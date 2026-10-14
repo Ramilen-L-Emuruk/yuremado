@@ -34,6 +34,83 @@ export const QUAKE_ISSUE_PRIORITY: Record<IssueType, number> = {
 
 const AMENDMENT_TYPE = '顕著な地震の震源要素更新のお知らせ'
 
+/** 報の新旧を比べるのに要る 2 つの時刻（→ {@link compareReportAge}）。 */
+export interface ReportAge {
+  /** 発表時刻（DMDATA は `Head/ReportDateTime`・分まで。P2PQuake は配信元の受信時刻）。 */
+  time: string
+  /** 電文の作成時刻（`Control/DateTime`）のミリ秒。DMDATA の XML 経路だけが持つ。 */
+  createdAtMs?: number
+}
+
+/**
+ * 報の新旧を比べる。**負なら `a` が古い、0 なら前後を決められない、正なら `a` が新しい。**
+ *
+ * **両方が作成時刻（`createdAtMs`）を持つならそれで比べる。** 電文解説資料 Ⅰ.（ⅱ）8 が
+ * 「最新情報の検索には `Control/DateTime` を参照すること」と定めている値で、秒まである。
+ * 発表時刻（`time`）は DMDATA ではこれを分へ切り捨てた値なので、同じ分の報どうしの前後を
+ * 決められない（数えた値は `docs/spec/quake-spec.md` §6.3）。
+ *
+ * **両方とも持たなければ `time` の文字列の辞書順で比べる。** P2PQuake・テストボタン・収録
+ * シナリオは作成時刻を持たないので、それらどうしの比較は従来どおり。辞書順が時系列と一致するのは
+ * 書式とタイムゾーンが揃っているときだけ（DMDATA は JST の ISO 8601、P2PQuake はスラッシュ区切り）で、
+ * バリアントごとにデータソースが 1 つだから成り立っている。
+ *
+ * **片方だけ持つ組は分の単位で比べ、同じ分なら 0**（理由は本体のコメント）。
+ *
+ * **空の `time` の扱いは呼び出し側が決める**（据え置き判定は「古い」、取消の照合は「取り下げ側」）。
+ * ここは比べるだけで、空どうしは 0 を返す。
+ */
+export function compareReportAge(a: ReportAge, b: ReportAge): number {
+  const aHas = a.createdAtMs !== undefined
+  const bHas = b.createdAtMs !== undefined
+  if (aHas && bHas) return a.createdAtMs! - b.createdAtMs!
+  if (!aHas && !bHas) return a.time < b.time ? -1 : a.time > b.time ? 1 : 0
+  // **片方だけ持つ組は分の単位で比べ、同じ分なら前後を決めない（0）。** 発表時刻しか無い側は
+  // 分までしか分からないので、作成時刻を持つ側も分へ切り捨ててから比べる。数値の鍵
+  // （`reportOrderKey`）でそのまま比べると、持たない側が必ず「その分の頭」＝最も古い側へ寄り、
+  // 据え置き判定は同じ分の報を「古い」と黙って捨て、取消の照合は同じ分の取消を「報より古い」と
+  // 読んで取り下げ済みの報を通してしまう（どちらも従来の安全側の逆）。日時として読めない時刻が
+  // 混ざるときは、従来どおり文字列で比べる。DMDATA で混ざるのは作成時刻を読めなかった報
+  // （パーサーが記録を残す）か、テストボタン・収録シナリオのカードと混ざったとき。
+  const am = aHas ? Math.floor(a.createdAtMs! / 60_000) : minuteOf(a.time)
+  const bm = bHas ? Math.floor(b.createdAtMs! / 60_000) : minuteOf(b.time)
+  if (am === null || bm === null) return a.time < b.time ? -1 : a.time > b.time ? 1 : 0
+  return am - bm
+}
+
+/** 発表時刻を日時として読んだ分（エポックからの分）。読めなければ null。 */
+function minuteOf(time: string): number | null {
+  const ms = new Date(time).getTime()
+  return Number.isFinite(ms) ? Math.floor(ms / 60_000) : null
+}
+
+/**
+ * カードの作成時刻を、そのカードが名乗る報の値に揃える。**持たない報なら欄ごと外す**
+ * （`undefined` の欄を残さない。残すと `toStrictEqual` や JSON 化で別物に見える）。
+ *
+ * 発表時刻（`time`）と作成時刻（`createdAtMs`）は同じ報を指していなければならない —— 片方だけ
+ * 別の報の値になると、次の据え置き判定・取消の照合がどの報と比べているのか分からなくなる。
+ */
+function withCreatedAtOf<T extends JMAQuake>(card: T, source: ReportAge): T {
+  if (source.createdAtMs !== undefined) return { ...card, createdAtMs: source.createdAtMs }
+  if (card.createdAtMs === undefined) return card
+  const { createdAtMs: _drop, ...rest } = card
+  return rest as T
+}
+
+/**
+ * 並べ直す経路（履歴・リプレイ）の並べ方の鍵。作成時刻を持てばそれ、無ければ発表時刻を
+ * 日時として読んだ値。**読めなければ `+Infinity`**（末尾へ寄せる。理由は `mergeQuakeHistory`）。
+ *
+ * {@link compareReportAge} と分けるのは用途が違うため。あちらは「前後を決められない（0）」を返せる
+ * 判定用で、こちらは並べ替え用なので 1 件ごとに数値を 1 つ決める（混ざっても全順序になる）。
+ */
+export function reportOrderKey(q: ReportAge): number {
+  if (q.createdAtMs !== undefined) return q.createdAtMs
+  const ms = new Date(q.time).getTime()
+  return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY
+}
+
 // --- 受け取った電文種別の記録（カードの見出しの材料。→ `QuakeReportRecord`） ---
 //
 // 気象庁は同じ地震について種別の違う電文を前後して発表する。能登 2024-01-01 の前震は
@@ -137,12 +214,12 @@ export function quakeHoldBack(existing: JMAQuake, incoming: JMAQuake): QuakeHold
   if (isSupersededByExistingCard(existing, incoming)) {
     // 訂正報は実配信で観測していない形なので必ず残す。時刻が新しいのに据え置いたものも残す
     // （どちらの理由も記録する側のコメントにある）。時刻が古いだけの分は黙る（→ `notable`）。
-    return { reason: 'superseded', notable: incoming.issue.correct !== 'なし' || incoming.time >= existing.time }
+    return { reason: 'superseded', notable: incoming.issue.correct !== 'なし' || compareReportAge(incoming, existing) >= 0 }
   }
-  // 実震度を持つ電文どうしは発表時刻で、持たない電文は種別優先度で判定する（理由は
-  // `mergeQuakeInto` の据え置き判定のコメント）。
+  // 実震度を持つ電文どうしは作成時刻（無ければ発表時刻）で、持たない電文は種別優先度で判定する
+  // （理由は `mergeQuakeInto` の据え置き判定のコメント）。
   if (hasIntensity(incoming)) {
-    return incoming.time < existing.time ? { reason: 'olderReport', notable: false } : null
+    return compareReportAge(incoming, existing) < 0 ? { reason: 'olderReport', notable: false } : null
   }
   return isPriorityRegression(existing, incoming) ? { reason: 'lowerPriority', notable: false } : null
 }
@@ -270,16 +347,11 @@ function mergeSourceTelegrams(base: readonly JMAQuake[] | undefined, incoming: J
   return base && !grew ? base : next
 }
 
-/** 発表時刻のミリ秒。**読めない時刻は末尾へ寄せる**（理由は `mergeQuakeHistory` の並べ替え）。 */
-function issuedAtMs(q: JMAQuake): number {
-  const ms = new Date(q.time).getTime()
-  return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY
-}
-
 /**
  * `incoming` を当てるには当て直しが要るか。
  *
- * **要るのは「控えにある報より古い報が、後から当たった」ときだけ。** 統合の規則は発表時刻の順に
+ * **要るのは「控えにある報より古い報が、後から当たった」ときだけ。** 古さは作成時刻（無ければ発表時刻。
+ * → `reportOrderKey`）で見る。統合の規則は発表された順に
  * 1 通ずつ当てる前提で書かれているので（→ `mergeQuakeInto` の据え置き判定の注記）、それより
  * 新しい報なら 1 通ずつ当てても当て直しと同じ答えになる。控えに無いカード（統合を通さずに
  * 作られたもの）は当て直せないので従来どおり 1 通ずつ当てる。
@@ -288,21 +360,21 @@ function needsRefold(existing: JMAQuake, incoming: JMAQuake): boolean {
   const sources = existing.sourceTelegrams
   if (!sources || sources.length === 0) return false
   if (sources.some(known => isSameTelegram(known, incoming))) return false
-  const at = issuedAtMs(incoming)
-  return sources.some(known => issuedAtMs(known) > at)
+  const at = reportOrderKey(incoming)
+  return sources.some(known => reportOrderKey(known) > at)
 }
 
 /**
- * 控えと `incoming` を発表時刻の順に並べ、空のカードから 1 通ずつ当て直す。
+ * 控えと `incoming` を発表された順（→ `reportOrderKey`）に並べ、空のカードから 1 通ずつ当て直す。
  *
- * **ライブと同じ答えにするための形。** ライブは発表時刻の順に届くので、`mergeQuakeInto` を
+ * **ライブと同じ答えにするための形。** ライブは発表された順に届くので、`mergeQuakeInto` を
  * 1 通ずつ当てた結果がそのまま正しい。履歴は新しい日から読むので、前の回で作ったカードへ
  * 古い報が後から当たる —— そのまま当てると、先にいるカードの状態を見て後から来た報を捨てる
  * 規則（震源要素更新と合流済みのカードは以後の通常電文を据え置く・時刻の古い完全版は据え置く）が、
  * 届く順番が逆のときだけ逆の答えを出す。実電文（控え 7 日分・64 地震）で、日付の境目を
  * どこに置いてもずれるのはこの形だけだった（2026-10-06 実測）。
  *
- * **同じ発表時刻の電文どうしは受け取った順のまま**（安定ソート）。`mergeQuakeHistory` が
+ * **並べる鍵が同じ電文どうしは受け取った順のまま**（安定ソート）。`mergeQuakeHistory` が
  * 1 回の中で作る並びと同じ規則。
  *
  * - **鍵（`eventKey`）は既存を引き継ぐ。** P2PQuake の鍵は最初に当たった報から作るので、
@@ -322,8 +394,8 @@ export function refoldQuakeCard(
 ): JMAQuake {
   const sources = mergeSourceTelegrams(existing.sourceTelegrams, incoming)
   const ordered = [...sources].sort((a, b) => {
-    const at = issuedAtMs(a)
-    const bt = issuedAtMs(b)
+    const at = reportOrderKey(a)
+    const bt = reportOrderKey(b)
     return at === bt ? 0 : at - bt
   })
   let card: JMAQuake | undefined
@@ -706,7 +778,8 @@ export function mergeQuakeInto(
   // --- A. incoming が VXSE61（顕著地震の震源要素更新） ---
   if (incoming.issue.type === AMENDMENT_TYPE) {
     if (!existing) return { ...incoming, eventKey, reports, sourceTelegrams }
-    return {
+    // 作成時刻は発表時刻（下の `time: incoming.time`）と一緒にこの報の値へ揃える（→ `withCreatedAtOf`）。
+    return withCreatedAtOf({
       ...existing,
       eventKey,
       reports,
@@ -745,7 +818,7 @@ export function mergeQuakeInto(
       // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
       // この経路だけ古い見出しが残る形になる。
       headline: incoming.headline ?? existing.headline,
-    }
+    }, incoming)
   }
 
   // --- B. incoming が通常電文 ---
@@ -787,29 +860,31 @@ export function mergeQuakeInto(
   // 気象庁は完全版の続報で確定させる（上記 7 件はいずれも続報が出ていない）。
   // **窓の外の速報が正当だった例が見つかったら、この判断を見直すこと。**
   //
-  // - **incoming が実震度を持つ（震度速報・震源・震度情報・各地の震度）**: 発表時刻（time）で
-  //   判定する。issue.type の優先度は見ない。旧実装は種別優先度だけで判定しており、震度速報を
+  // - **incoming が実震度を持つ（震度速報・震源・震度情報・各地の震度）**: 報の古さ（作成時刻。
+  //   → `compareReportAge`）で判定する。issue.type の優先度は見ない。旧実装は種別優先度だけで判定しており、震度速報を
   //   複数回発表するケース（能登 2024/1/1 16:06〜16:08 の実データで確認）で、間に震度を持たない
   //   震源情報が挟まって既存カードの issue.type が「震源情報」（震度速報より高優先度）に変わると、
   //   時系列的には後から届いた正しい震度速報の続報が「優先度が低い」という理由だけで無視され、
   //   新しく増えた区域（新潟県佐渡等）が地図・カードに反映されなくなっていた。
-  //   **同じ発表時刻（time）の続報は常に受け入れる。** `time`（気象庁電文の ReportDateTime）は
-  //   分単位までしか精度が無く、同じ分に複数報が発表されることが普通にある（上の実データでも
-  //   震源情報と震度速報の続報が同じ分に発表されていた）。`mergeQuakeInto` が時系列順に逐次
-  //   呼ばれる前提（ライブ経路は受信順、`mergeQuakeHistory` は time でソート済み）に乗り、
-  //   後から呼ばれた incoming を信じる。
+  //   **古さは電文の作成時刻（`Control/DateTime`・秒まで）で比べる。** 発表時刻（`time` ＝
+  //   ReportDateTime）は分へ切り捨てた値で、同じ分に複数報が発表されることが普通にある（上の
+  //   実データでも震源情報と震度速報の続報が同じ分に発表されていた）。電文解説資料 Ⅰ.（ⅱ）8 が
+  //   最新情報の検索に `Control/DateTime` を参照するよう定めている。**作成時刻が同じ（秒まで）か、
+  //   作成時刻を持たない経路（P2PQuake・テストボタン）で発表時刻が同じ続報、片方だけが作成時刻を
+  //   持つ組で分が同じ続報は受け入れる** ——
+  //   `mergeQuakeInto` が時系列順に逐次呼ばれる前提（ライブ経路は受信順、`mergeQuakeHistory` は
+  //   作成時刻でソート済み）に乗り、後から呼ばれた incoming を信じる。
   // - **incoming が震度データを持たない（震源情報等。この分岐に来た時点で existing は
   //   上の if 条件により必ず実震度を持つ）**: issue.type の優先度で判定する。震度を持たない
-  //   電文では time の精度（分単位）で新旧を確定できないうえ、時刻だけで判定すると、詳しい
-  //   情報（例: 震源・震度情報）を持つ既存カードが、粗い情報（震源情報）で種別ラベルだけ
-  //   後退してしまう（`coalesceByEventId` が暫定 ID のカードを畳むときに起きる）。
+  //   電文では、時刻だけで判定すると、詳しい情報（例: 震源・震度情報）を持つ既存カードが、
+  //   粗い情報（震源情報）で種別ラベルだけ後退してしまう（`coalesceByEventId` が暫定 ID のカードを畳むときに起きる）。
   //
   // **time が欠けている電文は「古い」とみなして据え置く。** 空文字列どうしの比較は
   // 常に false（`'' < ''` は false）になり据え置かれないため、明示的に弾く必要がある。
   // 気象庁電文はパーサーが time を必ず埋める前提だが、欠けたまま届いた場合に無警告で
   // 上書きを許すより、安全側（据え置き）に倒して記録を残す。
   //
-  // **time の比較は文字列の辞書順（`Date` を経由しない）。** これが時系列順と一致するのは
+  // **作成時刻を持たない経路の比較は、time の文字列の辞書順（`Date` を経由しない）。** これが時系列順と一致するのは
   // existing/incoming が同じ書式・同じタイムゾーンオフセットで揃っているときだけ。DMDATA
   // 経路（dmdataParser.ts）は ISO 8601 + 固定オフセット（例: `+09:00`）、P2PQuake 経路
   // （p2pquake.ts）はスラッシュ区切りでオフセット無し（例: `2026/01/02 15:04:05`）と書式が
@@ -981,8 +1056,9 @@ export function mergeQuakeInto(
 
   // 既存がより新しい VXSE61 の場合、その更新後の震源・種別・発表時刻を保持しつつ
   // incoming（震度電文）の震度を採用する。
-  if (existing.issue.type === AMENDMENT_TYPE && existing.time >= incoming.time) {
-    result = {
+  if (existing.issue.type === AMENDMENT_TYPE && compareReportAge(existing, incoming) >= 0) {
+    // **作成時刻も発表時刻と一緒に残す**（→ `withCreatedAtOf`）。
+    result = withCreatedAtOf({
       ...result,
       time: existing.time,
       issue: existing.issue,
@@ -997,7 +1073,7 @@ export function mergeQuakeInto(
       // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
       // この経路だけ古い見出しが残る形になる。
       headline: existing.headline ?? result.headline,
-    }
+    }, existing)
   }
 
   return result
@@ -1018,6 +1094,8 @@ export function mergeQuakeInto(
 export interface QuakeRetraction {
   /** 取消電文の発表時刻（`ReportDateTime`）。 */
   reportTime: string
+  /** 取消電文の作成時刻（`Control/DateTime`）のミリ秒。比べ方は {@link compareReportAge}。 */
+  reportCreatedAtMs?: number
   /** 取消電文の種別。 */
   issueType: IssueType
   /** 照合に使う電文・カード。 */
@@ -1031,7 +1109,12 @@ export interface QuakeRetraction {
  * `QuakeRetraction`）。当たらなかった場合は省略する。
  */
 export function quakeRetractionOf(cancel: JMAQuake, matched?: JMAQuake): QuakeRetraction {
-  return { reportTime: cancel.time, issueType: cancel.issue.type, entry: matched ?? cancel }
+  return {
+    reportTime: cancel.time,
+    ...(cancel.createdAtMs !== undefined && { reportCreatedAtMs: cancel.createdAtMs }),
+    issueType: cancel.issue.type,
+    entry: matched ?? cancel,
+  }
 }
 
 /**
@@ -1048,8 +1131,9 @@ export function quakeRetractionOf(cancel: JMAQuake, matched?: JMAQuake): QuakeRe
  *   なるため `false` を返し、`findExistingQuakeCard` が取消済みカードを避けることで**別カードと
  *   して立つ**。飲み込むと本物の地震が画面に出ない
  *
- * **同じ発表時刻なら取り下げ側へ倒す。** `time` は分精度なので、同じ分の取消と報のどちらが先か
- * は時刻から決められない。取消を尊重する方が安全。
+ * **作成時刻（`Control/DateTime`）で比べ、同じなら取り下げ側へ倒す。** 作成時刻は秒まであるので、
+ * 同じ分の取消と報の前後もこれで決まる（→ {@link compareReportAge}）。秒まで同じときと、作成時刻を
+ * 持たない経路（P2PQuake。発表時刻の比較へ落ちる）で同じになったときは、取消を尊重する方が安全。
  *
  * **発表時刻が空の報も取り下げ側へ倒す。** 空文字列どうしの比較は常に false になるため明示的に
  * 弾く必要がある（据え置き判定が空の `time` を扱うのと同じ理由）。
@@ -1112,7 +1196,7 @@ export function isRetractedQuakeReport(
   return retractions.some(r =>
     r.issueType === incoming.issue.type
     && sameQuakeEntry(r.entry, incoming, areaPrefIndex)
-    && (!incoming.time || incoming.time <= r.reportTime)
+    && (!incoming.time || compareReportAge(incoming, { time: r.reportTime, createdAtMs: r.reportCreatedAtMs }) <= 0)
   )
 }
 
@@ -1125,22 +1209,42 @@ export function isRetractedQuakeReport(
  * が入れ替わる。`eventKey` はブラウザ通知の重複抑止・カード選択・読み上げの主題キーに使う値
  * なので、入れ替わると**同じ地震の通知が二度出る**。
  *
- * **先に立ったカード（発表時刻が古い方）を選んでキーを据え置く。**
+ * **先に立ったカード（報が古い方。→ `reportOrderKey`）を選んでキーを据え置く。**
  *
  * **取消表示中のカードは選ばない。** 選ぶと `mergeQuakeInto` が置換して `cancelledAt` が落ち、
  * さらに `id` も入れ替わるため 10 秒後の purge 予約（`id` で対象を引く）が空振りし、取り消した
  * はずの地震が居座る。取消の後に届いた報の扱いは `isRetractedQuakeReport` を参照。
  */
 export function findExistingQuakeCard(cards: JMAQuake[], incoming: JMAQuake, areaPrefIndex: AreaPrefIndex): JMAQuake | undefined {
-  let found: JMAQuake | undefined
-  for (const card of cards) {
+  const index = findExistingQuakeCardIndex(cards, incoming, areaPrefIndex)
+  return index >= 0 ? cards[index] : undefined
+}
+
+/**
+ * `findExistingQuakeCard` の添字版（見つからなければ -1）。履歴経路（`mergeQuakeHistory`）は
+ * 置き換える位置を要るのでこちらを使う。**選び方を 1 箇所に置くためで、ライブと履歴で別々に
+ * 書くと、2 枚が同時に一致したとき経路によって選ぶカードが変わる。**
+ */
+export function findExistingQuakeCardIndex(cards: JMAQuake[], incoming: JMAQuake, areaPrefIndex: AreaPrefIndex): number {
+  let foundIndex = -1
+  for (let i = 0; i < cards.length; i++) {
+    const card = cards[i]
     if (card.cancelledAt) continue
     if (!sameQuakeEntry(card, incoming, areaPrefIndex)) continue
-    // 発表時刻が同値なら id で決める。配列順（＝到着順）に委ねると、同じ入力でも
-    // ライブと履歴で選ばれる側が変わる。
-    if (!found || card.time < found.time || (card.time === found.time && card.id < found.id)) found = card
+    // 古さで決め（→ `reportOrderKey`）、同じなら id で決める。配列順（＝到着順）に委ねると、
+    // 同じ入力でもライブと履歴で選ばれる側が変わる。
+    // `compareReportAge` を使わないのは、作成時刻を持つ報と持たない報が混ざると推移的でなく
+    // （同じ分を 0 と扱うため）、3 枚以上が一致したとき選ばれる側が配列順で変わるから。
+    // ここは安全側の判定ではなく「どれを残すか」の選択なので、並べ方と同じ全順序で選ぶ。
+    // 時刻が読めないカードは並べ方と同じく末尾（最も新しい側）に置き、読めるカードがあればそちらを選ぶ。
+    // 引き算にしないのは、時刻が読めないカード同士（鍵がどちらも +Infinity）で NaN になり id の決着へ届かないから。
+    if (foundIndex < 0) { foundIndex = i; continue }
+    const found = cards[foundIndex]
+    const cardKey = reportOrderKey(card)
+    const foundKey = reportOrderKey(found)
+    if (cardKey < foundKey || (cardKey === foundKey && card.id < found.id)) foundIndex = i
   }
-  return found
+  return foundIndex
 }
 
 /**
@@ -1210,18 +1314,22 @@ export function coalesceByEventId(cards: JMAQuake[]): JMAQuake[] {
 // 判定や「震度速報は震源名が空」の扱いを表現できないため）。件数は履歴数十〜数百件なので
 // 線形探索で足りる。
 //
-// **既知の限界: 同じ分（time の精度限界）に同じ段階の電文が複数ある場合、newQuakes の
-// 入力順序がそのまま結果に効く。** ソートは安定ソート（Array.prototype.sort、ES2019 以降で
-// 仕様保証）なので、time が同値の要素は入力配列上の相対順序を保つ。mergeQuakeInto の
-// 据え置き判定は「incoming が実震度を持つ電文どうし」では issue.type の優先度を見ず time
-// だけで判定するため、同じ分に複数の震度速報（再送等）が並べば、後に置いた方が勝つ。
+// **並べる鍵は電文の作成時刻（`Control/DateTime`・秒まで。→ `reportOrderKey`）。** 同じ分に
+// 並んだ報も発表された順に当たる。
+//
+// **既知の限界: 作成時刻が秒まで同じ電文（実電文 427 通で 1 対）と、作成時刻を持たない経路
+// （P2PQuake。発表時刻で並べる）で発表時刻が同じ電文は、newQuakes の入力順序がそのまま結果に
+// 効く。** ソートは安定ソート（Array.prototype.sort、ES2019 以降で仕様保証）なので、鍵が同値の
+// 要素は入力配列上の相対順序を保つ。mergeQuakeInto の据え置き判定は「incoming が実震度を持つ
+// 電文どうし」では issue.type の優先度を見ず時刻だけで判定するため、同値の震度速報が並べば
+// 後に置いた方が勝つ。
 //
 // **完全版（震源・震度情報 / 各地の震度情報）と速報段階（震度速報 / 震源情報）のあいだでは
 // 逆転しない。** 完全版を受けた後の速報段階は据え置くため（`isSupersededByExistingCard`）、
 // 入力配列で詳しい方が先・粗い方が後でも粗い方には後退しない。
 //
-// 呼び出し側（`services/dmdataReplay.ts` の `orderedForMerge`）は「発表時刻の昇順 → 同値なら
-// 種別優先度の昇順」で並べ直す。**段階をまたぐ逆転が据え置きで消えた後もこれは残す** ——
+// 呼び出し側（`services/dmdataReplay.ts` の `orderedForMerge`）は「作成時刻（無ければ発表時刻）の
+// 昇順 → 同値なら種別優先度の昇順」で並べ直す。**段階をまたぐ逆転が据え置きで消えた後もこれは残す** ——
 // 同じ段階どうしの並びは上のとおり依然として入力順に依存する。呼び出し側で結合順序を変える
 // 場合はこの前提を崩さないこと。
 // 索引の意味は `quakePoints.ts` の `isAreaPoint`。**省略可能にしない**——渡し忘れた呼び出し側が
@@ -1249,25 +1357,22 @@ export function mergeQuakeHistory(
   /** このバッチで報が当たったカードの鍵（畳み込みの後に写し直す対象。→ ループの後）。 */
   const touched = new Set<string>()
 
-  // 電文の発表時刻昇順で適用する（＝到着順の再現）。同時刻の相対順序は呼び出し側の
-  // 入力順序に委ねる（上の「既知の限界」参照）。
+  // 電文の作成時刻（無ければ発表時刻）の昇順で適用する（＝発表順の再現。鍵は `reportOrderKey`）。
+  // 作成時刻は秒まであるので、同じ分に並んだ報の前後もこれで決まる。秒まで同じ（または作成時刻を
+  // 持たない経路で発表時刻が同じ）ときの相対順序は呼び出し側の入力順序に委ねる（上の「既知の限界」参照）。
   //
   // **日時として読めない時刻は末尾へ寄せる。** 素朴に `getTime()` の差を返すと、読めない時刻が
   // 1 件混ざるだけで比較関数が全順序にならず（読めない a と読める b・c について a=b・a=c なのに
   // b<c が成り立つ）、`Array.prototype.sort` の結果が実装依存になる。**症状は「同じ入力なのに
   // 並びが違う」で、例外もログも出ない。** 呼び出し側（`dmdataReplay.ts` の `orderedForMerge`）が
-  // 同じ規則で並べてくるので、そこで作った順序をここで崩さないためにも要る。
-  const timeKey = (q: JMAQuake): number => {
-    const ms = new Date(q.time).getTime()
-    return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY
-  }
+  // 同じ鍵で並べてくるので、そこで作った順序をここで崩さないためにも要る。
   const ordered = [...newQuakes].sort((a, b) => {
-    const at = timeKey(a)
-    const bt = timeKey(b)
+    const at = reportOrderKey(a)
+    const bt = reportOrderKey(b)
     return at === bt ? 0 : at - bt
   })
   // 取り下げの記録。履歴ではカードを消してしまうため、消した後に「取消以前に発表された報」が
-  // 回ってきても照合できなくなる。**同じ分に取消と報が並ぶと入力順がそのまま効く**ので
+  // 回ってきても照合できなくなる。**作成時刻が同じ取消と報は入力順がそのまま効く**ので
   // （上の「既知の限界」と同じ機構）、取消を見た事実を別に残しておく。
   //
   // 呼び出し側が持つ台帳（`knownRetractions`）も足す。`base` に取消表示中のカードが含まれる
@@ -1294,9 +1399,9 @@ export function mergeQuakeHistory(
       })
       continue
     }
-    // **取消表示中のカードは置換しない**（理由は `findExistingQuakeCard`）。`base` 経由で
-    // 混ざりうるため、ライブ経路と同じ守りをここにも置く。
-    const index = merged.findIndex(e => !e.cancelledAt && sameQuakeEntry(e, q, areaPrefIndex))
+    // 既存カードはライブ経路と同じ関数で選ぶ（取消表示中は選ばない・2 枚当たれば報の古い方。
+    // → `findExistingQuakeCard`）。`base` 経由で取消表示中のカードが混ざりうる。
+    const index = findExistingQuakeCardIndex(merged, q, areaPrefIndex)
     const before = index >= 0 ? merged[index] : undefined
     // **前の回で作ったカードへ古い報が当たるなら、控えと合わせて当て直す**（→ `refoldQuakeCard`）。
     // 履歴は新しい日から読むので、日・窓の境目をまたいだ地震は後ろの報から先に当たる。

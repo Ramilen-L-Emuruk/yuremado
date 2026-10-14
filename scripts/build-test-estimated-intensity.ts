@@ -146,12 +146,12 @@ async function build() {
     lonIdx.push(Math.round(estimated.lon[i] * LON_STEPS))
     si.push(estimated.si[i])
   }
-  // 報ごとに変わるもの（識別子・発表時刻・電文を数える鍵・電文が名乗った報番号）は
+  // 報ごとに変わるもの（識別子・発表時刻・電文を数える鍵・電文が名乗った報番号・作成時刻）は
   // テスト側で作るので落とす。**パーサーへ報ごとの項目を足したらここへも足すこと**
   // （理由は `build-test-quake.ts` の同じ箇所。検査は `src/utils/testData.test.ts`）。
   const {
     id: _qid, eventId: _qeid, time: _qtime,
-    telegramKey: _qTelegramKey, reportSerial: _qReportSerial,
+    telegramKey: _qTelegramKey, reportSerial: _qReportSerial, createdAtMs: _qCreatedAtMs,
     ...quakeRest
   } = quake
   const out = {

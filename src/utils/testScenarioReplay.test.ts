@@ -167,6 +167,24 @@ describe('instantiateScenario', () => {
       expect(new Date(shifted.earthquake.time).getTime()).toBe(new Date(quake.earthquake.time).getTime() + originalDelta)
     })
 
+    it('作成時刻（createdAtMs）も同じ delta でシフトされ、持たない報には足さない', () => {
+      const baseTime = '2024-01-01T07:10:00Z'
+      const delta = NOW.getTime() - new Date(baseTime).getTime()
+      const created = Date.parse('2024-01-01T07:30:42Z')
+      const scenario: TestScenarioFile = {
+        id: 'test', label: 'テスト', description: '', category: 'quake', durationMs: 0,
+        baseTime,
+        entries: [
+          { offsetMs: 0, payload: { kind: 'event', event: { ...makeQuake(), createdAtMs: created } } },
+          { offsetMs: 0, payload: { kind: 'event', event: makeQuake({ id: 'dmdata-quake-20240101070900-2' }) } },
+        ],
+      }
+      const result = instantiateScenario(scenario, NOW)
+      const [a, b] = result.map(r => (r.payload as { kind: 'event'; event: JMAQuake }).event)
+      expect(a.createdAtMs).toBe(created + delta)
+      expect('createdAtMs' in b).toBe(false)
+    })
+
     it('idに埋め込まれたeventIdが再採番され、既存の正規表現にマッチし続ける', () => {
       const quake = makeQuake()
       const scenario: TestScenarioFile = {

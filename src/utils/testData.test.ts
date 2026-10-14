@@ -1518,30 +1518,31 @@ describe('テスト EEW の最大予測値の変化は実電文の形をして�
 describe('テストデータに報ごとに変わる項目が混ざっていない', () => {
   // **落とす集合は生成物ごとに違う。** 推計震度分布図の地震情報だけ `kind` と `issue` を
   // 残す（読む側が `Omit<JMAQuake, 'id' | 'eventId' | 'time'>` として受けるため）。
-  // 長周期に `telegramKey` / `reportSerial` を挙げないのは、パーサーがそれを読まないから。
+  // 長周期に `telegramKey` / `reportSerial` を挙げないのは、パーサーがそれを読まないから
+  // （作成時刻 `createdAtMs` は読むので挙げる）。
   const generated = [
     {
       label: '地震テスト（能登本震）',
       keys: Object.keys(readJson('src/data/noto-honshin-2024-quake.json') as object),
-      forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial'],
+      forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'cities', 'earthquake'],
     },
     {
       label: '未入電テスト（日向灘 2022）',
       keys: Object.keys(readJson('src/data/hyuganada-2022-quake.json') as object),
-      forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial'],
+      forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'cities', 'earthquake'],
     },
     {
       label: '長周期テスト（能登本震）',
       keys: Object.keys(readJson('src/data/noto-honshin-2024-lpgm.json') as object),
-      forbidden: ['id', 'eventId', 'time', 'cancelled'],
+      forbidden: ['id', 'eventId', 'time', 'createdAtMs', 'cancelled'],
       required: ['points', 'regions', 'prefs', 'maxClass'],
     },
     {
       label: '推計震度分布図テストの地震情報',
       keys: Object.keys((readJson('src/data/test-estimated-intensity.json') as { quake: object }).quake),
-      forbidden: ['id', 'eventId', 'time', 'telegramKey', 'reportSerial'],
+      forbidden: ['id', 'eventId', 'time', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'earthquake', 'kind', 'issue'],
     },
   ]

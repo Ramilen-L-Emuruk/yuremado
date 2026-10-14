@@ -19,7 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import { parseEarthquakeFromXml } from '../services/dmdataParser'
-import { mergeQuakeHistory } from './quakeMerge'
+import { mergeQuakeHistory, reportOrderKey } from './quakeMerge'
 import type { JMAQuake } from '../types/earthquake'
 import { tarEntries } from '../../scripts/telegram-audit/archive-cache.mjs'
 
@@ -49,8 +49,10 @@ function readTelegrams(dir: string): Map<string, JMAQuake[]> {
   return byEvent
 }
 
+// ライブの到着順の代わりに、電文の作成時刻（秒まで）で並べる。分までの発表時刻で並べると、
+// 同じ分の報の前後が入力順に委ねられ、ライブ順そのものが決まらない。
 const byTime = (list: readonly JMAQuake[]) =>
-  [...list].sort((a, b) => Date.parse(a.issue.time) - Date.parse(b.issue.time))
+  [...list].sort((a, b) => reportOrderKey(a) - reportOrderKey(b))
 
 const fold = (batches: readonly JMAQuake[][]): JMAQuake[] => {
   let cards: JMAQuake[] = []

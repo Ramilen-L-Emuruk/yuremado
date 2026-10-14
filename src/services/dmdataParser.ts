@@ -514,8 +514,8 @@ const JST_OFFSET_MS = 9 * 3600_000
  * **落ちた値はタイムゾーン表記を JST へ揃える。** 実電文 135 通では `Head/ReportDateTime` が
  * 常に JST（`+09:00`）、`Control/DateTime` が常に UTC（`Z`）だった。揃えずに落ちると、
  * その電文だけ `2026-08-23T13:47:32Z`、他は `2026-08-23T22:47:00+09:00` という形になる。
- * 地震情報の続報判定（`utils/quakeMerge.ts` の `mergeQuakeInto`）は **`Date` を経由しない
- * 文字列の辞書順**で新旧を比べるため、同じ時刻でも UTC 表記の側が必ず小さくなり、
+ * 地震情報の続報判定（`utils/quakeMerge.ts` の `compareReportAge`）は、作成時刻を持たない報どうしでは
+ * **`Date` を経由しない文字列の辞書順**で新旧を比べるため、同じ時刻でも UTC 表記の側が必ず小さくなり、
  * **その報は永久に「古い」と判定されて捨てられる。**
  *
  * 手元のサンプルでは `ReportDateTime` が常に埋まっていて受け皿は一度も通らなかったが、
@@ -524,8 +524,9 @@ const JST_OFFSET_MS = 9 * 3600_000
  * **なお `Control/DateTime` は秒値まで有効で、`Head/ReportDateTime` はそれを分へ切り捨てた値**
  * （実電文 135 通のうち 96 通で最大 55 秒ずれ、符号は常に負）。解説資料 Ⅰ.（ⅱ）8 は
  * 「同一種別の情報における最新情報の検索にあたっては `Serial` ではなく `Control/DateTime` を
- * 参照すること」と書いているが、**本実装は秒精度へ上げていない** —— 理由は
- * `docs/spec/quake-spec.md` §6.4。
+ * 参照すること」と書いている。**新旧の比較と並べ方はそちら（`readCreatedAtMs` が読む
+ * `createdAtMs`）で行い、この値は画面に出す発表時刻（分）として持つ**（地震情報・長周期。
+ * → `docs/spec/quake-spec.md` §6.3）。
  *
  * @param kindLabel 記録に出す電文種別の名前。**呼び出し元ごとに違う値を渡すこと** ——
  *   この関数は 9 種別から呼ばれており、固定文字列にすると記録の間引きの枠を全種別で
@@ -581,10 +582,32 @@ function readTelegramKey(doc: Document, kindLabel: string, logPrefix: string): s
   const controlEl = xmlQ(doc, 'Control')
   const raw = controlEl ? xmlText(xmlChild(controlEl, 'DateTime')) : ''
   if (!raw) {
-    log.warn(`${logPrefix} ${kindLabel}の電文作成時刻（Control/DateTime）を読めません（同じ電文を二度数えない鍵に使うため、受信通数が実際より少なく出ます）`)
+    log.warn(`${logPrefix} ${kindLabel}の電文作成時刻（Control/DateTime）を読めません（同じ電文を二度数えない鍵に使うため、受信通数が実際より少なく出ます。地震情報・長周期では報の新旧の比較も分単位の発表時刻へ落ちます）`)
     return undefined
   }
   return raw
+}
+
+/**
+ * 電文を作成した時刻（`Control/DateTime`）のミリ秒。→ `JMAQuake.createdAtMs`
+ *
+ * **`readTelegramKey` と分けるのは基準が違うため。** あちらは読めない値でも鍵にするが、
+ * こちらは新旧の比較に使うので、日時として読めない値・時間帯を明示していない値は持たせない
+ * （判定は `readableDateTimeMs`。`readReportDateTime` の受け皿と同じ厳しさ）。
+ *
+ * **欠落は記録しない。** 欠落なら `readTelegramKey` が既に記録している（同じ要素を見る）。
+ * 記録するのは、あるのに読めなかったときだけ。持たない報は比べる側が `time` へ落ちる。
+ */
+function readCreatedAtMs(doc: Document, kindLabel: string, logPrefix: string): number | undefined {
+  const controlEl = xmlQ(doc, 'Control')
+  const raw = controlEl ? xmlText(xmlChild(controlEl, 'DateTime')) : ''
+  if (!raw) return undefined
+  const ms = readableDateTimeMs(raw)
+  if (ms === null) {
+    reportUnreadableTelegramDateTime(logPrefix, `${kindLabel}の電文作成時刻`, raw, '新旧の比較は発表時刻（分）で行います')
+    return undefined
+  }
+  return ms
 }
 
 /**
@@ -1450,6 +1473,8 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   // 同じ電文を二度数えないための鍵と、電文が名乗る報番号。どちらもカードの見出しが
   // 「震度速報#2/震源情報」の形を組むための材料（→ `JMAQuake.telegramKey` / `.reportSerial`）。
   const telegramKey = readTelegramKey(doc, '地震情報', DMDATA_LOG_PREFIX)
+  // 報の新旧を比べ、並べるための秒まである時刻（→ `JMAQuake.createdAtMs`）。
+  const createdAtMs = readCreatedAtMs(doc, '地震情報', DMDATA_LOG_PREFIX)
   const reportSerial = readReportSerial(doc, '地震情報', DMDATA_LOG_PREFIX)
   // 電文が名乗る情報名（`Head/Title`）。**読み取りは `readInfoName` へ集約する** ——
   // `Control/Title` と紛れる要素で、複数の経路が別々に読むと片方が遅れる。
@@ -1473,6 +1498,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       // **取消でも埋める。** 取消カードは `reports` を積まないが、次にこのフィールドを使う
       // コードが「取消だけ持たない」ことを知らずに取りこぼすのを防ぐ（上の `eventId` と同じ理由）。
       ...(telegramKey && { telegramKey }),
+      ...(createdAtMs !== undefined && { createdAtMs }),
       ...(reportSerial !== undefined && { reportSerial }),
       time: reportDateTime,
       ...(quakeOperationStatus && { operationStatus: quakeOperationStatus }),
@@ -1770,6 +1796,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     // フィールドを落とすと履歴経由のカードがそのリンクに引き当たらない。
     eventId: eventId || undefined,
     ...(telegramKey && { telegramKey }),
+    ...(createdAtMs !== undefined && { createdAtMs }),
     ...(reportSerial !== undefined && { reportSerial }),
     time: reportDateTime,
     issue: {
@@ -2460,6 +2487,8 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   const lpgmOperationStatus = parseOperationStatus(doc)
 
   const reportDateTime = readReportDateTime(doc, '長周期地震動観測情報', DMDATA_LOG_PREFIX)
+  // 同じ地震の報の新旧を比べるための秒まである時刻（→ `JMALpgm.createdAtMs`）。
+  const lpgmCreatedAtMs = readCreatedAtMs(doc, '長周期地震動観測情報', DMDATA_LOG_PREFIX)
   const eventId        = xmlText(xmlQ(doc, 'EventID'))
   const serial         = xmlText(xmlQ(doc, 'Serial')) || '1'
   const infoType       = xmlText(xmlQ(doc, 'InfoType'))
@@ -2473,7 +2502,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   const originTime   = earthquakeEl ? xmlText(xmlQ(earthquakeEl, 'OriginTime')) : ''
   warnIfUnreadableDateTime(DMDATA_LOG_PREFIX, '長周期地震動観測情報の地震発生時刻', originTime, 'この要素が無いと電文ごと落とす')
 
-  if (cancelled) return { ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }), id, eventId, time: reportDateTime, originTime, maxClass: 0, cancelled: true }
+  if (cancelled) return { ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }), id, eventId, time: reportDateTime, ...(lpgmCreatedAtMs !== undefined && { createdAtMs: lpgmCreatedAtMs }), originTime, maxClass: 0, cancelled: true }
   if (!originTime) return dropTelegram(DMDATA_LOG_PREFIX, 'VXSE62（長周期地震動観測情報）に OriginTime がありません')
 
   // VXSE62 XML: Intensity > Observation > MaxLgInt が最大長周期地震動階級
@@ -2695,7 +2724,8 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   return {
     ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }),
     ...(lpgmInfoName && { infoName: lpgmInfoName }),
-    id, eventId, time: reportDateTime, originTime, maxClass, cancelled: false, points, regions,
+    id, eventId, time: reportDateTime, ...(lpgmCreatedAtMs !== undefined && { createdAtMs: lpgmCreatedAtMs }),
+    originTime, maxClass, cancelled: false, points, regions,
     ...(prefs.length > 0 && { prefs }),
     ...(obsMaxInt >= 0 && { maxInt: obsMaxInt }),
     ...(Number.isFinite(lpgmMagnitude) && { magnitude: lpgmMagnitude }),

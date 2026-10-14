@@ -14,6 +14,9 @@ import {
   quakeRetractionOf,
   addQuakeRetraction,
   quakeKeyForLpgmEventId,
+  compareReportAge,
+  reportOrderKey,
+  quakeHoldBack,
 } from './quakeMerge'
 import type { JMAQuake, IssueType, IntensityScale, EarthquakePoint, DomesticTsunami, CorrectType } from '../types/earthquake'
 import { reportsText } from '../test-utils/quakeReports'
@@ -77,6 +80,7 @@ interface QuakeOpts {
   cancelledAt?: Date
   telegramKey?: string   // 電文の一意鍵（→ JMAQuake.telegramKey）。省略すると id が鍵になる
   reportSerial?: number  // 電文が名乗る報番号（→ JMAQuake.reportSerial）
+  createdAtMs?: number   // 電文の作成時刻（Control/DateTime）のミリ秒（→ JMAQuake.createdAtMs）
 }
 
 // 熊本 M7.1・震度7（2026-07-28 16:27 JST = 07:27 UTC）を既定とするヘルパ。
@@ -90,6 +94,7 @@ function makeQuake(o: QuakeOpts = {}): JMAQuake {
     id: o.id ?? `dmdata-quake-${eventId}-1`,
     ...(o.telegramKey !== undefined && { telegramKey: o.telegramKey }),
     ...(o.reportSerial !== undefined && { reportSerial: o.reportSerial }),
+    ...(o.createdAtMs !== undefined && { createdAtMs: o.createdAtMs }),
     time,
     ...(o.cancelledAt ? { cancelledAt: o.cancelledAt } : {}),
     issue: { source: 'dmdata', time, type, correct: o.correct ?? 'なし' },
@@ -2281,5 +2286,174 @@ describe('mergeQuakeHistory が作る印の記憶', () => {
     // いちばん古い地震の記憶も残る（1 件あたり数行しか持たないので上限に届かない）。
     expect(trimmed.has('20260824192900')).toBe(true)
     expect(trimmed.has('20260824190000')).toBe(true)
+  })
+})
+
+// 報の新旧は電文の作成時刻（Control/DateTime・秒まで）で決める（→ quakeMerge.ts の
+// `compareReportAge`）。発表時刻（ReportDateTime）はそれを分へ切り捨てた値で、同じ分に複数の報が
+// 並ぶと前後を決められない。実電文（2024-01-01 の能登の前震 20240101160608 など 7 地震）では、
+// 同じ分に震源・震度情報が先・震度速報が後に発表されていた。
+describe('報の新旧は作成時刻（秒）で決める', () => {
+  // 同じ 16:08 の分に、震源・震度情報（16:08:20）→ 震度速報の続報（16:08:42）の順に発表された形
+  const MINUTE = '2024-01-01T16:08:00+09:00'
+  const at = (sec: number) => Date.parse(`2024-01-01T16:08:${String(sec).padStart(2, '0')}+09:00`)
+
+  describe('compareReportAge', () => {
+    it('正: 同じ分でも作成時刻が後の報を新しいとみなす', () => {
+      const a = { time: MINUTE, createdAtMs: at(20) }
+      const b = { time: MINUTE, createdAtMs: at(42) }
+      expect(compareReportAge(a, b)).toBeLessThan(0)
+      expect(compareReportAge(b, a)).toBeGreaterThan(0)
+    })
+    it('対照: 両方とも作成時刻を持たなければ発表時刻の比較へ落ちる（同じ分なら前後を決めない）', () => {
+      expect(compareReportAge({ time: MINUTE }, { time: MINUTE })).toBe(0)
+      expect(compareReportAge({ time: MINUTE }, { time: '2024-01-01T16:09:00+09:00' })).toBeLessThan(0)
+    })
+    it('安全弁: 秒まで同じなら前後を決めない（後から来た報を受け入れる規則が残る）', () => {
+      expect(compareReportAge({ time: MINUTE, createdAtMs: at(30) }, { time: MINUTE, createdAtMs: at(30) })).toBe(0)
+    })
+  })
+
+  describe('片方だけ作成時刻を持つ組', () => {
+    it('同じ分なら前後を決めない（据え置きは受け入れ、取消の照合は取り下げ側へ倒す従来の安全側）', () => {
+      expect(compareReportAge({ time: MINUTE, createdAtMs: at(20) }, { time: MINUTE })).toBe(0)
+      expect(compareReportAge({ time: MINUTE }, { time: MINUTE, createdAtMs: at(20) })).toBe(0)
+    })
+    it('分が違えば分の差で比べる', () => {
+      const next = '2024-01-01T16:09:00+09:00'
+      expect(compareReportAge({ time: MINUTE, createdAtMs: at(50) }, { time: next })).toBeLessThan(0)
+      expect(compareReportAge({ time: next }, { time: MINUTE, createdAtMs: at(50) })).toBeGreaterThan(0)
+    })
+    it('作成時刻を持たない側の発表時刻が読めなければ文字列で比べる（従来どおり）', () => {
+      // 作成時刻を持つ側は time を見ない（分は作成時刻から引く）。文字列比較へ落ちるのは持たない側が読めないときだけ
+      expect(compareReportAge({ time: MINUTE, createdAtMs: at(20) }, { time: '' })).toBeGreaterThan(0)
+      expect(compareReportAge({ time: '', createdAtMs: at(20) }, { time: MINUTE })).toBe(0)
+    })
+    it('取消の照合: 作成時刻を持たない取消が同じ分にあれば、作成時刻を持つ報は取り下げ済みとみなす', () => {
+      const retraction = {
+        reportTime: MINUTE,
+        issueType: '震度速報' as const,
+        entry: makePrompt({ time: MINUTE, telegramKey: 'cancel' }),
+      }
+      const report = makePrompt({ time: MINUTE, createdAtMs: at(50), telegramKey: 'r' })
+      expect(isRetractedQuakeReport([retraction], report)).toBe(true)
+    })
+  })
+
+  describe('震源要素更新が既存カードへ当たったとき', () => {
+    it('作成時刻も発表時刻と一緒に震源要素更新の報へ揃う', () => {
+      const card = mergeQuakeInto(undefined, makeQuake({ type: '震源・震度情報', time: MINUTE, createdAtMs: at(10), telegramKey: 'k53' }))
+      const amend = makeNoIntensity({ type: '顕著な地震の震源要素更新のお知らせ', time: '2024-01-01T16:20:00+09:00', createdAtMs: Date.parse('2024-01-01T16:20:30+09:00'), telegramKey: 'k61' })
+      const merged = mergeQuakeInto(card, amend)
+      expect(merged.time).toBe(amend.time)
+      expect(merged.createdAtMs).toBe(amend.createdAtMs)
+    })
+    it('震源要素更新が作成時刻を持たなければ、前の報の作成時刻を残さない', () => {
+      const card = mergeQuakeInto(undefined, makeQuake({ type: '震源・震度情報', time: MINUTE, createdAtMs: at(10), telegramKey: 'k53' }))
+      const amend = makeNoIntensity({ type: '顕著な地震の震源要素更新のお知らせ', time: '2024-01-01T16:20:00+09:00', telegramKey: 'k61' })
+      const merged = mergeQuakeInto(card, amend)
+      expect('createdAtMs' in merged).toBe(false)
+    })
+  })
+
+  describe('reportOrderKey', () => {
+    it('作成時刻を持てばそれ、持たなければ発表時刻、読めなければ末尾', () => {
+      expect(reportOrderKey({ time: MINUTE, createdAtMs: at(42) })).toBe(at(42))
+      expect(reportOrderKey({ time: MINUTE })).toBe(at(0))
+      expect(reportOrderKey({ time: 'こわれた値' })).toBe(Number.POSITIVE_INFINITY)
+    })
+  })
+
+  describe('quakeHoldBack', () => {
+    it('正: 同じ分のうちに作成時刻の古い報が後から届いたら据え置く', () => {
+      const newer = makePrompt({ time: MINUTE, createdAtMs: at(42), telegramKey: 'k42' })
+      const older = makePrompt({ time: MINUTE, createdAtMs: at(10), telegramKey: 'k10' })
+      expect(quakeHoldBack(newer, older)).toEqual({ reason: 'olderReport', notable: false })
+    })
+    it('対照: 作成時刻の新しい報は受け入れる', () => {
+      const older = makePrompt({ time: MINUTE, createdAtMs: at(10), telegramKey: 'k10' })
+      const newer = makePrompt({ time: MINUTE, createdAtMs: at(42), telegramKey: 'k42' })
+      expect(quakeHoldBack(older, newer)).toBeNull()
+    })
+    it('安全弁: 作成時刻を持たない経路（P2PQuake・テストボタン）は同じ分なら従来どおり受け入れる', () => {
+      const a = makePrompt({ time: MINUTE, telegramKey: 'a' })
+      const b = makePrompt({ time: MINUTE, telegramKey: 'b' })
+      expect(quakeHoldBack(a, b)).toBeNull()
+    })
+  })
+
+  describe('mergeQuakeHistory の並べ方', () => {
+    // 能登 2024-01-01 の前震の形: 同じ 16:08 に震源情報（16:08:32）→ 震度速報の続報（16:08:42）。
+    // ライブ（届いた順）では震度速報が後に当たり、震源を補ったうえで種別は「震度速報」になる。
+    const hypo = makeNoIntensity({ type: '震源情報', time: MINUTE, createdAtMs: at(32), telegramKey: 'hypo' })
+    const prompt = makePrompt({ time: MINUTE, createdAtMs: at(42), telegramKey: 'prompt' })
+    const noSec = (q: JMAQuake): JMAQuake => { const { createdAtMs: _c, ...rest } = q; return rest }
+
+    it('正: 入力順に依らず作成時刻の順に当て、ライブと同じ種別になる', () => {
+      const [card] = mergeQuakeHistory([prompt, hypo])
+      expect(card.issue.type).toBe('震度速報')
+      expect(card.earthquake.hypocenter.name).toBe('熊本県熊本地方')
+      const [same] = mergeQuakeHistory([hypo, prompt])
+      expect(same.issue.type).toBe('震度速報')
+    })
+    it('対照: 作成時刻が無ければ同じ分は入力順に委ねる（後に置いた方が勝つ）', () => {
+      expect(mergeQuakeHistory([noSec(prompt), noSec(hypo)])[0].issue.type).toBe('震源情報')
+      expect(mergeQuakeHistory([noSec(hypo), noSec(prompt)])[0].issue.type).toBe('震度速報')
+    })
+    it('安全弁: 前の回で作ったカードへ作成時刻の古い報が後から当たったら、控えと合わせて当て直す', () => {
+      const first = mergeQuakeHistory([prompt])
+      expect(first[0].issue.type).toBe('震度速報')
+      const [card] = mergeQuakeHistory([hypo], first)
+      expect(card.issue.type).toBe('震度速報')
+      expect(card.earthquake.hypocenter.name).toBe('熊本県熊本地方')
+    })
+  })
+
+  describe('取消の前後', () => {
+    const cancelAt = at(40)
+    const retraction = {
+      reportTime: MINUTE,
+      reportCreatedAtMs: cancelAt,
+      issueType: '震度速報' as const,
+      entry: makePrompt({ time: MINUTE, createdAtMs: cancelAt, telegramKey: 'cancel' }),
+    }
+    it('正: 同じ分でも取消より後に作られた報は取り下げ済みとみなさない', () => {
+      const after = makePrompt({ time: MINUTE, createdAtMs: at(50), telegramKey: 'after' })
+      expect(isRetractedQuakeReport([retraction], after)).toBe(false)
+    })
+    it('対照: 取消より前に作られた報は取り下げ済み', () => {
+      const before = makePrompt({ time: MINUTE, createdAtMs: at(10), telegramKey: 'before' })
+      expect(isRetractedQuakeReport([retraction], before)).toBe(true)
+    })
+    it('安全弁: 作成時刻を持たない報は、同じ分なら取り下げ側へ倒す', () => {
+      const unknown = makePrompt({ time: MINUTE, telegramKey: 'unknown' })
+      expect(isRetractedQuakeReport([retraction], unknown)).toBe(true)
+    })
+    it('取消電文から作る記録に作成時刻が入る', () => {
+      const cancel = { ...makePrompt({ time: MINUTE, createdAtMs: cancelAt }), cancelled: true }
+      expect(quakeRetractionOf(cancel).reportCreatedAtMs).toBe(cancelAt)
+    })
+  })
+
+  describe('findExistingQuakeCard', () => {
+    it('同じ地震に 2 枚当たるとき、作成時刻の古い方を選ぶ（同じ分でも）', () => {
+      const a = makeQuake({ id: 'dmdata-quake-20260728162718-1', time: MINUTE, createdAtMs: at(30), telegramKey: 'a' })
+      const b = makeQuake({ id: 'dmdata-quake-20260728162718-0', time: MINUTE, createdAtMs: at(10), telegramKey: 'b' })
+      const incoming = makeQuake({ time: '2024-01-01T16:10:00+09:00', telegramKey: 'c' })
+      // id の順なら b（-0）が勝つ組で、作成時刻の古い a が選ばれること（作成時刻だけで決まる）
+      const a2 = { ...a, createdAtMs: at(5) }
+      expect(findExistingQuakeCard([a2, b], incoming)?.telegramKey).toBe('a')
+      expect(findExistingQuakeCard([b, a2], incoming)?.telegramKey).toBe('a')
+    })
+    it('作成時刻を持つカードと持たないカードが同じ分に 3 枚当たっても、並びによらず同じカードを選ぶ', () => {
+      // 片方だけ持つ組を同じ分で 0 とする比べ方では A=B・B=C・C<A になり、並びで選ぶ側が変わっていた
+      const A = makeQuake({ id: 'dmdata-quake-a', time: MINUTE, createdAtMs: at(59), telegramKey: 'A' })
+      const B = makeQuake({ id: 'dmdata-quake-b', time: MINUTE, telegramKey: 'B' })
+      const C = makeQuake({ id: 'dmdata-quake-c', time: MINUTE, createdAtMs: at(5), telegramKey: 'C' })
+      const incoming = makeQuake({ time: '2024-01-01T16:10:00+09:00', telegramKey: 'in' })
+      const orders = [[A, B, C], [A, C, B], [B, A, C], [B, C, A], [C, A, B], [C, B, A]]
+      const picked = new Set(orders.map(o => findExistingQuakeCard(o, incoming)?.telegramKey))
+      expect([...picked]).toEqual(['B'])
+    })
   })
 })

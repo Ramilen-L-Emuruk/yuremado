@@ -5675,6 +5675,45 @@ describe('電文の一意鍵と報番号', () => {
   })
 })
 
+// --- 報の新旧を比べる作成時刻 ---
+//
+// 新旧の比較と並べ方は `Control/DateTime`（秒まで）で行う（→ `types/earthquake.ts` の
+// `JMAQuake.createdAtMs`・`utils/quakeMerge.ts` の `compareReportAge`）。
+describe('電文の作成時刻（createdAtMs）', () => {
+  // 正: `Control/DateTime` を日時として読んだミリ秒を持つ（取消でも、長周期でも）。
+  it('地震情報・取消・長周期で Control/DateTime のミリ秒を持つ', () => {
+    expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.createdAtMs).toBe(Date.parse('2026-08-08T18:00:00Z'))
+    const cancel = VXSE53_XML.replace('<InfoType>発表</InfoType>', '<InfoType>取消</InfoType>')
+    expect(parseEarthquakeFromXml('VXSE53', cancel)!.createdAtMs).toBe(Date.parse('2026-08-08T18:02:00Z'))
+    expect(parseLpgmFromXml(VXSE62_XML)!.createdAtMs).toBe(Date.parse('2026-08-13T10:00:00Z'))
+  })
+
+  // 対照: 発表時刻（分まで）とは別の値。秒を持つので、同じ分の報の前後を決められる。
+  it('秒まで読む（発表時刻の分の切り捨てとは別に持つ）', () => {
+    const xml = VXSE51_XML.replace('<DateTime>2026-08-08T18:00:00Z</DateTime>', '<DateTime>2026-08-08T18:00:42Z</DateTime>')
+    const quake = parseEarthquakeFromXml('VXSE51', xml)!
+    expect(quake.createdAtMs).toBe(Date.parse('2026-08-08T18:00:42Z'))
+    expect(quake.time).toBe('2026-08-09T03:00:00+09:00')
+  })
+
+  // 安全弁: 日時として読めない値・時間帯の無い値は持たせず、記録を残す（比べる側が発表時刻へ落ちる）。
+  it('読めない作成時刻は持たせず、記録を残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      for (const bad of ['こわれた値', '2026-08-08T18:00:00']) {
+        const xml = VXSE51_XML.replace('<DateTime>2026-08-08T18:00:00Z</DateTime>', `<DateTime>${bad}</DateTime>`)
+        const quake = parseEarthquakeFromXml('VXSE51', xml)!
+        expect(quake.createdAtMs).toBeUndefined()
+        // 一意鍵の方は読めない値でもそのまま持つ（用途が違う）
+        expect(quake.telegramKey).toBe(bad)
+      }
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('電文作成時刻を日時として読めません'))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+})
+
 describe('緊急地震速報の警報対象地方（Head/Headline/Information）', () => {
   // 2024-01-01 能登半島地震（本震）の VXSE45 第 20 報からそのまま起こした。警報が北陸だけ
   // だったところへ甲信・東海・関東が加わった報で、**`Item` が 2 つに分かれている**

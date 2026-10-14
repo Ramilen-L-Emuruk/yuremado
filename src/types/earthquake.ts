@@ -399,6 +399,21 @@ export interface JMAQuake {
    */
   telegramKey?: string
   /**
+   * 電文を作成した時刻（`Control/DateTime`）のミリ秒。**報の新旧を比べ、並べるために持つ**
+   * （→ `utils/quakeMerge.ts` の `compareReportAge`）。
+   *
+   * 電文解説資料 Ⅰ.（ⅱ）8 は「同一種別の情報における最新情報の検索にあたっては `Serial` ではなく
+   * 管理部の発表時刻（`Control/DateTime`）を参照すること」と定めている。{@link JMAQuake.time}
+   * （`Head/ReportDateTime`）はこれを分へ切り捨てた値で、同じ分に複数の報が並ぶと前後を決められない。
+   *
+   * **{@link JMAQuake.telegramKey} とは用途が違う。** あちらは「同じ電文か」を見る生の文字列で、
+   * 読めない値でもそのまま鍵にする。こちらは「どちらが新しいか」を見る数値で、読めない値は持たせない。
+   *
+   * DMDATA の XML 経路だけが持つ。P2PQuake・テストボタン・収録シナリオは持たず、比べる側が
+   * {@link JMAQuake.time} へ落ちる。
+   */
+  createdAtMs?: number
+  /**
    * 電文が名乗る報番号（`Head/Serial`）。数値として読めないときは持たせない。
    *
    * **持つ種別は限られる。** 実電文では震源・震度情報（VXSE53）だけが 1, 2, … と連番を振り、
@@ -1308,6 +1323,8 @@ export interface JMALpgm {
   id: string
   eventId: string     // VXSE51/52/53/62 が共有する 14 桁タイムスタンプ。lpgmByEventId の Map キー
   time: string
+  /** 電文を作成した時刻（`Control/DateTime`）のミリ秒。意味と扱いは {@link JMAQuake.createdAtMs} と同じ。 */
+  createdAtMs?: number
   /**
    * 電文の運用種別（`Control/Status`）。訓練・試験のときだけ入る。→ {@link TelegramOperationStatus}
    *

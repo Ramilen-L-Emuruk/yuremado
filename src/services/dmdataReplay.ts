@@ -12,7 +12,7 @@ import {
 } from '../utils/fetchWithTimeout'
 import {
   addQuakeRetraction, createQuakeFoldKeys, extractQuakeEventIdFromId, isRetractedQuakeReport,
-  quakeRetractionOf, QUAKE_ISSUE_PRIORITY, type QuakeRetraction,
+  quakeRetractionOf, QUAKE_ISSUE_PRIORITY, reportOrderKey, type QuakeRetraction,
 } from '../utils/quakeMerge'
 import type { AreaPrefIndex } from '../utils/quakePoints'
 import { latestValidDateTime } from '../utils/tsunami'
@@ -110,8 +110,12 @@ const DAY_MS = 86_400_000
 /**
  * 地震電文を「速報→詳細」の並びに揃える。
  *
- * `mergeQuakeHistory` は安定ソートで畳み込むため、**発表時刻が同値の電文どうしは入力配列の
- * 相対順序がそのまま結果に効く**（→ `utils/quakeMerge.ts` の `mergeQuakeHistory`）。
+ * 鍵は電文の作成時刻（`Control/DateTime`・秒まで。無ければ発表時刻。→ `utils/quakeMerge.ts` の
+ * `reportOrderKey`）。同じ分に並んだ報もこれで発表順に並ぶ。
+ *
+ * `mergeQuakeHistory` は安定ソートで畳み込むため、**鍵が同値の電文どうしは入力配列の
+ * 相対順序がそのまま結果に効く**（→ `utils/quakeMerge.ts` の `mergeQuakeHistory`）。作成時刻が
+ * 秒まで同じ報は実電文 427 通で 1 対だけだが、そこは種別優先度で決める。
  *
  * **完全版と速報段階のあいだの逆転は、統合側が据え置くので起きない**（同ファイルの
  * `isSupersededByExistingCard`）。それでもここで揃えるのは、**同じ段階どうしの並びが
@@ -122,11 +126,6 @@ const DAY_MS = 86_400_000
  * VXSE51→52→53→61 の順に連結していたが、1 本へ寄せた今は**ここで明示的に揃える**。
  * 症状は「同じ分に 2 種類の電文が届いた地震のカードだけ震度が粗いまま」で、例外もログも出ない。
  */
-function timeKey(q: JMAQuake): number {
-  const ms = Date.parse(q.time)
-  return Number.isFinite(ms) ? ms : Number.POSITIVE_INFINITY
-}
-
 function orderedForMerge(quakes: JMAQuake[]): JMAQuake[] {
   return [...quakes].sort((a, b) => {
     // **日時として読めない時刻は末尾へ寄せる。** 捨てないのは、同一性の判定に使う時刻を
@@ -136,8 +135,8 @@ function orderedForMerge(quakes: JMAQuake[]): JMAQuake[] {
     // 比較関数が全順序にならず（読めない a と読める b・c について a=b・a=c なのに b<c が
     // 成り立ちうる）、`Array.prototype.sort` の結果が実装依存になる。**症状は「同じ入力なのに
     // 並びが違う」で、例外もログも出ない。**
-    const at = timeKey(a)
-    const bt = timeKey(b)
+    const at = reportOrderKey(a)
+    const bt = reportOrderKey(b)
     if (at !== bt) return at - bt
     return (QUAKE_ISSUE_PRIORITY[a.issue.type] ?? 0) - (QUAKE_ISSUE_PRIORITY[b.issue.type] ?? 0)
   })

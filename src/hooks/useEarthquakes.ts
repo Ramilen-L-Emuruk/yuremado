@@ -16,7 +16,7 @@ import {
   type TelegramLoss, createEmptyTelegramLoss, telegramLossFrom, isTelegramLossEmpty,
   mergeHistoryLoss,
 } from '../utils/telegramLoss'
-import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, extractQuakeEventId, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, quakeRetractionOf, addQuakeRetraction, quakeHoldBack } from '../utils/quakeMerge'
+import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, extractQuakeEventId, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, compareReportAge } from '../utils/quakeMerge'
 import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmRowSnapshot, lpgmMarkKey, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
@@ -2351,7 +2351,7 @@ export function useEarthquakes(
             recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmNotifiable(lpgm) ? 'silentReplayInit' : 'notDispatched')
             if (lpgm.cancelled) continue
             const existing = lpgmByEventId.get(lpgm.eventId)
-            if (!existing || lpgm.time > existing.time) {
+            if (!existing || compareReportAge(lpgm, existing) > 0) {
               lpgmByEventId.set(lpgm.eventId, lpgm)
             }
           }
@@ -2955,7 +2955,7 @@ export function useEarthquakes(
           for (const lpgm of lpgmEvents) {
             if (lpgm.cancelled) continue
             const existing = lpgmByEventId.get(lpgm.eventId)
-            if (!existing || lpgm.time > existing.time) lpgmByEventId.set(lpgm.eventId, lpgm)
+            if (!existing || compareReportAge(lpgm, existing) > 0) lpgmByEventId.set(lpgm.eventId, lpgm)
           }
           // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
           const { cards, markMemory } = mergeQuakeHistory(
