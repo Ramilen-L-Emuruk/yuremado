@@ -26,13 +26,13 @@ import {
 } from '../utils/replayEventLog'
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
-import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, earthquakeToSegments, earthquakeCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState } from '../utils/ttsText'
+import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
 import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
 import { TAB_PRIORITY, type TabPriority } from '../utils/tabPriority'
 import { hasPendingEewSpeech } from '../utils/eewPendingSpeech'
-import { createQuakeFoldKeys, extractQuakeEventIdFromId, quakeEventKey, quakeKeyForLpgmEventId, sameQuakeEntry } from '../utils/quakeMerge'
+import { applyQuakeCancelToCard, createQuakeFoldKeys, extractQuakeEventIdFromId, quakeEventKey, quakeKeyForLpgmEventId, sameQuakeEntry } from '../utils/quakeMerge'
 
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 
@@ -2807,7 +2807,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         spokenAreaGradeRef.current,
       )
       : []
-    if (event.kind === 'quake' && event.cancelled) {
+    if (event.kind === 'quake' && event.cancelled && meta?.quakeCancel?.duplicate) {
+      // もう伝えた取消（同じ取消の二重配信か、同じ種別の古い取消が後から届いた）。カードは前の取消で
+      // 片付いているので、音と読み上げを出すと画面と声が食い違う（2026-10-15 ユーザー承認
+      // 「2通目は鳴らさない（推奨）」）。起動時の履歴で台帳へ積んだ取消（声にしていない）と同じ取消が
+      // 後からライブで届いた場合もここで黙るが、カードは履歴の時点で取り下げてあり、画面と声は食い違わない。
+      log.info('[quake] 既に伝えた取消なので音と読み上げを出さない', { id: event.id, issueType: event.issue.type })
+    } else if (event.kind === 'quake' && event.cancelled) {
       // 地震情報取消: カード削除は useEarthquakes reducer が担う。通知音・読み上げのみここで処理する。
       if (settings.soundEnabled) playAlertSound('eewCancel')
       // 読み上げがあるならタブ移動は読み上げに任せる（下の speakNonEEW に渡す follow）。
@@ -2827,18 +2833,37 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         //
         // 取消電文の issue.time は取消電文自体の発表時刻であり、取り消された元の地震情報の発表時刻ではない。
         // 読み上げには同一 eventId で最後に受信した地震情報（既存カード）の time を使う。
+        //
+        // **当たったカードと効き方は受信側が入口で決めたもの（`meta.quakeCancel`）を使う。** ここで
+        // 画面の状態から探し直すと、同じティックに続けて届いた報がまだ反映されていない状態や、同じ
+        // EventID の取消済みの古いカードを掴み、「地震情報全体の取消」と「一部の取消」を取り違える。
+        // 判断が渡らない経路（呼び出し元が `meta` を持たない）だけ、従来どおり画面の状態から探す。
         const cancelEventId = extractQuakeEventIdFromId(event.id)
-        const original = cancelEventId
-          ? earthquakesRef.current.find(e => extractQuakeEventIdFromId(e.id) === cancelEventId)
-          : undefined
+        const decided = meta?.quakeCancel
+        const original = decided
+          ? decided.target
+          : cancelEventId
+            ? earthquakesRef.current.find(e => !e.cancelledAt && extractQuakeEventIdFromId(e.id) === cancelEventId)
+            : undefined
         // **鍵は取り消されるカードから作る**（続報の主題 `quakeEventKey(existingCard ?? incomingQuake)`
         // と同じ流儀）。生の取消電文から作ると、暫定 EventID が付け替えられた地震ではカードの
         // `eventKey`（最初の報の値を据え置く）と食い違い、主題が続報と揃わないうえ、一覧も取消カードを
         // 見つけられずに選択中のカードへ落ちる —— 「カードが片付いた後に語る」正常な空振りと同じ形に
         // なるので、記録にも残らない。
         const cancelQuakeKey = quakeEventKey(original ?? (event as import('../types/earthquake').JMAQuake))
+        // **一部の取消は情報名で言う**（カードは残るので「地震情報は取り消されました」は誤り）。
+        // 見分けはカードへ当てる側と同じ関数（`applyQuakeCancelToCard`）で付ける。判断が渡らない経路で
+        // 台帳を渡さないのは、前の取消で外した報が、当て直したカードの控えにもう残っていないため。
+        const fallback = !decided && original
+          ? applyQuakeCancelToCard(original, event, [], getAreaPrefIndexCache())
+          : undefined
+        const retracted = decided
+          ? decided.retracted
+          : fallback?.kind === 'partial' ? fallback.retracted : undefined
         speakNonEEWDelayed(
-          earthquakeCancelToText(original?.time ?? null, event.cancelText),
+          retracted
+            ? earthquakeReportCancelToText(retracted.issueType, retracted.reportTime, event.cancelText)
+            : earthquakeCancelToText(original?.time ?? null, event.cancelText),
           SPEECH_PRIORITY.normal,
           ttsDelayFor('eewCancel'),
           `quake:${cancelQuakeKey}`,

@@ -1,4 +1,4 @@
-import type { JMAQuake, IssueType, QuakeReportRecord } from '../types/earthquake'
+import type { JMAQuake, IssueType, QuakeReportRecord, QuakeRetractedReport } from '../types/earthquake'
 import { isAreaPoint, type AreaPrefIndex } from './quakePoints'
 import { log } from './logger'
 import {
@@ -392,8 +392,26 @@ export function refoldQuakeCard(
   retractions: readonly QuakeRetraction[],
   areaPrefIndex: AreaPrefIndex,
 ): JMAQuake {
-  const sources = mergeSourceTelegrams(existing.sourceTelegrams, incoming)
-  const ordered = [...sources].sort((a, b) => {
+  // 全部が取り下げ済みなら当て直す材料が無い（呼び出し側は取り下げ済みの報を先に捨てているので、
+  // `incoming` 自身はここへ来ない。控えの側が全部取り下げられた場合の安全弁）
+  return refoldFromTelegrams(existing, mergeSourceTelegrams(existing.sourceTelegrams, incoming), retractions, areaPrefIndex)
+    ?? existing
+}
+
+/**
+ * `telegrams` を発表された順に並べ、空のカードから当て直す（→ `refoldQuakeCard`）。
+ * 取り下げ済みの報は飛ばす。**1 通も残らなければ `undefined`。**
+ *
+ * 鍵（`eventKey`）と一部の取消の記録（`retractedReports`）は `existing` から引き継ぐ。どちらも
+ * 電文の内容ではなくカードが積んできた事実なので、空から当て直すと失われる。
+ */
+function refoldFromTelegrams(
+  existing: JMAQuake,
+  telegrams: readonly JMAQuake[],
+  retractions: readonly QuakeRetraction[],
+  areaPrefIndex: AreaPrefIndex,
+): JMAQuake | undefined {
+  const ordered = [...telegrams].sort((a, b) => {
     const at = reportOrderKey(a)
     const bt = reportOrderKey(b)
     return at === bt ? 0 : at - bt
@@ -405,9 +423,8 @@ export function refoldQuakeCard(
       ? { ...mergeQuakeInto(undefined, telegram, { quiet: true }), eventKey: quakeEventKey(existing) }
       : mergeQuakeInto(card, telegram, { quiet: true })
   }
-  // 全部が取り下げ済みなら当て直す材料が無い（呼び出し側は取り下げ済みの報を先に捨てているので、
-  // `incoming` 自身はここへ来ない。控えの側が全部取り下げられた場合の安全弁）
-  return card ?? existing
+  if (card === undefined) return undefined
+  return existing.retractedReports ? { ...card, retractedReports: existing.retractedReports } : card
 }
 
 // 電文 ID 文字列から eventId（14桁タイムスタンプ）を抽出する。
@@ -746,6 +763,37 @@ function pickVarComment(
 }
 
 export function mergeQuakeInto(
+  existing: JMAQuake | undefined,
+  incoming: JMAQuake,
+  opts?: Parameters<typeof mergeQuakeIntoBody>[2],
+): JMAQuake {
+  const result = mergeQuakeIntoBody(existing, incoming, opts)
+  // **一部の取消の記録は、どの分岐を通っても引き継ぐ**（→ `JMAQuake.retractedReports`）。
+  // 本体は分岐ごとに `...existing` か `...incoming` を土台にするので、土台が電文の側だと
+  // 黙って落ちる。分岐 1 つずつに書き足すと、分岐が増えたときに必ず漏れる。
+  // `incoming` がカード（畳み込みでカードどうしを合わせるとき）なら、その記録も合わせる。
+  const retracted = mergeRetractedReports(existing?.retractedReports, incoming.retractedReports)
+  if (retracted === undefined || result.retractedReports === retracted) return result
+  return { ...result, retractedReports: retracted }
+}
+
+/** 一部の取消の記録を合わせる。**何も増えなければ `base` をそのまま返す**（「変化なし＝同一参照」を保つ）。 */
+function mergeRetractedReports(
+  base: readonly QuakeRetractedReport[] | undefined,
+  added: readonly QuakeRetractedReport[] | undefined,
+): readonly QuakeRetractedReport[] | undefined {
+  if (!added || added.length === 0) return base
+  const next = base ? [...base] : []
+  let grew = false
+  for (const r of added) {
+    if (next.some(k => k.issueType === r.issueType && k.reportTime === r.reportTime)) continue
+    next.push(r)
+    grew = true
+  }
+  return grew ? next : base
+}
+
+function mergeQuakeIntoBody(
   existing: JMAQuake | undefined,
   incoming: JMAQuake,
   opts?: {
@@ -1120,16 +1168,21 @@ export function quakeRetractionOf(cancel: JMAQuake, matched?: JMAQuake): QuakeRe
 /**
  * 取消の後に届いた報が「取り下げ済みの内容」かどうか。
  *
- * **正常な運用では取消の後に同じ地震の続報は来ない。** 取消は「その情報を取り下げる」意味で、
- * 取り下げた地震について続報は出ない。それでも届いたなら異常が 2 通りある。
+ * **取消の後にも、同じ地震の別の種別の報は来る。** 取消は情報名称の単位で効く（電文解説資料 別紙ウ）。
+ * 実電文 2024-01-01 23:04 の地震（EventID 20240101230402）は、震度速報（作成 14:05:48Z）→
+ * 震度速報の取消（14:13:46Z）→ 震源・震度情報（14:14:10Z）の順に届いた。取り消した種別とは違う
+ * 種別の報は種別の一致で外れるので、この関数は `false` を返し、ふつうの続報として当たる。
+ *
+ * 取り消した種別と**同じ種別**の報が取消の後に届いたなら、2 通りある。
  *
  * - **到着順の入れ替わり**: 取消より前に発表された報が遅れて届いた。当日ぶんの REST 経路や
  *   リプレイでは順序が入れ替わりうる（同じ分のタイは呼び出し側の入力順に委ねているため）。
  *   これは取り下げ済みの内容なので**捨てる**。この関数が `true` を返すのはこの場合
- * - **同一性の誤認識**: 別の地震の報が `sameQuakeEntry` で同一と判定された（§6.1 の限界。
- *   P2PQuake 経路・暫定 EventID の採り直しで起こりうる）。こちらは取消より後に発表された報に
- *   なるため `false` を返し、`findExistingQuakeCard` が取消済みカードを避けることで**別カードと
- *   して立つ**。飲み込むと本物の地震が画面に出ない
+ * - **取消より後に発表された報**: 取り消した後に気象庁が発表し直した報か、別の地震の報が
+ *   `sameQuakeEntry` で同一と判定されたもの（§6.1 の限界。P2PQuake 経路・暫定 EventID の採り直しで
+ *   起こりうる）。どちらも取り下げ済みの内容ではないので `false` を返す。カード全体が取り消されて
+ *   いれば `findExistingQuakeCard` が取消済みカードを避けて**別カードとして立ち**、一部の取消で
+ *   残ったカードならそこへ当たる。飲み込むと本物の地震が画面に出ない
  *
  * **作成時刻（`Control/DateTime`）で比べ、同じなら取り下げ側へ倒す。** 作成時刻は秒まであるので、
  * 同じ分の取消と報の前後もこれで決まる（→ {@link compareReportAge}）。秒まで同じときと、作成時刻を
@@ -1138,11 +1191,11 @@ export function quakeRetractionOf(cancel: JMAQuake, matched?: JMAQuake): QuakeRe
  * **発表時刻が空の報も取り下げ側へ倒す。** 空文字列どうしの比較は常に false になるため明示的に
  * 弾く必要がある（据え置き判定が空の `time` を扱うのと同じ理由）。
  *
- * **種別（`issue.type`）まで一致を要求する。** 取消は情報単位で、`useEarthquakes` の取消の
- * マッチングも種別まで見て絞っている（遠地地震の取消報が「震源・震度情報」のカードを巻き込まない
- * ようにするため。遠地地震は VXSE53 を共有し `Head/Title` だけが異なる）。**適用側が絞ったものを
- * 参照側で広げてはいけない。** 報を落とす判定は結果が画面に出ないぶん見つけにくいので、
- * 適用側と対称に保つ。
+ * **種別（`issue.type`）まで一致を要求する。** 取消は情報単位で、カードへ当てる側
+ * （`applyQuakeCancelToCard`）も種別まで見て、取り消した種別の報だけを外している（遠地地震の
+ * 取消報が「震源・震度情報」のカードを巻き込まないようにするため。遠地地震は VXSE53 を共有し
+ * `Head/Title` だけが異なる）。**適用側が絞ったものを参照側で広げてはいけない。** 報を落とす判定は
+ * 結果が画面に出ないぶん見つけにくいので、適用側と対称に保つ。
  */
 /**
  * 取消の記録を台帳へ足す。**同じ取消は二度積まない。**
@@ -1198,6 +1251,101 @@ export function isRetractedQuakeReport(
     && sameQuakeEntry(r.entry, incoming, areaPrefIndex)
     && (!incoming.time || compareReportAge(incoming, { time: r.reportTime, createdAtMs: r.reportCreatedAtMs }) <= 0)
   )
+}
+
+/**
+ * カードへ当てた電文のうち、この取消が取り下げるもの（同じ種別で、取消より前に発表された報）。
+ *
+ * 前後の比べ方と「発表時刻が空なら取り下げ側へ倒す」は `isRetractedQuakeReport` と同じ。
+ * **取消の側の発表時刻が空でも取り下げ側へ倒す**（前後を決められないので取消を尊重する。
+ * 空の時刻で比べると、どの報も取消より新しく見えて取消が黙って効かなくなる）。
+ * 控えを持たないカード（統合を通っていないもの）はカード自身を 1 通として見る。
+ */
+function telegramsRetractedBy(card: JMAQuake, cancel: JMAQuake): JMAQuake[] {
+  return (card.sourceTelegrams ?? [card]).filter(t =>
+    t.issue.type === cancel.issue.type
+    && (!t.time || !cancel.time || compareReportAge(t, cancel) <= 0)
+  )
+}
+
+/**
+ * 取消電文がこのカードに効くか。**取消表示中かどうかは見ない**（見るかは呼び出し側が決める。
+ * ライブは取消表示中のカードを対象から外し、履歴は最終状態が非表示なので含める）。
+ *
+ * **種別はカードの今の種別ではなく、カードが受けた報で見る。** 取消は情報名称の単位で効く
+ * （電文解説資料 別紙ウ）。震源情報まで進んだカード（今の種別は「震源情報」）に震度速報
+ * だけの取消が届いても、カードは震度速報を受けているので効く。今の種別で比べていた頃は
+ * 「対応するカードが見つからない」で無視し、取り消された震度がカードに残っていた。
+ *
+ * 種別まで見ることで、遠地地震の取消（VXSE53 を共有し `Head/Title` だけが異なる）が
+ * 震源・震度情報のカードを巻き込まない守りは残る —— そのカードは遠地地震の報を受けていない。
+ */
+export function isQuakeCancelTarget(card: JMAQuake, cancel: JMAQuake, areaPrefIndex: AreaPrefIndex): boolean {
+  return sameQuakeEntry(card, cancel, areaPrefIndex) && telegramsRetractedBy(card, cancel).length > 0
+}
+
+/** 取消をカードへ当てた結果。→ {@link applyQuakeCancelToCard} */
+export type QuakeCancelEffect =
+  /** この取消はカードに効かない。 */
+  | { kind: 'none' }
+  /** 取り下げると残る報が無い。カード全体の取消（ライブは取消表示、履歴は消す）。 */
+  | { kind: 'whole' }
+  /**
+   * 残る報で当て直したカード。取り下げた事実は `retractedReports` に積んである。
+   * `retracted` はこの取消で積んだ 1 件（読み上げが名乗る種別と時刻。`retractedReports` の
+   * 並びから推し量らないこと —— 前の取消の分も並んでいる）。
+   */
+  | { kind: 'partial'; card: JMAQuake; retracted: QuakeRetractedReport }
+
+/**
+ * 取消電文をカードへ当てる。ライブ（`useEarthquakes`）と履歴（`mergeQuakeHistory`）の
+ * **両方がこれを通す** —— 書き写すと片方だけが変わり、同じ取消について画面とリロード後の画面が
+ * 食い違う（実際、履歴は種別を見ずにカードを丸ごと消していた）。
+ *
+ * - 残る報があれば、**取り下げた報を外して空から当て直す**（`refoldFromTelegrams`）。
+ *   当て直しなので、取り下げた報だけが運んだ値（震度速報の震度・見出しの「震度速報」）は消え、
+ *   残る報の値は統合の規則どおりに並ぶ
+ * - **震度速報の取消なら、控えから補った震度（`intensityFromCache`）も外す。** 補った震度は
+ *   電文の内容ではなく、取り消された震度速報の写しなので
+ * - 取り下げた事実は `retractedReports` に積む（カードに「震度速報は取り消されました」と出す材料。
+ *   2026-10-15 ユーザー承認「残して取消の理由を出す（推奨）」）
+ *
+ * @param retractions それまでに見た取消の台帳（この取消を含んでいてもいなくてもよい）。
+ *   当て直しで、前の取消が取り下げた報を飛ばすのに使う
+ */
+export function applyQuakeCancelToCard(
+  card: JMAQuake,
+  cancel: JMAQuake,
+  retractions: readonly QuakeRetraction[],
+  areaPrefIndex: AreaPrefIndex,
+): QuakeCancelEffect {
+  if (!sameQuakeEntry(card, cancel, areaPrefIndex)) return { kind: 'none' }
+  const retracted = telegramsRetractedBy(card, cancel)
+  if (retracted.length === 0) return { kind: 'none' }
+  const stripFilled = cancel.issue.type === '震度速報'
+  const remaining = (card.sourceTelegrams ?? [card])
+    .filter(t => !retracted.includes(t))
+    .map(t => stripFilled && t.intensityFromCache ? withoutFilledIntensity(t) : t)
+  const ledger = [...retractions, quakeRetractionOf(cancel, card)]
+  const refolded = remaining.length > 0 ? refoldFromTelegrams(card, remaining, ledger, areaPrefIndex) : undefined
+  if (refolded === undefined) return { kind: 'whole' }
+  const lastRetracted = retracted.reduce((a, b) => (compareReportAge(b, a) > 0 ? b : a))
+  const report: QuakeRetractedReport = {
+    issueType: cancel.issue.type,
+    reportTime: lastRetracted.time,
+    ...(cancel.cancelText !== undefined && { cancelText: cancel.cancelText }),
+  }
+  return {
+    kind: 'partial',
+    card: { ...refolded, retractedReports: mergeRetractedReports(refolded.retractedReports, [report]) },
+    retracted: report,
+  }
+}
+
+/** 控えから補った震度を外す（補う前の姿へ戻す）。→ `JMAQuake.intensityFromCache` */
+function withoutFilledIntensity(t: JMAQuake): JMAQuake {
+  const { intensityFromCache: _filled, ...rest } = t
+  return { ...rest, earthquake: { ...t.earthquake, maxScale: -1 }, points: [] }
 }
 
 /**
@@ -1385,11 +1533,39 @@ export function mergeQuakeHistory(
     // ライブ経路（useEarthquakes の取消専用分岐）は取消を10秒表示してから purge するが、
     // 過去情報である履歴ではその最終状態（非表示）に一致させる。
     if (q.cancelled) {
+      // **当て方はライブと同じ関数**（`applyQuakeCancelToCard`。情報名称の単位で、取り消された
+      // 種別の報だけを外す）。種別を見ずにカードを丸ごと消していた頃は、震度速報だけの取消が
+      // 震源・震度情報より後に届くと、ライブではカードが残るのに履歴では消えていた。
+      //
       // 取消表示中のカードも対象に含める（履歴の最終状態は非表示なので消して良い）。
-      const target = merged.findIndex(e => sameQuakeEntry(e, q, areaPrefIndex))
+      let target = -1
+      let effect: QuakeCancelEffect = { kind: 'none' }
+      for (let i = 0; i < merged.length; i++) {
+        effect = applyQuakeCancelToCard(merged[i], q, retractions, areaPrefIndex)
+        if (effect.kind !== 'none') { target = i; break }
+      }
       // 照合の精度が高い順に、当たったカード → 取消電文そのもの（理由は `QuakeRetraction`）。
       retractions.push(quakeRetractionOf(q, target >= 0 ? merged[target] : undefined))
-      if (target >= 0) merged.splice(target, 1)
+      // どのカードにも効かない取消は珍しくない（取り消された報がこのバッチより前の日にある・
+      // 取消が先に並んだ）。台帳には積んだので、後から回ってくる報はそちらで落ちる。
+      if (effect.kind === 'none') {
+        log.debug('[quake] 履歴の取消が当たるカードが無かった（台帳には積んだ）', {
+          id: q.id, issueType: q.issue.type, time: q.time,
+        })
+      }
+      if (effect.kind === 'whole') merged.splice(target, 1)
+      else if (effect.kind === 'partial') {
+        merged[target] = effect.card
+        // 当て直したカードの姿を記憶へ写す（下の通常の報と同じ。次の報が比べる相手を画面と揃える）
+        const key = quakeEventKey(effect.card)
+        touched.add(key)
+        rememberQuakeCard(markMemory, key, {
+          facts: quakeFactSnapshot(effect.card),
+          rows: quakeRowSnapshot(effect.card.points, effect.card.cities ?? []),
+          issuedAt: markIssuedAt(effect.card.issue.time),
+          reportType: effect.card.issue.type,
+        })
+      }
       continue
     }
     // 取消以前に発表された報は取り下げ済みなので採らない（`isRetractedQuakeReport`）。

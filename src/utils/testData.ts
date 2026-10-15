@@ -618,7 +618,7 @@ export const TEST_QUAKE_CANCEL_DELAY_MS = 10_000
  * もの）が届き、23:13:47 に取り消された（リプレイで確かめた）。間は詰めてある。
  *
  * - **取消は震度速報と同じ `eventId`・同じ種別で届く。** 取消が効くカードの判定
- *   （`useEarthquakes.ts` の `isQuakeCancelTarget`）は種別まで見る
+ *   （`quakeMerge.ts` の `isQuakeCancelTarget`）は種別まで見る
  * - **取消の本文（`Body/Text`）は持たせない。** 実電文がそうだった（画面には定型の
  *   「この地震情報は取り消されました」だけが出る）
  * - **取消は震源も震度も持たない。** 形は `dmdataParser.ts` の取消の早期リターンと同じ
@@ -643,6 +643,44 @@ export function createTestQuakeCancel(): [JMAQuake, JMAQuake] {
     points: [],
   }
   return [prompt, cancel]
+}
+
+/**
+ * 地震情報の**一部の取消**のテストデータ（震度速報 → 震源・震度情報 → 震度速報だけの取消）。
+ * **DMDSS 版のみ**（理由は `createTestQuakeCancel` と同じ）。
+ *
+ * 取消は情報名称の単位で効く（電文解説資料 別紙ウ）。震源・震度情報まで進んだカードに震度速報だけの
+ * 取消が届くと、カードは残り、震度速報が運んだ内容だけが外れて「震度速報は取り消されました」と
+ * 理由が出る（→ `utils/quakeMerge.ts` の `applyQuakeCancelToCard`。2026-10-15 ユーザー承認
+ * 「残して取消の理由を出す（推奨）」）。**この順の実電文の標本は手元に無い** —— 実電文
+ * （2024-01-01 23:04）は震度速報 → 取消 → 震源・震度情報の順で、それは `createTestQuakeCancel` の形。
+ *
+ * - **取消の本文は実電文にある宣言の文**（「先ほどの、震度速報を取り消します。」）。画面にはそのまま出し、
+ *   読み上げは宣言だけの文を読まない（→ `ttsText.ts` の `cancelReasonSentence`）
+ * - 震度速報と震源・震度情報は種別遷移テストと同じ材料（`createTestQuakeReportSequence`）から採る
+ */
+export function createTestQuakePartialCancel(): [JMAQuake, JMAQuake, JMAQuake] {
+  const sequence = createTestQuakeReportSequence(true)
+  const prompt = sequence[0]
+  const detailSource = sequence[3]
+  const detailTime = new Date(new Date(prompt.time).getTime() + TEST_REPORT_SEQUENCE_DELAY_MS).toISOString()
+  const detail: JMAQuake = {
+    ...detailSource, telegramKey: detailTime, time: detailTime, issue: { ...detailSource.issue, time: detailTime },
+  }
+  const cancelTime = new Date(new Date(detailTime).getTime() + TEST_QUAKE_CANCEL_DELAY_MS).toISOString()
+  const cancel: JMAQuake = {
+    kind: 'quake',
+    id: prompt.id,
+    ...(prompt.eventId && { eventId: prompt.eventId }),
+    telegramKey: cancelTime,
+    time: cancelTime,
+    cancelled: true,
+    cancelText: '先ほどの、震度速報を取り消します。',
+    issue: { source: prompt.issue.source, time: cancelTime, type: '震度速報', correct: 'なし' },
+    earthquake: { time: '', hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: 0 }, maxScale: -1, domesticTsunami: '不明' },
+    points: [],
+  }
+  return [prompt, detail, cancel]
 }
 
 /**

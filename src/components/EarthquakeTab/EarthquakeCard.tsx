@@ -979,6 +979,22 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           )}
         </div>
 
+        {/* 一部の取消（震源情報まで進んだカードに震度速報だけの取消が届いた等）。カードは残し、
+            取り消された情報の名前と、気象庁が書いた理由（`Body/Text`）をそのまま出す
+            （2026-10-15 ユーザー承認「見出しの下に一行＋理由（推奨）」）。取り消された内容は
+            当て直しでカードから消えているので、**ここが消えたことを伝える唯一の場所**。 */}
+        {quake.retractedReports?.map(r => (
+          <div
+            key={`${r.issueType}#${r.reportTime}`}
+            className="px-4 py-1.5 text-center text-yellow-300 border-b border-border"
+          >
+            <div className="text-sm font-bold">{r.issueType}は取り消されました</div>
+            {r.cancelText && (
+              <div className="mt-0.5 text-xs text-yellow-300/80" style={{ whiteSpace: 'pre-line' }}>{r.cancelText}</div>
+            )}
+          </div>
+        ))}
+
         {/* 画面が狭い・低い環境（roomy 未満＝スマホ縦/横）では余白と文字を詰め、
             各地の震度がスクロールせずに見えるようにする。roomy 以上は従来の寸法。 */}
         <div className="flex flex-col gap-1.5 p-2 roomy:gap-2 roomy:p-3">
@@ -1670,6 +1686,14 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               </span>
             )}
           </div>
+
+          {/* 一部の取消。畳んだ表示では 1 行だけ（理由は開いたカードで読む。2026-10-15 ユーザー承認
+              「一行だけ出す（推奨）」）。最大震度のバッジが黙って変わる形を避けるために出す。 */}
+          {quake.retractedReports?.map(r => (
+            <div key={`${r.issueType}#${r.reportTime}`} className="text-sm font-bold text-yellow-300 mb-1">
+              {r.issueType}は取り消されました
+            </div>
+          ))}
 
           {/* 津波情報（常に最終行）。説明は選択時のカードと同じものを付ける
               —— **一覧のほうが先に目に入る**ので、こちらだけ説明が無いと順序が逆になる。 */}

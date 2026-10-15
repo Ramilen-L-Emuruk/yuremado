@@ -63,6 +63,8 @@ export interface TestFunctions {
   quakeReportSequence: () => void
   /** 地震情報の取消。DMDSS 版だけ渡す（P2PQuake は地震情報の取消を配信しない）。 */
   quakeCancel?: () => void
+  /** 地震情報の一部の取消（震度速報だけの取消）。DMDSS 版だけ渡す（理由は `quakeCancel` と同じ）。 */
+  quakePartialCancel?: () => void
   borrowFromTsunami?: () => void
   unreceivedQuake?: () => void
   maxScaleOrAboveQuake?: () => void
@@ -1882,6 +1884,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {isDmdss && onTest.quakeCancel && (
           <Row label="地震情報（取消）" description="震度速報を出し、10秒後に取り消す。カードに「取消」が重なり、10秒後に一覧から消える">
             <TestButton color="purple" onClick={onTest.quakeCancel}>取消テスト</TestButton>
+          </Row>
+        )}
+        {isDmdss && onTest.quakePartialCancel && (
+          <Row label="地震情報（一部の取消）" description="震度速報と震源・震度情報を出し、10秒後に震度速報だけを取り消す。カードは残り、見出しの下に「震度速報は取り消されました」と気象庁の取消の本文が出る">
+            <TestButton color="purple" onClick={onTest.quakePartialCancel}>一部取消テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.borrowFromTsunami && (

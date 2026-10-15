@@ -1044,6 +1044,25 @@ export function earthquakeCancelToText(time: string | null, cancelText?: string)
 }
 
 /**
+ * 地震カードの**一部の取消**（震源情報まで進んだカードに震度速報だけの取消が届いた等）の読み上げ。
+ * 「23時5分に発表された震度速報は取り消されました。」
+ *
+ * カードは残るので、全体の取消の文（「〜地震情報は取り消されました。」）では誤りになる。取り消された
+ * 情報の名前で言い、時刻もその情報の発表時刻にする（2026-10-15 ユーザー承認「情報名で言う（推奨）」）。
+ * 理由の文の扱いは全体の取消と同じ（`cancelReasonSentence`）。
+ *
+ * @param issueType 取り消された情報の種別（取消電文の種別）
+ * @param time 取り消された報の発表時刻。読めなければ時刻を言わない
+ */
+export function earthquakeReportCancelToText(issueType: string, time: string | null, cancelText?: string): string {
+  const formatted = time ? formatTime(time) : null
+  const head = formatted
+    ? `${formatted}に発表された${issueType}は取り消されました。`
+    : `${issueType}は取り消されました。`
+  return head + cancelReasonSentence(cancelText)
+}
+
+/**
  * 取消しの概要（電文の `Body/Text`）を読み上げへ足す句。無ければ空。
  * → docs/spec/audio-tts-spec.md §4「取消は「取り消された事実」だけを伝える」
  *

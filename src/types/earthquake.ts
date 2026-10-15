@@ -206,6 +206,23 @@ export interface QuakeReportRecord {
   serial?: number
 }
 
+/**
+ * 取り消された種別の記録。→ {@link JMAQuake.retractedReports}
+ *
+ * 取消は情報名称の単位で効く（電文解説資料 別紙ウ）。震源情報まで進んだカードに震度速報だけの
+ * 取消が届いたら、カードは残して震度速報の内容だけを外す。**外した事実はここにしか残らない**
+ * （当て直したカードの見出し・震度からは消える）ので、カードに「震度速報は取り消されました」と
+ * 出すための材料として持つ（2026-10-15 ユーザー承認「残して取消の理由を出す（推奨）」）。
+ */
+export interface QuakeRetractedReport {
+  /** 取り消された情報の種別（取消電文の種別）。 */
+  issueType: IssueType
+  /** 取り消された報の発表時刻（`ReportDateTime`）。その種別の報が複数あれば最後のもの。 */
+  reportTime: string
+  /** 取消電文の取消しの概要（`Body/Text`）。気象庁が書いた理由で、そのまま出す。 */
+  cancelText?: string
+}
+
 export type CorrectType =
   | 'なし'
   | '訂正'
@@ -452,6 +469,23 @@ export interface JMAQuake {
    * **統合前の生電文には無い。** 控えを持たないカードは当て直さない（従来どおり 1 通ずつ当てる）。
    */
   sourceTelegrams?: readonly JMAQuake[]
+  /**
+   * カードの一部を取り消した取消の記録（取り消された順）。→ {@link QuakeRetractedReport}
+   *
+   * カード全体が取り消されたとき（残る報が無いとき）はここではなく {@link JMAQuake.cancelledAt}
+   * が立つ。**統合（`mergeQuakeInto`）と当て直し（`refoldQuakeCard`）は既存の値を引き継ぐ** ——
+   * 続報が届いても、前に取り消された事実は変わらないため。
+   */
+  retractedReports?: readonly QuakeRetractedReport[]
+  /**
+   * 震度を持たない電文（震源情報など）へ、震度速報の控えから震度を補ったときに立つ印
+   * （`useEarthquakes` の `fillIntensityFromCache`）。
+   *
+   * **補った震度は電文の内容ではない。** 元の震度速報が取り消されたら、当て直しの前にこの印の
+   * 付いた電文から震度を外す（→ `quakeMerge.ts` の `applyQuakeCancelToCard`）。印が無いと、
+   * 控えへ積まれた補完済みの電文が、取り消された震度をカードへ持ち込み続ける。
+   */
+  intensityFromCache?: true
   /**
    * 震源要素を別の種別の電文から借りたときの出どころ。→ {@link BorrowedFromTsunami}
    *
@@ -1472,6 +1506,23 @@ export interface LiveEventMeta {
    * 対象外（受信側が `!event.cancelled` で先に外す）。
    */
   quakeHeldBack?: boolean
+  /**
+   * 地震情報の取消が**どのカードにどう効いたか**（取消の報にだけ立つ）。
+   *
+   * 受信側が入口で 1 回だけ決める（同じティックの写しも見る）。読み上げが画面の状態から
+   * 判定し直すと、同じティックに続けて届いた報が状態へまだ反映されていないとき、取消済みの
+   * 古いカードや当て直す前のカードを見て「カード全体の取消」と「一部の取消」を取り違える。
+   *
+   * - `target`: 取消が当たったカード（当てる前の姿）。見つからなければ `undefined`
+   * - `retracted`: 一部の取消なら、取り下げた報の種別と時刻（カードは残る）
+   * - `duplicate`: 台帳に同じ取消（か、同じ種別のより新しい取消）が既にある＝もう伝えた取消。
+   *   真なら取消の音と読み上げを出さない（2026-10-15 ユーザー承認「2通目は鳴らさない（推奨）」）
+   */
+  quakeCancel?: {
+    target: JMAQuake | undefined
+    retracted: QuakeRetractedReport | undefined
+    duplicate: boolean
+  }
 }
 
 // 南海トラフ地震臨時情報 (VYSE50)

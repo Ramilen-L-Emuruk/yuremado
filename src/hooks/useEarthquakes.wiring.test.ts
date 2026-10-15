@@ -4686,3 +4686,92 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     })
   })
 })
+
+// 地震情報の取消が「どのカードにどう効いたか」は受信の入口で決め、`onLiveEvent` の 2 つ目の引数で
+// 読み上げへ渡す（→ `LiveEventMeta.quakeCancel`）。読み上げが画面の状態から探し直すと、同じティックに
+// 続けて届いた報がまだ状態へ入っていないとき「全体の取消」と「一部の取消」を取り違える。
+describe('取消の効き方を読み上げへ渡す（LiveEventMeta.quakeCancel）', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  /** 取消の報について渡った判断。 */
+  const 取消の判断 = (fn: ReturnType<typeof vi.fn>) =>
+    fn.mock.calls
+      .filter(([e]) => (e as LiveEvent).kind === 'quake' && (e as JMAQuake).cancelled)
+      .map(([, meta]) => (meta as LiveEventMeta | undefined)?.quakeCancel)
+
+  it('正: 一部の取消では、取り下げた情報名と当たったカードが渡る', async () => {
+    const { createTestQuakePartialCancel } = await import('../utils/testData')
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+
+    // 同じティックで流す（状態がまだ追いついていなくても、写しで当たり先を引ける）
+    act(() => { for (const q of createTestQuakePartialCancel()) h.current.injectEvent(q) })
+
+    const [decided] = 取消の判断(onLiveEvent)
+    expect(decided?.target).toBeDefined()
+    expect(decided?.retracted?.issueType).toBe('震度速報')
+  })
+
+  it('対照: 取り消された種別の報しか受けていなければ、全体の取消として渡る（retracted なし）', async () => {
+    const { createTestQuakeCancel } = await import('../utils/testData')
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+
+    act(() => { for (const q of createTestQuakeCancel()) h.current.injectEvent(q) })
+
+    const [decided] = 取消の判断(onLiveEvent)
+    expect(decided?.target).toBeDefined()
+    expect(decided?.retracted).toBeUndefined()
+  })
+
+  it('安全弁: 当たるカードが無い取消は、当たり先なしで渡る（画面の古いカードを拾わない）', async () => {
+    const { createTestQuakeCancel } = await import('../utils/testData')
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+
+    const [, cancel] = createTestQuakeCancel()
+    act(() => { h.current.injectEvent(cancel) })
+
+    const [decided] = 取消の判断(onLiveEvent)
+    expect(decided).toEqual({ target: undefined, retracted: undefined, duplicate: false })
+  })
+
+  it('安全弁: 同じ取消が二度届いたら、2 通目はもう伝えた取消として渡る（1 通目は渡らない）', async () => {
+    const { createTestQuakeCancel } = await import('../utils/testData')
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+
+    const [prompt, cancel] = createTestQuakeCancel()
+    act(() => { h.current.injectEvent(prompt) })
+    act(() => { h.current.injectEvent(cancel) })
+    act(() => { h.current.injectEvent(cancel) })
+
+    expect(取消の判断(onLiveEvent).map(d => d?.duplicate)).toEqual([false, true])
+  })
+
+  it('安全弁: 同じティックで一部の取消が二度届いても、2 通目は一部の取消を名乗らない（写しで完結する）', async () => {
+    // 写しには 1 通目で当て直したカードが載る。2 通目が画面の状態（まだ当て直す前）へ落ちると、
+    // 取り下げた震度速報がまだ残るカードを拾って「一部の取消」を名乗る
+    const { createTestQuakePartialCancel } = await import('../utils/testData')
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+
+    const telegrams = createTestQuakePartialCancel()
+    const cancel = telegrams[telegrams.length - 1]
+    act(() => {
+      for (const q of telegrams) h.current.injectEvent(q)
+      h.current.injectEvent(cancel)
+    })
+
+    const [first, second] = 取消の判断(onLiveEvent)
+    expect(first?.retracted?.issueType).toBe('震度速報')
+    expect(second?.retracted).toBeUndefined()
+    expect(second?.duplicate).toBe(true)
+  })
+})
