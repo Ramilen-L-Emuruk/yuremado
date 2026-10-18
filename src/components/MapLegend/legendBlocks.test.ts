@@ -9,7 +9,7 @@ import { INTENSITY_COLORS } from '../../utils/intensity'
 import { TSUNAMI_OBS_HEIGHT_STEPS, tsunamiObsBarColor } from '../Map/gl/tsunamiObsBarStyle'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 import { TSUNAMI_STYLE } from '../../utils/tsunamiStyle'
-import { depthRampT, jstYearStartMs } from '../../utils/hypocenterCatalogView'
+import { depthRampT, jstYearStartMs, UNKNOWN_MAGNITUDE_HEX } from '../../utils/hypocenterCatalogView'
 
 function sources(patch: Partial<MapLegendSources>): MapLegendSources {
   return { ...EMPTY_LEGEND_SOURCES, ...patch }
@@ -115,6 +115,29 @@ describe('buildLegendBlocks', () => {
       expect(magnitude.title).toBe('マグニチュード')
       expect(depth.swatch).not.toEqual(magnitude.swatch)
     })
+
+    // 正: マグニチュードの色帯の下に、点を塗る灰色と同じ色で「M 不明」を添える。
+    it('M 不明の点を描いているときは色帯に「M 不明」を添える', () => {
+      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'magnitude', catalogUnknownMagnitude: true }))
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips).toEqual([{ label: 'M 不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' }])
+    })
+
+    // 対照: M 不明の点が無ければ添えない。
+    it('M 不明の点が無ければ添えない', () => {
+      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'magnitude', catalogUnknownMagnitude: false }))
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips).toBeUndefined()
+    })
+
+    // 対照: 深さや発生年で色を付けているときは、M 不明の点も深さ・年の色で塗るので添えない。
+    it.each(['depth', 'time'] as const)('%s の色分けでは添えない', (colorBy) => {
+      const [block] = buildLegendBlocks(
+        sources({ catalogColorBy: colorBy, catalogUnknownMagnitude: true, catalogYearRange: { lo: 0, hi: 1 } }),
+      )
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips).toBeUndefined()
+    })
   })
 
   describe('観測した津波の高さ', () => {
@@ -184,6 +207,8 @@ const SOLO_SOURCES: { [K in keyof MapLegendSources]: Partial<MapLegendSources> |
   primary: null,
   // 色を付ける軸（`catalogColorBy`）が無ければ点群を描いていない。目盛りだけでは何も出ない。
   catalogYearRange: null,
+  // マグニチュードの色帯に添える見本の有無だけを決める。色帯が無ければ何も出ない。
+  catalogUnknownMagnitude: null,
 }
 
 describe('描いているものを凡例に出し忘れていないか', () => {

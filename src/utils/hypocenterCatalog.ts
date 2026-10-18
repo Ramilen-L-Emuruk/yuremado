@@ -40,7 +40,10 @@ export interface HypocenterIndex {
   source: string
   sourceUrl: string
   license: string
-  /** 収録した M の下限。これより小さい地震は入っていない。 */
+  /**
+   * 収録した M の下限。これより小さい地震は入っていない。
+   * **M が決まっていない地震は下限に関わらず入っている**（`HypocenterYear.magnitude` が `NaN`）。
+   */
   minMagnitude: number
   /**
    * データの終端（UTC epoch ミリ秒）。これより後は**未取得**であって、地震が無かったのではない。
@@ -50,8 +53,15 @@ export interface HypocenterIndex {
   completeness: HypocenterCompleteness[]
   /** 収録されている年（昇順）。 */
   years: number[]
-  /** 年ごとの件数。 */
+  /** 年ごとの件数。M が決まっていない地震も含む。 */
   counts: Record<string, number>
+  /**
+   * 年ごとの、M が決まっていない地震の件数（`counts` の内数）。
+   *
+   * **画面はこの値を使わない**（件数欄の内訳は年ファイルの列から数える）。統計や調べもの向けに
+   * 索引へ載せているだけなので、欠けた索引でも読めるよう任意にしてある。
+   */
+  unknownMagnitudeCounts?: Record<string, number>
   /** 年ごとの確からしさ。 */
   quality: Record<string, HypocenterQuality>
   /** 最大震度を持つ年（確定値の年だけ。速報値には震度欄が無い）。 */
@@ -79,7 +89,12 @@ export interface HypocenterYear {
   lng: Float64Array
   /** 深さ (km)。 */
   depth: Float32Array
-  /** マグニチュード。 */
+  /**
+   * マグニチュード。**決まっていない地震は `NaN`**（取得元の M 欄が空・`-`）。
+   *
+   * 比較はどれも偽になるので、`m >= 下限` のような絞り込みでは黙って落ちる。残すかどうかは
+   * 呼び出し側が `Number.isNaN` で決めること（カタログタブの扱いは `hypocenterCatalogView.ts`）。
+   */
   magnitude: Float32Array
   /**
    * 最大震度を持つ地震の添字（昇順）。**疎に持つ** —— 有感は M2.0 以上の 11.9% しかない。
@@ -126,7 +141,10 @@ interface RawYear {
   lat: number[]
   lng: number[]
   dep: number[]
-  mag: number[]
+  /** M が決まっていない地震は `null`。 */
+  mag: (number | null)[]
+  /** `mag` の `null` の数（生成側が書く。列と食い違えば壊れた年として弾く）。 */
+  unknownMagnitudeCount?: number
   intIdx?: number[]
   intCode?: string[]
 }
@@ -253,12 +271,28 @@ export function loadHypocenterYear(year: number): Promise<HypocenterYear> {
         // **要素の型まで見る。** `null` が混ざると `null / coordScale` は例外にも NaN にもならず
         // **0 になる** —— 北緯 0 度・東経 0 度という「もっともらしい嘘」が静かに紛れ込み、
         // 地図にアフリカ沖の地震として現れる。NaN なら下流で崩れて気づけるが、0 は気づけない。
+        //
+        // **`null` を許すのは M の列だけ。** M が決まっていない地震を表す値で、下で `NaN` へ
+        // 写す（`null / magScale` の 0 にはしない —— M0.0 という「もっともらしい嘘」になる）。
+        const nullable = key === 'mag'
         for (let i = 0; i < col.length; i++) {
           const v = col[i]
+          if (v === null && nullable) continue
           if (typeof v !== 'number' || !Number.isFinite(v)) {
             throw new Error(`hypocenter ${year}: ${key}[${i}] が数値ではありません`)
           }
         }
+      }
+      // **M 未決定の数を生成側の申告と突き合わせる。** `null` を許したぶん、M の列だけが
+      // 壊れた年（全件 `null` など）も長さが揃えば通ってしまう —— 描画は失敗せず、灰色の
+      // 「M 不明」の点が増えるだけで誰も気づけない。
+      const unknown = raw.mag.reduce<number>((n, m) => (m === null ? n + 1 : n), 0)
+      if (raw.unknownMagnitudeCount !== undefined && raw.unknownMagnitudeCount !== unknown) {
+        throw new Error(`hypocenter ${year}: M 未決定の数が年ファイルの申告と一致しません`)
+      }
+      // 全件 M 未決定の年は実在しない（最も多い 1966 年でも 82%）。
+      if (raw.count > 0 && unknown === raw.count) {
+        throw new Error(`hypocenter ${year}: M の列がすべて null です`)
       }
       if (typeof raw.startMs !== 'number' || !Number.isFinite(raw.startMs)) {
         throw new Error(`hypocenter ${year}: startMs がありません`)
@@ -327,7 +361,8 @@ export function loadHypocenterYear(year: number): Promise<HypocenterYear> {
         out.lat[i] = raw.lat[i] / raw.coordScale
         out.lng[i] = raw.lng[i] / raw.coordScale
         out.depth[i] = raw.dep[i] / raw.depthScale
-        out.magnitude[i] = raw.mag[i] / raw.magScale
+        const mag = raw.mag[i]
+        out.magnitude[i] = mag === null ? NaN : mag / raw.magScale
       }
       yearCache.set(year, out)
       yearInflight.delete(year)
