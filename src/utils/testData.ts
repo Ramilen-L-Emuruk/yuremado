@@ -191,6 +191,9 @@ const HYPOCENTER_AMEND_NOTE = '震源要素を訂正します。'
  */
 const NOTO_HONSHIN_VAR_COMMENT_TEXT = notoHonshinQuake.varCommentText ?? ''
 
+/** 固定付加文 0211 の原文（能登本震の震源・震度情報 2024-01-01 16:24 にある文）。報の連続の震源情報で使う。 */
+export const TSUNAMI_WARNING_FORECAST_TEXT = '津波警報等（大津波警報・津波警報あるいは津波注意報）を発表中です。'
+
 /**
  * 訂正報テストの**初報**が持つ固定付加文（その他）を組む。訂正の一文（0256）だけを落とす。
  *
@@ -294,6 +297,12 @@ export function createTestEarthquake(useDmdataShape: boolean, operationStatus?: 
     // （P2PQuake は付加文を配信しない）。中身の決め方は `NOTO_HONSHIN_VAR_COMMENT_TEXT`。
     ...(useDmdataShape && NOTO_HONSHIN_VAR_COMMENT_TEXT
       ? { varCommentText: NOTO_HONSHIN_VAR_COMMENT_TEXT }
+      : {}),
+    // 固定付加文（`ForecastComment/Text`）。実電文をパーサーへ通したものをそのまま渡す
+    // （津波区分の文と、緊急地震速報を発表した旨の文）。地震カードに原文で出るので、
+    // 無いと実機で一度も確かめられない。DMDATA 経路だけが運ぶ点は上と同じ。
+    ...(useDmdataShape && notoHonshinQuake.forecastText
+      ? { forecastText: notoHonshinQuake.forecastText }
       : {}),
   }
 }
@@ -500,6 +509,11 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
     earthquake: { ...base.earthquake, maxScale: -1 },
     points: [],
     cities: undefined,
+    // **震源情報の固定付加文は津波の区分の文だけ。** 緊急地震速報を発表した旨の文（024x）は
+    // 震源・震度情報にしか付かない —— 履歴アーカイブ 4 本（NII の実電文）で数えると、その文を
+    // 持つ 29 通はすべて震源・震度情報で、震源情報 200 通はどれも津波の文だけだった（2026-10-19）。
+    // 能登の本震には震源情報が出ていないので、同じ報の 0211 の文（実電文の原文）を使う。
+    ...(base.forecastText === undefined ? {} : { forecastText: TSUNAMI_WARNING_FORECAST_TEXT }),
   }
 
   // **4 通目は観測点がまだ出そろっていない。** 観測点は遅れて入電するため、実配信では
