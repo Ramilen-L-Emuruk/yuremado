@@ -143,7 +143,7 @@ export function usePublicWaves(params: {
   spanSec: number
   alwaysConnected: boolean
   /**
-   * 観測点を選ぶ材料の緊急地震速報（`pickPublicWaveEew`）。予報円が引ければ P/S 線と同じもの、引けなければ
+   * 観測点を選ぶ材料の緊急地震速報（`pickPublicWaveEew`）。予報円が引ければ S 波の円がいちばん大きい速報、引けなければ
    * 発表中のいちばん新しいもの（仮定震源要素・深さ不明も含む）。無ければ `null`。
    */
   eew: EEWAlert | null

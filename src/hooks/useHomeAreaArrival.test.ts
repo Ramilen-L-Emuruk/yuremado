@@ -22,7 +22,7 @@ vi.mock('./useSubRegions', () => ({
   useSubRegions: () => ({ data: [INSIDE, OUTSIDE], failed: false }),
 }))
 
-const { useHomeAreaArrival } = await import('./useHomeAreaArrival')
+const { homeAreaArrivalOf, useHomeAreaName } = await import('./useHomeAreaArrival')
 
 const HOME = { lat: 37.0, lng: 136.9 }
 
@@ -58,87 +58,55 @@ function eew(areas: EEWRegion[]): EEWAlert {
   } as EEWAlert
 }
 
-const run = (eews: EEWAlert[], home = HOME as { lat: number; lng: number } | null) =>
-  renderHook(() => useHomeAreaArrival(eews, home)).result.current
+const run = (e: EEWAlert) => homeAreaArrivalOf(e, INSIDE.name)
 
-describe('useHomeAreaArrival', () => {
+describe('useHomeAreaName', () => {
+  it('登録地点を囲む区域の名前を返す（正）', () => {
+    expect(renderHook(() => useHomeAreaName(HOME)).result.current).toBe(INSIDE.name)
+  })
+
+  it('ホーム地点が未設定なら null', () => {
+    expect(renderHook(() => useHomeAreaName(null)).result.current).toBeNull()
+  })
+})
+
+describe('homeAreaArrivalOf', () => {
   it('登録地点の区域について電文が出した到達予測時刻を返す（正）', () => {
-    const got = run([eew([area({ arrivalTime: '2026-01-01T00:00:30Z' })])])
-    expect(got).toEqual({
-      areaName: INSIDE.name,
+    expect(run(eew([area({ arrivalTime: '2026-01-01T00:00:30Z' })]))).toEqual({
       arrivalMs: Date.parse('2026-01-01T00:00:30Z'),
       arrived: false,
     })
   })
 
   it('登録地点を囲まない区域の値は拾わない（対照）', () => {
-    const got = run([eew([area({ name: OUTSIDE.name, arrivalTime: '2026-01-01T00:00:30Z' })])])
-    expect(got).toBeNull()
+    expect(run(eew([area({ name: OUTSIDE.name, arrivalTime: '2026-01-01T00:00:30Z' })]))).toBeNull()
   })
 
   it('到達済みの区域は時刻を持たなくても到達済みとして返す', () => {
     // 到達済みは種別コードの下 1 桁（01/11）でも伝わる。standard 版はそちらしか持たない。
-    const got = run([eew([area({ kindCode: '11', arrivalTime: null, arrived: true })])])
-    expect(got).toEqual({ areaName: INSIDE.name, arrivalMs: null, arrived: true })
+    expect(run(eew([area({ kindCode: '11', arrivalTime: null, arrived: true })]))).toEqual({ arrivalMs: null, arrived: true })
   })
 
   it('PLUM 法の区域の時刻は採らない（安全弁）', () => {
     // あの時刻は到達の予測ではなく「その震度を初めて予測した時刻」＝過去の時刻。
-    const got = run([eew([area({ kindCode: '19', arrivalTime: '2026-01-01T00:00:30Z' })])])
-    expect(got).toBeNull()
+    expect(run(eew([area({ kindCode: '19', arrivalTime: '2026-01-01T00:00:30Z' })]))).toBeNull()
   })
 
   it('日時として読めない時刻は捨てる（安全弁）', () => {
     // 引き算して NaN を通すと `NaN > 0` が偽なので「まもなく」側へ落ちる。
-    const got = run([eew([area({ arrivalTime: 'こわれた値' })])])
-    expect(got).toBeNull()
+    expect(run(eew([area({ arrivalTime: 'こわれた値' })]))).toBeNull()
   })
 
-  it('複数の報が同じ区域を名乗ったら、いちばん早い到達を採る', () => {
-    const got = run([
-      eew([area({ arrivalTime: '2026-01-01T00:00:40Z' })]),
-      eew([area({ arrivalTime: '2026-01-01T00:00:25Z' })]),
-    ])
-    expect(got?.arrivalMs).toBe(Date.parse('2026-01-01T00:00:25Z'))
+  // 正（2026-10-14 ユーザー決定「地震ごとに並べて出す」）: 速報ごとに引き、別の地震の値と混ぜない。
+  // 以前は全速報をいちばん早い時刻へ畳んでいたので、秒数と距離が別の地震を指しえた。
+  it('別の地震の速報の値は混ぜない', () => {
+    const early = eew([area({ arrivalTime: '2026-01-01T00:00:25Z' })])
+    const late = eew([area({ arrivalTime: '2026-01-01T00:00:40Z' })])
+    expect(run(late)?.arrivalMs).toBe(Date.parse('2026-01-01T00:00:40Z'))
+    expect(run(early)?.arrivalMs).toBe(Date.parse('2026-01-01T00:00:25Z'))
   })
 
-  it('別の地震が未到達の予測を出していれば、到達済みより優先する（正）', () => {
-    // **以前は到達済みを優先していたが覆した。** 収まりつつある地震の「到達済み」を採ると、
-    // いまから揺れが来る別の地震の予測時刻が画面から消える（カードは出すか出さないかの
-    // 二値なので、消えれば利用者には何も伝わらない）。→ `mergeEewAreaArrival`
-    const got = run([
-      eew([area({ kindCode: '11', arrived: true })]),
-      eew([area({ arrivalTime: '2026-01-01T00:00:40Z' })]),
-    ])
-    expect(got).toEqual({
-      areaName: INSIDE.name,
-      arrivalMs: Date.parse('2026-01-01T00:00:40Z'),
-      arrived: false,
-    })
-  })
-
-  it('どの報も到達済みしか伝えていなければ到達済みを返す（対照）', () => {
-    const got = run([
-      eew([area({ kindCode: '11', arrived: true })]),
-      eew([area({ kindCode: '01', arrived: true })]),
-    ])
-    expect(got).toEqual({ areaName: INSIDE.name, arrivalMs: null, arrived: true })
-  })
-
-  it('PLUM 法の報が先に来ても、後から来た予測時刻を弾かない（安全弁）', () => {
-    // PLUM の区域は**過去時刻を持っている**ので、「時刻がある方を採る」と書くと先着が勝つ。
-    const got = run([
-      eew([area({ kindCode: '19', arrivalTime: '2026-01-01T00:00:05Z' })]),
-      eew([area({ arrivalTime: '2026-01-01T00:00:40Z' })]),
-    ])
-    expect(got?.arrivalMs).toBe(Date.parse('2026-01-01T00:00:40Z'))
-  })
-
-  it('ホーム地点が未設定なら null', () => {
-    expect(run([eew([area({ arrivalTime: '2026-01-01T00:00:30Z' })])], null)).toBeNull()
-  })
-
-  it('発表中の緊急地震速報が無ければ null', () => {
-    expect(run([])).toBeNull()
+  it('区域が無い速報は null', () => {
+    expect(run(eew([]))).toBeNull()
   })
 })

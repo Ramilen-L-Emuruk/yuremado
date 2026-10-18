@@ -2,15 +2,19 @@ import { useEffect, useRef, useState } from 'react'
 import type { EEWAlert } from '../types/earthquake'
 import type { PsWaveCircle } from '../services/kyoshin'
 import { travelTimeSec } from '../utils/travelTime'
-import { calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, isProvisionalHypocenter, S_WAVE_FALLBACK_KM_PER_SEC } from '../utils/eew'
+import { calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, eewEventKey, isProvisionalHypocenter, S_WAVE_FALLBACK_KM_PER_SEC } from '../utils/eew'
 import { hasKnownEpicenter, haversineKm } from '../utils/geo'
 import { serverNow } from '../utils/clock'
 import { log } from '../utils/logger'
-import { pickCountdownCircle } from '../utils/countdownEew'
-import { useHomeAreaArrival } from './useHomeAreaArrival'
+import { homeAreaArrivalOf, useHomeAreaName } from './useHomeAreaArrival'
 
 /**
- * 登録地点への主要動到達の見込み。
+ * 登録地点への主要動到達の見込み。**地震ごとに 1 行**（`rows`）。
+ *
+ * **同時に複数の地震の緊急地震速報が出ているときは、地震ごとに並べる**（2026-10-14 ユーザー決定
+ * 「地震ごとに並べて出す」。見せ方・並び順・上限・音は 2026-10-18 ユーザー承認 —— 「1 枚に行を並べる」
+ * 「到達の早い順」「上限なし」「いちばん早く届く地震」）。以前は S 波の円がいちばん大きい 1 件だけを
+ * 相手にしていたので、近い別の地震を取りこぼし、公開版では秒数と距離が別の地震を指しえた。
  *
  * **出どころが 2 つあり、既定は気象庁の発表値。** 自前の走時計算で「その地点へ何秒後」を出すのは
  * 気象業務法第 17 条の許可を要する地震動の予報業務に当たりうるため（→ `useHomeAreaArrival`）、
@@ -23,13 +27,62 @@ import { useHomeAreaArrival } from './useHomeAreaArrival'
 export interface SWaveArrival {
   /** `'telegram'` = 気象庁の区域ごとの発表値／`'own'` = 自前の走時計算（地点） */
   source: 'telegram' | 'own'
-  /** 気象庁が値を出した区域の名前。`source === 'own'` では null。 */
+  /** 気象庁が値を出した区域の名前。`source === 'own'` では null。どの行も同じ区域の値なので 1 つだけ持つ。 */
   areaName: string | null
+  /**
+   * 地震ごとの行。**1 件以上**（出す行が無ければ `SWaveArrival` ごと null）。
+   * 並びは**到達済み → 残りの早い順 → 推定中**（{@link compareArrivalRows}）。どの行も同じ速さで秒が減るので、
+   * 続報で時刻が変わらない限り順番は入れ替わらない。
+   */
+  rows: readonly SWaveArrivalRow[]
+}
+
+/** 1 つの地震について、登録地点への主要動到達の見込み。 */
+export interface SWaveArrivalRow {
+  /** 地震の鍵（`eewEventKey`）。行の見分けと、並びが同点のときの決め手。 */
+  key: string
+  /** 震央地名（緊急地震速報のカードの見出しと同じもの）。無ければ null。 */
+  hypocenterName: string | null
+  /**
+   * 震源が決まっていない報か（→ `isProvisionalHypocenter`）。地名は「揺れを捉えた観測点の所在地」で
+   * 震源ではないので、画面はカードの見出しと同じく「（震源未確定）」を添える。距離は出さない。
+   */
+  provisional: boolean
   /** 震源から登録地点までの距離 [km]。震源が判らなければ null（距離は観測事実で予想ではない）。 */
   distanceKm: number | null
   /** 到達までの秒数。到達済みは 0、推定不能は null。 */
   etaSec: number | null
   arrived: boolean
+}
+
+/**
+ * 行の並び。**到達済みを先頭、残りは残り秒数の短い順、推定中（秒数が null）を最後。** 同点は地震の鍵で決める
+ * （描き直しのたびに並びが揺れないように）。
+ */
+export function compareArrivalRows(a: SWaveArrivalRow, b: SWaveArrivalRow): number {
+  if (a.arrived !== b.arrived) return a.arrived ? -1 : 1
+  if (!a.arrived) {
+    if (a.etaSec === null && b.etaSec !== null) return 1
+    if (a.etaSec !== null && b.etaSec === null) return -1
+    if (a.etaSec !== null && b.etaSec !== null && a.etaSec !== b.etaSec) return a.etaSec - b.etaSec
+  }
+  return a.key < b.key ? -1 : a.key > b.key ? 1 : 0
+}
+
+/**
+ * 秒読みの音を鳴らす相手。**まだ届いていない地震のうち、到達がいちばん早いもの**
+ * （2026-10-18 ユーザー承認「いちばん早く届く地震」）。音はいつも 1 本で、その地震が届いた後は
+ * 次の地震の残り秒数へ移る。鳴らす相手が無ければ null。
+ *
+ * **地震の鍵も返す。** 呼び出し側は「同じ秒数を二度鳴らさない」判定を地震の鍵と組で行う ——
+ * 秒数だけで比べると、地震が替わった直後に前の地震と同じ秒数だったときに鳴らない。
+ */
+export function countdownBeepTarget(arrival: SWaveArrival | null): { key: string; etaSec: number } | null {
+  if (arrival === null) return null
+  for (const row of arrival.rows) {
+    if (!row.arrived && row.etaSec !== null) return { key: row.key, etaSec: row.etaSec }
+  }
+  return null
 }
 
 const SPEED_SMOOTH_FRAMES = 3   // 移動平均フレーム数
@@ -45,30 +98,39 @@ const MIN_VALID_SPEED = 0.5     // この速度(km/s)未満はフォールバッ
 const TELEGRAM_TICK_MS = 1000
 
 /**
- * 発表中の EEW のうち**震源が本物のもの**から、登録地点までの最短距離 [km] を返す。1 つも無ければ null。
+ * 1 件の速報の震源から登録地点までの距離 [km]。**震源が本物でなければ null。**
  *
- * 予報円が 1 つも作れないときの受け皿。**外すものが 3 つある。**
+ * 予報円の有無に依存させない（深さが判らない報は円を出さないが、距離は緯度経度だけで決まる観測事実）。
+ * **外すものが 3 つある。**
  *
  * - **取消済み** —— 画面から消えたものの距離を出さない
  * - **位置不明**（センチネル `-200`）—— 判定は `hasKnownEpicenter` を通す。有限なので
  *   `Number.isFinite` ではすり抜ける（→ `docs/spec/quake-spec.md` §5）
  * - **震源が決まっていない報**（仮定震源要素・「非常に強い揺れを検知」の報。→ `isProvisionalHypocenter`）
  *   —— 地名も座標も「揺れを捉えた観測点の所在地」であって震源ではない
- *   （→ `docs/spec/eew-spec.md` §5）。ここまでの距離を「震源から N km」と出したら嘘になる。
- *   **元から距離は出ていなかった** —— 予報円を出さないので円から拾えず null だった。
- *   この受け皿を足したときに巻き込まないよう、同じ条件で外す
+ *   （→ `docs/spec/eew-spec.md` §5）。ここまでの距離を「震源から N km」と出したら嘘になる
  */
-function nearestEpicenterDistanceKm(eews: EEWAlert[], home: { lat: number; lng: number }): number | null {
-  let nearest: number | null = null
-  for (const eew of eews) {
-    if (eew.cancelled || eew.cancelledAt) continue
-    if (isProvisionalHypocenter(eew)) continue
-    const { latitude, longitude } = eew.earthquake.hypocenter
-    if (!hasKnownEpicenter(latitude, longitude)) continue
-    const d = haversineKm(latitude, longitude, home.lat, home.lng)
-    if (nearest === null || d < nearest) nearest = d
-  }
-  return nearest
+function epicenterDistanceKm(eew: EEWAlert, home: { lat: number; lng: number }): number | null {
+  if (eew.cancelled || eew.cancelledAt) return null
+  if (isProvisionalHypocenter(eew)) return null
+  const { latitude, longitude } = eew.earthquake.hypocenter
+  if (!hasKnownEpicenter(latitude, longitude)) return null
+  return haversineKm(latitude, longitude, home.lat, home.lng)
+}
+
+function hypocenterNameOf(eew: EEWAlert | undefined): string | null {
+  const name = eew?.earthquake.hypocenter.name
+  return name ? name : null
+}
+
+/** 自前計算の経路で、地震ごとに持ち越す値（S 波の波面がまだ地表に出ていない間の速度の見積もり）。 */
+interface OwnCalcTrack {
+  prevSRadius: number | null
+  speedHistory: number[]
+  /** 判定の記録を報ごとに 1 回へ絞る鍵（規模と深さ）。 */
+  lastLoggedKey: string | null
+  /** 行を作らなかったことを記録したか（地震ごとに 1 回）。 */
+  skipLogged: boolean
 }
 
 export function useSWaveCountdown(
@@ -85,10 +147,9 @@ export function useSWaveCountdown(
   allowOwnCalculation: boolean,
 ): SWaveArrival | null {
   const [arrival, setArrival] = useState<SWaveArrival | null>(null)
-  const prevSRadiusRef = useRef<number | null>(null)
-  const speedHistoryRef = useRef<number[]>([])
-  const lastLoggedEEWRef = useRef<string | null>(null)
-  const homeAreaArrival = useHomeAreaArrival(eews, home)
+  // 地震ごと（予報円の `eventId`）。発表が終わった地震の分は毎回捨てる。
+  const tracksRef = useRef(new Map<string, OwnCalcTrack>())
+  const homeAreaName = useHomeAreaName(home)
 
   // 発表値を使う経路の計時。予報円の更新に相乗りできない理由は TELEGRAM_TICK_MS のコメント。
   const [tick, setTick] = useState(0)
@@ -100,114 +161,154 @@ export function useSWaveCountdown(
 
   useEffect(() => {
     if (home === null || !hasActiveEEW) {
-      prevSRadiusRef.current = null
-      speedHistoryRef.current = []
+      tracksRef.current.clear()
       setArrival(null)
       return
     }
-
-    // 最も波面が外側にある円。距離の表示にだけ使う経路もあるので先に取る。
-    // **選び方は波形の P/S 線と共有する**（`utils/countdownEew.ts`）。
-    const circle = pickCountdownCircle(psWave)
-    // **距離は円の有無に依存させない。** これは震源の緯度経度だけで決まる観測事実で、
-    // 深さとは関係が無い。**深さが判らない報では予報円を出さない**（`computeEewCircle`。
-    // → `docs/spec/eew-spec.md` §6）ので、円から震源を拾う形のままだと**位置は判っているのに
-    // 距離の行だけが消える** —— 止めたかったのは根拠の無い秒数で、距離ではない。
-    // 円が 1 つも無いときは、発表中の EEW のうち位置が判るものからいちばん近い震源で測る。
-    const distanceKm = circle
-      ? haversineKm(circle.lat, circle.lng, home.lat, home.lng)
-      : nearestEpicenterDistanceKm(eews, home)
 
     if (!allowOwnCalculation) {
       // **気象庁の発表値を伝えるだけ。** 区域の値なので区域名を添える。
-      if (!homeAreaArrival) {
-        prevSRadiusRef.current = circle?.sRadius ?? null
+      // 地震ごとに、その速報が登録地点の区域について出した値を使う（別の地震の値と混ぜない）。
+      // 距離も同じ速報の震源から測る —— 秒数と距離が別の地震を指さないように。
+      tracksRef.current.clear()
+      if (homeAreaName === null) {
         setArrival(null)
         return
       }
-      const etaSec = homeAreaArrival.arrivalMs === null
-        ? null
-        : Math.max(0, Math.round((homeAreaArrival.arrivalMs - serverNow()) / 1000))
-      setArrival({
-        source: 'telegram',
-        areaName: homeAreaArrival.areaName,
-        distanceKm,
-        etaSec,
-        arrived: homeAreaArrival.arrived || etaSec === 0,
-      })
+      const now = serverNow()
+      const rows: SWaveArrivalRow[] = []
+      for (const eew of eews) {
+        const area = homeAreaArrivalOf(eew, homeAreaName)
+        if (area === null) continue
+        const etaSec = area.arrivalMs === null ? null : Math.max(0, Math.round((area.arrivalMs - now) / 1000))
+        rows.push({
+          key: eewEventKey(eew),
+          hypocenterName: hypocenterNameOf(eew),
+          provisional: isProvisionalHypocenter(eew),
+          distanceKm: epicenterDistanceKm(eew, home),
+          etaSec,
+          arrived: area.arrived || etaSec === 0,
+        })
+      }
+      setArrival(rows.length === 0 ? null : { source: 'telegram', areaName: homeAreaName, rows: rows.sort(compareArrivalRows) })
       return
     }
 
-    // ここから下は自前計算（トークンを持つ端末だけ）。
-    if (circle === null || distanceKm === null) {
-      setArrival(null)
-      return
-    }
-    const sRadiusKm = circle.sRadius
-    let arrived = sRadiusKm >= distanceKm
-
-    let etaSec: number | null
-    if (circle.depth !== undefined && sRadiusKm > 0) {
-      // JMA2001 走時表から理論上のS波到達走時を引き、安全マージンを加算する
-      // （震源近傍は直達波がそのまま立ち上がるが、遠方ほど表面波の分離・コーダ波の重畳で
-      //  揺れの立ち上がりがなだらかになり、S波理論到達より体感開始が遅れる傾向があるため）
-      const marginSec = calcArrivalSafetyMarginSec(distanceKm)
-      const tNow = travelTimeSec('S', sRadiusKm, circle.depth)
-      const tArrivalWithMargin = travelTimeSec('S', distanceKm, circle.depth) + marginSec
-      arrived = tNow >= tArrivalWithMargin
-      etaSec = arrived ? 0 : Math.max(0, Math.round(tArrivalWithMargin - tNow))
-
-      // EEW解除前にS波が自宅に到達しない場合は非表示
-      // （安全マージン込みの到達時刻で判定する。マージン無しの理論到達時刻だけで解除前と
-      //   判定すると、実際の体感到達は解除後にずれ込むケースをカードで見せてしまうため）
-      if (!arrived && circle.magnitude !== undefined) {
-        const autoCancelSec = calcEEWAutoCancelSec(circle.magnitude, circle.depth)
-        const willArriveBeforeCancel = tArrivalWithMargin < autoCancelSec
-        const eewKey = `${circle.magnitude}-${circle.depth}`
-        if (lastLoggedEEWRef.current !== eewKey) {
-          lastLoggedEEWRef.current = eewKey
-          log.debug('[eew] S波到達判定（EEW更新）', {
-            sRadiusKm: Number(sRadiusKm.toFixed(1)),
-            distanceToHomeKm: Number(distanceKm.toFixed(1)),
-            etaSec,
-            marginSec: Number(marginSec.toFixed(1)),
-            autoCancelSec: Number(autoCancelSec.toFixed(1)),
-            tArrivalWithMargin: Number(tArrivalWithMargin.toFixed(1)),
-            willArriveBeforeCancel,
+    // ここから下は自前計算（トークンを持つ端末だけ）。予報円 1 つ（＝地震 1 つ）ごとに行を作る。
+    // 予報円は `usePsWaveCalc` の時点で、取消済み・位置不明・仮定震源要素・深さ不明・まだ発生していない
+    // ものを外してある（`computeEewCircle`）。円の `eventId` は `eewEventKey` と同じ式。
+    const tracks = tracksRef.current
+    const live = new Set<string>()
+    const rows: SWaveArrivalRow[] = []
+    for (const circle of psWave) {
+      live.add(circle.eventId)
+      let track = tracks.get(circle.eventId)
+      if (track === undefined) {
+        track = { prevSRadius: null, speedHistory: [], lastLoggedKey: null, skipLogged: false }
+        tracks.set(circle.eventId, track)
+      }
+      const eew = eews.find((e) => eewEventKey(e) === circle.eventId)
+      // **円を作った速報を引けない・震源が決まっていない報なら行を作らない**（`pickArrivalEews` と同じ方針）。
+      // 前者は予報円と速報の一覧の更新がずれた一瞬、後者は `computeEewCircle` が円を作らないはずの形。
+      // どちらも行の地名や「震源から N km」を出せないので、別の地震の名前で埋めたり「震源調査中」と出したりしない。
+      // 黙って消えないよう、地震ごとに 1 回だけ記録する。
+      if (eew === undefined || isProvisionalHypocenter(eew)) {
+        if (!track.skipLogged) {
+          track.skipLogged = true
+          log.debug('[eew] 主要動到達の行を作らない', {
+            eventId: circle.eventId,
+            reason: eew === undefined ? '予報円を作った速報が一覧に無い' : '震源が決まっていない報',
           })
         }
-        if (!willArriveBeforeCancel) {
-          prevSRadiusRef.current = sRadiusKm
-          setArrival(null)
-          return
-        }
+        track.prevSRadius = circle.sRadius
+        continue
       }
-    } else if (arrived) {
-      etaSec = 0
-    } else {
-      // S波がまだ地表に出ていない場合: フレーム差分で速度を推定
-      // ※更新間隔は約100ms〜1秒なので delta ≈ km/s として扱える
-      let speed = S_WAVE_FALLBACK_KM_PER_SEC
-      if (prevSRadiusRef.current !== null) {
-        const delta = sRadiusKm - prevSRadiusRef.current
-        if (delta > 0) {
-          speedHistoryRef.current.push(delta)
-          if (speedHistoryRef.current.length > SPEED_SMOOTH_FRAMES) {
-            speedHistoryRef.current.shift()
-          }
-          const avg = speedHistoryRef.current.reduce((s, v) => s + v, 0) / speedHistoryRef.current.length
-          if (avg >= MIN_VALID_SPEED) speed = avg
-        }
-      }
-      etaSec = sRadiusKm === 0 ? null : Math.max(0, Math.round((distanceKm - sRadiusKm) / speed))
+      const row = ownCalcRow(circle, home, track, eew)
+      track.prevSRadius = circle.sRadius
+      if (row !== null) rows.push(row)
     }
-
-    prevSRadiusRef.current = sRadiusKm
-    setArrival({ source: 'own', areaName: null, distanceKm, etaSec, arrived })
-    // `eews` は円が 1 つも無いときの距離（`nearestEpicenterDistanceKm`）に要る。
-    // **`homeAreaArrival` 経由で拾えるとは限らない** —— あちらは区域の発表値を見るので、
-    // 震源だけが動いた続報では同じ参照を返しうる。
-  }, [psWave, eews, home, hasActiveEEW, allowOwnCalculation, homeAreaArrival, tick])
+    for (const key of [...tracks.keys()]) if (!live.has(key)) tracks.delete(key)
+    setArrival(rows.length === 0 ? null : { source: 'own', areaName: null, rows: rows.sort(compareArrivalRows) })
+    // `eews` は行の地名と、発表値の経路で区域の値を引くのに要る。
+  }, [psWave, eews, home, hasActiveEEW, allowOwnCalculation, homeAreaName, tick])
 
   return arrival
+}
+
+/**
+ * 自前計算の 1 行。**解除までに届かない地震は null**（その地震の行だけを出さない。ほかの地震の行は残る）。
+ * `track.prevSRadius` はこの呼び出しの後で呼び出し側が進める。
+ */
+function ownCalcRow(
+  circle: PsWaveCircle,
+  home: { lat: number; lng: number },
+  track: OwnCalcTrack,
+  eew: EEWAlert,
+): SWaveArrivalRow | null {
+  const distanceKm = haversineKm(circle.lat, circle.lng, home.lat, home.lng)
+  const sRadiusKm = circle.sRadius
+  let arrived = sRadiusKm >= distanceKm
+
+  let etaSec: number | null
+  if (circle.depth !== undefined && sRadiusKm > 0) {
+    // JMA2001 走時表から理論上のS波到達走時を引き、安全マージンを加算する
+    // （震源近傍は直達波がそのまま立ち上がるが、遠方ほど表面波の分離・コーダ波の重畳で
+    //  揺れの立ち上がりがなだらかになり、S波理論到達より体感開始が遅れる傾向があるため）
+    const marginSec = calcArrivalSafetyMarginSec(distanceKm)
+    const tNow = travelTimeSec('S', sRadiusKm, circle.depth)
+    const tArrivalWithMargin = travelTimeSec('S', distanceKm, circle.depth) + marginSec
+    arrived = tNow >= tArrivalWithMargin
+    etaSec = arrived ? 0 : Math.max(0, Math.round(tArrivalWithMargin - tNow))
+
+    // EEW解除前にS波が自宅に到達しない場合は、その地震の行を出さない
+    // （安全マージン込みの到達時刻で判定する。マージン無しの理論到達時刻だけで解除前と
+    //   判定すると、実際の体感到達は解除後にずれ込むケースをカードで見せてしまうため）
+    if (!arrived && circle.magnitude !== undefined) {
+      const autoCancelSec = calcEEWAutoCancelSec(circle.magnitude, circle.depth)
+      const willArriveBeforeCancel = tArrivalWithMargin < autoCancelSec
+      const logKey = `${circle.magnitude}-${circle.depth}`
+      if (track.lastLoggedKey !== logKey) {
+        track.lastLoggedKey = logKey
+        log.debug('[eew] S波到達判定（EEW更新）', {
+          eventId: circle.eventId,
+          sRadiusKm: Number(sRadiusKm.toFixed(1)),
+          distanceToHomeKm: Number(distanceKm.toFixed(1)),
+          etaSec,
+          marginSec: Number(marginSec.toFixed(1)),
+          autoCancelSec: Number(autoCancelSec.toFixed(1)),
+          tArrivalWithMargin: Number(tArrivalWithMargin.toFixed(1)),
+          willArriveBeforeCancel,
+        })
+      }
+      if (!willArriveBeforeCancel) return null
+    }
+  } else if (arrived) {
+    etaSec = 0
+  } else {
+    // S波がまだ地表に出ていない場合: フレーム差分で速度を推定
+    // ※更新間隔は約100ms〜1秒なので delta ≈ km/s として扱える
+    let speed = S_WAVE_FALLBACK_KM_PER_SEC
+    if (track.prevSRadius !== null) {
+      const delta = sRadiusKm - track.prevSRadius
+      if (delta > 0) {
+        track.speedHistory.push(delta)
+        if (track.speedHistory.length > SPEED_SMOOTH_FRAMES) track.speedHistory.shift()
+        const avg = track.speedHistory.reduce((sum, v) => sum + v, 0) / track.speedHistory.length
+        if (avg >= MIN_VALID_SPEED) speed = avg
+      }
+    }
+    etaSec = sRadiusKm === 0 ? null : Math.max(0, Math.round((distanceKm - sRadiusKm) / speed))
+  }
+  // 残りが 0 秒へ丸まった行は到達済みとして扱う（発表値の経路の `arrived: area.arrived || etaSec === 0` と揃える）。
+  // 未到達のまま 0 秒を出すと、並びでも見出しでも「まだ来ていない」側に残る。
+  if (etaSec === 0) arrived = true
+
+  return {
+    key: circle.eventId,
+    hypocenterName: hypocenterNameOf(eew),
+    provisional: false,
+    distanceKm,
+    etaSec,
+    arrived,
+  }
 }

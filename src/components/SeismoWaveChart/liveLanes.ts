@@ -92,12 +92,13 @@ export function drawLanes(params: {
   win: SeismoWaveWindow | null
   stale: boolean
   quietLevel: number | null
-  arrival: WaveArrival | null
+  /** 地震ごとの P/S の到達（地震が無ければ空）。どれも同じ「P」「S」で引く。 */
+  arrivals: readonly WaveArrival[]
   timeline: LiveTimeline
   /** 縦の単位と下限の物差し（自作地震計は gal、公開観測点は μm/s。`waveUnit.ts`）。 */
   unit: WaveUnit
 }): { texts: Record<string, string | null>; compositeFellBack: boolean } {
-  const { targets, lanes, expanded, win, stale, quietLevel, arrival, timeline, unit } = params
+  const { targets, lanes, expanded, win, stale, quietLevel, arrivals, timeline, unit } = params
   const spanMs = liveSpanMs(timeline)
   const rightEdge = timeline.nowMs + timeline.leadMs
   // **描くたびに読み直す。** 押した向きは次のフレームで効く（この関数は毎秒 3 回
@@ -106,7 +107,7 @@ export function drawLanes(params: {
   // **縦の下限は畳むと ×3・展開した段は ×1.5**（2026-10-13 ユーザー承認。展開した段は詳細の窓と揃える）。
   // 値の単位は観測点の種類で違う（`unit`）。列の組み立て（`buildWaveColumns`）は単位を見ないので、名前の gal は読み替える。
   const minScale = unit.minScale(expanded ? 'detail' : 'card', quietLevel)
-  const marks = liveArrivalMarks(timeline, arrival)
+  const marks = liveArrivalMarks(timeline, arrivals)
   // 平均の線は**線が 1 本だけの段**に重ねる（2026-10-13 ユーザー承認）——展開した段・畳んだ合成・向きを 1 つだけ
   // 残した「3 成分を重ねる」。3 本を重ねた絵では作らない（6000 点 × 3 成分の移動平均なので、使わないときは回さない）。
   // **列数ごとに 1 回だけ作る**（段の幅は同じなので、段ごとに作り直さない）。
@@ -239,12 +240,13 @@ export function singleVisibleAxis(visibleAxes: readonly boolean[]): number | nul
  * 右端＝いま、それより先の時刻は描かない）。これから来る時刻を示す形（「いま」より先の線を描く・範囲外の線を
  * 端へ張り付ける）へ変えるなら、その整理をやり直す。
  */
-export function liveArrivalMarks(timeline: LiveTimeline, arrival: WaveArrival | null): WaveMark[] {
-  if (arrival === null || !timeline.clockCalibrated) return []
+export function liveArrivalMarks(timeline: LiveTimeline, arrivals: readonly WaveArrival[]): WaveMark[] {
+  if (arrivals.length === 0 || !timeline.clockCalibrated) return []
   const fromMs = timeline.nowMs - timeline.spanMs
   const toMs = timeline.nowMs + timeline.leadMs
   const nowRatio = (timeline.nowMs - fromMs) / (toMs - fromMs)
-  return buildArrivalMarksForRange({ fromMs, toMs }, arrival).filter((m) => m.ratio <= nowRatio)
+  // **地震ごとに引き、見分けない**（どれも「P」「S」。2026-10-18 ユーザー承認「見分けない」）。
+  return arrivals.flatMap((arrival) => buildArrivalMarksForRange({ fromMs, toMs }, arrival).filter((m) => m.ratio <= nowRatio))
 }
 
 /**

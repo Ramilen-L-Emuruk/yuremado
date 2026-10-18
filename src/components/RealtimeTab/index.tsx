@@ -7,7 +7,7 @@ import { EEW_FLASH_COLOR, UPDATE_MARK_WASH, EEW_HIGHLIGHT_FADE_MS } from '../../
 import type { EEWAlert } from '../../types/earthquake'
 import type { DetectionEvent, Confidence } from '../../utils/kyoshinDetector'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
-import type { SWaveArrival } from '../../hooks/useSWaveCountdown'
+import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdown'
 import { usePageVisible } from '../../hooks/usePageVisible'
 import { formatDateTime, formatDepth, hasDepth } from '../../utils/formatters'
 import { getIntensityColor, getIntensityLabel, getIntensityLabelWithApproxAbove, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
@@ -376,7 +376,7 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
   // 種別コードは両経路が持つ（→ `utils/eew.ts`）。
   //
   // **このファイルには `arrived` が 2 つある。** ここで扱う区域の `arrived` は電文が伝える
-  // 「既に主要動到達と推測」。下の S 波カウントダウンが持つ `SWaveArrival.arrived` は別物で、
+  // 「既に主要動到達と推測」。下の S 波カウントダウンの行が持つ `SWaveArrivalRow.arrived` は別物で、
   // 利用者が登録した地点への走時計算から出す到達済みフラグ（`nearbyStations.ts`）。
   // 並びは時間の順 ―― 到達済み → 未到達（到達の早い順）→ 到達時刻が判らないもの。
   //
@@ -950,7 +950,13 @@ const LABEL_ORDER = ['7', '6強', '6弱', '5強', '5弱', '4', '3', '2', '1', '0
  * 地点の値**で、そちらは発行済みトークンを持つ端末に限られる。
  */
 function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
-  const borderColor = arrival.arrived ? '#ef4444' : '#f97316'
+  // **地震が複数あれば、1 枚の中に地震ごとの行を並べる**（2026-10-18 ユーザー承認「1 枚に行を並べる」）。
+  // 区域名と注記は 1 回だけ出す（どの行も同じ区域・同じ出どころの値）。地震の名前は 2 件以上のときだけ添え、
+  // 1 件のときは今までと同じ見た目のまま。枠の色と見出しは先頭の行に合わせる（2026-10-18 ユーザー承認
+  // 「先頭の行に合わせる」）—— 並びは到達済みが先頭なので、どれか 1 つでも届いていれば到達済みになる。
+  const lead = arrival.rows[0]
+  const single = arrival.rows.length === 1
+  const borderColor = lead.arrived ? '#ef4444' : '#f97316'
   const scopeLabel = arrival.source === 'telegram' && arrival.areaName
     ? arrival.areaName
     : 'ホーム地点'
@@ -963,30 +969,52 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
           style={{ backgroundColor: borderColor }}
         />
         <span className="text-xs font-bold" style={{ color: borderColor }}>
-          {arrival.arrived ? '主要動 到達済み' : '主要動 到達カウントダウン'}
+          {lead.arrived ? '主要動 到達済み' : '主要動 到達カウントダウン'}
         </span>
-        {arrival.distanceKm !== null && (
-          <span className="text-xs text-secondary ml-auto">震源から {arrival.distanceKm.toFixed(0)} km</span>
+        {single && lead.distanceKm !== null && (
+          <span className="text-xs text-secondary ml-auto">震源から {lead.distanceKm.toFixed(0)} km</span>
         )}
       </div>
       <p className="text-xs text-secondary mb-1">{scopeLabel}</p>
-      {arrival.arrived ? (
-        <p className="text-red-400 font-bold text-sm">主要動が到達しています</p>
-      ) : arrival.etaSec !== null ? (
-        <div className="flex items-baseline gap-2">
-          <span className="text-4xl font-black text-white">{arrival.etaSec}</span>
-          <span className="text-sm text-secondary">秒後に到達予想</span>
-        </div>
+      {single ? (
+        <SWaveArrivalCountdown row={lead} />
       ) : (
-        <p className="text-sm text-secondary">到達時間を推定中…</p>
+        arrival.rows.map((row) => (
+          <div key={row.key} className="border-t border-border pt-1 mt-1">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-white min-w-0 truncate">
+                {row.hypocenterName ?? '震源調査中'}
+                {row.provisional && row.hypocenterName !== null && '（震源未確定）'}
+              </span>
+              {row.distanceKm !== null && (
+                <span className="text-xs text-secondary ml-auto shrink-0">震源から {row.distanceKm.toFixed(0)} km</span>
+              )}
+            </div>
+            <SWaveArrivalCountdown row={row} />
+          </div>
+        ))
       )}
-      <p className="text-xs text-secondary mt-1">
+      <p className={`text-xs text-secondary mt-1${single ? '' : ' border-t border-border pt-1'}`}>
         {arrival.source === 'telegram'
           ? '※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'
           : '※推定値。実際の到達時間は異なる場合があります'}
       </p>
     </div>
   )
+}
+
+/** 1 つの地震の到達の見込み（届いた／残り秒数／推定中）。 */
+function SWaveArrivalCountdown({ row }: { row: SWaveArrivalRow }) {
+  if (row.arrived) return <p className="text-red-400 font-bold text-sm">主要動が到達しています</p>
+  if (row.etaSec !== null) {
+    return (
+      <div className="flex items-baseline gap-2">
+        <span className="text-4xl font-black text-white">{row.etaSec}</span>
+        <span className="text-sm text-secondary">秒後に到達予想</span>
+      </div>
+    )
+  }
+  return <p className="text-sm text-secondary">到達時間を推定中…</p>
 }
 
 // 検知エンジンの確信度別スタイル。confirmed=赤・likely=橙・faint=淡青(震度0級・無音)・weak=灰。

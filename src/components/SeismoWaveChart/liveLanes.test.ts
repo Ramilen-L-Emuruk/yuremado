@@ -59,7 +59,7 @@ function allHaveValues(lines: readonly { values: ArrayLike<number> }[] | undefin
 
 function run(lanes: readonly Lane[], expanded: boolean) {
   const win = windowOf()
-  return drawLanes({ targets: targetsFor(lanes), lanes, expanded, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT })
+  return drawLanes({ targets: targetsFor(lanes), lanes, expanded, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT })
 }
 
 beforeEach(() => {
@@ -250,7 +250,7 @@ describe('地図の下端の P/S 線は、まだ来ていない時刻を描か�
 
   // 正: 既に過ぎた P は入り、まだ来ていない S は入らない。
   it('いまより先の到達は入れない', () => {
-    const marks = liveArrivalMarks(timeline, { pMs: nowMs - 1_000, sMs: nowMs + 5_000 })
+    const marks = liveArrivalMarks(timeline, [{ pMs: nowMs - 1_000, sMs: nowMs + 5_000 }])
     expect(marks.map((m) => m.label)).toEqual(['P'])
     expect(marks[0].ratio).toBeGreaterThanOrEqual(0)
     expect(marks[0].ratio).toBeLessThanOrEqual(1)
@@ -258,26 +258,50 @@ describe('地図の下端の P/S 線は、まだ来ていない時刻を描か�
 
   // 安全弁: 先の余白（いま〜いま＋0.6 秒）に落ちる線も入れない。裏の絵の範囲には収まるので、捨てるのは描く側ではなくここ。
   it('先の余白に落ちる到達も入れない', () => {
-    expect(liveArrivalMarks(timeline, { pMs: nowMs + 300, sMs: nowMs + 599 })).toEqual([])
+    expect(liveArrivalMarks(timeline, [{ pMs: nowMs + 300, sMs: nowMs + 599 }])).toEqual([])
   })
 
   // 安全弁（2026-10-15 ユーザー承認）: 時計を較正していない間は、過ぎた到達でも線を入れない（そのときの「いま」は
   // 端末の時計で、進んでいれば到達より先に線が出る）。
   it('時計を較正していない間は過ぎた到達も入れない', () => {
-    expect(liveArrivalMarks({ ...timeline, clockCalibrated: false }, { pMs: nowMs - 1_500, sMs: nowMs - 500 })).toEqual([])
+    expect(liveArrivalMarks({ ...timeline, clockCalibrated: false }, [{ pMs: nowMs - 1_500, sMs: nowMs - 500 }])).toEqual([])
   })
 
   // 対照: どちらも過ぎていれば 2 本とも入れる（捨てる判定が広すぎないこと）。
   it('どちらも過ぎていれば両方描く', () => {
     const { ctx, labels } = recordingCtx()
-    paintMarks(ctx, liveArrivalMarks(timeline, { pMs: nowMs - 1_500, sMs: nowMs - 500 }), 400, 60, 1)
+    paintMarks(ctx, liveArrivalMarks(timeline, [{ pMs: nowMs - 1_500, sMs: nowMs - 500 }]), 400, 60, 1)
     expect(labels).toEqual(['P', 'S'])
+  })
+
+  // 正（2026-10-14 ユーザー決定「地震ごとに並べて出す」）: 地震が 2 つあれば、どちらの線も引く。
+  // どの地震の線かは見分けない（2026-10-18 ユーザー承認「見分けない」）—— どれも「P」「S」。
+  it('地震が 2 つあれば両方の線を同じ名前で引く', () => {
+    const marks = liveArrivalMarks(timeline, [
+      { pMs: nowMs - 3_000, sMs: nowMs - 2_000 },
+      { pMs: nowMs - 1_500, sMs: nowMs - 500 },
+    ])
+    expect(marks.map((m) => m.label)).toEqual(['P', 'S', 'P', 'S'])
+  })
+
+  // 安全弁: 2 つ目の地震の「いまより先」の線は、1 つ目の線と別に捨てる（片方が過ぎていても巻き込まない）。
+  it('地震ごとに、いまより先の線だけを捨てる', () => {
+    const marks = liveArrivalMarks(timeline, [
+      { pMs: nowMs - 3_000, sMs: nowMs - 2_000 },
+      { pMs: nowMs + 1_000, sMs: nowMs + 3_000 },
+    ])
+    expect(marks.map((m) => m.label)).toEqual(['P', 'S'])
+  })
+
+  // 対照: 地震が無ければ線も無い。
+  it('地震が無ければ線を引かない', () => {
+    expect(liveArrivalMarks(timeline, [])).toEqual([])
   })
 
   // 安全弁: ちょうど「いま」の時刻は描いてよい過去に含める。その 1 ms 後は入れない。
   it('いまと同じ時刻は描き、その 1 ms 後は描かない', () => {
     const { ctx, labels } = recordingCtx()
-    paintMarks(ctx, liveArrivalMarks(timeline, { pMs: nowMs, sMs: nowMs + 1 }), 400, 60, 1)
+    paintMarks(ctx, liveArrivalMarks(timeline, [{ pMs: nowMs, sMs: nowMs + 1 }]), 400, 60, 1)
     expect(labels).toEqual(['P'])
   })
 
@@ -291,7 +315,7 @@ describe('地図の下端の P/S 線は、まだ来ていない時刻を描か�
       win: windowOf(),
       stale: false,
       quietLevel: 0.2,
-      arrival: { pMs: nowMs - 1_000, sMs: nowMs + 5_000 },
+      arrivals: [{ pMs: nowMs - 1_000, sMs: nowMs + 5_000 }],
       timeline,
       unit: SEISMO_WAVE_UNIT,
     })
@@ -308,7 +332,7 @@ describe('drawLanes の右端', () => {
     composite.mockImplementation((_c, _z, b) => (b(100), '0〜1.00 gal'))
     const win = windowOf()
     const timeline = timelineAtLastSample(win)
-    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrival: null, timeline, unit: SEISMO_WAVE_UNIT })
+    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline, unit: SEISMO_WAVE_UNIT })
     expect(build).toHaveBeenCalled()
     const args = build.mock.calls[0][0]
     expect(args.rightEdge).toBe(timeline.nowMs + timeline.leadMs)
@@ -344,7 +368,7 @@ describe('drawLanes の単位', () => {
   // 正: 公開観測点は速度の単位と、その物差しの下限で描く（gal の下限を当てない）。
   it('公開観測点は μm/s と公開観測点の下限で描く', () => {
     const win = windowOf()
-    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT })
+    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT })
     const opts = composite.mock.calls[0][4]
     expect(opts.unit).toBe('μm/s')
     expect(opts.minScale).toBeCloseTo(PUBLIC_WAVE_UNIT.minScale('card', 0.2))
@@ -353,7 +377,7 @@ describe('drawLanes の単位', () => {
   // 対照: 自作地震計は gal のまま。
   it('自作地震計は gal で描く', () => {
     const win = windowOf()
-    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT })
+    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrivals: [], timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT })
     expect(composite.mock.calls[0][4].unit).toBe('gal')
   })
 
