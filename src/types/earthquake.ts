@@ -1454,9 +1454,9 @@ export type AppEvent = JMAQuake | JMATsunami | EEWAlert
  * そのもので、型が直接そのまま描画へ渡る。こちらは状態を別のフィールドで持っていて
  * （`lpgmByEventId`・`nankai`・帯の各種など）、鳴らす経路にだけ流れてくる。
  *
- * **お知らせ（`JMAQuakeNotice`）は入れない。** あれは音も読み上げも起こさない運用連絡で、
- * `onLiveEvent` へ流していない（流すと「鳴らす経路に載っているのに鳴らない」紛らわしい状態に
- * なる）。→ `docs/spec/data-sources-spec.md` §2「扱う電文種別」
+ * **お知らせ（`JMAQuakeNotice`）も入れる。** 音は鳴らさないが、設定で有効にすれば読み上げる
+ * （既定は読まない）。読むかどうかは受け手が決めるので、送り手は帯へ反映できたものを常に流す。
+ * → `docs/spec/data-sources-spec.md` §2「扱う電文種別」
  */
 export type ExtraLiveEvent =
   | { kind: 'lpgm'; data: JMALpgm }
@@ -1464,6 +1464,11 @@ export type ExtraLiveEvent =
   | { kind: 'nankaiCommentary'; data: JMANankaiCommentary }
   | { kind: 'kohatsu'; data: JMAKohatsu }
   | { kind: 'earthquakeCount'; data: JMAEarthquakeCount }
+  /**
+   * 地震・津波に関するお知らせ（VZSE40）。**読み上げは設定で有効にしたときだけ**（既定は読まない。
+   * 判定は受け手の `handleExtraLiveEvent`）。帯への反映は送り手（`applyQuakeNotice`）が済ませている。
+   */
+  | { kind: 'quakeNotice'; data: JMAQuakeNotice }
   | {
     kind: 'estimatedIntensity'
     data: JMAEstimatedIntensity

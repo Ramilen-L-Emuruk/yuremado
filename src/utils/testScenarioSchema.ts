@@ -1,3 +1,5 @@
+import type { ReplayPayload } from '../types/replay'
+import { log } from './logger'
 import type { TestScenarioFile, TestScenarioIndex, TestScenarioMeta, ScenarioCategory } from '../types/testScenario'
 
 // 実地震シナリオファイル（`public/data/test-scenarios/`）の型検証ガード。
@@ -42,21 +44,38 @@ export function validateScenarioIndex(v: unknown): { valid: TestScenarioIndex; s
   return { valid, skipped, malformed: false }
 }
 
-// ReplayPayload の判別子。testScenarioReplay.remapPayload の switch と一致させる
-// （破損 payload が instantiateScenario で TypeError を投げる HIGH #1 対策）。
-const PAYLOAD_KINDS = new Set(['event', 'lpgm', 'nankai', 'nankaiCommentary', 'kohatsu'])
+/**
+ * ReplayPayload の判別子（破損 payload が instantiateScenario で TypeError を投げる HIGH #1 対策）。
+ *
+ * **`ReplayPayload['kind']` の全種別を持つ表から導く。** 文字列を手で並べていた頃は、種別を足しても
+ * ここへ書き忘れて、`remapPayload` が扱える `quakeNotice`・`earthquakeCount`・`estimatedIntensity` の
+ * 3 種別がシナリオの読み込みで**黙って捨てられていた**（2026-10-18 に 10/16 の誤報のシナリオで、
+ * 13:15 のお知らせが帯にすら出ないことで発覚）。表にしておけば、種別を足すと型検査がここで止まる。
+ * ローカル履歴アーカイブの検証（`historicalArchiveSchema.ts`）も同じ表を使う。
+ */
+const REPLAY_PAYLOAD_KIND_TABLE: Record<ReplayPayload['kind'], true> = {
+  event: true,
+  lpgm: true,
+  nankai: true,
+  nankaiCommentary: true,
+  kohatsu: true,
+  quakeNotice: true,
+  earthquakeCount: true,
+  estimatedIntensity: true,
+}
+export const REPLAY_PAYLOAD_KINDS: ReadonlySet<string> = new Set(Object.keys(REPLAY_PAYLOAD_KIND_TABLE))
 
 /**
  * payload の kind と対応する必須サブフィールドを検証する。
  * - kind: 'event' → event が Record
- * - kind: 'lpgm' | 'nankai' | 'nankaiCommentary' | 'kohatsu' → data が Record
+ * - それ以外の種別 → data が Record
  * これを通さないと `remapPayload` 内で `switch (payload.kind)` の分岐に入った直後に
  * `payload.event.kind` や `payload.data.???` を読んで TypeError で map 全体が中断し、
  * そのシナリオの全エントリが再生キューに積まれなくなる（HIGH #1）。
  */
 function isValidPayload(p: Record<string, unknown>): boolean {
   const kind = p.kind
-  if (typeof kind !== 'string' || !PAYLOAD_KINDS.has(kind)) return false
+  if (typeof kind !== 'string' || !REPLAY_PAYLOAD_KINDS.has(kind)) return false
   if (kind === 'event') return isRecord(p.event)
   return isRecord(p.data)
 }
@@ -75,7 +94,12 @@ export function validateScenarioFile(v: unknown): TestScenarioFile | null {
     if (!isRecord(e)) continue
     if (typeof e.offsetMs !== 'number' || !Number.isFinite(e.offsetMs)) continue
     if (!isRecord(e.payload)) continue
-    if (!isValidPayload(e.payload)) continue
+    if (!isValidPayload(e.payload)) {
+      // **捨てたことを残す。** かつて種別の一覧の書き忘れで 3 種別が黙って捨てられ、帯にすら出ないまま
+      // 気づけなかった（→ `REPLAY_PAYLOAD_KIND_TABLE`）。
+      log.warn('[scenario] シナリオの電文を読めないため捨てました', { id: v.id, kind: e.payload.kind })
+      continue
+    }
     entries.push({
       offsetMs: e.offsetMs,
       payload: e.payload as TestScenarioFile['entries'][number]['payload'],

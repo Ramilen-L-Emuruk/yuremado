@@ -441,6 +441,7 @@ const TELEGRAM_TEXT_BLOCK_DESCRIPTIONS: Record<TelegramTextBlockKey, string> = {
   kohatsuSummary: '発表内容を一文にまとめたものです。画面の帯に出ている見出しと同じ文です。地震の発生と、想定震源域で大規模地震の可能性が平常時より高まっていることが書かれます',
   kohatsuBody: '発表の理由と、とるべき防災対応の説明です',
   earthquakeCountFreeText: '地震回数の補足です。例:「８月２４日１５時過ぎから伊豆半島東方沖で地震が発生しています。」に続けて、震度２以下はこの情報でまとめて発表する旨が書かれます',
+  quakeNoticeBody: 'お知らせの本文です。例:「本日（１０月１６日）１２時４０分頃、緊急地震速報（警報）を北海道、東北、関東、北陸、甲信、東海、伊豆諸島に発表しましたが、震度２以上を観測した場所はありませんでした。」',
 }
 
 const TELEGRAM_TEXT_BLOCK_LABELS: Record<TelegramTextBlockKey, string> = {
@@ -461,6 +462,7 @@ const TELEGRAM_TEXT_BLOCK_LABELS: Record<TelegramTextBlockKey, string> = {
   kohatsuSummary: '要約',
   kohatsuBody: '本文',
   earthquakeCountFreeText: '自由付加文',
+  quakeNoticeBody: '本文',
 }
 
 /**
@@ -488,12 +490,13 @@ const TELEGRAM_TEXT_BLOCK_GROUPS: readonly {
     keys: ['kohatsuSummary', 'kohatsuBody'],
   },
   { title: '地震回数に関する情報', keys: ['earthquakeCountFreeText'] },
+  { title: '地震・津波に関するお知らせ', keys: ['quakeNoticeBody'] },
 ]
 
 /**
  * 気象庁が書いた文の内訳（電文種別 × ブロック）。
  *
- * **既定は畳んでおく。** 17 行＋グループの見出し 7 行を常に開くと、設定タブの中でこの
+ * **既定は畳んでおく。** 18 行＋グループの見出し 8 行を常に開くと、設定タブの中でこの
  * セクションだけが突出して伸びる。見出しには「何個を読む設定か」を出す —— 畳んだままでも、
  * 全部読むのか一部だけかが分かる。
  */
@@ -1602,6 +1605,30 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             />
           </Row>
         )}
+        {/* 地震・津波に関するお知らせ（運用連絡）。帯と、音・読み上げを別々に切り替える
+            （文言は 2026-10-18 ユーザー承認）。 */}
+        {isDmdss && (
+          <Row
+            label="お知らせを表示"
+            description="地震・津波に関するお知らせを地図の下に表示します"
+          >
+            <Toggle
+              checked={settings.quakeNoticeBanner}
+              onChange={v => onUpdate('quakeNoticeBanner', v)}
+            />
+          </Row>
+        )}
+        {isDmdss && (
+          <Row
+            label="お知らせの音・読み上げ"
+            description="地震・津波に関するお知らせの通知音と読み上げを行います"
+          >
+            <Toggle
+              checked={settings.quakeNoticeAlerts}
+              onChange={v => onUpdate('quakeNoticeAlerts', v)}
+            />
+          </Row>
+        )}
         <Row label="行動チェックリスト" description="強い揺れのときに、とるべき行動と持ち出すものを画面上部に出します。緊急地震速報・リアルタイム震度・地震情報のいずれかで判定します">
           <Toggle
             checked={settings.actionChecklistMinScale >= 0}
@@ -2033,7 +2060,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {isDmdss && onTest.quakeNotice && (
-          <Row label="地震・津波に関するお知らせ" description="観測点の入電停止などの運用連絡。バナー表示のみ（音・読み上げなし・閉じるボタンあり・7日で自動消去）">
+          <Row label="地震・津波に関するお知らせ" description="観測点の入電停止などの運用連絡。バナー表示（音と読み上げは「お知らせの音・読み上げ」が有効なときだけ・閉じるボタンあり・7日で自動消去）">
             <TestButton color="blue" onClick={onTest.quakeNotice}>お知らせテスト</TestButton>
           </Row>
         )}
