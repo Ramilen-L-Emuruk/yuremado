@@ -3536,18 +3536,21 @@ describe('DMDSS 版: 起動時に 7 日間の帯を復元する', () => {
     expect(h.current.quakeNotice?.id).toBe('n1')
   })
 
-  // 安全弁: この経路（起動・API キー変更・リプレイ往復の再接続のたびに走る）は `silent: true`
-  // を渡し忘れると、最大 7 日前のお知らせが `notDispatched` として「いま届いた」電文の
-  // ように録画ログへ混入する（2 巡目レビューで検出。1 巡目で直した経路の 1 つが漏れていた）。
-  it('安全弁: 起動時の復元で拾ったお知らせは録画ログへ記録しない（silent）', async () => {
+  // 安全弁: この経路（起動・API キー変更・リプレイ往復の再接続のたびに走る）で拾った最大 7 日前の
+  // お知らせを、「いま届いた」電文（`notDispatched`・`onLiveEvent`）のように扱わない。
+  // 他の帯と同じく `silentReplayInit` として記録される（下の「起動時の履歴復元」）。
+  it('安全弁: 起動時の復元で拾ったお知らせを「いま届いた」電文として記録しない', async () => {
     __resetReplayEventLogForTest()
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({
       extras: [extra({ kind: 'quakeNotice', data: notice() })],
     }))
-    const h = setup()
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
     await h.flush()
 
     expect(h.current.quakeNotice?.id).toBe('n1')
+    // 起動時に拾った古いお知らせを読み上げへ流さない
+    expect(onLiveEvent).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'quakeNotice' }))
     const notDispatched = drainReplayEvents().events
       .filter((e): e is ReplayTelegramEvent => e.type === 'telegram' && e.skipped === 'notDispatched')
     expect(notDispatched).toHaveLength(0)
@@ -4396,10 +4399,13 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     expect(loggedTelegrams().filter(t => t.skipped === 'staleSerial')).toHaveLength(0)
   })
 
-  it('地震・津波に関するお知らせにも記録が残る（音も読み上げも起こさない種別）', async () => {
+  // お知らせは帯へ反映できたら `onLiveEvent` へ流す（読み上げるかは受け手が設定で決める）。
+  // 流したものは受け手の側で記録されるので、ここに「流さなかった」記録は残らない。
+  it('地震・津波に関するお知らせは onLiveEvent へ流し、流さなかった記録を残さない', async () => {
     // キューの捌きを進めるため（この経路は `injectEvent` と違って即時ではない）
     vi.useFakeTimers()
-    const h = setup()
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
     await h.flush()
     const now = serverDate()
     act(() => {
@@ -4419,10 +4425,59 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     // キューは 10ms 間隔で捌く（`injectEvent` と違い即時ではない）
     act(() => { vi.advanceTimersByTime(50) })
 
-    const notDispatched = loggedTelegrams().filter(t => t.skipped === 'notDispatched')
-    expect(notDispatched).toHaveLength(1)
-    expect(notDispatched[0].kind).toBe('quakeNotice')
-    expect(notDispatched[0].eventId).toBe('notice-replaylog-event')
+    expect(onLiveEvent).toHaveBeenCalledWith({ kind: 'quakeNotice', data: expect.objectContaining({ id: 'notice-replaylog' }) })
+    expect(loggedTelegrams().filter(t => t.kind === 'quakeNotice')).toHaveLength(0)
+  })
+
+  // 安全弁: 別のお知らせ宛ての取消は、表示中のお知らせの期限タイマーを止めない（帯が居座らない）。
+  it('別のお知らせ宛ての取消が届いても、表示中のお知らせは期限で消える', async () => {
+    vi.useFakeTimers()
+    const h = setup()
+    await h.flush()
+    const now = serverDate()
+    const base = {
+      time: now.toISOString(), headline: '沖縄県の震度データ入電停止のお知らせ', body: '本文',
+      reportDateTime: now.toISOString(), expireAt: new Date(now.getTime() + 60_000).toISOString(),
+    }
+    act(() => {
+      h.current.loadReplayEvents([
+        { payload: { kind: 'quakeNotice', data: { ...base, id: 'notice-a', eventId: 'a', cancelled: false } }, replayTime: now },
+        { payload: { kind: 'quakeNotice', data: { ...base, id: 'notice-b', eventId: 'b', cancelled: true } }, replayTime: now },
+      ])
+    })
+    act(() => { vi.advanceTimersByTime(50) })
+    expect(h.current.quakeNotice?.id).toBe('notice-a')
+    act(() => { vi.advanceTimersByTime(61_000) })
+    expect(h.current.quakeNotice).toBeNull()
+  })
+
+  // 対照: 期限切れで帯へ反映できなかったお知らせは流さず、notApplied として記録する
+  it('対照: 期限切れのお知らせは onLiveEvent へ流さず notApplied で記録する', async () => {
+    vi.useFakeTimers()
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    const now = serverDate()
+    act(() => {
+      h.current.loadReplayEvents([{
+        payload: {
+          kind: 'quakeNotice',
+          data: {
+            id: 'notice-expired', time: now.toISOString(), eventId: 'notice-expired-event',
+            headline: '沖縄県の震度データ入電停止のお知らせ', body: '本文', cancelled: false,
+            reportDateTime: now.toISOString(),
+            expireAt: new Date(now.getTime() - 60_000).toISOString(),
+          },
+        },
+        replayTime: now,
+      }])
+    })
+    act(() => { vi.advanceTimersByTime(50) })
+
+    expect(onLiveEvent).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'quakeNotice' }))
+    const records = loggedTelegrams().filter(t => t.kind === 'quakeNotice')
+    expect(records).toHaveLength(1)
+    expect(records[0].skipped).toBe('notApplied')
   })
 
   // 正: リプレイ開始時の「窓の手前」を作るサイレント注入（silent: true）は onLiveEvent を
@@ -4724,9 +4779,9 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         expect(kohatsuRecords[0].skipped).toBe('silentReplayInit')
       })
 
-      // 対照: quakeNotice はサイレント復元では記録自体が 1 件も出ない唯一の例外
-      // （`applyQuakeNotice` に `silent: true` を渡しているため）。
-      it('対照: 起動時のお知らせには記録が残らない（唯一の例外）', async () => {
+      // 正: お知らせも他の帯と同じく、反映できたものを silentReplayInit として記録する
+      // （かつては記録自体を出さない唯一の例外だった。読み上げを持ったので揃えた）。
+      it('正: 起動時のお知らせは反映し silentReplayInit として記録する', async () => {
         const now = serverDate()
         vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({
           extras: [extra({
@@ -4742,7 +4797,10 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         const h = setup()
         await h.flush()
 
-        expect(loggedTelegrams().filter(t => t.kind === 'quakeNotice')).toHaveLength(0)
+        expect(h.current.quakeNotice?.id).toBe('notice-startup')
+        const records = loggedTelegrams().filter(t => t.kind === 'quakeNotice')
+        expect(records).toHaveLength(1)
+        expect(records[0].skipped).toBe('silentReplayInit')
       })
     })
 
@@ -4787,8 +4845,9 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         expect(silentInit).toHaveLength(1)
       })
 
-      // 安全弁: quakeNotice は「もっと見る」でも記録が残らない（起動時と同じ唯一の例外）。
-      it('安全弁: 「もっと見る」のお知らせには記録が残らない', async () => {
+      // 安全弁: 「もっと見る」のお知らせは南海トラフ臨時情報と同じく反映せず、notDispatched で記録する
+      // （古い日のお知らせで今の帯を上書きしない）。
+      it('安全弁: 「もっと見る」のお知らせは反映せず notDispatched として記録する', async () => {
         vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ hasMore: true }))
         const h = setup({ offset: null })
         await h.flush()
@@ -4808,7 +4867,10 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
 
         await act(async () => { await h.current.loadMoreEarthquakes() })
 
-        expect(loggedTelegrams().filter(t => t.kind === 'quakeNotice')).toHaveLength(0)
+        expect(h.current.quakeNotice).toBeNull()
+        const records = loggedTelegrams().filter(t => t.kind === 'quakeNotice')
+        expect(records).toHaveLength(1)
+        expect(records[0].skipped).toBe('notDispatched')
       })
     })
   })

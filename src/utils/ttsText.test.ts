@@ -2,8 +2,8 @@
 // 「〇時〇分」はローカルタイムゾーン依存のため、時刻の数値そのものではなく
 // 「日から読む／時分だけ読む」という書式の違いを正規表現で検証する。
 import { describe, it, expect, vi } from 'vitest'
-import { earthquakeCancelToText, tsunamiCancelToText, eewCancelToText, CANCEL_REASON_SPEAK_MAX_CHARS, nankaiToText, earthquakeCountToText,
-  estimatedIntensityToText, earthquakeToText, earthquakeToSegments, createQuakeSpokenState, applySpokenRefs, eewAlertToText, eewIntensityText, voicevoxPreviewTexts, lpgmToText, tsunamiToText, tsunamiToSegments, tsunamiDowngradeToText, tsunamiDowngradeToSegments, tsunamiArrivalToText, tsunamiMissingToText, tsunamiObservationUpdateToText, tsunamiAreaGradeChangeToText, tsunamiWarningLevelToText, selectWarningLevelToSpeak, selectObservationUpdatesToSpeak, selectMissingToSpeak, selectArrivalsToSpeak, WARNING_LEVEL_SPEAK_MAX_POINTS, joinWithAlso, telegramTextToSpeak, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, applyTsunamiSpokenRefs } from './ttsText'
+import { earthquakeCancelToText, tsunamiCancelToText, eewCancelToText, CANCEL_REASON_SPEAK_MAX_CHARS, nankaiToText, earthquakeCountToText, quakeNoticeToText,
+  estimatedIntensityToText, earthquakeToText, earthquakeToSegments, createQuakeSpokenState, applySpokenRefs, eewAlertToText, eewIntensityText, voicevoxPreviewTexts, lpgmToText, tsunamiToText, tsunamiToSegments, tsunamiDowngradeToText, tsunamiDowngradeToSegments, tsunamiArrivalToText, tsunamiMissingToText, tsunamiObservationUpdateToText, tsunamiAreaGradeChangeToText, tsunamiWarningLevelToText, selectWarningLevelToSpeak, selectObservationUpdatesToSpeak, selectMissingToSpeak, selectArrivalsToSpeak, WARNING_LEVEL_SPEAK_MAX_POINTS, joinWithAlso, telegramTextToSpeak, TELEGRAM_TEXT_BLOCK_KEYS, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, applyTsunamiSpokenRefs } from './ttsText'
 import { INTENSITY_SCALE_COUNT } from './intensity'
 import { joinSegments, mapChunksToRefs, plain, type SpeechSegment } from './ttsFollow'
 import { splitIntoChunks } from './voicevox'
@@ -2580,6 +2580,50 @@ describe('EEW の取消の理由を読み上げる', () => {
 //
 // **群発では地震カードが 1 枚も立たないことがある**（実サンプルは 21 時間で 1704 回・有感 1 回）。
 // この読み上げが、揺れが続いていることを伝える唯一の経路になる。
+describe('quakeNoticeToText', () => {
+  const base = {
+    id: 'n', time: '2026-10-16T04:15:00Z', eventId: 'e', body: '本文', cancelled: false,
+    reportDateTime: '2026-10-16T04:15:00Z', expireAt: '2026-10-23T04:15:00Z',
+  }
+  // 正: 見出しだけを読む（本文は気象庁が書いた文として別に読む）
+  it('見出しだけを読む', () => {
+    expect(quakeNoticeToText({ ...base, headline: '緊急地震速報（警報）について' }))
+      .toBe('地震・津波に関するお知らせ。緊急地震速報（警報）について。')
+  })
+  // 安全弁: 見出しが句点で終わっていても二重にしない
+  it('見出しの句点を二重にしない', () => {
+    expect(quakeNoticeToText({ ...base, headline: '配信試験のお知らせ。' }))
+      .toBe('地震・津波に関するお知らせ。配信試験のお知らせ。')
+  })
+  // 正: 取消は取り消された事実を読む（宣言だけの本文は読まない）
+  it('取消は取り消された事実を読む', () => {
+    expect(quakeNoticeToText({ ...base, headline: 'x', body: '', cancelled: true }))
+      .toBe('地震・津波に関するお知らせは取り消されました。')
+  })
+})
+
+describe('telegramTextToSpeak（お知らせ）', () => {
+  const event = {
+    kind: 'quakeNotice' as const,
+    data: {
+      id: 'n', time: '2026-10-16T04:15:00Z', eventId: 'e', headline: 'h', body: '本文を全部読みます。',
+      cancelled: false, reportDateTime: '2026-10-16T04:15:00Z', expireAt: '2026-10-23T04:15:00Z',
+    },
+  }
+  it('本文を読む', () => {
+    expect(telegramTextToSpeak(event, { readTelegramText: true } as never)?.text).toContain('本文を全部読みます。')
+  })
+  // 対照: ブロックを切れば読まない
+  it('本文のブロックを切れば読まない', () => {
+    const blocks = Object.fromEntries(TELEGRAM_TEXT_BLOCK_KEYS.map(k => [k, k !== 'quakeNoticeBody']))
+    expect(telegramTextToSpeak(event, { readTelegramText: true, telegramTextBlocks: blocks } as never)).toBeNull()
+  })
+  // 安全弁: 取消では本文を添えない
+  it('取消では本文を読まない', () => {
+    expect(telegramTextToSpeak({ ...event, data: { ...event.data, cancelled: true } }, { readTelegramText: true } as never)).toBeNull()
+  })
+})
+
 describe('earthquakeCountToText', () => {
   function makeCount(over: Partial<JMAEarthquakeCount> = {}): JMAEarthquakeCount {
     return {

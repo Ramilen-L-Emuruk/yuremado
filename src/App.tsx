@@ -110,6 +110,7 @@ import { log } from './utils/logger'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isDmdss } from './utils/env'
+import { ROOT_FRAME_CLASS } from './rootFrame'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
@@ -2042,7 +2043,10 @@ export function App() {
   // useActionChecklist）。観測点座標は他の利用箇所と同じキャッシュを共有するため、ここで
   // 呼んでも追加の取得は起きない。
   const stationCoordsForChecklist = useStationCoords()
-  const eewListForChecklist = useMemo(() => [...activeEEWsNoCancelled.values()], [activeEEWsNoCancelled])
+  // **チェックリストには取消を当てた直後の EEW も渡す。** 出している帯の元が取り消されたことを
+  // 知る手段がこれしか無い（判定からは向こうで外す。理由は useActionChecklist の `eews`）。
+  const eewListForChecklist = useMemo(() => [...activeEEWs.values()], [activeEEWs])
+  const eewListNoCancelled = useMemo(() => [...activeEEWsNoCancelled.values()], [activeEEWsNoCancelled])
   // ホーム地点の周り（半径 30km）。**行動チェックリストと自作地震計の波形が同じものを見る**
   // ので、ここで 1 つだけ作って両方へ渡す（→ hooks/useNearbyScope.ts）。
   const nearbyScope = useNearbyScope({
@@ -2333,7 +2337,7 @@ export function App() {
   const showSeismoWave = useSeismoWaveVisibility({
     mode: replayTimeOffset === null ? settings.seismoWave : 'off',
     scope: nearbyScope,
-    eews: eewListForChecklist,
+    eews: eewListNoCancelled,
     detectedPoints: kyoshinView.detectedPoints,
     stations: seismo.stations,
   })
@@ -2360,9 +2364,10 @@ export function App() {
     // 画面いっぱいの高さは h-dvh（100dvh）で取る。dvh はブラウザ UI の出入りに追従するため、
     // iOS Safari でツールバーが出ている間もナビが画面外へ押し出されない。
     // 画面端の safe-area は端に接する要素が各自で避ける（root では扱わない）。
+    // 外枠は固定配置にする（iOS が上端に重ねるぼかしと、横向きのあとのずれを避ける。理由は ROOT_FRAME_CLASS）。
     // 規則と端ごとの担当は docs/spec/architecture-spec.md
     // 「画面いっぱいへの広がりとセーフエリア」に集約している。
-    <div className="flex flex-col h-dvh bg-app text-white overflow-hidden">
+    <div className={`${ROOT_FRAME_CLASS} flex flex-col bg-app text-white overflow-hidden`}>
       {/* 地図(左) | パネル | アイコンナビ(右端)。
           side ブレークポイント未満（スマホ縦など）は縦積み(地図上・つまみ・パネル・ナビ下)になり、
           パネルの高さは --panel-ratio（つまみのドラッグで可変・折りたたみ時 0）で決まる。
@@ -2517,7 +2522,7 @@ export function App() {
                   <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} />
                 </div>
               )}
-              <SpecialInfoBanner nankai={nankai} nankaiCommentary={nankaiCommentary} kohatsu={kohatsu} quakeNotice={quakeNotice} earthquakeCount={earthquakeCount} speakingTelegramTextSubject={speakingTelegramTextSubject} />
+              <SpecialInfoBanner nankai={nankai} nankaiCommentary={nankaiCommentary} kohatsu={kohatsu} quakeNotice={settings.quakeNoticeBanner ? quakeNotice : null} earthquakeCount={earthquakeCount} speakingTelegramTextSubject={speakingTelegramTextSubject} />
             </div>
           </div>
           {/* 自作地震計の合成波形。**地図の外**（→ すぐ上の器のコメント）。 */}
@@ -2640,6 +2645,7 @@ export function App() {
                 view={catalogView}
                 onViewChange={setCatalogView}
                 pointCount={catalogCloud?.columns.count ?? 0}
+                unknownMagnitudeCount={catalogCloud?.unknownMagnitudeCount ?? 0}
                 loading={catalog.loading}
                 /* 絞り込みを変えた直後は件数が追いついていない（デバウンスした側で作るため）。
                    参照が同じなら落ち着いている（`useDebouncedValue` は同じ値なら同じ参照を返す）。 */

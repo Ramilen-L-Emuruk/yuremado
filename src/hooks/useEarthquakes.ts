@@ -1203,28 +1203,16 @@ export function useEarthquakes(
    * 帯の扱いは南海トラフ関連解説情報とほぼ同じ（最新の 1 通・7 日で畳む・取消で消す）。
    * **7 日は表示上の都合**で、気象庁が期限を定めているわけではない（後発地震注意情報の 7 日とは違う）。
    *
-   * 戻り値は「帯を出したか」。**呼び出し側は現状これを見ていない**（このお知らせは音も読み上げも
-   * 起こさないため、分岐する先が無い）。それでも bool を返すのは、隣の `applyNankaiCommentary`
-   * ・`applyKohatsu` と形を揃えておくため —— 揃えておかないと、後から「反映できたか」で
-   * 分岐したくなったときに、この関数だけ内部を書き換える必要が出る。
+   * 戻り値は「画面の状態を変えたか」（帯を出した・取消で帯を消した）。呼び出し側は真のときだけ
+   * `onLiveEvent` へ流す（読み上げるかは受け手が設定で決める）。偽なら流さず、録画向けの記録を
+   * `notApplied` で残す —— 隣の `applyNankaiCommentary`・`applyKohatsu` と同じ形。
+   *
+   * **記録はこの関数の中で行わない。** かつてはお知らせだけが音も読み上げも持たず、この関数が
+   * `notDispatched` を自分で記録する唯一の例外だった。読み上げを持った（設定で有効にしたとき）ので、
+   * 他の帯と同じく呼び出し側が「流した／流さなかった理由」を記録する。
    */
-  const applyQuakeNotice = useCallback((notice: JMAQuakeNotice, silent?: boolean): boolean => {
-    // この種別は音も読み上げも起こさないと決めており、`onLiveEvent` へ流していない。
-    // 届いたことだけは録画の側から見えるようにする。
-    //
-    // **`silent` のときは記録しない。** この関数はサイレント復元（起動時・履歴からの補完）
-    // からも呼ばれる唯一の経路のため、無条件に記録すると最大 7 日前の履歴上のお知らせが、
-    // 起動時や API キー変更・リプレイの往復による再接続のたびに「いま届いた」電文として
-    // イベントログへ混入する。他の種別（nankai・kohatsu 等）は `silent` の場合
-    // `silentReplayInit` として区別して記録するが、この種別は元から音・読み上げに一切
-    // 回さない（`notDispatched`）ため、サイレント復元でも同じ「回らない」が二重に成り立つ
-    // だけで新しい情報を持たない。素直に記録を止める。
-    if (!silent) recordSkippedTelegram({ kind: 'quakeNotice', data: notice }, 'notDispatched')
+  const applyQuakeNotice = useCallback((notice: JMAQuakeNotice): boolean => {
     if (notice.cancelled) {
-      if (quakeNoticeExpireTimerRef.current !== undefined) {
-        window.clearTimeout(quakeNoticeExpireTimerRef.current)
-        quakeNoticeExpireTimerRef.current = undefined
-      }
       // 消す前に id を照合する（待っている間に新しいお知らせへ入れ替わっていたら、そちらを消さない）。
       //
       // **取消は元のお知らせの `EventID` を引き継ぐ。** 気象庁公式のサンプル
@@ -1237,13 +1225,19 @@ export function useEarthquakes(
         log.info(`[quakeNotice] 別のお知らせへの取消のため帯を残します received=${notice.id} shown=${shown}`)
         return false
       }
+      // **期限タイマーは id を照合した後で止める。** 先に止めると、別のお知らせ宛ての取消が届いたとき、
+      // 表示中のお知らせの 7 日の期限だけが失われて帯が居座る。
+      if (quakeNoticeExpireTimerRef.current !== undefined) {
+        window.clearTimeout(quakeNoticeExpireTimerRef.current)
+        quakeNoticeExpireTimerRef.current = undefined
+      }
       shownQuakeNoticeIdRef.current = null
       setState(prev => ({ ...prev, quakeNotice: null }))
-      // **取消しの理由は出さない**（パーサーは `body` に読んでいる）。この帯は音も読み上げも
-      // 持たず、取消では帯ごと消えるので、理由を届ける先が 1 つも無い。中身が運用連絡なので、
-      // 消すためだけに帯を出し直すほどのものでもない。**「まだ決めていない」ではなく決めた結果**
-      // （→ docs/spec/data-sources-spec.md §2「扱う電文種別」）。
-      return false
+      // **取消しの理由（パーサーは `body` に読んでいる）は画面に出さない。** 取消では帯ごと消え、
+      // 中身が運用連絡なので、消すためだけに帯を出し直すほどのものでもない。読み上げを有効にした
+      // 端末では、理由は読み上げが伝える（→ `quakeNoticeToText`）。
+      // **真を返す** —— 帯を消した（画面が変わった）ので、受け手へ流して取消を読ませる。
+      return true
     }
 
     const remainMs = new Date(notice.expireAt).getTime() - getTimeRef.current().getTime()
@@ -2153,12 +2147,15 @@ export function useEarthquakes(
             recordSkippedTelegram({ kind: 'kohatsu', data: kohatsu }, applied ? 'silentReplayInit' : 'notApplied')
           }
         } else if (payload.kind === 'quakeNotice') {
-          // **通知は出さない。** 運用連絡なので音も読み上げも起こさない（→ docs/spec/data-sources-spec.md
-          // §2「扱う電文種別」）。帯に出すだけなので `onLiveEvent` へは流さない。
-          // **記録は `silent` を見て行う** —— サイレント復元（起動時・履歴からの補完）では
-          // 記録を残さない。ここだけ無条件に記録していた頃は、最大7日前の履歴上のお知らせが
-          // 起動時や再接続のたびに「いま届いた」電文としてログへ混入していた。
-          applyQuakeNotice(payload.data, silent)
+          const notice = payload.data
+          // 帯へ反映できたものだけ流す（他の帯と同じ形）。読み上げるかは受け手が設定で決める
+          // （既定は読まない → `handleExtraLiveEvent`）。
+          const applied = applyQuakeNotice(notice)
+          if (applied && !silent) {
+            onLiveEventRef.current?.({ kind: 'quakeNotice', data: notice })
+          } else {
+            recordSkippedTelegram({ kind: 'quakeNotice', data: notice }, applied ? 'silentReplayInit' : 'notApplied')
+          }
         } else if (payload.kind === 'earthquakeCount') {
           const count = payload.data
           const applied = applyEarthquakeCount(count)
@@ -2468,17 +2465,11 @@ export function useEarthquakes(
                 recordSkippedTelegram({ kind: 'earthquakeCount', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
                 break
               }
-              // **`silent: true` を渡す。** ここは起動時・API キー変更・リプレイ往復の
-              // 再接続のたびに最大 7 日前の履歴を流し込む経路で、渡し忘れると
-              // `applyQuakeNotice` が無条件に `recordSkippedTelegram(..., 'notDispatched')`
-              // を呼び、過去のお知らせが「いま届いた」電文としてログへ混入する。
-              // **この種別だけ記録を追加しない**（→ `applyQuakeNotice` のコメント・
-              // `docs/spec/recording-interface-spec.md` §4「唯一の例外」）。
-              // 例外時も記録しない方針を保つ（この種別は元から音・読み上げ・記録の
-              // 対象外と決めているため、失敗時だけ例外的に記録を足す理由が無い）。
-              case 'quakeNotice':
-                tryApplyExtra('お知らせ', p.data, data => applyQuakeNotice(data, true))
+              case 'quakeNotice': {
+                const applied = tryApplyExtra('お知らせ', p.data, applyQuakeNotice)
+                recordSkippedTelegram({ kind: 'quakeNotice', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
                 break
+              }
               // **推計震度分布図は地震ごとに持つ**ので、過去の地震の分布も入れてよい
               // （同じ地震の古い報では退行しない → `upsertEstimatedIntensity`）。音・読み上げは
               // 起こさない（`announce` 偽）——聞いていない分布を「伝えた」台帳にも積まない。
@@ -2605,9 +2596,12 @@ export function useEarthquakes(
             recordSkippedTelegram({ kind: 'kohatsu', data: kohatsu }, 'notApplied')
           }
         } else if (ev.kind === 'quakeNotice') {
-          // 運用連絡なので音も読み上げも起こさない（帯に出すだけ）。ここは常にライブなので
-          // `silent` は渡さない（従来どおり `notDispatched` で記録する）。
-          applyQuakeNotice(ev.data)
+          const notice = ev.data
+          if (applyQuakeNotice(notice)) {
+            onLiveEventRef.current?.({ kind: 'quakeNotice', data: notice })
+          } else {
+            recordSkippedTelegram({ kind: 'quakeNotice', data: notice }, 'notApplied')
+          }
         } else if (ev.kind === 'earthquakeCount') {
           const count = ev.data
           if (applyEarthquakeCount(count)) {
@@ -2928,8 +2922,7 @@ export function useEarthquakes(
         // 地震カードに紐づく情報で「もっと見る」が増やすカードの一部なので、従来どおり反映する。
         //
         // 反映しない種別でも、録画ログの原則（onLiveEvent を呼ぶかどうかに関わらず全件記録する）
-        // に従い、届いた事実は記録する。quakeNotice だけは起動時と同じ理由で記録しない
-        // （→ `applyQuakeNotice` のコメント・`docs/spec/recording-interface-spec.md` §4）。
+        // に従い、届いた事実は記録する（お知らせも他の帯と同じく記録する）。
         for (const lpgm of lpgmEvents) {
           recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmNotifiable(lpgm) ? 'silentReplayInit' : 'notDispatched')
         }
@@ -2957,9 +2950,9 @@ export function useEarthquakes(
             case 'earthquakeCount':
               recordSkippedTelegram({ kind: 'earthquakeCount', data: p.data }, 'notDispatched')
               break
-            // **記録しない**（起動時と同じ唯一の例外。→ `applyQuakeNotice` のコメント・
-            // `docs/spec/recording-interface-spec.md` §4「唯一の例外」）。
-            case 'quakeNotice': break
+            case 'quakeNotice':
+              recordSkippedTelegram({ kind: 'quakeNotice', data: p.data }, 'notDispatched')
+              break
             // **推計震度分布図は反映する**（帯と違い、長周期と同じく「もっと見る」が増やす
             // カードの一部）。地震ごとに持つので、古い日の分布が今の地震の分布を上書きすることは
             // ない（同じ地震の古い報でも退行しない → `upsertEstimatedIntensity`）。音・読み上げは
@@ -3611,13 +3604,17 @@ export function useEarthquakes(
     const { createTestQuakeNotice } = await loadTestData()
     // 受信と同じ関数を通す（理由は `simulateNankai` に同じ）。期限タイマーもそちらが張る。
     const notice = createTestQuakeNotice()
-    applyQuakeNotice(notice)
+    // **受信と同じく、帯へ反映できたら `onLiveEvent` へ流す。** 流さないと、音・読み上げ・パネルの展開が
+    // テストボタンでは一度も起きず、実機で確かめる入口が無くなる。
+    if (applyQuakeNotice(notice)) {
+      onLiveEventRef.current?.({ kind: 'quakeNotice', data: notice })
+    }
   }, [applyQuakeNotice])
 
   /**
    * 地震回数に関する情報のテスト。
    *
-   * **`onLiveEvent` へも流す。** 帯だけの VZSE40 と違い、こちらは通知音と読み上げを起こす
+   * **`onLiveEvent` へも流す。** 音の無い VZSE40（読み上げは設定で有効にしたときだけ）と違い、こちらは通知音と読み上げを起こす
    * （群発の総数は他のどの経路でも伝わらない）。実運用の分岐と同じところを踏ませる。
    */
   const simulateEarthquakeCount = useCallback(async () => {

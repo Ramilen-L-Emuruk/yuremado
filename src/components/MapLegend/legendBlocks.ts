@@ -29,6 +29,7 @@ import {
   MAGNITUDE_RAMP,
   TIME_RAMP,
   MAGNITUDE_RAMP_RANGE,
+  UNKNOWN_MAGNITUDE_HEX,
   depthRampT,
   jstYearOf,
   type CatalogColorBy,
@@ -81,7 +82,16 @@ export interface LegendTick {
 export type LegendSwatch =
   | { kind: 'scale'; cells: LegendCell[] }
   | { kind: 'chips'; chips: LegendChip[] }
-  | { kind: 'ramp'; stops: LegendStop[]; ticks: LegendTick[] }
+  | {
+      kind: 'ramp'
+      stops: LegendStop[]
+      ticks: LegendTick[]
+      /**
+       * 色帯の下に添える見本。色帯のどこにも無い色で描いたものを説明する
+       * （震源カタログの「M 不明」）。無ければ省く。
+       */
+      chips?: LegendChip[]
+    }
 
 export interface LegendBlock {
   key: LegendKey
@@ -145,6 +155,11 @@ export interface MapLegendSources {
    * 絞り込みで端まで点が残っていないことがあり、指定から目盛りを組むと色と食い違う。
    */
   catalogYearRange: { lo: number; hi: number } | null
+  /**
+   * 描いている点群に、M が決まっていない地震が 1 件でも入っているか（`CatalogPointCloud.unknownMagnitudeCount`）。
+   * マグニチュードで色を付けているときだけ、色帯の下に「M 不明」の見本を添える。
+   */
+  catalogUnknownMagnitude: boolean
 }
 
 /** 何も描いていない状態。テストと、地図がまだ出来ていないときの既定値に使う。 */
@@ -166,6 +181,7 @@ export const EMPTY_LEGEND_SOURCES: MapLegendSources = {
   primary: [],
   catalogColorBy: null,
   catalogYearRange: null,
+  catalogUnknownMagnitude: false,
 }
 
 /** 気象庁の震度階級（不明を除く）を階級値の昇順で。 */
@@ -241,8 +257,17 @@ function catalogBlock(sources: MapLegendSources): LegendBlock | null {
   switch (colorBy) {
     case 'depth':
       return { ...base, swatch: { kind: 'ramp', stops: rampStops(DEPTH_RAMP), ticks: depthTicks() } }
-    case 'magnitude':
-      return { ...base, swatch: { kind: 'ramp', stops: rampStops(MAGNITUDE_RAMP), ticks: magnitudeTicks() } }
+    case 'magnitude': {
+      // **M 不明の点が描かれているときだけ添える**（2026-10-18 ユーザー選択「灰色＋凡例「M 不明」」）。
+      // 色は点を塗る側と同じ定数から採る。
+      const chips: LegendChip[] | undefined = sources.catalogUnknownMagnitude
+        ? [{ label: 'M 不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' }]
+        : undefined
+      return {
+        ...base,
+        swatch: { kind: 'ramp', stops: rampStops(MAGNITUDE_RAMP), ticks: magnitudeTicks(), ...(chips ? { chips } : {}) },
+      }
+    }
     case 'time': {
       // **両端が判らなければ目盛りを出さない**（色の向きだけは伝わる）。点が 1 件も残って
       // いないときに `timeRange` が `null` で来る。

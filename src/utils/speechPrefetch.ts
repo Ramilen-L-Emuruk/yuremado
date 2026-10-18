@@ -3,7 +3,7 @@ import type { ReplayPayload } from '../types/replay'
 import {
   earthquakeToSegments, earthquakeCancelToText, tsunamiToSegments, tsunamiCancelToText,
   eewAlertToText, eewCancelToText, lpgmToText, nankaiToText, nankaiCommentaryToText,
-  kohatsuToText, earthquakeCountToText, estimatedIntensityToText, telegramTextToSpeak,
+  kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, telegramTextToSpeak,
   type TtsSpeechOptions,
 } from './ttsText'
 import { joinSegments } from './ttsFollow'
@@ -93,16 +93,17 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
       add(estimatedIntensityToText(payload.data.arrivalTime, false))
       break
     case 'quakeNotice':
-      // 地震・津波に関するお知らせは音も読み上げも起こさない（運用連絡）。
-      // → `docs/spec/data-sources-spec.md` §2「扱う電文種別」
+      // **読み上げを切っている端末（既定）でも焼く。** ここは種別ごとの読み上げ設定を受け取らない
+      // （南海トラフ関連解説情報の設定も同じく見ていない）。お知らせは数日に 1 通も無いので、
+      // 読まれない 1 通ぶんを焼くことの損失は小さい。
+      add(quakeNoticeToText(payload.data))
       break
   }
 
   // 気象庁が書いた文は最下位の層で別の発話として読まれる（→ audio-tts-spec.md §6）。
   // **本体とは別に焼くこと。** 1 つの文字列へ繋ぐと、実際に鳴るときのチャンクの割れ目が
   // 変わって控えが当たらない。
-  const liveEvent = toLiveEvent(payload)
-  if (liveEvent) add(telegramTextToSpeak(liveEvent, opts)?.text)
+  add(telegramTextToSpeak(toLiveEvent(payload), opts)?.text)
 
   return texts
 }
@@ -111,12 +112,9 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
  * キューの電文を、読み上げ側が受け取る形（{@link LiveEvent}）へ直す。
  *
  * **そのまま渡せない。** キューの型（`ReplayPayload`）と読み上げの型（`LiveEvent`）は
- * よく似ているが 2 か所違う —— 推計震度分布図は `isNew` を必須で持ち、お知らせ
- * （`quakeNotice`）は `LiveEvent` に含まれない（音も読み上げも起こさないため）。
- *
- * @returns 読み上げの対象にならない電文では null
+ * よく似ているが 1 か所違う —— 推計震度分布図は `isNew` を必須で持つ。
  */
-function toLiveEvent(payload: ReplayPayload): LiveEvent | null {
+function toLiveEvent(payload: ReplayPayload): LiveEvent {
   switch (payload.kind) {
     case 'event': return payload.event
     case 'lpgm':
@@ -124,10 +122,10 @@ function toLiveEvent(payload: ReplayPayload): LiveEvent | null {
     case 'nankaiCommentary':
     case 'kohatsu':
     case 'earthquakeCount':
+    case 'quakeNotice':
       return payload
     // 気象庁の文を引くだけなので `isNew` は結果に効かない（`telegramTextToSpeak` は見ない）。
     case 'estimatedIntensity': return { ...payload, isNew: true }
-    case 'quakeNotice': return null
   }
 }
 

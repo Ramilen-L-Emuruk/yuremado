@@ -47,6 +47,8 @@ interface Props {
   onViewChange: (next: CatalogViewOptions) => void
   /** いま地図に出ている点の数。 */
   pointCount: number
+  /** そのうち M が決まっていない地震の数（件数欄に内訳として出す）。 */
+  unknownMagnitudeCount: number
   loading: boolean
   /**
    * 絞り込みを変えた直後で、件数と点群がまだ追いついていないか。
@@ -149,6 +151,7 @@ export const CatalogTab = memo(function CatalogTab({
   view,
   onViewChange,
   pointCount,
+  unknownMagnitudeCount,
   loading,
   pending,
   error,
@@ -339,7 +342,11 @@ export const CatalogTab = memo(function CatalogTab({
                 : '地図に出ている点の数です'
           }
         >
-          <span className="text-white text-sm tabular-nums">{pointCount.toLocaleString()} 件</span>
+          <span className="text-white text-sm tabular-nums">
+            {pointCount.toLocaleString()} 件
+            {/* 2026-10-18 ユーザー選択「内訳を出す」。0 件なら括弧ごと出さない。 */}
+            {unknownMagnitudeCount > 0 && `（うち M 不明 ${unknownMagnitudeCount.toLocaleString()} 件）`}
+          </span>
           {(loading || pending) && (
             <span className="text-secondary text-xs">{loading ? '読み込み中' : '更新中'}</span>
           )}

@@ -333,11 +333,50 @@ describe('completeMinMagnitude', () => {
 describe('嘘の値が紛れ込む経路を塞ぐ', () => {
   // **`null / 10000` は例外にも NaN にもならず 0 になる。** 北緯 0 度・東経 0 度という
   // 「もっともらしい嘘」が地図に現れる。NaN なら下流で崩れて気づけるが、0 は気づけない。
-  it.each(['t', 'lat', 'lng', 'dep', 'mag'])('%s に null が混ざれば失敗する', async (key) => {
+  it.each(['t', 'lat', 'lng', 'dep'])('%s に null が混ざれば失敗する', async (key) => {
     const broken = { ...YEAR_2023, [key]: [null, 0] }
     vi.stubGlobal('fetch', vi.fn(async () => okResponse(broken)))
     const { loadHypocenterYear } = await freshModule()
     await expect(loadHypocenterYear(2023)).rejects.toThrow(new RegExp(key))
+  })
+
+  // 覆した振る舞い: 以前は mag の null も失敗させていた。M が決まっていない地震を収録するように
+  // したので（2026-10-14 ユーザー選択「全期間で収録する」）、mag の null だけは M 未決定として読む。
+  // **0 にしない** —— M0.0 という「もっともらしい嘘」になる。
+  it('mag の null は M 未決定として NaN で読む（以前は失敗させていた）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...YEAR_2023, mag: [null, 90] })))
+    const { loadHypocenterYear } = await freshModule()
+    const y = await loadHypocenterYear(2023)
+    expect(Number.isNaN(y.magnitude[0])).toBe(true)
+    expect(y.magnitude[1]).toBeCloseTo(9.0)
+  })
+
+  // 安全弁: null を許したのは M 未決定の印だけ。文字列や非有限値はいままでどおり失敗させる。
+  it.each([['45'], [Number.NaN], [Infinity]])('mag に %o が混ざれば失敗する', async (bad) => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...YEAR_2023, mag: [bad, 90] })))
+    const { loadHypocenterYear } = await freshModule()
+    await expect(loadHypocenterYear(2023)).rejects.toThrow(/mag/)
+  })
+
+  // 正: M の列だけが壊れた年を弾く。null を許したぶん、長さが揃っていれば全件 null でも
+  // 通ってしまい、灰色の点が増えるだけで誰も気づけない。
+  it('mag がすべて null の年は失敗する', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...YEAR_2023, mag: [null, null] })))
+    const { loadHypocenterYear } = await freshModule()
+    await expect(loadHypocenterYear(2023)).rejects.toThrow(/すべて null/)
+  })
+
+  it('M 未決定の数が年ファイルの申告と食い違えば失敗する', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...YEAR_2023, mag: [null, 90], unknownMagnitudeCount: 0 })))
+    const { loadHypocenterYear } = await freshModule()
+    await expect(loadHypocenterYear(2023)).rejects.toThrow(/申告/)
+  })
+
+  // 対照: 申告と列が合っていれば通る（申告の無い古い年ファイルも通る ―― 上の NaN のテスト）。
+  it('M 未決定の数が申告と合えば通る', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...YEAR_2023, mag: [null, 90], unknownMagnitudeCount: 1 })))
+    const { loadHypocenterYear } = await freshModule()
+    expect((await loadHypocenterYear(2023)).count).toBe(2)
   })
 
   it('列に文字列が混ざれば失敗する', async () => {
