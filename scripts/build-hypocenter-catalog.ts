@@ -25,11 +25,12 @@
 //   直近   https://www.data.jma.go.jp/eqev/data/daily_map/
 // 気象庁の公共データ利用規約（第 1.0 版）に基づき、加工して作成。
 
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { unzipSync } from 'fflate'
-import { parseHypocenterRecord, parseTrailingBlankDecimal } from './hypocenterRecord'
+import { parseHypocenterRecord, parseMagnitudeField, parseTrailingBlankDecimal } from './hypocenterRecord'
+import { isYearMagColumnValid, isZipCacheStale } from './hypocenterCacheRules'
 import { extractDailyHypocenterRows, parseDailyHypocenterLine } from './hypocenterDailyRecord'
 // 格納単位と「その単位で元データを表せるか」の検査はここが単一情報源。
 import { COORD_SCALE, DEPTH_SCALE, MAG_SCALE, TIME_SCALE, countUnrepresentable, findScaleMismatch } from './hypocenterScale'
@@ -60,6 +61,12 @@ const DAILY_LAG_DAYS = 2
 
 /** 日別ページの取得間隔 (ms)。966 日を一気に叩かないための間。 */
 const DAILY_FETCH_INTERVAL_MS = 120
+
+/**
+ * ZIP を取った後の間 (ms)。1 本が数 MB あり、全期間では 46 本を続けて取るため間を置く。
+ * 気象庁は上限を明記していないので、日別ページより長めに取った。
+ */
+const ZIP_FETCH_INTERVAL_MS = 1000
 
 /** 日別ページの取得を諦めるまでの試行回数。 */
 const DAILY_FETCH_ATTEMPTS = 3
@@ -213,14 +220,28 @@ const KNOWN: readonly {
     magnitude: 9.0,
   },
   {
+    // 2024 年は確定値が公開され（2026-10-18 の再生成で確認）、日別経路から年 ZIP へ入れ替わった。
+    // 期待値は速報値のまま置いてある（確定値の M7.6・深さ 15.86km は許容差の内）。
     year: 2024,
     label: '能登半島地震の本震',
-    path: '日別 震源リスト',
+    path: '年 ZIP（2024 年・速報値から入れ替わった年）',
     timeIso: '2024-01-01T07:10:22.500Z',
     lat: 37 + 29.7 / 60,
     lng: 137 + 16.2 / 60,
     depth: 16,
     magnitude: 7.6,
+  },
+  {
+    // **本震の 1.3 秒前に M 未決定の記録がある**（21:19:31.5・同じ日向灘）。照合が
+    // M 未決定の記録を候補から外していることも、この地震で確かめられる。
+    year: 2025,
+    label: '日向灘の地震（2025 年 1 月）',
+    path: '日別 震源リスト',
+    timeIso: '2025-01-13T12:19:32.800Z',
+    lat: 31 + 49.7 / 60,
+    lng: 131 + 34.2 / 60,
+    depth: 36,
+    magnitude: 6.6,
   },
 ]
 
@@ -304,8 +325,16 @@ interface YearCatalog {
   lng: number[]
   /** 深さ (km) × depthScale。 */
   dep: number[]
-  /** M × magScale。 */
-  mag: number[]
+  /**
+   * M × magScale。**M が決まっていない地震は `null`**（取得元の M 欄が空・`-`）。
+   *
+   * M の下限で絞るのは M が決まっている地震だけで、決まっていない地震は下限に関わらず収録する
+   * （2026-10-14 ユーザー選択「全期間で収録する」）。落とすと、震源は決まっているのに
+   * カタログから消える。
+   */
+  mag: (number | null)[]
+  /** `mag` が `null` の件数。索引にも年ごとに載せる。 */
+  unknownMagnitudeCount: number
   /**
    * 最大震度を持つ地震の添字。**疎に持つ** —— 有感は M2.0 以上の 11.9% しかないので、
    * 全件ぶんの列にすると 9 割が無駄になる。hasIntensity が false の年は空。
@@ -359,8 +388,45 @@ class NotPublishedError extends Error {}
 /** ZIP の中身をファイル名で覚える。まとめ ZIP は 1 ファイルで 32 年ぶんあるため、年ごとに取り直さない。 */
 const zipTextCache = new Map<string, string>()
 
-async function fetchZipText(file: string): Promise<string> {
-  const cached = zipTextCache.get(file)
+/** ZIP の置き場。日別ページと同じく Git 管理外。 */
+const ZIP_CACHE_DIR = join(CACHE_DIR, 'zip')
+
+/**
+ * 控えの ZIP を読む。無い・期限切れなら `null`（取りに行く）。
+ *
+ * **展開できない控えは捨てて `null` を返す。** 書き込みの途中で止まった控えが残ると、
+ * 取り直されないまま毎回失敗する。**無い以外の読み取りの失敗は投げる** —— 権限などの
+ * 障害を「無い」と読むと、黙って取り直し続ける。
+ */
+async function readZipCache(file: string): Promise<Uint8Array | null> {
+  const path = join(ZIP_CACHE_DIR, `h${file}.zip`)
+  let info
+  try {
+    info = await stat(path)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw e
+  }
+  if (isZipCacheStale(file, info.mtimeMs, Date.now())) return null
+  const bytes = new Uint8Array(await readFile(path))
+  try {
+    if (Object.keys(unzipSync(bytes)).length > 0) return bytes
+  } catch {
+    // 下で捨てる
+  }
+  console.warn(`  控えの h${file}.zip を展開できないので捨てて取り直します`)
+  await rm(path, { force: true })
+  return null
+}
+
+/**
+ * ZIP を取る。**一度取ったものはディスクに残して二度取らない**（直近の年だけは期限つき）。
+ *
+ * 全期間を作り直すと 46 本を取ることになる。読み方を変えて作り直すたびに取り直さないためのもの。
+ * **未公開（404）は残さない** —— 公開された日に取りに行けなくなる。
+ */
+async function fetchZipBytes(file: string): Promise<Uint8Array> {
+  const cached = await readZipCache(file)
   if (cached != null) return cached
   const url = `${ZIP_BASE}/h${file}.zip`
   const res = await fetch(url)
@@ -370,7 +436,24 @@ async function fetchZipText(file: string): Promise<string> {
     if (res.status === 404) throw new NotPublishedError(`${url}: 404（確定値は未公開）`)
     throw new Error(`${url}: ${res.status}`)
   }
-  const files = unzipSync(new Uint8Array(await res.arrayBuffer()))
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  // **展開できることを確かめてから残す。** 壊れた応答を残すと、取り直されないまま失敗し続ける。
+  const names = Object.keys(unzipSync(bytes))
+  if (names.length === 0) throw new Error(`${url}: ZIP が空です`)
+  await mkdir(ZIP_CACHE_DIR, { recursive: true })
+  // **一時名で書いてから置き換える。** 直接書くと、途中で止まったときに切れた控えが残る。
+  const path = join(ZIP_CACHE_DIR, `h${file}.zip`)
+  await writeFile(`${path}.tmp`, bytes)
+  await rename(`${path}.tmp`, path)
+  await sleep(ZIP_FETCH_INTERVAL_MS)
+  return bytes
+}
+
+async function fetchZipText(file: string): Promise<string> {
+  const cached = zipTextCache.get(file)
+  if (cached != null) return cached
+  const url = `${ZIP_BASE}/h${file}.zip`
+  const files = unzipSync(await fetchZipBytes(file))
   const names = Object.keys(files)
   if (names.length === 0) throw new Error(`${url}: ZIP が空です`)
   // **latin1 で読む。** 震央地名の欄が Shift-JIS で入りうるため、UTF-8 で読むと不正な
@@ -431,8 +514,11 @@ async function collectFromZip(year: number): Promise<Collected> {
       const r = parseHypocenterRecord(line)
       if (!r) {
         // **理由を分ける。** 深さ欄が読めないなら既知の変則（実測 90 件）。深さは読めるのに
-        // 落ちたなら、時刻か座標の形が変わったということ —— そちらは 1 件でも失敗させる。
-        if (parseTrailingBlankDecimal(line.slice(44, 49), 3) == null) out.unreadableDepth++
+        // 落ちたなら、時刻か座標か M 欄の形が変わったということ —— そちらは 1 件でも失敗させる。
+        // **M 欄を先に見る。** 深さの変則と重なった行を深さ側（許容の閾値つき）へ数えると、
+        // M 欄の書式変更が深さ欄の状態しだいで見逃される。
+        if (parseMagnitudeField(line.slice(52, 54)) === 'unreadable') out.unreadableOther++
+        else if (parseTrailingBlankDecimal(line.slice(44, 49), 3) == null) out.unreadableDepth++
         else out.unreadableOther++
         continue
       }
@@ -594,6 +680,7 @@ function buildYear(year: number, collected: Collected, minMagnitude: number): Ye
     lng: [],
     dep: [],
     mag: [],
+    unknownMagnitudeCount: 0,
     intIdx: [],
     intCode: [],
   }
@@ -602,7 +689,8 @@ function buildYear(year: number, collected: Collected, minMagnitude: number): Ye
   // 揃えておかないと読む側が二分探索できない。
   const sorted = [...collected.records].sort((a, b) => a.timeMs - b.timeMs)
   for (const r of sorted) {
-    if (r.magnitude == null || r.magnitude < minMagnitude) continue
+    // **M が決まっていない地震は下限で絞らずに残す**（理由は `YearCatalog.mag`）。
+    if (r.magnitude != null && r.magnitude < minMagnitude) continue
     const i = out.t.length
     // **ミリ秒の整数のまま掛けてから割る。** 先に秒へ直すと 2 進小数で表せない値を経由し、
     // 0.01 秒の刻みが 1 単位ずれることがある。
@@ -610,7 +698,12 @@ function buildYear(year: number, collected: Collected, minMagnitude: number): Ye
     out.lat.push(Math.round(r.lat * COORD_SCALE))
     out.lng.push(Math.round(r.lng * COORD_SCALE))
     out.dep.push(Math.round(r.depth * DEPTH_SCALE))
-    out.mag.push(Math.round(r.magnitude * MAG_SCALE))
+    if (r.magnitude == null) {
+      out.mag.push(null)
+      out.unknownMagnitudeCount++
+    } else {
+      out.mag.push(Math.round(r.magnitude * MAG_SCALE))
+    }
     if (r.intensity != null) {
       out.intIdx.push(i)
       out.intCode.push(r.intensity)
@@ -661,6 +754,9 @@ function verifyKnown(cat: YearCatalog, source: string): void {
   let best = -1
   let bestDiff = Infinity
   for (let i = 0; i < cat.count; i++) {
+    // **M が決まっていない記録は候補にしない。** 既知の地震はどれも M を持つので、
+    // 本震の直後に M 未決定の記録が並ぶと、そちらを最も近いものとして掴んでしまう。
+    if (cat.mag[i] == null) continue
     const diff = Math.abs(cat.startMs + (cat.t[i] * 1000) / TIME_SCALE - wantMs)
     if (diff < bestDiff) {
       bestDiff = diff
@@ -674,7 +770,8 @@ function verifyKnown(cat: YearCatalog, source: string): void {
     lat: cat.lat[best] / COORD_SCALE,
     lng: cat.lng[best] / COORD_SCALE,
     depth: cat.dep[best] / DEPTH_SCALE,
-    magnitude: cat.mag[best] / MAG_SCALE,
+    // 上の探索で M が決まっている記録だけを選んでいる。
+    magnitude: (cat.mag[best] as number) / MAG_SCALE,
   }
   // 許容差は「カラムがずれたら必ず超える」幅に取る。位置が 1 列ずれれば桁ごと変わるので、
   // 速報値と確定値の差（M で 0.1 程度）を通しても検知力は落ちない。
@@ -700,6 +797,7 @@ function verifyKnown(cat: YearCatalog, source: string): void {
 /** 年ファイルから索引に載せる項目だけを読む。索引が壊れた状態から作り直せるようにするため。 */
 interface YearSummary {
   count: number
+  unknownMagnitudeCount: number
   quality: Quality
   hasIntensity: boolean
   coveredThroughMs: number
@@ -709,7 +807,18 @@ async function readYearSummary(year: number): Promise<YearSummary | null> {
   try {
     const raw = await readFile(join(OUT_DIR, `${year}.json`), 'utf-8')
     const parsed = JSON.parse(raw) as Partial<YearCatalog>
-    if (typeof parsed.count !== 'number') return null
+    if (typeof parsed.count !== 'number') {
+      console.error(`  ${year}.json に件数（count）がありません。全年の再生成が必要です`)
+      return null
+    }
+    // **M の列の形を確かめる。** 列が無い・長さが件数と違う・null と有限数以外が混ざる年を
+    // そのまま載せると、索引の M 未決定の件数が実態とずれたまま公開される（読み取り側は
+    // 年を開いた時点で失敗するが、索引だけでは気づけない）。
+    const mag: unknown = parsed.mag
+    if (!isYearMagColumnValid(mag, parsed.count)) {
+      console.error(`  ${year}.json の M の列（mag）が件数と合わないか、読めない値を含みます。全年の再生成が必要です`)
+      return null
+    }
     // **格納単位が今の定数と違う年ファイルは弾く。** 単位を変えた後に範囲を絞って生成すると
     // （週次更新は `--from 2024`）、作り直さなかった年が古い単位で残る。**読み取り側は年ファイル
     // 自身の単位を信じて読むので、混在していても何も言わずに粗い精度で読む** —— この変更自体が
@@ -721,12 +830,19 @@ async function readYearSummary(year: number): Promise<YearSummary | null> {
     }
     return {
       count: parsed.count,
+      // **欄ではなく列から数える。** 欄を持たない古い年ファイル（M 未決定を落としていた頃のもの）も
+      // そのまま正しい値（0）になる。
+      unknownMagnitudeCount: (mag as (number | null)[]).filter((m) => m === null).length,
       quality: parsed.quality === 'preliminary' ? 'preliminary' : 'final',
       hasIntensity: parsed.hasIntensity === true,
       coveredThroughMs:
         typeof parsed.coveredThroughMs === 'number' ? parsed.coveredThroughMs : yearStart(year + 1),
     }
-  } catch {
+  } catch (e) {
+    // 無いのは「この年を作っていない」だけ。それ以外（JSON の破損など）は理由を出す。
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error(`  ${year}.json を読めません: ${e instanceof Error ? e.message : String(e)}`)
+    }
     return null
   }
 }
@@ -785,7 +901,7 @@ async function main(): Promise<void> {
     totalUnreadableDepth += collected.unreadableDepth
     totalKindJ += collected.kindJ
     const cat = buildYear(year, collected, minMagnitude)
-    console.log(`${cat.count} 件`)
+    console.log(`${cat.count} 件（うち M 未決定 ${cat.unknownMagnitudeCount} 件）`)
     // 検知した異常はここで失敗理由へ積む（buildYear が既に画面へ出している）。
     const depthRatio = collected.kindJ > 0 ? collected.unreadableDepth / collected.kindJ : 0
     if (depthRatio > UNREADABLE_DEPTH_WARN_RATIO) {
@@ -805,10 +921,12 @@ async function main(): Promise<void> {
         + ' ← 上流の刻みが細かくなった可能性。hypocenterScale.ts の格納単位を見直すこと',
       )
     }
-    // **1 件も採れなかった年は異常。** M 欄だけが壊れると震源 3 要素は読めるため
-    // 「読めない行」は増えず、件数 0 という形でしか現れない。
-    if (cat.count === 0 && collected.kindJ > 0) {
-      failures.push(`${year} 年: J レコードは ${collected.kindJ} 件あるのに 1 件も採れませんでした`)
+    // **M の決まった地震が 1 件も採れなかった年は異常。** M 欄だけが壊れると震源 3 要素は
+    // 読めるため「読めない行」は増えない。M 未決定も収録するので件数 0 にもならず、
+    // 「全件が M 未決定」という形で現れる —— 全体の件数ではなく M の決まった件数で見る。
+    const knownCount = cat.count - cat.unknownMagnitudeCount
+    if (knownCount === 0 && collected.kindJ > 0) {
+      failures.push(`${year} 年: J レコードは ${collected.kindJ} 件あるのに M の決まった地震を 1 件も採れませんでした`)
     }
     const known = KNOWN.find((k) => k.year === year)
     if (known) {
@@ -818,6 +936,7 @@ async function main(): Promise<void> {
     await writeFile(join(OUT_DIR, `${year}.json`), JSON.stringify(cat), 'utf-8')
     built.set(year, {
       count: cat.count,
+      unknownMagnitudeCount: cat.unknownMagnitudeCount,
       quality: cat.quality,
       hasIntensity: cat.hasIntensity,
       coveredThroughMs: cat.coveredThroughMs,
@@ -832,6 +951,7 @@ async function main(): Promise<void> {
     .sort((a, b) => a - b)
 
   const counts: Record<string, number> = {}
+  const unknownMagnitudeCounts: Record<string, number> = {}
   const quality: Record<string, Quality> = {}
   const intensityYears: number[] = []
   let coveredThroughMs = 0
@@ -848,6 +968,7 @@ async function main(): Promise<void> {
       console.log(`  索引を ${year} 年のファイルから復元しました（${summary.count} 件）`)
     }
     counts[String(year)] = summary.count
+    unknownMagnitudeCounts[String(year)] = summary.unknownMagnitudeCount
     quality[String(year)] = summary.quality
     if (summary.hasIntensity) intensityYears.push(year)
     coveredThroughMs = Math.max(coveredThroughMs, summary.coveredThroughMs)
@@ -873,7 +994,9 @@ async function main(): Promise<void> {
       coveredThroughMs,
       completeness: COMPLETENESS,
       years,
+      // 年ごとの件数。**M 未決定の地震も含む**（内訳は `unknownMagnitudeCounts`）。
       counts,
+      unknownMagnitudeCounts,
       quality,
       intensityYears,
     }),
@@ -881,7 +1004,8 @@ async function main(): Promise<void> {
   )
 
   const total = years.reduce((sum, y) => sum + counts[String(y)], 0)
-  console.log(`\n合計 ${total} 件 / ${years.length} 年ぶんを ${OUT_DIR} へ出力しました`)
+  const totalUnknown = years.reduce((sum, y) => sum + unknownMagnitudeCounts[String(y)], 0)
+  console.log(`\n合計 ${total} 件（うち M 未決定 ${totalUnknown} 件） / ${years.length} 年ぶんを ${OUT_DIR} へ出力しました`)
   console.log(`データの終端: ${new Date(coveredThroughMs).toISOString()}`)
   // 照合を通していないことを黙って済ませない。範囲を絞って生成したものを「照合済み」と
   // 思い込むのを防ぐため、経路ごとに言う。

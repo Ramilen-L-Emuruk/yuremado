@@ -101,6 +101,20 @@ describe('validateHistoricalArchiveFile', () => {
     expect(result?.skipped).toBe(5)
   })
 
+  it('お知らせ・地震回数・推計震度分布図の payload も通す（実地震シナリオと同じ種別一覧を使う）', () => {
+    const raw = {
+      ...meta,
+      entries: [
+        { time: '2011-03-11T05:47:00Z', payload: { kind: 'quakeNotice', data: {} } },
+        { time: '2011-03-11T05:48:00Z', payload: { kind: 'earthquakeCount', data: {} } },
+        { time: '2011-03-11T05:49:00Z', payload: { kind: 'estimatedIntensity', data: {} } },
+      ],
+    }
+    const result = validateHistoricalArchiveFile(raw)
+    expect(result?.file.entries).toHaveLength(3)
+    expect(result?.skipped).toBe(0)
+  })
+
   it('null / 非オブジェクトは null', () => {
     expect(validateHistoricalArchiveFile(null)).toBeNull()
     expect(validateHistoricalArchiveFile('string')).toBeNull()

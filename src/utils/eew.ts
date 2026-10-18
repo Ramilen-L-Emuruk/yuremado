@@ -589,15 +589,28 @@ export const DEEP_QUAKE_DEPTH_KM = 150
  *   載り、`eewMaxScale` が拾うのでここへ来ない）。表示・読み上げが「単独点処理のため」と言えるのは
  *   この対応があるからで、`condition` そのものは観測点数を意味しない
  * - `deep` … 深発地震（深さ `DEEP_QUAKE_DEPTH_KM` km 超）
+ * - `singleStation` … 待ち（`EEW_PHASE2_MAX_WAIT_MS`）を終えても値が付かず、震央の精度ランク
+ *   （`accuracy.epicenterRank`）が 1 の報。**`waited` が真のときしか返さない**（下記）
  * - `unknown` … 上記以外。**この理由だけは値が遅れて付く可能性が残る**ため、待つ意味があるのはここだけ
+ *
+ * **精度ランク 1 は「観測点 1 点」だけを指す区分ではない。** 解説資料の定義は「P 波／S 波レベル超え、
+ * IPF 法（1 点）、または仮定震源要素」で、実電文では値を持たないランク 1 の通常の報 12 通のうち
+ * 7 通が 0〜6 秒後の続報で値を持った。だから見た時点では理由に使わず、待っても値が付かなかった
+ * ときに限って「単独点処理のため」と言う（2026-10-14 ユーザー承認「待ち終えてから理由を言う（推奨）」、
+ * 文面は 2026-10-15 ユーザー承認「単独点処理のため(推奨)」）。
+ *
+ * `waited` … その緊急地震速報について、値の付かない待ちが切れたか。**待つかどうかを決める側は
+ * 偽を渡すこと** —— 真を渡すとランク 1 の報が待たずに確定し、数秒後に付く値を取りこぼす。
  *
  * 予想震度がある EEW への呼び出しは想定しない（呼び出し側が `eewMaxScale` を先に見る）。
  */
-export function eewNoForecastReason(eew: EEWAlert): 'assumed' | 'deep' | 'unknown' {
+export type EewNoForecastReason = 'assumed' | 'deep' | 'singleStation' | 'unknown'
+export function eewNoForecastReason(eew: EEWAlert, waited: boolean): EewNoForecastReason {
   if (eew.earthquake.condition === '仮定震源要素') return 'assumed'
   // **深さが判らない報（センチネル `-1`）は比較が偽になり `unknown` へ落ちる。これは意図どおり。**
   // 深さを読めていない以上「深発地震のため」とは断定できず、値が遅れて付く可能性も残る。
   if (eew.earthquake.hypocenter.depth > DEEP_QUAKE_DEPTH_KM) return 'deep'
+  if (waited && eew.accuracy?.epicenterRank === 1) return 'singleStation'
   return 'unknown'
 }
 

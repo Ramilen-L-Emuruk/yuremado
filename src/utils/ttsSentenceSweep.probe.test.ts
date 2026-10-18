@@ -270,7 +270,7 @@ function sweepEew(): void {
     push('EEW', '切り出し', k, eewAlertToText(eew(), k))
   }
   for (const s of SCALES) for (const orAbove of [false, true]) {
-    push('EEW', '予想最大震度', `${s}/${orAbove}`, eewScaleOnlyText({ scale: s, orAbove }, eew()))
+    push('EEW', '予想最大震度', `${s}/${orAbove}`, eewScaleOnlyText({ scale: s, orAbove }, eew(), false))
   }
   for (const c of [1, 2, 3, 4]) for (const over of [false, true]) {
     push('EEW', '予想最大階級', `${c}/${over}`, eewLpgmOnlyText(c, over))
@@ -278,12 +278,12 @@ function sweepEew(): void {
   for (const s of SCALES) for (const orAbove of [false, true]) {
     for (const c of [0, 1, 2, 3, 4]) for (const over of [false, true]) for (const up of [false, true]) {
       push('EEW', '震度×階級×格上げ', `${s}/${orAbove}/${c}/${over}/${up}`,
-        eewIntensityText({ scale: s, orAbove }, c, eew({ forecastMaxScale: s }), up, over, OPTS))
+        eewIntensityText({ scale: s, orAbove }, c, eew({ forecastMaxScale: s }), false, up, over, OPTS))
     }
   }
   // 予想震度が付かない 3 通り（単独点処理・深発・理由不明）
-  push('EEW', '予想震度なし', 'deep', eewScaleOnlyText({ scale: 0, orAbove: false }, eew({ depth: 400 })))
-  push('EEW', '予想震度なし', 'unknown', eewScaleOnlyText({ scale: 0, orAbove: false }, eew({ depth: 24 })))
+  push('EEW', '予想震度なし', 'deep', eewScaleOnlyText({ scale: 0, orAbove: false }, eew({ depth: 400 }), false))
+  push('EEW', '予想震度なし', 'unknown', eewScaleOnlyText({ scale: 0, orAbove: false }, eew({ depth: 24 }), false))
   for (let n = 1; n <= CHIHOU.length; n += 1) {
     for (const additional of [false, true]) for (const up of [false, true]) {
       push('EEW', '警報の対象地方', `${n}/${additional}/${up}`,

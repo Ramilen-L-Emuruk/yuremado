@@ -170,7 +170,7 @@ export function SpecialInfoBanner({
         {/* お知らせ（運用連絡）は最後。上の 4 枚は「いま起きている・起こりうる地震」の話で、
             こちらは観測点の入電停止・配信試験といった裏方の連絡。同時に出たときに
             事象の話を先に読ませる。 */}
-        {quakeNotice && <NoticeBanner notice={quakeNotice} />}
+        {quakeNotice && <NoticeBanner notice={quakeNotice} speaking={speaking('quakeNotice')} />}
       </div>
     </div>
   )
@@ -417,8 +417,9 @@ function CommentaryBanner({ commentary, speaking }: { commentary: JMANankaiComme
 //
 // 有効期限（発表から 7 日）は出さない。解説情報と同じく帯を常駐させないための表示上の都合で、
 // 気象庁が定めた期限ではない。
-function NoticeBanner({ notice }: { notice: JMAQuakeNotice }) {
-  const [open, setOpen] = useState(false)
+function NoticeBanner({ notice, speaking }: { notice: JMAQuakeNotice; speaking: boolean }) {
+  // 本文を読み上げている間は開く（他の帯と同じ。読み上げは設定で有効にしたときだけ）
+  const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'quakeNotice')
   const [dismissedId, setDismissedId] = useState<string | null>(() => {
     try {
       return localStorage.getItem(NOTICE_DISMISSED_KEY)

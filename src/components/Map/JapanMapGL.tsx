@@ -572,6 +572,7 @@ export function JapanMapGL({
     primary: LEGEND_PRIMARY_BY_MODE[mode],
     catalogColorBy: mode === 'catalog' && catalogCloud && catalogCloud.columns.count > 0 ? catalogColorBy : null,
     catalogYearRange: catalogCloud?.timeRange ?? null,
+    catalogUnknownMagnitude: mode === 'catalog' && (catalogCloud?.unknownMagnitudeCount ?? 0) > 0,
   }
   // **中身が変わったときだけ知らせる。** この関数は強震モニタの毎秒更新で呼び直されるので、
   // 素直に依存へ置くと毎秒通知が飛ぶ。小さなオブジェクトなので文字列にして比べる。

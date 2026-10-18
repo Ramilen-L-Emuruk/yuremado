@@ -62,6 +62,7 @@ const isLit = (el: HTMLElement) => el.style.boxShadow.includes('7px')
 const renderTab = (eews: EEWAlert[], speakingEewKey?: string | null) =>
   render(
     <RealtimeTab
+      eewNoForecastSettledKeys={new Set()}
       eews={eews}
       swaveArrival={null}
       kyoshinV2Detections={[]}
@@ -115,6 +116,7 @@ describe('いま声が語っているカードの印', () => {
   it('見えていないときは寄せない', () => {
     render(
       <RealtimeTab
+        eewNoForecastSettledKeys={new Set()}
         eews={[makeEEW('evt-A', '宮城県沖')]}
         swaveArrival={null}
         kyoshinV2Detections={[]}

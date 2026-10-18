@@ -814,7 +814,7 @@ export function App() {
   const { speakingKey: speakingQuakeKey, follow: quakeSpeakingCard } = useEewSpeakingCard()
 
   // ライブイベント受信処理（通知音・タイトル・タブ切替・読み上げ・ブラウザ通知）
-  const { handleLiveEvent, resetTracking, restorePreWindowTracking, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict } = useLiveEventHandler({
+  const { handleLiveEvent, resetTracking, restorePreWindowTracking, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict, eewNoForecastSettledKeys } = useLiveEventHandler({
     settings, title, earthquakesRef, tsunamisRef, kyoshinDetectedRef, defaultTabRef,
     setActiveTabNonRealtime, setActiveTabRealtimeOnUpdate, setActiveTabRealtimeUrgent,
     setActiveTabRealtimeForKyoshin: () => requestTabForKyoshin('realtime'),
@@ -868,7 +868,7 @@ export function App() {
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
-    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWRetraction,
+    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateEstimatedIntensity,
@@ -928,6 +928,7 @@ export function App() {
     eewAssumed:        simulateEEWAssumed,
     eewStrongShaking:  simulateEEWStrongShaking,
     eewDeep:           simulateEEWDeep,
+    eewNoForecast:     simulateEEWNoForecast,
     eewRetraction:     simulateEEWRetraction,
     tsunami:           simulateTsunami,
     tsunamiWarning:    simulateTsunamiWarning,
@@ -970,7 +971,7 @@ export function App() {
     },
   }), [
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
-    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWRetraction,
+    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateEstimatedIntensity,
@@ -2024,7 +2025,10 @@ export function App() {
   // useActionChecklist）。観測点座標は他の利用箇所と同じキャッシュを共有するため、ここで
   // 呼んでも追加の取得は起きない。
   const stationCoordsForChecklist = useStationCoords()
-  const eewListForChecklist = useMemo(() => [...activeEEWsNoCancelled.values()], [activeEEWsNoCancelled])
+  // **チェックリストには取消を当てた直後の EEW も渡す。** 出している帯の元が取り消されたことを
+  // 知る手段がこれしか無い（判定からは向こうで外す。理由は useActionChecklist の `eews`）。
+  const eewListForChecklist = useMemo(() => [...activeEEWs.values()], [activeEEWs])
+  const eewListNoCancelled = useMemo(() => [...activeEEWsNoCancelled.values()], [activeEEWsNoCancelled])
   // ホーム地点の周り（半径 30km）。**行動チェックリストと自作地震計の波形が同じものを見る**
   // ので、ここで 1 つだけ作って両方へ渡す（→ hooks/useNearbyScope.ts）。
   const nearbyScope = useNearbyScope({
@@ -2310,7 +2314,7 @@ export function App() {
   const showSeismoWave = useSeismoWaveVisibility({
     mode: replayTimeOffset === null ? settings.seismoWave : 'off',
     scope: nearbyScope,
-    eews: eewListForChecklist,
+    eews: eewListNoCancelled,
     detectedPoints: kyoshinView.detectedPoints,
     stations: seismo.stations,
   })
@@ -2501,7 +2505,7 @@ export function App() {
                   <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} />
                 </div>
               )}
-              <SpecialInfoBanner nankai={nankai} nankaiCommentary={nankaiCommentary} kohatsu={kohatsu} quakeNotice={quakeNotice} earthquakeCount={earthquakeCount} speakingTelegramTextSubject={speakingTelegramTextSubject}
+              <SpecialInfoBanner nankai={nankai} nankaiCommentary={nankaiCommentary} kohatsu={kohatsu} quakeNotice={settings.quakeNoticeBanner ? quakeNotice : null} earthquakeCount={earthquakeCount} speakingTelegramTextSubject={speakingTelegramTextSubject}
                 // 地図の下に波形が出ていると、帯は画面の下端に届かない（下端の余白を付けない）
                 atScreenBottom={!waveChartDrawn}
               />
@@ -2587,6 +2591,7 @@ export function App() {
                 swaveArrival={swaveArrival}
                 visible={activeTab === 'realtime' && !panelCollapsed}
                 speakingEewKey={speakingEewKey}
+                eewNoForecastSettledKeys={eewNoForecastSettledKeys}
                 activeLpgmEventId={activeLpgmEventId}
                 onToggleLpgm={toggleLpgmFromEew}
                 onDeactivateLpgm={deactivateLpgm}
@@ -2626,6 +2631,7 @@ export function App() {
                 view={catalogView}
                 onViewChange={setCatalogView}
                 pointCount={catalogCloud?.columns.count ?? 0}
+                unknownMagnitudeCount={catalogCloud?.unknownMagnitudeCount ?? 0}
                 loading={catalog.loading}
                 /* 絞り込みを変えた直後は件数が追いついていない（デバウンスした側で作るため）。
                    参照が同じなら落ち着いている（`useDebouncedValue` は同じ値なら同じ参照を返す）。 */
