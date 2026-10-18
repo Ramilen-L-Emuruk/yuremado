@@ -19,6 +19,8 @@ import {
   type LiveTimeline,
 } from './liveLanes'
 import { PUBLIC_WAVE_UNIT, SEISMO_WAVE_UNIT } from './waveUnit'
+import { SharedLaneScales, type LaneScales } from './sharedScale'
+import { compressedVertical, LINEAR_VERTICAL } from './verticalMap'
 import { paintCompositeColumnsAt, paintMarks, paintWaveColumnsAt } from './paintWave'
 import { buildWaveColumns } from './waveColumns'
 
@@ -59,7 +61,7 @@ function allHaveValues(lines: readonly { values: ArrayLike<number> }[] | undefin
 
 function run(lanes: readonly Lane[], expanded: boolean) {
   const win = windowOf()
-  return drawLanes({ targets: targetsFor(lanes), lanes, expanded, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT })
+  return drawLanes({ targets: targetsFor(lanes), lanes, expanded, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT, sharing: null })
 }
 
 beforeEach(() => {
@@ -294,6 +296,7 @@ describe('地図の下端の P/S 線は、まだ来ていない時刻を描か�
       arrival: { pMs: nowMs - 1_000, sMs: nowMs + 5_000 },
       timeline,
       unit: SEISMO_WAVE_UNIT,
+      sharing: null,
     })
     for (const marks of [composite.mock.calls[0][4]?.marks, overlay.mock.calls[0][4]?.marks]) {
       expect((marks ?? []).length).toBe(1)
@@ -308,7 +311,7 @@ describe('drawLanes の右端', () => {
     composite.mockImplementation((_c, _z, b) => (b(100), '0〜1.00 gal'))
     const win = windowOf()
     const timeline = timelineAtLastSample(win)
-    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrival: null, timeline, unit: SEISMO_WAVE_UNIT })
+    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrival: null, timeline, unit: SEISMO_WAVE_UNIT, sharing: null })
     expect(build).toHaveBeenCalled()
     const args = build.mock.calls[0][0]
     expect(args.rightEdge).toBe(timeline.nowMs + timeline.leadMs)
@@ -344,7 +347,7 @@ describe('drawLanes の単位', () => {
   // 正: 公開観測点は速度の単位と、その物差しの下限で描く（gal の下限を当てない）。
   it('公開観測点は μm/s と公開観測点の下限で描く', () => {
     const win = windowOf()
-    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT })
+    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT, sharing: null })
     const opts = composite.mock.calls[0][4]
     expect(opts.unit).toBe('μm/s')
     expect(opts.minScale).toBeCloseTo(PUBLIC_WAVE_UNIT.minScale('card', 0.2))
@@ -353,7 +356,7 @@ describe('drawLanes の単位', () => {
   // 対照: 自作地震計は gal のまま。
   it('自作地震計は gal で描く', () => {
     const win = windowOf()
-    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT })
+    drawLanes({ targets: targetsFor([{ kind: 'composite' }]), lanes: [{ kind: 'composite' }], expanded: false, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: SEISMO_WAVE_UNIT, sharing: null })
     expect(composite.mock.calls[0][4].unit).toBe('gal')
   })
 
@@ -361,5 +364,150 @@ describe('drawLanes の単位', () => {
   it('測れないときの値を単位ごとに持つ', () => {
     expect(PUBLIC_WAVE_UNIT.minScale('card', null)).not.toBe(SEISMO_WAVE_UNIT.minScale('card', null))
     expect(PUBLIC_WAVE_UNIT.minScale('detail', 0)).toBeGreaterThan(0)
+  })
+})
+
+// 公開観測点の段は縦の範囲を全段で揃える（2026-10-19 ユーザー選択「線形で始めて測る (Recommended)」）。
+// drawLanes は「揃える範囲」を受け取って描き、「揃える前の自分の範囲」を返す。
+describe('drawLanes の縦の範囲を揃える', () => {
+  function runShared(lanes: readonly Lane[], expanded: boolean, shared: LaneScales | null) {
+    const win = windowOf()
+    return drawLanes({ targets: targetsFor(lanes), lanes, expanded, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT, sharing: { shared } })
+  }
+
+  // 正: 他の観測点の範囲が自分より大きければ、そちらで描く（合成は下限として、3 成分は縦の範囲として渡る）。
+  it('揃える範囲が大きければ、合成も 3 成分もその範囲で描く', () => {
+    let signedScale = NaN
+    composite.mockReturnValue('0〜500 μm/s')
+    overlay.mockImplementation((_c, _z, b) => ((signedScale = b(50)?.scaleGal ?? NaN), '±400 μm/s'))
+    runShared([{ kind: 'composite' }, { kind: 'axis', axis: 0 }], true, { signed: 400, magnitude: 500, floor: 1 })
+    expect(composite.mock.calls[0][4].minScale).toBe(500)
+    expect(signedScale).toBe(400)
+  })
+
+  // 対照: 揃える範囲が自分より小さければ、自分の範囲のまま（小さい側へ縮めない）。
+  it('揃える範囲が小さければ自分の範囲で描く', () => {
+    let signedScale = NaN
+    composite.mockReturnValue('0〜1 μm/s')
+    overlay.mockImplementation((_c, _z, b) => ((signedScale = b(50)?.scaleGal ?? NaN), '±1 μm/s'))
+    runShared([{ kind: 'composite' }, { kind: 'axis', axis: 0 }], true, { signed: 1e-6, magnitude: 1e-6, floor: 1e-6 })
+    expect(composite.mock.calls[0][4].minScale).toBeCloseTo(PUBLIC_WAVE_UNIT.minScale('detail', 0.2))
+    // 窓の振れは ±1（sin）なので、下限 1.5 × 0.2 = 0.3 より大きい 1 前後になる。
+    expect(signedScale).toBeGreaterThan(0.9)
+    expect(signedScale).toBeLessThanOrEqual(1)
+  })
+
+  // 安全弁: 返す自分の範囲は揃える前の値（揃えた値を返すと、一度大きく揃えた範囲が自分を縛り続けて下がらない）。
+  it('返す自分の範囲は揃える前の値', () => {
+    composite.mockImplementation((_c, _z, b) => (b(50), '0〜500 μm/s'))
+    overlay.mockReturnValue('±400 μm/s')
+    const { ownScale } = runShared([{ kind: 'composite' }, { kind: 'axis', axis: 0 }], true, { signed: 400, magnitude: 500, floor: 1 })
+    expect(ownScale).not.toBeNull()
+    expect(ownScale!.signed).toBeLessThanOrEqual(1)
+    expect(ownScale!.magnitude).toBeLessThan(2)
+  })
+
+  // 安全弁: 揃えない段（自作地震計）は今までどおり自分の下限だけで描く。
+  it('揃えない段は自分の下限で描く', () => {
+    composite.mockReturnValue('0〜1.00 gal')
+    run([{ kind: 'composite' }], false)
+    expect(composite.mock.calls[0][4].minScale).toBeCloseTo(quietScaledGal('card', 0.2))
+  })
+
+  // 安全弁: 列を 1 つも組まなかった（描く段が無い・窓が空）なら、自分の範囲は返さない（古い値で他の段を縛らない）。
+  it('列を組まなければ自分の範囲は null', () => {
+    composite.mockReturnValue(null)
+    overlay.mockReturnValue(null)
+    expect(runShared([{ kind: 'composite' }], false, null).ownScale).toBeNull()
+  })
+})
+
+describe('SharedLaneScales', () => {
+  // 正: 全員の最大を、3 成分と合成で別々に取る。
+  it('3 成分と合成の最大を別々に取る', () => {
+    const s = new SharedLaneScales()
+    s.publish('a', { signed: 10, magnitude: 3, floor: 1 })
+    s.publish('b', { signed: 2, magnitude: 30, floor: 2 })
+    expect(s.shared()).toEqual({ signed: 10, magnitude: 30, floor: 2 })
+  })
+
+  // 対照: 誰も書いていなければ揃える相手はいない。
+  it('誰も書いていなければ null', () => {
+    expect(new SharedLaneScales().shared()).toBeNull()
+  })
+
+  // 安全弁: 外した段・null を書いた段は最大に残らない。数でない値は材料にしない。
+  it('外した段と数でない値は最大に入れない', () => {
+    const s = new SharedLaneScales()
+    s.publish('a', { signed: 100, magnitude: 100, floor: 50 })
+    s.publish('b', { signed: 5, magnitude: 6, floor: 1 })
+    s.publish('c', { signed: Infinity, magnitude: NaN, floor: Infinity })
+    s.remove('a')
+    expect(s.shared()).toEqual({ signed: 5, magnitude: 6, floor: 1 })
+    s.publish('b', null)
+    expect(s.shared()).toBeNull()
+  })
+})
+
+// 縦の圧縮（2026-10-19 ユーザー選択「縦を圧縮する (Recommended)」）。揃える段（公開観測点）だけ曲線で描く。
+describe('drawLanes の縦の圧縮', () => {
+  function runShared(lanes: readonly Lane[], shared: LaneScales | null) {
+    const win = windowOf()
+    return drawLanes({ targets: targetsFor(lanes), lanes, expanded: false, win, stale: false, quietLevel: 0.2, arrival: null, timeline: timelineAtLastSample(win), unit: PUBLIC_WAVE_UNIT, sharing: { shared } })
+  }
+
+  // 正: 揃える段は曲線で描き、小さい値が線形より高く出る（遠い観測点が埋もれない）。
+  it('揃える段は曲線で描く', () => {
+    composite.mockReturnValue('0〜500 μm/s')
+    runShared([{ kind: 'composite' }], { signed: 400, magnitude: 500, floor: 1 })
+    const v = composite.mock.calls[0][4].vertical
+    expect(v(5, 500)).toBeGreaterThan((5 / 500) * 10)
+    expect(v(500, 500)).toBeCloseTo(1)
+  })
+
+  // 対照: 揃えない段（自作地震計）は線形のまま。
+  it('揃えない段は線形', () => {
+    composite.mockReturnValue('0〜1.00 gal')
+    run([{ kind: 'composite' }], false)
+    expect(composite.mock.calls[0][4].vertical).toBe(LINEAR_VERTICAL)
+  })
+
+  // 安全弁: 畳んだ合成が描けず 3 成分へ戻した絵も、揃えた範囲で描く（戻した先だけ観測点ごとの範囲にならない）。
+  it('合成から 3 成分へ戻した絵も揃えた範囲で描く', () => {
+    let signedScale = NaN
+    composite.mockReturnValue(null)
+    overlay.mockImplementation((_c, _z, b) => ((signedScale = b(50)?.scaleGal ?? NaN), '±400 μm/s'))
+    runShared([{ kind: 'composite' }], { signed: 400, magnitude: 500, floor: 1 })
+    expect(signedScale).toBe(400)
+  })
+
+  // 安全弁: 揃える相手がまだいなくても曲線で描く（最初の 1 回だけ線形になると、揃った瞬間に絵が跳ねる）。
+  it('相手がまだいなくても曲線で描く', () => {
+    composite.mockReturnValue('0〜1 μm/s')
+    runShared([{ kind: 'composite' }], null)
+    expect(composite.mock.calls[0][4].vertical).not.toBe(LINEAR_VERTICAL)
+  })
+})
+
+describe('compressedVertical', () => {
+  // 正: 端は 1、0 は 0、符号を保ち、大小の順も保つ。
+  it('端・0・符号・順を保つ', () => {
+    const v = compressedVertical(2)
+    expect(v(100, 100)).toBeCloseTo(1)
+    expect(v(0, 100)).toBe(0)
+    expect(v(-100, 100)).toBeCloseTo(-1)
+    expect(v(10, 100)).toBeLessThan(v(20, 100))
+  })
+
+  // 対照: 折れ目よりずっと小さい値ではほぼ線形（比が保たれる）。
+  it('折れ目より小さい値はほぼ線形', () => {
+    const v = compressedVertical(1000)
+    expect(v(1, 2) / v(2, 2)).toBeCloseTo(0.5, 3)
+  })
+
+  // 安全弁: 折れ目が正の数でなければ線形へ戻す（0 で割ると全部の線が端へ張り付く）。
+  it('折れ目が使えなければ線形', () => {
+    expect(compressedVertical(0)).toBe(LINEAR_VERTICAL)
+    expect(compressedVertical(Number.NaN)).toBe(LINEAR_VERTICAL)
   })
 })

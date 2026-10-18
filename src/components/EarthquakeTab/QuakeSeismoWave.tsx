@@ -31,6 +31,7 @@ import {
   type PaintableColumns,
   type WaveMark,
 } from '../SeismoWaveChart/paintWave'
+import { LINEAR_VERTICAL } from '../SeismoWaveChart/verticalMap'
 import { buildTimeTicks } from '../SeismoWaveChart/timeTicks'
 import type { WaveUnit } from '../SeismoWaveChart/waveUnit'
 
@@ -334,6 +335,7 @@ function HistoryWave({ wave, quakeLabel, view }: { wave: SeismoQuakeWave; quakeL
             paintCompositeColumns(canvas, build, wave.interrupted, {
               minScale: quakeMinScale(wave.columns, wave.axisZero.ms, wave.unit),
               unit: wave.unit.label,
+              vertical: LINEAR_VERTICAL,
               marks,
               ticks,
               overlays:
@@ -352,7 +354,7 @@ function HistoryWave({ wave, quakeLabel, view }: { wave: SeismoQuakeWave; quakeL
           )
         }
       }
-      setScaleText(paintWaveColumns(canvas, build, wave.interrupted, { marks, visibleAxes: CARD_VISIBLE_AXES, ticks, unit: wave.unit.label }))
+      setScaleText(paintWaveColumns(canvas, build, wave.interrupted, { marks, visibleAxes: CARD_VISIBLE_AXES, ticks, unit: wave.unit.label, vertical: LINEAR_VERTICAL }))
     }
     paint()
     // **幅が変わったら描き直す。** カードは畳んだり開いたりするので、最初に描いた
