@@ -38,6 +38,11 @@ import {
   periodFromDateChange,
   formatJstDate,
   periodDayCount,
+  unknownMagnitudePasses,
+  UNKNOWN_MAGNITUDE_RGB,
+  UNKNOWN_MAGNITUDE_HEX,
+  MAGNITUDE_RAMP,
+  DEPTH_RAMP,
   type CatalogFilter,
   type CatalogViewOptions,
 } from './hypocenterCatalogView'
@@ -621,16 +626,18 @@ describe('buildCatalogPointCloud', () => {
     expect(c.columns.sizePx.length).toBe(c.columns.count)
   })
 
-  // 安全弁: 欠測（NaN）は落とす。**通すと点が原点や上空へ飛ぶ。**
-  it('マグニチュードや深さが NaN の地震は落とす', () => {
+  // 安全弁: 深さの欠測（NaN）は落とす。**通すと点が地表の上下へ飛ぶ。**
+  // 覆した振る舞い: 以前はマグニチュードの NaN も落としていた。M の NaN は「M が決まっていない」という
+  // 収録の値で、座標と深さは揃っているので点は正しい位置に描ける。下限が「制限なし」なら残す
+  // （扱いの詳細は下の「M が決まっていない地震（NaN）」）。
+  it('深さが NaN の地震は落とし、M が NaN の地震は既定の絞り込みで残す（以前は M の NaN も落としていた）', () => {
     const bad = makeYear(2020, [
       { lng: 139, lat: 35, depth: 10, mag: Number.NaN, timeMs: 1 },
       { lng: 140, lat: 36, depth: Number.NaN, mag: 4, timeMs: 2 },
       { lng: 141, lat: 37, depth: 10, mag: 4, timeMs: 3 },
     ])
     const c = buildCatalogPointCloud([bad], FILTER, VIEW)
-    expect(c.columns.count).toBe(1)
-    expect(c.columns.lng[0]).toBe(141)
+    expect(Array.from(c.columns.lng)).toEqual([139, 141])
   })
 
   // 正: 発生年で色を付けるとき、**分母は絞り込みに残った点で測る**。
@@ -1026,5 +1033,79 @@ describe('periodFromDateChange', () => {
   it('読めない値は null', () => {
     expect(periodFromDateChange(period, '', 'from', min, max)).toBeNull()
     expect(periodFromDateChange(period, '2021-02-30', 'to', min, max)).toBeNull()
+  })
+})
+
+describe('M が決まっていない地震（NaN）', () => {
+  // M2.5・M 未決定・M6.0 の 3 件。M 未決定の深さは 30km にしておく（深さの色で見分けるため）。
+  const y = makeYear(2020, [
+    { lng: 139, lat: 35, depth: 10, mag: 2.5, timeMs: 1 },
+    { lng: 140, lat: 36, depth: 30, mag: Number.NaN, timeMs: 2 },
+    { lng: 141, lat: 37, depth: 50, mag: 6.0, timeMs: 3 },
+  ])
+  const MAG_VIEW: CatalogViewOptions = { ...VIEW, colorBy: 'magnitude' }
+
+  // 正: 下限が「制限なし」なら残し、数を数える。
+  it('下限が「制限なし」なら残る', () => {
+    const c = buildCatalogPointCloud([y], FILTER, VIEW)
+    expect(c.columns.count).toBe(3)
+    expect(c.unknownMagnitudeCount).toBe(1)
+    expect(Number.isNaN(c.magnitude[1])).toBe(true)
+  })
+
+  // 対照: 下限を「制限なし」から 1 段でも上げたら外す（M が分からない地震は「M いくつ以上」を満たすと言えない）。
+  it('下限を上げたら外れる', () => {
+    const c = buildCatalogPointCloud([y], { ...FILTER, minMagnitude: MAGNITUDE_FILTER_RANGE.min + 0.5 }, VIEW)
+    expect(Array.from(c.columns.lat)).toEqual([35, 37])
+    expect(c.unknownMagnitudeCount).toBe(0)
+  })
+
+  // 正: 上限は見ない（上限を下げただけで消えると「小さい地震を除いた」ように見える）。
+  it('上限を下げても残る', () => {
+    const c = buildCatalogPointCloud([y], { ...FILTER, maxMagnitude: 3 }, VIEW)
+    expect(Array.from(c.columns.lat)).toEqual([35, 36])
+  })
+
+  // 安全弁: M の決まった地震の絞り込みは変わらない。
+  it('M の決まった地震は今までどおり下限・上限で絞る', () => {
+    const c = buildCatalogPointCloud([y], { ...FILTER, minMagnitude: 5, maxMagnitude: 9 }, VIEW)
+    expect(Array.from(c.columns.lat)).toEqual([37])
+  })
+
+  // 正: マグニチュードで色を付けるときは灰色（色帯の端の色にしない）。
+  it('マグニチュードの色分けでは灰色', () => {
+    const c = buildCatalogPointCloud([y], FILTER, MAG_VIEW)
+    expect(Array.from(c.columns.color.slice(3, 6))).toEqual(
+      UNKNOWN_MAGNITUDE_RGB.map((v) => Math.fround(v)),
+    )
+    // 色帯の下端（M2 の色）とは違う。
+    const low = sampleRamp(MAGNITUDE_RAMP, 0)
+    expect(Array.from(c.columns.color.slice(3, 6))).not.toEqual(low.map((v) => Math.fround(v)))
+  })
+
+  // 対照: 深さで色を付けるときは深さの色のまま（灰色にするのはマグニチュードの色分けだけ）。
+  it('深さの色分けでは深さの色', () => {
+    const c = buildCatalogPointCloud([y], FILTER, VIEW)
+    const want = sampleRamp(DEPTH_RAMP, depthRampT(30)).map((v) => Math.fround(v))
+    expect(Array.from(c.columns.color.slice(3, 6))).toEqual(want)
+  })
+
+  // 正: M で大きさを変えるときは最小（M2 相当）。
+  it('M で大きさを変えるときは最小', () => {
+    const c = buildCatalogPointCloud([y], FILTER, { ...VIEW, sizeBy: 'magnitude' })
+    expect(c.columns.sizePx[1]).toBeCloseTo(pointSizePx(VIEW.sizePx, MAGNITUDE_FILTER_RANGE.min, 'magnitude'))
+  })
+
+  it('灰色の 16 進表記は RGB と同じ色', () => {
+    const hex = UNKNOWN_MAGNITUDE_HEX.slice(1).match(/../g)!.map((h) => parseInt(h, 16) / 255)
+    hex.forEach((v, i) => expect(v).toBeCloseTo(UNKNOWN_MAGNITUDE_RGB[i], 2))
+  })
+})
+
+describe('unknownMagnitudePasses', () => {
+  // 正・対照: 境目は絞り込みの下端ちょうど。
+  it('下限が下端ちょうどなら残し、少しでも上なら外す', () => {
+    expect(unknownMagnitudePasses(MAGNITUDE_FILTER_RANGE.min)).toBe(true)
+    expect(unknownMagnitudePasses(MAGNITUDE_FILTER_RANGE.min + 0.1)).toBe(false)
   })
 })

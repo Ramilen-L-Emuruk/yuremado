@@ -188,7 +188,17 @@ function Swatch({
 }) {
   if (swatch.kind === 'scale') return <ScaleCells cells={swatch.cells} m={m} />
   if (swatch.kind === 'chips') return <Chips chips={swatch.chips} m={m} labels={labels} />
-  return <Ramp stops={swatch.stops} ticks={swatch.ticks} width={rampWidth} m={m} />
+  const ramp = <Ramp stops={swatch.stops} ticks={swatch.ticks} width={rampWidth} m={m} />
+  // **畳んだときは色帯だけにする。** 添えた見本まで並べると 1 行に収まらない（`Chips` の名前を省くのと同じ理由）。
+  if (!swatch.chips || swatch.chips.length === 0 || !labels) return ramp
+  return (
+    <div>
+      {ramp}
+      <div className="mt-[0.15rem]">
+        <Chips chips={swatch.chips} m={m} />
+      </div>
+    </div>
+  )
 }
 
 /** 開閉の向きを示す三角。**状態は `aria-expanded` が伝えるので読み上げからは外す。** */

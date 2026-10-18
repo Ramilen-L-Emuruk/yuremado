@@ -122,8 +122,6 @@ describe('読めない行', () => {
     expect(new Date(r.timeMs).toISOString()).toBe('2011-03-11T05:46:18.120Z')
   })
 
-  // 負の M（-0.1〜-3.0）は `A0` のような符号化で書かれる。読まずに null へ倒す
-  // （この生成が採るのは M2.0 以上なので、符号化される範囲は最初から対象外）。
   // `Number('-0')` は `-0` になり、`-0 < 0` は false。素朴に比較すると「南緯 0 度 30 分」が
   // 北緯へ反転する。現行の収録範囲（気象庁が決定した震源のみ）では起きないが、`J` 以外へ
   // 広げたときに踏む。
@@ -134,9 +132,25 @@ describe('読めない行', () => {
     expect(r.lat).toBeCloseTo(-0.5, 6)
   })
 
-  it('符号化された負の M は読まない', () => {
-    const negative = TOHOKU.slice(0, 52) + 'A0' + TOHOKU.slice(54)
-    expect(parseHypocenterRecord(negative)!.magnitude).toBe(null)
+  // 0 未満の M は気象庁の書式どおりに読む（以前は読まずに null へ倒していた）。
+  // null は「M 未決定」として収録されるので、倒すと M の決まった微小地震が未決定に化ける
+  // （1919〜2024 年の年 ZIP に `A0`〜`A6` が 992 件）。
+  it.each([
+    ['-5', -0.5],
+    ['A0', -1.0],
+    ['A6', -1.6],
+    ['B5', -2.5],
+    ['C0', -3.0],
+  ])('0 未満の M（%s）を %d と読む（以前は null にしていた）', (field, expected) => {
+    const negative = TOHOKU.slice(0, 52) + field + TOHOKU.slice(54)
+    expect(parseHypocenterRecord(negative)!.magnitude).toBeCloseTo(expected, 6)
+  })
+
+  // 正: 書式の外の M 欄は行ごと読めない。未決定（空白）と同じ null にすると、
+  // 上流の書式が変わっても「M 未決定が増えた」としか見えず、生成が失敗しない。
+  it.each(['X1', 'A ', '4.', 'D0'])('書式の外の M 欄（%j）なら行ごと読めない', (field) => {
+    const broken = TOHOKU.slice(0, 52) + field + TOHOKU.slice(54)
+    expect(parseHypocenterRecord(broken)).toBe(null)
   })
 })
 

@@ -39,10 +39,13 @@ export interface HypocenterRecord {
   /** 深さ (km)。 */
   depth: number
   /**
-   * マグニチュード。読めないときは `null`。
+   * マグニチュード。**`null` は気象庁が M を求められなかった地震**（欄が空白 2 文字）。
    *
-   * 負の M（-0.1〜-3.0）は `A0`〜`C0` のような符号化で表されるが、ここでは読まずに `null` に
-   * 倒す。この生成が採るのは M2.0 以上で、符号化されるのはそれよりはるかに小さい地震だけのため。
+   * 0 未満の M も読む（`-1`〜`-9` が -0.1〜-0.9、`A0`〜`C0` が -1.0〜-3.0。気象庁の
+   * [フォーマット仕様](https://www.data.jma.go.jp/eqev/data/bulletin/data/format/hypfmt_j.html)）。
+   * **読まずに `null` へ倒してはいけない** —— `null` は「M 未決定」として収録されるので、
+   * M が決まっている微小地震（1919〜2024 年に 992 件）が M 未決定に化ける。
+   * 欄がこのどれでもない行は、行ごと読めない行として扱う（`parseHypocenterRecord` が `null` を返す）。
    */
   magnitude: number | null
   /** レコード種別（`J` = 気象庁が決定した震源）。 */
@@ -85,7 +88,9 @@ export interface HypocenterRecord {
 /**
  * 1 行を読む。読めない行（長さ不足・必須項目の欠測）は `null` を返す。
  *
- * 必須は時刻・緯度・経度・深さ。M は欠測しうるので `null` を許す（呼び出し側が閾値で弾く）。
+ * 必須は時刻・緯度・経度・深さ。M は求まらないことがあるので `null` を許す（呼び出し側が
+ * M 未決定として収録する）。**M 欄が書式の外なら行ごと読めない** —— 未決定と区別できない形で
+ * 残すと、上流の書式が変わっても「M 未決定が増えた」としか見えない。
  */
 export function parseHypocenterRecord(line: string): HypocenterRecord | null {
   if (line.length < RECORD_LENGTH) return null
@@ -118,6 +123,9 @@ export function parseHypocenterRecord(line: string): HypocenterRecord | null {
   const depth = parseTrailingBlankDecimal(line.slice(44, 49), 3)
   if (depth == null) return null
 
+  const magnitude = parseMagnitudeField(line.slice(52, 54))
+  if (magnitude === 'unreadable') return null
+
   const intensityText = line.slice(61, 62)
 
   return {
@@ -126,7 +134,7 @@ export function parseHypocenterRecord(line: string): HypocenterRecord | null {
     lat,
     lng,
     depth,
-    magnitude: parseMagnitude(line.slice(52, 54)),
+    magnitude,
     kind: line.slice(0, 1),
     intensity: intensityText.trim() === '' ? null : intensityText,
     quality: line.slice(95, 96),
@@ -190,9 +198,16 @@ function parseDegMin(degText: string, minText: string): number | null {
   return deg + (negative ? -min : min) / 60
 }
 
-/** M は暗黙の小数点を持つ（`45` = 4.5）。数字で書かれていないものは読まない。 */
-function parseMagnitude(text: string): number | null {
-  if (!/^\s*-?\d+$/.test(text)) return null
-  const value = Number(text) / 10
-  return Number.isFinite(value) ? value : null
+/**
+ * M 欄（2 文字）を読む。暗黙の小数点を持つ（`45` = 4.5）。
+ *
+ * @returns 値／`null`（空白＝求まらなかった）／`'unreadable'`（書式の外）
+ */
+export function parseMagnitudeField(text: string): number | null | 'unreadable' {
+  if (text.trim() === '') return null
+  if (/^\s*-?\d+$/.test(text)) return Number(text) / 10
+  // 0 未満の符号化。`A` が -1、`B` が -2、`C` が -3 の位で、2 文字目が小数第 1 位。
+  const encoded = /^([A-C])(\d)$/.exec(text)
+  if (encoded) return -((encoded[1].charCodeAt(0) - 'A'.charCodeAt(0) + 1) + Number(encoded[2]) / 10)
+  return 'unreadable'
 }
