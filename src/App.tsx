@@ -110,6 +110,7 @@ import { log } from './utils/logger'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isDmdss } from './utils/env'
+import { ROOT_FRAME_CLASS } from './rootFrame'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
@@ -2333,9 +2334,10 @@ export function App() {
     // 画面いっぱいの高さは h-dvh（100dvh）で取る。dvh はブラウザ UI の出入りに追従するため、
     // iOS Safari でツールバーが出ている間もナビが画面外へ押し出されない。
     // 画面端の safe-area は端に接する要素が各自で避ける（root では扱わない）。
+    // 外枠は固定配置にする（iOS が上端に重ねるぼかしと、横向きのあとのずれを避ける。理由は ROOT_FRAME_CLASS）。
     // 規則と端ごとの担当は docs/spec/architecture-spec.md
     // 「画面いっぱいへの広がりとセーフエリア」に集約している。
-    <div className="flex flex-col h-dvh bg-app text-white overflow-hidden">
+    <div className={`${ROOT_FRAME_CLASS} flex flex-col bg-app text-white overflow-hidden`}>
       {/* 地図(左) | パネル | アイコンナビ(右端)。
           side ブレークポイント未満（スマホ縦など）は縦積み(地図上・つまみ・パネル・ナビ下)になり、
           パネルの高さは --panel-ratio（つまみのドラッグで可変・折りたたみ時 0）で決まる。
