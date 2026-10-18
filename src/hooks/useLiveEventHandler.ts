@@ -27,7 +27,7 @@ import {
 } from '../utils/replayEventLog'
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
-import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, earthquakeToSegments, earthquakeCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken } from '../utils/ttsText'
+import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, earthquakeToSegments, earthquakeCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
 import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
@@ -181,7 +181,7 @@ const SPEECH_PRIORITY = {
   /**
    * **何も切らないものを置く層。** 待ちきれなければ割り込まずに黙る（`speakNonEEW`）。
    *
-   * ここにいるのは 3 つ。
+   * ここにいるのは 4 つ。
    *
    * - **南海トラフ関連解説情報** ―― 段階の発表ではなく状況の解説で、臨時情報の発表期間中は
    *   毎日届く。地震情報と同格にすると数千文字に達しうる地震情報の読み上げを毎日切り、
@@ -193,6 +193,8 @@ const SPEECH_PRIORITY = {
    * - **変化を伝えない津波の続報** ―― 満潮時刻の報と、観測波高が動かない観測情報
    *   （→ `tsunamiSpeechIsQuiet`）。満潮時刻の報は必ず等級の発表の直後に届くので、上の層に
    *   置くと大津波警報の読み上げを割り込んで切る
+   * - **地震・津波に関するお知らせ**（設定で有効にしたときだけ） ―― 観測点の入電停止・配信試験と
+   *   いった運用連絡が大半で、本物の地震・津波・EEW の読み上げを塞いではならない
    *
    * **「待ちきれなければ黙る」は損失として受け入れている。** 層で「何も切らない」と宣言して
    * いても、待ちの上限（`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`）で割り込めばその宣言は破れる。
@@ -263,6 +265,15 @@ type SpeechTopic =
   | 'tsunami' | 'tsunamiObs' | 'nankai' | 'kohatsu' | 'nankaiCommentary' | 'earthquakeCount'
   | 'estimatedIntensity'
   /**
+   * 地震・津波に関するお知らせ（見出しと取消）。最下位の層（`commentary`）で読む。
+   *
+   * **相互譲り（`MUTUAL_YIELD_TOPICS`）にも載せる。** 同じ最下位の層には南海トラフ関連解説情報がいて、
+   * 同格どうしは待たずに割り込む規則なので、載せないとお知らせの見出しが解説情報を途中で切る
+   * （同じ層の気象庁が書いた文は `isMutualYieldTopic` が接頭辞で元から待つ側に入れている）。
+   * 運用連絡が他の情報を切る理由は無い。
+   */
+  | 'quakeNotice'
+  /**
    * 各地の満潮時刻・津波到達予想時刻に関する情報。
    *
    * **観測情報（`tsunamiObs`）と分ける。** 同じ主題にすると、到来順の裁き
@@ -313,6 +324,9 @@ const MUTUAL_YIELD_TOPICS: ReadonlySet<SpeechTopic> = new Set<SpeechTopic>([
   // かち合いやすく、載せないとそちらを切る。伝える内容も重ならない —— あちらは観測した震度、
   // こちらは**その描き方が公式のものへ替わった**という別の事実。
   'tsunami', 'tsunamiObs', 'nankai', 'kohatsu', 'earthquakeCount', 'estimatedIntensity',
+  // お知らせは最下位の層で読むので、上位を切ることはもともと無い。ここに載せるのは同じ層の
+  // 解説情報を切らないため（→ `SpeechTopic` の 'quakeNotice'）。
+  'quakeNotice',
 ])
 
 /**
@@ -694,9 +708,12 @@ function forgetRetractedObservations(before: JMATsunami, after: JMATsunami | nul
  * 鍵が食い違い、既読が効かない。
  */
 function rememberTelegramTextAsSpoken(payload: ReplayPayload, spoken: Set<string>, opts: TtsSpeechOptions): void {
-  // 読み上げの経路（`LiveEvent`）に乗らない 2 種別はここでも対象外。「地震・津波に関するお知らせ」は
-  // 流さないと決めた種別で、推計震度分布図は気象庁が書いた文を運ばない（二進電文）。
-  if (payload.kind === 'quakeNotice' || payload.kind === 'estimatedIntensity') return
+  // 推計震度分布図は気象庁が書いた文を運ばない（二進電文）。
+  //
+  // **お知らせ（`quakeNotice`）は対象に入れる。** 読み上げを有効にした端末では本文を
+  // 気象庁が書いた文として読むので、窓の手前で届いた本文を既読にしておかないと、録画の区間の
+  // 境目で読み直す。読み上げを切っている端末で既読にしても、読む機会が無いので害は無い。
+  if (payload.kind === 'estimatedIntensity') return
   const event: LiveEvent = payload.kind === 'event' ? payload.event : payload
   const speech = telegramTextToSpeak(event, opts)
   if (!speech) return
@@ -2704,6 +2721,43 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       return
     }
 
+    // 地震・津波に関するお知らせ（DMDSS版のみ）。**音と読み上げは設定で有効にしたときだけ**
+    // （`quakeNoticeAlerts`。既定は行わない。解説情報の `nankaiCommentaryAlerts` と同じ形）。
+    //
+    // 音は解説情報の音（`specialInfoCommentary`）を借りる。読むのは見出しだけで、本文は気象庁が書いた文として
+    // 別の発話で読む（`telegramTextToSpeak` の 'quakeNotice'。本文を読むかは「気象庁の文」の設定に従う）。
+    //
+    // **最下位の層（`commentary`）で読む**ので、地震・津波・EEW の読み上げを切らない。待ちきれなければ
+    // 黙る（その層の規約。損失は運用連絡を一度読まないことだけ）。
+    //
+    // **タブは動かさず、タイトルも書き換えない**（帯で伝える情報。震度や警報のタイトルを上書きしない）。
+    if (event.kind === 'quakeNotice') {
+      // 通知を切っている種別は本文も読まない（解説情報の設定と同じ扱い）
+      if (!settings.quakeNoticeAlerts) { skipTelegramTextRef.current = true; return }
+      const notice = event.data
+      if (notice.cancelled) {
+        // **取消は音を鳴らさず、取り消された事実だけを読む**（地震回数の取消と同じ）。主題は発表と共有する
+        // —— 分けると到来順の枠に載らず、待っている発表の予約を取り下げられない。帯が消えるので
+        // パネルも開かない。
+        if (settings.voicevoxEnabled) {
+          speakNonEEWDelayed(quakeNoticeToText(notice), SPEECH_PRIORITY.commentary, 0, 'quakeNotice')
+        }
+        return
+      }
+      // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側。
+      // 他の帯と同じ）。**帯を表示しない設定なら開かない** —— 開いても見せるものが無い。
+      if (settings.quakeNoticeBanner) expandPanelForSpecialInfo()
+      if (settings.soundEnabled) {
+        playAlertSound('specialInfoCommentary')
+      }
+      if (settings.voicevoxEnabled) {
+        speakNonEEWDelayed(
+          quakeNoticeToText(notice), SPEECH_PRIORITY.commentary, ttsDelayFor('specialInfoCommentary'), 'quakeNotice',
+        )
+      }
+      return
+    }
+
     // 南海トラフ関連解説情報（DMDSS版のみ）。臨時情報とは別の帯に出るため、ここでも別扱いにする。
     //
     // **ウィンドウタイトルは書き換えない。** 臨時情報の発表期間中は解説情報が毎日届くため、
@@ -2856,7 +2910,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // （症状が出ないぶん、後から読んで意図を確かめられない）。
     const segments: SpeechSegment[] = [{
       text,
-      refs: TELEGRAM_TEXT_OPEN_TARGET_KINDS.has(event.kind) ? [{ kind: 'telegramText' }] : [],
+      // **お知らせの帯を表示しない設定なら付けない。** 帯が描かれないので開く先が無い。
+      refs: TELEGRAM_TEXT_OPEN_TARGET_KINDS.has(event.kind)
+        && !(event.kind === 'quakeNotice' && !settings.quakeNoticeBanner)
+        ? [{ kind: 'telegramText' }] : [],
     }]
     // **長周期地震動観測情報だけ、どの地震の補足かまで主題に載せる。** 地震カードは複数
     // 並ぶので、種別だけではどのカードを開くか決まらない（バナーと津波の面は画面に 1 つ）。

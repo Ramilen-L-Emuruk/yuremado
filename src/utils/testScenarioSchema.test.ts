@@ -157,4 +157,37 @@ describe('validateScenarioFile', () => {
     const result = validateScenarioFile(raw)
     expect(result?.entries[0].silent).toBeUndefined()
   })
+
+  // 2026-10-18: 10/16 の誤報のシナリオで、13:15 の「地震・津波に関するお知らせ」が帯にすら出なかった。
+  // `remapPayload` は扱えるのに、ここの種別一覧に 3 種別が無く、読み込みの時点で黙って捨てていた。
+  it('お知らせ・地震回数・推計震度分布図の payload も通す（種別一覧の書き忘れで捨てない）', () => {
+    const raw = {
+      id: 'a',
+      label: 'A',
+      description: 'test',
+      category: 'eew-warning',
+      durationMs: 60000,
+      baseTime: '2026-10-16T03:40:00Z',
+      entries: [
+        { offsetMs: 0, payload: { kind: 'quakeNotice', data: { headline: '緊急地震速報（警報）について' } } },
+        { offsetMs: 1000, payload: { kind: 'earthquakeCount', data: {} } },
+        { offsetMs: 2000, payload: { kind: 'estimatedIntensity', data: {} } },
+      ],
+    }
+    const result = validateScenarioFile(raw)
+    expect(result?.entries.map(e => e.payload.kind)).toEqual(['quakeNotice', 'earthquakeCount', 'estimatedIntensity'])
+  })
+
+  it('対照: お知らせでも data が無ければ捨てる', () => {
+    const raw = {
+      id: 'a',
+      label: 'A',
+      description: 'test',
+      category: 'eew-warning',
+      durationMs: 60000,
+      baseTime: '2026-10-16T03:40:00Z',
+      entries: [{ offsetMs: 0, payload: { kind: 'quakeNotice' } }],
+    }
+    expect(validateScenarioFile(raw)?.entries).toHaveLength(0)
+  })
 })
