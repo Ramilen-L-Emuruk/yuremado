@@ -60,8 +60,10 @@ export interface CatalogPointCloud {
   columns: DepthPointColumns
   /** 発生時刻（UTC epoch ミリ秒）。 */
   timeMs: Float64Array
-  /** マグニチュード。 */
+  /** マグニチュード。決まっていない地震は `NaN`。 */
   magnitude: Float32Array
+  /** 残った点のうち、M が決まっていない地震の数（件数欄の内訳と凡例に使う）。 */
+  unknownMagnitudeCount: number
   /**
    * 発生年で色を付けるときに使った両端（UTC epoch ミリ秒）。点が 1 つも残らなければ `null`。
    *
@@ -139,6 +141,16 @@ export const MAGNITUDE_FILTER_RANGE = { min: 2, max: 9 } as const
  * 地震が入った日から最大級どうしを見分けられなくなる。M9.5 は観測史上の最大規模にあたる。
  */
 export const MAGNITUDE_RAMP_RANGE = { min: 2, max: 9.5 } as const
+
+/**
+ * M が決まっていない地震の色（マグニチュードで色を付けるときだけ使う）。
+ *
+ * **色帯のどこにも無い灰色にする**（2026-10-18 ユーザー選択「灰色＋凡例「M 不明」」）。
+ * 色帯の端の色を当てると、M が分からない地震が M2 や M9.5 として読める。
+ * 凡例は `UNKNOWN_MAGNITUDE_HEX` で同じ色を出す。
+ */
+export const UNKNOWN_MAGNITUDE_RGB: readonly [number, number, number] = [0.62, 0.62, 0.62]
+export const UNKNOWN_MAGNITUDE_HEX = '#9e9e9e'
 
 /** 発生年の色。古いほど暗く沈む。 */
 export const TIME_RAMP: Ramp = [
@@ -622,12 +634,29 @@ interface Bounds {
   maxTimeMs: number
   minMagnitude: number
   maxMagnitude: number
+  /** M が決まっていない地震を残すか。`unknownMagnitudePasses` の結果。 */
+  keepUnknownMagnitude: boolean
   minDepthKm: number
   maxDepthKm: number
   minLat: number
   maxLat: number
   minLng: number
   maxLng: number
+}
+
+/**
+ * M が決まっていない地震を絞り込みに残すか。
+ *
+ * **M の下限が「制限なし」のときだけ残す**（2026-10-14 ユーザー選択「全期間で収録する」）。
+ * 下限を置いた人は「M いくつ以上」を見たいのであって、M が分からない地震はその条件を満たすと
+ * 言えない。上限は見ない —— M が分からない地震が上限を超えているとも言えないため、上限を
+ * 動かしただけで消えると「小さい地震を除いた」ように見えてしまう。
+ *
+ * 1997 年以降は完全性の下限（M2.0）が「制限なし」と同じ値なので、既定の絞り込みで出る。
+ * それより前の期間は既定の下限が上がるため出ない（`withCompleteMagnitudeFloor`）。
+ */
+export function unknownMagnitudePasses(minMagnitude: number): boolean {
+  return minMagnitude <= MAGNITUDE_FILTER_RANGE.min
 }
 
 /** 絞り込みに残るかどうか。**取り込みと件数の見積もりで同じ述語を使う**ため切り出してある。 */
@@ -640,8 +669,13 @@ function passes(
   b: Bounds,
 ): boolean {
   // NaN はどの比較でも偽になるので、欠測はここで落ちる。
+  // **M だけは例外。** NaN は「M が決まっていない」という収録の値で、残すかどうかを別に決める。
   if (!(timeMs >= b.minTimeMs && timeMs <= b.maxTimeMs)) return false
-  if (!(magnitude >= b.minMagnitude && magnitude <= b.maxMagnitude)) return false
+  if (Number.isNaN(magnitude)) {
+    if (!b.keepUnknownMagnitude) return false
+  } else if (!(magnitude >= b.minMagnitude && magnitude <= b.maxMagnitude)) {
+    return false
+  }
   if (!(depthKm >= b.minDepthKm && depthKm <= b.maxDepthKm)) return false
   if (!(lat >= b.minLat && lat <= b.maxLat)) return false
   return lng >= b.minLng && lng <= b.maxLng
@@ -670,6 +704,7 @@ export function buildCatalogPointCloud(
     maxTimeMs: Math.max(filter.fromMs, filter.toMs),
     minMagnitude: filter.minMagnitude,
     maxMagnitude: effectiveMaxMagnitude(filter.maxMagnitude),
+    keepUnknownMagnitude: unknownMagnitudePasses(filter.minMagnitude),
     minDepthKm: effectiveMinDepthKm(filter.minDepthKm),
     maxDepthKm: effectiveMaxDepthKm(filter.maxDepthKm),
     minLat,
@@ -703,11 +738,14 @@ export function buildCatalogPointCloud(
   const sizePx = new Float32Array(count)
 
   let k = 0
+  let unknownMagnitudeCount = 0
   for (const y of years) {
     for (let i = 0; i < y.count; i++) {
       const m = y.magnitude[i]
       const d = y.depth[i]
       if (!passes(y.timeMs[i], m, d, y.lat[i], y.lng[i], bounds)) continue
+      const unknownMagnitude = Number.isNaN(m)
+      if (unknownMagnitude) unknownMagnitudeCount++
       lng[k] = y.lng[i]
       lat[k] = y.lat[i]
       depthKm[k] = d
@@ -717,10 +755,14 @@ export function buildCatalogPointCloud(
         options.colorBy === 'depth'
           ? sampleRamp(DEPTH_RAMP, depthRampT(d))
           : options.colorBy === 'magnitude'
-            ? sampleRamp(
-                MAGNITUDE_RAMP,
-                (m - MAGNITUDE_RAMP_RANGE.min) / (MAGNITUDE_RAMP_RANGE.max - MAGNITUDE_RAMP_RANGE.min),
-              )
+            ? // **色帯へ通さない。** `sampleRamp` は NaN を下端（M2 の色）へ倒すので、
+              // M の分からない地震が M2 として読める。
+              unknownMagnitude
+              ? UNKNOWN_MAGNITUDE_RGB
+              : sampleRamp(
+                  MAGNITUDE_RAMP,
+                  (m - MAGNITUDE_RAMP_RANGE.min) / (MAGNITUDE_RAMP_RANGE.max - MAGNITUDE_RAMP_RANGE.min),
+                )
             : sampleRamp(TIME_RAMP, timeSpan > 0 ? (y.timeMs[i] - timeLo) / timeSpan : 1)
       const c = k * 3
       color[c] = r
@@ -735,6 +777,7 @@ export function buildCatalogPointCloud(
     columns: { count, lng, lat, depthKm, color, sizePx, shape: 'circle' },
     timeMs,
     magnitude,
+    unknownMagnitudeCount,
     // **色を付けるのに使った幅をそのまま渡す。** 凡例が期間の指定から目盛りを組むと、
     // 絞り込みで端まで点が残っていないときに色と食い違う。点が 0 件なら `timeLo` は
     // `Infinity` のままなので `null` にする（そのまま渡すと目盛りが 1970 年になる）。

@@ -68,12 +68,12 @@ function makeEEW(areas: EEWRegion[]): EEWAlert {
 
 const renderTab = (eew: EEWAlert, visible = true) =>
   render(
-    <RealtimeTab eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible={visible} />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible={visible} />,
   )
 
 /** `visible` を切り替えられる形。タイマーの開閉を見るテストで使う。 */
 const tabElement = (eew: EEWAlert, visible: boolean) => (
-  <RealtimeTab eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible={visible} />
+  <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible={visible} />
 )
 
 /** a が b より前に出ているか。 */

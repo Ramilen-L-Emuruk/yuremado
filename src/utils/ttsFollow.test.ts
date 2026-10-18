@@ -826,9 +826,9 @@ describe('TELEGRAM_TEXT_OPEN_TARGET_KINDS', () => {
   // **「畳んでいるか」は種別ごとに実装を見て決める。** まとめて扱うと片方だけ当たっている
   // 状態に気づけない —— 長周期を「地震情報と同じで畳んでいない」と扱って外していたのがその形で、
   // 実際には「気象庁からの補足」として畳んであり、中身は読み上げる 3 ブロックそのものだった。
-  it('畳んである 6 種別を持ち、畳んでいない地震情報を持たない', () => {
+  it('畳んである 7 種別を持ち、畳んでいない地震情報を持たない', () => {
     expect([...TELEGRAM_TEXT_OPEN_TARGET_KINDS].sort())
-      .toEqual(['earthquakeCount', 'kohatsu', 'lpgm', 'nankai', 'nankaiCommentary', 'tsunami'])
+      .toEqual(['earthquakeCount', 'kohatsu', 'lpgm', 'nankai', 'nankaiCommentary', 'quakeNotice', 'tsunami'])
     // 地震情報の付加文だけは元から畳んでいない（開く相手がいない）
     expect(TELEGRAM_TEXT_OPEN_TARGET_KINDS.has('quake')).toBe(false)
   })

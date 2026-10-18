@@ -55,6 +55,7 @@ const P = (key: string, index: number): DetectedPoint => ({ key, lat: 35, lng: 1
 
 function tabElement(detections: DetectionEvent[], points: DetectedPoint[], visible: boolean) {
   return createElement(RealtimeTab, {
+    eewNoForecastSettledKeys: new Set<string>(),
     eews: [],
     swaveArrival: null,
     kyoshinV2Detections: detections,
@@ -406,8 +407,9 @@ function assumedEEW(over: Partial<EEWAlert> = {}): EEWAlert {
   })
 }
 
-function renderEEW(eew: EEWAlert) {
+function renderEEW(eew: EEWAlert, settledKeys: ReadonlySet<string> = new Set<string>()) {
   return render(createElement(RealtimeTab, {
+    eewNoForecastSettledKeys: settledKeys,
     eews: [eew],
     swaveArrival: null,
     kyoshinV2Detections: [],
@@ -444,5 +446,28 @@ describe('EEW カードの仮定震源要素の見せ方', () => {
   it('予想震度がある報では長周期階級バッジを出す', () => {
     renderEEW(fakeEEW({ forecastMaxScale: 40, forecastMaxLpgmClass: 3 }))
     expect(screen.getByText('予想長周期地震動')).toBeTruthy()
+  })
+})
+
+// 予想震度の付かない待ちが切れた後だけ、精度ランク 1 の報に「単独点処理のため」を添える
+// （読み上げと同じ判定。2026-10-15 ユーザー承認「出す(推奨)」）。
+describe('予想震度なしのバナーの理由（精度ランク 1）', () => {
+  const rank1 = () => fakeEEW({ accuracy: { epicenterRank: 1 } })
+
+  it('正: 待ちが切れた後は「単独点処理のため」を添える', () => {
+    renderEEW(rank1(), new Set(['e1']))
+    expect(screen.getByText('予想震度なし')).toBeTruthy()
+    expect(screen.getByText('単独点処理のため')).toBeTruthy()
+  })
+
+  it('対照: 待っている間は理由を添えない', () => {
+    renderEEW(rank1())
+    expect(screen.getByText('予想震度なし')).toBeTruthy()
+    expect(screen.queryByText('単独点処理のため')).toBeNull()
+  })
+
+  it('安全弁: 別の地震の印では添えない', () => {
+    renderEEW(rank1(), new Set(['other']))
+    expect(screen.queryByText('単独点処理のため')).toBeNull()
   })
 })

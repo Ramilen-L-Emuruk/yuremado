@@ -10,7 +10,7 @@
 //   安全弁＝ 電文が壊れていても投機で再生を壊さない
 import { describe, it, expect } from 'vitest'
 import { speculativeSpeechTexts, speculativeSpeechTextsSafe } from './speechPrefetch'
-import { telegramTextToSpeak, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, lpgmToText, estimatedIntensityToText, type TtsSpeechOptions } from './ttsText'
+import { telegramTextToSpeak, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, lpgmToText, estimatedIntensityToText, type TtsSpeechOptions } from './ttsText'
 import { splitIntoChunks } from './voicevox'
 import {
   createTestNankai, createTestNankaiCommentary, createTestKohatsu,
@@ -124,14 +124,22 @@ describe('チャンクの一致', () => {
   })
 })
 
-describe('読み上げない電文', () => {
-  // 地震・津波に関するお知らせは音も読み上げも起こさない運用連絡
-  // （→ data-sources-spec.md §2「扱う電文種別」）。焼いても一度も使われない。
-  it('お知らせ（VZSE40）からは何も作らない（対照）', () => {
-    const payload: ReplayPayload = { kind: 'quakeNotice', data: createTestQuakeNotice() }
-    expect(speculativeSpeechTexts(payload, OPTS)).toEqual([])
+describe('地震・津波に関するお知らせ', () => {
+  // 読み上げは設定で有効にしたときだけだが、投機は種別ごとの設定を見ない（解説情報と同じ）。
+  it('見出しの文を焼く', () => {
+    const data = createTestQuakeNotice()
+    expect(speculativeSpeechTexts({ kind: 'quakeNotice', data }, OPTS)).toEqual([quakeNoticeToText(data)])
   })
 
+  it('気象庁の文を読む設定なら本文も焼く', () => {
+    const data = createTestQuakeNotice()
+    const texts = speculativeSpeechTexts({ kind: 'quakeNotice', data }, OPTS_WITH_TELEGRAM_TEXT)
+    expect(texts).toHaveLength(2)
+    expect(texts[1]).toContain('沖縄県本庁舎の電力設備点検')
+  })
+})
+
+describe('読み上げない電文', () => {
   // 緊急地震速報の固定付加文は読まない（秒を争うため）。第 1 フェーズの文だけが出る。
   it('緊急地震速報：第 1 フェーズの文は作るが、固定付加文は作らない（対照）', () => {
     const event = createTestEEWWarning(true)

@@ -36,6 +36,7 @@ function makeCancelledEEW(overrides: Partial<EEWAlert> = {}): EEWAlert {
 const renderTab = (eews: EEWAlert[]) =>
   render(
     <RealtimeTab
+      eewNoForecastSettledKeys={new Set()}
       eews={eews}
       swaveArrival={null}
       kyoshinV2Detections={[]}

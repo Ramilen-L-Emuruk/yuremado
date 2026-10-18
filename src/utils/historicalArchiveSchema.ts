@@ -1,6 +1,8 @@
 import type { HistoricalArchiveFile, HistoricalArchiveIndex, HistoricalArchiveMeta } from '../types/historicalArchive'
 import { isValidIntensityScale } from './intensity'
 import { withStoredEewOrigin } from './eewOrigin'
+// ReplayPayload の判別子は実地震シナリオの検証と同じ表を使う（理由はあちらの注記）。
+import { REPLAY_PAYLOAD_KINDS } from './testScenarioSchema'
 
 // ローカル履歴アーカイブ（`public/data/historical-archives/`）の型検証ガード。
 // testScenarioSchema.ts と同じ考え方: 壊れた JSON を検証なしで使うと実行時例外や
@@ -48,9 +50,6 @@ export function validateHistoricalArchiveIndex(
   return { valid, skipped, malformed: false }
 }
 
-// ReplayPayload の判別子。types/replay.ts の ReplayPayload / testScenarioSchema.ts の
-// PAYLOAD_KINDS と一致させる。
-const PAYLOAD_KINDS = new Set(['event', 'lpgm', 'nankai', 'nankaiCommentary', 'kohatsu'])
 const TSUNAMI_GRADES = new Set(['MajorWarning', 'Warning', 'Watch', 'Forecast', 'Unknown'])
 
 function isValidScaleIfPresent(v: unknown): boolean {
@@ -95,7 +94,7 @@ function isValidAppEvent(event: Record<string, unknown>): boolean {
 
 function isValidPayload(p: Record<string, unknown>): boolean {
   const kind = p.kind
-  if (typeof kind !== 'string' || !PAYLOAD_KINDS.has(kind)) return false
+  if (typeof kind !== 'string' || !REPLAY_PAYLOAD_KINDS.has(kind)) return false
   if (kind === 'event') return isRecord(p.event) && isValidAppEvent(p.event)
   return isRecord(p.data)
 }

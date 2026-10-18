@@ -277,7 +277,7 @@ export function hasBorrowedHypocenterFollowTarget(segments: readonly SpeechSegme
  * `ttsFollow.test.ts` が検査する。
  */
 export const TELEGRAM_TEXT_OPEN_TARGET_KINDS: ReadonlySet<string> = new Set([
-  'nankai', 'nankaiCommentary', 'kohatsu', 'earthquakeCount', 'tsunami', 'lpgm',
+  'nankai', 'nankaiCommentary', 'kohatsu', 'earthquakeCount', 'quakeNotice', 'tsunami', 'lpgm',
 ])
 
 /**

@@ -1,4 +1,4 @@
-import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
+import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
 import { eewNoForecastReason, canPresentLpgmClass, type EewMaxScaleInfo } from './eew'
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from './intensity'
 import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, TSUNAMI_GRADE_LIFTED, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
@@ -224,6 +224,8 @@ export const TELEGRAM_TEXT_BLOCK_KEYS = [
   'kohatsuSummary', 'kohatsuBody',
   // 地震回数に関する情報
   'earthquakeCountFreeText',
+  // 地震・津波に関するお知らせ（本文は `Body/Text` の 1 枠だけ）
+  'quakeNoticeBody',
 ] as const
 
 export type TelegramTextBlockKey = typeof TELEGRAM_TEXT_BLOCK_KEYS[number]
@@ -1259,10 +1261,14 @@ export function eewWarningRegionsText(
 /**
  * 予想震度が付いていないときの句。理由の判定は `eewNoForecastReason` に委ねる
  * （待たずに読むかどうかの判断と同じ判定を使うため。二重に持つと食い違う）。
+ *
+ * `singleStation`（待ち終えても値が付かなかった精度ランク 1）も「単独点処理のため」と読む
+ * （2026-10-15 ユーザー承認「単独点処理のため(推奨)」）。
  */
-function noForecastText(event: EEWAlert): string {
-  switch (eewNoForecastReason(event)) {
-    case 'assumed': return '単独点処理のため、予想震度なし。'
+function noForecastText(event: EEWAlert, noForecastWaited: boolean): string {
+  switch (eewNoForecastReason(event, noForecastWaited)) {
+    case 'assumed':
+    case 'singleStation': return '単独点処理のため、予想震度なし。'
     case 'deep':    return '深発地震のため、予想震度なし。'
     case 'unknown': return '予想震度なし。'
   }
@@ -1279,12 +1285,15 @@ function noForecastText(event: EEWAlert): string {
  *
  * 震度を伝えられないときに階級句を落とすのは、結合する `eewIntensityText` の役目
  * （この関数は震度部分だけを組み立てる）。
+ *
+ * `noForecastWaited` … 値の付かない待ちが切れたか（`eewNoForecastReason` の `waited`）。
+ * 震度があるときは使わない。
  */
-export function eewScaleOnlyText(scaleInfo: EewMaxScaleInfo, event: EEWAlert): string {
+export function eewScaleOnlyText(scaleInfo: EewMaxScaleInfo, event: EEWAlert, noForecastWaited: boolean): string {
   if (scaleInfo.scale > 0) {
     return `予想最大震度${getIntensityLabelWithApproxAbove(scaleInfo.scale, scaleInfo.orAbove)}。`
   }
-  return noForecastText(event)
+  return noForecastText(event, noForecastWaited)
 }
 
 /**
@@ -1330,7 +1339,10 @@ export function eewLpgmOnlyText(lpgmClass: number, over = false): string {
  * 結果的に震度部分だけが声になる（「個別に呼び分ける」のではなく、0 扱いで自然に省略させる）。
  */
 export function eewIntensityText(
-  scaleInfo: EewMaxScaleInfo, lpgmClass: number, event: EEWAlert, announceUpgrade = false,
+  scaleInfo: EewMaxScaleInfo, lpgmClass: number, event: EEWAlert,
+  /** 値の付かない待ちが切れたか（`eewScaleOnlyText` の同名引数）。 */
+  noForecastWaited: boolean,
+  announceUpgrade = false,
   /**
    * 階級が「程度以上」だったか。**`event` から引き直さない** —— 渡される `lpgmClass` は
    * 安定待ちを経た確定値で、現在の報の値と食い違いうる。引き直すと別の値に語を貼り付ける。
@@ -1348,7 +1360,7 @@ export function eewIntensityText(
   //
   // **震度を伝えられないときは階級も読まない**（判定は `canPresentLpgmClass`。カード表示・
   // 第 2 フェーズの言い直しと同じ述語を共有する。理由はそちらのコメント）。
-  const scaleText = eewScaleOnlyText(scaleInfo, event)
+  const scaleText = eewScaleOnlyText(scaleInfo, event, noForecastWaited)
   const lpgmText = (opts?.readEewLpgmClass ?? true) && canPresentLpgmClass(scaleInfo.scale, lpgmClass)
     ? eewLpgmOnlyText(lpgmClass, lpgmOver)
     : ''
@@ -1403,7 +1415,7 @@ const PREVIEW_EEW_SCALE: EewMaxScaleInfo = { scale: 60, orAbove: false }
 export function voicevoxPreviewTexts(): readonly string[] {
   return [
     eewAlertToText(PREVIEW_EEW, 'warning'),
-    eewIntensityText(PREVIEW_EEW_SCALE, 0, PREVIEW_EEW),
+    eewIntensityText(PREVIEW_EEW_SCALE, 0, PREVIEW_EEW, false),
   ]
 }
 
@@ -3373,6 +3385,25 @@ function formatCountSpanForSpeech(startTime: string, endTime: string): string {
   return `${md(start)}から${md(end)}まで`
 }
 
+/**
+ * 地震・津波に関するお知らせ（VZSE40）の読み上げテキストを生成する。
+ *
+ * **見出し（`Head/Headline/Text`）だけを読む。** 本文は自由文で長く（2026-10-16 13:15 の
+ * 「緊急地震速報（警報）について」は約 300 字）、他の種別と同じく「気象庁が書いた文」として
+ * 別の発話で読む（→ `telegramTextToSpeak`）。ここで本文まで読むと、本文を切る設定が効かない。
+ *
+ * 取消は他の種別と同じく「取り消された事実」と理由を読む（→ `cancelReasonSentence`）。
+ * 帯ごと消えるので、理由が届く先は読み上げだけ（`staysOnScreen: false`。地震回数と同じ）。
+ */
+export function quakeNoticeToText(event: JMAQuakeNotice): string {
+  if (event.cancelled) {
+    return '地震・津波に関するお知らせは取り消されました。' + cancelReasonSentence(event.body, false)
+  }
+  // 見出しは句点を持たないのが通例だが、付いていても二重にしない
+  const headline = event.headline.trim().replace(/。$/, '')
+  return headline ? `地震・津波に関するお知らせ。${headline}。` : '地震・津波に関するお知らせ。'
+}
+
 /** 北海道・三陸沖後発地震注意情報（VYSE60）の読み上げテキストを生成する。 */
 export function kohatsuToText(event: JMAKohatsu): string {
   // **句点は無条件に足さない** —— 気象庁の見出し文は句点で終わることが多く、
@@ -4183,6 +4214,15 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
       if (event.data.cancelled) return null
       const body = joinTelegramTexts([pick('earthquakeCountFreeText', event.data.freeText)], reads)
       return telegramSpeech(`地震回数に関する情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+    }
+    case 'quakeNotice': {
+      // 取消は本体の読み上げ（`quakeNoticeToText`）が理由まで読む。本文は添えない。
+      if (event.data.cancelled) return null
+      // **本文は削らずに全文を読む**（題名の行・発表日時・問い合わせ先も含む）。他の種別の本文と
+      // 同じ扱い —— 自由文なので書式が一定せず、行の形で削ると別のお知らせで本題を落としうる。
+      // 聞きたくなければブロックごと切れる（`quakeNoticeBody`）。
+      const body = joinTelegramTexts([pick('quakeNoticeBody', event.data.body)], reads)
+      return telegramSpeech(`地震・津波に関するお知らせについて、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
     }
     // 推計震度分布図は二進電文で、気象庁が書いた文を運ばない。
     case 'estimatedIntensity':

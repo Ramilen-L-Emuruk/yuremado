@@ -9,7 +9,7 @@
 // 決めるのは呼び出し側で、そのときは {@link EMPTY_PUBLIC_SELECTION} から始め直す。
 //
 // **選んだ結果は利用者に出さない**（予想した震度の値は画面に出ず、出すのは観測点の位置と波形）。予報業務の棚卸しでは
-// 12 件目（`docs/forecast-computation-audit.md`）。
+// 12（下部の波形）と 10（地震カード）（`docs/forecast-computation-audit.md`）。
 
 import { predictMeasuredIntensity } from './eew'
 import { haversineKm } from './geo'

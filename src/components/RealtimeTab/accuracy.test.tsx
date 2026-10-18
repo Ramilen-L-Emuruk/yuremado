@@ -34,7 +34,7 @@ function makeEEW(accuracy?: EEWAccuracy): EEWAlert {
 
 const renderTab = (eew: EEWAlert) =>
   render(
-    <RealtimeTab eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
 
 /**
