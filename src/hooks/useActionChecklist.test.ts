@@ -12,6 +12,7 @@ import { useActionChecklist, SUPPRESS_MS } from './useActionChecklist'
 import type { EEWAlert, JMAQuake } from '../types/earthquake'
 import type { DetectedPoint } from '../utils/kyoshinDetectionView'
 import { NO_SCOPE } from '../utils/actionChecklistTrigger'
+import { drainReplayEvents, __resetReplayEventLogForTest, type ReplayOverlayEvent } from '../utils/replayEventLog'
 
 const MIN = 45 // 震度5弱
 
@@ -34,15 +35,23 @@ function quake(eventKey: string, maxScale: number): JMAQuake {
 const NO_EEWS: readonly EEWAlert[] = []
 
 /** 予想震度を持つ EEW。`eewEventKey` は `issue.eventId` があればそれを見る。 */
-function eewAlert(eventId: string, scale: number, cancelled = false): EEWAlert {
+function eewAlert(eventId: string, scale: number): EEWAlert {
   return {
     id: `${eventId}-1`,
     issue: { eventId },
-    cancelled,
+    cancelled: false,
     areas: [],
     forecastMaxScale: scale,
     earthquake: { condition: undefined },
   } as unknown as EEWAlert
+}
+
+/**
+ * 誤報取消を当てた EEW。**画面が持つ実際の形に合わせる** —— 取消は `{ ...表示中の EEW, cancelledAt }`
+ * で当たるので、`cancelled` は false のまま（→ `docs/spec/eew-spec.md`）。
+ */
+function cancelledEew(eventId: string, scale: number): EEWAlert {
+  return { ...eewAlert(eventId, scale), cancelledAt: new Date() }
 }
 
 const NO_POINTS: readonly DetectedPoint[] = []
@@ -220,8 +229,10 @@ describe('3 経路の優先順', () => {
     expect(result.current.state?.reason).toBe('quake')
   })
 
+  // 画面が持つ EEW には取消が `{ ...表示中の EEW, cancelledAt }` の形で当たり、`cancelled` は
+  // false のまま残る（→ eew-spec.md）。`cancelled: true` で作ると実際には来ない形を試すことになる。
   it('誤報取消の EEW は見ない', () => {
-    const { result } = setup(quake('ev1', 70), [eewAlert('e1', 50, true)])
+    const { result } = setup(quake('ev1', 70), [cancelledEew('e1', 50)])
     expect(result.current.state?.reason).toBe('quake')
   })
 
@@ -442,5 +453,181 @@ describe('リプレイの開始・停止で落とすもの', () => {
     act(() => rerender({ q: quake('ev2', 70), e: NO_EEWS }))
     expect(result.current.state?.scale).toBe(70)
     expect(result.current.collapsed).toBe(true)
+  })
+})
+
+describe('出している帯の元の EEW が誤報取消されたら', () => {
+  // 2026-10-16 の誤報（千島列島 M9.9・震度7予想の警報を約 8 分後に取消）の再生で、EEW カードは
+  // 取消を経て消えたのに、帯は「震度7 強い揺れが予想されています」のまま残った。開いている帯は
+  // 寿命でも消さない設計のため、取消で下ろす経路が要る。
+  beforeEach(() => { __resetReplayEventLogForTest() })
+
+  const closes = () => drainReplayEvents().events
+    .filter((e): e is ReplayOverlayEvent => e.type === 'overlay' && e.overlay === 'actionChecklist' && !e.open)
+
+  it('開いている帯を下ろす', () => {
+    const { result, rerender } = setup(undefined, [eewAlert('e1', 70)])
+    expect(result.current.state?.reason).toBe('eew')
+    act(() => rerender({ e: [cancelledEew('e1', 70)] }))
+    expect(result.current.state).toBe(null)
+    expect(result.current.collapsed).toBe(false)
+  })
+
+  it('下ろしたことを録画ツール向けに 1 件だけ記録する', () => {
+    const { rerender } = setup(undefined, [eewAlert('e1', 70)])
+    __resetReplayEventLogForTest() // 開いた分は見ない
+    act(() => rerender({ e: [cancelledEew('e1', 70)] }))
+    act(() => rerender({ e: NO_EEWS })) // 10 秒後に取消済みの EEW がリストから消える
+    expect(closes().map(e => e.reason)).toEqual(['緊急地震速報が取り消された'])
+  })
+
+  it('畳んだボタンも下ろし、畳んだ記録も捨てる', () => {
+    const { result, rerender } = setup(undefined, [eewAlert('e1', 70)])
+    act(() => result.current.dismiss())
+    act(() => rerender({ e: [cancelledEew('e1', 70)] }))
+    expect(result.current.state).toBe(null)
+    expect(result.current.collapsed).toBe(false)
+    expect(localStorage.getItem('action-checklist-suppress')).toBe(null)
+    // 震度7（取り消された予想）を基準に畳んだままにしない。本物の揺れは開いて出る。
+    act(() => rerender({ e: NO_EEWS, q: quake('ev1', 50) }))
+    expect(result.current.state?.reason).toBe('quake')
+    expect(result.current.collapsed).toBe(false)
+  })
+
+  it('強震モニタで揺れていれば、その帯へ切り替える', () => {
+    const STRONG = 19 // 震度7
+    const { result, rerender } = setup(undefined, [eewAlert('e1', 70)])
+    act(() => rerender({ e: [cancelledEew('e1', 70)], k: detected(STRONG) }))
+    expect(result.current.state?.reason).toBe('kyoshin')
+    // 識別子を取り消された EEW へ紐づけない
+    expect(result.current.state?.key).not.toContain('e1')
+  })
+
+  it('地震情報が閾値に達していれば、その帯へ切り替える', () => {
+    const { result, rerender } = setup(quake('ev1', 60), [eewAlert('e1', 70)])
+    expect(result.current.state?.reason).toBe('eew')
+    act(() => rerender({ q: quake('ev1', 60), e: [cancelledEew('e1', 70)] }))
+    expect(result.current.state?.reason).toBe('quake')
+    expect(result.current.state?.scale).toBe(60)
+  })
+
+  it('ほかの EEW が出ていれば、そちらへ切り替える', () => {
+    const { result, rerender } = setup(undefined, [eewAlert('e1', 70), eewAlert('e2', 50)])
+    expect(result.current.state?.key).toBe('eew:e1')
+    act(() => rerender({ e: [cancelledEew('e1', 70), eewAlert('e2', 50)] }))
+    expect(result.current.state?.key).toBe('eew:e2')
+  })
+
+  it('切り替えても、取り消された帯が下りたことは記録に残す', () => {
+    const { rerender } = setup(quake('ev1', 60), [eewAlert('e1', 70)])
+    __resetReplayEventLogForTest()
+    act(() => rerender({ q: quake('ev1', 60), e: [cancelledEew('e1', 70)] }))
+    const log = drainReplayEvents().events
+      .filter((e): e is ReplayOverlayEvent => e.type === 'overlay' && e.overlay === 'actionChecklist')
+    expect(log.map(e => [e.open, e.reason])).toEqual([
+      [false, '緊急地震速報が取り消された'],
+      [true, '揺れを検知'],
+    ])
+  })
+
+  // 寿命が尽きて消した地震は出し直さない（`show` が弾く）。切り替え先がそれしか無いときに
+  // 結果を見ずに任せると、取り消された帯が画面に残る（最新の地震は長く居座る）。
+  it('切り替え先が寿命の尽きた地震しか無ければ、消す', () => {
+    const { result, rerender } = setup(quake('ev1', 60))
+    act(() => result.current.dismiss())
+    act(() => void vi.advanceTimersByTime(SUPPRESS_MS + 1)) // ev1 は出し終えた
+    expect(result.current.state).toBe(null)
+    act(() => rerender({ q: quake('ev1', 60), e: [eewAlert('e1', 70)] }))
+    expect(result.current.state?.reason).toBe('eew')
+    act(() => rerender({ q: quake('ev1', 60), e: [cancelledEew('e1', 70)] }))
+    expect(result.current.state).toBe(null)
+    expect(result.current.collapsed).toBe(false)
+  })
+
+  // 安全弁: 別の揺れを閉じて畳んでいた記録は、その間の EEW が取り消されても残す
+  it('別の地震で畳んでいた記録は残し、畳んだまま地震情報へ戻る', () => {
+    const { result, rerender } = setup(quake('ev1', 70))
+    act(() => result.current.dismiss()) // ev1（震度7）で畳む
+    act(() => rerender({ q: quake('ev1', 70), e: [eewAlert('e1', 50)] })) // 畳んだまま EEW へ
+    expect(result.current.state?.reason).toBe('eew')
+    expect(result.current.collapsed).toBe(true)
+    act(() => rerender({ q: quake('ev1', 70), e: [cancelledEew('e1', 50)] }))
+    expect(result.current.state?.reason).toBe('quake')
+    expect(result.current.collapsed).toBe(true)
+    expect(localStorage.getItem('action-checklist-suppress')).not.toBe(null)
+  })
+
+  it('別の地震で畳んでいた記録を残したまま消すときは、畳んだ状態を保つ', () => {
+    const { result, rerender } = setup(quake('ev1', 70))
+    act(() => result.current.dismiss())
+    act(() => rerender({ q: undefined, e: [eewAlert('e1', 50)] }))
+    act(() => rerender({ q: undefined, e: [cancelledEew('e1', 50)] }))
+    expect(result.current.state).toBe(null)
+    expect(result.current.collapsed).toBe(true)
+    // 記録が効いているので、同程度以下の次の揺れは畳んだまま出る
+    act(() => rerender({ q: quake('ev2', 60), e: NO_EEWS }))
+    expect(result.current.collapsed).toBe(true)
+  })
+
+  // 識別子を持たない古い記録（導入前に保存されたもの）は、どの帯を閉じたものか分からないので捨てる
+  it('識別子の無い古い記録は、取消のときに捨てる', () => {
+    localStorage.setItem('action-checklist-suppress', JSON.stringify({ until: Date.now() + SUPPRESS_MS, scale: 70 }))
+    const { result, rerender } = setup(undefined, [eewAlert('e1', 70)])
+    expect(result.current.collapsed).toBe(true)
+    act(() => rerender({ e: [cancelledEew('e1', 70)] }))
+    expect(localStorage.getItem('action-checklist-suppress')).toBe(null)
+    act(() => rerender({ e: NO_EEWS, q: quake('ev1', 50) }))
+    expect(result.current.collapsed).toBe(false)
+  })
+
+  // 閉じたあと帯が別の EEW へ移っていても、記録の震度は取り消された予想のまま残っている
+  it('取り消された EEW を閉じてできた記録は、帯が別の EEW へ移っていても捨てる', () => {
+    const { result, rerender } = setup(undefined, [eewAlert('e1', 70)])
+    act(() => result.current.dismiss()) // e1（震度7予想）で畳む
+    act(() => rerender({ e: [eewAlert('e1', 40), eewAlert('e2', 50)] })) // 続報で e1 が下がり e2 が引き継ぐ
+    expect(result.current.state?.key).toBe('eew:e2')
+    act(() => rerender({ e: [cancelledEew('e1', 40), eewAlert('e2', 50)] }))
+    expect(localStorage.getItem('action-checklist-suppress')).toBe(null)
+    // 記録が無くなったので、出ている e2 は開いて出る
+    expect(result.current.state?.key).toBe('eew:e2')
+    expect(result.current.collapsed).toBe(false)
+  })
+
+  it('閉じた帯の識別子はリロードをまたいで効く', () => {
+    const first = setup(undefined, [eewAlert('e1', 70)])
+    act(() => first.result.current.dismiss())
+    first.unmount()
+    const second = setup(undefined, [eewAlert('e1', 70)])
+    expect(second.result.current.collapsed).toBe(true)
+    act(() => second.rerender({ e: [cancelledEew('e1', 70)] }))
+    expect(localStorage.getItem('action-checklist-suppress')).toBe(null)
+    expect(second.result.current.state).toBe(null)
+    expect(second.result.current.collapsed).toBe(false)
+  })
+
+  it('寿命を延ばしても、閉じた帯の識別子は保つ', () => {
+    const { result, rerender } = setup(undefined, [eewAlert('e1', 70)])
+    act(() => result.current.dismiss())
+    act(() => void vi.advanceTimersByTime(SUPPRESS_MS - 1000)) // 残りが半分を切る
+    act(() => rerender({ e: [eewAlert('e1', 70)], q: quake('ev1', 50) })) // 揺れが届いて延長
+    const saved = JSON.parse(localStorage.getItem('action-checklist-suppress') ?? 'null')
+    expect(saved.until).toBeGreaterThan(Date.now() + SUPPRESS_MS / 2)
+    expect(saved.key).toBe('eew:e1')
+  })
+
+  // 対照: 別の EEW の取消では下ろさない
+  it('元ではない EEW が取り消されても帯は残る', () => {
+    const { result, rerender } = setup(undefined, [eewAlert('e1', 70), eewAlert('e2', 50)])
+    act(() => rerender({ e: [eewAlert('e1', 70), cancelledEew('e2', 50)] }))
+    expect(result.current.state?.key).toBe('eew:e1')
+  })
+
+  // 対照: 最終報で終わった EEW は取消ではない（即座にリストから外れる）。揺れは実際に起きて
+  // いるので、帯は残す（開いている間は消さない）。
+  it('最終報で EEW がリストから外れただけなら帯は残る', () => {
+    const { result, rerender } = setup(undefined, [eewAlert('e1', 70)])
+    act(() => rerender({ e: NO_EEWS }))
+    expect(result.current.state?.reason).toBe('eew')
+    expect(result.current.state?.scale).toBe(70)
   })
 })

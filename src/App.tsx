@@ -2021,7 +2021,10 @@ export function App() {
   // useActionChecklist）。観測点座標は他の利用箇所と同じキャッシュを共有するため、ここで
   // 呼んでも追加の取得は起きない。
   const stationCoordsForChecklist = useStationCoords()
-  const eewListForChecklist = useMemo(() => [...activeEEWsNoCancelled.values()], [activeEEWsNoCancelled])
+  // **チェックリストには取消を当てた直後の EEW も渡す。** 出している帯の元が取り消されたことを
+  // 知る手段がこれしか無い（判定からは向こうで外す。理由は useActionChecklist の `eews`）。
+  const eewListForChecklist = useMemo(() => [...activeEEWs.values()], [activeEEWs])
+  const eewListNoCancelled = useMemo(() => [...activeEEWsNoCancelled.values()], [activeEEWsNoCancelled])
   // ホーム地点の周り（半径 30km）。**行動チェックリストと自作地震計の波形が同じものを見る**
   // ので、ここで 1 つだけ作って両方へ渡す（→ hooks/useNearbyScope.ts）。
   const nearbyScope = useNearbyScope({
@@ -2307,7 +2310,7 @@ export function App() {
   const showSeismoWave = useSeismoWaveVisibility({
     mode: replayTimeOffset === null ? settings.seismoWave : 'off',
     scope: nearbyScope,
-    eews: eewListForChecklist,
+    eews: eewListNoCancelled,
     detectedPoints: kyoshinView.detectedPoints,
     stations: seismo.stations,
   })
