@@ -138,6 +138,8 @@ describe('useSeismoStation', () => {
         lat: 35,
         lon: 135,
         intensity: 0.25,
+        // ホストが普段の計測震度を返していなければ `null`（震度1 の線で見る）。
+        usualMeasured: null,
         atMs: 2000,
         source: { kind: 'station' },
         waveSampleCount: 0,
@@ -148,6 +150,75 @@ describe('useSeismoStation', () => {
         waveTally: { gapSamples: 0, restarts: 0, droppedSamples: 0 },
       },
     ])
+  })
+
+  // 正: ホストの普段の計測震度が観測点の姿まで届く（波形グラフを自動で出す物差し）。
+  it('正: ホストが返した普段の計測震度が観測点の姿に載る', async () => {
+    const generatedAtMs = 1_800_000_000_000
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...STATUS,
+              generatedAtMs,
+              usualIntensities: [{ stationId: 'home', usualMeasured: -1.3, computedAtMs: generatedAtMs }],
+            }),
+            { status: 200 },
+          ),
+      ),
+    )
+    const h = renderHook(() => useSeismoStation(options))
+    await settleDirectory()
+    deliver(stationReading('home', 0.25))
+    await tick()
+    expect(h.result.current.stations[0]?.usualMeasured).toBe(-1.3)
+  })
+
+  // 正: 震度が届いている間、普段を 10 分おきに読み直す（ホストが測り直す間隔）。配線を外すと、
+  // 普段が 30 分で使えなくなり、以後ずっと震度1 の線で見ることになる。
+  it('正: 読めてから 10 分を過ぎて震度が届いたら、普段を読み直す', async () => {
+    let nowMs = 1_000_000
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => nowMs)
+    renderHook(() => useSeismoStation(options))
+    await settleDirectory()
+    const fetchMock = vi.mocked(globalThis.fetch)
+    const before = fetchMock.mock.calls.length
+    deliver(stationReading('home', 0.25))
+    await settleDirectory()
+    // 10 分の手前では読み直さない。
+    expect(fetchMock.mock.calls.length).toBe(before)
+    nowMs += 10 * 60_000
+    deliver(stationReading('home', 0.25))
+    await settleDirectory()
+    expect(fetchMock.mock.calls.length).toBe(before + 1)
+    now.mockRestore()
+  })
+
+  // 対照: 合成でない震度（センサー単独）には普段を付けない（統計の違うものを比べない）。
+  it('対照: センサー単独の震度には普段を付けない', async () => {
+    const generatedAtMs = 1_800_000_000_000
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ...STATUS,
+              generatedAtMs,
+              usualIntensities: [{ stationId: 'home', usualMeasured: -1.3, computedAtMs: generatedAtMs }],
+            }),
+            { status: 200 },
+          ),
+      ),
+    )
+    const h = renderHook(() => useSeismoStation(options))
+    await settleDirectory()
+    deliver(reading('mac:aa', 'i2c0-68', 0.4))
+    await tick()
+    expect(h.result.current.stations[0]?.source.kind).toBe('sensor')
+    expect(h.result.current.stations[0]?.usualMeasured).toBeNull()
   })
 
   it('正: 合成が来ない観測点は、センサー単独の震度から採る（#309 の穴）', async () => {
@@ -446,7 +517,7 @@ describe('useSeismoStation', () => {
     await tick()
 
     expect(h.result.current.stations[0].waveSampleCount).toBe(3)
-    const window = h.result.current.readWave('home')
+    const window = h.result.current.readWave('home', null)
     expect(window).not.toBeNull()
     if (window === null) return
     expect(window.firstSampleMs).toBe(1000)
@@ -534,8 +605,8 @@ describe('useSeismoStation', () => {
     await settleDirectory()
     deliver(stationReading('home', 0.25))
     await tick()
-    expect(h.result.current.readWave('home')).toBeNull()
-    expect(h.result.current.readWave('office')).toBeNull()
+    expect(h.result.current.readWave('home', null)).toBeNull()
+    expect(h.result.current.readWave('office', null)).toBeNull()
   })
 
   it('安全弁: 震度が途切れても波形は捨てない', async () => {
@@ -549,7 +620,7 @@ describe('useSeismoStation', () => {
     await tick(6000)
     // 行そのものは残る（途絶として出す）。**ここで見たいのは入れ物が生きていること。**
     expect(h.result.current.stations[0].source).toEqual({ kind: 'silent' })
-    expect(h.result.current.readWave('home')).not.toBeNull()
+    expect(h.result.current.readWave('home', null)).not.toBeNull()
   })
 
   it('対照: トグルが切れている・URL の形が違うなら繋がない', async () => {
@@ -755,7 +826,7 @@ describe('useSeismoStation: 作り直しの知らせ', () => {
     expect(waves).toHaveLength(1)
     expect(waves[0]).toContain('from=1030')
     expect(waves[0]).toContain('to=1060')
-    const w = h.result.current.readWave('home')
+    const w = h.result.current.readWave('home', null)
     expect(w?.gal[0][3]).toBe(11)
     expect(w?.gal[2][5]).toBe(19)
     expect(h.result.current.stations[0].waveTally.gapSamples).toBe(0)
@@ -774,11 +845,12 @@ describe('useSeismoStation: 作り直しの知らせ', () => {
     await tick(WAVE_REFILL_DELAY_MS)
 
     const waves = urls.filter((u) => u.includes('/waves'))
-    expect(waves).toHaveLength(1)
-    // **長さは入れ物が抱える長さで決まる**（空き 5997 サンプル × 10 ms 手前から）。
+    // **長さは入れ物が抱える長さで決まる**（空き 17997 サンプル × 10 ms 手前から）。ホストは 1 回 2 分までなので
+    // （`SAMPLES_RANGE_MAX_MS`）、抱える長さ（180 秒）ぶんは 2 回に分けて取る（2026-10-15 に時間幅の設定を足して覆した）。
+    expect(waves).toHaveLength(2)
     expect(waves[0]).toContain(`from=${1000 - (WAVE_RETAIN_SEC * 100 - 3) * 10}`)
-    expect(waves[0]).toContain('to=1000')
-    const w = h.result.current.readWave('home')
+    expect(waves[waves.length - 1]).toContain('to=1000')
+    const w = h.result.current.readWave('home', null)
     expect(w?.firstSampleMs).toBe(970)
     expect(w?.gal[0][0]).toBe(11)
     expect(w?.gal[0][3]).toBe(1)
@@ -798,9 +870,10 @@ describe('useSeismoStation: 作り直しの知らせ', () => {
 
     // 起点の作り直し（手前の空き）と穴の予約は、待っている間に 1 回へ束ねる。
     const waves = urls.filter((u) => u.includes('/waves'))
-    expect(waves).toHaveLength(1)
-    expect(waves[0]).toContain('to=1060')
-    expect(h.result.current.readWave('home')?.gal[0][3]).toBe(11)
+    // 抱える長さ（180 秒）ぶんの手前は 2 回に分かれる（ホストは 1 回 2 分まで。上と同じ）。
+    expect(waves).toHaveLength(2)
+    expect(waves[waves.length - 1]).toContain('to=1060')
+    expect(h.result.current.readWave('home', null)?.gal[0][3]).toBe(11)
     expect(h.result.current.stations[0].waveTally.gapSamples).toBe(0)
   })
 
@@ -833,7 +906,7 @@ describe('useSeismoStation: 作り直しの知らせ', () => {
     deliver({ kind: 'station-wave-revised', revised: { stationId: 'home', fromMs: 1000, toMs: 1100 } })
     await tick()
 
-    expect(h.result.current.readWave('home')?.gal[0][3]).toBe(11)
+    expect(h.result.current.readWave('home', null)?.gal[0][3]).toBe(11)
     expect(error).toHaveBeenCalledTimes(1)
   })
 })

@@ -8,7 +8,7 @@
 // **粒度を揃えてから繋ぐ。** 読み返しは列（上下の端）、押し出しは生のサンプル。
 // 押し出しの側を同じ `columnSpanMs` の列へ畳めば、境目のない 1 本の絵になる。
 //
-// **手元のバッファは伸ばさない**（`WAVE_RETAIN_SEC` は 60 秒のまま）。継ぎ足した列は
+// **手元のバッファは伸ばさない**（`WAVE_RETAIN_SEC` は下部の波形の時間幅のいちばん長いもの・180 秒のまま）。継ぎ足した列は
 // こちらが保持するので、生のサンプルは直近だけあればよい。
 
 import type { WaveHistoryColumn } from '../services/seismoWaveHistory'
@@ -112,7 +112,7 @@ export function smoothCompositeColumns(base: TimedColumns, windowMs: number): Fl
  * （端が粗くなるだけで、別の時刻の値を描くことはない）。
  *
  * **前提: 列の刻みが窓の半分（0.5 秒）より細かいこと。** 刻みがそれ以上だと前後の列が窓に入らず、列ごとの平均になる
- * （地震カードは 4.5 分を 1200 列で、刻みは 0.2 秒ほど）。
+ * （地震カードは 5 分を 1200 列で、刻みは 0.25 秒ほど）。
  */
 export function smoothCompositeWithin(base: TimedColumns, part: TimedColumns, windowMs: number): Float32Array | null {
   const span = base.columnSpanMs
