@@ -4,7 +4,8 @@ import { WAVE_HISTORY_LEAD_MS, WAVE_HISTORY_TAIL_MS } from '../services/seismoWa
  * 地震カードの公開観測点の波形を、保存庫からどの範囲で取るか（`docs/public-waveform-design.md` §6.1・§6.2）。
  *
  * - 範囲は自作地震計と同じカードの分の頭の 60 秒前〜4 分後（`WAVE_HISTORY_LEAD_MS`・`WAVE_HISTORY_TAIL_MS`）。次の地震の発生で切る
- * - **S 波が 4 分の内に届かない遠い観測点は、範囲の終わりを S 波の到達に合わせて伸ばす**（§0）
+ * - **S 波が 4 分の内に届かない遠い観測点は、範囲の終わりを S 波の到達に合わせて伸ばす**（§0）。自前で到達を解く箇所として
+ *   `docs/forecast-computation-audit.md` の 13 に載せてある。到達時刻は画面にも記録にも出さない
  * - 保存庫には 8〜19 秒遅れで入る（§3.5 の実測）。範囲の終わりが「いま」より十分前のものだけを取り終えたものとして扱う
  */
 

@@ -560,6 +560,8 @@ function buildCardWave(p: {
     target.arrivalOriginMs !== null && target.arrivalOriginSource !== null
       ? { kind: 'origin', ms: target.arrivalOriginMs, source: target.arrivalOriginSource }
       : { kind: 'minute', ms: Math.floor(target.originMs / MINUTE_MS) * MINUTE_MS }
+  // P/S の線と描く範囲に使う到達。自作地震計のカードと同じ扱いで、線を引くのは発生の秒が取れた地震だけ（下の `arrival`。
+  // `docs/forecast-computation-audit.md` の 7）
   const fromZero: WaveArrival | null = computeWaveArrival({
     originMs: axisZero.ms,
     hypocenter: target.hypocenter,
