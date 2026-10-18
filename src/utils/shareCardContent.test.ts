@@ -3,8 +3,8 @@ import type { MapMode } from '../components/Map/mapTypes'
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import { ATTRIBUTION_SOURCES, EEW_NOTICE } from './shareCard'
 import { buildShareCardContent, type ShareCardContent, type ShareCardContentInput } from './shareCardContent'
-// テストデータは、テスト本体ではなくここで読む。
-// 本体で初めて読むと、全件並列のとき変換の順番待ちが 1 件目の所要へ乗り、既定の 5 秒を超える。
+// テスト本体で初めて読むと、並列実行のときだけ解決と変換の待ちが 1 件目の時間に乗って 5 秒を超える。
+// 先頭で読んでおけば待ちはファイル読み込み時へ移る（CLAUDE.md「テスト本体の中で対象モジュールを初めて読まないこと」）。
 import { createTestEEWStrongShaking } from './testData'
 
 function quake(over: { maxScale?: number; magnitude?: number; depth?: number; time?: string } = {}): JMAQuake {
@@ -74,6 +74,7 @@ function input(over: Partial<ShareCardContentInput> & { mode: MapMode }): ShareC
     showBathymetry: true,
     showActiveFaults: true,
     showPlateBoundaries: true,
+    showPublicStations: false,
     ...over,
   }
 }
@@ -147,6 +148,22 @@ describe('buildShareCardContent — 読めない時刻', () => {
 })
 
 describe('buildShareCardContent — 出典', () => {
+  // 正: 公開観測点の印を描いているなら、EarthScope を「加工して作成」の側に挙げる（どのモードでも描く）。
+  it('公開観測点の印を描いているなら EarthScope を加工の側に挙げる', () => {
+    for (const mode of ['quake', 'kyoshin', 'tsunami'] as const) {
+      const line = build(input({ mode, showPublicStations: true })).notices.join('\n')
+      const derivedPart = line.slice(line.lastIndexOf('／') + 1)
+      expect(derivedPart).toContain(ATTRIBUTION_SOURCES.earthScope)
+      expect(derivedPart).toContain('加工して作成')
+    }
+  })
+
+  // 対照: 描いていなければ挙げない。
+  it('公開観測点の印を描いていなければ EarthScope を挙げない', () => {
+    const line = build(input({ mode: 'kyoshin' })).notices.join('\n')
+    expect(line).not.toContain(ATTRIBUTION_SOURCES.earthScope)
+  })
+
   it('気象庁の出典は常に入る', () => {
     const c = build(input({ mode: 'quake', quake: quake() }))
     const line = c.notices.join('\n')
@@ -282,6 +299,31 @@ describe('buildShareCardContent — 津波', () => {
   it('等級が無ければ見出しを「津波情報」に落とす', () => {
     const c = build(input({ mode: 'tsunami' }))
     expect(c.header.title).toBe('津波情報')
+  })
+
+  // 原因地震が複数ある津波（EventID に番号が足された形）は全件を並べる（2026-10-15 ユーザー承認「全件を並べる」）。
+  it('原因地震が複数あれば「／」で全件を並べる', () => {
+    const t = {
+      ...tsunami(),
+      sourceEarthquakes: [
+        { hypocenterName: '石川県能登地方', magnitude: 7.6 },
+        { hypocenterName: '佐渡付近', magnitude: 6.1 },
+      ],
+    } as unknown as JMATsunami
+    const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
+    expect(c.header.subtitle).toBe('石川県能登地方　M7.6 ／ 佐渡付近　M6.1　1 区域')
+  })
+
+  // 対照: 1 件なら区切りは入らない。
+  it('原因地震が 1 件なら区切りを入れない', () => {
+    const c = build(input({ mode: 'tsunami', tsunamis: [tsunami()] }))
+    expect(c.header.subtitle).toBe('日向灘　M8.1　1 区域')
+  })
+
+  // 安全弁: 同じ津波の報が並んでも、同じ原因地震を二度書かない。
+  it('複数の報が同じ原因地震を運んでも重ねない', () => {
+    const c = build(input({ mode: 'tsunami', tsunamis: [tsunami(), { ...tsunami(), id: 't2' } as JMATsunami] }))
+    expect(c.header.subtitle).toBe('日向灘　M8.1　1 区域')
   })
 })
 
