@@ -20,6 +20,12 @@ interface Props {
    * 帯は自分が対象なら中身を開く（→ `useAutoOpenWhileSpeaking`）。
    */
   speakingTelegramTextSubject: string | null
+  /**
+   * 帯の束がいま画面の下端に接しているか。地図の下に波形が出ていれば、帯は地図の中にあって
+   * 下端には届かないので false。真のときだけ下端の余白（`SAFE_BOTTOM`）を付ける —— ただし
+   * 余白が効くのは `sideShort` の画面だけで、縦積みや PC では真でも付かない。
+   */
+  atScreenBottom: boolean
 }
 
 // 閉じた解説情報の電文 id を覚えておくキー。解説情報には解除電文が無く、定例解説は平常時にも
@@ -112,19 +118,20 @@ function formatExpire(isoTime: string): string {
   return `${mm}/${dd} ${hh}:${mn}まで有効`
 }
 
-// 下端の safe-area（ホームインジケータ）を避けるための余白。両バナーの根要素に同じものを付ける。
-// **色の付いた箱の内側に置くこと。** 外側のラッパーに置くと帯ごと持ち上がり、下に地図が覗いて
-// 隙間に見える。避けたいのは押せる領域と文字であって、背景色は画面下端まで届いてよい。
-// last: … 2 枚同時に出うるため、余白が要るのは下端に接する最後の 1 枚だけ。上のバナーにも入れると
+// 下端の safe-area（ホームインジケータ）を避けるための余白。帯を並べる包みに付け、最後の帯へ効かせる。
+// **色の付いた箱の内側に入る。** 余白は最後の帯自身の padding になるので、背景色は画面下端まで届く。
+//   包みや外側のラッパーの padding にすると帯ごと持ち上がり、下に地図が覗いて隙間に見える。
+// 最後の 1 枚だけ … 5 枚同時に出うるため、余白が要るのは下端に接する最後の 1 枚だけ。上の帯にも入れると
 //   帯と帯の間に隙間ができる。並び順を JS 側で数えると種類が増えたときに追従漏れを起こすので、
 //   :last-child に判定させて実際に最後へ描画された要素だけに効かせる。
-// side: … 左右分割時だけ地図が画面全高を占めてバナーが画面下端に接する。縦積み時は地図の下に
-//   つまみ・パネル・ナビが続くので下端には届かず、余白を入れると地図の中に不要な隙間ができる
-//   （env() は要素の位置に関わらず値を返すため条件が要る）。
-const SAFE_BOTTOM = 'side:last:pb-[env(safe-area-inset-bottom,0px)]'
+// sideShort: … 横向きかつ高さ 600px 以下（主にスマホの横画面）。縦積みでは地図の下につまみ・パネル・ナビが
+//   続いて下端に届かない。iPad の横画面は余白を取らない（→ docs/spec/architecture-spec.md §4 規則 2）。
+//   env() は要素の位置に関わらず値を返すため、どちらも条件で表す必要がある。
+// atScreenBottom: … 地図の下に波形が出ているときは、帯は画面の下端に届かないので付けない。
+const SAFE_BOTTOM = 'sideShort:[&>*:last-child]:pb-[env(safe-area-inset-bottom,0px)]'
 
 export function SpecialInfoBanner({
-  nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, speakingTelegramTextSubject,
+  nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, speakingTelegramTextSubject, atScreenBottom,
 }: Props) {
   /**
    * この帯の文をいま読み上げているか。**主題は `telegramText:<電文の kind>`**
@@ -151,8 +158,8 @@ export function SpecialInfoBanner({
           前者だけでは地図が低いときに地図の上へはみ出す（→ docs/spec/architecture-spec.md §4）。
           南海トラフ臨時情報は先頭なので、縮んでもスクロールの先頭に残る。
           単位は vh ではなく dvh。vh は iOS の PWA だとビューポートではなく画面全体の高さを指すため。
-          SAFE_BOTTOM の last: がここの直接の子を数えるので、バナー以外をこの中に足さないこと。 */}
-      <div className="pointer-events-auto min-h-0 max-h-[40dvh] overflow-y-auto overflow-x-hidden overscroll-x-none">
+          SAFE_BOTTOM はここの直接の子の最後に効くので、バナー以外をこの中に足さないこと。 */}
+      <div className={`pointer-events-auto min-h-0 max-h-[40dvh] overflow-y-auto overflow-x-hidden overscroll-x-none${atScreenBottom ? ` ${SAFE_BOTTOM}` : ''}`}>
         {/* 南海トラフの 2 枚（臨時情報とその解説情報）を隣り合わせる。臨時情報の発表期間中は
             解説情報が毎日届いて両方が同時に出るため、間に別の事象（後発地震＝北海道・三陸沖）を
             挟むと同じ事象の話が分断されて読みにくい。重さの順よりこちらを優先する。 */}
@@ -264,7 +271,7 @@ function NankaiBanner({ nankai, speaking }: { nankai: JMANankai; speaking: boole
   const { bg, border, badge } = nankaiColors(nankai.kindName)
 
   return (
-    <div className={`${bg} border-t-2 ${border} ${SAFE_BOTTOM}`}>
+    <div className={`${bg} border-t-2 ${border}`}>
       <button
         className="w-full px-3 py-2 flex items-center gap-2 text-left"
         onClick={() => setOpen(!open)}
@@ -294,7 +301,7 @@ function KohatsuBanner({ kohatsu, speaking }: { kohatsu: JMAKohatsu; speaking: b
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'kohatsu')
 
   return (
-    <div className={`bg-blue-900/95 border-t-2 border-blue-400 ${SAFE_BOTTOM}`}>
+    <div className="bg-blue-900/95 border-t-2 border-blue-400">
       <button
         className="w-full px-3 py-2 flex items-center gap-2 text-left"
         onClick={() => setOpen(!open)}
@@ -361,7 +368,7 @@ function CommentaryBanner({ commentary, speaking }: { commentary: JMANankaiComme
   }
 
   return (
-    <div className={`bg-teal-900/95 border-t-2 border-teal-400 ${SAFE_BOTTOM}`}>
+    <div className="bg-teal-900/95 border-t-2 border-teal-400">
       {/* 展開トグルと閉じるボタンを横に並べる。button の入れ子は不正な HTML になるため、
           他の帯のように全体を 1 つの button で覆うことはできない */}
       <div className="w-full px-3 py-2 flex items-center gap-2">
@@ -436,7 +443,7 @@ function NoticeBanner({ notice }: { notice: JMAQuakeNotice }) {
   }
 
   return (
-    <div className={`bg-slate-800/95 border-t-2 border-slate-400 ${SAFE_BOTTOM}`}>
+    <div className="bg-slate-800/95 border-t-2 border-slate-400">
       {/* 展開トグルと閉じるボタンを横に並べる（button の入れ子は不正な HTML になるため） */}
       <div className="w-full px-3 py-2 flex items-center gap-2">
         <button
@@ -510,7 +517,7 @@ function EarthquakeCountBanner({ count, speaking }: { count: JMAEarthquakeCount;
   }
 
   return (
-    <div className={`bg-cyan-900/95 border-t-2 border-cyan-400 ${SAFE_BOTTOM}`}>
+    <div className="bg-cyan-900/95 border-t-2 border-cyan-400">
       {/* 展開トグルと閉じるボタンを横に並べる（button の入れ子は不正な HTML になるため） */}
       <div className="w-full px-3 py-2 flex items-center gap-2">
         <button

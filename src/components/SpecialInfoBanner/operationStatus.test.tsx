@@ -59,18 +59,18 @@ const earthquakeCount = (operationStatus?: TelegramOperationStatus): JMAEarthqua
 describe('特別情報の帯の運用種別', () => {
   // 正: 5 つの帯すべてに印が出る。**帯ごとに書くと片方だけ落ちる**ので、まとめて見る。
   it('訓練報はどの帯にも印が出る', () => {
-    render(<SpecialInfoBanner nankai={nankai('訓練')} nankaiCommentary={commentary('訓練')} kohatsu={kohatsu('訓練')} quakeNotice={quakeNotice('訓練')} earthquakeCount={earthquakeCount('訓練')} speakingTelegramTextSubject={null} />)
+    render(<SpecialInfoBanner nankai={nankai('訓練')} nankaiCommentary={commentary('訓練')} kohatsu={kohatsu('訓練')} quakeNotice={quakeNotice('訓練')} earthquakeCount={earthquakeCount('訓練')} speakingTelegramTextSubject={null} atScreenBottom />)
     expect(screen.getAllByText('訓練報')).toHaveLength(5)
   })
 
   it('試験報も同じ', () => {
-    render(<SpecialInfoBanner nankai={nankai('試験')} nankaiCommentary={commentary('試験')} kohatsu={kohatsu('試験')} quakeNotice={quakeNotice('試験')} earthquakeCount={earthquakeCount('試験')} speakingTelegramTextSubject={null} />)
+    render(<SpecialInfoBanner nankai={nankai('試験')} nankaiCommentary={commentary('試験')} kohatsu={kohatsu('試験')} quakeNotice={quakeNotice('試験')} earthquakeCount={earthquakeCount('試験')} speakingTelegramTextSubject={null} atScreenBottom />)
     expect(screen.getAllByText('試験報')).toHaveLength(5)
   })
 
   // 対照: 通常の報では印を出さない。**平常時に余計な印が出ないこと**を押さえる。
   it('通常の報では印を出さない', () => {
-    render(<SpecialInfoBanner nankai={nankai()} nankaiCommentary={commentary()} kohatsu={kohatsu()} quakeNotice={quakeNotice()} earthquakeCount={earthquakeCount()} speakingTelegramTextSubject={null} />)
+    render(<SpecialInfoBanner nankai={nankai()} nankaiCommentary={commentary()} kohatsu={kohatsu()} quakeNotice={quakeNotice()} earthquakeCount={earthquakeCount()} speakingTelegramTextSubject={null} atScreenBottom />)
     expect(screen.queryByText('訓練報')).toBeNull()
     expect(screen.queryByText('試験報')).toBeNull()
     // 帯そのものは出ている（印だけが出ない）
@@ -80,5 +80,33 @@ describe('特別情報の帯の運用種別', () => {
     expect(screen.getByText('北海道・三陸沖後発地震注意情報を発表しました。')).toBeTruthy()
     expect(screen.getByText('お知らせ')).toBeTruthy()
     expect(screen.getByText('地震回数')).toBeTruthy()
+  })
+})
+
+// 下端の余白（ホームインジケータを避ける分）。媒体の条件（スマホの横画面）は jsdom では効かないので、
+// ここで見るのは「付けるか」の側だけ —— 包みのクラスに余白の指定が載るか。
+describe('特別情報の帯の下端の余白', () => {
+  const SAFE = 'sideShort:[&>*:last-child]:pb-[env(safe-area-inset-bottom,0px)]'
+  const scroller = (container: HTMLElement) => container.querySelector('.overflow-y-auto') as HTMLElement
+
+  // 正: 画面の下端に接しているときは包みに余白の指定が載る
+  it('下端に接していれば余白を付ける', () => {
+    const { container } = render(<SpecialInfoBanner nankai={null} nankaiCommentary={null} kohatsu={null} quakeNotice={quakeNotice()} earthquakeCount={null} speakingTelegramTextSubject={null} atScreenBottom />)
+    expect(scroller(container).className).toContain(SAFE)
+  })
+
+  // 対照: 地図の下に波形が出ていて下端に届かないときは付けない
+  it('下端に接していなければ余白を付けない', () => {
+    const { container } = render(<SpecialInfoBanner nankai={null} nankaiCommentary={null} kohatsu={null} quakeNotice={quakeNotice()} earthquakeCount={null} speakingTelegramTextSubject={null} atScreenBottom={false} />)
+    expect(scroller(container).className).not.toContain('safe-area-inset-bottom')
+  })
+
+  // 安全弁: 帯の 1 枚 1 枚は余白を持たない（最後の 1 枚へは包みから効かせる）。帯の側に戻すと、
+  // 波形が出ていても余白が付き、帯と帯の間にも隙間ができうる
+  it('帯の 1 枚 1 枚は余白を持たない', () => {
+    const { container } = render(<SpecialInfoBanner nankai={nankai()} nankaiCommentary={commentary()} kohatsu={kohatsu()} quakeNotice={quakeNotice()} earthquakeCount={earthquakeCount()} speakingTelegramTextSubject={null} atScreenBottom />)
+    for (const child of Array.from(scroller(container).children)) {
+      expect((child as HTMLElement).className).not.toContain('safe-area-inset-bottom')
+    }
   })
 })

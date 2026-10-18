@@ -19,12 +19,13 @@ import { ShareCardButton } from './components/ShareCardButton'
 import { useShareCard } from './hooks/useShareCard'
 import { SeismoLinkStatus } from './components/SeismoLinkStatus'
 import { SeismoOverlay } from './components/SeismoOverlay'
-import { useSeismoStation } from './hooks/useSeismoStation'
+import { useSeismoStation, type SeismoStationState } from './hooks/useSeismoStation'
 import { useSeismoQuakeWaves, type SeismoQuakeWave } from './hooks/useSeismoQuakeWaves'
 import { usePublicQuakeWaves } from './hooks/usePublicQuakeWaves'
 import { mergeQuakeWaves } from './utils/mergeQuakeWaves'
 import { useQuakeOriginSeconds } from './hooks/useQuakeOriginSeconds'
 import { SeismoWaveChart } from './components/SeismoWaveChart'
+import { hasWaveChartRows } from './components/SeismoWaveChart/chartRows'
 import { useSeismoWaveVisibility } from './hooks/useSeismoWaveVisibility'
 import { usePublicWaves } from './hooks/usePublicWaves'
 import type { PublicStationMarker } from './components/Map/PublicStationMarkersGL'
@@ -114,6 +115,8 @@ import { ROOT_FRAME_CLASS } from './rootFrame'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
+/** 下端の波形に自作地震計を出さないときに渡す空の組。同一参照を使い回す（毎回作ると波形の枠が描き直される）。 */
+const EMPTY_SEISMO_STATIONS: readonly SeismoStationState[] = []
 
 // 平常時のウィンドウタイトル（index.html の <title> と一致させる）。
 // AutoHotKey 等が、情報更新時のタイトル変化を検知してイベントを発火できるようにする。
@@ -2311,6 +2314,12 @@ export function App() {
     detectedPoints: kyoshinView.detectedPoints,
     stations: seismo.stations,
   })
+  // 地図の下の波形の枠に渡すもの。**出さないなら空・null**（出すかどうかはここで決める）。
+  const waveChartStations = showSeismoWave ? seismo.stations : EMPTY_SEISMO_STATIONS
+  const waveChartPublic = publicWaves.visible ? publicWaves : null
+  // 枠が実際に段を描くか。描くと地図の高さが削れ、地図に重ねた帯は画面の下端に届かなくなる。
+  // **「出す」と判定しただけでは足りない** —— 段が 0 なら枠は何も描かない（→ SeismoWaveChart/chartRows.ts）。
+  const waveChartDrawn = hasWaveChartRows(waveChartStations, waveChartPublic)
 
   // 地図左上の更新時刻: リアルタイム表示はリアルタイム震度(kyoshin)の更新時刻、
   // DMDSS版かつWS接続中は現在時刻を毎秒更新、それ以外は最終受信時刻を表示する。
@@ -2492,15 +2501,18 @@ export function App() {
                   <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} />
                 </div>
               )}
-              <SpecialInfoBanner nankai={nankai} nankaiCommentary={nankaiCommentary} kohatsu={kohatsu} quakeNotice={quakeNotice} earthquakeCount={earthquakeCount} speakingTelegramTextSubject={speakingTelegramTextSubject} />
+              <SpecialInfoBanner nankai={nankai} nankaiCommentary={nankaiCommentary} kohatsu={kohatsu} quakeNotice={quakeNotice} earthquakeCount={earthquakeCount} speakingTelegramTextSubject={speakingTelegramTextSubject}
+                // 地図の下に波形が出ていると、帯は画面の下端に届かない（下端の余白を付けない）
+                atScreenBottom={!waveChartDrawn}
+              />
             </div>
           </div>
           {/* 自作地震計の合成波形。**地図の外**（→ すぐ上の器のコメント）。 */}
-          {(showSeismoWave || publicWaves.visible) && (
+          {waveChartDrawn && (
             <SeismoWaveChart
-              stations={showSeismoWave ? seismo.stations : []}
+              stations={waveChartStations}
               readWave={seismo.readWave}
-              publicWaves={publicWaves.visible ? publicWaves : null}
+              publicWaves={waveChartPublic}
               collapsedView={settings.seismoWaveCollapsedView}
               expanded={settings.seismoWaveExpanded}
               onToggleExpanded={toggleSeismoWaveExpanded}
