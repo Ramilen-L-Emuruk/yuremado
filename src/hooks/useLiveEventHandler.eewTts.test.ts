@@ -138,6 +138,8 @@ function makeEEW(over: {
   hypocenter?: { name: string; latitude: number; longitude: number }
   /** 警報の対象地方（`Head/Headline/Information` の地方予報区）。警報級の報にだけ入る。 */
   warningRegions?: string[]
+  /** 震央の精度ランク（`accuracy.epicenterRank`）。DMDATA 経路の報だけが持つ。 */
+  epicenterRank?: number
 } = {}): EEWAlert {
   const hypo = over.hypocenter ?? { name: '日向灘', latitude: 32.0, longitude: 132.0 }
   const areas: EEWRegion[] = over.noAreas ? [] : [{
@@ -166,12 +168,15 @@ function makeEEW(over: {
     cancelled: over.cancelled ?? false,
     issue: { eventId: over.eventId ?? 'evt-1', serial: String(over.serial ?? 1), time: '2026-01-01T12:00:00Z' },
     ...(over.warningRegions && { warningRegions: over.warningRegions }),
+    ...(over.epicenterRank !== undefined && { accuracy: { epicenterRank: over.epicenterRank } }),
     areas,
   } as EEWAlert
 }
 
 /** 直近の `setup` が作ったフックの戻り値。`setupFull` が復元の入口を取り出すために控える。 */
 let capturedResult: ReturnType<typeof useLiveEventHandler> | null = null
+/** 直近の `setup` の `renderHook` の結果。描き直した後の戻り値（state）を読むときに使う。 */
+let capturedHook: { current: ReturnType<typeof useLiveEventHandler> } | null = null
 /**
  * 直近の `setup` が渡したウィンドウタイトルの受け口（スタブ）。
  *
@@ -264,6 +269,7 @@ function setup(
     eewSpeakingCard,
   }))
   capturedResult = result.current
+  capturedHook = result
   return result.current.handleLiveEvent
 }
 
@@ -415,9 +421,131 @@ describe('EEW 読み上げの文言と発話順序', () => {
     await flushMicrotasks()
     expect(spokenTexts()).toHaveLength(1)   // まだ第1フェーズだけ
 
-    await vi.advanceTimersByTimeAsync(1)
+    // 待ちが切れると画面用の印（state）が動くので act() で包む
+    await act(() => vi.advanceTimersByTimeAsync(1))
     await flushMicrotasks()
     expect(spokenTexts()).toContain('予想震度なし。')
+  })
+
+  // 精度ランク 1（P 波／S 波レベル超え・IPF 法 1 点・仮定震源要素）は、見た時点では理由に使わない
+  // （12 通中 7 通は 0〜6 秒後に値が付く）。待ちが切れても値が付かなかったときに限って
+  // 「単独点処理のため」と言う（2026-10-14 ユーザー承認「待ち終えてから理由を言う（推奨）」、
+  // 文面は 2026-10-15 ユーザー承認「単独点処理のため(推奨)」）。
+  describe('精度ランク 1 で予想震度が付かないとき', () => {
+    it('正: 待ちが切れても値が付かなければ「単独点処理のため」と読み、画面用の印も付く', async () => {
+      const handle = setup()
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await flushMicrotasks()
+      await vi.advanceTimersByTimeAsync(2999)
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。'])
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。', '単独点処理のため、予想震度なし。'])
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+    })
+
+    it('対照: 精度ランクが 1 でなければ、待ちが切れても理由を添えない', async () => {
+      const handle = setup()
+      handle(makeEEW({ noAreas: true, epicenterRank: 2 }))
+      await flushMicrotasks()
+      await act(() => vi.advanceTimersByTimeAsync(3000))
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。', '予想震度なし。'])
+    })
+
+    it('対照: 待っている間に値が付けば、理由は一度も言わない', async () => {
+      const handle = setup()
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await flushMicrotasks()
+      await vi.advanceTimersByTimeAsync(2000)
+      handle(makeEEW({ serial: 2, scaleTo: 45, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(10000))
+      await flushMicrotasks()
+      expect(spokenTexts()).toContain('予想最大震度5弱。')
+      expect(spokenTexts().some(t => t.includes('予想震度なし'))).toBe(false)
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+    })
+
+    it('安全弁: 読み上げを切っていても、画面用の待ちは同じ長さで切れる', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await vi.advanceTimersByTimeAsync(2999)
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+      expect(spokenTexts()).toEqual([])
+    })
+
+    it('安全弁: 値の無い続報が待ちの途中で届いても、待ちは張り直さない（最初の報から数える）', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await vi.advanceTimersByTimeAsync(2000)
+      handle(makeEEW({ serial: 2, noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(1000))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+    })
+
+    it('安全弁: 印が付いた後に値が付いた続報が来たら、印を落とす', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(3000))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+      act(() => { handle(makeEEW({ serial: 2, scaleTo: 45, epicenterRank: 1 })) })
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+    })
+
+    it('安全弁: 取消で印を落とす', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(3000))
+      act(() => { handle(makeEEW({ serial: 2, cancelled: true })) })
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+    })
+
+    // 時間軸が変わったら、印も待ちも落とす。落とさないと、新しい時間軸で同じ鍵の初報が
+    // 待たずに理由を出す（残った待ちが切れて印を付け直す形も同じ）。
+    it('安全弁: リプレイのリセットで印と待ちを落とす', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ eventId: 'evt-A', noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(3000))
+      handle(makeEEW({ eventId: 'evt-B', noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(1000))
+      act(() => { capturedResult!.resetTracking() })
+      expect(capturedHook!.current.eewNoForecastSettledKeys.size).toBe(0)
+      await act(() => vi.advanceTimersByTimeAsync(5000))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.size).toBe(0)
+    })
+
+    it('安全弁: 取り消された鍵がまた発表されたら、待ちを最初からやり直す', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(3000))
+      act(() => { handle(makeEEW({ serial: 2, cancelled: true })) })
+      act(() => { handle(makeEEW({ serial: 3, noAreas: true, epicenterRank: 1 })) })
+      await act(() => vi.advanceTimersByTimeAsync(2999))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+    })
+
+    // 窓の手前で届いた報は、再生を始めた時点から待ち直す（印を最初から付けない）。
+    it('安全弁: リプレイの途中から始めたら、印を最初から付けず、始めた時点から待つ', async () => {
+      const d = setupFull({ voicevoxEnabled: false })
+      act(() => {
+        d.restore([{
+          payload: { kind: 'event' as const, event: makeEEW({ noAreas: true, epicenterRank: 1 }) },
+          replayTime: new Date('2026-01-01T12:00:00Z'),
+        }] as never)
+      })
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+      await act(() => vi.advanceTimersByTimeAsync(2999))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+    })
   })
 
   // 単独点処理・深発地震はその報に予想震度が載らない。待っても結論は理由付きの
@@ -2216,7 +2344,8 @@ describe('復元後に予報から警報へ上がったとき、区分は必ず 
     const d = setupFull(conf)
     d.restore(pre.map(entry) as never)
     d.handleLiveEvent(makeEEW({ serial: 4, scaleTo: 50, severity: 'Warning', ...live }))
-    await vi.advanceTimersByTimeAsync(30000)
+    // 予想震度の付かない待ちが切れると画面用の印（state）が動くので act() で包む
+    await act(() => vi.advanceTimersByTimeAsync(30000))
     await flushMicrotasks()
     // **数えるのは発話の本数ではなく「区分を名乗った発話」の本数。** 前置き
     // （「緊急地震速報に切り替わりました。」）と第 1 フェーズの名乗り（「緊急地震速報、〇〇で

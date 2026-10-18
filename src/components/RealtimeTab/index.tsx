@@ -34,6 +34,12 @@ interface Props {
    * それがどの地震のものか判らない。**「どちらか」は画面が担う**（詳細は `useEewSpeakingCard`）。
    */
   speakingEewKey?: string | null
+  /**
+   * 予想震度の付かない待ちが切れた緊急地震速報の識別子（`eewEventKey`）。
+   * 「予想震度なし」のバナーが理由を添えるかを決める（`eewNoForecastReason` の `waited`）。
+   * 読み上げと同じ待ちから作る（`useLiveEventHandler` の `eewNoForecastSettledKeys`）。
+   */
+  eewNoForecastSettledKeys: ReadonlySet<string>
   swaveArrival: SWaveArrival | null
   /** V2 検知エンジンの検知イベント（音・自動タブ切替・自動フィット・カード表示を駆動）。 */
   kyoshinV2Detections: DetectionEvent[]
@@ -61,9 +67,13 @@ interface Props {
  *
  * 理由が判らないとき（`unknown`）は何も添えない。値が遅れて付く可能性が残る状態で、
  * 気象庁が「発表しない」と決めたわけではないため。
+ *
+ * `noForecastWaited` … 値の付かない待ちが切れたか（`useLiveEventHandler` の
+ * `eewNoForecastSettledKeys`）。切れた後に精度ランク 1 なら、読み上げと同じく「単独点処理のため」を
+ * 添える（2026-10-15 ユーザー承認「出す(推奨)」）。
  */
-function NoForecastBanner({ eew }: { eew: EEWAlert }) {
-  const reason = eewNoForecastReason(eew)
+function NoForecastBanner({ eew, noForecastWaited }: { eew: EEWAlert; noForecastWaited: boolean }) {
+  const reason = eewNoForecastReason(eew, noForecastWaited)
   return (
     <div
       className="w-full rounded-lg py-2 px-4 flex flex-col items-center justify-center gap-1 roomy:py-3.5"
@@ -71,7 +81,7 @@ function NoForecastBanner({ eew }: { eew: EEWAlert }) {
     >
       {reason !== 'unknown' && (
         <span className="text-xs font-medium" style={{ color: '#9ca3af' }}>
-          {reason === 'assumed' ? '単独点処理のため' : '深発地震のため'}
+          {reason === 'deep' ? '深発地震のため' : '単独点処理のため'}
         </span>
       )}
       <span className="text-xl font-extrabold" style={{ color: '#e5e7eb' }}>予想震度なし</span>
@@ -204,8 +214,10 @@ function useSecondTick(active: boolean): number {
 }
 
 
-function EEWCard({ eew, visible, speaking, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: {
+function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: {
   eew: EEWAlert
+  /** 予想震度の付かない待ちが切れたか（`NoForecastBanner` の同名引数）。 */
+  noForecastWaited: boolean
   /**
    * このカードが利用者の目に入っているか（リアルタイムタブが選ばれていて、パネルが畳まれておらず、
    * ブラウザのタブも表に出ている）。**用途は到達予測の残り秒数を進めるタイマーの開閉だけ。**
@@ -514,7 +526,7 @@ function EEWCard({ eew, visible, speaking, activeLpgmEventId, onToggleLpgm, onDe
             </span>
           </div>
         ) : (
-          <NoForecastBanner eew={eew} />
+          <NoForecastBanner eew={eew} noForecastWaited={noForecastWaited} />
         )}
 
         {/* 推定最大長周期地震動階級（クリックで地図表示トグル）。地域別 lgIntTo 優先のため
@@ -1261,7 +1273,7 @@ function KyoshinDetectionSummary({ events, points, visible }: {
 }
 
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections, kyoshinDetectedPoints, swaveArrival, visible, speakingEewKey, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: Props) {
+export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections, kyoshinDetectedPoints, swaveArrival, visible, speakingEewKey, eewNoForecastSettledKeys, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: Props) {
   // ブラウザのタブ・ウィンドウ側の可視性は App では判らないため、ここで合成する。
   const pageVisible = usePageVisible()
   return (
@@ -1275,6 +1287,7 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
             eew={eew}
             visible={visible && pageVisible}
             speaking={speakingEewKey !== null && speakingEewKey !== undefined && eewEventKey(eew) === speakingEewKey}
+            noForecastWaited={eewNoForecastSettledKeys.has(eewEventKey(eew))}
             activeLpgmEventId={activeLpgmEventId}
             onToggleLpgm={onToggleLpgm}
             onDeactivateLpgm={onDeactivateLpgm}

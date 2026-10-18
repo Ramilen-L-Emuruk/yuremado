@@ -1560,6 +1560,60 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   // 寿命が伸び続ける（津波が続いている間は数分おきに届くので、事実上消えなくなる）。
   const [areaGradeChangedKeys, setAreaGradeChangedKeys] = useState<Set<string>>(() => new Set())
   const areaGradeClearTimerRef = useRef<number>(0)
+  /**
+   * 予想震度の付かない待ち（`EEW_PHASE2_MAX_WAIT_MS`）が切れた緊急地震速報（`eewEventKey`）。
+   * `eewNoForecastReason` の `waited` の出どころで、**読み上げと画面のバナーが同じこれを見る**。
+   *
+   * **読み上げの設定の外で持つ。** バナーは読み上げを切った端末にも出るので、読み上げの待ち
+   * （`eewTtsMaxTimersRef`。`voicevoxEnabled` の中でしか張られない）に相乗りすると、
+   * そういう端末ではバナーが理由を一度も出さない。待ちは自前のタイマー（`eewNoForecastWaitTimersRef`）で
+   * 測り、読み上げの待ちが切れたときもここへ印を付ける（どちらが先に切れても、
+   * 読み上げが理由を決める時点で印が付いているように）。
+   *
+   * ref は読み上げが発話の直前に同期で読むため、state は画面へ渡すため。必ず
+   * `markEewNoForecastSettled` / `unsettleEewNoForecast` を通して両方を一緒に動かす。
+   */
+  const [eewNoForecastSettledKeys, setEewNoForecastSettledKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const eewNoForecastSettledRef = useRef<Set<string>>(new Set())
+  const eewNoForecastWaitTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const markEewNoForecastSettled = (key: string) => {
+    if (eewNoForecastSettledRef.current.has(key)) return
+    eewNoForecastSettledRef.current.add(key)
+    setEewNoForecastSettledKeys(new Set(eewNoForecastSettledRef.current))
+  }
+  const unsettleEewNoForecast = (key: string) => {
+    const timer = eewNoForecastWaitTimersRef.current.get(key)
+    if (timer) { clearTimeout(timer); eewNoForecastWaitTimersRef.current.delete(key) }
+    if (!eewNoForecastSettledRef.current.delete(key)) return
+    setEewNoForecastSettledKeys(new Set(eewNoForecastSettledRef.current))
+  }
+  /**
+   * 報を受けるたびに、予想震度の付かない待ちを進める。
+   *
+   * - 値が付いた報 … 待ちも印も落とす。後の続報でまた値が無くなれば、待ちを最初からやり直す
+   *   （読み上げも同じく待ち直す。`eewConfirmedScaleRef` が 0 でなくなるため）
+   * - 値が無く、理由も判らない報 … まだ待っておらず印も無ければ待ちを張る。**張り直さない** ——
+   *   値の無い続報が数秒おきに届くと、張り直すたびに待ちが伸びていつまでも切れない
+   * - 値が無く、理由が判っている報（仮定震源要素・深発）… 待つ必要が無いので待ちだけ止める。
+   *   **印は落とさない** —— 印は「値が付かないまま待ち終えた」という事実で、その後に理由の判る報が
+   *   挟まっても事実は変わらない。落とすと、次に理由の判らない報へ戻ったときに待ち直すことになる
+   */
+  const trackEewNoForecastWait = (key: string, event: EEWAlert) => {
+    if (eewMaxScaleInfo(event).scale > 0) {
+      unsettleEewNoForecast(key)
+      return
+    }
+    if (eewNoForecastReason(event, false) !== 'unknown') {
+      const timer = eewNoForecastWaitTimersRef.current.get(key)
+      if (timer) { clearTimeout(timer); eewNoForecastWaitTimersRef.current.delete(key) }
+      return
+    }
+    if (eewNoForecastSettledRef.current.has(key) || eewNoForecastWaitTimersRef.current.has(key)) return
+    eewNoForecastWaitTimersRef.current.set(key, setTimeout(() => {
+      eewNoForecastWaitTimersRef.current.delete(key)
+      markEewNoForecastSettled(key)
+    }, EEW_PHASE2_MAX_WAIT_MS))
+  }
   // 津波イベント受信時にスクロールでフォーカスする予報区（今回の受信で変更があった区域全部＋その中の最高波高区域）。
   // 対象区域が特定できない受信（区域のみの発表・実質変化なしの続報・解除）は top: null（一番上へ戻す）で表す。
   // 形の意味は受け取る側（`FocusedDistrict`）に書いてある。`resetToTop` に既定値を置かないのは、
@@ -1607,7 +1661,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    * **`eewRetractedKeysRef` はここで触らない。** あれは消す側ではなく立てる側で、しかも
    * 誤報取消と自動解除で扱いが分かれる（判断は呼び出し側が持つ）。
    *
-   * タイマーを持つ 3 つ（上限待ち・安定待ちの 2 つ）は止めてから消す。**復元経路では
+   * タイマーを持つ 4 つ（上限待ち・安定待ちの 2 つ・予想震度の付かない待ち）は止めてから消す。**復元経路では
    * そもそも張られていない**ので、取得が空振りするだけで害は無い。
    */
   const forgetEewTracking = (key: string) => {
@@ -1617,6 +1671,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     activeEEWAnnouncedHypocentersRef.current.delete(key)
     const pendingMaxTimer = eewTtsMaxTimersRef.current.get(key)
     if (pendingMaxTimer) { clearTimeout(pendingMaxTimer); eewTtsMaxTimersRef.current.delete(key) }
+    unsettleEewNoForecast(key)
     eewTtsEventsRef.current.delete(key)
     eewPhase1TokensRef.current.delete(key)
     eewPhase2TokensRef.current.delete(key)
@@ -3459,6 +3514,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 同じ eventId で発表が再開することはないが、取消の記録を持ち越すと以後の読み上げが
       // 鳴らせなくなるため、報を受けた時点で必ず落とす
       eewRetractedKeysRef.current.delete(key)
+      // 予想震度の付かない待ちも、読み上げの設定の外で進める（理由は `eewNoForecastSettledRef`）
+      trackEewNoForecastWait(key, event)
 
       if (settings.voicevoxEnabled) {
         const clearPhase2MaxTimer = () => {
@@ -3613,9 +3670,12 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 「震度を伝えられないのに階級だけ確定した」という電文の異常が一度も記録されない
             // （発話の結果は同じなので画面にも出ず、後から原因を追えなくなる）。
             if (scaleUnchanged && !settings.ttsReadEewLpgmClass) return null
+            // 予想震度が無いときに理由を添えるか（`eewNoForecastReason` の `waited`）。下の
+            // `scalePhrase` と同じ値を使うため、ここで 1 回だけ読む。
+            const noForecastWaited = eewNoForecastSettledRef.current.has(key)
             const text = scaleUnchanged
               ? eewLpgmOnlyText(confirmedLpgm, confirmedLpgmInfo?.over === true)
-              : eewIntensityText(confirmedScale, confirmedLpgm, latest, announceUpgrade, confirmedLpgmInfo?.over === true, ttsRegionOptions(settings))
+              : eewIntensityText(confirmedScale, confirmedLpgm, latest, noForecastWaited, announceUpgrade, confirmedLpgmInfo?.over === true, ttsRegionOptions(settings))
             if (!text) {
               // 想定外。eewIntensityText 経由なら eewScaleOnlyText が常に非空を返す
               // （noForecastText が全ケースをカバーするため）。scaleUnchanged 経由の
@@ -3647,7 +3707,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // **この発話のどの句がどの値を運ぶか**（下の `onSettled` が既読を戻す単位）。
             // **`text` と同じ材料から作ること** —— 別に組み立てると、文面を変えたときに
             // 判定だけが古い形のまま残る。`eewIntensityText` は内部でこの 2 つを繋いでいる。
-            const scalePhrase = scaleUnchanged ? '' : eewScaleOnlyText(confirmedScale, latest)
+            const scalePhrase = scaleUnchanged ? '' : eewScaleOnlyText(confirmedScale, latest, noForecastWaited)
             const lpgmPhrase = eewLpgmOnlyText(spokenLpgm.cls, spokenLpgm.over)
             const upgradePhrase = announceUpgrade ? EEW_UPGRADE_PHRASE : ''
             // 組み立てとずれていないかの検算。ずれても「声になっていない」側へ倒れて同じ値を
@@ -4294,12 +4354,17 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 数 ms 後に階級だけの再読み上げが続くという不自然な二重発話になる
         updateLpgmStability(eewMaxLpgmClassInfo(event))
         if (severityUpgraded) {
+          // 格上げは待たずに確定するので、値が無ければ理由の待ち（`eewNoForecastSettledRef`）も
+          // 待たない。**値の無い警報は来ない前提** —— 気象庁が値を載せないのは観測点 1 点のときと
+          // 深さ 150km 超のときだけで、どちらの場合も気象庁は警報を出さない
+          // （深発地震テストの続報を予報級に留めているのと同じ理由。settings-pwa-spec.md §7「実電文の形に合わせる」）。来た場合、直前の報で待ちが切れて印が付いていれば理由つきで、
+          // 付いていなければ理由なしの「予想震度なし。」を読み、帯は 3 秒後に理由を出す。
           clearPhase2MaxTimer()
           confirmScale({ scale, orAbove: scaleOrAbove })
         } else if (scale > 0) {
           clearPhase2MaxTimer()
           updateScaleStability({ scale, orAbove: scaleOrAbove })
-        } else if (eewNoForecastReason(event) !== 'unknown') {
+        } else if (eewNoForecastReason(event, false) !== 'unknown') {
           clearPhase2MaxTimer()
           confirmScale({ scale: 0, orAbove: false })
         } else {
@@ -4343,6 +4408,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             && eewConfirmedScaleRef.current.get(key)?.scale !== 0) {
             const maxTimer = setTimeout(() => {
               eewTtsMaxTimersRef.current.delete(key)
+              // **確定より先に印を付ける。** 画面側の待ち（`trackEewNoForecastWait`）と同じ長さだが、
+              // どちらが先に切れるかは決まっていない。読み上げが理由を決めるのは発話の順番が
+              // 来たとき（`enqueuePhase2`）なので、ここで付けておけば必ず間に合う。
+              markEewNoForecastSettled(key)
               confirmScale({ scale: 0, orAbove: false })
             }, EEW_PHASE2_MAX_WAIT_MS)
             eewTtsMaxTimersRef.current.set(key, maxTimer)
@@ -5231,6 +5300,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   useEffect(() => {
     return () => {
       for (const timer of eewTtsMaxTimersRef.current.values()) clearTimeout(timer)
+      for (const timer of eewNoForecastWaitTimersRef.current.values()) clearTimeout(timer)
       for (const cycle of eewScaleStabilityRef.current.values()) clearTimeout(cycle.timer)
       for (const cycle of eewLpgmStabilityRef.current.values()) clearTimeout(cycle.timer)
       eewSpeechPendingRef.current = 0
@@ -5259,6 +5329,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     activeEEWAnnouncedHypocentersRef.current.clear()
     for (const timer of eewTtsMaxTimersRef.current.values()) clearTimeout(timer)
     eewTtsMaxTimersRef.current.clear()
+    // 予想震度の付かない待ちも落とす。印を持ち越すと、新しい時間軸の初報で待たずに理由を言う
+    for (const timer of eewNoForecastWaitTimersRef.current.values()) clearTimeout(timer)
+    eewNoForecastWaitTimersRef.current.clear()
+    eewNoForecastSettledRef.current.clear()
+    setEewNoForecastSettledKeys(new Set())
     eewTtsEventsRef.current.clear()
     eewPhase1TokensRef.current.clear()
     eewPhase2TokensRef.current.clear()
@@ -5532,6 +5607,15 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 声にしていない場所まで「名乗り済み」になり、窓の中の言い直しを黙らせる。
             if (restoredHypo !== 'keep') activeEEWAnnouncedHypocentersRef.current.set(key, [restoredHypo])
           }
+          // 予想震度の付かない待ちも、ライブ経路と同じ口で進める。窓の手前でどれだけ経ったかは
+          // ここでは測らず、再生を始めた時点から待ち直す（印を最初から付けると、窓の直前に届いた
+          // 報まで待たずに理由を出す）。読み上げは `eewConfirmedScaleRef` の復元で黙るので、
+          // この待ちが切れても声にはならず、画面のバナーだけが理由を出す。
+          //
+          // **記憶の書き込みをすべて終えてから呼ぶ。** 上の記憶は「全部書くか 1 つも書かないか」で
+          // 揃えてあり、途中に投げうる処理を挟むと一部だけ書かれた状態が残る（理由は上の
+          // 「投げうる計算を先に済ませる」のコメント）。
+          trackEewNoForecastWait(key, eew)
         } else if (ev.kind === 'tsunami') {
           const tsunami = ev as JMATsunami
           // **ライブ経路と同じ形で進めること**（電文は時系列順に渡ってくる）。片方だけずらすと、
@@ -5750,5 +5834,5 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     scheduleSpeech(TELEGRAM_TEXT_SPEECH_RESERVE_DELAY_MS, () => speakTelegramText(event))
   }
 
-  return { handleLiveEvent, resetTracking, restorePreWindowTracking, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict }
+  return { handleLiveEvent, resetTracking, restorePreWindowTracking, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict, eewNoForecastSettledKeys }
 }

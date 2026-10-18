@@ -45,6 +45,8 @@ export interface TestFunctions {
   /** 「非常に強い揺れを検知」の EEW。DMDSS 版でしか届かない形なので、ボタンも DMDSS 版にだけ出す。 */
   eewStrongShaking?: () => void
   eewDeep: () => void
+  /** 精度ランク 1 で予想震度が付かないまま取り消される EEW。精度ランクは DMDATA 経路しか運ばないので、ボタンは DMDSS 版にだけ出す。 */
+  eewNoForecast: () => void
   eewRetraction: () => void
   tsunami: () => void
   tsunamiWarning: () => void
@@ -1889,6 +1891,12 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="地震動予報（深発地震）" description="深さ450km（小笠原諸島西方沖 M6.5） – eewForecast 音 / 深発地震には地域別の震度予想が発表されないため「深発地震のため、予想震度なし。」を待たずに読み上げ。気象庁は深さ150km超に警報を出さないため続報も予報級のまま / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
           <TestButton color="yellow" onClick={onTest.eewDeep}>深発地震テスト</TestButton>
         </Row>
+        {/* 文面は 2026-10-15 ユーザー承認「足す(推奨)」 */}
+        {isDmdss && (
+          <Row label="地震動予報（予想震度なしのまま取消）" description="震源の確からしさが低い初報（石川県西方沖 M4.4 深さ10km。2024年11月26日の実電文の形） – eewForecast 音 / 3通続けて予想震度が載らず、3秒待っても付かないため「単独点処理のため、予想震度なし。」と読み上げ。約12秒後に取消（eewCancel 音・読み上げあり）">
+            <TestButton color="yellow" onClick={onTest.eewNoForecast}>予想震度なしテスト</TestButton>
+          </Row>
+        )}
         <Row label="緊急地震速報（警報）" description="震度5強相当 – eew 音 / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
           <TestButton color="orange" onClick={onTest.eewWarning}>警報テスト</TestButton>
         </Row>

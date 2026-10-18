@@ -1259,10 +1259,14 @@ export function eewWarningRegionsText(
 /**
  * 予想震度が付いていないときの句。理由の判定は `eewNoForecastReason` に委ねる
  * （待たずに読むかどうかの判断と同じ判定を使うため。二重に持つと食い違う）。
+ *
+ * `singleStation`（待ち終えても値が付かなかった精度ランク 1）も「単独点処理のため」と読む
+ * （2026-10-15 ユーザー承認「単独点処理のため(推奨)」）。
  */
-function noForecastText(event: EEWAlert): string {
-  switch (eewNoForecastReason(event)) {
-    case 'assumed': return '単独点処理のため、予想震度なし。'
+function noForecastText(event: EEWAlert, noForecastWaited: boolean): string {
+  switch (eewNoForecastReason(event, noForecastWaited)) {
+    case 'assumed':
+    case 'singleStation': return '単独点処理のため、予想震度なし。'
     case 'deep':    return '深発地震のため、予想震度なし。'
     case 'unknown': return '予想震度なし。'
   }
@@ -1279,12 +1283,15 @@ function noForecastText(event: EEWAlert): string {
  *
  * 震度を伝えられないときに階級句を落とすのは、結合する `eewIntensityText` の役目
  * （この関数は震度部分だけを組み立てる）。
+ *
+ * `noForecastWaited` … 値の付かない待ちが切れたか（`eewNoForecastReason` の `waited`）。
+ * 震度があるときは使わない。
  */
-export function eewScaleOnlyText(scaleInfo: EewMaxScaleInfo, event: EEWAlert): string {
+export function eewScaleOnlyText(scaleInfo: EewMaxScaleInfo, event: EEWAlert, noForecastWaited: boolean): string {
   if (scaleInfo.scale > 0) {
     return `予想最大震度${getIntensityLabelWithApproxAbove(scaleInfo.scale, scaleInfo.orAbove)}。`
   }
-  return noForecastText(event)
+  return noForecastText(event, noForecastWaited)
 }
 
 /**
@@ -1330,7 +1337,10 @@ export function eewLpgmOnlyText(lpgmClass: number, over = false): string {
  * 結果的に震度部分だけが声になる（「個別に呼び分ける」のではなく、0 扱いで自然に省略させる）。
  */
 export function eewIntensityText(
-  scaleInfo: EewMaxScaleInfo, lpgmClass: number, event: EEWAlert, announceUpgrade = false,
+  scaleInfo: EewMaxScaleInfo, lpgmClass: number, event: EEWAlert,
+  /** 値の付かない待ちが切れたか（`eewScaleOnlyText` の同名引数）。 */
+  noForecastWaited: boolean,
+  announceUpgrade = false,
   /**
    * 階級が「程度以上」だったか。**`event` から引き直さない** —— 渡される `lpgmClass` は
    * 安定待ちを経た確定値で、現在の報の値と食い違いうる。引き直すと別の値に語を貼り付ける。
@@ -1348,7 +1358,7 @@ export function eewIntensityText(
   //
   // **震度を伝えられないときは階級も読まない**（判定は `canPresentLpgmClass`。カード表示・
   // 第 2 フェーズの言い直しと同じ述語を共有する。理由はそちらのコメント）。
-  const scaleText = eewScaleOnlyText(scaleInfo, event)
+  const scaleText = eewScaleOnlyText(scaleInfo, event, noForecastWaited)
   const lpgmText = (opts?.readEewLpgmClass ?? true) && canPresentLpgmClass(scaleInfo.scale, lpgmClass)
     ? eewLpgmOnlyText(lpgmClass, lpgmOver)
     : ''
@@ -1402,7 +1412,7 @@ const PREVIEW_EEW_SCALE: EewMaxScaleInfo = { scale: 60, orAbove: false }
 export function voicevoxPreviewTexts(): readonly string[] {
   return [
     eewAlertToText(PREVIEW_EEW, 'warning'),
-    eewIntensityText(PREVIEW_EEW_SCALE, 0, PREVIEW_EEW),
+    eewIntensityText(PREVIEW_EEW_SCALE, 0, PREVIEW_EEW, false),
   ]
 }
 

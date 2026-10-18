@@ -913,6 +913,8 @@ const EEW_ARRIVAL_DELAY_MS = {
    * Pn（7.8km/s）で 450km を伝わると約 58 秒なので、この値は走時と整合する。
    */
   ogasawara: 60000,
+  /** 石川県西方沖・深さ 10km（海域）。2024-11-26 23:14 の実電文（発生 23:14:44・発現 23:14:52）の値 */
+  ishikawaSeihooki: 8000,
 } as const
 
 // EEW テストの kindCode は気象庁コード表12（緊急地震速報種別）に従う。
@@ -1249,6 +1251,54 @@ export function createTestEEWDeep(withDmdssFields: boolean, eventId?: string, se
       : {}),
     issue: { eventId: eid, serial: String(serial), time: report },
     // 深発地震では地域別の震度予想が発表されない
+    areas: [],
+  }
+}
+
+/**
+ * 「予想震度なしのまま取消」テストで報を流す時刻（押してからのミリ秒）。
+ *
+ * **2024-11-26 23:14 石川県西方沖 M4.4 の実電文の間隔を写している**（第 1〜3 報
+ * `VXSE45_JPOS_20241126141458471`・`…141501376`・`…141502922`、取消 `…141510487`）。
+ * 3 通とも震央の精度ランク 1・予想震度の要素なしで、値が付かないまま取消になった。
+ * 待ち（`EEW_PHASE2_MAX_WAIT_MS`＝3 秒）は第 3 報より前に切れるので、取消より先に
+ * 「単独点処理のため、予想震度なし。」を読む（→ docs/spec/audio-tts-spec.md §6）。
+ */
+export const TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS = [0, 2_900, 4_450] as const
+export const TEST_EEW_NO_FORECAST_CANCEL_MS = 12_000
+
+// 震央の精度ランク 1 で予想震度が付かないまま取り消される報（→ `TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS`）。
+//
+// **仮定震源要素ではない。** 震源要素は推定できている（M4.4・深さ 10km）が、精度ランク 1
+// （P 波／S 波レベル超え・IPF 法 1 点・仮定震源要素のいずれか）で、気象庁は予想震度を載せなかった。
+// 読み上げは待ちを終えてから理由を言う（2026-10-14 ユーザー承認「待ち終えてから理由を言う（推奨）」）。
+//
+// **DMDSS 版でしか届かない形**なので、ボタンも DMDSS 版にだけ出す（精度ランクは DMDATA 経路しか運ばない）。
+export function createTestEEWNoForecast(eventId?: string, serial = 1, baseTime?: Date): EEWAlert {
+  const anchor = baseTime ?? serverDate()
+  const origin = new Date(anchor.getTime() + eewOriginDriftMs(serial))
+  const report = serverDate().toISOString()
+  const eid = eventId ?? `test-no-forecast-${Date.now()}`
+  return {
+    kind: 'eew',
+    id: `test-eew-no-forecast-${eid}-${serial}`,
+    time: report,
+    test: false,
+    earthquake: {
+      originTime: origin.toISOString(),
+      arrivalTime: new Date(anchor.getTime() + EEW_ARRIVAL_DELAY_MS.ishikawaSeihooki).toISOString(),
+      condition: '',
+      // 実電文: 第 1 報 M4.4、第 2・3 報 M4.3（震央 37.0N 136.3E・深さ 10km は 3 通とも同じ）
+      hypocenter: { name: '石川県西方沖', latitude: 37.0, longitude: 136.3, depth: 10, magnitude: serial === 1 ? 4.4 : 4.3 },
+    },
+    severity: 'Forecast',
+    cancelled: false,
+    // 精度は実電文どおり（震央・深さとも rank 1、規模 rank 4・1 点）
+    accuracy: { epicenterRank: 1, epicenterRank2: 1, depthRank: 1, magnitudeRank: 4, magnitudePoints: 1 },
+    landOrSea: '海域',
+    reduceName: '石川県西方沖',
+    issue: { eventId: eid, serial: String(serial), time: report },
+    // 予想震度の要素ごと無い（区域も電文全体の予想震度も載らない）
     areas: [],
   }
 }
