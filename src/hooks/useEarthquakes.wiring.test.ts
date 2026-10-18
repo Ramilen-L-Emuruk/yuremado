@@ -64,27 +64,37 @@ vi.mock('../utils/stationCoords', () => ({
 
 // WebSocket の代役。`new` で呼ばれるためクラスで用意する（アロー関数はコンストラクタになれない）。
 // vi.mock のファクトリはファイル先頭へ巻き上げられるので、クラス定義も vi.hoisted で一緒に上げる。
-const { sockets, FakeWebSocket } = vi.hoisted(() => {
+const { sockets, FakeWebSocket, socketOptions } = vi.hoisted(() => {
   const sockets: {
     connected: boolean
     onStatusChange: ((s: string) => void) | null
     onEvent: ((e: unknown) => void) | null
     onReconnected: ((lastReceivedAtMs: number) => void) | null
+    onClassifications: ((c: readonly string[]) => void) | null
+    onClassificationsUnsettled: ((reason: 'auth' | 'timeout') => void) | null
   }[] = []
+  /**
+   * 次に作る代役の振る舞い。`holdClassifications` を立てると、最初の取り決めがいつまでも決まらない
+   * （同時接続の上限で 409 が続く形）。テストごとに `beforeEach` で戻す。
+   */
+  const socketOptions = { holdClassifications: false }
   class FakeWebSocket {
     onEvent: ((e: unknown) => void) | null = null
     onStatusChange: ((s: string) => void) | null = null
     onRawMessage: ((e: unknown) => void) | null = null
     onReconnected: ((lastReceivedAtMs: number) => void) | null = null
     onClassifications: ((c: readonly string[]) => void) | null = null
+    onClassificationsUnsettled: ((reason: 'auth' | 'timeout') => void) | null = null
     // 本物は最初の取り決めが済んだ時点で解決する。ここでは全区分を受けている人として即座に返す
-    readonly classificationsReady = Promise.resolve(['eew.forecast', 'telegram.earthquake'])
+    readonly classificationsReady: Promise<readonly string[]> = socketOptions.holdClassifications
+      ? new Promise<readonly string[]>(() => {})
+      : Promise.resolve(['eew.forecast', 'telegram.earthquake'])
     connected = false
     constructor() { sockets.push(this) }
     connect() { this.connected = true }
     disconnect() { this.connected = false }
   }
-  return { sockets, FakeWebSocket }
+  return { sockets, FakeWebSocket, socketOptions }
 })
 
 // 取得系はモック関数だけを置き、戻り値は下の beforeEach で `vi.mocked(...).mockResolvedValue(...)`
@@ -203,6 +213,7 @@ function skips(count: number, day = '2026-08-10'): Map<string, number> {
 
 beforeEach(() => {
   sockets.length = 0
+  socketOptions.holdClassifications = false
   mockIsDmdss = true
   // 戻り値の形はここで型付きに与える（実シグネチャと違えば型エラーになる）
   vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history())
@@ -4873,5 +4884,204 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         expect(records[0].skipped).toBe('notDispatched')
       })
     })
+  })
+})
+
+// 前回受け付けられた区分を覚えておき、起動直後にその区分で履歴と発表中の緊急地震速報を取る
+// （→ `services/dmdataClassificationMemory.ts`）。チケットの発行に 1.2〜2.2 秒、同時接続の上限で
+// 409 が続けば最大 15 秒、履歴と復元が待たされていた（2026-10-19 実測）。
+const { fetchDmdataActiveEews } = await import('../services/dmdata')
+const { rememberClassifications, loadRememberedClassifications } = await import('../services/dmdataClassificationMemory')
+const { createTestEEWWarning } = await import('../utils/testData')
+
+describe('DMDSS 版: 前回受け付けられた区分で、履歴と復元を申し込みの結果より先に始める', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    // 呼ばれた回数を数えるので、前のテストの記録を消す（戻り値は上の beforeEach が与え直す）
+    vi.mocked(fetchDmdataActiveEews).mockClear()
+    vi.mocked(fetchDmdataQuakeHistory).mockClear()
+    // 最初の取り決めがいつまでも決まらない（同時接続の上限で 409 が続く）
+    socketOptions.holdClassifications = true
+  })
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  // 正
+  it('覚えがあれば、申し込みの結果を待たずにその区分で取る', async () => {
+    rememberClassifications('test-key', ['eew.warning', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    expect(vi.mocked(fetchDmdataQuakeHistory)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(fetchDmdataActiveEews)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(fetchDmdataActiveEews).mock.calls[0][1]).toEqual(['eew.warning', 'telegram.earthquake'])
+  })
+
+  // 対照: 覚えが無ければ今までどおり待つ（受けられない区分の一覧を引いて断られる取得を出さない）
+  it('覚えが無ければ、申し込みの結果が出るまで取らない', async () => {
+    const h = setup()
+    await h.flush()
+    expect(vi.mocked(fetchDmdataQuakeHistory)).not.toHaveBeenCalled()
+    expect(vi.mocked(fetchDmdataActiveEews)).not.toHaveBeenCalled()
+  })
+
+  // 対照: 別の鍵の覚えは当てない（契約の違う鍵かもしれない）
+  it('別の鍵で覚えた区分では取らない', async () => {
+    rememberClassifications('other-key', ['eew.forecast', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    expect(vi.mocked(fetchDmdataActiveEews)).not.toHaveBeenCalled()
+  })
+
+  it('受け付けられた区分が覚えと違えば、その区分で取り直して覚え直す', async () => {
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onClassifications?.(['eew.warning', 'telegram.earthquake']) })
+    await h.flush()
+    expect(vi.mocked(fetchDmdataQuakeHistory)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(fetchDmdataActiveEews).mock.calls.map(c => c[1])).toEqual([
+      ['eew.forecast', 'telegram.earthquake'],
+      ['eew.warning', 'telegram.earthquake'],
+    ])
+    expect(loadRememberedClassifications('test-key')).toEqual(['eew.warning', 'telegram.earthquake'])
+  })
+
+  // 取り直しで捨てた版の結果を当てない（古い区分で取った「もっと見る」の続きの位置などで上書きしない）
+  it('取り直しの前の版が後から返っても、その結果は当てない', async () => {
+    let releaseFirst: (v: ReturnType<typeof history>) => void = () => {}
+    vi.mocked(fetchDmdataQuakeHistory)
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = resolve }))
+      .mockResolvedValueOnce(history({ oldestLoadedDay: '2026-10-12', hasMore: true }))
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onClassifications?.(['eew.warning', 'telegram.earthquake']) })
+    await h.flush()
+    expect(h.current.hasMore).toBe(true)
+    // 前の版が遅れて返る（打ち切りを無視して値を返した形）
+    await act(async () => { releaseFirst(history({ hasMore: false })) })
+    await h.flush()
+    expect(h.current.hasMore).toBe(true)
+  })
+
+  // 安全弁: 同じなら取り直さない
+  it('受け付けられた区分が覚えと同じなら取り直さない', async () => {
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onClassifications?.(['telegram.earthquake', 'eew.forecast']) })
+    await h.flush()
+    expect(vi.mocked(fetchDmdataQuakeHistory)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(fetchDmdataActiveEews)).toHaveBeenCalledTimes(1)
+  })
+
+  // 安全弁: 比べるのは最初に受け付けられた区分だけ。再接続のたびに履歴を取り直さない
+  it('再接続で区分が変わっても、2 度目以降は取り直さない', async () => {
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onClassifications?.(['eew.forecast', 'telegram.earthquake']) })
+    act(() => { sockets[0].onClassifications?.(['telegram.earthquake']) })
+    await h.flush()
+    expect(vi.mocked(fetchDmdataQuakeHistory)).toHaveBeenCalledTimes(1)
+    // 覚えは最新の受け付けに合わせる（次に開いたときはこちらで取る）
+    expect(loadRememberedClassifications('test-key')).toEqual(['telegram.earthquake'])
+  })
+
+  // 取り直しで、発表中の緊急地震速報を二重に積まない（前の版が積み終えた電文は数えない）
+  it('取り直しで同じ緊急地震速報が返っても、復元は 1 度だけ積む', async () => {
+    const eew = createTestEEWWarning(true, '20261019120000')
+    // 1 回だけの指定にする（既定の空配列を後のテストへ持ち越さない）
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([eew]).mockResolvedValueOnce([eew])
+    vi.mocked(log.info).mockClear()
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onClassifications?.(['eew.warning', 'telegram.earthquake']) })
+    await h.flush()
+    expect(vi.mocked(fetchDmdataActiveEews)).toHaveBeenCalledTimes(2)
+    const restored = vi.mocked(log.info).mock.calls
+      .filter(c => typeof c[0] === 'string' && c[0].includes('発表中の緊急地震速報を復元しました'))
+    expect(restored).toHaveLength(1)
+  })
+
+  // 取り直している間は読み込み中へ戻す（古い区分の一覧を確かなものとして見せ続けない）
+  it('取り直しの間は読み込み中に戻り、取り終えたら降りる', async () => {
+    let releaseSecond: (v: ReturnType<typeof history>) => void = () => {}
+    vi.mocked(fetchDmdataQuakeHistory)
+      .mockResolvedValueOnce(history())
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseSecond = resolve }))
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    expect(h.current.isLoading).toBe(false)
+    act(() => { sockets[0].onClassifications?.(['eew.warning', 'telegram.earthquake']) })
+    await h.flush()
+    expect(h.current.isLoading).toBe(true)
+    await act(async () => { releaseSecond(history()) })
+    await h.flush()
+    expect(h.current.isLoading).toBe(false)
+  })
+
+  // 取り直しの途中で押された「もっと見る」は、取り直しが決着してから、その続きを読む
+  // （先に読むと、後から終わった取り直しがカーソルを新しい側へ戻し、次の押下が同じ窓を読み直す）
+  it('取り直しの途中で押した「もっと見る」は、取り直しを待ってからその続きを読む', async () => {
+    let releaseSecond: (v: ReturnType<typeof history>) => void = () => {}
+    vi.mocked(fetchDmdataQuakeHistory)
+      .mockResolvedValueOnce(history({ oldestLoadedDay: '2026-10-12', hasMore: true }))
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseSecond = resolve }))
+      .mockResolvedValueOnce(history({ oldestLoadedDay: '2026-10-05', hasMore: true }))
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onClassifications?.(['eew.warning', 'telegram.earthquake']) })
+    await h.flush()
+    let pressed: Promise<void> = Promise.resolve()
+    act(() => { pressed = h.current.loadMoreEarthquakes() })
+    await h.flush()
+    // 取り直しが決着するまでは「もっと見る」の取得を出さない
+    expect(vi.mocked(fetchDmdataQuakeHistory)).toHaveBeenCalledTimes(2)
+    expect(h.current.isLoadingMore).toBe(true)
+    await act(async () => { releaseSecond(history({ oldestLoadedDay: '2026-10-11', hasMore: true })) })
+    await act(async () => { await pressed })
+    expect(vi.mocked(fetchDmdataQuakeHistory)).toHaveBeenCalledTimes(3)
+    // 取り直しの最古日（10-11）の続き＝ 10-10 の終わり（日本時間）から読む。前の版の 10-12 からではない
+    const before = vi.mocked(fetchDmdataQuakeHistory).mock.calls[2][1] as Date
+    expect(before.toISOString()).toBe('2026-10-10T14:59:59.999Z')
+    expect(h.current.isLoadingMore).toBe(false)
+  })
+
+  // 認証エラーで決着したら覚えを消す（次の起動で受けられない区分を引かない）。この起動は取り直さない
+  it('認証エラーで決着したら覚えを消し、取り直さない', async () => {
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onClassificationsUnsettled?.('auth') })
+    await h.flush()
+    expect(loadRememberedClassifications('test-key')).toBeNull()
+    expect(vi.mocked(fetchDmdataQuakeHistory)).toHaveBeenCalledTimes(1)
+  })
+
+  // 時間切れでは覚えを残して続ける。突き合わせは続き、後で違う区分が受け付けられたら取り直す
+  it('時間切れでは覚えを残し、後で違う区分が受け付けられたら取り直す', async () => {
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onClassificationsUnsettled?.('timeout') })
+    await h.flush()
+    expect(loadRememberedClassifications('test-key')).toEqual(['eew.forecast', 'telegram.earthquake'])
+    expect(vi.mocked(fetchDmdataQuakeHistory)).toHaveBeenCalledTimes(1)
+    act(() => { sockets[0].onClassifications?.(['eew.warning', 'telegram.earthquake']) })
+    await h.flush()
+    expect(vi.mocked(fetchDmdataQuakeHistory)).toHaveBeenCalledTimes(2)
+  })
+
+  // 対照: 覚えが無いまま決着しても何もしない（覚えも取り直しも無関係）
+  it('覚えが無いまま認証エラーで決着しても、別の鍵の覚えは消さない', async () => {
+    rememberClassifications('other-key', ['eew.forecast', 'telegram.earthquake'])
+    setup()
+    act(() => { sockets[0].onClassificationsUnsettled?.('auth') })
+    expect(loadRememberedClassifications('other-key')).toEqual(['eew.forecast', 'telegram.earthquake'])
   })
 })
