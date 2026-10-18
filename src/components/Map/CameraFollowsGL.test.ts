@@ -762,11 +762,106 @@ describe('EEW の初期フレーミング', () => {
     render(eewFrame(map, [noCoords], WEST_POINTS, refs))
 
     // Assert: 震源へは寄らない。矩形を持たない 1 点への直行（`{}`）が記録されていれば NaN を
-    // 寄り先に渡したということで、実機では MapLibre が例外を投げる。カメラを動かすのは成長フォロー
-    // だけで、目標は震源を除いた材料（ここでは検知点）になる。
+    // 寄り先に渡したということで、実機では MapLibre が例外を投げる。寄せる先は震源を除いた材料
+    // （ここでは検知点）になる。
     expect((map as FakeMap).moves).toEqual([{ padding: POINTS_PADDING, west: UNION_WEST }])
-    // 第一報のフォーカスも与えない（位置が判ってから改めて新規発報として扱う）。
+    // **第一報のフォーカスとして寄せる**（`eewFirstFocusTarget` が検知点を選ぶ）。以前は座標が無いと
+    // 印を立てずに返り、解除後の帰りまで抜けていた —— 覆したのはこの前提。
+    expect(refs.focusedEewIdRef.current).toBe('ev-nan')
+  })
+
+  // 正: 検知点で寄せた第一報に、新規発報の窓のうちに震源の座標が届いたら、もう一度だけ震源へ寄せる。
+  // 対照: その後の続報（同じ震源）では寄せ直さない。安全弁: 座標を待つ間の震源訂正フォローは警告を出さない。
+  it('検知点で寄せた第一報に震源の座標が届いたら、一度だけ震源へ寄せ直す', () => {
+    const map = createFakeMap({ fitZoom: 5 })
+    const noCoords = {
+      id: 'eew-late-report-1',
+      issue: { eventId: 'ev-late' },
+      earthquake: { originTime: '2026-08-21T05:00:00+09:00', hypocenter: { latitude: NaN, longitude: NaN } },
+    } as unknown as EEWAlert
+    const withCoords = {
+      ...noCoords,
+      id: 'eew-late-report-2',
+      earthquake: { ...noCoords.earthquake, hypocenter: { latitude: 37.5, longitude: 137.2 } },
+    } as unknown as EEWAlert
+    const refs = refsFor([noCoords], 0)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const view = render(eewFrame(map, [noCoords], WEST_POINTS, refs))
+    expect((map as FakeMap).moves).toEqual([{ padding: POINTS_PADDING, west: UNION_WEST }])
+    // 寄せ終わった後、座標を待つ間に座標の無い続報が届く（第一報の抑制中なので震源訂正フォローの分岐を通る）
+    act(() => (map as FakeMap).completeFlight())
+    view.rerender(eewFrame(map, [{ ...noCoords, id: 'eew-late-report-1b' } as EEWAlert], WEST_POINTS, refs))
+    expect(moveCount(map)).toBe(1)
+    expect(warn.mock.calls.filter((c) => String(c.join(' ')).includes('訂正の記録が空'))).toEqual([])
+
+    view.rerender(eewFrame(map, [withCoords], WEST_POINTS, refs))
+    // 2 回目は震源 1 点への直行（矩形を持たない経路 = `{}`）
+    expect((map as FakeMap).moves).toEqual([{ padding: POINTS_PADDING, west: UNION_WEST }, {}])
+
+    view.rerender(eewFrame(map, [{ ...withCoords, id: 'eew-late-report-3' } as EEWAlert], WEST_POINTS, refs))
+    expect(moveCount(map)).toBe(2)
+    warn.mockRestore()
+  })
+
+  // 対照: 新規発報の窓（10 秒）を過ぎてから座標が届いたときは、第一報として寄せ直さない（成長フォローに任せる）。
+  it('検知点で寄せた第一報でも、窓を過ぎてから届いた座標では寄せ直さない', () => {
+    const map = createFakeMap({ fitZoom: 5 })
+    const noCoords = {
+      id: 'eew-late-report-1',
+      issue: { eventId: 'ev-late' },
+      earthquake: { originTime: '2026-08-21T05:00:00+09:00', hypocenter: { latitude: NaN, longitude: NaN } },
+    } as unknown as EEWAlert
+    const withCoords = {
+      ...noCoords,
+      id: 'eew-late-report-2',
+      earthquake: { ...noCoords.earthquake, hypocenter: { latitude: 37.5, longitude: 137.2 } },
+    } as unknown as EEWAlert
+    const refs = refsFor([noCoords], 0)
+
+    const view = render(eewFrame(map, [noCoords], WEST_POINTS, refs))
+    expect(moveCount(map)).toBe(1)
+    act(() => (map as FakeMap).completeFlight())
+    // 初めて見た時刻を 11 秒前へずらして、窓を過ぎた状態にする
+    refs.firstSeenAtRef.current.set('ev-late', Date.now() - 11_000)
+    view.rerender(eewFrame(map, [withCoords], WEST_POINTS, refs))
+
+    expect((map as FakeMap).moves).not.toContainEqual({})
+  })
+
+  // 安全弁: 寄せる先が何も無ければ動かず、第一報の印も立てない（次の報で材料が届いたら寄せ直す）。
+  it('震源の位置も検知点も区域も無ければ動かず、第一報の印を立てない', () => {
+    const map = createFakeMap({ fitZoom: 5 })
+    const noCoords = {
+      id: 'eew-nan-report-1',
+      issue: { eventId: 'ev-nan' },
+      earthquake: { originTime: '2026-08-21T05:00:00+09:00', hypocenter: { latitude: NaN, longitude: NaN } },
+    } as unknown as EEWAlert
+    const refs = refsFor([noCoords], 0)
+
+    render(eewFrame(map, [noCoords], [], refs))
+
+    expect((map as FakeMap).moves).toEqual([])
     expect(refs.focusedEewIdRef.current).toBeNull()
+  })
+
+  // 正: 座標の無い EEW でも、解除されたら元の画へ帰る。以前は「EEW が出ていた」印を座標の判定より
+  // 後で立てていたため、座標の無い EEW の解除では帰還が走らなかった。
+  it('震源の位置が判らない EEW が解除されたら、日本全体へ帰る', () => {
+    const map = createFakeMap({ fitZoom: 5 })
+    const noCoords = {
+      id: 'eew-nan-report-1',
+      issue: { eventId: 'ev-nan' },
+      earthquake: { originTime: '2026-08-21T05:00:00+09:00', hypocenter: { latitude: NaN, longitude: NaN } },
+    } as unknown as EEWAlert
+    const refs = refsFor([noCoords], 0)
+    const view = render(eewFrame(map, [noCoords], [], refs))
+    expect((map as FakeMap).moves).toEqual([])
+
+    view.rerender(eewFrame(map, [], [], refs))
+
+    // fitJapan は padding 20 で寄せる（ファイル冒頭の注記）。
+    expect(fitPaddings(map)).toEqual([JAPAN_PADDING])
   })
 
   it('新規発報なら震源へ寄り、3 秒間は合成範囲へ引き直さない', () => {

@@ -954,12 +954,22 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
   // 区域名と注記は 1 回だけ出す（どの行も同じ区域・同じ出どころの値）。地震の名前は 2 件以上のときだけ添え、
   // 1 件のときは今までと同じ見た目のまま。枠の色と見出しは先頭の行に合わせる（2026-10-18 ユーザー承認
   // 「先頭の行に合わせる」）—— 並びは到達済みが先頭なので、どれか 1 つでも届いていれば到達済みになる。
+  //
+  // **到達予測の出ていない行（`noForecast`）は距離だけを伝える**（2026-10-14 ユーザー承認「距離だけのカードを出す」、
+  // 行の中での見せ方は 2026-10-19 ユーザー承認「行として最後に並べる (推奨)」）。1 件だけなら見出しを「震源から N km」に、
+  // どの行にも予測が無ければ見出しを「主要動の到達予測なし」にして枠を灰色にし、下の注記は出さない
+  // （注記は予測時刻の性質の説明なので、予測を 1 つも出していない枠には当てはまらない）。
   const lead = arrival.rows[0]
   const single = arrival.rows.length === 1
-  const borderColor = lead.arrived ? '#ef4444' : '#f97316'
+  // 並びは予測の無い行を最後へ置くので、先頭が予測なしなら全行が予測なし
+  const noForecastOnly = lead.noForecast
+  const borderColor = noForecastOnly ? '#6b7280' : lead.arrived ? '#ef4444' : '#f97316'
   const scopeLabel = arrival.source === 'telegram' && arrival.areaName
     ? arrival.areaName
     : 'ホーム地点'
+  const heading = noForecastOnly
+    ? (single && lead.distanceKm !== null ? `震源から ${lead.distanceKm.toFixed(0)} km` : '主要動の到達予測なし')
+    : lead.arrived ? '主要動 到達済み' : '主要動 到達カウントダウン'
   // 余白のみ圧縮する。カウントダウンの数字は緊急度が高く、一目で読めることが要るため縮めない。
   return (
     <div className="bg-card rounded-lg p-2 border-2 roomy:p-3" style={{ borderColor }}>
@@ -969,9 +979,9 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
           style={{ backgroundColor: borderColor }}
         />
         <span className="text-xs font-bold" style={{ color: borderColor }}>
-          {lead.arrived ? '主要動 到達済み' : '主要動 到達カウントダウン'}
+          {heading}
         </span>
-        {single && lead.distanceKm !== null && (
+        {single && !lead.noForecast && lead.distanceKm !== null && (
           <span className="text-xs text-secondary ml-auto">震源から {lead.distanceKm.toFixed(0)} km</span>
         )}
       </div>
@@ -994,17 +1004,20 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
           </div>
         ))
       )}
-      <p className={`text-xs text-secondary mt-1${single ? '' : ' border-t border-border pt-1'}`}>
-        {arrival.source === 'telegram'
-          ? '※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'
-          : '※推定値。実際の到達時間は異なる場合があります'}
-      </p>
+      {!noForecastOnly && (
+        <p className={`text-xs text-secondary mt-1${single ? '' : ' border-t border-border pt-1'}`}>
+          {arrival.source === 'telegram'
+            ? '※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'
+            : '※推定値。実際の到達時間は異なる場合があります'}
+        </p>
+      )}
     </div>
   )
 }
 
-/** 1 つの地震の到達の見込み（届いた／残り秒数／推定中）。 */
+/** 1 つの地震の到達の見込み（届いた／残り秒数／推定中／到達予測の出ていない地震）。 */
 function SWaveArrivalCountdown({ row }: { row: SWaveArrivalRow }) {
+  if (row.noForecast) return <p className="text-sm text-secondary">ホーム地点の地域には、気象庁の到達予測時刻が出ていません</p>
   if (row.arrived) return <p className="text-red-400 font-bold text-sm">主要動が到達しています</p>
   if (row.etaSec !== null) {
     return (

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, type HypoInfoPendingMissing, type AnnouncedHypocenter } from './eew'
+import { eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, rememberEewHypocenterName, EEW_HYPOCENTER_NAME_MEMORY_MAX, type HypoInfoPendingMissing, type AnnouncedHypocenter } from './eew'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
 
@@ -1250,5 +1250,36 @@ describe('eewArrivalEtaSecFromMs', () => {
     // `NaN > 0` は偽なので、素通しすると壊れた値が「まもなく」へ化ける。
     expect(eewArrivalEtaSecFromMs(NaN, 0)).toBeNull()
     expect(eewArrivalEtaSecFromMs(Infinity, 0)).toBeNull()
+  })
+})
+
+// 誤報取消の通知のために覚える震央地名（→ `useLiveEventHandler` の `eewLastHypocenterNameRef`）。
+describe('rememberEewHypocenterName', () => {
+  // 正: 名前のある報で覚え、続報の名前で上書きする。
+  it('名前のある報で覚え、続報で上書きする', () => {
+    const m = new Map<string, string>()
+    rememberEewHypocenterName(m, 'A', '日向灘')
+    rememberEewHypocenterName(m, 'A', '宮崎県南部平野部')
+    expect(m.get('A')).toBe('宮崎県南部平野部')
+  })
+
+  // 対照: 名前の空の報では上書きしない（取消や名乗らない報で前の名前を消さない）。
+  it('名前の空の報では上書きしない', () => {
+    const m = new Map<string, string>()
+    rememberEewHypocenterName(m, 'A', '日向灘')
+    rememberEewHypocenterName(m, 'A', '')
+    expect(m.get('A')).toBe('日向灘')
+  })
+
+  // 安全弁: 上限を超えたら、いちばん古く覚えたものから捨てる（覚え直したものは新しい側へ動く）。
+  it('上限を超えたら古いものから捨て、覚え直したものは残す', () => {
+    const m = new Map<string, string>()
+    for (let i = 0; i < EEW_HYPOCENTER_NAME_MEMORY_MAX; i++) rememberEewHypocenterName(m, `k${i}`, `n${i}`)
+    rememberEewHypocenterName(m, 'k0', 'n0')
+    rememberEewHypocenterName(m, 'new', 'x')
+    expect(m.size).toBe(EEW_HYPOCENTER_NAME_MEMORY_MAX)
+    expect(m.has('k0')).toBe(true)
+    expect(m.has('k1')).toBe(false)
+    expect(m.get('new')).toBe('x')
   })
 })

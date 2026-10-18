@@ -31,7 +31,7 @@ export interface SWaveArrival {
   areaName: string | null
   /**
    * 地震ごとの行。**1 件以上**（出す行が無ければ `SWaveArrival` ごと null）。
-   * 並びは**到達済み → 残りの早い順 → 推定中**（{@link compareArrivalRows}）。どの行も同じ速さで秒が減るので、
+   * 並びは**到達済み → 残りの早い順 → 推定中 → 到達予測の出ていない行**（{@link compareArrivalRows}）。どの行も同じ速さで秒が減るので、
    * 続報で時刻が変わらない限り順番は入れ替わらない。
    */
   rows: readonly SWaveArrivalRow[]
@@ -53,13 +53,22 @@ export interface SWaveArrivalRow {
   /** 到達までの秒数。到達済みは 0、推定不能は null。 */
   etaSec: number | null
   arrived: boolean
+  /**
+   * 登録地点の区域について、その速報が到達予測時刻を出していないか（公開版の経路だけ。自前計算の行は常に false）。
+   *
+   * 真の行は**距離だけを伝える**（2026-10-14 ユーザー承認「距離だけのカードを出す」、行の並べ方は 2026-10-19 ユーザー承認
+   * 「行として最後に並べる (推奨)」）。`etaSec` は null・`arrived` は false で、`distanceKm` は必ず数値
+   * （震源が決まっていない報・位置不明・取消済みは距離を出せないので行を作らない）。並びは最後、秒読みの音の相手にもしない。
+   */
+  noForecast: boolean
 }
 
 /**
- * 行の並び。**到達済みを先頭、残りは残り秒数の短い順、推定中（秒数が null）を最後。** 同点は地震の鍵で決める
- * （描き直しのたびに並びが揺れないように）。
+ * 行の並び。**到達済みを先頭、残りは残り秒数の短い順、推定中（秒数が null）、到達予測の出ていない行（`noForecast`）を最後。**
+ * 同点は地震の鍵で決める（描き直しのたびに並びが揺れないように）。
  */
 export function compareArrivalRows(a: SWaveArrivalRow, b: SWaveArrivalRow): number {
+  if (a.noForecast !== b.noForecast) return a.noForecast ? 1 : -1
   if (a.arrived !== b.arrived) return a.arrived ? -1 : 1
   if (!a.arrived) {
     if (a.etaSec === null && b.etaSec !== null) return 1
@@ -80,6 +89,8 @@ export function compareArrivalRows(a: SWaveArrivalRow, b: SWaveArrivalRow): numb
 export function countdownBeepTarget(arrival: SWaveArrival | null): { key: string; etaSec: number } | null {
   if (arrival === null) return null
   for (const row of arrival.rows) {
+    // 到達予測の出ていない行は秒数を持たないが、型の上で null であることに頼らず明示して外す（2026-10-19 ユーザー承認「秒読みの音には加えない」）
+    if (row.noForecast) continue
     if (!row.arrived && row.etaSec !== null) return { key: row.key, etaSec: row.etaSec }
   }
   return null
@@ -170,6 +181,10 @@ export function useSWaveCountdown(
       // **気象庁の発表値を伝えるだけ。** 区域の値なので区域名を添える。
       // 地震ごとに、その速報が登録地点の区域について出した値を使う（別の地震の値と混ぜない）。
       // 距離も同じ速報の震源から測る —— 秒数と距離が別の地震を指さないように。
+      //
+      // **登録地点の区域に値を出していない速報も、震源が判っていれば距離だけの行にする**（`noForecast`。
+      // 2026-10-14 ユーザー承認「距離だけのカードを出す」）。以前は行ごと捨てていたので、距離は観測事実なのに
+      // 「区域が載らない地震」では何も出なかった。震源が決まっていない報・位置不明・取消済みは距離を出せないので行を作らない。
       tracksRef.current.clear()
       if (homeAreaName === null) {
         setArrival(null)
@@ -179,7 +194,20 @@ export function useSWaveCountdown(
       const rows: SWaveArrivalRow[] = []
       for (const eew of eews) {
         const area = homeAreaArrivalOf(eew, homeAreaName)
-        if (area === null) continue
+        if (area === null) {
+          const distanceKm = epicenterDistanceKm(eew, home)
+          if (distanceKm === null) continue
+          rows.push({
+            key: eewEventKey(eew),
+            hypocenterName: hypocenterNameOf(eew),
+            provisional: false,
+            distanceKm,
+            etaSec: null,
+            arrived: false,
+            noForecast: true,
+          })
+          continue
+        }
         const etaSec = area.arrivalMs === null ? null : Math.max(0, Math.round((area.arrivalMs - now) / 1000))
         rows.push({
           key: eewEventKey(eew),
@@ -188,6 +216,7 @@ export function useSWaveCountdown(
           distanceKm: epicenterDistanceKm(eew, home),
           etaSec,
           arrived: area.arrived || etaSec === 0,
+          noForecast: false,
         })
       }
       setArrival(rows.length === 0 ? null : { source: 'telegram', areaName: homeAreaName, rows: rows.sort(compareArrivalRows) })
@@ -310,5 +339,6 @@ function ownCalcRow(
     distanceKm,
     etaSec,
     arrived,
+    noForecast: false,
   }
 }

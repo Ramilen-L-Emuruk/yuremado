@@ -100,17 +100,20 @@ describe('useSWaveCountdown: 出どころの出し分け', () => {
     expect(got?.areaName).toBeNull()
   })
 
-  it('トークンが無く発表値も無ければ何も出さない（安全弁）', () => {
-    // **ここが自前計算へ倒れると、公開版が許可の要る形で動く。**
-    // 予報円は与えてあるので、自前計算の材料は揃っている状態で確かめる。
+  // 意図的に覆した（2026-10-14 ユーザー承認「距離だけのカードを出す」）: 以前は何も出さなかった。
+  // 守るものは変わらない —— **ここが自前計算へ倒れると、公開版が許可の要る形で動く。**
+  // 予報円は与えてあるので、自前計算の材料は揃っている状態で確かめる。秒数は出さず、距離だけの行になる。
+  it('トークンが無く発表値も無ければ、自前計算へ倒さず距離だけの行にする（安全弁）', () => {
     const got = run([eew([area({ arrivalTime: null })])], false)
-    expect(got).toBeNull()
+    expect(got?.source).toBe('telegram')
+    expect(got?.rows.map((r) => [r.noForecast, r.etaSec, r.arrived])).toEqual([[true, null, false]])
   })
 
-  it('トークンが無く PLUM 法の区域しか無ければ何も出さない（安全弁）', () => {
+  it('トークンが無く PLUM 法の区域しか無ければ、自前計算へ倒さず距離だけの行にする（安全弁）', () => {
     // PLUM の時刻は過去の時刻。発表値として使えないので、ここも自前計算へ倒さない。
     const got = run([eew([area({ kindCode: '19', arrivalTime: ARRIVAL })])], false)
-    expect(got).toBeNull()
+    expect(got?.source).toBe('telegram')
+    expect(got?.rows.map((r) => [r.noForecast, r.etaSec])).toEqual([[true, null]])
   })
 
   it('発表中の緊急地震速報が無ければ何も出さない', () => {
@@ -202,10 +205,32 @@ describe('useSWaveCountdown: 複数の地震は地震ごとに行を出す', () 
   })
 
   // 対照: ホーム地点の区域について値を出していない速報の行は作らない。
-  it('ホーム地点の区域に値の無い速報は行を作らない', () => {
+  // 意図的に覆した（2026-10-14 ユーザー承認「距離だけのカードを出す」・並べ方は 2026-10-19 ユーザー承認
+  // 「行として最後に並べる (推奨)」）: 以前はホーム地点の区域に値の無い速報の行を作らなかった。
+  // 別の区域の値（東京都23区）は秒数に混ぜず、距離だけの行として最後に並べる。
+  it('ホーム地点の区域に値の無い速報は距離だけの行にして最後に並べる', () => {
     const near = eew([area({ arrivalTime: '2024-01-01T16:19:20+09:00' })], 'near')
     const other = eew([area({ name: '東京都23区', arrivalTime: '2024-01-01T16:19:08+09:00' })], 'other', FAR)
-    expect(run([near, other], false, [])?.rows.map((r) => r.key)).toEqual(['near'])
+    const rows = run([other, near], false, [])?.rows
+    expect(rows?.map((r) => [r.key, r.noForecast, r.etaSec])).toEqual([['near', false, 20], ['other', true, null]])
+    expect(rows?.[1].distanceKm).not.toBeNull()
+  })
+
+  // 対照: 距離を出せない報（位置不明・仮定震源要素・取消済み）は、値が無くても行を作らない。
+  it('震源が判らない・決まっていない・取り消された報は距離だけの行も作らない', () => {
+    const base = eew([area({ name: '東京都23区', arrivalTime: '2024-01-01T16:19:08+09:00' })], 'x')
+    const hidden: EEWAlert = { ...base, earthquake: { ...base.earthquake, hypocenter: { ...base.earthquake.hypocenter, latitude: -200, longitude: -200 } } }
+    const assumed: EEWAlert = { ...base, earthquake: { ...base.earthquake, condition: '仮定震源要素' } }
+    expect(run([hidden], false, [])).toBeNull()
+    expect(run([assumed], false, [])).toBeNull()
+    expect(run([{ ...base, cancelled: true }], false, [])).toBeNull()
+  })
+
+  // 安全弁: 自前計算の経路は距離だけの行を作らない（予報円ごとに秒数を出す経路のまま）。
+  it('自前計算の経路の行は距離だけの行にならない', () => {
+    const got = run([eew([area({ name: '東京都23区', arrivalTime: '2024-01-01T16:19:08+09:00' })])], true)
+    expect(got?.source).toBe('own')
+    expect(got?.rows.every((r) => !r.noForecast)).toBe(true)
   })
 
   // 正: 自前計算の経路も予報円 1 つ（＝地震 1 つ）ごとに行を作る。
@@ -276,12 +301,18 @@ describe('useSWaveCountdown: 円を作った速報を引けなければ行を作
 })
 
 describe('compareArrivalRows', () => {
-  const row = (key: string, etaSec: number | null, arrived = false): Row =>
-    ({ key, hypocenterName: null, provisional: false, distanceKm: null, etaSec, arrived })
+  const row = (key: string, etaSec: number | null, arrived = false, noForecast = false): Row =>
+    ({ key, hypocenterName: null, provisional: false, distanceKm: noForecast ? 100 : null, etaSec, arrived, noForecast })
 
   it('到達済みを先頭、残りは秒数の短い順、推定中を最後に並べる', () => {
     const sorted = [row('a', 20), row('b', null), row('c', 0, true), row('d', 5)].sort(compareArrivalRows)
     expect(sorted.map((r) => r.key)).toEqual(['c', 'd', 'a', 'b'])
+  })
+
+  // 2026-10-19 ユーザー承認「行として最後に並べる (推奨)」: 到達予測の出ていない行は推定中よりも後ろ。
+  it('到達予測の出ていない行は推定中よりも後ろに並べる', () => {
+    const sorted = [row('a', null, false, true), row('b', null), row('c', 0, true), row('d', 5)].sort(compareArrivalRows)
+    expect(sorted.map((r) => r.key)).toEqual(['c', 'd', 'b', 'a'])
   })
 
   // 同点は地震の鍵で決める（描き直しのたびに並びが揺れない）。
@@ -291,8 +322,8 @@ describe('compareArrivalRows', () => {
 })
 
 describe('countdownBeepTarget', () => {
-  const row = (key: string, etaSec: number | null, arrived = false): Row =>
-    ({ key, hypocenterName: null, provisional: false, distanceKm: null, etaSec, arrived })
+  const row = (key: string, etaSec: number | null, arrived = false, noForecast = false): Row =>
+    ({ key, hypocenterName: null, provisional: false, distanceKm: noForecast ? 100 : null, etaSec, arrived, noForecast })
   const of = (rows: Row[]) => ({ source: 'telegram' as const, areaName: NOTO.name, rows: [...rows].sort(compareArrivalRows) })
 
   // 正（2026-10-18 ユーザー承認「いちばん早く届く地震」）: まだ届いていない地震のうち到達がいちばん早いもの。
@@ -304,6 +335,13 @@ describe('countdownBeepTarget', () => {
   it('届いた地震は飛ばして次の地震の秒数で鳴らす', () => {
     // 鍵も返すので、呼び出し側は「前の地震と同じ秒数」でも地震が替われば鳴らせる。
     expect(countdownBeepTarget(of([row('a', 0, true), row('b', 3)]))).toEqual({ key: 'b', etaSec: 3 })
+  })
+
+  // 安全弁（2026-10-19 ユーザー承認「秒読みの音には加えない」）: 到達予測の出ていない行は音の相手にしない。
+  // 秒数を持たない形のまま etaSec だけ埋まった行が来ても、印のほうで外す。
+  it('到達予測の出ていない行では鳴らさない', () => {
+    expect(countdownBeepTarget(of([row('a', null, false, true)]))).toBeNull()
+    expect(countdownBeepTarget(of([row('a', 7, false, true), row('b', 9)]))).toEqual({ key: 'b', etaSec: 9 })
   })
 
   // 安全弁: 全部届いた・秒数が判らないなら鳴らさない。
