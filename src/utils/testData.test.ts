@@ -13,6 +13,9 @@ import {
   createTestEEW,
   createTestEEWAssumed,
   createTestEEWDeep,
+  createTestEEWNoForecast,
+  TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS,
+  TEST_EEW_NO_FORECAST_CANCEL_MS,
   createTestEEWForecast,
   createTestEEWWarning,
   createTestForeignQuakeHuge,
@@ -961,12 +964,35 @@ describe('テスト EEW の kindCode と予想震度の整合', () => {
 describe('予想震度が付かないテスト EEW', () => {
   const base = new Date('2026-01-01T12:00:00Z')
 
+  // 「予想震度なしのまま取消」テスト（2024-11-26 23:14 石川県西方沖の実電文の形）。
+  // 仮定震源要素でも深発でもなく、精度ランク 1 で値が付かない形でないと、待ちを終えて理由を言う経路を通らない。
+  it('予想震度なしのまま取消: 3 通とも精度ランク 1・区域なし・予想震度なしで、待つ前は理由が判らない', () => {
+    for (const serial of [1, 2, 3]) {
+      const eew = createTestEEWNoForecast('evt', serial, base)
+      expect(eew.earthquake.condition).toBe('')
+      expect(eew.earthquake.hypocenter.depth).toBeLessThanOrEqual(150)
+      expect(eew.accuracy?.epicenterRank).toBe(1)
+      expect(eewAreas(eew)).toEqual([])
+      expect(eewMaxScale(eew)).toBe(0)
+      expect(eewNoForecastReason(eew, false)).toBe('unknown')
+      expect(eewNoForecastReason(eew, true)).toBe('singleStation')
+    }
+  })
+
+  // 待ち（3 秒）が第 1 報から数えて取消より先に切れないと、理由を読む前に取り消されて経路を通らない
+  it('予想震度なしのまま取消: 3 通は取消より前に届き、取消は待ちが切れた後に届く', () => {
+    expect(TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS).toHaveLength(3)
+    expect(TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS[0]).toBe(0)
+    expect(Math.max(...TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS)).toBeLessThan(TEST_EEW_NO_FORECAST_CANCEL_MS)
+    expect(TEST_EEW_NO_FORECAST_CANCEL_MS).toBeGreaterThan(3000)
+  })
+
   it('単独点処理の初報は仮定震源要素で、区域を持たない', () => {
     const first = createTestEEWAssumed(true, 'evt', 1, base)
     expect(first.earthquake.condition).toBe('仮定震源要素')
     expect(eewAreas(first)).toEqual([])
     expect(eewMaxScale(first)).toBe(0)
-    expect(eewNoForecastReason(first)).toBe('assumed')
+    expect(eewNoForecastReason(first, false)).toBe('assumed')
   })
 
   it('単独点処理の続報は震源が確定し、警報へ格上げされる', () => {
@@ -1092,7 +1118,7 @@ describe('予想震度が付かないテスト EEW', () => {
       expect(eew.earthquake.hypocenter.depth).toBeGreaterThan(150)
       expect(eewAreas(eew)).toEqual([])
       expect(eew.severity).toBe('Forecast')
-      expect(eewNoForecastReason(eew)).toBe('deep')
+      expect(eewNoForecastReason(eew, false)).toBe('deep')
     }
   })
 })

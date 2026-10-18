@@ -124,7 +124,7 @@ describe('parseEEWFromXml: 「非常に強い揺れを検知」の報', () => {
   it('予想震度が載っているので、予想震度が無い理由（単独点処理）の対象にしない', () => {
     const eew = parseEEWFromXml('VXSE45', strongShakingXml())!
     // 理由の判定は「仮定震源要素」だけを見る。この形を巻き込むと「単独点処理のため」と言い出す
-    expect(eewNoForecastReason(eew)).not.toBe('assumed')
+    expect(eewNoForecastReason(eew, false)).not.toBe('assumed')
     expect(eewMaxScale(eew)).toBe(45)
   })
 })

@@ -58,7 +58,7 @@ function makeQuake(reports: QuakeReportRecord[]): JMAQuake {
 
 const renderEEW = async (eew: EEWAlert) => {
   const { container } = render(
-    <RealtimeTab eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
   await flushDataEffects()
   return container

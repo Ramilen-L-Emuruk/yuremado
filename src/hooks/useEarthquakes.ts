@@ -769,6 +769,8 @@ export function useEarthquakes(
   const testEEWTimersRef = useRef<Map<TestEEWKind, TestEEWEntry>>(new Map())
   // EEW 誤報取消テストの発報状態
   const testEEWRetractionRef = useRef<TestEEWRetractionEntry | null>(null)
+  // 「予想震度なしのまま取消」テストが続報と取消を流すまでの待ち（`simulateEEWNoForecast`）
+  const testEEWNoForecastTimersRef = useRef<number[]>([])
   // テスト津波の発報状態を種別ごとに独立管理
   const testTsunamiRef = useRef<{ cancelTimer: number; tsunami: JMATsunami } | null>(null)
   // 南海トラフ臨時情報の取消テストで、発表から取消までを待つタイマー
@@ -811,6 +813,9 @@ export function useEarthquakes(
       window.clearTimeout(testEEWRetractionRef.current.cancelTimer)
       testEEWRetractionRef.current = null
     }
+    // 「予想震度なしのまま取消」テストの続報と取消（TEST_EEW_NO_FORECAST_*）。
+    for (const timer of testEEWNoForecastTimersRef.current) window.clearTimeout(timer)
+    testEEWNoForecastTimersRef.current = []
     if (testNankaiRetractionTimerRef.current !== undefined) {
       window.clearTimeout(testNankaiRetractionTimerRef.current)
       testNankaiRetractionTimerRef.current = undefined
@@ -3376,6 +3381,44 @@ export function useEarthquakes(
     runSimulateEEW('deep', (e, s, b) => createTestEEWDeep(isDmdss, e, s, b), EEW_FINAL_SILENCE_MS, testEEWTimersRef.current, handleEvent)
   }, [handleEvent])
 
+  /**
+   * 「予想震度なしのまま取消」テスト（DMDSS 版のみ）。精度ランク 1 で予想震度の付かない報を
+   * 3 通流し、値が付かないまま取り消す（→ `createTestEEWNoForecast`・`TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS`）。
+   *
+   * **待ちは ref で追う。** この経路は `handleEvent` を直接呼ぶので、キューを空にしても止まらない
+   * （→ `clearTestSimulationTimers`）。押し直したら前の待ちを捨てて最初から流す。
+   */
+  const simulateEEWNoForecast = useCallback(async () => {
+    const { createTestEEWNoForecast, TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS, TEST_EEW_NO_FORECAST_CANCEL_MS } = await loadTestData()
+    for (const timer of testEEWNoForecastTimersRef.current) window.clearTimeout(timer)
+    testEEWNoForecastTimersRef.current = []
+    const eventId = `test-no-forecast-${Date.now()}`
+    const baseTime = serverDate()
+    const lastSerial = TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS.length
+    TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS.forEach((offset, i) => {
+      const send = () => handleEvent(createTestEEWNoForecast(eventId, i + 1, baseTime))
+      if (offset === 0) send()
+      else testEEWNoForecastTimersRef.current.push(window.setTimeout(send, offset))
+    })
+    testEEWNoForecastTimersRef.current.push(window.setTimeout(() => {
+      testEEWNoForecastTimersRef.current = []
+      const report = createTestEEWNoForecast(eventId, lastSerial, baseTime)
+      // 取消は最後の報と同じ報番号で届く（実電文 `VXSE45_JPOS_20241126141510487` が第 3 報の取消）。
+      // 取消の本文・予想を持たない形は `runSimulateEEWRetraction` と同じ（理由はそちらのコメント）
+      handleEvent({
+        ...report,
+        id: `${report.id}-cancel`,
+        cancelled: true,
+        cancelText: '先ほどの、緊急地震速報（地震動予報）を取り消します。',
+        areas: [],
+        earthquake: {
+          ...report.earthquake,
+          hypocenter: { ...report.earthquake.hypocenter, latitude: 0, longitude: 0 },
+        },
+      })
+    }, TEST_EEW_NO_FORECAST_CANCEL_MS))
+  }, [handleEvent])
+
   const simulateEEWRetraction = useCallback(async () => {
     const { createTestEEWWarning } = await loadTestData()
     runSimulateEEWRetraction((e, s, b) => createTestEEWWarning(isDmdss, e, s, b), EEW_RETRACTION_CANCEL_MS, testEEWRetractionRef, handleEvent)
@@ -3713,7 +3756,7 @@ export function useEarthquakes(
     simulateEarthquake,
     simulateForeignQuake,
     simulateForeignQuakeHuge,
-    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWRetraction,
+    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateEstimatedIntensity,

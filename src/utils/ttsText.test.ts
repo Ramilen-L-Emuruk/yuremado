@@ -181,7 +181,7 @@ describe('eewIntensityToText: 長周期地震動階級の読み上げ', () => {
   // 渡せるよう、eewMaxScaleInfo/eewMaxLpgmClassInfo で都度計算してから渡すラッパーを使う。
   function eewIntensityToText(event: EEWAlert, announceUpgrade = false): string {
     const lg = eewMaxLpgmClassInfo(event)
-    return eewIntensityText(eewMaxScaleInfo(event), lg.cls, event, announceUpgrade, lg.over)
+    return eewIntensityText(eewMaxScaleInfo(event), lg.cls, event, false, announceUpgrade, lg.over)
   }
 
   function makeEEW(
@@ -2804,7 +2804,7 @@ describe('設定タブの試聴文', () => {
   it('発話を 2 つに分けて返す', () => {
     const texts = voicevoxPreviewTexts()
     expect(texts).toHaveLength(2)
-    const phase2 = eewIntensityText({ scale: PREVIEW_SCALE, orAbove: false }, 0, EXPECTED_PREVIEW_EEW)
+    const phase2 = eewIntensityText({ scale: PREVIEW_SCALE, orAbove: false }, 0, EXPECTED_PREVIEW_EEW, false)
     expect(phase2).toBe('予想最大震度6強。')
     expect(texts[1]).toBe(phase2)
   })
@@ -3083,18 +3083,18 @@ describe('緊急地震速報の長周期地震動階級を読むかの設定', (
 
   // 対照: 既定は従来どおり階級も読む。
   it('既定（未指定）は階級を読む', () => {
-    expect(eewIntensityText(scale, 3, eew)).toContain('予想最大階級3')
+    expect(eewIntensityText(scale, 3, eew, false)).toContain('予想最大階級3')
   })
 
   // 正: 切ると階級の句だけが落ちる。
   it('切ると階級の句を落とす', () => {
-    const text = eewIntensityText(scale, 3, eew, false, false, { ...BASE, readEewLpgmClass: false })
+    const text = eewIntensityText(scale, 3, eew, false, false, false, { ...BASE, readEewLpgmClass: false })
     expect(text).not.toContain('階級')
   })
 
   // 安全弁: 震度は落とさない。緊急地震速報の主題そのもので、切る選択肢を設けていない。
   it('切っても予想震度は読む', () => {
-    const text = eewIntensityText(scale, 3, eew, false, false, { ...BASE, readEewLpgmClass: false })
+    const text = eewIntensityText(scale, 3, eew, false, false, false, { ...BASE, readEewLpgmClass: false })
     expect(text).toContain('予想最大震度4')
   })
 })

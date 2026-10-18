@@ -882,7 +882,7 @@ describe('eewNoForecastReason', () => {
         hypocenter: { name: 'テスト震源', latitude: 35.0, longitude: 135.0, depth: 10, magnitude: 6.0 },
       },
     })
-    expect(eewNoForecastReason(eew)).toBe('assumed')
+    expect(eewNoForecastReason(eew, false)).toBe('assumed')
   })
 
   it('深さが 150km を超えれば deep', () => {
@@ -894,7 +894,7 @@ describe('eewNoForecastReason', () => {
         hypocenter: { name: 'テスト震源', latitude: 35.0, longitude: 135.0, depth: 151, magnitude: 6.0 },
       },
     })
-    expect(eewNoForecastReason(eew)).toBe('deep')
+    expect(eewNoForecastReason(eew, false)).toBe('deep')
   })
 
   it('深さ 150km ちょうどは deep にしない（境界は含めない）', () => {
@@ -906,7 +906,7 @@ describe('eewNoForecastReason', () => {
         hypocenter: { name: 'テスト震源', latitude: 35.0, longitude: 135.0, depth: 150, magnitude: 6.0 },
       },
     })
-    expect(eewNoForecastReason(eew)).toBe('unknown')
+    expect(eewNoForecastReason(eew, false)).toBe('unknown')
   })
 
   // 仮定震源要素の判定を先に置いている。単独点処理で深い震源が仮定されることがあり、
@@ -920,11 +920,53 @@ describe('eewNoForecastReason', () => {
         hypocenter: { name: 'テスト震源', latitude: 35.0, longitude: 135.0, depth: 400, magnitude: 6.0 },
       },
     })
-    expect(eewNoForecastReason(eew)).toBe('assumed')
+    expect(eewNoForecastReason(eew, false)).toBe('assumed')
   })
 
   it('浅い通常の震源なら unknown（値が遅れて付く可能性が残る）', () => {
-    expect(eewNoForecastReason(makeEEW())).toBe('unknown')
+    expect(eewNoForecastReason(makeEEW(), false)).toBe('unknown')
+  })
+
+  // 精度ランク 1 は「レベル超え・IPF 法 1 点・仮定震源要素」の混ざった区分で、数秒後に値が付く報も
+  // 多い。だから待ちを終えたときに限って理由へ使う（2026-10-14 ユーザー承認）。
+  describe('待ちを終えた精度ランク 1（singleStation）', () => {
+    const rank = (epicenterRank: number) => makeEEW({ accuracy: { epicenterRank } })
+
+    it('正: 待ちを終えて精度ランクが 1 なら singleStation', () => {
+      expect(eewNoForecastReason(rank(1), true)).toBe('singleStation')
+    })
+
+    it('対照: 待っている間は精度ランク 1 でも unknown（待つかどうかの判定が待たずに確定しない）', () => {
+      expect(eewNoForecastReason(rank(1), false)).toBe('unknown')
+    })
+
+    it('対照: 待ちを終えても精度ランクが 1 でなければ unknown', () => {
+      expect(eewNoForecastReason(rank(2), true)).toBe('unknown')
+      expect(eewNoForecastReason(makeEEW(), true)).toBe('unknown')
+    })
+
+    it('安全弁: 仮定震源要素と深発は待ちに関係なく先に決まる', () => {
+      const assumed = makeEEW({
+        accuracy: { epicenterRank: 1 },
+        earthquake: {
+          originTime: '2026-01-01T12:00:00Z',
+          arrivalTime: '2026-01-01T12:00:20Z',
+          condition: '仮定震源要素',
+          hypocenter: { name: 'テスト震源', latitude: 35.0, longitude: 135.0, depth: 10, magnitude: 1.0 },
+        },
+      })
+      const deep = makeEEW({
+        accuracy: { epicenterRank: 1 },
+        earthquake: {
+          originTime: '2026-01-01T12:00:00Z',
+          arrivalTime: '2026-01-01T12:00:20Z',
+          condition: '以上',
+          hypocenter: { name: 'テスト震源', latitude: 35.0, longitude: 135.0, depth: 400, magnitude: 6.0 },
+        },
+      })
+      expect(eewNoForecastReason(assumed, true)).toBe('assumed')
+      expect(eewNoForecastReason(deep, true)).toBe('deep')
+    })
   })
 })
 

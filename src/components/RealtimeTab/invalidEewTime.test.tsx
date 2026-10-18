@@ -43,7 +43,7 @@ function makeEEW(originTime: string, areas: EEWRegion[]): EEWAlert {
 
 const renderTab = (eew: EEWAlert) =>
   render(
-    <RealtimeTab eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
 
 describe('緊急地震速報カードの時刻が読めないとき', () => {
