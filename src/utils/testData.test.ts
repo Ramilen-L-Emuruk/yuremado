@@ -1162,8 +1162,8 @@ describe('テスト津波のバリアント差（P2PQuake 経路に無い項目�
 })
 
 describe('テスト EEW のバリアント差（P2PQuake / Yahoo 経路に無い項目）', () => {
-  // standard 版の EEW は 2 経路の合成。Yahoo hypoInfo が土台で、P2PQuake code=556 が区域と
-  // 震源要素を注ぎ足す（`useEarthquakes.ts` の `enrichEEW`）。どちらも運ばない欄がこれら。
+  // standard 版の EEW は 2 経路の合成。Yahoo hypoInfo と P2PQuake code=556 の報を
+  // `utils/eew.ts` の `mergeEewReport` が 1 つにまとめる。どちらも運ばない欄がこれら。
   const standardFactories = [
     ['createTestEEW（特別警報）', createTestEEW(false, 'e', 2)],
     ['createTestEEWWarning（警報）', createTestEEWWarning(false, 'e', 2)],

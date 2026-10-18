@@ -2873,6 +2873,7 @@ describe('filterPreWindowEvents の EEW（解除時刻を決められないと�
     const eventId = opts.eventId ?? 'EEW1'
     const eew: EEWAlert = {
       kind: 'eew',
+      origin: 'dmdata',
       id: `dmdata-eew-${eventId}-1`,
       time,
       test: false,

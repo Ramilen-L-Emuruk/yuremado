@@ -28,6 +28,7 @@ import { splitIntoChunks, type SpeechOutcome } from '../utils/voicevox'
 // 安定待ちの猶予は定数から取る（数値を写すと、値を変えたときにテストだけが古い前提で通り続ける）
 import { EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS } from '../utils/eew'
 import { DEFAULTS, type AppSettings } from './useSettings'
+import { playAlertSound } from '../utils/alertSound'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass, JMAQuake, JMATsunami } from '../types/earthquake'
 
 // 「鳴っている最中」を再現するための保留。`holdNextSpeech()` で次の 1 回だけ保留にする。
@@ -2644,5 +2645,45 @@ describe('いま声が語っているカードの配線', () => {
     await act(() => vi.advanceTimersByTimeAsync(1000))
     act(() => { capturedResult!.resetTracking() })
     expect(stub.calls).toContain('reset')
+  })
+})
+
+// 標準版は Yahoo と P2PQuake が同じ報を運ぶ。2 通目には受信側が「同じ報」の印
+// （`LiveEventMeta.eewSameReport`）を付ける。印の付いた報では通知音を鳴らし直さないが、
+// 読み上げは止めない —— 後から来た経路が運んだ欄（区域など）で最新の値が変わりうる
+// （2026-10-18 ユーザー承認「最初の 1 通だけ」）。
+describe('別の経路から届いた同じ報（標準版）', () => {
+  const soundCalls = () => vi.mocked(playAlertSound).mock.calls.length
+
+  beforeEach(() => { vi.mocked(playAlertSound).mockClear() })
+
+  // 正: 印の付いた続報では鳴らさない
+  it('印の付いた報では通知音を鳴らさない', async () => {
+    const handle = setup({ soundEnabled: true })
+    handle(makeEEW({ serial: 1 }))
+    const afterFirst = soundCalls()
+    expect(afterFirst).toBeGreaterThan(0)
+    handle(makeEEW({ serial: 2 }), { eewSameReport: true })
+    expect(soundCalls()).toBe(afterFirst)
+  })
+
+  // 対照: 印が無ければ続報でも従来どおり鳴る
+  it('印が無ければ続報でも通知音を鳴らす', async () => {
+    const handle = setup({ soundEnabled: true })
+    handle(makeEEW({ serial: 1 }))
+    const afterFirst = soundCalls()
+    handle(makeEEW({ serial: 2 }))
+    expect(soundCalls()).toBeGreaterThan(afterFirst)
+  })
+
+  // 安全弁: 読み上げは止めない（後から来た経路が運んだ値を声にする）
+  it('印の付いた報でも、変わった予想震度は読み上げる', async () => {
+    const handle = setup()
+    handle(makeEEW({ serial: 1, scaleTo: 45 }))
+    await advance(2000)
+    speakMock.mockClear()
+    handle(makeEEW({ serial: 2, scaleTo: 50 }), { eewSameReport: true })
+    await advance(2000)
+    expect(spokenTexts().join('')).toContain('5強')
   })
 })

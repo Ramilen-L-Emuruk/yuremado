@@ -376,6 +376,7 @@ describe('検知カードは判定の根拠を出す', () => {
 function fakeEEW(over: Partial<EEWAlert> = {}): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: 'test-eew',
     time: '2026-01-01T12:00:00Z',
     test: false,

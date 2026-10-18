@@ -481,6 +481,7 @@ describe('再生中もキューの予約は発火時刻を待つ', () => {
     const iso = at.toISOString()
     return {
       kind: 'eew',
+      origin: 'dmdata',
       id: 'replay-final',
       time: override.time ?? iso,
       test: false,
@@ -2093,6 +2094,7 @@ describe('EEW の続報は古い報で退行しない', () => {
   ): EEWAlert {
     return {
       kind: 'eew',
+      origin: 'dmdata',
       id: `dmdata-eew-stale-${serial}`,
       time: AT,
       test: false,
@@ -2140,8 +2142,8 @@ describe('EEW の続報は古い報で退行しない', () => {
     expect(areasOf(h)).toEqual(['石川県能登', '富山県西部'])
   })
 
-  // 安全弁 2: 報番号を持たない経路（P2PQuake は issue.serial が欠けることがある）では
-  // 順序を決める根拠が無いため判定しない。0 で埋めて比較すると正しい報まで捨ててしまう。
+  // 安全弁 2: 報番号が読めない報では報番号で判定しない（0 で埋めて比較すると正しい報まで
+  // 捨ててしまう）。この報は発表時刻が同じなので、発表時刻の比較でも古いとは見なさない。
   it('報番号を持たない報は従来どおり後着を採る', async () => {
     const h = setup()
     await h.flush()
@@ -2301,77 +2303,299 @@ describe('EEW の続報は古い報で退行しない', () => {
   })
 })
 
-// P2PQuake の補完経路（`enrichEEW`）。standard 版で Yahoo hypoInfo が先に検出した EEW へ
-// 地域別予想震度を注入する経路で、キューを通らず WebSocket から直接呼ばれる。
+// 標準版の緊急地震速報は 2 つの経路（Yahoo の hypoInfo・P2PQuake の 556）が同じ報を運ぶ。
+// どちらも同じキュー・同じ台帳を通る。**運ばない欄は前の報の値を保つ**（Yahoo は区域・仮定震源・
+// 到達予測を持たない）こと、**報番号は経路ごとに、発表時刻は経路をまたいで**比べること、
+// **同じ報が 2 度目に届いても音を鳴らし直さない**こと、P2PQuake には最終報の印が無いので
+// **見張りの解除を積む**ことを固定する（2026-10-14 ユーザー承認「直前の P2PQuake の値を保つ」
+// 「解除の予約も続報の音・声も直す」、2026-10-18 ユーザー承認「最初の 1 通だけ」）。
 //
-// **この関数は退行防止の穴が 3 度続けて見つかった場所。** 状態しか見ていない／レンダー待ちの値と
-// 比べている／台帳を経由しない——いずれもテストが無かったために気づけなかった。主経路と同じ
-// 台帳で判定し、受理したら報番号も進めることを固定する。
-describe('P2PQuake 補完経路も古い報で退行しない', () => {
-  beforeEach(() => { mockIsDmdss = false })
+// かつては P2PQuake の報をキューに通さず補完だけしていた（`enrichEEW`）。Yahoo が先に出ていると
+// P2PQuake の報番号（警報だけの通し番号）と Yahoo の報番号（全報の通し番号）を同じ物差しで比べ、
+// P2PQuake の内容を丸ごと捨てていた（2026-10-16 千島列島の実測: 同じ報が P2PQuake 1・2、Yahoo 17・19）。
+describe('標準版: P2PQuake と Yahoo の緊急地震速報をまとめる', () => {
+  beforeEach(() => {
+    mockIsDmdss = false
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    setReplayOffset(null)
+  })
 
-  const AT = '2024-01-01T16:10:20+09:00'
-  function p2pReport(serial: string, areaNames: string[]): EEWAlert {
+  const T1 = '2024-01-01T16:10:20+09:00'
+  const T2 = '2024-01-01T16:10:41+09:00'
+
+  function p2p(serial: string, issueTime: string, areaNames: string[], over: Partial<EEWAlert> = {}): EEWAlert {
     return {
       kind: 'eew',
+      origin: 'p2pquake',
       id: `p2p-eew-${serial}`,
-      time: AT,
+      time: issueTime,
       test: false,
       earthquake: {
-        originTime: AT,
-        arrivalTime: AT,
-        condition: '',
+        originTime: T1,
+        arrivalTime: T1,
+        condition: '仮定震源要素',
         hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2, depth: 10, magnitude: 7.6 },
       },
       severity: 'Warning',
       cancelled: false,
       isFinal: false,
-      issue: { eventId: 'enrich-event', serial, time: AT },
+      issue: { eventId: 'merge-event', serial, time: issueTime },
       areas: areaNames.map(name => ({ pref: '', name, scaleFrom: 40, scaleTo: 50, kindCode: '11', arrivalTime: null })),
+      ...over,
     }
   }
-  const areasOfEnrich = (h: ReturnType<typeof setup>) =>
-    [...h.current.activeEEWs.values()][0]?.areas?.map(a => a.name) ?? []
 
-  it('台帳より古い報番号の補完は適用しない', async () => {
+  /** Yahoo の hypoInfo 由来の報。区域・仮定震源・到達予測を持たない（予想最大震度は持つ）。 */
+  function yahoo(serial: string, issueTime: string, over: Partial<EEWAlert> = {}): EEWAlert {
+    return {
+      kind: 'eew',
+      origin: 'yahoo',
+      id: `yahoo-eew-${serial}`,
+      time: issueTime,
+      test: false,
+      earthquake: {
+        originTime: T1,
+        arrivalTime: '',
+        condition: '',
+        hypocenter: { name: '能登半島沖', latitude: 37.6, longitude: 137.3, depth: 20, magnitude: 7.4 },
+      },
+      severity: 'Warning',
+      cancelled: false,
+      isFinal: false,
+      issue: { eventId: 'merge-event', serial, time: issueTime },
+      // P2PQuake の区域の最大（5弱）と揃える。同じ報なら同じ値を運ぶ
+      forecastMaxScale: 50,
+      ...over,
+    }
+  }
+
+  const shown = (h: ReturnType<typeof setup>) => [...h.current.activeEEWs.values()][0]
+  const areasOf = (h: ReturnType<typeof setup>) => shown(h)?.areas?.map(a => a.name) ?? []
+  const sameReportMarks = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls
+    .filter(([e]) => (e as LiveEvent).kind === 'eew')
+    .map(([, meta]) => (meta as LiveEventMeta | undefined)?.eewSameReport === true)
+
+  it('P2PQuake の報は WebSocket からキューを通って画面へ届く', async () => {
     const h = setup()
     await h.flush()
-    act(() => { h.current.injectEvent(p2pReport('3', ['石川県能登'])) })
-    act(() => { sockets[0].onEvent?.(p2pReport('2', ['新潟県上越'])) })
-    expect(areasOfEnrich(h)).toEqual(['石川県能登'])
+    // 発表時刻は「いま」に置く。古い時刻だと、見張りの解除（発表から 60 秒）がその場で発火して消える
+    const now = new Date(Math.floor(serverDate().getTime() / 1000) * 1000).toISOString()
+    act(() => { sockets[0].onEvent?.(p2p('1', now, ['石川県能登'])) })
+    act(() => { vi.advanceTimersByTime(50) })
+    expect(areasOf(h)).toEqual(['石川県能登'])
   })
 
-  it('新しい報の補完は適用し、報番号も進める', async () => {
+  // 本体 1: Yahoo の続報が P2PQuake の区域・仮定震源を消さない
+  it('Yahoo の続報は運ばない欄（区域・仮定震源）を前の P2PQuake の値のまま保ち、震源は差し替える', async () => {
     const h = setup()
     await h.flush()
-    act(() => { h.current.injectEvent(p2pReport('3', ['石川県能登'])) })
-    act(() => { sockets[0].onEvent?.(p2pReport('4', ['新潟県上越'])) })
-    expect(areasOfEnrich(h)).toEqual(['新潟県上越'])
-    // 報番号を据え置くと、格納した EEW の報番号が内容の新しさを表さなくなる
-    expect([...h.current.activeEEWs.values()][0]?.issue?.serial).toBe('4')
+    act(() => { h.current.injectEvent(p2p('1', T1, ['石川県能登', '富山県西部'])) })
+    act(() => { h.current.injectEvent(yahoo('19', T2)) })
+    expect(areasOf(h)).toEqual(['石川県能登', '富山県西部'])
+    expect(shown(h)?.earthquake.condition).toBe('仮定震源要素')
+    expect(shown(h)?.earthquake.hypocenter.name).toBe('能登半島沖')
+    expect(shown(h)?.origin).toBe('yahoo')
   })
 
-  // 補完で進めた報番号が台帳にも入っていないと、次に来る古い報を主経路が通してしまう。
-  it('補完で進めた報番号は主経路の判定にも効く', async () => {
+  // 本体 2: Yahoo が先に出ていても、P2PQuake の報番号は Yahoo と比べない
+  it('Yahoo が先に出ていても、同じ発表時刻の P2PQuake の報は採る', async () => {
     const h = setup()
     await h.flush()
-    act(() => { h.current.injectEvent(p2pReport('3', ['石川県能登'])) })
-    act(() => { sockets[0].onEvent?.(p2pReport('5', ['新潟県上越'])) })
-    act(() => { h.current.injectEvent(p2pReport('4', ['富山県西部'])) })
-    expect(areasOfEnrich(h)).toEqual(['新潟県上越'])
+    act(() => { h.current.injectEvent(yahoo('17', T1)) })
+    act(() => { h.current.injectEvent(p2p('1', T1, ['石川県能登'])) })
+    expect(areasOf(h)).toEqual(['石川県能登'])
+    expect(shown(h)?.earthquake.hypocenter.name).toBe('石川県能登地方')
   })
 
-  // 特別警報の下げ止まり（`everSpecialWarning`）。この経路は `stateRef.current` から読んだ
-  // 既存値を土台に組み立てるため、補完後の区域が弱くても、既に立っていた印を消してはならない
-  // （eew-spec.md §4）。
-  it('補完後に区域の震度が弱くなっても、既に立っていた特別警報の印は消えない', async () => {
+  // 遅れて届いた P2PQuake の報: 区域・仮定震源の別だけを補い、震源・報番号は新しい側のまま
+  it('Yahoo の新しい報より後に着いた P2PQuake の報は、区域と仮定震源の別だけを補う', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    act(() => { h.current.injectEvent(yahoo('19', T2)) })
+    act(() => { h.current.injectEvent(p2p('1', T1, ['新潟県上越'])) })
+    expect(areasOf(h)).toEqual(['新潟県上越'])
+    expect(shown(h)?.earthquake.condition).toBe('仮定震源要素')
+    expect(shown(h)?.earthquake.hypocenter.name, '古い報の震源へ戻っている').toBe('能登半島沖')
+    expect(shown(h)?.issue?.serial).toBe('19')
+    // 新しい報ではないので音・タブ移動は起こさない
+    expect(sameReportMarks(onLiveEvent)).toEqual([false, true])
+  })
+
+  // 安全弁: 遅れて届いた報でも、補った結果の区分が上がったなら知らせる
+  it('遅れて届いた P2PQuake の報で区分が上がったなら「同じ報」の印を付けない', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    act(() => { h.current.injectEvent(yahoo('19', T2, { severity: 'Forecast' })) })
+    act(() => {
+      h.current.injectEvent(p2p('1', T1, [], {
+        areas: [{ pref: '', name: '石川県能登', scaleFrom: 55, scaleTo: 60, kindCode: '11', arrivalTime: null }],
+      }))
+    })
+    expect(sameReportMarks(onLiveEvent)).toEqual([false, false])
+  })
+
+  // 区域を運ばない Yahoo の続報が予想の最大震度を上げたら、保っている古い区域ではなくそちらで見る
+  it('Yahoo の続報で予想の最大震度が上がれば、前の P2PQuake の区域に隠されず特別警報へ上がる', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    act(() => { h.current.injectEvent(p2p('1', T1, ['石川県能登'])) })
+    expect(shown(h)?.everSpecialWarning).toBeFalsy()
+    act(() => { h.current.injectEvent(yahoo('19', T2, { forecastMaxScale: 55 })) })
+    expect(shown(h)?.everSpecialWarning, '古い区域（5弱）が新しい 6弱を隠している').toBe(true)
+    // 対照: P2PQuake の新しい報が区域を運んだら、最大はまた区域で見る
+    act(() => {
+      h.current.injectEvent(p2p('2', '2024-01-01T16:10:50+09:00', [], {
+        areas: [{ pref: '', name: '石川県能登', scaleFrom: 40, scaleTo: 45, kindCode: '11', arrivalTime: null }],
+      }))
+    })
+    expect(shown(h)?.maxScaleFromForecast).toBe(false)
+  })
+
+  // 取消は終端: 取消の後に届いた報で音・通知・見張りを動かさない
+  it('取消を受けた速報へ後から届いた報は、通知にも回さない', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    act(() => { h.current.injectEvent(p2p('1', T1, ['石川県能登'])) })
+    act(() => { h.current.injectEvent({ ...p2p('1', T1, []), cancelled: true }) })
+    const before = onLiveEvent.mock.calls.length
+    act(() => { h.current.injectEvent(p2p('2', T2, ['石川県能登'])) })
+    expect(onLiveEvent.mock.calls.length, '取消の後の報が通知へ回っている').toBe(before)
+    expect(shown(h)?.cancelledAt).toBeDefined()
+  })
+
+  // 対照: 補うのは P2PQuake の報だけ。Yahoo の古い報は採らない
+  it('受けた報より発表時刻の古い Yahoo の報は採らない', async () => {
     const h = setup()
     await h.flush()
-    act(() => { h.current.injectEvent({ ...p2pReport('3', ['石川県能登']), areas: [{ pref: '', name: '石川県能登', scaleFrom: 55 as IntensityScale, scaleTo: 60 as IntensityScale, kindCode: '11', arrivalTime: null }] }) })
-    expect([...h.current.activeEEWs.values()][0]?.everSpecialWarning).toBe(true)
-    act(() => { sockets[0].onEvent?.(p2pReport('4', ['新潟県上越'])) }) // scaleTo:50（警報未満）で補完
-    const eew = [...h.current.activeEEWs.values()][0]
-    expect(eew?.everSpecialWarning, '弱い区域の補完で印が消えている').toBe(true)
+    act(() => { h.current.injectEvent(p2p('2', T2, ['石川県能登'])) })
+    act(() => { h.current.injectEvent(yahoo('17', T1)) })
+    expect(shown(h)?.earthquake.hypocenter.name).toBe('石川県能登地方')
+    expect(shown(h)?.issue?.serial).toBe('2')
+  })
+
+  // 対照: 同じ経路の中では報番号で比べる（同じ秒に 2 報が来る）
+  it('同じ経路で報番号の古い報は採らない', async () => {
+    const h = setup()
+    await h.flush()
+    act(() => { h.current.injectEvent(p2p('3', T1, ['石川県能登'])) })
+    act(() => { h.current.injectEvent(p2p('2', T1, ['新潟県上越'])) })
+    expect(areasOf(h)).toEqual(['石川県能登'])
+  })
+
+  // 音を鳴らし直さない印。読み上げ・タイトルは止めないので、通知そのものは届く。
+  it('別の経路から届いた同じ報には「同じ報」の印を付け、新しい報には付けない', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    act(() => { h.current.injectEvent(yahoo('17', T1)) })
+    act(() => { h.current.injectEvent(p2p('1', T1, ['石川県能登'])) })
+    act(() => { h.current.injectEvent(p2p('2', T2, ['石川県能登'])) })
+    expect(sameReportMarks(onLiveEvent)).toEqual([false, true, false])
+  })
+
+  // 安全弁: 同じ報でも区分が上がったなら鳴らす
+  it('同じ報でも、まとめた結果の区分が上がったなら印を付けない', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    act(() => { h.current.injectEvent(yahoo('17', T1, { severity: 'Forecast' })) })
+    act(() => {
+      h.current.injectEvent(p2p('1', T1, [], {
+        areas: [{ pref: '', name: '石川県能登', scaleFrom: 55, scaleTo: 60, kindCode: '11', arrivalTime: null }],
+      }))
+    })
+    expect(sameReportMarks(onLiveEvent)).toEqual([false, false])
+  })
+
+  // 特別警報の下げ止まり（eew-spec.md §4）。弱い区域の続報で印を消さない。
+  it('続報の区域が弱くなっても、既に立っていた特別警報の印は消えない', async () => {
+    const h = setup()
+    await h.flush()
+    act(() => {
+      h.current.injectEvent(p2p('1', T1, [], {
+        areas: [{ pref: '', name: '石川県能登', scaleFrom: 55, scaleTo: 60, kindCode: '11', arrivalTime: null }],
+      }))
+    })
+    expect(shown(h)?.everSpecialWarning).toBe(true)
+    act(() => { h.current.injectEvent(p2p('2', T2, ['新潟県上越'])) })
+    expect(shown(h)?.everSpecialWarning, '弱い区域の続報で印が消えている').toBe(true)
+  })
+
+  describe('P2PQuake には最終報の印が無いので、見張りの解除を積む', () => {
+    // 再生側の時計に寄せる（キューは getTimeRef=serverDate で発火を決める）
+    const OFFSET_MS = -3600_000
+    /** 規模を小さく取り、解除までの時間を下限（発表から 60 秒）で決める。 */
+    const small = (serial: string, issueTime: string, origin: 'p2pquake' | 'yahoo' = 'p2pquake') => p2p(serial, issueTime, ['石川県能登'], {
+      origin,
+      earthquake: {
+        originTime: issueTime,
+        arrivalTime: issueTime,
+        condition: '',
+        hypocenter: { name: 'テスト沖', latitude: 35, longitude: 140, depth: 10, magnitude: 4.0 },
+      },
+    })
+    /** 秒単位で丸めた「いま」（発表時刻は秒までしか比べない）。 */
+    const nowIso = () => new Date(Math.floor(serverDate().getTime() / 1000) * 1000).toISOString()
+
+    it('続報が来なければ、猶予を過ぎたら消す', () => {
+      setReplayOffset(OFFSET_MS)
+      const h = setup({ offset: OFFSET_MS })
+      act(() => { h.current.injectEvent(small('1', nowIso())) })
+      act(() => { vi.advanceTimersByTime(55_000) })
+      expect(h.current.activeEEWs.size).toBe(1)
+      act(() => { vi.advanceTimersByTime(10_000) })
+      expect(h.current.activeEEWs.size).toBe(0)
+    })
+
+    // 対照: 前の報の見張りは、より新しい報を受けていれば捨てる
+    it('続報を受けていれば、前の報の見張りでは消さない', () => {
+      setReplayOffset(OFFSET_MS)
+      const h = setup({ offset: OFFSET_MS })
+      act(() => { h.current.injectEvent(small('1', nowIso())) })
+      act(() => { vi.advanceTimersByTime(30_000) })
+      act(() => { h.current.injectEvent(small('2', nowIso())) })
+      // 1 報目の見張り（60 秒）は過ぎたが、2 報目の見張り（90 秒）はまだ
+      act(() => { vi.advanceTimersByTime(35_000) })
+      expect(h.current.activeEEWs.size).toBe(1)
+      act(() => { vi.advanceTimersByTime(30_000) })
+      expect(h.current.activeEEWs.size).toBe(0)
+    })
+
+    // 経路をまたいで見る: Yahoo で新しい報を受けていれば、その報から測り直す
+    it('別の経路（Yahoo）で新しい報を受けていれば、その報から張り直し、Yahoo が止まったら消す', () => {
+      setReplayOffset(OFFSET_MS)
+      const h = setup({ offset: OFFSET_MS })
+      act(() => { h.current.injectEvent(small('1', nowIso())) })
+      act(() => { vi.advanceTimersByTime(30_000) })
+      act(() => { h.current.injectEvent(small('20', nowIso(), 'yahoo')) })
+      // P2PQuake の見張り（60 秒）は過ぎたが、Yahoo の報（30 秒後）から 60 秒はまだ
+      act(() => { vi.advanceTimersByTime(40_000) })
+      expect(h.current.activeEEWs.size).toBe(1)
+      // Yahoo の取得が止まったまま 90 秒を過ぎたら消す（捨てると居座る）
+      act(() => { vi.advanceTimersByTime(25_000) })
+      expect(h.current.activeEEWs.size, 'Yahoo の続報のあと見張りが残っていない').toBe(0)
+    })
+
+    // 取消を受けた速報には見張りを効かせない（取消の表示を見張りの解除で上書きしない）
+    it('取消を受けていれば、見張りの解除は何もしない', () => {
+      setReplayOffset(OFFSET_MS)
+      const onLiveEvent = vi.fn()
+      const h = setup({ offset: OFFSET_MS, onLiveEvent })
+      act(() => { h.current.injectEvent(small('1', nowIso())) })
+      act(() => { h.current.injectEvent({ ...small('2', nowIso()), cancelled: true }) })
+      const before = onLiveEvent.mock.calls.length
+      act(() => { vi.advanceTimersByTime(65_000) })
+      const expiredAfter = onLiveEvent.mock.calls.slice(before)
+        .filter(([e]) => (e as LiveEvent).kind === 'eew' && (e as EEWAlert).expired)
+      expect(expiredAfter).toEqual([])
+    })
   })
 })
 
@@ -4355,6 +4579,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
   function eewReport(serial: string): EEWAlert {
     return {
       kind: 'eew',
+      origin: 'dmdata',
       id: `dmdata-eew-replaylog-${serial}`,
       time: AT,
       test: false,

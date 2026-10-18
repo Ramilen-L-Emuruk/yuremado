@@ -132,6 +132,57 @@ describe('convertEvent', () => {
     it('severity は付与しない（EEW 専用フィールド）', () => {
       expect((convert(REAL_QUAKE) as unknown as { severity?: unknown }).severity).toBeUndefined()
     })
+
+    // 訂正の有無が不明（`Unknown`）は「訂正」と読み替えない（→ `CorrectType`）
+    it('訂正種別 Unknown は「不明」として持つ', () => {
+      const q = convert({ ...REAL_QUAKE, issue: { ...REAL_QUAKE.issue, correct: 'Unknown' } }) as JMAQuake
+      expect(q.issue.correct).toBe('不明')
+    })
+
+    // 自由付加文・海外への津波の見通し（→ `JMAQuake.freeText`・`foreignTsunamiText`）。
+    // 値域は公式 OpenAPI（`comments.freeFormComment`・`earthquake.foreignTsunami`）。
+    describe('自由付加文と海外への津波の見通し', () => {
+      const foreign = (foreignTsunami: string, freeFormComment = '') => convert({
+        ...REAL_QUAKE,
+        comments: { freeFormComment },
+        earthquake: { ...REAL_QUAKE.earthquake, foreignTsunami },
+      }) as JMAQuake
+
+      // 正: 自由付加文を持つ
+      it('自由付加文を freeText へ写す', () => {
+        expect(foreign('Unknown', '大規模な噴火が発生しました。').freeText).toBe('大規模な噴火が発生しました。')
+      })
+      // 対照: 空文字は「無い」
+      it('空の自由付加文は持たない', () => {
+        expect(foreign('Unknown', '').freeText).toBeUndefined()
+        expect(foreign('Unknown', '  ').freeText).toBeUndefined()
+      })
+
+      it.each([
+        ['WarningPacificWide', '太平洋の広域に津波発生の可能性があります。'],
+        ['WarningPacific', '太平洋で津波発生の可能性があります。'],
+        ['WarningIndianWide', 'インド洋の広域に津波発生の可能性があります。'],
+        ['WarningIndian', 'インド洋で津波発生の可能性があります。'],
+        ['WarningNearby', '震源の近傍で津波発生の可能性があります。'],
+        ['NonEffectiveNearby', '震源の近傍で小さな津波発生の可能性がありますが、被害をもたらす津波の心配はありません。'],
+        ['Potential', '一般的に、この規模の地震が海域の浅い領域で発生すると、津波が発生することがあります。'],
+      ])('foreignTsunami=%s を気象庁の固定付加文の文面へ起こす', (value, text) => {
+        expect(foreign(value).foreignTsunamiText).toBe(text)
+        expect(warnSpy).not.toHaveBeenCalled()
+      })
+
+      // 対照: 伝える見通しが無い値は何も足さない
+      it.each(['None', 'Unknown', 'Checking'])('foreignTsunami=%s は何も足さない', (value) => {
+        expect(foreign(value).foreignTsunamiText).toBeUndefined()
+        expect(warnSpy).not.toHaveBeenCalled()
+      })
+
+      // 安全弁: 表に無い値は文面を作らず記録する
+      it('表に無い値は何も足さず記録する', () => {
+        expect(foreign('SomethingNew').foreignTsunamiText).toBeUndefined()
+        expect(warnSpy).toHaveBeenCalled()
+      })
+    })
   })
 
   describe('code=556（EEW）: 実レスポンス', () => {
@@ -428,7 +479,7 @@ describe('convertEvent', () => {
       expect(result?.map(a => a.name)).toEqual(['千葉県北西部'])
     })
 
-    it('地域が 1 件も無い場合は areas を undefined にする（enrichEEW が既存の区域塗りを空で上書きしないため）', () => {
+    it('地域が 1 件も無い場合は areas を undefined にする（統合が既存の区域塗りを空で上書きしないため）', () => {
       expect(areas([])).toBeUndefined()
       const cancelled = { ...REAL_EEW, cancelled: true } as Record<string, unknown>
       delete cancelled.areas

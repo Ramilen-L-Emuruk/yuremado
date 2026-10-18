@@ -1,5 +1,6 @@
 import type { HistoricalArchiveFile, HistoricalArchiveIndex, HistoricalArchiveMeta } from '../types/historicalArchive'
 import { isValidIntensityScale } from './intensity'
+import { withStoredEewOrigin } from './eewOrigin'
 
 // ローカル履歴アーカイブ（`public/data/historical-archives/`）の型検証ガード。
 // testScenarioSchema.ts と同じ考え方: 壊れた JSON を検証なしで使うと実行時例外や
@@ -117,7 +118,7 @@ export function validateHistoricalArchiveFile(v: unknown): { file: HistoricalArc
     }
     entries.push({
       time: e.time,
-      payload: e.payload as HistoricalArchiveFile['entries'][number]['payload'],
+      payload: withStoredEewOrigin(e.payload as HistoricalArchiveFile['entries'][number]['payload'], 'archive'),
       silent: typeof e.silent === 'boolean' ? e.silent : undefined,
     })
   }

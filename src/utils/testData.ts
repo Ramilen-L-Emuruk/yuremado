@@ -150,6 +150,10 @@ export function createTestForeignQuakeHuge(withDmdssFields: boolean): JMAQuake {
     forecastText: withDmdssFields
       ? '日本への津波の有無については現在調査中です。太平洋の広域に津波発生の可能性があります。一般的に、この規模の地震が海域の浅い領域で発生すると、津波が発生することがあります。'
       : undefined,
+    // **P2PQuake は付加文を運ばず、海外への見通しを値 1 つで運ぶ**（`foreignTsunami`）。DMDSS 版の
+    // 付加文の 2 文目（0221）にあたる `WarningPacificWide` を、読み取りと同じ文面で持たせる
+    // （→ `services/p2pquake.ts` の `FOREIGN_TSUNAMI_TEXT`）。
+    ...(withDmdssFields ? {} : { foreignTsunamiText: '太平洋の広域に津波発生の可能性があります。' }),
   }
 }
 
@@ -944,8 +948,8 @@ const EEW_ARRIVAL_DELAY_MS = {
 //
 // @param withDmdssFields DMDSS 版（DMDATA XML 経路）のとき true。
 //   **standard 版の EEW は 2 つの経路の合成**で、Yahoo 強震モニタの hypoInfo が土台になり、
-//   P2PQuake code=556 が区域と震源要素だけを後から注ぎ足す（`useEarthquakes.ts` の
-//   `enrichEEW`）。そのため震源要素の精度・内陸/海域・短縮名・固定付加文・最大予測値の変化・
+//   P2PQuake code=556 が区域と震源要素を後から運ぶ（両方を 1 つにまとめるのは `utils/eew.ts` の
+//   `mergeEewReport`）。そのため震源要素の精度・内陸/海域・短縮名・固定付加文・最大予測値の変化・
 //   長周期地震動階級は**どちらの経路も運ばない**。false を渡すとそれらを持たない形になる。
 // @param baseTime **地震発現時刻**の基準。同一イベントの続報・最終報では初報の値を渡す
 //   （実電文の発現時刻は続報で動かない）。**震源時刻はここから続報ごとにずらす**
@@ -967,6 +971,8 @@ export function createTestEEWWarning(withDmdssFields: boolean, eventId?: string,
     : { maxInt: 0, maxLgInt: 0, reason: 0 }
   return {
     kind: 'eew',
+    // standard 版で区域つきの報を運ぶのは P2PQuake（code=556）。DMDSS 版は DMDATA。
+    origin: withDmdssFields ? 'dmdata' : 'p2pquake',
     // 実運用の id は eventId と報番号で構成される（dmdataParser: `dmdata-eew-${eventId}-${serial}`）
     id: `test-eew-warn-${eid}-${serial}`,
     time: report,
@@ -1073,6 +1079,8 @@ export function createTestEEWForecast(withDmdssFields: boolean, eventId?: string
   const at = (offsetMs: number) => new Date(origin.getTime() + offsetMs).toISOString()
   return {
     kind: 'eew',
+    // standard 版で区域つきの報を運ぶのは P2PQuake（code=556）。DMDSS 版は DMDATA。
+    origin: withDmdssFields ? 'dmdata' : 'p2pquake',
     id: `test-eew-forecast-${eid}-${serial}`,
     time: report,
     test: false,
@@ -1120,6 +1128,8 @@ export function createTestEEWAssumed(withDmdssFields: boolean, eventId?: string,
   const isAssumed = serial === 1
   return {
     kind: 'eew',
+    // standard 版で区域つきの報を運ぶのは P2PQuake（code=556）。DMDSS 版は DMDATA。
+    origin: withDmdssFields ? 'dmdata' : 'p2pquake',
     id: `test-eew-assumed-${eid}-${serial}`,
     time: report,
     test: false,
@@ -1176,6 +1186,8 @@ export function createTestEEWStrongShaking(eventId?: string, serial = 1, baseTim
   const arrival = anchor.toISOString()
   return {
     kind: 'eew',
+    // DMDSS 版にだけ出すボタン（関数の注記）なので、経路は DMDATA だけ
+    origin: 'dmdata',
     id: `test-eew-strong-shaking-${eid}-${serial}`,
     time: report,
     test: false,
@@ -1228,6 +1240,8 @@ export function createTestEEWDeep(withDmdssFields: boolean, eventId?: string, se
   const eid = eventId ?? `test-deep-${Date.now()}`
   return {
     kind: 'eew',
+    // standard 版で区域つきの報を運ぶのは P2PQuake（code=556）。DMDSS 版は DMDATA。
+    origin: withDmdssFields ? 'dmdata' : 'p2pquake',
     id: `test-eew-deep-${eid}-${serial}`,
     time: report,
     test: false,
@@ -1269,6 +1283,10 @@ export function createTestEEW(withDmdssFields: boolean, eventId?: string, serial
   const isDowngradeReport = serial >= 3
   return {
     kind: 'eew',
+    // **経路も本物どおりにする。** standard 版の初報（区域なし）は Yahoo の hypoInfo、続報（区域つき）は
+    // P2PQuake の 556 が運ぶ。経路で統合の仕方が変わる（Yahoo の続報は区域・仮定震源を運ばないので
+    // 前の値を保つ。→ `utils/eew.ts` の `mergeEewReport`）ので、`'test'` にするとその経路を通らない
+    origin: withDmdssFields ? 'dmdata' : (isFirstReport ? 'yahoo' : 'p2pquake'),
     id: `test-eew-${eid}-${serial}`,
     time: report,
     test: false,
@@ -1319,7 +1337,7 @@ export function createTestEEW(withDmdssFields: boolean, eventId?: string, serial
     // 実データに合わせ areas を使用（参照は utils/eew.ts の eewAreas() で吸収）
     //
     // **standard 版の初報は区域を持たない。** Yahoo 強震モニタの hypoInfo が先に届き、
-    // 区域は P2PQuake code=556 が後から注ぎ足す（`useEarthquakes.ts` の `enrichEEW`）ため、
+    // 区域は P2PQuake code=556 が後から運ぶ（`utils/eew.ts` の `mergeEewReport` がまとめる）ため、
     // 実運用でもこの順で画面に出る。ボタンを 2 回押すと注入後の形へ進む。
     // **種別コードの下 1 桁が主要動の状況を表す**（コード表 12。→ `utils/eewKind.ts`）。
     // 到達の欄はこれで表示が 3 通りに分かれるので、**このボタンが 3 種類とも受け持つ**

@@ -1,4 +1,5 @@
-import type { EEWAlert, EEWRegion } from '../types/earthquake'
+import type { EEWAlert, EEWRegion, EewOrigin } from '../types/earthquake'
+import { parseJstTimeMs } from './quakeOriginSeconds'
 import { hasDepth } from './formatters'
 import { hasKnownEpicenter, haversineKm, hypocentralDistanceKm } from './geo'
 import type { AlertSoundType } from './alertSound'
@@ -409,8 +410,12 @@ export function eewMaxScaleInfo(eew: EEWAlert): EewMaxScaleInfo {
       areasOrAbove = true
     }
   }
-  if (areasMax > 0) return { scale: areasMax, orAbove: areasOrAbove }
   const forecast = eew.forecastMaxScale
+  // 区域が古い報のもので、電文全体の値のほうが新しいとき（→ `EEWAlert.maxScaleFromForecast`）。
+  if (eew.maxScaleFromForecast && forecast != null && isValidIntensityScale(forecast) && forecast > 0) {
+    return { scale: forecast, orAbove: eew.forecastMaxScaleOrAbove === true }
+  }
+  if (areasMax > 0) return { scale: areasMax, orAbove: areasOrAbove }
   const scale = forecast != null && isValidIntensityScale(forecast) ? forecast : 0
   return { scale, orAbove: scale > 0 && eew.forecastMaxScaleOrAbove === true }
 }
@@ -670,6 +675,234 @@ export function eewPhase2ScaleStabilityMs(currentScale: number, baseScale: numbe
 export function eewSerial(eew: EEWAlert): number | null {
   const n = Number(eew.issue?.serial)
   return Number.isInteger(n) && n > 0 ? n : null
+}
+
+/**
+ * 報の発表時刻（エポックミリ秒・**秒で切り捨て**）。読めなければ null。
+ *
+ * **経路をまたいで「同じ報か」「どちらが新しいか」を比べるのはこれ。** 報番号は経路で数え方が違う
+ * （→ `EewOrigin`）が、発表時刻は秒まで一致する（2026-10-16 千島列島の報で Yahoo と P2PQuake を
+ * 突き合わせて確かめた）。ミリ秒は経路で揃わない（P2PQuake は受信時刻のミリ秒を持つ）ので落とす。
+ *
+ * 時間帯を持たない表記（P2PQuake の `2026/10/16 12:40:02`）は日本時間として読む（→ `parseJstTimeMs`）。
+ */
+export function eewIssueTimeMs(eew: EEWAlert): number | null {
+  const t = eew.issue?.time || eew.time
+  if (!t) return null
+  const ms = parseJstTimeMs(t)
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) * 1000 : null
+}
+
+/**
+ * 1 つの地震について、受理した報の台帳。**経路をまたいで受ける standard 版のためのもの**
+ * （DMDSS 版は経路が 1 つなので、報番号の比較だけで足りる）。
+ */
+export interface EewAcceptance {
+  /** 経路ごとに受理した最大の報番号。**経路をまたいで比べない**（数え方が違う） */
+  readonly serialByOrigin: ReadonlyMap<EewOrigin, number>
+  /** 受理した報のうち最も新しい発表時刻（秒）。経路をまたいだ新旧はこれで比べる */
+  readonly latestIssueMs: number | null
+  /**
+   * 音・通知を出した報の発表時刻と、そのときの経路。**同じ報を別の経路から受けた**かの判定に使う
+   * （→ `isSameReportFromOtherOrigin`）。
+   */
+  readonly notifiedIssueMs: ReadonlyMap<number, EewOrigin>
+  /**
+   * 受理した報の数（補った報を含む）。**見張りの解除が「予約してから新しい報を受けたか」を見るのはこれ**
+   * —— 発表時刻も報番号も読めない報でも数は進むので、比べる値が無くて誤って消すことがない。
+   */
+  readonly receipts: number
+}
+
+export const EMPTY_EEW_ACCEPTANCE: EewAcceptance = {
+  serialByOrigin: new Map(), latestIssueMs: null, notifiedIssueMs: new Map(), receipts: 0,
+}
+
+/**
+ * 受理済みの報より古いか（＝適用すると内容が退行するか）。
+ *
+ * - **同じ経路の中では報番号で比べる。** 同じ秒に複数の報が届く（能登本震の実配信で 46 報中 13 報が
+ *   同一秒）ので、秒の発表時刻だけでは足りない
+ * - **経路をまたぐと発表時刻（秒）で比べる。** 報番号の数え方が違う（P2PQuake の 1 と Yahoo の 17 が
+ *   同じ報）ので、番号を比べると正しい報を毎回捨てる
+ * - **同じ値（同じ報番号・同じ秒）は古いと見なさない。** 訂正報も同じ番号で届きうる
+ * - 比べる値が取れない側があるときは、その比べ方を使わない（0 で埋めると正しい報まで捨てる）
+ */
+export function isStaleEewReport(acceptance: EewAcceptance | undefined, incoming: EEWAlert): boolean {
+  return eewStaleness(acceptance, incoming) !== 'fresh'
+}
+
+/**
+ * 受理済みの報と比べた新旧（{@link isStaleEewReport} の内訳）。
+ *
+ * - `stale` — 同じ経路の中で古い（報番号が小さい）。捨てる
+ * - `olderFromOtherOrigin` — 同じ経路の中では新しいが、別の経路がもっと新しい報を先に運んでいる。
+ *   **P2PQuake の報はこの形で遅れて届く**（Yahoo は 1 秒ごとに取りに行くので先に着く）。区域・仮定震源の
+ *   別は P2PQuake しか運ばないので、捨てずに補う（→ `supplementEewReport`）
+ * - `fresh` — 新しい
+ */
+export function eewStaleness(
+  acceptance: EewAcceptance | undefined, incoming: EEWAlert,
+): 'fresh' | 'stale' | 'olderFromOtherOrigin' {
+  if (!acceptance) return 'fresh'
+  const serial = eewSerial(incoming)
+  const accepted = acceptance.serialByOrigin.get(incoming.origin)
+  if (serial !== null && accepted !== undefined && serial < accepted) return 'stale'
+  const issueMs = eewIssueTimeMs(incoming)
+  return issueMs !== null && acceptance.latestIssueMs !== null && issueMs < acceptance.latestIssueMs
+    ? 'olderFromOtherOrigin'
+    : 'fresh'
+}
+
+/**
+ * 別の経路がもっと新しい報を先に運んだあとに届いた P2PQuake の報から、**P2PQuake しか運ばない欄だけ**を
+ * 表示中の報へ補う（区域・仮定震源の別）。震源・震度・報番号・発表時刻は新しい側（`existing`）を保つ。
+ *
+ * 補う区域は届いた報のものなので、表示中の報より 1 つ前の報の区域になりうる。それでも捨てるよりは
+ * 新しい —— Yahoo は区域を運ばないので、表示中の区域は届いた報よりさらに前の P2PQuake の報のもの。
+ */
+export function supplementEewReport(existing: EEWAlert, incoming: EEWAlert): EEWAlert {
+  const merged: EEWAlert = {
+    ...existing,
+    areas: incoming.areas ?? existing.areas,
+    earthquake: { ...existing.earthquake, condition: incoming.earthquake.condition },
+    severity: existing.severity === 'Warning' ? 'Warning' : incoming.severity,
+  }
+  return {
+    ...merged,
+    everSpecialWarning: (existing.everSpecialWarning ?? false) || computeSingleEEWLevel(merged) === 2,
+  }
+}
+
+/**
+ * 統合した報が、前に知らせた報より**知らせ直す値打ちのある変化**を持つか（区分が上がった・予想の
+ * 最大震度が上がった。後者も鳴らすのは 2026-10-19 ユーザー承認・選んだ選択肢「鳴らす」）。これに当たる報は、別の経路から来た同じ報でも音・タブ移動を止めない。
+ */
+export function raisesEewAlert(merged: EEWAlert, previous: EEWAlert): boolean {
+  return computeSingleEEWLevel(merged) > computeSingleEEWLevel(previous)
+    || eewMaxScale(merged) > eewMaxScale(previous)
+}
+
+/**
+ * 表示中の EEW（`shown`）より古い報か。状態更新の側の二重化で使う（入口は台帳で判定する）。
+ *
+ * 比べ方は {@link isStaleEewReport} と同じ —— 同じ経路なら報番号、経路が違えば発表時刻（秒）。
+ * `shown.origin` は最後に統合した報の経路（→ `EEWAlert.origin`）。
+ */
+export function isOlderEewReport(shown: EEWAlert, incoming: EEWAlert): boolean {
+  if (shown.origin === incoming.origin) {
+    const a = eewSerial(shown)
+    const b = eewSerial(incoming)
+    if (a !== null && b !== null) return b < a
+  }
+  const ta = eewIssueTimeMs(shown)
+  const tb = eewIssueTimeMs(incoming)
+  return ta !== null && tb !== null && tb < ta
+}
+
+/** 報を受理したあとの台帳（純関数。元の台帳は変えない）。 */
+export function acceptEewReport(acceptance: EewAcceptance | undefined, incoming: EEWAlert): EewAcceptance {
+  const base = acceptance ?? EMPTY_EEW_ACCEPTANCE
+  const serialByOrigin = new Map(base.serialByOrigin)
+  const serial = eewSerial(incoming)
+  if (serial !== null) serialByOrigin.set(incoming.origin, Math.max(serial, serialByOrigin.get(incoming.origin) ?? 0))
+  const issueMs = eewIssueTimeMs(incoming)
+  const latestIssueMs = issueMs === null ? base.latestIssueMs : Math.max(issueMs, base.latestIssueMs ?? issueMs)
+  return { ...base, serialByOrigin, latestIssueMs, receipts: base.receipts + 1 }
+}
+
+/** 音・通知を出したことを台帳へ書く（純関数）。発表時刻が読めない報は書かない。 */
+export function noteEewNotified(acceptance: EewAcceptance, incoming: EEWAlert): EewAcceptance {
+  const issueMs = eewIssueTimeMs(incoming)
+  if (issueMs === null || acceptance.notifiedIssueMs.has(issueMs)) return acceptance
+  return { ...acceptance, notifiedIssueMs: new Map(acceptance.notifiedIssueMs).set(issueMs, incoming.origin) }
+}
+
+/**
+ * **別の経路から既に受けて知らせた報と同じ報**か（→ `LiveEventMeta.eewSameReport`）。
+ *
+ * 同じ経路から同じ発表時刻の報がもう一度来た形（訂正報）は「同じ報」としない —— 知らせ直す。
+ */
+export function isSameReportFromOtherOrigin(acceptance: EewAcceptance | undefined, incoming: EEWAlert): boolean {
+  if (!acceptance) return false
+  const issueMs = eewIssueTimeMs(incoming)
+  if (issueMs === null) return false
+  const notifiedBy = acceptance.notifiedIssueMs.get(issueMs)
+  return notifiedBy !== undefined && notifiedBy !== incoming.origin
+}
+
+/**
+ * 同じ地震の報を 1 つに統合する。**状態に入れる値・読み上げと通知へ渡す値は、すべてこれを通す。**
+ *
+ * **経路が運ばない欄は既存の値を保つ**（standard 版は Yahoo と P2PQuake の 2 経路が同じ地震を運ぶ）。
+ *
+ * | 経路 | 運ばないので保つ欄 |
+ * |---|---|
+ * | Yahoo | 区域・仮定震源の別（`earthquake.condition`）・地震発現時刻 |
+ * | P2PQuake | 予想の最大震度（`forecastMaxScale`）・最終報の印（`isFinal`） |
+ * | DMDATA・保存データ・テスト | なし（丸ごと置き換える） |
+ *
+ * - **仮定震源の別は、Yahoo が新しい報番号で来ても直前の P2PQuake の値を保つ**（2026-10-14 ユーザー承認
+ *   「直前の P2PQuake の値を保つ」）。Yahoo は仮定震源要素かどうかを運ばない
+ * - severity は引き上げだけ（Yahoo の震度からの推定は、P2PQuake が警報と伝えた後でも弱く出る）
+ * - 特別警報の下げ止まり（`everSpecialWarning`）は一度立てたら落とさない（→ `computeDisplayEEWLevel`）
+ * - **取消・失効の報は通さない。** あちらは状態側が表示中の EEW を土台に名指しで扱う
+ */
+export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAlert): EEWAlert {
+  let base: EEWAlert
+  if (!existing) {
+    base = incoming
+  } else if (incoming.origin === 'yahoo') {
+    base = {
+      ...existing,
+      origin: incoming.origin,
+      id: incoming.id,
+      time: incoming.time,
+      test: incoming.test,
+      issue: incoming.issue,
+      cancelled: incoming.cancelled,
+      isFinal: incoming.isFinal,
+      // 予想の最大震度は Yahoo も運ぶが、震度が未確定の報（calcintensity が空）では欠ける。
+      // 欠けた報で前の値を消さない。
+      forecastMaxScale: incoming.forecastMaxScale ?? existing.forecastMaxScale,
+      forecastMaxScaleOrAbove: incoming.forecastMaxScale !== undefined
+        ? incoming.forecastMaxScaleOrAbove
+        : existing.forecastMaxScaleOrAbove,
+      // 運んだ値のほうが、保っている区域（前の P2PQuake の報）より新しい。欠けた報では前の印のまま。
+      maxScaleFromForecast: (incoming.forecastMaxScale ?? 0) > 0 ? true : existing.maxScaleFromForecast,
+      earthquake: {
+        ...existing.earthquake,
+        originTime: incoming.earthquake.originTime,
+        hypocenter: incoming.earthquake.hypocenter,
+      },
+    }
+  } else if (incoming.origin === 'p2pquake') {
+    base = {
+      ...existing,
+      origin: incoming.origin,
+      id: incoming.id,
+      time: incoming.time,
+      test: incoming.test,
+      issue: incoming.issue,
+      cancelled: incoming.cancelled,
+      earthquake: incoming.earthquake,
+      // 区域が 1 件も無い報（取消など）は undefined で届く（`services/p2pquake.ts`）。
+      areas: incoming.areas ?? existing.areas,
+      // 新しい区域を運んだら、最大は区域で見る（前の Yahoo の電文全体の値は古い）。
+      maxScaleFromForecast: incoming.areas ? false : existing.maxScaleFromForecast,
+    }
+  } else {
+    base = incoming
+  }
+  // **届いた報の区分から引き上げる**（`base` ではない）。経路ごとの分岐は既存の値を土台に
+  // 組むので、`base.severity` は既存のまま —— 予報を警報へ上げる報を取りこぼす。
+  const severity = existing?.severity === 'Warning' ? 'Warning' : incoming.severity
+  const merged: EEWAlert = { ...base, severity }
+  return {
+    ...merged,
+    everSpecialWarning: (existing?.everSpecialWarning ?? false) || merged.everSpecialWarning === true
+      || computeSingleEEWLevel(merged) === 2,
+  }
 }
 
 // EEW 単発のレベル算出: 0=予報級（severity!=='Warning'。震度の高低に関係なく警報未満は全て 0）

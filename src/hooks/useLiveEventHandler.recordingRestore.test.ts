@@ -217,6 +217,17 @@ describe('録画モードの既読復元', () => {
     expect(mainSpeeches().join('')).not.toContain('津波')
   })
 
+  // 正: 標準版（P2PQuake 552）の解除は EventID を持たず、`id` は配信ごとに変わる。ライブと同じ鍵
+  // （発表日時）で既読にしないと、窓の手前で伝えた解除を窓の中で別の `id` の同じ解除として読み直す。
+  it('EventID の無い解除も、発表日時が同じなら読み直さない（標準版）', async () => {
+    const { handleLiveEvent, restorePreWindowTracking } = setup({ recordingMode: true })
+    const p2pCancel = (id: string): JMATsunami => ({ ...makeTsunamiCancel(), id, eventId: undefined } as unknown as JMATsunami)
+    restorePreWindowTracking(preWindow(p2pCancel('p2p-a') as unknown as LiveEvent))
+    handleLiveEvent(p2pCancel('p2p-b') as unknown as LiveEvent)
+    await drain()
+    expect(mainSpeeches().join('')).not.toContain('津波')
+  })
+
   // 対照: 録画モードが無効なら取消を読む。
   it('録画モードでなければ津波の取消を読む', async () => {
     const { handleLiveEvent, restorePreWindowTracking } = setup()

@@ -1,4 +1,5 @@
 import type { TestScenarioFile, TestScenarioIndex, TestScenarioMeta, ScenarioCategory } from '../types/testScenario'
+import { withStoredEewOrigin } from './eewOrigin'
 
 // 実地震シナリオファイル（`public/data/test-scenarios/`）の型検証ガード。
 // スキーマ検証を怠ると壊れた JSON がそのまま instantiateScenario に渡り、
@@ -78,7 +79,7 @@ export function validateScenarioFile(v: unknown): TestScenarioFile | null {
     if (!isValidPayload(e.payload)) continue
     entries.push({
       offsetMs: e.offsetMs,
-      payload: e.payload as TestScenarioFile['entries'][number]['payload'],
+      payload: withStoredEewOrigin(e.payload as TestScenarioFile['entries'][number]['payload'], 'archive'),
       silent: typeof e.silent === 'boolean' ? e.silent : undefined,
     })
   }

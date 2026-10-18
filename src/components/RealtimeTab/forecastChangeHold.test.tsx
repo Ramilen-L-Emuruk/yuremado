@@ -28,6 +28,7 @@ const TEXT_DECREASED = '予想が小さくなりました'
 function makeEEW(serial: string, forecastChange?: EEWForecastChange, overrides: Partial<EEWAlert> = {}): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: `test-eew-${serial}`,
     time: '2026-01-01T12:00:00Z',
     test: false,

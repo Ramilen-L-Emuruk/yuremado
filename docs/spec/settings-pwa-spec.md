@@ -1900,7 +1900,7 @@ describe で固定してある。
 | EEW の震源要素の精度・内陸/海域・短縮名・固定付加文・最大予測値の変化・長周期地震動階級 | 持つ | **持たない**（P2PQuake も Yahoo hypoInfo も配信しない） |
 | EEW の区域の長周期階級（`lgIntTo`）・到達の印（`arrived`） | 持つ | 持たない（到達は種別コードの下 1 桁から判定する） |
 | EEW の区域の都道府県名（`areas[].pref`） | 県名付き（テストデータが直接持たせる。実運用では電文が空で来て `enrichEEWPref` が区域名から逆引きして補う欄で、その結果と揃えてある） | **県名なし**（実データの値は「茨城」「千葉」） |
-| EEW の初報の区域 | 最初から持つ | **持たない**（Yahoo hypoInfo が先に届き、P2PQuake code=556 が後から注ぐ。→ `useEarthquakes.ts` の `enrichEEW`） |
+| EEW の初報の区域 | 最初から持つ | **持たない**（Yahoo hypoInfo が先に届き、P2PQuake code=556 が後から区域を運ぶ。→ `utils/eew.ts` の `mergeEewReport`） |
 
 `points` の形の違いは [`quake-spec.md`](quake-spec.md) §4 の識別規則が単一情報源。**DMDSS 用の形は
 実電文から作る**（`npm run build-test-quake` が VXSE53 をパーサーへ通して

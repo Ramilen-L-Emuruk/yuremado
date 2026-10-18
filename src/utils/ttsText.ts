@@ -1366,6 +1366,7 @@ export function eewIntensityText(
  */
 const PREVIEW_EEW: EEWAlert = {
   kind: 'eew',
+  origin: 'test',
   id: 'voicevox-preview',
   time: '',
   test: true,
@@ -1834,16 +1835,20 @@ function buildEarthquakeSegments(
     const prefix = isNew ? '遠地地震に関する情報。' : '遠地地震に関する情報が更新されました。'
     // 付加文の原文を優先する。遠地地震は 022x/023x 系の付加文を併用するため、
     // domesticTsunami（021x 系の区分）へ丸めると意味が落ちる。
-    // 原文を持たない経路（P2PQuake）は従来どおり区分から文を起こす。
+    // 原文を持たない経路（P2PQuake）は区分から文を起こし、海外への津波の見通し
+    // （`foreignTsunamiText`）があれば続ける。
     // **空白だけの付加文もここで区分側へ倒れる**（{@link endTelegramSentence} が空を返す）。
     const forecast = endTelegramSentence(event.forecastText)
-    const tail = forecast ? plain(forecast) : domesticTsunamiSegment(domesticTsunami)
+    const foreign = endTelegramSentence(event.foreignTsunamiText)
+    const tail: SpeechSegment[] = forecast
+      ? [plain(forecast)]
+      : [domesticTsunamiSegment(domesticTsunami), ...(foreign ? [plain(foreign)] : [])]
     // 時刻が日時として読めなければ句ごと落とす（上の地震情報と同じ扱い）。
     const dayTime = formatDayTime(event.earthquake.time)
     return [
       plain(`${prefix}${dayTime ? `${dayTime}頃、` : ''}`),
       ...quakeOccurrenceSegments(hypocenter, opts),
-      tail,
+      ...tail,
     ]
   }
 
@@ -4018,8 +4023,9 @@ export interface TelegramTextSpeech {
  * 片方だけ読んだ状態で他方を黙らせると前置きだけ聞いた文が残る。
  *
  * **事象の識別子を持たない電文では種別だけになる**（＝従来どおり文字列だけで既読）。
- * 付加文を運ぶのは DMDATA の XML 経路だけで、そこでは全種別が `EventID` を持つため、
- * 実運用では起きない。**起きたときは黙って旧来の挙動へ戻る**ので、`speakTelegramText` の
+ * DMDATA の XML 経路は全種別が `EventID` を持つ。**P2PQuake の地震情報は持たない**ので、
+ * 呼び出し側が地震の時刻を代わりに渡す（自由付加文を運ぶ経路はこの 2 つ）。
+ * **それでも欠けたときは黙って旧来の挙動へ戻る**ので、`speakTelegramText` の
  * 記録に主題を出して気づけるようにしてある。
  */
 function telegramTextSpokenSubject(kind: LiveEvent['kind'], eventId: string | undefined): string {
@@ -4106,7 +4112,10 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
         pick('quakeVarComment', event.varCommentText),
         pick('quakeFreeText', event.freeText),
       ], reads)
-      return telegramSpeech(`地震情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.eventId))
+      // **P2PQuake の地震は `eventId` を持たない**ので、地震の時刻で主題を作る（同じ地震の続報は
+      // 同じ時刻を運ぶ）。`eventId` だけだと全件が `quake:` に潰れ、別の地震の同じ文を二度と読まない。
+      const quakeSubjectId = event.eventId ?? (event.earthquake?.time ? `time:${event.earthquake.time}` : undefined)
+      return telegramSpeech(`地震情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, quakeSubjectId))
     }
     case 'tsunami': {
       // 解除・失効・取消とも `cancelled` が立つ（理由は上の EEW 分岐のコメント）。
