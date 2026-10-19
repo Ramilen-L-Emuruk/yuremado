@@ -319,10 +319,21 @@ export async function fetchRealtimeIntensity(
         lastErr = new Error(`realtime response missing/empty realTimeData.intensity (edge=${edge})`)
         continue
       }
+      // **観測点リストの版（`siteConfigId`）の欠落・空文字も失敗にする**（2026-10-19 ユーザー選択
+      // 「欠落を「更新停止」に乗せる (推奨)」）。成功として渡すと、受け手は版の無いフレームの座標を
+      // 引けず（`useKyoshinRealtime` は空の版では観測点リストを取りに行かない）、`indicesSiteConfigId`
+      // （空）が `sitesSiteConfigId` と一致せず、検知と描画のゲートが閉じたままになる ——
+      // 取得は成功扱いなので「更新停止」の表示は出ない。
+      // 失敗にすれば、上の震度の欠落と同じく取り直しと「更新停止」の経路に乗る
+      // （→ docs/spec/data-sources-spec.md §4「データ」）。
+      if (typeof rt.siteConfigId !== 'string' || rt.siteConfigId.length === 0) {
+        lastErr = new Error(`realtime response missing/empty realTimeData.siteConfigId (edge=${edge})`)
+        continue
+      }
       const intensity = rt.intensity
       const indices = Array.from(intensity, (c) => c.charCodeAt(0) - 100)
       const hypoInfo: YahooHypoInfoItem[] = json.hypoInfo?.items ?? []
-      const siteConfigId = rt.siteConfigId ?? ''
+      const siteConfigId = rt.siteConfigId
       const dataTime = rt.dataTime ?? ''
       // **取れた分だけ控える。** 失敗（未登録の秒・空の応答）は控えない —— 待てば現れる。
       //

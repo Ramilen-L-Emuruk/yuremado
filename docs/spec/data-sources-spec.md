@@ -2071,8 +2071,18 @@ JMA 仕様上ここで配信される 556 は全て警報級であるため `con
 - **リアルタイム震度**: 1 秒毎の JSON。`realTimeData.intensity` 文字列（1 文字＝1 観測点、`charCodeAt(0)-100` が index 0〜20）
 - **震源情報（hypoInfo）**: EEW 相当の情報（震源・M・calcintensity 等）を含む場合がある
 
-`fetchRealtimeIntensity` は `res.ok` に加えて `realTimeData` の存在、`realTimeData.intensity` が
-非空の文字列であることを検証する（フィールド欠落・型不一致・空文字は次エッジ／リトライへフォールバック）。
+`fetchRealtimeIntensity` は `res.ok` に加えて `realTimeData` の存在、`realTimeData.intensity` と
+`realTimeData.siteConfigId` が非空の文字列であることを検証する（フィールド欠落・型不一致・空文字は次エッジ／リトライへフォールバック）。
+
+**観測点リストの版（`siteConfigId`）が欠けた応答も取得の失敗にする**（2026-10-19 ユーザー選択「欠落を「更新停止」に乗せる (推奨)」）。
+版の無いフレームを成功として渡すと、`useKyoshinRealtime` は空の版では観測点リストを取りに行かず、`indicesSiteConfigId`
+（`''`）が `sitesSiteConfigId` と一致しない。検知（`useKyoshinDetectorV2`）と地図の描画（`App.tsx`）はこの 2 つが一致する
+フレームしか通さないので、そのまま止まる。取得は成功扱いなので「更新停止」の表示は出ない。
+失敗にすれば、取り直しの間隔と「更新停止」は下の「取得に失敗したら間隔を空ける」の経路に乗る（失敗が `STALLED_AFTER_MS`
+＝5 秒続くと既存の「更新停止」の表示になる）。
+強震モニタの評価台が `npm run bench-kyoshin -- --fetch` で取得した実データ（`.probe-cache`・Git 管理外）の
+168,312 フレームを 2026-10-20 に数えたところ、版が空のフレームは 0 件だった。実配信で欠けないことを示す値ではない。
+
 `calcintensityToScale` は「空文字・null/undefined」（震度未確定の想定内）以外の未知コードで `log.warn` を出す
 （silent に severity=Forecast 格下げを防ぐ）。
 `useKyoshinRealtime` の `applyFrame` は try/catch で例外を隔離し、ローカルバグと fetch 失敗を分けて扱う。
@@ -5574,3 +5584,5 @@ EEW の予想震度は範囲（下限・上限）で配信され、**上限が�
   控えに期限を置かない（§2）。代わりに、まだ育ちうるアーカイブはその日の翌日 6:00 JST を過ぎるまで控えない。
   本体を落とすかの事前判定と消費のずれを数える会計を外した（食い違わないことはテストが固定し、食い違えば取り込みの失敗になる）。
   門の上限 0 件の分岐は、門を作る時点の検査へ置き換えた
+- 2026-10-20: 強震モニタの応答に観測点リストの版（`siteConfigId`）が無いとき、成功として空の版で渡していたのをやめ、
+  取得の失敗にした（§4「データ」。承認の原文もそこ）
