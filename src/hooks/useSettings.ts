@@ -80,7 +80,7 @@ export interface AppSettings {
   // （地名ラベルの退避が数秒遅れる・揺れ検知の診断ログを保存しない）。
   recordingMode: boolean
   notifyEEW: boolean               // 緊急地震速報の発報・昇格時にブラウザ通知を送る
-  notifyTsunami: boolean           // 津波注意報以上が発表されたときにブラウザ通知を送る
+  notifyTsunami: boolean           // 津波のブラウザ通知（予報以上の発表・続報と全区域解除。→ audio-tts-spec §7）
   notifyDetection: boolean         // 強震モニタの揺れ検知時にブラウザ通知を送る
   homeLat: number | null           // ホーム地点 緯度（null = 未設定）
   homeLng: number | null           // ホーム地点 経度（null = 未設定）

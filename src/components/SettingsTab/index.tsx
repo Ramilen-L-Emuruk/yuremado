@@ -1675,7 +1675,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <Row label="緊急地震速報の通知" description="緊急地震速報が出たときと、警報・特別警報へ上がったときに通知します">
               <Toggle checked={settings.notifyEEW} onChange={v => onUpdate('notifyEEW', v)} />
             </Row>
-            <Row label="津波通知" description="津波注意報以上が発表されたときに通知します">
+            <Row label="津波通知" description="津波警報・注意報・予報が発表されたときと、全て解除されたときに通知します">
               <Toggle checked={settings.notifyTsunami} onChange={v => onUpdate('notifyTsunami', v)} />
             </Row>
           </>
