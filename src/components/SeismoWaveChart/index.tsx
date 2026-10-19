@@ -13,8 +13,9 @@
 // 正側・負側の平均の線。展開した段のほか、畳んだ合成と、向きを 1 つだけ残した「3 成分を重ねる」も
 // 1 本なので重ねる（2026-10-13 ユーザー承認）。2 本以上を重ねた絵には足さない（線の数が倍になって読めない）。
 //
-// **P 波・S 波の到達線は、渡された緊急地震速報から引く**（`arrivalEew`。どの速報を相手にするかは
-// カウントダウンと同じ選び方。到達予想キーの門は掛けない —— `docs/forecast-computation-audit.md` の 11）。
+// **P 波・S 波の到達線は、渡された緊急地震速報から地震ごとに引く**（`arrivalEews`。予報円のある速報すべて ——
+// `utils/countdownEew.ts` の `pickArrivalEews`。どの地震の線かは見分けず、どれも「P」「S」。2026-10-18 ユーザー承認
+// 「見分けない」。到達予想キーの門は掛けない —— `docs/forecast-computation-audit.md` の 11）。
 // 右端は時計の「いま」で、**いまより先の時刻の線は描かない**（`liveLanes.ts` の `liveArrivalMarks`）。
 //
 // **右端を時計で進め、少しずつずらして描く**（`docs/public-waveform-design.md` §5.4）。組み立て（列・平均の線）は
@@ -40,6 +41,7 @@ import type { SeismoWaveCollapsedView } from '../../hooks/useSettings'
 import type { EEWAlert } from '../../types/earthquake'
 import type { LatLng } from '../../utils/stationCoords'
 import { getServerClockOffsetMs, serverNow } from '../../utils/clock'
+import { eewEventKey } from '../../utils/eew'
 import { log } from '../../utils/logger'
 import { computeWaveArrival, type WaveArrival } from '../../utils/seismoWaveArrival'
 import type { SeismoWaveWindow } from '../../utils/seismoWaveBuffer'
@@ -149,10 +151,11 @@ interface Props {
   expanded: boolean
   onToggleExpanded: () => void
   /**
-   * P/S の到達線を引く相手の緊急地震速報。**引かないなら `null`**（発表中のものが無い）。
-   * 選び方はカウントダウンと同じ（`utils/countdownEew.ts`）。
+   * P/S の到達線を引く相手の緊急地震速報。**地震ごとに 1 件**で、引かないなら空（発表中のものが無い）。
+   * 選び方は `utils/countdownEew.ts` の `pickArrivalEews`（予報円のある速報すべて）。
+   * **参照は顔ぶれが変わったときだけ変えること** —— 変わるたびに全観測点の走時を引き直す。
    */
-  arrivalEew: EEWAlert | null
+  arrivalEews: readonly EEWAlert[]
   /** 横の幅（秒。設定の時間幅）。抱えている長さ（`WAVE_RETAIN_SEC`）以下。 */
   spanSec: number
   /**
@@ -193,7 +196,7 @@ interface LiveWaveSource {
 /** 段を積む枠の高さの上限（画面の 3 分の 1。`docs/public-waveform-design.md` §0）。超えた分は枠の中で上下にずらして見る。 */
 const STACK_MAX_HEIGHT_CLASS = 'max-h-[33vh]'
 
-export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView, expanded, onToggleExpanded, arrivalEew, spanSec, onFocusStation }: Props) {
+export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView, expanded, onToggleExpanded, arrivalEews, spanSec, onFocusStation }: Props) {
   const sources: LiveWaveSource[] = []
   for (const station of stations) {
     sources.push({
@@ -242,7 +245,7 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
           collapsedView={collapsedView}
           expanded={expanded}
           onToggleExpanded={onToggleExpanded}
-          arrivalEew={arrivalEew}
+          arrivalEews={arrivalEews}
           spanSec={spanSec}
         />
       ))}
@@ -256,7 +259,7 @@ function StationWave({
   collapsedView,
   expanded,
   onToggleExpanded,
-  arrivalEew,
+  arrivalEews,
   spanSec,
 }: Omit<Props, 'stations' | 'readWave' | 'publicWaves' | 'onFocusStation'> & { source: LiveWaveSource; showControls: boolean }) {
   const axes = useWaveAxes()
@@ -267,29 +270,42 @@ function StationWave({
     return out
   }, [expanded, collapsedView, axes])
 
-  // **到達は観測点と速報が変わったときだけ解く**（描き直しのたびに走時表を引かない）。
-  const arrival = useMemo<WaveArrival | null>(() => {
-    if (arrivalEew === null) return null
-    return computeWaveArrival({
-      originMs: new Date(arrivalEew.earthquake.originTime).getTime(),
-      hypocenter: arrivalEew.earthquake.hypocenter,
-      stationLat: source.lat,
-      stationLon: source.lon,
-    })
-  }, [arrivalEew, source.lat, source.lon])
+  // **到達は観測点と速報が変わったときだけ解く**（描き直しのたびに走時表を引かない）。地震ごとに 1 つで、
+  // 解けなかった地震は `null` のまま持つ（記録に使う）。
+  const solved = useMemo(
+    () => arrivalEews.map((eew) => ({
+      eew,
+      arrival: computeWaveArrival({
+        originMs: new Date(eew.earthquake.originTime).getTime(),
+        hypocenter: eew.earthquake.hypocenter,
+        stationLat: source.lat,
+        stationLon: source.lon,
+      }),
+    })),
+    [arrivalEews, source.lat, source.lon],
+  )
+  const arrivals = useMemo<readonly WaveArrival[]>(
+    () => solved.flatMap((s) => (s.arrival === null ? [] : [s.arrival])),
+    [solved],
+  )
 
-  // **線を引けなかった理由を残す**（地震ごとに 1 回）。発表中の速報が無いときは `arrivalEew` が `null` で
+  // **線を引けなかった理由を残す**（観測点と地震の組ごとに 1 回）。発表中の速報が無いときは `arrivalEews` が空で
   // ここへ来ない（正常系なので記録しない）。画面からは「線が出ない」としか見えない。鍵は報ではなく地震
-  // （`issue.eventId`）—— 報の id で数えると、座標の無い観測点では続報のたびに同じ行が出る。
-  const loggedNoArrivalRef = useRef<string | null>(null)
+  // （`eewEventKey`）—— 報の id で数えると、座標の無い観測点では続報のたびに同じ行が出る。
+  const loggedNoArrivalRef = useRef(new Set<string>())
   useEffect(() => {
-    if (arrivalEew === null || arrival !== null) return
-    const key = `${source.id}:${arrivalEew.issue?.eventId ?? arrivalEew.id}`
-    if (loggedNoArrivalRef.current === key) return
-    loggedNoArrivalRef.current = key
-    const reason = source.lat === null || source.lon === null ? '観測点の座標が無い' : '速報の発生時刻・震源・深さから解けない'
-    log.debug(`[seismo] 下端の波形に P/S の線を引けない（${source.id}・${arrivalEew.id}）: ${reason}`)
-  }, [arrivalEew, arrival, source.id, source.lat, source.lon])
+    // **いまの相手に無い地震の鍵は捨てる**（発表が終わった地震の分を溜め続けない。同じ地震が再生でもう一度来たら、また 1 回記録する）。
+    const live = new Set(solved.map(({ eew }) => `${source.id}:${eewEventKey(eew)}`))
+    for (const key of [...loggedNoArrivalRef.current]) if (!live.has(key)) loggedNoArrivalRef.current.delete(key)
+    for (const { eew, arrival } of solved) {
+      if (arrival !== null) continue
+      const key = `${source.id}:${eewEventKey(eew)}`
+      if (loggedNoArrivalRef.current.has(key)) continue
+      loggedNoArrivalRef.current.add(key)
+      const reason = source.lat === null || source.lon === null ? '観測点の座標が無い' : '速報の発生時刻・震源・深さから解けない'
+      log.debug(`[seismo] 下端の波形に P/S の線を引けない（${source.id}・${eew.id}）: ${reason}`)
+    }
+  }, [solved, source.id, source.lat, source.lon])
 
   const canvasRefs = useRef(new Map<string, HTMLCanvasElement>())
   const [scaleTexts, setScaleTexts] = useState<Readonly<Record<string, string | null>>>({})
@@ -316,8 +332,8 @@ function StationWave({
   useEffect(() => {
     redrawNowRef.current = true
   }, [lanes, spanSec])
-  const arrivalRef = useRef(arrival)
-  arrivalRef.current = arrival
+  const arrivalsRef = useRef(arrivals)
+  arrivalsRef.current = arrivals
   const scaleTextsRef = useRef(scaleTexts)
   // **途絶を描画へも渡す。** 文言だけだと、絵そのものは「いま揺れている」ように
   // 見えたまま —— 線を薄くして、生きていない絵だと分かるようにする。
@@ -406,7 +422,7 @@ function StationWave({
         win,
         stale: staleRef.current,
         quietLevel: quiet.current(),
-        arrival: arrivalRef.current,
+        arrivals: arrivalsRef.current,
         timeline: nextTimeline,
         unit: unitRef.current,
       })

@@ -29,6 +29,7 @@ import { splitIntoChunks, type SpeechOutcome } from '../utils/voicevox'
 import { EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS } from '../utils/eew'
 import { DEFAULTS, type AppSettings } from './useSettings'
 import { playAlertSound } from '../utils/alertSound'
+import { showBrowserNotification } from '../utils/notifications'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass, JMAQuake, JMATsunami } from '../types/earthquake'
 
 // 「鳴っている最中」を再現するための保留。`holdNextSpeech()` で次の 1 回だけ保留にする。
@@ -2814,5 +2815,47 @@ describe('別の経路から届いた同じ報（標準版）', () => {
     handle(makeEEW({ serial: 2, scaleTo: 50 }), { eewSameReport: true })
     await advance(2000)
     expect(spokenTexts().join('')).toContain('5強')
+  })
+})
+
+// 誤報取消のブラウザ通知の本文。**DMDATA の取消電文は震源名が空**なので、電文の値だけで組むと
+// 「 の緊急地震速報は取り消されました」になる。直前の報が名乗った震央地名を地震ごとに覚えて使い、
+// 引けなければ名前抜きの文にする（2026-10-14 ユーザー選択「緊急地震速報は取り消されました」）。
+describe('誤報取消の通知の本文', () => {
+  const NAMELESS = { name: '', latitude: -200, longitude: -200 }
+  const notified = () => vi.mocked(showBrowserNotification).mock.calls.filter((c) => c[0] === '緊急地震速報 取消')
+
+  beforeEach(() => { vi.mocked(showBrowserNotification).mockClear() })
+
+  // 正: 取消電文の名前が空でも、直前の報が名乗った名前で通知する。
+  it('取消電文の名前が空なら、直前の報が名乗った震央地名を使う', () => {
+    const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+    handle(makeEEW({ eventId: 'evt-A' }))
+    const warn = vi.spyOn(console, 'warn')
+    handle(makeEEW({ eventId: 'evt-A', serial: 2, cancelled: true, hypocenter: NAMELESS }))
+    expect(notified().map((c) => c[1])).toEqual(['日向灘 の緊急地震速報は取り消されました'])
+    expect(warn.mock.calls.filter((c) => String(c.join(' ')).includes('震央地名を引けない'))).toEqual([])
+    warn.mockRestore()
+  })
+
+  // 安全弁: 自動解除で追跡を落とした後に遅れて届いた取消でも名前を引ける。
+  it('自動解除の後に遅れて届いた取消でも、覚えた名前を使う', () => {
+    const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+    handle(makeEEW({ eventId: 'evt-A' }))
+    handle({ ...makeEEW({ eventId: 'evt-A', serial: 2, cancelled: true }), expired: true })
+    handle(makeEEW({ eventId: 'evt-A', serial: 3, cancelled: true, hypocenter: NAMELESS }))
+    expect(notified().map((c) => c[1])).toEqual(['日向灘 の緊急地震速報は取り消されました'])
+  })
+
+  // 対照: 名乗った報を一度も受けていなければ、名前抜きの文にする（空の名前を差し込まない）。
+  it('名前を引けなければ「緊急地震速報は取り消されました」', () => {
+    const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+    handle(makeEEW({ eventId: 'evt-B', hypocenter: NAMELESS }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    handle(makeEEW({ eventId: 'evt-B', serial: 2, cancelled: true, hypocenter: NAMELESS }))
+    expect(notified().map((c) => c[1])).toEqual(['緊急地震速報は取り消されました'])
+    // 画面に出ていた地震なのに名前を引けなかったことは記録に残す（記憶の鍵ずれと見分けるため）
+    expect(warn.mock.calls.filter((c) => String(c.join(' ')).includes('震央地名を引けない'))).toHaveLength(1)
+    warn.mockRestore()
   })
 })

@@ -1279,6 +1279,10 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
   // 区域の到達状況（`Area/Condition`）で読めなかった値。**電文ごとに 1 行へまとめる** ——
   // 区域は数十個あるので 1 件ずつ出すと他の記録が埋もれる。
   const unknownArrivalConditions = new Set<string>()
+  // 名前（`Area/Name`）が読めなかった区域の数。これも電文ごとに 1 行へまとめる。
+  let namelessAreas = 0
+  // そのうち警報級の区域。警報の電文なのに「警報:」欄にその区域が出ない形になるので分けて数える。
+  let namelessWarningAreas = 0
   for (const prefEl of forecastEl ? xmlAll(forecastEl, 'Pref') : []) {
     // 府県予報区名（`Pref/Name`）。**都道府県名ではない** —— 気象庁が緊急地震速報のために定めた
     // 区分で、「熊本」のように「県」が付かないほか、鹿児島は「鹿児島」と「奄美」・北海道は
@@ -1286,10 +1290,6 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     const prefName = xmlText(xmlChild(prefEl, 'Name'))
     for (const a of xmlAll(prefEl, 'Area')) {
       const name = xmlText(xmlChild(a, 'Name'))
-      if (!name) continue
-      const fi = intRange(xmlChild(a, 'ForecastInt'))
-      const { scale: scaleTo, orAbove } = parseForecastInt(fi)
-      const { cls: lgVal, over: lgOver } = parseForecastLgInt(intRange(xmlChild(a, 'ForecastLgInt')))
       const kindEl = xmlQ(a, 'Kind')
       const kindCode = xmlText(kindEl ? xmlChild(kindEl, 'Code') : null)
       if (isEewWarningKindCode(kindCode)) sawWarningKind = true
@@ -1303,6 +1303,17 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
         if (kindCode) unknownKindCodes.add(kindCode)
         else if (kindEl) unknownKindCodes.add('（空）')
       }
+      // **名前の無い区域を捨てるのは、種別を見た後にする。** 先に捨てると、警報級の区域が
+      // 名前だけ欠けていたときに `sawWarningKind` が立たず、電文全体を予報級と読み違える。
+      // 画面にも声にも出せないので区域としては持たないが、捨てた件数は残す（下でまとめて記録）。
+      if (!name) {
+        namelessAreas++
+        if (isEewWarningKindCode(kindCode)) namelessWarningAreas++
+        continue
+      }
+      const fi = intRange(xmlChild(a, 'ForecastInt'))
+      const { scale: scaleTo, orAbove } = parseForecastInt(fi)
+      const { cls: lgVal, over: lgOver } = parseForecastLgInt(intRange(xmlChild(a, 'ForecastLgInt')))
       // 主要動の到達状況。**電文は同じ事実を 2 通りで伝えてくる** —— 区域の `Condition`
       //（「既に主要動到達と推測」。解説資料 Ⅱ.21 2-1-5-3-7）と、種別コードの下 1 桁
       //（01/11。コード表 12。→ `isEewArrivedKindCode`）。
@@ -1349,6 +1360,12 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     // 資料が定めていない到達状況。**到達済みの区域が「時刻を持たない区域」に紛れる**ので、
     // 値域が増えたことに気づけるよう残す。
     log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の区域の到達状況を読めません（無視します）: ${[...unknownArrivalConditions].join(', ')}`)
+  }
+  if (namelessAreas > 0) {
+    // 予想区域の `Area` はあるのに名前が読めなかった。**画面にも声にも地図にも出ない**ので残す
+    // （警報級かどうかの判定には数えてある）。
+    const warningPart = namelessWarningAreas > 0 ? `・うち警報級 ${namelessWarningAreas} 件` : ''
+    log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の予想区域の名前を読めません（${namelessAreas} 件を無視します${warningPart}）: EventID=${eventId} 第${serial}報`)
   }
   if (unreadableWarningRegions > 0) {
     // 地方予報区の `Area` はあるのに名前が読めなかった。**画面にも声にも出ない**ので残す。

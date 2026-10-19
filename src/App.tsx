@@ -71,8 +71,8 @@ import { createSpeechFollowController, telegramTextSubject, type SpeechFollowSes
 import { useTelegramTextSpeechFollow } from './hooks/useTelegramTextSpeechFollow'
 import { deriveKyoshinView } from './utils/kyoshinDetectionView'
 import { filterSubThresholdIndices } from './utils/kyoshinSubThresholdFilter'
-import { useSWaveCountdown } from './hooks/useSWaveCountdown'
-import { pickCountdownEew, pickPublicWaveEew } from './utils/countdownEew'
+import { countdownBeepTarget, useSWaveCountdown } from './hooks/useSWaveCountdown'
+import { pickArrivalEews, pickPublicWaveEew } from './utils/countdownEew'
 import { useArrivalTokenCheck } from './hooks/useArrivalToken'
 import { usePsWaveCalc } from './hooks/usePsWaveCalc'
 import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
@@ -80,7 +80,7 @@ import { useDebouncedValue } from './hooks/useDebouncedValue'
 import { getIntensityLabelWithOrAbove } from './utils/intensity'
 import { isMaxScaleUnreceived } from './utils/quakePoints'
 import { formatMagnitudeWithCondition, formatDateTimeLocal } from './utils/formatters'
-import { computeEEWLevel, eewMaxLpgmClass, isProvisionalHypocenter } from './utils/eew'
+import { computeEEWLevel, eewEventKey, eewMaxLpgmClass, isProvisionalHypocenter } from './utils/eew'
 import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
 import { canOpenLpgmNotes } from './utils/lpgm'
 import { estimatedIntensityFor, matchEstimatedIntensityArrival } from './utils/estimatedIntensity'
@@ -2007,13 +2007,34 @@ export function App() {
   const arrivalTokenStatus = useArrivalTokenCheck(settings.arrivalToken)
   const allowOwnArrivalCalc = arrivalTokenStatus.valid
   const swaveArrival = useSWaveCountdown(psWave, eewsForMap, home, hasActiveEEW, allowOwnArrivalCalc)
-  // 地図の下端の自作地震計の波形へ P/S の到達線を引く相手。**カウントダウンと同じ選び方**（`utils/countdownEew.ts`。
-  // 2026-10-13 ユーザー指示）。**到達予想キーの門は掛けない**（2026-10-14 ユーザー承認）——線は到達時刻を
+  // 地図の下端の波形（自作地震計・公開観測点）へ P/S の到達線を引く相手。**予報円のある速報すべて**
+  // （`utils/countdownEew.ts`。2026-10-14 ユーザー決定「地震ごとに並べて出す」。どの地震の線かは見分けない ——
+  // 2026-10-18 ユーザー承認「見分けない」）。**到達予想キーの門は掛けない**（2026-10-14 ユーザー承認）——線は到達時刻を
   // 過ぎてから描くだけで、これから来る時刻を出さないので予報業務に当たらないと整理した（`docs/forecast-computation-audit.md`
   // の 11）。歯止めは波形の側の「右端＝いま、それより先の線は描かない」（`SeismoWaveChart/liveLanes.ts` の `liveArrivalMarks`）。
-  // `psWave` は 100ms ごとに新しい配列になるが、選ばれる速報の参照は続報が来るまで変わらない
-  // （波形の側は速報の参照が変わったときだけ走時を解き直す）。
-  const seismoArrivalEew = pickCountdownEew(psWave, eewsForMap)
+  // **配列は顔ぶれが変わったときだけ作り直す** —— `psWave` は 100ms ごとに新しい配列になるが、波形の側は
+  // 速報の参照が変わったときだけ走時を解き直す。毎回新しい配列を渡すと、そのたびに全観測点の走時を引き直す。
+  // 鍵は予報円の顔ぶれ（地震の鍵の並び）。速報そのものが続報で差し替わったときは `eewsForMap` の参照で拾う。
+  // 区切りは改行（地震の鍵に空白が入っても割り戻しがずれないように）。
+  const arrivalCircleKey = psWave.map((c) => c.eventId).join('\n')
+  const seismoArrivalEews = useMemo(
+    () => pickArrivalEews(psWave, eewsForMap),
+    // `psWave` を鍵に入れない（100ms ごとに変わる）。顔ぶれは `arrivalCircleKey` が表す。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [arrivalCircleKey, eewsForMap],
+  )
+  // **引き当てられない円は線を引かない**（`pickArrivalEews`）。黙って消えないよう記録する ——
+  // 記録は副作用なので `useMemo` の中で出さない（StrictMode で 2 回出る）。
+  // **見るのは円の顔ぶれが変わったときだけ**（鍵に `seismoArrivalEews` を入れない）。速報の一覧はどの地震の続報でも
+  // 作り直され、取消のときは一覧が先に縮んで円が最大 100ms 残る —— 一覧の変化で見ると、取消のたびに
+  // 「引き当てられない」と記録して本物の食い違いを埋もれさせる。
+  useEffect(() => {
+    const missing = arrivalCircleKey === ''
+      ? []
+      : arrivalCircleKey.split('\n').filter((id) => !seismoArrivalEews.some((e) => eewEventKey(e) === id))
+    if (missing.length > 0) log.debug('[eew] P/S 線の相手を引き当てられない予報円', { eventIds: missing })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrivalCircleKey])
   const toggleSeismoWaveExpanded = useCallback(() => {
     updateSetting('seismoWaveExpanded', !settings.seismoWaveExpanded)
   }, [settings.seismoWaveExpanded, updateSetting])
@@ -2048,20 +2069,25 @@ export function App() {
   // 宣言が useReplayController より後になるため ref 経由で渡す（上記 resetLocalState 参照）。
   resetActionChecklistRef.current = actionChecklist.resetForReplay
 
-  const prevEtaRef = useRef<number | null>(null)
+  // 直前に鳴らした（鳴らす機会のあった）地震と秒数。**地震の鍵と組で覚える** —— 秒数だけで比べると、
+  // 地震が替わった直後に前の地震と同じ秒数だったとき鳴らない。
+  const prevBeepRef = useRef<{ key: string; etaSec: number } | null>(null)
   useEffect(() => {
-    const eta = swaveArrival?.etaSec ?? null
+    // 地震が複数あっても音は 1 本 —— まだ届いていない地震のうち到達がいちばん早いもの
+    // （2026-10-18 ユーザー承認「いちばん早く届く地震」→ `countdownBeepTarget`）。
+    const target = countdownBeepTarget(swaveArrival)
+    const prev = prevBeepRef.current
     if (
       settings.soundEnabled &&
-      eta !== null &&
-      eta >= 1 &&
-      eta <= 5 &&
-      eta !== prevEtaRef.current
+      target !== null &&
+      target.etaSec >= 1 &&
+      target.etaSec <= 5 &&
+      (prev === null || prev.key !== target.key || prev.etaSec !== target.etaSec)
     ) {
-      playCountdownBeep(eta)
+      playCountdownBeep(target.etaSec)
     }
-    prevEtaRef.current = eta
-  }, [swaveArrival?.etaSec, settings.soundEnabled])
+    prevBeepRef.current = target
+  }, [swaveArrival, settings.soundEnabled])
 
   // 揺れの強まり（レベルアップ・再エスカレーション）と別地点発報で、その 1 点へ一時的に寄せる合図。
   // 通知音を鳴らすのと同じ判定で useKyoshinAlerts が出し、地図（FitToDetectionGL）が消費する。
@@ -2204,7 +2230,7 @@ export function App() {
     spanSec: settings.waveSpanSec,
     alwaysConnected: settings.publicWaveAlwaysConnected,
     // 予報円を描かない速報（仮定震源要素・深さ不明）でも観測点を選ぶ（→ `pickPublicWaveEew`）。
-    eew: pickPublicWaveEew(seismoArrivalEew, eewsForMap),
+    eew: pickPublicWaveEew(psWave, eewsForMap),
     detectedPoints: kyoshinView.detectedPoints,
   })
 
@@ -2508,7 +2534,7 @@ export function App() {
               collapsedView={settings.seismoWaveCollapsedView}
               expanded={settings.seismoWaveExpanded}
               onToggleExpanded={toggleSeismoWaveExpanded}
-              arrivalEew={seismoArrivalEew}
+              arrivalEews={seismoArrivalEews}
               spanSec={settings.waveSpanSec}
               onFocusStation={focusMapTarget}
             />

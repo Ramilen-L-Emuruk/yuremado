@@ -4319,6 +4319,26 @@ describe('parseEEWFromXml（VXSE45 の XML 経路）', () => {
     expect(e.areas![0].kindCode).toBe('00')
   })
 
+  // 正: 名前の無い区域は区域として持たないが、警報級の判定には数える。以前は種別を見る前に
+  // 捨てていたため、警報級の区域が名前だけ欠けると電文全体を予報級と読み違え、記録も残らなかった。
+  it('名前の無い警報級の区域でも警報級と判定し、捨てた件数を記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    const nameless = EEW_WARNING_PREF.replace('<Name>神奈川県東部</Name>', '<Name></Name>')
+    const e = parseEEWFromXml('VXSE45', EEW_XML.replace('</Forecast>', `${nameless}</Forecast>`))!
+    expect(e.severity).toBe('Warning')
+    expect(e.areas).toEqual([])
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('予想区域の名前を読めません（1 件を無視します・うち警報級 1 件）'))).toBe(true)
+    warn.mockRestore()
+  })
+
+  // 対照: 名前のある区域だけなら、この記録は出さない。
+  it('名前のある区域だけなら予想区域の名前の記録を出さない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    parseEEWFromXml('VXSE45', EEW_XML.replace('</Forecast>', `${EEW_WARNING_PREF}</Forecast>`))
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('予想区域の名前を読めません'))).toBe(false)
+    warn.mockRestore()
+  })
+
   // 安全弁: Condition は要素の位置で意味が変わる。Earthquake 直下は震源の状態（「仮定震源要素」）、
   // Pref/Area 直下は区域の状態（「既に主要動到達と推測」）。子孫から拾うと、警報級の電文で
   // 区域側の文言が震源の condition に化け、仮定震源要素の判定が誤って立つ。

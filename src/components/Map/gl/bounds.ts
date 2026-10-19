@@ -186,3 +186,34 @@ export function boundsForLiveFollowTuple(
     boundsFromPositionsTuple(forecastAreaPositions),
   )
 }
+
+/**
+ * 新規 EEW の第一報で寄せる先（`FitToEEWGL` の第一報フォーカス）。
+ *
+ * **寄せる先は、自身の予報円 → 震源 → 予想の区域塗り → 揺れ検知点 の順に落とす。** 震源の座標を
+ * 持たない報（取消を除く「震源要素不明」・座標の無い経路の報）でも、気象庁が塗った区域や実際に
+ * 揺れている観測点があればそこへ寄せる。以前は座標が無い時点で何もせず返っていたため、
+ * 最初のフォーカスも解除後の帰りも抜けていた。
+ *
+ * 何も無ければ `none`。呼び出し側は「寄せた」印を立てずに待ち、次の報で材料が揃ったら寄せ直す。
+ */
+export type EewFirstFocusTarget =
+  | { kind: 'bounds'; bounds: BoundsTuple; from: 'circle' | 'areas' | 'detected' }
+  | { kind: 'point'; point: LatLng }
+  | { kind: 'none' }
+
+export function eewFirstFocusTarget(
+  ownCircle: EewFollowCircle | null,
+  epicenter: LatLng | null,
+  forecastAreaPositions: LatLng[],
+  detectedPositions: LatLng[],
+): EewFirstFocusTarget {
+  const circle = ownCircle ? boundsFromEewCircles([ownCircle]) : null
+  if (circle) return { kind: 'bounds', bounds: circle, from: 'circle' }
+  if (epicenter) return { kind: 'point', point: epicenter }
+  const areas = boundsFromPositionsTuple(forecastAreaPositions)
+  if (areas) return { kind: 'bounds', bounds: areas, from: 'areas' }
+  const detected = boundsFromPositionsTuple(detectedPositions)
+  if (detected) return { kind: 'bounds', bounds: detected, from: 'detected' }
+  return { kind: 'none' }
+}

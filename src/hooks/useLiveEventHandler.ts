@@ -11,7 +11,7 @@ import {
   eewMaxScaleInfo, isForecastScaleHigher, isForecastLpgmHigher, eewNoForecastReason, computeSingleEEWLevel, computeDisplayEEWLevel, canPresentLpgmClass,
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
   EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo,
-  isUnannouncedHypocenter, eewEventKey,
+  isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, eewCancelNotificationBody,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
 } from '../utils/eew'
 import { hasKnownEpicenter } from '../utils/geo'
@@ -1498,6 +1498,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   // 消えたことだけでは理由が分からない）。発表が終わった EEW の内容は誤りではないので、
   // 自動解除では鳴っているものを切らない（切ると代わりに読むものが無く、尻切れで終わる）。
   const eewRetractedKeysRef = useRef<Set<string>>(new Set())
+  // 地震（eventId）ごとに、直前の報が名乗った震央地名。**誤報取消の通知の本文にだけ使う** ——
+  // DMDATA の取消電文は震源名が空なので、電文の値だけでは「 の緊急地震速報は取り消されました」になる。
+  //
+  // **`forgetEewTracking` では消さない。** 自動解除で追跡を落とした後に遅れて届く取消にも通知は出る
+  // （`hadKey=false` の経路）ので、そのときも名前を引ける必要がある。代わりに件数で上限を置き、
+  // 古いものから捨てる（同時に発表される地震は数件なので、上限に当たるのは長く起動したときだけ）。
+  const eewLastHypocenterNameRef = useRef<Map<string, string>>(new Map())
   // 第 1 フェーズ（震源の読み上げ）の進み具合。eventId 別。
   // **予報から警報へ上がったときに、言い直すかどうか・何回言い直すかをこれ 1 つで決める。**
   //
@@ -3453,11 +3460,16 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             }
           }
           if (settings.notifyMinScale >= 0 && settings.notifyEEW) {
-            showBrowserNotification(
-              '緊急地震速報 取消',
-              `${event.earthquake.hypocenter.name} の緊急地震速報は取り消されました`,
-              `eew-cancel-${key}`,
-            )
+            const cancelName = event.earthquake.hypocenter.name || eewLastHypocenterNameRef.current.get(key)
+            // 画面に出ていた地震（hadKey）なのに名前を引けないのは、記憶の鍵がずれたか記憶が消えた印。
+            // 名前抜きの文は正常な形（名乗らない報だけだった・遅れて届いた取消）と見分けが付かないので記録を残す。
+            if (hadKey && !cancelName) {
+              log.warn('[eew] 誤報取消の通知に震央地名を引けない（名前を一度も覚えていない。名前の無い報だけだったか、記憶の鍵がずれたか記憶が消えた。名前抜きの文で出す）', {
+                key,
+                remembered: eewLastHypocenterNameRef.current.size,
+              })
+            }
+            showBrowserNotification('緊急地震速報 取消', eewCancelNotificationBody(cancelName), `eew-cancel-${key}`)
           }
         }
         // 誤報取消（訂正）だけは、鳴っている途中の読み上げも打ち切る対象として覚えておく。
@@ -3496,6 +3508,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         }
         return
       }
+
+      // 取消の通知で名乗るための震央地名を覚える（→ `eewLastHypocenterNameRef`）。名前の空の報では
+      // 上書きしない —— 前の報が名乗った名前のほうが、空よりは事実に近い。
+      rememberEewHypocenterName(eewLastHypocenterNameRef.current, key, event.earthquake.hypocenter.name)
 
       const currentLevel = computeSingleEEWLevel(event)
       // 上限が定まらない報は通知・タイトルでも「以上」を添える（値だけでは下限の断定になる）。
@@ -5435,6 +5451,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     spokenEEWUpgradePhraseRef.current.clear()
     eewRegionTokensRef.current.clear()
     eewRetractedKeysRef.current.clear()
+    eewLastHypocenterNameRef.current.clear()
     eewPhase1ProgressRef.current.clear()
     lastTsunamiGradeRef.current = null
     // 解除の照合に使う直前の津波も落とす（残すと、リプレイ後の解除を切替前の津波と照合する）

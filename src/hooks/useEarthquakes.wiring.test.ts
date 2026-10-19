@@ -870,10 +870,13 @@ describe('EEW 発報テストの報の推移', () => {
     expect(cancel.cancelled).toBe(true)
     expect(cancel.issue?.serial).toBe('2')
     expect(cancel.areas).toEqual([])
-    // 実運用の取消電文は震源座標を持たない（0）。震源名は通知文・読み上げが使うので残す
-    expect(cancel.earthquake.hypocenter.latitude).toBe(0)
-    expect(cancel.earthquake.hypocenter.longitude).toBe(0)
-    expect(cancel.earthquake.hypocenter.name).toBe(report.earthquake.hypocenter.name)
+    // 実運用の取消電文は `Earthquake` 要素を持たない —— `dmdataParser` と同じく震源名は空・
+    // 座標は位置不明（-200）。**以前は名前を残し座標を 0 にしていた**（実電文に無い形で、
+    // 名前の空の取消で通知が崩れる経路を一度も通れなかった。覆したのはこの前提）
+    expect(cancel.earthquake.hypocenter.latitude).toBe(-200)
+    expect(cancel.earthquake.hypocenter.longitude).toBe(-200)
+    expect(cancel.earthquake.hypocenter.name).toBe('')
+    expect(report.earthquake.hypocenter.name).not.toBe('')
     // 予想も持たない（実運用の取消電文は forecastMaxScale / forecastMaxLpgmClass が入らない）
     expect(cancel.forecastMaxScale).toBeUndefined()
     expect(cancel.forecastMaxLpgmClass).toBeUndefined()

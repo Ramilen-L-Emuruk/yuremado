@@ -425,6 +425,32 @@ export function eewMaxScale(eew: EEWAlert): number {
   return eewMaxScaleInfo(eew).scale
 }
 
+/** 誤報取消の通知のために覚えておく震央地名の件数の上限（古いものから捨てる）。 */
+export const EEW_HYPOCENTER_NAME_MEMORY_MAX = 64
+
+/**
+ * 地震ごとに、直前の報が名乗った震央地名を覚える。**名前の空の報では上書きしない。**
+ * 覚え直すたびに一番新しい位置へ動かし、上限を超えたら一番古いものを捨てる（`Map` の挿入順）。
+ */
+export function rememberEewHypocenterName(memory: Map<string, string>, key: string, name: string): void {
+  if (name === '') return
+  memory.delete(key)
+  memory.set(key, name)
+  while (memory.size > EEW_HYPOCENTER_NAME_MEMORY_MAX) {
+    const oldest = memory.keys().next().value
+    if (oldest === undefined) break
+    memory.delete(oldest)
+  }
+}
+
+/**
+ * 誤報取消のブラウザ通知の本文。名前を引けなければ名前抜きの文にする
+ * （2026-10-14 ユーザー選択「緊急地震速報は取り消されました」）。
+ */
+export function eewCancelNotificationBody(name: string | undefined): string {
+  return name ? `${name} の緊急地震速報は取り消されました` : '緊急地震速報は取り消されました'
+}
+
 /**
  * 第 1 フェーズで**声にした**震源。{@link isUnannouncedHypocenter} が比較の相手にする。
  *

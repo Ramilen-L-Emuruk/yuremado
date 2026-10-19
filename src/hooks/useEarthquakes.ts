@@ -449,13 +449,30 @@ function runSimulateEEW(
   timers.set(kind, { eventId, serial, baseTime, finalizeTimer })
 }
 
+/**
+ * テストボタンの取消電文が持つ地震の欄。**実電文の形にする** —— 取消電文は `Earthquake` 要素を
+ * 持たないので、`dmdataParser` は震源名を空・座標を位置不明（-200）・深さを不明（-1）・M を NaN・
+ * 発生時刻と発現時刻を空にして返す。名前を残していた頃は、取消の通知が震源名の空の電文で崩れる
+ * 経路（→ `useLiveEventHandler` の `eewLastHypocenterNameRef`）をテストボタンで一度も通れなかった。
+ * **取消を流すテストボタンはすべてこれを使う**（書き写すとまた片方だけ実電文から外れる）。
+ */
+function cancelledEewEarthquake(): EEWAlert['earthquake'] {
+  return {
+    originTime: '',
+    arrivalTime: '',
+    condition: '',
+    hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: NaN },
+  }
+}
+
 // EEW誤報取消テスト: 通常発報のまま cancelMs 後に明示的な取消電文（cancelled:true、isFinal無し）
 // を送る。誤報取消は音・ブラウザ通知・読み上げを伴う（自動解除との対比用）。
 //
 // 取消電文も実運用（dmdataParser.parseEEW の isCanceled 分岐）に合わせる:
 //   - 独立した 1 報なので報番号・id・発表時刻を進める。
-//   - 対象地域は空、震源座標は 0、予想最大震度・予想最大長周期階級も持たない
-//     （取消電文は予想を持たない）。震源名は残す（通知文・読み上げが hypocenter.name を使うため）。
+//   - 対象地域は空、予想最大震度・予想最大長周期階級も持たない（取消電文は予想を持たない）。
+//   - 地震の欄も持たない形にする（震源名は空・座標は位置不明）。通知の本文は、直前の報が
+//     名乗った震央地名を覚えておいて使う（→ `useLiveEventHandler` の `eewLastHypocenterNameRef`）。
 function runSimulateEEWRetraction(
   createFn: (eventId: string, serial: number, baseTime: Date) => EEWAlert,
   cancelMs: number,
@@ -495,10 +512,7 @@ function runSimulateEEWRetraction(
         forecastMaxScaleOrAbove: undefined,
         forecastMaxLpgmClass: undefined,
         forecastMaxLpgmClassOver: undefined,
-        earthquake: {
-          ...report.earthquake,
-          hypocenter: { ...report.earthquake.hypocenter, latitude: 0, longitude: 0 },
-        },
+        earthquake: cancelledEewEarthquake(),
       })
     } finally {
       ref.current = null
@@ -3508,10 +3522,7 @@ export function useEarthquakes(
         cancelled: true,
         cancelText: '先ほどの、緊急地震速報（地震動予報）を取り消します。',
         areas: [],
-        earthquake: {
-          ...report.earthquake,
-          hypocenter: { ...report.earthquake.hypocenter, latitude: 0, longitude: 0 },
-        },
+        earthquake: cancelledEewEarthquake(),
       })
     }, TEST_EEW_NO_FORECAST_CANCEL_MS))
   }, [handleEvent])

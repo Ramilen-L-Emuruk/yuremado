@@ -156,11 +156,14 @@ FAQ の文面から読んだ整理**である。
 注記も「気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります」に
 なる —— 区域の値が地点の値として読まれないようにするため。
 
+**緊急地震速報が同時に複数出ているときは、地震ごとに 1 行を並べる。** どの行も 1 つの速報だけから作る（秒数はその速報の
+区域の値、距離は同じ速報の震源から）。見せ方・並び順・音の決定と原文は [`eew-spec.md`](spec/eew-spec.md) §6 が正本。
+
 **自前計算へ切り替わるのは、発行済みトークンを持つ端末だけ。** 仕組みは
 [`settings-pwa-spec.md`](spec/settings-pwa-spec.md) §4.7「到達予想キー」。以下はその経路の説明。
 
 - **実装**: [`useSWaveCountdown.ts`](../src/hooks/useSWaveCountdown.ts)
-- **表示**: [`RealtimeTab/index.tsx:939`](../src/components/RealtimeTab/index.tsx:939) `SWaveArrivalCard`
+- **表示**: [`RealtimeTab/index.tsx`](../src/components/RealtimeTab/index.tsx) の `SWaveArrivalCard`
 
 **入力**: 電文の震源（緯度・経度・深さ・発生時刻）と、**利用者が設定した地点の座標**。
 
@@ -176,15 +179,15 @@ FAQ の文面から読んだ整理**である。
 カード下部に「※推定値。実際の到達時間は異なる場合があります」を添えている。
 
 **S 波がまだ地表に達していない間は、走時モデルすら使わない。** 予報円の半径の伸び方から
-速度そのものを推定する（[`useSWaveCountdown.ts:188`](../src/hooks/useSWaveCountdown.ts:188)）。
+速度そのものを推定する（[`useSWaveCountdown.ts`](../src/hooks/useSWaveCountdown.ts) の `ownCalcRow`。地震ごとに別々に推定する）。
 推定できないときの既定値は 4.0 km/s。
 
 > **これは例外的な経路ではない。** 震源の真上へ抜けるのが最短なので、S 波が地表に出るまでには
 > 「深さ ÷ 速度」の時間がかかる（深さ 10km なら約 2.9 秒）。その間はこの推定が使われ、
 > 深い地震ほど長く続く。逆に、ごく浅い地震ではこの時間がほぼ無くなる。
 
-**表示の有無が 4 に依存する**: 自動解除の前に到達しないと判定された場合、カードごと出さない
-（[`useSWaveCountdown.ts:164`](../src/hooks/useSWaveCountdown.ts:164)）。
+**表示の有無が 4 に依存する**: 自動解除の前に到達しないと判定された地震は、その地震の行を出さない
+（[`useSWaveCountdown.ts`](../src/hooks/useSWaveCountdown.ts) の `ownCalcRow`）。ほかの地震の行は残る。
 
 ### 2. 区域ポップアップの主要動到達秒数
 
@@ -454,7 +457,7 @@ S 波の到達半径に安全係数 1.2 を掛けて求める。**画面には�
 
 ### 11. 地図の下端の波形（自作地震計・公開観測点）へ引く P/S の到達線
 
-- **実装**: [`countdownEew.ts`](../src/utils/countdownEew.ts) の `pickCountdownEew`（相手の速報を選ぶ。1 と共有）、
+- **実装**: [`countdownEew.ts`](../src/utils/countdownEew.ts) の `pickArrivalEews`（相手の速報を選ぶ）、
   [`seismoWaveArrival.ts`](../src/utils/seismoWaveArrival.ts) の `computeWaveArrival`（7 と同じ関数）、
   [`SeismoWaveChart/index.tsx`](../src/components/SeismoWaveChart/index.tsx)（観測点と速報から到達を解く）、
   [`SeismoWaveChart/liveLanes.ts`](../src/components/SeismoWaveChart/liveLanes.ts) の `liveArrivalMarks`（窓の右端に合わせて横位置へ落とす）、
@@ -471,8 +474,8 @@ S 波の到達半径に安全係数 1.2 を掛けて求める。**画面には�
 **7 と違い、材料は緊急地震速報。** 震源は推定途中で、続報で動く。1 と同じく、特定の地点
 （自分が設置した観測点）への到達を自前で解くことになる。
 
-**到達予想キーの有無を問わず引く**（2026-10-14 ユーザー承認）。**相手の速報は 1 のカウントダウンと同じ選び方**
-（予報円のうち S 波の波面がいちばん外側にあるもの）。
+**到達予想キーの有無を問わず引く**（2026-10-14 ユーザー承認）。**相手は予報円を描いている速報すべて**で、
+地震ごとに線を引く（決定と原文は [`data-sources-spec.md`](spec/data-sources-spec.md) §4.5「波形を地図の下へ描く」が正本）。
 
 **絵は未来を描かない。** 右端は時計の「いま」（アプリの時計 `serverNow()`）で、それより先の到達時刻の線は描かない
 （[`liveLanes.ts`](../src/components/SeismoWaveChart/liveLanes.ts) の `liveArrivalMarks`。絵を滑らかに流すために
