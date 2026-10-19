@@ -19,7 +19,7 @@ import {
   type LiveTimeline,
 } from './liveLanes'
 import { PUBLIC_WAVE_UNIT, SEISMO_WAVE_UNIT } from './waveUnit'
-import { SharedLaneScales, type LaneScales } from './sharedScale'
+import { SharedLaneScales, sharedPaint, type LaneScales } from './sharedScale'
 import { compressedVertical, LINEAR_VERTICAL } from './verticalMap'
 import { paintCompositeColumnsAt, paintMarks, paintWaveColumnsAt } from './paintWave'
 import { buildWaveColumns } from './waveColumns'
@@ -470,6 +470,64 @@ describe('SharedLaneScales', () => {
     expect(s.shared()).toEqual({ signed: 5, magnitude: 6, floor: 1 })
     s.publish('b', null)
     expect(s.shared()).toBeNull()
+  })
+
+  // 正: 値が変わったら購読者へ知らせ、番号が進む（地震カードの段はこれで描き直す）。
+  it('値が変わったら知らせる', () => {
+    const s = new SharedLaneScales()
+    const listener = vi.fn()
+    s.subscribe(listener)
+    s.publish('a', { signed: 1, magnitude: 2, floor: 0.5 })
+    s.publish('a', { signed: 3, magnitude: 2, floor: 0.5 })
+    s.remove('a')
+    expect(listener).toHaveBeenCalledTimes(3)
+    expect(s.version()).toBe(3)
+  })
+
+  // 対照: 同じ値を書き直しても・いない段を外しても知らせない（知らせると、描き直すたびに書き戻して往復する）。
+  it('同じ値・いない段では知らせない', () => {
+    const s = new SharedLaneScales()
+    s.publish('a', { signed: 1, magnitude: 2, floor: 0.5 })
+    const listener = vi.fn()
+    const unsubscribe = s.subscribe(listener)
+    s.publish('a', { signed: 1, magnitude: 2, floor: 0.5 })
+    s.publish('b', null)
+    s.remove('c')
+    expect(listener).not.toHaveBeenCalled()
+    // 安全弁: 購読をやめたら呼ばない。
+    unsubscribe()
+    s.publish('a', { signed: 9, magnitude: 2, floor: 0.5 })
+    expect(listener).not.toHaveBeenCalled()
+  })
+})
+
+describe('sharedPaint', () => {
+  // 正: 揃える段は相手の範囲まで広げ、曲線で描く。
+  it('揃える段は広げて曲線で描く', () => {
+    const p = sharedPaint(1, { shared: { signed: 50, magnitude: 80, floor: 2 } })
+    expect(p.widen({ scaleGal: 5 }).scaleGal).toBe(50)
+    expect(p.compositeMinScale).toBe(80)
+    expect(p.vertical).not.toBe(LINEAR_VERTICAL)
+    // 折れ目は全員の下限の最大（2）。
+    expect(p.vertical(3, 50)).toBeCloseTo(compressedVertical(2)(3, 50))
+  })
+
+  // 対照: 揃えない段は線形で、範囲もそのまま。
+  it('揃えない段は線形のまま', () => {
+    const p = sharedPaint(1, null)
+    expect(p.widen({ scaleGal: 5 }).scaleGal).toBe(5)
+    expect(p.compositeMinScale).toBe(1)
+    expect(p.vertical).toBe(LINEAR_VERTICAL)
+  })
+
+  // 安全弁: 相手の範囲が狭くても狭めない。相手がまだいなくても曲線で描く（揃った瞬間に絵が跳ねない）。
+  it('狭めない・相手がいなくても曲線', () => {
+    const narrower = sharedPaint(1, { shared: { signed: 2, magnitude: 0.5, floor: 0.1 } })
+    expect(narrower.widen({ scaleGal: 5 }).scaleGal).toBe(5)
+    expect(narrower.compositeMinScale).toBe(1)
+    const alone = sharedPaint(1, { shared: null })
+    expect(alone.vertical).not.toBe(LINEAR_VERTICAL)
+    expect(alone.vertical(0.5, 10)).toBeCloseTo(compressedVertical(1)(0.5, 10))
   })
 })
 
