@@ -21,6 +21,7 @@ import {
   GRADES_IN_CARD_ORDER,
   compareObservedHeightDesc,
   hasObservedHeightChanged,
+  hasObservedHeightLowered,
   hasMaxHeightTimeAdvanced,
   overSuffixedHeight,
   latestValidDateTime,
@@ -577,6 +578,44 @@ describe('hasObservedHeightChanged', () => {
   it('値が下がっても・over が外れても真', () => {
     expect(hasObservedHeightChanged({ value: 0.8 }, { value: 1.2 })).toBe(true)
     expect(hasObservedHeightChanged({ value: 1.2 }, { value: 1.2, over: true })).toBe(true)
+  })
+})
+
+// 読んだ波高より下がったか（「変わりはありません」と言い切らないための判定）。
+// → docs/spec/tsunami-spec.md §10「変化を伝えない続報」
+describe('hasObservedHeightLowered', () => {
+  const spoken = new Map<string, { value: number; over?: boolean }>([
+    ['八戸港', { value: 1.2, over: true }],
+    ['大洗', { value: 0.4 }],
+  ])
+
+  // 正: 値が下がれば真
+  it('値が下がれば真', () => {
+    expect(hasObservedHeightLowered({ name: '大洗', height: { value: 0.3 } }, spoken)).toBe(true)
+  })
+
+  // 正: 値が同じでも「以上」が外れれば真
+  it('値が同じで「以上」が外れれば真', () => {
+    expect(hasObservedHeightLowered({ name: '八戸港', height: { value: 1.2 } }, spoken)).toBe(true)
+  })
+
+  // 対照: 同じ値・同じ「以上」なら偽（据え置きは「変わりはありません」のまま）
+  it('値も「以上」も同じなら偽', () => {
+    expect(hasObservedHeightLowered({ name: '大洗', height: { value: 0.4 } }, spoken)).toBe(false)
+    expect(hasObservedHeightLowered({ name: '八戸港', height: { value: 1.2, over: true } }, spoken)).toBe(false)
+  })
+
+  // 対照: 上がる向きは偽（そちらは hasObservedHeightRisen が拾う。「以上」が外れても値が上がれば上がった扱い）
+  it('上がる向きは偽', () => {
+    expect(hasObservedHeightLowered({ name: '大洗', height: { value: 0.5 } }, spoken)).toBe(false)
+    expect(hasObservedHeightLowered({ name: '八戸港', height: { value: 1.5 } }, spoken)).toBe(false)
+  })
+
+  // 安全弁: 記憶の無い観測点・波高の無い観測点（欠測・観測中）は偽。
+  // 前者は初出（上がった群が読む）、後者は比べる値を持たない
+  it('記憶が無い・波高が無いなら偽', () => {
+    expect(hasObservedHeightLowered({ name: '館山', height: { value: 0.1 } }, spoken)).toBe(false)
+    expect(hasObservedHeightLowered({ name: '大洗' }, spoken)).toBe(false)
   })
 })
 

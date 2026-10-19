@@ -3315,7 +3315,7 @@ export function useEarthquakes(
    *
    * **通知音だけが鳴って何も声にならなかった報を、実機で確かめる唯一の入口。**
    * 2024 年能登半島地震の 26 時間では、取消を除く津波電文 56 通のうち 7 通がこの形だった
-   * （→ docs/spec/tsunami-spec.md §10「変化を伝えない続報」）。発表 → 10 通の続報 → 満了で解除、
+   * （→ docs/spec/tsunami-spec.md §10「変化を伝えない続報」）。発表 → 11 通の続報 → 満了で解除、
    * と進む。
    *
    * | 段 | 報 | 確かめるもの |
@@ -3326,20 +3326,19 @@ export function useEarthquakes(
    * | 4 | 観測情報 | 「次の地点で第1波が更新されました」（到達時刻の訂正。→ `createTestTsunamiFirstWaveUpdate`） |
    * | 5 | 沖合の観測情報 | 沖合の観測点の最大波の観測時刻が動く。**カードの沖合の行に印が出るのはここだけ** |
    * | 6 | 観測情報 | 「観測された波高に変わりはありません」 |
-   * | 7 | 満潮時刻 | 名乗りだけ（初報） |
-   * | 8 | 満潮時刻 | 「満潮時刻が更新されました」 |
-   * | 9 | 満潮時刻 | 「津波の到達状況が更新されました」 |
-   * | 10 | 満潮時刻 | 「内容に変わりはありません」 |
+   * | 7 | 観測情報 | 段 2 の観測点（八戸港）の波高が下がり「以上」も外れた報。「津波観測に関する情報が発表されました」（**段 6 より後ろに置く** —— 読み上げの記憶は下げないので、後の観測情報も同じ一文になる） |
+   * | 8 | 満潮時刻 | 名乗りだけ（初報） |
+   * | 9 | 満潮時刻 | 「満潮時刻が更新されました」 |
+   * | 10 | 満潮時刻 | 「津波の到達状況が更新されました」 |
+   * | 11 | 満潮時刻 | 「内容に変わりはありません」 |
    *
    * **間隔は読み上げが終わる程度に空ける**（`TEST_TSUNAMI_QUIET_STEP_MS`）。これらは最下位の層で
    * 読むので、前の発話が続いていると待たされ、待ちきれなければ黙る。
    */
   const simulateTsunamiQuietReports = useCallback(async () => {
     const {
-      createTestTsunami, createTestTsunamiCancel, createTestTsunamiObservationReport, createTestTsunamiObservationOverUpgrade,
-      createTestTsunamiMaxHeightTimeUpdate, createTestTsunamiFirstWaveUpdate,
-      createTestTsunamiOffshoreMaxHeightTimeUpdate,
-      createTestTsunamiObservationNoChange, createTestTsunamiHighTide, createTestTsunamiHighTideFollowUp,
+      createTestTsunami, createTestTsunamiCancel,
+      createTestTsunamiQuietReportSteps,
       TEST_TSUNAMI_QUIET_STEP_MS, TEST_TSUNAMI_QUIET_TAIL_MS,
     } = await loadTestData()
     const base = createTestTsunami(isDmdss)
@@ -3347,19 +3346,9 @@ export function useEarthquakes(
       window.clearTimeout(testTsunamiQuietTimerRef.current)
     }
     // **同じ ref を使い回して連鎖させる**（等級変化テストと同じ流儀。追う先が 1 本なら、
-    // リセットとアンマウントの落とし方を増やさずに済む）。
-    const steps: ((prev: JMATsunami) => JMATsunami)[] = [
-      createTestTsunamiObservationReport,
-      createTestTsunamiObservationOverUpgrade,
-      createTestTsunamiMaxHeightTimeUpdate,
-      createTestTsunamiFirstWaveUpdate,
-      createTestTsunamiOffshoreMaxHeightTimeUpdate,
-      createTestTsunamiObservationNoChange,
-      prev => createTestTsunamiHighTide(base, prev),
-      prev => createTestTsunamiHighTideFollowUp(prev, 'tide'),
-      prev => createTestTsunamiHighTideFollowUp(prev, 'arrival'),
-      prev => createTestTsunamiHighTideFollowUp(prev, 'none'),
-    ]
+    // リセットとアンマウントの落とし方を増やさずに済む）。段の並びは testData 側が持つ
+    // （ユニットテストが同じ列を流して 7 段目が空振りしないことを確かめる）。
+    const steps = createTestTsunamiQuietReportSteps(base)
     // 解除は**最後の報を流してから**数える（他のテストと違って `TEST_AUTO_DISMISS_MS` を使わない）。
     // 段数から導くので、段を足しても最後の報が読み終わる余裕は変わらない（→ `TEST_TSUNAMI_QUIET_TAIL_MS`）。
     runSimulateTsunami(
