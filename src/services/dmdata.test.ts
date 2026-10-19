@@ -4,7 +4,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { PREFERRED_CLASSIFICATIONS } from './dmdataClassifications'
 import {
-  isNonRecoverableCloseCode,
+  closeCodeAction,
   fetchDmdataGdEarthquakes,
   releaseSocket,
   fetchDmdataActiveEews,
@@ -33,16 +33,31 @@ vi.mock('../utils/logger', async (importOriginal) => ({
   createLogThrottle: () => (emit: () => void) => emit(),
 }))
 
-describe('isNonRecoverableCloseCode', () => {
-  it('1008 (Policy Violation) のみ非回復扱い', () => {
-    expect(isNonRecoverableCloseCode(1008)).toBe(true)
+// 閉じた理由の一覧は DMDATA の WebSocket v2 のエラーコード表（4400・4404・4409・4503・4640・
+// 4641・4807・4808・4891）。扱いを変えるのは 3 つだけ。
+describe('closeCodeAction', () => {
+  // 正: 接続数の上限（4409）は「混雑」。以前は「再接続する」側に固定していた（覆した）
+  it('4409 は crowded', () => {
+    expect(closeCodeAction(4409)).toBe('crowded')
   })
 
-  it('1008 以外はすべて false（現状 1008 のみ判定対象）', () => {
-    // 1000: Normal Closure, 1001: Going Away, 1005: No Status, 1006: Abnormal,
-    // 1011: Internal Server Error, 4xxx: application-defined, 5xxx: 範囲外
-    for (const code of [1000, 1001, 1005, 1006, 1011, 4000, 4001, 4409, 4999, 5000, 9999]) {
-      expect(isNonRecoverableCloseCode(code)).toBe(false)
+  // 正: 解約で受けられる区分が無くなった（4807）・利用者の終了操作（4808）は止める
+  it('4807 は contract-ended、4808 は closed-by-user', () => {
+    expect(closeCodeAction(4807)).toBe('contract-ended')
+    expect(closeCodeAction(4808)).toBe('closed-by-user')
+  })
+
+  // 対照: 表のほかの 6 つは張り直せば直りうるので、今までどおり再接続する
+  it('表のほかの code は reconnect', () => {
+    for (const code of [4400, 4404, 4503, 4640, 4641, 4891]) {
+      expect(closeCodeAction(code)).toBe('reconnect')
+    }
+  })
+
+  // 安全弁: 表に無い code（ブラウザ側の切断を含む）で止めない。止めると自動復旧の道が無くなる
+  it('表に無い code は reconnect（1008 も含む）', () => {
+    for (const code of [1000, 1001, 1005, 1006, 1008, 1011, 4000, 4999]) {
+      expect(closeCodeAction(code)).toBe('reconnect')
     }
   })
 })
@@ -806,6 +821,267 @@ describe('409 を受けたときに自分の枠を返すか', () => {
     } finally {
       ws.disconnect()
       vi.useRealTimers()
+    }
+  })
+})
+
+// 配信元が理由を言って閉じたときの扱い（DMDATA の WebSocket v2 のエラーコード表）。
+// 理由は `type: "error"`（`code`・`close`）で届き、`close: true` ならそこで閉じる。
+// 閉じるときの close code そのものは資料に無いので、ブラウザが 1006 を渡す形でも効くことを見る。
+describe('DmdataWebSocket: 配信元が閉じた理由ごとの扱い', () => {
+  async function drain() {
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+  }
+
+  class FakeWs {
+    static last: FakeWs | null = null
+    onopen: (() => void) | null = null
+    onmessage: ((ev: { data: string }) => void) | null = null
+    onclose: ((ev: { code: number; reason: string }) => void) | null = null
+    onerror: (() => void) | null = null
+    readyState = 1
+    constructor() { FakeWs.last = this }
+    send() {}
+    close() { this.onclose?.({ code: 1006, reason: '' }) }
+    /** 配信元が `type: "error"` を送ってから閉じる形。`errorCode` を省くと理由なしで閉じる */
+    serverClose(closeCode: number, error?: { code: number; close: boolean }) {
+      if (error) this.onmessage?.({ data: JSON.stringify({ type: 'error', error: 'x', code: error.code, close: error.close }) })
+      this.onclose?.({ code: closeCode, reason: '' })
+    }
+  }
+
+  /** チケットは常に 200、枠を返す要求（DELETE）も 200。チケットを何回取りに来たかを数える */
+  function stubFetch() {
+    const calls: Array<{ url: string; method: string }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method ?? 'GET' })
+      if (init?.method === 'DELETE') return { ok: true, status: 200 } as unknown as Response
+      return {
+        status: 200,
+        json: async () => ({ websocket: { url: 'wss://example.invalid/ws' } }),
+      } as unknown as Response
+    }))
+    const tickets = () => calls.filter(c => c.method === 'POST').length
+    return { calls, tickets }
+  }
+
+  /** 繋いで `start` まで流した接続を作る。状態の移り変わりを記録する */
+  async function startConnected(socketId = 42) {
+    vi.useFakeTimers()
+    vi.stubGlobal('WebSocket', FakeWs as unknown as typeof WebSocket)
+    const fetched = stubFetch()
+    const ws = new DmdataWebSocket('valid-key')
+    const statuses: string[] = []
+    ws.onStatusChange = (s) => { statuses.push(s) }
+    ws.connect()
+    await drain()
+    FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'start', socketId }) })
+    await drain()
+    return { ws, statuses, ...fetched }
+  }
+
+  afterEach(() => { vi.useRealTimers() })
+
+  // 正: 解約で受けられる区分が無くなった（4807）。繋ぎ直しても同じ理由で閉じられるので止める
+  it('4807 で閉じたら contract-ended にして、張り直さない', async () => {
+    const { ws, statuses, tickets } = await startConnected()
+    try {
+      const before = tickets()
+      FakeWs.last?.serverClose(1006, { code: 4807, close: true })
+      await vi.advanceTimersByTimeAsync(600_000)
+      await drain()
+
+      expect(statuses[statuses.length - 1]).toBe('contract-ended')
+      expect(statuses).not.toContain('disconnected')
+      expect(tickets()).toBe(before)
+      expect(log.error).toHaveBeenCalled()
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 正: 利用者が終了の操作をした（4808）。その操作を打ち消して繋ぎ直さない
+  it('4808 で閉じたら closed-by-user にして、張り直さない', async () => {
+    const { ws, statuses, tickets } = await startConnected()
+    try {
+      const before = tickets()
+      FakeWs.last?.serverClose(1006, { code: 4808, close: true })
+      await vi.advanceTimersByTimeAsync(600_000)
+      await drain()
+
+      expect(statuses[statuses.length - 1]).toBe('closed-by-user')
+      expect(tickets()).toBe(before)
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 正: 理由のメッセージが無くても、close code そのものが表の値なら同じに扱う
+  it('close code が 4807 なら、error のメッセージが無くても止める', async () => {
+    const { ws, statuses, tickets } = await startConnected()
+    try {
+      const before = tickets()
+      FakeWs.last?.serverClose(4807)
+      await vi.advanceTimersByTimeAsync(600_000)
+      await drain()
+
+      expect(statuses[statuses.length - 1]).toBe('contract-ended')
+      expect(tickets()).toBe(before)
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 正: 接続数の上限（4409）はチケットの 409 と同じ。止めずに crowded で待ち、自分の古い枠を返す。
+  // 以前は「再接続する」側で、30 秒以内に叩き直していた（覆した）
+  it('4409 で閉じたら crowded にして、古い枠を返し、張り直しは続ける', async () => {
+    const { ws, statuses, calls, tickets } = await startConnected(77)
+    try {
+      const before = tickets()
+      FakeWs.last?.serverClose(1006, { code: 4409, close: true })
+      await drain()
+
+      expect(statuses[statuses.length - 1]).toBe('crowded')
+      expect(statuses).not.toContain('disconnected')
+      const deletes = calls.filter(c => c.method === 'DELETE')
+      expect(deletes).toHaveLength(1)
+      expect(deletes[0].url).toContain('/socket/77')
+
+      // 安全弁: 止めてはいない（枠が空けば自動で繋がる）
+      await vi.advanceTimersByTimeAsync(600_000)
+      await drain()
+      expect(tickets()).toBeGreaterThan(before)
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 正: 実配信の 4409 は、新しい接続が `start` の前に断られる形。返す枠を覚えていなければ
+  // DELETE は投げず（他人の枠を当てずっぽうで閉じない）、crowded で待つ
+  it('start 前に 4409 で閉じたら、枠を返さずに crowded で待つ', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('WebSocket', FakeWs as unknown as typeof WebSocket)
+    const { calls } = stubFetch()
+    const ws = new DmdataWebSocket('valid-key')
+    const statuses: string[] = []
+    ws.onStatusChange = (s) => { statuses.push(s) }
+    try {
+      ws.connect()
+      await drain()
+      FakeWs.last?.serverClose(1006, { code: 4409, close: true })
+      await drain()
+
+      expect(statuses[statuses.length - 1]).toBe('crowded')
+      expect(calls.filter(c => c.method === 'DELETE')).toHaveLength(0)
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 安全弁: 枠を返すのを待っているあいだに止めたら、再接続の予約を残さない。
+  // 残ると、同じインスタンスで connect() し直したときに古い予約も発火して二重に繋ぎに行く
+  it('4409 で枠を返している最中に disconnect() して connect() し直しても、二重に繋ぎに行かない', async () => {
+    const { ws, tickets } = await startConnected(77)
+    try {
+      FakeWs.last?.serverClose(1006, { code: 4409, close: true })
+      // DELETE の応答を待っている途中で止め、同じインスタンスで繋ぎ直す
+      ws.disconnect()
+      const before = tickets()
+      ws.connect()
+      await drain()
+      // 繋ぎ直しの 1 本は開いたまま。古い予約が残っていれば、ここでもう 1 本取りに行く。
+      // 進めるのは黙った接続の見張り（90 秒）の手前まで —— 越えると見張りの張り直しが混ざる
+      await vi.advanceTimersByTimeAsync(60_000)
+      await drain()
+
+      expect(tickets() - before).toBe(1)
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 対照: 表のほかの理由（4503 = 配信元の再起動）は今までどおり張り直す
+  it('4503 で閉じたら disconnected にして張り直す', async () => {
+    const { ws, statuses, tickets } = await startConnected()
+    try {
+      const before = tickets()
+      FakeWs.last?.serverClose(1006, { code: 4503, close: true })
+      await vi.advanceTimersByTimeAsync(60_000)
+      await drain()
+
+      expect(statuses).toContain('disconnected')
+      expect(tickets()).toBeGreaterThan(before)
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 対照: `close: false` の error は閉じた理由として使わない（そこでは閉じないと名乗っている）
+  it('close: false の error の code では止めない', async () => {
+    const { ws, statuses, tickets } = await startConnected()
+    try {
+      const before = tickets()
+      FakeWs.last?.serverClose(1006, { code: 4807, close: false })
+      await vi.advanceTimersByTimeAsync(60_000)
+      await drain()
+
+      expect(statuses).not.toContain('contract-ended')
+      expect(tickets()).toBeGreaterThan(before)
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 安全弁: 前の接続で名乗られた理由を、次の接続へ持ち越さない
+  it('前の接続の 4409 は、次の接続が理由なしで閉じたときに使わない', async () => {
+    const { ws, statuses } = await startConnected()
+    try {
+      FakeWs.last?.serverClose(1006, { code: 4409, close: true })
+      await vi.advanceTimersByTimeAsync(600_000)
+      await drain()
+      FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'start', socketId: 43 }) })
+      await drain()
+      statuses.length = 0
+
+      FakeWs.last?.serverClose(1006)
+      await drain()
+
+      expect(statuses).toEqual(['disconnected'])
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 安全弁: 止めても、鍵を替える・再読み込みで `connect()` を呼べば繋ぎ直す
+  it('止めた後に connect() を呼べば、また繋ぎに行く', async () => {
+    const { ws, tickets } = await startConnected()
+    try {
+      FakeWs.last?.serverClose(1006, { code: 4808, close: true })
+      await drain()
+      const before = tickets()
+
+      ws.connect()
+      await drain()
+
+      expect(tickets()).toBeGreaterThan(before)
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 正: 理由は debug の設定によらず warn で残す（以前は debug のときしか見ていなかった）
+  it('error のメッセージは debug によらず warn に残す', async () => {
+    const { ws } = await startConnected()
+    try {
+      FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'error', error: 'Server error.', code: 4503, close: false }) })
+      await drain()
+
+      expect(log.warn).toHaveBeenCalledWith(
+        '[DMDSS] 配信元からエラーを受けました',
+        { error: 'Server error.', code: 4503, close: false },
+      )
+    } finally {
+      ws.disconnect()
     }
   })
 })

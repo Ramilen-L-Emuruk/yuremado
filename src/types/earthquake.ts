@@ -1924,8 +1924,15 @@ export interface JMAEstimatedIntensity {
  * そのまま繋がるため、再接続は止めずに間隔だけ伸ばしている（`dmdata.ts` の
  * `RECONNECT_CROWDED_MAX_MS`）。**更新が止まっている点は `disconnected` と同じ**なので、
  * 地図の切断警告は両方で出す。
+ *
+ * `contract-ended`・`closed-by-user` は「配信元が理由を言って閉じたので、繋ぎ直さない」状態
+ * （DMDATA の WebSocket v2 のエラーコード 4807・4808。→ `dmdata.ts` の `closeCodeAction`）。
+ * `disconnected` と分けるのは、**自動では戻らない**ことと、利用者にすべきことが理由ごとに違うため。
+ * 更新が止まっている点は同じなので、地図の切断警告も出す（→ `utils/connectionStatus.ts`）。
  */
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'replay' | 'crowded'
+export type ConnectionStatus =
+  | 'connecting' | 'connected' | 'disconnected' | 'replay' | 'crowded'
+  | 'contract-ended' | 'closed-by-user'
 
 /**
  * 電文ログの行が何の電文として読まれたか。電文ログの種別名と絞り込みの選択肢はこの型から

@@ -39,6 +39,20 @@ export function dmdataConnectionLabel(
         text: '同時接続の上限（別のタブか端末が接続中。閉じれば自動で繋がります）',
         className: 'text-amber-400',
       }
+    // 配信元が理由を言って閉じ、繋ぎ直さない状態（→ `dmdata.ts` の `closeCodeAction`）。
+    // 自動では戻らないので、利用者がすべきことを括弧に書く（2026-10-19 ユーザー承認、
+    // 問い「4807（解約）・4808（終了の操作）で接続を止めたとき、設定タブの接続状態に何を出しますか？」に
+    // 選択肢「理由ごとに出す (Recommended)」）
+    case 'contract-ended':
+      return {
+        text: '接続を停止（受信できる区分がなくなりました。契約を確かめてから再読み込みしてください）',
+        className: 'text-red-400',
+      }
+    case 'closed-by-user':
+      return {
+        text: '接続を停止（DMDATA.JP 側で接続が終了されました。再読み込みで繋ぎ直します）',
+        className: 'text-amber-400',
+      }
     case 'disconnected':
     case undefined:
       if (!opts.apiKeySet) return { text: 'APIキー未設定', className: 'text-secondary' }
