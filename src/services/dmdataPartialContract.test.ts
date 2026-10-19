@@ -202,6 +202,8 @@ describe('DmdataWebSocket: 一部の区分しか契約していない人', () =>
     const ws = new DmdataWebSocket('valid-key')
     let settled: readonly string[] | null = null
     void ws.classificationsReady.then((c) => { settled = c })
+    const unsettled: string[] = []
+    ws.onClassificationsUnsettled = (reason) => { unsettled.push(reason) }
     try {
       ws.connect()
       await drain()
@@ -210,6 +212,8 @@ describe('DmdataWebSocket: 一部の区分しか契約していない人', () =>
       await drain()
       expect(settled).toEqual(['eew.warning', 'telegram.earthquake'])
       expect(requested.length).toBeGreaterThan(0)
+      // 受け付けが得られたので「決まらなかった」とは知らせない
+      expect(unsettled).toEqual([])
     } finally {
       ws.disconnect()
     }
@@ -225,12 +229,45 @@ describe('DmdataWebSocket: 一部の区分しか契約していない人', () =>
     const ws = new DmdataWebSocket('valid-key')
     let settled: readonly string[] | null = null
     void ws.classificationsReady.then((c) => { settled = c })
+    const unsettled: string[] = []
+    ws.onClassificationsUnsettled = (reason) => { unsettled.push(reason) }
     try {
       ws.connect()
       await vi.advanceTimersByTimeAsync(14_000)
       expect(settled).toBeNull()
       await vi.advanceTimersByTimeAsync(2_000)
       expect(settled).toEqual(PREFERRED_CLASSIFICATIONS)
+      // 覚えで始めた呼び出し側が、覚えを残して続けるのに使う（→ useEarthquakes の onClassificationsUnsettled）
+      expect(unsettled).toEqual(['timeout'])
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 正: 時間切れで決着した後の再接続で認証エラーになっても、まだ一度も受け付けを得ていなければ知らせる
+  // （知らせないと、覚えで始めた側が受けられない区分の覚えを捨てる機会が無くなる）
+  it('時間切れの後に認証エラーになったら、auth も知らせる', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calls++
+      // 15 秒が過ぎるまでは 409、その後は 403（鍵が失効した形）
+      return Date.now() < startedAt + 16_000
+        ? { status: 409, json: async () => ({ status: 'error', error: { message: 'full', code: 409 } }) } as unknown as Response
+        : { status: 403, json: async () => ({ status: 'error', error: { message: 'forbidden', code: 403 } }) } as unknown as Response
+    }))
+    vi.stubGlobal('WebSocket', FakeWs as unknown as typeof WebSocket)
+    const startedAt = Date.now()
+    const ws = new DmdataWebSocket('valid-key')
+    const unsettled: string[] = []
+    ws.onClassificationsUnsettled = (reason) => { unsettled.push(reason) }
+    try {
+      ws.connect()
+      await vi.advanceTimersByTimeAsync(16_000)
+      expect(unsettled).toEqual(['timeout'])
+      await vi.advanceTimersByTimeAsync(600_000)
+      expect(calls).toBeGreaterThan(1)
+      expect(unsettled).toEqual(['timeout', 'auth'])
     } finally {
       ws.disconnect()
     }
@@ -243,6 +280,8 @@ describe('DmdataWebSocket: 一部の区分しか契約していない人', () =>
     const ws = new DmdataWebSocket('valid-key')
     const statuses: string[] = []
     ws.onStatusChange = (s) => { statuses.push(s) }
+    const unsettled: string[] = []
+    ws.onClassificationsUnsettled = (reason) => { unsettled.push(reason) }
     try {
       vi.useFakeTimers()
       ws.connect()
@@ -250,6 +289,8 @@ describe('DmdataWebSocket: 一部の区分しか契約していない人', () =>
       const count = requested.length
       expect(statuses[statuses.length - 1]).toBe('disconnected')
       await expect(ws.classificationsReady).resolves.toEqual(PREFERRED_CLASSIFICATIONS)
+      // 覚えで始めた呼び出し側が、この鍵の覚えを捨てるのに使う
+      expect(unsettled).toEqual(['auth'])
 
       await vi.advanceTimersByTimeAsync(600_000)
       expect(requested.length).toBe(count)
