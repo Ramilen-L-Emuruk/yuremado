@@ -96,23 +96,30 @@ export function candidateCodes(
 /**
  * 出す観測点を決める。前回までに選んだ観測点は残し（いまの時刻で有効なエポックがあるものだけ）、新たに入った観測点へ
  * 続きの番号を振る。**戻り値は番号順。**
+ *
+ * **材料は複数渡せる**（緊急地震速報が同時に複数あるとき、地震ごとに選んで合わせる。2026-10-19 ユーザー承認
+ * 「地震ごとに選んで合わせる (推奨)」）。番号は渡した順に、材料ごとに材料の点へ近い順で振る。同じ観測点を
+ * 2 つの材料が選んでも番号は 1 つ（先に選んだ材料のもの）。
  */
 export function selectPublicStations(params: {
   prev: PublicSelectionState
   /** いまの時刻で有効なエポック（`activeEpochsAt`）。 */
   epochs: readonly PublicStationEpoch[]
-  source: PublicSelectionSource
-  /** 震源の要素が欠けたときに使う揺れ検知の点（いちばん強いもの）。無ければ `null`。 */
+  /** 選ぶ材料。**番号を振る順に並べる。** */
+  sources: readonly PublicSelectionSource[]
+  /** 震源の要素が欠けたときに使う揺れ検知の点（いちばん強いもの）。無ければ `null`。震源の材料にだけ使う。 */
   detection: { readonly lat: number; readonly lon: number } | null
 }): { state: PublicSelectionState; selected: SelectedPublicStation[] } {
-  const { prev, epochs, source, detection } = params
+  const { prev, epochs, sources, detection } = params
   const numbers = new Map(prev.numbers)
   let next = 1
   for (const n of numbers.values()) next = Math.max(next, n + 1)
-  for (const code of candidateCodes(epochs, source, detection)) {
-    if (numbers.has(code)) continue
-    numbers.set(code, next)
-    next += 1
+  for (const source of sources) {
+    for (const code of candidateCodes(epochs, source, source.kind === 'hypocenter' ? detection : null)) {
+      if (numbers.has(code)) continue
+      numbers.set(code, next)
+      next += 1
+    }
   }
   const byCode = new Map(epochs.map((e) => [e.code, e]))
   const selected: SelectedPublicStation[] = []

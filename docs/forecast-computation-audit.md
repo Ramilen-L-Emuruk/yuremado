@@ -500,7 +500,7 @@ S 波の到達半径に安全係数 1.2 を掛けて求める。**画面には�
 
 - **実装**: [`src/utils/publicStationSelection.ts`](../src/utils/publicStationSelection.ts) の `candidateCodes`・`selectPublicStations`、
   式は [`src/utils/eew.ts`](../src/utils/eew.ts) の `predictMeasuredIntensity`。材料の速報を渡すのは
-  [`src/hooks/usePublicWaves.ts`](../src/hooks/usePublicWaves.ts)（相手の速報は [`countdownEew.ts`](../src/utils/countdownEew.ts) の `pickPublicWaveEew`。予報円を描いている報があれば 1・11 と同じもの）
+  [`src/hooks/usePublicWaves.ts`](../src/hooks/usePublicWaves.ts)（相手の速報は [`countdownEew.ts`](../src/utils/countdownEew.ts) の `pickPublicWaveEews`。発表中の報すべてで、地震ごとに選んで合わせる）
 
 地図の下端に、揺れ検知か発表中の緊急地震速報があるとき、公開観測点（気象庁の広帯域地震計）の波形を出す
 （[`data-sources-spec.md`](spec/data-sources-spec.md) §4.6「どの観測点を出すか」）。どの観測点を出すかを、
@@ -526,9 +526,9 @@ S 波の到達半径に安全係数 1.2 を掛けて求める。**画面には�
 揺れを記録しない（同 §3.4 の実測で、予測 −1.5〜0.0 の帯で波形に揺れが映ったのは 15〜24%）。
 
 震源の要素が欠けるとき（仮定震源要素・規模不明）は予測計測震度を使わず、揺れ検知の点から 150 km の中、無ければ震央に近い順に
-3 点を選ぶ。深さだけが不明なら浅い（0 km）とみなして予測する。渡す速報は `pickPublicWaveEew`（[`countdownEew.ts`](../src/utils/countdownEew.ts)）が
-選ぶ —— 予報円を描いている報があれば 1・11 と同じもの、無ければ発表中の報のうち発生がいちばん新しいもの。予報円を描かない
-仮定震源要素・深さ不明の報もここで拾う（[`data-sources-spec.md`](spec/data-sources-spec.md) §4.6「どの観測点を出すか」）。
+3 点を選ぶ。深さだけが不明なら浅い（0 km）とみなして予測する。渡す速報は `pickPublicWaveEews`（[`countdownEew.ts`](../src/utils/countdownEew.ts)）が
+並べる —— 発表中の報すべてで、地震ごとに観測点を選んで合わせる（2026-10-19 ユーザー承認。原文は [`public-waveform-design.md`](public-waveform-design.md) §0 の決定表）。計算の式と
+閾値は変わらず、相手の地震が増えるだけ。予報円を描かない仮定震源要素・深さ不明の報もここで拾う（[`data-sources-spec.md`](spec/data-sources-spec.md) §4.6「どの観測点を出すか」）。
 
 **予報業務には当たらないと整理した**（2026-10-15 ユーザー承認。上記「予報業務の線引きとの対応」）。
 

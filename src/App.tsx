@@ -72,7 +72,7 @@ import { useTelegramTextSpeechFollow } from './hooks/useTelegramTextSpeechFollow
 import { deriveKyoshinView } from './utils/kyoshinDetectionView'
 import { filterSubThresholdIndices } from './utils/kyoshinSubThresholdFilter'
 import { countdownBeepTarget, useSWaveCountdown } from './hooks/useSWaveCountdown'
-import { pickArrivalEews, pickPublicWaveEew } from './utils/countdownEew'
+import { pickArrivalEews, pickPublicWaveEews } from './utils/countdownEew'
 import { useArrivalTokenCheck } from './hooks/useArrivalToken'
 import { usePsWaveCalc } from './hooks/usePsWaveCalc'
 import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
@@ -2229,8 +2229,8 @@ export function App() {
     replayOffsetMs: replayTimeOffset,
     spanSec: settings.waveSpanSec,
     alwaysConnected: settings.publicWaveAlwaysConnected,
-    // 予報円を描かない速報（仮定震源要素・深さ不明）でも観測点を選ぶ（→ `pickPublicWaveEew`）。
-    eew: pickPublicWaveEew(psWave, eewsForMap),
+    // 発表中の速報すべてで地震ごとに選んで合わせる。予報円を描かない速報（仮定震源要素・深さ不明）も含む（→ `pickPublicWaveEews`）。
+    eews: pickPublicWaveEews(psWave, eewsForMap),
     detectedPoints: kyoshinView.detectedPoints,
   })
 

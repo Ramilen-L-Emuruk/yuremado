@@ -7,12 +7,12 @@
 // どの地震の線かは見分けない —— どれも「P」「S」（2026-10-18 ユーザー承認「見分けない」）。登録地点への到達の
 // カウントダウンも地震ごとに行を並べる（`hooks/useSWaveCountdown.ts`）ので、選び方を共有する必要は無くなった。
 //
-// **公開観測点を選ぶ材料は今も 1 件**（S 波の円がいちばん大きい速報）。観測点の選び方を地震ごとに広げるかは
-// 決めていない。
+// **公開観測点も地震ごとに選んで合わせる**（2026-10-19 ユーザー承認「地震ごとに選んで合わせる (推奨)」）。
+// ここでは材料にする速報を、番号を振る順に並べるだけ。
 
 import type { PsWaveCircle } from '../services/kyoshin'
 import type { EEWAlert } from '../types/earthquake'
-import { eewEventKey, eewSortTimeMs } from './eew'
+import { compareEewNewestFirst, eewEventKey } from './eew'
 
 /**
  * 予報円を描いている速報（＝P/S 線を引ける速報）。**順は予報円の順**で、1 つも無ければ空。
@@ -32,29 +32,24 @@ export function pickArrivalEews(psWave: readonly PsWaveCircle[], eews: readonly 
 }
 
 /**
- * 下部の波形に出す公開観測点を選ぶ材料にする緊急地震速報（`hooks/usePublicWaves.ts`）。
+ * 下部の波形に出す公開観測点を選ぶ材料にする緊急地震速報（`hooks/usePublicWaves.ts`）。**発表中の速報をすべて返し、
+ * 並びは観測点に番号を振る順**（2026-10-19 ユーザー承認「地震ごとに選んで合わせる (推奨)」）。
  *
- * **予報円が引けるなら、S 波の波面がいちばん外側にある円の速報を使う**（P/S 線は地震ごとに引くが、観測点を選ぶ材料は 1 件のまま。
- * 地震ごとに選ぶかは未決 —— `docs/spec/data-sources-spec.md` §4.6）。
- * 予報円を描かない速報 ——仮定震源要素・深さ不明——だけが出ているときは、**発表中のうち地震の発生
- * （無ければ発現）がいちばん新しいものを使う**。そうした報でも観測点を選ぶと決めてあるため
- * （`docs/public-waveform-design.md` §0「震源の要素が欠けるとき」）。
- * `eews` は取消を外したもの（`App.tsx` の `eewsForMap`）。
+ * - **予報円を描いている速報が先で、S 波の波面が外側にあるものから**（円の半径の大きい順）
+ * - **予報円を描かない速報**（仮定震源要素・深さ不明・まだ発生していない・円の速報が一覧から消えた）**はその後ろで、
+ *   地震の発生（無ければ発現）が新しいものから**。そうした報でも観測点を選ぶと決めてあるため
+ *   （`docs/public-waveform-design.md` §0「震源の要素が欠けるとき」）
+ *
+ * `eews` は取消を外したもの（`App.tsx` の `eewsForMap`）。速報が無ければ空。
  */
-export function pickPublicWaveEew(psWave: readonly PsWaveCircle[], eews: readonly EEWAlert[]): EEWAlert | null {
-  if (psWave.length > 0) {
-    const widest = psWave.reduce((best, c) => (c.sRadius > best.sRadius ? c : best), psWave[0])
-    const eew = eews.find((e) => eewEventKey(e) === widest.eventId)
-    if (eew !== undefined) return eew
+export function pickPublicWaveEews(psWave: readonly PsWaveCircle[], eews: readonly EEWAlert[]): EEWAlert[] {
+  const withCircle: { eew: EEWAlert; sRadius: number }[] = []
+  for (const c of psWave) {
+    const eew = eews.find((e) => eewEventKey(e) === c.eventId)
+    if (eew === undefined || withCircle.some((w) => w.eew === eew)) continue
+    withCircle.push({ eew, sRadius: c.sRadius })
   }
-  let best: EEWAlert | null = null
-  let bestMs = -Infinity
-  for (const e of eews) {
-    const key = eewSortTimeMs(e)
-    if (best === null || key > bestMs) {
-      best = e
-      bestMs = key
-    }
-  }
-  return best
+  withCircle.sort((a, b) => b.sRadius - a.sRadius)
+  const rest = eews.filter((e) => !withCircle.some((w) => w.eew === e)).sort(compareEewNewestFirst)
+  return [...withCircle.map((w) => w.eew), ...rest]
 }

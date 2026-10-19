@@ -14,7 +14,7 @@ import { publicWaveKey, readPublicWave, writePublicWave } from '../utils/publicQ
 import { quakeEventKey } from '../utils/quakeMerge'
 import { parseJstTimeMs, type OriginSeconds } from '../utils/quakeOriginSeconds'
 import { activeEpochsAt, checkPublicStations, subscribePublicStations, loadPublicStations, type PublicStationEpoch, type PublicStationsFile } from '../utils/publicStations'
-import { candidateCodes, selectPublicStations, type PublicSelectionSource } from '../utils/publicStationSelection'
+import { candidateCodes, EMPTY_PUBLIC_SELECTION, selectPublicStations, type PublicSelectionSource } from '../utils/publicStationSelection'
 import { publicWaveCacheVerdict, PUBLIC_WAVE_MAX_RETRIES, type PublicWaveEntryState } from '../utils/publicWaveStoreLogic'
 import type { SeismoWaveWindow } from '../utils/seismoWaveBuffer'
 import { appendWaveWindow, type TimedColumns } from '../utils/seismoWaveColumns'
@@ -37,7 +37,8 @@ import type { SeismoQuakeWave } from './useSeismoQuakeWaves'
 /** 先に取る地震の数（§0）。 */
 export const PREFETCH_QUAKES = 100
 /**
- * 下部の波形の番号を引き継ぐ地震の見分け方: いちばん新しい地震で、発生から {@link LIVE_QUAKE_MS} 以内。
+ * 下部の波形の番号を引き継ぐ地震の見分け方: 発生から {@link LIVE_QUAKE_MS} 以内の地震すべて（下部の波形は緊急地震速報が
+ * 同時に複数あれば地震ごとに選んで合わせるため。2026-10-19 ユーザー承認「地震ごとに選んで合わせる (推奨)」）。
  * **下部の波形は地震ではなく揺れの材料（速報・揺れ検知）で選ぶ**ので、どの地震カードのことかを直接は持たない。
  */
 const LIVE_QUAKE_MS = 10 * 60_000
@@ -171,25 +172,29 @@ export function usePublicQuakeWaves(params: {
 
 
   // 地震ごとの観測点と番号。**下部の波形に出ている地震は、その番号を引き継ぐ**（地図の印と揃えるため）。
-  const liveKey = targets.length > 0 && serverNow() - targets[0].originMs <= LIVE_QUAKE_MS && liveNumbers !== null ? targets[0].eventKey : null
+  // 毎レンダー時刻で測り直し、文字列で比べる（`useMemo` の依存に時刻を入れないため）
+  const liveKeysJoined = liveNumbers === null ? '' : targets.filter((t) => serverNow() - t.originMs <= LIVE_QUAKE_MS).map((t) => t.eventKey).join('\n')
+  const liveKeys = useMemo(() => new Set(liveKeysJoined === '' ? [] : liveKeysJoined.split('\n')), [liveKeysJoined])
   const picks = useMemo(() => {
     const out = new Map<string, { target: QuakeTarget; stations: { epoch: PublicStationEpoch; number: number }[] }>()
     if (file === null) return out
     for (const t of targets) {
       const epochs = activeEpochsAt(file, t.originMs)
       // **引き継ぐのはこの地震の候補に入る観測点の番号だけ**（下部の波形は揺れの材料で選ぶので、別の揺れの観測点を持っていることがある）。
-      // 番号は元のまま（欠番は許す）—— 地図の印と同じ番号を名乗るため
-      const numbers = new Map<string, number>()
-      if (t.eventKey === liveKey && liveNumbers !== null) {
+      // 番号は元のまま（欠番は許す）—— 地図の印と同じ番号を名乗るため。**下部の波形に無い観測点は、下部の波形で使った番号の続きから
+      // 振る**（下部の波形の全番号を前回の記憶として渡し、この地震の候補でない分を後で外す）。地図の印の番号と重ならない
+      if (liveKeys.has(t.eventKey) && liveNumbers !== null) {
         const candidates = new Set(candidateCodes(epochs, t.source, null))
-        for (const [code, n] of liveNumbers) if (candidates.has(code)) numbers.set(code, n)
+        const { selected } = selectPublicStations({ prev: { numbers: liveNumbers }, epochs, sources: [t.source], detection: null })
+        const own = selected.filter((s) => candidates.has(s.epoch.code))
+        if (own.length > 0) out.set(t.eventKey, { target: t, stations: own })
+        continue
       }
-      const prev = { numbers }
-      const { selected } = selectPublicStations({ prev, epochs, source: t.source, detection: null })
+      const { selected } = selectPublicStations({ prev: EMPTY_PUBLIC_SELECTION, epochs, sources: [t.source], detection: null })
       if (selected.length > 0) out.set(t.eventKey, { target: t, stations: selected })
     }
     return out
-  }, [file, targets, liveKey, liveNumbers])
+  }, [file, targets, liveKeys, liveNumbers])
 
   // --- 取る・控える ---
   const slotsRef = useRef(new Map<string, Slot>())
@@ -254,12 +259,12 @@ export function usePublicQuakeWaves(params: {
   /** 再生時刻でまだ切っている（範囲の終わりが再生時刻より先の）地震があるか。出すたびに数え直す。 */
   const revealingRef = useRef(false)
   useEffect(() => {
-    if (liveKey === null && !replaying) return
+    if (liveKeys.size === 0 && !replaying) return
     const timer = setInterval(() => {
-      if (liveKey !== null || revealingRef.current) setLiveTick((n) => n + 1)
+      if (liveKeys.size > 0 || revealingRef.current) setLiveTick((n) => n + 1)
     }, 1000)
     return () => clearInterval(timer)
-  }, [liveKey, replaying])
+  }, [liveKeys, replaying])
 
   // 直前に出した内容。**変わっていない地震は同じ配列を使い回す**（継ぎ足しの巡回は 1 秒ごとに出し直すので、
   // 毎回作り直すと関わりのない地震のカードまで描き直される）。
@@ -314,7 +319,7 @@ export function usePublicQuakeWaves(params: {
           }
           rebasedRef.current.set(stored, rebased)
         }
-        let wave = eventKey === liveKey ? spliceLive(rebased.wave, readLiveRaw) : rebased.wave
+        let wave = liveKeys.has(eventKey) ? spliceLive(rebased.wave, readLiveRaw) : rebased.wave
         if (revealUntilMs !== null && wave.range.toMs > revealUntilMs) {
           revealing = true
           const cut = revealUpTo(wave, revealUntilMs, pick.target.originMs)
@@ -334,7 +339,7 @@ export function usePublicQuakeWaves(params: {
     return out
     // `version` は取れた知らせ、`liveTick` は継ぎ足し・再生時刻で切る分の巡回
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [picks, liveKey, version, liveTick, readLiveRaw, replaying, replayOffsetMs])
+  }, [picks, liveKeys, version, liveTick, readLiveRaw, replaying, replayOffsetMs])
 }
 
 /** 地震 1 件のうち、取る（控えを読む）観測点 1 つぶん。 */
