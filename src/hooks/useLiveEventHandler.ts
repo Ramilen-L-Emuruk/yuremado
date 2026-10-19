@@ -16,7 +16,7 @@ import {
 } from '../utils/eew'
 import { hasKnownEpicenter } from '../utils/geo'
 import { showBrowserNotification } from '../utils/notifications'
-import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry } from '../utils/tsunami'
+import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry } from '../utils/tsunami'
 import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
 import { playAlertSound, ttsDelayFor, maxTtsDelay, type AlertSoundType } from '../utils/alertSound'
 import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
@@ -826,6 +826,8 @@ interface TsunamiCardOrderBasis {
   areas: TsunamiArea[]
   /** カードが持っている観測点の全体（マージ済み）。 */
   observations: TsunamiObservation[]
+  /** カードの解除カードに並ぶ区域（カードと同じく `tsunamiAreaGradeChanges` の解除の組の順）。 */
+  liftedAreas: TsunamiArea[]
 }
 
 /**
@@ -859,9 +861,14 @@ interface TsunamiCardOrderBasis {
  */
 function tsunamiCardOrderBasis(event: JMATsunami, displayed: JMATsunami | undefined): TsunamiCardOrderBasis {
   const inherited = isTsunamiContinuation(displayed, event) ? displayed : undefined
+  const observations = mergeTsunamiObservations(inherited?.observations, event.observations ?? []) ?? []
+  // 解除された区域も区域と同じく、区域を伝えている報なら新報、伝えていない報なら前報から取る
+  // （`mergeTsunamiReports` の規則）。引き継ぎ元が無い報はカードがその報をそのまま描くので、その報から取る。
+  const liftedSource = event.areas.length > 0 || !inherited ? event : inherited
   return {
     areas: event.areas.length > 0 ? event.areas : (inherited?.areas ?? []),
-    observations: mergeTsunamiObservations(inherited?.observations, event.observations ?? []) ?? [],
+    observations,
+    liftedAreas: tsunamiLiftedAreas(liftedSource, observations),
   }
 }
 
@@ -2834,13 +2841,14 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 取消・終了時はタイマーをクリアして即時リセット
         title.clearTitleTimer('specialInfo')
         title.applyPriority()
-        if (event.kind === 'nankai' && settings.voicevoxEnabled) {
+        if (settings.voicevoxEnabled) {
           // 取消・終了も発表と同じ主題で予約する（間は置かない）。**主題を渡さないと到来順の枠に
           // 載らず**、発表の予約が待っている最中に取消が届いても取り下げられない
           // （取り消されたはずの臨時情報を、そのあと読み上げてしまう）。
+          // 後発地震注意情報の取消も読む（2026-10-14 ユーザー選択「提案どおり読み、テストボタンも足す」）。
           speakNonEEWDelayed(
-            nankaiToText(event.data),
-            SPEECH_PRIORITY.high, 0, 'nankai',
+            event.kind === 'nankai' ? nankaiToText(event.data) : kohatsuToText(event.data),
+            SPEECH_PRIORITY.high, 0, event.kind === 'nankai' ? 'nankai' : 'kohatsu',
           )
         }
       }
@@ -3035,7 +3043,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 津波以外では空（参照するのは津波の分岐だけなので、null を配って各所で確かめるより素直）。
     const tsunamiCardBasis: TsunamiCardOrderBasis = event.kind === 'tsunami'
       ? tsunamiCardOrderBasis(event, tsunamisRef.current[0])
-      : { areas: [], observations: [] }
+      : { areas: [], observations: [], liftedAreas: [] }
     // 津波の続報が「区域単位で等級が動いた報」か（全体の最上位等級は変わらないが、一部の区域で
     // 解除・切替・引き上げが起きている）。**観測情報と同じ枠に入れないための判定。**
     // 気象庁は一部解除でも区域を電文から消さず等級の降格として載せるため、他の区域に注意報が
@@ -4740,7 +4748,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 食い違えば追従スクロールが往復するので、往復を見たときに原因を辿れるようにする。
           if (tsunamiCardBasis.areas.length === 0) log.info('[tsunami] 観測点の並びの基準となる区域が無い（電文順で読み上げる）')
           const ownSet = new Set(own)
-          return sortObservationsForCardDisplay(tsunamiCardBasis.observations, tsunamiCardBasis.areas)
+          return sortObservationsForCardDisplay(tsunamiCardBasis.observations, tsunamiCardBasis.areas, tsunamiCardBasis.liftedAreas)
             .filter(o => ownSet.has(o))
         }
         const currentGrade = tsunamiMaxGrade(event)

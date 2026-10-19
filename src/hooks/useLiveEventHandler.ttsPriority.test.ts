@@ -22,6 +22,7 @@ import { CELL_LAT_DEG, CELL_LON_DEG } from '../utils/bufrEstimatedIntensity'
 import { useLiveEventHandler } from './useLiveEventHandler'
 import { DEFAULTS, type AppSettings } from './useSettings'
 import type { JMAQuake, JMATsunami, IssueType, EEWAlert, ExtraLiveEvent } from '../types/earthquake'
+import { createTestKohatsu, createTestKohatsuRetraction, createTestNankai } from '../utils/testData'
 
 /**
  * 発話ごとに「まだ再生中」の Promise を返し、解決関数を控えておく。
@@ -847,6 +848,45 @@ describe('非 EEW の読み上げの優先度', () => {
     finishSpeech(0)
     await flush()
     expect(spokenTexts().some(t => t.includes('大津波警報'))).toBe(true)
+  })
+
+  // 後発地震注意情報の取消も発表と同じ主題（`kohatsu`）で予約する（2026-10-14 ユーザー選択「提案どおり読み、
+  // テストボタンも足す」）。主題を落とすと到来順の枠に載らず、発表の予約が待っている最中に取消が届いても
+  // 発表を取り下げられない（取り消されたはずの注意情報を読む）。
+  describe('後発地震注意情報の取消の読み上げ', () => {
+    const issue = createTestKohatsu()
+    const cancel = createTestKohatsuRetraction(issue)
+    const CANCEL_TEXT = '北海道・三陸沖後発地震注意情報は取り消されました。'
+
+    it('正: 発表の間が明ける前に取消が届けば、発表は読まずに取消だけを読む', async () => {
+      const handle = setup()
+      handle({ kind: 'kohatsu', data: issue })
+      await advanceTimers(200)      // 発表の間（1.5 秒）が明ける前に
+      await flush()
+      handle({ kind: 'kohatsu', data: cancel })
+      await settle()
+      expect(spokenTexts()).toEqual([CANCEL_TEXT])
+    })
+
+    it('対照: 取消だけが届けば、そのまま読む', async () => {
+      const handle = setup()
+      handle({ kind: 'kohatsu', data: cancel })
+      await settle()
+      expect(spokenTexts()).toEqual([CANCEL_TEXT])
+    })
+
+    it('安全弁: 主題の違う臨時情報の予約は、後発地震の取消では取り下げない', async () => {
+      const handle = setup()
+      handle({ kind: 'nankai', data: createTestNankai('調査中') })
+      await advanceTimers(200)
+      await flush()
+      handle({ kind: 'kohatsu', data: cancel })
+      await settle()
+      finishSpeech(0)
+      await settle()
+      expect(spokenTexts()).toContain(CANCEL_TEXT)
+      expect(spokenTexts().some(t => t.includes('南海トラフ地震臨時情報'))).toBe(true)
+    })
   })
 
   // **かつては「後発が取り下げられても先発は読まれる」ことを固定していた**（取り下げの連鎖が

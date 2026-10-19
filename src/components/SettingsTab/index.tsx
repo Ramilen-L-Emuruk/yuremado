@@ -60,6 +60,7 @@ export interface TestFunctions {
   nankaiCommentaryAdHoc?: () => void
   nankaiCommentaryRoutine?: () => void
   kohatsu?: () => void
+  kohatsuRetraction?: () => void
   quakeNotice?: () => void
   earthquakeCount?: () => void
   earthquakeCountRetraction?: () => void
@@ -2049,6 +2050,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {isDmdss && onTest.kohatsu && (
           <Row label="北海道・三陸沖後発地震注意情報" description="バナー表示 + specialInfo 音">
             <TestButton color="blue" onClick={onTest.kohatsu}>後発地震テスト</TestButton>
+          </Row>
+        )}
+        {isDmdss && onTest.kohatsuRetraction && (
+          <Row label="北海道・三陸沖後発地震注意情報（取消）" description="後発地震注意情報を発表し、90秒後に同じ識別情報の取消を流す。バナーが消え、読み上げは取り消された事実だけを伝える">
+            <TestButton color="blue" onClick={onTest.kohatsuRetraction}>取消テスト</TestButton>
           </Row>
         )}
         {/* ── その他の地震情報 ── */}

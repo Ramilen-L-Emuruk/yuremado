@@ -104,8 +104,15 @@ export const HISTORY_EXTRA_TYPES = new Set([
 /**
  * 履歴で復元する電文の「同じものとみなす鍵」。同じ鍵のうち最新 1 通だけを残す。
  *
- * 長周期地震動だけ地震ごとに持つ（`lpgmByEventId`）ので鍵に識別子を含める。残りは
- * 画面に 1 つだけ出る帯なので種別だけでよい。
+ * 長周期地震動だけ地震ごとに持つ（`lpgmByEventId`）ので鍵に識別子を含め、地震ごとに畳む
+ * （受け手が時刻を比べて最新を選ぶので、畳んでも見え方は変わらない）。
+ *
+ * **帯（臨時情報・解説情報・後発地震注意情報・お知らせ・地震回数）は電文ごとに別の鍵にする（＝畳まない）。**
+ * 受け手（`applyNankai` ほか）は取消の照合・期限切れ・空の報の弾きを持っていて、どの報が帯に残るかは
+ * 届いた順に当てて初めて決まる。種別ごとに最新 1 通へ畳むと、その 1 通が「別の号への取消」や
+ * 「区間を 1 つも持たない地震回数」だったとき、ライブなら残っている帯が初期状態で消える。
+ * 鍵に発表時刻と取消かどうかを含めるのは、お知らせの取消が元のお知らせと同じ `id` を持つため
+ * （→ `applyQuakeNotice`）。同じ電文の重複配信（XML 版と JSON 版など）はこの鍵で 1 通にまとまる。
  *
  * **推計震度分布図は電文ごとに別の鍵にする（＝畳まない）。** この電文は識別子を持たず、
  * どれが同じ地震かは発現時刻と震源で決まる（→ `isSameEstimatedIntensityQuake`）。ここで
@@ -127,7 +134,7 @@ export function historyExtraKey(payload: ReplayPayload): string | null {
     case 'kohatsu':
     case 'quakeNotice':
     case 'earthquakeCount':
-      return payload.kind
+      return `${payload.kind}:${payload.data.id}|${payload.data.reportDateTime}|${payload.data.cancelled ? 'cancel' : 'issue'}`
     case 'estimatedIntensity':
       return `estimatedIntensity:${payload.data.arrivalTime}|${payload.data.time}|${payload.data.count}`
     default:

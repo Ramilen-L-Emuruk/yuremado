@@ -1869,6 +1869,38 @@ export function fetchDmdataQuakeHistoryFor(
 }
 
 /**
+ * 履歴の帯を受信時刻で並べたとき、同じ時刻どうしの順番を決める。発表時刻の古い順、それも同じなら
+ * 発表を先・取消を後ろにする（取消は照合する相手の発表が先に当たっていないと空振りする）。発表時刻が読めない
+ * 電文は後ろへ回す。
+ * 帯でない種別（長周期・推計震度分布図）は受け手が時刻や地震で選び直すので、順番を付けない。
+ */
+export function compareExtraTieBreak(a: ReplayPayload, b: ReplayPayload): number {
+  const band = (p: ReplayPayload) => {
+    switch (p.kind) {
+      case 'nankai':
+      case 'nankaiCommentary':
+      case 'kohatsu':
+      case 'quakeNotice':
+      case 'earthquakeCount':
+        return p.data
+      default:
+        return null
+    }
+  }
+  const x = band(a)
+  const y = band(b)
+  if (x === null || y === null) return 0
+  // 発表時刻が読めない電文は後ろへ回す（読めるものとの間でも順を決めておかないと、比較の推移律が崩れる）。
+  const tx = Date.parse(x.reportDateTime)
+  const ty = Date.parse(y.reportDateTime)
+  const fx = Number.isFinite(tx)
+  const fy = Number.isFinite(ty)
+  if (fx !== fy) return fx ? -1 : 1
+  if (fx && tx !== ty) return tx - ty
+  return Number(Boolean(x.cancelled)) - Number(Boolean(y.cancelled))
+}
+
+/**
  * 指定時刻より前に発表された地震電文を、日次アーカイブを遡って集める（地震カードの履歴復元用）。
  *
  * 「初期状態」の取得（`fetchDmdataReplayEvents` の pre-window）と分けている理由:
@@ -2094,8 +2126,9 @@ export async function fetchDmdataQuakeHistory(
   /** 429 の窓で見送った**電文**の数（取得元とは単位が違う）。 */
   let rateLimitedTelegrams = 0
   /**
-   * 帯と長周期は種別ごとに最新 1 通だけ残す（鍵の作り方は `historyExtraKey`）。
-   * 推計震度分布図は電文ごとに別の鍵なので全部残る（どれが同じ地震かは受け手が決める）。
+   * 長周期は地震ごとに最新 1 通だけ残す（鍵の作り方は `historyExtraKey`）。
+   * 帯と推計震度分布図は電文ごとに別の鍵なので全部残る（どの報が残るかは受け手が届いた順に当てて決める）。
+   * 同じ鍵が 2 度来るのは同じ電文の重複配信なので、そこだけ 1 通にまとまる。
    */
   const extraLatest = new Map<string, { payload: ReplayPayload; timeMs: number }>()
   const keepExtra = (key: string, payload: ReplayPayload, timeMs: number) => {
@@ -2359,8 +2392,7 @@ export async function fetchDmdataQuakeHistory(
         if (!parsed) { skipCounter.add(item.date); continue }
         switch (parsed.kind) {
           case 'extra':
-            // 帯と長周期は「種別ごとに最新 1 通」だけを残す（画面に出るのは 1 つ・長周期は
-            // 地震ごと）。古い報まで流すと、初期状態が入れた新しい値を上書きしうる。
+            // 長周期は地震ごとに最新 1 通、帯は電文ごとに残す（鍵の作り方と理由は `historyExtraKey`）。
             keepExtra(parsed.key, parsed.payload, entryTime.getTime())
             break
           case 'tsunami':
@@ -2576,8 +2608,10 @@ export async function fetchDmdataQuakeHistory(
   }
 
   // 帯と長周期は古い順に流す（`useReplayController` が初期状態の材料へ混ぜる）。
+  // **受信時刻が同じなら発表時刻、それも同じなら取消を後ろへ。** 帯は電文ごとに流すので、同じ秒に
+  // 並んだ発表と取消が逆に当たると、取消が空振りしたあと発表が当たって取り消された帯が出る。
   const extras: ReplayEntry[] = [...extraLatest.values()]
-    .sort((a, b) => a.timeMs - b.timeMs)
+    .sort((a, b) => a.timeMs - b.timeMs || compareExtraTieBreak(a.payload, b.payload))
     .map((x) => ({ payload: x.payload, replayTime: new Date(x.timeMs), silent: true }))
   // **打ち切ったときは出さない。** 上で打ち切りを記録済みで、こちらは「復元した」と名乗るため
   // 0 件の行が並ぶと復元できなかったのか静かだったのか読めない。

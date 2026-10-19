@@ -2,13 +2,13 @@
 // 「〇時〇分」はローカルタイムゾーン依存のため、時刻の数値そのものではなく
 // 「日から読む／時分だけ読む」という書式の違いを正規表現で検証する。
 import { describe, it, expect, vi } from 'vitest'
-import { earthquakeCancelToText, tsunamiCancelToText, eewCancelToText, CANCEL_REASON_SPEAK_MAX_CHARS, nankaiToText, earthquakeCountToText, quakeNoticeToText,
+import { earthquakeCancelToText, tsunamiCancelToText, eewCancelToText, CANCEL_REASON_SPEAK_MAX_CHARS, nankaiToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText,
   estimatedIntensityToText, earthquakeToText, earthquakeToSegments, createQuakeSpokenState, applySpokenRefs, eewAlertToText, eewIntensityText, voicevoxPreviewTexts, lpgmToText, tsunamiToText, tsunamiToSegments, tsunamiDowngradeToText, tsunamiDowngradeToSegments, tsunamiArrivalToText, tsunamiMissingToText, tsunamiObservationUpdateToText, tsunamiAreaGradeChangeToText, tsunamiWarningLevelToText, selectWarningLevelToSpeak, selectObservationUpdatesToSpeak, selectMissingToSpeak, selectArrivalsToSpeak, WARNING_LEVEL_SPEAK_MAX_POINTS, joinWithAlso, telegramTextToSpeak, TELEGRAM_TEXT_BLOCK_KEYS, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, applyTsunamiSpokenRefs } from './ttsText'
 import { INTENSITY_SCALE_COUNT } from './intensity'
 import { joinSegments, mapChunksToRefs, plain, type SpeechSegment } from './ttsFollow'
 import { splitIntoChunks } from './voicevox'
 import { log } from './logger'
-import { tsunamiAreaGradeChanges } from './tsunami'
+import { tsunamiAreaGradeChanges, tsunamiLiftText } from './tsunami'
 import { getStationCoordsCache } from './stationCoords'
 import { eewMaxScaleInfo, eewMaxLpgmClassInfo } from './eew'
 import type { TsunamiObservation, LiveEvent, JMAQuake, JMALpgm, EarthquakePoint, IssueType, DomesticTsunami, IntensityScale, EEWAlert, LpgmClass, JMATsunami, TsunamiArea, JMANankai, JMAEarthquakeCount } from '../types/earthquake'
@@ -3476,5 +3476,72 @@ describe('津波の読み上げ: 原因地震が 2 つ以上あるとき', () =>
     const out = text(t)
     expect(out).toContain('この地震の震源は石川県能登地方')
     expect(out).not.toContain('もう一つの地震')
+  })
+})
+
+// 後発地震注意情報の取消は、取り消された事実だけを伝える（臨時情報の取消と揃える）。
+describe('kohatsuToText: 取消', () => {
+  const kohatsu = (over: Record<string, unknown> = {}) => ({
+    id: 'k-1', time: '2026-07-18T01:00:00+09:00', eventId: 'k',
+    headline: '北海道・三陸沖後発地震注意情報（取消）',
+    body: 'システムの障害により、先に発表した北海道・三陸沖後発地震注意情報を取り消します。',
+    cancelled: false, reportDateTime: '2026-07-18T01:00:00+09:00', expireAt: '2026-07-25T01:00:00+09:00',
+    ...over,
+  }) as unknown as Parameters<typeof kohatsuToText>[0]
+
+  // 正: 取消は事実だけ。見出しも理由も読まない
+  it('取消は「取り消されました」とだけ伝える', () => {
+    expect(kohatsuToText(kohatsu({ cancelled: true, retracted: true }))).toBe('北海道・三陸沖後発地震注意情報は取り消されました。')
+  })
+
+  // 対照: 発表は従来どおり見出しと呼びかけを読む
+  it('発表は呼びかけまで読む', () => {
+    const text = kohatsuToText(kohatsu({ headline: '北海道・三陸沖後発地震注意情報' }))
+    expect(text).toContain('防災対応の確認をしてください。')
+    expect(text).not.toContain('取り消されました')
+  })
+})
+
+// 全区域解除の報は、気象庁が書いた文を最下位の層で読む（2026-10-14 ユーザー選択「画面にも出し、読み上げる」）。
+describe('telegramTextToSpeak: 津波の全区域解除', () => {
+  const ON: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0, readTelegramText: true }
+  const LIFT_COMMENT = '現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。'
+  const lift = (over: Partial<JMATsunami> = {}): JMATsunami => ({
+    kind: 'tsunami', id: 'dmdata-tsunami-20260728162718-VTSE41-', eventId: '20260728162718', headType: 'VTSE41',
+    time: '2026-07-28T18:10:00+09:00', cancelled: true, cancelReason: 'lifted',
+    infoName: '津波予報', headline: '津波注意報を解除しました。',
+    warningComments: [{ key: 'VTSE41', text: LIFT_COMMENT }],
+    issue: { source: '気象庁', time: '2026-07-28T18:10:00+09:00', type: 'Focus' }, areas: [],
+    ...over,
+  })
+
+  // 正: 解除の報の固定付加文を、前置きを付けて読む
+  it('解除の報の固定付加文を読む', () => {
+    const speech = telegramTextToSpeak(lift(), ON)
+    expect(speech?.text).toBe(`津波情報について、気象庁の発表文をお伝えします。${LIFT_COMMENT}`)
+  })
+
+  // 対照: 誤報取消と失効は読まない（取消の理由は `tsunamiCancelToText` が読み、失効には電文が無い）
+  it('誤報取消と失効は読まない', () => {
+    expect(telegramTextToSpeak(lift({ cancelReason: 'retracted', cancelText: '誤って発表しました。' }), ON)).toBeNull()
+    expect(telegramTextToSpeak(lift({ cancelReason: 'expired' }), ON)).toBeNull()
+  })
+
+  // 安全弁: 気象庁の文を読む設定を切っていれば、解除でも読まない
+  it('設定を切っていれば読まない', () => {
+    expect(telegramTextToSpeak(lift(), { ...ON, readTelegramText: false })).toBeNull()
+  })
+})
+
+// 解除表示に出す気象庁の文（本文・固定付加文・自由付加文を改行で連ねる）。
+describe('tsunamiLiftText', () => {
+  it('本文・固定付加文・自由付加文の順に連ねる', () => {
+    expect(tsunamiLiftText({ bodyText: '本文。', warningComments: [{ key: 'VTSE41', text: '付加文。' }], freeText: '自由。' }))
+      .toBe('本文。\n付加文。\n自由。')
+  })
+
+  // 安全弁: 空白だけの文は捨て、何も無ければ持たない（空の枠を画面に出さない）
+  it('空白だけなら持たない', () => {
+    expect(tsunamiLiftText({ bodyText: '  ', warningComments: [], freeText: undefined })).toBeUndefined()
   })
 })

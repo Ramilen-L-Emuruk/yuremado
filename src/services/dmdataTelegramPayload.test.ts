@@ -15,6 +15,10 @@ import {
 } from './dmdataTelegramPayload'
 import { PREFERRED_CLASSIFICATIONS, eewHeadTypeFor } from './dmdataClassifications'
 import { buildSampleTelegram } from '../test-utils/bufrBuild'
+import type { ReplayPayload } from '../types/replay'
+import {
+  createTestNankai, createTestNankaiCommentary, createTestKohatsu, createTestQuakeNotice, createTestEarthquakeCount,
+} from '../utils/testData'
 
 // 2024-01-01 能登半島地震の緊急地震速報（地震動予報・警報級）を最小化したもの。
 const EEW_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -175,5 +179,51 @@ describe('推計震度分布図の historyExtraKey', () => {
   it('発表時刻が違えば別の鍵', () => {
     expect(historyExtraKey(payloadWithId('a', '2026-09-16T00:00:00Z')))
       .not.toBe(historyExtraKey(payloadWithId('a', '2026-09-16T00:06:00Z')))
+  })
+})
+
+// 帯（南海トラフ・解説情報・後発地震・お知らせ・地震回数）の鍵は**電文ごと**。種別ごとに 1 通へ畳むと、
+// 最新の 1 通が取消のとき取り消す相手の発表が落ち、帯の取消が当てる先を失う。
+describe('帯の historyExtraKey', () => {
+  // 帯の 5 種別を実際の型で作る（`as never` で型を潰すと、項目名が型から消えても鍵が
+  // `kind:undefined|undefined|issue` に化けたまま通ってしまう）。
+  type BandPayload = Extract<ReplayPayload, { kind: 'nankai' | 'nankaiCommentary' | 'kohatsu' | 'quakeNotice' | 'earthquakeCount' }>
+  const bands: BandPayload[] = [
+    { kind: 'nankai', data: createTestNankai('調査中') },
+    { kind: 'nankaiCommentary', data: createTestNankaiCommentary('臨時解説') },
+    { kind: 'kohatsu', data: createTestKohatsu() },
+    { kind: 'quakeNotice', data: createTestQuakeNotice() },
+    { kind: 'earthquakeCount', data: createTestEarthquakeCount() },
+  ]
+  const withData = (p: BandPayload, patch: { id?: string; reportDateTime?: string; cancelled?: boolean }): BandPayload =>
+    ({ ...p, data: { ...p.data, ...patch } } as BandPayload)
+
+  for (const band of bands) {
+    describe(band.kind, () => {
+      // 正: 同じ識別情報の発表と取消は別の鍵（両方を流す）
+      it('発表と取消は別の鍵', () => {
+        expect(historyExtraKey(band)).not.toBe(historyExtraKey(withData(band, { cancelled: true })))
+      })
+
+      // 正: 同じ種別でも電文が違えば別の鍵（最新 1 通へ畳まない）
+      it('別の電文は別の鍵', () => {
+        expect(historyExtraKey(band)).not.toBe(historyExtraKey(withData(band, { id: 'other', reportDateTime: '2026-07-18T02:00:00+09:00' })))
+      })
+
+      // 対照: 同じ電文（id・発表時刻・取消かどうかが同じ）は同じ鍵（24 時間側と履歴側で二重に積まない）
+      it('同じ電文は同じ鍵', () => {
+        expect(historyExtraKey(band)).toBe(historyExtraKey({ ...band }))
+      })
+
+      it('鍵に undefined が入らない', () => {
+        expect(historyExtraKey(band)).not.toContain('undefined')
+      })
+    })
+  }
+
+  // 安全弁: 長周期は従来どおり地震ごと（受け手が時刻で最新を選ぶ）
+  it('長周期は地震ごとの鍵のまま', () => {
+    const lpgm = (id: string) => ({ kind: 'lpgm' as const, data: { id, eventId: 'e1' } as never })
+    expect(historyExtraKey(lpgm('x'))).toBe(historyExtraKey(lpgm('y')))
   })
 })

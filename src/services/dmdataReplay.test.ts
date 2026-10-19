@@ -14,7 +14,9 @@ import { PREFERRED_CLASSIFICATIONS } from './dmdataClassifications'
 import {
   fetchDmdataReplayEvents, fetchDmdataQuakeHistory, clearReplayCache, clearArchiveCacheForTest,
   clearParseCachesForTest, filterPreWindowEvents, isArchiveCacheable, HISTORY_WINDOW_DAYS, fetchDmdataEewOrigins, needsPerEventFetch,
+  compareExtraTieBreak,
 } from './dmdataReplay'
+import { createTestKohatsu, createTestKohatsuRetraction } from '../utils/testData'
 import { clearArchiveBodyDb } from '../utils/archiveBodyDb'
 
 /**
@@ -2209,7 +2211,7 @@ describe('fetchDmdataQuakeHistory', () => {
    * 中身は最小限（区間 1 つ）。ここで見たいのは「拾うかどうか」だけで、読み取りそのものは
    * `dmdataParser.test.ts` が実電文の形で固定している。
    */
-  function countBody(eventId: string, reportTime: string): string {
+  function countBody(eventId: string, reportTime: string, infoType: '発表' | '取消' = '発表'): string {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Report xmlns="http://xml.kishou.go.jp/jmaxml1/">
 <Control><Title>地震回数に関する情報</Title><Status>通常</Status><EditorialOffice>気象庁</EditorialOffice><PublishingOffice>気象庁</PublishingOffice></Control>
@@ -2218,7 +2220,7 @@ describe('fetchDmdataQuakeHistory', () => {
 <ReportDateTime>${reportTime}</ReportDateTime>
 <TargetDateTime>${reportTime}</TargetDateTime>
 <EventID>${eventId}</EventID>
-<InfoType>発表</InfoType>
+<InfoType>${infoType}</InfoType>
 <Serial>1</Serial>
 </Head>
 <Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/seismology1/">
@@ -2232,7 +2234,7 @@ describe('fetchDmdataQuakeHistory', () => {
   /** 地震と地震回数を混ぜた 1 日ぶんのアーカイブ。 */
   async function dayArchiveWithCount(
     quakes: Array<{ id: string; eventId: string; time: string }>,
-    counts: Array<{ id: string; eventId: string; time: string }>,
+    counts: Array<{ id: string; eventId: string; time: string; infoType?: '発表' | '取消' }>,
   ) {
     return makeTarGz([
       {
@@ -2243,7 +2245,7 @@ describe('fetchDmdataQuakeHistory', () => {
         ]),
       },
       ...quakes.map(t => ({ name: defaultFileName(t.id, t.time), content: historyBody(t.eventId, t.time) })),
-      ...counts.map(t => ({ name: defaultFileName(t.id, t.time), content: countBody(t.eventId, t.time) })),
+      ...counts.map(t => ({ name: defaultFileName(t.id, t.time), content: countBody(t.eventId, t.time, t.infoType) })),
     ])
   }
 
@@ -2276,8 +2278,10 @@ describe('fetchDmdataQuakeHistory', () => {
     expect(result.extras[0].silent).toBe(true)
   })
 
-  // 帯は画面に 1 つしか出ない。古い報まで流すと、初期状態が入れた新しい値を上書きしうる。
-  it('同じ種別の帯は最新 1 通だけを返す', async () => {
+  // **覆した: 同じ種別の帯も電文ごとに返す**（以前は最新 1 通だけを返していた）。最新の 1 通が取消なら、
+  // その前の発表を落とすと取り消すものが無く、帯は出ないまま終わるべきところで、発表を畳んで消していた
+  // 形と区別できなかった。古い順に並べて流し、受け手が最後の 1 通で決める（→ `historyExtraKey`）。
+  it('同じ種別の帯も電文ごとに、古い順で返す', async () => {
     const day = await dayArchiveWithCount(
       [],
       [
@@ -2289,8 +2293,50 @@ describe('fetchDmdataQuakeHistory', () => {
 
     const result = await fetchDmdataQuakeHistory('key', new Date('2026-08-10T12:00:00+09:00'), 7, false, null)
 
-    expect(result.extras).toHaveLength(1)
-    expect(result.extras[0].replayTime.toISOString()).toBe(new Date('2026-08-10T03:05:00+09:00').toISOString())
+    expect(result.extras.map(e => e.replayTime.toISOString())).toEqual([
+      new Date('2026-08-10T01:05:00+09:00').toISOString(),
+      new Date('2026-08-10T03:05:00+09:00').toISOString(),
+    ])
+  })
+
+  // 受信時刻が同じ帯どうしの並び。取消が発表より先に当たると、取消は空振りし、そのあと発表が当たって
+  // 取り消された帯が出る。
+  describe('compareExtraTieBreak', () => {
+    const issue = createTestKohatsu()
+    const cancel = createTestKohatsuRetraction(issue)
+    const k = (data: typeof issue) => ({ kind: 'kohatsu' as const, data })
+
+    it('正: 発表時刻が同じなら、取消を発表の後ろへ回す', () => {
+      const sameTime = { ...cancel, reportDateTime: issue.reportDateTime }
+      expect([k(sameTime), k(issue)].sort(compareExtraTieBreak).map(p => p.data.cancelled)).toEqual([false, true])
+    })
+
+    it('対照: 発表時刻が違えば、取消でも古いほうを先にする', () => {
+      const earlier = { ...cancel, reportDateTime: '2026-08-10T00:00:00+09:00' }
+      const later = { ...issue, reportDateTime: '2026-08-10T01:00:00+09:00' }
+      expect([k(later), k(earlier)].sort(compareExtraTieBreak).map(p => p.data.cancelled)).toEqual([true, false])
+    })
+
+    it('安全弁: 帯でない種別には順番を付けない', () => {
+      const lpgm = { kind: 'lpgm' } as Parameters<typeof compareExtraTieBreak>[0]
+      expect(compareExtraTieBreak(lpgm, k(cancel))).toBe(0)
+      expect(compareExtraTieBreak(k(cancel), lpgm)).toBe(0)
+    })
+  })
+
+  // 受信時刻も発表時刻も同じ発表と取消は、アーカイブの並びによらず発表を先にして返す（→ `compareExtraTieBreak`）。
+  // 取消が先に当たると空振りし、そのあと発表が当たって取り消された帯が出る。
+  it('同じ時刻の帯の発表と取消は、取消を後ろにして返す', async () => {
+    const time = '2026-08-10T03:05:00+09:00'
+    const day = await dayArchiveWithCount([], [
+      { id: 'bbbbbbb2', eventId: '20260810000000', time, infoType: '取消' },
+      { id: 'aaaaaaa1', eventId: '20260810000000', time },
+    ])
+    globalThis.fetch = mockHistoryArchives([{ date: '2026-08-10', url: 'https://x/d10', gz: day }]) as unknown as typeof fetch
+
+    const result = await fetchDmdataQuakeHistory('key', new Date('2026-08-10T12:00:00+09:00'), 7, false, null)
+
+    expect(result.extras.map(e => e.payload.kind === 'earthquakeCount' && e.payload.data.cancelled)).toEqual([false, true])
   })
 
   it('一部のアーカイブが読めなくても、残りから履歴を作る', async () => {

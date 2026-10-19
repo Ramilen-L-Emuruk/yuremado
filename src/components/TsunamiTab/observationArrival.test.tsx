@@ -10,10 +10,11 @@
 //
 // 時刻は `formatTime` がローカル時刻で組むため、**オフセットを書かない表記**を使う
 // （CI は TZ=UTC で回る）。
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { TsunamiTab } from './index'
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../../types/earthquake'
+import { log } from '../../utils/logger'
 
 afterEach(cleanup)
 
@@ -117,5 +118,34 @@ describe('観測点の行の到達予想', () => {
   it('予報だけの行が時刻を持たなければ欄を出さない', () => {
     render(<TsunamiTab tsunamis={[makeTsunami([{ name: '相馬', code: '25001' }], [])]} isVisible />)
     expect(timeLineOf('相馬')).toBeNull()
+  })
+})
+
+// 実測の無い観測点の行のバッジ。観測点ごとの到達状況があれば「予測」をその語に置き換える
+// （2026-10-19 ユーザー選択「「予測」を置き換える（推奨）」）。
+describe('実測の無い観測点の行の到達状況', () => {
+  afterEach(() => { vi.restoreAllMocks() })
+
+  /** 名前の span と同じ行に並ぶバッジの文字。 */
+  function badgeOf(name: string): string | null {
+    const nameEl = screen.getByText(name)
+    return nameEl.parentElement?.querySelectorAll('span')[1]?.textContent ?? null
+  }
+
+  it('正: 「津波到達中と推測」なら「予測」の代わりに「到達中」を出す', () => {
+    render(<TsunamiTab tsunamis={[makeTsunami([{ name: '相馬', code: '25001', arrivalCondition: '津波到達中と推測' }], [])]} />)
+    expect(badgeOf('相馬')).toBe('到達中')
+  })
+
+  it('対照: 到達状況が無ければ「予測」のまま', () => {
+    render(<TsunamiTab tsunamis={[makeTsunami([{ name: '相馬', code: '25001' }], [])]} />)
+    expect(badgeOf('相馬')).toBe('予測')
+  })
+
+  it('安全弁: 表に無い語は「予測」へ倒し、語を記録へ残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    render(<TsunamiTab tsunamis={[makeTsunami([{ name: '相馬', code: '25001', arrivalCondition: 'まだ無い語' }], [])]} />)
+    expect(badgeOf('相馬')).toBe('予測')
+    expect(warn.mock.calls.map(c => c.join(' ')).join(' | ')).toContain('まだ無い語')
   })
 })

@@ -3078,6 +3078,87 @@ const VTSE41_PARTIAL_LIFT_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </Body>
 </Report>`
 
+// 全区域解除の報。実電文（2026-07-28 18:10 JST の VTSE41・熊本県熊本地方の地震）の形を写す:
+// 情報名「津波予報」、見出し「津波注意報を解除しました。」、区域 1 件が解除コード 60、
+// 原因地震あり、固定付加文 0107 が 1 件、本文と自由付加文は無い。
+const VTSE41_FULL_LIFT_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<Report xmlns="http://xml.kishou.go.jp/jmaxml1/" xmlns:jmx_eb="http://xml.kishou.go.jp/jmaxml1/elementBasis1/">
+  <Control>
+    <Title>津波警報・注意報・予報a</Title>
+    <DateTime>2026-07-28T09:10:11Z</DateTime>
+    <PublishingOffice>気象庁</PublishingOffice>
+  </Control>
+  <Head xmlns="http://xml.kishou.go.jp/jmaxml1/informationBasis1/">
+    <Title>津波予報</Title>
+    <ReportDateTime>2026-07-28T18:10:00+09:00</ReportDateTime>
+    <EventID>20260728162718</EventID>
+    <InfoType>発表</InfoType>
+    <Serial></Serial>
+    <Headline><Text>津波注意報を解除しました。</Text></Headline>
+  </Head>
+  <Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/seismology1/">
+    <Tsunami>
+      <Forecast>
+        <Item>
+          <Area><Name>有明・八代海</Name><Code>712</Code></Area>
+          <Category>
+            <Kind><Name>津波注意報解除</Name><Code>60</Code></Kind>
+            <LastKind><Name>津波注意報</Name><Code>62</Code></LastKind>
+          </Category>
+        </Item>
+      </Forecast>
+    </Tsunami>
+    <Earthquake>
+      <OriginTime>2026-07-28T16:27:00+09:00</OriginTime>
+      <ArrivalTime>2026-07-28T16:27:00+09:00</ArrivalTime>
+      <Hypocenter><Area>
+        <Name>熊本県熊本地方</Name>
+        <Code>741</Code>
+        <jmx_eb:Coordinate description="北緯３２．７度　東経１３０．８度　深さ　１０ｋｍ">+32.7+130.8-10000/</jmx_eb:Coordinate>
+      </Area></Hypocenter>
+      <jmx_eb:Magnitude type="Mj">7.1</jmx_eb:Magnitude>
+    </Earthquake>
+    <Comments>
+      <WarningComment codeType="固定付加文"><Text>現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。</Text><Code>0107</Code></WarningComment>
+    </Comments>
+  </Body>
+</Report>`
+
+// 全区域解除の報も、気象庁が書いた文と原因地震を持つ（2026-10-14 ユーザー選択「画面にも出し、読み上げる」）。
+describe('津波 XML: 全区域解除の報が持つもの', () => {
+  // 正: 見出し・情報名・固定付加文・原因地震を持つ。最小の形で返していたころは、0107 の文が届いても
+  // 画面にも声にも出なかった
+  it('見出し・情報名・固定付加文・原因地震を持つ', () => {
+    const t = parseTsunamiFromXml('VTSE41', VTSE41_FULL_LIFT_XML)!
+    expect(t.cancelled).toBe(true)
+    expect(t.cancelReason).toBe('lifted')
+    expect(t.headline).toBe('津波注意報を解除しました。')
+    expect(t.infoName).toBe('津波予報')
+    expect(t.warningComments).toEqual([{ key: 'VTSE41', text: '現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。' }])
+    expect(t.sourceEarthquakes?.map(e => e.hypocenterName)).toEqual(['熊本県熊本地方'])
+  })
+
+  // 対照: 区域・解除区域・期限は持たない。解除の表示に区域名は出さない（2026-10-19 ユーザー選択「出さない（推奨）」）
+  it('区域・解除区域・期限は持たない', () => {
+    const t = parseTsunamiFromXml('VTSE41', VTSE41_FULL_LIFT_XML)!
+    expect(t.areas).toEqual([])
+    expect(t.cancelledAreas).toBeUndefined()
+    expect(t.validDateTime).toBeUndefined()
+  })
+
+  // 安全弁: 誤報取消は従来どおり最小の形（理由だけを持つ）。解除と取消を同じ形にしない
+  it('誤報取消は理由だけを持つ', () => {
+    const retraction = VTSE41_FULL_LIFT_XML
+      .replace('<InfoType>発表</InfoType>', '<InfoType>取消</InfoType>')
+      .replace('    <Comments>', '    <Text>システムの障害により誤った津波警報等を配信しました。</Text>\n    <Comments>')
+    const t = parseTsunamiFromXml('VTSE41', retraction)!
+    expect(t.cancelReason).toBe('retracted')
+    expect(t.cancelText).toBe('システムの障害により誤った津波警報等を配信しました。')
+    expect(t.warningComments).toBeUndefined()
+    expect(t.sourceEarthquakes).toBeUndefined()
+  })
+})
+
 // 区域の名前を読めなかったときに「正式解除」へ化けないこと。
 //
 // XML 経路は名前を読めない区域を捨てる（`if (!areaName) continue`）。捨てた結果 0 件になったものを
