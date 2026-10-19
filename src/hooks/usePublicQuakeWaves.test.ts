@@ -135,6 +135,27 @@ describe('usePublicQuakeWaves', () => {
     expect(card.columns.columns.length).toBeGreaterThan(0)
   })
 
+  // 正（2026-10-19 ユーザー承認「地震ごとに選んで合わせる (推奨)」）: 発生から 10 分以内の地震は、いちばん新しい 1 件に限らず
+  // 下部の波形の番号を引き継ぐ。下部の波形に無い観測点は、下部の波形で使った番号の続きから振る（地図の印と重ならない）。
+  // 以前は新しい 1 件だけが引き継ぎ、古い側のカードは 1 から振り直していた。新しい側も、引き継いだ番号の続きから振るので
+  // 地図の別の観測点と番号が重なりえた。
+  it('発生から 10 分以内の地震はどれも下部の波形の番号を引き継ぎ、無い観測点は続きの番号にする', async () => {
+    setReplayOffset(Date.parse('2026-10-13T11:46:00Z') - Date.now())
+    archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB']) })
+    const quakes = [quake('new', TIME, 30), quake('old', '2026/10/13 20:43:30', 30, 35.6, 139.9)]
+    const live = new Map([['ZZZ', 5], ['BBB', 3]])
+    const h = renderHook(() =>
+      usePublicQuakeWaves({ enabled: true, quakes, originSeconds: NO_SECONDS, openedEventKey: null, liveNumbers: live, readLiveRaw, replayOffsetMs: null }),
+    )
+    for (const q of quakes) {
+      const key = quakeEventKey(q)
+      await waitFor(() => expect(h.result.current.get(key)?.length).toBe(2))
+      const byCode = new Map(h.result.current.get(key)!.map((w) => [w.code, w.number]))
+      expect(byCode.get('BBB')).toBe(3)
+      expect(byCode.get('AAA')).toBe(6)
+    }
+  })
+
   // 安全弁: 入りきってから取った控えは、開き直しても取りに行かない（保存庫を繰り返し問い合わせない）。
   it('控えがあれば取りに行かない', async () => {
     archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB']) })

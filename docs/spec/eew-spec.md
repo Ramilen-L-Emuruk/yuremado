@@ -1083,13 +1083,13 @@ M1.0** を仮の震源として電文に書く。震央地名もその観測点�
   仮定震源要素かどうかで分ける必要がない。`EewAreaFill` は震源を持たず、`useEewLayerData.test.ts` が
   それを固定している。**以前は震源から走時を解いていて、そのとき仮定震源要素を除外していた**
 - **揺れ検知の基準震源選定** — `src/hooks/useKyoshinAlerts.ts` の `extractEewInfo`
-- **公開観測点を予測計測震度で選ばない** — `src/hooks/usePublicWaves.ts` の `selectionSource` が `isProvisionalHypocenter` で `assumed` を立て、
+- **公開観測点を予測計測震度で選ばない** — `src/hooks/usePublicWaves.ts` の `selectionSources` が `isProvisionalHypocenter` で `assumed` を立て、
   `src/utils/publicStationSelection.ts` の `candidateCodes` がそれを見て、揺れ検知があればいちばん強い検知点から 150 km の中、
   無ければ震央（最初に揺れを捉えた観測点の所在地）に近い順に 3 点を選ぶ（[`public-waveform-design.md`](../public-waveform-design.md) §0。
   規模不明の報も同じ扱い）。仮の M・深さで有感範囲を引くと、根拠のない範囲の観測点を出すことになる。**渡す速報は
-  `src/utils/countdownEew.ts` の `pickPublicWaveEew` が選ぶ** —— 予報円を描いている報があれば S 波の波面がいちばん外側にあるもの、
-  無ければ発表中の報（取消を外したもの）のうち発生がいちばん新しいもの。予報円は仮定震源要素の報を外す（上の 1 行目）ので、
-  P/S 線の選び方だけに頼ると仮定震源要素の報が観測点選びに届かない。こちらで拾う
+  `src/utils/countdownEew.ts` の `pickPublicWaveEews` が並べる** —— 発表中の報（取消を外したもの）すべてで、予報円を描いている報が先、
+  予報円を描かない報（仮定震源要素など）がその後ろ（地震ごとに選んで合わせる。2026-10-19 ユーザー承認。原文は [`public-waveform-design.md`](../public-waveform-design.md) §0 の決定表）。
+  予報円は仮定震源要素の報を外す（上の 1 行目）ので、P/S 線の選び方だけに頼ると仮定震源要素の報が観測点選びに届かない。こちらで拾う
   （[`data-sources-spec.md`](data-sources-spec.md) §4.6「どの観測点を出すか」）
 - **予想震度が出ない理由の判定**（ここだけは `condition` を直接見る。上記のとおり、強い揺れを検知した報を巻き込まないため） — `src/utils/eew.ts` の `eewNoForecastReason`。読み上げの文言
   （`src/utils/ttsText.ts` の `noForecastText`）と、予想震度の確定を待つかどうかの判断
@@ -1840,3 +1840,5 @@ DMDATA・P2PQuake で明示的な取消電文（`cancelled: true`）が来た場
   引けないときの文を書いた（2026-10-14 ユーザー承認、選択「緊急地震速報は取り消されました」）。以前は「 の緊急地震速報は
   取り消されました」と頭に空白が残っていた。画面に出ていた地震なのに名前を引けなかったときの警告も足した。§4 に、名前を
   読めない区域も警報級の判定には数えることを足した（以前は種別を見る前に捨てていた）。警告に警報級の件数と EventID・報番号を添えた
+- 2026-10-19: §5 の公開観測点の材料の速報を、`pickPublicWaveEews`（発表中の報すべて・地震ごとに選んで合わせる）に合わせて書き直した
+  （2026-10-19 ユーザー承認「地震ごとに選んで合わせる (推奨)」）。旧名は `pickPublicWaveEew`、`selectionSource` は `selectionSources` になった

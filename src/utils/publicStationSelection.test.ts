@@ -79,7 +79,7 @@ describe('selectPublicStations（番号と持ち越し）', () => {
     const { selected } = selectPublicStations({
       prev: EMPTY_PUBLIC_SELECTION,
       epochs,
-      source: { kind: 'hypocenter', ...MIYAGI, depthKm: 40, magnitude: 6.5, assumed: false },
+      sources: [{ kind: 'hypocenter', ...MIYAGI, depthKm: 40, magnitude: 6.5, assumed: false }],
       detection: null,
     })
     expect(selected[0]).toMatchObject({ number: 1, epoch: { code: 'JMM' } })
@@ -91,13 +91,13 @@ describe('selectPublicStations（番号と持ち越し）', () => {
     const first = selectPublicStations({
       prev: EMPTY_PUBLIC_SELECTION,
       epochs,
-      source: { kind: 'detection', lat: 38.0, lon: 140.7 },
+      sources: [{ kind: 'detection', lat: 38.0, lon: 140.7 }],
       detection: null,
     })
     const second = selectPublicStations({
       prev: first.state,
       epochs,
-      source: { kind: 'detection', lat: 26.6, lon: 128.0 },
+      sources: [{ kind: 'detection', lat: 26.6, lon: 128.0 }],
       detection: null,
     })
     for (const s of first.selected) expect(second.state.numbers.get(s.epoch.code)).toBe(s.number)
@@ -109,8 +109,46 @@ describe('selectPublicStations（番号と持ち越し）', () => {
   // 対照: いまの時刻で運用していない観測点は出さない（番号は記憶に残る）。
   it('運用していない観測点は出さない', () => {
     const prev = { numbers: new Map([['ASAJ', 1]]) }
-    const { selected, state } = selectPublicStations({ prev, epochs, source: { kind: 'detection', lat: 0, lon: 0 }, detection: null })
+    const { selected, state } = selectPublicStations({ prev, epochs, sources: [{ kind: 'detection', lat: 0, lon: 0 }], detection: null })
     expect(selected).toEqual([])
     expect(state.numbers.get('ASAJ')).toBe(1)
+  })
+})
+
+describe('selectPublicStations（緊急地震速報が同時に複数あるとき）', () => {
+  const miyagi = { kind: 'hypocenter', ...MIYAGI, depthKm: 40, magnitude: 6.5, assumed: false } as const
+  const okinawa = { kind: 'hypocenter', lat: 26.6, lon: 128.0, depthKm: 30, magnitude: 6.0, assumed: false } as const
+
+  // 正（2026-10-19 ユーザー承認「地震ごとに選んで合わせる (推奨)」）: 地震ごとに選んだ観測点を合わせて出す。
+  // 番号は渡した順に、地震ごとに震央へ近い順。以前は 1 件だけを材料にしていて、もう一方の地震の観測点が出なかった。
+  it('地震ごとに選んだ観測点を合わせ、渡した順に番号を振る', () => {
+    const first = candidateCodes(epochs, miyagi, null)
+    const second = candidateCodes(epochs, okinawa, null).filter((c) => !first.includes(c))
+    expect(second.length).toBeGreaterThan(0)
+    const { selected } = selectPublicStations({ prev: EMPTY_PUBLIC_SELECTION, epochs, sources: [miyagi, okinawa], detection: null })
+    expect(selected.map((s) => s.epoch.code)).toEqual([...first, ...second])
+    expect(selected.map((s) => s.number)).toEqual(selected.map((_, i) => i + 1))
+  })
+
+  // 対照: 材料が 1 つなら従来どおり（その地震の観測点だけ）。
+  it('材料が 1 つならその地震の観測点だけ', () => {
+    const { selected } = selectPublicStations({ prev: EMPTY_PUBLIC_SELECTION, epochs, sources: [okinawa], detection: null })
+    expect(selected.map((s) => s.epoch.code)).toEqual(candidateCodes(epochs, okinawa, null))
+  })
+
+  // 安全弁: 2 つの地震が同じ観測点を選んでも、番号は 1 つ（先に選んだ地震のもの）で、段は増えない。
+  it('同じ観測点を 2 つの地震が選んでも番号は 1 つ', () => {
+    const { selected } = selectPublicStations({ prev: EMPTY_PUBLIC_SELECTION, epochs, sources: [miyagi, miyagi], detection: null })
+    expect(selected.map((s) => s.epoch.code)).toEqual(candidateCodes(epochs, miyagi, null))
+  })
+
+  // 安全弁: 揺れ検知の点は震源の材料（仮定震源）にだけ使い、検知の材料そのものへは渡さない。
+  it('揺れ検知の点は震源の材料にだけ使う', () => {
+    const assumed = { ...miyagi, assumed: true } as const
+    const detection = { lat: 26.6, lon: 128.0 }
+    const { selected } = selectPublicStations({ prev: EMPTY_PUBLIC_SELECTION, epochs, sources: [assumed, { kind: 'detection', ...MIYAGI }], detection })
+    const fromAssumed = candidateCodes(epochs, assumed, detection)
+    const fromDetection = candidateCodes(epochs, { kind: 'detection', ...MIYAGI }, null).filter((c) => !fromAssumed.includes(c))
+    expect(selected.map((s) => s.epoch.code)).toEqual([...fromAssumed, ...fromDetection])
   })
 })

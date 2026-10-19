@@ -95,24 +95,37 @@ export function strongestDetection(points: readonly DetectedPoint[]): { lat: num
   return best === null ? null : { lat: best.lat, lon: best.lng }
 }
 
-/** 選ぶ材料。速報が無く検知も無ければ `null`（揺れていない）。 */
-function selectionSource(eew: EEWAlert | null, detection: { lat: number; lon: number } | null): PublicSelectionSource | null {
-  if (eew !== null) {
-    const h = eew.earthquake.hypocenter
-    if (Number.isFinite(h.latitude) && Number.isFinite(h.longitude)) {
-      // **仮定震源の判定に連動する箇所は eew-spec.md §5 に列挙する決まり。**
-      return {
-        kind: 'hypocenter',
-        lat: h.latitude,
-        lon: h.longitude,
-        depthKm: hasDepth(h.depth) ? h.depth : null,
-        magnitude: hasMagnitude(h.magnitude) ? h.magnitude : null,
-        assumed: isProvisionalHypocenter(eew),
-      }
-    }
+/**
+ * 選ぶ材料（番号を振る順）。**速報ごとに 1 つ**（2026-10-19 ユーザー承認「地震ごとに選んで合わせる (推奨)」）。
+ * 震源の位置が判らない速報は揺れ検知で代える（検知の材料は 1 つにまとめ、最初にそうした速報が現れた位置に置く）。
+ * 速報が無ければ検知だけ。どちらも無ければ空（揺れていない）。
+ */
+function selectionSources(eews: readonly EEWAlert[], detection: { lat: number; lon: number } | null): PublicSelectionSource[] {
+  const out: PublicSelectionSource[] = []
+  let detectionAdded = false
+  const addDetection = () => {
+    if (detection === null || detectionAdded) return
+    out.push({ kind: 'detection', ...detection })
+    detectionAdded = true
   }
-  if (detection !== null) return { kind: 'detection', ...detection }
-  return null
+  for (const eew of eews) {
+    const h = eew.earthquake.hypocenter
+    if (!Number.isFinite(h.latitude) || !Number.isFinite(h.longitude)) {
+      addDetection()
+      continue
+    }
+    // **仮定震源の判定に連動する箇所は eew-spec.md §5 に列挙する決まり。**
+    out.push({
+      kind: 'hypocenter',
+      lat: h.latitude,
+      lon: h.longitude,
+      depthKm: hasDepth(h.depth) ? h.depth : null,
+      magnitude: hasMagnitude(h.magnitude) ? h.magnitude : null,
+      assumed: isProvisionalHypocenter(eew),
+    })
+  }
+  if (eews.length === 0) addDetection()
+  return out
 }
 
 function browserShareDeps(makeLink: ConstructorParameters<typeof PublicWaveShare>[0]['makeLink']): ConstructorParameters<typeof PublicWaveShare>[0] {
@@ -143,13 +156,13 @@ export function usePublicWaves(params: {
   spanSec: number
   alwaysConnected: boolean
   /**
-   * 観測点を選ぶ材料の緊急地震速報（`pickPublicWaveEew`）。予報円が引ければ S 波の円がいちばん大きい速報、引けなければ
-   * 発表中のいちばん新しいもの（仮定震源要素・深さ不明も含む）。無ければ `null`。
+   * 観測点を選ぶ材料の緊急地震速報（`pickPublicWaveEews`）。発表中のものすべてで、**並びは番号を振る順**
+   * （予報円のある速報を S 波の円の大きい順、その後ろに予報円の無い速報を新しい順）。無ければ空。
    */
-  eew: EEWAlert | null
+  eews: readonly EEWAlert[]
   detectedPoints: readonly DetectedPoint[]
 }): PublicWaves {
-  const { enabled, replayOffsetMs, spanSec, alwaysConnected, eew, detectedPoints } = params
+  const { enabled, replayOffsetMs, spanSec, alwaysConnected, eews, detectedPoints } = params
   const replaying = replayOffsetMs !== null
 
   const [file, setFile] = useState<PublicStationsFile | null>(null)
@@ -174,12 +187,14 @@ export function usePublicWaves(params: {
 
   // --- 選び方（揺れの間の記憶） ---
   const detection = strongestDetection(detectedPoints)
-  const source = enabled ? selectionSource(eew, detection) : null
+  const sources = enabled ? selectionSources(eews, detection) : []
   const selectionRef = useRef<PublicSelectionState>(EMPTY_PUBLIC_SELECTION)
   const [lingering, setLingering] = useState(false)
-  const shaking = source !== null
-  // **検知も鍵に入れる**（速報が仮定震源要素のときは検知で仮に選ぶので、検知が後から現れたら選び直す）
-  const sourceKey = source === null ? '' : JSON.stringify([source, source.kind === 'hypocenter' ? detection : null])
+  const shaking = sources.length > 0
+  // **検知も鍵に入れる**（速報が仮定震源要素・規模不明のときは検知で仮に選ぶので、検知が後から現れたら選び直す）。
+  // 震源の要素がそろった速報だけなら検知は使わないので鍵に入れない（検知点が動くたびに選び直さない）
+  const usesDetection = sources.some((s) => s.kind === 'hypocenter' && (s.assumed || s.magnitude === null))
+  const sourceKey = sources.length === 0 ? '' : JSON.stringify([sources, usesDetection ? detection : null])
   const [selected, setSelected] = useState<readonly SelectedPublicStation[]>([])
   // **再生を始めた・止めた・時刻を変えたら、選び方の記憶と余韻を落とす**（別の時間軸の観測点・番号を持ち越さない）
   const timelineRef = useRef(replayOffsetMs)
@@ -191,11 +206,11 @@ export function usePublicWaves(params: {
     setLingering(false)
   }, [replayOffsetMs])
   useEffect(() => {
-    if (source === null || epochs.length === 0) return
-    const next = selectPublicStations({ prev: selectionRef.current, epochs, source, detection: source.kind === 'hypocenter' ? detection : null })
+    if (sources.length === 0 || epochs.length === 0) return
+    const next = selectPublicStations({ prev: selectionRef.current, epochs, sources, detection })
     selectionRef.current = next.state
     setSelected(next.selected)
-    // `source` は `sourceKey` で見る（毎レンダー新しいオブジェクトになるため）。
+    // `sources` は `sourceKey` で見る（毎レンダー新しいオブジェクトになるため）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKey, epochs, replayOffsetMs])
   useEffect(() => {

@@ -60,7 +60,7 @@ const eew = {
 } as unknown as EEWAlert
 
 type Params = Parameters<typeof usePublicWaves>[0]
-const base: Params = { enabled: true, replayOffsetMs: null, spanSec: 120, alwaysConnected: false, eew: null, detectedPoints: [] }
+const base: Params = { enabled: true, replayOffsetMs: null, spanSec: 120, alwaysConnected: false, eews: [], detectedPoints: [] }
 
 async function mount(initial: Params) {
   const r = renderHook((p: Params) => usePublicWaves(p), { initialProps: initial })
@@ -105,7 +105,7 @@ describe('usePublicWaves', () => {
 
   // 正: 緊急地震速報があれば観測点を選んで出し、運用中の全点を載せて繋ぐ。
   it('緊急地震速報で観測点を選んで出し、全点を載せて繋ぐ', async () => {
-    const r = await mount({ ...base, eew })
+    const r = await mount({ ...base, eews: [eew] })
     expect(r.result.current.visible).toBe(true)
     expect(r.result.current.stations[0]).toMatchObject({ code: 'JMM', number: 1, stale: true })
     const need = lastNeed()
@@ -114,10 +114,30 @@ describe('usePublicWaves', () => {
     expect(need.stations.length).toBeGreaterThanOrEqual(r.result.current.stations.length)
   })
 
+  // 正（2026-10-19 ユーザー承認「地震ごとに選んで合わせる (推奨)」）: 緊急地震速報が同時に複数あれば、地震ごとに
+  // 選んだ観測点を合わせて出す。番号は渡した順（宮城県沖が先、沖縄本島近海が後）。
+  it('緊急地震速報が複数あれば、地震ごとに選んだ観測点を合わせて出す', async () => {
+    const okinawa = {
+      earthquake: {
+        hypocenter: { latitude: 26.6, longitude: 128.0, depth: 30, magnitude: 6.0 },
+        condition: undefined,
+        originTime: new Date().toISOString(),
+      },
+    } as unknown as EEWAlert
+    const single = await mount({ ...base, eews: [eew] })
+    const miyagiOnly = single.result.current.stations.map((s) => s.code)
+    single.unmount()
+    const r = await mount({ ...base, eews: [eew, okinawa] })
+    const codes = r.result.current.stations.map((s) => s.code)
+    expect(codes.slice(0, miyagiOnly.length)).toEqual(miyagiOnly)
+    expect(codes.length).toBeGreaterThan(miyagiOnly.length)
+    expect(r.result.current.stations.map((s) => s.number)).toEqual(codes.map((_, i) => i + 1))
+  })
+
   // 正: 揺れの材料が消えても余韻のあいだは出したまま。明けたら引っ込め、繋ぐのもやめる。
   it('余韻のあいだは出し、明けたら引っ込めて繋ぐのをやめる', async () => {
-    const r = await mount({ ...base, eew })
-    r.rerender({ ...base, eew: null })
+    const r = await mount({ ...base, eews: [eew] })
+    r.rerender({ ...base, eews: [] })
     await act(async () => {
       vi.advanceTimersByTime(59_000)
     })
@@ -139,15 +159,15 @@ describe('usePublicWaves', () => {
 
   // 安全弁: 再生中（使えない）は繋ぐ係を作らず、揺れていても出さない。
   it('使えないときは繋ぐ係を作らず、出さない', async () => {
-    const r = await mount({ ...base, enabled: false, eew, alwaysConnected: true })
+    const r = await mount({ ...base, enabled: false, eews: [eew], alwaysConnected: true })
     expect(h.shares).toHaveLength(0)
     expect(r.result.current.visible).toBe(false)
   })
 
   // 安全弁: 使えなくなったら（再生を始めた）繋ぐ係を片付ける。
   it('使えなくなったら繋ぐ係を片付ける', async () => {
-    const r = await mount({ ...base, eew })
-    r.rerender({ ...base, eew, enabled: false })
+    const r = await mount({ ...base, eews: [eew] })
+    r.rerender({ ...base, eews: [eew], enabled: false })
     expect(h.shares[0].disposed).toBe(true)
     expect(r.result.current.visible).toBe(false)
   })
@@ -156,7 +176,7 @@ describe('usePublicWaves', () => {
   it('再生中は保存庫から再生時刻の分を取る', async () => {
     const offset = -3 * 3_600_000
     setReplayOffset(offset)
-    const r = await mount({ ...base, replayOffsetMs: offset, eew })
+    const r = await mount({ ...base, replayOffsetMs: offset, eews: [eew] })
     expect(h.shares).toHaveLength(0)
     expect(r.result.current.visible).toBe(true)
     expect(h.archive).toHaveLength(1)
@@ -169,19 +189,19 @@ describe('usePublicWaves', () => {
   it('再生時刻を変えても、同じ速報の観測点を新しい時間軸で直ちに選び直す', async () => {
     const offset = -3 * 3_600_000
     setReplayOffset(offset)
-    const r = await mount({ ...base, replayOffsetMs: offset, eew })
+    const r = await mount({ ...base, replayOffsetMs: offset, eews: [eew] })
     expect(r.result.current.visible).toBe(true)
     const first = r.result.current.stations.map(s => ({ code: s.code, number: s.number }))
     const next = offset - 10_000
     setReplayOffset(next)
-    r.rerender({ ...base, replayOffsetMs: next, eew })
+    r.rerender({ ...base, replayOffsetMs: next, eews: [eew] })
     await act(async () => {})
     expect(r.result.current.visible).toBe(true)
     expect(r.result.current.stations.map(s => ({ code: s.code, number: s.number }))).toEqual(first)
     expect(h.archive.length).toBeGreaterThan(1)
     // 材料が消えた別の時間軸には、前の選択・余韻を持ち越さない。
     setReplayOffset(next - 10_000)
-    r.rerender({ ...base, replayOffsetMs: next - 10_000, eew: null })
+    r.rerender({ ...base, replayOffsetMs: next - 10_000, eews: [] })
     await act(async () => {})
     expect(r.result.current.visible).toBe(false)
     expect(r.result.current.stations).toHaveLength(0)
