@@ -22,6 +22,7 @@ import {
   createTestLpgm,
   createTestQuakeAmendment,
   createTestQuakeReportSequence,
+  TSUNAMI_WARNING_FORECAST_TEXT,
   createTestTsunami,
   createTestTsunamiExpiry,
   createTestTsunamiForecast,
@@ -213,6 +214,26 @@ describe('地震情報テストの points 形状', () => {
   it('固定付加文（その他）は DMDSS 版だけが `＊` の説明を持つ', () => {
     expect(createTestEarthquake(true).varCommentText).toContain('＊印は気象庁以外の震度観測点')
     expect(createTestEarthquake(false).varCommentText).toBeUndefined()
+  })
+
+  // 固定付加文（`ForecastComment`）。地震カードに原文で出る（2026-10-19 ユーザー承認）ので、
+  // 渡し忘れると実機で一度も確かめられない。津波の欄とは違い、区分にならない文
+  // （緊急地震速報を発表した旨）を含む。
+  it('固定付加文は DMDSS 版だけが実電文どおり持つ', () => {
+    expect(createTestEarthquake(true).forecastText).toBe(notoHonshinQuake.forecastText)
+    expect(createTestEarthquake(true).forecastText).toContain('緊急地震速報を発表しています')
+    expect(createTestEarthquake(false).forecastText).toBeUndefined()
+  })
+
+  // 報の連続では種別ごとに実電文の形へ揃える。震度速報は「今後の情報に注意」、震源情報は
+  // 津波の文だけ（緊急地震速報の文は震源・震度情報にしか付かない。testData.ts の `destination`）。
+  it('報の連続の固定付加文は種別ごとに実電文の形を持つ', () => {
+    const byType = new Map(createTestQuakeReportSequence(true).map(q => [q.issue.type, q.forecastText]))
+    expect(byType.get('震度速報')).toBe('今後の情報に注意してください。')
+    expect(byType.get('震源情報')).toBe(TSUNAMI_WARNING_FORECAST_TEXT)
+    expect(byType.get('震源・震度情報')).toBe(notoHonshinQuake.forecastText)
+    // 標準版はどの報も持たない（P2PQuake は付加文を配信しない）
+    expect(createTestQuakeReportSequence(false).every(q => q.forecastText === undefined)).toBe(true)
   })
 
   // 元にした実電文（報番号 2）は「震源要素を訂正します。」（コード 0256）も持っている。
@@ -1188,8 +1209,8 @@ describe('テスト津波のバリアント差（P2PQuake 経路に無い項目�
 })
 
 describe('テスト EEW のバリアント差（P2PQuake / Yahoo 経路に無い項目）', () => {
-  // standard 版の EEW は 2 経路の合成。Yahoo hypoInfo が土台で、P2PQuake code=556 が区域と
-  // 震源要素を注ぎ足す（`useEarthquakes.ts` の `enrichEEW`）。どちらも運ばない欄がこれら。
+  // standard 版の EEW は 2 経路の合成。Yahoo hypoInfo と P2PQuake code=556 の報を
+  // `utils/eew.ts` の `mergeEewReport` が 1 つにまとめる。どちらも運ばない欄がこれら。
   const standardFactories = [
     ['createTestEEW（特別警報）', createTestEEW(false, 'e', 2)],
     ['createTestEEWWarning（警報）', createTestEEWWarning(false, 'e', 2)],

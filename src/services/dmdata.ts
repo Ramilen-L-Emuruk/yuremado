@@ -468,6 +468,10 @@ export class DmdataWebSocket {
   private eewHeadType: EewHeadType | null = 'VXSE45'
   private resolveClassificationsReady: ((c: readonly DmdataClassification[]) => void) | null = null
   private classificationsTimer: ReturnType<typeof setTimeout> | null = null
+  /** 配信元が一度でも区分を受け付けたか。認証エラーを `onClassificationsUnsettled` で知らせるかの判定に使う */
+  private everAccepted = false
+  /** `onClassificationsUnsettled('auth')` を知らせたか（重ねて知らせない） */
+  private authUnsettledNotified = false
   /**
    * REST の取得（履歴・起動時の復元）に使う区分。**最初の取り決めが終わった時点で 1 度だけ決まる。**
    * 繋がれば受け付けられた区分、繋がらなければ（409・通信の失敗・認証エラー）`PREFERRED_CLASSIFICATIONS`。
@@ -482,6 +486,15 @@ export class DmdataWebSocket {
   onRawMessage: ((entry: TelegramLogEntry) => void) | null = null
   /** 配信元が区分を受け付けたとき（繋がるたび）。設定タブの「受信している区分」に使う */
   onClassifications: ((c: readonly DmdataClassification[]) => void) | null = null
+  /**
+   * 受け付けられた区分を一度も得ないまま、取り決めが行き詰まったとき。`auth` は認証エラー・
+   * 受けられる区分が無い・鍵の文字が不正で、この先も繋がらない。`timeout` は 409・通信の失敗が続いて
+   * `CLASSIFICATIONS_READY_TIMEOUT_MS` が過ぎた。**どちらも 1 度まで。`timeout` の後に `auth` が来ることはある**
+   * （15 秒の後の再接続で認証エラーになった形。`classificationsReady` が既に決着していても知らせる）。**前回受け付けられた区分の覚えで履歴を始めた側が、
+   * 覚えを捨てるか続けるかを決めるのに使う**（`classificationsReady` は既定の区分を返すだけで、
+   * 理由を区別できない）。
+   */
+  onClassificationsUnsettled: ((reason: 'auth' | 'timeout') => void) | null = null
 
   private readonly debug: boolean
 
@@ -498,8 +511,11 @@ export class DmdataWebSocket {
       this.classificationsTimer = setTimeout(() => {
         this.classificationsTimer = null
         if (this.resolveClassificationsReady === null) return
-        log.warn(`[DMDSS] 受けられる区分を ${CLASSIFICATIONS_READY_TIMEOUT_MS / 1000} 秒で決められないため、既定の区分で履歴と復元を取ります`)
+        // 履歴と復元をどの区分で取るかは呼び出し側が決める（前回の覚えがあればそちらで既に走っている）。
+        // ここで「既定の区分で取る」と言い切らない
+        log.warn(`[DMDSS] 受けられる区分を ${CLASSIFICATIONS_READY_TIMEOUT_MS / 1000} 秒で決められませんでした`)
         this.settleClassifications(PREFERRED_CLASSIFICATIONS)
+        this.onClassificationsUnsettled?.('timeout')
       }, CLASSIFICATIONS_READY_TIMEOUT_MS)
     }
     if (this.debug) dlog('connect()', { includeTest: this.includeTest })
@@ -514,6 +530,7 @@ export class DmdataWebSocket {
       )
       if (ticket === null || this.stopped) return
       this.settleClassifications(ticket.classifications)
+      this.everAccepted = true
       this.classifications = ticket.classifications
       this.eewHeadType = eewHeadTypeFor(ticket.classifications)
       this.onClassifications?.(ticket.classifications)
@@ -525,6 +542,13 @@ export class DmdataWebSocket {
       // 繋がっても、履歴と復元が既定の区分のまま走る。決まらなければ上限の時間で倒す（`connect`）
       if ((err instanceof Error && err.message === 'auth') || err instanceof DmdataApiKeyError) {
         this.settleClassifications(PREFERRED_CLASSIFICATIONS)
+        // 知らせるのは、一度も受け付けを得ていないときだけ。**決着したかでは見ない** —— 15 秒の時間切れで
+        // 決着した後の認証エラーを取りこぼし、呼び出し側が受けられない区分の覚えを捨てられなくなる。
+        // 一度繋がった後の認証エラーは、覚えた区分が受け付けられた事実があるので知らせない
+        if (!this.everAccepted && !this.authUnsettledNotified && !this.stopped) {
+          this.authUnsettledNotified = true
+          this.onClassificationsUnsettled?.('auth')
+        }
       }
       if (this.stopped) return
       const reason = err instanceof Error ? err.message : String(err)

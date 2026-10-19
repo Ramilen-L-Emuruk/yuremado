@@ -344,6 +344,8 @@ export function quakeReportLabels(
 export function formatCorrectType(type: CorrectType): string {
   const map: Record<CorrectType, string> = {
     'なし': '',
+    // 訂正の有無が不明（P2PQuake の Unknown）。印は出さない（→ `CorrectType`）
+    '不明': '',
     '訂正': '訂正（内容不明）',
     '震度のみ訂正': '震度を訂正',
     '震源を訂正': '震源を訂正',

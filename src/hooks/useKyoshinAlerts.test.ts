@@ -27,6 +27,7 @@ function fakeRegion(overrides: Partial<AlertRegion> = {}): AlertRegion {
 function fakeEEW(id: string, originTime: string, hypocenter: Hypocenter, condition = '以上'): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id,
     time: originTime,
     test: false,

@@ -189,6 +189,7 @@ export function hypoInfoItemToEEW(item: YahooHypoInfoItem): EEWAlert {
   const scaleNum = scale === -1 ? 0 : scale
   return {
     kind: 'eew',
+    origin: 'yahoo',
     id: `${YAHOO_EEW_ID_PREFIX}${item.reportId}`,
     time: item.reportTime,
     test: item.isTraining === 'true',

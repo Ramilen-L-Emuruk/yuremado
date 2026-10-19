@@ -1432,6 +1432,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
 
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: `dmdata-eew-${eventId}-${serial}`,
     time: reportTime,
     test: false,

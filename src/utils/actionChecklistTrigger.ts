@@ -252,9 +252,9 @@ function scanPoints(
  * 下限側で比べれば足りる —— 下限が閾値に達していれば実際の揺れはそれ以上になる。
  *
  * **区域を持たない EEW がある。** standard 版は Yahoo hypoInfo（1Hz ポーリング）で先に検知し、
- * 後着の P2PQuake が区域を補う（[eew-spec.md](../../docs/spec/eew-spec.md) §3 の `enrichEEW`）。
+ * 後着の P2PQuake が区域を運ぶ（[eew-spec.md](../../docs/spec/eew-spec.md) §3「2 つの経路の報を 1 つにまとめる」）。
  * hypoInfo 由来の報は `areas` を持たず予想震度が `forecastMaxScale` にしか入らないため、
- * **補われる前の窓では区域で判定できない**（Yahoo の続報が上書きして区域が消えることもある）。
+ * **P2PQuake の報が届く前の窓では区域で判定できない**。
  * 区域が無ければ `eewMaxScale`（`areas` が空のときに `forecastMaxScale` へ落ちる正規の取り出し）で
  * 全国基準として判定する。`eewAreas` を使うのは旧形式（`regions` だけを持つ電文）も拾うため。
  */

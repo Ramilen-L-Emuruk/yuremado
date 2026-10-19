@@ -50,6 +50,7 @@ function area(over: Partial<EEWRegion> = {}): EEWRegion {
 function eew(areas: EEWRegion[], id = 'e1', hypocenter = { name: '能登半島沖', latitude: 37.5, longitude: 137.2, depth: 20, magnitude: 6.0 }): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id,
     time: '2024-01-01T16:18:51+09:00',
     test: false,

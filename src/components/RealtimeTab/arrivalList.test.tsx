@@ -49,6 +49,7 @@ function area(over: Partial<EEWRegion> & { name: string }): EEWRegion {
 function makeEEW(areas: EEWRegion[]): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: 'test-eew',
     time: '2026-01-01T12:00:00Z',
     test: false,

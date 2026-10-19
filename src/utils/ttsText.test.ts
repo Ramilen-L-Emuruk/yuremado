@@ -96,6 +96,20 @@ describe('earthquakeToText: 遠地地震', () => {
     expect(text).not.toContain('この地震による津波の心配はありません。')
   })
 
+  // P2PQuake は付加文を運ばず、海外への津波の見通しを値で運ぶ（→ `JMAQuake.foreignTsunamiText`）
+  it('付加文が無い経路では、津波区分の文に続けて海外への津波の見通しを読む', () => {
+    const foreignTsunamiText = '太平洋の広域に津波発生の可能性があります。'
+    const text = earthquakeToText({ ...makeQuake({ forecastText: undefined }), foreignTsunamiText }, TTS_OPTS, true)
+    expect(text.endsWith(`この地震による津波の心配はありません。${foreignTsunamiText}`)).toBe(true)
+  })
+
+  // 対照: 付加文の原文があるときは、そちらに海外の見通しも入っているので重ねない
+  it('付加文の原文があれば海外への津波の見通しを重ねない', () => {
+    const forecastText = '太平洋の広域に津波発生の可能性があります。'
+    const text = earthquakeToText({ ...makeQuake({ forecastText }), foreignTsunamiText: forecastText }, TTS_OPTS, true)
+    expect(text.split(forecastText)).toHaveLength(2)
+  })
+
   it('付加文が無い経路（P2PQuake）では津波区分から文を起こす', () => {
     const text = earthquakeToText(makeQuake({ forecastText: undefined }), TTS_OPTS, true)
     expect(text.endsWith('この地震による津波の心配はありません。')).toBe(true)
@@ -199,6 +213,7 @@ describe('eewIntensityToText: 長周期地震動階級の読み上げ', () => {
   ): EEWAlert {
     return {
       kind: 'eew',
+      origin: 'dmdata',
       id: 'test-eew',
       time: '2026-01-01T12:00:00Z',
       test: false,
@@ -3004,6 +3019,16 @@ describe('telegramTextToSpeak: 気象庁が書いた文', () => {
   // 対照: 既定は読まない。設定を足しただけで、これまで画面にだけ出ていた文が鳴り出さないこと。
   it('既定（未指定）では何も返さない', () => {
     expect(telegramTextToSpeak(quakeWithComment(), OFF)).toBeNull()
+  })
+
+  // P2PQuake の地震は `eventId` を持たない。主題が全件 `quake:` に潰れると、別の地震の同じ文を二度と読まない
+  it('eventId を持たない地震でも、地震の時刻で主題を分ける', () => {
+    const a = telegramTextToSpeak(quakeWithComment({ eventId: undefined }), ON)
+    const b = telegramTextToSpeak(quakeWithComment({
+      eventId: undefined, earthquake: { ...makeQuake().earthquake, time: '2026-07-18T01:00:00+09:00' },
+    }), ON)
+    expect(a?.subject).not.toBe(b?.subject)
+    expect(a?.subject).not.toBe('quake:')
   })
 
   // 正: 有効にすると、何についての文かを添えて返す。

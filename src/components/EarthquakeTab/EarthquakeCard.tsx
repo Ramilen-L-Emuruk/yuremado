@@ -1,6 +1,6 @@
 import { Fragment, memo, useMemo, useRef, useEffect, useState } from 'react'
 import type { JMAQuake, JMALpgm, IssueType, EarthquakePoint, IntensityScale, JMAEstimatedIntensity, QuakeReportRecord, BorrowedFromTsunami } from '../../types/earthquake'
-import { quakeEventKey } from '../../utils/quakeMerge'
+import { quakeEventKey, isKnownCorrection } from '../../utils/quakeMerge'
 import { QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
 import { getLpgmClassLabel, getLpgmClassColor, getLpgmClassBgColor, lpgmCategoryNote, buildLpgmRows, canOpenLpgmNotes } from '../../utils/lpgm'
 import { estimatedIntensityAvailability } from '../../utils/estimatedIntensity'
@@ -28,7 +28,7 @@ import { getIntensityLabel, getIntensityLabelWithOrAbove, getIntensityColor, get
 import { hasKnownEpicenter } from '../../utils/geo'
 
 import { areaPrefIndexOf, regionOrderIndexOf, stationPrefIndexOf, lookupPointCoords, lookupStationRegion, regionOrderRank, type LatLng } from '../../utils/stationCoords'
-import { isMaxScaleUnreceived, partitionUnreceivedPoints, unreceivedUnitLabel, buildIntensityRows, makeAreaPrefResolver, cityKey, type IntensityStationRow, type IntensityRegionRow } from '../../utils/quakePoints'
+import { isAreaPoint, isMaxScaleUnreceived, partitionUnreceivedPoints, unreceivedUnitLabel, buildIntensityRows, makeAreaPrefResolver, cityKey, type IntensityStationRow, type IntensityRegionRow } from '../../utils/quakePoints'
 import { rowMarkKey, rowMarkOf, type QuakeCardMarks, type QuakeUpdateField } from '../../utils/quakeUpdateMark'
 import { intensityRowsToExpand, lpgmRowsToExpand, mergeAutoExpanded } from '../../utils/autoExpandMarkedRows'
 import { UPDATE_MARK_COLOR, type UpdateStatus } from '../../utils/updateMark'
@@ -781,7 +781,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     // **最も起きやすい形**で印が消える（→ docs/spec/quake-spec.md §4）。
     // **ブロックと同じ切り分け結果から作る**（`unreceivedIndexes`）。別々に解決すると、
     // 片方だけが名前を引けたときに「印は出るのに地点が出ない」（またはその逆）になる。
-    const { stationPrefIndex, prefOf, regionOfStation, stations: unreceivedStations, areas: unreceivedAreaPoints } = unreceivedIndexes
+    const { stationPrefIndex, areaPrefIndex, prefOf, regionOfStation, stations: unreceivedStations, areas: unreceivedAreaPoints } = unreceivedIndexes
     const unreceivedPrefs = new Set<string>()
     const unreceivedAreas = new Set<string>()
     const unreceivedCities = new Set<string>()
@@ -789,7 +789,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       const pref = prefOf(p)
       if (pref) unreceivedPrefs.add(pref)
       // 区域点はそのまま。都道府県ロールアップ点（addr === pref）は県として既に数えている。
-      if (p.isArea) { if (!p.pref) unreceivedAreas.add(p.addr) }
+      // `pref` の有無では見分けない —— P2PQuake は区域の点にも県名を積む。
+      if (p.isArea) { if (isAreaPoint(p, areaPrefIndex)) unreceivedAreas.add(p.addr) }
       else {
         const region = regionOfStation(p)
         if (region) {
@@ -805,9 +806,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
     // 組み立ては `buildIntensityRows` に置いてある（電文の点だけを扱う純関数として試せるように）。
     // ここでは座標テーブル由来の索引を渡すだけ。
-    const areaPrefIndex = stationData ? areaPrefIndexOf(stationData) : null
     const order = stationData ? regionOrderIndexOf(stationData) : null
     return buildIntensityRows(quake.points, quake.cities ?? [], {
+      areaPrefIndex,
       prefOfArea: name => areaPrefIndex?.get(name) ?? null,
       prefOfStation: name => stationPrefIndex?.get(name) ?? null,
       regionOfStation: (pref, addr) => (stationData ? lookupStationRegion(stationData, pref, addr) : null),
@@ -1123,7 +1124,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             <span className="text-secondary text-base roomy:text-xl">
               {formatQuakeTime(earthquake.time) ?? '発生時刻不明'}
             </span>
-            {issue.correct !== 'なし' && (
+            {isKnownCorrection(issue.correct) && (
               <span className="text-xs bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded-sm font-medium shrink-0">
                 {formatCorrectType(issue.correct)}
               </span>
@@ -1222,6 +1223,18 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           {borrowedNote && (
             <div className="text-xs text-secondary roomy:text-sm" title={borrowedNote.title}>
               {borrowedNote.text}
+            </div>
+          )}
+
+          {/* 固定付加文（`ForecastComment/Text`）。原文をそのまま出す（2026-10-19 ユーザー承認。
+              パーサーが改行だけ詰めている → `normalizeForecastText`）。
+              上の津波の欄はこの付加文のコードを区分へ丸めたもので、区分にならない文
+              （例: 0245「この地震で緊急地震速報を発表しましたが、強い揺れは観測されませんでした。」）は
+              ここにしか現れない。1 文目は津波の欄と重なるが、文とコードの対応は電文に無く、
+              切り分けを推測しないために全文を出す。並びは電文と同じく「その他」の前。 */}
+          {quake.forecastText && (
+            <div className="w-full rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary whitespace-pre-wrap roomy:text-sm">
+              {quake.forecastText}
             </div>
           )}
 
@@ -1630,7 +1643,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
           {/* 日時 + 発表種別 + 訂正情報。
               発表種別だけは末尾を省略して詰められるが、日時と訂正情報は縮まない。収まらない
-              ときは折り返して 2 行にする。訂正報（`issue.correct !== 'なし'`）で 3 つ並ぶ場合の
+              ときは折り返して 2 行にする。訂正報（`isKnownCorrection(issue.correct)`）で 3 つ並ぶ場合の
               ほか、パネルが狭いときや種別名が長いとき（「顕著な地震の震源要素更新のお知らせ」）は
               2 つでも折り返す。詰め切って情報を欠けさせるより、カードが 1 行分高くなる方を
               選んでいる（震度バッジは寸法固定なので正方形は崩れない）。 */}
@@ -1645,7 +1658,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                 {quake.operationStatus}報
               </span>
             )}
-            {issue.correct !== 'なし' && (
+            {isKnownCorrection(issue.correct) && (
               <span className="text-xs bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded-sm font-medium shrink-0">
                 {formatCorrectType(issue.correct)}
               </span>

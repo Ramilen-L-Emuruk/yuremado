@@ -1340,7 +1340,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 ## 構成メモ
 
 - `src/App.tsx`: レイアウトの中枢。地図常時表示＋アイコンナビでパネル内容を切替。地図内容・更新時刻・通知音・自動タブ切替・EEW 連携の制御もここ。
-- レイアウトは画面の向き・高さで切り替わる（左右分割／上下分割）。分岐条件は `src/index.css` の `@custom-variant`（`side` / `sideNarrow` / `roomy`）が単一情報源。上下分割時は境界のつまみで比率変更・折りたたみができる（`PanelResizeHandle`）。詳細は [`docs/spec/architecture-spec.md`](docs/spec/architecture-spec.md) の「画面サイズ別のレイアウト」。
+- レイアウトは画面の向き・高さで切り替わる（左右分割／上下分割）。分岐条件は `src/index.css` の `@custom-variant`（`side` / `sideNarrow` / `sideShort` / `roomy`）が単一情報源。上下分割時は境界のつまみで比率変更・折りたたみができる（`PanelResizeHandle`）。詳細は [`docs/spec/architecture-spec.md`](docs/spec/architecture-spec.md) の「画面サイズ別のレイアウト」。
 - 地図は MapLibre GL JS（`JapanMapGL`）に一本化。`MapView` が App と地図実装の間の薄いラッパー。旧 Leaflet 版 JapanMap とエンジン切替フラグは F7 で撤去済み。
 - 地図のモード（`JapanMapGL` の `mode`）: `quake`（地震）／`tsunami`（津波海岸線）／`kyoshin`（リアルタイム震度・予報円）／`catalog`（長期震源カタログの点群）。
 - 生成データ（`public/data/*.json`）は座標が大きいため遅延読込（初回利用時に一度だけ fetch しキャッシュ）。  
@@ -1746,7 +1746,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 複数の呼び出し元が相乗りする取得（アーカイブ本体・電文本体・標準版の日ごとの控え）に止める合図を渡すと、1 人が止めただけで相乗りしている本編・初期状態・履歴まで巻き添えで落ちる。止めた打ち切りを「取得に失敗」と数えると、再生を止めるたびに本物の障害と見分けの付かない記録が積もる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §1「止めたら打ち切る」 |
 | 標準版（P2PQuake）の黙った接続の見張り（`P2P_SILENT_RECONNECT_MS`）を DMDATA と同じ短さにすると、ping の無い配信元は平常でも 6 分半ほど黙るので（実測 386.5 秒）、静かなだけの時間に張り直しを繰り返す。張り直しを `onclose` 待ちにすると、半開きの接続では閉じる知らせが届かずいつまでも張り直さない | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §3「黙った接続は 15 分で張り直す」 |
 | 標準版で張り直したときの取り戻しの起点を「接続を始めた時刻」にすると、繋がらない試行を繰り返した間の分を落とす。津波を「その接続で見たどの報より新しいか」で比べずに差し替えると、張り直した直後にライブで届いた取消を取り戻した古い発表報が上書きし、終わった津波が甦る | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §3「張り直したら、切れていた間の分を取り戻す」 |
-| 購読区分の判定（`eewHeadTypeFor`・`isHandledType` の必須引数）をライブ・リプレイ・起動時の復元のどれかで別に持つと、一部の区分しか契約していない人に経路によって届く電文が食い違う。履歴と復元が `classificationsReady` を待たない、または一時的な失敗で既定の区分に決めると、受けていない区分を引いて断られる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「一部の区分だけ受けられる人」 |
+| 購読区分の判定（`eewHeadTypeFor`・`isHandledType` の必須引数）をライブ・リプレイ・起動時の復元のどれかで別に持つと、一部の区分しか契約していない人に経路によって届く電文が食い違う。履歴と復元を、前回受け付けられた区分の覚えも `classificationsReady` の結果も無いまま始める、または一時的な失敗で既定の区分に決めると、受けていない区分を引いて断られる。覚えの扱い（鍵ごとに分ける・認証エラーで消す・突き合わせは最初の 1 回だけ）を崩すと、前の鍵の区分で引く・断られる区分を毎回引く・再接続のたびに履歴を取り直す | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「一部の区分だけ受けられる人」 |
 | 配信元のレート制限（リクエスト数・429）を守る仕組みを崩すと 429 連発・利用制限に触れる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「リクエスト数を抑える」・§2「429 は「頻度」ではなく「同じ id の取り直し」に返る」 |
 | 取得失敗時の間隔調整・更新停止の通知条件を誤ると、更新停止の見逃しまたは無限リトライになる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §4「取得に失敗したら間隔を空ける」・[`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「再生する時刻は入口で弾く」 |
 | 目録・電文パース結果のキャッシュの鍵を誤ると、誤った電文を使い回す | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「大量に取るならアーカイブを使う」 |
@@ -1819,7 +1819,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 自動復帰までの時間を計り直す契機のうちユーザー操作を崩すと、操作中でも既定タブへ戻ってしまう | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 自動復帰までの時間を計り直す契機のうち読み上げ終了（`onSpeechIdle`）を崩すと、読み終えた直後に唐突にタブが切り替わる、または戻るまでに余分な遅延が生じる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 倍率の適用範囲（UI は rem・地図の描画物には `iconScale`・枠線は倍率に連動させない）を崩すと、UI 倍率設定が一部の要素に効かない、または下限側でフチが主役になる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
-| 画面サイズ別レイアウトの分岐条件（`side`/`sideNarrow`/`roomy`）を崩すと、狭い画面でパネル比率・折りたたみが崩れる | [`architecture-spec.md`](docs/spec/architecture-spec.md) §4「画面サイズ別のレイアウト」 |
+| 画面サイズ別レイアウトの分岐条件（`side`/`sideNarrow`/`sideShort`/`roomy`）を崩すと、狭い画面でパネル比率・折りたたみが崩れる | [`architecture-spec.md`](docs/spec/architecture-spec.md) §4「画面サイズ別のレイアウト」 |
 | 録画モードの原則（ON は OFF より劣化させない）と止めるもの 3 つ（地名ラベルの重なり判定・揺れ検知の診断ログ保存・通知音のキープアライブ）を崩すと、録画中にコマ落ちが増える、解除直後の検知で記録の前半が欠ける、または動画の書き出し・アップロード後の再エンコードで常時ループ音が可聴のノイズに化ける | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 録画モードで有効にするもの 2 つ（合成待ち予算の拡大・海底地形タイルの先読み）を崩すと、負荷時に長い文の後半が欠ける、または自動フィット直後の暗転が長引く | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 録画モードで追加復元する 7 項目（気象庁の文・地震の地域と震源要素・確定情報の通し読み・EEW 誤報取消・EEW 最後の告知震源・津波取消・津波が語った原因地震の震源）を崩すと、区間の境目で同じ内容を読み直す（このうち EEW 最後の告知震源だけは例外的に増やす側で、崩すと震源が動いても言い直さない。津波が語った原因地震の震源は逆に値が変わっても言い直さない設計） | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |

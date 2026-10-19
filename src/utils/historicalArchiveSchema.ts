@@ -1,5 +1,6 @@
 import type { HistoricalArchiveFile, HistoricalArchiveIndex, HistoricalArchiveMeta } from '../types/historicalArchive'
 import { isValidIntensityScale } from './intensity'
+import { withStoredEewOrigin } from './eewOrigin'
 // ReplayPayload の判別子は実地震シナリオの検証と同じ表を使う（理由はあちらの注記）。
 import { REPLAY_PAYLOAD_KINDS } from './testScenarioSchema'
 
@@ -116,7 +117,7 @@ export function validateHistoricalArchiveFile(v: unknown): { file: HistoricalArc
     }
     entries.push({
       time: e.time,
-      payload: e.payload as HistoricalArchiveFile['entries'][number]['payload'],
+      payload: withStoredEewOrigin(e.payload as HistoricalArchiveFile['entries'][number]['payload'], 'archive'),
       silent: typeof e.silent === 'boolean' ? e.silent : undefined,
     })
   }

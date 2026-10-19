@@ -40,6 +40,7 @@ import {
   type PaintableColumns,
   type WaveMark,
 } from '../SeismoWaveChart/paintWave'
+import { LINEAR_VERTICAL } from '../SeismoWaveChart/verticalMap'
 import { buildTimeTicks } from '../SeismoWaveChart/timeTicks'
 import { ToggleChip } from '../SeismoWaveChart/WaveAxisToggles'
 import { formatGal, formatScale } from '../SeismoWaveChart/waveLabels'
@@ -405,6 +406,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
             visibleAxes: [0, 1, 2].map((i) => i === a),
             ticks: ticksFor(a),
             unit: wave.unit.label,
+            vertical: LINEAR_VERTICAL,
           })
           if (text === null) text = got
         }

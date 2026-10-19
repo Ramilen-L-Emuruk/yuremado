@@ -206,8 +206,17 @@ export interface QuakeReportRecord {
   serial?: number
 }
 
+/**
+ * 訂正の種別。
+ *
+ * - `'不明'` は **P2PQuake の `Unknown`（訂正の有無が不明）だけ**が持つ。訂正だと分かっていない
+ *   ので「訂正」の印は出さない。ただしカードの合流では訂正の可能性ありとして扱い、震源名が
+ *   違う報も同じ地震へ合流させる（2026-10-18 ユーザー承認・選んだ選択肢「印だけ消す」）。判定は
+ *   `utils/quakeMerge.ts` の `isKnownCorrection`（印・記録）と `allowsHypocenterChange`（合流）
+ */
 export type CorrectType =
   | 'なし'
+  | '不明'
   | '訂正'
   | '震度のみ訂正'
   | '震源を訂正'
@@ -377,9 +386,20 @@ export interface JMAQuake {
    * 全角スペースで整形された表が入ることがあるため、**改行と空白をそのまま保持する**
    * （前後の空行だけ落とす）。表示側も `whitespace-pre-wrap` で受けること。
    *
-   * P2PQuake 経路は配信しないため undefined。
+   * P2PQuake 経路は `comments.freeFormComment` から入れる（空文字は undefined）。
    */
   freeText?: string
+  /**
+   * 海外で発生した地震による日本以外への津波の見通し（P2PQuake の `earthquake.foreignTsunami`）を、
+   * 気象庁の固定付加文（コード 0221〜0228）の文面へ起こしたもの。**P2PQuake 経路だけが持つ。**
+   *
+   * DMDATA 経路は付加文の原文（{@link forecastText}）にこの文が入っているので要らない。P2PQuake は
+   * 付加文を配信せず、区分の値だけを運ぶ。読み上げの遠地地震の文で、国内の津波の区分の文に続けて読む
+   * （2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。**画面には出さない** —— DMDSS 版も
+   * 付加文を地震カードに出していないのに揃えた。値と文面の対応は `services/p2pquake.ts` の
+   * `FOREIGN_TSUNAMI_TEXT`。
+   */
+  foreignTsunamiText?: string
   /**
    * 見出し文（`Head/Headline/Text`）。気象庁が電文へ添えた一文の要約。
    *
@@ -1059,6 +1079,24 @@ export interface EEWForecastChange {
   reason?: 0 | 1 | 2 | 3 | 4 | 9
 }
 
+/**
+ * 緊急地震速報がどの経路から届いたか。
+ *
+ * **経路ごとに運ぶ欄が違う**ので、同じ地震の報を経路をまたいで統合するときに要る
+ * （→ `utils/eew.ts` の `mergeEewReport`。運ばない欄は既存の値を保つ）。
+ *
+ * - `dmdata`: DMDATA の電文（DMDSS 版。欄はすべて運ぶ）
+ * - `p2pquake`: P2PQuake の 556（standard 版。警報だけ。区域・仮定震源は運ぶが、予想の最大震度・最終報の印は運ばない）
+ * - `yahoo`: Yahoo 強震モニタの hypoInfo（standard 版。予報も含む。区域・仮定震源は運ばない）
+ * - `archive`: 保存しておいた電文から組み立てた報（ローカル履歴アーカイブ・テストシナリオ）
+ * - `test`: 設定タブのテストボタンが組み立てた報
+ *
+ * **報番号の数え方も経路で違う。** P2PQuake の `serial` は警報だけの番号、Yahoo の `reportNum` は
+ * 予報からの通し番号（2026-10-16 千島列島の報で、発表時刻 12:40:02 が Yahoo 17・P2PQuake 1）。
+ * 経路をまたいで報番号を比べないこと。比べるなら発表時刻（`issue.time`）を使う。
+ */
+export type EewOrigin = 'dmdata' | 'p2pquake' | 'yahoo' | 'archive' | 'test'
+
 export interface EEWAlert {
   /**
    * 見出し文（`Head/Headline/Text`）。→ {@link JMAQuake.headline}（扱いも同じ）
@@ -1118,6 +1156,8 @@ export interface EEWAlert {
    */
   strongShakingText?: string
   kind: 'eew'
+  /** どの経路から届いた報か（→ {@link EewOrigin}）。統合した後の報では、最後に統合した報の経路。 */
+  origin: EewOrigin
   id: string
   time: string
   test: boolean
@@ -1179,6 +1219,13 @@ export interface EEWAlert {
   // `forecastMaxScale` の上限が定まっていない（「〜以上」）ことを表す。
   // 意味と扱いは `EEWRegion.scaleToOrAbove` と同じ。
   forecastMaxScaleOrAbove?: boolean
+  /**
+   * 予想の最大震度を `forecastMaxScale` で見るか（区域の最大より優先する）。standard 版で、区域を運ばない
+   * Yahoo の続報が電文全体の値を新しく運んだときに立つ（`mergeEewReport`）—— 区域は前の P2PQuake の報の
+   * ものなので、そちらの最大で見ると新しい報の引き上げ・引き下げが隠れる。P2PQuake の新しい報が区域を
+   * 運んだら下ろす。DMDATA の報は区域と電文全体の値が同じ報から来るので立たない。
+   */
+  maxScaleFromForecast?: boolean
   // DMDATA EEW 電文 body.intensity.forecastMaxLpgmInt から取得した推定最大長周期地震動階級（1〜4）。
   forecastMaxLpgmClass?: LpgmClass
   /** 上限を定めない予測（電文の `To="over"`）だったか。→ `EEWRegion.lgIntToOver` */
@@ -1509,6 +1556,16 @@ export interface LiveEventMeta {
    * 対象外（受信側が `!event.cancelled` で先に外す）。
    */
   quakeHeldBack?: boolean
+  /**
+   * その緊急地震速報が、**別の経路から既に受けて知らせた報と同じ報**か（standard 版。Yahoo と
+   * P2PQuake の両方が同じ報を運ぶ）。同じ報かどうかは発表時刻（秒）で見分ける（報番号は経路で
+   * 数え方が違う。→ `EewOrigin`）。
+   *
+   * 真なら音・ブラウザ通知・自動タブ切替を起こさない（2026-10-18 ユーザー承認「最初の 1 通だけ」）。
+   * **読み上げとウィンドウタイトルは止めない** —— 後から来た経路が運んだ欄（区域など）で最新の値が
+   * 変わりうるので、読み上げは既読との差分で判断させる。区分が上がった報には立たない。
+   */
+  eewSameReport?: boolean
 }
 
 // 南海トラフ地震臨時情報 (VYSE50)

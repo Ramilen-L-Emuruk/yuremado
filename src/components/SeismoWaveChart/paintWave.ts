@@ -12,6 +12,7 @@ import { createLogThrottle, log } from '../../utils/logger'
 import type { WaveColumn } from './waveColumns'
 import { formatGal, formatScale } from './waveLabels'
 import type { TimeTick } from './timeTicks'
+import type { VerticalMap } from './verticalMap'
 
 /**
  * 3 成分の色。**3 本を互いに見分けられることを最優先に、色相を 120 度ずつ離す**
@@ -118,6 +119,8 @@ export interface PaintOptions {
   readonly overlays?: (columnCount: number) => readonly WaveOverlay[]
   /** 縦の表示に添える単位（自作地震計は `gal`、公開観測点は `μm/s`）。 */
   readonly unit: string
+  /** 値を縦の位置へ写す関数（`verticalMap.ts`）。ふだんは線形。地図の下端の公開観測点の段だけ曲線。 */
+  readonly vertical: VerticalMap
 }
 
 /**
@@ -178,7 +181,7 @@ export function paintWaveColumnsAt(
   stale: boolean,
   options: PaintOptions,
 ): string | null {
-  const { marks = [], visibleAxes, ticks: buildTicks, overlays, unit } = options
+  const { marks = [], visibleAxes, ticks: buildTicks, overlays, unit, vertical } = options
   const ctx = canvas.getContext('2d')
   // **取れなかったことは記録へ残す。** 黙って戻ると、画面からは「まだ何も届いて
   // いない」のと区別が付かない —— 描けなかったのか届いていないのかを切り分ける
@@ -248,8 +251,8 @@ export function paintWaveColumnsAt(
         continue
       }
       const x = c + 0.5
-      const top = mid - (col.max[a] / scaleGal) * half
-      const bottom = mid - (col.min[a] / scaleGal) * half
+      const top = mid - vertical(col.max[a], scaleGal) * half
+      const bottom = mid - vertical(col.min[a], scaleGal) * half
       if (started) {
         ctx.lineTo(x, top)
       } else {
@@ -264,7 +267,7 @@ export function paintWaveColumnsAt(
 
   // **重ねる線は太く・はっきり。** 元の線の上に描く（詳細の窓の段と同じ見せ方）。
   for (const overlay of overlays?.(w) ?? []) {
-    strokeOverlay(ctx, overlay, (v) => mid - (v / scaleGal) * half, dpr * 2, stale ? 0.3 : 1)
+    strokeOverlay(ctx, overlay, (v) => mid - vertical(v, scaleGal) * half, dpr * 2, stale ? 0.3 : 1)
   }
 
   paintMarks(ctx, marks, w, plotH, dpr)
@@ -278,6 +281,8 @@ export interface CompositePaintOptions {
   readonly minScale: number
   /** 縦の表示に添える単位（{@link PaintOptions.unit} と同じ）。 */
   readonly unit: string
+  /** 値を縦の位置へ写す関数（{@link PaintOptions.vertical} と同じ）。 */
+  readonly vertical: VerticalMap
   readonly marks?: readonly WaveMark[]
   readonly ticks?: (widthCssPx: number) => readonly TimeTick[]
   /** 重ねる線（合成を前後 1 秒で均した線）。縦の物差しは合成と同じ。 */
@@ -307,7 +312,7 @@ export function paintCompositeColumnsAt(
   stale: boolean,
   options: CompositePaintOptions,
 ): string | null {
-  const { minScale, unit, marks = [], ticks: buildTicks, overlays } = options
+  const { minScale, unit, marks = [], ticks: buildTicks, overlays, vertical } = options
   const ctx = canvas.getContext('2d')
   if (ctx === null) {
     throttledNoContext(() => log.error('[seismo] 波形を描く 2D コンテキストを取れなかった'))
@@ -351,7 +356,7 @@ export function paintCompositeColumnsAt(
   paintSingleMemberBand(ctx, columns.length, plotH, (c) => columns[c].hasValue && columns[c].minMembers <= 1)
 
   const reach = Math.max(1, plotH - dpr * 2)
-  const yOf = (v: number): number => zeroY - (v / scaleGal) * reach
+  const yOf = (v: number): number => zeroY - vertical(v, scaleGal) * reach
   ctx.globalAlpha = stale ? 0.25 : 0.85
   ctx.lineWidth = dpr
   ctx.strokeStyle = COMPOSITE_COLOR
