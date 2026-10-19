@@ -3308,7 +3308,7 @@ describe('津波の失効時刻の読み上げ', () => {
   /** 原因地震が 1 つの津波で、震源と失効時刻を同じ既読へ積む（ライブ受信の組み立てと同じ形）。 */
   function asTsunamiSpoken(t: JMATsunami, spoken: QuakeSpokenState | undefined): TsunamiQuakeSpoken | undefined {
     if (!spoken) return undefined
-    return { expiry: spoken, sources: (t.sourceEarthquakes ?? []).map(source => ({ source, spoken, subject: undefined })) }
+    return { expiry: spoken, sources: (t.sourceEarthquakes ?? []).map(source => ({ source, spoken, subject: undefined, quakeReportedLater: false })) }
   }
   /** 断片を連結して 1 本の文にする（`tsunamiToText` は既読を渡せないので自前で繋ぐ）。 */
   function joined(t: JMATsunami, spoken?: QuakeSpokenState): string {
@@ -3436,7 +3436,7 @@ describe('津波の読み上げ: 原因地震が 2 つ以上あるとき', () =>
   }
   function spokenFor(t: JMATsunami, a: QuakeSpokenState, b: QuakeSpokenState): TsunamiQuakeSpoken {
     const [s0, s1] = t.sourceEarthquakes!
-    return { expiry: a, sources: [{ source: s0, spoken: a, subject: 'A' }, { source: s1, spoken: b, subject: 'B' }] }
+    return { expiry: a, sources: [{ source: s0, spoken: a, subject: 'A', quakeReportedLater: false }, { source: s1, spoken: b, subject: 'B', quakeReportedLater: false }] }
   }
   const text = (t: JMATsunami, sp?: TsunamiQuakeSpoken) => tsunamiToSegments(t, undefined, sp).map(s => s.text).join('')
 
@@ -3476,6 +3476,98 @@ describe('津波の読み上げ: 原因地震が 2 つ以上あるとき', () =>
     const out = text(t)
     expect(out).toContain('この地震の震源は石川県能登地方')
     expect(out).not.toContain('もう一つの地震')
+  })
+})
+
+// 語り済みの震源が変わったら、変わった値だけを言い直す（2026-10-14 ユーザー選択「変わった値だけ
+// 言い直す（推奨）」。文面は 2026-10-19「「この地震の」を付ける (Recommended)」）。
+// 能登 2024/1/1 の 16:22 の津波警報は、大津波警報への引き上げと M7.4 → 7.6 を同じ報で伝えた。
+describe('津波の読み上げ: 語り済みの原因地震の震源が変わったとき', () => {
+  const src = (over: Partial<{ hypocenterName: string; depth: number; magnitude: number; magnitudeCondition: string }> = {}) =>
+    ({ hypocenterName: '石川県能登地方', depth: 10, magnitude: 7.6, arrivalTime: '2024-01-01T16:10:00+09:00', ...over })
+  function tsunami(sources: ReturnType<typeof src>[]): JMATsunami {
+    return {
+      kind: 'tsunami', id: 't', eventId: '20240101161010', time: '2024-01-01T16:22:00+09:00', cancelled: false,
+      issue: { source: '気象庁', time: '2024-01-01T16:22:00+09:00', type: 'Focus' },
+      areas: [{ grade: 'MajorWarning', immediate: false, name: '石川県能登' }],
+      sourceEarthquakes: sources,
+    } as JMATsunami
+  }
+  /** 震源名・深さ・規模を声にした既読（M7.4 を伝えた後の状態）。 */
+  function spokenAt(name = '石川県能登地方', depth = '10', mag = '7.4'): QuakeSpokenState {
+    const s = createQuakeSpokenState()
+    s.facts.set('hypocenterName', name); s.facts.set('depth', depth); s.facts.set('magnitude', mag)
+    return s
+  }
+  const spokenFor = (t: JMATsunami, states: QuakeSpokenState[], quakeReportedLater = false): TsunamiQuakeSpoken => ({
+    expiry: states[0],
+    sources: t.sourceEarthquakes!.map((source, i) => ({ source, spoken: states[i], subject: `S${i}`, quakeReportedLater })),
+  })
+  const text = (t: JMATsunami, sp?: TsunamiQuakeSpoken) => tsunamiToSegments(t, undefined, sp).map(s => s.text).join('')
+
+  it('正: 規模が変わったら、変わった値だけを言い直す', () => {
+    const t = tsunami([src()])
+    const out = text(t, spokenFor(t, [spokenAt()]))
+    expect(out).toContain('この地震のマグニチュードは7.6に更新されました。')
+    // 通しの文（「この地震の震源は〇〇、…です。」）は繰り返さない
+    expect(out).not.toContain('この地震の震源は')
+  })
+
+  it('対照: 値が変わっていなければ何も言わない', () => {
+    const t = tsunami([src({ magnitude: 7.4 })])
+    expect(text(t, spokenFor(t, [spokenAt()]))).not.toContain('更新されました')
+  })
+
+  // 安全弁: まだ声にしていない事実が残っていれば、従来どおり通しで語る（言い直しの文にしない）
+  it('安全弁: 未読の事実があれば通しで語り、言い直しの文にはしない', () => {
+    const t = tsunami([src()])
+    const partial = createQuakeSpokenState()
+    partial.facts.set('hypocenterName', '石川県能登地方'); partial.facts.set('magnitude', '7.4')
+    const out = text(t, spokenFor(t, [partial]))
+    expect(out).toContain('この地震の震源は石川県能登地方')
+    expect(out).not.toContain('更新されました')
+  })
+
+  it('正: 震源名・深さが変わったときも、それぞれの事実だけを言う', () => {
+    const t = tsunami([src({ hypocenterName: '能登半島沖', depth: 0, magnitude: 7.4 })])
+    const out = text(t, spokenFor(t, [spokenAt()]))
+    expect(out).toContain('この地震の震源は能登半島沖に更新されました。')
+    expect(out).toContain('この地震の震源の深さはごく浅い場所に更新されました。')
+    expect(out).not.toContain('マグニチュード')
+  })
+
+  it('正: 2 つ目の原因地震は「また、もう一つの地震の」で言う', () => {
+    const t = tsunami([src({ magnitude: 7.4 }), src({ hypocenterName: '佐渡付近', magnitude: 6.3 })])
+    const out = text(t, spokenFor(t, [spokenAt(), spokenAt('佐渡付近', '10', '6.1')]))
+    expect(out).toContain('また、もう一つの地震のマグニチュードは6.3に更新されました。')
+    expect(out).not.toContain('この地震のマグニチュード')
+  })
+
+  it('正: 数値にならない規模への更新は、気象庁の説明を続けて言う', () => {
+    const t = tsunami([src({ magnitude: NaN, magnitudeCondition: 'Ｍ８を超える巨大地震' })])
+    const out = text(t, spokenFor(t, [spokenAt()]))
+    expect(out).toContain('この地震のマグニチュードが更新されました。')
+    expect(out).not.toContain('に更新されました。この地震の')
+  })
+
+  // 安全弁: 地震情報がこの津波の報より後に出ていれば、津波の値のほうが古いかもしれない。
+  // 既読は地震情報と共有するので、地震情報が伝えた新しい値を古い値へ「更新」と言って巻き戻さない
+  it('安全弁: 地震情報がこの報より後に出ていれば、値が違っても言い直さない', () => {
+    const t = tsunami([src({ magnitude: 7.4 })])
+    const out = text(t, spokenFor(t, [spokenAt('石川県能登地方', '10', '7.6')], true))
+    expect(out).not.toContain('更新されました')
+    // 通しの文にも戻らない（全部を語り終えている）
+    expect(out).not.toContain('この地震の震源は')
+  })
+
+  // 記録は地震情報と共有する。言い直した値を積むので、次の報では黙る
+  it('安全弁: 言い直した値を既読へ積み、次の報では繰り返さない', () => {
+    const t = tsunami([src()])
+    const state = spokenAt()
+    const sp = spokenFor(t, [state])
+    applyTsunamiSpokenRefs(sp, tsunamiToSegments(t, undefined, sp).flatMap(s => s.refs))
+    expect(state.facts.get('magnitude')).toBe('7.6')
+    expect(text(t, sp)).not.toContain('更新されました')
   })
 })
 

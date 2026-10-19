@@ -277,6 +277,39 @@ describe('津波の読み上げが原因地震の震源を語る', () => {
     expect(lastSpoken()).not.toContain('この地震の震源は')
   })
 
+  // 正: 等級が上がる続報で規模も変わったら、変わった値だけを言い直す（2026-10-14 ユーザー選択
+  // 「変わった値だけ言い直す（推奨）」）。能登 2024/1/1 の 16:22 の津波警報がこの形。
+  it('正: 等級が上がる続報で規模が変わったら、変わった値だけを言い直す', async () => {
+    const handle = setup()
+    handle(makeTsunamiWithSource() as never)
+    await settle()
+    await playSpeech(0, speeches[0].chunks.length)
+
+    handle(makeTsunamiWithSource({ grade: 'MajorWarning', magnitude: 7.6 }) as never)
+    await settle()
+    expect(lastSpoken()).toContain('大津波警報')
+    expect(lastSpoken()).toContain('この地震のマグニチュードは7.6に更新されました。')
+    expect(lastSpoken()).not.toContain('この地震の震源は')
+  })
+
+  // 安全弁: 言い直しは声になって初めて既読になる。前の報で震源の文が鳴らなかったなら、
+  // 次の報では言い直しではなく通しで語る（記録が進んでいないので「更新」と言えない）
+  it('安全弁: 前の報で震源を語り終えていなければ、言い直しではなく通しで語る', async () => {
+    const handle = setup()
+    handle(makeTsunamiWithSource() as never)
+    await settle()
+    // 震源の文に届く前で止める（先頭のチャンクだけ鳴らす）。チャンクが 1 つしか無いと全部鳴ってしまい、
+    // この安全弁を確かめられないので前提を固定する
+    expect(speeches[0].chunks.length).toBeGreaterThan(1)
+    expect(speeches[0].chunks[0]).not.toContain('震源')
+    await playSpeech(0, 1)
+
+    handle(makeTsunamiWithSource({ grade: 'MajorWarning', magnitude: 7.6 }) as never)
+    await settle()
+    expect(lastSpoken()).toContain('この地震の震源は石川県能登地方')
+    expect(lastSpoken()).not.toContain('に更新されました')
+  })
+
   // 安全弁: 借りた震源を読み上げ経路へ持ち込まない。
   //
   // **語らないだけでは足りない。** `earthquakeToSegments` は震源を区域の選抜

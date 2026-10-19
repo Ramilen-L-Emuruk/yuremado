@@ -2176,8 +2176,9 @@ function observationsForAreaOrder(
  * 先に示す。**「震源情報」の語は使わない** —— 気象庁は津波電文で震源を伝えているのであって、
  * 地震情報の「震源情報」（VXSE52）を出したわけではない。
  *
- * **まだ声にしていない事実があるときだけ言う。** 記録は地震ごとに種別を跨いで共有するので、
+ * **通しで語るのは、まだ声にしていない事実があるときだけ。** 記録は地震ごとに種別を跨いで共有するので、
  * 地震情報が先に震源を伝えていれば黙る。津波の続報は 40 通を超えるため、これが無いと毎報で繰り返す。
+ * 全部を語り終えていて値が変わった事実があれば、その事実だけを短く言い直す（→ `sourceHypocenterChangedSegments`）。
  *
  * **追従用の印（`borrowedHypocenter`）を全断片へ付ける。** 読んでいるあいだ、その地震のカードを
  * 見せるため（→ `ttsFollow.ts`）。震源そのものは `quakeFact` で別に記録される。
@@ -2203,12 +2204,20 @@ export interface TsunamiSourceSpoken {
   spoken: QuakeSpokenState | undefined
   /** 震源を語っている間に見せるカードの主題（`quakeEventKey`）。カードが無ければ undefined。 */
   subject: string | undefined
+  /**
+   * その地震の地震情報が、この津波の報より**後に**発表されているか（結んだ地震カードの発表時刻で見る）。
+   *
+   * 真なら、震源の値が既読と違っても言い直さない（→ {@link sourceHypocenterChangedSegments}）。既読は地震情報と
+   * 共有しているので、地震情報が先に新しい値を伝えたあとで古い値を載せた津波の報が届くと、「〜に更新されました」と
+   * 古い値へ戻して告げてしまう。カードが無い・結べないときは偽。
+   */
+  quakeReportedLater: boolean
 }
 
 /** 既読を渡されなかったとき（試聴・先読みの合成）は、原因地震を既読なしで並べる。 */
 function tsunamiSourceSpokens(event: JMATsunami, spoken: TsunamiQuakeSpoken | undefined): readonly TsunamiSourceSpoken[] {
   if (spoken) return spoken.sources
-  return (event.sourceEarthquakes ?? []).map(source => ({ source, spoken: undefined, subject: undefined }))
+  return (event.sourceEarthquakes ?? []).map(source => ({ source, spoken: undefined, subject: undefined, quakeReportedLater: false }))
 }
 
 /**
@@ -2259,17 +2268,8 @@ function oneSourceHypocenterSegments(
   // **震源名が無ければ文ごと出さない。** 規模だけを「この地震の震源は、マグニチュードは…」と
   // 繋ぐと主語を欠いた文になる。
   if (!tellable.has('hypocenterName')) return []
-  // **見るのは「その事実を一度でも声にしたか」だけで、値が変わったかは見ない。**
-  // 地震情報の続報（`changedFactSegments`）は値を比べて「マグニチュードが更新されました」と
-  // 言い直すが、こちらは言い直さない —— **見たうえでそうしている**。
-  //
-  // ①この分岐へ来るのは等級が動いた報だけで、震源の更新はたいてい観測情報の続報に乗る
-  //   （能登の実電文では M7.4→7.6 が 16:22 の津波情報。等級は大津波警報のまま動いていない）。
-  // ②語り直すとこの文は全部の事実を並べ直すので、等級が動くたびに震源を丸ごと繰り返すことになる。
-  // ③更新そのものは地震情報が伝える（能登では 16:24。津波の 2 分後）。
-  //
-  // 「等級が動く報と震源の更新が同じ通に重なる」形は実データで確かめていない。重なったときに
-  // 更新が声にならないのは承知のうえで、冗長さを避ける側に倒している。
+  // **まだ声にしていない事実があれば、震源を通しで語る。** 全部を語り終えていれば、
+  // 値が変わった事実だけを短く言い直す（→ {@link sourceHypocenterChangedSegments}）。
   if (![...tellable].every(fact => spoken?.facts.has(fact))) {
     const follow: SpeechRef = entry.subject ? { kind: 'borrowedHypocenter', subject: entry.subject } : { kind: 'borrowedHypocenter' }
     const lead = index === 0 ? 'この地震の震源は' : 'また、もう一つの地震の震源は'
@@ -2299,7 +2299,62 @@ function oneSourceHypocenterSegments(
     }
     return segments
   }
-  return []
+  return sourceHypocenterChangedSegments(entry, index, hypocenter, tellable)
+}
+
+/**
+ * 原因地震 1 件の震源のうち、**声にした値から変わった事実だけ**を言い直す文。変化が無ければ空。
+ *
+ * 2026-10-14 ユーザー選択「変わった値だけ言い直す（推奨）」（選択肢の説明は「全部を語り終えていて値が
+ * 違う事実があるときだけ、変わった値を短く言う」）。入れるのは等級を名乗る発表文だけ（2026-10-19
+ * ユーザー選択「発表文だけ (Recommended)」）。文面は「この地震の」を冠した形（2026-10-19 ユーザー
+ * 選択「「この地震の」を付ける (Recommended)」）—— 津波の文の後ろで「マグニチュードは…」とだけ言うと、
+ * 何の規模か分からない。
+ *
+ * 能登 2024/1/1 では、M7.4 → 7.6 は大津波警報へ上がった 16:22 の津波警報（VTSE41）に載り、
+ * 地震情報が伝えたのは 2 分後の 16:24 だった。**記録は地震情報と共有する**ので、ここで伝えた値を
+ * 地震情報の続報（{@link changedFactSegments}）は言い直さない。
+ *
+ * 並び（震源名 → 規模 → 深さ）と判定は地震情報の続報に揃える。
+ */
+function sourceHypocenterChangedSegments(
+  entry: TsunamiSourceSpoken,
+  index: number,
+  hypocenter: Hypocenter,
+  tellable: Set<QuakeFact>,
+): SpeechSegment[] {
+  const spoken = entry.spoken
+  // 地震情報がこの報より後に出ているなら、この報の値のほうが古いかもしれない（→ `quakeReportedLater`）。
+  if (!spoken || entry.quakeReportedLater) return []
+  const changed = (fact: QuakeFact, value: string): boolean =>
+    tellable.has(fact) && spoken.facts.has(fact) && spoken.facts.get(fact) !== value
+  const follow: SpeechRef = entry.subject ? { kind: 'borrowedHypocenter', subject: entry.subject } : { kind: 'borrowedHypocenter' }
+  const subjectWord = index === 0 ? 'この地震の' : 'もう一つの地震の'
+  const sentences: SpeechSegment[] = []
+  const push = (text: string, fact: QuakeFact, value: string) => {
+    if (!text) return
+    sentences.push({ text, refs: [{ kind: 'quakeFact', fact, value, sourceIndex: index }, follow] })
+  }
+
+  if (changed('hypocenterName', hypocenter.name)) {
+    push(`${subjectWord}震源は${hypocenter.name}に更新されました。`, 'hypocenterName', hypocenter.name)
+  }
+  const magValue = magnitudeFactValue(hypocenter)
+  if (changed('magnitude', magValue)) {
+    // 数値にならない規模は「〜に更新されました」の枠に入らない（地震情報側と同じ扱い。
+    // → `magnitudeConditionAmendSentence`）。
+    const predicate = magnitudeConditionPredicate(hypocenter)
+    const text = hasMagnitude(hypocenter.magnitude)
+      ? `${subjectWord}マグニチュードは${magnitudeText(hypocenter.magnitude)}に更新されました。`
+      : predicate ? `${subjectWord}マグニチュードが更新されました。${predicate}` : ''
+    push(text, 'magnitude', magValue)
+  }
+  if (changed('depth', String(hypocenter.depth))) {
+    push(`${subjectWord}震源の深さは${depthUpdateValue(hypocenter.depth)}に更新されました。`, 'depth', String(hypocenter.depth))
+  }
+  // 2 つ目以降の地震は、通しで語るときと同じく「また、」で話題の切れ目を示す。
+  if (index > 0 && sentences.length > 0) sentences[0] = { ...sentences[0], text: `また、${sentences[0].text}` }
+  return sentences
 }
 
 /**
