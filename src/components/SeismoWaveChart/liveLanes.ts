@@ -23,6 +23,8 @@ import {
 } from './paintWave'
 import { buildTimeTicks } from './timeTicks'
 import type { WaveUnit } from './waveUnit'
+import type { LaneScales } from './sharedScale'
+import { compressedVertical, LINEAR_VERTICAL } from './verticalMap'
 
 /** 裏の絵を描く先。**画面に置かない canvas** なので、大きさは画面の段から測って渡す。 */
 export interface LaneTarget {
@@ -97,8 +99,16 @@ export function drawLanes(params: {
   timeline: LiveTimeline
   /** 縦の単位と下限の物差し（自作地震計は gal、公開観測点は μm/s。`waveUnit.ts`）。 */
   unit: WaveUnit
-}): { texts: Record<string, string | null>; compositeFellBack: boolean } {
-  const { targets, lanes, expanded, win, stale, quietLevel, arrivals, timeline, unit } = params
+  /**
+   * 他の観測点と縦を揃えるか（`sharedScale.ts`）。**揃えない段は `null`**（自作地震計）。
+   * 揃える段は、相手の範囲（まだ誰も書いていなければ `null`）が自分だけで決めた範囲より大きければそちらで描き、
+   * **縦を対数に近い曲線で圧縮する**（`verticalMap.ts`。相手がまだいなくても圧縮する —— 最初の 1 回だけ線形に
+   * なると、揃った瞬間に絵が跳ねる）。
+   */
+  sharing: { readonly shared: LaneScales | null } | null
+}): { texts: Record<string, string | null>; compositeFellBack: boolean; ownScale: LaneScales | null } {
+  const { targets, lanes, expanded, win, stale, quietLevel, arrivals, timeline, unit, sharing } = params
+  const sharedScale = sharing?.shared ?? null
   const spanMs = liveSpanMs(timeline)
   const rightEdge = timeline.nowMs + timeline.leadMs
   // **描くたびに読み直す。** 押した向きは次のフレームで効く（この関数は毎秒 3 回
@@ -136,6 +146,18 @@ export function drawLanes(params: {
     }
     return columnsCache.columns
   }
+  // **揃える範囲は、列を組んだ後に縦の範囲だけ広げて渡す。** 列そのものは自分の下限で組むので、自分だけで決めた範囲
+  // （`ownScale`）は揃える前の値のまま読める。
+  const buildShared = (columnCount: number) => {
+    const built = build(columnCount)
+    if (built === null || sharedScale === null || !(sharedScale.signed > built.scaleGal)) return built
+    return { ...built, scaleGal: sharedScale.signed }
+  }
+  const compositeMinScale = sharedScale === null ? minScale : Math.max(minScale, sharedScale.magnitude)
+  // 折れ目は全員の下限の最大（揃える相手がまだいなければ自分の下限）。全段で同じ曲線にしないと、同じ値が段によって違う高さになる。
+  const vertical = sharing === null ? LINEAR_VERTICAL : compressedVertical(Math.max(minScale, sharedScale?.floor ?? 0))
+  /** 最後に組んだ列（段が 1 つも描かれなければ `null`）。閉包の外から読むので関数越しにする（型の絞り込みが効かない）。 */
+  const lastBuilt = () => columnsCache?.columns ?? null
 
   /** その成分の正側・負側の平均の線（段の線と同じ縦の物差しで重ねる）。 */
   const axisMeanOverlays = (a: number) => (count: number) => {
@@ -166,8 +188,9 @@ export function drawLanes(params: {
     const ticks = isLast ? RESERVE_TICK_BAND : undefined
     if (lane.kind === 'composite') {
       const text = paintCompositeColumnsAt(canvas, size, build, stale, {
-        minScale,
+        minScale: compositeMinScale,
         unit: unit.label,
+        vertical,
         marks: laneMarks,
         ticks,
         // 合成の段は畳んでも展開しても 1 本なので、いつも均した線を重ねる。
@@ -180,12 +203,13 @@ export function drawLanes(params: {
       // 押し出しの窓は合成を必ず作れるので、ふだんは来ない。**重ねた絵が描けたときだけ「戻した」と数える**
       // ——どちらも描けないのは値が 1 つも無いとき（途絶・繋いだ直後）で、それは段の「—」が示している。
       if (text === null && !expanded) {
-        const overlay = paintWaveColumnsAt(canvas, size, build, stale, {
+        const overlay = paintWaveColumnsAt(canvas, size, buildShared, stale, {
           visibleAxes,
           ticks,
           marks: laneMarks,
           overlays: overlayLaneOverlays,
           unit: unit.label,
+          vertical,
         })
         if (overlay !== null) compositeFellBack = true
         out[key] = overlay
@@ -195,26 +219,44 @@ export function drawLanes(params: {
       return
     }
     if (lane.kind === 'overlay') {
-      out[key] = paintWaveColumnsAt(canvas, size, build, stale, {
+      out[key] = paintWaveColumnsAt(canvas, size, buildShared, stale, {
         visibleAxes,
         ticks,
         marks: laneMarks,
         overlays: overlayLaneOverlays,
         unit: unit.label,
+        vertical,
       })
       return
     }
     const a = lane.axis
-    out[key] = paintWaveColumnsAt(canvas, size, build, stale, {
+    out[key] = paintWaveColumnsAt(canvas, size, buildShared, stale, {
       // **振れ幅の分母は見えている向き全体で取り、線はその段の成分だけ引く** ——3 段の縦を揃える（詳細の窓と同じ）。
       visibleAxes: [0, 1, 2].map((x) => x === a),
       ticks,
       marks: laneMarks,
       overlays: axisMeanOverlays(a),
       unit: unit.label,
+      vertical,
     })
   })
-  return { texts: out, compositeFellBack }
+  return { texts: out, compositeFellBack, ownScale: ownScaleOf(lastBuilt(), minScale) }
+}
+
+/**
+ * 自分だけで決めた縦の範囲（揃える前）。**描けなかった（値が 1 つも無い）なら `null`** —— 他の観測点を古い値で縛らない。
+ * 合成の範囲は {@link paintCompositeColumnsAt} と同じく「下限と合成の最大の大きいほう」。
+ */
+export function ownScaleOf(
+  built: { readonly columns: readonly { readonly hasValue: boolean; readonly magMax: number }[]; readonly scaleGal: number; readonly hasAnyValue: boolean } | null,
+  minScale: number,
+): LaneScales | null {
+  if (built === null || !built.hasAnyValue) return null
+  let peak = 0
+  for (const col of built.columns) {
+    if (col.hasValue && Number.isFinite(col.magMax) && col.magMax > peak) peak = col.magMax
+  }
+  return { signed: built.scaleGal, magnitude: Math.max(minScale, peak), floor: minScale }
 }
 
 /**

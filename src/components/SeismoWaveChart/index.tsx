@@ -63,6 +63,7 @@ import {
 } from './liveLanes'
 import { WaveAxisToggles } from './WaveAxisToggles'
 import { PUBLIC_WAVE_UNIT, SEISMO_WAVE_UNIT, type WaveUnit } from './waveUnit'
+import { SharedLaneScales } from './sharedScale'
 
 /**
  * 波形が届かなくなっているときに出す語。
@@ -192,12 +193,21 @@ interface LiveWaveSource {
   readonly read: (fromMs: number) => SeismoWaveWindow | null
   /** 押したら地図をここへ寄せる。**寄せない段は `null`**（自作地震計）。 */
   readonly focus: (() => void) | null
+  /**
+   * 縦の範囲を揃える帳面（`sharedScale.ts`）。**揃えない段は `null`**（自作地震計。単位が違うので公開観測点と比べられない）。
+   */
+  readonly sharedScales: SharedLaneScales | null
 }
 
 /** 段を積む枠の高さの上限（画面の 3 分の 1。`docs/public-waveform-design.md` §0）。超えた分は枠の中で上下にずらして見る。 */
 const STACK_MAX_HEIGHT_CLASS = 'max-h-[33vh]'
 
 export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView, expanded, onToggleExpanded, arrivalEews, spanSec, onFocusStation }: Props) {
+  // **公開観測点の段は縦の範囲を全段で揃え、縦を対数に近い曲線で圧縮する**（2026-10-19 ユーザー選択「線形で始めて測る
+  // (Recommended)」、続けて「縦を圧縮する (Recommended)」）。段ごとに伸ばすと、揺れた 1 点だけ線が縮み、どこが揺れているか・
+  // どれだけ揺れたかを見比べられない。揃えて線形のままだと、遠い観測点が平らになる（`verticalMap.ts`）。
+  const publicScalesRef = useRef<SharedLaneScales | null>(null)
+  if (publicScalesRef.current === null) publicScalesRef.current = new SharedLaneScales()
   const sources: LiveWaveSource[] = []
   for (const station of stations) {
     sources.push({
@@ -212,6 +222,7 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
       sampleBehindWarnMs: SEISMO_SAMPLE_BEHIND_WARN_MS,
       read: (fromMs) => readWave(station.stationId, fromMs),
       focus: null,
+      sharedScales: null,
     })
   }
   if (publicWaves !== null) {
@@ -231,6 +242,7 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
         sampleBehindWarnMs: PUBLIC_WAVE_STALE_MS,
         read: (fromMs) => publicWaves.readWave(ps.code, fromMs),
         focus: () => onFocusStation([[ps.lat, ps.lon]]),
+        sharedScales: publicScalesRef.current,
       })
     })
   }
@@ -341,6 +353,14 @@ function StationWave({
   // 見えたまま —— 線を薄くして、生きていない絵だと分かるようにする。
   const staleRef = useRef(source.stale)
   staleRef.current = source.stale
+  const sharedScalesRef = useRef(source.sharedScales)
+  sharedScalesRef.current = source.sharedScales
+  // **段が消えたら帳面から外す**（残すと、出ていない観測点の古い最大で他の段を縛り続ける）。
+  useEffect(() => {
+    const scales = source.sharedScales
+    const id = source.id
+    return () => scales?.remove(id)
+  }, [source.sharedScales, source.id])
 
   useEffect(() => {
     let raf = 0
@@ -417,7 +437,8 @@ function StationWave({
         })
       }
       for (const key of [...backs.keys()]) if (!canvasRefs.current.has(key)) backs.delete(key)
-      const { texts: next, compositeFellBack } = drawLanes({
+      const shared = sharedScalesRef.current
+      const { texts: next, compositeFellBack, ownScale } = drawLanes({
         targets,
         lanes: lanesRef.current,
         expanded: expandedRef.current,
@@ -427,7 +448,10 @@ function StationWave({
         arrivals: arrivalsRef.current,
         timeline: nextTimeline,
         unit: unitRef.current,
+        sharing: shared === null ? null : { shared: shared.shared() },
       })
+      // 揃える前の自分の範囲を書く。**次の組み直しから**他の段（と自分）がこれを読む。
+      shared?.publish(stationId, ownScale)
       timeline = nextTimeline
       if (compositeFellBack && loggedFallbackFor !== stationId) {
         loggedFallbackFor = stationId
@@ -492,6 +516,8 @@ function StationWave({
           compose()
         } catch (e) {
           warnThrottled('compose', '[seismo] 下端の波形を組めなかった', e)
+          // **組めなかった段は揃える材料から外す**（前に書いた大きな範囲が残ると、他の全段の縦を縛り続ける）。
+          sharedScalesRef.current?.remove(stationIdRef.current)
         }
       }
       try {
