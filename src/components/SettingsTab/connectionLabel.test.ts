@@ -26,6 +26,15 @@ describe('dmdataConnectionLabel', () => {
     expect(label.className).toContain('amber')
   })
 
+  // 正: 配信元が閉じて止めた 2 つは、理由と利用者がすべきことを分けて出す（2026-10-19 ユーザー承認の文面）。
+  // 「切断」のままだと、自動で繋ぎ直す切断と見分けが付かず、待っていれば戻ると読まれる
+  it('解約・終了の操作で止めたときは、理由ごとの文言を出す', () => {
+    expect(dmdataConnectionLabel('contract-ended', KEY_OK).text)
+      .toBe('接続を停止（受信できる区分がなくなりました。契約を確かめてから再読み込みしてください）')
+    expect(dmdataConnectionLabel('closed-by-user', KEY_OK).text)
+      .toBe('接続を停止（DMDATA.JP 側で接続が終了されました。再読み込みで繋ぎ直します）')
+  })
+
   // 対照: 本当の切断は従来どおり「切断」。crowded の文言に寄せると、
   // キーや回線の問題を「タブを閉じれば直る」と誤って案内する
   it('切断は「切断」のまま', () => {
@@ -49,7 +58,7 @@ describe('dmdataConnectionLabel', () => {
   // 安全弁: **どの状態でも空文字を返さない**。空を返すと接続状態の行が消え、
   // 「状態が分からない」ことに画面からも気づけない
   it('どの状態でも文言が空にならない', () => {
-    for (const s of ['connected', 'connecting', 'disconnected', 'replay', 'crowded', undefined] as const) {
+    for (const s of ['connected', 'connecting', 'disconnected', 'replay', 'crowded', 'contract-ended', 'closed-by-user', undefined] as const) {
       const label = dmdataConnectionLabel(s, KEY_OK)
       expect(label.text.length).toBeGreaterThan(0)
       expect(label.className.length).toBeGreaterThan(0)

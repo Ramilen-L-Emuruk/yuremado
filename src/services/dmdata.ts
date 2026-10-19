@@ -392,7 +392,7 @@ export type ReleaseSocketOutcome = 'closed' | 'permanent' | 'transient'
  * **失敗は致命的ではない。** `socket.close` スコープが API キーに付いていなければ 403 が返るだけで、
  * その場合は従来どおり PingTimeout を待つことになる（＝この変更が入る前と同じ振る舞い）。
  *
- * **テストのために export している**（`isNonRecoverableCloseCode` と同じ扱い）。
+ * **テストのために export している**（`closeCodeAction` と同じ扱い）。
  * 呼ぶのは `DmdataWebSocket` の中だけ。
  *
  * @returns 閉じられたか、駄目だったならもう一度試す価値があるか
@@ -446,7 +446,24 @@ export class DmdataWebSocket {
   private reconnectAttempt = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
-  private authError = false
+  /**
+   * この先も繋がらないと分かって、再接続をやめた印。立つのは認証エラー・鍵の文字が不正・
+   * 配信元が「解約で受けられる区分が無くなった」「利用者が終了の操作をした」と言って閉じたとき
+   * （→ `closeCodeAction`）。`connect()` で下ろす（鍵を替えたとき・再読み込み）。
+   */
+  private halted = false
+  /**
+   * この接続で配信元が `type: "error"`・`close: true` と名乗った code。直後の `onclose` で
+   * 閉じた理由として使う —— 閉じるときの close code そのものがこの値と同じとは資料に書かれて
+   * いないので、ブラウザが渡す code（1006 など）だけで判断しない。接続を開くたびに捨てる。
+   */
+  private closingErrorCode: number | null = null
+  /**
+   * `connect()`・`disconnect()` のたびに進める番号。`await` を挟んだ処理が、待っているあいだに
+   * 止められた（その後に始め直された）ことを知るのに使う —— `stopped` は `connect()` で下りるので、
+   * 止めてすぐ始め直されると `stopped` だけでは気づけない。
+   */
+  private runId = 0
   // 最後にサーバー活動を確認した時刻（ping / data 受信）。ping ウォッチドッグが読む。
   private lastActivityAt = 0
   private pingWatchdogTimer: ReturnType<typeof setInterval> | null = null
@@ -504,8 +521,9 @@ export class DmdataWebSocket {
   }
 
   connect() {
+    this.runId += 1
     this.stopped = false
-    this.authError = false
+    this.halted = false
     // 決まらないまま待たせ続けない（理由は `CLASSIFICATIONS_READY_TIMEOUT_MS`）
     if (this.resolveClassificationsReady !== null && this.classificationsTimer === null) {
       this.classificationsTimer = setTimeout(() => {
@@ -558,7 +576,7 @@ export class DmdataWebSocket {
         // 理由（未設定／不正な文字）は reason に載っている。ここで言い切ると、未設定のときに
         // 「不正」と告げることになる。
         log.error('[DMDSS] APIキーが使えないため接続しない', { reason })
-        this.authError = true
+        this.halted = true
         this.onStatusChange?.('disconnected')
         return
       }
@@ -566,42 +584,55 @@ export class DmdataWebSocket {
       if (err instanceof Error && err.message === 'auth') {
         // APIキー不正・契約スコープ不足は復旧不能の実エラーのため常に出力する。
         log.error('[DMDSS] 認証エラーのため再接続しない（APIキーの契約スコープ・WebSocket権限を確認）', { reason })
-        this.authError = true
+        this.halted = true
         this.onStatusChange?.('disconnected')
         return
       }
-      // 同時接続数の上限は**再試行すれば直るが、短い間隔で繰り返しても直らない**。
-      // 枠が空くのを待つあいだ、配信元へ同じ失敗を投げ続けないよう間隔を伸ばす
-      // （理由は `RECONNECT_CROWDED_MAX_MS`）。停止はしない。
       if (err instanceof SocketCrowdedError) {
-        this.onStatusChange?.('crowded')
-        // **自分の古い枠が残っているなら返す。** 前の接続が正常に Close されなかった場合
-        // （タブのクラッシュ・ネットワーク断）、その枠は PingTimeout まで残り、枠が 3 本しか
-        // ない契約では自分で自分を塞ぐ。配信元が「すぐに再接続を行いたい場合は Socket Close v2 を
-        // 実行するよう実装する必要があります」と書いているのはこの場面（→ `releaseSocket`）。
-        //
-        // **閉じても即座に繋ぎ直さない。** 予約はそのまま置く —— 枠が空いたことの確認を
-        // 兼ねて、次の試行で繋がるかを見る。失敗しても従来どおり待つだけ。
-        if (this.lastSocketId !== null) {
-          const id = this.lastSocketId
-          // **待つ前に忘れる。** 同じ id へ二度 DELETE を投げないため
-          this.lastSocketId = null
-          const outcome = await releaseSocket(this.apiKey, id, this.debug)
-          // **一時的な失敗なら覚え直す。** ネットワーク断や配信元の 5xx で失敗しただけなら
-          // 枠はまだ残っており、次に 409 を受けたときに試す価値がある。**忘れてしまうと、
-          // 枠を返し損ねたセッションが PingTimeout まで自分を塞いだままになる**
-          // （権限不足なら `permanent` なので、繰り返し投げることにはならない）。
-          //
-          // **既に新しい id を覚えていたら上書きしない** —— `await` のあいだに接続が
-          // 成立して `type: start` が入ることがあり、そちらのほうが新しい。
-          if (outcome === 'transient' && this.lastSocketId === null) this.lastSocketId = id
-        }
-        this.scheduleReconnect({ crowded: true })
+        await this.waitForFreeSlot()
         return
       }
       if (this.debug) dlog('接続失敗', { reason })
       this.scheduleReconnect()
     }
+  }
+
+  /**
+   * 同時接続数の上限で断られたとき（チケットの 409・WebSocket の 4409）。
+   *
+   * 同時接続数の上限は**再試行すれば直るが、短い間隔で繰り返しても直らない**。
+   * 枠が空くのを待つあいだ、配信元へ同じ失敗を投げ続けないよう間隔を伸ばす
+   * （理由は `RECONNECT_CROWDED_MAX_MS`）。停止はしない。
+   */
+  private async waitForFreeSlot(): Promise<void> {
+    const runId = this.runId
+    this.onStatusChange?.('crowded')
+    // **自分の古い枠が残っているなら返す。** 前の接続が正常に Close されなかった場合
+    // （タブのクラッシュ・ネットワーク断）、その枠は PingTimeout まで残り、枠が 3 本しか
+    // ない契約では自分で自分を塞ぐ。配信元が「すぐに再接続を行いたい場合は Socket Close v2 を
+    // 実行するよう実装する必要があります」と書いているのはこの場面（→ `releaseSocket`）。
+    //
+    // **閉じても即座に繋ぎ直さない。** 予約はそのまま置く —— 枠が空いたことの確認を
+    // 兼ねて、次の試行で繋がるかを見る。失敗しても従来どおり待つだけ。
+    if (this.lastSocketId !== null) {
+      const id = this.lastSocketId
+      // **待つ前に忘れる。** 同じ id へ二度 DELETE を投げないため
+      this.lastSocketId = null
+      const outcome = await releaseSocket(this.apiKey, id, this.debug)
+      // **一時的な失敗なら覚え直す。** ネットワーク断や配信元の 5xx で失敗しただけなら
+      // 枠はまだ残っており、次に 409 を受けたときに試す価値がある。**忘れてしまうと、
+      // 枠を返し損ねたセッションが PingTimeout まで自分を塞いだままになる**
+      // （権限不足なら `permanent` なので、繰り返し投げることにはならない）。
+      //
+      // **既に新しい id を覚えていたら上書きしない** —— `await` のあいだに接続が
+      // 成立して `type: start` が入ることがあり、そちらのほうが新しい。
+      if (outcome === 'transient' && this.lastSocketId === null) this.lastSocketId = id
+    }
+    // **待っているあいだに止められていたら予約しない**（止めた後に始め直されていても同じ）。
+    // `disconnect()` は予約を消してから抜けるので、ここで置くと消し損ねた予約が残り、
+    // 同じインスタンスで `connect()` し直したときに二重に繋ぎに行く
+    if (runId !== this.runId || this.stopped || this.halted) return
+    this.scheduleReconnect({ crowded: true })
   }
 
   /** `classificationsReady` を決める。2 度目以降は何もしない */
@@ -617,6 +648,7 @@ export class DmdataWebSocket {
   private openWs(url: string) {
     const ws = new WebSocket(url, 'dmdata.v2')
     this.ws = ws
+    this.closingErrorCode = null
     // start 受信で正常購読が確定するまで reconnectAttempt を維持する（DMD-3）。
     // onopen で 0 リセットしてしまうと、start 前に切断される状態で指数バックオフが効かなくなる。
     this.lastActivityAt = performance.now()
@@ -643,19 +675,31 @@ export class DmdataWebSocket {
       if (this.debug) dlog('WebSocket close', { code: ev.code, reason: ev.reason })
       this.stopPingWatchdog()
       this.stopStableConnectionTimer()
-      // 既知の非回復系 close code は authError 相当に停止する（DMD-2）。
-      // 現状は 1008（Policy Violation）のみを非回復扱いにする。4xxx（application-defined）は
-      // DMDATA が実際に何を送るか公式仕様の裏取りが取れておらず、一律停止だと誤判定時に
-      // 自動復旧経路が無くなるため、通常の再接続対象に含めておく。
-      if (!this.stopped && isNonRecoverableCloseCode(ev.code)) {
-        log.error('[DMDSS] 非回復系 close code のため再接続しない', { code: ev.code, reason: ev.reason })
-        this.authError = true
-        this.onStatusChange?.('disconnected')
-        return
-      }
-      if (!this.stopped && !this.authError) {
-        this.onStatusChange?.('disconnected')
-        this.scheduleReconnect()
+      if (this.stopped || this.halted) return
+      // 閉じた理由は、配信元が直前に `type: "error"` で名乗った code を先に見る（→ `closingErrorCode`）。
+      const code = this.closingErrorCode ?? ev.code
+      const action = closeCodeAction(code)
+      switch (action) {
+        case 'crowded':
+          void this.waitForFreeSlot()
+          return
+        case 'contract-ended':
+        case 'closed-by-user':
+          // **繋ぎ直しても同じ理由で閉じられる**ので止める。鍵を替えるか再読み込みで `connect()` から始め直す
+          log.error('[DMDSS] 配信元が接続を閉じたため再接続しない', { code, closeCode: ev.code, reason: ev.reason })
+          this.halted = true
+          this.onStatusChange?.(action)
+          return
+        case 'reconnect':
+          this.onStatusChange?.('disconnected')
+          this.scheduleReconnect()
+          return
+        default: {
+          const exhaustive: never = action
+          log.warn('[DMDSS] 閉じた理由の扱いが決まっていません', { action: String(exhaustive) })
+          this.onStatusChange?.('disconnected')
+          this.scheduleReconnect()
+        }
       }
     }
 
@@ -672,7 +716,7 @@ export class DmdataWebSocket {
   private startPingWatchdog() {
     this.stopPingWatchdog()
     this.pingWatchdogTimer = setInterval(() => {
-      if (this.stopped || this.authError) return
+      if (this.stopped || this.halted) return
       const elapsed = performance.now() - this.lastActivityAt
       if (elapsed > PING_WATCHDOG_MS) {
         if (this.debug) dlog('ping ウォッチドッグ発火・自発 close', { elapsedMs: Math.round(elapsed) })
@@ -694,7 +738,7 @@ export class DmdataWebSocket {
   private scheduleStableReset() {
     this.stopStableConnectionTimer()
     this.stableConnectionTimer = setTimeout(() => {
-      if (this.stopped || this.authError) return
+      if (this.stopped || this.halted) return
       this.reconnectAttempt = 0
       if (this.debug) dlog('接続安定・reconnectAttempt リセット')
     }, STABLE_CONNECTION_MS)
@@ -823,7 +867,12 @@ export class DmdataWebSocket {
       return
     }
     if (msg.type === 'error') {
-      if (this.debug) dlog('error メッセージ受信', { error: (msg as { error?: unknown }).error, code: (msg as { code?: unknown }).code })
+      // **debug によらず残す。** 配信元が理由を言って切ったのに記録が無いと、利用者の画面に
+      // 「切断」しか出ない場面で原因を辿れない。間引かないのは、1 本の接続につき多くても 1 回だから
+      // （`close: true` ならそこで閉じ、張り直しは指数で間隔が伸びる）
+      const { error, code, close } = msg as { error?: unknown; code?: unknown; close?: unknown }
+      log.warn('[DMDSS] 配信元からエラーを受けました', { error, code, close })
+      if (close === true && typeof code === 'number') this.closingErrorCode = code
       return
     }
     if (msg.type !== 'data') {
@@ -1019,11 +1068,12 @@ export class DmdataWebSocket {
     this.reconnectAttempt += 1
     if (this.debug) dlog('再接続をスケジュール', { attempt: this.reconnectAttempt, delayMs: Math.round(delay) })
     this.reconnectTimer = setTimeout(() => {
-      if (!this.stopped && !this.authError) this.tryConnect()
+      if (!this.stopped && !this.halted) this.tryConnect()
     }, delay)
   }
 
   disconnect() {
+    this.runId += 1
     this.stopped = true
     // 待っている側（履歴・起動時の復元）を解く。待つ側は自分の打ち切りの印を見て何もしない
     this.settleClassifications(PREFERRED_CLASSIFICATIONS)
@@ -1043,12 +1093,29 @@ export class DmdataWebSocket {
   }
 }
 
-// 非回復系 WebSocket close code を判定する。
-// 保守的に 1008（Policy Violation）のみ非回復扱いにする。4xxx（application-defined）は
-// DMDATA v2 の公式仕様の裏取りが取れておらず、一律停止だと誤判定時に自動復旧経路が
-// 無くなるため通常の再接続対象に含める。実運用ログで意味が判明したら個別に列挙する。
-export function isNonRecoverableCloseCode(code: number): boolean {
-  return code === 1008
+/** 配信元が WebSocket を閉じた理由から決める、次にすること。 */
+export type CloseCodeAction = 'reconnect' | 'crowded' | 'contract-ended' | 'closed-by-user'
+
+/**
+ * 閉じた理由（`type: "error"` の `code`、なければ close code）から、次にすることを決める。
+ *
+ * 一覧は DMDATA の WebSocket v2 のエラーコード表（https://dmdata.jp/docs/reference/api/v2/websocket/）。
+ * 9 つのうち扱いを変えるのは 3 つだけで、残り（4400・4404・4503・4640・4641・4891）と
+ * 表に無い code（ブラウザ側の切断 1006 など）は今までどおり張り直す。
+ *
+ * - **4409**（接続できる接続数の上限）: チケットの 409 と同じ。張り直しは止めず、間隔を伸ばして古い枠を返す
+ * - **4807**（契約区分を解約し、ほかに接続中の区分がなくなった）: 繋ぎ直しても受けられる区分が無いので止める
+ * - **4808**（利用者が明示的に WebSocket を終了する操作をした）: 利用者の操作を打ち消さないよう止める
+ *
+ * **テストのために export している。**
+ */
+export function closeCodeAction(code: number): CloseCodeAction {
+  switch (code) {
+    case 4409: return 'crowded'
+    case 4807: return 'contract-ended'
+    case 4808: return 'closed-by-user'
+    default: return 'reconnect'
+  }
 }
 
 // **履歴の一括取得はここに置かない。** 以前はここに 8 本の取得関数があり、どれも
