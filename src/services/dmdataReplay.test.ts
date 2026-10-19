@@ -9,6 +9,7 @@
 // 「本体を落とすかどうかの判定」（`planNeedsBody` と窓の絞り込み）で、その物差しは
 // `fetch` の呼び出し回数。**端末の控えを挟むと 2 回目が必ず 0 回になり、判定そのものを
 // 測れなくなる。** 端末の控えを通した結線は `archivePersistWiring.test.ts` が見る。
+import { readFileSync } from 'node:fs'
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import { PREFERRED_CLASSIFICATIONS } from './dmdataClassifications'
 import {
@@ -1356,7 +1357,25 @@ describe('fetchDmdataReplayEvents の耐障害性', () => {
       expect(second.skippedByDay).toEqual(new Map())
     })
 
-    // 当日ぶんのアーカイブは控えないので、走査のたびに件数が増えうる。
+    // 事前判定（本体が要るか）と消費が食い違わないこと。
+//
+// **会計は置いていない**（2026-10-19 ユーザー承認。問い「本体を落とすかの事前判定と消費のずれの会計」→
+// 「テストで固定して外す (推奨)」）。食い違わない理由は 1 つ —— 計画はパース結果の控え
+// （`parsedTelegramCache`）を見て「本体は要らない」と決め、**控えは増える一方で消えない**。
+// 消す口はテスト用の `clearParseCachesForTest` だけで、ここが崩れると計画のあとで控えから消え、
+// `requireArchiveBody` が投げる（取り込みの失敗になる）。LRU のような上限を足すときはこのテストが落ちる。
+describe('事前判定と消費（parsedTelegramCache は消えない）', () => {
+  it('パース結果の控えを消すのはテスト用の口だけ', () => {
+    const src = readFileSync(new URL('./dmdataReplay.ts', import.meta.url), 'utf-8')
+    const removals = [...src.matchAll(/parsedTelegramCache\.(delete|clear)\(/g)]
+    expect(removals).toHaveLength(1)
+    const at = removals[0].index ?? -1
+    const owner = src.lastIndexOf('export function ', at)
+    expect(src.slice(owner, owner + 60)).toContain('clearParseCachesForTest')
+  })
+})
+
+// 当日ぶんのアーカイブは控えないので、走査のたびに件数が増えうる。
     // ここでは別 URL の目録を返して同じ形を作る（本体の控えは URL を鍵にするため）。
     it('正: 破損が増えたら、増えた分だけ報告する', async () => {
       globalThis.fetch = mockArchives([{ url: 'https://x/a', gz: await archiveWith(1) }]) as unknown as typeof fetch
@@ -2475,7 +2494,7 @@ describe('fetchDmdataQuakeHistory', () => {
   //
   // **控えの寿命が揃っていない。** 目録（`manifestCache`）と電文のパース結果
   // （`parsedTelegramCache`）は上限も期限も持たないのに、本体の控え
-  // （`utils/archiveBodyCache.ts`）は 96 本・128MB・12 時間で落ちる。そのため
+  // （`utils/archiveBodyCache.ts`）は 96 本・128MB の上限で古い順に落ちる。そのため
   // 「解析結果は手元にあるのに本体だけ消えた」状態が普通に起き、かつてはそこで
   // 落とし直した本体を 1 バイトも読まずに捨てていた。
   describe('控えで読み切れる日は本体を落とさない', () => {
@@ -2507,7 +2526,7 @@ describe('fetchDmdataQuakeHistory', () => {
       expect(first.quakes).toHaveLength(1)
       expect(counter.bodies).toBe(1)
 
-      // 期限切れ・追い出しで本体だけが消えた状態（目録とパース結果は残る）
+      // 追い出しで本体だけが消えた状態（目録とパース結果は残る）
       clearArchiveCacheForTest()
       const second = await fetchDmdataQuakeHistory('key', BEFORE, 7, false, null)
 
@@ -2906,6 +2925,33 @@ describe('filterPreWindowEvents の津波', () => {
     const kept = keptTsunamis(entries, '2024-01-02T19:00:00+09:00')
     expect(kept.map(t => t.eventId)).toEqual(['E2'])
   })
+
+  // 状態は同じ `entries` から作るので、どの報にも状態が付く（`groupTsunamiReports` は全報を
+  // どこかの束へ入れ、束ごとに状態を 1 つ作る）。束ね方が分かれる形を混ぜても、引けない報は出ない。
+  it('識別子あり・なし・「A」→「A B」の統合・同じ報の重複を混ぜても、生きている津波は全件残る', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const unkeyedEntry = tsunamiEntry('2024-01-02T11:00:00+09:00')
+      const unkeyedTsunami = unkeyedEntry.payload.kind === 'event' ? (unkeyedEntry.payload.event as JMATsunami) : null
+      const unkeyed: ReplayEntry = { ...unkeyedEntry, payload: { kind: 'event', event: { ...unkeyedTsunami!, eventId: undefined } } }
+      const a = tsunamiEntry('2024-01-02T10:00:00+09:00', { eventId: 'A' })
+      const b = tsunamiEntry('2024-01-02T10:05:00+09:00', { eventId: 'B' })
+      const ab = tsunamiEntry('2024-01-02T10:10:00+09:00', { eventId: 'A B' })
+      const entries = [a, b, unkeyed, ab, ab, a]
+      const kept = keptTsunamis(entries, '2024-01-02T12:00:00+09:00')
+      expect(kept.map(t => `${t.eventId ?? '-'} ${t.time}`)).toEqual([
+        'A 2024-01-02T10:00:00+09:00',
+        'B 2024-01-02T10:05:00+09:00',
+        '- 2024-01-02T11:00:00+09:00',
+        'A B 2024-01-02T10:10:00+09:00',
+        'A B 2024-01-02T10:10:00+09:00',
+        'A 2024-01-02T10:00:00+09:00',
+      ])
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })
 
 // EEW の最終報は「開始時刻の時点で自動解除済みか」で載せるかを決める（`calcEEWCancelTime`）。
@@ -3089,28 +3135,36 @@ describe('アーカイブ本体の控えは開始をまたいで残る', () => {
   })
 })
 
-// 当日ぶんのアーカイブは控えない、という安全弁そのものを固定する。
+// まだ育ちうるアーカイブは控えない、という安全弁そのものを固定する。
 //
-// **この判定が壊れても、他のどのテストも落ちない。** 現状は目録に当日が現れないので分岐へ
-// 到達せず、実機で確かめることもできない（`uncacheable` は 0 のまま）。
-describe('当日ぶんのアーカイブは控えない（isArchiveCacheable）', () => {
-  // JST の 2026-09-16 09:00（UTC では 00:00）を「いま」とする
-  const nowMs = Date.parse('2026-09-16T09:00:00+09:00')
-
-  it('正: 当日と同じ日は控えない', () => {
-    expect(isArchiveCacheable('2026-09-16', nowMs)).toBe(false)
+// **この判定が壊れても、他のどのテストも落ちない。** 控えには期限が無いので、ここで控えて
+// しまった途中までの中身は二度と取り直されない（→ `isArchiveCacheable`）。
+describe('翌日 6:00 JST を過ぎるまでアーカイブは控えない（isArchiveCacheable）', () => {
+  it('正: その日の翌日 6:00 JST を過ぎれば控える', () => {
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-16T06:00:00+09:00'))).toBe(true)
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-16T09:00:00+09:00'))).toBe(true)
   })
 
-  it('対照: 前日は控える', () => {
-    expect(isArchiveCacheable('2026-09-15', nowMs)).toBe(true)
+  it('対照: 当日は控えない', () => {
+    expect(isArchiveCacheable('2026-09-16', Date.parse('2026-09-16T23:59:59+09:00'))).toBe(false)
   })
 
-  // **日境界は JST で見る。** UTC で数えると、JST の 00:00〜09:00 のあいだ「今日」が
-  // 1 日前にずれ、当日ぶんを控えてしまう（いちばん弾きたい時間帯で弾けない）。
-  it('安全弁: JST の日境界で判定する（UTC 基準にずれない）', () => {
-    const justAfterJstMidnight = Date.parse('2026-09-16T00:30:00+09:00')
-    expect(isArchiveCacheable('2026-09-16', justAfterJstMidnight)).toBe(false)
-    expect(isArchiveCacheable('2026-09-15', justAfterJstMidnight)).toBe(true)
+  // 前日分は 00:30 頃に目録へ出る。出た直後のものを控えると、後から作り直されたときに
+  // 欠けた日が端末に残り続ける。
+  it('対照: 前日分も翌日 6:00 JST の手前では控えない', () => {
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-16T00:30:00+09:00'))).toBe(false)
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-16T05:59:59.999+09:00'))).toBe(false)
+  })
+
+  // **日境界は JST で見る。** UTC で数えると境目が 9 時間ずれ、まだ育ちうる時間帯に控えてしまう。
+  it('安全弁: 境目は JST で決まる（UTC の 6:00 ではない）', () => {
+    // JST 2026-09-16 06:00 = UTC 2026-09-15 21:00
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-15T21:00:00Z'))).toBe(true)
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-15T20:59:59Z'))).toBe(false)
+  })
+
+  it('安全弁: 日付として読めない値は控えない', () => {
+    expect(isArchiveCacheable('not-a-date', Date.parse('2026-09-16T09:00:00+09:00'))).toBe(false)
   })
 })
 

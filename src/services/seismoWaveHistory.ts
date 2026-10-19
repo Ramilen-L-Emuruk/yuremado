@@ -48,7 +48,7 @@ export const WAVE_HISTORY_TAIL_MS = 240_000
  *
  * **値が食い違ったらホスト側が正。** ここを緩めてもホストが弾く（安全側に外れる）。
  */
-const HOST_RANGE_MAX_MS = 10 * 60 * 1000
+export const HOST_RANGE_MAX_MS = 10 * 60 * 1000
 
 /** 取るときの打ち切り（ms）。LAN 内の相手だが、`/status` より広い範囲を読むので長めに取る。 */
 const FETCH_TIMEOUT_MS = 15_000
@@ -157,9 +157,8 @@ export function buildWaveHistoryRange(originMs: number): WaveHistoryRange | null
   if (!Number.isFinite(originMs)) return null
   const fromMs = Math.floor(originMs - WAVE_HISTORY_LEAD_MS)
   const toMs = Math.floor(originMs + WAVE_HISTORY_TAIL_MS)
-  // **定数を動かしたときの歯止め。** いまの値（5 分）では起きないが、伸ばした人が
-  // 上限を超えたことに気づく手立てがここしか無い。
-  if (toMs - fromMs > HOST_RANGE_MAX_MS) return null
+  // 幅は定数の和（整数なので床を取っても変わらない）で、ホストの上限に収まることは
+  // `seismoWaveHistory.test.ts` が固定している。ここでは上限を見ない。
   return { fromMs, toMs }
 }
 

@@ -16,7 +16,7 @@ export const PUBLIC_DATASELECT_URL = 'https://service.earthscope.org/fdsnws/data
  * 保存庫への門。EarthScope の Web サービスの上限（どの組み合わせでも同時 5 接続・毎秒 10 接続。設計書 §2）の手前に置く。
  * **値は仮**（設計書 §12「問い合わせの並列の度合い」）—— §3.4 の測り方（1 秒おき・直列）と同じ量にしてある。
  */
-const ARCHIVE_LIMITS: readonly RateLimitWindow[] = [
+export const ARCHIVE_LIMITS: readonly RateLimitWindow[] = [
   { windowMs: 1_000, max: 1 },
   { windowMs: 60_000, max: 60 },
 ]

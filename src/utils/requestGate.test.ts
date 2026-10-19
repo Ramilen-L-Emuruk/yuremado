@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createRateGate, createGateTag } from './requestGate'
+import { DATA_API_LIMITS, API_LIMITS } from '../services/dmdataRequestGates'
+import { ARCHIVE_LIMITS } from '../services/publicWaveArchive'
 
 // 起動時の履歴取得は `Promise.allSettled(items.map(...))` で全件を同時に投げる。
 // 配信元の上限（電文本体は 50req/5min）を守れるかは、**上限に達したあとこの門が
@@ -358,5 +360,42 @@ describe('drainsAt', () => {
       void gate.wait({ tag: createGateTag('mine') })
       expect(gate.drainsAt(createGateTag('mine'))).toBeNull()
     })
+  })
+})
+
+// 窓の形は作る時点で確かめる。上限 0 件の窓は判定に `NaN` を混ぜて上限を素通しさせるので、
+// 実行時に分岐して待たせる代わりに入口で投げる。
+describe('窓の形は作る時点で確かめる', () => {
+  it.each([
+    { windowMs: 1000, max: 0 },
+    { windowMs: 1000, max: -1 },
+    { windowMs: 1000, max: 1.5 },
+    { windowMs: 1000, max: Number.NaN },
+    { windowMs: 0, max: 1 },
+    { windowMs: -1, max: 1 },
+    { windowMs: Number.NaN, max: 1 },
+    { windowMs: Number.POSITIVE_INFINITY, max: 1 },
+  ])('不正な窓 %o は投げる（正）', (limit) => {
+    expect(() => createRateGate([limit])).toThrow(/窓の形が不正/)
+    // 正しい窓と並べても、1 本でも不正なら投げる
+    expect(() => createRateGate([{ windowMs: 1000, max: 1 }, limit])).toThrow(/窓の形が不正/)
+  })
+
+  it('max=1 の窓は作れて、最初の 1 件をその場で通す（対照）', async () => {
+    const gate = createRateGate([{ windowMs: 1000, max: 1 }])
+    await expect(gate.wait()).resolves.toBeUndefined()
+    expect(gate.waiting()).toBe(0)
+  })
+
+  it('空の制限は作れる（テストで門を素通しさせる形）', () => {
+    expect(() => createRateGate([])).not.toThrow()
+  })
+
+  // 本番の定数はトップレベルで読む（読んだ時点でモジュールの門が作られるので、不正なら読み込みで落ちる）。
+  it('本番の上限定数でそれぞれ門が作れる（安全弁）', () => {
+    for (const limits of [DATA_API_LIMITS, API_LIMITS, ARCHIVE_LIMITS]) {
+      expect(limits.length).toBeGreaterThan(0)
+      expect(() => createRateGate(limits)).not.toThrow()
+    }
   })
 })

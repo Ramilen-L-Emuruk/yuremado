@@ -290,12 +290,27 @@ function archiveIdFromUrl(url: string): string | null {
   }
 }
 
+/** 前日ぶんのアーカイブを控えてよくなる JST の時刻（翌日のこの時刻から。→ `isArchiveCacheable`）。 */
+const ARCHIVE_SETTLED_JST_TIME = '06:00:00'
+
 /**
- * そのアーカイブ（`date` が覆う JST 日）を控えてよいか。**当日ぶんだけ控えない。**
+ * そのアーカイブ（`date` が覆う JST 日）を控えてよいか。**その日の翌日 6:00 JST を過ぎるまで控えない。**
  *
- * 目録に当日は現れず当日経路が受ける建て付けなので現状は起きないが、配信元が
- * 「育っている途中の部分アーカイブ」を出す設計へ変われば、控えた側は途中までの中身を
- * 返し続ける。**前提を実装で守り、崩れたら記録に残す**（控えの `uncacheable` が立つ）。
+ * **控えには期限が無い**（アーカイブ id はファイルを 1 つに決める。→ `utils/archiveBodyCache.ts`）ので、
+ * 一度控えた中身は二度と取り直さない。そのため「もう育たないファイルか」をここで決める。
+ *
+ * - **当日ぶん**は目録に現れず当日経路が受ける建て付けなので現状は起きないが、配信元が
+ *   「育っている途中の部分アーカイブ」を出す設計へ変われば、控えた側は途中までの中身を
+ *   返し続ける
+ * - **前日ぶん**は配信元の資料が「前日分を 00:30 頃までに処理を目途」「アーカイブ処理が遅延する
+ *   場合があります」とだけ書き、**作り直されないとは書いていない**。遅れて出た直後のものを控えて、
+ *   それが後から作り直されると、欠けた日が端末に残り続ける。6:00 まで待つのはこの備え
+ *   （2026-10-19 ユーザー承認。問い「前日分のアーカイブが後から作り直されないという前提は、
+ *   資料では裏が取れていない。期限を外す前にどうする？」→「翌日の早い時間も控えない (推奨)」）。
+ *   待つ間に開いた分は毎回取り直すだけで、壊れはしない
+ *
+ * **端末の時計が約 5.5 時間以上進んでいると、0:30 頃に出た直後の前日ぶんを控えてしまい、控えには期限が
+ * 無いので残り続ける。** 時刻の同期を通した時計はリプレイ中に再生時刻を返すので使えず、ここは壁時計に頼る。
  *
  * **`nowMs` には壁時計（`Date.now()`）を渡すこと。`serverNow()` を渡してはいけない。**
  * あちらはリプレイ中に**再生対象のシミュレート時刻**を返すので、`date`（再生している日）と
@@ -304,7 +319,9 @@ function archiveIdFromUrl(url: string): string | null {
  * 再生上の「いま」ではない。
  */
 export function isArchiveCacheable(date: string, nowMs: number): boolean {
-  return date !== toJstDateStr(new Date(nowMs))
+  const settledAt = Date.parse(`${date}T${ARCHIVE_SETTLED_JST_TIME}+09:00`) + DAY_MS
+  // 日付として読めない値は控えない（取り直すだけで済む側へ倒す）
+  return Number.isFinite(settledAt) && nowMs >= settledAt
 }
 
 // 当日ぶんが目録に現れた、という到達しないはずの報せ。**間引く** —— 本編の窓は同じ日を
@@ -321,8 +338,10 @@ const warnSameDayArchive = createLogThrottle(60_000)
 function downloadArchive(
   url: string, apiKey: string, date: string, gateTag: GateTag | null,
 ): Promise<Map<string, Uint8Array>> {
-  const cacheable = isArchiveCacheable(date, Date.now())
-  if (!cacheable) {
+  const nowMs = Date.now()
+  const cacheable = isArchiveCacheable(date, nowMs)
+  // 前日ぶんが翌朝まで控えられないのは普通に起きる（00:30 頃に出る）。報せるのは当日ぶんだけ
+  if (date === toJstDateStr(new Date(nowMs))) {
     warnSameDayArchive(() => log.warn(
       `[replay] 当日ぶんのアーカイブが目録に現れた（控えずに毎回取る） date=${date}`,
     ))
@@ -397,8 +416,8 @@ const manifestCache = new Map<string, ManifestEntry[]>()
  *
  * **上限（LRU）を足すなら、`planNeedsBody` との噛み合わせを先に見ること。** あちらは
  * 「控えにあるか」で本体を落とすかを決め、本体を読む段で控えにも無ければ
- * `planMismatch`（実装の不具合）として数える。1 回の取得の途中で追い出しが起きると、
- * **正常な動作が実装の不具合として記録される。**
+ * `requireArchiveBody` が投げる（実装の不具合として扱う）。1 回の取得の途中で追い出しが起きると、
+ * **正常な動作が取り込みの失敗になる。**
  *
  * **返したオブジェクトは書き換えないこと。** 控えの実体をそのまま渡している。書き換えは控える
  * 前から画面の状態を壊すが（同じ参照が state にも載る）、控えると次の取得の入力まで汚れる。
@@ -433,11 +452,10 @@ const reportedReplaySkipCounts = new Map<string, number>()
 /**
  * 再生に使うセッション内の控えを捨てる。
  *
- * **アーカイブ本体の控えはここで捨てない。** 鍵（URL に入るアーカイブ id）は内容に対して
- * 不変なので捨てる正当性が無く、捨てると**開始のたびに同じファイルを落とし直す** ——
+ * **アーカイブ本体の控えはここで捨てない。** 鍵（URL に入るアーカイブ id）はファイルを 1 つに
+ * 決める値なので捨てる正当性が無く、捨てると**開始のたびに同じファイルを落とし直す** ——
  * 区間ごとにリプレイを開始し直す使い方（録画の自動化）では実測 1,000〜3,800 リクエストに
- * なっていた。メモリは本数とバイト数の上限で抑え、期限も置いてある
- * （→ `utils/archiveBodyCache.ts`）。
+ * なっていた。メモリは本数とバイト数の上限で抑える（期限は置かない。→ `utils/archiveBodyCache.ts`）。
  */
 export function clearReplayCache(): void {
   clearLiveReplayCache()
@@ -706,7 +724,7 @@ async function listArchives(
  * ## なぜ先に決めるのか
  *
  * 目録（`manifestCache`）と電文のパース結果（`parsedTelegramCache`）は**上限も期限も持たない**のに、
- * 本体の控え（`utils/archiveBodyCache.ts`）は 96 本・128MB・12 時間で落ちる。**控えの寿命が
+ * 本体の控え（`utils/archiveBodyCache.ts`）は 96 本・128MB の上限で古い順に落ちる。**控えの寿命が
  * 揃っていない**ので、「解析結果は手元にあるのに本体だけ消えた」状態が普通に起きる —— そこで
  * 落とし直した本体は、下の 3 箇所のどれからも読まれずに捨てられる。効きと成立条件、実際に
  * 数えた値は [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2。
@@ -802,21 +820,21 @@ function planNeedsBody(plans: ReadonlyArray<{ needsBody: boolean }>): boolean {
 }
 
 /**
- * 事前判定（`needsBody`）がずれていたときの記録。**到達しない。**
+ * 本体を落とした日の中身を返す。**落としていない日の電文を読もうとしたら投げる。**
  *
- * **読めなかった取得元（`failedArchiveUrls`）には積まない。** 全滅判定はその件数と分母の
- * **等号**で見るので、電文ごとに積むと件数が分母を越えて等号が成立せず、**本当の全滅を
- * 捕まえられなくなる**。日ごとに 1 度だけ積む形にしても、控えから読めていた分を抱えた日を
- * 「読めなかった」と申告することになり、呼び出し側が結果ごと捨てる。
+ * 計画（`planReplayEntries` / `planHistoryEntries`）が「本体は要らない」と答えた日は本体を
+ * 落とさない。消費のループは同じ計画を回すので、本体の要る電文が来るのは本体を落とした日だけ ——
+ * 計画は控え（`parsedTelegramCache`）を見て決め、控えはテスト以外で消えない（増える一方）ので、
+ * 計画のあとに控えから消えて食い違うことは無い（→ `dmdataReplay.test.ts` の「事前判定と消費」）。
  *
- * 代わりに呼び出し側が件数を数え、**最後に必ず要約を出す** —— そうしないと、その日は
- * 「静かな日」と見分けが付かなくなる。
+ * **黙って `null` を返さない。** 食い違えば実装の不具合なので、呼び出し側の try/catch が
+ * 「取り込みに失敗」として記録し、取りこぼしに数える。
  */
-function warnBodyNotDownloaded(entry: ManifestEntry, date: string, what: string): void {
-  log.error(
-    `[replay] 本体を落としていないのに${what}が要求された`
-    + ` date=${date} id=${String(entry.id)} type=${String(entry.head?.type)}（事前判定のずれ）`,
-  )
+function requireArchiveBody(
+  files: Map<string, Uint8Array> | undefined, entry: ManifestEntry, date: string,
+): Map<string, Uint8Array> {
+  if (files) return files
+  throw new Error(`本体を落としていない日の電文を読もうとした（事前判定のずれ） date=${date} id=${String(entry.id)}`)
 }
 
 export async function fetchDmdataReplayEvents(
@@ -899,14 +917,6 @@ export async function fetchDmdataReplayEvents(
   // 画面には「静かな時間帯だった」としか出ない。
   const scanSkips = createSkipCounter()
   const windowSkips = createSkipCounter()
-  /**
-   * 事前判定がずれて本体を読めなかった電文の数（→ `warnBodyNotDownloaded`）。
-   *
-   * **取りこぼしにも数えたうえで、別に集計する。** 取りこぼしとしては事実（その電文は
-   * 取り込めていない）だが、原因は実装の不具合なので、「壊れた電文」「揃わなかった断片」と
-   * 同じ入れ物に埋もれさせない。
-   */
-  let planMismatchCount = 0
   // 読み取れなかったアーカイブの URL。取得・展開の失敗だけでなく、目録が無い・壊れている
   // ケースも含める。これらは「アーカイブは落ちてきたが中身を 1 通も読めない」状態であり、
   // 取得エラーと同じく丸ごと欠落する。数え漏らすと UI が無警告のまま「電文 0 件の成功」に化ける。
@@ -1023,20 +1033,14 @@ export async function fetchDmdataReplayEvents(
         if (!include) continue
 
         const headType = entry.head.type
-        // ここから先は本体が要る。計画が要ると答えた日は上で落としてある。
-        if (files === undefined) {
-          warnBodyNotDownloaded(entry, item.date, '電文の読み取り')
-          planMismatchCount++
-          windowSkips.add(item.date)
-          continue
-        }
-
         try {
+          // ここから先は本体が要る。計画が要ると答えた日は上で落としてある。
+          const dayFiles = requireArchiveBody(files, entry, item.date)
           // 二進電文（IXAC41）は `.bin` で入り、512KiB を超えると複数エントリに分かれる。
           // **`dec.decode` を通してはいけない** —— 不正なバイトが U+FFFD へ潰れて戻せない。
           if (isBinaryTelegramType(headType)) {
-            const binName = findBodyFileName(entry, files)
-            const binBytes = binName ? files.get(binName) : undefined
+            const binName = findBodyFileName(entry, dayFiles)
+            const binBytes = binName ? dayFiles.get(binName) : undefined
             if (!binBytes) {
               log.warn(`[replay] 二進電文の本体が見つからずスキップ id=${entry.id} type=${headType}（${bodyMissReason(entry)}）`)
               // **電文ごとに 1 度だけ数える。** 分割は最大 24 断片あり、アーカイブの部分破損では
@@ -1074,8 +1078,8 @@ export async function fetchDmdataReplayEvents(
             continue
           }
 
-          const xmlFileName = findBodyFileName(entry, files)
-          const bodyBytes = xmlFileName ? files.get(xmlFileName) : undefined
+          const xmlFileName = findBodyFileName(entry, dayFiles)
+          const bodyBytes = xmlFileName ? dayFiles.get(xmlFileName) : undefined
           if (!bodyBytes) {
             log.warn(`[replay] 電文の本体が見つからずスキップ id=${entry.id} type=${headType}（${bodyMissReason(entry)}）`)
             windowSkips.add(item.date)
@@ -1176,14 +1180,6 @@ export async function fetchDmdataReplayEvents(
 
   if (failedArchiveUrls.length > 0) {
     log.warn(`[replay] 取得元 ${sourceDays} 日ぶんのうち ${failedArchiveUrls.length} 件を読めなかった（残りから取り込みを継続）: ${failedArchiveUrls.join(', ')}`)
-  }
-  // **事前判定のずれは必ず要約を出す。** 出さないと、その日は「静かな窓」と見分けが付かない
-  // （読めなかった取得元には積まない。理由は `warnBodyNotDownloaded`）。
-  if (planMismatchCount > 0) {
-    log.error(
-      `[replay] 本体の事前判定がずれた電文が ${planMismatchCount} 件ありました`
-      + '（その分は取り込めていません。実装の不具合です）',
-    )
   }
   // **窓を見る前に落ちた分だけ、前回からの増分にする**（→ `reportedReplaySkipCounts`）。
   // その日を走査すれば窓に関わらず毎回同じ顔ぶれが出るので、数え直すと壊れた 1 通が
@@ -1303,7 +1299,7 @@ function groupTsunamiReports(tsunamis: readonly JMATsunami[]): Map<JMATsunami, n
 function resolveTsunamiPreWindowStates(
   entries: ReplayEntry[],
   targetTime: Date,
-): (tsunami: JMATsunami) => TsunamiPreWindowState | undefined {
+): (tsunami: JMATsunami) => TsunamiPreWindowState {
   const tsunamis: JMATsunami[] = []
   for (const entry of entries) {
     if (entry.payload.kind !== 'event') continue
@@ -1334,9 +1330,13 @@ function resolveTsunamiPreWindowStates(
       : isStaleWithoutValidity(reports, targetTime)
     states.set(gi, { alive: !expired, validDateTime })
   }
+  // `groupTsunamiReports` は渡した全報をどこかの束へ入れ、上のループは束ごとに状態を 1 つ作る。
+  // 読む側は同じ `entries` の報しか引かないので、引けないのは不変条件が壊れたときだけ（黙って落とさず投げる）。
   return (tsunami) => {
     const gi = groupOf.get(tsunami)
-    return gi === undefined ? undefined : states.get(gi)
+    const state = gi === undefined ? undefined : states.get(gi)
+    if (!state) throw new Error(`[replay] 津波の状態が作られていない報を引きました（束ね方の不変条件が壊れています）: id=${tsunami.id}`)
+    return state
   }
 }
 
@@ -1544,14 +1544,8 @@ export function filterPreWindowEvents(
 
     if (ev.kind === 'tsunami') {
       const tsunami = ev as JMATsunami
+      // 状態は同じ `entries` から作るので、どの報にも必ず付く（付かなければ `tsunamiStates` が投げる）。
       const state = tsunamiStates(tsunami)
-      if (!state) {
-        // 状態は同じ `entries` から作るので、ここへ来るのは作る側と読む側の入力が食い違ったとき
-        // だけ。津波が 1 件も出ない結果は画面上「静かな時間だった」と見分けが付かないので、
-        // 落とす前に記録を残す。
-        log.warn(`[replay] 津波の有効性を解決できなかったため初期状態に載せません: id=${tsunami.id}`)
-        continue
-      }
       if (!state.alive) continue
       // その津波に対して最後に伝えられた期限を、期限を持たない報にも持たせる。補わないと
       // 最後の報で失効の予約が積まれず、期限を過ぎても画面から消えなくなる。
@@ -1701,7 +1695,8 @@ function planHistoryEntries(
  * （`parsedTelegramCache`。控える理由と鍵の取り方はそちらの注記）。
  *
  * @param files 本体。**控えで読み切れる日は落としていない**ので `undefined` を取る
- *   （→ `ManifestPlan`）。控えに無いのに渡されなかったら事前判定のずれなので記録して諦める
+ *   （→ `ManifestPlan`）。控えに無いのに渡されなかったら事前判定のずれなので投げる
+ *   （`requireArchiveBody`。呼び出し側の try/catch が取り込みの失敗として数える）
  * @param want どの型として読むか。呼び出し側が種別から決める
  * @returns 本体が見つからない・パースできないときは null（警告はここで出す。取りこぼしの
  *   計上は呼び出し側）
@@ -1715,13 +1710,10 @@ function parseHistoryTelegram(
 ): ParsedTelegram | null {
   const cached = parsedTelegramCache.get(entry.id)
   if (cached) return cached
-  if (!files) {
-    warnBodyNotDownloaded(entry, date, '電文のパース')
-    return null
-  }
+  const body = requireArchiveBody(files, entry, date)
 
-  const xmlFileName = findBodyFileName(entry, files)
-  const bodyBytes = xmlFileName ? files.get(xmlFileName) : undefined
+  const xmlFileName = findBodyFileName(entry, body)
+  const bodyBytes = xmlFileName ? body.get(xmlFileName) : undefined
   if (!bodyBytes) {
     log.warn(`[replay] 履歴用電文の本体が見つからずスキップ id=${entry.id} type=${entry.head.type}（${bodyMissReason(entry)}）`)
     return null
@@ -2163,13 +2155,6 @@ export async function fetchDmdataQuakeHistory(
   const countedBinaryKeys = new Set<string>()
   /** 取りこぼしは**日ごとに**数える（理由は `utils/telegramLoss.ts` の `skippedByDay`）。 */
   const skipCounter = createSkipCounter()
-  /**
-   * 事前判定がずれて本体を読めなかった電文の数（→ `warnBodyNotDownloaded`）。
-   *
-   * **`skipped` に混ぜたままにしない。** あちらは「壊れた電文」と同じ入れ物なので、
-   * 実装の不具合がその中に埋もれる。
-   */
-  let planMismatch = 0
   let usedDays = 0
   /** 打ち切ったか。**まだ遡れるかの判定と混ぜない** —— 打ち切りは「もう要らない」、遡れるかは在庫の話。 */
   let stoppedEarly = false
@@ -2347,15 +2332,10 @@ export async function fetchDmdataQuakeHistory(
           // 読むとき、どの断片から見ても本体を要らなくするため（→ `planHistoryEntries`）。
           const cached = parsedTelegramCache.get(entry.id)
           if (cached?.kind === 'extra') { keepExtra(cached.key, cached.payload, entryTime.getTime()); continue }
-          if (files === undefined) {
-            warnBodyNotDownloaded(entry, item.date, '二進電文の読み取り')
-            planMismatch++
-            skipCounter.add(item.date)
-            continue
-          }
+          const binFiles = requireArchiveBody(files, entry, item.date)
           const fkey = fragmentKey(entry.head.type, 'RJTD', entry.head.time)
-          const binName = findBodyFileName(entry, files)
-          const binBytes = binName ? files.get(binName) : undefined
+          const binName = findBodyFileName(entry, binFiles)
+          const binBytes = binName ? binFiles.get(binName) : undefined
           if (!binBytes) {
             log.warn(`[replay] 履歴用の二進電文の本体が見つからずスキップ id=${entry.id} type=${entry.head.type}（${bodyMissReason(entry)}）`)
             // 電文ごとに 1 度だけ数える（分割は最大 24 断片あり、部分破損では複数が同時に欠ける）
@@ -2396,9 +2376,6 @@ export async function fetchDmdataQuakeHistory(
           continue
         }
         // どの型として読むかは計画が種別から決めている（`planHistoryEntries`）。
-        // **本体が無いのに要求された場合も `null`** が返る（`warnBodyNotDownloaded` が鳴る）。
-        // その 1 件は事前判定のずれとして別に数える。
-        if (files === undefined && !parsedTelegramCache.has(entry.id)) planMismatch++
         const parsed = parseHistoryTelegram(entry, files, dec, plan.want, item.date)
         if (!parsed) { skipCounter.add(item.date); continue }
         switch (parsed.kind) {
@@ -2588,14 +2565,6 @@ export async function fetchDmdataQuakeHistory(
     log.warn(
       `[replay] 履歴用の取得元 ${usedDays} 日ぶんのうち ${failedArchiveUrls.length} 件を読めなかった`
       + `（読めた地震電文=${quakes.length} 件・扱えなかった電文=${historySkippedTotal} 件）`,
-    )
-  }
-  // **事前判定のずれは必ず要約を出す。** 出さないと、その日は「静かな日」と見分けが付かない
-  // （読めなかった取得元には積まない。理由は `warnBodyNotDownloaded`）。
-  if (planMismatch > 0) {
-    log.error(
-      `[replay] 履歴用に本体の事前判定がずれた電文が ${planMismatch} 件ありました`
-      + '（その分は取り込めていません。実装の不具合です）',
     )
   }
   if (sources.length === 0) {

@@ -230,8 +230,8 @@ export function createLocalKyoshinArchiveSource(archiveId: string): KyoshinSourc
         prefillOnce(selectWarmupFrames(frames, serverDate().getTime()))
         for (const frame of frames) sink.enqueue(frame)
       }).catch((err) => {
-        // loadLocalKyoshinArchive は内部で失敗を握り潰すため通常到達しないが、
-        // 想定外の例外（enqueue 自体の例外等）はログに残す。
+        // 読み込み（loadLocalKyoshinArchive）は失敗を戻り値へ収めるので、ここが受けるのは上の `then` の中の
+        // 処理（`sink.setStalled`・`prefillOnce`・`sink.enqueue` など）が投げた例外。記録して、助走の待ちを空で解く。
         log.error('[kyoshinLocalArchiveSource] ローカルアーカイブの反映中に例外', err)
         // ここへ落ちても助走の待ちは解く（上の `prefillOnce` を通っていれば二度目は無視される）。
         if (active) prefillOnce([])

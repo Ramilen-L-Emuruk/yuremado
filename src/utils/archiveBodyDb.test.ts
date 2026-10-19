@@ -1,7 +1,7 @@
 // アーカイブ本体の永続層（IndexedDB）の挙動を固定する。
 //
 // **フェイクの `ArchivePersistence`（`archiveBodyCache.test.ts`）では代われない。** あちらが
-// 見るのは二層の繋ぎ方で、こちらは**本物の IndexedDB で追い出し・期限・トランザクションが
+// 見るのは二層の繋ぎ方で、こちらは**本物の IndexedDB で追い出し・トランザクションが
 // 意図どおり動くか**。この層が黙って効かなくなると、症状は「なぜか毎回時間がかかる」だけになる。
 import 'fake-indexeddb/auto'
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
@@ -111,26 +111,13 @@ describe('archiveBodyDb', () => {
     expect((await archiveBodyDbStats()).entries).toBe(2)
   })
 
-  // 正: 期限を過ぎた控えは使わない（配信元の設計が変わったときに気づく手立て）
-  it('期限を過ぎた控えは使わず、その場で捨てる', async () => {
-    await writeArchiveBody('https://x/stale', gz(8))
-    // 控えた時刻を 31 日後から見る（期限は 30 日）
-    const later = Date.now() + 31 * 24 * 60 * 60 * 1000
-    vi.spyOn(Date, 'now').mockReturnValue(later)
+  // 期限は置かない（→ archiveBodyDb.ts）。何日経っても読める
+  it('時間が経っても控えたものを読める（期限を持たない）', async () => {
+    await writeArchiveBody('https://x/old', gz(8))
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 400 * 24 * 60 * 60 * 1000)
 
-    expect(await readArchiveBody('https://x/stale')).toBeNull()
-    vi.restoreAllMocks()
-    // 読んだ時点で捨てているので、件数からも消えている。捨てる処理は待たずに走るので、終わるのを待つ
-    await vi.waitFor(async () => expect((await archiveBodyDbStats()).entries).toBe(0), { timeout: 2000 })
-  })
-
-  // 対照: 期限の内側なら使う
-  it('期限の内側なら読める', async () => {
-    await writeArchiveBody('https://x/fresh', gz(8))
-    const later = Date.now() + 29 * 24 * 60 * 60 * 1000
-    vi.spyOn(Date, 'now').mockReturnValue(later)
-
-    expect(await readArchiveBody('https://x/fresh')).not.toBeNull()
+    expect(await readArchiveBody('https://x/old')).not.toBeNull()
+    expect((await archiveBodyDbStats()).entries).toBe(1)
   })
 
   // 上限の値そのものが、まとまった取得で落とす量を下回らないこと

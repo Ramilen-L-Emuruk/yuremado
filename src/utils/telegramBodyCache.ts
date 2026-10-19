@@ -60,19 +60,14 @@ export const MAX_TOTAL_BYTES = 24 * 1024 * 1024
  */
 const TOUCH_INTERVAL_MS = 6 * 60 * 60 * 1000
 
-/**
- * 控えの有効期限。
- *
- * **電文 id は内容に対して不変**なので、原理上は無期限でよい —— 配信元の注意書き
- * 「同じ`id`に対して短期間にリクエストを繰り返さないように」自体が、id と内容が
- * 1 対 1 であることを前提にしている。それでも期限を置くのは、**その前提が崩れたときに
- * 気づく手立てが他に無い**ため（訂正報が同じ id を使い回す等、配信元の設計が変われば、
- * 無期限の控えは永久に古い内容を返し続ける。例外もログも出ない）。
- *
- * 起動時の再取得を防ぐ目的には数日で足りるが、「もっと見る」で数週間前まで遡ることを
- * 考えて 30 日を採った。
+/*
+ * **控えに期限は置かない**（2026-10-19 ユーザー承認。問い「アーカイブ本体（12 時間）・電文本体（30 日）の控えの期限」→
+ * 「期限を外す (推奨)」）。電文 id は配信元が電文 1 通ごとに振る
+ * 値で、配信元の注意書き「同じ`id`に対して短期間にリクエストを繰り返さないように」も id と中身が 1 対 1 で
+ * あることを前提にしている（同じ id で中身が差し替わるかは資料に書かれていない）。期限で捨てても取り直すだけで、
+ * 中身が違っても誰も気づかないので、前提が崩れたときに気づく手立てにはならない。古い順に捨てるのは
+ * 件数と合計の上限だけ。
  */
-const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
  * 「控えたばかりのものを捨てた」と見なす幅。
@@ -92,9 +87,7 @@ interface MetaEntry {
   /** 最後に読んだ（または書いた）時刻。古い順に捨てるのに使う。 */
   lastUsedAt: number
   /**
-   * 控えた時刻。**有効期限の判定に使う**。
-   *
-   * `lastUsedAt` は読むたびに更新されるので期限には使えない（読み続ける限り永久に残る）。
+   * 控えた時刻。控えたばかりのものを捨てたかの判定（`THRASH_WINDOW_MS`）に使う。
    * 版を上げる前に控えた記録はこれを持たないので、無ければ `lastUsedAt` で代用する。
    */
   createdAt?: number
@@ -256,13 +249,6 @@ export async function readTelegramBody(id: string): Promise<string | null> {
     STORE_META, 'readonly', (s) => s.get(id) as IDBRequest<MetaEntry | undefined>,
   )
   const now = Date.now()
-  // **期限切れは使わない。** 控えた時刻を持たない記録（版を上げる前のもの）は
-  // `lastUsedAt` で代用する。期限の意図は `MAX_AGE_MS` を見ること
-  const bornAt = meta?.createdAt ?? meta?.lastUsedAt ?? 0
-  if (bornAt > 0 && now - bornAt > MAX_AGE_MS) {
-    void bothStores((m, b) => { m.delete(id); b.delete(id) })
-    return null
-  }
   if (meta && now - (meta.lastUsedAt ?? 0) > TOUCH_INTERVAL_MS) {
     // 更新の失敗は無視してよい（控えは読めているので、次に捨てる順序がずれるだけ）
     void tx(STORE_META, 'readwrite', (s) => s.put({ ...meta, lastUsedAt: now } satisfies MetaEntry))

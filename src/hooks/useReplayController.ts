@@ -444,7 +444,16 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
       } catch (e) {
         log.error('[replay] 初期状態の材料に履歴を足せなかった（24 時間ぶんだけで再生を続ける）', e)
       }
-      const preFiltered = filterPreWindowEvents(material, targetDate, getAreaPrefIndexCache())
+      // **絞り込みの失敗でも再生を止めない**（上の材料の組み立てと同じ理由）。投げるのは不変条件が
+      // 壊れたとき（津波の束ね方 → `resolveTsunamiPreWindowStates`）で、そのときは初期状態を空にして
+      // 窓の中の電文だけを再生する。
+      let preWindow: ReplayEntry[] = []
+      try {
+        preWindow = filterPreWindowEvents(material, targetDate, getAreaPrefIndexCache())
+      } catch (e) {
+        log.error('[replay] 初期状態の絞り込みに失敗（窓の手前の状態なしで再生を続ける）', e)
+      }
+      const preFiltered = preWindow
         .map(e => ({ ...e, replayTime: new Date(targetDate.getTime() - 1), silent: true }))
       // フェッチ中に WS 切断タイミングで ref が再セットされる競合を排除するため直前に再リセット
       d.resetTracking()
