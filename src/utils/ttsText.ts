@@ -3406,6 +3406,10 @@ export function quakeNoticeToText(event: JMAQuakeNotice): string {
 
 /** 北海道・三陸沖後発地震注意情報（VYSE60）の読み上げテキストを生成する。 */
 export function kohatsuToText(event: JMAKohatsu): string {
+  // **取消は取り消された事実だけを伝える**（2026-10-14 ユーザー選択「提案どおり読み、テストボタンも足す」）。
+  // 後発地震注意情報に「終了」の電文は無いので、`cancelled` が立つのは取消だけ。理由は読まない —— 臨時情報の
+  // 取消（`nankaiToText`）と揃える。音は鳴らさない（呼び出し側）。
+  if (event.cancelled) return '北海道・三陸沖後発地震注意情報は取り消されました。'
   // **句点は無条件に足さない** —— 気象庁の見出し文は句点で終わることが多く、
   // 重ねると「。。」になる（→ {@link endTelegramSentence}）。
   const headline = endTelegramSentence(event.headline.replace(/北海道・三陸沖後発地震注意情報/g, ''))
@@ -4150,7 +4154,10 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
     }
     case 'tsunami': {
       // 解除・失効・取消とも `cancelled` が立つ（理由は上の EEW 分岐のコメント）。
-      if (event.cancelled) return null
+      // **全区域の解除（`lifted`）だけは読む**（2026-10-14 ユーザー選択「画面にも出し、読み上げる」）。
+      // 解除の報は付加文 0107「現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。」
+      // などを載せる。取消（理由は `tsunamiCancelToText` が読む）と失効（電文が無い）は読まない。
+      if (event.cancelled && event.cancelReason !== 'lifted') return null
       const body = joinTelegramTexts([
         pick('tsunamiBody', event.bodyText),
         // 固定付加文は主題ごとに複数ある（避難行動／満潮／沿岸の観測／沖合の観測）。

@@ -1612,6 +1612,27 @@ export function createTestKohatsu(): JMAKohatsu {
 }
 
 /**
+ * 北海道・三陸沖後発地震注意情報の取消電文。**対象と同じ `eventId` を持たせる**（理由は
+ * `createTestNankaiRetraction` に同じ）。後発地震注意情報に「終了」の電文は無いので、`cancelled` と
+ * `retracted` の両方を立てる。本文は取消しの概要の形にする（読み上げは理由を読まない）。
+ */
+export function createTestKohatsuRetraction(base: JMAKohatsu): JMAKohatsu {
+  const now = serverDate().toISOString()
+  return {
+    ...base,
+    id: `${base.id}-cancel`,
+    time: now,
+    reportDateTime: now,
+    headline: '北海道・三陸沖後発地震注意情報（取消）',
+    summary: '',
+    appendix: '',
+    body: 'システムの障害により、先に発表した北海道・三陸沖後発地震注意情報を取り消します。',
+    cancelled: true,
+    retracted: true,
+  }
+}
+
+/**
  * 気象庁の本文が使う全角数字へ直す。
  *
  * 電文の自由文は数字も全角で書かれる（「８月２４日１５時過ぎから」）。テストデータだけ半角にすると、
@@ -1960,17 +1981,72 @@ export function createTestTsunamiSourceAdded(): (JMAQuake | JMATsunami)[] {
     { grade: 'Watch', immediate: false, name: '富山県', maxHeight: { description: '1m', value: 1.0 } },
   ])
   const liftTime = new Date(new Date(added.time).getTime() + TEST_TSUNAMI_SOURCE_ADDED_LIFT_SEC * 1000).toISOString()
-  const lift: JMATsunami = {
-    ...added,
-    id: `${added.id}-lift`,
-    time: liftTime,
-    issue: { ...added.issue, time: liftTime },
-    cancelled: true,
-    cancelReason: 'lifted',
-    areas: [],
-    sourceEarthquakes: undefined,
-  }
+  const lift = { ...createTestTsunamiCancel(added, liftTime, 'lifted', true), id: `${added.id}-lift` }
   return [quakeA, first, quakeB, added, lift]
+}
+
+/** 全区域解除の報が載せる固定付加文 0107（実電文 2026-07-28 18:10 JST の VTSE41 と同じ文）。 */
+const TSUNAMI_LIFT_WARNING_COMMENT = '現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。'
+
+/** 解除の見出し（`Head/Headline/Text`）に入る等級の名前。 */
+const TSUNAMI_LIFT_HEADLINE_GRADE: Partial<Record<TsunamiGrade, string>> = {
+  MajorWarning: '大津波警報',
+  Warning: '津波警報',
+  Watch: '津波注意報',
+}
+
+/**
+ * 津波の全区域解除・誤報取消の報を、パーサーが実電文から返すのと同じ形で作る
+ * （→ docs/spec/settings-pwa-spec.md §7「実電文の形に合わせる」）。
+ *
+ * **発表の報を広げて作らない。** 解除・取消の報は観測点・期限を持たないので、広げると
+ * 実電文に無い項目を抱えた報が流れる。
+ *
+ * - **standard 版**（P2PQuake の 552）: 区域が空になるだけで、理由も事象の識別子も来ない（`p2pquake.ts`）。
+ * - **誤報取消**: 取り消す報と同じ種類で、気象庁が書いた理由（`Body/Text`）だけを持つ（`dmdataParser.ts` の取消の分岐）。
+ * - **全区域解除**: 警報・注意報・予報（VTSE41）の報で、見出し・情報名・固定付加文 0107・原因地震を持つ。
+ *   見出しと情報名は実電文（2026-07-28 18:10 JST）の「津波注意報を解除しました。」「津波予報」に倣い、
+ *   見出しの等級は発表中のいちばん高いものにする。予報だけの津波の解除の見出しは実電文を持たないので入れない。
+ */
+export function createTestTsunamiCancel(
+  announcement: JMATsunami,
+  time: string,
+  reason: 'lifted' | 'retracted',
+  withDmdssFields: boolean,
+): JMATsunami {
+  const base: JMATsunami = {
+    kind: 'tsunami',
+    id: `${announcement.id}-cancel`,
+    time,
+    cancelled: true,
+    issue: { ...announcement.issue, time },
+    areas: [],
+  }
+  if (!withDmdssFields) return base
+  const dmdss: JMATsunami = {
+    ...base,
+    eventId: announcement.eventId,
+    ...(announcement.operationStatus && { operationStatus: announcement.operationStatus }),
+  }
+  if (reason === 'retracted') {
+    return {
+      ...dmdss,
+      ...(announcement.headType && { headType: announcement.headType }),
+      cancelReason: 'retracted',
+      cancelText: 'システムの障害により誤った津波警報等を配信しました。',
+    }
+  }
+  const topGrade = (['MajorWarning', 'Warning', 'Watch'] as const).find(g => announcement.areas.some(a => a.grade === g))
+  const gradeName = topGrade && TSUNAMI_LIFT_HEADLINE_GRADE[topGrade]
+  return {
+    ...dmdss,
+    headType: 'VTSE41',
+    cancelReason: 'lifted',
+    infoName: '津波予報',
+    ...(gradeName && { headline: `${gradeName}を解除しました。` }),
+    warningComments: [{ key: 'VTSE41', text: TSUNAMI_LIFT_WARNING_COMMENT }],
+    ...(announcement.sourceEarthquakes && { sourceEarthquakes: announcement.sourceEarthquakes }),
+  }
 }
 
 /** 津波情報だけを取り消すテストの各報の時刻（押した時刻からの秒）。 */
@@ -2029,17 +2105,7 @@ export function createTestTsunamiInfoRetraction(): JMATsunami[] {
     areas: [],
   }
   const liftTime = at(TEST_TSUNAMI_INFO_RETRACTION_AT_SEC.lift)
-  const lift: JMATsunami = {
-    kind: 'tsunami',
-    id: `${warning.id}-lift`,
-    eventId: warning.eventId,
-    headType: 'VTSE41',
-    time: liftTime,
-    cancelled: true,
-    cancelReason: 'lifted',
-    issue: { ...warning.issue, time: liftTime },
-    areas: [],
-  }
+  const lift = { ...createTestTsunamiCancel(warning, liftTime, 'lifted', true), id: `${warning.id}-lift` }
   return [warning, info, retraction, lift]
 }
 
@@ -2180,6 +2246,9 @@ export function createTestTsunamiGradeChange(base: JMATsunami): JMATsunami {
  * @param base 発表報。潮位観測点の出どころ
  * @param prev 直前の報（区域ごとに等級が動いた続報）。区域の等級と前回の等級の出どころ
  */
+/** 満潮時刻テストで「津波到達中と推測」を持たせる観測点（釜石）。 */
+const TEST_TSUNAMI_ARRIVING_STATION_CODE = '21003'
+
 export function createTestTsunamiHighTide(base: JMATsunami, prev: JMATsunami): JMATsunami {
   const now = new Date(serverNow()).toISOString()
   const stationsByKey = new Map(base.areas.map(a => [a.code ?? a.name, a.stations]))
@@ -2195,7 +2264,15 @@ export function createTestTsunamiHighTide(base: JMATsunami, prev: JMATsunami): J
     // 名乗ってから満潮時刻の話を始める形になる。文面は 2024-01-01 能登半島地震の実電文。
     headline: '各地の満潮時刻と津波到達予想時刻をお知らせします。',
     carriesForecastStations: true,
-    areas: prev.areas.map(a => ({ ...a, stations: stationsByKey.get(a.code ?? a.name) })),
+    // **釜石は到達予想時刻の代わりに「津波到達中と推測」を持たせる。** 実電文の `Station/FirstHeight` は
+    // 予想時刻を過ぎると時刻ではなくこの語を運ぶ（→ docs/spec/tsunami-spec.md §9「区域の到達状況」）。
+    // 実測の無い観測点の行で「予測」の代わりに「到達中」が出る形は、ここでしか実機に出ない。
+    areas: prev.areas.map(a => ({
+      ...a,
+      stations: stationsByKey.get(a.code ?? a.name)?.map(s => s.code === TEST_TSUNAMI_ARRIVING_STATION_CODE
+        ? { name: s.name, code: s.code, highTideDateTime: s.highTideDateTime, arrivalCondition: '津波到達中と推測' }
+        : s),
+    })),
     // 固定付加文は満潮の注記だけ。避難の呼びかけ（VTSE41 の主題）は前報のものが残る
     warningComments: [{ key: 'VTSE51|各地の満潮時刻・津波到達予想時刻に関する情報', text: '津波と満潮が重なると、津波はより高くなりますので一層厳重な警戒が必要です。' }],
     // 観測値・沖合の推定・本文・自由付加文はこの種別に入らない（前報から継がれることを画面で確かめる）
@@ -2408,7 +2485,8 @@ export function createTestTsunamiHighTideFollowUp(
         // 次の満潮へ進む（実電文でも半日ほど先へ飛ぶ）。
         ? { ...s, highTideDateTime: s.highTideDateTime ? new Date(new Date(s.highTideDateTime).getTime() + 12 * 3600_000).toISOString() : undefined }
         // 到達状況だけが確定へ変わる（「津波到達中と推測」→「第１波の到達を確認」）。
-        : { ...s, arrivalCondition: '第１波の到達を確認' }),
+        // 到達状況を持たない地点（まだ予想時刻を運んでいる）は動かさない —— 予想時刻と到達の確認は同時に載らない。
+        : s.arrivalCondition ? { ...s, arrivalCondition: '第１波の到達を確認' } : s),
     })),
   }
 }
@@ -2782,9 +2860,13 @@ export function createTestTsunami(withDmdssFields: boolean): JMATsunami {
         // **その形になるのは続報の側だけ。** ここは解除される前の初報で、津波注意報として
         // 発表されている区域なので `firstHeight` を持つ（→ §7「実電文の形に合わせる」。
         // 要素ごと無いのは津波予報と解除だけ）。
+        //
+        // **この区域の潮位観測点（深浦）に実測を持たせる。** 解除された区域の観測点は、カードでは
+        // 解除の区域の下へ移る（2026-10-19 ユーザー選択「解除の区域の下へ移す（推奨）」）。実測が無いと
+        // その並びが実機に一度も出ない。実測が届いた区域なので到達状況は「第１波の到達を確認」。
         grade: 'Watch', immediate: false, name: '青森県日本海沿岸', code: '200',
         maxHeight: { description: '1m', value: 1.0 },
-        firstHeight: { arrivalTime: t(45), condition: '' },
+        firstHeight: { condition: '第１波の到達を確認' },
       },
     ] as TsunamiArea[]).map(a => withDmdssFields ? a : toP2pTsunamiArea(a)),
     ...(withDmdssFields ? {
@@ -2803,6 +2885,8 @@ export function createTestTsunami(withDmdssFields: boolean): JMATsunami {
       // 水位が上昇中の観測点。波高の数値が消えないことの確認を兼ねる。
       { name: '大洗',   districtCode: '300', districtName: '茨城県',           height: { value: 2.1, description: '2.1m' }, arrivalTime: t(-2), initial: '押し', condition: { rising: true } },
       { name: '八戸港', districtCode: '201', districtName: '青森県太平洋沿岸', height: { value: 1.8, description: '1.8m' }, arrivalTime: t(-3), initial: '引き' },
+      // 続報で解除される区域（青森県日本海沿岸）の実測。解除の後もカードに残り、解除の区域の下へ並ぶ。
+      { name: '深浦', districtCode: '200', districtName: '青森県日本海沿岸', height: { value: 0.2, description: '0.2m' }, arrivalTime: t(-3), initial: '押し' },
       // 第1波の到達時刻が読み取れなかった観測点（`FirstHeight/Condition` = 第１波識別不能）。
       // **欠測とは別物** —— 津波は観測できていて到達も確定しており、時刻だけが出せない。
       // 時刻の欄に「到達時刻不明」と理由が出る（`utils/tsunami.ts` の

@@ -1005,6 +1005,39 @@ describe('津波テストの解除電文', () => {
     expect(h.current.tsunamis[0]?.cancelText).toBeUndefined()
   })
 
+  // 全区域解除の報に気象庁が書いた文（`liftText`）も、取消の理由と同じく名指しで移さないと落ちる。
+  // 落ちても読み上げは鳴るので、画面にだけ文が出ない食い違いになる。
+  it('正: DMDSS 版の全区域解除は、気象庁の文をカードへ引き継ぐ', async () => {
+    const h = setup()
+    await flushInitialLoad()
+    await act(async () => { await h.current.simulateTsunamiWatch() })
+    act(() => { vi.advanceTimersByTime(90_000) })
+
+    expect(h.current.tsunamis[0]?.cancelReason).toBe('lifted')
+    expect(h.current.tsunamis[0]?.liftText).toContain('現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。')
+  })
+
+  it('対照: 誤報取消は解除の文を持たない', async () => {
+    const h = setup()
+    await flushInitialLoad()
+    await act(async () => { await h.current.simulateTsunamiRetraction() })
+    act(() => { vi.advanceTimersByTime(90_000) })
+
+    expect(h.current.tsunamis[0]?.cancelReason).toBe('retracted')
+    expect(h.current.tsunamis[0]?.liftText).toBeUndefined()
+  })
+
+  it('安全弁: standard 版の解除は文を持たないので、カードにも付けない', async () => {
+    mockIsDmdss = false
+    const h = setup()
+    await flushInitialLoad()
+    await act(async () => { await h.current.simulateTsunamiWatch() })
+    act(() => { vi.advanceTimersByTime(90_000) })
+
+    expect(h.current.tsunamis[0]?.cancelledAt).toBeInstanceOf(Date)
+    expect(h.current.tsunamis[0]?.liftText).toBeUndefined()
+  })
+
   it('standard 版: 解除理由と eventId を持たない（P2PQuake では判別できない項目）', async () => {
     mockIsDmdss = false
     const events: LiveEvent[] = []
@@ -1196,6 +1229,27 @@ describe('南海トラフ関連解説情報の帯は期限で畳む', () => {
       }])
     })
     act(() => { vi.advanceTimersByTime(50) })
+    expect(h.current.nankaiCommentary).toBeNull()
+  })
+
+  // 安全弁: 表示中でない解説情報の取消は、表示中の帯の期限タイマーを止めない。
+  // 以前は照合の前にタイマーを止めていたので、別の解説情報の取消が 1 通届くだけで帯が期限で畳まれなくなった。
+  it('安全弁: 別の解説情報の取消が届いても、表示中の帯は期限で畳む', async () => {
+    vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'nankaiCommentary', data: commentary('c-shown', 5_000) })] }))
+    const h = setup()
+    await h.flush()
+    expect(h.current.nankaiCommentary?.id).toBe('c-shown')
+
+    act(() => {
+      h.current.loadReplayEvents([{
+        payload: { kind: 'nankaiCommentary', data: { ...commentary('c-other', 60_000), cancelled: true } },
+        replayTime: serverDate(),
+      }])
+    })
+    act(() => { vi.advanceTimersByTime(50) })
+    expect(h.current.nankaiCommentary?.id).toBe('c-shown')
+
+    act(() => { vi.advanceTimersByTime(5_001) })
     expect(h.current.nankaiCommentary).toBeNull()
   })
 
@@ -3870,6 +3924,73 @@ describe('後発地震注意情報の帯は期限で弾く', () => {
     expect(h.current.kohatsu).toBeNull()
     expect(vi.mocked(log.warn).mock.calls.map(c => c.join(' ')).join(' | '))
       .toContain('後発地震注意情報の期限を計算できません')
+  })
+
+  // 受け手の当て方: 履歴が発表 → 取消の順に渡せば、取消が発表を消して帯は出ない。
+  // （履歴が帯を電文ごとに渡すこと自体は、取得側の `dmdataReplay.test.ts`・`historyExtraKey` のテストが見る。
+  // ここでは取得をモックしているので、畳み込みの欠陥はこのテストでは再現しない）
+  it('履歴の帯は発表 → 取消の順に当て、帯は出ない', async () => {
+    const k = kohatsuInfo(60_000)
+    vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [
+      extra({ kind: 'kohatsu', data: k }),
+      extra({ kind: 'kohatsu', data: { ...k, id: 'dmdata-kohatsu-k1-2', cancelled: true, retracted: true } }),
+    ] }))
+    const h = setup()
+    await h.flush()
+
+    expect(h.current.kohatsu).toBeNull()
+  })
+})
+
+describe('後発地震注意情報の期限タイマーは、帯を書き換えるときだけ張り直す', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  function kohatsu(eventId: string, expireInMs: number, cancelled = false): JMAKohatsu {
+    const now = serverDate()
+    return {
+      id: `dmdata-kohatsu-${eventId}-${cancelled ? 2 : 1}`,
+      time: now.toISOString(),
+      eventId,
+      headline: '北海道・三陸沖後発地震注意情報',
+      body: '巨大地震が発生する可能性が平常時と比べて相対的に高まっています。',
+      cancelled,
+      // 後発地震注意情報の取消は誤報取消（`InfoType` = 取消）なので `retracted` を伴う（→ `JMAKohatsu.retracted`）
+      ...(cancelled && { retracted: true }),
+      reportDateTime: now.toISOString(),
+      expireAt: new Date(now.getTime() + expireInMs).toISOString(),
+    }
+  }
+
+  const inject = (h: ReturnType<typeof setup>, k: JMAKohatsu) => {
+    act(() => { h.current.loadReplayEvents([{ payload: { kind: 'kohatsu', data: k }, replayTime: serverDate() }]) })
+    act(() => { vi.advanceTimersByTime(50) })
+  }
+
+  // 安全弁: 期限切れで弾かれる報・別の識別情報の取消は、表示中の帯の期限タイマーを止めない。
+  // 以前は照合の前にタイマーを止めていたので、弾かれる報が 1 通届くだけで帯が期限を過ぎても残った。
+  it('安全弁: 弾かれる報が届いても、表示中の帯は期限で消える', async () => {
+    vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'kohatsu', data: kohatsu('k1', 5_000) })] }))
+    const h = setup()
+    await h.flush()
+    expect(h.current.kohatsu?.eventId).toBe('k1')
+
+    inject(h, kohatsu('k2', -1_000))
+    inject(h, kohatsu('k3', 60_000, true))
+    expect(h.current.kohatsu?.eventId).toBe('k1')
+
+    act(() => { vi.advanceTimersByTime(5_001) })
+    expect(h.current.kohatsu).toBeNull()
+  })
+
+  // 対照: 同じ識別情報の取消は帯を消し、期限のタイマーも残さない。
+  it('対照: 同じ識別情報の取消は帯を消す', async () => {
+    vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'kohatsu', data: kohatsu('k1', 5_000) })] }))
+    const h = setup()
+    await h.flush()
+
+    inject(h, kohatsu('k1', 5_000, true))
+    expect(h.current.kohatsu).toBeNull()
   })
 })
 

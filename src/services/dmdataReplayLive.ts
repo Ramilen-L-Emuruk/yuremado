@@ -1033,7 +1033,7 @@ export async function fetchLiveQuakeTelegrams(
           skipCounter.add(day)
           return
         }
-        // 受信時刻を入れておく（呼び出し側が種別ごとに最新 1 通へ畳むときの比較に使う）。
+        // 受信時刻を入れておく（呼び出し側が長周期を地震ごとに畳むときの比較と、帯を古い順に並べるのに使う）。
         // **発表時刻を入れない** —— アーカイブ経路の畳み込みは受信時刻で比べるので、軸が揃わない。
         // 発表時刻は分に丸められるので同じ分の続報が同点になり、読めなければ NaN で畳み込みが固まる。
         extras.push({ payload, replayTime: times.get(item) ?? new Date(item.receivedTime), silent: true })

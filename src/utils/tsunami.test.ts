@@ -486,7 +486,7 @@ describe('sortObservationsForCardDisplay', () => {
   it('等級カードの順に並べる（重い等級が先）', () => {
     const areas = [area('青森県太平洋沿岸', '201', 'Watch'), area('岩手県', '210', 'MajorWarning')]
     const items = [obs('八戸港', '青森県太平洋沿岸', '201', 0.4), obs('宮古', '岩手県', '210', 1.2)]
-    expect(sortObservationsForCardDisplay(items, areas).map(o => o.name)).toEqual(['宮古', '八戸港'])
+    expect(sortObservationsForCardDisplay(items, areas, []).map(o => o.name)).toEqual(['宮古', '八戸港'])
   })
 
   // 区域の並べ替え（実測の深刻な順）がそのまま観測点の順にも効く
@@ -494,25 +494,25 @@ describe('sortObservationsForCardDisplay', () => {
     const areas = [area('岩手県', '210', 'Warning', '3m'), area('宮城県', '220', 'Warning', '3m')]
     const items = [obs('宮古', '岩手県', '210', 1.2), obs('石巻市鮎川', '宮城県', '220', 2.4)]
     // 実測が深刻な宮城県の区域が上に来るので、観測点も石巻市鮎川が先
-    expect(sortObservationsForCardDisplay(items, areas).map(o => o.name)).toEqual(['石巻市鮎川', '宮古'])
+    expect(sortObservationsForCardDisplay(items, areas, []).map(o => o.name)).toEqual(['石巻市鮎川', '宮古'])
   })
 
   it('同じ区域の中は電文の並びを保つ', () => {
     const areas = [area('岩手県', '210', 'Warning')]
     const items = [obs('宮古', '岩手県', '210', 1.2), obs('大船渡', '岩手県', '210', 3.0)]
-    expect(sortObservationsForCardDisplay(items, areas).map(o => o.name)).toEqual(['宮古', '大船渡'])
+    expect(sortObservationsForCardDisplay(items, areas, []).map(o => o.name)).toEqual(['宮古', '大船渡'])
   })
 
   // 安全弁: 区域に紐づかない観測点はカードでも最後（「沖合観測」）。落としてはいけない
   it('区域に紐づかない観測点は最後に置き、取り落とさない', () => {
     const areas = [area('岩手県', '210', 'Warning')]
     const items = [obs('沖合A', '沖合', '999', 0.5), obs('宮古', '岩手県', '210', 1.2)]
-    expect(sortObservationsForCardDisplay(items, areas).map(o => o.name)).toEqual(['宮古', '沖合A'])
+    expect(sortObservationsForCardDisplay(items, areas, []).map(o => o.name)).toEqual(['宮古', '沖合A'])
   })
 
   it('区域が空でも全件を 電文順で返す', () => {
     const items = [obs('宮古', '岩手県', '210', 1.2), obs('大船渡', '岩手県', '210', 3.0)]
-    expect(sortObservationsForCardDisplay(items, []).map(o => o.name)).toEqual(['宮古', '大船渡'])
+    expect(sortObservationsForCardDisplay(items, [], []).map(o => o.name)).toEqual(['宮古', '大船渡'])
   })
 
   it('等級の並びはカードと共有する定数から作る', () => {

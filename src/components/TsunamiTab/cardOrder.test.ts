@@ -66,14 +66,14 @@ describe('津波カードの観測点の並び', () => {
   }
 
   it('単一情報源の並びがカードの描画順と一致する', () => {
-    const expected = sortObservationsForCardDisplay(observations, areas).map(o => o.name)
+    const expected = sortObservationsForCardDisplay(observations, areas, []).map(o => o.name)
     expect(renderedOrder(tsunami, expected)).toEqual(expected)
   })
 
   // 上のテストは「両方が同じ関数を使っている」だけでも通ってしまう。並びが実際に
   // 電文順ではないことをここで押さえる（等級・区域の並べ替えが効いていることの確認）。
   it('並びは電文順ではない（等級と区域の並べ替えが効いている）', () => {
-    const expected = sortObservationsForCardDisplay(observations, areas).map(o => o.name)
+    const expected = sortObservationsForCardDisplay(observations, areas, []).map(o => o.name)
     expect(expected).toEqual(['宮古', '大船渡', '石巻市鮎川', '八戸港', '沖合ブイ'])
     expect(expected).not.toEqual(observations.map(o => o.name))
   })
@@ -110,5 +110,42 @@ describe('解除された区域の並び', () => {
   it('並びは電文順ではない（遷移元の重い順が効いている）', () => {
     expect(spokenOrder()).toEqual(['北海道日本海沿岸南部', '青森県日本海沿岸'])
     expect(spokenOrder()).not.toEqual(cancelled.map(a => a.name))
+  })
+})
+
+// 解除された区域の観測点は解除カードの区域の下に描かれる（→ docs/spec/tsunami-spec.md §10「解除された区域」）。
+// 並べ替えに解除区域を渡さないと、沖合の観測点と同じく末尾へ落ち、画面と読み上げの順が食い違う。
+describe('解除された区域の観測点の並び', () => {
+  const active = [area('岩手県', '210', 'Watch', '1m')]
+  const cancelled: TsunamiArea[] = [
+    { name: '青森県日本海沿岸', code: '200', grade: 'Unknown', lastGrade: 'Watch', immediate: false },
+  ]
+  // 電文順は 沖合 → 解除区域 → 表示中の区域
+  const observations = [
+    obs('沖合ブイ', '沖合', '999', 0.2),
+    obs('深浦', '青森県日本海沿岸', '200', 0.3),
+    obs('宮古', '岩手県', '210', 0.5),
+  ]
+  const tsunami: JMATsunami = {
+    kind: 'tsunami',
+    id: 'card-order-lifted-obs',
+    time: '2026-01-01T12:00:00Z',
+    cancelled: false,
+    issue: { source: 'JMA', time: '2026-01-01T12:00:00Z', type: 'Focus' },
+    areas: active,
+    cancelledAreas: cancelled,
+    observations,
+  }
+  const lifted = () => tsunamiAreaGradeChanges(tsunami, observations)
+    .filter(c => c.to === TSUNAMI_GRADE_LIFTED).flatMap(c => c.areas)
+
+  it('正: 解除区域を渡した並びがカードの描画順と一致する', () => {
+    const expected = sortObservationsForCardDisplay(observations, active, lifted()).map(o => o.name)
+    expect(expected).toEqual(['宮古', '深浦', '沖合ブイ'])
+    expect(renderedOrder(tsunami, expected)).toEqual(expected)
+  })
+
+  it('対照: 解除区域を渡さないと、解除区域の観測点は沖合と同じく末尾の群へ落ちる', () => {
+    expect(sortObservationsForCardDisplay(observations, active, []).map(o => o.name)).toEqual(['宮古', '沖合ブイ', '深浦'])
   })
 })

@@ -791,10 +791,20 @@ describe('assemblePreWindowMaterial', () => {
     expect(material.map(kindOf)).toEqual(['lpgm', 'tsunami', 'earthquakeCount'])
   })
 
-  it('対照: 24 時間側・本編側に同じ鍵の帯があれば足さない（古い報で上書きしない）', () => {
+  // **覆した: 帯は種別ではなく電文ごとに見る**（以前は 24 時間側に同じ種別の帯があれば履歴の帯を足さなかった）。
+  // 種別で見ると、24 時間側の最新の 1 通が取消のとき、取り消す相手の発表が足されず、後発地震注意情報のような
+  // 帯は取消を当てる先を失う。古い順に並べるので、古い報が新しい報を上書きすることはない。
+  it('正: 24 時間側に同じ種別の帯があっても、別の電文なら古い順に足す', () => {
+    const pre = [countEntry('new', '2026-08-15T10:00:00+09:00')]
+    const old = countEntry('old', '2026-08-12T12:00:00+09:00')
+    const material = assemblePreWindowMaterial(pre, { tsunamis: [], extras: [old] }, [])
+    expect(material).toEqual([old, ...pre])
+  })
+
+  it('対照: 24 時間側・本編側と同じ電文の帯は足さない（二重に積まない）', () => {
     const pre = [countEntry('new', '2026-08-15T10:00:00+09:00')]
     const normal = [countEntry('at-target', '2026-08-15T12:00:00+09:00')]
-    const material = assemblePreWindowMaterial(pre, { tsunamis: [], extras: [countEntry('old', '2026-08-12T12:00:00+09:00')] }, normal)
+    const material = assemblePreWindowMaterial(pre, { tsunamis: [], extras: [countEntry('new', '2026-08-15T10:00:00+09:00'), countEntry('at-target', '2026-08-15T12:00:00+09:00')] }, normal)
     expect(material).toEqual(pre)
   })
 
