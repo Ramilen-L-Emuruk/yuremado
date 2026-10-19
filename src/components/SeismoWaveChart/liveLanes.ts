@@ -23,8 +23,7 @@ import {
 } from './paintWave'
 import { buildTimeTicks } from './timeTicks'
 import type { WaveUnit } from './waveUnit'
-import type { LaneScales } from './sharedScale'
-import { compressedVertical, LINEAR_VERTICAL } from './verticalMap'
+import { sharedPaint, type LaneScales } from './sharedScale'
 
 /** 裏の絵を描く先。**画面に置かない canvas** なので、大きさは画面の段から測って渡す。 */
 export interface LaneTarget {
@@ -108,7 +107,6 @@ export function drawLanes(params: {
   sharing: { readonly shared: LaneScales | null } | null
 }): { texts: Record<string, string | null>; compositeFellBack: boolean; ownScale: LaneScales | null } {
   const { targets, lanes, expanded, win, stale, quietLevel, arrivals, timeline, unit, sharing } = params
-  const sharedScale = sharing?.shared ?? null
   const spanMs = liveSpanMs(timeline)
   const rightEdge = timeline.nowMs + timeline.leadMs
   // **描くたびに読み直す。** 押した向きは次のフレームで効く（この関数は毎秒 3 回
@@ -148,14 +146,11 @@ export function drawLanes(params: {
   }
   // **揃える範囲は、列を組んだ後に縦の範囲だけ広げて渡す。** 列そのものは自分の下限で組むので、自分だけで決めた範囲
   // （`ownScale`）は揃える前の値のまま読める。
+  const { widen, compositeMinScale, vertical } = sharedPaint(minScale, sharing)
   const buildShared = (columnCount: number) => {
     const built = build(columnCount)
-    if (built === null || sharedScale === null || !(sharedScale.signed > built.scaleGal)) return built
-    return { ...built, scaleGal: sharedScale.signed }
+    return built === null ? null : widen(built)
   }
-  const compositeMinScale = sharedScale === null ? minScale : Math.max(minScale, sharedScale.magnitude)
-  // 折れ目は全員の下限の最大（揃える相手がまだいなければ自分の下限）。全段で同じ曲線にしないと、同じ値が段によって違う高さになる。
-  const vertical = sharing === null ? LINEAR_VERTICAL : compressedVertical(Math.max(minScale, sharedScale?.floor ?? 0))
   /** 最後に組んだ列（段が 1 つも描かれなければ `null`）。閉包の外から読むので関数越しにする（型の絞り込みが効かない）。 */
   const lastBuilt = () => columnsCache?.columns ?? null
 
