@@ -64,6 +64,7 @@ import {
 import { WaveAxisToggles } from './WaveAxisToggles'
 import { PUBLIC_WAVE_UNIT, SEISMO_WAVE_UNIT, type WaveUnit } from './waveUnit'
 import { SharedLaneScales } from './sharedScale'
+import { COMPRESSED_VERTICAL_NOTE } from './verticalMap'
 
 /**
  * 波形が届かなくなっているときに出す語。
@@ -533,6 +534,8 @@ function StationWave({
   const { tallyText, notice, stale, focus } = source
   const lastLane = lanes[lanes.length - 1]
   const headScale = lanes.length === 1 ? (scaleTexts[laneKey(lanes[0])] ?? null) : null
+  // 縦を揃えて圧縮する段（`drawLanes` の `sharing` が `null` でない段）だけ、範囲の字にホバーの一言を添える。
+  const compressedNote = source.sharedScales !== null ? COMPRESSED_VERTICAL_NOTE : undefined
 
   return (
     <div className="w-full bg-black/70 px-2 py-1">
@@ -553,7 +556,12 @@ function StationWave({
           {notice !== null && <span className="text-secondary truncate">{notice}</span>}
           {tallyText !== null && <span className="text-secondary truncate">{tallyText}</span>}
           {/* 畳んでいるときだけ縦の範囲をここへ出す（展開したら段ごとに出す）。 */}
-          {lanes.length === 1 && <span className="font-mono tabular-nums text-secondary">{headScale ?? '—'}</span>}
+          {/* 縦を圧縮している段（公開観測点）だけ、ホバーで一言添える（文面と承認は `COMPRESSED_VERTICAL_NOTE`）。 */}
+          {lanes.length === 1 && (
+            <span className="font-mono tabular-nums text-secondary" title={compressedNote}>
+              {headScale ?? '—'}
+            </span>
+          )}
           {/* **記号だけ・ホバーの説明も付けない**（2026-10-13 ユーザー判断「押せば分かる」）。
               読み上げソフト向けの名前だけ持たせる（画面には出ない。2026-10-13 ユーザー承認）。 */}
           {showControls && (
@@ -581,7 +589,13 @@ function StationWave({
                   <span style={{ color: lane.kind === 'axis' ? AXIS_COLORS[lane.axis] : COMPOSITE_COLOR }}>
                     {lane.kind === 'axis' ? AXIS_LABELS[lane.axis] : COMPOSITE_LABEL}
                   </span>
-                  <span className="font-mono tabular-nums text-secondary">{scaleTexts[key] ?? '—'}</span>
+                  {/* 見出しの帯は押しても下の波形へ通す作りなので、ホバーを受けるこの字だけ受け取る。 */}
+                  <span
+                    className={`font-mono tabular-nums text-secondary${compressedNote !== undefined ? ' pointer-events-auto' : ''}`}
+                    title={compressedNote}
+                  >
+                    {scaleTexts[key] ?? '—'}
+                  </span>
                 </div>
               )}
               <canvas

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
-  isRegistered, startClockSync, fetchRealtimeIntensity, clearKyoshinFrameCacheForTest,
+  isRegistered, startClockSync, fetchRealtimeIntensity, clearKyoshinFrameCacheForTest, findFrontier,
 } from './kyoshin'
 import { fetchServerTime, type ServerTimeSample } from './akamaiClock'
 import { log } from '../utils/logger'
@@ -380,6 +380,65 @@ describe('クロック較正のフロンティア探索は線形に走査しな�
 
     // 1 件目で諦める（窓を最後まで舐めない）
     expect(asked).toHaveLength(1)
+  })
+})
+
+// 判定件数に上限を置かない根拠。窓は最大 ±60 秒（`searchRange` の頭打ち）で、二分探索なら
+// 境界がどこにあっても両端 2 件 ＋ 7 件の 9 件で終わる。上の「12 件以下」は境界が窓に無い
+// （両端だけで決着する）形しか見ていないので、境界を窓の全位置に置いて数える。
+describe('フロンティア探索の判定件数は境界の位置によらず 9 件以下', () => {
+  const originalFetch = globalThis.fetch
+  afterEach(() => { globalThis.fetch = originalFetch })
+
+  /** `boundarySec` 以下を登録済みとして、判定した秒の数を返す。 */
+  async function probeCount(guessSec: number, above: number, below: number, boundarySec: number | null) {
+    let asked = 0
+    const boundaryTs = boundarySec === null ? null : tsOf(boundarySec)
+    globalThis.fetch = vi.fn(async (url: string) => {
+      const m = /RealTimeData\/\d{8}\/(\d{14})\.json/.exec(url)
+      if (!m) return { status: 200 } as Response
+      asked++
+      return { status: boundaryTs !== null && m[1] <= boundaryTs ? 200 : 403 } as Response
+    }) as unknown as typeof fetch
+    const found = await findFrontier(guessSec, above, below)
+    return { asked, found }
+  }
+
+  const guessSec = Math.floor(Date.UTC(2026, 9, 19, 3, 0, 0) / 1000)
+
+  // 正: 窓を最大（±60）まで広げ、境界を窓の中の全位置に置いても 9 件以下で、答えも合う。
+  it('正: 窓 ±60 秒で境界を全位置に置いても判定は 9 件以下で、境界を当てる', async () => {
+    let worst = 0
+    for (let b = guessSec - 60; b < guessSec + 60; b++) {
+      const { asked, found } = await probeCount(guessSec, 60, 60, b)
+      expect(found).toBe(b)
+      worst = Math.max(worst, asked)
+    }
+    expect(worst).toBeLessThanOrEqual(9)
+  })
+
+  // 正: 境界が窓の中央付近にあるとき（二分探索がいちばん深く潜る形の 1 つ）。
+  it('正: 境界が窓の中央付近でも 9 件以下', async () => {
+    for (const b of [guessSec - 1, guessSec, guessSec + 1]) {
+      const { asked, found } = await probeCount(guessSec, 60, 60, b)
+      expect(found).toBe(b)
+      expect(asked).toBeLessThanOrEqual(9)
+    }
+  })
+
+  // 対照: 既定の窓（above=2 / below=4）ではさらに少ない（両端 2 件 ＋ 3 件）。
+  it('対照: 既定の窓では 5 件以下', async () => {
+    for (let b = guessSec - 4; b < guessSec + 2; b++) {
+      const { asked, found } = await probeCount(guessSec, 2, 4, b)
+      expect(found).toBe(b)
+      expect(asked).toBeLessThanOrEqual(5)
+    }
+  })
+
+  // 安全弁: 境界が窓に無いときは両端だけで決着する（上端が登録済み → 上端、下端が未登録 → null）。
+  it('安全弁: 境界が窓の外なら両端の 2 件以下で決着する', async () => {
+    expect(await probeCount(guessSec, 60, 60, guessSec + 100)).toEqual({ asked: 1, found: guessSec + 60 })
+    expect(await probeCount(guessSec, 60, 60, null)).toEqual({ asked: 2, found: null })
   })
 })
 

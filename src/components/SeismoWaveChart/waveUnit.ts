@@ -20,6 +20,12 @@ export interface WaveUnit {
   readonly onsetNoiseFloor: number
   /** 物差し（測れなければ `null`）から縦の下限を出す。 */
   readonly minScale: (use: LiveScaleUse, quietLevel: number | null) => number
+  /**
+   * 同じ絵に並ぶ他の観測点と縦の範囲を揃え、縦を対数に近い曲線で圧縮するか（`sharedScale.ts`・`verticalMap.ts`）。
+   * 公開観測点だけ（地図の下端は 2026-10-19 ユーザー選択「縦を圧縮する (Recommended)」、地震カードは同日の
+   * ユーザー選択「揃えて圧縮する (推奨)」。経緯は docs/public-waveform-design.md §0）。自作地震計は観測点が 1 つなので揃える相手がいない。
+   */
+  readonly sharesVerticalScale: boolean
 }
 
 export const SEISMO_WAVE_UNIT: WaveUnit = {
@@ -27,6 +33,7 @@ export const SEISMO_WAVE_UNIT: WaveUnit = {
   quietMinLevel: QUIET_LEVEL_MIN_GAL,
   onsetNoiseFloor: NOISE_FLOOR_GAL,
   minScale: quietScaledGal,
+  sharesVerticalScale: false,
 }
 
 /**
@@ -53,4 +60,5 @@ export const PUBLIC_WAVE_UNIT: WaveUnit = {
     if (quietLevel === null || !Number.isFinite(quietLevel)) return PUBLIC_QUIET_FALLBACK_UMS[use]
     return QUIET_SCALE_RATIO[use] * Math.max(quietLevel, PUBLIC_QUIET_LEVEL_MIN_UMS)
   },
+  sharesVerticalScale: true,
 }

@@ -2331,8 +2331,18 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   if (unreadableAreaCount > 0) {
     log.warn(`${TSUNAMI_LOG_PREFIX} Forecast の区域 ${unreadableAreaCount} 件で名前を読めませんでした（うち解除済みと判定できたもの: ${unreadableCancelledCount} 件）`)
   }
-  if (areas.length === 0) return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'lifted', issue: { source, time: reportDateTime, type: 'Focus' }, areas: [] }
+  // **全解除の報も、見出し・情報名・付加文・本文・原因地震は通常どおり持つ。** 実電文（2026-07-28 18:10 JST の
+  // VTSE41）は固定付加文 0107「現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。」を載せ、
+  // 画面と読み上げはそれを伝える（2026-10-14 ユーザー選択「画面にも出し、読み上げる」）。最小の形で返すと、
+  // 気象庁が書いた文が届いていても画面にも声にも出ない。
+  //
+  // **解除区域（`cancelledAreas`）は載せない**（→ `JMATsunami.cancelledAreas`）。解除の表示に区域名は出さない
+  // （2026-10-19 ユーザー選択「出さない（推奨）」）。期限（`validDateTime`）も載せない —— 解除の報は期限を
+  // 伝える報ではなく、載っていても当てる先が無い。
+  //
+  // 前回の等級を読めなかった解除区域の記録は、全解除の報でも残す（区域名を画面に出さないぶん、記録にしか残らない）。
   warnUndescribableCancel(undescribableCancel, TSUNAMI_LOG_PREFIX)
+  if (areas.length === 0) return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'lifted', headline, infoName, warningComments, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas: [] }
   forecastStationTally.warnIfNoneReadable(TSUNAMI_LOG_PREFIX)
 
   // Observation も含む場合（VTSE51①: Forecast + Observation 両方あり）
@@ -3158,7 +3168,8 @@ export function parseVyse60FromXml(xml: string): JMAKohatsu | null {
   const bodyText  = (commentEl ? xmlText(xmlQ(commentEl, 'Text')) : '')
     || (bodyEl ? xmlText(xmlQ(bodyEl, 'Text')) : '')
 
-  // 有効期限は発表時刻 + 7日。
+  // 帯を畳む時刻は発表時刻 + 7日。**電文に期限の要素は無い**（アプリが帯を常駐させないための都合で、
+  // 画面にも出さない）。
   // **日時として解釈できることを先に確かめる**（南海トラフ関連解説情報と同じガード）。
   // 不正な文字列のまま進むと `new Date(...).toISOString()` が RangeError を投げ、
   // 電文 1 通が例外で落ちる。`readReportDateTime` は読めない値を空文字で返すので、

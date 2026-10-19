@@ -480,6 +480,50 @@ describe('connectSeismoStream', () => {
     expect(unreadable).toHaveLength(3)
   })
 
+  // 時刻・刻みが数として読めない波形は読み取りで捨てる。波形の入れ物（`SeismoWaveBuffer.push`）は
+  // これを前提に入口の検査を持たないので、壊れた形を並べて固定する（JSON の 1e999 は無限大に読める）。
+  it('正: 時刻・刻みが数として読めない station-wave は渡さない', async () => {
+    const got: SeismoMessage[] = []
+    const unreadable: string[] = []
+    const ctrl = new AbortController()
+    const wave = (first: string, step: string): string =>
+      `event: station-wave\ndata: {"stationId":"home","firstSampleMs":${first},"msPerSample":${step},`
+      + '"gal":[[1],[2],[3]],"memberCount":[2]}\n\n'
+    const fetchImpl = streamOnce(ctrl, [
+      wave('1e999', '10'),
+      wave('-1e999', '10'),
+      wave('null', '10'),
+      wave('"300"', '10'),
+      wave('300', '-1'),
+      wave('300', '0'),
+      wave('300', '"10"'),
+      wave('300', '1e999'),
+      // 対照: 読める形は渡す
+      wave('300', '10'),
+    ])
+
+    connectSeismoStream({
+      baseUrl: 'http://host:50506',
+      wave: 'station',
+      signal: ctrl.signal,
+      onMessage: (m) => got.push(m),
+      onState: () => {},
+      onUnreadable: (_n, d) => unreadable.push(d),
+      fetchImpl,
+      sleep: noSleep,
+    })
+    await settle()
+    ctrl.abort()
+
+    expect(got).toHaveLength(1)
+    const only = got[0]
+    expect(only.kind).toBe('station-wave')
+    if (only.kind !== 'station-wave') return
+    expect(only.wave.firstSampleMs).toBe(300)
+    expect(only.wave.msPerSample).toBe(10)
+    expect(unreadable).toHaveLength(8)
+  })
+
   it('正: 波形が要るときだけ ?wave=station を付ける', async () => {
     const ctrl = new AbortController()
     const fetchImpl = vi.fn(async () => emptyStream()) as unknown as typeof fetch
@@ -1058,6 +1102,68 @@ describe('SeismoHostDirectory', () => {
 
     // **引けた後は 1 分の下限へ戻る。**
     nowMs += 10_000
+    await directory.refresh()
+    expect(vi.mocked(fetchImpl).mock.calls.length).toBe(2)
+  })
+})
+
+// `refresh` は失敗を投げずに戻る（`fetchSeismoStatus` が通信・HTTP・JSON の全経路を戻り値へ収め、
+// 読み取りは `obj`/`arr`/`str` で形を問わず落とす）。待たない呼び出し（`refreshSoon`・
+// `useSeismoStation` の初回）はこの前提で `catch` を持たないので、壊れた形を並べて固定する。
+describe('SeismoHostDirectory.refresh は投げない', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.spyOn(log, 'warn').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  const fakeResponse = (json: () => Promise<unknown>, status = 200): Response =>
+    ({ ok: status >= 200 && status < 300, status, json }) as unknown as Response
+
+  const cases: ReadonlyArray<readonly [string, typeof fetch]> = [
+    ['fetch が同期で投げる', (() => { throw new Error('同期') }) as unknown as typeof fetch],
+    ['fetch が reject する', (async () => { throw new TypeError('Failed to fetch') }) as unknown as typeof fetch],
+    ['HTTP が成功でない', (async () => new Response('', { status: 503 })) as unknown as typeof fetch],
+    ['json() が reject する', (async () => fakeResponse(async () => { throw new SyntaxError('壊れた JSON') })) as unknown as typeof fetch],
+    ['json() が null', (async () => fakeResponse(async () => null)) as unknown as typeof fetch],
+    ['json() が配列', (async () => fakeResponse(async () => [1, 2])) as unknown as typeof fetch],
+    ['json() が数値', (async () => fakeResponse(async () => 42)) as unknown as typeof fetch],
+    ['sensors の要素が壊れている', (async () => fakeResponse(async () => ({
+      generatedAtMs: 1_800_000_000_000,
+      sensors: [
+        null, 1, 'x', [], { boardKey: 3 }, { station: 5 }, { boardKey: 'mac:aa', sensorId: 'i2c0-68', station: 'home' },
+        { boardKey: 'mac:bb', sensorId: 'i2c0-69', station: { stationId: 7, displayName: [], lat: 'x', lon: {} } },
+      ],
+      usualIntensities: [null, 3, { stationId: 'home', usualMeasured: 'x' }],
+    }))) as unknown as typeof fetch],
+    ['usualIntensities が配列でない', (async () => fakeResponse(async () => ({
+      generatedAtMs: 'y', sensors: [], usualIntensities: 'x',
+    }))) as unknown as typeof fetch],
+  ]
+
+  it.each(cases)('正: %s でも reject しない', async (_label, fetchImpl) => {
+    const directory = new SeismoHostDirectory('http://host:50506', fetchImpl, () => 0)
+    await expect(directory.refresh()).resolves.toBeUndefined()
+  })
+
+  it.each(cases)('正: %s でも待たない呼び出し（require）が未処理の rejection を出さない', async (_label, fetchImpl) => {
+    const directory = new SeismoHostDirectory('http://host:50506', fetchImpl, () => 0)
+    // 投げれば vitest が未処理の rejection としてこのテストを落とす
+    directory.require('home')
+    directory.requireBoard('mac:aa')
+    await vi.advanceTimersByTimeAsync(0)
+  })
+
+  // 安全弁: 失敗の後も取り込み中の印が残らない（`finally` で下ろす）。残ると以後二度と引かない。
+  it('安全弁: 投げる fetch の後も、下限を過ぎれば取り直す', async () => {
+    let nowMs = 0
+    const fetchImpl = vi.fn(() => { throw new Error('同期') }) as unknown as typeof fetch
+    const directory = new SeismoHostDirectory('http://host:50506', fetchImpl, () => nowMs)
+    await directory.refresh()
+    nowMs += 6000
     await directory.refresh()
     expect(vi.mocked(fetchImpl).mock.calls.length).toBe(2)
   })

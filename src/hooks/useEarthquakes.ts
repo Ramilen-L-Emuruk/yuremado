@@ -35,7 +35,7 @@ import {
 import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEventLog'
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
-import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState } from '../utils/tsunami'
+import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState, tsunamiLiftText } from '../utils/tsunami'
 import { log } from '../utils/logger'
 import { serverNow, serverDate } from '../utils/clock'
 import { isAbortedByCaller } from '../utils/fetchWithTimeout'
@@ -374,37 +374,21 @@ type TestTsunamiRef = React.MutableRefObject<{ cancelTimer: number; tsunami: JMA
 
 // 津波テスト: 発表 → cancelMs 後に解除（または誤報取消）。
 //
-// 解除電文は実運用（dmdataParser / p2pquake の 552）に合わせる:
-//   - 区域は空。実運用の解除・取消はどちらも areas を持たない（残っている区域が解除の意味）。
-//   - 発表時刻・id は解除電文自身のもの（直前の発表を流用しない）。
-//   - 解除理由は DMDSS 限定。standard 版（P2PQuake）は判別できないため付けない
-//     （p2pquake.ts の 552 パースと同じ扱い）。
+// 解除・取消の報は `createTestTsunamiCancel` が実運用（dmdataParser / p2pquake の 552）と同じ形で作る
+// （発表の報を広げない・発表時刻と id は解除の報自身のもの・理由は DMDSS 限定）。
 function runSimulateTsunami(
   createFn: () => JMATsunami,
   cancelMs: number,
   ref: TestTsunamiRef,
   handleEvent: (event: AppEvent) => void,
+  createCancel: typeof import('../utils/testData').createTestTsunamiCancel,
   cancelReason: 'lifted' | 'retracted' = 'lifted',
 ) {
   if (ref.current) window.clearTimeout(ref.current.cancelTimer)
   const tsunami = createFn()
   handleEvent(tsunami)
   const cancelTimer = window.setTimeout(() => {
-    const now = serverDate().toISOString()
-    handleEvent({
-      ...tsunami,
-      id: `${tsunami.id}-cancel`,
-      time: now,
-      issue: { ...tsunami.issue, time: now },
-      cancelled: true,
-      cancelReason: isDmdss ? cancelReason : undefined,
-      // 取消しの概要（電文の `Body/Text`）。**誤報取消のときだけ気象庁が理由を書く**ので、
-      // 解除では持たせない。実電文の形に合わせないと、画面と読み上げでこの経路を通れない
-      ...(isDmdss && cancelReason === 'retracted'
-        ? { cancelText: 'システムの障害により誤った津波警報等を配信しました。' }
-        : {}),
-      areas: [],
-    })
+    handleEvent(createCancel(tsunami, serverDate().toISOString(), cancelReason, isDmdss))
     ref.current = null
   }, cancelMs)
   ref.current = { cancelTimer, tsunami }
@@ -782,6 +766,8 @@ export function useEarthquakes(
   const testTsunamiRef = useRef<{ cancelTimer: number; tsunami: JMATsunami } | null>(null)
   // 南海トラフ臨時情報の取消テストで、発表から取消までを待つタイマー
   const testNankaiRetractionTimerRef = useRef<number | undefined>(undefined)
+  // 後発地震注意情報の取消テストで、発表から取消までを待つタイマー
+  const testKohatsuRetractionTimerRef = useRef<number | undefined>(undefined)
   const testEarthquakeCountRetractionTimerRef = useRef<number | undefined>(undefined)
   // 長周期地震動の取消テストで、発表から取消までを待つタイマー（`simulateLpgmRetraction`）
   const testLpgmRetractionTimerRef = useRef<number | undefined>(undefined)
@@ -828,6 +814,10 @@ export function useEarthquakes(
     if (testNankaiRetractionTimerRef.current !== undefined) {
       window.clearTimeout(testNankaiRetractionTimerRef.current)
       testNankaiRetractionTimerRef.current = undefined
+    }
+    if (testKohatsuRetractionTimerRef.current !== undefined) {
+      window.clearTimeout(testKohatsuRetractionTimerRef.current)
+      testKohatsuRetractionTimerRef.current = undefined
     }
     if (testEarthquakeCountRetractionTimerRef.current !== undefined) {
       window.clearTimeout(testEarthquakeCountRetractionTimerRef.current)
@@ -965,7 +955,7 @@ export function useEarthquakes(
   // 言い分けるのに使う（→ `isNewEstimatedIntensity`）。**持っている一覧では代われない** ——
   // 履歴から黙って取り込んだ分布は持っているが、まだ伝えていない。
   const shownEstimatedIntensityArrivalsRef = useRef<string[]>([])
-  // 後発地震注意情報（VYSE60）の7日間有効期限タイマー
+  // 後発地震注意情報（VYSE60）の帯を発表から 7 日で畳むタイマー（電文に期限は無く、7 日はアプリの都合）
   const kohatsuExpireTimerRef = useRef<number | undefined>(undefined)
   // 南海トラフ地震関連解説情報（VYSE51/52）の7日間有効期限タイマー。
   // 解説情報には解除電文が無く、定例解説は平常時にも毎月届く。期限で畳まないと帯が常駐する。
@@ -1101,9 +1091,13 @@ export function useEarthquakes(
    * 呼ぶ場所と戻り値の意味は `applyNankai` に同じ。
    */
   const applyKohatsu = useCallback((kohatsu: JMAKohatsu): boolean => {
-    if (kohatsuExpireTimerRef.current !== undefined) {
-      window.clearTimeout(kohatsuExpireTimerRef.current)
-      kohatsuExpireTimerRef.current = undefined
+    // **期限タイマーは、この報を帯へ当てると決めてから止める。** 先に止めると、別の情報単位宛ての取消や
+    // 期限切れの古い報が届いたとき、帯は残るのに表示中の報の期限だけが失われて居座る（お知らせと同じ）。
+    const clearExpireTimer = () => {
+      if (kohatsuExpireTimerRef.current !== undefined) {
+        window.clearTimeout(kohatsuExpireTimerRef.current)
+        kohatsuExpireTimerRef.current = undefined
+      }
     }
     if (!kohatsu.cancelled) {
       const expireMs = new Date(kohatsu.expireAt).getTime() - getTimeRef.current().getTime()
@@ -1120,6 +1114,7 @@ export function useEarthquakes(
       }
       if (expireMs <= 0) return false
 
+      clearExpireTimer()
       kohatsuExpireTimerRef.current = window.setTimeout(() => {
         kohatsuExpireTimerRef.current = undefined
         shownKohatsuEventIdRef.current = null
@@ -1138,6 +1133,7 @@ export function useEarthquakes(
         : `[kohatsu] 別の情報単位への取消のため帯を残します received=${kohatsu.eventId} shown=${shownKohatsuEventIdRef.current}`)
       return false
     }
+    clearExpireTimer()
     shownKohatsuEventIdRef.current = null
     setState(prev => ({ ...prev, kohatsu: null }))
     return true
@@ -1147,10 +1143,6 @@ export function useEarthquakes(
     // 取消電文は帯を消す。false を返すので音・読み上げも起こさない（取消を告げる必要のある
     // 重さの情報ではないため。臨時情報の取消とは扱いが違う）
     if (commentary.cancelled) {
-      if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-        window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-        nankaiCommentaryExpireTimerRef.current = undefined
-      }
       // 失効の予約と同じく、消す前に `id` を照合する（待っている間に新しい解説へ入れ替わって
       // いた場合にそちらを消さないため）。
       //
@@ -1165,6 +1157,12 @@ export function useEarthquakes(
       if (shown !== commentary.id) {
         log.info(`[nankaiCommentary] 別の号への取消のため帯を残します received=${commentary.id} shown=${shown}`)
         return false
+      }
+      // **期限タイマーは号を照合した後で止める**（お知らせと同じ）。先に止めると、別の号への取消で
+      // 帯は残るのに 7 日の期限だけが失われて居座る。
+      if (nankaiCommentaryExpireTimerRef.current !== undefined) {
+        window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
+        nankaiCommentaryExpireTimerRef.current = undefined
       }
       shownCommentaryIdRef.current = null
       setState(prev => ({ ...prev, nankaiCommentary: null }))
@@ -1199,7 +1197,7 @@ export function useEarthquakes(
    * 地震・津波に関するお知らせ（VZSE40）を反映する。
    *
    * 帯の扱いは南海トラフ関連解説情報とほぼ同じ（最新の 1 通・7 日で畳む・取消で消す）。
-   * **7 日は表示上の都合**で、気象庁が期限を定めているわけではない（後発地震注意情報の 7 日とは違う）。
+   * **7 日は表示上の都合**で、気象庁が期限を定めているわけではない（後発地震注意情報の帯の 7 日も同じ）。
    *
    * 戻り値は「画面の状態を変えたか」（帯を出した・取消で帯を消した）。呼び出し側は真のときだけ
    * `onLiveEvent` へ流す（読み上げるかは受け手が設定で決める）。偽なら流さず、録画向けの記録を
@@ -2051,9 +2049,10 @@ export function useEarthquakes(
                 payload: { kind: 'purge-cancelled-tsunami', id: current.id },
                 silent: true,
               })
-              // **取消電文から引き継ぐのは 2 つ。** 表示中のカードを土台にするので、
-              // 取消電文だけが持つ項目は名指しで移さないと落ちる（`cancelText` は
-              // 気象庁が書いた取消しの理由で、他のどこにも無い）。
+              // **解除・取消の報から移すのは 3 つ（`cancelReason`・`cancelText`・`liftText`。`cancelledAt` はいまの時刻）。** 表示中のカードを土台にするので、
+              // その報だけが持つ項目は名指しで移さないと落ちる（`cancelText` は気象庁が書いた取消しの
+              // 理由、`liftText` は全区域解除の報に気象庁が書いた文で、どちらも他のどこにも無い）。
+              const liftText = tsunami.cancelReason === 'lifted' ? tsunamiLiftText(tsunami) : undefined
               return {
                 ...prev,
                 tsunamis: [{
@@ -2061,6 +2060,7 @@ export function useEarthquakes(
                   cancelledAt: now,
                   cancelReason: tsunami.cancelReason,
                   ...(tsunami.cancelText && { cancelText: tsunami.cancelText }),
+                  ...(liftText && { liftText }),
                 }],
                 lastUpdate: now,
               }
@@ -3402,12 +3402,12 @@ export function useEarthquakes(
    * **DMDSS 版のみ。** 前回の等級（`LastKind`）は P2PQuake が配信しない。
    */
   const simulateTsunamiGradeChange = useCallback(async () => {
-    const { createTestTsunami, createTestTsunamiGradeChange, createTestTsunamiHighTide, TEST_AUTO_DISMISS_MS, TEST_TSUNAMI_HIGH_TIDE_DELAY_MS } = await loadTestData()
+    const { createTestTsunami, createTestTsunamiCancel, createTestTsunamiGradeChange, createTestTsunamiHighTide, TEST_AUTO_DISMISS_MS, TEST_TSUNAMI_HIGH_TIDE_DELAY_MS } = await loadTestData()
     const base = createTestTsunami(isDmdss)
     if (testTsunamiGradeChangeTimerRef.current !== undefined) {
       window.clearTimeout(testTsunamiGradeChangeTimerRef.current)
     }
-    runSimulateTsunami(() => base, TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent)
+    runSimulateTsunami(() => base, TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
     // 解除の待ちは `runSimulateTsunami` が張っている。続報はその手前へ差し込む。
     //
     // **待ちは ref で追う。** アンマウントとリセット（リプレイの開始・停止）で落とせるようにする
@@ -3456,7 +3456,7 @@ export function useEarthquakes(
    */
   const simulateTsunamiQuietReports = useCallback(async () => {
     const {
-      createTestTsunami, createTestTsunamiObservationReport, createTestTsunamiObservationOverUpgrade,
+      createTestTsunami, createTestTsunamiCancel, createTestTsunamiObservationReport, createTestTsunamiObservationOverUpgrade,
       createTestTsunamiMaxHeightTimeUpdate, createTestTsunamiFirstWaveUpdate,
       createTestTsunamiOffshoreMaxHeightTimeUpdate,
       createTestTsunamiObservationNoChange, createTestTsunamiHighTide, createTestTsunamiHighTideFollowUp,
@@ -3487,6 +3487,7 @@ export function useEarthquakes(
       TEST_TSUNAMI_QUIET_STEP_MS * steps.length + TEST_TSUNAMI_QUIET_TAIL_MS,
       testTsunamiRef,
       handleEvent,
+      createTestTsunamiCancel,
     )
     let prev = base
     const runStep = (i: number) => {
@@ -3803,27 +3804,27 @@ export function useEarthquakes(
   }, [handleEvent])
 
   const simulateTsunami = useCallback(async () => {
-    const { createTestTsunami, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    runSimulateTsunami(() => createTestTsunami(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent)
+    const { createTestTsunami, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
+    runSimulateTsunami(() => createTestTsunami(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
   }, [handleEvent])
 
   const simulateTsunamiWarning = useCallback(async () => {
-    const { createTestTsunamiWarning, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    runSimulateTsunami(() => createTestTsunamiWarning(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent)
+    const { createTestTsunamiWarning, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
+    runSimulateTsunami(() => createTestTsunamiWarning(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
   }, [handleEvent])
 
   const simulateTsunamiWatch = useCallback(async () => {
-    const { createTestTsunamiWatch, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    runSimulateTsunami(() => createTestTsunamiWatch(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent)
+    const { createTestTsunamiWatch, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
+    runSimulateTsunami(() => createTestTsunamiWatch(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
   }, [handleEvent])
 
   // 予報のみは DMDSS の実運用では ValidDateTime の期限切れで静かに消える（明示的な解除電文を
   // 伴わない）ため、DMDSS では runSimulateTsunami（明示的キャンセル）を使わず期限切れ経路に任せる。
   // standard 版（P2PQuake）は validDateTime を持たないため、実運用と同じく解除電文で消す。
   const simulateTsunamiForecast = useCallback(async () => {
-    const { createTestTsunamiForecast, TEST_AUTO_DISMISS_MS } = await loadTestData()
+    const { createTestTsunamiForecast, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
     if (!isDmdss) {
-      runSimulateTsunami(() => createTestTsunamiForecast(false), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent)
+      runSimulateTsunami(() => createTestTsunamiForecast(false), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
       return
     }
     if (testTsunamiRef.current) {
@@ -3853,7 +3854,7 @@ export function useEarthquakes(
    * 積まれるため、こちらで待ちを張る必要はない。
    */
   const simulateTsunamiExpiry = useCallback(async () => {
-    const { createTestTsunamiWarning, createTestTsunamiExpiry, TEST_AUTO_DISMISS_MS } = await loadTestData()
+    const { createTestTsunamiWarning, createTestTsunamiExpiry, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
     const base = createTestTsunamiWarning(true)
     if (testTsunamiExpiryTimerRef.current !== undefined) {
       window.clearTimeout(testTsunamiExpiryTimerRef.current)
@@ -3861,7 +3862,7 @@ export function useEarthquakes(
     // 1 段目は他の津波テストと同じ入口を通す。**解除の待ちもいったん張る** —— 2 段目が
     // 届かなかったとき（押し直し・リセット）に警報が画面へ居座らないようにするため。
     // 2 段目を流すところで落とす（下）。
-    runSimulateTsunami(() => base, TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent)
+    runSimulateTsunami(() => base, TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
     // **待ちは ref で追う。** アンマウントとリセット（リプレイの開始・停止）で落とせるように
     // する —— 追えないと、画面を消した後や再生へ切り替えた後に 45 秒前の続報だけが単独で
     // 届き、消えたはずの津波カードが復活する。この経路は `handleEvent` を直接呼ぶので、
@@ -3880,8 +3881,8 @@ export function useEarthquakes(
   }, [handleEvent])
 
   const simulateTsunamiRetraction = useCallback(async () => {
-    const { createTestTsunamiRetraction, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    runSimulateTsunami(() => createTestTsunamiRetraction(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, 'retracted')
+    const { createTestTsunamiRetraction, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
+    runSimulateTsunami(() => createTestTsunamiRetraction(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel, 'retracted')
   }, [handleEvent])
 
   const simulateNankai = useCallback(async (kindName: '調査中' | '巨大地震注意' | '巨大地震警戒') => {
@@ -3932,6 +3933,24 @@ export function useEarthquakes(
       onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
     }
   }, [applyKohatsu])
+
+  /**
+   * 後発地震注意情報の取消テスト。発表を出し、`TEST_AUTO_DISMISS_MS` 後に**同じ `eventId` の取消**を流す。
+   * 受信と同じ経路（イベントキュー）へ積む理由は `simulateNankaiRetraction` に同じ。
+   */
+  const simulateKohatsuRetraction = useCallback(async () => {
+    const { createTestKohatsu, createTestKohatsuRetraction, TEST_AUTO_DISMISS_MS } = await loadTestData()
+    if (testKohatsuRetractionTimerRef.current !== undefined) {
+      window.clearTimeout(testKohatsuRetractionTimerRef.current)
+    }
+    const kohatsu = createTestKohatsu()
+    const retraction = createTestKohatsuRetraction(kohatsu)
+    eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'kohatsu', data: kohatsu } })
+    testKohatsuRetractionTimerRef.current = window.setTimeout(() => {
+      testKohatsuRetractionTimerRef.current = undefined
+      eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'kohatsu', data: retraction } })
+    }, TEST_AUTO_DISMISS_MS)
+  }, [])
 
   const simulateQuakeNotice = useCallback(async () => {
     const { createTestQuakeNotice } = await loadTestData()
@@ -4174,7 +4193,7 @@ export function useEarthquakes(
     simulateForeignQuakeHuge,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence,

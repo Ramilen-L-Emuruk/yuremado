@@ -142,6 +142,8 @@ function makeEEW(over: {
   warningRegions?: string[]
   /** 震央の精度ランク（`accuracy.epicenterRank`）。DMDATA 経路の報だけが持つ。 */
   epicenterRank?: number
+  /** 報の発表時刻（`issue.time`）。既定は `2026-01-01T12:00:00Z`。 */
+  issueTime?: string
 } = {}): EEWAlert {
   const hypo = over.hypocenter ?? { name: '日向灘', latitude: 32.0, longitude: 132.0 }
   const areas: EEWRegion[] = over.noAreas ? [] : [{
@@ -168,7 +170,7 @@ function makeEEW(over: {
     },
     severity: over.severity ?? 'Warning',
     cancelled: over.cancelled ?? false,
-    issue: { eventId: over.eventId ?? 'evt-1', serial: String(over.serial ?? 1), time: '2026-01-01T12:00:00Z' },
+    issue: { eventId: over.eventId ?? 'evt-1', serial: String(over.serial ?? 1), time: over.issueTime ?? '2026-01-01T12:00:00Z' },
     ...(over.warningRegions && { warningRegions: over.warningRegions }),
     ...(over.epicenterRank !== undefined && { accuracy: { epicenterRank: over.epicenterRank } }),
     areas,
@@ -2764,6 +2766,42 @@ describe('いま声が語っているカードの配線', () => {
     expect(stub.pendingAtEnd[0]).toBe('evt-A:pending')
     // 取消を読み終えれば尽きる。
     expect(stub.pendingAtEnd[stub.pendingAtEnd.length - 1]).toBe('evt-A:done')
+  })
+
+  // 誤報取消の「〇時〇分に発表された」は、**取り消された速報の第 1 報の時刻**を言う。
+  // 取消電文の `issue.time` は取消を発表した時刻で、それを読むと取り消された速報がその時刻に
+  // 出たように聞こえる（2026-10-16 12:40 頃の速報の取消を「12時48分に発表された」と読んでいた）。
+  describe('誤報取消で読む発表時刻', () => {
+    // 正: 第 1 報 12:40・続報 12:41・取消 12:48 → 12 時 40 分と読む
+    it('第 1 報の発表時刻を読み、続報・取消の時刻では読まない', async () => {
+      const handle = setup()
+      handle(makeEEW({ eventId: 'evt-A', serial: 1, issueTime: '2026-01-01T03:40:00Z' }))
+      handle(makeEEW({ eventId: 'evt-A', serial: 2, issueTime: '2026-01-01T03:41:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+      handle(makeEEW({ eventId: 'evt-A', serial: 3, issueTime: '2026-01-01T03:48:00Z', cancelled: true }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(spokenTexts()).toContain('12時40分に発表された緊急地震速報は取り消されました。')
+      // 安全弁: 取消電文の時刻・続報の時刻を言わない
+      expect(spokenTexts().some(t => t.includes('12時48分'))).toBe(false)
+      expect(spokenTexts().some(t => t.includes('12時41分'))).toBe(false)
+    })
+
+    // 対照: 地震ごとに分けて覚える。別の地震の第 1 報の時刻を借りない
+    it('別の地震の第 1 報の時刻を借りない', async () => {
+      const handle = setup()
+      handle(makeEEW({ eventId: 'evt-A', issueTime: '2026-01-01T03:40:00Z' }))
+      handle(makeEEW({ eventId: 'evt-B', issueTime: '2026-01-01T03:45:00Z', hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2 } }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+      handle(makeEEW({ eventId: 'evt-B', serial: 2, issueTime: '2026-01-01T03:48:00Z', cancelled: true }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(spokenTexts()).toContain('12時45分に発表された緊急地震速報は取り消されました。')
+    })
   })
 
   // 安全弁: 時間軸が変わったら印ごと落とす。**これを呼び忘れても画面が光り続けるだけで

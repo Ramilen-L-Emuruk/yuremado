@@ -10,6 +10,7 @@ import { log } from '../utils/logger'
 import {
   buildWaveHistoryRange,
   fetchSeismoWaveHistory,
+  HOST_RANGE_MAX_MS,
   readWaveHistory,
   WAVE_HISTORY_LEAD_MS,
   WAVE_HISTORY_TAIL_MS,
@@ -71,8 +72,21 @@ describe('buildWaveHistoryRange', () => {
   })
 
   it('窓はホストの上限（列で 10 分）に収まる', () => {
-    // **安全弁。** 定数を伸ばした人がここで気づく。
+    // **安全弁。** 定数を伸ばした人がここで気づく（`buildWaveHistoryRange` は上限を見ない）。
     expect(WAVE_HISTORY_LEAD_MS + WAVE_HISTORY_TAIL_MS).toBeLessThanOrEqual(10 * 60 * 1000)
+    expect(HOST_RANGE_MAX_MS).toBe(10 * 60 * 1000)
+  })
+
+  // 床を取っても幅は定数の和のまま（定数が整数なので）。端数のある発生時刻でも上限を超えない。
+  it('端数のある発生時刻でも、組んだ窓の幅は上限に収まる', () => {
+    expect(Number.isInteger(WAVE_HISTORY_LEAD_MS)).toBe(true)
+    expect(Number.isInteger(WAVE_HISTORY_TAIL_MS)).toBe(true)
+    for (const origin of [0, 1_000_000.4, 1_000_000.6, 1_760_000_000_123.999, -5.5]) {
+      const range = buildWaveHistoryRange(origin)
+      expect(range).not.toBeNull()
+      expect(range!.toMs - range!.fromMs).toBe(WAVE_HISTORY_LEAD_MS + WAVE_HISTORY_TAIL_MS)
+      expect(range!.toMs - range!.fromMs).toBeLessThanOrEqual(HOST_RANGE_MAX_MS)
+    }
   })
 
   // 時間軸の 0 は分の頭より最大 30 秒前へ出る。その手前でノイズを 30 秒測れるだけ取る。

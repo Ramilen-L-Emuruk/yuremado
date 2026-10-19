@@ -444,6 +444,25 @@ export function rememberEewHypocenterName(memory: Map<string, string>, key: stri
 }
 
 /**
+ * 地震ごとに、手元で最初に受けた報の発表時刻を覚える。誤報取消の読み上げ
+ * （`eewCancelToText`）が「〇時〇分に発表された」と言うための値。
+ *
+ * **一度覚えたら上書きしない**（続報の時刻で上書きすると、第 1 報より後の時刻を言う）。
+ * 取消の報は覚えない —— 取消電文の `issue.time` は取消を発表した時刻で、取り消された速報の
+ * 時刻ではない。発表時刻を持たない報・日時として読めない報も飛ばし、次に読める時刻を持つ報を待つ
+ * （読めない値を覚えると上書きしないため、後から正しい報が来ても時刻抜きのまま固まる）。
+ * 捨てるのは呼び出し側の役目（解除・取消で追跡ごと落とす）。
+ */
+export function rememberEewFirstIssueTime(memory: Map<string, string>, key: string, event: EEWAlert): void {
+  if (event.cancelled) return
+  if (memory.has(key)) return
+  // リプレイの初期状態は最新 1 報へ畳まれて届くので、畳む前の第 1 報の時刻を先に見る（`EEWAlert.firstIssueTime`）
+  const time = event.firstIssueTime ?? event.issue?.time
+  if (!time || Number.isNaN(Date.parse(time))) return
+  memory.set(key, time)
+}
+
+/**
  * 誤報取消のブラウザ通知の本文。名前を引けなければ名前抜きの文にする
  * （2026-10-14 ユーザー選択「緊急地震速報は取り消されました」）。
  */
@@ -1008,6 +1027,28 @@ export function computeEverSpecialWarningEventIds(eews: readonly EEWAlert[]): Re
     if (eew.everSpecialWarning || computeSingleEEWLevel(eew) === 2) ids.add(eewEventKey(eew))
   }
   return ids
+}
+
+/**
+ * 地震（`eewEventKey`）ごとに、いちばん早い報の発表時刻を求める。リプレイの初期状態で報を
+ * 最新 1 報へ畳む前に呼び、畳んだ報へ `firstIssueTime` として載せる。
+ *
+ * 取消の報・日時として読めない時刻は数えない（`rememberEewFirstIssueTime` と同じ基準）。
+ * 並び順に頼らず時刻で比べる。
+ */
+export function computeFirstIssueTimes(eews: readonly EEWAlert[]): ReadonlyMap<string, string> {
+  const earliest = new Map<string, { time: string; ms: number }>()
+  for (const eew of eews) {
+    if (eew.cancelled) continue
+    const time = eew.firstIssueTime ?? eew.issue?.time
+    if (!time) continue
+    const ms = Date.parse(time)
+    if (Number.isNaN(ms)) continue
+    const key = eewEventKey(eew)
+    const cur = earliest.get(key)
+    if (!cur || ms < cur.ms) earliest.set(key, { time, ms })
+  }
+  return new Map([...earliest].map(([key, v]) => [key, v.time]))
 }
 
 export function computeEEWLevel(eews: ReadonlyMap<string, EEWAlert>): 0 | 1 | 2 | null {

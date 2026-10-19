@@ -92,6 +92,29 @@ describe('特別情報の帯の運用種別', () => {
   })
 })
 
+// 後発地震注意情報の帯を開いた中の発表時刻の行。**電文に期限の要素は無い**ので、アプリが帯を畳む
+// 7 日（`expireAt`）を「まで有効」と言い切らない（2026-10-19 ユーザー選択「発表時刻だけにする (Recommended)」）。
+describe('後発地震注意情報の帯の発表時刻の行', () => {
+  const none: SpecialInfoItems = { nankai: null, nankaiCommentary: null, kohatsu: null, quakeNotice: null, earthquakeCount: null }
+
+  // 正: 開くと発表時刻が出る。
+  it('開くと発表時刻を出す', () => {
+    render(<Banners items={{ ...none, kohatsu: kohatsu() }} />)
+    fireEvent.click(screen.getByText('北海道・三陸沖後発地震注意情報を発表しました。'))
+    expect(screen.getByText(/^発表: /)).toBeTruthy()
+  })
+
+  // 安全弁: 帯を畳む時刻は持っていても、期限として出さない。畳む時刻を発表と見分けの付く
+  // 年（2099 年）にして、その日時がどの形でも画面に出ていないことを見る。
+  it('「まで有効」も畳む時刻も出さない', () => {
+    const { container } = render(<Banners items={{ ...none, kohatsu: { ...kohatsu(), expireAt: '2099-12-31T23:59:00+09:00' } }} />)
+    fireEvent.click(screen.getByText('北海道・三陸沖後発地震注意情報を発表しました。'))
+    expect(container.textContent).not.toContain('まで有効')
+    expect(container.textContent).not.toContain('12/31')
+    expect(container.textContent).not.toContain('2099')
+  })
+})
+
 // 下端の余白（ホームインジケータを避ける分）。媒体の条件（スマホの横画面）は jsdom では効かないので、
 // ここで見るのは「付けるか」の側だけ —— 包みのクラスに余白の指定が載るか。
 describe('特別情報の帯の下端の余白', () => {

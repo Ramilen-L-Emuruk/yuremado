@@ -386,13 +386,8 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
     // **繋ぐ前に 1 回引く。** 押し出しは識別子だけを名乗るので、これが済むまでは
     // 表示名が識別子のまま出て、センサー単独の震度はどの観測点にも寄せられない。
     //
-    // **この `catch` は通常は発火しない。** `refresh` は失敗を投げずに戻り値へ
-    // 収める作り（`fetchSeismoStatus` が全経路を囲っている）なので、ここが拾うのは
-    // その前提が将来崩れたときだけ —— 待たない呼び出しなので、崩れたときに
-    // `unhandledRejection` として外へ漏れるのを防ぐためだけに置く。
-    void directory.refresh().catch((error: unknown) => {
-      log.warn('[seismo] 観測点の台帳を引けなかった', error)
-    })
+    // `catch` を置かない。`refresh` は reject しない（理由は `SeismoHostDirectory.refresh` の注記）。
+    void directory.refresh()
 
     const book = bookRef.current
     // **枠を用途ごとに分ける。** 1 つを共有すると、先に鳴った側が別種の障害の

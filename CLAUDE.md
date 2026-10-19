@@ -1823,7 +1823,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 画面サイズ別レイアウトの分岐条件（`side`/`sideNarrow`/`sideShort`/`roomy`）を崩すと、狭い画面でパネル比率・折りたたみが崩れる | [`architecture-spec.md`](docs/spec/architecture-spec.md) §4「画面サイズ別のレイアウト」 |
 | 録画モードの原則（ON は OFF より劣化させない）と止めるもの 3 つ（地名ラベルの重なり判定・揺れ検知の診断ログ保存・通知音のキープアライブ）を崩すと、録画中にコマ落ちが増える、解除直後の検知で記録の前半が欠ける、または動画の書き出し・アップロード後の再エンコードで常時ループ音が可聴のノイズに化ける | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 録画モードで有効にするもの 2 つ（合成待ち予算の拡大・海底地形タイルの先読み）を崩すと、負荷時に長い文の後半が欠ける、または自動フィット直後の暗転が長引く | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
-| 録画モードで追加復元する 7 項目（気象庁の文・地震の地域と震源要素・確定情報の通し読み・EEW 誤報取消・EEW 最後の告知震源・津波取消・津波が語った原因地震の震源）を崩すと、区間の境目で同じ内容を読み直す（このうち EEW 最後の告知震源だけは例外的に増やす側で、崩すと震源が動いても言い直さない。津波が語った原因地震の震源は逆に値が変わっても言い直さない設計） | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
+| 録画モードで追加復元する 7 項目（気象庁の文・地震の地域と震源要素・確定情報の通し読み・EEW 誤報取消・EEW 最後の告知震源・津波取消・津波が語った原因地震の震源）を崩すと、区間の境目で同じ内容を読み直す（EEW 最後の告知震源と津波が語った原因地震の震源は読み上げを増やす側にも働く。崩すと区間の境目で震源が動いても言い直さない） | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | リプレイ復元で地震の主題を `mergeQuakeInto` で組み立てる規則を崩すと、震源名が空の報が別の地震を吸い込む、または訂正報の名前変更に追随できない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 復元の既読にマージ後のカードを使う規則（生の入電を使わない）を崩すと、据え置かれた内容が既読として記録され、後で届く正規の報が省かれる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | dev サーバーでの API キー自動投入の条件（dev・DMDSS 版・`--host` なし・未入力）と受け取る側の二重チェック（本番ビルド・テスト）を崩すと、本番へ値が漏れる、または未入力の判定が壊れる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「dev サーバーでの API キー自動投入」 |
@@ -1910,7 +1910,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | DMDSS用のpoints形状を実電文をパーサーへ通さず、P2PQuake形状データを組み替えて作ると、元データに無い項目（観測点の所属市町村等）を再現できない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」・[`quake-spec.md`](docs/spec/quake-spec.md) §4（`points` の識別規則） |
 | 補完対象種別の列挙（`HISTORY_EXTRA_TYPES`）に新種別を足し忘れると、その種別だけ初期状態（24時間）で足りない分が復元されない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
 | 初期状態・本編で既に流れた種別を補完対象から除かず、注入を初期状態より後に置かないと、履歴側の古い報が新しい値を上書きしてしまう | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
-| 種別ごとに最新1通へ畳んでから渡す規則を崩すと、帯（`nankai`/`kohatsu`/`quakeNotice`/`earthquakeCount`）は無条件上書きの実装のため配列の順序次第で古い報の内容が残る。長周期（`lpgmByEventId`）は時刻比較で最新を選ぶため実害は小さい | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
+| 履歴の帯（`nankai`/`nankaiCommentary`/`kohatsu`/`quakeNotice`/`earthquakeCount`）を種別ごとに最新 1 通へ畳む、または同じ受信時刻で取消を発表より先に並べると、取消が空振りして取り消された帯が出る（並べ方は仕様書） | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
 | 初期状態の材料（24 時間の電文＋履歴の津波・帯・長周期）を 1 本にまとめず後から別経路で流すと、記憶の復元を通らず、24 時間より前から続く津波の最初の続報を新たな発表として読む | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
 | 履歴の津波の報を `id` だけで突き合わせると、報番号が種別ごとに別々なので別種別の報を「既にある」と取り違え、24 時間より前の報が 1 通も足されない（鍵は id・発表時刻・情報名）。期限を伝えていない津波を 24 時間より先まで生かすと、終わった津波が甦る | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
 | 推計震度分布図を履歴の補完で種別ごとに畳む（`historyExtraKey` を電文ごとの鍵から外す）と、同じ地震かの判定が受け手（`upsertEstimatedIntensity`）と 2 か所に分かれ、別の地震の分布が消える。二進電文の解析結果を最後の断片の id にしか控えないと、その日のアーカイブを毎回落とす | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」・[`quake-spec.md`](docs/spec/quake-spec.md) §8「地震ごとに 1 通を持ち、同じ地震の古い報は採らない」 |

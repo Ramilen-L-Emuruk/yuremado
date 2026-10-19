@@ -74,7 +74,7 @@ import { useTelegramTextSpeechFollow } from './hooks/useTelegramTextSpeechFollow
 import { deriveKyoshinView } from './utils/kyoshinDetectionView'
 import { filterSubThresholdIndices } from './utils/kyoshinSubThresholdFilter'
 import { countdownBeepTarget, useSWaveCountdown } from './hooks/useSWaveCountdown'
-import { pickArrivalEews, pickPublicWaveEew } from './utils/countdownEew'
+import { pickArrivalEews, pickPublicWaveEews } from './utils/countdownEew'
 import { useArrivalTokenCheck } from './hooks/useArrivalToken'
 import { usePsWaveCalc } from './hooks/usePsWaveCalc'
 import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
@@ -111,6 +111,7 @@ import { log } from './utils/logger'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isDmdss } from './utils/env'
+import { isLiveFeedHalted } from './utils/connectionStatus'
 import { ROOT_FRAME_CLASS } from './rootFrame'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
@@ -870,7 +871,7 @@ export function App() {
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
@@ -942,6 +943,7 @@ export function App() {
     nankaiCommentaryAdHoc:   () => simulateNankaiCommentary('臨時解説'),
     nankaiCommentaryRoutine: () => simulateNankaiCommentary('定例解説'),
     kohatsu:           simulateKohatsu,
+    kohatsuRetraction: simulateKohatsuRetraction,
     quakeNotice:       simulateQuakeNotice,
     earthquakeCount:   simulateEarthquakeCount,
     earthquakeCountRetraction: simulateEarthquakeCountRetraction,
@@ -976,7 +978,7 @@ export function App() {
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
@@ -2239,8 +2241,8 @@ export function App() {
     replayOffsetMs: replayTimeOffset,
     spanSec: settings.waveSpanSec,
     alwaysConnected: settings.publicWaveAlwaysConnected,
-    // 予報円を描かない速報（仮定震源要素・深さ不明）でも観測点を選ぶ（→ `pickPublicWaveEew`）。
-    eew: pickPublicWaveEew(psWave, eewsForMap),
+    // 発表中の速報すべてで地震ごとに選んで合わせる。予報円を描かない速報（仮定震源要素・深さ不明）も含む（→ `pickPublicWaveEews`）。
+    eews: pickPublicWaveEews(psWave, eewsForMap),
     detectedPoints: kyoshinView.detectedPoints,
   })
 
@@ -2376,12 +2378,13 @@ export function App() {
         ? nowTick
         : lastUpdate
   // 更新がエラーで停止しているか（リアルタイム=取得連続失敗 / それ以外=WS切断）。
-  // **`crowded`（同時接続枠が埋まっている）も更新は止まっている**ので同じく警告を出す。
+  // **`crowded`（同時接続枠が埋まっている）や、配信元が閉じて止めた状態も更新は止まっている**ので
+  // 同じく警告を出す（どれが当たるかは `isLiveFeedHalted`）。
   // 理由まで伝えるのは設定タブの接続状態の側（→ types/earthquake.ts の `ConnectionStatus`）。
   const overlayError =
     mapTab === 'realtime'
       ? kyoshin.error
-      : connectionStatus === 'disconnected' || connectionStatus === 'crowded'
+      : isLiveFeedHalted(connectionStatus)
 
   return (
     // 画面いっぱいの高さは h-dvh（100dvh）で取る。dvh はブラウザ UI の出入りに追従するため、

@@ -31,7 +31,9 @@ import {
   type PaintableColumns,
   type WaveMark,
 } from '../SeismoWaveChart/paintWave'
-import { LINEAR_VERTICAL } from '../SeismoWaveChart/verticalMap'
+import { ownScaleOf } from '../SeismoWaveChart/liveLanes'
+import { SharedLaneScales, sharedPaint } from '../SeismoWaveChart/sharedScale'
+import { COMPRESSED_VERTICAL_NOTE } from '../SeismoWaveChart/verticalMap'
 import { buildTimeTicks } from '../SeismoWaveChart/timeTicks'
 import type { WaveUnit } from '../SeismoWaveChart/waveUnit'
 
@@ -230,17 +232,55 @@ interface Props {
 }
 
 export function QuakeSeismoWave({ waves, quakeLabel, view }: Props) {
+  // **縦の範囲を揃える帳面はカードごとに 1 冊**（公開観測点の段どうしで揃える。`sharedScale.ts`）。
+  // フックより前で早期 return しないよう、空のときの判定は後ろに置く。
+  const scalesRef = useRef<SharedLaneScales | null>(null)
+  if (scalesRef.current === null) scalesRef.current = new SharedLaneScales()
   if (waves.length === 0) return null
   return (
     <div className="mt-2 flex flex-col gap-1">
       {waves.map((wave) => (
-        <HistoryWave key={wave.stationId} wave={wave} quakeLabel={quakeLabel} view={view} />
+        <HistoryWave
+          key={wave.stationId}
+          wave={wave}
+          quakeLabel={quakeLabel}
+          view={view}
+          sharedScales={wave.unit.sharesVerticalScale ? scalesRef.current : null}
+        />
       ))}
     </div>
   )
 }
 
-function HistoryWave({ wave, quakeLabel, view }: { wave: SeismoQuakeWave; quakeLabel: string; view: SeismoWaveCollapsedView }) {
+const subscribeNothing = (): (() => void) => () => {}
+const readNothing = (): number => 0
+
+function HistoryWave({
+  wave,
+  quakeLabel,
+  view,
+  sharedScales,
+}: {
+  wave: SeismoQuakeWave
+  quakeLabel: string
+  view: SeismoWaveCollapsedView
+  /**
+   * 同じカードの他の観測点と縦を揃える帳面（公開観測点だけ）。**揃えない段は `null`**（自作地震計）。
+   * 揃える段は、相手の範囲が自分だけで決めた範囲より大きければそちらで描き、縦を対数に近い曲線で圧縮する
+   * （地図の下端の段と同じ。`liveLanes.ts` の `drawLanes`）。
+   */
+  sharedScales: SharedLaneScales | null
+}) {
+  // **他の段の値が変わったら描き直す**（カードの段は列が変わったときしか描き直さないので、購読しないと揃わない）。
+  // 購読の関数は帳面ごとに 1 つ（描くたびに作り直すと、そのたびに購読し直す）。
+  const store = useMemo(
+    () =>
+      sharedScales === null
+        ? { subscribe: subscribeNothing, read: readNothing }
+        : { subscribe: (l: () => void) => sharedScales.subscribe(l), read: () => sharedScales.version() },
+    [sharedScales],
+  )
+  const sharedVersion = useSyncExternalStore(store.subscribe, store.read, store.read)
   const detailId = useId()
   const detailOpen = useSyncExternalStore(subscribeOpenDetail, readOpenDetail, readOpenDetail) === detailId
   const setDetailOpen = (open: boolean): void => {
@@ -299,8 +339,10 @@ function HistoryWave({ wave, quakeLabel, view }: { wave: SeismoQuakeWave; quakeL
           widthPx,
         })
       const marks = buildArrivalMarks(trimmed, wave.arrival)
-      const build = (columnCount: number) =>
-        foldQuakeWaveColumns({
+      const minScale = quakeMinScale(wave.columns, wave.axisZero.ms, wave.unit)
+      let lastBuilt: PaintableColumns | null = null
+      const build = (columnCount: number) => {
+        lastBuilt = foldQuakeWaveColumns({
           base: wave.columns,
           trimmed,
           zeroMs: wave.axisZero.ms,
@@ -308,6 +350,22 @@ function HistoryWave({ wave, quakeLabel, view }: { wave: SeismoQuakeWave; quakeL
           columnCount,
           unit: wave.unit,
         })
+        return lastBuilt
+      }
+      // **揃える範囲は、列を組んだ後に縦の範囲だけ広げて渡す**（地図の下端の段と同じ決め方。自分だけで決めた範囲は
+      // 揃える前の値のまま読める）。揃えない段（自作地震計）は線形のまま。
+      const { widen, compositeMinScale, vertical } = sharedPaint(
+        minScale,
+        sharedScales === null ? null : { shared: sharedScales.shared() },
+      )
+      const buildShared = (columnCount: number) => widen(build(columnCount))
+      // 揃える前の自分の範囲を書く。**値が変わったときだけ**他の段（と自分）が描き直す。
+      // **列を一度も組まなかった描き直し（2D の描画文脈を取れなかった）では書かない** —— 書くと自分が帳面から外れ、
+      // 他の段が自分抜きの範囲へ跳ねる。組んだうえで値が 1 つも無いときは外す（`ownScaleOf` が null）。
+      const publish = (): void => {
+        if (lastBuilt === null) return
+        sharedScales?.publish(wave.stationId, ownScaleOf(lastBuilt, minScale))
+      }
       // **途切れたら濃さを落とす。** 列は時間で薄れないので、渡さないと
       // 止まった絵が「いま静かに揺れている」ように見え続ける
       // （→ `useSeismoQuakeWaves` の `interrupted`）。**`waveStale` を素通しで
@@ -333,9 +391,9 @@ function HistoryWave({ wave, quakeLabel, view }: { wave: SeismoQuakeWave; quakeL
           }
           setScaleText(
             paintCompositeColumns(canvas, build, wave.interrupted, {
-              minScale: quakeMinScale(wave.columns, wave.axisZero.ms, wave.unit),
+              minScale: compositeMinScale,
               unit: wave.unit.label,
-              vertical: LINEAR_VERTICAL,
+              vertical,
               marks,
               ticks,
               overlays:
@@ -344,6 +402,7 @@ function HistoryWave({ wave, quakeLabel, view }: { wave: SeismoQuakeWave; quakeL
                   : (count) => [{ values: foldHistoryLine(smooth, count), color: COMPOSITE_SMOOTH_COLOR }],
             }),
           )
+          publish()
           return
         }
         const logKey = `${wave.stationId}:${coverage.withComposite === 0 ? 'none' : 'partial'}`
@@ -354,7 +413,8 @@ function HistoryWave({ wave, quakeLabel, view }: { wave: SeismoQuakeWave; quakeL
           )
         }
       }
-      setScaleText(paintWaveColumns(canvas, build, wave.interrupted, { marks, visibleAxes: CARD_VISIBLE_AXES, ticks, unit: wave.unit.label, vertical: LINEAR_VERTICAL }))
+      setScaleText(paintWaveColumns(canvas, buildShared, wave.interrupted, { marks, visibleAxes: CARD_VISIBLE_AXES, ticks, unit: wave.unit.label, vertical }))
+      publish()
     }
     paint()
     // **幅が変わったら描き直す。** カードは畳んだり開いたりするので、最初に描いた
@@ -370,7 +430,17 @@ function HistoryWave({ wave, quakeLabel, view }: { wave: SeismoQuakeWave; quakeL
     //
     // **時間軸の 0 と時間帯も入れる。** 秒が後から取れると列は変わらないまま 0 だけが動く。
     // 0 が動けば静かさを測る区間も動く。**表示の設定も入れる**（合成と 3 成分の切り替え）。
-  }, [wave.columns, wave.arrival, wave.axisZero, wave.reach, wave.interrupted, wave.unit, view])
+    //
+    // **揃える帳面の番号も入れる** —— 他の段の範囲が変わったら、自分の列が変わらなくても描き直す。
+  }, [wave.columns, wave.arrival, wave.axisZero, wave.reach, wave.interrupted, wave.unit, view, sharedScales, sharedVersion])
+
+  // **段が消えたら帳面から外す**（カードを畳んだ・観測点が外れた）。残すと、いない段の範囲で他の段を縛り続ける。
+  // 描き直しのたびには外さない —— 外すと他の段が描き直し、その値を書き戻すたびにまた描き直す往復になる。
+  useEffect(() => {
+    if (sharedScales === null) return
+    const stationId = wave.stationId
+    return () => sharedScales.remove(stationId)
+  }, [sharedScales, wave.stationId])
 
   return (
     <div className="rounded-sm bg-black/30 px-2 py-1">
@@ -380,7 +450,13 @@ function HistoryWave({ wave, quakeLabel, view }: { wave: SeismoQuakeWave; quakeL
         </span>
         {/* **震度は観測点名と同じ行へ置く**（行を増やさない。2026-10-05 のユーザー判断）。 */}
         {intensityParts !== null && <QuakeIntensityLine parts={intensityParts} className="text-white/85" />}
-        <span className="ml-auto font-mono tabular-nums text-secondary">{scaleText ?? '—'}</span>
+        {/* 縦を圧縮している段だけ、ホバーで一言添える（文面と承認は `COMPRESSED_VERTICAL_NOTE`）。 */}
+        <span
+          className="ml-auto font-mono tabular-nums text-secondary"
+          title={sharedScales !== null ? COMPRESSED_VERTICAL_NOTE : undefined}
+        >
+          {scaleText ?? '—'}
+        </span>
       </div>
       {/* 高さは目盛りの帯（`AXIS_BAND_PX` = 15px）を足したもの。
           **押すと詳細の窓を開く。** カードは全体が `<button>` なので `<span role="button">` で包み、

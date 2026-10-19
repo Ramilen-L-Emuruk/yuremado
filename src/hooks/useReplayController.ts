@@ -104,10 +104,10 @@ function tsunamiReportKey(tsunami: JMATsunami): string {
  * 詳細は settings-pwa-spec.md §6（2026-10-06 ユーザー承認）。
  * 地震は履歴をカードの一覧へ直接戻している（`restoreQuakeHistory`）。
  *
- * **既にあるものは足さない。** 津波は報の鍵（`tsunamiReportKey`）で、帯と長周期は種別ごとの鍵
- * （`historyExtraKey`）で見る。履歴は帯と長周期を鍵ごとに最新 1 通へ畳んであるので、
- * 24 時間側にある鍵を足すと、古い報が新しい値を上書きしうる。**本編も「既にある」側に
- * 数える** —— 開始時刻ちょうどの電文は履歴（`<= T`）と本編（`>= T`）の両方に入る。
+ * **既にあるものは足さない。** 津波は報の鍵（`tsunamiReportKey`）で、帯と長周期は `historyExtraKey` で見る。
+ * 帯の鍵は電文ごとなので、24 時間側や本編と重なるのは同じ電文だけ（開始時刻ちょうどの電文は履歴
+ * （`<= T`）と本編（`>= T`）の両方に入る）。長周期の鍵は地震ごとで、24 時間側にその地震の報が
+ * あれば履歴の古い報は足さない（足すと古い報が新しい値を上書きしうる）。
  *
  * 並びは発表時刻の昇順（同時刻は元の順を保つ）。津波は報を跨いで状態が積み上がるので、
  * 古い報から流さないと続報の引き継ぎが逆になる。
@@ -444,7 +444,16 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
       } catch (e) {
         log.error('[replay] 初期状態の材料に履歴を足せなかった（24 時間ぶんだけで再生を続ける）', e)
       }
-      const preFiltered = filterPreWindowEvents(material, targetDate, getAreaPrefIndexCache())
+      // **絞り込みの失敗でも再生を止めない**（上の材料の組み立てと同じ理由）。投げるのは不変条件が
+      // 壊れたとき（津波の束ね方 → `resolveTsunamiPreWindowStates`）で、そのときは初期状態を空にして
+      // 窓の中の電文だけを再生する。
+      let preWindow: ReplayEntry[] = []
+      try {
+        preWindow = filterPreWindowEvents(material, targetDate, getAreaPrefIndexCache())
+      } catch (e) {
+        log.error('[replay] 初期状態の絞り込みに失敗（窓の手前の状態なしで再生を続ける）', e)
+      }
+      const preFiltered = preWindow
         .map(e => ({ ...e, replayTime: new Date(targetDate.getTime() - 1), silent: true }))
       // フェッチ中に WS 切断タイミングで ref が再セットされる競合を排除するため直前に再リセット
       d.resetTracking()

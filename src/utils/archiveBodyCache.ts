@@ -18,8 +18,9 @@
  * |---|---|---|
  * | リクエスト数 | 1,000〜3,800 | **落とす実数だけ**（8 日 × 分類 2 つ ＝ 16 本） |
  *
- * 落とす物は毎回同じ —— アーカイブ id は電文 id と同じく**内容に対して不変**で、
- * 内容が変われば別の id になる。配信元のリファレンスが
+ * 落とす物は毎回同じ —— アーカイブ id は配信元が「アーカイブファイルを区別するユニーク ID」と
+ * 定める値で、同じ id には同じファイルが返る（作り直されないとまでは資料に書かれていないので、
+ * 育ちうる日は呼び出し側が控えない。→ `dmdataReplay.ts` の `isArchiveCacheable`）。配信元のリファレンスが
  * 「同じ`id`に対して短期間にリクエストを繰り返さないように実装してください」と
  * 明記している形そのものだった（→ [`docs/spec/data-sources-spec.md`](../../docs/spec/data-sources-spec.md)
  * §2「リクエスト数を抑える」）。
@@ -98,25 +99,13 @@ export const MAX_ENTRIES = 96
  */
 export const MAX_TOTAL_BYTES = 128 * 1024 * 1024
 
-/**
- * 控えの有効期限。
- *
- * **アーカイブ id は内容に対して不変**なので、原理上は無期限でよい。当日ぶんは目録に現れず
- * 別の経路（`dmdataReplayLive.ts`）が受ける建て付けで、さらに呼び出し側が当日を
- * `cacheable: false` で弾いている（`dmdataReplay.ts` の `downloadArchive`）。
- *
- * それでも期限を置くのは、**配信元の設計が変わったときに気づく手立てを二重にしておく**ため。
- * 当日の弾き方は「目録に載った日付」を信じているので、**日付の意味が変わる形の変更には効かない**。
- * 電文本体の控えが 30 日の期限を置いているのと同じ考え。
- *
- * 12 時間にしたのは、切れたときの代償が「その窓の日数ぶんを取り直す」だけで済むため
- * （録画の通しなら 16 本・「もっと見る」を限界まで押した状態でも 59 本）。
- *
- * **ただし期限切れは、目録と電文のパース結果（上限も期限も持たない）との寿命の差を作る。**
- * そこで落とし直した本体は 1 バイトも読まれずに捨てられるので、呼び出し側は
- * **控えで読み切れる日の本体を落とさない**（`dmdataReplay.ts` の `ManifestPlan`）。
+/*
+ * **控えに期限は置かない**（2026-10-19 ユーザー承認。問い「アーカイブ本体（12 時間）・電文本体（30 日）の
+ * 控えの期限」→「期限を外す (推奨)」）。アーカイブ id は配信元がファイルを 1 つに決める値で、
+ * 期限で捨てても取り直すだけ —— 中身が違っても誰も気づかないので、前提が崩れたときに気づく手立てに
+ * ならない。**まだ育ちうるファイルを控えない判断は呼び出し側が持つ**（`dmdataReplay.ts` の
+ * `isArchiveCacheable`。翌日 6:00 JST を過ぎるまで控えない）。古い順に捨てるのは件数と合計の上限だけ。
  */
-const MAX_AGE_MS = 12 * 60 * 60 * 1000
 
 /**
  * 「控えたばかりのものを追い出した」と見なす幅。
@@ -154,17 +143,15 @@ export interface DownloadedArchive {
    * **展開後ではなく圧縮のまま持つ。** 展開比は実測で ×11.5〜×18.1 あり、置く物としては
    * 桁が違う（→ `utils/archiveBodyDb.ts`）。展開は読むたびにやり直せばよい。
    *
-   * **省略すると端末の控えへ書かない。** 取得の形が gzip とは限らない経路から使われても
-   * 壊れないようにしてある（いまの呼び出し元は必ず渡す）。
    */
-  gz?: Uint8Array
+  gz: Uint8Array
   /**
    * 控えてよいか。既定は `true`。
    *
-   * **「まだ育っているかもしれないファイル」を控えないための口。** 上記 `MAX_AGE_MS` が
-   * 前提の崩れに気づくための時間の歯止めなのに対し、こちらは**呼び出し側が知っている事実で
-   * 前もって外す**もの。渡された `false` は記録に残す（`uncacheable`）—— 現状の経路では
-   * 立たないはずの値なので、立ったら前提が変わった印になる。
+   * **「まだ育っているかもしれないファイル」を控えないための口。** 控えは期限を持たないので、
+   * 一度控えたものは取り直さない。どれがもう育たないかは**呼び出し側が知っている事実で決める**
+   * （`dmdataReplay.ts` の `isArchiveCacheable`）。渡された `false` は数える（`uncacheable`）。
+   * 前日分を翌朝までに開けば普通に立つ値で、異常の印ではない。
    */
   cacheable?: boolean
 }
@@ -205,8 +192,6 @@ export interface ArchiveBodyCacheStats {
   coalesced: number
   /** 追い出した本数。 */
   evicted: number
-  /** 期限切れで捨てた本数。 */
-  expired: number
   /** そのうち、控えたばかりで追い出した本数。0 でなければ上限が足りていない。 */
   evictedRecent: number
   /** 呼び出し側が「控えるな」と言った本数（→ `DownloadedArchive.cacheable`）。 */
@@ -247,7 +232,7 @@ export function createArchiveBodyCache(opts?: {
   let seq = 0
   const inFlight = new Map<string, Promise<Map<string, Uint8Array>>>()
   const counters = {
-    hits: 0, persistHits: 0, misses: 0, coalesced: 0, evicted: 0, evictedRecent: 0, expired: 0, uncacheable: 0,
+    hits: 0, persistHits: 0, misses: 0, coalesced: 0, evicted: 0, evictedRecent: 0, uncacheable: 0,
   }
   const warnThrashing = createLogThrottle(60_000)
 
@@ -307,12 +292,7 @@ export function createArchiveBodyCache(opts?: {
   return {
     get(url, download) {
       const hit = entries.get(url)
-      if (hit && now() - hit.createdAt > MAX_AGE_MS) {
-        // 期限切れ。**`usedSeq` ではなく `createdAt` で見る** —— 読むたびに更新される値では、
-        // 読み続けている限り永久に期限が来ない。
-        entries.delete(url)
-        counters.expired++
-      } else if (hit) {
+      if (hit) {
         counters.hits++
         hit.usedSeq = ++seq
         return Promise.resolve(hit.files)
@@ -350,8 +330,8 @@ export function createArchiveBodyCache(opts?: {
           const got = await download()
           if (got.cacheable === false) {
             // 呼び出し側が「控えるな」と言っている。**取得はできているので値は返す。**
-            // **端末の控えへも書かない** —— 期限より前に前提が崩れたときの歯止めなので、
-            // 寿命の長い側にこそ効かせる必要がある。
+            // **端末の控えへも書かない** —— あちらも期限を持たないので、書けば育ちきる前の中身が
+            // 残り続ける。
             counters.uncacheable++
             return got.files
           }
@@ -360,7 +340,7 @@ export function createArchiveBodyCache(opts?: {
           evict()
           // **書き込みは待たない。** 端末へ残すのは次回以降のためで、この呼び出しの結果には
           // 関係がない。待つと、控えが遅い端末で取得そのものが遅くなる。
-          if (persist && got.gz) {
+          if (persist) {
             void persist.write(url, got.gz).catch((e: unknown) => {
               log.warn('[replay] アーカイブを端末の控えへ書けませんでした', e)
             })
@@ -373,7 +353,8 @@ export function createArchiveBodyCache(opts?: {
       })()
       // **`download` が同期的に投げた場合は印を置かない。** 上の `finally` が `inFlight.set` より
       // 先に走ってしまうため、置くと reject 済みの Promise がそのまま残り、以後ずっと同じ失敗を返す。
-      // いまの呼び出し元は `async` 関数を渡すので起きないが、この控えは他からも使える。
+      // 起きるのは端末の控え（`persist`）を渡さない構成だけ —— 渡していれば最初の `await readPersisted`
+      // で必ず非同期になる。いまの呼び出し元は渡しているが、この控えはメモリだけでも組める。
       if (!settledSync) inFlight.set(url, promise)
       return promise
     },
@@ -387,7 +368,6 @@ export function createArchiveBodyCache(opts?: {
       counters.coalesced = 0
       counters.evicted = 0
       counters.evictedRecent = 0
-      counters.expired = 0
       counters.uncacheable = 0
     },
   }

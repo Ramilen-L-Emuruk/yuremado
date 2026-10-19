@@ -87,25 +87,8 @@ describe('SeismoWaveBuffer', () => {
     expect(buffer.tally.gapSamples).toBe(30)
   })
 
-  it('安全弁: 数として読めない時刻・刻みは入口で弾く（数え上げを NaN で汚さない）', () => {
-    // **通すと `offset` が `NaN` になり、大小の比較がすべて偽になるので
-    // 「重なりの受け入れ」へ落ちて `droppedSamples` が `NaN` へ化ける。**
-    // そこが `NaN` だと受け取る側の等値比較（`sameTally`）が常に「違う」を返し、
-    // 毎巡回で画面を差し替え続ける（`NaN !== NaN`）。
-    const buffer = new SeismoWaveBuffer(60)
-    buffer.push(chunk(1000))
-
-    expect(buffer.push(chunk(Number.NaN)).kind).toBe('stale')
-    expect(buffer.push(chunk(Number.POSITIVE_INFINITY)).kind).toBe('stale')
-    expect(buffer.push(chunk(1300, { msPerSample: 0 })).kind).toBe('stale')
-    expect(buffer.push(chunk(1300, { msPerSample: Number.NaN })).kind).toBe('stale')
-
-    expect(Number.isFinite(buffer.tally.droppedSamples)).toBe(true)
-    expect(buffer.tally.droppedSamples).toBe(120)
-    // **弾いた後も続きは繋がる**（起点も末尾の時刻も壊れていない）。
-    expect(buffer.push(chunk(1300)).kind).toBe('appended')
-    expect(buffer.sampleCount).toBe(60)
-  })
+  // 数として読めない時刻・刻みは `push` へ届かない（前段の `readStationWave` が弾く。
+  // `seismoStream.test.ts` の「時刻・刻みが数として読めない station-wave は渡さない」）。
 
   it('正: 効いたセンサーの本数をサンプルごとに保つ（1 本の区間を見分ける）', () => {
     // 合成を名乗れない区間（1 台だけ）を段 4 が示せるようにするための値。

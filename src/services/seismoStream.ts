@@ -1145,12 +1145,8 @@ export class SeismoHostDirectory {
   }
 
   private refreshSoon(): void {
-    // **`catch` を置く。** `refresh` は投げない作りだが、ここは待たない呼び出しなので
-    // 将来その前提が崩れたときに `unhandledRejection` として外へ漏れる
-    // （他の 2 箇所の待たない呼び出しはどちらも受けを持っている）。
-    void this.refresh().catch((error: unknown) => {
-      log.warn('[seismo] 観測点の台帳の取り直しが投げた', error)
-    })
+    // `catch` を置かない。`refresh` は reject しない（理由は `refresh` の注記）。
+    void this.refresh()
   }
 
   /**
@@ -1163,6 +1159,12 @@ export class SeismoHostDirectory {
    * **症状が出ている状況では記録から区別できる** —— `fetchSeismoStatus` は失敗を
    * 全経路で 1 行残すので、「名前が識別子のまま」なのに記録が無ければ叩いていない
    * （＝次の下限で叩く）と読める。行数を増やしても分かることが増えない。
+   *
+   * **reject しない。** 通信・HTTP・JSON の失敗は `fetchSeismoStatus` が全経路で戻り値へ収め、
+   * 応答の読み取りは `obj`/`arr`/`str`/`readFinite` が形を問わず落とす。待たない呼び出し
+   * （`refreshSoon`・`useSeismoStation` の初回）はこれを前提に `catch` を持たないので、
+   * ここへ投げうる処理を足すならそちらへ受けを戻すこと（`seismoStream.test.ts` の
+   * 「refresh は投げない」が壊れた形を並べて固定している）。
    */
   async refresh(): Promise<void> {
     if (this.inFlight) return
@@ -1186,10 +1188,10 @@ export class SeismoHostDirectory {
       for (const s of result.stations) nextNames.set(s.stationId, s)
       const nextBoards = new Map<string, string | null>()
       for (const s of result.sensors) {
-        // **同じ基板の 2 個目以降は、割り当てが引けた側を採る。** ホストは観測点を
-        // 基板ごとに解くので（`stations.resolve(boardKey)`）同じ値が並ぶはずだが、
-        // 先に `null` を書いてしまうと**この基板は割り当て済みなのに `null`**
-        // という台帳ができる。
+        // **同じ基板の 2 個目以降は、割り当てが引けた側を採る。** ホストとの取り決め
+        // （同じ基板のセンサーには同じ station が付く。ホストは `stations.resolve(boardKey)` で
+        // 基板ごとに解く）が崩れた応答への防御で、取り決めどおりなら同じ値が並ぶ。崩れたときに
+        // 先の `null` を残すと、**割り当て済みの基板が `null`** の台帳ができる。
         if (nextBoards.get(s.boardKey) == null) nextBoards.set(s.boardKey, s.stationId)
       }
       this.names = nextNames

@@ -148,6 +148,18 @@ export function isSameTsunamiEvent(
 }
 
 /**
+ * 全区域の解除の報に気象庁が書いた文を、画面に出す 1 つの文字列にする（本文・固定付加文・自由付加文の順に改行で連ねる）。
+ *
+ * 並びは気象庁の文の読み上げ（`telegramTextToSpeak` の津波の分岐）と同じ。どれも無ければ undefined。
+ */
+export function tsunamiLiftText(report: Pick<JMATsunami, 'bodyText' | 'warningComments' | 'freeText'>): string | undefined {
+  const parts = [report.bodyText, ...(report.warningComments ?? []).map(c => c.text), report.freeText]
+    .map(t => t?.trim())
+    .filter((t): t is string => !!t)
+  return parts.length > 0 ? parts.join('\n') : undefined
+}
+
+/**
  * 津波情報（VTSE51）・沖合の津波観測に関する情報（VTSE52）**だけ**を取り消す報か。
  *
  * 取消は「独立した情報単位」（情報名称・運用種別・地震識別番号の組）ごとに届く
@@ -764,6 +776,15 @@ function transitionRank(to: TsunamiGrade | typeof TSUNAMI_GRADE_LIFTED): number 
  * 落ちるのは 2 つ。**前回も津波なし**（`lastGrade` が `'Unknown'`。何も起きていない）と、
  * **前回の等級を読めなかった**もの（`undefined`。パーサーが記録を残す）。
  */
+/**
+ * カードの解除の枠に並ぶ区域（`tsunamiAreaGradeChanges` の解除の組を、組の順に平らにしたもの）。
+ * カード（`TsunamiTab`）と読み上げの観測点の並び（`tsunamiCardOrderBasis`）が同じこの関数を通す ——
+ * 別々に書くと、片方だけ条件が変わったときに型にもテストにも掛からず画面と声の順がずれる。
+ */
+export function tsunamiLiftedAreas(tsunami: JMATsunami, observations: readonly TsunamiObservation[]): TsunamiArea[] {
+  return tsunamiAreaGradeChanges(tsunami, observations).filter(c => c.to === TSUNAMI_GRADE_LIFTED).flatMap(c => c.areas)
+}
+
 export function describableCancelledAreas(tsunami: JMATsunami): TsunamiArea[] {
   return (tsunami.cancelledAreas ?? []).filter(a => a.lastGrade !== undefined && a.lastGrade !== 'Unknown')
 }
@@ -1788,8 +1809,10 @@ export function sortAreasAcrossGradesForCardDisplay(
  * 観測点をカードが描画する順に並べる。
  *
  * カードの入れ子をそのまま辿る ―― 等級カード → 予想波高の見出し → 区域
- * （`sortAreasAcrossGradesForCardDisplay`）→ 区域内は電文の並び → 区域に紐づかない観測点
- * （「沖合観測」のカード）を最後に置く。
+ * （`sortAreasAcrossGradesForCardDisplay`）→ 区域内は電文の並び → この報で解除された区域
+ * （解除カード。`liftedAreas` を渡された順に）→ どの区域にも紐づかない観測点（「沖合観測」のカード）を最後に置く。
+ * 解除された区域の観測点は解除カードの区域の下に描かれるので、渡し忘れると沖合の観測点と同じ扱いで末尾へ落ち、
+ * 画面と読み上げの順が食い違う（引数を必須にしているのはそのため。解除区域が無ければ空配列を渡す）。
  *
  * **読み上げの観測点列挙もこの順に揃える**（→ [`ttsText.ts`] の
  * `tsunamiObservationUpdateToSegments`）。区域の並びで既に踏んでいるのと同じ罠で、読み上げが
@@ -1811,10 +1834,11 @@ export function sortAreasAcrossGradesForCardDisplay(
 export function sortObservationsForCardDisplay(
   observations: readonly TsunamiObservation[],
   areas: readonly TsunamiArea[],
+  liftedAreas: readonly TsunamiArea[],
 ): TsunamiObservation[] {
   const placed = new Set<TsunamiObservation>()
   const ordered: TsunamiObservation[] = []
-  for (const area of sortAreasAcrossGradesForCardDisplay(areas, observations)) {
+  for (const area of [...sortAreasAcrossGradesForCardDisplay(areas, observations), ...liftedAreas]) {
     for (const obs of observations) {
       if (placed.has(obs) || !matchesArea(obs, area)) continue
       placed.add(obs)

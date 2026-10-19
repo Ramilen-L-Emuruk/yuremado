@@ -266,11 +266,11 @@ function utcRangeForJstDates(days: string[]): { from: string; to: string } {
  *   - `Promise.all` の即時 reject で呼び出し元が先へ進んだあとも、他のワーカーは走り続け、
  *     呼び出し元が読み終えた共有配列へ書き込みを続ける
  *
- * **いまの呼び出し元は 1 つも例外を漏らさない。** どれも `fn` の中で try/catch し、
- * 取りこぼし（`skipped`）や読めなかった取得元へ振り替えている。つまりこの投げ直しは
- * **将来の呼び出し元に向けた安全網**で、現状は通らない。通る呼び出し元を足すなら、
- * **2 件目以降の例外は件数だけがログに残る**（詳細は最初の 1 件しか上がらない）ことを
- * 前提に、呼び出し元側で理由ごとに数えること。
+ * **呼び出し元が漏らすのは止める合図（`AbortError`）だけ。** それ以外の例外はどれも `fn` の中で
+ * try/catch し、取りこぼし（`skipped`）や読めなかった取得元へ振り替えている（EEW の詳細が 500 を
+ * 返しても取得は成功する。→ `dmdataReplayLive.test.ts`）。止める合図を漏らすのは EEW の詳細の 1 つで、
+ * 投げ直すのは最初の 1 件だけ。止める合図以外を漏らす呼び出し元を足すなら、2 件目以降は捨てられる
+ * ので、呼び出し元側で理由ごとに数えること。
  */
 async function mapWithLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
   let next = 0
@@ -288,9 +288,7 @@ async function mapWithLimit<T>(items: T[], limit: number, fn: (item: T) => Promi
   })
   await Promise.all(workers)
   if (errors.length > 0) {
-    // 止められて抜けた分は数えない（並列のぶんだけ同じ打ち切りが積もるだけで、障害ではない）
-    if (errors.every(isAbortedByCaller)) throw errors[0]
-    if (errors.length > 1) log.error(`[replay] 並列処理で ${errors.length} 件の例外が発生した（最初の 1 件を投げ直す）`, errors)
+    // 最初の 1 件だけ投げ直す（漏れてくるのは止める合図だけ。並列のぶんだけ同じ打ち切りが積もる）
     throw errors[0]
   }
 }
@@ -1033,7 +1031,7 @@ export async function fetchLiveQuakeTelegrams(
           skipCounter.add(day)
           return
         }
-        // 受信時刻を入れておく（呼び出し側が種別ごとに最新 1 通へ畳むときの比較に使う）。
+        // 受信時刻を入れておく（呼び出し側が長周期を地震ごとに畳むときの比較と、帯を古い順に並べるのに使う）。
         // **発表時刻を入れない** —— アーカイブ経路の畳み込みは受信時刻で比べるので、軸が揃わない。
         // 発表時刻は分に丸められるので同じ分の続報が同点になり、読めなければ NaN で畳み込みが固まる。
         extras.push({ payload, replayTime: times.get(item) ?? new Date(item.receivedTime), silent: true })

@@ -915,6 +915,15 @@ export interface JMATsunami {
    * 説明する文で、こちらは**気象庁がその報に書いた理由**。なぜ取り消したのかはここにしか無い。
    */
   cancelText?: string
+  /**
+   * 全区域の解除（`cancelReason: 'lifted'`）の報に気象庁が書いた文（本文・固定付加文・自由付加文を
+   * 改行で連ねたもの）。**状態に載せた津波の解除表示にだけ入る**（解除を当てるとき、解除の報から移す）。
+   *
+   * 実電文は固定付加文 0107「現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。」を
+   * 載せる。解除表示は直前のカードを土台にするので、名指しで移さないと解除の報の文は画面に出ない
+   * （2026-10-14 ユーザー選択「画面にも出し、読み上げる」）。
+   */
+  liftText?: string
   cancelledAt?: Date
   headline?: string
   /**
@@ -1263,6 +1272,13 @@ export interface EEWAlert {
    * 一度真になったら、以後の報で震度が下がっても真のまま（アプリ独自の判断。→ `computeDisplayEEWLevel`）。
    */
   everSpecialWarning?: boolean
+  /**
+   * この地震で最初の報の発表時刻。**載せるのはリプレイの初期状態だけ** —— 窓の手前の報は地震ごとに
+   * 最新 1 報へ畳んで渡すので、畳む前の全報から求めて載せる（`filterPreWindowEvents`）。
+   * 誤報取消の読み上げ（「〇時〇分に発表された」）が第 1 報の時刻を言うために使う。
+   * 無ければ `issue.time` を見る（→ `rememberEewFirstIssueTime`）。
+   */
+  firstIssueTime?: string
   // issue.serial = 情報番号（第N報）
   issue?: {
     eventId?: string
@@ -2032,8 +2048,15 @@ export interface JMAEstimatedIntensity {
  * そのまま繋がるため、再接続は止めずに間隔だけ伸ばしている（`dmdata.ts` の
  * `RECONNECT_CROWDED_MAX_MS`）。**更新が止まっている点は `disconnected` と同じ**なので、
  * 地図の切断警告は両方で出す。
+ *
+ * `contract-ended`・`closed-by-user` は「配信元が理由を言って閉じたので、繋ぎ直さない」状態
+ * （DMDATA の WebSocket v2 のエラーコード 4807・4808。→ `dmdata.ts` の `closeCodeAction`）。
+ * `disconnected` と分けるのは、**自動では戻らない**ことと、利用者にすべきことが理由ごとに違うため。
+ * 更新が止まっている点は同じなので、地図の切断警告も出す（→ `utils/connectionStatus.ts`）。
  */
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'replay' | 'crowded'
+export type ConnectionStatus =
+  | 'connecting' | 'connected' | 'disconnected' | 'replay' | 'crowded'
+  | 'contract-ended' | 'closed-by-user'
 
 /**
  * 電文ログの行が何の電文として読まれたか。電文ログの種別名と絞り込みの選択肢はこの型から

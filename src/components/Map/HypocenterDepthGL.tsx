@@ -45,8 +45,14 @@ interface Props {
   exaggeration: number
 }
 
+/** 吹き出しに並べる都道府県の数。超えた分は「ほか N 都道府県」の行で件数だけ伝える。 */
+const POPUP_PREF_LIMIT = 6
+
 /**
- * 震源の吹き出し。震源要素と、都道府県別の最大震度（上位 6 件）を出す。
+ * 震源の吹き出し。震源要素と、都道府県別の最大震度（強い順に上位 {@link POPUP_PREF_LIMIT} 件）を出す。
+ * **超えた分は黙って切らず、件数を末尾の 1 行で添える**（2026-10-14 ユーザー選択「断定を外し、「ほか N 都道府県」を
+ * 足す（推奨）」。数の前後に空白を入れる書き方は 2026-10-19「空白を入れる (Recommended)」）。並べ替えはしない ——
+ * 強い順に並べるのは呼び出し側（`useQuakeLayerData` の `prefIntensities`）。
  *
  * export はテスト向け（実行時はこのファイルの中からしか呼ばない）。**「未入電あり」の印が
  * 出るかは画面でしか分からない** —— 深さ方向に描く点なので、クリックで開くのが難しい。
@@ -54,8 +60,9 @@ interface Props {
 export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const hc = quake.earthquake.hypocenter
+  const omitted = prefIntensities.length - POPUP_PREF_LIMIT
   const rows = prefIntensities
-    .slice(0, 6)
+    .slice(0, POPUP_PREF_LIMIT)
     .map(({ pref, scale, unreceived, hasUnreceived }) => {
       // 観測値が 1 件も無い県は、震度階級色を借りずに無彩色で出し、語も断定形にしない
       // （→ docs/spec/quake-spec.md §4）。地図の未入電の印と同じ色・同じ語。
@@ -76,7 +83,10 @@ export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]
         `<span style="color:#cbd5e1">${esc(pref)}</span>${mark}</div>`
       )
     })
-    .join('')
+    .join('') +
+    (omitted > 0
+      ? `<div style="font-size:12px;color:#cbd5e1">ほか ${omitted} 都道府県</div>`
+      : '')
   return (
     `<div class="text-sm" style="min-width:160px">` +
     `<div class="font-bold" style="margin-bottom:4px">${esc(hc.name)}</div>` +

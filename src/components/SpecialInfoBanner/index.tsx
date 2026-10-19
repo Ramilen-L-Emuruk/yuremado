@@ -91,15 +91,6 @@ function nankaiColors(kindName: string): { bg: string; border: string; badge: st
   return                                  { bg: 'bg-yellow-900/95', border: 'border-yellow-400', badge: 'bg-yellow-400' }
 }
 
-function formatExpire(isoTime: string): string {
-  const d = new Date(isoTime)
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mn = String(d.getMinutes()).padStart(2, '0')
-  return `${mm}/${dd} ${hh}:${mn}まで有効`
-}
-
 // 下端の safe-area（ホームインジケータ）を避けるための余白。帯を並べる包みに付け、最後の帯へ効かせる。
 // **色の付いた箱の内側に入る。** 余白は最後の帯自身の padding になるので、背景色は画面下端まで届く。
 //   包みや外側のラッパーの padding にすると帯ごと持ち上がり、下に地図が覗いて隙間に見える。
@@ -312,10 +303,12 @@ function KohatsuBanner({ kohatsu, speaking }: { kohatsu: JMAKohatsu; speaking: b
         <ChevronIcon open={open} />
       </button>
       {open && (
+        // **期限は出さない**（2026-10-19 ユーザー選択「発表時刻だけにする (Recommended)」）。
+        // 電文に期限の要素は無く、帯を 7 日で畳むのはアプリの都合（`expireAt`）。これを「まで有効」と
+        // 言い切ると、気象庁が定めた期間のように読める。注意を呼びかける期間は気象庁の本文が語っている。
         <EarthquakeInfoDetail info={kohatsu} footer={
           <p className="text-white/60 text-xs">
             発表: {new Date(kohatsu.reportDateTime).toLocaleString('ja-JP')}
-            {' · '}{formatExpire(kohatsu.expireAt)}
           </p>
         } />
       )}
@@ -329,7 +322,7 @@ function KohatsuBanner({ kohatsu, speaking }: { kohatsu: JMAKohatsu; speaking: b
 // 解説情報は段階を持たないため、警戒度を読み取られない情報色（teal）にしている。
 //
 // 有効期限は出さない。内部では発表から 7 日で畳んでいるが、それは帯を常駐させないための
-// 表示上の都合であって、気象庁が期限を定めているわけではない（後発地震注意情報の 7 日とは違う）。
+// 表示上の都合であって、気象庁が期限を定めているわけではない（後発地震注意情報の帯の 7 日も同じ）。
 function CommentaryBanner({ commentary, speaking, onDismiss }: { commentary: JMANankaiCommentary; speaking: boolean; onDismiss: () => void }) {
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'nankaiCommentary')
   return (

@@ -226,19 +226,9 @@ export class SeismoWaveBuffer {
     // 意味の無い隙間ができる。
     if (length === 0) return { kind: 'stale' }
 
-    // **数として読めない時刻・刻みは入口で弾く。**
-    //
-    // 押し出し経由では起きない（`seismoStream.ts` の `readStationWave` が
-    // `Number.isFinite` で弾き、JSON も `NaN` を書けない）。それでも見るのは、
-    // **この入れ物が独立した部品**で、別の呼び手が来うるから ——
-    // 通すと下の `offset` が `NaN` になり、**大小の比較がすべて偽**になるので
-    // 最後の枝（重なりの受け入れ）へ落ちて `droppedSamples` が `NaN` へ化ける。
-    // そこが `NaN` になると受け取る側の等値比較（`sameTally`）が常に「違う」を
-    // 返し、**毎巡回で画面を差し替え続ける**（`NaN !== NaN`）。
-    if (!Number.isFinite(chunk.firstSampleMs) || !(chunk.msPerSample > 0)) {
-      this.droppedSamples += length
-      return { kind: 'stale' }
-    }
+    // 時刻・刻みはここでは確かめない。唯一の呼び手（`useSeismoStation`）へ渡る前に、
+    // `seismoStream.ts` の `readStationWave` が有限の時刻と正の刻みだけを通している
+    // （`seismoStream.test.ts` が壊れた形を並べて固定）。呼び手を足すなら同じ検査を前段に置くこと。
 
     /** 起点を引き直して置く。**この経路はいつでも成功する。** */
     const restartWith = (why: string): SeismoWavePushResult => {

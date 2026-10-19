@@ -290,7 +290,7 @@ function sweepEew(): void {
         eewWarningRegionsText(CHIHOU.slice(0, n), additional, up))
     }
   }
-  push('EEW', '取消', '-', eewCancelToText(eew()))
+  push('EEW', '取消', '-', eewCancelToText(eew(), eew().issue?.time ?? null))
 }
 
 function sweepTsunami(): void {

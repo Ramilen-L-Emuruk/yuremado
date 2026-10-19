@@ -9,12 +9,15 @@
 // 「本体を落とすかどうかの判定」（`planNeedsBody` と窓の絞り込み）で、その物差しは
 // `fetch` の呼び出し回数。**端末の控えを挟むと 2 回目が必ず 0 回になり、判定そのものを
 // 測れなくなる。** 端末の控えを通した結線は `archivePersistWiring.test.ts` が見る。
+import { readFileSync } from 'node:fs'
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import { PREFERRED_CLASSIFICATIONS } from './dmdataClassifications'
 import {
   fetchDmdataReplayEvents, fetchDmdataQuakeHistory, clearReplayCache, clearArchiveCacheForTest,
   clearParseCachesForTest, filterPreWindowEvents, isArchiveCacheable, HISTORY_WINDOW_DAYS, fetchDmdataEewOrigins, needsPerEventFetch,
+  compareExtraTieBreak,
 } from './dmdataReplay'
+import { createTestKohatsu, createTestKohatsuRetraction } from '../utils/testData'
 import { clearArchiveBodyDb } from '../utils/archiveBodyDb'
 
 /**
@@ -1354,7 +1357,25 @@ describe('fetchDmdataReplayEvents の耐障害性', () => {
       expect(second.skippedByDay).toEqual(new Map())
     })
 
-    // 当日ぶんのアーカイブは控えないので、走査のたびに件数が増えうる。
+    // 事前判定（本体が要るか）と消費が食い違わないこと。
+//
+// **会計は置いていない**（2026-10-19 ユーザー承認。問い「本体を落とすかの事前判定と消費のずれの会計」→
+// 「テストで固定して外す (推奨)」）。食い違わない理由は 1 つ —— 計画はパース結果の控え
+// （`parsedTelegramCache`）を見て「本体は要らない」と決め、**控えは増える一方で消えない**。
+// 消す口はテスト用の `clearParseCachesForTest` だけで、ここが崩れると計画のあとで控えから消え、
+// `requireArchiveBody` が投げる（取り込みの失敗になる）。LRU のような上限を足すときはこのテストが落ちる。
+describe('事前判定と消費（parsedTelegramCache は消えない）', () => {
+  it('パース結果の控えを消すのはテスト用の口だけ', () => {
+    const src = readFileSync(new URL('./dmdataReplay.ts', import.meta.url), 'utf-8')
+    const removals = [...src.matchAll(/parsedTelegramCache\.(delete|clear)\(/g)]
+    expect(removals).toHaveLength(1)
+    const at = removals[0].index ?? -1
+    const owner = src.lastIndexOf('export function ', at)
+    expect(src.slice(owner, owner + 60)).toContain('clearParseCachesForTest')
+  })
+})
+
+// 当日ぶんのアーカイブは控えないので、走査のたびに件数が増えうる。
     // ここでは別 URL の目録を返して同じ形を作る（本体の控えは URL を鍵にするため）。
     it('正: 破損が増えたら、増えた分だけ報告する', async () => {
       globalThis.fetch = mockArchives([{ url: 'https://x/a', gz: await archiveWith(1) }]) as unknown as typeof fetch
@@ -2209,7 +2230,7 @@ describe('fetchDmdataQuakeHistory', () => {
    * 中身は最小限（区間 1 つ）。ここで見たいのは「拾うかどうか」だけで、読み取りそのものは
    * `dmdataParser.test.ts` が実電文の形で固定している。
    */
-  function countBody(eventId: string, reportTime: string): string {
+  function countBody(eventId: string, reportTime: string, infoType: '発表' | '取消' = '発表'): string {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Report xmlns="http://xml.kishou.go.jp/jmaxml1/">
 <Control><Title>地震回数に関する情報</Title><Status>通常</Status><EditorialOffice>気象庁</EditorialOffice><PublishingOffice>気象庁</PublishingOffice></Control>
@@ -2218,7 +2239,7 @@ describe('fetchDmdataQuakeHistory', () => {
 <ReportDateTime>${reportTime}</ReportDateTime>
 <TargetDateTime>${reportTime}</TargetDateTime>
 <EventID>${eventId}</EventID>
-<InfoType>発表</InfoType>
+<InfoType>${infoType}</InfoType>
 <Serial>1</Serial>
 </Head>
 <Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/seismology1/">
@@ -2232,7 +2253,7 @@ describe('fetchDmdataQuakeHistory', () => {
   /** 地震と地震回数を混ぜた 1 日ぶんのアーカイブ。 */
   async function dayArchiveWithCount(
     quakes: Array<{ id: string; eventId: string; time: string }>,
-    counts: Array<{ id: string; eventId: string; time: string }>,
+    counts: Array<{ id: string; eventId: string; time: string; infoType?: '発表' | '取消' }>,
   ) {
     return makeTarGz([
       {
@@ -2243,7 +2264,7 @@ describe('fetchDmdataQuakeHistory', () => {
         ]),
       },
       ...quakes.map(t => ({ name: defaultFileName(t.id, t.time), content: historyBody(t.eventId, t.time) })),
-      ...counts.map(t => ({ name: defaultFileName(t.id, t.time), content: countBody(t.eventId, t.time) })),
+      ...counts.map(t => ({ name: defaultFileName(t.id, t.time), content: countBody(t.eventId, t.time, t.infoType) })),
     ])
   }
 
@@ -2276,8 +2297,10 @@ describe('fetchDmdataQuakeHistory', () => {
     expect(result.extras[0].silent).toBe(true)
   })
 
-  // 帯は画面に 1 つしか出ない。古い報まで流すと、初期状態が入れた新しい値を上書きしうる。
-  it('同じ種別の帯は最新 1 通だけを返す', async () => {
+  // **覆した: 同じ種別の帯も電文ごとに返す**（以前は最新 1 通だけを返していた）。最新の 1 通が取消なら、
+  // その前の発表を落とすと取り消すものが無く、帯は出ないまま終わるべきところで、発表を畳んで消していた
+  // 形と区別できなかった。古い順に並べて流し、受け手が最後の 1 通で決める（→ `historyExtraKey`）。
+  it('同じ種別の帯も電文ごとに、古い順で返す', async () => {
     const day = await dayArchiveWithCount(
       [],
       [
@@ -2289,8 +2312,50 @@ describe('fetchDmdataQuakeHistory', () => {
 
     const result = await fetchDmdataQuakeHistory('key', new Date('2026-08-10T12:00:00+09:00'), 7, false, null)
 
-    expect(result.extras).toHaveLength(1)
-    expect(result.extras[0].replayTime.toISOString()).toBe(new Date('2026-08-10T03:05:00+09:00').toISOString())
+    expect(result.extras.map(e => e.replayTime.toISOString())).toEqual([
+      new Date('2026-08-10T01:05:00+09:00').toISOString(),
+      new Date('2026-08-10T03:05:00+09:00').toISOString(),
+    ])
+  })
+
+  // 受信時刻が同じ帯どうしの並び。取消が発表より先に当たると、取消は空振りし、そのあと発表が当たって
+  // 取り消された帯が出る。
+  describe('compareExtraTieBreak', () => {
+    const issue = createTestKohatsu()
+    const cancel = createTestKohatsuRetraction(issue)
+    const k = (data: typeof issue) => ({ kind: 'kohatsu' as const, data })
+
+    it('正: 発表時刻が同じなら、取消を発表の後ろへ回す', () => {
+      const sameTime = { ...cancel, reportDateTime: issue.reportDateTime }
+      expect([k(sameTime), k(issue)].sort(compareExtraTieBreak).map(p => p.data.cancelled)).toEqual([false, true])
+    })
+
+    it('対照: 発表時刻が違えば、取消でも古いほうを先にする', () => {
+      const earlier = { ...cancel, reportDateTime: '2026-08-10T00:00:00+09:00' }
+      const later = { ...issue, reportDateTime: '2026-08-10T01:00:00+09:00' }
+      expect([k(later), k(earlier)].sort(compareExtraTieBreak).map(p => p.data.cancelled)).toEqual([true, false])
+    })
+
+    it('安全弁: 帯でない種別には順番を付けない', () => {
+      const lpgm = { kind: 'lpgm' } as Parameters<typeof compareExtraTieBreak>[0]
+      expect(compareExtraTieBreak(lpgm, k(cancel))).toBe(0)
+      expect(compareExtraTieBreak(k(cancel), lpgm)).toBe(0)
+    })
+  })
+
+  // 受信時刻も発表時刻も同じ発表と取消は、アーカイブの並びによらず発表を先にして返す（→ `compareExtraTieBreak`）。
+  // 取消が先に当たると空振りし、そのあと発表が当たって取り消された帯が出る。
+  it('同じ時刻の帯の発表と取消は、取消を後ろにして返す', async () => {
+    const time = '2026-08-10T03:05:00+09:00'
+    const day = await dayArchiveWithCount([], [
+      { id: 'bbbbbbb2', eventId: '20260810000000', time, infoType: '取消' },
+      { id: 'aaaaaaa1', eventId: '20260810000000', time },
+    ])
+    globalThis.fetch = mockHistoryArchives([{ date: '2026-08-10', url: 'https://x/d10', gz: day }]) as unknown as typeof fetch
+
+    const result = await fetchDmdataQuakeHistory('key', new Date('2026-08-10T12:00:00+09:00'), 7, false, null)
+
+    expect(result.extras.map(e => e.payload.kind === 'earthquakeCount' && e.payload.data.cancelled)).toEqual([false, true])
   })
 
   it('一部のアーカイブが読めなくても、残りから履歴を作る', async () => {
@@ -2429,7 +2494,7 @@ describe('fetchDmdataQuakeHistory', () => {
   //
   // **控えの寿命が揃っていない。** 目録（`manifestCache`）と電文のパース結果
   // （`parsedTelegramCache`）は上限も期限も持たないのに、本体の控え
-  // （`utils/archiveBodyCache.ts`）は 96 本・128MB・12 時間で落ちる。そのため
+  // （`utils/archiveBodyCache.ts`）は 96 本・128MB の上限で古い順に落ちる。そのため
   // 「解析結果は手元にあるのに本体だけ消えた」状態が普通に起き、かつてはそこで
   // 落とし直した本体を 1 バイトも読まずに捨てていた。
   describe('控えで読み切れる日は本体を落とさない', () => {
@@ -2461,7 +2526,7 @@ describe('fetchDmdataQuakeHistory', () => {
       expect(first.quakes).toHaveLength(1)
       expect(counter.bodies).toBe(1)
 
-      // 期限切れ・追い出しで本体だけが消えた状態（目録とパース結果は残る）
+      // 追い出しで本体だけが消えた状態（目録とパース結果は残る）
       clearArchiveCacheForTest()
       const second = await fetchDmdataQuakeHistory('key', BEFORE, 7, false, null)
 
@@ -2860,6 +2925,33 @@ describe('filterPreWindowEvents の津波', () => {
     const kept = keptTsunamis(entries, '2024-01-02T19:00:00+09:00')
     expect(kept.map(t => t.eventId)).toEqual(['E2'])
   })
+
+  // 状態は同じ `entries` から作るので、どの報にも状態が付く（`groupTsunamiReports` は全報を
+  // どこかの束へ入れ、束ごとに状態を 1 つ作る）。束ね方が分かれる形を混ぜても、引けない報は出ない。
+  it('識別子あり・なし・「A」→「A B」の統合・同じ報の重複を混ぜても、生きている津波は全件残る', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const unkeyedEntry = tsunamiEntry('2024-01-02T11:00:00+09:00')
+      const unkeyedTsunami = unkeyedEntry.payload.kind === 'event' ? (unkeyedEntry.payload.event as JMATsunami) : null
+      const unkeyed: ReplayEntry = { ...unkeyedEntry, payload: { kind: 'event', event: { ...unkeyedTsunami!, eventId: undefined } } }
+      const a = tsunamiEntry('2024-01-02T10:00:00+09:00', { eventId: 'A' })
+      const b = tsunamiEntry('2024-01-02T10:05:00+09:00', { eventId: 'B' })
+      const ab = tsunamiEntry('2024-01-02T10:10:00+09:00', { eventId: 'A B' })
+      const entries = [a, b, unkeyed, ab, ab, a]
+      const kept = keptTsunamis(entries, '2024-01-02T12:00:00+09:00')
+      expect(kept.map(t => `${t.eventId ?? '-'} ${t.time}`)).toEqual([
+        'A 2024-01-02T10:00:00+09:00',
+        'B 2024-01-02T10:05:00+09:00',
+        '- 2024-01-02T11:00:00+09:00',
+        'A B 2024-01-02T10:10:00+09:00',
+        'A B 2024-01-02T10:10:00+09:00',
+        'A 2024-01-02T10:00:00+09:00',
+      ])
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })
 
 // EEW の最終報は「開始時刻の時点で自動解除済みか」で載せるかを決める（`calcEEWCancelTime`）。
@@ -3043,28 +3135,36 @@ describe('アーカイブ本体の控えは開始をまたいで残る', () => {
   })
 })
 
-// 当日ぶんのアーカイブは控えない、という安全弁そのものを固定する。
+// まだ育ちうるアーカイブは控えない、という安全弁そのものを固定する。
 //
-// **この判定が壊れても、他のどのテストも落ちない。** 現状は目録に当日が現れないので分岐へ
-// 到達せず、実機で確かめることもできない（`uncacheable` は 0 のまま）。
-describe('当日ぶんのアーカイブは控えない（isArchiveCacheable）', () => {
-  // JST の 2026-09-16 09:00（UTC では 00:00）を「いま」とする
-  const nowMs = Date.parse('2026-09-16T09:00:00+09:00')
-
-  it('正: 当日と同じ日は控えない', () => {
-    expect(isArchiveCacheable('2026-09-16', nowMs)).toBe(false)
+// **この判定が壊れても、他のどのテストも落ちない。** 控えには期限が無いので、ここで控えて
+// しまった途中までの中身は二度と取り直されない（→ `isArchiveCacheable`）。
+describe('翌日 6:00 JST を過ぎるまでアーカイブは控えない（isArchiveCacheable）', () => {
+  it('正: その日の翌日 6:00 JST を過ぎれば控える', () => {
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-16T06:00:00+09:00'))).toBe(true)
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-16T09:00:00+09:00'))).toBe(true)
   })
 
-  it('対照: 前日は控える', () => {
-    expect(isArchiveCacheable('2026-09-15', nowMs)).toBe(true)
+  it('対照: 当日は控えない', () => {
+    expect(isArchiveCacheable('2026-09-16', Date.parse('2026-09-16T23:59:59+09:00'))).toBe(false)
   })
 
-  // **日境界は JST で見る。** UTC で数えると、JST の 00:00〜09:00 のあいだ「今日」が
-  // 1 日前にずれ、当日ぶんを控えてしまう（いちばん弾きたい時間帯で弾けない）。
-  it('安全弁: JST の日境界で判定する（UTC 基準にずれない）', () => {
-    const justAfterJstMidnight = Date.parse('2026-09-16T00:30:00+09:00')
-    expect(isArchiveCacheable('2026-09-16', justAfterJstMidnight)).toBe(false)
-    expect(isArchiveCacheable('2026-09-15', justAfterJstMidnight)).toBe(true)
+  // 前日分は 00:30 頃に目録へ出る。出た直後のものを控えると、後から作り直されたときに
+  // 欠けた日が端末に残り続ける。
+  it('対照: 前日分も翌日 6:00 JST の手前では控えない', () => {
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-16T00:30:00+09:00'))).toBe(false)
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-16T05:59:59.999+09:00'))).toBe(false)
+  })
+
+  // **日境界は JST で見る。** UTC で数えると境目が 9 時間ずれ、まだ育ちうる時間帯に控えてしまう。
+  it('安全弁: 境目は JST で決まる（UTC の 6:00 ではない）', () => {
+    // JST 2026-09-16 06:00 = UTC 2026-09-15 21:00
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-15T21:00:00Z'))).toBe(true)
+    expect(isArchiveCacheable('2026-09-15', Date.parse('2026-09-15T20:59:59Z'))).toBe(false)
+  })
+
+  it('安全弁: 日付として読めない値は控えない', () => {
+    expect(isArchiveCacheable('not-a-date', Date.parse('2026-09-16T09:00:00+09:00'))).toBe(false)
   })
 })
 
@@ -3256,6 +3356,53 @@ describe('本体は目録の filename で引く', () => {
  * （API が電文ごとに振る値）では畳めなかった。同一性の判定はライブ経路と同じ
  * `sameQuakeEntry`（→ `utils/quakeMerge.ts` の `createQuakeFoldKeys`）へ寄せてある。
  */
+// 窓の手前の緊急地震速報は最新 1 報へ畳まれる。誤報取消の読み上げが第 1 報の時刻を言えるよう、
+// 畳む前の全報から求めた時刻を `firstIssueTime` で載せる（→ `EEWAlert.firstIssueTime`）。
+describe('filterPreWindowEvents の EEW（第 1 報の時刻）', () => {
+  const report = (serial: number, time: string, eventId = 'EEW1'): ReplayEntry => ({
+    replayTime: new Date(time),
+    payload: {
+      kind: 'event',
+      event: {
+        kind: 'eew', origin: 'dmdata', id: `dmdata-eew-${eventId}-${serial}`, time, test: false,
+        earthquake: {
+          originTime: '2026-01-01T12:39:50+09:00', arrivalTime: '2026-01-01T12:39:50+09:00', condition: '',
+          hypocenter: { name: 'テスト震源', latitude: 35, longitude: 135, depth: 10, magnitude: 5.0 },
+        },
+        severity: 'Warning', cancelled: false, isFinal: false,
+        issue: { eventId, serial: String(serial), time },
+      } as EEWAlert,
+    },
+  })
+  const kept = (entries: ReplayEntry[]) =>
+    filterPreWindowEvents(entries, new Date('2026-01-01T12:40:40+09:00'))
+      .map(e => (e.payload.kind === 'event' ? e.payload.event : null))
+      .filter((ev): ev is EEWAlert => ev?.kind === 'eew')
+
+  // 正: 畳んで残るのは最新の報だが、第 1 報の時刻を持って渡る
+  it('最新 1 報へ畳んでも第 1 報の時刻を載せる', () => {
+    const out = kept([
+      report(1, '2026-01-01T12:40:00+09:00'),
+      report(2, '2026-01-01T12:40:10+09:00'),
+      report(3, '2026-01-01T12:40:30+09:00'),
+    ])
+    expect(out).toHaveLength(1)
+    expect(out[0].issue?.serial).toBe('3')
+    expect(out[0].firstIssueTime).toBe('2026-01-01T12:40:00+09:00')
+  })
+
+  // 対照: 地震ごとに分けて求める。別の地震の早い時刻を借りない
+  it('別の地震の第 1 報の時刻を借りない', () => {
+    const out = kept([
+      report(1, '2026-01-01T12:40:00+09:00', 'A'),
+      report(1, '2026-01-01T12:40:20+09:00', 'B'),
+      report(2, '2026-01-01T12:40:30+09:00', 'B'),
+    ])
+    const b = out.find(e => e.issue?.eventId === 'B')
+    expect(b?.firstIssueTime).toBe('2026-01-01T12:40:20+09:00')
+  })
+})
+
 describe('filterPreWindowEvents の畳み込み（地震）', () => {
   const AREA = { pref: '茨城県', addr: '茨城県南部', isArea: true, scale: 40 }
   const TARGET = '2026-09-29T12:00:00+09:00'

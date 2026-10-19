@@ -410,14 +410,6 @@ function searchRange(consecutiveFail: number): { above: number; below: number } 
 let syncConsecutiveFail = 0
 
 /**
- * フロンティア探索 1 回あたりの判定リクエストの上限。
- *
- * 二分探索なら窓 ±60 秒でも 9 件で足りる（両端 2 件 ＋ log2(121) ≒ 7 件）。上限は
- * **将来の書き換えで線形走査へ戻ったときに気づくための歯止め**で、通常は触れない。
- */
-const MAX_FRONTIER_PROBES = 12
-
-/**
  * フロンティア（登録済みの最新秒）を二分探索で探す。
  *
  * 登録は時刻順に進むので、「秒 s が登録済みか」は s について単調（s ≤ frontier のとき真）。
@@ -446,18 +438,13 @@ const MAX_FRONTIER_PROBES = 12
  * どちらも**その回の較正を諦める**形に落ちる（`K` は前回の値を保つ）。較正が止まり続けた場合は
  * `warnIfCalibrationStale` が記録に残す。
  *
+ * **判定の件数に上限は置かない。** 窓は `searchRange` で最大 ±60 秒に頭打ちし、両端 2 件 ＋ 二分探索
+ * 7 件の最大 9 件で必ず終わる（境界の位置によらないことは `kyoshin.test.ts` が固定している）。
+ *
  * @returns フロンティアの秒。窓の中に見つからない・判定不能なら `null`
  */
-async function findFrontier(guessSec: number, above: number, below: number): Promise<number | null> {
-  let probes = 0
-  const probe = async (s: number): Promise<boolean | null> => {
-    if (probes >= MAX_FRONTIER_PROBES) {
-      log.error(`[kyoshin] clock sync: フロンティア探索の判定上限（${MAX_FRONTIER_PROBES}）に達した`)
-      return null
-    }
-    probes++
-    return isRegistered(SYNC_EDGE, s)
-  }
+export async function findFrontier(guessSec: number, above: number, below: number): Promise<number | null> {
+  const probe = (s: number): Promise<boolean | null> => isRegistered(SYNC_EDGE, s)
 
   let lo = guessSec - below
   let hi = guessSec + above
