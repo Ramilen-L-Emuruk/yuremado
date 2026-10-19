@@ -48,3 +48,30 @@ describe('震源の吹き出しの都道府県別最大震度', () => {
     expect(html).not.toContain('未入電あり')
   })
 })
+
+// 6 県を超えた分は黙って切らず、件数を添える。足すこと自体は 2026-10-14 ユーザー選択
+// 「断定を外し、「ほか N 都道府県」を足す（推奨）」、書き方（数の前後に空白）は 2026-10-19「空白を入れる (Recommended)」。
+// **並べ替えはしない** —— 強い順にするのは呼び出し側（`useQuakeLayerData` の `prefIntensities`）で、
+// ここでは渡された順の先頭 6 件を出し、残りを数えるだけ。
+describe('震源の吹き出しで 6 県を超えたとき', () => {
+  const PREFS = ['石川県', '富山県', '新潟県', '福井県', '岐阜県', '長野県', '群馬県', '山形県']
+  const rows = (n: number) => PREFS.slice(0, n).map((pref, i) => row({ pref, scale: 70 - i * 5 }))
+
+  // 正: 超えた分の件数を末尾の 1 行で添える。
+  it('8 県なら「ほか 2 都道府県」を添える', () => {
+    expect(buildPopupHtml(QUAKE, rows(8))).toContain('ほか 2 都道府県')
+  })
+
+  // 対照: ちょうど 6 県なら添えない（境界の手前）。
+  it('6 県ちょうどなら添えない', () => {
+    expect(buildPopupHtml(QUAKE, rows(6))).not.toContain('ほか')
+  })
+
+  // 安全弁: 並べるのは強い順の上位 6 県のままで、7 県目以降の名前は出さない。
+  it('7 県目以降の名前は並べない', () => {
+    const html = buildPopupHtml(QUAKE, rows(8))
+    expect(html).toContain('長野県')
+    expect(html).not.toContain('群馬県')
+    expect(html).not.toContain('山形県')
+  })
+})
