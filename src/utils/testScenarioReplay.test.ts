@@ -24,6 +24,7 @@ function makeQuake(overrides: Partial<JMAQuake> = {}): JMAQuake {
 function makeEEW(overrides: Partial<EEWAlert> = {}): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: 'dmdata-eew-20240101070900-1',
     time: '2024-01-01T07:09:05Z',
     test: false,

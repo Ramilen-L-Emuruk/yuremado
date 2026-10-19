@@ -1858,14 +1858,30 @@ DMDATA 側と同じ場所にまとめてある）。
 
 `src/services/p2pquake.ts` の `convertEvent` が、受信した生 JSON を検証しながら内部型へ組み立てる。
 **内部型に宣言されたフィールドだけを明示的に詰め直す**ため、API 固有のフィールド
-（`comments` / `earthquake.foreignTsunami` / `hypocenter.reduceName` / `timestamp` 等）は落ちる。
+（`hypocenter.reduceName` / `timestamp` 等）は落ちる。
 生データは電文ログ（`TelegramLogEntry.rawBody`）に残るので調査には困らない。
+
+地震情報（551）で読む付加的な項目は 2 つ。
+
+- `comments.freeFormComment`（気象庁の自由付加文）→ `freeText`。前後の空白を落とし、空なら持たない。
+  DMDSS 版が `Comments/FreeFormComment` から読むものと同じ欄なので、画面・読み上げでの扱いは DMDSS 版と変わらない
+  （標準版の地震カードにも自由付加文が出るようになる。読み落としの修正として 2026-10-14 ユーザー承認
+  「予定どおりすべて直す」の対象）
+- `earthquake.foreignTsunami`（海外で起きた地震の、日本以外への津波の見通し）→ `foreignTsunamiText`。
+  英語の値を、気象庁の固定付加文（地震火山関連コード表の 0221〜0228 のうち、値に対応するもの）の文面へ起こして持つ
+  （文面の採用は 2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。`None` / `Unknown` / `Checking` は
+  伝える見通しが無いので何も持たない。表に無い値は文面を推し量って作らず、警告を残して何も持たない。
+  画面には出さず、遠地地震の読み上げで国内の津波の文の後に読む（→ [audio-tts-spec.md](audio-tts-spec.md) §4）。
+  読み上げは固定付加文の原文（`forecastText`。DMDSS 版だけが持つ）があればそちらを優先するので、二重には読まない
 
 英語の enum で来るフィールドは日本語化する:
 
 - `issue.type`: `ScalePrompt` → `震度速報` 等
-- `issue.correct`: `None` → `なし`、`Unknown` → `訂正`、`ScaleOnly` → `震度のみ訂正`、`DestinationOnly` → `震源を訂正`、`ScaleAndDestination` → `震度・震源を訂正`（`Correction` というキーは存在しない）
-- `earthquake.domesticTsunami`: `None` → `なし`、`Watch` → `注意報`、`Warning` → `警報等` 等（`DOMESTIC_TSUNAMI_MAP` が扱う値ドメインは `None` / `Unknown` / `Checking` / `SeaFloor`（`海面変動の可能性`） / `NonEffective`（`若干の海面変動`） / `Watch`（`注意報`） / `Warning`（`警報等`） / `MajorWarning`（`警報等`） の 8 種。津波電文 code=552 側の等級（`areas[].grade`）はこのマップを通さず別扱い）
+- `issue.correct`: `None` → `なし`、`Unknown` → `不明`、`ScaleOnly` → `震度のみ訂正`、`DestinationOnly` → `震源を訂正`、`ScaleAndDestination` → `震度・震源を訂正`（`Correction` というキーは存在しない）。
+  `Unknown`（訂正かどうか分からない）は、訂正と言い切れないので「訂正」の印は出さない（2026-10-18 ユーザー承認・選んだ選択肢「印だけ消す」。判定は `quakeMerge.ts` の `isKnownCorrection`）。
+  別の地震として割らないための「震源が動いてよい」扱いは訂正と同じに残す。実配信で `Unknown` を見たことはない
+  （2026-10-18 に `/history?codes=551` を 140 通数えて 0 件）
+- `earthquake.domesticTsunami`: `None` → `なし`、`Watch` → `注意報`、`Warning` → `警報等` 等（`DOMESTIC_TSUNAMI_MAP` が扱う値ドメインは公式 OpenAPI の列挙どおり `None` / `Unknown` / `Checking` / `NonEffective`（`若干の海面変動`） / `Watch`（`注意報`） / `Warning`（`警報等`） の 6 種。`Warning` は「津波予報（種類不明）」で大津波警報も含むので `警報等` と読む。津波電文 code=552 側の等級（`areas[].grade`）はこのマップを通さず別扱い）
 
 いずれのマップも、未知の値は既定値に格下げしたうえで警告を残す（`issue.type` → `その他`、
 `issue.correct` → `なし`、`domesticTsunami` → `不明`）。
@@ -5448,3 +5464,7 @@ EEW の予想震度は範囲（下限・上限）で配信され、**上限が�
 
 - 2026-10-18: 地震・津波に関するお知らせ（VZSE40）に設定で音と読み上げを足し、帯の表示も設定で切り替えられる
   ようにした（§2「扱う電文種別」。2026-10-18 ユーザー依頼）。帯へ反映できた報は `onLiveEvent` へ流す形に改めた
+- 2026-10-18: §3 の P2PQuake 地震情報（551）の読み取りに、自由付加文（`comments.freeFormComment` → `freeText`）と
+  海外への津波の見通し（`earthquake.foreignTsunami` → `foreignTsunamiText`。文面は気象庁の固定付加文 0221〜0228。
+  2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）を足した。訂正種別 `Unknown` は `不明` と読んで「訂正」の印を出さない
+  （同日ユーザー承認・選んだ選択肢「印だけ消す」）。津波区分の表を公式 OpenAPI の 6 値に揃えた（`SeaFloor`・`MajorWarning` は列挙に無い）

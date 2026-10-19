@@ -23,7 +23,11 @@ import type { QuakeRetraction } from '../utils/quakeMerge'
 import { withBorrowedFromTsunami, borrowFromTsunamiIntoCards } from '../utils/borrowFromTsunami'
 import { loadStationCoords, onStationCoordsLoaded, areaPrefIndexOf, getAreaPrefIndexCache } from '../utils/stationCoords'
 import type { AreaPrefIndex } from '../utils/quakePoints'
-import { calcEEWCancelTime, eewSerial, eewEventKey, computeSingleEEWLevel } from '../utils/eew'
+import {
+  calcEEWCancelTime, eewSerial, eewEventKey, eewIssueTimeMs, mergeEewReport, eewStaleness, acceptEewReport,
+  supplementEewReport, raisesEewAlert,
+  noteEewNotified, isSameReportFromOtherOrigin, isOlderEewReport, type EewAcceptance,
+} from '../utils/eew'
 import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEventLog'
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
@@ -205,6 +209,11 @@ type QueuePayload =
   | { kind: 'estimatedIntensity'; data: JMAEstimatedIntensity }
   | { kind: 'purge-cancelled-quake'; id: string }
   | { kind: 'purge-cancelled-eew'; key: string }
+  /**
+   * 最終報を名乗らない経路（P2PQuake）の見張りの解除。`receipts` は予約した時点で台帳が受けていた
+   * 報の数（`EewAcceptance.receipts`）。発火した時点でそれより多く受けていれば、最新の報から張り直す。
+   */
+  | { kind: 'eew-watch-expiry'; key: string; receipts: number }
   | { kind: 'purge-cancelled-tsunami'; id: string }
 
 interface QueueEntry {
@@ -335,30 +344,6 @@ function createEventQueue(): EventQueue {
     },
     clear() { entries.length = 0 },
   }
-}
-
-/**
- * 表示中の EEW より古い報か（＝適用すると内容が退行するか）。
- *
- * **同じ地震の報は同じ秒に複数届く。** 能登本震の実配信では 46 報中 13 報が同一秒だった。
- * キューは電文の時刻（秒精度）でしか並べ替えられず（`enqueueEvent`）、WebSocket の受信は
- * body の展開（gunzip）を待たずに次へ進むため（`services/dmdata.ts`）、同じ秒に届いた報は
- * 展開の完了順で処理されうる。順序が入れ替わったまま丸ごと上書きすると、地図の区域塗りが
- * 古い内容へ戻る。報番号で弾いてそれを防ぐ。
- *
- * 報番号の数値化は `eewSerial`（`utils/eew.ts`）に任せる。`0`・負値・小数を弾く判定が既に
- * あり、そこだけ独自に実装すると同じ値の扱いが 2 通りに割れる。
- *
- * **報番号が取れない側があるときは判定しない。** 順序を決める根拠が無いため後着を採る。
- * 0 で埋めて比較すると、`issue.serial` を持たない報（P2PQuake で起こりうる）を常に
- * 「古い」と見なして捨ててしまう。同じ報番号の再送も古いとはみなさない（訂正報も同じ番号で
- * 届きうるため、内容の異同にかかわらず通す）。
- */
-function isStaleEewReport(existing: EEWAlert, incoming: EEWAlert): boolean {
-  const existingSerial = eewSerial(existing)
-  const incomingSerial = eewSerial(incoming)
-  if (existingSerial === null || incomingSerial === null) return false
-  return incomingSerial < existingSerial
 }
 
 // DMDSS版 EEW の地域別予想震度には pref が含まれないため、細分区域名→都道府県の
@@ -840,7 +825,7 @@ export function useEarthquakes(
   // 帯に出している南海トラフ臨時情報・後発地震注意情報の識別情報（無ければ null）。取消の照合に使う。
   //
   // **`stateRef` では判定できない。** あれはレンダー時にしか進まないが、キューのディスパッチャは
-  // 1 ティックの中で複数のイベントを処理する（理由は `acceptedEewSerialRef` の宣言箇所に同じ）。
+  // 1 ティックの中で複数のイベントを処理する（理由は `eewAcceptanceRef` の宣言箇所に同じ）。
   // こちらは反映した時点で即座に進むため、同じティックの中でも正しく比べられる。
   const shownNankaiEventIdRef = useRef<string | null>(null)
   const shownKohatsuEventIdRef = useRef<string | null>(null)
@@ -885,7 +870,26 @@ export function useEarthquakes(
   // 順序が入れ替わりうる場面で起きる）。その間 `stateRef` は前のレンダーの値のままなので、
   // 直前に受理した報より古い報を「新しい」と誤判定して通してしまう。こちらは受理した時点で
   // 即座に進むため、同じティックの中でも正しく比べられる。
-  const acceptedEewSerialRef = useRef<Map<string, number>>(new Map())
+  //
+  // **経路ごとの報番号と、経路をまたいだ発表時刻を持つ**（→ `EewAcceptance`）。standard 版は
+  // Yahoo と P2PQuake が同じ地震を運び、報番号の数え方が違う（P2PQuake の 1 と Yahoo の 17 が
+  // 同じ報）。番号 1 つの台帳で比べると、P2PQuake の報を毎回「古い」と見なして捨てる。
+  const eewAcceptanceRef = useRef<Map<string, EewAcceptance>>(new Map())
+  /**
+   * **同じティックで統合した EEW の写し**（キーは `eewEventKey`）。
+   *
+   * 統合（`mergeEewReport`）は入口で 1 回だけ行い、その値を状態にも読み上げ・通知にも渡す。
+   * 土台を `stateRef` にすると、同じティックに続けて届いた報（Yahoo と P2PQuake の同じ報など）が
+   * 直前に統合した値を見られない。理由は `pendingQuakeCardsRef` と同じ。
+   *
+   * 表示が終わった EEW の分は台帳と一緒に掃除する。
+   */
+  const eewLatestRef = useRef<Map<string, EEWAlert>>(new Map())
+  /**
+   * 見張りの解除（`eew-watch-expiry`）のうち、いま生きている 1 本の印（キーは `eewEventKey`・値は
+   * 予約したときの受理回数）。P2PQuake の報が届くたびに張り直すので、前の見張りはこれと合わなければ捨てる。
+   */
+  const eewWatchReceiptsRef = useRef<Map<string, number>>(new Map())
   // VXSE51 受信時に震度データをキャッシュし、後続の VXSE52（震源情報）に補完する。
   // VXSE52 は震源のみで震度を持たないため、VXSE51 の maxScale・points を引き継ぐ。
   const quakeIntensityCacheRef = useRef<Map<string, { maxScale: IntensityScale; points: EarthquakePoint[] }>>(new Map())
@@ -946,79 +950,6 @@ export function useEarthquakes(
   // 通常版「もっと見る」用の生 API 取得件数（重複除去後の earthquakes.length とは別管理）
   // offset = earthquakes.length だと重複除去ズレで古いデータが抜け落ちるため、API 呼び出し回数ベースで管理する
   const p2pRawOffsetRef = useRef(0)
-
-  // P2PQuake WS の VXSE43/45 相当（556）受信時に既存の Yahoo EEW へ地域別予想震度・震源要素を注入する
-  // （音・タブ切替なし）。P2PQuakeはcondition（仮定震源要素の判別）・hypocenter（数値型・パース不要）
-  // ともYahoo hypoInfoより正確なため、両方を上書きする。ただし報番号が古い場合は上書きしない
-  // （WS/ポーリングの到着順序が入れ替わり、新しい報を古い報の値で退行させないため）。
-  //
-  // 古い報を弾く考え方は主経路と同じだが、比べる相手が違う。主経路の `isStaleEewReport` は
-  // 表示中の EEW と比べるのに対し、こちらは台帳（`acceptedEewSerialRef`）と比べる。理由は下記。
-  // かつてここだけ欠けた報番号を 0 で埋めており、`issue.serial` を持たない報が来ると
-  // 常に「古い」と見なされて注入が丸ごと飛んでいた。
-  const enrichEEW = useCallback((eventId: string, source: EEWAlert) => {
-    // 現在の state から既存 EEW を取り出して severity の格上げを判定する。
-    // setState の関数内で判定して外側から onLiveEvent を呼ぶ二重評価を避けるため、
-    // stateRef.current 経由で参照する。
-    const existing = stateRef.current.activeEEWs.get(eventId)
-    if (!existing) return
-    // 古い報かどうかは `handleEvent` と同じ台帳で判定する。`existing` はレンダー待ちで古いことが
-    // あり、そちらと比べると直前に受理した報を見落とす（この経路はキューを通らず WebSocket から
-    // 直接呼ばれるため、`handleEvent` 側の受理と入れ違いになりうる）。
-    const sourceSerial = eewSerial(source)
-    const acceptedSerial = acceptedEewSerialRef.current.get(eventId)
-    if (sourceSerial !== null && acceptedSerial !== undefined && sourceSerial < acceptedSerial) return
-    // severity は upgrade only。既存が Warning のときはソースが弱くても維持し、
-    // 既存が Forecast/Unknown で source が Warning のときは Warning に格上げする。
-    // Yahoo hypoInfo 由来の推定 severity（scaleNum ヒューリスティック）に対して
-    // P2PQuake code=556（仕様上 Warning 固定）が来たときにレベルダウンさせない。
-    // 現状 enrichEEW の呼び出し元は P2PQuake code=556 のみで source.severity は常に
-    // Warning。`source.severity ?? existing.severity` は将来別ソースから呼ばれる場合の
-    // 防御分岐（severity は必須プロパティなので現状 undefined にはならない）。
-    const enrichedBase: EEWAlert = {
-      ...existing,
-      severity: existing.severity === 'Warning' ? 'Warning' : (source.severity ?? existing.severity),
-      // 報番号も進める。中身だけ新しくして番号を据え置くと、格納した EEW の報番号が内容の
-      // 新しさを表さなくなり、以降の判定が「まだ古い報までしか受理していない」と誤認する。
-      // `eventId` は引数のキーと一致していなければならないので触らない。
-      issue: sourceSerial !== null ? { ...existing.issue, serial: source.issue?.serial } : existing.issue,
-      areas: source.areas ?? source.regions ?? existing.areas,
-      earthquake: {
-        ...existing.earthquake,
-        condition: source.earthquake.condition,
-        hypocenter: source.earthquake.hypocenter,
-      },
-    }
-    // 特別警報の下げ止まり（`computeDisplayEEWLevel`）。areas の注入で震度が動くため、
-    // ここでも既存の印を引き継いだうえで判定し直す（マージ処理と同じ規約）。
-    const enriched: EEWAlert = {
-      ...enrichedBase,
-      everSpecialWarning: existing.everSpecialWarning || computeSingleEEWLevel(enrichedBase) === 2,
-    }
-    if (sourceSerial !== null) acceptedEewSerialRef.current.set(eventId, sourceSerial)
-    setState(prev => {
-      // `enriched` は呼び出し時点の `stateRef.current`（レンダー待ちで古いことがある）から
-      // 組み立てている。この setState が適用されるまでの間にキュー側の続報が
-      // `everSpecialWarning: true` を先に書き込んでいた場合、ここで prev を見ずに丸ごと
-      // 上書きすると、一度立てた印を消すことになり「一度立ったら消えない」という不変条件
-      // （eew-spec.md §4）が破れる。**この 1 フィールドだけ** prev の最新値と OR で守る
-      // （severity・areas 等の巻き戻りは既存の別の問題で、このコミットの範囲外）。
-      const latest = prev.activeEEWs.get(eventId)
-      const merged: EEWAlert = {
-        ...enriched,
-        everSpecialWarning: enriched.everSpecialWarning || (latest?.everSpecialWarning ?? false),
-      }
-      return { ...prev, activeEEWs: new Map(prev.activeEEWs).set(eventId, merged) }
-    })
-    // severity が Warning に格上げされた場合、useLiveEventHandler 側の
-    // activeEEWLevelsRef（音・通知・タブ切替を駆動する独立トラッカー）が
-    // Yahoo の弱い初回推定のままにならないよう、通知層へ再評価を明示的に発火する。
-    // Yahoo hypoInfo 先着＋P2PQuake code=556 後着の順序で警報が無音・通知なしになる
-    // CRIT-1 の完全解消に必要な連携（レポート修正方針②）。
-    if (existing.severity !== 'Warning' && enriched.severity === 'Warning' && !isSilentRef.current) {
-      onLiveEventRef.current?.(enriched)
-    }
-  }, [])
 
   // 予約の発火時刻は、リプレイ中でもそのまま使う。キューへ入るものはすべて再生時計の
   // 時間軸に乗っているため:
@@ -1507,21 +1438,78 @@ export function useEarthquakes(
     // setState の外で走るため、状態更新の直前で弾いても間に合わない。地図・カードだけが新しい報を
     // 保ち、読み上げとタイトルが古い報で上書きされる——画面と音声が食い違う方が始末が悪い。
     // 取消・失効・テスト報は報番号に関わらず通す（弾くと誤報を消せなくなる）。
+    //
+    // **統合も入口で 1 回だけ行う**（`mergeEewReport`）。状態に入れる値と、読み上げ・通知へ渡す値を
+    // 同じものにするため —— かつては状態だけが統合され、読み上げには届いた電文がそのまま渡っていた
+    // （Yahoo の続報は区域も仮定震源の別も持たないので、P2PQuake が運んだ値が声から消えていた）。
+    let eewMerged: EEWAlert | undefined
+    // 別の経路から既に受けて知らせた報と同じ報か（→ `LiveEventMeta.eewSameReport`）。
+    let eewSameReport = false
+    // 別の経路が先に運んだ新しい報へ、遅れて届いた P2PQuake の報の区域・仮定震源の別だけを補ったか
+    // （→ `supplementEewReport`）。状態側でも同じ補い方をする。
+    let eewSupplement = false
     if (event.kind === 'eew') {
       const incoming = event as EEWAlert
+      const key = eewEventKey(incoming)
       if (!incoming.cancelled && !incoming.expired && !incoming.test) {
-        const key = eewEventKey(incoming)
-        const incomingSerial = eewSerial(incoming)
-        const acceptedSerial = acceptedEewSerialRef.current.get(key)
-        if (incomingSerial !== null && acceptedSerial !== undefined && incomingSerial < acceptedSerial) {
-          // 順序の入れ替わり自体は想定内だが、判定が誤り続けるとその EEW は以降更新されない。
-          // 捨てた事実が残らないと原因に辿り着けないため記録する（頻度は 1 地震あたり数件）。
-          log.debug(`[eew] 古い報を破棄: key=${key} 受理済み=#${acceptedSerial} 受信=#${incomingSerial}`)
-          recordSkippedTelegram(incoming, 'staleSerial')
+        const acceptance = eewAcceptanceRef.current.get(key)
+        const staleness = eewStaleness(acceptance, incoming)
+        const previous = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
+        if (previous?.cancelled || previous?.cancelledAt) {
+          // **取消は終端**（状態側と同じ。docs/spec/eew-spec.md §10）。入口で止めないと、状態は無視するのに
+          // 音・通知が鳴り、見張りの解除も積まれる。
+          log.debug(`[eew] 取消済みの速報へ届いた報を破棄: key=${key} 経路=${incoming.origin}`
+            + ` 受信=#${eewSerial(incoming) ?? '(なし)'}`)
+          recordSkippedTelegram(incoming, 'notApplied')
           return
         }
-        if (incomingSerial !== null) acceptedEewSerialRef.current.set(key, incomingSerial)
+        if (staleness === 'olderFromOtherOrigin' && incoming.origin === 'p2pquake' && previous) {
+          // **捨てない。** Yahoo は 1 秒ごとに取りに行くので、速報が続くあいだは P2PQuake の報が
+          // Yahoo の次の報より後に着くことがある。捨てると区域と仮定震源の別が一度も入らない。
+          // 震源・震度・報番号は新しい側のまま。新しい報ではないので音・タブ移動は起こさない
+          // （区分や予想の最大震度が上がったときだけ知らせる。2026-10-19 ユーザー承認・選んだ選択肢「上がったときだけ鳴らす」）。
+          eewMerged = supplementEewReport(previous, incoming)
+          eewSupplement = true
+          eewSameReport = !raisesEewAlert(eewMerged, previous)
+          eewAcceptanceRef.current.set(key, acceptEewReport(acceptance, incoming))
+          eewLatestRef.current.set(key, eewMerged)
+          log.debug(`[eew] 遅れて届いた P2PQuake の報で区域・仮定震源を補った: key=${key}`
+            + ` 受信=#${eewSerial(incoming) ?? '(なし)'}/${eewIssueTimeMs(incoming) ?? '(なし)'}`
+            + ` 受理済み=${acceptance?.latestIssueMs ?? '(なし)'}`)
+        } else if (staleness !== 'fresh') {
+          // 順序の入れ替わり自体は想定内だが、判定が誤り続けるとその EEW は以降更新されない。
+          // 捨てた事実が残らないと原因に辿り着けないため記録する（頻度は 1 地震あたり数件）。
+          log.debug(`[eew] 古い報を破棄: key=${key} 経路=${incoming.origin}`
+            + ` 受理済み=#${acceptance?.serialByOrigin.get(incoming.origin) ?? '(なし)'}/${acceptance?.latestIssueMs ?? '(なし)'}`
+            + ` 受信=#${eewSerial(incoming) ?? '(なし)'}/${eewIssueTimeMs(incoming) ?? '(なし)'}`)
+          recordSkippedTelegram(incoming, 'staleSerial')
+          return
+        } else {
+          eewMerged = mergeEewReport(previous, incoming)
+          // **区分や予想の最大震度が上がった報は「同じ報」として黙らせない**（上がったこと自体を知らせる）。
+          // 同じ秒に別の報が出ることがある（能登本震の実配信で 46 報中 13 報）ので、秒だけでは
+          // 「同じ報」と言い切れない —— 値が上がっていれば知らせる側へ倒す。
+          eewSameReport = previous !== undefined
+            && isSameReportFromOtherOrigin(acceptance, incoming)
+            && !raisesEewAlert(eewMerged, previous)
+          if (eewSameReport) {
+            log.debug(`[eew] 別の経路から受けた同じ報のため音・タブ移動を止める: key=${key} 経路=${incoming.origin}`
+              + ` 発表=${eewIssueTimeMs(incoming) ?? '(なし)'}`)
+          }
+          const accepted = acceptEewReport(acceptance, incoming)
+          eewAcceptanceRef.current.set(key, eewSameReport ? accepted : noteEewNotified(accepted, incoming))
+          eewLatestRef.current.set(key, eewMerged)
+        }
+      } else if (incoming.expired || incoming.test) {
+        // 状態側がこの EEW を消す。写しを残すと、同じ地震の報がまた届いたときに消えた値を土台にする。
+        eewLatestRef.current.delete(key)
+      } else if (incoming.cancelled) {
+        // 写しにも取消を載せる。取消前の値のまま残すと、同じティックに遅れて届いた報を入口が通してしまう。
+        const latest = eewLatestRef.current.get(key)
+        if (latest) eewLatestRef.current.set(key, { ...latest, cancelled: true })
       }
+      // 取り消された・消えた速報の見張りは要らない（写しは取消前の値のままなので、見張りの側では見分けられない）。
+      if (incoming.cancelled || incoming.expired) eewWatchReceiptsRef.current.delete(key)
     }
     // 地震情報は**入口で**「カードが内容を採るか」を見て、採らない電文では音・読み上げ・
     // ウィンドウタイトル・自動タブ切替を起こさない。理由は上の EEW と同じ ——「地図・カードだけが
@@ -1599,7 +1587,8 @@ export function useEarthquakes(
     }
     // ライブ受信／テスト送信のイベントを通知（サイレントモード中は抑制）
     if (!isSilentRef.current) {
-      onLiveEventRef.current?.(event, { quakeHeldBack })
+      // EEW は統合した値を渡す（理由は入口の `eewMerged`）。取消・失効・テスト報は届いたまま。
+      onLiveEventRef.current?.(eewMerged ?? event, { quakeHeldBack, eewSameReport })
     } else {
       // 録画ツール向けの記録。**`onLiveEvent` を呼ばない以上、`recordReplayTelegram`
       // （`handleLiveEvent` 側）へは届かない**——ここで拾わないと、リプレイ開始時の
@@ -1612,10 +1601,39 @@ export function useEarthquakes(
     // でも独立に解除イベントが発生しうるため、同一 eventId に対しここでのタイマー式解除と
     // 二重に発火することがある。2発目は activeEEWs から既に消えているため
     // useEarthquakes/useLiveEventHandler の hadKey チェックで無視される（意図した重複）。
+    //
+    // **最終報を名乗らない経路（P2PQuake）は、受けるたびに見張りの解除を予約し直す。**
+    // P2PQuake の 556 は最終報の印を運ばないので、Yahoo が拾わなかった速報（Yahoo の取得が
+    // 止まっているときなど）は解除の予約が 1 つも積まれず、画面に残り続けていた。見張りは
+    // 発火した時点で台帳を見て、**どの経路からでも**より新しい報を受けていれば、その報から
+    // 張り直す（`eew-watch-expiry`）。捨てると、Yahoo の続報のあと Yahoo の取得が止まった
+    // ときに解除の予約が 1 つも残らない。比べるのは受理した回数で、発表時刻や報番号は見ない
+    // （どちらも読めない報がある）。DMDATA には広げない（2026-10-14 ユーザー承認「解除の予約も続報の
+    // 音・声も直す」の説明「見張りの解除は P2PQuake に限る」）—— あちらは最終報を名乗る。
     if (event.kind === 'eew') {
       const eew = event as EEWAlert
+      const basis = eewMerged ?? eew
+      if (!eew.cancelled && !eew.test && !eew.isFinal && eew.origin === 'p2pquake') {
+        const key = eewEventKey(eew)
+        const acceptance = eewAcceptanceRef.current.get(key)
+        // 起点は受理した中でいちばん新しい発表時刻（遅れて届いた報で補ったときは、この報より新しい）。
+        const issueMs = acceptance?.latestIssueMs ?? eewIssueTimeMs(eew)
+        const cancelTime = calcEEWCancelTime(basis, new Date(issueMs ?? Number.NaN))
+        if (!Number.isFinite(cancelTime.getTime())) {
+          log.error('[eew] 発表時刻も震源時刻も読めないため見張りの解除を予約できません（取消が来るまで表示が残ります）'
+            + ` id=${eew.id} eventId=${eew.issue?.eventId ?? '(なし)'}`
+            + ` time="${eew.issue?.time ?? eew.time}" originTime="${eew.earthquake.originTime}"`)
+        } else {
+          const receipts = acceptance?.receipts ?? 0
+          eewWatchReceiptsRef.current.set(key, receipts)
+          eventQueueRef.current.push({
+            eventTime: cancelTime,
+            payload: { kind: 'eew-watch-expiry', key, receipts },
+          })
+        }
+      }
       if (!eew.cancelled && !eew.test && eew.isFinal) {
-        const cancelTime = calcEEWCancelTime(eew, new Date(eew.time))
+        const cancelTime = calcEEWCancelTime(basis, new Date(eew.time))
         // **予約できなかったことを、この経路の言葉で残す。** キューは発火時刻が読めない
         // エントリを捨てて記録するが（`createEventQueue` の `push`）、その文言は
         // 「捨てた」までしか言わない。ここで書かないと、症状（**その EEW が自動では
@@ -1854,7 +1872,7 @@ export function useEarthquakes(
             key: quakeEventKey(settled),
             snapshot: {
               facts: quakeFactSnapshot(settled),
-              rows: quakeRowSnapshot(settled.points, settled.cities ?? []),
+              rows: quakeRowSnapshot(settled.points, settled.cities ?? [], getAreaPrefIndexCache()),
               // 刈り込みで落とす順に使う（→ `MARK_MEMORY_MAX_ROWS`）。
               issuedAt: markIssuedAt(settled.issue.time),
               // 種別が変わった報では行の初出に印を付けない（→ `diffQuakeRows`）。
@@ -1939,7 +1957,7 @@ export function useEarthquakes(
         }
         case 'eew': {
           const eew = event as EEWAlert
-          // 台帳（`acceptedEewSerialRef`）と同じキーで引く。式を書き写すと、導出が変わったときに
+          // 台帳（`eewAcceptanceRef`）と同じキーで引く。式を書き写すと、導出が変わったときに
           // 片方だけ追従して台帳と状態のキーが割れ、同一ティックの判定が静かに壊れる。
           const key = eewEventKey(eew)
           if (eew.test) {
@@ -1966,15 +1984,13 @@ export function useEarthquakes(
             next.set(key, { ...existing, cancelledAt: now, ...(eew.cancelText && { cancelText: eew.cancelText }) })
             return { ...prev, activeEEWs: next, lastUpdate: now }
           }
-          // 続報の上書きだが severity は upgrade only にする（Yahoo hypoInfo 続報が
-          // 弱い推定値で来ても、既に P2PQuake WS 経由で Warning に上げていたら維持）。
-          // areas/earthquake の enrichment 保持は別途扱う（本コミットの範囲外）。
           const existing = prev.activeEEWs.get(key)
           // 入口（`handleEvent` の先頭）でも同じ判定をしているが、ここにも置く。キューの
           // ディスパッチャは 1 ティックで複数のイベントを処理し、その間 `stateRef` は
           // レンダー待ちで進まないため、入口だけでは同じティックに積まれた報を取りこぼす。
           // 記録は入口に集約する（setState は再実行されうるので副作用を持たせない）。
-          if (existing && isStaleEewReport(existing, eew)) return prev
+          // 遅れて届いた P2PQuake の報（`eewSupplement`）は古いのが前提なので、この判定を通さず補う。
+          if (existing && isOlderEewReport(existing, eew) && !eewSupplement) return prev
           // **取消は終端。非取消の報で復活させない。** 取消電文は報番号の台帳を進めず
           // （入口のガードは `!incoming.cancelled` のときだけ記録する）、状態側も取消前の
           // 報番号を保ったまま `cancelledAt` を足すだけなので、**同じ報番号の非取消報が
@@ -1988,15 +2004,18 @@ export function useEarthquakes(
             log.debug(`[eew] 取消済みのため非取消の報を無視: key=${key} 受信=#${eew.issue?.serial ?? '(なし)'}`)
             return prev
           }
-          const base: EEWAlert = existing
-            ? { ...eew, severity: existing.severity === 'Warning' ? 'Warning' : eew.severity }
-            : eew
-          // 特別警報の下げ止まり（`computeDisplayEEWLevel`）は既存の印を引き継いだうえで、
-          // この報自体がレベル2ならさらに立てる。一度立てたら以後は消えない（アプリ独自の判断。
-          // eew-spec.md §4）。
+          // **入口で統合した値をそのまま入れる**（読み上げ・通知へ渡した値と同じもの）。経路が
+          // 運ばない欄を保つ・severity を引き上げだけにする・特別警報の下げ止まりは
+          // `mergeEewReport` が担う。特別警報の印だけは、入口が見た土台より新しい状態
+          // （同じティックに先に適用された報）があれば、そちらとも OR する —— 一度立てた印は
+          // 消さない（eew-spec.md §4）。
+          // 補う報は、同じティックに先に適用された報があってもその上へ補う（入口の土台より新しいため）。
+          const fromEntry = eewSupplement && existing
+            ? supplementEewReport(existing, eew)
+            : eewMerged ?? mergeEewReport(existing, eew)
           const merged: EEWAlert = {
-            ...base,
-            everSpecialWarning: existing?.everSpecialWarning || computeSingleEEWLevel(base) === 2,
+            ...fromEntry,
+            everSpecialWarning: fromEntry.everSpecialWarning || (existing?.everSpecialWarning ?? false),
           }
           return {
             ...prev,
@@ -2014,10 +2033,10 @@ export function useEarthquakes(
   // （EEW は 1 日に数十件届き、画面は長く開かれたままになる）。`activeEEWs` から消えたものを
   // 落とすだけなので、判定に要る間は残る。
   useEffect(() => {
-    const ledger = acceptedEewSerialRef.current
-    if (ledger.size === 0) return
-    for (const key of [...ledger.keys()]) {
-      if (!state.activeEEWs.has(key)) ledger.delete(key)
+    for (const ledger of [eewAcceptanceRef.current, eewLatestRef.current, eewWatchReceiptsRef.current]) {
+      for (const key of [...ledger.keys()]) {
+        if (!state.activeEEWs.has(key)) ledger.delete(key)
+      }
     }
   }, [state.activeEEWs])
 
@@ -2121,6 +2140,40 @@ export function useEarthquakes(
               quakeMarkMemory: new Map([...prev.quakeMarkMemory].filter(([k]) => live.has(k))),
             }
           })
+        } else if (payload.kind === 'eew-watch-expiry') {
+          const { key } = payload
+          const shown = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
+          if (eewWatchReceiptsRef.current.get(key) !== payload.receipts) {
+            // P2PQuake の新しい報が見張りを張り直した。生きているのはそちら。
+            log.debug(`[eew] 見張りの解除を捨てた（後から張り直した見張りがある）: key=${key}`)
+          } else if (!shown || shown.cancelled || shown.cancelledAt) {
+            eewWatchReceiptsRef.current.delete(key)
+            log.debug(`[eew] 見張りの解除を捨てた（既に消えている・取り消されている）: key=${key}`)
+          } else {
+            const acceptance = eewAcceptanceRef.current.get(key)
+            if (acceptance && acceptance.receipts > payload.receipts) {
+              // **経路をまたいで見る** —— Yahoo が続報を出し続けている間にこの見張りが発火すると、
+              // まだ発表中の速報を消し、次の Yahoo の報で「新規発表」として鳴り直す。捨てずに、
+              // いちばん新しい報から測り直す（Yahoo の取得が止まったら、そこから解除される）。
+              const cancelTime = calcEEWCancelTime(shown, new Date(acceptance.latestIssueMs ?? Number.NaN))
+              if (Number.isFinite(cancelTime.getTime())) {
+                eewWatchReceiptsRef.current.set(key, acceptance.receipts)
+                eventQueueRef.current.push({
+                  eventTime: cancelTime,
+                  payload: { kind: 'eew-watch-expiry', key, receipts: acceptance.receipts },
+                })
+                log.debug(`[eew] 見張りの解除を新しい報から張り直した: key=${key} 解除=${cancelTime.toISOString()}`)
+              } else {
+                // 張り直す時刻が読めない。残すと取消が来るまで画面に居座るので、ここで解除する。
+                log.error(`[eew] 見張りの解除を張り直す時刻が読めないため、いま解除します: key=${key}`)
+                eewWatchReceiptsRef.current.delete(key)
+                handleEvent({ ...shown, cancelled: true, expired: true })
+              }
+            } else {
+              eewWatchReceiptsRef.current.delete(key)
+              handleEvent({ ...shown, cancelled: true, expired: true })
+            }
+          }
         } else if (payload.kind === 'purge-cancelled-eew') {
           const { key } = payload
           setState(prev => {
@@ -2737,13 +2790,16 @@ export function useEarthquakes(
 
     const ws = new P2PQuakeWebSocket()
     wsRef.current = ws
-    // P2PQuake WS の EEW（VXSE43/45 相当・内部 code=556）は areas 補完のみに使用し、音・タブ切替は発火させない。
-    // Yahoo hypoInfo で検出済みの eventId であれば areas を注入、未知なら全処理（フォールバック）。
+    // P2PQuake WS の EEW（VXSE43/45 相当・内部 code=556）も、Yahoo hypoInfo と同じく全処理（音・読み上げ・
+    // 通知・タブ移動）へ通す。どちらの経路から来ても `handleEvent` の入口で同じ地震の報として統合し
+    // （`mergeEewReport`）、同じ報を別の経路から受けたときは音・通知を起こさない（`eewSameReport`）。
+    // かつては Yahoo が先に拾った速報だけ P2PQuake を区域の注入に回していて、P2PQuake が先に拾った
+    // 速報の続報まで注入に回り、続報の音・読み上げ・通知が出なかった。
     ws.onEvent = (event: AppEvent) => {
       if (event.kind === 'eew') {
         if (event.test) { recordSkippedTelegram(event, 'testReport'); return }
         const eew = event as EEWAlert
-        // この key はそのまま台帳（`acceptedEewSerialRef`）のキーになる。式を書き写すと
+        // この key はそのまま台帳（`eewAcceptanceRef`）のキーになる。式を書き写すと
         // 導出が変わったときに片方だけ追従し、台帳と状態のキーが割れる。
         const key = eewEventKey(eew)
         if (event.cancelled) {
@@ -2754,11 +2810,7 @@ export function useEarthquakes(
           }
           return
         }
-        if (stateRef.current.activeEEWs.has(key)) {
-          enrichEEW(key, eew)
-        } else {
-          enqueueEvent(event)  // フォールバック: Yahoo が未検出のEEW
-        }
+        enqueueEvent(eew)
         return
       }
       if (event.kind === 'tsunami') noteP2pTsunamiSeen(event as JMATsunami)
@@ -3651,7 +3703,9 @@ export function useEarthquakes(
   const resetState = useCallback(() => {
     // 台帳もここで空にする。掃除の `useEffect` に任せると、リセットから次のコミットまでの間に
     // 同じ eventId の報が届いたとき、消えたはずの報番号と比べて誤って捨てうる。
-    acceptedEewSerialRef.current.clear()
+    eewAcceptanceRef.current.clear()
+    eewLatestRef.current.clear()
+    eewWatchReceiptsRef.current.clear()
     // 取消の台帳も空にする。リプレイの開始・リセットで時間軸が変わるため、前の軸で見た取消の
     // 発表時刻と新しい軸の報を比べると、正常な報を取り下げ済みと誤判定する。
     quakeRetractionsRef.current = []
@@ -3792,6 +3846,8 @@ export function useEarthquakes(
       if (payload.kind === 'purge-cancelled-quake') continue
       if (payload.kind === 'purge-cancelled-eew') continue
       if (payload.kind === 'purge-cancelled-tsunami') continue
+      // 見張りの解除は電文ではなく、発火しても読み上げるものが無い（失効は黙って消える）。
+      if (payload.kind === 'eew-watch-expiry') continue
       out.push(payload)
     }
     return out
