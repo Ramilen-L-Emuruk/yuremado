@@ -2535,6 +2535,12 @@ export function tsunamiAreaGradeChangeToText(changes: readonly TsunamiAreaGradeC
   return joinSegments(tsunamiAreaGradeChangeToSegments(changes))
 }
 
+/**
+ * 全区域が解除されたことを告げる文。読み上げと、気象庁の文を持たない解除の報の通知本文が共有する
+ * （2026-10-19 ユーザー選択「読み上げと同じ文 (Recommended)」）。
+ */
+export const TSUNAMI_ALL_LIFTED_SENTENCE = '津波警報等は全て解除されました。'
+
 /** VTSE41/51/52 津波警報等 全解除の読み上げテキストを cancelReason ごとに生成する。 */
 export function tsunamiCancelToText(cancelReason: JMATsunami['cancelReason'], cancelText?: string): string {
   const head = cancelReason === 'retracted'
@@ -2543,7 +2549,7 @@ export function tsunamiCancelToText(cancelReason: JMATsunami['cancelReason'], ca
       // **述語は画面と同じ**（`CANCEL_REASON_LABEL` の `expired`）。語は電文の要素名
       // （`ValidDateTime`＝失効時刻）へ揃えてある。
       ? '津波予報は失効しました。'
-      : '津波警報等は全て解除されました。'
+      : TSUNAMI_ALL_LIFTED_SENTENCE
   // 取消しの概要は取消電文にしか入らない。解除・失効では電文に無いので空のまま
   return head + cancelReasonSentence(cancelText)
 }

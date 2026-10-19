@@ -16,6 +16,7 @@ import {
 } from '../utils/eew'
 import { hasKnownEpicenter } from '../utils/geo'
 import { showBrowserNotification } from '../utils/notifications'
+import { tsunamiIssueNotification, tsunamiLiftNotification } from '../utils/tsunamiNotification'
 import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry } from '../utils/tsunami'
 import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
 import { playAlertSound, ttsDelayFor, maxTtsDelay, type AlertSoundType } from '../utils/alertSound'
@@ -3346,6 +3347,19 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (!alreadySpoken) {
         spokenTsunamiCancelEventIdsRef.current.add(cancelId)
         if (settings.soundEnabled) playAlertSound('tsunamiCancel')
+        // 全区域の解除だけ通知する（2026-10-19 ユーザー選択「送る (Recommended)」）。理由が読めない報は
+        // 画面と同じく解除へ倒す。誤報の取消と失効は従来どおり通知しない（問うたのは全区域解除だけ）。
+        //
+        // **通知だけは表示中の津波に向いた解除に限る**（`tsunamiStep.kind === 'ended'`。照合の中身は下の段）。
+        // 音・読み上げが照合しないのは「解除を落とす方が害が大きい」からだが、通知は tag が発表中の通知と
+        // 同じなので、別の津波の遅れて届いた解除が、閉じるまで残していた「津波警報」の通知を
+        // 「津波警報等の解除」へ置き換えてしまう。警報を終わったと伝える誤りは、解除の通知を 1 つ
+        // 落とすより重い。
+        if ((event.cancelReason ?? 'lifted') === 'lifted' && tsunamiStep?.kind === 'ended'
+          && settings.notifyMinScale >= 0 && settings.notifyTsunami) {
+          const n = tsunamiLiftNotification(event)
+          showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction)
+        }
         if (settings.voicevoxEnabled) {
           speakNonEEWDelayed(
             tsunamiCancelToText(event.cancelReason, event.cancelText),
@@ -4526,25 +4540,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // （`isTsunamiObservationOnly`。観測値の更新そのものは津波タブのカードで伝わる）。
     if (event.kind === 'tsunami' && !event.cancelled && !isTsunamiObservationOnly(event)
       && settings.notifyMinScale >= 0 && settings.notifyTsunami) {
-      const grade = tsunamiMaxGrade(event)
-      const tsunamiNotifyTitle = grade === 'MajorWarning' ? '大津波警報'
-        : grade === 'Warning' ? '津波警報'
-        : grade === 'Forecast' ? '津波予報（若干の海面変動）'
-        : '津波注意報'
-      // **区域はカードの並びで挙げる**（`tsunamiCardBasis`）。上位 5 件しか出さないので、
-      // 電文順（気象庁の地理順）で切ると、カードの先頭に並ぶ深刻な区域が通知から落ちる。
-      //
-      // **解除された区域（`cancelledAreas`）はここへ入れない。** 見出しはいま発表中の等級
-      // （「津波注意報」等）なので、その下に解除された区域を並べると**まだ出ている**と読める。
-      // 通知は「いま何が出ているか」を伝えるもので、区域ごとの移り変わりはカードと読み上げが担う。
-      // **決めていないのではなく、入れないと決めている。**
-      showBrowserNotification(
-        tsunamiNotifyTitle,
-        sortAreasAcrossGradesForCardDisplay(tsunamiCardBasis.areas, tsunamiCardBasis.observations)
-          .slice(0, 5).map(a => a.name).join('、'),
-        'tsunami',
-        true,
-      )
+      // 中身（見出し・区域の並び・「ほか N 区域」・解除の行・閉じるまで残すか）は `tsunamiIssueNotification`。
+      // **区域はカードの材料（`tsunamiCardBasis`）から取る**——電文順で切ると、カードの先頭に並ぶ
+      // 深刻な区域が通知から落ちる。
+      const n = tsunamiIssueNotification(event, tsunamiCardBasis)
+      showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction)
     }
     // 通知音（地震情報・津波情報）の種別判定。voicevox の delay 決定にも使うため
     // soundEnabled と独立に計算する（AUD-7: 読み上げは voicevoxEnabled 単独判定）。
