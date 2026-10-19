@@ -410,8 +410,9 @@ export interface JMAQuake {
   /**
    * この電文を一意に指す鍵。**同じ電文を二度数えないために持つ**（→ {@link JMAQuake.reports}）。
    *
-   * DMDATA は `Control/DateTime`（電文を作成した時刻。秒精度で、実電文では同じ地震の続報
-   * どうしが必ず異なる）、P2PQuake は電文ごとに振られる `id`。
+   * DMDATA は `Control/Title`（電文の種別名）と `Control/DateTime`（電文を作成した時刻・秒精度）の組、
+   * P2PQuake は電文ごとに振られる `id`。DMDATA で作成時刻だけを使わない理由は
+   * docs/spec/quake-spec.md §8「同じ電文を二度数えない」（組み立ては `utils/telegramKey.ts`）。
    *
    * **`id` では代用できない。** DMDATA 経路の `id` は `dmdata-quake-<eventId>-<serial>` だが、
    * 震度速報・震源情報は `Head/Serial` が空要素で届くため（→ {@link JMAQuake.reportSerial}）、

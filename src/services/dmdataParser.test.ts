@@ -5730,9 +5730,43 @@ describe('日時として読めない電文の時刻（津波以外の経路）'
 // カードの見出しを「震度速報#2/震源情報」の形で組むための材料
 // （→ `types/earthquake.ts` の `JMAQuake.telegramKey` / `.reportSerial`）。
 describe('電文の一意鍵と報番号', () => {
-  // 正: 一意鍵は `Control/DateTime`（電文を作成した時刻・秒精度）。
-  it('一意鍵に Control/DateTime を読む', () => {
-    expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.telegramKey).toBe('2026-08-08T18:00:00Z')
+  // 正: 一意鍵は `Control/Title`（種別名）と `Control/DateTime`（電文を作成した時刻・秒精度）の組。
+  it('一意鍵に Control/Title と Control/DateTime を読む', () => {
+    expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.telegramKey).toBe('震度速報|2026-08-08T18:00:00Z')
+  })
+
+  // 正: 同じ秒に作られた種別の違う 2 通は、別の鍵になる。
+  //
+  // 実配信で起きる形（全期間で 6 地震。2026-07-28 熊本県熊本地方は震源・震度情報と震度速報が
+  // 同じ 10:10:53Z）。鍵が重なると統合の控えに 2 通目が積まれず、後から当て直したカードから
+  // 震源・震度情報が消えて震度速報の形へ戻る。
+  it('同じ秒の震度速報と震源・震度情報を別の電文として見分ける', () => {
+    const sameSecond = VXSE53_XML.replace('<DateTime>2026-08-08T18:02:00Z</DateTime>', '<DateTime>2026-08-08T18:00:00Z</DateTime>')
+    expect(sameSecond).not.toBe(VXSE53_XML)
+    const prompt = parseEarthquakeFromXml('VXSE51', VXSE51_XML)!
+    const detail = parseEarthquakeFromXml('VXSE53', sameSecond)!
+    expect(detail.telegramKey).toBe('震源・震度に関する情報|2026-08-08T18:00:00Z')
+    expect(prompt.telegramKey).not.toBe(detail.telegramKey)
+  })
+
+  // 対照: 同じ電文（種別名も作成時刻も同じ）は同じ鍵のまま。二度流れても二度数えない。
+  it('同じ電文は同じ鍵になる', () => {
+    expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.telegramKey)
+      .toBe(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.telegramKey)
+  })
+
+  // 安全弁: 種別名が読めないときは種別コードで代え、記録を残す。空のまま組むと、
+  // 同じ秒に作られた別の種別とまた重なる（直した症状がそのまま戻る）。
+  it('種別名を読めなければ種別コードで代え、記録を残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VXSE51_XML.replace('<Title>震度速報</Title>\n    <DateTime>', '<Title/>\n    <DateTime>')
+      expect(xml).not.toBe(VXSE51_XML)
+      expect(parseEarthquakeFromXml('VXSE51', xml)!.telegramKey).toBe('VXSE51|2026-08-08T18:00:00Z')
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('電文の種別名'))
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   // 対照: `Head/ReportDateTime`（発表時刻）では代用できない。分へ丸められており、同じ分に
@@ -5742,7 +5776,7 @@ describe('電文の一意鍵と報番号', () => {
     // **値で確かめる。** `not.toBe` だけだと、鍵をまったく読まない実装（どちらも undefined に
     // ならない側）でも通ってしまう。
     expect(quake.time).toBe('2026-08-09T03:00:00+09:00')
-    expect(quake.telegramKey).toBe('2026-08-08T18:00:00Z')
+    expect(quake.telegramKey).toBe('震度速報|2026-08-08T18:00:00Z')
   })
 
   // 正: 報番号は `Head/Serial`。連番を振るのは震源・震度情報だけ。
@@ -5805,7 +5839,7 @@ describe('電文の一意鍵と報番号', () => {
     const quake = parseEarthquakeFromXml('VXSE53', xml)!
     expect(quake.cancelled).toBe(true)
     // **値で確かめる。** 通常報と突き合わせるだけだと、両方とも埋めない実装で通ってしまう。
-    expect(quake.telegramKey).toBe('2026-08-08T18:02:00Z')
+    expect(quake.telegramKey).toBe('震源・震度に関する情報|2026-08-08T18:02:00Z')
     expect(quake.reportSerial).toBe(1)
   })
 })

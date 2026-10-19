@@ -2396,7 +2396,7 @@ export function useEarthquakes(
         // 記録する側が重複を弾くので、部分結果ごとに呼んでよい（`rememberQuakeRetraction`）
         rememberQuakeRetractionsFromBatch(partial)
         // **base は空ではなく現在値。** 取得のあいだにライブで届いた地震を消さないため
-        // （`mergeQuakeHistory` は `Control/DateTime` で同じ電文を二度数えないので、
+        // （`mergeQuakeHistory` は電文の一意鍵（`telegramKey`）で同じ電文を二度数えないので、
         // 同じ部分結果を重ねて当てても結果は変わらない）。
         setState(prev => {
           // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
