@@ -225,10 +225,16 @@ beforeEach(() => {
 afterEach(cleanup)
 
 /** replayTimeOffset を差し替えられるハーネス。onLiveEvent は生の電文を覗きたいときだけ渡す。 */
-function setup(opts: { apiKey?: string; offset?: number | null; onLiveEvent?: (event: LiveEvent) => void } = {}) {
+function setup(opts: {
+  apiKey?: string; offset?: number | null; onLiveEvent?: (event: LiveEvent) => void
+  /** 起動時に復元した緊急地震速報を読み上げ側へ渡す口（`App.tsx` では `restoreStartupEews`） */
+  onStartupRestoreEews?: (eews: readonly EEWAlert[]) => void
+  /** 起動時の復元が出す画面の要求（`App.tsx` では `handleStartupRestore`） */
+  onStartupRestore?: Parameters<typeof useEarthquakes>[4]
+} = {}) {
   const view = renderHook(
     ({ offset }: { offset: number | null }) =>
-      useEarthquakes(opts.onLiveEvent, opts.apiKey ?? 'test-key', false, offset),
+      useEarthquakes(opts.onLiveEvent, opts.apiKey ?? 'test-key', false, offset, opts.onStartupRestore, opts.onStartupRestoreEews),
     { initialProps: { offset: opts.offset ?? null } },
   )
   return {
@@ -5353,6 +5359,34 @@ describe('DMDSS 版: 前回受け付けられた区分で、履歴と復元を�
     const restored = vi.mocked(log.info).mock.calls
       .filter(c => typeof c[0] === 'string' && c[0].includes('発表中の緊急地震速報を復元しました'))
     expect(restored).toHaveLength(1)
+  })
+
+  // 起動時に復元した緊急地震速報を読み上げ側へも渡す。渡さないと、その後に届いた取消が
+  // 「表示中の速報ではない」と判定されて鳴らず読まれない（→ `useLiveEventHandler` の `restoreStartupEews`）
+  it('復元した緊急地震速報を、読み上げ側の口へも渡す', async () => {
+    const eew = createTestEEWWarning(true, '20261019120000')
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([eew])
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const received: (readonly EEWAlert[])[] = []
+    const h = setup({ onStartupRestoreEews: (eews) => { received.push(eews) } })
+    await h.flush()
+    expect(received).toHaveLength(1)
+    expect(received[0].map(e => e.id)).toEqual([eew.id])
+  })
+
+  // 安全弁: 読み上げ側で投げても、画面の要求（発表中の速報を見せる）は出す
+  it('読み上げ側の口が投げても、画面の要求は出す', async () => {
+    const eew = createTestEEWWarning(true, '20261019120000')
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([eew])
+    rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+    const requested: string[] = []
+    const h = setup({
+      onStartupRestoreEews: () => { throw new Error('boom') },
+      onStartupRestore: (tab) => { requested.push(tab) },
+    })
+    await h.flush()
+    expect(requested).toContain('realtime')
+    expect(vi.mocked(log.error).mock.calls.some(c => String(c[0]).includes('読み上げ側へ渡せませんでした'))).toBe(true)
   })
 
   // 取り直している間は読み込み中へ戻す（古い区分の一覧を確かなものとして見せ続けない）

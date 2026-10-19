@@ -452,11 +452,17 @@ export function rememberEewHypocenterName(memory: Map<string, string>, key: stri
  * 時刻ではない。発表時刻を持たない報・日時として読めない報も飛ばし、次に読める時刻を持つ報を待つ
  * （読めない値を覚えると上書きしないため、後から正しい報が来ても時刻抜きのまま固まる）。
  * 捨てるのは呼び出し側の役目（解除・取消で追跡ごと落とす）。
+ *
+ * 値が null の項目は「第 1 報の時刻を拾えなかった」印（`EEWAlert.firstIssueTime` が null の報から作る）。
+ * 取消はこのとき時刻を言わずに読む。
  */
-export function rememberEewFirstIssueTime(memory: Map<string, string>, key: string, event: EEWAlert): void {
+export function rememberEewFirstIssueTime(memory: Map<string, string | null>, key: string, event: EEWAlert): void {
   if (event.cancelled) return
   if (memory.has(key)) return
-  // リプレイの初期状態は最新 1 報へ畳まれて届くので、畳む前の第 1 報の時刻を先に見る（`EEWAlert.firstIssueTime`）
+  // 第 1 報の時刻を拾えなかった印（`EEWAlert.firstIssueTime` が null）。**null として覚え、後の続報の時刻で埋めない**
+  // —— 埋めると、起動時に復元した後に届いた続報の時刻を第 1 報として言う
+  if (event.firstIssueTime === null) { memory.set(key, null); return }
+  // リプレイの初期状態・起動時の復元は最新 1 報で届くので、第 1 報の時刻を先に見る（`EEWAlert.firstIssueTime`）
   const time = event.firstIssueTime ?? event.issue?.time
   if (!time || Number.isNaN(Date.parse(time))) return
   memory.set(key, time)
@@ -1040,6 +1046,8 @@ export function computeFirstIssueTimes(eews: readonly EEWAlert[]): ReadonlyMap<s
   const earliest = new Map<string, { time: string; ms: number }>()
   for (const eew of eews) {
     if (eew.cancelled) continue
+    // 拾えなかった印（null）の報は数えない。`issue.time` で代えると第 1 報ではない時刻になる
+    if (eew.firstIssueTime === null) continue
     const time = eew.firstIssueTime ?? eew.issue?.time
     if (!time) continue
     const ms = Date.parse(time)

@@ -9,6 +9,7 @@ import {
   releaseSocket,
   fetchDmdataActiveEews,
   fetchDmdataEewEventList,
+  firstEewReportTime, describeFirstReportMiss,
   DmdataWebSocket,
   decodeTelegramText,
   needsBodyDecode,
@@ -1399,6 +1400,61 @@ describe('fetchDmdataActiveEews の部分失敗', () => {
     await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
 
     expect(warnings().some(w => w.includes('読み取れませんでした'))).toBe(false)
+  })
+})
+
+// 起動時の復元で、誤報取消の読み上げが言う「第 1 報の発表時刻」を詳細の全報から拾う。
+// 本文を読むのは最新報 1 通だけなので、第 1 報の時刻は詳細の `items[].dateTime` から取る
+// （資料「GD Eew Event v2」。`dateTime`・`serial`・`isCanceled` はどれも出現が「いつも」）。
+describe('firstEewReportTime', () => {
+  // 正: 報番号のいちばん小さい報の時刻を返す。並び順には頼らない
+  it('報番号の最小の報の時刻を返す', () => {
+    expect(firstEewReportTime([
+      { serial: 3, dateTime: '2026-10-16T12:40:30+09:00' },
+      { serial: 1, dateTime: '2026-10-16T12:40:00+09:00' },
+      { serial: 2, dateTime: '2026-10-16T12:40:10+09:00' },
+    ])).toBe('2026-10-16T12:40:00+09:00')
+  })
+
+  // 対照: 取り消された報は数えない。取消電文の時刻は取消を発表した時刻で、取り消された速報の時刻ではない
+  it('取り消された報は数えない', () => {
+    expect(firstEewReportTime([
+      { serial: 1, dateTime: '2026-10-16T12:40:00+09:00', isCanceled: true },
+      { serial: 2, dateTime: '2026-10-16T12:40:10+09:00' },
+    ])).toBe('2026-10-16T12:40:10+09:00')
+  })
+
+  // 安全弁: 拾えなければ null。最新報の時刻などで代えない（呼び出し側が時刻を言わずに読む）
+  it('時刻か報番号を読める報が無ければ null', () => {
+    expect(firstEewReportTime([])).toBeNull()
+    expect(firstEewReportTime([{ serial: 1 }, { dateTime: '2026-10-16T12:40:00+09:00' }])).toBeNull()
+    expect(firstEewReportTime([{ serial: 1, dateTime: 'not-a-date' }])).toBeNull()
+    expect(firstEewReportTime([{ serial: 1, dateTime: '2026-10-16T12:40:00+09:00', isCanceled: true }])).toBeNull()
+  })
+
+  // 安全弁: 報番号が null・空文字の報を 0 番（どの報より前）として拾わない
+  it('報番号が null や空文字の報を第 1 報にしない', () => {
+    expect(firstEewReportTime([
+      { serial: null as unknown as number, dateTime: '2026-10-16T12:39:00+09:00' },
+      { serial: '' as unknown as number, dateTime: '2026-10-16T12:39:30+09:00' },
+      { serial: 2, dateTime: '2026-10-16T12:40:10+09:00' },
+    ])).toBe('2026-10-16T12:40:10+09:00')
+    // 数字だけの文字列は読む（資料の型は整数だが、応答の型は検めていない）
+    expect(firstEewReportTime([
+      { serial: '1' as unknown as number, dateTime: '2026-10-16T12:40:00+09:00' },
+      { serial: 2, dateTime: '2026-10-16T12:40:10+09:00' },
+    ])).toBe('2026-10-16T12:40:00+09:00')
+  })
+})
+
+describe('describeFirstReportMiss', () => {
+  // 拾えなかった理由が取消なのか、読めない報なのかを記録で見分ける
+  it('取り消された報と読めない報を分けて数える', () => {
+    expect(describeFirstReportMiss([
+      { serial: 1, dateTime: '2026-10-16T12:40:00+09:00', isCanceled: true },
+      { serial: 2 },
+      { dateTime: '2026-10-16T12:40:20+09:00' },
+    ])).toBe('報 3 通・取り消された報 1 通・報番号か発表時刻を読めない報 2 通')
   })
 })
 
