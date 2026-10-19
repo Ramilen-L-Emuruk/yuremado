@@ -15,7 +15,7 @@ import { HISTORY_WINDOW_DAYS } from '../services/dmdataReplay'
 
 /** 展開済みアーカイブの代わり。`bytes` は展開後の tar の長さに相当する。 */
 function archive(name: string, bytes = 1000) {
-  return { files: new Map([[name, new Uint8Array(1)]]), bytes }
+  return { files: new Map([[name, new Uint8Array(1)]]), bytes, gz: new Uint8Array([0]) }
 }
 
 describe('createArchiveBodyCache', () => {
@@ -136,35 +136,17 @@ describe('createArchiveBodyCache', () => {
     expect(download).toHaveBeenCalledTimes(2)
   })
 
-  it('期限を過ぎた控えは使わず取り直す', async () => {
+  // 期限は置かない（→ archiveBodyCache.ts）。何日経っても取り直さない
+  it('時間が経っても控えたものを返す（期限を持たない）', async () => {
     let t = 1_000_000
     const cache = createArchiveBodyCache({ now: () => t })
     const download = vi.fn(async () => archive('a'))
 
     await cache.get('https://x/a', download)
-    t += 11 * 60 * 60 * 1000 // 期限内
+    t += 400 * 24 * 60 * 60 * 1000
     await cache.get('https://x/a', download)
     expect(download).toHaveBeenCalledTimes(1)
-
-    t += 2 * 60 * 60 * 1000 // 合計 13 時間 → 期限切れ
-    await cache.get('https://x/a', download)
-    expect(download).toHaveBeenCalledTimes(2)
-    expect(cache.stats().expired).toBe(1)
-  })
-
-  // 期限は「控えた時刻」で測る。読むたびに更新される値で測ると、読み続ける限り永久に切れない
-  it('期限は読み直しでは延びない', async () => {
-    let t = 1_000_000
-    const cache = createArchiveBodyCache({ now: () => t })
-    const download = vi.fn(async () => archive('a'))
-
-    await cache.get('https://x/a', download)
-    // 11 時間ごとに読んでも、控えた時刻からの経過で切れる
-    for (let i = 0; i < 2; i++) {
-      t += 11 * 60 * 60 * 1000
-      await cache.get('https://x/a', download)
-    }
-    expect(download).toHaveBeenCalledTimes(2)
+    expect(cache.stats().hits).toBe(1)
   })
 
   it('控えるなと言われたものは控えない（値は返す）', async () => {
@@ -265,17 +247,6 @@ describe('端末の控え（persist）', () => {
     const cache = createArchiveBodyCache({ persist: f.persist })
 
     await cache.get('u1', async () => ({ ...archive('a.xml'), gz: new Uint8Array([1]), cacheable: false }))
-    await Promise.resolve()
-
-    expect(f.store.size).toBe(0)
-  })
-
-  // 対照: gzip を渡さない取得元では書かない（書くものが無い）
-  it('gz を渡さなければ端末へ書かない', async () => {
-    const f = fakePersist()
-    const cache = createArchiveBodyCache({ persist: f.persist })
-
-    await cache.get('u1', async () => archive('a.xml'))
     await Promise.resolve()
 
     expect(f.store.size).toBe(0)

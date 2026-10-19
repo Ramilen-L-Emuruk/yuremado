@@ -26,7 +26,16 @@
 import { log, createLogThrottle } from './logger'
 
 const DB_NAME = 'dmdata-archive-bodies'
-const DB_VERSION = 1
+/**
+ * 版。**2 へ上げたときに、版 1 で控えた中身を一度だけ捨てる**（`onupgradeneeded`）。
+ *
+ * 版 1 は当日ぶんだけを控えず、前日ぶんは目録に出た直後（00:30 頃）でも控えていた。その頃は 30 日で
+ * 捨てていたが、版 2 から期限を置かない（→ 下の「控えに期限は置かない」）ので、育ちきる前に控えた
+ * 中身が混じっていると消えなくなる。捨てても取り直すだけ（1 日 1 本）。
+ */
+const DB_VERSION = 2
+/** 期限を置かなくなった版。これより前の版から上げるときだけ中身を捨てる（版をさらに上げても変えない） */
+const FIRST_VERSION_WITHOUT_EXPIRY = 2
 /**
  * 目録（`{ id, bytes, lastUsedAt }`）と本体（`{ id, gz }`）を**別のストアに分ける**。
  *
@@ -71,20 +80,12 @@ export const MAX_TOTAL_BYTES = 200 * 1024 * 1024
  */
 const TOUCH_INTERVAL_MS = 6 * 60 * 60 * 1000
 
-/**
- * 控えの有効期限。
- *
- * **アーカイブ id は内容に対して不変**なので、原理上は無期限でよい。当日ぶんは目録に現れず
- * 別の経路が受ける建て付けで、さらに呼び出し側が当日を `cacheable: false` で弾いている。
- *
- * それでも期限を置くのは、**配信元の設計が変わったときに気づく手立てを二重にしておく**ため。
- * 当日の弾き方は「目録に載った日付」を信じているので、**日付の意味が変わる形の変更には効かない**。
- *
- * **メモリ層の 12 時間より長い 30 日を採る**（電文本体の控えと同じ値）。永続層の目的は
- * 「タブを開き直しても残る」ことなので、12 時間だと録画のように数日にわたる作業で切れてしまい、
- * 置いた意味が薄れる。
+/*
+ * **控えに期限は置かない**（2026-10-19 ユーザー承認。問い「永続層のアーカイブ本体（archiveBodyDb.ts、30 日）の
+ * 期限も外す？」→「外す (推奨)」）。期限で捨てても取り直すだけで、前提が崩れたときに気づく手立てにならない。
+ * **まだ育ちうる日は呼び出し側が控えない**（`dmdataReplay.ts` の `isArchiveCacheable`。翌日 6:00 JST を
+ * 過ぎるまで控えない）。古い順に捨てるのは件数と合計の上限だけ。
  */
-const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
  * 「控えたばかりのものを捨てた」と見なす幅。
@@ -102,9 +103,7 @@ interface MetaEntry {
   /** 最後に読んだ（または書いた）時刻。古い順に捨てるのに使う。 */
   lastUsedAt: number
   /**
-   * 控えた時刻。**有効期限の判定に使う**。
-   *
-   * `lastUsedAt` は読むたびに更新されるので期限には使えない（読み続ける限り永久に残る）。
+   * 控えた時刻。控えたばかりのものを捨てたかの判定（`THRASH_WINDOW_MS`）に使う。
    */
   createdAt?: number
 }
@@ -152,7 +151,13 @@ let dbPromise: Promise<IDBDatabase | null> | null = null
 
 function openDb(): Promise<IDBDatabase | null> {
   if (dbPromise) return dbPromise
-  dbPromise = new Promise<IDBDatabase | null>((resolve) => {
+  // 塞がれた昇格（`onblocked`）が後から通ったかを、同じ要求の `onsuccess` で知るための印
+  let answered = false
+  const pending: Promise<IDBDatabase | null> = new Promise<IDBDatabase | null>((resolveRaw) => {
+    const resolve = (db: IDBDatabase | null) => {
+      answered = true
+      resolveRaw(db)
+    }
     try {
       if (typeof indexedDB === 'undefined') {
         // 古いブラウザ・IndexedDB を持たない実行環境。控えを持てないだけなので警告は出さない
@@ -160,8 +165,14 @@ function openDb(): Promise<IDBDatabase | null> {
         return
       }
       const req = indexedDB.open(DB_NAME, DB_VERSION)
-      req.onupgradeneeded = () => {
+      req.onupgradeneeded = (ev) => {
         const db = req.result
+        // 版 1 の中身は捨てる（理由は `DB_VERSION`）
+        if (ev.oldVersion > 0 && ev.oldVersion < FIRST_VERSION_WITHOUT_EXPIRY) {
+          for (const name of [STORE_META, STORE_BODY]) {
+            if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name)
+          }
+        }
         if (!db.objectStoreNames.contains(STORE_META)) {
           db.createObjectStore(STORE_META, { keyPath: 'id' }).createIndex(INDEX_LAST_USED, 'lastUsedAt')
         }
@@ -171,18 +182,25 @@ function openDb(): Promise<IDBDatabase | null> {
       }
       req.onsuccess = () => {
         const db = req.result
+        // 塞がれていた昇格が後から通った。待たせた呼び出しには控えなしで答え済みなので、
+        // ここで開いた接続を以後の呼び出しの答えにする（開き直すと要求が直列に並んで待たされ、接続も 2 本になる）
+        const own = answered ? Promise.resolve<IDBDatabase | null>(db) : pending
         // 別のタブが版を上げようとしたら道を空ける（次の呼び出しで開き直す）
         db.onversionchange = () => {
           db.close()
-          dbPromise = null
+          if (dbPromise === own) dbPromise = null
         }
-        resolve(db)
+        if (answered) dbPromise = own
+        else resolve(db)
       }
       req.onerror = () => {
         warnOnce('アーカイブの控えを開けませんでした（毎回取得します）', req.error)
-        resolve(null)
+        if (!answered) resolve(null)
       }
       req.onblocked = () => {
+        // **旧い版のタブが閉じるまで、控えなしで進める。** 要求そのものは生きていて、旧いタブが
+        // `onversionchange` で接続を閉じれば昇格が通り、`onsuccess` がその接続を採る（上）。
+        // ここで待つと、閉じないタブ（固まったタブなど）があるあいだ取得ごと止まる
         warnOnce('アーカイブの控えの版を上げられませんでした（別のタブが開いています）', null)
         resolve(null)
       }
@@ -191,7 +209,8 @@ function openDb(): Promise<IDBDatabase | null> {
       resolve(null)
     }
   })
-  return dbPromise
+  dbPromise = pending
+  return pending
 }
 
 /**
@@ -296,12 +315,6 @@ export async function readArchiveBody(key: string): Promise<Uint8Array | null> {
 
   const meta = got?.meta
   const now = Date.now()
-  // **期限切れは使わない**（意図は `MAX_AGE_MS`）。控えた時刻を持たない記録は `lastUsedAt` で代用する
-  const bornAt = meta?.createdAt ?? meta?.lastUsedAt ?? 0
-  if (bornAt > 0 && now - bornAt > MAX_AGE_MS) {
-    void bothStores((m, b) => { m.delete(key); b.delete(key) })
-    return null
-  }
   if (meta && now - (meta.lastUsedAt ?? 0) > TOUCH_INTERVAL_MS) {
     // 更新の失敗は無視してよい（控えは読めているので、次に捨てる順序がずれるだけ）
     void tx(STORE_META, 'readwrite', (s) => s.put({ ...meta, lastUsedAt: now } satisfies MetaEntry))

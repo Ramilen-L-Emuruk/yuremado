@@ -34,8 +34,6 @@
  * 復元する経路がそれ。**枠そのものは増やさない** —— 入れ替えるのは順番だけ。
  */
 
-import { log, createLogThrottle } from './logger'
-
 /**
  * 「この長さの窓で、この件数まで」という 1 本の制限。
  *
@@ -128,11 +126,17 @@ export interface RateGate {
  * この性質を保っているかをテストで確かめること。**
  *
  * @param limits 守る制限。**空なら一切待たせない**（テストで門を素通しさせるときに使う）。
- *   複数渡したときはすべてを同時に満たすまで待つ。
+ *   複数渡したときはすべてを同時に満たすまで待つ。**各窓は `max` が 1 以上の整数・`windowMs` が正の有限値**
+ *   でなければ投げる。
  */
 export function createRateGate(limits: readonly RateLimitWindow[]): RateGate {
-  // 上限 0 件は毎回の判定で通るので、鳴らしっぱなしにせず間引く
-  const warnZeroLimit = createLogThrottle(60_000)
+  // 窓の形は作る時点で確かめる。上限 0 件は判定に `NaN` を混ぜて上限を素通しさせ、`wait()` は
+  // 拒否する経路を持たないので、通った後で気づく手段が無い。入口で投げれば、判定は常に有限の時刻を返す。
+  for (const l of limits) {
+    if (!Number.isInteger(l.max) || l.max < 1 || !Number.isFinite(l.windowMs) || l.windowMs <= 0) {
+      throw new Error(`[gate] 窓の形が不正です（windowMs=${l.windowMs}, max=${l.max}）。max は 1 以上の整数、windowMs は正の値にしてください`)
+    }
+  }
   interface Waiter { resolve: () => void; urgent: boolean; tag: GateTag | null }
   const queue: Waiter[] = []
   /** 実際に通した時刻（昇順）。いちばん長い窓より古いものは捨てる。 */
@@ -163,19 +167,8 @@ export function createRateGate(limits: readonly RateLimitWindow[]): RateGate {
   function nextSlotAt(now: number, history: number[] = fired): number {
     prune(history, now)
     let at = now
+    // 上限 0 件の窓はここへ来ない（`createRateGate` の入口で投げる）ので、`max` は常に 1 以上。
     for (const l of limits) {
-      // 0 件しか通さない設定は使っていないが、入ってきたら永久に待たせる側へ倒す
-      // （通してしまうと、上限を守るというこの門の意味が消える）。
-      //
-      // **黙って待たせない。** `wait()` は拒否する経路を持たないので、この値が紛れ込むと
-      // 取得が**例外もタイムアウトも無く無期限に止まる** —— 記録が無いと原因を追う
-      // 手掛かりが 1 つも残らない。
-      if (l.max <= 0) {
-        warnZeroLimit(() => log.error(
-          `[gate] 上限 0 件の窓が渡されました（windowMs=${l.windowMs}）。この門を通る取得は永久に待ちます`,
-        ))
-        return Number.POSITIVE_INFINITY
-      }
       if (history.length < l.max) continue
       // `history` は昇順。窓に入っているのは `now - windowMs` より後のもの。
       const from = now - l.windowMs
@@ -253,7 +246,6 @@ export function createRateGate(limits: readonly RateLimitWindow[]): RateGate {
         const next = takeNext(pending)
         if (!next) break
         at = nextSlotAt(at, history)
-        if (!Number.isFinite(at)) return at   // 上限 0 件の窓（永久に待つ）はそのまま返す
         history.push(at)
         if (next.tag === tag) remaining--
       }

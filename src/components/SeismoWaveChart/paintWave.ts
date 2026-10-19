@@ -220,10 +220,9 @@ export function paintWaveColumnsAt(
   const built = build(w)
   if (built === null) return null
   const { columns, scaleGal, hasAnyValue } = built
-  // **振れ幅が 0 なら描かない。** 下の除算が `Infinity` になり、`lineTo` が
-  // 何もしないまま「線が引けていない」だけの絵になる（下限を正の値にしてある
-  // ので通常は起きないが、0 を渡された場合に黙って壊れるのを避ける）。
-  if (!hasAnyValue || !(scaleGal > 0)) return null
+  // 振れ幅は見ない。`scaleGal` は下限（`WaveUnit.minScale`）と 0 以上の最大の大きいほうで、
+  // 下限はどの入力でも有限の正の値を返す（`waveUnit.test.ts` が固定）ので、0 以下にならない。
+  if (!hasAnyValue) return null
 
   paintSingleMemberBand(ctx, columns.length, plotH, (c) => columns[c].hasValue && columns[c].minMembers <= 1)
 
@@ -350,8 +349,8 @@ export function paintCompositeColumnsAt(
     if (col.magMax > peak) peak = col.magMax
   }
   if (!hasMag) return null
+  // `minScale` はどの入力でも有限の正の値（`waveUnit.test.ts`）なので、0 以下にならない。
   const scaleGal = Math.max(minScale, peak)
-  if (!(scaleGal > 0)) return null
 
   paintSingleMemberBand(ctx, columns.length, plotH, (c) => columns[c].hasValue && columns[c].minMembers <= 1)
 

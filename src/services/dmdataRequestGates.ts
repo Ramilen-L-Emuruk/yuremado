@@ -45,7 +45,7 @@ import { log } from '../utils/logger'
  * **配信元にかかる量は変わらない**のに、均等割りはまとまった取得を「本数 × 6 秒」
  * そのまま待たせる（起動時の履歴で約 42 秒・リプレイの開始で約 96 秒かかっていた）。
  */
-const DATA_API_LIMITS: readonly RateLimitWindow[] = [
+export const DATA_API_LIMITS: readonly RateLimitWindow[] = [
   { windowMs: 5 * 60_000, max: 50 },
   { windowMs: 10 * 60_000, max: 2000 },
 ]
@@ -60,7 +60,7 @@ const DATA_API_LIMITS: readonly RateLimitWindow[] = [
  * 効かなくなったときの歯止め —— ページを辿るループの上限（`LIST_MAX_PAGES` ほか）と同じ役目で、
  * こちらは件数ではなくレートの側から押さえる。
  */
-const API_LIMITS: readonly RateLimitWindow[] = [
+export const API_LIMITS: readonly RateLimitWindow[] = [
   { windowMs: 10 * 60_000, max: 2000 },
 ]
 
