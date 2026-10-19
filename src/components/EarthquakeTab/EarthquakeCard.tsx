@@ -1226,6 +1226,18 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             </div>
           )}
 
+          {/* 固定付加文（`ForecastComment/Text`）。原文をそのまま出す（2026-10-19 ユーザー承認。
+              パーサーが改行だけ詰めている → `normalizeForecastText`）。
+              上の津波の欄はこの付加文のコードを区分へ丸めたもので、区分にならない文
+              （例: 0245「この地震で緊急地震速報を発表しましたが、強い揺れは観測されませんでした。」）は
+              ここにしか現れない。1 文目は津波の欄と重なるが、文とコードの対応は電文に無く、
+              切り分けを推測しないために全文を出す。並びは電文と同じく「その他」の前。 */}
+          {quake.forecastText && (
+            <div className="w-full rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary whitespace-pre-wrap roomy:text-sm">
+              {quake.forecastText}
+            </div>
+          )}
+
           {/* 固定付加文（その他）。長周期地震動の同じ枠と揃えて出す。 */}
           {quake.varCommentText && (
             <div className="w-full rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary whitespace-pre-wrap roomy:text-sm">
