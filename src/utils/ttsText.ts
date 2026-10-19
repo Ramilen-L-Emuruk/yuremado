@@ -1020,9 +1020,15 @@ function formatDayTime(isoTime: string): string | null {
  * **述語は「取り消されました」。** 気象庁が使う語は「取消」で（→ CLAUDE.md「利用者へ出す語を
  * 気象庁の表現と揃える」）、カードのオーバーレイも「この緊急地震速報は取り消されました」と
  * 書いている。津波・南海トラフ臨時情報・地震回数の取消も同じ述語。
+ *
+ * **時刻は取り消された緊急地震速報の第 1 報の発表時刻を渡すこと**（呼び出し側
+ * useLiveEventHandler.ts が受信の記憶から引く）。取消電文自身の `issue.time` は取消を発表した
+ * 時刻で、これを「〜に発表された緊急地震速報」と読むと、取り消された速報がその時刻に出たように
+ * 聞こえる（2026-10-16 12:40 頃の速報の取消を「12時48分に発表された」と読んでいた）。
+ * 分からなければ null を渡し、時刻を言わない文にする。
  */
-export function eewCancelToText(event: EEWAlert): string {
-  const time = event.issue?.time ? formatTime(event.issue.time) : null
+export function eewCancelToText(event: EEWAlert, firstIssueTime: string | null): string {
+  const time = firstIssueTime ? formatTime(firstIssueTime) : null
   const head = time
     ? `${time}に発表された緊急地震速報は取り消されました。`
     : '緊急地震速報は取り消されました。'

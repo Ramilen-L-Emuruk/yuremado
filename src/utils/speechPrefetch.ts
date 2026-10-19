@@ -61,7 +61,9 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
         if (event.cancelled) add(tsunamiCancelToText(event.cancelReason, event.cancelText))
         else add(joinSegments(tsunamiToSegments(event, undefined, undefined, opts)))
       } else if (event.kind === 'eew') {
-        if (event.cancelled) add(eewCancelToText(event))
+        // 取消の頭の文は第 1 報の時刻を言うが、この電文 1 通からは分からない（受信の記憶にしか無い）。
+        // 時刻抜きで組み、当たるのは理由の文の側だけ。
+        if (event.cancelled) add(eewCancelToText(event, null))
         // **区分（予報／警報／震源更新）は渡す値を選ばない。** 第 1 フェーズの文は
         // 「切り出し語＋震源名で地震。」の形で、切り出し語は 3 通りとも独立したチャンクになり
         // **起動時の作り置き（`warmFixedPhrases`）が既に焼いている**。残る「〇〇で地震。」の

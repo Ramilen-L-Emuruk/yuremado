@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, EEW_HYPOCENTER_NAME_MEMORY_MAX } from './eew'
+import { eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX } from './eew'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
 
@@ -1476,6 +1476,51 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
       const merged = mergeEewReport(prev, report('dmdata', '2', LATER, { areas: undefined }))
       expect(merged.areas).toBeUndefined()
     })
+  })
+})
+
+// 誤報取消の読み上げで「〇時〇分に発表された」と言うために覚える第 1 報の時刻
+// （→ `useLiveEventHandler` の `eewFirstIssueTimeRef`）。
+describe('rememberEewFirstIssueTime', () => {
+  const report = (time: string | undefined, cancelled = false) =>
+    ({ kind: 'eew', cancelled, issue: { eventId: 'e', serial: '1', time } }) as unknown as EEWAlert
+
+  // 正: 最初の報の時刻を覚え、続報では上書きしない
+  it('最初の報の時刻を覚え、続報では上書きしない', () => {
+    const m = new Map<string, string>()
+    rememberEewFirstIssueTime(m, 'A', report('2026-10-16T12:40:00+09:00'))
+    rememberEewFirstIssueTime(m, 'A', report('2026-10-16T12:41:00+09:00'))
+    expect(m.get('A')).toBe('2026-10-16T12:40:00+09:00')
+  })
+
+  // 対照: 取消の報は覚えない（取消を発表した時刻で、取り消された速報の時刻ではない）
+  it('取消の報の時刻は覚えない', () => {
+    const m = new Map<string, string>()
+    rememberEewFirstIssueTime(m, 'A', report('2026-10-16T12:48:00+09:00', true))
+    expect(m.has('A')).toBe(false)
+  })
+
+  // 安全弁: 発表時刻の無い報は飛ばし、次に時刻を持つ報で覚える
+  it('発表時刻の無い報は飛ばし、次の報で覚える', () => {
+    const m = new Map<string, string>()
+    rememberEewFirstIssueTime(m, 'A', report(undefined))
+    rememberEewFirstIssueTime(m, 'A', report('2026-10-16T12:41:00+09:00'))
+    expect(m.get('A')).toBe('2026-10-16T12:41:00+09:00')
+  })
+
+  // 正: リプレイの初期状態で畳んだ報は、畳む前の第 1 報の時刻（firstIssueTime）を先に見る
+  it('畳んだ報に載った第 1 報の時刻を優先する', () => {
+    const m = new Map<string, string>()
+    rememberEewFirstIssueTime(m, 'A', { ...report('2026-10-16T12:44:00+09:00'), firstIssueTime: '2026-10-16T12:40:00+09:00' } as EEWAlert)
+    expect(m.get('A')).toBe('2026-10-16T12:40:00+09:00')
+  })
+
+  // 安全弁: 日時として読めない値も覚えない。覚えると上書きしないので、後の正しい報の時刻を取りこぼす
+  it('日時として読めない値は飛ばし、次の報で覚える', () => {
+    const m = new Map<string, string>()
+    rememberEewFirstIssueTime(m, 'A', report('not-a-date'))
+    rememberEewFirstIssueTime(m, 'A', report('2026-10-16T12:41:00+09:00'))
+    expect(m.get('A')).toBe('2026-10-16T12:41:00+09:00')
   })
 })
 

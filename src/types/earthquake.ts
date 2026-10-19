@@ -1212,6 +1212,13 @@ export interface EEWAlert {
    * 一度真になったら、以後の報で震度が下がっても真のまま（アプリ独自の判断。→ `computeDisplayEEWLevel`）。
    */
   everSpecialWarning?: boolean
+  /**
+   * この地震で最初の報の発表時刻。**載せるのはリプレイの初期状態だけ** —— 窓の手前の報は地震ごとに
+   * 最新 1 報へ畳んで渡すので、畳む前の全報から求めて載せる（`filterPreWindowEvents`）。
+   * 誤報取消の読み上げ（「〇時〇分に発表された」）が第 1 報の時刻を言うために使う。
+   * 無ければ `issue.time` を見る（→ `rememberEewFirstIssueTime`）。
+   */
+  firstIssueTime?: string
   // issue.serial = 情報番号（第N報）
   issue?: {
     eventId?: string
