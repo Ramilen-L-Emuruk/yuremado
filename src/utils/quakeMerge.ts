@@ -1458,10 +1458,9 @@ export function coalesceByEventId(cards: JMAQuake[]): JMAQuake[] {
       eventId, keptId: kept.id, droppedId: card.id, keptEventKey: kept.eventKey,
     })
     result[index] = kept
-    // 畳んだ結果が別の eventId を名乗る・取消表示に入る形にも追随する。**いまの `mergeQuakeInto` は
-    // id を既存か新着のどちらかから引き継ぐだけなので、この分岐は通らない**。頭から探していた頃は
-    // そのつど読み直していたので、統合の仕方が変わってもその振る舞いを保つための安全弁。
-    if (extractQuakeEventId(kept) !== eventId || kept.cancelledAt) firstIndexOf.delete(eventId!)
+    // **畳んだ結果も同じ eventId を名乗り、取消表示に入らない**（`mergeQuakeInto` は id を既存か
+    // 新着のどちらかから引き継ぎ、`cancelledAt` を引き継がない）ので、索引はそのまま使える。
+    // この前提は quakeMerge.test.ts の「畳んだカードは同じ eventId のまま」が固定している。
     remember(kept, index)
   }
   return result

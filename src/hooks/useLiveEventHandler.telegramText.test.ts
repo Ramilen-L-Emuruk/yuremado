@@ -647,3 +647,108 @@ describe('据え置きの印が立った地震情報の本文', () => {
     expect(telegramSpeeches()).toHaveLength(1)
   })
 })
+
+// 取消の文に続けて読むには長すぎた理由の配線（→ `speakDeferredCancelReason`）。
+// 文そのもの（前置き・境目）は ttsText.test.ts の `deferredCancelReasonToSpeak` が押さえている。
+// ここで固定するのは、設定「気象庁の発表文を読む」に従わないこと（2026-10-19 ユーザー選択
+// 「設定に関係なく読む（推奨）」）と、同じ取消の二重配信で 2 度鳴らないこと。
+describe('長すぎる取消の理由（配線）', () => {
+  const LONG_REASON = '観測データの誤りにより'.repeat(12) + '取り消します'
+  const PREFIX = '地震回数に関する情報が取り消された理由をお伝えします。'
+  const cancelCount = (id = 'count-cancel-1'): LiveEvent => ({
+    kind: 'earthquakeCount',
+    data: {
+      id, time: '2026-01-01T12:00:00Z', eventId: 'count-1', headline: '',
+      items: [], cancelled: true, cancelText: LONG_REASON,
+    },
+  } as unknown as LiveEvent)
+  const deferredSpeeches = () => speeches.map(s => s.text).filter(t => t.startsWith(PREFIX))
+
+  // 正: 長い理由は、取消の文とは別の発話で、取消の文のあとに鳴る
+  it('長い理由は別の発話で、取消の文のあとに読む', async () => {
+    const { handleLiveEvent } = setup()
+    handleLiveEvent(cancelCount())
+    await drain()
+    const texts = speeches.map(s => s.text)
+    expect(texts[0]).toBe('地震回数に関する情報は取り消されました。')
+    expect(deferredSpeeches()).toEqual([`${PREFIX}${LONG_REASON}。`])
+  })
+
+  // 対照: 設定「気象庁の発表文を読む」を切っていても読む（短い理由と同じく設定に従わない）
+  it('気象庁の発表文を読まない設定でも読む', async () => {
+    const { handleLiveEvent } = setup({ ttsReadTelegramText: false })
+    handleLiveEvent(cancelCount())
+    await drain()
+    expect(deferredSpeeches()).toHaveLength(1)
+  })
+
+  // 安全弁: 読み上げそのものを切っていれば鳴らない
+  it('VOICEVOX 読み上げが無効なら鳴らない', async () => {
+    const { handleLiveEvent } = setup({ voicevoxEnabled: false })
+    handleLiveEvent(cancelCount())
+    await drain()
+    expect(speakMock).not.toHaveBeenCalled()
+  })
+
+  // 安全弁: 同じ取消が 2 度届いても、理由は 1 度しか読まない
+  it('同じ取消の二重配信では理由を 2 度読まない', async () => {
+    const { handleLiveEvent } = setup()
+    handleLiveEvent(cancelCount('count-cancel-1'))
+    await drain()
+    handleLiveEvent(cancelCount('count-cancel-1'))
+    await drain()
+    expect(deferredSpeeches()).toHaveLength(1)
+  })
+
+  // 対照: 別の取消が同じ文面の理由を運んでも黙らない（既読の鍵に事象を入れている）
+  it('別の取消が同じ文面の理由を運べば、それも読む', async () => {
+    const { handleLiveEvent } = setup()
+    handleLiveEvent(cancelCount('count-cancel-1'))
+    await drain()
+    handleLiveEvent(cancelCount('count-cancel-2'))
+    await drain()
+    expect(deferredSpeeches()).toHaveLength(2)
+  })
+
+  // 6 箇所の配線をそれぞれ固定する（呼び忘れ・情報名の取り違えは型検査が拾えない）。
+  it('地震情報の取消でも、情報名を名乗って読む', async () => {
+    const { handleLiveEvent } = setup()
+    handleLiveEvent({ ...makeQuake({ id: 'quake-1-cancel', eventId: '20260101120000' }), cancelled: true, cancelText: LONG_REASON } as JMAQuake)
+    await drain()
+    expect(speeches.map(s => s.text)).toContain(`地震情報が取り消された理由をお伝えします。${LONG_REASON}。`)
+  })
+
+  it('津波警報等の誤報の取消でも、情報名を名乗って読む', async () => {
+    const { handleLiveEvent } = setup()
+    handleLiveEvent({
+      kind: 'tsunami', id: 'tsunami-1-cancel', eventId: '20260101120000', time: '2026-01-01T12:00:00Z',
+      issue: { source: 'JMA', time: '2026-01-01T12:00:00Z', type: 'Focus' },
+      cancelled: true, cancelReason: 'retracted', cancelText: LONG_REASON, areas: [],
+    } as unknown as JMATsunami)
+    await drain()
+    expect(speeches.map(s => s.text)).toContain(`津波警報等が取り消された理由をお伝えします。${LONG_REASON}。`)
+  })
+
+  it('長周期地震動の取消でも、情報名を名乗って読む', async () => {
+    const { handleLiveEvent } = setup()
+    handleLiveEvent({
+      kind: 'lpgm',
+      data: {
+        id: 'lpgm-1-cancel', eventId: 'lpgm-1', cancelled: true, time: '2026-01-01T12:01:00Z',
+        originTime: '2026-01-01T12:00:00Z', maxClass: 0, cancelText: LONG_REASON,
+      },
+    } as unknown as LiveEvent)
+    await drain()
+    expect(speeches.map(s => s.text)).toContain(`長周期地震動に関する観測情報が取り消された理由をお伝えします。${LONG_REASON}。`)
+  })
+
+  it('お知らせの取消でも、情報名を名乗って読む', async () => {
+    const { handleLiveEvent } = setup({ quakeNoticeAlerts: true })
+    handleLiveEvent({
+      kind: 'quakeNotice',
+      data: { id: 'notice-1-cancel', time: '2026-01-01T12:00:00Z', eventId: 'n1', cancelled: true, headline: '', body: LONG_REASON },
+    } as unknown as LiveEvent)
+    await drain()
+    expect(speeches.map(s => s.text)).toContain(`地震・津波に関するお知らせが取り消された理由をお伝えします。${LONG_REASON}。`)
+  })
+})

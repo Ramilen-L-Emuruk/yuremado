@@ -1473,6 +1473,20 @@ describe('coalesceByEventId — 暫定 EventID で分かれたカードを畳む
     expect(coalesceByEventId([normal, cancelled])).toHaveLength(2)
   })
 
+  // 入力に取消表示のカードを含めないのは、`coalesceByEventId` がそれを索引に載せず（`remember`）、
+  // 畳む相手にも選ばない（`!card.cancelledAt`）ため —— `mergeQuakeInto` へ渡るのは常に取消表示でない 2 枚。
+  // ここで固定するのは「その 2 枚を畳んだ結果が取消表示へ化けない・別の eventId を名乗らない」こと。
+  it('畳んだカードは同じ eventId のまま・取消表示に入らない（coalesceByEventId が索引を使い続ける前提）', () => {
+    const cards = [震度速報, 震源情報, 震源震度情報].map(q => ({ ...q, id: q.id.replace('20260824040519', '20260824040526') }))
+    for (const a of cards) {
+      for (const b of cards) {
+        const kept = mergeQuakeInto(a, b)
+        expect(extractQuakeEventId(kept)).toBe(extractQuakeEventId(a))
+        expect(kept.cancelledAt).toBeUndefined()
+      }
+    }
+  })
+
   it('ほかの地震と入り混じっていても、同じ eventId は最初に現れた位置へ畳む（並びは保つ）', () => {
     const a1 = makeQuake({ id: 'dmdata-quake-20260824040526-1' })
     const b1 = makeQuake({ id: 'dmdata-quake-20260824041000-1' })

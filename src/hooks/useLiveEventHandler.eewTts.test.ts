@@ -2142,6 +2142,27 @@ describe('警報の対象地方（第 1.5 フェーズ）', () => {
   })
 })
 
+// 取消の文に続けて読むには長すぎた理由（→ `speakDeferredCancelReason`）。EEW だけは
+// 決め直しの関数（`chainEEWSpeech`）の中から予約するので、他の種別とは別に固定する。
+describe('緊急地震速報の取消の長い理由', () => {
+  const LONG_REASON = '装置の障害により発表した'.repeat(12) + '緊急地震速報を取り消します'
+  it('取消の文のあとに、情報名を名乗って別の発話で読む', async () => {
+    const handle = setup()
+    handle(makeEEW({ scaleTo: 50 }))
+    await flushMicrotasks()
+    handle({ ...makeEEW({ serial: 2, cancelled: true }), cancelText: LONG_REASON })
+    for (let i = 0; i < 20; i++) {
+      await vi.advanceTimersByTimeAsync(500)
+      await flushMicrotasks()
+    }
+    const texts = spokenTexts()
+    const cancelAt = texts.findIndex(t => t.includes('緊急地震速報は取り消されました'))
+    const reasonAt = texts.indexOf(`緊急地震速報が取り消された理由をお伝えします。${LONG_REASON}。`)
+    expect(cancelAt).toBeGreaterThanOrEqual(0)
+    expect(reasonAt).toBeGreaterThan(cancelAt)
+  })
+})
+
 // 合成が 1 音も鳴らなかったとき（VOICEVOX 未起動・ネットワーク断・話者 ID 不正）。
 //
 // **`speakWithVoicevox` は例外を投げずに正常終了する。** 戻り値の `spoke` を見ないと
