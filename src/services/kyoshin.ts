@@ -536,7 +536,7 @@ async function syncClockOnce(): Promise<void> {
       // 秒 target の登録時刻 ≈ (target+1)*1000 + REG_DELAY_MS。その瞬間の perf=flipPerf。
       // 現在時刻へ換算して供給する（feedServerSample が performance.now() との差で K を更新）。
       const serverAtFlip = (target + 1) * 1000 + REG_DELAY_MS
-      feedServerSample(serverAtFlip + (performance.now() - flipPerf))
+      feedServerSample(serverAtFlip + (performance.now() - flipPerf), 'fallback')
       return
     }
     if (registered === false) {
@@ -584,7 +584,7 @@ async function calibrateFromServerTime(
   // 停止済みなら供給しない。取得は中断できないため、ここまで来てから捨てる。
   if (isStopped()) return 'skipped'
   // サンプルが指す瞬間からの経過分を足して現在時刻へ換算する。
-  feedServerSample(outcome.serverEpochMs + (performance.now() - outcome.perfRefMs))
+  feedServerSample(outcome.serverEpochMs + (performance.now() - outcome.perfRefMs), 'primary')
   return 'calibrated'
 }
 
@@ -657,9 +657,12 @@ export function startClockSync(): () => void {
     running = false
     if (!stopped) timer = setTimeout(loop, CLOCK_SYNC_INTERVAL_MS)
   }
-  // **タブが戻ったら次の周期を待たずに取り直す。** 戻った時点で較正を捨てる（`utils/clock.ts`）ので、
-  // 次の周期（最長 30 秒）まで端末の時計のまま動く —— その間は下端の波形の P/S の線を引かない（2026-10-15
-  // ユーザー承認。`docs/public-waveform-design.md` §0）ので、待ちを短くする。1 回の復帰で 1 リクエスト。
+  // **タブが戻ったら次の周期を待たずに取り直す。** 時計の関係が飛んでいたら戻った時点で較正を捨てる
+  // （`utils/clock.ts`）ので、次の周期（最長 30 秒）まで端末の時計のまま動く —— その間は下端の波形の P/S の
+  // 線を引かない（2026-10-15 ユーザー承認。`docs/public-waveform-design.md` §0）ので、待ちを短くする。
+  // 較正を保った場合も、差がある程度動いていれば保った値はそのぶんずれている場合があるので、
+  // 取り直しが主経路で成功した 1 回で置き換える（フォールバックのサンプルでは置き換えない）。
+  // 1 回の復帰で 1 リクエスト。
   const onVisible = () => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') void loop()
   }
