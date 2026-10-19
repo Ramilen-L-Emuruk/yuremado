@@ -47,6 +47,7 @@ import { computeWaveArrival, type WaveArrival } from '../../utils/seismoWaveArri
 import type { SeismoWaveWindow } from '../../utils/seismoWaveBuffer'
 import { measureWindowQuietLevel, QuietLevelMemory } from '../../utils/seismoQuietScale'
 import { formatWaveTally } from './waveLabels'
+import { hasWaveChartRows } from './chartRows'
 import { useWaveAxes } from '../../hooks/useSeismoWaveAxes'
 import { AXIS_BAND_PX, AXIS_COLORS, AXIS_LABELS, COMPOSITE_COLOR, paintTicks } from './paintWave'
 import {
@@ -233,7 +234,8 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
       })
     })
   }
-  if (sources.length === 0) return null
+  // 段が 0 なら何も描かない。判定は呼び出し側（App の帯の下端の余白）と共有する（→ chartRows.ts）
+  if (!hasWaveChartRows(stations, publicWaves)) return null
   return (
     <div className={`w-full ${STACK_MAX_HEIGHT_CLASS} overflow-y-auto overscroll-contain`}>
       {sources.map((source, i) => (

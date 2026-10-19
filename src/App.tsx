@@ -19,12 +19,13 @@ import { ShareCardButton } from './components/ShareCardButton'
 import { useShareCard } from './hooks/useShareCard'
 import { SeismoLinkStatus } from './components/SeismoLinkStatus'
 import { SeismoOverlay } from './components/SeismoOverlay'
-import { useSeismoStation } from './hooks/useSeismoStation'
+import { useSeismoStation, type SeismoStationState } from './hooks/useSeismoStation'
 import { useSeismoQuakeWaves, type SeismoQuakeWave } from './hooks/useSeismoQuakeWaves'
 import { usePublicQuakeWaves } from './hooks/usePublicQuakeWaves'
 import { mergeQuakeWaves } from './utils/mergeQuakeWaves'
 import { useQuakeOriginSeconds } from './hooks/useQuakeOriginSeconds'
 import { SeismoWaveChart } from './components/SeismoWaveChart'
+import { hasWaveChartRows } from './components/SeismoWaveChart/chartRows'
 import { useSeismoWaveVisibility } from './hooks/useSeismoWaveVisibility'
 import { usePublicWaves } from './hooks/usePublicWaves'
 import type { PublicStationMarker } from './components/Map/PublicStationMarkersGL'
@@ -44,7 +45,8 @@ import {
   jstYearOf, jstYearStartMs, jstYearEndMs, clampPeriodToRange,
   type CatalogFilter, type CatalogViewOptions, type CatalogPointCloud,
 } from './utils/hypocenterCatalogView'
-import { SpecialInfoBanner } from './components/SpecialInfoBanner'
+import { SpecialInfoBanner, shareButtonBottomClass } from './components/SpecialInfoBanner'
+import { useSpecialInfoBanners } from './components/SpecialInfoBanner/useSpecialInfoBanners'
 import { MapLegend } from './components/MapLegend'
 import { isMapAreaShort } from './components/MapLegend/autoCollapse'
 import { buildLegendBlocks, EMPTY_LEGEND_SOURCES, type MapLegendSources, type LegendBlock } from './components/MapLegend/legendBlocks'
@@ -114,6 +116,8 @@ import { ROOT_FRAME_CLASS } from './rootFrame'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
+/** 下端の波形に自作地震計を出さないときに渡す空の組。同一参照を使い回す（毎回作ると波形の枠が描き直される）。 */
+const EMPTY_SEISMO_STATIONS: readonly SeismoStationState[] = []
 
 // 平常時のウィンドウタイトル（index.html の <title> と一致させる）。
 // AutoHotKey 等が、情報更新時のタイトル変化を検知してイベントを発火できるようにする。
@@ -2341,6 +2345,19 @@ export function App() {
     detectedPoints: kyoshinView.detectedPoints,
     stations: seismo.stations,
   })
+  // 地図に重ねる特別情報の帯の束。**閉じた帯を除いた「いま出す帯」を、帯の描画と共有ボタンの置き場所が同じ値で見る。**
+  // お知らせの帯は設定で隠せるので、隠しているときは元データごと渡さない。
+  const specialInfoBanners = useSpecialInfoBanners({
+    nankai, nankaiCommentary, kohatsu,
+    quakeNotice: settings.quakeNoticeBanner ? quakeNotice : null,
+    earthquakeCount,
+  })
+  // 地図の下の波形の枠に渡すもの。**出さないなら空・null**（出すかどうかはここで決める）。
+  const waveChartStations = showSeismoWave ? seismo.stations : EMPTY_SEISMO_STATIONS
+  const waveChartPublic = publicWaves.visible ? publicWaves : null
+  // 枠が実際に段を描くか。描くと地図の高さが削れ、地図に重ねた帯は画面の下端に届かなくなる。
+  // **「出す」と判定しただけでは足りない** —— 段が 0 なら枠は何も描かない（→ SeismoWaveChart/chartRows.ts）。
+  const waveChartDrawn = hasWaveChartRows(waveChartStations, waveChartPublic)
 
   // 地図左上の更新時刻: リアルタイム表示はリアルタイム震度(kyoshin)の更新時刻、
   // DMDSS版かつWS接続中は現在時刻を毎秒更新、それ以外は最終受信時刻を表示する。
@@ -2471,18 +2488,6 @@ export function App() {
               <MapRenderStatus />
               <SeismoLinkStatus stream={seismo.stream} />
             </div>
-            {/* 地図右下。表示中の地図を画像にするボタン。左上の情報ブロックと同じ理由で z を高く取る。 */}
-            {shareCard.ready && (
-              <div
-                className="absolute z-99999 flex flex-col items-end gap-1"
-                style={{
-                  bottom: 'max(0.5rem, env(safe-area-inset-bottom, 0px))',
-                  right: 'max(0.5rem, env(safe-area-inset-right, 0px))',
-                }}
-              >
-                <ShareCardButton state={shareCard.state} onClick={() => shareCard.share()} />
-              </div>
-            )}
             {/* 地図に重ねる縦並び。上端に行動チェックリスト、下端に凡例・特別情報バナー。
                 **地図の高さを 1 本の縦並びで分け合う**（足りないときは中身が縮み、それぞれの中で
                 スクロールする）。上と下を別々に絶対配置して画面の高さ（`dvh`）で上限を掛けると、
@@ -2522,15 +2527,34 @@ export function App() {
                   <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} />
                 </div>
               )}
-              <SpecialInfoBanner nankai={nankai} nankaiCommentary={nankaiCommentary} kohatsu={kohatsu} quakeNotice={settings.quakeNoticeBanner ? quakeNotice : null} earthquakeCount={earthquakeCount} speakingTelegramTextSubject={speakingTelegramTextSubject} />
+              {/* 地図右下の共有ボタン（表示中の地図を画像にする）。**特別情報の帯のすぐ上に置く** —— 縦並びの外に
+                  絶対配置すると、帯が出ても押し上げてもらえずに帯へ重なる。高さ 0 の行を足場にしてその上へ
+                  はみ出させるので、凡例の縮み方（縦並びの高さの分け合い）には加わらない。
+                  帯が無い（閉じた帯しか残っていない場合も含む）ときは地図の下端に付く。ホームインジケータ分を
+                  避けるのは帯と同じ条件 —— スマホの横画面で、地図の下に波形が出ていないときだけ（`shareButtonBottomClass`。
+                  帯の SAFE_BOTTOM の隣に置いてある）。 */}
+              {shareCard.ready && (
+                <div className="relative h-0 shrink-0">
+                  <div
+                    className={`absolute pointer-events-auto ${shareButtonBottomClass(specialInfoBanners.shown, !waveChartDrawn)}`}
+                    style={{ right: 'max(0.5rem, env(safe-area-inset-right, 0px))' }}
+                  >
+                    <ShareCardButton state={shareCard.state} onClick={() => shareCard.share()} />
+                  </div>
+                </div>
+              )}
+              <SpecialInfoBanner banners={specialInfoBanners} speakingTelegramTextSubject={speakingTelegramTextSubject}
+                // 地図の下に波形が出ていると、帯は画面の下端に届かない（下端の余白を付けない）
+                atScreenBottom={!waveChartDrawn}
+              />
             </div>
           </div>
           {/* 自作地震計の合成波形。**地図の外**（→ すぐ上の器のコメント）。 */}
-          {(showSeismoWave || publicWaves.visible) && (
+          {waveChartDrawn && (
             <SeismoWaveChart
-              stations={showSeismoWave ? seismo.stations : []}
+              stations={waveChartStations}
               readWave={seismo.readWave}
-              publicWaves={publicWaves.visible ? publicWaves : null}
+              publicWaves={waveChartPublic}
               collapsedView={settings.seismoWaveCollapsedView}
               expanded={settings.seismoWaveExpanded}
               onToggleExpanded={toggleSeismoWaveExpanded}
