@@ -1364,8 +1364,9 @@ function zenkakuDayTime(d: Date): string {
 // 深発地震（深さ 150km 超）。震源は確定しているが地域別予想が発表されないため、読み上げは
 // 待たずに「深発地震のため、予想震度なし。」と伝える。
 //
-// **severity は続報も含めて予報級に固定する。** 気象庁は深さ 150km を超える地震に緊急地震速報
-// （警報）を発表しないため、警報級の深発 EEW は実電文として存在しない。
+// **severity は続報も含めて予報級に固定する。** 気象庁は深さ 150km を超える地震に、PLUM 法による
+// 2 点以上の震度予測がある場合を除いて緊急地震速報（警報）を発表しない。このテストは区域を持たず
+// その例外に当たらないので、警報級へ上げると実電文に無い形になる。
 export function createTestEEWDeep(withDmdssFields: boolean, eventId?: string, serial = 1, baseTime?: Date): EEWAlert {
   // 地震発現時刻の基準。**続報でも動かさない**（→ `EEW_ARRIVAL_DELAY_MS`）
   const anchor = baseTime ?? serverDate()
@@ -1781,6 +1782,9 @@ export function createTestQuakeNotice(): JMAQuakeNotice {
       '　なお、沖縄県内69点の全震度観測点のうち入電しない自治体震度',
       '観測点は、35点です。',
     ].join('\n'),
+    // 自由付加文（`Body/Comments/FreeFormComment`）。実配信の控えには 0 件で、文は電文解説資料
+    // Ⅱ.51 の事例から採った。本文の後に続けて出る・続けて読まれる形をテストボタンで確かめるため
+    freeText: '保守点検の時刻が変更になりました。',
     cancelled: false,
     reportDateTime: now,
     // 7 日で畳む（帯を常駐させないための表示上の都合。気象庁が定めた期限ではない）
@@ -1791,11 +1795,13 @@ export function createTestQuakeNotice(): JMAQuakeNotice {
 /**
  * 地震回数に関する情報（VXSE60）のテストデータ。
  *
- * 気象庁公式のサンプル電文（`32-35_03_01_100514_VXSE60.xml`＝2008 年の伊豆半島東方沖の群発）
- * の区間構成と回数をそのまま使い、時刻だけ実行時刻から起こす。
+ * 区間構成は気象庁公式のサンプル電文（`32-35_03_01_100514_VXSE60.xml`＝2008 年の伊豆半島東方沖の
+ * 群発）に拠り、時刻だけ実行時刻から起こす。
  *
- * **回数の内訳を崩さない** —— 区間ごとの 1587 + 35 + 35 + 47 が累積の 1704 に一致する。
- * 適当な数字を置くと、累積行が他の行の合計だと分かる形を実機で確かめられない。
+ * **回数（`Number`）は全区間「発表なし」（電文の `-1`。型では `null`）、有感（`FeltNumber`）だけが
+ * 値を持つ。** 電文解説資料 Ⅱ.35 の事例がこの形で、実配信で起きうるいちばん崩れやすい形
+ * （帯に「-1回」、読み上げで「マイナス1回」と出ていた）を実機で確かめられるようにしてある。
+ * 有感の内訳は崩さない —— 区間ごとの 1 + 0 + 0 + 0 が累積の 1 に一致する。
  */
 export function createTestEarthquakeCount(): JMAEarthquakeCount {
   const nowMs = serverNow()
@@ -1812,11 +1818,11 @@ export function createTestEarthquakeCount(): JMAEarthquakeCount {
     eventId,
     headline: '地震回数に関する情報をお知らせします。',
     items: [
-      { type: '地震回数',       startTime: iso(-21), endTime: iso(-3), number: 1587, feltNumber: 1 },
-      { type: '１時間地震回数', startTime: iso(-3),  endTime: iso(-2), number: 35,   feltNumber: 0 },
-      { type: '１時間地震回数', startTime: iso(-2),  endTime: iso(-1), number: 35,   feltNumber: 0 },
-      { type: '１時間地震回数', startTime: iso(-1),  endTime: iso(0),  number: 47,   feltNumber: 0 },
-      { type: '累積地震回数',   startTime: iso(-21), endTime: iso(0),  number: 1704, feltNumber: 1 },
+      { type: '地震回数',       startTime: iso(-21), endTime: iso(-3), number: null, feltNumber: 1 },
+      { type: '１時間地震回数', startTime: iso(-3),  endTime: iso(-2), number: null, feltNumber: 0 },
+      { type: '１時間地震回数', startTime: iso(-2),  endTime: iso(-1), number: null, feltNumber: 0 },
+      { type: '１時間地震回数', startTime: iso(-1),  endTime: iso(0),  number: null, feltNumber: 0 },
+      { type: '累積地震回数',   startTime: iso(-21), endTime: iso(0),  number: null, feltNumber: 1 },
     ],
     nextAdvisory: `次の「地震回数に関する情報」は、${toFullWidthDigits(next.getDate())}日${toFullWidthDigits(next.getHours())}時００分頃に発表します。`,
     freeText: `　${toFullWidthDigits(startDate.getMonth() + 1)}月${toFullWidthDigits(startDate.getDate())}日${toFullWidthDigits(startDate.getHours())}時過ぎから伊豆半島東方沖で地震が発生しています。この

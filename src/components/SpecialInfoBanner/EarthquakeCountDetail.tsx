@@ -1,4 +1,5 @@
-import type { JMAEarthquakeCount, JMAEarthquakeCountItem } from '../../types/earthquake'
+import type { JMAEarthquakeCount } from '../../types/earthquake'
+import { pickEarthquakeCountSummaryItem } from '../../utils/earthquakeCountSummary'
 
 /**
  * 地震回数に関する情報（VXSE60）の帯を開いたときの中身。
@@ -47,40 +48,48 @@ function formatSpan(startTime: string, endTime: string): string {
 }
 
 /**
- * 累積の区間。**畳んだ見出しと開いた表で同じものを指す**ので、判定はここに 1 つだけ置く。
- *
- * **`type` の語で判定する** —— 並び順（最後が累積）は電文の書き方にすぎず、`type` のほうが
- * 電文自身の宣言。
- */
-export function cumulativeItem(count: JMAEarthquakeCount): JMAEarthquakeCountItem | undefined {
-  return count.items.find(it => it.type.includes('累積'))
-}
-
-/**
  * 畳んだ帯に出す一行。
  *
  * **電文の見出し（`Head/Headline/Text`）は使わない** —— 「地震回数に関する情報をお知らせします。」
- * という中身の無い定型文で、畳んだままでは何も伝わらない。累積の区間から数字を組む。
+ * という中身の無い定型文で、畳んだままでは何も伝わらない。区間の数字から組む。
  *
- * 累積が読めなければ種別名だけを返す（部分の区間の数字を総数のように見せない）。
+ * **どの区間の数字を出すかは読み上げと同じ関数で選ぶ**（`pickEarthquakeCountSummaryItem`。
+ * 累積 → 地震回数 → 最新の１時間地震回数）。選べなければ種別名だけを返す。
+ *
+ * **気象庁が発表しない値（電文の `-1`。型では `null`）は句ごと出さない**
+ * （2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」）。回数だけが無ければ
+ * 「8/24 15時から 有感 1回」、有感だけが無ければ「8/24 15時から 5回」、両方無ければ種別名。
  *
  * **取消の分岐は持たない。** 取消が自分の群発に一致すれば `applyEarthquakeCount` が帯ごと消し、
  * 一致しなければ表示中の帯はそのまま残る —— どちらの道でも取消の報がここへ渡ることはない。
  * 防御のつもりで分岐を置くと、次に触る人へ「取消も描ける」という誤った保証を与える。
  */
 export function earthquakeCountHeadline(count: JMAEarthquakeCount): string {
-  const total = cumulativeItem(count)
+  const total = pickEarthquakeCountSummaryItem(count)
   if (!total) return '地震回数に関する情報'
+  const { number, feltNumber } = total
+  if (number === null && feltNumber === null) return '地震回数に関する情報'
   const start = new Date(total.startTime)
   const since = Number.isFinite(start.getTime())
     ? `${start.getMonth() + 1}/${start.getDate()} ${String(start.getHours()).padStart(2, '0')}時から `
     : ''
-  return `${since}${total.number.toLocaleString('ja-JP')}回（うち有感 ${total.feltNumber.toLocaleString('ja-JP')}回）`
+  if (number === null) return `${since}有感 ${formatCount(feltNumber)}回`
+  if (feltNumber === null) return `${since}${formatCount(number)}回`
+  return `${since}${formatCount(number)}回（うち有感 ${formatCount(feltNumber)}回）`
+}
+
+/** 回数を桁区切りで出す。**発表なし（`null`）は「—」**（開いた表のセルと同じ）。 */
+function formatCount(n: number | null): string {
+  return n === null ? '—' : n.toLocaleString('ja-JP')
 }
 
 export function EarthquakeCountDetail({ count }: { count: JMAEarthquakeCount }) {
   return (
     <div className="px-3 pb-2">
+      {/* 回数を伴わない発表報は本文（`Body/Text`）だけを運ぶ。改行は保つ */}
+      {count.body && (
+        <p className="text-white/90 text-xs leading-relaxed whitespace-pre-wrap mb-2">{count.body}</p>
+      )}
       {count.freeText && (
         <p className="text-white/90 text-xs leading-relaxed whitespace-pre-wrap mb-2">{count.freeText}</p>
       )}
@@ -116,10 +125,10 @@ export function EarthquakeCountDetail({ count }: { count: JMAEarthquakeCount }) 
                     {formatSpan(item.startTime, item.endTime)}
                   </td>
                   <td className="py-0.5 pr-2 text-white text-right tabular-nums whitespace-nowrap">
-                    {item.number.toLocaleString('ja-JP')}
+                    {formatCount(item.number)}
                   </td>
                   <td className="py-0.5 text-white text-right tabular-nums whitespace-nowrap">
-                    {item.feltNumber.toLocaleString('ja-JP')}
+                    {formatCount(item.feltNumber)}
                   </td>
                 </tr>
               ))}

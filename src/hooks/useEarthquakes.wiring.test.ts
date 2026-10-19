@@ -1453,13 +1453,22 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     expect(h.current.earthquakeCount?.eventId).toBe('20080824150500')
   })
 
-  // 安全弁: 区間が 1 つも読めなかった報は帯にしない。中身が空の帯を出しても伝わる
+  // 安全弁: 区間も本文も無い報は帯にしない。中身が空の帯を出しても伝わる
   // ものが無く、読み取りの失敗はパーサー側が記録している。
-  it('区間が空の報は帯にしない', async () => {
+  it('区間も本文も無い報は帯にしない', async () => {
     const h = setup()
     await h.flush()
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', []) })
     expect(h.current.earthquakeCount).toBeNull()
+  })
+
+  // 正: 回数を伴わない発表報（区間 0 件・本文あり）は帯にする
+  // （2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」）。
+  it('回数を伴わない発表報は本文があれば帯にする', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'earthquakeCount', data: { ...count('20080824150500', []), body: '本文です。' } })
+    expect(h.current.earthquakeCount?.body).toBe('本文です。')
   })
 
   // 安全弁: リセット（リプレイの開始・ライブ復帰）で両方とも消える。**時間軸が変わる**ので、

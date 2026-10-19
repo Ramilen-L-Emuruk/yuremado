@@ -30,8 +30,8 @@ export interface WaveArrival {
  * 震源と観測点の組から到達時刻を出す。**求まらなければ `null`。**
  *
  * 求まらないのは 4 つ ——発生時刻が読めない・震源の位置が判らない（センチネル `-200`）・
- * **深さが判らない**（センチネル `-1`。`0` は「ごく浅い」という有効値）・観測点の座標を
- * ホストが持っていない。**いずれも線を引かない** ——根拠のない目盛りを波形へ重ねると、
+ * **深さが判らない**（センチネル `-1`、または「700km以上」という下限だけの値。`0` は「ごく浅い」
+ * という有効値）・観測点の座標をホストが持っていない。**いずれも線を引かない** ——根拠のない目盛りを波形へ重ねると、
  * 実測の絵そのものまで疑わしくなる。
  */
 export function computeWaveArrival(params: {
@@ -48,7 +48,7 @@ export function computeWaveArrival(params: {
   if (!hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)) return null
   // **深さ不明を 0 と読み替えない。** 最も浅い地震の速さで解くことになり、深い地震ほど
   // 早い時刻へ線を引く（`usePsWaveCalc` が予報円で弾いているのと同じ理由）。
-  if (!hasDepth(hypocenter.depth)) return null
+  if (!hasKnownDepth(hypocenter)) return null
   if (stationLat === null || stationLon === null) return null
   if (!isStationCoordinate(stationLat, stationLon)) return null
 
@@ -67,7 +67,8 @@ export function computeWaveArrival(params: {
  * 震源から観測点までの距離（震源距離・km）。**求まらなければ `null`。**
  *
  * **求まらない条件は {@link computeWaveArrival} と揃える**（発生時刻は要らない）——震源の位置か
- * 深さが判らない・観測点の座標が無い。深さ不明（`-1`）を 0 と読むと、深い地震ほど近く出る。
+ * 深さが判らない（「700km以上」を含む）・観測点の座標が無い。深さ不明（`-1`）を 0 と読むと、
+ * 深い地震ほど近く出る。
  */
 export function computeHypocentralDistanceKm(params: {
   hypocenter: Hypocenter
@@ -76,12 +77,23 @@ export function computeHypocentralDistanceKm(params: {
 }): number | null {
   const { hypocenter, stationLat, stationLon } = params
   if (!hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)) return null
-  if (!hasDepth(hypocenter.depth)) return null
+  if (!hasKnownDepth(hypocenter)) return null
   if (stationLat === null || stationLon === null) return null
   if (!isStationCoordinate(stationLat, stationLon)) return null
   const surfaceKm = haversineKm(hypocenter.latitude, hypocenter.longitude, stationLat, stationLon)
   const km = hypocentralDistanceKm(surfaceKm, hypocenter.depth)
   return Number.isFinite(km) ? km : null
+}
+
+/**
+ * 走時と震源距離を解けるだけ深さが決まっているか。
+ *
+ * **「700km以上」（`depthAtLeast`）は深さ不明と同じ扱いにする**（2026-10-19 ユーザー承認
+ * 「線と距離を出さない (推奨)」）。700 は下限にすぎず、700km として解くと実際より浅い地震の
+ * 時刻・距離を名乗ることになる。
+ */
+function hasKnownDepth(hypocenter: Pick<Hypocenter, 'depth' | 'depthAtLeast'>): boolean {
+  return hasDepth(hypocenter.depth) && !hypocenter.depthAtLeast
 }
 
 /**

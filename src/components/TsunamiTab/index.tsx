@@ -202,7 +202,7 @@ function SourceEarthquakeLine({ eq, prefix, link }: {
           発表されないことがある）。`0` は「ごく浅い」という有効値なので `hasDepth` で弾く。
           **値によらず「深さ」を前置する** —— 地震カード・地図・共有カードもそう出しており、
           ここだけ省くとアプリの中で表記が割れる。 */}
-      {eq.depth !== undefined && hasDepth(eq.depth) && `　深さ ${formatDepth(eq.depth)}`}
+      {eq.depth !== undefined && hasDepth(eq.depth) && `　深さ ${formatDepth(eq.depth, eq.depthAtLeast === true)}`}
       {/* 地震の時刻は `sourceEarthquakeTime` を通す（**発現時刻を先に採る**）。発生時刻を出すと、
           同じ地震が地震カードと津波カードで 1 分違って見える。理由と実電文で測った数字は
           `docs/spec/tsunami-spec.md` §4 が正。 */}

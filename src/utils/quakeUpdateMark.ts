@@ -99,7 +99,8 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
   // 深さの 0 は「ごく浅い」という有効値で、-1 が「読めなかった」の目印。
   // **浅いほど危険なので、順序は深さの符号を反転させる** —— 「上がった（赤）」が
   // 「より深刻になった」を指す約束を、どの欄でも守る。
-  snap.set('depth', h.depth >= 0 ? { key: String(h.depth), rank: -h.depth } : { key: UNKNOWN })
+  // 「700km以上」（`depthAtLeast`）は同じ 700 でも別の値なので鍵に含める（印が付いた・外れたも更新）。
+  snap.set('depth', h.depth >= 0 ? { key: `${h.depth}${h.depthAtLeast ? '+' : ''}`, rank: -h.depth } : { key: UNKNOWN })
   // 「調査中」「不明」は値ではなく「まだ決まっていない」ので、値が無いのと同じに扱う
   // （→ `DOMESTIC_TSUNAMI_RANK`）。**逆向き（確定していた区分が調査中へ戻る）は印を付ける** ——
   // 気象庁が取り下げた事実なので、こちらは伝える。

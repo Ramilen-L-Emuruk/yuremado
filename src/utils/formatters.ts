@@ -164,10 +164,18 @@ export function hasDepth(depth: number): boolean {
   return Number.isFinite(depth) && depth >= 0
 }
 
-export function formatDepth(depth: number): string {
+/**
+ * 深さの表示（「10km」「ごく浅い」「不明」「700km以上」）。
+ *
+ * @param atLeast 深さが「700km以上」という下限だけの値か（`Hypocenter.depthAtLeast`）。**必須にしてある**
+ *   —— 省略できると、震源から深さを渡す箇所で印を渡し忘れても型検査が通り、「700km以上」の地震が
+ *   「700km」と出る。印を持たない値（長期震源カタログ等）を渡す箇所は `false` と書く。
+ *   真なら「700km以上」（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）。
+ */
+export function formatDepth(depth: number, atLeast: boolean): string {
   if (!hasDepth(depth)) return '不明'
   if (depth === 0) return 'ごく浅い'
-  return `${depth}km`
+  return atLeast ? `${depth}km以上` : `${depth}km`
 }
 
 /**

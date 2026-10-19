@@ -21,6 +21,17 @@ export interface Hypocenter {
    * 距離閾値・地図の深さ配置が、かつてそろってこの形で誤っていた。
    */
   depth: number
+  /**
+   * 深さが「700km以上」という下限だけの値か。真なら {@link depth} は `700` で、実際の深さはそれ以上。
+   *
+   * 気象庁は 700km 以上の深さを `-700000/` と `description="…深さ　７００ｋｍ以上"` で送る
+   * （電文解説資料 Ⅱ.11-7 ほか）。**700km ちょうどとして扱わない** —— 表示は「700km以上」、読み上げは
+   * 「深さ700キロメートル以上」（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）。
+   * 波形の P/S 線と震源距離は深さが決まらないので引かない（同日承認「線と距離を出さない (推奨)」）。
+   *
+   * 立つのは DMDATA の XML 経路だけ（`dmdataParser.ts` の `parseJmaCoord`）。偽のときは持たせない。
+   */
+  depthAtLeast?: boolean
   magnitude: number
   /**
    * 規模が数値で求まらないときに気象庁が添える説明（`jmx_eb:Magnitude@description`）。
@@ -1399,6 +1410,8 @@ export interface HypocenterAreaDetail {
   longitude?: number
   /** 深さ（km）。読めないときは持たせない。**`0` は「ごく浅い」という有効値** */
   depth?: number
+  /** 深さが「700km以上」という下限だけの値か（→ {@link Hypocenter.depthAtLeast}）。偽のときは持たせない */
+  depthAtLeast?: boolean
   /**
    * 震央補助表現（`Area/NameFromMark`。例:「御前崎の北東４０ｋｍ付近」）。
    *
@@ -1793,7 +1806,8 @@ export interface JMAKohatsu extends EarthquakeInfoMeta {
  * （電文自身が「配信試験の開始と終了は本電文でお知らせします」と書いている。運用種別の印は
  * → {@link TelegramOperationStatus}）。
  *
- * 構造は単純で、見出し（`Head/Headline/Text`）と自由文（`Body/Text`）だけ。段階も等級も持たない。
+ * 構造は単純で、見出し（`Head/Headline/Text`）と自由文（`Body/Text`）に、自由付加文
+ * （`Body/Comments/FreeFormComment`）が付くことがあるだけ。段階も等級も持たない。
  */
 export interface JMAQuakeNotice {
   id: string
@@ -1809,6 +1823,13 @@ export interface JMAQuakeNotice {
   headline: string
   /** `Body/Text`。自由文。改行と全角スペースの整形を保つ（記書きの体裁が崩れる） */
   body: string
+  /**
+   * 自由付加文（`Body/Comments/FreeFormComment`。電文解説資料 Ⅱ.51 2-1）。改行と全角スペースは保つ。
+   *
+   * 本文の後に続けて出し、続けて読む（2026-10-19 ユーザー承認「本文に続けて出す (推奨)」）。
+   * 資料の事例は「保守点検の時刻が変更になりました。」。
+   */
+  freeText?: string
   /** 取消電文（`Head/InfoType` が「取消」）。帯を引っ込める */
   cancelled: boolean
   reportDateTime: string
@@ -1826,10 +1847,16 @@ export interface JMAEarthquakeCountItem {
   type: string
   startTime: string
   endTime: string
-  /** その区間の地震回数（有感・無感の合計） */
-  number: number
-  /** そのうち有感（震度1以上）の回数 */
-  feltNumber: number
+  /**
+   * その区間の地震回数（有感・無感の合計）。**`null` は「気象庁がこの値を発表していない」。**
+   *
+   * 電文は発表しない値の要素に `-1` を入れる（電文解説資料 Ⅱ.35 1-1。資料の事例では全区間の
+   * `Number` が `-1` で、`FeltNumber` だけが値を持つ）。**`-1` を数のまま持たない** —— 画面に
+   * 「-1回」と出し、読み上げで「マイナス1回」と言う。`0`（1 回も起きていない）とも混ぜない。
+   */
+  number: number | null
+  /** そのうち有感（震度1以上）の回数。`null` の意味は {@link number} と同じ（発表なし） */
+  feltNumber: number | null
 }
 
 /**
@@ -1860,8 +1887,19 @@ export interface JMAEarthquakeCount {
   operationStatus?: TelegramOperationStatus
   /** `Head/Headline/Text`。例: 「地震回数に関する情報をお知らせします。」 */
   headline: string
-  /** 区間ごとの回数。電文に現れた順を保つ（累積が最後に来る） */
+  /**
+   * 区間ごとの回数。電文に現れた順を保つ（累積が最後に来る）。
+   *
+   * **発表報でも空のことがある。** 回数を伴わない発表報（`EarthquakeCount` 要素を持たず、
+   * 本文 `Body/Text` だけの報）があり、そのときは {@link body} が中身になる。
+   */
   items: JMAEarthquakeCountItem[]
+  /**
+   * 発表報の本文（`Body` 直下の `Text`）。回数を伴わない発表報が運ぶ。改行は保つ。
+   *
+   * 取消電文の `Body/Text`（取消しの理由）は {@link cancelText} に入れ、ここには入れない。
+   */
+  body?: string
   /** `Body/NextAdvisory`。次回発表の予定を伝える文 */
   nextAdvisory?: string
   /** `Body/Comments/FreeFormComment`。どこで何が起きているかの説明が入る */

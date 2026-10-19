@@ -2749,8 +2749,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         playAlertSound('earthquakeCount')
       }
       if (settings.voicevoxEnabled) {
-        // 帯で伝える情報なのでタブは動かさない（理由は上）。累積の区間が読めなければ
-        // `earthquakeCountToText` は空を返し、そのときは音と帯だけで伝える。
+        // 帯で伝える情報なのでタブは動かさない（理由は上）。伝える区間を選べない報
+        // （回数を伴わない発表報など）でも `earthquakeCountToText` は種別名を返す。
         const countSpeech = earthquakeCountToText(count)
         if (countSpeech) {
           speakNonEEWDelayed(
@@ -4490,7 +4490,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         if (severityUpgraded) {
           // 格上げは待たずに確定するので、値が無ければ理由の待ち（`eewNoForecastSettledRef`）も
           // 待たない。**値の無い警報は来ない前提** —— 気象庁が値を載せないのは観測点 1 点のときと
-          // 深さ 150km 超のときだけで、どちらの場合も気象庁は警報を出さない
+          // 深さ 150km 超のとき（PLUM 法による 2 点以上の震度予測がある場合を除く）だけで、どちらの
+          // 場合も気象庁は警報を出さない（深さ 150km 超でも PLUM 法の予測があれば警報は出うるが、
+          // そのときは予測震度の値が載る）
           // （深発地震テストの続報を予報級に留めているのと同じ理由。settings-pwa-spec.md §7「実電文の形に合わせる」）。来た場合、直前の報で待ちが切れて印が付いていれば理由つきで、
           // 付いていなければ理由なしの「予想震度なし。」を読み、帯は 3 秒後に理由を出す。
           clearPhase2MaxTimer()

@@ -29,6 +29,7 @@ import { log } from './logger'
  * | `grade` / `area` / `station` | 津波カードの行を引く（追従スクロール） |
  * | `quakeRegion` / `quakeFact` | 地震情報で「実際に声になった内容」を記録する（続報の差分） |
  * | `quakeObserved` | 地震情報で「その報が運んでいた観測点・市町村」を記録する（区域より下の階層の差分） |
+ * | `quakeRegionSnapshot` | 地震情報で「その報の区域ごとの最大震度」を記録する（区域が下がった・消えたかの判定） |
  * | `unreceivedNote` | 未入電の説明文（「…では、震度5弱以上と推定されますが、未入電です。」）。**名前を指さない** |
  *
  * `grade` は等級のカードそのもの（「大津波警報」「津波警報」の見出し）を指す。等級を言った
@@ -50,6 +51,13 @@ export type SpeechRef =
    */
   | { kind: 'quakeFact'; fact: QuakeFact; value: string; sourceIndex?: number }
   | { kind: 'quakeObserved'; observed: SpokenObservation }
+  /**
+   * その報が運んでいた**区域ごとの最大震度**（区域名 → 震度）。`quakeRegion` が「声にした区域」を
+   * 上向きにしか進めない記録なのに対し、こちらは**最後に声にした報の姿をそのまま置き換える**。
+   * 続報で区域の震度が下がった・区域が消えたことを見分けるためだけに持つ（→ `ttsText.ts` の
+   * `regionsLoweredSince`）。
+   */
+  | { kind: 'quakeRegionSnapshot'; regions: ReadonlyMap<string, number> }
   | { kind: 'unreceivedNote' }
   | { kind: 'telegramText' }
   /**
@@ -176,6 +184,8 @@ function sameRef(a: SpeechRef, b: SpeechRef): boolean {
   // 中身（811 点になりうる）を突き合わせない —— ここは重複排除のための比較で、変化の検出は
   // `ttsText.ts` の `observationChange` が担う。
   if (a.kind === 'quakeObserved' && b.kind === 'quakeObserved') return a.observed === b.observed
+  // 区域の姿の記録も 1 つの読み上げ文に高々 1 つ。理由は上と同じ。
+  if (a.kind === 'quakeRegionSnapshot' && b.kind === 'quakeRegionSnapshot') return a.regions === b.regions
   // 未入電の説明文の印は中身を持たないので、同じ種類なら同一。**扱わないと重複排除が効かない**
   // （`mapChunksToRefs` は `sameRef` で既出かを見るため、同じチャンクへ何度も積まれる）。
   if (a.kind === 'unreceivedNote' && b.kind === 'unreceivedNote') return true

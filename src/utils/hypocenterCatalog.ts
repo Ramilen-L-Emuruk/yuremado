@@ -64,8 +64,6 @@ export interface HypocenterIndex {
   unknownMagnitudeCounts?: Record<string, number>
   /** 年ごとの確からしさ。 */
   quality: Record<string, HypocenterQuality>
-  /** 最大震度を持つ年（確定値の年だけ。速報値には震度欄が無い）。 */
-  intensityYears: number[]
 }
 
 /** 1 年ぶんの震源。各配列は同じ長さで、同じ添字が同じ地震を指す。時刻の昇順。 */
@@ -96,34 +94,6 @@ export interface HypocenterYear {
    * 呼び出し側が `Number.isNaN` で決めること（カタログタブの扱いは `hypocenterCatalogView.ts`）。
    */
   magnitude: Float32Array
-  /**
-   * 最大震度を持つ地震の添字（昇順）。**疎に持つ** —— 有感は M2.0 以上の 11.9% しかない。
-   * 速報値の年（`quality === 'preliminary'`）は震度欄が無いので空。
-   */
-  intensityIdx: Int32Array
-  /**
-   * `intensityIdx` と同じ長さ。最大震度の生コード。**震度の値と、震度でない分類が混在する。**
-   *
-   * | コード | 意味 |
-   * |---|---|
-   * | `1` `2` `3` `4` `7` | 震度 1・2・3・4・7 |
-   * | `5` `6` | 震度 5・6（弱強の区分が無い時代。1996 年 9 月まで） |
-   * | `A` `B` `C` `D` | 震度 5 弱・5 強・6 弱・6 強（1996 年 10 月以降） |
-   * | `F` `X` | 有感地震・付近有感（**震度の値ではない**） |
-   * | `L` `S` `M` `R` | 最大有感距離による顕著度（**震度ではない**。1977 年まで） |
-   *
-   * **「震度 5 以上」を文字比較で絞ってはいけない。** ASCII では数字より英大文字の方が大きいので、
-   * `code >= '5'` は `F` `X` `L` `S` `M` `R` まで拾う（1919〜2023 年で 7,190 件）。
-   * 震度として扱えるのは上の表の前半 3 行だけで、実測 110,273 件のうち 103,083 件。
-   *
-   * **`5` `6` は `IntensityScale` に対応する値が無い。** アプリの階級値は 45（5 弱）と 50（5 強）に
-   * 分かれているが、1996 年 9 月までの「震度 5」はその区分より前のもので、どちらでもない（同様に
-   * 「震度 6」は 55／60 のどちらでもない）。実測 199 件。**写すなら、どちらへ寄せるか・別扱いに
-   * するかを決めてから**。ここで既定を置くと、その判断を隠したまま集計が進む。
-   *
-   * 「有感かどうか」だけなら添字に含まれるかどうかを見ればよい（どのコードも有感を意味する）。
-   */
-  intensityCode: string[]
 }
 
 /** 生成スクリプトが書き出す形。読み込み直後だけ使う。 */
@@ -145,8 +115,9 @@ interface RawYear {
   mag: (number | null)[]
   /** `mag` の `null` の数（生成側が書く。列と食い違えば壊れた年として弾く）。 */
   unknownMagnitudeCount?: number
-  intIdx?: number[]
-  intCode?: string[]
+  // 年ファイルは最大震度の疎な 2 列（`intIdx`・`intCode`）も持つが、アプリはどこからも読まない
+  // ので、型にも読み取り結果にも載せず、検査もしない（2026-10-19 ユーザー承認「F20 で使う列を残し、
+  // 他を外す (推奨)」。F20 は期間の上限を収録の終端に揃える修正で、使う列は coveredThroughMs と quality）。列の意味は生成スクリプト（scripts/build-hypocenter-catalog.ts）にある。
 }
 
 let indexCache: HypocenterIndex | null = null
@@ -216,6 +187,18 @@ export function loadHypocenterIndex(): Promise<HypocenterIndex> {
         // 区別できないまま格子を描く。欠けていることに気づけるのはここだけ。
         if (typeof idx.coveredThroughMs !== 'number' || !Number.isFinite(idx.coveredThroughMs)) {
           throw new Error('hypocenter index: coveredThroughMs がありません')
+        }
+        // **年ごとの確からしさも全年ぶん見る。** 期間の行に「速報値」を添えるかはこれで決める
+        // （`preliminaryNote`）。欠けた年を黙って通すと、速報値の期間に何も添えない —— 年ファイル
+        // 側と同じく、既定値（'final'）へ倒さない。
+        if (!idx.quality || typeof idx.quality !== 'object') {
+          throw new Error('hypocenter index: quality がありません')
+        }
+        for (const year of idx.years) {
+          const q = idx.quality[String(year)]
+          if (q !== 'final' && q !== 'preliminary') {
+            throw new Error(`hypocenter index: quality[${year}] が不正です（${String(q)}）`)
+          }
         }
         // **完全性の表が無ければ失敗させる。** 無いと `completeMinMagnitude()` が収録の下限を
         // そのまま返し、1919 年からの日別回数を M2.0 で数えてしまう（観測網の歴史が地震活動に化ける）。
@@ -317,30 +300,10 @@ export function loadHypocenterYear(year: number): Promise<HypocenterYear> {
           throw new Error(`hypocenter ${year}: ${key} が不正です`)
         }
       }
-      // 震度は疎な 2 列。**片方だけ欠けたら失敗させる** —— 長さが違うと、別の地震の震度を
-      // 返すことになる（座標の列ずれと同じ性質の事故）。
-      const hasIdx = raw.intIdx != null
-      const hasCode = raw.intCode != null
-      if (hasIdx !== hasCode) {
-        throw new Error(`hypocenter ${year}: intIdx と intCode は両方揃っている必要があります`)
-      }
-      if (hasIdx) {
-        if (raw.intIdx!.length !== raw.intCode!.length) {
-          throw new Error(`hypocenter ${year}: intIdx と intCode の長さが一致しません`)
-        }
-        // **値域も見る。** 範囲外の添字は例外にならず、消費側が別の地震の震度を引く
-        // （列の長さずれと同じ性質の事故）。
-        for (const i of raw.intIdx!) {
-          if (!Number.isInteger(i) || i < 0 || i >= raw.count) {
-            throw new Error(`hypocenter ${year}: intIdx に範囲外の添字があります（${String(i)}）`)
-          }
-        }
-      }
     },
   })
     .then((raw) => {
       const n = raw.count
-      const intIdx = raw.intIdx ?? []
       const out: HypocenterYear = {
         year: raw.year,
         count: n,
@@ -351,8 +314,6 @@ export function loadHypocenterYear(year: number): Promise<HypocenterYear> {
         lng: new Float64Array(n),
         depth: new Float32Array(n),
         magnitude: new Float32Array(n),
-        intensityIdx: Int32Array.from(intIdx),
-        intensityCode: raw.intCode ?? [],
       }
       for (let i = 0; i < n; i++) {
         // 時刻は「その年の頭からの経過時間 × timeScale」で入っている。起点も刻みも年ファイルが

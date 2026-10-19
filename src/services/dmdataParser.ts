@@ -771,14 +771,49 @@ function degreeMinuteToDegrees(v: number): number {
 // @param degreeMinute 緯度経度が度分表記（"+4012.6+14218.2-44000/"）か。
 //   要素の type 属性で判別する（下記 readHypocenterCoord）。桁数から推測しない
 //   ——度単位の経度は 3 桁になりうるので、桁だけでは度分と見分けられない。
-function parseJmaCoord(s: string, degreeMinute = false): { lat: number; lng: number; depth: number } {
+//
+// **深さ 700km 以上は下限だけの値**（`depthAtLeast`）。気象庁は 700km 以上の深さを `-700000/` と
+// `description="…深さ　７００ｋｍ以上"` で表す（電文解説資料 Ⅱ.11-7 ほか）。判定は値で行い
+// （700 以上なら下限）、文字表現との突き合わせは要素を持つ呼び出し側が行う（`readCoordinate`）。
+function parseJmaCoord(s: string, degreeMinute = false): JmaCoord {
   const m = s.match(/([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)?\//)
-  if (!m) return { lat: NaN, lng: NaN, depth: -1 }
+  if (!m) return { lat: NaN, lng: NaN, depth: -1, depthAtLeast: false }
   const lat = degreeMinute ? degreeMinuteToDegrees(parseFloat(m[1])) : parseFloat(m[1])
   const lng = degreeMinute ? degreeMinuteToDegrees(parseFloat(m[2])) : parseFloat(m[2])
   // 高さフィールドは負値・メートル単位（海面下）
   const depth = m[3] != null ? Math.abs(parseFloat(m[3])) / 1000 : -1
-  return { lat, lng, depth }
+  return { lat, lng, depth, depthAtLeast: Number.isFinite(depth) && depth >= DEPTH_LOWER_BOUND_KM }
+}
+
+/** {@link parseJmaCoord} の結果。`depth` は km（読めなければ -1）。 */
+interface JmaCoord {
+  lat: number
+  lng: number
+  depth: number
+  /** 深さが「700km以上」という下限だけの値か（→ `Hypocenter.depthAtLeast`） */
+  depthAtLeast: boolean
+}
+
+/** 気象庁が深さを下限（「700km以上」）でしか表さない境目（km）。電文解説資料 Ⅱ.11-7 ほか。 */
+const DEPTH_LOWER_BOUND_KM = 700
+
+/**
+ * 座標の要素を読む（{@link parseJmaCoord} ＋ 深さの下限の突き合わせ）。
+ *
+ * **深さの下限は値で決め、電文の文字表現（`@description` の「７００ｋｍ以上」）と食い違えば記録する。**
+ * 値と文字表現が別の書き方を始めたとき、黙って片方だけを信じると「700km以上」が「700km」に
+ * 化けても気づけない。文字表現の無い要素（度単位へ丸めた座標など）では突き合わせない。
+ */
+function readCoordinate(el: Element | null, logPrefix: string, degreeMinute = false): JmaCoord {
+  const coord = parseJmaCoord(xmlText(el), degreeMinute)
+  const desc = (el?.getAttribute('description') ?? '').replace(/[\s　]/g, '')
+  if (desc && Number.isFinite(coord.lat)) {
+    const saysAtLeast = /深さ(?:７００ｋｍ|700km)以上/.test(desc)
+    if (saysAtLeast !== coord.depthAtLeast) {
+      log.warn(`${logPrefix} 深さの値と文字表現が食い違います（値で判断します）: "${xmlText(el)}" 「${desc}」`)
+    }
+  }
+  return coord
 }
 
 // 震源の座標を読む。
@@ -856,18 +891,18 @@ function isUnknownHypocenterCoord(areaEl: Element | null): boolean {
     (el.getAttribute('description') ?? '').replace(/[\s　]/g, '').includes('震源要素不明'))
 }
 
-function readHypocenterCoord(areaEl: Element, headType: string): { lat: number; lng: number; depth: number } {
+function readHypocenterCoord(areaEl: Element, headType: string): JmaCoord {
   const els = xmlAll(areaEl, 'Coordinate')
   const dm = els.find(el => (el.getAttribute('type') ?? '').includes('度分'))
   // 度分の要素そのものを度単位として読み直さないよう、退避先は「度分ではないほう」から採る。
-  const plain = parseJmaCoord(xmlText(els.find(el => el !== dm) ?? null))
+  const plain = readCoordinate(els.find(el => el !== dm) ?? null, `[quake XML] ${headType}:`)
   if (!dm) {
     if (headType === 'VXSE61') {
       log.warn(`[quake XML] ${headType}: 「震源位置（度分）」の座標が見当たらないため、度単位へ丸めた座標を使います`)
     }
     return plain
   }
-  const parsed = parseJmaCoord(xmlText(dm), true)
+  const parsed = readCoordinate(dm, `[quake XML] ${headType}:`, true)
   const problem = degreeMinuteCoordProblem(parsed, plain)
   if (!problem) return parsed
   // 電文ごと捨てると震源要素更新が丸ごと消えるため、丸めた側へ落として記録を残す
@@ -933,7 +968,7 @@ function readHypocenterAreaDetail(
   logPrefix: string,
 ): import('../types/earthquake').HypocenterAreaDetail {
   const coordEl = xmlChild(areaEl, 'Coordinate')
-  const { lat, lng, depth } = parseJmaCoord(xmlText(coordEl))
+  const { lat, lng, depth, depthAtLeast } = readCoordinate(coordEl, logPrefix)
   if (coordEl && !(Number.isFinite(lat) && Number.isFinite(lng))) {
     const desc = coordEl.getAttribute('description')?.trim() ?? ''
     log.warn(`${logPrefix} 震源座標を読めません: "${xmlText(coordEl)}"${desc ? `（電文の表現「${desc}」）` : ''}`)
@@ -946,6 +981,7 @@ function readHypocenterAreaDetail(
     // 区別が付かない値が入る（`parseJmaCoord` は読めないとき -1 を返す）。
     // `0`（ごく浅い）は有効値なので落とさない。
     ...(depth >= 0 && { depth }),
+    ...(depth >= 0 && depthAtLeast && { depthAtLeast: true }),
   }
 }
 
@@ -1243,9 +1279,9 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
   const eewInfoName = readInfoName(doc)
   const hypocenterEl = eqEl ? xmlQ(eqEl, 'Hypocenter') : null
   const areaEl = eqEl ? xmlQ(hypocenterEl ?? eqEl, 'Area') : null
-  const { lat, lng, depth } = areaEl
-    ? parseJmaCoord(xmlText(xmlQ(areaEl, 'Coordinate')))
-    : { lat: NaN, lng: NaN, depth: -1 }
+  const { lat, lng, depth, depthAtLeast } = areaEl
+    ? readCoordinate(xmlQ(areaEl, 'Coordinate'), DMDATA_LOG_PREFIX)
+    : { lat: NaN, lng: NaN, depth: -1, depthAtLeast: false }
 
   // 取消以外で震源が読めない電文は不正として捨てる。地震情報側（`parseEarthquakeFromXml`）と同じく
   // **要素が無いのか、要素はあるが座標が読めないのかを書き分ける。** 前者では `coordStr` が空文字に
@@ -1479,6 +1515,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
         latitude: isCanceled ? -200 : (Number.isFinite(lat) ? lat : -200),
         longitude: isCanceled ? -200 : (Number.isFinite(lng) ? lng : -200),
         depth,
+        ...(depthAtLeast && !isCanceled && { depthAtLeast: true }),
         magnitude: eewMagnitudeEl ? parseFloat(xmlText(eewMagnitudeEl)) : NaN,
         ...(eewMagnitudeType && { magnitudeType: eewMagnitudeType }),
         ...(eewAreaCode && { code: eewAreaCode }),
@@ -1583,9 +1620,9 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   const hypLabels = areaEl ? readHypocenterAreaLabels(areaEl) : {}
   // 震源決定機関（`Hypocenter/Source`）。`Area` の外にあるので上の読み手には入らない。
   const hypSource = readHypocenterSource(hypocenterEl)
-  const { lat, lng, depth } = areaEl
+  const { lat, lng, depth, depthAtLeast } = areaEl
     ? readHypocenterCoord(areaEl, headType)
-    : { lat: NaN, lng: NaN, depth: -1 }
+    : { lat: NaN, lng: NaN, depth: -1, depthAtLeast: false }
 
   // 震源を持つ電文で座標が読めないものは不正として捨てる（震度速報は上で除外済み）。
   // **ただし「震源要素不明」だけは捨てない**（→ `isUnknownHypocenterCoord`）。震源が判らない
@@ -1897,6 +1934,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
         latitude: Number.isFinite(lat) ? lat : -200,
         longitude: Number.isFinite(lng) ? lng : -200,
         depth,
+        ...(depthAtLeast && { depthAtLeast: true }),
         magnitude,
         ...(magnitudeCondition && { magnitudeCondition }),
         ...(magnitudeType && { magnitudeType }),
@@ -3156,7 +3194,8 @@ export function parseVyse60FromXml(xml: string): JMAKohatsu | null {
 /**
  * VZSE40（地震・津波に関するお知らせ）を {@link JMAQuakeNotice} にパースする。
  *
- * 構造は他の解説系より単純で、見出し（`Head/Headline/Text`）と自由文（`Body/Text`）だけ。
+ * 構造は他の解説系より単純で、見出し（`Head/Headline/Text`）と自由文（`Body/Text`）に、
+ * 自由付加文（`Body/Comments/FreeFormComment`。電文解説資料 Ⅱ.51 2-1）が付くことがあるだけ。
  * 段階も等級も持たない。
  *
  * **見出しは `Head/Headline/Text` から採る。`Head/Title` ではない。** `Title` はどの報でも
@@ -3190,6 +3229,10 @@ export function parseQuakeNoticeFromXml(xml: string): JMAQuakeNotice | null {
   // 解説情報の本文読み取りと同じ考え方）。
   const bodyEl = xmlQ(doc, 'Body')
   const body = bodyEl ? xmlText(xmlChild(bodyEl, 'Text')) : ''
+  // 自由付加文。**`Body/Comments` の直下に限る**（Body 配下の別の節を掴まないため。本文と同じ考え方）。
+  // 内側の改行と全角スペースは本文と同じく保つ（`xmlText` が落とすのは前後の空白だけ）。
+  const commentsEl = bodyEl ? xmlChild(bodyEl, 'Comments') : null
+  const freeText = commentsEl ? xmlText(xmlChild(commentsEl, 'FreeFormComment')) : ''
 
   // 取消は null にせず cancelled で返す（解析できなかった場合と区別するため）。
   const cancelled = xmlText(xmlQ(doc, 'InfoType')) === '取消'
@@ -3199,6 +3242,7 @@ export function parseQuakeNoticeFromXml(xml: string): JMAQuakeNotice | null {
     id: `dmdata-quake-notice-${eventId}-${serial}`,
     time: reportDateTime, eventId,
     headline, body,
+    ...(freeText && { freeText }),
     cancelled, reportDateTime,
     expireAt: new Date(reportMs + 7 * 24 * 3600 * 1000).toISOString(),
   }
@@ -3206,6 +3250,22 @@ export function parseQuakeNoticeFromXml(xml: string): JMAQuakeNotice | null {
 
 /** {@link parseEarthquakeCountFromXml} が数える区間の集計。全滅したときだけ記録する。 */
 const COUNT_ITEM_LABEL = '地震回数の区間'
+
+/**
+ * 地震回数の値（`Number` / `FeltNumber`）を読む。
+ *
+ * @returns 回数。`-1`（気象庁が値を発表しない）は `null`。空欄・数でない値・`-1` 以外の負の値は
+ *   `undefined`（読めない）。**空欄を `0` にしない** —— `Number('')` は `0` を返すので、
+ *   素の変換だと要素の欠落が「0 回」として通る。
+ */
+function readCountValue(text: string): number | null | undefined {
+  if (text === '') return undefined
+  const n = Number(text)
+  if (!Number.isFinite(n)) return undefined
+  if (n === -1) return null
+  if (n < 0) return undefined
+  return n
+}
 
 /**
  * VXSE60（地震回数に関する情報）を {@link JMAEarthquakeCount} にパースする。
@@ -3219,6 +3279,10 @@ const COUNT_ITEM_LABEL = '地震回数の区間'
  *
  * **`type` は電文の語をそのまま持つ。** 3 種類しか確認できていないので、値の集合を決め打ちして
  * 未知の区間を捨てると、増えたときに黙って落ちる。
+ *
+ * **回数の `-1` は「発表なし」として `null` で持つ**（電文解説資料 Ⅱ.35 1-1。→ `readCountValue`）。
+ * **回数を伴わない発表報**（`EarthquakeCount` を持たず `Body/Text` だけ）も捨てずに返す
+ * （本文は `body`）。
  */
 export function parseEarthquakeCountFromXml(xml: string): JMAEarthquakeCount | null {
   const doc = parseTelegramXml(xml, DMDATA_LOG_PREFIX)
@@ -3257,13 +3321,16 @@ export function parseEarthquakeCountFromXml(xml: string): JMAEarthquakeCount | n
   }
 
   const countEl = bodyEl ? xmlQ(bodyEl, 'EarthquakeCount') : null
-  // **元要素そのものが見えなくなった場合を別に拾う。** `ReadTally` は「要素はあるのに読めなかった」
-  // を数えるので、`EarthquakeCount` ごと消えると数える対象が 0 件になって素通りする
+  // 発表報の本文（Body 直下の Text）。**回数を伴わない発表報**はこれだけを運ぶ
+  // （`EarthquakeCount` 要素を持たない報。電文解説資料 Ⅱ.35）。
+  const body = bodyEl ? xmlText(xmlChild(bodyEl, 'Text')) : ''
+  // **`EarthquakeCount` が無いこと自体は異常ではない**（回数を伴わない発表報がある）。記録するのは
+  // 回数も本文も無い報だけ —— 中身が何も読めず、`ReadTally` も数える対象が 0 件になって素通りする
   // （長周期の `warnIfNoLpgmRegions`・震度点の `warnIfNoIntensityPoints` と同じ盲点）。
   // **この種別は実配信でほぼ観測できない**ので、痕跡が残らないと構造の変化に何年も気づけない。
   // （取消は上で `return` 済みなので、ここに来る時点で必ず発表報）
-  if (!countEl) {
-    log.warn(`${DMDATA_LOG_PREFIX} VXSE60（地震回数に関する情報）に EarthquakeCount 要素が見つかりません`)
+  if (!countEl && !body) {
+    log.warn(`${DMDATA_LOG_PREFIX} VXSE60（地震回数に関する情報）に EarthquakeCount 要素も本文（Body/Text）もありません`)
   }
   const items: JMAEarthquakeCountItem[] = []
   const tally = createReadTally(COUNT_ITEM_LABEL)
@@ -3280,10 +3347,17 @@ export function parseEarthquakeCountFromXml(xml: string): JMAEarthquakeCount | n
     // `Number('')` は `0` を返すので、`Number.isFinite` だけで見ていると要素の欠落が
     // 「0 回」として通る。空欄と 0 回は画面でも読み上げでも同じ顔になり、
     // 群発の最中に「地震は起きていない」と伝えかねない。
-    const number = numberText === '' ? NaN : Number(numberText)
-    const feltNumber = feltText === '' ? NaN : Number(feltText)
-    if (!type || !Number.isFinite(number) || !Number.isFinite(feltNumber)) {
+    //
+    // **`-1` は「発表しない」**（電文解説資料 Ⅱ.35 1-1）。数として持たず `null` にする ——
+    // 資料の事例では全区間の `Number` が `-1` で、`FeltNumber` だけが値を持つ。
+    // `-1` 以外の負の値は書式の外なので、読めない値として扱う。
+    const number = readCountValue(numberText)
+    const feltNumber = readCountValue(feltText)
+    if (!type || number === undefined || feltNumber === undefined) {
       tally.unreadable(type || '(種類なし)', numberText)
+      // **一部だけ読めないときも残す。** 全滅の記録（`warnIfNoneReadable`）だけでは、累積の区間だけが
+      // 落ちたとき、見出しと読み上げが黙って別の区間の数を伝える（→ `pickEarthquakeCountSummaryItem`）。
+      log.warn(`${DMDATA_LOG_PREFIX} VXSE60（地震回数に関する情報）の区間を読めず捨てました: type="${type}" Number="${numberText}" FeltNumber="${feltText}"`)
       continue
     }
     items.push({ type, startTime, endTime, number, feltNumber })
@@ -3295,6 +3369,7 @@ export function parseEarthquakeCountFromXml(xml: string): JMAEarthquakeCount | n
     ...(operationStatus && { operationStatus }),
     id: `dmdata-quake-count-${eventId}-${serial}`,
     time: reportDateTime, eventId, headline, items,
+    ...(body && { body }),
     ...(bodyEl && xmlText(xmlQ(bodyEl, 'NextAdvisory')) && { nextAdvisory: xmlText(xmlQ(bodyEl, 'NextAdvisory')) }),
     ...(bodyEl && xmlText(xmlQ(bodyEl, 'FreeFormComment')) && { freeText: xmlText(xmlQ(bodyEl, 'FreeFormComment')) }),
     cancelled: false, reportDateTime,

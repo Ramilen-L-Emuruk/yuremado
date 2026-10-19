@@ -1905,7 +1905,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 区域の到達状況と実測の組み合わせ規則を崩すと、実配信に存在しない組み合わせ（「まもなく到達」の区域に実測がある等）を作ってしまう | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §9「区域の到達状況」「実測との関係」 |
 | EEWの警報コードを予想震度5弱未満の区域に使う、または種別コード（未到達・到達済み・PLUM法）とarrivalTimeの整合を崩すと、警報コードと予想震度の対応が電文仕様と食い違う、または「主要動の到達（予測）」欄にその区域が出ない | [`eew-spec.md`](docs/spec/eew-spec.md) §4「区域の種別コード」「到達予測時刻は種別によって意味が変わる」 |
 | 区域の件数を実電文の分布幅に寄せない、または区域を持たない報の条件を実際の発表条件と違う基準に置き換えると、区域増加時の欄の折返しを実機確認できない、またはPLUM法2点以上で区域を持つ実在報・深さの例外規定を反映しない誤った深発報を再現してしまう | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」・[`eew-spec.md`](docs/spec/eew-spec.md) §4「上限を定めない予想の扱い」「仮定震源要素の扱い」 |
-| 深発地震テストの続報を予報級のまま固定する規則を崩し警報級へ格上げすると、気象庁が深さ150km超の地震に警報を発表しないという実配信にない形になる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」 |
+| 深発地震テストの続報を予報級のまま固定する規則を崩し警報級へ格上げすると、実配信にない形になる（気象庁は深さ150km超の地震に、PLUM法による2点以上の震度予測がある場合を除いて警報を発表せず、このテストは区域を持たないのでその例外に当たらない） | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」 |
 | バリアント差を「落とす側」ではなく「残す側」で書く規則を崩すと、型にDMDATA由来の項目が増えたときそのままstandard版へ型検査も警告もなく漏れる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」 |
 | DMDSS用のpoints形状を実電文をパーサーへ通さず、P2PQuake形状データを組み替えて作ると、元データに無い項目（観測点の所属市町村等）を再現できない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」・[`quake-spec.md`](docs/spec/quake-spec.md) §4（`points` の識別規則） |
 | 補完対象種別の列挙（`HISTORY_EXTRA_TYPES`）に新種別を足し忘れると、その種別だけ初期状態（24時間）で足りない分が復元されない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |

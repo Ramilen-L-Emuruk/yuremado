@@ -70,6 +70,8 @@ export interface EewEpicenter {
   name: string
   magnitude: number
   depth: number
+  /** 深さが「700km以上」という下限だけの値か（→ `Hypocenter.depthAtLeast`）。ポップアップの表示に使う */
+  depthAtLeast: boolean
   serial: string
   severity: EEWAlert['severity']
   maxScale: number
@@ -186,6 +188,7 @@ export function useEewLayerData(
           name: hc.name,
           magnitude: hc.magnitude,
           depth: hc.depth,
+          depthAtLeast: hc.depthAtLeast === true,
           serial: eew.issue?.serial ?? '',
           severity: eew.severity,
           maxScale: scale,

@@ -80,7 +80,7 @@ export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]
   return (
     `<div class="text-sm" style="min-width:160px">` +
     `<div class="font-bold" style="margin-bottom:4px">${esc(hc.name)}</div>` +
-    `<div class="text-xs" style="color:#94a3b8">${esc(formatMagnitudeWithCondition(hc.magnitude, hc.magnitudeCondition))} / 深さ ${esc(formatDepth(hc.depth))}</div>` +
+    `<div class="text-xs" style="color:#94a3b8">${esc(formatMagnitudeWithCondition(hc.magnitude, hc.magnitudeCondition))} / 深さ ${esc(formatDepth(hc.depth, hc.depthAtLeast === true))}</div>` +
     (rows ? `<div style="margin-top:8px;display:flex;flex-direction:column;gap:2px">${rows}</div>` : '') +
     `</div>`
   )

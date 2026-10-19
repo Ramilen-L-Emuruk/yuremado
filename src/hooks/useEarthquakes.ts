@@ -1267,8 +1267,10 @@ export function useEarthquakes(
    * 無く、群発が収まれば発表が止まるだけ。畳む契機を次報と取消だけにすると、収まったあとも
    * 帯が居座る。
    *
-   * **区間が 1 つも読めなかった報は反映しない。** 中身が空の帯を出しても伝わるものが無く、
-   * 読み取りの失敗はパーサー側が記録している。
+   * **区間も本文も無い報は反映しない。** 中身が空の帯を出しても伝わるものが無く、
+   * 読み取りの失敗はパーサー側が記録している。**回数を伴わない発表報（区間が 0 件で本文
+   * `body` だけを運ぶ）は反映する** —— 帯の見出しは種別名、開くと本文（2026-10-19 ユーザー承認
+   * 「-1 を「発表なし」に (推奨)」）。
    */
   const applyEarthquakeCount = useCallback((count: JMAEarthquakeCount): boolean => {
     if (count.cancelled) {
@@ -1288,7 +1290,7 @@ export function useEarthquakes(
       // 取消がどこへも流れず、直前に読み上げた回数が訂正されないまま残る。
       return true
     }
-    if (count.items.length === 0) return false
+    if (count.items.length === 0 && !count.body) return false
 
     const remainMs = new Date(count.expireAt).getTime() - getTimeRef.current().getTime()
     // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない（解説情報と同じ）。

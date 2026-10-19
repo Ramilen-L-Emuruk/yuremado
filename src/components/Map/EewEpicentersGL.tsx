@@ -167,7 +167,7 @@ export function buildPopupHtml(ep: EewEpicenter): string {
     `<div style="margin-top:2px;font-size:11px;color:#94a3b8">` +
     (provisional
       ? '震源調査中'
-      : `${escapeHtml(formatMagnitude(ep.magnitude))} / 深さ ${escapeHtml(formatDepth(ep.depth))}`) +
+      : `${escapeHtml(formatMagnitude(ep.magnitude))} / 深さ ${escapeHtml(formatDepth(ep.depth, ep.depthAtLeast))}`) +
     `</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     // 上限が定まらない報は「4以上」と出す。値だけにすると下限を断定した表示になる

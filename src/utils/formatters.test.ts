@@ -34,22 +34,33 @@ describe('色付けの不明ガード', () => {
 
 describe('formatDepth', () => {
   it('depth=0 は "ごく浅い"', () => {
-    expect(formatDepth(0)).toBe('ごく浅い')
+    expect(formatDepth(0, false)).toBe('ごく浅い')
   })
   it('負値は "不明"', () => {
-    expect(formatDepth(-1)).toBe('不明')
+    expect(formatDepth(-1, false)).toBe('不明')
   })
   it('通常値は "Nkm"', () => {
-    expect(formatDepth(50)).toBe('50km')
+    expect(formatDepth(50, false)).toBe('50km')
   })
   it('NaN は "不明"', () => {
-    expect(formatDepth(Number.NaN)).toBe('不明')
+    expect(formatDepth(Number.NaN, false)).toBe('不明')
   })
   it('undefined 相当（Number 変換 NaN）は "不明"', () => {
-    expect(formatDepth(Number(undefined))).toBe('不明')
+    expect(formatDepth(Number(undefined), false)).toBe('不明')
+  })
+  // 「700km以上」（2026-10-19 ユーザー承認）。正・対照・安全弁を対にする
+  it('下限だけの深さ（700km以上）は "700km以上"', () => {
+    expect(formatDepth(700, true)).toBe('700km以上')
+  })
+  it('対照: 印が無ければ同じ 700 でも "700km"', () => {
+    expect(formatDepth(700, false)).toBe('700km')
+  })
+  it('安全弁: 印があっても深さ不明は "不明"・ごく浅いは "ごく浅い" のまま', () => {
+    expect(formatDepth(-1, true)).toBe('不明')
+    expect(formatDepth(0, true)).toBe('ごく浅い')
   })
   it('Infinity は "不明"', () => {
-    expect(formatDepth(Number.POSITIVE_INFINITY)).toBe('不明')
+    expect(formatDepth(Number.POSITIVE_INFINITY, false)).toBe('不明')
   })
 })
 

@@ -1445,6 +1445,17 @@ describe('実機で一度も出ていなかった項目', () => {
     expect(base.items.length).toBeGreaterThan(0)
     expect(base.cancelText).toBeUndefined()
   })
+
+  // 電文解説資料 Ⅱ.35 の事例の形: 回数は全区間「発表なし」（-1 → null）、有感だけが値を持つ。
+  // 帯に「-1回」と出ていた形を、テストボタンで確かめられるようにしてある。
+  it('地震回数のテストデータは回数が発表なし・有感だけが値を持つ', () => {
+    const base = createTestEarthquakeCount()
+    expect(base.items.every(i => i.number === null)).toBe(true)
+    expect(base.items.every(i => typeof i.feltNumber === 'number')).toBe(true)
+    // 有感の内訳は累積に一致する（累積行が他の行の合計だと分かる形を崩さない）
+    const parts = base.items.filter(i => !i.type.includes('累積')).reduce((sum, i) => sum + (i.feltNumber ?? 0), 0)
+    expect(base.items.find(i => i.type.includes('累積'))?.feltNumber).toBe(parts)
+  })
 })
 
 describe('津波の続報で区域ごとに等級が動く報', () => {

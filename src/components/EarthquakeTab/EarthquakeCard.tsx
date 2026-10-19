@@ -1248,7 +1248,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   {borrowedHypocenter && <BorrowedMark />}
                 </span>
                 <span className="font-black leading-none text-[1.375rem] roomy:text-[1.75rem]" style={{ color: '#ffffff' }}>
-                  {formatDepth(hypocenter.depth)}
+                  {formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}
                   {markDot('depth', 'md', 'align-top ml-1')}
                 </span>
               </div>
@@ -1724,7 +1724,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             {hasFacts && (
               <span className="flex items-center gap-1 text-secondary">
                 <span>深さ</span>
-                <span className="text-white font-medium">{formatDepth(hypocenter.depth)}</span>
+                <span className="text-white font-medium">{formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}</span>
                 <span
                   className="inline-block w-1.5 h-3.5 rounded-xs shrink-0"
                   style={{ backgroundColor: getDepthColor(hypocenter.depth) }}
