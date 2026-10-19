@@ -3053,7 +3053,8 @@ export function parseVyse60FromXml(xml: string): JMAKohatsu | null {
   const bodyText  = (commentEl ? xmlText(xmlQ(commentEl, 'Text')) : '')
     || (bodyEl ? xmlText(xmlQ(bodyEl, 'Text')) : '')
 
-  // 有効期限は発表時刻 + 7日。
+  // 帯を畳む時刻は発表時刻 + 7日。**電文に期限の要素は無い**（アプリが帯を常駐させないための都合で、
+  // 画面にも出さない）。
   // **日時として解釈できることを先に確かめる**（南海トラフ関連解説情報と同じガード）。
   // 不正な文字列のまま進むと `new Date(...).toISOString()` が RangeError を投げ、
   // 電文 1 通が例外で落ちる。`readReportDateTime` は読めない値を空文字で返すので、
