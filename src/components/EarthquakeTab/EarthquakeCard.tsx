@@ -19,6 +19,7 @@ import {
   formatMagnitudeValue,
   formatMagnitudeWithCondition,
   formatCoordinate,
+  formatNameFromMark,
   formatTimeMin,
   NON_JMA_MARK,
   NON_JMA_MARK_TITLE,
@@ -1188,6 +1189,18 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             {borrowedHypocenter && hypocenter.name && <BorrowedMark />}
             {hypocenter.name && markDot('hypocenterName', 'md', 'align-top ml-1')}
           </div>
+          {/* 震央補助表現（「輪島の東北東30km付近」）。震央地名より具体的に場所が分かる。電文が
+              持っているときだけ出し、標準版（P2PQuake）は持たない。津波カードと同じくラベルを付けず、
+              座標と同じ大きさで震源名の直下に置く（2026-10-19 ユーザー承認「震源名の直下に 1 行 (推奨)」）。
+              更新の印は付けない —— 位置が動けば座標の行に印が出る。
+              **名前が無い報でも出す。** 震源名の欄は名前が無いと固定文言「震源調査中」に倒れるので印を
+              付けないが、この行は電文（借りたなら津波電文）が書いた文そのものなので、借りたなら印を付ける。 */}
+          {hypocenter.nameFromMark && (
+            <div className="text-xs text-secondary roomy:text-sm">
+              {formatNameFromMark(hypocenter.nameFromMark)}
+              {borrowedHypocenter && <BorrowedMark />}
+            </div>
+          )}
           {hasLocation && (
             <div className="text-xs text-secondary roomy:text-sm">
               {formatCoordinate(hypocenter.latitude, hypocenter.longitude)}

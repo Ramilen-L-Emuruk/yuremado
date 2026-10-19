@@ -213,6 +213,12 @@ describe('地震情報テストの points 形状', () => {
     expect(createTestEarthquake(false).points.some((p) => p.nonJma)).toBe(false)
   })
 
+  // 震央補助表現は開いた地震カードに出す。DMDATA 経路だけが運ぶので標準版には持たせない。
+  it('震央補助表現は DMDSS 版だけが実電文の値で持つ', () => {
+    expect(createTestEarthquake(true).earthquake.hypocenter.nameFromMark).toBe('輪島の東北東３０ｋｍ付近')
+    expect(createTestEarthquake(false).earthquake.hypocenter.nameFromMark).toBeUndefined()
+  })
+
   // 固定付加文（その他）。`＊` の説明はカードに枠付きで出るが、渡さないと実機で一度も出ない。
   // 正・対照・安全弁の 3 種で固定する（→ CLAUDE.md「検証」）。
   it('固定付加文（その他）は DMDSS 版だけが `＊` の説明を持つ', () => {

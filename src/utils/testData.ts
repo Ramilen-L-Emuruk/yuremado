@@ -248,7 +248,21 @@ export function createTestEarthquake(useDmdataShape: boolean, operationStatus?: 
       // 震度・津波はDMDATA archive（気象庁電文, VXSE53「震源・震度情報」16:24発表）の
       // 確定報、震源要素（座標・深さ）は同日21:30に発表された「顕著な地震の震源要素更新の
       // お知らせ」（VXSE61）による確定値を採用（速報時の深さ0kmから16kmに更新）。
-      hypocenter: { name: '石川県能登地方', latitude: 37.495, longitude: 137.27, depth: 16, magnitude: 7.6 },
+      hypocenter: {
+        name: '石川県能登地方', latitude: 37.495, longitude: 137.27, depth: 16, magnitude: 7.6,
+        // 震央地名コードと震央補助表現（「輪島の東北東３０ｋｍ付近」）とその材料。**DMDATA 経路だけが
+        // 運ぶ**ので standard 版では渡さない。値は同じ 16:24 の実電文をパーサーへ通したもの
+        // （`npm run build-test-quake`）。座標は上で VXSE61 の確定値に差し替えているので、
+        // **確定座標と 16:24 の補助表現の組み合わせは実配信には無い**（実配信では VXSE61 が震源を
+        // 丸ごと置き換える）。補助表現の行を実機に出すための入口で、値そのものは 16:24 の実電文のもの。
+        ...(useDmdataShape && {
+          code: notoHonshinQuake.earthquake.hypocenter.code,
+          nameFromMark: notoHonshinQuake.earthquake.hypocenter.nameFromMark,
+          markCode: notoHonshinQuake.earthquake.hypocenter.markCode,
+          direction: notoHonshinQuake.earthquake.hypocenter.direction,
+          distanceKm: notoHonshinQuake.earthquake.hypocenter.distanceKm,
+        }),
+      },
       maxScale: 70,
       domesticTsunami: '警報等',
     },

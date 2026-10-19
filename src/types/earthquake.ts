@@ -54,8 +54,8 @@ export interface Hypocenter {
    * {@link HypocenterAreaDetail.nameFromMark} と同じで、**読み手も同じ**
    * （`readHypocenterAreaLabels`）。長周期・津波は既に読んでいたので扱いを揃える。
    *
-   * **読んで持つだけで、いまはどこからも使っていない。** 震央地名より具体的に場所を伝えられる
-   * ので出す価値はあるが、震央地名を置き換えるのか併記するのかは表示側の判断が要る。
+   * **開いた地震カードで、震源名の直下に併記する**（置き換えない。数字と単位は表示のときだけ
+   * 半角へ直す → `formatNameFromMark`）。材料（`markCode` 以下）は画面に出さない。
    */
   nameFromMark?: string
   markCode?: string

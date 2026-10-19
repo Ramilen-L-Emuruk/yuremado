@@ -8,7 +8,7 @@ vi.mock('./logger', async (importOriginal) => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: warnMock, error: vi.fn() },
 }))
 
-import { formatCoordinate, formatDepth, formatDomesticTsunami, formatMagnitude, formatMagnitudeCondition, formatMagnitudeValue, formatMagnitudeWithCondition, formatFileStamp, formatDateTime, formatDateTimeLocal, formatDateTimeMin, formatQuakeTime, formatTime, formatTimeMin, hasHypocenterFacts, withNonJmaMark, NON_JMA_MARK } from './formatters'
+import { formatCoordinate, formatDepth, formatDomesticTsunami, formatMagnitude, formatMagnitudeCondition, formatMagnitudeValue, formatMagnitudeWithCondition, formatNameFromMark, formatFileStamp, formatDateTime, formatDateTimeLocal, formatDateTimeMin, formatQuakeTime, formatTime, formatTimeMin, hasHypocenterFacts, withNonJmaMark, NON_JMA_MARK } from './formatters'
 import type { Hypocenter } from '../types/earthquake'
 import { withTz } from '../test-utils/withTz'
 import { getMagnitudeColor, getDepthColor } from './intensity'
@@ -409,5 +409,25 @@ describe('日時として読めない値のガード', () => {
     expect(stamp).not.toContain('NaN')
     expect(stamp).toMatch(/^\d{8}_\d{6}[+-]\d{4}$/)
     expect(warnMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('震央補助表現の表示', () => {
+  // 正: 数字と距離の単位を半角へ直す。
+  it('全角の数字と ｋｍ を半角にする', () => {
+    expect(formatNameFromMark('輪島の東北東３０ｋｍ付近')).toBe('輪島の東北東30km付近')
+    expect(formatNameFromMark('新潟の南西１２０ｋｍ付近')).toBe('新潟の南西120km付近')
+  })
+
+  // 対照: 地名・方位の語はそのまま残す。
+  it('地名と方位の語は変えない', () => {
+    expect(formatNameFromMark('御前崎の北東４０ｋｍ付近')).toBe('御前崎の北東40km付近')
+    expect(formatNameFromMark('宮古の東６０ｋｍ付近').startsWith('宮古の東')).toBe(true)
+  })
+
+  // 安全弁: 既に半角の文や数字を含まない文はそのまま返す。
+  it('半角の文は変えない', () => {
+    expect(formatNameFromMark('輪島の東北東30km付近')).toBe('輪島の東北東30km付近')
+    expect(formatNameFromMark('　輪島付近')).toBe('輪島付近')
   })
 })

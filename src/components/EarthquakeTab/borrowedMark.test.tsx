@@ -185,3 +185,44 @@ describe('地震カードの「津波情報より」の印', () => {
     expect(note.textContent).not.toContain('警報')
   })
 })
+
+// 震央補助表現（「輪島の東北東３０ｋｍ付近」）は開いたカードの震源名の直下に出す
+// （2026-10-19 ユーザー承認「震源名の直下に 1 行 (推奨)」「半角へ揃える・両カード (推奨)」）。
+describe('地震カードの震央補助表現', () => {
+  const withMark = (over: Partial<JMAQuake> = {}) => makeQuake({
+    ...over,
+    earthquake: {
+      ...makeQuake().earthquake,
+      hypocenter: { ...makeQuake().earthquake.hypocenter, nameFromMark: '輪島の東北東３０ｋｍ付近' },
+    },
+  })
+
+  // 正: 数字と単位を半角へ直して出す。
+  it('数字と単位を半角にして出す', async () => {
+    await renderTab(withMark())
+    expect(screen.getByText('輪島の東北東30km付近')).toBeTruthy()
+    expect(screen.queryByText('輪島の東北東３０ｋｍ付近')).toBeNull()
+  })
+
+  // 正: 津波から借りた震源なら、他の震源の欄と同じく印を付ける（名前・補助表現・座標・規模・深さ）。
+  it('借りた震源なら印を付ける', async () => {
+    await renderTab(withMark({ hypocenterSource: FROM_INFO }))
+    expect(markCount()).toBe(5)
+    // 個数だけでは他の欄の印と取り違えうるので、補助表現の行そのものに付いたことも見る。
+    const line = screen.getByText('輪島の東北東30km付近', { exact: false })
+    expect(line.textContent).toContain('※')
+  })
+
+  // 対照: 借りていなければ印は付かない。
+  it('借りていなければ印を付けない', async () => {
+    await renderTab(withMark())
+    expect(screen.getByText('輪島の東北東30km付近')).toBeTruthy()
+    expect(screen.queryAllByText('※')).toHaveLength(0)
+  })
+
+  // 安全弁: 電文が持たないとき（標準版・震度速報など）は行ごと出さない。
+  it('持たないときは行を出さない', async () => {
+    await renderTab(makeQuake())
+    expect(screen.queryByText(/付近$/)).toBeNull()
+  })
+})

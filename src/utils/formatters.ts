@@ -257,6 +257,23 @@ export function formatCoordinate(latitude: number, longitude: number, digits = 1
 }
 
 /**
+ * 震央補助表現（`Area/NameFromMark`。「輪島の東北東３０ｋｍ付近」）を画面に出す形にする。
+ *
+ * **数字と距離の単位だけ半角へ直す**（2026-10-19 ユーザー承認「半角へ揃える・両カード (推奨)」）。
+ * 隣に並ぶ座標・規模・深さは半角なので、原文の全角のままだと字の幅が行ごとに割れる。地名と
+ * 方位の語はそのまま残す。
+ *
+ * **持つ値は電文のまま**で、直すのは表示するときだけ —— 津波から借りた震源が地震情報の値と
+ * 同じかの突き合わせ（`borrowFromTsunami.ts`）は原文どうしで行う。
+ */
+export function formatNameFromMark(s: string): string {
+  return s
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/ｋｍ/g, 'km')
+    .trim()
+}
+
+/**
  * 「津波警報等」に添える説明。**気象庁自身が固定付加文の中で同じ補い方をしている**
  * （「津波警報等（大津波警報・津波警報あるいは津波注意報）を発表中です。」）。
  *
