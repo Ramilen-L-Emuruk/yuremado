@@ -18,6 +18,7 @@ function makeQuake(over: {
   depth?: number
   magnitude?: number
   magnitudeCondition?: string
+  nameFromMark?: string
   domesticTsunami?: JMAQuake['earthquake']['domesticTsunami']
   maxScale?: IntensityScale
 } = {}): JMAQuake {
@@ -35,6 +36,7 @@ function makeQuake(over: {
         depth: over.depth ?? 10,
         magnitude: over.magnitude ?? 7.6,
         ...(over.magnitudeCondition ? { magnitudeCondition: over.magnitudeCondition } : {}),
+        ...(over.nameFromMark ? { nameFromMark: over.nameFromMark } : {}),
       },
       maxScale: over.maxScale ?? 70,
       domesticTsunami: over.domesticTsunami ?? '警報等',
@@ -95,6 +97,37 @@ describe('地震カードの更新の印', () => {
       const before = quakeFactSnapshot(makeQuake({ name: '能登半島沖' }))
       const after = quakeFactSnapshot(makeQuake({ name: '石川県能登地方' }))
       expect(changedQuakeFacts(after, before).get('hypocenterName')).toBe('changed')
+    })
+
+    // 正: 震央補助表現の文が別の文へ変わったら向きの無い印（比べるのは電文の原文）。
+    it('震央補助表現の文が変わったら向きの無い印が出る', () => {
+      const before = quakeFactSnapshot(makeQuake({ nameFromMark: '輪島の東北東３０ｋｍ付近' }))
+      const after = quakeFactSnapshot(makeQuake({ nameFromMark: '輪島の東北東４０ｋｍ付近' }))
+      expect(changedQuakeFacts(after, before).get('nameFromMark')).toBe('changed')
+    })
+
+    // 対照: 文が無かった報のあとに文が現れただけなら印を付けない（値が無い欄に値が付いたのと同じ）。
+    it('震央補助表現が現れただけの報では印を付けない', () => {
+      const before = quakeFactSnapshot(makeQuake({}))
+      const after = quakeFactSnapshot(makeQuake({ nameFromMark: '輪島の東北東３０ｋｍ付近' }))
+      expect(changedQuakeFacts(after, before).has('nameFromMark')).toBe(false)
+    })
+
+    // 安全弁: 座標だけ動いて文がそのままなら、印は座標の行にだけ出る（全期間の控えで 87 組あった形）。
+    it('座標だけ動いて震央補助表現が同じなら、震央補助表現には印を付けない', () => {
+      const before = quakeFactSnapshot(makeQuake({ lat: 37.5, lng: 137.2, nameFromMark: '輪島の東北東３０ｋｍ付近' }))
+      const after = quakeFactSnapshot(makeQuake({ lat: 37.495, lng: 137.27, nameFromMark: '輪島の東北東３０ｋｍ付近' }))
+      const changed = changedQuakeFacts(after, before)
+      expect(changed.has('nameFromMark')).toBe(false)
+      expect(changed.get('coordinate')).toBe('changed')
+    })
+
+    // 文が消えた報（全期間の控えで 14 組あった形）。記憶の上では「向きの無い変化」になるが、カードは文が無いと
+    // 行ごと出さないので、印を描く場所が無い（→ EarthquakeCard の震央補助表現の行）。
+    it('震央補助表現が消えた報では向きの無い変化として残る（描く行は無い）', () => {
+      const before = quakeFactSnapshot(makeQuake({ nameFromMark: '輪島の東北東３０ｋｍ付近' }))
+      const after = quakeFactSnapshot(makeQuake({}))
+      expect(changedQuakeFacts(after, before).get('nameFromMark')).toBe('changed')
     })
 
     // 対照: 津波区分の「調査中」「不明」は値ではなく「まだ決まっていない」なので、

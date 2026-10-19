@@ -16,6 +16,7 @@ import { UPDATE_MARK_TTL_MS, statusOf, type SnapshotValue, type UpdateStatus } f
 export type QuakeUpdateField =
   | 'hypocenterName'
   | 'coordinate'
+  | 'nameFromMark'
   | 'magnitude'
   | 'depth'
   | 'domesticTsunami'
@@ -88,6 +89,11 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
   // 位置不明のセンチネルは -200（パーサーが埋める）。`Number.isFinite` だけでは素通りする。
   const hasPos = Number.isFinite(h.latitude) && Number.isFinite(h.longitude) && h.latitude !== -200 && h.longitude !== -200
   snap.set('coordinate', { key: hasPos ? `${h.latitude},${h.longitude}` : UNKNOWN })
+  // 震央補助表現（「輪島の東北東３０ｋｍ付近」）も大小が無い。**電文の原文で比べる**（表示は半角へ直すが、
+  // 持つ値は原文 —— `formatNameFromMark`）。全期間の控え（2020-11〜、続報 1,586 組）では、座標が動いても
+  // 文はそのままで、文が別の文へ変わった組は 0 だった。震央地名と同じく、動かないのは標本の性質として入れておく
+  // （2026-10-19 ユーザー承認「1 で」＝文が別の文へ変わったときだけ印を付ける）。
+  snap.set('nameFromMark', { key: h.nameFromMark || UNKNOWN })
   // 規模は**数値と説明の両方**を鍵に含める。「Ｍ８を超える巨大地震」は本文が NaN で
   // `description` だけが値を持つので、数値だけで比べるとその変化が消える
   // （→ `docs/spec/quake-spec.md` §8）。**大小を比べられるのは数値があるときだけ。**
