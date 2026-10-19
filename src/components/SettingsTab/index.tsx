@@ -58,6 +58,8 @@ export interface TestFunctions {
   quakeNotice?: () => void
   earthquakeCount?: () => void
   earthquakeCountRetraction?: () => void
+  lpgmRetraction?: () => void
+  areaUnreceivedQuake?: () => void
   trainingQuake?: () => void
   quakeAmendment: () => void
   quakeReportSequence: () => void
@@ -1869,6 +1871,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <TestButton color="orange" onClick={onTest.maxScaleOrAboveQuake}>5弱以上テスト</TestButton>
           </Row>
         )}
+        {isDmdss && onTest.areaUnreceivedQuake && (
+          <Row label="地震情報（区域まるごと「5弱以上・未入電」の報）" description="日向灘の未入電テストの1区域を、配下の市町村がすべて未入電の形へ組み替えたもの（気象庁の資料が定める形で、実電文の標本は無い）。区域の最大震度が載らなくても、一覧と読み上げに残る">
+            <TestButton color="orange" onClick={onTest.areaUnreceivedQuake}>区域未入電テスト</TestButton>
+          </Row>
+        )}
         <Row label="遠地地震" description="メキシコ・チアパス州沿岸 M7.4 深さ不明（実データ）– earthquakeInfo 音 / 国内震度なし・日本への津波影響なし">
           <TestButton color="purple" onClick={onTest.foreignQuake}>遠地地震テスト</TestButton>
         </Row>
@@ -1972,6 +1979,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {isDmdss && onTest.estimatedIntensity && (
           <Row label="推計震度分布図" description="気象庁が推計した震度の広がり。地図とカードのボタンが公式の表示へ替わる + 地震情報と同じ音・短い読み上げ。テストでは地震情報の3秒後に初報、さらに16秒後に続報を流し、読み上げが「受信しました」から「更新されました」へ変わる（実際の発表は地震から数分後、続報はその6分後）">
             <TestButton color="teal" onClick={onTest.estimatedIntensity}>推計震度分布図テスト</TestButton>
+          </Row>
+        )}
+        {isDmdss && onTest.lpgmRetraction && (
+          <Row label="長周期地震動に関する観測情報（取消）" description="地震テストの長周期地震動 → 90秒後に取消。取消は音を鳴らさず、取り消されたことと理由の文を読み上げる（長周期の表示は消える）">
+            <TestButton color="teal" onClick={onTest.lpgmRetraction}>長周期 取消テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.earthquakeCount && (

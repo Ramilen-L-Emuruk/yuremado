@@ -17,6 +17,7 @@ import {
   createTestEEWWarning,
   createTestForeignQuakeHuge,
   createTestLpgm,
+  createTestLpgmRetraction,
   createTestQuakeAmendment,
   createTestQuakeReportSequence,
   createTestTsunami,
@@ -26,6 +27,8 @@ import {
   createTestTsunamiWarning,
   createTestTsunamiWatch,
   createTestUnreceivedQuake,
+  createTestAreaUnreceivedQuake,
+  TEST_AREA_UNRECEIVED_AREA,
   toEventIdTimestamp,
   toP2pPref,
 } from './testData'
@@ -34,6 +37,7 @@ import { extractQuakeEventId } from './quakeMerge'
 import { eewAreas, eewMaxScale, eewNoForecastReason, isEewAreaArrived } from './eew'
 import { extractQuakeEventIdFromId } from './quakeMerge'
 import { isObservationMissing, matchesArea } from './tsunami'
+import { applyLiveLpgm } from './lpgmRetraction'
 
 // テストデータが「名前で」外部データと突き合わせている箇所を固定する。
 //
@@ -560,6 +564,63 @@ describe('未入電テスト（日向灘 2022-01-22）', () => {
     const quake = createTestUnreceivedQuake()
     expect(extractQuakeEventId(quake)).toMatch(/^\d{14}$/)
     expect(quake.eventId).toBe(extractQuakeEventId(quake))
+  })
+})
+
+// 長周期地震動の取消のテストデータ。**表示中の長周期を実際に消す形でないと**、取消は
+// 受け手へ渡らず（→ useEarthquakes.ts の `noteLiveLpgm`）、ボタンを押しても何も読まれない。
+describe('長周期地震動の取消テスト', () => {
+  beforeEach(() => { vi.useFakeTimers({ now: new Date('2026-09-12T12:34:56Z').getTime() }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('元の長周期を表示から消す（同じ地震・後から発表）', () => {
+    const base = createTestLpgm('20240101161000')
+    vi.advanceTimersByTime(90_000)
+    const retraction = createTestLpgmRetraction(base)
+    expect(retraction).toMatchObject({ eventId: base.eventId, cancelled: true })
+    expect(retraction.id).not.toBe(base.id)
+    expect(retraction.cancelText).toBeTruthy()
+    const shown = new Map([[base.eventId, base]])
+    expect(applyLiveLpgm(shown, retraction).has(base.eventId)).toBe(false)
+  })
+})
+
+// 区域まるごと未入電の形（→ quake-spec.md §4「震度5弱以上未入電」）。実電文の標本が無いので、
+// 未入電テストを組み替えて作る。**組み替える先が元データに無いと、何も変わらないまま通る。**
+describe('区域未入電テスト（日向灘の組み替え）', () => {
+  // 安全弁: 組み替える区域が元データにあり、元のままでは「まるごと未入電」になっていない
+  // （元データを差し替えて区域名が消えると、テストボタンが未入電テストと同じものになる）。
+  it('組み替える区域が元データにあり、元は観測値を持つ', () => {
+    const base = createTestUnreceivedQuake()
+    const baseCities = (base.cities ?? []).filter((c) => c.area === TEST_AREA_UNRECEIVED_AREA)
+    expect(baseCities.length).toBeGreaterThan(0)
+    expect(baseCities.some((c) => !c.unreceived)).toBe(true)
+    expect(base.points.some((p) => p.isArea && !p.pref && p.addr === TEST_AREA_UNRECEIVED_AREA && !p.unreceived)).toBe(true)
+  })
+
+  // 正: 区域・配下の市町村・観測点がすべて未入電（下限の5弱）になる。パーサーが積む形と同じ。
+  it('区域・配下の市町村・観測点がすべて未入電になる', () => {
+    const quake = createTestAreaUnreceivedQuake()
+    const areaPoint = quake.points.find((p) => p.isArea && !p.pref && p.addr === TEST_AREA_UNRECEIVED_AREA)
+    expect(areaPoint).toMatchObject({ scale: 45, unreceived: true })
+    const cities = (quake.cities ?? []).filter((c) => c.area === TEST_AREA_UNRECEIVED_AREA)
+    for (const c of cities) {
+      expect(c).toMatchObject({ scale: 45, unreceived: true })
+      expect(c.hasUnreceived).toBeUndefined()
+    }
+    const stations = quake.points.filter((p) => !p.isArea && p.area === TEST_AREA_UNRECEIVED_AREA)
+    expect(stations.length).toBeGreaterThan(0)
+    for (const st of stations) expect(st).toMatchObject({ scale: 45, unreceived: true })
+  })
+
+  // 対照: 他の区域は元のまま（組み替えが区域を越えて広がらない）。
+  it('他の区域は元のまま', () => {
+    const base = createTestUnreceivedQuake()
+    const quake = createTestAreaUnreceivedQuake()
+    const others = (q: typeof base) => (q.cities ?? []).filter((c) => c.area !== TEST_AREA_UNRECEIVED_AREA)
+    expect(others(quake)).toEqual(others(base))
+    expect(quake.points.filter((p) => p.area !== TEST_AREA_UNRECEIVED_AREA && p.addr !== TEST_AREA_UNRECEIVED_AREA))
+      .toEqual(base.points.filter((p) => p.area !== TEST_AREA_UNRECEIVED_AREA && p.addr !== TEST_AREA_UNRECEIVED_AREA))
   })
 })
 

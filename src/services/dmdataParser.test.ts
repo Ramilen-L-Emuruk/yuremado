@@ -322,6 +322,28 @@ describe('parseEarthquakeFromXml: 震源・震度に関する情報（VXSE53）'
       expect(city.hasUnreceived).toBeUndefined()
     })
 
+    // 正: 配下の市町村がすべて未入電の県・区域は `MaxInt` を持たない（気象庁の資料が定める形。
+    // 実電文の標本は無い）。それでも下限の 5弱の未入電の点として積み、画面と読み上げに残す。
+    it('配下がすべて未入電の県・区域は、MaxInt が無くても未入電の点として積む', () => {
+      const xml = VXSE53_XML
+        .replace(/(<Code>03<\/Code>)\s*<MaxInt>4<\/MaxInt>/, '$1')
+        .replace(/(<Code>210<\/Code>)\s*<MaxInt>4<\/MaxInt>/, '$1')
+        .replace(/(<Code>0348500<\/Code>)\s*<MaxInt>3<\/MaxInt>/, '$1<Condition>震度５弱以上未入電</Condition>')
+        .replace('<Int>3</Int>', '<Int>震度５弱以上未入電</Int>')
+      expect(xml).not.toContain('<MaxInt>3</MaxInt>')
+      const points = parseEarthquakeFromXml('VXSE53', xml)!.points
+      expect(points).toContainEqual({ pref: '岩手県', addr: '岩手県', isArea: true, scale: 45, unreceived: true, code: '03' })
+      expect(points).toContainEqual({ pref: '', addr: '岩手県沿岸北部', isArea: true, scale: 45, unreceived: true, code: '210' })
+    })
+
+    // 対照: 配下に震度を持つ市町村が 1 つでもあれば、MaxInt の無い区域を未入電にしない
+    // （観測できた値があるのに「5弱以上」と言うと、実際より強い揺れを伝える）。
+    it('配下に震度を持つ市町村があれば、MaxInt の無い区域を未入電にしない', () => {
+      const xml = VXSE53_XML.replace(/(<Code>210<\/Code>)\s*<MaxInt>4<\/MaxInt>/, '$1')
+      const points = parseEarthquakeFromXml('VXSE53', xml)!.points
+      expect(points.some(p => p.addr === '岩手県沿岸北部' && p.isArea)).toBe(false)
+    })
+
     // 対照: 震度速報（区域までしか持たない電文）では市町村を持たない。
     it('震度速報では持たない', () => {
       expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.cities).toBeUndefined()
@@ -1775,6 +1797,27 @@ describe('parseLpgmFromXml: xmlChild が Area 直下の値を拾い、配下 Cit
     const lpgm = parseLpgmFromXml(cancelXml)
     if (!lpgm) throw new Error('parseLpgmFromXml returned null unexpectedly')
     expect(lpgm.cancelled).toBe(true)
+  })
+
+  // 正: 取消の理由（`Body/Text`）を cancelText として持つ。電文にしかない事実なので、
+  // 読み落とすと読み上げが「取り消されました」だけになる。取消の実電文の標本は無いので、
+  // 他の種別の取消と同じ置き方（Body 直下の Text）で組んでいる。
+  it('取消電文の Body/Text を cancelText として持つ', () => {
+    const cancelXml = VXSE62_XML
+      .replace('<InfoType>発表</InfoType>', '<InfoType>取消</InfoType>')
+      .replace(/<Body xmlns="([^"]+)">[\s\S]*<\/Body>/, '<Body xmlns="$1"><Text>先ほどの長周期地震動に関する観測情報を取り消します。</Text></Body>')
+    const lpgm = parseLpgmFromXml(cancelXml)
+    if (!lpgm) throw new Error('parseLpgmFromXml returned null unexpectedly')
+    expect(lpgm.cancelled).toBe(true)
+    expect(lpgm.cancelText).toBe('先ほどの長周期地震動に関する観測情報を取り消します。')
+  })
+
+  // 対照: 本文の無い取消では cancelText を持たない（空文字を載せない）。
+  it('Body/Text の無い取消では cancelText を持たない', () => {
+    const cancelXml = VXSE62_XML.replace('<InfoType>発表</InfoType>', '<InfoType>取消</InfoType>')
+    const lpgm = parseLpgmFromXml(cancelXml)
+    if (!lpgm) throw new Error('parseLpgmFromXml returned null unexpectedly')
+    expect(lpgm).not.toHaveProperty('cancelText')
   })
 
   it('MaxLgInt が 0 のときは null（対象階級外）', () => {

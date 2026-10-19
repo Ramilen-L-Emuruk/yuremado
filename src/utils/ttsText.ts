@@ -1077,13 +1077,14 @@ export function earthquakeReportCancelToText(issueType: string, time: string | n
  * 読み上げが伸びると後続の電文が待ちの上限に達して割り込むため、上限を超えたら画面に委ねる。
  *
  * @param staysOnScreen 省いた本文が画面に残るか。地震・津波・EEW は取消のあともカードが残って
- *   全文を出すので既定は `true`。**地震回数だけは取消で帯ごと消える**ので `false` を渡す ——
+ *   全文を出すので既定は `true`。**地震回数（帯）と長周期地震動（一覧・バッジ）は取消で表示ごと
+ *   消える**ので `false` を渡す ——
  *   記録が「画面には全文が出ます」と言い続けると、読み上げも表示も失われた事実が残らない。
  */
 function cancelReasonSentence(cancelText: string | undefined, staysOnScreen = true): string {
   // 取消の理由も気象庁が書いた文なので、日時は全角のゼロ埋めで来る（`１６日０１時２５分`）。
   // 半角・ゼロ埋めなしへ揃えないと先頭の 0 が桁として読まれる（→ {@link normalizeDateTimeForSpeech}）。
-  // **この関数は 4 種別（EEW・地震情報・津波・地震回数）の取消が共有している。**
+  // **この関数は 5 種別（EEW・地震情報・津波・地震回数・長周期地震動）の取消が共有している。**
   const text = normalizeDateTimeForSpeech(cancelText ?? '').replace(/\s+/g, ' ').trim()
   if (!text) return ''
   const subject = CANCEL_DECLARATION.exec(text)?.[1]
@@ -3410,8 +3411,11 @@ function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
 /** VXSE62 長周期地震動情報の読み上げテキストを生成する。isNew=false のとき更新報として冒頭に通知する。 */
 export function lpgmToText(lpgm: JMALpgm, opts: TtsSpeechOptions, isNew: boolean): string {
   if (lpgm.cancelled) {
-    // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。
-    return '長周期地震動に関する観測情報は取り消されました。'
+    // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。理由（電文の
+    // `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
+    // **`staysOnScreen: false`。** 取消で長周期の表示（一覧・バッジ）ごと消え、理由を
+    // 出す場所が画面に無いので、長すぎて省いた理由はどこにも残らない（地震回数と同じ）。
+    return '長周期地震動に関する観測情報は取り消されました。' + cancelReasonSentence(lpgm.cancelText, false)
   }
   // 地震の時刻は**発現時刻を先に採る**（地震情報・津波カードと同じ規則）。揃えないと、
   // 同じ地震について地震情報が「◯時◯分ころ」と読んだ直後に、長周期が 1 分違う時刻を読む。

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { AUTO_EXPAND_MAX_VISIBLE_ROWS, intensityRowsToExpand, lpgmRowsToExpand, mergeAutoExpanded } from './autoExpandMarkedRows'
 import { rowMarkKey } from './quakeUpdateMark'
 import type { UpdateStatus } from './updateMark'
-import type { IntensityPrefRow } from './quakePoints'
+import type { IntensityPrefRow, IntensityTopRow } from './quakePoints'
 import type { LpgmPrefRow } from './lpgm'
 
 const station = (name: string) => ({ name, scale: 40, unreceived: false, nonJma: false })
@@ -11,7 +11,7 @@ const city = (name: string, stations: string[] = []) =>
 const region = (name: string, cities: ReturnType<typeof city>[] = [], stations: string[] = []) =>
   ({ name, scale: 40, unreceived: false, hasUnreceived: false, cities, stations: stations.map(station) })
 const pref = (name: string, regions: ReturnType<typeof region>[]): IntensityPrefRow =>
-  ({ pref: name, scale: 40, unreceived: false, hasUnreceived: false, regions }) as IntensityPrefRow
+  ({ kind: 'pref', pref: name, scale: 40, unreceived: false, hasUnreceived: false, regions, stations: [] }) as IntensityPrefRow
 
 const marksOf = (...keys: string[]): ReadonlyMap<string, UpdateStatus> =>
   new Map(keys.map(k => [k, 'changed' as const]))
@@ -35,6 +35,26 @@ describe('印の付いた行を見せるために開く行', () => {
   it('区域の印は県だけ開く', () => {
     expect([...(intensityRowsToExpand(rows, marksOf(rowMarkKey.area('能登'))) ?? [])])
       .toEqual(['pref:石川県'])
+  })
+
+  // 正: 県を引けない区域（最上段）の配下の観測点は、その区域だけを開く（上に県の行は無い）。
+  it('最上段の区域の配下の観測点は、その区域だけを開く', () => {
+    const orphan = { kind: 'area', ...region('岩手県沿岸北部', [city('宮古市', ['宮古市田老'])]) } as IntensityTopRow
+    const open = intensityRowsToExpand([orphan], marksOf(rowMarkKey.station('宮古市田老')))
+    expect([...(open ?? [])].sort()).toEqual(['area:岩手県沿岸北部', 'city:岩手県沿岸北部/宮古市'])
+  })
+
+  // 正: 区域を引けない観測点（県の直下）は県だけを開く。
+  it('県の直下の観測点は県だけを開く', () => {
+    const withLoose = [{ ...pref('岩手県', []), stations: [station('宮古市田老')] } as IntensityTopRow]
+    expect([...(intensityRowsToExpand(withLoose, marksOf(rowMarkKey.station('宮古市田老'))) ?? [])])
+      .toEqual(['pref:岩手県'])
+  })
+
+  // 対照: 最上段の区域そのものの印では何も開かない（その行は既に見えている）。
+  it('最上段の区域そのものの印では何も開かない', () => {
+    const orphan = { kind: 'area', ...region('岩手県沿岸北部', [], ['宮古市田老']) } as IntensityTopRow
+    expect(intensityRowsToExpand([orphan], marksOf(rowMarkKey.area('岩手県沿岸北部')))).toBeNull()
   })
 
   // 対照: 印が無ければ何も開かない。

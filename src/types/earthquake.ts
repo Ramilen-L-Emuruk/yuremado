@@ -1376,6 +1376,8 @@ export interface JMALpgm {
   originTime: string  // TTS 読み上げテキスト用
   maxClass: number    // 1〜4
   cancelled: boolean
+  /** 取消しの理由（`Body/Text`）。取消電文だけが持つ（→ {@link JMAEarthquakeCount.cancelText}） */
+  cancelText?: string
   points?: LpgmPoint[]    // 観測点別階級（取消電文では undefined）
   regions?: LpgmRegion[]  // 一次細分区域別最大階級
   prefs?: LpgmPref[]      // 都道府県別最大階級・最大震度（→ {@link LpgmPref}）

@@ -2407,6 +2407,27 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 長周期地震動情報（DMDSS版のみ）
     if (event.kind === 'lpgm') {
       const lpgmEvent = event.data
+      if (lpgmEvent.cancelled) {
+        // **取消は音を鳴らさず、タブも動かさず、取り消された事実と理由だけを読む**
+        // （2026-10-14 ユーザー選択「読み上げる・音は鳴らさない」。地震回数の取消と同じ扱い）。
+        // ここへ来るのは表示中の長周期を消した取消だけ（→ `useEarthquakes.ts` の `noteLiveLpgm`）。
+        // **主題は発表と共有する** —— 分けると到来順の枠に載らず、発表の予約が待っている最中に
+        // 取消が届いても取り下げられない（取り消された階級をそのあと読み上げる）。
+        // 一覧ごと消えるので、見せる先が無い（追従先を渡さない）。
+        // **既読の記憶も落とす** —— 残すと、取り消された地震の長周期が発表し直されたとき
+        // （画面には初めて出る）に「更新」の前置きで読む。
+        seenLpgmEventIdsRef.current.delete(lpgmEvent.eventId)
+        if (settings.voicevoxEnabled) {
+          speakNonEEWDelayed(
+            lpgmToText(lpgmEvent, ttsRegionOptions(settings), false),
+            SPEECH_PRIORITY.normal, 0, `lpgm:${lpgmEvent.eventId}`,
+          )
+        } else {
+          // 読み上げが無効な端末では、取消は一覧とバッジが消えるだけで理由がどこにも残らない
+          log.info(`[lpgm] 表示中の長周期地震動が取り消されました（${lpgmEvent.eventId}）${lpgmEvent.cancelText ? `: ${lpgmEvent.cancelText}` : ''}`)
+        }
+        return
+      }
       // 読み上げ文を先に作る。**空になるのは読み上げそのものが無効な端末だけ** ――
       // `lpgmToText` は区域名を 1 つも作れなくても階級だけを伝える文へ落ちるので、
       // 読み上げが有効なら必ず非空になる（`ttsText.test.ts` が固定している）。
@@ -2419,13 +2440,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         log.info('[tab] earthquake を要求 (長周期地震動・読み上げ無し)')
         setActiveTabNonRealtime('earthquake')
       }
-      if (!lpgmEvent.cancelled) {
-        // 紐づく地震カードを選択し、自動的に LPGM 表示をオンにする
-        // （引き当ての述語はカードのバッジと共有する。→ `quakeKeyForLpgmEventId`）
-        const matchedKey = quakeKeyForLpgmEventId(earthquakesRef.current, lpgmEvent.eventId)
-        if (matchedKey) selectQuake(matchedKey)
-        openLpgmFromQuake(lpgmEvent.eventId)
-      }
+      // 紐づく地震カードを選択し、自動的に LPGM 表示をオンにする
+      // （引き当ての述語はカードのバッジと共有する。→ `quakeKeyForLpgmEventId`）
+      const matchedKey = quakeKeyForLpgmEventId(earthquakesRef.current, lpgmEvent.eventId)
+      if (matchedKey) selectQuake(matchedKey)
+      openLpgmFromQuake(lpgmEvent.eventId)
       if (settings.soundEnabled) {
         playAlertSound('earthquake')
       }

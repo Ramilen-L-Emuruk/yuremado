@@ -426,6 +426,35 @@ describe('lpgmToText: 階級ごとの地域列挙', () => {
     expect(lpgmToText({ ...makeLpgm(), cancelled: true }, TTS_OPTS, false)).toBe('長周期地震動に関する観測情報は取り消されました。')
   })
 
+  // 正: 取消の理由（電文の本文）を、取り消された事実の後ろに読む。他の 4 種別の取消と同じ述語
+  // （`cancelReasonSentence`）を通る。
+  it('取消の理由があれば、取り消された事実の後ろに読む', () => {
+    const text = lpgmToText({ ...makeLpgm(), cancelled: true, cancelText: 'システム障害のため取り消します。' }, TTS_OPTS, false)
+    expect(text).toBe('長周期地震動に関する観測情報は取り消されました。システム障害のため取り消します。')
+  })
+
+  // 対照: 宣言の形でも、主語が既知の情報名でなければ読む（長周期の取消は標本が無く、主語の
+  // 集合に入れていない）。黙って落とすと理由が混ざっていたときに失われる。
+  it('長周期の取消の宣言は、標本が無いので読む', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {})
+    try {
+      const text = lpgmToText({ ...makeLpgm(), cancelled: true, cancelText: '先ほどの、長周期地震動に関する観測情報を取り消します。' }, TTS_OPTS, false)
+      expect(text).toBe('長周期地震動に関する観測情報は取り消されました。先ほどの、長周期地震動に関する観測情報を取り消します。')
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('既知の情報名でないため読み上げます'))
+    } finally { info.mockRestore() }
+  })
+
+  // 安全弁: 長すぎる理由は省き、「画面にも残らない」と記録する（長周期の取消は表示ごと消える）
+  it('長すぎる理由は省き、画面に残らないことを記録する', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {})
+    try {
+      const long = 'あ'.repeat(CANCEL_REASON_SPEAK_MAX_CHARS + 1)
+      const text = lpgmToText({ ...makeLpgm(), cancelled: true, cancelText: long }, TTS_OPTS, false)
+      expect(text).toBe('長周期地震動に関する観測情報は取り消されました。')
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('画面にも残りません'))
+    } finally { info.mockRestore() }
+  })
+
   // 安全弁: 時刻が日時として読めない電文でも、主題（どこで階級いくつか）は残る
   it('地震の時刻を読めなくても空にはならない', () => {
     const text = lpgmToText({ ...makeLpgm(), originTime: '壊れた値', arrivalTime: undefined }, TTS_OPTS, true)

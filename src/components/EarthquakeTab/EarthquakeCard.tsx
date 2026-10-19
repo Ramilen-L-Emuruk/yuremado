@@ -28,7 +28,8 @@ import { getIntensityLabel, getIntensityLabelWithOrAbove, getIntensityColor, get
 import { hasKnownEpicenter } from '../../utils/geo'
 
 import { areaPrefIndexOf, regionOrderIndexOf, stationPrefIndexOf, lookupPointCoords, lookupStationRegion, regionOrderRank, type LatLng } from '../../utils/stationCoords'
-import { isMaxScaleUnreceived, partitionUnreceivedPoints, unreceivedUnitLabel, buildIntensityRows, makeAreaPrefResolver, cityKey, type IntensityStationRow, type IntensityRegionRow } from '../../utils/quakePoints'
+import { isMaxScaleUnreceived, partitionUnreceivedPoints, unreceivedUnitLabel, buildIntensityRows, makeAreaPrefResolver, cityKey, type IntensityStationRow, type IntensityRegionRow, type IntensityRows } from '../../utils/quakePoints'
+import { log } from '../../utils/logger'
 import { rowMarkKey, rowMarkOf, type QuakeCardMarks, type QuakeUpdateField } from '../../utils/quakeUpdateMark'
 import { intensityRowsToExpand, lpgmRowsToExpand, mergeAutoExpanded } from '../../utils/autoExpandMarkedRows'
 import { UPDATE_MARK_COLOR, type UpdateStatus } from '../../utils/updateMark'
@@ -516,6 +517,36 @@ function borrowedSourceNote(
   }
 }
 
+/**
+ * 取消されたカードに重ねる表示。**開いた表示と畳んだ表示で同じ部品を使う。**
+ *
+ * 取消を受けたカードは選択から外れて押せなくなる（`App.tsx` が選択を外す）ので、利用者が目にするのは
+ * ほぼ畳んだ表示だけ。かつては気象庁が書いた取消しの概要（電文の `Body/Text`）を開いた表示にだけ
+ * 置いていて、**理由が画面に出る場面がほとんど無かった**。写しを 2 つ持つと片方だけ直る形になるので、
+ * 1 つにまとめてある。
+ */
+function QuakeCancelOverlay({ cancelText, compact }: { cancelText?: string; compact: boolean }) {
+  return (
+    <div className={`absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-lg ${compact ? 'px-3' : 'px-4'}`}>
+      <span className="font-black text-white" style={{ fontSize: compact ? '1.75rem' : '3rem', lineHeight: 1.1 }}>取消</span>
+      <span className={`${compact ? 'text-xs' : 'text-sm'} font-bold text-white/90 mt-1`}>この地震情報は取り消されました</span>
+      {/* 気象庁が書いた取消しの概要（電文の `Body/Text`）。アプリが組み立てた文言ではないので
+          そのまま出す。オーバーレイは 10 秒で消えるが、理由を捨てる理由にはならない。 */}
+      {cancelText && (
+        // カードは `overflow-hidden` で、オーバーレイは `absolute inset-0`。**本文が下地の
+        // 高さを超えると下が切れる**（読み上げは長文を画面へ委ねる設計なので、そこで切れると
+        // 理由がどこにも残らない）。この要素の中でスクロールできるようにしておく。
+        <span
+          className={`${compact ? 'mt-1' : 'mt-2'} text-center text-white/80 overflow-y-auto`}
+          style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-line', maxHeight: '40%' }}
+        >
+          {cancelText}
+        </span>
+      )}
+    </div>
+  )
+}
+
 function QuakeReportHeading({ reports, fallback }: { reports?: QuakeReportRecord[]; fallback: IssueType }) {
   return (
     <>
@@ -579,6 +610,11 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const maxScaleOrAbove = maxScale !== -1 && isMaxScaleUnreceived(maxScale, quake.points)
   const tsunamiInfo = formatDomesticTsunami(domesticTsunami)
   const hasLocation = hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)
+  // **震央地名は名前の有無で出す**（座標の有無で決めない）。津波電文から借りた震源は名前があっても
+  // 座標を読めないことがあり（`readHypocenterAreaDetail` が座標を落とす経路）、座標で決めると
+  // 読み上げ・共有カード・タイトルは震央地名を言うのにカードだけ「震源調査中」になる。
+  // 緯度・経度の行だけは座標の有無で出す。
+  const epicenterLabel = hypocenter.name || '震源調査中'
   // 規模・深さは位置と別に判定する（→ `hasHypocenterFacts`）
   const hasFacts = hasHypocenterFacts(hypocenter)
   // 津波電文から借りた値の印と、その説明（→ `utils/borrowFromTsunami.ts`）。
@@ -772,8 +808,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     return positions.length > 0 ? () => onFocusMap(positions) : undefined
   }
 
-  const prefGroups = useMemo(() => {
-    if (!isSelected || !quake.points.length) return []
+  const intensityRows = useMemo((): IntensityRows => {
+    if (!isSelected || !quake.points.length) return { rows: [], unplacedStations: [] }
 
     // 「未入電あり」の印は、**その範囲に未入電の地点が 1 つでもあるか**で出す。行の最大が
     // 未入電かどうかでは判定しない —— 区域・県の最大震度は配下の最大なので、1 点でも観測値が
@@ -817,6 +853,19 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       rank: name => regionOrderRank(name, order),
     })
   }, [isSelected, quake.points, quake.cities, stationData, unreceivedIndexes])
+  const prefGroups = intensityRows.rows
+
+  // **一覧のどこにも置けなかった観測点を記録する**（県も区域も引けない点。→ `buildIntensityRows`）。
+  // 座標表の読み込み前は引けないのが普通なので、読み込んだ後に出す。**鍵に名前の顔ぶれを含める** ——
+  // 地震ごと 1 回にすると、続報で置けない観測点が増えても記録が出ない。
+  const loggedUnplacedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!stationData || intensityRows.unplacedStations.length === 0) return
+    const key = JSON.stringify([quakeEventKey(quake), [...new Set(intensityRows.unplacedStations)].sort()])
+    if (loggedUnplacedRef.current === key) return
+    loggedUnplacedRef.current = key
+    log.warn(`[quake] 県も区域も引けず震度一覧に置けなかった観測点 ${intensityRows.unplacedStations.length} 件: ${intensityRows.unplacedStations.join(', ')}`)
+  }, [stationData, intensityRows, quake])
 
   /**
    * 「震度を入手していない地点」。**未入電は観測点 1 つ 1 つに付く事実**なので、地点名で見せる
@@ -938,25 +987,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           boxShadow: `0 0 0 1px ${typeStyle.cardBorder}40`,
         }}
       >
-        {quake.cancelledAt && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-lg px-4">
-            <span className="font-black text-white" style={{ fontSize: '3rem', lineHeight: 1.1 }}>取消</span>
-            <span className="text-sm font-bold text-white/90 mt-1">この地震情報は取り消されました</span>
-            {/* 気象庁が書いた取消しの概要（電文の `Body/Text`）。アプリが組み立てた文言ではないので
-                そのまま出す。オーバーレイは 10 秒で消えるが、理由を捨てる理由にはならない。 */}
-            {quake.cancelText && (
-              // カードは `overflow-hidden` で、オーバーレイは `absolute inset-0`。**本文が下地の
-              // 高さを超えると下が切れる**（読み上げは長文を画面へ委ねる設計なので、そこで切れると
-              // 理由がどこにも残らない）。この要素の中でスクロールできるようにしておく。
-              <span
-                className="mt-2 text-center text-white/80 overflow-y-auto"
-                style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-line', maxHeight: '40%' }}
-              >
-                {quake.cancelText}
-              </span>
-            )}
-          </div>
-        )}
+        {quake.cancelledAt && <QuakeCancelOverlay cancelText={quake.cancelText} compact={false} />}
         {/* 種別ヘッダー */}
         <div
           className="w-full py-1.5 px-4 text-center text-xs font-bold tracking-widest"
@@ -1148,19 +1179,13 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
           {/* 震源地。**緯度・経度はこの直下に置く** —— どちらも「どこで起きたか」を言う欄で、
               あいだに規模・津波・付加文を挟むと、震央地名を読んだあとに座標を探すことになる。 */}
-          {/* **印は名前を出しているときだけ。** 座標を読めない報では名前の代わりに固定文言
-              「震源調査中」が出るので、そこへ印を当てると**文言そのものが新しくなった**ように
-              読める（借りた震源で名前はあるのに座標が無い形が実際に起こりうる）。 */}
+          {/* **印は名前を出しているときだけ。** 名前が無い報では固定文言「震源調査中」が出るので、
+              そこへ印を当てると**文言そのものが新しくなった**ように読め、借りた印なら「震源調査中」
+              という文言が津波から来たように読める。 */}
           <div className="font-bold text-white leading-tight text-[1.375rem] roomy:text-[1.875rem] rounded-sm">
-            {hasLocation ? hypocenter.name : '震源調査中'}
-            {/* **「震源調査中」には印を付けない。** 借りた原因地震に震央地名はあるのに座標を
-                読めなかった形（`readHypocenterAreaDetail` が座標を落とす経路）では、名前を出せず
-                固定文言へ倒れる。そこへ印を足すと「震源調査中」という文言そのものが津波から
-                来たように読め、しかも借りたはずなのに調査中という矛盾した見た目になる。
-                **借りた名前が画面に出ないこと自体は別の穴**（この分岐が名前の表示を座標の有無で
-                決めているため）で、今回の変更が作ったものではない。 */}
-            {borrowedHypocenter && hasLocation && <BorrowedMark />}
-            {hasLocation && markDot('hypocenterName', 'md', 'align-top ml-1')}
+            {epicenterLabel}
+            {borrowedHypocenter && hypocenter.name && <BorrowedMark />}
+            {hypocenter.name && markDot('hypocenterName', 'md', 'align-top ml-1')}
           </div>
           {hasLocation && (
             <div className="text-xs text-secondary roomy:text-sm">
@@ -1468,97 +1493,102 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
             if (prefGroups.length === 0) return null
 
+            // 市町村に紐付かない観測点の行（区域の直下・県の直下の両方で使う）。
+            const stationRow = (st: IntensityStationRow, depth: 1 | 2 | 3, pref: string) => (
+              <IntensityRow
+                key={st.name}
+                label={st.name}
+                scale={st.scale}
+                unreceived={st.unreceived}
+                unreceivedIsOwn={st.unreceived}
+                nonJma={st.nonJma}
+                mark={rowMark(rowMarkKey.station(st.name))}
+                depth={depth}
+                expandKey={null}
+                expanded={expanded}
+                onToggle={toggle}
+                onFocus={focusHandlerFor(pref, st.name)}
+              />
+            )
+            // 区域の行と配下（市町村・観測点）。県の下では depth 1、県を引けない区域
+            // （→ `IntensityOrphanRegionRow`）は最上段なので depth 0 から始める。
+            // `pref` は観測点の寄り先を引くのに使う（県を引けない区域では空）。
+            const regionTree = (region: IntensityRegionRow, depth: 0 | 1, pref: string) => (
+              <Fragment key={region.name}>
+                <IntensityRow
+                  label={region.name}
+                  scale={region.scale}
+                  unreceived={region.unreceived}
+                  hasUnreceived={region.hasUnreceived}
+                  mark={rowMark(rowMarkKey.area(region.name), regionDescendantKeys(region))}
+                  depth={depth}
+                  expandKey={region.cities.length > 0 || region.stations.length > 0 ? `area:${region.name}` : null}
+                  expanded={expanded}
+                  onToggle={toggle}
+                  onFocus={focusBoundsHandler(areaBounds.get(region.name) ?? null)}
+                />
+                {expanded.has(`area:${region.name}`) && (
+                  <>
+                    {region.cities.map(city => (
+                      <div key={city.name}>
+                        <IntensityRow
+                          label={city.name}
+                          scale={city.scale}
+                          unreceived={city.unreceived}
+                          unreceivedIsOwn={city.unreceived}
+                          hasUnreceived={city.hasUnreceived}
+                          mark={rowMark(rowMarkKey.city(region.name, city.name), city.stations.map(st => rowMarkKey.station(st.name)))}
+                          depth={(depth + 1) as 1 | 2}
+                          expandKey={city.stations.length > 0 ? `city:${region.name}/${city.name}` : null}
+                          expanded={expanded}
+                          onToggle={toggle}
+                          onFocus={focusCityHandler(pref, city.stations)}
+                        />
+                        {expanded.has(`city:${region.name}/${city.name}`) && city.stations.map(st => stationRow(st, (depth + 2) as 2 | 3, pref))}
+                      </div>
+                    ))}
+                    {/* 市町村に紐付かない観測点（P2PQuake 経路はすべてこちら）。
+                        → `IntensityRegionRow.stations` */}
+                    {region.stations.map(st => stationRow(st, (depth + 1) as 1 | 2, pref))}
+                  </>
+                )}
+              </Fragment>
+            )
+
             return (
               <div className="flex flex-col gap-0.5 pt-1 border-t border-white/10">
-                {prefGroups.map((prefRow, idx) => (
+                {prefGroups.map((row, idx) => (
                   <div
-                    key={prefRow.pref}
+                    key={row.kind === 'pref' ? `pref:${row.pref}` : `area:${row.name}`}
                     className="rounded-sm"
                     style={{ backgroundColor: idx % 2 === 0 ? 'rgba(255,255,255,0.03)' : 'transparent' }}
                   >
-                    <IntensityRow
-                      label={prefRow.pref}
-                      scale={prefRow.scale}
-                      unreceived={prefRow.unreceived}
-                      hasUnreceived={prefRow.hasUnreceived}
-                      mark={rowMark(rowMarkKey.pref(prefRow.pref), prefRow.regions.flatMap(r => [rowMarkKey.area(r.name), ...regionDescendantKeys(r)]))}
-                      depth={0}
-                      expandKey={prefRow.regions.length > 0 ? `pref:${prefRow.pref}` : null}
-                      expanded={expanded}
-                      onToggle={toggle}
-                      onFocus={focusBoundsHandler(prefBounds.get(prefRow.pref) ?? null)}
-                    />
-                    {expanded.has(`pref:${prefRow.pref}`) && prefRow.regions.map(region => (
-                      <div key={region.name}>
+                    {row.kind === 'area' ? regionTree(row, 0, '') : (
+                      <>
                         <IntensityRow
-                          label={region.name}
-                          scale={region.scale}
-                          unreceived={region.unreceived}
-                          hasUnreceived={region.hasUnreceived}
-                          mark={rowMark(rowMarkKey.area(region.name), regionDescendantKeys(region))}
-                          depth={1}
-                          expandKey={region.cities.length > 0 || region.stations.length > 0 ? `area:${region.name}` : null}
+                          label={row.pref}
+                          scale={row.scale}
+                          unreceived={row.unreceived}
+                          hasUnreceived={row.hasUnreceived}
+                          mark={rowMark(rowMarkKey.pref(row.pref), [
+                            ...row.regions.flatMap(r => [rowMarkKey.area(r.name), ...regionDescendantKeys(r)]),
+                            ...row.stations.map(st => rowMarkKey.station(st.name)),
+                          ])}
+                          depth={0}
+                          expandKey={row.regions.length > 0 || row.stations.length > 0 ? `pref:${row.pref}` : null}
                           expanded={expanded}
                           onToggle={toggle}
-                          onFocus={focusBoundsHandler(areaBounds.get(region.name) ?? null)}
+                          onFocus={focusBoundsHandler(prefBounds.get(row.pref) ?? null)}
                         />
-                        {expanded.has(`area:${region.name}`) && (
+                        {expanded.has(`pref:${row.pref}`) && (
                           <>
-                            {region.cities.map(city => (
-                              <div key={city.name}>
-                                <IntensityRow
-                                  label={city.name}
-                                  scale={city.scale}
-                                  unreceived={city.unreceived}
-                                  unreceivedIsOwn={city.unreceived}
-                                  hasUnreceived={city.hasUnreceived}
-                                  mark={rowMark(rowMarkKey.city(region.name, city.name), city.stations.map(st => rowMarkKey.station(st.name)))}
-                                  depth={2}
-                                  expandKey={city.stations.length > 0 ? `city:${region.name}/${city.name}` : null}
-                                  expanded={expanded}
-                                  onToggle={toggle}
-                                  onFocus={focusCityHandler(prefRow.pref, city.stations)}
-                                />
-                                {expanded.has(`city:${region.name}/${city.name}`) && city.stations.map(st => (
-                                  <IntensityRow
-                                    key={st.name}
-                                    label={st.name}
-                                    scale={st.scale}
-                                    unreceived={st.unreceived}
-                                    unreceivedIsOwn={st.unreceived}
-                                    nonJma={st.nonJma}
-                                    mark={rowMark(rowMarkKey.station(st.name))}
-                                    depth={3}
-                                    expandKey={null}
-                                    expanded={expanded}
-                                    onToggle={toggle}
-                                    onFocus={focusHandlerFor(prefRow.pref, st.name)}
-                                  />
-                                ))}
-                              </div>
-                            ))}
-                            {/* 市町村に紐付かない観測点（P2PQuake 経路はすべてこちら）。
-                                → `IntensityRegionRow.stations` */}
-                            {region.stations.map(st => (
-                              <IntensityRow
-                                key={st.name}
-                                label={st.name}
-                                scale={st.scale}
-                                unreceived={st.unreceived}
-                                unreceivedIsOwn={st.unreceived}
-                                nonJma={st.nonJma}
-                                mark={rowMark(rowMarkKey.station(st.name))}
-                                depth={2}
-                                expandKey={null}
-                                expanded={expanded}
-                                onToggle={toggle}
-                                onFocus={focusHandlerFor(prefRow.pref, st.name)}
-                              />
-                            ))}
+                            {row.regions.map(region => regionTree(region, 1, row.pref))}
+                            {/* 区域を引けない観測点（県は分かっている）。長周期の一覧と同じく県の直下へ置く */}
+                            {row.stations.map(st => stationRow(st, 1, row.pref))}
                           </>
                         )}
-                      </div>
-                    ))}
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1570,7 +1600,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           <QuakeSeismoWave
             waves={seismoWaves ?? []}
             view={seismoWaveView}
-            quakeLabel={`${formatQuakeTime(earthquake.time) ?? '発生時刻不明'} ${hasLocation ? hypocenter.name : '震源調査中'}`}
+            quakeLabel={`${formatQuakeTime(earthquake.time) ?? '発生時刻不明'} ${epicenterLabel}`}
           />
         </div>
       </button>
@@ -1592,12 +1622,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
         ${borderClass}
       `}
     >
-      {quake.cancelledAt && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-lg">
-          <span className="font-black text-white" style={{ fontSize: '1.75rem', lineHeight: 1.1 }}>取消</span>
-          <span className="text-xs font-bold text-white/90 mt-1">この地震情報は取り消されました</span>
-        </div>
-      )}
+      {quake.cancelledAt && <QuakeCancelOverlay cancelText={quake.cancelText} compact />}
       <div className="flex items-stretch gap-3">
         {/* 震度バッジ。7rem 角の正方形に固定する。右カラム（通常は 4 行）の高さとほぼ同じ寸法で、
             カードの高さいっぱいに見える。
@@ -1641,7 +1666,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               「熊本県天草・芦北地方」級の名前が折り返すとカードだけが縦に伸びて一覧の行が
               揃わなくなるため、ここは伸ばさない。発表種別は日時の行へ逃がし、地名に幅を明け渡している。 */}
           <div className="text-white font-bold text-lg leading-tight truncate mb-1">
-            {hasLocation ? hypocenter.name : '震源調査中'}
+            {epicenterLabel}
           </div>
 
           {/* 日時 + 発表種別 + 訂正情報。

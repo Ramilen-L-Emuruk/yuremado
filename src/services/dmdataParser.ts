@@ -1587,16 +1587,8 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   const magnitudeType = magnitudeEl?.getAttribute('type')?.trim() || undefined
 
   // MaxInt は Intensity > Observation 直下。
-  // **仕様外への保険。** 電文解説資料は `MaxInt` の値域を "1"〜"7" と定めており
-  // （震度速報 VXSE51 だけは "3"〜"7"。震度3未満では発表しないため）、
-  // その範囲に未入電の観測点しか無い場合は **`MaxInt` 要素そのものが出現しない**（未入電の
-  // 文字列は入らない）。実電文 853 通でも `MaxInt` に現れたことは無い。
-  // 仕様が変わってここへ入った場合に `-1` へ落として最大震度を失わないよう、読めるようにだけ
-  // しておく。
-  //
-  // **この保険と `isMaxScaleUnreceived` の真偽は別の話。** あの述語は `MaxInt` を見ておらず、
-  // 最大震度と観測点の階級が一致するかだけを見るので、**観測できた最大が5弱の地震**では
-  // 保険が働かなくても真になる（→ `utils/quakePoints.ts`）。
+  // 未入電の文字列は仕様上ここへ来ない（値域は "1"〜"7"。電文解説資料 Ⅱ.33）。読めるのは
+  // 観測点と共通の `readIntensity` を通る副作用にすぎない。
   const obsEl = xmlQ(doc, 'Observation')
   const maxIntStr = obsEl ? xmlText(xmlQ(obsEl, 'MaxInt')) : ''
   const { scale: maxScale } = readIntensity(maxIntStr || null)
@@ -1615,6 +1607,29 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   // 市町村は `points` へ混ぜない（4 種目を足すと `pref` と `isArea` による見分けが狂う。
   // → `JMAQuakeCity` のコメント）。区域と観測点のあいだの粒度として別に持つ。
   const cities: JMAQuakeCity[] = []
+  /**
+   * 配下の市町村が**すべて**値そのものが未入電か（`MaxInt` が無く `Condition` が未入電）。
+   *
+   * 都道府県・地域の `MaxInt` は、配下に震度の値を入手していない市町村しか無いとき出現しない
+   * （電文解説資料 Ⅱ.33 2-1-3-1・2-1-3-3-1）。そのとき点を積まないと、**いちばん強く揺れた県・
+   * 地域ほど**区域の行・読み上げの区域名から欠ける。市町村と同じく下限の 5弱の未入電として積む。
+   *
+   * 市町村を 1 つも持たない要素（震度速報）は偽 —— 未入電かどうかを電文から言えない。
+   * 確かめた控えの実電文の範囲では都道府県・地域の `MaxInt` の欠落は見当たらず（市町村では 40 件この形を取る）、
+   * 資料が許す形として受ける。
+   */
+  const onlyUnreceivedCities = (el: Element): boolean => {
+    const cityEls = el.getElementsByTagName('*')
+    let count = 0
+    for (let i = 0; i < cityEls.length; i++) {
+      const c = cityEls[i]
+      if (c.localName !== 'City') continue
+      if (xmlText(xmlChild(c, 'MaxInt'))) return false
+      if (!xmlText(xmlChild(c, 'Condition')).includes(UNRECEIVED_INTENSITY)) return false
+      count++
+    }
+    return count > 0
+  }
   const allEls = doc.getElementsByTagName('*')
   const prefEls: Element[] = []
   for (let i = 0; i < allEls.length; i++) {
@@ -1639,6 +1654,14 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       points.push({
         pref: prefName, addr: prefName, isArea: true, scale: prefScale as IntensityScale,
         ...(prefUnreceived && { unreceived: true }),
+        ...(prefRevise && { revise: prefRevise }),
+        ...(prefCode && { code: prefCode }),
+      })
+      prefTally.readable()
+    } else if (prefName && !prefRawInt && onlyUnreceivedCities(prefEl)) {
+      // 配下がすべて未入電の県（→ `onlyUnreceivedCities`）。下限の 5弱の未入電として積む
+      points.push({
+        pref: prefName, addr: prefName, isArea: true, scale: 45, unreceived: true,
         ...(prefRevise && { revise: prefRevise }),
         ...(prefCode && { code: prefCode }),
       })
@@ -1675,6 +1698,14 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
           points.push({
             pref: '', addr: areaName, isArea: true, scale: areaScale as IntensityScale,
             ...(areaUnreceived && { unreceived: true }),
+            ...(areaRevise && { revise: areaRevise }),
+            ...(areaCode && { code: areaCode }),
+          })
+          areaTally.readable()
+        } else if (areaName && !areaRawInt && onlyUnreceivedCities(el)) {
+          // 配下がすべて未入電の地域（→ `onlyUnreceivedCities`）。都道府県と同じ扱い
+          points.push({
+            pref: '', addr: areaName, isArea: true, scale: 45, unreceived: true,
             ...(areaRevise && { revise: areaRevise }),
             ...(areaCode && { code: areaCode }),
           })
@@ -2502,7 +2533,13 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   const originTime   = earthquakeEl ? xmlText(xmlQ(earthquakeEl, 'OriginTime')) : ''
   warnIfUnreadableDateTime(DMDATA_LOG_PREFIX, '長周期地震動観測情報の地震発生時刻', originTime, 'この要素が無いと電文ごと落とす')
 
-  if (cancelled) return { ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }), id, eventId, time: reportDateTime, ...(lpgmCreatedAtMs !== undefined && { createdAtMs: lpgmCreatedAtMs }), originTime, maxClass: 0, cancelled: true }
+  // 取消電文は Body 直下の Text に取消しの理由が入る（他種別と同じ形。
+  // → docs/spec/quake-spec.md §8「取消しの理由は電文にしかない」）。
+  if (cancelled) {
+    const lpgmBodyEl = xmlQ(doc, 'Body')
+    const cancelText = lpgmBodyEl ? xmlText(xmlChild(lpgmBodyEl, 'Text')) : ''
+    return { ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }), id, eventId, time: reportDateTime, ...(lpgmCreatedAtMs !== undefined && { createdAtMs: lpgmCreatedAtMs }), originTime, maxClass: 0, cancelled: true, ...(cancelText && { cancelText }) }
+  }
   if (!originTime) return dropTelegram(DMDATA_LOG_PREFIX, 'VXSE62（長周期地震動観測情報）に OriginTime がありません')
 
   // VXSE62 XML: Intensity > Observation > MaxLgInt が最大長周期地震動階級

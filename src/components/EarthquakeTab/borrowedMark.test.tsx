@@ -147,9 +147,9 @@ describe('地震カードの「津波情報より」の印', () => {
     expect(screen.queryByText('※ 津波情報より')).toBeNull()
   })
 
-  // 安全弁: 座標を読めず「震源調査中」へ倒れた借り物には、震央地名の印を付けない。
-  // 付けるとその文言自体が津波から来たように読め、借りたはずなのに調査中という矛盾に見える。
-  it('座標を読めなかった借り物では、「震源調査中」に印を付けない', async () => {
+  // 正: 座標を読めなくても、借りた震央地名は出して印を付ける（座標の行だけが出ない）。
+  // 名前は電文が伝えた事実なので、座標が無いことを理由に「震源調査中」へ倒さない。
+  it('座標を読めなかった借り物でも、震央地名を出して印を付ける', async () => {
     await renderTab(makeQuake({
       hypocenterSource: FROM_INFO,
       earthquake: {
@@ -158,8 +158,22 @@ describe('地震カードの「津波情報より」の印', () => {
         hypocenter: { name: '石川県能登地方', latitude: -200, longitude: -200, depth: 0, magnitude: 7.6 },
       },
     }))
-    expect(screen.getByText('震源調査中').textContent).toBe('震源調査中')
-    // 残るのは規模と深さの 2 つ（座標の行はそもそも出ない）。
+    expect(screen.queryByText('震源調査中')).toBeNull()
+    // 震央地名・規模・深さの 3 つ（座標の行はそもそも出ない）。
+    expect(markCount()).toBe(3)
+  })
+
+  // 安全弁: 名前も無く「震源調査中」へ倒れた借り物には、震央地名の印を付けない。
+  // 付けるとその文言自体が津波から来たように読める。
+  it('名前も座標も無い借り物では、「震源調査中」に印を付けない', async () => {
+    await renderTab(makeQuake({
+      hypocenterSource: FROM_INFO,
+      earthquake: {
+        ...makeQuake().earthquake,
+        hypocenter: { name: '', latitude: -200, longitude: -200, depth: 0, magnitude: 7.6 },
+      },
+    }))
+    expect(screen.getAllByText('震源調査中').length).toBeGreaterThan(0)
     expect(markCount()).toBe(2)
   })
 

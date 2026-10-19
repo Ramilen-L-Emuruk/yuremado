@@ -861,8 +861,8 @@ export function App() {
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWDeep, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
-    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateEstimatedIntensity,
-    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
+    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
+    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
     resetState, loadReplayEvents, peekUpcomingPayloads, restoreQuakeHistory,
   } = useEarthquakes(handleLiveEvent, debouncedApiKey, settings.dmdataTestDelivery, replayTimeOffset, handleStartupRestore)
@@ -932,6 +932,7 @@ export function App() {
     quakeNotice:       simulateQuakeNotice,
     earthquakeCount:   simulateEarthquakeCount,
     earthquakeCountRetraction: simulateEarthquakeCountRetraction,
+    lpgmRetraction:    isDmdss ? simulateLpgmRetraction : undefined,
     trainingQuake:     simulateTrainingQuake,
     quakeAmendment:    simulateQuakeAmendment,
     quakeReportSequence: simulateQuakeReportSequence,
@@ -940,6 +941,7 @@ export function App() {
     borrowFromTsunami: isDmdss ? simulateHypocenterFromTsunami : undefined,
     unreceivedQuake:   simulateUnreceivedQuake,
     maxScaleOrAboveQuake: simulateMaxScaleOrAboveQuake,
+    areaUnreceivedQuake: simulateAreaUnreceivedQuake,
     tsunamiGradeChange: simulateTsunamiGradeChange,
     tsunamiQuietReports: isDmdss ? simulateTsunamiQuietReports : undefined,
     tsunamiExpiry: isDmdss ? simulateTsunamiExpiry : undefined,
@@ -960,8 +962,8 @@ export function App() {
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWDeep, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
-    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateEstimatedIntensity,
-    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
+    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
+    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
   ])
   // IconNav の onTabChange。手動選択は必ず即時反映し、以後 TAB_HOLD_MS の間は自動切替に

@@ -83,6 +83,8 @@ function spokenTexts(): string[] {
  * 受信時の 1 回目が空振りするので、「最後の機会」が与えられたかどうかを回数で見分けられる。
  */
 const openEstimatedIntensitySpy = vi.fn(() => false)
+/** 長周期地震動の受信で画面を動かす呼び出し（取消では動かさないことを見る）。 */
+const lpgmScreenSpies = { setActiveTabNonRealtime: vi.fn(), selectQuake: vi.fn(), openLpgmFromQuake: vi.fn() }
 
 /**
  * 読み上げは Promise チェーンで繋がっているため、保留中のマイクロタスクを流し切る。
@@ -247,7 +249,7 @@ function makeEEW(over: { noAreas?: boolean; condition?: string; serial?: number 
   } as unknown as EEWAlert
 }
 
-function setup() {
+function setup(over: Partial<AppSettings> = {}) {
   const settings = { ...DEFAULTS,
     voicevoxEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
     soundEnabled: false, soundVolume: 1, notifyMinScale: -1,
@@ -256,6 +258,7 @@ function setup() {
     minDisplayScale: -1,
     // 解説情報の読み上げはこの設定で切れるため、優先度を見るテストでは明示的に有効にする
     nankaiCommentaryAlerts: true,
+    ...over,
   } as unknown as AppSettings
   // title API は多数のメソッドを持つため、未知のプロパティも関数として返す Proxy で代替する
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {
@@ -267,10 +270,10 @@ function setup() {
     tsunamisRef: { current: [] as JMATsunami[] },
     kyoshinDetectedRef: { current: false },
     defaultTabRef: { current: 'earthquake' },
-    setActiveTabRealtimeForKyoshin: vi.fn(), setActiveTabNonRealtime: vi.fn(),
+    setActiveTabRealtimeForKyoshin: vi.fn(), setActiveTabNonRealtime: lpgmScreenSpies.setActiveTabNonRealtime,
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true), quakeSpeakingCard: null, expandPanelForSpecialInfo: vi.fn(), revertToDefaultTab: vi.fn(),
-    selectQuake: vi.fn(), openLpgmFromQuake: vi.fn(), openEstimatedIntensity: openEstimatedIntensitySpy, closeDistributionOnQuakeReport: vi.fn(),
+    selectQuake: lpgmScreenSpies.selectQuake, openLpgmFromQuake: lpgmScreenSpies.openLpgmFromQuake, openEstimatedIntensity: openEstimatedIntensitySpy, closeDistributionOnQuakeReport: vi.fn(),
   }))
   // `result.current` は呼ぶたびに引き直す（控えると最初のレンダーの関数に固定される）
   return (event: Parameters<typeof result.current.handleLiveEvent>[0]) => { act(() => { result.current.handleLiveEvent(event) }) }
@@ -295,6 +298,7 @@ beforeEach(() => {
   speeches.length = 0
   speakMock.mockClear()
   openEstimatedIntensitySpy.mockClear()
+  for (const spy of Object.values(lpgmScreenSpies)) spy.mockClear()
   // 持ち越すと、次のテストが「ずっと誰かが鳴っている」世界で走って待ちの上限が効かなくなる
   mockSpeaking = false
 })
@@ -356,6 +360,107 @@ describe('非 EEW の読み上げの優先度', () => {
     await settle()
     expect(spokenTexts()).toHaveLength(2)
     expect(spokenTexts()[1]).toContain('長周期')
+  })
+
+  // 正: 長周期地震動の取消は、取り消された事実と理由を読むだけ。音を鳴らさず、タブも動かさず、
+  // 一覧も開かない（2026-10-14 ユーザー選択「読み上げる・音は鳴らさない」。一覧ごと消えるので
+  // 見せる先も無い）。
+  it('長周期地震動の取消は、音もタブ移動も無く読み上げだけ', async () => {
+    const { playAlertSound } = await import('../utils/alertSound')
+    vi.mocked(playAlertSound).mockClear()
+    const handle = setup({ soundEnabled: true })
+    handle({
+      kind: 'lpgm',
+      data: {
+        id: 'lpgm-1-cancel', eventId: 'lpgm-1', cancelled: true, time: '2026-01-01T12:01:00Z',
+        originTime: '2026-01-01T12:00:00Z', maxClass: 0,
+        cancelText: 'システム障害のため取り消します。',
+      },
+    } as never)
+    await settle()
+    expect(spokenTexts()).toEqual(['長周期地震動に関する観測情報は取り消されました。システム障害のため取り消します。'])
+    expect(playAlertSound).not.toHaveBeenCalled()
+    expect(lpgmScreenSpies.setActiveTabNonRealtime).not.toHaveBeenCalled()
+    expect(lpgmScreenSpies.selectQuake).not.toHaveBeenCalled()
+    expect(lpgmScreenSpies.openLpgmFromQuake).not.toHaveBeenCalled()
+  })
+
+  // 安全弁: 取消のあとに同じ地震の長周期が発表し直されたら、初出として読む（一覧は取消で空に
+  // なっているので、利用者には初めて出る長周期）。
+  it('取消のあとの再発表は「更新されました」と言わない', async () => {
+    const handle = setup()
+    const shown = {
+      kind: 'lpgm',
+      data: {
+        eventId: 'lpgm-1', cancelled: false, time: '2026-01-01T12:00:00Z',
+        areas: [{ pref: '石川県', name: '石川県能登', lpgmClass: 4 }],
+      },
+    } as never
+    handle(shown)
+    await settle()
+    handle({
+      kind: 'lpgm',
+      data: {
+        id: 'lpgm-1-cancel', eventId: 'lpgm-1', cancelled: true, time: '2026-01-01T12:01:00Z',
+        originTime: '2026-01-01T12:00:00Z', maxClass: 0,
+      },
+    } as never)
+    await settle()
+    handle(shown)
+    await settle()
+    const last = spokenTexts()[spokenTexts().length - 1]
+    expect(last).toContain('長周期地震動に関する観測情報。')
+    expect(last).not.toContain('更新されました')
+  })
+
+  // 対照: 取消でない長周期は音を鳴らし一覧を開く（取消の枝が発表まで呑み込んでいないこと）。
+  it('対照: 取消でない長周期地震動は音を鳴らし一覧を開く', async () => {
+    const { playAlertSound } = await import('../utils/alertSound')
+    vi.mocked(playAlertSound).mockClear()
+    const handle = setup({ soundEnabled: true })
+    handle({
+      kind: 'lpgm',
+      data: {
+        eventId: 'lpgm-1', cancelled: false, time: '2026-01-01T12:00:00Z',
+        areas: [{ pref: '石川県', name: '石川県能登', lpgmClass: 4 }],
+      },
+    } as never)
+    await settle()
+    expect(playAlertSound).toHaveBeenCalledWith('earthquake')
+    expect(lpgmScreenSpies.openLpgmFromQuake).toHaveBeenCalledWith('lpgm-1')
+  })
+
+  // 安全弁: 取消は発表と同じ主題で予約する。待っている発表の読み上げは、後から届いた取消に
+  // 取り下げられる（取り消された階級をそのあと読み上げない）。
+  it('取消は発表と同じ主題で予約し、待っている発表を取り下げる', async () => {
+    const handle = setup()
+    handle(makeQuake())
+    await settle()
+    expect(spokenTexts()).toHaveLength(1)
+    mockSpeaking = true
+    handle({
+      kind: 'lpgm',
+      data: {
+        eventId: 'lpgm-1', cancelled: false, time: '2026-01-01T12:00:00Z',
+        areas: [{ pref: '石川県', name: '石川県能登', lpgmClass: 4 }],
+      },
+    } as never)
+    handle({
+      kind: 'lpgm',
+      data: {
+        id: 'lpgm-1-cancel', eventId: 'lpgm-1', cancelled: true, time: '2026-01-01T12:01:00Z',
+        originTime: '2026-01-01T12:00:00Z', maxClass: 0,
+      },
+    } as never)
+    mockSpeaking = false
+    for (let i = 0; i < 6; i++) {
+      speeches.forEach((_, idx) => finishSpeech(idx))
+      await flush()
+      await advanceTimers(5000)
+      await flush()
+    }
+    expect(spokenTexts().some(t => t.includes('長周期地震動階級'))).toBe(false)
+    expect(spokenTexts().some(t => t.includes('取り消されました'))).toBe(true)
   })
 
   // 南海トラフ関連解説情報は最下位。臨時情報の発表期間中は毎日届くため、既存のどの層と同格に

@@ -4487,6 +4487,89 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     expect(loggedTelegrams().filter(t => t.kind === 'lpgm')).toHaveLength(0)
   })
 
+  // 正: 表示中の長周期地震動を消した取消は受け手へ渡す（読み上げで取り消されたことを伝える）。
+  // 渡さないと、画面の一覧とバッジが黙って消えるだけになる。
+  describe('長周期地震動の取消を受け手へ渡す条件', () => {
+    const cancelOf = (base: ReturnType<typeof lpgmData>) => ({
+      ...base, id: `${base.id}-cancel`, time: new Date(Date.parse(base.time) + 60_000).toISOString(),
+      maxClass: 0, cancelled: true,
+    })
+    const lpgmCalls = (fn: ReturnType<typeof vi.fn>) =>
+      fn.mock.calls.map(c => c[0] as LiveEvent).filter(e => e.kind === 'lpgm')
+
+    it('表示中の長周期を消した取消は受け手へ渡す', async () => {
+      vi.useFakeTimers()
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      const shown = lpgmData()
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: shown }) })
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) }) })
+
+      const calls = lpgmCalls(onLiveEvent)
+      expect(calls).toHaveLength(2)
+      expect(calls[1].kind === 'lpgm' && calls[1].data.cancelled).toBe(true)
+      expect(h.current.lpgmByEventId.has(shown.eventId)).toBe(false)
+    })
+
+    // 正: 表示へ反映される前（同じ処理の回）に届いた取消も、直前の報を消したと判定する。
+    // 状態は描き直しまで進まないので、状態だけを見ると「何も消していない」に化ける。
+    it('同じ回に届いた報と取消でも、取消を受け手へ渡す', async () => {
+      vi.useFakeTimers()
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      const shown = lpgmData()
+      act(() => {
+        sockets[0].onEvent?.({ kind: 'lpgm', data: shown })
+        sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) })
+      })
+
+      const calls = lpgmCalls(onLiveEvent)
+      expect(calls).toHaveLength(2)
+      expect(calls[1].kind === 'lpgm' && calls[1].data.cancelled).toBe(true)
+    })
+
+    // 対照: 消すものが無い取消は渡さない（画面に何も起きていないのに「取り消されました」と言わない）。
+    it('表示に無い長周期の取消は受け手へ渡さない', async () => {
+      vi.useFakeTimers()
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(lpgmData()) }) })
+
+      expect(lpgmCalls(onLiveEvent)).toHaveLength(0)
+    })
+
+    // 対照: 階級 0 の長周期は画面に出ない（カードは階級 1 以上だけを描く）ので、それを消した取消は
+    // 「表示中を消した」に当たらず、受け手へ渡さない。
+    it('階級 0 の長周期を消した取消は受け手へ渡さない', async () => {
+      vi.useFakeTimers()
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      const shown = lpgmData({ maxClass: 0 })
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: shown }) })
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) }) })
+
+      expect(lpgmCalls(onLiveEvent)).toHaveLength(0)
+    })
+
+    // 安全弁: 同じ取消が 2 通届いても、2 通目は消すものが無いので渡さない（二重に読まない）。
+    it('同じ取消の 2 通目は受け手へ渡さない', async () => {
+      vi.useFakeTimers()
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      const shown = lpgmData()
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: shown }) })
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) }) })
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) }) })
+
+      expect(lpgmCalls(onLiveEvent).filter(e => e.kind === 'lpgm' && e.data.cancelled)).toHaveLength(1)
+    })
+  })
+
   // 履歴バッチ復元（起動時・「もっと見る」）は onLiveEvent を呼ばずに直接 state を書き換える
   // 独立した経路で、上のキュー・ライブ WebSocket 経路の穴を直しても波及しない
   // （→ `docs/spec/recording-interface-spec.md` §4）。

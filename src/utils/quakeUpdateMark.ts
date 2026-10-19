@@ -1,5 +1,5 @@
 import type { JMAQuake, JMAQuakeCity, EarthquakePoint, IssueType } from '../types/earthquake'
-import { cityKey } from './quakePoints'
+import { cityKey, higherIntensityEntry, type IntensityEntry } from './quakePoints'
 import { log } from './logger'
 import { UPDATE_MARK_TTL_MS, statusOf, type SnapshotValue, type UpdateStatus } from './updateMark'
 
@@ -165,6 +165,7 @@ export function quakeRowSnapshot(
   cities: readonly JMAQuakeCity[],
 ): Map<string, SnapshotValue> {
   const snap = new Map<string, SnapshotValue>()
+  const prefEntries = new Map<string, IntensityEntry>()
   for (const p of points) {
     // 未入電は下限の 45 が入っているので、階級だけで比べると観測値が届いた瞬間を
     // 取りこぼす（45 のまま）。**鍵には含め、順序には含めない** —— 階級が同じまま
@@ -179,10 +180,14 @@ export function quakeRowSnapshot(
     // 震度速報の段階で `st:` の記憶ができてしまい、**「観測点の段が初めて現れた報では印を
     // 付けない」歯止めが効かなくなる** —— 各地の震度で観測点が数千行いっぺんに光る。
     if (p.pref) {
-      // 県の行は配下の最大。**点を上書きせず、大きい方を残す。**
+      // 県の行は配下の最大。**点を上書きせず、行と同じ規則で大きい方を残す**（震度が同じなら
+      // 観測値を採る。→ `higherIntensityEntry`）。鍵には区域・観測点と同じく未入電の印を含める ——
+      // 含めないと、県の値が「5弱以上・未入電」から観測値の 5弱へ変わった報で県の行だけ印が付かない。
       const key = rowMarkKey.pref(p.pref)
-      const cur = snap.get(key)
-      if (cur === undefined || p.scale > (cur.rank ?? -1)) snap.set(key, { key: String(p.scale), rank: p.scale })
+      const cur = prefEntries.get(key)
+      const next = higherIntensityEntry(cur, { scale: p.scale, unreceived: !!p.unreceived })
+      prefEntries.set(key, next)
+      snap.set(key, { key: `${next.scale}${next.unreceived ? '!' : ''}`, rank: next.scale })
     }
     if (!p.pref && p.isArea) snap.set(rowMarkKey.area(p.addr), value)
     if (!p.isArea) snap.set(rowMarkKey.station(p.addr), value)

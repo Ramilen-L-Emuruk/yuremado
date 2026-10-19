@@ -619,8 +619,9 @@ export const TEST_QUAKE_CANCEL_DELAY_MS = 10_000
  *
  * - **取消は震度速報と同じ `eventId`・同じ種別で届く。** 取消が効くカードの判定
  *   （`quakeMerge.ts` の `isQuakeCancelTarget`）は種別まで見る
- * - **取消の本文（`Body/Text`）は持たせない。** 実電文がそうだった（画面には定型の
- *   「この地震情報は取り消されました」だけが出る）
+ * - **取消の本文（`Body/Text`）は実電文と同じ宣言の一文を持たせる**（「先ほどの、震度速報を
+ *   取り消します。」。docs/spec/quake-spec.md §8「取消しの理由は電文にしかない」）。カードの
+ *   取消の表示（開いた表示・畳んだ表示の両方）に出る。読み上げは宣言だけの本文を落とす
  * - **取消は震源も震度も持たない。** 形は `dmdataParser.ts` の取消の早期リターンと同じ
  * - **`id` は震度速報と同じ。** 震度速報（VXSE51）は報番号を持たず（`<Serial>` が空）、
  *   取消も同じなので、`id` の末尾が揃う（実電文で確かめた）
@@ -638,6 +639,7 @@ export function createTestQuakeCancel(): [JMAQuake, JMAQuake] {
     telegramKey: cancelTime,
     time: cancelTime,
     cancelled: true,
+    cancelText: '先ほどの、震度速報を取り消します。',
     issue: { source: prompt.issue.source, time: cancelTime, type: '震度速報', correct: 'なし' },
     earthquake: { time: '', hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: 0 }, maxScale: -1, domesticTsunami: '不明' },
     points: [],
@@ -749,6 +751,43 @@ export function createTestMaxScaleOrAboveQuake(): JMAQuake {
   }
 }
 
+/** 区域まるごと未入電のテストで組み替える区域（日向灘 2022-01-22 の報で、市町村 7・観測点 12）。 */
+export const TEST_AREA_UNRECEIVED_AREA = '宮崎県北部山沿い'
+
+/**
+ * 区域まるごと「震度5弱以上未入電」の地震情報のテストデータ（日向灘の未入電テストの組み替え）。
+ *
+ * **気象庁の資料が定める形で、実電文の標本は無い。** 区域の配下の市町村がすべて未入電のとき、
+ * 気象庁は区域の `MaxInt` を載せない（電文解説資料 Ⅱ.33 2-1-3-3-1。都道府県も同じ 2-1-3-1）。
+ * パーサーはそのとき未入電の区域点（`scale: 45, unreceived: true`）を積む
+ * （→ `dmdataParser.ts`。docs/spec/quake-spec.md §4「震度5弱以上未入電」）。控えの実電文では
+ * 区域・都道府県の `MaxInt` の欠落は 0 件で、市町村の階層でだけ同じ規則の形が 40 件出ている。
+ *
+ * **ここで作るのはパーサーを通した後の形。** `TEST_AREA_UNRECEIVED_AREA` の区域について、
+ * 配下の市町村をすべて値そのものが未入電（`unreceived`）に、観測点をすべて未入電に、
+ * 区域点を未入電にする。都道府県点は他の区域で観測値があるので実電文のまま残す。
+ *
+ * **DMDSS 版のみ。** 未入電は DMDATA 経路でしか配信されない。
+ */
+export function createTestAreaUnreceivedQuake(): JMAQuake {
+  const base = createTestUnreceivedQuake()
+  const area = TEST_AREA_UNRECEIVED_AREA
+  const unreceived = { scale: 45 as const, unreceived: true }
+  return {
+    ...base,
+    points: base.points.map(p => {
+      if (p.isArea && !p.pref && p.addr === area) return { ...p, ...unreceived }
+      if (!p.isArea && p.area === area) return { ...p, ...unreceived }
+      return p
+    }),
+    cities: (base.cities ?? []).map(c => {
+      if (c.area !== area) return c
+      const { hasUnreceived: _dropped, ...rest } = c
+      return { ...rest, ...unreceived }
+    }),
+  }
+}
+
 // 本震と同一 eventId（14桁タイムスタンプ）を持つ長周期地震動観測情報（VXSE62, 2024/1/1
 // 16:23発表）の実データ。DMDATA archive の確定報を**そのままパーサーへ通して**作ってある
 // （最大階級4・観測点198・区域72・都道府県31）。
@@ -779,6 +818,34 @@ export function createTestLpgm(eventId: string): JMALpgm {
     // （パーサーは名前の `＊` を外してこの印を立て、表示側が `withNonJmaMark` で戻す）、
     // 表示経路を通すためだけに立てている。
     points: (notoHonshinLpgm.points ?? []).map((p, i) => i === 0 ? { ...p, nonJma: true } : p),
+  }
+}
+
+/**
+ * 長周期地震動に関する観測情報の取消。
+ *
+ * **取消電文は観測点・区域・都道府県を持たない**（パーサーの取消の早期リターンと同じ形。
+ * 階級は 0）。発表報を使い回して `cancelled` だけ立てると、実電文に存在しない「階級の表を持つ
+ * 取消」ができる。
+ *
+ * **理由（`Body/Text`）の文は推した形。** 長周期の取消は実配信の控えにも、気象庁の公式サンプル
+ * 電文（2026-09-17 版・取消 21 本）にも 1 通も無い。サンプルの取消はどれも
+ * 「先ほどの、＜情報名＞を取り消します。」の形なので、それに倣った。この主語は読み上げの
+ * 「宣言だけの本文」の集合（`ttsText.ts` の `CANCEL_DECLARATION_SUBJECTS`）に無いので、
+ * 定型文に続けてこの文も読む（標本が無い種別は読む側へ倒す規約）。
+ *
+ * @param base 取り消す対象の発表報（`eventId` で照合するので同じ地震のものを渡す）
+ */
+export function createTestLpgmRetraction(base: JMALpgm): JMALpgm {
+  const now = serverDate().toISOString()
+  return {
+    id: `${base.id}-cancel`,
+    eventId: base.eventId,
+    time: now,
+    originTime: base.originTime,
+    maxClass: 0,
+    cancelled: true,
+    cancelText: '先ほどの、長周期地震動に関する観測情報を取り消します。',
   }
 }
 

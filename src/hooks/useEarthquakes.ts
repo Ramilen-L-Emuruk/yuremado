@@ -86,6 +86,10 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
 /**
  * lpgm が `onLiveEvent`（音・読み上げ・タブ移動）の対象になるか。
  *
+ * - **発表**は階級 1 以上だけ（階級 0 は音読み上げの対象外と決めている）
+ * - **取消**は表示中の長周期を実際に消したときだけ（`cancelHitShown`。→ `noteLiveLpgm`）。
+ *   受け手は音もタブ移動も起こさず読み上げだけにする（→ `useLiveEventHandler.ts` の lpgm の枝）
+ *
  * **他の 5 種別（nankai 等）と違い、これは「反映されたか」と一致しない。** あちらは
  * `applyXxx` が期限切れ等で棄却すると `lpgmByEventId` 相当の state 自体を書き換えないが、
  * lpgm は取消なら削除・それ以外なら必ず追加する形で **`lpgmByEventId` を常に書き換える**
@@ -93,8 +97,8 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
  * ので、記録の理由はどちらも `notApplied`（＝反映されなかった）ではなく
  * `notDispatched`（＝音読み上げの対象外と決めている）にする（3 巡目レビューで指摘）。
  */
-function lpgmNotifiable(lpgm: JMALpgm): boolean {
-  return !lpgm.cancelled && lpgm.maxClass >= 1
+function lpgmNotifiable(lpgm: JMALpgm, cancelHitShown: boolean): boolean {
+  return lpgm.cancelled ? cancelHitShown : lpgm.maxClass >= 1
 }
 
 // 初回取得件数（設定の最大選択値に合わせる。standard 版の経路だけが使う —— DMDSS 版は日数で
@@ -774,6 +778,8 @@ export function useEarthquakes(
   // 南海トラフ臨時情報の取消テストで、発表から取消までを待つタイマー
   const testNankaiRetractionTimerRef = useRef<number | undefined>(undefined)
   const testEarthquakeCountRetractionTimerRef = useRef<number | undefined>(undefined)
+  // 長周期地震動の取消テストで、発表から取消までを待つタイマー（`simulateLpgmRetraction`）
+  const testLpgmRetractionTimerRef = useRef<number | undefined>(undefined)
   const testTsunamiGradeChangeTimerRef = useRef<number | undefined>(undefined)
   // 「警報 → 予報（失効時刻つき）」テストが発表から降格報までを待つ待ち（`simulateTsunamiExpiry`）。
   const testTsunamiExpiryTimerRef = useRef<number | undefined>(undefined)
@@ -818,6 +824,10 @@ export function useEarthquakes(
     if (testEarthquakeCountRetractionTimerRef.current !== undefined) {
       window.clearTimeout(testEarthquakeCountRetractionTimerRef.current)
       testEarthquakeCountRetractionTimerRef.current = undefined
+    }
+    if (testLpgmRetractionTimerRef.current !== undefined) {
+      window.clearTimeout(testLpgmRetractionTimerRef.current)
+      testLpgmRetractionTimerRef.current = undefined
     }
     if (testTsunamiGradeChangeTimerRef.current !== undefined) {
       window.clearTimeout(testTsunamiGradeChangeTimerRef.current)
@@ -867,6 +877,31 @@ export function useEarthquakes(
    */
   const pendingQuakeCardsRef = useRef<JMAQuake[]>([])
   pendingQuakeCardsRef.current = []
+  /**
+   * **同じティックで当てた長周期地震動の写し**（地震ごと。`null` は取消で消したこと）。
+   *
+   * 取消が表示中の長周期を消したかで読み上げを決める（→ `lpgmCancelHitsShown`）が、
+   * `stateRef` はレンダー時にしか進まない。発表と取消が同じティックで捌かれると、取消は
+   * 発表を見られず「表示していない地震への取消」と誤って黙る。理由と捨て方は
+   * `pendingQuakeCardsRef` と同じ。
+   */
+  const pendingLpgmRef = useRef<Map<string, JMALpgm | null>>(new Map())
+  pendingLpgmRef.current = new Map()
+  /**
+   * ライブの長周期 1 通を写しへ当て、**取消なら表示中の長周期を実際に消したか**を返す
+   * （発表なら常に `false`）。消した判定は `applyLiveLpgm` と同じ規則（取消より前に発表された
+   * 報だけを消す）。地震回数の取消（`applyEarthquakeCount`）と同じく、表示していない地震への
+   * 取消は読み上げない（2026-10-15 ユーザー選択「表示中を消した時だけ（推奨）」）。
+   */
+  const noteLiveLpgm = (lpgm: JMALpgm): boolean => {
+    const pending = pendingLpgmRef.current
+    const shown = pending.has(lpgm.eventId) ? pending.get(lpgm.eventId) ?? undefined : stateRef.current.lpgmByEventId.get(lpgm.eventId)
+    const next = applyLiveLpgm(shown ? new Map([[lpgm.eventId, shown]]) : new Map(), lpgm).get(lpgm.eventId)
+    pending.set(lpgm.eventId, next ?? null)
+    // 階級 0 の長周期は一覧もバッジも出さない（`EarthquakeCard` は `maxClass >= 1` だけを描く）ので、
+    // それを消した取消は「表示中を消した」に当たらない
+    return lpgm.cancelled && shown !== undefined && shown.maxClass >= 1 && next === undefined
+  }
   // 受理した EEW の報番号（キーは `eewEventKey`）。古い報の判定に使う。
   //
   // **`stateRef` では判定できない。** あれはレンダー時にしか進まないが、キューのディスパッチャは
@@ -2094,6 +2129,7 @@ export function useEarthquakes(
             isSilentRef.current = false
             continue
           }
+          const lpgmCancelHitShown = noteLiveLpgm(lpgm)
           setState(prev => {
             const next = applyLiveLpgm(prev.lpgmByEventId, lpgm)
             // 長周期の一覧にも、震度一覧と同じ印を付ける。取消では付けない（一覧ごと消えるため）。
@@ -2133,7 +2169,7 @@ export function useEarthquakes(
           // **理由は `notApplied` ではなく `notDispatched`。** `lpgmNotifiable` が偽でも
           // `lpgmByEventId` は必ず書き換わるので、「反映されなかった」を意味する `notApplied`
           // を使うと嘘になる（他の 5 種別は棄却＝ state 不変が一致するが lpgm だけ一致しない）。
-          const lpgmCanNotify = lpgmNotifiable(lpgm)
+          const lpgmCanNotify = lpgmNotifiable(lpgm, lpgmCancelHitShown)
           if (!silent && lpgmCanNotify) {
             onLiveEventRef.current?.({ kind: 'lpgm', data: lpgm })
           } else {
@@ -2423,9 +2459,11 @@ export function useEarthquakes(
             .map(p => p.data)
           for (const lpgm of lpgmEvents) {
             // **キュー経路（`lpgmNotifiable`）と同じ判定で記録する。** ここも `onLiveEvent` を
-            // 呼ばないサイレント経路なので、通知しうる中身（取消でなく階級1以上）でも
+            // 呼ばないサイレント経路なので、通知しうる中身（階級1以上の発表）でも
             // `silentReplayInit`、それ以外は `notDispatched`（→ `lpgmNotifiable` のコメント）。
-            recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmNotifiable(lpgm) ? 'silentReplayInit' : 'notDispatched')
+            // 取消は表示中の長周期を消したときだけ通知しうるが、履歴の畳み込みは画面と突き合わせないので
+            // 消したかは決まらない。`notDispatched` の側へ置く（従来どおり）。
+            recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmNotifiable(lpgm, false) ? 'silentReplayInit' : 'notDispatched')
           }
           if (cancelled) return
           // 地震ごとの 1 通へ畳む。**取消を台帳へ積み、その地震の取消より前の報は採らない**
@@ -2621,12 +2659,13 @@ export function useEarthquakes(
             recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, 'notApplied')
             return
           }
+          const lpgmCancelHitShown = noteLiveLpgm(lpgm)
           setState(prev => ({ ...prev, lpgmByEventId: applyLiveLpgm(prev.lpgmByEventId, lpgm) }))
-          if (lpgmNotifiable(lpgm)) {
+          if (lpgmNotifiable(lpgm, lpgmCancelHitShown)) {
             onLiveEventRef.current?.({ kind: 'lpgm', data: lpgm })
           } else {
             // 録画ツール向けの記録。この経路は常にライブ（silent の概念を持たない）なので
-            // `notDispatched` 一択——音読み上げの対象外と決めている（取消・階級 0）。
+            // `notDispatched` 一択——音読み上げの対象外と決めている（表示していない地震への取消・階級 0）。
             // キュー経路（`handleEvent`）の同じ判定と揃える（3巡目レビューで検出。ここだけ
             // else が無く記録が丸ごと抜けていた）。
             recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, 'notDispatched')
@@ -2982,7 +3021,8 @@ export function useEarthquakes(
         // に従い、届いた事実は記録する。quakeNotice だけは起動時と同じ理由で記録しない
         // （→ `applyQuakeNotice` のコメント・`docs/spec/recording-interface-spec.md` §4）。
         for (const lpgm of lpgmEvents) {
-          recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmNotifiable(lpgm) ? 'silentReplayInit' : 'notDispatched')
+          // 取消の扱いは起動時と同じ（消したかは決まらないので `notDispatched`）
+          recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmNotifiable(lpgm, false) ? 'silentReplayInit' : 'notDispatched')
         }
         for (const e of history.extras) {
           const p = e.payload
@@ -3384,6 +3424,20 @@ export function useEarthquakes(
   }, [handleEvent])
 
   /**
+   * 区域まるごと「震度5弱以上未入電」の地震情報のテスト（日向灘の未入電テストの組み替え）。
+   *
+   * **実電文の標本が無い形を出す唯一の入口。** 配下の市町村がすべて未入電のとき、気象庁は区域の
+   * 最大震度を載せない（→ `createTestAreaUnreceivedQuake`）。その区域が一覧・読み上げから
+   * 消えないことを実機で確かめる。
+   *
+   * **DMDSS 版のみ。** 未入電は DMDATA 経路でしか配信されない。
+   */
+  const simulateAreaUnreceivedQuake = useCallback(async () => {
+    const { createTestAreaUnreceivedQuake } = await loadTestData()
+    handleEvent(createTestAreaUnreceivedQuake())
+  }, [handleEvent])
+
+  /**
    * 推計震度分布図のテスト。**地震情報を先に出し、少し置いてから分布を流す。**
    *
    * 実運用では地震から数分後に届くもので、そのころ地震カードは既に画面にある。
@@ -3639,6 +3693,35 @@ export function useEarthquakes(
     }, TEST_AUTO_DISMISS_MS)
   }, [])
 
+  /**
+   * 長周期地震動の取消テスト。地震テストと同じ地震情報と長周期地震動を流し、
+   * `TEST_AUTO_DISMISS_MS` 後にその長周期だけを取り消す（DMDSS 版のみ。長周期は DMDATA 経由でしか
+   * 配信されない）。
+   *
+   * **取消の理由が届く先は読み上げだけ** —— 取消で長周期の一覧・バッジごと消える。ボタンが無いと、
+   * 取消の文が一度も声にならないまま気づけない。
+   *
+   * 発表も取消も受信と同じ経路（イベントキュー）へ積む。取消が表示中の長周期を消したかの判定
+   * （`noteLiveLpgm`）と、読み上げへ渡すかの判定（`lpgmNotifiable`）をライブと同じ形で通すため。
+   */
+  const simulateLpgmRetraction = useCallback(async () => {
+    if (!isDmdss) return
+    const { createTestEarthquake, createTestLpgm, createTestLpgmRetraction, TEST_AUTO_DISMISS_MS } = await loadTestData()
+    if (testLpgmRetractionTimerRef.current !== undefined) {
+      window.clearTimeout(testLpgmRetractionTimerRef.current)
+    }
+    const quake = createTestEarthquake(true)
+    handleEvent(quake)
+    const eventId = extractQuakeEventId(quake)
+    if (!eventId) return
+    const lpgm = createTestLpgm(eventId)
+    eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'lpgm', data: lpgm } })
+    testLpgmRetractionTimerRef.current = window.setTimeout(() => {
+      testLpgmRetractionTimerRef.current = undefined
+      eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'lpgm', data: createTestLpgmRetraction(lpgm) } })
+    }, TEST_AUTO_DISMISS_MS)
+  }, [handleEvent])
+
   const resetState = useCallback(() => {
     // 台帳もここで空にする。掃除の `useEffect` に任せると、リセットから次のコミットまでの間に
     // 同じ eventId の報が届いたとき、消えたはずの報番号と比べて誤って捨てうる。
@@ -3800,8 +3883,8 @@ export function useEarthquakes(
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWDeep, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
-    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateEstimatedIntensity,
-    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
+    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
+    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence,
     simulateQuakeCancel,
     simulateQuakePartialCancel,
