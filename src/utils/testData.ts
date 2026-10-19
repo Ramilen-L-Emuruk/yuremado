@@ -1,4 +1,4 @@
-import type { JMAQuake, JMATsunami, EEWAlert, EEWForecastChange, JMANankai, JMANankaiCommentary, JMAKohatsu, EarthquakePoint, IntensityScale, JMALpgm, JMAQuakeCity, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAEstimatedIntensityGrade, EEWRegion, TsunamiArea, TsunamiGrade, TsunamiHeadType, TelegramOperationStatus } from '../types/earthquake'
+import type { JMAQuake, JMATsunami, EEWAlert, EEWForecastChange, JMANankai, JMANankaiCommentary, JMAKohatsu, EarthquakePoint, IntensityScale, JMALpgm, JMAQuakeCity, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAEstimatedIntensityGrade, EEWRegion, TsunamiArea, TsunamiGrade, TelegramOperationStatus } from '../types/earthquake'
 import { serverNow, serverDate } from './clock'
 import { extractQuakeEventIdFromId } from './quakeMerge'
 import { log } from './logger'
@@ -1790,6 +1790,15 @@ function tsunamiOriginDate(now: Date): Date {
 // @param withDmdssFields DMDSS 版のとき true
 /** 震源を津波から借りるテストの、電文と電文のあいだ（秒）。実電文の 1 分間隔を詰めたもの。 */
 const TEST_HYPOCENTER_BORROW_STEP_SEC = 4
+/**
+ * 震源を津波から借りるテストで、規模が更新される津波警報を流すまでの間（秒。1 通目の震度速報から）。
+ *
+ * **前の津波の読み上げが終わってから届くように空ける**（実電文では 16:12 → 16:22 の 10 分）。
+ * 読み上げ文は電文が届いた時点で組み、既読は声になった後で積むので、前の津波の文を言い終える前に
+ * 届くと「まだ声にしていない」扱いになり、変わった値だけの言い直しではなく震源を通しで語る。
+ * 実測では 1 通目の震度速報と 1 通目の津波の読み上げが終わるまで約 14 秒かかった。
+ */
+const TEST_HYPOCENTER_BORROW_UPDATE_SEC = 30
 
 /**
  * 震源を津波電文から借りる場面のテスト（2024 年能登半島地震の本震と同じ順序）。
@@ -1802,7 +1811,8 @@ const TEST_HYPOCENTER_BORROW_STEP_SEC = 4
  *   1. 震度速報（最大震度6強・震源なし）
  *   2. 津波警報（Ｍ７．４。**ここで震度速報のカードに震源が入る**）
  *   3. 震度速報の続報（最大震度7・震源はやはり無い＝借りたまま保つことを見る）
- *   4. 津波の続報（Ｍ７．６へ更新。実電文では 16:22 で、地震情報の更新 16:24 より 2 分早い）
+ *   4. 津波警報の続報（石川県能登を大津波警報へ引き上げ、同じ報でＭ７．６へ更新。実電文では 16:22 で、
+ *      地震情報の更新 16:24 より 2 分早い）
  *
  * **DMDSS 版のみ。** P2PQuake は津波電文の原因地震を配信しないので、standard 版では
  * 借りる相手が居ない（ボタン自体を DMDSS 版に限っている）。
@@ -1842,7 +1852,7 @@ export function createTestHypocenterFromTsunami(): (JMAQuake | JMATsunami)[] {
     }
   }
 
-  const tsunami = (step: number, magnitude: number, infoName: string, headType: TsunamiHeadType): JMATsunami => {
+  const tsunami = (step: number, magnitude: number, notoGrade: 'Warning' | 'MajorWarning'): JMATsunami => {
     const time = at(step)
     return {
       kind: 'tsunami',
@@ -1850,13 +1860,15 @@ export function createTestHypocenterFromTsunami(): (JMAQuake | JMATsunami)[] {
       // **地震側と同じ `eventId` にする。** 借りる条件はこの一致だけで、食い違えば借りない
       // （→ `utils/borrowFromTsunami.ts`）。揃えないとテストが何も確かめない。
       eventId,
-      headType,
+      // 実電文の名乗りは `Head/Title`。VTSE41 は「津波警報・津波注意報・津波予報」。
+      headType: 'VTSE41',
       time,
       cancelled: false,
-      infoName,
+      infoName: '津波警報・津波注意報・津波予報',
       issue: { source: 'テスト', time, type: 'Focus' },
+      // 16:12 の実電文では 3 区域とも津波警報で、16:22 の報で石川県能登だけが大津波警報へ上がった。
       areas: [
-        { grade: 'MajorWarning', immediate: true, name: '石川県能登' },
+        { grade: notoGrade, immediate: true, name: '石川県能登' },
         { grade: 'Warning', immediate: false, name: '新潟県上中下越' },
         { grade: 'Warning', immediate: false, name: '富山県' },
       ],
@@ -1877,11 +1889,11 @@ export function createTestHypocenterFromTsunami(): (JMAQuake | JMATsunami)[] {
 
   return [
     prompt(0, firstPoints),
-    // 実電文の名乗りは `Head/Title`。VTSE41 は「津波警報・津波注意報・津波予報」。
-    tsunami(1, 7.4, '津波警報・津波注意報・津波予報', 'VTSE41'),
+    tsunami(1, 7.4, 'Warning'),
     prompt(2, areaPoints),
-    // 続報は VTSE51「津波情報」。規模だけが上がる。
-    tsunami(3, 7.6, '津波情報', 'VTSE51'),
+    // 16:22 の実電文と同じく、大津波警報への引き上げと規模の更新（Ｍ７．４ → Ｍ７．６）が同じ報に載る。
+    // 読み上げは震源を通しで繰り返さず、変わった規模だけを言い直す（→ `sourceHypocenterChangedSegments`）。
+    tsunami(TEST_HYPOCENTER_BORROW_UPDATE_SEC / TEST_HYPOCENTER_BORROW_STEP_SEC, 7.6, 'MajorWarning'),
   ]
 }
 

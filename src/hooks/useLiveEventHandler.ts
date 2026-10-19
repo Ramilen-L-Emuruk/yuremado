@@ -654,7 +654,11 @@ function tsunamiQuakeSpokenFor(
     const key = card ? `quake:${quakeEventKey(card)}`
       : link.eventId ? `quake:${link.eventId}`
       : `tsunami-source:${sourceEarthquakeTime(link.source) ?? ''}|${link.source.hypocenterName}`
-    return { source: link.source, spoken: quakeSpokenStateFor(states, key), subject: card ? quakeEventKey(card) : undefined }
+    // 地震情報のほうが新しいかは発表時刻で比べる（読めない時刻は「新しくない」へ倒し、言い直しを止めない）。
+    const tsunamiAt = Date.parse(tsunami.issue.time || tsunami.time)
+    const quakeAt = card ? Date.parse(card.issue.time || card.time) : NaN
+    const quakeReportedLater = Number.isFinite(tsunamiAt) && Number.isFinite(quakeAt) && quakeAt > tsunamiAt
+    return { source: link.source, spoken: quakeSpokenStateFor(states, key), subject: card ? quakeEventKey(card) : undefined, quakeReportedLater }
   })
   const firstCard = cardOf(ids[0])
   const expiry = sources[0]?.spoken
