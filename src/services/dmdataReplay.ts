@@ -1,7 +1,7 @@
 import { parseEarthquakeFromXml, parseTsunamiFromXml } from './dmdataParser'
 import { parseTar } from '../utils/tarParser'
 import type { JMAQuake, EEWAlert, JMATsunami } from '../types/earthquake'
-import { selectActiveEews, computeEverSpecialWarningEventIds, eewEventKey } from '../utils/eew'
+import { selectActiveEews, computeEverSpecialWarningEventIds, computeFirstIssueTimes, eewEventKey } from '../utils/eew'
 import { gunzip } from '../utils/gzip'
 import { createArchiveBodyCache } from '../utils/archiveBodyCache'
 import { readArchiveBody, writeArchiveBody } from '../utils/archiveBodyDb'
@@ -1578,16 +1578,27 @@ export function filterPreWindowEvents(
   // ライブ受信中と同じ精度で判定できる（起動時復元 `fetchDmdataActiveEews` と違い、
   // 最新報 1 通に制約されない）。
   const everSpecialByEvent = computeEverSpecialWarningEventIds(eewReports.map(r => r.eew))
+  // 第 1 報の発表時刻も同じ理由で畳む前に求める。誤報取消の読み上げが「〇時〇分に発表された」と言う
+  // 時刻で、畳んだ 1 報の時刻を使うと窓の直前の報の時刻を言ってしまう（→ `EEWAlert.firstIssueTime`）。
+  const firstIssueByEvent = computeFirstIssueTimes(eewReports.map(r => r.eew))
   for (const entry of selectActiveEews(eewReports, targetTime, 'replay')) {
     const ev = entry.payload.kind === 'event' ? entry.payload.event : undefined
-    if (ev?.kind === 'eew' && everSpecialByEvent.has(eewEventKey(ev as EEWAlert))) {
-      result.push({
-        ...entry,
-        payload: { kind: 'event', event: { ...ev, everSpecialWarning: true } },
-      })
-    } else {
-      result.push(entry)
-    }
+    if (ev?.kind !== 'eew') { result.push(entry); continue }
+    const key = eewEventKey(ev as EEWAlert)
+    const firstIssueTime = firstIssueByEvent.get(key)
+    const everSpecial = everSpecialByEvent.has(key)
+    if (!everSpecial && firstIssueTime === undefined) { result.push(entry); continue }
+    result.push({
+      ...entry,
+      payload: {
+        kind: 'event',
+        event: {
+          ...ev,
+          ...(everSpecial && { everSpecialWarning: true }),
+          ...(firstIssueTime !== undefined && { firstIssueTime }),
+        },
+      },
+    })
   }
 
   return result

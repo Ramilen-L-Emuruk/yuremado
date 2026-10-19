@@ -3256,6 +3256,53 @@ describe('本体は目録の filename で引く', () => {
  * （API が電文ごとに振る値）では畳めなかった。同一性の判定はライブ経路と同じ
  * `sameQuakeEntry`（→ `utils/quakeMerge.ts` の `createQuakeFoldKeys`）へ寄せてある。
  */
+// 窓の手前の緊急地震速報は最新 1 報へ畳まれる。誤報取消の読み上げが第 1 報の時刻を言えるよう、
+// 畳む前の全報から求めた時刻を `firstIssueTime` で載せる（→ `EEWAlert.firstIssueTime`）。
+describe('filterPreWindowEvents の EEW（第 1 報の時刻）', () => {
+  const report = (serial: number, time: string, eventId = 'EEW1'): ReplayEntry => ({
+    replayTime: new Date(time),
+    payload: {
+      kind: 'event',
+      event: {
+        kind: 'eew', origin: 'dmdata', id: `dmdata-eew-${eventId}-${serial}`, time, test: false,
+        earthquake: {
+          originTime: '2026-01-01T12:39:50+09:00', arrivalTime: '2026-01-01T12:39:50+09:00', condition: '',
+          hypocenter: { name: 'テスト震源', latitude: 35, longitude: 135, depth: 10, magnitude: 5.0 },
+        },
+        severity: 'Warning', cancelled: false, isFinal: false,
+        issue: { eventId, serial: String(serial), time },
+      } as EEWAlert,
+    },
+  })
+  const kept = (entries: ReplayEntry[]) =>
+    filterPreWindowEvents(entries, new Date('2026-01-01T12:40:40+09:00'))
+      .map(e => (e.payload.kind === 'event' ? e.payload.event : null))
+      .filter((ev): ev is EEWAlert => ev?.kind === 'eew')
+
+  // 正: 畳んで残るのは最新の報だが、第 1 報の時刻を持って渡る
+  it('最新 1 報へ畳んでも第 1 報の時刻を載せる', () => {
+    const out = kept([
+      report(1, '2026-01-01T12:40:00+09:00'),
+      report(2, '2026-01-01T12:40:10+09:00'),
+      report(3, '2026-01-01T12:40:30+09:00'),
+    ])
+    expect(out).toHaveLength(1)
+    expect(out[0].issue?.serial).toBe('3')
+    expect(out[0].firstIssueTime).toBe('2026-01-01T12:40:00+09:00')
+  })
+
+  // 対照: 地震ごとに分けて求める。別の地震の早い時刻を借りない
+  it('別の地震の第 1 報の時刻を借りない', () => {
+    const out = kept([
+      report(1, '2026-01-01T12:40:00+09:00', 'A'),
+      report(1, '2026-01-01T12:40:20+09:00', 'B'),
+      report(2, '2026-01-01T12:40:30+09:00', 'B'),
+    ])
+    const b = out.find(e => e.issue?.eventId === 'B')
+    expect(b?.firstIssueTime).toBe('2026-01-01T12:40:20+09:00')
+  })
+})
+
 describe('filterPreWindowEvents の畳み込み（地震）', () => {
   const AREA = { pref: '茨城県', addr: '茨城県南部', isArea: true, scale: 40 }
   const TARGET = '2026-09-29T12:00:00+09:00'

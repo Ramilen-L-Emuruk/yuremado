@@ -11,7 +11,7 @@ import {
   eewMaxScaleInfo, isForecastScaleHigher, isForecastLpgmHigher, eewNoForecastReason, computeSingleEEWLevel, computeDisplayEEWLevel, canPresentLpgmClass,
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
   EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo,
-  isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, eewCancelNotificationBody,
+  isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewFirstIssueTime, eewCancelNotificationBody,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
 } from '../utils/eew'
 import { hasKnownEpicenter } from '../utils/geo'
@@ -1491,6 +1491,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   const eewPhase2DoneRef = useRef<Set<string>>(new Set())
   // 予約の解決時にテキストを生成するため、eventId ごとに最新イベントを保持する（変化なし続報も含め常に最新で上書き）
   const eewTtsEventsRef = useRef<Map<string, EEWAlert>>(new Map())
+  // 地震（eventId）ごとに、手元で最初に受けた報の発表時刻。**誤報取消の読み上げ
+  // （「〇時〇分に発表された緊急地震速報は取り消されました」）にだけ使う** —— 取消電文の
+  // `issue.time` は取消を発表した時刻なので、そのまま読むと取り消された速報の時刻を言い違える。
+  // 続報では上書きしない（`eewTtsEventsRef` が最新の報で上書きされるのとは逆）。
+  // リプレイの初期状態は報を最新 1 報へ畳んで渡すので、畳む前の第 1 報の時刻を `firstIssueTime` で受け取る。
+  // 起動時の復元は配信元が最新 1 報しか返さないので、その報の時刻になる（第 1 報とは限らない）。
+  const eewFirstIssueTimeRef = useRef<Map<string, string>>(new Map())
   // 誤報取消（訂正）を受けた eventId。**`shouldStillPlay` で鳴っているものを落としてよいのは
   // これだけ**（もう 1 つの打ち切りは予報から警報への言い直しだが、あちらは新しい発話を
   // 割り込ませる形で止める。`eewPhase1ProgressRef` を参照）。
@@ -1711,6 +1718,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     if (pendingMaxTimer) { clearTimeout(pendingMaxTimer); eewTtsMaxTimersRef.current.delete(key) }
     unsettleEewNoForecast(key)
     eewTtsEventsRef.current.delete(key)
+    eewFirstIssueTimeRef.current.delete(key)
     eewPhase1TokensRef.current.delete(key)
     eewPhase2TokensRef.current.delete(key)
     eewPhase2DoneRef.current.delete(key)
@@ -3448,12 +3456,24 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               // 後始末で「もう語ることは無い」と判定され、取消の読み上げを待たずに
               // 「いま声が語っているカード」の印が落ちる。
               eewCancelSpeechRef.current.add(key)
+              // **第 1 報の時刻はいま読み取っておく。** 文は発話の直前に組まれるが、そのときには
+              // 下の `forgetEewTracking` が記憶を消している。
+              const firstIssueTime = eewFirstIssueTimeRef.current.get(key) ?? null
+              if (!firstIssueTime) {
+                // 画面に出ていた地震（hadKey）なのに引けないのは、記憶の鍵がずれたか発表時刻の無い報だけだった印。
+                // 時刻抜きの文は正常な形と見分けが付かないので記録を残す。
+                // hadTtsEvent: その地震の報を受けた記憶はあるか（無ければ鍵のずれ、あれば読める時刻を持つ報が無かった）
+                log.warn('[eew] 誤報取消の読み上げに第 1 報の発表時刻を引けない（時刻抜きの文で読む）', {
+                  key,
+                  hadTtsEvent: eewTtsEventsRef.current.has(key),
+                })
+              }
               scheduleSpeech(ttsDelayFor('eewCancel'), () => chainEEWSpeech(
                 key,
                 () => {
                   // 発話するものが決まった（または黙ると決めた）時点で予約は消化された。
                   eewCancelSpeechRef.current.delete(key)
-                  return eewCancelToText(event)
+                  return eewCancelToText(event, firstIssueTime)
                 },
                 () => followSpeechTab('realtime', TAB_PRIORITY.eewUrgent),
               ))
@@ -3601,6 +3621,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 「発表中なのに電文が無い」「取り消されていないのに取消の印が残っている」という、
       // どちらも発話を黙らせる向きの食い違いになる。**症状は音の不在なので、例外もログも出ない。**
       eewTtsEventsRef.current.set(key, event)
+      rememberEewFirstIssueTime(eewFirstIssueTimeRef.current, key, event)
       // 同じ eventId で発表が再開することはないが、取消の記録を持ち越すと以後の読み上げが
       // 鳴らせなくなるため、報を受けた時点で必ず落とす
       eewRetractedKeysRef.current.delete(key)
@@ -5425,6 +5446,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     eewNoForecastSettledRef.current.clear()
     setEewNoForecastSettledKeys(new Set())
     eewTtsEventsRef.current.clear()
+    eewFirstIssueTimeRef.current.clear()
     eewPhase1TokensRef.current.clear()
     eewPhase2TokensRef.current.clear()
     // 誤報取消の読み上げの予約も捨てる。**予約自体は `cancelPendingSpeech` が取り消すので、
@@ -5651,6 +5673,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 復元済みの緊急地震速報に対して予約を組む経路が後から 1 つ増えれば、そこだけが
           // 無言で黙る。**症状は音の不在で、例外もログも出ない。**
           eewTtsEventsRef.current.set(key, eew)
+          // 窓の手前の報は最新 1 報へ畳まれて届く。第 1 報の時刻は畳む前に求めて `firstIssueTime` に載っている
+          // （`filterPreWindowEvents`）ので、ここではそれを覚える
+          rememberEewFirstIssueTime(eewFirstIssueTimeRef.current, key, eew)
           spokenEEWScalesRef.current.set(key, restoredScale)
           spokenEEWLpgmClassesRef.current.set(key, restoredLpgm)
           // 区分も復元する。落とすと注入後の最初の続報で「警報。」が付き直し、

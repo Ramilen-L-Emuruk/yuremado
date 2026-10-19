@@ -2248,7 +2248,7 @@ describe('取消の述語は種別をまたいでそろえる', () => {
   } as JMALpgm
 
   const texts: [string, string][] = [
-    ['緊急地震速報', eewCancelToText(eew)],
+    ['緊急地震速報', eewCancelToText(eew, '2026-01-01T12:00:00+09:00')],
     ['地震情報', earthquakeCancelToText('2026-01-01T12:00:00+09:00')],
     ['長周期地震動情報', lpgmToText(lpgm, TTS_OPTS, true)],
     ['津波', tsunamiCancelToText('retracted')],
@@ -2559,7 +2559,7 @@ describe('EEW の取消の理由を読み上げる', () => {
   } as unknown as EEWAlert)
 
   it('理由を足す', () => {
-    const text = eewCancelToText(cancelledEew('システム障害のため取り消します。'))
+    const text = eewCancelToText(cancelledEew('システム障害のため取り消します。'), '2026-01-01T12:00:00+09:00')
     expect(text).toContain('取り消されました。')
     expect(text).toContain('システム障害のため取り消します。')
   })
@@ -2570,12 +2570,25 @@ describe('EEW の取消の理由を読み上げる', () => {
     ['先ほどの、緊急地震速報（予報）を取り消します。'],
     ['先ほどの、緊急地震速報（地震動予報）を取り消します。'],
   ])('実電文の本文は読まない: %s', (cancelText) => {
-    expect(eewCancelToText(cancelledEew(cancelText))).toMatch(/緊急地震速報は取り消されました。$/)
+    expect(eewCancelToText(cancelledEew(cancelText), '2026-01-01T12:00:00+09:00')).toMatch(/緊急地震速報は取り消されました。$/)
   })
 
   // 対照: 理由が無ければ従来どおり（空文字を足して助詞だけの文にしない）
   it('理由が無ければ従来どおり', () => {
-    expect(eewCancelToText(cancelledEew())).toMatch(/緊急地震速報は取り消されました。$/)
+    expect(eewCancelToText(cancelledEew(), '2026-01-01T12:00:00+09:00')).toMatch(/緊急地震速報は取り消されました。$/)
+  })
+
+  // 正: 時刻は渡された値（取り消された速報の第 1 報）を読み、取消電文自身の `issue.time` は読まない
+  it('渡された第 1 報の時刻を読み、取消電文の発表時刻は読まない', () => {
+    const cancel = { ...cancelledEew(), issue: { eventId: 'e', serial: '9', time: '2026-01-01T12:48:00+09:00' } } as EEWAlert
+    const text = eewCancelToText(cancel, '2026-01-01T12:40:00+09:00')
+    expect(text).toMatch(/^12時40分に発表された緊急地震速報は取り消されました。/)
+    expect(text).not.toContain('48分')
+  })
+
+  // 安全弁: 第 1 報の時刻が分からなければ時刻を言わない（取消電文の時刻へ倒さない）
+  it('第 1 報の時刻が無ければ時刻を言わない', () => {
+    expect(eewCancelToText(cancelledEew(), null)).toBe('緊急地震速報は取り消されました。')
   })
 
   // 安全弁: 上限を超えた本文は読まないが、**捨てたことを記録する**（画面には全文が出る）
@@ -2583,7 +2596,7 @@ describe('EEW の取消の理由を読み上げる', () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => {})
     try {
       const long = 'あ'.repeat(CANCEL_REASON_SPEAK_MAX_CHARS + 1)
-      expect(eewCancelToText(cancelledEew(long))).toMatch(/取り消されました。$/)
+      expect(eewCancelToText(cancelledEew(long), '2026-01-01T12:00:00+09:00')).toMatch(/取り消されました。$/)
       expect(info).toHaveBeenCalledWith(expect.stringContaining('取消しの概要が長いため'))
     } finally {
       info.mockRestore()
