@@ -28,6 +28,7 @@ const TEXT_DECREASED = '予想が小さくなりました'
 function makeEEW(serial: string, forecastChange?: EEWForecastChange, overrides: Partial<EEWAlert> = {}): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: `test-eew-${serial}`,
     time: '2026-01-01T12:00:00Z',
     test: false,
@@ -49,7 +50,7 @@ function makeEEW(serial: string, forecastChange?: EEWForecastChange, overrides: 
 }
 
 const tab = (eews: EEWAlert[]) => (
-  <RealtimeTab eews={eews} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />
+  <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={eews} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />
 )
 
 /** 時間を進める（保持タイマーの発火に伴う再描画を取りこぼさないよう act で包む）。 */

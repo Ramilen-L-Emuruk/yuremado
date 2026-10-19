@@ -26,7 +26,6 @@ import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import { fetchSeismoWaveSamples, SAMPLES_SPAN_MAX_MS } from '../../services/seismoWaveSamples'
 import { createLogThrottle, log } from '../../utils/logger'
 import { columnsSpan, measureQuietLevel, selectQuakeWindow } from '../../utils/seismoQuakeWindow'
-import { quietScaledGal } from '../../utils/seismoQuietScale'
 import { trimTrailingGap } from '../../utils/seismoWaveColumns'
 import { MEAN_LINE_WINDOW_MS } from '../../utils/waveMeanLines'
 import { axisZeroLabel, buildArrivalMarksForRange, formatQuakeIntensityParts, QuakeIntensityLine } from '../EarthquakeTab/QuakeSeismoWave'
@@ -41,9 +40,10 @@ import {
   type PaintableColumns,
   type WaveMark,
 } from '../SeismoWaveChart/paintWave'
+import { LINEAR_VERTICAL } from '../SeismoWaveChart/verticalMap'
 import { buildTimeTicks } from '../SeismoWaveChart/timeTicks'
 import { ToggleChip } from '../SeismoWaveChart/WaveAxisToggles'
-import { formatGal, formatScaleGal } from '../SeismoWaveChart/waveLabels'
+import { formatGal, formatScale } from '../SeismoWaveChart/waveLabels'
 import {
   clampView,
   columnsRange,
@@ -59,6 +59,7 @@ import { paintIntensitySeries } from './paintIntensity'
 import { paintSampleLane } from './paintSampleLane'
 import {
   buildSampleSeries,
+  singleMemberColumns,
   laneGeometry,
   maxAbsInRange,
   movingAverage,
@@ -120,9 +121,9 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
   const bounds = useMemo(() => columnsRange(trimTrailingGap(wave.columns)), [wave.columns])
   // カードと同じ切り出し。**最初に映す範囲と、震度・最大加速度を数える区間に使う。**
   const quakeSpan = useMemo(() => {
-    const picked = selectQuakeWindow({ base: wave.columns, zero: wave.axisZero, reach: wave.reach })
+    const picked = selectQuakeWindow({ base: wave.columns, zero: wave.axisZero, reach: wave.reach, noiseFloor: wave.unit.onsetNoiseFloor })
     return columnsSpan(picked.columns)
-  }, [wave.columns, wave.axisZero, wave.reach])
+  }, [wave.columns, wave.axisZero, wave.reach, wave.unit])
 
   const [rawView, setRawView] = useState<ViewRange>(() => quakeSpan ?? bounds)
   // **描くたびに記録の中へ収める。** 継ぎ足しで記録が伸びても、見えている範囲は勝手に動かさない。
@@ -182,14 +183,36 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
   const everCompleteRef = useRef(wave.complete)
   if (wave.complete) everCompleteRef.current = true
   const everComplete = everCompleteRef.current
+  // **手元に持っている観測点（公開観測点）は取りに行かない。** 保存庫から取った範囲をまるごと読んであるので、
+  // それを並べるだけ（取った範囲が変わる＝取り直したときだけ並べ直す）。
+  const heldWindow = wave.samples.kind === 'held' ? wave.samples.window : null
   useEffect(() => {
+    if (heldWindow === null) return
+    let series: SampleSeries
+    try {
+      series = buildSampleSeries([heldWindow])
+    } catch (error) {
+      log.error(`[seismo] 詳細の窓: 手元の生のサンプルを並べられなかった（${wave.stationId}）。カードの列で描く:`, error)
+      return
+    }
+    const range = seriesRange(series)
+    if (range === null) {
+      log.debug(`[seismo] 詳細の窓: 手元の生のサンプルが 1 点も無い（${wave.stationId}）。カードの列で描く`)
+      return
+    }
+    setSamples({ series, range })
+  }, [heldWindow, wave.stationId])
+
+  const hostBaseUrl = wave.samples.kind === 'host' ? wave.samples.baseUrl : null
+  useEffect(() => {
+    if (hostBaseUrl === null) return
     const b = boundsRef.current
     if (!(b.toMs > b.fromMs)) return
     const ctrl = new AbortController()
     // **ホストの列の上限（10 分）を超える区間は頭から 10 分ぶん**（揺れは頭のほうにある）。
     const toMs = Math.min(b.toMs, b.fromMs + SAMPLES_SPAN_MAX_MS)
     void fetchSeismoWaveSamples({
-      baseUrl: wave.baseUrl,
+      baseUrl: hostBaseUrl,
       stationId: wave.stationId,
       fromMs: b.fromMs,
       toMs,
@@ -213,7 +236,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
       setSamples({ series, range })
     })
     return () => ctrl.abort()
-  }, [wave.baseUrl, wave.stationId, everComplete])
+  }, [hostBaseUrl, wave.stationId, everComplete])
 
   // ---- フォーカス ----
   // **開いたら窓の中へ移し、Tab で外へ出さない。** 出られると、背後のカードの波形へ移って Enter で
@@ -266,8 +289,8 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
   // カードより低い倍率にする —— カードは「一覧で見て、揺れたかどうか」を見せるために静かなときの振れを
   // 小さく抑え、こちらは寄せて読むための窓なので小さな揺れも段の高さいっぱいに出す。
   const detailFloorGal = useMemo(
-    () => quietScaledGal('detail', measureQuietLevel(wave.columns, wave.axisZero.ms)),
-    [wave.columns, wave.axisZero.ms],
+    () => wave.unit.minScale('detail', measureQuietLevel(wave.columns, wave.axisZero.ms)),
+    [wave.columns, wave.axisZero.ms, wave.unit],
   )
 
   useEffect(() => {
@@ -302,6 +325,16 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
         let best = -1
         for (const a of visibleIdx) if (Number.isFinite(maxes[a]) && (best < 0 || maxes[a] > maxes[best])) best = a
         const scaleGal = Math.max(detailFloorGal, best < 0 ? 0 : maxes[best])
+        // 裏付けが 1 本しか無いピクセル。全段で同じなので幅ごとに 1 回だけ数える。
+        const singleCache = new Map<number, Uint8Array>()
+        const singleMember = (widthPx: number): Uint8Array => {
+          let hit = singleCache.get(widthPx)
+          if (hit === undefined) {
+            hit = singleMemberColumns(samples.series, view, widthPx)
+            singleCache.set(widthPx, hit)
+          }
+          return hit
+        }
         for (const a of visibleIdx) {
           const canvas = laneRefs.current[a]
           if (canvas === null) continue
@@ -318,6 +351,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
                     geometry: (widthPx: number) =>
                       laneGeometry({ series: samples.series, values: axisAverages[a][side], range: view, widthPx, map: (v) => v }),
                   })),
+            singleMember,
             scaleGal,
             stale: wave.interrupted,
             marks: laneMarks(a, a === visibleIdx[0] && !showComposite),
@@ -344,15 +378,16 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
                   laneGeometry({ series: samples.series, values: composite.smooth, range: view, widthPx, map: (v) => v }),
               },
             ],
+            singleMember,
             scaleGal: compositeScale,
             stale: wave.interrupted,
             marks: [...arrivalMarks, ...peakMarkAt(compositePeak?.atMs)],
           })
           if (!ok) throttledNoContext(() => log.error('[seismo] 詳細の窓の波形を描く 2D コンテキストを取れなかった'))
-          setCompositeScaleText(`0〜${formatGal(compositeScale)} gal`)
+          setCompositeScaleText(`0〜${formatGal(compositeScale)} ${wave.unit.label}`)
         }
         // 縦の表示はカードと同じ書式。
-        setScaleText(formatScaleGal(scaleGal))
+        setScaleText(formatScale(scaleGal, wave.unit.label))
       } else {
         // ---- カードの列で描く（サンプルが届くまで・取れなかったとき・覆っていない範囲） ----
         const build = (columnCount: number): PaintableColumns =>
@@ -370,6 +405,8 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
             marks: laneMarks(a, a === visibleIdx[0]),
             visibleAxes: [0, 1, 2].map((i) => i === a),
             ticks: ticksFor(a),
+            unit: wave.unit.label,
+            vertical: LINEAR_VERTICAL,
           })
           if (text === null) text = got
         }
@@ -404,7 +441,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
     // `visibleIdx` は `axes` から作るので `axes` で足りる。`view` は `useSamples` のときだけ使い、
     // そのとき `displayFromMs`/`displayToMs` が `view` と一致する。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useSamples, samples, columnsShown, displayFromMs, displayToMs, axes, detailFloorGal, peaks, composite, compositePeak, axisAverages, intensity, wave.arrival, wave.axisZero, wave.interrupted])
+  }, [useSamples, samples, columnsShown, displayFromMs, displayToMs, axes, detailFloorGal, peaks, composite, compositePeak, axisAverages, intensity, wave.arrival, wave.axisZero, wave.interrupted, wave.unit])
 
   // ---- 操作 ----
   const zoomBy = useCallback(
@@ -536,7 +573,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
               <div className="flex gap-2 text-[11px] leading-none" style={{ color: COMPOSITE_COLOR }}>
                 <span>合成</span>
                 {compositePeak !== null && (
-                  <span className="tabular-nums text-secondary">最大 {formatGal(compositePeak.value)} gal</span>
+                  <span className="tabular-nums text-secondary">最大 {formatGal(compositePeak.value)} {wave.unit.label}</span>
                 )}
                 <span className="ml-auto font-mono tabular-nums text-secondary">{compositeScaleText ?? '—'}</span>
               </div>
@@ -549,7 +586,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
                 <div className="flex gap-2 text-[11px] leading-none" style={{ color: AXIS_COLORS[a] }}>
                   <span>{AXIS_LABELS[a]}</span>
                   {peaks[a] !== null && (
-                    <span className="tabular-nums text-secondary">最大 {formatGal((peaks[a] as AxisPeak).gal)} gal</span>
+                    <span className="tabular-nums text-secondary">最大 {formatGal((peaks[a] as AxisPeak).gal)} {wave.unit.label}</span>
                   )}
                   {/* 縦の範囲は**段ごとの見出しの右端**（合成の段と同じ位置）。3 成分は縦を共通にしているので、
                       どの段にも同じ値が並ぶ。 */}

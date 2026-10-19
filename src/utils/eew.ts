@@ -1,4 +1,5 @@
-import type { EEWAlert, EEWRegion } from '../types/earthquake'
+import type { EEWAlert, EEWRegion, EewOrigin } from '../types/earthquake'
+import { parseJstTimeMs } from './quakeOriginSeconds'
 import { hasDepth } from './formatters'
 import { hasKnownEpicenter, haversineKm, hypocentralDistanceKm } from './geo'
 import type { AlertSoundType } from './alertSound'
@@ -87,6 +88,9 @@ export function calcEEWAutoCancelSec(mjma: number, depth: number): number {
 /**
  * EEWの発震時刻を起点にした自動解除時刻を返す。最終報受信から MIN_CANCEL_SEC 秒の下限保証付き。
  *
+ * **震源時刻が無い・読めないときは地震発現時刻を起点にする**（{@link eewSortTimeMs}。「非常に強い揺れを検知」の
+ * 報は震源時刻を持たない）。
+ *
  * **片方の時刻が読めないときは、読めたほうだけで決める。** 読めない時刻から作った `Date` は
  * Invalid で、それを含む大小比較は**どちらの向きでも偽**になる。素朴に書くと非対称になり、
  * 震源時刻が読めないときは発表時刻基準の値が返るのに、発表時刻が読めないときだけ Invalid が
@@ -98,12 +102,19 @@ export function calcEEWAutoCancelSec(mjma: number, depth: number): number {
  * `services/dmdataReplay.ts` は失効の判定ができない旨を記録して有効側へ倒す）。
  */
 export function calcEEWCancelTime(eew: EEWAlert, reportTime: Date): Date {
-  const mjma = eew.earthquake.hypocenter.magnitude ?? 6.0
+  // **規模が判らない報（`NaN`）は `??` では止まらない。** 素通りすると有感半径が実質 0 になり、
+  // 規模に関係なく「最終報の 60 秒後」で消える（既定値の M6 相当が効いていなかった）。
+  // 規模が「不明」になるのは「非常に強い揺れを検知」の報など（解説資料 Ⅱ.21 1-5）。
+  const rawMagnitude = eew.earthquake.hypocenter.magnitude
+  const mjma = Number.isFinite(rawMagnitude) ? rawMagnitude : 6.0
   // **既定値は `??` では当たらない。** 深さが判らないことはセンチネル `-1` で表すので
   // （`Hypocenter.depth`。`0` は「ごく浅い」という有効値）、`?? 30` は素通りして -1 が
   // そのまま有感半径の計算（`calcPGV600` の深さ項）へ流れ、解除が実際より早まる。
   const depth = hasDepth(eew.earthquake.hypocenter.depth) ? eew.earthquake.hypocenter.depth : 30
-  const originTime = new Date(eew.earthquake.originTime)
+  // **起点は発生時刻。無ければ発現時刻へ落とす**（並べ替えの {@link eewSortTimeMs} と同じ段）。
+  // 規模が「不明」の報は発生時刻も持たないので、ここで落とさないと規模の既定値が効かないまま
+  // 「最終報の 60 秒後」へ張り付く。発現時刻は発生時刻より後なので、解除は早まらない側へずれる。
+  const originTime = new Date(eewSortTimeMs(eew))
   const autoCancelSec = calcEEWAutoCancelSec(mjma, depth)
   const fromOrigin = new Date(originTime.getTime() + autoCancelSec * 1000)
   const minTime = new Date(reportTime.getTime() + MIN_CANCEL_SEC * 1000)
@@ -177,6 +188,57 @@ export function calcArrivalSafetyMarginSec(distanceKm: number): number {
  */
 export function eewEventKey(eew: EEWAlert): string {
   return eew.issue?.eventId ?? eew.id
+}
+
+/**
+ * 震源が決まっていない報か。**震源・規模・深さを数値として使う箇所は、すべてこれを通すこと。**
+ *
+ * 真になる形は 2 つある（どちらも気象庁「地震火山関連 XML 電文解説資料」Ⅱ.21）。
+ *
+ * - **仮定震源要素**（`earthquake.condition`）—— PLUM 法でトリガーした観測点の直下 10km・M1.0 を仮に置いた報
+ * - **非常に強い揺れを検知・最大予測震度のみ**（`strongShakingOnly`）—— 強い揺れを検知した観測点を
+ *   震央とみなし、深さ 10km・規模不明とした報。発生時刻も持たない
+ *
+ * どちらも震央地名は**観測点の所在地**で、震源の推定位置ではない。だから扱い（M・深さを伏せる・
+ * 予報円を描かない・距離を測らない・地図で控えめに描く）を揃える。片方だけを見る判定を残すと、
+ * もう片方の形が確定した震源の顔で出る（実際に「非常に強い揺れを検知」の報がそうなっていた）。
+ *
+ * **予想震度が無い理由の判定（`eewNoForecastReason`）にはこれを使わない。** 「単独点処理のため」と
+ * 言えるのは仮定震源要素に限った対応で、こちらの形には予想震度が必ず載る。
+ */
+export function isProvisionalHypocenter(eew: EEWAlert): boolean {
+  return eew.earthquake.condition === '仮定震源要素' || eew.strongShakingOnly === true
+}
+
+/**
+ * 「どれが新しい地震か」を並べるときの時刻（エポックミリ秒。大きいほど新しい）。
+ *
+ * **発生時刻を先に見て、読めなければ発現時刻へ落とす。** 「非常に強い揺れを検知」の報は発生時刻を
+ * 持たないので（→ {@link isProvisionalHypocenter}）、発生時刻だけで並べると空文字が最小になり、
+ * 他の地震と同時に出ている間ずっと「最も古い地震」として扱われる。発現時刻は 1 回必須の要素
+ * （解説資料 Ⅱ.21 1-3）で、強い揺れを検知した時刻にあたる。
+ *
+ * **文字列のまま辞書順で比べない。** 経路ごとに時刻の書き方が違い（DMDATA は `+09:00`、テスト
+ * データは `Z`）、混ざると前後が入れ替わる。発生時刻と発現時刻は数秒しか違わないので、
+ * 混ぜて並べても地震どうしの前後はまず崩れない。
+ *
+ * どちらも読めなければ `-Infinity`（最も古い扱い）。Yahoo hypoInfo 経路は発現時刻を運ばない。
+ */
+export function eewSortTimeMs(eew: EEWAlert): number {
+  for (const t of [eew.earthquake.originTime, eew.earthquake.arrivalTime]) {
+    if (!t) continue
+    const ms = new Date(t).getTime()
+    if (Number.isFinite(ms)) return ms
+  }
+  return -Infinity
+}
+
+/** 新しい地震が先に来る並べ方（→ {@link eewSortTimeMs}）。`Array.prototype.sort` へそのまま渡す。 */
+export function compareEewNewestFirst(a: EEWAlert, b: EEWAlert): number {
+  const ta = eewSortTimeMs(a)
+  const tb = eewSortTimeMs(b)
+  if (ta === tb) return 0
+  return ta < tb ? 1 : -1
 }
 
 export function eewAreas(eew: EEWAlert): EEWRegion[] {
@@ -348,8 +410,12 @@ export function eewMaxScaleInfo(eew: EEWAlert): EewMaxScaleInfo {
       areasOrAbove = true
     }
   }
-  if (areasMax > 0) return { scale: areasMax, orAbove: areasOrAbove }
   const forecast = eew.forecastMaxScale
+  // 区域が古い報のもので、電文全体の値のほうが新しいとき（→ `EEWAlert.maxScaleFromForecast`）。
+  if (eew.maxScaleFromForecast && forecast != null && isValidIntensityScale(forecast) && forecast > 0) {
+    return { scale: forecast, orAbove: eew.forecastMaxScaleOrAbove === true }
+  }
+  if (areasMax > 0) return { scale: areasMax, orAbove: areasOrAbove }
   const scale = forecast != null && isValidIntensityScale(forecast) ? forecast : 0
   return { scale, orAbove: scale > 0 && eew.forecastMaxScaleOrAbove === true }
 }
@@ -357,6 +423,32 @@ export function eewMaxScaleInfo(eew: EEWAlert): EewMaxScaleInfo {
 /** 対象地域の最大予想震度（scale 値）。震度が取れないときは 0 を返す。判定は `eewMaxScaleInfo`。 */
 export function eewMaxScale(eew: EEWAlert): number {
   return eewMaxScaleInfo(eew).scale
+}
+
+/** 誤報取消の通知のために覚えておく震央地名の件数の上限（古いものから捨てる）。 */
+export const EEW_HYPOCENTER_NAME_MEMORY_MAX = 64
+
+/**
+ * 地震ごとに、直前の報が名乗った震央地名を覚える。**名前の空の報では上書きしない。**
+ * 覚え直すたびに一番新しい位置へ動かし、上限を超えたら一番古いものを捨てる（`Map` の挿入順）。
+ */
+export function rememberEewHypocenterName(memory: Map<string, string>, key: string, name: string): void {
+  if (name === '') return
+  memory.delete(key)
+  memory.set(key, name)
+  while (memory.size > EEW_HYPOCENTER_NAME_MEMORY_MAX) {
+    const oldest = memory.keys().next().value
+    if (oldest === undefined) break
+    memory.delete(oldest)
+  }
+}
+
+/**
+ * 誤報取消のブラウザ通知の本文。名前を引けなければ名前抜きの文にする
+ * （2026-10-14 ユーザー選択「緊急地震速報は取り消されました」）。
+ */
+export function eewCancelNotificationBody(name: string | undefined): string {
+  return name ? `${name} の緊急地震速報は取り消されました` : '緊急地震速報は取り消されました'
 }
 
 /**
@@ -528,15 +620,28 @@ export const DEEP_QUAKE_DEPTH_KM = 150
  *   載り、`eewMaxScale` が拾うのでここへ来ない）。表示・読み上げが「単独点処理のため」と言えるのは
  *   この対応があるからで、`condition` そのものは観測点数を意味しない
  * - `deep` … 深発地震（深さ `DEEP_QUAKE_DEPTH_KM` km 超）
+ * - `singleStation` … 待ち（`EEW_PHASE2_MAX_WAIT_MS`）を終えても値が付かず、震央の精度ランク
+ *   （`accuracy.epicenterRank`）が 1 の報。**`waited` が真のときしか返さない**（下記）
  * - `unknown` … 上記以外。**この理由だけは値が遅れて付く可能性が残る**ため、待つ意味があるのはここだけ
+ *
+ * **精度ランク 1 は「観測点 1 点」だけを指す区分ではない。** 解説資料の定義は「P 波／S 波レベル超え、
+ * IPF 法（1 点）、または仮定震源要素」で、実電文では値を持たないランク 1 の通常の報 12 通のうち
+ * 7 通が 0〜6 秒後の続報で値を持った。だから見た時点では理由に使わず、待っても値が付かなかった
+ * ときに限って「単独点処理のため」と言う（2026-10-14 ユーザー承認「待ち終えてから理由を言う（推奨）」、
+ * 文面は 2026-10-15 ユーザー承認「単独点処理のため(推奨)」）。
+ *
+ * `waited` … その緊急地震速報について、値の付かない待ちが切れたか。**待つかどうかを決める側は
+ * 偽を渡すこと** —— 真を渡すとランク 1 の報が待たずに確定し、数秒後に付く値を取りこぼす。
  *
  * 予想震度がある EEW への呼び出しは想定しない（呼び出し側が `eewMaxScale` を先に見る）。
  */
-export function eewNoForecastReason(eew: EEWAlert): 'assumed' | 'deep' | 'unknown' {
+export type EewNoForecastReason = 'assumed' | 'deep' | 'singleStation' | 'unknown'
+export function eewNoForecastReason(eew: EEWAlert, waited: boolean): EewNoForecastReason {
   if (eew.earthquake.condition === '仮定震源要素') return 'assumed'
   // **深さが判らない報（センチネル `-1`）は比較が偽になり `unknown` へ落ちる。これは意図どおり。**
   // 深さを読めていない以上「深発地震のため」とは断定できず、値が遅れて付く可能性も残る。
   if (eew.earthquake.hypocenter.depth > DEEP_QUAKE_DEPTH_KM) return 'deep'
+  if (waited && eew.accuracy?.epicenterRank === 1) return 'singleStation'
   return 'unknown'
 }
 
@@ -609,6 +714,234 @@ export function eewPhase2ScaleStabilityMs(currentScale: number, baseScale: numbe
 export function eewSerial(eew: EEWAlert): number | null {
   const n = Number(eew.issue?.serial)
   return Number.isInteger(n) && n > 0 ? n : null
+}
+
+/**
+ * 報の発表時刻（エポックミリ秒・**秒で切り捨て**）。読めなければ null。
+ *
+ * **経路をまたいで「同じ報か」「どちらが新しいか」を比べるのはこれ。** 報番号は経路で数え方が違う
+ * （→ `EewOrigin`）が、発表時刻は秒まで一致する（2026-10-16 千島列島の報で Yahoo と P2PQuake を
+ * 突き合わせて確かめた）。ミリ秒は経路で揃わない（P2PQuake は受信時刻のミリ秒を持つ）ので落とす。
+ *
+ * 時間帯を持たない表記（P2PQuake の `2026/10/16 12:40:02`）は日本時間として読む（→ `parseJstTimeMs`）。
+ */
+export function eewIssueTimeMs(eew: EEWAlert): number | null {
+  const t = eew.issue?.time || eew.time
+  if (!t) return null
+  const ms = parseJstTimeMs(t)
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) * 1000 : null
+}
+
+/**
+ * 1 つの地震について、受理した報の台帳。**経路をまたいで受ける standard 版のためのもの**
+ * （DMDSS 版は経路が 1 つなので、報番号の比較だけで足りる）。
+ */
+export interface EewAcceptance {
+  /** 経路ごとに受理した最大の報番号。**経路をまたいで比べない**（数え方が違う） */
+  readonly serialByOrigin: ReadonlyMap<EewOrigin, number>
+  /** 受理した報のうち最も新しい発表時刻（秒）。経路をまたいだ新旧はこれで比べる */
+  readonly latestIssueMs: number | null
+  /**
+   * 音・通知を出した報の発表時刻と、そのときの経路。**同じ報を別の経路から受けた**かの判定に使う
+   * （→ `isSameReportFromOtherOrigin`）。
+   */
+  readonly notifiedIssueMs: ReadonlyMap<number, EewOrigin>
+  /**
+   * 受理した報の数（補った報を含む）。**見張りの解除が「予約してから新しい報を受けたか」を見るのはこれ**
+   * —— 発表時刻も報番号も読めない報でも数は進むので、比べる値が無くて誤って消すことがない。
+   */
+  readonly receipts: number
+}
+
+export const EMPTY_EEW_ACCEPTANCE: EewAcceptance = {
+  serialByOrigin: new Map(), latestIssueMs: null, notifiedIssueMs: new Map(), receipts: 0,
+}
+
+/**
+ * 受理済みの報より古いか（＝適用すると内容が退行するか）。
+ *
+ * - **同じ経路の中では報番号で比べる。** 同じ秒に複数の報が届く（能登本震の実配信で 46 報中 13 報が
+ *   同一秒）ので、秒の発表時刻だけでは足りない
+ * - **経路をまたぐと発表時刻（秒）で比べる。** 報番号の数え方が違う（P2PQuake の 1 と Yahoo の 17 が
+ *   同じ報）ので、番号を比べると正しい報を毎回捨てる
+ * - **同じ値（同じ報番号・同じ秒）は古いと見なさない。** 訂正報も同じ番号で届きうる
+ * - 比べる値が取れない側があるときは、その比べ方を使わない（0 で埋めると正しい報まで捨てる）
+ */
+export function isStaleEewReport(acceptance: EewAcceptance | undefined, incoming: EEWAlert): boolean {
+  return eewStaleness(acceptance, incoming) !== 'fresh'
+}
+
+/**
+ * 受理済みの報と比べた新旧（{@link isStaleEewReport} の内訳）。
+ *
+ * - `stale` — 同じ経路の中で古い（報番号が小さい）。捨てる
+ * - `olderFromOtherOrigin` — 同じ経路の中では新しいが、別の経路がもっと新しい報を先に運んでいる。
+ *   **P2PQuake の報はこの形で遅れて届く**（Yahoo は 1 秒ごとに取りに行くので先に着く）。区域・仮定震源の
+ *   別は P2PQuake しか運ばないので、捨てずに補う（→ `supplementEewReport`）
+ * - `fresh` — 新しい
+ */
+export function eewStaleness(
+  acceptance: EewAcceptance | undefined, incoming: EEWAlert,
+): 'fresh' | 'stale' | 'olderFromOtherOrigin' {
+  if (!acceptance) return 'fresh'
+  const serial = eewSerial(incoming)
+  const accepted = acceptance.serialByOrigin.get(incoming.origin)
+  if (serial !== null && accepted !== undefined && serial < accepted) return 'stale'
+  const issueMs = eewIssueTimeMs(incoming)
+  return issueMs !== null && acceptance.latestIssueMs !== null && issueMs < acceptance.latestIssueMs
+    ? 'olderFromOtherOrigin'
+    : 'fresh'
+}
+
+/**
+ * 別の経路がもっと新しい報を先に運んだあとに届いた P2PQuake の報から、**P2PQuake しか運ばない欄だけ**を
+ * 表示中の報へ補う（区域・仮定震源の別）。震源・震度・報番号・発表時刻は新しい側（`existing`）を保つ。
+ *
+ * 補う区域は届いた報のものなので、表示中の報より 1 つ前の報の区域になりうる。それでも捨てるよりは
+ * 新しい —— Yahoo は区域を運ばないので、表示中の区域は届いた報よりさらに前の P2PQuake の報のもの。
+ */
+export function supplementEewReport(existing: EEWAlert, incoming: EEWAlert): EEWAlert {
+  const merged: EEWAlert = {
+    ...existing,
+    areas: incoming.areas ?? existing.areas,
+    earthquake: { ...existing.earthquake, condition: incoming.earthquake.condition },
+    severity: existing.severity === 'Warning' ? 'Warning' : incoming.severity,
+  }
+  return {
+    ...merged,
+    everSpecialWarning: (existing.everSpecialWarning ?? false) || computeSingleEEWLevel(merged) === 2,
+  }
+}
+
+/**
+ * 統合した報が、前に知らせた報より**知らせ直す値打ちのある変化**を持つか（区分が上がった・予想の
+ * 最大震度が上がった。後者も鳴らすのは 2026-10-19 ユーザー承認・選んだ選択肢「鳴らす」）。これに当たる報は、別の経路から来た同じ報でも音・タブ移動を止めない。
+ */
+export function raisesEewAlert(merged: EEWAlert, previous: EEWAlert): boolean {
+  return computeSingleEEWLevel(merged) > computeSingleEEWLevel(previous)
+    || eewMaxScale(merged) > eewMaxScale(previous)
+}
+
+/**
+ * 表示中の EEW（`shown`）より古い報か。状態更新の側の二重化で使う（入口は台帳で判定する）。
+ *
+ * 比べ方は {@link isStaleEewReport} と同じ —— 同じ経路なら報番号、経路が違えば発表時刻（秒）。
+ * `shown.origin` は最後に統合した報の経路（→ `EEWAlert.origin`）。
+ */
+export function isOlderEewReport(shown: EEWAlert, incoming: EEWAlert): boolean {
+  if (shown.origin === incoming.origin) {
+    const a = eewSerial(shown)
+    const b = eewSerial(incoming)
+    if (a !== null && b !== null) return b < a
+  }
+  const ta = eewIssueTimeMs(shown)
+  const tb = eewIssueTimeMs(incoming)
+  return ta !== null && tb !== null && tb < ta
+}
+
+/** 報を受理したあとの台帳（純関数。元の台帳は変えない）。 */
+export function acceptEewReport(acceptance: EewAcceptance | undefined, incoming: EEWAlert): EewAcceptance {
+  const base = acceptance ?? EMPTY_EEW_ACCEPTANCE
+  const serialByOrigin = new Map(base.serialByOrigin)
+  const serial = eewSerial(incoming)
+  if (serial !== null) serialByOrigin.set(incoming.origin, Math.max(serial, serialByOrigin.get(incoming.origin) ?? 0))
+  const issueMs = eewIssueTimeMs(incoming)
+  const latestIssueMs = issueMs === null ? base.latestIssueMs : Math.max(issueMs, base.latestIssueMs ?? issueMs)
+  return { ...base, serialByOrigin, latestIssueMs, receipts: base.receipts + 1 }
+}
+
+/** 音・通知を出したことを台帳へ書く（純関数）。発表時刻が読めない報は書かない。 */
+export function noteEewNotified(acceptance: EewAcceptance, incoming: EEWAlert): EewAcceptance {
+  const issueMs = eewIssueTimeMs(incoming)
+  if (issueMs === null || acceptance.notifiedIssueMs.has(issueMs)) return acceptance
+  return { ...acceptance, notifiedIssueMs: new Map(acceptance.notifiedIssueMs).set(issueMs, incoming.origin) }
+}
+
+/**
+ * **別の経路から既に受けて知らせた報と同じ報**か（→ `LiveEventMeta.eewSameReport`）。
+ *
+ * 同じ経路から同じ発表時刻の報がもう一度来た形（訂正報）は「同じ報」としない —— 知らせ直す。
+ */
+export function isSameReportFromOtherOrigin(acceptance: EewAcceptance | undefined, incoming: EEWAlert): boolean {
+  if (!acceptance) return false
+  const issueMs = eewIssueTimeMs(incoming)
+  if (issueMs === null) return false
+  const notifiedBy = acceptance.notifiedIssueMs.get(issueMs)
+  return notifiedBy !== undefined && notifiedBy !== incoming.origin
+}
+
+/**
+ * 同じ地震の報を 1 つに統合する。**状態に入れる値・読み上げと通知へ渡す値は、すべてこれを通す。**
+ *
+ * **経路が運ばない欄は既存の値を保つ**（standard 版は Yahoo と P2PQuake の 2 経路が同じ地震を運ぶ）。
+ *
+ * | 経路 | 運ばないので保つ欄 |
+ * |---|---|
+ * | Yahoo | 区域・仮定震源の別（`earthquake.condition`）・地震発現時刻 |
+ * | P2PQuake | 予想の最大震度（`forecastMaxScale`）・最終報の印（`isFinal`） |
+ * | DMDATA・保存データ・テスト | なし（丸ごと置き換える） |
+ *
+ * - **仮定震源の別は、Yahoo が新しい報番号で来ても直前の P2PQuake の値を保つ**（2026-10-14 ユーザー承認
+ *   「直前の P2PQuake の値を保つ」）。Yahoo は仮定震源要素かどうかを運ばない
+ * - severity は引き上げだけ（Yahoo の震度からの推定は、P2PQuake が警報と伝えた後でも弱く出る）
+ * - 特別警報の下げ止まり（`everSpecialWarning`）は一度立てたら落とさない（→ `computeDisplayEEWLevel`）
+ * - **取消・失効の報は通さない。** あちらは状態側が表示中の EEW を土台に名指しで扱う
+ */
+export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAlert): EEWAlert {
+  let base: EEWAlert
+  if (!existing) {
+    base = incoming
+  } else if (incoming.origin === 'yahoo') {
+    base = {
+      ...existing,
+      origin: incoming.origin,
+      id: incoming.id,
+      time: incoming.time,
+      test: incoming.test,
+      issue: incoming.issue,
+      cancelled: incoming.cancelled,
+      isFinal: incoming.isFinal,
+      // 予想の最大震度は Yahoo も運ぶが、震度が未確定の報（calcintensity が空）では欠ける。
+      // 欠けた報で前の値を消さない。
+      forecastMaxScale: incoming.forecastMaxScale ?? existing.forecastMaxScale,
+      forecastMaxScaleOrAbove: incoming.forecastMaxScale !== undefined
+        ? incoming.forecastMaxScaleOrAbove
+        : existing.forecastMaxScaleOrAbove,
+      // 運んだ値のほうが、保っている区域（前の P2PQuake の報）より新しい。欠けた報では前の印のまま。
+      maxScaleFromForecast: (incoming.forecastMaxScale ?? 0) > 0 ? true : existing.maxScaleFromForecast,
+      earthquake: {
+        ...existing.earthquake,
+        originTime: incoming.earthquake.originTime,
+        hypocenter: incoming.earthquake.hypocenter,
+      },
+    }
+  } else if (incoming.origin === 'p2pquake') {
+    base = {
+      ...existing,
+      origin: incoming.origin,
+      id: incoming.id,
+      time: incoming.time,
+      test: incoming.test,
+      issue: incoming.issue,
+      cancelled: incoming.cancelled,
+      earthquake: incoming.earthquake,
+      // 区域が 1 件も無い報（取消など）は undefined で届く（`services/p2pquake.ts`）。
+      areas: incoming.areas ?? existing.areas,
+      // 新しい区域を運んだら、最大は区域で見る（前の Yahoo の電文全体の値は古い）。
+      maxScaleFromForecast: incoming.areas ? false : existing.maxScaleFromForecast,
+    }
+  } else {
+    base = incoming
+  }
+  // **届いた報の区分から引き上げる**（`base` ではない）。経路ごとの分岐は既存の値を土台に
+  // 組むので、`base.severity` は既存のまま —— 予報を警報へ上げる報を取りこぼす。
+  const severity = existing?.severity === 'Warning' ? 'Warning' : incoming.severity
+  const merged: EEWAlert = { ...base, severity }
+  return {
+    ...merged,
+    everSpecialWarning: (existing?.everSpecialWarning ?? false) || merged.everSpecialWarning === true
+      || computeSingleEEWLevel(merged) === 2,
+  }
 }
 
 // EEW 単発のレベル算出: 0=予報級（severity!=='Warning'。震度の高低に関係なく警報未満は全て 0）

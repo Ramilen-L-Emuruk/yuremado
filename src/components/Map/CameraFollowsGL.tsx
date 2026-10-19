@@ -8,7 +8,7 @@ import type { ShakeFocus, MapFocusTarget } from './mapTypes'
 import type { EEWAlert } from '../../types/earthquake'
 import type { PsWaveCircle } from '../../services/kyoshin'
 import { computeEewCircle } from '../../hooks/usePsWaveCalc'
-import { eewEventKey } from '../../utils/eew'
+import { compareEewNewestFirst, eewEventKey } from '../../utils/eew'
 import { hasKnownEpicenter } from '../../utils/geo'
 import { serverNow } from '../../utils/clock'
 import {
@@ -16,7 +16,7 @@ import {
   fitJapan,
   flyToPoint,
   flyToBoundsSnapped,
-  boundsFromCirclesForEewFollow,
+  toLngLatBounds,
   boundsForLiveFollow,
   boundsFromPositions,
   mapContainsBounds,
@@ -30,6 +30,7 @@ import {
   type FitZoomPolicy,
 } from './gl/camera'
 import { decideTsunamiFit } from './gl/tsunamiFit'
+import { eewFirstFocusTarget, type EewFirstFocusTarget } from './gl/bounds'
 import { hasObservedHeightChanged, hasMaxHeightTimeAdvanced, firstWaveSpokenKey, type ObservedHeightRank } from '../../utils/tsunami'
 import type { TsunamiObsBar } from '../../hooks/useTsunamiLayerData'
 import { openPopupAt, closeMapPopup } from './gl/popupRegistry'
@@ -611,6 +612,13 @@ const GROWTH_FOLLOW_SUPPRESS_MS = 3000
 // 揃えにいかないこと。
 const SHAKE_FOCUS_YIELD_AFTER_EEW_MS = 10000
 
+/** 第一報で寄せた先を記録に書くときの呼び名（`eewFirstFocusTarget` の `from`）。 */
+const EEW_FIRST_FOCUS_LABEL: Record<Extract<EewFirstFocusTarget, { kind: 'bounds' }>['from'], string> = {
+  circle: '自身の波円',
+  areas: '予想区域（震源座標なし）',
+  detected: '揺れ検知点（震源座標・予想区域なし）',
+}
+
 // 「新規発報」とみなす鮮度。EEW を初めて見てからこの時間の内に追従が始まったら第一報のフォーカス
 // （自身の波円／震源へ寄る＋上の抑制）を与え、過ぎていたら「発報中の EEW のところへ入室した」として
 // 合成範囲へ寄せる。
@@ -731,6 +739,12 @@ export function FitToEEWGL({
   // マウントごとに落ちてよい: 第一報フォーカスを与えた入室でしか意味を持たず、別モードから
   // 入室した回は入室フィットが合成範囲へ寄せ直すため（`entryFittedRef` と同じ寿命）。
   const relocationSpanRef = useRef<LatLng[]>([])
+  // **震源の座標を待っている第一報**の地震の鍵。座標の無い報を区域塗りか検知点へ寄せたときに立て、
+  // 新規発報の窓（`NEW_EEW_FOCUS_WINDOW_MS`）のうちに座標付きの報が届いたら、もう一度だけ第一報として
+  // 震源（自身の波円）へ寄せ直して落とす。立てないと、区域や検知点で広く引いた画のまま震源へ寄らない
+  // （`focusedEewIdRef` が同じ地震を指しているので、第一報の分岐へ二度と入らない）。
+  // 震源訂正フォローは、これが立っている間の「訂正の記録が空」を異常として扱わない。
+  const awaitingEpicenterFocusRef = useRef<string | null>(null)
   // 第一報の抑制の期限。**`suppressGrowthUntilRef` とは別に持つ。** あちらは揺れフォーカスも
   // 張るので、震源訂正フォロー（下）の条件にすると「寄せた観測点から震源が外れている」だけで
   // 引き戻してしまい、揺れフォーカスが 3 秒保たない。破ってよいのは第一報が張った抑制だけ。
@@ -747,10 +761,10 @@ export function FitToEEWGL({
   // 再計算で 100ms ごとに走るため、素通しにすると 3 秒の抑制中に同じ行が 30 本並ぶ。
   const relocationSkipRef = useRef<string | null>(null)
 
-  // 最新 EEW（originTime 降順）を追従対象とする。
+  // 最新 EEW（発生時刻の降順。発生時刻を持たない報は発現時刻で並べる → `compareEewNewestFirst`）を追従対象とする。
   const latest =
     eews.length > 0
-      ? [...eews].sort((a, b) => b.earthquake.originTime.localeCompare(a.earthquake.originTime))[0]
+      ? [...eews].sort(compareEewNewestFirst)[0]
       : null
 
   // 新規 EEW 受信 → 震源/波円へフィット。解除 → 検知点 or 日本全体へ。
@@ -763,6 +777,7 @@ export function FitToEEWGL({
       // 発報が終わったら訂正の記録は忘れる。残すと、次の EEW で抑制を破ったときに無関係な
       // 場所まで含む画になる（親が `focusedEewIdRef` を落とすのと同じ理由）。
       relocationSpanRef.current = []
+      awaitingEpicenterFocusRef.current = null
       if (hadEewRef.current) {
         hadEewRef.current = false
         if (isUserInteracting) {
@@ -790,12 +805,10 @@ export function FitToEEWGL({
       return
     }
     const { latitude, longitude } = latest.earthquake.hypocenter
-    if (!hasKnownEpicenter(latitude, longitude)) {
-      // 寄り先が無いので何もしない。他のスキップと同じく記録は残す——黙って止まると
-      // 「EEW が出ているのに地図が動かない」の原因を後から追えない。
-      log.debug('[mapGL] EEW追従 スキップ (震源座標なし)')
-      return
-    }
+    const epicenter: LatLng | null = hasKnownEpicenter(latitude, longitude) ? [latitude, longitude] : null
+    // **「EEW が出ている」印は、震源の座標の有無と関係なく立てる。** 解除時の帰還はこの印を見る。
+    // 以前は座標が無い時点で印を立てる前に返っていたため、座標の無い EEW では最初のフォーカスも
+    // 解除後の帰りも抜けていた。寄せる先は座標が無くても区域塗りや検知点から選べる（`eewFirstFocusTarget`）。
     hadEewRef.current = true
     // キーの導出は初出時刻の台帳（gl/eewFirstSeen.ts）と必ず同じものを使う。食い違うと台帳を
     // 引けなくなり、すべてが新規発報に倒れて入室フィットが黙って死ぬ。
@@ -813,8 +826,30 @@ export function FitToEEWGL({
     // 第一報フォーカス、という二段のカメラ移動になる（実機で確認した）。
     const firstSeenAt = firstSeenAtRef.current.get(eewEventId)
     const isNewAlert = firstSeenAt === undefined || serverNow() - firstSeenAt < NEW_EEW_FOCUS_WINDOW_MS
-    if (isNewAlert && focusedEewIdRef.current !== eewEventId) {
+    // 区域や検知点で寄せた第一報に、窓のうちに震源の座標が届いた（`awaitingEpicenterFocusRef` の注記）
+    const epicenterArrivedLate = epicenter !== null && awaitingEpicenterFocusRef.current === eewEventId
+    if (isNewAlert && (focusedEewIdRef.current !== eewEventId || epicenterArrivedLate)) {
+      // 寄せる先は 自身の予報円 → 震源 → 予想の区域塗り → 揺れ検知点 の順（`eewFirstFocusTarget`）。
+      //
+      // 波円は psWave prop を待たず、その場で自身の円だけを直接計算する。psWave は usePsWaveCalc が
+      // 別 Effect で非同期に更新するため、新規 EEW 受信直後のこのレンダーではまだ反映されていない
+      // （psWave.find に頼ると常に外れて震源へ落ちる＝震源→波円のギクシャクになる）。他に発報中の
+      // EEW があってもそれらの円は含めない。
+      const target = eewFirstFocusTarget(
+        computeEewCircle(latest, serverNow()),
+        epicenter,
+        forecastAreaPositions,
+        detectedPoints.map(dp2ll),
+      )
+      if (target.kind === 'none') {
+        // **印を立てずに戻る。** 立てると、次の報で区域や震源が届いても第一報のフォーカスを与えない。
+        // 黙ると「EEW が出ているのに地図が動かない」の原因を後から追えないので記録は残す。
+        log.debug('[mapGL] EEW新規 寄せる先なし（震源の座標・予想区域・検知点のいずれも無い）。次の報で寄せ直す')
+        return
+      }
       focusedEewIdRef.current = eewEventId
+      // 震源で寄せられたかどうか。区域・検知点で寄せたなら、座標付きの報で 1 度だけ寄せ直す
+      awaitingEpicenterFocusRef.current = epicenter === null ? eewEventId : null
       // 第一報のフォーカスで、この入室の初期フレーミングも済んだものとして扱う。立てておかないと、
       // 続報でこの effect が再実行されたときに下の入室フィットへ落ち、寄せた直後に合成範囲へ
       // 引き直してしまう（フォーカスを見せる意味が無くなる）。
@@ -823,23 +858,17 @@ export function FitToEEWGL({
       suppressGrowthUntilRef.current = Date.now() + GROWTH_FOLLOW_SUPPRESS_MS
       firstReportSuppressUntilRef.current = suppressGrowthUntilRef.current
       // 訂正の振れ幅の記録を、この震源から始め直す（上記 ref の注記）。円へ寄せるか震源 1 点へ
-      // 寄せるかに関わらず、画の中心にあるのはこの震源。
-      relocationSpanRef.current = [[latitude, longitude]]
+      // 寄せるかに関わらず、画の中心にあるのはこの震源。座標の無い報では空から始める。
+      relocationSpanRef.current = epicenter ? [epicenter] : []
       // 揺れフォーカスに譲らせる猶予はこれとは別の長さで張る（役割が違う。上記の定数参照）。
       newEewYieldUntilRef.current = Date.now() + SHAKE_FOCUS_YIELD_AFTER_EEW_MS
-      // 波円が既にあれば波円へ直接フィット（震源→波円のギクシャク防止）。他に発報中の EEW があっても
-      // それらの円は含めない。psWave prop は usePsWaveCalc が別 Effect で非同期に更新するため、新規 EEW
-      // 受信直後のこのレンダーではまだ反映されていない（psWave.find に頼ると常に外れて震源フォールバック
-      // に落ちてしまう）。ここでは psWave を待たず、その場で自身の円だけを直接計算する。
-      const ownCircle = computeEewCircle(latest, serverNow())
-      const bounds = ownCircle ? boundsFromCirclesForEewFollow([ownCircle]) : null
-      if (bounds) {
-        log.debug('[mapGL] EEW新規 自身の波円へフィット')
-        flyToBoundsSnapped(map, bounds, { padding: 60, durationSec: 0.8 })
+      if (target.kind === 'bounds') {
+        log.debug(`[mapGL] EEW新規 ${EEW_FIRST_FOCUS_LABEL[target.from]}へフィット`)
+        flyToBoundsSnapped(map, toLngLatBounds(target.bounds), { padding: 60, durationSec: 0.8 })
         return
       }
       log.debug('[mapGL] EEW新規 震源へフィット')
-      flyToPoint(map, [latitude, longitude], fitMaxZoom(map), 0.8)
+      flyToPoint(map, target.point, fitMaxZoom(map), 0.8)
       return
     }
     // ここから入室フィット（このマウントで 1 回だけ）。目標は成長フォローと同一の合成範囲にする。
@@ -870,10 +899,14 @@ export function FitToEEWGL({
       flyToBoundsSnapped(map, entryBounds, { padding: 60, durationSec: 0.8 })
       return
     }
-    // 保険。ここへ来る時点で latest の震源座標は有効（上の早期 return を通っている）なので、
-    // 合成範囲は必ず作れるはず。作れなかったときのために震源 1 点への寄りを残しておく。
-    log.debug('[mapGL] EEW入室フィット 座標なし 震源へフィット')
-    flyToPoint(map, [latitude, longitude], fitMaxZoom(map), 0.8)
+    // 保険。合成範囲が作れないのは、震源の座標も円も区域も検知点も無いときだけ。震源の座標が
+    // あればそこへ寄せ、無ければ寄せる先が無いことを記録して留まる。
+    if (epicenter) {
+      log.debug('[mapGL] EEW入室フィット 座標なし 震源へフィット')
+      flyToPoint(map, epicenter, fitMaxZoom(map), 0.8)
+    } else {
+      log.debug('[mapGL] EEW入室フィット 寄せる先なし（震源の座標・予想区域・検知点のいずれも無い）')
+    }
     // psWave/eews/detectedPoints/candidatePoints/hasDetection は意図的に依存配列から外している。この
     // effect は「新規 EEW を検知した瞬間」「発報中の EEW のところへ入室した瞬間」「最後の EEW が消えた
     // 瞬間」だけに反応させたく、点群の変化では再実行させない（3 つの印——focusedEewIdRef・
@@ -1044,9 +1077,14 @@ export function FitToEEWGL({
       const ownCircles = psWave.filter((c) => c.eventId === focusedKey)
       const relocated = boundsForLiveFollow(ownCircles, relocationSpanRef.current, [], [])
       if (!relocated) {
-        // **到達しないはず。** ここへ来る条件（第一報の抑制が有効）は、第一報フォーカスが
-        // `relocationSpanRef` を 1 点で作り直した後にしか成立せず、空の記録から矩形を作ろうと
-        // することはない。不変条件が崩れた印なので、常に残る側で記録する。
+        // 震源の座標が無いまま区域・検知点で寄せた第一報では、記録が空なのが正常（座標が届けば
+        // 上の第一報の分岐が寄せ直す。`awaitingEpicenterFocusRef` の注記）。間引いて見送りとして残す。
+        if (awaitingEpicenterFocusRef.current === focusedKey) {
+          noteRelocationSkip('震源の座標がまだ無い（区域・検知点で寄せた第一報）')
+          return
+        }
+        // **ほかは到達しないはず。** 震源で寄せた第一報は `relocationSpanRef` を 1 点で作り直すので、
+        // 空の記録から矩形を作ろうとすることはない。不変条件が崩れた印なので、常に残る側で記録する。
         log.warn('[mapGL] EEW震源訂正フォロー 寄り先を作れない（訂正の記録が空）')
         return
       }
@@ -1301,13 +1339,15 @@ export function TsunamiFitGL({
     //   あっても空になる（`useTsunamiLayerData` は海岸線を引けない区域の行を作らない）。
     //   どちらでも扱いは同じでよい —— まだ寄り先を持っていない状態なので、基準を作り直して
     //   対象海域から見せる
-    // - **差し替わった**: 気象庁が解除を経ずに別の津波を発表した（`useEarthquakes` の
-    //   「別 eventId の tsunami で上書き」）。**signature は非空のまま変わる**ので、空を経由したか
-    //   だけでは見分けられない。**両方の識別子が取れるときだけ見る** —— 片方でも空なら「別物」と
-    //   言えないので従来どおり差分を取る（標準版は識別子を持たないため常にこちら）
+    // - **差し替わった**: 番号の重ならない津波が解除を経ずに届いた（`useEarthquakes` の
+    //   「番号の重ならない津波で表示中の津波を置き換えます」）。**signature は非空のまま変わる**ので、
+    //   空を経由したかだけでは見分けられない。**番号が 1 つでも重なれば同じ津波**（気象庁は別の地震の
+    //   寄与で番号を足して切り替える。→ `utils/tsunami.ts` の `isSameTsunamiEvent`）。**両方の識別子が
+    //   取れるときだけ見る** —— 片方でも空なら「別物」と言えないので従来どおり差分を取る（標準版は
+    //   識別子を持たないため常にこちら）
     const tsunamiPresent = tsunamiSignature !== ''
     const tsunamiSwitched = tsunamiPresent && !!tsunamiEventId && !!prevEventIdRef.current
-      && tsunamiEventId !== prevEventIdRef.current
+      && !eventIdsOverlap(tsunamiEventId, prevEventIdRef.current)
     const obsBaselineStale = (tsunamiPresent && !prevSeenSigRef.current) || tsunamiSwitched
     prevSeenSigRef.current = tsunamiSignature
     prevEventIdRef.current = tsunamiEventId
@@ -1542,4 +1582,10 @@ export function FocusTargetGL({ focusTarget }: { focusTarget: MapFocusTarget | n
     return () => { map.off('moveend', openPopup) }
   }, [map, focusTarget])
   return null
+}
+
+/** 半角スペースで並んだ地震の識別番号どうしが 1 つでも重なるか（→ `useTsunamiLayerData` の `tsunamiEventId`）。 */
+function eventIdsOverlap(a: string, b: string): boolean {
+  const bIds = new Set(b.split(' ').filter(Boolean))
+  return a.split(' ').some(id => id !== '' && bIds.has(id))
 }

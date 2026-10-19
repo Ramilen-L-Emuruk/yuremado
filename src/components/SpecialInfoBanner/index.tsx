@@ -6,40 +6,28 @@ import type {
   TelegramOperationStatus,
 } from '../../types/earthquake'
 import { EarthquakeCountDetail, earthquakeCountHeadline } from './EarthquakeCountDetail'
-import { log } from '../../utils/logger'
-import { normalizeDmdataTelegramId } from '../../utils/dmdataId'
+import type { SpecialInfoBanners } from './useSpecialInfoBanners'
 
 interface Props {
-  nankai: JMANankai | null
-  nankaiCommentary: JMANankaiCommentary | null
-  kohatsu: JMAKohatsu | null
-  quakeNotice: JMAQuakeNotice | null
-  earthquakeCount: JMAEarthquakeCount | null
+  /**
+   * 帯の束の状態（`useSpecialInfoBanners`）。**描くのは `visible`（閉じた電文を除いたもの）だけ。**
+   * 閉じた状態を呼び出し側が持つので、共有ボタンの置き場所も同じ「いま出ている帯」で決められる。
+   */
+  banners: SpecialInfoBanners
   /**
    * いま気象庁が書いた文を読み上げている電文の主題（`telegramText:<kind>`。読んでいなければ null）。
    * 帯は自分が対象なら中身を開く（→ `useAutoOpenWhileSpeaking`）。
    */
   speakingTelegramTextSubject: string | null
+  /**
+   * 帯の束がいま画面の下端に接しているか。地図の下に波形が出ていれば、帯は地図の中にあって
+   * 下端には届かないので false。真のときだけ下端の余白（`SAFE_BOTTOM`）を付ける —— ただし
+   * 余白が効くのは `sideShort` の画面だけで、縦積みや PC では真でも付かない。
+   */
+  atScreenBottom: boolean
 }
 
-// 閉じた解説情報の電文 id を覚えておくキー。解説情報には解除電文が無く、定例解説は平常時にも
-// 毎月届くため、読み終えた帯を手で閉じられるようにしている。リロードで復活しないよう永続化する。
-// 保持するのは 1 件だけでよい（表示するのは常に最新の 1 通のみ）。
-const COMMENTARY_DISMISSED_KEY = 'nankai-commentary-dismissed'
-
-// 閉じたお知らせ（VZSE40）の電文 id。解説情報と同じ理由で永続化する。取消電文は届くが、
-// 「入電停止は明日の 8 時から」のような予告は取り消されないまま期間が過ぎるため、
-// 読み終えたら手で閉じられるようにしている。
-const NOTICE_DISMISSED_KEY = 'quake-notice-dismissed'
-
-// 閉じた地震回数の情報（VXSE60）の電文 id。群発は日をまたいで続き、そのあいだ報が重なる。
-// 読み終えた帯を手で片付けられるようにしている。
-//
-// **覚えるのは報の id であって群発（`eventId`）ではない。** つまり閉じたあと続報が届けば
-// 帯は出直す。続報は回数が増えた**新しい事実**なので、そのつもり —— 群発ごとに閉じたままに
-// すると、1704 回が 3000 回になっても黙ることになる。公式サンプルの `NextAdvisory` が
-// 次の発表を約 6 時間後としており、出直す頻度もその程度。
-const COUNT_DISMISSED_KEY = 'earthquake-count-dismissed'
+// 閉じた電文の id の覚え方（localStorage のキー・書式の揃え方）は useSpecialInfoBanners.ts にある。
 
 function NankaiIcon() {
   return (
@@ -112,26 +100,38 @@ function formatExpire(isoTime: string): string {
   return `${mm}/${dd} ${hh}:${mn}まで有効`
 }
 
-// 下端の safe-area（ホームインジケータ）を避けるための余白。両バナーの根要素に同じものを付ける。
-// **色の付いた箱の内側に置くこと。** 外側のラッパーに置くと帯ごと持ち上がり、下に地図が覗いて
-// 隙間に見える。避けたいのは押せる領域と文字であって、背景色は画面下端まで届いてよい。
-// last: … 2 枚同時に出うるため、余白が要るのは下端に接する最後の 1 枚だけ。上のバナーにも入れると
+// 下端の safe-area（ホームインジケータ）を避けるための余白。帯を並べる包みに付け、最後の帯へ効かせる。
+// **色の付いた箱の内側に入る。** 余白は最後の帯自身の padding になるので、背景色は画面下端まで届く。
+//   包みや外側のラッパーの padding にすると帯ごと持ち上がり、下に地図が覗いて隙間に見える。
+// 最後の 1 枚だけ … 5 枚同時に出うるため、余白が要るのは下端に接する最後の 1 枚だけ。上の帯にも入れると
 //   帯と帯の間に隙間ができる。並び順を JS 側で数えると種類が増えたときに追従漏れを起こすので、
 //   :last-child に判定させて実際に最後へ描画された要素だけに効かせる。
-// side: … 左右分割時だけ地図が画面全高を占めてバナーが画面下端に接する。縦積み時は地図の下に
-//   つまみ・パネル・ナビが続くので下端には届かず、余白を入れると地図の中に不要な隙間ができる
-//   （env() は要素の位置に関わらず値を返すため条件が要る）。
-const SAFE_BOTTOM = 'side:last:pb-[env(safe-area-inset-bottom,0px)]'
+// sideShort: … 横向きかつ高さ 600px 以下（主にスマホの横画面）。縦積みでは地図の下につまみ・パネル・ナビが
+//   続いて下端に届かない。iPad の横画面は余白を取らない（→ docs/spec/architecture-spec.md §4 規則 2）。
+//   env() は要素の位置に関わらず値を返すため、どちらも条件で表す必要がある。
+// atScreenBottom: … 地図の下に波形が出ているときは、帯は画面の下端に届かないので付けない。
+const SAFE_BOTTOM = 'sideShort:[&>*:last-child]:pb-[env(safe-area-inset-bottom,0px)]'
 
-export function SpecialInfoBanner({
-  nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, speakingTelegramTextSubject,
-}: Props) {
+/**
+ * 地図の右下の共有ボタンを包む要素の、下の位置のクラス。帯の下端の余白と同じ条件で下端の safe-area を避ける
+ * （→ docs/spec/architecture-spec.md §4）。帯が出ていればボタンは帯のすぐ上に載り、下端に届くのは帯の側なので避けない。
+ * **クラス名は字面のまま書く**（Tailwind は文字列をそのまま拾う。組み立てると生成されない）。
+ */
+export function shareButtonBottomClass(bannerShown: boolean, atScreenBottom: boolean): string {
+  return !bannerShown && atScreenBottom
+    ? 'bottom-2 sideShort:bottom-[max(0.5rem,env(safe-area-inset-bottom,0px))]'
+    : 'bottom-2'
+}
+
+export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, atScreenBottom }: Props) {
   /**
    * この帯の文をいま読み上げているか。**主題は `telegramText:<電文の kind>`**
    * （→ `useLiveEventHandler` の `speakTelegramText`）。
    */
   const speaking = (kind: string) => speakingTelegramTextSubject === telegramTextSubject(kind)
-  if (!nankai && !nankaiCommentary && !kohatsu && !quakeNotice && !earthquakeCount) return null
+  // **閉じた帯しか残っていなければ何も描かない**（外枠の下限 2.5rem だけが空で残らないように）
+  if (!banners.shown) return null
+  const { nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount } = banners.visible
 
   return (
     // **自分では絶対配置しない。** 地図の下端へ積む枠は呼び出し側（`App`）が持っており、
@@ -151,19 +151,19 @@ export function SpecialInfoBanner({
           前者だけでは地図が低いときに地図の上へはみ出す（→ docs/spec/architecture-spec.md §4）。
           南海トラフ臨時情報は先頭なので、縮んでもスクロールの先頭に残る。
           単位は vh ではなく dvh。vh は iOS の PWA だとビューポートではなく画面全体の高さを指すため。
-          SAFE_BOTTOM の last: がここの直接の子を数えるので、バナー以外をこの中に足さないこと。 */}
-      <div className="pointer-events-auto min-h-0 max-h-[40dvh] overflow-y-auto overflow-x-hidden overscroll-x-none">
+          SAFE_BOTTOM はここの直接の子の最後に効くので、バナー以外をこの中に足さないこと。 */}
+      <div className={`pointer-events-auto min-h-0 max-h-[40dvh] overflow-y-auto overflow-x-hidden overscroll-x-none${atScreenBottom ? ` ${SAFE_BOTTOM}` : ''}`}>
         {/* 南海トラフの 2 枚（臨時情報とその解説情報）を隣り合わせる。臨時情報の発表期間中は
             解説情報が毎日届いて両方が同時に出るため、間に別の事象（後発地震＝北海道・三陸沖）を
             挟むと同じ事象の話が分断されて読みにくい。重さの順よりこちらを優先する。 */}
         {nankai && <NankaiBanner nankai={nankai} speaking={speaking('nankai')} />}
-        {nankaiCommentary && <CommentaryBanner commentary={nankaiCommentary} speaking={speaking('nankaiCommentary')} />}
+        {nankaiCommentary && <CommentaryBanner commentary={nankaiCommentary} speaking={speaking('nankaiCommentary')} onDismiss={() => banners.dismiss('nankaiCommentary')} />}
         {kohatsu && <KohatsuBanner kohatsu={kohatsu} speaking={speaking('kohatsu')} />}
-        {earthquakeCount && <EarthquakeCountBanner count={earthquakeCount} speaking={speaking('earthquakeCount')} />}
+        {earthquakeCount && <EarthquakeCountBanner count={earthquakeCount} speaking={speaking('earthquakeCount')} onDismiss={() => banners.dismiss('earthquakeCount')} />}
         {/* お知らせ（運用連絡）は最後。上の 4 枚は「いま起きている・起こりうる地震」の話で、
             こちらは観測点の入電停止・配信試験といった裏方の連絡。同時に出たときに
             事象の話を先に読ませる。 */}
-        {quakeNotice && <NoticeBanner notice={quakeNotice} />}
+        {quakeNotice && <NoticeBanner notice={quakeNotice} speaking={speaking('quakeNotice')} onDismiss={() => banners.dismiss('quakeNotice')} />}
       </div>
     </div>
   )
@@ -264,7 +264,7 @@ function NankaiBanner({ nankai, speaking }: { nankai: JMANankai; speaking: boole
   const { bg, border, badge } = nankaiColors(nankai.kindName)
 
   return (
-    <div className={`${bg} border-t-2 ${border} ${SAFE_BOTTOM}`}>
+    <div className={`${bg} border-t-2 ${border}`}>
       <button
         className="w-full px-3 py-2 flex items-center gap-2 text-left"
         onClick={() => setOpen(!open)}
@@ -294,7 +294,7 @@ function KohatsuBanner({ kohatsu, speaking }: { kohatsu: JMAKohatsu; speaking: b
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'kohatsu')
 
   return (
-    <div className={`bg-blue-900/95 border-t-2 border-blue-400 ${SAFE_BOTTOM}`}>
+    <div className="bg-blue-900/95 border-t-2 border-blue-400">
       <button
         className="w-full px-3 py-2 flex items-center gap-2 text-left"
         onClick={() => setOpen(!open)}
@@ -330,38 +330,10 @@ function KohatsuBanner({ kohatsu, speaking }: { kohatsu: JMAKohatsu; speaking: b
 //
 // 有効期限は出さない。内部では発表から 7 日で畳んでいるが、それは帯を常駐させないための
 // 表示上の都合であって、気象庁が期限を定めているわけではない（後発地震注意情報の 7 日とは違う）。
-function CommentaryBanner({ commentary, speaking }: { commentary: JMANankaiCommentary; speaking: boolean }) {
+function CommentaryBanner({ commentary, speaking, onDismiss }: { commentary: JMANankaiCommentary; speaking: boolean; onDismiss: () => void }) {
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'nankaiCommentary')
-  // 閉じた電文 id。マウント時に一度だけ読む。別の解説情報に入れ替わっても id が違うので
-  // 下の判定を通り、新しい電文はきちんと表示される。
-  const [dismissedId, setDismissedId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(COMMENTARY_DISMISSED_KEY)
-    } catch (e) {
-      log.debug('[nankai] 解説情報の既読状態を読めません', e)
-      return null
-    }
-  })
-
-  // 突き合わせる前に書式を揃える。保存されている id は閉じた当時のもので、
-  // 電文 id の書式を変えた版へ更新すると素の比較では外れる（＝閉じた帯が復活する）。
-  if (dismissedId != null && normalizeDmdataTelegramId(dismissedId) === normalizeDmdataTelegramId(commentary.id)) {
-    return null
-  }
-
-  const dismiss = () => {
-    // 永続化できない環境（プライベートモード等・容量超過）でも、この場で閉じる動作は止めない。
-    // ただし黙って諦めると「閉じてもリロードで復活する」問い合わせを追跡できないため記録する。
-    try {
-      localStorage.setItem(COMMENTARY_DISMISSED_KEY, commentary.id)
-    } catch (e) {
-      log.debug('[nankai] 解説情報の既読状態を保存できません', e)
-    }
-    setDismissedId(commentary.id)
-  }
-
   return (
-    <div className={`bg-teal-900/95 border-t-2 border-teal-400 ${SAFE_BOTTOM}`}>
+    <div className="bg-teal-900/95 border-t-2 border-teal-400">
       {/* 展開トグルと閉じるボタンを横に並べる。button の入れ子は不正な HTML になるため、
           他の帯のように全体を 1 つの button で覆うことはできない */}
       <div className="w-full px-3 py-2 flex items-center gap-2">
@@ -381,7 +353,7 @@ function CommentaryBanner({ commentary, speaking }: { commentary: JMANankaiComme
         </button>
         <button
           className="shrink-0 p-1 text-white/70 hover:text-white"
-          onClick={dismiss}
+          onClick={onDismiss}
           aria-label="解説情報を閉じる"
         >
           <CloseIcon />
@@ -410,33 +382,11 @@ function CommentaryBanner({ commentary, speaking }: { commentary: JMANankaiComme
 //
 // 有効期限（発表から 7 日）は出さない。解説情報と同じく帯を常駐させないための表示上の都合で、
 // 気象庁が定めた期限ではない。
-function NoticeBanner({ notice }: { notice: JMAQuakeNotice }) {
-  const [open, setOpen] = useState(false)
-  const [dismissedId, setDismissedId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(NOTICE_DISMISSED_KEY)
-    } catch (e) {
-      log.debug('[quakeNotice] お知らせの既読状態を読めません', e)
-      return null
-    }
-  })
-
-  // 突き合わせる前に書式を揃える（解説情報と同じ理由。→ CommentaryBanner）
-  if (dismissedId != null && normalizeDmdataTelegramId(dismissedId) === normalizeDmdataTelegramId(notice.id)) {
-    return null
-  }
-
-  const dismiss = () => {
-    try {
-      localStorage.setItem(NOTICE_DISMISSED_KEY, notice.id)
-    } catch (e) {
-      log.debug('[quakeNotice] お知らせの既読状態を保存できません', e)
-    }
-    setDismissedId(notice.id)
-  }
-
+function NoticeBanner({ notice, speaking, onDismiss }: { notice: JMAQuakeNotice; speaking: boolean; onDismiss: () => void }) {
+  // 本文を読み上げている間は開く（他の帯と同じ。読み上げは設定で有効にしたときだけ）
+  const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'quakeNotice')
   return (
-    <div className={`bg-slate-800/95 border-t-2 border-slate-400 ${SAFE_BOTTOM}`}>
+    <div className="bg-slate-800/95 border-t-2 border-slate-400">
       {/* 展開トグルと閉じるボタンを横に並べる（button の入れ子は不正な HTML になるため） */}
       <div className="w-full px-3 py-2 flex items-center gap-2">
         <button
@@ -455,7 +405,7 @@ function NoticeBanner({ notice }: { notice: JMAQuakeNotice }) {
         </button>
         <button
           className="shrink-0 p-1 text-white/70 hover:text-white"
-          onClick={dismiss}
+          onClick={onDismiss}
           aria-label="お知らせを閉じる"
         >
           <CloseIcon />
@@ -484,33 +434,10 @@ function NoticeBanner({ notice }: { notice: JMAQuakeNotice }) {
 //
 // 色は青緑（cyan）。南海トラフの解説（teal）とは隣り合わないので紛れにくく、
 // 段階の重さを表す黄／橙／赤とも、運用連絡の無彩色とも別に見える。
-function EarthquakeCountBanner({ count, speaking }: { count: JMAEarthquakeCount; speaking: boolean }) {
+function EarthquakeCountBanner({ count, speaking, onDismiss }: { count: JMAEarthquakeCount; speaking: boolean; onDismiss: () => void }) {
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'earthquakeCount')
-  const [dismissedId, setDismissedId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(COUNT_DISMISSED_KEY)
-    } catch (e) {
-      log.debug('[earthquakeCount] 既読状態を読めません', e)
-      return null
-    }
-  })
-
-  // 突き合わせる前に書式を揃える（解説情報と同じ理由。→ CommentaryBanner）
-  if (dismissedId != null && normalizeDmdataTelegramId(dismissedId) === normalizeDmdataTelegramId(count.id)) {
-    return null
-  }
-
-  const dismiss = () => {
-    try {
-      localStorage.setItem(COUNT_DISMISSED_KEY, count.id)
-    } catch (e) {
-      log.debug('[earthquakeCount] 既読状態を保存できません', e)
-    }
-    setDismissedId(count.id)
-  }
-
   return (
-    <div className={`bg-cyan-900/95 border-t-2 border-cyan-400 ${SAFE_BOTTOM}`}>
+    <div className="bg-cyan-900/95 border-t-2 border-cyan-400">
       {/* 展開トグルと閉じるボタンを横に並べる（button の入れ子は不正な HTML になるため） */}
       <div className="w-full px-3 py-2 flex items-center gap-2">
         <button
@@ -533,7 +460,7 @@ function EarthquakeCountBanner({ count, speaking }: { count: JMAEarthquakeCount;
         </button>
         <button
           className="shrink-0 p-1 text-white/70 hover:text-white"
-          onClick={dismiss}
+          onClick={onDismiss}
           aria-label="地震回数を閉じる"
         >
           <CloseIcon />

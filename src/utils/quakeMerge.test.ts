@@ -19,6 +19,7 @@ import {
   quakeHoldBack,
   applyQuakeCancelToCard,
   isQuakeCancelTarget,
+  isKnownCorrection,
 } from './quakeMerge'
 import type { JMAQuake, IssueType, IntensityScale, EarthquakePoint, DomesticTsunami, CorrectType } from '../types/earthquake'
 import { reportsText } from '../test-utils/quakeReports'
@@ -371,6 +372,21 @@ describe('sameQuakeEntry', () => {
     const original = makeQuake({ id: 'p2p-1', hypoName: '日向灘' })
     const corrected = makeQuake({ id: 'p2p-2', hypoName: '豊後水道', correct: '震源を訂正' })
     expect(sameQuakeEntry(original, corrected)).toBe(true)
+  })
+
+  // 訂正の有無が不明な報（P2PQuake の Unknown）も、合流では訂正の可能性ありとして扱う
+  // （2026-10-18 ユーザー承認・選んだ選択肢「印だけ消す」）。印は出さない（→ `isKnownCorrection`）。
+  it('訂正の有無が不明な報も震源名が変わって同一イベントとみなす', () => {
+    const original = makeQuake({ id: 'p2p-1', hypoName: '日向灘' })
+    const unknown = makeQuake({ id: 'p2p-2', hypoName: '豊後水道', correct: '不明' })
+    expect(sameQuakeEntry(original, unknown)).toBe(true)
+  })
+
+  it('訂正の印は、訂正と分かっている報にだけ付ける', () => {
+    expect(isKnownCorrection('不明')).toBe(false)
+    expect(isKnownCorrection('なし')).toBe(false)
+    expect(isKnownCorrection('訂正')).toBe(true)
+    expect(isKnownCorrection('震源を訂正')).toBe(true)
   })
 
   // VXSE61（P2PQuake の DestinationAmended）は震源要素を差し替える電文で、issue.correct は
@@ -2165,7 +2181,7 @@ describe('mergeQuakeHistory が作る印の記憶', () => {
       key,
       snapshot: {
         facts: quakeFactSnapshot(settled),
-        rows: quakeRowSnapshot(settled.points, settled.cities ?? []),
+        rows: quakeRowSnapshot(settled.points, settled.cities ?? [], null),
         issuedAt: markIssuedAt(settled.issue.time),
         reportType: settled.issue.type,
       },

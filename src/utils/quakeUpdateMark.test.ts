@@ -51,7 +51,7 @@ const city = (name: string, areaName: string, scale: IntensityScale, over: Parti
   ({ name, area: areaName, pref: '石川県', scale, ...over }) as JMAQuakeCity
 
 const snapRows = (points: EarthquakePoint[], cities: JMAQuakeCity[] = []) =>
-  quakeRowSnapshot(points, cities)
+  quakeRowSnapshot(points, cities, null)
 
 /**
  * 同じ情報種別の続報として差分を取る（このファイルの多くのテストが見たい形）。
@@ -213,6 +213,16 @@ describe('地震カードの更新の印', () => {
     // 対照: ロールアップ点は県の最大としては効く（落としているのではなく、行にしないだけ）。
     it('都道府県ロールアップ点は県の最大には効く', () => {
       expect(snapRows([prefRollup('石川県', 70)]).get(rowMarkKey.pref('石川県'))?.key).toBe('70')
+    })
+
+    // 正: 標準版（P2PQuake）は区域の点にも県名を積む。`pref` の有無で見分けると区域の記憶が
+    // 1 つもできず、震度速報の区域の行に印が付かない。
+    it('県名を持つ区域の点（標準版）も区域の行として覚える', () => {
+      const p2pArea: EarthquakePoint = { pref: '石川県', addr: '石川県能登', isArea: true, scale: 70 as IntensityScale }
+      const snap = snapRows([p2pArea])
+      expect(snap.get(rowMarkKey.area('石川県能登'))?.key).toBe('70')
+      expect(snap.get(rowMarkKey.pref('石川県'))?.key).toBe('70')
+      expect([...snap.keys()].some(k => k.startsWith('st:'))).toBe(false)
     })
 
     // 対照: 区域の段は既に出ているので、同じ報で区域が増えれば印は付く（段ごとに見ている）。

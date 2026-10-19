@@ -78,6 +78,7 @@ describe('buildIntensityRows', () => {
 
   const deps = (over: Partial<IntensityRowDeps> = {}): IntensityRowDeps => ({
     // 索引は実データから作る（テスト専用の小さな索引では、区域名と県名の衝突を取り違えても気づけない）。
+    areaPrefIndex: AREA_PREF_INDEX,
     prefOfArea: name => AREA_PREF_INDEX.get(name) ?? null,
     prefOfStation: () => null,
     regionOfStation: () => null,
@@ -99,6 +100,30 @@ describe('buildIntensityRows', () => {
     expect(rows[0].pref).toBe('岩手県')
     expect(rows[0].scale).toBe(40)
     expect(rows[0].regions.map(r => r.name)).toEqual(['岩手県沿岸北部', '岩手県内陸北部'])
+  })
+
+  // 正: 標準版（P2PQuake）の震度速報は区域の点にも県名を積む（`pref` が空でない）。
+  // `pref` の有無で区域を見分けると県の行だけが並び、配下の区域が 1 件も出なかった。
+  it('県名を持つ区域の点（標準版の震度速報）から区域の行を作る', () => {
+    const p2pArea = (pref: string, addr: string, scale: number, unreceived = false): EarthquakePoint =>
+      ({ pref, addr, isArea: true, scale: s(scale), ...(unreceived && { unreceived }) })
+    const rows = prefRowsOf([
+      p2pArea('石川県', '石川県能登', 70),
+      p2pArea('石川県', '石川県加賀', 50),
+      p2pArea('新潟県', '新潟県上越', 46),
+    ], [], deps({ unreceivedAreas: new Set(['新潟県上越']) }))
+    const ishikawa = rows.find(r => r.pref === '石川県')
+    expect(ishikawa?.scale).toBe(70)
+    expect(ishikawa?.regions.map(r => r.name)).toEqual(['石川県能登', '石川県加賀'])
+    expect(rows.find(r => r.pref === '新潟県')?.regions.map(r => r.name)).toEqual(['新潟県上越'])
+  })
+
+  // 安全弁: 区域名が県名と同じ奈良県は、標準版でも区域の行として出す（ロールアップ点と取り違えない）。
+  it('県名と同じ名前の区域（奈良県）も区域の行として出す', () => {
+    const rows = prefRowsOf([
+      { pref: '奈良県', addr: '奈良県', isArea: true, scale: s(40) },
+    ], [], deps())
+    expect(rows[0].regions.map(r => r.name)).toEqual(['奈良県'])
   })
 
   // 正: 区域の点を持たない電文（P2PQuake の詳細報）では観測点から逆引きする。

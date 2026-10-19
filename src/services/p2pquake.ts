@@ -26,19 +26,42 @@ function codeToLogKind(code: number): TelegramLogEntry['kind'] {
 }
 
 const CORRECT_TYPE_MAP: Record<string, CorrectType> = {
-  None: 'なし', Unknown: '訂正', ScaleOnly: '震度のみ訂正',
+  // `Unknown` は訂正の有無が不明（公式の API 定義の説明）。訂正とは扱わない（→ `CorrectType`）
+  None: 'なし', Unknown: '不明', ScaleOnly: '震度のみ訂正',
   DestinationOnly: '震源を訂正', ScaleAndDestination: '震度・震源を訂正',
+}
+
+// P2PQuake の公式の API 定義（OpenAPI）が `domesticTsunami` に挙げる 6 値だけを持つ。
+// **大津波警報も `Warning` に入る**（定義の説明は「津波予報（種類不明）」）ので、`MajorWarning` の
+// ような値は来ない。表に無い値は下で記録し、'不明' として扱う。
+/** 表 `table` が自分で持つ鍵 `key` の値。持たなければ `undefined`（継承した名前は拾わない）。 */
+function ownEntry<V>(table: Readonly<Record<string, V>>, key: string): V | undefined {
+  return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined
 }
 
 const DOMESTIC_TSUNAMI_MAP: Record<string, DomesticTsunami> = {
   None: 'なし', Unknown: '不明', Checking: '調査中',
-  // SeaFloor は DomesticTsunami 型に含まれる正規値だが、P2PQuake API v2 の実運用で
-  // この enum が返る実例は確認できていない（実データ検証で 0 件）。型網羅性維持と、
-  // 将来の API 変更時に未変換のまま流さないためエントリは残す。
-  SeaFloor: '海面変動の可能性', NonEffective: '若干の海面変動',
+  NonEffective: '若干の海面変動',
   Watch: '注意報', Warning: '警報等',
-  // QUAKE-5: 大津波警報。欠落していると DOMESTIC_TSUNAMI_MAP[raw]=undefined → '不明' 灰色格下げに
-  MajorWarning: '警報等',
+}
+
+/**
+ * `earthquake.foreignTsunami`（海外で発生した地震の、日本以外への津波の見通し）を、気象庁の
+ * 固定付加文の文面へ起こす表（→ `JMAQuake.foreignTsunamiText`）。
+ *
+ * 文面は気象庁の「地震火山関連コード表」の固定付加文（0221〜0228）の原文に揃えた
+ * （2026-10-18 にコード表で確かめた。採用は同日ユーザー承認・選んだ選択肢「表の文面でよい」）。
+ * `None`・`Unknown`・`Checking` は伝える見通しが無いので何も足さない。
+ */
+const FOREIGN_TSUNAMI_TEXT: Readonly<Record<string, string | null>> = {
+  None: null, Unknown: null, Checking: null,
+  NonEffectiveNearby: '震源の近傍で小さな津波発生の可能性がありますが、被害をもたらす津波の心配はありません。',
+  WarningNearby: '震源の近傍で津波発生の可能性があります。',
+  WarningPacific: '太平洋で津波発生の可能性があります。',
+  WarningPacificWide: '太平洋の広域に津波発生の可能性があります。',
+  WarningIndian: 'インド洋で津波発生の可能性があります。',
+  WarningIndianWide: 'インド洋の広域に津波発生の可能性があります。',
+  Potential: '一般的に、この規模の地震が海域の浅い領域で発生すると、津波が発生することがあります。',
 }
 
 const ISSUE_TYPE_MAP: Record<string, IssueType> = {
@@ -263,8 +286,16 @@ function parseQuake(raw: Record<string, unknown>): JMAQuake | null {
   if (rawCorrect && !correct) warnField(context, 'issue.correct', rawCorrect)
 
   const rawTsunami = str(earthquake.domesticTsunami)
-  const domesticTsunami = DOMESTIC_TSUNAMI_MAP[rawTsunami]
+  // 表引きは自分の鍵だけを見る（`toString` などの継承した名前を表の値と取り違えない）。
+  const domesticTsunami = ownEntry(DOMESTIC_TSUNAMI_MAP, rawTsunami)
   if (rawTsunami && !domesticTsunami) warnField(context, 'earthquake.domesticTsunami', rawTsunami)
+
+  // 表に無い値は記録して何も足さない（文面を推し量って作らない）。
+  const rawForeign = str(earthquake.foreignTsunami)
+  const foreignTsunamiText = rawForeign ? ownEntry(FOREIGN_TSUNAMI_TEXT, rawForeign) : null
+  if (rawForeign && foreignTsunamiText === undefined) warnField(context, 'earthquake.foreignTsunami', rawForeign)
+  // 自由付加文。空文字は「無い」と同じに扱う（DMDATA 経路と揃える）。
+  const freeText = str(obj(raw.comments).freeFormComment).trim() || undefined
 
   return {
     kind: 'quake',
@@ -290,6 +321,8 @@ function parseQuake(raw: Record<string, unknown>): JMAQuake | null {
       domesticTsunami: domesticTsunami ?? '不明',
     },
     points: parseQuakePoints(raw.points, context),
+    ...(freeText && { freeText }),
+    ...(foreignTsunamiText && { foreignTsunamiText }),
   }
 }
 
@@ -412,6 +445,7 @@ function parseEEW(raw: Record<string, unknown>): EEWAlert | null {
 
   return {
     kind: 'eew',
+    origin: 'p2pquake',
     id,
     time,
     test: raw.test === true,
@@ -439,7 +473,7 @@ function parseEEW(raw: Record<string, unknown>): EEWAlert | null {
       time: requiredStr(issue.time, context, 'issue.time') || undefined,
     },
     // 地域が 1 件も無いとき（取消電文など）は undefined にする。空配列を入れると
-    // useEarthquakes の enrichEEW（`source.areas ?? existing.areas`）が既存の地域別予想を
+    // 統合（`utils/eew.ts` の `mergeEewReport`・`incoming.areas ?? existing.areas`）が既存の地域別予想を
     // 空で上書きしてしまい、地図の区域塗りが消える。
     areas: areas.length > 0 ? areas : undefined,
   }

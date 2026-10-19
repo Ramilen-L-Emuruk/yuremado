@@ -7,7 +7,7 @@
 //
 // **物差し** は「1 秒ごとの、中心からの振れの最大」の中央値（3 成分のうち最大）。地震カード・
 // 詳細の窓は 0 の手前 30 秒で測る（`seismoQuakeWindow.ts` の `measureQuietLevel`）。地図の下端の
-// 波形は手元の 60 秒ぶんから測り、揺れに引きずられないよう直近 5 分の最小を使う
+// 波形は表示している幅（設定で 60〜180 秒）ぶんから測り、揺れに引きずられないよう直近 5 分の最小を使う
 // （{@link QuietLevelMemory}）。
 
 import type { SeismoWaveWindow } from './seismoWaveBuffer'
@@ -106,7 +106,7 @@ export const LIVE_QUIET_MEMORY_MS = 5 * 60_000
 /**
  * 地図の下端の波形の静かさを、**直近 5 分の最小**で覚える。
  *
- * 手元の窓は 60 秒しか無いので、揺れが 30 秒を超えると、その場で測った値は揺れの強さに引きずられる。
+ * 測る窓は表示している幅（60〜180 秒）しか無いので、揺れがその半分を超えると、その場で測った値は揺れの強さに引きずられる。
  * そのまま下限にすると**揺れている最中に縦が伸び、揺れが小さく描かれる**。揺れの前に測った値を
  * 覚えておき、いちばん静かだったものを使う。5 分を超えて揺れ続けると引きずられ始めるが、
  * そのときは揺れの大きさのほうが下限を超えているので、絵の縦は揺れで決まる。
@@ -114,17 +114,21 @@ export const LIVE_QUIET_MEMORY_MS = 5 * 60_000
  * **時刻はデータの時刻で渡す**（壁時計は使わない）。時刻が覚えている長さより前へ戻ったら（再生の
  * 切り替えなど）、覚えていた値を捨てる —— 別の時間の静かさを混ぜない。
  *
- * **{@link QUIET_LEVEL_MIN_GAL} 未満の値は覚えない**（測れなかったものとして扱う）。値が張り付いた窓
+ * **物差しの下限（`minLevel`）未満の値は覚えない**（測れなかったものとして扱う）。値が張り付いた窓
  * （センサーの固着・同じ値の連続）は 0 を返し、最小を採る作りでは 1 回でその後 5 分間の下限を決めてしまう。
+ * 下限は単位で違う（自作地震計は {@link QUIET_LEVEL_MIN_GAL}、公開観測点は
+ * `components/SeismoWaveChart/waveUnit.ts` の値）ので、作るときに渡す。
  */
 export class QuietLevelMemory {
   private entries: { atMs: number; level: number }[] = []
+
+  constructor(private readonly minLevel: number) {}
 
   observe(atMs: number, level: number | null): void {
     if (!Number.isFinite(atMs)) return
     const last = this.entries[this.entries.length - 1]
     if (last !== undefined && atMs < last.atMs - LIVE_QUIET_MEMORY_MS) this.entries = []
-    if (level !== null && Number.isFinite(level) && level >= QUIET_LEVEL_MIN_GAL) this.entries.push({ atMs, level })
+    if (level !== null && Number.isFinite(level) && level >= this.minLevel) this.entries.push({ atMs, level })
     const from = atMs - LIVE_QUIET_MEMORY_MS
     this.entries = this.entries.filter((e) => e.atMs >= from && e.atMs <= atMs)
   }

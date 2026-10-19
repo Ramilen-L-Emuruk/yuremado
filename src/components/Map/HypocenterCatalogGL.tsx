@@ -4,7 +4,7 @@ import { useMapGL } from './mapGLContext'
 import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPointLayer } from './gl/depthPointLayer'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { formatCoordinate, formatMagnitude } from '../../utils/formatters'
+import { formatCoordinate, formatMagnitude, hasMagnitude } from '../../utils/formatters'
 import { log } from '../../utils/logger'
 import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
 import type { CatalogPointCloud } from '../../utils/hypocenterCatalogView'
@@ -52,6 +52,16 @@ function formatCatalogDepth(depthKm: number): string {
   return `${depthKm.toFixed(1)}km`
 }
 
+/**
+ * 吹き出しの M。決まっていない地震は「M 不明」と書く（2026-10-18 ユーザー選択「M 不明」）。
+ *
+ * **`formatMagnitude` の「不明」をそのまま使わない。** 吹き出しは M と深さを 1 行に並べるので、
+ * 「不明 / 深さ 10.0km」では何が不明なのか読めない。
+ */
+function formatCatalogMagnitude(magnitude: number): string {
+  return hasMagnitude(magnitude) ? formatMagnitude(magnitude) : 'M 不明'
+}
+
 function buildPopupHtml(cloud: CatalogPointCloud, i: number): string {
   const lat = cloud.columns.lat[i]
   const lng = cloud.columns.lng[i]
@@ -60,7 +70,7 @@ function buildPopupHtml(cloud: CatalogPointCloud, i: number): string {
     `<div class="text-sm" style="min-width:170px">` +
     `<div class="font-bold" style="margin-bottom:4px">${formatCatalogTime(cloud.timeMs[i])}</div>` +
     `<div class="text-xs" style="color:#94a3b8">` +
-    `${formatMagnitude(cloud.magnitude[i])} / 深さ ${formatCatalogDepth(cloud.columns.depthKm[i])}</div>` +
+    `${formatCatalogMagnitude(cloud.magnitude[i])} / 深さ ${formatCatalogDepth(cloud.columns.depthKm[i])}</div>` +
     `<div class="text-xs" style="color:#64748b;margin-top:4px">${coord}</div>` +
     `</div>`
   )

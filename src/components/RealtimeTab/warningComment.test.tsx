@@ -22,6 +22,7 @@ const COMMENT = '強い揺れに警戒してください。'
 function makeEEW(over: Partial<EEWAlert> = {}): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: 'test-eew',
     time: '2026-01-01T12:00:00Z',
     test: false,
@@ -41,7 +42,7 @@ function makeEEW(over: Partial<EEWAlert> = {}): EEWAlert {
 
 const renderTab = (eew: EEWAlert) =>
   render(
-    <RealtimeTab eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
 
 /** a が b より前に出ているか。 */

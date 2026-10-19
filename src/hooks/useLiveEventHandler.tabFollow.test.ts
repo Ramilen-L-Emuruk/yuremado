@@ -866,6 +866,45 @@ describe('リプレイの開始で、津波の取消を「もう伝えた」記�
   })
 })
 
+// 標準版（P2PQuake 552）の解除は EventID を持たず、`id` は受け取るたびに違う。`id` を鍵にすると
+// 同じ解除を 2 度受けたとき見分けられないので、発表日時（`issue.time`）を鍵にする。
+describe('標準版の津波の解除は、発表日時で重複を見分ける', () => {
+  const cancelSounds = () =>
+    vi.mocked(playAlertSound).mock.calls.filter(c => c[0] === 'tsunamiCancel').length
+  const p2pCancel = (id: string, issueTime: string): JMATsunami => ({
+    kind: 'tsunami',
+    id,
+    time: issueTime,
+    cancelled: true,
+    issue: { source: '気象庁', time: issueTime, type: 'Focus' },
+    areas: [],
+  } as unknown as JMATsunami)
+
+  // 正: id が違っても発表日時が同じなら同じ解除
+  it('id が違っても発表日時が同じ解除は 2 回目を鳴らさない', () => {
+    const { handle } = setup({ voicevoxEnabled: false, soundEnabled: true })
+    handle(p2pCancel('p2p-a', '2026/01/01 21:20:00'))
+    handle(p2pCancel('p2p-b', '2026/01/01 21:20:00'))
+    expect(cancelSounds()).toBe(1)
+  })
+
+  // 対照: 発表日時が違えば別の解除として鳴らす
+  it('発表日時が違う解除はそれぞれ鳴らす', () => {
+    const { handle } = setup({ voicevoxEnabled: false, soundEnabled: true })
+    handle(p2pCancel('p2p-a', '2026/01/01 21:20:00'))
+    handle(p2pCancel('p2p-b', '2026/01/02 08:00:00'))
+    expect(cancelSounds()).toBe(2)
+  })
+
+  // 安全弁: eventId を持つ電文（DMDSS 版）は今までどおり eventId で見る
+  it('eventId を持つ解除は発表日時が違っても同じ eventId なら鳴らさない', () => {
+    const { handle } = setup({ voicevoxEnabled: false, soundEnabled: true })
+    handle(makeTsunamiCancelEvent())
+    handle({ ...makeTsunamiCancelEvent(), id: 'tsunami-cancel-2', issue: { source: 'JMA', time: '2026-01-01T12:30:00Z', type: 'Focus' } } as JMATsunami)
+    expect(cancelSounds()).toBe(1)
+  })
+})
+
 // 推計震度分布図のタブ切替。
 //
 // 直したかった症状（2026-07-28 16:37 の実機）: 地震情報を読み上げている最中に分布図が届き、

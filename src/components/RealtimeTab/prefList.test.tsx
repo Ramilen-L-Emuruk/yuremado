@@ -20,6 +20,7 @@ function makeArea(pref: string, name: string, kindCode: string): EEWRegion {
 function makeEEW(areas: EEWRegion[]): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: 'test-eew',
     time: '2026-01-01T12:00:00Z',
     test: false,
@@ -37,7 +38,7 @@ function makeEEW(areas: EEWRegion[]): EEWAlert {
 
 const renderTab = (eew: EEWAlert) =>
   render(
-    <RealtimeTab eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
 
 /** 「警報:」「予報:」のラベルに続く府県予報区の並び。 */

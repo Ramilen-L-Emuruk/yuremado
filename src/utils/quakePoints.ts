@@ -212,6 +212,12 @@ export function cityKey(area: string, city: string): string {
 }
 
 export interface IntensityRowDeps {
+  /**
+   * 一次細分区域名 → 都道府県名 の索引（{@link isAreaPoint} へ渡す）。区域の点と都道府県
+   * ロールアップ点を見分けるのに使う。**P2PQuake は区域の点にも `pref` を積む**ので、
+   * `pref` の有無では見分けられない。
+   */
+  areaPrefIndex: AreaPrefIndex
   /** 一次細分区域名 → 都道府県名 */
   prefOfArea: (areaName: string) => string | null
   /** 観測点名 → 都道府県名。電文が `pref` を持たない経路（DMDATA の観測点）の補完 */
@@ -306,8 +312,11 @@ export function buildIntensityRows(
   // 最上段の区域の行として残す（→ `IntensityOrphanRegionRow`）。
   const orphanAreaOwn = new Map<string, Entry>()
   for (const p of points) {
-    if (p.pref || !p.isArea) continue
-    const pref = prefOfArea(p.addr)
+    // 都道府県ロールアップ点（`addr === pref` で区域として実在しない）は県の最大にしか効かない。
+    if (!isAreaPoint(p, deps.areaPrefIndex)) continue
+    // DMDATA は区域の点を `pref: ''` で積み、P2PQuake は県名を積む。どちらでも引けるように
+    // 電文の `City` と座標テーブルを先に訊き、引けなければ電文の県名を使う。
+    const pref = prefOfArea(p.addr) || p.pref
     const entry = { scale: p.scale, unreceived: !!p.unreceived }
     if (!pref) { orphanAreaOwn.set(p.addr, higher(orphanAreaOwn.get(p.addr), entry)); continue }
     addArea(pref, p.addr, entry)

@@ -68,6 +68,12 @@ interface SuppressRecord {
   until: number
   /** 畳んだときの震度。**これを超える揺れが来たら畳んだままにしない。** */
   scale: number
+  /**
+   * 畳んだときに出ていた帯の識別子。誤報取消された EEW を閉じてできた記録かを見分けるのに使う
+   * （→ `docs/spec/action-checklist-spec.md` §4「元の EEW が誤報取消されたとき」）。
+   * この項目を持たない旧形式の記録は見分けが付かないので、取消のときは捨てる側へ倒す。
+   */
+  key?: string
 }
 
 export interface ChecklistState {
@@ -84,20 +90,33 @@ export interface ChecklistState {
 // 起動直後（同期が済む前）にも読まれること、再生（テスト時刻設定）中に再生時計へ追従させると
 // 数十分を数秒で飛ばす再生で畳んだ記録が即座に失効することによる。
 
+/**
+ * 誤報取消された EEW か。
+ *
+ * **`cancelledAt` で見る。** 画面が持つ EEW には取消が `{ ...表示中の EEW, cancelledAt }` の形で
+ * 当たるため、`cancelled`（受け取った電文そのものが取消報か）は取消前の false のまま残る
+ * （→ `docs/spec/eew-spec.md`「取消かどうかは `cancelledAt` で見る」）。`cancelled` も併せて
+ * 見るのは、取消報そのものが渡された場合に備えるため。
+ */
+function isEewCancelled(eew: EEWAlert): boolean {
+  return eew.cancelled === true || eew.cancelledAt != null
+}
+
 function loadSuppress(): SuppressRecord | null {
   try {
     const raw = localStorage.getItem(SUPPRESS_KEY)
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null) return null
-    const { until, scale } = parsed as Record<string, unknown>
+    const { until, scale, key } = parsed as Record<string, unknown>
     if (typeof until !== 'number' || !Number.isFinite(until)) return null
     // **震度は階級表にある値だけを採る。** 階級外の値（例: 99）が入ると「これを超えたら開き直す」
     // が永久に成立せず、以後どんな揺れでもボタンが自動で開かなくなる。記録は永続化されるため、
     // 一度混入するとリロードでも直らない。
     if (typeof scale !== 'number' || !isValidIntensityScale(scale)) return null
     // 期限切れは無かったことにする。次の揺れは改めてパネルで出す。
-    return until > Date.now() ? { until, scale } : null
+    if (until <= Date.now()) return null
+    return typeof key === 'string' ? { until, scale, key } : { until, scale }
   } catch (e) {
     // null へ倒すのは安全側（「畳んでいない」＝出す方向）。ただし黙ると「閉じてもリロードで
     // 開き直す」の原因が読み取り側か書き込み側か切り分けられなくなるため記録する。
@@ -141,6 +160,14 @@ export function useActionChecklist(params: {
    * 併せて受け取る必要がある（`useKyoshinAlerts` が同じ理由でこれを見ている）。
    */
   kyoshinStalled: boolean
+  /**
+   * 発報中の EEW。**取消を当てた直後のもの（`cancelledAt` 付き・10 秒で消える）も含めて渡す。**
+   *
+   * 判定からは外すが、出している帯の元が取り消されたことはこれでしか分からない。取消済みを
+   * 除いて渡すと、EEW がリストから消えるだけで帯を下ろす契機が無くなる。最終報のあとの自動解除で
+   * 終わった EEW と区別できないため —— そちらは取消の表示を経ずにリストから外れ、揺れは実際に
+   * 起きているので帯は残すのが正しい。
+   */
   eews: readonly EEWAlert[]
   latestQuake: JMAQuake | undefined
 }): {
@@ -175,9 +202,10 @@ export function useActionChecklist(params: {
     saveSuppress(record)
   }, [])
 
-  const show = useCallback((next: ChecklistState) => {
+  /** 出した（または中身が同じなので触らずに済んだ）なら true。寿命が尽きて消したもので弾いたら false。 */
+  const show = useCallback((next: ChecklistState): boolean => {
     // 寿命が尽きて消したものは出し直さない。
-    if (doneKeysRef.current.includes(next.key)) return
+    if (doneKeysRef.current.includes(next.key)) return false
     const record = suppressRef.current
     const now = Date.now()
     const wasCollapsed = collapsedRef.current
@@ -191,7 +219,7 @@ export function useActionChecklist(params: {
     if (keepCollapsed && record.until - now < SUPPRESS_EXTEND_BELOW_MS) {
       // **基準の震度は上書きしない** —— 余震で下がっていく値に追随させると、そのうち小さな
       // 揺れでも「上がった」と見なして開いてしまう。
-      applySuppress({ until: now + SUPPRESS_MS, scale: record.scale })
+      applySuppress({ ...record, until: now + SUPPRESS_MS })
     }
 
     // 中身が変わらないなら触らない（開いた項目の状態を保つため）。**震度は比較に含める** ——
@@ -200,7 +228,7 @@ export function useActionChecklist(params: {
     if (
       cur && cur.key === next.key && cur.scale === next.scale && cur.scoped === next.scoped
       && wasCollapsed === keepCollapsed
-    ) return
+    ) return true
 
     setState(next)
     setCollapsed(keepCollapsed)
@@ -215,6 +243,7 @@ export function useActionChecklist(params: {
     // 畳んでいたものを開き直したなら、記録は役目を終えた。開いたまま受けた揺れでは消さない
     // （`restore` で開いた人の「もう一度閉じたときの基準」として残す）。
     if (wasCollapsed && !keepCollapsed && record) applySuppress(null)
+    return true
   }, [applySuppress])
 
   // 強震モニタの観測値。**判定は検知フレームが進むたび（高々 1 秒に 1 度）に限る。** App は EEW の
@@ -251,42 +280,74 @@ export function useActionChecklist(params: {
     // **最も深刻な EEW を選ぶ。** `eews` の並びは発報を受けた順（内部の Map の挿入順）で、
     // 深刻さとは無関係。最初に閾値を超えたところで打ち切ると、後から発生したより強い地震の
     // 予想を見落とす（連続する余震や、離れた 2 地域でほぼ同時に起きたときに実際に起きる）。
-    let eewHit: { scale: number; key: string } | null = null
-    for (const eew of eews) {
-      if (eew.cancelled) continue
-      const scale = eewScaleForScope(eew, scope, minScale)
-      if (scale == null) continue
-      // **報番号を含む `eew.id` は使わない。** 続報のたびにキーが変わり、畳んだものが開き直す。
-      if (eewHit == null || scale > eewHit.scale) eewHit = { scale, key: `eew:${eewEventKey(eew)}` }
+    //
+    // **出している帯の元が誤報取消された EEW なら、まずそれを下ろしてから判定をやり直す**
+    // （→ `docs/spec/action-checklist-spec.md` §4「元の EEW が誤報取消されたとき」）。開いている帯は
+    // 寿命でも消さない設計なので、ここで下ろさないと取り消された「震度7 強い揺れが予想されています」が
+    // 手で閉じるまで残る。
+    const cancelledKeys = new Set(eews.filter(isEewCancelled).map(e => `eew:${eewEventKey(e)}`))
+    // 取り消された EEW の帯を閉じてできた記録は捨てる（震度の基準が取り消された予想から来ている）。
+    // **いま出ている帯とは別に見る** —— 閉じたあと別の EEW の帯へ移っていても、記録の震度は残っている。
+    const record = suppressRef.current
+    if (record?.key != null && cancelledKeys.has(record.key)) applySuppress(null)
+    const cur = stateRef.current
+    const retracted = cur?.reason === 'eew' && cancelledKeys.has(cur.key)
+    if (retracted) {
+      // 識別子を持たない古い記録は、どの帯を閉じたものか分からないので捨てる側へ倒す。
+      if (suppressRef.current?.key == null) applySuppress(null)
+      // 記録を捨てたなら畳んだ状態も解く（記録が無いまま畳んでいると、寿命のタイマーも動かない）。
+      if (suppressRef.current == null) collapsedRef.current = false
+      // **ref（`stateRef`・上の `collapsedRef`）はレンダーを待たずに下ろす。** 下の `show` が
+      // 「いま出ているもの」「いま畳んでいるか」をこれで見るので、取り消された帯を前提に判定させない。
+      stateRef.current = null
+      // 録画ツール向けの記録（画面には出ない）。切り替える場合も、取り消された帯が下りたことは 1 件残す
+      // （「揺れを検知」の開いた記録だけでは、何が引っ込んだのかが読めない）。
+      recordReplayEvent({ type: 'overlay', overlay: 'actionChecklist', open: false, reason: '緊急地震速報が取り消された', subject: null })
     }
-    if (eewHit) {
-      show({ reason: 'eew', scale: eewHit.scale, scoped, key: eewHit.key })
-      return
+    const next = pickChecklist()
+    // **切り替え先を出せなかったら消す。** `show` は寿命が尽きて消したもの（`doneKeysRef`）を弾く。
+    // 地震情報は最新の 1 件が長く居座るので、切り替え先がそれだと結果を見ずに任せたとき
+    // 取り消された帯が画面に残る。
+    const shown = next != null && show(next)
+    if (retracted && !shown) {
+      setState(null)
+      // 記録を残した場合は畳んだ状態を保つ（リロード直後と同じ形。次の揺れは畳んだまま出る）。
+      setCollapsed(collapsedRef.current)
     }
 
-    if (hitScale != null) {
-      if (kyoshinAnchorRef.current == null) {
-        const eewAnchor = eews.find(e => !e.cancelled)
-        kyoshinAnchorRef.current = (eewAnchor ? eewEventKey(eewAnchor) : null)
-          ?? (latestQuake ? quakeEventKey(latestQuake) : null)
-          ?? new Date().toISOString()
+    function pickChecklist(): ChecklistState | null {
+      let eewHit: { scale: number; key: string } | null = null
+      for (const eew of eews) {
+        if (isEewCancelled(eew)) continue
+        const scale = eewScaleForScope(eew, scope, minScale)
+        if (scale == null) continue
+        // **報番号を含む `eew.id` は使わない。** 続報のたびにキーが変わり、畳んだものが開き直す。
+        if (eewHit == null || scale > eewHit.scale) eewHit = { scale, key: `eew:${eewEventKey(eew)}` }
       }
-      show({ reason: 'kyoshin', scale: hitScale, scoped, key: `kyoshin:${kyoshinAnchorRef.current}` })
-      return
-    }
+      if (eewHit) return { reason: 'eew', scale: eewHit.scale, scoped, key: eewHit.key }
 
-    // **詰まっている間に地震情報へ落とさない。** 揺れが続いているのに「強い揺れがありました」
-    // （過去形）へ差し替わり、震度も別の値になる。留めるのは**表示中が強震モニタ由来のときだけ**
-    // —— 何も出ていない状態まで止めると、エンジンが壊れ続けている端末で地震情報の経路まで死ぬ。
-    if (kyoshinStalled && stateRef.current?.reason === 'kyoshin') return
-
-    if (latestQuake) {
-      const scale = quakeScaleForScope(latestQuake, scope, minScale)
-      if (scale != null) {
-        show({ reason: 'quake', scale, scoped, key: `quake:${quakeEventKey(latestQuake)}` })
+      if (hitScale != null) {
+        if (kyoshinAnchorRef.current == null) {
+          const eewAnchor = eews.find(e => !isEewCancelled(e))
+          kyoshinAnchorRef.current = (eewAnchor ? eewEventKey(eewAnchor) : null)
+            ?? (latestQuake ? quakeEventKey(latestQuake) : null)
+            ?? new Date().toISOString()
+        }
+        return { reason: 'kyoshin', scale: hitScale, scoped, key: `kyoshin:${kyoshinAnchorRef.current}` }
       }
+
+      // **詰まっている間に地震情報へ落とさない。** 揺れが続いているのに「強い揺れがありました」
+      // （過去形）へ差し替わり、震度も別の値になる。留めるのは**表示中が強震モニタ由来のときだけ**
+      // —— 何も出ていない状態まで止めると、エンジンが壊れ続けている端末で地震情報の経路まで死ぬ。
+      if (kyoshinStalled && stateRef.current?.reason === 'kyoshin') return null
+
+      if (latestQuake) {
+        const scale = quakeScaleForScope(latestQuake, scope, minScale)
+        if (scale != null) return { reason: 'quake', scale, scoped, key: `quake:${quakeEventKey(latestQuake)}` }
+      }
+      return null
     }
-  }, [eews, hitScale, kyoshinStalled, latestQuake, scope, minScale, scoped, show])
+  }, [eews, hitScale, kyoshinStalled, latestQuake, scope, minScale, scoped, show, applySuppress])
 
   // 設定で「出さない」に切り替えたら、いま出ているものも引っ込める。判定側で早期に抜けるだけ
   // では、開いたままの帯が手動で閉じるまで残り続ける（開いている間は寿命でも消さない設計のため）。
@@ -334,7 +395,7 @@ export function useActionChecklist(params: {
     const cur = stateRef.current
     setCollapsed(true)
     if (!cur) return
-    applySuppress({ until: Date.now() + SUPPRESS_MS, scale: cur.scale })
+    applySuppress({ until: Date.now() + SUPPRESS_MS, scale: cur.scale, key: cur.key })
   }, [applySuppress])
 
   // 畳んだボタンを押して開く。**抑止の記録は消さない** —— 開いている間は `keepCollapsed` が

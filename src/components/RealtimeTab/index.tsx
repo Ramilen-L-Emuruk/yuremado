@@ -7,12 +7,12 @@ import { EEW_FLASH_COLOR, UPDATE_MARK_WASH, EEW_HIGHLIGHT_FADE_MS } from '../../
 import type { EEWAlert } from '../../types/earthquake'
 import type { DetectionEvent, Confidence } from '../../utils/kyoshinDetector'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
-import type { SWaveArrival } from '../../hooks/useSWaveCountdown'
+import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdown'
 import { usePageVisible } from '../../hooks/usePageVisible'
 import { formatDateTime, formatDepth, hasDepth } from '../../utils/formatters'
 import { getIntensityColor, getIntensityLabel, getIntensityLabelWithApproxAbove, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
-import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec } from '../../utils/eew'
+import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst } from '../../utils/eew'
 import { kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 import { readableTextColor } from '../../utils/contrast'
@@ -34,6 +34,12 @@ interface Props {
    * それがどの地震のものか判らない。**「どちらか」は画面が担う**（詳細は `useEewSpeakingCard`）。
    */
   speakingEewKey?: string | null
+  /**
+   * 予想震度の付かない待ちが切れた緊急地震速報の識別子（`eewEventKey`）。
+   * 「予想震度なし」のバナーが理由を添えるかを決める（`eewNoForecastReason` の `waited`）。
+   * 読み上げと同じ待ちから作る（`useLiveEventHandler` の `eewNoForecastSettledKeys`）。
+   */
+  eewNoForecastSettledKeys: ReadonlySet<string>
   swaveArrival: SWaveArrival | null
   /** V2 検知エンジンの検知イベント（音・自動タブ切替・自動フィット・カード表示を駆動）。 */
   kyoshinV2Detections: DetectionEvent[]
@@ -61,9 +67,13 @@ interface Props {
  *
  * 理由が判らないとき（`unknown`）は何も添えない。値が遅れて付く可能性が残る状態で、
  * 気象庁が「発表しない」と決めたわけではないため。
+ *
+ * `noForecastWaited` … 値の付かない待ちが切れたか（`useLiveEventHandler` の
+ * `eewNoForecastSettledKeys`）。切れた後に精度ランク 1 なら、読み上げと同じく「単独点処理のため」を
+ * 添える（2026-10-15 ユーザー承認「出す(推奨)」）。
  */
-function NoForecastBanner({ eew }: { eew: EEWAlert }) {
-  const reason = eewNoForecastReason(eew)
+function NoForecastBanner({ eew, noForecastWaited }: { eew: EEWAlert; noForecastWaited: boolean }) {
+  const reason = eewNoForecastReason(eew, noForecastWaited)
   return (
     <div
       className="w-full rounded-lg py-2 px-4 flex flex-col items-center justify-center gap-1 roomy:py-3.5"
@@ -71,7 +81,7 @@ function NoForecastBanner({ eew }: { eew: EEWAlert }) {
     >
       {reason !== 'unknown' && (
         <span className="text-xs font-medium" style={{ color: '#9ca3af' }}>
-          {reason === 'assumed' ? '単独点処理のため' : '深発地震のため'}
+          {reason === 'deep' ? '深発地震のため' : '単独点処理のため'}
         </span>
       )}
       <span className="text-xl font-extrabold" style={{ color: '#e5e7eb' }}>予想震度なし</span>
@@ -204,8 +214,10 @@ function useSecondTick(active: boolean): number {
 }
 
 
-function EEWCard({ eew, visible, speaking, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: {
+function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: {
   eew: EEWAlert
+  /** 予想震度の付かない待ちが切れたか（`NoForecastBanner` の同名引数）。 */
+  noForecastWaited: boolean
   /**
    * このカードが利用者の目に入っているか（リアルタイムタブが選ばれていて、パネルが畳まれておらず、
    * ブラウザのタブも表に出ている）。**用途は到達予測の残り秒数を進めるタイマーの開閉だけ。**
@@ -236,9 +248,9 @@ function EEWCard({ eew, visible, speaking, activeLpgmEventId, onToggleLpgm, onDe
   // **値が無いときは整形を呼ばない。** 呼ぶと「読めない値が来た」として記録され、
   // 「電文が時刻を持たない」ことと区別が付かなくなる（他の呼び出しと表記も揃う）。
   const originTimeText = eew.earthquake.originTime ? formatDateTime(eew.earthquake.originTime) : null
-  // 震源要素が推定できず、PLUM 法による震度予測だけが有効な状態。震源・規模・深さは固定の仮定値
-  // （観測点直下 10km・M1.0）なので、数値は伏せ、地名には未確定である旨を添える。
-  const isAssumed = eew.earthquake.condition === '仮定震源要素'
+  // 震源が決まっていない報（仮定震源要素と「非常に強い揺れを検知」の報。→ `isProvisionalHypocenter`）。
+  // 震源・規模・深さは仮の値（観測点直下 10km）なので、数値は伏せ、地名には未確定である旨を添える。
+  const isAssumed = isProvisionalHypocenter(eew)
   const prefAreas = areas.filter(a => a.pref)
 
   /**
@@ -364,7 +376,7 @@ function EEWCard({ eew, visible, speaking, activeLpgmEventId, onToggleLpgm, onDe
   // 種別コードは両経路が持つ（→ `utils/eew.ts`）。
   //
   // **このファイルには `arrived` が 2 つある。** ここで扱う区域の `arrived` は電文が伝える
-  // 「既に主要動到達と推測」。下の S 波カウントダウンが持つ `SWaveArrival.arrived` は別物で、
+  // 「既に主要動到達と推測」。下の S 波カウントダウンの行が持つ `SWaveArrivalRow.arrived` は別物で、
   // 利用者が登録した地点への走時計算から出す到達済みフラグ（`nearbyStations.ts`）。
   // 並びは時間の順 ―― 到達済み → 未到達（到達の早い順）→ 到達時刻が判らないもの。
   //
@@ -514,7 +526,7 @@ function EEWCard({ eew, visible, speaking, activeLpgmEventId, onToggleLpgm, onDe
             </span>
           </div>
         ) : (
-          <NoForecastBanner eew={eew} />
+          <NoForecastBanner eew={eew} noForecastWaited={noForecastWaited} />
         )}
 
         {/* 推定最大長周期地震動階級（クリックで地図表示トグル）。地域別 lgIntTo 優先のため
@@ -633,6 +645,20 @@ function EEWCard({ eew, visible, speaking, activeLpgmEventId, onToggleLpgm, onDe
             </span>
           )}
         </div>
+
+        {/* 「非常に強い揺れを検知」の報の本文（電文の `Body/Text`。どこで強い揺れを検知したか）。
+            震源名は粗い地方名（「北陸地方」）しか持たないので、場所はこちらでしか伝わらない。
+            気象庁が書いた文なので見出しを付けずにそのまま出す（2026-10-15 ユーザー承認）。
+            改行と全角空白は電文どおりに残す。**取り消されたら出さない**（固定付加文と同じ扱い。
+            取り消された推定が取消の表示と並ばないように。2026-10-15 ユーザー承認）。 */}
+        {eew.strongShakingText && !eew.cancelledAt && (
+          <div
+            className="text-secondary text-[0.8125rem] roomy:text-[1rem] leading-snug"
+            style={{ whiteSpace: 'pre-line' }}
+          >
+            {eew.strongShakingText}
+          </div>
+        )}
 
         {/* 予想が変わったこと（電文の `Appendix`）。**気象庁が「変わった」と書いてきた事実だけを出す**
             —— アプリが続報どうしを比べて推定した結果ではない。理由まで電文に入っている。
@@ -924,10 +950,26 @@ const LABEL_ORDER = ['7', '6強', '6弱', '5強', '5弱', '4', '3', '2', '1', '0
  * 地点の値**で、そちらは発行済みトークンを持つ端末に限られる。
  */
 function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
-  const borderColor = arrival.arrived ? '#ef4444' : '#f97316'
+  // **地震が複数あれば、1 枚の中に地震ごとの行を並べる**（2026-10-18 ユーザー承認「1 枚に行を並べる」）。
+  // 区域名と注記は 1 回だけ出す（どの行も同じ区域・同じ出どころの値）。地震の名前は 2 件以上のときだけ添え、
+  // 1 件のときは今までと同じ見た目のまま。枠の色と見出しは先頭の行に合わせる（2026-10-18 ユーザー承認
+  // 「先頭の行に合わせる」）—— 並びは到達済みが先頭なので、どれか 1 つでも届いていれば到達済みになる。
+  //
+  // **到達予測の出ていない行（`noForecast`）は距離だけを伝える**（2026-10-14 ユーザー承認「距離だけのカードを出す」、
+  // 行の中での見せ方は 2026-10-19 ユーザー承認「行として最後に並べる (推奨)」）。1 件だけなら見出しを「震源から N km」に、
+  // どの行にも予測が無ければ見出しを「主要動の到達予測なし」にして枠を灰色にし、下の注記は出さない
+  // （注記は予測時刻の性質の説明なので、予測を 1 つも出していない枠には当てはまらない）。
+  const lead = arrival.rows[0]
+  const single = arrival.rows.length === 1
+  // 並びは予測の無い行を最後へ置くので、先頭が予測なしなら全行が予測なし
+  const noForecastOnly = lead.noForecast
+  const borderColor = noForecastOnly ? '#6b7280' : lead.arrived ? '#ef4444' : '#f97316'
   const scopeLabel = arrival.source === 'telegram' && arrival.areaName
     ? arrival.areaName
     : 'ホーム地点'
+  const heading = noForecastOnly
+    ? (single && lead.distanceKm !== null ? `震源から ${lead.distanceKm.toFixed(0)} km` : '主要動の到達予測なし')
+    : lead.arrived ? '主要動 到達済み' : '主要動 到達カウントダウン'
   // 余白のみ圧縮する。カウントダウンの数字は緊急度が高く、一目で読めることが要るため縮めない。
   return (
     <div className="bg-card rounded-lg p-2 border-2 roomy:p-3" style={{ borderColor }}>
@@ -937,30 +979,55 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
           style={{ backgroundColor: borderColor }}
         />
         <span className="text-xs font-bold" style={{ color: borderColor }}>
-          {arrival.arrived ? '主要動 到達済み' : '主要動 到達カウントダウン'}
+          {heading}
         </span>
-        {arrival.distanceKm !== null && (
-          <span className="text-xs text-secondary ml-auto">震源から {arrival.distanceKm.toFixed(0)} km</span>
+        {single && !lead.noForecast && lead.distanceKm !== null && (
+          <span className="text-xs text-secondary ml-auto">震源から {lead.distanceKm.toFixed(0)} km</span>
         )}
       </div>
       <p className="text-xs text-secondary mb-1">{scopeLabel}</p>
-      {arrival.arrived ? (
-        <p className="text-red-400 font-bold text-sm">主要動が到達しています</p>
-      ) : arrival.etaSec !== null ? (
-        <div className="flex items-baseline gap-2">
-          <span className="text-4xl font-black text-white">{arrival.etaSec}</span>
-          <span className="text-sm text-secondary">秒後に到達予想</span>
-        </div>
+      {single ? (
+        <SWaveArrivalCountdown row={lead} />
       ) : (
-        <p className="text-sm text-secondary">到達時間を推定中…</p>
+        arrival.rows.map((row) => (
+          <div key={row.key} className="border-t border-border pt-1 mt-1">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-white min-w-0 truncate">
+                {row.hypocenterName ?? '震源調査中'}
+                {row.provisional && row.hypocenterName !== null && '（震源未確定）'}
+              </span>
+              {row.distanceKm !== null && (
+                <span className="text-xs text-secondary ml-auto shrink-0">震源から {row.distanceKm.toFixed(0)} km</span>
+              )}
+            </div>
+            <SWaveArrivalCountdown row={row} />
+          </div>
+        ))
       )}
-      <p className="text-xs text-secondary mt-1">
-        {arrival.source === 'telegram'
-          ? '※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'
-          : '※推定値。実際の到達時間は異なる場合があります'}
-      </p>
+      {!noForecastOnly && (
+        <p className={`text-xs text-secondary mt-1${single ? '' : ' border-t border-border pt-1'}`}>
+          {arrival.source === 'telegram'
+            ? '※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'
+            : '※推定値。実際の到達時間は異なる場合があります'}
+        </p>
+      )}
     </div>
   )
+}
+
+/** 1 つの地震の到達の見込み（届いた／残り秒数／推定中／到達予測の出ていない地震）。 */
+function SWaveArrivalCountdown({ row }: { row: SWaveArrivalRow }) {
+  if (row.noForecast) return <p className="text-sm text-secondary">ホーム地点の地域には、気象庁の到達予測時刻が出ていません</p>
+  if (row.arrived) return <p className="text-red-400 font-bold text-sm">主要動が到達しています</p>
+  if (row.etaSec !== null) {
+    return (
+      <div className="flex items-baseline gap-2">
+        <span className="text-4xl font-black text-white">{row.etaSec}</span>
+        <span className="text-sm text-secondary">秒後に到達予想</span>
+      </div>
+    )
+  }
+  return <p className="text-sm text-secondary">到達時間を推定中…</p>
 }
 
 // 検知エンジンの確信度別スタイル。confirmed=赤・likely=橙・faint=淡青(震度0級・無音)・weak=灰。
@@ -1247,20 +1314,21 @@ function KyoshinDetectionSummary({ events, points, visible }: {
 }
 
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections, kyoshinDetectedPoints, swaveArrival, visible, speakingEewKey, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: Props) {
+export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections, kyoshinDetectedPoints, swaveArrival, visible, speakingEewKey, eewNoForecastSettledKeys, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: Props) {
   // ブラウザのタブ・ウィンドウ側の可視性は App では判らないため、ここで合成する。
   const pageVisible = usePageVisible()
   return (
     <div className="flex flex-col min-h-full p-2 gap-2 roomy:p-3 roomy:gap-3">
       {/* データカード */}
       {[...eews]
-        .sort((a, b) => b.earthquake.originTime.localeCompare(a.earthquake.originTime))
+        .sort(compareEewNewestFirst)
         .map(eew => (
           <EEWCard
             key={eew.issue?.eventId ?? eew.id}
             eew={eew}
             visible={visible && pageVisible}
             speaking={speakingEewKey !== null && speakingEewKey !== undefined && eewEventKey(eew) === speakingEewKey}
+            noForecastWaited={eewNoForecastSettledKeys.has(eewEventKey(eew))}
             activeLpgmEventId={activeLpgmEventId}
             onToggleLpgm={onToggleLpgm}
             onDeactivateLpgm={onDeactivateLpgm}

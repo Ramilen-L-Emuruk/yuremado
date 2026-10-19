@@ -6,6 +6,7 @@ import {
   boundsForLiveFollowTuple,
   boundsFromEewCircles,
   boundsFromPositionsTuple,
+  eewFirstFocusTarget,
   mergeBounds,
   EEW_FOLLOW_LOOSE,
   EEW_FOLLOW_MAX_RADIUS_KM,
@@ -470,5 +471,40 @@ describe('japanWideCornersLatLng', () => {
 
     // Assert
     expect(bounds).toEqual(wideTuple)
+  })
+})
+
+describe('eewFirstFocusTarget（第一報で寄せる先の順番）', () => {
+  const circle: EewFollowCircle = { lat: 35, lng: 139, pRadius: 40, sRadius: 20, depth: 10 }
+  const areas: [number, number][] = [[36, 138], [37, 139]]
+  const detected: [number, number][] = [[34, 135], [34.5, 135.5]]
+
+  it('自身の波円があれば、震源・区域・検知点より先にそれへ寄せる', () => {
+    const target = eewFirstFocusTarget(circle, [35, 139], areas, detected)
+
+    expect(target.kind).toBe('bounds')
+    expect(target.kind === 'bounds' && target.from).toBe('circle')
+  })
+
+  it('波円が無く震源が判っていれば、区域より先に震源の点へ寄せる', () => {
+    const target = eewFirstFocusTarget(null, [35, 139], areas, detected)
+
+    expect(target).toEqual({ kind: 'point', point: [35, 139] })
+  })
+
+  it('震源が判らなければ予想区域へ寄せ、検知点は使わない', () => {
+    const target = eewFirstFocusTarget(null, null, areas, detected)
+
+    expect(target).toEqual({ kind: 'bounds', bounds: boundsFromPositionsTuple(areas), from: 'areas' })
+  })
+
+  it('区域も無ければ揺れ検知点へ寄せる', () => {
+    const target = eewFirstFocusTarget(null, null, [], detected)
+
+    expect(target).toEqual({ kind: 'bounds', bounds: boundsFromPositionsTuple(detected), from: 'detected' })
+  })
+
+  it('何も無ければ none を返す（寄せた印を立てさせない）', () => {
+    expect(eewFirstFocusTarget(null, null, [], [])).toEqual({ kind: 'none' })
   })
 })

@@ -45,6 +45,7 @@ function makeEEW(over: {
 }): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: over.id,
     time: '2024-01-01T16:18:51+09:00',
     test: false,

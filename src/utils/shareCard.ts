@@ -73,6 +73,11 @@ export const ATTRIBUTION_SOURCES = {
   bathymetry: 'GEBCO・NOAA NCEI（Esri のタイルサービス経由）',
   activeFaults: '産総研 活断層データベース',
   plateBoundaries: 'PB2002 (Bird, 2003)',
+  /**
+   * 公開観測点の印（`docs/public-waveform-design.md` §0。2026-10-15 ユーザー承認）。網の運用者は気象庁で、
+   * そちらは上の `jma` が既に挙げている。CC BY 4.0 は運用者と配信した施設の両方を挙げることを求める。
+   */
+  earthScope: 'EarthScope',
 } as const
 
 export interface AttributionParts {
@@ -325,7 +330,45 @@ function legendBlockSize(ctx: CanvasRenderingContext2D, block: LegendBlock, maxW
     return { w: Math.max(titleW, w), h: LEGEND_TITLE_H + LEGEND_ROW_H * rows.length }
   }
   const tickH = block.swatch.ticks.length > 0 ? LEGEND_TICK_H : 0
-  return { w: Math.max(titleW, LEGEND_RAMP_W), h: LEGEND_TITLE_H + LEGEND_RAMP_H + tickH }
+  // 色帯の下に添えた見本（震源カタログの「M 不明」）。描く側の `drawLegend` と同じ行割りで数える。
+  const chipRows = block.swatch.chips ? legendChipRows(ctx, block.swatch.chips, maxWidth) : []
+  const chipsW = Math.max(
+    0,
+    ...chipRows.map((row) => row.reduce((sum, chip, i) => sum + (i > 0 ? LEGEND_CHIP_GAP : 0) + legendChipWidth(ctx, chip), 0)),
+  )
+  return {
+    w: Math.max(titleW, LEGEND_RAMP_W, chipsW),
+    h: LEGEND_TITLE_H + LEGEND_RAMP_H + tickH + LEGEND_ROW_H * chipRows.length,
+  }
+}
+
+/** 色見本の行を描く。見本だけの段と、色帯の下に添えた見本の両方が使う。 */
+function drawLegendChipRows(ctx: CanvasRenderingContext2D, rows: LegendChip[][], left: number, top: number): void {
+  rows.forEach((row, rowIndex) => {
+    let x = left
+    const rowY = top + LEGEND_ROW_H * rowIndex
+    for (const chip of row) {
+      const { markWidth, labelOffset } = legendChipLayout(chip.shape)
+      ctx.fillStyle = chip.color
+      if (chip.shape === 'line') {
+        ctx.fillRect(x, rowY + 9, markWidth, 4)
+      } else if (chip.shape === 'bar') {
+        // 観測棒は縦長。占める幅も細いので左端から描く。
+        ctx.fillRect(x, rowY + 4, markWidth, 16)
+      } else {
+        ctx.beginPath()
+        ctx.arc(x + markWidth / 2, rowY + 11, 8, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+      }
+      ctx.font = `500 16px ${FONT_STACK}`
+      ctx.fillStyle = TEXT_PRIMARY
+      ctx.fillText(chip.label, x + labelOffset, rowY + 17)
+      x += legendChipWidth(ctx, chip) + LEGEND_CHIP_GAP
+    }
+  })
 }
 
 function drawLegend(ctx: CanvasRenderingContext2D, blocks: LegendBlock[], mapBottom: number): void {
@@ -379,31 +422,7 @@ function drawLegend(ctx: CanvasRenderingContext2D, blocks: LegendBlock[], mapBot
       }
     } else if (block.swatch.kind === 'chips') {
       const rows = legendChipRows(ctx, block.swatch.chips, boxW - LEGEND_PAD * 2)
-      rows.forEach((row, rowIndex) => {
-        let x = left + LEGEND_PAD
-        const rowY = bodyY + LEGEND_ROW_H * rowIndex
-        for (const chip of row) {
-          const { markWidth, labelOffset } = legendChipLayout(chip.shape)
-          ctx.fillStyle = chip.color
-          if (chip.shape === 'line') {
-            ctx.fillRect(x, rowY + 9, markWidth, 4)
-          } else if (chip.shape === 'bar') {
-            // 観測棒は縦長。占める幅も細いので左端から描く。
-            ctx.fillRect(x, rowY + 4, markWidth, 16)
-          } else {
-            ctx.beginPath()
-            ctx.arc(x + markWidth / 2, rowY + 11, 8, 0, Math.PI * 2)
-            ctx.fill()
-            ctx.strokeStyle = 'rgba(255,255,255,0.9)'
-            ctx.lineWidth = 1.5
-            ctx.stroke()
-          }
-          ctx.font = `500 16px ${FONT_STACK}`
-          ctx.fillStyle = TEXT_PRIMARY
-          ctx.fillText(chip.label, x + labelOffset, rowY + 17)
-          x += legendChipWidth(ctx, chip) + LEGEND_CHIP_GAP
-        }
-      })
+      drawLegendChipRows(ctx, rows, left + LEGEND_PAD, bodyY)
     } else {
       const gradient = ctx.createLinearGradient(left + LEGEND_PAD, 0, left + LEGEND_PAD + LEGEND_RAMP_W, 0)
       for (const stop of block.swatch.stops) gradient.addColorStop(Math.min(Math.max(stop.at, 0), 1), stop.color)
@@ -418,6 +437,11 @@ function drawLegend(ctx: CanvasRenderingContext2D, blocks: LegendBlock[], mapBot
         ctx.fillText(tick.label, tx, bodyY + LEGEND_RAMP_H + 14)
       }
       ctx.textAlign = 'left'
+      if (block.swatch.chips) {
+        const tickH = block.swatch.ticks.length > 0 ? LEGEND_TICK_H : 0
+        const rows = legendChipRows(ctx, block.swatch.chips, boxW - LEGEND_PAD * 2)
+        drawLegendChipRows(ctx, rows, left + LEGEND_PAD, bodyY + LEGEND_RAMP_H + tickH)
+      }
     }
     y += size.h + LEGEND_BLOCK_GAP
   })

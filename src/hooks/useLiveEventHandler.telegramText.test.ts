@@ -133,6 +133,7 @@ function setup(overSettings: Partial<AppSettings> = {}) {
   const title = new Proxy({ alertTitle: null, setTitle: vi.fn() } as Record<string, unknown>, {
     get: (t, k) => (k in t ? t[k as string] : vi.fn()),
   })
+  const expandPanelForSpecialInfo = vi.fn()
   const { result } = renderHook(() => useLiveEventHandler({
     telegramTextFollow: follow,
     settings, title: title as never,
@@ -144,7 +145,7 @@ function setup(overSettings: Partial<AppSettings> = {}) {
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true),
     quakeSpeakingCard: null,
-    expandPanelForSpecialInfo: vi.fn(), revertToDefaultTab: vi.fn(),
+    expandPanelForSpecialInfo, revertToDefaultTab: vi.fn(),
     selectQuake: vi.fn(), openLpgmFromQuake: vi.fn(), openEstimatedIntensity: vi.fn(), closeDistributionOnQuakeReport: vi.fn(),
   }))
   // state を更新する関数は act() で包んでから返す。
@@ -157,7 +158,7 @@ function setup(overSettings: Partial<AppSettings> = {}) {
   const restorePreWindowTracking: typeof result.current.restorePreWindowTracking = (...args) => {
     act(() => { result.current.restorePreWindowTracking(...args) })
   }
-  return { ...result.current, handleLiveEvent, resetTracking, restorePreWindowTracking }
+  return { ...result.current, handleLiveEvent, resetTracking, restorePreWindowTracking, expandPanelForSpecialInfo }
 }
 
 /** 気象庁の文の追従セッション。begin/end の呼ばれ方と `subject` を記録する。 */
@@ -441,6 +442,93 @@ describe('気象庁が書いた文の読み上げ（配線）', () => {
     await drain()
     expect(telegramSpeeches()).toHaveLength(1)
     expect(telegramSpeeches()[0]).toContain('本文です。')
+  })
+
+  // ── 地震・津波に関するお知らせ（VZSE40）──────────────────────────────
+  // 読み上げは `quakeNoticeAlerts` を有効にしたときだけ（既定は読まない）。
+  const notice = (over: { cancelled?: boolean; body?: string } = {}) => ({
+    kind: 'quakeNotice' as const,
+    data: {
+      id: 'dmdata-quake-notice-20261016131500-1', time: '2026-10-16T04:15:00Z', eventId: '20261016131500',
+      headline: '緊急地震速報（警報）について',
+      body: over.body ?? '　地震そのものは発生したことを確認しています。',
+      cancelled: over.cancelled ?? false,
+      reportDateTime: '2026-10-16T04:15:00Z', expireAt: '2026-10-23T04:15:00Z',
+    },
+  })
+
+  // 対照（既定の挙動）: 設定を有効にしていなければ見出しも本文も読まない。
+  it('お知らせの読み上げが無効（既定）なら見出しも本文も読まない', async () => {
+    expect(DEFAULTS.quakeNoticeAlerts).toBe(false)
+    const { handleLiveEvent } = setup()
+    handleLiveEvent(notice())
+    await drain()
+    expect(speeches.map(s => s.text).some(t => t.includes('お知らせ'))).toBe(false)
+  })
+
+  // 正: 有効なら見出しを読み、本文を気象庁が書いた文として読む。
+  it('お知らせの読み上げが有効なら見出しと本文を読む', async () => {
+    const { handleLiveEvent } = setup({ quakeNoticeAlerts: true })
+    handleLiveEvent(notice())
+    await drain()
+    const texts = speeches.map(s => s.text)
+    expect(texts).toContain('地震・津波に関するお知らせ。緊急地震速報（警報）について。')
+    expect(telegramSpeeches()).toHaveLength(1)
+    expect(telegramSpeeches()[0]).toContain('地震そのものは発生したことを確認しています。')
+  })
+
+  // 安全弁: 本文は「気象庁の文」の設定に従う（お知らせの設定だけでは読まない）。
+  it('気象庁の文を読む設定が無効なら、お知らせの本文は読まない', async () => {
+    const { handleLiveEvent } = setup({ quakeNoticeAlerts: true, ttsReadTelegramText: false })
+    handleLiveEvent(notice())
+    await drain()
+    expect(speeches.map(s => s.text)).toContain('地震・津波に関するお知らせ。緊急地震速報（警報）について。')
+    expect(telegramSpeeches()).toHaveLength(0)
+  })
+
+  // 正: 有効なら解説情報の音を鳴らし、パネルを開く。対照: 無効（既定）なら鳴らさず開かない。
+  it('お知らせの音・読み上げが有効なら解説情報の音を鳴らしパネルを開き、無効なら何もしない', async () => {
+    const { playAlertSound } = await import('../utils/alertSound')
+    const sound = vi.mocked(playAlertSound)
+    sound.mockClear()
+    const off = setup({ soundEnabled: true })
+    off.handleLiveEvent(notice())
+    await drain()
+    expect(sound).not.toHaveBeenCalledWith('specialInfoCommentary')
+    expect(off.expandPanelForSpecialInfo).not.toHaveBeenCalled()
+
+    const on = setup({ soundEnabled: true, quakeNoticeAlerts: true })
+    on.handleLiveEvent(notice())
+    await drain()
+    expect(sound).toHaveBeenCalledWith('specialInfoCommentary')
+    expect(on.expandPanelForSpecialInfo).toHaveBeenCalled()
+  })
+
+  // 安全弁: 帯を表示しない設定ならパネルは開かない（開いても見せるものが無い）。取消でも開かず、音も鳴らさない。
+  it('帯を表示しない設定・取消ではパネルを開かない', async () => {
+    const { playAlertSound } = await import('../utils/alertSound')
+    const sound = vi.mocked(playAlertSound)
+    sound.mockClear()
+    const hidden = setup({ soundEnabled: true, quakeNoticeAlerts: true, quakeNoticeBanner: false })
+    hidden.handleLiveEvent(notice())
+    await drain()
+    expect(hidden.expandPanelForSpecialInfo).not.toHaveBeenCalled()
+
+    sound.mockClear()
+    const cancel = setup({ soundEnabled: true, quakeNoticeAlerts: true })
+    cancel.handleLiveEvent(notice({ cancelled: true, body: '' }))
+    await drain()
+    expect(cancel.expandPanelForSpecialInfo).not.toHaveBeenCalled()
+    expect(sound).not.toHaveBeenCalled()
+  })
+
+  // 正: 取消は取り消された事実を読む。本文（取消の宣言）は添えない。
+  it('お知らせの取消は取り消された事実を読み、本文は添えない', async () => {
+    const { handleLiveEvent } = setup({ quakeNoticeAlerts: true })
+    handleLiveEvent(notice({ cancelled: true, body: '' }))
+    await drain()
+    expect(speeches.map(s => s.text)).toContain('地震・津波に関するお知らせは取り消されました。')
+    expect(telegramSpeeches()).toHaveLength(0)
   })
 
   // 安全弁: リプレイのリセットで既読が落ちる。落とさないと、同じシナリオを再生し直したときに

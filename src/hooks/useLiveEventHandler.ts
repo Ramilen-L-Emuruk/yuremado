@@ -11,12 +11,13 @@ import {
   eewMaxScaleInfo, isForecastScaleHigher, isForecastLpgmHigher, eewNoForecastReason, computeSingleEEWLevel, computeDisplayEEWLevel, canPresentLpgmClass,
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
   EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo,
-  isUnannouncedHypocenter, eewEventKey,
+  isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, eewCancelNotificationBody,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
 } from '../utils/eew'
 import { hasKnownEpicenter } from '../utils/geo'
 import { showBrowserNotification } from '../utils/notifications'
-import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isCancelForCurrentTsunami, isTsunamiContinuation, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry } from '../utils/tsunami'
+import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry } from '../utils/tsunami'
+import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
 import { playAlertSound, ttsDelayFor, maxTtsDelay, type AlertSoundType } from '../utils/alertSound'
 import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
 import {
@@ -26,7 +27,7 @@ import {
 } from '../utils/replayEventLog'
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
-import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState } from '../utils/ttsText'
+import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
 import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
@@ -180,7 +181,7 @@ const SPEECH_PRIORITY = {
   /**
    * **何も切らないものを置く層。** 待ちきれなければ割り込まずに黙る（`speakNonEEW`）。
    *
-   * ここにいるのは 3 つ。
+   * ここにいるのは 4 つ。
    *
    * - **南海トラフ関連解説情報** ―― 段階の発表ではなく状況の解説で、臨時情報の発表期間中は
    *   毎日届く。地震情報と同格にすると数千文字に達しうる地震情報の読み上げを毎日切り、
@@ -192,6 +193,8 @@ const SPEECH_PRIORITY = {
    * - **変化を伝えない津波の続報** ―― 満潮時刻の報と、観測波高が動かない観測情報
    *   （→ `tsunamiSpeechIsQuiet`）。満潮時刻の報は必ず等級の発表の直後に届くので、上の層に
    *   置くと大津波警報の読み上げを割り込んで切る
+   * - **地震・津波に関するお知らせ**（設定で有効にしたときだけ） ―― 観測点の入電停止・配信試験と
+   *   いった運用連絡が大半で、本物の地震・津波・EEW の読み上げを塞いではならない
    *
    * **「待ちきれなければ黙る」は損失として受け入れている。** 層で「何も切らない」と宣言して
    * いても、待ちの上限（`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`）で割り込めばその宣言は破れる。
@@ -262,6 +265,15 @@ type SpeechTopic =
   | 'tsunami' | 'tsunamiObs' | 'nankai' | 'kohatsu' | 'nankaiCommentary' | 'earthquakeCount'
   | 'estimatedIntensity'
   /**
+   * 地震・津波に関するお知らせ（見出しと取消）。最下位の層（`commentary`）で読む。
+   *
+   * **相互譲り（`MUTUAL_YIELD_TOPICS`）にも載せる。** 同じ最下位の層には南海トラフ関連解説情報がいて、
+   * 同格どうしは待たずに割り込む規則なので、載せないとお知らせの見出しが解説情報を途中で切る
+   * （同じ層の気象庁が書いた文は `isMutualYieldTopic` が接頭辞で元から待つ側に入れている）。
+   * 運用連絡が他の情報を切る理由は無い。
+   */
+  | 'quakeNotice'
+  /**
    * 各地の満潮時刻・津波到達予想時刻に関する情報。
    *
    * **観測情報（`tsunamiObs`）と分ける。** 同じ主題にすると、到来順の裁き
@@ -312,6 +324,9 @@ const MUTUAL_YIELD_TOPICS: ReadonlySet<SpeechTopic> = new Set<SpeechTopic>([
   // かち合いやすく、載せないとそちらを切る。伝える内容も重ならない —— あちらは観測した震度、
   // こちらは**その描き方が公式のものへ替わった**という別の事実。
   'tsunami', 'tsunamiObs', 'nankai', 'kohatsu', 'earthquakeCount', 'estimatedIntensity',
+  // お知らせは最下位の層で読むので、上位を切ることはもともと無い。ここに載せるのは同じ層の
+  // 解説情報を切らないため（→ `SpeechTopic` の 'quakeNotice'）。
+  'quakeNotice',
 ])
 
 /**
@@ -566,6 +581,8 @@ export function ttsRegionOptions(settings: AppSettings): TtsSpeechOptions {
 //
 // DMDATA は全報が eventId を共有する。P2PQuake は eventId を持たないが、earthquake.time と震源名は
 // 続報間で変わらない（変わるのは訂正報・震源要素更新のときで、それは通知に値する変化）。
+// 実測（2026-10-18 に /history?codes=551 を 140 通・2026-09-28〜10-18）: 同じ鍵の続報 3 組、
+// 鍵がずれた形 0 件（数分違いの近い組 1 つは別の地震だった）。
 // issue.type まで含めるのは、震度速報／震源情報／各地の震度情報を別報として扱うため。
 function newQuakeTrackingKey(q: JMAQuake): string {
   const base = extractQuakeEventIdFromId(q.id)
@@ -607,15 +624,110 @@ function quakeSpokenStateFor(states: Map<string, QuakeSpokenState>, eventKey: st
 }
 
 /**
+ * 津波の読み上げが見る既読を組み立てる。**原因地震ごとに、その地震の主題の既読を引く**（→ `TsunamiQuakeSpoken`）。
+ *
+ * どの原因地震がどの地震カードに当たるかは `linkTsunamiSources` が決める（ライブ受信と録画モードの復元で
+ * 同じ関数を通す。片方だけ書き換えると、区間の境目で同じ震源を読み直す）。
+ *
+ * - 地震カードがあればその `eventKey` を主題の鍵にする（暫定 EventID の採り直しがあった地震でも、カード側が
+ *   統合で安定した鍵を持っている）。カードが無ければ地震の識別番号を使う（津波が先に届いた順序）
+ * - 番号と結べなかった原因地震は、その原因地震だけの鍵を使う（地震情報とは既読を共有しない。語りすぎても
+ *   別の地震の震源を「伝えた」ことにはならない）
+ * - 失効時刻は 1 つ目の原因地震の主題へ積む（従来の置き場所）
+ *
+ * 識別番号を持たない電文（P2PQuake）では既読を持てないので null。
+ *
+ * @returns 既読と、震源を語っている間に見せるカードの主題（結べた最初の地震）
+ */
+function tsunamiQuakeSpokenFor(
+  states: Map<string, QuakeSpokenState>,
+  tsunami: JMATsunami,
+  cards: readonly JMAQuake[],
+): { spoken: TsunamiQuakeSpoken; subject: string | undefined } | null {
+  const ids = tsunamiEventIds(tsunami)
+  if (ids.length === 0) return null
+  const cardOf = (eventId: string | undefined): JMAQuake | undefined =>
+    eventId ? cards.find(q => extractQuakeEventIdFromId(q.id) === eventId) : undefined
+  const sources = linkTsunamiSources(tsunami, cards).map(link => {
+    const card = cardOf(link.eventId)
+    const key = card ? `quake:${quakeEventKey(card)}`
+      : link.eventId ? `quake:${link.eventId}`
+      : `tsunami-source:${sourceEarthquakeTime(link.source) ?? ''}|${link.source.hypocenterName}`
+    return { source: link.source, spoken: quakeSpokenStateFor(states, key), subject: card ? quakeEventKey(card) : undefined }
+  })
+  const firstCard = cardOf(ids[0])
+  const expiry = sources[0]?.spoken
+    ?? quakeSpokenStateFor(states, `quake:${firstCard ? quakeEventKey(firstCard) : ids[0]}`)
+  return { spoken: { expiry, sources }, subject: sources.find(s => s.subject)?.subject }
+}
+
+/**
+ * 津波の解除・誤報取消を「もう伝えた」と覚える鍵。ライブとリプレイの復元で同じ鍵を使うこと
+ * （ずれると、復元で既読にした取消をライブの続きでもう一度読む）。
+ *
+ * `eventId` を持たない電文は発表日時（`issue.time`）を鍵にする。P2PQuake 552 は EventID を
+ * 持たず、`id` は配信 1 件ごとの識別子で同じ発表でも揃う保証が無いので、`id` では同じ解除の 2 度目を
+ * 見分けられない（XML 経路の parseTsunamiFromXml も EventID 欠落時に空文字を返すので `||` で判定する）。
+ */
+function tsunamiCancelKey(report: JMATsunami): string {
+  return report.eventId || (report.issue.time ? `issue:${report.issue.time}` : report.id)
+}
+
+/**
+ * 津波情報・沖合の観測だけの取消（{@link isPartialTsunamiRetraction}）を「もう伝えた」と覚える鍵。
+ * 解除・誤報取消の鍵（{@link tsunamiCancelKey}）とは別にする —— 同じ鍵だと、津波情報の取消を伝えただけで
+ * 後から届く本物の解除が「伝え済み」になって鳴らない。
+ *
+ * 報番号は入れない（同じ取消が別の id で配信し直されても二重に読まないため）。同じ種類の報が
+ * 改めて届いたら {@link forgetPartialRetractionsOf} で外す。
+ */
+function partialRetractionKey(report: JMATsunami): string {
+  return `${report.eventId || report.id}|${report.headType}`
+}
+
+/**
+ * 種類 `headType` の一部取消の既読を外す。**番号の重なりでは見ない** —— 原因地震が加わると EventID が
+ * 「A」から「A B」へ伸びるので、取消のときの鍵と再発表の鍵が一致しない。表示する津波は 1 つなので、
+ * 種類だけで外して足りる。
+ */
+function forgetPartialRetractionsOf(spoken: Set<string>, headType: string): void {
+  const suffix = `|${headType}`
+  for (const key of spoken) if (key.endsWith(suffix)) spoken.delete(key)
+}
+
+/** 観測点ごとに持つ読み上げ・画面の記憶（一部取消で抜けた観測点だけを落とすのに使う）。 */
+interface TsunamiObservationMemories {
+  readonly maps: readonly Map<string, unknown>[]
+  readonly sets: readonly Set<string>[]
+}
+
+/**
+ * 取消で抜けた観測点の記憶を落とす。取り消された値を「もう伝えた」まま残すと、同じ観測点が
+ * 改めて届いたときに声にならない。残った観測点の記憶は触らない（読み直しになるため）。
+ * 組み直す報が残らなかったとき（`after` が null）は、取消前の観測点をすべて落とす。
+ */
+function forgetRetractedObservations(before: JMATsunami, after: JMATsunami | null, memories: TsunamiObservationMemories): void {
+  const remaining = new Set((after?.observations ?? []).map(o => o.name))
+  for (const o of before.observations ?? []) {
+    if (remaining.has(o.name)) continue
+    for (const m of memories.maps) m.delete(o.name)
+    for (const s of memories.sets) s.delete(o.name)
+  }
+}
+
+/**
  * 窓の手前の電文が運ぶ「気象庁が書いた文」を既読へ入れる（録画モードの復元専用）。
  *
  * **読み上げるときと同じ関数で本文を組むこと。** 別に組むと、設定でブロックを切っている端末で
  * 鍵が食い違い、既読が効かない。
  */
 function rememberTelegramTextAsSpoken(payload: ReplayPayload, spoken: Set<string>, opts: TtsSpeechOptions): void {
-  // 読み上げの経路（`LiveEvent`）に乗らない 2 種別はここでも対象外。「地震・津波に関するお知らせ」は
-  // 流さないと決めた種別で、推計震度分布図は気象庁が書いた文を運ばない（二進電文）。
-  if (payload.kind === 'quakeNotice' || payload.kind === 'estimatedIntensity') return
+  // 推計震度分布図は気象庁が書いた文を運ばない（二進電文）。
+  //
+  // **お知らせ（`quakeNotice`）は対象に入れる。** 読み上げを有効にした端末では本文を
+  // 気象庁が書いた文として読むので、窓の手前で届いた本文を既読にしておかないと、録画の区間の
+  // 境目で読み直す。読み上げを切っている端末で既読にしても、読む機会が無いので害は無い。
+  if (payload.kind === 'estimatedIntensity') return
   const event: LiveEvent = payload.kind === 'event' ? payload.event : payload
   const speech = telegramTextToSpeak(event, opts)
   if (!speech) return
@@ -1160,17 +1272,33 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   const spokenEEWLevelsRef = useRef<Map<string, 0 | 1 | 2>>(new Map())
   // 直前に読み上げた津波グレード（引き下げ検出・重複読み上げ抑制に使用）
   const lastTsunamiGradeRef = useRef<Exclude<TsunamiGrade, 'Unknown'> | null>(null)
-  // 直前に受信した津波（解除がこの津波に向けたものかの照合に使う。`isCancelForCurrentTsunami`）。
+  // 直前に受信した津波（次の報が別の津波か・等級が動いたかを比べる相手。津波情報だけの取消の後は
+  // 組み直した津波）。
   //
   // **App が持つ表示中の津波（`tsunamisRef`）ではなく、自分が受信したものを見ること。**
   // あちらは App の render 本体で代入されるため、同一 tick に複数の電文が捌けると（アーカイブ
   // 再生の追いつき・長時間バックグラウンド後の復帰）tick 開始前の値に取り残される。その値と
-  // 照合すると、届いたばかりの津波に対する解除を「別イベントの解除」と誤判定し、記憶を落とさない。
-  //
-  // ここで管理している記憶（波高・観測点名）は、いずれも自分が受信した電文で進めている。
-  // 照合の基準も揃えるのが筋が通る（`useEarthquakes` 側は state の整合のために `prev.tsunamis[0]`
-  // を見る。基準が違っても、判定そのものは同じ関数を共有している）。
+  // 比べると、届いたばかりの津波の 2 通目まで「新しい津波」に見える。
   const lastTsunamiRef = useRef<JMATsunami | null>(null)
+  // 受信した報を**状態更新と同じ規則**（`stepTsunamiState`）で当てていった津波。解除・取消がいまの津波に
+  // 向いているかの照合と、津波情報だけの取消で何を組み直すか・どの観測点が抜けるかを決める相手に使う。
+  // `lastTsunamiRef` は生の最終報なので畳んだ報を持たず、`tsunamisRef` は同一 tick に取り残される（理由は上）。
+  // ここで管理している記憶（波高・観測点名）は、いずれも自分が受信した電文で進めているので、照合の基準も
+  // 揃える（`useEarthquakes` 側は state の整合のために `prev.tsunamis[0]` を見る。基準が違っても、判定は
+  // 同じ関数を共有している）。`undefined` は「まだ 1 通も受けていない」（起動直後・リプレイの初期化後）、
+  // `null` は「受けた津波が終わった」。前者のときだけ画面の津波から始める（起動時の復元は受信処理を
+  // 通らないため）。期限切れの判定はしない（状態更新と失効予約が扱う。失効は取消の報として届くので、
+  // ここも同じ報で終わる。届いた時点で期限の過ぎた報だけは状態に載らずここには残るが、次の取消か
+  // 別の津波で入れ替わる）。
+  const receivedTsunamiRef = useRef<JMATsunami | null | undefined>(undefined)
+  // 原因地震を地震カードと結べなかったことを記録した津波（同じ記録を続報のたびに出さない）。
+  const loggedUnlinkedTsunamiSourcesRef = useRef<Set<string>>(new Set())
+  // 観測点ごとの記憶の一覧（一部取消で抜けた観測点だけを落とす。→ `forgetRetractedObservations`）。
+  // **観測点の記憶を足したら、ここにも足すこと。** 漏れた記憶だけが取り消された値を覚えたまま残る。
+  const tsunamiObservationMemories = (): TsunamiObservationMemories => ({
+    maps: [lastMaxObsHeightRef.current, lastMaxObsTimeRef.current, lastMaxObsFirstWaveRef.current, spokenObsHeightRef.current, spokenObsMaxHeightTimeRef.current, spokenObsFirstWaveRef.current],
+    sets: [seenObsNamesRef.current, spokenObsNamesRef.current, spokenObsMissingRef.current, spokenObsWarningLevelRef.current],
+  })
   // 震源要素を載せていた直近の津波。震源を持たない地震電文（震度速報）へ貸す
   // （→ `utils/borrowFromTsunami.ts`）。
   //
@@ -1370,6 +1498,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   // 消えたことだけでは理由が分からない）。発表が終わった EEW の内容は誤りではないので、
   // 自動解除では鳴っているものを切らない（切ると代わりに読むものが無く、尻切れで終わる）。
   const eewRetractedKeysRef = useRef<Set<string>>(new Set())
+  // 地震（eventId）ごとに、直前の報が名乗った震央地名。**誤報取消の通知の本文にだけ使う** ——
+  // DMDATA の取消電文は震源名が空なので、電文の値だけでは「 の緊急地震速報は取り消されました」になる。
+  //
+  // **`forgetEewTracking` では消さない。** 自動解除で追跡を落とした後に遅れて届く取消にも通知は出る
+  // （`hadKey=false` の経路）ので、そのときも名前を引ける必要がある。代わりに件数で上限を置き、
+  // 古いものから捨てる（同時に発表される地震は数件なので、上限に当たるのは長く起動したときだけ）。
+  const eewLastHypocenterNameRef = useRef<Map<string, string>>(new Map())
   // 第 1 フェーズ（震源の読み上げ）の進み具合。eventId 別。
   // **予報から警報へ上がったときに、言い直すかどうか・何回言い直すかをこれ 1 つで決める。**
   //
@@ -1463,6 +1598,60 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   // 寿命が伸び続ける（津波が続いている間は数分おきに届くので、事実上消えなくなる）。
   const [areaGradeChangedKeys, setAreaGradeChangedKeys] = useState<Set<string>>(() => new Set())
   const areaGradeClearTimerRef = useRef<number>(0)
+  /**
+   * 予想震度の付かない待ち（`EEW_PHASE2_MAX_WAIT_MS`）が切れた緊急地震速報（`eewEventKey`）。
+   * `eewNoForecastReason` の `waited` の出どころで、**読み上げと画面のバナーが同じこれを見る**。
+   *
+   * **読み上げの設定の外で持つ。** バナーは読み上げを切った端末にも出るので、読み上げの待ち
+   * （`eewTtsMaxTimersRef`。`voicevoxEnabled` の中でしか張られない）に相乗りすると、
+   * そういう端末ではバナーが理由を一度も出さない。待ちは自前のタイマー（`eewNoForecastWaitTimersRef`）で
+   * 測り、読み上げの待ちが切れたときもここへ印を付ける（どちらが先に切れても、
+   * 読み上げが理由を決める時点で印が付いているように）。
+   *
+   * ref は読み上げが発話の直前に同期で読むため、state は画面へ渡すため。必ず
+   * `markEewNoForecastSettled` / `unsettleEewNoForecast` を通して両方を一緒に動かす。
+   */
+  const [eewNoForecastSettledKeys, setEewNoForecastSettledKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const eewNoForecastSettledRef = useRef<Set<string>>(new Set())
+  const eewNoForecastWaitTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const markEewNoForecastSettled = (key: string) => {
+    if (eewNoForecastSettledRef.current.has(key)) return
+    eewNoForecastSettledRef.current.add(key)
+    setEewNoForecastSettledKeys(new Set(eewNoForecastSettledRef.current))
+  }
+  const unsettleEewNoForecast = (key: string) => {
+    const timer = eewNoForecastWaitTimersRef.current.get(key)
+    if (timer) { clearTimeout(timer); eewNoForecastWaitTimersRef.current.delete(key) }
+    if (!eewNoForecastSettledRef.current.delete(key)) return
+    setEewNoForecastSettledKeys(new Set(eewNoForecastSettledRef.current))
+  }
+  /**
+   * 報を受けるたびに、予想震度の付かない待ちを進める。
+   *
+   * - 値が付いた報 … 待ちも印も落とす。後の続報でまた値が無くなれば、待ちを最初からやり直す
+   *   （読み上げも同じく待ち直す。`eewConfirmedScaleRef` が 0 でなくなるため）
+   * - 値が無く、理由も判らない報 … まだ待っておらず印も無ければ待ちを張る。**張り直さない** ——
+   *   値の無い続報が数秒おきに届くと、張り直すたびに待ちが伸びていつまでも切れない
+   * - 値が無く、理由が判っている報（仮定震源要素・深発）… 待つ必要が無いので待ちだけ止める。
+   *   **印は落とさない** —— 印は「値が付かないまま待ち終えた」という事実で、その後に理由の判る報が
+   *   挟まっても事実は変わらない。落とすと、次に理由の判らない報へ戻ったときに待ち直すことになる
+   */
+  const trackEewNoForecastWait = (key: string, event: EEWAlert) => {
+    if (eewMaxScaleInfo(event).scale > 0) {
+      unsettleEewNoForecast(key)
+      return
+    }
+    if (eewNoForecastReason(event, false) !== 'unknown') {
+      const timer = eewNoForecastWaitTimersRef.current.get(key)
+      if (timer) { clearTimeout(timer); eewNoForecastWaitTimersRef.current.delete(key) }
+      return
+    }
+    if (eewNoForecastSettledRef.current.has(key) || eewNoForecastWaitTimersRef.current.has(key)) return
+    eewNoForecastWaitTimersRef.current.set(key, setTimeout(() => {
+      eewNoForecastWaitTimersRef.current.delete(key)
+      markEewNoForecastSettled(key)
+    }, EEW_PHASE2_MAX_WAIT_MS))
+  }
   // 津波イベント受信時にスクロールでフォーカスする予報区（今回の受信で変更があった区域全部＋その中の最高波高区域）。
   // 対象区域が特定できない受信（区域のみの発表・実質変化なしの続報・解除）は top: null（一番上へ戻す）で表す。
   // 形の意味は受け取る側（`FocusedDistrict`）に書いてある。`resetToTop` に既定値を置かないのは、
@@ -1510,7 +1699,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    * **`eewRetractedKeysRef` はここで触らない。** あれは消す側ではなく立てる側で、しかも
    * 誤報取消と自動解除で扱いが分かれる（判断は呼び出し側が持つ）。
    *
-   * タイマーを持つ 3 つ（上限待ち・安定待ちの 2 つ）は止めてから消す。**復元経路では
+   * タイマーを持つ 4 つ（上限待ち・安定待ちの 2 つ・予想震度の付かない待ち）は止めてから消す。**復元経路では
    * そもそも張られていない**ので、取得が空振りするだけで害は無い。
    */
   const forgetEewTracking = (key: string) => {
@@ -1520,6 +1709,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     activeEEWAnnouncedHypocentersRef.current.delete(key)
     const pendingMaxTimer = eewTtsMaxTimersRef.current.get(key)
     if (pendingMaxTimer) { clearTimeout(pendingMaxTimer); eewTtsMaxTimersRef.current.delete(key) }
+    unsettleEewNoForecast(key)
     eewTtsEventsRef.current.delete(key)
     eewPhase1TokensRef.current.delete(key)
     eewPhase2TokensRef.current.delete(key)
@@ -2571,6 +2761,43 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       return
     }
 
+    // 地震・津波に関するお知らせ（DMDSS版のみ）。**音と読み上げは設定で有効にしたときだけ**
+    // （`quakeNoticeAlerts`。既定は行わない。解説情報の `nankaiCommentaryAlerts` と同じ形）。
+    //
+    // 音は解説情報の音（`specialInfoCommentary`）を借りる。読むのは見出しだけで、本文は気象庁が書いた文として
+    // 別の発話で読む（`telegramTextToSpeak` の 'quakeNotice'。本文を読むかは「気象庁の文」の設定に従う）。
+    //
+    // **最下位の層（`commentary`）で読む**ので、地震・津波・EEW の読み上げを切らない。待ちきれなければ
+    // 黙る（その層の規約。損失は運用連絡を一度読まないことだけ）。
+    //
+    // **タブは動かさず、タイトルも書き換えない**（帯で伝える情報。震度や警報のタイトルを上書きしない）。
+    if (event.kind === 'quakeNotice') {
+      // 通知を切っている種別は本文も読まない（解説情報の設定と同じ扱い）
+      if (!settings.quakeNoticeAlerts) { skipTelegramTextRef.current = true; return }
+      const notice = event.data
+      if (notice.cancelled) {
+        // **取消は音を鳴らさず、取り消された事実だけを読む**（地震回数の取消と同じ）。主題は発表と共有する
+        // —— 分けると到来順の枠に載らず、待っている発表の予約を取り下げられない。帯が消えるので
+        // パネルも開かない。
+        if (settings.voicevoxEnabled) {
+          speakNonEEWDelayed(quakeNoticeToText(notice), SPEECH_PRIORITY.commentary, 0, 'quakeNotice')
+        }
+        return
+      }
+      // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側。
+      // 他の帯と同じ）。**帯を表示しない設定なら開かない** —— 開いても見せるものが無い。
+      if (settings.quakeNoticeBanner) expandPanelForSpecialInfo()
+      if (settings.soundEnabled) {
+        playAlertSound('specialInfoCommentary')
+      }
+      if (settings.voicevoxEnabled) {
+        speakNonEEWDelayed(
+          quakeNoticeToText(notice), SPEECH_PRIORITY.commentary, ttsDelayFor('specialInfoCommentary'), 'quakeNotice',
+        )
+      }
+      return
+    }
+
     // 南海トラフ関連解説情報（DMDSS版のみ）。臨時情報とは別の帯に出るため、ここでも別扱いにする。
     //
     // **ウィンドウタイトルは書き換えない。** 臨時情報の発表期間中は解説情報が毎日届くため、
@@ -2723,7 +2950,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // （症状が出ないぶん、後から読んで意図を確かめられない）。
     const segments: SpeechSegment[] = [{
       text,
-      refs: TELEGRAM_TEXT_OPEN_TARGET_KINDS.has(event.kind) ? [{ kind: 'telegramText' }] : [],
+      // **お知らせの帯を表示しない設定なら付けない。** 帯が描かれないので開く先が無い。
+      refs: TELEGRAM_TEXT_OPEN_TARGET_KINDS.has(event.kind)
+        && !(event.kind === 'quakeNotice' && !settings.quakeNoticeBanner)
+        ? [{ kind: 'telegramText' }] : [],
     }]
     // **長周期地震動観測情報だけ、どの地震の補足かまで主題に載せる。** 地震カードは複数
     // 並ぶので、種別だけではどのカードを開くか決まらない（バナーと津波の面は画面に 1 つ）。
@@ -2757,12 +2987,33 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 読み直す形にすると、片方だけ条件を足したときにどれかが抑制から外れる —— 仕様書自身が
     // 「片方だけ直されると画面と声が食い違う」と書いている形を、修正の中に持ち込むことになる。
     const quakeHeldBack = event.kind === 'quake' && meta?.quakeHeldBack === true
+    // **別の経路から既に受けて知らせた緊急地震速報と同じ報か**（→ `LiveEventMeta.eewSameReport`。
+    // standard 版は Yahoo と P2PQuake が同じ報を運ぶ）。真なら音とタブ移動を起こさない
+    // （ブラウザ通知は新規・格上げのときしか出さないので、この印が立つ報ではもともと出ない）。
+    // 読み上げとウィンドウタイトルは止めない —— 後から来た経路が運んだ欄で最新の値が変わりうる。
+    const eewSameReport = event.kind === 'eew' && meta?.eewSameReport === true
     // **地震・津波・EEW 以外はここで降ろす。** 以降の分岐はこの 3 種別の状態を突き合わせる
     // 処理で、ほかの電文はどれにも当てはまらない（→ `handleExtraLiveEvent`）。先に降ろすので、
     // この行から下の `event` は `AppEvent` に絞られている。
     if (event.kind !== 'quake' && event.kind !== 'tsunami' && event.kind !== 'eew') {
       handleExtraLiveEvent(event)
       return
+    }
+    // 受信した津波を状態更新と同じ規則で当てる（理由は `receivedTsunamiRef` の宣言箇所）。当てる前の値は
+    // 一部取消の分岐が「どの観測点が抜けたか」を見るのに使う。
+    // **まだ 1 通も受けていなければ画面の津波から始める。** 起動時の復元（silent 注入）は受信処理を通らず
+    // 状態にだけ津波を載せるので、空のままだと、リロード直後に届いた最初の津波情報の取消を「知らない津波」
+    // として捨てる（画面は組み直すのに、声も観測点の記憶の整理も起きない）。
+    // 終わった津波（null）では画面へ倒さない —— 同じ周回の画面はまだ解除前を見せていることがある。
+    const shownTsunami = tsunamisRef.current[0]
+    const tsunamiBeforeReport = receivedTsunamiRef.current !== undefined
+      ? receivedTsunamiRef.current
+      : (shownTsunami && !shownTsunami.cancelledAt ? shownTsunami : null)
+    const tsunamiStep = event.kind === 'tsunami'
+      ? stepTsunamiState(tsunamiBeforeReport ?? undefined, event, null)
+      : null
+    if (tsunamiStep && tsunamiStep.kind !== 'ignored') {
+      receivedTsunamiRef.current = tsunamiStep.kind === 'live' ? tsunamiStep.tsunami : null
     }
     // 受信時に該当タブを自動表示し、ウィンドウタイトルを更新する
     // （地震情報・津波情報・緊急地震速報）。
@@ -3003,12 +3254,16 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       const upgraded = isTsunamiGradeUpgrade(event, current)
       tsunamiIsNewOrUpgraded = isNew || upgraded
       // **読み取りを先に済ませてから更新する。** この 2 つを直接並べると、行を入れ替えただけで
-      // `isTsunamiNewFire(event, event)` になり（`eventId` が一致するので常に偽）、以後どんな別の
+      // `isTsunamiNewFire(event, event)` になり（同じ津波なので常に偽）、以後どんな別の
       // 津波が来ても印を落とせなくなる —— 例外もログも出ない。退避しておけば入れ替えは型で落ちる。
       const previousTsunami = lastTsunamiRef.current ?? undefined
       // 解除の照合に使うので、受信した順で覚える（理由は宣言箇所）。タブ切替の判定が
       // `tsunamisRef` を見ているのは従来どおり（あちらは「画面がいま何を出しているか」の話）。
       lastTsunamiRef.current = event
+      // 同じ種類の報が改めて届いたら、その種類の取消の重複抑止を解く（取消 → 再発表 → 再取消の
+      // 2 回目を黙って捨てないため）。鍵は取消の形のまま保つ —— 同じ取消が別 id で再配信されても
+      // 二重に読まないように、報番号を鍵へ入れていない（→ `partialRetractionKey`）。
+      if (event.headType) forgetPartialRetractionsOf(spokenTsunamiCancelEventIdsRef.current, event.headType)
       // **タブ切替の `isNew` を流用しないこと**（宣言箇所に理由）。あちらは `tsunamisRef` 由来で、
       // 同一 tick に取り残された値を見る。タブが余分に動くだけなら実害は小さいが、印を消す判定に
       // 使うと消えてはいけない印が消える。
@@ -3062,6 +3317,34 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         }
       }
       title.showTsunamiTitle()
+    } else if (event.kind === 'tsunami' && isPartialTsunamiRetraction(event)) {
+      // **津波情報・沖合の観測だけの取消。** 警報等は生きているので、解除・誤報取消の分岐へ落とさない
+      // （落とすと「津波警報等は誤って発表されたため取り消されました」と読み、観測点の記憶も全部捨てる）。
+      // カードはその種類の報を抜いて組み直す（`useEarthquakes`）。ここでは音を鳴らさず、取り消された
+      // 事実だけを読む（2026-10-15 ユーザー承認「読み上げて組み直す（推奨）」）。
+      const retractKey = partialRetractionKey(event)
+      // 照合と組み直しは、受信した報を状態更新と同じ規則で当てた津波で行う（→ `receivedTsunamiRef`）。
+      if (!tsunamiStep || tsunamiStep.kind === 'ignored' || !tsunamiBeforeReport) {
+        log.info(`[tsunami] 表示中の津波と一致しない ${event.headType} の取消のため何もしません`)
+      } else if (spokenTsunamiCancelEventIdsRef.current.has(retractKey)) {
+        log.debug(`[tsunami] ${event.headType} の取消は既に伝えたので読みません: ${retractKey}`)
+      } else {
+        spokenTsunamiCancelEventIdsRef.current.add(retractKey)
+        const refolded = tsunamiStep.kind === 'live' ? tsunamiStep.tsunami : null
+        if (!refolded) log.warn(`[tsunami] ${event.headType} の取消で組み直す報が残りません（読み上げの記憶は観測点ごと落とします）: id=${tsunamiBeforeReport.id}`)
+        forgetRetractedObservations(tsunamiBeforeReport, refolded, tsunamiObservationMemories())
+        // 次の続報が比べる相手も組み直した津波にする（取り消された値を基準に新規・格上げを判定しない）。
+        lastTsunamiRef.current = refolded
+        // 等級の基準も組み直した津波に揃える（取り消された報の等級を基準に、次の報の引き下げ・格上げを判定しない）。
+        { const g = refolded ? tsunamiMaxGrade(refolded) : 'Unknown'; lastTsunamiGradeRef.current = g === 'Unknown' ? null : g }
+        if (settings.voicevoxEnabled && (event.headType === 'VTSE51' || event.headType === 'VTSE52')) {
+          speakNonEEWDelayed(
+            tsunamiPartialRetractionToText(event.headType),
+            SPEECH_PRIORITY.normal, 0, 'tsunamiObs',
+            { tab: 'tsunami', priority: TAB_PRIORITY.tsunami },
+          )
+        }
+      }
     } else if (event.kind === 'tsunami' && event.cancelled) {
       // 録画ツール向けの記録。**解除・取消・失効は電文が言い分けている**（`cancelReason`）ので、
       // そのまま残す。読めない値のときは「解除」へ倒す（画面の扱いと揃える）。
@@ -3075,12 +3358,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // expired が複数キューに積まれても 2 回目以降を握り潰す）。
       // ページリロード後の初回解除は Set に無いため正常に発火する（HIGH-1 対応: 「未追跡」と
       // 「解除済み」を lastTsunamiGradeRef===null で混同していたのを eventId 単位に置き換え）。
-      // eventId 単位で追跡（serial が変わっても同一 event の重複 cancel を捕捉できる）。
-      // eventId が空文字 or 未設定の電文は event.id にフォールバック（XML 経路の parseTsunamiFromXml
-      // は EventID 欠落時に空文字を返すため `??` ではなく `||` を使う）。長期セッションでの無制限
-      // 増加を防ぐため 200 件を超えたらクリア（DMDSS 続報・合成 expired タイマー・P2PQuake 経路の
-      // 重複を捕捉できる深さ。実運用でこの件数の cancel を 1 セッションで扱うことは非現実的）。
-      const cancelId = (event.eventId || event.id)
+      // eventId 単位で追跡（serial が変わっても同一 event の重複 cancel を捕捉できる）。鍵は `tsunamiCancelKey`。
+      // 長期セッションでの無制限増加を防ぐため 200 件を超えたらクリア（DMDSS の合成 expired の多重・
+      // 同じ電文の再受信を捕捉できる深さ。実運用でこの件数の cancel を 1 セッションで扱うことは非現実的）。
+      const cancelId = tsunamiCancelKey(event)
       if (spokenTsunamiCancelEventIdsRef.current.size > 200) {
         spokenTsunamiCancelEventIdsRef.current.clear()
       }
@@ -3123,9 +3404,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 解除を読み上げる」食い違いは既知の性質で、解除を落とす方が害が大きいという判断
       // （理由は `isCancelForCurrentTsunami`）。ここで揃えているのは**記憶と画面の状態**だけ。
       //
-      // 照合の相手は自分が受信した直前の津波（`lastTsunamiRef`）。`tsunamisRef` を見ると、
-      // 同一 tick に複数の電文が捌けたときに取り残された値と比べてしまう（宣言箇所に理由）。
-      if (isCancelForCurrentTsunami(event, lastTsunamiRef.current ?? undefined)) {
+      // 照合は受信した報を状態更新と同じ規則で当てた結果（`tsunamiStep`。中身は `isCancelForCurrentTsunami`）。
+      // `tsunamisRef` を見ると、同一 tick に複数の電文が捌けたときに取り残された値と比べてしまう
+      // （`lastTsunamiRef` の宣言箇所に理由）。
+      if (tsunamiStep?.kind === 'ended') {
         lastTsunamiGradeRef.current = null
         lastTsunamiRef.current = null
         // 観測点の記憶は**波高と名前の両方**を、**画面用と読み上げ用の両方**で落とす。
@@ -3222,11 +3504,16 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             }
           }
           if (settings.notifyMinScale >= 0 && settings.notifyEEW) {
-            showBrowserNotification(
-              '緊急地震速報 取消',
-              `${event.earthquake.hypocenter.name} の緊急地震速報は取り消されました`,
-              `eew-cancel-${key}`,
-            )
+            const cancelName = event.earthquake.hypocenter.name || eewLastHypocenterNameRef.current.get(key)
+            // 画面に出ていた地震（hadKey）なのに名前を引けないのは、記憶の鍵がずれたか記憶が消えた印。
+            // 名前抜きの文は正常な形（名乗らない報だけだった・遅れて届いた取消）と見分けが付かないので記録を残す。
+            if (hadKey && !cancelName) {
+              log.warn('[eew] 誤報取消の通知に震央地名を引けない（名前を一度も覚えていない。名前の無い報だけだったか、記憶の鍵がずれたか記憶が消えた。名前抜きの文で出す）', {
+                key,
+                remembered: eewLastHypocenterNameRef.current.size,
+              })
+            }
+            showBrowserNotification('緊急地震速報 取消', eewCancelNotificationBody(cancelName), `eew-cancel-${key}`)
           }
         }
         // 誤報取消（訂正）だけは、鳴っている途中の読み上げも打ち切る対象として覚えておく。
@@ -3266,6 +3553,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         return
       }
 
+      // 取消の通知で名乗るための震央地名を覚える（→ `eewLastHypocenterNameRef`）。名前の空の報では
+      // 上書きしない —— 前の報が名乗った名前のほうが、空よりは事実に近い。
+      rememberEewHypocenterName(eewLastHypocenterNameRef.current, key, event.earthquake.hypocenter.name)
+
       const currentLevel = computeSingleEEWLevel(event)
       // 上限が定まらない報は通知・タイトルでも「以上」を添える（値だけでは下限の断定になる）。
       const { scale, orAbove: scaleOrAbove } = eewMaxScaleInfo(event)
@@ -3299,7 +3590,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (isNew || levelUpgraded) {
         log.info(`[tab] realtime を要求 (EEW${isNew ? '新規発報' : 'レベルアップ'} key=${key})`)
         setActiveTabRealtimeUrgent()
-      } else {
+      } else if (!eewSameReport) {
         setActiveTabRealtimeOnUpdate()
       }
       activeEEWLevelsRef.current.set(
@@ -3309,7 +3600,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // spokenEEW*Ref（読み上げた震度・階級・区分）は受信時点では更新しない。
       // 発話の直前だけで更新する（理由は宣言箇所のコメント）。
 
-      if (settings.soundEnabled) {
+      if (settings.soundEnabled && !eewSameReport) {
         const eewSoundType = selectEEWSoundType(isNew, levelUpgraded, currentLevel, event.isFinal ?? false)
         playAlertSound(eewSoundType)
       }
@@ -3357,6 +3648,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 同じ eventId で発表が再開することはないが、取消の記録を持ち越すと以後の読み上げが
       // 鳴らせなくなるため、報を受けた時点で必ず落とす
       eewRetractedKeysRef.current.delete(key)
+      // 予想震度の付かない待ちも、読み上げの設定の外で進める（理由は `eewNoForecastSettledRef`）
+      trackEewNoForecastWait(key, event)
 
       if (settings.voicevoxEnabled) {
         const clearPhase2MaxTimer = () => {
@@ -3511,9 +3804,12 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 「震度を伝えられないのに階級だけ確定した」という電文の異常が一度も記録されない
             // （発話の結果は同じなので画面にも出ず、後から原因を追えなくなる）。
             if (scaleUnchanged && !settings.ttsReadEewLpgmClass) return null
+            // 予想震度が無いときに理由を添えるか（`eewNoForecastReason` の `waited`）。下の
+            // `scalePhrase` と同じ値を使うため、ここで 1 回だけ読む。
+            const noForecastWaited = eewNoForecastSettledRef.current.has(key)
             const text = scaleUnchanged
               ? eewLpgmOnlyText(confirmedLpgm, confirmedLpgmInfo?.over === true)
-              : eewIntensityText(confirmedScale, confirmedLpgm, latest, announceUpgrade, confirmedLpgmInfo?.over === true, ttsRegionOptions(settings))
+              : eewIntensityText(confirmedScale, confirmedLpgm, latest, noForecastWaited, announceUpgrade, confirmedLpgmInfo?.over === true, ttsRegionOptions(settings))
             if (!text) {
               // 想定外。eewIntensityText 経由なら eewScaleOnlyText が常に非空を返す
               // （noForecastText が全ケースをカバーするため）。scaleUnchanged 経由の
@@ -3545,7 +3841,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // **この発話のどの句がどの値を運ぶか**（下の `onSettled` が既読を戻す単位）。
             // **`text` と同じ材料から作ること** —— 別に組み立てると、文面を変えたときに
             // 判定だけが古い形のまま残る。`eewIntensityText` は内部でこの 2 つを繋いでいる。
-            const scalePhrase = scaleUnchanged ? '' : eewScaleOnlyText(confirmedScale, latest)
+            const scalePhrase = scaleUnchanged ? '' : eewScaleOnlyText(confirmedScale, latest, noForecastWaited)
             const lpgmPhrase = eewLpgmOnlyText(spokenLpgm.cls, spokenLpgm.over)
             const upgradePhrase = announceUpgrade ? EEW_UPGRADE_PHRASE : ''
             // 組み立てとずれていないかの検算。ずれても「声になっていない」側へ倒れて同じ値を
@@ -4192,12 +4488,17 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 数 ms 後に階級だけの再読み上げが続くという不自然な二重発話になる
         updateLpgmStability(eewMaxLpgmClassInfo(event))
         if (severityUpgraded) {
+          // 格上げは待たずに確定するので、値が無ければ理由の待ち（`eewNoForecastSettledRef`）も
+          // 待たない。**値の無い警報は来ない前提** —— 気象庁が値を載せないのは観測点 1 点のときと
+          // 深さ 150km 超のときだけで、どちらの場合も気象庁は警報を出さない
+          // （深発地震テストの続報を予報級に留めているのと同じ理由。settings-pwa-spec.md §7「実電文の形に合わせる」）。来た場合、直前の報で待ちが切れて印が付いていれば理由つきで、
+          // 付いていなければ理由なしの「予想震度なし。」を読み、帯は 3 秒後に理由を出す。
           clearPhase2MaxTimer()
           confirmScale({ scale, orAbove: scaleOrAbove })
         } else if (scale > 0) {
           clearPhase2MaxTimer()
           updateScaleStability({ scale, orAbove: scaleOrAbove })
-        } else if (eewNoForecastReason(event) !== 'unknown') {
+        } else if (eewNoForecastReason(event, false) !== 'unknown') {
           clearPhase2MaxTimer()
           confirmScale({ scale: 0, orAbove: false })
         } else {
@@ -4241,6 +4542,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             && eewConfirmedScaleRef.current.get(key)?.scale !== 0) {
             const maxTimer = setTimeout(() => {
               eewTtsMaxTimersRef.current.delete(key)
+              // **確定より先に印を付ける。** 画面側の待ち（`trackEewNoForecastWait`）と同じ長さだが、
+              // どちらが先に切れるかは決まっていない。読み上げが理由を決めるのは発話の順番が
+              // 来たとき（`enqueuePhase2`）なので、ここで付けておけば必ず間に合う。
+              markEewNoForecastSettled(key)
               confirmScale({ scale: 0, orAbove: false })
             }, EEW_PHASE2_MAX_WAIT_MS)
             eewTtsMaxTimersRef.current.set(key, maxTimer)
@@ -4353,6 +4658,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       let ttsSegments: SpeechSegment[] | null = null
       // 声になった内容を書き戻す先（地震情報のときだけ立つ）。
       let quakeSpokenState: QuakeSpokenState | null = null
+      /** 津波の読み上げが見る既読（原因地震ごと）。地震情報では使わない（→ `tsunamiQuakeSpokenFor`）。 */
+      let tsunamiSpoken: TsunamiQuakeSpoken | null = null
       // 読み上げ文に含めた観測点。**発話を始める瞬間に既読へ移す**（`spokenObsHeightRef`）。
       // 受信時に移すと、待たされて鳴らなかった観測値まで既読になり二度と読まれない。
       let spokenObs: import('../types/earthquake').TsunamiObservation[] | null = null
@@ -4431,17 +4738,30 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // **カードがあればその `eventKey` を使う。** DMDATA ではどちらも `eventId` だが、
         // 暫定 EventID の採り直しがあった地震ではカード側が統合で安定した鍵を持っている。
         // カードがまだ無いのは津波が先に届いた順序で、そのときは電文の `eventId` で足りる。
-        if (!event.cancelled && event.eventId) {
-          const card = earthquakesRef.current.find(q => extractQuakeEventIdFromId(q.id) === event.eventId)
-          quakeSpokenState = quakeSpokenStateFor(
-            spokenQuakeStatesRef.current,
-            `quake:${card ? quakeEventKey(card) : event.eventId}`,
-          )
+        // **原因地震が 2 つ以上ある津波**（別の地震が寄与して番号が足された警報）では、地震ごとに既読を引く
+        // （→ `tsunamiQuakeSpokenFor`）。
+        const builtTsunamiSpoken = !event.cancelled
+          ? tsunamiQuakeSpokenFor(spokenQuakeStatesRef.current, event, earthquakesRef.current)
+          : null
+        if (builtTsunamiSpoken) {
+          tsunamiSpoken = builtTsunamiSpoken.spoken
+          // **原因地震が複数あるのに地震カードと結べなかったものを記録する**（同じ津波・同じ件数では 1 度だけ）。
+          // 結べないとその地震は借りた震源のカードが開かない —— 声と画面は普通に動くので、記録が無ければ
+          // 気づけない。原因地震が 1 つの津波は主題へ倒せるので対象にしない。件数が変わったら記録し直す
+          // （地震情報が後から届いて結べた・逆に結べなくなった、を追えるように）。
+          const unlinked = builtTsunamiSpoken.spoken.sources.filter(s => s.subject === undefined).length
+          const total = builtTsunamiSpoken.spoken.sources.length
+          const unlinkedKey = `${event.eventId || event.id}|${unlinked}/${total}`
+          if (total > 1 && unlinked > 0 && !loggedUnlinkedTsunamiSourcesRef.current.has(unlinkedKey)) {
+            loggedUnlinkedTsunamiSourcesRef.current.add(unlinkedKey)
+            log.info(`[tsunami] 原因地震 ${total} 件のうち ${unlinked} 件を地震カードと結べません（地震情報がまだ届いていないか、発現時刻で 1 対 1 に決まらない）: eventId=${event.eventId}`)
+          }
           // **震源を語っているあいだ、その地震のカードを見せる**ための主題（→ `ttsFollow.ts` の
           // `hasBorrowedHypocenterFollowTarget`）。**カードがあるときだけ立てる** —— 津波が先に
           // 届いた順序ではまだ画面にカードが無く、見せる相手がいない（そのときは震源を語る前に
-          // 地震電文が届き、次の報から追従できる）。
-          if (card) quakeSubjectKey = quakeEventKey(card)
+          // 地震電文が届き、次の報から追従できる）。原因地震が 2 つ以上なら、語っている地震ごとの
+          // カードは参照（`borrowedHypocenter.subject`）が持つ。
+          if (builtTsunamiSpoken.subject) quakeSubjectKey = builtTsunamiSpoken.subject
         } else if (!event.cancelled && event.validDateTime) {
           // **識別子を欠く電文では既読を持てない。** 鍵は地震ごと（`quake:<eventId>`）なので、
           // `eventId` が無ければ `quakeSpokenState` は null のまま —— 失効時刻や震源の
@@ -4720,8 +5040,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // ここを渡し忘れると失効時刻が実運用で一度も声にならない
           // （→ `ttsText.ts` の `tsunamiExpirySegments`）。
           ttsSegments = isDowngrade
-            ? tsunamiDowngradeToSegments(event, tsunamiCardBasis.observations, quakeSpokenState ?? undefined)
-            : tsunamiToSegments(event, tsunamiCardBasis.observations, quakeSpokenState ?? undefined, ttsRegionOptions(settings))
+            ? tsunamiDowngradeToSegments(event, tsunamiCardBasis.observations, tsunamiSpoken ?? undefined)
+            : tsunamiToSegments(event, tsunamiCardBasis.observations, tsunamiSpoken ?? undefined, ttsRegionOptions(settings))
           // グレード変化と同時に観測中（波高未確定）で新規到達した観測点も読み上げに含める
           // （こちらもカードの並びに揃える。理由は観測点更新側と同じ）
           const obsOnGradeChange = observationsInCardOrder(event)
@@ -4816,6 +5136,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // （宣言箇所の理由）。
         const areasToMark = speakableAreaChanges.length > 0 ? speakableAreaChanges : null
         const spokenState = quakeSpokenState
+        const spokenTsunami = tsunamiSpoken
         speakNonEEWDelayed(
           ttsText,
           speechPriority,
@@ -4824,7 +5145,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           { tab: followTab, priority: event.kind === 'tsunami' ? TAB_PRIORITY.tsunami : TAB_PRIORITY.quake },
           ttsSegments ?? undefined,
           // 地震情報は**読み終えたあと**に、実際に声になった分だけを記録する。
-          spokenState ? refs => applySpokenRefs(spokenState, refs) : undefined,
+          spokenTsunami ? refs => applyTsunamiSpokenRefs(spokenTsunami, refs)
+            : spokenState ? refs => applySpokenRefs(spokenState, refs) : undefined,
           // 読み上げた観測点を既読へ移すのは**声に出す瞬間**（宣言は `spokenObsHeightRef`）。
           // 待たされた末に見送られた分は既読にならず、次の電文でもう一度読み上げ対象に入る。
           obsToMark || missingToMark || warningLevelToMark || areasToMark || maxHeightTimeToMark || firstWaveToMark || tideAreasToMark
@@ -5112,6 +5434,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   useEffect(() => {
     return () => {
       for (const timer of eewTtsMaxTimersRef.current.values()) clearTimeout(timer)
+      for (const timer of eewNoForecastWaitTimersRef.current.values()) clearTimeout(timer)
       for (const cycle of eewScaleStabilityRef.current.values()) clearTimeout(cycle.timer)
       for (const cycle of eewLpgmStabilityRef.current.values()) clearTimeout(cycle.timer)
       eewSpeechPendingRef.current = 0
@@ -5140,6 +5463,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     activeEEWAnnouncedHypocentersRef.current.clear()
     for (const timer of eewTtsMaxTimersRef.current.values()) clearTimeout(timer)
     eewTtsMaxTimersRef.current.clear()
+    // 予想震度の付かない待ちも落とす。印を持ち越すと、新しい時間軸の初報で待たずに理由を言う
+    for (const timer of eewNoForecastWaitTimersRef.current.values()) clearTimeout(timer)
+    eewNoForecastWaitTimersRef.current.clear()
+    eewNoForecastSettledRef.current.clear()
+    setEewNoForecastSettledKeys(new Set())
     eewTtsEventsRef.current.clear()
     eewPhase1TokensRef.current.clear()
     eewPhase2TokensRef.current.clear()
@@ -5167,10 +5495,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     spokenEEWUpgradePhraseRef.current.clear()
     eewRegionTokensRef.current.clear()
     eewRetractedKeysRef.current.clear()
+    eewLastHypocenterNameRef.current.clear()
     eewPhase1ProgressRef.current.clear()
     lastTsunamiGradeRef.current = null
     // 解除の照合に使う直前の津波も落とす（残すと、リプレイ後の解除を切替前の津波と照合する）
     lastTsunamiRef.current = null
+    receivedTsunamiRef.current = undefined
+    loggedUnlinkedTsunamiSourcesRef.current.clear()
     lastMaxObsHeightRef.current.clear()
     lastMaxObsTimeRef.current.clear()
     lastMaxObsFirstWaveRef.current.clear()
@@ -5244,6 +5575,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
      * その先の `createQuakeFoldKeys`）が持つ。
      */
     const quakeTopicFor = createPreWindowQuakeTopics()
+    /** 窓の手前で見た地震（地震番号ごとに最後の報）。津波の原因地震を結ぶ相手に使う（→ `tsunamiQuakeSpokenFor`）。 */
+    const restoredQuakes = new Map<string, JMAQuake>()
     /**
      * 電文 1 通ぶんの復元。**呼び出し側のループが 1 通ずつ例外を受け止める。**
      */
@@ -5266,6 +5599,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 続報が「聞いたことのない地域」を省いて読む。復元しない結果その報は全文で読まれるが、
           // それが窓から聞き始めた人にとって正しい（冒頭は「更新されました」になる）。
           markQuakeReportSeen(seenQuakeReportKeysRef.current, newQuakeTrackingKey(ev as JMAQuake))
+          {
+            const quake = ev as JMAQuake
+            const quakeEventId = extractQuakeEventIdFromId(quake.id)
+            // 取消の報は震源を持たない（センチネル）ので結ぶ相手にしない。カードを消すかは取消の種類で
+            // 変わるが、ここで要るのは発現時刻と震源だけなので、前の報を残しておけば足りる。
+            if (quakeEventId && !quake.cancelled) restoredQuakes.set(quakeEventId, quake)
+          }
           // 録画モードだけは上の理由が成り立たないので、地域と震源要素も既読にする
           // （区間の最初の確定情報が全区域を読み直すのを防ぐ）。
           //
@@ -5402,14 +5742,42 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 声にしていない場所まで「名乗り済み」になり、窓の中の言い直しを黙らせる。
             if (restoredHypo !== 'keep') activeEEWAnnouncedHypocentersRef.current.set(key, [restoredHypo])
           }
+          // 予想震度の付かない待ちも、ライブ経路と同じ口で進める。窓の手前でどれだけ経ったかは
+          // ここでは測らず、再生を始めた時点から待ち直す（印を最初から付けると、窓の直前に届いた
+          // 報まで待たずに理由を出す）。読み上げは `eewConfirmedScaleRef` の復元で黙るので、
+          // この待ちが切れても声にはならず、画面のバナーだけが理由を出す。
+          //
+          // **記憶の書き込みをすべて終えてから呼ぶ。** 上の記憶は「全部書くか 1 つも書かないか」で
+          // 揃えてあり、途中に投げうる処理を挟むと一部だけ書かれた状態が残る（理由は上の
+          // 「投げうる計算を先に済ませる」のコメント）。
+          trackEewNoForecastWait(key, eew)
         } else if (ev.kind === 'tsunami') {
           const tsunami = ev as JMATsunami
           // **ライブ経路と同じ形で進めること**（電文は時系列順に渡ってくる）。片方だけずらすと、
           // リプレイを途中から始めたときだけ「解除で終わった津波の観測点が既読のまま残る」
           // （＝次の津波で到達を伝えられない）という、ライブでは起きない食い違いになる。
+          // 受信した津波の当て方もライブと同じ関数で進める（→ `receivedTsunamiRef`）。
+          const before = receivedTsunamiRef.current ?? null
+          const step = stepTsunamiState(before ?? undefined, tsunami, null)
+          if (step.kind !== 'ignored') receivedTsunamiRef.current = step.kind === 'live' ? step.tsunami : null
+          if (isPartialTsunamiRetraction(tsunami)) {
+            // **津波情報・沖合の観測だけの取消。** 警報等は生きているので、下の解除の扱い（記憶を全部捨て、
+            // 解除の鍵を積む）へ落とさない。落とすと、後から届く本物の解除が「伝え済み」になって鳴らない。
+            if (step.kind === 'ignored' || !before) return
+            const refolded = step.kind === 'live' ? step.tsunami : null
+            if (recording) spokenTsunamiCancelEventIdsRef.current.add(partialRetractionKey(tsunami))
+            forgetRetractedObservations(before, refolded, tsunamiObservationMemories())
+            lastTsunamiRef.current = refolded
+            // 等級の基準も組み直した津波に揃える（取り消された報の等級を基準に、次の報の引き下げ・格上げを判定しない）。
+            { const g = refolded ? tsunamiMaxGrade(refolded) : 'Unknown'; lastTsunamiGradeRef.current = g === 'Unknown' ? null : g }
+            return
+          }
           if (tsunami.cancelled) {
             // 録画モードでは取消の読み上げも済ませた扱いにする（鍵はライブ経路と同じ組み立て）。
-            if (recording) spokenTsunamiCancelEventIdsRef.current.add(tsunami.eventId || tsunami.id)
+            if (recording) spokenTsunamiCancelEventIdsRef.current.add(tsunamiCancelKey(tsunami))
+            // 記憶を落とすのは、いまの津波に向いた解除だけ（ライブ経路の `tsunamiStep.kind === 'ended'` と同じ）。
+            // 別の津波の遅れた解除で落とすと、`receivedTsunamiRef` が生きた津波を持ったまま記憶だけが空になる。
+            if (step.kind !== 'ended') return
             lastTsunamiGradeRef.current = null
             lastTsunamiRef.current = null
             lastMaxObsHeightRef.current.clear()
@@ -5428,6 +5796,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             const grade = tsunamiMaxGrade(tsunami)
             if (grade !== 'Unknown') lastTsunamiGradeRef.current = grade
             lastTsunamiRef.current = tsunami
+            // 同じ種類の報が改めて届いたら一部取消の既読を外す（ライブ経路と同じ。理由は `partialRetractionKey`）。
+            if (tsunami.headType) forgetPartialRetractionsOf(spokenTsunamiCancelEventIdsRef.current, tsunami.headType)
             // **録画モードでは、津波が語った震源も「もう伝えた」扱いにする。**
             //
             // 津波の読み上げは末尾で原因地震の震源を語り、その既読は**地震の主題**へ積まれる
@@ -5435,22 +5805,29 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 次の津波が同じ震源を語り直す —— 録画は区間を繋ぐので、通しで聞くと二度述べになる。
             //
             // **主題の組み立てはライブ経路と揃える。** あちらはカードがあればその `eventKey` を
-            // 使うが、復元は状態更新の外で流れるためカードを引けない。DMDATA ではどちらも
-            // `eventId` なので実運用では一致する（識別子を持たない経路はそもそも震源を貸さない）。
-            if (recording && tsunami.eventId) {
-              const quakeState = quakeSpokenStateFor(spokenQuakeStatesRef.current, `quake:${tsunami.eventId}`)
+            // 使うが、復元は状態更新の外で流れるためカードを引けない。代わりに窓の手前で見た地震を
+            // 地震ごとに 1 通ずつ渡す（`restoredQuakes`）。DMDATA ではどちらも `eventId` から鍵を作るので
+            // 実運用では一致し（識別子を持たない経路はそもそも震源を貸さない）、原因地震が複数あるときも
+            // ライブと同じ相手へ結べる（空で渡すと、地震番号が 2 つの津波で結び先が 1 つも見つからない）。
+            const restoredSpoken = recording
+              ? tsunamiQuakeSpokenFor(spokenQuakeStatesRef.current, tsunami, [...restoredQuakes.values()])
+              : null
+            if (restoredSpoken) {
               // 既読を渡して組み、返ってきた参照をその既読へ積む。まだ語っていない事実だけが
               // 文になるので、同じ震源を載せた続報が何通あっても二重には積まれない。
-              applySpokenRefs(quakeState, tsunamiToSegments(tsunami, undefined, quakeState, opts).flatMap(seg => seg.refs))
+              applyTsunamiSpokenRefs(restoredSpoken.spoken, tsunamiToSegments(tsunami, undefined, restoredSpoken.spoken, opts).flatMap(seg => seg.refs))
             }
             // T 時点までの観測点は「もう伝えた」ものとして扱う。**読み上げ用も埋めること。**
             // 埋め忘れると、注入後の最初の観測情報でそれまでの全観測点が読み直され、途中から
             // 再生を始めたのに津波の到達をいまさら読み上げることになる。
             rememberObservationsForDisplay(tsunami.observations ?? [], seenObsNamesRef.current, lastMaxObsHeightRef.current, lastMaxObsTimeRef.current, lastMaxObsFirstWaveRef.current)
             // ライブ経路が持つ「等級を語れない電文では既読にしない」ガード（`canTellGrade`）は
-            // ここに無い。この復元は DMDSS 版のリプレイ専用で、DMDATA は未知の区分を安全側で
-            // 津波警報へ丸めるため（`dmdataParser` の Kind/Code 判定）、区域が残ったまま等級だけ
-            // 落ちた電文が届かないから。ライブ側のガードを変えるときはこの非対称でよいか確かめる。
+            // ここに無い。この復元はバリアントを問わず呼ばれるが（上の地震の注記）、どちらでも
+            // 効かせる場面が無い —— DMDATA は未知の区分を安全側で津波警報へ丸めるので
+            // （`dmdataParser` の Kind/Code 判定）、区域が残ったまま等級だけ落ちた電文が届かない。
+            // P2PQuake 552 は等級 `Unknown` を正規の値として持つが、観測点も前回の等級
+            // （`lastGrade`）も持たないので、ここで既読へ積むものがそもそも無い。
+            // ライブ側のガードを変えるときはこの非対称でよいか確かめる。
             // **欠測の観測点は名前を到達確認の記憶へ入れない**（理由は `rememberObservationHeights`）。
             // 波高だけは進める——欠測と同時に来た「これまでの最大波」を読み直さないため。
             const observations = tsunami.observations ?? []
@@ -5595,5 +5972,5 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     scheduleSpeech(TELEGRAM_TEXT_SPEECH_RESERVE_DELAY_MS, () => speakTelegramText(event))
   }
 
-  return { handleLiveEvent, resetTracking, restorePreWindowTracking, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict }
+  return { handleLiveEvent, resetTracking, restorePreWindowTracking, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict, eewNoForecastSettledKeys }
 }

@@ -104,6 +104,7 @@ export function buildEewEntries(parsed: ParsedEewPage, opts: BuildEewEntriesOpti
     const hypocenterMagnitude = report.magnitude ?? parsed.hypocenter.magnitude
     const event: EEWAlert = {
       kind: 'eew',
+      origin: 'archive',
       id: `${opts.idPrefix}-eew-${report.reportNum}`,
       time: report.timeIso,
       test: false,

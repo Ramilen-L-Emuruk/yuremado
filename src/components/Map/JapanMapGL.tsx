@@ -11,6 +11,7 @@ import { LabelsGL } from './LabelsGL'
 import { KyoshinSubThresholdGL } from './KyoshinSubThresholdGL'
 import { KyoshinPointsGL } from './KyoshinPointsGL'
 import { KyoshinDetectedPointsGL } from './KyoshinDetectedPointsGL'
+import { PublicStationMarkersGL } from './PublicStationMarkersGL'
 import { KyoshinMaxEffectGL } from './KyoshinMaxEffectGL'
 import { ActiveFaultsGL } from './ActiveFaultsGL'
 import { PlateBoundariesGL } from './PlateBoundariesGL'
@@ -95,6 +96,7 @@ const LEGEND_PRIMARY_BY_MODE: Record<MapMode, LegendKey[]> = {
 
 export function JapanMapGL({
   mode,
+  publicStationMarkers,
   quake,
   lpgm,
   distributionMode = false,
@@ -317,6 +319,7 @@ export function JapanMapGL({
       mode === 'kyoshin' ? unconfirmedPoints.map((p) => `${p.lat},${p.lng}`).join(';') : '',
       // 未入電の印（`quake-unreceived-points`）。出入りでラベルの退避をやり直す
       unreceivedMarkersVisible ? drawnUnreceivedMarkers.map((m) => `${m.position[0]},${m.position[1]}`).join(';') : '',
+      publicStationMarkers.map((m) => `${m.lat},${m.lon}`).join(';'),
     ]
     return parts.join('|')
   }, [
@@ -332,6 +335,7 @@ export function JapanMapGL({
     kyoshinSites,
     detectedMarkerPoints,
     unconfirmedPoints,
+    publicStationMarkers,
   ])
 
   useEffect(() => {
@@ -574,6 +578,7 @@ export function JapanMapGL({
     primary: LEGEND_PRIMARY_BY_MODE[mode],
     catalogColorBy: mode === 'catalog' && catalogCloud && catalogCloud.columns.count > 0 ? catalogColorBy : null,
     catalogYearRange: catalogCloud?.timeRange ?? null,
+    catalogUnknownMagnitude: mode === 'catalog' && (catalogCloud?.unknownMagnitudeCount ?? 0) > 0,
   }
   // **中身が変わったときだけ知らせる。** この関数は強震モニタの毎秒更新で呼び直されるので、
   // 素直に依存へ置くと毎秒通知が飛ぶ。小さなオブジェクトなので文字列にして比べる。
@@ -707,6 +712,7 @@ export function JapanMapGL({
             visible={mode === 'kyoshin'}
           />
           <KyoshinMaxEffectGL sites={kyoshinSites} indices={kyoshinIndices} iconScale={iconScale} visible={mode === 'kyoshin'} />
+          <PublicStationMarkersGL markers={publicStationMarkers} iconScale={iconScale} visible={publicStationMarkers.length > 0} />
           {/* 長期震源カタログの点群。**常時マウントして visible だけ切り替える**——
               カスタムレイヤーの付け外しはシェーダーの作り直しを伴い、タブを往復するたびに
               数十万点を詰め直すことになる。 */}

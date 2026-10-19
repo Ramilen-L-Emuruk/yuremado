@@ -2,8 +2,8 @@
 // 「〇時〇分」はローカルタイムゾーン依存のため、時刻の数値そのものではなく
 // 「日から読む／時分だけ読む」という書式の違いを正規表現で検証する。
 import { describe, it, expect, vi } from 'vitest'
-import { earthquakeCancelToText, tsunamiCancelToText, eewCancelToText, CANCEL_REASON_SPEAK_MAX_CHARS, nankaiToText, earthquakeCountToText,
-  estimatedIntensityToText, earthquakeToText, earthquakeToSegments, createQuakeSpokenState, applySpokenRefs, eewAlertToText, eewIntensityText, voicevoxPreviewTexts, lpgmToText, tsunamiToText, tsunamiToSegments, tsunamiDowngradeToText, tsunamiDowngradeToSegments, tsunamiArrivalToText, tsunamiMissingToText, tsunamiObservationUpdateToText, tsunamiAreaGradeChangeToText, tsunamiWarningLevelToText, selectWarningLevelToSpeak, selectObservationUpdatesToSpeak, selectMissingToSpeak, selectArrivalsToSpeak, WARNING_LEVEL_SPEAK_MAX_POINTS, joinWithAlso, telegramTextToSpeak, type TtsSpeechOptions, type QuakeSpokenState } from './ttsText'
+import { earthquakeCancelToText, tsunamiCancelToText, eewCancelToText, CANCEL_REASON_SPEAK_MAX_CHARS, nankaiToText, earthquakeCountToText, quakeNoticeToText,
+  estimatedIntensityToText, earthquakeToText, earthquakeToSegments, createQuakeSpokenState, applySpokenRefs, eewAlertToText, eewIntensityText, voicevoxPreviewTexts, lpgmToText, tsunamiToText, tsunamiToSegments, tsunamiDowngradeToText, tsunamiDowngradeToSegments, tsunamiArrivalToText, tsunamiMissingToText, tsunamiObservationUpdateToText, tsunamiAreaGradeChangeToText, tsunamiWarningLevelToText, selectWarningLevelToSpeak, selectObservationUpdatesToSpeak, selectMissingToSpeak, selectArrivalsToSpeak, WARNING_LEVEL_SPEAK_MAX_POINTS, joinWithAlso, telegramTextToSpeak, TELEGRAM_TEXT_BLOCK_KEYS, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, applyTsunamiSpokenRefs } from './ttsText'
 import { INTENSITY_SCALE_COUNT } from './intensity'
 import { joinSegments, mapChunksToRefs, plain, type SpeechSegment } from './ttsFollow'
 import { splitIntoChunks } from './voicevox'
@@ -96,6 +96,20 @@ describe('earthquakeToText: 遠地地震', () => {
     expect(text).not.toContain('この地震による津波の心配はありません。')
   })
 
+  // P2PQuake は付加文を運ばず、海外への津波の見通しを値で運ぶ（→ `JMAQuake.foreignTsunamiText`）
+  it('付加文が無い経路では、津波区分の文に続けて海外への津波の見通しを読む', () => {
+    const foreignTsunamiText = '太平洋の広域に津波発生の可能性があります。'
+    const text = earthquakeToText({ ...makeQuake({ forecastText: undefined }), foreignTsunamiText }, TTS_OPTS, true)
+    expect(text.endsWith(`この地震による津波の心配はありません。${foreignTsunamiText}`)).toBe(true)
+  })
+
+  // 対照: 付加文の原文があるときは、そちらに海外の見通しも入っているので重ねない
+  it('付加文の原文があれば海外への津波の見通しを重ねない', () => {
+    const forecastText = '太平洋の広域に津波発生の可能性があります。'
+    const text = earthquakeToText({ ...makeQuake({ forecastText }), foreignTsunamiText: forecastText }, TTS_OPTS, true)
+    expect(text.split(forecastText)).toHaveLength(2)
+  })
+
   it('付加文が無い経路（P2PQuake）では津波区分から文を起こす', () => {
     const text = earthquakeToText(makeQuake({ forecastText: undefined }), TTS_OPTS, true)
     expect(text.endsWith('この地震による津波の心配はありません。')).toBe(true)
@@ -181,7 +195,7 @@ describe('eewIntensityToText: 長周期地震動階級の読み上げ', () => {
   // 渡せるよう、eewMaxScaleInfo/eewMaxLpgmClassInfo で都度計算してから渡すラッパーを使う。
   function eewIntensityToText(event: EEWAlert, announceUpgrade = false): string {
     const lg = eewMaxLpgmClassInfo(event)
-    return eewIntensityText(eewMaxScaleInfo(event), lg.cls, event, announceUpgrade, lg.over)
+    return eewIntensityText(eewMaxScaleInfo(event), lg.cls, event, false, announceUpgrade, lg.over)
   }
 
   function makeEEW(
@@ -199,6 +213,7 @@ describe('eewIntensityToText: 長周期地震動階級の読み上げ', () => {
   ): EEWAlert {
     return {
       kind: 'eew',
+      origin: 'dmdata',
       id: 'test-eew',
       time: '2026-01-01T12:00:00Z',
       test: false,
@@ -2609,6 +2624,50 @@ describe('EEW の取消の理由を読み上げる', () => {
 //
 // **群発では地震カードが 1 枚も立たないことがある**（実サンプルは 21 時間で 1704 回・有感 1 回）。
 // この読み上げが、揺れが続いていることを伝える唯一の経路になる。
+describe('quakeNoticeToText', () => {
+  const base = {
+    id: 'n', time: '2026-10-16T04:15:00Z', eventId: 'e', body: '本文', cancelled: false,
+    reportDateTime: '2026-10-16T04:15:00Z', expireAt: '2026-10-23T04:15:00Z',
+  }
+  // 正: 見出しだけを読む（本文は気象庁が書いた文として別に読む）
+  it('見出しだけを読む', () => {
+    expect(quakeNoticeToText({ ...base, headline: '緊急地震速報（警報）について' }))
+      .toBe('地震・津波に関するお知らせ。緊急地震速報（警報）について。')
+  })
+  // 安全弁: 見出しが句点で終わっていても二重にしない
+  it('見出しの句点を二重にしない', () => {
+    expect(quakeNoticeToText({ ...base, headline: '配信試験のお知らせ。' }))
+      .toBe('地震・津波に関するお知らせ。配信試験のお知らせ。')
+  })
+  // 正: 取消は取り消された事実を読む（宣言だけの本文は読まない）
+  it('取消は取り消された事実を読む', () => {
+    expect(quakeNoticeToText({ ...base, headline: 'x', body: '', cancelled: true }))
+      .toBe('地震・津波に関するお知らせは取り消されました。')
+  })
+})
+
+describe('telegramTextToSpeak（お知らせ）', () => {
+  const event = {
+    kind: 'quakeNotice' as const,
+    data: {
+      id: 'n', time: '2026-10-16T04:15:00Z', eventId: 'e', headline: 'h', body: '本文を全部読みます。',
+      cancelled: false, reportDateTime: '2026-10-16T04:15:00Z', expireAt: '2026-10-23T04:15:00Z',
+    },
+  }
+  it('本文を読む', () => {
+    expect(telegramTextToSpeak(event, { readTelegramText: true } as never)?.text).toContain('本文を全部読みます。')
+  })
+  // 対照: ブロックを切れば読まない
+  it('本文のブロックを切れば読まない', () => {
+    const blocks = Object.fromEntries(TELEGRAM_TEXT_BLOCK_KEYS.map(k => [k, k !== 'quakeNoticeBody']))
+    expect(telegramTextToSpeak(event, { readTelegramText: true, telegramTextBlocks: blocks } as never)).toBeNull()
+  })
+  // 安全弁: 取消では本文を添えない
+  it('取消では本文を読まない', () => {
+    expect(telegramTextToSpeak({ ...event, data: { ...event.data, cancelled: true } }, { readTelegramText: true } as never)).toBeNull()
+  })
+})
+
 describe('earthquakeCountToText', () => {
   function makeCount(over: Partial<JMAEarthquakeCount> = {}): JMAEarthquakeCount {
     return {
@@ -2833,7 +2892,7 @@ describe('設定タブの試聴文', () => {
   it('発話を 2 つに分けて返す', () => {
     const texts = voicevoxPreviewTexts()
     expect(texts).toHaveLength(2)
-    const phase2 = eewIntensityText({ scale: PREVIEW_SCALE, orAbove: false }, 0, EXPECTED_PREVIEW_EEW)
+    const phase2 = eewIntensityText({ scale: PREVIEW_SCALE, orAbove: false }, 0, EXPECTED_PREVIEW_EEW, false)
     expect(phase2).toBe('予想最大震度6強。')
     expect(texts[1]).toBe(phase2)
   })
@@ -2991,6 +3050,16 @@ describe('telegramTextToSpeak: 気象庁が書いた文', () => {
     expect(telegramTextToSpeak(quakeWithComment(), OFF)).toBeNull()
   })
 
+  // P2PQuake の地震は `eventId` を持たない。主題が全件 `quake:` に潰れると、別の地震の同じ文を二度と読まない
+  it('eventId を持たない地震でも、地震の時刻で主題を分ける', () => {
+    const a = telegramTextToSpeak(quakeWithComment({ eventId: undefined }), ON)
+    const b = telegramTextToSpeak(quakeWithComment({
+      eventId: undefined, earthquake: { ...makeQuake().earthquake, time: '2026-07-18T01:00:00+09:00' },
+    }), ON)
+    expect(a?.subject).not.toBe(b?.subject)
+    expect(a?.subject).not.toBe('quake:')
+  })
+
   // 正: 有効にすると、何についての文かを添えて返す。
   it('有効にすると前置きを付けて返す', () => {
     const speech = telegramTextToSpeak(quakeWithComment(), ON)
@@ -3112,18 +3181,18 @@ describe('緊急地震速報の長周期地震動階級を読むかの設定', (
 
   // 対照: 既定は従来どおり階級も読む。
   it('既定（未指定）は階級を読む', () => {
-    expect(eewIntensityText(scale, 3, eew)).toContain('予想最大階級3')
+    expect(eewIntensityText(scale, 3, eew, false)).toContain('予想最大階級3')
   })
 
   // 正: 切ると階級の句だけが落ちる。
   it('切ると階級の句を落とす', () => {
-    const text = eewIntensityText(scale, 3, eew, false, false, { ...BASE, readEewLpgmClass: false })
+    const text = eewIntensityText(scale, 3, eew, false, false, false, { ...BASE, readEewLpgmClass: false })
     expect(text).not.toContain('階級')
   })
 
   // 安全弁: 震度は落とさない。緊急地震速報の主題そのもので、切る選択肢を設けていない。
   it('切っても予想震度は読む', () => {
-    const text = eewIntensityText(scale, 3, eew, false, false, { ...BASE, readEewLpgmClass: false })
+    const text = eewIntensityText(scale, 3, eew, false, false, false, { ...BASE, readEewLpgmClass: false })
     expect(text).toContain('予想最大震度4')
   })
 })
@@ -3265,13 +3334,18 @@ describe('津波の失効時刻の読み上げ', () => {
       ...over,
     }
   }
+  /** 原因地震が 1 つの津波で、震源と失効時刻を同じ既読へ積む（ライブ受信の組み立てと同じ形）。 */
+  function asTsunamiSpoken(t: JMATsunami, spoken: QuakeSpokenState | undefined): TsunamiQuakeSpoken | undefined {
+    if (!spoken) return undefined
+    return { expiry: spoken, sources: (t.sourceEarthquakes ?? []).map(source => ({ source, spoken, subject: undefined })) }
+  }
   /** 断片を連結して 1 本の文にする（`tsunamiToText` は既読を渡せないので自前で繋ぐ）。 */
   function joined(t: JMATsunami, spoken?: QuakeSpokenState): string {
-    return tsunamiToSegments(t, undefined, spoken).map(s => s.text).join('')
+    return tsunamiToSegments(t, undefined, asTsunamiSpoken(t, spoken)).map(s => s.text).join('')
   }
   /** 断片を「声になった」ものとして既読へ反映する。 */
   function markSpoken(t: JMATsunami, spoken: QuakeSpokenState): void {
-    for (const s of tsunamiToSegments(t, undefined, spoken)) applySpokenRefs(spoken, s.refs ?? [])
+    for (const s of tsunamiToSegments(t, undefined, asTsunamiSpoken(t, spoken))) applySpokenRefs(spoken, s.refs ?? [])
   }
 
   // 正: 同じ日の期限は時刻だけで読む。2024 年能登半島地震の実電文の形。
@@ -3309,7 +3383,7 @@ describe('津波の失効時刻の読み上げ', () => {
   it('本番と同じチャンク分割を通しても、一度声にしたら黙る', () => {
     const spoken = createQuakeSpokenState()
     const t = expiryTsunami({ validDateTime: '2024-01-02T17:00:00+09:00' })
-    const segments = tsunamiToSegments(t, undefined, spoken)
+    const segments = tsunamiToSegments(t, undefined, asTsunamiSpoken(t, spoken))
     const refsByChunk = mapChunksToRefs(segments, splitIntoChunks(joinSegments(segments)))
     // どこかのチャンクに失効時刻の参照が残っていること（混在で捨てられていない）
     expect(refsByChunk.flat().some(r => r.kind === 'quakeFact' && r.fact === 'tsunamiExpiry')).toBe(true)
@@ -3345,7 +3419,7 @@ describe('津波の失効時刻の読み上げ', () => {
 
   /** 降格文の断片を連結する（発表文の `joined` と同じ役目）。 */
   function joinedDowngrade(t: JMATsunami, spoken?: QuakeSpokenState): string {
-    return tsunamiDowngradeToSegments(t, undefined, spoken).map(s => s.text).join('')
+    return tsunamiDowngradeToSegments(t, undefined, asTsunamiSpoken(t, spoken)).map(s => s.text).join('')
   }
 
   // 正: **降格文も失効時刻を語る。** 実電文で期限が付くのは「警報・注意報が解除されて予報だけが
@@ -3360,7 +3434,7 @@ describe('津波の失効時刻の読み上げ', () => {
   it('降格文でも一度声にしたら黙る', () => {
     const spoken = createQuakeSpokenState()
     const t = expiryTsunami({ validDateTime: '2024-01-02T17:00:00+09:00' })
-    for (const s of tsunamiDowngradeToSegments(t, undefined, spoken)) applySpokenRefs(spoken, s.refs ?? [])
+    for (const s of tsunamiDowngradeToSegments(t, undefined, asTsunamiSpoken(t, spoken))) applySpokenRefs(spoken, s.refs ?? [])
     expect(joinedDowngrade(t, spoken)).not.toContain('失効時刻')
   })
 
@@ -3373,5 +3447,63 @@ describe('津波の失効時刻の読み上げ', () => {
     const text = joined(t)
     expect(text).toContain('この地震の震源は')
     expect(text.indexOf('この地震の震源は')).toBeLessThan(text.indexOf('失効時刻'))
+  })
+})
+
+// 原因地震が 2 つ以上ある津波（別の地震が寄与して番号が足された警報。電文解説資料 Ⅰ.別02-8 出現例６）。
+// 2 つ目以降の震源も読む（2026-10-15 ユーザー承認「読む（推奨）」）。既読は地震ごとに積む。
+describe('津波の読み上げ: 原因地震が 2 つ以上あるとき', () => {
+  const NOTO = { hypocenterName: '石川県能登地方', depth: 10, magnitude: 7.6, arrivalTime: '2024-01-01T16:10:00+09:00' }
+  const SADO = { hypocenterName: '佐渡付近', depth: 20, magnitude: 6.1, arrivalTime: '2024-01-01T16:40:00+09:00' }
+  function twoSourceTsunami(): JMATsunami {
+    return {
+      kind: 'tsunami', id: 't', eventId: '20240101161010 20240101164010', time: '2024-01-01T16:45:00+09:00', cancelled: false,
+      issue: { source: '気象庁', time: '2024-01-01T16:45:00+09:00', type: 'Focus' },
+      areas: [{ grade: 'Warning', immediate: false, name: '石川県能登' }],
+      sourceEarthquakes: [NOTO, SADO],
+    }
+  }
+  function spokenFor(t: JMATsunami, a: QuakeSpokenState, b: QuakeSpokenState): TsunamiQuakeSpoken {
+    const [s0, s1] = t.sourceEarthquakes!
+    return { expiry: a, sources: [{ source: s0, spoken: a, subject: 'A' }, { source: s1, spoken: b, subject: 'B' }] }
+  }
+  const text = (t: JMATsunami, sp?: TsunamiQuakeSpoken) => tsunamiToSegments(t, undefined, sp).map(s => s.text).join('')
+
+  // 正: 2 つ目は「また、もう一つの地震の震源は」で読む
+  it('2 つ目以降の震源も読む', () => {
+    const t = twoSourceTsunami()
+    const out = text(t, spokenFor(t, createQuakeSpokenState(), createQuakeSpokenState()))
+    expect(out).toContain('この地震の震源は石川県能登地方')
+    expect(out).toContain('また、もう一つの地震の震源は佐渡付近')
+  })
+
+  // 正: 既読はそれぞれの地震へ積み、読んだら黙る
+  it('既読を地震ごとに積み、次の報では黙る', () => {
+    const t = twoSourceTsunami()
+    const a = createQuakeSpokenState()
+    const b = createQuakeSpokenState()
+    const sp = spokenFor(t, a, b)
+    applyTsunamiSpokenRefs(sp, tsunamiToSegments(t, undefined, sp).flatMap(s => s.refs))
+    expect(a.facts.get('hypocenterName')).toBe('石川県能登地方')
+    expect(b.facts.get('hypocenterName')).toBe('佐渡付近')
+    expect(text(t, sp)).not.toContain('震源は')
+  })
+
+  // 安全弁: 1 つ目を語り済みでも、2 つ目は未読なら 2 つ目だけ読む（片方の既読で両方が黙らない）
+  it('片方だけ語り済みなら、もう片方だけを読む', () => {
+    const t = twoSourceTsunami()
+    const a = createQuakeSpokenState()
+    a.facts.set('hypocenterName', '石川県能登地方'); a.facts.set('depth', '10'); a.facts.set('magnitude', '7.6')
+    const out = text(t, spokenFor(t, a, createQuakeSpokenState()))
+    expect(out).not.toContain('この地震の震源は')
+    expect(out).toContain('また、もう一つの地震の震源は佐渡付近')
+  })
+
+  // 対照: 原因地震が 1 つなら従来どおり「この地震の震源は」だけ
+  it('原因地震が 1 つなら従来どおり', () => {
+    const t = { ...twoSourceTsunami(), eventId: '20240101161010', sourceEarthquakes: [NOTO] }
+    const out = text(t)
+    expect(out).toContain('この地震の震源は石川県能登地方')
+    expect(out).not.toContain('もう一つの地震')
   })
 })

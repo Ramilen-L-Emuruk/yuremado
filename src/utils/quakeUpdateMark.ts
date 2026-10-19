@@ -1,5 +1,5 @@
 import type { JMAQuake, JMAQuakeCity, EarthquakePoint, IssueType } from '../types/earthquake'
-import { cityKey, higherIntensityEntry, type IntensityEntry } from './quakePoints'
+import { cityKey, higherIntensityEntry, isAreaPoint, type AreaPrefIndex, type IntensityEntry } from './quakePoints'
 import { log } from './logger'
 import { UPDATE_MARK_TTL_MS, statusOf, type SnapshotValue, type UpdateStatus } from './updateMark'
 
@@ -163,6 +163,8 @@ export function changedQuakeFacts(
 export function quakeRowSnapshot(
   points: readonly EarthquakePoint[],
   cities: readonly JMAQuakeCity[],
+  /** 区域の点と都道府県ロールアップ点を見分ける索引（`buildIntensityRows` へ渡すものと同じ） */
+  areaPrefIndex: AreaPrefIndex,
 ): Map<string, SnapshotValue> {
   const snap = new Map<string, SnapshotValue>()
   const prefEntries = new Map<string, IntensityEntry>()
@@ -174,11 +176,14 @@ export function quakeRowSnapshot(
     // **振り分けは `buildIntensityRows` と同じ規則にする。** 行を組む側と写す側で違えると、
     // 画面に無い行を記憶したり、ある行を記憶し損ねたりする。
     //
-    // とくに**都道府県ロールアップ点**（`Pref/MaxInt` 由来。`isArea` が真で `pref` を持つ）は
-    // **どの行にもならず、県の最大にしか効かない**。`isAreaPoint` で振り分けると観測点の側へ
-    // 落ちるので（あの述語は `addr === pref` のとき区域の索引を引き、索引に無ければ偽を返す）、
-    // 震度速報の段階で `st:` の記憶ができてしまい、**「観測点の段が初めて現れた報では印を
-    // 付けない」歯止めが効かなくなる** —— 各地の震度で観測点が数千行いっぺんに光る。
+    // とくに**都道府県ロールアップ点**（`Pref/MaxInt` 由来。`isArea` が真で `addr === pref`）は
+    // **どの行にもならず、県の最大にしか効かない**。`isAreaPoint` が偽でも観測点の側へ落とさない
+    // こと（`!p.isArea` で分ける）—— 落とすと震度速報の段階で `st:` の記憶ができてしまい、
+    // **「観測点の段が初めて現れた報では印を付けない」歯止めが効かなくなる** —— 各地の震度で
+    // 観測点が数千行いっぺんに光る。
+    //
+    // 区域の点は `pref` の有無で見分けない。**P2PQuake は区域の点にも県名を積む**ので、
+    // `pref` で見ると標準版の震度速報で区域の記憶が 1 つもできない。
     if (p.pref) {
       // 県の行は配下の最大。**点を上書きせず、行と同じ規則で大きい方を残す**（震度が同じなら
       // 観測値を採る。→ `higherIntensityEntry`）。鍵には区域・観測点と同じく未入電の印を含める ——
@@ -189,7 +194,7 @@ export function quakeRowSnapshot(
       prefEntries.set(key, next)
       snap.set(key, { key: `${next.scale}${next.unreceived ? '!' : ''}`, rank: next.scale })
     }
-    if (!p.pref && p.isArea) snap.set(rowMarkKey.area(p.addr), value)
+    if (isAreaPoint(p, areaPrefIndex)) snap.set(rowMarkKey.area(p.addr), value)
     if (!p.isArea) snap.set(rowMarkKey.station(p.addr), value)
   }
   for (const c of cities) {

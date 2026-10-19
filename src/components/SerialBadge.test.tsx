@@ -23,6 +23,7 @@ HTMLElement.prototype.scrollIntoView = () => {}
 function makeEEW(serial: string): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: 'test-eew',
     time: '2026-01-01T12:00:00Z',
     test: false,
@@ -58,7 +59,7 @@ function makeQuake(reports: QuakeReportRecord[]): JMAQuake {
 
 const renderEEW = async (eew: EEWAlert) => {
   const { container } = render(
-    <RealtimeTab eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
   await flushDataEffects()
   return container

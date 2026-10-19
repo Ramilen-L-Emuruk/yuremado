@@ -41,6 +41,7 @@ import {
   type SeismoWaveWindow,
 } from '../utils/seismoWaveBuffer'
 import { createLogThrottle, log } from '../utils/logger'
+import { MAX_WAVE_SPAN_SEC } from '../utils/waveSpan'
 import { judgeSilence } from '../utils/seismoSilence'
 
 /**
@@ -87,14 +88,14 @@ export const WAVE_STALE_MS = 5000
 /**
  * 抱える波形の長さ（秒）。
  *
- * 実機の刻みは約 10 ms（100 Hz）なので、3 成分＋本数で 4 × 6000 サンプル ＝
- * `Float32Array` で 96 KB ほど。**観測点ごとに 1 本**持つ。
+ * 実機の刻みは約 10 ms（100 Hz）なので、3 成分＋本数で 4 × 18000 サンプル ＝
+ * `Float32Array` で 288 KB ほど。**観測点ごとに 1 本**持つ。
  *
- * **絵の横軸もこの長さで引く**（`components/SeismoWaveChart/`）。別々に持つと、
- * 片方だけ動かしたときに絵の左端が「抱えていない区間」なのか「届かなかった区間」
+ * **絵の横の幅（設定の時間幅）のいちばん長いものに揃える**（`utils/waveSpan.ts` の `MAX_WAVE_SPAN_SEC`）。
+ * 短く持つと、設定で幅を広げたときに絵の左端が「抱えていない区間」なのか「届かなかった区間」
  * なのか分からなくなる。
  */
-export const WAVE_RETAIN_SEC = 60
+export const WAVE_RETAIN_SEC = MAX_WAVE_SPAN_SEC
 
 /**
  * 下部の波形で穴を見つけてから、ホストの控え（`/waves`）へ取りに行くまで待つ時間（ms）。
@@ -184,6 +185,15 @@ export interface SeismoStationState {
    * （ホスト側も同じ約束で `null` を返す）。
    */
   readonly intensity: number | null
+  /**
+   * 普段の計測震度（ホストの `/status` の `usualIntensities`）。**読めなければ `null`**
+   * （→ `SeismoHostDirectory.usualMeasured`）。波形グラフを自動で出すかの物差し
+   * （`utils/seismoWaveTrigger.ts`）。
+   *
+   * **観測点の合成の震度（`source.kind === 'station'`）にだけ付ける。** ホストは普段を観測点の合成波形から
+   * 測るので、合成が届かない間の震度（センサーごとの最大）と比べると、統計の違うものを比べることになる。
+   */
+  readonly usualMeasured: number | null
   /** その値が代表する時刻（ホストの時計）。読めなければ `null`。 */
   readonly atMs: number | null
   readonly source: SeismoIntensitySource
@@ -225,11 +235,11 @@ export interface SeismoStations {
   /**
    * その観測点の波形を読む。**参照は安定**（毎レンダー変わらない）。
    *
-   * **state に載せない。** 60 秒ぶんで 96 KB あるので、毎秒の描き直しで
+   * **state に載せない。** 抱えている 180 秒ぶんで 288 KB あるので、毎秒の描き直しで
    * 写し取ると再描画の重さが波形の長さに引きずられる。読む頻度は描く側
-   * （`requestAnimationFrame` で回すか、間引くか）が決める。
+   * （`requestAnimationFrame` で回すか、間引くか）が決める。`fromMs` より前は写さない（`null` なら抱えている全部）。
    */
-  readonly readWave: (stationId: string) => SeismoWaveWindow | null
+  readonly readWave: (stationId: string, fromMs: number | null) => SeismoWaveWindow | null
   /**
    * ホストが取り戻した区間の合成波形を作り直した知らせ（`station-wave-revised`・#597）を受け取る。
    * **戻り値を呼ぶと受け取りをやめる。参照は安定。**
@@ -304,6 +314,7 @@ function sameStates(
       x.lat !== y.lat ||
       x.lon !== y.lon ||
       x.intensity !== y.intensity ||
+      x.usualMeasured !== y.usualMeasured ||
       x.atMs !== y.atMs ||
       x.source.kind !== y.source.kind ||
       x.waveSampleCount !== y.waveSampleCount ||
@@ -339,8 +350,8 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
   // 差し替えると再描画がそのぶん増える（{@link REBUILD_INTERVAL_MS}）。
   const bookRef = useRef<Map<string, StationEntry>>(new Map())
 
-  const readWave = useCallback((stationId: string): SeismoWaveWindow | null => {
-    return bookRef.current.get(stationId)?.wave?.snapshot() ?? null
+  const readWave = useCallback((stationId: string, fromMs: number | null): SeismoWaveWindow | null => {
+    return bookRef.current.get(stationId)?.wave?.snapshot(fromMs) ?? null
   }, [])
 
   // **繋ぎ直しをまたいで持つ。** 受け手（地震カード）は一度だけ登録し、繋ぎ直しのたびに登録し直さない。
@@ -464,6 +475,9 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
       // 届いている値がまとめて「古い」へ倒れる。ホストが言う `atMs` も
       // 使わない —— あちらはホストの時計で、こちらとのずれを測る術が無い。
       const receivedAt = performance.now()
+      // **普段の計測震度は、震度が届いている間 10 分おきに読み直す**（ホストが測り直す間隔）。
+      // 叩く頻度は台帳の下限が担うので、毎回呼んでよい。
+      directory.requireUsual()
       switch (message.kind) {
         case 'station-reading': {
           const { stationId, intensity, atMs } = message.reading
@@ -588,6 +602,7 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
             stationId,
             displayName: directory.displayName(stationId),
             ...directory.location(stationId),
+            usualMeasured: directory.usualMeasured(stationId),
             intensity: entry.station.intensity,
             atMs: entry.station.atMs,
             source: { kind: 'station' },
@@ -630,7 +645,7 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
           //     見分けが付かなくなる（→ `SeismoIntensitySource` の `'silent'`）
           //
           // **帳面からは消さない** —— 波形の入れ物を捨てると、震度が戻ったときに
-          // 絵が 60 秒ぶん巻き戻る。
+          // 絵が抱えている長さぶん巻き戻る。
           const readingSilence = judgeSilence({
             lastReceivedAt: entry.readingReceivedAt,
             now,
@@ -647,6 +662,8 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
               stationId,
               displayName: directory.displayName(stationId),
               ...directory.location(stationId),
+              // 普段はホストが観測点の合成波形から測った値なので、合成でない震度とは比べない。
+              usualMeasured: null,
               intensity: null,
               atMs: null,
               source: { kind: 'wave-only' },
@@ -673,6 +690,8 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
             stationId,
             displayName: directory.displayName(stationId),
             ...directory.location(stationId),
+            // 普段はホストが観測点の合成波形から測った値なので、合成でない震度とは比べない。
+            usualMeasured: null,
             intensity: null,
             atMs: null,
             source: { kind: 'silent' },
@@ -686,6 +705,8 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
           stationId,
           displayName: directory.displayName(stationId),
           ...directory.location(stationId),
+          // 普段はホストが観測点の合成波形から測った値なので、合成でない震度とは比べない。
+          usualMeasured: null,
           intensity: best,
           atMs: bestAtMs,
           source: { kind: 'sensor', sensorCount: count },

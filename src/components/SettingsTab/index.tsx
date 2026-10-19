@@ -1,3 +1,4 @@
+import { ensureWaveSpanSec, WAVE_SPAN_CHOICES } from '../../utils/waveSpan'
 import { memo, useState, useCallback, useEffect, useRef } from 'react'
 import type { AppSettings, TtsUnreceivedDetail } from '../../hooks/useSettings'
 import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX } from '../../hooks/useSettings'
@@ -41,7 +42,11 @@ export interface TestFunctions {
   eewWarning: () => void
   eewForecast: () => void
   eewAssumed: () => void
+  /** 「非常に強い揺れを検知」の EEW。DMDSS 版でしか届かない形なので、ボタンも DMDSS 版にだけ出す。 */
+  eewStrongShaking?: () => void
   eewDeep: () => void
+  /** 精度ランク 1 で予想震度が付かないまま取り消される EEW。精度ランクは DMDATA 経路しか運ばないので、ボタンは DMDSS 版にだけ出す。 */
+  eewNoForecast: () => void
   eewRetraction: () => void
   tsunami: () => void
   tsunamiWarning: () => void
@@ -73,6 +78,10 @@ export interface TestFunctions {
   tsunamiGradeChange?: () => void
   tsunamiQuietReports?: () => void
   tsunamiExpiry?: () => void
+  /** 津波の原因地震が後から加わる（`EventID` の番号が書き足される）。DMDSS 版だけ渡す。 */
+  tsunamiSourceAdded?: () => void
+  /** 津波情報（VTSE51）だけの取消。DMDSS 版だけ渡す。 */
+  tsunamiInfoRetraction?: () => void
   estimatedIntensity?: () => void
   notification: () => void
 }
@@ -438,6 +447,7 @@ const TELEGRAM_TEXT_BLOCK_DESCRIPTIONS: Record<TelegramTextBlockKey, string> = {
   kohatsuSummary: '発表内容を一文にまとめたものです。画面の帯に出ている見出しと同じ文です。地震の発生と、想定震源域で大規模地震の可能性が平常時より高まっていることが書かれます',
   kohatsuBody: '発表の理由と、とるべき防災対応の説明です',
   earthquakeCountFreeText: '地震回数の補足です。例:「８月２４日１５時過ぎから伊豆半島東方沖で地震が発生しています。」に続けて、震度２以下はこの情報でまとめて発表する旨が書かれます',
+  quakeNoticeBody: 'お知らせの本文です。例:「本日（１０月１６日）１２時４０分頃、緊急地震速報（警報）を北海道、東北、関東、北陸、甲信、東海、伊豆諸島に発表しましたが、震度２以上を観測した場所はありませんでした。」',
 }
 
 const TELEGRAM_TEXT_BLOCK_LABELS: Record<TelegramTextBlockKey, string> = {
@@ -458,6 +468,7 @@ const TELEGRAM_TEXT_BLOCK_LABELS: Record<TelegramTextBlockKey, string> = {
   kohatsuSummary: '要約',
   kohatsuBody: '本文',
   earthquakeCountFreeText: '自由付加文',
+  quakeNoticeBody: '本文',
 }
 
 /**
@@ -485,12 +496,13 @@ const TELEGRAM_TEXT_BLOCK_GROUPS: readonly {
     keys: ['kohatsuSummary', 'kohatsuBody'],
   },
   { title: '地震回数に関する情報', keys: ['earthquakeCountFreeText'] },
+  { title: '地震・津波に関するお知らせ', keys: ['quakeNoticeBody'] },
 ]
 
 /**
  * 気象庁が書いた文の内訳（電文種別 × ブロック）。
  *
- * **既定は畳んでおく。** 17 行＋グループの見出し 7 行を常に開くと、設定タブの中でこの
+ * **既定は畳んでおく。** 18 行＋グループの見出し 8 行を常に開くと、設定タブの中でこの
  * セクションだけが突出して伸びる。見出しには「何個を読む設定か」を出す —— 畳んだままでも、
  * 全部読むのか一部だけかが分かる。
  */
@@ -1368,7 +1380,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                 `utils/seismoWaveTrigger.ts`）。通信量が増えることは hint で伝える。 */}
             <Row
               label="波形グラフ"
-              description="地図の下端に直近60秒の揺れを表示します"
+              description="地図の下端に直近の揺れを表示します"
               hint="「表示しない」以外は波形を受信し続けます"
             >
               <select
@@ -1395,6 +1407,39 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </Row>
           </>
         )}
+      </Section>
+
+      {/* **自作地震計の節の外に置く。** 時間幅は自作地震計と公開観測点の両方に効く（物差しを揃える）。
+          文言は 2026-10-15 ユーザー承認（`docs/public-waveform-design.md` §0「案A」）。通信量は注記で常に見せる
+          ——ホバーに隠すと、繋ぎっぱなしにしてから増えたことに気づけない。 */}
+      <Section title="波形グラフ">
+        {/* 文言は 2026-10-15 ユーザー承認（`docs/public-waveform-design.md` §0「案A」）。オフなら下の常時接続は押せない */}
+        <Row
+          label="公開観測点の波形を表示"
+          description="揺れたとき、近くの公開観測点（気象庁の広帯域地震計）の波形を地図の下端と地震カードに表示します"
+        >
+          <Toggle checked={settings.publicWaveEnabled} onChange={v => onUpdate('publicWaveEnabled', v)} />
+        </Row>
+        <Row label="波形の時間幅" description="地図の下端に表示する長さです">
+          <select
+            value={settings.waveSpanSec}
+            onChange={e => onUpdate('waveSpanSec', ensureWaveSpanSec(Number(e.target.value), settings.waveSpanSec))}
+            className="bg-panel border border-border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500"
+          >
+            {WAVE_SPAN_CHOICES.map(sec => (
+              <option key={sec} value={sec}>{`${sec}秒`}</option>
+            ))}
+          </select>
+        </Row>
+        <Row
+          label="公開観測点に常時接続"
+          description="揺れていないときも接続しておき、揺れ始めから表示します"
+          hint="通信量が増えます（1日に約130MB）"
+        >
+          <fieldset disabled={!settings.publicWaveEnabled} className={settings.publicWaveEnabled ? '' : 'opacity-40'}>
+            <Toggle checked={settings.publicWaveAlwaysConnected} onChange={v => onUpdate('publicWaveAlwaysConnected', v)} />
+          </fieldset>
+        </Row>
       </Section>
 
       <Section title="タブ自動切替設定">
@@ -1563,6 +1608,30 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <Toggle
               checked={settings.nankaiCommentaryAlerts}
               onChange={v => onUpdate('nankaiCommentaryAlerts', v)}
+            />
+          </Row>
+        )}
+        {/* 地震・津波に関するお知らせ（運用連絡）。帯と、音・読み上げを別々に切り替える
+            （文言は 2026-10-18 ユーザー承認）。 */}
+        {isDmdss && (
+          <Row
+            label="お知らせを表示"
+            description="地震・津波に関するお知らせを地図の下に表示します"
+          >
+            <Toggle
+              checked={settings.quakeNoticeBanner}
+              onChange={v => onUpdate('quakeNoticeBanner', v)}
+            />
+          </Row>
+        )}
+        {isDmdss && (
+          <Row
+            label="お知らせの音・読み上げ"
+            description="地震・津波に関するお知らせの通知音と読み上げを行います"
+          >
+            <Toggle
+              checked={settings.quakeNoticeAlerts}
+              onChange={v => onUpdate('quakeNoticeAlerts', v)}
             />
           </Row>
         )}
@@ -1842,12 +1911,23 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="地震動予報" description="震度4程度（予報域） – eewForecast 音 / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
           <TestButton color="yellow" onClick={onTest.eewForecast}>予報テスト</TestButton>
         </Row>
+        {isDmdss && onTest.eewStrongShaking && (
+          <Row label="地震動予報（非常に強い揺れを検知）" description="震源を決める前に、強い揺れを検知した観測点だけで出る第1報（北陸地方・最大震度5弱程度以上。2024年6月3日の実電文の形） – eewForecast 音 / M・深さは出さず、気象庁の本文を震源名の下に出す。10秒以内に再度押すと仮定震源要素の続報、押さなければ最終報確定→無音で自動解除（数分後）">
+            <TestButton color="yellow" onClick={onTest.eewStrongShaking}>強い揺れ検知テスト</TestButton>
+          </Row>
+        )}
         <Row label="地震動予報（単独点処理）" description="震源が特定できていない初報（日向灘・気象庁が入れる固定値 M1.0 深さ10km） – eewForecast 音 / 予想震度が載らないため「単独点処理のため、予想震度なし。」を待たずに読み上げ。10秒以内に再度押すと震源確定＋震度5強予想の警報へ格上げ（eew 音）。格上げの伝え方は押すタイミングで変わる（読み上げ中に押すと割り込んで言い直し）。押さなくても最終報が確定震源になるため同じ格上げが起きる→無音で自動解除（数分後）">
           <TestButton color="yellow" onClick={onTest.eewAssumed}>単独点処理テスト</TestButton>
         </Row>
         <Row label="地震動予報（深発地震）" description="深さ450km（小笠原諸島西方沖 M6.5） – eewForecast 音 / 深発地震には地域別の震度予想が発表されないため「深発地震のため、予想震度なし。」を待たずに読み上げ。気象庁は深さ150km超に警報を出さないため続報も予報級のまま / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
           <TestButton color="yellow" onClick={onTest.eewDeep}>深発地震テスト</TestButton>
         </Row>
+        {/* 文面は 2026-10-15 ユーザー承認「足す(推奨)」 */}
+        {isDmdss && (
+          <Row label="地震動予報（予想震度なしのまま取消）" description="震源の確からしさが低い初報（石川県西方沖 M4.4 深さ10km。2024年11月26日の実電文の形） – eewForecast 音 / 3通続けて予想震度が載らず、3秒待っても付かないため「単独点処理のため、予想震度なし。」と読み上げ。約12秒後に取消（eewCancel 音・読み上げあり）">
+            <TestButton color="yellow" onClick={onTest.eewNoForecast}>予想震度なしテスト</TestButton>
+          </Row>
+        )}
         <Row label="緊急地震速報（警報）" description="震度5強相当 – eew 音 / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
           <TestButton color="orange" onClick={onTest.eewWarning}>警報テスト</TestButton>
         </Row>
@@ -1931,6 +2011,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <TestButton color="orange" onClick={onTest.tsunamiGradeChange}>区域の等級変化テスト</TestButton>
           </Row>
         )}
+        {isDmdss && onTest.tsunamiSourceAdded && (
+          <Row label="津波警報（原因の地震が加わる）" description="30秒おきに4通を流す（震源・震度情報 → 津波警報 → 2つ目の地震の震源・震度情報 → 2つの地震を原因とする津波警報）→ 最後の報の60秒後に全解除。後の地震が津波に加わると、気象庁は同じ津波の続報として地震の番号を書き足す。カードは別の津波に入れ替わらず、バナーに2つの地震が並び、どちらからも地震情報へ移れる。読み上げは2つ目の震源を「また、もう一つの地震の震源は」で伝える">
+            <TestButton color="orange" onClick={onTest.tsunamiSourceAdded}>原因地震の追加テスト</TestButton>
+          </Row>
+        )}
         {isDmdss && onTest.tsunamiQuietReports && (
           <Row label="津波警報・注意報（変化の小さい続報）" description="大津波警報 → 10秒おきに続報を10通（観測値 → 八戸港の波高に「以上」が付く → 最大波の観測時刻だけ更新 → 室蘭港の第1波の到達時刻が訂正される → 沖合の観測点の最大波の観測時刻が更新される → 変化なし → 各地の満潮時刻 → 満潮時刻の更新 → 到達状況の更新 → 変化なし）→ 最後の報の20秒後に全解除。気象庁が続報を出しているのに、等級も観測波高の数値も動かない報がどう伝わるかを確かめる。2通目は潮位計が振り切れて真の波高が読めなくなった報で、数値は 1.8m のまま変わらない。最後の5通（変化なしと満潮時刻）は緊急地震速報や津波警報の読み上げを切らないので、そうした上位の読み上げが続いている間は鳴らずに見送られる。5通目は沖合の観測点だけを載せた報で、カードの沖合の行に更新の印が出るのはここだけ">
             <TestButton color="blue" onClick={onTest.tsunamiQuietReports}>変化の小さい続報テスト</TestButton>
@@ -1939,6 +2024,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="津波警報・注意報（取消）" description={`青森・北海道等 – tsunami 音 / 90秒後に${isDmdss ? '誤報として取消' : '解除（standard 版は取消と解除を区別できないため「解除」表示）'}`}>
           <TestButton color="red" onClick={onTest.tsunamiRetraction}>誤報取消テスト</TestButton>
         </Row>
+        {isDmdss && onTest.tsunamiInfoRetraction && (
+          <Row label="津波情報の取消（警報は続く）" description="津波警報 → 20秒後に津波情報（観測点つき）→ さらに20秒後、津波情報だけを取り消す → 90秒後に解除。消えるのは津波情報が運んだ観測点だけで、津波警報の区域は残る。読み上げは「津波情報は取り消されました。」とだけ伝え、音は鳴らない">
+            <TestButton color="red" onClick={onTest.tsunamiInfoRetraction}>津波情報の取消テスト</TestButton>
+          </Row>
+        )}
         {/* ── 臨時情報・関連解説情報・後発地震 ── */}
         {isDmdss && onTest.nankaiChecking && (
           <Row label="南海トラフ地震臨時情報（調査中）" description="バナー表示 + specialInfo 音（バナー消去ボタンなし・再テストで上書き）">
@@ -1997,7 +2087,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {isDmdss && onTest.quakeNotice && (
-          <Row label="地震・津波に関するお知らせ" description="観測点の入電停止などの運用連絡。バナー表示のみ（音・読み上げなし・閉じるボタンあり・7日で自動消去）">
+          <Row label="地震・津波に関するお知らせ" description="観測点の入電停止などの運用連絡。バナー表示（音と読み上げは「お知らせの音・読み上げ」が有効なときだけ・閉じるボタンあり・7日で自動消去）">
             <TestButton color="blue" onClick={onTest.quakeNotice}>お知らせテスト</TestButton>
           </Row>
         )}
@@ -2201,6 +2291,27 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <a href="https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/" target="_blank" rel="noopener noreferrer"
               className="text-blue-400 hover:text-blue-300">
               Yahoo!天気・災害
+            </a>
+          </span>
+        </CreditRow>
+        {/* 下部の波形に出す公開観測点（気象庁の広帯域地震計・JP 網）。文面は `docs/public-waveform-design.md` §0
+            （2026-10-15 ユーザー承認）。EarthScope は運用者がライセンスを宣言していない網を CC BY 4.0 で配るので、
+            運用者（気象庁）・配信した施設（EarthScope）・ライセンスの 3 つを挙げる（同 §2）。 */}
+        <CreditRow label="公開観測点の波形">
+          <span className="text-xs text-secondary">
+            <a href="https://www.jma.go.jp/" target="_blank" rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300">
+              気象庁
+            </a>
+            （JP 網）・配信{' '}
+            <a href="https://www.earthscope.org/" target="_blank" rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300">
+              EarthScope
+            </a>
+            （NSF NGF）・
+            <a href="https://creativecommons.org/licenses/by/4.0/deed.ja" target="_blank" rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300">
+              CC BY 4.0
             </a>
           </span>
         </CreditRow>

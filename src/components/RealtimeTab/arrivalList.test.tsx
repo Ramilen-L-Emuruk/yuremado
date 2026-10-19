@@ -49,6 +49,7 @@ function area(over: Partial<EEWRegion> & { name: string }): EEWRegion {
 function makeEEW(areas: EEWRegion[]): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: 'test-eew',
     time: '2026-01-01T12:00:00Z',
     test: false,
@@ -67,12 +68,12 @@ function makeEEW(areas: EEWRegion[]): EEWAlert {
 
 const renderTab = (eew: EEWAlert, visible = true) =>
   render(
-    <RealtimeTab eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible={visible} />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible={visible} />,
   )
 
 /** `visible` を切り替えられる形。タイマーの開閉を見るテストで使う。 */
 const tabElement = (eew: EEWAlert, visible: boolean) => (
-  <RealtimeTab eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible={visible} />
+  <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible={visible} />
 )
 
 /** a が b より前に出ているか。 */

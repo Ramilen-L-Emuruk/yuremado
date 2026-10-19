@@ -19,11 +19,16 @@ import { ShareCardButton } from './components/ShareCardButton'
 import { useShareCard } from './hooks/useShareCard'
 import { SeismoLinkStatus } from './components/SeismoLinkStatus'
 import { SeismoOverlay } from './components/SeismoOverlay'
-import { useSeismoStation } from './hooks/useSeismoStation'
-import { useSeismoQuakeWaves } from './hooks/useSeismoQuakeWaves'
+import { useSeismoStation, type SeismoStationState } from './hooks/useSeismoStation'
+import { useSeismoQuakeWaves, type SeismoQuakeWave } from './hooks/useSeismoQuakeWaves'
+import { usePublicQuakeWaves } from './hooks/usePublicQuakeWaves'
+import { mergeQuakeWaves } from './utils/mergeQuakeWaves'
 import { useQuakeOriginSeconds } from './hooks/useQuakeOriginSeconds'
 import { SeismoWaveChart } from './components/SeismoWaveChart'
+import { hasWaveChartRows } from './components/SeismoWaveChart/chartRows'
 import { useSeismoWaveVisibility } from './hooks/useSeismoWaveVisibility'
+import { usePublicWaves } from './hooks/usePublicWaves'
+import type { PublicStationMarker } from './components/Map/PublicStationMarkersGL'
 import { EarthquakeTab } from './components/EarthquakeTab'
 import { RealtimeTab } from './components/RealtimeTab'
 import { useEewSpeakingCard } from './hooks/useEewSpeakingCard'
@@ -40,7 +45,8 @@ import {
   jstYearOf, jstYearStartMs, jstYearEndMs, clampPeriodToRange,
   type CatalogFilter, type CatalogViewOptions, type CatalogPointCloud,
 } from './utils/hypocenterCatalogView'
-import { SpecialInfoBanner } from './components/SpecialInfoBanner'
+import { SpecialInfoBanner, shareButtonBottomClass } from './components/SpecialInfoBanner'
+import { useSpecialInfoBanners } from './components/SpecialInfoBanner/useSpecialInfoBanners'
 import { MapLegend } from './components/MapLegend'
 import { isMapAreaShort } from './components/MapLegend/autoCollapse'
 import { buildLegendBlocks, EMPTY_LEGEND_SOURCES, type MapLegendSources, type LegendBlock } from './components/MapLegend/legendBlocks'
@@ -67,8 +73,8 @@ import { createSpeechFollowController, telegramTextSubject, type SpeechFollowSes
 import { useTelegramTextSpeechFollow } from './hooks/useTelegramTextSpeechFollow'
 import { deriveKyoshinView } from './utils/kyoshinDetectionView'
 import { filterSubThresholdIndices } from './utils/kyoshinSubThresholdFilter'
-import { useSWaveCountdown } from './hooks/useSWaveCountdown'
-import { pickCountdownEew } from './utils/countdownEew'
+import { countdownBeepTarget, useSWaveCountdown } from './hooks/useSWaveCountdown'
+import { pickArrivalEews, pickPublicWaveEew } from './utils/countdownEew'
 import { useArrivalTokenCheck } from './hooks/useArrivalToken'
 import { usePsWaveCalc } from './hooks/usePsWaveCalc'
 import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
@@ -76,7 +82,7 @@ import { useDebouncedValue } from './hooks/useDebouncedValue'
 import { getIntensityLabelWithOrAbove } from './utils/intensity'
 import { isMaxScaleUnreceived } from './utils/quakePoints'
 import { formatMagnitudeWithCondition, formatDateTimeLocal } from './utils/formatters'
-import { computeEEWLevel, eewMaxLpgmClass } from './utils/eew'
+import { computeEEWLevel, eewEventKey, eewMaxLpgmClass, isProvisionalHypocenter } from './utils/eew'
 import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
 import { canOpenLpgmNotes } from './utils/lpgm'
 import { estimatedIntensityFor, matchEstimatedIntensityArrival } from './utils/estimatedIntensity'
@@ -106,9 +112,12 @@ import { log } from './utils/logger'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isDmdss } from './utils/env'
+import { ROOT_FRAME_CLASS } from './rootFrame'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
+/** 下端の波形に自作地震計を出さないときに渡す空の組。同一参照を使い回す（毎回作ると波形の枠が描き直される）。 */
+const EMPTY_SEISMO_STATIONS: readonly SeismoStationState[] = []
 
 // 平常時のウィンドウタイトル（index.html の <title> と一致させる）。
 // AutoHotKey 等が、情報更新時のタイトル変化を検知してイベントを発火できるようにする。
@@ -121,6 +130,8 @@ const DEFAULT_TITLE = isDmdss
 // 空配列を freeze せず可変配列として扱っているのは既存 SiteCoords 型定義が可変配列のため。
 const EMPTY_SITES: [number, number][] = []
 const EMPTY_INDICES: number[] = []
+// 公開観測点の波形を出していないときに地図へ渡す空の印（毎回の新しい配列で地図の印を作り直させない）。
+const NO_PUBLIC_STATIONS: readonly PublicStationMarker[] = []
 
 // APIキーの入力が落ち着いたと見なすまでの待ち時間(ms)。手入力の打鍵間隔より長く、
 // 貼り付け後の接続開始が待たされたと感じない程度に短く。
@@ -804,7 +815,7 @@ export function App() {
   const { speakingKey: speakingQuakeKey, follow: quakeSpeakingCard } = useEewSpeakingCard()
 
   // ライブイベント受信処理（通知音・タイトル・タブ切替・読み上げ・ブラウザ通知）
-  const { handleLiveEvent, resetTracking, restorePreWindowTracking, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict } = useLiveEventHandler({
+  const { handleLiveEvent, resetTracking, restorePreWindowTracking, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict, eewNoForecastSettledKeys } = useLiveEventHandler({
     settings, title, earthquakesRef, tsunamisRef, kyoshinDetectedRef, defaultTabRef,
     setActiveTabNonRealtime, setActiveTabRealtimeOnUpdate, setActiveTabRealtimeUrgent,
     setActiveTabRealtimeForKyoshin: () => requestTabForKyoshin('realtime'),
@@ -858,12 +869,13 @@ export function App() {
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
-    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWDeep, simulateEEWRetraction,
+    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
+    simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     resetState, loadReplayEvents, peekUpcomingPayloads, restoreQuakeHistory,
   } = useEarthquakes(handleLiveEvent, debouncedApiKey, settings.dmdataTestDelivery, replayTimeOffset, handleStartupRestore)
   earthquakesRef.current = earthquakes
@@ -915,7 +927,9 @@ export function App() {
     eewWarning:        simulateEEWWarning,
     eewForecast:       simulateEEWForecast,
     eewAssumed:        simulateEEWAssumed,
+    eewStrongShaking:  simulateEEWStrongShaking,
     eewDeep:           simulateEEWDeep,
+    eewNoForecast:     simulateEEWNoForecast,
     eewRetraction:     simulateEEWRetraction,
     tsunami:           simulateTsunami,
     tsunamiWarning:    simulateTsunamiWarning,
@@ -945,6 +959,8 @@ export function App() {
     tsunamiGradeChange: simulateTsunamiGradeChange,
     tsunamiQuietReports: isDmdss ? simulateTsunamiQuietReports : undefined,
     tsunamiExpiry: isDmdss ? simulateTsunamiExpiry : undefined,
+    tsunamiSourceAdded: isDmdss ? simulateTsunamiSourceAdded : undefined,
+    tsunamiInfoRetraction: isDmdss ? simulateTsunamiInfoRetraction : undefined,
     estimatedIntensity: simulateEstimatedIntensity,
     notification:      () => {
       if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
@@ -959,12 +975,13 @@ export function App() {
     },
   }), [
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
-    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWDeep, simulateEEWRetraction,
+    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
+    simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
   ])
   // IconNav の onTabChange。手動選択は必ず即時反映し、以後 TAB_HOLD_MS の間は自動切替に
   // 奪わせない（EEW の新規発報・レベルアップ・誤報取消だけはこれより強い）。
@@ -1207,7 +1224,7 @@ export function App() {
   // 由来の誤 confirmed を EEW 経由で再導入しかねないため区別する。
   // **観測点の数で分けているのではない**——仮定震源要素の定義に観測点数は含まれない（eew-spec.md §5）。
   const hasActiveNonAssumedEEW = useMemo(
-    () => [...activeEEWsNoCancelled.values()].some((eew) => eew.earthquake.condition !== '仮定震源要素'),
+    () => [...activeEEWsNoCancelled.values()].some((eew) => !isProvisionalHypocenter(eew)),
     [activeEEWsNoCancelled],
   )
 
@@ -1997,13 +2014,34 @@ export function App() {
   const arrivalTokenStatus = useArrivalTokenCheck(settings.arrivalToken)
   const allowOwnArrivalCalc = arrivalTokenStatus.valid
   const swaveArrival = useSWaveCountdown(psWave, eewsForMap, home, hasActiveEEW, allowOwnArrivalCalc)
-  // 地図の下端の自作地震計の波形へ P/S の到達線を引く相手。**カウントダウンと同じ選び方**（`utils/countdownEew.ts`。
-  // 2026-10-13 ユーザー指示）。**到達予想キーの門は掛けない**（2026-10-14 ユーザー承認）——線は到達時刻を
+  // 地図の下端の波形（自作地震計・公開観測点）へ P/S の到達線を引く相手。**予報円のある速報すべて**
+  // （`utils/countdownEew.ts`。2026-10-14 ユーザー決定「地震ごとに並べて出す」。どの地震の線かは見分けない ——
+  // 2026-10-18 ユーザー承認「見分けない」）。**到達予想キーの門は掛けない**（2026-10-14 ユーザー承認）——線は到達時刻を
   // 過ぎてから描くだけで、これから来る時刻を出さないので予報業務に当たらないと整理した（`docs/forecast-computation-audit.md`
-  // の 11）。歯止めは波形の側の「右端＝最後に届いたサンプル」（`SeismoWaveChart/liveLanes.ts` の `liveArrivalMarks`）。
-  // `psWave` は 100ms ごとに新しい配列になるが、選ばれる速報の参照は続報が来るまで変わらない
-  // （波形の側は速報の参照が変わったときだけ走時を解き直す）。
-  const seismoArrivalEew = pickCountdownEew(psWave, eewsForMap)
+  // の 11）。歯止めは波形の側の「右端＝いま、それより先の線は描かない」（`SeismoWaveChart/liveLanes.ts` の `liveArrivalMarks`）。
+  // **配列は顔ぶれが変わったときだけ作り直す** —— `psWave` は 100ms ごとに新しい配列になるが、波形の側は
+  // 速報の参照が変わったときだけ走時を解き直す。毎回新しい配列を渡すと、そのたびに全観測点の走時を引き直す。
+  // 鍵は予報円の顔ぶれ（地震の鍵の並び）。速報そのものが続報で差し替わったときは `eewsForMap` の参照で拾う。
+  // 区切りは改行（地震の鍵に空白が入っても割り戻しがずれないように）。
+  const arrivalCircleKey = psWave.map((c) => c.eventId).join('\n')
+  const seismoArrivalEews = useMemo(
+    () => pickArrivalEews(psWave, eewsForMap),
+    // `psWave` を鍵に入れない（100ms ごとに変わる）。顔ぶれは `arrivalCircleKey` が表す。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [arrivalCircleKey, eewsForMap],
+  )
+  // **引き当てられない円は線を引かない**（`pickArrivalEews`）。黙って消えないよう記録する ——
+  // 記録は副作用なので `useMemo` の中で出さない（StrictMode で 2 回出る）。
+  // **見るのは円の顔ぶれが変わったときだけ**（鍵に `seismoArrivalEews` を入れない）。速報の一覧はどの地震の続報でも
+  // 作り直され、取消のときは一覧が先に縮んで円が最大 100ms 残る —— 一覧の変化で見ると、取消のたびに
+  // 「引き当てられない」と記録して本物の食い違いを埋もれさせる。
+  useEffect(() => {
+    const missing = arrivalCircleKey === ''
+      ? []
+      : arrivalCircleKey.split('\n').filter((id) => !seismoArrivalEews.some((e) => eewEventKey(e) === id))
+    if (missing.length > 0) log.debug('[eew] P/S 線の相手を引き当てられない予報円', { eventIds: missing })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrivalCircleKey])
   const toggleSeismoWaveExpanded = useCallback(() => {
     updateSetting('seismoWaveExpanded', !settings.seismoWaveExpanded)
   }, [settings.seismoWaveExpanded, updateSetting])
@@ -2012,7 +2050,10 @@ export function App() {
   // useActionChecklist）。観測点座標は他の利用箇所と同じキャッシュを共有するため、ここで
   // 呼んでも追加の取得は起きない。
   const stationCoordsForChecklist = useStationCoords()
-  const eewListForChecklist = useMemo(() => [...activeEEWsNoCancelled.values()], [activeEEWsNoCancelled])
+  // **チェックリストには取消を当てた直後の EEW も渡す。** 出している帯の元が取り消されたことを
+  // 知る手段がこれしか無い（判定からは向こうで外す。理由は useActionChecklist の `eews`）。
+  const eewListForChecklist = useMemo(() => [...activeEEWs.values()], [activeEEWs])
+  const eewListNoCancelled = useMemo(() => [...activeEEWsNoCancelled.values()], [activeEEWsNoCancelled])
   // ホーム地点の周り（半径 30km）。**行動チェックリストと自作地震計の波形が同じものを見る**
   // ので、ここで 1 つだけ作って両方へ渡す（→ hooks/useNearbyScope.ts）。
   const nearbyScope = useNearbyScope({
@@ -2035,20 +2076,25 @@ export function App() {
   // 宣言が useReplayController より後になるため ref 経由で渡す（上記 resetLocalState 参照）。
   resetActionChecklistRef.current = actionChecklist.resetForReplay
 
-  const prevEtaRef = useRef<number | null>(null)
+  // 直前に鳴らした（鳴らす機会のあった）地震と秒数。**地震の鍵と組で覚える** —— 秒数だけで比べると、
+  // 地震が替わった直後に前の地震と同じ秒数だったとき鳴らない。
+  const prevBeepRef = useRef<{ key: string; etaSec: number } | null>(null)
   useEffect(() => {
-    const eta = swaveArrival?.etaSec ?? null
+    // 地震が複数あっても音は 1 本 —— まだ届いていない地震のうち到達がいちばん早いもの
+    // （2026-10-18 ユーザー承認「いちばん早く届く地震」→ `countdownBeepTarget`）。
+    const target = countdownBeepTarget(swaveArrival)
+    const prev = prevBeepRef.current
     if (
       settings.soundEnabled &&
-      eta !== null &&
-      eta >= 1 &&
-      eta <= 5 &&
-      eta !== prevEtaRef.current
+      target !== null &&
+      target.etaSec >= 1 &&
+      target.etaSec <= 5 &&
+      (prev === null || prev.key !== target.key || prev.etaSec !== target.etaSec)
     ) {
-      playCountdownBeep(eta)
+      playCountdownBeep(target.etaSec)
     }
-    prevEtaRef.current = eta
-  }, [swaveArrival?.etaSec, settings.soundEnabled])
+    prevBeepRef.current = target
+  }, [swaveArrival, settings.soundEnabled])
 
   // 揺れの強まり（レベルアップ・再エスカレーション）と別地点発報で、その 1 点へ一時的に寄せる合図。
   // 通知音を鳴らすのと同じ判定で useKyoshinAlerts が出し、地図（FitToDetectionGL）が消費する。
@@ -2181,17 +2227,19 @@ export function App() {
   // 共有カード（表示中の地図を 1 枚の画像にする）。撮影は地図そのものを操作するため実体が要る
   // ——地図の生成時に受け取って持つ。地図へ重ねる UI は App が配置する決まりなので、
   // それを起こすボタンもここに置く。
-  const [mapHandle, setMapHandle] = useState<MapHandle | null>(null)
-  const shareCard = useShareCard(mapHandle, {
-    mode: mapMode,
-    quake: mapQuake,
-    tsunamis,
-    eews: eewsForMap,
-    // 出典に何を挙げるかは「地図に描かれているか」で決まるため、表示の設定をそのまま渡す。
-    showBathymetry: settings.showBathymetry,
-    showActiveFaults: settings.showActiveFaults,
-    showPlateBoundaries: settings.showPlateBoundaries,
-  }, settings.showMapLegend ? legendBlocks : EMPTY_LEGEND_BLOCKS)
+  // 公開観測点（気象庁の広帯域地震計・EarthScope 経由）の下部の波形（→ hooks/usePublicWaves.ts）。
+  //
+  // **再生中は再生時刻の分を保存庫から取る**（`docs/public-waveform-design.md` §0）。
+  const publicWaves = usePublicWaves({
+    // 設定「公開観測点の波形を表示」がオフなら繋がない・取らない（地図の印もこれと地震カードから作るので一緒に消える）
+    enabled: settings.publicWaveEnabled,
+    replayOffsetMs: replayTimeOffset,
+    spanSec: settings.waveSpanSec,
+    alwaysConnected: settings.publicWaveAlwaysConnected,
+    // 予報円を描かない速報（仮定震源要素・深さ不明）でも観測点を選ぶ（→ `pickPublicWaveEew`）。
+    eew: pickPublicWaveEew(psWave, eewsForMap),
+    detectedPoints: kyoshinView.detectedPoints,
+  })
 
   // 自作地震計（`seismo-host/`）の観測点の震度。**設定が切れていれば繋がない。**
   //
@@ -2219,9 +2267,13 @@ export function App() {
   // 地震カードの発生時刻を秒まで決める（P/S 線の起点。→ hooks/useQuakeOriginSeconds.ts）。
   // **波形を出す設定のときだけ動かす** —— 出さないなら取りに行く理由も、端末に残す理由も無い。
   const quakeOriginSeconds = useQuakeOriginSeconds({
-    enabled: settings.seismoEnabled && settings.seismoWave !== 'off',
+    // 自作・公開のどちらかの波形カードに使うときだけ、発生秒を取りに行く。
+    enabled: settings.publicWaveEnabled || (settings.seismoEnabled && settings.seismoWave !== 'off'),
     isDmdss,
     apiKey: debouncedApiKey,
+    // ライブでは接続が区分を取り決めるまで待つ。再生中は、一度も繋がっていなければ既定の区分で引く
+    // （リプレイの取得と同じ扱い。→ 上の `fetchDmdataReplayEvents` の呼び出し）。
+    classifications: replayTimeOffset === null ? dmdataClassifications : (dmdataClassifications ?? PREFERRED_CLASSIFICATIONS),
     quakes: filteredEarthquakes,
     activeEEWs,
     replayOffsetMs: replayTimeOffset,
@@ -2236,6 +2288,54 @@ export function App() {
     originSeconds: quakeOriginSeconds,
     subscribeWaveRevised: seismo.subscribeWaveRevised,
   })
+  // 地震カードに出す公開観測点の波形（→ hooks/usePublicQuakeWaves.ts）。
+  //
+  // **再生中も動かす**（`docs/public-waveform-design.md` §0「リプレイ中は、地震カードに加えて下部の波形も再生時刻の分を出す」）。
+  // 地震の時刻を指定して保存庫から取るので、いまの値が過去の画面へ混ざらない（自作地震計のカードと同じ）。
+  //
+  // **下部の波形に出している地震は、その番号を引き継ぐ**（カードの番号を地図の印と揃える。2026-10-15 ユーザー決定）。
+  const publicLiveNumbers = useMemo(
+    () => (publicWaves.visible ? new Map(publicWaves.stations.map((st) => [st.code, st.number])) : null),
+    [publicWaves.visible, publicWaves.stations],
+  )
+  const publicQuakeWaves = usePublicQuakeWaves({
+    enabled: settings.publicWaveEnabled,
+    quakes: filteredEarthquakes,
+    originSeconds: quakeOriginSeconds,
+    openedEventKey: selectedQuakeId,
+    liveNumbers: publicLiveNumbers,
+    readLiveRaw: publicWaves.readRawWave,
+    replayOffsetMs: replayTimeOffset,
+  })
+  // 自作地震計を先に、続けて公開観測点を番号順に（§6.3）。**変わっていない地震は前の配列を使い回す**（→ utils/mergeQuakeWaves.ts）。
+  const quakeWavesRef = useRef<ReadonlyMap<string, readonly SeismoQuakeWave[]>>(new Map())
+  const quakeWaves = useMemo(() => {
+    const cards = new Map([...publicQuakeWaves].map(([key, list]) => [key, list.map((w) => w.card)]))
+    const merged = mergeQuakeWaves(seismoQuakeWaves, cards, quakeWavesRef.current)
+    quakeWavesRef.current = merged
+    return merged
+  }, [seismoQuakeWaves, publicQuakeWaves])
+  // 地図の公開観測点の印。**下部の波形を出している間はそちらを優先し**、出していなければ開いている地震カードの観測点を出す
+  // （2026-10-15 ユーザー決定）。
+  const openedPublicWaves = selectedQuakeId === null ? undefined : publicQuakeWaves.get(selectedQuakeId)
+  const publicStationMarkers: readonly PublicStationMarker[] = publicWaves.visible
+    ? publicWaves.stations
+    : mapMode === 'quake' && openedPublicWaves !== undefined
+      ? openedPublicWaves
+      : NO_PUBLIC_STATIONS
+  const [mapHandle, setMapHandle] = useState<MapHandle | null>(null)
+  const shareCard = useShareCard(mapHandle, {
+    mode: mapMode,
+    quake: mapQuake,
+    tsunamis,
+    eews: eewsForMap,
+    // 出典に何を挙げるかは「地図に描かれているか」で決まるため、表示の設定をそのまま渡す。
+    showBathymetry: settings.showBathymetry,
+    showActiveFaults: settings.showActiveFaults,
+    showPlateBoundaries: settings.showPlateBoundaries,
+    // 公開観測点の三角は、下部に波形を出している間か、地震カードを開いている間だけ地図に描く（`PublicStationMarkersGL`）。
+    showPublicStations: publicStationMarkers.length > 0,
+  }, settings.showMapLegend ? legendBlocks : EMPTY_LEGEND_BLOCKS)
   // 絵を出すかどうかは受け取るかどうかと別に決める（→ hooks/useSeismoWaveVisibility.ts）。
   //
   // **再生中は明示的に落とす。** 繋いでいないので観測点が 1 つも無く、結果として絵は
@@ -2244,10 +2344,23 @@ export function App() {
   const showSeismoWave = useSeismoWaveVisibility({
     mode: replayTimeOffset === null ? settings.seismoWave : 'off',
     scope: nearbyScope,
-    eews: eewListForChecklist,
+    eews: eewListNoCancelled,
     detectedPoints: kyoshinView.detectedPoints,
     stations: seismo.stations,
   })
+  // 地図に重ねる特別情報の帯の束。**閉じた帯を除いた「いま出す帯」を、帯の描画と共有ボタンの置き場所が同じ値で見る。**
+  // お知らせの帯は設定で隠せるので、隠しているときは元データごと渡さない。
+  const specialInfoBanners = useSpecialInfoBanners({
+    nankai, nankaiCommentary, kohatsu,
+    quakeNotice: settings.quakeNoticeBanner ? quakeNotice : null,
+    earthquakeCount,
+  })
+  // 地図の下の波形の枠に渡すもの。**出さないなら空・null**（出すかどうかはここで決める）。
+  const waveChartStations = showSeismoWave ? seismo.stations : EMPTY_SEISMO_STATIONS
+  const waveChartPublic = publicWaves.visible ? publicWaves : null
+  // 枠が実際に段を描くか。描くと地図の高さが削れ、地図に重ねた帯は画面の下端に届かなくなる。
+  // **「出す」と判定しただけでは足りない** —— 段が 0 なら枠は何も描かない（→ SeismoWaveChart/chartRows.ts）。
+  const waveChartDrawn = hasWaveChartRows(waveChartStations, waveChartPublic)
 
   // 地図左上の更新時刻: リアルタイム表示はリアルタイム震度(kyoshin)の更新時刻、
   // DMDSS版かつWS接続中は現在時刻を毎秒更新、それ以外は最終受信時刻を表示する。
@@ -2271,9 +2384,10 @@ export function App() {
     // 画面いっぱいの高さは h-dvh（100dvh）で取る。dvh はブラウザ UI の出入りに追従するため、
     // iOS Safari でツールバーが出ている間もナビが画面外へ押し出されない。
     // 画面端の safe-area は端に接する要素が各自で避ける（root では扱わない）。
+    // 外枠は固定配置にする（iOS が上端に重ねるぼかしと、横向きのあとのずれを避ける。理由は ROOT_FRAME_CLASS）。
     // 規則と端ごとの担当は docs/spec/architecture-spec.md
     // 「画面いっぱいへの広がりとセーフエリア」に集約している。
-    <div className="flex flex-col h-dvh bg-app text-white overflow-hidden">
+    <div className={`${ROOT_FRAME_CLASS} flex flex-col bg-app text-white overflow-hidden`}>
       {/* 地図(左) | パネル | アイコンナビ(右端)。
           side ブレークポイント未満（スマホ縦など）は縦積み(地図上・つまみ・パネル・ナビ下)になり、
           パネルの高さは --panel-ratio（つまみのドラッグで可変・折りたたみ時 0）で決まる。
@@ -2303,6 +2417,7 @@ export function App() {
             <ErrorBoundary variant="region" label="地図">
               <MapView
                 mode={mapMode}
+                publicStationMarkers={publicStationMarkers}
                 catalogCloud={catalogCloud}
                 catalogColorBy={settledView.colorBy}
                 onLegendSourcesChange={setLegendSources}
@@ -2376,18 +2491,6 @@ export function App() {
               <MapRenderStatus />
               <SeismoLinkStatus stream={seismo.stream} />
             </div>
-            {/* 地図右下。表示中の地図を画像にするボタン。左上の情報ブロックと同じ理由で z を高く取る。 */}
-            {shareCard.ready && (
-              <div
-                className="absolute z-99999 flex flex-col items-end gap-1"
-                style={{
-                  bottom: 'max(0.5rem, env(safe-area-inset-bottom, 0px))',
-                  right: 'max(0.5rem, env(safe-area-inset-right, 0px))',
-                }}
-              >
-                <ShareCardButton state={shareCard.state} onClick={() => shareCard.share()} />
-              </div>
-            )}
             {/* 地図に重ねる縦並び。上端に行動チェックリスト、下端に凡例・特別情報バナー。
                 **地図の高さを 1 本の縦並びで分け合う**（足りないときは中身が縮み、それぞれの中で
                 スクロールする）。上と下を別々に絶対配置して画面の高さ（`dvh`）で上限を掛けると、
@@ -2427,18 +2530,40 @@ export function App() {
                   <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} />
                 </div>
               )}
-              <SpecialInfoBanner nankai={nankai} nankaiCommentary={nankaiCommentary} kohatsu={kohatsu} quakeNotice={quakeNotice} earthquakeCount={earthquakeCount} speakingTelegramTextSubject={speakingTelegramTextSubject} />
+              {/* 地図右下の共有ボタン（表示中の地図を画像にする）。**特別情報の帯のすぐ上に置く** —— 縦並びの外に
+                  絶対配置すると、帯が出ても押し上げてもらえずに帯へ重なる。高さ 0 の行を足場にしてその上へ
+                  はみ出させるので、凡例の縮み方（縦並びの高さの分け合い）には加わらない。
+                  帯が無い（閉じた帯しか残っていない場合も含む）ときは地図の下端に付く。ホームインジケータ分を
+                  避けるのは帯と同じ条件 —— スマホの横画面で、地図の下に波形が出ていないときだけ（`shareButtonBottomClass`。
+                  帯の SAFE_BOTTOM の隣に置いてある）。 */}
+              {shareCard.ready && (
+                <div className="relative h-0 shrink-0">
+                  <div
+                    className={`absolute pointer-events-auto ${shareButtonBottomClass(specialInfoBanners.shown, !waveChartDrawn)}`}
+                    style={{ right: 'max(0.5rem, env(safe-area-inset-right, 0px))' }}
+                  >
+                    <ShareCardButton state={shareCard.state} onClick={() => shareCard.share()} />
+                  </div>
+                </div>
+              )}
+              <SpecialInfoBanner banners={specialInfoBanners} speakingTelegramTextSubject={speakingTelegramTextSubject}
+                // 地図の下に波形が出ていると、帯は画面の下端に届かない（下端の余白を付けない）
+                atScreenBottom={!waveChartDrawn}
+              />
             </div>
           </div>
           {/* 自作地震計の合成波形。**地図の外**（→ すぐ上の器のコメント）。 */}
-          {showSeismoWave && (
+          {waveChartDrawn && (
             <SeismoWaveChart
-              stations={seismo.stations}
+              stations={waveChartStations}
               readWave={seismo.readWave}
+              publicWaves={waveChartPublic}
               collapsedView={settings.seismoWaveCollapsedView}
               expanded={settings.seismoWaveExpanded}
               onToggleExpanded={toggleSeismoWaveExpanded}
-              arrivalEew={seismoArrivalEew}
+              arrivalEews={seismoArrivalEews}
+              spanSec={settings.waveSpanSec}
+              onFocusStation={focusMapTarget}
             />
           )}
         </div>
@@ -2493,7 +2618,7 @@ export function App() {
                 onToggleUnreceived={toggleUnreceived}
                 onFocusMap={focusMapTarget}
                 speakingTelegramTextSubject={speakingTelegramTextSubject}
-                seismoWaves={seismoQuakeWaves}
+                seismoWaves={quakeWaves}
                 seismoWaveView={settings.seismoWaveCollapsedView}
               />
             </ErrorBoundary>
@@ -2507,6 +2632,7 @@ export function App() {
                 swaveArrival={swaveArrival}
                 visible={activeTab === 'realtime' && !panelCollapsed}
                 speakingEewKey={speakingEewKey}
+                eewNoForecastSettledKeys={eewNoForecastSettledKeys}
                 activeLpgmEventId={activeLpgmEventId}
                 onToggleLpgm={toggleLpgmFromEew}
                 onDeactivateLpgm={deactivateLpgm}
@@ -2546,6 +2672,7 @@ export function App() {
                 view={catalogView}
                 onViewChange={setCatalogView}
                 pointCount={catalogCloud?.columns.count ?? 0}
+                unknownMagnitudeCount={catalogCloud?.unknownMagnitudeCount ?? 0}
                 loading={catalog.loading}
                 /* 絞り込みを変えた直後は件数が追いついていない（デバウンスした側で作るため）。
                    参照が同じなら落ち着いている（`useDebouncedValue` は同じ値なら同じ参照を返す）。 */

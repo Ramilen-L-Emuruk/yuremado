@@ -8,6 +8,7 @@ import type { TtsUnreceivedDetail, TelegramTextBlockKey, TelegramTextBlocks, Tel
 import { TELEGRAM_TEXT_BLOCK_KEYS, TELEGRAM_BOILERPLATE_KEYS, TELEGRAM_BOILERPLATE_DEFAULT_READS } from '../utils/ttsText'
 // 同じ理由（依存の向き）で、波形グラフの出し方の定義も utils 側に置いてある。
 import type { SeismoWaveMode } from '../utils/seismoWaveTrigger'
+import { DEFAULT_WAVE_SPAN_SEC, ensureWaveSpanSec, type WaveSpanSec } from '../utils/waveSpan'
 
 /** 波形を展開していないときに出すもの（→ {@link AppSettings.seismoWaveCollapsedView}）。 */
 export type SeismoWaveCollapsedView = 'composite' | 'overlay'
@@ -44,6 +45,19 @@ export interface AppSettings {
   // （臨時情報＝段階の発表はこの設定に関わらず鳴る）。soundEnabled / voicevoxEnabled が
   // 無効ならそちらが優先される。
   nankaiCommentaryAlerts: boolean
+  /**
+   * 地震・津波に関するお知らせ（VZSE40。観測点の入電停止・配信試験などの運用連絡）を地図の下に帯で出す。
+   * 既定は出す。切っても受信と記録は続く（画面に出さないだけ）。
+   */
+  quakeNoticeBanner: boolean
+  /**
+   * 地震・津波に関するお知らせ（VZSE40）の通知音と読み上げを行う（解説情報の `nankaiCommentaryAlerts` と同じ形）。
+   * **既定は行わない**（運用連絡が大半で、平常時に音や声で知らせるほどの情報ではないため）。読み上げは
+   * 最下位の層で行い、他の情報の読み上げを切らない。本文は「気象庁が書いた文」の設定
+   * （`ttsReadTelegramText` と `quakeNoticeBody`）に従う。`soundEnabled` / `voicevoxEnabled` が
+   * 無効ならそちらが優先される。有効なら受信時にパネルを一時的に開く（他の帯と同じ）。
+   */
+  quakeNoticeAlerts: boolean
   uiScale: number           // UI 倍率 (1 = 100%)
   mapIconScale: number      // 地図アイコンの倍率 (1 = 100%、UI 倍率とは独立)
   // 地図を傾けたとき、震源をどれだけ深く見せるか (1 = 実際の深さ)。水平方向は常に実スケール。
@@ -101,8 +115,8 @@ export interface AppSettings {
    * `TELEGRAM_TEXT_BLOCK_KEYS`）。**`ttsReadTelegramText` が偽ならここの指定は効かない** ——
    * あちらがマスタートグルで、こちらはその内訳。
    *
-   * **この設定だけオブジェクトで持っている。** 17 個をフラットに並べると、型定義・既定値・
-   * `sanitize` の 3 箇所へ 17 行ずつ増えて画面や音の設定と混ざる。ブロックの集合は電文の
+   * **この設定だけオブジェクトで持っている。** 18 個をフラットに並べると、型定義・既定値・
+   * `sanitize` の 3 箇所へ 18 行ずつ増えて画面や音の設定と混ざる。ブロックの集合は電文の
    * 構造に由来するまとまりなので、1 つにしてキーの一覧から導く。
    */
   ttsTelegramTextBlocks: TelegramTextBlocks
@@ -170,6 +184,21 @@ export interface AppSettings {
    * （向きの切り替えと違い、見せ方の好みなので残す）。
    */
   seismoWaveExpanded: boolean
+  /**
+   * 地図の下端の波形の横の幅（秒。60 / 120 / 180）。**自作地震計と公開観測点で揃える**
+   * （`docs/public-waveform-design.md` §0。2026-10-14 ユーザー承認）。
+   */
+  waveSpanSec: WaveSpanSec
+  /**
+   * 公開観測点（気象庁の広帯域地震計・EarthScope 経由）の波形を出すか。**既定はオン。** オフなら地図の下端・地震カード・
+   * 地図の印のどれにも出さず、SeedLink にも保存庫にも取りに行かない（`docs/public-waveform-design.md` §0。2026-10-15 ユーザー承認）。
+   */
+  publicWaveEnabled: boolean
+  /**
+   * 公開観測点（EarthScope の SeedLink）へ揺れていないときも繋いでおくか。**既定はオフ**で、出すときだけ繋ぐ
+   * （同 §0。繋ぎっぱなしは 1 日に約 130 MB）。
+   */
+  publicWaveAlwaysConnected: boolean
   panelRatio: number             // 縦積みレイアウト（スマホ縦など）でのパネル高さ比率（0.2〜0.8）
 }
 
@@ -207,6 +236,8 @@ export const DEFAULTS: AppSettings = {
   soundEnabled: true,
   soundVolume: 1.0,
   nankaiCommentaryAlerts: true,
+  quakeNoticeBanner: true,
+  quakeNoticeAlerts: false,
   uiScale: 1,
   mapIconScale: 1,
   hypocenterDepthScale: 1,
@@ -272,6 +303,9 @@ export const DEFAULTS: AppSettings = {
   seismoWave: 'off',
   seismoWaveCollapsedView: 'composite',
   seismoWaveExpanded: false,
+  waveSpanSec: DEFAULT_WAVE_SPAN_SEC,
+  publicWaveEnabled: true,
+  publicWaveAlwaysConnected: false,
   panelRatio: 0.45,
 }
 
@@ -371,6 +405,8 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     soundEnabled: ensureBool(partial.soundEnabled, DEFAULTS.soundEnabled),
     soundVolume: clampNumber(partial.soundVolume, 0, 1, DEFAULTS.soundVolume),
     nankaiCommentaryAlerts: ensureBool(partial.nankaiCommentaryAlerts, DEFAULTS.nankaiCommentaryAlerts),
+    quakeNoticeBanner: ensureBool(partial.quakeNoticeBanner, DEFAULTS.quakeNoticeBanner),
+    quakeNoticeAlerts: ensureBool(partial.quakeNoticeAlerts, DEFAULTS.quakeNoticeAlerts),
     uiScale: clampNumber(partial.uiScale, 0.5, 3, DEFAULTS.uiScale),
     mapIconScale: clampNumber(partial.mapIconScale, 0.5, 3, DEFAULTS.mapIconScale),
     hypocenterDepthScale: clampNumber(partial.hypocenterDepthScale, 1, 20, DEFAULTS.hypocenterDepthScale),
@@ -427,6 +463,9 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     seismoWave: ensureSeismoWave(partial.seismoWave, DEFAULTS.seismoWave),
     seismoWaveCollapsedView: ensureSeismoWaveCollapsedView(partial.seismoWaveCollapsedView, DEFAULTS.seismoWaveCollapsedView),
     seismoWaveExpanded: ensureBool(partial.seismoWaveExpanded, DEFAULTS.seismoWaveExpanded),
+    waveSpanSec: ensureWaveSpanSec(partial.waveSpanSec, DEFAULTS.waveSpanSec),
+    publicWaveEnabled: ensureBool(partial.publicWaveEnabled, DEFAULTS.publicWaveEnabled),
+    publicWaveAlwaysConnected: ensureBool(partial.publicWaveAlwaysConnected, DEFAULTS.publicWaveAlwaysConnected),
     panelRatio: clampNumber(partial.panelRatio, PANEL_RATIO_MIN, PANEL_RATIO_MAX, DEFAULTS.panelRatio),
   }
 }

@@ -772,7 +772,7 @@ CRITICAL / HIGH の指摘は **`code-reviewer` エージェント**で実装か�
 
 既存テストが落ちたときは、**まず「意図的に覆したもの」と「壊したもの」を分ける**。前者は反転させて更新し（何を覆したかをテスト名に書く）、後者は実装を直す。設計書§29 では 3 件落ち、うち 2 件は §18 が置いた防御テスト（離れた点が同時に高震度）で、これを壊さない形に設計を変えた。
 
-**実データでの回帰確認も併せて行う。** ユニットテストは合成フレームなので、実地震の立ち上がり方の変化は捕まえられない。`npm run bench-kyoshin` が 793 窓を再生して分類ごとに集計し、**ベースライン（`scripts/kyoshin-bench/baseline.json`）との差分だけを出す**（比べるのは段階・初 likely・初 confirmed・**確定の継続フレーム数**・無関係な検知の件数）（下記「補助コマンド」参照）。窓の定義は `scripts/kyoshin-bench/windows.json` が単一情報源で、分類の意味と「その地震を検知したか」の判定規則は `scripts/bench-kyoshin.ts` の冒頭にある。
+**実データでの回帰確認も併せて行う。** ユニットテストは合成フレームなので、実地震の立ち上がり方の変化は捕まえられない。`npm run bench-kyoshin` が 795 窓を再生して分類ごとに集計し、**ベースライン（`scripts/kyoshin-bench/baseline.json`）との差分だけを出す**（比べるのは段階・初 likely・初 confirmed・**確定の継続フレーム数**・無関係な検知の件数）（下記「補助コマンド」参照）。窓の定義は `scripts/kyoshin-bench/windows.json` が単一情報源で、分類の意味と「その地震を検知したか」の判定規則は `scripts/bench-kyoshin.ts` の冒頭にある。
 
 変更を入れる前に一度素の状態で回し、差分が 0 であることを確かめてから実装に入ること（キャッシュや窓カタログの取り違えをここで弾ける）。**差分が出たら 1 件ずつ中身を見る。** 検知の位置が震源から離れていれば、それはその地震の検知ではなく無関係なノイズで、「取りこぼしが増えた」ように見えて実は「誤検知が減った」ことがある（実例: トカラ列島近海の窓で東京の観測点が鳴っていた）。意図した変更なら `-- --update-baseline` で受け入れる。
 
@@ -965,7 +965,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | `npm run build-test-lpgm` | テストボタン用の長周期地震動データ（`src/data/noto-honshin-2024-lpgm.json`）を、**実電文をパーサーへ通して**作り直す（`scripts/build-test-lpgm.ts`）。**要 DMDATA.JP API キー**（置き場所は `capture-scenario` と同じ・キーの読み取り順は `build-test-quake` と同じ）。`--event=<EventID 14 桁>` で対象の地震を選ぶ（既定は能登半島地震の本震）。**電文から読む項目を足したら実行する** —— 手で組み立てると、テストボタンだけ古い形のまま残って新しい項目が実機で一度も画面に出ない。アーカイブの控えは `build-test-quake` と共通 |
 | `npm run build-test-estimated-intensity` | テストボタン用の推計震度分布図データ（`src/data/test-estimated-intensity.json`）を、**実電文をパーサーと BUFR 復号器へ通して**作り直す。**要 DMDATA.JP API キー**（`capture-scenario` と同じ置き場所・同じワークツリーの注意・キーの読み取り順は `build-test-quake` と同じ）。`--arrival=<地震発現時刻 UTC・分まで>` で対象を選ぶ（既定は 2026-07-28T10:03 の熊本県熊本地方 M4.2。**推計震度分布図が出た地震のうちいちばんセルが少ない**ので軽い）。**鍵が `EventID` でないのは、この電文が識別子を持たないため** —— 地震情報と結び付けられるのは発現時刻しかなく、アプリ側の引き当てと同じ鍵で選ぶ。**地震情報と対で書き出す**（分布だけ置いても引き当てる相手のカードが無くボタンが出ない）。**手では作れない** —— BUFR は二進。アーカイブの控えは `build-test-quake` と共通 |
 | `npx tsx scripts/measure-kyoshin-warmup.ts` | 強震モニタ検知エンジンの**助走**の効きを実データで測る。「その時刻から再生を始めた場合」が「ずっと再生し続けた場合」とどれだけ一致するかを、大地震 7 本・地震発生の 1〜12.5 分後の 164 点で見る。**API キー不要**。初回は `--fetch` で窓を取得する（7 本・約 6300 フレーム）。キャッシュは `bench-kyoshin` と共有する。`--warmups=0,180,300,600` で固定長を比べ、`--adaptive` で実装と同じ「遡って静穏で打ち切る」方式を測る。**助走の長さを決める定数（`utils/kyoshinWarmup.ts`）を変えたら実行する** —— `bench-kyoshin` は窓の先頭から流すので、途中から入る形は測れない |
-| `npm run bench-kyoshin` | 強震モニタ検知エンジンの実データ回帰ベンチ（`scripts/bench-kyoshin.ts`）。Yahoo の過去フレームを窓ごとに再生し、**気象庁発表の地震を捉えられたか**と**地震が無いのに鳴っていないか**を分類ごとに集計してベースラインと突き合わせる。**API キー不要**。窓は `scripts/kyoshin-bench/windows.json`（単一情報源）。初回は `-- --fetch` で取得する（全 793 窓・500MB 超・数十分）。検知エンジンを変更したら実行する（上記「特殊ケース: 強震モニタ検知エンジンを変更したとき」） |
+| `npm run bench-kyoshin` | 強震モニタ検知エンジンの実データ回帰ベンチ（`scripts/bench-kyoshin.ts`）。Yahoo の過去フレームを窓ごとに再生し、**気象庁発表の地震を捉えられたか**と**地震が無いのに鳴っていないか**を分類ごとに集計してベースラインと突き合わせる。**API キー不要**。窓は `scripts/kyoshin-bench/windows.json`（単一情報源）。初回は `-- --fetch` で取得する（全 795 窓・500MB 超・数十分）。検知エンジンを変更したら実行する（上記「特殊ケース: 強震モニタ検知エンジンを変更したとき」） |
 | `npx tsx scripts/build-historical-archive-<地震>.ts` | ローカル履歴アーカイブ（`public/data/historical-archives/*.json`）の再生成。対象は 4 本（`2016-kumamoto` / `2016-tottori` / `2018-iburi` / `2018-osaka`）。**API キー不要**。地震情報・津波は NII「気象庁防災情報 XML データベース」の実電文を本番と同じパーサーへ通し、EEW は気象庁の発表状況ページから取る。**電文から読む項目を足したら実行する** —— テストボタンのデータと同じ理由で、作り直さないとその項目は履歴再生で一度も画面に出ない。**`index.json` を 4 本とも書き換えるので順次実行する**。**NII からの取得だけ**は一度取ったページが `.codex/nii-cache/` に残るため、途中で落ちても続きから進む（EEW 側の取得はキャッシュを持たない）。詳細は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「国立情報学研究所（NII）の実電文アーカイブ由来のデータ（地震情報・津波）」 |
 | `npm run capture-kyoshin-waveform` | ローカル履歴アーカイブ用に、NIED K-NET/KiK-net の実波形から強震モニタ風のリアルタイム震度リプレイデータを生成（`scripts/capture-kyoshin-waveform.ts`）。**要 NIED 登録**（`NIED_KNET_USER`/`NIED_KNET_PASSWORD` を `.env.local` に。取得は `--origin=<地震発生時刻JST、YYYYMMDDHHMMSS> --id=<出力id>`）。`--origin` は複数回指定でき、本震＋離れた余震を1つのアーカイブへ統合する（1件の取得失敗ではバッチ全体を止めず、残りで統合する）。出力（`public/data/historical-archives-kyoshin/*.json`）は**再配布禁止のためリポジトリに含めない**（`.gitignore` 対象。生成した本人のローカル環境でのみ再生できる）。**devサーバー無しでも使いたい場合は、設定タブ「K-NETデータの取り込み」から同じZIPを直接ブラウザへ取り込める**（NIEDのダウンロードページで自分で取得したZIPを選ぶだけで、対応する地震へ自動で追加される。データは端末内にのみ保存）。詳細は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「NIED K-NET/KiK-netの実波形由来のデータ（ローカル限定・リアルタイム震度）」 |
 | `npm version patch\|minor\|major` | バージョン更新・コミット・git tag 作成（リリース時に 1 回だけ実行。詳細は「リリース」参照） |
@@ -975,7 +975,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 ## 構成メモ
 
 - `src/App.tsx`: レイアウトの中枢。地図常時表示＋アイコンナビでパネル内容を切替。地図内容・更新時刻・通知音・自動タブ切替・EEW 連携の制御もここ。
-- レイアウトは画面の向き・高さで切り替わる（左右分割／上下分割）。分岐条件は `src/index.css` の `@custom-variant`（`side` / `sideNarrow` / `roomy`）が単一情報源。上下分割時は境界のつまみで比率変更・折りたたみができる（`PanelResizeHandle`）。詳細は [`docs/spec/architecture-spec.md`](docs/spec/architecture-spec.md) の「画面サイズ別のレイアウト」。
+- レイアウトは画面の向き・高さで切り替わる（左右分割／上下分割）。分岐条件は `src/index.css` の `@custom-variant`（`side` / `sideNarrow` / `sideShort` / `roomy`）が単一情報源。上下分割時は境界のつまみで比率変更・折りたたみができる（`PanelResizeHandle`）。詳細は [`docs/spec/architecture-spec.md`](docs/spec/architecture-spec.md) の「画面サイズ別のレイアウト」。
 - 地図は MapLibre GL JS（`JapanMapGL`）に一本化。`MapView` が App と地図実装の間の薄いラッパー。旧 Leaflet 版 JapanMap とエンジン切替フラグは F7 で撤去済み。
 - 地図のモード（`JapanMapGL` の `mode`）: `quake`（地震）／`tsunami`（津波海岸線）／`kyoshin`（リアルタイム震度・予報円）／`catalog`（長期震源カタログの点群）。
 - 生成データ（`public/data/*.json`）は座標が大きいため遅延読込（初回利用時に一度だけ fetch しキャッシュ）。
@@ -1405,7 +1405,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 自動復帰までの時間を計り直す契機のうちユーザー操作を崩すと、操作中でも既定タブへ戻ってしまう | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 自動復帰までの時間を計り直す契機のうち読み上げ終了（`onSpeechIdle`）を崩すと、読み終えた直後に唐突にタブが切り替わる、または戻るまでに余分な遅延が生じる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 倍率の適用範囲（UI は rem・地図の描画物には `iconScale`・枠線は倍率に連動させない）を崩すと、UI 倍率設定が一部の要素に効かない、または下限側でフチが主役になる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
-| 画面サイズ別レイアウトの分岐条件（`side`/`sideNarrow`/`roomy`）を崩すと、狭い画面でパネル比率・折りたたみが崩れる | [`architecture-spec.md`](docs/spec/architecture-spec.md) §4「画面サイズ別のレイアウト」 |
+| 画面サイズ別レイアウトの分岐条件（`side`/`sideNarrow`/`sideShort`/`roomy`）を崩すと、狭い画面でパネル比率・折りたたみが崩れる | [`architecture-spec.md`](docs/spec/architecture-spec.md) §4「画面サイズ別のレイアウト」 |
 | 録画モードの原則（ON は OFF より劣化させない）と止めるもの 2 つ（地名ラベルの重なり判定・揺れ検知の診断ログ保存）を崩すと、録画中にコマ落ちが増える、または解除直後の検知で記録の前半が欠ける | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 録画モードで有効にするもの 2 つ（合成待ち予算の拡大・海底地形タイルの先読み）を崩すと、負荷時に長い文の後半が欠ける、または自動フィット直後の暗転が長引く | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 録画モードで追加復元する 7 項目（気象庁の文・地震の地域と震源要素・確定情報の通し読み・EEW 誤報取消・EEW 最後の告知震源・津波取消・津波が語った原因地震の震源）を崩すと、区間の境目で同じ内容を読み直す（このうち EEW 最後の告知震源だけは例外的に増やす側で、崩すと震源が動いても言い直さない。津波が語った原因地震の震源は逆に値が変わっても言い直さない設計） | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |

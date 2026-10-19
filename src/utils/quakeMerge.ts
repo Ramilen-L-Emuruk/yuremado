@@ -1,4 +1,4 @@
-import type { JMAQuake, IssueType, QuakeReportRecord, QuakeRetractedReport } from '../types/earthquake'
+import type { JMAQuake, IssueType, QuakeReportRecord, QuakeRetractedReport, CorrectType } from '../types/earthquake'
 import { isAreaPoint, type AreaPrefIndex } from './quakePoints'
 import { log } from './logger'
 import {
@@ -214,7 +214,7 @@ export function quakeHoldBack(existing: JMAQuake, incoming: JMAQuake): QuakeHold
   if (isSupersededByExistingCard(existing, incoming)) {
     // 訂正報は実配信で観測していない形なので必ず残す。時刻が新しいのに据え置いたものも残す
     // （どちらの理由も記録する側のコメントにある）。時刻が古いだけの分は黙る（→ `notable`）。
-    return { reason: 'superseded', notable: incoming.issue.correct !== 'なし' || compareReportAge(incoming, existing) >= 0 }
+    return { reason: 'superseded', notable: isKnownCorrection(incoming.issue.correct) || compareReportAge(incoming, existing) >= 0 }
   }
   // 実震度を持つ電文どうしは作成時刻（無ければ発表時刻）で、持たない電文は種別優先度で判定する
   // （理由は `mergeQuakeInto` の据え置き判定のコメント）。
@@ -477,8 +477,20 @@ export function quakeKeyForLpgmEventId(quakes: readonly JMAQuake[], eventId: str
 //   電文で、`issue.correct` は「なし」のまま来る。mergeQuakeInto の分岐 A が hypocenter を
 //   丸ごと置き換える設計と対になる条件なので、ここから外すと震源名が変わった更新報が
 //   別カードに分裂する（P2PQuake 経路は eventId が無く震源名で判定するため）。
+// 訂正の有無が不明（`'不明'`）な報もここでは「変わりうる」側に入れる（→ `CorrectType`）。
 function allowsHypocenterChange(q: JMAQuake): boolean {
   return q.issue.correct !== 'なし' || q.issue.type === AMENDMENT_TYPE
+}
+
+/**
+ * 訂正報だと分かっている報か。**カードの「訂正」の印と記録はこれで決める。**
+ *
+ * 訂正の有無が不明な報（`'不明'`。P2PQuake の `Unknown`）は含めない —— 訂正されていない
+ * 地震カードに「訂正」の印が付く（2026-10-18 ユーザー承認・選んだ選択肢「印だけ消す」）。
+ * カードの合流は別の判定（`allowsHypocenterChange`）で、そちらは不明も含める。
+ */
+export function isKnownCorrection(correct: CorrectType): boolean {
+  return correct !== 'なし' && correct !== '不明'
 }
 
 // 震源名が「両方とも判明していて食い違う」なら別イベントとみなせる。
@@ -960,7 +972,7 @@ function mergeQuakeIntoBody(
       existingTime: existing.time, incomingTime: incoming.time,
       droppedMaxScale: incoming.earthquake.maxScale, droppedPoints: incoming.points.length,
     }
-    if (incoming.issue.correct !== 'なし') {
+    if (isKnownCorrection(incoming.issue.correct)) {
       // **訂正報も据え置くが、こちらは警告で残す。** 訂正は「その報の内容が誤りだった」という
       // 報なので本来は内容を採りたいが、速報段階の粒度で完全版を上書きすると、この据え置きが
       // 塞いだ不整合をそのまま再現する（理由は `isSupersededByExistingCard`）。**実配信では
@@ -1561,7 +1573,7 @@ export function mergeQuakeHistory(
         touched.add(key)
         rememberQuakeCard(markMemory, key, {
           facts: quakeFactSnapshot(effect.card),
-          rows: quakeRowSnapshot(effect.card.points, effect.card.cities ?? []),
+          rows: quakeRowSnapshot(effect.card.points, effect.card.cities ?? [], areaPrefIndex),
           issuedAt: markIssuedAt(effect.card.issue.time),
           reportType: effect.card.issue.type,
         })
@@ -1600,7 +1612,7 @@ export function mergeQuakeHistory(
       touched.add(key)
       rememberQuakeCard(markMemory, key, {
         facts: quakeFactSnapshot(card),
-        rows: quakeRowSnapshot(card.points, card.cities ?? []),
+        rows: quakeRowSnapshot(card.points, card.cities ?? [], areaPrefIndex),
         issuedAt: markIssuedAt(card.issue.time),
         // **カードの種別を渡す**（`q.issue.type` ではない）。ライブ側も統合後のカードから
         // 採っており、片方だけ電文の種別にすると行の初出の判定基準がずれる。
@@ -1654,7 +1666,7 @@ export function mergeQuakeHistory(
     if (!card || card === beforeCoalesce.get(key)) continue
     rememberQuakeCard(markMemory, key, {
       facts: quakeFactSnapshot(card),
-      rows: quakeRowSnapshot(card.points, card.cities ?? []),
+      rows: quakeRowSnapshot(card.points, card.cities ?? [], areaPrefIndex),
       issuedAt: markIssuedAt(card.issue.time),
       reportType: card.issue.type,
     })

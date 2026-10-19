@@ -223,8 +223,17 @@ export interface QuakeRetractedReport {
   cancelText?: string
 }
 
+/**
+ * 訂正の種別。
+ *
+ * - `'不明'` は **P2PQuake の `Unknown`（訂正の有無が不明）だけ**が持つ。訂正だと分かっていない
+ *   ので「訂正」の印は出さない。ただしカードの合流では訂正の可能性ありとして扱い、震源名が
+ *   違う報も同じ地震へ合流させる（2026-10-18 ユーザー承認・選んだ選択肢「印だけ消す」）。判定は
+ *   `utils/quakeMerge.ts` の `isKnownCorrection`（印・記録）と `allowsHypocenterChange`（合流）
+ */
 export type CorrectType =
   | 'なし'
+  | '不明'
   | '訂正'
   | '震度のみ訂正'
   | '震源を訂正'
@@ -394,9 +403,20 @@ export interface JMAQuake {
    * 全角スペースで整形された表が入ることがあるため、**改行と空白をそのまま保持する**
    * （前後の空行だけ落とす）。表示側も `whitespace-pre-wrap` で受けること。
    *
-   * P2PQuake 経路は配信しないため undefined。
+   * P2PQuake 経路は `comments.freeFormComment` から入れる（空文字は undefined）。
    */
   freeText?: string
+  /**
+   * 海外で発生した地震による日本以外への津波の見通し（P2PQuake の `earthquake.foreignTsunami`）を、
+   * 気象庁の固定付加文（コード 0221〜0228）の文面へ起こしたもの。**P2PQuake 経路だけが持つ。**
+   *
+   * DMDATA 経路は付加文の原文（{@link forecastText}）にこの文が入っているので要らない。P2PQuake は
+   * 付加文を配信せず、区分の値だけを運ぶ。読み上げの遠地地震の文で、国内の津波の区分の文に続けて読む
+   * （2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。**画面には出さない** —— DMDSS 版も
+   * 付加文を地震カードに出していないのに揃えた。値と文面の対応は `services/p2pquake.ts` の
+   * `FOREIGN_TSUNAMI_TEXT`。
+   */
+  foreignTsunamiText?: string
   /**
    * 見出し文（`Head/Headline/Text`）。気象庁が電文へ添えた一文の要約。
    *
@@ -530,6 +550,9 @@ export interface BorrowedFromTsunami {
 }
 
 export type TsunamiGrade = 'MajorWarning' | 'Warning' | 'Watch' | 'Forecast' | 'Unknown'
+
+/** 津波電文の種類。→ {@link JMATsunami.headType} */
+export type TsunamiHeadType = 'VTSE41' | 'VTSE51' | 'VTSE52'
 
 /**
  * 固定付加文（`Comments/WarningComment`）1 件。→ {@link JMATsunami.warningComments}
@@ -665,7 +688,7 @@ export interface TsunamiSourceEarthquake extends HypocenterAreaDetail {
    * **ただし `originTime` と入れ替えないこと。** 津波の `originTime` は
    * `isTsunamiNewFire`（`utils/tsunami.ts`）が**電文の識別子が両側そろっていないときの
    * 同一性判定**に使っている。中身を差し替えると、続報が別の津波として立つ。
-   * （`isTsunamiContinuation` は `eventId` と `cancelledAt` しか見ておらず、この注意の対象外）
+   * （`isTsunamiContinuation` は `isSameTsunamiEvent`（`EventID` の番号の重なり）と `cancelledAt` しか見ておらず、この注意の対象外）
    */
   arrivalTime?: string
   /**
@@ -839,12 +862,37 @@ export interface JMATsunami {
    * standard 版は P2PQuake の文書 ID。
    */
   id: string
+  /**
+   * 識別情報（`Head/EventID`）。**寄与している地震の識別番号を半角スペースで並べたもの**で、
+   * 番号は 1 つとは限らない（電文解説資料 Ⅰ.別02-1）。気象庁は別の地震が寄与すると同じ警報を
+   * 切り替えて番号を足す（同 Ⅰ.別02-8 出現例６: `A` → `A B`）。
+   *
+   * **文字列のまま比べないこと。** 同じ津波かどうかは `utils/tsunami.ts` の `isSameTsunamiEvent`
+   * （番号が 1 つでも重なり、運用種別が同じ）で見る。番号の取り出しは `tsunamiEventIds`。
+   */
   eventId?: string
   time: string
+  /**
+   * 電文の種類（`VTSE41` 津波警報・注意報・予報／`VTSE51` 津波情報／`VTSE52` 沖合の津波観測に
+   * 関する情報）。DMDATA の XML 経路だけが持つ。P2PQuake（standard 版）とテストデータの一部は持たない。
+   *
+   * **種類で扱いが変わる事実が 2 つある。** 有効期限と本文は津波警報等（VTSE41）が決める
+   * （→ `mergeTsunamiReports`）。取消は種類ごとの単位で届き、VTSE41 の取消だけが津波全体を消す
+   * （→ `isPartialTsunamiRetraction`）。
+   */
+  headType?: TsunamiHeadType
   /**
    * 電文の運用種別（`Control/Status`）。訓練・試験のときだけ入る。→ {@link TelegramOperationStatus}
    */
   operationStatus?: TelegramOperationStatus
+  /**
+   * いま画面に出している津波を組み立てた報（取消・解除の報は含まない）。状態に載せた津波だけが持つ。
+   *
+   * **津波情報（VTSE51）・沖合の観測（VTSE52）だけの取消で、その種類の報を抜いて組み直すために持つ。**
+   * 続報の統合（`mergeTsunamiReports`）は前報の値を取り込んで重ねるので、統合の後からは
+   * どの値がどの種類の報から来たかを取り出せない。→ `refoldTsunamiWithout`
+   */
+  foldedReports?: JMATsunami[]
   cancelled: boolean
   // cancelled=true のときの解除理由。'lifted'=気象庁の正式解除（区域が電文から消える）、
   // 'retracted'=誤って発表した電文の取消（InfoType=取消）、'expired'=ValidDateTime満了によりアプリが自動検出。
@@ -1080,6 +1128,24 @@ export interface EEWForecastChange {
   reason?: 0 | 1 | 2 | 3 | 4 | 9
 }
 
+/**
+ * 緊急地震速報がどの経路から届いたか。
+ *
+ * **経路ごとに運ぶ欄が違う**ので、同じ地震の報を経路をまたいで統合するときに要る
+ * （→ `utils/eew.ts` の `mergeEewReport`。運ばない欄は既存の値を保つ）。
+ *
+ * - `dmdata`: DMDATA の電文（DMDSS 版。欄はすべて運ぶ）
+ * - `p2pquake`: P2PQuake の 556（standard 版。警報だけ。区域・仮定震源は運ぶが、予想の最大震度・最終報の印は運ばない）
+ * - `yahoo`: Yahoo 強震モニタの hypoInfo（standard 版。予報も含む。区域・仮定震源は運ばない）
+ * - `archive`: 保存しておいた電文から組み立てた報（ローカル履歴アーカイブ・テストシナリオ）
+ * - `test`: 設定タブのテストボタンが組み立てた報
+ *
+ * **報番号の数え方も経路で違う。** P2PQuake の `serial` は警報だけの番号、Yahoo の `reportNum` は
+ * 予報からの通し番号（2026-10-16 千島列島の報で、発表時刻 12:40:02 が Yahoo 17・P2PQuake 1）。
+ * 経路をまたいで報番号を比べないこと。比べるなら発表時刻（`issue.time`）を使う。
+ */
+export type EewOrigin = 'dmdata' | 'p2pquake' | 'yahoo' | 'archive' | 'test'
+
 export interface EEWAlert {
   /**
    * 見出し文（`Head/Headline/Text`）。→ {@link JMAQuake.headline}（扱いも同じ）
@@ -1117,7 +1183,30 @@ export interface EEWAlert {
    * 3 つの電文で扱いを揃える（片方だけ拾うと、同じ事象なのに種別によって理由が出たり出なかったりする）。
    */
   cancelText?: string
+  /**
+   * 「非常に強い揺れを検知・最大予測震度のみ」の報か（気象庁「地震火山関連 XML 電文解説資料」Ⅱ.21）。
+   *
+   * 震源要素を決める前に、強い揺れを検知した観測点だけで出す第 1 報の形。**震央は検知した観測点・
+   * 深さ 10km は仮の値・規模は不明（`NaN`）**で、発生時刻（`OriginTime`）も区域も持たない。
+   * 仮定震源要素（`earthquake.condition`）とは別の形だが、**震源が決まっていない点は同じ**なので、
+   * 画面・地図・予報円の扱いは仮定震源要素に揃える（判定は `utils/eew.ts` の `isProvisionalHypocenter`）。
+   *
+   * 資料はこの形を「緊急地震速報（地震動予報）」と「緊急地震速報（予報）」に限っており、警報には出ない。
+   * DMDSS 版限定（P2PQuake / Yahoo 経路はこの区別を運ばない）。
+   */
+  strongShakingOnly?: true
+  /**
+   * 上の形の報の本文（`Body/Text`）。強い揺れを検知した観測点の所在地が入る
+   * （実電文: 「３日０６時３１分４２秒頃\n石川県珠洲市付近　　　　　最大震度５弱程度以上と推定」）。
+   *
+   * **`cancelText` と同じ要素だが別の中身。** 資料は取消以外でこの要素が出るのを上の形のときだけと
+   * 定めている。アプリが組み立てた文ではないので、カードにはそのまま出す（読み上げには載せない。
+   * 2026-10-15 ユーザー承認）。
+   */
+  strongShakingText?: string
   kind: 'eew'
+  /** どの経路から届いた報か（→ {@link EewOrigin}）。統合した後の報では、最後に統合した報の経路。 */
+  origin: EewOrigin
   id: string
   time: string
   test: boolean
@@ -1179,6 +1268,13 @@ export interface EEWAlert {
   // `forecastMaxScale` の上限が定まっていない（「〜以上」）ことを表す。
   // 意味と扱いは `EEWRegion.scaleToOrAbove` と同じ。
   forecastMaxScaleOrAbove?: boolean
+  /**
+   * 予想の最大震度を `forecastMaxScale` で見るか（区域の最大より優先する）。standard 版で、区域を運ばない
+   * Yahoo の続報が電文全体の値を新しく運んだときに立つ（`mergeEewReport`）—— 区域は前の P2PQuake の報の
+   * ものなので、そちらの最大で見ると新しい報の引き上げ・引き下げが隠れる。P2PQuake の新しい報が区域を
+   * 運んだら下ろす。DMDATA の報は区域と電文全体の値が同じ報から来るので立たない。
+   */
+  maxScaleFromForecast?: boolean
   // DMDATA EEW 電文 body.intensity.forecastMaxLpgmInt から取得した推定最大長周期地震動階級（1〜4）。
   forecastMaxLpgmClass?: LpgmClass
   /** 上限を定めない予測（電文の `To="over"`）だったか。→ `EEWRegion.lgIntToOver` */
@@ -1458,9 +1554,9 @@ export type AppEvent = JMAQuake | JMATsunami | EEWAlert
  * そのもので、型が直接そのまま描画へ渡る。こちらは状態を別のフィールドで持っていて
  * （`lpgmByEventId`・`nankai`・帯の各種など）、鳴らす経路にだけ流れてくる。
  *
- * **お知らせ（`JMAQuakeNotice`）は入れない。** あれは音も読み上げも起こさない運用連絡で、
- * `onLiveEvent` へ流していない（流すと「鳴らす経路に載っているのに鳴らない」紛らわしい状態に
- * なる）。→ `docs/spec/data-sources-spec.md` §2「扱う電文種別」
+ * **お知らせ（`JMAQuakeNotice`）も入れる。** 音は鳴らさないが、設定で有効にすれば読み上げる
+ * （既定は読まない）。読むかどうかは受け手が決めるので、送り手は帯へ反映できたものを常に流す。
+ * → `docs/spec/data-sources-spec.md` §2「扱う電文種別」
  */
 export type ExtraLiveEvent =
   | { kind: 'lpgm'; data: JMALpgm }
@@ -1468,6 +1564,11 @@ export type ExtraLiveEvent =
   | { kind: 'nankaiCommentary'; data: JMANankaiCommentary }
   | { kind: 'kohatsu'; data: JMAKohatsu }
   | { kind: 'earthquakeCount'; data: JMAEarthquakeCount }
+  /**
+   * 地震・津波に関するお知らせ（VZSE40）。**読み上げは設定で有効にしたときだけ**（既定は読まない。
+   * 判定は受け手の `handleExtraLiveEvent`）。帯への反映は送り手（`applyQuakeNotice`）が済ませている。
+   */
+  | { kind: 'quakeNotice'; data: JMAQuakeNotice }
   | {
     kind: 'estimatedIntensity'
     data: JMAEstimatedIntensity
@@ -1525,6 +1626,16 @@ export interface LiveEventMeta {
     retracted: QuakeRetractedReport | undefined
     duplicate: boolean
   }
+  /**
+   * その緊急地震速報が、**別の経路から既に受けて知らせた報と同じ報**か（standard 版。Yahoo と
+   * P2PQuake の両方が同じ報を運ぶ）。同じ報かどうかは発表時刻（秒）で見分ける（報番号は経路で
+   * 数え方が違う。→ `EewOrigin`）。
+   *
+   * 真なら音・ブラウザ通知・自動タブ切替を起こさない（2026-10-18 ユーザー承認「最初の 1 通だけ」）。
+   * **読み上げとウィンドウタイトルは止めない** —— 後から来た経路が運んだ欄（区域など）で最新の値が
+   * 変わりうるので、読み上げは既読との差分で判断させる。区分が上がった報には立たない。
+   */
+  eewSameReport?: boolean
 }
 
 // 南海トラフ地震臨時情報 (VYSE50)
@@ -1886,6 +1997,15 @@ export interface JMAEstimatedIntensity {
  */
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'replay' | 'crowded'
 
+/**
+ * 電文ログの行が何の電文として読まれたか。電文ログの種別名と絞り込みの選択肢はこの型から
+ * 引く（`components/TelegramTab/labels.ts`）ので、ここへ足すとそちらが型エラーで知らせる。
+ * 電文種別コード（`headType`）の名前は型では縛れないので、`labels.test.ts` が縛る。
+ */
+export type TelegramLogKind =
+  | 'eew' | 'quake' | 'tsunami' | 'lpgm' | 'nankai' | 'nankaiCommentary' | 'kohatsu'
+  | 'quakeNotice' | 'earthquakeCount' | 'estimatedIntensity'
+
 export interface TelegramLogEntry {
   id: string
   receivedAt: Date
@@ -1893,8 +2013,7 @@ export interface TelegramLogEntry {
   headType: string
   isTest: boolean
   status: 'parsed' | 'filtered' | 'error'
-  kind?: 'eew' | 'quake' | 'tsunami' | 'lpgm' | 'nankai' | 'nankaiCommentary' | 'kohatsu'
-    | 'quakeNotice' | 'earthquakeCount' | 'estimatedIntensity'
+  kind?: TelegramLogKind
   rawHead?: unknown
   rawBody: unknown
   errorMessage?: string

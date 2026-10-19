@@ -16,6 +16,7 @@ afterEach(cleanup)
 function makeCancelledEEW(overrides: Partial<EEWAlert> = {}): EEWAlert {
   return {
     kind: 'eew',
+    origin: 'dmdata',
     id: 'test-eew',
     time: '2026-01-01T12:00:00Z',
     test: false,
@@ -35,6 +36,7 @@ function makeCancelledEEW(overrides: Partial<EEWAlert> = {}): EEWAlert {
 const renderTab = (eews: EEWAlert[]) =>
   render(
     <RealtimeTab
+      eewNoForecastSettledKeys={new Set()}
       eews={eews}
       swaveArrival={null}
       kyoshinV2Detections={[]}

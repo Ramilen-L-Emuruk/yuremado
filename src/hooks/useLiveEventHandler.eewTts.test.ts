@@ -28,6 +28,8 @@ import { splitIntoChunks, type SpeechOutcome } from '../utils/voicevox'
 // 安定待ちの猶予は定数から取る（数値を写すと、値を変えたときにテストだけが古い前提で通り続ける）
 import { EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS } from '../utils/eew'
 import { DEFAULTS, type AppSettings } from './useSettings'
+import { playAlertSound } from '../utils/alertSound'
+import { showBrowserNotification } from '../utils/notifications'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass, JMAQuake, JMATsunami } from '../types/earthquake'
 
 // 「鳴っている最中」を再現するための保留。`holdNextSpeech()` で次の 1 回だけ保留にする。
@@ -138,6 +140,8 @@ function makeEEW(over: {
   hypocenter?: { name: string; latitude: number; longitude: number }
   /** 警報の対象地方（`Head/Headline/Information` の地方予報区）。警報級の報にだけ入る。 */
   warningRegions?: string[]
+  /** 震央の精度ランク（`accuracy.epicenterRank`）。DMDATA 経路の報だけが持つ。 */
+  epicenterRank?: number
 } = {}): EEWAlert {
   const hypo = over.hypocenter ?? { name: '日向灘', latitude: 32.0, longitude: 132.0 }
   const areas: EEWRegion[] = over.noAreas ? [] : [{
@@ -166,12 +170,15 @@ function makeEEW(over: {
     cancelled: over.cancelled ?? false,
     issue: { eventId: over.eventId ?? 'evt-1', serial: String(over.serial ?? 1), time: '2026-01-01T12:00:00Z' },
     ...(over.warningRegions && { warningRegions: over.warningRegions }),
+    ...(over.epicenterRank !== undefined && { accuracy: { epicenterRank: over.epicenterRank } }),
     areas,
   } as EEWAlert
 }
 
 /** 直近の `setup` が作ったフックの戻り値。`setupFull` が復元の入口を取り出すために控える。 */
 let capturedResult: ReturnType<typeof useLiveEventHandler> | null = null
+/** 直近の `setup` の `renderHook` の結果。描き直した後の戻り値（state）を読むときに使う。 */
+let capturedHook: { current: ReturnType<typeof useLiveEventHandler> } | null = null
 /**
  * 直近の `setup` が渡したウィンドウタイトルの受け口（スタブ）。
  *
@@ -264,6 +271,7 @@ function setup(
     eewSpeakingCard,
   }))
   capturedResult = result.current
+  capturedHook = result
   return result.current.handleLiveEvent
 }
 
@@ -415,9 +423,131 @@ describe('EEW 読み上げの文言と発話順序', () => {
     await flushMicrotasks()
     expect(spokenTexts()).toHaveLength(1)   // まだ第1フェーズだけ
 
-    await vi.advanceTimersByTimeAsync(1)
+    // 待ちが切れると画面用の印（state）が動くので act() で包む
+    await act(() => vi.advanceTimersByTimeAsync(1))
     await flushMicrotasks()
     expect(spokenTexts()).toContain('予想震度なし。')
+  })
+
+  // 精度ランク 1（P 波／S 波レベル超え・IPF 法 1 点・仮定震源要素）は、見た時点では理由に使わない
+  // （12 通中 7 通は 0〜6 秒後に値が付く）。待ちが切れても値が付かなかったときに限って
+  // 「単独点処理のため」と言う（2026-10-14 ユーザー承認「待ち終えてから理由を言う（推奨）」、
+  // 文面は 2026-10-15 ユーザー承認「単独点処理のため(推奨)」）。
+  describe('精度ランク 1 で予想震度が付かないとき', () => {
+    it('正: 待ちが切れても値が付かなければ「単独点処理のため」と読み、画面用の印も付く', async () => {
+      const handle = setup()
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await flushMicrotasks()
+      await vi.advanceTimersByTimeAsync(2999)
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。'])
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。', '単独点処理のため、予想震度なし。'])
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+    })
+
+    it('対照: 精度ランクが 1 でなければ、待ちが切れても理由を添えない', async () => {
+      const handle = setup()
+      handle(makeEEW({ noAreas: true, epicenterRank: 2 }))
+      await flushMicrotasks()
+      await act(() => vi.advanceTimersByTimeAsync(3000))
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。', '予想震度なし。'])
+    })
+
+    it('対照: 待っている間に値が付けば、理由は一度も言わない', async () => {
+      const handle = setup()
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await flushMicrotasks()
+      await vi.advanceTimersByTimeAsync(2000)
+      handle(makeEEW({ serial: 2, scaleTo: 45, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(10000))
+      await flushMicrotasks()
+      expect(spokenTexts()).toContain('予想最大震度5弱。')
+      expect(spokenTexts().some(t => t.includes('予想震度なし'))).toBe(false)
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+    })
+
+    it('安全弁: 読み上げを切っていても、画面用の待ちは同じ長さで切れる', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await vi.advanceTimersByTimeAsync(2999)
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+      expect(spokenTexts()).toEqual([])
+    })
+
+    it('安全弁: 値の無い続報が待ちの途中で届いても、待ちは張り直さない（最初の報から数える）', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await vi.advanceTimersByTimeAsync(2000)
+      handle(makeEEW({ serial: 2, noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(1000))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+    })
+
+    it('安全弁: 印が付いた後に値が付いた続報が来たら、印を落とす', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(3000))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+      act(() => { handle(makeEEW({ serial: 2, scaleTo: 45, epicenterRank: 1 })) })
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+    })
+
+    it('安全弁: 取消で印を落とす', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(3000))
+      act(() => { handle(makeEEW({ serial: 2, cancelled: true })) })
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+    })
+
+    // 時間軸が変わったら、印も待ちも落とす。落とさないと、新しい時間軸で同じ鍵の初報が
+    // 待たずに理由を出す（残った待ちが切れて印を付け直す形も同じ）。
+    it('安全弁: リプレイのリセットで印と待ちを落とす', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ eventId: 'evt-A', noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(3000))
+      handle(makeEEW({ eventId: 'evt-B', noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(1000))
+      act(() => { capturedResult!.resetTracking() })
+      expect(capturedHook!.current.eewNoForecastSettledKeys.size).toBe(0)
+      await act(() => vi.advanceTimersByTimeAsync(5000))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.size).toBe(0)
+    })
+
+    it('安全弁: 取り消された鍵がまた発表されたら、待ちを最初からやり直す', async () => {
+      const handle = setup({ voicevoxEnabled: false })
+      handle(makeEEW({ noAreas: true, epicenterRank: 1 }))
+      await act(() => vi.advanceTimersByTimeAsync(3000))
+      act(() => { handle(makeEEW({ serial: 2, cancelled: true })) })
+      act(() => { handle(makeEEW({ serial: 3, noAreas: true, epicenterRank: 1 })) })
+      await act(() => vi.advanceTimersByTimeAsync(2999))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+    })
+
+    // 窓の手前で届いた報は、再生を始めた時点から待ち直す（印を最初から付けない）。
+    it('安全弁: リプレイの途中から始めたら、印を最初から付けず、始めた時点から待つ', async () => {
+      const d = setupFull({ voicevoxEnabled: false })
+      act(() => {
+        d.restore([{
+          payload: { kind: 'event' as const, event: makeEEW({ noAreas: true, epicenterRank: 1 }) },
+          replayTime: new Date('2026-01-01T12:00:00Z'),
+        }] as never)
+      })
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+      await act(() => vi.advanceTimersByTimeAsync(2999))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(false)
+      await act(() => vi.advanceTimersByTimeAsync(1))
+      expect(capturedHook!.current.eewNoForecastSettledKeys.has('evt-1')).toBe(true)
+    })
   })
 
   // 単独点処理・深発地震はその報に予想震度が載らない。待っても結論は理由付きの
@@ -2216,7 +2346,8 @@ describe('復元後に予報から警報へ上がったとき、区分は必ず 
     const d = setupFull(conf)
     d.restore(pre.map(entry) as never)
     d.handleLiveEvent(makeEEW({ serial: 4, scaleTo: 50, severity: 'Warning', ...live }))
-    await vi.advanceTimersByTimeAsync(30000)
+    // 予想震度の付かない待ちが切れると画面用の印（state）が動くので act() で包む
+    await act(() => vi.advanceTimersByTimeAsync(30000))
     await flushMicrotasks()
     // **数えるのは発話の本数ではなく「区分を名乗った発話」の本数。** 前置き
     // （「緊急地震速報に切り替わりました。」）と第 1 フェーズの名乗り（「緊急地震速報、〇〇で
@@ -2644,5 +2775,87 @@ describe('いま声が語っているカードの配線', () => {
     await act(() => vi.advanceTimersByTimeAsync(1000))
     act(() => { capturedResult!.resetTracking() })
     expect(stub.calls).toContain('reset')
+  })
+})
+
+// 標準版は Yahoo と P2PQuake が同じ報を運ぶ。2 通目には受信側が「同じ報」の印
+// （`LiveEventMeta.eewSameReport`）を付ける。印の付いた報では通知音を鳴らし直さないが、
+// 読み上げは止めない —— 後から来た経路が運んだ欄（区域など）で最新の値が変わりうる
+// （2026-10-18 ユーザー承認「最初の 1 通だけ」）。
+describe('別の経路から届いた同じ報（標準版）', () => {
+  const soundCalls = () => vi.mocked(playAlertSound).mock.calls.length
+
+  beforeEach(() => { vi.mocked(playAlertSound).mockClear() })
+
+  // 正: 印の付いた続報では鳴らさない
+  it('印の付いた報では通知音を鳴らさない', async () => {
+    const handle = setup({ soundEnabled: true })
+    handle(makeEEW({ serial: 1 }))
+    const afterFirst = soundCalls()
+    expect(afterFirst).toBeGreaterThan(0)
+    handle(makeEEW({ serial: 2 }), { eewSameReport: true })
+    expect(soundCalls()).toBe(afterFirst)
+  })
+
+  // 対照: 印が無ければ続報でも従来どおり鳴る
+  it('印が無ければ続報でも通知音を鳴らす', async () => {
+    const handle = setup({ soundEnabled: true })
+    handle(makeEEW({ serial: 1 }))
+    const afterFirst = soundCalls()
+    handle(makeEEW({ serial: 2 }))
+    expect(soundCalls()).toBeGreaterThan(afterFirst)
+  })
+
+  // 安全弁: 読み上げは止めない（後から来た経路が運んだ値を声にする）
+  it('印の付いた報でも、変わった予想震度は読み上げる', async () => {
+    const handle = setup()
+    handle(makeEEW({ serial: 1, scaleTo: 45 }))
+    await advance(2000)
+    speakMock.mockClear()
+    handle(makeEEW({ serial: 2, scaleTo: 50 }), { eewSameReport: true })
+    await advance(2000)
+    expect(spokenTexts().join('')).toContain('5強')
+  })
+})
+
+// 誤報取消のブラウザ通知の本文。**DMDATA の取消電文は震源名が空**なので、電文の値だけで組むと
+// 「 の緊急地震速報は取り消されました」になる。直前の報が名乗った震央地名を地震ごとに覚えて使い、
+// 引けなければ名前抜きの文にする（2026-10-14 ユーザー選択「緊急地震速報は取り消されました」）。
+describe('誤報取消の通知の本文', () => {
+  const NAMELESS = { name: '', latitude: -200, longitude: -200 }
+  const notified = () => vi.mocked(showBrowserNotification).mock.calls.filter((c) => c[0] === '緊急地震速報 取消')
+
+  beforeEach(() => { vi.mocked(showBrowserNotification).mockClear() })
+
+  // 正: 取消電文の名前が空でも、直前の報が名乗った名前で通知する。
+  it('取消電文の名前が空なら、直前の報が名乗った震央地名を使う', () => {
+    const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+    handle(makeEEW({ eventId: 'evt-A' }))
+    const warn = vi.spyOn(console, 'warn')
+    handle(makeEEW({ eventId: 'evt-A', serial: 2, cancelled: true, hypocenter: NAMELESS }))
+    expect(notified().map((c) => c[1])).toEqual(['日向灘 の緊急地震速報は取り消されました'])
+    expect(warn.mock.calls.filter((c) => String(c.join(' ')).includes('震央地名を引けない'))).toEqual([])
+    warn.mockRestore()
+  })
+
+  // 安全弁: 自動解除で追跡を落とした後に遅れて届いた取消でも名前を引ける。
+  it('自動解除の後に遅れて届いた取消でも、覚えた名前を使う', () => {
+    const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+    handle(makeEEW({ eventId: 'evt-A' }))
+    handle({ ...makeEEW({ eventId: 'evt-A', serial: 2, cancelled: true }), expired: true })
+    handle(makeEEW({ eventId: 'evt-A', serial: 3, cancelled: true, hypocenter: NAMELESS }))
+    expect(notified().map((c) => c[1])).toEqual(['日向灘 の緊急地震速報は取り消されました'])
+  })
+
+  // 対照: 名乗った報を一度も受けていなければ、名前抜きの文にする（空の名前を差し込まない）。
+  it('名前を引けなければ「緊急地震速報は取り消されました」', () => {
+    const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+    handle(makeEEW({ eventId: 'evt-B', hypocenter: NAMELESS }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    handle(makeEEW({ eventId: 'evt-B', serial: 2, cancelled: true, hypocenter: NAMELESS }))
+    expect(notified().map((c) => c[1])).toEqual(['緊急地震速報は取り消されました'])
+    // 画面に出ていた地震なのに名前を引けなかったことは記録に残す（記憶の鍵ずれと見分けるため）
+    expect(warn.mock.calls.filter((c) => String(c.join(' ')).includes('震央地名を引けない'))).toHaveLength(1)
+    warn.mockRestore()
   })
 })
