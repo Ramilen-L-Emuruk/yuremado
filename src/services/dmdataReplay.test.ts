@@ -1944,7 +1944,11 @@ describe('fetchDmdataQuakeHistory', () => {
   // 「読めないものは据え置いて種別だけで比べる」形だと、読めない a と読める b・c について
   // a=b・a=c なのに b<c が成り立ちうる（`Array.prototype.sort` の結果が実装依存になる）。
   // 読めない時刻を末尾へ寄せることで全順序になり、並びが決まる。
-  it('安全弁: 読めない発表時刻は末尾へ寄せ、読める分の並びを崩さない', async () => {
+  //
+  // **本体の発表時刻が読めない電文は、パーサーが time を空にして返す**（→ `readTelegramDateTime`。
+  // 2026-10-19 ユーザー承認「1 本へ縮める (推奨)」）。電文そのものは捨てないので取りこぼしには
+  // 数えず、空の time として末尾へ並ぶ（据え置くかは統合側 `quakeHoldBack` の判断）。
+  it('安全弁: 本体の発表時刻が読めない電文は空の time で末尾へ寄せ、取りこぼしに数えない', async () => {
     const gz = await dayArchive([
       { id: 'aaaaaaa1', eventId: '20260810020000', time: '2026-08-10T02:05:00+09:00' },
       // 目録の時刻は読めるが、**電文本体の発表時刻**が読めない形（目録側が読めない電文は
@@ -1956,14 +1960,18 @@ describe('fetchDmdataQuakeHistory', () => {
 
     const result = await fetchDmdataQuakeHistory('key', new Date('2026-08-10T12:00:00+09:00'), 7, false, null)
 
-    // 読めない 1 件も捨てない（同一性の判定に使う時刻を落とさない方針）
+    // 読めない 1 件も電文としては捨てない（時刻だけが空になる）
     expect(result.quakes).toHaveLength(3)
-    // 01:05 → 02:05 → 読めない分、の順
+    // 01:05 → 02:05 → 読めない分（空）、の順
     expect(result.quakes.map(q => q.time)).toEqual([
       '2026-08-10T01:05:00+09:00',
       '2026-08-10T02:05:00+09:00',
-      'これは日時ではない',
+      '',
     ])
+    // 空になったのは時刻だけで、どの電文かは失っていない
+    expect(result.quakes[2].id).toContain('20260810030000')
+    // 解析には成功しているので、取りこぼし（skipped）には数えない
+    expect([...result.skippedByDay.values()].reduce((a, b) => a + b, 0)).toBe(0)
   })
 
   // 安全弁: 日は新しい順に処理するので、並べ直さないと日をまたいだ並びが逆になる。

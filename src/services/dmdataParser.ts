@@ -165,7 +165,9 @@ function parseForecastInt(range: Record<string, unknown>): { scale: IntensitySca
  * （震度側は対応済みだったのに長周期側だけ抜けていた）。上限には下限側の値を採り、
  * 「程度以上」はフラグで持ち越して表示・読み上げで語を補う。
  */
-function parseForecastLgInt(range: Record<string, unknown>): { cls: LpgmClass | undefined; over: boolean } {
+function parseForecastLgInt(
+  range: Record<string, unknown>,
+): { cls: LpgmClass | undefined; over: boolean; belowClass1: boolean } {
   const fromStr = str(range.from)
   const toStr = str(range.to)
   const pick = (v: string): LpgmClass | undefined => {
@@ -175,10 +177,16 @@ function parseForecastLgInt(range: Record<string, unknown>): { cls: LpgmClass | 
   if (toStr === DMDATA_INTENSITY_OVER) {
     const from = pick(fromStr)
     // 下限が読めなければ「程度以上」も意味を成さない（「不明程度以上」を作らない）。
-    return { cls: from, over: from !== undefined }
+    return { cls: from, over: from !== undefined, belowClass1: false }
   }
   // over 以外は従来どおり「to があれば to・空なら from」。
-  return { cls: pick(toStr || fromStr), over: false }
+  //
+  // **"0" は「予測なし」と分けて持つ**（`belowClass1`）。解説資料 Ⅱ.21 2-1-2 の値域は "0"〜"4" で、
+  // 0 は階級1未満の予測。手元の控え（緊急地震速報 3 日分・62 地震・660 通）のうち最大の階級が 0 の報が 256 通あった。1〜4 の欄には
+  // 入れない —— その欄を読む側はどこも「1〜4 か、無いか」で書かれている（2026-10-19 ユーザー承認
+  // 「0 を持ち、表示は今のまま (推奨)」「別の欄で持つ (推奨)」）
+  const chosen = toStr || fromStr
+  return { cls: pick(chosen), over: false, belowClass1: chosen === '0' }
 }
 
 const VXSE_ISSUE_TYPE: Record<string, IssueType> = {
@@ -507,20 +515,13 @@ function xmlText(el: Element | null): string {
   return el?.textContent?.trim() ?? ''
 }
 
-const JST_OFFSET_MS = 9 * 3600_000
-
 /**
- * 発表時刻を読む。`Head/ReportDateTime` が空なら `Control/DateTime` へ落ちる。
+ * 発表時刻（`Head/ReportDateTime`）を読む。日時として読めない値・時間帯を明示していない値は空にして
+ * 記録する（→ `readTelegramDateTime`）。
  *
- * **落ちた値はタイムゾーン表記を JST へ揃える。** 実電文 135 通では `Head/ReportDateTime` が
- * 常に JST（`+09:00`）、`Control/DateTime` が常に UTC（`Z`）だった。揃えずに落ちると、
- * その電文だけ `2026-08-23T13:47:32Z`、他は `2026-08-23T22:47:00+09:00` という形になる。
- * 地震情報の続報判定（`utils/quakeMerge.ts` の `mergeQuakeInto`）は **`Date` を経由しない
- * 文字列の辞書順**で新旧を比べるため、同じ時刻でも UTC 表記の側が必ず小さくなり、
- * **その報は永久に「古い」と判定されて捨てられる。**
- *
- * 手元のサンプルでは `ReportDateTime` が常に埋まっていて受け皿は一度も通らなかったが、
- * 通ったときに例外もログも出さずに壊れる形なので塞いでおく。
+ * **`Control/DateTime` へは落ちない。** `Head/ReportDateTime` は全種別で必須の要素で、実電文で欠けた
+ * 例は無い（EEW 80,725 通・控え 1,226 通）。空になった地震情報は `utils/quakeMerge.ts` の
+ * `quakeHoldBack` が「発表時刻が空」として据え置く（2026-10-19 ユーザー承認「1 本へ縮める (推奨)」）。
  *
  * **なお `Control/DateTime` は秒値まで有効で、`Head/ReportDateTime` はそれを分へ切り捨てた値**
  * （実電文 135 通のうち 96 通で最大 55 秒ずれ、符号は常に負）。解説資料 Ⅰ.（ⅱ）8 は
@@ -536,31 +537,7 @@ const JST_OFFSET_MS = 9 * 3600_000
  *   置かないのは、種別を足したときの決め忘れを型検査で捕まえるため
  */
 function readReportDateTime(doc: Document, kindLabel: string, logPrefix: string): string {
-  const report = xmlText(xmlQ(doc, 'ReportDateTime'))
-  if (report) {
-    // **主経路は値を捨てず、記録だけ残す。** 下の受け皿と扱いが違うのは意図したもの ——
-    // 発表時刻は全種別の骨格で、空にした場合に何が壊れるか（続報の新旧判定・表示・共有
-    // カード・読み上げ）を確かめていない。受け皿は元から空へ倒す作りで、そちらは
-    // `Head/ReportDateTime` が欠けた電文しか通らないため影響範囲が狭い。
-    warnIfUnreadableDateTime(logPrefix, `${kindLabel}の発表時刻`, report, '空にしたときの影響を確かめていない')
-    return report
-  }
-  const control = xmlText(xmlQ(doc, 'DateTime'))
-  if (!control) return ''
-  // **読めない値をそのまま通さない。** 通すと以降の時刻比較がすべてこの値に引きずられる。
-  // 空にすれば `mergeQuakeInto` が「発表時刻が空の電文」として据え置く（安全側）。
-  //
-  // **時間帯を明示していない値も通さない。** `2026-08-08T18:02:00` のようにオフセットが無いと
-  // `Date.parse` は**実行環境のローカル時刻**として解釈する。このアプリは利用者のブラウザで
-  // 動くので、同じ電文が端末ごとに違う時刻になり、しかも「読めない」とも判定されない
-  // （`Number.isNaN` は素通りする）。実電文は常に `Z` 付きだが、静かにずれる形なので弾く。
-  // 判定は `readableDateTimeMs` に集約してある（この 2 段を書き写すと片方だけずれる）。
-  const ms = readableDateTimeMs(control)
-  if (ms === null) {
-    reportUnreadableTelegramDateTime(logPrefix, `${kindLabel}の発表時刻`, control, '空として扱います')
-    return ''
-  }
-  return new Date(ms + JST_OFFSET_MS).toISOString().replace(/\.\d{3}Z$/, '+09:00')
+  return readTelegramDateTime(logPrefix, `${kindLabel}の発表時刻`, xmlText(xmlQ(doc, 'ReportDateTime')))
 }
 
 /**
@@ -610,116 +587,38 @@ function readReportSerial(doc: Document, kindLabel: string, logPrefix: string): 
 const HAS_EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:?\d{2})$/
 
 /**
- * 日時として使えるならミリ秒値、使えなければ `null`。読めることと、時間帯を明示していることの
- * 2 段で見る。
+ * 読めない日時の記録の間引き。**要素の種別ごとに、同じ値では二度鳴らさない。**
  *
- * 判定と値を 1 回で返すのは、`readReportDateTime` が判定の後にミリ秒値を使うため
- * （別々にすると `Date.parse` を 2 度呼ぶことになる）。
- */
-function readableDateTimeMs(raw: string): number | null {
-  const ms = Date.parse(raw)
-  return Number.isFinite(ms) && HAS_EXPLICIT_TIMEZONE.test(raw) ? ms : null
-}
-
-/** 日時として使える値か。値が要らない呼び出し元はこちら。 */
-function isReadableDateTime(raw: string): boolean {
-  return readableDateTimeMs(raw) !== null
-}
-
-/**
- * 読めない日時の記録。**要素の種別ごとに、同じ値では二度鳴らさない。**
- *
- * ここの呼び出しは繰り返しの中にある（津波なら区域・潮位観測点・沖合観測点でそれぞれ）。
- * 上流の日時書式がまとめて変わると、1 通の電文で観測点の数だけ同じ行が並び、**他の警告が
- * 埋もれる**。表示の整形（`formatters.ts`）が同じ理由で間引いているので、濃さを揃える。
- *
- * 種類が上限を超えたあとも時間で間引いて出し続ける（黙らせない理由は `createFirstSeenLogGate`）。
+ * 呼び出しは繰り返しの中にある（津波なら区域・潮位観測点・沖合観測点でそれぞれ）。上流の日時書式が
+ * まとめて変わると、1 通の電文で観測点の数だけ同じ行が並び、**他の警告が埋もれる**。表示の整形
+ * （`formatters.ts`）が同じ理由で間引いているので、濃さを揃える。種類が上限を超えたあとも時間で
+ * 間引いて出し続ける（黙らせない理由は `createFirstSeenLogGate`）。
  */
 const gateTelegramDateTime = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
 
-function reportUnreadableTelegramDateTime(logPrefix: string, label: string, raw: string, disposition: string): void {
-  gateTelegramDateTime(`${logPrefix} ${label}`, raw, overflowed => {
-    const tail = overflowed
-      ? `（読めない値が ${UNREADABLE_VALUE_LOG_KINDS} 種類を超えたため、以後は間引いて記録します）`
-      : ''
-    log.warn(`${logPrefix} ${label}を日時として読めません（${disposition}）: "${raw}"${tail}`)
-  })
-}
-
 /**
  * 電文の日時要素を読む。**日時として読めない値・時間帯を明示していない値は捨てて記録する。**
+ * 電文の日時はすべてここを通す（2026-10-19 ユーザー承認「1 本へ縮める (推奨)」。値を残して記録だけ
+ * する形は持たない —— 同じ地震かを見分ける時刻も、捨てて空として扱う。同日の問い「今は値を残している
+ * 4 か所…も、時間帯が読めなければ値を捨てる形にする？」→「4 か所も捨てる (推奨)」）。
  *
- * `readReportDateTime` / `readObservationDateTime` と同じ厳しさで見る。片方だけ検証すると、
- * 隣り合った 2 つの時刻で守りの強さが食い違う。
- *
- * **時間帯の明示まで確かめるのがこの関数の要**。`2026-01-01T12:00:00` のようにオフセットが
- * 無い値を `Date` は実行環境のローカル時刻として解釈し、**有効な日時を返す** —— 表示側の
- * ガード（`formatters.ts` の `readDateTime`）では原理的に捕まらず、同じ電文が端末ごとに
- * 違う時刻として画面に出る。実電文はすべて `Z` か `+09:00` を持つ。
- *
- * **同一性の判定に使う時刻へは当てない**（下記「捨てずに記録だけ残す」）。空文字へ倒すと、
- * 別々の電文が同じキーを共有して 1 つの地震として束ねられる —— 読めない時刻をキーに残すより
- * 重い事故になる。
+ * **時間帯の明示まで確かめるのがこの関数の要**。`2026-01-01T12:00:00` のようにオフセットが無い値を
+ * `Date` は実行環境のローカル時刻として解釈し、**有効な日時を返す** —— 表示側のガード
+ * （`formatters.ts` の `readDateTime`）では原理的に捕まらず、同じ電文が端末ごとに違う時刻として
+ * 画面に出る。実電文はすべて `Z` か `+09:00` を持つ。
  *
  * @returns 読めた値。読めなければ空文字（要素が無いのと同じ扱いへ倒す）
  */
 function readTelegramDateTime(logPrefix: string, label: string, raw: string): string {
   if (!raw) return ''
-  if (!isReadableDateTime(raw)) {
-    reportUnreadableTelegramDateTime(logPrefix, label, raw, '無視します')
-    return ''
-  }
-  return raw
-}
-
-/**
- * 日時として読めないことを記録するだけで、値は捨てない。
- *
- * **捨てるほうが害になる時刻に使う。** 残す理由は呼び出し元ごとに違う。
- *
- * - **同一性の判定に使う時刻**（地震情報の `earthquake.time`・津波の `originTime`）。
- *   空文字へ倒すと、識別子を持たない電文どうしが同じキーになって束ねられる
- * - **その電文に必須の要素**（長周期地震動観測情報の `OriginTime`）。捨てると電文ごと
- *   落ちる作りなので、階級の情報まで道連れになる
- * - **落としたときの影響を確かめていない時刻**（全種別の発表時刻。`readReportDateTime` の
- *   主経路）。空にすると続報の新旧判定・表示・共有カード・読み上げのどこが壊れるかを
- *   調べていない
- *
- * **理由を引数で受け取るのは、文面で決めつけないため。** 固定文にすると、長周期の
- * `OriginTime`（同一性の判定には使わない）で「同一性の判定に使うため」と記録され、
- * 次に調べる人を別の場所へ誘導する。
- *
- * 表示・読み上げは `formatters.ts` の `readDateTime` が受け止める（時刻の句ごと落とす）。
- *
- * @param keepReason 値を残す理由。「〜ため値は残します」の形に埋め込む
- */
-function warnIfUnreadableDateTime(logPrefix: string, label: string, raw: string, keepReason: string): void {
-  if (!raw || isReadableDateTime(raw)) return
-  reportUnreadableTelegramDateTime(logPrefix, label, raw, `${keepReason}ため値は残します`)
-}
-
-/**
- * 観測状況を確定した時刻（`Head/TargetDateTime`）。**日時として読めない値は捨てる。**
- *
- * **`readReportDateTime` と同じ厳しさで見る。** 片方だけ検証すると、隣り合った 2 つの時刻で
- * 守りの強さが食い違う。
- *
- * 表示側（`TsunamiTab` の `formatTimeMin`）も読めない値を弾くようになったので、守りは二重。
- * それでも入口で捨てるのは、**時間帯を明示していない値は表示側では捕まえられない**ため
- * （`Date` がローカル時刻として解釈し、端末ごとに違う時刻が出る）。
- */
-function readObservationDateTime(headEl: Element): string | undefined {
-  const raw = xmlText(xmlChild(headEl, 'TargetDateTime'))
-  if (!raw) return undefined
-  // **時間帯の明示まで確かめる**（`readReportDateTime` と同じガード）。`Date.parse` は
-  // オフセットの無い `2026-01-01T12:00:00` を**実行環境のローカル時刻**として解釈し、
-  // 有限値を返す —— つまり `Number.isFinite` だけでは素通りする。このアプリは利用者の
-  // ブラウザで動くので、同じ電文が端末ごとに違う時刻として画面に出る。
-  if (!isReadableDateTime(raw)) {
-    reportUnreadableTelegramDateTime(TSUNAMI_LOG_PREFIX, '観測状況を確定した時刻', raw, '無視します')
-    return undefined
-  }
-  return raw
+  if (Number.isFinite(Date.parse(raw)) && HAS_EXPLICIT_TIMEZONE.test(raw)) return raw
+  gateTelegramDateTime(`${logPrefix} ${label}`, raw, overflowed => {
+    const tail = overflowed
+      ? `（読めない値が ${UNREADABLE_VALUE_LOG_KINDS} 種類を超えたため、以後は間引いて記録します）`
+      : ''
+    log.warn(`${logPrefix} ${label}を日時として読めません（無視します）: "${raw}"${tail}`)
+  })
+  return ''
 }
 
 // 度分表記（"+4012.6" = 北緯 40 度 12.6 分）を 10 進度へ直す。読めない値は NaN を返す。
@@ -730,10 +629,6 @@ function readObservationDateTime(headEl: Element): string | undefined {
 // **分が 60 以上の値は捨てる**（例: "+4065.5"）。分として成り立たない値なので、有限性しか
 // 見ていない呼び出し元の防御を素通りさせず、ここで NaN にして落とす。
 //
-// **このガードが守るのはそこまで。** 度単位の座標（"+40.2"）が誤って度分の要素に入っていても
-// 「0 度 40.2 分」で分は 60 未満のため、ここは通ってしまう。その取り違えを捕まえているのは
-// 下記 `degreeMinuteCoordProblem`（度単位側との突き合わせ）で、**別の防御**。
-// 片方を消してもう片方が代わりを務めることはない。
 function degreeMinuteToDegrees(v: number): number {
   const sign = v < 0 ? -1 : 1
   const abs = Math.abs(v)
@@ -766,32 +661,10 @@ function parseJmaCoord(s: string, degreeMinute = false): { lat: number; lng: num
 // JSON 変換もそちらを 10 進度へ直した値を返す。丸めた側を採ると深さが 4km ずれた実例がある
 // （2026-06-25 岩手県沖 M7.2: 度単位 40km ／度分 44km）。
 //
-// **丸めた側へ落ちたことは必ず記録する。** ずれは有効な座標の形をしていて、画面にも
-// 読み上げにも「おかしい」とは出ない。落ちた事実を残さないと、4km のずれが起きていることに
-// 誰も気づけない。ただし記録するのは VXSE61 のときだけ——他の種別は Coordinate を元から
-// 1 つしか持たず、そこで鳴らすと正常系が警告で埋まる。
-// 度分から起こした座標を、度単位の座標と突き合わせて許す差。度単位側は同じ震源を 0.1 度へ
-// 丸めた値なので、正しければ差は 0.05 度に収まる。実電文 8 通で測った最大の食い違いは
-// 0.048 度で、その約 2 倍を取っている。
-const COORD_CROSS_CHECK_TOLERANCE_DEG = 0.1
-
-// 度分から起こした座標が信用できるか。信用できないなら理由を返す（記録の文面に使う）。
-//
-// **有限性だけでは足りない。** 度単位の値（"+40.2"）が誤って度分の要素に入っていると
-// 「0 度 40.2 分」＝ 0.67 度という、有限だがまるで違う座標になる。度単位の座標は同じ震源を
-// 丸めたものなので、突き合わせればこの取り違えを捕まえられる。
-function degreeMinuteCoordProblem(
-  dm: { lat: number; lng: number },
-  plain: { lat: number; lng: number },
-): string | null {
-  if (!Number.isFinite(dm.lat) || !Number.isFinite(dm.lng)) return '座標を読めません'
-  // 突き合わせる相手が無い電文（度分しか持たない）は、そのまま採るしかない。
-  if (!Number.isFinite(plain.lat) || !Number.isFinite(plain.lng)) return null
-  const off = Math.max(Math.abs(dm.lat - plain.lat), Math.abs(dm.lng - plain.lng))
-  if (off > COORD_CROSS_CHECK_TOLERANCE_DEG) return `度単位の座標と ${off.toFixed(2)} 度食い違います`
-  return null
-}
-
+// **度分の要素が無くて丸めた側へ落ちたときは記録する。** ずれは有効な座標の形をしていて、画面にも
+// 読み上げにも「おかしい」とは出ない。ただし記録するのは VXSE61 のときだけ——他の種別は Coordinate を
+// 元から 1 つしか持たず、そこで鳴らすと正常系が警告で埋まる。度分の要素があればそれを採り、度分として
+// 読めなければ座標が読めないので電文ごと捨てる（度単位へは落とさない）。
 /**
  * 電文の運用種別（`Control/Status`。電文解説資料 Ⅰ.3）を読む。
  *
@@ -844,13 +717,11 @@ function readHypocenterCoord(areaEl: Element, headType: string): { lat: number; 
     }
     return plain
   }
-  const parsed = parseJmaCoord(xmlText(dm), true)
-  const problem = degreeMinuteCoordProblem(parsed, plain)
-  if (!problem) return parsed
-  // 電文ごと捨てると震源要素更新が丸ごと消えるため、丸めた側へ落として記録を残す
-  // （退避先が無ければ座標なしのまま返り、呼び出し元の有限性チェックで電文が捨てられる）。
-  log.warn(`[quake XML] ${headType}: 「震源位置（度分）」の${problem}。度単位へ丸めた座標を使います: ${xmlText(dm)}`)
-  return plain
+  // **度単位の座標とは突き合わせない。** 2 つの座標は `@type` で区別される（解説資料 Ⅱ.36
+  // 1-3-1-2）ので、度分と名乗る要素を度分として読めば足りる。読めなければ呼び出し元の有限性の
+  // 検査で電文ごと捨てられ、記録が残る（2026-10-19 ユーザー承認。問い「VXSE61 の度分座標を度単位と
+  // 突き合わせる検査」→「外す (推奨)」）
+  return parseJmaCoord(xmlText(dm), true)
 }
 
 /**
@@ -1187,19 +1058,14 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
 
   const eventId = xmlText(xmlQ(doc, 'EventID'))
   const serial = xmlText(xmlQ(doc, 'Serial')) || '1'
-  // **他の XML パーサーと同じ経路で読む。** かつてここだけ素読みで、`Control/DateTime` への
-  // 受け皿も、読めない値・時間帯を明示しない値を空にする検証も持っていなかった。
+  // **他の XML パーサーと同じ経路で読む**（`readReportDateTime`。`Control/DateTime` へは落ちない）。
+  // 読めない値・時間帯を明示しない値は記録して空にする。空の発表時刻は、自動解除の時刻計算
+  // （`utils/eew.ts` の `calcEEWCancelTime`）が震源時刻の側へ落として受け止める。
   //
-  // 緊急地震速報では `Head/ReportDateTime` と `Control/DateTime` が**秒まで一致する**。
-  // 地震情報は `ReportDateTime` が分へ丸められて最大 55 秒ずれるが、こちらにその丸めは
-  // 無いので、受け皿へ落ちても指す瞬間は変わらない。
+  // 緊急地震速報では `Head/ReportDateTime` と `Control/DateTime` が**秒まで一致する**（地震情報は
+  // 分へ丸められて最大 55 秒ずれるが、こちらにその丸めは無い）。
   //
-  // **受け皿が実運用で働くことは期待していない。** `Head/ReportDateTime` の欠落は 1 通も
-  // 観測できていない。それでも揃えるのは、欠けた電文が来たときに**例外もログも出さずに**
-  // 発表時刻が空になり、自動解除の時刻計算（`utils/eew.ts` の `calcEEWCancelTime`）が
-  // Invalid Date へ落ちるため。
-  //
-  // 上の 2 つは DMDATA アーカイブの `eew.forecast` と `eew.warning`（2022-07-20〜2026-09-12・
+  // 秒の一致と欠落の件数は DMDATA アーカイブの `eew.forecast` と `eew.warning`（2022-07-20〜2026-09-12・
   // XML 80,725 通。2026-09-13 に数えた値）を走査した実測。差の分布は 0 秒のみ、
   // `ReportDateTime` の欠落は 0 通だった。**目録は後から縮むので、別の日に数えた値とは
   // 範囲が同じでも数が食い違いうる**（→ `docs/spec/quake-spec.md` §6.2）。
@@ -1268,7 +1134,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
   })
   const { scale: forecastScale, orAbove: forecastOrAbove } =
     parseForecastInt(intRange(forecastEl ? xmlChild(forecastEl, 'ForecastInt') : null))
-  const { cls: lgClass, over: lgClassOver } =
+  const { cls: lgClass, over: lgClassOver, belowClass1: lgClassBelow1 } =
     parseForecastLgInt(intRange(forecastEl ? xmlChild(forecastEl, 'ForecastLgInt') : null))
 
   const areas: EEWRegion[] = []
@@ -1313,7 +1179,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
       }
       const fi = intRange(xmlChild(a, 'ForecastInt'))
       const { scale: scaleTo, orAbove } = parseForecastInt(fi)
-      const { cls: lgVal, over: lgOver } = parseForecastLgInt(intRange(xmlChild(a, 'ForecastLgInt')))
+      const { cls: lgVal, over: lgOver, belowClass1: lgBelow1 } = parseForecastLgInt(intRange(xmlChild(a, 'ForecastLgInt')))
       // 主要動の到達状況。**電文は同じ事実を 2 通りで伝えてくる** —— 区域の `Condition`
       //（「既に主要動到達と推測」。解説資料 Ⅱ.21 2-1-5-3-7）と、種別コードの下 1 桁
       //（01/11。コード表 12。→ `isEewArrivedKindCode`）。
@@ -1347,6 +1213,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
         ...(arrived && { arrived: true }),
         lgIntTo: lgVal,
         ...(lgOver && { lgIntToOver: true }),
+        ...(lgBelow1 && { lgIntBelowClass1: true }),
       })
     }
   }
@@ -1479,6 +1346,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     ...(!isCanceled && forecastScale > 0 && forecastOrAbove && { forecastMaxScaleOrAbove: true }),
     forecastMaxLpgmClass: isCanceled ? undefined : lgClass,
     ...(!isCanceled && lgClassOver && { forecastMaxLpgmClassOver: true }),
+    ...(!isCanceled && lgClassBelow1 && { forecastMaxLpgmBelowClass1: true }),
     issue: { eventId, serial, time: reportTime },
     areas: isCanceled ? [] : areas,
     // 固定付加文（`Comments/WarningComment/Text`）。地震情報・津波では既に読んでいたが EEW だけ
@@ -1587,14 +1455,11 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   // 津波側の選択（`sourceEarthquakeTime`）と同じ規則であることは
   // `docs/spec/tsunami-spec.md` §4 に書いてある。
   //
-  // **読めない値でも捨てない。** この値は `earthquake.time` になり、`eventId` を持たない経路
-  // （P2PQuake）の同一性キー（`eventKey`）に入る。空文字へ倒すと別々の地震が同じキーになって
-  // 1 枚のカードへ束ねられる —— 読めない時刻を残すより重い。記録だけ残し、表示・読み上げ側の
-  // ガード（`formatters.ts` の `readDateTime`）に受け止めさせる。
-  const earthquakeTime = earthquakeEl
+  // 読めない値は空にする（→ `readTelegramDateTime`）。この値は `earthquake.time` になり同一性の
+  // キーにも入るが、実電文で読めなかった例は無いので、値を残す受け皿は置かない
+  const earthquakeTime = readTelegramDateTime(DMDATA_LOG_PREFIX, '地震の発現時刻（または発生時刻）', earthquakeEl
     ? (xmlText(xmlQ(earthquakeEl, 'ArrivalTime')) || xmlText(xmlQ(earthquakeEl, 'OriginTime')))
-    : xmlText(xmlQ(doc, 'TargetDateTime'))
-  warnIfUnreadableDateTime(DMDATA_LOG_PREFIX, '地震の発現時刻（または発生時刻）', earthquakeTime, '同一性の判定に使う')
+    : xmlText(xmlQ(doc, 'TargetDateTime')))
 
   // Magnitude 要素が空・欠落の電文は「規模不明」。`|| 0` で 0 に潰すと M0.0 と実測値のように
   // 表示・読み上げされるため、NaN のまま返して不明判定（formatters の hasMagnitude）に委ねる。
@@ -1950,7 +1815,7 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   // （`parseIssueSourceFromXml` が `Control` 直下に限っているのと同じ理由）。
   const tsunamiHeadEl = xmlQ(doc, 'Head')
   const observationDateTime = (headType === 'VTSE51' || headType === 'VTSE52') && tsunamiHeadEl
-    ? readObservationDateTime(tsunamiHeadEl)
+    ? (readTelegramDateTime(TSUNAMI_LOG_PREFIX, '観測状況を確定した時刻', xmlText(xmlChild(tsunamiHeadEl, 'TargetDateTime'))) || undefined)
     : undefined
   // 見出し文。**他の種別と同じ読み手を通す**（→ `readHeadlineText`）——
   // 同じ事実を 2 通りの書き方で表すと、片方だけ静かにずれる。
@@ -2008,11 +1873,9 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
     // `Hypocenter` 直下（`Source`）。**位置要素は長周期側と同じ読み手を通す** ——
     // 経路ごとに書くと、いま直したのと同じ取りこぼしがまた起きる。
     //
-    // 2 つの時刻は扱いが違う。発生時刻は**読めなくても捨てない** —— `isTsunamiNewFire` が、
-    // 識別子が両側そろっていない電文の同一性判定にこの値を使うため、空へ倒すと別々の津波が
-    // 同じものとして扱われる。発現時刻は表示にしか使わないので捨てる。
-    const sourceOriginTime = xmlText(xmlQ(eqEl, 'OriginTime'))
-    warnIfUnreadableDateTime(TSUNAMI_LOG_PREFIX, '原因地震の発生時刻', sourceOriginTime, '同一性の判定に使う')
+    // 発生時刻は `isTsunamiNewFire` が識別子のそろわない電文の同一性判定に使うが、読めない値は
+    // 他の時刻と同じく空にする（→ `readTelegramDateTime`）
+    const sourceOriginTime = readTelegramDateTime(TSUNAMI_LOG_PREFIX, '原因地震の発生時刻', xmlText(xmlQ(eqEl, 'OriginTime')))
     const sourceArrivalTime = readTelegramDateTime(TSUNAMI_LOG_PREFIX, '原因地震の発現時刻', xmlText(xmlChild(eqEl, 'ArrivalTime')))
     return {
       hypocenterName: hypoName,
@@ -2540,14 +2403,12 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   const cancelled      = infoType === '取消'
 
   const earthquakeEl = xmlQ(doc, 'Earthquake')
-  // **読めない値でも捨てない。** この要素が無いと電文ごと落とす作り（次の行）なので、
-  // 捨てると階級の情報まで道連れになる。読み上げ側（`ttsText.ts` の `lpgmToText`）が
-  // 時刻の句ごと落として受け止める。
-  const originTime   = earthquakeEl ? xmlText(xmlQ(earthquakeEl, 'OriginTime')) : ''
-  warnIfUnreadableDateTime(DMDATA_LOG_PREFIX, '長周期地震動観測情報の地震発生時刻', originTime, 'この要素が無いと電文ごと落とす')
+  // 読めない値は空にする（→ `readTelegramDateTime`）。空なら次の行で電文ごと捨てる
+  const originTime   = readTelegramDateTime(DMDATA_LOG_PREFIX, '長周期地震動観測情報の地震発生時刻',
+    earthquakeEl ? xmlText(xmlQ(earthquakeEl, 'OriginTime')) : '')
 
   if (cancelled) return { ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }), id, eventId, time: reportDateTime, originTime, maxClass: 0, cancelled: true }
-  if (!originTime) return dropTelegram(DMDATA_LOG_PREFIX, 'VXSE62（長周期地震動観測情報）に OriginTime がありません')
+  if (!originTime) return dropTelegram(DMDATA_LOG_PREFIX, 'VXSE62（長周期地震動観測情報）の OriginTime が無いか、日時として読めません')
 
   // VXSE62 XML: Intensity > Observation > MaxLgInt が最大長周期地震動階級
   const obsEl       = xmlQ(doc, 'Observation')
@@ -2819,14 +2680,6 @@ const NANKAI_STAGE_KEYWORDS: readonly string[] = ['巨大地震警戒', '巨大�
 /** 解説情報が `Body/EarthquakeInfo/InfoKind` に名乗る値（電文解説資料 Ⅱ.41 1-1）。 */
 const NANKAI_COMMENTARY_INFO_KIND = '南海トラフ地震関連解説情報'
 
-/**
- * 解説情報の地震関連情報番号コード（200＝定例解説／210・219＝臨時解説）。
- *
- * **臨時情報と同じ番号体系にある。** 段階のコードだけを見ると解説情報を段階として読むので、
- * 段階の判定から明示的に外す。
- */
-const NANKAI_COMMENTARY_CODES: ReadonlySet<string> = new Set(['200', '210', '219'])
-
 // REST API 経由の JMA XML（VYSE50: 南海トラフ地震臨時情報）を JMANankai にパース。
 // 段階を判別できない電文（= 解説情報 VYSE51/52）は null を返す。解説情報は
 // parseNankaiCommentaryFromXml で別の型に読む。
@@ -2883,13 +2736,12 @@ export function parseNankaiFromXml(xml: string): JMANankai | null {
   if (!stage) return null
 
   // 本文は EarthquakeInfo 直下の Text（解説情報側の parseNankaiCommentaryFromXml と揃える）。
-  // 実電文の VYSE50 に Comment 要素は無いが、他の地震電文と同じ形が来たときの保険として先に見る。
-  // Body 直下のフォールバックは、EarthquakeInfo を持たない電文形のため。
+  // Body 直下のフォールバックは、EarthquakeInfo を持たない電文形のため。**`Comment` は見ない** ——
+  // 解説資料 Ⅱ.41 の Body に `Comment` は無い（2026-10-19 ユーザー承認。問い「南海トラフ臨時情報・
+  // 後発地震の Comment を先に見る分岐」→「外す (推奨)」）
   const bodyEl      = xmlQ(doc, 'Body')
-  const commentEl   = bodyEl ? xmlQ(bodyEl, 'Comment') : null
   const quakeInfoEl = bodyEl ? xmlQ(bodyEl, 'EarthquakeInfo') : null
-  const bodyText  = (commentEl ? xmlText(xmlQ(commentEl, 'Text')) : '')
-    || (quakeInfoEl ? xmlText(xmlQ(quakeInfoEl, 'Text')) : '')
+  const bodyText  = (quakeInfoEl ? xmlText(xmlQ(quakeInfoEl, 'Text')) : '')
     || (bodyEl ? xmlText(xmlQ(bodyEl, 'Text')) : '')
 
   return {
@@ -2942,10 +2794,6 @@ function resolveNankaiStage(doc: Document, headline: string): { code: string; na
     return { code, name: known }
   }
 
-  // **解説情報のコードは段階として通さない。** 上の `InfoKind` の分岐で弾けているはずだが、
-  // その 1 枚だけに頼ると、名乗りが揺れた電文で解説情報が「段階」として画面へ出る。
-  if (NANKAI_COMMENTARY_CODES.has(code)) return null
-
   // コードは読めたが表に無い。気象庁が段階を増やした場合で、電文の `Name` をそのまま使う。
   // **既定値へ丸めない** —— 知らない段階を「調査中」と名乗ると、警戒の報を軽く見せうる。
   // **帯を引っ込めるかは名称の一致（`kindName === '調査終了'`）で決まる**ので、終了に相当する
@@ -2962,7 +2810,7 @@ function resolveNankaiStage(doc: Document, headline: string): { code: string; na
 }
 
 // REST API 経由の JMA XML（VYSE51/52: 南海トラフ地震関連解説情報）を JMANankaiCommentary に
-// パース。段階を持つ電文（= 臨時情報 VYSE50）は null を返す。
+// パース。臨時情報（VYSE50）は渡されない前提（呼び出し側が電文種別で振り分ける）。
 //
 // 種別は Body/EarthquakeInfo/InfoSerial（地震関連情報番号コード）で判別する。コード表が定める
 // 解説情報の値は 200＝定例解説／210＝臨時解説（次回も臨時）／219＝臨時解説（次回は定例）の 3 つで、
@@ -2978,10 +2826,8 @@ export function parseNankaiCommentaryFromXml(xml: string): JMANankaiCommentary |
   const headEl   = xmlQ(doc, 'Head')
   const headline = headEl ? xmlText(xmlQ(headEl, 'Title')) : ''
 
-  // 段階キーワードを持つのは臨時情報。呼び出し側（dmdata.ts / dmdataReplay.ts）が電文種別で
-  // 振り分けているため通常は発火しない二重防御。単体で呼んだときに臨時情報を取り違えないための
-  // 保険であり、相互排他は dmdataParser.test.ts で固定している。
-  if (NANKAI_STAGE_KEYWORDS.some(k => headline.includes(k))) return null
+  // **臨時情報かどうかはここで見ない。** 呼び出し側（dmdata.ts / dmdataReplay.ts）が電文種別
+  // （VYSE50 と VYSE51/52）で振り分けている（2026-10-19 ユーザー承認。問い「南海トラフ解説情報の二重判定・二重除外」→「外す (推奨)」）
 
   const reportDateTime = readReportDateTime(doc, '南海トラフ地震関連解説情報', DMDATA_LOG_PREFIX)
   // 期限（expireAt）の計算に使うため、日時として解釈できることをここで確かめる。
@@ -3058,10 +2904,14 @@ export function parseVyse60FromXml(xml: string): JMAKohatsu | null {
   const headEl   = xmlQ(doc, 'Head')
   const headline = headEl ? xmlText(xmlQ(headEl, 'Title')) : ''
 
-  const bodyEl    = xmlQ(doc, 'Body')
-  const commentEl = bodyEl ? xmlQ(bodyEl, 'Comment') : null
-  const bodyText  = (commentEl ? xmlText(xmlQ(commentEl, 'Text')) : '')
-    || (bodyEl ? xmlText(xmlQ(bodyEl, 'Text')) : '')
+  // 本文は EarthquakeInfo 直下の Text、無ければ Body 直下の Text（臨時情報の parseNankaiFromXml と揃える。
+  // Body の中で最初に現れる Text を拾うと、並び順しだいで別の節の文を掴む）。**`Comment` は見ない** ——
+  // 解説資料 Ⅱ.42 の Body に `Comment` は無い（2026-10-19 ユーザー承認。問い「南海トラフ臨時情報・後発地震の
+  // Comment を先に見る分岐」→「外す (推奨)」）
+  const bodyEl      = xmlQ(doc, 'Body')
+  const quakeInfoEl = bodyEl ? xmlChild(bodyEl, 'EarthquakeInfo') : null
+  const bodyText    = (quakeInfoEl ? xmlText(xmlChild(quakeInfoEl, 'Text')) : '')
+    || (bodyEl ? xmlText(xmlChild(bodyEl, 'Text')) : '')
 
   // 帯を畳む時刻は発表時刻 + 7日。**電文に期限の要素は無い**（アプリが帯を常駐させないための都合で、
   // 画面にも出さない）。
@@ -3078,16 +2928,8 @@ export function parseVyse60FromXml(xml: string): JMAKohatsu | null {
   const kohatsuMeta = readEarthquakeInfoMeta(doc)
   // **この種別に `NextAdvisory` は無い。** 解説資料 Ⅱ.42 が定める `Body` は `EarthquakeInfo`
   // （`InfoKind` / `Text` / `Appendix`）と `Text` だけで、実電文 7 通でも 0 件
-  // （→ docs/spec/data-sources-spec.md §2「3 種別に共通する要素は 1 箇所で読む」）。
-  //
-  // **それでも記録する。** 共有の読み取りを通るぶん値が入る余地は残っており、その形は
-  // **帯には「次の情報」として出るのに読み上げだけ黙る**ことになる —— 読み上げ側は
-  // この要素が無い前提でブロックを持たせていない（→ `utils/ttsText.ts` の
-  // `TELEGRAM_TEXT_BLOCK_KEYS`）。気象庁が出すようになったことに気づける場所はここだけで、
-  // 黙って通すと非対称の痕跡がどこにも残らない。
-  if (kohatsuMeta.nextAdvisory) {
-    log.warn(`${DMDATA_LOG_PREFIX} VYSE60 に NextAdvisory が入っています（解説資料 Ⅱ.42 は定めていません。読み上げには載りません）: "${kohatsuMeta.nextAdvisory}"`)
-  }
+  // （→ docs/spec/data-sources-spec.md §2「3 種別に共通する要素は 1 箇所で読む」）。来たときの
+  // 警告は置かない（2026-10-19 ユーザー承認。問い「後発地震注意情報の NextAdvisory の警告」→「外す (推奨)」）
 
   return {
     ...(kohatsuOperationStatus && { operationStatus: kohatsuOperationStatus }),

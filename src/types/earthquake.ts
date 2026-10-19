@@ -1044,6 +1044,12 @@ export interface EEWRegion {
    * **語だけが違う** —— 気象庁の表現は「階級3程度以上」（→ `getLpgmClassLabelWithApproxAbove`）。
    */
   lgIntToOver?: boolean
+  /**
+   * 電文が階級 0（階級1未満）を予測したか（`ForecastLgInt` が "0"）。`lgIntTo` は 1〜4 だけを持つので、
+   * 0 の報ではそちらは `undefined` のまま、これが立つ。**画面・読み上げは今は読まない**（電文に無い
+   * のと同じに見せる。2026-10-19 ユーザー承認「0 を持ち、表示は今のまま (推奨)」）
+   */
+  lgIntBelowClass1?: true
 }
 
 /**
@@ -1246,6 +1252,8 @@ export interface EEWAlert {
   forecastMaxLpgmClass?: LpgmClass
   /** 上限を定めない予測（電文の `To="over"`）だったか。→ `EEWRegion.lgIntToOver` */
   forecastMaxLpgmClassOver?: boolean
+  /** 電文全体の最大の予測が階級 0（階級1未満）だったか。→ `EEWRegion.lgIntBelowClass1` */
+  forecastMaxLpgmBelowClass1?: true
   /**
    * 気象庁の固定付加文（`Comments/WarningComment/Text`）。避難行動の呼びかけなどの定型文。
    *
