@@ -1,6 +1,8 @@
 import type { JMAQuake, JMATsunami, EEWAlert, EEWForecastChange, JMANankai, JMANankaiCommentary, JMAKohatsu, EarthquakePoint, IntensityScale, JMALpgm, JMAQuakeCity, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAEstimatedIntensityGrade, EEWRegion, TsunamiArea, TsunamiGrade, TelegramOperationStatus } from '../types/earthquake'
 import { serverNow, serverDate } from './clock'
 import { extractQuakeEventIdFromId } from './quakeMerge'
+import { dmdataTelegramKey } from './telegramKey'
+import { quakeNoticeId } from './dmdataId'
 import { log } from './logger'
 import { INTENSITY_SCALES_ASC } from './intensity'
 import notoHonshinPoints from '../data/noto-honshin-2024-points.json'
@@ -248,7 +250,21 @@ export function createTestEarthquake(useDmdataShape: boolean, operationStatus?: 
       // 震度・津波はDMDATA archive（気象庁電文, VXSE53「震源・震度情報」16:24発表）の
       // 確定報、震源要素（座標・深さ）は同日21:30に発表された「顕著な地震の震源要素更新の
       // お知らせ」（VXSE61）による確定値を採用（速報時の深さ0kmから16kmに更新）。
-      hypocenter: { name: '石川県能登地方', latitude: 37.495, longitude: 137.27, depth: 16, magnitude: 7.6 },
+      hypocenter: {
+        name: '石川県能登地方', latitude: 37.495, longitude: 137.27, depth: 16, magnitude: 7.6,
+        // 震央地名コードと震央補助表現（「輪島の東北東３０ｋｍ付近」）とその材料。**DMDATA 経路だけが
+        // 運ぶ**ので standard 版では渡さない。値は同じ 16:24 の実電文をパーサーへ通したもの
+        // （`npm run build-test-quake`）。座標は上で VXSE61 の確定値に差し替えているので、
+        // **確定座標と 16:24 の補助表現の組み合わせは実配信には無い**（実配信では VXSE61 が震源を
+        // 丸ごと置き換える）。補助表現の行を実機に出すための入口で、値そのものは 16:24 の実電文のもの。
+        ...(useDmdataShape && {
+          code: notoHonshinQuake.earthquake.hypocenter.code,
+          nameFromMark: notoHonshinQuake.earthquake.hypocenter.nameFromMark,
+          markCode: notoHonshinQuake.earthquake.hypocenter.markCode,
+          direction: notoHonshinQuake.earthquake.hypocenter.direction,
+          distanceKm: notoHonshinQuake.earthquake.hypocenter.distanceKm,
+        }),
+      },
       maxScale: 70,
       domesticTsunami: '警報等',
     },
@@ -433,7 +449,7 @@ const TEST_LATE_STATION_COUNT = 6
 const TEST_LATE_CITY_COUNT = 3
 
 /**
- * 種別が前後して届く地震情報のテストデータ（**5 通**）。
+ * 種別が前後して届く地震情報のテストデータ（**7 通**）。
  *
  * 気象庁は同じ地震について**種別の違う電文を前後して発表する**。能登 2024-01-01 の前震は
  * 震度速報 → 震源情報 → 震度速報 → 震源・震度情報 の順で届き、3 通目の時点で見出しが
@@ -448,18 +464,25 @@ const TEST_LATE_CITY_COUNT = 3
  * - **震源情報は震度を持たない**
  * - **続報で区域が増える。** 1 通目は一部の区域だけで、3 通目で出そろう
  * - **報番号（`Head/Serial`）を持つのは震源・震度情報だけ。** 震度速報・震源情報は空要素で届くので
- *   `id` の末尾は 4 通とも `-1` のまま。**通数を数える鍵は電文の作成時刻**（`telegramKey`）で、
+ *   `id` の末尾は 4 通とも `-1` のまま。**通数を数える鍵は電文の種別名と作成時刻の組**（`telegramKey`）で、
  *   ここを持たせないと 2 通目の震度速報が「同じ電文の再送」と見なされて数えられない
  * - **地震の時刻と識別情報は動かさない。** 動かすと別カードが立ち、同じカードへ届かない
  * - **5 通目は観測点・市町村だけが増える。** 区域の最大震度も震源要素も据え置きなので、
  *   読み上げの差分（区域まで）は空になる。「観測地点が追加されましたが、地域ごとの最大震度は
  *   変わっていません。」と読む形を、実機で確かめられる唯一の入口
+ * - **6 通目は震源・震度情報のあとに届く震度速報。** 据え置かれ、カードは変わらない
+ * - **7 通目は観測点の震度が上下する続報**（上げる点と下げる点の数は関数内の定数）。動いた行に
+ *   更新の印が付き、読み上げは「観測された震度が更新されました。」と読む
  */
 export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake[] {
   const base = createTestEarthquake(useDmdataShape)
   const baseMs = new Date(base.time).getTime()
   // n 通目の発表時刻。**同じ値を一意鍵にも使う** —— 実電文の `Control/DateTime` にあたる。
   const at = (index: number) => new Date(baseMs + index * TEST_REPORT_SEQUENCE_DELAY_MS).toISOString()
+  // 一意鍵。DMDSS 版は実電文と同じく種別名（`Control/Title`）と組にする（→ `utils/telegramKey.ts`）。
+  // standard 版は P2PQuake の電文ごとの `id` にあたる値なので、時刻だけで一意になる。
+  const keyOf = (controlTitle: string, time: string) =>
+    (useDmdataShape ? dmdataTelegramKey(controlTitle, time) : time)
   // 震度速報が持つのは区域と都道府県の点だけ（観測点は震源・震度情報から届く）。
   //
   // **`base.points` からは採れない。** standard 版の `createTestEarthquake` は区域の点を落として
@@ -486,7 +509,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   const prompt = (time: string, points: EarthquakePoint[]): JMAQuake => {
     return {
       ...base,
-      telegramKey: time,
+      telegramKey: keyOf('震度速報', time),
       time,
       issue: { ...base.issue, time, type: '震度速報' },
       earthquake: {
@@ -507,7 +530,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   const destinationTime = at(1)
   const destination: JMAQuake = {
     ...base,
-    telegramKey: destinationTime,
+    telegramKey: keyOf('震源に関する情報', destinationTime),
     time: destinationTime,
     issue: { ...base.issue, time: destinationTime, type: '震源情報' },
     earthquake: { ...base.earthquake, maxScale: -1 },
@@ -535,7 +558,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   const detailTime = at(3)
   const detail: JMAQuake = {
     ...base,
-    telegramKey: detailTime,
+    telegramKey: keyOf('震源・震度に関する情報', detailTime),
     // **報番号を持たせるのはこの種別だけ。** 実電文でも連番を振るのは震源・震度情報（VXSE53）に限る。
     reportSerial: 1,
     time: detailTime,
@@ -551,7 +574,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   ).toISOString()
   const followUp: JMAQuake = {
     ...base,
-    telegramKey: followUpTime,
+    telegramKey: keyOf('震源・震度に関する情報', followUpTime),
     reportSerial: 2,
     time: followUpTime,
     issue: { ...base.issue, time: followUpTime },
@@ -607,7 +630,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   })
   const raised: JMAQuake = {
     ...base,
-    telegramKey: raisedTime,
+    telegramKey: keyOf('震源・震度に関する情報', raisedTime),
     reportSerial: 3,
     time: raisedTime,
     issue: { ...base.issue, time: raisedTime },
@@ -636,9 +659,10 @@ export const TEST_QUAKE_CANCEL_DELAY_MS = 10_000
  * もの）が届き、23:13:47 に取り消された（リプレイで確かめた）。間は詰めてある。
  *
  * - **取消は震度速報と同じ `eventId`・同じ種別で届く。** 取消が効くカードの判定
- *   （`useEarthquakes.ts` の `isQuakeCancelTarget`）は種別まで見る
- * - **取消の本文（`Body/Text`）は持たせない。** 実電文がそうだった（画面には定型の
- *   「この地震情報は取り消されました」だけが出る）
+ *   （`quakeMerge.ts` の `isQuakeCancelTarget`）は種別まで見る
+ * - **取消の本文（`Body/Text`）は実電文と同じ宣言の一文を持たせる**（「先ほどの、震度速報を
+ *   取り消します。」。docs/spec/quake-spec.md §8「取消しの理由は電文にしかない」）。カードの
+ *   取消の表示（開いた表示・畳んだ表示の両方）に出る。読み上げは宣言だけの本文を落とす
  * - **取消は震源も震度も持たない。** 形は `dmdataParser.ts` の取消の早期リターンと同じ
  * - **`id` は震度速報と同じ。** 震度速報（VXSE51）は報番号を持たず（`<Serial>` が空）、
  *   取消も同じなので、`id` の末尾が揃う（実電文で確かめた）
@@ -653,14 +677,53 @@ export function createTestQuakeCancel(): [JMAQuake, JMAQuake] {
     kind: 'quake',
     id: prompt.id,
     ...(prompt.eventId && { eventId: prompt.eventId }),
-    telegramKey: cancelTime,
+    telegramKey: dmdataTelegramKey('震度速報', cancelTime),
     time: cancelTime,
     cancelled: true,
+    cancelText: '先ほどの、震度速報を取り消します。',
     issue: { source: prompt.issue.source, time: cancelTime, type: '震度速報', correct: 'なし' },
     earthquake: { time: '', hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: 0 }, maxScale: -1, domesticTsunami: '不明' },
     points: [],
   }
   return [prompt, cancel]
+}
+
+/**
+ * 地震情報の**一部の取消**のテストデータ（震度速報 → 震源・震度情報 → 震度速報だけの取消）。
+ * **DMDSS 版のみ**（理由は `createTestQuakeCancel` と同じ）。
+ *
+ * 取消は情報名称の単位で効く（電文解説資料 別紙ウ）。震源・震度情報まで進んだカードに震度速報だけの
+ * 取消が届くと、カードは残り、震度速報が運んだ内容だけが外れて「震度速報は取り消されました」と
+ * 理由が出る（→ `utils/quakeMerge.ts` の `applyQuakeCancelToCard`。2026-10-15 ユーザー承認
+ * 「残して取消の理由を出す（推奨）」）。**この順の実電文の標本は手元に無い** —— 実電文
+ * （2024-01-01 23:04）は震度速報 → 取消 → 震源・震度情報の順で、それは `createTestQuakeCancel` の形。
+ *
+ * - **取消の本文は実電文にある宣言の文**（「先ほどの、震度速報を取り消します。」）。画面にはそのまま出し、
+ *   読み上げは宣言だけの文を読まない（→ `ttsText.ts` の `cancelReasonSentence`）
+ * - 震度速報と震源・震度情報は種別遷移テストと同じ材料（`createTestQuakeReportSequence`）から採る
+ */
+export function createTestQuakePartialCancel(): [JMAQuake, JMAQuake, JMAQuake] {
+  const sequence = createTestQuakeReportSequence(true)
+  const prompt = sequence[0]
+  const detailSource = sequence[3]
+  const detailTime = new Date(new Date(prompt.time).getTime() + TEST_REPORT_SEQUENCE_DELAY_MS).toISOString()
+  const detail: JMAQuake = {
+    ...detailSource, telegramKey: detailTime, time: detailTime, issue: { ...detailSource.issue, time: detailTime },
+  }
+  const cancelTime = new Date(new Date(detailTime).getTime() + TEST_QUAKE_CANCEL_DELAY_MS).toISOString()
+  const cancel: JMAQuake = {
+    kind: 'quake',
+    id: prompt.id,
+    ...(prompt.eventId && { eventId: prompt.eventId }),
+    telegramKey: cancelTime,
+    time: cancelTime,
+    cancelled: true,
+    cancelText: '先ほどの、震度速報を取り消します。',
+    issue: { source: prompt.issue.source, time: cancelTime, type: '震度速報', correct: 'なし' },
+    earthquake: { time: '', hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: 0 }, maxScale: -1, domesticTsunami: '不明' },
+    points: [],
+  }
+  return [prompt, detail, cancel]
 }
 
 /**
@@ -722,10 +785,50 @@ export function createTestMaxScaleOrAboveQuake(): JMAQuake {
     kind: 'quake',
     id: `dmdata-quake-${eventId}-1`,
     eventId,
+    // 報ごとに変わる項目（一意鍵・報番号）はここで作る。生成物には入れない（→ `scripts/build-test-quake.ts`）。
+    telegramKey: dmdataTelegramKey('震源・震度に関する情報', now),
+    reportSerial: 1,
     time: now,
     issue: { source: 'テスト', time: now, type: '震源・震度情報', correct: 'なし' },
     // 震源要素は実電文のまま。地震の時刻だけ「いま」へ寄せる（`createTestUnreceivedQuake` と同じ）。
     earthquake: { ...ishikawaSeihookiQuake.earthquake, time: now },
+  }
+}
+
+/** 区域まるごと未入電のテストで組み替える区域（日向灘 2022-01-22 の報で、市町村 7・観測点 12）。 */
+export const TEST_AREA_UNRECEIVED_AREA = '宮崎県北部山沿い'
+
+/**
+ * 区域まるごと「震度5弱以上未入電」の地震情報のテストデータ（日向灘の未入電テストの組み替え）。
+ *
+ * **気象庁の資料が定める形で、実電文の標本は無い。** 区域の配下の市町村がすべて未入電のとき、
+ * 気象庁は区域の `MaxInt` を載せない（電文解説資料 Ⅱ.33 2-1-3-3-1。都道府県も同じ 2-1-3-1）。
+ * パーサーはそのとき未入電の区域点（`scale: 45, unreceived: true`）を積む
+ * （→ `dmdataParser.ts`。docs/spec/quake-spec.md §4「震度5弱以上未入電」）。控えの実電文では
+ * 区域・都道府県の `MaxInt` の欠落は 0 件で、市町村の階層でだけ同じ規則の形が 40 件出ている。
+ *
+ * **ここで作るのはパーサーを通した後の形。** `TEST_AREA_UNRECEIVED_AREA` の区域について、
+ * 配下の市町村をすべて値そのものが未入電（`unreceived`）に、観測点をすべて未入電に、
+ * 区域点を未入電にする。都道府県点は他の区域で観測値があるので実電文のまま残す。
+ *
+ * **DMDSS 版のみ。** 未入電は DMDATA 経路でしか配信されない。
+ */
+export function createTestAreaUnreceivedQuake(): JMAQuake {
+  const base = createTestUnreceivedQuake()
+  const area = TEST_AREA_UNRECEIVED_AREA
+  const unreceived = { scale: 45 as const, unreceived: true }
+  return {
+    ...base,
+    points: base.points.map(p => {
+      if (p.isArea && !p.pref && p.addr === area) return { ...p, ...unreceived }
+      if (!p.isArea && p.area === area) return { ...p, ...unreceived }
+      return p
+    }),
+    cities: (base.cities ?? []).map(c => {
+      if (c.area !== area) return c
+      const { hasUnreceived: _dropped, ...rest } = c
+      return { ...rest, ...unreceived }
+    }),
   }
 }
 
@@ -759,6 +862,34 @@ export function createTestLpgm(eventId: string): JMALpgm {
     // （パーサーは名前の `＊` を外してこの印を立て、表示側が `withNonJmaMark` で戻す）、
     // 表示経路を通すためだけに立てている。
     points: (notoHonshinLpgm.points ?? []).map((p, i) => i === 0 ? { ...p, nonJma: true } : p),
+  }
+}
+
+/**
+ * 長周期地震動に関する観測情報の取消。
+ *
+ * **取消電文は観測点・区域・都道府県を持たない**（パーサーの取消の早期リターンと同じ形。
+ * 階級は 0）。発表報を使い回して `cancelled` だけ立てると、実電文に存在しない「階級の表を持つ
+ * 取消」ができる。
+ *
+ * **理由（`Body/Text`）の文は推した形。** 長周期の取消は実配信の控えにも、気象庁の公式サンプル
+ * 電文（2026-09-17 版・取消 21 本）にも 1 通も無い。サンプルの取消はどれも
+ * 「先ほどの、＜情報名＞を取り消します。」の形なので、それに倣った。この主語は読み上げの
+ * 「宣言だけの本文」の集合（`ttsText.ts` の `CANCEL_DECLARATION_SUBJECTS`）に無いので、
+ * 定型文に続けてこの文も読む（標本が無い種別は読む側へ倒す規約）。
+ *
+ * @param base 取り消す対象の発表報（`eventId` で照合するので同じ地震のものを渡す）
+ */
+export function createTestLpgmRetraction(base: JMALpgm): JMALpgm {
+  const now = serverDate().toISOString()
+  return {
+    id: `${base.id}-cancel`,
+    eventId: base.eventId,
+    time: now,
+    originTime: base.originTime,
+    maxClass: 0,
+    cancelled: true,
+    cancelText: '先ほどの、長周期地震動に関する観測情報を取り消します。',
   }
 }
 
@@ -1245,8 +1376,9 @@ function zenkakuDayTime(d: Date): string {
 // 深発地震（深さ 150km 超）。震源は確定しているが地域別予想が発表されないため、読み上げは
 // 待たずに「深発地震のため、予想震度なし。」と伝える。
 //
-// **severity は続報も含めて予報級に固定する。** 気象庁は深さ 150km を超える地震に緊急地震速報
-// （警報）を発表しないため、警報級の深発 EEW は実電文として存在しない。
+// **severity は続報も含めて予報級に固定する。** 気象庁は深さ 150km を超える地震に、PLUM 法による
+// 2 点以上の震度予測がある場合を除いて緊急地震速報（警報）を発表しない。このテストは区域を持たず
+// その例外に当たらないので、警報級へ上げると実電文に無い形になる。
 export function createTestEEWDeep(withDmdssFields: boolean, eventId?: string, serial = 1, baseTime?: Date): EEWAlert {
   // 地震発現時刻の基準。**続報でも動かさない**（→ `EEW_ARRIVAL_DELAY_MS`）
   const anchor = baseTime ?? serverDate()
@@ -1655,12 +1787,14 @@ function toFullWidthDigits(n: number): string {
 export function createTestQuakeNotice(): JMAQuakeNotice {
   const nowDate = serverDate()
   const now = nowDate.toISOString()
-  const eventId = toEventIdTimestamp(nowDate)
+  // 実電文のお知らせの `EventID` は発表時刻を分で切ったもの（秒は 00）
+  const eventId = toEventIdTimestamp(new Date(Math.floor(nowDate.getTime() / 60_000) * 60_000))
   const tomorrow = new Date(serverNow() + 24 * 3600 * 1000)
   const md = `${toFullWidthDigits(tomorrow.getMonth() + 1)}月${toFullWidthDigits(tomorrow.getDate())}日`
   return {
-    // 実電文と同じ形の id にする（`Serial` は空なのでパーサーが '1' へ倒す）
-    id: `dmdata-quake-notice-${eventId}-1`,
+    // 実電文と同じ形の id にする（`EventID` と電文の作成時刻 `Control/DateTime` の組。→ `quakeNoticeId`）。
+    // 作成時刻は実電文と同じく秒までの UTC で書く。
+    id: quakeNoticeId(eventId, now.replace(/\.\d{3}Z$/, 'Z')),
     time: now,
     eventId,
     headline: '沖縄県の震度データ入電停止のお知らせ',
@@ -1683,6 +1817,9 @@ export function createTestQuakeNotice(): JMAQuakeNotice {
       '　なお、沖縄県内69点の全震度観測点のうち入電しない自治体震度',
       '観測点は、35点です。',
     ].join('\n'),
+    // 自由付加文（`Body/Comments/FreeFormComment`）。実配信の控えには 0 件で、文は電文解説資料
+    // Ⅱ.51 の事例から採った。本文の後に続けて出る・続けて読まれる形をテストボタンで確かめるため
+    freeText: '保守点検の時刻が変更になりました。',
     cancelled: false,
     reportDateTime: now,
     // 7 日で畳む（帯を常駐させないための表示上の都合。気象庁が定めた期限ではない）
@@ -1693,11 +1830,13 @@ export function createTestQuakeNotice(): JMAQuakeNotice {
 /**
  * 地震回数に関する情報（VXSE60）のテストデータ。
  *
- * 気象庁公式のサンプル電文（`32-35_03_01_100514_VXSE60.xml`＝2008 年の伊豆半島東方沖の群発）
- * の区間構成と回数をそのまま使い、時刻だけ実行時刻から起こす。
+ * 区間構成は気象庁公式のサンプル電文（`32-35_03_01_100514_VXSE60.xml`＝2008 年の伊豆半島東方沖の
+ * 群発）に拠り、時刻だけ実行時刻から起こす。
  *
- * **回数の内訳を崩さない** —— 区間ごとの 1587 + 35 + 35 + 47 が累積の 1704 に一致する。
- * 適当な数字を置くと、累積行が他の行の合計だと分かる形を実機で確かめられない。
+ * **回数（`Number`）は全区間「発表なし」（電文の `-1`。型では `null`）、有感（`FeltNumber`）だけが
+ * 値を持つ。** 電文解説資料 Ⅱ.35 の事例がこの形で、実配信で起きうるいちばん崩れやすい形
+ * （帯に「-1回」、読み上げで「マイナス1回」と出ていた）を実機で確かめられるようにしてある。
+ * 有感の内訳は崩さない —— 区間ごとの 1 + 0 + 0 + 0 が累積の 1 に一致する。
  */
 export function createTestEarthquakeCount(): JMAEarthquakeCount {
   const nowMs = serverNow()
@@ -1714,11 +1853,11 @@ export function createTestEarthquakeCount(): JMAEarthquakeCount {
     eventId,
     headline: '地震回数に関する情報をお知らせします。',
     items: [
-      { type: '地震回数',       startTime: iso(-21), endTime: iso(-3), number: 1587, feltNumber: 1 },
-      { type: '１時間地震回数', startTime: iso(-3),  endTime: iso(-2), number: 35,   feltNumber: 0 },
-      { type: '１時間地震回数', startTime: iso(-2),  endTime: iso(-1), number: 35,   feltNumber: 0 },
-      { type: '１時間地震回数', startTime: iso(-1),  endTime: iso(0),  number: 47,   feltNumber: 0 },
-      { type: '累積地震回数',   startTime: iso(-21), endTime: iso(0),  number: 1704, feltNumber: 1 },
+      { type: '地震回数',       startTime: iso(-21), endTime: iso(-3), number: null, feltNumber: 1 },
+      { type: '１時間地震回数', startTime: iso(-3),  endTime: iso(-2), number: null, feltNumber: 0 },
+      { type: '１時間地震回数', startTime: iso(-2),  endTime: iso(-1), number: null, feltNumber: 0 },
+      { type: '１時間地震回数', startTime: iso(-1),  endTime: iso(0),  number: null, feltNumber: 0 },
+      { type: '累積地震回数',   startTime: iso(-21), endTime: iso(0),  number: null, feltNumber: 1 },
     ],
     nextAdvisory: `次の「地震回数に関する情報」は、${toFullWidthDigits(next.getDate())}日${toFullWidthDigits(next.getHours())}時００分頃に発表します。`,
     freeText: `　${toFullWidthDigits(startDate.getMonth() + 1)}月${toFullWidthDigits(startDate.getDate())}日${toFullWidthDigits(startDate.getHours())}時過ぎから伊豆半島東方沖で地震が発生しています。この
@@ -1833,7 +1972,7 @@ export function createTestHypocenterFromTsunami(): (JMAQuake | JMATsunami)[] {
     const time = at(step)
     return {
       ...base,
-      telegramKey: time,
+      telegramKey: dmdataTelegramKey('震度速報', time),
       time,
       issue: { ...base.issue, time, type: '震度速報' },
       earthquake: {

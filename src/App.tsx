@@ -11,7 +11,7 @@ import {
 import { PanelResizeHandle } from './components/PanelResizeHandle'
 import { MapView, type MapMode } from './components/Map/MapView'
 import type { ShakeFocus, MapFocusTarget } from './components/Map/mapTypes'
-import type { LatLng } from './utils/stationCoords'
+import { getAreaPrefIndexCache, type LatLng } from './utils/stationCoords'
 import { MapUpdateTime } from './components/MapUpdateTime'
 import { MapDataStatus } from './components/MapDataStatus'
 import { MapRenderStatus } from './components/MapRenderStatus'
@@ -42,7 +42,7 @@ import {
   buildCatalogPointCloud, DEPTH_FILTER_MAX_KM, MAGNITUDE_FILTER_RANGE,
   LATITUDE_FILTER_RANGE, LONGITUDE_FILTER_RANGE,
   CATALOG_REBUILD_DEBOUNCE_MS, oldestYearOf, withCompleteMagnitudeFloor,
-  jstYearOf, jstYearStartMs, jstYearEndMs, clampPeriodToRange,
+  jstYearOf, jstYearStartMs, jstYearEndMs, clampPeriodToRange, catalogPeriodBounds,
   type CatalogFilter, type CatalogViewOptions, type CatalogPointCloud,
 } from './utils/hypocenterCatalogView'
 import { SpecialInfoBanner, shareButtonBottomClass } from './components/SpecialInfoBanner'
@@ -79,9 +79,8 @@ import { useArrivalTokenCheck } from './hooks/useArrivalToken'
 import { usePsWaveCalc } from './hooks/usePsWaveCalc'
 import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
 import { useDebouncedValue } from './hooks/useDebouncedValue'
-import { getIntensityLabelWithOrAbove } from './utils/intensity'
-import { isMaxScaleUnreceived } from './utils/quakePoints'
-import { formatMagnitudeWithCondition, formatDateTimeLocal } from './utils/formatters'
+import { decideQuakeNotification, rememberQuakeNotified, type QuakeNotifiedState } from './utils/quakeNotification'
+import { formatDateTimeLocal } from './utils/formatters'
 import { computeEEWLevel, eewEventKey, eewMaxLpgmClass, isProvisionalHypocenter } from './utils/eew'
 import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
 import { canOpenLpgmNotes } from './utils/lpgm'
@@ -873,9 +872,9 @@ export function App() {
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
-    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateEstimatedIntensity,
-    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
-    simulateQuakeReportSequence, simulateQuakeCancel, simulateHypocenterFromTsunami,
+    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
+    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
+    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     resetState, loadReplayEvents, peekUpcomingPayloads, restoreQuakeHistory,
   } = useEarthquakes(handleLiveEvent, debouncedApiKey, settings.dmdataTestDelivery, replayTimeOffset, handleStartupRestore)
@@ -948,13 +947,16 @@ export function App() {
     quakeNotice:       simulateQuakeNotice,
     earthquakeCount:   simulateEarthquakeCount,
     earthquakeCountRetraction: simulateEarthquakeCountRetraction,
+    lpgmRetraction:    isDmdss ? simulateLpgmRetraction : undefined,
     trainingQuake:     simulateTrainingQuake,
     quakeAmendment:    simulateQuakeAmendment,
     quakeReportSequence: simulateQuakeReportSequence,
     quakeCancel: isDmdss ? simulateQuakeCancel : undefined,
+    quakePartialCancel: isDmdss ? simulateQuakePartialCancel : undefined,
     borrowFromTsunami: isDmdss ? simulateHypocenterFromTsunami : undefined,
     unreceivedQuake:   simulateUnreceivedQuake,
     maxScaleOrAboveQuake: simulateMaxScaleOrAboveQuake,
+    areaUnreceivedQuake: simulateAreaUnreceivedQuake,
     tsunamiGradeChange: simulateTsunamiGradeChange,
     tsunamiQuietReports: isDmdss ? simulateTsunamiQuietReports : undefined,
     tsunamiExpiry: isDmdss ? simulateTsunamiExpiry : undefined,
@@ -977,9 +979,9 @@ export function App() {
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
-    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateEstimatedIntensity,
-    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
-    simulateQuakeReportSequence, simulateQuakeCancel, simulateHypocenterFromTsunami,
+    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
+    simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
+    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
   ])
   // IconNav の onTabChange。手動選択は必ず即時反映し、以後 TAB_HOLD_MS の間は自動切替に
@@ -1247,31 +1249,33 @@ export function App() {
     }
   }, [activeEEWs, activeLpgmEventId, activeLpgmSource])
 
-  // ブラウザ通知: 新しい地震が設定震度以上なら通知
+  // ブラウザ通知: 新しい地震が設定震度以上なら通知。中身と出すかどうかは `decideQuakeNotification`。
   // 重複抑止は eventKey で行う（earthquake.time では、同じ分に起きた 2 件目の地震が
-  // 「通知済み」と誤判定されて通知が出ない）。
-  const lastNotifiedIdRef = useRef<string | null>(null)
+  // 「通知済み」と誤判定されて通知が出ない）。**1 つの地震で最大 2 回**——震度速報で出したあと、
+  // 震源が判った報でもう 1 度だけ出し、tag（地震ごとの鍵）で前の通知を置き換える
+  // （2026-10-19 ユーザー承認「速報の文＋震源で置き換え (推奨)」）。
+  // 覚えるのは地震ごと（`rememberQuakeNotified`）。1 件だけだと、2 つの地震の報が交互に先頭へ来たとき
+  // 前の地震を忘れて 3 回目を出す。
+  const notifiedQuakesRef = useRef(new Map<string, QuakeNotifiedState>())
   useEffect(() => {
     const latestQuake = earthquakes[0]
     if (!latestQuake) return
-    if (settings.notifyMinScale < 0) return
-    const notifyKey = quakeEventKey(latestQuake)
-    if (notifyKey === lastNotifiedIdRef.current) return
-    if (latestQuake.earthquake.maxScale < settings.notifyMinScale) return
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
-    lastNotifiedIdRef.current = notifyKey
-    // **断定形で出さない**（→ docs/spec/quake-spec.md §4「震度5弱以上未入電」）。OS 通知は
-    // カードを開かない利用者が最初に目にする経路なので、ここを落とすと「実際にはもっと強い
-    // かもしれない」が誰にも届かない。
-    const scale = getIntensityLabelWithOrAbove(
-      latestQuake.earthquake.maxScale,
-      isMaxScaleUnreceived(latestQuake.earthquake.maxScale, latestQuake.points),
-    )
-    new Notification('地震情報', {
-      body: `${latestQuake.earthquake.hypocenter.name} 最大震度${scale} ${formatMagnitudeWithCondition(latestQuake.earthquake.hypocenter.magnitude, latestQuake.earthquake.hypocenter.magnitudeCondition)}`,
-      icon: `${import.meta.env.BASE_URL}icons/icon.svg`,
-      tag: latestQuake.id,
-    })
+    // **通知は補助の経路なので、ここで投げても画面を落とさない**（App のレンダー・effect の例外は
+    // 根の受け皿でしか拾えず、画面全体が消える）。失敗は記録に残す。
+    try {
+      const previous = notifiedQuakesRef.current.get(quakeEventKey(latestQuake)) ?? null
+      const decided = decideQuakeNotification(latestQuake, previous, settings.notifyMinScale, getAreaPrefIndexCache())
+      if (!decided) return
+      rememberQuakeNotified(notifiedQuakesRef.current, decided.next)
+      new Notification(decided.notification.title, {
+        body: decided.notification.body,
+        icon: `${import.meta.env.BASE_URL}icons/icon.svg`,
+        tag: decided.notification.tag,
+      })
+    } catch (err) {
+      log.error(`[notify] 地震の通知を出せず（${latestQuake.eventKey ?? latestQuake.id}・最大震度 ${latestQuake.earthquake.maxScale}）`, err)
+    }
   }, [earthquakes, settings.notifyMinScale])
 
   // 情報更新時にウィンドウタイトルを変更し、平常時は既定タイトルに戻す。
@@ -1378,6 +1382,7 @@ export function App() {
     return {
       // 初期表示は直近 10 年。マグニチュードの下限は索引が届いた時点でその期間の
       // 完全性へ合わせ直す（下の効果）。ここでの 2 は索引が来るまでの仮の値。
+      // 終わりも仮の値で、索引が届いたらデータの最終日へ収める（下の効果）。
       fromMs: jstYearStartMs(thisYear - 9),
       toMs: jstYearEndMs(thisYear),
       minMagnitude: MAGNITUDE_FILTER_RANGE.min,
@@ -1407,11 +1412,12 @@ export function App() {
   const catalogIndex = catalog.index
   // 索引が届いたら、期間を収録範囲へ収め、マグニチュードの下限をその期間の完全性に合わせる。
   // **収める側も必要。** 年が明けた直後は「今年」がまだ収録されておらず、選択肢に無い値が残る。
+  // **終わりはデータの最終日へ収める**（`catalogPeriodBounds`）。既定の終わり（今年の 12 月 31 日）は
+  // 索引が来るまでの仮の値で、ここでデータの終端（2 日前前後）まで下がる。
   useEffect(() => {
     if (!catalogIndex || catalogIndex.years.length === 0) return
     setCatalogFilter((prev) => {
-      const lo = jstYearStartMs(catalogIndex.years[0])
-      const hi = jstYearEndMs(catalogIndex.years[catalogIndex.years.length - 1])
+      const { minMs: lo, maxMs: hi } = catalogPeriodBounds(catalogIndex)
       // **収めるのは日ごと**（`clampPeriodToRange`）。両端をそれぞれ時刻で丸めると、選んでいる
       // 期間が丸ごと収録の外にあるときに同じ 1 点へ潰れ、1 件も残らないのに見出しは
       // 「1 日ぶん」と出る。
@@ -1793,7 +1799,7 @@ export function App() {
     // 切り替え前の状態へ戻す。
     setSpecialInfoPanelHold(null)
     // ブラウザ通知の重複抑止。残すと、同じ地震を再生したときに 2 回目の通知が出ない。
-    lastNotifiedIdRef.current = null
+    notifiedQuakesRef.current.clear()
     resetActionChecklistRef.current()
     // 別地点発報のエピソード状態。旧い時間軸の「発報済み」が残ると、新しい軸で鳴るべき
     // 別地点発報が黙って抑え込まれる（時刻の巻き戻りでは自動で切り替わるが、前へ飛ばした

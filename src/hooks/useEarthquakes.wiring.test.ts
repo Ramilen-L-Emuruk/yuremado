@@ -1363,8 +1363,8 @@ describe('震源・津波区分を津波電文から借りる結線', () => {
 })
 
 describe('地震・津波に関するお知らせ（VZSE40）と地震回数（VXSE60）の結線', () => {
-  // どちらも**実配信では観測できていない種別**（電文一覧 13 か月で 0 通）。実機で偶然踏んで
-  // 気づくことが期待できないぶん、畳み方と取消の照合はここで固定しておく。
+  // どちらも実機で偶然踏んで気づくことが期待できない（お知らせは実配信に届くが取消は未観測、
+  // 地震回数は実配信で観測できていない）。畳み方と取消の照合はここで固定しておく。
 
   /** expireInMs 後に期限が切れるお知らせ。 */
   function notice(id: string, expireInMs: number): JMAQuakeNotice {
@@ -1432,16 +1432,38 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     expect(h.current.quakeNotice).toBeNull()
   })
 
-  // 正: 取消で帯を消す。**照合は `id`** ―― お知らせは 1 通ごとに `EventID` が変わるので、
-  // 表示中の報そのものを指せるのは id のほう。
-  it('取消電文で帯を消す', async () => {
+  // 正: 取消で帯を消す。**照合は `EventID`** ―― 取消は元のお知らせの `EventID` を引き継ぐが、
+  // `id` には取消自身の作成時刻が入るので、元のお知らせの `id` とは一致しない。
+  it('取消電文で帯を消す（id が違っても EventID が同じなら消す）', async () => {
     const h = setup()
     await h.flush()
     push(h, { kind: 'quakeNotice', data: notice('n-live', 60_000) })
     expect(h.current.quakeNotice?.id).toBe('n-live')
 
-    push(h, { kind: 'quakeNotice', data: { ...notice('n-live', 60_000), cancelled: true } })
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-live', 60_000), id: 'n-live-cancel', cancelled: true } })
     expect(h.current.quakeNotice).toBeNull()
+  })
+
+  // 既知の限界を固定する: 同じ分に別のお知らせ（EventID が同じ）が出て表示を置き換えたあと、先の
+  // お知らせ宛ての取消が届くと、表示中の 1 通を消す。取消は分までの EventID しか持たず、どちら宛てかを
+  // 電文から決められないため。
+  it('同じ EventID の別のお知らせが表示中なら、取消はそれを消す', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'quakeNotice', data: notice('n-a', 60_000) })
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-b', 60_000), eventId: 'n-a-event' } })
+    expect(h.current.quakeNotice?.id).toBe('n-b')
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-a', 60_000), id: 'n-a-cancel', cancelled: true } })
+    expect(h.current.quakeNotice).toBeNull()
+  })
+
+  // 安全弁: EventID が空の取消は照合しない（空どうしは同じお知らせの証拠にならない）。
+  it('EventID が空の取消では帯を消さない', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-live', 60_000), eventId: '' } })
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-cancel', 60_000), eventId: '', cancelled: true } })
+    expect(h.current.quakeNotice?.id).toBe('n-live')
   })
 
   // 安全弁: 別のお知らせに向けた取消で、いま出ている帯を消さない。
@@ -1507,13 +1529,22 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     expect(h.current.earthquakeCount?.eventId).toBe('20080824150500')
   })
 
-  // 安全弁: 区間が 1 つも読めなかった報は帯にしない。中身が空の帯を出しても伝わる
+  // 安全弁: 区間も本文も無い報は帯にしない。中身が空の帯を出しても伝わる
   // ものが無く、読み取りの失敗はパーサー側が記録している。
-  it('区間が空の報は帯にしない', async () => {
+  it('区間も本文も無い報は帯にしない', async () => {
     const h = setup()
     await h.flush()
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', []) })
     expect(h.current.earthquakeCount).toBeNull()
+  })
+
+  // 正: 回数を伴わない発表報（区間 0 件・本文あり）は帯にする
+  // （2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」）。
+  it('回数を伴わない発表報は本文があれば帯にする', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'earthquakeCount', data: { ...count('20080824150500', []), body: '本文です。' } })
+    expect(h.current.earthquakeCount?.body).toBe('本文です。')
   })
 
   // 安全弁: リセット（リプレイの開始・ライブ復帰）で両方とも消える。**時間軸が変わる**ので、
@@ -5029,6 +5060,89 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     expect(loggedTelegrams().filter(t => t.kind === 'lpgm')).toHaveLength(0)
   })
 
+  // 正: 表示中の長周期地震動を消した取消は受け手へ渡す（読み上げで取り消されたことを伝える）。
+  // 渡さないと、画面の一覧とバッジが黙って消えるだけになる。
+  describe('長周期地震動の取消を受け手へ渡す条件', () => {
+    const cancelOf = (base: ReturnType<typeof lpgmData>) => ({
+      ...base, id: `${base.id}-cancel`, time: new Date(Date.parse(base.time) + 60_000).toISOString(),
+      maxClass: 0, cancelled: true,
+    })
+    const lpgmCalls = (fn: ReturnType<typeof vi.fn>) =>
+      fn.mock.calls.map(c => c[0] as LiveEvent).filter(e => e.kind === 'lpgm')
+
+    it('表示中の長周期を消した取消は受け手へ渡す', async () => {
+      vi.useFakeTimers()
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      const shown = lpgmData()
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: shown }) })
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) }) })
+
+      const calls = lpgmCalls(onLiveEvent)
+      expect(calls).toHaveLength(2)
+      expect(calls[1].kind === 'lpgm' && calls[1].data.cancelled).toBe(true)
+      expect(h.current.lpgmByEventId.has(shown.eventId)).toBe(false)
+    })
+
+    // 正: 表示へ反映される前（同じ処理の回）に届いた取消も、直前の報を消したと判定する。
+    // 状態は描き直しまで進まないので、状態だけを見ると「何も消していない」に化ける。
+    it('同じ回に届いた報と取消でも、取消を受け手へ渡す', async () => {
+      vi.useFakeTimers()
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      const shown = lpgmData()
+      act(() => {
+        sockets[0].onEvent?.({ kind: 'lpgm', data: shown })
+        sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) })
+      })
+
+      const calls = lpgmCalls(onLiveEvent)
+      expect(calls).toHaveLength(2)
+      expect(calls[1].kind === 'lpgm' && calls[1].data.cancelled).toBe(true)
+    })
+
+    // 対照: 消すものが無い取消は渡さない（画面に何も起きていないのに「取り消されました」と言わない）。
+    it('表示に無い長周期の取消は受け手へ渡さない', async () => {
+      vi.useFakeTimers()
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(lpgmData()) }) })
+
+      expect(lpgmCalls(onLiveEvent)).toHaveLength(0)
+    })
+
+    // 対照: 階級 0 の長周期は画面に出ない（カードは階級 1 以上だけを描く）ので、それを消した取消は
+    // 「表示中を消した」に当たらず、受け手へ渡さない。
+    it('階級 0 の長周期を消した取消は受け手へ渡さない', async () => {
+      vi.useFakeTimers()
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      const shown = lpgmData({ maxClass: 0 })
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: shown }) })
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) }) })
+
+      expect(lpgmCalls(onLiveEvent)).toHaveLength(0)
+    })
+
+    // 安全弁: 同じ取消が 2 通届いても、2 通目は消すものが無いので渡さない（二重に読まない）。
+    it('同じ取消の 2 通目は受け手へ渡さない', async () => {
+      vi.useFakeTimers()
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      const shown = lpgmData()
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: shown }) })
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) }) })
+      act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) }) })
+
+      expect(lpgmCalls(onLiveEvent).filter(e => e.kind === 'lpgm' && e.data.cancelled)).toHaveLength(1)
+    })
+  })
+
   // 履歴バッチ復元（起動時・「もっと見る」）は onLiveEvent を呼ばずに直接 state を書き換える
   // 独立した経路で、上のキュー・ライブ WebSocket 経路の穴を直しても波及しない
   // （→ `docs/spec/recording-interface-spec.md` §4）。
@@ -5233,6 +5347,95 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         expect(records[0].skipped).toBe('notDispatched')
       })
     })
+  })
+})
+
+// 地震情報の取消が「どのカードにどう効いたか」は受信の入口で決め、`onLiveEvent` の 2 つ目の引数で
+// 読み上げへ渡す（→ `LiveEventMeta.quakeCancel`）。読み上げが画面の状態から探し直すと、同じティックに
+// 続けて届いた報がまだ状態へ入っていないとき「全体の取消」と「一部の取消」を取り違える。
+describe('取消の効き方を読み上げへ渡す（LiveEventMeta.quakeCancel）', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  /** 取消の報について渡った判断。 */
+  const 取消の判断 = (fn: ReturnType<typeof vi.fn>) =>
+    fn.mock.calls
+      .filter(([e]) => (e as LiveEvent).kind === 'quake' && (e as JMAQuake).cancelled)
+      .map(([, meta]) => (meta as LiveEventMeta | undefined)?.quakeCancel)
+
+  it('正: 一部の取消では、取り下げた情報名と当たったカードが渡る', async () => {
+    const { createTestQuakePartialCancel } = await import('../utils/testData')
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+
+    // 同じティックで流す（状態がまだ追いついていなくても、写しで当たり先を引ける）
+    act(() => { for (const q of createTestQuakePartialCancel()) h.current.injectEvent(q) })
+
+    const [decided] = 取消の判断(onLiveEvent)
+    expect(decided?.target).toBeDefined()
+    expect(decided?.retracted?.issueType).toBe('震度速報')
+  })
+
+  it('対照: 取り消された種別の報しか受けていなければ、全体の取消として渡る（retracted なし）', async () => {
+    const { createTestQuakeCancel } = await import('../utils/testData')
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+
+    act(() => { for (const q of createTestQuakeCancel()) h.current.injectEvent(q) })
+
+    const [decided] = 取消の判断(onLiveEvent)
+    expect(decided?.target).toBeDefined()
+    expect(decided?.retracted).toBeUndefined()
+  })
+
+  it('安全弁: 当たるカードが無い取消は、当たり先なしで渡る（画面の古いカードを拾わない）', async () => {
+    const { createTestQuakeCancel } = await import('../utils/testData')
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+
+    const [, cancel] = createTestQuakeCancel()
+    act(() => { h.current.injectEvent(cancel) })
+
+    const [decided] = 取消の判断(onLiveEvent)
+    expect(decided).toEqual({ target: undefined, retracted: undefined, duplicate: false })
+  })
+
+  it('安全弁: 同じ取消が二度届いたら、2 通目はもう伝えた取消として渡る（1 通目は渡らない）', async () => {
+    const { createTestQuakeCancel } = await import('../utils/testData')
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+
+    const [prompt, cancel] = createTestQuakeCancel()
+    act(() => { h.current.injectEvent(prompt) })
+    act(() => { h.current.injectEvent(cancel) })
+    act(() => { h.current.injectEvent(cancel) })
+
+    expect(取消の判断(onLiveEvent).map(d => d?.duplicate)).toEqual([false, true])
+  })
+
+  it('安全弁: 同じティックで一部の取消が二度届いても、2 通目は一部の取消を名乗らない（写しで完結する）', async () => {
+    // 写しには 1 通目で当て直したカードが載る。2 通目が画面の状態（まだ当て直す前）へ落ちると、
+    // 取り下げた震度速報がまだ残るカードを拾って「一部の取消」を名乗る
+    const { createTestQuakePartialCancel } = await import('../utils/testData')
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+
+    const telegrams = createTestQuakePartialCancel()
+    const cancel = telegrams[telegrams.length - 1]
+    act(() => {
+      for (const q of telegrams) h.current.injectEvent(q)
+      h.current.injectEvent(cancel)
+    })
+
+    const [first, second] = 取消の判断(onLiveEvent)
+    expect(first?.retracted?.issueType).toBe('震度速報')
+    expect(second?.retracted).toBeUndefined()
+    expect(second?.duplicate).toBe(true)
   })
 })
 

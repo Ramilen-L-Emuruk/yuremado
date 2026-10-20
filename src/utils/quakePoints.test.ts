@@ -5,7 +5,7 @@
 // 標準版（P2PQuake）で区域ごと落ちる。索引を渡す形と渡さない形の両方を固定する。
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { isAreaPoint, buildIntensityRows, cityKey, type IntensityRowDeps } from './quakePoints'
+import { isAreaPoint, buildIntensityRows, cityKey, type IntensityPrefRow, type IntensityRowDeps } from './quakePoints'
 import { areaPrefIndexOf, type StationCoordsData } from './stationCoords'
 import type { EarthquakePoint, IntensityScale } from '../types/earthquake'
 
@@ -65,6 +65,13 @@ describe('区域の点かロールアップ点か（索引なし）', () => {
 // ため区域の行が事実上どこにも出なかった。読み上げは元から区域が主なので、画面＝県／音声＝区域
 // のずれになっていた。
 describe('buildIntensityRows', () => {
+  // 県の行だけを返す（県を引けない区域の行が混ざったら落とす）。最上段の区域の行と
+  // 置けなかった観測点は、下の「引けない点を捨てない」の describe で見る。
+  const prefRowsOf = (...args: Parameters<typeof buildIntensityRows>): IntensityPrefRow[] =>
+    buildIntensityRows(...args).rows.map(r => {
+      if (r.kind !== 'pref') throw new Error(`県を引けない区域の行が混ざった: ${r.name}`)
+      return r
+    })
   const s = (n: number) => n as IntensityScale
   const area = (addr: string, scale: number): EarthquakePoint => ({ pref: '', addr, isArea: true, scale: s(scale) })
   const prefPoint = (pref: string, scale: number): EarthquakePoint => ({ pref, addr: pref, isArea: true, scale: s(scale) })
@@ -84,7 +91,7 @@ describe('buildIntensityRows', () => {
 
   // 正: 県の点と区域の点が両方あるとき、**区域を捨てない**。
   it('県の行の下に、その県の一次細分区域を並べる', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       prefPoint('岩手県', 40),
       area('岩手県沿岸北部', 40),
       area('岩手県内陸北部', 30),
@@ -100,7 +107,7 @@ describe('buildIntensityRows', () => {
   it('県名を持つ区域の点（標準版の震度速報）から区域の行を作る', () => {
     const p2pArea = (pref: string, addr: string, scale: number, unreceived = false): EarthquakePoint =>
       ({ pref, addr, isArea: true, scale: s(scale), ...(unreceived && { unreceived }) })
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       p2pArea('石川県', '石川県能登', 70),
       p2pArea('石川県', '石川県加賀', 50),
       p2pArea('新潟県', '新潟県上越', 46),
@@ -113,7 +120,7 @@ describe('buildIntensityRows', () => {
 
   // 安全弁: 区域名が県名と同じ奈良県は、標準版でも区域の行として出す（ロールアップ点と取り違えない）。
   it('県名と同じ名前の区域（奈良県）も区域の行として出す', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       { pref: '奈良県', addr: '奈良県', isArea: true, scale: s(40) },
     ], [], deps())
     expect(rows[0].regions.map(r => r.name)).toEqual(['奈良県'])
@@ -121,7 +128,7 @@ describe('buildIntensityRows', () => {
 
   // 正: 区域の点を持たない電文（P2PQuake の詳細報）では観測点から逆引きする。
   it('区域の点が無ければ観測点の所属区域から作る', () => {
-    const rows = buildIntensityRows(
+    const rows = prefRowsOf(
       [{ pref: '岩手県', addr: '宮古市田老', isArea: false, scale: s(40) }],
       [],
       deps({ prefOfStation: () => '岩手県', regionOfStation: () => '岩手県沿岸北部' }),
@@ -132,7 +139,7 @@ describe('buildIntensityRows', () => {
   // 対照: 区域の点があるときは、**区域の行を観測点から作らない**（電文が示した粒度を優先する）。
   // 観測点は行の材料にはならないが、その区域の下へはぶら下がる。
   it('区域の点があれば、区域の行は観測点から作らない', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('岩手県沿岸北部', 40),
       { pref: '岩手県', addr: '宮古市田老', isArea: false, scale: s(40) },
     ], [], deps({ regionOfStation: () => '岩手県沿岸北部' }))
@@ -145,7 +152,7 @@ describe('buildIntensityRows', () => {
   // 正: 市町村を持つ電文（DMDATA）では、区域 → 市町村 → 観測点の 3 段になる。
   // 観測点は所属する区域と市町村の両方を名乗る（パーサーが電文の並びから両方を付ける）。
   it('市町村を区域の下に、観測点を市町村の下に置く', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('岩手県沿岸北部', 40),
       { pref: '', addr: '普代村銅屋', isArea: false, scale: s(30), city: '普代村', area: '岩手県沿岸北部' },
     ], [
@@ -160,7 +167,7 @@ describe('buildIntensityRows', () => {
 
   // 安全弁: 市町村を持たない経路（P2PQuake）では、観測点が区域の直下に入る。
   it('市町村を持たない観測点は区域の直下に置く', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('岩手県沿岸北部', 40),
       { pref: '岩手県', addr: '宮古市田老', isArea: false, scale: s(40) },
     ], [], deps({ regionOfStation: () => '岩手県沿岸北部' }))
@@ -170,7 +177,7 @@ describe('buildIntensityRows', () => {
 
   // 安全弁 1: 県の点が無くても、区域だけが届いた県を落とさない。
   it('区域しか無い県も行にする（県の値は配下の最大）', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('岩手県沿岸北部', 30),
       area('岩手県内陸北部', 45),
     ], [], deps())
@@ -180,7 +187,7 @@ describe('buildIntensityRows', () => {
 
   // 安全弁 2: 「未入電あり」は**範囲に 1 点でもあれば**付く。行の最大が観測値でも消さない。
   it('最大が観測値でも、範囲に未入電があれば印を付ける', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       prefPoint('岩手県', 40),
       area('岩手県沿岸北部', 40),
     ], [], deps({
@@ -197,7 +204,7 @@ describe('buildIntensityRows', () => {
   // **電文が点を並べた順に画面を委ねない。**
   it('震度の降順で並べ、同じ震度は標準順で並べる', () => {
     const order: Record<string, number> = { 岩手県沿岸北部: 1, 岩手県内陸北部: 2, 岩手県内陸南部: 3 }
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('岩手県内陸北部', 40),
       area('岩手県沿岸北部', 40),
       area('岩手県内陸南部', 45),
@@ -207,14 +214,14 @@ describe('buildIntensityRows', () => {
 
   // 安全弁 4: 震度を読めなかった点（-1）は行にしない。
   it('震度が読めなかった点は行にしない', () => {
-    const rows = buildIntensityRows([prefPoint('岩手県', -1), area('岩手県沿岸北部', -1)], [], deps())
+    const rows = prefRowsOf([prefPoint('岩手県', -1), area('岩手県沿岸北部', -1)], [], deps())
     expect(rows).toEqual([])
   })
 
   // 正: **同名の市町村を取り違えない。** 市町村名は全国で一意ではない（府中市＝東京都・広島県）。
   // 名前だけで観測点を束ねていたときは、両方が載った電文でどちらの行にも他県の観測点が並んだ。
   it('同名の市町村があっても、観測点をそれぞれの県の側へ入れる', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('東京都２３区', 30),
       area('広島県南西部', 30),
       { pref: '', addr: '府中市宮西町', isArea: false, scale: s(30), city: '府中市', area: '東京都２３区' },
@@ -232,7 +239,7 @@ describe('buildIntensityRows', () => {
   // 対照: 同名でない市町村は、当然そのまま自分の観測点だけを持つ（上の鍵の変更で
   // ふつうの電文が壊れていないこと）。
   it('同名でない市町村は従来どおり自分の観測点だけを持つ', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('岩手県沿岸北部', 40),
       { pref: '', addr: '普代村銅屋', isArea: false, scale: s(30), city: '普代村', area: '岩手県沿岸北部' },
       { pref: '', addr: '野田村野田', isArea: false, scale: s(30), city: '野田村', area: '岩手県沿岸北部' },
@@ -248,7 +255,7 @@ describe('buildIntensityRows', () => {
   // 安全弁 5: **市町村の行を作れなくても観測点は捨てない。** 市町村の震度が読めなかった電文では
   // `cities` にその市町村が入らない。行き先が無いままにすると、読めていた観測点まで消える。
   it('市町村の行が無い観測点は、その区域の直下へ落とす', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('岩手県沿岸北部', 40),
       { pref: '', addr: '普代村銅屋', isArea: false, scale: s(30), city: '普代村', area: '岩手県沿岸北部' },
     ], [], deps())
@@ -260,7 +267,7 @@ describe('buildIntensityRows', () => {
   // 安全弁 6: **区域自身の震度が読めなくても、配下は出す。** この形の脱落は記録にも残らない
   // （区域の読み取り失敗は「その電文の区域が全滅したとき」しか記録しない）。
   it('区域の点が無くても、市町村と観測点があれば区域の行を立てる', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       prefPoint('岩手県', 40),
       { pref: '', addr: '普代村銅屋', isArea: false, scale: s(30), city: '普代村', area: '岩手県沿岸北部' },
     ], [
@@ -277,7 +284,7 @@ describe('buildIntensityRows', () => {
   // 収録状況に左右されるが、電文はその観測点をその区域の下に置いた事実そのもの。
   // 印（「未入電あり」）の側と優先順位を手で揃えていた頃は、ここがずれても誰も気づけなかった。
   it('観測点の区域は、座標表の逆引きより電文の区域を優先する', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('岩手県沿岸北部', 40),
       area('岩手県内陸北部', 30),
       { pref: '', addr: '宮古市田老', isArea: false, scale: s(40), area: '岩手県沿岸北部' },
@@ -294,7 +301,7 @@ describe('buildIntensityRows', () => {
   // 正: **区域から県への引き当ては、まず電文自身に訊く。** `City` は所属する区域と都道府県の
   // 両方を名乗る。座標表の読み込み前・取得失敗でも区域から下が消えないこと。
   it('座標表を引けなくても、電文の市町村から区域の所属県を決める', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('岩手県沿岸北部', 40),
     ], [
       { name: '普代村', area: '岩手県沿岸北部', pref: '岩手県', scale: s(30) },
@@ -306,7 +313,7 @@ describe('buildIntensityRows', () => {
   // 市町村の未入電は 2 つの形がある（→ docs/spec/quake-spec.md §5）。実電文ではほとんど
   // 出ないためテストボタンのデータには入っていない。ロジックだけはここで固定する。
   it('市町村の未入電を 2 つの形のまま行へ移す', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('石川県能登', 45),
     ], [
       // 値なし＋未入電＝市町村の値そのものが入電なし
@@ -324,7 +331,7 @@ describe('buildIntensityRows', () => {
   // 頼ると**強く揺れた市町村ほど印が消える**。能登本震（震度6強の輪島市に未入電の観測点が 1 点）
   // では、1343 市町村すべてで `Condition` が付いていなかった。
   it('市町村の最大が観測できていても、配下に未入電の観測点があれば印を立てる', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('石川県能登', 60),
       { pref: '', addr: '輪島市鳳至町', isArea: false, scale: s(60), area: '石川県能登', city: '輪島市' },
       { pref: '', addr: '輪島市門前町走出', isArea: false, scale: s(45), unreceived: true, area: '石川県能登', city: '輪島市' },
@@ -338,7 +345,7 @@ describe('buildIntensityRows', () => {
 
   // 対照: 未入電を持たない市町村には立てない（同じ区域に別の市町村が未入電を抱えていても）。
   it('未入電を持たない市町村には印を立てない', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('石川県能登', 60),
       { pref: '', addr: '穴水町大町', isArea: false, scale: s(60), area: '石川県能登', city: '穴水町' },
     ], [
@@ -353,7 +360,7 @@ describe('buildIntensityRows', () => {
   // 安全弁: **電文が言っている分を消さない。** 配下の観測点を 1 つも読めていない形では、
   // 集合の側は空のままになる。そこで上書きすると、電文だけが知っている事実が消える。
   it('配下の観測点から集められなくても、電文の Condition は残す', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('石川県能登', 40),
     ], [
       { name: '能登町', area: '石川県能登', pref: '石川県', scale: s(40), hasUnreceived: true },
@@ -364,7 +371,7 @@ describe('buildIntensityRows', () => {
   // 安全弁: **鍵は区域と組にする。** 同じ名前の市町村が別の区域にあるとき、片方だけに立てる
   // （府中市＝東京都・広島県）。名前だけで束ねると両方に印が出る。
   it('同名の市町村が別の区域にあっても、印は該当する方だけに立てる', () => {
-    const rows = buildIntensityRows([
+    const rows = prefRowsOf([
       area('東京都23区', 40),
       area('広島県南西部', 40),
     ], [
@@ -375,5 +382,63 @@ describe('buildIntensityRows', () => {
     const hiroshima = rows.find(r => r.pref === '広島県')!.regions[0].cities.find(c => c.name === '府中市')!
     expect(tokyo.hasUnreceived).toBe(false)
     expect(hiroshima.hasUnreceived).toBe(true)
+  })
+
+  describe('引けない点を捨てない', () => {
+    // 正: 県を引けない区域（座標表の読み込み前・座標表に無い区域名）を最上段の区域の行として残す。
+    // 捨てると、その区域と配下が記録もなく画面から消える。
+    it('県を引けない区域は、最上段の区域の行として残す', () => {
+      const result = buildIntensityRows([area('岩手県沿岸北部', 40)], [], deps({ prefOfArea: () => null }))
+      expect(result.rows).toHaveLength(1)
+      const row = result.rows[0]
+      expect(row.kind).toBe('area')
+      if (row.kind !== 'area') return
+      expect(row.name).toBe('岩手県沿岸北部')
+      expect(row.scale).toBe(40)
+    })
+
+    // 対照: 県を引ける区域は従来どおり県の行の下に入る（最上段へ出さない）。
+    it('対照: 県を引ける区域は県の行の下に入る', () => {
+      const result = buildIntensityRows([area('岩手県沿岸北部', 40)], [], deps())
+      expect(result.rows.map(r => r.kind)).toEqual(['pref'])
+    })
+
+    // 正: 区域を引けないが県は分かる観測点を、県の直下に置く（長周期の一覧と同じ置き方）。
+    it('区域を引けない観測点は、県の直下に置く', () => {
+      const result = buildIntensityRows(
+        [{ pref: '', addr: '宮古市田老', isArea: false, scale: s(40) }],
+        [],
+        deps({ prefOfStation: () => '岩手県', regionOfStation: () => null }),
+      )
+      const row = result.rows[0]
+      if (row.kind !== 'pref') throw new Error('県の行ではない')
+      expect(row.pref).toBe('岩手県')
+      expect(row.regions).toEqual([])
+      expect(row.stations.map(st => st.name)).toEqual(['宮古市田老'])
+      // 県の点が無いので、県の直下の観測点の値が県の値になる
+      expect(row.scale).toBe(40)
+      expect(result.unplacedStations).toEqual([])
+    })
+
+    // 安全弁: 県も区域も引けない観測点は、置けなかった名前として返す（呼び出し側が記録する）。
+    it('県も区域も引けない観測点は、置けなかった名前として返す', () => {
+      const result = buildIntensityRows(
+        [{ pref: '', addr: '宮古市田老', isArea: false, scale: s(40) }],
+        [],
+        deps(),
+      )
+      expect(result.rows).toEqual([])
+      expect(result.unplacedStations).toEqual(['宮古市田老'])
+    })
+
+    // 安全弁: 県の行と県を引けない区域の行は、震度の高い順に混ぜて並ぶ（最上段の区域を末尾へ追いやらない）。
+    it('最上段の区域の行も震度の順に並ぶ', () => {
+      const result = buildIntensityRows(
+        [area('岩手県沿岸北部', 50), prefPoint('宮城県', 30), area('宮城県北部', 30)],
+        [],
+        deps({ prefOfArea: name => (name === '宮城県北部' ? '宮城県' : null) }),
+      )
+      expect(result.rows.map(r => (r.kind === 'pref' ? r.pref : r.name))).toEqual(['岩手県沿岸北部', '宮城県'])
+    })
   })
 })

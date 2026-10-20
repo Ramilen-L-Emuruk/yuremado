@@ -164,10 +164,18 @@ export function hasDepth(depth: number): boolean {
   return Number.isFinite(depth) && depth >= 0
 }
 
-export function formatDepth(depth: number): string {
+/**
+ * 深さの表示（「10km」「ごく浅い」「不明」「700km以上」）。
+ *
+ * @param atLeast 深さが「700km以上」という下限だけの値か（`Hypocenter.depthAtLeast`）。**必須にしてある**
+ *   —— 省略できると、震源から深さを渡す箇所で印を渡し忘れても型検査が通り、「700km以上」の地震が
+ *   「700km」と出る。印を持たない値（長期震源カタログ等）を渡す箇所は `false` と書く。
+ *   真なら「700km以上」（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）。
+ */
+export function formatDepth(depth: number, atLeast: boolean): string {
   if (!hasDepth(depth)) return '不明'
   if (depth === 0) return 'ごく浅い'
-  return `${depth}km`
+  return atLeast ? `${depth}km以上` : `${depth}km`
 }
 
 /**
@@ -257,6 +265,23 @@ export function formatCoordinate(latitude: number, longitude: number, digits = 1
 }
 
 /**
+ * 震央補助表現（`Area/NameFromMark`。「輪島の東北東３０ｋｍ付近」）を画面に出す形にする。
+ *
+ * **数字と距離の単位だけ半角へ直す**（2026-10-19 ユーザー承認「半角へ揃える・両カード (推奨)」）。
+ * 隣に並ぶ座標・規模・深さは半角なので、原文の全角のままだと字の幅が行ごとに割れる。地名と
+ * 方位の語はそのまま残す。
+ *
+ * **持つ値は電文のまま**で、直すのは表示するときだけ —— 津波から借りた震源が地震情報の値と
+ * 同じかの突き合わせ（`borrowFromTsunami.ts`）は原文どうしで行う。
+ */
+export function formatNameFromMark(s: string): string {
+  return s
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/ｋｍ/g, 'km')
+    .trim()
+}
+
+/**
  * 「津波警報等」に添える説明。**気象庁自身が固定付加文の中で同じ補い方をしている**
  * （「津波警報等（大津波警報・津波警報あるいは津波注意報）を発表中です。」）。
  *
@@ -287,19 +312,6 @@ export function formatDomesticTsunami(type: DomesticTsunami): { text: string; co
     '警報等': { text: '津波警報等', color: '#ef4444' },
   }
   return map[type] ?? { text: '不明', color: '#94a3b8' }
-}
-
-export function formatIssueType(type: IssueType): string {
-  const map: Record<IssueType, string> = {
-    '震度速報': '震度速報',
-    '震源情報': '震源情報',
-    '震源・震度情報': '震源・震度情報',
-    '各地の震度情報': '各地の震度情報',
-    '顕著な地震の震源要素更新のお知らせ': '顕著な地震の震源要素更新のお知らせ',
-    '遠地地震': '遠地地震',
-    'その他': 'その他',
-  }
-  return map[type] ?? type
 }
 
 /** カードの見出しに出す電文種別 1 つぶん。→ {@link quakeReportLabels} */
@@ -334,10 +346,10 @@ export function quakeReportLabels(
   reports: QuakeReportRecord[] | undefined,
   fallback: IssueType,
 ): QuakeReportLabel[] {
-  if (!reports || reports.length === 0) return [{ type: formatIssueType(fallback) }]
+  if (!reports || reports.length === 0) return [{ type: fallback }]
   return reports.map(r => {
     const count = r.serial ?? r.keys.length
-    return count > 1 ? { type: formatIssueType(r.type), count } : { type: formatIssueType(r.type) }
+    return count > 1 ? { type: r.type, count } : { type: r.type }
   })
 }
 

@@ -2,7 +2,8 @@
 // `setData` は中身が同じでも地図全体を描き直させるので、ここを外すと、ヒートマップを
 // 出していなくても親が描き直されるたびにフル再描画が走る（理由は関数の説明）。
 import { describe, it, expect } from 'vitest'
-import { isSameHeatData } from './QuakeHeatmapGL'
+import type { MapGeoJSONFeature } from 'maplibre-gl'
+import { clickHtml, hoverHtml, isSameHeatData } from './QuakeHeatmapGL'
 import type { HeatPoint } from '../../utils/quakeHeatmap'
 
 const point = (name: string): HeatPoint =>
@@ -43,5 +44,34 @@ describe('isSameHeatData', () => {
   it('まだ何も流し込んでいない（undefined）なら、空でも違うとみなす', () => {
     expect(isSameHeatData(undefined, [])).toBe(false)
     expect(isSameHeatData(undefined, null)).toBe(false)
+  })
+})
+
+// 吹き出しの規模の札。巨大地震は気象庁の説明を出し、M 不明は「不明」のまま
+// （2026-10-19 ユーザー承認「巨大地震を言い分ける (推奨)」）。
+describe('吹き出しの規模の札', () => {
+  const feature = (properties: Record<string, unknown>) => ({ properties }) as unknown as MapGeoJSONFeature
+
+  it('巨大地震は「M8を超える巨大地震 震源名」と出す（ホバー・クリックとも）', () => {
+    const f = feature({ name: '石川県能登地方', magnitude: -1, magnitudeCondition: 'Ｍ８を超える巨大地震', depth: 10, time: '' })
+    const hover = hoverHtml(f).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    expect(hover).toBe('M8を超える巨大地震 石川県能登地方')
+    expect(clickHtml(f)).toContain('M8を超える巨大地震')
+  })
+
+  // 対照: M 不明・説明の欄が落ちた地物は「不明」。
+  it('M 不明は「不明」のまま', () => {
+    expect(hoverHtml(feature({ name: 'A', magnitude: -1, magnitudeCondition: 'Ｍ不明' }))).toContain('>不明<')
+    expect(hoverHtml(feature({ name: 'A', magnitude: -1 }))).toContain('>不明<')
+  })
+
+  it('数値の規模は従来どおり', () => {
+    expect(hoverHtml(feature({ name: 'A', magnitude: 3.2, magnitudeCondition: null }))).toContain('>M3.2<')
+  })
+
+  // 深さが「700km以上」という下限だけの値なら、クリックの吹き出しでもそう出す（印は点が運ぶ）。
+  it('深さの下限の印があれば「700km以上」、無ければ従来どおり', () => {
+    expect(clickHtml(feature({ name: 'A', magnitude: 6, depth: 700, depthAtLeast: true }))).toContain('深さ 700km以上')
+    expect(clickHtml(feature({ name: 'A', magnitude: 6, depth: 700, depthAtLeast: false }))).toContain('深さ 700km<')
   })
 })

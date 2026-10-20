@@ -101,7 +101,7 @@
 | 選抜・並べ替え・上限 | `selectRegionNames` `selectObservationUpdatesToSpeak` `selectArrivalsToSpeak` `selectMissingToSpeak` `selectWarningLevelToSpeak` `orderAreasForSpeech` `observationsForAreaOrder` `groupObservationsByDistrict` |
 | 既読の記録 | `createQuakeSpokenState` `applySpokenRefs` `regionDiffKind` `isUnreceivedUnspoken` `magnitudeFactValue` `tellableHypocenterFacts` `tellableFacts` `hasUnspokenFact` |
 | 断片化・参照付け | `gradeSegment` |
-| 定数（上限値・順序・正規表現・照合表） | `GRADE_ORDER` `SCALE_DESCENDING` `NO_REGION_LOG_THROTTLE_MS` `warnNoRegionNames` `reportedUnknownMagnitudeConditions` `CANCEL_REASON_SPEAK_MAX_CHARS` `CANCEL_DECLARATION` `CANCEL_DECLARATION_SUBJECTS` `EEW_LEAD_PHRASES` `OBS_UPDATE_SPEAK_MAX_POINTS` `ARRIVAL_SPEAK_MAX_POINTS` `MISSING_SPEAK_MAX_POINTS` `WARNING_LEVEL_SPEAK_MAX_POINTS` |
+| 定数（上限値・順序・正規表現・照合表） | `GRADE_ORDER` `SCALE_DESCENDING` `NO_REGION_LOG_THROTTLE_MS` `warnNoRegionNames` `reportedUnknownMagnitudeConditions` `CANCEL_REASON_INLINE_MAX_CHARS` `CANCEL_DECLARATION` `CANCEL_DECLARATION_SUBJECTS` `EEW_LEAD_PHRASES` `OBS_UPDATE_SPEAK_MAX_POINTS` `ARRIVAL_SPEAK_MAX_POINTS` `MISSING_SPEAK_MAX_POINTS` `WARNING_LEVEL_SPEAK_MAX_POINTS` |
 | 型定義（6 件） | `TtsSpeechOptions` `QuakeSpokenState` `SpokenRegion` `RegionNameIndexes` `RegionDiffKind` `SpokenHeightLookup` |
 
 **文字列版（`earthquakeToText` / `tsunamiToText` / `tsunamiDowngradeToText` /
@@ -131,7 +131,7 @@
 | `magnitudePhrase` | アプリ | 「マグニチュード7.1の」（連体修飾） | 規模を語る形が全体で 4 通り（→ §4-2） |
 | `MAGNITUDE_CONDITION_SENTENCE` | アプリ（キーが電文の語） | 「マグニチュードは不明です。」「マグニチュードは8を超える巨大地震とみられます。」 | |
 | `magnitudeConditionSentence` | フォールバック | 既知は上の表／未知は「マグニチュードは〈電文の語を半角化〉です。」 | 未知の語の経路だけ、述語の直前が電文の表記になる（意図的。気象庁が語を増やしたときに黙らないため） |
-| `depthSourcePhrase` | アプリ | 「深さ120キロメートル」／「ごく浅い場所」 | 深さを語る形が全体で 3 通り（→ §4-3） |
+| `depthSourcePhrase` | アプリ | 「深さ120キロメートル」／「ごく浅い場所」／「深さ700キロメートル以上」 | 深さを語る形が全体で 3 通り（→ §4-3）。「以上」は 3 通りとも同じ位置（数字の後）に付く |
 | `depthAmendPhrase` | アプリ | 「震源の深さ120キロメートル」／「震源の深さはごく浅く」「震源の深さはごく浅い場所」 | ごく浅いのときだけ、後ろに規模が続くかどうかで語形が変わる（→ §4-1） |
 | `depthUpdateValue` | アプリ | 「120キロメートル」／「ごく浅い場所」 | 深さを語る形が全体で 3 通り（→ §4-3） |
 | `intensityText` | アプリ | 「5弱」 | |
@@ -159,11 +159,11 @@
 
 | 種別 | 文の形 |
 |---|---|
-| 震度速報 | 「震度速報。」＋区域／変化が無ければ「震度速報が更新されました。」だけ |
+| 震度速報 | 「震度速報。」＋区域／変化が無ければ「震度速報が更新されました。観測した震度に変わりはありません。」。区域が下がった・消えた続報は「震度速報が更新されました。」だけ |
 | 震源要素更新（VXSE61） | 「顕著な地震の震源要素更新のお知らせ。15時4分頃発生した〈震源名〉の地震について、震源の深さ120キロメートル、マグニチュード7.1に更新されました。」 |
 | 遠地地震 | 「遠地地震に関する情報。10日15時4分頃、〈震源の句〉」＋**電文の付加文をそのまま** |
 | 地震情報・震源情報（初報） | 「地震情報。15時4分頃、〈震源の句〉〈津波区分の文〉〈区域の文〉」 |
-| 同（続報・差分） | 「地震情報が更新されました。」＋変わった要素だけ |
+| 同（続報・差分） | 「地震情報が更新されました。」＋変わった要素だけ。区域の差分が空なら区域より下の階層を見て一文足す（「観測地点が追加されましたが、地域ごとの最大震度は変わっていません。」ほか）。**下がった・減ったものがあれば「観測された震度が更新されました。」**（言い切らない。→ [audio-tts-spec.md](audio-tts-spec.md) §4「続報は差分だけ読む」） |
 
 ### 3.3 緊急地震速報
 
@@ -203,7 +203,7 @@
 | 関数 | 出どころ | 組み立てている文の形 | 揃っていない点 |
 |---|---|---|---|
 | `buildLpgmRegionText` | アプリ | 「階級3を〈区域〉、〈区域〉、階級2を〈区域〉で観測しました。」 | 震度側（`buildRegionSegments`）とほぼ同じ形の文を、断片列ではなく**文字列連結で作る**。長周期は差分を持たず毎回全区域を読み直すので参照が要らないため（意図的）。ただし同じ形の文が 2 通りの作りで並んでいる |
-| `lpgmToText` | アプリ | 「長周期地震動情報。15時4分頃発生した地震で、長周期地震動階級3を〈区域〉で観測しました。」／取消は「長周期地震動情報は取り消されました。」 | 時刻の導入句（→ §4-4） |
+| `lpgmToText` | アプリ | 「長周期地震動情報。15時4分頃発生した地震で、長周期地震動階級3を〈区域〉で観測しました。」／取消は「長周期地震動に関する観測情報は取り消されました。」＋取消の理由（`cancelReasonSentence`） | 時刻の導入句（→ §4-4） |
 
 ### 3.6 特別情報
 
@@ -212,7 +212,7 @@
 | `nankaiToText` | アプリ | 「南海トラフ地震臨時情報、調査中。南海トラフ地震の発生可能性について調査しています。最新情報に注意してください。」など 6 通り | 段階がある 4 通りは名乗りを読点で継ぎ、取消とフォールバックだけ句点で切る（→ §4-11）。どの段階にも当たらないときの文は、名乗りと本文で同じ語を繰り返す（「南海トラフ地震臨時情報。南海トラフ地震に関する臨時情報が発表されました。」） |
 | `nankaiCommentaryToText` | アプリ（号数が電文由来） | 臨時解説「南海トラフ地震関連解説情報、第1号。南海トラフ地震の想定震源域の状況について解説情報が発表されました。」／定例解説は号数を持たず「南海トラフ地震関連解説情報。」 | 同じ関数の中で名乗りの継ぎ方が読点と句点に分かれる（→ §4-11） |
 | `kohatsuToText` | **混在** | 「北海道・三陸沖後発地震注意情報。〈電文の見出し文〉。今後、大規模地震の発生可能性が平常時より高まっています。防災対応の確認をしてください。」／取消は「北海道・三陸沖後発地震注意情報は取り消されました。」 | 電文の見出し文を丸ごと読む唯一の種別（解説情報は同じ見出し文から号数だけ抜く。→ §4-8） |
-| `earthquakeCountToText` | **混在** | 「地震回数に関する情報。9日15時から10日12時までに、地震が40回発生しています。このうち、震度1以上を観測したのは3回です。」／取消は「地震回数に関する情報は取り消されました。」＋電文の理由 | |
+| `earthquakeCountToText` | **混在** | 「地震回数に関する情報。9日15時から10日12時までに、地震が40回発生しています。このうち、震度1以上を観測したのは3回です。」。回数が発表なし（電文の `-1`）なら「…までに、震度1以上を観測した地震は3回です。」、有感が発表なしなら有感の文を言わず、両方が発表なし・区間を選べない報は「地震回数に関する情報。」だけ（回数を伴わない発表報の本文は、気象庁が書いた文として別の発話で読む。部品「本文」）（→ [quake-spec.md](quake-spec.md) §8「地震回数に関する情報」）／取消は「地震回数に関する情報は取り消されました。」＋電文の理由 | |
 | `quakeNoticeToText` | **混在** | 「地震・津波に関するお知らせ。〈電文の見出し文〉。」／取消は「地震・津波に関するお知らせは取り消されました。」＋電文の理由（設定「お知らせの音・読み上げ」を有効にしたときだけ。本文は気象庁が書いた文として別に読む） | 名乗りの継ぎ方は地震回数と同じ句点 |
 | `estimatedIntensityToText` | アプリ | 「15時4分頃発生した地震について、気象庁の推計震度分布図を受信しました。」／続報は「〜が更新されました。」 | 名乗りを文の中に入れる（意図的）。時刻の導入句（→ §4-4） |
 
@@ -220,8 +220,9 @@
 
 | 関数 | 出どころ | 組み立てている文の形 | 揃っていない点 |
 |---|---|---|---|
-| `cancelReasonSentence` | **電文** | 電文の `Body/Text` をそのまま。句点で終わっていなければ足す（→ §4-8）。**この関数自身はアプリの語を持たない** —— 定型文と繋いでいるのは呼び出し側 4 つ（`eewCancelToText`・`earthquakeCancelToText`・`tsunamiCancelToText`・`earthquakeCountToText`） | |
+| `cancelReasonSentence` | **電文** | 電文の `Body/Text` をそのまま。句点で終わっていなければ足す（→ §4-8）。**この関数自身はアプリの語を持たない** —— 定型文と繋いでいるのは呼び出し側の各取消文。120 字を超える理由は続けず、`deferredCancelReasonToSpeak` が別の発話にする | |
 | `earthquakeCancelToText` | **混在** | 「15時4分に発表された地震情報は取り消されました。」＋電文の理由 | |
+| `deferredCancelReasonToSpeak` | **混在** | 「地震情報が取り消された理由をお伝えします。」＋電文の理由。理由が 120 字（`CANCEL_REASON_INLINE_MAX_CHARS`）を超えたときだけ、取消の文とは別の発話で最下位の層に読む（→ [`audio-tts-spec.md`](audio-tts-spec.md) §6「取消の長い理由は最下位の層で読む」）。「地震情報」の位置には取消の文が名乗った情報名が入る | |
 
 ### 3.8 `ttsText.ts` の外
 
@@ -624,4 +625,13 @@ VOICEVOX 試聴ボタンが読ませていたのは次の一文で、文字列�
   縮めた（2026-10-13 ユーザー承認）。画面の文も同じ形で変えた（語の決め方は
   [`tsunami-spec.md`](tsunami-spec.md) §3）
 - 2026-10-18: §3.6 に地震・津波に関するお知らせの読み上げ文（`quakeNoticeToText`）を足した
+- 2026-10-19: 3 つの文を実装に合わせた。①地震回数（`earthquakeCountToText`）の発表なし（電文の `-1`）の
+  言い方（2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」）、②地震情報・震度速報の続報で
+  下がった・減ったものがあるときは「変わっていません」「変わりはありません」を言わない（同日承認
+  「言い切りを外す (推奨)」）、③深さ 700km 以上の「以上」（`depthSourcePhrase`・`depthUpdateValue`・
+  `depthAmendPhrase`。同日承認「「700km以上」 (推奨)」）。一覧の件数は変わらない
+- 2026-10-19: 地震回数の読み上げ文の行に、回数を伴わない発表報の本文を気象庁が書いた文として読むこと
+  （部品「本文」。2026-10-19 ユーザー承認「部品「本文」を足す (推奨)」）を書き添えた
 - 2026-10-19: `kohatsuToText` の取消の文（「北海道・三陸沖後発地震注意情報は取り消されました。」）を足した
+- 2026-10-19: 取消の長い理由を別の発話で読む文（`deferredCancelReasonToSpeak`。「◯◯が取り消された理由をお伝えします。」、
+  2026-10-19 ユーザー承認）を足し、境目の定数の名前を `CANCEL_REASON_INLINE_MAX_CHARS` へ改めた

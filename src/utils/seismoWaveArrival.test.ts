@@ -129,3 +129,27 @@ describe('computeHypocentralDistanceKm', () => {
     expect(computeHypocentralDistanceKm({ hypocenter: hypo(), stationLat: null, stationLon: null })).toBeNull()
   })
 })
+
+// 深さ「700km以上」は下限だけの値なので、深さ不明と同じく線も距離も出さない
+// （2026-10-19 ユーザー承認「線と距離を出さない (推奨)」）。700km として解くと、実際より浅い
+// 地震の時刻・距離を名乗ることになる。
+describe('深さ「700km以上」', () => {
+  const deep = (depthAtLeast: boolean) => hypo({ latitude: 27.8, longitude: 140.0, depth: depthAtLeast ? 700 : 650, ...(depthAtLeast && { depthAtLeast: true }) })
+
+  // 正: 線を引かない・距離を出さない
+  it('到達時刻も震源距離も出さない', () => {
+    expect(computeWaveArrival({ originMs: ORIGIN_MS, hypocenter: deep(true), ...HOME })).toBeNull()
+    expect(computeHypocentralDistanceKm({ hypocenter: deep(true), ...HOME })).toBeNull()
+  })
+
+  // 対照: ふつうの深発地震（650km）は線も距離も出す
+  it('対照: 650km は出す', () => {
+    expect(computeWaveArrival({ originMs: ORIGIN_MS, hypocenter: deep(false), ...HOME })).not.toBeNull()
+    expect(computeHypocentralDistanceKm({ hypocenter: deep(false), ...HOME })).not.toBeNull()
+  })
+
+  // 安全弁: 印が無ければ同じ 700 でも出す（値だけで深さ不明へ倒さない）
+  it('安全弁: 印の無い 700km は出す', () => {
+    expect(computeWaveArrival({ originMs: ORIGIN_MS, hypocenter: hypo({ latitude: 27.8, longitude: 140.0, depth: 700 }), ...HOME })).not.toBeNull()
+  })
+})

@@ -220,7 +220,7 @@ describe('fetchSeismoStatus', () => {
   it('対照: sensors が空配列なら「繋がったが観測点 0 件」', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ sensors: [] })) as unknown as typeof fetch
     const result = await fetchSeismoStatus('http://host:50506', fetchImpl)
-    expect(result).toEqual({ kind: 'ok', stations: [], sensorCount: 0, sensors: [], usualIntensities: new Map() })
+    expect(result).toEqual({ kind: 'ok', stations: [], sensorCount: 0, sensors: [], usualIntensities: new Map(), assignedStationCount: null })
   })
 
   it('正: 観測点ごとの普段の計測震度を読み、古いものと読めないものは載せない', async () => {
@@ -278,6 +278,43 @@ describe('fetchSeismoStatus', () => {
     ])
   })
 
+  // 設定タブの状態の 1 行は、観測点の数を割り当てから数える（2026-10-19 ユーザー承認「割り当てから数える (推奨)」）。
+  it('正: 割り当て済みの観測点を、未受信の基板も含めて重複なしで数える', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        // 届いたセンサーは 1 つも無い（ホストの起動直後）。
+        sensors: [],
+        assignedBoards: [
+          { boardKey: 'mac:aa', stationId: 'home', lastPacketMs: null, state: 'pending', sensors: [] },
+          { boardKey: 'mac:bb', stationId: 'home', lastPacketMs: null, state: 'pending', sensors: [] },
+          { boardKey: 'mac:cc', stationId: 'garden', lastPacketMs: null, state: 'pending', sensors: [] },
+          // `stationId` を読めない要素は数えない。
+          { boardKey: 'mac:dd' },
+        ],
+      }),
+    ) as unknown as typeof fetch
+    const result = await fetchSeismoStatus('http://host:50506', fetchImpl)
+    expect(result.kind).toBe('ok')
+    if (result.kind !== 'ok') return
+    expect(result.assignedStationCount).toBe(2)
+    // **届いたセンサーから組む `stations` の意味は変えない**（座標・地震カードの対象に使う）。
+    expect(result.stations).toEqual([])
+  })
+
+  it('対照: 割り当てが空配列なら 0（数えられない null とは分ける）', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ sensors: [], assignedBoards: [] })) as unknown as typeof fetch
+    const result = await fetchSeismoStatus('http://host:50506', fetchImpl)
+    expect(result.kind === 'ok' && result.assignedStationCount).toBe(0)
+  })
+
+  it('安全弁: 割り当てを返さない古いホスト・配列でない値は null', async () => {
+    for (const body of [{ sensors: [] }, { sensors: [], assignedBoards: { home: 1 } }]) {
+      const fetchImpl = vi.fn(async () => jsonResponse(body)) as unknown as typeof fetch
+      const result = await fetchSeismoStatus('http://host:50506', fetchImpl)
+      expect(result.kind === 'ok' && result.assignedStationCount).toBeNull()
+    }
+  })
+
   it('対照: 合成の最新震度（stationIntensities）は読まない', async () => {
     // **繋いだ直後の空白を埋められそうに見えるが、読まないと決めた**（理由は
     // `SeismoHostCheck` の説明。時刻がホストの時計なので古さを測れない）。
@@ -292,7 +329,7 @@ describe('fetchSeismoStatus', () => {
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
     // `usualIntensities` は別の欄（普段の計測震度）。古さはホストの時計どうしで測る（`readUsualIntensities`）。
-    expect(Object.keys(result).sort()).toEqual(['kind', 'sensorCount', 'sensors', 'stations', 'usualIntensities'])
+    expect(Object.keys(result).sort()).toEqual(['assignedStationCount', 'kind', 'sensorCount', 'sensors', 'stations', 'usualIntensities'])
   })
 
   it('安全弁: HTTP エラー・到達不能・URL 不正を言い分ける', async () => {

@@ -374,12 +374,68 @@ export function clampPeriodToRange(period: CatalogPeriod, minMs: number, maxMs: 
  *
  * **動かしていない側の日付は保つ。** 両方を年へ丸め直すと、片方のつまみを触っただけで
  * もう片方の日付指定が黙って消える。
+ *
+ * **動かした先は収録の範囲へ収める。** 最後の年はデータの終端（`catalogPeriodBounds`）で
+ * 止まるので、年の終わり（12 月 31 日）へそのまま置くと、まだ取れていない日を選べてしまう。
+ *
+ * @param minMs 範囲の始まり。**その日の 0 時であること**
+ * @param maxMs 範囲の終わり。**その日の最後の瞬間であること**
  */
-export function periodFromYearChange(period: CatalogPeriod, fromYear: number, toYear: number): CatalogPeriod {
-  return {
+export function periodFromYearChange(
+  period: CatalogPeriod,
+  fromYear: number,
+  toYear: number,
+  minMs: number,
+  maxMs: number,
+): CatalogPeriod {
+  return clampPeriodToRange({
     fromMs: fromYear === jstYearOf(period.fromMs) ? period.fromMs : jstYearStartMs(fromYear),
     toMs: toYear === jstYearOf(period.toMs) ? period.toMs : jstYearEndMs(toYear),
-  }
+  }, minMs, maxMs)
+}
+
+/**
+ * 期間として選べる範囲。始まりは収録の最初の年の 1 月 1 日 0 時、終わりは**データの最終日**の
+ * 最後の瞬間（2026-10-19 ユーザー承認「終端で止め、速報値を添える (推奨)」）。
+ *
+ * **索引の `coveredThroughMs` は排他的な終端**（覆えた最後の日の翌日 0 時。生成は
+ * `scripts/build-hypocenter-catalog.ts`）。そのまま終わりに使うと、まだ取れていない翌日を
+ * 選べてしまい、「取っていない」が「地震が無かった」に見える。1 ミリ秒手前の日の終わりへ寄せる。
+ * 最後の年の終わりを越えることはない（越えていれば年の終わりで止める）。
+ *
+ * 返す 2 つはどちらも日の境界に乗る（期間の不変条件。→ `CatalogPeriod`）。
+ */
+export function catalogPeriodBounds(index: Pick<HypocenterIndex, 'years' | 'coveredThroughMs'>): { minMs: number; maxMs: number } {
+  const minMs = jstYearStartMs(index.years[0])
+  const lastYearEnd = jstYearEndMs(index.years[index.years.length - 1])
+  const lastDay = jstDayBounds(Math.min(index.coveredThroughMs - 1, lastYearEnd))
+  // 終端が最初の年より前（壊れた索引）なら、最初の 1 日だけを残す。幅を消すと 1 件も出ないのに
+  // 見出しだけがもっともらしく出る（理由は `jstDayBounds`）。
+  const firstDay = jstDayBounds(minMs)
+  const maxMs = lastDay == null ? lastYearEnd
+    : lastDay[1] < minMs ? (firstDay?.[1] ?? lastYearEnd)
+      : lastDay[1]
+  return { minMs, maxMs }
+}
+
+/**
+ * 期間が速報値の年に掛かるときに添える 1 行（例「2025年1月1日以降は速報値」）。掛からなければ `null`。
+ * 2026-10-19 ユーザー承認「終端で止め、速報値を添える (推奨)」。
+ *
+ * 年は**収録のうち最初の速報値の年**。速報値（気象庁の「震源リスト」）は確定値（地震月報）が
+ * まだ出ていない直近の年に限られ、末尾に連なって並ぶ。期間がその途中から始まっていても、
+ * 境目の日付を出す方が「どこから先が速報値か」が読める。
+ *
+ * 掛かるかは期間の両端の年（逆順でもよい）の間に速報値の年があるかで見る。
+ */
+export function preliminaryNote(index: Pick<HypocenterIndex, 'years' | 'quality'>, period: CatalogPeriod): string | null {
+  const firstPreliminary = index.years.find((y) => index.quality[String(y)] === 'preliminary')
+  if (firstPreliminary === undefined) return null
+  const lo = Math.min(jstYearOf(period.fromMs), jstYearOf(period.toMs))
+  const hi = Math.max(jstYearOf(period.fromMs), jstYearOf(period.toMs))
+  const touches = index.years.some((y) => y >= lo && y <= hi && index.quality[String(y)] === 'preliminary')
+  if (!touches) return null
+  return `${formatJstDate(jstYearStartMs(firstPreliminary))}以降は速報値`
 }
 
 /**

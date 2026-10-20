@@ -42,6 +42,7 @@ function refNames(segments: SpeechSegment[]): string[][] {
             : r.kind === 'telegramText' ? '(気象庁が書いた文)'
               : r.kind === 'borrowedHypocenter' ? '(借りた震源)'
                 : r.kind === 'quakeObserved' ? '(その報の観測点)'
+                  : r.kind === 'quakeRegionSnapshot' ? '(その報の区域)'
                   : r.name
     )))
 }

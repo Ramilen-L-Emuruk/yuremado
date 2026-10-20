@@ -35,6 +35,8 @@ import {
   clampDayToRange,
   clampPeriodToRange,
   periodFromYearChange,
+  catalogPeriodBounds,
+  preliminaryNote,
   periodFromDateChange,
   formatJstDate,
   periodDayCount,
@@ -64,8 +66,6 @@ const makeYear = (
   lng: Float64Array.from(events.map((e) => e.lng)),
   depth: Float32Array.from(events.map((e) => e.depth)),
   magnitude: Float32Array.from(events.map((e) => e.mag)),
-  intensityIdx: new Int32Array(0),
-  intensityCode: [],
 })
 
 const FILTER: CatalogFilter = {
@@ -97,7 +97,6 @@ const INDEX: HypocenterIndex = {
   years: [1919, 1960, 1997, 2020, 2021, 2022],
   counts: {},
   quality: {},
-  intensityYears: [],
 }
 
 describe('sampleRamp', () => {
@@ -951,6 +950,8 @@ describe('clampPeriodToRange', () => {
 })
 
 describe('periodFromYearChange', () => {
+  const min = jstYearStartMs(1919)
+  const max = jstYearEndMs(2026)
   /** 2020 年 6 月 15 日 〜 2024 年 3 月 2 日。両端とも年の途中。 */
   const period = {
     fromMs: fromDateInputValue('2020-06-15', 'start')!,
@@ -959,20 +960,20 @@ describe('periodFromYearChange', () => {
 
   // 正: 動かした側は年の境界へ。
   it('動かした側は年の頭・末へ', () => {
-    const r = periodFromYearChange(period, 2018, 2024)
+    const r = periodFromYearChange(period, 2018, 2024, min, max)
     expect(r.fromMs).toBe(jstYearStartMs(2018))
   })
 
   // **対照: 動かしていない側の日付は保つ。**
   // 両方を年へ丸め直すと、片方のつまみを触っただけでもう片方の日付指定が黙って消える。
   it('動かしていない側の日付は保つ', () => {
-    expect(periodFromYearChange(period, 2018, 2024).toMs).toBe(period.toMs)
-    expect(periodFromYearChange(period, 2020, 2026).fromMs).toBe(period.fromMs)
+    expect(periodFromYearChange(period, 2018, 2024, min, max).toMs).toBe(period.toMs)
+    expect(periodFromYearChange(period, 2020, 2026, min, max).fromMs).toBe(period.fromMs)
   })
 
   // 対照: 同じ年を指したままなら何も変わらない。
   it('同じ年のままなら変わらない', () => {
-    expect(periodFromYearChange(period, 2020, 2024)).toEqual(period)
+    expect(periodFromYearChange(period, 2020, 2024, min, max)).toEqual(period)
   })
 
   // **安全弁: どの動かし方でも逆転しない。**
@@ -980,8 +981,17 @@ describe('periodFromYearChange', () => {
   it.each([
     [2018, 2024], [2020, 2026], [2024, 2024], [2020, 2020], [2018, 2018], [2026, 2026],
   ])('%i〜%i へ動かしても開始が終了を越えない', (fromYear, toYear) => {
-    const r = periodFromYearChange(period, fromYear, toYear)
+    const r = periodFromYearChange(period, fromYear, toYear, min, max)
     expect(r.fromMs).toBeLessThanOrEqual(r.toMs)
+  })
+
+  // **安全弁: 最後の年へ動かしても、データの終端より先へは出ない**
+  // （2026-10-19 ユーザー承認「終端で止め、速報値を添える (推奨)」）。
+  it('終了を最後の年へ動かすと、年の終わりではなくデータの最終日で止まる', () => {
+    const dataEnd = fromDateInputValue('2026-10-16', 'end')!
+    const r = periodFromYearChange(period, 2020, 2026, min, dataEnd)
+    expect(toDateInputValue(r.toMs)).toBe('2026-10-16')
+    expect(r.toMs).toBe(dataEnd)
   })
 })
 
@@ -1107,5 +1117,83 @@ describe('unknownMagnitudePasses', () => {
   it('下限が下端ちょうどなら残し、少しでも上なら外す', () => {
     expect(unknownMagnitudePasses(MAGNITUDE_FILTER_RANGE.min)).toBe(true)
     expect(unknownMagnitudePasses(MAGNITUDE_FILTER_RANGE.min + 0.1)).toBe(false)
+  })
+})
+
+describe('catalogPeriodBounds', () => {
+  // 生成物の終端（2026-10-17 00:00 JST ＝ 排他的な終端）。データは 2026 年 10 月 16 日まで。
+  const index = {
+    years: [1919, 2025, 2026],
+    coveredThroughMs: Date.UTC(2026, 9, 17) - 9 * 60 * 60 * 1000,
+  }
+
+  // 正: 終わりは排他的な終端の 1 ミリ秒手前（データの最終日の終わり）。
+  it('終わりはデータの最終日の終わり（排他的な終端の手前の日）', () => {
+    const { minMs, maxMs } = catalogPeriodBounds(index)
+    expect(minMs).toBe(jstYearStartMs(1919))
+    expect(toDateInputValue(maxMs)).toBe('2026-10-16')
+    expect(maxMs).toBe(fromDateInputValue('2026-10-16', 'end'))
+  })
+
+  // 正: 既定の期間（直近 10 年・今年の 12 月 31 日まで）を収めると、行の文字列が承認どおりになる。
+  it('既定の期間を収めると「2017年1月1日 〜 2026年10月16日（3,576日ぶん）」', () => {
+    const { minMs, maxMs } = catalogPeriodBounds(index)
+    const r = clampPeriodToRange({ fromMs: jstYearStartMs(2017), toMs: jstYearEndMs(2026) }, minMs, maxMs)
+    const text = `${formatJstDate(r.fromMs)} 〜 ${formatJstDate(r.toMs)}（${periodDayCount(r.fromMs, r.toMs).toLocaleString('ja-JP')}日ぶん）`
+    expect(text).toBe('2017年1月1日 〜 2026年10月16日（3,576日ぶん）')
+  })
+
+  // 対照: 通年ぶん覆えた最後の年（終端が翌年の頭）なら、年の終わりまで選べる。
+  it('最後の年を通年ぶん覆えていれば、終わりは 12 月 31 日', () => {
+    const { maxMs } = catalogPeriodBounds({ years: [2024], coveredThroughMs: jstYearStartMs(2025) })
+    expect(maxMs).toBe(jstYearEndMs(2024))
+  })
+
+  // 安全弁: 終端が最後の年の終わりを越えていても、年の終わりで止める。
+  it('終端が最後の年を越えていても、年の終わりで止める', () => {
+    const { maxMs } = catalogPeriodBounds({ years: [2024], coveredThroughMs: jstYearStartMs(2030) })
+    expect(maxMs).toBe(jstYearEndMs(2024))
+  })
+
+  // 安全弁: 終端が最初の年より前（壊れた索引）でも幅を残し、日の境界に乗せる。
+  it('終端が最初の年より前でも、最初の 1 日を残す', () => {
+    const { minMs, maxMs } = catalogPeriodBounds({ years: [2024], coveredThroughMs: jstYearStartMs(2020) })
+    expect(periodDayCount(minMs, maxMs)).toBe(1)
+    expect(maxMs).toBe(fromDateInputValue('2024-01-01', 'end'))
+  })
+})
+
+describe('preliminaryNote', () => {
+  const index = {
+    years: [2023, 2024, 2025, 2026],
+    quality: { 2023: 'final', 2024: 'final', 2025: 'preliminary', 2026: 'preliminary' } as const,
+  }
+  const period = (from: string, to: string) => ({
+    fromMs: fromDateInputValue(from, 'start')!,
+    toMs: fromDateInputValue(to, 'end')!,
+  })
+
+  // 正: 速報値の年に掛かれば、最初の速報値の年の元日から速報値だと添える。
+  it('速報値の年に掛かれば「2025年1月1日以降は速報値」', () => {
+    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'))).toBe('2025年1月1日以降は速報値')
+  })
+
+  it('期間が速報値の年の途中から始まっても、境目の日付を出す', () => {
+    expect(preliminaryNote(index, period('2026-03-01', '2026-10-16'))).toBe('2025年1月1日以降は速報値')
+  })
+
+  // 対照: 確定値の年だけなら出さない。
+  it('確定値の年だけなら出さない', () => {
+    expect(preliminaryNote(index, period('2023-01-01', '2024-12-31'))).toBeNull()
+  })
+
+  // 安全弁: 開始と終了を逆に置いても掛かりを見落とさない（年ファイルの取得と同じく両端を正規化）。
+  it('開始と終了が逆でも掛かりを見る', () => {
+    const p = period('2023-01-01', '2025-02-01')
+    expect(preliminaryNote(index, { fromMs: p.toMs, toMs: p.fromMs })).toBe('2025年1月1日以降は速報値')
+  })
+
+  it('速報値の年が無い索引では出さない', () => {
+    expect(preliminaryNote({ years: [2023], quality: { 2023: 'final' } }, period('2023-01-01', '2023-12-31'))).toBeNull()
   })
 })

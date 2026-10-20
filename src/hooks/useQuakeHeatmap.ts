@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { JMAQuake } from '../types/earthquake'
 import { fetchJmaQuakeHistory } from '../services/p2pquake'
 import { fetchDmdataGdEarthquakes } from '../services/dmdata'
-import { magnitudeToWeight, quakeIdentityKey, hasValidHypocenter, type HeatPoint } from '../utils/quakeHeatmap'
+import { heatMagnitude, magnitudeToWeight, quakeIdentityKey, hasValidHypocenter, type HeatPoint } from '../utils/quakeHeatmap'
 import { log } from '../utils/logger'
 import { serverNow } from '../utils/clock'
 
@@ -103,11 +103,14 @@ export function useQuakeHeatmap(
             key: it.eventId,
             lat: it.latitude,
             lng: it.longitude,
-            weight: magnitudeToWeight(it.magnitude),
+            // GD Earthquake List は規模の説明を返さない（不明は -1）。
+            weight: magnitudeToWeight(it.magnitude, null),
             name: it.name,
             time: it.originTime,
             depth: it.depth,
-            magnitude: it.magnitude,
+            depthAtLeast: false,
+            magnitude: heatMagnitude(it.magnitude),
+            magnitudeCondition: null,
           })),
         )
       : fetchJmaQuakeHistory(HEATMAP_DAYS).then(quakes =>
@@ -117,11 +120,13 @@ export function useQuakeHeatmap(
               key: quakeIdentityKey(q),
               lat: q.earthquake.hypocenter.latitude,
               lng: q.earthquake.hypocenter.longitude,
-              weight: magnitudeToWeight(q.earthquake.hypocenter.magnitude),
+              weight: magnitudeToWeight(q.earthquake.hypocenter.magnitude, q.earthquake.hypocenter.magnitudeCondition ?? null),
               name: q.earthquake.hypocenter.name,
               time: q.earthquake.time,
               depth: q.earthquake.hypocenter.depth,
-              magnitude: q.earthquake.hypocenter.magnitude,
+              depthAtLeast: q.earthquake.hypocenter.depthAtLeast ?? false,
+              magnitude: heatMagnitude(q.earthquake.hypocenter.magnitude),
+              magnitudeCondition: q.earthquake.hypocenter.magnitudeCondition ?? null,
             })),
         )
 
@@ -158,20 +163,35 @@ export function useQuakeHeatmap(
     if (!basePoints) return null
     const cutoffMs = serverNow() - HEATMAP_DAYS * 24 * 60 * 60 * 1000
     const merged = new Map<string, HeatPoint>()
-    for (const p of basePoints) merged.set(p.key, p)
+    // 規模の説明・深さの下限の欄を持たない形で控えた点（この欄を足す前のキャッシュ）は「無い」として読む。
+    // **重みも読み直す。** 前の形は規模不明の重みを NaN で控えていて、JSON を通ると null になる
+    // （そのままだと濃さの式に null が流れ、点が描かれない）。
+    for (const p of basePoints) {
+      const magnitude = heatMagnitude(p.magnitude)
+      const magnitudeCondition = p.magnitudeCondition ?? null
+      merged.set(p.key, {
+        ...p,
+        magnitude,
+        magnitudeCondition,
+        depthAtLeast: p.depthAtLeast ?? false,
+        weight: Number.isFinite(p.weight) ? p.weight : magnitudeToWeight(magnitude, magnitudeCondition),
+      })
+    }
     for (const q of earthquakes) {
       if (q.cancelled || q.cancelledAt) continue
-      const { latitude, longitude, magnitude, name, depth } = q.earthquake.hypocenter
+      const { latitude, longitude, magnitude, magnitudeCondition, name, depth, depthAtLeast } = q.earthquake.hypocenter
       if (!hasValidHypocenter(latitude, longitude)) continue
       if (new Date(q.earthquake.time).getTime() < cutoffMs) continue
       merged.set(quakeIdentityKey(q), {
         lat: latitude,
         lng: longitude,
-        weight: magnitudeToWeight(magnitude),
+        weight: magnitudeToWeight(magnitude, magnitudeCondition ?? null),
         name,
         time: q.earthquake.time,
         depth,
-        magnitude,
+        depthAtLeast: depthAtLeast ?? false,
+        magnitude: heatMagnitude(magnitude),
+        magnitudeCondition: magnitudeCondition ?? null,
       })
     }
     return Array.from(merged.values())

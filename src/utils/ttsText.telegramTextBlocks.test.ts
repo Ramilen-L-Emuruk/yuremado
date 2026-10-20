@@ -212,11 +212,61 @@ describe('気象庁が書いた文をブロックごとに選ぶ', () => {
     expect(telegramTextToSpeak(kohatsu(), BASE)?.body).toBe('後発地震の要約です。後発地震の本文です。')
   })
 
-  // 正: 地震回数は 1 ブロックしかないので、切れば `null`
+  // 回数を伴わない発表報の本文（部品「本文」。2026-10-19 ユーザー承認「部品「本文」を足す (推奨)」）
+  const countWithBody = (): LiveEvent => ({
+    kind: 'earthquakeCount',
+    data: { cancelled: false, eventId: '20080824150500', body: '地震回数の本文です。', freeText: '地震回数の補足です。' },
+  } as unknown as LiveEvent)
+
+  // 正: 本文 → 自由付加文の順で読む
+  it('地震回数の本文を自由付加文の前に読む', () => {
+    expect(telegramTextToSpeak(countWithBody(), BASE)?.body).toBe('地震回数の本文です。地震回数の補足です。')
+  })
+
+  // 正: 本文だけを切れる
+  it('地震回数の本文だけを切れる', () => {
+    expect(telegramTextToSpeak(countWithBody(), {
+      ...BASE, telegramTextBlocks: blocksWithout('earthquakeCountBody'),
+    })?.body).toBe('地震回数の補足です。')
+  })
+
+  // 安全弁: 両方切れば `null`（前置きだけを鳴らさない）
+  it('地震回数の本文と自由付加文を両方切ると何も返さない', () => {
+    expect(telegramTextToSpeak(countWithBody(), {
+      ...BASE, telegramTextBlocks: blocksWithout('earthquakeCountBody', 'earthquakeCountFreeText'),
+    })).toBeNull()
+  })
+
+  // 正: 本文を持たない報（回数のある発表報）では、自由付加文を切れば `null`
   it('地震回数に関する情報を切ると何も返さない', () => {
     expect(telegramTextToSpeak(earthquakeCount(), BASE)?.body).toBe('地震回数の補足です。')
     expect(telegramTextToSpeak(earthquakeCount(), {
       ...BASE, telegramTextBlocks: blocksWithout('earthquakeCountFreeText'),
+    })).toBeNull()
+  })
+
+  // 地震・津波に関するお知らせの自由付加文は、本文に続けて同じ発話で読む
+  // （2026-10-19 ユーザー承認「本文に続けて出す (推奨)」）。ブロックは増やさず本文と同じに従う。
+  const quakeNotice = (freeText?: string): LiveEvent => ({
+    kind: 'quakeNotice',
+    data: { cancelled: false, eventId: '20091106160000', headline: '見出し', body: 'お知らせの本文です。', ...(freeText && { freeText }) },
+  } as unknown as LiveEvent)
+
+  // 正: 本文の後に自由付加文
+  it('お知らせの自由付加文を本文に続けて読む', () => {
+    expect(telegramTextToSpeak(quakeNotice('保守点検の時刻が変更になりました。'), BASE)?.body)
+      .toBe('お知らせの本文です。保守点検の時刻が変更になりました。')
+  })
+
+  // 対照: 自由付加文が無ければいまどおり本文だけ
+  it('対照: 自由付加文が無ければ本文だけ', () => {
+    expect(telegramTextToSpeak(quakeNotice(), BASE)?.body).toBe('お知らせの本文です。')
+  })
+
+  // 安全弁: 本文のブロックを切れば自由付加文も読まない（前置きだけを鳴らさない）
+  it('本文のブロックを切れば自由付加文も読まない', () => {
+    expect(telegramTextToSpeak(quakeNotice('保守点検の時刻が変更になりました。'), {
+      ...BASE, telegramTextBlocks: blocksWithout('quakeNoticeBody'),
     })).toBeNull()
   })
 

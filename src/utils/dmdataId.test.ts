@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeDmdataTelegramId } from './dmdataId'
+import { isQuakeNoticeDismissed, normalizeDmdataTelegramId, quakeNoticeId } from './dmdataId'
 
 describe('normalizeDmdataTelegramId', () => {
   // 正: 旧書式で保存された既読の記録が、いまの書式と突き合わせられる。
@@ -32,5 +32,34 @@ describe('normalizeDmdataTelegramId', () => {
   it('DMDATA 以外の id には触らない', () => {
     expect(normalizeDmdataTelegramId('p2p-12345')).toBe('p2p-12345')
     expect(normalizeDmdataTelegramId('')).toBe('')
+  })
+})
+
+describe('isQuakeNoticeDismissed', () => {
+  const notice = { id: quakeNoticeId('20230110160100', '2023-01-10T07:01:33Z'), eventId: '20230110160100' }
+
+  // 正: 閉じたお知らせそのものは閉じたまま。
+  it('同じ id の記録なら閉じている', () => {
+    expect(isQuakeNoticeDismissed(notice.id, notice)).toBe(true)
+  })
+
+  // 正: **同じ分に出た別のお知らせは、先のお知らせを閉じても出る。** id が EventID だけだったころは
+  // ここが重なって、後のお知らせまで隠れていた。
+  it('同じ分の別のお知らせを閉じた記録では隠れない', () => {
+    const earlier = quakeNoticeId('20230110160100', '2023-01-10T07:01:15Z')
+    expect(isQuakeNoticeDismissed(earlier, notice)).toBe(false)
+  })
+
+  // 安全弁: 旧い書式（`…-<EventID>-<Serial>`）の記録は EventID で効かせる。更新した直後に
+  // 閉じた帯が出直さないように。
+  it('旧い書式の記録は EventID が同じなら閉じている', () => {
+    expect(isQuakeNoticeDismissed('dmdata-quake-notice-20230110160100-1', notice)).toBe(true)
+    expect(isQuakeNoticeDismissed('dmdata-xml-quake-notice-20230110160100-1', notice)).toBe(true)
+  })
+
+  // 対照: 旧い書式でも EventID が違えば別のお知らせ。
+  it('旧い書式で EventID が違えば閉じていない', () => {
+    expect(isQuakeNoticeDismissed('dmdata-quake-notice-20230110160200-1', notice)).toBe(false)
+    expect(isQuakeNoticeDismissed(null, notice)).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-import type { IntensityPrefRow } from './quakePoints'
+import type { IntensityRegionRow, IntensityTopRow } from './quakePoints'
 import type { LpgmPrefRow } from './lpgm'
 import { rowMarkKey } from './quakeUpdateMark'
 import type { UpdateStatus } from './updateMark'
@@ -31,34 +31,41 @@ export const AUTO_EXPAND_MAX_VISIBLE_ROWS = 60
  * @param marks 行ごとの印（`QuakeCardMarks.rows`）
  */
 export function intensityRowsToExpand(
-  rows: readonly IntensityPrefRow[],
+  rows: readonly IntensityTopRow[],
   marks: ReadonlyMap<string, UpdateStatus> | undefined,
 ): Set<string> | null {
   if (!marks || marks.size === 0) return null
   const open = new Set<string>()
   // 鍵 → その鍵を開いたときに現れる行数（直下の子の数）。上限の判定に使う。
   const childCount = new Map<string, number>()
-  for (const pref of rows) {
-    const prefKey = `pref:${pref.pref}`
-    childCount.set(prefKey, pref.regions.length)
-    for (const region of pref.regions) {
-      const areaKey = `area:${region.name}`
-      childCount.set(areaKey, region.cities.length + region.stations.length)
-      if (marks.has(rowMarkKey.area(region.name))) open.add(prefKey)
-      for (const city of region.cities) {
-        const cityKeyStr = `city:${region.name}/${city.name}`
-        childCount.set(cityKeyStr, city.stations.length)
-        if (marks.has(rowMarkKey.city(region.name, city.name))) { open.add(prefKey); open.add(areaKey) }
-        for (const st of city.stations) {
-          if (!marks.has(rowMarkKey.station(st.name))) continue
-          open.add(prefKey); open.add(areaKey); open.add(cityKeyStr)
-        }
+  // 区域の行と配下。`ancestors` はその区域より上で開く鍵（県の下なら県の鍵、最上段の区域なら無し）。
+  const visitRegion = (region: IntensityRegionRow, ancestors: readonly string[]) => {
+    const areaKey = `area:${region.name}`
+    childCount.set(areaKey, region.cities.length + region.stations.length)
+    const openAll = (keys: readonly string[]) => { for (const k of keys) open.add(k) }
+    if (marks.has(rowMarkKey.area(region.name))) openAll(ancestors)
+    for (const city of region.cities) {
+      const cityKeyStr = `city:${region.name}/${city.name}`
+      childCount.set(cityKeyStr, city.stations.length)
+      if (marks.has(rowMarkKey.city(region.name, city.name))) openAll([...ancestors, areaKey])
+      for (const st of city.stations) {
+        if (marks.has(rowMarkKey.station(st.name))) openAll([...ancestors, areaKey, cityKeyStr])
       }
-      // 市町村に紐付かない観測点（P2PQuake 経路はすべてこちら）。
-      for (const st of region.stations) {
-        if (!marks.has(rowMarkKey.station(st.name))) continue
-        open.add(prefKey); open.add(areaKey)
-      }
+    }
+    // 市町村に紐付かない観測点（P2PQuake 経路はすべてこちら）。
+    for (const st of region.stations) {
+      if (marks.has(rowMarkKey.station(st.name))) openAll([...ancestors, areaKey])
+    }
+  }
+  for (const row of rows) {
+    // 県を引けない区域（最上段）。→ `IntensityOrphanRegionRow`
+    if (row.kind === 'area') { visitRegion(row, []); continue }
+    const prefKey = `pref:${row.pref}`
+    childCount.set(prefKey, row.regions.length + row.stations.length)
+    for (const region of row.regions) visitRegion(region, [prefKey])
+    // 区域を引けない観測点（県の直下）
+    for (const st of row.stations) {
+      if (marks.has(rowMarkKey.station(st.name))) open.add(prefKey)
     }
   }
   return withinVisibleLimit(open, childCount)

@@ -21,6 +21,17 @@ export interface Hypocenter {
    * 距離閾値・地図の深さ配置が、かつてそろってこの形で誤っていた。
    */
   depth: number
+  /**
+   * 深さが「700km以上」という下限だけの値か。真なら {@link depth} は `700` で、実際の深さはそれ以上。
+   *
+   * 気象庁は 700km 以上の深さを `-700000/` と `description="…深さ　７００ｋｍ以上"` で送る
+   * （電文解説資料 Ⅱ.11-7 ほか）。**700km ちょうどとして扱わない** —— 表示は「700km以上」、読み上げは
+   * 「深さ700キロメートル以上」（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）。
+   * 波形の P/S 線と震源距離は深さが決まらないので引かない（同日承認「線と距離を出さない (推奨)」）。
+   *
+   * 立つのは DMDATA の XML 経路だけ（`dmdataParser.ts` の `parseJmaCoord`）。偽のときは持たせない。
+   */
+  depthAtLeast?: boolean
   magnitude: number
   /**
    * 規模が数値で求まらないときに気象庁が添える説明（`jmx_eb:Magnitude@description`）。
@@ -54,8 +65,8 @@ export interface Hypocenter {
    * {@link HypocenterAreaDetail.nameFromMark} と同じで、**読み手も同じ**
    * （`readHypocenterAreaLabels`）。長周期・津波は既に読んでいたので扱いを揃える。
    *
-   * **読んで持つだけで、いまはどこからも使っていない。** 震央地名より具体的に場所を伝えられる
-   * ので出す価値はあるが、震央地名を置き換えるのか併記するのかは表示側の判断が要る。
+   * **開いた地震カードで、震源名の直下に併記する**（置き換えない。数字と単位は表示のときだけ
+   * 半角へ直す → `formatNameFromMark`）。材料（`markCode` 以下）は画面に出さない。
    */
   nameFromMark?: string
   markCode?: string
@@ -204,6 +215,23 @@ export interface QuakeReportRecord {
    * 少なくなるため、電文が番号を名乗っているならその値の方が正しい。
    */
   serial?: number
+}
+
+/**
+ * 取り消された種別の記録。→ {@link JMAQuake.retractedReports}
+ *
+ * 取消は情報名称の単位で効く（電文解説資料 別紙ウ）。震源情報まで進んだカードに震度速報だけの
+ * 取消が届いたら、カードは残して震度速報の内容だけを外す。**外した事実はここにしか残らない**
+ * （当て直したカードの見出し・震度からは消える）ので、カードに「震度速報は取り消されました」と
+ * 出すための材料として持つ（2026-10-15 ユーザー承認「残して取消の理由を出す（推奨）」）。
+ */
+export interface QuakeRetractedReport {
+  /** 取り消された情報の種別（取消電文の種別）。 */
+  issueType: IssueType
+  /** 取り消された報の発表時刻（`ReportDateTime`）。その種別の報が複数あれば最後のもの。 */
+  reportTime: string
+  /** 取消電文の取消しの概要（`Body/Text`）。気象庁が書いた理由で、そのまま出す。 */
+  cancelText?: string
 }
 
 /**
@@ -410,14 +438,30 @@ export interface JMAQuake {
   /**
    * この電文を一意に指す鍵。**同じ電文を二度数えないために持つ**（→ {@link JMAQuake.reports}）。
    *
-   * DMDATA は `Control/DateTime`（電文を作成した時刻。秒精度で、実電文では同じ地震の続報
-   * どうしが必ず異なる）、P2PQuake は電文ごとに振られる `id`。
+   * DMDATA は `Control/Title`（電文の種別名）と `Control/DateTime`（電文を作成した時刻・秒精度）の組、
+   * P2PQuake は電文ごとに振られる `id`。DMDATA で作成時刻だけを使わない理由は
+   * docs/spec/quake-spec.md §8「同じ電文を二度数えない」（組み立ては `utils/telegramKey.ts`）。
    *
    * **`id` では代用できない。** DMDATA 経路の `id` は `dmdata-quake-<eventId>-<serial>` だが、
    * 震度速報・震源情報は `Head/Serial` が空要素で届くため（→ {@link JMAQuake.reportSerial}）、
    * パーサーのフォールバックにより**同じ地震の全報が同じ `id`** になる。
    */
   telegramKey?: string
+  /**
+   * 電文を作成した時刻（`Control/DateTime`）のミリ秒。**報の新旧を比べ、並べるために持つ**
+   * （→ `utils/quakeMerge.ts` の `compareReportAge`）。
+   *
+   * 電文解説資料 Ⅰ.（ⅱ）8 は「同一種別の情報における最新情報の検索にあたっては `Serial` ではなく
+   * 管理部の発表時刻（`Control/DateTime`）を参照すること」と定めている。{@link JMAQuake.time}
+   * （`Head/ReportDateTime`）はこれを分へ切り捨てた値で、同じ分に複数の報が並ぶと前後を決められない。
+   *
+   * **{@link JMAQuake.telegramKey} とは用途が違う。** あちらは「同じ電文か」を見る生の文字列で、
+   * 読めない値でもそのまま鍵にする。こちらは「どちらが新しいか」を見る数値で、読めない値は持たせない。
+   *
+   * DMDATA の XML 経路だけが持つ。P2PQuake・テストボタン・収録シナリオは持たず、比べる側が
+   * {@link JMAQuake.time} へ落ちる。
+   */
+  createdAtMs?: number
   /**
    * 電文が名乗る報番号（`Head/Serial`）。数値として読めないときは持たせない。
    *
@@ -457,6 +501,23 @@ export interface JMAQuake {
    * **統合前の生電文には無い。** 控えを持たないカードは当て直さない（従来どおり 1 通ずつ当てる）。
    */
   sourceTelegrams?: readonly JMAQuake[]
+  /**
+   * カードの一部を取り消した取消の記録（取り消された順）。→ {@link QuakeRetractedReport}
+   *
+   * カード全体が取り消されたとき（残る報が無いとき）はここではなく {@link JMAQuake.cancelledAt}
+   * が立つ。**統合（`mergeQuakeInto`）と当て直し（`refoldQuakeCard`）は既存の値を引き継ぐ** ——
+   * 続報が届いても、前に取り消された事実は変わらないため。
+   */
+  retractedReports?: readonly QuakeRetractedReport[]
+  /**
+   * 震度を持たない電文（震源情報など）へ、震度速報の控えから震度を補ったときに立つ印
+   * （`useEarthquakes` の `fillIntensityFromCache`）。
+   *
+   * **補った震度は電文の内容ではない。** 元の震度速報が取り消されたら、当て直しの前にこの印の
+   * 付いた電文から震度を外す（→ `quakeMerge.ts` の `applyQuakeCancelToCard`）。印が無いと、
+   * 控えへ積まれた補完済みの電文が、取り消された震度をカードへ持ち込み続ける。
+   */
+  intensityFromCache?: true
   /**
    * 震源要素を別の種別の電文から借りたときの出どころ。→ {@link BorrowedFromTsunami}
    *
@@ -1366,6 +1427,8 @@ export interface HypocenterAreaDetail {
   longitude?: number
   /** 深さ（km）。読めないときは持たせない。**`0` は「ごく浅い」という有効値** */
   depth?: number
+  /** 深さが「700km以上」という下限だけの値か（→ {@link Hypocenter.depthAtLeast}）。偽のときは持たせない */
+  depthAtLeast?: boolean
   /**
    * 震央補助表現（`Area/NameFromMark`。例:「御前崎の北東４０ｋｍ付近」）。
    *
@@ -1420,6 +1483,8 @@ export interface JMALpgm {
   id: string
   eventId: string     // VXSE51/52/53/62 が共有する 14 桁タイムスタンプ。lpgmByEventId の Map キー
   time: string
+  /** 電文を作成した時刻（`Control/DateTime`）のミリ秒。意味と扱いは {@link JMAQuake.createdAtMs} と同じ。 */
+  createdAtMs?: number
   /**
    * 電文の運用種別（`Control/Status`）。訓練・試験のときだけ入る。→ {@link TelegramOperationStatus}
    *
@@ -1437,6 +1502,8 @@ export interface JMALpgm {
   originTime: string  // TTS 読み上げテキスト用
   maxClass: number    // 1〜4
   cancelled: boolean
+  /** 取消しの理由（`Body/Text`）。取消電文だけが持つ（→ {@link JMAEarthquakeCount.cancelText}） */
+  cancelText?: string
   points?: LpgmPoint[]    // 観測点別階級（取消電文では undefined）
   regions?: LpgmRegion[]  // 一次細分区域別最大階級
   prefs?: LpgmPref[]      // 都道府県別最大階級・最大震度（→ {@link LpgmPref}）
@@ -1572,6 +1639,23 @@ export interface LiveEventMeta {
    * 対象外（受信側が `!event.cancelled` で先に外す）。
    */
   quakeHeldBack?: boolean
+  /**
+   * 地震情報の取消が**どのカードにどう効いたか**（取消の報にだけ立つ）。
+   *
+   * 受信側が入口で 1 回だけ決める（同じティックの写しも見る）。読み上げが画面の状態から
+   * 判定し直すと、同じティックに続けて届いた報が状態へまだ反映されていないとき、取消済みの
+   * 古いカードや当て直す前のカードを見て「カード全体の取消」と「一部の取消」を取り違える。
+   *
+   * - `target`: 取消が当たったカード（当てる前の姿）。見つからなければ `undefined`
+   * - `retracted`: 一部の取消なら、取り下げた報の種別と時刻（カードは残る）
+   * - `duplicate`: 台帳に同じ取消（か、同じ種別のより新しい取消）が既にある＝もう伝えた取消。
+   *   真なら取消の音と読み上げを出さない（2026-10-15 ユーザー承認「2通目は鳴らさない（推奨）」）
+   */
+  quakeCancel?: {
+    target: JMAQuake | undefined
+    retracted: QuakeRetractedReport | undefined
+    duplicate: boolean
+  }
   /**
    * その緊急地震速報が、**別の経路から既に受けて知らせた報と同じ報**か（standard 版。Yahoo と
    * P2PQuake の両方が同じ報を運ぶ）。同じ報かどうかは発表時刻（秒）で見分ける（報番号は経路で
@@ -1739,7 +1823,8 @@ export interface JMAKohatsu extends EarthquakeInfoMeta {
  * （電文自身が「配信試験の開始と終了は本電文でお知らせします」と書いている。運用種別の印は
  * → {@link TelegramOperationStatus}）。
  *
- * 構造は単純で、見出し（`Head/Headline/Text`）と自由文（`Body/Text`）だけ。段階も等級も持たない。
+ * 構造は単純で、見出し（`Head/Headline/Text`）と自由文（`Body/Text`）に、自由付加文
+ * （`Body/Comments/FreeFormComment`）が付くことがあるだけ。段階も等級も持たない。
  */
 export interface JMAQuakeNotice {
   id: string
@@ -1755,6 +1840,13 @@ export interface JMAQuakeNotice {
   headline: string
   /** `Body/Text`。自由文。改行と全角スペースの整形を保つ（記書きの体裁が崩れる） */
   body: string
+  /**
+   * 自由付加文（`Body/Comments/FreeFormComment`。電文解説資料 Ⅱ.51 2-1）。改行と全角スペースは保つ。
+   *
+   * 本文の後に続けて出し、続けて読む（2026-10-19 ユーザー承認「本文に続けて出す (推奨)」）。
+   * 資料の事例は「保守点検の時刻が変更になりました。」。
+   */
+  freeText?: string
   /** 取消電文（`Head/InfoType` が「取消」）。帯を引っ込める */
   cancelled: boolean
   reportDateTime: string
@@ -1772,10 +1864,16 @@ export interface JMAEarthquakeCountItem {
   type: string
   startTime: string
   endTime: string
-  /** その区間の地震回数（有感・無感の合計） */
-  number: number
-  /** そのうち有感（震度1以上）の回数 */
-  feltNumber: number
+  /**
+   * その区間の地震回数（有感・無感の合計）。**`null` は「気象庁がこの値を発表していない」。**
+   *
+   * 電文は発表しない値の要素に `-1` を入れる（電文解説資料 Ⅱ.35 1-1。資料の事例では全区間の
+   * `Number` が `-1` で、`FeltNumber` だけが値を持つ）。**`-1` を数のまま持たない** —— 画面に
+   * 「-1回」と出し、読み上げで「マイナス1回」と言う。`0`（1 回も起きていない）とも混ぜない。
+   */
+  number: number | null
+  /** そのうち有感（震度1以上）の回数。`null` の意味は {@link number} と同じ（発表なし） */
+  feltNumber: number | null
 }
 
 /**
@@ -1806,8 +1904,19 @@ export interface JMAEarthquakeCount {
   operationStatus?: TelegramOperationStatus
   /** `Head/Headline/Text`。例: 「地震回数に関する情報をお知らせします。」 */
   headline: string
-  /** 区間ごとの回数。電文に現れた順を保つ（累積が最後に来る） */
+  /**
+   * 区間ごとの回数。電文に現れた順を保つ（累積が最後に来る）。
+   *
+   * **発表報でも空のことがある。** 回数を伴わない発表報（`EarthquakeCount` 要素を持たず、
+   * 本文 `Body/Text` だけの報）があり、そのときは {@link body} が中身になる。
+   */
   items: JMAEarthquakeCountItem[]
+  /**
+   * 発表報の本文（`Body` 直下の `Text`）。回数を伴わない発表報が運ぶ。改行は保つ。
+   *
+   * 取消電文の `Body/Text`（取消しの理由）は {@link cancelText} に入れ、ここには入れない。
+   */
+  body?: string
   /** `Body/NextAdvisory`。次回発表の予定を伝える文 */
   nextAdvisory?: string
   /** `Body/Comments/FreeFormComment`。どこで何が起きているかの説明が入る */

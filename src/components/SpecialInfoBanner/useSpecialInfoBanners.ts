@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import type { JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount } from '../../types/earthquake'
 import { log } from '../../utils/logger'
-import { normalizeDmdataTelegramId } from '../../utils/dmdataId'
+import { isQuakeNoticeDismissed, normalizeDmdataTelegramId } from '../../utils/dmdataId'
 
 /** 地図に重ねる特別情報の帯 5 種の元データ（届いていなければ null）。 */
 export interface SpecialInfoItems {
@@ -79,7 +79,8 @@ export function useSpecialInfoBanners(items: SpecialInfoItems): SpecialInfoBanne
     nankai,
     nankaiCommentary: nankaiCommentary && !isDismissed(dismissed.nankaiCommentary, nankaiCommentary.id) ? nankaiCommentary : null,
     kohatsu,
-    quakeNotice: quakeNotice && !isDismissed(dismissed.quakeNotice, quakeNotice.id) ? quakeNotice : null,
+    // お知らせだけは id の書式を変えたので、旧い書式の記録も効かせる（→ `isQuakeNoticeDismissed`）
+    quakeNotice: quakeNotice && !isQuakeNoticeDismissed(dismissed.quakeNotice, quakeNotice) ? quakeNotice : null,
     earthquakeCount: earthquakeCount && !isDismissed(dismissed.earthquakeCount, earthquakeCount.id) ? earthquakeCount : null,
   }), [nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, dismissed])
 

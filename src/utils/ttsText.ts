@@ -12,6 +12,7 @@ import { hasMagnitude, hasDepth, readDateTime } from './formatters'
 import { tsunamiSourceHypocenter } from './borrowFromTsunami'
 import { createLogThrottle, createPerLabelLogGate, log } from './logger'
 import { hasKnownEpicenter } from './geo'
+import { pickEarthquakeCountSummaryItem } from './earthquakeCountSummary'
 
 /**
  * 等級を読む順（重い等級が先）。**カードが等級カードを積む順と同じ並びを使う**
@@ -222,9 +223,10 @@ export const TELEGRAM_TEXT_BLOCK_KEYS = [
   // 「3 種別に共通する要素は 1 箇所で読む」）。**切っても入れても何も起きない欄を設定に並べない。**
   // 気象庁がこの要素を出すようになったら、キーと `telegramTextToSpeak` の `pick` を戻す。
   'kohatsuSummary', 'kohatsuBody',
-  // 地震回数に関する情報
-  'earthquakeCountFreeText',
-  // 地震・津波に関するお知らせ（本文は `Body/Text` の 1 枠だけ）
+  // 地震回数に関する情報。本文（`Body/Text`）は回数を伴わない発表報だけが運ぶ
+  // （2026-10-19 ユーザー承認「部品「本文」を足す (推奨)」）
+  'earthquakeCountBody', 'earthquakeCountFreeText',
+  // 地震・津波に関するお知らせ（本文は `Body/Text` の 1 枠だけ。自由付加文も同じ枠に従う）
   'quakeNoticeBody',
 ] as const
 
@@ -383,6 +385,14 @@ export interface QuakeSpokenState {
    * 比べて増えたか」であって、どの観測点を読み上げたかではない（観測点名は声にならない）。
    */
   observed?: SpokenObservation
+  /**
+   * 最後に声にした報の**区域ごとの最大震度**（区域名 → 震度。→ `quakeRegionSnapshot`）。
+   *
+   * **`regions` とは向きが違う。** あちらは上向きにしか進まない（伝えた震度を下げない）ので、
+   * 続報で区域が下がった・消えたことを見分けられない。こちらは `observed` と同じく最後の 1 つで
+   * 置き換える。使い道は「変わっていません」と言い切ってよいかの判定だけ（→ {@link regionsLoweredSince}）。
+   */
+  regionSnapshot?: ReadonlyMap<string, number>
 }
 
 /** 空の {@link QuakeSpokenState} を作る。 */
@@ -414,6 +424,9 @@ export function applySpokenRefs(state: QuakeSpokenState, refs: readonly SpeechRe
       // **置き換える（積まない）。** 次の報と比べる基準は「最後に伝えた報」なので、
       // 古い報の観測点を残しても使い道がない。
       state.observed = ref.observed
+    } else if (ref.kind === 'quakeRegionSnapshot') {
+      // 置き換える（積まない）。理由は `observed` と同じ。
+      state.regionSnapshot = ref.regions
     }
   }
 }
@@ -632,6 +645,96 @@ function unreceivedRegionSegments(
   return segments
 }
 
+/**
+ * 最大震度以下で実際に観測がある階級だけを、地域名と組にして降順に集める。
+ *
+ * 震度スケール上の位置ではなくこの配列の添字を「最大から何階級目か」として数えるため、観測 0 地域の
+ * 階級が読み上げ枠を空費して下の階級に届かなくなることがない（長周期地震動側の数え方と揃えている）。
+ *
+ * **読み上げ（`buildRegionSegments`）と、区域が下がったかの判定（`regionScaleMap`）が共有する。**
+ * 地域名の作り方（県名へのまとめ）が食い違うと、まとめ方の違いだけで区域が「消えた」ことになる。
+ *
+ * @param points 観測値の点（未入電の点は呼び出し側で除く）
+ * @param maxIdx 最大震度の `SCALE_DESCENDING` での位置
+ */
+function observedRegionsByScale(
+  points: EarthquakePoint[],
+  maxIdx: number,
+  idx: RegionNameIndexes,
+): { scale: IntensityScale; names: string[] }[] {
+  const observed: { scale: IntensityScale; names: string[] }[] = []
+  // 上位の階級で区域名を出した県。下位でその県を丸ごとまとめると県の震度を過小に伝えるため、
+  // 持ち回って `aggregateAreaNamesByPref` のまとめ判定から外す（理由は同関数のコメント）。
+  // 打ち切られるのは必ず下位の階級なので、上から順に積むこの持ち回りで整合する。
+  const prefsWithAreaShown = new Set<string>()
+  for (let i = maxIdx; i < SCALE_DESCENDING.length; i++) {
+    const scale = SCALE_DESCENDING[i]
+    const names = regionNamesForScale(points, scale, idx, prefsWithAreaShown)
+    if (names.length > 0) observed.push({ scale, names })
+    // 区域名だけを数える。県名でまとめた結果は areaPrefIndex から引けないので入らない。
+    // これは**多区域の県が県名と同じ表記の区域を持たない**ことに依存する（stationCoords.test.ts が
+    // 検証）。奈良県だけは県名と同名の区域を持つが単一区域なので、どちらに数えても出力は変わらない。
+    for (const name of names) {
+      const pref = idx.areaPrefIndex?.get(name)
+      if (pref) prefsWithAreaShown.add(pref)
+    }
+  }
+  return observed
+}
+
+/**
+ * その報の区域ごとの最大震度（地域名 → 震度）。地域名は読み上げと同じ作り方（県名へのまとめを含む）。
+ *
+ * **未入電の点は数えない**（読み上げの区域の文と同じ。→ `buildRegionSegments`）。最大震度が無い報・
+ * 地域名を 1 つも作れない報では空を返す。
+ */
+function regionScaleMap(points: EarthquakePoint[], maxScale: IntensityScale): Map<string, number> {
+  const map = new Map<string, number>()
+  const maxIdx = SCALE_DESCENDING.indexOf(maxScale)
+  if (maxIdx < 0) return map
+  // 索引の組み方は `buildRegionSegments` と同じ（座標表が未読み込みなら索引なしで名前を作る）。
+  // **ここだけ条件を変えない** —— 名前の作り方が読み上げとずれると、区域が「消えた」ように見える。
+  const stationData = getStationCoordsCache()
+  const idx: RegionNameIndexes = {
+    prefAreaNames: stationData ? prefAreaNamesIndexOf(stationData) : null,
+    areaPrefIndex: getAreaPrefIndexCache(),
+    stationPrefIndex: stationData ? stationPrefIndexOf(stationData) : null,
+    stationData,
+  }
+  for (const { scale, names } of observedRegionsByScale(points.filter(p => !p.unreceived), maxIdx, idx)) {
+    // 県名へまとめた名前は複数の階級に現れうる。降順なので最初に見たものが最大。
+    for (const name of names) if (!map.has(name)) map.set(name, scale)
+  }
+  return map
+}
+
+/**
+ * 最後に声にした報（`spoken.regionSnapshot`）と比べて、**区域の最大震度が下がった・区域が消えた**か。
+ *
+ * 真のとき、続報は「変わっていません」「変わりはありません」と言い切らない（2026-10-19 ユーザー承認
+ * 「言い切りを外す (推奨)」）。**下がった値そのものは読まない**（既読の `regions` は上向きのまま）。
+ *
+ * @param minSaidScale 前の報のうち、この震度以上の区域だけを比べる。**震度速報は震度3以上の区域しか
+ *   運ばない**ので、地震情報のあとに震度速報が届くと震度1・2の区域が「消えた」ように見える。
+ *   震度速報の経路では 30（震度3）を渡し、種別の違いを下がったと取り違えないようにする。
+ * @returns 比べる相手が無いときは偽。前の報に比べる区域があるのに今の報から地域名を作れないときは真
+ *   （下がっていないと言える根拠が無いので、言い切らない側へ倒す）
+ */
+function regionsLoweredSince(event: JMAQuake, spoken: QuakeSpokenState, minSaidScale: number): boolean {
+  const before = spoken.regionSnapshot
+  if (!before) return false
+  const now = regionScaleMap(event.points, event.earthquake.maxScale)
+  // 前の報に比べる区域があるのに今の報から地域名を作れないときは、下がっていないと言える根拠が無い。
+  // **言い切らない側へ倒す**（承認された仕様の安全側）。
+  if (now.size === 0) return [...before.values()].some((said) => said >= minSaidScale)
+  for (const [name, said] of before) {
+    if (said < minSaidScale) continue
+    const current = now.get(name)
+    if (current === undefined || current < said) return true
+  }
+  return false
+}
+
 function buildRegionSegments(
   points: EarthquakePoint[],
   maxScale: IntensityScale,
@@ -658,26 +761,8 @@ function buildRegionSegments(
   }
   const regionOrder = stationData ? regionOrderIndexOf(stationData) : null
 
-  // 最大震度以下で実際に観測がある階級だけを降順に集める。震度スケール上の位置ではなく
-  // この配列の添字を「最大から何階級目か」として数えるため、観測 0 地域の階級が読み上げ枠を
-  // 空費して下の階級に届かなくなることがない（長周期地震動側の数え方と揃えている）。
-  const observed: { scale: IntensityScale; names: string[] }[] = []
-  // 上位の階級で区域名を出した県。下位でその県を丸ごとまとめると県の震度を過小に伝えるため、
-  // 持ち回って `aggregateAreaNamesByPref` のまとめ判定から外す（理由は同関数のコメント）。
-  // 打ち切られるのは必ず下位の階級なので、上から順に積むこの持ち回りで整合する。
-  const prefsWithAreaShown = new Set<string>()
-  for (let i = maxIdx; i < SCALE_DESCENDING.length; i++) {
-    const scale = SCALE_DESCENDING[i]
-    const names = regionNamesForScale(points, scale, idx, prefsWithAreaShown)
-    if (names.length > 0) observed.push({ scale, names })
-    // 区域名だけを数える。県名でまとめた結果は areaPrefIndex から引けないので入らない。
-    // これは**多区域の県が県名と同じ表記の区域を持たない**ことに依存する（stationCoords.test.ts が
-    // 検証）。奈良県だけは県名と同名の区域を持つが単一区域なので、どちらに数えても出力は変わらない。
-    for (const name of names) {
-      const pref = idx.areaPrefIndex?.get(name)
-      if (pref) prefsWithAreaShown.add(pref)
-    }
-  }
+  // 最大震度以下で実際に観測がある階級だけを降順に集める（→ `observedRegionsByScale`）。
+  const observed = observedRegionsByScale(points, maxIdx, idx)
 
   const mentioned = new Set<string>()  // 上位階で読み上げ済みの地域名
   // 「最大」を冠したか。同じ文で二度冠さないためだけに持つ（→ `collectParts`）。
@@ -900,9 +985,28 @@ function magnitudeFactValue(hypocenter: Hypocenter): string {
  * 深さ不明の電文は遠地地震で頻出し（`depth: {value: null, condition: "不明"}`）、
  * パーサはこれを -1 センチネルに落とすため、0 と同一視すると「ごく浅い場所」と誤読する。
  */
-function depthSourcePhrase(depth: number): string {
-  if (!hasDepth(depth)) return ''
-  return depth === 0 ? 'ごく浅い場所' : `深さ${depth}キロメートル`
+function depthSourcePhrase(h: DepthFact): string {
+  if (!hasDepth(h.depth)) return ''
+  return h.depth === 0 ? 'ごく浅い場所' : `深さ${h.depth}キロメートル${atLeastSuffix(h)}`
+}
+
+/** 深さを語る関数が受け取る形。`depthAtLeast` は「700km以上」の印（→ `Hypocenter.depthAtLeast`）。 */
+type DepthFact = Pick<Hypocenter, 'depth' | 'depthAtLeast'>
+
+/**
+ * 「700km以上」の「以上」（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）。
+ * 読み上げは「深さ700キロメートル以上を震源とする…」「震源の深さは700キロメートル以上に更新されました。」。
+ */
+function atLeastSuffix(h: DepthFact): string {
+  return h.depthAtLeast ? '以上' : ''
+}
+
+/**
+ * 既読の記録に載せる深さの値。**「以上」の印も含める** —— 同じ 700 でも「700km」と「700km以上」は
+ * 別の内容で、印が付いた・外れたことも続報の変化として言い直す（値が同じでも印が変われば更新）。
+ */
+function depthFactValue(h: DepthFact): string {
+  return `${h.depth}${h.depthAtLeast ? '+' : ''}`
 }
 
 /**
@@ -915,10 +1019,10 @@ function depthSourcePhrase(depth: number): string {
  * {@link depthUpdateValue} と同じ「ごく浅い場所」を使って自分で述語へ繋ぐ。ここを連用中止形のまま
  * 言い切ると「震源の深さはごく浅くに更新されました。」という壊れた文になる。
  */
-function depthAmendPhrase(depth: number, hasFollowing: boolean): string {
-  if (!hasDepth(depth)) return ''
-  if (depth !== 0) return `震源の深さ${depth}キロメートル`
-  return hasFollowing ? '震源の深さはごく浅く' : `震源の深さは${depthUpdateValue(depth)}`
+function depthAmendPhrase(h: DepthFact, hasFollowing: boolean): string {
+  if (!hasDepth(h.depth)) return ''
+  if (h.depth !== 0) return `震源の深さ${h.depth}キロメートル${atLeastSuffix(h)}`
+  return hasFollowing ? '震源の深さはごく浅く' : `震源の深さは${depthUpdateValue(h)}`
 }
 
 function intensityText(scale: IntensityScale | number): string {
@@ -1052,6 +1156,25 @@ export function earthquakeCancelToText(time: string | null, cancelText?: string)
 }
 
 /**
+ * 地震カードの**一部の取消**（震源情報まで進んだカードに震度速報だけの取消が届いた等）の読み上げ。
+ * 「23時5分に発表された震度速報は取り消されました。」
+ *
+ * カードは残るので、全体の取消の文（「〜地震情報は取り消されました。」）では誤りになる。取り消された
+ * 情報の名前で言い、時刻もその情報の発表時刻にする（2026-10-15 ユーザー承認「情報名で言う（推奨）」）。
+ * 理由の文の扱いは全体の取消と同じ（`cancelReasonSentence`）。
+ *
+ * @param issueType 取り消された情報の種別（取消電文の種別）
+ * @param time 取り消された報の発表時刻。読めなければ時刻を言わない
+ */
+export function earthquakeReportCancelToText(issueType: string, time: string | null, cancelText?: string): string {
+  const formatted = time ? formatTime(time) : null
+  const head = formatted
+    ? `${formatted}に発表された${issueType}は取り消されました。`
+    : `${issueType}は取り消されました。`
+  return head + cancelReasonSentence(cancelText)
+}
+
+/**
  * 取消しの概要（電文の `Body/Text`）を読み上げへ足す句。無ければ空。
  * → docs/spec/audio-tts-spec.md §4「取消は「取り消された事実」だけを伝える」
  *
@@ -1062,52 +1185,89 @@ export function earthquakeCancelToText(time: string | null, cancelText?: string)
  * 先に述べているので、続けて読むと同じことを 2 度言う。宣言の形でも主語が既知の情報名でなければ
  * 理由が混ざっているものとして読む（そちらへ倒す理由は `CANCEL_DECLARATION`）。
  *
- * **長い本文は読まない。** 取消しの概要は 1〜2 文が通例だが、他の自由文と同じく長文が入りうる。
- * 読み上げが伸びると後続の電文が待ちの上限に達して割り込むため、上限を超えたら画面に委ねる。
- *
- * @param staysOnScreen 省いた本文が画面に残るか。地震・津波・EEW は取消のあともカードが残って
- *   全文を出すので既定は `true`。**地震回数だけは取消で帯ごと消える**ので `false` を渡す ——
- *   記録が「画面には全文が出ます」と言い続けると、読み上げも表示も失われた事実が残らない。
+ * **長い本文は続けて読まず、別の発話で最下位の層へ回す**（{@link deferredCancelReasonToSpeak}）。
+ * 取消しの概要は 1〜2 文が通例だが、他の自由文と同じく長文が入りうる。取消の文と同じ発話に足すと、
+ * 読み上げが伸びて後続の電文が待ちの上限に達し割り込む。どちらで読むかの境目は
+ * {@link CANCEL_REASON_INLINE_MAX_CHARS}。
  */
-function cancelReasonSentence(cancelText: string | undefined, staysOnScreen = true): string {
-  // 取消の理由も気象庁が書いた文なので、日時は全角のゼロ埋めで来る（`１６日０１時２５分`）。
-  // 半角・ゼロ埋めなしへ揃えないと先頭の 0 が桁として読まれる（→ {@link normalizeDateTimeForSpeech}）。
-  // **この関数は 4 種別（EEW・地震情報・津波・地震回数）の取消が共有している。**
-  const text = normalizeDateTimeForSpeech(cancelText ?? '').replace(/\s+/g, ' ').trim()
-  if (!text) return ''
-  const subject = CANCEL_DECLARATION.exec(text)?.[1]
-  if (subject !== undefined) {
-    if (CANCEL_DECLARATION_SUBJECTS.has(subject)) {
-      // **省いたことを残す。** 取消は実電文で年に数通しか出ないため、毎回記録しても
-      // 他の記録を埋めない。
-      log.info(`[tts] 取消の宣言だけの本文なので読み上げを省きました（${text}）`)
-      return ''
-    }
+function cancelReasonSentence(cancelText: string | undefined): string {
+  // **この関数は 6 種別（EEW・地震情報・津波・地震回数・長周期地震動・地震・津波に関するお知らせ）の
+  // 取消が共有している。**
+  const reason = classifyCancelReason(cancelText)
+  if (reason.kind === 'declaration') {
+    // **省いたことを残す。** 取消は実電文で年に数通しか出ないため、毎回記録しても
+    // 他の記録を埋めない。
+    log.info(`[tts] 取消の宣言だけの本文なので読み上げを省きました（${reason.text}）`)
+    return ''
+  }
+  if (reason.kind === 'unknownDeclaration') {
     // **宣言の形だが主語が既知の情報名でないので読む。** ここが「落とし損ね」の検知点 ——
     // 実電文に無い情報名で宣言が来たら、この記録を見て主語の集合へ足すかを判断する
     // （逆に理由が混ざっていた場合は、読む側へ倒れているので情報は失われない）。
-    log.info(`[tts] 取消の宣言の形だが「${subject}」が既知の情報名でないため読み上げます（${text}）`)
+    log.info(`[tts] 取消の宣言の形だが「${reason.subject}」が既知の情報名でないため読み上げます（${reason.text}）`)
   }
-  if (text.length > CANCEL_REASON_SPEAK_MAX_CHARS) {
-    // **捨てたことを残す。** 気象庁が書いた理由を丸ごと落とすので、痕跡が無いと
-    // 「今日は長文だったから読まなかった」を後から確かめられない。
-    const where = staysOnScreen ? '画面には全文が出ます' : '画面にも残りません'
-    log.info(`[tts] 取消しの概要が長いため読み上げを省きました（${text.length}文字。${where}）`)
+  if (reason.kind === 'none') return ''
+  if (reason.text.length > CANCEL_REASON_INLINE_MAX_CHARS) {
+    // **回したことを残す。** 別の発話は最下位の層で、待ちきれなければ黙る ——
+    // 鳴らなかったときに「長文だったから別に回した」ことを後から辿れるようにする。
+    log.info(`[tts] 取消しの概要が長いため、別の発話で最下位の層に回します（${reason.text.length}文字）`)
     return ''
   }
   // 電文の本文は句点で終わることが多いが、終わっていなければ足す（次の文と繋がって
   // 聞こえないため）。**述語は 5 箇所で共有する**（→ {@link endTelegramSentence}）。
-  return endTelegramSentence(text)
+  return endTelegramSentence(reason.text)
+}
+
+/** 取消しの概要（`Body/Text`）を読み上げの扱いで分けたもの。→ {@link classifyCancelReason} */
+type CancelReason =
+  | { kind: 'none' }
+  | { kind: 'declaration'; text: string }
+  | { kind: 'unknownDeclaration'; text: string; subject: string }
+  | { kind: 'reason'; text: string }
+
+/**
+ * 取消しの概要を、読み上げで同じ扱いを受ける形に分ける。続けて読む側（{@link cancelReasonSentence}）と
+ * 別の発話へ回す側（{@link deferredCancelReasonToSpeak}）が同じ判定を通るための 1 箇所。
+ */
+function classifyCancelReason(cancelText: string | undefined): CancelReason {
+  // 取消の理由も気象庁が書いた文なので、日時は全角のゼロ埋めで来る（`１６日０１時２５分`）。
+  // 半角・ゼロ埋めなしへ揃えないと先頭の 0 が桁として読まれる（→ {@link normalizeDateTimeForSpeech}）。
+  const text = normalizeDateTimeForSpeech(cancelText ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return { kind: 'none' }
+  const subject = CANCEL_DECLARATION.exec(text)?.[1]
+  if (subject === undefined) return { kind: 'reason', text }
+  return CANCEL_DECLARATION_SUBJECTS.has(subject)
+    ? { kind: 'declaration', text }
+    : { kind: 'unknownDeclaration', text, subject }
 }
 
 /**
- * 取消しの概要を読み上げる上限（文字数）。
+ * 取消の文に続けて読む理由の上限（文字数）。超える理由は別の発話で最下位の層に読む
+ * （{@link deferredCancelReasonToSpeak}。2026-10-19 ユーザー選択「外して最下位の層で読む (推奨)」）。
  *
  * 実電文の取消しの概要は 1 文（例「先ほどの、震度速報を取り消します。」）。
- * 超える本文は画面に委ねる —— 読み上げが伸びると、後続の電文が待ちの上限
+ * 超える本文を取消の文と同じ発話へ足すと、読み上げが伸びて後続の電文が待ちの上限
  * （`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`）に達して割り込む。
  */
-export const CANCEL_REASON_SPEAK_MAX_CHARS = 120
+export const CANCEL_REASON_INLINE_MAX_CHARS = 120
+
+/**
+ * 取消の文に続けて読むには長すぎる理由を、別の発話にした文。続けて読める長さ・宣言だけの本文・
+ * 理由が無いときは `null`。
+ *
+ * **前置きで何の理由かを名乗る。** 最下位の層は前の発話が終わるのを待つので、取消の文との間に
+ * 別の読み上げが挟まることがある（2026-10-19 ユーザー選択「◯◯が取り消された理由をお伝えします。」）。
+ * **「気象庁の発表文」とは名乗らない** —— その語は設定「気象庁の発表文を読む」のラベルで、この発話は
+ * その設定に従わない（2026-10-19 ユーザー選択「設定に関係なく読む（推奨）」）。
+ *
+ * @param infoName 取消の文が名乗った情報名（「地震情報」「震度速報」「津波警報等」など）
+ */
+export function deferredCancelReasonToSpeak(infoName: string, cancelText: string | undefined): string | null {
+  const reason = classifyCancelReason(cancelText)
+  if (reason.kind !== 'reason' && reason.kind !== 'unknownDeclaration') return null
+  if (reason.text.length <= CANCEL_REASON_INLINE_MAX_CHARS) return null
+  return `${infoName}が取り消された理由をお伝えします。${endTelegramSentence(reason.text)}`
+}
 
 /**
  * 取消の宣言の形。捕獲するのは「何を取り消すか」の主語で、それが情報名そのものなら
@@ -1453,7 +1613,7 @@ function quakeOccurrenceSegments(hypocenter: Hypocenter, opts?: TtsSpeechOptions
     segments.push({ text: hypocenter.name, refs: [{ kind: 'quakeFact', fact: 'hypocenterName', value: hypocenter.name }] })
     if (tellable.has('depth')) {
       segments.push(plain('、'))
-      segments.push({ text: depthSourcePhrase(hypocenter.depth), refs: [{ kind: 'quakeFact', fact: 'depth', value: String(hypocenter.depth) }] })
+      segments.push({ text: depthSourcePhrase(hypocenter), refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] })
     }
     segments.push(plain('を震源とする'))
   }
@@ -1481,9 +1641,9 @@ function domesticTsunamiSegment(t: DomesticTsunami): SpeechSegment {
  * {@link depthSourcePhrase} は「深さ10キロメートル」を返すため、この文には使えない
  * （「震源の深さは深さ10キロメートルに」と重なる）。深さ不明では空文字。
  */
-function depthUpdateValue(depth: number): string {
-  if (!hasDepth(depth)) return ''
-  return depth === 0 ? 'ごく浅い場所' : `${depth}キロメートル`
+function depthUpdateValue(h: DepthFact): string {
+  if (!hasDepth(h.depth)) return ''
+  return h.depth === 0 ? 'ごく浅い場所' : `${h.depth}キロメートル${atLeastSuffix(h)}`
 }
 
 /**
@@ -1503,7 +1663,7 @@ function tellableHypocenterFacts(hypocenter: Hypocenter, opts?: TtsSpeechOptions
   const facts = new Set<QuakeFact>()
   if (hypocenter.name) {
     facts.add('hypocenterName')
-    if (detail && depthSourcePhrase(hypocenter.depth)) facts.add('depth')
+    if (detail && depthSourcePhrase(hypocenter)) facts.add('depth')
   }
   if (!detail) return facts
   // 数値が読めなくても、気象庁が説明を添えていれば規模は語れる（「Ｍ８を超える巨大地震」）。
@@ -1573,8 +1733,8 @@ function changedFactSegments(event: JMAQuake, spoken: QuakeSpokenState, opts?: T
       : magnitudeConditionAmendSentence(hypocenter)
     segments.push({ text, refs: [{ kind: 'quakeFact', fact: 'magnitude', value }] })
   }
-  if (changed('depth', String(hypocenter.depth))) {
-    segments.push({ text: `震源の深さは${depthUpdateValue(hypocenter.depth)}に更新されました。`, refs: [{ kind: 'quakeFact', fact: 'depth', value: String(hypocenter.depth) }] })
+  if (changed('depth', depthFactValue(hypocenter))) {
+    segments.push({ text: `震源の深さは${depthUpdateValue(hypocenter)}に更新されました。`, refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] })
   }
   if (changed('domesticTsunami', domesticTsunami)) {
     segments.push(domesticTsunamiSegment(domesticTsunami))
@@ -1587,15 +1747,19 @@ function changedFactSegments(event: JMAQuake, spoken: QuakeSpokenState, opts?: T
  *
  * | 値 | 意味 |
  * |---|---|
+ * | `lowered` | 観測点か市町村が減った、または震度が下がった（他の変化より優先する） |
  * | `added` | 観測点か市町村が増えた |
- * | `updated` | 顔ぶれは同じだが震度が動いた |
- * | `none` | どちらも起きていない（＝本当に変化が無い） |
+ * | `updated` | 顔ぶれは同じだが震度が上がった |
+ * | `none` | どれも起きていない（＝本当に変化が無い） |
  * | `unknown` | 比べる相手がいない（この地震でまだ 1 通も声にしていない） |
  *
  * **`none` と `unknown` を混ぜないこと。** 前者は「変わりはありません」と言い切ってよい根拠だが、
  * 後者は何も判らないだけで、言い切ると嘘になりうる。
+ *
+ * **`lowered` を他より先に見る。** 下がったものがあるのに「変わっていません」と言うと嘘になる
+ * （2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。
  */
-type ObservationChange = 'added' | 'updated' | 'none' | 'unknown'
+type ObservationChange = 'lowered' | 'added' | 'updated' | 'none' | 'unknown'
 
 /**
  * 観測点を指す鍵。**コードがあれば優先する** —— 観測点名は全国で一意とは限らない。
@@ -1662,24 +1826,48 @@ function observationChange(event: JMAQuake, spoken: QuakeSpokenState): Observati
   const nowCities = event.cities ?? []
   const prevCities = indexOf(prev.cities, cityKey, c => c.scale, '市町村')
 
-  // **減ったことは見ない。** 気象庁は観測点を取り下げず（`Revise` の値域は追加・上方修正・
-  // 下方修正だけ）、減って見える形は**種別の違い**で起きる ―― 震度速報は区域までしか運ばないので、
-  // 地震情報のあとに震度速報が届けば観測点は「消えた」ように見える。それを変化として扱うと
-  // 種別が前後するたびに誤って読む。**実際に減る電文を観測したわけではなく、減らない前提を
-  // 置いている**（減った場合は黙って `none` へ落ちる）。
+  // **減った・下がったことも見る**（2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。
+  // 気象庁は続報で観測点・市町村の震度を下方修正する（`Revise` の値域に「下方修正」がある。
+  // 電文解説資料 Ⅱ.33-5）。見ないと、下がった続報で「変わっていません」と言い切ってしまう。
+  //
+  // **消えたかどうかは、今の報がその階層を運んでいるときだけ見る。** 減って見える形は**種別の違い**
+  // でも起きる ―― 観測点を運ばない報が地震情報のあとに届けば、観測点は全部「消えた」ように見える。
+  // その階層を 1 件も持たない報では消えたと数えない。
+  let added = false
   let updated = false
+  let lowered = false
   for (const p of nowStations) {
     const before = prevStations.get(stationKey(p))
-    if (before === undefined) return 'added'
-    if (before !== p.scale) updated = true
+    if (before === undefined) added = true
+    else if (p.scale < before) lowered = true
+    else if (before !== p.scale) updated = true
   }
   for (const c of nowCities) {
     const before = prevCities.get(cityKey(c))
-    if (before === undefined) return 'added'
-    if (before !== c.scale) updated = true
+    if (before === undefined) added = true
+    else if (c.scale < before) lowered = true
+    else if (before !== c.scale) updated = true
   }
+  if (nowStations.length > 0) {
+    const nowKeys = new Set(nowStations.map(stationKey))
+    for (const key of prevStations.keys()) if (!nowKeys.has(key)) lowered = true
+  }
+  if (nowCities.length > 0) {
+    const nowKeys = new Set(nowCities.map(cityKey))
+    for (const key of prevCities.keys()) if (!nowKeys.has(key)) lowered = true
+  }
+  if (lowered) return 'lowered'
+  if (added) return 'added'
   return updated ? 'updated' : 'none'
 }
+
+/**
+ * 前の報から震度が下がった・観測が減った続報で、「変わっていません」の代わりに言う一文。
+ *
+ * **下がった値は読まない。** 言うのは「更新された」ことだけ（2026-10-19 ユーザー承認
+ * 「言い切りを外す (推奨)」）。前置きの情報名（「地震情報が更新されました。」）は呼び出し側が付ける。
+ */
+const OBSERVED_INTENSITY_UPDATED = '観測された震度が更新されました。'
 
 /**
  * 「更新されました」のあとに続ける一文。**名乗りだけで終わらせないための断片。**
@@ -1697,10 +1885,16 @@ function observationChange(event: JMAQuake, spoken: QuakeSpokenState): Observati
  * 言い切れる。観測点の記録を待たせない ―― あちらは `points` を運ばないので記録が作られず、
  * 待たせると永久に名乗りだけで終わる。
  *
+ * **区域の最大震度が下がった・区域が消えた報はここへ来ない**（呼び出し側が先に
+ * {@link regionsLoweredSince} で見て {@link OBSERVED_INTENSITY_UPDATED} を出す）。
+ *
  * @param change 区域より下の階層で起きたこと
  */
 function noRegionChangeSegments(change: ObservationChange): SpeechSegment[] {
   if (change === 'unknown') return []
+  // 下がった・減ったものがあるなら言い切らない。下がった値そのものは読まない
+  // （2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。
+  if (change === 'lowered') return [plain(OBSERVED_INTENSITY_UPDATED)]
   if (change === 'added') return [plain('観測地点が追加されましたが、地域ごとの最大震度は変わっていません。')]
   if (change === 'updated') return [plain('観測された震度が更新されましたが、地域ごとの最大震度は変わっていません。')]
   return [plain('内容に変わりはありません。')]
@@ -1802,7 +1996,12 @@ function buildEarthquakeSegments(
     // 地域名を作れず最大震度だけを伝えた地震（`maxScaleOnly`）でも「変わりはない」と言い切れる。
     // どちらも無い（震度そのものを一度も声にしていない）なら根拠が無いので黙る。
     const toldIntensity = !!spoken && (spoken.regions.size > 0 || spoken.facts.has('maxScaleOnly'))
+    //
+    // **区域が下がった・消えた報では言い切らない**（名乗りの「震度速報が更新されました。」だけで
+    // 終える。2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。比べるのは前の報の震度3以上の
+    // 区域だけ（震度速報が運ぶ範囲。→ `regionsLoweredSince`）。
     const noChange = !isNew && spoken && fallback.length === 0 && toldIntensity
+      && !regionsLoweredSince(event, spoken, 30)
       ? [plain('観測した震度に変わりはありません。')]
       : []
     return [plain(prefix), ...fallback, ...noChange]
@@ -1820,8 +2019,8 @@ function buildEarthquakeSegments(
     // **深さの語形は後ろに規模が続くかどうかで変わる**（理由は depthAmendPhrase）。順に組み立てる前に
     // 規模が並ぶかを決めておく。
     const magnitudeFollows = hasMagnitude(hypocenter.magnitude)
-    const depth = depthAmendPhrase(hypocenter.depth, magnitudeFollows)
-    if (depth) amended.push({ text: depth, refs: [{ kind: 'quakeFact', fact: 'depth', value: String(hypocenter.depth) }] })
+    const depth = depthAmendPhrase(hypocenter, magnitudeFollows)
+    if (depth) amended.push({ text: depth, refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] })
     if (magnitudeFollows) {
       const value = magnitudeText(hypocenter.magnitude)
       if (amended.length > 0) amended.push(plain('、'))
@@ -1906,11 +2105,17 @@ function buildEarthquakeSegments(
     // それだけで言い切れる（観測点の記録は見ない。この種別では作られない）。下の階層を持つのは
     // 震源・震度情報（VXSE53）と各地の震度情報（P2PQuake）だけ。
     const nothingSaid = facts.length === 0 && regionSegs.length === 0 && unreceivedSegs.length === 0 && fallback.length === 0
+    //
+    // **区域の最大震度が下がった・区域が消えた報では言い切らない**（2026-10-19 ユーザー承認
+    // 「言い切りを外す (推奨)」）。観測点・市町村の側で下がったものは `observationChange` が
+    // `lowered` として返す。どちらも下がった値そのものは読まない。
     const noChange = !nothingSaid
       ? []
       : isEpicenterOnly
         ? [plain('震源の内容に変わりはありません。')]
-        : noRegionChangeSegments(observationChange(event, spoken))
+        : regionsLoweredSince(event, spoken, 0)
+          ? [plain(OBSERVED_INTENSITY_UPDATED)]
+          : noRegionChangeSegments(observationChange(event, spoken))
     return [plain(`${label}が更新されました。`), ...facts, ...regionSegs, ...unreceivedSegs, ...fallback, ...noChange]
   }
 
@@ -1956,7 +2161,25 @@ export function earthquakeToSegments(
   spoken?: QuakeSpokenState,
   readAllRegions = false,
 ): SpeechSegment[] {
-  return withObservedRef(buildEarthquakeSegments(event, opts, isNew, spoken, readAllRegions), event)
+  return withRegionSnapshotRef(withObservedRef(buildEarthquakeSegments(event, opts, isNew, spoken, readAllRegions), event), event)
+}
+
+/**
+ * その報の区域ごとの最大震度を、**読み終えたときに記録する**ための参照を最後の断片へ足す
+ * （→ `QuakeSpokenState.regionSnapshot`）。載せ方の規律は {@link withObservedRef} と同じ。
+ *
+ * **地域名を 1 つも作れない報では記録を発行しない。** 震源情報のように区域を運ばない報で空に
+ * 置き換えると、次の報で比べる相手が消える。
+ */
+function withRegionSnapshotRef(segments: SpeechSegment[], event: JMAQuake): SpeechSegment[] {
+  if (segments.length === 0) return segments
+  const regions = regionScaleMap(event.points, event.earthquake.maxScale)
+  if (regions.size === 0) return segments
+  const last = segments[segments.length - 1]
+  return [
+    ...segments.slice(0, -1),
+    { ...last, refs: [...last.refs, { kind: 'quakeRegionSnapshot', regions }] },
+  ]
 }
 
 /** VXSE51/52/53/61 地震情報の読み上げテキストを生成する。isNew=false のとき更新報として冒頭に通知する。 */
@@ -2287,8 +2510,8 @@ function oneSourceHypocenterSegments(
     if (tellable.has('depth')) {
       segments.push({ text: '、', refs: [follow] })
       segments.push({
-        text: depthSourcePhrase(hypocenter.depth),
-        refs: [{ kind: 'quakeFact', fact: 'depth', value: String(hypocenter.depth), sourceIndex: index }, follow],
+        text: depthSourcePhrase(hypocenter),
+        refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter), sourceIndex: index }, follow],
       })
     }
     const magRef: SpeechRef[] = [{ kind: 'quakeFact', fact: 'magnitude', value: magnitudeFactValue(hypocenter), sourceIndex: index }, follow]
@@ -2355,8 +2578,10 @@ function sourceHypocenterChangedSegments(
       : predicate ? `${subjectWord}マグニチュードが更新されました。${predicate}` : ''
     push(text, 'magnitude', magValue)
   }
-  if (changed('depth', String(hypocenter.depth))) {
-    push(`${subjectWord}震源の深さは${depthUpdateValue(hypocenter.depth)}に更新されました。`, 'depth', String(hypocenter.depth))
+  // 値の作り方は記録（初めて語るときの `depthFactValue`）と揃える。「以上」の印が付いた・外れただけでも更新。
+  const depthValue = depthFactValue(hypocenter)
+  if (changed('depth', depthValue)) {
+    push(`${subjectWord}震源の深さは${depthUpdateValue(hypocenter)}に更新されました。`, 'depth', depthValue)
   }
   // 2 つ目以降の地震は、通しで語るときと同じく「また、」で話題の切れ目を示す。
   if (index > 0 && sentences.length > 0) sentences[0] = { ...sentences[0], text: `また、${sentences[0].text}` }
@@ -3406,11 +3631,25 @@ export function nankaiCommentaryToText(event: JMANankaiCommentary): string {
  * 自由文（`freeText`）の中にしか出てこない。文から地名を抜くと、書き方が変わったときに
  * 別の語を場所として読み上げる。
  *
- * **累積の区間を選ぶ。** 電文は「区間ごとの回数」と「初めからの累計」を同じ `Item` の並びで
- * 送ってくるので、末尾を無条件に採ると 1 時間ぶんの数字を総数として読みかねない。判定は
- * `type` の語で行い、見つからなければ**読み上げない**（部分の数字を全体として言わない）。
+ * **伝える区間は見出しと同じ関数で選ぶ**（`pickEarthquakeCountSummaryItem`。累積 → 地震回数 →
+ * 最新の１時間地震回数）。電文は「区間ごとの回数」と「初めからの累計」を同じ `Item` の並びで送って
+ * くるので、末尾を無条件に採ると 1 時間ぶんの数字を総数として読みかねない。
  *
- * @returns 読み上げ文。累積の区間が無ければ空文字（呼び出し側はタブ移動へ落とす）
+ * **気象庁が発表しない値（電文の `-1`。型では `null`）の句は言わない**
+ * （2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」）:
+ *
+ * | 回数 | 有感 | 文 |
+ * |---|---|---|
+ * | あり | あり | 「…までに、地震が5回発生しています。このうち、震度1以上を観測したのは1回です。」 |
+ * | あり | 発表なし | 「…までに、地震が5回発生しています。」 |
+ * | 発表なし | あり | 「…までに、震度1以上を観測した地震は1回です。」 |
+ * | 発表なし | 発表なし | 数の文を言わない（「地震回数に関する情報。」だけ） |
+ *
+ * 区間を選べない報（回数を伴わない発表報・未知の `type` だけの報）も種別名だけを読む。回数を
+ * 伴わない発表報の本文は、気象庁が書いた文として別の発話で読む（部品「本文」`earthquakeCountBody`。
+ * → `telegramTextToSpeak`）。
+ *
+ * @returns 読み上げ文。取消以外では必ず種別名を含む
  */
 export function earthquakeCountToText(event: JMAEarthquakeCount): string {
   if (event.cancelled) {
@@ -3418,21 +3657,29 @@ export function earthquakeCountToText(event: JMAEarthquakeCount): string {
     // **地震・津波・EEW の取消と揃える** —— 片方だけ拾うと、
     // 同じ「取り消した」でも種別によって理由が出たり出なかったりする。**この種別はカードが
     // 消えるので、理由が届く先は読み上げだけ**（他の 3 種別は取消後もカードが残って全文を出す）。
-    // **`staysOnScreen: false`。** この種別は取消で帯ごと消えるので、長すぎて省いた理由は
-    // 読み上げにも画面にも残らない。他の 3 種別（カードが残る）と同じ記録にしない。
-    return '地震回数に関する情報は取り消されました。' + cancelReasonSentence(event.cancelText, false)
+    // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
+    return '地震回数に関する情報は取り消されました。' + cancelReasonSentence(event.cancelText)
   }
-  const total = event.items.find(it => it.type.includes('累積'))
+  const head = '地震回数に関する情報。'
+  const total = pickEarthquakeCountSummaryItem(event)
   if (!total) {
-    // **黙って読まないと、この電文が届いたことがどこにも残らない。** 「累積」を含む区間が
-    // 必ず 1 つあるという前提は公式サンプルから採ったもので、実配信では確かめられていない。
-    log.warn(`[tts] 地震回数に関する情報に累積の区間がありません（読み上げません）: ${event.items.map(i => i.type).join('・') || '区間なし'}`)
-    return ''
+    // **区間が 1 つも無いのは回数を伴わない発表報なら正常**（本文だけを運ぶ）。区間はあるのに
+    // どれも選べないときだけ記録する —— 区間の種類が増えたのに気づけるように。
+    if (event.items.length > 0) {
+      log.warn(`[tts] 地震回数に関する情報に読める区間がありません（種別名だけ読みます）: ${event.items.map(i => i.type).join('・')}`)
+    }
+    return head
   }
-  const felt = total.feltNumber > 0
-    ? `このうち、震度1以上を観測したのは${total.feltNumber}回です。`
+  const { number, feltNumber } = total
+  if (number === null && feltNumber === null) return head
+  const span = formatCountSpanForSpeech(total.startTime, total.endTime)
+  if (number === null) return `${head}${span}に、震度1以上を観測した地震は${feltNumber}回です。`
+  const occurred = `${head}${span}に、地震が${number}回発生しています。`
+  if (feltNumber === null) return occurred
+  const felt = feltNumber > 0
+    ? `このうち、震度1以上を観測したのは${feltNumber}回です。`
     : 'このうち、震度1以上を観測したものはありません。'
-  return `地震回数に関する情報。${formatCountSpanForSpeech(total.startTime, total.endTime)}に、地震が${total.number}回発生しています。${felt}`
+  return `${occurred}${felt}`
 }
 
 /**
@@ -3458,13 +3705,14 @@ function formatCountSpanForSpeech(startTime: string, endTime: string): string {
  * **見出し（`Head/Headline/Text`）だけを読む。** 本文は自由文で長く（2026-10-16 13:15 の
  * 「緊急地震速報（警報）について」は約 300 字）、他の種別と同じく「気象庁が書いた文」として
  * 別の発話で読む（→ `telegramTextToSpeak`）。ここで本文まで読むと、本文を切る設定が効かない。
+ * 自由付加文（`freeText`）もそちらで本文に続けて読む。
  *
  * 取消は他の種別と同じく「取り消された事実」と理由を読む（→ `cancelReasonSentence`）。
- * 帯ごと消えるので、理由が届く先は読み上げだけ（`staysOnScreen: false`。地震回数と同じ）。
+ * 帯ごと消えるので、理由が届く先は読み上げだけ（地震回数と同じ）。
  */
 export function quakeNoticeToText(event: JMAQuakeNotice): string {
   if (event.cancelled) {
-    return '地震・津波に関するお知らせは取り消されました。' + cancelReasonSentence(event.body, false)
+    return '地震・津波に関するお知らせは取り消されました。' + cancelReasonSentence(event.body)
   }
   // 見出しは句点を持たないのが通例だが、付いていても二重にしない
   const headline = event.headline.trim().replace(/。$/, '')
@@ -3577,8 +3825,11 @@ function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
 /** VXSE62 長周期地震動情報の読み上げテキストを生成する。isNew=false のとき更新報として冒頭に通知する。 */
 export function lpgmToText(lpgm: JMALpgm, opts: TtsSpeechOptions, isNew: boolean): string {
   if (lpgm.cancelled) {
-    // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。
-    return '長周期地震動に関する観測情報は取り消されました。'
+    // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。理由（電文の
+    // `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
+    // 取消で長周期の表示（一覧・バッジ）ごと消え、理由が届く先は読み上げだけ（地震回数と同じ）。
+    // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
+    return '長周期地震動に関する観測情報は取り消されました。' + cancelReasonSentence(lpgm.cancelText)
   }
   // 地震の時刻は**発現時刻を先に採る**（地震情報・津波カードと同じ規則）。揃えないと、
   // 同じ地震について地震情報が「◯時◯分ころ」と読んだ直後に、長周期が 1 分違う時刻を読む。
@@ -4286,7 +4537,12 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
     }
     case 'earthquakeCount': {
       if (event.data.cancelled) return null
-      const body = joinTelegramTexts([pick('earthquakeCountFreeText', event.data.freeText)], reads)
+      // 本文（`body`）は回数を伴わない発表報だけが運ぶ（2026-10-19 ユーザー承認「部品「本文」を足す (推奨)」）。
+      // 並びは他の種別と同じく本文 → 自由付加文。
+      const body = joinTelegramTexts([
+        pick('earthquakeCountBody', event.data.body),
+        pick('earthquakeCountFreeText', event.data.freeText),
+      ], reads)
       return telegramSpeech(`地震回数に関する情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
     }
     case 'quakeNotice': {
@@ -4295,8 +4551,16 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
       // **本文は削らずに全文を読む**（題名の行・発表日時・問い合わせ先も含む）。他の種別の本文と
       // 同じ扱い —— 自由文なので書式が一定せず、行の形で削ると別のお知らせで本題を落としうる。
       // 聞きたくなければブロックごと切れる（`quakeNoticeBody`）。
-      const body = joinTelegramTexts([pick('quakeNoticeBody', event.data.body)], reads)
-      return telegramSpeech(`地震・津波に関するお知らせについて、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+      //
+      // **自由付加文（`freeText`）は本文に続けて同じ発話で読む**（2026-10-19 ユーザー承認
+      // 「本文に続けて出す (推奨)」）。設定のブロックは増やさず本文と同じ `quakeNoticeBody` に従う。
+      const body = joinTelegramTexts([
+        pick('quakeNoticeBody', event.data.body),
+        pick('quakeNoticeBody', event.data.freeText),
+      ], reads)
+      // **主題は `id` で作る。`eventId` ではない。** お知らせの `EventID` は発表時刻の分で、同じ分の別の
+      // お知らせと重なる。`eventId` で作ると、先のお知らせと同じ文（問い合わせ先の行など）が既読として飛ばされる。
+      return telegramSpeech(`地震・津波に関するお知らせについて、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.id))
     }
     // 推計震度分布図は二進電文で、気象庁が書いた文を運ばない。
     case 'estimatedIntensity':

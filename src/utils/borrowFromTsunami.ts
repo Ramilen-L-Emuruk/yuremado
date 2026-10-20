@@ -80,6 +80,7 @@ export function tsunamiSourceHypocenter(src: TsunamiSourceEarthquake): Hypocente
     latitude: src.latitude ?? -200,
     longitude: src.longitude ?? -200,
     depth: src.depth ?? -1,
+    ...(src.depthAtLeast && { depthAtLeast: true }),
     magnitude: src.magnitude ?? NaN,
     ...(src.magnitudeCondition && { magnitudeCondition: src.magnitudeCondition }),
     ...(src.magnitudeType && { magnitudeType: src.magnitudeType }),
@@ -189,6 +190,7 @@ function sameBorrowedHypocenter(quake: JMAQuake, borrowed: BorrowedHypocenter): 
     && a.latitude === b.latitude
     && a.longitude === b.longitude
     && a.depth === b.depth
+    && !!a.depthAtLeast === !!b.depthAtLeast
     && Object.is(a.magnitude, b.magnitude)
     && a.magnitudeCondition === b.magnitudeCondition
     && a.magnitudeType === b.magnitudeType
