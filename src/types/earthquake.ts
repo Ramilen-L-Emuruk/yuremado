@@ -1306,6 +1306,13 @@ export interface EEWAlert {
   // 意味と扱いは `EEWRegion.scaleToOrAbove` と同じ。
   forecastMaxScaleOrAbove?: boolean
   /**
+   * 電文全体の最大予想震度が "0"（震度0）だったか。**`forecastMaxScale` には入れない**（階級の欄は
+   * 1〜7 だけを持ち、空のままにする）。気象庁は値を出し終えているので、予想震度が遅れて付くのを
+   * 待たない（→ `eewNoForecastReason` の `belowScale1`）。出す文言は従来と同じ理由なしの「予想震度なし」。
+   * 決めた日付と原文は eew-spec.md §4。DMDATA の電文だけが立てる
+   */
+  forecastMaxScaleBelow1?: true
+  /**
    * 予想の最大震度を `forecastMaxScale` で見るか（区域の最大より優先する）。standard 版で、区域を運ばない
    * Yahoo の続報が電文全体の値を新しく運んだときに立つ（`mergeEewReport`）—— 区域は前の P2PQuake の報の
    * ものなので、そちらの最大で見ると新しい報の引き上げ・引き下げが隠れる。P2PQuake の新しい報が区域を

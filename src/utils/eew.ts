@@ -647,6 +647,10 @@ export const DEEP_QUAKE_DEPTH_KM = 150
  * - `deep` … 深発地震（深さ `DEEP_QUAKE_DEPTH_KM` km 超）
  * - `singleStation` … 待ち（`EEW_PHASE2_MAX_WAIT_MS`）を終えても値が付かず、震央の精度ランク
  *   （`accuracy.epicenterRank`）が 1 の報。**`waited` が真のときしか返さない**（下記）
+ * - `belowScale1` … 最大予想震度が "0"（震度0。→ `EEWAlert.forecastMaxScaleBelow1`）。気象庁は値を
+ *   出し終えているので待たない。画面と読み上げは理由を添えずに「予想震度なし」と出す（→ eew-spec.md §4）。
+ *   **他の理由より先に見る** —— 値が出ている報に「単独点処理のため」
+ *   「深発地震のため」を添えると、発表された内容と食い違う
  * - `unknown` … 上記以外。**この理由だけは値が遅れて付く可能性が残る**ため、待つ意味があるのはここだけ
  *
  * **精度ランク 1 は「観測点 1 点」だけを指す区分ではない。** 解説資料の定義は「P 波／S 波レベル超え、
@@ -660,8 +664,9 @@ export const DEEP_QUAKE_DEPTH_KM = 150
  *
  * 予想震度がある EEW への呼び出しは想定しない（呼び出し側が `eewMaxScale` を先に見る）。
  */
-export type EewNoForecastReason = 'assumed' | 'deep' | 'singleStation' | 'unknown'
+export type EewNoForecastReason = 'belowScale1' | 'assumed' | 'deep' | 'singleStation' | 'unknown'
 export function eewNoForecastReason(eew: EEWAlert, waited: boolean): EewNoForecastReason {
+  if (eew.forecastMaxScaleBelow1) return 'belowScale1'
   if (eew.earthquake.condition === '仮定震源要素') return 'assumed'
   // **深さが判らない報（センチネル `-1`）は比較が偽になり `unknown` へ落ちる。これは意図どおり。**
   // 深さを読めていない以上「深発地震のため」とは断定できず、値が遅れて付く可能性も残る。

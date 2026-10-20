@@ -66,7 +66,8 @@ interface Props {
  * 直接見ると、閾値を動かしたときに画面と音声が食い違う）。
  *
  * 理由が判らないとき（`unknown`）は何も添えない。値が遅れて付く可能性が残る状態で、
- * 気象庁が「発表しない」と決めたわけではないため。
+ * 気象庁が「発表しない」と決めたわけではないため。最大予想震度が 0 の報（`belowScale1`）にも
+ * 添えない（値は出ているので「〜のため」と言う理由が無い）。
  *
  * `noForecastWaited` … 値の付かない待ちが切れたか（`useLiveEventHandler` の
  * `eewNoForecastSettledKeys`）。切れた後に精度ランク 1 なら、読み上げと同じく「単独点処理のため」を
@@ -74,14 +75,17 @@ interface Props {
  */
 function NoForecastBanner({ eew, noForecastWaited }: { eew: EEWAlert; noForecastWaited: boolean }) {
   const reason = eewNoForecastReason(eew, noForecastWaited)
+  const reasonLabel = reason === 'deep' ? '深発地震のため'
+    : reason === 'assumed' || reason === 'singleStation' ? '単独点処理のため'
+    : null
   return (
     <div
       className="w-full rounded-lg py-2 px-4 flex flex-col items-center justify-center gap-1 roomy:py-3.5"
       style={{ backgroundColor: 'rgba(42,42,42,0.8)', border: '2px solid #4b5563' }}
     >
-      {reason !== 'unknown' && (
+      {reasonLabel !== null && (
         <span className="text-xs font-medium" style={{ color: '#9ca3af' }}>
-          {reason === 'deep' ? '深発地震のため' : '単独点処理のため'}
+          {reasonLabel}
         </span>
       )}
       <span className="text-xl font-extrabold" style={{ color: '#e5e7eb' }}>予想震度なし</span>

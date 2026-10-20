@@ -1436,6 +1436,8 @@ function noForecastText(event: EEWAlert, noForecastWaited: boolean): string {
     case 'assumed':
     case 'singleStation': return '単独点処理のため、予想震度なし。'
     case 'deep':    return '深発地震のため、予想震度なし。'
+    // 最大予想震度 0 の報。理由は添えない（読む文は理由の判らないときと同じ）。
+    case 'belowScale1':
     case 'unknown': return '予想震度なし。'
   }
 }

@@ -47,6 +47,8 @@ export interface TestFunctions {
   eewDeep: () => void
   /** 精度ランク 1 で予想震度が付かないまま取り消される EEW。精度ランクは DMDATA 経路しか運ばないので、ボタンは DMDSS 版にだけ出す。 */
   eewNoForecast: () => void
+  /** 最大予想震度 0 の初報から震度1 へ上がる EEW。震度0 は DMDATA 経路しか運ばないので、ボタンは DMDSS 版にだけ出す。 */
+  eewForecastZero: () => void
   eewRetraction: () => void
   tsunami: () => void
   tsunamiWarning: () => void
@@ -1929,6 +1931,12 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {isDmdss && (
           <Row label="地震動予報（予想震度なしのまま取消）" description="震源の確からしさが低い初報（石川県西方沖 M4.4 深さ10km。2024年11月26日の実電文の形） – eewForecast 音 / 3通続けて予想震度が載らず、3秒待っても付かないため「単独点処理のため、予想震度なし。」と読み上げ。約12秒後に取消（eewCancel 音・読み上げあり）">
             <TestButton color="yellow" onClick={onTest.eewNoForecast}>予想震度なしテスト</TestButton>
+          </Row>
+        )}
+        {/* 文面は 2026-10-20 ユーザー承認「1 で、足してコミットして」 */}
+        {isDmdss && (
+          <Row label="地震動予報（予想震度0）" description="最大予想震度が0の初報（九州地方南東沖 深さ10km。2023年4月21日の実電文の形） – eewForecast 音 / 予想震度0は値が出ているため待たずに「予想震度なし。」と読み上げ。約16秒後に予想震度1の続報（eewUpdate 音・「予想最大震度1。」と言い直し）→無音で自動解除（数分後）">
+            <TestButton color="yellow" onClick={onTest.eewForecastZero}>予想震度0テスト</TestButton>
           </Row>
         )}
         <Row label="緊急地震速報（警報）" description="震度5強相当 – eew 音 / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">

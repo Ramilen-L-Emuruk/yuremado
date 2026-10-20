@@ -924,6 +924,28 @@ describe('eewNoForecastReason', () => {
     expect(eewNoForecastReason(eew, false)).toBe('assumed')
   })
 
+  // 最大予想震度 0 は値が出ている報なので、他の理由より先に belowScale1 を返す
+  // （→ eew-spec.md §4）。
+  describe('最大予想震度 0（belowScale1）', () => {
+    it('正: 震度0の印が立てば belowScale1（待ちを終えていても同じ）', () => {
+      expect(eewNoForecastReason(makeEEW({ forecastMaxScaleBelow1: true }), false)).toBe('belowScale1')
+      expect(eewNoForecastReason(makeEEW({ forecastMaxScaleBelow1: true, accuracy: { epicenterRank: 1 } }), true)).toBe('belowScale1')
+    })
+
+    it('安全弁: 仮定震源要素・深発より先に見る（値の出た報に理由を添えない）', () => {
+      const eew = makeEEW({
+        forecastMaxScaleBelow1: true,
+        earthquake: {
+          originTime: '2026-01-01T12:00:00Z',
+          arrivalTime: '2026-01-01T12:00:20Z',
+          condition: '仮定震源要素',
+          hypocenter: { name: 'テスト震源', latitude: 35.0, longitude: 135.0, depth: 400, magnitude: 6.0 },
+        },
+      })
+      expect(eewNoForecastReason(eew, false)).toBe('belowScale1')
+    })
+  })
+
   it('浅い通常の震源なら unknown（値が遅れて付く可能性が残る）', () => {
     expect(eewNoForecastReason(makeEEW(), false)).toBe('unknown')
   })
