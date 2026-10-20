@@ -2,6 +2,7 @@ import type { JMAQuake, JMATsunami, EEWAlert, EEWForecastChange, JMANankai, JMAN
 import { serverNow, serverDate } from './clock'
 import { extractQuakeEventIdFromId } from './quakeMerge'
 import { dmdataTelegramKey } from './telegramKey'
+import { quakeNoticeId } from './dmdataId'
 import { log } from './logger'
 import { INTENSITY_SCALES_ASC } from './intensity'
 import notoHonshinPoints from '../data/noto-honshin-2024-points.json'
@@ -1786,12 +1787,14 @@ function toFullWidthDigits(n: number): string {
 export function createTestQuakeNotice(): JMAQuakeNotice {
   const nowDate = serverDate()
   const now = nowDate.toISOString()
-  const eventId = toEventIdTimestamp(nowDate)
+  // 実電文のお知らせの `EventID` は発表時刻を分で切ったもの（秒は 00）
+  const eventId = toEventIdTimestamp(new Date(Math.floor(nowDate.getTime() / 60_000) * 60_000))
   const tomorrow = new Date(serverNow() + 24 * 3600 * 1000)
   const md = `${toFullWidthDigits(tomorrow.getMonth() + 1)}月${toFullWidthDigits(tomorrow.getDate())}日`
   return {
-    // 実電文と同じ形の id にする（`Serial` は空なのでパーサーが '1' へ倒す）
-    id: `dmdata-quake-notice-${eventId}-1`,
+    // 実電文と同じ形の id にする（`EventID` と電文の作成時刻 `Control/DateTime` の組。→ `quakeNoticeId`）。
+    // 作成時刻は実電文と同じく秒までの UTC で書く。
+    id: quakeNoticeId(eventId, now.replace(/\.\d{3}Z$/, 'Z')),
     time: now,
     eventId,
     headline: '沖縄県の震度データ入電停止のお知らせ',

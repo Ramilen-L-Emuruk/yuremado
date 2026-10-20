@@ -5270,10 +5270,53 @@ describe('地震・津波に関するお知らせ（VZSE40）', () => {
     expect(notice.body).toContain('電力設備点検')
     expect(notice.cancelled).toBe(false)
     expect(notice.eventId).toBe('20091106160000')
-    // `Serial` は空で届く。id の一意性は eventId が担う
-    expect(notice.id).toBe('dmdata-quake-notice-20091106160000-1')
+    // `Serial` は空で届く。id は EventID と電文の作成時刻（Control/DateTime）の組
+    expect(notice.id).toBe('dmdata-quake-notice-20091106160000-2009-11-06T07:00:00Z')
     expect(new Date(notice.expireAt).getTime() - new Date(notice.reportDateTime).getTime())
       .toBe(7 * 24 * 3600 * 1000)
+  })
+
+  // 正: **同じ分に出た別のお知らせは別の id になる。** `EventID` は発表時刻を分で切ったもので、
+  // 自治体ごとの「震度データ入電停止」が数十秒おきに並ぶと同じ値になる（実電文の形は
+  // docs/spec/data-sources-spec.md §2「扱う電文種別」）。
+  it('同じ分の別のお知らせは作成時刻で見分ける', () => {
+    const later = VZSE40_XML.replace('<DateTime>2009-11-06T07:00:00Z</DateTime>', '<DateTime>2009-11-06T07:00:37Z</DateTime>')
+    expect(later).not.toBe(VZSE40_XML)
+    const a = parseQuakeNoticeFromXml(VZSE40_XML)!
+    const b = parseQuakeNoticeFromXml(later)!
+    expect(b.eventId).toBe(a.eventId)
+    expect(b.id).not.toBe(a.id)
+  })
+
+  // 対照: 同じ電文なら同じ id（受け直し・履歴との突き合わせで同じものと分かる）。
+  it('同じ電文は同じ id になる', () => {
+    expect(parseQuakeNoticeFromXml(VZSE40_XML)!.id).toBe(parseQuakeNoticeFromXml(VZSE40_XML)!.id)
+  })
+
+  // 安全弁: 作成時刻が無くても電文は捨てない（帯と読み上げは出せる）。見分けられないことは記録する。
+  it('作成時刻が無くても捨てず、記録を残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VZSE40_XML.replace('<DateTime>2009-11-06T07:00:00Z</DateTime>', '<DateTime></DateTime>')
+      expect(xml).not.toBe(VZSE40_XML)
+      const notice = parseQuakeNoticeFromXml(xml)!
+      expect(notice).not.toBeNull()
+      expect(notice.headline).toBe('沖縄県の震度データ入電停止のお知らせ')
+      // id は発表時刻で代える（空のまま `…-` で終わらせない）
+      expect(notice.id).toBe(`dmdata-quake-notice-20091106160000-${notice.reportDateTime}`)
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('電文作成時刻（Control/DateTime）')
+    } finally { warn.mockRestore() }
+  })
+
+  // 安全弁: EventID が無くても捨てず、取消を照合できないことを記録する。
+  it('EventID が無くても捨てず、記録を残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VZSE40_XML.replace('<EventID>20091106160000</EventID>', '<EventID></EventID>')
+      expect(xml).not.toBe(VZSE40_XML)
+      expect(parseQuakeNoticeFromXml(xml)).not.toBeNull()
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('EventID を読めません')
+    } finally { warn.mockRestore() }
   })
 
   // 正: **記書きの改行と全角スペースを保つ。** 詰めると期間や連絡先の対応が崩れ、帯の中で

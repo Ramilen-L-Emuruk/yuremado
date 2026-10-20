@@ -849,7 +849,9 @@ export function useEarthquakes(
   const shownKohatsuEventIdRef = useRef<string | null>(null)
   // 解説情報だけは `id`（識別情報と号数の組）で持つ。理由は `applyNankaiCommentary` の照合箇所。
   const shownCommentaryIdRef = useRef<string | null>(null)
-  const shownQuakeNoticeIdRef = useRef<string | null>(null)
+  // 表示中のお知らせ。取消は元のお知らせの `EventID` しか持たないので、`id` と並べて覚える
+  // （照合は `applyQuakeNotice`）。
+  const shownQuakeNoticeRef = useRef<{ id: string; eventId: string } | null>(null)
   // 表示中の地震回数の群発識別子。**取消が自分宛かを同期的に判定する**ために持つ
   // （`setState` の中で照合すると、読み上げを起こすかどうかをその場で返せない）。
   const shownEarthquakeCountEventIdRef = useRef<string | null>(null)
@@ -1209,25 +1211,41 @@ export function useEarthquakes(
    */
   const applyQuakeNotice = useCallback((notice: JMAQuakeNotice): boolean => {
     if (notice.cancelled) {
-      // 消す前に id を照合する（待っている間に新しいお知らせへ入れ替わっていたら、そちらを消さない）。
+      // 消す前に、取消が表示中のお知らせ宛てかを照合する（待っている間に新しいお知らせへ
+      // 入れ替わっていたら、そちらを消さない）。
       //
-      // **取消は元のお知らせの `EventID` を引き継ぐ。** 気象庁公式のサンプル
-      // （`42_03_01_220402_VZSE40.xml`）は発表時刻が 2022-04-02 06:58 なのに `EventID` は
-      // `20220402050100`（＝05:01）で、自分の発表時刻ではなく**取り消す対象の発表時刻**を
-      // 指している（発表側のサンプルでは `EventID` ＝自分の発表時刻）。`Serial` は両方とも空なので、
-      // 発表と取消で `id` が一致する。**実配信の取消は未観測**なので、届いたら形を確かめること。
-      const shown = shownQuakeNoticeIdRef.current
-      if (shown !== notice.id) {
-        log.info(`[quakeNotice] 別のお知らせへの取消のため帯を残します received=${notice.id} shown=${shown}`)
+      // **照合は `EventID` で行う。`id` ではない。** 取消は元のお知らせの `EventID` を引き継ぐ ——
+      // 気象庁公式のサンプル（`jmaxml_20260723_Samples.zip` の `42_03_01_220402_VZSE40.xml`）は発表時刻が 2022-04-02 06:58 なのに
+      // `EventID` は `20220402050100`（＝05:01）で、自分の発表時刻ではなく**取り消す対象の発表時刻**を
+      // 指している（発表側のサンプルでは `EventID` ＝自分の発表時刻）。`id` には電文の作成時刻が
+      // 入るので（→ `quakeNoticeId`）、発表と取消で一致しない。
+      //
+      // **同じ分に別のお知らせが出ていたら、どちら宛てかは電文から決められない。** 取消が持つのは
+      // 分までの `EventID` だけで、元のお知らせの作成時刻は載らない。表示中の 1 通と分が一致すれば
+      // 消す。**実配信の取消は未観測**（アーカイブの控えのお知らせ 605 通に 0 通。→ docs/spec/data-sources-spec.md §2
+      // 「扱う電文種別」）なので、届いたら形を確かめること。
+      //
+      // **`EventID` が空の取消は照合しない。** 空どうしは「同じお知らせ」の証拠にならない
+      // （パーサーは空を記録して通す）。
+      const shown = shownQuakeNoticeRef.current
+      if (shown == null) {
+        log.info(`[quakeNotice] 表示中のお知らせが無いため取消を当てません received=${notice.eventId}`)
         return false
       }
+      if (notice.eventId === '' || shown.eventId !== notice.eventId) {
+        log.info(`[quakeNotice] 別のお知らせへの取消のため帯を残します received=${notice.eventId} shown=${shown.eventId}`)
+        return false
+      }
+      // どのお知らせを消したかは記録に残す。同じ分に別のお知らせが出ていた場合、取消の本来の宛先とは
+      // 別の 1 通を消した可能性があり、それは後から id を突き合わせないと分からない。
+      log.info(`[quakeNotice] 取消で帯を消します eventId=${notice.eventId} shown=${shown.id} cancel=${notice.id}`)
       // **期限タイマーは id を照合した後で止める。** 先に止めると、別のお知らせ宛ての取消が届いたとき、
       // 表示中のお知らせの 7 日の期限だけが失われて帯が居座る。
       if (quakeNoticeExpireTimerRef.current !== undefined) {
         window.clearTimeout(quakeNoticeExpireTimerRef.current)
         quakeNoticeExpireTimerRef.current = undefined
       }
-      shownQuakeNoticeIdRef.current = null
+      shownQuakeNoticeRef.current = null
       setState(prev => ({ ...prev, quakeNotice: null }))
       // **取消しの理由（パーサーは `body` に読んでいる）は画面に出さない。** 取消では帯ごと消え、
       // 中身が運用連絡なので、消すためだけに帯を出し直すほどのものでもない。読み上げを有効にした
@@ -1247,11 +1265,11 @@ export function useEarthquakes(
     if (quakeNoticeExpireTimerRef.current !== undefined) {
       window.clearTimeout(quakeNoticeExpireTimerRef.current)
     }
-    shownQuakeNoticeIdRef.current = notice.id
+    shownQuakeNoticeRef.current = { id: notice.id, eventId: notice.eventId }
     setState(prev => ({ ...prev, quakeNotice: notice }))
     quakeNoticeExpireTimerRef.current = window.setTimeout(() => {
       quakeNoticeExpireTimerRef.current = undefined
-      if (shownQuakeNoticeIdRef.current === notice.id) shownQuakeNoticeIdRef.current = null
+      if (shownQuakeNoticeRef.current?.id === notice.id) shownQuakeNoticeRef.current = null
       setState(prev => (prev.quakeNotice?.id === notice.id ? { ...prev, quakeNotice: null } : prev))
     }, remainMs)
     return true
@@ -4048,7 +4066,7 @@ export function useEarthquakes(
     shownNankaiEventIdRef.current = null
     shownKohatsuEventIdRef.current = null
     shownCommentaryIdRef.current = null
-    shownQuakeNoticeIdRef.current = null
+    shownQuakeNoticeRef.current = null
     shownEarthquakeCountEventIdRef.current = null
     estimatedIntensitiesRef.current = []
     // 分布を伝えた地震の台帳も空にする。リプレイの開始・リセットで時間軸が変わるため、前の軸で

@@ -32,6 +32,7 @@ import { parseTsunamiEstimationCondition, parseTsunamiForecastHeightImportant, p
 import { createPerLabelLogGate, log, UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS } from '../utils/logger'
 import { NON_JMA_MARK } from '../utils/formatters'
 import { dmdataTelegramKey } from '../utils/telegramKey'
+import { quakeNoticeId } from '../utils/dmdataId'
 import { arr, obj, str } from './parseHelpers'
 
 // EEW: "1","2","3","4","5-","5+","6-","6+","7","不明" 等
@@ -3238,8 +3239,20 @@ export function parseQuakeNoticeFromXml(xml: string): JMAQuakeNotice | null {
     return dropTelegram(DMDATA_LOG_PREFIX, `地震・津波に関するお知らせの発表時刻を日時として読めません: "${reportDateTime}"`)
   }
   const eventId = xmlText(xmlQ(doc, 'EventID'))
-  // `Serial` は実電文でもサンプルでも空。id の一意性は eventId（発表時刻由来）が担う。
-  const serial = xmlText(xmlQ(doc, 'Serial')) || '1'
+  if (!eventId) {
+    // 取消は `EventID` で表示中のお知らせと照合する（→ `applyQuakeNotice`）。空の取消は照合しないので、
+    // 空のまま通すと取消が効かない。電文は捨てない —— 発表なら帯と読み上げは出せる。
+    log.warn(`${DMDATA_LOG_PREFIX} 地震・津波に関するお知らせの EventID を読めません（取消を照合できません）`)
+  }
+  // **id は `EventID` と `Control/DateTime` の組で作る**（→ `quakeNoticeId`）。`EventID` は発表時刻を
+  // 分で切ったもので同じ分の別のお知らせと重なり、`Serial` は空で届く。
+  const controlEl = xmlQ(doc, 'Control')
+  const controlDateTime = controlEl ? xmlText(xmlChild(controlEl, 'DateTime')) : ''
+  if (!controlDateTime) {
+    // 作成時刻が無ければ発表時刻（分まで）で代える。同じ分の別のお知らせと id が重なる（閉じた帯の
+    // 記録・既読が混ざる）。電文は捨てない —— 帯と読み上げは id が重なっても出せる。
+    log.warn(`${DMDATA_LOG_PREFIX} 地震・津波に関するお知らせの電文作成時刻（Control/DateTime）を読めません（発表時刻で代えるので、同じ分の別のお知らせと見分けられません）`)
+  }
 
   const headEl = xmlQ(doc, 'Head')
   const headlineEl = headEl ? xmlQ(headEl, 'Headline') : null
@@ -3259,7 +3272,7 @@ export function parseQuakeNoticeFromXml(xml: string): JMAQuakeNotice | null {
 
   return {
     ...(operationStatus && { operationStatus }),
-    id: `dmdata-quake-notice-${eventId}-${serial}`,
+    id: quakeNoticeId(eventId, controlDateTime || reportDateTime),
     time: reportDateTime, eventId,
     headline, body,
     ...(freeText && { freeText }),

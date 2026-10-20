@@ -2872,6 +2872,21 @@ describe('telegramTextToSpeak（お知らせ）', () => {
   it('取消では本文を読まない', () => {
     expect(telegramTextToSpeak({ ...event, data: { ...event.data, cancelled: true } }, { readTelegramText: true } as never)).toBeNull()
   })
+
+  // 正: **同じ分に出た別のお知らせ（EventID が同じ）は、既読の鍵が別になる。** 鍵を EventID で作ると、
+  // 後のお知らせの問い合わせ先の行のような共通の文が、先のお知らせで読んだものとして飛ばされる。
+  it('EventID が同じでも id が違えば既読の鍵が別になる', () => {
+    const first = telegramTextToSpeak(event, { readTelegramText: true } as never)!
+    const second = telegramTextToSpeak({ ...event, data: { ...event.data, id: 'n2' } }, { readTelegramText: true } as never)!
+    expect(second.units.map(u => u.key)).not.toEqual(first.units.map(u => u.key))
+  })
+
+  // 対照: 同じお知らせ（同じ id）なら鍵は同じ（受け直しで読み直さない）。
+  it('同じ id なら既読の鍵も同じ', () => {
+    const a = telegramTextToSpeak(event, { readTelegramText: true } as never)!
+    const b = telegramTextToSpeak({ ...event, data: { ...event.data, eventId: 'e-other' } }, { readTelegramText: true } as never)!
+    expect(b.units.map(u => u.key)).toEqual(a.units.map(u => u.key))
+  })
 })
 
 describe('earthquakeCountToText', () => {
