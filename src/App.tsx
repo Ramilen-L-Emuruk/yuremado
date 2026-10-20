@@ -2070,7 +2070,7 @@ export function App() {
     // エンジンが詰まって検知結果を出せない間は、空の結果を「揺れていない」と読ませない。
     kyoshinStalled: kyoshinV2.stalled,
     eews: eewListForChecklist,
-    latestQuake: earthquakes[0],
+    quakes: earthquakes,
   })
   // 宣言が useReplayController より後になるため ref 経由で渡す（上記 resetLocalState 参照）。
   resetActionChecklistRef.current = actionChecklist.resetForReplay
