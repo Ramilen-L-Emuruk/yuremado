@@ -2613,6 +2613,60 @@ export function createTestTsunamiObservationNoChange(prev: JMATsunami): JMATsuna
 }
 
 /**
+ * 読み上げた波高より下がった観測点を持つ観測情報の報（気象庁の訂正にあたる形）。
+ *
+ * **走査した範囲では実配信の標本が見つからなかった形**（→ docs/spec/tsunami-spec.md §10）。ほかに読む変化が無いので、「観測された波高に変わりはありません」へ落ちずに
+ * 「津波観測に関する情報が発表されました。」と読むことを実機で確かめる入口。
+ *
+ * **「○m以上」が付いた観測点（`createTestTsunamiObservationOverUpgrade` の八戸港）を、値を下げて
+ * 「以上」も外す。** 下がる向きの 2 通り（値・「以上」）を 1 点で同時に通す。
+ * 読み上げの記憶は下げないので、**この報より後の観測情報も同じ一文になる** —— 静かな報の
+ * テストでは、変化の無い報（`createTestTsunamiObservationNoChange`）より後ろに置くこと。
+ *
+ * 観測点は `coastal` から採る（理由は {@link createTestTsunamiQuietReportSteps}）。値をそのまま使うので、
+ * 八戸港の波高のほかは何も動かない。
+ */
+export function createTestTsunamiObservationLowered(prev: JMATsunami, coastal: JMATsunami): JMATsunami {
+  const report = asObservationReport(prev, 'obs-lowered')
+  return {
+    ...report,
+    observations: (coastal.observations ?? []).map(o =>
+      o.name === OVER_UPGRADE_STATION && o.height
+        ? { ...o, height: { value: 0.6, description: '0.6m' } }
+        : o),
+  }
+}
+
+/**
+ * 設定タブ「変化の小さい続報テスト」の段の並び（`base` は発表報）。各段は直前の報を受けて次の報を作る。
+ *
+ * **段の表は `useEarthquakes` の `simulateTsunamiQuietReports` にある。** 並びはここが持つ
+ * —— 7 段目は「最後に届いた沿岸の観測点を運ぶ報」を要るので、それを追う変数ごとここへ閉じ込める
+ * （5 段目の沖合の報と 6 段目の変化の無い報は沿岸の観測点を持たない）。
+ */
+export function createTestTsunamiQuietReportSteps(base: JMATsunami): ((prev: JMATsunami) => JMATsunami)[] {
+  let lastCoastal = base
+  const steps: ((prev: JMATsunami) => JMATsunami)[] = [
+    createTestTsunamiObservationReport,
+    createTestTsunamiObservationOverUpgrade,
+    createTestTsunamiMaxHeightTimeUpdate,
+    createTestTsunamiFirstWaveUpdate,
+    createTestTsunamiOffshoreMaxHeightTimeUpdate,
+    createTestTsunamiObservationNoChange,
+    prev => createTestTsunamiObservationLowered(prev, lastCoastal),
+    prev => createTestTsunamiHighTide(base, prev),
+    prev => createTestTsunamiHighTideFollowUp(prev, 'tide'),
+    prev => createTestTsunamiHighTideFollowUp(prev, 'arrival'),
+    prev => createTestTsunamiHighTideFollowUp(prev, 'none'),
+  ]
+  return steps.map(step => (prev: JMATsunami) => {
+    const next = step(prev)
+    if (next.observations?.some(o => !o.offshore)) lastCoastal = next
+    return next
+  })
+}
+
+/**
  * 各地の満潮時刻・津波到達予想時刻に関する情報の続報。
  *
  * 実配信では 6 通のうち 2 通が「満潮時刻は 1 つも動かず到達状況だけ変わった」報だった

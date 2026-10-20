@@ -29,6 +29,7 @@ import {
   createTestTsunamiForecast,
   createTestTsunamiGradeChange,
   createTestTsunamiInfoRetraction,
+  createTestTsunamiQuietReportSteps,
   createTestTsunamiSourceAdded,
   createTestTsunamiWarning,
   createTestTsunamiWatch,
@@ -42,7 +43,7 @@ import notoHonshinQuake from '../data/noto-honshin-2024-quake.json'
 import { extractQuakeEventId } from './quakeMerge'
 import { eewAreas, eewMaxScale, eewNoForecastReason, isEewAreaArrived } from './eew'
 import { extractQuakeEventIdFromId } from './quakeMerge'
-import { foldTsunamiReports, isObservationMissing, isPartialTsunamiRetraction, isSameTsunamiEvent, matchesArea, refoldTsunamiWithout } from './tsunami'
+import { hasObservedHeightLowered, foldTsunamiReports, isObservationMissing, isPartialTsunamiRetraction, isSameTsunamiEvent, matchesArea, refoldTsunamiWithout } from './tsunami'
 import { linkTsunamiSources } from './tsunamiSourceLinks'
 import { applyLiveLpgm } from './lpgmRetraction'
 
@@ -1806,5 +1807,40 @@ describe('津波情報だけを取り消すテスト', () => {
   it('取消は理由の文を持たない', () => {
     const [, , retraction] = createTestTsunamiInfoRetraction()
     expect(retraction.cancelText).toBeUndefined()
+  })
+})
+
+// 設定タブ「変化の小さい続報テスト」の 7 段目（波高が下がった報）。**空振りしても画面は「変わりは
+// ありません」と読むだけで、例外もログも出ない**（実際に一度、5 段目の沖合の報が沿岸の観測点を落として
+// 7 段目が何も変えていなかった）。→ docs/spec/tsunami-spec.md §10「読み上げた波高より下がった観測点」
+describe('変化の小さい続報テストの 7 段目', () => {
+  beforeEach(() => { vi.useFakeTimers({ now: new Date('2026-09-12T12:34:56Z').getTime() }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  const run = () => {
+    const base = createTestTsunami(true)
+    const steps = createTestTsunamiQuietReportSteps(base)
+    const reports: JMATsunami[] = []
+    let prev = base
+    for (const step of steps) { prev = step(prev); reports.push(prev) }
+    return reports
+  }
+
+  // 正: 2 段目で「以上」が付いた八戸港が、7 段目で値が下がり「以上」も外れる
+  it('7 段目は 2 段目の八戸港より低い値を運び、下がったと判定される', () => {
+    const reports = run()
+    const before = reports[1].observations?.find(o => o.name === '八戸港')
+    const lowered = reports[6].observations?.find(o => o.name === '八戸港')
+    expect(before?.height?.over).toBe(true)
+    expect(lowered?.height).toEqual({ value: 0.6, description: '0.6m' })
+    const spoken = new Map([['八戸港', { value: before!.height!.value, over: true }]])
+    expect(hasObservedHeightLowered(lowered!, spoken)).toBe(true)
+  })
+
+  // 安全弁: 7 段目の直前（5・6 段目）は沿岸の観測点を持たない。それでも 7 段目は沿岸の観測点を運ぶ
+  it('沖合だけの報の後でも、7 段目は沿岸の観測点を運ぶ', () => {
+    const reports = run()
+    expect(reports[5].observations?.every(o => o.offshore)).toBe(true)
+    expect(reports[6].observations?.some(o => !o.offshore)).toBe(true)
   })
 })

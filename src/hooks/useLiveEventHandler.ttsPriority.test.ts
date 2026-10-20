@@ -1555,6 +1555,56 @@ describe('読み上げた観測点の既読', () => {
     expect(spokenTexts()[1]).toBe('津波観測に関する情報。観測された波高に変わりはありません。')
   })
 
+  // 正: 読んだ波高より下がった観測点がある報では「変わりはありません」と言わない
+  // （2026-10-19 ユーザー承認の一文。実配信の控え 2020-11〜2026-10 には標本が無い）
+  it('波高が下がった報は「変わりはありません」ではなく「発表されました」と読む', async () => {
+    const handle = setup()
+    handle(makeTsunamiObs({ value: 0.5 }))
+    await settle()
+    expect(spokenTexts()[0]).toContain('0.5メートル')
+    finishSpeech(0)
+    await flush()
+
+    handle(makeTsunamiObs({ id: 'tsunami-obs-2', value: 0.3 }))
+    await settle()
+    expect(spokenTexts()).toHaveLength(2)
+    expect(spokenTexts()[1]).toBe('津波観測に関する情報が発表されました。')
+    // 下がった値は声にしない
+    expect(spokenTexts()[1]).not.toContain('0.3メートル')
+  })
+
+  // 対照: 同じ報で別の観測点が上がったなら、波高の文が読まれる（この一文の分岐には来ない）
+  it('別の観測点が上がった報では、上がった観測点を読む', async () => {
+    const handle = setup()
+    handle(makeTsunamiObs({ points: [{ name: '輪島港', value: 0.5 }, { name: '珠洲市長橋', value: 0.2 }] }))
+    await settle()
+    finishSpeech(0)
+    await flush()
+    handle(makeTsunamiObs({ id: 'tsunami-obs-2', points: [{ name: '輪島港', value: 0.3 }, { name: '珠洲市長橋', value: 0.4 }] }))
+    await settle()
+    expect(spokenTexts()).toHaveLength(2)
+    expect(spokenTexts()[1]).toContain('0.4メートル')
+    expect(spokenTexts()[1]).not.toContain('発表されました')
+  })
+
+  // 安全弁: 記憶は下げないので、下がった後に同じ値が続いても「変わりはありません」へ戻らない
+  // （聞き手が最後に聞いたのは下がる前の値）
+  it('下がった後の同じ値の再送でも「変わりはありません」と言わない', async () => {
+    const handle = setup()
+    handle(makeTsunamiObs({ value: 0.5 }))
+    await settle()
+    finishSpeech(0)
+    await flush()
+    handle(makeTsunamiObs({ id: 'tsunami-obs-2', value: 0.3 }))
+    await settle()
+    finishSpeech(1)
+    await flush()
+    handle(makeTsunamiObs({ id: 'tsunami-obs-3', value: 0.3 }))
+    await settle()
+    expect(spokenTexts()).toHaveLength(3)
+    expect(spokenTexts()[2]).toBe('津波観測に関する情報が発表されました。')
+  })
+
   // 正: 波高が据え置きのまま `MaxHeight/Revise` が「更新」になったら、その事実を読む
   // （2024 年能登半島地震の 01/02 00:51 と同じ形。かつては読み上げ文が空になっていた）
   it('最大波の観測時刻だけが動いた報を読む', async () => {
