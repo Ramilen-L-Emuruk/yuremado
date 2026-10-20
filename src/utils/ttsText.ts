@@ -4296,7 +4296,9 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
       // 同じ扱い —— 自由文なので書式が一定せず、行の形で削ると別のお知らせで本題を落としうる。
       // 聞きたくなければブロックごと切れる（`quakeNoticeBody`）。
       const body = joinTelegramTexts([pick('quakeNoticeBody', event.data.body)], reads)
-      return telegramSpeech(`地震・津波に関するお知らせについて、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+      // **主題は `id` で作る。`eventId` ではない。** お知らせの `EventID` は発表時刻の分で、同じ分の別の
+      // お知らせと重なる。`eventId` で作ると、先のお知らせと同じ文（問い合わせ先の行など）が既読として飛ばされる。
+      return telegramSpeech(`地震・津波に関するお知らせについて、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.id))
     }
     // 推計震度分布図は二進電文で、気象庁が書いた文を運ばない。
     case 'estimatedIntensity':

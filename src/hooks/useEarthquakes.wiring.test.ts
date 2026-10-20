@@ -1363,8 +1363,8 @@ describe('震源・津波区分を津波電文から借りる結線', () => {
 })
 
 describe('地震・津波に関するお知らせ（VZSE40）と地震回数（VXSE60）の結線', () => {
-  // どちらも**実配信では観測できていない種別**（電文一覧 13 か月で 0 通）。実機で偶然踏んで
-  // 気づくことが期待できないぶん、畳み方と取消の照合はここで固定しておく。
+  // どちらも実機で偶然踏んで気づくことが期待できない（お知らせは実配信に届くが取消は未観測、
+  // 地震回数は実配信で観測できていない）。畳み方と取消の照合はここで固定しておく。
 
   /** expireInMs 後に期限が切れるお知らせ。 */
   function notice(id: string, expireInMs: number): JMAQuakeNotice {
@@ -1432,16 +1432,38 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     expect(h.current.quakeNotice).toBeNull()
   })
 
-  // 正: 取消で帯を消す。**照合は `id`** ―― お知らせは 1 通ごとに `EventID` が変わるので、
-  // 表示中の報そのものを指せるのは id のほう。
-  it('取消電文で帯を消す', async () => {
+  // 正: 取消で帯を消す。**照合は `EventID`** ―― 取消は元のお知らせの `EventID` を引き継ぐが、
+  // `id` には取消自身の作成時刻が入るので、元のお知らせの `id` とは一致しない。
+  it('取消電文で帯を消す（id が違っても EventID が同じなら消す）', async () => {
     const h = setup()
     await h.flush()
     push(h, { kind: 'quakeNotice', data: notice('n-live', 60_000) })
     expect(h.current.quakeNotice?.id).toBe('n-live')
 
-    push(h, { kind: 'quakeNotice', data: { ...notice('n-live', 60_000), cancelled: true } })
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-live', 60_000), id: 'n-live-cancel', cancelled: true } })
     expect(h.current.quakeNotice).toBeNull()
+  })
+
+  // 既知の限界を固定する: 同じ分に別のお知らせ（EventID が同じ）が出て表示を置き換えたあと、先の
+  // お知らせ宛ての取消が届くと、表示中の 1 通を消す。取消は分までの EventID しか持たず、どちら宛てかを
+  // 電文から決められないため。
+  it('同じ EventID の別のお知らせが表示中なら、取消はそれを消す', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'quakeNotice', data: notice('n-a', 60_000) })
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-b', 60_000), eventId: 'n-a-event' } })
+    expect(h.current.quakeNotice?.id).toBe('n-b')
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-a', 60_000), id: 'n-a-cancel', cancelled: true } })
+    expect(h.current.quakeNotice).toBeNull()
+  })
+
+  // 安全弁: EventID が空の取消は照合しない（空どうしは同じお知らせの証拠にならない）。
+  it('EventID が空の取消では帯を消さない', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-live', 60_000), eventId: '' } })
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-cancel', 60_000), eventId: '', cancelled: true } })
+    expect(h.current.quakeNotice?.id).toBe('n-live')
   })
 
   // 安全弁: 別のお知らせに向けた取消で、いま出ている帯を消さない。
