@@ -1464,6 +1464,66 @@ export function createTestEEWNoForecast(eventId?: string, serial = 1, baseTime?:
   }
 }
 
+/**
+ * 「予想震度0」テストで報を流す時刻（押してからのミリ秒）。
+ *
+ * **2023-04-21 03:26 九州地方南東沖 M3.6〜4.2 の実電文（EventID 20230421032622）の間隔を写している**
+ * （第 1〜5 報。第 5 報が最終報）。第 1 報だけ最大予想震度が 0（`ForecastInt` From="0" To="0"）で、
+ * 第 2 報から 1 に上がる。0 は値が出ているので、待ち（`EEW_PHASE2_MAX_WAIT_MS`）を置かずに
+ * 「予想震度なし。」を読み、第 2 報で「予想最大震度1。」と言い直す（→ docs/spec/eew-spec.md §4）。
+ */
+export const TEST_EEW_FORECAST_ZERO_REPORT_OFFSETS_MS = [0, 16_000, 19_000, 39_000, 52_000] as const
+
+/**
+ * 実電文の震源時刻のずれ [秒]（第 1〜3 報 03:25:52・第 4・5 報 03:25:54）。
+ * `EEW_ORIGIN_DRIFT_SEC` と違って正の値を持つが、正のずれが付く第 4・5 報は押してから 39・52 秒後に
+ * 流すので、震源時刻は既に過去になっている（間隔を 2 秒より縮めると予報円が消える）。
+ */
+const TEST_EEW_FORECAST_ZERO_ORIGIN_DRIFT_SEC = [0, 0, 0, 2, 2] as const
+
+// 最大予想震度 0 の初報から始まる報（→ `TEST_EEW_FORECAST_ZERO_REPORT_OFFSETS_MS`）。
+//
+// **震度0 は `forecastMaxScale` に入れない**（→ `EEWAlert.forecastMaxScaleBelow1`）。区域は 5 通とも無い。
+// **DMDSS 版でしか届かない形**なので、ボタンも DMDSS 版にだけ出す（震度0 を運ぶのは DMDATA 経路だけ）。
+export function createTestEEWForecastZero(eventId?: string, serial = 1, baseTime?: Date): EEWAlert {
+  const anchor = baseTime ?? serverDate()
+  const drift = TEST_EEW_FORECAST_ZERO_ORIGIN_DRIFT_SEC[
+    Math.min(Math.max(serial, 1), TEST_EEW_FORECAST_ZERO_ORIGIN_DRIFT_SEC.length) - 1
+  ]
+  const origin = new Date(anchor.getTime() + drift * 1000)
+  const report = serverDate().toISOString()
+  const eid = eventId ?? `test-forecast-zero-${Date.now()}`
+  const isFirst = serial <= 1
+  // 実電文の震源（第 1 報 30.4N 132.8E M3.6、第 2・3 報 30.5N 132.6E、第 4・5 報 30.6N 132.5E。M は第 2 報から 4.2）。深さは 5 通とも 10km
+  const [latitude, longitude] = isFirst ? [30.4, 132.8] : serial <= 3 ? [30.5, 132.6] : [30.6, 132.5]
+  return {
+    kind: 'eew',
+    origin: 'test',
+    id: `test-eew-forecast-zero-${eid}-${serial}`,
+    time: report,
+    test: false,
+    earthquake: {
+      originTime: origin.toISOString(),
+      // 実電文: 発生 03:25:52・発現 03:26:22（30 秒）。発現時刻は続報で動かない
+      arrivalTime: new Date(anchor.getTime() + 30_000).toISOString(),
+      condition: '',
+      hypocenter: { name: '九州地方南東沖', latitude, longitude, depth: 10, magnitude: isFirst ? 3.6 : 4.2 },
+    },
+    severity: 'Forecast',
+    cancelled: false,
+    // 精度は実電文どおり（第 5 報だけ震央の rank2 が 9）
+    accuracy: isFirst
+      ? { epicenterRank: 6, epicenterRank2: 3, depthRank: 6, magnitudeRank: 2, magnitudePoints: 0 }
+      : { epicenterRank: 7, epicenterRank2: serial >= 5 ? 9 : 3, depthRank: 7, magnitudeRank: 6, magnitudePoints: 0 },
+    landOrSea: '海域',
+    reduceName: '九州南東沖',
+    issue: { eventId: eid, serial: String(serial), time: report },
+    areas: [],
+    ...(isFirst ? { forecastMaxScaleBelow1: true as const } : { forecastMaxScale: 10 as IntensityScale }),
+    ...(serial >= TEST_EEW_FORECAST_ZERO_REPORT_OFFSETS_MS.length && { isFinal: true }),
+  }
+}
+
 export function createTestEEW(withDmdssFields: boolean, eventId?: string, serial = 1, baseTime?: Date): EEWAlert {
   // 地震発現時刻の基準。**続報でも動かさない**（→ `EEW_ARRIVAL_DELAY_MS`）
   const anchor = baseTime ?? serverDate()

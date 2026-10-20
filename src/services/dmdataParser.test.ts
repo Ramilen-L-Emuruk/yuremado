@@ -1344,6 +1344,71 @@ describe('parseEEWFromXml: severity・cancel・LPGM', () => {
     expect(parseEEWFromXml('VXSE43', noEq)).not.toBeNull()
   })
 
+  // **最大予想震度 "0"（震度0）は「予想なし」と分けて持つ**（→ eew-spec.md §4）。
+  // 実電文（VXSE45_RJTD_20230420182633610・九州地方南東沖 M3.6）は区域を持たず、
+  // `<ForecastInt><From>0</From><To>0</To></ForecastInt>` だけを載せる。
+  describe('最大予想震度 0（震度0）', () => {
+    const parse = (fi: string) => parseEEWFromXml('VXSE45', eewXml({ forecastInt: fi }))!
+
+    // 正: "0" なら階級の欄は空のまま、震度0の印を立てる
+    it('"0" なら forecastMaxScale は空のまま、震度0の印を立てる', () => {
+      const eew = parse('<From>0</From><To>0</To>')
+      expect(eew.forecastMaxScale).toBeUndefined()
+      expect(eew.forecastMaxScaleOrAbove).toBeUndefined()
+      expect(eew.forecastMaxScaleBelow1).toBe(true)
+    })
+
+    // 正: To が空なら From を採る規則（`parseForecastInt` と同じ）で "0" になる形も同じ
+    it('To が空で From が "0" でも震度0の印を立てる', () => {
+      expect(parse('<From>0</From>').forecastMaxScaleBelow1).toBe(true)
+    })
+
+    // 対照: "1" は従来どおり震度1（階級 10）で、印は立てない
+    it('"1" なら震度1 を持ち、震度0の印は立てない', () => {
+      const eew = parse('<From>1</From><To>1</To>')
+      expect(eew.forecastMaxScale).toBe(10)
+      expect(eew.forecastMaxScaleBelow1).toBeUndefined()
+    })
+
+    // 対照: 予想が読めない（"不明"）・"0 程度以上"は震度0ではない
+    it('"不明" と From="0" To="over" では印を立てない', () => {
+      expect(parse('<To>不明</To>').forecastMaxScaleBelow1).toBeUndefined()
+      expect(parse('<From>0</From><To>over</To>').forecastMaxScaleBelow1).toBeUndefined()
+    })
+
+    // 安全弁: From が 1 以上なのに To が "0" の矛盾した組では印を立てない（立てると待たずに確定してしまう）
+    it('From="1" To="0" の矛盾した組では印を立てず、読めない値として記録に残す', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      try {
+        expect(parse('<From>1</From><To>0</To>').forecastMaxScaleBelow1).toBeUndefined()
+        expect(warn.mock.calls.some(c => String(c[0]).includes('最大予想震度を読めず'))).toBe(true)
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
+    // 読めない値は「予想なし」に落ちるので、値を記録に残す。正規の "不明" は残さない
+    it('読めない値は記録に残し、"不明" は残さない', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      try {
+        parse('<From>０</From><To>０</To>')
+        expect(warn.mock.calls.some(c => String(c[0]).includes('最大予想震度を読めず'))).toBe(true)
+        warn.mockClear()
+        parse('<To>不明</To>')
+        parse('<From>0</From><To>0</To>')
+        expect(warn.mock.calls.some(c => String(c[0]).includes('最大予想震度を読めず'))).toBe(false)
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
+    // 安全弁: 取消電文は予想を持たないので印も付けない
+    it('取消電文には印を付けない', () => {
+      const eew = parseEEWFromXml('VXSE45', eewXml({ infoType: '取消', forecastInt: '<From>0</From><To>0</To>' }))!
+      expect(eew.forecastMaxScaleBelow1).toBeUndefined()
+    })
+  })
+
   it('forecastMaxScale は To 優先・range 外は undefined', () => {
     // parseIntensityStr マップ: 5- → 45 / 5+ → 50 / 6- → 55 / 6+ → 60
     expect(parseEEWFromXml('VXSE45', eewXml())!.forecastMaxScale).toBe(50)

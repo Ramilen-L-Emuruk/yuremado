@@ -1196,8 +1196,20 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     from: xmlText(el ? xmlChild(el, 'From') : null),
     to: xmlText(el ? xmlChild(el, 'To') : null),
   })
-  const { scale: forecastScale, orAbove: forecastOrAbove } =
-    parseForecastInt(intRange(forecastEl ? xmlChild(forecastEl, 'ForecastInt') : null))
+  const forecastIntRange = intRange(forecastEl ? xmlChild(forecastEl, 'ForecastInt') : null)
+  const { scale: forecastScale, orAbove: forecastOrAbove } = parseForecastInt(forecastIntRange)
+  // **最大予想震度 "0"（震度0）は「予想なし」と分けて持つ**（→ eew-spec.md §4）。階級の欄
+  // （`IntensityScale`）は 1〜7 だけを持つので `forecastMaxScale` は空のまま、`forecastMaxScaleBelow1` を
+  // 立てる。採る値は `parseForecastInt` と同じ「To があれば To・空なら From」。**From が 1 以上なのに To が
+  // "0" の矛盾した組では立てない** —— 立てると値の付くのを待たずに「予想震度なし」と確定してしまう。
+  const forecastIntValue = forecastIntRange.to || forecastIntRange.from
+  const forecastBelow1 = forecastIntValue === '0' && (forecastIntRange.from === '' || forecastIntRange.from === '0')
+  // 読めない値（"0"・"over"・正規の "不明" 以外）は「予想なし」と同じ扱いに落ちる。画面と読み上げからは
+  // 正常な「予想なし」と見分けられないので、値を記録に残す。
+  if (!isCanceled && forecastIntValue !== '' && forecastScale < 0 && !forecastBelow1
+    && forecastIntValue !== DMDATA_INTENSITY_OVER && forecastIntValue !== '不明') {
+    log.warn(`${DMDATA_LOG_PREFIX} ${headType} の最大予想震度を読めず、予想なしとして扱います: From="${forecastIntRange.from}" To="${forecastIntRange.to}"`)
+  }
   const { cls: lgClass, over: lgClassOver, belowClass1: lgClassBelow1 } =
     parseForecastLgInt(intRange(forecastEl ? xmlChild(forecastEl, 'ForecastLgInt') : null))
 
@@ -1409,6 +1421,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     isFinal: isCanceled || (xmlText(xmlQ(doc, 'NextAdvisory')) || '').includes('最終報'),
     forecastMaxScale: (!isCanceled && forecastScale >= 0) ? forecastScale as IntensityScale : undefined,
     ...(!isCanceled && forecastScale > 0 && forecastOrAbove && { forecastMaxScaleOrAbove: true }),
+    ...(!isCanceled && forecastBelow1 && { forecastMaxScaleBelow1: true }),
     forecastMaxLpgmClass: isCanceled ? undefined : lgClass,
     ...(!isCanceled && lgClassOver && { forecastMaxLpgmClassOver: true }),
     ...(!isCanceled && lgClassBelow1 && { forecastMaxLpgmBelowClass1: true }),

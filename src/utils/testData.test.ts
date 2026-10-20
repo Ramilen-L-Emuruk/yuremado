@@ -16,6 +16,8 @@ import {
   createTestEEWNoForecast,
   TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS,
   TEST_EEW_NO_FORECAST_CANCEL_MS,
+  createTestEEWForecastZero,
+  TEST_EEW_FORECAST_ZERO_REPORT_OFFSETS_MS,
   createTestEEWForecast,
   createTestEEWWarning,
   createTestForeignQuakeHuge,
@@ -1087,6 +1089,29 @@ describe('予想震度が付かないテスト EEW', () => {
     expect(TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS[0]).toBe(0)
     expect(Math.max(...TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS)).toBeLessThan(TEST_EEW_NO_FORECAST_CANCEL_MS)
     expect(TEST_EEW_NO_FORECAST_CANCEL_MS).toBeGreaterThan(3000)
+  })
+
+  // 「予想震度0」テスト（2023-04-21 九州地方南東沖の実電文の形）。初報だけが震度0 の印を持ち、
+  // 待たずに確定する理由（belowScale1）へ入らないと、ボタンが目的の経路を通らない
+  it('予想震度0: 初報は震度0 の印を持って待たずに確定し、続報は震度1 を持つ', () => {
+    const first = createTestEEWForecastZero('evt', 1, base)
+    expect(first.forecastMaxScaleBelow1).toBe(true)
+    expect(first.forecastMaxScale).toBeUndefined()
+    expect(eewAreas(first)).toEqual([])
+    expect(eewMaxScale(first)).toBe(0)
+    expect(eewNoForecastReason(first, false)).toBe('belowScale1')
+    for (const serial of [2, 3, 4, 5]) {
+      const eew = createTestEEWForecastZero('evt', serial, base)
+      expect(eew.forecastMaxScaleBelow1).toBeUndefined()
+      expect(eewMaxScale(eew)).toBe(10)
+      expect(eew.isFinal).toBe(serial === 5 ? true : undefined)
+    }
+  })
+
+  it('予想震度0: 5 通を実電文の間隔で流し、発現時刻は続報で動かない', () => {
+    expect(TEST_EEW_FORECAST_ZERO_REPORT_OFFSETS_MS).toEqual([0, 16_000, 19_000, 39_000, 52_000])
+    const arrivals = [1, 2, 3, 4, 5].map(s => createTestEEWForecastZero('evt', s, base).earthquake.arrivalTime)
+    expect(new Set(arrivals).size).toBe(1)
   })
 
   it('単独点処理の初報は仮定震源要素で、区域を持たない', () => {
