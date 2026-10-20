@@ -45,7 +45,8 @@ export function computeEEWTitle(eews: ReadonlyMap<string, EEWAlert>): string {
   // 震度の付いた予報級に primary を奪われ、タイトルが「地震動予報」になって警報級が「他N件」に
   // 埋もれる。地名と震度は primary から、区分の名前は最大レベルから取り、軸を分ける。
   // （0 になる条件は `condition` ではなく「電文に値があるか」。気象庁が最大予測震度を発表しないのは
-  // 「観測点 1 点による震度予測」と「深さ 150km 超」で、該当すれば電文に値が入らない）
+  // 「観測点 1 点による震度予測」と「深さ 150km 超（PLUM 法による 2 点以上の震度予測がある場合を除く）」で、
+  // 該当すれば電文に値が入らない）
   const maxLevel = Array.from(eews.values())
     .reduce<0 | 1 | 2>((m, e) => Math.max(m, computeDisplayEEWLevel(e)) as 0 | 1 | 2, 0)
   return `${eewKindLabel(maxLevel)} ${primary.earthquake.hypocenter.name}` +

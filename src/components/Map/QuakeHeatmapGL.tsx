@@ -2,8 +2,8 @@ import { useEffect, useRef } from 'react'
 import type { ExpressionSpecification, GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import type { HeatPoint } from '../../utils/quakeHeatmap'
-import { formatMagnitude, formatDepth, formatDateTimeMin } from '../../utils/formatters'
+import { heatMagnitudeColorValue, heatMagnitudeLabel, heatMagnitudeRank, type HeatPoint } from '../../utils/quakeHeatmap'
+import { formatDepth, formatDateTimeMin } from '../../utils/formatters'
 import { getMagnitudeColor } from '../../utils/intensity'
 import { heatmapColorExpression } from './gl/heatmapRamp'
 import { addOrderedLayer } from './gl/layerOrder'
@@ -114,7 +114,11 @@ function buildFC(points: readonly HeatPoint[]): FeatureCollection<Point> {
       name: p.name,
       time: p.time,
       depth: p.depth,
+      depthAtLeast: p.depthAtLeast,
       magnitude: p.magnitude,
+      magnitudeCondition: p.magnitudeCondition,
+      // 吹き出しで重なった点を選ぶ順位。巨大地震は数値の M を持たないので別に持つ。
+      rank: heatMagnitudeRank(p.magnitude, p.magnitudeCondition),
     },
     geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
   }))
@@ -127,17 +131,28 @@ function titleOf(f: MapGeoJSONFeature): string {
   return name || '震源地不明'
 }
 
-function hoverHtml(f: MapGeoJSONFeature): string {
+/** 地物から読んだ規模の説明。地図の地物は `null` の欄を落とすことがあるので、文字列以外は「なし」。 */
+function conditionOf(f: MapGeoJSONFeature): string | null {
+  const c = f.properties?.magnitudeCondition
+  return typeof c === 'string' && c !== '' ? c : null
+}
+
+/** 規模の札（「M3.2」「M8を超える巨大地震」「不明」）。中身の決め方は quakeHeatmap.ts。 */
+function magnitudeBadge(f: MapGeoJSONFeature): string {
   const m = Number(f.properties?.magnitude ?? -1)
+  const c = conditionOf(f)
+  return badgeHtml(heatMagnitudeLabel(m, c), getMagnitudeColor(heatMagnitudeColorValue(m, c)))
+}
+
+export function hoverHtml(f: MapGeoJSONFeature): string {
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
-    `${badgeHtml(formatMagnitude(m), getMagnitudeColor(m))}` +
+    `${magnitudeBadge(f)}` +
     `<span style="font-weight:600">${escapeHtml(titleOf(f))}</span></div>`
   )
 }
 
-function clickHtml(f: MapGeoJSONFeature): string {
-  const m = Number(f.properties?.magnitude ?? -1)
+export function clickHtml(f: MapGeoJSONFeature): string {
   const depth = Number(f.properties?.depth ?? -1)
   const time = String(f.properties?.time ?? '')
   // 日時として読めなければ行ごと落とす（時刻が無い点と同じ扱い）。
@@ -146,8 +161,8 @@ function clickHtml(f: MapGeoJSONFeature): string {
     `<div style="min-width:160px">` +
     `<div style="font-weight:700;font-size:13px">${escapeHtml(titleOf(f))}</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
-    `${badgeHtml(formatMagnitude(m), getMagnitudeColor(m))}` +
-    `<span style="color:#cbd5e1">深さ ${escapeHtml(formatDepth(depth))}</span></div>` +
+    `${magnitudeBadge(f)}` +
+    `<span style="color:#cbd5e1">深さ ${escapeHtml(formatDepth(depth, f.properties?.depthAtLeast === true))}</span></div>` +
     (timeText ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">${escapeHtml(timeText)}</div>` : '') +
     `</div>`
   )
@@ -215,7 +230,7 @@ export function QuakeHeatmapGL({ points, iconScale, visible }: Props) {
       layerId: HIT_LYR,
       priority: 'heat',
       tolPx: HIT_TOL_PX,
-      rankKey: 'magnitude',
+      rankKey: 'rank',
       buildHoverHtml: hoverHtml,
       buildClickHtml: clickHtml,
     })

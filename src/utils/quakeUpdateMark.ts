@@ -1,5 +1,5 @@
 import type { JMAQuake, JMAQuakeCity, EarthquakePoint, IssueType } from '../types/earthquake'
-import { cityKey, isAreaPoint, type AreaPrefIndex } from './quakePoints'
+import { cityKey, higherIntensityEntry, isAreaPoint, type AreaPrefIndex, type IntensityEntry } from './quakePoints'
 import { log } from './logger'
 import { UPDATE_MARK_TTL_MS, statusOf, type SnapshotValue, type UpdateStatus } from './updateMark'
 
@@ -16,6 +16,7 @@ import { UPDATE_MARK_TTL_MS, statusOf, type SnapshotValue, type UpdateStatus } f
 export type QuakeUpdateField =
   | 'hypocenterName'
   | 'coordinate'
+  | 'nameFromMark'
   | 'magnitude'
   | 'depth'
   | 'domesticTsunami'
@@ -88,6 +89,11 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
   // 位置不明のセンチネルは -200（パーサーが埋める）。`Number.isFinite` だけでは素通りする。
   const hasPos = Number.isFinite(h.latitude) && Number.isFinite(h.longitude) && h.latitude !== -200 && h.longitude !== -200
   snap.set('coordinate', { key: hasPos ? `${h.latitude},${h.longitude}` : UNKNOWN })
+  // 震央補助表現（「輪島の東北東３０ｋｍ付近」）も大小が無い。**電文の原文で比べる**（表示は半角へ直すが、
+  // 持つ値は原文 —— `formatNameFromMark`）。全期間の控え（2020-11〜、続報 1,586 組）では、座標が動いても
+  // 文はそのままで、文が別の文へ変わった組は 0 だった。震央地名と同じく、動かないのは標本の性質として入れておく
+  // （2026-10-19 ユーザー承認「1 で」＝文が別の文へ変わったときだけ印を付ける）。
+  snap.set('nameFromMark', { key: h.nameFromMark || UNKNOWN })
   // 規模は**数値と説明の両方**を鍵に含める。「Ｍ８を超える巨大地震」は本文が NaN で
   // `description` だけが値を持つので、数値だけで比べるとその変化が消える
   // （→ `docs/spec/quake-spec.md` §8）。**大小を比べられるのは数値があるときだけ。**
@@ -99,7 +105,8 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
   // 深さの 0 は「ごく浅い」という有効値で、-1 が「読めなかった」の目印。
   // **浅いほど危険なので、順序は深さの符号を反転させる** —— 「上がった（赤）」が
   // 「より深刻になった」を指す約束を、どの欄でも守る。
-  snap.set('depth', h.depth >= 0 ? { key: String(h.depth), rank: -h.depth } : { key: UNKNOWN })
+  // 「700km以上」（`depthAtLeast`）は同じ 700 でも別の値なので鍵に含める（印が付いた・外れたも更新）。
+  snap.set('depth', h.depth >= 0 ? { key: `${h.depth}${h.depthAtLeast ? '+' : ''}`, rank: -h.depth } : { key: UNKNOWN })
   // 「調査中」「不明」は値ではなく「まだ決まっていない」ので、値が無いのと同じに扱う
   // （→ `DOMESTIC_TSUNAMI_RANK`）。**逆向き（確定していた区分が調査中へ戻る）は印を付ける** ——
   // 気象庁が取り下げた事実なので、こちらは伝える。
@@ -167,6 +174,7 @@ export function quakeRowSnapshot(
   areaPrefIndex: AreaPrefIndex,
 ): Map<string, SnapshotValue> {
   const snap = new Map<string, SnapshotValue>()
+  const prefEntries = new Map<string, IntensityEntry>()
   for (const p of points) {
     // 未入電は下限の 45 が入っているので、階級だけで比べると観測値が届いた瞬間を
     // 取りこぼす（45 のまま）。**鍵には含め、順序には含めない** —— 階級が同じまま
@@ -184,10 +192,14 @@ export function quakeRowSnapshot(
     // 区域の点は `pref` の有無で見分けない。**P2PQuake は区域の点にも県名を積む**ので、
     // `pref` で見ると標準版の震度速報で区域の記憶が 1 つもできない。
     if (p.pref) {
-      // 県の行は配下の最大。**点を上書きせず、大きい方を残す。**
+      // 県の行は配下の最大。**点を上書きせず、行と同じ規則で大きい方を残す**（震度が同じなら
+      // 観測値を採る。→ `higherIntensityEntry`）。鍵には区域・観測点と同じく未入電の印を含める ——
+      // 含めないと、県の値が「5弱以上・未入電」から観測値の 5弱へ変わった報で県の行だけ印が付かない。
       const key = rowMarkKey.pref(p.pref)
-      const cur = snap.get(key)
-      if (cur === undefined || p.scale > (cur.rank ?? -1)) snap.set(key, { key: String(p.scale), rank: p.scale })
+      const cur = prefEntries.get(key)
+      const next = higherIntensityEntry(cur, { scale: p.scale, unreceived: !!p.unreceived })
+      prefEntries.set(key, next)
+      snap.set(key, { key: `${next.scale}${next.unreceived ? '!' : ''}`, rank: next.scale })
     }
     if (isAreaPoint(p, areaPrefIndex)) snap.set(rowMarkKey.area(p.addr), value)
     if (!p.isArea) snap.set(rowMarkKey.station(p.addr), value)

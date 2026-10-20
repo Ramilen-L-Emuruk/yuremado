@@ -102,7 +102,7 @@ async function build() {
   const parsed = parseLpgmFromXml(picked.xml)
   if (!parsed) throw new Error(`${picked.name} をパーサーが受け付けませんでした`)
   // 報ごとに変わるもの（識別子・発表時刻・取消の別）はテスト側で作るので落とす
-  const { id: _id, eventId: _eventId, time: _time, cancelled: _cancelled, ...rest } = parsed
+  const { id: _id, eventId: _eventId, time: _time, createdAtMs: _createdAtMs, cancelled: _cancelled, ...rest } = parsed
   fs.writeFileSync(OUT, JSON.stringify(rest), 'utf8')
   console.log(
     `${picked.name} から作りました: 観測点 ${rest.points?.length ?? 0}・区域 ${rest.regions?.length ?? 0}`

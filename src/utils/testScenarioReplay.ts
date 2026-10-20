@@ -56,6 +56,9 @@ function remapAppEvent(event: AppEvent, deltaMs: number, remapId: IdRemapper): A
         id: replaceEventIdInId(event.id, event.eventId, newEventId),
         eventId: newEventId,
         time: shiftIso(event.time, deltaMs),
+        // 報の新旧を比べる作成時刻も一緒に動かす。止めると、発表時刻だけずれて作成時刻が収録当時の
+        // 絶対値のまま残り、比べる相手（同じ再生で届く報）と時間軸が食い違う。
+        ...(event.createdAtMs !== undefined && { createdAtMs: event.createdAtMs + deltaMs }),
         issue: { ...event.issue, time: shiftIso(event.issue.time, deltaMs) },
         earthquake: { ...event.earthquake, time: shiftIso(event.earthquake.time, deltaMs) },
       }
@@ -143,6 +146,7 @@ function remapPayload(payload: ReplayPayload, deltaMs: number, remapId: IdRemapp
           eventId: newEventId,
           id: replaceEventIdInId(payload.data.id, payload.data.eventId, newEventId),
           time: shiftIso(payload.data.time, deltaMs),
+          ...(payload.data.createdAtMs !== undefined && { createdAtMs: payload.data.createdAtMs + deltaMs }),
           originTime: shiftIso(payload.data.originTime, deltaMs),
           // 地震発現時刻。**読み上げが「◯時◯分頃発生した地震で」としてこの値を読む**
           // （`ttsText.ts` の `lpgmToText`）。シフトを外すと、画面の時刻はずれていないのに

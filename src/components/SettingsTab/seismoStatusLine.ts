@@ -15,10 +15,10 @@ import type { SeismoHostCheck } from '../../services/seismoStream'
 /**
  * 画面に出す前の状態。**`SeismoHostCheck` に、通信する手前で決まる 4 つを足したもの。**
  *
- * **`ok` の枝は、画面が読む 3 つだけを `Pick` で取る。** `SeismoHostCheck` の `ok` を
+ * **`ok` の枝は、画面が読む 4 つだけを `Pick` で取る。** `SeismoHostCheck` の `ok` を
  * そのまま並べると、あちらへ項目が増えるたびにこのファイルの試験まで直すことに
- * なる（作る側が全部の項目を埋めさせられる）—— 画面が読むのは観測点の一覧と
- * センサーの数だけで、押し出しを寄せるための割り当ては使わない。
+ * なる（作る側が全部の項目を埋めさせられる）—— 画面が読むのは観測点の一覧・
+ * 割り当て済みの観測点の数・センサーの数だけで、押し出しを寄せるための割り当ては使わない。
  */
 export type SeismoUiStatus =
   /** トグルが切れている。 */
@@ -29,7 +29,7 @@ export type SeismoUiStatus =
   | { readonly kind: 'invalid' }
   /** 問い合わせている途中。 */
   | { readonly kind: 'checking' }
-  | Pick<Extract<SeismoHostCheck, { kind: 'ok' }>, 'kind' | 'stations' | 'sensorCount'>
+  | Pick<Extract<SeismoHostCheck, { kind: 'ok' }>, 'kind' | 'stations' | 'sensorCount' | 'assignedStationCount'>
   | Exclude<SeismoHostCheck, { kind: 'ok' }>
 
 export type SeismoStatusTone = 'ok' | 'problem' | 'muted'
@@ -56,19 +56,30 @@ export function seismoStatusLine(status: SeismoUiStatus): SeismoStatusLine {
       return { text: 'URLの形式が正しくない。http:// または https:// から入力してください', tone: 'problem' }
     case 'checking':
       return { text: '確認中…', tone: 'muted' }
-    case 'ok':
+    case 'ok': {
+      // **観測点の数は設定の割り当てから数える**（2026-10-19 ユーザー承認「割り当てから数える (推奨)」）。
+      // 届いたセンサーから数えると、ホストの起動直後や基板が黙っている間は 0 になり、
+      // 設定が済んでいるのに「未設定」と出る。割り当てを返さない古いホストだけ、従来どおり
+      // 届いたセンサーから組んだ観測点で数える。
+      const stationCount = status.assignedStationCount ?? status.stations.length
       // **0 件のときは別の文にする。** 「接続済み: 観測点 0・センサー 0」は、
       // 文字だけ見ると成功か異常か判らない —— ホストは動いているが観測点の設定が
       // まだ、という状態なので、それを名指しする。
-      if (status.stations.length === 0) {
+      if (stationCount === 0) {
         return { text: '接続済み: 観測点は未設定', tone: 'ok' }
       }
+      // **割り当てはあるのに 1 つも届いていない。** 「センサー 0」と出すと、センサーを
+      // 繋いでいないのか、繋いだのに届いていないのかが読めない。
+      if (status.sensorCount === 0) {
+        return { text: `接続済み: 観測点 ${stationCount}・まだ届いていない`, tone: 'ok' }
+      }
       // **観測点とセンサーの本数を出す。** 「繋がった」だけでは、繋いだ先が
-      // 自分の意図したホストかを確かめられない。
+      // 自分の意図したホストかを確かめられない。センサーの数は届いているもの。
       return {
-        text: `接続済み: 観測点 ${status.stations.length}・センサー ${status.sensorCount}`,
+        text: `接続済み: 観測点 ${stationCount}・センサー ${status.sensorCount}`,
         tone: 'ok',
       }
+    }
     case 'unreachable':
       // **確かめることは 1 つに絞る。** ホーム画面から開く前提は、この行の上にある
       // 常時表示の但し書き（「要：ホーム画面に追加してから開く」）が受け持つ ——

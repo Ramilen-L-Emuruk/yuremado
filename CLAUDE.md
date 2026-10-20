@@ -1773,7 +1773,8 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 生成データ取得のタイムアウト値と失敗時の扱いを仕様書と揃えず個別に決めると、低速回線向けの一括 60 秒と読み上げ専用の短縮 5 秒がずれる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「生成データ」 |
 | 生成データの中身の検分を取得後（呼び出し側）で行うと、失敗が「データN件を取り込めず」に計上されず console にしか残らない | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「生成データ」 |
 | README「ライセンス」節の地図データ出典表記を仕様書側の用語へ揃えると、配信元 GIS レイヤーの実名を言い換えたことになり出典表示として不正確になる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §1「概要」 |
-| 続報の新旧判定に使う ReportDateTime と Control/DateTime のタイムゾーン表記を混在させると、その報だけ辞書順比較で永久に「古い」と判定され捨てられる | [`quake-spec.md`](docs/spec/quake-spec.md) §6.3「発表時刻は分単位のまま」 |
+| 報の新旧を比べる・並べる箇所で `compareReportAge` / `reportOrderKey` を通さず分単位の発表時刻（ReportDateTime）を直接比べると、同じ分に発表された報の前後が入力順で決まり、履歴・リプレイの並びが発表順と食い違う | [`quake-spec.md`](docs/spec/quake-spec.md) §6.3「報の新旧は電文の作成時刻（秒）で比べる」 |
+| 作成時刻を持たない報どうしの比較で ReportDateTime と Control/DateTime のタイムゾーン表記を混在させると、その報だけ辞書順比較で永久に「古い」と判定され捨てられる | [`quake-spec.md`](docs/spec/quake-spec.md) §6.3「報の新旧は電文の作成時刻（秒）で比べる」 |
 | 電文が名乗る情報名を「最初に現れる Title」から読むと、種別の固定名（Control/Title）を拾い遠地地震などの判別が効かなくなる | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §4「電文が名乗る情報名」 |
 | 観測時点（TargetDateTime）を観測情報以外の種別や発表時刻と同義に扱うと、最大 6 分さかのぼる別時点を「いまの高さ」として誤解させる | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §4「観測状況を確定した時刻」 |
 | 電文の読み取り経路をXML以外（DMDATAのJSON変換版）にも広げると、独自スキーマが端折る項目（津波の注意文・予想波高の「未満」）が黙って落ちる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「受信する電文種別」 |
@@ -1904,7 +1905,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 区域の到達状況と実測の組み合わせ規則を崩すと、実配信に存在しない組み合わせ（「まもなく到達」の区域に実測がある等）を作ってしまう | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §9「区域の到達状況」「実測との関係」 |
 | EEWの警報コードを予想震度5弱未満の区域に使う、または種別コード（未到達・到達済み・PLUM法）とarrivalTimeの整合を崩すと、警報コードと予想震度の対応が電文仕様と食い違う、または「主要動の到達（予測）」欄にその区域が出ない | [`eew-spec.md`](docs/spec/eew-spec.md) §4「区域の種別コード」「到達予測時刻は種別によって意味が変わる」 |
 | 区域の件数を実電文の分布幅に寄せない、または区域を持たない報の条件を実際の発表条件と違う基準に置き換えると、区域増加時の欄の折返しを実機確認できない、またはPLUM法2点以上で区域を持つ実在報・深さの例外規定を反映しない誤った深発報を再現してしまう | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」・[`eew-spec.md`](docs/spec/eew-spec.md) §4「上限を定めない予想の扱い」「仮定震源要素の扱い」 |
-| 深発地震テストの続報を予報級のまま固定する規則を崩し警報級へ格上げすると、気象庁が深さ150km超の地震に警報を発表しないという実配信にない形になる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」 |
+| 深発地震テストの続報を予報級のまま固定する規則を崩し警報級へ格上げすると、実配信にない形になる（気象庁は深さ150km超の地震に、PLUM法による2点以上の震度予測がある場合を除いて警報を発表せず、このテストは区域を持たないのでその例外に当たらない） | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」 |
 | バリアント差を「落とす側」ではなく「残す側」で書く規則を崩すと、型にDMDATA由来の項目が増えたときそのままstandard版へ型検査も警告もなく漏れる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」 |
 | DMDSS用のpoints形状を実電文をパーサーへ通さず、P2PQuake形状データを組み替えて作ると、元データに無い項目（観測点の所属市町村等）を再現できない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実電文の形に合わせる」・[`quake-spec.md`](docs/spec/quake-spec.md) §4（`points` の識別規則） |
 | 補完対象種別の列挙（`HISTORY_EXTRA_TYPES`）に新種別を足し忘れると、その種別だけ初期状態（24時間）で足りない分が復元されない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |

@@ -302,6 +302,10 @@ export function JapanMapGL({
   // labelOverlap.ts 参照。EEW 予想震度塗りはバッジを持たないため含めない）。kyoshinIndices
   // （観測点の指数・毎秒更新）はここに含めない——観測点の位置は不変なので、値が変わっても
   // ラベルとの重なりの有無自体は変化しないため（含めると毎秒再評価が走ってしまう）。
+  // 未入電の印として実際に描く点（`QuakeUnreceivedPointsGL` へ渡すもの）と、描くかどうか。
+  // 凡例・重なり判定の合図・描画の 3 か所で同じものを使う（片方だけ直すと食い違う）。
+  const drawnUnreceivedMarkers = unreceivedMode || !aggregateByRegion ? unreceivedMarkers : orphanUnreceivedMarkers
+  const unreceivedMarkersVisible = mode === 'quake' && !lpgmActive && !distributionMode
   const overlapSignature = useMemo(() => {
     const parts = [
       aggregateByRegion ? regionAggregates.map((r) => r.name).join(',') : '',
@@ -313,10 +317,14 @@ export function JapanMapGL({
       // 検知点マーカーとして実際に描かれるのは detectedMarkerPoints と unconfirmedPoints の 2 本。
       // detectedPoints（間引き前）と candidatePoints はカメラフィット専用のため含めない。
       mode === 'kyoshin' ? unconfirmedPoints.map((p) => `${p.lat},${p.lng}`).join(';') : '',
+      // 未入電の印（`quake-unreceived-points`）。出入りでラベルの退避をやり直す
+      unreceivedMarkersVisible ? drawnUnreceivedMarkers.map((m) => `${m.position[0]},${m.position[1]}`).join(';') : '',
       publicStationMarkers.map((m) => `${m.lat},${m.lon}`).join(';'),
     ]
     return parts.join('|')
   }, [
+    unreceivedMarkersVisible,
+    drawnUnreceivedMarkers,
     aggregateByRegion,
     regionAggregates,
     lpgmActive,
@@ -551,9 +559,7 @@ export function JapanMapGL({
     // 観測点の丸と検知点は出る条件が同じ（どちらも `mode === 'kyoshin'`）なので 1 つで表す。
     realtimeIntensity: mode === 'kyoshin' && kyoshinIndices.length > 0,
     eewIntensity: mode === 'kyoshin' && eewAreaFills.length > 0 && eewLpgmRegionAggregates.length === 0,
-    unreceived:
-      mode === 'quake' && !lpgmActive && !distributionMode
-      && (unreceivedMode || !aggregateByRegion ? unreceivedMarkers.length > 0 : orphanUnreceivedMarkers.length > 0),
+    unreceived: unreceivedMarkersVisible && drawnUnreceivedMarkers.length > 0,
     lpgm: mode === 'quake' && lpgmActive && (aggregateByRegion ? lpgmRegionAggregates.length > 0 : lpgmMarkers.length > 0),
     eewLpgm: mode === 'kyoshin' && eewLpgmRegionAggregates.length > 0,
     // **予報円はリアルタイム震度モードのときだけ凡例へ出す。** 描画自体は全モードで走るが、
@@ -672,9 +678,9 @@ export function JapanMapGL({
               同じ扱い）。見ないと、推計震度分布図や震度の面を見せている最中に無関係の印が
               重なる。 */}
           <QuakeUnreceivedPointsGL
-            markers={unreceivedMode || !aggregateByRegion ? unreceivedMarkers : orphanUnreceivedMarkers}
+            markers={drawnUnreceivedMarkers}
             iconScale={iconScale}
-            visible={mode === 'quake' && !lpgmActive && !distributionMode}
+            visible={unreceivedMarkersVisible}
             epicenter={epicenter}
           />
           {/* LPGM（長周期地震動）進行中: 区域集約時は区域塗り＋階級ラベル、高ズーム時は観測点ドット。 */}

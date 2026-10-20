@@ -250,7 +250,24 @@ describe('データの終端と確からしさ', () => {
     expect(idx.completeness).toHaveLength(4)
   })
 
-  it.each(['coveredThroughMs', 'completeness'])('索引に %s が無ければ失敗する', async (key) => {
+  // 期間の行に「速報値」を添えるかは索引の確からしさで決める（`preliminaryNote`）。
+  // 欠けた年を通すと、速報値の期間に何も添えない。
+  it.each([
+    ['欠けている', { 2022: 'final' }],
+    ['値が不正', { 2023: 'provisional' }],
+  ])('索引の確からしさが年ぶん揃っていなければ失敗する（%s）', async (_label, quality) => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...INDEX, quality })))
+    const { loadHypocenterIndex } = await freshModule()
+    await expect(loadHypocenterIndex()).rejects.toThrow(/quality/)
+  })
+
+  it('索引の速報値の年はそのまま読む', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...INDEX, quality: { 2023: 'preliminary' } })))
+    const { loadHypocenterIndex } = await freshModule()
+    expect((await loadHypocenterIndex()).quality[2023]).toBe('preliminary')
+  })
+
+  it.each(['coveredThroughMs', 'completeness', 'quality'])('索引に %s が無ければ失敗する', async (key) => {
     const broken: Record<string, unknown> = { ...INDEX }
     delete broken[key]
     vi.stubGlobal('fetch', vi.fn(async () => okResponse(broken)))
@@ -259,39 +276,28 @@ describe('データの終端と確からしさ', () => {
   })
 })
 
-describe('最大震度（疎な 2 列）', () => {
-  it('添字とコードを読む', async () => {
+// **震度の 2 列はどこからも読まないので、読み取り結果にも載せず検査もしない**
+// （2026-10-19 決定「F20 で使う列を残し、他を外す (推奨)」）。
+// 以前はここで「添字とコードを読む」「長さが合わなければ失敗する」「片方だけ欠けても失敗する」
+// 「範囲外の添字なら失敗する」を固定していた。読まない列の壊れで年ごと取れなくなるのを避けるため、
+// 意図して覆した。
+describe('最大震度の 2 列は読まない', () => {
+  it('読み取り結果に震度の列は載らない', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse(YEAR_2023)))
     const { loadHypocenterYear } = await freshModule()
     const y = await loadHypocenterYear(2023)
-    expect([...y.intensityIdx]).toEqual([1])
-    expect(y.intensityCode).toEqual(['7'])
-    // 有感かどうかは添字に含まれるかで判る（2 件目だけが有感）
-    expect(y.intensityIdx.includes(0)).toBe(false)
-    expect(y.intensityIdx.includes(1)).toBe(true)
+    expect(Object.keys(y)).not.toContain('intensityIdx')
+    expect(Object.keys(y)).not.toContain('intensityCode')
   })
 
-  it('震度欄が無い年（速報値）は空', async () => {
-    const { intIdx: _a, intCode: _b, ...noInt } = YEAR_2023
-    vi.stubGlobal('fetch', vi.fn(async () => okResponse(noInt)))
+  it.each([
+    ['長さが合わない', { ...YEAR_2023, intCode: ['7', '5'] }],
+    ['片方だけ欠けている', { ...YEAR_2023, intCode: undefined }],
+    ['範囲外の添字がある', { ...YEAR_2023, intIdx: [5], intCode: ['7'] }],
+  ])('震度の列が壊れていても（%s）年は読める', async (_label, body) => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse(body)))
     const { loadHypocenterYear } = await freshModule()
-    const y = await loadHypocenterYear(2023)
-    expect(y.intensityIdx).toHaveLength(0)
-    expect(y.intensityCode).toHaveLength(0)
-  })
-
-  // 座標の列ずれと同じ性質の事故。長さが違えば別の地震の震度を返す
-  it('添字とコードの長さが合わなければ失敗する', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...YEAR_2023, intCode: ['7', '5'] })))
-    const { loadHypocenterYear } = await freshModule()
-    await expect(loadHypocenterYear(2023)).rejects.toThrow(/intIdx/)
-  })
-
-  it('片方だけ欠けても失敗する', async () => {
-    const { intCode: _drop, ...half } = YEAR_2023
-    vi.stubGlobal('fetch', vi.fn(async () => okResponse(half)))
-    const { loadHypocenterYear } = await freshModule()
-    await expect(loadHypocenterYear(2023)).rejects.toThrow(/intIdx/)
+    expect((await loadHypocenterYear(2023)).count).toBe(2)
   })
 })
 
@@ -390,13 +396,6 @@ describe('嘘の値が紛れ込む経路を塞ぐ', () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse(YEAR_2023)))
     const { loadHypocenterYear } = await freshModule()
     expect((await loadHypocenterYear(2023)).count).toBe(2)
-  })
-
-  // 列の長さずれと同じ性質の事故。範囲外の添字は消費側が別の地震の震度を引く
-  it.each([[-1], [2], [1.5]])('intIdx に範囲外の添字 %s があれば失敗する', async (bad) => {
-    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...YEAR_2023, intIdx: [bad], intCode: ['7'] })))
-    const { loadHypocenterYear } = await freshModule()
-    await expect(loadHypocenterYear(2023)).rejects.toThrow(/intIdx/)
   })
 
   // **索引の年も中身まで見る。** 年として読めない値からは NaN の時刻ができ、それが

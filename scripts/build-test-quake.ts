@@ -141,7 +141,8 @@ async function build() {
   const parsed = parseEarthquakeFromXml('VXSE53', picked.xml)
   if (!parsed) throw new Error(`${picked.name} をパーサーが受け付けませんでした`)
   // **報ごとに変わるものはテスト側で作るので落とす。** 識別子・発表時刻・発表元のほかに、
-  // 電文を数える鍵（`telegramKey`）と電文が名乗った報番号（`reportSerial`）も入る。
+  // 電文を数える鍵（`telegramKey`）・電文が名乗った報番号（`reportSerial`）・新旧を比べる
+  // 作成時刻（`createdAtMs`）も入る。
   //
   // **パーサーへ報ごとに変わる項目を足したら、ここへも足すこと。** 落とし忘れると収録した
   // 電文の値が焼き付き、テストが作る発表時刻と食い違う（`telegramKey` は 2026-09-14 に
@@ -150,7 +151,7 @@ async function build() {
   // `src/utils/testData.test.ts` が生成物のキーを見て落とす。
   const {
     kind: _kind, id: _id, eventId: _eventId, time: _time, issue: _issue,
-    telegramKey: _telegramKey, reportSerial: _reportSerial,
+    telegramKey: _telegramKey, reportSerial: _reportSerial, createdAtMs: _createdAtMs,
     ...rest
   } = parsed
 

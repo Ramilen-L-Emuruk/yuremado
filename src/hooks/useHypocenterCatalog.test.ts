@@ -3,7 +3,8 @@
 // 長期震源カタログの読み込みフックを固定する。
 // 取得そのもの（`utils/hypocenterCatalog.ts`）はモックし、ここでは**分岐だけ**を見る。
 // 背景は docs/spec/map-rendering-spec.md §16「長期震源カタログの点群」。
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+
 import { muteConsoleError } from '../test-utils/muteConsoleError'
 import { renderHook, waitFor, act } from '@testing-library/react'
 import type { HypocenterIndex, HypocenterYear } from '../utils/hypocenterCatalog'
@@ -32,7 +33,6 @@ const INDEX: HypocenterIndex = {
   years: [2020, 2021, 2022],
   counts: {},
   quality: {},
-  intensityYears: [],
 }
 
 /** 年ごとに**同じオブジェクトを返す**（実装のキャッシュと同じ性質。参照の安定を試すのに要る）。 */
@@ -50,8 +50,6 @@ const makeYear = (year: number): HypocenterYear => {
     lng: new Float64Array(0),
     depth: new Float32Array(0),
     magnitude: new Float32Array(0),
-    intensityIdx: new Int32Array(0),
-    intensityCode: [],
   }
   YEAR_CACHE.set(year, y)
   return y
