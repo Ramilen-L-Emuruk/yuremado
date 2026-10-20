@@ -2,7 +2,7 @@
 // 「〇時〇分」はローカルタイムゾーン依存のため、時刻の数値そのものではなく
 // 「日から読む／時分だけ読む」という書式の違いを正規表現で検証する。
 import { describe, it, expect, vi } from 'vitest'
-import { earthquakeCancelToText, tsunamiCancelToText, eewCancelToText, CANCEL_REASON_SPEAK_MAX_CHARS, nankaiToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText,
+import { earthquakeCancelToText, tsunamiCancelToText, eewCancelToText, CANCEL_REASON_INLINE_MAX_CHARS, deferredCancelReasonToSpeak, nankaiToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText,
   estimatedIntensityToText, earthquakeToText, earthquakeToSegments, createQuakeSpokenState, applySpokenRefs, eewAlertToText, eewIntensityText, voicevoxPreviewTexts, lpgmToText, tsunamiToText, tsunamiToSegments, tsunamiDowngradeToText, tsunamiDowngradeToSegments, tsunamiArrivalToText, tsunamiMissingToText, tsunamiObservationUpdateToText, tsunamiAreaGradeChangeToText, tsunamiWarningLevelToText, selectWarningLevelToSpeak, selectObservationUpdatesToSpeak, selectMissingToSpeak, selectArrivalsToSpeak, WARNING_LEVEL_SPEAK_MAX_POINTS, joinWithAlso, telegramTextToSpeak, TELEGRAM_TEXT_BLOCK_KEYS, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, applyTsunamiSpokenRefs } from './ttsText'
 import { INTENSITY_SCALE_COUNT } from './intensity'
 import { joinSegments, mapChunksToRefs, plain, type SpeechSegment } from './ttsFollow'
@@ -462,14 +462,14 @@ describe('lpgmToText: 階級ごとの地域列挙', () => {
     } finally { info.mockRestore() }
   })
 
-  // 安全弁: 長すぎる理由は省き、「画面にも残らない」と記録する（長周期の取消は表示ごと消える）
-  it('長すぎる理由は省き、画面に残らないことを記録する', () => {
+  // 安全弁: 長すぎる理由は続けて読まず、別の発話へ回したことを記録する
+  it('長すぎる理由は続けて読まず、別の発話へ回したことを記録する', () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => {})
     try {
-      const long = 'あ'.repeat(CANCEL_REASON_SPEAK_MAX_CHARS + 1)
+      const long = 'あ'.repeat(CANCEL_REASON_INLINE_MAX_CHARS + 1)
       const text = lpgmToText({ ...makeLpgm(), cancelled: true, cancelText: long }, TTS_OPTS, false)
       expect(text).toBe('長周期地震動に関する観測情報は取り消されました。')
-      expect(info).toHaveBeenCalledWith(expect.stringContaining('画面にも残りません'))
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('別の発話で最下位の層に回します'))
     } finally { info.mockRestore() }
   })
 
@@ -2732,9 +2732,10 @@ describe('取消の理由を読み上げる', () => {
     expect(tsunamiCancelToText('retracted', '装置の障害によるもの')).toContain('装置の障害によるもの。')
   })
 
-  // 安全弁: 長い本文は読まない。読み上げが伸びると後続の電文が待ちの上限に達して割り込む
-  it('長すぎる本文は読まない（画面に委ねる）', () => {
-    const long = 'あ'.repeat(CANCEL_REASON_SPEAK_MAX_CHARS + 1)
+  // 安全弁: 長い本文は続けて読まない。読み上げが伸びると後続の電文が待ちの上限に達して割り込む
+  // （別の発話で読む側は `deferredCancelReasonToSpeak` のテスト）
+  it('長すぎる本文は取消の文に続けて読まない', () => {
+    const long = 'あ'.repeat(CANCEL_REASON_INLINE_MAX_CHARS + 1)
     expect(tsunamiCancelToText('retracted', long)).toBe('津波警報等は誤って発表されたため取り消されました。')
   })
 })
@@ -2782,16 +2783,46 @@ describe('EEW の取消の理由を読み上げる', () => {
     expect(eewCancelToText(cancelledEew(), null)).toBe('緊急地震速報は取り消されました。')
   })
 
-  // 安全弁: 上限を超えた本文は読まないが、**捨てたことを記録する**（画面には全文が出る）
-  it('長すぎる本文は読まず、記録を残す', () => {
+  // 安全弁: 上限を超えた本文は続けて読まず、**別の発話へ回したことを記録する**
+  it('長すぎる本文は続けて読まず、記録を残す', () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => {})
     try {
-      const long = 'あ'.repeat(CANCEL_REASON_SPEAK_MAX_CHARS + 1)
+      const long = 'あ'.repeat(CANCEL_REASON_INLINE_MAX_CHARS + 1)
       expect(eewCancelToText(cancelledEew(long), '2026-01-01T12:00:00+09:00')).toMatch(/取り消されました。$/)
       expect(info).toHaveBeenCalledWith(expect.stringContaining('取消しの概要が長いため'))
     } finally {
       info.mockRestore()
     }
+  })
+})
+
+// 取消の文に続けて読むには長すぎる理由は、別の発話にして最下位の層で読む
+// （2026-10-19 ユーザー選択「外して最下位の層で読む (推奨)」・前置きは「◯◯が取り消された理由をお伝えします。」）。
+describe('長すぎる取消の理由を別の発話にする（deferredCancelReasonToSpeak）', () => {
+  // 正: 境目を 1 字でも超えたら、情報名を名乗る前置きを付けて返す
+  it('境目を超えた理由は、前置きを付けて返す', () => {
+    const long = 'あ'.repeat(CANCEL_REASON_INLINE_MAX_CHARS + 1)
+    expect(deferredCancelReasonToSpeak('地震情報', long)).toBe(`地震情報が取り消された理由をお伝えします。${long}。`)
+  })
+
+  // 対照: 境目ちょうどの理由は取消の文に続けて読むので、別の発話は作らない（二度読みしない）
+  it('境目ちょうどの理由は別の発話にしない（取消の文が続けて読む）', () => {
+    const atLimit = 'あ'.repeat(CANCEL_REASON_INLINE_MAX_CHARS)
+    expect(deferredCancelReasonToSpeak('地震情報', atLimit)).toBeNull()
+    expect(earthquakeCancelToText(null, atLimit)).toBe(`地震情報は取り消されました。${atLimit}。`)
+  })
+
+  // 安全弁: 宣言だけの本文・空の本文は、どちらの側でも読まない
+  it('宣言だけの本文と空の本文は別の発話にしない', () => {
+    expect(deferredCancelReasonToSpeak('震度速報', '先ほどの、震度速報を取り消します。')).toBeNull()
+    expect(deferredCancelReasonToSpeak('地震情報', undefined)).toBeNull()
+    expect(deferredCancelReasonToSpeak('地震情報', '  ')).toBeNull()
+  })
+
+  // 安全弁: 日時の正規化は続けて読む側と同じ（全角のゼロ埋めのまま読ませない）
+  it('日時は続けて読む側と同じく正規化する', () => {
+    const long = '１６日０１時２５分に' + 'あ'.repeat(CANCEL_REASON_INLINE_MAX_CHARS)
+    expect(deferredCancelReasonToSpeak('緊急地震速報', long)).toContain('16日1時25分に')
   })
 })
 

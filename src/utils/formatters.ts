@@ -314,19 +314,6 @@ export function formatDomesticTsunami(type: DomesticTsunami): { text: string; co
   return map[type] ?? { text: '不明', color: '#94a3b8' }
 }
 
-export function formatIssueType(type: IssueType): string {
-  const map: Record<IssueType, string> = {
-    '震度速報': '震度速報',
-    '震源情報': '震源情報',
-    '震源・震度情報': '震源・震度情報',
-    '各地の震度情報': '各地の震度情報',
-    '顕著な地震の震源要素更新のお知らせ': '顕著な地震の震源要素更新のお知らせ',
-    '遠地地震': '遠地地震',
-    'その他': 'その他',
-  }
-  return map[type] ?? type
-}
-
 /** カードの見出しに出す電文種別 1 つぶん。→ {@link quakeReportLabels} */
 export interface QuakeReportLabel {
   /** 気象庁の種別名。 */
@@ -359,10 +346,10 @@ export function quakeReportLabels(
   reports: QuakeReportRecord[] | undefined,
   fallback: IssueType,
 ): QuakeReportLabel[] {
-  if (!reports || reports.length === 0) return [{ type: formatIssueType(fallback) }]
+  if (!reports || reports.length === 0) return [{ type: fallback }]
   return reports.map(r => {
     const count = r.serial ?? r.keys.length
-    return count > 1 ? { type: formatIssueType(r.type), count } : { type: formatIssueType(r.type) }
+    return count > 1 ? { type: r.type, count } : { type: r.type }
   })
 }
 
