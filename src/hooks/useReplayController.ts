@@ -72,15 +72,17 @@ export function replayTargetProblem(targetDate: Date, nowMs: number): string | n
 }
 
 /**
- * 津波の報 1 通を指す鍵。報番号（`Serial`）は電文の種別（津波警報・注意報・予報／津波情報／
- * 沖合の津波観測に関する情報）ごとに別々に数えられる。`id` はいまは種別を含めて作るので
- * 種別をまたいでも重ならない（→ `parseTsunamiFromXml`）が、かつては `EventID` と報番号だけで
- * 作っていて、この突き合わせを `id` だけで書いたときに別種別の報を「既にある」と取り違えた
- * （実電文で起きた。経緯は `parseTsunamiFromXml` の `id` の箇所）。`id` の作り方がまた変わっても
- * 取り違えないよう、発表時刻と電文が名乗る情報名（`Head/Title`）も鍵に残す。
+ * 津波の報 1 通を指す鍵。`id` は種別を含めて作るので種別をまたいでも重ならない（→ `parseTsunamiFromXml`）が、
+ * かつては `EventID` と報番号だけで作っていて、この突き合わせを `id` だけで書いたときに別種別の報を
+ * 「既にある」と取り違えた（実電文で起きた。経緯は `parseTsunamiFromXml` の `id` の箇所）。
+ *
+ * **津波警報等（VTSE41）の報どうしは `id` では見分けられない**（報番号が空で、同じ津波の全報が同じ `id`）。
+ * 見分けるのは時刻で、**作成時刻（`createdAtMs`。秒まで）を使う**。発表時刻（分まで）だと、同じ分に出た 2 通が
+ * 同じ鍵になって後のほうが足されない。作成時刻を持たない報（P2PQuake・テストデータ）は発表時刻で作る。
+ * 情報名（`Head/Title`）も鍵に残す。
  */
 function tsunamiReportKey(tsunami: JMATsunami): string {
-  return `${tsunami.id}|${tsunami.time}|${tsunami.infoName ?? ''}`
+  return `${tsunami.id}|${tsunami.createdAtMs ?? tsunami.time}|${tsunami.infoName ?? ''}`
 }
 
 /**
@@ -129,7 +131,8 @@ export function assemblePreWindowMaterial(
   for (const tsunami of history.tsunamis) {
     const reportKey = tsunamiReportKey(tsunami)
     if (tsunamiKeys.has(reportKey)) continue
-    const timeMs = Date.parse(tsunami.time)
+    // 並べる位置は作成時刻（秒まで）で決める。発表時刻（分の頭）だと、同じ分の 24 時間側の報（受信時刻）より必ず先に並ぶ。
+    const timeMs = tsunami.createdAtMs ?? Date.parse(tsunami.time)
     // 並べる位置が決まらない報は足さない。黙って落とすと、その津波が初期状態に出ない理由が
     // どこにも残らないので記録する（パーサーが時刻を検分しているので、通常は来ない）。
     if (!Number.isFinite(timeMs)) {

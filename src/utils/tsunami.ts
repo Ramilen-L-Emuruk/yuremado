@@ -1,6 +1,7 @@
 import type { JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiEstimationCondition, TsunamiGrade, TsunamiObservation, TsunamiObservationCondition, TsunamiSourceEarthquake, TsunamiStation, TsunamiWarningComment } from '../types/earthquake'
 import { formatTimeMin, readDateTime } from './formatters'
 import { log } from './logger'
+import { compareReportAge, reportOrderKey } from './quakeMerge'
 import type { UpdateMark } from './updateMark'
 
 /**
@@ -220,16 +221,28 @@ export function applyTsunamiReport(acc: JMATsunami | undefined, report: JMATsuna
 /**
  * 報を古い順に重ねて、画面へ載せる 1 件を組み立てる（{@link applyTsunamiReport} を畳む）。
  *
- * **発表時刻を読めない報は外す。** 並べ替えの比較が NaN になると順序が定まらない。
+ * **並べる鍵は作成時刻（`createdAtMs`。秒まで）で、持たなければ発表時刻**（`reportOrderKey`）。同じ津波の
+ * 津波警報等と津波情報は同じ分に並ぶことがあり、発表時刻（分まで）では前後を決められない。
+ * **どちらの時刻も読めない報は外す。** 並べ替えの比較が NaN になると順序が定まらない。
  *
  * @param reports 同じ津波の報。順序は問わない
  * @returns 重ねる報が 1 通も無ければ undefined
  */
 export function foldTsunamiReports(reports: readonly JMATsunami[]): JMATsunami | undefined {
   return reports
-    .filter(r => Number.isFinite(new Date(r.time).getTime()))
-    .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
+    .filter(r => Number.isFinite(reportOrderKey(r)))
+    .sort((a, b) => reportOrderKey(a) - reportOrderKey(b))
     .reduce<JMATsunami | undefined>(applyTsunamiReport, undefined)
+}
+
+/**
+ * 報 `a` が `b` より前に発表されたか（作成時刻があれば秒まで、無ければ発表時刻で。→ `compareReportAge`）。
+ * **どちらかの時刻を読めなければ偽**（時刻では落とさない。取消・解除の足切りに使う —— 取消を落とすほうが害が大きい）。
+ * 同じ分で片方しか作成時刻を持たないときも偽（前後を決められない）。
+ */
+function isReportedBefore(a: JMATsunami, b: JMATsunami): boolean {
+  if (!Number.isFinite(reportOrderKey(a)) || !Number.isFinite(reportOrderKey(b))) return false
+  return compareReportAge(a, b) < 0
 }
 
 /**
@@ -273,15 +286,22 @@ function isRetractedBy(r: JMATsunami, retraction: Pick<JMATsunami, 'headType' | 
  *
  * **比べる相手より前に発表された取消は当てない。** 取消は取り消す報より後に出る。「A B」の取消で終えたあとに「A」で
  * 発表し直した津波へ、同じ取消が届き直す（再接続・取りこぼしの補い）と、「A」は「A B」に含まれるので終わってしまう。
- * 発表時刻をどちらか読めなければ時刻では落とさない（取消を落とすほうが害が大きい）。
+ * 比べるのは作成時刻（秒まで）で、どちらかの時刻を読めなければ時刻では落とさない（取消を落とすほうが害が大きい）。
  */
 function isRetractionForCurrentUnit(cancel: JMATsunami, current: JMATsunami): boolean {
-  const sameKind = reportsOf(current).filter(r => r.headType === cancel.headType)
-  const target = sameKind.length > 0 ? sameKind[sameKind.length - 1] : current
-  const cancelAt = new Date(cancel.time).getTime()
-  const targetAt = new Date(target.time).getTime()
-  if (Number.isFinite(cancelAt) && Number.isFinite(targetAt) && cancelAt < targetAt) return false
+  const target = lastReportOfKind(current, cancel)
+  if (isReportedBefore(cancel, target)) return false
   return isRetractedTsunamiInfoUnit(target, cancel)
+}
+
+/**
+ * 組み立てに使った報のうち、`report` と同じ種類で最後に重ねた報（無ければ津波そのもの）。
+ * 取消・解除の前後はこの報と比べる。表示中の津波の時刻は最後に重ねた報のもので、種類の違う報
+ * （同じ分に出る津波情報など）の時刻と比べると、同じ津波の取消・解除を「先に出た」と読んで落とす。
+ */
+function lastReportOfKind(current: JMATsunami, report: JMATsunami): JMATsunami {
+  const sameKind = reportsOf(current).filter(r => r.headType === report.headType)
+  return sameKind.length > 0 ? sameKind[sameKind.length - 1] : current
 }
 
 /**
@@ -298,8 +318,12 @@ function isRetractionForCurrentUnit(cancel: JMATsunami, current: JMATsunami): bo
  *      気象庁はこの切替えのあとの取消を「A B」で 1 通だけ出すと定めている（同 Ⅰ.別02-8 例２「地震Ａの識別番号だけの
  *      津波警報・注意報・予報の取消電文は発信しない」）。津波情報だけの取消（{@link isPartialTsunamiRetraction}）はここでは番号の重なりで同じ津波かを見るだけで、
  *      どの報を抜くか（取消の組に含まれるか）は {@link refoldTsunamiWithout} が決める。抜く報が無ければ {@link stepTsunamiState} が `ignored` を返す
- * 2. どちらかが欠けていれば同一イベントかは判定できないので、発表時刻の前後だけを見る。
- *    表示中より古い解除は別イベントの遅延到達とみなす（これが無いと A の遅い解除で B が消える）
+ * 2. どちらかが欠けていれば同一イベントかは判定できないので、時刻の前後だけを見る。
+ *    表示中より古い解除は別イベントの遅延到達とみなす（これが無いと A の遅い解除で B が消える）。
+ *    比べる相手は、組み立てに使った報のうち解除と同じ種類で最後の報（`lastReportOfKind`）。同じ分に出た
+ *    津波情報の時刻と比べると、その数十秒前に作られた同じ津波の解除を古いと読んで落とす。
+ *    番号が無いので、同じ種類の最後の報より後・別の種類の最後の報より前に作られた解除は、同じ津波の解除か
+ *    別の津波の遅れた解除かを見分けられない。この間は当てる側へ倒す（解除を落とすほうが害が大きい）
  *
  * **時刻も読めないときは受け入れる**（`true`）。かつて `id` の完全一致を求めていた頃は、
  * P2PQuake（standard 版）の 552 が `eventId` を持たず `id` は電文ごとの文書 ID なので、発表と
@@ -318,9 +342,7 @@ export function isCancelForCurrentTsunami(cancel: JMATsunami, current: JMATsunam
     if (cancel.cancelReason === 'retracted' && !isPartialTsunamiRetraction(cancel)) return isRetractionForCurrentUnit(cancel, current)
     return isSameTsunamiEvent(cancel, current)
   }
-  const cancelAt = new Date(cancel.time).getTime()
-  const currentAt = new Date(current.time).getTime()
-  if (Number.isFinite(cancelAt) && Number.isFinite(currentAt) && cancelAt < currentAt) return false
+  if (isReportedBefore(cancel, lastReportOfKind(current, cancel))) return false
   return true
 }
 
@@ -398,8 +420,8 @@ export function stepTsunamiState(current: JMATsunami | undefined, report: JMATsu
  * 報 1 通だけを見て期限の有無を判定すると、そういう津波は「失効しない津波」として扱われ、
  * 期限を過ぎても画面に残り続ける（予報のみに解除電文は出ないため、消す手段が他に無い）。
  *
- * 期限を持つ報が複数あれば発表時刻が最も新しいものを採る（気象庁が期限を延ばした・縮めた場合に
- * 従うため）。発表時刻が読めない報は新旧を判定できないので候補から外す。
+ * 期限を持つ報が複数あれば最も新しいものを採る（気象庁が期限を延ばした・縮めた場合に従うため）。新旧は作成時刻
+ * （`createdAtMs`。秒まで）で比べ、持たなければ発表時刻で比べる。どちらの時刻も読めない報は新旧を判定できないので候補から外す。
  *
  * **期限そのものが日時として読めない値は採らない。** 読めない値を採ると、その津波が「期限を持つ」
  * 顔をしたまま、以後の比較（`new Date(壊れた値) <= now` 等）がすべて偽に倒れる。表示を続ける側にも、
@@ -410,7 +432,7 @@ export function stepTsunamiState(current: JMATsunami | undefined, report: JMATsu
  * @returns 最後に伝えられた期限。1 通も期限を持たなければ undefined
  */
 export function latestValidDateTime(reports: JMATsunami[]): string | undefined {
-  let latestAt = -Infinity
+  let latestReport: JMATsunami | undefined
   let latest: string | undefined
   for (const report of reports) {
     if (!report.validDateTime) continue
@@ -418,15 +440,15 @@ export function latestValidDateTime(reports: JMATsunami[]): string | undefined {
       log.warn(`[tsunami] 有効期限を日時として読めないため採用しません: id=${report.id} validDateTime=${report.validDateTime}`)
       continue
     }
-    const at = new Date(report.time).getTime()
-    if (!Number.isFinite(at)) {
+    if (!Number.isFinite(reportOrderKey(report))) {
       // 発表時刻が読めないと新旧を判定できない。期限が読めない場合と同じく記録を残す
       // （片方だけ無言で落とすと、期限が消えた原因を追う手がかりが残らない）。
       log.warn(`[tsunami] 発表時刻を日時として読めないため有効期限の候補から外します: id=${report.id} time=${report.time}`)
       continue
     }
-    if (at < latestAt) continue
-    latestAt = at
+    // 新旧は作成時刻（秒まで）で比べる（→ `compareReportAge`）。前後を決められない組は後ろの報を採る（従来どおり）。
+    if (latestReport && compareReportAge(report, latestReport) < 0) continue
+    latestReport = report
     latest = report.validDateTime
   }
   return latest

@@ -884,6 +884,14 @@ export interface JMATsunami {
   eventId?: string
   time: string
   /**
+   * 電文を作成した時刻（`Control/DateTime`）のミリ秒。**報の新旧を比べ、並べるために持つ**。意味と扱いは
+   * {@link JMAQuake.createdAtMs} と同じ（比べるのは `utils/quakeMerge.ts` の `compareReportAge`・`reportOrderKey`）。
+   *
+   * 同じ津波の津波警報等（`VTSE41`）と津波情報（`VTSE51`）は、同じ分の発表時刻で並ぶことがある（数えた値は
+   * `docs/spec/tsunami-spec.md` §3「報の新旧は作成時刻で比べる」）。DMDATA の XML 経路だけが持つ。
+   */
+  createdAtMs?: number
+  /**
    * 電文の種類（`VTSE41` 津波警報・注意報・予報／`VTSE51` 津波情報／`VTSE52` 沖合の津波観測に
    * 関する情報）。DMDATA の XML 経路だけが持つ。P2PQuake（standard 版）とテストデータの一部は持たない。
    *

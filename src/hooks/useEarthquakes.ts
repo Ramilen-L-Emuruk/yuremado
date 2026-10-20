@@ -19,7 +19,7 @@ import {
   type TelegramLoss, createEmptyTelegramLoss, telegramLossFrom, isTelegramLossEmpty,
   mergeHistoryLoss,
 } from '../utils/telegramLoss'
-import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, extractQuakeEventId, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, type ReportAge } from '../utils/quakeMerge'
+import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, extractQuakeEventId, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
 import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmRowSnapshot, lpgmMarkKey, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
@@ -2577,8 +2577,18 @@ export function useEarthquakes(
             const tsunamiEvents = history.tsunamis
             // 種別横断の生電文を eventId ごとに統合（リアルタイムと同一ロジック）。
             rememberQuakeRetractionsFromBatch(quakeEvents)
-            const allTsunami = tsunamiEvents
-              .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+            // 新しい順。**作成時刻（秒まで）で並べる**（→ `reportOrderKey`）。同じ津波の津波警報等と津波情報は同じ分に
+            // 並ぶことがあり、履歴の並びは取得の完了順なので、分で並べると古い報が「最新」として画面に載りうる。
+            // **時刻を読めない報は先に外す。** `reportOrderKey` は読めない報を `Infinity`（昇順の末尾）にするので、
+            // 新しい順に並べると先頭へ来て、壊れた報が「最新」として画面に載る。外した件数は記録する。
+            const orderable = tsunamiEvents.filter(t => Number.isFinite(reportOrderKey(t)))
+            if (orderable.length < tsunamiEvents.length) {
+              const dropped = tsunamiEvents.filter(t => !Number.isFinite(reportOrderKey(t)))
+              const droppedCancels = dropped.filter(t => t.cancelled).length
+              log.warn(`[data] 時刻を読めない津波の報 ${dropped.length} 通（うち取消・解除 ${droppedCancels} 通）を、起動時履歴の最新報の候補から外しました`)
+            }
+            const allTsunami = orderable
+              .sort((a, b) => reportOrderKey(b) - reportOrderKey(a))
             // 画面へ載せるのは最新報 1 通だけ。その報が有効期限を持たなくても、同じ津波の過去報が
             // 伝えていれば引き継ぐ（引き継がないと下の失効予約が積まれず、期限切れの津波が消えない）。
             const latestTsunami = allTsunami[0] && withInheritedTsunamiFacts(allTsunami[0], allTsunami)

@@ -2025,6 +2025,8 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
 
   const tsunamiOperationStatus = parseOperationStatus(doc)
   const reportDateTime = readReportDateTime(doc, '津波情報', TSUNAMI_LOG_PREFIX)
+  // 報の新旧を比べ、並べるための秒まである時刻（→ `JMATsunami.createdAtMs`）。
+  const createdAtMs = readCreatedAtMs(doc, '津波情報', TSUNAMI_LOG_PREFIX)
   // 空文字は undefined に落とす。
   // 「同一イベントか」の判定はどこも falsy 判定で書かれているのに対し、キーの導出側が空文字を
   // 有効な識別子として扱うと、識別子を持たない電文どうしが同じ津波として束ねられる。
@@ -2126,9 +2128,9 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   }).filter(eq => eq.hypocenterName)
   const sourceEarthquakes = sourceEarthquakeList.length > 0 ? sourceEarthquakeList : undefined
 
-  // **種別（`headType`）を入れる。** 報番号（`Serial`）は VTSE41・VTSE51・VTSE52 で別々に数えるので、
-  // `EventID` と報番号だけでは同じ津波の別種別の報が同じ id になる（警報の第 1 報と津波情報の
-  // 第 1 報はどちらも 1 番）。リプレイの初期状態を作る突き合わせ（`useReplayController`）を
+  // **種別（`headType`）を入れる。** 報番号（`Serial`）は VTSE51・VTSE52 では種別ごとに数え、VTSE41 では
+  // 空（控えの実電文 184 通すべて。空なら 1 番とみなす）なので、`EventID` と報番号だけでは同じ津波の別種別の
+  // 報が同じ id になる。**VTSE41 の報どうしは id では見分けられない**（同じ津波の全報が同じ id）。リプレイの初期状態を作る突き合わせ（`useReplayController`）を
   // 作っている途中で id だけを鍵にしたとき、実電文（2025-07-30 カムチャツカ半島付近の地震の
   // 津波 82 通）で 24 時間より前の報が 1 通も足されなかった。
   const id = `dmdata-tsunami-${eventId ?? ''}-${headType}-${serial}`
@@ -2140,7 +2142,7 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   if (cancelled) {
     // 取消しの概要は上で読んだ本文と同じ要素（`Body/Text`）。
     const cancelText = tsunamiBodyText ?? ''
-    return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'retracted', ...(cancelText && { cancelText }), issue: { source, time: reportDateTime, type: 'Focus' }, areas: [] }
+    return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'retracted', ...(cancelText && { cancelText }), issue: { source, time: reportDateTime, type: 'Focus' }, areas: [] }
   }
 
   const forecastEl = xmlQ(doc, 'Forecast')
@@ -2169,7 +2171,7 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
     // 観測）と VTSE51 の観測のみ続報が通る主経路で、まさに観測時点が最も効く形。載せ忘れると
     // 「観測 ◯◯ 時点」が肝心の電文で一度も出ない（続報のマージは `?? current` で前報へ倒れる
     // ため、画面には古い時点が残るか、前報が無ければ何も出ない）。
-    return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: false, headline, infoName, warningComments, carriesForecastStations, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas: [], observations, observationDateTime, estimations }
+    return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: false, headline, infoName, warningComments, carriesForecastStations, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas: [], observations, observationDateTime, estimations }
   }
 
   const allEls = forecastEl!.getElementsByTagName('*')
@@ -2342,13 +2344,13 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   //
   // 前回の等級を読めなかった解除区域の記録は、全解除の報でも残す（区域名を画面に出さないぶん、記録にしか残らない）。
   warnUndescribableCancel(undescribableCancel, TSUNAMI_LOG_PREFIX)
-  if (areas.length === 0) return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'lifted', headline, infoName, warningComments, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas: [] }
+  if (areas.length === 0) return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'lifted', headline, infoName, warningComments, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas: [] }
   forecastStationTally.warnIfNoneReadable(TSUNAMI_LOG_PREFIX)
 
   // Observation も含む場合（VTSE51①: Forecast + Observation 両方あり）
   const observations = observationEl ? parseTsunamiObservationsFromXml(observationEl, offshore) : undefined
 
-  return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: false, validDateTime, headline, infoName, warningComments, carriesForecastStations, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas, cancelledAreas: cancelledAreas.length > 0 ? cancelledAreas : undefined, observations: observations && observations.length > 0 ? observations : undefined, observationDateTime, estimations }
+  return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: false, validDateTime, headline, infoName, warningComments, carriesForecastStations, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas, cancelledAreas: cancelledAreas.length > 0 ? cancelledAreas : undefined, observations: observations && observations.length > 0 ? observations : undefined, observationDateTime, estimations }
 }
 
 /**

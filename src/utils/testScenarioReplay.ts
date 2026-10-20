@@ -76,6 +76,8 @@ function remapAppEvent(event: AppEvent, deltaMs: number, remapId: IdRemapper): A
         id: replaceEventIdInId(event.id, event.eventId, newEventId),
         eventId: newEventId,
         time: shiftIso(event.time, deltaMs),
+        // 作成時刻も同じだけずらす（地震情報と同じ。ずらさないと比べる相手と時間軸が食い違う）。
+        ...(event.createdAtMs !== undefined && { createdAtMs: event.createdAtMs + deltaMs }),
         validDateTime: shiftIsoOpt(event.validDateTime, deltaMs),
         // 原因地震の時刻は 2 つとも動かす。**カードが出すのは発現時刻**（`sourceEarthquakeTime`）で、
         // 発生時刻は識別子を持たない電文の同一性判定（`isTsunamiNewFire`）が見る。
