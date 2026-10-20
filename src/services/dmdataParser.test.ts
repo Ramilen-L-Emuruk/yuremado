@@ -322,6 +322,28 @@ describe('parseEarthquakeFromXml: 震源・震度に関する情報（VXSE53）'
       expect(city.hasUnreceived).toBeUndefined()
     })
 
+    // 正: 配下の市町村がすべて未入電の県・区域は `MaxInt` を持たない（気象庁の資料が定める形。
+    // 実電文の標本は無い）。それでも下限の 5弱の未入電の点として積み、画面と読み上げに残す。
+    it('配下がすべて未入電の県・区域は、MaxInt が無くても未入電の点として積む', () => {
+      const xml = VXSE53_XML
+        .replace(/(<Code>03<\/Code>)\s*<MaxInt>4<\/MaxInt>/, '$1')
+        .replace(/(<Code>210<\/Code>)\s*<MaxInt>4<\/MaxInt>/, '$1')
+        .replace(/(<Code>0348500<\/Code>)\s*<MaxInt>3<\/MaxInt>/, '$1<Condition>震度５弱以上未入電</Condition>')
+        .replace('<Int>3</Int>', '<Int>震度５弱以上未入電</Int>')
+      expect(xml).not.toContain('<MaxInt>3</MaxInt>')
+      const points = parseEarthquakeFromXml('VXSE53', xml)!.points
+      expect(points).toContainEqual({ pref: '岩手県', addr: '岩手県', isArea: true, scale: 45, unreceived: true, code: '03' })
+      expect(points).toContainEqual({ pref: '', addr: '岩手県沿岸北部', isArea: true, scale: 45, unreceived: true, code: '210' })
+    })
+
+    // 対照: 配下に震度を持つ市町村が 1 つでもあれば、MaxInt の無い区域を未入電にしない
+    // （観測できた値があるのに「5弱以上」と言うと、実際より強い揺れを伝える）。
+    it('配下に震度を持つ市町村があれば、MaxInt の無い区域を未入電にしない', () => {
+      const xml = VXSE53_XML.replace(/(<Code>210<\/Code>)\s*<MaxInt>4<\/MaxInt>/, '$1')
+      const points = parseEarthquakeFromXml('VXSE53', xml)!.points
+      expect(points.some(p => p.addr === '岩手県沿岸北部' && p.isArea)).toBe(false)
+    })
+
     // 対照: 震度速報（区域までしか持たない電文）では市町村を持たない。
     it('震度速報では持たない', () => {
       expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.cities).toBeUndefined()
@@ -1775,6 +1797,27 @@ describe('parseLpgmFromXml: xmlChild が Area 直下の値を拾い、配下 Cit
     const lpgm = parseLpgmFromXml(cancelXml)
     if (!lpgm) throw new Error('parseLpgmFromXml returned null unexpectedly')
     expect(lpgm.cancelled).toBe(true)
+  })
+
+  // 正: 取消の理由（`Body/Text`）を cancelText として持つ。電文にしかない事実なので、
+  // 読み落とすと読み上げが「取り消されました」だけになる。取消の実電文の標本は無いので、
+  // 他の種別の取消と同じ置き方（Body 直下の Text）で組んでいる。
+  it('取消電文の Body/Text を cancelText として持つ', () => {
+    const cancelXml = VXSE62_XML
+      .replace('<InfoType>発表</InfoType>', '<InfoType>取消</InfoType>')
+      .replace(/<Body xmlns="([^"]+)">[\s\S]*<\/Body>/, '<Body xmlns="$1"><Text>先ほどの長周期地震動に関する観測情報を取り消します。</Text></Body>')
+    const lpgm = parseLpgmFromXml(cancelXml)
+    if (!lpgm) throw new Error('parseLpgmFromXml returned null unexpectedly')
+    expect(lpgm.cancelled).toBe(true)
+    expect(lpgm.cancelText).toBe('先ほどの長周期地震動に関する観測情報を取り消します。')
+  })
+
+  // 対照: 本文の無い取消では cancelText を持たない（空文字を載せない）。
+  it('Body/Text の無い取消では cancelText を持たない', () => {
+    const cancelXml = VXSE62_XML.replace('<InfoType>発表</InfoType>', '<InfoType>取消</InfoType>')
+    const lpgm = parseLpgmFromXml(cancelXml)
+    if (!lpgm) throw new Error('parseLpgmFromXml returned null unexpectedly')
+    expect(lpgm).not.toHaveProperty('cancelText')
   })
 
   it('MaxLgInt が 0 のときは null（対象階級外）', () => {
@@ -5116,6 +5159,13 @@ const VXSE60_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </Body>
 </Report>`
 
+// 回数を伴わない発表報（`EarthquakeCount` を持たず `Body/Text` だけ）。電文解説資料 Ⅱ.35 の構造に
+// 合わせて組んだ合成電文（本文の文面はテスト用。実電文の標本は手元に無い）。
+const VXSE60_NO_COUNT_XML = VXSE60_XML.replace(
+  /<EarthquakeCount>[\s\S]*?<\/Comments>/,
+  '<Text>　伊豆半島東方沖の地震活動は低下しました。\nこの情報の発表を終了します。</Text>',
+)
+
 // 電文の運用種別（`Control/Status`。電文解説資料 Ⅰ.3）。
 //
 // **`EEWAlert.test` とは別物。** あちらは「画面・音・地図へ流さない」抑制フラグで、検証用に
@@ -5349,16 +5399,33 @@ describe('地震回数に関する情報（VXSE60）', () => {
     } finally { warn.mockRestore() }
   })
 
-  // 安全弁: **`EarthquakeCount` 要素そのものが消えた場合**を別に拾う。区間の全滅検知は
+  // **意図して覆した（2026-10-19）**: かつては `EarthquakeCount` 要素が無いだけで記録していた。
+  // 回数を伴わない発表報（本文 `Body/Text` だけ）は正常な形なので、記録するのは
+  // **回数も本文も無い報だけ**にした（2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」）。
+  //
+  // 正: 回数を伴わない発表報は捨てず、本文を持って返す。記録もしない。
+  it('回数を伴わない発表報（EarthquakeCount なし・本文あり）は本文を持ち、記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const count = parseEarthquakeCountFromXml(VXSE60_NO_COUNT_XML)!
+      expect(count.cancelled).toBe(false)
+      expect(count.items).toEqual([])
+      // 内側の改行は保つ（前後の空白は他の本文と同じく `xmlText` が落とす）
+      expect(count.body).toBe('伊豆半島東方沖の地震活動は低下しました。\nこの情報の発表を終了します。')
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).not.toContain('EarthquakeCount')
+    } finally { warn.mockRestore() }
+  })
+
+  // 安全弁: **回数も本文も無い報**は中身が何も読めないので記録する。区間の全滅検知は
   // 「要素はあるのに読めなかった」を数えるので、親ごと消えると数える対象が 0 件になって素通りする
   // （長周期・震度点にも同じ盲点があり、そちらは専用の関数で塞いである）。
-  it('EarthquakeCount 要素が見つからなければ記録する', () => {
+  it('EarthquakeCount 要素も本文も無ければ記録する', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
     try {
       const xml = VXSE60_XML.split('EarthquakeCount').join('EarthquakeCounts')
       expect(xml).not.toBe(VXSE60_XML)
       expect(parseEarthquakeCountFromXml(xml)!.items).toEqual([])
-      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('EarthquakeCount 要素が見つかりません')
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('EarthquakeCount 要素も本文（Body/Text）もありません')
     } finally { warn.mockRestore() }
   })
 
@@ -5368,8 +5435,41 @@ describe('地震回数に関する情報（VXSE60）', () => {
     try {
       const xml = VXSE60_XML.replace('<InfoType>発表</InfoType>', '<InfoType>取消</InfoType>')
       expect(parseEarthquakeCountFromXml(xml)!.cancelled).toBe(true)
-      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).not.toContain('EarthquakeCount 要素が見つかりません')
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).not.toContain('EarthquakeCount 要素も本文')
     } finally { warn.mockRestore() }
+  })
+
+  // 正: 回数の `-1` は「発表なし」（電文解説資料 Ⅱ.35 1-1）。数として持たず null にする。
+  // 資料の事例は全区間の `Number` が -1 で、`FeltNumber` だけが値を持つ形。
+  it('回数の -1 は「発表なし」（null）として持つ', () => {
+    const xml = VXSE60_XML
+      .replace('<Number>1587</Number>', '<Number>-1</Number>')
+      .replace('<Number>35</Number>', '<Number>-1</Number>')
+      .replace('<Number>1704</Number>', '<Number>-1</Number>')
+    const count = parseEarthquakeCountFromXml(xml)!
+    expect(count.items.map(i => i.number)).toEqual([null, null, null])
+    expect(count.items.map(i => i.feltNumber)).toEqual([1, 0, 1])
+  })
+
+  // 正: 有感の -1 も同じ扱い（区間は捨てない）。
+  it('有感の -1 も「発表なし」（null）として持ち、区間は捨てない', () => {
+    const xml = VXSE60_XML.replace('<FeltNumber>1</FeltNumber>', '<FeltNumber>-1</FeltNumber>')
+    const count = parseEarthquakeCountFromXml(xml)!
+    expect(count.items).toHaveLength(3)
+    expect(count.items[0]).toMatchObject({ number: 1587, feltNumber: null })
+  })
+
+  // 安全弁: -1 以外の負の値は書式の外。読めない値として区間ごと捨てる（-1 と同じに丸めない）。
+  it('-1 以外の負の値は読めない値として捨てる', () => {
+    const xml = VXSE60_XML.replace('<Number>1587</Number>', '<Number>-2</Number>')
+    expect(parseEarthquakeCountFromXml(xml)!.items.map(i => i.type)).toEqual(['１時間地震回数', '累積地震回数'])
+  })
+
+  // 正: 累積の区間が無い報もそのまま返す（どの区間を伝えるかは表示・読み上げ側が選ぶ）。
+  it('累積の区間が無い報も区間を読む', () => {
+    const xml = VXSE60_XML.replace(/<Item type="累積地震回数">[\s\S]*?<\/Item>/, '')
+    expect(xml).not.toBe(VXSE60_XML)
+    expect(parseEarthquakeCountFromXml(xml)!.items.map(i => i.type)).toEqual(['地震回数', '１時間地震回数'])
   })
 
   // 対照: 1 件でも読めていれば記録しない（部分脱落では黙る）。
@@ -5810,6 +5910,45 @@ describe('電文の一意鍵と報番号', () => {
   })
 })
 
+// --- 報の新旧を比べる作成時刻 ---
+//
+// 新旧の比較と並べ方は `Control/DateTime`（秒まで）で行う（→ `types/earthquake.ts` の
+// `JMAQuake.createdAtMs`・`utils/quakeMerge.ts` の `compareReportAge`）。
+describe('電文の作成時刻（createdAtMs）', () => {
+  // 正: `Control/DateTime` を日時として読んだミリ秒を持つ（取消でも、長周期でも）。
+  it('地震情報・取消・長周期で Control/DateTime のミリ秒を持つ', () => {
+    expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.createdAtMs).toBe(Date.parse('2026-08-08T18:00:00Z'))
+    const cancel = VXSE53_XML.replace('<InfoType>発表</InfoType>', '<InfoType>取消</InfoType>')
+    expect(parseEarthquakeFromXml('VXSE53', cancel)!.createdAtMs).toBe(Date.parse('2026-08-08T18:02:00Z'))
+    expect(parseLpgmFromXml(VXSE62_XML)!.createdAtMs).toBe(Date.parse('2026-08-13T10:00:00Z'))
+  })
+
+  // 対照: 発表時刻（分まで）とは別の値。秒を持つので、同じ分の報の前後を決められる。
+  it('秒まで読む（発表時刻の分の切り捨てとは別に持つ）', () => {
+    const xml = VXSE51_XML.replace('<DateTime>2026-08-08T18:00:00Z</DateTime>', '<DateTime>2026-08-08T18:00:42Z</DateTime>')
+    const quake = parseEarthquakeFromXml('VXSE51', xml)!
+    expect(quake.createdAtMs).toBe(Date.parse('2026-08-08T18:00:42Z'))
+    expect(quake.time).toBe('2026-08-09T03:00:00+09:00')
+  })
+
+  // 安全弁: 日時として読めない値・時間帯の無い値は持たせず、記録を残す（比べる側が発表時刻へ落ちる）。
+  it('読めない作成時刻は持たせず、記録を残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      for (const bad of ['こわれた値', '2026-08-08T18:00:00']) {
+        const xml = VXSE51_XML.replace('<DateTime>2026-08-08T18:00:00Z</DateTime>', `<DateTime>${bad}</DateTime>`)
+        const quake = parseEarthquakeFromXml('VXSE51', xml)!
+        expect(quake.createdAtMs).toBeUndefined()
+        // 一意鍵の方は読めない値でもそのまま持つ（用途が違う）
+        expect(quake.telegramKey).toBe(bad)
+      }
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('電文作成時刻を日時として読めません'))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+})
+
 describe('緊急地震速報の警報対象地方（Head/Headline/Information）', () => {
   // 2024-01-01 能登半島地震（本震）の VXSE45 第 20 報からそのまま起こした。警報が北陸だけ
   // だったところへ甲信・東海・関東が加わった報で、**`Item` が 2 つに分かれている**
@@ -5918,5 +6057,99 @@ describe('緊急地震速報の区域が属する府県予報区（Pref/Name）'
       ['石川', '石川県能登'],
       ['富山', '富山県東部'],
     ])
+  })
+})
+
+// ── 深さ「700km以上」（電文解説資料 Ⅱ.11-7 ほか）──────────────────────
+//
+// 気象庁は 700km 以上の深さを `-700000/` と `description="…深さ　７００ｋｍ以上"` で送る。
+// **700km ちょうどとして持たない**（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）。
+// 地震情報・緊急地震速報・津波の原因地震の 3 経路で同じ印（`depthAtLeast`）を立てる。
+describe('深さ「700km以上」', () => {
+  const DEEP = '<Coordinate description="北緯３９．９度　東経１４２．２度　深さ　７００ｋｍ以上">+39.9+142.2-700000/</Coordinate>'
+
+  // 正: 地震情報
+  it('地震情報: -700000 と「７００ｋｍ以上」を下限の印付きで読む', () => {
+    const xml = VXSE53_XML.replace('<Coordinate>+39.9+142.2-50000/</Coordinate>', DEEP)
+    expect(xml).not.toBe(VXSE53_XML)
+    const h = parseEarthquakeFromXml('VXSE53', xml)!.earthquake.hypocenter
+    expect(h.depth).toBe(700)
+    expect(h.depthAtLeast).toBe(true)
+  })
+
+  // 対照: 650km は下限ではない（印を持たない）
+  it('対照: 650km は印を持たない', () => {
+    const xml = VXSE53_XML.replace(
+      '<Coordinate>+39.9+142.2-50000/</Coordinate>',
+      '<Coordinate description="北緯３９．９度　東経１４２．２度　深さ６５０ｋｍ">+39.9+142.2-650000/</Coordinate>',
+    )
+    const h = parseEarthquakeFromXml('VXSE53', xml)!.earthquake.hypocenter
+    expect(h.depth).toBe(650)
+    expect(h.depthAtLeast).toBeUndefined()
+  })
+
+  // 安全弁: 値と文字表現が食い違ったら値で判断し、記録する（黙って片方だけを信じない）
+  it('値と文字表現が食い違えば値で判断して記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VXSE53_XML.replace(
+        '<Coordinate>+39.9+142.2-50000/</Coordinate>',
+        '<Coordinate description="北緯３９．９度　東経１４２．２度　深さ７００ｋｍ">+39.9+142.2-700000/</Coordinate>',
+      )
+      expect(parseEarthquakeFromXml('VXSE53', xml)!.earthquake.hypocenter.depthAtLeast).toBe(true)
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('深さの値と文字表現が食い違います')
+    } finally { warn.mockRestore() }
+  })
+
+  // 対照: ふつうの電文（文字表現が「深さ　１０ｋｍ」）では記録しない
+  it('対照: 値と文字表現が一致する電文では記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      parseEEWFromXml('VXSE45', EEW_XML)
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).not.toContain('深さの値と文字表現')
+    } finally { warn.mockRestore() }
+  })
+
+  // 正: 緊急地震速報
+  it('緊急地震速報: 下限の印付きで読む', () => {
+    const eew = parseEEWFromXml('VXSE45', eewXml({
+      area: '<Name>茨城県沖</Name><jmx_eb:Coordinate description="北緯３６．２度　東経１４１．０度　深さ　７００ｋｍ以上">+36.2+141.0-700000/</jmx_eb:Coordinate>',
+    }))!
+    expect(eew.earthquake.hypocenter.depth).toBe(700)
+    expect(eew.earthquake.hypocenter.depthAtLeast).toBe(true)
+  })
+
+  // 正: 津波の原因地震
+  it('津波の原因地震: 下限の印付きで読む', () => {
+    const xml = PARITY_TSUNAMI_XML.replace(
+      '<jmx_eb:Coordinate description="北緯３４．９度　東経１４１．３度　深さ　３０ｋｍ">+34.9+141.3-30000/</jmx_eb:Coordinate>',
+      '<jmx_eb:Coordinate description="北緯３４．９度　東経１４１．３度　深さ　７００ｋｍ以上">+34.9+141.3-700000/</jmx_eb:Coordinate>',
+    )
+    expect(xml).not.toBe(PARITY_TSUNAMI_XML)
+    const eq = parseTsunamiFromXml('VTSE51', xml)!.sourceEarthquakes![0]
+    expect(eq.depth).toBe(700)
+    expect(eq.depthAtLeast).toBe(true)
+  })
+})
+
+// ── 地震・津波に関するお知らせの自由付加文（電文解説資料 Ⅱ.51 2-1）─────────────
+describe('地震・津波に関するお知らせ（VZSE40）の自由付加文', () => {
+  const withComment = VZSE40_XML.replace(
+    '</Body>',
+    '<Comments><FreeFormComment>保守点検の時刻が\n　変更になりました。</FreeFormComment></Comments></Body>',
+  )
+
+  // 正: `Body/Comments/FreeFormComment` を読み、内側の改行と全角スペースを保つ
+  it('自由付加文を読み、改行と全角スペースを保つ', () => {
+    expect(withComment).not.toBe(VZSE40_XML)
+    const notice = parseQuakeNoticeFromXml(withComment)!
+    expect(notice.freeText).toBe('保守点検の時刻が\n　変更になりました。')
+    // 本文は自由付加文を含まない（Body 直下の Text だけ）
+    expect(notice.body).not.toContain('保守点検')
+  })
+
+  // 対照: 自由付加文の無い電文では持たない
+  it('対照: 自由付加文が無ければ持たない', () => {
+    expect(parseQuakeNoticeFromXml(VZSE40_XML)!.freeText).toBeUndefined()
   })
 })

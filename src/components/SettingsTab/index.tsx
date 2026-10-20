@@ -64,11 +64,15 @@ export interface TestFunctions {
   quakeNotice?: () => void
   earthquakeCount?: () => void
   earthquakeCountRetraction?: () => void
+  lpgmRetraction?: () => void
+  areaUnreceivedQuake?: () => void
   trainingQuake?: () => void
   quakeAmendment: () => void
   quakeReportSequence: () => void
   /** 地震情報の取消。DMDSS 版だけ渡す（P2PQuake は地震情報の取消を配信しない）。 */
   quakeCancel?: () => void
+  /** 地震情報の一部の取消（震度速報だけの取消）。DMDSS 版だけ渡す（理由は `quakeCancel` と同じ）。 */
+  quakePartialCancel?: () => void
   borrowFromTsunami?: () => void
   unreceivedQuake?: () => void
   maxScaleOrAboveQuake?: () => void
@@ -443,8 +447,9 @@ const TELEGRAM_TEXT_BLOCK_DESCRIPTIONS: Record<TelegramTextBlockKey, string> = {
   nankaiCommentaryNextAdvisory: '次の情報がいつ出るかの案内です。例:「次回の情報発表は、２２日１５時３０分頃を予定しています。」',
   kohatsuSummary: '発表内容を一文にまとめたものです。画面の帯に出ている見出しと同じ文です。地震の発生と、想定震源域で大規模地震の可能性が平常時より高まっていることが書かれます',
   kohatsuBody: '発表の理由と、とるべき防災対応の説明です',
+  earthquakeCountBody: '地震回数に関する情報の本文です。',
   earthquakeCountFreeText: '地震回数の補足です。例:「８月２４日１５時過ぎから伊豆半島東方沖で地震が発生しています。」に続けて、震度２以下はこの情報でまとめて発表する旨が書かれます',
-  quakeNoticeBody: 'お知らせの本文です。例:「本日（１０月１６日）１２時４０分頃、緊急地震速報（警報）を北海道、東北、関東、北陸、甲信、東海、伊豆諸島に発表しましたが、震度２以上を観測した場所はありませんでした。」',
+  quakeNoticeBody: 'お知らせの本文と自由付加文です。例:「本日（１０月１６日）１２時４０分頃、緊急地震速報（警報）を北海道、東北、関東、北陸、甲信、東海、伊豆諸島に発表しましたが、震度２以上を観測した場所はありませんでした。」',
 }
 
 const TELEGRAM_TEXT_BLOCK_LABELS: Record<TelegramTextBlockKey, string> = {
@@ -464,6 +469,7 @@ const TELEGRAM_TEXT_BLOCK_LABELS: Record<TelegramTextBlockKey, string> = {
   nankaiCommentaryNextAdvisory: '次回発表予定',
   kohatsuSummary: '要約',
   kohatsuBody: '本文',
+  earthquakeCountBody: '本文',
   earthquakeCountFreeText: '自由付加文',
   quakeNoticeBody: '本文',
 }
@@ -492,14 +498,14 @@ const TELEGRAM_TEXT_BLOCK_GROUPS: readonly {
     title: '北海道・三陸沖後発地震注意情報',
     keys: ['kohatsuSummary', 'kohatsuBody'],
   },
-  { title: '地震回数に関する情報', keys: ['earthquakeCountFreeText'] },
+  { title: '地震回数に関する情報', keys: ['earthquakeCountBody', 'earthquakeCountFreeText'] },
   { title: '地震・津波に関するお知らせ', keys: ['quakeNoticeBody'] },
 ]
 
 /**
  * 気象庁が書いた文の内訳（電文種別 × ブロック）。
  *
- * **既定は畳んでおく。** 18 行＋グループの見出し 8 行を常に開くと、設定タブの中でこの
+ * **既定は畳んでおく。** 19 行＋グループの見出し 8 行を常に開くと、設定タブの中でこの
  * セクションだけが突出して伸びる。見出しには「何個を読む設定か」を出す —— 畳んだままでも、
  * 全部読むのか一部だけかが分かる。
  */
@@ -1916,7 +1922,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="地震動予報（単独点処理）" description="震源が特定できていない初報（日向灘・気象庁が入れる固定値 M1.0 深さ10km） – eewForecast 音 / 予想震度が載らないため「単独点処理のため、予想震度なし。」を待たずに読み上げ。10秒以内に再度押すと震源確定＋震度5強予想の警報へ格上げ（eew 音）。格上げの伝え方は押すタイミングで変わる（読み上げ中に押すと割り込んで言い直し）。押さなくても最終報が確定震源になるため同じ格上げが起きる→無音で自動解除（数分後）">
           <TestButton color="yellow" onClick={onTest.eewAssumed}>単独点処理テスト</TestButton>
         </Row>
-        <Row label="地震動予報（深発地震）" description="深さ450km（小笠原諸島西方沖 M6.5） – eewForecast 音 / 深発地震には地域別の震度予想が発表されないため「深発地震のため、予想震度なし。」を待たずに読み上げ。気象庁は深さ150km超に警報を出さないため続報も予報級のまま / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
+        <Row label="地震動予報（深発地震）" description="深さ450km（小笠原諸島西方沖 M6.5） – eewForecast 音 / 深発地震には地域別の震度予想が発表されないため「深発地震のため、予想震度なし。」を待たずに読み上げ。続報も予報級のまま / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
           <TestButton color="yellow" onClick={onTest.eewDeep}>深発地震テスト</TestButton>
         </Row>
         {/* 文面は 2026-10-15 ユーザー承認「足す(推奨)」 */}
@@ -1948,6 +1954,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <TestButton color="orange" onClick={onTest.maxScaleOrAboveQuake}>5弱以上テスト</TestButton>
           </Row>
         )}
+        {isDmdss && onTest.areaUnreceivedQuake && (
+          <Row label="地震情報（区域まるごと「5弱以上・未入電」の報）" description="日向灘の未入電テストの1区域を、配下の市町村がすべて未入電の形へ組み替えたもの（気象庁の資料が定める形で、実電文の標本は無い）。区域の最大震度が載らなくても、一覧と読み上げに残る">
+            <TestButton color="orange" onClick={onTest.areaUnreceivedQuake}>区域未入電テスト</TestButton>
+          </Row>
+        )}
         <Row label="遠地地震" description="メキシコ・チアパス州沿岸 M7.4 深さ不明（実データ）– earthquakeInfo 音 / 国内震度なし・日本への津波影響なし">
           <TestButton color="purple" onClick={onTest.foreignQuake}>遠地地震テスト</TestButton>
         </Row>
@@ -1963,6 +1974,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {isDmdss && onTest.quakeCancel && (
           <Row label="地震情報（取消）" description="震度速報を出し、10秒後に取り消す。カードに「取消」が重なり、10秒後に一覧から消える">
             <TestButton color="purple" onClick={onTest.quakeCancel}>取消テスト</TestButton>
+          </Row>
+        )}
+        {isDmdss && onTest.quakePartialCancel && (
+          <Row label="地震情報（一部の取消）" description="震度速報と震源・震度情報を出し、10秒後に震度速報だけを取り消す。カードは残り、見出しの下に「震度速報は取り消されました」と気象庁の取消の本文が出る">
+            <TestButton color="purple" onClick={onTest.quakePartialCancel}>一部取消テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.borrowFromTsunami && (
@@ -2063,8 +2079,13 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <TestButton color="teal" onClick={onTest.estimatedIntensity}>推計震度分布図テスト</TestButton>
           </Row>
         )}
+        {isDmdss && onTest.lpgmRetraction && (
+          <Row label="長周期地震動に関する観測情報（取消）" description="地震テストの長周期地震動 → 90秒後に取消。取消は音を鳴らさず、取り消されたことと理由の文を読み上げる（長周期の表示は消える）">
+            <TestButton color="teal" onClick={onTest.lpgmRetraction}>長周期 取消テスト</TestButton>
+          </Row>
+        )}
         {isDmdss && onTest.earthquakeCount && (
-          <Row label="地震回数に関する情報（バナー）" description="群発時の回数経過（21時間で1704回・うち有感1回）をバナー表示 + earthquakeCount 音・短い読み上げ（閉じるボタンあり・7日で自動消去）">
+          <Row label="地震回数に関する情報（バナー）" description="群発時の回数経過（21時間で有感1回）をバナー表示 + earthquakeCount 音・短い読み上げ（閉じるボタンあり・7日で自動消去）">
             <TestButton color="teal" onClick={onTest.earthquakeCount}>地震回数テスト</TestButton>
           </Row>
         )}

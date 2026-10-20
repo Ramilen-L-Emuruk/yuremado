@@ -19,6 +19,8 @@ function makeQuake(over: {
   type?: IssueType
   name?: string
   depth?: number
+  /** 深さが「700km以上」という下限だけの値か（→ `Hypocenter.depthAtLeast`） */
+  depthAtLeast?: boolean
   magnitude?: number
   magnitudeCondition?: string
   maxScale?: IntensityScale
@@ -44,6 +46,7 @@ function makeQuake(over: {
           latitude: 14.4,
           longitude: -93.0,
           depth: over.depth ?? -1,
+          ...(over.depthAtLeast && { depthAtLeast: true }),
           magnitude: over.magnitude ?? 7.4,
           ...(over.magnitudeCondition && { magnitudeCondition: over.magnitudeCondition }),
         },
@@ -439,6 +442,35 @@ describe('lpgmToText: 階級ごとの地域列挙', () => {
 
   it('取消でも空にはならない', () => {
     expect(lpgmToText({ ...makeLpgm(), cancelled: true }, TTS_OPTS, false)).toBe('長周期地震動に関する観測情報は取り消されました。')
+  })
+
+  // 正: 取消の理由（電文の本文）を、取り消された事実の後ろに読む。他の 4 種別の取消と同じ述語
+  // （`cancelReasonSentence`）を通る。
+  it('取消の理由があれば、取り消された事実の後ろに読む', () => {
+    const text = lpgmToText({ ...makeLpgm(), cancelled: true, cancelText: 'システム障害のため取り消します。' }, TTS_OPTS, false)
+    expect(text).toBe('長周期地震動に関する観測情報は取り消されました。システム障害のため取り消します。')
+  })
+
+  // 対照: 宣言の形でも、主語が既知の情報名でなければ読む（長周期の取消は標本が無く、主語の
+  // 集合に入れていない）。黙って落とすと理由が混ざっていたときに失われる。
+  it('長周期の取消の宣言は、標本が無いので読む', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {})
+    try {
+      const text = lpgmToText({ ...makeLpgm(), cancelled: true, cancelText: '先ほどの、長周期地震動に関する観測情報を取り消します。' }, TTS_OPTS, false)
+      expect(text).toBe('長周期地震動に関する観測情報は取り消されました。先ほどの、長周期地震動に関する観測情報を取り消します。')
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('既知の情報名でないため読み上げます'))
+    } finally { info.mockRestore() }
+  })
+
+  // 安全弁: 長すぎる理由は省き、「画面にも残らない」と記録する（長周期の取消は表示ごと消える）
+  it('長すぎる理由は省き、画面に残らないことを記録する', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {})
+    try {
+      const long = 'あ'.repeat(CANCEL_REASON_SPEAK_MAX_CHARS + 1)
+      const text = lpgmToText({ ...makeLpgm(), cancelled: true, cancelText: long }, TTS_OPTS, false)
+      expect(text).toBe('長周期地震動に関する観測情報は取り消されました。')
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('画面にも残りません'))
+    } finally { info.mockRestore() }
   })
 
   // 安全弁: 時刻が日時として読めない電文でも、主題（どこで階級いくつか）は残る
@@ -1360,12 +1392,34 @@ describe('earthquakeToSegments: 続報は差分だけ読む', () => {
       .toBe('震度速報が更新されました。観測した震度に変わりはありません。')
   })
 
-  it('対照: 震度が下がった区域は読み直さない', () => {
+  // **意図して覆した（2026-10-19）**: かつては「観測した震度に変わりはありません。」と言い切っていた。
+  // 下がったのに「変わりはありません」は嘘になるので、名乗りだけで終える
+  // （2026-10-19 ユーザー承認「言い切りを外す (推奨)」）。
+  it('安全弁: 震度が下がった区域は読み直さず、「変わりはありません」とも言わない', () => {
     const state = createQuakeSpokenState()
     markSpoken(state, earthquakeToSegments(quakeOf([area('石川県', '石川県能登', 60)], 60), OPTS, true, state))
-    // 訂正で震度が下がるケース。既に伝えた値より低いので地域は挙げない。
-    // **区域の点しか動いていないので「変わりはありません」側へ落ちる** —— 観測点・市町村の
-    // 集合は変わっておらず、この種別はそもそもそれらを運ばない。
+    // 訂正で震度が下がるケース。既に伝えた値より低いので地域は挙げない（下がった値を声にしない）。
+    const text = joinSegments(earthquakeToSegments(quakeOf([area('石川県', '石川県能登', 50)], 50), OPTS, false, state))
+    expect(text).toBe('震度速報が更新されました。')
+    expect(text).not.toContain('5強')
+  })
+
+  // 正: 区域が消えた（震度3以上だった区域が載らなくなった）報も言い切らない
+  it('正: 震度3以上で伝えた区域が消えた報も言い切らない', () => {
+    const state = createQuakeSpokenState()
+    markSpoken(state, earthquakeToSegments(quakeOf([
+      area('石川県', '石川県能登', 40), area('富山県', '富山県東部', 30),
+    ], 40), OPTS, true, state))
+    expect(joinSegments(earthquakeToSegments(quakeOf([area('石川県', '石川県能登', 40)], 40), OPTS, false, state)))
+      .toBe('震度速報が更新されました。')
+  })
+
+  // 対照: 一度下がった報のあと、同じ内容の報が来たら「変わりはありません」へ戻る
+  // （比べるのは最後に声にした報。上向きにしか進まない既読と比べると、ずっと「下がった」になる）
+  it('対照: 下がった報のあとの据え置きの報は「変わりはありません」', () => {
+    const state = createQuakeSpokenState()
+    markSpoken(state, earthquakeToSegments(quakeOf([area('石川県', '石川県能登', 60)], 60), OPTS, true, state))
+    markSpoken(state, earthquakeToSegments(quakeOf([area('石川県', '石川県能登', 50)], 50), OPTS, false, state))
     expect(joinSegments(earthquakeToSegments(quakeOf([area('石川県', '石川県能登', 50)], 50), OPTS, false, state)))
       .toBe('震度速報が更新されました。観測した震度に変わりはありません。')
   })
@@ -1423,6 +1477,88 @@ describe('earthquakeToSegments: 続報は差分だけ読む', () => {
       markSpoken(state, earthquakeToSegments(quakeWith(baseAreaAndStation), OPTS, true, state))
       expect(joinSegments(earthquakeToSegments(quakeWith(baseAreaAndStation), OPTS, false, state)))
         .toBe('地震情報が更新されました。内容に変わりはありません。')
+    })
+
+    // ── 下がった・減った続報（2026-10-19 ユーザー承認「言い切りを外す (推奨)」）──
+    //
+    // 下方修正は電文に実在する（`Revise` の「下方修正」。電文解説資料 Ⅱ.33-5）。下がったのに
+    // 「変わっていません」と言うと嘘になるので、「観測された震度が更新されました。」で終える。
+    // **下がった値そのものは読まない**（既読は上向きにしか進めない）。
+    describe('下がった・減った続報では言い切らない', () => {
+      const LOWERED = '地震情報が更新されました。観測された震度が更新されました。'
+
+      it('正: 観測点の震度が下がった', () => {
+        const state = createQuakeSpokenState()
+        markSpoken(state, earthquakeToSegments(quakeWith(baseAreaAndStation), OPTS, true, state))
+        const second = earthquakeToSegments(
+          quakeWith([area('神奈川県', '神奈川県東部', 30), station('横浜中区山下町', 10)]), OPTS, false, state)
+        expect(joinSegments(second)).toBe(LOWERED)
+      })
+
+      it('正: 観測点が減った', () => {
+        const state = createQuakeSpokenState()
+        const two = [...baseAreaAndStation, station('横浜西区浜松町', 20)]
+        markSpoken(state, earthquakeToSegments(quakeWith(two), OPTS, true, state))
+        expect(joinSegments(earthquakeToSegments(quakeWith(baseAreaAndStation), OPTS, false, state))).toBe(LOWERED)
+      })
+
+      it('正: 増えた観測点があっても、下がったものがあれば「変わっていません」と言わない', () => {
+        const state = createQuakeSpokenState()
+        markSpoken(state, earthquakeToSegments(quakeWith(baseAreaAndStation), OPTS, true, state))
+        const second = earthquakeToSegments(quakeWith([
+          area('神奈川県', '神奈川県東部', 30), station('横浜中区山下町', 10), station('横浜西区浜松町', 20),
+        ]), OPTS, false, state)
+        expect(joinSegments(second)).toBe(LOWERED)
+      })
+
+      it('正: 市町村の震度が下がった', () => {
+        const state = createQuakeSpokenState()
+        const city = (scale: number) => [{ name: '横浜市中区', area: '神奈川県東部', pref: '神奈川県', scale: scale as IntensityScale }]
+        markSpoken(state, earthquakeToSegments(quakeWith(baseAreaAndStation, city(20)), OPTS, true, state))
+        expect(joinSegments(earthquakeToSegments(quakeWith(baseAreaAndStation, city(10)), OPTS, false, state))).toBe(LOWERED)
+      })
+
+      it('正: 区域の最大震度が下がった（観測点は据え置き）', () => {
+        const state = createQuakeSpokenState()
+        markSpoken(state, earthquakeToSegments(quakeWith(baseAreaAndStation), OPTS, true, state))
+        const second = earthquakeToSegments(
+          { ...quakeWith([area('神奈川県', '神奈川県東部', 20), station('横浜中区山下町', 20)]), earthquake: { ...quakeWith([]).earthquake, maxScale: 20 } },
+          OPTS, false, state)
+        expect(joinSegments(second)).toBe(LOWERED)
+        // 安全弁: 下がった区域の値は読まない
+        expect(joinSegments(second)).not.toContain('震度2を')
+      })
+
+      // 対照: 上がった区域がある報はいまどおりそれを読み、文を足さない
+      it('対照: 上がった区域がある報はそれを読み、「更新されました」を足さない', () => {
+        const state = createQuakeSpokenState()
+        markSpoken(state, earthquakeToSegments(quakeWith(baseAreaAndStation), OPTS, true, state))
+        const second = earthquakeToSegments(quakeWith([
+          area('神奈川県', '神奈川県東部', 30), station('横浜中区山下町', 10),
+          area('東京都', '東京都23区', 30), station('新宿区西新宿', 30),
+        ]), OPTS, false, state)
+        const text = joinSegments(second)
+        expect(text).toContain('東京都23区')
+        expect(text).not.toContain('観測された震度が更新されました')
+        expect(text).not.toContain('変わっていません')
+      })
+
+      // 安全弁: 観測点を 1 つも運ばない報では、観測点が「消えた」と数えない（種別の違いで起きる形）
+      it('安全弁: 観測点を運ばない報では消えたと数えない', () => {
+        const state = createQuakeSpokenState()
+        markSpoken(state, earthquakeToSegments(quakeWith(baseAreaAndStation), OPTS, true, state))
+        expect(joinSegments(earthquakeToSegments(quakeWith([area('神奈川県', '神奈川県東部', 30)]), OPTS, false, state)))
+          .toBe('地震情報が更新されました。内容に変わりはありません。')
+      })
+
+      // 安全弁: 今の報から地域名を作れないときは、下がっていないと言える根拠が無いので言い切らない
+      it('安全弁: 今の報から地域名を作れないときは「変わっていません」と言わない', () => {
+        const state = createQuakeSpokenState()
+        markSpoken(state, earthquakeToSegments(quakeWith(baseAreaAndStation), OPTS, true, state))
+        const text = joinSegments(earthquakeToSegments(quakeWith([]), OPTS, false, state))
+        expect(text).not.toContain('変わっていません')
+        expect(text).not.toContain('変わりはありません')
+      })
     })
 
     it('対照: 区域に差分がある続報はこの経路へ入らない（従来どおり地域を読む）', () => {
@@ -1816,6 +1952,61 @@ describe('earthquakeToSegments: 続報は差分だけ読む', () => {
     const second = quakeOf([], -1, { type: '震源情報', name: '', depth: 10, magnitude: 5.2, domesticTsunami: 'なし' })
     expect(joinSegments(earthquakeToSegments(second, OPTS, false, state)))
       .toBe('震源情報が更新されました。震源の内容に変わりはありません。')
+  })
+
+  // 深さ「700km以上」（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）
+  describe('深さ「700km以上」', () => {
+    // 正: 初報で「以上」を言う
+    it('正: 初報は「深さ700キロメートル以上を震源とする」', () => {
+      const q = quakeOf([], -1, { type: '震源情報', name: '小笠原諸島西方沖', depth: 700, depthAtLeast: true, magnitude: 6.0, domesticTsunami: 'なし' })
+      expect(joinSegments(earthquakeToSegments(q, OPTS, true, createQuakeSpokenState())))
+        .toContain('小笠原諸島西方沖、深さ700キロメートル以上を震源とする')
+    })
+
+    // 対照: 650km は「以上」を付けない
+    it('対照: 650km は「以上」を付けない', () => {
+      const q = quakeOf([], -1, { type: '震源情報', name: '小笠原諸島西方沖', depth: 650, magnitude: 6.0, domesticTsunami: 'なし' })
+      const text = joinSegments(earthquakeToSegments(q, OPTS, true, createQuakeSpokenState()))
+      expect(text).toContain('深さ650キロメートルを震源とする')
+      expect(text).not.toContain('以上')
+    })
+
+    // 正: 値が同じでも「以上」が付いたら更新として言い直す
+    it('正: 700km → 700km以上は更新として言う', () => {
+      const state = createQuakeSpokenState()
+      const first = quakeOf([], -1, { type: '震源情報', name: '小笠原諸島西方沖', depth: 700, magnitude: 6.0, domesticTsunami: 'なし' })
+      markSpoken(state, earthquakeToSegments(first, OPTS, true, state))
+      const second = quakeOf([], -1, { type: '震源情報', name: '小笠原諸島西方沖', depth: 700, depthAtLeast: true, magnitude: 6.0, domesticTsunami: 'なし' })
+      expect(joinSegments(earthquakeToSegments(second, OPTS, false, state)))
+        .toBe('震源情報が更新されました。震源の深さは700キロメートル以上に更新されました。')
+    })
+
+    // 安全弁: 「以上」が外れたことも更新として言う（言い直さないと「以上」のまま耳に残る）
+    it('安全弁: 700km以上 → 700km も更新として言う', () => {
+      const state = createQuakeSpokenState()
+      const first = quakeOf([], -1, { type: '震源情報', name: '小笠原諸島西方沖', depth: 700, depthAtLeast: true, magnitude: 6.0, domesticTsunami: 'なし' })
+      markSpoken(state, earthquakeToSegments(first, OPTS, true, state))
+      const second = quakeOf([], -1, { type: '震源情報', name: '小笠原諸島西方沖', depth: 700, magnitude: 6.0, domesticTsunami: 'なし' })
+      expect(joinSegments(earthquakeToSegments(second, OPTS, false, state)))
+        .toBe('震源情報が更新されました。震源の深さは700キロメートルに更新されました。')
+    })
+
+    // 対照: 同じ「700km以上」の続報は言い直さない
+    it('対照: 同じ「700km以上」の続報は言い直さない', () => {
+      const state = createQuakeSpokenState()
+      const q = quakeOf([], -1, { type: '震源情報', name: '小笠原諸島西方沖', depth: 700, depthAtLeast: true, magnitude: 6.0, domesticTsunami: 'なし' })
+      markSpoken(state, earthquakeToSegments(q, OPTS, true, state))
+      expect(joinSegments(earthquakeToSegments(q, OPTS, false, state)))
+        .toBe('震源情報が更新されました。震源の内容に変わりはありません。')
+    })
+
+    // 正: 顕著な地震の震源要素更新のお知らせでも「以上」を言う
+    it('正: 震源要素更新のお知らせでも「以上」を言う', () => {
+      const text = earthquakeToText(
+        makeQuake({ type: '顕著な地震の震源要素更新のお知らせ', name: '小笠原諸島西方沖', depth: 700, depthAtLeast: true, magnitude: 6.0 }),
+        OPTS, true)
+      expect(text).toContain('震源の深さ700キロメートル以上、マグニチュード6.0に更新されました。')
+    })
   })
 
   it('深さの更新文で「深さ」が重ならない', () => {
@@ -2719,17 +2910,77 @@ describe('earthquakeCountToText', () => {
     expect(earthquakeCountToText(makeCount({ items }))).toContain('震度1以上を観測したものはありません')
   })
 
-  // 対照: **累積が無ければ読まない。** 末尾を無条件に採ると、1 時間ぶんの 35 回を
-  // 「これまでの総数」として読み上げる。呼び出し側は空文字をタブ移動へ落とす。
-  it('累積の区間が無ければ空を返す（部分の数字を総数として言わない）', () => {
+  // **意図して覆した（2026-10-19）**: かつては累積が無ければ空を返していた。いまは「地震回数」の
+  // 区間 → 最新の「１時間地震回数」の区間へ落とし、見出しと同じ区間で読む
+  // （2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」）。
+  //
+  // 正: 累積が無ければ「地震回数」の区間で読む（1 時間ぶんの 35 回は言わない）
+  it('累積の区間が無ければ「地震回数」の区間で読む', () => {
+    const items = makeCount().items.filter(i => i.type !== '累積地震回数')
+    const text = earthquakeCountToText(makeCount({ items }))
+    expect(text).toBe('地震回数に関する情報。24日15時から25日9時までに、地震が1587回発生しています。このうち、震度1以上を観測したのは1回です。')
+  })
+
+  // 正: それも無ければ、終了時刻が最も遅い「１時間地震回数」の区間で読む（電文の並び順ではない）
+  it('それも無ければ最新の「１時間地震回数」の区間で読む', () => {
+    const items = [
+      { type: '１時間地震回数', startTime: '2008-08-25T10:00:00+09:00', endTime: '2008-08-25T11:00:00+09:00', number: 47, feltNumber: 0 },
+      { type: '１時間地震回数', startTime: '2008-08-25T09:00:00+09:00', endTime: '2008-08-25T10:00:00+09:00', number: 35, feltNumber: 0 },
+    ]
+    const text = earthquakeCountToText(makeCount({ items }))
+    expect(text).toContain('25日10時から25日11時までに、地震が47回発生しています。')
+    expect(text).not.toContain('35')
+  })
+
+  // 安全弁: 選べる区間が無い報（回数を伴わない発表報）は種別名だけを読む。数の文を作らない
+  it('区間の無い報は種別名だけを読む', () => {
+    expect(earthquakeCountToText(makeCount({ items: [], body: '本文' }))).toBe('地震回数に関する情報。')
+  })
+
+  // 安全弁: 未知の type だけの報も種別名だけ。区間の種類が増えたことに気づけるよう記録する
+  it('未知の区間だけの報は種別名だけを読み、記録する', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
     try {
-      const items = makeCount().items.filter(i => i.type !== '累積地震回数')
-      expect(earthquakeCountToText(makeCount({ items }))).toBe('')
-      // **黙って読まないと、この電文が届いたことがどこにも残らない。** 「累積」が必ずあるという
-      // 前提は公式サンプルから採ったもので、実配信では確かめられていない
-      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('累積の区間がありません')
+      const items = [{ type: '６時間地震回数', startTime: '2008-08-25T06:00:00+09:00', endTime: '2008-08-25T12:00:00+09:00', number: 100, feltNumber: 0 }]
+      expect(earthquakeCountToText(makeCount({ items }))).toBe('地震回数に関する情報。')
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('読める区間がありません')
     } finally { warn.mockRestore() }
+  })
+
+  // 「発表なし」（電文の -1。型では null）の句は言わない（2026-10-19 ユーザー承認
+  // 「-1 を「発表なし」に (推奨)」）。
+  describe('発表なしの値', () => {
+    const withTotal = (number: number | null, feltNumber: number | null) =>
+      earthquakeCountToText(makeCount({
+        items: [{ type: '累積地震回数', startTime: '2008-08-24T15:00:00+09:00', endTime: '2008-08-25T12:00:00+09:00', number, feltNumber }],
+      }))
+
+    // 正: 回数だけが発表なし → 有感の数だけを言う
+    it('回数が発表なし・有感 1 → 有感の文だけ', () => {
+      expect(withTotal(null, 1)).toBe('地震回数に関する情報。24日15時から25日12時までに、震度1以上を観測した地震は1回です。')
+    })
+
+    // 正: 有感だけが発表なし → 有感の句を言わない
+    it('回数 5・有感が発表なし → 回数の文だけ', () => {
+      expect(withTotal(5, null)).toBe('地震回数に関する情報。24日15時から25日12時までに、地震が5回発生しています。')
+    })
+
+    // 安全弁: 両方が発表なし → 数の文を言わない（区間の読みようが無い）
+    it('両方が発表なし → 種別名だけ', () => {
+      expect(withTotal(null, null)).toBe('地震回数に関する情報。')
+    })
+
+    // 対照: 有感 0 はいまどおり「ありません」（発表なしと混ぜない）
+    it('対照: 有感 0 はいまどおり「ありません」', () => {
+      expect(withTotal(5, 0)).toBe('地震回数に関する情報。24日15時から25日12時までに、地震が5回発生しています。このうち、震度1以上を観測したものはありません。')
+    })
+
+    // 安全弁: どの経路でも「-1」「マイナス」を声にしない
+    it('「-1」を声にしない', () => {
+      for (const t of [withTotal(null, 1), withTotal(5, null), withTotal(null, null)]) {
+        expect(t).not.toMatch(/-1|マイナス|null/)
+      }
+    })
   })
 
   // 正: 取消は取り消された事実を伝える。回数には触れない。

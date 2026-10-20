@@ -69,6 +69,8 @@ const OVERLAP_CHECK_LAYER_IDS = [
   'quake-region-label',
   'quake-lpgm-region-label',
   'quake-points',
+  // 震度5弱以上・未入電の印（`QuakeUnreceivedPointsGL`）。観測値のバッジと同じくラベルを退避させる
+  'quake-unreceived-points',
   'quake-lpgm-points',
   'kyoshin-points',
   'kyoshin-detected',

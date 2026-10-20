@@ -9,6 +9,7 @@ describe('seismoStatusLine', () => {
       kind: 'ok',
       stations: [{ stationId: 'home', displayName: '自宅', lat: 35, lon: 139 }],
       sensorCount: 9,
+      assignedStationCount: null,
     })
     expect(line.tone).toBe('ok')
     expect(line.text).toContain('観測点 1')
@@ -34,10 +35,40 @@ describe('seismoStatusLine', () => {
     expect(seismoStatusLine({ kind: 'invalid' }).tone).toBe('problem')
   })
 
+  // **観測点の数は設定の割り当てから数える**（2026-10-19 ユーザー承認「割り当てから数える (推奨)」）。
+  // 届いたセンサーから数えると、ホストの起動直後に設定済みの観測点が「未設定」に見える。
+  describe('割り当てから数える', () => {
+    const home = { stationId: 'home', displayName: '自宅', lat: 35, lon: 139 }
+
+    it('正: 割り当てがあり、センサーから 1 つも届いていなければ「まだ届いていない」', () => {
+      const line = seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: 2 })
+      expect(line.text).toBe('接続済み: 観測点 2・まだ届いていない')
+      expect(line.tone).toBe('ok')
+    })
+
+    it('正: ふだんは観測点の数を割り当てから、センサーの数は届いているものから出す', () => {
+      // 届いた観測点は 1 つでも、割り当ては 2 つ。
+      const line = seismoStatusLine({ kind: 'ok', stations: [home], sensorCount: 9, assignedStationCount: 2 })
+      expect(line.text).toBe('接続済み: 観測点 2・センサー 9')
+    })
+
+    it('対照: 割り当てが 0 なら、届いたものがあっても「未設定」', () => {
+      expect(seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 3, assignedStationCount: 0 }).text)
+        .toBe('接続済み: 観測点は未設定')
+    })
+
+    it('安全弁: 割り当てを返さない古いホストでは、届いたセンサーから組んだ観測点で数える', () => {
+      expect(seismoStatusLine({ kind: 'ok', stations: [home], sensorCount: 3, assignedStationCount: null }).text)
+        .toBe('接続済み: 観測点 1・センサー 3')
+      expect(seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: null }).text)
+        .toBe('接続済み: 観測点は未設定')
+    })
+  })
+
   it('正: 観測点が 0 件のときは別の文にする', () => {
     // **「接続済み: 観測点 0・センサー 0」では成功か異常か判らない。**
     // ホストは動いているが設定がまだ、という状態なので、それを名指しする。
-    const line = seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 0 })
+    const line = seismoStatusLine({ kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: null })
     expect(line.tone).toBe('ok')
     expect(line.text).toContain('観測点は未設定')
     expect(line.text).not.toContain('観測点 0')
@@ -63,8 +94,9 @@ describe('seismoStatusLine', () => {
       { kind: 'no-url' },
       { kind: 'invalid' },
       { kind: 'checking' },
-      { kind: 'ok', stations: [], sensorCount: 0 },
-      { kind: 'ok', stations: [{ stationId: 'a', displayName: 'A', lat: 35, lon: 139 }], sensorCount: 3 },
+      { kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: null },
+      { kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: 2 },
+      { kind: 'ok', stations: [{ stationId: 'a', displayName: 'A', lat: 35, lon: 139 }], sensorCount: 3, assignedStationCount: null },
       { kind: 'unreachable', detail: 'Failed to fetch' },
       { kind: 'http-error', status: 503 },
       { kind: 'unreadable', detail: 'x' },

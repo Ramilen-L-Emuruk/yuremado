@@ -276,7 +276,8 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
     depth: isAssumed
       ? undefined
       : hasDepth(hypocenter.depth)
-        ? { key: String(hypocenter.depth), rank: -hypocenter.depth }
+        // 「700km以上」（`depthAtLeast`）は同じ 700 でも別の値なので鍵に含める。
+        ? { key: `${hypocenter.depth}${hypocenter.depthAtLeast ? '+' : ''}`, rank: -hypocenter.depth }
         : { key: '' },  // 値が無い欄の番兵（地震カード側の `UNKNOWN` と同じ）
     maxScale: maxScale >= 0
       // 上限が定まらない報（「震度4程度以上」）は同じ階級でも別の値。**順序は階級で見る**
@@ -711,7 +712,7 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
                 {/* **`formatDepth` を通す。** 素で埋めると、深さが判らない報（`-1`）で
                     「-1km」と出る。地震カードと同じ述語にしておけば、`0`（ごく浅い）と
                     `-1`（不明）の言い分けも経路で食い違わない。 */}
-                {formatDepth(hypocenter.depth)}
+                {formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}
               </span>
             </div>
           </div>

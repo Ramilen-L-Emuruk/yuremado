@@ -1091,7 +1091,7 @@ export function useSeismoQuakeWaves(params: {
     .map((t) => {
       const h = t.hypocenter
       // **秒が後から取れたときも引き直す**（過去分の取得は開いた直後に非同期で返る）。
-      return `${t.eventKey}@${t.arrivalOriginMs}@${t.arrivalOriginSource}@${h.latitude},${h.longitude},${h.depth}`
+      return `${t.eventKey}@${t.arrivalOriginMs}@${t.arrivalOriginSource}@${h.latitude},${h.longitude},${h.depth}${h.depthAtLeast ? '+' : ''}`
     })
     .join(',')
   useEffect(() => {

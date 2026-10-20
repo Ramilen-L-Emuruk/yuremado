@@ -6,6 +6,7 @@ import { DescriptionTip } from '../DescriptionTip'
 import type { HypocenterIndex } from '../../utils/hypocenterCatalog'
 import {
   catalogCompleteness,
+  catalogPeriodBounds,
   DEPTH_FILTER_MAX_KM,
   depthBoundLabel,
   MAGNITUDE_FILTER_RANGE,
@@ -26,6 +27,7 @@ import {
   jstYearStartMs,
   oldestYearOf,
   periodDayCount,
+  preliminaryNote,
   rangeLabel,
   toDateInputValue,
   type CatalogViewOptions,
@@ -119,11 +121,14 @@ function RangeRow({
   label,
   description,
   valueText,
+  note,
   children,
 }: {
   label: string
   description: string
   valueText: string
+  /** 範囲の下に添える 1 行。無ければ `null`（行ごと出さない）。 */
+  note: string | null
   children: React.ReactNode
 }) {
   return (
@@ -132,6 +137,7 @@ function RangeRow({
         <DescriptionTip label={label} description={description} />
         <p className="text-secondary text-xs tabular-nums">{valueText}</p>
       </div>
+      {note && <p className="text-secondary text-xs text-right">{note}</p>}
       <div className="mt-1">{children}</div>
     </div>
   )
@@ -162,18 +168,21 @@ export const CatalogTab = memo(function CatalogTab({
   const years = index?.years ?? []
   // **収録の両端をスライダーの端にする。** 索引が来るまでは選んでいる値をそのまま端にして
   // おく（つまみが範囲外に置かれると、ブラウザが勝手に丸めて値が飛ぶ）。
+  // **終わりはデータの最終日**（`catalogPeriodBounds`）。年の終わりまで選べると、まだ取れて
+  // いない日が「地震が無かった日」に見える。
   const fromYear = jstYearOf(filter.fromMs)
   const toYear = jstYearOf(filter.toMs)
-  const firstYear = years[0] ?? fromYear
-  const lastYear = years[years.length - 1] ?? toYear
-  const periodMin = jstYearStartMs(firstYear)
-  const periodMax = jstYearEndMs(lastYear)
+  const bounds = index && years.length > 0 ? catalogPeriodBounds(index) : null
+  const periodMin = bounds?.minMs ?? jstYearStartMs(fromYear)
+  const periodMax = bounds?.maxMs ?? jstYearEndMs(toYear)
+  const firstYear = jstYearOf(periodMin)
+  const lastYear = jstYearOf(periodMax)
   const completeness = index ? catalogCompleteness(index, filter) : null
 
   // 期間の決め方そのものは `hypocenterCatalogView` の純粋関数に置いてある（単体テストの対象）。
   // ここは値を繋ぐだけ。
   const changeYears = (nextFrom: number, nextTo: number) => {
-    onFilterChange({ ...filter, ...periodFromYearChange(filter, nextFrom, nextTo) })
+    onFilterChange({ ...filter, ...periodFromYearChange(filter, nextFrom, nextTo, periodMin, periodMax) })
   }
 
   // **読めない値では何もしない。** 日付ピッカーは打鍵の途中で空や不完全な値を返す。
@@ -191,6 +200,7 @@ export const CatalogTab = memo(function CatalogTab({
           label="期間"
           description="表示する期間です。スライダーは年ごとに動き、日付を選ぶと年の途中から指定できます。日付を選んだ側は、もう一方のつまみを動かしても保たれます。古い側の年が変わると、その期間で網羅されている下限にマグニチュードを合わせます（観測網が疎だった時代は小さい地震が記録に残っていないため）"
           valueText={`${formatJstDate(filter.fromMs)} 〜 ${formatJstDate(filter.toMs)}（${periodDayCount(filter.fromMs, filter.toMs).toLocaleString()}日ぶん）`}
+          note={index ? preliminaryNote(index, filter) : null}
         >
           <RangeSlider
             label="期間"
@@ -228,6 +238,7 @@ export const CatalogTab = memo(function CatalogTab({
 
         <RangeRow
           label="マグニチュード"
+          note={null}
           description="表示する規模の範囲です。端に置くとその側の制限を外します。期間の古い側を昔へ動かすと、その期間で記録に残っている下限まで自動で引き上がります"
           valueText={rangeLabel(
             magnitudeBoundLabel(filter.minMagnitude, 'min'),
@@ -247,6 +258,7 @@ export const CatalogTab = memo(function CatalogTab({
 
         <RangeRow
           label="深さ"
+          note={null}
           description="表示する震源の深さの範囲です。端に置くとその側の制限を外します"
           valueText={rangeLabel(depthBoundLabel(filter.minDepthKm, 'min'), depthBoundLabel(filter.maxDepthKm, 'max'))}
         >
@@ -263,6 +275,7 @@ export const CatalogTab = memo(function CatalogTab({
 
         <RangeRow
           label="緯度"
+          note={null}
           description="表示する南北の範囲です。経度・深さと合わせて、直方体で切り出せます。端に置くとその側の制限を外します"
           valueText={rangeLabel(latBoundLabel(filter.minLat, 'min'), latBoundLabel(filter.maxLat, 'max'))}
         >
@@ -279,6 +292,7 @@ export const CatalogTab = memo(function CatalogTab({
 
         <RangeRow
           label="経度"
+          note={null}
           description="表示する東西の範囲です。端に置くとその側の制限を外します"
           valueText={rangeLabel(lngBoundLabel(filter.minLng, 'min'), lngBoundLabel(filter.maxLng, 'max'))}
         >

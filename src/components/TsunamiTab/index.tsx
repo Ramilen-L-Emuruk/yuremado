@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAutoOpenWhileSpeaking } from '../../hooks/useAutoOpenWhileSpeaking'
 import type { JMAQuake, JMATsunami, TsunamiArea, TsunamiObservation, TsunamiWarningComment } from '../../types/earthquake'
-import { formatDateTimeMin, formatDepth, formatMagnitudeCondition, formatTimeMin, hasDepth } from '../../utils/formatters'
+import { formatDateTimeMin, formatDepth, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
 import { quakeEventKey, extractQuakeEventId } from '../../utils/quakeMerge'
 import { linkTsunamiSources } from '../../utils/tsunamiSourceLinks'
 import { groupAreasForCardDisplay, tsunamiLiftedAreas, matchesArea, observationBadges, observationHeightText, observationArrivalFallbackText, observationMaxHeightTimeText, estimationBadges, estimationHeightText, forecastHeightImportantBadge, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, isTsunamiGradeRaised, sourceEarthquakeTime, tsunamiAreaKey, tsunamiEventIds, evacuationActionLine, fallbackEvacuationAction, type ObsUpdateMark, type ObsUpdateField } from '../../utils/tsunami'
@@ -202,7 +202,7 @@ function SourceEarthquakeLine({ eq, prefix, link }: {
           発表されないことがある）。`0` は「ごく浅い」という有効値なので `hasDepth` で弾く。
           **値によらず「深さ」を前置する** —— 地震カード・地図・共有カードもそう出しており、
           ここだけ省くとアプリの中で表記が割れる。 */}
-      {eq.depth !== undefined && hasDepth(eq.depth) && `　深さ ${formatDepth(eq.depth)}`}
+      {eq.depth !== undefined && hasDepth(eq.depth) && `　深さ ${formatDepth(eq.depth, eq.depthAtLeast === true)}`}
       {/* 地震の時刻は `sourceEarthquakeTime` を通す（**発現時刻を先に採る**）。発生時刻を出すと、
           同じ地震が地震カードと津波カードで 1 分違って見える。理由と実電文で測った数字は
           `docs/spec/tsunami-spec.md` §4 が正。 */}
@@ -210,8 +210,8 @@ function SourceEarthquakeLine({ eq, prefix, link }: {
       {link}
       {/* 震央補助表現（「御前崎の北東40km付近」）と震源決定機関（「ＰＴＷＣ」等）。
           前者は震央地名より具体的に場所が分かり、後者は誰が決めた値かを示す。
-          どちらも気象庁の語をそのまま出す。 */}
-      {eq.nameFromMark && <div>{eq.nameFromMark}</div>}
+          前者は数字と単位だけ半角へ直し（`formatNameFromMark`。地震カードと同じ）、後者は原文のまま出す。 */}
+      {eq.nameFromMark && <div>{formatNameFromMark(eq.nameFromMark)}</div>}
       {/* この要素は**気象庁以外の機関が決めた震源を採用したときだけ**入る（Ⅱ.13 2-3-2）ので、
           機関名だけでは含意（気象庁の決定ではない）が伝わらない。ラベルに書く。 */}
       {eq.source && <div>震源決定: {eq.source}（気象庁以外）</div>}

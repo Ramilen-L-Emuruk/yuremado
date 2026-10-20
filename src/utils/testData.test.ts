@@ -20,6 +20,7 @@ import {
   createTestEEWWarning,
   createTestForeignQuakeHuge,
   createTestLpgm,
+  createTestLpgmRetraction,
   createTestQuakeAmendment,
   createTestQuakeReportSequence,
   TSUNAMI_WARNING_FORECAST_TEXT,
@@ -32,6 +33,8 @@ import {
   createTestTsunamiWarning,
   createTestTsunamiWatch,
   createTestUnreceivedQuake,
+  createTestAreaUnreceivedQuake,
+  TEST_AREA_UNRECEIVED_AREA,
   toEventIdTimestamp,
   toP2pPref,
 } from './testData'
@@ -41,6 +44,7 @@ import { eewAreas, eewMaxScale, eewNoForecastReason, isEewAreaArrived } from './
 import { extractQuakeEventIdFromId } from './quakeMerge'
 import { foldTsunamiReports, isObservationMissing, isPartialTsunamiRetraction, isSameTsunamiEvent, matchesArea, refoldTsunamiWithout } from './tsunami'
 import { linkTsunamiSources } from './tsunamiSourceLinks'
+import { applyLiveLpgm } from './lpgmRetraction'
 
 // テストデータが「名前で」外部データと突き合わせている箇所を固定する。
 //
@@ -207,6 +211,12 @@ describe('地震情報テストの points 形状', () => {
   it('気象庁以外の印は DMDSS 版だけが持つ', () => {
     expect(createTestEarthquake(true).points.some((p) => p.nonJma)).toBe(true)
     expect(createTestEarthquake(false).points.some((p) => p.nonJma)).toBe(false)
+  })
+
+  // 震央補助表現は開いた地震カードに出す。DMDATA 経路だけが運ぶので標準版には持たせない。
+  it('震央補助表現は DMDSS 版だけが実電文の値で持つ', () => {
+    expect(createTestEarthquake(true).earthquake.hypocenter.nameFromMark).toBe('輪島の東北東３０ｋｍ付近')
+    expect(createTestEarthquake(false).earthquake.hypocenter.nameFromMark).toBeUndefined()
   })
 
   // 固定付加文（その他）。`＊` の説明はカードに枠付きで出るが、渡さないと実機で一度も出ない。
@@ -587,6 +597,63 @@ describe('未入電テスト（日向灘 2022-01-22）', () => {
     const quake = createTestUnreceivedQuake()
     expect(extractQuakeEventId(quake)).toMatch(/^\d{14}$/)
     expect(quake.eventId).toBe(extractQuakeEventId(quake))
+  })
+})
+
+// 長周期地震動の取消のテストデータ。**表示中の長周期を実際に消す形でないと**、取消は
+// 受け手へ渡らず（→ useEarthquakes.ts の `noteLiveLpgm`）、ボタンを押しても何も読まれない。
+describe('長周期地震動の取消テスト', () => {
+  beforeEach(() => { vi.useFakeTimers({ now: new Date('2026-09-12T12:34:56Z').getTime() }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('元の長周期を表示から消す（同じ地震・後から発表）', () => {
+    const base = createTestLpgm('20240101161000')
+    vi.advanceTimersByTime(90_000)
+    const retraction = createTestLpgmRetraction(base)
+    expect(retraction).toMatchObject({ eventId: base.eventId, cancelled: true })
+    expect(retraction.id).not.toBe(base.id)
+    expect(retraction.cancelText).toBeTruthy()
+    const shown = new Map([[base.eventId, base]])
+    expect(applyLiveLpgm(shown, retraction).has(base.eventId)).toBe(false)
+  })
+})
+
+// 区域まるごと未入電の形（→ quake-spec.md §4「震度5弱以上未入電」）。実電文の標本が無いので、
+// 未入電テストを組み替えて作る。**組み替える先が元データに無いと、何も変わらないまま通る。**
+describe('区域未入電テスト（日向灘の組み替え）', () => {
+  // 安全弁: 組み替える区域が元データにあり、元のままでは「まるごと未入電」になっていない
+  // （元データを差し替えて区域名が消えると、テストボタンが未入電テストと同じものになる）。
+  it('組み替える区域が元データにあり、元は観測値を持つ', () => {
+    const base = createTestUnreceivedQuake()
+    const baseCities = (base.cities ?? []).filter((c) => c.area === TEST_AREA_UNRECEIVED_AREA)
+    expect(baseCities.length).toBeGreaterThan(0)
+    expect(baseCities.some((c) => !c.unreceived)).toBe(true)
+    expect(base.points.some((p) => p.isArea && !p.pref && p.addr === TEST_AREA_UNRECEIVED_AREA && !p.unreceived)).toBe(true)
+  })
+
+  // 正: 区域・配下の市町村・観測点がすべて未入電（下限の5弱）になる。パーサーが積む形と同じ。
+  it('区域・配下の市町村・観測点がすべて未入電になる', () => {
+    const quake = createTestAreaUnreceivedQuake()
+    const areaPoint = quake.points.find((p) => p.isArea && !p.pref && p.addr === TEST_AREA_UNRECEIVED_AREA)
+    expect(areaPoint).toMatchObject({ scale: 45, unreceived: true })
+    const cities = (quake.cities ?? []).filter((c) => c.area === TEST_AREA_UNRECEIVED_AREA)
+    for (const c of cities) {
+      expect(c).toMatchObject({ scale: 45, unreceived: true })
+      expect(c.hasUnreceived).toBeUndefined()
+    }
+    const stations = quake.points.filter((p) => !p.isArea && p.area === TEST_AREA_UNRECEIVED_AREA)
+    expect(stations.length).toBeGreaterThan(0)
+    for (const st of stations) expect(st).toMatchObject({ scale: 45, unreceived: true })
+  })
+
+  // 対照: 他の区域は元のまま（組み替えが区域を越えて広がらない）。
+  it('他の区域は元のまま', () => {
+    const base = createTestUnreceivedQuake()
+    const quake = createTestAreaUnreceivedQuake()
+    const others = (q: typeof base) => (q.cities ?? []).filter((c) => c.area !== TEST_AREA_UNRECEIVED_AREA)
+    expect(others(quake)).toEqual(others(base))
+    expect(quake.points.filter((p) => p.area !== TEST_AREA_UNRECEIVED_AREA && p.addr !== TEST_AREA_UNRECEIVED_AREA))
+      .toEqual(base.points.filter((p) => p.area !== TEST_AREA_UNRECEIVED_AREA && p.addr !== TEST_AREA_UNRECEIVED_AREA))
   })
 })
 
@@ -1378,6 +1445,17 @@ describe('実機で一度も出ていなかった項目', () => {
     expect(base.items.length).toBeGreaterThan(0)
     expect(base.cancelText).toBeUndefined()
   })
+
+  // 電文解説資料 Ⅱ.35 の事例の形: 回数は全区間「発表なし」（-1 → null）、有感だけが値を持つ。
+  // 帯に「-1回」と出ていた形を、テストボタンで確かめられるようにしてある。
+  it('地震回数のテストデータは回数が発表なし・有感だけが値を持つ', () => {
+    const base = createTestEarthquakeCount()
+    expect(base.items.every(i => i.number === null)).toBe(true)
+    expect(base.items.every(i => typeof i.feltNumber === 'number')).toBe(true)
+    // 有感の内訳は累積に一致する（累積行が他の行の合計だと分かる形を崩さない）
+    const parts = base.items.filter(i => !i.type.includes('累積')).reduce((sum, i) => sum + (i.feltNumber ?? 0), 0)
+    expect(base.items.find(i => i.type.includes('累積'))?.feltNumber).toBe(parts)
+  })
 })
 
 describe('津波の続報で区域ごとに等級が動く報', () => {
@@ -1578,30 +1656,31 @@ describe('テスト EEW の最大予測値の変化は実電文の形をして�
 describe('テストデータに報ごとに変わる項目が混ざっていない', () => {
   // **落とす集合は生成物ごとに違う。** 推計震度分布図の地震情報だけ `kind` と `issue` を
   // 残す（読む側が `Omit<JMAQuake, 'id' | 'eventId' | 'time'>` として受けるため）。
-  // 長周期に `telegramKey` / `reportSerial` を挙げないのは、パーサーがそれを読まないから。
+  // 長周期に `telegramKey` / `reportSerial` を挙げないのは、パーサーがそれを読まないから
+  // （作成時刻 `createdAtMs` は読むので挙げる）。
   const generated = [
     {
       label: '地震テスト（能登本震）',
       keys: Object.keys(readJson('src/data/noto-honshin-2024-quake.json') as object),
-      forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial'],
+      forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'cities', 'earthquake'],
     },
     {
       label: '未入電テスト（日向灘 2022）',
       keys: Object.keys(readJson('src/data/hyuganada-2022-quake.json') as object),
-      forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial'],
+      forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'cities', 'earthquake'],
     },
     {
       label: '長周期テスト（能登本震）',
       keys: Object.keys(readJson('src/data/noto-honshin-2024-lpgm.json') as object),
-      forbidden: ['id', 'eventId', 'time', 'cancelled'],
+      forbidden: ['id', 'eventId', 'time', 'createdAtMs', 'cancelled'],
       required: ['points', 'regions', 'prefs', 'maxClass'],
     },
     {
       label: '推計震度分布図テストの地震情報',
       keys: Object.keys((readJson('src/data/test-estimated-intensity.json') as { quake: object }).quake),
-      forbidden: ['id', 'eventId', 'time', 'telegramKey', 'reportSerial'],
+      forbidden: ['id', 'eventId', 'time', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'earthquake', 'kind', 'issue'],
     },
   ]

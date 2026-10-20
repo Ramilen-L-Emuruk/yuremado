@@ -286,6 +286,17 @@ export type SeismoHostCheck =
       readonly stations: readonly SeismoStationInfo[]
       /** ホストが把握しているセンサーの本数（観測点へ割り当てていないものも含む）。 */
       readonly sensorCount: number
+      /**
+       * 設定で基板を割り当てた観測点の数（ホストの `assignedBoards[]` の `stationId` を重複なしで数えたもの）。
+       * **古いホストは `assignedBoards` を返さないので `null`**（そのときは `stations` の数で代える）。
+       *
+       * **`stations` とは別物。** `stations` は**実際に届いた**センサーから組むので、ホストを起動した
+       * 直後や基板が黙っている間は空になる —— それを「観測点は未設定」と出すと、設定が済んでいるのに
+       * 未設定に見える。`assignedBoards` は未受信の基板も載せる。
+       * 設定タブの状態の 1 行だけが読む（2026-10-19 ユーザー承認「割り当てから数える (推奨)」）。
+       * `stations` の意味（観測点の座標・地震カードの対象）は変えない。
+       */
+      readonly assignedStationCount: number | null
       /** センサーごとの割り当て。**素性を読めなかったものは並ばない。** */
       readonly sensors: readonly SeismoSensorInfo[]
       /**
@@ -914,7 +925,39 @@ export async function fetchSeismoStatus(
     sensorCount: root.sensors.length,
     sensors,
     usualIntensities: readUsualIntensities(root),
+    assignedStationCount: readAssignedStationCount(root),
   }
+}
+
+/**
+ * `/status` の `assignedBoards[]`（設定で割り当てた基板。未受信のものも載る）から、割り当て済みの
+ * 観測点の数を数える。1 つの観測点に複数の基板を割り当てるので `stationId` の重複を除く。
+ *
+ * **欄が無い（古いホスト）・配列でないときは `null`。** 0 と区別する —— 0 は「割り当てが無い」で、
+ * `null` は「数えられない」。`stationId` を読めない要素は数えない。
+ */
+/** 割り当ての形が崩れたことの記録の間引き（状態の確かめは繰り返し走るので、毎回は出さない）。 */
+const throttledAssignedBoardsLog = createLogThrottle(FAILURE_LOG_INTERVAL_MS)
+
+function readAssignedStationCount(root: Record<string, unknown>): number | null {
+  if (root.assignedBoards === undefined) return null
+  // **欄はあるのに形が違うときは記録する。** 黙って `null`（古いホストと同じ数え方）や 0
+  //（「観測点は未設定」）へ落ちると、ホストの形が変わったことに気づけない。
+  if (!Array.isArray(root.assignedBoards)) {
+    throttledAssignedBoardsLog(() => log.warn('[seismo] /status の assignedBoards が配列ではありません（割り当てから観測点を数えません）'))
+    return null
+  }
+  const ids = new Set<string>()
+  for (const raw of root.assignedBoards) {
+    const stationId = str(obj(raw).stationId)
+    if (stationId !== '') ids.add(stationId)
+  }
+  if (ids.size === 0 && root.assignedBoards.length > 0) {
+    const count = root.assignedBoards.length
+    throttledAssignedBoardsLog(() => log.warn(`[seismo] /status の assignedBoards ${count} 件から stationId を 1 件も読めません（割り当てから観測点を数えません）`))
+    return null
+  }
+  return ids.size
 }
 
 /**

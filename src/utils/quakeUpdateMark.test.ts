@@ -263,6 +263,25 @@ describe('地震カードの更新の印', () => {
       expect(ascending.get(rowMarkKey.pref('石川県'))?.key).toBe('60')
       expect(descending.get(rowMarkKey.pref('石川県'))?.key).toBe('60')
     })
+
+    // 正: 県の行の鍵にも未入電の印を含める（観測点・区域の行と同じ）。県の値が未入電の下限 45 から
+    // 観測値の 45 へ変わったとき、階級だけで比べると印が出ない。
+    it('県の値が未入電から観測値へ変わったら、県の行にも印が出る', () => {
+      // 配下がすべて未入電の県は `MaxInt` を持たず、未入電の点として届く（→ パーサーの `onlyUnreceivedCities`）
+      const before = snapRows([{ ...prefRollup('石川県', 45), unreceived: true }, station('輪島', 45, { unreceived: true })])
+      const after = snapRows([prefRollup('石川県', 45), station('輪島', 45)])
+      expect(before.get(rowMarkKey.pref('石川県'))?.key).toBe('45!')
+      expect(after.get(rowMarkKey.pref('石川県'))?.key).toBe('45')
+      expect(diffSameType(after, before).get(rowMarkKey.pref('石川県'))).toBe('changed')
+    })
+
+    // 安全弁: 同じ震度なら観測値を採る（画面の県の行と同じ規則。並び順で鍵が変わらない）。
+    it('県の行の鍵は、同じ震度なら観測値を採る（並び順に依らない）', () => {
+      const a = snapRows([station('a', 45, { unreceived: true }), station('b', 45)])
+      const b = snapRows([station('b', 45), station('a', 45, { unreceived: true })])
+      expect(a.get(rowMarkKey.pref('石川県'))?.key).toBe('45')
+      expect(b.get(rowMarkKey.pref('石川県'))?.key).toBe('45')
+    })
   })
 
   describe('比べる相手を、値の変化と初出で分ける', () => {

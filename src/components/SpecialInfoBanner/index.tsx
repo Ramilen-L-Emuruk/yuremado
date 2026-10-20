@@ -409,6 +409,11 @@ function NoticeBanner({ notice, speaking, onDismiss }: { notice: JMAQuakeNotice;
           {notice.body && (
             <p className="text-white/90 text-xs leading-relaxed whitespace-pre-wrap mb-1">{notice.body}</p>
           )}
+          {/* 自由付加文は本文の後に空行を挟んで原文のまま出す（2026-10-19 ユーザー承認
+              「本文に続けて出す (推奨)」）。空行は段落の間（`mt-3`）で表す */}
+          {notice.freeText && (
+            <p className={`text-white/90 text-xs leading-relaxed whitespace-pre-wrap mb-1 ${notice.body ? 'mt-3' : ''}`}>{notice.freeText}</p>
+          )}
           <p className="text-white/60 text-xs">
             発表: {new Date(notice.reportDateTime).toLocaleString('ja-JP')}
           </p>

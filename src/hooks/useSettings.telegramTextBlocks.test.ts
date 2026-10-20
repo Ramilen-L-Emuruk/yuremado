@@ -41,6 +41,16 @@ describe('気象庁が書いた文のブロック指定', () => {
     expect(s.ttsTelegramTextBlocks.nankaiBody).toBe(true)
   })
 
+  // 正: 後から足した地震回数の「本文」（2026-10-19 ユーザー承認「部品「本文」を足す (推奨)」）は、
+  // 既定が自由付加文と同じ（読む）。足す前に保存された設定でも欠けたキーとして既定で埋まる
+  it('地震回数の本文の既定は自由付加文と同じで、足す前の保存値でも埋まる', () => {
+    expect(DEFAULTS.ttsTelegramTextBlocks.earthquakeCountBody).toBe(DEFAULTS.ttsTelegramTextBlocks.earthquakeCountFreeText)
+    const { earthquakeCountBody: _omit, ...before } = DEFAULTS.ttsTelegramTextBlocks
+    void _omit
+    const s = sanitize({ ttsTelegramTextBlocks: before as AppSettings['ttsTelegramTextBlocks'] })
+    expect(s.ttsTelegramTextBlocks.earthquakeCountBody).toBe(true)
+  })
+
   // 安全弁: 知らないキーは捨てる（消した項目が localStorage に居座る）
   it('一覧に無いキーを捨てる', () => {
     const s = sanitize({

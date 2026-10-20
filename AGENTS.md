@@ -1388,7 +1388,8 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 生成データ取得のタイムアウト値と失敗時の扱いを仕様書と揃えず個別に決めると、低速回線向けの一括 60 秒と読み上げ専用の短縮 5 秒がずれる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「生成データ」 |
 | 生成データの中身の検分を取得後（呼び出し側）で行うと、失敗が「データN件を取り込めず」に計上されず console にしか残らない | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「生成データ」 |
 | README「ライセンス」節の地図データ出典表記を仕様書側の用語へ揃えると、配信元 GIS レイヤーの実名を言い換えたことになり出典表示として不正確になる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §1「概要」 |
-| 続報の新旧判定に使う ReportDateTime と Control/DateTime のタイムゾーン表記を混在させると、その報だけ辞書順比較で永久に「古い」と判定され捨てられる | [`quake-spec.md`](docs/spec/quake-spec.md) §6.3「発表時刻は分単位のまま」 |
+| 報の新旧を比べる・並べる箇所で `compareReportAge` / `reportOrderKey` を通さず分単位の発表時刻（ReportDateTime）を直接比べると、同じ分に発表された報の前後が入力順で決まり、履歴・リプレイの並びが発表順と食い違う | [`quake-spec.md`](docs/spec/quake-spec.md) §6.3「報の新旧は電文の作成時刻（秒）で比べる」 |
+| 作成時刻を持たない報どうしの比較で ReportDateTime と Control/DateTime のタイムゾーン表記を混在させると、その報だけ辞書順比較で永久に「古い」と判定され捨てられる | [`quake-spec.md`](docs/spec/quake-spec.md) §6.3「報の新旧は電文の作成時刻（秒）で比べる」 |
 | 電文が名乗る情報名を「最初に現れる Title」から読むと、種別の固定名（Control/Title）を拾い遠地地震などの判別が効かなくなる | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §4「電文が名乗る情報名」 |
 | 観測時点（TargetDateTime）を観測情報以外の種別や発表時刻と同義に扱うと、最大 6 分さかのぼる別時点を「いまの高さ」として誤解させる | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §4「観測状況を確定した時刻」 |
 | 電文の読み取り経路をXML以外（DMDATAのJSON変換版）にも広げると、独自スキーマが端折る項目（津波の注意文・予想波高の「未満」）が黙って落ちる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「受信する電文種別」 |

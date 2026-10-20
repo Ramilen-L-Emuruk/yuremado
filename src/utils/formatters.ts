@@ -164,10 +164,18 @@ export function hasDepth(depth: number): boolean {
   return Number.isFinite(depth) && depth >= 0
 }
 
-export function formatDepth(depth: number): string {
+/**
+ * 深さの表示（「10km」「ごく浅い」「不明」「700km以上」）。
+ *
+ * @param atLeast 深さが「700km以上」という下限だけの値か（`Hypocenter.depthAtLeast`）。**必須にしてある**
+ *   —— 省略できると、震源から深さを渡す箇所で印を渡し忘れても型検査が通り、「700km以上」の地震が
+ *   「700km」と出る。印を持たない値（長期震源カタログ等）を渡す箇所は `false` と書く。
+ *   真なら「700km以上」（2026-10-19 ユーザー承認「「700km以上」 (推奨)」）。
+ */
+export function formatDepth(depth: number, atLeast: boolean): string {
   if (!hasDepth(depth)) return '不明'
   if (depth === 0) return 'ごく浅い'
-  return `${depth}km`
+  return atLeast ? `${depth}km以上` : `${depth}km`
 }
 
 /**
@@ -254,6 +262,23 @@ export function formatCoordinate(latitude: number, longitude: number, digits = 1
   const ns = latitude < 0 ? '南緯' : '北緯'
   const ew = longitude < 0 ? '西経' : '東経'
   return `${ns} ${Math.abs(latitude).toFixed(digits)}° ${ew} ${Math.abs(longitude).toFixed(digits)}°`
+}
+
+/**
+ * 震央補助表現（`Area/NameFromMark`。「輪島の東北東３０ｋｍ付近」）を画面に出す形にする。
+ *
+ * **数字と距離の単位だけ半角へ直す**（2026-10-19 ユーザー承認「半角へ揃える・両カード (推奨)」）。
+ * 隣に並ぶ座標・規模・深さは半角なので、原文の全角のままだと字の幅が行ごとに割れる。地名と
+ * 方位の語はそのまま残す。
+ *
+ * **持つ値は電文のまま**で、直すのは表示するときだけ —— 津波から借りた震源が地震情報の値と
+ * 同じかの突き合わせ（`borrowFromTsunami.ts`）は原文どうしで行う。
+ */
+export function formatNameFromMark(s: string): string {
+  return s
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/ｋｍ/g, 'km')
+    .trim()
 }
 
 /**

@@ -113,7 +113,7 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   // 規模が判らないこととは別物で、最も伝えるべき場面に出る。「不明」の語だけは従来どおり落とす。
   const magnitude = formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition)
   if (magnitude !== '不明') parts.push(magnitude)
-  if (hasDepth(hypocenter.depth)) parts.push(`深さ ${formatDepth(hypocenter.depth)}`)
+  if (hasDepth(hypocenter.depth)) parts.push(`深さ ${formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}`)
   // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、「null 発生」のような
   // 壊れた文字列を焼き付けるくらいなら出さない（規模・深さの「不明」を落とすのと同じ考え方）。
   const timeText = formatDateTime(time)

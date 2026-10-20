@@ -138,11 +138,49 @@ export interface IntensityRegionRow {
 
 /** 都道府県の行と、その下に畳んである一次細分区域。 */
 export interface IntensityPrefRow {
+  kind: 'pref'
   pref: string
   scale: IntensityScale
   unreceived: boolean
   hasUnreceived: boolean
   regions: IntensityRegionRow[]
+  /**
+   * 区域を引けない観測点（県は分かっている）。区域の行の後ろに、県の直下として並べる
+   * （長周期の一覧の `LpgmPrefRow.stations` と同じ置き方）。
+   */
+  stations: IntensityStationRow[]
+}
+
+/**
+ * 県を引けない区域の行。**最上段に区域として置く**（長周期の一覧の `kind: 'area'` と同じ）。
+ * 捨てると、その区域と配下の市町村・観測点が記録もなく画面から消える。
+ */
+export type IntensityOrphanRegionRow = { kind: 'area' } & IntensityRegionRow
+
+/** 震度一覧の最上段の行（都道府県、または県を引けない区域）。 */
+export type IntensityTopRow = IntensityPrefRow | IntensityOrphanRegionRow
+
+/** {@link buildIntensityRows} の結果。 */
+export interface IntensityRows {
+  rows: IntensityTopRow[]
+  /**
+   * 県も区域も引けず、一覧のどこにも置けなかった観測点の名前。**呼び出し側が記録する**
+   * （座標表の読み込み前は引けないのが普通なので、読み込みの後に 1 回だけ）。
+   */
+  unplacedStations: string[]
+}
+
+/** 震度の値と、その値が未入電の下限か。 */
+export type IntensityEntry = { scale: number; unreceived: boolean }
+
+/**
+ * 2 つの値のうち行に出す方。**震度が同じなら観測値を採る**（並び順で結果が変わらないように）。
+ * 県・区域の行の値と、更新の印の鍵（`quakeUpdateMark.ts` の `quakeRowSnapshot`）で共有する。
+ */
+export function higherIntensityEntry(a: IntensityEntry | undefined, b: IntensityEntry): IntensityEntry {
+  if (!a) return b
+  if (a.scale !== b.scale) return a.scale > b.scale ? a : b
+  return a.unreceived ? b : a
 }
 
 /**
@@ -230,7 +268,8 @@ export function makeAreaPrefResolver(
 /**
  * 震度一覧の行を組み立てる。**都道府県の行に、一次細分区域を畳んで持たせる。**
  *
- * **県の点があっても区域を捨てないこと。** 実電文は県の `MaxInt` を必ず持つ（実測 66/66）ので、
+ * **県の点があっても区域を捨てないこと。** 実電文は県の `MaxInt` をほぼ必ず持つ（実測 66/66。配下が
+ * すべて未入電の県は持たないが、パーサーが未入電の点として積む）ので、
  * 「県の点があれば区域を無視する」作りにすると区域の行が事実上どこにも出ない。読み上げは
  * 元から区域が主（`ttsText.ts` の `regionNamesForScale`）なので、画面＝県／音声＝区域という
  * ずれになる。
@@ -249,15 +288,9 @@ export function buildIntensityRows(
   points: readonly EarthquakePoint[],
   cities: readonly JMAQuakeCity[],
   deps: IntensityRowDeps,
-): IntensityPrefRow[] {
-  type Entry = { scale: number; unreceived: boolean }
-  // 同じ震度なら**観測値を採る**。並び順で結果が変わらないようにするため（電文は 1 つの
-  // 区域につき 1 点しか持たないので現状は起きないが、順序依存を残す理由も無い）。
-  const higher = (a: Entry | undefined, b: Entry): Entry => {
-    if (!a) return b
-    if (a.scale !== b.scale) return a.scale > b.scale ? a : b
-    return a.unreceived ? b : a
-  }
+): IntensityRows {
+  type Entry = IntensityEntry
+  const higher = higherIntensityEntry
 
   // 都道府県ロールアップ点（電文の `Pref` 直下の `MaxInt`）→ 県別の最大震度
   const prefMax = new Map<string, Entry>()
@@ -274,14 +307,19 @@ export function buildIntensityRows(
     set.set(name, higher(set.get(name), entry))
     areaByPref.set(pref, set)
   }
+  // **県を引けない区域点を捨てない。** 震度速報は市町村を持たないので、区域→県を電文から
+  // 引けず座標表に頼る。座標表の読み込み前・座標表に無い区域名（統廃合・改称）では引けない。
+  // 最上段の区域の行として残す（→ `IntensityOrphanRegionRow`）。
+  const orphanAreaOwn = new Map<string, Entry>()
   for (const p of points) {
     // 都道府県ロールアップ点（`addr === pref` で区域として実在しない）は県の最大にしか効かない。
     if (!isAreaPoint(p, deps.areaPrefIndex)) continue
     // DMDATA は区域の点を `pref: ''` で積み、P2PQuake は県名を積む。どちらでも引けるように
     // 電文の `City` と座標テーブルを先に訊き、引けなければ電文の県名を使う。
     const pref = prefOfArea(p.addr) || p.pref
-    if (!pref) continue
-    addArea(pref, p.addr, { scale: p.scale, unreceived: !!p.unreceived })
+    const entry = { scale: p.scale, unreceived: !!p.unreceived }
+    if (!pref) { orphanAreaOwn.set(p.addr, higher(orphanAreaOwn.get(p.addr), entry)); continue }
+    addArea(pref, p.addr, entry)
   }
   if (areaByPref.size === 0) {
     for (const p of points) {
@@ -301,6 +339,9 @@ export function buildIntensityRows(
   // 市町村の束ね方は {@link cityKey}（区域＋市町村名）。
   const stationsByCity = new Map<string, IntensityStationRow[]>()
   const stationsByRegion = new Map<string, IntensityStationRow[]>()
+  // 区域を引けない観測点の置き場（県の直下）と、県も引けなかった観測点の名前
+  const looseByPref = new Map<string, IntensityStationRow[]>()
+  const unplacedStations: string[] = []
   const pushInto = (map: Map<string, IntensityStationRow[]>, key: string, row: IntensityStationRow) => {
     const list = map.get(key)
     if (list) list.push(row); else map.set(key, [row])
@@ -316,8 +357,9 @@ export function buildIntensityRows(
     // 区域は電文が置いたものをそのまま使う（DMDATA）。持たない経路（P2PQuake）は座標表から
     // 逆引きする。**市町村へ入れるのは区域が分かったときだけ** —— 区域が無いと同名の市町村を
     // 見分けられないうえ、市町村の行を作れなかったときの落とし先も無くなる。
+    const prefOfPoint = () => p.pref || deps.prefOfStation(p.addr) || ''
     const fromIndex = () => {
-      const pref = p.pref || deps.prefOfStation(p.addr) || ''
+      const pref = prefOfPoint()
       return (pref ? deps.regionOfStation(pref, p.addr) : null) ?? undefined
     }
     const region = p.area ?? fromIndex()
@@ -325,7 +367,14 @@ export function buildIntensityRows(
       pushInto(stationsByCity, cityKey(region, p.city), row)
       continue
     }
-    if (!region) continue
+    if (!region) {
+      // **区域を引けない観測点を捨てない。** 県が分かれば県の直下へ置き（長周期と同じ）、
+      // 県も分からなければ名前を返して呼び出し側に記録させる。
+      const pref = prefOfPoint()
+      if (pref) pushInto(looseByPref, pref, row)
+      else unplacedStations.push(p.addr)
+      continue
+    }
     pushInto(stationsByRegion, region, row)
   }
 
@@ -372,46 +421,61 @@ export function buildIntensityRows(
     regionNames.set(pref, set)
   }
   for (const [pref, set] of areaByPref) for (const name of set.keys()) addRegionName(pref, name)
+  // 県を引けない区域名（区域点の分は上で集めてある）。配下の市町村・観測点ごと最上段へ置く
+  const orphanRegionNames = new Set<string>(orphanAreaOwn.keys())
   for (const name of [...citiesByRegion.keys(), ...stationsByRegion.keys()]) {
     const pref = prefOfArea(name)
     if (pref) addRegionName(pref, name)
+    else orphanRegionNames.add(name)
+  }
+
+  const regionRow = (name: string, telegramOwn: Entry | undefined): IntensityRegionRow => {
+    const cityRows = (citiesByRegion.get(name) ?? []).sort(byScale(c => c.scale, c => c.name))
+    const stationRows = (stationsByRegion.get(name) ?? []).sort(byScale(x => x.scale, x => x.name))
+    // 電文が区域の値を持っていればそれが正。無ければ配下の最大で代用する。
+    const own = telegramOwn
+      ?? [...cityRows, ...stationRows].reduce<Entry | undefined>(
+        (a, r) => higher(a, { scale: r.scale, unreceived: r.unreceived }), undefined)
+    return {
+      name,
+      scale: (own?.scale ?? -1) as IntensityScale,
+      unreceived: !!own?.unreceived,
+      hasUnreceived: deps.unreceivedAreas.has(name),
+      cities: cityRows,
+      stations: stationRows,
+    }
   }
 
   // **区域しか無い県も出す。** 電文が県の `MaxInt` を必ず持つのは実測での話で、資料が
-  // 保証しているわけではない。区域だけが届いた県を落とすと、その県が画面から消える。
-  const prefNames = new Set<string>([...prefMax.keys(), ...regionNames.keys()])
-  return Array.from(prefNames)
-    .map(pref => {
+  // 保証しているわけではない（配下がすべて未入電の県は `MaxInt` を持たない。パーサーは
+  // その県を未入電の点として積む）。区域だけが届いた県を落とすと、その県が画面から消える。
+  // 区域を引けない観測点だけを持つ県も同じ。
+  const prefNames = new Set<string>([...prefMax.keys(), ...regionNames.keys(), ...looseByPref.keys()])
+  const prefRows: IntensityTopRow[] = Array.from(prefNames)
+    .map((pref): IntensityPrefRow => {
       const regions = Array.from(regionNames.get(pref) ?? [])
-        .map(name => {
-          const cityRows = (citiesByRegion.get(name) ?? []).sort(byScale(c => c.scale, c => c.name))
-          const stationRows = (stationsByRegion.get(name) ?? []).sort(byScale(x => x.scale, x => x.name))
-          // 電文が区域の値を持っていればそれが正。無ければ配下の最大で代用する。
-          const own = areaByPref.get(pref)?.get(name)
-            ?? [...cityRows, ...stationRows].reduce<Entry | undefined>(
-              (a, r) => higher(a, { scale: r.scale, unreceived: r.unreceived }), undefined)
-          return {
-            name,
-            scale: (own?.scale ?? -1) as IntensityScale,
-            unreceived: !!own?.unreceived,
-            hasUnreceived: deps.unreceivedAreas.has(name),
-            cities: cityRows,
-            stations: stationRows,
-          }
-        })
+        .map(name => regionRow(name, areaByPref.get(pref)?.get(name)))
         .filter(r => r.scale >= 0)
         .sort(byScale(r => r.scale, r => r.name))
-      // 県の点が無ければ配下の区域の最大を県の値にする。
+      const loose = (looseByPref.get(pref) ?? []).sort(byScale(x => x.scale, x => x.name))
+      // 県の点が無ければ配下（区域・県の直下の観測点）の最大を県の値にする。
       const own = prefMax.get(pref)
-        ?? regions.reduce<Entry | undefined>((a, r) => higher(a, { scale: r.scale, unreceived: r.unreceived }), undefined)
+        ?? [...regions, ...loose].reduce<Entry | undefined>((a, r) => higher(a, { scale: r.scale, unreceived: r.unreceived }), undefined)
       return {
+        kind: 'pref',
         pref,
         scale: (own?.scale ?? -1) as IntensityScale,
         unreceived: !!own?.unreceived,
         hasUnreceived: deps.unreceivedPrefs.has(pref) || deps.unreceivedAreas.has(pref),
         regions,
+        stations: loose,
       }
     })
     .filter(row => row.scale >= 0)
-    .sort(byScale(g => g.scale, g => g.pref))
+  const orphanRows: IntensityTopRow[] = Array.from(orphanRegionNames)
+    .map((name): IntensityOrphanRegionRow => ({ kind: 'area', ...regionRow(name, orphanAreaOwn.get(name)) }))
+    .filter(row => row.scale >= 0)
+  const rows = [...orphanRows, ...prefRows]
+    .sort(byScale(r => r.scale, r => (r.kind === 'pref' ? r.pref : r.name)))
+  return { rows, unplacedStations }
 }
