@@ -28,7 +28,7 @@ import {
 } from '../utils/replayEventLog'
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
-import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken } from '../utils/ttsText'
+import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
 import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
@@ -182,7 +182,7 @@ const SPEECH_PRIORITY = {
   /**
    * **何も切らないものを置く層。** 待ちきれなければ割り込まずに黙る（`speakNonEEW`）。
    *
-   * ここにいるのは 4 つ。
+   * ここにいるのは 5 つ。
    *
    * - **南海トラフ関連解説情報** ―― 段階の発表ではなく状況の解説で、臨時情報の発表期間中は
    *   毎日届く。地震情報と同格にすると数千文字に達しうる地震情報の読み上げを毎日切り、
@@ -196,6 +196,8 @@ const SPEECH_PRIORITY = {
    *   置くと大津波警報の読み上げを割り込んで切る
    * - **地震・津波に関するお知らせ**（設定で有効にしたときだけ） ―― 観測点の入電停止・配信試験と
    *   いった運用連絡が大半で、本物の地震・津波・EEW の読み上げを塞いではならない
+   * - **取消の文に続けて読むには長すぎた理由** ―― 取り消された事実は本体が今の層で先に伝えている
+   *   （→ `speakDeferredCancelReason`）
    *
    * **「待ちきれなければ黙る」は損失として受け入れている。** 層で「何も切らない」と宣言して
    * いても、待ちの上限（`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`）で割り込めばその宣言は破れる。
@@ -263,6 +265,13 @@ type SpeechTopic =
    * 本文を読むために肝心の震度・等級を落とすことになる。
    */
   | `telegramText:${string}`
+  /**
+   * 取消の文に続けて読むには長すぎた理由。→ `speakDeferredCancelReason`
+   *
+   * **取消の本体と別の主題にする**理由は `telegramText:*` と同じ（同じ主題だと、後から予約した
+   * こちらが本体の予約を追い越して取り下げる）。
+   */
+  | `cancelReason:${string}`
   | 'tsunami' | 'tsunamiObs' | 'nankai' | 'kohatsu' | 'nankaiCommentary' | 'earthquakeCount'
   | 'estimatedIntensity'
   /**
@@ -341,7 +350,9 @@ const MUTUAL_YIELD_TOPICS: ReadonlySet<SpeechTopic> = new Set<SpeechTopic>([
  * **同主題どうしは呼び出し側で除外済み**（言い換えなので最新に置き換えるのが正しい）。
  */
 function isMutualYieldTopic(topic: SpeechTopic): boolean {
-  return MUTUAL_YIELD_TOPICS.has(topic) || topic.startsWith('telegramText:')
+  // 取消の長い理由（`cancelReason:*`）も同じ扱い。取り消された事実は本体が先に伝えており、
+  // 理由はその補足なので、どの主題とも内容が重ならない。
+  return MUTUAL_YIELD_TOPICS.has(topic) || topic.startsWith('telegramText:') || topic.startsWith('cancelReason:')
 }
 
 /**
@@ -2603,6 +2614,55 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   }
 
   /**
+   * 取消の文に続けて読むには長すぎる理由を、**別の発話で最下位の層に**読む
+   * （→ `deferredCancelReasonToSpeak`。2026-10-19 ユーザー選択「外して最下位の層で読む (推奨)」）。
+   *
+   * **取消の読み上げが鳴り始めた時点で呼ぶ**（`speakNonEEWDelayed` の `onSpeakStart`・EEW は
+   * `chainEEWSpeech` の決め直し）。予約した時点で呼ぶと、本体が後発に取り下げられたときに
+   * 「取り消された」と言わないまま理由だけが鳴る。本体が鳴らない取消（同じ取消の二重配信・設定で
+   * 切った種別）も同じく呼ばれない。
+   *
+   * **設定「気象庁の発表文を読む」は見ない**（2026-10-19 ユーザー選択「設定に関係なく読む（推奨）」）。
+   * 続けて読める長さの理由はその設定と無関係に読んでいるので、長さで読まれる端末が分かれないようにする。
+   *
+   * **予約を遅らせる理由は気象庁の文と同じ**（`TELEGRAM_TEXT_SPEECH_RESERVE_DELAY_MS`）。本体と同じ瞬間に
+   * 予約すると、直後に届いた電文の予約に追い越されて待つ前に取り下げられる。
+   *
+   * **同じ事象の同じ理由は 2 度読まない。** 既読は気象庁の文と同じ記憶に積む（リプレイの開始で一緒に落ちる）。
+   *
+   * @param subject どの事象の取消か（`eew:<鍵>`・`quake:<鍵>`・`tsunami:<EventID>` など）。主題と既読の
+   *   鍵の両方に入れる —— 種別だけにすると、別の事象の取消が同じ文面の理由を運んだとき 2 通目が黙り、
+   *   数秒内に続いた別の事象の取消どうしでは先の理由が後の予約に追い越されて落ちる。
+   */
+  const speakDeferredCancelReason = (infoName: string, cancelText: string | undefined, subject: string) => {
+    if (!settings.voicevoxEnabled) return
+    const text = deferredCancelReasonToSpeak(infoName, cancelText)
+    if (!text) return
+    const key = `cancelReason:${subject}|${text}`
+    const alreadySpoken = () => {
+      if (!spokenTelegramTextRef.current.has(key)) return false
+      // **弾いたことを残す。** 理由を別に回した記録（`cancelReasonSentence`）だけが残り、
+      // 鳴らなかった理由を後から追えなくなるため。
+      log.debug(`[tts] 取消の長い理由は既に読んだため読まない subject=${subject}`)
+      return true
+    }
+    if (alreadySpoken()) return
+    scheduleSpeech(TELEGRAM_TEXT_SPEECH_RESERVE_DELAY_MS, () => {
+      if (alreadySpoken()) return
+      speakNonEEWDelayed(
+        text,
+        SPEECH_PRIORITY.commentary,
+        0,
+        `cancelReason:${subject}`,
+        undefined,
+        undefined,
+        undefined,
+        () => { spokenTelegramTextRef.current.add(key) },
+      )
+    })
+  }
+
+  /**
    * {@link AppEvent} に含まれない種別（{@link ExtraLiveEvent}）の受け口。
    *
    * **`handleLiveEvent` の本体から分けてある。** あちらは地震・津波・EEW の状態を突き合わせる
@@ -2631,6 +2691,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           speakNonEEWDelayed(
             lpgmToText(lpgmEvent, ttsRegionOptions(settings), false),
             SPEECH_PRIORITY.normal, 0, `lpgm:${lpgmEvent.eventId}`,
+            undefined, undefined, undefined,
+            () => speakDeferredCancelReason('長周期地震動に関する観測情報', lpgmEvent.cancelText, `lpgm:${lpgmEvent.eventId}`),
           )
         } else {
           // 読み上げが無効な端末では、取消は一覧とバッジが消えるだけで理由がどこにも残らない
@@ -2758,7 +2820,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 最中に取消が届いても取り下げられない（取り消された回数をそのあと読み上げる）。
         // 帯が消えるので、パネルの展開も要らない。
         if (settings.voicevoxEnabled) {
-          speakNonEEWDelayed(earthquakeCountToText(count), SPEECH_PRIORITY.normal, 0, 'earthquakeCount')
+          speakNonEEWDelayed(
+            earthquakeCountToText(count), SPEECH_PRIORITY.normal, 0, 'earthquakeCount',
+            undefined, undefined, undefined,
+            () => speakDeferredCancelReason('地震回数に関する情報', count.cancelText, `earthquakeCount:${count.id}`),
+          )
         }
         return
       }
@@ -2800,7 +2866,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // —— 分けると到来順の枠に載らず、待っている発表の予約を取り下げられない。帯が消えるので
         // パネルも開かない。
         if (settings.voicevoxEnabled) {
-          speakNonEEWDelayed(quakeNoticeToText(notice), SPEECH_PRIORITY.commentary, 0, 'quakeNotice')
+          speakNonEEWDelayed(
+            quakeNoticeToText(notice), SPEECH_PRIORITY.commentary, 0, 'quakeNotice',
+            undefined, undefined, undefined,
+            () => speakDeferredCancelReason('地震・津波に関するお知らせ', notice.body, `quakeNotice:${notice.id}`),
+          )
         }
         return
       }
@@ -3161,7 +3231,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           { tab: 'earthquake', priority: TAB_PRIORITY.quake },
           undefined,
           undefined,
-          undefined,
+          // 前置きの情報名は、本体の文と同じ `retracted` から採る（名乗りを揃える）
+          () => speakDeferredCancelReason(retracted ? retracted.issueType : '地震情報', event.cancelText, `quake:${cancelQuakeKey}`),
           // **どの地震について語っているか。** 取消の読み上げのあいだ、一覧を取消カードへ寄せる
           // （→ `quakeSpeakingCard`）。鍵は主題と同じものを渡す。
           cancelQuakeKey,
@@ -3423,6 +3494,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             ttsDelayFor('tsunamiCancel'),
             'tsunami',
             { tab: 'tsunami', priority: TAB_PRIORITY.tsunami },
+            undefined,
+            undefined,
+            // 理由（`cancelText`）を運ぶのは誤報の取消だけ。解除・失効の本体は「津波警報等」を名乗らない
+            // （→ `tsunamiCancelToText`）ので、前置きと名乗りがずれないよう取消に限る。
+            event.cancelReason === 'retracted'
+              ? () => speakDeferredCancelReason('津波警報等', event.cancelText, `tsunami:${event.eventId || event.id}`)
+              : undefined,
           )
         }
       }
@@ -3543,7 +3621,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                 () => {
                   // 発話するものが決まった（または黙ると決めた）時点で予約は消化された。
                   eewCancelSpeechRef.current.delete(key)
-                  return eewCancelToText(event, firstIssueTime)
+                  // 本体の文を組み終えてから理由を予約する（組み立てが例外を投げたとき理由だけが鳴らないように）
+                  const cancelSpeech = eewCancelToText(event, firstIssueTime)
+                  speakDeferredCancelReason('緊急地震速報', event.cancelText, `eew:${key}`)
+                  return cancelSpeech
                 },
                 () => followSpeechTab('realtime', TAB_PRIORITY.eewUrgent),
               ))
@@ -4797,14 +4878,6 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 地震電文が届き、次の報から追従できる）。原因地震が 2 つ以上なら、語っている地震ごとの
           // カードは参照（`borrowedHypocenter.subject`）が持つ。
           if (builtTsunamiSpoken.subject) quakeSubjectKey = builtTsunamiSpoken.subject
-        } else if (!event.cancelled && event.validDateTime) {
-          // **識別子を欠く電文では既読を持てない。** 鍵は地震ごと（`quake:<eventId>`）なので、
-          // `eventId` が無ければ `quakeSpokenState` は null のまま —— 失効時刻や震源の
-          // 言い直しを「一度言ったら黙る」で抑えられず、続報のたびに繰り返す。
-          // **症状は「同じことを何度も喋る」だけで、例外も警告も出ない。** そういう電文が
-          // 実際に来るのかは数えていない（国内の津波電文は原因地震の EventID を持つのが
-          // ふつう）ので、来たと分かるように記録だけ残す。
-          log.debug('[tts] 識別子を持たない津波電文（失効時刻の既読を持てない）', { id: event.id })
         }
         /**
          * 今回の電文が運んできた観測点を、**カードの並び**で返す。

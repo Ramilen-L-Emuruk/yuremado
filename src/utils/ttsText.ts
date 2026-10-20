@@ -1185,53 +1185,89 @@ export function earthquakeReportCancelToText(issueType: string, time: string | n
  * 先に述べているので、続けて読むと同じことを 2 度言う。宣言の形でも主語が既知の情報名でなければ
  * 理由が混ざっているものとして読む（そちらへ倒す理由は `CANCEL_DECLARATION`）。
  *
- * **長い本文は読まない。** 取消しの概要は 1〜2 文が通例だが、他の自由文と同じく長文が入りうる。
- * 読み上げが伸びると後続の電文が待ちの上限に達して割り込むため、上限を超えたら画面に委ねる。
- *
- * @param staysOnScreen 省いた本文が画面に残るか。地震・津波・EEW は取消のあともカードが残って
- *   全文を出すので既定は `true`。**地震回数（帯）と長周期地震動（一覧・バッジ）は取消で表示ごと
- *   消える**ので `false` を渡す ——
- *   記録が「画面には全文が出ます」と言い続けると、読み上げも表示も失われた事実が残らない。
+ * **長い本文は続けて読まず、別の発話で最下位の層へ回す**（{@link deferredCancelReasonToSpeak}）。
+ * 取消しの概要は 1〜2 文が通例だが、他の自由文と同じく長文が入りうる。取消の文と同じ発話に足すと、
+ * 読み上げが伸びて後続の電文が待ちの上限に達し割り込む。どちらで読むかの境目は
+ * {@link CANCEL_REASON_INLINE_MAX_CHARS}。
  */
-function cancelReasonSentence(cancelText: string | undefined, staysOnScreen = true): string {
-  // 取消の理由も気象庁が書いた文なので、日時は全角のゼロ埋めで来る（`１６日０１時２５分`）。
-  // 半角・ゼロ埋めなしへ揃えないと先頭の 0 が桁として読まれる（→ {@link normalizeDateTimeForSpeech}）。
-  // **この関数は 5 種別（EEW・地震情報・津波・地震回数・長周期地震動）の取消が共有している。**
-  const text = normalizeDateTimeForSpeech(cancelText ?? '').replace(/\s+/g, ' ').trim()
-  if (!text) return ''
-  const subject = CANCEL_DECLARATION.exec(text)?.[1]
-  if (subject !== undefined) {
-    if (CANCEL_DECLARATION_SUBJECTS.has(subject)) {
-      // **省いたことを残す。** 取消は実電文で年に数通しか出ないため、毎回記録しても
-      // 他の記録を埋めない。
-      log.info(`[tts] 取消の宣言だけの本文なので読み上げを省きました（${text}）`)
-      return ''
-    }
+function cancelReasonSentence(cancelText: string | undefined): string {
+  // **この関数は 6 種別（EEW・地震情報・津波・地震回数・長周期地震動・地震・津波に関するお知らせ）の
+  // 取消が共有している。**
+  const reason = classifyCancelReason(cancelText)
+  if (reason.kind === 'declaration') {
+    // **省いたことを残す。** 取消は実電文で年に数通しか出ないため、毎回記録しても
+    // 他の記録を埋めない。
+    log.info(`[tts] 取消の宣言だけの本文なので読み上げを省きました（${reason.text}）`)
+    return ''
+  }
+  if (reason.kind === 'unknownDeclaration') {
     // **宣言の形だが主語が既知の情報名でないので読む。** ここが「落とし損ね」の検知点 ——
     // 実電文に無い情報名で宣言が来たら、この記録を見て主語の集合へ足すかを判断する
     // （逆に理由が混ざっていた場合は、読む側へ倒れているので情報は失われない）。
-    log.info(`[tts] 取消の宣言の形だが「${subject}」が既知の情報名でないため読み上げます（${text}）`)
+    log.info(`[tts] 取消の宣言の形だが「${reason.subject}」が既知の情報名でないため読み上げます（${reason.text}）`)
   }
-  if (text.length > CANCEL_REASON_SPEAK_MAX_CHARS) {
-    // **捨てたことを残す。** 気象庁が書いた理由を丸ごと落とすので、痕跡が無いと
-    // 「今日は長文だったから読まなかった」を後から確かめられない。
-    const where = staysOnScreen ? '画面には全文が出ます' : '画面にも残りません'
-    log.info(`[tts] 取消しの概要が長いため読み上げを省きました（${text.length}文字。${where}）`)
+  if (reason.kind === 'none') return ''
+  if (reason.text.length > CANCEL_REASON_INLINE_MAX_CHARS) {
+    // **回したことを残す。** 別の発話は最下位の層で、待ちきれなければ黙る ——
+    // 鳴らなかったときに「長文だったから別に回した」ことを後から辿れるようにする。
+    log.info(`[tts] 取消しの概要が長いため、別の発話で最下位の層に回します（${reason.text.length}文字）`)
     return ''
   }
   // 電文の本文は句点で終わることが多いが、終わっていなければ足す（次の文と繋がって
   // 聞こえないため）。**述語は 5 箇所で共有する**（→ {@link endTelegramSentence}）。
-  return endTelegramSentence(text)
+  return endTelegramSentence(reason.text)
+}
+
+/** 取消しの概要（`Body/Text`）を読み上げの扱いで分けたもの。→ {@link classifyCancelReason} */
+type CancelReason =
+  | { kind: 'none' }
+  | { kind: 'declaration'; text: string }
+  | { kind: 'unknownDeclaration'; text: string; subject: string }
+  | { kind: 'reason'; text: string }
+
+/**
+ * 取消しの概要を、読み上げで同じ扱いを受ける形に分ける。続けて読む側（{@link cancelReasonSentence}）と
+ * 別の発話へ回す側（{@link deferredCancelReasonToSpeak}）が同じ判定を通るための 1 箇所。
+ */
+function classifyCancelReason(cancelText: string | undefined): CancelReason {
+  // 取消の理由も気象庁が書いた文なので、日時は全角のゼロ埋めで来る（`１６日０１時２５分`）。
+  // 半角・ゼロ埋めなしへ揃えないと先頭の 0 が桁として読まれる（→ {@link normalizeDateTimeForSpeech}）。
+  const text = normalizeDateTimeForSpeech(cancelText ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return { kind: 'none' }
+  const subject = CANCEL_DECLARATION.exec(text)?.[1]
+  if (subject === undefined) return { kind: 'reason', text }
+  return CANCEL_DECLARATION_SUBJECTS.has(subject)
+    ? { kind: 'declaration', text }
+    : { kind: 'unknownDeclaration', text, subject }
 }
 
 /**
- * 取消しの概要を読み上げる上限（文字数）。
+ * 取消の文に続けて読む理由の上限（文字数）。超える理由は別の発話で最下位の層に読む
+ * （{@link deferredCancelReasonToSpeak}。2026-10-19 ユーザー選択「外して最下位の層で読む (推奨)」）。
  *
  * 実電文の取消しの概要は 1 文（例「先ほどの、震度速報を取り消します。」）。
- * 超える本文は画面に委ねる —— 読み上げが伸びると、後続の電文が待ちの上限
+ * 超える本文を取消の文と同じ発話へ足すと、読み上げが伸びて後続の電文が待ちの上限
  * （`HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`）に達して割り込む。
  */
-export const CANCEL_REASON_SPEAK_MAX_CHARS = 120
+export const CANCEL_REASON_INLINE_MAX_CHARS = 120
+
+/**
+ * 取消の文に続けて読むには長すぎる理由を、別の発話にした文。続けて読める長さ・宣言だけの本文・
+ * 理由が無いときは `null`。
+ *
+ * **前置きで何の理由かを名乗る。** 最下位の層は前の発話が終わるのを待つので、取消の文との間に
+ * 別の読み上げが挟まることがある（2026-10-19 ユーザー選択「◯◯が取り消された理由をお伝えします。」）。
+ * **「気象庁の発表文」とは名乗らない** —— その語は設定「気象庁の発表文を読む」のラベルで、この発話は
+ * その設定に従わない（2026-10-19 ユーザー選択「設定に関係なく読む（推奨）」）。
+ *
+ * @param infoName 取消の文が名乗った情報名（「地震情報」「震度速報」「津波警報等」など）
+ */
+export function deferredCancelReasonToSpeak(infoName: string, cancelText: string | undefined): string | null {
+  const reason = classifyCancelReason(cancelText)
+  if (reason.kind !== 'reason' && reason.kind !== 'unknownDeclaration') return null
+  if (reason.text.length <= CANCEL_REASON_INLINE_MAX_CHARS) return null
+  return `${infoName}が取り消された理由をお伝えします。${endTelegramSentence(reason.text)}`
+}
 
 /**
  * 取消の宣言の形。捕獲するのは「何を取り消すか」の主語で、それが情報名そのものなら
@@ -3621,9 +3657,8 @@ export function earthquakeCountToText(event: JMAEarthquakeCount): string {
     // **地震・津波・EEW の取消と揃える** —— 片方だけ拾うと、
     // 同じ「取り消した」でも種別によって理由が出たり出なかったりする。**この種別はカードが
     // 消えるので、理由が届く先は読み上げだけ**（他の 3 種別は取消後もカードが残って全文を出す）。
-    // **`staysOnScreen: false`。** この種別は取消で帯ごと消えるので、長すぎて省いた理由は
-    // 読み上げにも画面にも残らない。他の 3 種別（カードが残る）と同じ記録にしない。
-    return '地震回数に関する情報は取り消されました。' + cancelReasonSentence(event.cancelText, false)
+    // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
+    return '地震回数に関する情報は取り消されました。' + cancelReasonSentence(event.cancelText)
   }
   const head = '地震回数に関する情報。'
   const total = pickEarthquakeCountSummaryItem(event)
@@ -3673,11 +3708,11 @@ function formatCountSpanForSpeech(startTime: string, endTime: string): string {
  * 自由付加文（`freeText`）もそちらで本文に続けて読む。
  *
  * 取消は他の種別と同じく「取り消された事実」と理由を読む（→ `cancelReasonSentence`）。
- * 帯ごと消えるので、理由が届く先は読み上げだけ（`staysOnScreen: false`。地震回数と同じ）。
+ * 帯ごと消えるので、理由が届く先は読み上げだけ（地震回数と同じ）。
  */
 export function quakeNoticeToText(event: JMAQuakeNotice): string {
   if (event.cancelled) {
-    return '地震・津波に関するお知らせは取り消されました。' + cancelReasonSentence(event.body, false)
+    return '地震・津波に関するお知らせは取り消されました。' + cancelReasonSentence(event.body)
   }
   // 見出しは句点を持たないのが通例だが、付いていても二重にしない
   const headline = event.headline.trim().replace(/。$/, '')
@@ -3792,9 +3827,9 @@ export function lpgmToText(lpgm: JMALpgm, opts: TtsSpeechOptions, isNew: boolean
   if (lpgm.cancelled) {
     // 述語は「取り消されました」で全種別そろえる（→ `eewCancelToText`）。理由（電文の
     // `Body/Text`）も読む（宣言だけの本文は落ちる。→ `cancelReasonSentence`）。
-    // **`staysOnScreen: false`。** 取消で長周期の表示（一覧・バッジ）ごと消え、理由を
-    // 出す場所が画面に無いので、長すぎて省いた理由はどこにも残らない（地震回数と同じ）。
-    return '長周期地震動に関する観測情報は取り消されました。' + cancelReasonSentence(lpgm.cancelText, false)
+    // 取消で長周期の表示（一覧・バッジ）ごと消え、理由が届く先は読み上げだけ（地震回数と同じ）。
+    // 長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
+    return '長周期地震動に関する観測情報は取り消されました。' + cancelReasonSentence(lpgm.cancelText)
   }
   // 地震の時刻は**発現時刻を先に採る**（地震情報・津波カードと同じ規則）。揃えないと、
   // 同じ地震について地震情報が「◯時◯分ころ」と読んだ直後に、長周期が 1 分違う時刻を読む。

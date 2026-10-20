@@ -101,7 +101,7 @@
 | 選抜・並べ替え・上限 | `selectRegionNames` `selectObservationUpdatesToSpeak` `selectArrivalsToSpeak` `selectMissingToSpeak` `selectWarningLevelToSpeak` `orderAreasForSpeech` `observationsForAreaOrder` `groupObservationsByDistrict` |
 | 既読の記録 | `createQuakeSpokenState` `applySpokenRefs` `regionDiffKind` `isUnreceivedUnspoken` `magnitudeFactValue` `tellableHypocenterFacts` `tellableFacts` `hasUnspokenFact` |
 | 断片化・参照付け | `gradeSegment` |
-| 定数（上限値・順序・正規表現・照合表） | `GRADE_ORDER` `SCALE_DESCENDING` `NO_REGION_LOG_THROTTLE_MS` `warnNoRegionNames` `reportedUnknownMagnitudeConditions` `CANCEL_REASON_SPEAK_MAX_CHARS` `CANCEL_DECLARATION` `CANCEL_DECLARATION_SUBJECTS` `EEW_LEAD_PHRASES` `OBS_UPDATE_SPEAK_MAX_POINTS` `ARRIVAL_SPEAK_MAX_POINTS` `MISSING_SPEAK_MAX_POINTS` `WARNING_LEVEL_SPEAK_MAX_POINTS` |
+| 定数（上限値・順序・正規表現・照合表） | `GRADE_ORDER` `SCALE_DESCENDING` `NO_REGION_LOG_THROTTLE_MS` `warnNoRegionNames` `reportedUnknownMagnitudeConditions` `CANCEL_REASON_INLINE_MAX_CHARS` `CANCEL_DECLARATION` `CANCEL_DECLARATION_SUBJECTS` `EEW_LEAD_PHRASES` `OBS_UPDATE_SPEAK_MAX_POINTS` `ARRIVAL_SPEAK_MAX_POINTS` `MISSING_SPEAK_MAX_POINTS` `WARNING_LEVEL_SPEAK_MAX_POINTS` |
 | 型定義（6 件） | `TtsSpeechOptions` `QuakeSpokenState` `SpokenRegion` `RegionNameIndexes` `RegionDiffKind` `SpokenHeightLookup` |
 
 **文字列版（`earthquakeToText` / `tsunamiToText` / `tsunamiDowngradeToText` /
@@ -220,8 +220,9 @@
 
 | 関数 | 出どころ | 組み立てている文の形 | 揃っていない点 |
 |---|---|---|---|
-| `cancelReasonSentence` | **電文** | 電文の `Body/Text` をそのまま。句点で終わっていなければ足す（→ §4-8）。**この関数自身はアプリの語を持たない** —— 定型文と繋いでいるのは呼び出し側 4 つ（`eewCancelToText`・`earthquakeCancelToText`・`tsunamiCancelToText`・`earthquakeCountToText`） | |
+| `cancelReasonSentence` | **電文** | 電文の `Body/Text` をそのまま。句点で終わっていなければ足す（→ §4-8）。**この関数自身はアプリの語を持たない** —— 定型文と繋いでいるのは呼び出し側の各取消文。120 字を超える理由は続けず、`deferredCancelReasonToSpeak` が別の発話にする | |
 | `earthquakeCancelToText` | **混在** | 「15時4分に発表された地震情報は取り消されました。」＋電文の理由 | |
+| `deferredCancelReasonToSpeak` | **混在** | 「地震情報が取り消された理由をお伝えします。」＋電文の理由。理由が 120 字（`CANCEL_REASON_INLINE_MAX_CHARS`）を超えたときだけ、取消の文とは別の発話で最下位の層に読む（→ [`audio-tts-spec.md`](audio-tts-spec.md) §6「取消の長い理由は最下位の層で読む」）。「地震情報」の位置には取消の文が名乗った情報名が入る | |
 
 ### 3.8 `ttsText.ts` の外
 
@@ -632,3 +633,5 @@ VOICEVOX 試聴ボタンが読ませていたのは次の一文で、文字列�
 - 2026-10-19: 地震回数の読み上げ文の行に、回数を伴わない発表報の本文を気象庁が書いた文として読むこと
   （部品「本文」。2026-10-19 ユーザー承認「部品「本文」を足す (推奨)」）を書き添えた
 - 2026-10-19: `kohatsuToText` の取消の文（「北海道・三陸沖後発地震注意情報は取り消されました。」）を足した
+- 2026-10-19: 取消の長い理由を別の発話で読む文（`deferredCancelReasonToSpeak`。「◯◯が取り消された理由をお伝えします。」、
+  2026-10-19 ユーザー承認）を足し、境目の定数の名前を `CANCEL_REASON_INLINE_MAX_CHARS` へ改めた
