@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { isEewArrivedKindCode, isEewPlumKindCode } from './eewKind'
 import { mergeQuakeInto, mergeQuakeHistory } from './quakeMerge'
 import { earthquakeToSegments, createQuakeSpokenState, applySpokenRefs } from './ttsText'
@@ -1661,24 +1661,37 @@ describe('テストデータに報ごとに変わる項目が混ざっていな�
   const generated = [
     {
       label: '地震テスト（能登本震）',
+      file: 'noto-honshin-2024-quake.json',
       keys: Object.keys(readJson('src/data/noto-honshin-2024-quake.json') as object),
       forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'cities', 'earthquake'],
     },
     {
       label: '未入電テスト（日向灘 2022）',
+      file: 'hyuganada-2022-quake.json',
       keys: Object.keys(readJson('src/data/hyuganada-2022-quake.json') as object),
       forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'cities', 'earthquake'],
     },
     {
+      // 読む側（`createTestMaxScaleOrAboveQuake`）がまるごと展開する。この一覧から漏れていた間、
+      // 収録した電文の鍵と報番号が焼き付いたまま残っていた（2026-10-20 に取り除いた）。
+      label: '5弱以上テスト（石川県西方沖 2024）',
+      file: 'ishikawa-seihooki-2024-quake.json',
+      keys: Object.keys(readJson('src/data/ishikawa-seihooki-2024-quake.json') as object),
+      forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial'],
+      required: ['points', 'cities', 'earthquake'],
+    },
+    {
       label: '長周期テスト（能登本震）',
+      file: 'noto-honshin-2024-lpgm.json',
       keys: Object.keys(readJson('src/data/noto-honshin-2024-lpgm.json') as object),
       forbidden: ['id', 'eventId', 'time', 'createdAtMs', 'cancelled'],
       required: ['points', 'regions', 'prefs', 'maxClass'],
     },
     {
       label: '推計震度分布図テストの地震情報',
+      file: 'test-estimated-intensity.json',
       keys: Object.keys((readJson('src/data/test-estimated-intensity.json') as { quake: object }).quake),
       forbidden: ['id', 'eventId', 'time', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'earthquake', 'kind', 'issue'],
@@ -1694,8 +1707,18 @@ describe('テストデータに報ごとに変わる項目が混ざっていな�
 
   // 安全弁: 検査そのものが空振りしていないこと。生成物を足したのにここへ足し忘れる・
   // キーの読み取りが壊れる、のどちらも上のテストが通り続けるので気づけない
+  // 安全弁: `src/data` の生成物（最上位が配列ではなくオブジェクトのもの）がすべて上の一覧に載っている。
+  // 件数を手で書くだけだと、生成物を足したときに一覧と件数の両方を足し忘れて素通りする
+  // （5弱以上テストのデータがそうして漏れていた）。配列の生成物は報ごとの項目を持てないので対象外。
+  it('src/data の生成物がすべて検査の対象に入っている', () => {
+    const objectFiles = readdirSync(new URL('../data/', import.meta.url))
+      .filter(f => f.endsWith('.json'))
+      .filter(f => !Array.isArray(readJson(`src/data/${f}`)))
+    expect(objectFiles.filter(f => !generated.some(g => g.file === f))).toEqual([])
+  })
+
   it('検査そのものが素通りしない', () => {
-    expect(generated).toHaveLength(4)
+    expect(generated).toHaveLength(5)
     for (const g of generated) {
       expect(g.keys.length).toBeGreaterThan(3)
       expect(g.forbidden.length).toBeGreaterThan(0)

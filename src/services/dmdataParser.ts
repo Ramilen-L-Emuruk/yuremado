@@ -31,6 +31,7 @@ import { isEewForecastKindCode, isEewWarningKindCode, isEewArrivedKindCode } fro
 import { parseTsunamiEstimationCondition, parseTsunamiForecastHeightImportant, parseTsunamiObservationCondition } from '../utils/tsunami'
 import { createPerLabelLogGate, log, UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS } from '../utils/logger'
 import { NON_JMA_MARK } from '../utils/formatters'
+import { dmdataTelegramKey } from '../utils/telegramKey'
 import { arr, obj, str } from './parseHelpers'
 
 // EEW: "1","2","3","4","5-","5+","6-","6+","7","不明" 等
@@ -565,28 +566,36 @@ function readReportDateTime(doc: Document, kindLabel: string, logPrefix: string)
 }
 
 /**
- * 電文を一意に指す鍵（`Control/DateTime`）。→ `JMAQuake.telegramKey`
+ * 電文を一意に指す鍵（`Control/Title` と `Control/DateTime` の組）。→ `JMAQuake.telegramKey`
  *
  * **日時としては扱わない。** ここで欲しいのは「同じ電文か」だけなので、読めない値でも
  * そのまま鍵にする（読めない値どうしが一致するなら、それは同じ電文）。日時としての検証は
  * `readReportDateTime` の担当で、あちらは値の意味を使うため基準が違う。
  *
  * **`Head/ReportDateTime` では代用できない。** あちらは分へ丸められており、同じ分に複数報が
- * 発表されるのが普通（能登 2024-01-01 の本震は 16:11 に 2 報）。`Control/DateTime` は秒精度で、
- * 実電文では同じ地震の続報どうしが必ず異なっていた。
+ * 発表されるのが普通（能登 2024-01-01 の本震は 16:11 に 2 報）。`Control/DateTime` は秒精度。
  *
- * **読めなかったら記録を残す。** 鍵を持たない報は `id` で代用されるが、`Head/Serial` が空の種別
+ * **作成時刻だけでも足りない**ので、種別名（`Control/Title`）と組にする（理由と実測は
+ * docs/spec/quake-spec.md §8「同じ電文を二度数えない」）。
+ *
+ * **作成時刻が読めなかったら記録を残す。** 鍵を持たない報は `id` で代用されるが、`Head/Serial` が空の種別
  * （震度速報・震源情報）は**同じ地震の全報が同じ `id`** になるため、2 通目以降が重複と見なされて
  * 受信通数が実際より少なく出る。例外も画面の異常も出ないので、ここで言わないと痕跡が残らない。
+ * 種別名だけが読めないときは、配信元が名乗る種別コード（`headType`。`VXSE51` など）で代える。
+ * 空のまま組むと、同じ秒に作られた別の種別とまた重なる。代えたことは記録する。
  */
-function readTelegramKey(doc: Document, kindLabel: string, logPrefix: string): string | undefined {
+function readTelegramKey(doc: Document, kindLabel: string, logPrefix: string, headType: string): string | undefined {
   const controlEl = xmlQ(doc, 'Control')
   const raw = controlEl ? xmlText(xmlChild(controlEl, 'DateTime')) : ''
   if (!raw) {
     log.warn(`${logPrefix} ${kindLabel}の電文作成時刻（Control/DateTime）を読めません（同じ電文を二度数えない鍵に使うため、受信通数が実際より少なく出ます。地震情報・長周期では報の新旧の比較も分単位の発表時刻へ落ちます）`)
     return undefined
   }
-  return raw
+  const title = controlEl ? xmlText(xmlChild(controlEl, 'Title')) : ''
+  if (!title) {
+    log.warn(`${logPrefix} ${kindLabel}の電文の種別名（Control/Title）を読めません（種別コード ${headType} で代えます・${raw}）`)
+  }
+  return dmdataTelegramKey(title || headType, raw)
 }
 
 /**
@@ -1562,7 +1571,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   const serial = xmlText(xmlQ(doc, 'Serial')) || '1'
   // 同じ電文を二度数えないための鍵と、電文が名乗る報番号。どちらもカードの見出しが
   // 「震度速報#2/震源情報」の形を組むための材料（→ `JMAQuake.telegramKey` / `.reportSerial`）。
-  const telegramKey = readTelegramKey(doc, '地震情報', DMDATA_LOG_PREFIX)
+  const telegramKey = readTelegramKey(doc, '地震情報', DMDATA_LOG_PREFIX, headType)
   // 報の新旧を比べ、並べるための秒まである時刻（→ `JMAQuake.createdAtMs`）。
   const createdAtMs = readCreatedAtMs(doc, '地震情報', DMDATA_LOG_PREFIX)
   const reportSerial = readReportSerial(doc, '地震情報', DMDATA_LOG_PREFIX)
