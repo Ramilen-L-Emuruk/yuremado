@@ -5615,3 +5615,148 @@ describe('DMDSS 版: 前回受け付けられた区分で、履歴と復元を�
     expect(loadRememberedClassifications('other-key')).toEqual(['eew.forecast', 'telegram.earthquake'])
   })
 })
+
+describe('DMDSS 版: 起動時履歴は、ライブで当てた津波の報より古ければ津波を書き換えない', () => {
+  // 履歴の取得はライブの接続と並行して走り、数十秒〜数分かかる。その間にライブで当てた報を、取り込みの最後に
+  // 履歴の古い最新報（または空）で上書きすると、引き上げが巻き戻る・ライブで出た津波が消える・解除した津波が甦る
+  // （→ `useEarthquakes.ts` の `liveTsunamiSeenKeyRef`）。ここでは履歴の取得を止めておき、その間にライブで流す。
+  const EVENT_ID = '20240101161010'
+
+  function tsunami(over: { id: string; ageSec: number; grade?: 'Warning' | 'Watch'; cancelled?: boolean; validInMs?: number }): JMATsunami {
+    const createdAtMs = serverDate().getTime() - over.ageSec * 1000
+    const at = new Date(Math.floor(createdAtMs / 60_000) * 60_000).toISOString()
+    return {
+      kind: 'tsunami',
+      id: over.id,
+      eventId: EVENT_ID,
+      headType: 'VTSE41',
+      time: at,
+      createdAtMs,
+      cancelled: over.cancelled ?? false,
+      ...(over.cancelled && { cancelReason: 'lifted' as const }),
+      ...(over.validInMs !== undefined && { validDateTime: new Date(serverDate().getTime() + over.validInMs).toISOString() }),
+      infoName: '津波警報・注意報・予報',
+      issue: { source: 'dmdata', time: at, type: 'Focus' },
+      areas: over.cancelled ? [] : [{ grade: over.grade ?? 'Watch', immediate: false, name: '石川県能登' }],
+    }
+  }
+
+  /** 履歴の取得を止めておき、あとで解く。 */
+  function holdHistory() {
+    let release: (v: ReturnType<typeof history>) => void = () => {}
+    vi.mocked(fetchDmdataQuakeHistory).mockImplementationOnce(() => new Promise(r => { release = r }))
+    return (v: ReturnType<typeof history>) => release(v)
+  }
+
+  async function settle(h: ReturnType<typeof setup>) {
+    await h.flush()
+    await h.flush()
+  }
+
+  // 正: 取得中にライブで引き上げた報を、履歴の古い最新報で巻き戻さない
+  it('ライブで当てた報より古い履歴は、津波を巻き戻さない', async () => {
+    const release = holdHistory()
+    const h = setup()
+    await h.flush()
+    act(() => { h.current.injectEvent(tsunami({ id: 'live-warning', ageSec: 10, grade: 'Warning' })) })
+    release(history({ tsunamis: [tsunami({ id: 'history-watch', ageSec: 600, grade: 'Watch', validInMs: 3_600_000 })] }))
+    await settle(h)
+    expect(h.current.tsunamis.map(t => t.areas[0]?.grade)).toEqual(['Warning'])
+  })
+
+  // 正: 履歴に津波が無くても、ライブで出た津波を消さない
+  it('履歴に津波が無くても、ライブで出た津波を残す', async () => {
+    const release = holdHistory()
+    const h = setup()
+    await h.flush()
+    act(() => { h.current.injectEvent(tsunami({ id: 'live-watch', ageSec: 10 })) })
+    release(history())
+    await settle(h)
+    expect(h.current.tsunamis.length).toBe(1)
+  })
+
+  // 正: ライブで解除した津波を、履歴の古い発表報で甦らせない
+  it('ライブで解除した津波を、履歴の古い報で甦らせない', async () => {
+    const release = holdHistory()
+    const h = setup()
+    await h.flush()
+    act(() => { h.current.injectEvent(tsunami({ id: 'live-lift', ageSec: 10, cancelled: true })) })
+    release(history({ tsunamis: [tsunami({ id: 'history-watch', ageSec: 600, validInMs: 3_600_000 })] }))
+    await settle(h)
+    expect(h.current.tsunamis.some(t => t.id === 'history-watch' && !t.cancelled && !t.cancelledAt)).toBe(false)
+  })
+
+  // 対照: ライブで何も当てていなければ、履歴の最新報を当てる（従来どおり）
+  it('ライブで何も当てていなければ、履歴の最新報を当てる', async () => {
+    const release = holdHistory()
+    const h = setup()
+    await h.flush()
+    release(history({ tsunamis: [tsunami({ id: 'history-watch', ageSec: 600, validInMs: 3_600_000 })] }))
+    await settle(h)
+    expect(h.current.tsunamis.map(t => t.id)).toEqual(['history-watch'])
+  })
+
+  // 対照: ライブで当てた報より履歴の最新報が新しければ、履歴を当てる
+  it('履歴の最新報のほうが新しければ、履歴を当てる', async () => {
+    const release = holdHistory()
+    const h = setup()
+    await h.flush()
+    act(() => { h.current.injectEvent(tsunami({ id: 'live-watch', ageSec: 600 })) })
+    release(history({ tsunamis: [tsunami({ id: 'history-warning', ageSec: 10, grade: 'Warning', validInMs: 3_600_000 })] }))
+    await settle(h)
+    expect(h.current.tsunamis.map(t => t.id)).toEqual(['history-warning'])
+  })
+
+  // 正: 状態を変えなかった報（表示中が無いときの一部取消）では鍵を進めない。進めると取り消されていない履歴の津波まで落ちる
+  it('取得中に何にも当たらなかった取消が届いても、履歴の津波は当てる', async () => {
+    const release = holdHistory()
+    const h = setup()
+    await h.flush()
+    act(() => { h.current.injectEvent({ ...tsunami({ id: 'live-retract', ageSec: 10, cancelled: true }), headType: 'VTSE51' as const, cancelReason: 'retracted' as const }) })
+    release(history({ tsunamis: [tsunami({ id: 'history-watch', ageSec: 600, validInMs: 3_600_000 })] }))
+    await settle(h)
+    expect(h.current.tsunamis.map(t => t.id)).toEqual(['history-watch'])
+  })
+
+  describe('失効予約', () => {
+    beforeEach(() => { vi.useFakeTimers() })
+    afterEach(() => {
+      vi.useRealTimers()
+      socketOptions.holdClassifications = false
+      localStorage.clear()
+    })
+
+    // 正: 履歴を当てたら、ライブで先に当てた報の予約を外す（外さないと早いほうが今の津波を終わらせる）
+    it('履歴を当てたら、ライブで当てた報の早い予約では失効しない', async () => {
+      const release = holdHistory()
+      const h = setup()
+      await h.flush()
+      act(() => { h.current.injectEvent(tsunami({ id: 'live-watch', ageSec: 600, validInMs: 30_000 })) })
+      release(history({ tsunamis: [tsunami({ id: 'history-watch', ageSec: 10, validInMs: 120_000 })] }))
+      await settle(h)
+      act(() => { vi.advanceTimersByTime(31_000) })
+      expect(h.current.tsunamis[0].cancelledAt).toBeUndefined()
+      act(() => { vi.advanceTimersByTime(90_000) })
+      expect(h.current.tsunamis[0].cancelReason).toBe('expired')
+    })
+
+    // 正: 区分の食い違いで取り直す 2 回目も予約を積む（1 回目の予約を外したまま積み直さないと、失効しない津波になる）
+    it('履歴を取り直しても、津波は期限で失効する', async () => {
+      const t = tsunami({ id: 'history-watch', ageSec: 600, validInMs: 60_000 })
+      vi.mocked(fetchDmdataQuakeHistory).mockClear()
+      vi.mocked(fetchDmdataQuakeHistory)
+        .mockResolvedValueOnce(history({ tsunamis: [t] }))
+        .mockResolvedValueOnce(history({ tsunamis: [t] }))
+      socketOptions.holdClassifications = true
+      rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
+      const h = setup()
+      await settle(h)
+      act(() => { sockets[0].onClassifications?.(['eew.warning', 'telegram.earthquake']) })
+      await settle(h)
+      expect(vi.mocked(fetchDmdataQuakeHistory)).toHaveBeenCalledTimes(2)
+      expect(h.current.tsunamis[0].cancelledAt).toBeUndefined()
+      act(() => { vi.advanceTimersByTime(61_000) })
+      expect(h.current.tsunamis[0].cancelReason).toBe('expired')
+    })
+  })
+})
