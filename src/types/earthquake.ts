@@ -1995,6 +1995,7 @@ export interface JMAEstimatedIntensity {
    * **発生時刻（`OriginTime`）ではなく発現時刻（`ArrivalTime`）。** 資料の表記は
    * 「年月日（地震時刻、ＵＴＣ）」でどちらとも書かれていないが、**両者が 1 分ずれた実電文
    * 2 例（2026-04-20・2026-06-26）で照合したところ、いずれも `ArrivalTime` と一致した。**
+   * 標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）で照らし合わせた 110 通も、すべて一致した（→ docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）。
    * これは {@link JMAQuake.earthquake}`.time` が採っているのと同じ時刻なので、
    * 地震カードとは分単位でそのまま突き合わせられる（→ `matchEstimatedIntensity`）。
    */

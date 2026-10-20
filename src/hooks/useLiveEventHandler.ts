@@ -1024,7 +1024,8 @@ function hasMaxHeightTimeChanged(
  * **`over` が外れる向きも記録しない。** 地図のカメラ（`utils/tsunami.ts` の
  * `hasObservedHeightChanged`）が向きを問わず拾うのとは**意図的に非対称**で、あちらは「動いたか」、
  * こちらは「深刻になったか」を問う。そのぶん「`over` が外れ、また付く」続報では 2 度目の昇格を
- * 取りこぼすが、その形は実配信で観測していない（→ docs/spec/tsunami-spec.md §6）。
+ * 取りこぼすが、その形は標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）で見つかっていない（→ docs/spec/tsunami-spec.md §6）。ただし `over` が
+ * 付いた観測点そのものが 1 点しかないので、起きないとまでは言えない（→ docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）。
  */
 function rememberObservationHeights(
   obs: readonly import('../types/earthquake').TsunamiObservation[],
