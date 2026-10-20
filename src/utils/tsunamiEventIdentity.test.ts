@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   tsunamiEventIds,
   isSameTsunamiEvent,
+  isRetractedTsunamiInfoUnit,
+  stepTsunamiState,
   isTsunamiContinuation,
   isTsunamiNewFire,
   isCancelForCurrentTsunami,
@@ -14,7 +16,7 @@ import {
 } from './tsunami'
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../types/earthquake'
 
-// 番号が足される切替え（電文解説資料 Ⅰ.別02-8 出現例６）と、種類ごとの取消（同 Ⅰ.別03-1 例１①）。
+// 番号が足される切替え（電文解説資料 Ⅰ.別02-7 出現例６）と、種類ごとの取消（同 Ⅰ.別03-1 例１①）。
 // 実電文の標本は手元に無いので、資料の例の形をそのまま組む。
 
 const A = '20100714184000'
@@ -202,6 +204,112 @@ describe('津波情報・沖合の観測だけの取消（F5）', () => {
     const reissued = report({ headType: 'VTSE51', time: '2010-07-14T18:59:00+09:00', areas: [], observations: [obs('久慈港')] })
     const folded = foldTsunamiReports([warning, info, offshore, retract, reissued])
     expect(folded?.observations?.map(o => o.name).sort()).toEqual(['久慈港', '岩手釜石沖'].sort())
+  })
+})
+
+describe('isRetractedTsunamiInfoUnit（取消が取り消す情報の単位）', () => {
+  // 正: 報の番号の組が取消の組に含まれれば取り消される（並びは問わない。切替え前の「A」も「A B」の取消で消える。Ⅰ.別02-8 例２）
+  it('番号の組が取消の組に含まれれば取り消される', () => {
+    expect(isRetractedTsunamiInfoUnit(report({ eventId: `${A} ${B}` }), report({ eventId: `${B} ${A}` }))).toBe(true)
+    expect(isRetractedTsunamiInfoUnit(report({ eventId: A }), report({ eventId: `${A} ${B}` }))).toBe(true)
+  })
+
+  // 対照: 番号が重なっていても、取消の組に含まれない番号を持つ報は取り消さない（「A」の取消は「A B」を消さない）
+  it('取消の組より番号の多い報は取り消さない', () => {
+    expect(isRetractedTsunamiInfoUnit(report({ eventId: `${A} ${B}` }), report({ eventId: A }))).toBe(false)
+  })
+
+  // 安全弁: 運用種別も単位に含む。番号が無ければ照合しない
+  it('運用種別が違う・番号が無いなら偽', () => {
+    expect(isRetractedTsunamiInfoUnit(report({ eventId: A }), report({ eventId: A, operationStatus: '訓練' }))).toBe(false)
+    expect(isRetractedTsunamiInfoUnit(report({ eventId: undefined }), report({ eventId: A }))).toBe(false)
+    expect(isRetractedTsunamiInfoUnit(report({ eventId: A }), report({ eventId: undefined }))).toBe(false)
+  })
+
+  it('組み立てに使った報の番号は足さない', () => {
+    const folded = report({ eventId: `${A} ${B}`, foldedReports: [report({ eventId: A }), report({ eventId: `${A} ${B}` })] })
+    expect(isRetractedTsunamiInfoUnit(folded, report({ eventId: A }))).toBe(false)
+  })
+})
+
+describe('番号が伸びた津波の取消は、取消の組に含まれる単位だけに効く（Ⅰ.別02-8 例２）', () => {
+  const warnA = report({ eventId: A, time: '2010-07-14T18:44:00+09:00' })
+  const warnAB = report({ eventId: `${A} ${B}`, time: '2010-07-14T18:50:00+09:00' })
+  const current = mergeTsunamiReports(warnA, warnAB)
+  const retract = (eventId: string, headType: JMATsunami['headType'] = 'VTSE41') =>
+    report({ eventId, headType, time: '2010-07-14T19:00:00+09:00', cancelled: true, cancelReason: 'retracted', areas: [] })
+
+  // 正: 切り替え済みの「A」だけの取消では津波は終わらない
+  it('古い単位「A」の津波警報等の取消は表示中の「A B」に当たらない', () => {
+    expect(isCancelForCurrentTsunami(retract(A), current)).toBe(false)
+    expect(stepTsunamiState(current, retract(A), null)).toEqual({ kind: 'ignored' })
+  })
+
+  // 対照: いまの単位の組を含む取消なら終わる
+  it('「A B」の取消なら津波を終える', () => {
+    expect(stepTsunamiState(current, retract(`${A} ${B}`), null)).toEqual({ kind: 'ended', reason: 'cancelled' })
+  })
+
+  // 正: 表示中より大きい組の取消でも、いまの単位を含むので終える
+  it('「A B C」の取消でも「A B」の津波を終える', () => {
+    expect(stepTsunamiState(current, retract(`${A} ${B} 20100714190000`), null)).toEqual({ kind: 'ended', reason: 'cancelled' })
+  })
+
+  // 安全弁: 発表し直した津波へ、前の津波を終えた取消が届き直しても終えない（取消は取り消す報より後に出る）
+  it('発表し直した「A」の津波は、それより前の「A B」の取消で終えない', () => {
+    const reissued = report({ eventId: A, time: '2010-07-14T19:30:00+09:00' })
+    expect(stepTsunamiState(reissued, retract(`${A} ${B}`), null)).toEqual({ kind: 'ignored' })
+  })
+
+  // 安全弁: 番号を持たない一部取消でも、運用種別の違う報は抜かない
+  it('番号を持たない訓練の津波情報の取消は通常の津波情報を抜かない', () => {
+    const infoA = report({ eventId: A, headType: 'VTSE51', time: '2010-07-14T18:46:00+09:00', areas: [], observations: [obs('宮古')] })
+    const folded = mergeTsunamiReports(warnA, infoA)
+    const drill = report({ eventId: undefined, headType: 'VTSE51', operationStatus: '訓練', time: '2010-07-14T19:00:00+09:00', cancelled: true, cancelReason: 'retracted', areas: [] })
+    expect(stepTsunamiState(folded, drill, null)).toEqual({ kind: 'ignored' })
+  })
+
+  // 安全弁: 解除は従来どおり番号の重なりで当てる（解除の照合は狭めていない）
+  it('解除は番号が重なれば当たる', () => {
+    const lift = report({ eventId: A, time: '2010-07-14T19:00:00+09:00', cancelled: true, cancelReason: 'lifted', areas: [] })
+    expect(stepTsunamiState(current, lift, null)).toEqual({ kind: 'ended', reason: 'cancelled' })
+  })
+
+  // 安全弁: 比べる相手は同じ種類の最後の報。種類の違う報（津波情報）が別の組を名乗っても、警報等の取消は当たる
+  it('津波情報が「A」を名乗った後でも「A B」の津波警報等の取消で終える', () => {
+    const infoA = report({ eventId: A, headType: 'VTSE51', time: '2010-07-14T18:55:00+09:00', areas: [], observations: [obs('宮古')] })
+    const withInfo = mergeTsunamiReports(current, infoA)
+    expect(withInfo.eventId).toBe(A)
+    expect(stepTsunamiState(withInfo, retract(`${A} ${B}`), null)).toEqual({ kind: 'ended', reason: 'cancelled' })
+  })
+
+  // 対照: 番号は重なるが取消の組に含まれる津波情報が無い一部取消は、取り消すものが無いので何もしない（読み上げも走らせない）
+  it('取消の組に含まれる報の無い津波情報の取消は ignored', () => {
+    const infoAB = report({ eventId: `${A} ${B}`, headType: 'VTSE51', time: '2010-07-14T18:52:00+09:00', areas: [], observations: [obs('八戸港')] })
+    expect(stepTsunamiState(mergeTsunamiReports(current, infoAB), retract(A, 'VTSE51'), null)).toEqual({ kind: 'ignored' })
+  })
+
+  // 正: 津波情報の取消は「A」の単位の報だけを抜き、「A B」の単位の観測点を残す
+  it('津波情報の「A」の取消は「A B」の津波情報を残す', () => {
+    const infoA = report({ eventId: A, headType: 'VTSE51', time: '2010-07-14T18:46:00+09:00', areas: [], observations: [obs('宮古')] })
+    const infoAB = report({ eventId: `${A} ${B}`, headType: 'VTSE51', time: '2010-07-14T18:52:00+09:00', areas: [], observations: [obs('八戸港')] })
+    const folded = [warnAB, infoAB].reduce(mergeTsunamiReports, [infoA].reduce(mergeTsunamiReports, warnA))
+    const step = stepTsunamiState(folded, retract(A, 'VTSE51'), null)
+    expect(step.kind).toBe('live')
+    if (step.kind !== 'live') return
+    expect(step.tsunami.observations?.map(o => o.name)).toEqual(['八戸港'])
+  })
+
+  // 正: 「A B」の津波情報の取消は、切替え前の「A」の津波情報もまとめて抜く（警報は残る）
+  it('津波情報の「A B」の取消は「A」と「A B」の津波情報を両方抜く', () => {
+    const infoA = report({ eventId: A, headType: 'VTSE51', time: '2010-07-14T18:46:00+09:00', areas: [], observations: [obs('宮古')] })
+    const infoAB = report({ eventId: `${A} ${B}`, headType: 'VTSE51', time: '2010-07-14T18:52:00+09:00', areas: [], observations: [obs('八戸港')] })
+    const folded = [warnAB, infoAB].reduce(mergeTsunamiReports, [infoA].reduce(mergeTsunamiReports, warnA))
+    const step = stepTsunamiState(folded, retract(`${A} ${B}`, 'VTSE51'), null)
+    expect(step.kind).toBe('live')
+    if (step.kind !== 'live') return
+    expect(step.tsunami.observations ?? []).toEqual([])
+    expect(step.tsunami.areas).toEqual(warnAB.areas)
   })
 })
 

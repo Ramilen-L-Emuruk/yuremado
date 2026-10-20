@@ -2088,7 +2088,7 @@ export function useEarthquakes(
           // 番号が 1 つも重ならない津波が、表示中の津波の解除を待たずに届いた。
           //
           // **置き換える（2026-10-14 ユーザー承認「置き換える（推奨）」）。** 気象庁は別の地震が寄与すると
-          // 同じ警報を切り替えて番号を足すので（電文解説資料 Ⅰ.別02-8 出現例６）、同じ津波は番号が重なる。
+          // 同じ警報を切り替えて番号を足すので（電文解説資料 Ⅰ.別02-7 出現例６）、同じ津波は番号が重なる。
           // 重ならない報は別の津波として扱い、最新の発表を見せる。置き換えた事実はログから追えるようにする。
           if (!step.continued && current && current.eventId && tsunami.eventId
               && !isSameTsunamiEvent(current, tsunami) && !current.cancelledAt) {

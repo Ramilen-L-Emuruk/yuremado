@@ -129,7 +129,7 @@ export function tsunamiEventIds(t: Pick<JMATsunami, 'eventId' | 'foldedReports'>
  * **地震の識別番号が 1 つでも重なり、運用種別（`Control/Status`）が同じなら同じ津波。**
  *
  * - 番号の重なりで見るのは、気象庁が別の地震の寄与を受けて同じ警報を切り替えるとき、`EventID` に
- *   番号を足すため（電文解説資料 Ⅰ.別02-8 出現例６: `A` → `A B`）。文字列の一致で比べると、
+ *   番号を足すため（電文解説資料 Ⅰ.別02-7 出現例６: `A` → `A B`）。文字列の一致で比べると、
  *   切替えの報を別の津波と取り違え、観測点・付加文・期限・本文を落として新しい発表として鳴らす
  * - 運用種別を見るのは、気象庁の言う「独立した情報単位」が情報名称・運用種別・地震識別番号の
  *   組で決まるため（同 Ⅰ.別01-1）。訓練の報を通常の津波へ混ぜない
@@ -145,6 +145,30 @@ export function isSameTsunamiEvent(
   if (aIds.length === 0) return false
   const bIds = new Set(tsunamiEventIds(b))
   return aIds.some(id => bIds.has(id))
+}
+
+/**
+ * 報 `report` が取消 `retraction` に取り消される情報の単位か（運用種別も同じ）。**取消の照合はこれで見る。**
+ *
+ * 情報の単位は「情報名称、運用種別、及び地震識別番号の組み合わせが一致する一連の情報」（電文解説資料
+ * Ⅰ.別01-1）。番号が「A」の報と「A B」の報は別の単位で、取消は`report` の番号の組が取消の組に**すべて含まれる**ときに効く。
+ * 気象庁は、「A」→「A B」と切り替えた警報をすべて取り消すときに「A B」の取消を 1 通だけ出し、「A」だけの取消は出さない
+ * （同 Ⅰ.別02-8 例２）。だから「A B」の取消は切替え前の「A」の報も取り消し、「A」の取消は「A B」の報を取り消さない。
+ * 続報の照合（{@link isSameTsunamiEvent}・番号の重なり）とは目的が違う —— あちらは「同じ津波か」を、
+ * こちらは「その取消がどの報を取り消すか」を問う。
+ *
+ * **比べるのはそれぞれの報が自分で名乗った `eventId` だけ**（組み立てに使った報の番号は足さない）。
+ * どちらかが番号を持たなければ偽。
+ */
+export function isRetractedTsunamiInfoUnit(
+  report: Pick<JMATsunami, 'eventId' | 'operationStatus'>,
+  retraction: Pick<JMATsunami, 'eventId' | 'operationStatus'>,
+): boolean {
+  if ((report.operationStatus ?? null) !== (retraction.operationStatus ?? null)) return false
+  const reportIds = tsunamiEventIds({ eventId: report.eventId })
+  const retractionIds = new Set(tsunamiEventIds({ eventId: retraction.eventId }))
+  if (reportIds.length === 0 || retractionIds.size === 0) return false
+  return reportIds.every(id => retractionIds.has(id))
 }
 
 /**
@@ -211,9 +235,10 @@ export function foldTsunamiReports(reports: readonly JMATsunami[]): JMATsunami |
 /**
  * 表示中の津波から、取消が向いた報を抜いて組み直す（津波情報・沖合の観測だけの取消を受けたとき）。
  *
- * 抜くのは**種類が同じで、地震の番号が取消と重なる報**。取消は情報の単位（情報名称と地震の番号）ごとに
- * 効くので（電文解説資料 Ⅰ.別01-1・Ⅰ.別03-1）、原因の地震が加わって番号が「A」→「A B」と伸びた津波では、同じ
- * 津波情報でも単位の違う報が混ざりうる。種類だけで抜くと、生きている単位の観測点まで消える。
+ * 抜くのは**種類が同じで、地震の番号の組が取消の組に含まれる報**（{@link isRetractedTsunamiInfoUnit}）。取消は
+ * 情報の単位（情報名称・運用種別・地震の番号の組）ごとに効くので（電文解説資料 Ⅰ.別01-1・Ⅰ.別03-1）、原因の
+ * 地震が加わって番号が「A」→「A B」と伸びた津波では、同じ津波情報でも単位の違う報が混ざりうる。番号の
+ * 重なりで抜くと、「A」だけの取消で「A B」の単位の観測点まで消える。「A B」の取消は「A」の報も抜く（Ⅰ.別02-8 例２）。
  * 取消が番号を持たないとき（番号で照合できない経路）は種類だけで抜く。
  *
  * 組み立てに使った報（`foldedReports`）は届いた順に並んでいるので、並べ替えずにそのまま当て直す。
@@ -224,10 +249,39 @@ export function refoldTsunamiWithout(
   current: JMATsunami,
   retraction: Pick<JMATsunami, 'headType' | 'eventId' | 'operationStatus'>,
 ): JMATsunami | null {
-  const byNumber = tsunamiEventIds(retraction).length > 0
   return reportsOf(current)
-    .filter(r => r.headType !== retraction.headType || (byNumber && !isSameTsunamiEvent(r, retraction)))
+    .filter(r => !isRetractedBy(r, retraction))
     .reduce<JMATsunami | undefined>(applyTsunamiReport, undefined) ?? null
+}
+
+/**
+ * 報 `r` が一部取消 `retraction` の向いた報か（{@link refoldTsunamiWithout} が抜く報）。
+ * 取消が番号を持たなければ種類と運用種別だけで見る（訓練の取消で通常の報を抜かない）。
+ */
+function isRetractedBy(r: JMATsunami, retraction: Pick<JMATsunami, 'headType' | 'eventId' | 'operationStatus'>): boolean {
+  if (r.headType !== retraction.headType) return false
+  if (tsunamiEventIds(retraction).length > 0) return isRetractedTsunamiInfoUnit(r, retraction)
+  return (r.operationStatus ?? null) === (retraction.operationStatus ?? null)
+}
+
+/**
+ * 津波警報等の取消（一部取消でない `retracted`）が、表示中の津波の**いまの情報の単位**に向いているか。
+ *
+ * 比べる相手は、組み立てに使った報のうち**取消と同じ種類で最後に届いた報**が名乗った番号の組で、それが取消の組に含まれれば当たる。取消は情報名称ごとの
+ * 単位に効くので（電文解説資料 Ⅰ.別01-1）、種類の違う報（津波情報など）の番号とは比べない。同じ種類の報が
+ * 1 通も無ければ、表示中の津波自身の番号と比べる。
+ *
+ * **比べる相手より前に発表された取消は当てない。** 取消は取り消す報より後に出る。「A B」の取消で終えたあとに「A」で
+ * 発表し直した津波へ、同じ取消が届き直す（再接続・取りこぼしの補い）と、「A」は「A B」に含まれるので終わってしまう。
+ * 発表時刻をどちらか読めなければ時刻では落とさない（取消を落とすほうが害が大きい）。
+ */
+function isRetractionForCurrentUnit(cancel: JMATsunami, current: JMATsunami): boolean {
+  const sameKind = reportsOf(current).filter(r => r.headType === cancel.headType)
+  const target = sameKind.length > 0 ? sameKind[sameKind.length - 1] : current
+  const cancelAt = new Date(cancel.time).getTime()
+  const targetAt = new Date(target.time).getTime()
+  if (Number.isFinite(cancelAt) && Number.isFinite(targetAt) && cancelAt < targetAt) return false
+  return isRetractedTsunamiInfoUnit(target, cancel)
 }
 
 /**
@@ -236,8 +290,14 @@ export function refoldTsunamiWithout(
  * 津波は 1 件スロットで持つため、**別イベントの遅延到達した解除で進行中の津波を消してはいけない**。
  * 判定は 2 段。
  *
- * 1. 双方が `eventId` を持つなら {@link isSameTsunamiEvent}（地震の識別番号の重なり）で見る
- *    （`serial` が違っても同一イベントを解除できるよう、`id` 全体ではなく番号で照合する）
+ * 1. 双方が `eventId` を持つなら番号で見る（`serial` が違っても同一イベントを解除できるよう、`id` 全体ではなく番号で照合する）
+ *    - **解除・失効**は {@link isSameTsunamiEvent}（地震の識別番号の重なり）。解除は津波の続報なので、続報と同じ物差しで見る
+ *    - **取消**（`cancelReason: 'retracted'`。津波警報等の取消）は {@link isRetractedTsunamiInfoUnit}（取消の番号の組に含まれるか）で、
+ *      組み立てに使った報のうち**取消と同じ種類で最後に届いた報**が名乗った組と比べる（`isRetractionForCurrentUnit`）。取消は情報の単位ごとに効くので（電文解説資料 Ⅰ.別01-1）、
+ *      「A」→「A B」と切り替えたあとの「A」だけの取消は、もう切り替わった古い単位を取り消すだけで、津波は終わらない。
+ *      気象庁はこの切替えのあとの取消を「A B」で 1 通だけ出すと定めている（同 Ⅰ.別02-8 例２「地震Ａの識別番号だけの
+ *      津波警報・注意報・予報の取消電文は発信しない」）。津波情報だけの取消（{@link isPartialTsunamiRetraction}）はここでは番号の重なりで同じ津波かを見るだけで、
+ *      どの報を抜くか（取消の組に含まれるか）は {@link refoldTsunamiWithout} が決める。抜く報が無ければ {@link stepTsunamiState} が `ignored` を返す
  * 2. どちらかが欠けていれば同一イベントかは判定できないので、発表時刻の前後だけを見る。
  *    表示中より古い解除は別イベントの遅延到達とみなす（これが無いと A の遅い解除で B が消える）
  *
@@ -254,7 +314,10 @@ export function isCancelForCurrentTsunami(cancel: JMATsunami, current: JMATsunam
   if (!current) return true
   const cancelEventId = cancel.eventId
   const currentEventId = current.eventId
-  if (cancelEventId && currentEventId) return isSameTsunamiEvent(cancel, current)
+  if (cancelEventId && currentEventId) {
+    if (cancel.cancelReason === 'retracted' && !isPartialTsunamiRetraction(cancel)) return isRetractionForCurrentUnit(cancel, current)
+    return isSameTsunamiEvent(cancel, current)
+  }
   const cancelAt = new Date(cancel.time).getTime()
   const currentAt = new Date(current.time).getTime()
   if (Number.isFinite(cancelAt) && Number.isFinite(currentAt) && cancelAt < currentAt) return false
@@ -283,7 +346,7 @@ export function isTsunamiContinuation(current: JMATsunami | undefined, next: JMA
 /**
  * 報を 1 通当てたあと、表示中の津波がどうなるか（{@link stepTsunamiState} の答え）。
  *
- * - `ignored` … 表示中の津波に当たらない報（別の津波の解除・取消、表示中の津波が無いときの一部取消）。状態を変えない
+ * - `ignored` … 表示中の津波に当たらない報（別の津波の解除・取消、表示中の津波が無いときの一部取消、取消の番号の組に含まれる報が無い一部取消）。状態を変えない
  * - `ended` … 表示中の津波が終わる。`reason` は終わり方
  *   - `cancelled` … 解除・取消・失効（表示中の津波があれば取消表示を経る）
  *   - `retractedAll` … 一部取消で、組み直す報が残らない
@@ -308,6 +371,8 @@ export type TsunamiStateStep =
 export function stepTsunamiState(current: JMATsunami | undefined, report: JMATsunami, now: Date | null): TsunamiStateStep {
   if (isPartialTsunamiRetraction(report)) {
     if (!current || current.cancelledAt || !isCancelForCurrentTsunami(report, current)) return { kind: 'ignored' }
+    // 同じ津波でも、取消の番号の組に含まれる同じ種類の報が無ければ取り消すものが無い（読み上げも記憶の整理も走らせない）
+    if (!reportsOf(current).some(r => isRetractedBy(r, report))) return { kind: 'ignored' }
     const refolded = refoldTsunamiWithout(current, report)
     return refolded ? { kind: 'live', tsunami: refolded, continued: true } : { kind: 'ended', reason: 'retractedAll' }
   }

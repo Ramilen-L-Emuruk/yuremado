@@ -15,7 +15,7 @@ import {
   quakeRetractionOf, QUAKE_ISSUE_PRIORITY, reportOrderKey, type QuakeRetraction,
 } from '../utils/quakeMerge'
 import type { AreaPrefIndex } from '../utils/quakePoints'
-import { latestValidDateTime, foldTsunamiReports, isPartialTsunamiRetraction, isSameTsunamiEvent } from '../utils/tsunami'
+import { latestValidDateTime, foldTsunamiReports, isSameTsunamiEvent, stepTsunamiState } from '../utils/tsunami'
 import type { ReplayEntry, ReplayPayload, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
 import {
   isHandledType, QUAKE_TYPES, TSUNAMI_TYPES, HISTORY_EXTRA_TYPES, historyExtraKey,
@@ -1272,6 +1272,37 @@ function groupTsunamiReports(tsunamis: readonly JMATsunami[]): Map<JMATsunami, n
 }
 
 /**
+ * 束の報を古い順に当てて、**最後に当てた結果が解除・取消・失効で終わっているか**。
+ *
+ * **当て方はライブの状態更新と同じ `stepTsunamiState` に任せる。** 取消は情報の単位（番号の組）ごとに効き、
+ * 「A」→「A B」と切り替えたあとの「A」だけの取消では津波は終わらない（→ `isCancelForCurrentTsunami`）。
+ * 取消の報を見つけただけで終わったとみなすと、ライブなら生きている津波を初期状態から落とす。終わったあとに同じ束で
+ * 発表し直した報があれば、ライブと同じく生きている側に数える。
+ * 津波情報だけの取消で組み直す報が残らなかったとき（`retractedAll`）は終わったと数えない（従来どおり。警報は生きている）。
+ * 解除・取消のあとに届いた一部取消は、表示中の津波が無いので `ignored` になり、終わった判定を打ち消さない。
+ *
+ * **発表時刻を読めない取消は捨てずに末尾へ回す。** 捨てると、時刻の壊れた取消で解除済みの津波が初期状態に甦る。
+ * 時刻を読めない取消以外の報は外す（束を畳む `foldTsunamiReports` も外すので、内容を使われない報で判定だけを動かさない）。
+ */
+function endedByCancel(reports: JMATsunami[]): boolean {
+  const at = (r: JMATsunami) => { const t = new Date(r.time).getTime(); return Number.isFinite(t) ? t : Infinity }
+  const ordered = reports.filter(r => r.cancelled || Number.isFinite(at(r))).sort((a, b) => at(a) - at(b))
+  let current: JMATsunami | undefined
+  let ended = false
+  for (const r of ordered) {
+    const step = stepTsunamiState(current, r, null)
+    if (step.kind === 'ended') {
+      ended = step.reason === 'cancelled'
+      current = undefined
+    } else if (step.kind === 'live') {
+      ended = false
+      current = step.tsunami
+    }
+  }
+  return ended
+}
+
+/**
  * 初期状態の再現に載せる津波を、報ではなくイベント単位で決める。
  *
  * 報 1 通だけで判定できない事実が 2 つある。
@@ -1284,6 +1315,7 @@ function groupTsunamiReports(tsunamis: readonly JMATsunami[]): Map<JMATsunami, n
  *
  * もうひとつは**解除**。解除報を捨てるだけでは、それより前の発表報が残って解除済みの津波が復活する。
  * **津波情報・沖合の観測だけの取消は解除に数えない**（警報は生きている。→ `isPartialTsunamiRetraction`）。
+ * 津波警報等の取消も、取消が向いた情報の単位がもう切り替わっていれば数えない（→ `endedByCancel`）。
  *
  * **解除による足切りは `eventId` を持つ電文にしか適用しない。** 識別子が無ければ「どの津波の解除か」
  * を決められず、時刻の前後だけで落とすと、同じ 24 時間に無関係な津波が 2 つあったときに、解除された
@@ -1318,7 +1350,7 @@ function resolveTsunamiPreWindowStates(
   const states = new Map<number, TsunamiPreWindowState>()
   for (const [gi, reports] of groups) {
     const identified = !!reports[0].eventId
-    if (identified && reports.some(r => r.cancelled && !isPartialTsunamiRetraction(r))) {
+    if (identified && endedByCancel(reports)) {
       states.set(gi, { alive: false })
       continue
     }
