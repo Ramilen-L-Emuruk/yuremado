@@ -133,11 +133,12 @@ export function quakeScaleForScope(
     if (!recognizesTelegram(quake, scope)) return nationwide()
     // 「載っていない」から言えることは電文の粒度で決まる。**言えない場合は倒す。**
     //
-    // 観測点の点を持つ電文なら「載っていない＝震度1未満」なので、閾値がいくつでも出さなくてよい。
+    // 観測点の点を持つ電文なら「その時点では、載っていない＝震度1未満」なので、閾値がいくつでも
+    // 出さなくてよい。**観測点は続報で後から加わることがある**が、その続報が届いたらこの関数がもう一度
+    // 呼ばれる（どの地震を呼び直すかは `useActionChecklist` の `judgedQuakesRef`）。
     // 区域しか持たない電文（震度速報）で言えるのは「震度3未満」までなので、閾値がそれより低いと
-    // 判定できない。**そこで判定を保留すると、その地震は二度と評価されないことがある** ——
-    // 見るのは常に最新の 1 件（`earthquakes[0]`・地震の時刻の新しい順）なので、観測点を載せた続報が
-    // 届く前に別の地震が起きると、古い方は先頭へ戻れない。
+    // 判定できない。**そこで判定を保留すると、観測点を載せた続報が届かなかったとき出ないまま終わる**
+    // （震度速報だけで終わる地震がある）。
     const hasStationPoint = (quake.points ?? []).some(p => !p.isArea && isValidIntensityScale(p.scale))
     if (!hasStationPoint && minScale < AREA_REPORT_FLOOR) return nationwide()
     return null

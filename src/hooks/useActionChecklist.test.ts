@@ -63,6 +63,8 @@ function detected(index: number): readonly DetectedPoint[] {
 
 interface Props {
   q?: JMAQuake
+  /** 地震の一覧（地震の時刻の新しい順）。渡せば `q` より優先する。 */
+  qs?: readonly JMAQuake[]
   e?: readonly EEWAlert[]
   k?: readonly DetectedPoint[]
   /** 検知エンジンが結果を出せなくなっている（`useKyoshinDetectorV2` の `stalled`）。 */
@@ -70,9 +72,20 @@ interface Props {
   min?: number
 }
 
+// **同じ地震には同じ配列を返す。** 描き直すたびに `[q]` を作ると、App の一覧（状態なので参照が保たれる）と
+// 違って毎回「一覧が変わった」ことになり、判定が余計に走り直す。
+const NO_QUAKES: readonly JMAQuake[] = []
+const singleQuakeLists = new WeakMap<JMAQuake, readonly JMAQuake[]>()
+function listOf(q: JMAQuake | undefined): readonly JMAQuake[] {
+  if (!q) return NO_QUAKES
+  let list = singleQuakeLists.get(q)
+  if (!list) singleQuakeLists.set(q, (list = [q]))
+  return list
+}
+
 function setup(initial: JMAQuake | undefined, eews: readonly EEWAlert[] = NO_EEWS) {
   return renderHook(
-    ({ q, e, k, stalled, min }: Props) =>
+    ({ q, qs, e, k, stalled, min }: Props) =>
       useActionChecklist({
         minScale: min ?? MIN,
         // ホーム地点を持たない端末（全国基準）。`scope` は呼び出し側が作る
@@ -81,7 +94,7 @@ function setup(initial: JMAQuake | undefined, eews: readonly EEWAlert[] = NO_EEW
         detectedPoints: k ?? NO_POINTS,
         kyoshinStalled: stalled ?? false,
         eews: e ?? NO_EEWS,
-        latestQuake: q,
+        quakes: qs ?? listOf(q),
       }),
     { initialProps: { q: initial, e: eews } as Props },
   )
@@ -629,5 +642,208 @@ describe('出している帯の元の EEW が誤報取消されたら', () => {
     act(() => rerender({ e: NO_EEWS }))
     expect(result.current.state?.reason).toBe('eew')
     expect(result.current.state?.scale).toBe(70)
+  })
+})
+
+// 観測点は続報で後から加わる（実電文で、VXSE53 を 2 通以上持つ 18 地震のうち 17 地震）。先頭の
+// 1 件だけを見ると、その間に別の地震が先頭へ来たとき、前の地震で上がった震度が判定されない。
+describe('先頭でない地震の続報', () => {
+  /** 統合したカード。`id` は最後に当てた電文の id（続報が届くと替わる）。 */
+  function card(eventKey: string, maxScale: number, id: string): JMAQuake {
+    return { ...quake(eventKey, maxScale), id }
+  }
+
+  // 正
+  it('先頭でない地震に続報が届いて閾値に達したら出る', () => {
+    const { result, rerender } = setup(card('ev1', 30, 'ev1-1'))
+    // 別の地震が先頭へ来る（どちらも閾値未満）
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 30, 'ev1-1')] }))
+    expect(result.current.state).toBe(null)
+    // 前の地震の続報で震度が上がる
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 55, 'ev1-2')] }))
+    expect(result.current.state?.key).toBe('quake:ev1')
+    expect(result.current.state?.scale).toBe(55)
+  })
+
+  // 正: 一度も先頭に来ていない地震（起動時の履歴で入った等）でも、続報が届けば判定する
+  it('先頭に来たことのない地震でも、続報が届いて閾値に達したら出る', () => {
+    const { result, rerender } = setup(undefined)
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 30, 'ev1-1')] }))
+    expect(result.current.state).toBe(null)
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 55, 'ev1-2')] }))
+    expect(result.current.state?.key).toBe('quake:ev1')
+  })
+
+  // 対照: 起動時の履歴や「もっと見る」で古い地震がまとめて入っただけでは出さない
+  it('先頭でない地震が初めて現れただけでは出ない', () => {
+    const { result, rerender } = setup(card('ev2', 30, 'ev2-1'))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 70, 'ev1-9')] }))
+    expect(result.current.state).toBe(null)
+  })
+
+  // 対照: 同じ `id` のまま描き直されただけ（続報ではない）なら出さない
+  it('先頭でない地震の id が変わらなければ出ない', () => {
+    const { result, rerender } = setup(card('ev2', 30, 'ev2-1'))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 70, 'ev1-9')] }))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 70, 'ev1-9')], e: NO_EEWS }))
+    expect(result.current.state).toBe(null)
+  })
+
+  it('続報で出た古い地震の帯は、先頭のより低い地震に差し替わらない', () => {
+    const { result, rerender } = setup(card('ev1', 30, 'ev1-1'))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 30, 'ev1-1')] }))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 60, 'ev1-2')] }))
+    // 先頭の地震の続報で、閾値には達するが古い方より低い
+    act(() => rerender({ qs: [card('ev2', 50, 'ev2-2'), card('ev1', 60, 'ev1-2')] }))
+    expect(result.current.state?.key).toBe('quake:ev1')
+    expect(result.current.state?.scale).toBe(60)
+  })
+
+  // 安全弁: 寿命が尽きて消した地震が最も深刻でも、閾値に達した別の地震は出る
+  it('消した地震が最も深刻でも、別の地震の帯は出る', () => {
+    const { result, rerender } = setup(card('ev1', 70, 'ev1-1'))
+    act(() => result.current.dismiss())
+    act(() => void vi.advanceTimersByTime(SUPPRESS_MS + 1)) // 寿命が尽きて消える
+    expect(result.current.state).toBe(null)
+    act(() => rerender({ qs: [card('ev2', 50, 'ev2-1'), card('ev1', 70, 'ev1-1')] }))
+    expect(result.current.state?.key).toBe('quake:ev2')
+  })
+
+  it('一覧から消えた地震は判定から外れる', () => {
+    const { result, rerender } = setup(card('ev1', 30, 'ev1-1'))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 30, 'ev1-1')] }))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1')] }))
+    // 同じ地震が再び現れても、初めて現れた扱い（先頭でないので判定しない）
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 70, 'ev1-2')] }))
+    expect(result.current.state).toBe(null)
+  })
+
+  it('リプレイの開始で、前に見た id を忘れる', () => {
+    const { result, rerender } = setup(card('ev2', 30, 'ev2-1'))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 30, 'ev1-1')] }))
+    act(() => result.current.resetForReplay())
+    // 新しい時間軸で同じ地震が別の報の状態で現れても、「続報が届いた」と取り違えない
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 70, 'ev1-3')] }))
+    expect(result.current.state).toBe(null)
+  })
+})
+
+describe('判定する地震の期限と取消', () => {
+  function card(eventKey: string, maxScale: number, id: string, telegramKey?: string): JMAQuake {
+    return { ...quake(eventKey, maxScale), id, ...(telegramKey && { telegramKey }) }
+  }
+  function cancelled(q: JMAQuake): JMAQuake {
+    return { ...q, cancelledAt: new Date() } as JMAQuake
+  }
+
+  // 正: DMDATA の id は種別を含まないので、震源情報 #1 → 震源・震度情報 #1 で id が変わらない
+  it('id が同じでも、最後に当てた電文が替われば続報として判定する', () => {
+    const { result, rerender } = setup(undefined)
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1', 't2a'), card('ev1', 30, 'dmdata-quake-ev1-1', 't1a')] }))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1', 't2a'), card('ev1', 55, 'dmdata-quake-ev1-1', 't1b')] }))
+    expect(result.current.state?.key).toBe('quake:ev1')
+  })
+
+  // 正: 最後に電文が届いてから 1 時間を過ぎた地震は選ばない（何時間も前の地震の帯が開き直さない）
+  it('最後に電文が届いてから 1 時間を過ぎた地震は、より深刻でも選ばない', () => {
+    const { result, rerender } = setup(card('ev1', 70, 'ev1-1'))
+    expect(result.current.state?.key).toBe('quake:ev1')
+    act(() => rerender({ q: card('ev1', 70, 'ev1-1'), e: [eewAlert('e1', 60)] }))
+    expect(result.current.state?.key).toBe('eew:e1')
+    act(() => void vi.advanceTimersByTime(SUPPRESS_MS + 1000))
+    act(() => rerender({ qs: [card('ev2', 50, 'ev2-1'), card('ev1', 70, 'ev1-1')], e: NO_EEWS }))
+    expect(result.current.state?.key).toBe('quake:ev2')
+  })
+
+  // 対照: 1 時間以内なら、より深刻な古い地震を選ぶ
+  it('1 時間以内なら、より深刻な地震を選ぶ', () => {
+    const { result, rerender } = setup(card('ev1', 70, 'ev1-1'))
+    act(() => rerender({ q: card('ev1', 70, 'ev1-1'), e: [eewAlert('e1', 60)] }))
+    act(() => void vi.advanceTimersByTime(SUPPRESS_MS - 60_000))
+    act(() => rerender({ qs: [card('ev2', 50, 'ev2-1'), card('ev1', 70, 'ev1-1')], e: NO_EEWS }))
+    expect(result.current.state?.key).toBe('quake:ev1')
+  })
+
+  // 安全弁: 続報が届けば期限は延びる
+  it('続報が届けば、そこから 1 時間判定する', () => {
+    const { result, rerender } = setup(card('ev2', 30, 'ev2-1'))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 30, 'ev1-1')] }))
+    act(() => void vi.advanceTimersByTime(SUPPRESS_MS + 1000))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 55, 'ev1-2')] }))
+    expect(result.current.state?.key).toBe('quake:ev1')
+  })
+
+  it('取消表示中の地震カードは判定しない', () => {
+    const { result } = setup(cancelled(card('ev1', 70, 'ev1-1')))
+    expect(result.current.state).toBe(null)
+  })
+
+  // 正: 出ている帯の元の地震が取り消されたら、帯を下ろす（緊急地震速報と同じ）
+  it('出ている帯の元の地震が取り消されたら、帯を下ろす', () => {
+    const { result, rerender } = setup(card('ev1', 70, 'ev1-1'))
+    expect(result.current.state?.key).toBe('quake:ev1')
+    act(() => rerender({ qs: [cancelled(card('ev1', 70, 'ev1-1'))] }))
+    expect(result.current.state).toBe(null)
+  })
+
+  it('取り消された地震の帯を閉じてできた記録は捨てる', () => {
+    const { result, rerender } = setup(card('ev1', 70, 'ev1-1'))
+    act(() => result.current.dismiss())
+    expect(localStorage.getItem('action-checklist-suppress')).not.toBe(null)
+    act(() => rerender({ qs: [cancelled(card('ev1', 70, 'ev1-1'))] }))
+    expect(localStorage.getItem('action-checklist-suppress')).toBe(null)
+  })
+
+  // 対照: 同じ鍵の生きたカードが並んでいれば（取消のあとに出し直された報）帯は下ろさない
+  it('同じ鍵の生きたカードが残っていれば、帯は下ろさない', () => {
+    const { result, rerender } = setup(card('ev1', 70, 'ev1-1'))
+    act(() => rerender({ qs: [card('ev1', 70, 'ev1-2'), cancelled(card('ev1', 70, 'ev1-1'))] }))
+    expect(result.current.state?.key).toBe('quake:ev1')
+  })
+
+  // 安全弁: 同じ鍵の取消カードの震度は使わない（生きたカードの震度で出す）
+  it('同じ鍵の取消カードと並んでいても、震度は生きたカードから取る', () => {
+    const { result, rerender } = setup(card('ev1', 50, 'ev1-1'))
+    act(() => rerender({ qs: [card('ev1', 50, 'ev1-2'), cancelled(card('ev1', 70, 'ev1-1'))] }))
+    expect(result.current.state?.scale).toBe(50)
+  })
+
+  /** 統合したカード（控えている電文つき）。`at` は控えの各電文の発表時刻。 */
+  function folded(eventKey: string, maxScale: number, adoptedId: string, at: string[]): JMAQuake {
+    const sources = at.map((time, i) => ({ ...quake(eventKey, maxScale), id: `${eventKey}-src${i}`, time }))
+    return { ...card(eventKey, maxScale, adoptedId, `k-${adoptedId}`), sourceTelegrams: sources }
+  }
+
+  // 対照: 「もっと見る」で古い電文が足され、当て直しで採用される電文が古い完全版へ替わっても、
+  // 続報は届いていないので判定しない
+  it('古い電文が後から足されて採用される電文が替わっても、続報としない', () => {
+    const { result, rerender } = setup(undefined)
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), folded('ev1', 70, 'ev1-prompt', ['2026/01/01 16:20:00'])] }))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), folded('ev1', 70, 'ev1-full', ['2026/01/01 16:15:00', '2026/01/01 16:20:00'])] }))
+    expect(result.current.state).toBe(null)
+  })
+
+  // 正: 同じ分に届いた続報も、通数で拾う
+  it('最も新しい電文と同じ分に届いた続報も、続報として判定する', () => {
+    const { result, rerender } = setup(undefined)
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), folded('ev1', 30, 'ev1-a', ['2026/01/01 16:20:00'])] }))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), folded('ev1', 55, 'ev1-a', ['2026/01/01 16:20:00', '2026/01/01 16:20:00'])] }))
+    expect(result.current.state?.key).toBe('quake:ev1')
+  })
+
+  // 正: 取消のあと、同じ地震が先頭でない位置へ出し直されたら続報として判定する
+  it('取消のあと先頭でない位置へ出し直された地震は、続報として判定する', () => {
+    const { result, rerender } = setup(undefined)
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 30, 'ev1-1')] }))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), cancelled(card('ev1', 30, 'ev1-1'))] }))
+    act(() => rerender({ qs: [card('ev2', 30, 'ev2-1'), card('ev1', 60, 'ev1-2')] }))
+    expect(result.current.state?.key).toBe('quake:ev1')
+  })
+
+  // 対照: 別の地震が取り消されても帯は残る
+  it('元ではない地震が取り消されても帯は残る', () => {
+    const { result, rerender } = setup(card('ev1', 70, 'ev1-1'))
+    act(() => rerender({ qs: [cancelled(card('ev2', 30, 'ev2-1')), card('ev1', 70, 'ev1-1')] }))
+    expect(result.current.state?.key).toBe('quake:ev1')
   })
 })
