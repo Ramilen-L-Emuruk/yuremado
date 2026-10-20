@@ -319,10 +319,21 @@ export async function fetchRealtimeIntensity(
         lastErr = new Error(`realtime response missing/empty realTimeData.intensity (edge=${edge})`)
         continue
       }
+      // **観測点リストの版（`siteConfigId`）の欠落・空文字も失敗にする**（2026-10-19 ユーザー選択
+      // 「欠落を「更新停止」に乗せる (推奨)」）。成功として渡すと、受け手は版の無いフレームの座標を
+      // 引けず（`useKyoshinRealtime` は空の版では観測点リストを取りに行かない）、`indicesSiteConfigId`
+      // （空）が `sitesSiteConfigId` と一致せず、検知と描画のゲートが閉じたままになる ——
+      // 取得は成功扱いなので「更新停止」の表示は出ない。
+      // 失敗にすれば、上の震度の欠落と同じく取り直しと「更新停止」の経路に乗る
+      // （→ docs/spec/data-sources-spec.md §4「データ」）。
+      if (typeof rt.siteConfigId !== 'string' || rt.siteConfigId.length === 0) {
+        lastErr = new Error(`realtime response missing/empty realTimeData.siteConfigId (edge=${edge})`)
+        continue
+      }
       const intensity = rt.intensity
       const indices = Array.from(intensity, (c) => c.charCodeAt(0) - 100)
       const hypoInfo: YahooHypoInfoItem[] = json.hypoInfo?.items ?? []
-      const siteConfigId = rt.siteConfigId ?? ''
+      const siteConfigId = rt.siteConfigId
       const dataTime = rt.dataTime ?? ''
       // **取れた分だけ控える。** 失敗（未登録の秒・空の応答）は控えない —— 待てば現れる。
       //
@@ -536,7 +547,7 @@ async function syncClockOnce(): Promise<void> {
       // 秒 target の登録時刻 ≈ (target+1)*1000 + REG_DELAY_MS。その瞬間の perf=flipPerf。
       // 現在時刻へ換算して供給する（feedServerSample が performance.now() との差で K を更新）。
       const serverAtFlip = (target + 1) * 1000 + REG_DELAY_MS
-      feedServerSample(serverAtFlip + (performance.now() - flipPerf))
+      feedServerSample(serverAtFlip + (performance.now() - flipPerf), 'fallback')
       return
     }
     if (registered === false) {
@@ -584,7 +595,7 @@ async function calibrateFromServerTime(
   // 停止済みなら供給しない。取得は中断できないため、ここまで来てから捨てる。
   if (isStopped()) return 'skipped'
   // サンプルが指す瞬間からの経過分を足して現在時刻へ換算する。
-  feedServerSample(outcome.serverEpochMs + (performance.now() - outcome.perfRefMs))
+  feedServerSample(outcome.serverEpochMs + (performance.now() - outcome.perfRefMs), 'primary')
   return 'calibrated'
 }
 
@@ -657,9 +668,12 @@ export function startClockSync(): () => void {
     running = false
     if (!stopped) timer = setTimeout(loop, CLOCK_SYNC_INTERVAL_MS)
   }
-  // **タブが戻ったら次の周期を待たずに取り直す。** 戻った時点で較正を捨てる（`utils/clock.ts`）ので、
-  // 次の周期（最長 30 秒）まで端末の時計のまま動く —— その間は下端の波形の P/S の線を引かない（2026-10-15
-  // ユーザー承認。`docs/public-waveform-design.md` §0）ので、待ちを短くする。1 回の復帰で 1 リクエスト。
+  // **タブが戻ったら次の周期を待たずに取り直す。** 時計の関係が飛んでいたら戻った時点で較正を捨てる
+  // （`utils/clock.ts`）ので、次の周期（最長 30 秒）まで端末の時計のまま動く —— その間は下端の波形の P/S の
+  // 線を引かない（2026-10-15 ユーザー承認。`docs/public-waveform-design.md` §0）ので、待ちを短くする。
+  // 較正を保った場合も、差がある程度動いていれば保った値はそのぶんずれている場合があるので、
+  // 取り直しが主経路で成功した 1 回で置き換える（フォールバックのサンプルでは置き換えない）。
+  // 1 回の復帰で 1 リクエスト。
   const onVisible = () => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') void loop()
   }

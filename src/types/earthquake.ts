@@ -438,8 +438,9 @@ export interface JMAQuake {
   /**
    * この電文を一意に指す鍵。**同じ電文を二度数えないために持つ**（→ {@link JMAQuake.reports}）。
    *
-   * DMDATA は `Control/DateTime`（電文を作成した時刻。秒精度で、実電文では同じ地震の続報
-   * どうしが必ず異なる）、P2PQuake は電文ごとに振られる `id`。
+   * DMDATA は `Control/Title`（電文の種別名）と `Control/DateTime`（電文を作成した時刻・秒精度）の組、
+   * P2PQuake は電文ごとに振られる `id`。DMDATA で作成時刻だけを使わない理由は
+   * docs/spec/quake-spec.md §8「同じ電文を二度数えない」（組み立ては `utils/telegramKey.ts`）。
    *
    * **`id` では代用できない。** DMDATA 経路の `id` は `dmdata-quake-<eventId>-<serial>` だが、
    * 震度速報・震源情報は `Head/Serial` が空要素で届くため（→ {@link JMAQuake.reportSerial}）、
@@ -1112,6 +1113,12 @@ export interface EEWRegion {
    * **語だけが違う** —— 気象庁の表現は「階級3程度以上」（→ `getLpgmClassLabelWithApproxAbove`）。
    */
   lgIntToOver?: boolean
+  /**
+   * 電文が階級 0（階級1未満）を予測したか（`ForecastLgInt` が "0"）。`lgIntTo` は 1〜4 だけを持つので、
+   * 0 の報ではそちらは `undefined` のまま、これが立つ。**画面・読み上げは今は読まない**（電文に無い
+   * のと同じに見せる。2026-10-19 ユーザー承認「0 を持ち、表示は今のまま (推奨)」）
+   */
+  lgIntBelowClass1?: true
 }
 
 /**
@@ -1281,12 +1288,15 @@ export interface EEWAlert {
    */
   everSpecialWarning?: boolean
   /**
-   * この地震で最初の報の発表時刻。**載せるのはリプレイの初期状態だけ** —— 窓の手前の報は地震ごとに
-   * 最新 1 報へ畳んで渡すので、畳む前の全報から求めて載せる（`filterPreWindowEvents`）。
-   * 誤報取消の読み上げ（「〇時〇分に発表された」）が第 1 報の時刻を言うために使う。
-   * 無ければ `issue.time` を見る（→ `rememberEewFirstIssueTime`）。
+   * この地震で最初の報の発表時刻。誤報取消の読み上げ（「〇時〇分に発表された」）が第 1 報の時刻を言うために使う。
+   * **載せるのは、最新 1 報だけを渡す 2 つの経路** —— リプレイの初期状態（畳む前の全報から求める。
+   * `filterPreWindowEvents`）と、起動時の復元（詳細の全報から拾う。`fetchDmdataActiveEews`）。
+   *
+   * - 欄が無い: ライブで届いた報。その報の `issue.time` を見る（→ `rememberEewFirstIssueTime`）
+   * - null: 第 1 報の時刻を拾えなかった。**`issue.time` で代えない** —— 代えると第 1 報ではない時刻を言うので、
+   *   取消は時刻を言わずに読む（2026-10-19 ユーザー承認「時刻を言わない (Recommended)」）
    */
-  firstIssueTime?: string
+  firstIssueTime?: string | null
   // issue.serial = 情報番号（第N報）
   issue?: {
     eventId?: string
@@ -1314,6 +1324,8 @@ export interface EEWAlert {
   forecastMaxLpgmClass?: LpgmClass
   /** 上限を定めない予測（電文の `To="over"`）だったか。→ `EEWRegion.lgIntToOver` */
   forecastMaxLpgmClassOver?: boolean
+  /** 電文全体の最大の予測が階級 0（階級1未満）だったか。→ `EEWRegion.lgIntBelowClass1` */
+  forecastMaxLpgmBelowClass1?: true
   /**
    * 気象庁の固定付加文（`Comments/WarningComment/Text`）。避難行動の呼びかけなどの定型文。
    *
@@ -1991,6 +2003,7 @@ export interface JMAEstimatedIntensity {
    * **発生時刻（`OriginTime`）ではなく発現時刻（`ArrivalTime`）。** 資料の表記は
    * 「年月日（地震時刻、ＵＴＣ）」でどちらとも書かれていないが、**両者が 1 分ずれた実電文
    * 2 例（2026-04-20・2026-06-26）で照合したところ、いずれも `ArrivalTime` と一致した。**
+   * 標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）で照らし合わせた 110 通も、すべて一致した（→ docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）。
    * これは {@link JMAQuake.earthquake}`.time` が採っているのと同じ時刻なので、
    * 地震カードとは分単位でそのまま突き合わせられる（→ `matchEstimatedIntensity`）。
    */

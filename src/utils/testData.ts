@@ -1,6 +1,8 @@
 import type { JMAQuake, JMATsunami, EEWAlert, EEWForecastChange, JMANankai, JMANankaiCommentary, JMAKohatsu, EarthquakePoint, IntensityScale, JMALpgm, JMAQuakeCity, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAEstimatedIntensityGrade, EEWRegion, TsunamiArea, TsunamiGrade, TelegramOperationStatus } from '../types/earthquake'
 import { serverNow, serverDate } from './clock'
 import { extractQuakeEventIdFromId } from './quakeMerge'
+import { dmdataTelegramKey } from './telegramKey'
+import { quakeNoticeId } from './dmdataId'
 import { log } from './logger'
 import { INTENSITY_SCALES_ASC } from './intensity'
 import notoHonshinPoints from '../data/noto-honshin-2024-points.json'
@@ -462,7 +464,7 @@ const TEST_LATE_CITY_COUNT = 3
  * - **震源情報は震度を持たない**
  * - **続報で区域が増える。** 1 通目は一部の区域だけで、3 通目で出そろう
  * - **報番号（`Head/Serial`）を持つのは震源・震度情報だけ。** 震度速報・震源情報は空要素で届くので
- *   `id` の末尾は 4 通とも `-1` のまま。**通数を数える鍵は電文の作成時刻**（`telegramKey`）で、
+ *   `id` の末尾は 4 通とも `-1` のまま。**通数を数える鍵は電文の種別名と作成時刻の組**（`telegramKey`）で、
  *   ここを持たせないと 2 通目の震度速報が「同じ電文の再送」と見なされて数えられない
  * - **地震の時刻と識別情報は動かさない。** 動かすと別カードが立ち、同じカードへ届かない
  * - **5 通目は観測点・市町村だけが増える。** 区域の最大震度も震源要素も据え置きなので、
@@ -477,6 +479,10 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   const baseMs = new Date(base.time).getTime()
   // n 通目の発表時刻。**同じ値を一意鍵にも使う** —— 実電文の `Control/DateTime` にあたる。
   const at = (index: number) => new Date(baseMs + index * TEST_REPORT_SEQUENCE_DELAY_MS).toISOString()
+  // 一意鍵。DMDSS 版は実電文と同じく種別名（`Control/Title`）と組にする（→ `utils/telegramKey.ts`）。
+  // standard 版は P2PQuake の電文ごとの `id` にあたる値なので、時刻だけで一意になる。
+  const keyOf = (controlTitle: string, time: string) =>
+    (useDmdataShape ? dmdataTelegramKey(controlTitle, time) : time)
   // 震度速報が持つのは区域と都道府県の点だけ（観測点は震源・震度情報から届く）。
   //
   // **`base.points` からは採れない。** standard 版の `createTestEarthquake` は区域の点を落として
@@ -503,7 +509,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   const prompt = (time: string, points: EarthquakePoint[]): JMAQuake => {
     return {
       ...base,
-      telegramKey: time,
+      telegramKey: keyOf('震度速報', time),
       time,
       issue: { ...base.issue, time, type: '震度速報' },
       earthquake: {
@@ -524,7 +530,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   const destinationTime = at(1)
   const destination: JMAQuake = {
     ...base,
-    telegramKey: destinationTime,
+    telegramKey: keyOf('震源に関する情報', destinationTime),
     time: destinationTime,
     issue: { ...base.issue, time: destinationTime, type: '震源情報' },
     earthquake: { ...base.earthquake, maxScale: -1 },
@@ -552,7 +558,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   const detailTime = at(3)
   const detail: JMAQuake = {
     ...base,
-    telegramKey: detailTime,
+    telegramKey: keyOf('震源・震度に関する情報', detailTime),
     // **報番号を持たせるのはこの種別だけ。** 実電文でも連番を振るのは震源・震度情報（VXSE53）に限る。
     reportSerial: 1,
     time: detailTime,
@@ -568,7 +574,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   ).toISOString()
   const followUp: JMAQuake = {
     ...base,
-    telegramKey: followUpTime,
+    telegramKey: keyOf('震源・震度に関する情報', followUpTime),
     reportSerial: 2,
     time: followUpTime,
     issue: { ...base.issue, time: followUpTime },
@@ -624,7 +630,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   })
   const raised: JMAQuake = {
     ...base,
-    telegramKey: raisedTime,
+    telegramKey: keyOf('震源・震度に関する情報', raisedTime),
     reportSerial: 3,
     time: raisedTime,
     issue: { ...base.issue, time: raisedTime },
@@ -671,7 +677,7 @@ export function createTestQuakeCancel(): [JMAQuake, JMAQuake] {
     kind: 'quake',
     id: prompt.id,
     ...(prompt.eventId && { eventId: prompt.eventId }),
-    telegramKey: cancelTime,
+    telegramKey: dmdataTelegramKey('震度速報', cancelTime),
     time: cancelTime,
     cancelled: true,
     cancelText: '先ほどの、震度速報を取り消します。',
@@ -779,6 +785,9 @@ export function createTestMaxScaleOrAboveQuake(): JMAQuake {
     kind: 'quake',
     id: `dmdata-quake-${eventId}-1`,
     eventId,
+    // 報ごとに変わる項目（一意鍵・報番号）はここで作る。生成物には入れない（→ `scripts/build-test-quake.ts`）。
+    telegramKey: dmdataTelegramKey('震源・震度に関する情報', now),
+    reportSerial: 1,
     time: now,
     issue: { source: 'テスト', time: now, type: '震源・震度情報', correct: 'なし' },
     // 震源要素は実電文のまま。地震の時刻だけ「いま」へ寄せる（`createTestUnreceivedQuake` と同じ）。
@@ -1778,12 +1787,14 @@ function toFullWidthDigits(n: number): string {
 export function createTestQuakeNotice(): JMAQuakeNotice {
   const nowDate = serverDate()
   const now = nowDate.toISOString()
-  const eventId = toEventIdTimestamp(nowDate)
+  // 実電文のお知らせの `EventID` は発表時刻を分で切ったもの（秒は 00）
+  const eventId = toEventIdTimestamp(new Date(Math.floor(nowDate.getTime() / 60_000) * 60_000))
   const tomorrow = new Date(serverNow() + 24 * 3600 * 1000)
   const md = `${toFullWidthDigits(tomorrow.getMonth() + 1)}月${toFullWidthDigits(tomorrow.getDate())}日`
   return {
-    // 実電文と同じ形の id にする（`Serial` は空なのでパーサーが '1' へ倒す）
-    id: `dmdata-quake-notice-${eventId}-1`,
+    // 実電文と同じ形の id にする（`EventID` と電文の作成時刻 `Control/DateTime` の組。→ `quakeNoticeId`）。
+    // 作成時刻は実電文と同じく秒までの UTC で書く。
+    id: quakeNoticeId(eventId, now.replace(/\.\d{3}Z$/, 'Z')),
     time: now,
     eventId,
     headline: '沖縄県の震度データ入電停止のお知らせ',
@@ -1961,7 +1972,7 @@ export function createTestHypocenterFromTsunami(): (JMAQuake | JMATsunami)[] {
     const time = at(step)
     return {
       ...base,
-      telegramKey: time,
+      telegramKey: dmdataTelegramKey('震度速報', time),
       time,
       issue: { ...base.issue, time, type: '震度速報' },
       earthquake: {
@@ -2599,6 +2610,60 @@ export function createTestTsunamiObservationOverUpgrade(prev: JMATsunami): JMATs
  */
 export function createTestTsunamiObservationNoChange(prev: JMATsunami): JMATsunami {
   return asObservationReport(prev, 'obs-nochange')
+}
+
+/**
+ * 読み上げた波高より下がった観測点を持つ観測情報の報（気象庁の訂正にあたる形）。
+ *
+ * **走査した範囲では実配信の標本が見つからなかった形**（→ docs/spec/tsunami-spec.md §10）。ほかに読む変化が無いので、「観測された波高に変わりはありません」へ落ちずに
+ * 「津波観測に関する情報が発表されました。」と読むことを実機で確かめる入口。
+ *
+ * **「○m以上」が付いた観測点（`createTestTsunamiObservationOverUpgrade` の八戸港）を、値を下げて
+ * 「以上」も外す。** 下がる向きの 2 通り（値・「以上」）を 1 点で同時に通す。
+ * 読み上げの記憶は下げないので、**この報より後の観測情報も同じ一文になる** —— 静かな報の
+ * テストでは、変化の無い報（`createTestTsunamiObservationNoChange`）より後ろに置くこと。
+ *
+ * 観測点は `coastal` から採る（理由は {@link createTestTsunamiQuietReportSteps}）。値をそのまま使うので、
+ * 八戸港の波高のほかは何も動かない。
+ */
+export function createTestTsunamiObservationLowered(prev: JMATsunami, coastal: JMATsunami): JMATsunami {
+  const report = asObservationReport(prev, 'obs-lowered')
+  return {
+    ...report,
+    observations: (coastal.observations ?? []).map(o =>
+      o.name === OVER_UPGRADE_STATION && o.height
+        ? { ...o, height: { value: 0.6, description: '0.6m' } }
+        : o),
+  }
+}
+
+/**
+ * 設定タブ「変化の小さい続報テスト」の段の並び（`base` は発表報）。各段は直前の報を受けて次の報を作る。
+ *
+ * **段の表は `useEarthquakes` の `simulateTsunamiQuietReports` にある。** 並びはここが持つ
+ * —— 7 段目は「最後に届いた沿岸の観測点を運ぶ報」を要るので、それを追う変数ごとここへ閉じ込める
+ * （5 段目の沖合の報と 6 段目の変化の無い報は沿岸の観測点を持たない）。
+ */
+export function createTestTsunamiQuietReportSteps(base: JMATsunami): ((prev: JMATsunami) => JMATsunami)[] {
+  let lastCoastal = base
+  const steps: ((prev: JMATsunami) => JMATsunami)[] = [
+    createTestTsunamiObservationReport,
+    createTestTsunamiObservationOverUpgrade,
+    createTestTsunamiMaxHeightTimeUpdate,
+    createTestTsunamiFirstWaveUpdate,
+    createTestTsunamiOffshoreMaxHeightTimeUpdate,
+    createTestTsunamiObservationNoChange,
+    prev => createTestTsunamiObservationLowered(prev, lastCoastal),
+    prev => createTestTsunamiHighTide(base, prev),
+    prev => createTestTsunamiHighTideFollowUp(prev, 'tide'),
+    prev => createTestTsunamiHighTideFollowUp(prev, 'arrival'),
+    prev => createTestTsunamiHighTideFollowUp(prev, 'none'),
+  ]
+  return steps.map(step => (prev: JMATsunami) => {
+    const next = step(prev)
+    if (next.observations?.some(o => !o.offshore)) lastCoastal = next
+    return next
+  })
 }
 
 /**

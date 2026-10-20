@@ -29,6 +29,38 @@ let kEpochMs: number | null = null
  */
 let lastSampleAtPerfMs: number | null = null
 
+/**
+ * 最後に K を更新した時点の「較正済みの時刻 − 壁時計」(ms)。未較正なら null。
+ * タブ復帰で K を捨てるかの判定に使う（→ 下の visibilitychange・docs/spec/data-sources-spec.md §5）。
+ */
+let wallOffsetAtSampleMs: number | null = null
+
+/**
+ * タブ復帰で K を捨てる「較正済みの時刻 − 壁時計」の動きの閾値 (ms)。普段の動きより十分に大きく、
+ * 壁時計のずれより小さく取る（2026-10-19 ユーザー承認。実測値と理由は docs/spec/data-sources-spec.md §5
+ * 「タブ復帰で較正を捨てる条件」）。
+ */
+export const RESUME_DISCARD_THRESHOLD_MS = 500
+
+/**
+ * タブ復帰で K を保ったとき、次の主経路のサンプルで K を置き換えるかを決める差の下限 (ms)。
+ * 主経路のサンプルの振れ幅（実測 11 ms 幅。`services/akamaiClock.ts` の応答到着基準の実測）より
+ * 小さい差で置き換えると、平均で均した K を 1 サンプルの誤差に差し替えるだけになるので、その倍ほどに取る。
+ * ただのタブ切替で動く差（2026-10-19 の実測で約 40 分に 6 ms）はこれに届かない。
+ */
+export const RESUME_REPLACE_MIN_DRIFT_MS = 20
+
+/** サンプルの出どころ。置き換えに使ってよいのは精度の高い主経路だけ（→ `services/kyoshin.ts`）。 */
+export type ServerSampleSource = 'primary' | 'fallback'
+
+/**
+ * タブ復帰で K を保ったが、差が `RESUME_REPLACE_MIN_DRIFT_MS` 以上動いていたとき立てる。
+ * 次の主経路のサンプル 1 回だけは EMA を通さず K を置き換える。保った K は閾値の手前（最大 500 ms）まで
+ * ずれている場合があるが、EMA では 1 回に 2 割しか寄らないため、置き換えないと数分かけてしか戻らない。
+ * フォールバックのサンプルでは使わずに残す（精度の違う推定を K へ丸ごと入れないため）。
+ */
+let replaceKOnNextSample = false
+
 /** リプレイ/手動時刻のオフセット(ms)。null のとき live モード。 */
 let replayOffsetMs: number | null = null
 
@@ -70,13 +102,18 @@ export function setReplayOffset(offsetMs: number | null): void {
  * サーバー由来の「現在時刻」サンプルで K を較正する（live モード用）。
  * リプレイ中は K を更新しない（アーカイブ時刻とサーバー現在時刻は無関係なため）。
  * @param trueServerEpochMs サーバーの現在時刻(epoch ms)の推定値
+ * @param source サンプルの出どころ。タブ復帰の後の置き換えは `'primary'` のときだけ行う
  */
-export function feedServerSample(trueServerEpochMs: number): void {
+export function feedServerSample(trueServerEpochMs: number, source: ServerSampleSource): void {
   if (replayOffsetMs !== null) return
   if (!Number.isFinite(trueServerEpochMs)) return
   const sample = trueServerEpochMs - performance.now()
-  kEpochMs = kEpochMs === null ? sample : kEpochMs * (1 - EMA_ALPHA) + sample * EMA_ALPHA
-  lastSampleAtPerfMs = performance.now()
+  const replace = replaceKOnNextSample && source === 'primary'
+  kEpochMs = kEpochMs === null || replace ? sample : kEpochMs * (1 - EMA_ALPHA) + sample * EMA_ALPHA
+  if (replace) replaceKOnNextSample = false
+  const nowPerf = performance.now()
+  lastSampleAtPerfMs = nowPerf
+  wallOffsetAtSampleMs = nowPerf + kEpochMs - Date.now()
 }
 
 /**
@@ -101,20 +138,36 @@ export function getServerClockOffsetMs(): number | null {
 
 // Page Visibility 対応: タブが hidden の間、performance.now() は継続するが、
 // setInterval/setTimeout はブラウザによって 1s→1min まで throttle される。この間サーバー同期
-// ポーリング（kyoshin.ts startClockSync）が事実上停止し、visible 復帰時の K は「throttle 前の
-// サーバー時刻」を基準にしたまま。壁時計に対する performance.now() の相対関係は保たれるので
-// 較正済み K は形式的には有効だが、ハイバネート・スリープ復帰など performance.now() 自体が
-// 大きく飛ぶ環境（Chromium は wall clock 追従で復帰後 monotonic 保証が必ずしも成立しない）を
-// 想定して安全側に振る: visible 復帰時に K を捨て、次のサンプルまで壁時計フォールバックへ戻す。
-// フォールバック中は既存の未較正 warn 機構（60 秒スロットル）で診断可能。
+// ポーリング（kyoshin.ts startClockSync）が事実上停止する。壁時計に対する performance.now() の
+// 相対関係が保たれていれば較正済み K はそのまま有効だが、ハイバネート・スリープ復帰など
+// performance.now() 自体が飛ぶ環境（Chromium は wall clock 追従で復帰後 monotonic 保証が必ずしも
+// 成立しない）では K が使えなくなる。
+//
+// **捨てるのは関係が動いたときだけ**（2026-10-19 ユーザー選択「差が大きいときだけ捨てる (推奨)」）。
+// 較正時に控えた「較正済みの時刻 − 壁時計」と、復帰時に測り直した同じ差を比べ、
+// `RESUME_DISCARD_THRESHOLD_MS` 以上動いていたら捨てて次のサンプルまで壁時計フォールバックへ戻す。
+// 差を控えていなければ安全側で捨てる（`feedServerSample` は必ず控えるので、通常は通らない）。
+// 保ったときも差が `RESUME_REPLACE_MIN_DRIFT_MS` 以上動いていれば、K はそのぶんずれている場合があるので、
+// 次の主経路のサンプル 1 回で K を置き換える（`replaceKOnNextSample`）。
+// 理由と実測は docs/spec/data-sources-spec.md §5「タブ復帰で較正を捨てる条件」。
 // SSR / 非ブラウザ環境（Node のテスト等）では document 参照が失敗するためガードする。
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && replayOffsetMs === null && kEpochMs !== null) {
-      log.info('[clock] タブ復帰: K を破棄して次のサーバーサンプルで再較正')
-      kEpochMs = null
-      // 鮮度も一緒に捨てる。残すと「未較正なのに直近で較正済み」と読める矛盾した診断になる。
-      lastSampleAtPerfMs = null
+    if (document.visibilityState !== 'visible' || replayOffsetMs !== null || kEpochMs === null) return
+    const drift = wallOffsetAtSampleMs === null
+      ? Number.POSITIVE_INFINITY
+      : Math.abs(performance.now() + kEpochMs - Date.now() - wallOffsetAtSampleMs)
+    if (drift < RESUME_DISCARD_THRESHOLD_MS) {
+      const replace = drift >= RESUME_REPLACE_MIN_DRIFT_MS
+      log.debug(`[clock] タブ復帰: 時計の関係は ${Math.round(drift)} ms しか動いていないため K を保つ${replace ? '（次の主経路のサンプルで置き換える）' : ''}`)
+      if (replace) replaceKOnNextSample = true
+      return
     }
+    log.info(`[clock] タブ復帰: 時計の関係が ${Number.isFinite(drift) ? Math.round(drift) : '?'} ms 動いたため K を破棄して次のサーバーサンプルで再較正`)
+    kEpochMs = null
+    // 鮮度も一緒に捨てる。残すと「未較正なのに直近で較正済み」と読める矛盾した診断になる。
+    lastSampleAtPerfMs = null
+    wallOffsetAtSampleMs = null
+    replaceKOnNextSample = false
   })
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { isEewArrivedKindCode, isEewPlumKindCode } from './eewKind'
 import { mergeQuakeInto, mergeQuakeHistory } from './quakeMerge'
 import { earthquakeToSegments, createQuakeSpokenState, applySpokenRefs } from './ttsText'
@@ -29,6 +29,7 @@ import {
   createTestTsunamiForecast,
   createTestTsunamiGradeChange,
   createTestTsunamiInfoRetraction,
+  createTestTsunamiQuietReportSteps,
   createTestTsunamiSourceAdded,
   createTestTsunamiWarning,
   createTestTsunamiWatch,
@@ -42,7 +43,7 @@ import notoHonshinQuake from '../data/noto-honshin-2024-quake.json'
 import { extractQuakeEventId } from './quakeMerge'
 import { eewAreas, eewMaxScale, eewNoForecastReason, isEewAreaArrived } from './eew'
 import { extractQuakeEventIdFromId } from './quakeMerge'
-import { foldTsunamiReports, isObservationMissing, isPartialTsunamiRetraction, isSameTsunamiEvent, matchesArea, refoldTsunamiWithout } from './tsunami'
+import { hasObservedHeightLowered, foldTsunamiReports, isObservationMissing, isPartialTsunamiRetraction, isSameTsunamiEvent, matchesArea, refoldTsunamiWithout } from './tsunami'
 import { linkTsunamiSources } from './tsunamiSourceLinks'
 import { applyLiveLpgm } from './lpgmRetraction'
 
@@ -1661,24 +1662,37 @@ describe('テストデータに報ごとに変わる項目が混ざっていな�
   const generated = [
     {
       label: '地震テスト（能登本震）',
+      file: 'noto-honshin-2024-quake.json',
       keys: Object.keys(readJson('src/data/noto-honshin-2024-quake.json') as object),
       forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'cities', 'earthquake'],
     },
     {
       label: '未入電テスト（日向灘 2022）',
+      file: 'hyuganada-2022-quake.json',
       keys: Object.keys(readJson('src/data/hyuganada-2022-quake.json') as object),
       forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'cities', 'earthquake'],
     },
     {
+      // 読む側（`createTestMaxScaleOrAboveQuake`）がまるごと展開する。この一覧から漏れていた間、
+      // 収録した電文の鍵と報番号が焼き付いたまま残っていた（2026-10-20 に取り除いた）。
+      label: '5弱以上テスト（石川県西方沖 2024）',
+      file: 'ishikawa-seihooki-2024-quake.json',
+      keys: Object.keys(readJson('src/data/ishikawa-seihooki-2024-quake.json') as object),
+      forbidden: ['kind', 'id', 'eventId', 'time', 'issue', 'telegramKey', 'reportSerial'],
+      required: ['points', 'cities', 'earthquake'],
+    },
+    {
       label: '長周期テスト（能登本震）',
+      file: 'noto-honshin-2024-lpgm.json',
       keys: Object.keys(readJson('src/data/noto-honshin-2024-lpgm.json') as object),
       forbidden: ['id', 'eventId', 'time', 'createdAtMs', 'cancelled'],
       required: ['points', 'regions', 'prefs', 'maxClass'],
     },
     {
       label: '推計震度分布図テストの地震情報',
+      file: 'test-estimated-intensity.json',
       keys: Object.keys((readJson('src/data/test-estimated-intensity.json') as { quake: object }).quake),
       forbidden: ['id', 'eventId', 'time', 'telegramKey', 'reportSerial', 'createdAtMs'],
       required: ['points', 'earthquake', 'kind', 'issue'],
@@ -1694,8 +1708,18 @@ describe('テストデータに報ごとに変わる項目が混ざっていな�
 
   // 安全弁: 検査そのものが空振りしていないこと。生成物を足したのにここへ足し忘れる・
   // キーの読み取りが壊れる、のどちらも上のテストが通り続けるので気づけない
+  // 安全弁: `src/data` の生成物（最上位が配列ではなくオブジェクトのもの）がすべて上の一覧に載っている。
+  // 件数を手で書くだけだと、生成物を足したときに一覧と件数の両方を足し忘れて素通りする
+  // （5弱以上テストのデータがそうして漏れていた）。配列の生成物は報ごとの項目を持てないので対象外。
+  it('src/data の生成物がすべて検査の対象に入っている', () => {
+    const objectFiles = readdirSync(new URL('../data/', import.meta.url))
+      .filter(f => f.endsWith('.json'))
+      .filter(f => !Array.isArray(readJson(`src/data/${f}`)))
+    expect(objectFiles.filter(f => !generated.some(g => g.file === f))).toEqual([])
+  })
+
   it('検査そのものが素通りしない', () => {
-    expect(generated).toHaveLength(4)
+    expect(generated).toHaveLength(5)
     for (const g of generated) {
       expect(g.keys.length).toBeGreaterThan(3)
       expect(g.forbidden.length).toBeGreaterThan(0)
@@ -1783,5 +1807,40 @@ describe('津波情報だけを取り消すテスト', () => {
   it('取消は理由の文を持たない', () => {
     const [, , retraction] = createTestTsunamiInfoRetraction()
     expect(retraction.cancelText).toBeUndefined()
+  })
+})
+
+// 設定タブ「変化の小さい続報テスト」の 7 段目（波高が下がった報）。**空振りしても画面は「変わりは
+// ありません」と読むだけで、例外もログも出ない**（実際に一度、5 段目の沖合の報が沿岸の観測点を落として
+// 7 段目が何も変えていなかった）。→ docs/spec/tsunami-spec.md §10「読み上げた波高より下がった観測点」
+describe('変化の小さい続報テストの 7 段目', () => {
+  beforeEach(() => { vi.useFakeTimers({ now: new Date('2026-09-12T12:34:56Z').getTime() }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  const run = () => {
+    const base = createTestTsunami(true)
+    const steps = createTestTsunamiQuietReportSteps(base)
+    const reports: JMATsunami[] = []
+    let prev = base
+    for (const step of steps) { prev = step(prev); reports.push(prev) }
+    return reports
+  }
+
+  // 正: 2 段目で「以上」が付いた八戸港が、7 段目で値が下がり「以上」も外れる
+  it('7 段目は 2 段目の八戸港より低い値を運び、下がったと判定される', () => {
+    const reports = run()
+    const before = reports[1].observations?.find(o => o.name === '八戸港')
+    const lowered = reports[6].observations?.find(o => o.name === '八戸港')
+    expect(before?.height?.over).toBe(true)
+    expect(lowered?.height).toEqual({ value: 0.6, description: '0.6m' })
+    const spoken = new Map([['八戸港', { value: before!.height!.value, over: true }]])
+    expect(hasObservedHeightLowered(lowered!, spoken)).toBe(true)
+  })
+
+  // 安全弁: 7 段目の直前（5・6 段目）は沿岸の観測点を持たない。それでも 7 段目は沿岸の観測点を運ぶ
+  it('沖合だけの報の後でも、7 段目は沿岸の観測点を運ぶ', () => {
+    const reports = run()
+    expect(reports[5].observations?.every(o => o.offshore)).toBe(true)
+    expect(reports[6].observations?.some(o => !o.offshore)).toBe(true)
   })
 })

@@ -1308,6 +1308,10 @@ interface GdEewListItem {
 /** `/v2/gd/eew/{eventId}` が返す 1 報。 */
 interface GdEewReportItem {
   serial?: number
+  /** この報を発表した時刻（資料「GD Eew Event v2」の `items[].dateTime`。出現は「いつも」）。 */
+  dateTime?: string
+  /** 取り消された報か（同 `items[].isCanceled`）。 */
+  isCanceled?: boolean
   telegrams?: Array<{
     id?: string
     /** JSON 版のときだけ入り、元の XML 版電文の id を指す。 */
@@ -1331,14 +1335,66 @@ const ACTIVE_EEW_MAX_PAGES = 10
  * {@link fetchLatestEewReport} の答え。**「報が無かった」と「取れなかった」を分ける** —— 前者は取りきれた答えで、
  * 後者は取り直す値打ちがある（呼び出し側が続けて失敗したら打ち切る・取りきれていないと記録するのに使う）。
  *
- * - `report`: 最新報を読めた
+ * - `report`: 最新報を読めた。`firstIssueTime` は同じ応答から拾った第 1 報の発表時刻（{@link firstEewReportTime}。
+ *   拾えなければ null。`firstIssueMiss` は拾えなかったときの内訳（{@link describeFirstReportMiss}。拾えたら null））
  * - `none`: 受けている種別の報が無い（警報だけを受けている人の、予報で終わった地震）・訓練の報だけだった
  * - `failed`: 詳細か本文を取れなかった・報が 1 通も返らなかった・読めなかった
  */
 export type LatestEewReport =
-  | { readonly kind: 'report'; readonly eew: EEWAlert }
+  | { readonly kind: 'report'; readonly eew: EEWAlert; readonly firstIssueTime: string | null; readonly firstIssueMiss: string | null }
   | { readonly kind: 'none' }
   | { readonly kind: 'failed' }
+
+/**
+ * 詳細（`/v2/gd/eew/{eventId}`）の全報から、その地震の第 1 報の発表時刻を拾う。取り消された報を除き、
+ * 報番号のいちばん小さい報の `dateTime` を返す。拾えなければ null。
+ *
+ * **誤報取消の読み上げ（「〇時〇分に発表された」）が言う時刻のため**（→ `EEWAlert.firstIssueTime`）。
+ * 起動時の復元が電文本体を読むのは最新報 1 通だけなので、第 1 報の時刻はここから取る。応答は既に
+ * 手元にあるので、取得は増えない。
+ *
+ * 報番号か時刻を読めない報は比べられないので飛ばす。**飛ばした報が第 1 報だった場合は、2 報目以降の
+ * 時刻を返しうる** —— 資料では両方とも「いつも」出る欄なので、実際には起きない見込み。
+ */
+export function firstEewReportTime(items: readonly GdEewReportItem[]): string | null {
+  let first: { serial: number; time: string } | null = null
+  for (const item of items) {
+    if (item.isCanceled) continue
+    const serial = readReportSerial(item)
+    const time = item.dateTime
+    if (serial === null || typeof time !== 'string' || Number.isNaN(Date.parse(time))) continue
+    if (first === null || serial < first.serial) first = { serial, time }
+  }
+  return first?.time ?? null
+}
+
+/**
+ * 報番号を数として読む。読めなければ null。
+ *
+ * **`Number()` に素通しで渡さない。** 欄が null や空文字だと 0 になり、どの報より小さい「第 1 報」に化ける。
+ * 資料の型は整数だが、文字列で来ても数字だけなら読む（型の宣言は応答を検めていない）。
+ */
+function readReportSerial(item: GdEewReportItem): number | null {
+  const raw: unknown = item.serial
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null
+  if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) return Number(raw.trim())
+  return null
+}
+
+/**
+ * {@link firstEewReportTime} が null を返したときの内訳（記録用）。報の総数・取り消された報・報番号か
+ * 発表時刻を読めなかった報の数。**どれが効いたかで、直す場所が変わる**（取消だけなら正常、読めないなら応答の形の変化）。
+ */
+export function describeFirstReportMiss(items: readonly GdEewReportItem[]): string {
+  let canceled = 0
+  let unreadable = 0
+  for (const item of items) {
+    if (item.isCanceled) { canceled++; continue }
+    const time = item.dateTime
+    if (readReportSerial(item) === null || typeof time !== 'string' || Number.isNaN(Date.parse(time))) unreadable++
+  }
+  return `報 ${items.length} 通・取り消された報 ${canceled} 通・報番号か発表時刻を読めない報 ${unreadable} 通`
+}
 
 /**
  * 1 地震ぶんの最新報を取り出す。
@@ -1399,7 +1455,13 @@ export async function fetchLatestEewReport(
     const payload = buildXmlPayload(headType, body.xml, eewHeadType)
     // 取り込まないと決めた側（予報を受けている人の VXSE43 など）はここで落ちる（`buildXmlPayload` が
     // `eewHeadType` で弾く）。**判定は `dmdataTelegramPayload.ts` が持つ**ので、この場で重ねて弾かない。
-    if (payload?.kind === 'event' && payload.event.kind === 'eew') return { kind: 'report', eew: payload.event as EEWAlert }
+    if (payload?.kind === 'event' && payload.event.kind === 'eew') {
+      const firstIssueTime = firstEewReportTime(items)
+      return {
+        kind: 'report', eew: payload.event as EEWAlert, firstIssueTime,
+        firstIssueMiss: firstIssueTime === null ? describeFirstReportMiss(items) : null,
+      }
+    }
   }
   // **「訓練報だけだった」と「読めなかった」を分ける。** 前者は正常（訓練は復元しない）だが、
   // 後者は電文の書式が変わった・パーサーが落とすようになった等の異常で、記録が無いと
@@ -1509,8 +1571,17 @@ export async function fetchDmdataActiveEews(
       // この復元が効くところなので、そこで全滅させるのは割に合わない。
       try {
         const found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, true)
-        const eew = found.kind === 'report' ? found.eew : null
-        if (eew) reports.push({ eew, value: eew })
+        if (found.kind === 'report') {
+          // **第 1 報の時刻を載せる**（誤報取消の読み上げが言う時刻。→ `EEWAlert.firstIssueTime`）。拾えなければ
+          // null を載せ、取消は時刻を言わずに読む —— 復元した最新報の時刻で代えると、第 1 報ではない時刻を言う
+          // （2026-10-19 ユーザー承認「時刻を言わない (Recommended)」）
+          if (found.firstIssueTime === null) {
+            log.warn(`[DMDSS] 発表中の緊急地震速報の詳細から第 1 報の発表時刻を拾えませんでした eventId=${ev.eventId}`
+              + `（${found.firstIssueMiss ?? '内訳なし'}。取り消されたら時刻を言わずに読みます）`)
+          }
+          const value: EEWAlert = { ...found.eew, firstIssueTime: found.firstIssueTime }
+          reports.push({ eew: value, value })
+        }
       } catch (err) {
         log.warn(`[DMDSS] 発表中の緊急地震速報の詳細で例外が出たため、この地震だけ諦めます eventId=${ev.eventId}`, err)
       }

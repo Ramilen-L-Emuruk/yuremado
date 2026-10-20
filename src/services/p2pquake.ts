@@ -31,14 +31,14 @@ const CORRECT_TYPE_MAP: Record<string, CorrectType> = {
   DestinationOnly: '震源を訂正', ScaleAndDestination: '震度・震源を訂正',
 }
 
-// P2PQuake の公式の API 定義（OpenAPI）が `domesticTsunami` に挙げる 6 値だけを持つ。
-// **大津波警報も `Warning` に入る**（定義の説明は「津波予報（種類不明）」）ので、`MajorWarning` の
-// ような値は来ない。表に無い値は下で記録し、'不明' として扱う。
 /** 表 `table` が自分で持つ鍵 `key` の値。持たなければ `undefined`（継承した名前は拾わない）。 */
 function ownEntry<V>(table: Readonly<Record<string, V>>, key: string): V | undefined {
   return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined
 }
 
+// P2PQuake の公式の API 定義（OpenAPI）が `domesticTsunami` に挙げる 6 値だけを持つ。
+// **大津波警報も `Warning` に入る**（定義の説明は「津波予報（種類不明）」）ので、`MajorWarning` の
+// ような値は来ない。表に無い値は下で記録し、'不明' として扱う。
 const DOMESTIC_TSUNAMI_MAP: Record<string, DomesticTsunami> = {
   None: 'なし', Unknown: '不明', Checking: '調査中',
   NonEffective: '若干の海面変動',

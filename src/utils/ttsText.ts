@@ -3422,6 +3422,18 @@ export function tsunamiObservationNoChangeSegments(): SpeechSegment[] {
   return [plain('津波観測に関する情報。観測された波高に変わりはありません。')]
 }
 
+/**
+ * 観測情報の続報で、読み上げるべき変化は無いが、読んだ波高より下がった観測点があるときの一文。
+ *
+ * **「変わりはありません」とは言えない**（下がったのは変化）ので、波高については何も
+ * 言い切らずに名乗るだけにする。下がった値は声にしない（画面のカードには新しい値が出る）
+ * —— 「津波観測に関する情報が発表されました。」（2026-10-19 ユーザー承認。選んだ選択肢は
+ * 「案 2『嘘の文だけ直す』」、返事の原文「案2で進めて」）。判定は `hasObservedHeightLowered`。
+ */
+export function tsunamiObservationLoweredSegments(): SpeechSegment[] {
+  return [plain('津波観測に関する情報が発表されました。')]
+}
+
 /** 満潮時刻の報の名乗り（電文が見出し文を持たないときに使う）。 */
 const TIDE_REPORT_FALLBACK_HEADLINE = '各地の満潮時刻と津波到達予想時刻をお知らせします。'
 
@@ -4558,7 +4570,9 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
         pick('quakeNoticeBody', event.data.body),
         pick('quakeNoticeBody', event.data.freeText),
       ], reads)
-      return telegramSpeech(`地震・津波に関するお知らせについて、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
+      // **主題は `id` で作る。`eventId` ではない。** お知らせの `EventID` は発表時刻の分で、同じ分の別の
+      // お知らせと重なる。`eventId` で作ると、先のお知らせと同じ文（問い合わせ先の行など）が既読として飛ばされる。
+      return telegramSpeech(`地震・津波に関するお知らせについて、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.id))
     }
     // 推計震度分布図は二進電文で、気象庁が書いた文を運ばない。
     case 'estimatedIntensity':

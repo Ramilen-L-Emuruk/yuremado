@@ -1378,7 +1378,7 @@ CLI側だけが追加で「NIEDのイベントディレクトリ自動探索」�
 > 電文種別コード（VXSE53 等）の意味は [`data-sources-spec.md`](data-sources-spec.md) §2 の一覧を参照。
 
 archive の目録（各アーカイブ内の `telegrams.json`）は、**同じ電文を XML 版と JSON 版の 2 エントリ**で
-持つ。`originalId` を持つ方が JSON 版で、その値は元の XML エントリの `id` を指す。
+持つ。`originalId` を持つ方が JSON 版で、その値は元の XML エントリの `id` を指す（標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）の目録で、XML 版が `originalId` を持つ形は見つかっていない。→ [`telegram-coverage-audit.md`](telegram-coverage-audit.md) §7「前提を全期間で数えた結果」）。
 
 読み取り側（`src/services/dmdataReplay.ts`）はこの性質を使って重複を除いている。
 **採るのは種別を問わず XML 版**（`originalId` を持たない側）。電文の読み取りを XML へ
@@ -2012,7 +2012,7 @@ describe で固定してある。
 - **津波誤報取消**: `TEST_AUTO_DISMISS_MS`（90 秒）後に取消電文が届き 10 秒間の解除表示（DMDSS は `retracted` で「取消」表示、standard は理由なしで「解除」表示）
 - **変化の小さい続報テスト**: ここだけ `TEST_AUTO_DISMISS_MS` を使わず、**段数から導く**
   （`TEST_TSUNAMI_QUIET_STEP_MS` × 段数 ＋ `TEST_TSUNAMI_QUIET_TAIL_MS`）。**段数はここへ書かない**
-  —— 実装（`simulateTsunamiQuietReports` の `steps`）が持つ値で、段を足すたびに写した数だけが古くなる
+  —— 実装（`testData.ts` の `createTestTsunamiQuietReportSteps`）が持つ値で、段を足すたびに写した数だけが古くなる
   （実際にずれていた）。
   固定値から引き算する形にしていたころ、段を 1 つ足しただけで最後の報の余裕が 20 秒から 10 秒へ縮んだ
   —— **段を足した人にはその劣化が見えない**。導く形にすれば、段が増えても最後の報は同じだけ読む時間を持てる
@@ -2768,3 +2768,4 @@ Playwright / Chrome DevTools でボタン発火後の DOM 状態を確認した�
   終わってから届くよう 30 秒後に流すようにした
 - 2026-10-19: 設定タブ「種別が前後する報」の説明文を、実際に流す 7 通に合わせた（流し方と順序の括弧を 7 通にし、6 通目の
   据え置きと 7 通目の印・読み上げを書き足した。2026-10-19 ユーザー承認「6・7通目を書き足す (推奨)」）
+- 2026-10-20: §6 の目録の `originalId` に、標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）の目録で数えた結果を添えた（→ telegram-coverage-audit.md §7）

@@ -1658,6 +1658,28 @@ export function hasObservedHeightRisen(
 }
 
 /**
+ * 記憶した波高より下がったか（値が下がった・「以上」が外れた）。
+ *
+ * 読み上げはこの観測点を「更新」として読まない（{@link hasObservedHeightRisen} が偽）ので、
+ * ほかに読む変化が無いと「観測された波高に変わりはありません」へ落ち、事実と違うことを言う。
+ * それを避けるために見る（`useLiveEventHandler` の変化を伝えない続報の分岐）。
+ *
+ * **比べる相手は読み上げた値の記憶**（それまでの最大値だけを持ち、下がっても書き換えない）。
+ * 走査した範囲で標本が見つからなかったことと、数えた条件は docs/spec/tsunami-spec.md §10
+ * 「読み上げた波高より下がった観測点」にある。
+ */
+export function hasObservedHeightLowered(
+  obs: { name: string; height?: ObservedHeightRank },
+  spoken: ReadonlyMap<string, { value: number; over?: boolean }>,
+): boolean {
+  if (!obs.height) return false
+  const prev = spoken.get(obs.name)
+  if (prev === undefined) return false
+  if (obs.height.value < prev.value) return true
+  return !!prev.over && !obs.height.over && obs.height.value <= prev.value
+}
+
+/**
  * 気象庁が「最大波の観測時刻を更新した」と言っていて、その時刻がまだ見ていないものか。
  *
  * **判定は電文が直接言っているもの（`MaxHeight/Revise` = 更新）を見る。** 時刻の比較だけで

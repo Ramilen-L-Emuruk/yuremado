@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mergeQuakeHistory, mergeQuakeInto } from './quakeMerge'
+import { dmdataTelegramKey } from './telegramKey'
 import type { JMAQuake, IssueType, IntensityScale, EarthquakePoint, DomesticTsunami } from '../types/earthquake'
 
 // 履歴の取り込みは新しい日から 1 日ずつ反映し、「もっと見る」は窓ごとに回を分ける。
@@ -242,5 +243,65 @@ describe('控え（sourceTelegrams）の持ち方', () => {
   it('同じ電文が二度流れても、カードは同じ参照のまま（変化なし＝同一参照）', () => {
     const once = mergeQuakeInto(mergeQuakeInto(undefined, osaka[0]), osaka[1])
     expect(mergeQuakeInto(once, osaka[1])).toBe(once)
+  })
+})
+
+// **種別の違う 2 通が同じ秒に作られても、控えから落ちない。**
+//
+// 2026-07-28 熊本県熊本地方（EventID 20260728190752）の形を写した。震源・震度情報と震度速報の
+// 作成時刻（`Control/DateTime`）がどちらも 10:10:53Z で、作成時刻だけを鍵にしていた間は
+// 2 通目が控えに積まれず、古い報が後から当たって当て直すと完全版が消えて震度速報の形へ戻った
+// （観測点 36 → 6・震源が消える）。鍵の組み立てはパーサーと同じ関数を通す（→ `utils/telegramKey.ts`）。
+describe('同じ秒に作られた種別の違う電文', () => {
+  const K_EVENT = '20260728190752'
+  const K_QUAKE_TIME = '2026-07-28T19:07:00+09:00'
+  const K_HYPO = { name: '熊本県熊本地方', depth: 10, magnitude: 4.2 }
+  const SAME_SECOND = '2026-07-28T10:10:53Z'
+  const make = (keyOf: (title: string, dt: string) => string) => {
+    const first = telegram({
+      eventId: K_EVENT, key: keyOf('震度速報', '2026-07-28T10:09:40Z'), type: '震度速報',
+      time: '2026-07-28T19:09:00+09:00', quakeTime: K_QUAKE_TIME, tsunami: '調査中', maxScale: 30,
+      points: [area('', '熊本県熊本', 30)],
+    })
+    // 同じ回の取り込みでは震度速報が先に並ぶ（発表時刻が同じ分で、安定ソートが受け取った順を保つ）
+    const late = telegram({
+      eventId: K_EVENT, key: keyOf('震度速報', SAME_SECOND), type: '震度速報',
+      time: '2026-07-28T19:10:00+09:00', quakeTime: K_QUAKE_TIME, tsunami: '調査中', maxScale: 30,
+      points: [area('', '熊本県熊本', 30), area('', '熊本県阿蘇', 20)],
+    })
+    const detail = telegram({
+      eventId: K_EVENT, key: keyOf('震源・震度に関する情報', SAME_SECOND), type: '震源・震度情報',
+      time: '2026-07-28T19:10:00+09:00', quakeTime: K_QUAKE_TIME, tsunami: 'なし', hypocenter: K_HYPO,
+      maxScale: 30, serial: 1,
+      points: [area('', '熊本県熊本', 30), station('', '熊本市中央区大江', 30), station('', '益城町宮園', 20)],
+    })
+    return { first, late, detail }
+  }
+
+  // **正**: 鍵が別なら控えに両方が残り、古い報が後から当たっても完全版のまま
+  it('作成時刻が同じでも、古い報の後当てで完全版が消えない', () => {
+    const { first, late, detail } = make(dmdataTelegramKey)
+    const cards = fold([[late, detail], [first]])
+    expect(cards).toHaveLength(1)
+    expect(cards[0].sourceTelegrams).toHaveLength(3)
+    expect(cards[0].issue.type).toBe('震源・震度情報')
+    expect(cards[0].earthquake.hypocenter.name).toBe('熊本県熊本地方')
+    expect(cards[0].points.filter(p => !p.isArea)).toHaveLength(2)
+  })
+
+  // **対照**: 作成時刻だけを鍵にすると、同じ流れで完全版が消える（直した穴が実在することの固定）
+  it('作成時刻だけを鍵にすると、後当てで震度速報の形へ戻る', () => {
+    const { first, late, detail } = make((_title, dt) => dt)
+    const cards = fold([[late, detail], [first]])
+    expect(cards[0].sourceTelegrams).toHaveLength(2)
+    expect(cards[0].issue.type).toBe('震度速報')
+    expect(cards[0].points.filter(p => !p.isArea)).toHaveLength(0)
+  })
+
+  // **安全弁**: 同じ電文が二度流れても、控えには 1 通だけ
+  it('同じ電文は二度積まない', () => {
+    const { detail } = make(dmdataTelegramKey)
+    const card = mergeQuakeInto(mergeQuakeInto(undefined, detail), { ...detail })
+    expect(card.sourceTelegrams).toHaveLength(1)
   })
 })

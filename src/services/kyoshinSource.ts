@@ -43,7 +43,9 @@ export interface KyoshinFrame {
   dataTime: string
   /**
    * このフレームがどの観測点集合に対応するかの識別子。`resolveSites()` に渡すと座標が引ける。
-   * Yahoo では観測点リストの版を表す `siteConfigId`。取得できなかった場合は空文字。
+   * Yahoo（ライブ・リプレイ・助走）では観測点リストの版を表す `siteConfigId` で、空にはならない
+   * （版が欠けた応答は `fetchRealtimeIntensity` が取得の失敗にするので、フレームにならない）。
+   * ローカル履歴アーカイブではアーカイブの id。
    */
   sitesKey: string
   /** 観測点ごとの震度インデックス。`sitesKey` の観測点リストと同順。 */

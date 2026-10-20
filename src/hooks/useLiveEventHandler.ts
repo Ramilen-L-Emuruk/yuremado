@@ -17,7 +17,7 @@ import {
 import { hasKnownEpicenter } from '../utils/geo'
 import { showBrowserNotification } from '../utils/notifications'
 import { tsunamiIssueNotification, tsunamiLiftNotification } from '../utils/tsunamiNotification'
-import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry } from '../utils/tsunami'
+import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry } from '../utils/tsunami'
 import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
 import { playAlertSound, ttsDelayFor, maxTtsDelay, type AlertSoundType } from '../utils/alertSound'
 import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
@@ -28,7 +28,7 @@ import {
 } from '../utils/replayEventLog'
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
-import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken } from '../utils/ttsText'
+import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
 import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
@@ -37,6 +37,7 @@ import { hasPendingEewSpeech } from '../utils/eewPendingSpeech'
 import { applyQuakeCancelToCard, compareReportAge, createQuakeFoldKeys, extractQuakeEventIdFromId, quakeEventKey, quakeKeyForLpgmEventId, sameQuakeEntry } from '../utils/quakeMerge'
 
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
+import { serverDate } from '../utils/clock'
 
 // ─── 録画ツール向けイベントログの記録（→ `docs/spec/recording-interface-spec.md`）────────
 //
@@ -1026,7 +1027,8 @@ function hasMaxHeightTimeChanged(
  * **`over` が外れる向きも記録しない。** 地図のカメラ（`utils/tsunami.ts` の
  * `hasObservedHeightChanged`）が向きを問わず拾うのとは**意図的に非対称**で、あちらは「動いたか」、
  * こちらは「深刻になったか」を問う。そのぶん「`over` が外れ、また付く」続報では 2 度目の昇格を
- * 取りこぼすが、その形は実配信で観測していない（→ docs/spec/tsunami-spec.md §6）。
+ * 取りこぼすが、その形は標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）で見つかっていない（→ docs/spec/tsunami-spec.md §6）。ただし `over` が
+ * 付いた観測点そのものが 1 点しかないので、起きないとまでは言えない（→ docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）。
  */
 function rememberObservationHeights(
   obs: readonly import('../types/earthquake').TsunamiObservation[],
@@ -1521,9 +1523,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   // （「〇時〇分に発表された緊急地震速報は取り消されました」）にだけ使う** —— 取消電文の
   // `issue.time` は取消を発表した時刻なので、そのまま読むと取り消された速報の時刻を言い違える。
   // 続報では上書きしない（`eewTtsEventsRef` が最新の報で上書きされるのとは逆）。
-  // リプレイの初期状態は報を最新 1 報へ畳んで渡すので、畳む前の第 1 報の時刻を `firstIssueTime` で受け取る。
-  // 起動時の復元は配信元が最新 1 報しか返さないので、その報の時刻になる（第 1 報とは限らない）。
-  const eewFirstIssueTimeRef = useRef<Map<string, string>>(new Map())
+  // リプレイの初期状態と起動時の復元は最新 1 報で届くので、第 1 報の時刻を `firstIssueTime` で受け取る。
+  // 値が null なら第 1 報の時刻を拾えなかった印で、取消は時刻を言わずに読む（→ `rememberEewFirstIssueTime`）。
+  const eewFirstIssueTimeRef = useRef<Map<string, string | null>>(new Map())
   // 誤報取消（訂正）を受けた eventId。**`shouldStillPlay` で鳴っているものを落としてよいのは
   // これだけ**（もう 1 つの打ち切りは予報から警報への言い直しだが、あちらは新しい発話を
   // 割り込ませる形で止める。`eewPhase1ProgressRef` を参照）。
@@ -3609,8 +3611,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               eewCancelSpeechRef.current.add(key)
               // **第 1 報の時刻はいま読み取っておく。** 文は発話の直前に組まれるが、そのときには
               // 下の `forgetEewTracking` が記憶を消している。
-              const firstIssueTime = eewFirstIssueTimeRef.current.get(key) ?? null
-              if (!firstIssueTime) {
+              const remembered = eewFirstIssueTimeRef.current.get(key)
+              const firstIssueTime = remembered ?? null
+              if (remembered === null) {
+                // 起動時の復元で第 1 報の時刻を拾えなかった地震。拾えなかったことは取得の時点で記録してあるので、
+                // ここは時刻抜きで読む予定どおりの経路（異常ではない）。
+                log.info('[eew] 誤報取消を時刻抜きの文で読む（第 1 報の発表時刻は復元の時点で拾えなかった）', { key })
+              } else if (!firstIssueTime) {
                 // 画面に出ていた地震（hadKey）なのに引けないのは、記憶の鍵がずれたか発表時刻の無い報だけだった印。
                 // 時刻抜きの文は正常な形と見分けが付かないので記録を残す。
                 // hadTtsEvent: その地震の報を受けた記憶はあるか（無ければ鍵のずれ、あれば読める時刻を持つ報が無かった）
@@ -5105,7 +5112,21 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             } else if ((event.observations?.length ?? 0) > 0) {
               // 観測点は載っているのに、波高・最大波の時刻・到達確認・欠測・第1波のどれも
               // 動いていない報（それらは上の `rest` が拾うので、ここへは何も残っていない）。
-              ttsSegments = tsunamiObservationNoChangeSegments()
+              //
+              // **読んだ波高より下がった観測点があれば「変わりはありません」と言わない。**
+              // 下がった点は上がった点の群（`hasObservedHeightRisen`）に入らないのでここへ落ちるが、
+              // 下がったのは変化で、言い切ると事実と違う（→ `hasObservedHeightLowered`）。
+              // **欠測の観測点も含める** —— 欠測でも電文はこれまでの最大波の値を載せていて、
+              // それが下がったなら「変わりはありません」とは言えない。
+              const loweredObs = (event.observations ?? []).filter(o => hasObservedHeightLowered(o, spokenObsHeightRef.current))
+              if (loweredObs.length > 0) {
+                // 記憶は下げないので、以後の報も同じ一文になる。どの観測点のせいかを追えるよう残す。
+                log.info('[tsunami] 読み上げた波高より下がった観測点があるため「変わりはありません」と言わない',
+                  loweredObs.map(o => ({ name: o.name, spoken: spokenObsHeightRef.current.get(o.name), now: o.height })))
+                ttsSegments = tsunamiObservationLoweredSegments()
+              } else {
+                ttsSegments = tsunamiObservationNoChangeSegments()
+              }
               tsunamiSpeechIsQuiet = true
               // **観測点を 1 つも運ばない報では黙る**（従来どおり）。区域一覧だけを載せた報
               // （津波警報等・VTSE41）が既読の等級変化しか持たないときにここへ来るが、
@@ -5667,16 +5688,23 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     quakeSpeakingCard?.reset()
   }, [cancelPendingSpeech, speechFollow, unreceivedFollow, telegramTextFollow, borrowedHypocenterFollow, eewSpeakingCard, quakeSpeakingCard])
 
-  // pre-window イベントから T 時点の追跡 ref を復元する（サイレント注入後の正確な音判定に必要）
-  const restorePreWindowTracking = useCallback((preFiltered: ReplayEntry[]) => {
+  /**
+   * 電文の並びから追跡 ref を復元する。入口は 2 つあり、`source` で分ける（**必須**。渡し忘れを型で落とす）。
+   * - `'replay'`: リプレイの窓の手前（`restorePreWindowTracking`）
+   * - `'startup'`: 起動時に復元した発表中の緊急地震速報（`restoreStartupEews`）
+   */
+  const restoreTrackingFrom = useCallback((preFiltered: ReplayEntry[], source: 'replay' | 'startup') => {
     /**
      * **録画モードでは、窓の手前で伝えた内容も「もう伝えた」として扱う。**
      *
      * 通常の再生で復元しないのは「窓から聞き始めた人は一度も聞いていない」ため（`restoreOne` の
      * 地震の分岐に理由がある）。録画は区間を繋いで 1 本の動画にするので、その前提が成り立たない ——
      * 前の区間で既に画面にも声にも出ている。復元しないと区間の境目で同じ長文を読み直す。
+     *
+     * **起動時の復元には当てはまらない。** 録画は区間を繋ぐリプレイの話で、ライブの起動時に
+     * 「前の区間」は無い。
      */
-    const recording = settingsRef.current.recordingMode
+    const recording = source === 'replay' && settingsRef.current.recordingMode
     const opts = ttsRegionOptions(settingsRef.current)
     /**
      * 窓の手前で見た地震と、そこへ与えた読み上げの主題。
@@ -5810,6 +5838,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 窓の手前の報は最新 1 報へ畳まれて届く。第 1 報の時刻は畳む前に求めて `firstIssueTime` に載っている
           // （`filterPreWindowEvents`）ので、ここではそれを覚える
           rememberEewFirstIssueTime(eewFirstIssueTimeRef.current, key, eew)
+          // 震央地名もライブ経路と同じく覚える。取消電文は名前を持たないので、覚えていないと取消の通知が
+          // 名前抜きになり、「名前を引けない」の記録が毎回出る（→ `eewCancelNotificationBody`）
+          rememberEewHypocenterName(eewLastHypocenterNameRef.current, key, eew.earthquake?.hypocenter?.name ?? '')
           spokenEEWScalesRef.current.set(key, restoredScale)
           spokenEEWLpgmClassesRef.current.set(key, restoredLpgm)
           // 区分も復元する。落とすと注入後の最初の続報で「警報。」が付き直し、
@@ -6029,13 +6060,64 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       const byKind = new Map<string, number>()
       for (const f of failures) byKind.set(f.kind, (byKind.get(f.kind) ?? 0) + 1)
       const breakdown = [...byKind].map(([kind, n]) => `${kind}=${n}`).join('・')
+      const head = source === 'replay'
+        ? `[replay] 窓の手前の電文から状態を復元できませんでした（飛ばした電文は既読にならず、窓に入ってから読み直します）`
+        : `[data] 起動時に復元した緊急地震速報を読み上げ側へ載せられませんでした（取消が声にならない・続報を初報として読むことがあります）`
       log.warn(
-        `[replay] 窓の手前の電文から状態を復元できませんでした（飛ばした電文は既読にならず、`
-        + `窓に入ってから読み直します）: ${failures.length}/${preFiltered.length} 通（${breakdown}）。見本:`,
+        `${head}: ${failures.length}/${preFiltered.length} 通（${breakdown}）。見本:`,
         ...failures.slice(0, 3).map(f => f.err),
       )
     }
   }, [])
+
+  // pre-window イベントから T 時点の追跡 ref を復元する（サイレント注入後の正確な音判定に必要）
+  const restorePreWindowTracking = useCallback(
+    (preFiltered: ReplayEntry[]) => restoreTrackingFrom(preFiltered, 'replay'),
+    [restoreTrackingFrom],
+  )
+
+  /**
+   * 起動時に復元した「発表中の緊急地震速報」を、読み上げ側の記憶にも載せる（音も読み上げも出さない）。
+   *
+   * **復元した報は `handleLiveEvent` を通らない**（`useEarthquakes` が `silent` で積むので `onLiveEvent` が
+   * 呼ばれない）。載せないと、その後ライブで届いた取消は「表示中の速報ではない」（`activeEEWLevelsRef` に
+   * 無い）と判定されて通知音も取消の読み上げも出ず、続報は初めての地震として読まれる。リプレイの初期状態と
+   * 同じ記憶を作るので、同じ復元処理（`restoreTrackingFrom`）を `'startup'` で通す（2026-10-19 ユーザー承認「帳面に載せる」）。
+   *
+   * **その結果、復元の後に届く続報は続報として扱われる** —— 続報の音だけで、通知も名乗りも出ず、予想震度が
+   * 変わらなければ声も出ない。起動した人はこの速報を一度も聞いていないが、それを示したうえでこの形に決めた
+   * （2026-10-19 ユーザー承認「いまの実装のまま」）。
+   *
+   * **既に知っている地震は載せ直さない。** 接続の張り直しでも復元は走るので、その間にライブで受けて
+   * 読み上げた地震を、配信元の一覧が返す（遅れているかもしれない）報で巻き戻さないため。
+   * ただし第 1 報の時刻だけは、復元側のほうが早ければ差し替える —— ライブで最初に受けたのが
+   * 第 2 報以降なら、覚えているのはその報の時刻で、取消のときに読む時刻を誤る。
+   *
+   * **既に取消を受けた地震も載せない。** 一覧が取消の反映より遅れて発表中として返すと、
+   * 終わった速報を「発表中」として帳面へ戻すことになる。
+   */
+  const restoreStartupEews = useCallback((eews: readonly EEWAlert[]) => {
+    const unknown: EEWAlert[] = []
+    for (const eew of eews) {
+      const key = eewEventKey(eew)
+      if (eewRetractedKeysRef.current.has(key)) continue
+      if (activeEEWLevelsRef.current.has(key) || eewTtsEventsRef.current.has(key)) {
+        const restored = eew.firstIssueTime
+        const known = eewFirstIssueTimeRef.current.get(key)
+        if (typeof restored === 'string' && (known == null || Date.parse(restored) < Date.parse(known))) {
+          eewFirstIssueTimeRef.current.set(key, restored)
+        }
+        continue
+      }
+      unknown.push(eew)
+    }
+    if (unknown.length === 0) return
+    restoreTrackingFrom(unknown.map(eew => ({
+      payload: { kind: 'event', event: eew },
+      replayTime: serverDate(),
+      silent: true,
+    })), 'startup')
+  }, [restoreTrackingFrom])
 
   // **タブ復帰で津波カードを先頭へ戻す口はここに置かない。** 先頭復帰は `App.tsx` の
   // `requestAutoTab` が `shouldResetTsunamiScroll` で決める 1 経路だけにしてある。
@@ -6087,5 +6169,5 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     scheduleSpeech(TELEGRAM_TEXT_SPEECH_RESERVE_DELAY_MS, () => speakTelegramText(event))
   }
 
-  return { handleLiveEvent, resetTracking, restorePreWindowTracking, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict, eewNoForecastSettledKeys }
+  return { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict, eewNoForecastSettledKeys }
 }

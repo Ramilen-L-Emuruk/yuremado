@@ -1522,6 +1522,22 @@ describe('rememberEewFirstIssueTime', () => {
     rememberEewFirstIssueTime(m, 'A', report('2026-10-16T12:41:00+09:00'))
     expect(m.get('A')).toBe('2026-10-16T12:41:00+09:00')
   })
+
+  // 正: 起動時の復元で第 1 報の時刻を拾えなかった印（null）は、その報の時刻で代えずに null で覚える
+  it('拾えなかった印（null）は、その報の時刻で代えない', () => {
+    const m = new Map<string, string | null>()
+    rememberEewFirstIssueTime(m, 'A', { ...report('2026-10-16T12:44:00+09:00'), firstIssueTime: null } as EEWAlert)
+    expect(m.has('A')).toBe(true)
+    expect(m.get('A')).toBeNull()
+  })
+
+  // 安全弁: null で覚えた後に届いた続報の時刻でも埋めない（埋めると続報の時刻を第 1 報として言う）
+  it('null で覚えた後の続報の時刻で埋めない', () => {
+    const m = new Map<string, string | null>()
+    rememberEewFirstIssueTime(m, 'A', { ...report('2026-10-16T12:44:00+09:00'), firstIssueTime: null } as EEWAlert)
+    rememberEewFirstIssueTime(m, 'A', report('2026-10-16T12:45:00+09:00'))
+    expect(m.get('A')).toBeNull()
+  })
 })
 
 // 誤報取消の通知のために覚える震央地名（→ `useLiveEventHandler` の `eewLastHypocenterNameRef`）。

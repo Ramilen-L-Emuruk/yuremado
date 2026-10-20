@@ -63,7 +63,7 @@ const DAILY_LAG_DAYS = 2
 const DAILY_FETCH_INTERVAL_MS = 120
 
 /**
- * ZIP を取った後の間 (ms)。1 本が数 MB あり、全期間では 46 本を続けて取るため間を置く。
+ * ZIP を取った後の間 (ms)。1 本が数 MB あり、全期間では 47 本を続けて取るため間を置く。
  * 気象庁は上限を明記していないので、日別ページより長めに取った。
  */
 const ZIP_FETCH_INTERVAL_MS = 1000
@@ -422,7 +422,7 @@ async function readZipCache(file: string): Promise<Uint8Array | null> {
 /**
  * ZIP を取る。**一度取ったものはディスクに残して二度取らない**（直近の年だけは期限つき）。
  *
- * 全期間を作り直すと 46 本を取ることになる。読み方を変えて作り直すたびに取り直さないためのもの。
+ * 全期間を作り直すと 47 本を取ることになる。読み方を変えて作り直すたびに取り直さないためのもの。
  * **未公開（404）は残さない** —— 公開された日に取りに行けなくなる。
  */
 async function fetchZipBytes(file: string): Promise<Uint8Array> {

@@ -181,6 +181,9 @@ export function formatDepth(depth: number, atLeast: boolean): string {
 /**
  * 規模が有効値か。パーサは規模不明の電文を NaN（DMDATA 経路）または -1（P2PQuake 経路）で
  * 渡してくるため、表示・読み上げ・タイトルはいずれもこの判定で「不明」を弾く。
+ *
+ * **負の M も「不明」になる。** 気象庁は M0 未満の地震も決める。長期震源カタログの元データ（1919〜2024 年の
+ * 確定値）では、震度の欄に値がある地震（有感）に負の M は見つかっていない（→ docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）。電文の M は数えていない。
  */
 export function hasMagnitude(magnitude: number): boolean {
   return Number.isFinite(magnitude) && magnitude >= 0

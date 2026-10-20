@@ -70,7 +70,7 @@ interface SuppressRecord {
   scale: number
   /**
    * 畳んだときに出ていた帯の識別子。誤報取消された EEW を閉じてできた記録かを見分けるのに使う
-   * （→ `docs/spec/action-checklist-spec.md` §4「元の EEW が誤報取消されたとき」）。
+   * （→ `docs/spec/action-checklist-spec.md` §4「元の EEW・地震情報が取り消されたとき」）。
    * この項目を持たない旧形式の記録は見分けが付かないので、取消のときは捨てる側へ倒す。
    */
   key?: string
@@ -100,6 +100,93 @@ export interface ChecklistState {
  */
 function isEewCancelled(eew: EEWAlert): boolean {
   return eew.cancelled === true || eew.cancelledAt != null
+}
+
+/**
+ * 取消表示中の地震カードか。取消は `{ ...カード, cancelledAt }` の形で当たり、10 秒後に一覧から消える
+ * （`useEarthquakes`）。その間も `id` と観測点を持ったまま残るので、判定から外すにはこれを見る。
+ */
+function isQuakeCancelled(q: JMAQuake): boolean {
+  return q.cancelledAt != null
+}
+
+/**
+ * 続報が届いたかを見分けるための、カードの指紋。
+ *
+ * **カードが控えている電文（`sourceTelegrams`）のうち、最も新しい発表時刻と、その時刻の電文の
+ * 通数で作る。** 新しい続報が届けばどちらかが増える（DMDATA 版の発表時刻は分単位なので、同じ分に
+ * 届いた続報は通数で拾う）。
+ *
+ * - **採用した電文（カードの `id`・`telegramKey`）は使わない。** 「もっと見る」や履歴で古い電文が
+ *   後から足されると、時刻順の当て直し（`quakeMerge.ts` の `refoldQuakeCard`）で採用される電文が
+ *   古い完全版へ替わることがある（完全版より後の速報段階の報は採用されないため）。続報は届いていない
+ * - **`id` だけでも足りない。** DMDATA の `id` は `dmdata-quake-<EventID>-<報番号>` で電文の種別を
+ *   含まないので、震源情報の第 1 報のあとに震源・震度情報の第 1 報が届いても同じ値になる
+ * - **受け取った通数の合計も使わない。** 古い電文が足されると増える
+ *
+ * 控えを持たないカード（統合を通さずに作られたもの）や発表時刻を読めないカードは、`id` と
+ * `telegramKey` の組で見る。**限界:** 最も新しい電文と同じ分の古い電文が後から足されると、続報と
+ * 取り違える。
+ */
+function quakeFingerprint(q: JMAQuake): string {
+  let latest = Number.NEGATIVE_INFINITY
+  let count = 0
+  for (const t of q.sourceTelegrams ?? []) {
+    const ms = new Date(t.time).getTime()
+    if (!Number.isFinite(ms)) continue
+    if (ms > latest) {
+      latest = ms
+      count = 1
+    } else if (ms === latest) {
+      count++
+    }
+  }
+  return count > 0 ? `${latest}#${count}` : `${q.id}#${q.telegramKey ?? ''}`
+}
+
+/**
+ * 地震情報の経路で判定する地震の顔ぶれを、いまの一覧に合わせて更新する（`judged` と `seen` を
+ * その場で書き換える）。入れる条件は `useActionChecklist` の `judgedQuakesRef` を参照。
+ *
+ * `judged` の値は、先頭に来たこと・続報が届いたことにこの画面が気づいた壁時計の時刻。判定に使うのは
+ * そこから `SUPPRESS_MS` 以内の地震だけ（→ `isJudgedFresh`）。
+ *
+ * 取消表示中のカードは判定に入れず、指紋も書き換えない。同じ鍵の取消カードと新しいカードが一覧に
+ * 並ぶことがあり、両方で書き換えると指紋が 1 回の走査の中で入れ替わって「続報が届いた」と取り違える。
+ * ただし前に見た指紋は残す（取消のあとの出し直しを続報として拾うため）。
+ *
+ * 一覧から消えた地震は両方から外す（覚えたままにすると、一覧と同じだけ際限なく溜まる）。
+ */
+function updateJudgedQuakes(
+  quakes: readonly JMAQuake[],
+  judged: Map<string, number>,
+  seen: Map<string, string>,
+  now: number,
+): void {
+  const present = new Set<string>()
+  // 取消表示中の鍵。判定からは外すが、前に見た指紋は消さない —— 消すと、取消のあと同じ地震が
+  // 先頭でない位置へ出し直されたとき「初めて現れた」扱いになり、判定されない。
+  const cancelled = new Set<string>()
+  quakes.forEach((q, i) => {
+    if (isQuakeCancelled(q)) {
+      cancelled.add(quakeEventKey(q))
+      return
+    }
+    const key = quakeEventKey(q)
+    present.add(key)
+    const prev = seen.get(key)
+    const fingerprint = quakeFingerprint(q)
+    const followUp = prev !== undefined && prev !== fingerprint
+    if (followUp || (i === 0 && !judged.has(key))) judged.set(key, now)
+    seen.set(key, fingerprint)
+  })
+  for (const key of judged.keys()) if (!present.has(key)) judged.delete(key)
+  for (const key of seen.keys()) if (!present.has(key) && !cancelled.has(key)) seen.delete(key)
+}
+
+/** 気づいてから `SUPPRESS_MS` 以内か。 */
+function isJudgedFresh(judgedAt: number, now: number): boolean {
+  return now - judgedAt <= SUPPRESS_MS
 }
 
 function loadSuppress(): SuppressRecord | null {
@@ -169,12 +256,20 @@ export function useActionChecklist(params: {
    * 起きているので帯は残すのが正しい。
    */
   eews: readonly EEWAlert[]
-  latestQuake: JMAQuake | undefined
+  /**
+   * 地震情報の一覧（地震の時刻の新しい順。`useEarthquakes` の `earthquakes`）。
+   *
+   * **先頭の 1 件だけでなく一覧を渡す。** 観測点は続報で後から加わる。先頭だけを見ると、続報が届く前に
+   * 別の地震が先頭へ来たとき、前の地震で加わった近所の点が判定されない。どれを判定するかは
+   * `judgedQuakesRef`（→ docs/spec/action-checklist-spec.md §2「同時に成立したら緊急度の順」）。
+   */
+  quakes: readonly JMAQuake[]
 }): {
   state: ChecklistState | null; collapsed: boolean; dismiss: () => void; restore: () => void
   resetForReplay: () => void
 } {
-  const { minScale, scope, detectedPoints, kyoshinStalled, eews, latestQuake } = params
+  const { minScale, scope, detectedPoints, kyoshinStalled, eews, quakes } = params
+  const latestQuake = quakes[0]
 
   const [state, setState] = useState<ChecklistState | null>(null)
   const [suppress, setSuppress] = useState<SuppressRecord | null>(loadSuppress)
@@ -195,6 +290,21 @@ export function useActionChecklist(params: {
   // 寿命が尽きて消した識別子。**永続化はしない** —— リロードは「もう一度見たい」ことも
   // 意味しうるので、その場合は改めて出してよい。
   const doneKeysRef = useRef<string[]>([])
+  // 地震情報の経路で判定する地震（地震の鍵）。入るのは次の 2 つ（2026-10-19 ユーザー選択「続報が
+  // 届いた地震も見直す (推奨)」。→ docs/spec/action-checklist-spec.md §2「同時に成立したら緊急度の順」）。
+  //   - 先頭に来た地震 … 従来どおり、届いた時点で判定する
+  //   - 続報が届いた地震 … 前に見たカードの指紋（`quakeFingerprint`）と違えば届いたと分かる
+  // **先頭でない地震が初めて現れただけでは入れない。** 起動時の履歴や「もっと見る」で古い地震が
+  // まとめて入るたびに、何日も前の地震の帯が出ることになる。
+  // 値は、先頭に来たこと・続報が届いたことに気づいた時刻。**判定するのはそこから `SUPPRESS_MS`（1 時間）以内だけ**
+  // （2026-10-20 ユーザー承認。原文「推しで」、承認した案は「判定するのは最後に電文が届いてから
+  // 1 時間以内の地震に限る」）。期限が無いと、寿命で消した識別子（`DONE_KEYS_MAX` 件まで）が
+  // 押し出されたとき・より深刻な帯が消えたあとに、何時間も前の地震の帯が開き直す。
+  // 期限の内側では続報で加わった近所の点を判定し続け、先頭の地震（もっと低い震度）に差し替えない
+  // （選び方は下の `pickChecklist`）。
+  const judgedQuakesRef = useRef(new Map<string, number>())
+  // 地震の鍵ごとに、前に見たカードの指紋。続報が届いたかの見分けに使う。
+  const seenQuakesRef = useRef(new Map<string, string>())
 
   const applySuppress = useCallback((record: SuppressRecord | null) => {
     suppressRef.current = record
@@ -272,6 +382,10 @@ export function useActionChecklist(params: {
     // 数秒でも `hitScale` は null になるが、そこで捨てると復帰したとき同じ揺れが別物として扱われ、
     // 畳んだ帯が開き直す。
     if (hitScale == null && !kyoshinStalled) kyoshinAnchorRef.current = null
+    // **判定する地震の顔ぶれは、出さない設定の間も更新する。** 止めると、その間に先頭に来た地震を
+    // 取りこぼし、その間に届いた続報は設定を戻した時刻で記録される（1 時間の期限が実際より遅れて始まる）。
+    const now = Date.now()
+    updateJudgedQuakes(quakes, judgedQuakesRef.current, seenQuakesRef.current, now)
     if (minScale < 0) return
 
     // **緊急度の順に見て、最初に成立したものを出す。** 3 つは同時に成立しうる（発報中の EEW・
@@ -281,17 +395,25 @@ export function useActionChecklist(params: {
     // 深刻さとは無関係。最初に閾値を超えたところで打ち切ると、後から発生したより強い地震の
     // 予想を見落とす（連続する余震や、離れた 2 地域でほぼ同時に起きたときに実際に起きる）。
     //
-    // **出している帯の元が誤報取消された EEW なら、まずそれを下ろしてから判定をやり直す**
-    // （→ `docs/spec/action-checklist-spec.md` §4「元の EEW が誤報取消されたとき」）。開いている帯は
-    // 寿命でも消さない設計なので、ここで下ろさないと取り消された「震度7 強い揺れが予想されています」が
-    // 手で閉じるまで残る。
-    const cancelledKeys = new Set(eews.filter(isEewCancelled).map(e => `eew:${eewEventKey(e)}`))
-    // 取り消された EEW の帯を閉じてできた記録は捨てる（震度の基準が取り消された予想から来ている）。
+    // **出している帯の元が取り消された EEW・地震情報なら、まずそれを下ろしてから判定をやり直す**
+    // （→ `docs/spec/action-checklist-spec.md` §4「元の EEW・地震情報が取り消されたとき」）。開いている
+    // 帯は寿命でも消さない設計なので、ここで下ろさないと取り消された「震度7 強い揺れが予想されています」
+    // 「強い揺れがありました」が手で閉じるまで残る。
+    // 地震情報は、取消表示中のカードと同じ鍵の生きたカードが並ぶことがある（取消のあとに出し直された
+    // 報）。その鍵は生きているので取り消された扱いにしない。
+    const liveQuakeKeys = new Set(quakes.filter(q => !isQuakeCancelled(q)).map(q => quakeEventKey(q)))
+    const cancelledKeys = new Set([
+      ...eews.filter(isEewCancelled).map(e => `eew:${eewEventKey(e)}`),
+      ...quakes
+        .filter(q => isQuakeCancelled(q) && !liveQuakeKeys.has(quakeEventKey(q)))
+        .map(q => `quake:${quakeEventKey(q)}`),
+    ])
+    // 取り消された帯を閉じてできた記録は捨てる（震度の基準が取り消された予想・観測から来ている）。
     // **いま出ている帯とは別に見る** —— 閉じたあと別の EEW の帯へ移っていても、記録の震度は残っている。
     const record = suppressRef.current
     if (record?.key != null && cancelledKeys.has(record.key)) applySuppress(null)
     const cur = stateRef.current
-    const retracted = cur?.reason === 'eew' && cancelledKeys.has(cur.key)
+    const retracted = cur != null && cancelledKeys.has(cur.key)
     if (retracted) {
       // 識別子を持たない古い記録は、どの帯を閉じたものか分からないので捨てる側へ倒す。
       if (suppressRef.current?.key == null) applySuppress(null)
@@ -302,7 +424,11 @@ export function useActionChecklist(params: {
       stateRef.current = null
       // 録画ツール向けの記録（画面には出ない）。切り替える場合も、取り消された帯が下りたことは 1 件残す
       // （「揺れを検知」の開いた記録だけでは、何が引っ込んだのかが読めない）。
-      recordReplayEvent({ type: 'overlay', overlay: 'actionChecklist', open: false, reason: '緊急地震速報が取り消された', subject: null })
+      recordReplayEvent({
+        type: 'overlay', overlay: 'actionChecklist', open: false,
+        reason: cur.reason === 'quake' ? '地震情報が取り消された' : '緊急地震速報が取り消された',
+        subject: null,
+      })
     }
     const next = pickChecklist()
     // **切り替え先を出せなかったら消す。** `show` は寿命が尽きて消したもの（`doneKeysRef`）を弾く。
@@ -341,13 +467,27 @@ export function useActionChecklist(params: {
       // —— 何も出ていない状態まで止めると、エンジンが壊れ続けている端末で地震情報の経路まで死ぬ。
       if (kyoshinStalled && stateRef.current?.reason === 'kyoshin') return null
 
-      if (latestQuake) {
-        const scale = quakeScaleForScope(latestQuake, scope, minScale)
-        if (scale != null) return { reason: 'quake', scale, scoped, key: `quake:${quakeEventKey(latestQuake)}` }
+      // **判定する地震のうち、最も深刻なものを選ぶ**（EEW と同じ。同じ震度なら一覧の前＝地震の時刻が
+      // 新しい方）。判定するのは気づいてから 1 時間以内の地震だけ（`judgedQuakesRef`）。
+      // **取消表示中のカードは外す。** 顔ぶれ（`updateJudgedQuakes`）は鍵で持つので、同じ鍵の生きた
+      // カードと並んでいると取消カードもここまで来る。**寿命が尽きて消したものも選ぶ前に外す** ——
+      // 外さないと、それが最大のとき `show` で弾かれ、閾値に達した別の地震まで出なくなる。
+      let quakeHit: { scale: number; key: string } | null = null
+      for (const q of quakes) {
+        if (isQuakeCancelled(q)) continue
+        const eventKey = quakeEventKey(q)
+        const judgedAt = judgedQuakesRef.current.get(eventKey)
+        if (judgedAt === undefined || !isJudgedFresh(judgedAt, now)) continue
+        const key = `quake:${eventKey}`
+        if (doneKeysRef.current.includes(key)) continue
+        const scale = quakeScaleForScope(q, scope, minScale)
+        if (scale == null) continue
+        if (quakeHit == null || scale > quakeHit.scale) quakeHit = { scale, key }
       }
+      if (quakeHit) return { reason: 'quake', scale: quakeHit.scale, scoped, key: quakeHit.key }
       return null
     }
-  }, [eews, hitScale, kyoshinStalled, latestQuake, scope, minScale, scoped, show, applySuppress])
+  }, [eews, hitScale, kyoshinStalled, quakes, latestQuake, scope, minScale, scoped, show, applySuppress])
 
   // 設定で「出さない」に切り替えたら、いま出ているものも引っ込める。判定側で早期に抜けるだけ
   // では、開いたままの帯が手動で閉じるまで残り続ける（開いている間は寿命でも消さない設計のため）。
@@ -409,6 +549,8 @@ export function useActionChecklist(params: {
    *   落とさないと切替前の地震の帯が新しい時間軸の画面に残る
    * - `doneKeysRef`（寿命が尽きて消した識別子）—— 残すと、同じ地震を再生しても二度と出ない
    * - `kyoshinAnchorRef`（強震モニタ由来の揺れの識別子）
+   * - `judgedQuakesRef`・`seenQuakesRef`（判定する地震と、前に見たカードの指紋）—— 残すと、
+   *   新しい時間軸で同じ地震を再生したとき、旧い軸で見た `id` と比べて「続報が届いた」と取り違える
    *
    * **抑止の記録（`SuppressRecord`）は落とさない。** 利用者が閉じた意思で、永続化してある
    * （リプレイへ入った途端に開き直すのは閉じた意思を無視することになる）。期限は壁時計で
@@ -421,6 +563,8 @@ export function useActionChecklist(params: {
   const resetForReplay = useCallback(() => {
     doneKeysRef.current = []
     kyoshinAnchorRef.current = null
+    judgedQuakesRef.current.clear()
+    seenQuakesRef.current.clear()
     setState(null)
     setCollapsed(suppressRef.current !== null)
   }, [])
