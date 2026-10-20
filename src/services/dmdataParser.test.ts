@@ -776,61 +776,57 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
     expect(parseEarthquakeFromXml('VXSE53', xml)!.issue.source).toBe('大阪管区気象台')
   })
 
-  // ---- 発表時刻の受け皿（Head/ReportDateTime が空なら Control/DateTime へ落ちる）----
+  // ---- 発表時刻は Head/ReportDateTime だけから読む（Control/DateTime へは落ちない）----
   //
-  // 実電文 135 通では Head/ReportDateTime が常に JST（+09:00）、Control/DateTime が常に
-  // UTC（Z）だった。受け皿が表記を揃えずに落ちると、その報だけ `2026-08-08T18:02:00Z`、
-  // 他は `2026-08-09T03:02:00+09:00` という形になる。続報判定（utils/quakeMerge.ts の
-  // mergeQuakeInto）は **Date を経由しない文字列の辞書順**で新旧を比べるため、同じ時刻でも
-  // UTC 表記の側が必ず小さく、その報は永久に「古い」と判定されて捨てられる。
+  // `Head/ReportDateTime` は全種別で必須の要素で、実電文で欠けた例は無い。空になった地震情報は
+  // utils/quakeMerge.ts の `quakeHoldBack` が「発表時刻が空」として据え置く。
   //
-  // 雛形の VXSE53_XML は Control/DateTime と ReportDateTime が同じ時刻の別表記になっている
-  // （18:02Z ＝ 翌 03:02+09:00）ので、2 つの経路が同じ文字列を返すことを直接確かめられる。
+  // 雛形の VXSE53_XML は Control/DateTime（18:02Z）と ReportDateTime（翌 03:02+09:00）が同じ時刻の
+  // 別表記なので、**Control/DateTime が読める値のまま残っていても使われない**ことを直接確かめられる。
 
-  // 正: 受け皿へ落ちた値は JST 表記に揃う（UTC のまま出てこない）。
-  it('発表時刻が空なら Control/DateTime を JST 表記へ直して使う', () => {
+  // 正: 発表時刻が空なら、Control/DateTime が読める値でも time は空のまま（受け皿へ落ちない）。
+  it('発表時刻が空なら Control/DateTime へ落ちず空のまま', () => {
     const xml = VXSE53_XML.replace('<ReportDateTime>2026-08-09T03:02:00+09:00</ReportDateTime>', '')
     // .replace() は対象が無くても黙って素通りする。当たったことを機械的に確かめる。
     expect(xml).not.toBe(VXSE53_XML)
-    expect(parseEarthquakeFromXml('VXSE53', xml)!.time).toBe('2026-08-09T03:02:00+09:00')
+    expect(xml).toContain('<DateTime>2026-08-08T18:02:00Z</DateTime>')
+    expect(parseEarthquakeFromXml('VXSE53', xml)!.time).toBe('')
   })
 
-  // 対照: 発表時刻がある電文は受け皿を通らず、その値をそのまま使う（変換を掛けない）。
+  // 対照: 発表時刻がある電文は、その値をそのまま使う（変換を掛けない）。
   it('発表時刻があればそれをそのまま使う', () => {
     expect(fromXml().time).toBe('2026-08-09T03:02:00+09:00')
   })
 
-  // 安全弁: 受け皿を通った値と通常経路の値が**文字列として等しい**。辞書順で比べる続報判定が
-  // 同じ時刻を同じものとして扱えるのは、これが成り立つときだけ。**どちらの表記が変わっても
-  // ここで落ちる**ので、片方だけを直す変更を止められる。
-  it('受け皿を通っても通常経路と同じ文字列になる', () => {
-    const xml = VXSE53_XML.replace('<ReportDateTime>2026-08-09T03:02:00+09:00</ReportDateTime>', '')
-    expect(xml).not.toBe(VXSE53_XML)
-    expect(parseEarthquakeFromXml('VXSE53', xml)!.time).toBe(fromXml().time)
-  })
-
-  // 安全弁: 時間帯を明示していない値も空にする。**「読めない」では捕まらない類の壊れ方。**
-  // `2026-08-08T18:02:00` のようにオフセットが無いと `Date.parse` は実行環境のローカル時刻として
+  // 安全弁: 時間帯を明示していない発表時刻も空にする。**「読めない」では捕まらない類の壊れ方。**
+  // `2026-08-09T03:02:00` のようにオフセットが無いと `Date.parse` は実行環境のローカル時刻として
   // 解釈するため、このアプリ（利用者のブラウザで動く）では端末ごとに違う時刻になる。
   // `Number.isNaN` は素通りするので、表記そのものを確かめないと防げない。
-  it('Control/DateTime に時間帯が無ければ発表時刻を空にする', () => {
-    const xml = VXSE53_XML
-      .replace('<ReportDateTime>2026-08-09T03:02:00+09:00</ReportDateTime>', '')
-      .replace('<DateTime>2026-08-08T18:02:00Z</DateTime>', '<DateTime>2026-08-08T18:02:00</DateTime>')
-    expect(xml).not.toBe(VXSE53_XML)
-    expect(xml).toContain('<DateTime>2026-08-08T18:02:00</DateTime>')
-    expect(parseEarthquakeFromXml('VXSE53', xml)!.time).toBe('')
+  it('時間帯を明示していない発表時刻は空にして記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      // 記録は同じ値では二度鳴らさない（モジュール単位の間引き）ので、他のテストと被らない値にする
+      const xml = VXSE53_XML.replace('<ReportDateTime>2026-08-09T03:02:00+09:00</ReportDateTime>', '<ReportDateTime>2026-08-09T03:02:01</ReportDateTime>')
+      expect(xml).not.toBe(VXSE53_XML)
+      expect(parseEarthquakeFromXml('VXSE53', xml)!.time).toBe('')
+      expect(warn.mock.calls.filter(c => String(c[0]).includes('地震情報の発表時刻'))).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 
-  // 日時として読めない値は空にして据え置かせる。そのまま通すと以降の時刻比較がこの値に
-  // 引きずられる（mergeQuakeInto は time が空の電文を「古い」とみなして据え置く）。
-  it('Control/DateTime が日時として読めなければ発表時刻を空にする', () => {
-    const xml = VXSE53_XML
-      .replace('<ReportDateTime>2026-08-09T03:02:00+09:00</ReportDateTime>', '')
-      .replace('<DateTime>2026-08-08T18:02:00Z</DateTime>', '<DateTime>不明</DateTime>')
-    expect(xml).not.toBe(VXSE53_XML)
-    expect(xml).toContain('<DateTime>不明</DateTime>')
-    expect(parseEarthquakeFromXml('VXSE53', xml)!.time).toBe('')
+  // 正: 日時として読めない発表時刻は空にして据え置かせる。そのまま通すと以降の時刻比較がこの値に
+  // 引きずられる（mergeQuakeInto は time が空の電文を据え置く）。
+  it('日時として読めない発表時刻は空にして記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VXSE53_XML.replace('<ReportDateTime>2026-08-09T03:02:00+09:00</ReportDateTime>', '<ReportDateTime>不明-地震情報の発表時刻</ReportDateTime>')
+      expect(xml).not.toBe(VXSE53_XML)
+      expect(parseEarthquakeFromXml('VXSE53', xml)!.time).toBe('')
+      expect(warn.mock.calls.filter(c => String(c[0]).includes('地震情報の発表時刻'))).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
   // 取消電文も eventId を持つ。同一性判定（sameQuakeEntry・coalesceByEventId）はどれも
   // id 文字列から 14 桁を抜く extractQuakeEventId を通るため、このフィールドの有無で挙動は
@@ -1455,6 +1451,78 @@ describe('parseEEWFromXml: severity・cancel・LPGM', () => {
     expect(parseEEWFromXml('VXSE45', eewXml())!.forecastMaxLpgmClass).toBe(3)
     const outOfRange = eewXml({ forecastLgInt: '<From>5</From><To>5</To>' })
     expect(parseEEWFromXml('VXSE45', outOfRange)!.forecastMaxLpgmClass).toBeUndefined()
+  })
+
+  // **長周期地震動階級 "0"（階級1未満）は「予測なし」と分けて持つ。** 解説資料 Ⅱ.21 2-1-2 の値域は
+  // "0"〜"4"。1〜4 の欄（`lgIntTo` / `forecastMaxLpgmClass`）には入れず、別の欄に立てる
+  // （2026-10-19 ユーザー承認「0 を持ち、表示は今のまま (推奨)」「別の欄で持つ (推奨)」）。
+  describe('長周期地震動階級 0（階級1未満）', () => {
+    const lgPref = (lg: string) => eewPref('<From>3</From><To>3</To>', '09', '緊急地震速報（予報）',
+      '<ForecastLgInt>' + lg + '</ForecastLgInt>')
+    const parse = (lg: string) =>
+      parseEEWFromXml('VXSE45', eewXml({ forecastLgInt: lg, pref: lgPref(lg) }))!
+
+    // 正: "0" なら電文全体・区域とも、階級は持たずに「階級1未満」を立てる
+    it('"0" なら階級は undefined のまま、階級1未満の印を立てる', () => {
+      const eew = parse('<From>0</From><To>0</To>')
+      expect(eew.forecastMaxLpgmClass).toBeUndefined()
+      expect(eew.forecastMaxLpgmBelowClass1).toBe(true)
+      expect(eew.areas![0].lgIntTo).toBeUndefined()
+      expect(eew.areas![0].lgIntBelowClass1).toBe(true)
+    })
+
+    // 正: To が空なら From を採る規則（従来どおり）で "0" になる形も同じ
+    it('To が空で From が "0" でも階級1未満の印を立てる', () => {
+      const eew = parse('<From>0</From>')
+      expect(eew.forecastMaxLpgmClass).toBeUndefined()
+      expect(eew.forecastMaxLpgmBelowClass1).toBe(true)
+      expect(eew.areas![0].lgIntBelowClass1).toBe(true)
+    })
+
+    // 対照: "2" なら階級 2 を持ち、印は立てない
+    it('"2" なら階級 2 を持ち、階級1未満の印は立てない', () => {
+      const eew = parse('<From>2</From><To>2</To>')
+      expect(eew.forecastMaxLpgmClass).toBe(2)
+      expect(eew.forecastMaxLpgmBelowClass1).toBeUndefined()
+      expect(eew.areas![0].lgIntTo).toBe(2)
+      expect(eew.areas![0].lgIntBelowClass1).toBeUndefined()
+    })
+
+    // 対照: 下限が 0 でも上限（To）が 1 以上なら上限を採り、印は立てない
+    it('From が "0" でも To が "2" なら階級 2 を持ち、印は立てない', () => {
+      const eew = parse('<From>0</From><To>2</To>')
+      expect(eew.forecastMaxLpgmClass).toBe(2)
+      expect(eew.forecastMaxLpgmBelowClass1).toBeUndefined()
+      expect(eew.areas![0].lgIntBelowClass1).toBeUndefined()
+    })
+
+    // 安全弁: From="0" To="over"（0 程度以上）は「階級1未満」ではない。印を立てず、over の既存の
+    // 判定（下限が 1〜4 で読めなければ階級も「程度以上」も持たない）も崩さない
+    it('From="0" To="over" では印を立てず、over の判定も従来どおり', () => {
+      const eew = parse('<From>0</From><To>over</To>')
+      expect(eew.forecastMaxLpgmBelowClass1).toBeUndefined()
+      expect(eew.forecastMaxLpgmClass).toBeUndefined()
+      expect(eew.forecastMaxLpgmClassOver).toBeUndefined()
+      expect(eew.areas![0].lgIntBelowClass1).toBeUndefined()
+      expect(eew.areas![0].lgIntTo).toBeUndefined()
+      expect(eew.areas![0].lgIntToOver).toBeUndefined()
+      // 下限が 1 以上の over は従来どおり（印とは独立）
+      const over3 = parse('<From>3</From><To>over</To>')
+      expect(over3.forecastMaxLpgmClass).toBe(3)
+      expect(over3.forecastMaxLpgmClassOver).toBe(true)
+      expect(over3.forecastMaxLpgmBelowClass1).toBeUndefined()
+      expect(over3.areas![0].lgIntToOver).toBe(true)
+      expect(over3.areas![0].lgIntBelowClass1).toBeUndefined()
+    })
+
+    // 安全弁: 取消電文では電文全体の印を残さない（予想を持たない形。areas も空）
+    it('取消電文では階級1未満の印を残さない', () => {
+      const eew = parseEEWFromXml('VXSE43', eewXml({
+        infoType: '取消', forecastLgInt: '<From>0</From><To>0</To>', pref: lgPref('<From>0</From><To>0</To>'),
+      }))!
+      expect(eew.forecastMaxLpgmBelowClass1).toBeUndefined()
+      expect(eew.areas).toEqual([])
+    })
   })
 
   // 安全弁: 取消はそのイベントの打ち切りなので最終報として扱う。実電文の取消は Body に Text しか
@@ -2464,12 +2532,24 @@ describe('parseNankaiFromXml（VYSE50 南海トラフ地震臨時情報）', () 
     }
   })
 
-  // 安全弁: 解説情報のコードは段階として通さない。`InfoKind` の分岐を迂回しても止まること
-  it('解説情報のコードは InfoKind が揺れても段階にしない', () => {
-    const xml = nankaiXml({
-      title: '南海トラフ地震臨時情報（調査中）', serial: { name: '臨時解説', code: '210' },
-    }).replace('<InfoKind>南海トラフ地震臨時情報</InfoKind>', '<InfoKind>南海トラフ地震に関連する情報</InfoKind>')
-    expect(parseNankaiFromXml(xml)).toBeNull()
+  // 対照: 解説情報を見分けるのは `InfoKind` の名乗りだけ。コード 200/210/219 を二重に除外しない
+  // （呼び出し側が電文種別で振り分けるため、VYSE50 に解説情報は来ない）。名乗りが解説情報でなければ、
+  // 解説情報と同じコードでも「表に無いコード」として電文の名称で通し、記録を残す
+  it('InfoKind が解説情報でなければ、解説情報のコードも未知の段階として名称で通す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const base = nankaiXml({
+        title: '南海トラフ地震臨時情報（調査中）', serial: { name: '臨時解説', code: '210' },
+      })
+      const xml = base.replace('<InfoKind>南海トラフ地震臨時情報</InfoKind>', '<InfoKind>南海トラフ地震に関連する情報</InfoKind>')
+      expect(xml).not.toBe(base)
+      const nankai = parseNankaiFromXml(xml)
+      expect(nankai?.kindCode).toBe('210')
+      expect(nankai?.kindName).toBe('臨時解説')
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('未知の地震関連情報番号コード'))
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   // 安全弁: 表に無いコードを既定値へ丸めない。知らない段階を「調査中」と名乗ると、
@@ -2592,9 +2672,18 @@ describe('parseNankaiCommentaryFromXml（VYSE51/52 南海トラフ地震関連�
     expect(commentary?.id).toBe('dmdata-nankai-commentary-20260820170000-1')
   })
 
-  it('臨時情報を渡すと null（段階を持つ電文はこちらで扱わない）', () => {
-    const xml = nankaiXml({ title: '南海トラフ地震臨時情報（巨大地震注意）' })
-    expect(parseNankaiCommentaryFromXml(xml)).toBeNull()
+  // 臨時情報かどうかはこのパーサーでは見ない（呼び出し側の dmdata.ts / dmdataReplay.ts が
+  // 電文種別 VYSE50 と VYSE51/52 で振り分ける）。見出しに段階の語があっても弾かず、そのまま読む
+  it('見出しに段階の語があっても弾かない（振り分けは呼び出し側の電文種別で行う）', () => {
+    const xml = commentaryXml({
+      title: '南海トラフ地震臨時情報（巨大地震注意）',
+      serialName: '臨時解説',
+      serialCode: '210',
+    })
+    const commentary = parseNankaiCommentaryFromXml(xml)
+    expect(commentary).not.toBeNull()
+    expect(commentary?.headline).toBe('南海トラフ地震臨時情報（巨大地震注意）')
+    expect(commentary?.serialCode).toBe('210')
   })
 
   it('発表日時が日時として読めなければ null（期限計算が壊れるため）', () => {
@@ -3586,26 +3675,51 @@ describe('巨大地震に関する情報の共通要素（南海トラフ・後�
   })
 
   // 正: **後発地震注意情報に `NextAdvisory` は無い**（解説資料 Ⅱ.42）。共有の読み取りを通るので
-  // 値が入る余地は残っており、その形は**帯には出るのに読み上げだけ黙る**（読み上げ側はこの要素が
-  // 無い前提でブロックを持たせていない → `utils/ttsText.ts` の `TELEGRAM_TEXT_BLOCK_KEYS`）。
-  // 気づける場所はパーサーだけなので、届いたら記録する
-  it('後発地震注意情報に次回発表予定が入っていたら記録する', () => {
-    const warns: string[] = []
-    const spy = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { warns.push(a.join(' ')) })
+  // 値が入れば読むが、来たときの警告は置かない（2026-10-19 ユーザー承認「外す (推奨)」）
+  it('後発地震注意情報に次回発表予定が入っていても値は読み、警告は出さない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
     try {
       const xml = KOHATSU_META_XML.replace(
         '</EarthquakeInfo>',
         '</EarthquakeInfo>\n    <NextAdvisory>次回の情報発表は、２１時頃を予定しています。</NextAdvisory>',
       )
+      expect(xml).not.toBe(KOHATSU_META_XML)
       const k = parseVyse60FromXml(xml)!
       expect(k.nextAdvisory).toContain('２１時頃')
-      expect(warns.join('\n')).toContain('VYSE60 に NextAdvisory が入っています')
+      expect(warn).not.toHaveBeenCalled()
     } finally {
-      spy.mockRestore()
+      warn.mockRestore()
     }
   })
 
-  // 対照: 実電文どおり要素が無ければ黙る（正常な形で警告を出すと、他の記録が埋もれる）
+  // **本文は `Body/Comment/Text` を見ない**（解説資料 Ⅱ.41・Ⅱ.42 の Body に `Comment` は無い。
+  // 2026-10-19 ユーザー承認「外す (推奨)」）。差し込んでも、臨時情報は EarthquakeInfo/Text を採る。
+  // 位置は EarthquakeInfo より前に置く（`Comment` を先に見る形なら、ここで必ずそちらを掴む）。
+  it('南海トラフ臨時情報の本文は Comment/Text を見ず EarthquakeInfo/Text を採る', () => {
+    const xml = NANKAI_META_XML.replace(
+      '<EarthquakeInfo type="南海トラフ地震に関連する情報">',
+      '<Comment><Text>差し込んだ付加文</Text></Comment>\n    <EarthquakeInfo type="南海トラフ地震に関連する情報">',
+    )
+    expect(xml).not.toBe(NANKAI_META_XML)
+    const n = parseNankaiFromXml(xml)!
+    expect(n.body).toContain('評価検討会を開催します')
+    expect(n.body).not.toContain('差し込んだ付加文')
+  })
+
+  // 後発地震注意情報も同じ。Comment は EarthquakeInfo より前へ差し込む —— Body の中で最初に現れる
+  // Text を拾う読み方だと、この並びで Comment/Text を本文として掴む
+  it('後発地震注意情報の本文は Comment/Text を見ない', () => {
+    const xml = KOHATSU_META_XML.replace(
+      '<EarthquakeInfo type="北海道・三陸沖後発地震注意情報">',
+      '<Comment><Text>差し込んだ付加文</Text></Comment>\n    <EarthquakeInfo type="北海道・三陸沖後発地震注意情報">',
+    )
+    expect(xml).not.toBe(KOHATSU_META_XML)
+    const k = parseVyse60FromXml(xml)!
+    expect(k.body).toContain('マグニチュード７．４')
+    expect(k.body).not.toContain('差し込んだ付加文')
+  })
+
+  // 対照: 実電文どおり要素が無ければ値も持たず、記録もしない
   it('後発地震注意情報に次回発表予定が無ければ記録しない', () => {
     const warns: string[] = []
     const spy = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { warns.push(a.join(' ')) })
@@ -4272,28 +4386,36 @@ describe('震源要素更新（VXSE61）は「度分」の座標を採る', () =
     expect(r.warns).toBe(1)
   })
 
-  // 安全弁: 度分として読めない値（分が 60 以上）。度単位の値を誤って度分の要素へ入れた電文が
-  // これにあたる。「0 度 40.2 分」＝ 0.67 度という有限だが全く違う座標にせず、丸めた側へ落とす。
-  it('度分が壊れていれば度単位へ落として記録する', () => {
-    const xml = VXSE61_XML.replace('+4012.6+14218.2-44000/', '+40.2+142.3-44000/')
+  // 正: **度単位の座標とは突き合わせない。** 2 つの座標は `@type` で区別されるので、度分と名乗る
+  // 要素を度分として読めば足りる（2026-10-19 ユーザー承認「外す (推奨)」）。度単位側（40.2）と
+  // 1 度食い違う度分（41 度 12.6 分）でも、度分の値をそのまま採り、度単位へ落とさない。
+  it('度分の座標は度単位の座標と食い違っても度分のまま採る', () => {
+    const xml = VXSE61_XML.replace('+4012.6+14218.2-44000/', '+4112.6+14218.2-44000/')
+    expect(xml).not.toBe(VXSE61_XML)
     const r = withWarnSpy(() => parseEarthquakeFromXml('VXSE61', xml)!)
-    expect(r.value.earthquake.hypocenter.latitude).toBe(40.2)
-    expect(r.value.earthquake.hypocenter.longitude).toBe(142.3)
-    expect(r.warns).toBe(1)
+    expect(r.value.earthquake.hypocenter.latitude).toBe(41.21)
+    expect(r.value.earthquake.hypocenter.longitude).toBe(142.3033)
+    expect(r.warns).toBe(0)
   })
 
-  // 安全弁: 分が 60 以上の値（分として成り立たない）。`degreeMinuteToDegrees` の `min < 60` は
-  // 突き合わせとは別の防御で、こちらは**突き合わせる相手が無くても**効く。閾値の向きが
-  // 静かに反転しても気づけるよう、この分岐だけを踏むケースを固定しておく。
-  it('分が 60 以上の度分は採らない', () => {
-    const xml = VXSE61_XML.replace('+4012.6+14218.2-44000/', '+4065.5+14218.2-44000/')
-    const r = withWarnSpy(() => parseEarthquakeFromXml('VXSE61', xml)!)
-    expect(r.value.earthquake.hypocenter.latitude).toBe(40.2)
-    expect(r.warns).toBe(1)
+  // 安全弁: 分が 60 以上の値（分として成り立たない）は、度単位の座標が隣にあっても**そちらへ
+  // 落とさず**電文ごと捨て、捨てた記録を残す。`degreeMinuteToDegrees` の `min < 60` が NaN にし、
+  // 呼び出し元の有限性の検査が捨てる。閾値の向きが静かに反転しても気づけるよう固定しておく。
+  it('分が 60 以上の度分は度単位へ落とさず電文ごと捨てて記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VXSE61_XML.replace('+4012.6+14218.2-44000/', '+4065.5+14218.2-44000/')
+      expect(xml).not.toBe(VXSE61_XML)
+      expect(parseEarthquakeFromXml('VXSE61', xml)).toBeNull()
+      expect(warn.mock.calls.filter(c => String(c[0]).includes('震源座標が読めません'))).toHaveLength(1)
+      expect(fallbackWarnCount(warn.mock.calls)).toBe(0)
+    } finally {
+      warn.mockRestore()
+    }
   })
 
-  // 突き合わせる相手（度単位の座標）を消した電文。`degreeMinuteCoordProblem` は相手が無いと
-  // 無条件に許すので、ここで効くのは `degreeMinuteToDegrees` の `min < 60` だけになる。
+  // 度単位の座標を消した電文。度分の要素だけで読めるか・壊れていれば捨てるかを、隣の座標の
+  // 有無に関わらず同じに保つことを見る。
   const dmOnly = (coord: string) => VXSE61_XML
     .replace(/<jmx_eb:Coordinate description=[^>]*>[^<]*<\/jmx_eb:Coordinate>/, '')
     .replace('+4012.6+14218.2-44000/', coord)
@@ -4305,9 +4427,9 @@ describe('震源要素更新（VXSE61）は「度分」の座標を採る', () =
     expect(q.earthquake.hypocenter.latitude).toBe(40.21)
   })
 
-  // 安全弁: 分が 60 以上（分として成り立たない値）。突き合わせが使えないこの経路では
-  // `min < 60` だけが防御になる。採ってしまうと 41.09 度という有限だが誤った座標が流れる。
-  it('突き合わせる相手が無くても分が 60 以上の度分は採らない', () => {
+  // 安全弁: 分が 60 以上（分として成り立たない値）。度単位の座標が無い電文でも同じく捨てる。
+  // 採ってしまうと 41.09 度という有限だが誤った座標が流れる。
+  it('度単位の座標が無くても分が 60 以上の度分は採らない', () => {
     expect(parseEarthquakeFromXml('VXSE61', dmOnly('+4065.5+14218.2-44000/'))).toBeNull()
   })
 
@@ -4498,83 +4620,57 @@ describe('parseEEWFromXml（VXSE45 の XML 経路）', () => {
   })
 })
 
-// ---- 発表時刻の受け皿（Head/ReportDateTime が空なら Control/DateTime へ落ちる）----
+// ---- 発表時刻は Head/ReportDateTime だけから読む（Control/DateTime へは落ちない）----
 //
-// **緊急地震速報も他の XML パーサーと同じ `readReportDateTime` を通す。** ここだけ素読み
-// だったため、受け皿（UTC → JST の表記揃え）も検証（読めない値・時間帯を明示しない値を
-// 空にする）も持っていなかった。地震情報側の同名のテスト（→「発表時刻が空なら〜」）と
-// 対になる。
+// **緊急地震速報も他の XML パーサーと同じ `readReportDateTime` を通す。** 地震情報側の同名の
+// テスト（→「発表時刻が空なら Control/DateTime へ落ちず空のまま」）と対になる。
 //
-// 緊急地震速報では 2 つの時刻が**秒まで一致する**（走査した範囲と実測値は `parseEEWFromXml`
-// のコメント）。地震情報は `ReportDateTime` が分へ丸められて最大 55 秒ずれるが、こちらに
-// その丸めは無い。雛形も実電文どおり同じ瞬間の別表記（13:35:37Z ＝ 22:35:37+09:00）なので、
-// 2 つの経路が同じ文字列を返すことを直接確かめられる。
-describe('緊急地震速報: 発表時刻の受け皿', () => {
-  const withoutReportDateTime = (): string => {
+// 雛形は Control/DateTime（13:35:37Z）と ReportDateTime（22:35:37+09:00）が同じ瞬間の別表記なので、
+// **Control/DateTime が読める値のまま残っていても使われない**ことを直接確かめられる。
+describe('緊急地震速報: 発表時刻は Head/ReportDateTime だけから読む', () => {
+  // 正: 発表時刻が空なら、Control/DateTime が読める値でも time は空のまま（受け皿へ落ちない）。
+  it('発表時刻が空なら Control/DateTime へ落ちず空のまま', () => {
     const xml = EEW_XML.replace('<ReportDateTime>2026-09-03T22:35:37+09:00</ReportDateTime>', '')
     // .replace() は対象が無くても黙って素通りする。当たったことを機械的に確かめる。
     expect(xml).not.toBe(EEW_XML)
-    return xml
-  }
-
-  // 正: 受け皿へ落ちた値は JST 表記に揃う（UTC のまま出てこない）。
-  it('発表時刻が空なら Control/DateTime を JST 表記へ直して使う', () => {
-    const e = parseEEWFromXml('VXSE45', withoutReportDateTime())!
-    expect(e.time).toBe('2026-09-03T22:35:37+09:00')
-    // `time` と `issue.time` は同じ値から作る。片方だけ直すと、自動解除の時刻計算
+    expect(xml).toContain('<DateTime>2026-09-03T13:35:37Z</DateTime>')
+    const e = parseEEWFromXml('VXSE45', xml)!
+    expect(e.time).toBe('')
+    // `time` と `issue.time` は同じ値から作る。片方だけ違うと、自動解除の時刻計算
     // （`calcEEWCancelTime`）と誤報取消の読み上げ（`eewCancelToText`）で別の時刻になる。
     expect(e.issue!.time).toBe(e.time)
   })
 
-  // 対照: 発表時刻がある電文は受け皿を通らず、その値をそのまま使う（変換を掛けない）。
+  // 対照: 発表時刻がある電文は、その値をそのまま使う（変換を掛けない）。
   it('発表時刻があればそれをそのまま使う', () => {
     expect(parseEEWFromXml('VXSE45', EEW_XML)!.time).toBe('2026-09-03T22:35:37+09:00')
   })
 
-  // 安全弁: 受け皿を通った値と通常経路の値が**文字列として等しい**。どちらの表記が変わっても
-  // ここで落ちるので、片方だけを直す変更を止められる。
-  it('受け皿を通っても通常経路と同じ文字列になる', () => {
-    expect(parseEEWFromXml('VXSE45', withoutReportDateTime())!.time)
-      .toBe(parseEEWFromXml('VXSE45', EEW_XML)!.time)
-  })
-
-  // 対照: 受け皿は `Head/ReportDateTime` が読めるときには使わない。壊れた
-  // `Control/DateTime` に引きずられて発表時刻が消えたり、UTC 表記へ化けたりしない。
+  // 対照: Control/DateTime の中身は発表時刻に関わらない。壊れた Control/DateTime に引きずられて
+  // 発表時刻が消えたり、UTC 表記へ化けたりしない。
   it('Control/DateTime が壊れていても発表時刻があればそちらを使う', () => {
     const xml = EEW_XML.replace('<DateTime>2026-09-03T13:35:37Z</DateTime>', '<DateTime>不明</DateTime>')
     expect(xml).not.toBe(EEW_XML)
     expect(parseEEWFromXml('VXSE45', xml)!.time).toBe('2026-09-03T22:35:37+09:00')
   })
 
-  // ---- ここから下の 2 件が守るもの ----
-  //
-  // **`parseEEWFromXml` が `readReportDateTime` を通ること自体は、上の「発表時刻が空なら〜」と
-  // 「受け皿を通っても〜」の 2 件が守る。** 素読み（`xmlText(xmlQ(doc, 'ReportDateTime'))`）へ
-  // 戻すとその 2 件が落ちる。
-  //
-  // 下の 2 件は**戻しても落ちない** —— `ReportDateTime` を落とした時点で素読みも空を返すので、
-  // `Control/DateTime` の中身が何であれ結果が変わらない。守っているのは別のこと＝
-  // **`readReportDateTime` の検証（時間帯の明示・日時として読めるか）が緊急地震速報の経路でも
-  // 効いていること**で、将来この検証が緩められたり、EEW だけ独自の受け皿を書いたりすれば落ちる。
-
-  // 安全弁: 時間帯を明示していない値は空にする。**「読めない」では捕まらない類の壊れ方。**
-  // オフセットが無いと `Date.parse` は実行環境のローカル時刻として解釈し、有限値を返す
-  // （`Number.isNaN` は素通りする）。このアプリは利用者のブラウザで動くので、同じ電文が
-  // 端末ごとに違う時刻になる。
-  it('Control/DateTime に時間帯が無ければ発表時刻を空にする', () => {
-    const xml = withoutReportDateTime()
-      .replace('<DateTime>2026-09-03T13:35:37Z</DateTime>', '<DateTime>2026-09-03T13:35:37</DateTime>')
-    expect(xml).toContain('<DateTime>2026-09-03T13:35:37</DateTime>')
-    expect(parseEEWFromXml('VXSE45', xml)!.time).toBe('')
-  })
-
-  // 安全弁: 日時として読めない値も空にする。そのまま通すと以降の時刻比較がこの値に
-  // 引きずられる（自動解除の時刻が Invalid Date になり、解除の予約が働かなくなる）。
-  it('Control/DateTime が日時として読めなければ発表時刻を空にする', () => {
-    const xml = withoutReportDateTime()
-      .replace('<DateTime>2026-09-03T13:35:37Z</DateTime>', '<DateTime>不明</DateTime>')
-    expect(xml).toContain('<DateTime>不明</DateTime>')
-    expect(parseEEWFromXml('VXSE45', xml)!.time).toBe('')
+  // 安全弁: 時間帯を明示していない発表時刻は空にして記録する。**「読めない」では捕まらない類の
+  // 壊れ方。** オフセットが無いと `Date.parse` は実行環境のローカル時刻として解釈し、有限値を返す
+  // （`Number.isNaN` は素通りする）。このアプリは利用者のブラウザで動くので、同じ電文が端末ごとに
+  // 違う時刻になる。`time` と `issue.time` の両方が空になる。
+  it('時間帯を明示していない発表時刻は空にして記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      // 記録は同じ値では二度鳴らさない（モジュール単位の間引き）ので、他のテストと被らない値にする
+      const xml = EEW_XML.replace('<ReportDateTime>2026-09-03T22:35:37+09:00</ReportDateTime>', '<ReportDateTime>2026-09-03T22:35:38</ReportDateTime>')
+      expect(xml).not.toBe(EEW_XML)
+      const e = parseEEWFromXml('VXSE45', xml)!
+      expect(e.time).toBe('')
+      expect(e.issue!.time).toBe('')
+      expect(warn.mock.calls.filter(c => String(c[0]).includes('緊急地震速報の発表時刻'))).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
 
@@ -5680,9 +5776,9 @@ describe('津波フィクスチャの観測点名・区域名が実在するこ�
 // 解釈し、有効な日時を返す —— 同じ電文が端末ごとに違う時刻として画面に出る。弾けるのは
 // 電文を読むこの層だけなので、ここで検証する。
 //
-// 扱いは 2 通りに分かれる。**表示にしか使わない時刻は捨て**、**同一性の判定に使う時刻は
-// 捨てずに記録だけ残す**（空へ倒すと別々の電文が同じキーで束ねられ、読めない時刻を残すより
-// 重い事故になる）。
+// **扱いは 1 通り**。電文の日時はすべて `readTelegramDateTime` を通し、読めない値・時間帯の無い値は
+// 記録して空にする。同一性の判定に使う時刻（原因地震の発生時刻など）も例外にしない
+// （2026-10-19 ユーザー承認「1 本へ縮める (推奨)」「4 か所も捨てる (推奨)」）。
 describe('日時として読めない電文の時刻', () => {
   /** fixture の一部を差し替える。`.replace()` は対象が無くても黙って素通りするので当たりを確かめる。 */
   const replaceOnce = (xml: string, from: string, to: string): string => {
@@ -5755,16 +5851,21 @@ describe('日時として読めない電文の時刻', () => {
     expect(parseTsunamiFromXml('VTSE51', withValidDateTime('2026-01-01T13:00:00'))!.validDateTime).toBeUndefined()
   })
 
-  // **安全弁: 同一性の判定に使う時刻は捨てない。** `isTsunamiNewFire` が、識別子が両側
-  // そろっていない電文の同一性判定にこの値を使う。空へ倒すと別々の津波が同じものとして
-  // 扱われる —— 読めない時刻を残すより重い。
-  it('原因地震の発生時刻は読めなくても捨てない（同一性の判定に使うため）', () => {
-    const xml = replaceOnce(PARITY_TSUNAMI_XML, '<OriginTime>2026-01-01T12:00:00+09:00</OriginTime>', '<OriginTime>壊れた値</OriginTime>')
-    expect(parseTsunamiFromXml('VTSE51', xml)!.sourceEarthquakes?.[0].originTime).toBe('壊れた値')
+  // 正: 原因地震の発生時刻も、読めなければ空にして記録する。`isTsunamiNewFire` が識別子の
+  // そろわない電文の同一性判定にこの値を使うが、他の時刻と同じく値を残す受け皿は置かない。
+  it('原因地震の発生時刻も読めなければ空にして記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = replaceOnce(PARITY_TSUNAMI_XML, '<OriginTime>2026-01-01T12:00:00+09:00</OriginTime>', '<OriginTime>壊れた値-津波の原因地震の発生時刻</OriginTime>')
+      // 空は要素が無いのと同じ扱い（`|| undefined`）へ倒れる
+      expect(parseTsunamiFromXml('VTSE51', xml)!.sourceEarthquakes?.[0].originTime).toBeUndefined()
+      expect(warn.mock.calls.filter(c => String(c[0]).includes('原因地震の発生時刻'))).toHaveLength(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 
-  // 対照: 同じ地震要素でも、発現時刻は表示にしか使わないので捨てる。
-  // **2 つを同じ扱いにしないこと**を固定する（片方の規則をもう片方へ広げると穴が開く）。
+  // 対照: 同じ地震要素の発現時刻も、同じ扱いで捨てる（2 つの時刻で守りの強さを揃える）。
   it('原因地震の発現時刻は読めなければ捨てる', () => {
     const xml = replaceOnce(PARITY_TSUNAMI_XML, '<ArrivalTime>2026-01-01T12:01:00+09:00</ArrivalTime>', '<ArrivalTime>壊れた値</ArrivalTime>')
     expect(parseTsunamiFromXml('VTSE51', xml)!.sourceEarthquakes?.[0].arrivalTime).toBeUndefined()
@@ -5773,9 +5874,9 @@ describe('日時として読めない電文の時刻', () => {
 
 // 日時のガードを、津波以外の経路でも配線できているか。
 //
-// **`readTelegramDateTime` の当て方は 3 通り混在する**（`|| null` / `|| undefined` /
-// `warnIfUnreadableDateTime` で残す）。引数の取り違えや `||` の付け忘れは型検査を通るので、
-// 種別ごとに「読める値は従来どおり／読めない値はどう落ちるか」の対で固定する。
+// **`readTelegramDateTime` の当て方は 2 通り混在する**（`|| null` / `|| undefined`）。引数の取り違えや
+// `||` の付け忘れは型検査を通るので、種別ごとに「読める値は従来どおり／読めない値は空になる」の対で
+// 固定する。値を残して記録だけする形は持たない（2026-10-19 ユーザー承認「1 本へ縮める (推奨)」）。
 describe('日時として読めない電文の時刻（津波以外の経路）', () => {
   const replaceOnce = (xml: string, from: string, to: string): string => {
     const next = xml.replace(from, to)
@@ -5805,34 +5906,53 @@ describe('日時として読めない電文の時刻（津波以外の経路）'
       expect(parseEEWFromXml('VXSE45', xml)!.earthquake.arrivalTime).toBe('')
     })
 
-    // **安全弁: 発表時刻は捨てない。** 空にしたときの影響を確かめていないため、記録だけ残す。
-    // `readReportDateTime` は `Head/ReportDateTime` が在れば素通しする（検証が掛かるのは
-    // `Control/DateTime` への受け皿だけ）。これは全 9 種別に共通の扱い。
-    it('発表時刻は読めなくても捨てない', () => {
-      const xml = replaceOnce(EEW_XML, '<ReportDateTime>2026-09-03T22:35:37+09:00</ReportDateTime>', '<ReportDateTime>壊れた値</ReportDateTime>')
-      expect(parseEEWFromXml('VXSE45', xml)!.time).toBe('壊れた値')
+    // 正: 発表時刻も読めなければ空にして記録する。`readReportDateTime` は `Head/ReportDateTime` を
+    // `readTelegramDateTime` へ通す（Control/DateTime への受け皿は持たない）。全 9 種別に共通の扱い。
+    it('発表時刻も読めなければ空にして記録する', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      try {
+        const xml = replaceOnce(EEW_XML, '<ReportDateTime>2026-09-03T22:35:37+09:00</ReportDateTime>', '<ReportDateTime>壊れた値-緊急地震速報の発表時刻</ReportDateTime>')
+        const e = parseEEWFromXml('VXSE45', xml)!
+        expect(e.time).toBe('')
+        expect(e.issue!.time).toBe('')
+        expect(warn.mock.calls.filter(c => String(c[0]).includes('緊急地震速報の発表時刻'))).toHaveLength(1)
+      } finally {
+        warn.mockRestore()
+      }
     })
   })
 
   // ---- 地震情報 ----
   //
-  // **安全弁: `earthquake.time` は捨てない。** `eventKey`（同一性の判定）の材料で、空文字へ
-  // 倒すと識別子を持たない電文どうしが同じキーで束ねられる —— 読めない時刻を残すより重い。
+  // `earthquake.time` は `eventKey`（同一性の判定）の材料にもなるが、他の時刻と同じく読めなければ
+  // 空にする（値を残す受け皿は置かない）。
   describe('地震情報', () => {
     it('読める値は従来どおり残る', () => {
       expect(parseEarthquakeFromXml('VXSE53', NOTO_UNRECEIVED_XML)!.earthquake.time).toBe('2024-01-01T16:10:00+09:00')
     })
 
-    it('発現時刻は読めなくても捨てない（同一性の判定に使うため）', () => {
-      const xml = replaceOnce(NOTO_UNRECEIVED_XML, '<ArrivalTime>2024-01-01T16:10:00+09:00</ArrivalTime>', '<ArrivalTime>壊れた値</ArrivalTime>')
-      expect(parseEarthquakeFromXml('VXSE53', xml)!.earthquake.time).toBe('壊れた値')
+    it('発現時刻も読めなければ空にして記録する', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      try {
+        const xml = replaceOnce(NOTO_UNRECEIVED_XML, '<ArrivalTime>2024-01-01T16:10:00+09:00</ArrivalTime>', '<ArrivalTime>壊れた値-地震の発現時刻</ArrivalTime>')
+        expect(parseEarthquakeFromXml('VXSE53', xml)!.earthquake.time).toBe('')
+        expect(warn.mock.calls.filter(c => String(c[0]).includes('地震の発現時刻（または発生時刻）'))).toHaveLength(1)
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
+    // 安全弁: 時間帯を明示していない発現時刻も空にする（表示側のガードでは捕まらない形）。
+    it('時間帯を明示していない発現時刻も空にする', () => {
+      const xml = replaceOnce(NOTO_UNRECEIVED_XML, '<ArrivalTime>2024-01-01T16:10:00+09:00</ArrivalTime>', '<ArrivalTime>2024-01-01T16:10:00</ArrivalTime>')
+      expect(parseEarthquakeFromXml('VXSE53', xml)!.earthquake.time).toBe('')
     })
   })
 
   // ---- 長周期地震動観測情報 ----
   //
-  // 地震発生時刻は**必須要素**（無いと電文ごと落とす作り）なので捨てない。発現時刻は表示だけ
-  // なので捨てる。**2 つを同じ扱いにしないこと**を固定する。
+  // 地震発生時刻は**必須要素**で、読めなければ空にし、空なら電文ごと捨てる。発現時刻は表示だけ
+  // なので空にして電文は残す。
   describe('長周期地震動観測情報', () => {
     it('読める値は従来どおり残る', () => {
       const lpgm = parseLpgmFromXml(PARITY_LPGM_XML)!
@@ -5840,11 +5960,17 @@ describe('日時として読めない電文の時刻（津波以外の経路）'
       expect(lpgm.arrivalTime).toBe('2026-08-13T18:58:30+09:00')
     })
 
-    it('地震発生時刻は読めなくても捨てない（捨てると電文ごと落ちるため）', () => {
-      const xml = replaceOnce(PARITY_LPGM_XML, '<OriginTime>2026-08-13T18:58:00+09:00</OriginTime>', '<OriginTime>壊れた値</OriginTime>')
-      const lpgm = parseLpgmFromXml(xml)
-      expect(lpgm).not.toBeNull()
-      expect(lpgm!.originTime).toBe('壊れた値')
+    it('地震発生時刻が読めなければ電文ごと捨てて記録する', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      try {
+        const xml = replaceOnce(PARITY_LPGM_XML, '<OriginTime>2026-08-13T18:58:00+09:00</OriginTime>', '<OriginTime>壊れた値-長周期の地震発生時刻</OriginTime>')
+        expect(parseLpgmFromXml(xml)).toBeNull()
+        const msgs = warn.mock.calls.map(c => String(c[0]))
+        expect(msgs.filter(m => m.includes('長周期地震動観測情報の地震発生時刻'))).toHaveLength(1)
+        expect(msgs.filter(m => m.includes('OriginTime が無いか、日時として読めません'))).toHaveLength(1)
+      } finally {
+        warn.mockRestore()
+      }
     })
 
     it('地震発現時刻は読めなければ捨てる', () => {

@@ -504,6 +504,7 @@ function runSimulateEEWRetraction(
         forecastMaxScaleOrAbove: undefined,
         forecastMaxLpgmClass: undefined,
         forecastMaxLpgmClassOver: undefined,
+        forecastMaxLpgmBelowClass1: undefined,
         earthquake: cancelledEewEarthquake(),
       })
     } finally {
