@@ -598,7 +598,7 @@ describe('津波テストの識別子は原因地震の発現時刻から作る'
   beforeEach(() => { vi.useFakeTimers({ now: new Date('2026-09-12T12:34:56Z').getTime() }) })
   afterEach(() => { vi.useRealTimers() })
 
-  // 原因地震が 2 件あるので、番号も 2 つ並ぶ（電文解説資料 Ⅰ.別02-8 出現例６）。番号ごとに、
+  // 原因地震が 2 件あるので、番号も 2 つ並ぶ（電文解説資料 Ⅰ.別02-7 出現例６）。番号ごとに、
   // 同じ位置の原因地震の発現時刻から作る。
   it('識別子の番号は原因地震ごとの発現時刻と一致する（発表時刻ではない）', () => {
     const tsunami = createTestTsunami(true)

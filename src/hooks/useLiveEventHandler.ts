@@ -3302,7 +3302,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       const retractKey = partialRetractionKey(event)
       // 照合と組み直しは、受信した報を状態更新と同じ規則で当てた津波で行う（→ `receivedTsunamiRef`）。
       if (!tsunamiStep || tsunamiStep.kind === 'ignored' || !tsunamiBeforeReport) {
-        log.info(`[tsunami] 表示中の津波と一致しない ${event.headType} の取消のため何もしません`)
+        log.info(`[tsunami] 表示中の津波に当たらないか、取り消す報が無い ${event.headType} の取消のため何もしません`)
       } else if (spokenTsunamiCancelEventIdsRef.current.has(retractKey)) {
         log.debug(`[tsunami] ${event.headType} の取消は既に伝えたので読みません: ${retractKey}`)
       } else {

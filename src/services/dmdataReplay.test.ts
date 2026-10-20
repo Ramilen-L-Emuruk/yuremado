@@ -2926,6 +2926,30 @@ describe('filterPreWindowEvents の津波', () => {
     expect(kept.map(t => t.eventId)).toEqual(['E2'])
   })
 
+  // 取消は情報の単位（番号の組）ごとに効く（電文解説資料 Ⅰ.別01-1・Ⅰ.別02-8 例２）。「A」→「A B」と切り替えたあとの
+  // 「A」だけの津波警報等の取消はライブでは津波を終わらせないので、初期状態でも落とさない。
+  it('切り替え済みの古い単位の取消では津波を落とさず、組が一致する取消なら落とす', () => {
+    const retraction = (eventId: string): ReplayEntry => {
+      const entry = tsunamiEntry('2024-01-02T10:20:00+09:00', { eventId, cancelled: true })
+      const t = entry.payload.kind === 'event' ? (entry.payload.event as JMATsunami) : null
+      return { ...entry, payload: { kind: 'event', event: { ...t!, headType: 'VTSE41' as const, cancelReason: 'retracted' as const } } }
+    }
+    const a = tsunamiEntry('2024-01-02T10:00:00+09:00', { eventId: 'A' })
+    const ab = tsunamiEntry('2024-01-02T10:10:00+09:00', { eventId: 'A B' })
+    expect(keptTsunamis([a, ab, retraction('A')], '2024-01-02T12:00:00+09:00').map(t => t.eventId)).toEqual(['A', 'A B', 'A'])
+    expect(keptTsunamis([a, ab, retraction('A B')], '2024-01-02T12:00:00+09:00')).toEqual([])
+  })
+
+  // 解除・取消のあとに同じ束で発表し直した津波は、ライブと同じく生きている。時刻を読めない取消は捨てずに当てる
+  it('取消のあとの発表し直しは残し、時刻を読めない取消でも落とす', () => {
+    const lift = tsunamiEntry('2024-01-02T10:20:00+09:00', { eventId: 'A', cancelled: true })
+    const again = tsunamiEntry('2024-01-02T10:40:00+09:00', { eventId: 'A' })
+    const first = tsunamiEntry('2024-01-02T10:00:00+09:00', { eventId: 'A' })
+    expect(keptTsunamis([first, lift, again], '2024-01-02T12:00:00+09:00').length).toBeGreaterThan(0)
+    const broken: ReplayEntry = { ...lift, payload: { kind: 'event', event: { ...(lift.payload.kind === 'event' ? lift.payload.event as JMATsunami : null)!, time: '壊れた時刻' } } }
+    expect(keptTsunamis([first, broken], '2024-01-02T12:00:00+09:00')).toEqual([])
+  })
+
   // 状態は同じ `entries` から作るので、どの報にも状態が付く（`groupTsunamiReports` は全報を
   // どこかの束へ入れ、束ごとに状態を 1 つ作る）。束ね方が分かれる形を混ぜても、引けない報は出ない。
   it('識別子あり・なし・「A」→「A B」の統合・同じ報の重複を混ぜても、生きている津波は全件残る', () => {
