@@ -616,6 +616,44 @@ describe('fetchRealtimeIntensity の控え', () => {
     expect(second.hypoInfo).toHaveLength(1)
   })
 
+  // 正: 観測点リストの版が欠けた・空の応答は失敗にする（成功として渡すと、検知と描画が黙って止まる）
+  it.each([
+    ['欠けた', { dataTime: '2024-01-01T16:16:29', intensity: 'def' }],
+    ['空の', { dataTime: '2024-01-01T16:16:29', siteConfigId: '', intensity: 'def' }],
+  ])('観測点リストの版が%s応答は、両局とも失敗なら投げる', async (_label, rt) => {
+    globalThis.fetch = vi.fn(async () =>
+      ({ ok: true, json: async () => ({ realTimeData: rt, hypoInfo: { items: [] } }) }) as unknown as Response,
+    ) as unknown as typeof fetch
+
+    await expect(fetchRealtimeIntensity(TARGET, { cache: false })).rejects.toThrow(/siteConfigId/)
+  })
+
+  // 対照: 版が欠けた局があっても、もう一方の局で取れればそちらを返す
+  it('west の応答に版が無くても、east で取れればそちらを返す', async () => {
+    const noVersion = { realTimeData: { dataTime: '2024-01-01T16:16:29', intensity: 'def' }, hypoInfo: { items: [] } }
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => noVersion } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => BODY } as unknown as Response) as unknown as typeof fetch
+
+    const got = await fetchRealtimeIntensity(TARGET, { cache: false })
+    expect(got.siteConfigId).toBe('20220301000000')
+    expect(got.indices).toEqual([0, 1, 2])
+  })
+
+  // 安全弁: 版が欠けた応答は控えない（次に版つきで取れたら、そちらを使う）
+  it('版が欠けた応答は控えず、次に版つきで取れた分を使う', async () => {
+    const noVersion = { realTimeData: { dataTime: '2024-01-01T16:16:29', intensity: 'def' }, hypoInfo: { items: [] } }
+    const fn = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => noVersion } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => noVersion } as unknown as Response)
+      .mockResolvedValue({ ok: true, json: async () => BODY } as unknown as Response)
+    globalThis.fetch = fn as unknown as typeof fetch
+
+    await expect(fetchRealtimeIntensity(TARGET, { cache: true })).rejects.toThrow()
+    const got = await fetchRealtimeIntensity(TARGET, { cache: true })
+    expect(got.siteConfigId).toBe('20220301000000')
+  })
+
   // 鍵はエッジを含めない。west が落ちて east で取れたものも、次の要求に使える
   it('west が落ちて east で取れた分も控える', async () => {
     const fn = vi.fn()
