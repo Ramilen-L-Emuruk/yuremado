@@ -1367,7 +1367,7 @@ CLI側だけが追加で「NIEDのイベントディレクトリ自動探索」�
 > 電文種別コード（VXSE53 等）の意味は [`data-sources-spec.md`](data-sources-spec.md) §2 の一覧を参照。
 
 archive の目録（各アーカイブ内の `telegrams.json`）は、**同じ電文を XML 版と JSON 版の 2 エントリ**で
-持つ。`originalId` を持つ方が JSON 版で、その値は元の XML エントリの `id` を指す。
+持つ。`originalId` を持つ方が JSON 版で、その値は元の XML エントリの `id` を指す（標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）の目録で、XML 版が `originalId` を持つ形は見つかっていない。→ [`telegram-coverage-audit.md`](telegram-coverage-audit.md) §7「前提を全期間で数えた結果」）。
 
 読み取り側（`src/services/dmdataReplay.ts`）はこの性質を使って重複を除いている。
 **採るのは種別を問わず XML 版**（`originalId` を持たない側）。電文の読み取りを XML へ
@@ -2736,3 +2736,4 @@ Playwright / Chrome DevTools でボタン発火後の DOM 状態を確認した�
 - 2026-10-19: 録画モードの復元で、津波が語った原因地震の震源も「値が変わったら言い直す」比較の基準になることを書いた（§2）。
   §7 の震源の借用テストは、規模の更新を実電文どおり大津波警報への引き上げと同じ報（VTSE41）に載せ、前の読み上げが
   終わってから届くよう 30 秒後に流すようにした
+- 2026-10-20: §6 の目録の `originalId` に、標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）の目録で数えた結果を添えた（→ telegram-coverage-audit.md §7）

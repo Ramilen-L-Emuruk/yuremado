@@ -1887,6 +1887,9 @@ function toHalfWidthHeightDesc(s: string): string {
  * 等級とともに変わるため（「津波警報・津波注意報・津波予報」→「津波注意報・津波予報」→
  * 「津波予報」と実電文で 3 回変わった）。含めると、解除済みの等級の避難呼びかけが別の鍵として
  * 画面に残る。
+ *
+ * **VTSE51 の情報名が 2 つを併記した報は、どちらとも違う鍵になる。** 資料は 1 通で両方を名乗る形を
+ * 許すが、標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）では 0 通だった（→ docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）。
  */
 function tsunamiWarningCommentKey(headType: string, infoName: string | undefined): string {
   if (headType !== 'VTSE51') return headType
@@ -2558,6 +2561,9 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   // 観測していない」という正常な報で、記録すると長周期地震動を伴わない地震のたびに鳴る。
   // 読めない値（欠損・想定外の表記）は電文を捨てた理由として残す。区域・観測点の階級で
   // 同じ区別をしているのに、それを読みにいくかを決めるこのゲートだけ素通しだった。
+  //
+  // **0 の報は電文ごと捨てる**（同じ電文の震度・付加文も載らない）。資料の値域は 0〜4 で 0 は来うるが、
+  // 標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）では見つかっていない（→ docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）。
   if (maxClass === 0) return null
   if (!(maxClass >= 1 && maxClass <= 4)) {
     return dropTelegram(DMDATA_LOG_PREFIX, `VXSE62 の最大長周期地震動階級を読めません: "${maxClassStr}"`)

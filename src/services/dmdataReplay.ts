@@ -1672,6 +1672,7 @@ function planHistoryEntries(
     const isTsunami = TSUNAMI_TYPES.has(entry.head.type)
     if (!isQuake && !isExtra && !isTsunami) continue
     // XML 版と JSON 版の 2 エントリで載るうち、XML 版（originalId 無し）だけを拾う
+    // （標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）の目録で、XML 版が originalId を持つ形は見つかっていない → docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）
     if (entry.originalId) continue
     // **3 つのセットは互いに素**なので、種別からどの型として読むかが一意に決まる。
     // 二進電文は補完の種別（`HISTORY_EXTRA_TYPES`）に入っているが、読み方だけが違う。

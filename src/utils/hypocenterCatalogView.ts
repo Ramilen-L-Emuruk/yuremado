@@ -541,7 +541,8 @@ export const DEPTH_FILTER_MAX_KM = 750
  *
  * 見出しは両端とも「制限なし」と書く（`depthBoundLabel`）。下限だけ 0 のまま比較していると、
  * **深さが負の地震が黙って落ちる**——「制限なし」と表示しながら外すことになる。いまの生成側は
- * 負の深さを作らないので結果は変わらないが、その不変条件はここからは見えない。片方だけ
+ * 負の深さを作らないので結果は変わらない（確定値の元データでは 0 件。速報値は数えていない。
+ * → docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）が、その不変条件はここからは見えない。片方だけ
  * 読み替える形にしておくと、取得元が増えたときに気づけない。
  */
 export function effectiveMaxDepthKm(maxDepthKm: number): number {
