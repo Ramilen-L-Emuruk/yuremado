@@ -1274,12 +1274,15 @@ export interface EEWAlert {
    */
   everSpecialWarning?: boolean
   /**
-   * この地震で最初の報の発表時刻。**載せるのはリプレイの初期状態だけ** —— 窓の手前の報は地震ごとに
-   * 最新 1 報へ畳んで渡すので、畳む前の全報から求めて載せる（`filterPreWindowEvents`）。
-   * 誤報取消の読み上げ（「〇時〇分に発表された」）が第 1 報の時刻を言うために使う。
-   * 無ければ `issue.time` を見る（→ `rememberEewFirstIssueTime`）。
+   * この地震で最初の報の発表時刻。誤報取消の読み上げ（「〇時〇分に発表された」）が第 1 報の時刻を言うために使う。
+   * **載せるのは、最新 1 報だけを渡す 2 つの経路** —— リプレイの初期状態（畳む前の全報から求める。
+   * `filterPreWindowEvents`）と、起動時の復元（詳細の全報から拾う。`fetchDmdataActiveEews`）。
+   *
+   * - 欄が無い: ライブで届いた報。その報の `issue.time` を見る（→ `rememberEewFirstIssueTime`）
+   * - null: 第 1 報の時刻を拾えなかった。**`issue.time` で代えない** —— 代えると第 1 報ではない時刻を言うので、
+   *   取消は時刻を言わずに読む（2026-10-19 ユーザー承認「時刻を言わない (Recommended)」）
    */
-  firstIssueTime?: string
+  firstIssueTime?: string | null
   // issue.serial = 情報番号（第N報）
   issue?: {
     eventId?: string

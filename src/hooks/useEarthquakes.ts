@@ -709,6 +709,17 @@ export function useEarthquakes(
    * `utils/tabPriority.ts` と 2 箇所へ分かれる。
    */
   onStartupRestore?: (tab: 'realtime' | 'tsunami') => void,
+  /**
+   * 起動時に復元した「発表中の緊急地震速報」を、読み上げ側（`useLiveEventHandler` の `restoreStartupEews`）へ渡す。
+   *
+   * **`onLiveEvent` を通らない分を、ここで別に伝える。** 復元は `silent` で積むので読み上げ側には届かず、
+   * 渡さないとその後の取消が「表示中の速報ではない」と判定されて鳴らず読まれない（→ eew-spec.md §2
+   * 「起動時に、発表中のものを復元する」）。**この引数だけ任意なのは、前の引数がすべて任意だから**
+   * （必須の引数は任意の後ろに置けない。必須にするなら前の引数ごと必須へ直し、テストの呼び出しもすべて直すことになる）。
+   * `useEarthquakes.wiring.test.ts` が固定するのは「渡せば呼ばれる」ところまでで、
+   * **`App.tsx` が渡しているかは型でもテストでも捕まらない**（渡し忘れると取消が声にならないだけで、例外もログも出ない）。
+   */
+  onStartupRestoreEews?: (eews: readonly EEWAlert[]) => void,
 ) {
   const [state, setState] = useState<EarthquakeState>({
     earthquakes: [],
@@ -754,6 +765,8 @@ export function useEarthquakes(
   onLiveEventRef.current = onLiveEvent
   const onStartupRestoreRef = useRef(onStartupRestore)
   onStartupRestoreRef.current = onStartupRestore
+  const onStartupRestoreEewsRef = useRef(onStartupRestoreEews)
+  onStartupRestoreEewsRef.current = onStartupRestoreEews
   // キューディスパッチャーがサイレントエントリを処理中は true にして通知音を抑制する
   const isSilentRef = useRef(false)
   // テスト EEW の発報状態を種別ごとに独立管理（複数EEW同時テスト対応）
@@ -2802,6 +2815,14 @@ export function useEarthquakes(
               })
             }
             log.info(`[data] 発表中の緊急地震速報を復元しました: ${fresh.length} 件`)
+            // 読み上げ側の記憶にも載せる（キューの報は silent なので読み上げ側へ届かない）。
+            // ここで投げても画面の要求は出す——記憶に載らなければ取消が声にならないだけで済むが、
+            // 画面が移らないと発表中の速報そのものに気づけない。
+            try {
+              onStartupRestoreEewsRef.current?.(fresh)
+            } catch (err) {
+              log.error('[data] 復元した緊急地震速報を読み上げ側へ渡せませんでした（取り消されても読み上げません）:', err)
+            }
             onStartupRestoreRef.current?.('realtime')
           })
           .catch((err: unknown) => {
