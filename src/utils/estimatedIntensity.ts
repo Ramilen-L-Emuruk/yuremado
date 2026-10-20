@@ -53,6 +53,11 @@ export function matchEstimatedIntensityArrival(
  *
  * 震源が両方読めているときだけ、距離でも裏を取る。**片方でも読めなければ時刻だけで判定する**
  * ——震度速報しか届いていない段階のカードは震源を持たない（位置不明のセンチネル）。
+ *
+ * **発現時刻の分は、同じ地震の続報で動くことがある。** 全期間のアーカイブ（地震情報の区分
+ * 2,131 日・2026-10-19 に数えた）で 1 件あった（EventID 20210410083449。震源・震度情報の
+ * 報番号 1 が 08:34、報番号 2 が 08:35。→ quake-spec.md §8）。
+ * 分がずれた側の分布図はこの地震のカードに結び付かない。
  */
 export function matchEstimatedIntensity(quake: JMAQuake, ei: JMAEstimatedIntensity): boolean {
   return matchEstimatedIntensityArrival(quake, ei.arrivalTime, ei.hypocenter.lat, ei.hypocenter.lon)
