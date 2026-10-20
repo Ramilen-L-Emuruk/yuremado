@@ -825,6 +825,17 @@ describe('assemblePreWindowMaterial', () => {
     expect(material).toHaveLength(2)
   })
 
+  // 正: 津波警報等（VTSE41）は報番号が空で、同じ津波の全報が同じ `id` になる。同じ分に 2 通出ても
+  // 作成時刻（秒まで）で見分けて両方足し、作成時刻の順に並べる（発表時刻の分で見ると 1 通しか足されない）。
+  it('正: 同じ id・同じ分・同じ情報名でも、作成時刻が違えば別の報として足し、作成時刻の順に並べる', () => {
+    const base = { ...forecastTsunami('same-id', '2026-08-13T09:00:00+09:00'), infoName: '津波警報・注意報・予報' }
+    const later = { ...base, createdAtMs: Date.parse('2026-08-13T09:00:40+09:00') }
+    const earlier = { ...base, createdAtMs: Date.parse('2026-08-13T09:00:10+09:00') }
+    const material = assemblePreWindowMaterial([], { tsunamis: [later, earlier], extras: [] }, [])
+    expect(material.map(e => (e.payload as { kind: 'event'; event: import('../types/earthquake').JMATsunami }).event.createdAtMs)).toEqual([earlier.createdAtMs, later.createdAtMs])
+    expect(material.map(e => e.replayTime.getTime())).toEqual([earlier.createdAtMs, later.createdAtMs])
+  })
+
   it('安全弁: 履歴が無ければ 24 時間ぶんをそのまま返す', () => {
     const pre = [countEntry('pre')]
     expect(assemblePreWindowMaterial(pre, null, [])).toBe(pre)

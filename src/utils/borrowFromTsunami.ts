@@ -1,5 +1,5 @@
 import type { JMAQuake, JMATsunami, Hypocenter, BorrowedFromTsunami, TsunamiSourceEarthquake, DomesticTsunami, TsunamiGrade } from '../types/earthquake'
-import { extractQuakeEventId, isHypocenterPending } from './quakeMerge'
+import { compareReportAge, extractQuakeEventId, isHypocenterPending } from './quakeMerge'
 import { tsunamiMaxGrade, tsunamiEventIds } from './tsunami'
 import { linkTsunamiSources } from './tsunamiSourceLinks'
 
@@ -60,8 +60,8 @@ function tsunamiToBorrowFrom(
     if (!source?.hypocenterName) continue
     // **新しい報を採る。** 津波電文の震源は続報で更新される（能登では 16:22 に Ｍ７．４→Ｍ７．６。
     // 地震情報が同じ更新を伝えるのは 16:24 で、2 分遅い）。古い報を掴むと、更新された規模が
-    // 地震情報の到着まで反映されない。
-    if (!best || t.time > best.tsunami.time) best = { tsunami: t, source }
+    // 地震情報の到着まで反映されない。新旧は作成時刻（秒まで）で比べる（→ `compareReportAge`）。
+    if (!best || compareReportAge(t, best.tsunami) > 0) best = { tsunami: t, source }
   }
   return best
 }
@@ -293,7 +293,7 @@ function tsunamiToBorrowGradeFrom(eventId: string, tsunamis: readonly JMATsunami
   for (const t of tsunamis) {
     if (!isBorrowableTsunami(t, eventId)) continue
     if (!BORROWABLE_GRADES.has(tsunamiMaxGrade(t))) continue
-    if (!best || t.time > best.time) best = t
+    if (!best || compareReportAge(t, best) > 0) best = t
   }
   return best
 }

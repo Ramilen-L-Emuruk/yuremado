@@ -92,6 +92,20 @@ describe('borrowHypocenterFromTsunami', () => {
     expect(borrowHypocenterFromTsunami(makePrompt(), [later, first], [])?.hypocenter.magnitude).toBe(7.6)
   })
 
+  // 同じ分の報は作成時刻（秒まで）で新旧を決める。発表時刻（分まで）だと前後が付かず、届いた順で先の報を掴む。
+  it('同じ分の報は作成時刻の新しいほうの値を借りる', () => {
+    const older = makeTsunami({ createdAtMs: Date.parse('2024-01-01T07:22:05Z'), time: '2024-01-01T07:22:00Z' })
+    const newer = makeTsunami({
+      id: 'dmdata-tsunami-20240101161010-2',
+      createdAtMs: Date.parse('2024-01-01T07:22:40Z'),
+      time: '2024-01-01T07:22:00Z',
+      infoName: '津波情報',
+      sourceEarthquakes: [notoSource({ magnitude: 7.6 })],
+    })
+    expect(borrowHypocenterFromTsunami(makePrompt(), [newer, older], [])?.hypocenter.magnitude).toBe(7.6)
+    expect(borrowHypocenterFromTsunami(makePrompt(), [older, newer], [])?.hypocenter.magnitude).toBe(7.6)
+  })
+
   // 対照: 結ぶ根拠が無いときは借りない。
   it('eventId が食い違う津波からは借りない', () => {
     // 震度速報の eventId は震源決定前の採番で、確定後の電文と別値になることがある
@@ -298,6 +312,16 @@ describe('borrowDomesticTsunamiFromTsunami', () => {
     expect(borrowed?.source.shortLabel).toBe('津波情報')
     expect(borrowed?.source.shortLabel).not.toContain('警報')
     expect(borrowed?.source.reportTime).toBe('2024-01-01T07:12:00Z')
+  })
+
+  // 同じ分の報は作成時刻（秒まで）で新旧を決め、新しいほうの等級から借りる。
+  // 出どころ（電文の名乗り）で、どちらの報から借りたかを見分ける。
+  it('同じ分の報は作成時刻の新しいほうから借りる', () => {
+    const at = (sec: number) => Date.parse(`2024-01-01T07:22:${sec}Z`)
+    const older = withGrade('Watch', { time: '2024-01-01T07:22:00Z', createdAtMs: at(10), infoName: '津波警報・津波注意報・津波予報' })
+    const newer = withGrade('Warning', { id: 'dmdata-tsunami-20240101161010-2', time: '2024-01-01T07:22:00Z', createdAtMs: at(40), infoName: '津波情報' })
+    expect(borrowDomesticTsunamiFromTsunami(makePrompt(), [older, newer])?.source.infoName).toBe('津波情報')
+    expect(borrowDomesticTsunamiFromTsunami(makePrompt(), [newer, older])?.source.infoName).toBe('津波情報')
   })
 
   // 対照: 気象庁が判断を示した値は上書きしない。

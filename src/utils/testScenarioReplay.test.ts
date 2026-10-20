@@ -339,6 +339,23 @@ describe('instantiateScenario', () => {
       expect(new Date(shifted.estimations![0].maxHeightDateTime!).getTime()).toBe(new Date(tsunami.estimations![0].maxHeightDateTime!).getTime() + originalDelta)
     })
 
+    // 作成時刻も同じだけずらす。ずらさないと、発表時刻はいまへ寄るのに作成時刻だけ収録当時のまま残り、
+    // 報の新旧の比較（`compareReportAge`）が時間軸の違う 2 つの値を比べる。
+    it('作成時刻（createdAtMs）もずらし、持たない報には足さない', () => {
+      const baseTime = '2024-01-01T07:15:00Z'
+      const delta = NOW.getTime() - new Date(baseTime).getTime()
+      const createdAtMs = Date.parse('2024-01-01T07:15:42Z')
+      const scenario = (event: JMATsunami): TestScenarioFile => ({
+        id: 'test', label: 'テスト', description: '', category: 'tsunami', durationMs: 0,
+        baseTime,
+        entries: [{ offsetMs: 0, payload: { kind: 'event', event } }],
+      })
+      const shifted = (instantiateScenario(scenario(makeTsunami({ createdAtMs })), NOW)[0].payload as { kind: 'event'; event: JMATsunami }).event
+      expect(shifted.createdAtMs).toBe(createdAtMs + delta)
+      const without = (instantiateScenario(scenario(makeTsunami()), NOW)[0].payload as { kind: 'event'; event: JMATsunami }).event
+      expect('createdAtMs' in without).toBe(false)
+    })
+
     it('eventIdが再採番される', () => {
       const tsunami = makeTsunami()
       const scenario: TestScenarioFile = {

@@ -1285,7 +1285,8 @@ function groupTsunamiReports(tsunamis: readonly JMATsunami[]): Map<JMATsunami, n
  * 時刻を読めない取消以外の報は外す（束を畳む `foldTsunamiReports` も外すので、内容を使われない報で判定だけを動かさない）。
  */
 function endedByCancel(reports: JMATsunami[]): boolean {
-  const at = (r: JMATsunami) => { const t = new Date(r.time).getTime(); return Number.isFinite(t) ? t : Infinity }
+  // 作成時刻（秒まで）があればそれで並べる。読めなければ `Infinity`（末尾）。
+  const at = (r: JMATsunami) => reportOrderKey(r)
   const ordered = reports.filter(r => r.cancelled || Number.isFinite(at(r))).sort((a, b) => at(a) - at(b))
   let current: JMATsunami | undefined
   let ended = false

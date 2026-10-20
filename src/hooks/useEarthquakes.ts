@@ -19,7 +19,7 @@ import {
   type TelegramLoss, createEmptyTelegramLoss, telegramLossFrom, isTelegramLossEmpty,
   mergeHistoryLoss,
 } from '../utils/telegramLoss'
-import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, extractQuakeEventId, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, type ReportAge } from '../utils/quakeMerge'
+import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, extractQuakeEventId, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
 import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmRowSnapshot, lpgmMarkKey, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
@@ -878,6 +878,16 @@ export function useEarthquakes(
    * 理由は失効予約を積む箇所の注記。
    */
   const expiryBasisRef = useRef<{ shownAtStep: JMATsunami | undefined; tsunami: JMATsunami | undefined } | null>(null)
+  /**
+   * DMDSS 版で、ライブで当てた津波の報（解除・取消・失効を含む）のうちいちばん新しいものの並べる鍵
+   * （`reportOrderKey`。作成時刻、無ければ発表時刻）。
+   *
+   * **起動時履歴の取り込みはこれより新しい報でしか津波を書き換えない。** 履歴の取得はライブの接続と並行して
+   * 走り、数十秒〜数分かかる。その間にライブで当てた報（引き上げ・解除）を、取り込みの最後に履歴の古い最新報
+   * （または空）で上書きすると、引き上げが巻き戻る・ライブで出た津波が消える・解除した津波が甦る。
+   * 標準版の `p2pTsunamiSeenMs` と同じ考え方。時間軸が変わるリセットで空に戻す。
+   */
+  const liveTsunamiSeenKeyRef = useRef(Number.NEGATIVE_INFINITY)
   /**
    * **同じティックで受理した地震カードの写し**（同じ地震につき 1 枚）。
    *
@@ -1899,6 +1909,12 @@ export function useEarthquakes(
         const step = stepTsunamiState(base, tsunami, now)
         if (step.kind !== 'ignored') {
           expiryBasisRef.current = { shownAtStep: shown, tsunami: step.kind === 'live' ? step.tsunami : undefined }
+          // 起動時履歴の取り込みが、これより古い報で津波を書き換えないように覚えておく（→ `liveTsunamiSeenKeyRef`）。
+          // **状態を変えなかった報（`ignored`）では進めない。** 履歴の取得中は表示中の津波が無いので、一部取消などは
+          // 何も当たらずに捨てられる。それで鍵だけ進めると、取り消されていない履歴の津波まで当たらなくなる。
+          // 時刻を読めない報（鍵が非有限）は覚えない。パーサーが津波の日時を入口で確かめるので、ライブでは届かない
+          const seenKey = reportOrderKey(tsunami)
+          if (Number.isFinite(seenKey) && seenKey > liveTsunamiSeenKeyRef.current) liveTsunamiSeenKeyRef.current = seenKey
         }
         if (step.kind !== 'ignored') {
           purgeExpiry()
@@ -2526,7 +2542,7 @@ export function useEarthquakes(
       // 前の版を打ち切り、その結果を捨てる（→ `startRestFetches`）。
       let restRun = 0
       let restAbort: AbortController | null = null
-      // 履歴と復元がキューへ積んだもの（EEW の電文 id・津波の失効予約）。**版をまたいで持つ** ——
+      // 履歴と復元がキューへ積んだ EEW の電文 id（津波の失効予約は、外してから積むのでここに載せない）。**版をまたいで持つ** ——
       // 前の版が打ち切られる前に積み終えていると、取り直しの版が同じものをもう一度積むことになる
       // （EEW の報番号の台帳は同じ報番号の再送を通すので、入口では弾かれない）。
       const restoredQueueKeys = new Set<string>()
@@ -2609,8 +2625,18 @@ export function useEarthquakes(
             const tsunamiEvents = history.tsunamis
             // 種別横断の生電文を eventId ごとに統合（リアルタイムと同一ロジック）。
             rememberQuakeRetractionsFromBatch(quakeEvents)
-            const allTsunami = tsunamiEvents
-              .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+            // 新しい順。**作成時刻（秒まで）で並べる**（→ `reportOrderKey`）。同じ津波の津波警報等と津波情報は同じ分に
+            // 並ぶことがあり、履歴の並びは取得の完了順なので、分で並べると古い報が「最新」として画面に載りうる。
+            // **時刻を読めない報は先に外す。** `reportOrderKey` は読めない報を `Infinity`（昇順の末尾）にするので、
+            // 新しい順に並べると先頭へ来て、壊れた報が「最新」として画面に載る。外した件数は記録する。
+            const orderable = tsunamiEvents.filter(t => Number.isFinite(reportOrderKey(t)))
+            if (orderable.length < tsunamiEvents.length) {
+              const dropped = tsunamiEvents.filter(t => !Number.isFinite(reportOrderKey(t)))
+              const droppedCancels = dropped.filter(t => t.cancelled).length
+              log.warn(`[data] 時刻を読めない津波の報 ${dropped.length} 通（うち取消・解除 ${droppedCancels} 通）を、起動時履歴の最新報の候補から外しました`)
+            }
+            const allTsunami = orderable
+              .sort((a, b) => reportOrderKey(b) - reportOrderKey(a))
             // 画面へ載せるのは最新報 1 通だけ。その報が有効期限を持たなくても、同じ津波の過去報が
             // 伝えていれば引き継ぐ（引き継がないと下の失効予約が積まれず、期限切れの津波が消えない）。
             const latestTsunami = allTsunami[0] && withInheritedTsunamiFacts(allTsunami[0], allTsunami)
@@ -2622,7 +2648,20 @@ export function useEarthquakes(
               log.warn(`[data] 予報のみの津波に有効期限が付いていません（期限を伝えた報を取得できていない可能性）: id=${latestTsunami.id}`)
             }
             const now = serverDate()
-            const tsunamis = latestTsunami
+            // **ライブで当てた報より古い履歴では津波を書き換えない**（→ `liveTsunamiSeenKeyRef`）。履歴の最新報が
+            // ライブで当てたどの報より新しいときだけ当てる。履歴に津波が無くても、ライブで当てた報があれば今の状態を残す。
+            const historyTsunamiKey = allTsunami[0] ? reportOrderKey(allTsunami[0]) : Number.NEGATIVE_INFINITY
+            const liveSeenKey = liveTsunamiSeenKeyRef.current
+            const applyHistoryTsunami = !(Number.isFinite(liveSeenKey) && liveSeenKey >= historyTsunamiKey)
+            if (!applyHistoryTsunami) {
+              const liveAt = new Date(liveSeenKey).toISOString()
+              if (allTsunami[0]) {
+                log.info(`[tsunami] 起動時履歴の最新報はライブで当てた報より新しくないので、津波は今の状態を残します: history=${allTsunami[0].id}（${new Date(historyTsunamiKey).toISOString()}） ライブ=${liveAt}`)
+              } else {
+                log.info(`[tsunami] 起動時履歴に津波は無かったが、ライブで津波の報を当てているので今の状態を残します: ライブ=${liveAt}`)
+              }
+            }
+            const tsunamis = applyHistoryTsunami && latestTsunami
               && !latestTsunami.cancelled
               && !(latestTsunami.validDateTime && new Date(latestTsunami.validDateTime) <= now)
               ? [latestTsunami] : []
@@ -2655,6 +2694,7 @@ export function useEarthquakes(
               const { cards, markMemory } = mergeQuakeHistory(
                 quakeEvents, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
               )
+              const nextTsunamis = applyHistoryTsunami ? tsunamis : prev.tsunamis
               return {
                 ...prev,
                 // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
@@ -2663,8 +2703,8 @@ export function useEarthquakes(
                 ...marksFromHistory(markMemory, cards, lpgmByEventId, prev.quakeUpdateMarks),
                 // **貸し手は同じ更新で復元する `tsunamis`。`prev.tsunamis` ではない** ——
                 // 起動時の復元では前の状態が空なので、そちらを見ると 1 枚も借りられない。
-                earthquakes: borrowFromTsunamiIntoCards(cards, tsunamis),
-                tsunamis,
+                earthquakes: borrowFromTsunamiIntoCards(cards, nextTsunamis),
+                tsunamis: nextTsunamis,
                 lpgmByEventId,
                 lastUpdate: serverDate(),
                 isLoading: false,
@@ -2754,11 +2794,20 @@ export function useEarthquakes(
               }
             }
             // 初回ロードで津波が有効（validDateTime未来）の場合、キューへ解除イベントを挿入する。
+            // **履歴で津波を当てたときは、積む前に古い失効予約を外す**（ライブで報を当てるときと同じ。外さないと、
+            // ライブで先に当てた報の予約と履歴の予約が並び、早いほうが今の津波を終わらせる）。当てなかったときは触らない。
+            // **津波の予約は `restoredQueueKeys` で重複を止めない。** 外してから積むので重なりようがなく、区分の食い違いで
+            // 取り直す 2 回目は、1 回目の予約を外したあと同じ鍵で止められて、期限つきの津波が失効しなくなる。
+            if (applyHistoryTsunami) {
+              eventQueueRef.current.retain(entry => {
+                if (entry.payload.kind !== 'event') return true
+                const ev = entry.payload.event
+                return ev.kind !== 'tsunami' || (ev as JMATsunami).cancelReason !== 'expired'
+              })
+            }
             if (tsunamis.length > 0 && latestTsunami?.validDateTime) {
               const expireTime = new Date(latestTsunami.validDateTime)
-              const queueKey = `tsunami-expire:${latestTsunami.id}:${latestTsunami.validDateTime}`
-              if (expireTime > serverDate() && !restoredQueueKeys.has(queueKey)) {
-                restoredQueueKeys.add(queueKey)
+              if (expireTime > serverDate()) {
                 eventQueueRef.current.push({
                   eventTime: expireTime,
                   payload: { kind: 'event', event: { ...latestTsunami, cancelled: true, cancelReason: 'expired' } as AppEvent },
@@ -4083,6 +4132,8 @@ export function useEarthquakes(
     // 分布を伝えた地震の台帳も空にする。リプレイの開始・リセットで時間軸が変わるため、前の軸で
     // 伝えた分布を「もう伝えた」と数えると、新しい軸の初報が「更新されました」と読まれる。
     shownEstimatedIntensityArrivalsRef.current = []
+    // ライブで当てた津波の報の鍵も落とす。前の時間軸の報より古い履歴が、新しい軸で当たらなくなる。
+    liveTsunamiSeenKeyRef.current = Number.NEGATIVE_INFINITY
     clearTestSimulationTimers()
     setState(prev => ({
       ...prev,

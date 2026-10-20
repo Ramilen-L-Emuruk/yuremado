@@ -6134,6 +6134,17 @@ describe('電文の作成時刻（createdAtMs）', () => {
     expect(quake.time).toBe('2026-08-09T03:00:00+09:00')
   })
 
+  // 正: 津波の報も同じく持つ（同じ津波の津波警報等と津波情報は同じ分に出るので、前後は秒で決める。
+  // → `docs/spec/tsunami-spec.md` §3「報の新旧は作成時刻で比べる」）。
+  it('津波の報も Control/DateTime のミリ秒を持つ', () => {
+    const xml = VTSE52_XML.replace('<EditorialOffice>気象庁</EditorialOffice></Control>', '<EditorialOffice>気象庁</EditorialOffice><DateTime>2026-01-01T03:30:42Z</DateTime></Control>')
+    const tsunami = parseTsunamiFromXml('VTSE52', xml)!
+    expect(tsunami.createdAtMs).toBe(Date.parse('2026-01-01T03:30:42Z'))
+    expect(tsunami.time).toBe('2026-01-01T12:30:00+09:00')
+    // 対照: 作成時刻を載せない電文は持たない
+    expect(parseTsunamiFromXml('VTSE52', VTSE52_XML)!.createdAtMs).toBeUndefined()
+  })
+
   // 安全弁: 日時として読めない値・時間帯の無い値は持たせず、記録を残す（比べる側が発表時刻へ落ちる）。
   it('読めない作成時刻は持たせず、記録を残す', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})

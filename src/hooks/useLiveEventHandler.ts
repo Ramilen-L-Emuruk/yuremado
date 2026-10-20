@@ -34,7 +34,7 @@ import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTel
 import { log, createLogThrottle } from '../utils/logger'
 import { TAB_PRIORITY, type TabPriority } from '../utils/tabPriority'
 import { hasPendingEewSpeech } from '../utils/eewPendingSpeech'
-import { applyQuakeCancelToCard, createQuakeFoldKeys, extractQuakeEventIdFromId, quakeEventKey, quakeKeyForLpgmEventId, sameQuakeEntry } from '../utils/quakeMerge'
+import { applyQuakeCancelToCard, compareReportAge, createQuakeFoldKeys, extractQuakeEventIdFromId, quakeEventKey, quakeKeyForLpgmEventId, sameQuakeEntry } from '../utils/quakeMerge'
 
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import { serverDate } from '../utils/clock'
@@ -666,10 +666,13 @@ function tsunamiQuakeSpokenFor(
     const key = card ? `quake:${quakeEventKey(card)}`
       : link.eventId ? `quake:${link.eventId}`
       : `tsunami-source:${sourceEarthquakeTime(link.source) ?? ''}|${link.source.hypocenterName}`
-    // 地震情報のほうが新しいかは発表時刻で比べる（読めない時刻は「新しくない」へ倒し、言い直しを止めない）。
-    const tsunamiAt = Date.parse(tsunami.issue.time || tsunami.time)
-    const quakeAt = card ? Date.parse(card.issue.time || card.time) : NaN
-    const quakeReportedLater = Number.isFinite(tsunamiAt) && Number.isFinite(quakeAt) && quakeAt > tsunamiAt
+    // 地震情報のほうが新しいかは作成時刻（秒まで。持たなければ発表時刻）で比べる（→ `compareReportAge`）。
+    // 読めない時刻・前後を決められない組は「新しくない」へ倒し、言い直しを止めない。
+    const tsunamiAge = { time: tsunami.issue.time || tsunami.time, createdAtMs: tsunami.createdAtMs }
+    const quakeAge = card ? { time: card.issue.time || card.time, createdAtMs: card.createdAtMs } : undefined
+    const quakeReportedLater = quakeAge !== undefined
+      && Number.isFinite(Date.parse(tsunamiAge.time)) && Number.isFinite(Date.parse(quakeAge.time))
+      && compareReportAge(quakeAge, tsunamiAge) > 0
     return { source: link.source, spoken: quakeSpokenStateFor(states, key), subject: card ? quakeEventKey(card) : undefined, quakeReportedLater }
   })
   const firstCard = cardOf(ids[0])
