@@ -27,6 +27,7 @@ import {
 import { DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
 import { log } from '../utils/logger'
 import { CELL_LAT_DEG, CELL_LON_DEG } from '../utils/bufrEstimatedIntensity'
+import { ACTIVE_EEW_WINDOW_MS } from '../utils/eew'
 // **テストボタンのデータをここで先に読む。** 値は使わないが、これが無いと
 // `simulate*` を最初に呼ぶテストが「このファイルで初回のモジュール解決・変換」を
 // テスト本体の中で行うことになる —— 実データ 3 つで 824 KB あり、全ファイル並列実行では
@@ -2311,6 +2312,8 @@ describe('EEW の続報は古い報で退行しない', () => {
 
   // 台帳は表示が終わった EEW の分を落とす。落とさないと伸び続け、逆に落としすぎると保護が
   // 効かなくなる。解除で消えたあと、同じキーの報を初報として受け直せることで確認する。
+  // **消えてから `ACTIVE_EEW_WINDOW_MS` の間は、消えた地震の記憶（`eewEndedRef`）が同じ報・古い報を弾く**
+  // （2026-10-21 ユーザー承認「おすすめで」）ので、その窓を過ぎてから受け直す。
   it('表示が終わった EEW の報番号は台帳に残さない', async () => {
     vi.useFakeTimers()
     try {
@@ -2323,6 +2326,8 @@ describe('EEW の続報は古い報で退行しない', () => {
       act(() => { h.current.injectEvent({ ...report('6', ['石川県能登']), isFinal: true }) })
       act(() => { vi.advanceTimersByTime(30 * 60_000) })
       expect(h.current.activeEEWs.size).toBe(0)
+      act(() => { vi.advanceTimersByTime(ACTIVE_EEW_WINDOW_MS + 1000) })
+      // 窓を過ぎた記憶を落とすのは画面の掛け替えのとき。ここでは落ちていなくても使わない（`endedEewMatch` が経過で見る）
 
       // 台帳が残っていると #1 は「古い報」として弾かれ、二度と表示できなくなる
       act(() => { h.current.injectEvent(report('1', ['新潟県上越'])) })
@@ -6332,7 +6337,7 @@ describe('DMDSS 版: 取り直しの最中に終えた緊急地震速報を戻�
     expect(handed).toHaveLength(1)
     expect(handed[0].map(e => e.id)).toEqual([other.id])
     // 弾いたことは記録に残す（黙って弾くと、誤って本物を弾いたときに追えない）
-    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('起動時の復元') && String(c[0]).includes('画面から消えた地震の報なので戻しません'))).toBe(true)
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('起動時の復元') && String(c[0]).includes('画面から消えた地震の報なので採りません'))).toBe(true)
   })
 
   // 正: 誤報取消で画面から消えた地震も同じ。取消の前の報を取り直しが返しても戻さない
@@ -6378,5 +6383,101 @@ describe('DMDSS 版: 取り直しの最中に終えた緊急地震速報を戻�
     act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
     await h.flush()
     expect(handed).toHaveLength(1)
+  })
+})
+
+// 画面から消えた地震の報がライブで遅れて・重ねて届いても、終わった速報を戻さない（→ `eewEndedRef`）。台帳と写しは消えた
+// 時点で捨てるので、入口の新旧の比べ方だけでは同じ報・古い報を「新しい報」と見なし、音と読み上げごと戻ってしまう。
+// 取消で終えた地震は報番号によらず採らない（取消は終端。2026-10-21 ユーザー承認「おすすめで」）
+describe('ライブの入口: 画面から消えた地震の報を採らない', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.mocked(fetchDmdataActiveEews).mockReset()
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValue([])
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  const report = (serial: number, over: Partial<EEWAlert> = {}) =>
+    ({ ...createTestEEWWarning(true, '20261020140000', serial), ...over })
+
+  /** ライブで受けた最終報を自動解除させる */
+  async function expireLive() {
+    const h = setup()
+    await h.flush()
+    const final = report(3, { isFinal: true })
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: final }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(1)
+    act(() => { vi.advanceTimersByTime(10 * 60_000) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(0)
+    return Object.assign(h, { final })
+  }
+
+  const deliver = async (h: ReturnType<typeof setup>, eew: EEWAlert) => {
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: eew }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+  }
+
+  // 正: 自動解除で消えた後に、同じ報・古い報が届いても戻さない。弾いたことは記録に残す
+  it('自動解除で消えた地震の、同じ報・古い報は戻さない', async () => {
+    const h = await expireLive()
+    await deliver(h, report(3, { isFinal: true }))
+    await deliver(h, report(2))
+    expect(h.current.activeEEWs.size).toBe(0)
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('ライブの受信') && String(c[0]).includes('画面から消えた地震の報なので採りません'))).toBe(true)
+  })
+
+  // 安全弁: 自動解除で消えた後でも、より新しい報番号の報は通す（終わったのではなく続いている）
+  it('自動解除で消えた後でも、より新しい報番号の報は出す', async () => {
+    const h = await expireLive()
+    await deliver(h, report(4))
+    expect(h.current.activeEEWs.size).toBe(1)
+  })
+
+  // 正: 取消で消えた地震は、より新しい報番号の報も戻さない（取消は終端）
+  it('取消で消えた地震は、より新しい報番号の報も出さない', async () => {
+    const h = setup()
+    await h.flush()
+    await deliver(h, report(3))
+    await deliver(h, report(4, { cancelled: true }))
+    expect([...h.current.activeEEWs.values()][0]?.cancelledAt).toBeTruthy()
+    act(() => { vi.advanceTimersByTime(30_000) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(0)
+    await deliver(h, report(5))
+    expect(h.current.activeEEWs.size).toBe(0)
+  })
+
+  // 正: 消えた後に取消が届いたら、その後の新しい報番号の報も出さない（取消は終端）
+  it('消えた後に届いた取消も、その後の新しい報番号の報を止める', async () => {
+    const h = await expireLive()
+    await deliver(h, report(4, { cancelled: true }))
+    expect(h.current.activeEEWs.size).toBe(0)
+    await deliver(h, report(5))
+    expect(h.current.activeEEWs.size).toBe(0)
+  })
+
+  // 経路をまたぐと報番号を比べられないので発表時刻で比べる（標準版の Yahoo と P2PQuake）。同じ秒以前は弾き、新しければ出す
+  it('別の経路の報は発表時刻で比べる（同じ秒以前は弾き、新しければ出す）', async () => {
+    const h = await expireLive()
+    const shown = h.final
+    const sameTime = { ...report(1), origin: 'p2pquake' as const, time: shown.time, issue: { ...shown.issue!, serial: '1' } }
+    await deliver(h, sameTime)
+    expect(h.current.activeEEWs.size).toBe(0)
+    const later = new Date(Date.parse(shown.issue!.time ?? shown.time) + 5000).toISOString()
+    await deliver(h, { ...sameTime, time: later, issue: { ...sameTime.issue!, time: later } })
+    expect(h.current.activeEEWs.size).toBe(1)
+  })
+
+  // 対照: 覚えておく窓（ACTIVE_EEW_WINDOW_MS）を過ぎた記憶では弾かない
+  it('消えてから覚えておく窓を過ぎれば、同じ地震の報も弾かない', async () => {
+    const h = await expireLive()
+    act(() => { vi.advanceTimersByTime(ACTIVE_EEW_WINDOW_MS + 1000) })
+    await h.flush()
+    await deliver(h, report(2))
+    expect(h.current.activeEEWs.size).toBe(1)
   })
 })
