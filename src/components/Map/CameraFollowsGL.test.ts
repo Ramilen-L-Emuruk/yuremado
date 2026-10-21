@@ -1240,6 +1240,7 @@ interface TsunamiProps {
   mode?: string
   signature?: string
   eventId?: string
+  operationStatus?: string
   coast?: LatLng[]
   bars?: { name: string; lat: number; lng: number; height: { value: number; over?: boolean }; maxHeightDateTime?: string; maxHeightRevise?: string; arrivalTime?: string; initial?: string }[]
   arrivals?: typeof ARRIVALS
@@ -1256,6 +1257,7 @@ function tsunamiHarness(map: maplibregl.Map, props: TsunamiProps = {}) {
       mode: props.mode ?? 'tsunami',
       tsunamiSignature: props.signature ?? SIG,
       tsunamiEventId: props.eventId ?? EVENT_ID,
+      tsunamiOperationStatus: props.operationStatus ?? '',
       tsunamiFitPositions: props.coast ?? COAST,
       observationBars: props.bars ?? [],
       arrivalMarkers: props.arrivals ?? [],
@@ -1780,6 +1782,22 @@ describe('津波モードの帰還（観測点 → 俯瞰）', () => {
     view.rerender(tsunamiHarness(map, { mode: 'tsunami', ...b }))
 
     // Assert: B の観測点（A の基準と比べて全件が「新規」に見える）ではなく対象海域全体が出る。
+    expect(fitTargets(map)).toEqual([COAST_WEST])
+  })
+
+  it('番号が重なっても運用種別が違えば（訓練の報）別の津波として観測点を持ち越さない', () => {
+    // Arrange: 通常の津波 A が現れて観測点も届いた状態。津波タブの外にいる。
+    const map = createFakeMap()
+    const view = render(tsunamiHarness(map, { mode: 'kyoshin', signature: '', eventId: '', coast: [] }))
+    view.rerender(tsunamiHarness(map, { mode: 'kyoshin' }))
+    view.rerender(tsunamiHarness(map, { mode: 'kyoshin', bars: OBS_BARS }))
+
+    // Act: 同じ番号の訓練の津波が上書きする → 津波タブへ移る。
+    const drill = { operationStatus: '訓練', signature: SIG_B, bars: OBS_BARS_B }
+    view.rerender(tsunamiHarness(map, { mode: 'kyoshin', ...drill }))
+    view.rerender(tsunamiHarness(map, { mode: 'tsunami', ...drill }))
+
+    // Assert: 差し替えとして扱い、対象海域全体を出す（観測点の差分を取らない）。
     expect(fitTargets(map)).toEqual([COAST_WEST])
   })
 

@@ -1,11 +1,11 @@
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { MapMode } from '../components/Map/mapTypes'
 import { computeDisplayEEWLevel, eewKindLabel, eewMaxScale, eewMaxScaleInfo, isProvisionalHypocenter } from './eew'
-import { formatDateTime, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth, hasMagnitude } from './formatters'
+import { formatDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth, hasMagnitude } from './formatters'
 import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove, isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
 import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader } from './shareCard'
-import { tsunamiOverallGrade } from './tsunami'
+import { sourceEarthquakeTime, tsunamiOverallGrade } from './tsunami'
 
 // 共有カードの見出しと出典行を、いま地図が見せているものから組み立てる。
 //
@@ -139,8 +139,10 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   const { text, color } = formatTsunamiGrade(grade)
   const areaCount = new Set(live.flatMap((t) => t.areas.map((a) => a.name))).size
   // 原因地震が複数あれば（EventID に番号が足された津波）全件を「／」で並べる。長いと折り返す
-  // （2026-10-15 ユーザー承認「全件を並べる」）。同じ津波を複数の報が運ぶので、震源名と規模の組で重ねない。
-  const sourceTexts: string[] = []
+  // （2026-10-15 ユーザー承認「全件を並べる」）。同じ地震を複数の報が運ぶので、震源名・規模・発生時刻の組で重ねる。
+  // **震源名と規模が同じ別の地震には発生時刻を添える**（2026-10-21 ユーザー選択「B は案1」。全期間の津波電文 651 通のうち
+  // 1 通。2023-12-03 の VTSE41 がフィリピン付近の M7.0 を 2 つ載せた）。添えないと同じ文が 2 つ並ぶか、1 つに畳まれて地震が消える。
+  const collected: { text: string; time: string | undefined; ms: number }[] = []
   for (const source of live.flatMap((t) => t.sourceEarthquakes ?? [])) {
     // 規模が数値で無いときは説明を出す（「Ｍ８を超える巨大地震」）。落とすと、**最も重大な
     // 地震ほど震源名だけの薄い画像になる**。
@@ -150,8 +152,22 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
       // 半角・津波の共有カードでは全角、と表記が割れる
       : (source.magnitudeCondition ? `　${formatMagnitudeCondition(source.magnitudeCondition)}` : '')
     const text = `${source.hypocenterName}${magnitudeText}`
-    if (!sourceTexts.includes(text)) sourceTexts.push(text)
+    const time = sourceEarthquakeTime(source)
+    // 時刻は瞬間で比べる（同じ時刻でも表記が報ごとに違いうる）。
+    const ms = time ? Date.parse(time) : NaN
+    if (!collected.some((e) => e.text === text && (e.ms === ms || (Number.isNaN(e.ms) && Number.isNaN(ms))))) {
+      collected.push({ text, time, ms })
+    }
   }
+  // 時刻を読めない地震は、同じ文で時刻の読める地震があればそちらと重ねる（別の地震と決められず、並べても見分けが付かない）。
+  // 届いた順によらないよう、集め終えてから落とす。
+  const sourceEntries = collected.filter((e) =>
+    !Number.isNaN(e.ms) || !collected.some((o) => o.text === e.text && !Number.isNaN(o.ms)))
+  const sourceTexts = sourceEntries.map(({ text, time }) => {
+    if (sourceEntries.filter((e) => e.text === text).length < 2) return text
+    const hm = time ? formatTimeMin(time) : null
+    return hm ? `${text}（${hm} 発生）` : text
+  })
   const parts: string[] = []
   if (sourceTexts.length > 0) parts.push(sourceTexts.join(' ／ '))
   if (areaCount > 0) parts.push(`${areaCount} 区域`)

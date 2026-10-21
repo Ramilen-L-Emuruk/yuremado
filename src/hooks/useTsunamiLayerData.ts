@@ -102,6 +102,8 @@ export function useTsunamiLayerData(
   tsunamiFitPositions: LatLng[]
   tsunamiSignature: string
   tsunamiEventId: string
+  /** 表示中の津波の運用種別（`operationStatus`。通常の報は空文字）。カメラが番号と組で「同じ津波か」を見る（→ `isSameTsunamiEvent`）。 */
+  tsunamiOperationStatus: string
 } {
   const tsunamiZones = useTsunamiZones()
   const tsunamiObsCoords = useTsunamiObsCoords()
@@ -238,9 +240,10 @@ export function useTsunamiLayerData(
   // （`utils/tsunami.ts`）へ倒れるのと同じ構えで、あちらが判定できないものをここだけ断定しない。
   const liveTsunami = tsunamis.find((t) => !t.cancelled)
   const tsunamiEventId = liveTsunami ? tsunamiEventIds(liveTsunami).join(' ') : ''
+  const tsunamiOperationStatus = liveTsunami?.operationStatus ?? ''
 
   return {
     tsunamiLines, observationBars, arrivalMarkers, missingMarkers,
-    tsunamiFitPositions, tsunamiSignature, tsunamiEventId,
+    tsunamiFitPositions, tsunamiSignature, tsunamiEventId, tsunamiOperationStatus,
   }
 }

@@ -128,6 +128,9 @@ function setup() {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  // 時計を発表時刻に置く。受信処理は期限の過ぎた報を読まないので、実値の期限（2024-01-02 17:00）を
+  // いまの時刻のまま当てると、届いた時点で失効した報になる。
+  vi.setSystemTime(new Date(ISSUED))
   speeches.length = 0
   serial = 0
   speakMock.mockClear()
