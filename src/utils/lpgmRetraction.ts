@@ -36,13 +36,24 @@ export function lpgmRetractionOf(cancel: JMALpgm): LpgmRetraction {
 }
 
 /**
+ * 取消がいつのものかを言えるか（発表時刻か作成時刻のどちらかがあるか）。
+ *
+ * 前後の比べ方（`compareReportAge`）は作成時刻を先に見るので、発表時刻が空でも作成時刻があれば
+ * 「その取消より前の報」を決められる。両方とも無い取消は前後を決められない。
+ */
+function hasRetractionAge(r: Pick<LpgmRetraction, 'time' | 'createdAtMs'>): boolean {
+  return !!r.time || r.createdAtMs !== undefined
+}
+
+/**
  * 台帳へ足す。**同じ取消は二度積まない**（ライブと履歴の重なり・「もっと見る」の読み直しで
  * 同じ取消が何度も届く。重複を許すと上限が同じ取消で埋まる。→ `addQuakeRetraction`）。
  */
 export function addLpgmRetraction(list: LpgmRetraction[], r: LpgmRetraction, max: number): void {
-  // 地震を指せない取消は台帳に積まない（どの報にも当たらず、上限の枠だけを食う）
-  if (!r.eventId || !r.time) {
-    log.warn(`[lpgm] 地震を指せない取消を台帳へ積まなかった (eventId=${r.eventId || '(空)'} time=${r.time || '(空)'})`)
+  // 地震を指せない取消（地震 ID が空・いつの取消か言えない）は台帳に積まない（どの報にも当たらず、
+  // 上限の枠だけを食う）
+  if (!r.eventId || !hasRetractionAge(r)) {
+    log.warn(`[lpgm] 地震を指せない取消を台帳へ積まなかった (eventId=${r.eventId || '(空)'} time=${r.time || '(空)'} createdAtMs=${r.createdAtMs ?? '(空)'})`)
     return
   }
   if (list.some(k => k.eventId === r.eventId && k.time === r.time && k.createdAtMs === r.createdAtMs)) return
@@ -55,13 +66,15 @@ export function addLpgmRetraction(list: LpgmRetraction[], r: LpgmRetraction, max
 
 /**
  * この報が取り下げ済みか（同じ地震の取消より前に発表された報か）。
- * 発表時刻が空の報は取り下げ側へ倒す（`isRetractedQuakeReport` と同じ）。
+ * 発表時刻も作成時刻も空の報は取り下げ側へ倒す。`isRetractedQuakeReport` は発表時刻だけで倒すが、
+ * 地震情報は発表時刻が空の報を先に据え置く（`quakeHoldBack`）。長周期には据え置きが無いので、作成時刻で比べる。
  */
 export function isRetractedLpgm(retractions: readonly LpgmRetraction[], lpgm: JMALpgm): boolean {
   return retractions.some(r =>
     r.eventId === lpgm.eventId
-    // 取消の側の時刻が空でも取り下げ側へ倒す（台帳には積まないので、ここへ来るのはライブの 1 通だけ）
-    && (!lpgm.time || !r.time || compareReportAge(lpgm, { time: r.time, createdAtMs: r.createdAtMs }) <= 0)
+    // 報・取消のどちらかがいつのものか言えなければ取り下げ側へ倒す（取消の側は台帳には積まないので、
+    // ここへ来るのはライブの 1 通だけ）。発表時刻が空でも作成時刻があれば比べる（取消の側と同じ規則）
+    && (!hasRetractionAge(lpgm) || !hasRetractionAge(r) || compareReportAge(lpgm, { time: r.time, createdAtMs: r.createdAtMs }) <= 0)
   )
 }
 
@@ -110,9 +123,9 @@ export function foldLpgmHistory(
   events: readonly JMALpgm[],
   ledger: readonly LpgmRetraction[],
 ): Map<string, JMALpgm> {
-  // 地震を指せない取消（eventId・発表時刻が空）は台帳と同じく使わない。使うと、取消より後に
-  // 発表し直された報まで履歴の畳み込みだけで落ち、ライブとリロードで結果がずれる
-  const retractions = [...ledger, ...events.filter(e => e.cancelled && e.eventId && e.time).map(lpgmRetractionOf)]
+  // 地震を指せない取消（eventId が空・発表時刻も作成時刻も空）は台帳と同じく使わない。使うと、
+  // 取消より後に発表し直された報まで履歴の畳み込みだけで落ち、ライブとリロードで結果がずれる
+  const retractions = [...ledger, ...events.filter(e => e.cancelled && e.eventId && hasRetractionAge(e)).map(lpgmRetractionOf)]
   const result = new Map(base)
   const ordered = [...events].sort((a, b) => {
     const at = reportOrderKey(a)
