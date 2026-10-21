@@ -344,6 +344,30 @@ npm version patch   # または minor / major
 
 `package.json` の更新・コミット作成・git tag（`vX.Y.Z`）作成までが自動で行われる。`src/components/SettingsTab/index.tsx` のバージョン表示は `vite.config.ts` の `define`（`__APP_VERSION__`）経由で `package.json` を参照しているため**手動更新は不要**。
 
+**着手前チェック #3 で未コミットの変更をユーザー判断で通していても、`npm version` は自分で作業ツリーがクリーンであることを求める**（`Git working directory not clean` で落ちる）。このリポジトリでは **`public/data/test-scenarios/index.json`** がよくこれに当たる（2 回続けてここで止まった例がある）—— 手元で実地震テストシナリオを置くと一覧が書き換わるが、コミット済みの空配列のテンプレートが正なので、書き換えた分はコミットしない（扱いは [`docs/spec/settings-pwa-spec.md`](../../../docs/spec/settings-pwa-spec.md) §6「シナリオ本体の扱い」）。#3 でこのファイル（など、コミットしない手元のファイル）だけが dirty と分かった時点で、この手順の直前に退避する段取りを組んでおく。マージ（手順 3）はこのファイルに触らないので、マージの前の退避は要らない。
+
+**stash はすべてのワークツリーと、同じリポジトリで動く他のセッションとで共有される。** 素の `git stash pop` は積まれている先頭を取るので、自分の退避が積まれていなかったとき（対象が未追跡で pathspec が当たらなかった・変更が無くて `No local changes to save` になった等）には、他のセッションの退避を作業ツリーへ広げて消す。次の 4 段を、**別々の呼び出しで**この順に行う。
+
+1. 退避する前の `git status --porcelain` を控え（4 で比べる元になる）、一意の印を付けて退避する（印には今回の版番号や時刻を入れ、他と重ならないようにする）:
+   ```bash
+   git stash push -m "release-tmp-<一意の印>: public/data/test-scenarios/index.json" -- public/data/test-scenarios/index.json
+   ```
+2. 自分の退避の SHA を引き、`TaskCreate` の `metadata` に書く（シェルの変数は呼び出しをまたいで残らない）。**印の付いた行が無ければ、退避されていない。** 3 へ進まず、状況をユーザーへ提示する（2 行以上当たったときも同じ。印が他と重なっている）:
+   ```bash
+   git stash list --format='%H %gs' | grep -F 'release-tmp-<一意の印>:'
+   ```
+3. `npm version patch`（または minor / major）。**失敗しても 4 は行う**（退避したファイルを戻さないまま止めない）
+4. 控えた SHA を指定して戻し、戻ったことを確かめてから消す。消す前に `stash@{n}` を引き直す（他のセッションの出し入れで番号がずれる）:
+   ```bash
+   git stash apply <控えた SHA>
+   git stash list --format='%gd %H %gs' | grep -F 'release-tmp-<一意の印>:'
+   git stash drop <いま引いた stash@{n}>
+   ```
+
+- 退避するのは、#3 でユーザーが通すと判断したファイルだけ。`git stash` をパス指定なしで叩かない。**`git stash pop` は使わない**
+- `git stash apply` の後、`git status --porcelain` で退避前と同じ差分に戻ったことを確かめてから drop する。**apply が衝突した（`CONFLICT`）・差分が退避前と一致しないときは drop しない。** 退避は残っているので失われない。状況をユーザーへ提示する
+- drop は SHA を受け付けないので、番号を引いてから打つまでの間に他のセッションが出し入れすると、別の退避を消しうる。**drop の出力（`Dropped stash@{n} (<SHA>)`）に出た SHA が控えた SHA と違えば**、消したのは他の退避。元の件名を `git log -1 --format=%s <出力に出た SHA>` で引き、`git stash store -m "<引いた件名>" <出力に出た SHA>` で戻す。そのうえで自分の退避の番号を引き直して drop し直し、ユーザーへ報告する
+
 ### 6. プッシュ
 
 直前に `git fetch` で origin との乖離を**もう一度**確認する。手順 4 のビルドとブラウザ確認には時間がかかるため、着手前チェックの時点から状況が変わっている可能性がある。
