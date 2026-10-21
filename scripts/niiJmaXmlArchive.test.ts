@@ -10,9 +10,35 @@ const SCRIPTS_DIR = 'scripts'
 /** キャッシュを通る取得。これを取り込む側が要約を出す責任を負う */
 const CACHED_FETCHERS = new Set(['fetchDayListing', 'fetchRawXml'])
 
-/** `niiJmaXmlArchive` を指すモジュール名か（サブディレクトリからは `../` になる） */
+/** `niiJmaXmlArchive` を指すモジュール名（サブディレクトリからは `../` になる） */
+const NII_MODULE = /^(?:\.\.?\/)+niiJmaXmlArchive$/
+
+/** `niiJmaXmlArchive` を指すモジュール名か */
 function isNiiModule(node: ts.Expression | undefined): boolean {
-  return node !== undefined && ts.isStringLiteral(node) && /^(?:\.\.?\/)+niiJmaXmlArchive$/.test(node.text)
+  return node !== undefined && ts.isStringLiteral(node) && NII_MODULE.test(node.text)
+}
+
+/**
+ * そのソースが `niiJmaXmlArchive` をどこかで取り込んでいるか（何を取り込んだかは見ない）。
+ *
+ * **構文解析の前の下ごしらえ。** `scripts/` を全部構文解析すると、78 本のうち取り込んでいるのは
+ * 1 本なのに 78 本ぶんの CPU を食い、全件並列のときにこの検査だけが 5 秒の上限を超えた
+ * （2026-10-21・5830 ms。単独なら 685〜915 ms）。
+ *
+ * 振るいは 2 つの「どちらか」。片方だけでは取りこぼす形がある。
+ *   - `ts.preProcessFile` が拾った取り込み先 —— 取り込み先を拾うだけの軽い走査で、文字列の中の
+ *     エスケープも解く。ただし `export * as nii from '...'` は拾わない（2026-10-21 に下のテストで判明）
+ *   - 字面に `niiJmaXmlArchive` がある —— `export * as` も含めて、エスケープを使わない書き方は全部これで残る
+ *
+ * **振るいが外す余地は、モジュール名をエスケープで書いたときだけに限られる**（字面に名前が無いので、
+ * 2 つ目の走査に頼る）。その走査が拾わない形として確かめたのは `export * as` で、ほかに走査が
+ * 正規表現リテラルを割り算と読み違えて、その後ろの取り込みを読み落とす余地もある（再現はしていない）。
+ * どれもモジュール名をわざわざエスケープで書かない限り起きない。`\` を含むファイルを全部解析へ回せば
+ * 穴は無くなるが、正規表現を書くファイルが多く 54 本中 39 本が残って速くならない（2026-10-21 に数えた）。
+ */
+function mentionsNiiModule(src: string): boolean {
+  if (src.includes('niiJmaXmlArchive')) return true
+  return ts.preProcessFile(src, true, true).importedFiles.some((f) => NII_MODULE.test(f.fileName))
 }
 
 /** `{ a, b as c }` の並びに、キャッシュを通る取得が含まれるか。**別名で受けても元の名前で見る** */
@@ -36,8 +62,12 @@ function hasCachedFetcher(elements: readonly (ts.ImportSpecifier | ts.ExportSpec
  *                                  （`import nii = require(...)` も。**別のノード種別**）
  *
  * 型だけの取り込み（`import type` ／ `{ type X }`）は実行時に何も起こさないので咎めない。
+ *
+ * 構文解析の前に `mentionsNiiModule` で振るい、取り込んでいないファイルは解析しない。下のテストは
+ * どれもこの関数を通すので、下ごしらえが取りこぼす書き方があれば、そのテストが落ちる。
  */
 function importsCachedFetchers(src: string): boolean {
+  if (!mentionsNiiModule(src)) return false
   const sourceFile = ts.createSourceFile('probe.ts', src, ts.ScriptTarget.Latest, true)
   let found = false
 
@@ -535,6 +565,18 @@ describe('同じ原因が続く警告は間引く', () => {
     expect(importsCachedFetchers(dynamic)).toBe(true)
     expect(importsCachedFetchers(required)).toBe(true)
     expect(importsCachedFetchers(twoOnOneLine)).toBe(false)
+  })
+
+  it('安全弁: モジュール名をエスケープで書いても、構文解析の前の振るいで落とさない', () => {
+    // `n` は `n`。字面に `niiJmaXmlArchive` が現れないので、文字列の一致で振るうとここで素通りする
+    const escaped = "import { fetchRawXml } from './\\u006eiiJmaXmlArchive'\n"
+    expect(importsCachedFetchers(escaped)).toBe(true)
+  })
+
+  it('既知の穴: モジュール名をエスケープで書いた `export * as` は、振るいで外れて咎められない', () => {
+    // `mentionsNiiModule` のコメントにある限界をそのまま固定する。直したら、このテストを反転させること
+    const escapedNamespaceReExport = "export * as nii from './\\u006eiiJmaXmlArchive'\n"
+    expect(importsCachedFetchers(escapedNamespaceReExport)).toBe(false)
   })
 
   it('安全弁: `import x = require(...)` も咎める（`require` の呼び出し形とは別のノード）', () => {
