@@ -13,7 +13,7 @@ import { muteConsoleError } from '../test-utils/muteConsoleError'
 import { buildSampleTelegram } from '../test-utils/bufrBuild'
 import {
   enumerateJstDates, resolveLiveDates, toJstDateStr, archiveDaysForWindow, archiveListRange,
-  fetchLiveReplayEntries, fetchLiveQuakeTelegrams, clearLiveReplayCache,
+  fetchLiveReplayEntries, fetchLiveQuakeTelegrams, fetchLiveTelegramsBetween, clearLiveReplayCache,
 } from './dmdataReplayLive'
 import { setBodyGateIntervalForTest } from './telegramBody'
 import {
@@ -1364,5 +1364,178 @@ describe('fetchLiveQuakeTelegrams', () => {
 
     expect(result.extras).toHaveLength(0)
     expect(result.skippedByDay.get('2026-08-23')).toBe(1)
+  })
+})
+
+// ライブの接続を張り直したとき・起動直後の隙間を埋める取り戻し（#927）。
+// 見たいのは 3 つ —— 窓（受信時刻）の外を取らないこと、ライブで受け取った電文の本体を取り直さないこと、
+// 受け取った順に並べ直せるよう受信時刻を返すこと。
+describe('fetchLiveTelegramsBetween', () => {
+  const originalFetch = globalThis.fetch
+
+  beforeEach(() => {
+    clearLiveReplayCache()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    muteConsoleError()
+  })
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    clearLiveReplayCache()
+    vi.restoreAllMocks()
+  })
+
+  const from = new Date('2026-08-23T00:00:00Z')
+  const to = new Date('2026-08-23T00:30:00Z')
+
+  it('受信時刻が窓の中の電文だけを取り、受信時刻を返す', async () => {
+    const { fn, urls } = mockLive({
+      list: [
+        { id: 'before', type: 'VXSE53', headTime: '2026-08-22T23:50:00Z', receivedTime: '2026-08-22T23:50:01.000Z', url: 'https://b/before' },
+        { id: 'inside', type: 'VXSE53', headTime: '2026-08-23T00:05:00Z', receivedTime: '2026-08-23T00:05:01.000Z', url: 'https://b/inside' },
+        { id: 'after', type: 'VXSE53', headTime: '2026-08-23T00:40:00Z', receivedTime: '2026-08-23T00:40:01.000Z', url: 'https://b/after' },
+      ],
+      bodies: {
+        'https://b/before': quakeBody('20260823085000', '2026-08-23T08:50:00+09:00'),
+        'https://b/inside': quakeBody('20260823090500', '2026-08-23T09:05:00+09:00'),
+        'https://b/after': quakeBody('20260823094000', '2026-08-23T09:40:00+09:00'),
+      },
+    })
+    globalThis.fetch = fn as unknown as typeof fetch
+
+    const result = await fetchLiveTelegramsBetween('key', from, to, false, () => false, null)
+
+    expect(result.quakes.map(q => q.id.includes('20260823090500'))).toEqual([true])
+    expect(result.receivedAt.get(result.quakes[0])?.toISOString()).toBe('2026-08-23T00:05:01.000Z')
+    expect(urls).not.toContain('https://b/before')
+    expect(urls).not.toContain('https://b/after')
+  })
+
+  it('ライブで受け取り済みの電文は本体を取らず、数だけ返す', async () => {
+    const { fn, urls } = mockLive({
+      list: [
+        { id: 'seen', type: 'VXSE53', headTime: '2026-08-23T00:05:00Z', receivedTime: '2026-08-23T00:05:01.000Z', url: 'https://b/seen' },
+        { id: 'missed', type: 'VTSE41', headTime: '2026-08-23T00:06:00Z', receivedTime: '2026-08-23T00:06:01.000Z', url: 'https://b/missed' },
+      ],
+      bodies: {
+        'https://b/seen': quakeBody('20260823090500', '2026-08-23T09:05:00+09:00'),
+        'https://b/missed': tsunamiBody(),
+      },
+    })
+    globalThis.fetch = fn as unknown as typeof fetch
+
+    const result = await fetchLiveTelegramsBetween('key', from, to, false, id => id === 'seen', null)
+
+    expect(result.alreadyReceivedCount).toBe(1)
+    expect(result.quakes).toHaveLength(0)
+    expect(result.tsunamis).toHaveLength(1)
+    expect(urls).not.toContain('https://b/seen')
+  })
+
+  // 対照: 窓に何も無ければ本体を 1 件も取らない（一覧の 1 回だけ）
+  it('窓に電文が無ければ一覧の 1 回だけで終わる', async () => {
+    const { fn, urls } = mockLive({ list: [] })
+    globalThis.fetch = fn as unknown as typeof fetch
+
+    const result = await fetchLiveTelegramsBetween('key', from, to, false, () => false, null)
+
+    expect(result.quakes).toHaveLength(0)
+    expect(urls.filter(u => u.includes('/v2/telegram?'))).toHaveLength(1)
+    expect(urls.filter(u => !u.includes('/v2/telegram?'))).toHaveLength(0)
+  })
+
+  // 安全弁: 一覧が引けなければ投げる（呼び出し側が記録する。黙って 0 通にすると「何も無かった」に化ける）
+  it('一覧が引けなければ例外にする', async () => {
+    const { fn } = mockLive({ listError: ['telegram'] })
+    globalThis.fetch = fn as unknown as typeof fetch
+
+    await expect(fetchLiveTelegramsBetween('key', from, to, false, () => false, null)).rejects.toThrow()
+  })
+
+  /** 一覧を `pages` のとおり新しい順にページ分けして返す（最後のページ以外は nextToken を付ける）。本体は mockLive に任せる */
+  function pagedList(pages: MockTelegram[][], bodies: Record<string, string>) {
+    const base = mockLive({ bodies })
+    const listUrls: string[] = []
+    const fn = vi.fn(async (input: string) => {
+      if (!input.includes('/v2/telegram?')) return base.fn(input)
+      listUrls.push(input)
+      const token = new URL(input).searchParams.get('cursorToken')
+      const index = token === null ? 0 : Number(token)
+      const next = index + 1 < pages.length ? { nextToken: String(index + 1) } : {}
+      return { ok: true, json: async () => ({ status: 'ok', items: pages[index].map(listItem), ...next }) } as unknown as Response
+    })
+    return { fn, listUrls }
+  }
+  const at = (iso: string, id: string): MockTelegram =>
+    ({ id, type: 'VXSE53', headTime: iso, receivedTime: iso, url: `https://b/${id}` })
+
+  // 正: 一覧は新しい順なので、ページの最後が窓より古くなったら次のページを引かない
+  it('窓より古いページに届いたら、それ以上ページを辿らない', async () => {
+    const { fn, listUrls } = pagedList([
+      [at('2026-08-23T00:20:00.000Z', 'p1')],
+      [at('2026-08-22T23:00:00.000Z', 'p2-old')],
+      [at('2026-08-22T20:00:00.000Z', 'p3-older')],
+    ], { 'https://b/p1': quakeBody('20260823092000', '2026-08-23T09:20:00+09:00') })
+    globalThis.fetch = fn as unknown as typeof fetch
+
+    const result = await fetchLiveTelegramsBetween('key', from, to, false, () => false, null)
+
+    expect(listUrls).toHaveLength(2)
+    expect(result.quakes).toHaveLength(1)
+  })
+
+  // 対照: ページの最後がまだ窓の中なら、次のページも辿る（窓の中の電文を落とさない）
+  it('ページの最後がまだ窓の中なら次のページを引く', async () => {
+    const { fn, listUrls } = pagedList([
+      [at('2026-08-23T00:20:00.000Z', 'p1')],
+      [at('2026-08-23T00:10:00.000Z', 'p2')],
+    ], {
+      'https://b/p1': quakeBody('20260823092000', '2026-08-23T09:20:00+09:00'),
+      'https://b/p2': quakeBody('20260823091000', '2026-08-23T09:10:00+09:00'),
+    })
+    globalThis.fetch = fn as unknown as typeof fetch
+
+    const result = await fetchLiveTelegramsBetween('key', from, to, false, () => false, null)
+
+    expect(listUrls).toHaveLength(2)
+    expect(result.quakes).toHaveLength(2)
+  })
+
+  // 正: 本体の取得が失敗した電文は、取りこぼし（skipped）にも、取り直せば読めうる数（failedTelegrams）にも数える
+  it('本体を取れなかった電文を failedTelegrams と skipped の両方に数える', async () => {
+    const { fn } = mockLive({
+      list: [{ id: 'broken', type: 'VXSE53', headTime: '2026-08-23T00:05:00Z', receivedTime: '2026-08-23T00:05:01.000Z', url: 'https://b/broken' }],
+      bodies: { 'https://b/broken': 'error' },
+    })
+    globalThis.fetch = fn as unknown as typeof fetch
+
+    const result = await fetchLiveTelegramsBetween('key', from, to, false, () => false, null)
+
+    expect(result.failedTelegrams).toBe(1)
+    expect(result.skipped).toBe(1)
+    expect(result.reachedOnlyBack).toBeNull()
+  })
+
+  // 安全弁: 窓より古いところで止めたときは、ページの上限に届いても打ち切りにしない。止められないまま上限に届いたら、
+  // 読めた分（新しい側）を返し、届いた端を reachedOnlyBack に入れる
+  it('上限に届いても窓より古いところで止めたなら打ち切りにせず、止められなければ読めた分と届いた端を返す', async () => {
+    // 窓の中に 1 通ずつのページが 19 枚（00:29〜00:11）。20 枚目で窓より古くなるかどうかで分ける
+    const minute = (i: number) => String(29 - i).padStart(2, '0')
+    const inside = Array.from({ length: 19 }, (_, i) => [at(`2026-08-23T00:${minute(i)}:00.000Z`, `in-${i}`)])
+    const bodies = Object.fromEntries(inside.map(([t], i) =>
+      [t.url, quakeBody(`2026082309${minute(i)}00`, `2026-08-23T09:${minute(i)}:00+09:00`)]))
+    const stopped = pagedList([...inside, [at('2026-08-22T23:00:00.000Z', 'old')], [at('2026-08-22T22:00:00.000Z', 'older')]], bodies)
+    globalThis.fetch = stopped.fn as unknown as typeof fetch
+    const full = await fetchLiveTelegramsBetween('key', from, to, false, () => false, null)
+    expect(stopped.listUrls).toHaveLength(20)
+    expect(full.reachedOnlyBack).toBeNull()
+
+    clearLiveReplayCache()
+    const endless = pagedList([...inside, [at('2026-08-23T00:05:00.000Z', 'still-in')], [at('2026-08-23T00:04:00.000Z', 'more')]], bodies)
+    globalThis.fetch = endless.fn as unknown as typeof fetch
+    const cut = await fetchLiveTelegramsBetween('key', from, to, false, () => false, null)
+    expect(endless.listUrls).toHaveLength(20)
+    // 20 ページ目（00:05）までは読めて当てる。21 ページ目（00:04）は見ていない
+    expect(cut.reachedOnlyBack?.toISOString()).toBe('2026-08-23T00:05:00.000Z')
+    expect(cut.quakes).toHaveLength(19)
   })
 })

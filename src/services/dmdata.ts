@@ -103,6 +103,9 @@ const PING_WATCHDOG_CHECK_MS = 15000
 // start 受信直後にリセットしてしまうと「open→start→即切断」を繰り返すフラッピングで
 // バックオフが効かず高頻度でチケット再取得を叩き続ける状態になるため、健全性を確認してからリセットする。
 const STABLE_CONNECTION_MS = 15000
+// 受け取った電文の id を覚えておく件数。張り直したときの取り戻しは「切れる 5 分前から」を引くので、
+// その幅に収まる通数（平常は数通・大地震の直後でも数百通）を十分に覆えればよい。
+const RECEIVED_TELEGRAM_IDS_MAX = 2000
 
 // 検証用デバッグログ。includeTest（試験報受信）が有効、または localStorage['dmdss-debug']='1'
 // のときに有効化する。APIキー等の機密値は出力しない。
@@ -466,6 +469,24 @@ export class DmdataWebSocket {
   private runId = 0
   // 最後にサーバー活動を確認した時刻（ping / data 受信）。ping ウォッチドッグが読む。
   private lastActivityAt = 0
+  /**
+   * `start` を受けた接続で最後に何かを受けた時刻（サーバー時計・エポックミリ秒）。張り直したときに
+   * 「どこまでは受け取れていたか」を知らせる（→ `onStarted`）。`lastActivityAt` と分けるのは、
+   * あちらが経過時間を測るための単調な時計で、電文の受信時刻と比べられないため。
+   * **`start` 前の接続が受けたもの（4409 などの `type: "error"`）では進めない** —— 張り直しの試行が
+   * 断られるたびに進めると、取り戻す窓の左端が切れた時刻より後ろへずれ、その間の電文を落とす。
+   */
+  private lastAliveAtMs: number | null = null
+  /** いま `start` を受けた接続にとっての「前の接続で最後に受けた時刻」（`start` を受けた時点で固める） */
+  private previousAliveAtStartMs: number | null = null
+  /** このインスタンスで `start` を受けたことがあるか（最初の 1 回と張り直しを見分ける） */
+  private startedOnce = false
+  /**
+   * 受け取った電文の id（直近 `RECEIVED_TELEGRAM_IDS_MAX` 件）。張り直したときの取り戻しが、
+   * 受け取り済みの電文の本体を取り直さないために読む（→ `hasReceivedTelegram`）。
+   */
+  private readonly receivedTelegramIds = new Set<string>()
+  private receivedTelegramIdsOverflowLogged = false
   private pingWatchdogTimer: ReturnType<typeof setInterval> | null = null
   // start 受信後の安定判定タイマー。STABLE_CONNECTION_MS 継続で reconnectAttempt をリセットする。
   private stableConnectionTimer: ReturnType<typeof setTimeout> | null = null
@@ -512,8 +533,19 @@ export class DmdataWebSocket {
    * 理由を区別できない）。
    */
   onClassificationsUnsettled: ((reason: 'auth' | 'timeout') => void) | null = null
+  /**
+   * 配信元が購読の開始（`type: "start"`）を告げたとき（繋がるたび）。`previousAliveAtMs` は
+   * **張り直しのときだけ**値を持ち、前の接続で最後に何かを受けた時刻（サーバー時計）。最初の接続では null。
+   * 切れていた間の電文はこの接続では届かないので、呼び出し側が取り戻す。
+   */
+  onStarted: ((info: { previousAliveAtMs: number | null }) => void) | null = null
 
   private readonly debug: boolean
+
+  /** 受け取り済みの電文か（取り戻しで本体を取り直さないために使う） */
+  hasReceivedTelegram(id: string): boolean {
+    return this.receivedTelegramIds.has(id)
+  }
 
   // includeTest: 試験報・訓練報（EEW 配信テスト VXSE42 等）も受信する（検証用）。
   constructor(private apiKey: string, private includeTest = false) {
@@ -647,6 +679,8 @@ export class DmdataWebSocket {
 
   private openWs(url: string) {
     const ws = new WebSocket(url, 'dmdata.v2')
+    // この接続が `start` を受けたか（→ `lastAliveAtMs`）
+    let startedThisSocket = false
     this.ws = ws
     this.closingErrorCode = null
     // start 受信で正常購読が確定するまで reconnectAttempt を維持する（DMD-3）。
@@ -667,6 +701,11 @@ export class DmdataWebSocket {
       // duration 計測は単調増加する performance.now() を使う（壁時計・serverNow は NTP 補正で
       // 非連続にジャンプするため duration 計測には不適）。
       this.lastActivityAt = performance.now()
+      if (msg.type === 'start') {
+        this.previousAliveAtStartMs = this.startedOnce ? this.lastAliveAtMs : null
+        startedThisSocket = true
+      }
+      if (startedThisSocket) this.lastAliveAtMs = serverNow()
       // body の復号は非同期（gunzip）。発火後は待たない。
       void this.handleMessage(msg)
     }
@@ -815,6 +854,21 @@ export class DmdataWebSocket {
     this.onEvent?.({ kind: 'estimatedIntensity', data: payload.data })
   }
 
+  private rememberReceivedTelegram(id: unknown): void {
+    if (typeof id !== 'string' || id === '') return
+    this.receivedTelegramIds.add(id)
+    if (this.receivedTelegramIds.size > RECEIVED_TELEGRAM_IDS_MAX) {
+      const oldest = this.receivedTelegramIds.values().next().value
+      if (oldest !== undefined) this.receivedTelegramIds.delete(oldest)
+      // 捨てた id の電文は、取り戻しの窓に入ると受け取っていないものとして本体を取り直す（結果は統合が重ねないので正しいが、
+      // 本体の取得が増える）。1 度だけ記録して、そうなり始めたことを辿れるようにする
+      if (!this.receivedTelegramIdsOverflowLogged) {
+        this.receivedTelegramIdsOverflowLogged = true
+        log.info(`[DMDSS] 受け取った電文の id が ${RECEIVED_TELEGRAM_IDS_MAX} 件に達したので、古いものから忘れ始めます（取り戻しの窓に入ると本体を取り直します）`)
+      }
+    }
+  }
+
   private makeLogEntry(
     headType: string,
     rawHead: unknown,
@@ -854,6 +908,10 @@ export class DmdataWebSocket {
         })
       }
       this.onStatusChange?.('connected')
+      // **張り直しを知らせる。** 前の接続で最後に受けた時刻は、`onmessage` がこの `start` を受けた時点で固めた値
+      const previousAliveAtMs = this.startedOnce ? this.previousAliveAtStartMs : null
+      this.startedOnce = true
+      this.onStarted?.({ previousAliveAtMs })
       return
     }
     if (msg.type === 'ping') {
@@ -879,7 +937,6 @@ export class DmdataWebSocket {
       if (this.debug) dlog('未処理メッセージ', { type: msg.type })
       return
     }
-
     const head = msg.head as Record<string, unknown> | undefined
     const isTest = head?.test === true
     const headType = head?.type as string | undefined
@@ -937,6 +994,12 @@ export class DmdataWebSocket {
       this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, isTest, 'error', undefined, 'body decode failed'))
       return
     }
+    // **本文を読めた電文だけ「受け取り済み」にする**（→ `hasReceivedTelegram`）。取り戻しはこの印の付いた
+    // 電文の本体を取らないので、復号に失敗した電文へ付けると、一覧から取り直せば読めたはずの電文を落とす。
+    // 二進電文（上の分岐）にも付けない —— 断片の一部だけを受けて切れたとき、取り戻しが残りの断片だけを
+    // 取ると結合できない。代わりに、ライブで受けた断片も取り戻しが本体を 1 件ずつ取り直す（推計震度分布図は
+    // 13 か月で 28 通しか来ないので、増える件数はわずか）
+    this.rememberReceivedTelegram(msg.id)
 
     // VXSE42（配信テスト）: 震源データなし。配信経路の疎通確認のみ。
     if (headType === 'VXSE42') {

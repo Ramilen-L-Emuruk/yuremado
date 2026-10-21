@@ -1085,6 +1085,129 @@ describe('DmdataWebSocket: 配信元が閉じた理由ごとの扱い', () => {
       ws.disconnect()
     }
   })
+
+  // 張り直したときの取り戻し（#927）が使う 2 つの口。`onStarted` は最初の `start` と張り直しを見分け、
+  // 張り直しなら前の接続で最後に何か受け取った時刻を渡す。
+  describe('張り直しの知らせと、受け取った電文の id', () => {
+    it('最初の start では previousAliveAtMs が null、張り直しでは前の接続で最後に受けた時刻', async () => {
+      vi.useFakeTimers()
+      vi.stubGlobal('WebSocket', FakeWs as unknown as typeof WebSocket)
+      stubFetch()
+      const ws = new DmdataWebSocket('valid-key')
+      const started: Array<number | null> = []
+      ws.onStarted = ({ previousAliveAtMs }) => { started.push(previousAliveAtMs) }
+      try {
+        ws.connect()
+        await drain()
+        FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'start', socketId: 1 }) })
+        await drain()
+        expect(started).toEqual([null])
+
+        await vi.advanceTimersByTimeAsync(10_000)
+        FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'ping', pingId: 'p' }) })
+        const pingAt = serverNow()
+        await drain()
+        // 切れてから張り直すまでの間は何も受けていない（この間が取り戻す隙間）
+        FakeWs.last?.serverClose(1006)
+        await vi.advanceTimersByTimeAsync(60_000)
+        await drain()
+        FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'start', socketId: 2 }) })
+        await drain()
+
+        expect(started).toHaveLength(2)
+        expect(started[1]).toBe(pingAt)
+      } finally {
+        ws.disconnect()
+      }
+    })
+
+    const VXSE42_XML = '<?xml version="1.0" encoding="UTF-8"?><Report><Control><Title>VXSE42</Title></Control></Report>'
+
+    // 正: 本文を読めた電文の id は覚え、受けていない id は知らないと答える
+    it('本文を読めた data の id を覚え、受けていない id は知らないと答える', async () => {
+      const { ws } = await startConnected()
+      try {
+        FakeWs.last?.onmessage?.({ data: JSON.stringify({
+          type: 'data', id: 'tg-1', head: { type: 'VXSE42' },
+          body: btoa(VXSE42_XML), encoding: 'base64', format: 'xml',
+        }) })
+        await drain()
+
+        expect(ws.hasReceivedTelegram('tg-1')).toBe(true)
+        expect(ws.hasReceivedTelegram('tg-2')).toBe(false)
+      } finally {
+        ws.disconnect()
+      }
+    })
+
+    // 対照: 本文を読めなかった電文は覚えない（覚えると、取り戻しが一覧から取り直せば読めた電文を飛ばす）
+    it('本文の復号に失敗した data の id は覚えない', async () => {
+      const { ws } = await startConnected()
+      try {
+        FakeWs.last?.onmessage?.({ data: JSON.stringify({
+          type: 'data', id: 'tg-broken', head: { type: 'VXSE42' },
+          body: 'not-base64-@@@', encoding: 'base64', compression: 'gzip', format: 'xml',
+        }) })
+        await drain()
+
+        expect(ws.hasReceivedTelegram('tg-broken')).toBe(false)
+      } finally {
+        ws.disconnect()
+      }
+    })
+
+    // 安全弁: 本文を読まない種別は覚えない（取り戻しの一覧はそもそもその種別を引かない）
+    it('本文を読まない種別の id は覚えない', async () => {
+      const { ws } = await startConnected()
+      try {
+        FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'data', id: 'tg-other', head: { type: 'ZZZZ99' } }) })
+        await drain()
+
+        expect(ws.hasReceivedTelegram('tg-other')).toBe(false)
+      } finally {
+        ws.disconnect()
+      }
+    })
+
+    // 正: start を受ける前に閉じられた接続は、最後に受けた時刻を動かさない（動かすと取り戻しの起点が
+    // 繋がっていなかった時刻へずれ、その間の電文を取りこぼす）
+    it('start を受ける前の error は、張り直しで渡す時刻を動かさない', async () => {
+      vi.useFakeTimers()
+      vi.stubGlobal('WebSocket', FakeWs as unknown as typeof WebSocket)
+      stubFetch()
+      const ws = new DmdataWebSocket('valid-key')
+      const started: Array<number | null> = []
+      ws.onStarted = ({ previousAliveAtMs }) => { started.push(previousAliveAtMs) }
+      try {
+        ws.connect()
+        await drain()
+        FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'start', socketId: 1 }) })
+        await drain()
+        await vi.advanceTimersByTimeAsync(5_000)
+        FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'ping', pingId: 'p' }) })
+        const pingAt = serverNow()
+        await drain()
+        FakeWs.last?.serverClose(1006)
+        await vi.advanceTimersByTimeAsync(60_000)
+        await drain()
+
+        // 張り直した接続が start の前に error を受けて閉じる（枠が空いていない 4409 など）
+        FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'error', error: 'busy', code: 4409, close: false }) })
+        await drain()
+        FakeWs.last?.serverClose(1006)
+        await vi.advanceTimersByTimeAsync(60_000)
+        await drain()
+
+        FakeWs.last?.onmessage?.({ data: JSON.stringify({ type: 'start', socketId: 3 }) })
+        await drain()
+
+        expect(started).toHaveLength(2)
+        expect(started[1]).toBe(pingAt)
+      } finally {
+        ws.disconnect()
+      }
+    })
+  })
 })
 
 describe('decodeTelegramText', () => {
