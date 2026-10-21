@@ -19,6 +19,15 @@ import { STORAGE_KINDS } from './hostSettings'
 // 一瞬掴むと、素の renameSync は EPERM で落ちる（全件並列で 2026-10-13〜10-15 に 4 回。lockTolerantRename.ts）。
 import { lockTolerantRenameSync } from './lockTolerantRename'
 
+// **このファイルのテストは、1 件ごとの上限を 20 秒にする**（既定は 5 秒）。ほとんどのテストが本物のファイルを
+// 読み書きし、4 本を複製して消す 1 件で約 210 回のファイル操作を通る（同じファイルかの確かめ・空のフォルダの
+// 片付けを含む）。単独なら 1 件 0.2〜0.5 秒だが、全件並列で混んだときは 1 件が 5.3〜6.2 秒になり、
+// 既定の 5 秒で 4 件が時間切れになった（2026-10-21・全件 7 回のうち 1 回。アサーションの失敗は 0 件）。
+// 落ちるのは混雑の山に当たったテストで、どれとは決まらないので、ファイル全体に掛ける。
+// 待ちを消す手（ファイル操作を偽物に差し替える）は採らない —— 確かめているのは本物のファイルの同一性・
+// ジャンクション・SHA-256 で、偽物では確かめられない。プロジェクト全体の上限（vitest.config.ts）は緩めない。
+const FILE_IO_TIMEOUT_MS = 20_000
+
 let base: string
 let from: string
 let to: string
@@ -70,7 +79,7 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true })
 })
 
-describe('複製', () => {
+describe('複製', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   it('順番は要約 → 揺れの記録 → 合成波形 → 生データで、4 つの置き場所の顔ぶれと一致する', () => {
     expect(COPY_ORDER).toEqual(['summary', 'events', 'wave', 'raw'])
     expect([...COPY_ORDER].sort()).toEqual([...STORAGE_KINDS].sort())
@@ -201,7 +210,7 @@ describe('複製', () => {
   })
 })
 
-describe('古い場所を消す', () => {
+describe('古い場所を消す', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   it('複製が終わる前は消せない', async () => {
     await begin(to, from, 1000)
     const m = make()
@@ -277,7 +286,7 @@ describe('古い場所を消す', () => {
   })
 })
 
-describe('別名（ジャンクション）で同じ場所を指したとき', () => {
+describe('別名（ジャンクション）で同じ場所を指したとき', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   /** `target` を指す別名を作る（Windows はジャンクション、他はシンボリックリンク）。 */
   function alias(target: string, name: string): string {
     const p = join(base, name)
@@ -341,7 +350,7 @@ describe('別名（ジャンクション）で同じ場所を指したとき', (
   })
 })
 
-describe('一時的に消せなかったものを承認し直す', () => {
+describe('一時的に消せなかったものを承認し直す', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   const RAW = join('raw', '2026-10-01', 'raw-2026-10-01T00.mseed3')
 
   /** 複製先のファイルをフォルダに替えて、読み直せなくする（一時的な失敗の代わり）。 */
@@ -503,7 +512,7 @@ describe('一時的に消せなかったものを承認し直す', () => {
   })
 })
 
-describe('保存先のフォルダそのものが見えないとき', () => {
+describe('保存先のフォルダそのものが見えないとき', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   it('安全弁: いまの保存先が見えなければ 1 本も結果を残さず、前の保存先にも触らず、理由を出す', async () => {
     await begin(to, from, 1000)
     const m = make()
@@ -574,7 +583,7 @@ describe('保存先のフォルダそのものが見えないとき', () => {
   })
 })
 
-describe('複製をやめる', () => {
+describe('複製をやめる', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   it('正: 前の保存先が見つからない間はやめられ、複製中でなくなり、状態の口から消える', async () => {
     await begin(to, from, 1000)
     rmSync(from, { recursive: true })
@@ -655,7 +664,7 @@ describe('複製をやめる', () => {
   })
 })
 
-describe('速さの上限の貸し', () => {
+describe('速さの上限の貸し', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   function clock() {
     let t = 0
     let slept = 0
@@ -702,7 +711,7 @@ describe('速さの上限の貸し', () => {
   })
 })
 
-describe('読み直しにも速さの上限を掛ける', () => {
+describe('読み直しにも速さの上限を掛ける', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   it('正: 消す前の複製先の読み直しは、上限の速さで待つ', async () => {
     await begin(to, from, 1000)
     const fast = make()
@@ -748,7 +757,7 @@ describe('読み直しにも速さの上限を掛ける', () => {
   })
 })
 
-describe('帳面の複製元を比べる', () => {
+describe('帳面の複製元を比べる', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   function journalFrom(src: string, state: 'copying' | 'copied' | 'purging'): void {
     mkdirSync(to, { recursive: true })
     writeFileSync(
@@ -798,7 +807,7 @@ describe('帳面の複製元を比べる', () => {
   })
 })
 
-describe('同じ実体かどうか', () => {
+describe('同じ実体かどうか', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   it('正: 同じドライブの同じファイル番号なら同じ', () => {
     expect(sameIdentity({ dev: 1n, ino: 5n }, { dev: 1n, ino: 5n })).toBe(true)
   })
@@ -810,7 +819,7 @@ describe('同じ実体かどうか', () => {
   })
 })
 
-describe('複製元が見つからないとき', () => {
+describe('複製元が見つからないとき', { timeout: FILE_IO_TIMEOUT_MS }, () => {
   it('安全弁: 複製元のフォルダそのものが無ければ copied にせず、理由を出して待つ', async () => {
     await begin(to, from, 1000)
     rmSync(from, { recursive: true })
