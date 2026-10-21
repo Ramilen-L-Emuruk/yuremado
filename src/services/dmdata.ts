@@ -7,9 +7,9 @@
 // `formatMode: 'raw'` で購読しているため、復号して得られるのは気象庁の XML そのもの。
 
 import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, EEWAlert, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
-import { parseEEWFromXml, parseEarthquakeFromXml, parseTsunamiFromXml, parseLpgmFromXml, parseNankaiFromXml, parseNankaiCommentaryFromXml, parseVyse60FromXml, parseQuakeNoticeFromXml, parseEarthquakeCountFromXml } from './dmdataParser'
+import { parseForecastInt, parseForecastLgInt, parseEEWFromXml, parseEarthquakeFromXml, parseTsunamiFromXml, parseLpgmFromXml, parseNankaiFromXml, parseNankaiCommentaryFromXml, parseVyse60FromXml, parseQuakeNoticeFromXml, parseEarthquakeCountFromXml } from './dmdataParser'
 import { serverNow, serverDate } from '../utils/clock'
-import { selectActiveEews, computeEverSpecialWarningEventIds, eewEventKey, ACTIVE_EEW_WINDOW_MS } from '../utils/eew'
+import { selectActiveEews, computeEverSpecialWarningEventIds, eewEventKey, ACTIVE_EEW_WINDOW_MS, isSpecialWarningForecast, computeSingleEEWLevel } from '../utils/eew'
 import { gunzip } from '../utils/gzip'
 import {
   EEW_HEAD_TYPES, type EewHeadType, NANKAI_TYPES, COMMENTARY_TYPES, KOHATSU_TYPES, NOTICE_TYPES,
@@ -1375,6 +1375,22 @@ interface GdEewReportItem {
   dateTime?: string
   /** 取り消された報か（同 `items[].isCanceled`）。 */
   isCanceled?: boolean
+  /**
+   * 警報の報か（同 `items[].isWarning`）。**実物の応答に報ごとの欄があることを確かめた**（2026-10-21、
+   * 能登半島地震の本震 20240101161010 の詳細。46 報すべてに `isWarning`・`intensity` があった）。
+   * **地震ごとではなく報ごとの値**（同日、予報から警報へ上がった 20230505215718 の詳細で、予報の第 1 報が false・
+   * 警報の第 2 報以降が true だった）。
+   */
+  isWarning?: boolean
+  /**
+   * その報の予想の最大（同 `items[].intensity`）。値の形は電文と同じ `{ from, to }`（`to` が `"over"` なら下限以上）。
+   * **起動時の復元が最新報 1 通しか本文を読まないので、途中の報で特別警報だったかはここからしか分からない**
+   * （→ {@link gdReportSpecialWarning}）。
+   */
+  intensity?: {
+    forecastMaxInt?: Record<string, unknown>
+    forecastMaxLgInt?: Record<string, unknown>
+  }
   telegrams?: Array<{
     id?: string
     /** JSON 版のときだけ入り、元の XML 版電文の id を指す。 */
@@ -1398,7 +1414,14 @@ const ACTIVE_EEW_MAX_PAGES = 10
  * - `failed`: 詳細か本文を取れなかった・報が 1 通も返らなかった・読めなかった
  */
 export type LatestEewReport =
-  | { readonly kind: 'report'; readonly eew: EEWAlert; readonly firstIssueTime: string | null; readonly firstIssueMiss: string | null }
+  | {
+    readonly kind: 'report'; readonly eew: EEWAlert; readonly firstIssueTime: string | null; readonly firstIssueMiss: string | null
+    /**
+     * 詳細の全報のどこかで特別警報相当だったか（{@link gdReportsEverSpecialWarning}）と、判定できなかった報の数。
+     * **最新報の本文だけでは分からない** —— 途中の報で予想震度 6 弱以上になり、最新報で下がった速報がある
+     */
+    readonly everSpecialWarning: boolean; readonly specialUnreadable: number
+  }
   | { readonly kind: 'none' }
   | { readonly kind: 'failed' }
 
@@ -1451,6 +1474,48 @@ export function describeFirstReportMiss(items: readonly GdEewReportItem[]): stri
     if (readReportSerial(item) === null || typeof time !== 'string' || Number.isNaN(Date.parse(time))) unreadable++
   }
   return `報 ${items.length} 通・取り消された報 ${canceled} 通・報番号か発表時刻を読めない報 ${unreadable} 通`
+}
+
+/**
+ * 詳細（`/v2/gd/eew/{eventId}`）の 1 報が特別警報相当だったか（警報の報で、予想震度 6 弱以上か長周期階級 4 以上。
+ * 線引きは `isSpecialWarningForecast`）。**読めなければ null** —— 「特別警報ではなかった」と言えない報を偽に化けさせない。
+ *
+ * - 取り消された報・予報の報（`isWarning` が偽）は false
+ * - 予想の欄は電文の読み取り（`parseForecastInt` / `parseForecastLgInt`）と同じ読み方をする（`over` は下限へ寄せる）
+ * - どちらかが線を越えていれば true。**`isWarning` が欠けていても越えていれば true** —— 予想震度 6 弱以上は警報の基準
+ *   （5 弱以上）を必ず越えるので、警報の欄を待たずに言える
+ * - 越えておらず、`isWarning` が真でない・予想震度が読めない・長周期の欄はあるのに読めない報は null。
+ *   **長周期の欄が無いだけなら読めないに数えない** —— 欄そのものを持たない地震がある（2026-10-21 に
+ *   20230505215718 の詳細で確かめた。9 報すべてに `forecastMaxLgInt` が無かった）
+ * - 予想震度 `"0"`（震度 1 未満）は階級に写らないが、読めた値なので越えていない側へ数える
+ */
+export function gdReportSpecialWarning(item: GdEewReportItem): boolean | null {
+  if (item.isCanceled) return false
+  if (item.isWarning === false) return false
+  const intRange = item.intensity?.forecastMaxInt
+  const lgRange = item.intensity?.forecastMaxLgInt
+  const scale = intRange ? parseForecastInt(intRange).scale : -1
+  const lgRead = lgRange ? parseForecastLgInt(lgRange) : null
+  if (isSpecialWarningForecast(scale, lgRead?.cls ?? -1)) return true
+  if (item.isWarning !== true) return null
+  const intChosen = intRange ? (typeof intRange.to === 'string' && intRange.to) || intRange.from : undefined
+  const intReadable = scale >= 0 || intChosen === '0'
+  const lgUnreadable = lgRead !== null && lgRead.cls === undefined && !lgRead.belowClass1
+  return intReadable && !lgUnreadable ? false : null
+}
+
+/**
+ * 詳細の全報を畳み、どこかの報で特別警報相当だったか（`special`）と、読めずに判定できなかった報の数（`unreadable`）を返す。
+ */
+export function gdReportsEverSpecialWarning(items: readonly GdEewReportItem[]): { special: boolean; unreadable: number } {
+  let special = false
+  let unreadable = 0
+  for (const item of items) {
+    const v = gdReportSpecialWarning(item)
+    if (v === true) special = true
+    else if (v === null) unreadable++
+  }
+  return { special, unreadable }
 }
 
 /**
@@ -1514,9 +1579,11 @@ export async function fetchLatestEewReport(
     // `eewHeadType` で弾く）。**判定は `dmdataTelegramPayload.ts` が持つ**ので、この場で重ねて弾かない。
     if (payload?.kind === 'event' && payload.event.kind === 'eew') {
       const firstIssueTime = firstEewReportTime(items)
+      const ever = gdReportsEverSpecialWarning(items)
       return {
         kind: 'report', eew: payload.event as EEWAlert, firstIssueTime,
         firstIssueMiss: firstIssueTime === null ? describeFirstReportMiss(items) : null,
+        everSpecialWarning: ever.special, specialUnreadable: ever.unreadable,
       }
     }
   }
@@ -1636,7 +1703,17 @@ export async function fetchDmdataActiveEews(
             log.warn(`[DMDSS] 発表中の緊急地震速報の詳細から第 1 報の発表時刻を拾えませんでした eventId=${ev.eventId}`
               + `（${found.firstIssueMiss ?? '内訳なし'}。取り消されたら時刻を言わずに読みます）`)
           }
-          const value: EEWAlert = { ...found.eew, firstIssueTime: found.firstIssueTime }
+          // **途中の報の特別警報も載せる**（→ `gdReportsEverSpecialWarning`）。最新報の本文だけでは、途中で予想震度 6 弱
+          // 以上になって最新報で下がった速報の下げ止まり（`computeDisplayEEWLevel`）が戻らない。判定できなかった報は記録に残す
+          // —— 偽へ倒すと、特別警報だった速報が警報として戻っても気づけない。最新報の本文が特別警報なら印はそこで立つので記録しない
+          if (found.specialUnreadable > 0 && !found.everSpecialWarning && computeSingleEEWLevel(found.eew) !== 2) {
+            log.warn(`[DMDSS] 発表中の緊急地震速報の詳細で、特別警報だったかを判定できない報が ${found.specialUnreadable} 通ありました eventId=${ev.eventId}`
+              + '（警報の欄か予想を読めない。この速報は特別警報ではなかったものとして戻します）')
+          }
+          const value: EEWAlert = {
+            ...found.eew, firstIssueTime: found.firstIssueTime,
+            ...(found.everSpecialWarning && { everSpecialWarning: true }),
+          }
           reports.push({ eew: value, value })
         }
       } catch (err) {
@@ -1647,9 +1724,8 @@ export async function fetchDmdataActiveEews(
     // **解除済みかは取り終えた時刻で判定する**（取り始めた `now` ではない）。一覧と地震ごとの詳細を順に取る間
     // （門で待てば延びる）に解除の時刻を過ぎた速報を「発表中」として返すと、受け手が終わった速報を戻す
     const activeRaw = selectActiveEews(reports, serverDate(), 'startup')
-    // 特別警報の下げ止まり（`computeDisplayEEWLevel`）。**この経路は完全ではない**——
-    // 地震ごとに最新報 1 通しか取れないため（`fetchLatestEewReport`）、過去のどこかの報で
-    // 特別警報だった事実そのものを取得できない場合がある（詳細は関数の JSDoc）。
+    // 特別警報の下げ止まり（`computeDisplayEEWLevel`）。本文を読むのは最新報 1 通だけだが、途中の報で特別警報だった
+    // 事実は詳細の全報の予想から載せてある（上の `everSpecialWarning`）。ここでは最新報そのものの判定と合わせて立てる
     const everSpecialByEvent = computeEverSpecialWarningEventIds(reports.map(r => r.eew))
     const active = activeRaw.map(eew => everSpecialByEvent.has(eewEventKey(eew))
       ? { ...eew, everSpecialWarning: true }

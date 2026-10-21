@@ -1604,6 +1604,25 @@ export function useEarthquakes(
     return true
   }, [])
 
+  /**
+   * **特別警報だった印（`everSpecialWarning`）だけを、表示中の速報へ移す**（→ eew-spec.md §4「特別警報の下げ止まり」）。
+   * 起動時・張り直しの復元は、詳細の全報から「途中で特別警報だった」を載せてくる（`fetchDmdataActiveEews`）。取得の間に
+   * ライブの新しい報が先に着くと、復元の報は古い報として捨てられ（入口の古い報の判定・張り直しの報番号の絞り込み）、印も
+   * 一緒に消える —— 印は報ではなく地震についての事実なので、報を捨てても印は残す。音・読み上げ・タブ移動は起こさない
+   * （報としては採っていない）。取り消された速報・表示から消えた速報には付けない
+   */
+  const carryEverSpecialWarning = useCallback((key: string, from: string): void => {
+    const previous = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
+    if (!previous || previous.everSpecialWarning || previous.cancelled || previous.cancelledAt) return
+    if (eewLatestRef.current.has(key)) eewLatestRef.current.set(key, { ...previous, everSpecialWarning: true })
+    setState(prev => {
+      const existing = prev.activeEEWs.get(key)
+      if (!existing || existing.everSpecialWarning || existing.cancelledAt) return prev
+      return { ...prev, activeEEWs: new Map(prev.activeEEWs).set(key, { ...existing, everSpecialWarning: true }) }
+    })
+    log.debug(`[eew] 報は採らず、特別警報だった印だけ移した: key=${key}（${from}）`)
+  }, [])
+
   const handleEvent = useCallback((event: AppEvent) => {
     // 古い報は**入口で**捨てる。この下の通知（読み上げ・ウィンドウタイトル）と自動解除の予約は
     // setState の外で走るため、状態更新の直前で弾いても間に合わない。地図・カードだけが新しい報を
@@ -1654,6 +1673,8 @@ export function useEarthquakes(
             + ` 受理済み=#${acceptance?.serialByOrigin.get(incoming.origin) ?? '(なし)'}/${acceptance?.latestIssueMs ?? '(なし)'}`
             + ` 受信=#${eewSerial(incoming) ?? '(なし)'}/${eewIssueTimeMs(incoming) ?? '(なし)'}`)
           recordSkippedTelegram(incoming, 'staleSerial')
+          // 報は捨てても、運んできた特別警報の印だけは移す（→ `carryEverSpecialWarning`）
+          if (incoming.everSpecialWarning) carryEverSpecialWarning(key, `入口で古い報として捨てた報 経路=${incoming.origin}`)
           return
         } else {
           eewMerged = mergeEewReport(previous, incoming)
@@ -2261,7 +2282,7 @@ export function useEarthquakes(
           return { ...prev, lastUpdate: now }
       }
     })
-  }, [])
+  }, [carryEverSpecialWarning])
 
   // 表示が終わった EEW の報番号は覚えておく必要がない。掃除しないと台帳が伸び続ける
   // （EEW は 1 日に数十件届き、画面は長く開かれたままになる）。`activeEEWs` から消えたものを
@@ -3241,9 +3262,14 @@ export function useEarthquakes(
           if (restoredQueueKeys.has(`eew:${eew.id}`)) return false
           // 取り直しの最中に終えた地震は戻さない（台帳は画面から消えた時点で捨てているので、下の比較では弾けない）
           if (skipEndedEew(eewEndedRef.current, eew, '張り直しの復元')) { endedCount++; return false }
-          const accepted = eewAcceptanceRef.current.get(eewEventKey(eew))?.serialByOrigin.get(eew.origin)
+          const key = eewEventKey(eew)
+          const accepted = eewAcceptanceRef.current.get(key)?.serialByOrigin.get(eew.origin)
           const serial = eewSerial(eew)
-          return accepted === undefined || serial === null || serial > accepted
+          if (accepted === undefined || serial === null || serial > accepted) return true
+          // 報は積まないが、詳細の全報から載せた特別警報の印は移す（→ `carryEverSpecialWarning`）。取得の間にライブが追いつくと
+          // ここで落ちるので、移さないと切れていた間に特別警報だった速報が警報として残る
+          if (eew.everSpecialWarning) carryEverSpecialWarning(key, '張り直しの復元で受け取り済みの報')
+          return false
         })
         if (fresh.length === 0) {
           if (eews.length > 0) log.info(`[DMDSS] 張り直しの間の緊急地震速報: 発表中の ${eews.length} 件はどれも戻しません（受け取り済みの報 ${eews.length - endedCount} 件・画面から消えた地震の報 ${endedCount} 件）`)
@@ -3464,7 +3490,7 @@ export function useEarthquakes(
       historyAbort.abort()
       ws.disconnect()
     }
-  }, [handleEvent, enqueueEvent, appendTelegramLog, dmdataApiKey, dmdataTestDelivery, replayTimeOffset])
+  }, [handleEvent, enqueueEvent, appendTelegramLog, dmdataApiKey, dmdataTestDelivery, replayTimeOffset, carryEverSpecialWarning])
 
   const loadMoreEarthquakes = useCallback(async () => {
     if (stateRef.current.isLoadingMore || !stateRef.current.hasMore) return

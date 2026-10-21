@@ -2414,6 +2414,59 @@ describe('EEW の続報は古い報で退行しない', () => {
       const other = eews.find(e => e.issue?.eventId === 'other-event')
       expect(other?.everSpecialWarning).toBeFalsy()
     })
+
+    // 起動時・張り直しの復元は、詳細の全報から「途中で特別警報だった」印を載せてくる。取得の間にライブの
+    // 新しい報が先に着くと、復元の報は古い報として入口で捨てられる —— 報を捨てても印は移す。
+    // 正: 古い報が運んだ印は、表示中の速報へ移る（報そのものの値は新しい報のまま）
+    it('古い報として捨てた報が運んだ特別警報の印は、表示中の速報へ移る', async () => {
+      const h = setup()
+      await h.flush()
+      act(() => { h.current.injectEvent(report('3', ['石川県能登'], { scaleTo: 50 })) })
+      act(() => { h.current.injectEvent({ ...report('2', ['石川県能登'], { scaleTo: 50 }), everSpecialWarning: true }) })
+      const eew = [...h.current.activeEEWs.values()][0]
+      expect(eew?.everSpecialWarning).toBe(true)
+      expect(eew?.issue?.serial).toBe('3')
+    })
+
+    // 安全弁: 取り消された速報には、印つきの古い報が着いても付けない
+    it('取り消された速報には、古い報が運んだ印を付けない', async () => {
+      const h = setup()
+      await h.flush()
+      act(() => { h.current.injectEvent(report('3', ['石川県能登'], { scaleTo: 50 })) })
+      act(() => { h.current.injectEvent({ ...report('4', []), cancelled: true }) })
+      act(() => { h.current.injectEvent({ ...report('2', ['石川県能登'], { scaleTo: 50 }), everSpecialWarning: true }) })
+      const eew = [...h.current.activeEEWs.values()][0]
+      expect(eew?.cancelledAt).toBeInstanceOf(Date)
+      expect(eew?.everSpecialWarning).toBeFalsy()
+    })
+
+    // 対照: 印を運ばない古い報では立たない
+    it('印を運ばない古い報では印が立たない', async () => {
+      const h = setup()
+      await h.flush()
+      act(() => { h.current.injectEvent(report('3', ['石川県能登'], { scaleTo: 50 })) })
+      act(() => { h.current.injectEvent(report('2', ['石川県能登'], { scaleTo: 50 })) })
+      const eew = [...h.current.activeEEWs.values()][0]
+      expect(eew?.everSpecialWarning).toBeFalsy()
+    })
+
+    // 安全弁: 移した印は次の続報にも残る。画面の状態だけでなく、受信処理へ渡す値（入口の写しから統合した報）にも載る
+    // —— 写しに載せないと、状態と受信処理へ渡した値で印が食い違う。捨てた古い報そのものは受信処理へ渡さない（音を鳴らさない）
+    it('移した印は次の続報で消えず、受信処理へ渡す値にも載る', async () => {
+      const onLiveEvent = vi.fn()
+      const h = setup({ onLiveEvent })
+      await h.flush()
+      act(() => { h.current.injectEvent(report('3', ['石川県能登'], { scaleTo: 50 })) })
+      act(() => { h.current.injectEvent({ ...report('2', ['石川県能登'], { scaleTo: 50 }), everSpecialWarning: true }) })
+      const eewCalls = () => onLiveEvent.mock.calls.map(c => c[0] as LiveEvent).filter((e): e is EEWAlert & LiveEvent => e.kind === 'eew')
+      expect(eewCalls().map(e => e.issue?.serial)).toEqual(['3'])
+      act(() => { h.current.injectEvent(report('4', ['石川県能登'], { scaleTo: 45 })) })
+      const eew = [...h.current.activeEEWs.values()][0]
+      expect(eew?.issue?.serial).toBe('4')
+      expect(eew?.everSpecialWarning).toBe(true)
+      const calls = eewCalls()
+      expect(calls[calls.length - 1]?.everSpecialWarning).toBe(true)
+    })
   })
 })
 
@@ -6140,6 +6193,40 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     await h.flush()
     expect(handed).toHaveLength(1)
     expect(handed[0].map(e => e.id)).toEqual([r3.id])
+  })
+
+  // 正: 受け取り済みの報番号の報は積まないが、詳細の全報から載せた特別警報の印は表示中の速報へ移す。
+  // 取得の間にライブが追いつくとここで落ちるので、移さないと切れていた間に特別警報だった速報が警報のまま残る
+  it('張り直しで積まない受け取り済みの報でも、運んできた特別警報の印は移す', async () => {
+    const r2 = createTestEEWWarning(true, '20261020120000', 2)
+    const handed: (readonly EEWAlert[])[] = []
+    const h = setup({ onStartupRestoreEews: (eews) => { handed.push(eews) } })
+    await h.flush()
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: { ...r2, everSpecialWarning: undefined } }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+    const before = [...h.current.activeEEWs.values()][0]
+    expect(before?.everSpecialWarning).toBeFalsy()
+
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([{ ...r2, everSpecialWarning: true }])
+    act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+    await h.flush()
+    expect(handed).toHaveLength(0)
+    expect([...h.current.activeEEWs.values()][0]?.everSpecialWarning).toBe(true)
+  })
+
+  // 対照: 印を運ばない受け取り済みの報では立たない
+  it('張り直しで積まない受け取り済みの報が印を運ばなければ、印は立たない', async () => {
+    const r2 = createTestEEWWarning(true, '20261020120000', 2)
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: { ...r2, everSpecialWarning: undefined } }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([{ ...r2, everSpecialWarning: undefined }])
+    act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+    await h.flush()
+    expect([...h.current.activeEEWs.values()][0]?.everSpecialWarning).toBeFalsy()
   })
 })
 
