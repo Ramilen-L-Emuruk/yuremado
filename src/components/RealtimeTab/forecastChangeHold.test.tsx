@@ -14,7 +14,12 @@ import { render, screen, cleanup, act } from '@testing-library/react'
 import { RealtimeTab, EEW_FORECAST_CHANGE_HOLD_MS } from './index'
 import type { EEWAlert, EEWForecastChange } from '../../types/earthquake'
 
-beforeEach(() => { vi.useFakeTimers() })
+/** フィクスチャの報の発表時刻（`time`）。帯は発表から保持時間を過ぎた報では出さないので、時計をここへ合わせる。 */
+const ISSUED_AT = '2026-01-01T12:00:00Z'
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date(Date.parse(ISSUED_AT) + 1000))
+})
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 /** 実電文に出る形（→ 集計は eew-spec.md §3「最大予測値の変化」）。 */
@@ -30,7 +35,7 @@ function makeEEW(serial: string, forecastChange?: EEWForecastChange, overrides: 
     kind: 'eew',
     origin: 'dmdata',
     id: `test-eew-${serial}`,
-    time: '2026-01-01T12:00:00Z',
+    time: ISSUED_AT,
     test: false,
     earthquake: {
       originTime: '2026-01-01T12:00:00Z',
@@ -124,6 +129,40 @@ describe('「予想が変わった」の帯の寿命', () => {
       cancelled: true,
       cancelledAt: new Date('2026-01-01T12:00:30Z'),
     })]))
+    expect(screen.queryByText(TEXT_INCREASED)).toBeNull()
+  })
+})
+
+// 発表から保持時間を過ぎた報の変化は出さない（2026-10-21 ユーザー承認「おすすめで」）。起動時・張り直しの復元と
+// リプレイの初期状態は数分前の報を「いま初めて見た報」として描くが、ライブで見ていればその帯はもう消えている。
+describe('「予想が変わった」の帯: 発表から時間が経った報', () => {
+  const issuedAgo = (ms: number) => new Date(Date.now() - ms).toISOString()
+
+  // 正: 発表から保持時間を過ぎた報（復元した数分前の報）では出さない
+  it('発表から保持時間を過ぎた報の変化は出さない', () => {
+    render(tab([makeEEW('5', INCREASED, { time: issuedAgo(3 * 60_000) })]))
+    expect(screen.queryByText(TEXT_INCREASED)).toBeNull()
+  })
+
+  // 対照: 保持時間の手前なら出す（ライブの報は発表からすぐ届く）
+  it('発表から保持時間の手前の報なら出す', () => {
+    render(tab([makeEEW('5', INCREASED, { time: issuedAgo(EEW_FORECAST_CHANGE_HOLD_MS - 1000) })]))
+    expect(screen.getByText(TEXT_INCREASED)).toBeTruthy()
+  })
+
+  // 安全弁: 発表時刻が読めない報は止めない（比べられないものを黙らせない）
+  it('発表時刻が読めない報では、これまでどおり出す', () => {
+    render(tab([makeEEW('5', INCREASED, { time: '' })]))
+    expect(screen.getByText(TEXT_INCREASED)).toBeTruthy()
+  })
+
+  // 安全弁: 古い報が届いても、前の報が立てた帯をその計時のまま残す（古い報で消しも延ばしもしない）
+  it('古い報が届いても、前の報の帯はその計時のまま残る', () => {
+    const { rerender } = render(tab([makeEEW('2', INCREASED)]))
+    advance(3000)
+    rerender(tab([makeEEW('3', DECREASED, { time: issuedAgo(60_000) })]))
+    expect(screen.getByText(TEXT_INCREASED)).toBeTruthy()
+    advance(EEW_FORECAST_CHANGE_HOLD_MS - 3000 + 100)
     expect(screen.queryByText(TEXT_INCREASED)).toBeNull()
   })
 })
