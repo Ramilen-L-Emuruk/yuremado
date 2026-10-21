@@ -13,10 +13,11 @@
 // **書き込みは非同期で、失敗しても投げない。** この印は診断のためのもので、書けないことを
 // 理由に受信を止めるほうが失うものが大きい。失敗は呼び出し側へ文字列で返す。
 
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import { jstDateTime } from './jstTime'
+import { lockTolerantRename } from './lockTolerantRename'
 
 export interface LifeMark {
   readonly pid: number
@@ -134,7 +135,7 @@ export class HostLifeMark {
       try {
         await mkdir(dirname(this.path), { recursive: true })
         await writeFile(temp, JSON.stringify(mark))
-        await rename(temp, this.path)
+        await lockTolerantRename(temp, this.path)
         return null
       } catch (error) {
         return messageOf(error)

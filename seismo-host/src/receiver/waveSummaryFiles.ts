@@ -21,7 +21,7 @@
 // **書くときは一時ファイルへ書いてから置き換える。** 読み返しが書きかけを掴むと、壊れた要約として
 // 捨てるだけで済む（`decodeSummary` が長さを確かめる）が、置き換えれば掴む機会そのものが無くなる。
 
-import { mkdir, readdir, readFile, rename, stat, unlink, writeFile, open } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, unlink, writeFile, open } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import { jstHour } from './jstTime'
@@ -37,6 +37,7 @@ import {
 } from './waveSummaryDerived'
 import { encodeReceptionSummary } from './receptionSummary'
 import { summarizeMseedHourWithReception, summarizeWaveHourWithDerived } from './waveSummarySources'
+import { lockTolerantRename } from './lockTolerantRename'
 
 const HOUR_MS = 3_600_000
 
@@ -339,7 +340,7 @@ export async function buildSummaryFile(job: SummaryJob): Promise<SummaryJobResul
   const put = async (path: string, encoded: Buffer | string): Promise<number> => {
     tmp = `${path}.tmp`
     await writeFile(tmp, encoded)
-    await rename(tmp, path)
+    await lockTolerantRename(tmp, path)
     tmp = null
     return Buffer.byteLength(encoded)
   }

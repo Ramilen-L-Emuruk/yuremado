@@ -7,10 +7,11 @@
 // 取り戻しは脇役なので、書けないことを理由に受信を止めるほうが失うものが大きい。
 // 失敗は文字列で呼び出し側へ返す。
 
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import { type BacklogBookState, parseBacklogBookState } from './backlogBook'
+import { lockTolerantRename } from './lockTolerantRename'
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -60,7 +61,7 @@ export class BacklogBookWriter {
       try {
         await mkdir(dirname(this.path), { recursive: true })
         await writeFile(temp, text)
-        await rename(temp, this.path)
+        await lockTolerantRename(temp, this.path)
         return null
       } catch (error) {
         return messageOf(error)
