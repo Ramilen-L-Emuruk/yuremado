@@ -6142,3 +6142,125 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     expect(handed[0].map(e => e.id)).toEqual([r3.id])
   })
 })
+
+// 発表中の速報の取り直し（起動時・張り直し）が、取り直しの最中に自動解除で終えた速報を「発表中」として返すことがある。
+// 台帳は画面から消えた時点で捨てるので、終えた地震として別に覚えて弾く（→ `eewEndedRef`）。戻すと読み上げ側の帳面に
+// 終わった速報が居座り、本物の速報が全部解除されてもタイトルが戻らない（読み上げ側は `useLiveEventHandler.eewTts.test.ts`）
+describe('DMDSS 版: 取り直しの最中に終えた緊急地震速報を戻さない', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.mocked(fetchDmdataActiveEews).mockReset()
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValue([])
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  const finalReport = (serial: number) => ({ ...createTestEEWWarning(true, '20261020130000', serial), isFinal: true })
+
+  /** 最終報をライブで受け、張り直しの取り直しを返さずに待たせたまま自動解除させる */
+  async function expireDuringReconnectRestore(handed: (readonly EEWAlert[])[]) {
+    const h = setup({ onStartupRestoreEews: (eews) => { handed.push(eews) } })
+    await h.flush()
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: finalReport(3) }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(1)
+    let resolve: (v: EEWAlert[]) => void = () => {}
+    vi.mocked(fetchDmdataActiveEews).mockImplementationOnce(() => new Promise(r => { resolve = r }))
+    act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+    await h.flush()
+    act(() => { vi.advanceTimersByTime(10 * 60_000) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(0)
+    return { h, resolve: (eews: EEWAlert[]) => resolve(eews) }
+  }
+
+  // 正: 取り直しの最中に自動解除で終えた速報は、取り直しが返しても戻さない
+  it('張り直しの取り直しが、その最中に自動解除した速報を返しても戻さない', async () => {
+    const handed: (readonly EEWAlert[])[] = []
+    const { h, resolve } = await expireDuringReconnectRestore(handed)
+    await act(async () => { resolve([finalReport(3)]) })
+    await h.flush()
+    act(() => { vi.advanceTimersByTime(50) })
+    expect(handed).toHaveLength(0)
+    expect(h.current.activeEEWs.size).toBe(0)
+  })
+
+  // 安全弁: 終えた後に、より新しい報番号の報が返ったら通す（終わったのではなく続いている）
+  it('終えた後でも、より新しい報番号の報は戻す', async () => {
+    const handed: (readonly EEWAlert[])[] = []
+    const { h, resolve } = await expireDuringReconnectRestore(handed)
+    await act(async () => { resolve([{ ...finalReport(4), isFinal: false }]) })
+    await h.flush()
+    expect(handed).toHaveLength(1)
+    expect(handed[0].map(e => e.issue?.serial)).toEqual(['4'])
+  })
+
+  // 正: 起動時の取り直しも同じ。ライブで最終報を受けて自動解除した後に取り直しが返っても戻さない
+  it('起動時の取り直しが、その最中に自動解除した速報を返しても戻さない', async () => {
+    let resolve: (v: EEWAlert[]) => void = () => {}
+    vi.mocked(fetchDmdataActiveEews).mockImplementationOnce(() => new Promise(r => { resolve = r }))
+    const handed: (readonly EEWAlert[])[] = []
+    const h = setup({ onStartupRestoreEews: (eews) => { handed.push(eews) } })
+    await h.flush()
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: finalReport(3) }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+    act(() => { vi.advanceTimersByTime(10 * 60_000) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(0)
+
+    // 対照: 同じ取り直しに入っていた、終えていない地震の速報は戻す（起動時の経路そのものが働いている証拠）
+    const other = createTestEEWWarning(true, '20261020130600', 1)
+    await act(async () => { resolve([finalReport(3), other]) })
+    await h.flush()
+    expect(handed).toHaveLength(1)
+    expect(handed[0].map(e => e.id)).toEqual([other.id])
+    // 弾いたことは記録に残す（黙って弾くと、誤って本物を弾いたときに追えない）
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('起動時の復元') && String(c[0]).includes('画面から消えた地震の報なので戻しません'))).toBe(true)
+  })
+
+  // 正: 誤報取消で画面から消えた地震も同じ。取消の前の報を取り直しが返しても戻さない
+  it('取消で画面から消えた地震の報を、張り直しの取り直しが返しても戻さない', async () => {
+    const handed: (readonly EEWAlert[])[] = []
+    const h = setup({ onStartupRestoreEews: (eews) => { handed.push(eews) } })
+    await h.flush()
+    const live = createTestEEWWarning(true, '20261020131000', 3)
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: live }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: { ...createTestEEWWarning(true, '20261020131000', 4), cancelled: true } }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+    expect([...h.current.activeEEWs.values()][0]?.cancelledAt).toBeTruthy()
+    act(() => { vi.advanceTimersByTime(30_000) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(0)
+
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([live])
+    act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+    await h.flush()
+    expect(handed).toHaveLength(0)
+  })
+
+  // 安全弁: リセット（リプレイの開始など）の後は前の時間軸の記憶を使わない。同じ地震の報を取り直したら戻す
+  it('リセットの後は、前に終えた地震の報でも取り直しで戻す', async () => {
+    const handed: (readonly EEWAlert[])[] = []
+    const { h, resolve } = await expireDuringReconnectRestore(handed)
+    act(() => { h.current.resetState() })
+    await h.flush()
+    await act(async () => { resolve([finalReport(3)]) })
+    await h.flush()
+    expect(handed).toHaveLength(1)
+  })
+
+  // 対照: 終えていない速報（ライブで受けていない地震）は、これまでどおり戻す
+  it('終えていない地震の速報は、張り直しの取り直しで戻す', async () => {
+    const handed: (readonly EEWAlert[])[] = []
+    const h = setup({ onStartupRestoreEews: (eews) => { handed.push(eews) } })
+    await h.flush()
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([createTestEEWWarning(true, '20261020130500', 2)])
+    act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+    await h.flush()
+    expect(handed).toHaveLength(1)
+  })
+})

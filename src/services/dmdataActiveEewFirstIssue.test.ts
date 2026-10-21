@@ -90,5 +90,50 @@ describe('fetchDmdataActiveEews の第 1 報の時刻', () => {
     expect(got[0].firstIssueTime).toBeNull()
     expect(warnings().some(w => w.includes('第 1 報の発表時刻を拾えませんでした'))).toBe(true)
   })
+
+  // 解除済みかは、取り始めた時刻ではなく取り終えた時刻で判定する。一覧と詳細を順に取る間に解除の時刻を過ぎた
+  // 最終報を「発表中」として返すと、受け手が終わった速報を戻す
+  describe('解除済みかは取り終えた時刻で判定する', () => {
+    afterEach(() => { vi.restoreAllMocks() })
+
+    /** 最終報。発生は 10 分前（規模による解除はとうに過ぎている）、発表は `reportAgoMs` 前 —— 解除は発表の 60 秒後 */
+    const finalXml = (eventId: string, reportAgoMs: number) => {
+      const now = serverNow()
+      return eewXml(eventId, 5, jst(now - reportAgoMs))
+        .replace(/<OriginTime>[^<]*<\/OriginTime>/, `<OriginTime>${jst(now - 10 * 60_000)}</OriginTime>`)
+        .replace('</Body>', '<NextAdvisory>この情報をもって、緊急地震速報：最終報とします。</NextAdvisory></Body>')
+    }
+
+    /** 本体を返すときに時計を `advanceMs` 進める（詳細を取る間に時間が経った形） */
+    function stubAdvancing(eventId: string, body: string, advanceMs: number): void {
+      const realNow = Date.now.bind(Date)
+      let shift = 0
+      vi.spyOn(Date, 'now').mockImplementation(() => realNow() + shift)
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.includes('data.api.dmdata.jp')) {
+          shift += advanceMs
+          return { ok: true, text: async () => body } as unknown as Response
+        }
+        if (url.includes('/gd/eew/')) {
+          return { ok: true, json: async () => ({ items: [{ serial: 5, telegrams: [{ id: 'xml-5', head: { type: 'VXSE45', test: false } }] }] }) } as unknown as Response
+        }
+        return { ok: true, json: async () => ({ items: [{ eventId, dateTime: new Date(serverNow()).toISOString() }] }) } as unknown as Response
+      }))
+    }
+
+    // 正: 取っている間に解除の時刻を過ぎた最終報は返さない
+    it('取っている間に解除の時刻を過ぎた最終報は返さない', async () => {
+      const id = '20261021120000'
+      stubAdvancing(id, finalXml(id, 58_000), 5_000)
+      expect(await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)).toHaveLength(0)
+    })
+
+    // 対照: 取り終えた時点でもまだ解除の時刻前なら返す
+    it('取り終えた時点でまだ解除の時刻前なら返す', async () => {
+      const id = '20261021120001'
+      stubAdvancing(id, finalXml(id, 30_000), 5_000)
+      expect(await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)).toHaveLength(1)
+    })
+  })
 })
 
