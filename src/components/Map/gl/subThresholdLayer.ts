@@ -206,7 +206,7 @@ ${POINT_VS_BODY}`,
     gl.shaderSource(s, src)
     gl.compileShader(s)
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-      log.error(`[${LYR}] shader compile failed`, gl.getShaderInfoLog(s), src)
+      log.error(`[${LYR}] シェーダーをコンパイルできなかった`, gl.getShaderInfoLog(s), src)
       gl.deleteShader(s)
       return null
     }
@@ -240,7 +240,7 @@ ${POINT_VS_BODY}`,
     gl.deleteShader(vertex)
     gl.deleteShader(fragment)
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-      log.error(`[${LYR}] program link failed`, gl.getProgramInfoLog(p))
+      log.error(`[${LYR}] シェーダーのプログラムをリンクできなかった`, gl.getProgramInfoLog(p))
       gl.deleteProgram(p)
       return null
     }

@@ -1,17 +1,17 @@
 ---
 name: release
-description: Coordinate an explicitly requested release, merge to the default branch, version update, tag, or push with safe preflight checks.
+description: はっきり頼まれたリリース・既定ブランチへの統合・版の更新・タグ・push を、着手前の安全な確かめつきで取りまとめる。
 ---
 
-# Release
+# リリース
 
-Use this skill only when the user explicitly requests a release, merge, tag, or push. Finishing implementation is not authorization to release.
+利用者がリリース・統合・タグ・push をはっきり頼んだときだけ使う。実装を終えたことは、リリースしてよいという許しではない。
 
-1. Read the target repository's release commands, default branch, versioning convention, deployment behavior, and required validation. Stop for clarification if they are not defined.
-2. Verify the current branch, a clean working tree, the remote tracking state, intended release candidates, and the latest remote default branch before changing Git state.
-3. Present the planned merge, validation, version update, tag, and push steps when the request does not make those operations unambiguous. Obtain confirmation before actions that alter shared history, publish artifacts, or deploy.
-4. Merge without rewriting history, run the required integration validation, then perform versioning and tagging only if validation passes.
-5. Fetch again immediately before push. If push or CI fails, do not force-push, recreate version tags, or discard the resulting state. Report the exact state and await direction.
-6. Remove only confirmed, merged worktrees or branches. Never use forced branch deletion or recursive removal against an unverified path. ワークツリーは素の `git worktree remove` で消さず、AGENTS.md「ワークツリーを消す前に、ジャンクションを外す」のコマンドで消す（`node_modules` のジャンクションが残っていると、git が向け先の中身まで消す）。
+1. 対象のリポジトリのリリースのコマンド・既定ブランチ・版の付け方・公開の動き・要る確かめを読む。決まっていなければ止めて確かめる。
+2. Git の状態を変える前に、いまのブランチ・作業ツリーがきれいか・リモートの追跡の状態・出す候補・リモートの既定ブランチの最新を確かめる。
+3. 頼まれた内容から統合・確かめ・版の更新・タグ・push の手順が一通りに決まらないときは、予定を示す。共有の履歴を変える操作・成果物の公開・本番への配布の前には確認を取る。
+4. 履歴を書き換えずに統合し、要る統合後の確かめを走らせ、通ったときだけ版の更新とタグ付けをする。
+5. push の直前にもう一度 fetch する。push や CI が失敗したら、force push・版のタグの作り直し・できた状態の破棄をしない。そのままの状態を報告して指示を待つ。
+6. 消すのは、確かめた・統合済みのワークツリーとブランチだけ。確かめていないパスに対して、強制のブランチ削除や再帰の削除を決して使わない。ワークツリーは素の `git worktree remove` で消さず、AGENTS.md「ワークツリーを消す前に、ジャンクションを外す」のコマンドで消す（`node_modules` のジャンクションが残っていると、git が向け先の中身まで消す）。
 
-Use `release-manager` for release preflight and coordination. Preserve any project-specific release lock only when its mechanism is documented and usable in Codex.
+着手前の確かめと取りまとめには `release-manager` を使う。プロジェクト独自のリリースの鍵（ロック）は、仕組みが文書にあって Codex で使えるときだけ守る。

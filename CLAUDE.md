@@ -16,6 +16,30 @@ yuremado（揺れ窓）で作業するときの手順とルール。
 
 > 2026-10-01: ユーザーから「二度と英語使うな」と言われ、メモリには残していた。2026-10-06 に、自作地震計のホストに地震検出の状態を足す実装の途中で、作業の合間の報告とツールの説明文を英語で書き、同じ言葉でもう一度言われた。**メモリはその端末の中にしか無いので、この手順書に書いた。**
 
+### リポジトリに書く文も日本語で書く（機械で止める）
+
+コメント・資料・画面の文言に加えて、次のものも日本語で書く。**ここは機械が止める。**
+
+| 対象 | 止める場所 |
+|---|---|
+| エラーの文面（`new Error(…)`・名前が `Error`／`Exception` で終わる型・それを継ぐクラスの `super(…)`・`err.message = …`・`throw '…'`）・ログ（`console.*`・`log.*`・`logger.*`）—— `src`・`scripts`・`seismo-host`・`firmware` の TS/JS と、トップの `*.config.ts` | `npm test`（[`scripts/japaneseOnly.test.ts`](scripts/japaneseOnly.test.ts)） |
+| ファームの出力（`Serial.print*`・`http.send`・`static_assert`） | 同上 |
+| Codex の設定（`.codex/**/*.toml`・`.agents/**/*.md`）・CI の名前とコメント（`.github/workflows/*.yml`） | 同上 |
+| コミットメッセージ（件名と本文の各行。ブランチでもタグでも、送るコミットすべて） | push の前のフック（[`scripts/check-commit-messages.ts`](scripts/check-commit-messages.ts)） |
+
+**判定は「日本語を 1 文字も含まないのに英単語が残る」か「日本語を含む文で、日本語の前・間・後のどこかの区間に英単語が 3 語以上続く」**（[`scripts/lib/japaneseOnly.ts`](scripts/lib/japaneseOnly.ts)）。
+英語らしさでは見ない —— それだと `fix` の 1 語や、機能語の無い `custom layer add failed` がすり抜ける（2026-10-21 の棚卸しで実際に漏れた）。
+**コマンド・パス・英語の引用はバッククォートで囲む**（囲んだ中は数えない）。識別子（`station-coords`・`MapLibre`・`ADMIN_TOKEN`）と、単位のような 2 文字以下の語（`ms`・`Hz`）も数えない。ただし `to`・`is`・`of` などの機能語は 2 文字でも数える。
+日本語の文に英単語を 2 語まで混ぜるのは通る（`Socket Start 失敗`）。テスト・型定義・テスト用の素材（`*.test.*`・`*.spec.*`・`*.fixture.*`・`*.d.ts`）は対象外。
+
+**例外はテストの `ALLOWED` に理由つきで載せる。** 載せてよいのは、文面で分岐する合図（`'auth'`）と、外の道具が読む欄だけ。「英語の方が分かりやすい」は理由にしない。ファイルと文面の完全一致で効き、もう現れなくなった項目はテストが落とす。
+コミットメッセージの例外は、git が自分で書く行（`Merge branch …`・`Merge pull request #N from …`・衝突の一覧 `# Conflicts:`・cherry-pick と revert の本文の 1 行）・版番号の件名（`5.58.2`）・決まったキーのトレーラー（`Co-Authored-By: 名前 <アドレス>` など）だけ。`git revert` の件名 `Revert "…"` は例外に無いので、日本語に書き直す。
+
+**止められない経路がある。** 判定に掛からない書き方（変数に入れてから `new Error(msg)` に渡す文面、大文字だけの英語 `ERROR FAILED`、ハイフンで繋いだ `failed-to-fetch`、`status=failed` のような `key=value` の値）、注釈付きタグ自身のメッセージ（見るのはタグが指すコミットのメッセージ）、フックを入れていない端末からの push（入れ方は `npm run install-git-hooks`）、GitHub の Web 画面での編集、`--no-verify`（使わない）。
+コミットメッセージが push の前に止まったら、まだ公開していないので `git commit --amend`（最後の 1 本）か `git rebase -i` で書き直してから push する。
+
+> 2026-10-21: ユーザーから「今のソースコード全体に英語が混じってしまったりしていないですか？Opus5.5のクセでたまに英語になってしまうみたいなんですよね。」と訊かれ、棚卸しで、英語の文面が、エラー・ログとファームの出力に 137 行（うちファーム 26 行）、Codex の設定 15 本に 65 行、CI の名前とコメントに 20 行残っているのを見つけた。直したうえで「英語がこれらに入っていないことを確認するレビュー追加してくれない？」と言われ、判定は「日本語必須＋許可リスト」、コミットメッセージは push の前、と決めた。
+
 ## プロジェクト概要
 
 - React 18 + TypeScript + Vite 6 製の PWA。MapLibre GL JS（WebGL）地図で地震情報・緊急地震速報・津波情報・リアルタイム震度を表示する。
@@ -1311,7 +1335,8 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | `npm run audit-accent-unidic` | 読み上げに出る名前の**アクセント核**を、エンジンとは別の出典（[UniDic](https://clrd.ninjal.ac.jp/unidic/) 現代書き言葉フルパッケージの `lex_3_1.csv`・28 列目のアクセント型）と突き合わせる監査。**要 VOICEVOX**（既定 `http://localhost:50021`・`--engine` / `--speaker` で変更可）。エンジンが置く核は、語が内蔵辞書にあればその値・無ければ推定なので、**推定が外れた語は読みも句数も正しく、誤読の突き合わせにも句割りの判定にも掛からない**。**zip 全体 1.75GB のうち圧縮 25MB だけを HTTP Range で抜く**（目録を読んで該当エントリだけ取り、`.claude/unidic-cache/` に残す）。既定の対象は 3 辞書のキーと `public/data` の地名と警報対象地方で 3241 語、`--upstream` を付けると震央地名・震度観測点・**詳細震央地名**の上流も取って 6233 語（海外の地名は読点でも割って入れる。読み上げがそこでチャンクを割るため）。**`--components` を付けると「名前を割った構成要素」も対象へ加える**（震央地名の前部・後部要素と、観測点名の市町村。**UniDic に 1 語として載る語が 26 → 116 語へ増える** —— 複合語まるごとは載らないが構成要素は載ることがあるため。気象庁の個別コード表を取るので通信が増える）。**`--bare-check` を付けると「1 語としてエンジンの辞書にあるか」も調べる**（観測点名まで見るには `--upstream` と併用する）＝辞書に値が無い語を読点あり／なしで読み比べ、読みが変わるものを出す（`甲信` を見つけたのはこれ）。エンジンへの問い合わせが倍になるので既定では回さない。**比べられるのは名前まるごとが 1 語として載っているものだけ**（183 語。カタカナの外国地名はよく載るので、詳細震央地名を入れて 29 語から増えた）で、**句ごとには比べない** ——複合語のアクセントは構成要素の単語アクセントと別物で偽陽性だらけになる。**食い違いが出ても exit 0** ＝ 正解を決めるのは耳で、これは候補を出すところまで。取得そのものに失敗したときだけ exit 1（列位置は既知の語で検算する）。**辞書を作り直したとき・観測点や区域が増えたとき**に実行する。詳細は [`docs/spec/audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §3「エンジンが置く核が外れているとき」 |
 | `npm run build-third-party-licenses` | 同梱する第三者ソフトウェアのライセンス全文（`public/third-party-licenses.txt`）の再生成。**API キー不要・通信なし**（`node_modules` から集める）。**対象は直接の依存だけでなく、そこから辿れる推移的な依存も含む**（実測 32 件。`react-dom` が引く `scheduler`、`maplibre-gl` が引く `@mapbox/*` も配布物へ入る。**うち `@types/geojson` は型定義だけで実行時コードを持たない**が、`maplibre-gl` が `dependencies` に宣言しているので閉包へ入る —— 載せすぎは害にならないので除外していない）。あわせて **`vite-plugin-pwa` が Service Worker へ注入する Workbox** も載せる（devDependencies なので依存グラフでは辿れない。ビルド成果物を見て確かめたものだけを足すこと）。**依存を足し引きしたら実行する** —— MIT も BSD-3-Clause も著作権表示とライセンス文を配布物に含めることを条件としているのに、足りなくても型チェックもビルドも通り画面にも出ない。上流が LICENSE ファイルを配っていない依存だけは代替の文面をスクリプト側に持つ（現在は `murmurhash-js` の 1 件）。**全件が載っていることは [`scripts/thirdPartyLicenses.test.ts`](scripts/thirdPartyLicenses.test.ts) が `npm test` で検査する** |
 | `npm run check-personal-info -- <--range 範囲 \| --all \| --text ファイル…>` | 公開する内容に個人情報が無いかを確かめる。**push の前には pre-push フックが自動で走らせる**ので、手で回すのは git の外の文章（PR の本文など）を出す前と、履歴全体を見直すとき（`--all`。数分かかる）。**メインの checkout に照合ファイル（`.claude/personal-info.txt`）が無いと止まる**（終了コード 2）。依存を足して作者の連絡先が載ったら許可リストへ理由つきで足す。詳細は上記「公開する前に個人情報が無いことを確かめる」 |
-| `npm run install-git-hooks` | 上の検査を push の前に走らせるフックを入れる。**clone した端末ごとに 1 回**（フックは git の管理外なので clone では入らない）。中継だけを置き、本体（`scripts/git-hooks/pre-push`）が見つからなければ push を止める |
+| `npm run check-commit-messages -- --range <範囲>` | コミットメッセージに英語の文が無いかを確かめる（上記「リポジトリに書く文も日本語で書く」）。`--range` の後ろは `git log` に渡す範囲。終了コードは 0＝無し・1＝見つかった・2＝調べられない。**push の前には pre-push フックが自動で走らせる**ので、手で回すのはフックの届かない経路で出す前だけ。例: `--range origin/main..HEAD` |
+| `npm run install-git-hooks` | `check-personal-info` と `check-commit-messages` の 2 つの検査を push の前に走らせるフックを入れる。**clone した端末ごとに 1 回**（フックは git の管理外なので clone では入らない）。中継だけを置き、本体（`scripts/git-hooks/pre-push`）が見つからなければ push を止める |
 | `npm run list-ui-strings -- [--out <TSV>] <パス…>` | 日本語を含む文字列を、`.ts`・`.tsx`・`.html` の構文から一覧にする（コメントは拾わない・HTML はタグを外して地の文と、日本語を含む属性の値だけ）。文言を見直す前の棚卸しに使う。拾えない形（英語だけの文言・JSON）と使い方は [`docs/ui-wording-procedure.md`](docs/ui-wording-procedure.md)「1. 棚卸しは機械で取る」 |
 | `npm run find-locale-strings -- <言語ファイル> <語…>` | ほかのアプリ（Chrome の `ja.pak`・VS Code の日本語パック）の画面の文言を、手元の言語ファイルから探す。言語ファイルの場所は同じ手順書の「3. 語の出どころを探す」 |
 | `node scripts/build-tsunami-zones.mjs` | 津波予報区 海岸線データ（`public/data/tsunami-zones.json`）の再生成 |

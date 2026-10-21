@@ -459,7 +459,7 @@ export function installFrameProfiler(): void {
   if (!longAnimationFrameSupported) {
     // Chrome 123 以降でのみ使える。ここに来た場合もフレーム間隔の監視と区間の記録は働くので、
     // 診断そのものは成立する（帰属だけが取れない）。
-    log.info('[frameProfiler] この環境は Long Animation Frames に未対応。フレーム間隔と区間の記録だけで診断する')
+    log.info('[frameProfiler] この環境は `Long Animation Frames` に未対応。フレーム間隔と区間の記録だけで診断する')
   }
 
   if (typeof window !== 'undefined') {

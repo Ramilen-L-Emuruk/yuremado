@@ -105,7 +105,7 @@ describe('loadStationCoords', { timeout: 15_000 }, () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse({ stations: {}, areas: {} })))
     const { loadStationCoords, getStationCoordsCache } = await freshModule()
 
-    await expect(loadStationCoords()).rejects.toThrow(/no data/)
+    await expect(loadStationCoords()).rejects.toThrow(/空か、形が崩れている/)
     expect(getStationCoordsCache()).toBeNull()
   })
 
@@ -113,21 +113,21 @@ describe('loadStationCoords', { timeout: 15_000 }, () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse({ oops: true })))
     const { loadStationCoords } = await freshModule()
 
-    await expect(loadStationCoords()).rejects.toThrow(/no data/)
+    await expect(loadStationCoords()).rejects.toThrow(/空か、形が崩れている/)
   })
 
   it('200でも areas を持たない形なら失敗として扱う（区域の逆引きが TypeError になるのを防ぐ）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse({ stations: SAMPLE.stations })))
     const { loadStationCoords } = await freshModule()
 
-    await expect(loadStationCoords()).rejects.toThrow(/no data/)
+    await expect(loadStationCoords()).rejects.toThrow(/空か、形が崩れている/)
   })
 
   it('200でも areas が空なら失敗として扱う（区域名→都道府県の逆引きが黙って効かなくなるのを防ぐ）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse({ stations: SAMPLE.stations, areas: {} })))
     const { loadStationCoords } = await freshModule()
 
-    await expect(loadStationCoords()).rejects.toThrow(/no data/)
+    await expect(loadStationCoords()).rejects.toThrow(/空か、形が崩れている/)
   })
 
   // 文字列は Object.keys が添字の配列（'abc' → ['0','1','2']）を返すため、非空チェックだけでは
@@ -139,7 +139,7 @@ describe('loadStationCoords', { timeout: 15_000 }, () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse(body)))
     const { loadStationCoords, getStationCoordsCache } = await freshModule()
 
-    await expect(loadStationCoords()).rejects.toThrow(/no data/)
+    await expect(loadStationCoords()).rejects.toThrow(/空か、形が崩れている/)
     expect(getStationCoordsCache()).toBeNull()
   })
 

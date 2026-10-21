@@ -370,7 +370,7 @@ function downloadArchive(
     if (gz === null) {
       // **429 だけは窓を置く**（他の失敗は次の操作で取り直してよい）
       if (id && status === 429) noteRateLimited('archive', id)
-      throw new Error(`Archive fetch failed: ${status}`)
+      throw new Error(`アーカイブを取得できなかった: ${status}`)
     }
     // **成功したら窓と回数を捨てる**
     if (id) noteRateLimitCleared('archive', id)
@@ -696,11 +696,11 @@ async function listArchives(
       `https://api.dmdata.jp/v2/archive?${params.toString()}`,
       { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: { Authorization: authHeader(apiKey) } } },
       async (res) => {
-        if (!res.ok) throw new Error(`Archive list failed: ${res.status}`)
+        if (!res.ok) throw new Error(`アーカイブの一覧を取得できなかった: ${res.status}`)
         return (await res.json()) as { status: string; items: ArchiveItem[]; nextToken?: string }
       },
     )
-    if (listJson.status !== 'ok') throw new Error('Archive list error')
+    if (listJson.status !== 'ok') throw new Error('アーカイブの一覧が成功（ok）を返さなかった')
     items.push(...listJson.items)
     if (!listJson.nextToken) break
     cursorToken = listJson.nextToken
@@ -710,7 +710,7 @@ async function listArchives(
   // にも計上されないまま「部分成功」に見える。
   if (page >= ARCHIVE_LIST_MAX_PAGES) {
     throw new Error(
-      `Archive list truncated: ページ上限（${ARCHIVE_LIST_MAX_PAGES}）に達した`
+      `アーカイブの一覧が途中で切れた: ページ上限（${ARCHIVE_LIST_MAX_PAGES}）に達した`
       + ` 範囲=${startDate}~${endDate} 件数=${items.length}`,
     )
   }
@@ -1168,7 +1168,7 @@ export async function fetchDmdataReplayEvents(
   // 全部が見送りだった場合は下の記録で手がかりを残す。
   const sourceDays = targets.length + liveDates.length - rateLimitedSources.length
   if (sourceDays > 0 && failedSourceDays === sourceDays) {
-    throw new Error(`Archive fetch failed: 取得元${sourceDays}件すべてを読み取れませんでした`)
+    throw new Error(`アーカイブを取得できなかった: 取得元${sourceDays}件すべてを読み取れませんでした`)
   }
   if (rateLimitedSources.length > 0) {
     log.info(
@@ -2573,7 +2573,7 @@ export async function fetchDmdataQuakeHistory(
   // 兄弟関数（`fetchDmdataReplayEvents` の `sourceDays`）と同じ形に揃える。
   const judgedDays = usedDays - rateLimitedSources.length
   if (!stoppedEarly && judgedDays > 0 && failedArchiveUrls.length === judgedDays) {
-    throw new Error(`Archive fetch failed: 取得元${judgedDays}件すべてを読み取れませんでした`)
+    throw new Error(`アーカイブを取得できなかった: 取得元${judgedDays}件すべてを読み取れませんでした`)
   }
   // **見送りは例外にしない**（待てば取れる）。ただし全部が見送りだと画面は
   // 「静かな期間だった」と見えるので、手がかりを残す。

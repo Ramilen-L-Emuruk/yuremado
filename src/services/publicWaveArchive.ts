@@ -38,7 +38,7 @@ async function takeSlot(signal: AbortSignal | undefined, urgent: boolean): Promi
       const onAbort = () => {
         const i = slotWaiters.indexOf(entry)
         if (i >= 0) slotWaiters.splice(i, 1)
-        reject(signal!.reason ?? new DOMException('Aborted', 'AbortError'))
+        reject(signal!.reason ?? new DOMException('取得を中断した', 'AbortError'))
       }
       const entry = {
         wake: () => {

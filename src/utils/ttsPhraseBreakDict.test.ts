@@ -134,7 +134,7 @@ describe('loadTtsPhraseBreakDict', { timeout: 15_000 }, () => {
     const { loadTtsPhraseBreakDict, getTtsPhraseBreakDictCache } = await freshModule()
 
     const assertion = expect(loadTtsPhraseBreakDict()).rejects.toThrow(
-      `tts-phrase-break-dict fetch timed out after ${DICT_FETCH_TIMEOUT_MS}ms`,
+      `tts-phrase-break-dict の取得が ${DICT_FETCH_TIMEOUT_MS}ms で時間切れになった`,
     )
     await vi.advanceTimersByTimeAsync(DICT_FETCH_TIMEOUT_MS)
     await assertion

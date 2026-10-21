@@ -81,7 +81,7 @@ const RECONNECT_CROWDED_MAX_MS = 300_000
  *
  * 401/403（`'auth'`）と違って**再試行すれば直る**ので停止させない。一方で通常の失敗
  * （ネットワーク断など）とも待ち方が違うため、文字列ではなく型で見分ける
- * （`ticket: 409` のメッセージ照合は、他の 4xx を足したときに静かに崩れる）。
+ * （`接続のチケットを取得できなかった: 409` のような文面の照合は、他の 4xx を足したときに静かに崩れる）。
  */
 /**
  * 最初の取り決めを待つ上限。409・通信の失敗が続いても、履歴と起動時の復元をいつまでも待たせない。
@@ -361,7 +361,7 @@ async function fetchTicketUrl(
   const status = result.attempt.status
   if (status === 401 || status === 403) throw new Error('auth')
   if (status === 409) throw new SocketCrowdedError()
-  throw new Error(`ticket: ${status}`)
+  throw new Error(`接続のチケットを取得できなかった: ${status}`)
 }
 
 function urlOf(body: unknown): string {

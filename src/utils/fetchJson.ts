@@ -129,7 +129,7 @@ export async function fetchJsonWithTimeout<T>(
   }
   try {
     const res = await fetch(url, { signal: controller.signal })
-    if (!res.ok) throw new Error(`${label} fetch failed: ${res.status}`)
+    if (!res.ok) throw new Error(`${label} を取得できなかった: ${res.status}`)
     const data = (await res.json()) as T
     // 検分は **この try の中で**呼ぶ。投げた例外を下の catch が拾い、通信失敗と同じく failed に
     // 計上される（呼び出し側の `.then()` に置くと、この関数は成功として返した後なので計上されない）。
@@ -143,9 +143,9 @@ export async function fetchJsonWithTimeout<T>(
     // abort 由来の例外（AbortError）は原因が読み取れないため、タイムアウトと分かる文言に置き換える。
     // signal はこの関数内でしか使わないので、aborted が立つのはタイムアウトのときだけ。
     // ただし aborted だけで判定すると、時間切れの直後に届いた別種の例外（配信データ破損による
-    // SyntaxError 等）まで「timed out」に化けて本当の原因が消える。abort 由来かどうかまで見る。
+    // SyntaxError 等）まで「時間切れ」に化けて本当の原因が消える。abort 由来かどうかまで見る。
     if (controller.signal.aborted && isAbortError(err)) {
-      throw new Error(`${label} fetch timed out after ${timeoutMs}ms`)
+      throw new Error(`${label} の取得が ${timeoutMs}ms で時間切れになった`)
     }
     throw err
   } finally {

@@ -65,7 +65,7 @@ function main(): number {
     else targets.push(args[i])
   }
   if (targets.length === 0 || (args.includes('--out') && outFile === null)) {
-    console.error('使い方: npx tsx scripts/list-ui-strings.ts [--out <TSV>] <ディレクトリかファイル…>')
+    console.error('使い方: `npx tsx scripts/list-ui-strings.ts [--out <TSV>] <ディレクトリかファイル…>`')
     return 2
   }
   const missing = targets.filter((t) => !existsSync(resolve(t)))

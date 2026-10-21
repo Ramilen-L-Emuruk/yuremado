@@ -74,14 +74,14 @@ async function setupFont() {
   // tiny-sdf は document.createElement('canvas') を使うため Node 上でシムする。
   globalThis.document = {
     createElement(tag) {
-      if (tag !== 'canvas') throw new Error(`unexpected element: ${tag}`)
+      if (tag !== 'canvas') throw new Error(`想定外の要素: ${tag}`)
       return createCanvas(1, 1)
     },
   }
   const familiesBefore = new Set(GlobalFonts.families.map((f) => f.family))
   if (FONT_FILE) {
     const ok = GlobalFonts.registerFromPath(path.resolve(FONT_FILE))
-    if (!ok) throw new Error(`failed to register font: ${FONT_FILE}`)
+    if (!ok) throw new Error(`フォントを登録できなかった: ${FONT_FILE}`)
   }
   // registerFromPath が成功しても、canvas に渡す FONT_FAMILY が TTF 内部の名前と食い違っていれば skia は
   // 例外を投げずシステム既定フォントで描いてしまう（実測で確認済み。配布名 "M PLUS Rounded 1c" を渡すと
@@ -248,7 +248,7 @@ async function main() {
     totalGlyphs += glyphs.length
   }
   console.log(
-    `glyphs generated: stack="${STACK}" font="${FONT_FILE || FONT_FAMILY}" weight=${FONT_WEIGHT} ` +
+    `グリフを作った: stack="${STACK}" font="${FONT_FILE || FONT_FAMILY}" weight=${FONT_WEIGHT} ` +
       `codepoints=${cps.size} blocks=${sortedBlocks.length} glyphs=${totalGlyphs} -> public/fonts/${STACK}/`,
   )
 }

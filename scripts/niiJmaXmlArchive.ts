@@ -68,7 +68,7 @@ export async function fetchText(url: string, retries = 3): Promise<string> {
       await new Promise((r) => setTimeout(r, 1000 * attempt))
     }
   }
-  throw new Error('unreachable')
+  throw new Error('ここには来ないはず')
 }
 
 /** キャッシュのファイル名。URLをそのまま使えないので、英数字以外を潰す。 */

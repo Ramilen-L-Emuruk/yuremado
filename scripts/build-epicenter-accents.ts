@@ -216,11 +216,11 @@ async function main(): Promise<void> {
       + `別のホストなら --engine で指定します。理由: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
-  console.log(`Engine ${engine} (VOICEVOX ${version}), speaker ${speaker}`)
+  console.log(`エンジン ${engine}（VOICEVOX ${version}）・話者 ${speaker}`)
 
-  console.log(`Fetching ${SOURCE_URL} ...`)
+  console.log(`取得中: ${SOURCE_URL}`)
   const res = await fetch(SOURCE_URL)
-  if (!res.ok) throw new Error(`Failed to fetch source: ${res.status}`)
+  if (!res.ok) throw new Error(`元データを取得できなかった: ${res.status}`)
   const geo = await res.json() as { features?: Feature[] }
   const features = geo.features
   if (!Array.isArray(features)) throw new Error('取得したデータに features がありません')
@@ -253,7 +253,7 @@ async function main(): Promise<void> {
   if (kanaOf.size < EXPECTED_COUNT_RANGE.min) {
     throw new Error(`ふりがなを持つ震央地名が ${kanaOf.size} 件しかありません`)
   }
-  console.log(`Loaded ${kanaOf.size} epicenter names`)
+  console.log(`震央地名を ${kanaOf.size} 件読んだ`)
 
   for (const [name, expected] of FURIGANA_FIXTURES) {
     const actual = kanaOf.get(name)

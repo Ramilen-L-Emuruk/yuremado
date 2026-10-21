@@ -23,7 +23,7 @@ export const SHIM = `#!/bin/sh
 ${MARK}。本体はメインの checkout の scripts/git-hooks/pre-push。
 hook="$(git rev-parse --path-format=absolute --git-common-dir)/../scripts/git-hooks/pre-push"
 if [ ! -f "$hook" ]; then
-  echo "[個人情報の検査] フックの本体が無い: $hook。push を止める" >&2
+  echo "[push 前の検査] フックの本体が無い: $hook。push を止める" >&2
   exit 1
 fi
 exec sh "$hook" "$@"

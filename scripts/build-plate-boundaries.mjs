@@ -92,9 +92,9 @@ function toLatLng([lon, lat]) {
 }
 
 async function main() {
-  console.log(`Fetching ${SOURCE_URL} ...`)
+  console.log(`取得中: ${SOURCE_URL}`)
   const res = await fetch(SOURCE_URL)
-  if (!res.ok) throw new Error(`Failed to fetch source: ${res.status}`)
+  if (!res.ok) throw new Error(`元データを取得できなかった: ${res.status}`)
   const geojson = await res.json()
 
   // 配布元データは日付変更線で既に分割済み（経度は -180〜180 に収まり、隣接点の経度差が
@@ -111,14 +111,14 @@ async function main() {
   )].filter((code) => !PLATE_NAMES[code])
   if (unknown.length > 0) {
     // 配布元にプレートが追加された場合の気付き用（略号のまま表示されるため実害は無い）。
-    console.warn(`Unmapped plate codes (shown as-is): ${unknown.join(', ')}`)
+    console.warn(`対応表に無いプレートの記号（そのまま出す）: ${unknown.join(', ')}`)
   }
 
-  console.log(`Extracted ${segments.length} boundary segments`)
+  console.log(`境界の線分を ${segments.length} 本取り出した`)
 
   await mkdir(OUT_DIR, { recursive: true })
   await writeFile(OUT_FILE, JSON.stringify(segments))
-  console.log(`Wrote ${OUT_FILE}`)
+  console.log(`${OUT_FILE} を書いた`)
 }
 
 main().catch((err) => {

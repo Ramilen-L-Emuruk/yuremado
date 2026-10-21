@@ -133,7 +133,7 @@ function resolveHolders(meta) {
   if (holders === '') {
     throw new Error(
       `${meta.name}: 著作権者を package.json から解決できません` +
-        `（author / contributors / maintainers のいずれも空）。` +
+        `（\`author\`・\`contributors\`・\`maintainers\` のいずれも空）。` +
         `上流の配布物を確認し、必要なら手で調べた値をここへ渡す形へ変えてください`,
     )
   }

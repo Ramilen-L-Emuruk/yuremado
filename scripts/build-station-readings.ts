@@ -430,7 +430,7 @@ async function fetchSeismicFurigana(): Promise<Map<string, string>> {
     if (key) listedKeys.add(key)
   }
   const unlisted = await collectUnlistedStations(listedKeys)
-  console.log(`Loaded ${listed.length} listed + ${unlisted.size} unlisted seismic stations`)
+  console.log(`震度観測点を読んだ（掲載 ${listed.length}・未掲載 ${unlisted.size}）`)
 
   const merged = mergeFurigana([listed, [...unlisted.values()]])
   if (merged.duplicates.length > 0) {
@@ -518,14 +518,14 @@ export function mergeFurigana(groups: readonly (readonly UpstreamStation[])[]): 
  * zip は 1.6MB あり、シートごとに落とし直す理由が無い。
  */
 export async function fetchCodeTableBook(): Promise<Map<string, unknown[][]>> {
-  console.log(`Fetching ${JMA_TEC_MATERIAL} ...`)
+  console.log(`取得中: ${JMA_TEC_MATERIAL}`)
   const indexRes = await fetch(JMA_TEC_MATERIAL)
   if (!indexRes.ok) throw new Error(`気象庁 技術資料ページの取得に失敗: ${indexRes.status}`)
   const index = await indexRes.text()
   const file = /href="(jmaxml_\d+_Code\.zip)"/i.exec(index)?.[1]
   if (!file) throw new Error('気象庁 技術資料ページに個別コード表（jmaxml_*_Code.zip）へのリンクがありません')
   const zipUrl = new URL(file, JMA_TEC_MATERIAL).href
-  console.log(`Fetching ${zipUrl} ...`)
+  console.log(`取得中: ${zipUrl}`)
   const zipRes = await fetch(zipUrl)
   if (!zipRes.ok) throw new Error(`気象庁 個別コード表の取得に失敗: ${zipRes.status}`)
   const zip = new Uint8Array(await zipRes.arrayBuffer())
@@ -582,7 +582,7 @@ function readTidalFurigana(book: ReadonlyMap<string, unknown[][]>): Map<string, 
       + `外れています: ${furiganaOf.size} 件。コード表の形式が変わっていないか確かめてください。`,
     )
   }
-  console.log(`Loaded ${furiganaOf.size} tidal stations`)
+  console.log(`潮位観測点を ${furiganaOf.size} 点読んだ`)
   checkFurigana('潮位観測点', furiganaOf, TIDAL_FURIGANA_FIXTURES)
   return furiganaOf
 }
@@ -646,7 +646,7 @@ export function readCityFurigana(book: ReadonlyMap<string, unknown[][]>): Map<st
       + `外れています: ${furiganaOf.size} 件。コード表の形式が変わっていないか確かめてください。`,
     )
   }
-  console.log(`Loaded ${furiganaOf.size} cities`)
+  console.log(`市町村を ${furiganaOf.size} 件読んだ`)
   checkFurigana('市町村', furiganaOf, CITY_FURIGANA_FIXTURES)
   return furiganaOf
 }
@@ -749,7 +749,7 @@ async function fetchDistanceReadings(
       )
     }
   }
-  console.log(`Resolved ${readings.size} distance readings`)
+  console.log(`距離の読みを ${readings.size} 件決めた`)
   return readings
 }
 
@@ -844,7 +844,7 @@ async function main(): Promise<void> {
       + `別のホストなら --engine で指定します。理由: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
-  console.log(`Engine ${engine} (VOICEVOX ${version}), speaker ${speaker}`)
+  console.log(`エンジン ${engine}（VOICEVOX ${version}）・話者 ${speaker}`)
 
   const seismicFurigana = await fetchSeismicFurigana()
   const codeTable = await fetchCodeTableBook()

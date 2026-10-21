@@ -77,7 +77,7 @@ export function perfReportPlugin(): Plugin {
             fs.mkdirSync(dir, { recursive: true })
             const name = `perf-${stamp}${label ? `-${label}` : ''}.json`
             fs.writeFileSync(path.join(dir, name), JSON.stringify(result, null, 2) + '\n')
-            server.config.logger.info(`[perf-report] saved: scripts/perf/results/${name}`)
+            server.config.logger.info(`[perf-report] 保存した: scripts/perf/results/${name}`)
             res.setHeader('content-type', 'application/json')
             res.end(JSON.stringify({ saved: name }))
           } catch (e) {

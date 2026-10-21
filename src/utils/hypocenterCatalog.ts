@@ -169,10 +169,10 @@ export function loadHypocenterIndex(): Promise<HypocenterIndex> {
       validate: (data) => {
         const idx = data as HypocenterIndex
         if (!idx || typeof idx !== 'object' || !Array.isArray(idx.years)) {
-          throw new Error('hypocenter index: 形が不正です')
+          throw new Error('震源カタログの目次: 形が不正です')
         }
         if (idx.years.length === 0) {
-          throw new Error('hypocenter index: 収録年が 0 件です')
+          throw new Error('震源カタログの目次: 収録年が 0 件です')
         }
         // **年の中身まで見る。** 数値でない年が 1 つでも混ざると、そこから作った時刻が NaN になり、
         // 日付ピッカーへ渡すところで例外になる（`toDateInputValue`）。震源カタログタブは常時
@@ -180,34 +180,34 @@ export function loadHypocenterIndex(): Promise<HypocenterIndex> {
         // 同じ厳しさで見ておく。
         for (const year of idx.years) {
           if (typeof year !== 'number' || !Number.isInteger(year)) {
-            throw new Error(`hypocenter index: years に年として読めない値があります（${String(year)}）`)
+            throw new Error(`震源カタログの目次: years に年として読めない値があります（${String(year)}）`)
           }
         }
         // **終端が無ければ失敗させる。** 無いまま通すと、消費側は「未取得」と「地震が無かった」を
         // 区別できないまま格子を描く。欠けていることに気づけるのはここだけ。
         if (typeof idx.coveredThroughMs !== 'number' || !Number.isFinite(idx.coveredThroughMs)) {
-          throw new Error('hypocenter index: coveredThroughMs がありません')
+          throw new Error('震源カタログの目次: coveredThroughMs がありません')
         }
         // **年ごとの確からしさも全年ぶん見る。** 期間の行に「速報値」を添えるかはこれで決める
         // （`preliminaryNote`）。欠けた年を黙って通すと、速報値の期間に何も添えない —— 年ファイル
         // 側と同じく、既定値（'final'）へ倒さない。
         if (!idx.quality || typeof idx.quality !== 'object') {
-          throw new Error('hypocenter index: quality がありません')
+          throw new Error('震源カタログの目次: quality がありません')
         }
         for (const year of idx.years) {
           const q = idx.quality[String(year)]
           if (q !== 'final' && q !== 'preliminary') {
-            throw new Error(`hypocenter index: quality[${year}] が不正です（${String(q)}）`)
+            throw new Error(`震源カタログの目次: quality[${year}] が不正です（${String(q)}）`)
           }
         }
         // **完全性の表が無ければ失敗させる。** 無いと `completeMinMagnitude()` が収録の下限を
         // そのまま返し、1919 年からの日別回数を M2.0 で数えてしまう（観測網の歴史が地震活動に化ける）。
         if (!Array.isArray(idx.completeness) || idx.completeness.length === 0) {
-          throw new Error('hypocenter index: completeness がありません')
+          throw new Error('震源カタログの目次: completeness がありません')
         }
         for (const entry of idx.completeness) {
           if (typeof entry?.from !== 'number' || typeof entry?.minMagnitude !== 'number') {
-            throw new Error('hypocenter index: completeness の形が不正です')
+            throw new Error('震源カタログの目次: completeness の形が不正です')
           }
         }
       },

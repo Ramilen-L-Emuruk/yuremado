@@ -1,16 +1,16 @@
 ---
 name: code-review
-description: Review a change or branch for real correctness, security, test, and documentation risks without editing the code.
+description: 変更やブランチを、コードを編集せずに、正しさ・安全・テスト・文書の実際の危険の側から見る。
 ---
 
-# Code Review
+# コードレビュー
 
-Use this skill when the user requests a review, or before accepting a consequential implementation change.
+利用者がレビューを頼んだとき、または影響の大きい実装の変更を受け入れる前に使う。
 
-1. Establish the comparison point and inspect the complete relevant diff, not only the final commit message.
-2. Trace affected behavior through callers, data boundaries, error paths, configuration, and tests. Before accepting a removal or simplification claim, verify that the relevant entry points and user-facing paths are covered. Prefer evidence from the implementation over stale documentation.
-3. Focus on correctness, security, recovery from failure, concurrency, compatibility, validation, and meaningful test gaps. Include documentation or UI text only when it changes or misrepresents behavior.
-4. Report findings first, ordered by severity. Each finding needs a specific file reference, the failure scenario, and a practical correction.
-5. Do not turn style preferences into defects or create an unbounded review cycle. If no actionable issue remains, say so and name residual verification limits.
+1. 比べる起点を決め、関係する差分を全部読む。最後のコミットメッセージだけで済ませない。
+2. 影響する振る舞いを、呼び出し元・データの境目・エラーの道筋・設定・テストまで辿る。消す・単純にするという主張を受け入れる前に、関係する入口と利用者に見える道筋が覆われていることを確かめる。古い文書より実装の根拠を優先する。
+3. 正しさ・安全・失敗からの立ち直り・並行処理・互換性・入力の検証・意味のあるテストの抜けに絞る。文書や画面の文言は、振る舞いを変えるか取り違えて伝えるときだけ扱う。
+4. 指摘を先に、重い順に報告する。指摘ごとに、具体的なファイルの参照・失敗する場面・現実的な直し方を付ける。
+5. 書き方の好みを欠陥にしない。終わりの無いレビューの繰り返しを作らない。直すべきものが残っていなければそう言い、確かめきれなかった範囲を挙げる。
 
-Use `code-reviewer` for the main pass. Add `adversarial-reviewer`, `documentation-reviewer`, or `java-reviewer` only for independent, relevant coverage. Reviewers do not edit or commit.
+主なレビューには `code-reviewer` を使う。別の視点が要るときだけ `adversarial-reviewer`・`documentation-reviewer`・`java-reviewer` を足す。レビュー役は編集もコミットもしない。

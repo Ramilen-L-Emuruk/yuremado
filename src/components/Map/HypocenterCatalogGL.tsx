@@ -97,7 +97,7 @@ export function HypocenterCatalogGL({ cloud, exaggeration, visible }: Props) {
         // 載せられたら不調の記録を消す（前回の失敗を引きずらない）。
         clearRenderFailure(LYR, 'draw')
       } catch (err) {
-        log.error('[HypocenterCatalogGL] custom layer add failed', err)
+        log.error('[HypocenterCatalogGL] カスタムレイヤーを足せなかった', err)
         // **ここも画面へ出す。** 載せられなければ `render()` が一度も呼ばれず、
         // 描画側の検出（シェーダーの可否）には永久に到達しない。
         reportRenderFailure(LYR, LABEL, 'draw')
@@ -107,7 +107,7 @@ export function HypocenterCatalogGL({ cloud, exaggeration, visible }: Props) {
 
     // MAP-1: WebGL context lost/restored 時に MapLibre は custom layer を復元しない。
     const onRestored = () => {
-      log.warn('[HypocenterCatalogGL] WebGL context restored, re-adding custom layer')
+      log.warn('[HypocenterCatalogGL] WebGL の文脈が戻ったので、カスタムレイヤーを足し直す')
       if (map.isStyleLoaded()) add()
       else map.once('style.load', add)
     }
@@ -143,7 +143,7 @@ export function HypocenterCatalogGL({ cloud, exaggeration, visible }: Props) {
         },
       })
     } catch (err) {
-      log.error('[HypocenterCatalogGL] popup source registration failed', err)
+      log.error('[HypocenterCatalogGL] 吹き出しの元データを登録できなかった', err)
       // **画面にも出す。** 描画は出るのにクリックしても何も返らない状態は、
       // 見た目からは仕様と区別がつかない。
       reportRenderFailure(LYR, LABEL, 'interact')

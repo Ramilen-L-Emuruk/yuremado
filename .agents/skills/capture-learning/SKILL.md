@@ -1,14 +1,14 @@
 ---
 name: capture-learning
-description: Extract a reusable, non-obvious lesson from completed work into a focused repository or personal Codex skill.
+description: 終えた作業から、繰り返し使えて自明でない教訓を取り出し、リポジトリか個人の Codex スキルへまとめる。
 ---
 
-# Capture Learning
+# 教訓を残す
 
-Use this skill after resolving a non-trivial, repeatable problem. Do not use it for a typo, a one-off outage, or generic advice.
+自明でなく、また起こりうる問題を片付けた後に使う。打ち間違い・一度きりの障害・一般的な助言には使わない。
 
-1. Identify the durable lesson: the trigger, root cause or decision context, the reliable approach, and boundaries where it should not apply.
-2. Decide scope. Put team or repository knowledge in `.agents/skills/<skill-name>/SKILL.md`; use a personal skill location only for knowledge that should not be committed.
-3. Draft a concise skill with `name` and a discriminating `description`. Include only facts that change future decisions; do not copy a session transcript.
-4. Show the proposed name, scope, and content before creating or replacing a skill. Write it only after the user confirms.
-5. Validate the frontmatter and ensure the new skill has no credentials, local paths, or accidental project secrets.
+1. 長く効く教訓を見定める。きっかけ、根本の原因または判断の前提、確かなやり方、当てはまらない範囲を挙げる。
+2. 置き場所を決める。チームやリポジトリの知識は `.agents/skills/<skill-name>/SKILL.md` へ置く。個人のスキルの置き場所は、コミットしてはいけない知識にだけ使う。
+3. `name` と、他と見分けの付く `description` を持つ短いスキルの案を書く。先の判断を変える事実だけを入れ、会話の記録を写さない。
+4. スキルを作る・置き換える前に、名前・置き場所・中身の案を見せる。書くのは利用者が確かめてから。
+5. 前置き（frontmatter）が正しいかを確かめ、資格情報・手元のパス・うっかり入ったプロジェクトの秘密が無いことを確かめる。

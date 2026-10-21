@@ -49,7 +49,7 @@ export function QuakeEstimatedIntensityGL({ data, visible }: Props) {
       } catch (err) {
         // **載せられなければ `render()` は一度も呼ばれない。** レイヤー側の検出には永久に
         // 到達しないので、ここで画面へ出す（docs/spec/map-rendering-spec.md §16）。
-        log.error('[QuakeEstimatedIntensityGL] custom layer add failed', err)
+        log.error('[QuakeEstimatedIntensityGL] カスタムレイヤーを足せなかった', err)
         reportRenderFailure(LYR, LABEL, 'draw')
         return null
       }
@@ -75,7 +75,7 @@ export function QuakeEstimatedIntensityGL({ data, visible }: Props) {
       map.triggerRepaint()
     }
     const onRestored = () => {
-      log.warn('[QuakeEstimatedIntensityGL] WebGL context restored, re-adding custom layer')
+      log.warn('[QuakeEstimatedIntensityGL] WebGL の文脈が戻ったので、カスタムレイヤーを足し直す')
       if (map.isStyleLoaded()) doReadd()
       else map.once('style.load', doReadd)
     }

@@ -103,7 +103,7 @@ function compile(gl: WebGL2RenderingContext, label: string, type: number, src: s
   if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
     // **ソースも残す。** 頂点シェーダーは投影ごとに組み立てるため、どの断片と繋いだ結果が
     // 落ちたのかが判らないと再現できない。
-    log.error(`[${label}] shader compile failed`, gl.getShaderInfoLog(s), src)
+    log.error(`[${label}] シェーダーをコンパイルできなかった`, gl.getShaderInfoLog(s), src)
   }
   return s
 }
@@ -135,7 +135,7 @@ export function createProjectionProgramCache<K extends string>(
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
       // **リンクに失敗したプログラムを返してはならない。** WebGL は未リンクのプログラムへの
       // `useProgram` で例外を投げず、直前の別レイヤーのシェーダーが残ったまま描画が走る。
-      log.error(`[${tag}] program link failed`, gl.getProgramInfoLog(program))
+      log.error(`[${tag}] シェーダーのプログラムをリンクできなかった`, gl.getProgramInfoLog(program))
       gl.deleteProgram(program)
       byVariant.set(variantName, null)
       return null

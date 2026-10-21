@@ -431,14 +431,14 @@ static const Sensor IIS2ICLX_LAYOUT[] = {
   { &Wire,  0x6B, "i2c0-6b", &IIS2ICLX_KIND },
   { &Wire1, 0x6A, "i2c1-6a", &IIS2ICLX_KIND },
 };
-static_assert(sizeof(MPU6050_LAYOUT) == sizeof(IIS2ICLX_LAYOUT), "layouts must have the same number of sensors");
+static_assert(sizeof(MPU6050_LAYOUT) == sizeof(IIS2ICLX_LAYOUT), "MPU6050 と IIS2ICLX で配置のセンサー数が違う");
 // **起動時は MPU6050 の並びで始める**（`chooseLayout` が決めるまで）。この起動で何も送る前に
 // 決めるので、ここでの値が外へ出ることは無い。
 static Sensor g_sensors[] = {
   MPU6050_LAYOUT[0], MPU6050_LAYOUT[1], MPU6050_LAYOUT[2],
 };
 static const size_t SENSOR_N = sizeof(g_sensors) / sizeof(g_sensors[0]);
-static_assert(sizeof(MPU6050_LAYOUT) / sizeof(MPU6050_LAYOUT[0]) == SENSOR_N, "layout size must match SENSOR_N");
+static_assert(sizeof(MPU6050_LAYOUT) / sizeof(MPU6050_LAYOUT[0]) == SENSOR_N, "配置の数が SENSOR_N と合わない");
 
 // 起動時に決めた並びの見立て（→ `chooseLayout`）。状態ページとシリアルに出す。
 enum : uint8_t {
@@ -542,9 +542,9 @@ struct FlashSectorIndex {
 // **センサーの数とフラッシュの区画の形を揃える。** ずれたまま焼くと、4 個目のセンサーの範囲が
 // 区画の頭からはみ出して隣の欄を壊す（コンパイルは通ってしまう）。
 static_assert(sizeof(FlashSectorHead::range) / sizeof(FlashRange) == SENSOR_N,
-              "FlashSectorHead::range must have one entry per sensor");
+              "FlashSectorHead::range はセンサーごとに 1 つ要る");
 static_assert(sizeof(FlashSectorIndex::range) / sizeof(FlashRange) == SENSOR_N,
-              "FlashSectorIndex::range must have one entry per sensor");
+              "FlashSectorIndex::range はセンサーごとに 1 つ要る");
 
 
 static WiFiUDP    udp;
@@ -781,7 +781,7 @@ struct PrevState {
 };
 static const uint32_t PREV_STATE_VERSION = 2;
 // 大きさは `PREV_HEARTBEAT_MS` のすり減りの見積もりの前提。**欄を足したらあちらも見直す。**
-static_assert(sizeof(PrevState) == 84, "PrevState size changed: revisit PREV_HEARTBEAT_MS wear estimate");
+static_assert(sizeof(PrevState) == 84, "PrevState の大きさが変わった。PREV_HEARTBEAT_MS で見積もった書き込み回数を見直すこと");
 // 書いた理由。**状態ページへは名前で出す**（`prevWhyName`）。
 enum PrevWhy : uint8_t { PREV_WHY_HEARTBEAT = 0, PREV_WHY_CHANGE = 1, PREV_WHY_RESTART = 2, PREV_WHY_OTA = 3 };
 
@@ -1826,7 +1826,7 @@ static bool loadBacklogRef(const BacklogRef &r, BacklogSlot &out, int32_t &cache
 static void handleBacklog(){
   g_backlogRequests++;
   if (g_backlog == nullptr && g_flashPart == nullptr) {
-    http.send(503, "text/plain", "backlog unavailable\n");
+    http.send(503, "text/plain; charset=utf-8", "取り戻し用の控えが使えない\n");
     return;
   }
   const String sid = http.arg("sid");
@@ -1838,7 +1838,7 @@ static void handleBacklog(){
   if (si < 0 || !parseU32(http.arg("from"), from) || !parseU32(http.arg("to"), to)
       || (int32_t)(to - from) <= 0 || !parseBid(http.arg("bid"), bid)) {
     g_backlogBad++;
-    http.send(400, "text/plain", "need sid, bid, from, to (from < to)\n");
+    http.send(400, "text/plain; charset=utf-8", "sid・bid・from・to が要る（from < to）\n");
     return;
   }
   const uint8_t sensor = (uint8_t)si;
@@ -1869,7 +1869,7 @@ static void handleBacklog(){
   }
   if (!known) {
     g_backlogOtherBoot++;
-    http.send(410, "text/plain", "other boot\n");
+    http.send(410, "text/plain; charset=utf-8", "別の起動の分\n");
     return;
   }
 
@@ -1889,7 +1889,7 @@ static void handleBacklog(){
   for (size_t k = 0; k < found; k++) {
     if (!loadBacklogRef(refs[k], slots[k], cachedSector)) {
       g_backlogLoadFails++;
-      http.send(500, "text/plain", "backlog read failed\n");
+      http.send(500, "text/plain; charset=utf-8", "控えを読めなかった\n");
       return;
     }
   }
@@ -2104,7 +2104,7 @@ static void handleStatus(){
   // **切り詰めた JSON を返さない。** 読み手は壊れた中身を「センサーが無い」と
   // 読みうる。収まらなかったことを、そうと判る形で伝える。
   if (u >= sizeof(buf) - 1) {
-    http.send(500, "text/plain", "status json truncated");
+    http.send(500, "text/plain; charset=utf-8", "状態の JSON が途中で切れた");
     return;
   }
   http.send(200, "application/json", buf);
@@ -2152,11 +2152,11 @@ static bool adminTokenOk(){
 // 脅威の見立てと同じ）。
 static bool adminAllowed(){
   if (ADMIN_TOKEN[0] == '\0') {
-    http.send(501, "text/plain", "admin disabled: no ADMIN_TOKEN on this board\n");
+    http.send(501, "text/plain; charset=utf-8", "管理の操作は使えない（この基板に ADMIN_TOKEN が無い）\n");
     return false;
   }
   if (!adminTokenOk()) {
-    http.send(403, "text/plain", "bad token\n");
+    http.send(403, "text/plain; charset=utf-8", "トークンが違う\n");
     return false;
   }
   return true;
@@ -2178,7 +2178,7 @@ static void handleRestart(){
   if (!adminAllowed()) return;
   Serial.println("# /restart を受けたので再起動する");
   prevSave(millis(), PREV_WHY_RESTART);
-  http.send(200, "text/plain", "restarting\n");
+  http.send(200, "text/plain; charset=utf-8", "再起動する\n");
   // **応答が出ていく猶予は `delay` が作っている。`flush()` ではない。**
   // Arduino の `Client::flush()` は**受け取ったまま読んでいないものを捨てる**操作で、
   // 送信が線に出たことの保証ではない。**`flush()` があるから `delay` は要らない、と
@@ -2281,7 +2281,7 @@ static void armUdp(){
 static void handleWifiReconnect(){
   if (!adminAllowed()) return;
   Serial.println("# /wifi-reconnect を受けたので Wi-Fi を切って繋ぎ直す");
-  http.send(200, "text/plain", "reconnecting\n");
+  http.send(200, "text/plain; charset=utf-8", "Wi-Fi を繋ぎ直す\n");
   // 猶予を作っているのは `delay` のほう（理由は `handleRestart` の同じ箇所）。
   //
   // **`handleRestart` と同じ 200 ms にしてある。** 短くする理由が無いうえ、
@@ -2305,7 +2305,7 @@ static void handleWifiReconnect(){
 static void handleWifiDrop(){
   if (!adminAllowed()) return;
   Serial.println("# /wifi-drop を受けたので Wi-Fi を切る（繋ぎ直しは立て直しに任せる）");
-  http.send(200, "text/plain", "dropping\n");
+  http.send(200, "text/plain; charset=utf-8", "Wi-Fi を切る\n");
   // 猶予の理由は `handleWifiReconnect` の同じ箇所。
   http.client().flush();
   delay(200);
@@ -2327,7 +2327,7 @@ static void handleWifiDrop(){
 // 呼ぶと listen のソケットが積み上がりうる。**毎回やり直すのは SNTP と UDP だけ**で、
 // UDP は `stop()` で古いものを閉じてから開く（閉じずに開くと、切れる前の記述子が残る）。
 static void onWifiUp(){
-  Serial.printf("# wifi up ip=%s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  Serial.printf("# Wi-Fi 接続 ip=%s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
 
   // **この起動で合うまでは繋ぎ直しのたびに呼び、合ったあとは呼ばない。** UTC で持つ
   // （表示側で直す）。
@@ -2363,7 +2363,7 @@ static void onWifiUp(){
   g_ackWaiting = false;
 
   if (g_servicesUp) return;
-  if (MDNS.begin(g_node)) Serial.printf("# mdns %s.local\n", g_node);
+  if (MDNS.begin(g_node)) Serial.printf("# mDNS の名前 %s.local\n", g_node);
   ArduinoOTA.setHostname(g_node);
   // 焼き直しも再起動を伴うので、始める前に書く（`why: "ota"`）。書かないと前の起動の記録は
   // 最大 60 秒前の生存記録のまま残り、焼き直したのか止まったのかが記録から読めない。
@@ -2469,7 +2469,7 @@ void setup(){
                   (unsigned)g_flashSectors, (unsigned)valid, (unsigned)g_flashNext);
   }
 
-  Serial.printf("\n# %s (%s) booting bid=%s reset=%s%s self_restarts=%lu\n",
+  Serial.printf("\n# %s (%s) 起動 bid=%s reset=%s%s self_restarts=%lu\n",
                 g_node, g_mac, g_bootId, resetReasonName(g_resetReason),
                 g_selfRestartCause == SELF_RESTART_ACK ? "（返事の途絶で自分から）"
                   : g_selfRestartCause == SELF_RESTART_WIFI ? "（Wi-Fi が切れたままで自分から）" : "",
@@ -2489,13 +2489,13 @@ void setup(){
     Serial.println("# 前の起動の記録は無い");
   }
   for (int b = 0; b < 2; b++) {
-    Serial.printf("# i2c%d begun=%d scan: %u found (%s)%s\n",
+    Serial.printf("# i2c%d begun=%d 走査で見つけた数 %u (%s)%s\n",
                   b, g_busOk[b], (unsigned)g_scanN[b], g_scan[b], g_scanCut[b] ? " …切れ" : "");
   }
-  Serial.printf("# layout %s\n", layoutName(g_layout));
+  Serial.printf("# 配置 %s\n", layoutName(g_layout));
   for (size_t i = 0; i < SENSOR_N; i++) {
     const Sensor &s = g_sensors[i];
-    Serial.printf("# sensor %s %s ok=%d who=0x%02X initFails=%u\n",
+    Serial.printf("# センサー %s %s ok=%d who=0x%02X initFails=%u\n",
                   s.sid, s.kind->name, s.ok, s.who, (unsigned)s.initFails);
   }
 
@@ -3330,7 +3330,7 @@ void loop(){
       g_rescueDisconnecting = false;
       onWifiUp();
     } else {
-      Serial.println("# wifi down");
+      Serial.println("# Wi-Fi 切断");
       g_wifiDowns++;
       g_wifiDownSinceMs = millis();
       g_wifiSeenDown = true;

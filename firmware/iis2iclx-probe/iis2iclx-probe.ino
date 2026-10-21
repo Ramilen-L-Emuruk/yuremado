@@ -510,8 +510,8 @@ static void startNetwork() {
     return;
   }
   g_wifiOk = true;
-  Serial.printf("# wifi ok ip=%s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
-  if (MDNS.begin(NODE_NAME)) Serial.printf("# mdns %s.local\n", NODE_NAME);
+  Serial.printf("# Wi-Fi 接続 ip=%s rssi=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  if (MDNS.begin(NODE_NAME)) Serial.printf("# mDNS の名前 %s.local\n", NODE_NAME);
 
   ArduinoOTA.setHostname(NODE_NAME);
   // **更新中は I²C を読まない。** 読みに行くと更新の受信が間延びする。
@@ -525,12 +525,12 @@ static void startNetwork() {
     Serial.printf("# OTA 失敗 code=%u\n", (unsigned)e);
   });
   ArduinoOTA.begin();
-  Serial.printf("# ota %s:3232\n", WiFi.localIP().toString().c_str());
+  Serial.printf("# OTA の待ち受け %s:3232\n", WiFi.localIP().toString().c_str());
 
   http.on("/", handleStatus);
   http.on("/fs", handleFullScale);
   http.begin();
-  Serial.printf("# http http://%s/\n", WiFi.localIP().toString().c_str());
+  Serial.printf("# HTTP の待ち受け http://%s/\n", WiFi.localIP().toString().c_str());
 }
 
 void setup() {

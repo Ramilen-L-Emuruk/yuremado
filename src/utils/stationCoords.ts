@@ -112,7 +112,7 @@ export function loadStationCoords(): Promise<StationCoordsData> {
         const data = raw as StationCoordsData | null
         const filled = (v: unknown) => !!v && typeof v === 'object' && Object.keys(v).length > 0
         if (!data || typeof data !== 'object' || !filled(data.stations) || !filled(data.areas)) {
-          throw new Error('station-coords fetch returned no data (empty or malformed)')
+          throw new Error('観測点の座標データが空か、形が崩れている')
         }
       },
     })

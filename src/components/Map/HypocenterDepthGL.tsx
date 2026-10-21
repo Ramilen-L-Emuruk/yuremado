@@ -115,7 +115,7 @@ export function HypocenterDepthGL({ quake, epicenter, prefIntensities, iconScale
         // 載せられたら不調の記録を消す（前回の失敗を引きずらない）。
         clearRenderFailure(LYR, 'draw')
       } catch (err) {
-        log.error('[HypocenterDepthGL] custom layer add failed', err)
+        log.error('[HypocenterDepthGL] カスタムレイヤーを足せなかった', err)
         // **ここも画面へ出す。** 載せられなければ `render()` が一度も呼ばれず、
         // 描画側の検出（シェーダーの可否）には永久に到達しない。
         reportRenderFailure(LYR, LABEL, 'draw')
@@ -126,7 +126,7 @@ export function HypocenterDepthGL({ quake, epicenter, prefIntensities, iconScale
     // MAP-1: WebGL context lost/restored 時に MapLibre は custom layer を復元しない。
     // PsWaveGL と同じ手当て（style.load を待ってから再追加し、例外はここで隔離する）。
     const onRestored = () => {
-      log.warn('[HypocenterDepthGL] WebGL context restored, re-adding custom layer')
+      log.warn('[HypocenterDepthGL] WebGL の文脈が戻ったので、カスタムレイヤーを足し直す')
       if (map.isStyleLoaded()) add()
       else map.once('style.load', add)
     }
@@ -157,7 +157,7 @@ export function HypocenterDepthGL({ quake, epicenter, prefIntensities, iconScale
         buildClickHtml: () => buildPopupHtml(contentRef.current.quake, contentRef.current.prefIntensities),
       })
     } catch (err) {
-      log.error('[HypocenterDepthGL] popup source registration failed', err)
+      log.error('[HypocenterDepthGL] 吹き出しの元データを登録できなかった', err)
       // **画面にも出す。** 描画は出るのにクリックしても何も返らない状態は、
       // 見た目からは仕様と区別がつかない。
       reportRenderFailure(LYR, LABEL, 'interact')

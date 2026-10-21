@@ -29,7 +29,7 @@ export function loadTsunamiZones(): Promise<TsunamiZones> {
       // 「データN件を取り込めず」にも計上されるため（`.then()` では計上されない）。
       validate: (data) => {
         if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
-          throw new Error('tsunami-zones fetch returned no data (empty or malformed)')
+          throw new Error('津波予報区のデータが空か、形が崩れている')
         }
       },
     })

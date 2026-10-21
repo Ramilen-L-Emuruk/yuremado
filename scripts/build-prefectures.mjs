@@ -148,13 +148,13 @@ function nearestPrefName(rep, prefIndex) {
 }
 
 async function main() {
-  console.log(`Fetching ${SUBREGION_URL} ...`)
+  console.log(`取得中: ${SUBREGION_URL}`)
   const subRes = await fetch(SUBREGION_URL)
-  if (!subRes.ok) throw new Error(`Failed to fetch subregions: ${subRes.status}`)
+  if (!subRes.ok) throw new Error(`細分区域を取得できなかった: ${subRes.status}`)
   const subGeojson = await subRes.text()
-  console.log(`Fetching ${PREFECTURE_URL} ...`)
+  console.log(`取得中: ${PREFECTURE_URL}`)
   const prefRes = await fetch(PREFECTURE_URL)
-  if (!prefRes.ok) throw new Error(`Failed to fetch prefectures: ${prefRes.status}`)
+  if (!prefRes.ok) throw new Error(`都道府県を取得できなかった: ${prefRes.status}`)
   const prefText = await prefRes.text()
   const prefGeojson = JSON.parse(prefText)
 
@@ -184,7 +184,7 @@ async function main() {
       if (name) {
         f.properties.prefname = name
         fallback++
-        console.log(`  fallback: ${f.properties.name} -> ${name}`)
+        console.log(`  県名を補った: ${f.properties.name} -> ${name}`)
       }
     }
   }
@@ -214,7 +214,7 @@ async function main() {
     0,
   )
   console.log(
-    `Wrote ${OUT_FILE} (prefectures: ${Object.keys(prefs).length}, points: ${points}, fallback: ${fallback})`,
+    `${OUT_FILE} を書いた（都道府県 ${Object.keys(prefs).length}・点 ${points}・県名を補った区域 ${fallback}）`,
   )
 }
 

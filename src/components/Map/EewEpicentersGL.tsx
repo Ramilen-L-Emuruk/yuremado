@@ -213,7 +213,7 @@ export function EewEpicentersGL({ epicenters, iconScale, fullOpacity }: Props) {
         // 載せられたら不調の記録を消す（前回の失敗を引きずらない）。
         clearRenderFailure(LYR, 'draw')
       } catch (err) {
-        log.error('[EewEpicentersGL] custom layer add failed', err)
+        log.error('[EewEpicentersGL] カスタムレイヤーを足せなかった', err)
         // **ここも画面へ出す。** 載せられなければ `render()` が一度も呼ばれず、
         // 描画側の検出（シェーダーの可否）には永久に到達しない。
         reportRenderFailure(LYR, LABEL, 'draw')
@@ -224,7 +224,7 @@ export function EewEpicentersGL({ epicenters, iconScale, fullOpacity }: Props) {
     // MAP-1: WebGL context lost/restored 時に MapLibre は custom layer を復元しない。
     // HypocenterDepthGL / PsWaveGL と同じ手当て。
     const onRestored = () => {
-      log.warn('[EewEpicentersGL] WebGL context restored, re-adding custom layer')
+      log.warn('[EewEpicentersGL] WebGL の文脈が戻ったので、カスタムレイヤーを足し直す')
       if (map.isStyleLoaded()) add()
       else map.once('style.load', add)
     }
@@ -262,7 +262,7 @@ export function EewEpicentersGL({ epicenters, iconScale, fullOpacity }: Props) {
         },
       })
     } catch (err) {
-      log.error('[EewEpicentersGL] popup source registration failed', err)
+      log.error('[EewEpicentersGL] 吹き出しの元データを登録できなかった', err)
       // **画面にも出す。** 描画は出るのにクリックしても何も返らない状態は、
       // 見た目からは仕様と区別がつかない。
       reportRenderFailure(LYR, LABEL, 'interact')
