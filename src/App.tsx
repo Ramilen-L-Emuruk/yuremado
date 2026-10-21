@@ -1146,6 +1146,9 @@ export function App() {
     return filteredEarthquakes.find(q => quakeEventKey(q) === selectedQuakeId && !q.cancelledAt)
       ?? latestNonCancelled
   })()
+  // 選択中に見えているカードの鍵。**開いているカードに従うものは `selectedQuakeId` ではなくこちらを見る** ——
+  // 起動直後や選んだカードが取り消された後は `selectedQuakeId` が表示中のカードを指していない。
+  const selectedQuakeKey = selectedQuake ? quakeEventKey(selectedQuake) : null
   // 地図に表示中の LPGM（バッジクリックでトグル）
   const activeLpgm = activeLpgmEventId ? (lpgmByEventId.get(activeLpgmEventId) ?? null) : null
 
@@ -2172,7 +2175,7 @@ export function App() {
       activeTab,
       overlay: quakeOverlay,
       subject,
-      selectedKey: selectedQuake ? quakeEventKey(selectedQuake) : null,
+      selectedKey: selectedQuakeKey,
       // **見るのは地点名の有無まで。** 座標表で引けるかは見ない（引けない地点はカードの一覧に
       // 出る。地図へ置けなかったことは別に記録する）。カードのボタンを出す条件・自動で閉じる
       // 条件と同じ述語に揃えてある。
@@ -2180,7 +2183,7 @@ export function App() {
     })
     if (decision === 'opened') applyQuakeOverlay({ kind: 'unreceived', eventKey: subject! }, '未入電の読み上げ')
     return decision
-  }, [selectedQuake, activeTab, quakeOverlay])
+  }, [selectedQuake, selectedQuakeKey, activeTab, quakeOverlay])
   // **開いたときと同じ地震のものだけ閉じる。** 開けてから閉じるまでの間に選択が移っていれば、
   // そこにあるのは利用者が開き直した別の表示（`closeUnreceivedOverlayFor`）。
   const closeUnreceivedForSpeech = useCallback((subject: string | undefined, reason: string) => {
@@ -2308,7 +2311,7 @@ export function App() {
     enabled: settings.publicWaveEnabled,
     quakes: filteredEarthquakes,
     originSeconds: quakeOriginSeconds,
-    openedEventKey: selectedQuakeId,
+    openedEventKey: selectedQuakeKey,
     liveNumbers: publicLiveNumbers,
     readLiveRaw: publicWaves.readRawWave,
     replayOffsetMs: replayTimeOffset,
@@ -2323,7 +2326,7 @@ export function App() {
   }, [seismoQuakeWaves, publicQuakeWaves])
   // 地図の公開観測点の印。**下部の波形を出している間はそちらを優先し**、出していなければ開いている地震カードの観測点を出す
   // （2026-10-15 ユーザー決定）。
-  const openedPublicWaves = selectedQuakeId === null ? undefined : publicQuakeWaves.get(selectedQuakeId)
+  const openedPublicWaves = selectedQuakeKey === null ? undefined : publicQuakeWaves.get(selectedQuakeKey)
   const publicStationMarkers: readonly PublicStationMarker[] = publicWaves.visible
     ? publicWaves.stations
     : mapMode === 'quake' && openedPublicWaves !== undefined
@@ -2601,7 +2604,7 @@ export function App() {
             <ErrorBoundary variant="region" label={TAB_LABELS.earthquake}>
               <EarthquakeTab
                 earthquakes={filteredEarthquakes}
-                selectedId={selectedQuake ? quakeEventKey(selectedQuake) : null}
+                selectedId={selectedQuakeKey}
                 speakingKey={speakingQuakeKey}
                 followSpeech={settings.voicevoxEnabled}
                 onSelect={selectQuakeFromCard}
