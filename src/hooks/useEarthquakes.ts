@@ -3245,9 +3245,13 @@ export function useEarthquakes(
         oweFrom(fromMs, reason)
         enqueueBackfill(runBackfill)
       }
-      // 切れていた間に発表された緊急地震速報を戻す（起動時の復元と同じ取得）。音・タブ移動は起こさない。
+      // 切れていた間に発表された緊急地震速報を戻す（起動時の復元と同じ取得）。音は鳴らさない。
       // **台帳の報番号より新しい報だけ積む** —— 表示中の速報の続報もここで入る（地震単位で除くと、切れる前から
-      // 出ていた速報が古い予想のまま残る）。同じ報番号は入口が通してしまうので、ここで止める
+      // 出ていた速報が古い予想のまま残る）。同じ報番号は入口が通してしまうので、ここで止める。
+      // **切れていた間に始まった地震（台帳に無い）があれば、起動時の復元と同じ画面の要求を出す**
+      // （2026-10-21 ユーザー承認「おすすめで」）。ライブなら発報で実時間タブへ移るので、出さないと音も画面の
+      // 移動も無いまま戻り、別のタブを見ている人は気づけない。強さは起動時と同じ（`onStartupRestore`）。
+      // 見ていた地震の続報だけなら出さない —— その画面は切れる前にもう移している
       const restoreEewsAfterReconnect = async (): Promise<void> => {
         if (cancelled) return
         const classifications = dmdataRestClassificationsRef.current
@@ -3258,12 +3262,15 @@ export function useEarthquakes(
         const eews = await fetchDmdataActiveEews(dmdataApiKey, classifications)
         if (cancelled) return
         let endedCount = 0
+        let startedWhileAway = false
         const fresh = eews.filter((eew) => {
           if (restoredQueueKeys.has(`eew:${eew.id}`)) return false
           // 取り直しの最中に終えた地震は戻さない（台帳は画面から消えた時点で捨てているので、下の比較では弾けない）
           if (skipEndedEew(eewEndedRef.current, eew, '張り直しの復元')) { endedCount++; return false }
           const key = eewEventKey(eew)
-          const accepted = eewAcceptanceRef.current.get(key)?.serialByOrigin.get(eew.origin)
+          const acceptance = eewAcceptanceRef.current.get(key)
+          if (!acceptance) startedWhileAway = true
+          const accepted = acceptance?.serialByOrigin.get(eew.origin)
           const serial = eewSerial(eew)
           if (accepted === undefined || serial === null || serial > accepted) return true
           // 報は積まないが、詳細の全報から載せた特別警報の印は移す（→ `carryEverSpecialWarning`）。取得の間にライブが追いつくと
@@ -3279,12 +3286,13 @@ export function useEarthquakes(
           restoredQueueKeys.add(`eew:${eew.id}`)
           eventQueueRef.current.push({ eventTime: serverDate(), silent: true, payload: { kind: 'event', event: eew as AppEvent } })
         }
-        log.info(`[DMDSS] 張り直しの間に発表された緊急地震速報を戻しました: ${fresh.length} 件（発表中 ${eews.length} 件のうち。受け取り済みの報 ${eews.length - fresh.length - endedCount} 件・画面から消えた地震の報 ${endedCount} 件は戻さない）`)
+        log.info(`[DMDSS] 張り直しの間に発表された緊急地震速報を戻しました: ${fresh.length} 件（発表中 ${eews.length} 件のうち。受け取り済みの報 ${eews.length - fresh.length - endedCount} 件・画面から消えた地震の報 ${endedCount} 件は戻さない）${startedWhileAway ? '。切れていた間に始まった地震があるので実時間タブを要求します' : ''}`)
         try {
           onStartupRestoreEewsRef.current?.(fresh)
         } catch (err) {
           log.error('[DMDSS] 張り直しで戻した緊急地震速報を読み上げ側へ渡せませんでした（取り消されても読み上げません）:', err)
         }
+        if (startedWhileAway) onStartupRestoreRef.current?.('realtime')
       }
       ws.onStarted = ({ previousAliveAtMs }) => {
         if (cancelled) return

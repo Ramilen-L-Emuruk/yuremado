@@ -6228,6 +6228,35 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     await h.flush()
     expect([...h.current.activeEEWs.values()][0]?.everSpecialWarning).toBeFalsy()
   })
+
+  // 正: 切れていた間に始まった地震（台帳に無い）を戻したら、起動時と同じく実時間タブを要求する
+  // （2026-10-21 ユーザー承認「おすすめで」）。ライブなら発報で移っていた
+  it('張り直しで初めて見る地震を戻したら、実時間タブを要求する', async () => {
+    const requested: string[] = []
+    const h = setup({ onStartupRestore: (tab) => { requested.push(tab) } })
+    await h.flush()
+    requested.length = 0
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([createTestEEWWarning(true, '20261020121500', 2)])
+    act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+    await h.flush()
+    expect(requested).toEqual(['realtime'])
+  })
+
+  // 対照: 見ていた地震の続報だけなら要求しない（その画面は切れる前に移している）
+  it('張り直しで見ていた地震の続報だけを戻したときは、タブを要求しない', async () => {
+    const requested: string[] = []
+    const h = setup({ onStartupRestore: (tab) => { requested.push(tab) } })
+    await h.flush()
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: createTestEEWWarning(true, '20261020121500', 1) }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+    requested.length = 0
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([createTestEEWWarning(true, '20261020121500', 2)])
+    act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(1)
+    expect(requested).toEqual([])
+  })
 })
 
 // 発表中の速報の取り直し（起動時・張り直し）が、取り直しの最中に自動解除で終えた速報を「発表中」として返すことがある。
