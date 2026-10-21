@@ -2,13 +2,16 @@
 //
 // 履歴の一部が取れなかったことを地震タブへ出す。
 //
-// 履歴取得は例外を投げずに一部の失敗を吸収するため `error` は立たない。**画面には取れた分の
+// 履歴取得の大半は例外を投げずに一部の失敗を吸収するため `error` は立たない。**画面には取れた分の
 // カードだけが出て、失敗は何も出ない**状態だった（実測 2026-09-15: 起動時の電文本体 85 件のうち
 // 81 件が 429 で失敗し、4 件しか出ていなかった）。取得元が「日」単位なので、1 日落ちれば
 // 失う電文は多い。
 //
 // **いちばん効くのはカードが 0 件のとき。** 出さないと「7 日のうち 6 日が落ちて 0 件」が
 // 「まったく静かな期間だった」と同じ画になる。
+//
+// 取得がまるごと失敗して `error` が立ったときも、カードがあれば一覧を残し、失敗は帯の先頭で知らせる
+// （カードが 0 件なら全画面の失敗表示）。
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -174,16 +177,48 @@ describe('履歴の一部が取れなかったときの帯', () => {
     expect(screen.getByText(/続きの読み込みに失敗/)).toBeTruthy()
   })
 
-  // 安全弁: 1 件も取れなかったとき（`error`）は全画面の失敗表示が出る。そこへ帯を重ねない
+  // 安全弁: カードが 1 枚も無いとき（`error`）は全画面の失敗表示が出る。そこへ帯を重ねない
   // ——「一部が欠けた」と「まるごと失敗した」が同じ画面に並ぶと、どちらの話か読めない。
-  it('安全弁: 全滅の表示中は帯を出さない', async () => {
+  it('安全弁: カードが無いときの全滅の表示には帯を重ねない', async () => {
     await renderTab({
+      earthquakes: [],
       error: '取得失敗',
       historyLoss: addTelegramLoss(createEmptyTelegramLoss(), skips(1), ['https://x/a']),
     })
 
     expect(screen.getByText('データの取得に失敗')).toBeTruthy()
     expect(screen.queryByText(/取り込めず（再読み込み/)).toBeNull()
+  })
+
+  // 正（2026-10-21 に覆した。以前はカードがあっても一覧ごと全画面の失敗表示へ差し替えていた）:
+  // 起動時の履歴より先に、または失敗の後にライブで届いた地震は state にあるので、一覧を残して
+  // 失敗は帯で知らせる。文面は全画面の表示と同じ語に、中身を括弧で添える。
+  it('正: カードがあれば一覧を残し、失敗を帯で出す', async () => {
+    await renderTab({ error: 'HTTP 500' })
+
+    expect(screen.getByText('データの取得に失敗（HTTP 500）')).toBeTruthy()
+    expect(screen.getByText(/石川県能登地方/)).toBeTruthy()
+  })
+
+  // 安全弁: 中身が空の例外でも失敗は知らせる（空文字は偽なので、真偽で見ると帯も全画面の表示も消える）。
+  // 空のときは括弧を付けない。
+  it('安全弁: エラーの中身が空でも失敗を知らせる', async () => {
+    await renderTab({ error: '' })
+    expect(screen.getByText('データの取得に失敗')).toBeTruthy()
+    expect(screen.getByText(/石川県能登地方/)).toBeTruthy()
+  })
+
+  // 安全弁: 失敗の帯は損失の帯の先頭に並ぶ（履歴がまるごと取れていないので、日ごとの欠けより重い）。
+  // 他の帯を押しのけて消さない。
+  it('安全弁: 失敗の帯と損失の帯が両方出て、失敗が先頭に来る', async () => {
+    await renderTab({
+      error: '取得失敗',
+      historyLoss: addTelegramLoss(createEmptyTelegramLoss(), skips(1), ['https://x/a']),
+    })
+
+    const failed = screen.getByText('データの取得に失敗（取得失敗）')
+    const loss = screen.getByText(/取り込めず（再読み込み/)
+    expect(failed.compareDocumentPosition(loss) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
 

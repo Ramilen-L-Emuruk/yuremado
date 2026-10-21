@@ -607,6 +607,60 @@ function marksFromHistory(
 }
 
 /**
+ * ライブで届いた長周期地震動の報を 1 通当て、一覧と更新の印を進める。
+ *
+ * **キュー経路（`handleEvent`）と DMDSS 版の WebSocket 経路の両方がここを通る。** 片方だけに
+ * 印付けを書いていた頃は、DMDSS 版のライブで長周期の一覧に印が付かなかった（キュー経路を
+ * 通るテスト・リプレイでは付くので、実機でしか見えない）。
+ *
+ * 長周期の一覧にも、震度一覧と同じ印を付ける。**取消では付けない**（一覧ごと消えるため）。
+ * 控えの 60 日では長周期の続報が 1 通も無かった（24 件すべて単発）。ただしそれは
+ * 「見つからなかった」であって「来ない」ではないので、同じ構造の震度一覧に印を付ける以上
+ * こちらだけ出ない形にはしない（→ `lpgmRowSnapshot`）。
+ */
+export function applyLiveLpgmWithMarks(
+  prev: Pick<EarthquakeState, 'earthquakes' | 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
+  lpgm: JMALpgm,
+  now: number,
+): Pick<EarthquakeState, 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
+  const next = applyLiveLpgm(prev.lpgmByEventId, lpgm)
+  const unmarked = { lpgmByEventId: next, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory }
+  if (lpgm.cancelled) return unmarked
+  // **印付けが投げても一覧の更新は通す。** ここは `setState` の更新関数の中で走るので、
+  // 投げると周りの受け皿に届かず描画中の例外になり、画面ごと落ちる。印は補助なので、
+  // 付け損ねたら記録を残して据え置く。
+  try {
+    return markedLpgmState(prev, lpgm, next, now)
+  } catch (err) {
+    log.error('[lpgm] 長周期の一覧の更新の印を付けられなかった（一覧は更新した）', { eventId: lpgm.eventId, err })
+    return unmarked
+  }
+}
+
+function markedLpgmState(
+  prev: Pick<EarthquakeState, 'earthquakes' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
+  lpgm: JMALpgm,
+  next: Map<string, JMALpgm>,
+  now: number,
+): Pick<EarthquakeState, 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
+  const markState = advanceQuakeMarks({
+    prev: { memory: prev.quakeMarkMemory, marks: prev.quakeUpdateMarks },
+    key: lpgmMarkKey(lpgm.eventId),
+    snapshot: {
+      // 長周期は震源要素の欄を持たない（震源はカードの地震情報側が出す）。
+      facts: new Map(),
+      rows: lpgmRowSnapshot(lpgm.regions ?? [], lpgm.points ?? [], lpgm.prefs ?? []),
+      issuedAt: markIssuedAt(lpgm.time),
+      // 長周期地震動観測情報は 1 種類しか無いので、種別が変わることがない。
+      reportType: 'lpgm',
+    },
+    liveKeys: liveMarkKeys(prev.earthquakes, next),
+    now,
+  })
+  return { lpgmByEventId: next, quakeUpdateMarks: markState.marks, quakeMarkMemory: markState.memory }
+}
+
+/**
  * P2PQuake の津波の報（552）の束から、いま画面に出す津波を決める。
  *
  * **起動時の履歴と、張り直したときの取り戻しが同じ判断を通る**ためにここへ置く（片方だけ
@@ -2381,35 +2435,8 @@ export function useEarthquakes(
             continue
           }
           const lpgmCancelHitShown = noteLiveLpgm(lpgm)
-          setState(prev => {
-            const next = applyLiveLpgm(prev.lpgmByEventId, lpgm)
-            // 長周期の一覧にも、震度一覧と同じ印を付ける。取消では付けない（一覧ごと消えるため）。
-            //
-            // **控えの 60 日では長周期の続報が 1 通も無かった**（24 件すべて単発）。ただし
-            // それは「見つからなかった」であって「来ない」ではないので、同じ構造の震度一覧に
-            // 印を付ける以上こちらだけ出ない形にはしない（→ `lpgmRowSnapshot`）。
-            if (lpgm.cancelled) return { ...prev, lpgmByEventId: next }
-            const markState = advanceQuakeMarks({
-              prev: { memory: prev.quakeMarkMemory, marks: prev.quakeUpdateMarks },
-              key: lpgmMarkKey(lpgm.eventId),
-              snapshot: {
-                // 長周期は震源要素の欄を持たない（震源はカードの地震情報側が出す）。
-                facts: new Map(),
-                rows: lpgmRowSnapshot(lpgm.regions ?? [], lpgm.points ?? [], lpgm.prefs ?? []),
-                issuedAt: markIssuedAt(lpgm.time),
-                // 長周期地震動観測情報は 1 種類しか無いので、種別が変わることがない。
-                reportType: 'lpgm',
-              },
-              liveKeys: liveMarkKeys(prev.earthquakes, next),
-              now: Date.now(),
-            })
-            return {
-              ...prev,
-              lpgmByEventId: next,
-              quakeUpdateMarks: markState.marks,
-              quakeMarkMemory: markState.memory,
-            }
-          })
+          // 印付けの規則は `applyLiveLpgmWithMarks`（WebSocket 経路と共通）
+          setState(prev => ({ ...prev, ...applyLiveLpgmWithMarks(prev, lpgm, Date.now()) }))
           // **他の 6 種別（nankai/nankaiCommentary/kohatsu/earthquakeCount/estimatedIntensity/
           // quakeNotice）と同じく、`onLiveEvent` を呼ばない場合はすべて記録する。** かつては
           // `lpgm.cancelled`（取消）・`maxClass < 1`（階級 0）を「既存の正常な振り分け」として
@@ -3052,7 +3079,8 @@ export function useEarthquakes(
             return
           }
           const lpgmCancelHitShown = noteLiveLpgm(lpgm)
-          setState(prev => ({ ...prev, lpgmByEventId: applyLiveLpgm(prev.lpgmByEventId, lpgm) }))
+          // 印付けもキュー経路と同じ関数で（→ `applyLiveLpgmWithMarks`）
+          setState(prev => ({ ...prev, ...applyLiveLpgmWithMarks(prev, lpgm, Date.now()) }))
           if (lpgmNotifiable(lpgm, lpgmCancelHitShown)) {
             onLiveEventRef.current?.({ kind: 'lpgm', data: lpgm })
           } else {
