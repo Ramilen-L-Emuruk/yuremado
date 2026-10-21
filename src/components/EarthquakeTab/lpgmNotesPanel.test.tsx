@@ -89,6 +89,7 @@ const renderTab = async (lpgm: JMALpgm) => {
     error={null}
     historyLoss={createEmptyTelegramLoss()}
     loadMoreFailed={false}
+    reconnectGapLoss={false}
     fetchThrottled={false}
     lpgmByEventId={new Map([[EVENT_ID, lpgm]])}
     updateMarks={new Map()}
@@ -125,6 +126,7 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     error={null}
     historyLoss={createEmptyTelegramLoss()}
     loadMoreFailed={false}
+    reconnectGapLoss={false}
     fetchThrottled={false}
     lpgmByEventId={new Map([[EVENT_ID, lpgm]])}
     updateMarks={new Map()}

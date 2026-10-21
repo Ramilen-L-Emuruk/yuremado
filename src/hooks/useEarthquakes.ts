@@ -688,6 +688,18 @@ export interface EarthquakeState {
    * 戻してある。次に成功したら消す。
    */
   loadMoreFailed: boolean
+  /**
+   * 接続が切れていた間の電文を、取り戻せていないか。**両バリアント共通**（2026-10-21 ユーザー承認「A・X・揃える」）。
+   *
+   * **最初に取れなかった時点から立てる**（引き直しを待っている間も、諦めた後も）。引き直しは次に張り直したときにしか
+   * 走らないので、接続が安定していればいつ来るか分からない —— その間も一覧には穴が空いている。
+   * DMDSS 版は、持ち越した区間を後の取り戻しが埋めたら降ろす。諦めた区間（引き直しても取れなかった・一覧の
+   * ページの上限に当たった）と、標準版の取り戻しの失敗は、再読み込みまで残す（どちらも同じ区間を引き直さない）。
+   * 読めない形の電文は数えない（引き直しても再読み込みしても同じなので、知らせても直す手が無い）。
+   *
+   * 空へ戻すのは `historyLoss` と同じ契機（接続をやり直すとき・リプレイの開始）。
+   */
+  reconnectGapLoss: boolean
   telegramLog: TelegramLogEntry[]
 }
 
@@ -748,6 +760,7 @@ export function useEarthquakes(
     error: null,
     historyLoss: createEmptyTelegramLoss(),
     loadMoreFailed: false,
+    reconnectGapLoss: false,
     telegramLog: [],
   })
 
@@ -2477,9 +2490,9 @@ export function useEarthquakes(
     // 履歴の損失もここで空へ戻す。**これから読み直す範囲の話**なので、前の接続で欠けた分を
     // 持ち越すと直っても表示が消えない。遡り幅と同じ同期ブロックで戻す。
     setState(prev => (
-      isTelegramLossEmpty(prev.historyLoss) && !prev.loadMoreFailed
+      isTelegramLossEmpty(prev.historyLoss) && !prev.loadMoreFailed && !prev.reconnectGapLoss
         ? prev
-        : { ...prev, historyLoss: createEmptyTelegramLoss(), loadMoreFailed: false }
+        : { ...prev, historyLoss: createEmptyTelegramLoss(), loadMoreFailed: false, reconnectGapLoss: false }
     ))
 
     // VAR-1: リプレイ中はライブ接続を止める（両バリアント共通）。過去の電文を流している最中に
@@ -3085,6 +3098,15 @@ export function useEarthquakes(
           owedReason = reason
         }
       }
+      // 画面に「接続が切れていた間の電文を取り込めず」を出すかの 2 つの理由（→ `reconnectGapLoss`）。
+      // 持ち越した区間は次の回が引き直すので、回が始まるたびに降ろし、その回がまた取れなければ立て直す。
+      // 諦めた区間はこの接続の間は二度と引かないので、立てたら降ろさない（再読み込みで履歴が取り直す）
+      let gapCarried = false
+      let gapGivenUp = false
+      const publishGapLoss = (): void => {
+        const missing = gapCarried || gapGivenUp
+        setState(prev => (prev.reconnectGapLoss === missing ? prev : { ...prev, reconnectGapLoss: missing }))
+      }
       // **履歴を当て終えるまで待つ。** 先に当てると、履歴が過去の報から引き継ぐ津波の有効期限より前に、同じ報が
       // 引き継ぎ元の無いまま当たる（履歴の取得は成否を問わず決着する）。待っている間に取り直しが始まったら、その新しい
       // 版も待つ（「もっと見る」と同じ。1 本だけ待つと、待ち始めた時点の版しか見ない）
@@ -3103,16 +3125,20 @@ export function useEarthquakes(
         const isRetry = owedIsRetry
         owedFromMs = null
         owedIsRetry = false
+        // 持ち越していた区間はこの回が引き直す。取れなければ下でまた立てる
+        gapCarried = false
         const from = new Date(startMs - DMDATA_RECONNECT_BACKFILL_MARGIN_MS)
         const to = serverDate()
         // 取れなかった区間を次の張り直しへ持ち越す。引き直しの回だったなら持ち越さずに諦める（→ `owedIsRetry`）
         const carryOrGiveUp = (detail: string, err?: unknown, carryFromMs = startMs): void => {
           if (isRetry) {
             log.error(`[DMDSS] ${reason}の取り戻しを諦めました（${from.toISOString()}〜${to.toISOString()}。引き直しても${detail}。この間の電文が一覧に無いことがあります）`, ...(err === undefined ? [] : [err]))
+            gapGivenUp = true
             return
           }
           oweFrom(carryFromMs, reason)
           owedIsRetry = true
+          gapCarried = true
           log.warn(`[DMDSS] ${reason}の取り戻しで${detail}（次に繋がり直したとき、1 度だけ引き直します）`, ...(err === undefined ? [] : [err]))
         }
         let got: Awaited<ReturnType<typeof fetchLiveTelegramsBetween>>
@@ -3123,43 +3149,56 @@ export function useEarthquakes(
         } catch (err) {
           if (cancelled) return
           // その場では取り直さない（次に繋がり直したとき、この区間から引き直す）。7 日の履歴を取り直すことはしない
-          // （2026-10-20 ユーザー承認「おすすめで」）。画面には出さないので、黙ると切れていた間の分が一覧に無いことに気づけない
+          // （2026-10-20 ユーザー承認「おすすめで」）。取れなかったことは地震タブの帯にも出す（→ `reconnectGapLoss`）
           carryOrGiveUp('電文の一覧を引けませんでした', err)
+          publishGapLoss()
           return
         }
         if (cancelled) return
-        const timed: { at: number; payload: QueuePayload }[] = []
-        // 受信時刻は取得側が必ず添える。万一引けなければ窓の右端に置く（先頭へ回して古い報として当てない）
-        const atOf = (e: JMAQuake | JMATsunami) => got.receivedAt.get(e)?.getTime() ?? to.getTime()
-        for (const q of got.quakes) timed.push({ at: atOf(q), payload: { kind: 'event', event: q } })
-        for (const t of got.tsunamis) timed.push({ at: atOf(t), payload: { kind: 'event', event: t } })
-        for (const e of got.extras) timed.push({ at: e.replayTime.getTime(), payload: e.payload })
-        // 受け取った順に当てる（キューは同じ発火時刻なら積んだ順に出す）
-        timed.sort((a, b) => a.at - b.at)
-        const eventTime = serverDate()
-        for (const { payload } of timed) eventQueueRef.current.push({ eventTime, silent: true, payload })
-        log.info(`[DMDSS] ${reason}の取り戻し（${from.toISOString()}〜${to.toISOString()}）: 地震情報 ${got.quakes.length} 通・津波 ${got.tsunamis.length} 通・ほか ${got.extras.length} 通を当てます（ライブで受け取り済み ${got.alreadyReceivedCount} 通）`)
-        // 持ち越すときの左端。ページの上限に当たったなら、読めた新しい側だけに絞る（古い側をまた引くと同じところで止まる）
-        let carryFromMs = startMs
-        if (got.reachedOnlyBack !== null) {
-          // 一覧のページの上限に当たった。新しい側の読めた分は上で当てた。届かなかった古い側は、引き直しても同じところで
-          // 止まるので持ち越さずに諦める（2026-10-20 ユーザー承認「おすすめで」。7 日の履歴も取り直さない）
-          log.error(`[DMDSS] ${reason}の取り戻しで、電文一覧のページの上限に当たりました（${from.toISOString()}〜${got.reachedOnlyBack.toISOString()} の電文は取り戻していません。一覧に無いことがあります）`)
-          carryFromMs = got.reachedOnlyBack.getTime() + DMDATA_RECONNECT_BACKFILL_MARGIN_MS
+        // 取れた分を当てる途中で投げたら、区間はもう受け取ってあるので持ち越されない。帯を立ててから投げ直す
+        // （投げ直した先は鎖の catch が記録する）。立てないと、取れていない区間があるのに帯が出ない
+        try {
+          const timed: { at: number; payload: QueuePayload }[] = []
+          // 受信時刻は取得側が必ず添える。万一引けなければ窓の右端に置く（先頭へ回して古い報として当てない）
+          const atOf = (e: JMAQuake | JMATsunami) => got.receivedAt.get(e)?.getTime() ?? to.getTime()
+          for (const q of got.quakes) timed.push({ at: atOf(q), payload: { kind: 'event', event: q } })
+          for (const t of got.tsunamis) timed.push({ at: atOf(t), payload: { kind: 'event', event: t } })
+          for (const e of got.extras) timed.push({ at: e.replayTime.getTime(), payload: e.payload })
+          // 受け取った順に当てる（キューは同じ発火時刻なら積んだ順に出す）
+          timed.sort((a, b) => a.at - b.at)
+          const eventTime = serverDate()
+          for (const { payload } of timed) eventQueueRef.current.push({ eventTime, silent: true, payload })
+          log.info(`[DMDSS] ${reason}の取り戻し（${from.toISOString()}〜${to.toISOString()}）: 地震情報 ${got.quakes.length} 通・津波 ${got.tsunamis.length} 通・ほか ${got.extras.length} 通を当てます（ライブで受け取り済み ${got.alreadyReceivedCount} 通）`)
+          // 持ち越すときの左端。ページの上限に当たったなら、読めた新しい側だけに絞る（古い側をまた引くと同じところで止まる）
+          let carryFromMs = startMs
+          if (got.reachedOnlyBack !== null) {
+            // 一覧のページの上限に当たった。新しい側の読めた分は上で当てた。届かなかった古い側は、引き直しても同じところで
+            // 止まるので持ち越さずに諦める（2026-10-20 ユーザー承認「おすすめで」。7 日の履歴も取り直さない）
+            log.error(`[DMDSS] ${reason}の取り戻しで、電文一覧のページの上限に当たりました（${from.toISOString()}〜${got.reachedOnlyBack.toISOString()} の電文は取り戻していません。一覧に無いことがあります）`)
+            carryFromMs = got.reachedOnlyBack.getTime() + DMDATA_RECONNECT_BACKFILL_MARGIN_MS
+            gapGivenUp = true
+          }
+          // 待てば取れうる電文（取得制限で見送った・取得か読み取りが例外で終わった）があれば、次の取り戻しで同じ区間から引き直す
+          const retryable = got.rateLimitedTelegrams + got.failedTelegrams
+          if (retryable > 0 && got.failedTelegrams === 0) {
+            // 取得制限だけなら、引き直しの回数に数えない。429 の窓は待てば明けるので、明けた後の回で取れる
+            oweFrom(carryFromMs, reason)
+            owedIsRetry = isRetry
+            gapCarried = true
+            log.warn(`[DMDSS] ${reason}の取り戻しで、取得制限のため ${got.rateLimitedTelegrams} 通を見送りました（次に繋がり直したとき、引き直します）`)
+          } else if (retryable > 0) {
+            carryOrGiveUp(` ${retryable} 通を取れませんでした（取得制限で見送り ${got.rateLimitedTelegrams} 通・取得の失敗 ${got.failedTelegrams} 通）`, undefined, carryFromMs)
+          }
+          // 読めない形の電文と、断片が揃わなかった推計震度分布図。引き直しても同じなので持ち越さない
+          const unreadable = got.skipped - got.failedTelegrams
+          // 画面には数えない（→ `reconnectGapLoss`。引き直しても再読み込みしても同じ）
+          if (unreadable > 0) log.warn(`[DMDSS] ${reason}の取り戻しで、読めなかった電文（推計震度分布図の断片が揃わなかったものを含む）が ${unreadable} 通ありました`)
+          publishGapLoss()
+        } catch (err) {
+          gapGivenUp = true
+          publishGapLoss()
+          throw err
         }
-        // 待てば取れうる電文（取得制限で見送った・取得か読み取りが例外で終わった）があれば、次の取り戻しで同じ区間から引き直す
-        const retryable = got.rateLimitedTelegrams + got.failedTelegrams
-        if (retryable > 0 && got.failedTelegrams === 0) {
-          // 取得制限だけなら、引き直しの回数に数えない。429 の窓は待てば明けるので、明けた後の回で取れる
-          oweFrom(carryFromMs, reason)
-          owedIsRetry = isRetry
-          log.warn(`[DMDSS] ${reason}の取り戻しで、取得制限のため ${got.rateLimitedTelegrams} 通を見送りました（次に繋がり直したとき、引き直します）`)
-        } else if (retryable > 0) {
-          carryOrGiveUp(` ${retryable} 通を取れませんでした（取得制限で見送り ${got.rateLimitedTelegrams} 通・取得の失敗 ${got.failedTelegrams} 通）`, undefined, carryFromMs)
-        }
-        // 読めない形の電文と、断片が揃わなかった推計震度分布図。引き直しても同じなので持ち越さない
-        const unreadable = got.skipped - got.failedTelegrams
-        if (unreadable > 0) log.warn(`[DMDSS] ${reason}の取り戻しで、読めなかった電文（推計震度分布図の断片が揃わなかったものを含む）が ${unreadable} 通ありました`)
       }
       const backfillFrom = (fromMs: number, reason: string): void => {
         oweFrom(fromMs, reason)
@@ -3347,6 +3386,10 @@ export function useEarthquakes(
     ws.onReconnected = lastReceivedAtMs => {
       p2pBackfillChain = p2pBackfillChain.then(() => backfillSince(lastReceivedAtMs))
     }
+    // 取り戻せなかった区間はこの接続の間は引き直さないので、立てたら再読み込みまで降ろさない（→ `reconnectGapLoss`）
+    const markP2pGapLoss = (): void => {
+      setState(prev => (prev.reconnectGapLoss ? prev : { ...prev, reconnectGapLoss: true }))
+    }
     const backfillSince = (lastReceivedAtMs: number): Promise<void> => {
       if (cancelled) return Promise.resolve()
       const sinceMs = lastReceivedAtMs - P2P_RECONNECT_BACKFILL_MARGIN_MS
@@ -3356,6 +3399,8 @@ export function useEarthquakes(
           if (truncated) {
             // 黙って切ると、遡り切れなかった時間が「何も無かった」に化ける
             log.warn(`[p2pquake] 張り直し後の取り戻しがページ上限に達しました（${new Date(sinceMs).toISOString()} まで遡り切れていない可能性・取得 ${events.length} 件）`)
+            // 遡り切れなかった古い側は、次の張り直しでも引き直さない（次の窓は新しい「最後に受けた時刻」から始まる）
+            markP2pGapLoss()
           }
           const quakes = events.filter((e): e is JMAQuake => e.kind === 'quake')
           const tsunamiEvents = events.filter((e): e is JMATsunami => e.kind === 'tsunami')
@@ -3389,10 +3434,11 @@ export function useEarthquakes(
         })
         .catch((err: unknown) => {
           if (cancelled) return
-          // 失敗しても再試行しない（次に張り直したときにまた取りに行く）。黙ると取りこぼしに気づけない。
-          // **画面には出さない**（記録だけ。2026-10-06 ユーザー承認）。切れていた間の分は一覧に無いまま残る。
-          // ここで投げ直さないので、順に並べる鎖（`p2pBackfillChain`）は止まらない
+          // 失敗しても再試行しない（次に張り直したときは、その接続で最後に受けた時刻から取る）。切れていた間の分は
+          // 一覧に無いまま残るので、地震タブの帯にも出す（2026-10-21 ユーザー承認「A・X・揃える」。2026-10-06 には
+          // 記録だけと決めていた）。ここで投げ直さないので、順に並べる鎖（`p2pBackfillChain`）は止まらない
           log.error('[p2pquake] 張り直し後の取り戻しに失敗', err)
+          markP2pGapLoss()
         })
     }
     ws.connect()
@@ -4366,6 +4412,7 @@ export function useEarthquakes(
       // 完了時に立て直すので落としてよい（`hasMore` と同じ理由）。
       historyLoss: createEmptyTelegramLoss(),
       loadMoreFailed: false,
+      reconnectGapLoss: false,
     }))
     eventQueueRef.current.clear()
     quakeIntensityCacheRef.current.clear()

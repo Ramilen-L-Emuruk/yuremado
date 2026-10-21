@@ -124,6 +124,7 @@ function renderCard(
       error={null}
       historyLoss={createEmptyTelegramLoss()}
       loadMoreFailed={false}
+      reconnectGapLoss={false}
       fetchThrottled={false}
       lpgmByEventId={opts.lpgm ? new Map([[EVENT_ID, opts.lpgm]]) : new Map()}
       updateMarks={new Map()}

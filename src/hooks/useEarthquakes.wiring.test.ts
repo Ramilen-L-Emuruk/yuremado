@@ -456,6 +456,39 @@ describe('standard 版も再生中はライブ受信を止める（VAR-1）', ()
       expect(vi.mocked(fetchHistorySince)).toHaveBeenCalledTimes(2)
     })
 
+    // 地震タブの帯（2026-10-21 ユーザー承認「A・X・揃える」）。標準版は同じ区間を引き直さないので、立てたら降ろさない
+    it('正: 取り戻しに失敗したら reconnectGapLoss を立て、後の回が取れても降ろさない', async () => {
+      const h = setup({ offset: null })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(false)
+      // 2 回目は beforeEach の既定（取れた）を返す
+      vi.mocked(fetchHistorySince).mockRejectedValueOnce(new Error('通信の失敗'))
+      act(() => { sockets[0].onReconnected?.(Date.now() - 10 * 60_000) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(true)
+      act(() => { sockets[0].onReconnected?.(Date.now() - 60_000) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(true)
+    })
+
+    it('正: 遡り切れなかった（ページ上限）ときも reconnectGapLoss を立てる', async () => {
+      const h = setup({ offset: null })
+      await h.flush()
+      vi.mocked(fetchHistorySince).mockResolvedValueOnce({ events: [], rawCount: 0, truncated: true })
+      act(() => { sockets[0].onReconnected?.(Date.now() - 10 * 60_000) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(true)
+    })
+
+    it('対照: 取り戻しが取れれば reconnectGapLoss は立てない', async () => {
+      const h = setup({ offset: null })
+      await h.flush()
+      act(() => { sockets[0].onReconnected?.(Date.now() - 10 * 60_000) })
+      await h.flush()
+      expect(vi.mocked(fetchHistorySince)).toHaveBeenCalled()
+      expect(h.current.reconnectGapLoss).toBe(false)
+    })
+
     // 安全弁: 起動時の履歴は一覧を空から組み直すので、取り戻しはその後に走らせる（先に終わると消される）。
     it('起動時の履歴が片付くまで取り戻しを始めず、取り戻した分が残る', async () => {
       // 起動時の取得を止めておく（setup が effect を走らせる前に仕込む。既定値は beforeEach が後から入れない）
@@ -6101,6 +6134,100 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     await h.flush()
     expect(vi.mocked(fetchLiveTelegramsBetween)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(fetchLiveTelegramsBetween).mock.calls[0][1].getTime()).toBe(oldest - 5 * 60_000)
+  })
+
+  // 地震タブの帯（2026-10-21 ユーザー承認「A・X・揃える」）。最初に取れなかった時点から出し、
+  // 持ち越した区間を後の回が埋めたら降ろす。諦めた区間は再読み込みまで残す
+  describe('取り戻せていない間は reconnectGapLoss を立てる', () => {
+    it('正: 一覧を引けなかったら、引き直しを待っている間も立てる', async () => {
+      const h = setup()
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(false)
+      vi.mocked(fetchLiveTelegramsBetween).mockRejectedValueOnce(new Error('通信の失敗'))
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(true)
+    })
+
+    it('正: 持ち越した区間を次の回が埋めたら降ろす', async () => {
+      const h = setup()
+      await h.flush()
+      vi.mocked(fetchLiveTelegramsBetween).mockResolvedValueOnce({ ...got(), skipped: 1, failedTelegrams: 1 })
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(true)
+
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 10_000 }) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(false)
+    })
+
+    it('正: 取得制限で見送っただけでも、取れるまでは立てる', async () => {
+      const h = setup()
+      await h.flush()
+      vi.mocked(fetchLiveTelegramsBetween).mockResolvedValueOnce({ ...got(), rateLimitedTelegrams: 1 })
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(true)
+    })
+
+    it('安全弁: 引き直しても取れずに諦めた区間は、後の回が取れても降ろさない', async () => {
+      const h = setup()
+      await h.flush()
+      vi.mocked(fetchLiveTelegramsBetween)
+        .mockResolvedValueOnce({ ...got(), skipped: 1, failedTelegrams: 1 })
+        .mockResolvedValueOnce({ ...got(), skipped: 1, failedTelegrams: 1 })
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+      await h.flush()
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 20_000 }) })
+      await h.flush()
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 5_000 }) })
+      await h.flush()
+      expect(vi.mocked(fetchLiveTelegramsBetween)).toHaveBeenCalledTimes(3)
+      expect(h.current.reconnectGapLoss).toBe(true)
+    })
+
+    it('安全弁: 一覧のページの上限に当たったら、後の回が取れても降ろさない', async () => {
+      const h = setup()
+      await h.flush()
+      vi.mocked(fetchLiveTelegramsBetween).mockResolvedValueOnce({ ...got(), reachedOnlyBack: new Date(Date.now() - 30 * 60_000) })
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60 * 60_000 }) })
+      await h.flush()
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 10_000 }) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(true)
+    })
+
+    it('安全弁: 取れた分を当てる途中で投げても、立てる（区間はもう受け取ってあるので持ち越されない）', async () => {
+      const h = setup()
+      await h.flush()
+      const broken = got([missedQuake()])
+      vi.mocked(fetchLiveTelegramsBetween).mockResolvedValueOnce({
+        ...broken,
+        receivedAt: { get: () => { throw new Error('想定外') } } as unknown as typeof broken.receivedAt,
+      })
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(true)
+    })
+
+    it('対照: 読めない形の電文だけなら立てない（引き直しても再読み込みしても同じ）', async () => {
+      const h = setup()
+      await h.flush()
+      vi.mocked(fetchLiveTelegramsBetween).mockResolvedValueOnce({ ...got(), skipped: 2 })
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(false)
+    })
+
+    it('対照: 取り戻しが取れれば立てない', async () => {
+      const h = setup()
+      await h.flush()
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+      await h.flush()
+      expect(vi.mocked(fetchLiveTelegramsBetween)).toHaveBeenCalled()
+      expect(h.current.reconnectGapLoss).toBe(false)
+    })
   })
 
   // 正: 緊急地震速報の取り戻しは履歴を待たない（張り直しの直後にいちばん要る）

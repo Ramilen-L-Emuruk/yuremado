@@ -313,6 +313,16 @@ export function formatHistoryLossNotice(loss: TelegramLoss): string | null {
 export const HISTORY_LOAD_MORE_FAILED_NOTICE = '続きの読み込みに失敗（もう一度お試しください）'
 
 /**
+ * 接続が切れていた間の電文を取り戻せていないときの一文（両バリアント共通。2026-10-21 ユーザー承認
+ * 「A・X・揃える」）。
+ *
+ * **件数を入れない。** 電文の一覧そのものを引けなかったときは、何通欠けたかが分からない。
+ * 括弧の「再読み込みで取得し直します」は `formatHistoryLossNotice` と同じ。出す条件と、再読み込みでも取り切れない
+ * 場合は `docs/spec/data-sources-spec.md` §2「繋がっていなかった間の電文を取り戻す」。
+ */
+export const RECONNECT_GAP_LOSS_NOTICE = '接続が切れていた間の電文を取り込めず（再読み込みで取得し直します）'
+
+/**
  * いま配信元の上限に達していて、取得を待たせていることを知らせる一文。
  *
  * **失敗ではない。** 枠が空けばそのまま取りに行くので、欠けは出ない —— だから

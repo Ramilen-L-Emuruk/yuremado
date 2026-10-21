@@ -81,6 +81,7 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
       error={null}
       historyLoss={createEmptyTelegramLoss()}
       loadMoreFailed={false}
+      reconnectGapLoss={false}
       fetchThrottled={false}
       lpgmByEventId={new Map()}
       updateMarks={new Map()}
