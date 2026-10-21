@@ -128,6 +128,17 @@ export function getServerClockSampleAgeMs(): number | null {
 }
 
 /**
+ * `serverNow()` が壁時計へのフォールバックでなく、信じてよい時刻を返しているか。
+ * リプレイ・手動時刻の最中か、サーバー時刻で一度でも較正できていれば `true`。
+ *
+ * 「いまの時刻と比べて古いから捨てる」判定はこれを見てから行う —— 未較正の端末は壁時計がずれていることがあり
+ * （→ `serverNow` の CLK-3）、その時刻で比べると本物の報まで捨てうる。
+ */
+export function isServerClockTrusted(): boolean {
+  return replayOffsetMs !== null || kEpochMs !== null
+}
+
+/**
  * 現在の推定クロックオフセット（サーバー - 壁時計, ms）。デバッグ・表示用。
  * @returns 較正済みならオフセット(ms)、未較正なら null。
  */
