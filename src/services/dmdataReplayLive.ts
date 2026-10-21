@@ -382,16 +382,38 @@ function fetchBinaryBody(url: string, apiKey: string): Promise<Uint8Array> {
  * `formatMode` を付けないので返るのは XML 版（気象庁の電文そのもの）。JSON 版は使わない
  * （理由は `dmdataTelegramPayload.ts` の `buildXmlPayload`）。
  */
+/**
+ * 電文一覧がページの上限（`LIST_MAX_PAGES`）に届いて打ち切られた。**ほかの失敗と型で分ける** —— 張り直しの取り戻しは、
+ * 通信の失敗なら次の張り直しで同じ区間を引き直すが、これは同じ区間を引いても同じところで止まるので諦める（記録だけ残す）
+ */
+export class TelegramListPageLimitError extends Error {
+  /** 上限までに読めた項目（一覧は新しい順なので、範囲の新しい側）。張り直しの取り戻しは、これだけは当てる */
+  readonly items: readonly TelegramListItem[]
+  constructor(message: string, items: readonly TelegramListItem[]) {
+    super(message)
+    this.name = 'TelegramListPageLimitError'
+    this.items = items
+  }
+}
+
 async function listTelegrams(
   apiKey: string,
   utcFrom: string,
   utcTo: string,
   includeTest: boolean,
   signal: AbortSignal | null,
+  /**
+   * これより前に受信した電文は要らない、という時刻。`null` なら範囲を全部辿る。
+   * **一覧は新しい順に返る**（配信元のリファレンス「電文リストを新しい順で返します」）ので、ページの最後の電文が
+   * これより古くなったところで辿るのをやめる。張り直しの取り戻しは数分の窓しか要らないのに範囲は日単位なので、
+   * 打ち切らないと大地震の日ほど何ページも辿り、上限に当たって丸ごと失敗する
+   */
+  stopOlderThan: Date | null,
 ): Promise<TelegramListItem[]> {
   const items: TelegramListItem[] = []
   let cursorToken: string | undefined
   let page = 0
+  let reachedOldest = false
   for (; page < LIST_MAX_PAGES; page++) {
     const params = new URLSearchParams({ datetime: `${utcFrom}~${utcTo}`, limit: String(LIST_LIMIT) })
     // **一覧は既定で試験・訓練報を返さない。** 明示的に要求しないと、設定を入れていても
@@ -402,7 +424,16 @@ async function listTelegrams(
     const json = await getJson<{ items?: TelegramListItem[]; nextToken?: string }>(
       `${API_BASE}/telegram?${params.toString()}`, apiKey, 'Telegram list', signal,
     )
-    items.push(...(json.items ?? []))
+    const pageItems = json.items ?? []
+    items.push(...pageItems)
+    if (stopOlderThan !== null && pageItems.length > 0) {
+      // 受信時刻が読めない電文では止めない（読めないものを「古い」と取ると、窓の中の電文を落としうる）
+      const lastMs = new Date(pageItems[pageItems.length - 1].receivedTime).getTime()
+      if (Number.isFinite(lastMs) && lastMs < stopOlderThan.getTime()) {
+        reachedOldest = true
+        break
+      }
+    }
     if (!json.nextToken) break
     cursorToken = json.nextToken
   }
@@ -411,10 +442,11 @@ async function listTelegrams(
   // も増えない）。上限に達するのは「範囲指定が効いていない」ときなので、そのとき欠けた分は
   // どれだけあるか分からない —— **静かに一部を捨てるより、読めなかったと言うほうが正しい。**
   // 監査スクリプト側（`scripts/telegram-audit/archive-cache.mjs`）も同じ扱いにしてある。
-  if (page >= LIST_MAX_PAGES) {
-    throw new Error(
+  if (page >= LIST_MAX_PAGES && !reachedOldest) {
+    throw new TelegramListPageLimitError(
       `電文一覧のページ上限（${LIST_MAX_PAGES}）に達した 範囲=${utcFrom}~${utcTo}`
       + ` 件数=${items.length}。範囲指定が効いていない疑いがある`,
+      items,
     )
   }
   // 設定を入れたのに試験報が 1 通も無いことを記録する。
@@ -806,7 +838,7 @@ export async function fetchLiveReplayEntries(
   const wantsEew = eewHeadType !== null
   const noEew = { items: [] as TelegramListItem[], failedSources: [] as string[], skippedByDay: new Map<string, number>() as ReadonlyMap<string, number> }
   const settled = await Promise.allSettled([
-    wantsTelegrams ? listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal) : Promise.resolve([] as TelegramListItem[]),
+    wantsTelegrams ? listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal, null) : Promise.resolve([] as TelegramListItem[]),
     wantsEew ? listEewTelegrams(apiKey, utcFrom, utcTo, fromTime, toTime, signal) : Promise.resolve(noEew),
   ])
   /** 実際に引いた一覧の本数。全滅の判定の分母（引いていない一覧を「読めた」に数えない）。 */
@@ -939,6 +971,120 @@ export async function fetchLiveReplayEntries(
 }
 
 /**
+ * 一覧で選んだ電文の本体を取り、地震情報・津波・帯と長周期（`HISTORY_EXTRA_TYPES`）に分けて読む。
+ * 当日ぶんの履歴（`fetchLiveQuakeTelegrams`）と、ライブの接続を張り直したときの取り戻し
+ * （`fetchLiveTelegramsBetween`）が共有する。**読み方を 2 本持つと、片方だけ種別の扱いがずれる。**
+ *
+ * @param noteSkip 取りこぼし 1 通を数える（担当日は呼び出し側が決める）
+ * @returns `receivedAt` は地震情報・津波の受信時刻（取り戻しで受信順に並べるのに使う）
+ */
+async function collectHistoryTelegrams(
+  targets: TelegramListItem[],
+  times: ReadonlyMap<TelegramListItem, Date | null>,
+  includeTest: boolean,
+  apiKey: string,
+  noteSkip: () => void,
+): Promise<{
+  quakes: JMAQuake[]; tsunamis: JMATsunami[]; extras: ReplayEntry[]
+  receivedAt: ReadonlyMap<JMAQuake | JMATsunami, Date>
+  rateLimitedTelegrams: number
+  /**
+   * 本体の取得か読み取りが例外で終わった電文の数（`noteSkip` にも数える）。**読めない形（パーサーが null を返す）とは分ける** ——
+   * こちらは通信の失敗を含み、取り直せば読めることがある。張り直しの取り戻しは、これが 1 通でもあれば同じ区間を次へ持ち越す
+   */
+  failedTelegrams: number
+}> {
+  /** 429 の窓で見送った電文の数。**取りこぼしとは別に数える**（待てば取れる）。 */
+  let rateLimitedTelegrams = 0
+  let failedTelegrams = 0
+  const quakes: JMAQuake[] = []
+  const receivedAt = new Map<JMAQuake | JMATsunami, Date>()
+  const tsunamis: JMATsunami[] = []
+  const extras: ReplayEntry[] = []
+  // 二進電文（推計震度分布図）の結合と数え方。**本編の再生と同じ規則**（→ `LiveBinaryTelegrams`）。
+  const binaries = new LiveBinaryTelegrams()
+  await mapWithLimit(targets, BODY_CONCURRENCY, async (item) => {
+    try {
+      // 二進電文はテキストへ落とさず、分割の結合を経てから読む（`fetchLiveReplayEntries` と同じ）。
+      if (isBinaryTelegramType(item.head.type)) {
+        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, apiKey))
+        if (binPayload === 'pending') return
+        if (binPayload === 'unreadable') {
+          log.warn(`[replay] 履歴用の二進電文の読み取りに失敗しスキップ id=${item.id} type=${item.head.type}`)
+          noteSkip()
+          return
+        }
+        if (isFilteredBinaryTelegram(binPayload, includeTest)) {
+          log.info(`[replay] 履歴用の二進電文の試験報を取り込みません id=${item.id} type=${item.head.type}`)
+          return
+        }
+        // 受信時刻を入れる（窓の判定と同じ値。畳み込みの比較はアーカイブ経路も受信時刻）
+        extras.push({ payload: binPayload, replayTime: times.get(item) ?? new Date(item.receivedTime), silent: true })
+        return
+      }
+      // 履歴は緊急地震速報を扱わない（`HISTORY_EXTRA_TYPES` に入っていない）ので、取り込む EEW 種別は無し
+      const payload = buildXmlPayload(item.head.type, await fetchBody(item.url, apiKey), null)
+      if (HISTORY_EXTRA_TYPES.has(item.head.type)) {
+        if (payload === null || historyExtraKey(payload) === null) {
+          log.warn(`[replay] 履歴用電文のパースに失敗しスキップ id=${item.id} type=${item.head.type}`)
+          noteSkip()
+          return
+        }
+        // 受信時刻を入れておく（呼び出し側が長周期を地震ごとに畳むときの比較と、帯を古い順に並べるのに使う）。
+        // **発表時刻を入れない** —— アーカイブ経路の畳み込みは受信時刻で比べるので、軸が揃わない。
+        // 発表時刻は分に丸められるので同じ分の続報が同点になり、読めなければ NaN で畳み込みが固まる。
+        extras.push({ payload, replayTime: times.get(item) ?? new Date(item.receivedTime), silent: true })
+        return
+      }
+      if (TSUNAMI_TYPES.has(item.head.type)) {
+        if (payload?.kind !== 'event' || payload.event.kind !== 'tsunami') {
+          log.warn(`[replay] 履歴用電文のパースに失敗しスキップ id=${item.id} type=${item.head.type}`)
+          noteSkip()
+          return
+        }
+        tsunamis.push(payload.event)
+        receivedAt.set(payload.event, times.get(item) ?? new Date(item.receivedTime))
+        return
+      }
+      if (payload?.kind !== 'event' || payload.event.kind !== 'quake') {
+        log.warn(`[replay] 履歴用電文のパースに失敗しスキップ id=${item.id} type=${item.head.type}`)
+        noteSkip()
+        return
+      }
+      quakes.push(payload.event)
+      receivedAt.set(payload.event, times.get(item) ?? new Date(item.receivedTime))
+    } catch (e) {
+      // 429 の窓による見送りは取りこぼしに数えない（上と同じ理由）
+      if (e instanceof RateLimitWindowError) {
+        log.info(
+          `[replay] 履歴用電文は 429 の窓が明けるまで取りに行きません id=${item.id} type=${item.head.type}`
+          + `（あと ${Math.max(0, Math.round((e.until - Date.now()) / 1000))} 秒）`,
+        )
+        // 二進電文は電文ごとに 1 度だけ数える（→ `LiveBinaryTelegrams.noteRateLimited`）
+        if (isBinaryTelegramType(item.head.type) && !binaries.noteRateLimited(item)) return
+        rateLimitedTelegrams++
+        return
+      }
+      log.error(`[replay] 履歴用電文の取り込みに失敗しスキップ id=${item.id} type=${item.head.type}`, e)
+      // 二進電文は電文ごとに 1 度だけ数える。恒久失敗が勝つ（→ `LiveBinaryTelegrams.noteFailed`）
+      if (isBinaryTelegramType(item.head.type)) {
+        const { countSkip, releaseRateLimited } = binaries.noteFailed(item)
+        if (releaseRateLimited) rateLimitedTelegrams--
+        if (!countSkip) return
+      }
+      failedTelegrams++
+      noteSkip()
+    }
+  })
+  // 揃わなかった二進電文の断片を取りこぼしとして数える（この関数は 1 日ぶんの担当なので `day`）。
+  for (const key of binaries.unresolvedKeys()) {
+    log.warn(`[replay] 履歴用の二進電文の断片が揃いませんでした（分布は出ません）key=${key}`)
+    noteSkip()
+  }
+  return { quakes, tsunamis, extras, receivedAt, rateLimitedTelegrams, failedTelegrams }
+}
+
+/**
  * アーカイブが無い日の地震電文を集める（地震カードの履歴復元用）。
  *
  * 日単位で呼ぶ。履歴の打ち切りが日単位のため（日の途中で切ると同一イベントの続報が分断され、
@@ -974,7 +1120,7 @@ export async function fetchLiveQuakeTelegrams(
   // 窓判定は上限を含まないため、1ms 足して同じ範囲にする。
   const until = new Date(before.getTime() + 1)
 
-  const list = await listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal)
+  const list = await listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal, null)
   // **この関数は 1 日ぶんを担当する**（引数 `day`）ので、取りこぼしはすべてその日に付く。
   const skipCounter = createSkipCounter()
   /** 429 の窓で見送った電文の数。**取りこぼしとは別に数える**（待てば取れる）。 */
@@ -999,85 +1145,86 @@ export async function fetchLiveQuakeTelegrams(
     } else if (verdict === 'include') targets.push(item)
   }
 
-  const quakes: JMAQuake[] = []
-  const tsunamis: JMATsunami[] = []
-  const extras: ReplayEntry[] = []
-  // 二進電文（推計震度分布図）の結合と数え方。**本編の再生と同じ規則**（→ `LiveBinaryTelegrams`）。
-  const binaries = new LiveBinaryTelegrams()
-  await mapWithLimit(targets, BODY_CONCURRENCY, async (item) => {
-    try {
-      // 二進電文はテキストへ落とさず、分割の結合を経てから読む（`fetchLiveReplayEntries` と同じ）。
-      if (isBinaryTelegramType(item.head.type)) {
-        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, apiKey))
-        if (binPayload === 'pending') return
-        if (binPayload === 'unreadable') {
-          log.warn(`[replay] 履歴用の二進電文の読み取りに失敗しスキップ id=${item.id} type=${item.head.type}`)
-          skipCounter.add(day)
-          return
-        }
-        if (isFilteredBinaryTelegram(binPayload, includeTest)) {
-          log.info(`[replay] 履歴用の二進電文の試験報を取り込みません id=${item.id} type=${item.head.type}`)
-          return
-        }
-        // 受信時刻を入れる（窓の判定と同じ値。畳み込みの比較はアーカイブ経路も受信時刻）
-        extras.push({ payload: binPayload, replayTime: times.get(item) ?? new Date(item.receivedTime), silent: true })
-        return
-      }
-      // 履歴は緊急地震速報を扱わない（`HISTORY_EXTRA_TYPES` に入っていない）ので、取り込む EEW 種別は無し
-      const payload = buildXmlPayload(item.head.type, await fetchBody(item.url, apiKey), null)
-      if (HISTORY_EXTRA_TYPES.has(item.head.type)) {
-        if (payload === null || historyExtraKey(payload) === null) {
-          log.warn(`[replay] 履歴用電文のパースに失敗しスキップ id=${item.id} type=${item.head.type}`)
-          skipCounter.add(day)
-          return
-        }
-        // 受信時刻を入れておく（呼び出し側が長周期を地震ごとに畳むときの比較と、帯を古い順に並べるのに使う）。
-        // **発表時刻を入れない** —— アーカイブ経路の畳み込みは受信時刻で比べるので、軸が揃わない。
-        // 発表時刻は分に丸められるので同じ分の続報が同点になり、読めなければ NaN で畳み込みが固まる。
-        extras.push({ payload, replayTime: times.get(item) ?? new Date(item.receivedTime), silent: true })
-        return
-      }
-      if (TSUNAMI_TYPES.has(item.head.type)) {
-        if (payload?.kind !== 'event' || payload.event.kind !== 'tsunami') {
-          log.warn(`[replay] 履歴用電文のパースに失敗しスキップ id=${item.id} type=${item.head.type}`)
-          skipCounter.add(day)
-          return
-        }
-        tsunamis.push(payload.event)
-        return
-      }
-      if (payload?.kind !== 'event' || payload.event.kind !== 'quake') {
-        log.warn(`[replay] 履歴用電文のパースに失敗しスキップ id=${item.id} type=${item.head.type}`)
-        skipCounter.add(day)
-        return
-      }
-      quakes.push(payload.event)
-    } catch (e) {
-      // 429 の窓による見送りは取りこぼしに数えない（上と同じ理由）
-      if (e instanceof RateLimitWindowError) {
-        log.info(
-          `[replay] 履歴用電文は 429 の窓が明けるまで取りに行きません id=${item.id} type=${item.head.type}`
-          + `（あと ${Math.max(0, Math.round((e.until - Date.now()) / 1000))} 秒）`,
-        )
-        // 二進電文は電文ごとに 1 度だけ数える（→ `LiveBinaryTelegrams.noteRateLimited`）
-        if (isBinaryTelegramType(item.head.type) && !binaries.noteRateLimited(item)) return
-        rateLimitedTelegrams++
-        return
-      }
-      log.error(`[replay] 履歴用電文の取り込みに失敗しスキップ id=${item.id} type=${item.head.type}`, e)
-      // 二進電文は電文ごとに 1 度だけ数える。恒久失敗が勝つ（→ `LiveBinaryTelegrams.noteFailed`）
-      if (isBinaryTelegramType(item.head.type)) {
-        const { countSkip, releaseRateLimited } = binaries.noteFailed(item)
-        if (releaseRateLimited) rateLimitedTelegrams--
-        if (!countSkip) return
-      }
-      skipCounter.add(day)
-    }
-  })
-  // 揃わなかった二進電文の断片を取りこぼしとして数える（この関数は 1 日ぶんの担当なので `day`）。
-  for (const key of binaries.unresolvedKeys()) {
-    log.warn(`[replay] 履歴用の二進電文の断片が揃いませんでした（分布は出ません）key=${key}`)
-    skipCounter.add(day)
-  }
+  const { quakes, tsunamis, extras, rateLimitedTelegrams: bodyRateLimited } = await collectHistoryTelegrams(
+    targets, times, includeTest, apiKey, () => skipCounter.add(day),
+  )
+  rateLimitedTelegrams += bodyRateLimited
   return { quakes, tsunamis, extras, skippedByDay: skipCounter.toMap(), rateLimitedTelegrams }
+}
+
+/**
+ * 受信時刻が [from, to) に入る地震情報・津波・帯と長周期の電文を集める（ライブの接続を
+ * 張り直したとき・起動時の履歴と接続の隙間を埋めるときの取り戻し用）。
+ *
+ * 一覧は窓が跨る JST 日を覆う範囲で引き（`datetime` には日付で渡す。当日経路と同じ書式）、
+ * 窓は受信時刻で切る。**ライブで受け取り済みの電文（`alreadyReceived`）は本体を取らない** ——
+ * 窓は切れる前の分まで余裕を持たせるので、受け取り済みの分まで取り直すと、取り戻すたびに
+ * 本体の取得が積み上がる。
+ *
+ * @throws 一覧が失敗したとき。ページの上限に達したときは投げず、読めた分（窓の新しい側）を返して `reachedOnlyBack` に届いた端を入れる
+ */
+export async function fetchLiveTelegramsBetween(
+  apiKey: string,
+  from: Date,
+  to: Date,
+  includeTest: boolean,
+  alreadyReceived: (id: string) => boolean,
+  signal: AbortSignal | null,
+): Promise<{
+  quakes: JMAQuake[]; tsunamis: JMATsunami[]; extras: ReplayEntry[]
+  /** 地震情報・津波の受信時刻（受信順に並べるのに使う） */
+  receivedAt: ReadonlyMap<JMAQuake | JMATsunami, Date>
+  /** 窓に入った電文のうち、ライブで受け取り済みで取らなかった数 */
+  alreadyReceivedCount: number
+  /** 取りこぼした電文の数（読めなかった・揃わなかった） */
+  skipped: number
+  rateLimitedTelegrams: number
+  /** 取りこぼしのうち、本体の取得か読み取りが例外で終わった数（取り直せば読めることがある） */
+  failedTelegrams: number
+  /**
+   * 一覧のページの上限に当たって窓の左端まで遡れなかったとき、読めたいちばん古い電文の受信時刻。届いたなら null。
+   * **この時刻より前（左端まで）の電文は見ていない**
+   */
+  reachedOnlyBack: Date | null
+}> {
+  const days = enumerateJstDates(from, to)
+  if (days.length === 0) {
+    return { quakes: [], tsunamis: [], extras: [], receivedAt: new Map(), alreadyReceivedCount: 0, skipped: 0, rateLimitedTelegrams: 0, failedTelegrams: 0, reachedOnlyBack: null }
+  }
+  const daySet = new Set(days)
+  const { from: utcFrom, to: utcTo } = utcRangeForJstDates(days)
+  // 窓の左端より古い電文に届いたらページ送りをやめる（範囲は日単位なので、打ち切らないと日の頭まで辿る）
+  // **ページの上限に当たっても、読めた分は当てる。** 一覧は新しい順なので、読めた分は窓の新しい側にあたる。
+  // 捨てると、張り直しの直前に出た報まで一覧に無いままになる
+  let list: TelegramListItem[]
+  let reachedOnlyBack: Date | null = null
+  try {
+    list = await listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal, from)
+  } catch (err) {
+    if (!(err instanceof TelegramListPageLimitError)) throw err
+    list = [...err.items]
+    const oldest = list.reduce((min, item) => {
+      const ms = new Date(item.receivedTime).getTime()
+      return Number.isFinite(ms) && ms < min ? ms : min
+    }, to.getTime())
+    reachedOnlyBack = new Date(oldest)
+  }
+  let skipped = 0
+  let alreadyReceivedCount = 0
+  const targets: TelegramListItem[] = []
+  const times = liveEntryTimes(list)
+  const malformedSeen = new Set<string>()
+  for (const item of list) {
+    const type = item.head?.type
+    if (!QUAKE_TYPES.has(type) && !HISTORY_EXTRA_TYPES.has(type) && !TSUNAMI_TYPES.has(type)) continue
+    const verdict = classifyTelegram(item, times.get(item) ?? null, from, to, daySet, includeTest, null)
+    if (verdict === 'malformed') {
+      if (isFirstMalformed(item, malformedSeen)) skipped++
+    } else if (verdict === 'include') {
+      if (alreadyReceived(item.id)) alreadyReceivedCount++
+      else targets.push(item)
+    }
+  }
+  const read = await collectHistoryTelegrams(targets, times, includeTest, apiKey, () => { skipped++ })
+  return { ...read, alreadyReceivedCount, skipped, reachedOnlyBack }
 }

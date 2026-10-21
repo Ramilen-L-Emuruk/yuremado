@@ -10,6 +10,7 @@ import { DmdataWebSocket, fetchDmdataActiveEews } from '../services/dmdata'
 // 履歴の取得はリプレイ開始時の復元と実装を共有する（→ `data-sources-spec.md` §2
 // 「大量に取るならアーカイブを使う」）。同じ目的の実装を 2 本持たない。
 import { fetchDmdataQuakeHistoryFor, HISTORY_WINDOW_DAYS } from '../services/dmdataReplay'
+import { fetchLiveTelegramsBetween } from '../services/dmdataReplayLive'
 import { PREFERRED_CLASSIFICATIONS, type DmdataClassification } from '../services/dmdataClassifications'
 import {
   forgetClassifications, loadRememberedClassifications, rememberClassifications, sameClassifications,
@@ -594,6 +595,8 @@ function selectP2pTsunamiSnapshot(
  * 統合が同じ電文として重ねない（→ `utils/quakeMerge.ts` の `isSameTelegram`）。
  */
 const P2P_RECONNECT_BACKFILL_MARGIN_MS = 5 * 60 * 1000
+// DMDSS 版の取り戻しも同じ幅だけ遡る（最後に受け取った時刻の直前に出て、まだ届いていなかった電文を拾うため）
+const DMDATA_RECONNECT_BACKFILL_MARGIN_MS = P2P_RECONNECT_BACKFILL_MARGIN_MS
 
 function liveMarkKeys(
   earthquakes: readonly JMAQuake[],
@@ -2549,6 +2552,8 @@ export function useEarthquakes(
       // 覚えた区分で始めたときに、申し込みの結果との突き合わせを済ませたか。**最初に受け付けられた
       // 区分とだけ比べる** —— 再接続のたびに比べ直すと、そのたびに履歴を取り直すことになる。
       let rememberedChecked = remembered === null
+      // 起動時の履歴が目録を引いた右端（エポックミリ秒）。まだ引いていなければ `null`（→ `ws.onStarted`）
+      let historyBeforeMs: number | null = null
 
       // **取れた分から順に画面へ出す。** 電文本体の取得は配信元の上限に合わせて
       // 6 秒に 1 件へ直列化されるので（→ `services/telegramBody.ts`）、控えが空の初回は
@@ -2604,13 +2609,16 @@ export function useEarthquakes(
         const stale = () => cancelled || run !== restRun
         dmdataRestRunRef.current++
         dmdataRestClassificationsRef.current = classifications
+        const historyBefore = serverDate()
+        // 最初の版の右端だけ覚える（→ `ws.onStarted`。取り直しの版は右端が後ろへ伸びるだけで、隙間を作らない）
+        if (historyBeforeMs === null) historyBeforeMs = historyBefore.getTime()
         // **取り直しなら読み込み中へ戻し、前の版のエラー表示を消す。** 前の版が覚えた区分のせいで
         // 失敗していると、取り直しが数分かかる間「読み込み中」が消えたままエラーが残る
         if (run > 1) setState(prev => ({ ...prev, isLoading: true, error: null }))
         dmdataHistorySettledRef.current = Promise.resolve()
           .then(() => (stale() ? Promise.reject(new Error('cancelled')) : fetchDmdataQuakeHistoryFor(
             classifications,
-            dmdataApiKey, serverDate(), HISTORY_WINDOW_DAYS, dmdataTestDelivery, abort.signal,
+            dmdataApiKey, historyBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, abort.signal,
             applyPartialQuakesFor(stale), stale,
           )))
           .then((history) => {
@@ -3025,6 +3033,175 @@ export function useEarthquakes(
         // られた区分のほうが当たっている見込みが高い）。**突き合わせは止めない** —— 後で繋がって
         // 受け付けられた区分が違えば、そこで取り直す
         log.info('[DMDSS] 受けられる区分をチケットで確かめられないため、前回受け付けられた区分のまま履歴と復元を続けます', { 前回: remembered })
+      }
+      // **繋がっていなかった間に出た電文を取り戻す**（#927）。DMDATA の WebSocket は張り直しても
+      // 切れていた間の電文を送り直さない。隙間は 2 つある ——
+      //   - 張り直し: 前の接続で最後に何か受け取った時刻から、いま繋がった時刻まで
+      //   - 起動: 履歴が目録を引いた時刻から、最初に繋がった時刻まで。申し込みの結果を待つ形でも、
+      //     区分はチケットの応えで決まり、その後に WebSocket が開くので隙間がある。前回受け付けられた
+      //     区分で先に始めた形・決まらないまま既定の区分で始めた形（409 が続く）では秒単位に伸びる。
+      //     最初に繋がった時点で履歴がまだ始まっていなければ、履歴が繋がった後の分まで引くので取りに行かない
+      // 起動時の履歴と同じく音・読み上げ・タブ移動は起こさない（標準版の張り直しの取り戻しと同じ扱い。
+      // 2026-10-20 ユーザー承認「おすすめで」）。キューへ `silent` で積み、ライブの報と同じ `handleEvent` を通す
+      // —— 統合（同じ電文を二度数えない・古い報で退行しない）と津波の新旧の比べ方をライブと共有するため。
+      //
+      // **取り戻しは 1 本ずつ順に走らせる**（標準版の `p2pBackfillChain` と同じ理由）。区間は下の `owedFromMs` 1 つに
+      // 寄せ、回が始まるときに受け取る —— 履歴を待っている間に張り直しが重なっても、最初の回がいちばん古い左端から
+      // 1 度だけ引き、後の回は引く区間が残っていないので何もせずに終わる（回線が明滅したとき、同じ左端あたりの窓を
+      // 回数ぶん引き直さない）。どの段が投げても鎖は解決済みに戻す —— 戻さないと、以後の張り直しの取り戻しが 1 つも走らなくなる。
+      //
+      // **緊急地震速報は別の鎖で回す。** 地震・津波の取り戻しは履歴を当て終えるまで待つが、発表中の速報を戻すのに
+      // 履歴は要らない。同じ鎖に並べると、履歴の取得が長引く間、張り直しの直後にいちばん要る速報が戻らない。
+      const makeChain = (label: string) => {
+        let chain: Promise<void> = Promise.resolve()
+        return (step: () => Promise<void>): void => {
+          chain = chain.then(step).catch((err: unknown) => {
+            if (!cancelled) log.error(`[DMDSS] ${label}の順番待ちで想定外の失敗`, err)
+          })
+        }
+      }
+      const enqueueBackfill = makeChain('取り戻し')
+      const enqueueEewRestore = makeChain('緊急地震速報の取り戻し')
+      // まだ取り戻せていない区間の左端（エポックミリ秒）。張り直しのたびに古いほうへ寄せ、取り戻しが始まるときに
+      // 受け取る。取れなかったとき（通信の失敗・取得制限で見送った電文・取り直せば読めうる電文がある）は戻す ——
+      // 次の窓は新しい「最後に受けた時刻」から始まるので、戻さないとその区間が二度と引かれない。
+      //
+      // **戻すのは 1 度だけ**（`owedIsRetry`）。引き直した回でもまた取れなければ、記録して諦める。回数を限らないと、
+      // 恒久的に読めない電文が 1 通あるだけで左端が古いまま窓が伸び続け、張り直しのたびに同じ区間を引き直す。
+      // 持ち越した区間に新しい張り直しの区間が合流すると、印は 1 つなので合流した分も引き直しの回になり、
+      // 次の回が失敗すると両方を諦める（張り直しが続くときに起きうる既知の制約。諦めたことは記録に残る）
+      let owedFromMs: number | null = null
+      let owedReason = ''
+      let owedIsRetry = false
+      const oweFrom = (fromMs: number, reason: string): void => {
+        if (owedFromMs === null || fromMs < owedFromMs) {
+          owedFromMs = fromMs
+          owedReason = reason
+        }
+      }
+      // **履歴を当て終えるまで待つ。** 先に当てると、履歴が過去の報から引き継ぐ津波の有効期限より前に、同じ報が
+      // 引き継ぎ元の無いまま当たる（履歴の取得は成否を問わず決着する）。待っている間に取り直しが始まったら、その新しい
+      // 版も待つ（「もっと見る」と同じ。1 本だけ待つと、待ち始めた時点の版しか見ない）
+      const waitHistorySettled = async (): Promise<void> => {
+        for (let waiting = dmdataHistorySettledRef.current; ; waiting = dmdataHistorySettledRef.current) {
+          await waiting.catch(() => {})
+          if (dmdataHistorySettledRef.current === waiting) return
+        }
+      }
+      const runBackfill = async (): Promise<void> => {
+        await waitHistorySettled()
+        // 始まる時点で区間を受け取る。ここより後に来た張り直しは、次の回が引く
+        if (cancelled || owedFromMs === null) return
+        const startMs = owedFromMs
+        const reason = owedReason
+        const isRetry = owedIsRetry
+        owedFromMs = null
+        owedIsRetry = false
+        const from = new Date(startMs - DMDATA_RECONNECT_BACKFILL_MARGIN_MS)
+        const to = serverDate()
+        // 取れなかった区間を次の張り直しへ持ち越す。引き直しの回だったなら持ち越さずに諦める（→ `owedIsRetry`）
+        const carryOrGiveUp = (detail: string, err?: unknown, carryFromMs = startMs): void => {
+          if (isRetry) {
+            log.error(`[DMDSS] ${reason}の取り戻しを諦めました（${from.toISOString()}〜${to.toISOString()}。引き直しても${detail}。この間の電文が一覧に無いことがあります）`, ...(err === undefined ? [] : [err]))
+            return
+          }
+          oweFrom(carryFromMs, reason)
+          owedIsRetry = true
+          log.warn(`[DMDSS] ${reason}の取り戻しで${detail}（次に繋がり直したとき、1 度だけ引き直します）`, ...(err === undefined ? [] : [err]))
+        }
+        let got: Awaited<ReturnType<typeof fetchLiveTelegramsBetween>>
+        try {
+          got = await fetchLiveTelegramsBetween(
+            dmdataApiKey, from, to, dmdataTestDelivery, id => ws.hasReceivedTelegram(id), historyAbort.signal,
+          )
+        } catch (err) {
+          if (cancelled) return
+          // その場では取り直さない（次に繋がり直したとき、この区間から引き直す）。7 日の履歴を取り直すことはしない
+          // （2026-10-20 ユーザー承認「おすすめで」）。画面には出さないので、黙ると切れていた間の分が一覧に無いことに気づけない
+          carryOrGiveUp('電文の一覧を引けませんでした', err)
+          return
+        }
+        if (cancelled) return
+        const timed: { at: number; payload: QueuePayload }[] = []
+        // 受信時刻は取得側が必ず添える。万一引けなければ窓の右端に置く（先頭へ回して古い報として当てない）
+        const atOf = (e: JMAQuake | JMATsunami) => got.receivedAt.get(e)?.getTime() ?? to.getTime()
+        for (const q of got.quakes) timed.push({ at: atOf(q), payload: { kind: 'event', event: q } })
+        for (const t of got.tsunamis) timed.push({ at: atOf(t), payload: { kind: 'event', event: t } })
+        for (const e of got.extras) timed.push({ at: e.replayTime.getTime(), payload: e.payload })
+        // 受け取った順に当てる（キューは同じ発火時刻なら積んだ順に出す）
+        timed.sort((a, b) => a.at - b.at)
+        const eventTime = serverDate()
+        for (const { payload } of timed) eventQueueRef.current.push({ eventTime, silent: true, payload })
+        log.info(`[DMDSS] ${reason}の取り戻し（${from.toISOString()}〜${to.toISOString()}）: 地震情報 ${got.quakes.length} 通・津波 ${got.tsunamis.length} 通・ほか ${got.extras.length} 通を当てます（ライブで受け取り済み ${got.alreadyReceivedCount} 通）`)
+        // 持ち越すときの左端。ページの上限に当たったなら、読めた新しい側だけに絞る（古い側をまた引くと同じところで止まる）
+        let carryFromMs = startMs
+        if (got.reachedOnlyBack !== null) {
+          // 一覧のページの上限に当たった。新しい側の読めた分は上で当てた。届かなかった古い側は、引き直しても同じところで
+          // 止まるので持ち越さずに諦める（2026-10-20 ユーザー承認「おすすめで」。7 日の履歴も取り直さない）
+          log.error(`[DMDSS] ${reason}の取り戻しで、電文一覧のページの上限に当たりました（${from.toISOString()}〜${got.reachedOnlyBack.toISOString()} の電文は取り戻していません。一覧に無いことがあります）`)
+          carryFromMs = got.reachedOnlyBack.getTime() + DMDATA_RECONNECT_BACKFILL_MARGIN_MS
+        }
+        // 待てば取れうる電文（取得制限で見送った・取得か読み取りが例外で終わった）があれば、次の取り戻しで同じ区間から引き直す
+        const retryable = got.rateLimitedTelegrams + got.failedTelegrams
+        if (retryable > 0 && got.failedTelegrams === 0) {
+          // 取得制限だけなら、引き直しの回数に数えない。429 の窓は待てば明けるので、明けた後の回で取れる
+          oweFrom(carryFromMs, reason)
+          owedIsRetry = isRetry
+          log.warn(`[DMDSS] ${reason}の取り戻しで、取得制限のため ${got.rateLimitedTelegrams} 通を見送りました（次に繋がり直したとき、引き直します）`)
+        } else if (retryable > 0) {
+          carryOrGiveUp(` ${retryable} 通を取れませんでした（取得制限で見送り ${got.rateLimitedTelegrams} 通・取得の失敗 ${got.failedTelegrams} 通）`, undefined, carryFromMs)
+        }
+        // 読めない形の電文と、断片が揃わなかった推計震度分布図。引き直しても同じなので持ち越さない
+        const unreadable = got.skipped - got.failedTelegrams
+        if (unreadable > 0) log.warn(`[DMDSS] ${reason}の取り戻しで、読めなかった電文（推計震度分布図の断片が揃わなかったものを含む）が ${unreadable} 通ありました`)
+      }
+      const backfillFrom = (fromMs: number, reason: string): void => {
+        oweFrom(fromMs, reason)
+        enqueueBackfill(runBackfill)
+      }
+      // 切れていた間に発表された緊急地震速報を戻す（起動時の復元と同じ取得）。音・タブ移動は起こさない。
+      // **台帳の報番号より新しい報だけ積む** —— 表示中の速報の続報もここで入る（地震単位で除くと、切れる前から
+      // 出ていた速報が古い予想のまま残る）。同じ報番号は入口が通してしまうので、ここで止める
+      const restoreEewsAfterReconnect = async (): Promise<void> => {
+        if (cancelled) return
+        const classifications = dmdataRestClassificationsRef.current
+        if (!classifications) {
+          log.warn('[DMDSS] 受けられる区分がまだ決まっていないため、張り直しの間の緊急地震速報は取り直しません')
+          return
+        }
+        const eews = await fetchDmdataActiveEews(dmdataApiKey, classifications)
+        if (cancelled) return
+        const fresh = eews.filter((eew) => {
+          if (restoredQueueKeys.has(`eew:${eew.id}`)) return false
+          const accepted = eewAcceptanceRef.current.get(eewEventKey(eew))?.serialByOrigin.get(eew.origin)
+          const serial = eewSerial(eew)
+          return accepted === undefined || serial === null || serial > accepted
+        })
+        if (fresh.length === 0) {
+          if (eews.length > 0) log.info(`[DMDSS] 張り直しの間の緊急地震速報: 発表中の ${eews.length} 件はどれも受け取り済みの報でした`)
+          return
+        }
+        for (const eew of fresh) {
+          restoredQueueKeys.add(`eew:${eew.id}`)
+          eventQueueRef.current.push({ eventTime: serverDate(), silent: true, payload: { kind: 'event', event: eew as AppEvent } })
+        }
+        log.info(`[DMDSS] 張り直しの間に発表された緊急地震速報を戻しました: ${fresh.length} 件（発表中 ${eews.length} 件のうち）`)
+        try {
+          onStartupRestoreEewsRef.current?.(fresh)
+        } catch (err) {
+          log.error('[DMDSS] 張り直しで戻した緊急地震速報を読み上げ側へ渡せませんでした（取り消されても読み上げません）:', err)
+        }
+      }
+      ws.onStarted = ({ previousAliveAtMs }) => {
+        if (cancelled) return
+        if (previousAliveAtMs !== null) {
+          backfillFrom(previousAliveAtMs, '張り直し')
+          enqueueEewRestore(restoreEewsAfterReconnect)
+        } else if (historyBeforeMs !== null) {
+          backfillFrom(historyBeforeMs, '起動から接続まで')
+        } else {
+          log.info('[DMDSS] 最初に繋がった時点で履歴がまだ始まっていないため、起動から接続までの取り戻しは見送ります（履歴が繋がった後の分まで引きます）')
+        }
       }
       ws.connect()
 
