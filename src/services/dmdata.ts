@@ -9,7 +9,7 @@
 import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, EEWAlert, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
 import { parseEEWFromXml, parseEarthquakeFromXml, parseTsunamiFromXml, parseLpgmFromXml, parseNankaiFromXml, parseNankaiCommentaryFromXml, parseVyse60FromXml, parseQuakeNoticeFromXml, parseEarthquakeCountFromXml } from './dmdataParser'
 import { serverNow, serverDate } from '../utils/clock'
-import { selectActiveEews, computeEverSpecialWarningEventIds, eewEventKey } from '../utils/eew'
+import { selectActiveEews, computeEverSpecialWarningEventIds, eewEventKey, ACTIVE_EEW_WINDOW_MS } from '../utils/eew'
 import { gunzip } from '../utils/gzip'
 import {
   EEW_HEAD_TYPES, type EewHeadType, NANKAI_TYPES, COMMENTARY_TYPES, KOHATSU_TYPES, NOTICE_TYPES,
@@ -1383,12 +1383,6 @@ interface GdEewReportItem {
   }>
 }
 
-// 起動時に「いま発表中の緊急地震速報」を探すときの窓。自動解除は震源時刻から最長でも
-// 約 8 分（M9・深さ 30km で 476 秒。`calcEEWAutoCancelSec` の実測。規模と深さの両方で変わる）
-// なので、それを覆う幅を取る。
-// **ここは詳細取得を絞り込むためのふるいでしかなく**、実際に有効かどうかは
-// `selectActiveEews` が `calcEEWCancelTime` で判定する。
-const ACTIVE_EEW_WINDOW_MS = 15 * 60 * 1000
 // 一覧のページングが終わらない場合の歯止め。1 日ぶんの緊急地震速報は多い日でも数十件で、
 // 1 ページ 100 件なので通常は 1 ページで終わる。起動時の処理なので、万一 `nextToken` が
 // 同じ値を返し続けても画面が出ないまま止まることはない、という保険。
@@ -1650,7 +1644,9 @@ export async function fetchDmdataActiveEews(
       }
     }
     // 取消済み・自動解除済みはここで落ちる。判定はリプレイの初期状態と共有している。
-    const activeRaw = selectActiveEews(reports, now, 'startup')
+    // **解除済みかは取り終えた時刻で判定する**（取り始めた `now` ではない）。一覧と地震ごとの詳細を順に取る間
+    // （門で待てば延びる）に解除の時刻を過ぎた速報を「発表中」として返すと、受け手が終わった速報を戻す
+    const activeRaw = selectActiveEews(reports, serverDate(), 'startup')
     // 特別警報の下げ止まり（`computeDisplayEEWLevel`）。**この経路は完全ではない**——
     // 地震ごとに最新報 1 通しか取れないため（`fetchLatestEewReport`）、過去のどこかの報で
     // 特別警報だった事実そのものを取得できない場合がある（詳細は関数の JSDoc）。

@@ -788,6 +788,53 @@ export const EMPTY_EEW_ACCEPTANCE: EewAcceptance = {
 }
 
 /**
+ * 起動時・張り直しで「いま発表中の緊急地震速報」を探すときの窓（`fetchDmdataActiveEews`）。自動解除は震源時刻から
+ * 最長でも約 8 分（M9・深さ 30km で 476 秒。`calcEEWAutoCancelSec` の実測。規模と深さの両方で変わる）なので、それを
+ * 覆う幅を取る。**詳細取得を絞り込むふるいでしかなく**、実際に有効かどうかは `selectActiveEews` が `calcEEWCancelTime`
+ * で判定する。
+ *
+ * 終えた速報を覚えておく長さにも使う（→ {@link endedEewMatch}）—— この窓より前に終わった速報は、取り直しがそもそも返さない。
+ */
+export const ACTIVE_EEW_WINDOW_MS = 15 * 60 * 1000
+
+/** 表示を終えた（自動解除・取消で画面から消えた）地震について覚えておくこと。 */
+export interface EndedEew {
+  /** 終えるまでに受理した、経路ごとの最大の報番号（台帳の `serialByOrigin` を写したもの） */
+  readonly serialByOrigin: ReadonlyMap<EewOrigin, number>
+  /** 終えるまでに受理した報のうち最も新しい発表時刻（台帳の `latestIssueMs`）。経路をまたいだ比較に使う */
+  readonly latestIssueMs: number | null
+  /** 画面から消えた時刻（エポックミリ秒） */
+  readonly endedAtMs: number
+}
+
+/** 終えた地震の報と見なした根拠。`null` は「終えた地震の報とは言えない」 */
+export type EndedEewMatch = 'serial' | 'issue-time'
+
+/**
+ * 発表中の速報の取り直しが返した報が、もう終えた地震の報か（＝戻すと終わった速報が帳面へ戻るか）。
+ *
+ * - 終えてから `keepMs` を過ぎた記憶は使わない（取り直しはその窓より前に終わった速報を返さない）。
+ *   **時計が巻き戻って経過が負になった記憶も使わない** —— 較正の前後で基準が変わったときで、いつ終えたか分からない
+ * - 同じ経路の報番号を比べられれば報番号で比べ、**終えた後のより新しい報は通す**（終わったのではなく続いている）
+ * - 報番号を比べられなければ（別の経路で終えた・報番号が無い）発表時刻で比べる
+ * - どちらでも比べられなければ**通す**。弾くと本当に発表中の速報が画面に出ない —— 終わった速報を戻す害
+ *   （タイトルが戻らない）より重い
+ */
+export function endedEewMatch(
+  ended: EndedEew | undefined, incoming: EEWAlert, nowMs: number, keepMs: number,
+): EndedEewMatch | null {
+  if (!ended) return null
+  const elapsed = nowMs - ended.endedAtMs
+  if (elapsed < 0 || elapsed > keepMs) return null
+  const endedSerial = ended.serialByOrigin.get(incoming.origin)
+  const serial = eewSerial(incoming)
+  if (endedSerial !== undefined && serial !== null) return serial <= endedSerial ? 'serial' : null
+  const issueMs = eewIssueTimeMs(incoming)
+  if (ended.latestIssueMs !== null && issueMs !== null) return issueMs <= ended.latestIssueMs ? 'issue-time' : null
+  return null
+}
+
+/**
  * 受理済みの報より古いか（＝適用すると内容が退行するか）。
  *
  * - **同じ経路の中では報番号で比べる。** 同じ秒に複数の報が届く（能登本震の実配信で 46 報中 13 報が

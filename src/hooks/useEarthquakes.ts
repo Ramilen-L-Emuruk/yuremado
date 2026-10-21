@@ -32,6 +32,7 @@ import {
   calcEEWCancelTime, eewSerial, eewEventKey, eewIssueTimeMs, mergeEewReport, eewStaleness, acceptEewReport,
   supplementEewReport, raisesEewAlert,
   noteEewNotified, isSameReportFromOtherOrigin, isOlderEewReport, type EewAcceptance,
+  endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew,
 } from '../utils/eew'
 import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEventLog'
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
@@ -456,6 +457,37 @@ function cancelledEewEarthquake(): EEWAlert['earthquake'] {
     condition: '',
     hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: NaN },
   }
+}
+
+/**
+ * 発表中の速報の取り直し（起動時・張り直し）が返した報が、画面から消えた地震の報なら `true` を返し、弾いたことを
+ * 記録に残す（→ `endedEewMatch`）。**黙って弾かない** —— 誤って本物を弾いたとき、画面には「出ない」としか現れない。
+ */
+function skipEndedEew(ended: ReadonlyMap<string, EndedEew>, eew: EEWAlert, path: string): boolean {
+  const key = eewEventKey(eew)
+  const record = ended.get(key)
+  const nowMs = serverNow()
+  const match = endedEewMatch(record, eew, nowMs, ACTIVE_EEW_WINDOW_MS)
+  if (match === null || !record) return false
+  const basis = match === 'serial'
+    ? `消えるまでに第 ${record.serialByOrigin.get(eew.origin)} 報まで受けていた`
+    : '消えるまでに受けた報より発表時刻が新しくない'
+  log.info(`[DMDSS] ${path}: ${key}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報）は ${Math.round((nowMs - record.endedAtMs) / 1000)} 秒前に画面から消えた地震の報なので戻しません（${basis}）`)
+  return true
+}
+
+/**
+ * 画面から消えた地震の記憶を作る。**前に消えたときの記憶があれば、経路ごとの報番号と発表時刻は大きいほうを残す** ——
+ * 台帳は消えた時点で捨てるので、載り直した地震の台帳は載り直した後の報しか数えていない。上書きすると記憶が縮み、
+ * 前に消えたときの報を取り直しが返したとき通してしまう。
+ */
+function mergeEndedEew(previous: EndedEew | undefined, acceptance: EewAcceptance, nowMs: number): EndedEew {
+  const serialByOrigin = new Map(previous?.serialByOrigin)
+  for (const [origin, serial] of acceptance.serialByOrigin) {
+    serialByOrigin.set(origin, Math.max(serial, serialByOrigin.get(origin) ?? serial))
+  }
+  const issues = [previous?.latestIssueMs, acceptance.latestIssueMs].filter((v): v is number => typeof v === 'number')
+  return { serialByOrigin, latestIssueMs: issues.length > 0 ? Math.max(...issues) : null, endedAtMs: nowMs }
 }
 
 // EEW誤報取消テスト: 通常発報のまま cancelMs 後に明示的な取消電文（cancelled:true、isFinal無し）
@@ -953,6 +985,17 @@ export function useEarthquakes(
   // Yahoo と P2PQuake が同じ地震を運び、報番号の数え方が違う（P2PQuake の 1 と Yahoo の 17 が
   // 同じ報）。番号 1 つの台帳で比べると、P2PQuake の報を毎回「古い」と見なして捨てる。
   const eewAcceptanceRef = useRef<Map<string, EewAcceptance>>(new Map())
+  /**
+   * **表示を終えた（自動解除・取消で画面から消えた）地震**（キーは `eewEventKey`）。台帳は画面から消えた時点で
+   * 捨てるので、それとは別に `ACTIVE_EEW_WINDOW_MS` だけ覚えておく。
+   *
+   * 発表中の速報の取り直し（起動時・張り直し）が、もう終えた地震を「発表中」として返すことがある —— 取り直しの
+   * 最中に自動解除が先に起きた場合。台帳には何も残っていないので、そのまま戻すと**読み上げ側の帳面に終わった
+   * 速報が居座り**、本物の速報が全部解除されてもタイトルが戻らない。取り直しの結果はここで弾く（→ `skipEndedEew`）。
+   */
+  const eewEndedRef = useRef<Map<string, EndedEew>>(new Map())
+  /** 直前に画面へ載っていた地震の鍵。`eewEndedRef` へ覚えるのは、ここにあって今回消えたものだけ */
+  const prevActiveEewKeysRef = useRef<ReadonlySet<string>>(new Set())
   /**
    * **同じティックで統合した EEW の写し**（キーは `eewEventKey`）。
    *
@@ -2224,6 +2267,22 @@ export function useEarthquakes(
   // （EEW は 1 日に数十件届き、画面は長く開かれたままになる）。`activeEEWs` から消えたものを
   // 落とすだけなので、判定に要る間は残る。
   useEffect(() => {
+    // 消える前に、終えた地震として覚える（→ `eewEndedRef`）。古い記憶はここで落とす（経過が負＝時計が巻き戻ったものも）。
+    // **覚えるのは前回の画面に載っていて今回消えた地震だけ** —— 台帳は入口で状態より先に書くので、状態が採らなかった
+    // 報の地震も台帳には残る。それを「終えた」とすると、画面に一度も出ていない地震の取り直しを弾いてしまう。
+    // リセットは台帳を先に空にするので、ここでは何も覚えない
+    const nowMs = serverNow()
+    for (const [key, ended] of eewEndedRef.current) {
+      const elapsed = nowMs - ended.endedAtMs
+      if (elapsed < 0 || elapsed > ACTIVE_EEW_WINDOW_MS) eewEndedRef.current.delete(key)
+    }
+    for (const key of prevActiveEewKeysRef.current) {
+      const acceptance = eewAcceptanceRef.current.get(key)
+      if (acceptance && !state.activeEEWs.has(key)) {
+        eewEndedRef.current.set(key, mergeEndedEew(eewEndedRef.current.get(key), acceptance, nowMs))
+      }
+    }
+    prevActiveEewKeysRef.current = new Set(state.activeEEWs.keys())
     for (const ledger of [eewAcceptanceRef.current, eewLatestRef.current, eewWatchReceiptsRef.current]) {
       for (const key of [...ledger.keys()]) {
         if (!state.activeEEWs.has(key)) ledger.delete(key)
@@ -2867,8 +2926,8 @@ export function useEarthquakes(
           .then(() => (stale() ? [] : fetchDmdataActiveEews(dmdataApiKey, classifications)))
           .then(eews => {
             if (stale() || eews.length === 0) return
-            // 前の版が積み終えた電文は積まない（→ `restoredQueueKeys`）
-            const fresh = eews.filter(eew => !restoredQueueKeys.has(`eew:${eew.id}`))
+            // 前の版が積み終えた電文は積まない（→ `restoredQueueKeys`）。取り直しの最中に終えた地震も戻さない（→ `eewEndedRef`）
+            const fresh = eews.filter(eew => !restoredQueueKeys.has(`eew:${eew.id}`) && !skipEndedEew(eewEndedRef.current, eew, '起動時の復元'))
             if (fresh.length === 0) return
             for (const eew of fresh) {
               restoredQueueKeys.add(`eew:${eew.id}`)
@@ -3177,21 +3236,24 @@ export function useEarthquakes(
         }
         const eews = await fetchDmdataActiveEews(dmdataApiKey, classifications)
         if (cancelled) return
+        let endedCount = 0
         const fresh = eews.filter((eew) => {
           if (restoredQueueKeys.has(`eew:${eew.id}`)) return false
+          // 取り直しの最中に終えた地震は戻さない（台帳は画面から消えた時点で捨てているので、下の比較では弾けない）
+          if (skipEndedEew(eewEndedRef.current, eew, '張り直しの復元')) { endedCount++; return false }
           const accepted = eewAcceptanceRef.current.get(eewEventKey(eew))?.serialByOrigin.get(eew.origin)
           const serial = eewSerial(eew)
           return accepted === undefined || serial === null || serial > accepted
         })
         if (fresh.length === 0) {
-          if (eews.length > 0) log.info(`[DMDSS] 張り直しの間の緊急地震速報: 発表中の ${eews.length} 件はどれも受け取り済みの報でした`)
+          if (eews.length > 0) log.info(`[DMDSS] 張り直しの間の緊急地震速報: 発表中の ${eews.length} 件はどれも戻しません（受け取り済みの報 ${eews.length - endedCount} 件・画面から消えた地震の報 ${endedCount} 件）`)
           return
         }
         for (const eew of fresh) {
           restoredQueueKeys.add(`eew:${eew.id}`)
           eventQueueRef.current.push({ eventTime: serverDate(), silent: true, payload: { kind: 'event', event: eew as AppEvent } })
         }
-        log.info(`[DMDSS] 張り直しの間に発表された緊急地震速報を戻しました: ${fresh.length} 件（発表中 ${eews.length} 件のうち）`)
+        log.info(`[DMDSS] 張り直しの間に発表された緊急地震速報を戻しました: ${fresh.length} 件（発表中 ${eews.length} 件のうち。受け取り済みの報 ${eews.length - fresh.length - endedCount} 件・画面から消えた地震の報 ${endedCount} 件は戻さない）`)
         try {
           onStartupRestoreEewsRef.current?.(fresh)
         } catch (err) {
@@ -4319,6 +4381,8 @@ export function useEarthquakes(
     eewAcceptanceRef.current.clear()
     eewLatestRef.current.clear()
     eewWatchReceiptsRef.current.clear()
+    // 終えた地震の記憶も前の時間軸のもの。残すと、新しい軸で同じ地震の報を取り直したときに戻さなくなる
+    eewEndedRef.current.clear()
     // 取消の台帳も空にする。リプレイの開始・リセットで時間軸が変わるため、前の軸で見た取消の
     // 発表時刻と新しい軸の報を比べると、正常な報を取り下げ済みと誤判定する。
     quakeRetractionsRef.current = []

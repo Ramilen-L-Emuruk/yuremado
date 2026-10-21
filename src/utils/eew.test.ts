@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX } from './eew'
+import { eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew } from './eew'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
 
@@ -1282,6 +1282,40 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
   const LATER = '2026-10-16T12:40:41+09:00'
   const report = (origin: EEWAlert['origin'], serial: string, time: string, over: Partial<EEWAlert> = {}) =>
     makeEEW({ origin, issue: { eventId: 'ev', serial, time }, time, ...over })
+
+  // 発表中の速報の取り直しが、もう終えた地震の報を返したか（→ `useEarthquakes` の `eewEndedRef`）
+  describe('endedEewMatch', () => {
+    const ENDED_AT = 1_000_000
+    const ended: EndedEew = { serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT }
+    const match = (over: Partial<EndedEew> | undefined, eew: EEWAlert, nowMs = ENDED_AT + 1000) =>
+      endedEewMatch(over === undefined ? undefined : { ...ended, ...over }, eew, nowMs, ACTIVE_EEW_WINDOW_MS)
+    // 正: 同じ経路で、終えたときの報番号以下の報は終えた地震の報
+    it('同じ経路で終えたときの報番号以下の報は終えた地震の報', () => {
+      expect(match({}, report('dmdata', '3', YAHOO_TIME))).toBe('serial')
+      expect(match({}, report('dmdata', '2', YAHOO_TIME))).toBe('serial')
+    })
+    // 安全弁: 終えた後に、より新しい報番号の報が来たら通す（発表時刻が古く読めても報番号を優先する）
+    it('より新しい報番号の報は通す', () => {
+      expect(match({}, report('dmdata', '4', YAHOO_TIME))).toBeNull()
+    })
+    // 対照: 終えていない地震・窓を過ぎた記憶・時計が巻き戻った記憶は使わない
+    it('終えていない地震と、窓を過ぎた・経過が負の記憶では弾かない', () => {
+      expect(match(undefined, report('dmdata', '3', YAHOO_TIME))).toBeNull()
+      expect(match({}, report('dmdata', '3', YAHOO_TIME), ENDED_AT + ACTIVE_EEW_WINDOW_MS + 1)).toBeNull()
+      expect(match({}, report('dmdata', '3', YAHOO_TIME), ENDED_AT - 1)).toBeNull()
+    })
+    // 別の経路で終えた地震は報番号を比べられないので発表時刻で比べる。新しい報は通す
+    it('報番号を比べられなければ発表時刻で比べる', () => {
+      expect(match({}, report('yahoo', '17', YAHOO_TIME))).toBe('issue-time')
+      expect(match({}, report('yahoo', '17', LATER))).toBeNull()
+      expect(match({}, report('dmdata', '', YAHOO_TIME))).toBe('issue-time')
+    })
+    // 安全弁: 報番号も発表時刻も比べられなければ通す —— 弾くと本当に発表中の速報が画面に出ない
+    it('どちらでも比べられなければ通す', () => {
+      expect(match({ latestIssueMs: null }, report('yahoo', '17', YAHOO_TIME))).toBeNull()
+      expect(match({}, report('yahoo', '17', 'not-a-time'))).toBeNull()
+    })
+  })
 
   describe('eewIssueTimeMs', () => {
     it('時間帯を持たない P2PQuake の表記を日本時間として読み、Yahoo の表記と同じ秒になる', () => {
