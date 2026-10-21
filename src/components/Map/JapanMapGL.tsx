@@ -435,7 +435,7 @@ export function JapanMapGL({
     // どちらの層が落ちたか判別できないため sourceId も残す。
     m.on('error', (e) => {
       const sourceId = (e as { sourceId?: string }).sourceId
-      log.error('[JapanMapGL] map error', { sourceId, error: e.error })
+      log.error('[JapanMapGL] 地図でエラーが起きた', { sourceId, error: e.error })
     })
     m.once('load', () => {
       // 本アプリの既定フレーミング（日本全体・padding 20）へ即時に合わせる。

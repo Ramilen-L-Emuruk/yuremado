@@ -81,11 +81,11 @@ function normalizeSegments(geometry) {
 }
 
 async function main() {
-  console.log(`Fetching ${SOURCE_URL} ...`)
+  console.log(`取得中: ${SOURCE_URL}`)
   const res = await fetch(SOURCE_URL)
-  if (!res.ok) throw new Error(`Failed to fetch source: ${res.status}`)
+  if (!res.ok) throw new Error(`元データを取得できなかった: ${res.status}`)
   const geojson = await res.json()
-  console.log(`Loaded ${geojson.features.length} features`)
+  console.log(`地物を ${geojson.features.length} 件読んだ`)
 
   const zones = {}
   for (const feature of geojson.features) {
@@ -102,7 +102,7 @@ async function main() {
   )
   await mkdir(OUT_DIR, { recursive: true })
   await writeFile(OUT_FILE, JSON.stringify(zones))
-  console.log(`Wrote ${OUT_FILE} (zones: ${Object.keys(zones).length}, vertices: ${vertices})`)
+  console.log(`${OUT_FILE} を書いた（予報区 ${Object.keys(zones).length}・頂点 ${vertices}）`)
 }
 
 main().catch((err) => {

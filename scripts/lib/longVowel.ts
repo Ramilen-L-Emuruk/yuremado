@@ -58,7 +58,7 @@ export function openLongVowels(
       : ((res.stderr || '').trim() || '（詳細は出力されませんでした）')
     throw new Error(
       `読みの長音を開けませんでした（${python} ${SCRIPT}）。`
-      + '形態素解析が要ります: pip install fugashi unidic-lite\n'
+      + '形態素解析が要ります: `pip install fugashi unidic-lite`\n'
       + detail,
     )
   }

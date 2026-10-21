@@ -526,7 +526,7 @@ async function fetchHistoryRaw(
     `${API_BASE}/history?${params.toString()}`,
     { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: bypassCache ? { cache: 'no-store' } : undefined },
     async (res) => {
-      if (!res.ok) throw new Error(`P2PQuake API error: ${res.status}`)
+      if (!res.ok) throw new Error(`P2PQuake の API が失敗を返した: ${res.status}`)
       return await res.json()
     },
   )
@@ -581,7 +581,7 @@ export async function fetchHistorySince(
   for (let page = 0; page < RECONNECT_BACKFILL_MAX_PAGES; page++) {
     if (page > 0) {
       await new Promise(resolve => setTimeout(resolve, RECONNECT_BACKFILL_REQUEST_INTERVAL_MS))
-      if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+      if (signal?.aborted) throw new DOMException('取得を中断した', 'AbortError')
     }
     const params = new URLSearchParams()
     codes.forEach(c => params.append('codes', String(c)))
@@ -652,7 +652,7 @@ export async function fetchJmaArchiveRaw(
       if (res.status === 429) {
         throw new Error(`P2PQuake の取得制限に達しました（jma/${resource}）。しばらく待ってから再試行してください`)
       }
-      if (!res.ok) throw new Error(`P2PQuake jma/${resource} error: ${res.status}`)
+      if (!res.ok) throw new Error(`P2PQuake の jma/${resource} が失敗を返した: ${res.status}`)
       return await res.json()
     },
   )

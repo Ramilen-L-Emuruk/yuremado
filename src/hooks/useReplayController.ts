@@ -503,7 +503,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
       // 強震モニタの供給元は `timeOffset != null` だけで過去フレームへ切り替わる別経路
       // （`useKyoshinRealtime` → `createYahooArchiveSource`）で、DMDATA のアーカイブには依存しない。
       // 以前はここで巻き戻していたため、DMDATA の API キーが無い環境では**強震モニタの検証すら
-      // できなかった**（実例: `Archive list failed: 401` で再生が始まらない）。
+      // できなかった**（実例: `アーカイブの一覧を取得できなかった: 401` で再生が始まらない）。
       // 「再生中」と赤字が並ぶ矛盾は、設定タブが `replayStartLabel` の有無で見出しを
       // 「再生中の警告」と「取得失敗」に出し分けることで既に解消されている。
       // 先読み位置だけは畳む（アーカイブが読めない以上、続きを取りに行っても同じ失敗を繰り返す）。

@@ -66,7 +66,7 @@ export function KyoshinSubThresholdGL({ sites, indices, iconScale, visible }: Pr
         // 載せられたら前回の失敗の記録を消す（引きずらない）。
         clearRenderFailure(SUB_THRESHOLD_LAYER_ID, 'draw')
       } catch (err) {
-        log.error('[KyoshinSubThresholdGL] custom layer re-add failed', err)
+        log.error('[KyoshinSubThresholdGL] カスタムレイヤーを足し直せなかった', err)
         // **載せられなかったら画面へ出す。** 載せられなければ `render()` が一度も呼ばれず、
         // 描画側の検出（`gl/guardRender.ts`）には永久に到達しない —— 利用者には
         // 「なぜか震度0以下の点だけ出ない」状態が手掛かりなしで続く。
@@ -90,7 +90,7 @@ export function KyoshinSubThresholdGL({ sites, indices, iconScale, visible }: Pr
     // さらに Evented.fire はリスナー単位で try/catch しないため各コンポーネントで try/catch する。
     const doReadd = () => { sub = makeAndAdd() ?? sub }
     const onRestored = () => {
-      log.warn('[KyoshinSubThresholdGL] WebGL context restored, re-adding custom layer')
+      log.warn('[KyoshinSubThresholdGL] WebGL の文脈が戻ったので、カスタムレイヤーを足し直す')
       if (map.isStyleLoaded()) doReadd()
       else map.once('style.load', doReadd)
     }

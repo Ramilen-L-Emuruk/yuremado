@@ -65,7 +65,7 @@ if ('serviceWorker' in navigator) {
 }
 
 const rootEl = document.getElementById('root')
-if (!rootEl) throw new Error('Root element not found')
+if (!rootEl) throw new Error('描画先の要素（#root）が見つからない')
 
 // 最後の受け皿。**`App` 自身のレンダー例外はここでしか拾えない** —— `App` は 1700 行超の単一
 // コンポーネントで、メモ化していない裸の計算式を本体に多数持つ。その中で投げられた例外は、React が

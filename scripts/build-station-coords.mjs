@@ -134,7 +134,7 @@ async function main() {
     else unlistedNoCoords++
   }
   if (unlistedNoCoords > 0) {
-    console.warn(`Skipped ${unlistedNoCoords} unlisted station(s) with unreadable coordinates`)
+    console.warn(`座標を読めない未掲載の観測点 ${unlistedNoCoords} 点を飛ばした`)
   }
 
   const areaCoords = {}
@@ -184,8 +184,8 @@ async function main() {
   await mkdir(OUT_DIR, { recursive: true })
   await writeFile(OUT_FILE, JSON.stringify(output))
   console.log(
-    `Wrote ${OUT_FILE} (stations: ${listedCount}, unlisted: ${unlistedCount}, ` +
-      `areas: ${Object.keys(areaCoords).length}, regions: ${regionNames.length})`,
+    `${OUT_FILE} を書いた（観測点 ${listedCount}・未掲載 ${unlistedCount}・` +
+      `区域 ${Object.keys(areaCoords).length}・地域 ${regionNames.length}）`,
   )
 }
 

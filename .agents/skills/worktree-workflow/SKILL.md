@@ -1,14 +1,14 @@
 ---
 name: worktree-workflow
-description: Create, use, and clean up Git worktrees for isolated repository changes without losing uncommitted work.
+description: リポジトリの変更を切り離して進めるための Git のワークツリーを、コミットしていない作業を失わずに作り・使い・片付ける。
 ---
 
-# Worktree Workflow
+# ワークツリーの扱い
 
-Use this skill when work needs an isolated checkout or when coordinating independent changes. Do not create a worktree merely for a small, single-file edit.
+作業を切り離した checkout で進めたいとき、または独立した変更を取りまとめるときに使う。1 ファイルだけの小さな編集のためにワークツリーを作らない。
 
-1. Inspect the current Git root, branch, existing worktrees, and working-tree state before creating anything.
-2. Create a clearly named branch and worktree with Git. Keep project-local worktrees under `.codex/worktrees/` only when the target repository's `.gitignore` includes that path; otherwise use the repository's documented location. Do not rely on Claude-specific worktree commands or undocumented tool names.
-3. Run commands in the intended worktree and report its path and branch when they matter to later steps.
-4. Before cleanup, verify the exact worktree-to-branch mapping with `git worktree list`. Remove only the named, clean, merged worktree after confirmation when cleanup affects user work. ワークツリーは素の `git worktree remove` で消さず、AGENTS.md「ワークツリーを消す前に、ジャンクションを外す」のコマンドで消す（`node_modules` のジャンクションが残っていると、git が向け先の中身まで消す）。
-5. Never use forced removal or branch deletion to bypass uncommitted changes or unmerged commits.
+1. 何かを作る前に、いまの Git のトップ・ブランチ・既にあるワークツリー・作業ツリーの状態を調べる。
+2. はっきりした名前のブランチとワークツリーを Git で作る。プロジェクトの中の `.codex/worktrees/` に置くのは、対象のリポジトリの `.gitignore` がそのパスを含むときだけ。そうでなければリポジトリの文書にある場所を使う。Claude 専用のワークツリーのコマンドや、文書に無い道具の名前に頼らない。
+3. コマンドは狙ったワークツリーの中で走らせ、後の手順に効くときはそのパスとブランチを報告する。
+4. 片付ける前に、`git worktree list` でワークツリーとブランチの対応を正確に確かめる。片付けが利用者の作業に響くときは、確認を取ってから、名前を挙げた・きれいな・統合済みのワークツリーだけを消す。ワークツリーは素の `git worktree remove` で消さず、AGENTS.md「ワークツリーを消す前に、ジャンクションを外す」のコマンドで消す（`node_modules` のジャンクションが残っていると、git が向け先の中身まで消す）。
+5. コミットしていない変更や統合していないコミットを押し切るために、強制の削除やブランチの削除を決して使わない。

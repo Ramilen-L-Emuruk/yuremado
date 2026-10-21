@@ -1,17 +1,17 @@
 ---
 name: development-workflow
-description: Plan and implement a non-trivial repository change with evidence-based scoping, tests, review, and proportionate verification.
+description: 自明でないリポジトリの変更を、根拠に基づく範囲決め・テスト・レビュー・見合った確かめつきで計画し実装する。
 ---
 
-# Development Workflow
+# 開発の進め方
 
-Use this skill for multi-step features, defects, refactors, or configuration changes. Do not use it for a one-line factual answer or a trivial isolated edit.
+何段にも分かれる機能・不具合・作り直し・設定の変更に使う。1 行で答えられる事実の質問や、ほかに響かない小さな編集には使わない。
 
-1. Inspect the repository before choosing an approach. Reuse established patterns, trace callers and configuration when removal or replacement is proposed, and verify library behavior from primary documentation when it matters.
-2. For work with multiple phases or architectural impact, make a concise plan with affected files, risks, validation, and any decision that requires user input. Treat the confirmed scope and completion criteria as binding; explain the evidence and obtain confirmation before reducing them. Use `code-explorer`, `implementation-planner`, or `architect` when the work can be independently investigated.
-3. Implement the smallest change that satisfies the confirmed requirement. Add or update tests that demonstrate the intended behavior and relevant failure cases.
-4. Run the appropriate build, tests, lint, static checks, and focused reproduction. When user-visible runtime behavior changes, perform a safe behavior-level check as well. State what was run, what was not run, and why.
-5. For consequential changes, request read-only review from `code-reviewer`; use `adversarial-reviewer`, `documentation-reviewer`, `java-reviewer`, or `verifier` only when their focus applies. Fix actionable findings, then revalidate the affected paths. Stop once the proportionate review is complete; report residual risks instead of starting an unbounded review loop. Parallelize only independent read-only work.
-6. Update user-facing documentation, configuration references, and comments when behavior or usage changed.
+1. やり方を選ぶ前にリポジトリを調べる。既にある書き方を使い回し、消す・差し替える案のときは呼び出し元と設定を辿り、ライブラリの振る舞いが効くときは一次資料で確かめる。
+2. 何段にも分かれる作業や設計に響く作業では、触るファイル・危険・確かめ方・利用者の判断が要る決めごとを書いた短い計画を作る。確かめた範囲と終わりの条件は守るものとして扱い、狭めるときは根拠を示して確認を取る。独立して調べられる作業には `code-explorer`・`implementation-planner`・`architect` を使う。
+3. 確かめた要件を満たす最も小さい変更を実装する。狙った振る舞いと、関係する失敗の場合を示すテストを足すか直す。
+4. 見合ったビルド・テスト・lint・静的検査・絞った再現を走らせる。利用者に見える動きが変わるときは、振る舞いの段でも安全な確かめをする。何を走らせ、何を走らせなかったか、その理由を書く。
+5. 影響の大きい変更は、読むだけの `code-reviewer` にレビューを頼む。`adversarial-reviewer`・`documentation-reviewer`・`java-reviewer`・`verifier` は、その視点が当てはまるときだけ使う。直すべき指摘を直し、影響する道筋を確かめ直す。見合ったレビューが済んだら止め、終わりの無いレビューを始めずに残る危険を報告する。並べて走らせるのは、互いに独立した読むだけの作業に限る。
+6. 振る舞いや使い方が変わったら、利用者向けの文書・設定の説明・コメントを直す。
 
-Do not commit, push, merge, publish, add production dependencies, or make external changes unless the user has authorized that action.
+利用者が許していない限り、コミット・push・統合・公開・本番の依存の追加・外部への変更はしない。

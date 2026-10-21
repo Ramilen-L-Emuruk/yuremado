@@ -137,7 +137,7 @@ export function loadSubRegions(): Promise<SubRegion[]> {
       // 各区域の中身（`rings` を持つか等）までは見ていない。prefectures 側も同じ粒度。
       validate: (data) => {
         if (!Array.isArray(data) || data.length === 0) {
-          throw new Error('subregions fetch returned no data (empty or malformed)')
+          throw new Error('細分区域のデータが空か、形が崩れている')
         }
       },
     })

@@ -56,7 +56,7 @@ export function loadPrefectures(): Promise<Prefectures> {
       // 各県の中身（`rings` を持つか等）までは見ていない。subregions 側も同じ粒度。
       validate: (data) => {
         if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) {
-          throw new Error('prefectures fetch returned no data (empty or malformed)')
+          throw new Error('都道府県の境界データが空か、形が崩れている')
         }
       },
     })

@@ -81,7 +81,7 @@ describe('loadPrefectures', { timeout: 15_000 }, () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse(body)))
     const { loadPrefectures, getPrefecturesCache } = await freshModule()
 
-    await expect(loadPrefectures()).rejects.toThrow(/no data/)
+    await expect(loadPrefectures()).rejects.toThrow(/空か、形が崩れている/)
     expect(getPrefecturesCache()).toBeNull()
   })
 
@@ -93,7 +93,7 @@ describe('loadPrefectures', { timeout: 15_000 }, () => {
     vi.stubGlobal('fetch', fetchMock)
     const { loadPrefectures } = await freshModule()
 
-    await expect(loadPrefectures()).rejects.toThrow(/no data/)
+    await expect(loadPrefectures()).rejects.toThrow(/空か、形が崩れている/)
     expect(await loadPrefectures()).toEqual(SAMPLE)
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
@@ -107,7 +107,7 @@ describe('loadPrefectures', { timeout: 15_000 }, () => {
     vi.stubGlobal('fetch', fetchMock)
     const { loadPrefectures, getPrefecturesCache } = await freshModule()
 
-    const assertion = expect(loadPrefectures()).rejects.toThrow(/timed out/)
+    const assertion = expect(loadPrefectures()).rejects.toThrow(/時間切れ/)
     await vi.advanceTimersByTimeAsync(DATA_FETCH_TIMEOUT_MS)
     await assertion
     expect(getPrefecturesCache()).toBeNull()

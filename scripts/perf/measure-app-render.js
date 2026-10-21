@@ -438,7 +438,7 @@
     console.log('[measureAppRender] 完了。blockMaxMs（小さいほど良い・非力機の実カクつき指標）:')
     for (const [k, v] of Object.entries(scenarios)) {
       console.log(
-        `  ${k.padEnd(22)} fps ${String(v.frame.fps).padStart(5)}  blockMax ${String(v.blockMaxMs).padStart(6)}ms` +
+        `  ${k.padEnd(22)} 毎秒コマ数 ${String(v.frame.fps).padStart(5)}  blockMax ${String(v.blockMaxMs).padStart(6)}ms` +
           `  blockMove ${String(v.move.blockDuringMoveMs).padStart(6)}ms  blockStill ${String(v.move.blockWhileStillMs).padStart(6)}ms` +
           `  moveWin ${v.move.count}  longtaskMax ${v.longtask.maxMs}ms`,
       )
@@ -451,7 +451,7 @@
           headers: { 'content-type': 'text/plain' },
           body: JSON.stringify(result),
         })
-        console.log('[measureAppRender] report:', res.ok ? await res.text() : 'HTTP ' + res.status)
+        console.log('[measureAppRender] 結果を送った:', res.ok ? await res.text() : 'HTTP ' + res.status)
       } catch (e) {
         console.warn('[measureAppRender] report 送信失敗（結果はログ/返り値から回収可）:', e)
       }

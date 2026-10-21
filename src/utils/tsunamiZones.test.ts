@@ -43,7 +43,7 @@ describe('loadTsunamiZones', { timeout: 15_000 }, () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse({})))
     const { loadTsunamiZones } = await freshModule()
 
-    await expect(loadTsunamiZones()).rejects.toThrow(/no data/)
+    await expect(loadTsunamiZones()).rejects.toThrow(/空か、形が崩れている/)
   })
 
   it('失敗後に呼び直すと再取得する（inflightを破棄してリトライ可能にする）', async () => {

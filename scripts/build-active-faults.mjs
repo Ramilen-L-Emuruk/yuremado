@@ -88,9 +88,9 @@ function parsePlacemark(block) {
 }
 
 async function main() {
-  console.log(`Fetching ${SOURCE_URL} ...`)
+  console.log(`取得中: ${SOURCE_URL}`)
   const res = await fetch(SOURCE_URL)
-  if (!res.ok) throw new Error(`Failed to fetch source: ${res.status}`)
+  if (!res.ok) throw new Error(`元データを取得できなかった: ${res.status}`)
   const buf = new Uint8Array(await res.arrayBuffer())
 
   const files = unzipSync(buf)
@@ -99,7 +99,7 @@ async function main() {
   const kml = new TextDecoder('utf-8').decode(files[docName])
 
   const placemarkBlocks = kml.match(/<Placemark>[\s\S]*?<\/Placemark>/g) || []
-  console.log(`Found ${placemarkBlocks.length} placemarks`)
+  console.log(`Placemark を ${placemarkBlocks.length} 件見つけた`)
 
   const segments = placemarkBlocks
     .map(parsePlacemark)
@@ -111,7 +111,7 @@ async function main() {
   )
   await mkdir(OUT_DIR, { recursive: true })
   await writeFile(OUT_FILE, JSON.stringify(segments))
-  console.log(`Wrote ${OUT_FILE} (segments: ${segments.length}, vertices: ${vertices})`)
+  console.log(`${OUT_FILE} を書いた（線分 ${segments.length}・頂点 ${vertices}）`)
 }
 
 main().catch((err) => {

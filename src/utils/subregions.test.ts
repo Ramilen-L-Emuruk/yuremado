@@ -88,7 +88,7 @@ describe('loadSubRegions', { timeout: 15_000 }, () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse([])))
     const { loadSubRegions, getSubRegionsCache } = await freshModule()
 
-    await expect(loadSubRegions()).rejects.toThrow(/no data/)
+    await expect(loadSubRegions()).rejects.toThrow(/空か、形が崩れている/)
     expect(getSubRegionsCache()).toBeNull()
   })
 
@@ -96,7 +96,7 @@ describe('loadSubRegions', { timeout: 15_000 }, () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse({ oops: true })))
     const { loadSubRegions } = await freshModule()
 
-    await expect(loadSubRegions()).rejects.toThrow(/no data/)
+    await expect(loadSubRegions()).rejects.toThrow(/空か、形が崩れている/)
   })
 
   it('応答が返らないときはタイムアウトで失敗確定し、次の要求で再取得できる', async () => {
@@ -109,7 +109,7 @@ describe('loadSubRegions', { timeout: 15_000 }, () => {
     const { loadSubRegions, getSubRegionsCache } = await freshModule()
 
     // 待ち続けず、タイムアウトで reject する（＝呼び出し側のフォールバックが動ける）
-    const assertion = expect(loadSubRegions()).rejects.toThrow(/timed out/)
+    const assertion = expect(loadSubRegions()).rejects.toThrow(/時間切れ/)
     await vi.advanceTimersByTimeAsync(DATA_FETCH_TIMEOUT_MS)
     await assertion
     expect(getSubRegionsCache()).toBeNull()

@@ -1,4 +1,4 @@
-name: Update hypocenter catalog
+name: 長期震源カタログを更新する
 
 # 長期震源カタログ（public/data/hypocenter/）の直近ぶんを週 1 回更新する。
 #
@@ -36,10 +36,10 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: ソースを取り出す
         uses: actions/checkout@v7
 
-      - name: Setup Node.js
+      - name: Node.js を用意する
         uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -51,7 +51,7 @@ jobs:
       # key に run_id を入れて毎回新しく保存し、restore-keys で直前のものを引き継ぐ。
       # **世代は積み上がらない。** GitHub は 7 日間アクセスの無いキャッシュを失効させる。
       # 毎週触るのは直前の 1 つだけなので、常時 2〜3 世代（1 世代 100MB 足らず）に収まる。
-      - name: Restore daily page cache
+      - name: 日別ページの控えを戻す
         uses: actions/cache@v6
         with:
           path: .claude/hypocenter-cache
@@ -59,20 +59,20 @@ jobs:
           restore-keys: |
             hypocenter-daily-
 
-      - name: Install dependencies
+      - name: 依存を入れる
         run: npm ci
 
       # 2024 年以降だけを作り直す。**確定値（年 ZIP）を先に試すので、気象庁がその年の
       # 確定値を公開した週に、自動で速報値から差し替わる**（2024 年はすでに確定値）。
-      - name: Update catalog
+      - name: カタログを更新する
         run: npm run build-hypocenter-catalog -- --from 2024
 
       # テストを通してから push する。パーサの回帰やカタログの検分に失敗したら、
       # 壊れたデータを本番へ出さずに止める。
-      - name: Run tests
+      - name: テストを走らせる
         run: npm test
 
-      - name: Commit and push
+      - name: コミットして push する
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

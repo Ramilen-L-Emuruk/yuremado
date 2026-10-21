@@ -306,11 +306,11 @@ async function getJson<T>(url: string, apiKey: string, what: string, signal: Abo
     url,
     { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: { Authorization: authHeader(apiKey) } } },
     async (res) => {
-      if (!res.ok) throw new Error(`${what} failed: ${res.status}`)
+      if (!res.ok) throw new Error(`${what}を取得できなかった: ${res.status}`)
       return (await res.json()) as { status?: string } & T
     },
   )
-  if (json.status !== 'ok') throw new Error(`${what} error`)
+  if (json.status !== 'ok') throw new Error(`${what}が成功（ok）を返さなかった`)
   return json
 }
 
@@ -336,7 +336,7 @@ function fetchBody(url: string, apiKey: string): Promise<string> {
       throw new RateLimitWindowError(telegramIdFromUrl(url) ?? url, body.rateLimitedUntil)
     }
     if (body.xml === null) {
-      throw new Error(`Telegram body fetch failed: ${body.status === null ? 'network' : body.status}`)
+      throw new Error(`電文の本体を取得できなかった: ${body.status === null ? '通信の失敗' : body.status}`)
     }
     return body.xml
   })()
@@ -368,7 +368,7 @@ function fetchBinaryBody(url: string, apiKey: string): Promise<Uint8Array> {
     if (rateLimitedUntil !== null) {
       throw new RateLimitWindowError(telegramIdFromUrl(url) ?? url, rateLimitedUntil)
     }
-    if (bytes === null) throw new Error(`Telegram body fetch failed: ${status ?? 'network'}`)
+    if (bytes === null) throw new Error(`電文の本体を取得できなかった: ${status ?? '通信の失敗'}`)
     return bytes
   })()
   binaryBodyCache.set(url, promise)
@@ -422,7 +422,7 @@ async function listTelegrams(
     if (includeTest) params.set('test', 'including')
     if (cursorToken) params.set('cursorToken', cursorToken)
     const json = await getJson<{ items?: TelegramListItem[]; nextToken?: string }>(
-      `${API_BASE}/telegram?${params.toString()}`, apiKey, 'Telegram list', signal,
+      `${API_BASE}/telegram?${params.toString()}`, apiKey, '電文の一覧', signal,
     )
     const pageItems = json.items ?? []
     items.push(...pageItems)
@@ -611,7 +611,7 @@ async function listEewTelegrams(
     const params = new URLSearchParams({ datetime: `${utcFrom}~${utcTo}`, limit: String(LIST_LIMIT) })
     if (cursorToken) params.set('cursorToken', cursorToken)
     const json = await getJson<{ items?: EewListItem[]; nextToken?: string }>(
-      `${API_BASE}/gd/eew?${params.toString()}`, apiKey, 'EEW list', signal,
+      `${API_BASE}/gd/eew?${params.toString()}`, apiKey, '緊急地震速報の一覧', signal,
     )
     events.push(...(json.items ?? []))
     if (!json.nextToken) break
@@ -653,7 +653,7 @@ async function listEewTelegrams(
       // 直列化する**ので瞬間 8req/s にはならない（同じ定数を使う電文本体の取得は
       // 6 秒の門で直列化されている）。
       const json = await getJson<{ items?: Array<{ telegrams?: TelegramListItem[] }> }>(
-        `${API_BASE}/gd/eew/${encodeURIComponent(ev.eventId)}`, apiKey, 'EEW detail', signal,
+        `${API_BASE}/gd/eew/${encodeURIComponent(ev.eventId)}`, apiKey, '緊急地震速報の詳細', signal,
       )
       for (const rep of json.items ?? []) {
         for (const tg of rep.telegrams ?? []) {
@@ -866,7 +866,7 @@ export async function fetchLiveReplayEntries(
   // 2 本とも引けなければ、その日ぶんは 1 通も取れていない。呼び出し元が「その日の取得元が
   // 読めなかった」として扱えるよう投げる（部分的に取れた場合と区別が付かなくなるため）。
   if (attemptedLists > 0 && failedListCount === attemptedLists) {
-    throw new Error(`Live fetch failed: 当日経路の一覧をすべて取得できませんでした（日=${dayLabel}）`)
+    throw new Error(`当日経路の一覧をすべて取得できませんでした（日=${dayLabel}）`)
   }
 
   // EEW の一覧を組み立てる段で落ちた報も取りこぼしに含める。**窓を見る前の分**なので

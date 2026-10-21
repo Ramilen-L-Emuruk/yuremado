@@ -50,7 +50,7 @@ export function fetchSiteList(siteConfigId?: string): Promise<SiteCoords> {
 
   const promise = fetchJsonOutcome(url, { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null }, (r) => r.ok)
     .then((res) => {
-      if (!res.ok) throw new Error(`sitelist fetch failed: ${res.status}`)
+      if (!res.ok) throw new Error(`観測点リストを取得できなかった: ${res.status}`)
       return outcomeJson<{ items: SiteCoords }>(res)
     })
     .then((json) => json.items)
@@ -304,7 +304,7 @@ export async function fetchRealtimeIntensity(
         signal: null,
       }, (r) => r.ok)
       if (!res.ok) {
-        lastErr = new Error(`realtime fetch failed: ${res.status}`)
+        lastErr = new Error(`リアルタイムの値を取得できなかった: ${res.status}`)
         continue
       }
       const json = outcomeJson<{
@@ -316,7 +316,7 @@ export async function fetchRealtimeIntensity(
       // 誤って success として集計される。フィールド欠落・型不一致に加え空文字も失敗として扱う。
       const rt = json.realTimeData
       if (!rt || typeof rt.intensity !== 'string' || rt.intensity.length === 0) {
-        lastErr = new Error(`realtime response missing/empty realTimeData.intensity (edge=${edge})`)
+        lastErr = new Error(`リアルタイムの応答に realTimeData.intensity が無いか空（edge=${edge}）`)
         continue
       }
       // **観測点リストの版（`siteConfigId`）の欠落・空文字も失敗にする**（2026-10-19 ユーザー選択
@@ -327,7 +327,7 @@ export async function fetchRealtimeIntensity(
       // 失敗にすれば、上の震度の欠落と同じく取り直しと「更新停止」の経路に乗る
       // （→ docs/spec/data-sources-spec.md §4「データ」）。
       if (typeof rt.siteConfigId !== 'string' || rt.siteConfigId.length === 0) {
-        lastErr = new Error(`realtime response missing/empty realTimeData.siteConfigId (edge=${edge})`)
+        lastErr = new Error(`リアルタイムの応答に realTimeData.siteConfigId が無いか空（edge=${edge}）`)
         continue
       }
       const intensity = rt.intensity
@@ -353,7 +353,7 @@ export async function fetchRealtimeIntensity(
       lastErr = err
     }
   }
-  throw lastErr ?? new Error('realtime fetch failed')
+  throw lastErr ?? new Error('リアルタイムの値を取得できなかった')
 }
 
 // ---- クロック同期（サーバー時刻較正）----
@@ -514,7 +514,7 @@ async function syncClockOnce(): Promise<void> {
   if (frontier === null) {
     syncConsecutiveFail += 1
     if (syncConsecutiveFail % 3 === 0) {
-      log.warn(`[kyoshin] clock sync frontier not found for ${syncConsecutiveFail} consecutive tries, search window expanded`, { above, below })
+      log.warn(`[kyoshin] 時計の較正の境目が ${syncConsecutiveFail} 回続けて見つからないので、探す範囲を広げた`, { above, below })
     }
     return
   }

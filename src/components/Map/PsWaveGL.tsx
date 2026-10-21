@@ -381,7 +381,7 @@ ${VERT_BODY}`,
         // 載せられたら前回の失敗の記録を消す（引きずらない）。
         clearRenderFailure(LYR, 'draw')
       } catch (err) {
-        log.error('[PsWaveGL] custom layer add failed', err)
+        log.error('[PsWaveGL] カスタムレイヤーを足せなかった', err)
         reportRenderFailure(LYR, LABEL, 'draw')
       }
     }
@@ -406,7 +406,7 @@ ${VERT_BODY}`,
       requestRepaint()
     }
     const onRestored = () => {
-      log.warn('[PsWaveGL] WebGL context restored, re-adding custom layer')
+      log.warn('[PsWaveGL] WebGL の文脈が戻ったので、カスタムレイヤーを足し直す')
       if (map.isStyleLoaded()) readdLayer()
       else map.once('style.load', readdLayer)
     }

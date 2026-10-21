@@ -86,11 +86,11 @@ function labelPoint(rings) {
 }
 
 async function main() {
-  console.log(`Fetching ${SOURCE_URL} ...`)
+  console.log(`取得中: ${SOURCE_URL}`)
   const res = await fetch(SOURCE_URL)
-  if (!res.ok) throw new Error(`Failed to fetch source: ${res.status}`)
+  if (!res.ok) throw new Error(`元データを取得できなかった: ${res.status}`)
   const geojson = await res.json()
-  console.log(`Loaded ${geojson.features.length} features`)
+  console.log(`地物を ${geojson.features.length} 件読んだ`)
 
   const regions = []
   for (const feature of geojson.features) {
@@ -105,7 +105,7 @@ async function main() {
   await mkdir(OUT_DIR, { recursive: true })
   await writeFile(OUT_FILE, JSON.stringify(regions))
   const points = regions.reduce((n, r) => n + r.rings.reduce((m, x) => m + x.length, 0), 0)
-  console.log(`Wrote ${OUT_FILE} (regions: ${regions.length}, points: ${points})`)
+  console.log(`${OUT_FILE} を書いた（区域 ${regions.length}・点 ${points}）`)
 }
 
 main().catch((err) => {

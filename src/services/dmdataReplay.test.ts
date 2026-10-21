@@ -1235,7 +1235,7 @@ describe('fetchDmdataReplayEvents の耐障害性', () => {
   it('アーカイブ取得が全滅した場合は例外として伝播する（無言で 0 件にしない）', async () => {
     globalThis.fetch = mockArchives([{ url: 'https://x/a', gz: 'error' }]) as unknown as typeof fetch
 
-    await expect(fetchDmdataReplayEvents('key', FROM, TO, false, PREFERRED_CLASSIFICATIONS, null)).rejects.toThrow(/Archive fetch failed/)
+    await expect(fetchDmdataReplayEvents('key', FROM, TO, false, PREFERRED_CLASSIFICATIONS, null)).rejects.toThrow(/アーカイブを取得できなかった/)
   })
 
   // ここが今回の要。1 つのアーカイブの破損で、他のアーカイブから読めた電文まで

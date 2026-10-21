@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: GitHub Pages へ公開する
 
 # main への push で本番ビルドを生成し、GitHub Pages へ公開する。
 on:
@@ -21,42 +21,42 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: ソースを取り出す
         uses: actions/checkout@v7
 
-      - name: Setup Node.js
+      - name: Node.js を用意する
         uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: 依存を入れる
         run: npm ci
 
       # ビルドより先に走らせる。失敗するとこのジョブが止まり、deploy まで到達しない。
-      # npm run build に含まれる型チェック・グリフ検証では挙動の回帰は捕まらない。
-      - name: Run tests
+      # `npm run build` に含まれる型チェック・グリフ検証では挙動の回帰は捕まらない。
+      - name: テストを走らせる
         run: npm test
 
-      - name: Build standard
+      - name: 標準版をビルドする
         run: npm run build
 
-      - name: Build DMDSS
+      - name: DMDSS 版をビルドする
         run: npm run build:dmdss
 
-      - name: Merge DMDSS build into dist
+      - name: DMDSS 版を dist へ合わせる
         run: |
           mkdir -p dist/dmdss
           cp -r dist-dmdss/. dist/dmdss/
 
-      - name: Setup Pages
+      - name: Pages を用意する
         uses: actions/configure-pages@v6
 
       # **`public/` にドットファイルを置かないこと。** upload-pages-artifact は v4 以降、
       # 隠しファイルを既定で成果物から除外する。置いても CI は成功したまま、配信からだけ
       # 静かに落ちる。どうしても必要なら `include-hidden-files: true` を足す —— 既定のままに
       # しているのは、`.env` の類が `public/` へ紛れ込んだときに公開しないため。
-      - name: Upload artifact
+      - name: 成果物を上げる
         uses: actions/upload-pages-artifact@v5
         with:
           path: dist
@@ -68,6 +68,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
+      - name: GitHub Pages へ公開する
         id: deployment
         uses: actions/deploy-pages@v5

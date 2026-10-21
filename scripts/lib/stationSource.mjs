@@ -72,7 +72,7 @@ const GIST_COMMITS_API = `https://api.github.com/gists/${GIST_ID}/commits`
 function parseGistUrl(url) {
   const [, user, id, raw, revision, file] = new URL(url).pathname.split('/')
   if (!user || !id || raw !== 'raw' || !revision || !file) {
-    throw new Error(`取得元 URL の形が想定と違います（.../<user>/<id>/raw/<revision>/<file> を期待）: ${url}`)
+    throw new Error(`取得元 URL の形が想定と違います（\`.../<user>/<id>/raw/<revision>/<file>\` を期待）: ${url}`)
   }
   return { user, id, revision, file }
 }
@@ -204,7 +204,7 @@ export function stationKeyOf(station) {
 
 /** 固定リビジョンの観測点一覧を取る。件数が想定の幅を外れたら止める。 */
 export async function fetchListedStations() {
-  console.log(`Fetching ${STATION_SOURCE_URL} ...`)
+  console.log(`取得中: ${STATION_SOURCE_URL}`)
   const stations = await fetchJson(STATION_SOURCE_URL, '観測点一覧')
   if (!Array.isArray(stations)) throw new Error('取得したデータが配列ではありません')
   if (stations.length < LISTED_COUNT_RANGE.min || stations.length > LISTED_COUNT_RANGE.max) {
@@ -213,7 +213,7 @@ export async function fetchListedStations() {
       + `外れています: ${stations.length} 件。取得元か形式が変わっていないか確かめてください。`,
     )
   }
-  console.log(`Loaded ${stations.length} stations`)
+  console.log(`観測点を ${stations.length} 点読んだ`)
   return stations
 }
 
@@ -252,7 +252,7 @@ async function fetchRevisions() {
  */
 export async function collectUnlistedStations(listed) {
   const revisions = await fetchRevisions()
-  console.log(`Found ${revisions.length} revisions`)
+  console.log(`版を ${revisions.length} 件見つけた`)
 
   // **固定リビジョンが一覧に含まれることを確かめる。** 固定先が消えた・書き間違えたを
   // ここで捕まえる。含まれていなければ「現行の一覧」と「履歴」が別物を指しているので、
@@ -320,19 +320,19 @@ export async function collectUnlistedStations(listed) {
     }
   }
   if (unreadable.length > 0) {
-    console.warn(`Skipped ${unreadable.length} unreadable revision(s): ${unreadable.join(' ')}`)
+    console.warn(`読めない版 ${unreadable.length} 件を飛ばした: ${unreadable.join(' ')}`)
   }
   if (empty.length > 0) {
-    console.warn(`Empty revision(s): ${empty.join(' ')}`)
+    console.warn(`空の版: ${empty.join(' ')}`)
   }
   if (degraded.length > 0) {
-    console.warn(`Mostly-dropped revision(s): ${degraded.join(' ')}`)
+    console.warn(`観測点の大半が落ちた版: ${degraded.join(' ')}`)
   }
   if (noPref.size > 0) {
-    console.warn(`Skipped ${noPref.size} station(s) without a prefecture: ${[...noPref].slice(0, 5).join(' ')}`)
+    console.warn(`都道府県の無い観測点 ${noPref.size} 点を飛ばした: ${[...noPref].slice(0, 5).join(' ')}`)
   }
   if (noName > 0) {
-    console.warn(`Skipped ${noName} entr(ies) without a name`)
+    console.warn(`名前の無い行 ${noName} 件を飛ばした`)
   }
   const readable = revisions.length - unreadable.length - empty.length - degraded.length
   if (readable < MIN_READABLE_REVISIONS) {
@@ -347,8 +347,8 @@ export async function collectUnlistedStations(listed) {
   // 「2 回目以降は取らない」という約束が黙って壊れても気づけない
   // （CLAUDE.md「進行と件数が見える形にする」）。
   console.log(
-    `Revisions: ${revisionStats.cacheHits} from cache / ${revisionStats.downloads} downloaded`
-    + ` (interval ${RAW_MIN_INTERVAL_MS}ms, cache: ${revisionCacheDir()})`
+    `版: 控えから ${revisionStats.cacheHits} 件・取得 ${revisionStats.downloads} 件`
+    + `（間隔 ${RAW_MIN_INTERVAL_MS}ms・控えの置き場所 ${revisionCacheDir()}）`
   )
   return unlisted
 }

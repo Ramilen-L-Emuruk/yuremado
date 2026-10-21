@@ -95,7 +95,7 @@ async function fetchText(url: string, retries = 3): Promise<string> {
       await new Promise((r) => setTimeout(r, 1000 * attempt))
     }
   }
-  throw new Error('unreachable')
+  throw new Error('ここには来ないはず')
 }
 
 async function buildEewSection(): Promise<HistoricalArchiveEntry[]> {

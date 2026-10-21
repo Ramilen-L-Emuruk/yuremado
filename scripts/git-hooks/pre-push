@@ -1,18 +1,29 @@
 #!/bin/sh
-# 公開前の個人情報の検査（CLAUDE.md「公開する前に個人情報が無いことを確かめる」）。
+# push の前の検査（CLAUDE.md「公開する前に個人情報が無いことを確かめる」「英語の文を置かない」）。
 # git が push の直前に呼ぶ。入れ方は `npm run install-git-hooks`（scripts/install-git-hooks.ts）。
 #
-# 見つかったら（終了コード 1）・調べられなかったら（2）push を止める。
+# 1. 個人情報の検査（scripts/check-personal-info.ts）
+# 2. コミットメッセージの英語の検査（scripts/check-commit-messages.ts）
+# どちらかが見つけたら（終了コード 1）・調べられなかったら（2）push を止める。
 # 検査の道具はメインの checkout のものを使う（ワークツリーには node_modules が無いことがあるため）。
 common="$(git rev-parse --path-format=absolute --git-common-dir)" || common=""
 if [ -z "$common" ]; then
-  echo "[個人情報の検査] git rev-parse --git-common-dir が失敗した。push を止める" >&2
+  echo "[push 前の検査] git rev-parse --git-common-dir が失敗した。push を止める" >&2
   exit 2
 fi
 root="$(cd "$common/.." && pwd)"
 tsx="$root/node_modules/.bin/tsx"
 if [ ! -f "$tsx" ]; then
-  echo "[個人情報の検査] $tsx が無い（メインの checkout で npm ci を）。push を止める" >&2
+  echo "[push 前の検査] $tsx が無い（メインの checkout で npm ci を）。push を止める" >&2
   exit 2
 fi
-exec "$tsx" "$root/scripts/check-personal-info.ts" --pre-push "$1"
+for script in check-personal-info.ts check-commit-messages.ts; do
+  if [ ! -f "$root/scripts/$script" ]; then
+    echo "[push 前の検査] $root/scripts/$script が無い（メインの checkout が古い。main を取り込んでから）。push を止める" >&2
+    exit 2
+  fi
+done
+# 送る ref は標準入力で 1 回だけ届く。2 つの検査に同じものを渡すため、先に読み切る
+input="$(cat)"
+printf '%s\n' "$input" | "$tsx" "$root/scripts/check-personal-info.ts" --pre-push "$1" || exit $?
+printf '%s\n' "$input" | "$tsx" "$root/scripts/check-commit-messages.ts" --pre-push "$1"

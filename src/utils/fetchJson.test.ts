@@ -53,7 +53,7 @@ describe('fetchJsonWithTimeout', () => {
   it('HTTP エラーはステータス付きの例外にする', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 }) as unknown as Response))
 
-    await expect(fetchJsonWithTimeout('/data/x.json', 'x')).rejects.toThrow('x fetch failed: 404')
+    await expect(fetchJsonWithTimeout('/data/x.json', 'x')).rejects.toThrow('x を取得できなかった: 404')
   })
 
   it('応答が返らないときはタイムアウトで失敗する（永久に pending にしない）', async () => {
@@ -61,7 +61,7 @@ describe('fetchJsonWithTimeout', () => {
     vi.stubGlobal('fetch', hangingFetch())
 
     const assertion = expect(fetchJsonWithTimeout('/data/x.json', 'x', { timeoutMs: 5000 })).rejects.toThrow(
-      'x fetch timed out after 5000ms',
+      'x の取得が 5000ms で時間切れになった',
     )
     await vi.advanceTimersByTimeAsync(5000)
     await assertion
@@ -72,7 +72,7 @@ describe('fetchJsonWithTimeout', () => {
     vi.stubGlobal('fetch', headerOnlyFetch())
 
     const assertion = expect(fetchJsonWithTimeout('/data/x.json', 'x', { timeoutMs: 5000 })).rejects.toThrow(
-      'x fetch timed out after 5000ms',
+      'x の取得が 5000ms で時間切れになった',
     )
     await vi.advanceTimersByTimeAsync(5000)
     await assertion
