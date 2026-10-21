@@ -12,6 +12,7 @@ import {
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
   EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo,
   isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewFirstIssueTime, eewCancelNotificationBody,
+  eewSerial, eewIssueTimeMs,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
 } from '../utils/eew'
 import { hasKnownEpicenter } from '../utils/geo'
@@ -1224,6 +1225,50 @@ export interface LiveEventHandlerDeps {
   openLpgmFromQuake: (eventId: string) => void
 }
 
+/**
+ * 復元で受け取った報が、読み上げ側が最後に見た報（`seen`）より新しいか。
+ *
+ * 同じ経路なら報番号、経路が違うか報番号が読めなければ発表時刻（秒）で比べる（`eewStaleness` と同じ考え方）。
+ * **比べられないときは新しいと見なさない** —— 配信元の一覧は遅れていることがあり、その報で記憶を巻き戻さないため。
+ */
+function isLaterEewReport(incoming: EEWAlert, seen: EEWAlert): boolean {
+  if (incoming.origin === seen.origin) {
+    const a = eewSerial(incoming)
+    const b = eewSerial(seen)
+    if (a !== null && b !== null) return a > b
+  }
+  const a = eewIssueTimeMs(incoming)
+  const b = eewIssueTimeMs(seen)
+  return a !== null && b !== null && a > b
+}
+
+/** {@link isLaterEewReport} と同じ比べ方で、古いか同じだと言えるか（どちらも言えなければ「比べられない」）。 */
+function isEarlierOrSameEewReport(incoming: EEWAlert, seen: EEWAlert): boolean {
+  if (incoming.origin === seen.origin) {
+    const a = eewSerial(incoming)
+    const b = eewSerial(seen)
+    if (a !== null && b !== null) return a <= b
+  }
+  const a = eewIssueTimeMs(incoming)
+  const b = eewIssueTimeMs(seen)
+  return a !== null && b !== null && a <= b
+}
+
+/**
+ * 発表中の緊急地震速報のウィンドウタイトル。**ライブの受信と、張り直しで初めて見る速報の復元とで同じ文にする。**
+ *
+ * 区分の名前は「発表中の EEW すべての最大レベル」から決める（この報の区分では決めない）。予報級の報を受けた瞬間に、
+ * 別に発表中の警報級が隠れてしまうため。useAlertTitle の computeEEWTitle と同じ `eewKindLabel` を使い、文言がずれないようにする。
+ */
+function eewOngoingTitleText(levels: ReadonlyMap<string, 0 | 1 | 2>, event: EEWAlert): string {
+  // 上限が定まらない報は「以上」を添える（値だけでは下限の断定になる）。
+  const { scale, orAbove } = eewMaxScaleInfo(event)
+  const titleLevel = Array.from(levels.values()).reduce<0 | 1 | 2>((m, l) => Math.max(m, l) as 0 | 1 | 2, 0)
+  return `${eewKindLabel(titleLevel)} ${event.earthquake.hypocenter.name}` +
+    (scale > 0 ? ` 最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}予想` : '') +
+    (levels.size > 1 ? ` 他${levels.size - 1}件` : '')
+}
+
 export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   const {
     settings, title, earthquakesRef, tsunamisRef, kyoshinDetectedRef, defaultTabRef,
@@ -1242,6 +1287,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    */
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+  /** 最新のタイトルの口。`settingsRef` と同じ理由で持つ（`restoreStartupEews` が読む）。 */
+  const titleRef = useRef(title)
+  titleRef.current = title
 
   // 「新規地震」として注目を移した報のキー（`eventKey:issue.type`）。
   // 同一イベント・同一種別の続報では新規扱いにせず、読み上げの冒頭を「更新されました」にする。
@@ -3831,16 +3879,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         )
       }
       // EEW タイトルをイベントデータから構築（state は未更新のため event 直接参照）
-      const newCount = activeEEWLevelsRef.current.size
-      // 区分の名前は「発表中の EEW すべての最大レベル」から決める（受信したこの報の区分では
-      // 決めない）。予報級の報を受けた瞬間に、別に発表中の警報級が隠れてしまうため。
-      // useAlertTitle の computeEEWTitle と同じ `eewKindLabel` を使い、文言がずれないようにする。
-      const titleLevel = Array.from(activeEEWLevelsRef.current.values())
-        .reduce<0 | 1 | 2>((m, l) => Math.max(m, l) as 0 | 1 | 2, 0)
-      const eewTitle = `${eewKindLabel(titleLevel)} ${event.earthquake.hypocenter.name}` +
-        (scale > 0 ? ` 最大震度${getIntensityLabelWithApproxAbove(scale, scaleOrAbove)}予想` : '') +
-        (newCount > 1 ? ` 他${newCount - 1}件` : '')
-      title.setOngoingTitle(eewTitle)
+      title.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, event))
       title.scheduleTitleRevert('eew')
 
       // VOICEVOX: 2フェーズ読み上げ
@@ -5881,16 +5920,33 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
            * 書き込みの直前に例外の余地を残さなければ、この分岐は全部書くか 1 つも書かないかに
            * なる。値を束ねたぶん `eewMaxScaleInfo` / `eewMaxLpgmClassInfo` の二度手間も消える。
            */
-          const restoredLevel = computeSingleEEWLevel(eew)
+          /**
+           * **既に記憶がある地震では、下げずに上げるだけにする**（ライブ経路と同じ向き）。
+           *
+           * ここへ記憶つきで来るのは、張り直しの復元が「ライブで見ていた地震の、切れていた間の報」を
+           * 運んできたときだけ（`restoreStartupEews`。リプレイは手前で記憶を空にしている）。ライブで
+           * その報を受けていれば、格上げの判定元（`activeEEWLevelsRef`）は `Math.max` で積まれ、
+           * 声にした区分・予想値も上がるだけで下がらない。最新報の値で上書きすると、切れる前に
+           * 声にした値より下がった報で既読が下がり、次の報で同じ値を読み直す。
+           */
+          const prevActiveLevel = activeEEWLevelsRef.current.get(key) ?? 0
+          const prevSpokenLevel = spokenEEWLevelsRef.current.get(key) ?? 0
+          const prevSpokenScale = spokenEEWScalesRef.current.get(key)
+          const prevSpokenLpgm = spokenEEWLpgmClassesRef.current.get(key)
+          const restoredLevel = Math.max(prevSpokenLevel, computeSingleEEWLevel(eew)) as 0 | 1 | 2
           // `activeEEWLevelsRef` だけは表示用レベルで復元する。**この ref だけ**ウィンドウ
           // タイトル（`title.setTitle` の無条件経路）の駆動源を兼ねており、生値のままだと
           // 特別警報の下げ止まり（`computeDisplayEEWLevel`。eew-spec.md §4）が窓をまたいだ
-          // 途中再生で効かず、カードは特別警報のままなのにタイトルだけ警報へ戻る食い違いになる。
+          // 途中再生・張り直しで効かず、カードは特別警報のままなのにタイトルだけ警報へ戻る食い違いになる。
           // 読み上げ側（`spokenEEWLevelsRef` 等）は特別警報の呼称を使わない設計なので、
           // そちらは `restoredLevel`（生値）のまま据え置く。
-          const restoredDisplayLevel = computeDisplayEEWLevel(eew)
+          const restoredDisplayLevel = Math.max(prevActiveLevel, computeDisplayEEWLevel(eew)) as 0 | 1 | 2
           const restoredScale = eewMaxScaleInfo(eew)
           const restoredLpgm = eewMaxLpgmClassInfo(eew)
+          const spokenScale = prevSpokenScale && !isForecastScaleHigher(restoredScale, prevSpokenScale)
+            ? prevSpokenScale : restoredScale
+          const spokenLpgm = prevSpokenLpgm && !isForecastLpgmHigher(restoredLpgm, prevSpokenLpgm)
+            ? prevSpokenLpgm : restoredLpgm
           const restoredRegions = eew.warningRegions?.length
             ? [...(spokenEEWRegionsRef.current.get(key) ?? []), ...eew.warningRegions]
             : null
@@ -5919,8 +5975,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 震央地名もライブ経路と同じく覚える。取消電文は名前を持たないので、覚えていないと取消の通知が
           // 名前抜きになり、「名前を引けない」の記録が毎回出る（→ `eewCancelNotificationBody`）
           rememberEewHypocenterName(eewLastHypocenterNameRef.current, key, eew.earthquake?.hypocenter?.name ?? '')
-          spokenEEWScalesRef.current.set(key, restoredScale)
-          spokenEEWLpgmClassesRef.current.set(key, restoredLpgm)
+          spokenEEWScalesRef.current.set(key, spokenScale)
+          spokenEEWLpgmClassesRef.current.set(key, spokenLpgm)
           // 区分も復元する。落とすと注入後の最初の続報で「警報。」が付き直し、
           // 途中から再生を始めた地震がその場で警報化したように聞こえる。
           spokenEEWLevelsRef.current.set(key, restoredLevel)
@@ -5958,13 +6014,24 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
            * 当たる。**窓の手前の報数・続報の中身・設定を振っても必ず 1 度は声になる**ことは
            * `useLiveEventHandler.eewTts.test.ts` が網羅で固定している。
            */
-          if (recording) {
-            // 最後に第 1 フェーズを読んだときの震源。落とすと、窓に入った最初の続報で
-            // 震源の大幅更新の判定に使う比較対象が無くなる（取消の報は上で追跡ごと捨てている）。
-            // **窓の手前の分は入れ替える（積まない）。** ここで復元したいのは「窓に入った最初の
-            // 続報が比べる相手」で、手前で実際に何を声にしたかは分からない。報ごとに積むと、
-            // 声にしていない場所まで「名乗り済み」になり、窓の中の言い直しを黙らせる。
-            if (restoredHypo !== 'keep') activeEEWAnnouncedHypocentersRef.current.set(key, [restoredHypo])
+          // 最後に第 1 フェーズを読んだときの震源。**録画モードに限らず、どの復元でも入れる**
+          // （2026-10-21 ユーザー承認「おすすめで」）。空のままだと震源の大幅更新の判定
+          // （`isUnannouncedHypocenter`）が比べる相手を持たず常に偽になり、復元した速報は、その後
+          // 震源が大きく動いても「震源を更新」を一度も言わない —— ライブで見ていれば初報で名乗った
+          // 震源と比べて言い直す（取消の報は上で追跡ごと捨てている）。
+          // **記憶が無ければ入れ替える。** ここで入れたいのは「次の続報が比べる相手」で、手前で実際に
+          // 何を声にしたかは分からない。報ごとに積むと、声にしていない場所まで「名乗り済み」になり、
+          // 復元の後の言い直しを黙らせる。
+          // **記憶がある地震（張り直しで戻した、ライブで見ていた地震）では積む。** ライブ側も名乗った震源を
+          // 全部持つ（速報の初期に震源が区域の境目を往復するため）。入れ替えると切れる前に名乗った震源が消え、
+          // そこへ戻っただけの続報で言い直す。
+          if (restoredHypo !== 'keep') {
+            const prevAnnounced = activeEEWAnnouncedHypocentersRef.current.get(key)
+            const known = prevAnnounced?.some(h => h.name === restoredHypo.name && h.lat === restoredHypo.lat && h.lng === restoredHypo.lng)
+            activeEEWAnnouncedHypocentersRef.current.set(
+              key,
+              !prevAnnounced?.length ? [restoredHypo] : known ? prevAnnounced : [...prevAnnounced, restoredHypo],
+            )
           }
           // 予想震度の付かない待ちも、ライブ経路と同じ口で進める。窓の手前でどれだけ経ったかは
           // ここでは測らず、再生を始めた時点から待ち直す（印を最初から付けると、窓の直前に届いた
@@ -6155,16 +6222,25 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    * 変わらなければ声も出ない。起動した人はこの速報を一度も聞いていないが、それを示したうえでこの形に決めた
    * （2026-10-19 ユーザー承認「いまの実装のまま」）。
    *
-   * **既に知っている地震は載せ直さない。** 接続の張り直しでも復元は走るので、その間にライブで受けて
-   * 読み上げた地震を、配信元の一覧が返す（遅れているかもしれない）報で巻き戻さないため。
-   * ただし第 1 報の時刻だけは、復元側のほうが早ければ差し替える —— ライブで最初に受けたのが
+   * **既に知っている地震は、最後に見た報より新しいときだけ記憶を進める**（2026-10-21 ユーザー承認「おすすめで」）。
+   * 張り直しでは、切れていた間の報がここへ来る。進めないと、格上げの判定元・声にした区分と予想値・名乗った震源が
+   * 切れる前のまま残り、次のライブ報で、切れていた間に出ていたはずの格上げ音・通知・「緊急地震速報に
+   * 切り替わりました」が遅れて出る（特別警報の下げ止まりもタイトルだけ効かない）。ライブで見ていれば、その報を
+   * 受けた時点で記憶は進んでいた。**進めるだけで鳴らさない** —— 鳴らすと、時刻のずれた警報になる。
+   * 一覧の報が最後に見た報より古い・同じなら触らない —— 起動の直後にライブの報が先に届いたときがこれで、
+   * 遅れているかもしれない一覧の報で巻き戻さない。進める側も、区分・予想値は上げるだけで下げない（`restoreOne`）。
+   * 第 1 報の時刻だけは、新旧によらず、復元側のほうが早ければ差し替える —— ライブで最初に受けたのが
    * 第 2 報以降なら、覚えているのはその報の時刻で、取消のときに読む時刻を誤る。
+   *
+   * **初めて知った地震にはウィンドウタイトルを付ける**（同日承認）。ライブなら受信時に付く。起動時は App の初期反映
+   * でも付くが、張り直しではそれが済んでいるので、ここで付けないと次の報までタイトルが付かない。
    *
    * **既に取消を受けた地震も載せない。** 一覧が取消の反映より遅れて発表中として返すと、
    * 終わった速報を「発表中」として帳面へ戻すことになる。
    */
   const restoreStartupEews = useCallback((eews: readonly EEWAlert[]) => {
-    const unknown: EEWAlert[] = []
+    const toRestore: EEWAlert[] = []
+    const firstSeen: EEWAlert[] = []
     for (const eew of eews) {
       const key = eewEventKey(eew)
       if (eewRetractedKeysRef.current.has(key)) continue
@@ -6174,16 +6250,51 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         if (typeof restored === 'string' && (known == null || Date.parse(restored) < Date.parse(known))) {
           eewFirstIssueTimeRef.current.set(key, restored)
         }
+        // 比べる相手が無ければ進めない（巻き戻さない側へ倒す）
+        const seen = eewTtsEventsRef.current.get(key)
+        if (!seen) continue
+        if (!isLaterEewReport(eew, seen)) {
+          // 古い・同じ報は黙って飛ばしてよい（起動の直後にライブが先着した形）。報番号も発表時刻も比べられない報だけは
+          // 記録に残す —— 画面は進むのに読み上げ側の記憶が切れる前のまま残り、次の報で格上げの知らせが遅れて出うる
+          if (!isEarlierOrSameEewReport(eew, seen)) {
+            log.warn(`[eew] 張り直しで戻した報が、最後に見た報より新しいか比べられないため、読み上げ側の記憶を進めません: key=${key}`)
+          }
+          continue
+        }
+        // **読み上げが途中（予約・発話中・安定待ち）なら進めない。** 進めると、まだ鳴っていない第 1 フェーズが
+        // 「名乗り済み」と判定されて黙り、安定待ちは確定の時点で「もう声にした値」と判定されて黙る。
+        // 進めなければ、次のライブ報で従来どおり追いつく（格上げの知らせが遅れて出る側に倒れる）
+        if (eewPhase1TokensRef.current.has(key) || eewPhase1ProgressRef.current.has(key)
+          || eewPhase2TokensRef.current.has(key)
+          || eewScaleStabilityRef.current.has(key) || eewLpgmStabilityRef.current.has(key)) {
+          log.debug(`[eew] 読み上げの途中なので、張り直しで戻した報で記憶を進めない: key=${key}`)
+          continue
+        }
+        toRestore.push(eew)
         continue
       }
-      unknown.push(eew)
+      toRestore.push(eew)
+      firstSeen.push(eew)
     }
-    if (unknown.length === 0) return
-    restoreTrackingFrom(unknown.map(eew => ({
+    if (toRestore.length === 0) return
+    restoreTrackingFrom(toRestore.map(eew => ({
       payload: { kind: 'event', event: eew },
       replayTime: serverDate(),
       silent: true,
     })), 'startup')
+    const titled = firstSeen.filter(eew => activeEEWLevelsRef.current.has(eewEventKey(eew)))
+    if (titled.length === 0) {
+      // 取消の報なら付けないのが正しい。それ以外で付かないのは、上の復元が投げて記憶へ載らなかったとき
+      if (firstSeen.some(eew => !eew.cancelled)) log.warn('[eew] 初めて知った緊急地震速報を読み上げ側へ載せられず、ウィンドウタイトルを付けませんでした（次の報で付きます）')
+      return
+    }
+    // タイトルの失敗は呼び出し元の catch（「読み上げ側へ渡せませんでした」）へ流さない。記憶は書き込み済みなので文面が事実と違う
+    try {
+      titleRef.current.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, titled[titled.length - 1]))
+      titleRef.current.scheduleTitleRevert('eew')
+    } catch (err) {
+      log.warn('[eew] 復元した緊急地震速報のウィンドウタイトルを付けられませんでした（次の報で付きます）:', err)
+    }
   }, [restoreTrackingFrom])
 
   // **タブ復帰で津波カードを先頭へ戻す口はここに置かない。** 先頭復帰は `App.tsx` の

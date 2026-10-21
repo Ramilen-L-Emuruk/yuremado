@@ -9,7 +9,7 @@ import {
   releaseSocket,
   fetchDmdataActiveEews,
   fetchDmdataEewEventList,
-  firstEewReportTime, describeFirstReportMiss,
+  firstEewReportTime, describeFirstReportMiss, gdReportSpecialWarning, gdReportsEverSpecialWarning,
   DmdataWebSocket,
   decodeTelegramText,
   needsBodyDecode,
@@ -1657,5 +1657,67 @@ describe('fetchDmdataEewEventList', () => {
   it('失敗しても投げず、集めた分を返して未完と印す', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 }) as unknown as Response))
     await expect(fetchDmdataEewEventList(KEY, FROM, TO)).resolves.toEqual({ events: [], complete: false })
+  })
+})
+
+// 起動時の復元で、途中の報で特別警報だったかを詳細の全報の予想から判定する（本文を読むのは最新報 1 通だけ）。
+// 欄の形は 2026-10-21 に能登半島地震の本震（20240101161010）の詳細で確かめた（`isWarning`・`intensity.forecastMaxInt`）
+describe('gdReportSpecialWarning', () => {
+  const report = (over: Record<string, unknown>) => ({
+    serial: 1, isWarning: true,
+    intensity: { forecastMaxInt: { from: '5+', to: '5+' }, forecastMaxLgInt: { from: '1', to: '1' } },
+    ...over,
+  })
+  // 正: 警報の報で予想震度 6 弱以上、または長周期階級 4 以上なら特別警報相当
+  it('予想震度 6 弱以上・長周期階級 4 以上の警報の報は特別警報相当', () => {
+    expect(gdReportSpecialWarning(report({ intensity: { forecastMaxInt: { from: '6-', to: '6-' } } }))).toBe(true)
+    expect(gdReportSpecialWarning(report({ intensity: { forecastMaxInt: { from: '5+', to: '5+' }, forecastMaxLgInt: { from: '4', to: '4' } } }))).toBe(true)
+    // 上限を定めない予想は下限で見る（電文の読み取りと同じ）。「6 弱以上」は特別警報相当
+    expect(gdReportSpecialWarning(report({ intensity: { forecastMaxInt: { from: '6-', to: 'over' } } }))).toBe(true)
+  })
+  // 対照: 5 強以下・長周期階級 3 以下は特別警報ではない。「5 強以上」は下限 5 強なので越えていない
+  it('予想震度 5 強以下なら特別警報ではない', () => {
+    expect(gdReportSpecialWarning(report({}))).toBe(false)
+    expect(gdReportSpecialWarning(report({ intensity: { forecastMaxInt: { from: '5+', to: 'over' }, forecastMaxLgInt: { from: '3', to: '3' } } }))).toBe(false)
+  })
+  // 安全弁: 取り消された報・予報の報は数えない
+  it('取り消された報・予報の報は数えない', () => {
+    expect(gdReportSpecialWarning(report({ isCanceled: true, intensity: { forecastMaxInt: { from: '7', to: '7' } } }))).toBe(false)
+    expect(gdReportSpecialWarning(report({ isWarning: false, intensity: { forecastMaxInt: { from: '6-', to: '6-' } } }))).toBe(false)
+  })
+  // 正: 警報の欄が欠けていても、予想震度 6 弱以上なら特別警報相当（6 弱以上の予想は警報の基準 5 弱以上を必ず越える）
+  it('警報の欄が欠けていても、線を越えた予想なら特別警報相当', () => {
+    expect(gdReportSpecialWarning({ serial: 1, intensity: { forecastMaxInt: { from: '6-', to: '6-' } } })).toBe(true)
+  })
+  // 対照: 長周期の欄が無いだけなら読めないに数えない（2023-05-05 の地震の詳細は全報に長周期の欄が無かった）。
+  // 予想震度 "0"（震度 1 未満）も読めた値
+  it('長周期の欄が無い報・予想震度 0 の報は、越えていなければ false', () => {
+    expect(gdReportSpecialWarning(report({ intensity: { forecastMaxInt: { from: '5+', to: '5+' } } }))).toBe(false)
+    expect(gdReportSpecialWarning(report({ intensity: { forecastMaxInt: { from: '0', to: '0' }, forecastMaxLgInt: { from: '0', to: '0' } } }))).toBe(false)
+  })
+  // 安全弁: 読めない報は null（「特別警報ではなかった」と言えないものを偽にしない）
+  it('警報の欄・予想震度・長周期の欄を読めない報は null', () => {
+    expect(gdReportSpecialWarning({ serial: 1, intensity: { forecastMaxInt: { from: '5+', to: '5+' } } })).toBeNull()
+    expect(gdReportSpecialWarning(report({ intensity: undefined }))).toBeNull()
+    expect(gdReportSpecialWarning(report({ intensity: { forecastMaxInt: { from: '不明', to: '不明' } } }))).toBeNull()
+    // 長周期の欄はあるのに読めない —— 長周期で越えていたかは言えない
+    expect(gdReportSpecialWarning(report({ intensity: { forecastMaxInt: { from: '5+', to: '5+' }, forecastMaxLgInt: { from: '不明', to: '不明' } } }))).toBeNull()
+  })
+})
+
+describe('gdReportsEverSpecialWarning', () => {
+  const r = (serial: number, int: string, over: Record<string, unknown> = {}) =>
+    ({ serial, isWarning: true, intensity: { forecastMaxInt: { from: int, to: int } }, ...over })
+  // 正: 途中の報で特別警報相当なら、最新報で下がっていても立つ（能登本震の第 5 報で 6 弱・第 6〜8 報で 5 強の形）
+  it('途中の 1 報でも特別警報相当なら立つ', () => {
+    expect(gdReportsEverSpecialWarning([r(1, '5+'), r(2, '6-'), r(3, '5+')])).toEqual({ special: true, unreadable: 0 })
+  })
+  // 対照: どの報も 5 強以下なら立たない
+  it('どの報も 5 強以下なら立たない', () => {
+    expect(gdReportsEverSpecialWarning([r(1, '5-'), r(2, '5+')])).toEqual({ special: false, unreadable: 0 })
+  })
+  // 安全弁: 読めない報は数を返す
+  it('読めない報の数を返す', () => {
+    expect(gdReportsEverSpecialWarning([r(1, '5+'), { serial: 2 }])).toEqual({ special: false, unreadable: 1 })
   })
 })

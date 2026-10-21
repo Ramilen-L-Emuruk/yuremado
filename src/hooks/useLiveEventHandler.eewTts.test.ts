@@ -2483,11 +2483,11 @@ describe('復元は取消の報の追跡を残さない', () => {
 })
 
 /**
- * 録画モードでは、窓の手前（`restorePreWindowTracking`）で告知した震源も復元する。
+ * 窓の手前（`restorePreWindowTracking`）で告知した震源も復元する（録画モードに限らない。2026-10-21 ユーザー承認「おすすめで」）。
  *
  * **これは既読の復元と向きが逆で、読み上げを増やす側。** 復元しないと「震源名が変わったか」の
- * 比較対象が無く、区間の境目で震源が 50km 超動いても言い直さない —— 前の区間で旧震源を聞いた
- * 視聴者には、震源が黙って入れ替わったように見える。
+ * 比較対象が無く、震源が 50km 超動いても言い直さない —— 録画なら前の区間で旧震源を聞いた
+ * 視聴者に、震源が黙って入れ替わったように見える。ライブで見ていれば言い直していた。
  *
  * **誤報取消の識別（`eewRetractedKeysRef`）はここで固定していない。** 効くのは「取消のあとに
  * その EEW の報が届く」異常系だけで、正常な運用では起きない（→ eew-spec.md §10）。
@@ -2508,15 +2508,16 @@ describe('録画モードの既読復元（緊急地震速報の震源）', () =
     expect(spokenTexts().some(t => t.includes('震源を更新'))).toBe(true)
   })
 
-  // 対照: 録画モードでなければ比較対象を持たないので言い直さない
-  //（窓から聞き始めた視聴者は旧震源を一度も聞いていない）。
-  it('録画モードでなければ、窓の手前の震源とは比べない', async () => {
+  // 正（意図的に覆した）: 録画モードでなくても、窓の手前の震源と比べて言い直す。以前は「窓から聞き始めた
+  // 視聴者は旧震源を一度も聞いていない」として比べなかったが、それだと復元した速報はその後震源が大きく動いても
+  // 一度も言い直さない。ライブで見ていた場合と同じ動きにそろえた（2026-10-21 ユーザー承認「おすすめで」）。
+  it('録画モードでなくても、窓の手前の震源からの大幅更新を言い直す', async () => {
     const { handleLiveEvent, restore } = setupFull()
     restore(preWindow(makeEEW({ scaleTo: 50 })))
     handleLiveEvent(makeEEW({ serial: 2, scaleTo: 50, hypocenter: { name: '種子島近海', latitude: 30.5, longitude: 131.0 } }))
     await vi.advanceTimersByTimeAsync(2000)
     await flushMicrotasks()
-    expect(spokenTexts().some(t => t.includes('震源を更新'))).toBe(false)
+    expect(spokenTexts().some(t => t.includes('震源を更新'))).toBe(true)
   })
 
   // 安全弁: 復元しても、震源が動いていなければ言い直さない。
@@ -3030,6 +3031,194 @@ describe('いま声が語っているカードの配線', () => {
 
       expect(spokenTexts().filter(t => t.includes('取り消されました')).length).toBe(before)
     })
+  })
+
+  // 張り直しの復元が、ライブで見ていた地震の「切れていた間の報」を運んできたとき（2026-10-21 ユーザー承認「おすすめで」）。
+  // ライブで受けていれば、その報の時点で格上げ音・通知が出て記憶が進む。復元は鳴らさずに記憶だけ進め、
+  // 次のライブ報でそれが遅れて出ないようにする。
+  describe('張り直しで戻した、ライブで見ていた地震の報', () => {
+    const missed = (over: Parameters<typeof makeEEW>[0], extra: Partial<EEWAlert> = {}): EEWAlert => ({
+      ...makeEEW({ eventId: 'evt-K', ...over }),
+      firstIssueTime: '2026-01-01T03:40:00Z',
+      ...extra,
+    })
+    const notifiedTitles = () => vi.mocked(showBrowserNotification).mock.calls.map(c => c[0])
+
+    // 正: 予報で見ていて、切れていた間に警報へ上がった。次の報で警報の通知を出し直さない
+    it('切れていた間に警報へ上がった報を戻すと、次の報で警報の通知を出さない', async () => {
+      const handle = setup({ soundEnabled: true, notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ eventId: 'evt-K', serial: 1, severity: 'Forecast', scaleTo: 40, issueTime: '2026-01-01T03:40:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+      act(() => { capturedResult!.restoreStartupEews([missed({ serial: 2, severity: 'Warning', scaleTo: 50, issueTime: '2026-01-01T03:41:00Z' })]) })
+      vi.mocked(showBrowserNotification).mockClear()
+      vi.mocked(playAlertSound).mockClear()
+      speakMock.mockClear()
+      handle(makeEEW({ eventId: 'evt-K', serial: 3, severity: 'Warning', scaleTo: 50, issueTime: '2026-01-01T03:42:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(notifiedTitles()).toEqual([])
+      expect(vi.mocked(playAlertSound).mock.calls.map(c => c[0])).toEqual(['eewUpdate'])
+      expect(spokenTexts().some(t => t.includes('切り替わりました'))).toBe(false)
+    })
+
+    // 対照: 戻さなければ、次の報が格上げとして扱われ、警報の通知が遅れて出る（直す前の形）
+    it('戻さなければ、次の報で警報の通知が出る', async () => {
+      const handle = setup({ soundEnabled: true, notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ eventId: 'evt-K', serial: 1, severity: 'Forecast', scaleTo: 40, issueTime: '2026-01-01T03:40:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+      vi.mocked(showBrowserNotification).mockClear()
+      handle(makeEEW({ eventId: 'evt-K', serial: 3, severity: 'Warning', scaleTo: 50, issueTime: '2026-01-01T03:42:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(notifiedTitles()).toEqual(['緊急地震速報 警報'])
+    })
+
+    // 安全弁: 一覧の報がライブで最後に見た報より古ければ触らない（起動直後にライブが先に届いた形）
+    it('ライブで見た報より古い報では、記憶を進めない', async () => {
+      const handle = setup({ soundEnabled: true, notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ eventId: 'evt-K', serial: 2, severity: 'Forecast', scaleTo: 40, issueTime: '2026-01-01T03:41:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+      act(() => { capturedResult!.restoreStartupEews([missed({ serial: 1, severity: 'Warning', scaleTo: 50, issueTime: '2026-01-01T03:40:00Z' })]) })
+      vi.mocked(showBrowserNotification).mockClear()
+      handle(makeEEW({ eventId: 'evt-K', serial: 3, severity: 'Warning', scaleTo: 50, issueTime: '2026-01-01T03:42:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(notifiedTitles()).toEqual(['緊急地震速報 警報'])
+    })
+
+    // 正: 切れていた間に特別警報になって下がった速報。次の報が 6 弱でも特別警報の通知を出し直さない
+    // （ライブで見ていれば、下げ止まりで特別警報のまま続いている）
+    it('切れていた間に特別警報だった報を戻すと、次の 6 弱で特別警報の通知を出さない', async () => {
+      const handle = setup({ soundEnabled: true, notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ eventId: 'evt-K', serial: 1, scaleTo: 50, issueTime: '2026-01-01T03:40:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+      act(() => {
+        capturedResult!.restoreStartupEews([
+          missed({ serial: 3, scaleTo: 50, issueTime: '2026-01-01T03:42:00Z' }, { everSpecialWarning: true }),
+        ])
+      })
+      vi.mocked(showBrowserNotification).mockClear()
+      handle(makeEEW({ eventId: 'evt-K', serial: 4, scaleTo: 55, issueTime: '2026-01-01T03:43:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(notifiedTitles()).toEqual([])
+    })
+
+    // 安全弁: 進めても、格上げの判定元は下げない。ライブで特別警報まで受けた地震で、戻した報が
+    // （特別警報の印を運ばずに）警報だったとき、次の 6 弱で特別警報の通知を出し直さない
+    it('戻した報が低くても、格上げの判定元を下げない', async () => {
+      const handle = setup({ soundEnabled: true, notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ eventId: 'evt-K', serial: 1, scaleTo: 55, issueTime: '2026-01-01T03:40:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+      act(() => { capturedResult!.restoreStartupEews([missed({ serial: 2, scaleTo: 50, issueTime: '2026-01-01T03:41:00Z' })]) })
+      vi.mocked(showBrowserNotification).mockClear()
+      handle(makeEEW({ eventId: 'evt-K', serial: 3, scaleTo: 55, issueTime: '2026-01-01T03:42:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(notifiedTitles()).toEqual([])
+    })
+
+    // 安全弁: 進めても、声にした予想値は下げない。切れる前に 5 強を声にした地震で、戻した報が 5 弱でも、
+    // 次の 5 強を読み直さない
+    it('戻した報が低くても、声にした予想値を下げない', async () => {
+      const handle = setup()
+      handle(makeEEW({ eventId: 'evt-K', serial: 1, scaleTo: 50, issueTime: '2026-01-01T03:40:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+      const before = spokenTexts().filter(t => t.includes('5強')).length
+      expect(before).toBeGreaterThan(0)
+      act(() => { capturedResult!.restoreStartupEews([missed({ serial: 2, scaleTo: 45, issueTime: '2026-01-01T03:41:00Z' })]) })
+      handle(makeEEW({ eventId: 'evt-K', serial: 3, scaleTo: 50, issueTime: '2026-01-01T03:42:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(spokenTexts().filter(t => t.includes('5強')).length).toBe(before)
+    })
+
+    // 安全弁: 読み上げの途中（第 1 フェーズがまだ鳴っていない）なら進めない。進めると初報の名乗りが黙る
+    it('読み上げの途中に戻した報では記憶を進めず、初報の名乗りを鳴らす', async () => {
+      const handle = setup()
+      handle(makeEEW({ eventId: 'evt-K', serial: 1, severity: 'Forecast', scaleTo: 40, issueTime: '2026-01-01T03:40:00Z' }))
+      act(() => { capturedResult!.restoreStartupEews([missed({ serial: 2, severity: 'Warning', scaleTo: 50, issueTime: '2026-01-01T03:41:00Z' })]) })
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(spokenTexts().some(t => t.endsWith('日向灘で地震。'))).toBe(true)
+    })
+
+    // 安全弁: 名乗った震源は積む。切れる前に名乗った震源へ戻っただけの報で「震源を更新」と言わない
+    it('戻した報の震源を、切れる前に名乗った震源に積む', async () => {
+      const handle = setup()
+      handle(makeEEW({ eventId: 'evt-K', serial: 1, scaleTo: 50, issueTime: '2026-01-01T03:40:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+      act(() => {
+        capturedResult!.restoreStartupEews([
+          missed({ serial: 2, scaleTo: 50, issueTime: '2026-01-01T03:41:00Z', hypocenter: { name: '種子島近海', latitude: 30.5, longitude: 131.0 } }),
+        ])
+      })
+      speakMock.mockClear()
+      handle(makeEEW({ eventId: 'evt-K', serial: 3, scaleTo: 50, issueTime: '2026-01-01T03:42:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(spokenTexts().some(t => t.includes('震源を更新'))).toBe(false)
+    })
+
+    // 正: 初めて知った地震にはタイトルを付ける。見ていた地震の報だけなら付け直さない
+    it('初めて知った地震にだけ、復元でウィンドウタイトルを付ける', async () => {
+      const handle = setup()
+      const title = capturedTitle as unknown as { setOngoingTitle: ReturnType<typeof vi.fn> }
+      act(() => { capturedResult!.restoreStartupEews([missed({ eventId: 'evt-N', serial: 2, issueTime: '2026-01-01T03:41:00Z' })]) })
+      expect(title.setOngoingTitle.mock.calls.map(c => c[0])).toEqual(['緊急地震速報 日向灘 最大震度5弱予想'])
+
+      handle(makeEEW({ eventId: 'evt-K', serial: 1, issueTime: '2026-01-01T03:40:00Z' }))
+      title.setOngoingTitle.mockClear()
+      act(() => { capturedResult!.restoreStartupEews([missed({ serial: 2, issueTime: '2026-01-01T03:41:00Z' })]) })
+      expect(title.setOngoingTitle).not.toHaveBeenCalled()
+    })
+  })
+
+  // 復元した速報の「名乗った震源」（2026-10-21 ユーザー承認「おすすめで」）。空のままだと、その後震源が
+  // 大きく動いても「震源を更新」を一度も言わない。
+  describe('復元した速報の震源の言い直し', () => {
+    const restoredR = (): EEWAlert => ({
+      ...makeEEW({ eventId: 'evt-R', serial: 3, issueTime: '2026-01-01T03:44:00Z' }),
+      firstIssueTime: '2026-01-01T03:40:00Z',
+    })
+
+    // 正: 復元の後、震源が大きく動いた続報で「震源を更新」と言う
+    it('復元の後に震源が大きく動いたら「震源を更新」と言う', async () => {
+      const handle = setup()
+      act(() => { capturedResult!.restoreStartupEews([restoredR()]) })
+      handle(makeEEW({ eventId: 'evt-R', serial: 4, issueTime: '2026-01-01T03:45:00Z', hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2 } }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(spokenTexts().some(t => t.startsWith('震源を更新、石川県能登地方'))).toBe(true)
+    })
+
+    // 対照: 震源が動かなければ言わない（復元後の続報は続報のまま）
+    it('震源が動かなければ「震源を更新」と言わない', async () => {
+      const handle = setup()
+      act(() => { capturedResult!.restoreStartupEews([restoredR()]) })
+      handle(makeEEW({ eventId: 'evt-R', serial: 4, issueTime: '2026-01-01T03:45:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(spokenTexts().some(t => t.includes('震源を更新'))).toBe(false)
+    })
+    // リプレイの初期状態から続く速報は「録画モードの既読復元（緊急地震速報の震源）」が固定している
   })
 
   // 安全弁: 時間軸が変わったら印ごと落とす。**これを呼び忘れても画面が光り続けるだけで

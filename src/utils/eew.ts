@@ -1044,9 +1044,16 @@ export function eewKindLabel(level: 0 | 1 | 2): string {
 
 export function computeSingleEEWLevel(eew: EEWAlert): 0 | 1 | 2 {
   if (eew.severity !== 'Warning') return 0
-  const isSpecialByIntensity = eewMaxScale(eew) >= 55
-  const isSpecialByLpgm = eewMaxLpgmClass(eew) >= 4
-  return (isSpecialByIntensity || isSpecialByLpgm) ? 2 : 1
+  return isSpecialWarningForecast(eewMaxScale(eew), eewMaxLpgmClass(eew)) ? 2 : 1
+}
+
+/**
+ * 警報の報が特別警報相当か（予想震度 6 弱以上か、予想長周期地震動階級 4 以上）。**線引きはここだけに置く** ——
+ * 電文から組み立てた報（{@link computeSingleEEWLevel}）と、起動時の復元が読む詳細の各報（`services/dmdata.ts` の
+ * `gdReportSpecialWarning`）の 2 か所が同じ線を使う。
+ */
+export function isSpecialWarningForecast(maxScale: number, maxLpgmClass: number): boolean {
+  return maxScale >= 55 || maxLpgmClass >= 4
 }
 
 /**
@@ -1074,10 +1081,9 @@ export function computeDisplayEEWLevel(eew: EEWAlert): 0 | 1 | 2 {
  * 唯一の計算場所——複数の呼び出し元（ライブ受信・起動時復元・リプレイの初期状態復元）が
  * それぞれ独自に判定を書くと、経路によって下げ止まりの有無が食い違う。
  *
- * **起動時復元は完全ではない。** DMDATA の `/v2/gd/eew` は地震ごとに最新報 1 通しか返さない
- * （`fetchDmdataActiveEews`）ため、渡せるのがその 1 通だけの経路では、過去のどこかの報で
- * 特別警報だった事実そのものを取得できない。全報が揃うのはライブ受信の継続中と、
- * 窓内の全電文を持つリプレイの初期状態復元だけ。
+ * **起動時復元が本文を読むのは最新報 1 通だけ**（`fetchDmdataActiveEews`）なので、過去のどこかの報で特別警報だった
+ * 事実は、詳細（`/v2/gd/eew/{eventId}`）の全報が持つ予想から判定して `everSpecialWarning` に載せてから渡している
+ * （`services/dmdata.ts` の `gdReportsEverSpecialWarning`）。ここはその印も見るので、渡されるのが 1 通でも下げ止まりは保たれる。
  */
 export function computeEverSpecialWarningEventIds(eews: readonly EEWAlert[]): ReadonlySet<string> {
   const ids = new Set<string>()

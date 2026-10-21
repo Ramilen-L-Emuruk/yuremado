@@ -138,7 +138,7 @@ const EEW_AREA_ARRIVED_CONDITION = '既に主要動到達と推測'
  * 最大震度7として塗られ・読み上げられる。上限には下限側の値を採り、「以上」は
  * フラグで持ち越して表示・読み上げで語を補う（P2PQuake の `scaleTo: 99` と同じ扱い）。
  */
-function parseForecastInt(range: Record<string, unknown>): { scale: IntensityScale; orAbove: boolean } {
+export function parseForecastInt(range: Record<string, unknown>): { scale: IntensityScale; orAbove: boolean } {
   const fromStr = str(range.from)
   const toStr = str(range.to)
   if (toStr === DMDATA_INTENSITY_OVER) {
@@ -167,7 +167,7 @@ function parseForecastInt(range: Record<string, unknown>): { scale: IntensitySca
  * （震度側は対応済みだったのに長周期側だけ抜けていた）。上限には下限側の値を採り、
  * 「程度以上」はフラグで持ち越して表示・読み上げで語を補う。
  */
-function parseForecastLgInt(
+export function parseForecastLgInt(
   range: Record<string, unknown>,
 ): { cls: LpgmClass | undefined; over: boolean; belowClass1: boolean } {
   const fromStr = str(range.from)

@@ -91,6 +91,46 @@ describe('fetchDmdataActiveEews の第 1 報の時刻', () => {
     expect(warnings().some(w => w.includes('第 1 報の発表時刻を拾えませんでした'))).toBe(true)
   })
 
+  // 途中の報で特別警報だったか（`everSpecialWarning`）は、本文を読む最新報ではなく詳細の全報の予想から載せる。
+  // 載せないと、途中で予想震度 6 弱以上になり最新報で下がった速報が、起動時に「警報」として戻る（特別警報の下げ止まりが効かない）
+  describe('途中の報の特別警報を載せる', () => {
+    const items = (ints: string[], over: (i: number) => Record<string, unknown> = () => ({})) => ints.map((int, i) => ({
+      serial: i + 1, dateTime: jst(serverNow() - (ints.length - i) * 5_000), isCanceled: false, isWarning: true,
+      intensity: { forecastMaxInt: { from: int, to: int } },
+      telegrams: [{ id: `xml-${i + 1}`, head: { type: 'VXSE45', test: false } }],
+      ...over(i),
+    }))
+
+    // 正: 第 2 報で 6 弱、最新の第 3 報で 5 強に下がった速報を戻すと、特別警報の印が立つ
+    it('途中の報が特別警報相当なら、最新報で下がっていても印を立てる', async () => {
+      const id = '20261021130000'
+      stub(id, items(['5+', '6-', '5+']), eewXml(id, 3, jst(serverNow() - 5_000)))
+      const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+      expect(got).toHaveLength(1)
+      expect(got[0].everSpecialWarning).toBe(true)
+    })
+
+    // 対照: どの報も 5 強以下なら立てない
+    it('どの報も 5 強以下なら印を立てない', async () => {
+      const id = '20261021130001'
+      stub(id, items(['5-', '5+', '5+']), eewXml(id, 3, jst(serverNow() - 5_000)))
+      const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+      expect(got).toHaveLength(1)
+      expect(got[0].everSpecialWarning).toBeFalsy()
+    })
+
+    // 安全弁: 取り消された報の 6 弱は数えない。読めない報は記録に残す
+    it('取り消された報は数えず、読めない報は記録に残す', async () => {
+      const id = '20261021130002'
+      stub(id, items(['5+', '6-', '5+'], (i) => i === 1 ? { isCanceled: true } : i === 0 ? { intensity: undefined } : {}),
+        eewXml(id, 3, jst(serverNow() - 5_000)))
+      const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+      expect(got).toHaveLength(1)
+      expect(got[0].everSpecialWarning).toBeFalsy()
+      expect(warnings().some(w => w.includes('特別警報だったかを判定できない報が 1 通'))).toBe(true)
+    })
+  })
+
   // 解除済みかは、取り始めた時刻ではなく取り終えた時刻で判定する。一覧と詳細を順に取る間に解除の時刻を過ぎた
   // 最終報を「発表中」として返すと、受け手が終わった速報を戻す
   describe('解除済みかは取り終えた時刻で判定する', () => {
