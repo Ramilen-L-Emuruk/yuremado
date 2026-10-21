@@ -571,6 +571,53 @@ describe('EEW 読み上げの文言と発話順序', () => {
     expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。', '深発地震のため、予想震度なし。'])
   })
 
+  // 最大予想震度 0（震度0）は値が出ている報。理由不明の待ちに入れず、理由を添えずに読む（→ eew-spec.md §4）。
+  describe('最大予想震度 0（震度0）', () => {
+    const below1 = (o: Parameters<typeof makeEEW>[0]) => ({ ...makeEEW(o), forecastMaxScaleBelow1: true as const })
+
+    // 正: 時間を進めずに理由なしの「予想震度なし」まで出る
+    it('待たずに理由を添えず「予想震度なし」と読む', async () => {
+      const handle = setup()
+      handle(below1({ noAreas: true }))
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。', '予想震度なし。'])
+    })
+
+    // 対照: 印が無ければ従来どおり待つ（時間を進めないうちは第 2 フェーズを読まない）
+    it('印の無い「予想なし」の報は待つ', async () => {
+      const handle = setup()
+      handle(makeEEW({ noAreas: true }))
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。'])
+    })
+
+    // 安全弁: 待ちの最中に震度0 の続報が来たら待ちを打ち切り、上限が後から発火しても二重に読まない
+    it('待機中に震度0 の続報が来たら打ち切り、二重に読まない', async () => {
+      const handle = setup()
+      handle(makeEEW({ noAreas: true }))
+      await flushMicrotasks()
+      await vi.advanceTimersByTimeAsync(1000)
+      handle(below1({ serial: 2, noAreas: true }))
+      await flushMicrotasks()
+      expect(spokenTexts()).toContain('予想震度なし。')
+      await vi.advanceTimersByTimeAsync(10000)
+      await flushMicrotasks()
+      expect(spokenTexts().filter(t => t.includes('予想震度なし'))).toHaveLength(1)
+    })
+
+    // 0 → 1 の続報は引き上げとして言い直す（実電文 13 地震のうち 7 地震がこの形）
+    it('震度0 の後に震度1 の続報が来たら言い直す', async () => {
+      const handle = setup()
+      handle(below1({ noAreas: true }))
+      await flushMicrotasks()
+      speakMock.mockClear()
+      handle(makeEEW({ serial: 2, scaleTo: 10 }))
+      await vi.advanceTimersByTimeAsync(2000)
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['予想最大震度1。'])
+    })
+  })
+
   // 待たずに「なし」を読んだ後で震源が確定し、値が付くことはある。引き上げ扱いで言い直す。
   it('待たずに「予想震度なし」を読んだ後、続報に値が付いたら言い直す', async () => {
     const handle = setup()

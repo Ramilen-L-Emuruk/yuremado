@@ -286,6 +286,15 @@ describe('eewIntensityToText: 長周期地震動階級の読み上げ', () => {
       .toContain('深発地震のため、予想震度なし。')
   })
 
+  // 最大予想震度 0 の報は値が出ているので、仮定震源要素・深発でも理由を添えない
+  // （→ eew-spec.md §4）。読む文は理由の判らないときと同じ。
+  it('最大予想震度 0 の報は理由を添えずに「予想震度なし」と読む', () => {
+    const below1 = (o: Parameters<typeof makeEEW>[1]) => ({ ...makeEEW(undefined, o), forecastMaxScaleBelow1: true as const })
+    expect(eewIntensityToText(below1({}))).toBe('予想震度なし。')
+    expect(eewIntensityToText(below1({ depth: 400 }))).toBe('予想震度なし。')
+    expect(eewIntensityToText(below1({ condition: '仮定震源要素' }))).toBe('予想震度なし。')
+  })
+
   // 上限が定まらない報（DMDATA の to='over' / P2PQuake の scaleTo=99）は下限側の階級を持つ。
   // 語を落とすと「震度4程度以上」を「震度4」と断定した放送になる。
   // **語は気象庁の表現に合わせてある**（→ `getIntensityLabelWithApproxAbove`）。
