@@ -20,7 +20,7 @@
 // **投げない。** 取れなかった理由は結果の `problem` と取れなかった日（地震情報は `failedDays`、秒まで寄せる
 // 材料は `refineFailedDays`）に入れる。
 
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { extractDailyHypocenterRows, parseDailyHypocenterLine } from '../../../scripts/hypocenterDailyRecord'
@@ -28,6 +28,7 @@ import { authHeader, dmdataApiKeyProblem } from '../../../src/utils/dmdataApiKey
 import type { P2pReferenceQuake } from '../detection/p2pQuake'
 import { fetchQuakeHistory, JMA_QUAKE_REQUEST_INTERVAL_MS } from '../detection/quakeHistory'
 import { REFINE_TIME_MARGIN_MS, refineQuake, type EewOrigin, type HypocenterRow, type RecordQuake } from '../detection/quakeRefine'
+import { lockTolerantRename } from './lockTolerantRename'
 
 /** 1 回に頼める範囲の広さ。 */
 export const RECORD_QUAKES_RANGE_MAX_MS = 7 * 24 * 3_600_000
@@ -270,7 +271,7 @@ export class RecordQuakes {
       await mkdir(join(this.deps.dir, source), { recursive: true })
       const tmp = `${path}.tmp`
       await writeFile(tmp, JSON.stringify({ v: FORMAT_VERSION, fetchedAtMs, data } satisfies DayFile<T>))
-      await rename(tmp, path)
+      await lockTolerantRename(tmp, path)
     } catch (error) {
       // **書けなくても答えは返す**（控えに残らないだけ。次も取りに行くことになる）。
       console.warn(`[record-quakes] 控えを書けなかった（${source}/${key}）: ${messageOf(error)}`)

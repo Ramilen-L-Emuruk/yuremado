@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,6 +15,9 @@ import {
   sameIdentity,
 } from './storageMigration'
 import { STORAGE_KINDS } from './hostSettings'
+// 保存先のフォルダを「見えなくする」改名も本番と同じ口を通す。書いた直後のファイルを外のプロセスが
+// 一瞬掴むと、素の renameSync は EPERM で落ちる（全件並列で 2026-10-13〜10-15 に 4 回。lockTolerantRename.ts）。
+import { lockTolerantRenameSync } from './lockTolerantRename'
 
 let base: string
 let from: string
@@ -507,7 +510,7 @@ describe('保存先のフォルダそのものが見えないとき', () => {
     await m.load()
     await m.pass()
     const away = join(base, 'away')
-    renameSync(to, away)
+    lockTolerantRenameSync(to, away)
     const r = await m.purge()
     expect(r.files).toBe(0)
     expect(existsSync(join(from, 'raw', '2026-10-01', 'raw-2026-10-01T00.mseed3'))).toBe(true)
@@ -516,7 +519,7 @@ describe('保存先のフォルダそのものが見えないとき', () => {
     expect(m.snapshot()!.purgeable?.files).toBe(4)
     // 帳面の保存で置き場所を作り直していない
     expect(existsSync(to)).toBe(false)
-    renameSync(away, to)
+    lockTolerantRenameSync(away, to)
     // 戻れば全部を承認し直せる（「合わない」「消した」と記録していない）
     const again = make()
     await again.load()
@@ -532,7 +535,7 @@ describe('保存先のフォルダそのものが見えないとき', () => {
     await m.load()
     await m.pass()
     const away = join(base, 'away')
-    renameSync(from, away)
+    lockTolerantRenameSync(from, away)
     await m.purge()
     expect(m.snapshot()!.state).toBe('purging')
     expect(m.snapshot()!.purgeable?.files).toBe(4)
@@ -600,13 +603,13 @@ describe('複製をやめる', () => {
   it('対照: 見つからなかった後で前の保存先が戻っていれば、押されてもやめない', async () => {
     await begin(to, from, 1000)
     const away = join(base, 'away')
-    renameSync(from, away)
+    lockTolerantRenameSync(from, away)
     const m = make()
     await m.load()
     await m.pass()
     expect(m.snapshot()!.sourceMissing).toBe(true)
     // 画面は直近の回の印を見て出している。押されるまでの間に戻った
-    renameSync(away, from)
+    lockTolerantRenameSync(away, from)
     expect(await m.abandon()).toBe(false)
     expect(m.isCopying()).toBe(true)
     expect(m.snapshot()!.sourceMissing).toBe(false)
@@ -638,7 +641,7 @@ describe('複製をやめる', () => {
     put(to, 'raw/2026-10-01/raw-2026-10-01T00.mseed3', 'RAW0')
     await begin(to, from, 1000)
     const away = join(base, 'away')
-    renameSync(from, away)
+    lockTolerantRenameSync(from, away)
     const m = make()
     await m.load()
     await m.pass()
@@ -831,11 +834,11 @@ describe('複製元が見つからないとき', () => {
   it('正: 複製元が戻れば、次の回で続きを複製する', async () => {
     await begin(to, from, 1000)
     const moved = join(base, 'away')
-    renameSync(from, moved)
+    lockTolerantRenameSync(from, moved)
     const m = make()
     await m.load()
     expect(await m.pass()).toBe(false)
-    renameSync(moved, from)
+    lockTolerantRenameSync(moved, from)
     expect(await m.pass()).toBe(true)
     expect(m.snapshot()!.doneFiles).toBe(4)
   })

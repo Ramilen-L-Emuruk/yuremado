@@ -14,8 +14,9 @@
 // **環境変数（`SEISMO_RAW_DIR` ほか 4 つ）が 1 つでもあれば、そちらを使う。** 従来の起動方法を壊さない。
 // そのときは画面からは変えられない（`locked`）。
 
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { dirname, isAbsolute, join, posix, win32 } from 'node:path'
+import { lockTolerantRenameSync } from './lockTolerantRename'
 
 export const HOST_SETTINGS_FILE = 'host-settings.json'
 
@@ -254,5 +255,5 @@ export function writeHostSettings(path: string, settings: HostSettings): void {
   } finally {
     closeSync(fd)
   }
-  renameSync(tmp, path)
+  lockTolerantRenameSync(tmp, path)
 }
