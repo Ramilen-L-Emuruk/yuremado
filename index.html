@@ -26,11 +26,11 @@
     <meta name="apple-mobile-web-app-title" content="揺れ窓" />
     <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
     <!--
-      SEC-5: PNG 不在のため apple-touch-icon も SVG に指定するが、iOS Safari の apple-touch-icon は
-      仕様上 PNG 前提であり SVG が使われるかは未確定（実機検証が必要）。iOS のホーム画面追加で
-      アイコンが正しく表示されない可能性があるため、根本対応には `icons/` に実 PNG を追加する必要がある。
+      iOS のホーム画面は apple-touch-icon に PNG を前提とする（SVG が使われる保証は無い）。
+      icon.svg から scripts/build-app-icons.mjs で焼いた 180×180 を渡す。角は iOS が丸めるので、
+      背景を全面に塗った版にしてある（透明の角を残すと黒く埋まる）。
     -->
-    <link rel="apple-touch-icon" href="./icons/icon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-180.png" />
     <title>揺れ窓</title>
   </head>
   <body>
