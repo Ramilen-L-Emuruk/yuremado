@@ -45,7 +45,7 @@ import notoHonshinQuake from '../data/noto-honshin-2024-quake.json'
 import { extractQuakeEventId } from './quakeMerge'
 import { eewAreas, eewMaxScale, eewNoForecastReason, isEewAreaArrived } from './eew'
 import { extractQuakeEventIdFromId } from './quakeMerge'
-import { hasObservedHeightLowered, foldTsunamiReports, isObservationMissing, isPartialTsunamiRetraction, isSameTsunamiEvent, matchesArea, refoldTsunamiWithout } from './tsunami'
+import { hasObservedHeightLowered, changedObservationFields, collectTideEntries, tideReportChange, foldTsunamiReports, isObservationMissing, isPartialTsunamiRetraction, isSameTsunamiEvent, matchesArea, refoldTsunamiWithout } from './tsunami'
 import { linkTsunamiSources } from './tsunamiSourceLinks'
 import { applyLiveLpgm } from './lpgmRetraction'
 
@@ -1867,5 +1867,83 @@ describe('変化の小さい続報テストの 7 段目', () => {
     const reports = run()
     expect(reports[5].observations?.every(o => o.offshore)).toBe(true)
     expect(reports[6].observations?.some(o => !o.offshore)).toBe(true)
+  })
+})
+
+// 設定タブ「変化の小さい続報テスト」の 8 段目（電文の印だけが動いた報）と 12 段目（到達予想時刻だけが
+// 動いた満潮時刻の報）。**どちらも空振りしても画面は黙るか「変わりはありません」と読むだけ**なので、
+// 段を作った時点で判定が立つことを確かめておく。
+describe('変化の小さい続報テストの電文の印と到達予想時刻の段', () => {
+  beforeEach(() => { vi.useFakeTimers({ now: new Date('2026-09-12T12:34:56Z').getTime() }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  const run = () => {
+    const base = createTestTsunami(true)
+    const steps = createTestTsunamiQuietReportSteps(base)
+    const reports: JMATsunami[] = []
+    let prev = base
+    for (const step of steps) { prev = step(prev); reports.push(prev) }
+    return reports
+  }
+
+  // 正: 8 段目のいわき市小名浜は値を持たないのに、電文の印で第1波と波高の両方が光る
+  it('8 段目は値を持たない観測点に電文の印だけを載せ、両方の項目に印が付く', () => {
+    const reports = run()
+    const o = reports[7].observations?.find(x => x.name === 'いわき市小名浜')
+    expect(o?.height).toBeUndefined()
+    expect(o?.arrivalTime).toBeUndefined()
+    const f = changedObservationFields(o!, undefined, undefined, new Map())
+    expect(f.has('firstWave')).toBe(true)
+    expect(f.has('height')).toBe(true)
+  })
+
+  // 正: 12 段目は満潮時刻も到達状況も据え置きで、到達予想時刻だけが動く
+  it('12 段目は到達予想時刻だけが動いた報として判定される', () => {
+    const reports = run()
+    const spoken = collectTideEntries(reports[10].areas)
+    expect(tideReportChange(reports[11].areas, spoken)).toBe('arrivalTime')
+  })
+
+  // 対照: 最後の段は何も動かない
+  it('13 段目は何も動かない', () => {
+    const reports = run()
+    expect(reports).toHaveLength(13)
+    const spoken = collectTideEntries(reports[11].areas)
+    expect(tideReportChange(reports[12].areas, spoken)).toBe('none')
+  })
+})
+
+// 観測情報の段は前の段の電文の印（Revise）を持ち越さない。持ち越すと、画面は電文の印でも項目に印を
+// 付けるので、「変化なし」の段まで全行が光る（実電文は値を持つ観測点の再送に印を残さない）。
+describe('変化の小さい続報テストの段は電文の印を持ち越さない', () => {
+  beforeEach(() => { vi.useFakeTimers({ now: new Date('2026-09-12T12:34:56Z').getTime() }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  const run = () => {
+    const base = createTestTsunami(true)
+    const steps = createTestTsunamiQuietReportSteps(base)
+    const reports: JMATsunami[] = []
+    let prev = base
+    for (const step of steps) { prev = step(prev); reports.push(prev) }
+    return reports
+  }
+  const withRevise = (r: JMATsunami) =>
+    (r.observations ?? []).filter(o => o.firstHeightRevise || o.maxHeightRevise).map(o => o.name)
+
+  // 正: 4 通目（第1波の訂正）で印を持つのは訂正した室蘭港だけ
+  it('4 通目は室蘭港だけが印を持つ', () => {
+    expect(withRevise(run()[3])).toEqual(['室蘭港'])
+  })
+
+  // 対照: 6 通目（変化なし）と 7 通目（波高が下がった報）はどの観測点も印を持たない
+  it('6 通目と 7 通目はどの観測点も印を持たない', () => {
+    const reports = run()
+    expect(withRevise(reports[5])).toEqual([])
+    expect(withRevise(reports[6])).toEqual([])
+  })
+
+  // 安全弁: 8 通目は印を立てた観測点（いわき市小名浜）だけが持つ
+  it('8 通目はいわき市小名浜だけが印を持つ', () => {
+    expect(withRevise(run()[7])).toEqual(['いわき市小名浜'])
   })
 })

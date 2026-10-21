@@ -196,7 +196,7 @@ function makeTsunamiObsUpdate(): JMATsunami {
  * 2024-01-02 00:51 の舞鶴・玄海町仮屋と同じ形（→ `utils/tsunami.ts` の `hasMaxHeightTimeAdvanced`）。
  * 値が動かないので、波高だけを見る仕組みでは「変化なし」に見える。
  */
-function makeTsunamiMaxHeightTimeUpdate(over: { at?: string } = {}): JMATsunami {
+function makeTsunamiMaxHeightTimeUpdate(over: { at?: string; revise?: string | null } = {}): JMATsunami {
   return {
     kind: 'tsunami',
     id: 'tsunami-3',
@@ -212,7 +212,8 @@ function makeTsunamiMaxHeightTimeUpdate(over: { at?: string } = {}): JMATsunami 
       // 直前の報（`makeTsunamiObsUpdate`）と同じ 3.4m。動くのは時刻だけ。
       height: { value: 3.4, over: false, description: '3.4m' },
       maxHeightDateTime: over.at ?? '2026-01-01T12:14:00Z',
-      maxHeightRevise: '更新',
+      // `null` を渡すと `Revise` を持たない報（同じ値の再送の実電文の形）になる
+      ...(over.revise === null ? {} : { maxHeightRevise: over.revise ?? '更新' }),
     }],
   } as unknown as JMATsunami
 }
@@ -660,19 +661,40 @@ describe('読み上げとタブ切替の同調', () => {
     expect(result.current.obsUpdateStatus.get('輪島港')?.fields.has('maxHeightTime') ?? false).toBe(false)
   })
 
-  it('同じ最大波の観測時刻の再送ではバッジが付かない', async () => {
+  // **再送の報は `Revise` を持たない形で作る。** 以前は「`Revise` は「更新」のまま残り続ける」前提で
+  // 書いていたが、全期間 19 津波・延べ 8,085 観測点で、自前の比較が何も拾わないのに `Revise` が付いた
+  // 168 件は、どれも値を持たない観測点の「追加」だった（値を持つ観測点の再送に印が残る形は無い）。電文の印でも
+  // 項目に印を付けると決めた（2026-10-21 ユーザー選択「どちらかにあれば付ける (Recommended)」）ので、
+  // 実電文に無い形を守る理由が無くなった —— **意図して覆したテスト**。
+  it('同じ最大波の観測時刻の再送（Revise なし）ではバッジが付かない', async () => {
     const { handle, result } = setup({ voicevoxEnabled: false })
     handle(makeTsunami())
     handle(makeTsunamiObsUpdate())
     handle(makeTsunamiMaxHeightTimeUpdate())
     await settle()
 
-    // Act: 同じ時刻のまま再送される（`Revise` は「更新」のまま残り続ける）。
+    // Act: 同じ時刻・同じ値のまま再送される（実電文では `Revise` を持たない）。
+    handle(makeTsunamiMaxHeightTimeUpdate({ revise: null }))
+    await settle()
+
+    // Assert: 付かない
+    expect(result.current.obsUpdateStatus.get('輪島港')).toBeUndefined()
+  })
+
+  // 対照: 値が動いて見えなくても、電文が `Revise` を書いてきたら印を付ける（どの項目かは電文が言わないので波高へ）
+  it('値が据え置きでも MaxHeight/Revise が付いた報では波高に印が付く', async () => {
+    const { handle, result } = setup({ voicevoxEnabled: false })
+    handle(makeTsunami())
+    handle(makeTsunamiObsUpdate())
     handle(makeTsunamiMaxHeightTimeUpdate())
     await settle()
 
-    // Assert: 付かない。`Revise` の有無だけで判定していたら、再送のたびに点滅する。
-    expect(result.current.obsUpdateStatus.get('輪島港')).toBeUndefined()
+    handle(makeTsunamiMaxHeightTimeUpdate())
+    await settle()
+
+    const mark = result.current.obsUpdateStatus.get('輪島港')
+    expect(mark?.fields.has('height')).toBe(true)
+    expect(mark?.fields.has('maxHeightTime')).toBe(false)
   })
 
   // 解除では観測点の記憶を落とす。**画面用も読み上げ用と揃えて落とすこと。** 片方だけ残すと

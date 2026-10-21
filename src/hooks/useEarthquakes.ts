@@ -847,7 +847,7 @@ export function useEarthquakes(
   const testTsunamiGradeChangeTimerRef = useRef<number | undefined>(undefined)
   // 「警報 → 予報（失効時刻つき）」テストが発表から降格報までを待つ待ち（`simulateTsunamiExpiry`）。
   const testTsunamiExpiryTimerRef = useRef<number | undefined>(undefined)
-  // 「変化の小さい続報」テストが 6 通を順に流すあいだの待ち（`simulateTsunamiQuietReports`）。
+  // 「変化の小さい続報」テストが続報を順に流すあいだの待ち（`simulateTsunamiQuietReports`）。
   const testTsunamiQuietTimerRef = useRef<number | undefined>(undefined)
 
   /**
@@ -3884,7 +3884,7 @@ export function useEarthquakes(
    *
    * **通知音だけが鳴って何も声にならなかった報を、実機で確かめる唯一の入口。**
    * 2024 年能登半島地震の 26 時間では、取消を除く津波電文 56 通のうち 7 通がこの形だった
-   * （→ docs/spec/tsunami-spec.md §10「変化を伝えない続報」）。発表 → 11 通の続報 → 満了で解除、
+   * （→ docs/spec/tsunami-spec.md §10「変化を伝えない続報」）。発表 → 13 通の続報 → 満了で解除、
    * と進む。
    *
    * | 段 | 報 | 確かめるもの |
@@ -3896,10 +3896,12 @@ export function useEarthquakes(
    * | 5 | 沖合の観測情報 | 沖合の観測点の最大波の観測時刻が動く。**カードの沖合の行に印が出るのはここだけ** |
    * | 6 | 観測情報 | 「観測された波高に変わりはありません」 |
    * | 7 | 観測情報 | 段 2 の観測点（八戸港）の波高が下がり「以上」も外れた報。「津波観測に関する情報が発表されました」（**段 6 より後ろに置く** —— 読み上げの記憶は下げないので、後の観測情報も同じ一文になる） |
-   * | 8 | 満潮時刻 | 名乗りだけ（初報） |
-   * | 9 | 満潮時刻 | 「満潮時刻が更新されました」 |
-   * | 10 | 満潮時刻 | 「津波の到達状況が更新されました」 |
-   * | 11 | 満潮時刻 | 「内容に変わりはありません」 |
+   * | 8 | 観測情報 | いわき市小名浜が欠測から戻り、値を持たないまま電文の印（`Revise` = 追加）だけが付いた報。カードの「到達時刻不明」「観測中」に印の色が当たる（→ `createTestTsunamiObservationReviseOnly`） |
+   * | 9 | 満潮時刻 | 名乗りだけ（初報） |
+   * | 10 | 満潮時刻 | 「満潮時刻が更新されました」 |
+   * | 11 | 満潮時刻 | 「津波の到達状況が更新されました」 |
+   * | 12 | 満潮時刻 | 「津波の到達予想時刻が更新されました」（到達予想時刻だけを 10 分早める） |
+   * | 13 | 満潮時刻 | 「内容に変わりはありません」 |
    *
    * **間隔は読み上げが終わる程度に空ける**（`TEST_TSUNAMI_QUIET_STEP_MS`）。これらは最下位の層で
    * 読むので、前の発話が続いていると待たされ、待ちきれなければ黙る。
