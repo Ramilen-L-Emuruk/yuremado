@@ -9,7 +9,7 @@ import type { DetectionEvent, Confidence } from '../../utils/kyoshinDetector'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdown'
 import { usePageVisible } from '../../hooks/usePageVisible'
-import { formatDateTime, formatDepth, hasDepth } from '../../utils/formatters'
+import { formatDateTime, formatDepth, formatMagnitudeValue, hasDepth, hasMagnitude } from '../../utils/formatters'
 import { getIntensityColor, getIntensityLabel, getIntensityLabelWithApproxAbove, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
 import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst, eewIssueTimeMs } from '../../utils/eew'
@@ -288,7 +288,12 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
   const flash = useFieldFlash(eew.issue?.eventId ?? eew.id, {
     // 震央地名には大小が無いので `rank` を付けない（動いたことしか言えない）。
     hypocenterName: hypocenter.name ? { key: hypocenter.name } : undefined,
-    magnitude: isAssumed ? undefined : { key: hypocenter.magnitude.toFixed(1), rank: hypocenter.magnitude },
+    // 規模が判らない報（`NaN`）にも順序を付けない（深さの番兵と同じ形）。
+    magnitude: isAssumed
+      ? undefined
+      : hasMagnitude(hypocenter.magnitude)
+        ? { key: hypocenter.magnitude.toFixed(1), rank: hypocenter.magnitude }
+        : { key: '' },
     // **浅いほど危険なので順序は符号を反転させる**（地震カードと揃える）。
     //
     // **深さが判らない報（センチネル `-1`）には順序を付けない。** 符号を反転させると
@@ -713,7 +718,7 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
                 className={`font-black leading-none text-[1.25rem] roomy:text-[1.5rem] rounded${fade(flash.magnitude).className}`}
                 style={{ color: '#ffffff', ...fade(flash.magnitude).style }}
               >
-                {hypocenter.magnitude.toFixed(1)}
+                {formatMagnitudeValue(hypocenter.magnitude, hypocenter.magnitudeCondition)}
               </span>
             </div>
             <div

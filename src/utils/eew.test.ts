@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew } from './eew'
+import { calcShakingDurationSec, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew } from './eew'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
 
@@ -706,6 +706,30 @@ describe('calcEEWAutoCancelSec: 自動解除までの秒数（有感半径のS�
   it('30 秒（FIXED_BUFFER_SEC）以上を返す', () => {
     expect(calcEEWAutoCancelSec(5.0, 10)).toBeGreaterThanOrEqual(30)
     expect(calcEEWAutoCancelSec(3.0, 10)).toBeGreaterThanOrEqual(30)
+  })
+})
+
+describe('calcEEWAutoCancelSec: 規模が判らない値は M6.0 として求める', () => {
+  // 正: NaN（強震モニタ・DMDATA の規模不明）と -1（P2PQuake の規模不明）は M6.0 と同じ秒数
+  it('NaN と -1 は M6.0 と同じ', () => {
+    expect(calcEEWAutoCancelSec(Number.NaN, 10)).toBe(calcEEWAutoCancelSec(6.0, 10))
+    expect(calcEEWAutoCancelSec(-1, 10)).toBe(calcEEWAutoCancelSec(6.0, 10))
+  })
+  // 対照: 読める規模はその値で求める（M6 と同じにならない）
+  it('読める規模はその値で求める', () => {
+    expect(calcEEWAutoCancelSec(4.0, 10)).toBeLessThan(calcEEWAutoCancelSec(6.0, 10))
+  })
+  // 安全弁: M0.0 は値として扱う（判らない値とは分ける）
+  it('0 は M6 に倒さない', () => {
+    expect(calcEEWAutoCancelSec(0, 10)).toBeLessThan(calcEEWAutoCancelSec(6.0, 10))
+  })
+})
+
+describe('calcShakingDurationSec: 規模が判らないときは既定値', () => {
+  it('NaN と -1 は undefined と同じ既定値、読める規模は表の値', () => {
+    expect(calcShakingDurationSec(Number.NaN, 0)).toBe(calcShakingDurationSec(undefined, 0))
+    expect(calcShakingDurationSec(-1, 0)).toBe(calcShakingDurationSec(undefined, 0))
+    expect(calcShakingDurationSec(4.0, 0)).not.toBe(calcShakingDurationSec(undefined, 0))
   })
 })
 
@@ -1505,6 +1529,44 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
       expect(merged.forecastMaxScale).toBe(50)
       expect(merged.isFinal).toBe(true)
       expect(merged.areas?.map(a => a.name)).toEqual(['石川県能登'])
+    })
+
+    describe('Yahoo の規模が読めない報（NaN）', () => {
+      const p2pM = report('p2pquake', '1', P2P_TIME, {
+        earthquake: { ...makeEEW().earthquake, hypocenter: { name: '古い震源', latitude: 37, longitude: 137, depth: 10, magnitude: 6.1 } },
+      })
+      const yahooAt = (magnitude: number) => report('yahoo', '19', LATER, {
+        earthquake: { ...makeEEW().earthquake, hypocenter: { name: '新しい震源', latitude: 40, longitude: 140, depth: 20, magnitude } },
+      })
+
+      // 正: 読めなかった規模で前の値を消さない（震源のほかの欄は差し替える）
+      it('前の報の規模を保ち、震源のほかの欄は差し替える', () => {
+        const merged = mergeEewReport(p2pM, yahooAt(Number.NaN))
+        expect(merged.earthquake.hypocenter.magnitude).toBe(6.1)
+        expect(merged.earthquake.hypocenter.name).toBe('新しい震源')
+        expect(merged.earthquake.hypocenter.depth).toBe(20)
+      })
+      // 対照: 読めた規模は差し替える
+      it('読めた規模は差し替える', () => {
+        expect(mergeEewReport(p2pM, yahooAt(6.8)).earthquake.hypocenter.magnitude).toBe(6.8)
+      })
+      // 正: Yahoo が先に着き、遅れて届いた P2PQuake の報が規模を埋める
+      it('遅れて届いた P2PQuake の報で、読めていない規模を埋める', () => {
+        const merged = supplementEewReport(mergeEewReport(undefined, yahooAt(Number.NaN)), p2pM)
+        expect(merged.earthquake.hypocenter.magnitude).toBe(6.1)
+        expect(merged.earthquake.hypocenter.name).toBe('新しい震源')
+      })
+      // 安全弁: 届いた報も規模を持たない（P2PQuake の -1）なら書き込まない
+      it('遅れて届いた報も規模不明なら、表示中の値を変えない', () => {
+        const unknown = { ...p2pM, earthquake: { ...p2pM.earthquake, hypocenter: { ...p2pM.earthquake.hypocenter, magnitude: -1 } } }
+        const merged = supplementEewReport(mergeEewReport(undefined, yahooAt(Number.NaN)), unknown)
+        expect(merged.earthquake.hypocenter.magnitude).toBeNaN()
+      })
+      // 安全弁: 読めている規模は、遅れて届いた古い報で戻さない
+      it('読めている規模は遅れて届いた報で上書きしない', () => {
+        const merged = supplementEewReport(mergeEewReport(undefined, yahooAt(6.8)), p2pM)
+        expect(merged.earthquake.hypocenter.magnitude).toBe(6.8)
+      })
     })
 
     it('区域を持たない P2PQuake の報は前の区域を消さない', () => {

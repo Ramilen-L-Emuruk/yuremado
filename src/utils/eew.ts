@@ -1,6 +1,6 @@
 import type { EEWAlert, EEWRegion, EewOrigin } from '../types/earthquake'
 import { parseJstTimeMs } from './quakeOriginSeconds'
-import { hasDepth } from './formatters'
+import { hasDepth, hasMagnitude } from './formatters'
 import { hasKnownEpicenter, haversineKm, hypocentralDistanceKm } from './geo'
 import type { AlertSoundType } from './alertSound'
 import { travelTimeSec } from './travelTime'
@@ -75,12 +75,20 @@ export function predictMeasuredIntensity(mjma: number, depth: number, epicentral
   return 2.68 + 1.72 * Math.log10(calcPGV600(X, mw, depth))
 }
 
+/** 規模が判らない報の自動解除を求めるときに置く規模（固定の仮定値。§7） */
+const UNKNOWN_MAGNITUDE_ASSUMED = 6.0
+
 /**
  * EEW最終報の発震時刻から何秒後に自動解除するかを返す。
  * 司・翠川(1999)の有感半径(×1.5バッファ)にS波が到達するまでの時間 + 30秒。
+ *
+ * **規模が判らない値（`NaN`・P2PQuake の `-1`）は M6.0 として求める**（`hasMagnitude` で見る）。
+ * 素通りすると `NaN` は有感半径が 0 になり（二分探索の比較が毎回偽）、`-1` は M3 扱いになる。
+ * 既定値はここ 1 か所に置く —— 自動解除の予約（{@link calcEEWCancelTime}）と S 波カウントダウンの
+ * 「解除までに届くか」（`useSWaveCountdown`）が別々の既定で判定すると、画面の解除と食い違う。
  */
 export function calcEEWAutoCancelSec(mjma: number, depth: number): number {
-  const feltRadius = calcFeltRadiusKm(mjma, depth)
+  const feltRadius = calcFeltRadiusKm(hasMagnitude(mjma) ? mjma : UNKNOWN_MAGNITUDE_ASSUMED, depth)
   const sWaveSec = travelTimeSec('S', feltRadius, Math.max(depth, 1))
   return Math.round(sWaveSec) + FIXED_BUFFER_SEC
 }
@@ -102,11 +110,9 @@ export function calcEEWAutoCancelSec(mjma: number, depth: number): number {
  * `services/dmdataReplay.ts` は失効の判定ができない旨を記録して有効側へ倒す）。
  */
 export function calcEEWCancelTime(eew: EEWAlert, reportTime: Date): Date {
-  // **規模が判らない報（`NaN`）は `??` では止まらない。** 素通りすると有感半径が実質 0 になり、
-  // 規模に関係なく「最終報の 60 秒後」で消える（既定値の M6 相当が効いていなかった）。
-  // 規模が「不明」になるのは「非常に強い揺れを検知」の報など（解説資料 Ⅱ.21 1-5）。
-  const rawMagnitude = eew.earthquake.hypocenter.magnitude
-  const mjma = Number.isFinite(rawMagnitude) ? rawMagnitude : 6.0
+  // 規模が判らない報（「非常に強い揺れを検知」の報など。解説資料 Ⅱ.21 1-5）の既定（M6.0）は
+  // calcEEWAutoCancelSec が持つので、ここでは判定しない
+  const mjma = eew.earthquake.hypocenter.magnitude
   // **既定値は `??` では当たらない。** 深さが判らないことはセンチネル `-1` で表すので
   // （`Hypocenter.depth`。`0` は「ごく浅い」という有効値）、`?? 30` は素通りして -1 が
   // そのまま有感半径の計算（`calcPGV600` の深さ項）へ流れ、解除が実際より早まる。
@@ -139,7 +145,7 @@ const SHAKING_DURATION_TABLE: { minMag: number; durationSec: number }[] = [
   { minMag: -Infinity, durationSec: 14 },
 ]
 
-const DEFAULT_SHAKING_DURATION_SEC = 20 // magnitude 未定義時（Yahoo版）のデフォルト
+const DEFAULT_SHAKING_DURATION_SEC = 20 // 規模が無い・判らない（NaN・P2PQuake の -1）ときのデフォルト
 
 // 震源距離による継続時間の伸び分 [秒/km]。P-S時間差の拡大・表面波の分離・
 // コーダ波の伸長など、遠方ほど揺れが長引く傾向を表す目安の係数（経験式ではない）。
@@ -150,10 +156,10 @@ const PATH_DURATION_CAP_SEC = 80
 /**
  * マグニチュードと震源距離から揺れ継続時間の目安[秒]を返す。
  * マグニチュード別テーブルの基準値に、距離による伸び分（distanceKm * 係数、上限あり）を加算する。
- * magnitude 未定義時はデフォルト値を基準にする。
+ * 規模が無い・判らないときはデフォルト値を基準にする（`hasMagnitude` で見る。`-1` を表の最下段に当てない）。
  */
 export function calcShakingDurationSec(magnitude: number | undefined, distanceKm: number): number {
-  const entry = magnitude === undefined
+  const entry = magnitude === undefined || !hasMagnitude(magnitude)
     ? undefined
     : SHAKING_DURATION_TABLE.find((e) => magnitude >= e.minMag)
   const baseDurationSec = entry ? entry.durationSec : DEFAULT_SHAKING_DURATION_SEC
@@ -880,6 +886,8 @@ export function eewStaleness(
 /**
  * 別の経路がもっと新しい報を先に運んだあとに届いた P2PQuake の報から、**P2PQuake しか運ばない欄だけ**を
  * 表示中の報へ補う（区域・仮定震源の別）。震源・震度・報番号・発表時刻は新しい側（`existing`）を保つ。
+ * **ただし表示中の規模が読めていない（`NaN`。Yahoo が規模を欠いた報）なら、届いた報の規模で埋める**
+ * —— Yahoo が先に着く以上、P2PQuake の規模はこの経路でしか入らない。
  *
  * 補う区域は届いた報のものなので、表示中の報より 1 つ前の報の区域になりうる。それでも捨てるよりは
  * 新しい —— Yahoo は区域を運ばないので、表示中の区域は届いた報よりさらに前の P2PQuake の報のもの。
@@ -888,7 +896,14 @@ export function supplementEewReport(existing: EEWAlert, incoming: EEWAlert): EEW
   const merged: EEWAlert = {
     ...existing,
     areas: incoming.areas ?? existing.areas,
-    earthquake: { ...existing.earthquake, condition: incoming.earthquake.condition },
+    earthquake: {
+      ...existing.earthquake,
+      condition: incoming.earthquake.condition,
+      hypocenter: hasMagnitude(existing.earthquake.hypocenter.magnitude)
+        || !hasMagnitude(incoming.earthquake.hypocenter.magnitude)
+        ? existing.earthquake.hypocenter
+        : { ...existing.earthquake.hypocenter, magnitude: incoming.earthquake.hypocenter.magnitude },
+    },
     severity: existing.severity === 'Warning' ? 'Warning' : incoming.severity,
   }
   return {
@@ -961,7 +976,7 @@ export function isSameReportFromOtherOrigin(acceptance: EewAcceptance | undefine
  *
  * | 経路 | 運ばないので保つ欄 |
  * |---|---|
- * | Yahoo | 区域・仮定震源の別（`earthquake.condition`）・地震発現時刻 |
+ * | Yahoo | 区域・仮定震源の別（`earthquake.condition`）・地震発現時刻。規模は読めなかった報（`NaN`）だけ |
  * | P2PQuake | 予想の最大震度（`forecastMaxScale`）・最終報の印（`isFinal`） |
  * | DMDATA・保存データ・テスト | なし（丸ごと置き換える） |
  *
@@ -976,6 +991,15 @@ export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAler
   if (!existing) {
     base = incoming
   } else if (incoming.origin === 'yahoo') {
+    const keepsPreviousMagnitude = !hasMagnitude(incoming.earthquake.hypocenter.magnitude)
+      && hasMagnitude(existing.earthquake.hypocenter.magnitude)
+    if (keepsPreviousMagnitude) {
+      log.debug('[緊急地震速報] 強震モニタの報が規模を運ばなかったため、前の報の規模を保ちます', {
+        id: incoming.id, previousId: existing.id, magnitude: existing.earthquake.hypocenter.magnitude,
+        previousHypocenter: [existing.earthquake.hypocenter.latitude, existing.earthquake.hypocenter.longitude],
+        hypocenter: [incoming.earthquake.hypocenter.latitude, incoming.earthquake.hypocenter.longitude],
+      })
+    }
     base = {
       ...existing,
       origin: incoming.origin,
@@ -996,7 +1020,11 @@ export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAler
       earthquake: {
         ...existing.earthquake,
         originTime: incoming.earthquake.originTime,
-        hypocenter: incoming.earthquake.hypocenter,
+        // Yahoo の規模は欠けることがある。**読めなかった報（`NaN`）で前の値（P2PQuake の報など）を消さない**
+        // —— 消すとカードの M が「不明」へ戻り、規模から決める自動解除も既定の M6 相当へずれる。
+        hypocenter: hasMagnitude(incoming.earthquake.hypocenter.magnitude)
+          ? incoming.earthquake.hypocenter
+          : { ...incoming.earthquake.hypocenter, magnitude: existing.earthquake.hypocenter.magnitude },
       },
     }
   } else if (incoming.origin === 'p2pquake') {
