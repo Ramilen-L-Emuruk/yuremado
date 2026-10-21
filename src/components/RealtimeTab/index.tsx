@@ -12,7 +12,7 @@ import { usePageVisible } from '../../hooks/usePageVisible'
 import { formatDateTime, formatDepth, hasDepth } from '../../utils/formatters'
 import { getIntensityColor, getIntensityLabel, getIntensityLabelWithApproxAbove, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
-import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst } from '../../utils/eew'
+import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst, eewIssueTimeMs } from '../../utils/eew'
 import { kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 import { readableTextColor } from '../../utils/contrast'
@@ -146,6 +146,22 @@ const ARRIVAL_COLUMN_MAX_COUNT = 3
 const ARRIVAL_BADGE_MIN_WIDTH = '1.75rem'
 
 /**
+ * 報が発表されてから {@link EEW_FORECAST_CHANGE_HOLD_MS} を過ぎているか。過ぎた報の変化は帯に出さない
+ * （2026-10-21 ユーザー承認「おすすめで」）。
+ *
+ * **ライブで見ていた人には、もう消えている帯だから。** 起動時・張り直しの復元とリプレイの初期状態は、
+ * 数分前の報を「いま初めて見た報」として描く。手元で初めて見た時刻から数えると、ライブなら発表の
+ * 10 秒後に消えていた帯が、開いた瞬間から 10 秒出る。ライブの報は発表からすぐ届くので、ここでは止まらない。
+ * 時刻は `serverNow()`（端末の時計のずれとリプレイの再生時計を吸収する。ただし較正が済むまでは端末の時計のままで、
+ * 端末の時計が 10 秒以上進んでいると、その間はライブの報でも帯が出ない）。発表時刻が読めない報は止めない
+ * —— 比べられないものを黙らせると、ライブの報の帯まで消える側に倒れる。
+ */
+function isForecastChangeStale(eew: EEWAlert): boolean {
+  const issuedMs = eewIssueTimeMs(eew)
+  return issuedMs !== null && serverNow() - issuedMs >= EEW_FORECAST_CHANGE_HOLD_MS
+}
+
+/**
  * 気象庁が「予想が変わった」と書いてきた帯（電文の `Appendix`）を、最低
  * {@link EEW_FORECAST_CHANGE_HOLD_MS} は出し続ける。
  *
@@ -170,15 +186,17 @@ const ARRIVAL_BADGE_MIN_WIDTH = '1.75rem'
 function useHeldForecastChange(eew: EEWAlert): string {
   const text = eewForecastChangeText(eew)
   const serial = eewSerial(eew)
-  const [held, setHeld] = useState(text)
+  const stale = isForecastChangeStale(eew)
+  const [held, setHeld] = useState(stale ? '' : text)
   const timerRef = useRef(0)
   useEffect(() => {
     // 変化を伝えていない報では何もしない ―― 消さずに据え置くのがこのフックの本体。
-    if (!text) return
+    // 発表から保持時間を過ぎた報も同じ扱い（→ `isForecastChangeStale`）。前の報が立てた帯はその計時のまま残す
+    if (!text || stale) return
     setHeld(text)
     window.clearTimeout(timerRef.current)
     timerRef.current = window.setTimeout(() => setHeld(''), EEW_FORECAST_CHANGE_HOLD_MS)
-  }, [text, serial])
+  }, [text, serial, stale])
   useEffect(() => () => window.clearTimeout(timerRef.current), [])
   // 取消の報では出さない。取り下げた予想について「大きくなりました」と並べても意味がない。
   //
