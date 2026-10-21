@@ -6,7 +6,7 @@ import { fetchHistory, fetchHistorySince, fetchJmaQuake, P2PQuakeWebSocket } fro
 // 1 本へ寄せてある（→ `data-sources-spec.md` §2「大量に取るならアーカイブを使う」）。
 // **発表中の緊急地震速報だけは別**で、`/v2/telegram` にも当日のアーカイブにも無いため
 // `/v2/gd/eew` を辿る専用の経路が要る。
-import { DmdataWebSocket, fetchDmdataActiveEews } from '../services/dmdata'
+import { DmdataWebSocket, fetchDmdataActiveEews, fetchDmdataActiveEewsOutcome } from '../services/dmdata'
 // 履歴の取得はリプレイ開始時の復元と実装を共有する（→ `data-sources-spec.md` §2
 // 「大量に取るならアーカイブを使う」）。同じ目的の実装を 2 本持たない。
 import { fetchDmdataQuakeHistoryFor, HISTORY_WINDOW_DAYS } from '../services/dmdataReplay'
@@ -3103,8 +3103,11 @@ export function useEarthquakes(
       // 諦めた区間はこの接続の間は二度と引かないので、立てたら降ろさない（再読み込みで履歴が取り直す）
       let gapCarried = false
       let gapGivenUp = false
+      // 張り直しの間の緊急地震速報を取り直せなかった（→ `restoreEewsAfterReconnect`）。次の張り直しの取り直しは
+      // その時点で発表中のものを全部引き直すので、取れたら降ろす（2026-10-21 ユーザー承認「案1で」）
+      let eewGap = false
       const publishGapLoss = (): void => {
-        const missing = gapCarried || gapGivenUp
+        const missing = gapCarried || gapGivenUp || eewGap
         setState(prev => (prev.reconnectGapLoss === missing ? prev : { ...prev, reconnectGapLoss: missing }))
       }
       // **履歴を当て終えるまで待つ。** 先に当てると、履歴が過去の報から引き継ぐ津波の有効期限より前に、同じ報が
@@ -3212,10 +3215,14 @@ export function useEarthquakes(
         const classifications = dmdataRestClassificationsRef.current
         if (!classifications) {
           log.warn('[DMDSS] 受けられる区分がまだ決まっていないため、張り直しの間の緊急地震速報は取り直しません')
+          eewGap = true
+          publishGapLoss()
           return
         }
-        const eews = await fetchDmdataActiveEews(dmdataApiKey, classifications)
+        const { eews, complete } = await fetchDmdataActiveEewsOutcome(dmdataApiKey, classifications)
         if (cancelled) return
+        eewGap = !complete
+        publishGapLoss()
         const fresh = eews.filter((eew) => {
           if (restoredQueueKeys.has(`eew:${eew.id}`)) return false
           const accepted = eewAcceptanceRef.current.get(eewEventKey(eew))?.serialByOrigin.get(eew.origin)

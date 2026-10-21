@@ -148,6 +148,8 @@ vi.mock('../services/dmdata', () => ({
   // 戻り値を持たせるのは、呼び出し側が `.then` で受けるため（`vi.fn()` のままだと
   // `undefined.then` で落ちる）。
   fetchDmdataActiveEews: vi.fn(async () => []),
+  // 張り直しの取り直しが使う（起動時の復元は上の配列だけを返すほう）
+  fetchDmdataActiveEewsOutcome: vi.fn(async () => ({ eews: [], complete: true })),
 }))
 
 // 履歴の取得はアーカイブ経由の 1 本へ寄せてある（→ `services/dmdataReplay.ts` の
@@ -5863,6 +5865,7 @@ describe('DMDSS 版: 起動時履歴は、ライブで当てた津波の報よ�
 // 履歴の目録を引いてから繋がるまでの隙間を、一覧から取り戻す。音・読み上げ・タブ移動は起こさない
 // （2026-10-20 ユーザー承認「おすすめで」）。
 const { fetchLiveTelegramsBetween } = await import('../services/dmdataReplayLive')
+const { fetchDmdataActiveEewsOutcome } = await import('../services/dmdata')
 
 describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', () => {
   const at = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString()
@@ -5890,6 +5893,7 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     vi.mocked(fetchLiveTelegramsBetween).mockReset()
     vi.mocked(fetchLiveTelegramsBetween).mockResolvedValue(got())
     vi.mocked(fetchDmdataActiveEews).mockClear()
+    vi.mocked(fetchDmdataActiveEewsOutcome).mockClear()
     // 履歴の右端を呼び出しの記録から読むので、前のテストの記録を消す
     vi.mocked(fetchDmdataQuakeHistory).mockClear()
   })
@@ -5903,7 +5907,7 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     act(() => { sockets[0].onStarted?.({ previousAliveAtMs: null }) })
     await h.flush()
     vi.mocked(fetchLiveTelegramsBetween).mockClear()
-    vi.mocked(fetchDmdataActiveEews).mockClear()
+    vi.mocked(fetchDmdataActiveEewsOutcome).mockClear()
     vi.mocked(fetchLiveTelegramsBetween).mockResolvedValueOnce(got([missedQuake()]))
 
     const lastAlive = Date.now() - 10 * 60_000
@@ -5917,7 +5921,7 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     expect(h.current.earthquakes.some(q => q.eventId === missedQuake().eventId || q.id === 'dmdata-quake-missed')).toBe(true)
     expect(onLiveEvent).not.toHaveBeenCalled()
     // 切れていた間に発表された緊急地震速報も取り直す
-    expect(vi.mocked(fetchDmdataActiveEews)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(fetchDmdataActiveEewsOutcome)).toHaveBeenCalledTimes(1)
   })
 
   // 正: 起動直後は、履歴が目録を引いた時刻から最初に繋がるまでを取る
@@ -6220,6 +6224,34 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
       expect(h.current.reconnectGapLoss).toBe(false)
     })
 
+    // 張り直しの間の緊急地震速報の取り直し（2026-10-21 ユーザー承認「案1で」）
+    it('正: 緊急地震速報を取り直せなかったら立て、次の取り直しが取れたら降ろす', async () => {
+      const h = setup()
+      await h.flush()
+      vi.mocked(fetchDmdataActiveEewsOutcome).mockResolvedValueOnce({ eews: [], complete: false })
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(true)
+
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 10_000 }) })
+      await h.flush()
+      expect(h.current.reconnectGapLoss).toBe(false)
+    })
+
+    it('安全弁: 緊急地震速報を取り直せても、電文の取り戻しが取れていなければ降ろさない', async () => {
+      const h = setup()
+      await h.flush()
+      vi.mocked(fetchLiveTelegramsBetween)
+        .mockResolvedValueOnce({ ...got(), skipped: 1, failedTelegrams: 1 })
+        .mockResolvedValueOnce({ ...got(), skipped: 1, failedTelegrams: 1 })
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
+      await h.flush()
+      act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 20_000 }) })
+      await h.flush()
+      expect(vi.mocked(fetchDmdataActiveEewsOutcome)).toHaveBeenCalledTimes(2)
+      expect(h.current.reconnectGapLoss).toBe(true)
+    })
+
     it('対照: 取り戻しが取れれば立てない', async () => {
       const h = setup()
       await h.flush()
@@ -6235,10 +6267,10 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     vi.mocked(fetchDmdataQuakeHistory).mockImplementationOnce(() => new Promise(() => {}))
     const h = setup()
     await h.flush()
-    vi.mocked(fetchDmdataActiveEews).mockClear()
+    vi.mocked(fetchDmdataActiveEewsOutcome).mockClear()
     act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
     await h.flush()
-    expect(vi.mocked(fetchDmdataActiveEews)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(fetchDmdataActiveEewsOutcome)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(fetchLiveTelegramsBetween)).not.toHaveBeenCalled()
   })
 
@@ -6255,14 +6287,14 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     act(() => { vi.advanceTimersByTime(100) })
     await h.flush()
 
-    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([r1, r2])
+    vi.mocked(fetchDmdataActiveEewsOutcome).mockResolvedValueOnce({ eews: [r1, r2], complete: true })
     act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
     await h.flush()
     // 第 1 報は古く、第 2 報は受け取り済み。どちらも積まない
     expect(handed).toHaveLength(0)
 
     // 正: 切れている間に出た第 3 報は積む
-    vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([r3])
+    vi.mocked(fetchDmdataActiveEewsOutcome).mockResolvedValueOnce({ eews: [r3], complete: true })
     act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 30_000 }) })
     await h.flush()
     expect(handed).toHaveLength(1)

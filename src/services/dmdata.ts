@@ -1560,12 +1560,38 @@ export async function fetchLatestEewReport(
 export async function fetchDmdataActiveEews(
   apiKey: string, classifications: readonly DmdataClassification[],
 ): Promise<EEWAlert[]> {
+  return (await fetchDmdataActiveEewsOutcome(apiKey, classifications)).eews
+}
+
+/** `fetchDmdataActiveEewsOutcome` の戻り値。 */
+export interface ActiveEewsOutcome {
+  /** いま発表中と判定した緊急地震速報 */
+  eews: EEWAlert[]
+  /**
+   * 取りこぼした地震があり得るか。一覧を引けなかった・一覧のページの上限で打ち切った・詳細を取れなかった
+   * （応答が無い・報を読めない・例外）ときに偽。緊急地震速報の区分を受けていないだけなら真（取るものが無い）。
+   */
+  complete: boolean
+}
+
+/**
+ * `fetchDmdataActiveEews` と同じ取得で、取りこぼしがあり得たかも返す。
+ *
+ * **張り直しの取り戻しが使う**（→ `hooks/useEarthquakes.ts` の `restoreEewsAfterReconnect`）。取れなかったら
+ * 地震タブの帯（`reconnectGapLoss`）を立てる —— 張り直しの直後にいちばん要る情報なので、黙って空振りさせない
+ * （2026-10-21 ユーザー承認「案1で」）。起動時の復元は帯の対象ではない（「接続が切れていた間」の話ではない）ので、
+ * 配列だけを返す `fetchDmdataActiveEews` を使う。
+ */
+export async function fetchDmdataActiveEewsOutcome(
+  apiKey: string, classifications: readonly DmdataClassification[],
+): Promise<ActiveEewsOutcome> {
   const eewHeadType = eewHeadTypeFor(classifications)
   if (eewHeadType === null) {
     log.info('[DMDSS] 緊急地震速報の区分を受けていないため、発表中の緊急地震速報を復元しません')
-    return []
+    return { eews: [], complete: true }
   }
-  if (!isApiKeyUsable(apiKey, `発表中の緊急地震速報 (${eewHeadType})`)) return []
+  if (!isApiKeyUsable(apiKey, `発表中の緊急地震速報 (${eewHeadType})`)) return { eews: [], complete: false }
+  let complete = true
   const headers = { Authorization: authHeader(apiKey) }
   const now = serverDate()
   const since = now.getTime() - ACTIVE_EEW_WINDOW_MS
@@ -1589,6 +1615,7 @@ export async function fetchDmdataActiveEews(
       if (!res.ok) {
         logRestFailure(`発表中の緊急地震速報の一覧（${page + 1} ページ目・ここまで ${events.length} 件）`, res.status)
         cursorToken = undefined
+        complete = false
         break
       }
       const json = outcomeJson<{ items?: GdEewListItem[]; nextToken?: string }>(res)
@@ -1598,6 +1625,7 @@ export async function fetchDmdataActiveEews(
     }
     // 打ち切りを黙って起こさない。取りこぼしたかどうかは件数にも画面にも現れない。
     if (cursorToken) {
+      complete = false
       log.warn(`[DMDSS] 発表中の緊急地震速報の一覧が ${ACTIVE_EEW_MAX_PAGES} ページに達したため打ち切りました`
         + `（ここまで ${events.length} 件。続きが残っています）`)
     }
@@ -1623,7 +1651,7 @@ export async function fetchDmdataActiveEews(
           + `（${Math.round(ACTIVE_EEW_WINDOW_MS / 60_000)} 分）に入るものは 0 件でした`,
         )
       }
-      return []
+      return { eews: [], complete }
     }
 
     const reports: Array<{ eew: EEWAlert; value: EEWAlert }> = []
@@ -1644,8 +1672,11 @@ export async function fetchDmdataActiveEews(
           }
           const value: EEWAlert = { ...found.eew, firstIssueTime: found.firstIssueTime }
           reports.push({ eew: value, value })
+        } else if (found.kind === 'failed') {
+          complete = false
         }
       } catch (err) {
+        complete = false
         log.warn(`[DMDSS] 発表中の緊急地震速報の詳細で例外が出たため、この地震だけ諦めます eventId=${ev.eventId}`, err)
       }
     }
@@ -1667,10 +1698,10 @@ export async function fetchDmdataActiveEews(
         + ` → 報を読めた ${reports.length} 件 → 有効 ${active.length} 件`,
       )
     }
-    return active
+    return { eews: active, complete }
   } catch (err) {
     log.error('[DMDSS] 発表中の緊急地震速報の取得に失敗', err)
-    return []
+    return { eews: [], complete: false }
   }
 }
 
