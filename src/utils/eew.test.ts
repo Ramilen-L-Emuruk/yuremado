@@ -1286,7 +1286,7 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
   // 発表中の速報の取り直しが、もう終えた地震の報を返したか（→ `useEarthquakes` の `eewEndedRef`）
   describe('endedEewMatch', () => {
     const ENDED_AT = 1_000_000
-    const ended: EndedEew = { serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT }
+    const ended: EndedEew = { serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT, cancelled: false }
     const match = (over: Partial<EndedEew> | undefined, eew: EEWAlert, nowMs = ENDED_AT + 1000) =>
       endedEewMatch(over === undefined ? undefined : { ...ended, ...over }, eew, nowMs, ACTIVE_EEW_WINDOW_MS)
     // 正: 同じ経路で、終えたときの報番号以下の報は終えた地震の報
@@ -1314,6 +1314,15 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
     it('どちらでも比べられなければ通す', () => {
       expect(match({ latestIssueMs: null }, report('yahoo', '17', YAHOO_TIME))).toBeNull()
       expect(match({}, report('yahoo', '17', 'not-a-time'))).toBeNull()
+    })
+    // 正: 取消で終えた地震は、より新しい報番号・発表時刻の報も終えた地震の報（取消は終端）
+    it('取消で終えた地震は、報番号・発表時刻によらず終えた地震の報', () => {
+      expect(match({ cancelled: true }, report('dmdata', '4', LATER))).toBe('cancelled')
+      expect(match({ cancelled: true }, report('yahoo', '17', 'not-a-time'))).toBe('cancelled')
+    })
+    // 対照: 取消で終えた記憶でも、窓を過ぎれば使わない
+    it('取消で終えた記憶も、窓を過ぎれば弾かない', () => {
+      expect(match({ cancelled: true }, report('dmdata', '4', LATER), ENDED_AT + ACTIVE_EEW_WINDOW_MS + 1)).toBeNull()
     })
   })
 

@@ -805,16 +805,22 @@ export interface EndedEew {
   readonly latestIssueMs: number | null
   /** 画面から消えた時刻（エポックミリ秒） */
   readonly endedAtMs: number
+  /**
+   * 取消で終えたか。**取消は終端**（docs/spec/eew-spec.md §10）なので、取消で終えた地震は報番号によらず
+   * 同じ地震の報を採らない（2026-10-21 ユーザー承認「おすすめで」）
+   */
+  readonly cancelled: boolean
 }
 
 /** 終えた地震の報と見なした根拠。`null` は「終えた地震の報とは言えない」 */
-export type EndedEewMatch = 'serial' | 'issue-time'
+export type EndedEewMatch = 'cancelled' | 'serial' | 'issue-time'
 
 /**
  * 発表中の速報の取り直しが返した報が、もう終えた地震の報か（＝戻すと終わった速報が帳面へ戻るか）。
  *
  * - 終えてから `keepMs` を過ぎた記憶は使わない（取り直しはその窓より前に終わった速報を返さない）。
  *   **時計が巻き戻って経過が負になった記憶も使わない** —— 較正の前後で基準が変わったときで、いつ終えたか分からない
+ * - **取消で終えた地震の報は、報番号・発表時刻によらず終えた地震の報**（取消は終端）
  * - 同じ経路の報番号を比べられれば報番号で比べ、**終えた後のより新しい報は通す**（終わったのではなく続いている）
  * - 報番号を比べられなければ（別の経路で終えた・報番号が無い）発表時刻で比べる
  * - どちらでも比べられなければ**通す**。弾くと本当に発表中の速報が画面に出ない —— 終わった速報を戻す害
@@ -826,6 +832,7 @@ export function endedEewMatch(
   if (!ended) return null
   const elapsed = nowMs - ended.endedAtMs
   if (elapsed < 0 || elapsed > keepMs) return null
+  if (ended.cancelled) return 'cancelled'
   const endedSerial = ended.serialByOrigin.get(incoming.origin)
   const serial = eewSerial(incoming)
   if (endedSerial !== undefined && serial !== null) return serial <= endedSerial ? 'serial' : null
