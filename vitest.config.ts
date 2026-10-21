@@ -21,8 +21,9 @@ export default defineConfig({
     // **描いたものをテストごとに片付ける。** `globals` を立てていないので、React Testing Library の
     // 自動の片付けは効かない（理由と踏んだ例は src/vitestSetup.ts）。
     setupFiles: ['src/vitestSetup.ts'],
-    // テストのタイムアウトは既定（5 秒）のまま。混雑時に 5 秒を割りうる生成データローダの
-    // テストだけが個別に延長している（理由は prefectures.test.ts のコメント）。
+    // テストのタイムアウトは既定（5 秒）のまま。混雑時に 5 秒を割りうるテストだけが、ファイルの中で
+    // describe ごとに延長し、その理由をそのファイルの冒頭に書いている（例: prefectures.test.ts・
+    // seismo-host の storageMigration.test.ts）。
     // ここを全体で緩めると、無関係なテストに入り込んだ性能劣化を見逃す網になる。
   },
 })

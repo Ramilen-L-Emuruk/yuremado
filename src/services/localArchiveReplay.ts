@@ -10,9 +10,12 @@
 // 都度フィルタし直すだけなので副作用は無い。
 
 import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
-import type { JMAQuake } from '../types/earthquake'
+import type { JMAQuake, JMATsunami } from '../types/earthquake'
 import type { HistoricalArchiveFile, HistoricalArchiveIndex, HistoricalArchiveMeta } from '../types/historicalArchive'
 import { validateHistoricalArchiveIndex, validateHistoricalArchiveFile } from '../utils/historicalArchiveSchema'
+import { selectQuakeHistory } from '../utils/quakeHistorySelection'
+import { getAreaPrefIndexCache } from '../utils/stationCoords'
+import { historyExtraKey } from './dmdataTelegramPayload'
 import { fetchJsonWithTimeout } from '../utils/fetchJson'
 import { log } from '../utils/logger'
 
@@ -172,23 +175,40 @@ export async function fetchLocalArchiveEvents(
   return { entries, skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0 }
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000
+
 /**
- * 地震カードの履歴（`fetchReplayQuakeHistory`）のローカル版。`before` より前の地震情報
- * （payload.kind === 'event' かつ event.kind === 'quake'）を新しい順に `targetEvents` 件まで返す。
+ * 履歴の窓の下端。**DMDSS 版の履歴と同じく JST の日で切る**（`fetchDmdataQuakeHistory` は
+ * `before` の `maxDays` 日前を含む JST 日から日次アーカイブを読む）。
+ */
+function historyWindowStartMs(before: Date, maxDays: number): number {
+  const startDay = new Date(before.getTime() - maxDays * DAY_MS + JST_OFFSET_MS).toISOString().slice(0, 10)
+  return Date.parse(`${startDay}T00:00:00+09:00`)
+}
+
+/**
+ * 地震カードの履歴（`fetchReplayQuakeHistory`）のローカル版。
  *
- * DMDATA/P2PQuake側の `maxDays` に相当する概念は無い（収録データは最初から手元にあるので
- * 「何日分まで遡ってよいか」で打ち切る必要が無い）。何も無ければ空配列で成功として返す
- * （＝「その期間、地震は無かった」という正当な結果。DMDATA/P2PQuakeへフォールバックしない）。
+ * **どちらの版でも `maxDays` 日（`HISTORY_WINDOW_DAYS`）を全部返し、件数では切らない**
+ * （2026-10-14 ユーザー選択。DMDSS 版の履歴と同じ扱い）。地震に畳んで選び、選んだ地震の電文は
+ * 窓より前のものも含めて全部返す（→ `selectQuakeHistory`）。以前は地震情報の電文を新しい順に
+ * 件数で切っていて、熊本の本震直前は 52 地震のうち 18 枚しか残らず、途中で切れたカードもできていた。
+ *
+ * **同じ窓から津波と、帯・長周期・推計震度分布図（`extras`）も返す。** 初期状態（24 時間）で
+ * 足りない分を補う材料で、DMDSS 版の履歴と同じ形にする（帯は電文ごと、長周期は地震ごとに最新 1 通。
+ * 鍵は `historyExtraKey`）。
+ *
+ * 何も無ければ空配列で成功として返す（＝「その期間、地震は無かった」という正当な結果。
+ * DMDATA/P2PQuakeへフォールバックしない）。
  */
 export async function fetchLocalArchiveQuakeHistory(
   meta: HistoricalArchiveMeta,
   before: Date,
-  targetEvents: number,
+  maxDays: number,
 ): Promise<QuakeHistoryResult> {
   const file = await loadFile(meta.id)
   if (!file) {
-    // ローカル履歴アーカイブは帯・長周期を収録していないので `extras` は常に空。
-    // 津波は収録しているが、ここで返すのは地震カードの厚みだけ（津波は初期状態の担当）。
     return {
       quakes: [], tsunamis: [], extras: [], skippedByDay: new Map(),
       failedArchiveUrls: [fileUrl(meta.id)], rateLimitedSources: [], rateLimitedTelegrams: 0, hasMore: false,
@@ -196,19 +216,57 @@ export async function fetchLocalArchiveQuakeHistory(
     }
   }
 
-  // 並べ替えは payload 内部の event.time ではなくエントリ自身の time で行う。
+  // 時刻は payload 内部の event.time ではなくエントリ自身の time で見る。
   // fetchLocalArchiveEvents の replayTime 扱いと揃えるためで、event.time が欠落・不整合でも
   // 収録データの実際の発表順（＝エントリの並び順の根拠）からは外れない。
-  const quakes: JMAQuake[] = file.entries
-    .filter((e) => e.payload.kind === 'event' && e.payload.event.kind === 'quake' && new Date(e.time).getTime() < before.getTime())
-    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-    .slice(0, targetEvents)
-    .map((e) => (e.payload as { kind: 'event'; event: JMAQuake }).event)
+  const beforeMs = before.getTime()
+  const windowStartMs = historyWindowStartMs(before, maxDays)
+  const parsed = file.entries.map((entry) => ({ entry, ms: new Date(entry.time).getTime() }))
+  // 読み込み時の検証（`isValidIso`）を通っているので通常は 0 件。食い違いが出たときに黙って消えないよう数える
+  const unreadable = parsed.filter(({ ms }) => !Number.isFinite(ms)).length
+  if (unreadable > 0) {
+    log.warn(`[localArchive] ${meta.id}.json の履歴で、時刻を読めない電文 ${unreadable} 件を除きました`)
+  }
+  // `before` ちょうどの電文は履歴に入れない（本編の再生がその時刻から流すので、そちらで届く）
+  const timed = parsed
+    .filter(({ ms }) => Number.isFinite(ms) && ms < beforeMs)
+    .sort((a, b) => a.ms - b.ms)
+
+  // 地震情報は新しい順に並べて返す（P2PQuake の履歴と揃える。統合は `reportOrderKey` で並べ直すが、
+  // 同じ順位の報どうしは入力の並びがそのまま効く）
+  const quakeEntries = timed
+    .filter(({ entry }) => entry.payload.kind === 'event' && entry.payload.event.kind === 'quake')
+    .reverse()
+  const quakeOf = ({ entry }: { entry: HistoricalArchiveFile['entries'][number] }) =>
+    (entry.payload as { kind: 'event'; event: JMAQuake }).event
+  const quakes = selectQuakeHistory(
+    quakeEntries, quakeOf, ({ ms }) => ms,
+    { maxEvents: null, windowStartMs },
+    getAreaPrefIndexCache(),
+  ).map(quakeOf)
+
+  const inWindow = timed.filter(({ ms }) => ms >= windowStartMs)
+  const tsunamis: JMATsunami[] = []
+  const extraLatest = new Map<string, ReplayEntry>()
+  for (const { entry, ms } of inWindow) {
+    if (entry.payload.kind === 'event') {
+      if (entry.payload.event.kind === 'tsunami') tsunamis.push(entry.payload.event)
+      continue
+    }
+    const key = historyExtraKey(entry.payload)
+    if (key === null) continue
+    // 同じ鍵なら新しいほうを残す（長周期は地震ごとに最新 1 通。帯は電文ごとに鍵が違うので全部残る）
+    const prev = extraLatest.get(key)
+    if (!prev || ms >= prev.replayTime.getTime()) {
+      extraLatest.set(key, { payload: entry.payload, replayTime: new Date(ms), silent: entry.silent })
+    }
+  }
+  const extras = [...extraLatest.values()].sort((a, b) => a.replayTime.getTime() - b.replayTime.getTime())
 
   // **カーソルは持たない**（`oldestLoadedDay`）。ローカル履歴アーカイブは 1 ファイルで完結して
   // いて、その外に遡る先が無い。
   return {
-    quakes, tsunamis: [], extras: [], skippedByDay: new Map(),
+    quakes, tsunamis, extras, skippedByDay: new Map(),
     failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, hasMore: false,
     oldestLoadedDay: null,
   }

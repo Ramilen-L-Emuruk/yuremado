@@ -13,7 +13,7 @@
 //   書き直すと、読めなかった分の履歴がまるごと消える。理由は警告として出し続け、人が直すのを待つ。
 //   管理コンソールからの保存も、そのあいだは失敗として返す。
 
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { describeFailure, parseStationConfig } from './stationConfig'
@@ -29,6 +29,7 @@ import {
   type StationHistoryReason,
   writeStationXml,
 } from './stationXml'
+import { lockTolerantRenameSync } from './lockTolerantRename'
 
 /** 設定ファイルの名前。 */
 export const STATION_CONFIG_FILE = 'stations.xml'
@@ -187,7 +188,7 @@ export class StationStore {
       fsyncSync(fd)
       closeSync(fd)
       fd = null
-      renameSync(tmp, this.path)
+      lockTolerantRenameSync(tmp, this.path)
       this.doc = next
       this.written += 1
     } catch (error) {

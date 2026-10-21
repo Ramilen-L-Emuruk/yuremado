@@ -15,12 +15,13 @@
 //
 // **書けなくても投げない。** 揺れの検出と押し出しを止めるほうが重い。数えて理由を残す。
 
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { jstMonth, NAME_START_SLACK_MS, nameMayStartInRange, startMsFromFileName } from './eventRange'
 import type { ShakeEventRecord } from './shakeEvent'
+import { lockTolerantRenameSync } from '../receiver/lockTolerantRename'
 
 /**
  * 件数の上限・月の数え方・名前から始まりを読む決まりは `eventRange.ts` が持つ
@@ -102,7 +103,7 @@ export class ShakeEventStore {
       fsyncSync(fd)
       closeSync(fd)
       fd = null
-      renameSync(tmp, path)
+      lockTolerantRenameSync(tmp, path)
       this.written++
       return true
     } catch (error) {

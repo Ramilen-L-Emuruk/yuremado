@@ -1201,6 +1201,7 @@ export function TsunamiFitGL({
   mode,
   tsunamiSignature,
   tsunamiEventId,
+  tsunamiOperationStatus,
   tsunamiFitPositions,
   observationBars,
   arrivalMarkers,
@@ -1218,6 +1219,11 @@ export function TsunamiFitGL({
    * 差し替えた報でだけ、観測点の差分が丸ごと「更新」として扱われる —— 例外もログも出ない。
    */
   tsunamiEventId: string
+  /**
+   * 表示中の津波の運用種別（通常の報は空文字）。**番号と組で見る** —— 同じ番号でも訓練と通常は別の津波
+   * （→ `utils/tsunami.ts` の `isSameTsunamiEvent`）。既定値を置かない理由は上と同じ。
+   */
+  tsunamiOperationStatus: string
   tsunamiFitPositions: LatLng[]
   /**
    * 観測棒。**フィールド名は `TsunamiObsBar` から引く**（名前を変えたらここで型が落ちる）。
@@ -1262,6 +1268,7 @@ export function TsunamiFitGL({
   // （下の `obsBaselineStale`）。
   const prevSeenSigRef = useRef<string>('')
   const prevEventIdRef = useRef<string>('')
+  const prevOperationStatusRef = useRef<string>('')
   const pendingObsPositionsRef = useRef<LatLng[]>([])
   const prevModeRef = useRef<string>(mode)
   const prevInteractingRef = useRef(false)
@@ -1341,16 +1348,17 @@ export function TsunamiFitGL({
     //   対象海域から見せる
     // - **差し替わった**: 番号の重ならない津波が解除を経ずに届いた（`useEarthquakes` の
     //   「番号の重ならない津波で表示中の津波を置き換えます」）。**signature は非空のまま変わる**ので、
-    //   空を経由したかだけでは見分けられない。**番号が 1 つでも重なれば同じ津波**（気象庁は別の地震の
-    //   寄与で番号を足して切り替える。→ `utils/tsunami.ts` の `isSameTsunamiEvent`）。**両方の識別子が
+    //   空を経由したかだけでは見分けられない。**運用種別が同じで番号が 1 つでも重なれば同じ津波**（気象庁は別の地震の
+    //   寄与で番号を足して切り替える。訓練の報は通常の津波と混ぜない。→ `utils/tsunami.ts` の `isSameTsunamiEvent`）。**両方の識別子が
     //   取れるときだけ見る** —— 片方でも空なら「別物」と言えないので従来どおり差分を取る（標準版は
     //   識別子を持たないため常にこちら）
     const tsunamiPresent = tsunamiSignature !== ''
     const tsunamiSwitched = tsunamiPresent && !!tsunamiEventId && !!prevEventIdRef.current
-      && !eventIdsOverlap(tsunamiEventId, prevEventIdRef.current)
+      && (tsunamiOperationStatus !== prevOperationStatusRef.current || !eventIdsOverlap(tsunamiEventId, prevEventIdRef.current))
     const obsBaselineStale = (tsunamiPresent && !prevSeenSigRef.current) || tsunamiSwitched
     prevSeenSigRef.current = tsunamiSignature
     prevEventIdRef.current = tsunamiEventId
+    prevOperationStatusRef.current = tsunamiOperationStatus
 
     // 更新された観測バーを検出して持ち越しに積む。海岸線 sig はここで消費して競合を防ぐ
     // （寄り先が観測点と海岸線で二重に決まると、直後に引き直しが起きて二段のカメラ移動になる）。
@@ -1481,7 +1489,7 @@ export function TsunamiFitGL({
     log.debug('[mapGL] fitJapan (津波の帰還: 海岸線なし or 発表終了)')
     fitJapan(map, 1.0)
   }, [
-    map, mode, tsunamiSignature, tsunamiEventId, tsunamiFitPositions, observationBars, arrivalMarkers, missingMarkers,
+    map, mode, tsunamiSignature, tsunamiEventId, tsunamiOperationStatus, tsunamiFitPositions, observationBars, arrivalMarkers, missingMarkers,
     isUserInteracting, idleReturnTick, armIdleReturnTimer, clearIdleReturnTimer,
   ])
 

@@ -10,7 +10,7 @@
 //   安全弁＝ 電文が壊れていても投機で再生を壊さない
 import { describe, it, expect } from 'vitest'
 import { speculativeSpeechTexts, speculativeSpeechTextsSafe } from './speechPrefetch'
-import { telegramTextToSpeak, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, lpgmToText, estimatedIntensityToText, type TtsSpeechOptions } from './ttsText'
+import { tsunamiPartialRetractionToText, telegramTextToSpeak, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, lpgmToText, estimatedIntensityToText, type TtsSpeechOptions } from './ttsText'
 import { splitIntoChunks } from './voicevox'
 import {
   createTestNankai, createTestNankaiCommentary, createTestKohatsu,
@@ -216,5 +216,26 @@ describe('投機で再生を壊さない', () => {
     const data = createTestKohatsu()
     const payload: ReplayPayload = { kind: 'kohatsu', data }
     expect(speculativeSpeechTextsSafe(payload, OPTS)).toEqual(speculativeSpeechTexts(payload, OPTS))
+  })
+})
+
+describe('津波情報だけの取消', () => {
+  const retraction = {
+    kind: 'tsunami', id: 'r-1', eventId: '20240101161000', headType: 'VTSE51',
+    time: '2024-01-01T17:00:00+09:00', cancelled: true, cancelReason: 'retracted',
+    issue: { source: '気象庁', time: '2024-01-01T17:00:00+09:00', type: 'Focus' }, areas: [],
+  }
+
+  // 正: 一部取消は、受信処理が実際に読む文（解除・誤報取消の文ではない）を焼く
+  it('一部取消の文を焼く', () => {
+    const texts = speculativeSpeechTexts({ kind: 'event', event: retraction } as unknown as ReplayPayload, OPTS)
+    expect(texts).toEqual([tsunamiPartialRetractionToText('VTSE51')])
+  })
+
+  // 対照: 津波警報等の取消は従来どおり取消の文
+  it('津波警報等の取消は取消の文を焼く', () => {
+    const texts = speculativeSpeechTexts({ kind: 'event', event: { ...retraction, headType: 'VTSE41' } } as unknown as ReplayPayload, OPTS)
+    expect(texts).not.toContain(tsunamiPartialRetractionToText('VTSE51'))
+    expect(texts.length).toBeGreaterThan(0)
   })
 })

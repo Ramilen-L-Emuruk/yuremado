@@ -1,8 +1,8 @@
 import type { HistoricalArchiveFile, HistoricalArchiveIndex, HistoricalArchiveMeta } from '../types/historicalArchive'
 import { isValidIntensityScale } from './intensity'
 import { withStoredEewOrigin } from './eewOrigin'
-// ReplayPayload の判別子は実地震シナリオの検証と同じ表を使う（理由はあちらの注記）。
-import { REPLAY_PAYLOAD_KINDS } from './testScenarioSchema'
+// ReplayPayload の判別子は実地震シナリオの検証と同じ表を使う（理由は表の注記）。
+import { REPLAY_PAYLOAD_KINDS } from './replayPayloadKinds'
 
 // ローカル履歴アーカイブ（`public/data/historical-archives/`）の型検証ガード。
 // testScenarioSchema.ts と同じ考え方: 壊れた JSON を検証なしで使うと実行時例外や

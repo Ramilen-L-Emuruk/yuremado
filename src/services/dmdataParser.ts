@@ -566,7 +566,8 @@ function readTelegramKey(doc: Document, kindLabel: string, logPrefix: string, he
   const controlEl = xmlQ(doc, 'Control')
   const raw = controlEl ? xmlText(xmlChild(controlEl, 'DateTime')) : ''
   if (!raw) {
-    log.warn(`${logPrefix} ${kindLabel}の電文作成時刻（Control/DateTime）を読めません（同じ電文を二度数えない鍵に使うため、受信通数が実際より少なく出ます。地震情報・長周期では報の新旧の比較も分単位の発表時刻へ落ちます）`)
+    // 報の新旧が分へ落ちることは `readCreatedAtMs` が別の行で言う（呼ぶ種別が違うため）
+    log.warn(`${logPrefix} ${kindLabel}の電文作成時刻（Control/DateTime）を読めません（同じ電文を二度数えない鍵に使うため、受信通数が実際より少なく出ます）`)
     return undefined
   }
   const title = controlEl ? xmlText(xmlChild(controlEl, 'Title')) : ''
@@ -583,13 +584,24 @@ function readTelegramKey(doc: Document, kindLabel: string, logPrefix: string, he
  * こちらは新旧の比較に使うので、日時として読めない値・時間帯を明示していない値は持たせない
  * （判定は電文の日時すべてと同じ `readTelegramDateTime`）。
  *
- * **欠落は記録しない。** 欠落なら `readTelegramKey` が既に記録している（同じ要素を見る）。
- * 記録するのは、あるのに読めなかったときだけ。持たない報は比べる側が `time` へ落ちる。
+ * **欠落も、あるのに読めなかったときも記録する**（どちらも `gateTelegramDateTime` で間引く）。持たない報は比べる側（`compareReportAge`）が
+ * 発表時刻（分）へ落ちるので、記録はその落ち先を言う。呼ぶのは地震情報・津波・長周期の 3 種別で、
+ * `readTelegramKey` を呼ぶのは地震情報だけ —— 地震情報で欠けたときは 2 行出るが、それぞれ別の帰結
+ * （受信通数と報の新旧）を言う。`Control/DateTime` は全種別で必須の要素で、`telegram.earthquake` の控えの
+ * 全期間（2020-11-18〜2026-10-18・XML 20,954 通）で欠けた例は無い。
  */
 function readCreatedAtMs(doc: Document, kindLabel: string, logPrefix: string): number | undefined {
   const controlEl = xmlQ(doc, 'Control')
   const raw = controlEl ? xmlText(xmlChild(controlEl, 'DateTime')) : ''
-  const readable = readTelegramDateTime(logPrefix, `${kindLabel}の電文作成時刻`, raw)
+  const consequence = '報の新旧は発表時刻（分）で比べます'
+  if (!raw) {
+    // 読めない値と同じ門を通す（欠けるときは書式の変化で系統的に欠け、履歴の読み直しのたびに連発するため）
+    gateTelegramDateTime(`${logPrefix} ${kindLabel}の電文作成時刻`, '(欠落)', () => {
+      log.warn(`${logPrefix} ${kindLabel}の電文作成時刻（Control/DateTime）がありません（${consequence}）`)
+    })
+    return undefined
+  }
+  const readable = readTelegramDateTimeWithConsequence(logPrefix, `${kindLabel}の電文作成時刻`, raw, consequence)
   return readable ? Date.parse(readable) : undefined
 }
 
@@ -622,7 +634,15 @@ const HAS_EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:?\d{2})$/
  * （`formatters.ts`）が同じ理由で間引いているので、濃さを揃える。種類が上限を超えたあとも時間で
  * 間引いて出し続ける（黙らせない理由は `createFirstSeenLogGate`）。
  */
-const gateTelegramDateTime = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
+let gateTelegramDateTime = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
+
+/**
+ * テスト用: 読めない日時の記録の間引きを空へ戻す。**門はモジュールの中に残る**ので、同じファイルの
+ * 先のテストが同じ値を読ませていると、記録を確かめるテストが順番しだいで落ちる。
+ */
+export function resetTelegramDateTimeLogGateForTest(): void {
+  gateTelegramDateTime = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS)
+}
 
 /**
  * 電文の日時要素を読む。**日時として読めない値・時間帯を明示していない値は捨てて記録する。**
@@ -638,13 +658,21 @@ const gateTelegramDateTime = createPerLabelLogGate(UNREADABLE_VALUE_LOG_KINDS, U
  * @returns 読めた値。読めなければ空文字（要素が無いのと同じ扱いへ倒す）
  */
 function readTelegramDateTime(logPrefix: string, label: string, raw: string): string {
+  return readTelegramDateTimeWithConsequence(logPrefix, label, raw, '無視します')
+}
+
+/**
+ * `readTelegramDateTime` の本体。読めなかったときに何が起きるか（`consequence`）を記録の括弧へ入れる。
+ * 捨てた値の代わりに別の値へ落ちる呼び出し元（→ `readCreatedAtMs`）は、落ち先をここで言う。
+ */
+function readTelegramDateTimeWithConsequence(logPrefix: string, label: string, raw: string, consequence: string): string {
   if (!raw) return ''
   if (Number.isFinite(Date.parse(raw)) && HAS_EXPLICIT_TIMEZONE.test(raw)) return raw
   gateTelegramDateTime(`${logPrefix} ${label}`, raw, overflowed => {
     const tail = overflowed
       ? `（読めない値が ${UNREADABLE_VALUE_LOG_KINDS} 種類を超えたため、以後は間引いて記録します）`
       : ''
-    log.warn(`${logPrefix} ${label}を日時として読めません（無視します）: "${raw}"${tail}`)
+    log.warn(`${logPrefix} ${label}を日時として読めません（${consequence}）: "${raw}"${tail}`)
   })
   return ''
 }

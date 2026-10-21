@@ -204,6 +204,19 @@ function reportsOf(t: JMATsunami): JMATsunami[] {
 }
 
 /**
+ * 届いた報 `next` が、組み立てに使った報のどれかより前に作られたか（{@link mergeTsunamiReports} が重ね直す条件）。
+ *
+ * **どれか 1 通でも時刻を読めなければ偽**（重ね直しは時刻を読めない報を外すので、その報が組み立てから落ちる）。
+ * 前後を決められない組（同じ分で片方だけ作成時刻を持つ）も偽で、従来どおり届いた順に重ねる。
+ */
+function arrivesOutOfOrder(current: JMATsunami, next: JMATsunami): boolean {
+  const earlier = reportsOf(current)
+  const later = reportsOf(next)
+  if (![...earlier, ...later].every(r => Number.isFinite(reportOrderKey(r)))) return false
+  return later.some(n => earlier.some(r => compareReportAge(n, r) < 0))
+}
+
+/**
  * 組み立て途中の津波へ、報を 1 通当てる。**画面へ載せる津波を報から組み立てる規則はここだけ。**
  *
  * - 津波情報・沖合の観測だけの取消（{@link isPartialTsunamiRetraction}）は、それより前に届いた
@@ -254,7 +267,7 @@ function isReportedBefore(a: JMATsunami, b: JMATsunami): boolean {
  * 重なりで抜くと、「A」だけの取消で「A B」の単位の観測点まで消える。「A B」の取消は「A」の報も抜く（Ⅰ.別02-8 例２）。
  * 取消が番号を持たないとき（番号で照合できない経路）は種類だけで抜く。
  *
- * 組み立てに使った報（`foldedReports`）は届いた順に並んでいるので、並べ替えずにそのまま当て直す。
+ * 組み立てに使った報（`foldedReports`）は作成時刻の順に並んでいる（古い報が後から届いたときは {@link mergeTsunamiReports} が並べ直す）ので、並べ替えずにそのまま当て直す。
  *
  * @returns 組み直した津波。抜いた結果 1 通も残らなければ null（呼び出し側は津波を消す）
  */
@@ -368,11 +381,11 @@ export function isTsunamiContinuation(current: JMATsunami | undefined, next: JMA
 /**
  * 報を 1 通当てたあと、表示中の津波がどうなるか（{@link stepTsunamiState} の答え）。
  *
- * - `ignored` … 表示中の津波に当たらない報（別の津波の解除・取消、表示中の津波が無いときの一部取消、取消の番号の組に含まれる報が無い一部取消）。状態を変えない
+ * - `ignored` … 表示中の津波に当たらない報（別の津波の解除・取消、表示中の津波が無いときの一部取消、取消の番号の組に含まれる報が無い一部取消、表示中の津波と別の期限の過ぎた報）。状態を変えない
  * - `ended` … 表示中の津波が終わる。`reason` は終わり方
  *   - `cancelled` … 解除・取消・失効（表示中の津波があれば取消表示を経る）
  *   - `retractedAll` … 一部取消で、組み直す報が残らない
- *   - `outdated` … 届いた報の有効期限が既に過ぎている
+ *   - `outdated` … 表示中の津波へ当てた結果の有効期限が既に過ぎている（届いた報 1 通の期限ではない）
  * - `live` … 当てたあとの津波。`continued` は前報を引き継いだか
  */
 export type TsunamiStateStep =
@@ -387,8 +400,9 @@ export type TsunamiStateStep =
  * 津波警報・注意報（VTSE41）で状態の期限は消えるのに予約だけが残り、注意報の発表中に「失効」する、
  * 津波情報だけの取消で予約がすべて外れて予報が失効しない、の 2 つが実際に起きた。
  *
- * 受信処理（`useLiveEventHandler`）も同じ関数で「受け取った報を当てた津波」を追う。あちらは時計を持たず、
- * 期限切れは状態更新と失効予約が扱うので、`now` に `null` を渡して期限の判定を飛ばす。
+ * 受信処理（`useLiveEventHandler` の `handleLiveEvent`）も同じ関数で「受け取った報を当てた津波」を追い、期限の判定も揃えるため
+ * 同じ時計（`serverDate()`）を渡す。渡さないと、届いた時点で期限の過ぎた報を受信処理だけが「生きている津波」として抱え続ける。
+ * 窓の手前の報を一度に舐める復元（`restorePreWindowTracking`・`dmdataReplay.ts`）は従来どおり `null` を渡し、期限の判定を飛ばす。
  */
 export function stepTsunamiState(current: JMATsunami | undefined, report: JMATsunami, now: Date | null): TsunamiStateStep {
   if (isPartialTsunamiRetraction(report)) {
@@ -402,12 +416,26 @@ export function stepTsunamiState(current: JMATsunami | undefined, report: JMATsu
     if (current && !isCancelForCurrentTsunami(report, current)) return { kind: 'ignored' }
     return { kind: 'ended', reason: 'cancelled' }
   }
-  // 有効期限が過去 = 既に失効している（ページの再読込で古い報が流れ直したときなど）
-  if (now && report.validDateTime && new Date(report.validDateTime) <= now) return { kind: 'ended', reason: 'outdated' }
+  // **期限は当てた結果の津波で判定する。届いた報 1 通の期限では判定しない**（2026-10-21 ユーザー選択「案1で」）。
+  // 報 1 通の期限で見ると、生きている津波があるところへ期限の過ぎた古い報（配信の順番の乱れ・張り直しの取り戻し）が
+  // 1 通届いただけで、その津波をカードごと・失効の予約ごと黙って外す。
   if (isTsunamiContinuation(current, report)) {
-    return { kind: 'live', tsunami: mergeTsunamiReports(current!, report), continued: true }
+    const merged = mergeTsunamiReports(current!, report)
+    // 同じ津波の報は重ね直した結果の期限で見る。古い報が後から届いても、新しい報の期限が生きていれば残る
+    if (isTsunamiExpired(merged, now)) return { kind: 'ended', reason: 'outdated' }
+    return { kind: 'live', tsunami: merged, continued: true }
   }
+  // 表示中の津波と別の（または表示中が無いときの）期限の過ぎた報は、何も変えない。表示中の津波は消さない
+  if (isTsunamiExpired(report, now)) return { kind: 'ignored' }
   return { kind: 'live', tsunami: report, continued: false }
+}
+
+/**
+ * 津波（または報）の有効期限が `now` までに過ぎているか。`now` が null なら判定しない（偽）。
+ * 受信処理は、届いた報そのものが期限切れなら音・読み上げを起こさない判定にも使う（{@link stepTsunamiState} の答えとは別に）。
+ */
+export function isTsunamiExpired(t: Pick<JMATsunami, 'validDateTime'>, now: Date | null): boolean {
+  return !!now && !!t.validDateTime && new Date(t.validDateTime) <= now
 }
 
 /**
@@ -526,7 +554,7 @@ export function withInheritedTsunamiFacts(latest: JMATsunami, reports: JMATsunam
 
   // **ライブ受信が続報のたびに行っているのと同じことを、古い報から順にやり直す。**
   // 規則を書き写さずに `mergeTsunamiReports` を畳むので、引き継ぐ項目が増えても
-  // ここを直す必要が無い。`latest` は時刻によらず最後に重ねる（画面へ載せるのは `latest`）。
+  // ここを直す必要が無い。`latest` は最後に重ねる（画面へ載せるのは `latest`）。`latest` が組み立てたどの報より古ければ、`mergeTsunamiReports` が作成時刻の順に並べ直す。
   const merged = applyTsunamiReport(foldTsunamiReports(sameEvent), latest) ?? latest
 
   // **期限の引き継ぎ自体は畳み込みの中で済んでいる**（`mergeTsunamiReports` が段ごとに決める）。
@@ -644,10 +672,19 @@ function warnIfCancelStopsEchoing(current: JMATsunami, next: JMATsunami): void {
  * **新しく引き継ぐ項目を足すときは、この表とここだけを直す。** リプレイの初期状態
  * （`dmdataReplay.ts`）は最新 1 報へ畳まず全報を順に流す作りなので、触らなくてよい。
  *
+ * **表の「新報」は発表の新しい報のこと。** 届いた報が、組み立てに使った報のどれかより前に作られていれば
+ * （張り直しの取り戻し・履歴との行き違いで古い報が後から届く）、1 通ずつ重ねずに作成時刻の順へ並べ直して
+ * 全部を重ね直す（{@link foldTsunamiReports}。履歴から戻すときと同じ規則。2026-10-21 ユーザー選択「A は案1」）。
+ * 届いた順に重ねると、古い津波警報等が新しい報の期限・本文・区域・等級を上書きする。
+ *
  * @param current いま表示している津波（＝これまでの報を取り込んだ結果）
  * @param next 新しく届いた報
  */
 export function mergeTsunamiReports(current: JMATsunami, next: JMATsunami): JMATsunami {
+  if (arrivesOutOfOrder(current, next)) {
+    // `arrivesOutOfOrder` は全報の時刻を読めるときしか真にならないので、畳み込みは空にならない（`?? next` は型のため）。
+    return foldTsunamiReports([...reportsOf(current), ...reportsOf(next)]) ?? next
+  }
   warnIfActionLineGoesStale(current, next)
   warnIfCancelStopsEchoing(current, next)
   return {

@@ -27,13 +27,14 @@
 
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { copyFile, link, mkdir, readFile, readdir, realpath, rename, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises'
+import { copyFile, link, mkdir, readFile, readdir, realpath, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import { Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 import { STORAGE_KINDS, isInside, samePath, type StorageKind } from './hostSettings'
+import { lockTolerantRename } from './lockTolerantRename'
 
 export const MIGRATION_FILE = 'migration.json'
 const TMP_SUFFIX = '.migrating'
@@ -190,7 +191,7 @@ async function writeJournal(to: string, journal: MigrationJournal): Promise<void
   const path = join(to, MIGRATION_FILE)
   await mkdir(to, { recursive: true })
   await writeFile(`${path}.tmp`, `${JSON.stringify(journal)}\n`)
-  await rename(`${path}.tmp`, path)
+  await lockTolerantRename(`${path}.tmp`, path)
 }
 
 export interface BeginMigrationOptions {

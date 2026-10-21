@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { foldTsunamiReports, isCancelForCurrentTsunami, latestValidDateTime } from './tsunami'
+import { foldTsunamiReports, isCancelForCurrentTsunami, latestValidDateTime, mergeTsunamiReports, stepTsunamiState } from './tsunami'
 import type { JMATsunami, TsunamiArea } from '../types/earthquake'
 
 // 津波の報の新旧を作成時刻（Control/DateTime。秒まで）で比べる（→ docs/spec/tsunami-spec.md §3「報の新旧は作成時刻で比べる」）。
@@ -118,5 +118,81 @@ describe('isCancelForCurrentTsunami（同じ分の取消・解除の足切り）
     const current = foldTsunamiReports([report({ createdAtMs: at(10) })])!
     const retraction = report({ cancelled: true, cancelReason: 'retracted', createdAtMs: at(40) })
     expect(isCancelForCurrentTsunami(retraction, current)).toBe(true)
+  })
+})
+
+describe('mergeTsunamiReports（古い報が後から届いたとき）', () => {
+  // 正: 後から届いた古い津波警報等は、新しい報の期限・本文・区域を上書きしない（作成時刻の順に重ね直す）
+  it('古い津波警報等が後から届いても、新しい報の期限・本文・等級が残る', () => {
+    const older = report({ createdAtMs: at(10), validDateTime: '2024-01-01T20:00:00+09:00', bodyText: '古い本文', areas: [area({ grade: 'Warning' })] })
+    const newer = report({ createdAtMs: at(40), validDateTime: '2024-01-01T22:00:00+09:00', bodyText: '新しい本文', areas: [area({ grade: 'Watch' })] })
+    const merged = mergeTsunamiReports(newer, older)
+    expect(merged.validDateTime).toBe('2024-01-01T22:00:00+09:00')
+    expect(merged.bodyText).toBe('新しい本文')
+    expect(merged.areas[0].grade).toBe('Watch')
+    expect(merged.foldedReports?.map(r => r.createdAtMs)).toEqual([at(10), at(40)])
+  })
+
+  // 対照: 順番どおりに届いた報は、従来どおり新しい報が正
+  it('順番どおりに届いた報は、届いた報の期限・本文を採る', () => {
+    const older = report({ createdAtMs: at(10), validDateTime: '2024-01-01T20:00:00+09:00', bodyText: '古い本文' })
+    const newer = report({ createdAtMs: at(40), validDateTime: '2024-01-01T22:00:00+09:00', bodyText: '新しい本文' })
+    const merged = mergeTsunamiReports(older, newer)
+    expect(merged.validDateTime).toBe('2024-01-01T22:00:00+09:00')
+    expect(merged.bodyText).toBe('新しい本文')
+  })
+
+  // 安全弁: 前後を決められない組（同じ分で片方だけ作成時刻を持つ）は並べ直さず、届いた順に重ねる
+  it('前後を決められない組は届いた順に重ねる', () => {
+    const first = report({ createdAtMs: at(40), bodyText: '先に届いた本文' })
+    const second = report({ bodyText: '後から届いた本文' })
+    expect(mergeTsunamiReports(first, second).bodyText).toBe('後から届いた本文')
+  })
+
+  // 安全弁: 組み立て済みの古い報がもう一度届いても（張り直しの取り戻し）、新しい報の本文が残る
+  it('組み立て済みの古い報がもう一度届いても新しい報の本文が残る', () => {
+    const older = report({ createdAtMs: at(10), bodyText: '古い本文' })
+    const newer = report({ createdAtMs: at(40), bodyText: '新しい本文' })
+    const again = mergeTsunamiReports(mergeTsunamiReports(older, newer), older)
+    expect(again.bodyText).toBe('新しい本文')
+  })
+})
+
+describe('stepTsunamiState（時計を渡したとき）', () => {
+  const NOW = new Date('2024-01-01T17:00:00+09:00')
+
+  // 正: 表示中の津波が無いところへ届いた期限切れの報は、何も始めない
+  it('表示中の津波が無いときの期限切れの報は何も変えない', () => {
+    const expired = report({ validDateTime: '2024-01-01T16:30:00+09:00' })
+    expect(stepTsunamiState(undefined, expired, NOW)).toEqual({ kind: 'ignored' })
+  })
+
+  // 正: 生きている別の津波へ、期限の過ぎた古い報が届いても外さない（届いた報 1 通の期限では判定しない）
+  it('生きている別の津波は、期限の過ぎた古い報で外さない', () => {
+    const live = report({ eventId: '20240101170000', createdAtMs: at(40), validDateTime: '2024-01-01T20:00:00+09:00' })
+    const stale = report({ createdAtMs: at(10), validDateTime: '2024-01-01T16:30:00+09:00' })
+    expect(stepTsunamiState(live, stale, NOW)).toEqual({ kind: 'ignored' })
+  })
+
+  // 正: 同じ津波の古い報が後から届いても、新しい報の期限が生きていれば残る
+  it('同じ津波の古い期限切れの報は、新しい報の期限で判定する', () => {
+    const newer = report({ createdAtMs: at(40), validDateTime: '2024-01-01T20:00:00+09:00' })
+    const stale = report({ createdAtMs: at(10), validDateTime: '2024-01-01T16:30:00+09:00' })
+    const step = stepTsunamiState(newer, stale, NOW)
+    expect(step.kind).toBe('live')
+    if (step.kind === 'live') expect(step.tsunami.validDateTime).toBe('2024-01-01T20:00:00+09:00')
+  })
+
+  // 対照: 当てた結果の期限が過ぎていれば、津波は終わる
+  it('当てた結果の期限が過ぎていれば終わりとして扱う', () => {
+    const older = report({ createdAtMs: at(10), validDateTime: '2024-01-01T18:00:00+09:00' })
+    const newer = report({ createdAtMs: at(40), validDateTime: '2024-01-01T16:30:00+09:00' })
+    expect(stepTsunamiState(older, newer, NOW)).toEqual({ kind: 'ended', reason: 'outdated' })
+  })
+
+  // 対照: 時計を渡さない（復元の経路）なら期限は見ない
+  it('時計を渡さなければ期限で落とさない', () => {
+    const expired = report({ validDateTime: '2024-01-01T16:30:00+09:00' })
+    expect(stepTsunamiState(undefined, expired, null).kind).toBe('live')
   })
 })
