@@ -865,7 +865,7 @@ export function App() {
 
   const {
     earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, connectionStatus, dmdataClassifications, lastUpdate, isLoading, isLoadingMore, hasMore, error,
-    historyLoss, loadMoreFailed,
+    historyLoss, loadMoreFailed, reconnectGapLoss,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
@@ -2617,6 +2617,7 @@ export function App() {
                 error={error}
                 historyLoss={historyLoss}
                 loadMoreFailed={loadMoreFailed}
+                reconnectGapLoss={reconnectGapLoss}
                 fetchThrottled={fetchThrottled}
                 lpgmByEventId={lpgmByEventId}
                 updateMarks={quakeUpdateMarks}

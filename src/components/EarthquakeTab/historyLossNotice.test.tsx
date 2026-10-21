@@ -53,6 +53,7 @@ async function renderTab(opts: {
   earthquakes?: JMAQuake[]
   historyLoss?: TelegramLoss
   loadMoreFailed?: boolean
+  reconnectGapLoss?: boolean
   fetchThrottled?: boolean
   error?: string | null
 }) {
@@ -72,6 +73,7 @@ async function renderTab(opts: {
       error={opts.error ?? null}
       historyLoss={opts.historyLoss ?? createEmptyTelegramLoss()}
       loadMoreFailed={opts.loadMoreFailed ?? false}
+      reconnectGapLoss={opts.reconnectGapLoss ?? false}
       fetchThrottled={opts.fetchThrottled ?? false}
       lpgmByEventId={new Map()}
       updateMarks={new Map()}
@@ -139,6 +141,27 @@ describe('履歴の一部が取れなかったときの帯', () => {
     await renderTab({ loadMoreFailed: true })
 
     expect(screen.getByText(/続きの読み込みに失敗/)).toBeTruthy()
+  })
+
+  // 接続が切れていた間の取りこぼし（2026-10-21 ユーザー承認「A・X・揃える」）。履歴の損失と同じ帯の並びに出す
+  it('正: 接続が切れていた間の電文を取り戻せていなければ、その文面で出す', async () => {
+    await renderTab({ reconnectGapLoss: true })
+
+    expect(screen.getByText('接続が切れていた間の電文を取り込めず（再読み込みで取得し直します）')).toBeTruthy()
+    expect(screen.getByText('石川県能登地方')).toBeTruthy()
+  })
+
+  it('正: 接続が切れていた間の取りこぼしは、カードが 0 件でも出す', async () => {
+    await renderTab({ earthquakes: [], reconnectGapLoss: true })
+
+    expect(screen.getByText('地震情報はありません')).toBeTruthy()
+    expect(screen.getByText(/接続が切れていた間の電文を取り込めず/)).toBeTruthy()
+  })
+
+  it('対照: 履歴の損失だけなら、接続が切れていた間の文面は出ない', async () => {
+    await renderTab({ historyLoss: addTelegramLoss(createEmptyTelegramLoss(), skips(1), []) })
+
+    expect(screen.queryByText(/接続が切れていた間/)).toBeNull()
   })
 
   it('正: 両方あれば両方出す', async () => {

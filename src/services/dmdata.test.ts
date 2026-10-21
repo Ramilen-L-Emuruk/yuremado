@@ -8,6 +8,7 @@ import {
   fetchDmdataGdEarthquakes,
   releaseSocket,
   fetchDmdataActiveEews,
+  fetchDmdataActiveEewsOutcome,
   fetchDmdataEewEventList,
   firstEewReportTime, describeFirstReportMiss, gdReportSpecialWarning, gdReportsEverSpecialWarning,
   DmdataWebSocket,
@@ -1418,6 +1419,41 @@ describe('fetchDmdataActiveEews', () => {
 
     expect(urls.some(u => u.endsWith('/xml-3'))).toBe(true)
     expect(urls.some(u => u.endsWith('/xml-1'))).toBe(false)
+  })
+
+  // 取りこぼしがあり得たか（張り直しの取り直しが地震タブの帯に使う。2026-10-21 ユーザー承認「案1で」）
+  describe('fetchDmdataActiveEewsOutcome の complete', () => {
+    it('正: 一覧を引けなければ偽', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503 }) as unknown as Response))
+      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS)).complete).toBe(false)
+    })
+
+    it('正: 窓の中の地震の詳細に報が 1 通も無ければ偽', async () => {
+      const recent = new Date(serverNow() - 60_000).toISOString()
+      stubEewFetch([{ eventId: 'ev-empty', dateTime: recent }], [])
+      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS)).complete).toBe(false)
+    })
+
+    it('対照: 一覧が 0 件なら真（取るものが無い）', async () => {
+      stubEewFetch([], [])
+      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS)).complete).toBe(true)
+    })
+
+    it('対照: 訓練・試験の報だけなら真（復元しないのが正しい）', async () => {
+      const recent = new Date(serverNow() - 60_000).toISOString()
+      stubEewFetch(
+        [{ eventId: 'ev-test', dateTime: recent }],
+        telegram({ id: 'xml-1', head: { type: 'VXSE45', test: true } }).items,
+      )
+      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS)).complete).toBe(true)
+    })
+
+    it('対照: 緊急地震速報の区分を受けていなければ真（一覧も引かない）', async () => {
+      const urls = stubEewFetch([], [])
+      const got = await fetchDmdataActiveEewsOutcome(KEY, ['telegram.earthquake'])
+      expect(got.complete).toBe(true)
+      expect(urls).toHaveLength(0)
+    })
   })
 
   it('一覧が失敗したら空配列を返し、失敗した事実を記録する', async () => {

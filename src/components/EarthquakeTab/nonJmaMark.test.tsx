@@ -93,6 +93,7 @@ const renderTab = async (quake: JMAQuake, lpgm?: JMALpgm, opts: { unreceivedOpen
     error={null}
     historyLoss={createEmptyTelegramLoss()}
     loadMoreFailed={false}
+    reconnectGapLoss={false}
     fetchThrottled={false}
     lpgmByEventId={lpgm ? new Map([[EVENT_ID, lpgm]]) : new Map()}
     updateMarks={new Map()}

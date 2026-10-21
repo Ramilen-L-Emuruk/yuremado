@@ -68,6 +68,7 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     error={null}
     historyLoss={createEmptyTelegramLoss()}
     loadMoreFailed={false}
+    reconnectGapLoss={false}
     fetchThrottled={false}
     lpgmByEventId={new Map()}
     updateMarks={new Map()}
@@ -135,6 +136,7 @@ describe('未入電トグル', () => {
         error={null}
         historyLoss={createEmptyTelegramLoss()}
         loadMoreFailed={false}
+        reconnectGapLoss={false}
         fetchThrottled={false}
         lpgmByEventId={new Map()}
         updateMarks={new Map()}

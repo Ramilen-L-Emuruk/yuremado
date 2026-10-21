@@ -11,7 +11,7 @@ import type { LatLng } from '../../utils/stationCoords'
 import { quakeCardScrollTarget, QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
 import { planFollowScroll } from '../../utils/ttsFollow'
 import {
-  type TelegramLoss, formatHistoryLossNotice, HISTORY_LOAD_MORE_FAILED_NOTICE,
+  type TelegramLoss, formatHistoryLossNotice, HISTORY_LOAD_MORE_FAILED_NOTICE, RECONNECT_GAP_LOSS_NOTICE,
   formatRateLimitedNotice, FETCH_THROTTLED_NOTICE,
 } from '../../utils/telegramLoss'
 
@@ -43,6 +43,8 @@ interface Props {
   historyLoss: TelegramLoss
   /** 直近の「もっと見る」がまるごと失敗したか（押し直せば回復しうる側）。 */
   loadMoreFailed: boolean
+  /** 接続が切れていた間の電文を取り戻せていないか（→ `hooks/useEarthquakes.ts` の `reconnectGapLoss`）。 */
+  reconnectGapLoss: boolean
   /**
    * いま配信元の上限に達していて、取得が待たされているか（→ `hooks/useFetchThrottled.ts`）。
    *
@@ -192,19 +194,20 @@ function useQuakeCardScroll(
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, fetchThrottled, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   useQuakeCardScroll(listRef, quakeCardScrollTarget({ earthquakes, selectedKey: selectedId, speakingKey, followSpeech }))
-  // 履歴について知らせる帯。**4 つを別に持つ**（確定した損失／429 で見送った分／押し直せば
-  // 回復しうる失敗／いま待っているだけ）。混ぜると、戻せない損失と戻せるものが同じ重さに見える。
+  // 履歴について知らせる帯。**5 つを別に持つ**（確定した損失／429 で見送った分／押し直せば
+  // 回復しうる失敗／接続が切れていた間の取りこぼし／いま待っているだけ）。混ぜると、戻せない損失と戻せるものが同じ重さに見える。
   //
-  // **待っているだけの告知は最後・青で出す。** 上の 3 つは「何かが欠けた・失敗した」だが、
+  // **待っているだけの告知は最後・青で出す。** 上の 4 つは「何かが欠けた・失敗した」だが、
   // これは欠けていない（枠が空けばそのまま取りに行く）。
   const notices: Array<{ text: string; tone: 'loss' | 'info' }> = [
     formatHistoryLossNotice(historyLoss),
     formatRateLimitedNotice(historyLoss),
     loadMoreFailed ? HISTORY_LOAD_MORE_FAILED_NOTICE : null,
+    reconnectGapLoss ? RECONNECT_GAP_LOSS_NOTICE : null,
   ].filter((t): t is string => t !== null).map(text => ({ text, tone: 'loss' as const }))
   if (fetchThrottled) notices.push({ text: FETCH_THROTTLED_NOTICE, tone: 'info' })
   // **1 件も無いときだけ読み込み中の画面にする。**
