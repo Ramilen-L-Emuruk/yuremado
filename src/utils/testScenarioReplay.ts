@@ -1,10 +1,14 @@
-import type { AppEvent, EEWRegion } from '../types/earthquake'
+import type { AppEvent, EEWRegion, TsunamiArea } from '../types/earthquake'
 import type { ReplayEntry, ReplayPayload } from '../types/replay'
 import type { TestScenarioFile } from '../types/testScenario'
+import { log } from './logger'
 
 function shiftIso(iso: string, deltaMs: number): string {
   const t = new Date(iso).getTime()
-  return Number.isFinite(t) ? new Date(t + deltaMs).toISOString() : iso
+  if (Number.isFinite(t)) return new Date(t + deltaMs).toISOString()
+  // 読めない時刻は収録当時の値のまま画面へ出る。止めはしないが、黙って通さない
+  log.warn(`[testScenario] 時刻を読めないためずらさずに通します: ${iso}`)
+  return iso
 }
 
 function shiftIsoOpt(iso: string | undefined, deltaMs: number): string | undefined {
@@ -45,6 +49,26 @@ function replaceEventIdInId(id: string, oldEventId: string | undefined, newEvent
 
 function shiftEEWRegions(regions: EEWRegion[] | undefined, deltaMs: number): EEWRegion[] | undefined {
   return regions?.map(r => ({ ...r, arrivalTime: shiftIsoNullable(r.arrivalTime, deltaMs) }))
+}
+
+/**
+ * 津波の区域を写す。**発表中の区域（`areas`）と解除された区域（`cancelledAreas`）の両方に当てる。**
+ * 形は同じで、解除された区域も到達予想・観測点の満潮時刻を持ちうる。片方だけ写す形にしていた頃は、
+ * `cancelledAreas` の時刻が収録当時の絶対値のまま残っていた。
+ */
+function shiftTsunamiAreas(areas: TsunamiArea[], deltaMs: number): TsunamiArea[] {
+  return areas.map(a => ({
+    ...a,
+    firstHeight: a.firstHeight && {
+      ...a.firstHeight,
+      arrivalTime: shiftIsoOpt(a.firstHeight.arrivalTime, deltaMs),
+    },
+    stations: a.stations?.map(s => ({
+      ...s,
+      highTideDateTime: shiftIsoOpt(s.highTideDateTime, deltaMs),
+      arrivalTime: shiftIsoOpt(s.arrivalTime, deltaMs),
+    })),
+  }))
 }
 
 function remapAppEvent(event: AppEvent, deltaMs: number, remapId: IdRemapper): AppEvent {
@@ -88,18 +112,11 @@ function remapAppEvent(event: AppEvent, deltaMs: number, remapId: IdRemapper): A
           arrivalTime: shiftIsoOpt(eq.arrivalTime, deltaMs),
         })),
         issue: { ...event.issue, time: shiftIso(event.issue.time, deltaMs) },
-        areas: event.areas.map(a => ({
-          ...a,
-          firstHeight: a.firstHeight && {
-            ...a.firstHeight,
-            arrivalTime: shiftIsoOpt(a.firstHeight.arrivalTime, deltaMs),
-          },
-          stations: a.stations?.map(s => ({
-            ...s,
-            highTideDateTime: shiftIsoOpt(s.highTideDateTime, deltaMs),
-            arrivalTime: shiftIsoOpt(s.arrivalTime, deltaMs),
-          })),
-        })),
+        areas: shiftTsunamiAreas(event.areas, deltaMs),
+        ...(event.cancelledAreas && { cancelledAreas: shiftTsunamiAreas(event.cancelledAreas, deltaMs) }),
+        // 観測状況を確定した時刻（観測情報の基点）。カードの観測欄に時点として出るので、
+        // 止めると隣の観測点の時刻だけがずれて、時点が収録当時のまま残る。
+        ...(event.observationDateTime !== undefined && { observationDateTime: shiftIso(event.observationDateTime, deltaMs) }),
         observations: event.observations?.map(o => ({
           ...o,
           arrivalTime: shiftIsoOpt(o.arrivalTime, deltaMs),
@@ -130,6 +147,9 @@ function remapAppEvent(event: AppEvent, deltaMs: number, remapId: IdRemapper): A
         },
         areas: shiftEEWRegions(event.areas, deltaMs),
         regions: shiftEEWRegions(event.regions, deltaMs),
+        // 第 1 報の発表時刻（誤報取消の読み上げが読む。起動時の復元・初期状態が付ける）。
+        // `null` は「引けなかった」という事実なのでそのまま残す。
+        ...(event.firstIssueTime !== undefined && { firstIssueTime: shiftIsoNullable(event.firstIssueTime, deltaMs) }),
       }
     }
   }

@@ -1,5 +1,5 @@
-import type { ReplayPayload } from '../types/replay'
 import { log } from './logger'
+import { REPLAY_PAYLOAD_KINDS } from './replayPayloadKinds'
 import type { TestScenarioFile, TestScenarioIndex, TestScenarioMeta, ScenarioCategory } from '../types/testScenario'
 import { withStoredEewOrigin } from './eewOrigin'
 
@@ -46,27 +46,6 @@ export function validateScenarioIndex(v: unknown): { valid: TestScenarioIndex; s
 }
 
 /**
- * ReplayPayload の判別子（破損 payload が instantiateScenario で TypeError を投げる HIGH #1 対策）。
- *
- * **`ReplayPayload['kind']` の全種別を持つ表から導く。** 文字列を手で並べていた頃は、種別を足しても
- * ここへ書き忘れて、`remapPayload` が扱える `quakeNotice`・`earthquakeCount`・`estimatedIntensity` の
- * 3 種別がシナリオの読み込みで**黙って捨てられていた**（2026-10-18 に 10/16 の誤報のシナリオで、
- * 13:15 のお知らせが帯にすら出ないことで発覚）。表にしておけば、種別を足すと型検査がここで止まる。
- * ローカル履歴アーカイブの検証（`historicalArchiveSchema.ts`）も同じ表を使う。
- */
-const REPLAY_PAYLOAD_KIND_TABLE: Record<ReplayPayload['kind'], true> = {
-  event: true,
-  lpgm: true,
-  nankai: true,
-  nankaiCommentary: true,
-  kohatsu: true,
-  quakeNotice: true,
-  earthquakeCount: true,
-  estimatedIntensity: true,
-}
-export const REPLAY_PAYLOAD_KINDS: ReadonlySet<string> = new Set(Object.keys(REPLAY_PAYLOAD_KIND_TABLE))
-
-/**
  * payload の kind と対応する必須サブフィールドを検証する。
  * - kind: 'event' → event が Record
  * - それ以外の種別 → data が Record
@@ -97,7 +76,7 @@ export function validateScenarioFile(v: unknown): TestScenarioFile | null {
     if (!isRecord(e.payload)) continue
     if (!isValidPayload(e.payload)) {
       // **捨てたことを残す。** かつて種別の一覧の書き忘れで 3 種別が黙って捨てられ、帯にすら出ないまま
-      // 気づけなかった（→ `REPLAY_PAYLOAD_KIND_TABLE`）。
+      // 気づけなかった（→ `utils/replayPayloadKinds.ts`）。
       log.warn('[scenario] シナリオの電文を読めないため捨てました', { id: v.id, kind: e.payload.kind })
       continue
     }

@@ -224,43 +224,150 @@ describe('fetchLocalArchiveQuakeHistory', () => {
     clearLocalArchiveCache()
   })
 
-  it('before より前の地震（event.kind === quake）だけを新しい順に返す', async () => {
+  /**
+   * 地震に畳めるだけの欄を持つ地震情報。`eventId`（14 桁）が同じなら同じ地震として畳まれる
+   * （DMDATA の電文 ID の書式。→ `extractQuakeEventIdFromId`）。
+   */
+  const quakeOf = (eventId: string, serial: number, time: string) => validQuake({
+    id: `dmdata-quake-${eventId}-${serial}`,
+    eventId,
+    time,
+    issue: { source: '気象庁', time, type: '震源・震度情報', correct: 'なし' },
+    earthquake: {
+      time: '2016-04-14T12:26:00Z',
+      hypocenter: { name: '熊本県熊本地方', latitude: 32.7, longitude: 130.8, depth: 10, magnitude: 6.5 },
+      maxScale: 70,
+      domesticTsunami: 'なし',
+    },
+    points: [],
+  })
+  const quakeEntry = (eventId: string, serial: number, time: string) =>
+    ({ time, payload: { kind: 'event', event: quakeOf(eventId, serial, time) } })
+  /** 履歴の窓（7 日）を見るには、収録範囲の広いアーカイブが要る。 */
+  const wide: HistoricalArchiveMeta = { ...meta, from: '2016-04-01T00:00:00Z', to: '2016-04-30T00:00:00Z', firstEventTime: '2016-04-01T00:00:00Z' }
+  const BEFORE = new Date('2016-04-16T00:00:00Z')
+
+  it('before より前の地震（event.kind === quake）だけを返す', async () => {
     mockFetchJson.mockResolvedValueOnce({
-      ...meta,
+      ...wide,
       entries: [
-        { time: '2011-03-11T05:46:27Z', payload: { kind: 'event', event: validEew() } }, // quake以外は除外
-        { time: '2011-03-11T05:46:00Z', payload: { kind: 'event', event: validQuake({ id: 'q1' }) } },
-        { time: '2011-03-11T05:49:00Z', payload: { kind: 'event', event: validQuake({ id: 'q2' }) } },
-        { time: '2011-03-11T05:55:00Z', payload: { kind: 'event', event: validQuake({ id: 'q3' }) } }, // before以降は除外
+        { time: '2016-04-14T12:27:00Z', payload: { kind: 'event', event: validEew() } }, // quake以外は除外
+        quakeEntry('20160414212600', 1, '2016-04-14T12:30:00Z'),
+        quakeEntry('20160415000300', 1, '2016-04-15T00:10:00Z'),
+        quakeEntry('20160416012500', 1, '2016-04-16T01:30:00Z'), // before以降は除外
       ],
     })
 
-    const result = await fetchLocalArchiveQuakeHistory(meta, new Date('2011-03-11T05:50:00Z'), 10)
+    const result = await fetchLocalArchiveQuakeHistory(wide, BEFORE, 7)
 
-    expect(result.quakes.map(q => q.id)).toEqual(['q2', 'q1']) // 新しい順
+    expect(result.quakes.map(q => q.id).sort()).toEqual([
+      'dmdata-quake-20160414212600-1', 'dmdata-quake-20160415000300-1',
+    ])
     expect(skippedTotal(result.skippedByDay)).toBe(0)
     expect(result.failedArchiveUrls).toEqual([])
   })
 
-  it('targetEvents 件で打ち切る', async () => {
+  // 並びは新しい順（P2PQuake の履歴と同じ）。統合は同じ順位の報どうしで入力の並びが効くので固定する
+  it('地震情報を収録の並びによらず新しい順に返す', async () => {
     mockFetchJson.mockResolvedValueOnce({
-      ...meta,
+      ...wide,
       entries: [
-        { time: '2011-03-11T05:46:00Z', payload: { kind: 'event', event: validQuake({ id: 'q1' }) } },
-        { time: '2011-03-11T05:47:00Z', payload: { kind: 'event', event: validQuake({ id: 'q2' }) } },
+        quakeEntry('20160415000300', 1, '2016-04-15T00:10:00Z'),
+        quakeEntry('20160414212600', 2, '2016-04-14T12:40:00Z'),
+        quakeEntry('20160415000300', 2, '2016-04-15T00:20:00Z'),
+        quakeEntry('20160414212600', 1, '2016-04-14T12:30:00Z'),
       ],
     })
 
-    const result = await fetchLocalArchiveQuakeHistory(meta, new Date('2011-03-11T06:00:00Z'), 1)
+    const result = await fetchLocalArchiveQuakeHistory(wide, BEFORE, 7)
 
-    expect(result.quakes).toHaveLength(1)
-    expect(result.quakes[0].id).toBe('q2')
+    expect(result.quakes.map(q => q.id)).toEqual([
+      'dmdata-quake-20160415000300-2', 'dmdata-quake-20160415000300-1',
+      'dmdata-quake-20160414212600-2', 'dmdata-quake-20160414212600-1',
+    ])
+  })
+
+  // 正: 電文の件数で切っていた頃は、熊本の本震直前で 52 地震のうち 18 枚しか残らなかった
+  it('件数では切らない（50 件を超える地震を全部返す）', async () => {
+    const entries = Array.from({ length: 60 }, (_, i) => {
+      const t = new Date(Date.parse('2016-04-15T00:00:00Z') + i * 60_000).toISOString()
+      return quakeEntry(`201604150${String(1000 + i).padStart(5, '0')}`, 1, t)
+    })
+    mockFetchJson.mockResolvedValueOnce({ ...wide, entries })
+
+    const result = await fetchLocalArchiveQuakeHistory(wide, BEFORE, 7)
+
+    expect(result.quakes).toHaveLength(60)
+  })
+
+  // 正: 窓を地震で閉じる。窓の中に報を持つ地震は、窓より前の報も返す（途中で切れたカードを作らない）
+  it('窓の中に報を持つ地震は、窓より前の報も一緒に返す', async () => {
+    mockFetchJson.mockResolvedValueOnce({
+      ...wide,
+      entries: [
+        quakeEntry('20160407230000', 1, '2016-04-07T14:00:00Z'), // 窓（04-09 JST 0 時〜）より前
+        quakeEntry('20160407230000', 2, '2016-04-09T00:00:00Z'), // 同じ地震の続報が窓の中
+      ],
+    })
+
+    const result = await fetchLocalArchiveQuakeHistory(wide, BEFORE, 7)
+
+    expect(result.quakes.map(q => q.id).sort()).toEqual([
+      'dmdata-quake-20160407230000-1', 'dmdata-quake-20160407230000-2',
+    ])
+  })
+
+  // 対照: 報が全部窓より前の地震は返さない（7 日の窓が効いている）
+  it('報が全部 7 日の窓より前の地震は返さない', async () => {
+    mockFetchJson.mockResolvedValueOnce({
+      ...wide,
+      entries: [
+        quakeEntry('20160402100000', 1, '2016-04-02T01:00:00Z'),
+        quakeEntry('20160415000300', 1, '2016-04-15T00:10:00Z'),
+      ],
+    })
+
+    const result = await fetchLocalArchiveQuakeHistory(wide, BEFORE, 7)
+
+    expect(result.quakes.map(q => q.id)).toEqual(['dmdata-quake-20160415000300-1'])
+  })
+
+  it('同じ窓の津波と帯・長周期（extras）も返す', async () => {
+    const band = (id: string, time: string) => ({
+      time,
+      payload: {
+        kind: 'earthquakeCount',
+        data: { id, time, eventId: '20160414212600', headline: '', items: [], cancelled: false, reportDateTime: time, expireAt: '2016-04-22T00:00:00Z' },
+      },
+    })
+    const lpgm = (serial: number, time: string) => ({
+      time,
+      payload: { kind: 'lpgm', data: { id: `lpgm-${serial}`, eventId: '20160414212600', time, originTime: time, maxClass: 1, cancelled: false } },
+    })
+    mockFetchJson.mockResolvedValueOnce({
+      ...wide,
+      entries: [
+        { time: '2016-04-14T12:40:00Z', payload: { kind: 'event', event: validTsunami({ id: 't1' }) } },
+        band('c1', '2016-04-14T13:00:00Z'),
+        band('c2', '2016-04-14T14:00:00Z'),
+        lpgm(1, '2016-04-14T12:45:00Z'),
+        lpgm(2, '2016-04-14T12:50:00Z'),
+        { time: '2016-04-02T00:00:00Z', payload: { kind: 'event', event: validTsunami({ id: 't-old' }) } }, // 窓より前
+      ],
+    })
+
+    const result = await fetchLocalArchiveQuakeHistory(wide, BEFORE, 7)
+
+    expect(result.tsunamis.map(t => t.id)).toEqual(['t1'])
+    // 帯は電文ごと、長周期は地震ごとに最新 1 通（鍵は historyExtraKey）。古い順
+    expect(result.extras.map(e => e.payload.kind === 'lpgm' ? e.payload.data.id : e.payload.kind === 'earthquakeCount' ? e.payload.data.id : '?'))
+      .toEqual(['lpgm-2', 'c1', 'c2'])
   })
 
   it('本体が読めなければ失敗アーカイブとして扱う', async () => {
     mockFetchJson.mockRejectedValueOnce(new Error('network error'))
 
-    const result = await fetchLocalArchiveQuakeHistory(meta, new Date(meta.to), 10)
+    const result = await fetchLocalArchiveQuakeHistory(meta, new Date(meta.to), 7)
 
     expect(result.quakes).toEqual([])
     expect(result.failedArchiveUrls).toHaveLength(1)

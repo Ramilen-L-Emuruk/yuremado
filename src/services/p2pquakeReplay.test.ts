@@ -366,6 +366,27 @@ describe('fetchP2PQuakeHistory の打ち切り', () => {
     // カードの並びは呼び出し先の mergeQuakeHistory が決めるので、ここでは採否だけが意味を持つ。
     expect(result.quakes.map(q => q.id)).toEqual(['a-2', 'a-1', 'b'])
   })
+
+  // 選んだ地震の古い報が、選ばない地震の新しい報より後ろに並ぶ形。以前は目標に達した後の
+  // 最初の新しい地震（c）で並びを抜けていたため、その後ろの b-1 が落ちていた。
+  it('目標に達した後に別の地震を挟んでも、選んだ地震の古い報を落とさない', async () => {
+    const bQuakeAt = new Date(2024, 0, 1, 10, 30, 0)
+    // b の前の報: 発表は 10:00 だが、地震の時刻は b-2 と同じ（同じ地震）
+    const b1 = quake('b-1', new Date(2024, 0, 1, 10, 0, 0))
+    ;(b1.earthquake as { time: string }).time = p2pTime(bQuakeAt)
+    respondWith({
+      quake: [[
+        quake('a', new Date(2024, 0, 1, 11, 0, 0)),
+        quake('b-2', bQuakeAt),                         // 目標 2 件に到達
+        quake('c', new Date(2024, 0, 1, 10, 20, 0)),    // 3 件目の地震 → 採らない
+        b1,
+      ]],
+    })
+
+    const result = await fetchP2PQuakeHistory(T, 2, null)
+
+    expect(result.quakes.map(q => q.id)).toEqual(['a', 'b-2', 'b-1'])
+  })
 })
 
 // 打ち切りは「どこで切るか」の判断なので、応答の並びに委ねない。

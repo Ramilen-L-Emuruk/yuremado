@@ -1707,9 +1707,10 @@ export function App() {
   // 再生開始時刻より前の履歴（地震カードの一覧と、初期状態に足す 24 時間より前の電文）。
   // 取得元は再生用と同じくバリアントで変わるが、引き方が違う。**どちらもライブ接続時の
   // 初回履歴と同じ範囲を読む** —— DMDSS 版は日次アーカイブを 7 日ぶん（件数では打ち切らない。
-  // → `HISTORY_WINDOW_DAYS`）、standard 版は P2PQuake のクエリを 1 回引いて件数で切る。
+  // → `HISTORY_WINDOW_DAYS`）、standard 版は P2PQuake のクエリを 1 回引いて地震の件数で切る。
   // こちらも fetchReplayEvents と同じく、対象期間がローカル履歴アーカイブに重なればそちらを使う
   // （重ならなければ DMDATA/P2PQuake 側は「そもそもデータの無い時代」で必ず失敗するため）。
+  // ローカル履歴アーカイブはどちらの版でも 7 日ぶんを全部返し、件数では切らない（2026-10-14 ユーザー選択）。
   // 重なり判定には履歴の遡り幅（7 日）ではなく fetchReplayEvents の「初期状態」と同じ
   // REPLAY_PRE_WINDOW_MS（24時間）を使う。ここを独自の幅にすると、本編・初期状態はアーカイブに
   // 重ならないのに履歴だけ数日先の無関係なアーカイブに重なってしまい、再生は実データ側で
@@ -1717,7 +1718,7 @@ export function App() {
   const fetchReplayQuakeHistory = useCallback(
     (before: Date, signal: AbortSignal) => {
       const covering = findCoveringArchiveSync(historicalArchives, new Date(before.getTime() - REPLAY_PRE_WINDOW_MS), before)
-      if (covering) return fetchLocalArchiveQuakeHistory(covering, before, MAX_HISTORY_RETAINED)
+      if (covering) return fetchLocalArchiveQuakeHistory(covering, before, HISTORY_WINDOW_DAYS)
       return isDmdss
         // 履歴（再生開始より前の地震カード）も本編と同じ扱いにする。片方だけ通すと
         // 「再生には訓練報が出るのにカードの一覧には無い」形でずれる。

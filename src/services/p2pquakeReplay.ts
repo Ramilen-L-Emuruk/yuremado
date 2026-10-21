@@ -19,7 +19,7 @@ import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult } from '../type
 import type { RawP2PEvent } from './p2pquake'
 import type { JMAQuake } from '../types/earthquake'
 import { convertEvent, fetchJmaArchiveRaw } from './p2pquake'
-import { sameQuakeEntry } from '../utils/quakeMerge'
+import { selectQuakeHistory } from '../utils/quakeHistorySelection'
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import { log } from '../utils/logger'
 import { createSkipCounter, UNKNOWN_SKIP_DAY } from '../utils/telegramLoss'
@@ -269,8 +269,8 @@ function toEntry(raw: RawP2PEvent): ReplayEntry | null {
  *
  * 集めた電文は目標のイベント数で打ち切る。API のページングは電文単位なので、そのまま渡すと
  * 地震の多い期間ほど一覧が厚くなり、同じ設定でもバリアントで枚数が食い違う（実測では
- * standard 版だけ 84 枚、DMDSS 版は 50 枚台）。同一イベントの判定にはカードの統合と同じ
- * `sameQuakeEntry` を使う（別の物差しで数えると、統合後の枚数と合わない）。
+ * standard 版だけ 84 枚、DMDSS 版は 50 枚台）。地震の数え方と選び方は `selectQuakeHistory`
+ * （ローカル履歴アーカイブの履歴と共有）。
  */
 export async function fetchP2PQuakeHistory(
   before: Date,
@@ -321,18 +321,14 @@ export async function fetchP2PQuakeHistory(
   }
   candidates.sort((a, b) => b.time - a.time)
 
-  const quakes: JMAQuake[] = []
-  // 目標の数え方に使う「イベントの代表電文」。新しい順に見るので、同じ地震の前の報は
-  // 代表より後に現れる。既知と判定された電文は目標に達した後でも採る（切ると、一覧の
-  // 最も古いカードだけが震度速報のまま残るなど、途中で切れた形になる）。
-  const seenEvents: JMAQuake[] = []
-  for (const { event } of candidates) {
-    if (!seenEvents.some(e => sameQuakeEntry(e, event, getAreaPrefIndexCache()))) {
-      if (seenEvents.length >= targetEvents) break
-      seenEvents.push(event)
-    }
-    quakes.push(event)
-  }
+  // **地震で選ぶ。** 新しい地震から `targetEvents` 件を選び、選んだ地震の報は全部採る
+  // （→ `selectQuakeHistory`）。以前は目標に達した後の最初の新しい地震で並びを抜けていたため、
+  // その後ろに並ぶ「選んだ地震の古い報」が落ち、一覧の最も古いカードが途中で切れていた。
+  const quakes = selectQuakeHistory(
+    candidates, c => c.event, c => c.time,
+    { maxEvents: targetEvents, windowStartMs: null },
+    getAreaPrefIndexCache(),
+  ).map(c => c.event)
 
   // P2PQuake は帯（地震回数・お知らせ・南海トラフ解説情報）も長周期も配信しないので常に空。
   // 津波もここでは返さない（standard 版の津波は初期状態の担当で、遡り幅も目的が違う）。
