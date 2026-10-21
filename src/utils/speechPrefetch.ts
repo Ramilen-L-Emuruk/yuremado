@@ -1,12 +1,13 @@
 import type { LiveEvent } from '../types/earthquake'
 import type { ReplayPayload } from '../types/replay'
 import {
-  earthquakeToSegments, earthquakeCancelToText, tsunamiToSegments, tsunamiCancelToText,
+  earthquakeToSegments, earthquakeCancelToText, tsunamiToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText,
   eewAlertToText, eewCancelToText, lpgmToText, nankaiToText, nankaiCommentaryToText,
   kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, telegramTextToSpeak,
   type TtsSpeechOptions,
 } from './ttsText'
 import { joinSegments } from './ttsFollow'
+import { isPartialTsunamiRetraction } from './tsunami'
 import { log } from './logger'
 
 /**
@@ -58,7 +59,10 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
         if (event.cancelled) add(earthquakeCancelToText(event.earthquake?.time ?? null, event.cancelText))
         else add(joinSegments(earthquakeToSegments(event, opts, true)))
       } else if (event.kind === 'tsunami') {
-        if (event.cancelled) add(tsunamiCancelToText(event.cancelReason, event.cancelText))
+        // 津波情報・沖合の観測だけの取消は、解除・誤報取消とは別の文を読む（→ `useLiveEventHandler` の一部取消の分岐）。
+        if (isPartialTsunamiRetraction(event)) {
+          if (event.headType === 'VTSE51' || event.headType === 'VTSE52') add(tsunamiPartialRetractionToText(event.headType))
+        } else if (event.cancelled) add(tsunamiCancelToText(event.cancelReason, event.cancelText))
         else add(joinSegments(tsunamiToSegments(event, undefined, undefined, opts)))
       } else if (event.kind === 'eew') {
         // 取消の頭の文は第 1 報の時刻を言うが、この電文 1 通からは分からない（受信の記憶にしか無い）。

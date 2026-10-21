@@ -92,6 +92,29 @@ describe('バナーから開く付加文の面', () => {
     expect(container.textContent).toContain(BODY_ONLY)
   })
 
+  // 正: 小さい番号の地震が加わって番号の組が伸びても（`B` → `A B`）、番号が重なる同じ津波なので閉じない。
+  // 最小の番号を鍵にすると、ここで鍵が `B` から `A` へ動いて閉じていた。
+  it('小さい番号が加わっても、同じ津波の等級が動かなければ開いたまま', () => {
+    const { container, rerender } = renderTab([makeTsunami({ eventId: '20260420165000' })])
+    fireEvent.click(screen.getByRole('button'))
+    expect(container.textContent).toContain(BODY_ONLY)
+
+    const switched = makeTsunami({ id: 'test-tsunami-2', time: '2026-04-20T16:56:00Z', eventId: '20260420160000 20260420165000' })
+    rerender(<TsunamiTab tsunamis={[switched]} isVisible />)
+    expect(container.textContent).toContain(BODY_ONLY)
+  })
+
+  // 対照: 番号が 1 つも重ならない別の津波へ入れ替わったら、等級が同じでも閉じる。
+  it('番号の重ならない別の津波へ入れ替わったら閉じる', () => {
+    const { container, rerender } = renderTab([makeTsunami({ eventId: '20260420165000' })])
+    fireEvent.click(screen.getByRole('button'))
+    expect(container.textContent).toContain(BODY_ONLY)
+
+    const other = makeTsunami({ id: 'test-tsunami-9', time: '2026-04-20T18:00:00Z', eventId: '20260420175500' })
+    rerender(<TsunamiTab tsunamis={[other]} isVisible />)
+    expect(container.textContent).not.toContain(BODY_ONLY)
+  })
+
   // 対照: 面は下の区域一覧を覆う。等級が動いた報まで覆い続けると、引き上げや一部解除が目に入らない。
   it('区域の等級が動いた続報では閉じる', () => {
     const { container, rerender } = renderTab([makeTsunami()])

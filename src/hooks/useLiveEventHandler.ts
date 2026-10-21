@@ -17,7 +17,7 @@ import {
 import { hasKnownEpicenter } from '../utils/geo'
 import { showBrowserNotification } from '../utils/notifications'
 import { tsunamiIssueNotification, tsunamiLiftNotification } from '../utils/tsunamiNotification'
-import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry } from '../utils/tsunami'
+import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, isTsunamiExpired, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry } from '../utils/tsunami'
 import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
 import { playAlertSound, ttsDelayFor, maxTtsDelay, type AlertSoundType } from '../utils/alertSound'
 import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
@@ -637,6 +637,18 @@ function quakeSpokenStateFor(states: Map<string, QuakeSpokenState>, eventKey: st
 }
 
 /**
+ * これから `keys` の記憶を引くとき、無いものを作っても上限（`SPOKEN_QUAKE_STATES_MAX`）を超えないかを先に見て、
+ * 超えるなら引く前に 1 度だけ丸ごと捨てる。**1 度の読み上げで複数の記憶を引く経路はこれを通すこと**
+ * （引く途中で捨てると、先に引いた記憶が宙に浮く。→ `tsunamiQuakeSpokenFor`）。
+ */
+function reserveQuakeSpokenStates(states: Map<string, QuakeSpokenState>, keys: readonly string[]): void {
+  const missing = new Set(keys.filter(k => !states.has(k))).size
+  if (missing === 0 || states.size + missing <= SPOKEN_QUAKE_STATES_MAX) return
+  log.debug(`[quake] 読み上げ済みの記憶が上限に達したため捨てた (${states.size} 件)`)
+  states.clear()
+}
+
+/**
  * 津波の読み上げが見る既読を組み立てる。**原因地震ごとに、その地震の主題の既読を引く**（→ `TsunamiQuakeSpoken`）。
  *
  * どの原因地震がどの地震カードに当たるかは `linkTsunamiSources` が決める（ライブ受信と録画モードの復元で
@@ -661,11 +673,19 @@ function tsunamiQuakeSpokenFor(
   if (ids.length === 0) return null
   const cardOf = (eventId: string | undefined): JMAQuake | undefined =>
     eventId ? cards.find(q => extractQuakeEventIdFromId(q.id) === eventId) : undefined
-  const sources = linkTsunamiSources(tsunami, cards).map(link => {
+  const links = linkTsunamiSources(tsunami, cards).map(link => {
     const card = cardOf(link.eventId)
     const key = card ? `quake:${quakeEventKey(card)}`
       : link.eventId ? `quake:${link.eventId}`
       : `tsunami-source:${sourceEarthquakeTime(link.source) ?? ''}|${link.source.hypocenterName}`
+    return { link, card, key }
+  })
+  const firstCard = cardOf(ids[0])
+  const expiryKey = `quake:${firstCard ? quakeEventKey(firstCard) : ids[0]}`
+  // **引く前に、新しく作る数で上限を見る。** 引いている途中で `quakeSpokenStateFor` の丸ごと捨てるが走ると、
+  // 先に引いた記憶が地図から外れて宙に浮き、そこへ積んだ既読が次の報では見えなくなる（読み直す側へ倒れる）。
+  reserveQuakeSpokenStates(states, [...links.map(l => l.key), ...(links.length > 0 ? [] : [expiryKey])])
+  const sources = links.map(({ link, card, key }) => {
     // 地震情報のほうが新しいかは作成時刻（秒まで。持たなければ発表時刻）で比べる（→ `compareReportAge`）。
     // 読めない時刻・前後を決められない組は「新しくない」へ倒し、言い直しを止めない。
     const tsunamiAge = { time: tsunami.issue.time || tsunami.time, createdAtMs: tsunami.createdAtMs }
@@ -675,9 +695,7 @@ function tsunamiQuakeSpokenFor(
       && compareReportAge(quakeAge, tsunamiAge) > 0
     return { source: link.source, spoken: quakeSpokenStateFor(states, key), subject: card ? quakeEventKey(card) : undefined, quakeReportedLater }
   })
-  const firstCard = cardOf(ids[0])
-  const expiry = sources[0]?.spoken
-    ?? quakeSpokenStateFor(states, `quake:${firstCard ? quakeEventKey(firstCard) : ids[0]}`)
+  const expiry = sources[0]?.spoken ?? quakeSpokenStateFor(states, expiryKey)
   return { spoken: { expiry, sources }, subject: sources.find(s => s.subject)?.subject }
 }
 
@@ -722,17 +740,29 @@ interface TsunamiObservationMemories {
 }
 
 /**
- * 取消で抜けた観測点の記憶を落とす。取り消された値を「もう伝えた」まま残すと、同じ観測点が
- * 改めて届いたときに声にならない。残った観測点の記憶は触らない（読み直しになるため）。
+ * 取消で値が変わった観測点の記憶を落とす。取り消された値を「もう伝えた」まま残すと、同じ観測点が
+ * 改めて届いたときに声にならない。
+ *
+ * 落とすのは 2 通り —— 組み直した津波から**抜けた**観測点と、名前は残ったが**中身が取消前と違う**観測点
+ * （取り消された報が波高・時刻・第1波・状態を上書きしていた。記憶はその取り消された値を持っている）。
+ * 中身が同じまま残った観測点の記憶は触らない（読み直しになるため）。
  * 組み直す報が残らなかったとき（`after` が null）は、取消前の観測点をすべて落とす。
  */
 function forgetRetractedObservations(before: JMATsunami, after: JMATsunami | null, memories: TsunamiObservationMemories): void {
-  const remaining = new Set((after?.observations ?? []).map(o => o.name))
+  const remaining = new Map((after?.observations ?? []).map(o => [o.name, observationMemoryKey(o)]))
   for (const o of before.observations ?? []) {
-    if (remaining.has(o.name)) continue
+    if (remaining.get(o.name) === observationMemoryKey(o)) continue
     for (const m of memories.maps) m.delete(o.name)
     for (const s of memories.sets) s.delete(o.name)
   }
+}
+
+/**
+ * 観測点の記憶（`TsunamiObservationMemories`）が写し取っている中身だけを並べた鍵。**記憶を足したら、その記憶が読む項目もここへ足すこと。**
+ * 波高と「以上」・観測状態（欠測・観測中のまま警報相当もここから決まる）・最大波の観測時刻・第1波。
+ */
+function observationMemoryKey(o: import('../types/earthquake').TsunamiObservation): string {
+  return JSON.stringify([o.height?.value ?? null, o.height?.over ?? null, o.condition ?? null, o.maxHeightDateTime ?? null, firstWaveSpokenKey(o) ?? null])
 }
 
 /**
@@ -1315,9 +1345,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   // 揃える（`useEarthquakes` 側は state の整合のために `prev.tsunamis[0]` を見る。基準が違っても、判定は
   // 同じ関数を共有している）。`undefined` は「まだ 1 通も受けていない」（起動直後・リプレイの初期化後）、
   // `null` は「受けた津波が終わった」。前者のときだけ画面の津波から始める（起動時の復元は受信処理を
-  // 通らないため）。期限切れの判定はしない（状態更新と失効予約が扱う。失効は取消の報として届くので、
-  // ここも同じ報で終わる。届いた時点で期限の過ぎた報だけは状態に載らずここには残るが、次の取消か
-  // 別の津波で入れ替わる）。
+  // 通らないため）。期限切れも状態更新と同じ時計（`serverDate()`）で判定する —— 届いた時点で期限の過ぎた報は
+  // 状態に載らないので、ここにも残さない（残すと、次の続報がその報を前報として引き継ぐ）。発表中の津波の失効は
+  // 取消の報として届くので、ここも同じ報で終わる。
   const receivedTsunamiRef = useRef<JMATsunami | null | undefined>(undefined)
   // 原因地震を地震カードと結べなかったことを記録した津波（同じ記録を続報のたびに出さない）。
   const loggedUnlinkedTsunamiSourcesRef = useRef<Set<string>>(new Set())
@@ -3075,6 +3105,51 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     )
   }
 
+  /**
+   * 終わった津波の記憶（比べる相手・等級・観測点・満潮時刻・区域の等級）を落とす。ライブの後始末（{@link forgetEndedTsunami}）と
+   * 録画モードの復元が共有する。**記憶を足したら、ここに足すこと**（片方の経路だけに足すと、区間の境目で食い違う）。
+   */
+  const forgetEndedTsunamiMemories = (): void => {
+    lastTsunamiGradeRef.current = null
+    lastTsunamiRef.current = null
+    // 観測点の記憶は**波高と名前の両方**を、**画面用と読み上げ用の両方**で落とす。
+    //
+    // 波高だけ落として名前を残すと、前の津波で「観測中」（波高未確定）のまま終わった観測点は、
+    // 次の津波で再び到達が確認されても「新規到達」と見なされず、到達を一度も伝えられない
+    // （名前は波高の有無に関わらず記録されるため。`rememberObservations`）。常時起動する
+    // 使い方では 1 セッションで複数の津波をまたぐので、実際に起こりうる。
+    //
+    // 画面用と読み上げ用のどちらか片方だけ落とすと、「声は到達を伝えるのにバッジが付かない」
+    // （またはその逆）になる。判定は同じ観測点集合を見るので、揃えて落とすこと。
+    lastMaxObsHeightRef.current.clear()
+    lastMaxObsTimeRef.current.clear()
+    lastMaxObsFirstWaveRef.current.clear()
+    seenObsNamesRef.current.clear()
+    spokenObsHeightRef.current.clear()
+    spokenObsNamesRef.current.clear()
+    spokenObsMissingRef.current.clear()
+    spokenObsWarningLevelRef.current.clear()
+    spokenObsMaxHeightTimeRef.current.clear()
+    spokenObsFirstWaveRef.current.clear()
+    spokenTideRef.current.clear()
+    spokenAreaGradeRef.current.clear()
+  }
+
+  /**
+   * 受信した津波が終わったときの後始末（記憶・タイマー・印・カードの位置）。**津波が画面から消える経路はどれもこれを通す** ——
+   * 解除・取消・失効（`tsunamiStep.kind === 'ended'`）と、津波情報だけの取消で組み直す報が残らなかったとき（`retractedAll`）。
+   * 片方だけに後始末を書くと、カードが消えたのに前の津波の満潮時刻・区域の等級の既読や印が残り、次の津波で読み落とす。
+   */
+  const forgetEndedTsunami = (): void => {
+    forgetEndedTsunamiMemories()
+    window.clearTimeout(obsStatusClearTimerRef.current)
+    window.clearTimeout(areaGradeClearTimerRef.current)
+    setObsUpdateStatus(new Map())
+    setAreaGradeChangedKeys(new Set())
+    // 解除はカードの中身が消えるので前の位置に意味が無い。先頭へ戻す。
+    setFocusedDistrict({ districts: [], top: null, resetToTop: true, ts: Date.now() })
+  }
+
   const handleLiveEventInner = (event: LiveEvent, meta?: LiveEventMeta) => {
     // **カードが内容を採らない地震情報か**（→ `LiveEventMeta.quakeHeldBack`）。真なら音・読み上げ・
     // ウィンドウタイトル・自動タブ切替を起こさない（判定は受信側が済ませていて、ここは印を読むだけ）。
@@ -3106,10 +3181,23 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       ? receivedTsunamiRef.current
       : (shownTsunami && !shownTsunami.cancelledAt ? shownTsunami : null)
     const tsunamiStep = event.kind === 'tsunami'
-      ? stepTsunamiState(tsunamiBeforeReport ?? undefined, event, null)
+      ? stepTsunamiState(tsunamiBeforeReport ?? undefined, event, serverDate())
       : null
     if (tsunamiStep && tsunamiStep.kind !== 'ignored') {
       receivedTsunamiRef.current = tsunamiStep.kind === 'live' ? tsunamiStep.tsunami : null
+    }
+    // **届いた時点で期限の過ぎた報は、音・読み上げ・タブ移動・気象庁の文を起こさない**（2026-10-21 ユーザー選択「案1で」）。
+    // 当てた結果で津波が終わったとき（`outdated`。画面も津波を外す）だけ、解除と同じ後始末で記憶を落とす —— 画面に無い
+    // 津波の中身を既読として抱えると、次の津波の同じ観測点・区域を読み落とす。生きている津波へ当たらない古い報
+    // （`ignored`）では記憶も画面も変えない。同じ津波の古い報で新しい期限がまだ生きているとき（`live`）は、画面は
+    // 作成時刻の順に重ね直した津波へ替わるが、記憶は触らない（古い報の中身を「いま伝えた」ことにしない）。
+    const tsunamiOutdated = tsunamiStep?.kind === 'ended' && tsunamiStep.reason === 'outdated'
+    if (tsunamiOutdated || (event.kind === 'tsunami' && !event.cancelled && isTsunamiExpired(event, serverDate()))) {
+      const ended = tsunamiOutdated
+      log.info(`[tsunami] 有効期限の過ぎた報のため読み上げない（${ended ? '津波を終える' : '表示中の津波は変えない'}）: id=${event.id}`)
+      if (ended) forgetEndedTsunami()
+      skipTelegramTextRef.current = true
+      return
     }
     // 受信時に該当タブを自動表示し、ウィンドウタイトルを更新する
     // （地震情報・津波情報・緊急地震速報）。
@@ -3428,12 +3516,30 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       } else {
         spokenTsunamiCancelEventIdsRef.current.add(retractKey)
         const refolded = tsunamiStep.kind === 'live' ? tsunamiStep.tsunami : null
-        if (!refolded) log.warn(`[tsunami] ${event.headType} の取消で組み直す報が残りません（読み上げの記憶は観測点ごと落とします）: id=${tsunamiBeforeReport.id}`)
-        forgetRetractedObservations(tsunamiBeforeReport, refolded, tsunamiObservationMemories())
-        // 次の続報が比べる相手も組み直した津波にする（取り消された値を基準に新規・格上げを判定しない）。
-        lastTsunamiRef.current = refolded
-        // 等級の基準も組み直した津波に揃える（取り消された報の等級を基準に、次の報の引き下げ・格上げを判定しない）。
-        { const g = refolded ? tsunamiMaxGrade(refolded) : 'Unknown'; lastTsunamiGradeRef.current = g === 'Unknown' ? null : g }
+        // 録画ツール向けの記録。`alert` は全体の等級が動いたときだけ出す（→ recording-interface-spec.md）——
+        // 組み直す報が残らなければ津波は画面から消えるので取消、残れば組み直した津波の等級が動いたときだけ。
+        const gradeBefore = tsunamiMaxGrade(tsunamiBeforeReport)
+        const gradeAfter = refolded ? tsunamiMaxGrade(refolded) : null
+        if (!refolded) {
+          recordReplayEvent({ type: 'alert', category: 'tsunami', change: 'retracted', grade: null, telegram: currentReplayTelegram() })
+        } else if (gradeAfter !== 'Unknown' && gradeBefore !== 'Unknown' && gradeAfter !== gradeBefore) {
+          recordReplayEvent({
+            type: 'alert', category: 'tsunami',
+            change: GRADE_PRIORITY[gradeAfter!] > GRADE_PRIORITY[gradeBefore] ? 'upgraded' : 'downgraded',
+            grade: gradeAfter, telegram: currentReplayTelegram(),
+          })
+        }
+        if (!refolded) {
+          // カードは消える（`useEarthquakes` の `retractedAll`）。解除と同じ後始末をする。
+          log.warn(`[tsunami] ${event.headType} の取消で組み直す報が残らないため、津波の記憶を解除と同じく落とします: id=${tsunamiBeforeReport.id}`)
+          forgetEndedTsunami()
+        } else {
+          forgetRetractedObservations(tsunamiBeforeReport, refolded, tsunamiObservationMemories())
+          // 次の続報が比べる相手も組み直した津波にする（取り消された値を基準に新規・格上げを判定しない）。
+          lastTsunamiRef.current = refolded
+          // 等級の基準も組み直した津波に揃える（取り消された報の等級を基準に、次の報の引き下げ・格上げを判定しない）。
+          lastTsunamiGradeRef.current = gradeAfter === 'Unknown' ? null : gradeAfter
+        }
         if (settings.voicevoxEnabled && (event.headType === 'VTSE51' || event.headType === 'VTSE52')) {
           speakNonEEWDelayed(
             tsunamiPartialRetractionToText(event.headType),
@@ -3525,35 +3631,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // `tsunamisRef` を見ると、同一 tick に複数の電文が捌けたときに取り残された値と比べてしまう
       // （`lastTsunamiRef` の宣言箇所に理由）。
       if (tsunamiStep?.kind === 'ended') {
-        lastTsunamiGradeRef.current = null
-        lastTsunamiRef.current = null
-        // 観測点の記憶は**波高と名前の両方**を、**画面用と読み上げ用の両方**で落とす。
-        //
-        // 波高だけ落として名前を残すと、前の津波で「観測中」（波高未確定）のまま終わった観測点は、
-        // 次の津波で再び到達が確認されても「新規到達」と見なされず、到達を一度も伝えられない
-        // （名前は波高の有無に関わらず記録されるため。`rememberObservations`）。常時起動する
-        // 使い方では 1 セッションで複数の津波をまたぐので、実際に起こりうる。
-        //
-        // 画面用と読み上げ用のどちらか片方だけ落とすと、「声は到達を伝えるのにバッジが付かない」
-        // （またはその逆）になる。判定は同じ観測点集合を見るので、揃えて落とすこと。
-        lastMaxObsHeightRef.current.clear()
-        lastMaxObsTimeRef.current.clear()
-        lastMaxObsFirstWaveRef.current.clear()
-        seenObsNamesRef.current.clear()
-        spokenObsHeightRef.current.clear()
-        spokenObsNamesRef.current.clear()
-        spokenObsMissingRef.current.clear()
-        spokenObsWarningLevelRef.current.clear()
-        spokenObsMaxHeightTimeRef.current.clear()
-        spokenObsFirstWaveRef.current.clear()
-        spokenTideRef.current.clear()
-        spokenAreaGradeRef.current.clear()
-        window.clearTimeout(obsStatusClearTimerRef.current)
-        window.clearTimeout(areaGradeClearTimerRef.current)
-        setObsUpdateStatus(new Map())
-        setAreaGradeChangedKeys(new Set())
-        // 解除はカードの中身が消えるので前の位置に意味が無い。先頭へ戻す。
-        setFocusedDistrict({ districts: [], top: null, resetToTop: true, ts: Date.now() })
+        forgetEndedTsunami()
       } else {
         // 捨てた事実を残す。黙って通すと「解除を受けたのにバッジが消えない」を追えない。
         log.info('[tsunami] 表示中の津波と一致しない解除のため、観測点の記憶は落とさない')
@@ -5912,10 +5990,12 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             if (step.kind === 'ignored' || !before) return
             const refolded = step.kind === 'live' ? step.tsunami : null
             if (recording) spokenTsunamiCancelEventIdsRef.current.add(partialRetractionKey(tsunami))
+            // 組み直す報が残らなければ津波は消える（ライブ経路と同じく解除の扱いで記憶を落とす）。
+            if (!refolded) { forgetEndedTsunamiMemories(); return }
             forgetRetractedObservations(before, refolded, tsunamiObservationMemories())
             lastTsunamiRef.current = refolded
             // 等級の基準も組み直した津波に揃える（取り消された報の等級を基準に、次の報の引き下げ・格上げを判定しない）。
-            { const g = refolded ? tsunamiMaxGrade(refolded) : 'Unknown'; lastTsunamiGradeRef.current = g === 'Unknown' ? null : g }
+            { const g = tsunamiMaxGrade(refolded); lastTsunamiGradeRef.current = g === 'Unknown' ? null : g }
             return
           }
           if (tsunami.cancelled) {
@@ -5924,20 +6004,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 記憶を落とすのは、いまの津波に向いた解除だけ（ライブ経路の `tsunamiStep.kind === 'ended'` と同じ）。
             // 別の津波の遅れた解除で落とすと、`receivedTsunamiRef` が生きた津波を持ったまま記憶だけが空になる。
             if (step.kind !== 'ended') return
-            lastTsunamiGradeRef.current = null
-            lastTsunamiRef.current = null
-            lastMaxObsHeightRef.current.clear()
-            lastMaxObsTimeRef.current.clear()
-            lastMaxObsFirstWaveRef.current.clear()
-            seenObsNamesRef.current.clear()
-            spokenObsHeightRef.current.clear()
-            spokenObsNamesRef.current.clear()
-            spokenObsMissingRef.current.clear()
-            spokenObsWarningLevelRef.current.clear()
-            spokenObsMaxHeightTimeRef.current.clear()
-            spokenObsFirstWaveRef.current.clear()
-            spokenTideRef.current.clear()
-            spokenAreaGradeRef.current.clear()
+            forgetEndedTsunamiMemories()
           } else {
             const grade = tsunamiMaxGrade(tsunami)
             if (grade !== 'Unknown') lastTsunamiGradeRef.current = grade

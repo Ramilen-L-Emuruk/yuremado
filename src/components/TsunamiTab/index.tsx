@@ -850,30 +850,32 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   // 41 通）、そのたびに閉じると読んでいる途中で毎回消える。鍵は津波の識別子と「区域ごとの等級」の
   // 組にして、等級が動いた報だけが閉じる契機になるようにする。
   //
-  // `id` へ落ちるのは識別子を持たない電文のときだけ。その電文は続報として束ねられない
-  // （`isTsunamiContinuation`）ので前報の中身も引き継がず、鍵が報ごとに変わっても
-  // 「等級が動いたときだけ閉じる」との食い違いにはならない。
-  // 鍵の番号は**いちばん小さいもの**を使う。番号が足される切替え（`A` → `A B`）でも、番号が入れ替わっていく
-  // 形でも、組み立てに使った報の番号を含むので同じ津波の間は変わらない（→ `tsunamiEventIds`）。
-  const commentsKey = `${(active[0] ? [...tsunamiEventIds(active[0])].sort()[0] : undefined) ?? active[0]?.id ?? ''}|`
-    + (active[0]?.areas ?? []).map(a => `${a.code ?? a.name}:${a.grade}`).join(',')
+  // **同じ津波かは番号の重なりで見る**（`isSameTsunamiEvent` と同じ物差し。運用種別も揃えて比べる）。番号の組を
+  // 1 つの文字列の鍵へ縮める（最小の番号など）と、組み直しや、より小さい番号を持つ報の追加で鍵が動き、
+  // 等級が動いていないのに閉じる。番号を持たない電文（標準版）は `id` で比べる —— その電文は続報として束ねられない
+  // （`isTsunamiContinuation`）ので前報の中身も引き継がず、報ごとに閉じても「等級が動いたときだけ閉じる」との食い違いにはならない。
+  const commentsIdentity = active[0]
+    ? `${active[0].operationStatus ?? ''}|${tsunamiEventIds(active[0]).join(' ') || `#${active[0].id}`}`
+    : ''
+  const commentsGrades = (active[0]?.areas ?? []).map(a => `${a.code ?? a.name}:${a.grade}`).join(',')
   // **前回値は state で持つ。ref をレンダー中に書き換えない。** React は描いた結果を捨てて
   // 描き直すことがあり、捨てられたレンダーでも ref の書き換えだけは残る。次のレンダーでは
   // 「鍵は変わっていない」と見えて閉じそこねる —— 実機で等級が動いても開いたままになった。
   // state なら捨てられたレンダーの更新も一緒に捨てられるので、この取りこぼしが起きない。
-  const [prevCommentsKey, setPrevCommentsKey] = useState(commentsKey)
+  const [prevComments, setPrevComments] = useState({ identity: commentsIdentity, grades: commentsGrades })
   // **閉じるのはエフェクトで行う。** 開閉の状態はフックが持ち、その setter は
   // 「手で操作した」という意味を持つ（読み上げの持ち物から外す）。レンダー中に呼ぶと、
   // React が捨てたレンダーでもフック内部の印だけが書き換わる。
   //
   // 1 描画ぶん閉じるのが遅れるが、**等級が動いた報で閉じる**という意図は保たれる。
   useEffect(() => {
-    if (prevCommentsKey === commentsKey) return
-    setPrevCommentsKey(commentsKey)
+    if (prevComments.identity === commentsIdentity && prevComments.grades === commentsGrades) return
+    setPrevComments({ identity: commentsIdentity, grades: commentsGrades })
+    if (prevComments.grades === commentsGrades && isSameCommentsTsunami(prevComments.identity, commentsIdentity)) return
     // 読み上げ中でも閉じる（面は区域一覧を覆うので、発表・引き上げ・一部解除を隠さない）。
     // フックの setter を通すので、その読み上げのあいだは開き直さない。
     setCommentsOpen(false)
-  }, [commentsKey, prevCommentsKey, setCommentsOpen])
+  }, [commentsIdentity, commentsGrades, prevComments, setCommentsOpen])
 
   // バナーの実高さを測る。使い道は 2 つ。
   //   - 読み上げの追従と受信時の寄せが視野から引く高さ（貼り付けている間だけ）
@@ -1562,6 +1564,8 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                             onClick={(e) => { e.stopPropagation(); onEarthquakeLink?.(quakeEventKey(linkedQuakes[i]!)) }}
                             onKeyDown={(e) => {
                               if (e.key !== 'Enter' && e.key !== ' ') return
+                              // Space の既定の動き（パネルのスクロール）を止める。`button` 要素なら自前で止めるが、これは `role="button"`。
+                              e.preventDefault()
                               e.stopPropagation()
                               onEarthquakeLink?.(quakeEventKey(linkedQuakes[i]!))
                             }}
@@ -1724,3 +1728,17 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
     </div>
   )
 })
+
+/**
+ * 付加文の面を閉じる判定で使う「同じ津波か」（`TsunamiTab` の `commentsIdentity` どうし）。
+ * 運用種別が同じで、番号の組が 1 つでも重なれば同じ津波（→ `utils/tsunami.ts` の `isSameTsunamiEvent`）。
+ * 番号を持たない電文（`#` で始まる `id`）は一致だけで見る。
+ */
+function isSameCommentsTsunami(a: string, b: string): boolean {
+  const [aStatus, aIds = ''] = a.split('|')
+  const [bStatus, bIds = ''] = b.split('|')
+  if (aStatus !== bStatus) return false
+  if (aIds.startsWith('#') || bIds.startsWith('#')) return aIds === bIds
+  const bSet = new Set(bIds.split(' ').filter(Boolean))
+  return aIds.split(' ').some(id => id !== '' && bSet.has(id))
+}

@@ -314,6 +314,61 @@ describe('buildShareCardContent — 津波', () => {
     expect(c.header.subtitle).toBe('石川県能登地方　M7.6 ／ 佐渡付近　M6.1　1 区域')
   })
 
+  // 正: 震源名と規模が同じ別の地震は 1 つに畳まず、発生時刻を添えて見分ける（2026-10-21 ユーザー選択「B は案1」。
+  // 2023-12-03 の VTSE41 がフィリピン付近の M7.0 を 2 つ載せた実例の形）。
+  it('震源名と規模が同じ別の地震には発生時刻を添える', () => {
+    const t = {
+      ...tsunami(),
+      sourceEarthquakes: [
+        { hypocenterName: 'フィリピン付近', magnitude: 7.7, originTime: '2023-12-02T23:37:00+09:00' },
+        { hypocenterName: 'フィリピン付近', magnitude: 7.0, originTime: '2023-12-03T19:36:00+09:00' },
+        { hypocenterName: 'フィリピン付近', magnitude: 7.0, originTime: '2023-12-04T04:50:00+09:00' },
+      ],
+    } as unknown as JMATsunami
+    const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.7 ／ フィリピン付近　M7.0（19:36 発生） ／ フィリピン付近　M7.0（04:50 発生）　1 区域')
+  })
+
+  // 安全弁: 時刻を読めない側は別の地震と決められないので、同じ文の地震と重ねる（時刻なしの行が並ばない）
+  it('時刻を持たない同じ文の地震は、時刻を持つ地震と重ねる', () => {
+    const t = {
+      ...tsunami(),
+      sourceEarthquakes: [
+        { hypocenterName: 'フィリピン付近', magnitude: 7.0, originTime: '2023-12-03T19:36:00+09:00' },
+        { hypocenterName: 'フィリピン付近', magnitude: 7.0 },
+      ],
+    } as unknown as JMATsunami
+    const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.0　1 区域')
+  })
+
+  // 安全弁: 時刻を持たない地震が先に並んでも、時刻の違う 2 つの地震は畳まない（届いた順によらない）
+  it('時刻を持たない地震が先に並んでも、時刻の違う地震を畳まない', () => {
+    const t = {
+      ...tsunami(),
+      sourceEarthquakes: [
+        { hypocenterName: 'フィリピン付近', magnitude: 7.0 },
+        { hypocenterName: 'フィリピン付近', magnitude: 7.0, originTime: '2023-12-03T19:36:00+09:00' },
+        { hypocenterName: 'フィリピン付近', magnitude: 7.0, originTime: '2023-12-04T04:50:00+09:00' },
+      ],
+    } as unknown as JMATsunami
+    const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.0（19:36 発生） ／ フィリピン付近　M7.0（04:50 発生）　1 区域')
+  })
+
+  // 対照: 同じ瞬間を違う表記で運んでも 1 つの地震として重ねる
+  it('同じ瞬間を違う表記で運ぶ地震は重ねる', () => {
+    const t = {
+      ...tsunami(),
+      sourceEarthquakes: [
+        { hypocenterName: 'フィリピン付近', magnitude: 7.0, originTime: '2023-12-03T19:36:00+09:00' },
+        { hypocenterName: 'フィリピン付近', magnitude: 7.0, originTime: '2023-12-03T10:36:00Z' },
+      ],
+    } as unknown as JMATsunami
+    const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.0　1 区域')
+  })
+
   // 対照: 1 件なら区切りは入らない。
   it('原因地震が 1 件なら区切りを入れない', () => {
     const c = build(input({ mode: 'tsunami', tsunamis: [tsunami()] }))

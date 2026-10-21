@@ -240,7 +240,7 @@ export function JapanMapGL({
   // 描くため常時計算する。
   const {
     tsunamiLines, observationBars, arrivalMarkers, missingMarkers,
-    tsunamiFitPositions, tsunamiSignature, tsunamiEventId,
+    tsunamiFitPositions, tsunamiSignature, tsunamiEventId, tsunamiOperationStatus,
   } = useTsunamiLayerData(
     tsunamis,
     observations,
@@ -834,6 +834,7 @@ export function JapanMapGL({
             mode={mode}
             tsunamiSignature={tsunamiSignature}
             tsunamiEventId={tsunamiEventId}
+            tsunamiOperationStatus={tsunamiOperationStatus}
             tsunamiFitPositions={tsunamiFitPositions}
             observationBars={observationBars}
             arrivalMarkers={arrivalMarkers}
