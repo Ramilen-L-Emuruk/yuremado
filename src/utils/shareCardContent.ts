@@ -5,7 +5,7 @@ import { formatDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagn
 import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove, isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
 import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader } from './shareCard'
-import { sourceEarthquakeTime, tsunamiOverallGrade } from './tsunami'
+import { isTsunamiForecastOnly, sourceEarthquakeTime, tsunamiOverallGrade } from './tsunami'
 
 // 共有カードの見出しと出典行を、いま地図が見せているものから組み立てる。
 //
@@ -133,10 +133,18 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
 }
 
 function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
-  const live = tsunamis.filter((t) => !t.cancelled)
-  const grade = tsunamiOverallGrade(live)
+  // **解除表示中（`cancelledAt`）も外す。** 等級の判定（`tsunamiOverallGrade`・`isTsunamiForecastOnly`）は
+  // どちらも外すので、ここで残すと見出しは発表中の津波、区域数・震源・時刻は解除された津波、と出どころが割れる。
+  const live = tsunamis.filter((t) => !t.cancelled && !t.cancelledAt)
+  // **予報だけの津波も等級を名乗る**（2026-10-21 ユーザー選択「おすすめで」）。`tsunamiOverallGrade` は
+  // 予報を数えないので、それだけで決めると予報の画像は「津波情報」の一語になり、震源も区域も載らない。
+  // 等級の読めない区域が混じれば予報と言い切らず（`isTsunamiForecastOnly`）、従来どおり「津波情報」に落とす。
+  const grade = tsunamiOverallGrade(live) ?? (isTsunamiForecastOnly(live) ? 'Forecast' : null)
   if (!grade) return { header: { title: '津波情報' }, filenameLabel: 'tsunami' }
-  const { text, color } = formatTsunamiGrade(grade)
+  // **見出しの文字色は付けない**（既定の白。2026-10-21 ユーザー選択「おすすめで」）。`formatTsunamiGrade` の
+  // `color` は等級の地の色（`bg`）に載せる文字の色で、注意報では黒になる —— 暗い見出し帯の上では読めない。
+  // 地の色を文字色にすると、大津波警報の紫がこの帯の上でコントラスト比 2.5 ほどしか取れない。
+  const { text } = formatTsunamiGrade(grade)
   const areaCount = new Set(live.flatMap((t) => t.areas.map((a) => a.name))).size
   // 原因地震が複数あれば（EventID に番号が足された津波）全件を「／」で並べる。長いと折り返す
   // （2026-10-15 ユーザー承認「全件を並べる」）。同じ地震を複数の報が運ぶので、震源名・規模・発生時刻の組で重ねる。
@@ -177,7 +185,6 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   return {
     header: {
       title: text,
-      titleColor: color,
       subtitle: parts.join(SUBTITLE_SEPARATOR),
       meta: issuedText ? `${issuedText} 発表` : undefined,
     },
