@@ -77,10 +77,48 @@ describe('長周期の取消の台帳（lpgmRetraction）', () => {
       expect(ledger).toEqual([lpgmRetractionOf(取消)])
     })
 
-    it('安全弁: 地震を指せない取消（eventId・発表時刻が空）は積まない', () => {
+    it('安全弁: 地震を指せない取消（eventId が空・発表時刻も作成時刻も空）は積まない', () => {
       const ledger: LpgmRetraction[] = []
-      recordLpgmRetractions([{ ...取消, eventId: '' }, { ...取消, time: '' }], ledger)
+      recordLpgmRetractions([{ ...取消, eventId: '' }, { ...取消, time: '', createdAtMs: undefined }], ledger)
       expect(ledger).toEqual([])
+    })
+
+    // 発表時刻が空でも、作成時刻があれば前後は決められる（比べ方は作成時刻を先に見る）
+    it('正: 発表時刻が空でも作成時刻のある取消は積み、その前の報を取り下げる', () => {
+      const ledger: LpgmRetraction[] = []
+      const 発表時刻の無い取消 = { ...取消, time: '' }
+      recordLpgmRetractions([発表時刻の無い取消], ledger)
+      expect(ledger).toEqual([{ eventId: 取消.eventId, time: '', createdAtMs: 取消.createdAtMs }])
+      expect(isRetractedLpgm(ledger, 発表)).toBe(true)
+      expect(foldLpgmHistory(new Map(), [発表, 発表時刻の無い取消], []).size).toBe(0)
+    })
+
+    // 作成時刻を持たない報（作成時刻を読めなかった報・テストボタンの報）とも比べられる。比べ方は
+    // 持つ側を分へ切り捨て、持たない側は自分の発表時刻の分を使う（空の発表時刻は読まない）
+    it('正: 発表時刻が空の取消は、作成時刻を持たない前の報も取り下げる', () => {
+      const 作成時刻の無い報 = lpgm({ time: '2024-01-01T07:40:00Z' })
+      const ledger: LpgmRetraction[] = []
+      recordLpgmRetractions([{ ...取消, time: '' }], ledger)
+      expect(isRetractedLpgm(ledger, 作成時刻の無い報)).toBe(true)
+      expect(isRetractedLpgm(ledger, lpgm({ time: '2024-01-01T08:00:00Z' }))).toBe(false)
+    })
+
+    it('対照: 報の発表時刻が空でも作成時刻があれば比べ、取消より後の報は採る（前の報は取り下げる）', () => {
+      const ledger = [lpgmRetractionOf(取消)]
+      expect(isRetractedLpgm(ledger, { ...lpgm({ time: '2024-01-01T08:00:00Z', created: '2024-01-01T08:00:10Z' }), time: '' })).toBe(false)
+      expect(isRetractedLpgm(ledger, { ...発表, time: '' })).toBe(true)
+    })
+
+    it('安全弁: 報の発表時刻も作成時刻も空なら取り下げ側へ倒す', () => {
+      expect(isRetractedLpgm([lpgmRetractionOf(取消)], { ...発表, time: '', createdAtMs: undefined })).toBe(true)
+    })
+
+    it('対照: 発表時刻が空の取消でも、作成時刻より後に発表し直された報は採る', () => {
+      const ledger: LpgmRetraction[] = []
+      const 後 = lpgm({ time: '2024-01-01T08:00:00Z', created: '2024-01-01T08:00:10Z' })
+      recordLpgmRetractions([{ ...取消, time: '' }], ledger)
+      expect(isRetractedLpgm(ledger, 後)).toBe(false)
+      expect(foldLpgmHistory(new Map(), [後, { ...取消, time: '' }], []).get(後.eventId)).toBe(後)
     })
   })
 

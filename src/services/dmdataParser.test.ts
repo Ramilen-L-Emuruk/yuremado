@@ -3,7 +3,7 @@
 // DOMParser を使うためこのファイルだけ jsdom 環境で動かす（既定は node）。
 import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { parseEarthquakeFromXml, parseEEWFromXml, parseTsunamiFromXml, parseLpgmFromXml, parseNankaiFromXml, parseNankaiCommentaryFromXml, parseVyse60FromXml, parseQuakeNoticeFromXml, parseEarthquakeCountFromXml } from './dmdataParser'
+import { parseEarthquakeFromXml, resetTelegramDateTimeLogGateForTest, parseEEWFromXml, parseTsunamiFromXml, parseLpgmFromXml, parseNankaiFromXml, parseNankaiCommentaryFromXml, parseVyse60FromXml, parseQuakeNoticeFromXml, parseEarthquakeCountFromXml } from './dmdataParser'
 import { log } from '../utils/logger'
 import { hasKnownEpicenter } from '../utils/geo'
 import { hasMagnitude } from '../utils/formatters'
@@ -6211,7 +6211,11 @@ describe('電文の作成時刻（createdAtMs）', () => {
   })
 
   // 安全弁: 日時として読めない値・時間帯の無い値は持たせず、記録を残す（比べる側が発表時刻へ落ちる）。
+  //
+  // **門を初期化してから確かめる。** 読めない日時の記録は同じ値では二度鳴らさない門を通り、門は
+  // モジュールの中に残る。同じファイルの先のテストが同じ値を読ませていると、ここで warn が出ず落ちる。
   it('読めない作成時刻は持たせず、記録を残す', () => {
+    resetTelegramDateTimeLogGateForTest()
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
     try {
       for (const bad of ['こわれた値', '2026-08-08T18:00:00']) {
@@ -6220,8 +6224,23 @@ describe('電文の作成時刻（createdAtMs）', () => {
         expect(quake.createdAtMs).toBeUndefined()
         // 一意鍵の方は読めない値でもそのまま持つ（用途が違う。種別名との組にした形 → readTelegramKey）
         expect(quake.telegramKey).toBe(`震度速報|${bad}`)
+        // 値ごとに 1 行。括弧は捨てた後の落ち先を言う
+        expect(warn).toHaveBeenCalledWith(`[dmdata XML] 地震情報の電文作成時刻を日時として読めません（報の新旧は発表時刻（分）で比べます）: "${bad}"`)
       }
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('電文作成時刻を日時として読めません'))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 安全弁: 欠けたときも記録を残す。長周期と津波は一意鍵（readTelegramKey）を読まないので、
+  // ここで言わないと痕跡が残らない。
+  it('作成時刻が欠けた長周期でも記録を残す', () => {
+    resetTelegramDateTimeLogGateForTest()
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VXSE62_XML.replace('<DateTime>2026-08-13T10:00:00Z</DateTime>', '<DateTime/>')
+      expect(parseLpgmFromXml(xml)!.createdAtMs).toBeUndefined()
+      expect(warn).toHaveBeenCalledWith('[dmdata XML] 長周期地震動観測情報の電文作成時刻（Control/DateTime）がありません（報の新旧は発表時刻（分）で比べます）')
     } finally {
       warn.mockRestore()
     }
