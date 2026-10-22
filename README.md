@@ -5,7 +5,14 @@ React + TypeScript + MapLibre GL JS で構築されています。
 [kotoho7/scratch-realtime-earthquake-viewer-page](https://github.com/kotoho7/scratch-realtime-earthquake-viewer-page) を参考にしています。
 
 **通常版（P2PQuake）**: https://ramilen-l-emuruk.github.io/yuremado/
+
 **DM-D.S.S 版（DMDATA.JP）**: https://ramilen-l-emuruk.github.io/yuremado/dmdss/
+
+**YouTube（再現リプレイの動画）**: https://www.youtube.com/@Yuremado
+
+**X（更新のお知らせ）**: https://x.com/Yuremado
+
+**不具合の報告・ご要望（GitHub Issues）**: https://github.com/Ramilen-L-Emuruk/yuremado/issues
 
 > 「DM-D.S.S」は DMDATA.JP のサービス名。以下のドキュメントとコード（`VITE_VARIANT=dmdss`）では表記を短縮して **DMDSS** と記載する。
 
