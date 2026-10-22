@@ -1348,9 +1348,10 @@ export function createTestEEWStrongShaking(eventId?: string, serial = 1, baseTim
       originTime: isStrongShaking ? '' : new Date(anchor.getTime() - 1_000).toISOString(),
       arrivalTime: arrival,
       condition: isStrongShaking ? '' : '仮定震源要素',
-      // 第 1 報の震央地名は観測点を含む地方（「北陸地方」）、第 2 報は短縮用震央地名と同じ「富山湾」
+      // 第 1 報の震央地名は観測点を含む地方（「北陸地方」）、第 2 報は短縮用震央地名と同じ「富山湾」。
+      // 第 1 報の規模は実電文どおり `NaN` に説明「Ｍ不明」が付く（`Magnitude@description`。→ `dmdataParser.strongShaking.test.ts`）
       hypocenter: isStrongShaking
-        ? { name: '北陸地方', latitude: 37.4, longitude: 137.4, depth: 10, magnitude: NaN }
+        ? { name: '北陸地方', latitude: 37.4, longitude: 137.4, depth: 10, magnitude: NaN, magnitudeCondition: 'Ｍ不明' }
         : { name: '富山湾', latitude: 37.4, longitude: 137.4, depth: 10, magnitude: 1.0 },
     },
     severity: 'Forecast',

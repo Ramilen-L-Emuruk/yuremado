@@ -179,6 +179,7 @@ const makeEp = (over: Partial<EewEpicenter> = {}): EewEpicenter => ({
   isAssumed: false,
   name: '日向灘',
   magnitude: 6.5,
+  magnitudeCondition: undefined,
   depth: 30,
   depthAtLeast: false,
   serial: '1',
@@ -208,6 +209,14 @@ describe('EEW 震源ポップアップの文言', () => {
     expect(html).not.toContain('仮定震源要素')
     expect(html).toContain('震源調査中')
     expect(html).not.toContain('NaN')
+  })
+
+  // 規模が数値にならない報は気象庁の説明を出す（地震情報の吹き出しと同じ部品。2026-10-22 ユーザー承認
+  // 「吹き出しと共有カードも揃える (Recommended)」）
+  it('規模が数値にならない報は、規模の説明を出す', () => {
+    const html = buildPopupHtml(makeEp({ magnitude: NaN, magnitudeCondition: 'Ｍ８を超える巨大地震' }))
+    expect(html).toContain('M8を超える巨大地震')
+    expect(html).not.toContain('不明')
   })
 
   // 対照: 確定震源では但し書きを出さない（出すと確定した震源まで疑わせる）。

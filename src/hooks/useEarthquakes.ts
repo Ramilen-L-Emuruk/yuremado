@@ -3064,7 +3064,7 @@ export function useEarthquakes(
         // 版が古くなっても通信は最後まで走り、結果だけ `stale` で捨てる。余分になるのは取り直しが起きた起動の
         // 一覧 1 回ぶんだけなので、打ち切りの配線は足していない
         void Promise.resolve()
-          .then(() => (stale() ? [] : fetchDmdataActiveEews(dmdataApiKey, classifications)))
+          .then(() => (stale() ? [] : fetchDmdataActiveEews(dmdataApiKey, classifications, dmdataTestDeliveryRef.current)))
           .then(eews => {
             if (stale() || eews.length === 0) return
             // 前の版が積み終えた電文は積まない（→ `restoredQueueKeys`）。取り直しの最中に終えた地震も戻さない（→ `eewEndedRef`）
@@ -3410,7 +3410,7 @@ export function useEarthquakes(
           publishGapLoss()
           return
         }
-        const { eews, complete } = await fetchDmdataActiveEewsOutcome(dmdataApiKey, classifications)
+        const { eews, complete } = await fetchDmdataActiveEewsOutcome(dmdataApiKey, classifications, dmdataTestDeliveryRef.current)
         if (cancelled) return
         eewGap = !complete
         publishGapLoss()

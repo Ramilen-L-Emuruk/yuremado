@@ -29,14 +29,17 @@ function quake(over: { maxScale?: number; magnitude?: number; depth?: number; ti
 }
 
 function eew(
-  over: { severity?: string; scaleTo?: number; cancelled?: boolean; name?: string; condition?: string; originTime?: string; serial?: string } = {},
+  over: { severity?: string; scaleTo?: number; cancelled?: boolean; name?: string; condition?: string; originTime?: string; serial?: string; magnitude?: number; magnitudeCondition?: string } = {},
 ): EEWAlert {
   return {
     id: 'e1',
     earthquake: {
       originTime: over.originTime ?? '2026/08/24 12:34:00',
       condition: over.condition ?? '',
-      hypocenter: { name: over.name ?? '日向灘', latitude: 32, longitude: 131.6, depth: 30, magnitude: 6.5 },
+      hypocenter: {
+        name: over.name ?? '日向灘', latitude: 32, longitude: 131.6, depth: 30, magnitude: over.magnitude ?? 6.5,
+        ...(over.magnitudeCondition && { magnitudeCondition: over.magnitudeCondition }),
+      },
     },
     ...(over.serial ? { issue: { serial: over.serial } } : {}),
     severity: over.severity ?? 'Forecast',
@@ -468,5 +471,24 @@ describe('buildShareCardContent — 共有の本文', () => {
   it('津波で等級が無ければ見出しと URL だけにする', () => {
     const c = build(input({ mode: 'tsunami' }))
     expect(c.shareText).toBe(`津波情報\n${APP_URL}`)
+  })
+})
+
+// 緊急地震速報の規模の説明（「Ｍ８を超える巨大地震」）も地震情報と同じく画像に出す（2026-10-22 ユーザー承認
+// 「吹き出しと共有カードも揃える (Recommended)」）。「不明」の語だけは落とす
+describe('buildShareCardContent — 緊急地震速報の規模の説明', () => {
+  it('正: 規模が数値にならない報は気象庁の説明を出す', () => {
+    const c = build(input({ mode: 'kyoshin', eews: [eew({ magnitude: NaN, magnitudeCondition: 'Ｍ８を超える巨大地震' })] }))
+    expect(JSON.stringify(c.header)).toContain('M8を超える巨大地震')
+  })
+
+  it('対照: 説明が「Ｍ不明」の規模も出さない', () => {
+    const c = build(input({ mode: 'kyoshin', eews: [eew({ magnitude: NaN, magnitudeCondition: 'Ｍ不明' })] }))
+    expect(JSON.stringify(c.header)).not.toContain('不明')
+  })
+
+  it('対照: 説明の無い不明の規模は出さない', () => {
+    const c = build(input({ mode: 'kyoshin', eews: [eew({ magnitude: NaN })] }))
+    expect(JSON.stringify(c.header)).not.toContain('不明')
   })
 })

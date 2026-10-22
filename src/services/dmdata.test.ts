@@ -1334,7 +1334,7 @@ describe('fetchDmdataActiveEews', () => {
       telegram({ id: 'xml-1', head: { type: 'VXSE45', test: false } }).items,
     )
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.includes('/gd/eew/ev-recent'))).toBe(true)
   })
@@ -1347,7 +1347,7 @@ describe('fetchDmdataActiveEews', () => {
     const recent = new Date(serverNow() - 60_000).toISOString()
     stubEewFetch([{ eventId: 'ev-log', dateTime: recent }], [])
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     const infos = vi.mocked(log.info).mock.calls.map(c => String(c[0]))
     expect(infos.some(m => m.includes('発表中の緊急地震速報の復元'))).toBe(true)
@@ -1358,7 +1358,7 @@ describe('fetchDmdataActiveEews', () => {
   it('一覧が 0 件なら復元の記録を出さない', async () => {
     stubEewFetch([], [])
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(log.info).not.toHaveBeenCalled()
   })
@@ -1367,7 +1367,7 @@ describe('fetchDmdataActiveEews', () => {
     const old = new Date(serverNow() - 60 * 60_000).toISOString()
     const urls = stubEewFetch([{ eventId: 'ev-old', dateTime: old }], [])
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.includes('/gd/eew/ev-old'))).toBe(false)
   })
@@ -1378,19 +1378,33 @@ describe('fetchDmdataActiveEews', () => {
       telegram({ id: 'xml-1', head: { type: 'VXSE45', test: false } }).items,
     )
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.includes('/gd/eew/ev-broken'))).toBe(true)
   })
 
-  it('安全弁: 訓練・試験の報は電文本体を取りに行かない', async () => {
+  // 設定「試験報を受信（検証用）」が入っていれば、起動時の復元も訓練・試験の報を戻す（ライブと同じ。
+  // 2026-10-21 ユーザー承認「設定に従わせる (Recommended)」）
+  it('正: 試験報を受ける設定なら、訓練・試験の報も電文本体を取りに行く', async () => {
     const recent = new Date(serverNow() - 60_000).toISOString()
     const urls = stubEewFetch(
       [{ eventId: 'ev-test', dateTime: recent }],
       telegram({ id: 'xml-1', head: { type: 'VXSE45', test: true } }).items,
     )
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, true)
+
+    expect(urls.some(u => u.includes('data.api.dmdata.jp'))).toBe(true)
+  })
+
+  it('安全弁: 訓練・試験の報は電文本体を取りに行かない（試験報を受けない設定・既定）', async () => {
+    const recent = new Date(serverNow() - 60_000).toISOString()
+    const urls = stubEewFetch(
+      [{ eventId: 'ev-test', dateTime: recent }],
+      telegram({ id: 'xml-1', head: { type: 'VXSE45', test: true } }).items,
+    )
+
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.includes('data.api.dmdata.jp'))).toBe(false)
   })
@@ -1402,7 +1416,7 @@ describe('fetchDmdataActiveEews', () => {
       telegram({ id: 'json-1', originalId: 'xml-1', head: { type: 'VXSE45', test: false } }).items,
     )
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.endsWith('/xml-1'))).toBe(true)
     expect(urls.some(u => u.endsWith('/json-1'))).toBe(false)
@@ -1415,7 +1429,7 @@ describe('fetchDmdataActiveEews', () => {
       { serial: 1, telegrams: [{ id: 'xml-1', head: { type: 'VXSE45', test: false } }] },
     ])
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.endsWith('/xml-3'))).toBe(true)
     expect(urls.some(u => u.endsWith('/xml-1'))).toBe(false)
@@ -1425,18 +1439,18 @@ describe('fetchDmdataActiveEews', () => {
   describe('fetchDmdataActiveEewsOutcome の complete', () => {
     it('正: 一覧を引けなければ偽', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503 }) as unknown as Response))
-      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS)).complete).toBe(false)
+      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS, false)).complete).toBe(false)
     })
 
     it('正: 窓の中の地震の詳細に報が 1 通も無ければ偽', async () => {
       const recent = new Date(serverNow() - 60_000).toISOString()
       stubEewFetch([{ eventId: 'ev-empty', dateTime: recent }], [])
-      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS)).complete).toBe(false)
+      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS, false)).complete).toBe(false)
     })
 
     it('対照: 一覧が 0 件なら真（取るものが無い）', async () => {
       stubEewFetch([], [])
-      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS)).complete).toBe(true)
+      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS, false)).complete).toBe(true)
     })
 
     it('対照: 訓練・試験の報だけなら真（復元しないのが正しい）', async () => {
@@ -1445,12 +1459,12 @@ describe('fetchDmdataActiveEews', () => {
         [{ eventId: 'ev-test', dateTime: recent }],
         telegram({ id: 'xml-1', head: { type: 'VXSE45', test: true } }).items,
       )
-      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS)).complete).toBe(true)
+      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS, false)).complete).toBe(true)
     })
 
     it('対照: 緊急地震速報の区分を受けていなければ真（一覧も引かない）', async () => {
       const urls = stubEewFetch([], [])
-      const got = await fetchDmdataActiveEewsOutcome(KEY, ['telegram.earthquake'])
+      const got = await fetchDmdataActiveEewsOutcome(KEY, ['telegram.earthquake'], false)
       expect(got.complete).toBe(true)
       expect(urls).toHaveLength(0)
     })
@@ -1459,7 +1473,7 @@ describe('fetchDmdataActiveEews', () => {
   it('一覧が失敗したら空配列を返し、失敗した事実を記録する', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503 }) as unknown as Response))
 
-    await expect(fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)).resolves.toEqual([])
+    await expect(fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)).resolves.toEqual([])
 
     expect(warnings().some(w => w.includes('発表中の緊急地震速報の一覧'))).toBe(true)
   })
@@ -1491,7 +1505,7 @@ describe('fetchDmdataActiveEews の部分失敗', () => {
       } as unknown as Response
     }))
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     // 壊れた 1 件に引きずられず、健全な側の電文本体まで辿り着いている
     expect(urls.some(u => u.endsWith('/xml-ok'))).toBe(true)
@@ -1518,7 +1532,7 @@ describe('fetchDmdataActiveEews の部分失敗', () => {
       } as unknown as Response
     }))
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.endsWith('/xml-page1'))).toBe(true)
     expect(warnings().some(w => w.includes('ページ目'))).toBe(true)
@@ -1538,7 +1552,7 @@ describe('fetchDmdataActiveEews の部分失敗', () => {
       return { ok: true, json: async () => ({ items: [{ eventId: 'ev1', dateTime: recent }] }) } as unknown as Response
     }))
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(warnings().some(w => w.includes('読み取れませんでした'))).toBe(true)
   })
@@ -1556,7 +1570,7 @@ describe('fetchDmdataActiveEews の部分失敗', () => {
       return { ok: true, json: async () => ({ items: [{ eventId: 'ev1', dateTime: recent }] }) } as unknown as Response
     }))
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(warnings().some(w => w.includes('読み取れませんでした'))).toBe(false)
   })

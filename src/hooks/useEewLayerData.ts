@@ -69,6 +69,8 @@ export interface EewEpicenter {
   /** 以下はポップアップ表示用（震源名・規模・深さ・第何報・警報種別・予想最大震度）。 */
   name: string
   magnitude: number
+  /** 規模が数値にならないときの気象庁の説明（→ `Hypocenter.magnitudeCondition`）。吹き出しは地震情報と同じ部品で整形する */
+  magnitudeCondition: string | undefined
   depth: number
   /** 深さが「700km以上」という下限だけの値か（→ `Hypocenter.depthAtLeast`）。ポップアップの表示に使う */
   depthAtLeast: boolean
@@ -187,6 +189,7 @@ export function useEewLayerData(
           ...(eew.strongShakingOnly && { strongShakingOnly: true as const }),
           name: hc.name,
           magnitude: hc.magnitude,
+          magnitudeCondition: hc.magnitudeCondition,
           depth: hc.depth,
           depthAtLeast: hc.depthAtLeast === true,
           serial: eew.issue?.serial ?? '',
