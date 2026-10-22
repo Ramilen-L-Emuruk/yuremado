@@ -67,9 +67,10 @@ export function toEventIdTimestamp(d: Date): string {
  * 津波の影響なし）という、遠地地震特有の組み合わせになる報を選んでいる。
  * これにより「深さ句の省略」「付加文原文の読み上げ」「0230 の津波区分マップ」を一度に確認できる。
  *
- * @param includeComments 付加文（固定・自由の両方）を含めるか。付加文は DMDATA 経路でのみ
- *   配信され、P2PQuake（標準版）には存在しないため、standard 版のテストでは false を渡して
- *   実データで起こり得ない読み上げ・表示が出ないようにする。
+ * @param includeComments 固定付加文を含めるか。固定付加文は DMDATA 経路でのみ配信され、
+ *   P2PQuake（標準版）には存在しないため、standard 版のテストでは false を渡して
+ *   実データで起こり得ない読み上げ・表示が出ないようにする。**自由付加文はこの引数に関わらず持たせる**
+ *   —— P2PQuake も `comments.freeFormComment` で配信する（`services/p2pquake.ts`）。
  */
 export function createTestForeignQuake(includeComments: boolean): JMAQuake {
   const nowDate = serverDate()
@@ -97,9 +98,8 @@ export function createTestForeignQuake(includeComments: boolean): JMAQuake {
     // 自由付加文も実電文どおり。この報では津波情報の発表元を 1 行添えるだけだが、
     // 続報が出る事象（火山噴火・津波を伴う海外地震）ではここに観測状況が書かれ、
     // 固定付加文が動かないまま**自由付加文だけが更新される**。
-    freeText: includeComments
-      ? 'ＰＴＷＣでは１７日２３時５４分に津波情報を発表しています。'
-      : undefined,
+    // 自由付加文は両方の版が配信するので、版を問わず持たせる。
+    freeText: 'ＰＴＷＣでは１７日２３時５４分に津波情報を発表しています。',
   }
 }
 
@@ -152,7 +152,7 @@ export function createTestForeignQuakeHuge(withDmdssFields: boolean): JMAQuake {
     forecastText: withDmdssFields
       ? '日本への津波の有無については現在調査中です。太平洋の広域に津波発生の可能性があります。一般的に、この規模の地震が海域の浅い領域で発生すると、津波が発生することがあります。'
       : undefined,
-    // **P2PQuake は付加文を運ばず、海外への見通しを値 1 つで運ぶ**（`foreignTsunami`）。DMDSS 版の
+    // **P2PQuake は固定付加文を運ばず、海外への見通しを値 1 つで運ぶ**（`foreignTsunami`）。DMDSS 版の
     // 付加文の 2 文目（0221）にあたる `WarningPacificWide` を、読み取りと同じ文面で持たせる
     // （→ `services/p2pquake.ts` の `FOREIGN_TSUNAMI_TEXT`）。
     ...(withDmdssFields ? {} : { foreignTsunamiText: '太平洋の広域に津波発生の可能性があります。' }),
@@ -314,7 +314,7 @@ export function createTestEarthquake(useDmdataShape: boolean, operationStatus?: 
     // （→ docs/spec/quake-spec.md §5「市町村の震度」）。
     ...(useDmdataShape && { cities: notoHonshinQuake.cities as JMAQuakeCity[] }),
     // 固定付加文（その他）。**DMDATA 経路だけが運ぶ**ので standard 版では渡さない
-    // （P2PQuake は付加文を配信しない）。中身の決め方は `NOTO_HONSHIN_VAR_COMMENT_TEXT`。
+    // （P2PQuake は固定付加文を配信しない）。中身の決め方は `NOTO_HONSHIN_VAR_COMMENT_TEXT`。
     ...(useDmdataShape && NOTO_HONSHIN_VAR_COMMENT_TEXT
       ? { varCommentText: NOTO_HONSHIN_VAR_COMMENT_TEXT }
       : {}),
