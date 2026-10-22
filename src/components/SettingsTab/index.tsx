@@ -1,4 +1,5 @@
 import { ensureWaveSpanSec, WAVE_SPAN_CHOICES } from '../../utils/waveSpan'
+import { formatArchiveCoverage } from '../../utils/historicalArchiveCoverage'
 import { memo, useState, useCallback, useEffect, useRef } from 'react'
 import type { AppSettings, TtsUnreceivedDetail } from '../../hooks/useSettings'
 import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX } from '../../hooks/useSettings'
@@ -2179,7 +2180,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                 <div key={a.id} className="flex items-center gap-2">
                   <DescriptionTip
                     label={a.label}
-                    description={`${new Date(a.from).toLocaleString('ja-JP')} 〜 ${new Date(a.to).toLocaleString('ja-JP')}`}
+                    description={formatArchiveCoverage(a)}
                   />
                   <button
                     onClick={() => onStartReplay(new Date(new Date(a.firstEventTime).getTime() - 60_000))}

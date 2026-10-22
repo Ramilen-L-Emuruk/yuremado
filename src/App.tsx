@@ -102,11 +102,11 @@ import { loadTtsEpicenterAccents } from './utils/ttsEpicenterAccents'
 import { warmFixedPhrases, isValidVoicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS, isSpeaking, msSinceAudible, onSpeechIdle, setSpeechSynthBudgetRelaxed } from './utils/voicevox'
 import { EEW_LEAD_PHRASES } from './utils/ttsText'
 import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
-import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS } from './hooks/useReplayController'
+import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS, type ReplayFetchPurpose } from './hooks/useReplayController'
 import { fetchDmdataReplayEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
 import { PREFERRED_CLASSIFICATIONS } from './services/dmdataClassifications'
 import { fetchP2PReplayEvents, fetchP2PQuakeHistory, clearP2PReplayCache } from './services/p2pquakeReplay'
-import { findCoveringArchiveSync, findArchiveJustEndedSync, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
+import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerdict, emptyReplayFetchResult, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
 import { useHistoricalArchiveIndex } from './hooks/useHistoricalArchiveIndex'
 import { log } from './utils/logger'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
@@ -1718,7 +1718,17 @@ export function App() {
   // 通常のアーカイブ取得の代わりにこちらを使う（localArchiveReplay.ts 参照）。
   const { archives: historicalArchives, isLoading: historicalArchivesLoading } = useHistoricalArchiveIndex()
   const fetchReplayEvents = useCallback(
-    (from: Date, to: Date, signal: AbortSignal) => {
+    (from: Date, to: Date, signal: AbortSignal, purpose: ReplayFetchPurpose) => {
+      // 収録範囲の中でも、電文を集めていない日だけを見る窓は止める（2018 年北海道胆振東部地震は
+      // 余震の前後 6 日だけを集めている）。空の成功で返すと「何も無かった」と区別が付かない
+      // （2026-10-22 ユーザー選択「止めて理由を出す (Recommended)」）。目的ごとの扱いは `uncollectedFetchVerdict`。
+      const verdict = uncollectedFetchVerdict(historicalArchives, from, to, purpose)
+      if (verdict.kind === 'empty') return Promise.resolve(emptyReplayFetchResult())
+      if (verdict.kind === 'reject') {
+        return Promise.reject(new Error(
+          `ローカル履歴アーカイブ「${verdict.archive.label}」は、この日の電文を収録していません`,
+        ))
+      }
       const covering = findCoveringArchiveSync(historicalArchives, from, to)
       if (covering) return fetchLocalArchiveEvents(covering, from, to)
       // 収録範囲の終端を過ぎた直後（先読みが1時間ごとに次のウィンドウを取りに来た結果、

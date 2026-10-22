@@ -23,6 +23,23 @@ function isValidIso(v: unknown): v is string {
   return typeof v === 'string' && v.length > 0 && !Number.isNaN(new Date(v).getTime())
 }
 
+/**
+ * 集めた範囲の並び。空・逆向き・`from`〜`to` の外・前の範囲と重なる（順が崩れている）ものを弾く。
+ * 崩れた並びをそのまま使うと、集めていない日の判定（`findUncollectedArchiveSync`）が黙って外れる。
+ */
+function isValidCoveredRanges(v: unknown, fromMs: number, toMs: number): boolean {
+  if (!Array.isArray(v) || v.length === 0) return false
+  let prevEnd = fromMs
+  for (const r of v) {
+    if (!isRecord(r) || !isValidIso(r.from) || !isValidIso(r.to)) return false
+    const start = new Date(r.from).getTime()
+    const end = new Date(r.to).getTime()
+    if (start >= end || start < prevEnd || end > toMs) return false
+    prevEnd = end
+  }
+  return true
+}
+
 function isArchiveMeta(v: unknown): v is HistoricalArchiveMeta {
   if (!isRecord(v)) return false
   if (typeof v.id !== 'string' || v.id.length === 0) return false
@@ -30,6 +47,7 @@ function isArchiveMeta(v: unknown): v is HistoricalArchiveMeta {
   if (typeof v.description !== 'string') return false
   if (!isValidIso(v.from) || !isValidIso(v.to)) return false
   if (new Date(v.from).getTime() >= new Date(v.to).getTime()) return false
+  if (!isValidCoveredRanges(v.coveredRanges, new Date(v.from).getTime(), new Date(v.to).getTime())) return false
   if (!isValidIso(v.firstEventTime)) return false
   const firstEventMs = new Date(v.firstEventTime).getTime()
   if (firstEventMs < new Date(v.from).getTime() || firstEventMs > new Date(v.to).getTime()) return false
@@ -128,6 +146,7 @@ export function validateHistoricalArchiveFile(v: unknown): { file: HistoricalArc
       description: v.description as string,
       from: v.from as string,
       to: v.to as string,
+      coveredRanges: v.coveredRanges,
       firstEventTime: v.firstEventTime as string,
       entries,
     },

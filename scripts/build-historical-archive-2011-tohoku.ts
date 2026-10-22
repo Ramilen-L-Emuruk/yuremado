@@ -179,6 +179,8 @@ async function main() {
     description: existing.description,
     from: existing.from,
     to: existing.to,
+    // 取得元の資料は収録範囲を途切れなく覆っているので、集めた範囲は収録範囲と同じ。
+    coveredRanges: [{ from: existing.from, to: existing.to }],
     firstEventTime: allEntries[0].time,
     entries: allEntries,
   }

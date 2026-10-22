@@ -106,6 +106,7 @@ async function main() {
       '2016年4月14日21時26分頃、熊本県熊本地方を震源とするM6.5の地震（前震）が発生。同16日1時25分頃には同地方でM7.3の地震（本震）が発生し、いずれも熊本県益城町で震度7を観測した（熊本地震）。',
     windowStart: WINDOW_START,
     windowEnd: WINDOW_END,
+    dates: DATES,
     entries: [...eewEntries, ...quakeTsunamiEntries],
     outPath: OUT_PATH,
     indexPath: INDEX_PATH,

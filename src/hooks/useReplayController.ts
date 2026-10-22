@@ -163,12 +163,18 @@ export function assemblePreWindowMaterial(
     .map(x => x.entry)
 }
 
+/**
+ * 取得の目的。**本編**は開始時刻からの窓、**初期状態**は開始時刻の手前 24 時間、**先読み**は再生中に次の窓を取るもの。
+ * 取得元は目的によって失敗の扱いを変えることがある（ローカル履歴アーカイブで電文を集めていない日。App の `fetchReplayEvents`）。
+ */
+export type ReplayFetchPurpose = 'main' | 'initial' | 'prefetch'
+
 export interface ReplayControllerDeps {
   /**
    * 指定範囲の電文を取得する。バリアントごとの取得元をここで差し替える
    * （DMDSS 版は DMDATA アーカイブ、standard 版は P2PQuake の日付指定クエリ）。
    */
-  fetchEvents: (fromTime: Date, toTime: Date, signal: AbortSignal) => Promise<ReplayFetchResult>
+  fetchEvents: (fromTime: Date, toTime: Date, signal: AbortSignal, purpose: ReplayFetchPurpose) => Promise<ReplayFetchResult>
   /**
    * 再生開始時刻より前の履歴を取得する。使い道は 2 つ。
    * - 地震カードの一覧を、ライブ接続時と同じ厚みにする（`restoreQuakeHistory`）
@@ -407,10 +413,10 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
       // （初期状態が欠けたまま再生すると、地震が起きていない状態から始まって
       //   実際の状況と食い違うため）。どちらで失敗したかはメッセージに含める。
       const [normal, pre, history] = await Promise.all([
-        d.fetchEvents(targetDate, toTime, signal).catch((e) => {
+        d.fetchEvents(targetDate, toTime, signal, 'main').catch((e) => {
           throw new Error(`本編（${fmt(targetDate)} 以降）の取得に失敗: ${msgOf(e)}`)
         }),
-        d.fetchEvents(preFrom, targetDate, signal).catch((e) => {
+        d.fetchEvents(preFrom, targetDate, signal, 'initial').catch((e) => {
           throw new Error(`初期状態（過去 24 時間）の取得に失敗: ${msgOf(e)}`)
         }),
         historySettled,
@@ -562,7 +568,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
     recordReplayEvent({ type: 'fetch', phase: 'start', target: 'prefetch', message: null })
     // 先読みも本編と同じく打ち切れない取得を含むため、完了時に世代を照合する。
     const session = guard.current()
-    fetchEvents(nextFrom, nextTo, guard.signal())
+    fetchEvents(nextFrom, nextTo, guard.signal(), 'prefetch')
       .then((result) => {
         if (!guard.isCurrent(session)) {
           log.info('[replay] 先読み完了時に別セッションへ切り替わっていたため結果を破棄')
