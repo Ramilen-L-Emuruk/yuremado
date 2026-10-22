@@ -168,9 +168,10 @@ describe('fetchDmdataGdEarthquakesBefore', () => {
       '2024-01-01': [{ items: [at('a', '2024-01-01T16:10:00+09:00')] }],
       '2024-01-02': [{ items: [at('b', '2024-01-02T08:00:00+09:00')] }],
     })
-    const items = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
+    const { items, failedDays } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
     expect(urls.map(u => /date=([0-9-]+)/.exec(u)?.[1])).toEqual(['2024-01-01', '2024-01-02'])
     expect(items.map(i => i.eventId)).toEqual(['a', 'b'])
+    expect(failedDays).toEqual([])
   })
 
   it('対照: 再生時刻より後・期間の手前の地震は落とす', async () => {
@@ -178,14 +179,14 @@ describe('fetchDmdataGdEarthquakesBefore', () => {
       '2024-01-01': [{ items: [at('early', '2024-01-01T11:00:00+09:00')] }],
       '2024-01-02': [{ items: [at('late', '2024-01-02T13:00:00+09:00'), at('ok', '2024-01-02T11:00:00+09:00')] }],
     })
-    const items = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
+    const { items } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
     expect(items.map(i => i.eventId)).toEqual(['ok'])
   })
 
   it('安全弁: 混んだ日はページ上限で打ち切って記録し、止める合図で残りの日を投げない', async () => {
     const busy = Array.from({ length: 10 }, (_, i) => ({ items: [at(`x${i}`, '2024-01-02T09:00:00+09:00')], nextToken: `T${i}` }))
     const urls = stubByDate({ '2024-01-02': busy })
-    const items = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
+    const { items } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
     // 1/1 は 1 ページ（空）、混んだ 1/2 は上限の 5 ページで打ち切る
     expect(urls.filter(u => u.includes('date=2024-01-02'))).toHaveLength(5)
     expect(items).toHaveLength(5)
@@ -196,6 +197,54 @@ describe('fetchDmdataGdEarthquakesBefore', () => {
     const urls2 = stubByDate({})
     await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 30, controller.signal)
     expect(urls2).toHaveLength(0)
+  })
+
+  it('安全弁: 1 日の失敗で全体を捨てず、失敗した日を返す。全日が失敗したら投げる', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('date=2024-01-01')) return { ok: false, status: 500, json: async () => ({}) } as unknown as Response
+      return { ok: true, json: async () => ({ items: [at('b', '2024-01-02T08:00:00+09:00')] }) } as unknown as Response
+    }))
+    const { items, failedDays } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
+    expect(items.map(i => i.eventId)).toEqual(['b'])
+    expect(failedDays).toEqual(['2024-01-01'])
+
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) } as unknown as Response)))
+    await expect(fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)).rejects.toThrow()
+  })
+
+  it('安全弁: 日付に依らない失敗（401・403・429）はその場で投げ、残りの日を投げない', async () => {
+    for (const status of [401, 403, 429]) {
+      const calls = vi.fn(async () => ({ ok: false, status, json: async () => ({}) } as unknown as Response))
+      vi.stubGlobal('fetch', calls)
+      await expect(fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 30, null)).rejects.toThrow()
+      expect(calls).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('安全弁: ほかの失敗も 3 日続いたら残りを投げず、取れた日の分は返す', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(url)
+      // 最初の 1 日だけ取れ、以後はずっと 500
+      if (urls.length === 1) return { ok: true, json: async () => ({ items: [at('a', '2023-12-03T12:00:00+09:00')] }) } as unknown as Response
+      return { ok: false, status: 500, json: async () => ({}) } as unknown as Response
+    }))
+    const { items, failedDays } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 30, null)
+    expect(urls).toHaveLength(4)
+    expect(items.map(i => i.eventId)).toEqual(['a'])
+    expect(failedDays).toHaveLength(30)
+  })
+
+  it('対照: 失敗が 2 日続いても、取れた日を挟めば打ち切らない', async () => {
+    let n = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      n++
+      if (n % 3 === 0) return { ok: true, json: async () => ({ items: [] }) } as unknown as Response
+      return { ok: false, status: 500, json: async () => ({}) } as unknown as Response
+    }))
+    const { failedDays } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 30, null)
+    expect(n).toBe(31)
+    expect(failedDays.length).toBeGreaterThan(0)
   })
 })
 

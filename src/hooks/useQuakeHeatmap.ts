@@ -114,8 +114,12 @@ export function useQuakeHeatmap(
   const [basePoints, setBasePoints] = useState<KeyedHeatPoint[] | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   // 再生を始めた時刻（ms）。オフセットが変わるのは再生の開始・停止のときだけなので、変わった時点の再生時刻を採る。
+  // **分で切り捨てる。** オフセットは「開始時刻 − 押した瞬間の Date.now()」なので、ここで足し戻すと
+  // 押してから描くまでの数ミリ秒ぶんだけ毎回ずれ、同じ開始時刻でも控えの鍵が一致しない。
+  // 切り捨てたぶん（1 分未満）だけ手前までしか取らない。その 1 分に起きた地震は、再生の初期状態で
+  // 届けば地図に出るが、届かなければ出ない（ヒートマップの粒度では見分けが付かない差として受け入れる）。
   const replayAnchorMs = useMemo(
-    () => (replayOffsetMs === null ? null : Math.round(Date.now() + replayOffsetMs)),
+    () => (replayOffsetMs === null ? null : Math.floor((Date.now() + replayOffsetMs) / 60_000) * 60_000),
     [replayOffsetMs],
   )
   // 再生中は 1 分ごとに描き直す（点の出し入れを再生時刻に合わせる）
@@ -161,19 +165,25 @@ export function useQuakeHeatmap(
       // 取れるまでは何も出さない（いまの 30 日を出すと、再生時刻より後の地震が並ぶ）
       setBasePoints([])
       setIsLoading(true)
-      const loadReplay = isDmdss
-        ? fetchDmdataGdEarthquakesBefore(dmdataApiKey, replayAnchorMs, HEATMAP_DAYS, controller.signal).then(fromGdItems)
-        : fetchJmaQuakeHistory(HEATMAP_DAYS, replayAnchorMs, controller.signal).then(fromJmaQuakes)
+      // complete が偽（取れなかった日がある）なら控えない。控えると、同じ開始時刻で再生し直しても
+      // 欠けた日が戻らないまま表示され続ける
+      const loadReplay: Promise<{ points: KeyedHeatPoint[]; complete: boolean }> = isDmdss
+        ? fetchDmdataGdEarthquakesBefore(dmdataApiKey, replayAnchorMs, HEATMAP_DAYS, controller.signal)
+          .then(r => ({ points: fromGdItems(r.items), complete: r.failedDays.length === 0 }))
+        : fetchJmaQuakeHistory(HEATMAP_DAYS, replayAnchorMs, controller.signal)
+          .then(quakes => ({ points: fromJmaQuakes(quakes), complete: true }))
       loadReplay
-        .then(result => {
+        .then(({ points, complete }) => {
           if (controller.signal.aborted) return
-          replayBaseCache.set(replayAnchorMs, result)
-          while (replayBaseCache.size > REPLAY_BASE_CACHE_MAX) {
-            const oldest = replayBaseCache.keys().next().value
-            if (oldest === undefined) break
-            replayBaseCache.delete(oldest)
+          if (complete) {
+            replayBaseCache.set(replayAnchorMs, points)
+            while (replayBaseCache.size > REPLAY_BASE_CACHE_MAX) {
+              const oldest = replayBaseCache.keys().next().value
+              if (oldest === undefined) break
+              replayBaseCache.delete(oldest)
+            }
           }
-          setBasePoints(result)
+          setBasePoints(points)
         })
         .catch(err => {
           if (controller.signal.aborted) {
@@ -186,7 +196,11 @@ export function useQuakeHeatmap(
         .finally(() => {
           if (!controller.signal.aborted) setIsLoading(false)
         })
-      return () => controller.abort()
+      return () => {
+        controller.abort()
+        // 打ち切った取得は finally で読み込み中を降ろさないので、ここで降ろす（次の取得が立て直す）
+        setIsLoading(false)
+      }
     }
 
     const cached = loadCache()
@@ -235,7 +249,9 @@ export function useQuakeHeatmap(
   // （`serverNow()`）。控えの点も、再生で届いた地震も同じ物差しで見る（`isWithinHeatWindow`）。
   const points = useMemo(() => {
     if (!basePoints) return null
-    const nowMs = serverNow()
+    // 再生していないときは実時間で測る。`serverNow()` は時計側のオフセットを読むので、フックが受け取る
+    // オフセットと戻る瞬間がずれうる（停止した直後だけ再生時刻で絞られる）
+    const nowMs = replayAnchorMs === null ? liveServerNow() : serverNow()
     const merged = new Map<string, HeatPoint>()
     // 規模の説明・深さの下限の欄を持たない形で控えた点（この欄を足す前のキャッシュ）は「無い」として読む。
     // **重みも読み直す。** 前の形は規模不明の重みを NaN で控えていて、JSON を通ると null になる
@@ -272,7 +288,7 @@ export function useQuakeHeatmap(
     return Array.from(merged.values())
     // refilterTick は再生中に 1 分ごとに描き直すためだけの依存（中身は読まない）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [basePoints, earthquakes, refilterTick])
+  }, [basePoints, earthquakes, refilterTick, replayAnchorMs])
 
   return { points, isLoading }
 }

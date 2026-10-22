@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { convertEvent } from './p2pquake'
+import { convertEvent, setJmaGateIntervalForTest, resetJmaGateForTest } from './p2pquake'
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import { log } from '../utils/logger'
 import { isEewAreaArrived } from '../utils/eew'
@@ -81,10 +81,13 @@ let warnSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
   warnSpy = vi.spyOn(log, 'warn').mockImplementation(() => {})
+  // /jma の門（1 分に 10 件）はここでは見ない。見たいのはページの辿り方で、門の待ちが乗ると時間切れになる
+  setJmaGateIntervalForTest(0)
 })
 
 afterEach(() => {
   warnSpy.mockRestore()
+  resetJmaGateForTest()
 })
 
 describe('convertEvent', () => {
@@ -822,5 +825,41 @@ describe('fetchJmaQuakeHistory（ヒートマップ用の遡り取得）', () =>
     controller.abort()
     await fetchJmaQuakeHistory(30, Date.parse('2026-08-16T01:30:00+09:00'), controller.signal)
     expect(calls).toBe(0)
+  })
+})
+
+describe('fetchJmaArchiveRaw の門', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('正: 待っている背景（ヒートマップの遡り）を、前景（リプレイ・履歴）が追い越す', async () => {
+    const { fetchJmaArchiveRaw } = await import('./p2pquake')
+    setJmaGateIntervalForTest(150)
+    const order: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      order.push(new URL(url).searchParams.get('offset') ?? '0')
+      return { ok: true, status: 200, json: async () => [] } as unknown as Response
+    }))
+    const bg1 = fetchJmaArchiveRaw('quake', { limit: 1, offset: 1 }, null, 'background')
+    const bg2 = fetchJmaArchiveRaw('quake', { limit: 1, offset: 2 }, null, 'background')
+    const fg = fetchJmaArchiveRaw('quake', { limit: 1, offset: 3 }, null, 'foreground')
+    await Promise.all([bg1, bg2, fg])
+    expect(order).toEqual(['1', '3', '2'])
+  })
+
+  it('安全弁: 止めた取得は列に並ばず（枠を使わず）、取得も飛ばさず、AbortError で抜ける', async () => {
+    const { fetchJmaArchiveRaw } = await import('./p2pquake')
+    // 門を効かせる（1 件通すと次は 10 秒待つ）。止めた取得が枠を使えば、次の取得は時間切れまで待たされる
+    setJmaGateIntervalForTest(10_000)
+    const calls = vi.fn(async () => ({ ok: true, status: 200, json: async () => [] } as unknown as Response))
+    vi.stubGlobal('fetch', calls)
+    const controller = new AbortController()
+    // 理由つきで止めても、呼び出し側の「止めた」判定に掛かる形で投げる
+    controller.abort(new Error('別の理由'))
+    await expect(fetchJmaArchiveRaw('quake', { limit: 1 }, controller.signal, 'background')).rejects.toMatchObject({ name: 'AbortError' })
+    expect(calls).not.toHaveBeenCalled()
+    await fetchJmaArchiveRaw('quake', { limit: 1 }, null, 'background')
+    expect(calls).toHaveBeenCalledTimes(1)
   })
 })
