@@ -145,6 +145,13 @@ function parseCoord(value: string | undefined): number {
   return parseFloat(value.replace(/[NESW]/i, ''))
 }
 
+/** 規模の文字列を数値に変換する。読めない場合は `NaN`（`hasMagnitude` が偽になる）。 */
+function parseMagnitude(value: string | undefined): number {
+  if (!value) return NaN
+  const n = parseFloat(value)
+  return Number.isFinite(n) ? n : NaN
+}
+
 /** "60km" などの深さ文字列を km 数値に変換する。不明な場合は -1。 */
 function parseDepth(value: string | undefined): number {
   if (!value) return -1
@@ -207,7 +214,9 @@ export function hypoInfoItemToEEW(item: YahooHypoInfoItem): EEWAlert {
         latitude: parseCoord(item.latitude),
         longitude: parseCoord(item.longitude),
         depth: parseDepth(item.depth),
-        magnitude: parseFloat(item.magnitude) || 0,
+        // **読めない規模は `NaN` で表す**（DMDATA の経路と同じ。`Hypocenter.magnitude`）。
+        // かつて `|| 0` で M0.0 にしていたので、カードに「M0.0」と出ていた。
+        magnitude: parseMagnitude(item.magnitude),
       },
     },
     severity: scaleNum >= 45 ? 'Warning' : 'Forecast',
