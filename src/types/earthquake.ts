@@ -85,8 +85,10 @@ export interface Hypocenter {
  * 電文の運用種別（`Control/Status`。電文解説資料 Ⅰ.3）。
  *
  * **`EEWAlert.test` とは別物。** あちらは「画面・音・地図へ流さない」ための抑制フラグで、
- * 検証用に受信した試験報はあえて `test: false` にして流している（`services/dmdata.ts`）。
- * こちらは**電文が自分で名乗っている種別**で、表示に印を付けるためだけに持つ。
+ * 検証用に受信した試験報はあえて `test: false` にして流している（DMDATA は `services/dmdata.ts`、
+ * 標準版の緊急地震速報は `utils/eew.ts` の `admitTrainingEew`）。
+ * こちらは**報の運用種別**で、表示に印を付けるためだけに持つ。DMDATA は電文が自分で名乗る値、
+ * 標準版の緊急地震速報は経路の旗（強震モニタの `isTraining`・P2PQuake の `test`）から付けた値。
  *
  * 「通常」は持たせない（既定の状態に欄を割く意味がない）。
  */
@@ -1692,6 +1694,20 @@ export interface LiveEventMeta {
    * 変わりうるので、読み上げは既読との差分で判断させる。区分が上がった報には立たない。
    */
   eewSameReport?: boolean
+  /**
+   * その緊急地震速報の誤報取消が、**取消の前に画面から消えた（自動解除された）地震**に届いたものか（取消の報にだけ立つ。
+   * 入口が `isLateEewCancel` で決める）。
+   *
+   * 立てば読み上げ側は、画面に出ていた地震の誤報取消と同じく音・読み上げ・通知・タブ移動を出す。読み上げ側の追跡は
+   * 消えた時点で捨ててあるので、取消の文に要る値はここで渡す（2026-10-21 ユーザー承認「直す (Recommended)」）。
+   *
+   * - `firstIssueTime`: 手元で最初に受けた報の発表時刻（`null` は拾えなかった印、`undefined` は覚えていない）
+   * - `hypocenterName`: 消える直前の報の震央地名（空なら名乗らなかった）
+   */
+  eewLateCancel?: {
+    firstIssueTime: string | null | undefined
+    hypocenterName: string
+  }
 }
 
 // 南海トラフ地震臨時情報 (VYSE50)

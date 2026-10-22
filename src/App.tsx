@@ -816,13 +816,12 @@ export function App() {
 
   // ライブイベント受信処理（通知音・タイトル・タブ切替・読み上げ・ブラウザ通知）
   const { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict, eewNoForecastSettledKeys } = useLiveEventHandler({
-    settings, title, earthquakesRef, tsunamisRef, kyoshinDetectedRef, defaultTabRef,
+    settings, title, earthquakesRef, tsunamisRef,
     setActiveTabNonRealtime, setActiveTabRealtimeOnUpdate, setActiveTabRealtimeUrgent,
-    setActiveTabRealtimeForKyoshin: () => requestTabForKyoshin('realtime'),
     followSpeechTab, preSpeechTab, speechFollow, unreceivedFollow, telegramTextFollow,
     borrowedHypocenterFollow, eewSpeakingCard, quakeSpeakingCard,
     expandPanelForSpecialInfo,
-    revertToDefaultTab, selectQuake, openLpgmFromQuake, openEstimatedIntensity,
+    selectQuake, openLpgmFromQuake, openEstimatedIntensity,
     closeDistributionOnQuakeReport,
   })
 
@@ -869,7 +868,7 @@ export function App() {
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
-    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction,
+    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
@@ -932,6 +931,7 @@ export function App() {
     eewNoForecast:     simulateEEWNoForecast,
     eewForecastZero:   simulateEEWForecastZero,
     eewRetraction:     simulateEEWRetraction,
+    eewLateRetraction: simulateEEWLateRetraction,
     tsunami:           simulateTsunami,
     tsunamiWarning:    simulateTsunamiWarning,
     tsunamiWatch:      simulateTsunamiWatch,
@@ -977,7 +977,7 @@ export function App() {
     },
   }), [
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
-    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction,
+    simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,

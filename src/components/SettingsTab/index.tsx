@@ -50,6 +50,8 @@ export interface TestFunctions {
   /** 最大予想震度 0 の初報から震度1 へ上がる EEW。震度0 は DMDATA 経路しか運ばないので、ボタンは DMDSS 版にだけ出す。 */
   eewForecastZero: () => void
   eewRetraction: () => void
+  /** 自動解除で画面から消えた後に、同じ地震の誤報取消を届ける EEW（→ `isLateEewCancel`） */
+  eewLateRetraction: () => void
   tsunami: () => void
   tsunamiWarning: () => void
   tsunamiWatch: () => void
@@ -1499,6 +1501,16 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりませんが、地名ラベルの位置調整が数秒遅れ、揺れ検知の診断ログを保存しません">
           <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
         </Row>
+        {/* 標準版の行。DMDSS 版は「DM-D.S.S 接続設定」に同じ設定の行がある（あちらは緊急地震速報以外の試験報にも効く）。
+            文面は 2026-10-21 ユーザー承認 */}
+        {!isDmdss && (
+          <Row label="試験報を受信（検証用）" description="緊急地震速報の訓練報・試験報も受信します。画面には「訓練報」「試験報」の印を付けて出します">
+            <Toggle
+              checked={settings.dmdataTestDelivery}
+              onChange={v => onUpdate('dmdataTestDelivery', v)}
+            />
+          </Row>
+        )}
       </Section>
 
       <Section title="通知設定">
@@ -1947,6 +1959,10 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
         <Row label="緊急地震速報（誤報取消）" description="警報相当（日向灘 M6.5） – eewCancel 音 / 10秒後に誤報として取消（音・通知・読み上げあり）">
           <TestButton color="purple" onClick={onTest.eewRetraction}>誤報取消テスト</TestButton>
+        </Row>
+        {/* 文面は 2026-10-22 ユーザー承認（「この形で進めてよいか、テストボタンの文面もこれでよいか」への「進めて」） */}
+        <Row label="緊急地震速報（自動解除の後の誤報取消）" description="警報相当（日向灘 M6.5） – 最終報まで流し、自動解除で画面から消えた 10 秒後に誤報として取消（音・通知・読み上げあり）">
+          <TestButton color="purple" onClick={onTest.eewLateRetraction}>遅れた誤報取消テスト</TestButton>
         </Row>
         {/* ── 地震情報 ── */}
         <Row label="地震情報" description="令和6年能登半島地震・本震 M7.6 最大震度7（実データ）をリストと地図に追加">

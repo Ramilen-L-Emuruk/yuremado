@@ -511,9 +511,9 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
         }}
       >
         {headerLabel}
-        {/* 電文が自分で名乗っている運用種別（`Control/Status`）。**本物と見分けられるようにする** ——
-            設定「試験報・訓練報を受信する」を有効にすると、検証用にこれらもカード・音・地図へ
-            流している（`services/dmdata.ts`）ので、印が無いと画面では区別がつかない。 */}
+        {/* 運用種別（DMDATA は電文の `Control/Status`、標準版は強震モニタの `isTraining`・P2PQuake の `test` から
+            `admitTrainingEew` が付ける）。**本物と見分けられるようにする** —— 設定「試験報を受信（検証用）」を
+            有効にすると、検証用にこれらもカード・音・地図へ流しているので、印が無いと画面では区別がつかない。 */}
         {eew.operationStatus && (
           <span
             className="ml-2 px-1.5 py-0.5 rounded-sm font-bold"

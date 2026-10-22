@@ -139,13 +139,11 @@ function setup(overSettings: Partial<AppSettings> = {}) {
     settings, title: title as never,
     earthquakesRef,
     tsunamisRef: { current: [] as JMATsunami[] },
-    kyoshinDetectedRef: { current: false },
-    defaultTabRef: { current: 'earthquake' },
-    setActiveTabRealtimeForKyoshin: vi.fn(), setActiveTabNonRealtime: vi.fn(),
+    setActiveTabNonRealtime: vi.fn(),
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true),
     quakeSpeakingCard: null,
-    expandPanelForSpecialInfo: vi.fn(), revertToDefaultTab: vi.fn(),
+    expandPanelForSpecialInfo: vi.fn(),
     selectQuake: vi.fn(), openLpgmFromQuake: vi.fn(), openEstimatedIntensity: vi.fn(), closeDistributionOnQuakeReport: vi.fn(),
   }))
   // `handleLiveEvent` / `restorePreWindowTracking` は state を更新するので act() で包む。
