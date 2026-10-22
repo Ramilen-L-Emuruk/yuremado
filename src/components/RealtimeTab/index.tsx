@@ -981,7 +981,7 @@ const LABEL_ORDER = ['7', '6強', '6弱', '5強', '5弱', '4', '3', '2', '1', '0
  */
 function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
   // **地震が複数あれば、1 枚の中に地震ごとの行を並べる**（2026-10-18 ユーザー承認「1 枚に行を並べる」）。
-  // 区域名と注記は 1 回だけ出す（どの行も同じ区域・同じ出どころの値）。地震の名前は 2 件以上のときだけ添え、
+  // 区域名と注記は 1 回だけ出す（どの行も同じ区域・同じ出どころの値。混ざった枠だけは下の `mixed` のとおり行ごと）。地震の名前は 2 件以上のときだけ添え、
   // 1 件のときは今までと同じ見た目のまま。枠の色と見出しは先頭の行に合わせる（2026-10-18 ユーザー承認
   // 「先頭の行に合わせる」）—— 並びは到達済みが先頭なので、どれか 1 つでも届いていれば到達済みになる。
   //
@@ -994,9 +994,18 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
   // 並びは予測の無い行を最後へ置くので、先頭が予測なしなら全行が予測なし
   const noForecastOnly = lead.noForecast
   const borderColor = noForecastOnly ? '#6b7280' : lead.arrived ? '#ef4444' : '#f97316'
-  const scopeLabel = arrival.source === 'telegram' && arrival.areaName
-    ? arrival.areaName
-    : 'ホーム地点'
+  // **自前計算の行と発表値の行が混ざった枠（`'mixed'`）は、範囲を行ごとに出し、注記を 2 つとも出す**
+  // （2026-10-22 ユーザー承認「行ごとに範囲を出す (Recommended)」）。1 回だけ出すと、どちらかの行の範囲を偽って伝える
+  const mixed = arrival.source === 'mixed'
+  const scopeOf = (source: 'telegram' | 'own') => source === 'telegram' && arrival.areaName ? arrival.areaName : 'ホーム地点'
+  const scopeLabel = scopeOf(arrival.source === 'own' ? 'own' : 'telegram')
+  // 注記はそれが説明する行があるときだけ出す。気象庁の注記は**到達予測時刻を出した発表値の行**があるときだけ（距離だけの行は
+  // 時刻を出していない。2026-10-22 ユーザー承認「時刻のある行があるときだけ (Recommended)」）
+  const notes = [
+    ...(arrival.rows.some((r) => r.source === 'telegram' && !r.noForecast)
+      ? ['※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'] : []),
+    ...(arrival.rows.some((r) => r.source === 'own') ? ['※推定値。実際の到達時間は異なる場合があります'] : []),
+  ]
   const heading = noForecastOnly
     ? (single && lead.distanceKm !== null ? `震源から ${lead.distanceKm.toFixed(0)} km` : '主要動の到達予測なし')
     : lead.arrived ? '主要動 到達済み' : '主要動 到達カウントダウン'
@@ -1015,7 +1024,7 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
           <span className="text-xs text-secondary ml-auto">震源から {lead.distanceKm.toFixed(0)} km</span>
         )}
       </div>
-      <p className="text-xs text-secondary mb-1">{scopeLabel}</p>
+      {!mixed && <p className="text-xs text-secondary mb-1">{scopeLabel}</p>}
       {single ? (
         <SWaveArrivalCountdown row={lead} />
       ) : (
@@ -1030,17 +1039,16 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
                 <span className="text-xs text-secondary ml-auto shrink-0">震源から {row.distanceKm.toFixed(0)} km</span>
               )}
             </div>
+            {mixed && <p className="text-xs text-secondary">{scopeOf(row.source)}</p>}
             <SWaveArrivalCountdown row={row} />
           </div>
         ))
       )}
-      {!noForecastOnly && (
-        <p className={`text-xs text-secondary mt-1${single ? '' : ' border-t border-border pt-1'}`}>
-          {arrival.source === 'telegram'
-            ? '※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'
-            : '※推定値。実際の到達時間は異なる場合があります'}
+      {!noForecastOnly && notes.map((note, i) => (
+        <p key={note} className={`text-xs text-secondary ${i === 0 ? 'mt-1' : ''}${i === 0 && !single ? ' border-t border-border pt-1' : ''}`}>
+          {note}
         </p>
-      )}
+      ))}
     </div>
   )
 }

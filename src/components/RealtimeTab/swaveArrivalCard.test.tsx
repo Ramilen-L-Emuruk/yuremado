@@ -17,6 +17,7 @@ const NOTE = '※気象庁が発表した地域ごとの到達予測時刻です
 
 function row(over: Partial<SWaveArrivalRow> & { key: string }): SWaveArrivalRow {
   return {
+    source: 'telegram',
     hypocenterName: null,
     provisional: false,
     distanceKm: null,
@@ -30,8 +31,8 @@ function row(over: Partial<SWaveArrivalRow> & { key: string }): SWaveArrivalRow 
 const noForecastRow = (key: string, name: string, km: number) =>
   row({ key, hypocenterName: name, distanceKm: km, noForecast: true })
 
-function renderCard(rows: SWaveArrivalRow[]) {
-  const arrival: SWaveArrival = { source: 'telegram', areaName: '石川県能登', rows }
+function renderCard(rows: SWaveArrivalRow[], source: SWaveArrival['source'] = 'telegram') {
+  const arrival: SWaveArrival = { source, areaName: source === 'own' ? null : '石川県能登', rows }
   return render(
     <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[]} swaveArrival={arrival} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
@@ -80,5 +81,41 @@ describe('主要動の到達カード: 到達予測の出ていない地震', ()
     expect(screen.getByText('震源から 40 km')).toBeTruthy()
     expect(screen.getByText(NOTE)).toBeTruthy()
     expect(screen.queryByText(BODY)).toBeNull()
+  })
+})
+
+// 到達予想キーの端末で、自前計算の行と発表値の行が混ざった枠（2026-10-22 ユーザー承認「行ごとに範囲を出す (Recommended)」）
+describe('主要動の到達カード: 自前計算の行と発表値の行が混ざったとき', () => {
+  const OWN_NOTE = '※推定値。実際の到達時間は異なる場合があります'
+
+  it('行ごとに範囲を出し、注記は 2 つとも出す', () => {
+    renderCard([
+      row({ key: 'near', source: 'own', hypocenterName: '能登半島沖', distanceKm: 40, etaSec: 10 }),
+      row({ key: 'other', source: 'telegram', hypocenterName: '石川県能登地方', distanceKm: 20, etaSec: 23 }),
+    ], 'mixed')
+    expect(screen.getByText('ホーム地点')).toBeTruthy()
+    expect(screen.getByText('石川県能登')).toBeTruthy()
+    expect(screen.getByText(NOTE)).toBeTruthy()
+    expect(screen.getByText(OWN_NOTE)).toBeTruthy()
+  })
+
+  it('気象庁の値の行が距離だけなら、気象庁の注記は出さず推定値の注記だけ出す', () => {
+    renderCard([
+      row({ key: 'near', source: 'own', hypocenterName: '能登半島沖', distanceKm: 40, etaSec: 10 }),
+      row({ key: 'far', source: 'telegram', hypocenterName: '佐渡付近', distanceKm: 150, noForecast: true }),
+    ], 'mixed')
+    expect(screen.getByText(OWN_NOTE)).toBeTruthy()
+    expect(screen.queryByText(NOTE)).toBeNull()
+    expect(screen.getByText(BODY)).toBeTruthy()
+  })
+
+  it('対照: 自前計算の行だけなら範囲は 1 回・注記は推定値の 1 つだけ', () => {
+    renderCard([
+      row({ key: 'near', source: 'own', hypocenterName: '能登半島沖', distanceKm: 40, etaSec: 10 }),
+      row({ key: 'far', source: 'own', hypocenterName: '佐渡付近', distanceKm: 150, etaSec: 30 }),
+    ], 'own')
+    expect(screen.getAllByText('ホーム地点')).toHaveLength(1)
+    expect(screen.getByText(OWN_NOTE)).toBeTruthy()
+    expect(screen.queryByText(NOTE)).toBeNull()
   })
 })
