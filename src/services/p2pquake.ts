@@ -18,11 +18,18 @@ const WS_URL = 'wss://api.p2pquake.net/v2/ws'
 // P2PQuake API はイベント種別を数値 code で返すため、内部の kind 識別子に変換する
 export type RawP2PEvent = { code: number; [key: string]: unknown }
 
+/**
+ * P2PQuake のイベントコード → 何の電文か（電文ログの種別と同じ語）。**扱うコードの唯一の表**で、
+ * 扱うかの判定（`isSupportedCode`）・読み取りの振り分け（`convertEvent`）・読めた行の種別・
+ * 電文ログが読めなかった行に付ける種別（`components/TelegramTab/labels.ts`）がすべてここを引く。
+ * 値は読み取れる 3 種に限る（足すと `convertEvent` の振り分けが型エラーで知らせる）。
+ */
+export const P2P_KIND_OF_CODE: ReadonlyMap<number, AppEvent['kind']> = new Map([
+  [551, 'quake'], [552, 'tsunami'], [556, 'eew'],
+])
+
 function codeToLogKind(code: number): TelegramLogEntry['kind'] {
-  if (code === 551) return 'quake'
-  if (code === 552) return 'tsunami'
-  if (code === 556) return 'eew'
-  return undefined
+  return P2P_KIND_OF_CODE.get(code)
 }
 
 const CORRECT_TYPE_MAP: Record<string, CorrectType> = {
@@ -484,12 +491,19 @@ export function convertEvent(raw: RawP2PEvent): AppEvent | null {
   // 型注釈を信用しない。配列や null が来ても落ちないように obj() で受け直す。
   const data = obj(raw)
   const code = readNumber(data.code)
-  if (!isSupportedCode(code)) return null
+  const kind = typeof code === 'number' ? P2P_KIND_OF_CODE.get(code) : undefined
+  if (kind === undefined) return null
   warnCounts = new Map()
   try {
-    if (code === 551) return parseQuake(data)
-    if (code === 552) return parseTsunami(data)
-    return parseEEW(data)
+    switch (kind) {
+      case 'quake': return parseQuake(data)
+      case 'tsunami': return parseTsunami(data)
+      case 'eew': return parseEEW(data)
+      default: {
+        const unhandled: never = kind
+        return unhandled
+      }
+    }
   } finally {
     flushWarnCounts(`${code} id=${str(data.id)}`)
   }
@@ -497,7 +511,7 @@ export function convertEvent(raw: RawP2PEvent): AppEvent | null {
 
 /** 内部型へ変換できる電文種別か。未対応 code は障害ではなく設計どおりの読み飛ばし。 */
 export function isSupportedCode(code: unknown): boolean {
-  return code === 551 || code === 552 || code === 556
+  return typeof code === 'number' && P2P_KIND_OF_CODE.has(code)
 }
 
 export async function fetchHistory(

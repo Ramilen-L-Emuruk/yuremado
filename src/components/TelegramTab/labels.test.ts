@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { TelegramLogEntry } from '../../types/earthquake'
-import { NON_EEW_HANDLED_TYPES, EEW_HEAD_TYPES } from '../../services/dmdataTelegramPayload'
-import { DISPATCHED_WITHOUT_PARSER } from '../../services/dmdata'
+import { NON_EEW_HANDLED_TYPES, EEW_HEAD_TYPES, DISPATCHED_WITHOUT_PARSER } from '../../services/dmdataTelegramPayload'
 import { isSupportedCode } from '../../services/p2pquake'
 import {
   HEAD_TYPE_LABEL, KIND_LABEL, KIND_OPTIONS, headTypeLabel, matchesTelegramFilter, readKindFilter,
