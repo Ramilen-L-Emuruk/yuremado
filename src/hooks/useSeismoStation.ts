@@ -225,8 +225,16 @@ export interface SeismoStationState {
 export interface SeismoStations {
   /** 震度か波形が届いている観測点（途絶えたものも含む）。**表示名の順。** */
   readonly stations: readonly SeismoStationState[]
-  /** 繋がり具合。**無効・URL 不正のときは `null`。** */
+  /** 繋がり具合。**無効・URL 不正のときは `null`**（URL 不正かどうかは {@link urlUnusable} で見分ける）。 */
   readonly stream: SeismoStreamState | null
+  /**
+   * 機能は入っているのに、URL が空か形が違うので繋ぎに行けない。
+   *
+   * **`stream` が `null` なのと見分けるために別に持つ。** `null` は「切っている」でも返るので、
+   * それだけを見ると URL の誤りで繋がっていないことが地図から消える（2026-10-21 ユーザー選択
+   * 「おすすめで」で、この場合も「地震計 未接続」を出すと決めた）。再生中は `enabled` が偽なので立たない。
+   */
+  readonly urlUnusable: boolean
   // **読めない押し出しはここへ載せない。** 画面へ出さないと決めたので
   // （→ `docs/spec/data-sources-spec.md` §4.5「繋がらなくなったことを地図の右上へ出す」）、
   // 受け取ると**誰も読まない値のために再描画だけが起きる** —— しかもホストと PWA の版が
@@ -738,8 +746,9 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
     }
   }, [canConnect, baseUrl, wave])
 
+  const urlUnusable = enabled && !canConnect
   return useMemo(
-    () => ({ stations, stream, readWave, subscribeWaveRevised }),
-    [stations, stream, readWave, subscribeWaveRevised],
+    () => ({ stations, stream, urlUnusable, readWave, subscribeWaveRevised }),
+    [stations, stream, urlUnusable, readWave, subscribeWaveRevised],
   )
 }

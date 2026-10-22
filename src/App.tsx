@@ -2554,7 +2554,7 @@ export function App() {
               <MapUpdateTime lastUpdate={overlayUpdateTime} error={overlayError} />
               <MapDataStatus />
               <MapRenderStatus />
-              <SeismoLinkStatus stream={seismo.stream} />
+              <SeismoLinkStatus stream={seismo.stream} urlUnusable={seismo.urlUnusable} />
             </div>
             {/* 地図に重ねる縦並び。上端に行動チェックリスト、下端に凡例・特別情報バナー。
                 **地図の高さを 1 本の縦並びで分け合う**（足りないときは中身が縮み、それぞれの中で
