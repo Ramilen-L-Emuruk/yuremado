@@ -1958,7 +1958,8 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 震度0を閾値によらず対象外にする規則を崩すと、震度0と震度1の階級値が同じ（どちらも10）であるため震度1まで下げた設定で平常時のノイズが閾値を通り帯が鳴りっぱなしになる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
 | 観測点名の突き合わせに県名を含めると、DMDATAの電文は `pref` が常に空なのでDMDSS版では構造的に1件も一致せず、地点を登録した人ほど判定が死ぬ | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §3「3 つの照合対象」 |
 | 地震情報の判定で観測点の点だけを見て区域の点を見ないと、区域別震度しか持たない震度速報（多くの地震で最初に届く報）で何も出せなくなる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
-| 区域を持たないEEW（区域が補われる前のhypoInfo由来の報）を全国基準へ落とさないと、その窓でEEW経路が死ぬ | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
+| 区域を持たない EEW（予測震度の下限が震度 3 以下の報・区域が補われる前の hypoInfo 由来の報）を、自宅の区域を引けるのに全国基準で判定すると、遠くの地震でも自宅に帯が出る。自前の予測震度で埋めると、自宅に向けて自前の予想を出すことになる。「非常に強い揺れを検知」の報まで区域なしとして捨てると、自宅のすぐ近くで強く揺れていても帯が出ない（この報だけは検知点からの距離で見る） | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
+| 地図の下端の自作地震計の波形を EEW で出す判定を区域の突き合わせへ戻すと、区域を持たない小さい報で遠くの地震でも出る。範囲の中心をホーム地点へ戻すと、地点が無い端末では全国どこの検知でも出る。普段が読めない観測点の下限を地震カードと同じ「下限なし」へ揃えると、ホストの起動直後に遠くの小さい地震で出る | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §4.5「EEW の経路は予測計測震度で決める」 |
 | 階級表に無い震度を判定・表示から弾かないと、型検査を通らない経路（実地震テストシナリオの手書きJSON等）から来た壊れた値がそのまま使われる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「階級表に無い震度は見なかったことにする」 |
 | 畳んだままにする3条件（いま畳んでいる・期限内・震度が畳んだときを超えていない）を全部満たすことを崩すと、震度条件が欠けた場合は震度5弱で閉じたあとの震度6強のような引き上げが伝わらない | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §4「畳んだままにする 3 条件」 |
 | 畳んでいる間の揺れで基準の震度を上書きすると、余震で下がっていく値に追随してそのうち小さな揺れでも「上がった」と見なして開いてしまう | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §4「畳んだままにする 3 条件」 |

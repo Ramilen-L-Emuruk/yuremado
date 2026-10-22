@@ -35,6 +35,7 @@ export function useNearbyScope(params: {
   return useMemo(() => {
     if (!home || !stationCoords) return NO_SCOPE
     return {
+      centers: [home],
       kyoshinKeys: nearbyKyoshinKeys(kyoshinSites, home),
       stationNames: nearbyStationNames(stationCoords, home),
       regionNames: nearbyRegionNames(stationCoords, home),

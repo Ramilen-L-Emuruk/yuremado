@@ -54,6 +54,7 @@ import { buildLegendBlocks, EMPTY_LEGEND_SOURCES, type MapLegendSources, type Le
 import { ActionChecklist } from './components/ActionChecklist'
 import { useActionChecklist } from './hooks/useActionChecklist'
 import { useNearbyScope } from './hooks/useNearbyScope'
+import { useSeismoScope } from './hooks/useSeismoScope'
 import { useStationCoords } from './hooks/useStationCoords'
 import { useEarthquakes, MAX_HISTORY_RETAINED } from './hooks/useEarthquakes'
 import { useFetchThrottled } from './hooks/useFetchThrottled'
@@ -2351,9 +2352,16 @@ export function App() {
   // **再生中は明示的に落とす。** 繋いでいないので観測点が 1 つも無く、結果として絵は
   // 出ない —— が、それは「`stations` が空だから」という偶然に頼った形で、判定の中では
   // EEW と強震モニタ（再生中も動いている）に反応して内部の状態が立ってしまう。
+  // 波形を出すかを見る範囲は、ホーム地点ではなく自作地震計の周り（座標が無ければホーム地点。→ hooks/useSeismoScope.ts）。
+  const seismoScope = useSeismoScope({
+    stations: seismo.stations,
+    homeScope: nearbyScope,
+    stationCoords: stationCoordsForChecklist,
+    kyoshinSites: kyoshinSitesGated,
+  })
   const showSeismoWave = useSeismoWaveVisibility({
     mode: replayTimeOffset === null ? settings.seismoWave : 'off',
-    scope: nearbyScope,
+    scope: seismoScope,
     eews: eewListNoCancelled,
     detectedPoints: kyoshinView.detectedPoints,
     stations: seismo.stations,

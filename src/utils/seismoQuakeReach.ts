@@ -27,6 +27,11 @@ import type { Hypocenter } from '../types/earthquake'
  */
 export const USUAL_MARGIN = 0.5
 
+/**
+ * 普段が読めない観測点に下限を置かない（地震カードの判定。出す側へ倒す。2026-10-13 ユーザー承認）。
+ */
+export const NO_FLOOR_WITHOUT_USUAL = -Infinity
+
 /** 判定に使う観測点 1 つ。 */
 export interface ReachStation {
   readonly stationId: string
@@ -35,7 +40,7 @@ export interface ReachStation {
   readonly lon: number | null
   /**
    * 普段の計測震度（ホストの `/status` の `usualIntensities`）。**読めなければ `null`**
-   * （古いホスト・記録が足りない・測り直しが止まっている）—— そのときは下限を置かない。
+   * （古いホスト・記録が足りない・測り直しが止まっている）—— そのときの下限は呼び出し側が決める。
    */
   readonly usualMeasured: number | null
 }
@@ -58,7 +63,15 @@ export type QuakeReach =
  * **深さが判らない地震は予測しない。** 深さ 0 と読み替えると浅い地震として強めに出るが、
  * `0` は「ごく浅い」という有効値で、判らないことの代わりに使わない。
  */
-export function judgeQuakeReach(hypocenter: Hypocenter, stations: readonly ReachStation[]): QuakeReach {
+export function judgeQuakeReach(
+  hypocenter: Hypocenter,
+  stations: readonly ReachStation[],
+  /**
+   * 普段が読めない観測点の下限。地震カードは {@link NO_FLOOR_WITHOUT_USUAL}（下限なし・出す側へ倒す）、
+   * 地図の下端の波形は `utils/seismoWaveTrigger.ts` の `EEW_REACH_FLOOR_WITHOUT_USUAL`。
+   */
+  floorWithoutUsual: number,
+): QuakeReach {
   const { latitude, longitude, depth, magnitude } = hypocenter
   if (!hasKnownEpicenter(latitude, longitude) || !hasDepth(depth) || !hasMagnitude(magnitude)) return { kind: 'unknown' }
   const reached: string[] = []
@@ -71,8 +84,8 @@ export function judgeQuakeReach(hypocenter: Hypocenter, stations: readonly Reach
     }
     predictable += 1
     const predicted = predictMeasuredIntensity(magnitude, depth, haversineKm(latitude, longitude, s.lat, s.lon))
-    // **普段が読めなければ下限を置かない**（出す側へ倒す）。予測が数にならなければ届いた側へ倒す。
-    const floor = s.usualMeasured === null || !Number.isFinite(s.usualMeasured) ? -Infinity : s.usualMeasured - USUAL_MARGIN
+    // 普段が読めなければ呼び出し側が決めた下限を使う。予測が数にならなければ届いた側へ倒す。
+    const floor = s.usualMeasured === null || !Number.isFinite(s.usualMeasured) ? floorWithoutUsual : s.usualMeasured - USUAL_MARGIN
     if (!Number.isFinite(predicted) || predicted > floor) reached.push(s.stationId)
   }
   if (predictable === 0) return { kind: 'unknown' }
