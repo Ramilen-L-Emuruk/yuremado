@@ -11,6 +11,7 @@ import {
   findExistingQuakeCard as findExistingQuakeCardWithIndex,
   sortQuakes,
   isRetractedQuakeReport as isRetractedQuakeReportWithIndex,
+  noteRetractionTie,
   quakeRetractionOf,
   addQuakeRetraction,
   quakeKeyForLpgmEventId,
@@ -1698,6 +1699,73 @@ describe('取消の後に届いた報', () => {
 
     it('安全弁: 記録が空なら何も取り下げない', () => {
       expect(isRetractedQuakeReport([], 震度速報)).toBe(false)
+    })
+  })
+
+  // 取消と同じ時刻だったために捨てた報の記録（2026-10-21 ユーザー承認「捨てたら記録を残す」）。
+  // 捨てる扱いは変えず、取消より前の報を捨てたのと理由を見分けられるようにする。
+  describe('noteRetractionTie', () => {
+    afterEach(() => { vi.restoreAllMocks() })
+    const 作成 = Date.parse('2026-01-01T07:10:12Z')
+    const 秒つき取消: JMAQuake = { ...取消, createdAtMs: 作成 }
+    const 秒つき台帳 = [quakeRetractionOf(秒つき取消, 取消済みカード)]
+    const 報 = (createdAtMs: number | undefined, time = 取消.time): JMAQuake => ({
+      ...makeQuake({
+        id: 'dmdata-quake-20260101160610-9', type: '震度速報', hypoName: '',
+        time, quakeTime: 地震の時刻, maxScale: 50,
+        points: [{ pref: '', addr: '石川県能登', isArea: true, scale: 50 }],
+      }),
+      ...(createdAtMs !== undefined && { createdAtMs }),
+    })
+    const tieLines = (warn: { mock: { calls: unknown[][] } }) =>
+      warn.mock.calls.filter(c => String(c[1]).includes('取消と同じ時刻の報'))
+
+    it('正: 取消と同じ秒に作られた報は、同じ時刻だったことを記録する', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      noteRetractionTie(秒つき台帳, 報(作成), null)
+      const lines = tieLines(warn)
+      expect(lines).toHaveLength(1)
+      expect(lines[0][2]).toMatchObject({ issueType: '震度速報', cancelId: 取消済みカード.id })
+    })
+
+    it('正: 作成時刻を持たない経路でも、同じ分なら記録する（取消・報とも持たない／片方だけ持つ）', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      // 両方持たない（P2PQuake）: 発表時刻の文字列で比べて同じ
+      noteRetractionTie([quakeRetractionOf(取消, 取消済みカード)], 報(undefined), null)
+      expect(tieLines(warn)).toHaveLength(1)
+      // 片方だけ持つ: 分へ切り捨てて比べ、同じ分なら前後を決めない
+      noteRetractionTie([quakeRetractionOf(取消, 取消済みカード)], 報(作成), null)
+      noteRetractionTie(秒つき台帳, 報(undefined), null)
+      expect(tieLines(warn)).toHaveLength(3)
+    })
+
+    it('対照: 取消より前に作られた報は、同じ時刻の記録を出さない（理由が違う）', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const older = 報(作成 - 1000)
+      expect(isRetractedQuakeReport(秒つき台帳, older)).toBe(true)
+      noteRetractionTie(秒つき台帳, older, null)
+      expect(tieLines(warn)).toHaveLength(0)
+    })
+
+    it('安全弁: 同じ時刻の取消より後の取消もあれば、同じ時刻を理由にしない', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const 後の取消: JMAQuake = { ...取消, id: 'dmdata-quake-20260101160610-10', time: '2026-01-01T07:12:00Z', createdAtMs: 作成 + 120_000 }
+      const 台帳 = [...秒つき台帳, quakeRetractionOf(後の取消, 取消済みカード)]
+      noteRetractionTie(台帳, 報(作成), null)
+      expect(tieLines(warn)).toHaveLength(0)
+    })
+
+    it('安全弁: 発表時刻が空の報は同じ時刻の記録にしない（空で倒すのは別の理由）', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      noteRetractionTie(秒つき台帳, 報(undefined, ''), null)
+      expect(tieLines(warn)).toHaveLength(0)
+    })
+
+    it('正: 履歴の取り込みで同じ時刻の報を捨てたときも記録が出る', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const cards = mergeQuakeHistory([報(作成)], [], 秒つき台帳)
+      expect(cards).toHaveLength(0)
+      expect(tieLines(warn)).toHaveLength(1)
     })
   })
 

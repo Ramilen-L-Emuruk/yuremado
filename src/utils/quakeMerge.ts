@@ -277,8 +277,11 @@ function mergeReportRecord(a: QuakeReportRecord, b: QuakeReportRecord): QuakeRep
  * これを直さないのは、**同居させる経路が無い**ため —— 遠地地震は国内の震度を伴わない別の事象で、
  * 顕著な地震の震源要素更新のお知らせとは `sameQuakeEntry` が同一カードと見なさない。
  *
- * 代償として、**完全版を受け取った後に震度速報が届いても見出しには出ない**（記録そのものは
- * 残る）。**この順序は気象庁の発表で実際に起きる** —— 近接した時刻に 2 つの地震があると、
+ * 代償として、**完全版を受け取った後に震度速報が届いても見出しには出ない**。この関数が見出しの
+ * 記録（`reports`）から落とすので、記録にも残らない。残るのは当て直し用の電文の控え
+ * （`sourceTelegrams`。→ `mergeQuakeInto` の `holdBack`）だけ。
+ *
+ * **この順序は気象庁の発表で実際に起きる** —— 近接した時刻に 2 つの地震があると、
  * あとから入電した区域の震度が先に検知していた地震へ紐づくため。そのときカードの中身は
  * `mergeQuakeInto` の `isSupersededByExistingCard` が据え置くので、**見出しにだけ出ない**。
  */
@@ -1269,6 +1272,61 @@ export function isRetractedQuakeReport(
 }
 
 /**
+ * {@link isRetractedQuakeReport} が `true` を返した報のうち、**取消と同じ時刻だったために**
+ * 取り下げ側へ倒したものなら、その取消を返す。**判定するだけで記録はしない**
+ * （記録は {@link logRetractionTie}）。捨てる扱いそのものは変えない。
+ *
+ * **同じ時刻は前後を決められないので、取消を尊重して捨てている**（→ `isRetractedQuakeReport`）。
+ * 取消より前に発表された報を捨てるのとは理由が違うのに、記録が同じだと見分けられない。出たら、
+ * 気象庁が取消と同じ秒に同じ種別の報を作ったか、作成時刻を持たない経路で同じ分になったかのどちらか
+ * （数えた範囲は `docs/spec/quake-spec.md` §6.2）。
+ *
+ * **ライブの更新関数の中からは呼ばない。** 入口で 1 回だけ決め、結果を渡す（更新関数はレンダー時に
+ * 走るぶん、別の時点の台帳を読む。`useEarthquakes` の `quakeRetracted` と同じ理由）。
+ */
+export function findRetractionTie(
+  retractions: readonly QuakeRetraction[],
+  incoming: JMAQuake,
+  areaPrefIndex: AreaPrefIndex,
+): QuakeRetraction | undefined {
+  if (!incoming.time) return undefined
+  const ages = retractions
+    .filter(r => r.issueType === incoming.issue.type && sameQuakeEntry(r.entry, incoming, areaPrefIndex))
+    .map(r => ({ r, age: compareReportAge(incoming, { time: r.reportTime, createdAtMs: r.reportCreatedAtMs }) }))
+  // 同じ時刻の取消があっても、**それより後の取消もあるなら**「取消より前の報」として捨てたのと
+  // 変わらない。同じ時刻だけが理由のときに限る。
+  if (ages.some(a => a.age < 0)) return undefined
+  return ages.find(a => a.age === 0)?.r
+}
+
+/**
+ * {@link findRetractionTie} が見つけた取消を、記録に 1 行残す。
+ *
+ * **ライブと履歴では、従来の「取消以前に発表された報を捨てた」の行に続けてもう 1 行出る。**
+ * リプレイの初期状態（`foldPreWindowQuakes`）は従来の行を持たない（件数をまとめて出す）ので、
+ * この行だけが単独で出る。
+ */
+export function logRetractionTie(incoming: JMAQuake, tied: QuakeRetraction): void {
+  log.warn('[quake] 取消と同じ時刻の報を、前後を決められないので取消を採って捨てた', {
+    id: incoming.id, issueType: incoming.issue.type, time: incoming.time,
+    cancelId: tied.entry.id, cancelTime: tied.reportTime,
+  })
+}
+
+/**
+ * 判定と記録を続けて行う。**台帳をその場で読める入口（履歴・リプレイの初期状態）だけが使う。**
+ * ライブは入口で {@link findRetractionTie} を呼び、その結果を更新関数へ渡す（理由はあちらの注記）。
+ */
+export function noteRetractionTie(
+  retractions: readonly QuakeRetraction[],
+  incoming: JMAQuake,
+  areaPrefIndex: AreaPrefIndex,
+): void {
+  const tied = findRetractionTie(retractions, incoming, areaPrefIndex)
+  if (tied) logRetractionTie(incoming, tied)
+}
+
+/**
  * カードへ当てた電文のうち、この取消が取り下げるもの（同じ種別で、取消より前に発表された報）。
  *
  * 前後の比べ方と「発表時刻が空なら取り下げ側へ倒す」は `isRetractedQuakeReport` と同じ。
@@ -1590,6 +1648,7 @@ export function mergeQuakeHistory(
       log.warn('[quake] 取消以前に発表された報を捨てた', {
         id: q.id, issueType: q.issue.type, time: q.time,
       })
+      noteRetractionTie(retractions, q, areaPrefIndex)
       continue
     }
     // 既存カードはライブ経路と同じ関数で選ぶ（取消表示中は選ばない・2 枚当たれば報の古い方。

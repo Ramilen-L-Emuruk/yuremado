@@ -4612,6 +4612,26 @@ describe('カードが採らない電文には「据え置き」の印を付け�
     expect(h.current.earthquakes.filter(q => !q.cancelledAt)).toHaveLength(0)
   })
 
+  // 正: **取消と同じ時刻の報を捨てたときは、その旨の記録が 1 行出る**（捨てる扱いは変えない）。
+  // 判定は入口で 1 回決め、更新関数へはその結果だけを渡す。対照: 取消より前の報では出ない。
+  it('取消と同じ時刻の報を捨てたときだけ、同じ時刻だったことを記録する', async () => {
+    // この配線テストは logger をモックしているので、`log.warn` を直接見る。
+    vi.mocked(log.warn).mockClear()
+    const tieLines = () => vi.mocked(log.warn).mock.calls.filter(c => String(c[0]).includes('取消と同じ時刻の報'))
+    const h = setup({ onLiveEvent: vi.fn() })
+    await h.flush()
+
+    act(() => { h.current.injectEvent(完全版(1, '2024-11-26T22:47:00+09:00')) })
+    act(() => { h.current.injectEvent(取消(2, '2024-11-26T22:50:00+09:00')) })
+    // 取消より前（対照）: 捨てるが、同じ時刻の記録は出ない
+    act(() => { h.current.injectEvent(完全版(3, '2024-11-26T22:48:00+09:00')) })
+    expect(tieLines()).toHaveLength(0)
+    // 取消と同じ時刻: 捨てて、記録が出る
+    act(() => { h.current.injectEvent(完全版(4, '2024-11-26T22:50:00+09:00')) })
+    expect(tieLines()).toHaveLength(1)
+    expect(h.current.earthquakes.filter(q => !q.cancelledAt)).toHaveLength(0)
+  })
+
   // 正: **震源要素更新（VXSE61）はどんな既存カードでも採る。** 統合側は専用の分岐で必ず受理して
   // 抜けるので、切り出した述語もその前提を持たなければならない。持たないと、1 通目でカードの
   // 種別が VXSE61 へ変わったあと、2 通目以降が「既存が VXSE61」の理由で据え置き扱いになり、

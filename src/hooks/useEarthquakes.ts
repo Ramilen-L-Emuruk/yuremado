@@ -20,7 +20,7 @@ import {
   type TelegramLoss, createEmptyTelegramLoss, telegramLossFrom, isTelegramLossEmpty,
   mergeHistoryLoss,
 } from '../utils/telegramLoss'
-import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, extractQuakeEventId, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
+import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, extractQuakeEventId, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, findRetractionTie, logRetractionTie, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
 import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmRowSnapshot, lpgmMarkKey, lpgmTelegramRevise, quakeTelegramRevise, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
@@ -1832,6 +1832,11 @@ export function useEarthquakes(
      */
     const quakeRetracted = filledQuake !== undefined
       && isRetractedQuakeReport(quakeRetractionsRef.current, filledQuake, getAreaPrefIndexCache())
+    // 取消と同じ時刻だったために捨てる報なら、その取消もここで決める。**更新関数の中で台帳を
+    // 読み直さない**（理由は `quakeRetracted` と同じ。読み直すと別の時点の台帳で判定が食い違う）。
+    const quakeRetractionTie = quakeRetracted && filledQuake !== undefined
+      ? findRetractionTie(quakeRetractionsRef.current, filledQuake, getAreaPrefIndexCache())
+      : undefined
     let quakeHeldBack = false
     let quakeCancel: LiveEventMeta['quakeCancel']
     if (event.kind === 'quake') {
@@ -2186,6 +2191,7 @@ export function useEarthquakes(
             log.warn('[quake] 取消以前に発表された報を捨てた', {
               id: quake.id, issueType: quake.issue.type, time: quake.time,
             })
+            if (quakeRetractionTie) logRetractionTie(quake, quakeRetractionTie)
             return prev
           }
           const existing = findExistingQuakeCard(prev.earthquakes, quake, getAreaPrefIndexCache())
