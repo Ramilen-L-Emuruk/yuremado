@@ -953,6 +953,9 @@ function readHeadlineText(doc: Document): string {
 /** 見出しの構造化（`Head/Headline/Information`）のうち、地方予報区を並べるブロックの `type`。 */
 const EEW_REGION_INFORMATION_TYPE = '緊急地震速報（地方予報区）'
 
+/** 地方予報区ブロックの `Item/LastKind/Code` で「前の報では警報の対象でなかった」を表す値（名前は「なし」）。 */
+const EEW_LAST_KIND_NONE_CODE = '00'
+
 /**
  * 緊急地震速報の警報対象地方（`Head/Headline/Information` の地方予報区ブロック）。
  *
@@ -964,30 +967,55 @@ const EEW_REGION_INFORMATION_TYPE = '緊急地震速報（地方予報区）'
  * 出ていることが例外なく一致した（警報ありの 240 通すべてが持ち、警報 0 の 527 通は 1 通も
  * 持たない）。予報級では空配列を返す。
  *
- * **`Item` を全部たどって文書順で連結する。** 気象庁は続報で新しく警報対象になった地方を
- * 2 つ目の `Item`（`LastKind` が「なし」）に分けて示すが、**その区別は使わない** ——
- * あれは「前報からの差分」で、こちらが前報を取りこぼしていれば一緒に落ちる。何を新しく
- * 伝えるかは「自分が何を声にしたか」から決める（`useLiveEventHandler` の第 1.5 フェーズ）。
+ * **`Item` を全部たどって文書順で連結する（`regions`）。** 気象庁は続報で新しく警報対象に
+ * なった地方を 2 つ目の `Item`（`LastKind` が「なし」・コード `00`）に分けて示す。
+ * その分け方は `added` として別に返し、**カードで新たに加わった地方に色を付けるのにだけ使う**
+ * （→ `docs/spec/eew-spec.md` §3「警報の対象地方」）。**読み上げには使わない** —— あれは
+ * 「前報からの差分」で、こちらが前報を取りこぼしていれば一緒に落ちる。何を新しく声にするかは
+ * 「自分が何を声にしたか」から決める（`useLiveEventHandler` の第 1.5 フェーズ）。
  */
-function readEewWarningRegions(doc: Document): { regions: string[]; unreadable: number } {
+function readEewWarningRegions(doc: Document): { regions: string[]; added: string[]; unreadable: number; unreadableLastKind: number } {
   const headEl = xmlQ(doc, 'Head')
   const headlineEl = headEl ? xmlChild(headEl, 'Headline') : null
-  if (!headlineEl) return { regions: [], unreadable: 0 }
+  if (!headlineEl) return { regions: [], added: [], unreadable: 0, unreadableLastKind: 0 }
   const names: string[] = []
+  const added: string[] = []
+  const carried = new Set<string>()
   let unreadable = 0
+  let unreadableLastKind = 0
   for (const info of xmlAll(headlineEl, 'Information')) {
     if (info.getAttribute('type') !== EEW_REGION_INFORMATION_TYPE) continue
-    for (const area of xmlAll(info, 'Area')) {
-      const name = xmlText(xmlChild(area, 'Name'))
-      // **要素はあるのに名前が読めない**のは異常。数えて呼び出し元へ返す —— 黙って捨てると、
-      // 警報の対象が画面からも声からも欠けたことに気づけない（他の要素と同じ規律）。
-      if (name) names.push(name)
-      else unreadable++
+    for (const item of xmlAll(info, 'Item')) {
+      const lastKindEl = xmlChild(item, 'LastKind')
+      const lastKindCode = lastKindEl ? xmlText(xmlChild(lastKindEl, 'Code')) : ''
+      const isAdded = lastKindCode === EEW_LAST_KIND_NONE_CODE
+      // `LastKind` は「なし」（`00`）か、いまの `Kind` と同じ値（前の報から続いている）のどちらか。
+      // **どちらでもない・どちらかのコードが読めない `Item` は「続いている」側へ倒れる**（加わった地方が光らないだけ）ので、
+      // 書式が変わったことに気づけるよう数えて返す。
+      const kindEl = xmlChild(item, 'Kind')
+      const kindCode = kindEl ? xmlText(xmlChild(kindEl, 'Code')) : ''
+      if (!isAdded && (lastKindCode === '' || lastKindCode !== kindCode)) unreadableLastKind++
+      for (const area of xmlAll(item, 'Area')) {
+        const name = xmlText(xmlChild(area, 'Name'))
+        // **要素はあるのに名前が読めない**のは異常。数えて呼び出し元へ返す —— 黙って捨てると、
+        // 警報の対象が画面からも声からも欠けたことに気づけない（他の要素と同じ規律）。
+        if (name) {
+          names.push(name)
+          if (isAdded) added.push(name)
+          else carried.add(name)
+        } else unreadable++
+      }
     }
   }
   // 実電文では同じ地方が 2 つの `Item` にまたがることは無い（既存と新規で排他）。
   // それでも除くのは、重なれば読み上げが同じ地名を 2 度言うため。
-  return { regions: [...new Set(names)], unreadable }
+  // 既存の `Item` にもいる地方は「加わった」と言えないので外す（重なりは上と同じく実電文では起きない）。
+  return {
+    regions: [...new Set(names)],
+    added: [...new Set(added)].filter(name => !carried.has(name)),
+    unreadable,
+    unreadableLastKind,
+  }
 }
 
 /**
@@ -1194,7 +1222,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
   // ——後半の地方名は下の `warningRegions` が構造化された形で持っており、そちらを使う。
   const eewHeadline = readHeadlineText(doc)
   // 警報の対象地方。予報級では空（→ `readEewWarningRegions`）。
-  const { regions: eewWarningRegions, unreadable: unreadableWarningRegions } = readEewWarningRegions(doc)
+  const { regions: eewWarningRegions, added: eewAddedWarningRegions, unreadable: unreadableWarningRegions, unreadableLastKind: unreadableWarningLastKind } = readEewWarningRegions(doc)
   const eewInfoName = readInfoName(doc)
   const hypocenterEl = eqEl ? xmlQ(eqEl, 'Hypocenter') : null
   const areaEl = eqEl ? xmlQ(hypocenterEl ?? eqEl, 'Area') : null
@@ -1362,6 +1390,25 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     // 地方予報区の `Area` はあるのに名前が読めなかった。**画面にも声にも出ない**ので残す。
     log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の警報対象地方の名前を読めません（${unreadableWarningRegions} 件を無視します）`)
   }
+  if (unreadableWarningLastKind > 0) {
+    // 前の報での種別（`Item/LastKind/Code`）が「なし」でも、いまの種別と同じでもない。
+    // 新たに加わった地方をカードで光らせられないだけで、画面の顔ぶれと読み上げは変わらない。
+    log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の警報対象地方で、前の報での種別（LastKind）を判定できません（${unreadableWarningLastKind} 件。LastKind か Kind のコードが欠けているか、どちらとも合いません。新たに加わった地方として扱いません）: EventID=${eventId} 第${serial}報`)
+  }
+  if (!isCanceled) {
+    // **電文全体の最大予測値が区域の最大より低い。** 表示・判定は電文全体の値を先に採る
+    // （`utils/eew.ts` の `eewMaxScaleInfo`）ので、この形では区域に出ている震度より低い最大が出る。
+    // 控えにある実電文では 1 通も無い組み合わせ（→ `docs/spec/eew-spec.md` §4「予想最大震度は電文全体の値」）
+    // なので、起きたら書式か値の異常として残す。
+    const areasMaxScale = Math.max(0, ...areas.map(a => (a.scaleTo > 0 ? a.scaleTo : 0)))
+    const areasMaxLg = Math.max(0, ...areas.map(a => a.lgIntTo ?? 0))
+    if (forecastScale > 0 && areasMaxScale > forecastScale) {
+      log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の最大予測震度（${forecastScale}）が区域の最大（${areasMaxScale}）より低い報です（電文全体の値を採ります）: EventID=${eventId} 第${serial}報`)
+    }
+    if (lgClass != null && lgClass > 0 && areasMaxLg > lgClass) {
+      log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の最大予測長周期地震動階級（${lgClass}）が区域の最大（${areasMaxLg}）より低い報です（電文全体の値を採ります）: EventID=${eventId} 第${serial}報`)
+    }
+  }
   if (sawWarningKind && eewWarningRegions.length === 0) {
     // **警報級と判定したのに対象地方が 1 つも無い。** 実電文では警報ありの 240 通すべてが
     // 地方予報区ブロックを持つので、この組み合わせは電文の書式が変わった印。
@@ -1429,6 +1476,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     test: false,
     ...(eewHeadline && { headline: eewHeadline }),
     ...(eewWarningRegions.length > 0 && { warningRegions: eewWarningRegions }),
+    ...(eewAddedWarningRegions.length > 0 && { addedWarningRegions: eewAddedWarningRegions }),
     ...(eewInfoName && { infoName: eewInfoName }),
     ...(eewCancelText && { cancelText: eewCancelText }),
     ...(strongShakingOnly && { strongShakingOnly: true as const }),
