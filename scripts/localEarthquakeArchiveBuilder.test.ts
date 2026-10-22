@@ -13,13 +13,42 @@ vi.mock('./niiJmaXmlArchive', () => ({
   flushSuppressedCacheWarnings: vi.fn(),
 }))
 
-import { parseNiiTime, resolveQuakeHeadType, resolveTsunamiHeadType, isRelated, isUnverifiableCancellation, mergeIndexEntry, buildQuakeAndTsunamiSection } from './localEarthquakeArchiveBuilder'
+import { parseNiiTime, resolveQuakeHeadType, resolveTsunamiHeadType, isRelated, isUnverifiableCancellation, mergeIndexEntry, buildQuakeAndTsunamiSection, coveredRangesFromDates } from './localEarthquakeArchiveBuilder'
 import { flushSuppressedCacheWarnings } from './niiJmaXmlArchive'
 import type { JMAQuake } from '../src/types/earthquake'
 
 function indexEntry(id: string, from: string) {
-  return { id, label: id, description: id, from, to: from, firstEventTime: from }
+  return { id, label: id, description: id, from, to: from, coveredRanges: [{ from, to: from }], firstEventTime: from }
 }
+
+describe('coveredRangesFromDates', () => {
+  it('続いた日は 1 つの範囲にまとめ、離れた日は分ける（胆振東部の 6 日）', () => {
+    const ranges = coveredRangesFromDates(
+      ['20180906', '20180907', '20181005', '20181006', '20190221', '20190222'],
+      new Date('2018-09-06T00:00:00+09:00'),
+      new Date('2019-02-23T00:00:00+09:00'),
+    )
+    expect(ranges).toEqual([
+      { from: '2018-09-05T15:00:00.000Z', to: '2018-09-07T15:00:00.000Z' },
+      { from: '2018-10-04T15:00:00.000Z', to: '2018-10-06T15:00:00.000Z' },
+      { from: '2019-02-20T15:00:00.000Z', to: '2019-02-22T15:00:00.000Z' },
+    ])
+  })
+
+  it('収録範囲で切る（熊本は 4/14 の正午から）', () => {
+    const ranges = coveredRangesFromDates(
+      ['20160414', '20160415'],
+      new Date('2016-04-14T12:00:00+09:00'),
+      new Date('2016-04-16T00:00:00+09:00'),
+    )
+    expect(ranges).toEqual([{ from: '2016-04-14T03:00:00.000Z', to: '2016-04-15T15:00:00.000Z' }])
+  })
+
+  it('書式の崩れた日・収録範囲に掛からない日だけなら止める', () => {
+    expect(() => coveredRangesFromDates(['2018-09-06'], new Date(0), new Date(1e13))).toThrow()
+    expect(() => coveredRangesFromDates(['20000101'], new Date('2018-09-06T00:00:00+09:00'), new Date('2018-09-07T00:00:00+09:00'))).toThrow()
+  })
+})
 
 describe('mergeIndexEntry', () => {
   it('正: 新規エントリを収録範囲の開始時刻(from)順に挿入する', () => {

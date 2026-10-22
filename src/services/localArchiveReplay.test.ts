@@ -13,6 +13,7 @@ import { fetchJsonWithTimeout } from '../utils/fetchJson'
 import {
   findCoveringArchiveSync,
   findArchiveJustEndedSync,
+  findUncollectedArchiveSync,
   fetchLocalArchiveEvents,
   fetchLocalArchiveQuakeHistory,
   listHistoricalArchives,
@@ -32,6 +33,7 @@ const meta: HistoricalArchiveMeta = {
   description: 'test',
   from: '2011-03-11T05:45:00Z',
   to: '2011-03-11T06:00:00Z',
+  coveredRanges: [{ from: '2011-03-11T05:45:00Z', to: '2011-03-11T06:00:00Z' }],
   firstEventTime: '2011-03-11T05:46:00Z',
 }
 
@@ -89,6 +91,44 @@ describe('findCoveringArchiveSync', () => {
   it('収録範囲より後（先読みが収録終端を過ぎた場合）は null', () => {
     const afterEnd = new Date(meta.to)
     expect(findCoveringArchiveSync(index, afterEnd, new Date(afterEnd.getTime() + ONE_HOUR_MS))).toBeNull()
+  })
+})
+
+describe('findUncollectedArchiveSync', () => {
+  // 2018 年北海道胆振東部地震の形: 収録範囲は 9/6〜2/23 と広いが、電文を集めたのは 3 か所の 2 日ずつ
+  const iburi: HistoricalArchiveMeta = {
+    id: '2018-iburi',
+    label: '2018年北海道胆振東部地震',
+    description: 'test',
+    from: '2018-09-05T15:00:00.000Z',
+    to: '2019-02-22T15:00:00.000Z',
+    coveredRanges: [
+      { from: '2018-09-05T15:00:00.000Z', to: '2018-09-07T15:00:00.000Z' },
+      { from: '2018-10-04T15:00:00.000Z', to: '2018-10-06T15:00:00.000Z' },
+      { from: '2019-02-20T15:00:00.000Z', to: '2019-02-22T15:00:00.000Z' },
+    ],
+    firstEventTime: '2018-09-05T18:08:10.400Z',
+  }
+  const hour = (iso: string): [Date, Date] => [new Date(iso), new Date(new Date(iso).getTime() + 60 * 60 * 1000)]
+
+  it('集めていない日だけを見る窓はそのアーカイブを返す（止める）', () => {
+    expect(findUncollectedArchiveSync([iburi], ...hour('2018-11-01T03:00:00.000Z'))?.id).toBe('2018-iburi')
+    // 集めた日の終わりちょうどから始まる窓も、集めていない側だけを見る
+    expect(findUncollectedArchiveSync([iburi], ...hour('2018-09-07T15:00:00.000Z'))?.id).toBe('2018-iburi')
+  })
+
+  // 対照: 集めた日に 1 秒でも掛かる窓は通す（掛かった分の電文は本物）
+  it('集めた日に掛かる窓・集めた日の中の窓は null（止めない）', () => {
+    expect(findUncollectedArchiveSync([iburi], ...hour('2018-09-06T03:00:00.000Z'))).toBeNull()
+    expect(findUncollectedArchiveSync([iburi], ...hour('2018-09-07T14:30:00.000Z'))).toBeNull()
+    // 初期状態（24 時間）が集めていない前日へはみ出しても、集めた日に掛かれば通す
+    expect(findUncollectedArchiveSync([iburi], new Date('2018-10-04T03:00:00.000Z'), new Date('2018-10-05T03:00:00.000Z'))).toBeNull()
+  })
+
+  // 安全弁: 途切れなく集めたアーカイブ・収録範囲の外は従来どおり（止めない）
+  it('収録範囲を全部集めたアーカイブと、収録範囲の外では null', () => {
+    expect(findUncollectedArchiveSync([meta], ...hour('2011-03-11T05:50:00Z'))).toBeNull()
+    expect(findUncollectedArchiveSync([iburi], ...hour('2020-01-01T00:00:00.000Z'))).toBeNull()
   })
 })
 
@@ -244,7 +284,7 @@ describe('fetchLocalArchiveQuakeHistory', () => {
   const quakeEntry = (eventId: string, serial: number, time: string) =>
     ({ time, payload: { kind: 'event', event: quakeOf(eventId, serial, time) } })
   /** 履歴の窓（7 日）を見るには、収録範囲の広いアーカイブが要る。 */
-  const wide: HistoricalArchiveMeta = { ...meta, from: '2016-04-01T00:00:00Z', to: '2016-04-30T00:00:00Z', firstEventTime: '2016-04-01T00:00:00Z' }
+  const wide: HistoricalArchiveMeta = { ...meta, from: '2016-04-01T00:00:00Z', to: '2016-04-30T00:00:00Z', coveredRanges: [{ from: '2016-04-01T00:00:00Z', to: '2016-04-30T00:00:00Z' }], firstEventTime: '2016-04-01T00:00:00Z' }
   const BEFORE = new Date('2016-04-16T00:00:00Z')
 
   it('before より前の地震（event.kind === quake）だけを返す', async () => {

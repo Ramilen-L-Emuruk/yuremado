@@ -112,15 +112,13 @@ export function listHistoricalArchives(): Promise<HistoricalArchiveIndex> {
  * 収録範囲に重なる問い合わせは「その期間、収録データ上は何も無かった」という空の成功として
  * 扱えばよいため、重なりがあれば常にこのアーカイブを使う。
  *
- * **この前提は、from/toの全期間にわたって実際に電文を取得しているアーカイブでのみ成り立つ。**
+ * **この前提は、実際に電文を集めた範囲（`coveredRanges`）の中でだけ成り立つ。**
  * 2018年北海道胆振東部地震（`build-historical-archive-2018-iburi.ts`）のように、警報級の
  * 余震が数ヶ月おきに散発する地震活動では、from/toは最初と最後のイベントを広く跨ぐ一方、
  * 実際に電文一覧を取得しているのは`DATES`に列挙した数日だけで、間の期間（例えば余震と
  * 余震の間の1ヶ月）は「取得していない」だけであり「確認して何も無かった」わけではない。
- * この種のアーカイブに対し、間の期間を対象時刻に指定すると、本来なら「収録データが無い」と
- * 正直に失敗すべきところを、黙って「地震活動なし」の空成功として返してしまう。現状はこの
- * 矛盾を解消する仕組みを持たない（`HistoricalArchiveMeta`に実収録日を持たせる等の対応が
- * 必要）。詳細は`docs/spec/settings-pwa-spec.md`の胆振東部アーカイブの節を参照。
+ * 問い合わせが集めた範囲に 1 秒も掛からないときは、呼び出し側が `findUncollectedArchiveSync`
+ * で見分けて止める（空の成功にしない）。詳細は`docs/spec/settings-pwa-spec.md`の胆振東部アーカイブの節を参照。
  *
  * index の取得自体は非同期だが、App.tsx の fetchReplayEvents はリプレイ中に何度も（本編・
  * 初期状態・先読みのたびに）呼ばれるため、都度 await すると呼び出し順序が崩れうる。設定タブ表示用の
@@ -131,6 +129,24 @@ export function findCoveringArchiveSync(index: HistoricalArchiveIndex, fromTime:
   const from = fromTime.getTime()
   const to = toTime.getTime()
   return index.find((m) => new Date(m.from).getTime() < to && from < new Date(m.to).getTime()) ?? null
+}
+
+/**
+ * 指定範囲 [fromTime, toTime) が収録範囲（`from`〜`to`）に重なるのに、実際に電文を集めた範囲
+ * （`coveredRanges`）には 1 秒も掛からないアーカイブを返す。無ければ null。
+ *
+ * **一部でも集めた範囲に掛かる問い合わせは通す。** 再生の窓（本編は 1 時間・初期状態は 24 時間）は
+ * 日の境目をまたぐので、掛かった分の電文は本物として返せる。集めていない側だけを見る窓が来た時点で止まる。
+ */
+export function findUncollectedArchiveSync(index: HistoricalArchiveIndex, fromTime: Date, toTime: Date): HistoricalArchiveMeta | null {
+  const covering = findCoveringArchiveSync(index, fromTime, toTime)
+  if (!covering) return null
+  const from = fromTime.getTime()
+  const to = toTime.getTime()
+  const touchesCollected = covering.coveredRanges.some(
+    (r) => new Date(r.from).getTime() < to && from < new Date(r.to).getTime(),
+  )
+  return touchesCollected ? null : covering
 }
 
 /**
