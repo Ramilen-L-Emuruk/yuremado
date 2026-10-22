@@ -8,8 +8,25 @@ import {
   heatMagnitudeLabel,
   heatMagnitudeRank,
   isHugeMagnitudeCondition,
+  isWithinHeatWindow,
   magnitudeToWeight,
 } from './quakeHeatmap'
+
+// リプレイ中は「いま」が再生時刻になる。再生時刻より後の地震を出さないことと、前 30 日の端を固定する
+describe('isWithinHeatWindow', () => {
+  const now = Date.parse('2024-01-02T00:00:00Z')
+  it('正: いまより前 30 日の中は出す', () => {
+    expect(isWithinHeatWindow('2024-01-01T00:00:00Z', now)).toBe(true)
+    expect(isWithinHeatWindow('2023-12-03T00:00:00Z', now)).toBe(true)
+  })
+  it('対照: いまより後・30 日より前は出さない', () => {
+    expect(isWithinHeatWindow('2024-01-02T00:00:01Z', now)).toBe(false)
+    expect(isWithinHeatWindow('2023-12-02T23:59:59Z', now)).toBe(false)
+  })
+  it('安全弁: 時刻が読めないものは出さない', () => {
+    expect(isWithinHeatWindow('not-a-date', now)).toBe(false)
+  })
+})
 import { MAG_CONDITION_HUGE, MAG_CONDITION_UNKNOWN } from './bufrEstimatedIntensity'
 
 const HUGE = 'Ｍ８を超える巨大地震'

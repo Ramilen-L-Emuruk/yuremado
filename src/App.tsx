@@ -1014,7 +1014,7 @@ export function App() {
 
   const scenarioTest = useTestScenarios(loadReplayEvents)
 
-  const { points: quakeHeatPoints } = useQuakeHeatmap(settings.showQuakeHeatmap, debouncedApiKey, earthquakes)
+  const { points: quakeHeatPoints } = useQuakeHeatmap(settings.showQuakeHeatmap, debouncedApiKey, earthquakes, replayTimeOffset)
 
   // 最新の非解除津波電文から観測データを収集（地図バー描画用）
   const latestTsunamiObservations = useMemo(() => {

@@ -747,7 +747,7 @@ describe('fetchJmaQuakeHistory（ヒートマップ用の遡り取得）', () =>
       return { ok: true, status: 200, json: async () => page(perPage) }
     })
     const { fetchJmaQuakeHistory } = await import('./p2pquake')
-    const running = fetchJmaQuakeHistory(365_000)
+    const running = fetchJmaQuakeHistory(365_000, null, null)
     // ページ間の待ち（6.5 秒 × 最大 19 回）を偽の時計で飛ばす
     await vi.advanceTimersByTimeAsync(6_500 * 25)
     return { calls, result: await running }
@@ -787,5 +787,40 @@ describe('fetchJmaQuakeHistory（ヒートマップ用の遡り取得）', () =>
 
     expect(Array.isArray(result)).toBe(true)
     expect(result.length).toBeGreaterThan(0)
+  })
+
+  // リプレイ中は再生時刻の前 30 日を日付で絞って取る。`until_date` は日単位なので、その日の再生時刻より後は落とす
+  // （REAL_QUAKE の地震時刻は 2026-08-16 01:12 JST）
+  async function runUntil(untilIso: string): Promise<{ urls: string[]; count: number }> {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      urls.push(url)
+      return { ok: true, status: 200, json: async () => page(1) }
+    })
+    const { fetchJmaQuakeHistory } = await import('./p2pquake')
+    const result = await fetchJmaQuakeHistory(30, Date.parse(untilIso), null)
+    return { urls, count: result.length }
+  }
+
+  it('正: 再生時刻から日付で絞り、再生時刻より前の地震を返す', async () => {
+    const { urls, count } = await runUntil('2026-08-16T01:30:00+09:00')
+    expect(urls[0]).toContain('since_date=20260717')
+    expect(urls[0]).toContain('until_date=20260816')
+    expect(count).toBe(1)
+  })
+
+  it('対照: 同じ日でも再生時刻より後の地震は落とす', async () => {
+    const { count } = await runUntil('2026-08-16T01:00:00+09:00')
+    expect(count).toBe(0)
+  })
+
+  it('安全弁: 止める合図が立っていれば 1 件も投げない', async () => {
+    let calls = 0
+    vi.stubGlobal('fetch', async () => { calls++; return { ok: true, status: 200, json: async () => page(1) } })
+    const { fetchJmaQuakeHistory } = await import('./p2pquake')
+    const controller = new AbortController()
+    controller.abort()
+    await fetchJmaQuakeHistory(30, Date.parse('2026-08-16T01:30:00+09:00'), controller.signal)
+    expect(calls).toBe(0)
   })
 })

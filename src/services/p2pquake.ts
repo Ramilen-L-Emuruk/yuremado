@@ -678,14 +678,25 @@ export async function fetchJmaTsunami(query: JmaArchiveQuery, signal: AbortSigna
 const JMA_QUAKE_HISTORY_REQUEST_INTERVAL_MS = 6500
 const JMA_QUAKE_HISTORY_MAX_PAGES = 20
 
-// ヒートマップ用: 直近 `days` 日分の地震履歴を offset ページングでまとめて取得する。
-export async function fetchJmaQuakeHistory(days: number): Promise<JMAQuake[]> {
-  const cutoffMs = serverNow() - days * 24 * 60 * 60 * 1000
+/** 日本時間の暦日を yyyyMMdd で（`since_date` / `until_date` は日本時間の日で切る）。 */
+function jstYmd(ms: number): string {
+  const d = new Date(ms + 9 * 60 * 60 * 1000)
+  return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
+// ヒートマップ用: `days` 日分の地震履歴を offset ページングでまとめて取得する。
+// `untilMs` が null ならいまから遡り、時刻を渡せばその時刻より前の `days` 日を日付で絞って取る（リプレイ中）。
+// `until_date` は日単位なので、その日の `untilMs` より後の地震も混ざる。それは最後に落とす。
+export async function fetchJmaQuakeHistory(days: number, untilMs: number | null, signal: AbortSignal | null): Promise<JMAQuake[]> {
+  const endMs = untilMs ?? serverNow()
+  const cutoffMs = endMs - days * 24 * 60 * 60 * 1000
+  const dateRange = untilMs === null ? {} : { sinceDate: jstYmd(cutoffMs), untilDate: jstYmd(untilMs) }
   const collected: JMAQuake[] = []
   let offset = 0
   let page = 0
   for (; page < JMA_QUAKE_HISTORY_MAX_PAGES; page++) {
-    const batch = await fetchJmaQuake({ limit: 100, offset }, null)
+    if (signal?.aborted) break
+    const batch = await fetchJmaQuake({ limit: 100, offset, ...dateRange }, signal)
     if (batch.length === 0) break
     collected.push(...batch)
     const oldestTime = new Date(batch[batch.length - 1].earthquake.time).getTime()
@@ -715,7 +726,10 @@ export async function fetchJmaQuakeHistory(days: number): Promise<JMAQuake[]> {
     seenKeys.add(key)
     return true
   })
-  return deduped.filter(q => new Date(q.earthquake.time).getTime() >= cutoffMs)
+  return deduped.filter(q => {
+    const t = new Date(q.earthquake.time).getTime()
+    return t >= cutoffMs && t <= endMs
+  })
 }
 
 /**

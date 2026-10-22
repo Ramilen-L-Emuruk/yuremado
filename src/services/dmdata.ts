@@ -1218,6 +1218,122 @@ function gdDepthKm(depth?: { value?: string | null }): number {
 
 const GD_EARTHQUAKE_MAX_PAGES = 20
 
+/** GD Earthquake List の 1 件（応答の形のまま。欠けうる欄は optional）。 */
+interface RawGdEarthquakeItem {
+  eventId: string
+  // 震源が未決定の地震（震度速報だけが出て震源・震度情報がまだ発表されていない等）は、
+  // originTime も hypocenter も持たない項目として返る（eventId・arrivalTime・maxInt のみ）。
+  // 実データに合わせて optional とし、読む側で必ず存在を確かめる。必須と宣言すると
+  // 「あるはず」の思い込みのまま参照して例外になり、1件の欠測で全ページ分を失う。
+  originTime?: string
+  hypocenter?: {
+    // 震源地名・深さはヒートマップのポップアップ表示に使う。契約や電文の種別によっては
+    // 欠けることがあるため optional として扱い、欠測時は空文字 / -1 に倒す。
+    name?: string
+    coordinate?: { latitude?: { value?: string }; longitude?: { value?: string } }
+    depth?: { value?: string | null }
+  }
+  magnitude?: { value?: string }
+}
+
+/**
+ * 1 件を地図に置ける形へ読む。置く場所（震源）か時刻が無ければ、捨てた理由を返す。
+ * 新しい順に辿って期間で打ち切る経路と、日付で絞って取る経路（リプレイ）で同じ読み方をするため切り出した。
+ */
+function readGdEarthquakeItem(it: RawGdEarthquakeItem): GdEarthquakeItem | 'noTime' | 'noCoord' {
+  const originTime = it.originTime
+  const originMs = originTime ? new Date(originTime).getTime() : NaN
+  if (!originTime || !Number.isFinite(originMs)) return 'noTime'
+  const latitude = parseFloat(it.hypocenter?.coordinate?.latitude?.value ?? '')
+  const longitude = parseFloat(it.hypocenter?.coordinate?.longitude?.value ?? '')
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return 'noCoord'
+  const magnitude = parseFloat(it.magnitude?.value ?? '')
+  return {
+    eventId: it.eventId,
+    originTime,
+    latitude,
+    longitude,
+    // 深さと同じく、値なし・数値化できない場合は -1（不明）に倒す。NaN のまま流すと
+    // 重みの計算結果も NaN になり、ヒートマップの描画が壊れる。
+    magnitude: Number.isFinite(magnitude) ? magnitude : -1,
+    name: it.hypocenter?.name ?? '',
+    depth: gdDepthKm(it.hypocenter?.depth),
+  }
+}
+
+/** 日付で絞った取得で、1 日に辿るページの上限（1 ページ 100 件）。 */
+const GD_EARTHQUAKE_DAY_MAX_PAGES = 5
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** 日本時間の暦日を YYYY-MM-DD で（`date` は日本時間の日で切る。2026-10-22 に 1 件投げて確かめた）。 */
+function jstDateParam(ms: number): string {
+  const d = new Date(ms + 9 * 60 * 60 * 1000)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
+/**
+ * 震源カタログを、`untilMs` より前の `days` 日について **日付で絞って** 取る（リプレイ中のヒートマップ用）。
+ * 一覧は新しい順にしか辿れないので、過去の再生時刻からは遡り切れない。`date`（日本時間の 1 日）を
+ * 日ごとに投げる —— 30 日なら最低 31 リクエスト。混んだ日は 1 日 `GD_EARTHQUAKE_DAY_MAX_PAGES` ページまで辿り、
+ * 達したら記録を残して読めた分を返す（`fetchDmdataGdEarthquakes` と同じく、投げると控えが空になるため）。
+ * 期間の外（`untilMs` より後・`days` 日より前）は落とす。止める合図で残りの日を打ち切る。
+ */
+export async function fetchDmdataGdEarthquakesBefore(
+  apiKey: string,
+  untilMs: number,
+  days: number,
+  signal: AbortSignal | null,
+): Promise<GdEarthquakeItem[]> {
+  const headers = { Authorization: authHeader(apiKey) }
+  const fromMs = untilMs - days * DAY_MS
+  const collected: GdEarthquakeItem[] = []
+  let skippedNoTime = 0
+  let skippedNoCoord = 0
+  const cappedDays: string[] = []
+  const dates: string[] = []
+  for (let ms = fromMs; jstDateParam(ms) <= jstDateParam(untilMs); ms += DAY_MS) dates.push(jstDateParam(ms))
+  for (const date of dates) {
+    let cursorToken: string | undefined
+    let page = 0
+    for (; page < GD_EARTHQUAKE_DAY_MAX_PAGES; page++) {
+      if (signal?.aborted) return collected
+      const qs = cursorToken ? `&cursorToken=${cursorToken}` : ''
+      // ページを辿るループなので枠を待つ（→ `services/dmdataRequestGates.ts`）
+      await waitForApiSlot()
+      const res = await fetchJsonOutcome(`${API_BASE}/gd/earthquake?date=${date}&limit=100${qs}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers } }, (r) => r.ok)
+      if (!res.ok) {
+        logRestFailure('震源カタログ (gd/earthquake・日付指定)', res.status)
+        throw new Error(`gd/earthquake: ${res.status}`)
+      }
+      const json = outcomeJson<{ items?: RawGdEarthquakeItem[]; nextToken?: string }>(res)
+      for (const it of json.items ?? []) {
+        const item = readGdEarthquakeItem(it)
+        if (item === 'noTime') { skippedNoTime++; continue }
+        if (item === 'noCoord') { skippedNoCoord++; continue }
+        const t = new Date(item.originTime).getTime()
+        if (t < fromMs || t > untilMs) continue
+        collected.push(item)
+      }
+      if (!json.nextToken) break
+      cursorToken = json.nextToken
+    }
+    if (page >= GD_EARTHQUAKE_DAY_MAX_PAGES) cappedDays.push(date)
+  }
+  if (cappedDays.length > 0) {
+    log.warn(
+      `[DMDSS] GD Earthquake List（日付指定）: 1 日のページ上限（${GD_EARTHQUAKE_DAY_MAX_PAGES}）に達した日があります`
+      + `（${cappedDays.join('・')}）。その日の古い側が欠けている可能性があります`,
+    )
+  }
+  const skipped = skippedNoTime + skippedNoCoord
+  if (skipped > 0) {
+    log.warn(
+      `[DMDSS] GD Earthquake List（日付指定）: ${skipped} 件をスキップしました（発生時刻なし ${skippedNoTime} 件 / 震源座標なし ${skippedNoCoord} 件）`,
+    )
+  }
+  return collected
+}
+
 // DMDATA REST API で震源カタログ（GD Earthquake List）を取得し、直近 `days` 日分に絞って返す。
 // 通常版の fetchJmaQuakeHistory に相当するヒートマップ用データ源。
 // 震源または発生時刻が決まっていない項目は地図に置けないため、その1件だけ除いて取得を続ける。
@@ -1253,25 +1369,7 @@ export async function fetchDmdataGdEarthquakes(apiKey: string, days: number): Pr
       logRestFailure('震源カタログ (gd/earthquake)', res.status)
       throw new Error(`gd/earthquake: ${res.status}`)
     }
-    const json = outcomeJson<{
-      items?: Array<{
-        eventId: string
-        // 震源が未決定の地震（震度速報だけが出て震源・震度情報がまだ発表されていない等）は、
-        // originTime も hypocenter も持たない項目として返る（eventId・arrivalTime・maxInt のみ）。
-        // 実データに合わせて optional とし、読む側で必ず存在を確かめる。必須と宣言すると
-        // 「あるはず」の思い込みのまま参照して例外になり、1件の欠測で全ページ分を失う。
-        originTime?: string
-        hypocenter?: {
-          // 震源地名・深さはヒートマップのポップアップ表示に使う。契約や電文の種別によっては
-          // 欠けることがあるため optional として扱い、欠測時は空文字 / -1 に倒す。
-          name?: string
-          coordinate?: { latitude?: { value?: string }; longitude?: { value?: string } }
-          depth?: { value?: string | null }
-        }
-        magnitude?: { value?: string }
-      }>
-      nextToken?: string
-    }>(res)
+    const json = outcomeJson<{ items?: RawGdEarthquakeItem[]; nextToken?: string }>(res)
     const items = json.items ?? []
     if (items.length === 0) break
 
@@ -1281,23 +1379,11 @@ export async function fetchDmdataGdEarthquakes(apiKey: string, days: number): Pr
       const originTime = it.originTime
       const originMs = originTime ? new Date(originTime).getTime() : NaN
       if (Number.isFinite(originMs) && originMs < cutoffMs) { reachedCutoff = true; break }
-      const latitude = parseFloat(it.hypocenter?.coordinate?.latitude?.value ?? '')
-      const longitude = parseFloat(it.hypocenter?.coordinate?.longitude?.value ?? '')
       // 置く場所（震源）と時刻のどちらかが無ければヒートマップに載せられない。この1件だけ捨てる。
-      if (!originTime || !Number.isFinite(originMs)) { skippedNoTime++; continue }
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) { skippedNoCoord++; continue }
-      const magnitude = parseFloat(it.magnitude?.value ?? '')
-      collected.push({
-        eventId: it.eventId,
-        originTime,
-        latitude,
-        longitude,
-        // 深さと同じく、値なし・数値化できない場合は -1（不明）に倒す。NaN のまま流すと
-        // 重みの計算結果も NaN になり、ヒートマップの描画が壊れる。
-        magnitude: Number.isFinite(magnitude) ? magnitude : -1,
-        name: it.hypocenter?.name ?? '',
-        depth: gdDepthKm(it.hypocenter?.depth),
-      })
+      const item = readGdEarthquakeItem(it)
+      if (item === 'noTime') { skippedNoTime++; continue }
+      if (item === 'noCoord') { skippedNoCoord++; continue }
+      collected.push(item)
     }
     if (reachedCutoff || !json.nextToken) break
     // 1 ページ丸ごと捨てて 1 件も残らなかったなら、応答の形が変わった可能性が高い。残りのページを

@@ -6,6 +6,7 @@ import { PREFERRED_CLASSIFICATIONS } from './dmdataClassifications'
 import {
   closeCodeAction,
   fetchDmdataGdEarthquakes,
+  fetchDmdataGdEarthquakesBefore,
   releaseSocket,
   fetchDmdataActiveEews,
   fetchDmdataActiveEewsOutcome,
@@ -141,6 +142,61 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+})
+
+// リプレイ中のヒートマップ用。一覧は新しい順にしか辿れないので、`date`（日本時間の 1 日）で日ごとに取る
+describe('fetchDmdataGdEarthquakesBefore', () => {
+  /** `date=` ごとに本文を返す fetch。呼ばれた URL も記録する。 */
+  function stubByDate(byDate: Record<string, Array<{ items: unknown[]; nextToken?: string }>>) {
+    const urls: string[] = []
+    const calls = new Map<string, number>()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(url)
+      const date = /[?&]date=([0-9-]+)/.exec(url)?.[1] ?? ''
+      const n = calls.get(date) ?? 0
+      calls.set(date, n + 1)
+      const body = byDate[date]?.[n] ?? { items: [] }
+      return { ok: true, json: async () => body } as unknown as Response
+    }))
+    return urls
+  }
+  const at = (eventId: string, iso: string) => ({ ...gdItem({ eventId, daysAgo: 0 }), originTime: iso })
+  const UNTIL = Date.parse('2024-01-02T12:00:00+09:00')
+
+  it('正: 期間の各日を YYYY-MM-DD で投げ、期間の中の地震を返す', async () => {
+    const urls = stubByDate({
+      '2024-01-01': [{ items: [at('a', '2024-01-01T16:10:00+09:00')] }],
+      '2024-01-02': [{ items: [at('b', '2024-01-02T08:00:00+09:00')] }],
+    })
+    const items = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
+    expect(urls.map(u => /date=([0-9-]+)/.exec(u)?.[1])).toEqual(['2024-01-01', '2024-01-02'])
+    expect(items.map(i => i.eventId)).toEqual(['a', 'b'])
+  })
+
+  it('対照: 再生時刻より後・期間の手前の地震は落とす', async () => {
+    stubByDate({
+      '2024-01-01': [{ items: [at('early', '2024-01-01T11:00:00+09:00')] }],
+      '2024-01-02': [{ items: [at('late', '2024-01-02T13:00:00+09:00'), at('ok', '2024-01-02T11:00:00+09:00')] }],
+    })
+    const items = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
+    expect(items.map(i => i.eventId)).toEqual(['ok'])
+  })
+
+  it('安全弁: 混んだ日はページ上限で打ち切って記録し、止める合図で残りの日を投げない', async () => {
+    const busy = Array.from({ length: 10 }, (_, i) => ({ items: [at(`x${i}`, '2024-01-02T09:00:00+09:00')], nextToken: `T${i}` }))
+    const urls = stubByDate({ '2024-01-02': busy })
+    const items = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
+    // 1/1 は 1 ページ（空）、混んだ 1/2 は上限の 5 ページで打ち切る
+    expect(urls.filter(u => u.includes('date=2024-01-02'))).toHaveLength(5)
+    expect(items).toHaveLength(5)
+    expect(vi.mocked(log.warn).mock.calls.some(c => String(c[0]).includes('1 日のページ上限'))).toBe(true)
+
+    const controller = new AbortController()
+    controller.abort()
+    const urls2 = stubByDate({})
+    await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 30, controller.signal)
+    expect(urls2).toHaveLength(0)
+  })
 })
 
 describe('fetchDmdataGdEarthquakes', () => {

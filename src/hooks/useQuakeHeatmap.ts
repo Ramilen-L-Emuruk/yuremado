@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { JMAQuake } from '../types/earthquake'
 import { fetchJmaQuakeHistory } from '../services/p2pquake'
-import { fetchDmdataGdEarthquakes } from '../services/dmdata'
-import { heatMagnitude, magnitudeToWeight, quakeIdentityKey, hasValidHypocenter, type HeatPoint } from '../utils/quakeHeatmap'
+import { fetchDmdataGdEarthquakes, fetchDmdataGdEarthquakesBefore, type GdEarthquakeItem } from '../services/dmdata'
+import { heatMagnitude, magnitudeToWeight, quakeIdentityKey, hasValidHypocenter, isWithinHeatWindow, HEATMAP_DAYS, type HeatPoint } from '../utils/quakeHeatmap'
 import { log } from '../utils/logger'
-import { serverNow } from '../utils/clock'
+import { serverNow, liveServerNow } from '../utils/clock'
 
 import { isDmdss } from '../utils/env'
 import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
-const HEATMAP_DAYS = 30
 // 1ヶ月分の再取得は API 呼び出しコストがあるため、一定時間は localStorage のキャッシュを再利用する。
 // キャッシュ取得後にライブ受信した地震は earthquakes とのマージで別途反映するため、
 // このキャッシュ自体はやや古くても実害は小さい。
@@ -44,25 +43,88 @@ function loadCache(): CacheEntry | null {
 
 function saveCache(points: KeyedHeatPoint[]): void {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: serverNow(), points }))
+    // 鮮度は実時間で測る（`serverNow()` はリプレイ中に再生時刻を返す）
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ fetchedAt: liveServerNow(), points }))
   } catch (e) {
     // 容量超過等。次回また取得を試みるので致命的ではないが、黙って毎回取り直す状態になるため残す。
     log.warn('[data] 地震活動ヒートマップのキャッシュ保存に失敗（次回も取得し直します）', e)
   }
 }
 
+function fromGdItems(items: GdEarthquakeItem[]): KeyedHeatPoint[] {
+  return items.map((it): KeyedHeatPoint => ({
+    key: it.eventId,
+    lat: it.latitude,
+    lng: it.longitude,
+    // GD Earthquake List は規模の説明を返さない（不明は -1）。
+    weight: magnitudeToWeight(it.magnitude, null),
+    name: it.name,
+    time: it.originTime,
+    depth: it.depth,
+    depthAtLeast: false,
+    magnitude: heatMagnitude(it.magnitude),
+    magnitudeCondition: null,
+  }))
+}
+
+function fromJmaQuakes(quakes: JMAQuake[]): KeyedHeatPoint[] {
+  return quakes
+    .filter(q => hasValidHypocenter(q.earthquake.hypocenter.latitude, q.earthquake.hypocenter.longitude))
+    .map((q): KeyedHeatPoint => ({
+      key: quakeIdentityKey(q),
+      lat: q.earthquake.hypocenter.latitude,
+      lng: q.earthquake.hypocenter.longitude,
+      weight: magnitudeToWeight(q.earthquake.hypocenter.magnitude, q.earthquake.hypocenter.magnitudeCondition ?? null),
+      name: q.earthquake.hypocenter.name,
+      time: q.earthquake.time,
+      depth: q.earthquake.hypocenter.depth,
+      depthAtLeast: q.earthquake.hypocenter.depthAtLeast ?? false,
+      magnitude: heatMagnitude(q.earthquake.hypocenter.magnitude),
+      magnitudeCondition: q.earthquake.hypocenter.magnitudeCondition ?? null,
+    }))
+}
+
+/**
+ * リプレイ中に取った「再生時刻の前 30 日」の控え。鍵は再生を始めた時刻（ms）。**メモリだけに置く** ——
+ * 同じ再生を始め直したときに取り直さないためのもので、localStorage の 6 時間の控え（いまの 30 日）とは別物。
+ */
+const replayBaseCache = new Map<number, KeyedHeatPoint[]>()
+const REPLAY_BASE_CACHE_MAX = 8
+
+/** 再生中に点を出し入れし直す間隔。再生時刻が進むと、前 30 日の端と再生時刻の手前が動くため。 */
+const REPLAY_REFILTER_MS = 60_000
+
 // 直近1ヶ月分の地震活動ヒートマップ用データを取得する。
 // 30日分のベースデータは API 取得後 CACHE_TTL_MS の間キャッシュしつつ、ライブ受信中の
 // 地震一覧（earthquakes）を都度マージすることで、新規受信した地震も即座に反映する。
 // earthquakes は useEarthquakes 側で既に issue 種別の優先度・同一性判定を解決済みの
 // 一覧（1地震につき1エントリ）のため、ここで改めてその判定をする必要はない。
+//
+// **リプレイ中（`replayOffsetMs` が null でない）は、再生時刻の前 30 日を取り直し、再生時刻より後の点を出さない**
+// （2026-10-22 ユーザー選択「前 30 日を取り直す (Recommended)」）。いまの 30 日の控えを流用すると、
+// 再生時刻より後に起きた地震が地図に並び、30 日より前を再生すると再生で届いた地震しか出ない。
+// 取り直しは再生を始めた時刻ごとに 1 回。DMDSS 版は日ごとに最低 31 リクエスト、標準版は日付で絞って数ページ
+// （→ `services/dmdata.ts` の `fetchDmdataGdEarthquakesBefore`・`services/p2pquake.ts` の `fetchJmaQuakeHistory`）。
 export function useQuakeHeatmap(
   enabled: boolean,
   dmdataApiKey: string,
   earthquakes: JMAQuake[],
+  replayOffsetMs: number | null,
 ): { points: HeatPoint[] | null; isLoading: boolean } {
   const [basePoints, setBasePoints] = useState<KeyedHeatPoint[] | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  // 再生を始めた時刻（ms）。オフセットが変わるのは再生の開始・停止のときだけなので、変わった時点の再生時刻を採る。
+  const replayAnchorMs = useMemo(
+    () => (replayOffsetMs === null ? null : Math.round(Date.now() + replayOffsetMs)),
+    [replayOffsetMs],
+  )
+  // 再生中は 1 分ごとに描き直す（点の出し入れを再生時刻に合わせる）
+  const [refilterTick, setRefilterTick] = useState(0)
+  useEffect(() => {
+    if (replayAnchorMs === null) return
+    const id = setInterval(() => setRefilterTick(t => t + 1), REPLAY_REFILTER_MS)
+    return () => clearInterval(id)
+  }, [replayAnchorMs])
 
   useEffect(() => {
     if (!enabled) {
@@ -84,12 +146,51 @@ export function useQuakeHeatmap(
       // キャッシュがあれば表示を保つ。キー入力中はデバウンス（800ms）でここを一時的に通るため、
       // 捨てると「直している最中に、見えていたヒートマップが消える」ことになる。
       // 変換途中の値こそこの判定を入れた理由なので、まさに直そうとしている人にだけ起きる。
+      // （リプレイ中も同じ控えを置くが、再生時刻より後の点は下の絞り込みで外れる）
       setBasePoints(loadCache()?.points ?? null)
       return
     }
 
+    if (replayAnchorMs !== null) {
+      const hit = replayBaseCache.get(replayAnchorMs)
+      if (hit) {
+        setBasePoints(hit)
+        return
+      }
+      const controller = new AbortController()
+      // 取れるまでは何も出さない（いまの 30 日を出すと、再生時刻より後の地震が並ぶ）
+      setBasePoints([])
+      setIsLoading(true)
+      const loadReplay = isDmdss
+        ? fetchDmdataGdEarthquakesBefore(dmdataApiKey, replayAnchorMs, HEATMAP_DAYS, controller.signal).then(fromGdItems)
+        : fetchJmaQuakeHistory(HEATMAP_DAYS, replayAnchorMs, controller.signal).then(fromJmaQuakes)
+      loadReplay
+        .then(result => {
+          if (controller.signal.aborted) return
+          replayBaseCache.set(replayAnchorMs, result)
+          while (replayBaseCache.size > REPLAY_BASE_CACHE_MAX) {
+            const oldest = replayBaseCache.keys().next().value
+            if (oldest === undefined) break
+            replayBaseCache.delete(oldest)
+          }
+          setBasePoints(result)
+        })
+        .catch(err => {
+          if (controller.signal.aborted) {
+            log.debug('[data] 再生時刻の地震活動ヒートマップ取得を打ち切った', err)
+            return
+          }
+          // 空のまま残す（再生で届いた地震だけが出る）。いまの 30 日へは倒さない
+          log.warn('[data] 再生時刻の地震活動ヒートマップ取得失敗（再生で届いた地震だけを出します）', err)
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setIsLoading(false)
+        })
+      return () => controller.abort()
+    }
+
     const cached = loadCache()
-    if (cached && serverNow() - cached.fetchedAt < CACHE_TTL_MS) {
+    if (cached && liveServerNow() - cached.fetchedAt < CACHE_TTL_MS) {
       setBasePoints(cached.points)
       return
     }
@@ -98,37 +199,8 @@ export function useQuakeHeatmap(
     setIsLoading(true)
 
     const load = isDmdss
-      ? fetchDmdataGdEarthquakes(dmdataApiKey, HEATMAP_DAYS).then(items =>
-          items.map((it): KeyedHeatPoint => ({
-            key: it.eventId,
-            lat: it.latitude,
-            lng: it.longitude,
-            // GD Earthquake List は規模の説明を返さない（不明は -1）。
-            weight: magnitudeToWeight(it.magnitude, null),
-            name: it.name,
-            time: it.originTime,
-            depth: it.depth,
-            depthAtLeast: false,
-            magnitude: heatMagnitude(it.magnitude),
-            magnitudeCondition: null,
-          })),
-        )
-      : fetchJmaQuakeHistory(HEATMAP_DAYS).then(quakes =>
-          quakes
-            .filter(q => hasValidHypocenter(q.earthquake.hypocenter.latitude, q.earthquake.hypocenter.longitude))
-            .map((q): KeyedHeatPoint => ({
-              key: quakeIdentityKey(q),
-              lat: q.earthquake.hypocenter.latitude,
-              lng: q.earthquake.hypocenter.longitude,
-              weight: magnitudeToWeight(q.earthquake.hypocenter.magnitude, q.earthquake.hypocenter.magnitudeCondition ?? null),
-              name: q.earthquake.hypocenter.name,
-              time: q.earthquake.time,
-              depth: q.earthquake.hypocenter.depth,
-              depthAtLeast: q.earthquake.hypocenter.depthAtLeast ?? false,
-              magnitude: heatMagnitude(q.earthquake.hypocenter.magnitude),
-              magnitudeCondition: q.earthquake.hypocenter.magnitudeCondition ?? null,
-            })),
-        )
+      ? fetchDmdataGdEarthquakes(dmdataApiKey, HEATMAP_DAYS).then(fromGdItems)
+      : fetchJmaQuakeHistory(HEATMAP_DAYS, null, null).then(fromJmaQuakes)
 
     load
       .then(result => {
@@ -155,18 +227,21 @@ export function useQuakeHeatmap(
     return () => {
       cancelled = true
     }
-  }, [enabled, dmdataApiKey])
+  }, [enabled, dmdataApiKey, replayAnchorMs])
 
   // ベースデータにライブ受信中の地震をマージする。取消済み・震源未確定・期間外は除外し、
   // 同一地震（quakeIdentityKey）が両方にあればライブ側（最新情報）を優先する。
+  // 期間は「いま」から遡る 30 日で、**「いま」より後は外す**。いまは再生中なら再生時刻
+  // （`serverNow()`）。控えの点も、再生で届いた地震も同じ物差しで見る（`isWithinHeatWindow`）。
   const points = useMemo(() => {
     if (!basePoints) return null
-    const cutoffMs = serverNow() - HEATMAP_DAYS * 24 * 60 * 60 * 1000
+    const nowMs = serverNow()
     const merged = new Map<string, HeatPoint>()
     // 規模の説明・深さの下限の欄を持たない形で控えた点（この欄を足す前のキャッシュ）は「無い」として読む。
     // **重みも読み直す。** 前の形は規模不明の重みを NaN で控えていて、JSON を通ると null になる
     // （そのままだと濃さの式に null が流れ、点が描かれない）。
     for (const p of basePoints) {
+      if (!isWithinHeatWindow(p.time, nowMs)) continue
       const magnitude = heatMagnitude(p.magnitude)
       const magnitudeCondition = p.magnitudeCondition ?? null
       merged.set(p.key, {
@@ -181,7 +256,7 @@ export function useQuakeHeatmap(
       if (q.cancelled || q.cancelledAt) continue
       const { latitude, longitude, magnitude, magnitudeCondition, name, depth, depthAtLeast } = q.earthquake.hypocenter
       if (!hasValidHypocenter(latitude, longitude)) continue
-      if (new Date(q.earthquake.time).getTime() < cutoffMs) continue
+      if (!isWithinHeatWindow(q.earthquake.time, nowMs)) continue
       merged.set(quakeIdentityKey(q), {
         lat: latitude,
         lng: longitude,
@@ -195,7 +270,9 @@ export function useQuakeHeatmap(
       })
     }
     return Array.from(merged.values())
-  }, [basePoints, earthquakes])
+    // refilterTick は再生中に 1 分ごとに描き直すためだけの依存（中身は読まない）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [basePoints, earthquakes, refilterTick])
 
   return { points, isLoading }
 }
