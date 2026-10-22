@@ -159,7 +159,8 @@ export function buildPopupHtml(ep: EewEpicenter): string {
   return (
     `<div style="min-width:170px">` +
     `<div style="display:flex;align-items:baseline;gap:8px">` +
-    `<span style="font-weight:700;font-size:13px">${escapeHtml(ep.name)}</span>` +
+    // 震央地名が空の報はカードと同じ「震源調査中」を出す（見出しが空のまま番号だけ並ばないように）
+    `<span style="font-weight:700;font-size:13px">${escapeHtml(ep.name || '震源調査中')}</span>` +
     (serialText ? `<span style="font-size:11px;color:#94a3b8">${serialText}</span>` : '') +
     `</div>` +
     // EEW-6: 仮定震源要素（震源未確定）は M・深さが未確定なので数値を隠す。

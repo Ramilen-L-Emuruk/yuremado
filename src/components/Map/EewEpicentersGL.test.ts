@@ -218,6 +218,14 @@ describe('EEW 震源ポップアップの文言', () => {
     expect(html).toContain('深さ')
   })
 
+  // 正: 震央地名が空の報は見出しを「震源調査中」にし、M・深さは確定震源と同じく出す
+  it('震央地名が空なら見出しを「震源調査中」にし、M・深さは出す', () => {
+    const html = buildPopupHtml(makeEp({ name: '' }))
+    expect(html).toContain('>震源調査中</span>')
+    expect(html).toContain('M6.5')
+    expect(html).toContain('深さ')
+  })
+
   // 安全弁: 震源名は電文由来の文字列なのでエスケープを通す（但し書きの追加で経路を変えていない）。
   it('震源名はエスケープされる', () => {
     const html = buildPopupHtml(makeEp({ name: '<script>x</script>' }))

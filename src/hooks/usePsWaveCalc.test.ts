@@ -63,12 +63,53 @@ describe('computeEewCircle', () => {
     expect(computeEewCircle(eew, NOW)).toBeNull()
   })
 
-  it('震源名が無い仮定震源要素の EEW は null', () => {
+  // 正（以前は null だったのを覆した）: 震央地名が空なだけの報は、座標・深さ・発生時刻で円を描く
+  it('震央地名が空でも、座標と深さが揃っていれば円を描く', () => {
     const eew = makeEEW({
       earthquake: {
         originTime: '2026-01-01T12:00:00Z',
         arrivalTime: '2026-01-01T12:00:20Z',
-        condition: '以上',
+        condition: '',
+        hypocenter: { name: '', latitude: 35.0, longitude: 135.0, depth: 10, magnitude: 6.0 },
+      },
+    })
+    expect(computeEewCircle(eew, NOW)).toMatchObject({ lat: 35.0, lng: 135.0, depth: 10 })
+  })
+
+  // 安全弁: 地名が空で位置も判らない報（センチネル -200）は描かない
+  it('震央地名が空で位置も判らない報は null', () => {
+    const eew = makeEEW({
+      earthquake: {
+        originTime: '2026-01-01T12:00:00Z',
+        arrivalTime: '2026-01-01T12:00:20Z',
+        condition: '',
+        hypocenter: { name: '', latitude: -200, longitude: -200, depth: 10, magnitude: 6.0 },
+      },
+    })
+    expect(computeEewCircle(eew, NOW)).toBeNull()
+  })
+
+  // 対照: 地名が空でも仮定震源要素なら描かない
+  it('震央地名が空の仮定震源要素の報は null', () => {
+    const eew = makeEEW({
+      earthquake: {
+        originTime: '2026-01-01T12:00:00Z',
+        arrivalTime: '2026-01-01T12:00:20Z',
+        condition: '仮定震源要素',
+        hypocenter: { name: '', latitude: 35.0, longitude: 135.0, depth: 10, magnitude: 6.0 },
+      },
+    })
+    expect(computeEewCircle(eew, NOW)).toBeNull()
+  })
+
+  // 対照: 地名が空でも「非常に強い揺れを検知」の報なら描かない（仮の震源のもう一方の経路）
+  it('震央地名が空の「非常に強い揺れを検知」の報は null', () => {
+    const eew = makeEEW({
+      strongShakingOnly: true,
+      earthquake: {
+        originTime: '2026-01-01T12:00:00Z',
+        arrivalTime: '2026-01-01T12:00:20Z',
+        condition: '',
         hypocenter: { name: '', latitude: 35.0, longitude: 135.0, depth: 10, magnitude: 6.0 },
       },
     })
