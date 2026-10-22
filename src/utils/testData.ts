@@ -1,4 +1,4 @@
-import type { JMAQuake, JMATsunami, EEWAlert, EEWForecastChange, JMANankai, JMANankaiCommentary, JMAKohatsu, EarthquakePoint, IntensityScale, JMALpgm, JMAQuakeCity, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAEstimatedIntensityGrade, EEWRegion, TsunamiArea, TsunamiGrade, TelegramOperationStatus } from '../types/earthquake'
+import type { JMAQuake, JMATsunami, EEWAlert, EEWForecastChange, JMANankai, JMANankaiCommentary, JMAKohatsu, EarthquakePoint, IntensityScale, JMALpgm, JMAQuakeCity, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAEstimatedIntensityGrade, EEWRegion, TsunamiArea, TsunamiGrade, TsunamiObservation, TelegramOperationStatus } from '../types/earthquake'
 import { serverNow, serverDate } from './clock'
 import { extractQuakeEventIdFromId } from './quakeMerge'
 import { dmdataTelegramKey } from './telegramKey'
@@ -2528,7 +2528,19 @@ export const TEST_TSUNAMI_QUIET_STEP_MS = 10000
  */
 export const TEST_TSUNAMI_QUIET_TAIL_MS = 20000
 
-/** 観測情報の報に共通の差し替え（種別の名乗りと見出し文）。 */
+/**
+ * 観測点から電文の印（`FirstHeight/Revise`・`MaxHeight/Revise`）を剥がす。
+ *
+ * **前の段の印を次の段へ持ち越さないため。** 実電文の `Revise` は、その報で追加・更新した項目にだけ付く
+ * （全期間の控えで、値を持つ観測点の再送に印が残った形は無い）。持ち越すと、画面は電文の印でも項目に
+ * 印を付けるので（→ `changedObservationFields`）、「変化なし」の段まで全行が光る。印を立てるのは
+ * 動かす段だけ。
+ */
+function withoutRevise(observations: readonly TsunamiObservation[] | undefined): TsunamiObservation[] | undefined {
+  return observations?.map(({ firstHeightRevise: _f, maxHeightRevise: _m, ...o }) => o)
+}
+
+/** 観測情報の報に共通の差し替え（種別の名乗りと見出し文。観測点の電文の印は剥がす）。 */
 function asObservationReport(base: JMATsunami, suffix: string): JMATsunami {
   const nowDate = serverDate()
   const now = nowDate.toISOString()
@@ -2542,6 +2554,7 @@ function asObservationReport(base: JMATsunami, suffix: string): JMATsunami {
     id: `${base.id}-${suffix}`,
     time: now,
     issue: { ...base.issue, time: now },
+    observations: withoutRevise(base.observations),
     infoName: '津波観測に関する情報',
     // 観測情報は VTSE51（沖合だけを運ぶ報は呼び出し側で VTSE52 へ差し替える）。
     headType: 'VTSE51',
@@ -2576,7 +2589,7 @@ export function createTestTsunamiMaxHeightTimeUpdate(prev: JMATsunami): JMATsuna
   const advanced = new Date(new Date(report.time).getTime() - 60000).toISOString()
   return {
     ...report,
-    observations: (prev.observations ?? []).map(o =>
+    observations: (report.observations ?? []).map(o =>
       o.height && !o.offshore && !o.condition?.maxHeightMissing
         ? { ...o, maxHeightRevise: '更新', maxHeightDateTime: advanced }
         : o),
@@ -2606,7 +2619,7 @@ export function createTestTsunamiOffshoreMaxHeightTimeUpdate(prev: JMATsunami): 
     ...report,
     infoName: '沖合の津波観測に関する情報',
     headType: 'VTSE52',
-    observations: (prev.observations ?? [])
+    observations: (report.observations ?? [])
       .filter(o => o.offshore)
       .map(o => o.height && !o.condition?.observing
         ? { ...o, maxHeightRevise: '更新', maxHeightDateTime: advanced }
@@ -2635,7 +2648,7 @@ export function createTestTsunamiFirstWaveUpdate(prev: JMATsunami): JMATsunami {
   const report = asObservationReport(prev, 'firstwave')
   return {
     ...report,
-    observations: (prev.observations ?? []).map(o =>
+    observations: (report.observations ?? []).map(o =>
       o.name === FIRST_WAVE_UPDATE_STATION && o.arrivalTime
         ? {
           ...o,
@@ -2668,7 +2681,7 @@ export function createTestTsunamiObservationOverUpgrade(prev: JMATsunami): JMATs
   const report = asObservationReport(prev, 'obs-over')
   return {
     ...report,
-    observations: (prev.observations ?? []).map(o =>
+    observations: (report.observations ?? []).map(o =>
       o.name === OVER_UPGRADE_STATION && o.height
         // `description` は実電文をパーサーが通した後の形（半角・「以上」を含む）に揃える。
         ? { ...o, height: { ...o.height, description: `${o.height.value}m以上`, over: true } }
@@ -2704,9 +2717,38 @@ export function createTestTsunamiObservationLowered(prev: JMATsunami, coastal: J
   const report = asObservationReport(prev, 'obs-lowered')
   return {
     ...report,
-    observations: (coastal.observations ?? []).map(o =>
+    observations: (withoutRevise(coastal.observations) ?? []).map(o =>
       o.name === OVER_UPGRADE_STATION && o.height
         ? { ...o, height: { value: 0.6, description: '0.6m' } }
+        : o),
+  }
+}
+
+/** 電文の印だけが動いたことを伝える観測点（欠測から戻る。発表報では第1波・最大波とも欠測）。 */
+const REVISE_ONLY_STATION = 'いわき市小名浜'
+
+/**
+ * 値は何も持たないまま、電文の印（`FirstHeight/Revise`・`MaxHeight/Revise` = 追加）だけが動いた観測情報の報。
+ *
+ * **自前の比較では何も拾えない形。** 欠測だった観測点が戻り、第1波は「第１波識別不能」、最大波は
+ * 「観測中」として載り直す —— どちらも値を持たないので、前の報と比べる相手が無い。全期間 19 津波・
+ * 延べ 8,085 観測点で、電文だけが印を持つ形は 168 あり、どれもこの「第１波識別不能・観測中・欠測の追加」
+ * だった（→ `changedObservationFields`）。カードの行の「到達時刻不明」「観測中」に色が当たるのは
+ * ここでしか実機に出ない。
+ *
+ * 観測点は `coastal` から採る（理由は {@link createTestTsunamiQuietReportSteps}）。
+ */
+export function createTestTsunamiObservationReviseOnly(prev: JMATsunami, coastal: JMATsunami): JMATsunami {
+  const report = asObservationReport(prev, 'obs-revise')
+  return {
+    ...report,
+    observations: (withoutRevise(coastal.observations) ?? []).map(o =>
+      o.name === REVISE_ONLY_STATION
+        ? {
+          name: o.name, districtCode: o.districtCode, districtName: o.districtName,
+          condition: { firstWaveUnidentifiable: true, observing: true },
+          firstHeightRevise: '追加', maxHeightRevise: '追加',
+        }
         : o),
   }
 }
@@ -2728,9 +2770,11 @@ export function createTestTsunamiQuietReportSteps(base: JMATsunami): ((prev: JMA
     createTestTsunamiOffshoreMaxHeightTimeUpdate,
     createTestTsunamiObservationNoChange,
     prev => createTestTsunamiObservationLowered(prev, lastCoastal),
+    prev => createTestTsunamiObservationReviseOnly(prev, lastCoastal),
     prev => createTestTsunamiHighTide(base, prev),
     prev => createTestTsunamiHighTideFollowUp(prev, 'tide'),
     prev => createTestTsunamiHighTideFollowUp(prev, 'arrival'),
+    prev => createTestTsunamiHighTideFollowUp(prev, 'arrivalTime'),
     prev => createTestTsunamiHighTideFollowUp(prev, 'none'),
   ]
   return steps.map(step => (prev: JMATsunami) => {
@@ -2747,11 +2791,15 @@ export function createTestTsunamiQuietReportSteps(base: JMATsunami): ((prev: JMA
  * （2024 年能登半島地震の 01/01 20:30・01/02 02:31）。**3 通りを撃ち分けられないと、
  * 読み上げの言い分け（→ `tideReportChange`）を実機で確かめられない。**
  *
- * @param kind `tide` 満潮時刻を進める／`arrival` 到達状況だけ変える／`none` 何も変えない
+ * **到達予想時刻だけが動く形も撃てる**（`arrivalTime`）。全期間の控えで 11 地点（2024-01-01 16:23 の
+ * 坂井市三国 17:10 → 17:00 など）がこの形で、かつては「内容に変わりはありません」と読んでいた。
+ *
+ * @param kind `tide` 満潮時刻を進める／`arrival` 到達状況だけ変える／`arrivalTime` 到達予想時刻だけ
+ *   10 分早める／`none` 何も変えない
  */
 export function createTestTsunamiHighTideFollowUp(
   prev: JMATsunami,
-  kind: 'tide' | 'arrival' | 'none',
+  kind: 'tide' | 'arrival' | 'arrivalTime' | 'none',
 ): JMATsunami {
   const now = new Date(serverNow()).toISOString()
   const base: JMATsunami = { ...prev, id: `${prev.id}-${kind}`, time: now, issue: { ...prev.issue, time: now } }
@@ -2763,6 +2811,9 @@ export function createTestTsunamiHighTideFollowUp(
       stations: a.stations?.map(s => kind === 'tide'
         // 次の満潮へ進む（実電文でも半日ほど先へ飛ぶ）。
         ? { ...s, highTideDateTime: s.highTideDateTime ? new Date(new Date(s.highTideDateTime).getTime() + 12 * 3600_000).toISOString() : undefined }
+        // 到達予想時刻だけを 10 分早める（実電文と同じ向き・同じ幅）。到達状況を運ぶ地点は予想時刻を持たない。
+        : kind === 'arrivalTime'
+          ? (s.arrivalTime ? { ...s, arrivalTime: new Date(new Date(s.arrivalTime).getTime() - 10 * 60000).toISOString() } : s)
         // 到達状況だけが確定へ変わる（「津波到達中と推測」→「第１波の到達を確認」）。
         // 到達状況を持たない地点（まだ予想時刻を運んでいる）は動かさない —— 予想時刻と到達の確認は同時に載らない。
         : s.arrivalCondition ? { ...s, arrivalCondition: '第１波の到達を確認' } : s),

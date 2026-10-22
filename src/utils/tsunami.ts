@@ -1018,13 +1018,21 @@ export function isTideReport(tsunami: JMATsunami): boolean {
  * - `first`   ―― まだ一度も満潮時刻を声にしていない（名乗りだけで意味が通る）
  * - `tide`    ―― 満潮時刻が動いた地点がある（初出の地点を含む）
  * - `arrival` ―― 満潮時刻は据え置きで、到達状況だけが動いた
- * - `none`    ―― どちらも動いていない
+ * - `arrivalTime` ―― 満潮時刻も到達状況も据え置きで、津波の到達予想時刻だけが動いた
+ * - `none`    ―― どれも動いていない
  *
  * **`tide` と `arrival` を混ぜないこと。** 2024 年能登半島地震では、6 通のうち 2 通
  * （01/01 20:30・01/02 02:31）が「満潮時刻は 1 つも動かず到達状況だけ変わった」報だった。
  * 一括りに「満潮時刻が更新されました」と読むと、気象庁が言っていないことを言うことになる。
+ *
+ * **到達予想時刻だけが動いた報も `none` にしない。** 全期間の控えで 11 地点（2024-01-01 16:23 の
+ * 坂井市三国 17:10 → 17:00 など）がこの形で、`none` だと「内容に変わりはありません」と言っていた
+ * （2026-10-21 ユーザー選択「どちらかにあれば更新 (Recommended)」。文面は同日「おすすめで」）。
+ * **優先は 満潮時刻 ＞ 到達状況 ＞ 到達予想時刻** で、1 つの報で 1 つだけを言う。
+ * 区域の `Revise` は見ない —— 値が直前と同じなのに「更新」と書かれた区域が 103 件あり、理由が
+ * 確かめられていないため。
  */
-export type TideReportChange = 'first' | 'tide' | 'arrival' | 'none'
+export type TideReportChange = 'first' | 'tide' | 'arrival' | 'arrivalTime' | 'none'
 
 /**
  * 声にした満潮時刻と到達状況（潮位観測点ごと）。
@@ -1036,6 +1044,8 @@ export type TideReportChange = 'first' | 'tide' | 'arrival' | 'none'
 export interface SpokenTideEntry {
   highTide?: string
   arrival?: string
+  /** 津波の到達予想時刻（`TsunamiStation.arrivalTime`）。 */
+  arrivalTime?: string
 }
 
 /**
@@ -1057,6 +1067,7 @@ export function collectTideEntries(areas: readonly TsunamiArea[]): Map<string, S
       entries.set(tideStationKey(area, station), {
         highTide: station.highTideDateTime,
         arrival: station.arrivalCondition,
+        arrivalTime: station.arrivalTime,
       })
     }
   }
@@ -1079,14 +1090,19 @@ export function tideReportChange(
   if (spoken.size === 0) return 'first'
   let tideChanged = false
   let arrivalChanged = false
+  let arrivalTimeChanged = false
   for (const [key, entry] of collectTideEntries(areas)) {
     const prev = spoken.get(key)
     if (!prev) { tideChanged = true; continue }
     if (prev.highTide !== entry.highTide) tideChanged = true
     if (prev.arrival !== entry.arrival) arrivalChanged = true
+    if (prev.arrivalTime !== entry.arrivalTime) arrivalTimeChanged = true
   }
   if (tideChanged) return 'tide'
   if (arrivalChanged) return 'arrival'
+  // 予想時刻が消えた（取り下げた）報もここに入る。予想時刻を過ぎると到達状況の側が変わって上の
+  // `arrival` が先に勝つので、到達状況が据え置きのまま予想時刻だけが消える形はまず起きない。
+  if (arrivalTimeChanged) return 'arrivalTime'
   return 'none'
 }
 
@@ -1772,6 +1788,7 @@ export function changedObservationFields(
     name: string
     height?: ObservedHeightRank
     maxHeightRevise?: string
+    firstHeightRevise?: string
     maxHeightDateTime?: string
     arrivalTime?: string
     initial?: string
@@ -1799,6 +1816,20 @@ export function changedObservationFields(
   // **波高は「深刻になったか」で見る**（→ {@link hasObservedHeightRisen}）。記憶が高水位マーク式
   // なのと対で、下方修正では印を付けない。向きを問わず拾うのは地図のカメラだけ。
   if (hasObservedHeightRisen(obs, prevHeights)) fields.add('height')
+  // **電文の印（`Revise`）も拾う。** 気象庁が「追加」「更新」と書いた項目は、自前の比較で
+  // 動いて見えなくても印を付ける（どちらかにあれば付ける。2026-10-21 ユーザー選択
+  // 「どちらかにあれば付ける (Recommended)」）。全期間 19 津波・延べ 8,085 観測点で、
+  // 自前の比較では拾えず電文だけが印を持つ形が 168 あった —— 第１波識別不能・観測中・欠測の
+  // 「追加」で、どれも値を持たないので比べる相手が無い。
+  //
+  // **最大波の `MaxHeight/Revise` は、自前の比較で何も付かなかったときだけ波高へ付ける。**
+  // この印は波高と最大波の観測時刻の両方に掛かり、電文はどちらが動いたかを言わない。自前の比較が
+  // どれかを拾えていれば、そちらのほうが「どの項目か」を正しく言える（2026-10-21 ユーザー選択
+  // 「おすすめで」）。
+  // 下の第1波の印より先に見ること —— 「自前の比較で」には電文の印を含めない。
+  if (obs.maxHeightRevise && fields.size === 0) fields.add('height')
+  // **第1波は `FirstHeight/Revise` があればそのまま付ける。** 項目が 1 つなので取り違えようがない。
+  if (obs.firstHeightRevise) fields.add('firstWave')
   return fields
 }
 

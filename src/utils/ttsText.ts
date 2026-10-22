@@ -3472,6 +3472,7 @@ export function tsunamiTideToSegments(
   const headlinePart = speakableHeadline(headline) || TIDE_REPORT_FALLBACK_HEADLINE
   const tail = change === 'tide' ? '満潮時刻が更新されました。'
     : change === 'arrival' ? '津波の到達状況が更新されました。'
+    : change === 'arrivalTime' ? '津波の到達予想時刻が更新されました。'
     : change === 'none' ? '内容に変わりはありません。'
     : ''
   return [plain(`${headlinePart}${tail}`)]
