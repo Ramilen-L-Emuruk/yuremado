@@ -11,6 +11,7 @@
 
 import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
 import type { JMAQuake, JMATsunami } from '../types/earthquake'
+import type { ReplayFetchPurpose } from '../hooks/useReplayController'
 import type { HistoricalArchiveFile, HistoricalArchiveIndex, HistoricalArchiveMeta } from '../types/historicalArchive'
 import { validateHistoricalArchiveIndex, validateHistoricalArchiveFile } from '../utils/historicalArchiveSchema'
 import { selectQuakeHistory } from '../utils/quakeHistorySelection'
@@ -166,6 +167,37 @@ export function findArchiveJustEndedSync(index: HistoricalArchiveIndex, fromTime
     const to = new Date(m.to).getTime()
     return from >= to && from < to + windowMs
   }) ?? null
+}
+
+/**
+ * 再生の窓が、電文を集めていない日だけを見るときの扱い。目的（`ReplayFetchPurpose`）で分ける。
+ * - 本編: 止める（`reject`）。開始時刻そのものが集めていない日
+ * - 初期状態: 空で返す（`empty`）。集めた日の 0 時ちょうどから始めると、手前 24 時間が丸ごと前日になる。
+ *   本編は本物の電文を返せるのに、それで再生全体を止めることになるため
+ * - 先読み: 集めていない日へ入った最初の窓だけ止め（再生中の警告に出る。再生は続く）、直前の窓も
+ *   集めていなかったら空で返す。毎時の失敗が積み上がって警告と取りこぼしの数が意味を失うため
+ * 集めた日に掛かる窓・アーカイブの外の窓は `fetch`（従来どおり取りに行く）。
+ */
+export function uncollectedFetchVerdict(
+  index: HistoricalArchiveIndex,
+  fromTime: Date,
+  toTime: Date,
+  purpose: ReplayFetchPurpose,
+): { kind: 'fetch' } | { kind: 'empty' } | { kind: 'reject'; archive: HistoricalArchiveMeta } {
+  const archive = findUncollectedArchiveSync(index, fromTime, toTime)
+  if (!archive) return { kind: 'fetch' }
+  if (purpose === 'initial') return { kind: 'empty' }
+  if (purpose === 'prefetch') {
+    const span = toTime.getTime() - fromTime.getTime()
+    const previous = findUncollectedArchiveSync(index, new Date(fromTime.getTime() - span), fromTime)
+    if (previous) return { kind: 'empty' }
+  }
+  return { kind: 'reject', archive }
+}
+
+/** 電文が 1 通も無く、取りこぼしも無い取得結果（集めていない日を空で返すとき）。 */
+export function emptyReplayFetchResult(): ReplayFetchResult {
+  return { entries: [], skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0 }
 }
 
 export async function fetchLocalArchiveEvents(

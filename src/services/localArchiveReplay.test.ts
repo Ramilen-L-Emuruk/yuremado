@@ -14,6 +14,7 @@ import {
   findCoveringArchiveSync,
   findArchiveJustEndedSync,
   findUncollectedArchiveSync,
+  uncollectedFetchVerdict,
   fetchLocalArchiveEvents,
   fetchLocalArchiveQuakeHistory,
   listHistoricalArchives,
@@ -123,6 +124,20 @@ describe('findUncollectedArchiveSync', () => {
     expect(findUncollectedArchiveSync([iburi], ...hour('2018-09-07T14:30:00.000Z'))).toBeNull()
     // 初期状態（24 時間）が集めていない前日へはみ出しても、集めた日に掛かれば通す
     expect(findUncollectedArchiveSync([iburi], new Date('2018-10-04T03:00:00.000Z'), new Date('2018-10-05T03:00:00.000Z'))).toBeNull()
+  })
+
+  it('目的で扱いを分ける: 本編は止め、初期状態は空、先読みは集めていない日へ入った最初の窓だけ止める', () => {
+    const DAY = 24 * 60 * 60 * 1000
+    // 集めた日（10/5）の 0 時ちょうどから始めると、初期状態の窓は丸ごと前日（10/4）
+    const start = new Date('2018-10-04T15:00:00.000Z')
+    expect(uncollectedFetchVerdict([iburi], new Date(start.getTime() - DAY), start, 'initial').kind).toBe('empty')
+    expect(uncollectedFetchVerdict([iburi], ...hour('2018-11-01T03:00:00.000Z'), 'main').kind).toBe('reject')
+    // 10/6 の終わり（10/6 15:00Z）を越えた最初の先読みは止め、その次からは空
+    expect(uncollectedFetchVerdict([iburi], ...hour('2018-10-06T15:00:00.000Z'), 'prefetch').kind).toBe('reject')
+    expect(uncollectedFetchVerdict([iburi], ...hour('2018-10-06T16:00:00.000Z'), 'prefetch').kind).toBe('empty')
+    // 集めた日に掛かる窓は取りに行く
+    expect(uncollectedFetchVerdict([iburi], ...hour('2018-10-05T03:00:00.000Z'), 'main').kind).toBe('fetch')
+    expect(uncollectedFetchVerdict([iburi], ...hour('2018-10-05T03:00:00.000Z'), 'initial').kind).toBe('fetch')
   })
 
   // 安全弁: 途切れなく集めたアーカイブ・収録範囲の外は従来どおり（止めない）
