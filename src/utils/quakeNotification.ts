@@ -1,22 +1,29 @@
 // 地震情報のブラウザ通知（OS 通知）の中身と、出すかどうかを決める。**通知を出すのは App の担当**で、
 // ここは純粋な判定だけ（単体テストの対象）。背景は docs/spec/settings-pwa-spec.md §2「ブラウザ通知」。
 //
-// **1 つの地震で出すのは最大 2 回**（2026-10-19 ユーザー承認「速報の文＋震源で置き換え (推奨)」）。
+// **1 つの地震で出すのは、震度速報・震源が判った報・最大震度が上がった報の 3 つの場面**。
 // - 震度速報（震源がまだ判らない報）が閾値を満たせば、まず「震度速報 {区域} 最大震度{震度}」を出す
-// - 同じ地震で震源が判った報が来たら、もう 1 度だけ「{震源名} 最大震度{震度} {規模}」を出す
-// - その後の続報では出さない
-// 通知の tag を地震ごと（`quakeEventKey`）にするので、2 回目は OS 上で 1 回目を置き換える。
+// - 同じ地震で震源が判った報が来たら、もう 1 度「{震源名} 最大震度{震度} {規模}」を出す
+//   （ここまで 2026-10-19 ユーザー承認「速報の文＋震源で置き換え (推奨)」）
+// - 震源が判ったあとの続報で、最大震度の階級が前に通知したときより上がったら
+//   「最大震度更新 {震源名} 最大震度{震度} {規模}」を出し、音も鳴らし直す
+//   （2026-10-21 選択「上がったら出し直す (Recommended)」・2026-10-22 選択「頭に「最大震度更新」 (Recommended)」）
+// - 遠地地震は設定の震度に関係なく、地震ごとに 1 回「遠地地震 {震源名} {規模}」を出す
+//   （2026-10-22 選択「全部出す (Recommended)」。震源名は詳細震央地名）
+// 通知の tag を地震ごと（`quakeEventKey`）にするので、2 回目以降は OS 上で前の通知を置き換える。
 import type { AreaPrefIndex } from './quakePoints'
 import { isAreaPoint, isMaxScaleUnreceived } from './quakePoints'
 import type { JMAQuake } from '../types/earthquake'
 import { getIntensityLabelWithOrAbove } from './intensity'
 import { formatMagnitudeWithCondition } from './formatters'
-import { isHypocenterPending, quakeEventKey } from './quakeMerge'
+import { isHypocenterPending, quakeEventKey, sameQuakeEntry } from './quakeMerge'
 
-/** 最後に通知した地震と、そのとき震源が判っていたか。 */
+/** 最後に通知した地震と、そのとき震源が判っていたか・最大震度は何だったか。 */
 export interface QuakeNotifiedState {
   readonly key: string
   readonly withHypocenter: boolean
+  /** 最後に通知したときの最大震度。上がったら出し直す（→ {@link decideQuakeNotification}）。 */
+  readonly maxScale: number
 }
 
 /**
@@ -50,6 +57,11 @@ export interface QuakeNotification {
   readonly body: string
   /** OS 上で同じ地震の通知を置き換えるための印（地震ごとの鍵）。 */
   readonly tag: string
+  /**
+   * 置き換えるときも音を鳴らし直すか（Notification の `renotify`）。最大震度が上がった報だけ真 ——
+   * 同じ tag の通知は既定では黙って差し替わるので、上がったことに気づけない。
+   */
+  readonly renotify: boolean
 }
 
 /**
@@ -98,12 +110,33 @@ export function hypocenterNotificationBody(quake: JMAQuake): string {
   return `${name} 最大震度${maxScaleLabel(quake)} ${formatMagnitudeWithCondition(magnitude, magnitudeCondition)}`
 }
 
+/** 最大震度が上がった報の本文。例「最大震度更新 石川県能登地方 最大震度6強 M7.6」。 */
+export function maxScaleRaisedNotificationBody(quake: JMAQuake): string {
+  return `最大震度更新 ${hypocenterNotificationBody(quake)}`
+}
+
 /**
- * いちばん新しい地震について通知を出すかを決める。
+ * 遠地地震の本文。例「遠地地震 メキシコ、チアパス州沿岸 M7.4」。震源名は詳細震央地名
+ * （パーサーが `Area/DetailedName` を優先して入れる）。名前が無ければ省く。
+ */
+export function foreignQuakeNotificationBody(quake: JMAQuake): string {
+  const { name, magnitude, magnitudeCondition } = quake.earthquake.hypocenter
+  const mag = formatMagnitudeWithCondition(magnitude, magnitudeCondition)
+  return name ? `遠地地震 ${name} ${mag}` : `遠地地震 ${mag}`
+}
+
+/**
+ * その地震について通知を出すかを決める。
  *
- * - 閾値（`notifyMinScale`。負なら通知しない）は従来どおり最大震度で見る
- * - 前回通知した地震と同じ鍵なら、**震源なしで出したあとに震源が判ったときだけ**もう 1 度出す
+ * - 通知を切っている（`notifyMinScale` が負）なら出さない
+ * - 遠地地震（国内の震度を持たない）は閾値に関係なく、地震ごとに 1 回だけ出す
+ * - それ以外は最大震度が閾値（`notifyMinScale`）以上のときだけ見る
+ * - 前回通知した地震と同じ鍵なら、次のどちらかのときだけもう 1 度出す
+ *   - 震源なしで出したあとに震源が判った
+ *   - 震源が判ったあとで、最大震度が前に通知したときより上がった（音も鳴らし直す）
  * - 震源が判ったかは震源の欄が埋まったか（`isHypocenterPending`）で見る。本文が震源名を使うため
+ *
+ * **震源がまだ判らないうちに最大震度が上がっても出さない。** 震源が判った報で、そのときの最大震度を出す。
  *
  * @returns 出す通知と、次に覚えておく状態。出さなければ `null`（状態も変えない）
  */
@@ -114,16 +147,61 @@ export function decideQuakeNotification(
   areaPrefIndex: AreaPrefIndex,
 ): { notification: QuakeNotification; next: QuakeNotifiedState } | null {
   if (notifyMinScale < 0) return null
-  if (quake.earthquake.maxScale < notifyMinScale) return null
   const key = quakeEventKey(quake)
+  const sameQuake = previous !== null && previous.key === key
+  const maxScale = quake.earthquake.maxScale
+  if (quake.issue.type === '遠地地震') {
+    if (sameQuake) return null
+    return {
+      notification: { title: '地震情報', body: foreignQuakeNotificationBody(quake), tag: key, renotify: false },
+      next: { key, withHypocenter: true, maxScale },
+    }
+  }
+  if (maxScale < notifyMinScale) return null
   const withHypocenter = !isHypocenterPending(quake)
-  if (previous && previous.key === key && (previous.withHypocenter || !withHypocenter)) return null
+  if (sameQuake) {
+    if (!previous.withHypocenter && withHypocenter) {
+      return {
+        notification: { title: '地震情報', body: hypocenterNotificationBody(quake), tag: key, renotify: false },
+        next: { key, withHypocenter, maxScale },
+      }
+    }
+    if (previous.withHypocenter && withHypocenter && maxScale > previous.maxScale) {
+      return {
+        notification: { title: '地震情報', body: maxScaleRaisedNotificationBody(quake), tag: key, renotify: true },
+        next: { key, withHypocenter, maxScale },
+      }
+    }
+    return null
+  }
   return {
     notification: {
       title: '地震情報',
       body: withHypocenter ? hypocenterNotificationBody(quake) : scalePromptNotificationBody(quake, areaPrefIndex),
       tag: key,
+      renotify: false,
     },
-    next: { key, withHypocenter },
+    next: { key, withHypocenter, maxScale },
   }
+}
+
+/**
+ * ライブで届いた報から、通知を考える地震カードを引く。受信側の統合と同じ当て方（`sameQuakeEntry`）で、
+ * 取り消されたカードは外す。同じカードに当たった報は 1 つにまとめる（同じティックに続報が並んだとき）。
+ *
+ * @returns 引けたカードと、引けなかった報（状態が採らなかった・取り消された報。呼び出し側が記録する）
+ */
+export function collectQuakesToNotify(
+  pending: readonly JMAQuake[],
+  earthquakes: readonly JMAQuake[],
+  areaPrefIndex: AreaPrefIndex,
+): { cards: JMAQuake[]; unmatched: JMAQuake[] } {
+  const cards: JMAQuake[] = []
+  const unmatched: JMAQuake[] = []
+  for (const incoming of pending) {
+    const card = earthquakes.find(c => !c.cancelledAt && sameQuakeEntry(c, incoming, areaPrefIndex))
+    if (!card) unmatched.push(incoming)
+    else if (!cards.includes(card)) cards.push(card)
+  }
+  return { cards, unmatched }
 }

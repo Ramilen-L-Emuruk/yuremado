@@ -462,7 +462,8 @@ const TEST_LATE_CITY_COUNT = 3
  * - **震度速報は震源を持たない。** 電文に `Earthquake` 要素が無く、パーサーは震源名を空・
  *   座標を -200（位置不明センチネル）・深さを -1・規模を `NaN` で埋める
  * - **震源情報は震度を持たない**
- * - **続報で区域が増える。** 1 通目は一部の区域だけで、3 通目で出そろう
+ * - **続報で区域が増える。** 1 通目は一部の区域だけで、3 通目で出そろう。1 通目にはいちばん強い震度の区域を
+ *   入れないので、3 通目で最大震度が上がる（ブラウザ通知の「最大震度更新」が出る）
  * - **報番号（`Head/Serial`）を持つのは震源・震度情報だけ。** 震度速報・震源情報は空要素で届くので
  *   `id` の末尾は 4 通とも `-1` のまま。**通数を数える鍵は電文の種別名と作成時刻の組**（`telegramKey`）で、
  *   ここを持たせないと 2 通目の震度速報が「同じ電文の再送」と見なされて数えられない
@@ -500,11 +501,16 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   const areaPoints = areaSource
     .filter(p => p.isArea)
     .map(p => (useDmdataShape || p.pref ? p : { ...p, pref: areaPrefByName.get(p.addr) ?? p.pref }))
-  const firstPoints = [...areaPoints]
-    .sort((a, b) => b.scale - a.scale)
-    .slice(0, Math.ceil(areaPoints.length * 0.6))
   const maxScaleOf = (points: EarthquakePoint[]): IntensityScale =>
     points.reduce<IntensityScale>((max, p) => (p.scale > max ? p.scale : max), -1)
+  // 1 通目は**いちばん強い震度の区域がまだ入っていない形**にする（能登の本震なら震度7の 2 行を外し、最大震度6弱）。
+  // 3 通目で出そろって最大震度が上がるので、2 通目の震源情報のあとで最大震度が上がった報になり、
+  // ブラウザ通知の「最大震度更新」（→ `utils/quakeNotification.ts`）を実機で確かめられる入口はここだけ。
+  const topScale = maxScaleOf(areaPoints)
+  const firstPoints = [...areaPoints]
+    .filter(p => p.scale !== topScale)
+    .sort((a, b) => b.scale - a.scale)
+    .slice(0, Math.ceil(areaPoints.length * 0.6))
 
   const prompt = (time: string, points: EarthquakePoint[]): JMAQuake => {
     return {
@@ -671,7 +677,9 @@ export const TEST_QUAKE_CANCEL_DELAY_MS = 10_000
  * 緊急地震速報だけ）。
  */
 export function createTestQuakeCancel(): [JMAQuake, JMAQuake] {
-  const prompt = createTestQuakeReportSequence(true)[0]
+  // **区域が出そろった 3 通目を採る。** 1 通目はいちばん強い震度の区域を外してある（最大震度が上がる形を
+  // 作るため）ので、採ると震度7 の再送という実電文の形から外れる
+  const prompt = createTestQuakeReportSequence(true)[2]
   const cancelTime = new Date(new Date(prompt.time).getTime() + TEST_QUAKE_CANCEL_DELAY_MS).toISOString()
   const cancel: JMAQuake = {
     kind: 'quake',
