@@ -431,13 +431,37 @@ describe('eewMaxScaleInfo: 「〜以上」の集約', () => {
   })
 
   // 安全弁: 区域別予想を先に見る順序は変えていない。
-  it('仮定震源要素でも areas があればそちらを優先する', () => {
+  // 2026-10-22 に覆した: 以前は区域を先に見ていた。DMDATA の報は電文全体の値（最大予測震度）を先に採る
+  // （ユーザー承認「電文全体の値を使う (Recommended)」）。仮定震源要素でも値を捨てないことは変わらない。
+  it('DMDATA の報は仮定震源要素でも電文全体の値を区域より先に採る', () => {
     const eew = makeEEW({
       earthquake: { ...makeEEW().earthquake, condition: '仮定震源要素' },
       areas: [area({ scaleFrom: 40, scaleTo: 40, scaleToOrAbove: true })],
       forecastMaxScale: 70,
     })
+    expect(eewMaxScaleInfo(eew)).toEqual({ scale: 70, orAbove: false })
+  })
+
+  // 対照: standard 版は区域（P2PQuake）と電文全体の値（Yahoo）が別の経路なので、印が無ければ区域を先に見る
+  it('standard 版は印が無ければ区域を先に見る', () => {
+    const eew = makeEEW({
+      origin: 'p2pquake',
+      areas: [area({ scaleFrom: 40, scaleTo: 40, scaleToOrAbove: true })],
+      forecastMaxScale: 70,
+    })
     expect(eewMaxScaleInfo(eew)).toEqual({ scale: 40, orAbove: true })
+  })
+
+  // 安全弁: 電文全体の値を採っても、同じ階級の区域の「以上」は落とさない
+  it('電文全体の値と同じ階級の区域が「以上」なら残す', () => {
+    const eew = makeEEW({ areas: [area({ scaleFrom: 50, scaleTo: 50, scaleToOrAbove: true })], forecastMaxScale: 50 })
+    expect(eewMaxScaleInfo(eew)).toEqual({ scale: 50, orAbove: true })
+  })
+
+  // 安全弁: 電文全体の値が無い（震度0・未設定）なら区域の最大へ戻る
+  it('電文全体の値が無ければ区域の最大を採る', () => {
+    const eew = makeEEW({ areas: [area({ scaleFrom: 40, scaleTo: 40 })] })
+    expect(eewMaxScaleInfo(eew)).toEqual({ scale: 40, orAbove: false })
   })
 
   it('震度が取れないときは orAbove を立てない（「不明以上」を作らない）', () => {
@@ -570,12 +594,13 @@ describe('eewMaxLpgmClass', () => {
     expect(eewMaxLpgmClass(eew)).toBe(2)
   })
 
-  it('areas内のlgIntTo最大値をforecastMaxLpgmClassより優先する', () => {
+  // 2026-10-22 に覆した: 以前は区域の最大を先に見ていた（ユーザー承認「電文全体の値を使う (Recommended)」）
+  it('電文全体の forecastMaxLpgmClass を区域の lgIntTo より先に採る', () => {
     const eew = makeEEW({
       areas: [{ pref: 'A県', name: 'A地域', scaleFrom: 30, scaleTo: 40, kindCode: '10', arrivalTime: null, lgIntTo: 2 }],
       forecastMaxLpgmClass: 4,
     })
-    expect(eewMaxLpgmClass(eew)).toBe(2)
+    expect(eewMaxLpgmClass(eew)).toBe(4)
   })
 
   it('areas内にlgIntToを持つ地域が無ければforecastMaxLpgmClassにフォールバックする', () => {

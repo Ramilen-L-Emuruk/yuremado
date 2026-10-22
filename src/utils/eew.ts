@@ -393,10 +393,16 @@ export interface EewMaxScaleInfo {
  * （2024 能登 1/1〜1/3 の実データでは仮定震源要素 72 報のうち 50 報が最大予測震度を持っていた。
  * うち区域を持たない 25 報が、かつてこの経路で「予想震度なし」に落ちていた）。
  *
- * 区域別予想を先に見るのは、地域ごとの内訳のほうが細かいため。区域の列挙が始まるのは電文全体の
- * 予想が震度 4 以上になってからで、震度 3 以下の予想は区域が空のまま電文全体の値だけが載る。
- * **区域そのものに下限は無い**（震度 2 の区域も並ぶ）。この順序で値を取りこぼさないことの裏付けは
- * docs/spec/eew-spec.md §4「区域に載る予測震度に下限は無い」。
+ * **DMDATA の報は電文全体の値（`Body/Intensity/Forecast/ForecastInt`）を先に採り**、区域の最大は
+ * それが無いときの代わりにする（2026-10-22 ユーザー承認「電文全体の値を使う (Recommended)」）。
+ * 気象庁が「最大予測震度」として発表するのはこの値で、区域の最大はそこから導いたものにすぎない
+ * （控えにある実電文で両者の食い違いは 0 件。範囲と件数は → docs/spec/eew-spec.md §4「予想最大震度は電文全体の値」）。
+ * **DMDATA 以外の報は区域を先に見る** —— standard 版は区域（P2PQuake）と電文全体の値（Yahoo）が別の経路から
+ * 来るので、電文全体の値を採るのは `maxScaleFromForecast` が立ったときだけ（`mergeEewReport`）。
+ *
+ * 区域の列挙が始まるのは電文全体の予想が震度 4 以上になってからで、震度 3 以下の予想は区域が空のまま
+ * 電文全体の値だけが載る。**区域そのものに下限は無い**（震度 2 の区域も並ぶ）。
+ * → docs/spec/eew-spec.md §4「区域に載る予測震度に下限は無い」。
  *
  * 震度スケール外の値（`IntensityScale` に無い中間値・範囲外値）は採用しない。
  * `EEWRegion` は型で守られているが、実地震シナリオ JSON のように型検査を通らない経路から
@@ -418,9 +424,13 @@ export function eewMaxScaleInfo(eew: EEWAlert): EewMaxScaleInfo {
     }
   }
   const forecast = eew.forecastMaxScale
-  // 区域が古い報のもので、電文全体の値のほうが新しいとき（→ `EEWAlert.maxScaleFromForecast`）。
-  if (eew.maxScaleFromForecast && forecast != null && isValidIntensityScale(forecast) && forecast > 0) {
-    return { scale: forecast, orAbove: eew.forecastMaxScaleOrAbove === true }
+  // DMDATA の報、または区域が古い報のもので電文全体の値のほうが新しいとき（→ `EEWAlert.maxScaleFromForecast`）。
+  // 同じ階級の区域が「以上」なら残す（強い側の表現を落とさない。下の区域の扱いと同じ）。
+  if ((eew.origin === 'dmdata' || eew.maxScaleFromForecast) && forecast != null && isValidIntensityScale(forecast) && forecast > 0) {
+    return {
+      scale: forecast,
+      orAbove: eew.forecastMaxScaleOrAbove === true || (areasMax === forecast && areasOrAbove),
+    }
   }
   if (areasMax > 0) return { scale: areasMax, orAbove: areasOrAbove }
   const scale = forecast != null && isValidIntensityScale(forecast) ? forecast : 0
@@ -591,8 +601,9 @@ export interface EewMaxLpgmClassInfo {
 /**
  * 最大予想長周期地震動階級と、それが「程度以上」だったか。
  *
- * 選び方は `eewMaxScaleInfo` と揃える —— 地域別を優先し、**同じ階級で「程度以上」の区域が
- * 1 つでもあれば「程度以上」を立てる**（上限が定まらない区域を、定まった区域に紛れさせない）。
+ * 選び方は `eewMaxScaleInfo` と揃える —— 電文全体の値（`ForecastLgInt`）を先に採り、区域の最大は
+ * それが無いときの代わり。**同じ階級で「程度以上」の区域が 1 つでもあれば「程度以上」を立てる**
+ * （上限が定まらない区域を、定まった区域に紛れさせない）。階級を運ぶのは DMDATA だけなので経路で分けない。
  */
 export function eewMaxLpgmClassInfo(eew: EEWAlert): EewMaxLpgmClassInfo {
   let areasMax = 0
@@ -606,10 +617,11 @@ export function eewMaxLpgmClassInfo(eew: EEWAlert): EewMaxLpgmClassInfo {
       areasOver = true
     }
   }
-  if (areasMax > 0) return { cls: areasMax, over: areasOver }
   const forecast = eew.forecastMaxLpgmClass
-  const cls = forecast != null && isValidLpgmClass(forecast) ? forecast : 0
-  return { cls, over: cls > 0 && eew.forecastMaxLpgmClassOver === true }
+  if (forecast != null && isValidLpgmClass(forecast) && forecast > 0) {
+    return { cls: forecast, over: eew.forecastMaxLpgmClassOver === true || (areasMax === forecast && areasOver) }
+  }
+  return { cls: areasMax, over: areasMax > 0 && areasOver }
 }
 
 /**

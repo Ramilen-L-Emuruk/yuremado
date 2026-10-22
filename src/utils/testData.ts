@@ -1136,8 +1136,8 @@ export function createTestEEWWarning(withDmdssFields: boolean, eventId?: string,
     },
     severity: 'Warning',
     cancelled: false,
-    // 電文全体の最大予測震度。区域があるときの表示は区域を優先するが（`utils/eew.ts` の
-    // `eewMaxScale`）、**実電文はどちらの経路もこの欄を持つ** —— DMDATA は `Intensity/
+    // 電文全体の最大予測震度。DMDATA の報はこちらを区域より先に採り、standard 版は区域を先に見る
+    // （`utils/eew.ts` の `eewMaxScale`）。**実電文はどちらの経路もこの欄を持つ** —— DMDATA は `Intensity/
     // Forecast/MaxInt`、standard 版は Yahoo hypoInfo の `calcintensity` がここへ入る。
     forecastMaxScale: 50,
     ...(withDmdssFields ? {
@@ -1566,8 +1566,8 @@ export function createTestEEW(withDmdssFields: boolean, eventId?: string, serial
     //
     // 電文全体の最大予測震度も同じ遷移をする（`Intensity/Forecast/MaxInt` の `To="over"`）。
     // **区域が無い報ではこれだけが予想震度になる** —— standard 版の初報がまさにその形で、
-    // 「震度6強程度以上」を区域なしで伝える経路はここでしか通らない（`utils/eew.ts` の
-    // `eewMaxScale` は区域があればそちらを優先するため）。
+    // 「震度6強程度以上」を区域なしで伝える経路はここでしか通らない（standard 版の
+    // `eewMaxScale`（`utils/eew.ts`）は区域があればそちらを優先するため）。
     forecastMaxScale: isDowngradeReport ? 45 : 60,
     // **上限が定まらないことを伝えられるのは DMDATA だけ。** P2PQuake は電文全体の最大予測震度を
     // 配信せず（区域ごとの `scaleTo: 99` は運ぶ）、Yahoo hypoInfo の `calcintensity` にも
@@ -1590,7 +1590,12 @@ export function createTestEEW(withDmdssFields: boolean, eventId?: string, serial
     // **続報で地方が増える形まで再現する。** 実配信では 4 年に 3 例しかないが（能登本震は
     // 1→4→6 地方）、読み上げが「新たに、〜でも強い揺れに警戒してください。」と差分を言う経路は
     // ここでしか通らない。ボタンを 1 回押すと 1 地方、もう 1 回で 2 地方へ広がる。
+    //
+    // **加わった地方を電文が分けて示すのは、加わったその報だけ**（2 つ目の `Item` の `LastKind` が
+    // 「なし」）。次の報では前の報でも警報だったので 1 つ目の `Item` へ戻る。カードはこれで
+    // 「関東」にだけ一瞬色を付ける。
     ...(withDmdssFields ? { warningRegions: isFirstReport ? ['東北'] : ['東北', '関東'] } : {}),
+    ...(withDmdssFields && serial === 2 ? { addedWarningRegions: ['関東'] } : {}),
     issue: { eventId: eid, serial: String(serial), time: report },
     // 実データに合わせ areas を使用（参照は utils/eew.ts の eewAreas() で吸収）
     //

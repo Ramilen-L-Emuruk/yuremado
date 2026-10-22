@@ -6305,6 +6305,51 @@ describe('緊急地震速報の警報対象地方（Head/Headline/Information）
     expect(eew?.warningRegions).toEqual(['北陸', '甲信', '東海', '関東'])
   })
 
+  // 正: 2 つ目の Item（LastKind が「なし」）の地方を、新たに加わった地方として分けて持つ
+  it('新たに加わった地方を分けて持つ', () => {
+    const eew = parseEEWFromXml('VXSE45', eewXml({ headline: notoHeadline }))
+    expect(eew?.addedWarningRegions).toEqual(['甲信', '東海', '関東'])
+  })
+
+  // 対照: 既に警報だった地方しかない報では持たせない
+  it('加わった地方が無ければ持たせない', () => {
+    const eew = parseEEWFromXml('VXSE45', eewXml({ headline: '<Text>x</Text>' + regionInfo(ITEM_EXISTING) }))
+    expect(eew?.warningRegions).toEqual(['北陸'])
+    expect(eew?.addedWarningRegions).toBeUndefined()
+  })
+
+  // 安全弁: 既存の Item にもいる地方は「加わった」に入れない（実電文では起きない重なり）
+  it('既存の Item にもいる地方は加わったと見なさない', () => {
+    const addedHokuriku = ITEM_ADDED.replace('<Area><Name>甲信</Name><Code>9935</Code></Area>', '<Area><Name>北陸</Name><Code>9934</Code></Area>')
+    const eew = parseEEWFromXml('VXSE45', eewXml({ headline: '<Text>x</Text>' + regionInfo(ITEM_EXISTING + addedHokuriku) }))
+    expect(eew?.addedWarningRegions).toEqual(['東海', '関東'])
+  })
+
+  // 正: 前の報での種別（LastKind）が読めない Item は「続いている」側へ倒し、記録を残す
+  it('LastKind を読めない Item は記録して加わった地方に入れない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const noLastKind = ITEM_ADDED.replace('<LastKind><Name>なし</Name><Code>00</Code></LastKind>', '')
+      const eew = parseEEWFromXml('VXSE45', eewXml({ headline: '<Text>x</Text>' + regionInfo(ITEM_EXISTING + noLastKind) }))
+      expect(eew?.warningRegions).toEqual(['北陸', '甲信', '東海', '関東'])
+      expect(eew?.addedWarningRegions).toBeUndefined()
+      expect(warn.mock.calls.some(c => String(c[0]).includes('前の報での種別（LastKind）を判定できません（1 件'))).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 対照: 実電文の形（なし／いまの種別と同じ）では記録しない
+  it('LastKind が「なし」かいまの種別と同じなら記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      parseEEWFromXml('VXSE45', eewXml({ headline: notoHeadline }))
+      expect(warn.mock.calls.some(c => String(c[0]).includes('LastKind'))).toBe(false)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   // 対照: 見出しを持たない報（予報級の実電文と同じ形）では空
   it('見出しを持たない報では持たせない', () => {
     const eew = parseEEWFromXml('VXSE45', eewXml())
@@ -6492,5 +6537,46 @@ describe('緊急地震速報の規模の説明', () => {
     const eew = parseEEWFromXml('VXSE45', eewXml({ magnitude: '<jmx_eb:Magnitude type="Mj" description="Ｍ６．５">6.5</jmx_eb:Magnitude>' }))!
     expect(eew.earthquake.hypocenter.magnitude).toBe(6.5)
     expect(eew.earthquake.hypocenter.magnitudeCondition).toBeUndefined()
+  })
+})
+
+// 表示は電文全体の最大予測値を区域の最大より先に採る（`utils/eew.ts` の `eewMaxScaleInfo`）。
+// 全期間の実電文では 2 つが 1 通も食い違わないので、電文全体のほうが低い報は異常として記録する。
+describe('緊急地震速報の電文全体の最大予測値が区域の最大より低い報', () => {
+  const lowCount = (warn: { mock: { calls: unknown[][] } }): string[] =>
+    warn.mock.calls.filter(c => String(c[0]).includes('区域の最大')).map(c => String(c[0]))
+
+  // 正: 震度が区域の最大より低ければ記録する
+  it('最大予測震度が区域の最大より低ければ記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const e = parseEEWFromXml('VXSE45', eewXml({ forecastInt: '<From>4</From><To>4</To>', pref: eewPref('<From>5-</From><To>5+</To>') }))
+      expect(e?.forecastMaxScale).toBe(40)
+      expect(lowCount(warn).some(t => t.includes('最大予測震度（40）が区域の最大（50）'))).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 対照: 一致していれば記録しない（実電文の形）
+  it('一致していれば記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      parseEEWFromXml('VXSE45', eewXml({ pref: eewPref('<From>5-</From><To>5+</To>') }))
+      expect(lowCount(warn)).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 安全弁: 区域を持たない報（震度 3 以下の予想）では比べる相手が無いので記録しない
+  it('区域が無ければ記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      parseEEWFromXml('VXSE45', eewXml({ forecastInt: '<From>3</From><To>3</To>' }))
+      expect(lowCount(warn)).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

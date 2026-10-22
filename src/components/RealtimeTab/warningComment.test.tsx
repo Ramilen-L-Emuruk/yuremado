@@ -62,7 +62,7 @@ describe('EEW カードの固定付加文', () => {
     renderTab(makeEEW())
     const comment = screen.getByText(COMMENT)
     const maxScaleLabel = screen.getByText('予想最大震度')
-    const originTime = screen.getByText(/ごろ$/)
+    const originTime = screen.getByText(/^地震発生時刻 /)
     expect(precedes(maxScaleLabel, comment)).toBe(true)
     expect(precedes(comment, originTime)).toBe(true)
   })
@@ -78,5 +78,37 @@ describe('EEW カードの固定付加文', () => {
   it('取消（cancelledAt）では出さない', () => {
     renderTab(makeEEW({ cancelledAt: new Date('2026-01-01T12:01:00Z') }))
     expect(screen.queryByText(COMMENT)).toBeNull()
+  })
+})
+
+// 新たに警報の対象に加わった地方（電文の 2 つ目の `Item`）だけを、他の欄と同じ減衰で一瞬光らせる
+// （2026-10-22 ユーザー承認「一瞬色を付ける」。→ docs/spec/eew-spec.md §3「警報の対象地方」）。
+describe('EEW カードの新たに加わった警報の地方', () => {
+  const rerenderTab = (r: ReturnType<typeof renderTab>, eew: EEWAlert) =>
+    r.rerender(
+      <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
+    )
+  const regionSpan = (name: string) => {
+    return screen.getByText((_, node) => node?.tagName === 'SPAN' && node.textContent === name) as HTMLElement
+  }
+
+  // 正: 続報で加わった地方にだけ「上がった」の色を当てる
+  it('続報で加わった地方にだけ色を付ける', () => {
+    const r = renderTab(makeEEW({ warningRegions: ['北陸'] }))
+    // id は変えない —— 色付けは同じ地震の続報どうしで比べる（id が変われば別の地震として初出に戻る）
+    rerenderTab(r, makeEEW({ warningRegions: ['北陸', '甲信', '関東'], addedWarningRegions: ['甲信', '関東'] }))
+    for (const name of ['甲信', '関東']) {
+      expect(regionSpan(name).className).toContain('update-fade-text')
+      expect(regionSpan(name).style.getPropertyValue('--update-mark-color')).toBe('#f87171')
+    }
+    // 対照: 前から警報だった地方は色を付けない（span で包まない）
+    expect(screen.queryAllByText((_, node) => node?.tagName === 'SPAN' && node.textContent === '北陸')).toHaveLength(0)
+    expect(r.container.textContent).toContain('関東・北陸・甲信')  // 並びは読み上げと同じ標準順
+  })
+
+  // 対照: 初めて見た報は、加わった地方を持っていても光らせない（欄の初出は動いたことにしない）
+  it('初めて見た報では光らせない', () => {
+    renderTab(makeEEW({ warningRegions: ['北陸', '甲信'], addedWarningRegions: ['甲信'] }))
+    expect(regionSpan('甲信').className).not.toContain('update-fade')
   })
 })

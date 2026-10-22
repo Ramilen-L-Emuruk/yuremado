@@ -1,7 +1,7 @@
 // リアルタイムタブの右パネル。地図エリアは JapanMap が強震モニタ（観測点）と
 // 予報円を描画し、ここでは EEW 情報カード・強震モニタ検知(V2)カード・注記を表示する。
 // 震度スケールの凡例は地図へ重ねる `MapLegend` が持つ（同じものを 2 箇所に出さない）。
-import { memo, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useRef, useState } from 'react'
 import { useFieldFlash, type FieldFlash } from '../../hooks/useFieldFlash'
 import { EEW_FLASH_COLOR, UPDATE_MARK_WASH, EEW_HIGHLIGHT_FADE_MS } from '../../utils/updateMark'
 import type { EEWAlert } from '../../types/earthquake'
@@ -23,6 +23,14 @@ import { isEewWarningKindCode } from '../../utils/eewKind'
 import { serverNow } from '../../utils/clock'
 import { log } from '../../utils/logger'
 import { hasKnownEpicenter } from '../../utils/geo'
+
+/**
+ * カードの「地震発現時刻」の見出しに添える吹き出しの文（ホバー・タップで出る）。発生時刻と数秒しか
+ * 違わないことが多く、違いを知らないと食い違いに見えるため（2026-10-22 ユーザー承認「ホバーで説明を出す」。
+ * 文面は選択肢に書いた「観測点が地震を検知した時刻」のまま）。発生時刻の行には添えない。
+ */
+const EEW_ARRIVAL_TIME_DESCRIPTION = '観測点が地震を検知した時刻'
+
 
 interface Props {
   eews: EEWAlert[]
@@ -271,6 +279,9 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
   // **値が無いときは整形を呼ばない。** 呼ぶと「読めない値が来た」として記録され、
   // 「電文が時刻を持たない」ことと区別が付かなくなる（他の呼び出しと表記も揃う）。
   const originTimeText = eew.earthquake.originTime ? formatDateTime(eew.earthquake.originTime) : null
+  // 地震発現時刻（`Earthquake/ArrivalTime`）。Yahoo hypoInfo の報（standard 版）は配信せず空文字が入るので、
+  // 空なら整形を呼ばずに行ごと出さない（上と同じ理由）。P2PQuake の報は値を持つ。
+  const arrivalTimeText = eew.earthquake.arrivalTime ? formatDateTime(eew.earthquake.arrivalTime) : null
   // 震源が決まっていない報（仮定震源要素と「非常に強い揺れを検知」の報。→ `isProvisionalHypocenter`）。
   // 震源・規模・深さは仮の値（観測点直下 10km）なので、数値は伏せ、地名には未確定である旨を添える。
   const isAssumed = isProvisionalHypocenter(eew)
@@ -312,6 +323,13 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
       // 上限が定まらない報（「震度4程度以上」）は同じ階級でも別の値。**順序は階級で見る**
       // —— 「程度以上」が付いたかどうかは大小ではない。
       ? { key: `${maxScale}${maxScaleOrAbove ? '+' : ''}`, rank: maxScale }
+      : undefined,
+    // 新たに警報の対象に加わった地方（電文の 2 つ目の `Item`。→ `addedWarningRegions`）。
+    // **色を当てるのはその地方名だけ**（2026-10-22 ユーザー承認「一瞬色を付ける」）。
+    // 順序は地方の数で見る —— 加わったなら数が増えるので「上がった」の色になる。
+    // 警報の地方が無い報では欄ごと無いので、初めて警報になった報では光らない（欄の初出は動いたことにしない）。
+    addedWarningRegions: (eew.warningRegions?.length ?? 0) > 0
+      ? { key: (eew.addedWarningRegions ?? []).join('・'), rank: eew.warningRegions!.length }
       : undefined,
   })
   /**
@@ -626,8 +644,20 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
                 {/* **並びは読み上げと同じ標準順へ揃える**（`sortEewWarningRegions`）。
                     電文の文書順は続報で入れ替わるので、そのまま出すと聞いた順と食い違う。
                     区切りが下の「対象地域」欄（` / `）と違うのは、こちらを見出しの大きさで
-                    並べているため —— 日本語で地名を続ける書き方に寄せてある。 */}
-                {sortEewWarningRegions(eew.warningRegions!).join('・')}
+                    並べているため —— 日本語で地名を続ける書き方に寄せてある。
+                    新たに加わった地方だけを、他の欄と同じ減衰で一瞬光らせる（`flash.addedWarningRegions`）。 */}
+                {sortEewWarningRegions(eew.warningRegions!).map((name, i) => {
+                  const added = eew.addedWarningRegions?.includes(name) === true
+                  const f = added ? fade(flash.addedWarningRegions) : undefined
+                  return (
+                    <Fragment key={name}>
+                      {i > 0 && '・'}
+                      {f
+                        ? <span key={f.key} className={`rounded${f.className}`} style={f.style}>{name}</span>
+                        : name}
+                    </Fragment>
+                  )
+                })}
               </div>
             )}
             {eew.warningComment && (
@@ -646,11 +676,20 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
             どれを「最新」とみなすかの並び順も同じ値を読む。据え置きの根拠・読む場所の一覧・実測は
             → `docs/spec/eew-spec.md` §3「地震の時刻は発生時刻を出す」。
 
-            日時として読めなければ欄ごと出さない（「ごろ」だけが残ると、時刻を
+            地震発現時刻（`Earthquake/ArrivalTime`）を下に並べる。見出しはどちらも気象庁の名前のまま
+            （2026-10-22 ユーザー承認「2 行とも名前を付ける」）。秒まで電文の値なので「ごろ」は付けない。
+            発現時刻の行にだけ、見出しへ意味の吹き出しを添える（→ `EEW_ARRIVAL_TIME_DESCRIPTION`。同じカードの「精度情報」と同じ部品）。
+
+            日時として読めなければその行ごと出さない（見出しだけが残ると、時刻を
             読み落としたのか電文が出していないのか分からない）。 */}
-        {originTimeText && (
+        {(originTimeText || arrivalTimeText) && (
           <div className="text-secondary text-[0.9375rem] roomy:text-[1.125rem]">
-            {originTimeText}ごろ
+            {originTimeText && <div>地震発生時刻 {originTimeText}</div>}
+            {arrivalTimeText && (
+              <div>
+                <DescriptionTip label="地震発現時刻" description={EEW_ARRIVAL_TIME_DESCRIPTION} /> {arrivalTimeText}
+              </div>
+            )}
           </div>
         )}
 
