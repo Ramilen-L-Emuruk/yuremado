@@ -109,3 +109,38 @@ describe('津波カードの時刻が読めないとき', () => {
     expect(text).toContain('8.5m')
   })
 })
+
+// 原因地震の行の時刻。値は地震発現時刻（`sourceEarthquakeTime` が発現時刻を先に採る）なので、
+// 公式の名前「地震発現」を付ける。「発生」は地震発生時刻（`OriginTime`）の名前で、別の値。
+// → docs/spec/tsunami-spec.md §4「DMDATA XML」
+describe('津波カードの原因地震の時刻', () => {
+  const withSource = (arrivalTime: string | undefined, originTime: string | undefined) => makeTsunamiWithSource({
+    hypocenterName: '三陸沖', magnitude: 7.4, arrivalTime, originTime,
+  })
+
+  // 正: 発現時刻に公式の名前を付ける。
+  it('地震発現時刻に「地震発現」の名前を付ける', () => {
+    const { container } = renderTab(withSource('2026-04-20T16:53:00+09:00', '2026-04-20T16:52:00+09:00'))
+    expect(container.textContent ?? '').toContain('地震発現 16:53')
+  })
+
+  // 対照: 「発生」とは書かない（発現時刻に別の値の名前を付けない）。
+  it('「発生」の語を付けない', () => {
+    const { container } = renderTab(withSource('2026-04-20T16:53:00+09:00', '2026-04-20T16:52:00+09:00'))
+    const text = container.textContent ?? ''
+    expect(text).not.toMatch(/\d{2}:\d{2}発生/)
+    expect(text).not.toContain('16:52')
+  })
+
+  // 安全弁: 時刻が読めなければ句ごと落とし、名前だけを残さない。震源名は残る。
+  it('時刻が読めなければ「地震発現」の語だけを残さない', () => {
+    const { container } = renderTab(withSource(BROKEN, undefined))
+    const text = container.textContent ?? ''
+    expect(text).not.toContain('地震発現')
+    expect(text).toContain('三陸沖')
+  })
+})
+
+function makeTsunamiWithSource(source: NonNullable<JMATsunami['sourceEarthquakes']>[number]): JMATsunami {
+  return { ...makeTsunami(), sourceEarthquakes: [source] }
+}

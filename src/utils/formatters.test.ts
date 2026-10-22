@@ -8,7 +8,7 @@ vi.mock('./logger', async (importOriginal) => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: warnMock, error: vi.fn() },
 }))
 
-import { formatCoordinate, formatDepth, formatDomesticTsunami, formatMagnitude, formatMagnitudeCondition, formatMagnitudeValue, formatMagnitudeWithCondition, formatNameFromMark, formatFileStamp, formatDateTime, formatDateTimeLocal, formatDateTimeMin, formatQuakeTime, formatTime, formatTimeMin, hasHypocenterFacts, withNonJmaMark, NON_JMA_MARK } from './formatters'
+import { formatCoordinate, formatDepth, formatDomesticTsunami, formatMagnitude, formatMagnitudeCondition, formatMagnitudeValue, formatMagnitudeWithCondition, formatNameFromMark, formatFileStamp, formatDateTime, formatDateTimeLocal, formatDateTimeMin, formatQuakeTime, formatQuakeTimeLabeled, formatTime, formatTimeMin, hasHypocenterFacts, withNonJmaMark, NON_JMA_MARK } from './formatters'
 import type { Hypocenter } from '../types/earthquake'
 import { withTz } from '../test-utils/withTz'
 import { getMagnitudeColor, getDepthColor } from './intensity'
@@ -336,8 +336,19 @@ describe('日時として読めない値のガード', () => {
       expect(formatTimeMin('2026-01-02T03:04:05+09:00')).toBe('03:04')
       expect(formatDateTime('2026-01-02T03:04:05+09:00')).toBe('2026/01/02 03:04:05')
       expect(formatDateTimeMin('2026-01-02T03:04:05+09:00')).toBe('2026/01/02 03:04')
-      expect(formatQuakeTime('2026-01-02T03:04:05+09:00')).toBe('1月2日 3:04ごろ')
+      expect(formatQuakeTime('2026-01-02T03:04:05+09:00')).toBe('1月2日 3:04')
       expect(formatDateTimeLocal(new Date('2026-01-02T03:04:05+09:00'))).toBe('2026-01-02T03:04')
+    })
+  })
+
+  // 地震の時刻（地震発現時刻）の名前つきの形。「発生」は地震発生時刻の名前なので使わない。
+  it('地震の時刻には「地震発現」の名前を付け、読めなければ「地震発現時刻不明」', () => {
+    withTz('Asia/Tokyo', () => {
+      // 正: 名前つきで、「ごろ」も「発生」も付かない。
+      expect(formatQuakeTimeLabeled('2026-01-02T03:04:05+09:00')).toBe('地震発現 1月2日 3:04')
+      // 安全弁: 読めない値・空文字は名前だけを残さず、決まった語にする。
+      expect(formatQuakeTimeLabeled('壊れた値-labeled')).toBe('地震発現時刻不明')
+      expect(formatQuakeTimeLabeled('')).toBe('地震発現時刻不明')
     })
   })
 

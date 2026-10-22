@@ -8,7 +8,7 @@ import { telegramTextSubject } from '../../utils/ttsFollow'
 import { useAutoOpenWhileSpeakingIn } from '../../hooks/useAutoOpenWhileSpeaking'
 import { SerialBadge } from '../SerialBadge'
 import {
-  formatQuakeTime,
+  formatQuakeTimeLabeled,
   formatDepth,
   formatDomesticTsunami,
   TSUNAMI_WARNING_GROUP_TITLE,
@@ -1170,7 +1170,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               隣の種別バッジだけが残り、時刻を読み落としたのか電文に無いのか分からない。 */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-secondary text-base roomy:text-xl">
-              {formatQuakeTime(earthquake.time) ?? '発生時刻不明'}
+              {formatQuakeTimeLabeled(earthquake.time)}
             </span>
             {isKnownCorrection(issue.correct) && (
               <span className="text-xs bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded-sm font-medium shrink-0">
@@ -1628,7 +1628,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           <QuakeSeismoWave
             waves={seismoWaves ?? []}
             view={seismoWaveView}
-            quakeLabel={`${formatQuakeTime(earthquake.time) ?? '発生時刻不明'} ${epicenterLabel}`}
+            quakeLabel={`${formatQuakeTimeLabeled(earthquake.time)} ${epicenterLabel}`}
           />
         </div>
       </button>
@@ -1705,7 +1705,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               選んでいる（震度バッジは寸法固定なので正方形は崩れない）。 */}
           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             {/* 畳んだ表示。開いた表示（上）と同じ語を出す。 */}
-            <span className="text-base text-secondary shrink-0">{formatQuakeTime(earthquake.time) ?? '発生時刻不明'}</span>
+            <span className="text-base text-secondary shrink-0">{formatQuakeTimeLabeled(earthquake.time)}</span>
             <span className={`text-xs px-1.5 py-0.5 rounded-sm min-w-0 truncate ${issueTypeBadgeClass(issue.type)}`}>
               <QuakeReportHeading reports={quake.reports} fallback={issue.type} />
             </span>

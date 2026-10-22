@@ -1,7 +1,7 @@
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { MapMode } from '../components/Map/mapTypes'
 import { computeDisplayEEWLevel, eewKindLabel, eewMaxScale, eewMaxScaleInfo, isProvisionalHypocenter } from './eew'
-import { formatDateTime, formatTimeMin, formatDepth, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth } from './formatters'
+import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTime, formatTimeMin, formatDepth, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth } from './formatters'
 import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove, isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
 import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader } from './shareCard'
@@ -124,7 +124,7 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   const magnitude = shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition)
   if (magnitude !== null) parts.push(magnitude)
   if (hasDepth(hypocenter.depth)) parts.push(`深さ ${formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}`)
-  // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、「null 発生」のような
+  // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、「地震発現 null」のような
   // 壊れた文字列を焼き付けるくらいなら出さない（規模・深さの「不明」を落とすのと同じ考え方）。
   const timeText = formatDateTime(time)
   return {
@@ -136,7 +136,7 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
         : '地震情報',
       titleColor: knownScale ? getIntensityColor(maxScale) : undefined,
       subtitle: parts.join(SUBTITLE_SEPARATOR),
-      meta: timeText ? `${timeText} 発生` : undefined,
+      meta: timeText ? `${QUAKE_ARRIVAL_TIME_LABEL} ${timeText}` : undefined,
     },
     filenameLabel: 'quake',
   }
@@ -157,8 +157,8 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   const { text } = formatTsunamiGrade(grade)
   const areaCount = new Set(live.flatMap((t) => t.areas.map((a) => a.name))).size
   // 原因地震が複数あれば（EventID に番号が足された津波）全件を「／」で並べる。長いと折り返す
-  // （2026-10-15 ユーザー承認「全件を並べる」）。同じ地震を複数の報が運ぶので、震源名・規模・発生時刻の組で重ねる。
-  // **震源名と規模が同じ別の地震には発生時刻を添える**（2026-10-21 ユーザー選択「B は案1」。全期間の津波電文 651 通のうち
+  // （2026-10-15 ユーザー承認「全件を並べる」）。同じ地震を複数の報が運ぶので、震源名・規模・地震発現時刻の組で重ねる。
+  // **震源名と規模が同じ別の地震には地震発現時刻を添える**（2026-10-21 ユーザー選択「B は案1」。全期間の津波電文 651 通のうち
   // 1 通。2023-12-03 の VTSE41 がフィリピン付近の M7.0 を 2 つ載せた）。添えないと同じ文が 2 つ並ぶか、1 つに畳まれて地震が消える。
   const collected: { text: string; time: string | undefined; ms: number }[] = []
   for (const source of live.flatMap((t) => t.sourceEarthquakes ?? [])) {
@@ -184,7 +184,7 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   const sourceTexts = sourceEntries.map(({ text, time }) => {
     if (sourceEntries.filter((e) => e.text === text).length < 2) return text
     const hm = time ? formatTimeMin(time) : null
-    return hm ? `${text}（${hm} 発生）` : text
+    return hm ? `${text}（${QUAKE_ARRIVAL_TIME_LABEL} ${hm}）` : text
   })
   const parts: string[] = []
   if (sourceTexts.length > 0) parts.push(sourceTexts.join(' ／ '))

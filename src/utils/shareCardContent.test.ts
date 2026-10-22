@@ -118,9 +118,11 @@ describe('buildShareCardContent — 地震', () => {
 // （`formatDateTime` が `null` を返してもテンプレートリテラルは型検査を通る）。
 // 規模・深さの「不明」を落とすのと同じ考え方で、欄ごと落とす。
 describe('buildShareCardContent — 読めない時刻', () => {
-  it('地震の発生時刻が読めなければ meta を出さない', () => {
-    // 対照: 読める値では従来どおり入る。
-    expect(build(input({ mode: 'quake', quake: quake() })).header.meta).toContain('発生')
+  it('地震発現時刻が読めなければ meta を出さない', () => {
+    // 対照: 読める値では公式の名前つきで入る。値は地震発現時刻なので「発生」とは書かない。
+    const ok = build(input({ mode: 'quake', quake: quake() })).header.meta
+    expect(ok).toMatch(/^地震発現 \d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/)
+    expect(ok).not.toContain('発生')
     const c = build(input({ mode: 'quake', quake: quake({ time: '壊れた値' }) }))
     expect(c.header.meta).toBeUndefined()
   })
@@ -387,7 +389,7 @@ describe('buildShareCardContent — 津波', () => {
       ],
     } as unknown as JMATsunami
     const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
-    expect(c.header.subtitle).toBe('フィリピン付近　M7.7 ／ フィリピン付近　M7.0（19:36 発生） ／ フィリピン付近　M7.0（04:50 発生）　1 区域')
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.7 ／ フィリピン付近　M7.0（地震発現 19:36） ／ フィリピン付近　M7.0（地震発現 04:50）　1 区域')
   })
 
   // 安全弁: 時刻を読めない側は別の地震と決められないので、同じ文の地震と重ねる（時刻なしの行が並ばない）
@@ -414,7 +416,7 @@ describe('buildShareCardContent — 津波', () => {
       ],
     } as unknown as JMATsunami
     const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
-    expect(c.header.subtitle).toBe('フィリピン付近　M7.0（19:36 発生） ／ フィリピン付近　M7.0（04:50 発生）　1 区域')
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.0（地震発現 19:36） ／ フィリピン付近　M7.0（地震発現 04:50）　1 区域')
   })
 
   // 対照: 同じ瞬間を違う表記で運んでも 1 つの地震として重ねる
@@ -463,7 +465,8 @@ describe('buildShareCardContent — 共有の本文', () => {
     expect(lines[0]).toContain('最大震度')
     expect(lines[0]).toContain('日向灘')
     expect(lines[0]).toContain('M5.2')
-    expect(lines[1]).toContain('発生')
+    // 地震の時刻は地震発現時刻なので、公式の名前で出す（「発生」は地震発生時刻の名前）。
+    expect(lines[1]).toMatch(/^地震発現 /)
     expect(lines[2]).toBe(APP_URL)
   })
 
