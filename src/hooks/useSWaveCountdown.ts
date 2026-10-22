@@ -41,7 +41,10 @@ export interface SWaveArrival {
 export interface SWaveArrivalRow {
   /** 地震の鍵（`eewEventKey`）。行の見分けと、並びが同点のときの決め手。 */
   key: string
-  /** 震央地名（緊急地震速報のカードの見出しと同じもの）。無ければ null。 */
+  /**
+   * 震央地名。**短縮用震央地名（`ReduceName`）があればそちらで、無ければ通常の震央地名**
+   * （→ {@link hypocenterNameOf}）。カードの見出しとは別の名前になりうる。無ければ null。
+   */
   hypocenterName: string | null
   /**
    * 震源が決まっていない報か（→ `isProvisionalHypocenter`）。地名は「揺れを捉えた観測点の所在地」で
@@ -129,8 +132,23 @@ function epicenterDistanceKm(eew: EEWAlert, home: { lat: number; lng: number }):
   return haversineKm(latitude, longitude, home.lat, home.lng)
 }
 
+/**
+ * 到達予測の行に出す震央地名。**短縮用震央地名（`Hypocenter/Area/ReduceName`）があればそちらを使う**
+ * （2026-10-22 ユーザー承認「2-A 到達予測の行」）。
+ *
+ * あの行は 1 行で末尾を省略するうえ、同じ行に「震源から 42 km」が並ぶので、アプリの中でいちばん
+ * 幅が足りない。気象庁が電文に載せている短い呼び方を使えば、こちらで切り詰めずに済む
+ * （例: 「福島県沖」→「福島沖」）。
+ *
+ * **使うのはここだけ。** カードの見出し・地図の吹き出し・ウィンドウタイトルは通常の震央地名を出す ——
+ * 短縮名は情報を落とすことがあり（「熊本県天草・芦北地方」→「熊本県」）、幅に余裕のある場所で
+ * 使うと、どこの地震か分かりにくくなる。
+ *
+ * **地震情報の電文は持たない。** 全期間の控えの 19,345 通で `ReduceName` は 1 件も無く、
+ * 載せているのは緊急地震速報だけ（→ `docs/spec/eew-spec.md`）。
+ */
 function hypocenterNameOf(eew: EEWAlert | undefined): string | null {
-  const name = eew?.earthquake.hypocenter.name
+  const name = eew?.reduceName || eew?.earthquake.hypocenter.name
   return name ? name : null
 }
 

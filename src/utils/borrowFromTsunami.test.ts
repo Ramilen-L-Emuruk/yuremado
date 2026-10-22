@@ -78,6 +78,26 @@ describe('borrowHypocenterFromTsunami', () => {
     expect(borrowed?.source.reportTime).toBe('2024-01-01T07:12:00Z')
   })
 
+  // 正: **規模の種別と震源決定機関は対で写す。** 片方だけだと、カードに規模の「気象庁以外の値」は
+  // 出るのに「震源決定: …（気象庁以外）」の行が出ない —— 同じ事実の半分が欠ける
+  // （電文では `@type="M"` と `Hypocenter/Source` が対で現れる）。
+  it('規模の種別と震源決定機関を対で写す', () => {
+    const borrowed = borrowHypocenterFromTsunami(
+      makePrompt(),
+      [makeTsunami({ sourceEarthquakes: [notoSource({ magnitudeType: 'M', source: 'ＵＳＧＳ' })] })],
+      [],
+    )
+    expect(borrowed?.hypocenter.magnitudeType).toBe('M')
+    expect(borrowed?.hypocenter.source).toBe('ＵＳＧＳ')
+  })
+
+  // 対照: 気象庁が決めた震源では電文に機関が入らないので、写す値も無い。
+  it('震源決定機関が無ければ写さない', () => {
+    const borrowed = borrowHypocenterFromTsunami(makePrompt(), [makeTsunami()], [])
+    expect(borrowed?.hypocenter.magnitudeType).toBe('Mj')
+    expect(borrowed?.hypocenter.source).toBeUndefined()
+  })
+
   it('津波の続報で震源が更新されたら新しい報の値を借りる', () => {
     // 実電文では 16:22 に Ｍ７．４ → Ｍ７．６（地震情報が同じ更新を伝えるのは 16:24）。
     const first = makeTsunami()

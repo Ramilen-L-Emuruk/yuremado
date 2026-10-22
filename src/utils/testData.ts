@@ -43,6 +43,26 @@ const ishikawaSeihookiQuake = ishikawaSeihookiQuakeJson as unknown as Omit<
 >
 
 // テスト発報（EEW・津波）の自動解除までの時間。実発報の解除ロジックとは無関係の、テスト表示専用の固定値。
+/**
+ * テストデータの電文を出したところ（`issue.source`）。**画面には出さない欄**で、DMDATA は
+ * 編集官署（無ければ発表官署）、標準版は P2PQuake の発表元が入る（→ `JMAQuake.issue.source`）。
+ */
+const ISSUE_SOURCE = '気象庁'
+
+/**
+ * テストデータの編集官署（`issue.editorialOffice` ＝ `Control/EditorialOffice`）。
+ * **実電文の値を使う**（2026-10-22 ユーザー承認「実電文の値」）。
+ *
+ * この欄はもともと画面に出ていなかったので `issue.source` へ `'テスト'` を入れていたが、
+ * 2026-10-22 に地震カードへ出すと決めた（→ `EarthquakeCard` の「編集官署」）。実電文に無い値を
+ * 出すと、**実機で一度も本物の形を確かめられない**（→ CLAUDE.md「テストボタンは実機確認の唯一の入口」）。
+ * 全期間の控えでは「気象庁本庁」11,332 通・「大阪管区気象台」8,013 通の 2 つだけ。
+ *
+ * **標準版（P2PQuake）の形には付けない。** あちらは相当する項目を配信せず、付けると
+ * 実電文に無い形になる（→ `createTestEarthquake` の `useDmdataShape`）。
+ */
+const EDITORIAL_OFFICE = '気象庁本庁'
+
 export const TEST_AUTO_DISMISS_MS = 90000
 
 // 区域ごとに等級が動く続報のあと、各地の満潮時刻の報を流すまでの間（→ `createTestTsunamiHighTide`）。
@@ -80,11 +100,17 @@ export function createTestForeignQuake(includeComments: boolean): JMAQuake {
     id: `dmdata-quake-${eventId}-1`,
     eventId,
     time: now,
-    issue: { source: 'テスト', time: now, type: '遠地地震', correct: 'なし' },
+    issue: { source: ISSUE_SOURCE, editorialOffice: EDITORIAL_OFFICE, time: now, type: '遠地地震', correct: 'なし' },
     earthquake: {
       time: now,
       // 震源名は詳細震央地名（DetailedName）。実電文では震央地名「中米」より詳細なこちらを採る。
-      hypocenter: { name: 'メキシコ、チアパス州沿岸', latitude: 14.4, longitude: -93.0, depth: -1, magnitude: 7.4 },
+      // **気象庁以外が決めた震源の形**（`Hypocenter/Source` と `@type="M"` が対で現れる。
+      // 全期間の控えで遠地地震 184 通のうち 113 通がこの形で、機関は ＰＴＷＣ 89・ＵＳＧＳ 24）。
+      // 画面の「震源決定: …（気象庁以外）」の行と、規模の前置き `M` を実機で確かめる唯一の入口。
+      hypocenter: {
+        name: 'メキシコ、チアパス州沿岸', latitude: 14.4, longitude: -93.0, depth: -1, magnitude: 7.4,
+        magnitudeType: 'M', source: 'ＵＳＧＳ',
+      },
       // 遠地地震は国内で震度を観測しないため maxScale は常に -1。
       maxScale: -1,
       // 0230（この地震による日本への津波の影響はありません）由来。
@@ -128,7 +154,7 @@ export function createTestForeignQuakeHuge(withDmdssFields: boolean): JMAQuake {
     id: `dmdata-quake-${eventId}-1`,
     eventId,
     time: now,
-    issue: { source: 'テスト', time: now, type: '遠地地震', correct: 'なし' },
+    issue: { source: ISSUE_SOURCE, editorialOffice: EDITORIAL_OFFICE, time: now, type: '遠地地震', correct: 'なし' },
     earthquake: {
       time: now,
       hypocenter: {
@@ -139,6 +165,9 @@ export function createTestForeignQuakeHuge(withDmdssFields: boolean): JMAQuake {
         depth: -1,
         // 数値は入らない。説明だけが「規模不明」と「M8 超」を分ける
         magnitude: NaN,
+        // **対照: 遠地地震でも気象庁が震源を決めることがある**（控えで 184 通中 61 通が `Mj`）。
+        // そのときは `Hypocenter/Source` が電文に入らないので、「震源決定」の行も出ない。
+        magnitudeType: 'Mj',
         // **この説明は DMDATA 経路にしかない。** P2PQuake は規模を数値でしか配信せず、
         // 「Ｍ８を超える巨大地震」と「Ｍ不明」を分ける手立てを持たない。standard 版では
         // 落として、実データどおり「Ｍ不明」と出る形にする（表示・読み上げの経路自体は通る）。
@@ -246,7 +275,14 @@ export function createTestEarthquake(useDmdataShape: boolean, operationStatus?: 
     ...(operationStatus ? { operationStatus } : {}),
     // 同じ内容（震源＋各地の震度）に付く情報種別はバリアントで異なる。
     // DMDATA は VXSE53 の「震源・震度情報」、P2PQuake は DetailScale の「各地の震度情報」。
-    issue: { source: 'テスト', time: now, type: useDmdataShape ? '震源・震度情報' : '各地の震度情報', correct: 'なし' },
+    issue: {
+      source: ISSUE_SOURCE,
+      // **標準版には付けない**（P2PQuake は編集官署を配信しない）。
+      ...(useDmdataShape && { editorialOffice: EDITORIAL_OFFICE }),
+      time: now,
+      type: useDmdataShape ? '震源・震度情報' : '各地の震度情報',
+      correct: 'なし',
+    },
     earthquake: {
       time: now,
       // 令和6年能登半島地震の本震（2024/1/1 16:10発生）の実データを元にしたパラメータ。
@@ -711,7 +747,14 @@ export function createTestQuakeCancel(): [JMAQuake, JMAQuake] {
     time: cancelTime,
     cancelled: true,
     cancelText: '先ほどの、震度速報を取り消します。',
-    issue: { source: prompt.issue.source, time: cancelTime, type: '震度速報', correct: 'なし' },
+    issue: {
+      source: prompt.issue.source,
+      // 実パーサーは取消電文にも編集官署を付ける（→ `dmdataParser.ts`）。落とすと実電文の形から外れる。
+      ...(prompt.issue.editorialOffice && { editorialOffice: prompt.issue.editorialOffice }),
+      time: cancelTime,
+      type: '震度速報',
+      correct: 'なし',
+    },
     earthquake: { time: '', hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: 0 }, maxScale: -1, domesticTsunami: '不明' },
     points: [],
   }
@@ -749,7 +792,14 @@ export function createTestQuakePartialCancel(): [JMAQuake, JMAQuake, JMAQuake] {
     time: cancelTime,
     cancelled: true,
     cancelText: '先ほどの、震度速報を取り消します。',
-    issue: { source: prompt.issue.source, time: cancelTime, type: '震度速報', correct: 'なし' },
+    issue: {
+      source: prompt.issue.source,
+      // 実パーサーは取消電文にも編集官署を付ける（→ `dmdataParser.ts`）。落とすと実電文の形から外れる。
+      ...(prompt.issue.editorialOffice && { editorialOffice: prompt.issue.editorialOffice }),
+      time: cancelTime,
+      type: '震度速報',
+      correct: 'なし',
+    },
     earthquake: { time: '', hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: 0 }, maxScale: -1, domesticTsunami: '不明' },
     points: [],
   }
@@ -782,7 +832,7 @@ export function createTestUnreceivedQuake(): JMAQuake {
     // `id` から抜く経路（`extractQuakeEventId`）ではなく、このフィールドを直接見る（→ 型定義）。
     eventId,
     time: now,
-    issue: { source: 'テスト', time: now, type: '震源・震度情報', correct: 'なし' },
+    issue: { source: ISSUE_SOURCE, editorialOffice: EDITORIAL_OFFICE, time: now, type: '震源・震度情報', correct: 'なし' },
     // 震源要素は実電文のまま。地震の時刻だけ「いま」へ寄せる（カードの並びと自動タブ切替が
     // 実運用と同じところを踏むようにするため）。
     earthquake: { ...hyuganadaQuake.earthquake, time: now },
@@ -819,7 +869,7 @@ export function createTestMaxScaleOrAboveQuake(): JMAQuake {
     telegramKey: dmdataTelegramKey('震源・震度に関する情報', now),
     reportSerial: 1,
     time: now,
-    issue: { source: 'テスト', time: now, type: '震源・震度情報', correct: 'なし' },
+    issue: { source: ISSUE_SOURCE, editorialOffice: EDITORIAL_OFFICE, time: now, type: '震源・震度情報', correct: 'なし' },
     // 震源要素は実電文のまま。地震の時刻だけ「いま」へ寄せる（`createTestUnreceivedQuake` と同じ）。
     earthquake: { ...ishikawaSeihookiQuake.earthquake, time: now },
   }
@@ -2097,7 +2147,7 @@ export function createTestHypocenterFromTsunami(): (JMAQuake | JMATsunami)[] {
       time,
       cancelled: false,
       infoName: '津波警報・津波注意報・津波予報',
-      issue: { source: 'テスト', time, type: 'Focus' },
+      issue: { source: ISSUE_SOURCE, time, type: 'Focus' },
       // 16:12 の実電文では 3 区域とも津波警報で、16:22 の報で石川県能登だけが大津波警報へ上がった。
       areas: [
         { grade: notoGrade, immediate: true, name: '石川県能登' },
@@ -2208,7 +2258,7 @@ export function createTestTsunamiSourceAdded(): (JMAQuake | JMATsunami)[] {
       time,
       cancelled: false,
       infoName: '津波警報・津波注意報・津波予報',
-      issue: { source: 'テスト', time, type: 'Focus' },
+      issue: { source: ISSUE_SOURCE, time, type: 'Focus' },
       areas,
       sourceEarthquakes: sources,
     }
@@ -2367,7 +2417,7 @@ export function createTestTsunamiForecast(withDmdssFields: boolean): JMATsunami 
     // 予報は DMDSS の実運用でも明示的な解除電文を伴わず ValidDateTime の期限切れで消えるため、
     // 期限切れ経路（cancelReason: 'expired'）を再現する。standard 版はこの項目自体が来ない。
     validDateTime: withDmdssFields ? new Date(now.getTime() + TEST_AUTO_DISMISS_MS).toISOString() : undefined,
-    issue: { source: 'テスト', time: nowIso, type: 'Focus' },
+    issue: { source: ISSUE_SOURCE, time: nowIso, type: 'Focus' },
     areas: [
       { grade: 'Forecast', immediate: false, name: '北海道太平洋沿岸東部' },
       { grade: 'Forecast', immediate: false, name: '北海道太平洋沿岸中部' },
@@ -2800,7 +2850,7 @@ export function createTestTsunamiRetraction(withDmdssFields: boolean): JMATsunam
     ...(withDmdssFields && { headType: 'VTSE41' as const }),
     time: now,
     cancelled: false,
-    issue: { source: 'テスト', time: now, type: 'Focus' },
+    issue: { source: ISSUE_SOURCE, time: now, type: 'Focus' },
     areas: [
       { grade: 'Warning', immediate: true, name: '青森県太平洋沿岸', maxHeight: { description: '3m', value: 3.0 } },
       { grade: 'Watch', immediate: false, name: '北海道太平洋沿岸東部', maxHeight: { description: '1m', value: 1.0 } },
@@ -2823,7 +2873,7 @@ export function createTestTsunamiWatch(withDmdssFields: boolean): JMATsunami {
     // 値は実電文の形に合わせ、**その報が出している等級を並べる**（VTSE41 の実電文 8 通で
     // 「津波注意報・津波予報」「大津波警報・津波警報・津波注意報」等が確認できる）。
     infoName: withDmdssFields ? '津波注意報' : undefined,
-    issue: { source: 'テスト', time: now, type: 'Focus' },
+    issue: { source: ISSUE_SOURCE, time: now, type: 'Focus' },
     areas: [
       { grade: 'Watch', immediate: false, name: '北海道太平洋沿岸東部', maxHeight: { description: '1m', value: 1.0 } },
       { grade: 'Watch', immediate: false, name: '北海道太平洋沿岸中部', maxHeight: { description: '1m', value: 1.0 } },
@@ -2845,7 +2895,7 @@ export function createTestTsunamiWarning(withDmdssFields: boolean): JMATsunami {
     // 情報名は**その報が出している等級を並べる**（→ `createTestTsunamiWatch`）。
     // この報は警報と注意報の両方を出しているので、実電文と同じく 2 つ並べる。
     infoName: withDmdssFields ? '津波警報・津波注意報' : undefined,
-    issue: { source: 'テスト', time: now, type: 'Focus' },
+    issue: { source: ISSUE_SOURCE, time: now, type: 'Focus' },
     areas: [
       { grade: 'Warning', immediate: true,  name: '青森県太平洋沿岸', maxHeight: { description: '3m', value: 3.0 } },
       { grade: 'Warning', immediate: true,  name: '茨城県',           maxHeight: { description: '3m', value: 3.0 } },
@@ -2960,7 +3010,7 @@ export function createTestTsunami(withDmdssFields: boolean): JMATsunami {
     // の続報処理は `infoName` を最新の報から取り、観測時点は `?? current` で前報から引き継ぐので、
     // 等級の発表が最後に来た実運用でこの組み合わせになる。**電文としてあり得ない形ではない。**
     observationDateTime: withDmdssFields ? t(-2) : undefined,
-    issue: { source: 'テスト', time: nowIso, type: 'Focus' },
+    issue: { source: ISSUE_SOURCE, time: nowIso, type: 'Focus' },
     // ── ここから下は DMDATA XML 経路にしかない ──
     //
     // P2PQuake の `parseTsunami` が作るのは `kind` / `id` / `time` / `cancelled` / `issue` /

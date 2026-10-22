@@ -115,16 +115,20 @@ describe('buildShareCardContent — 地震', () => {
 // （`formatDateTime` が `null` を返してもテンプレートリテラルは型検査を通る）。
 // 規模・深さの「不明」を落とすのと同じ考え方で、欄ごと落とす。
 describe('buildShareCardContent — 読めない時刻', () => {
-  it('地震の発生時刻が読めなければ meta を出さない', () => {
-    // 対照: 読める値では従来どおり入る。
-    expect(build(input({ mode: 'quake', quake: quake() })).header.meta).toContain('発生')
+  it('地震の時刻が読めなければ meta を出さない', () => {
+    // 対照: 読める値では入る。**画面のカードと同じ書式（秒なし・「ごろ」）**
+    // （2026-10-22 ユーザー承認「5-A 秒と発生を落とす」）。`earthquake.time` は発現時刻が先で
+    // 電文に秒が無いので、以前の `… 12:34:00 発生` は秒を捏造し、発現時刻を「発生」と名乗っていた。
+    expect(build(input({ mode: 'quake', quake: quake() })).header.meta).toBe('2026/08/24 12:34ごろ')
     const c = build(input({ mode: 'quake', quake: quake({ time: '壊れた値' }) }))
     expect(c.header.meta).toBeUndefined()
   })
 
   // 対照: 報番号と時刻が両方そろう既定の形。**組み立てを配列の join へ変えた**ので、
   // 区切り（全角スペース）と並びが従来どおりであることを固定する。
-  it('報番号と発生時刻が両方あれば従来どおり並べる', () => {
+  // 安全弁: **緊急地震速報はこのままにする。** あちらが出すのは `originTime`（地震発生時刻）で、
+  // 電文が秒まで持つ。地震情報の側の時刻（発現時刻・秒なし）とは別物なので、一緒に変えない。
+  it('報番号と発生時刻が両方あれば従来どおり並べる（緊急地震速報）', () => {
     const c = build(input({ mode: 'kyoshin', eews: [eew({ serial: '3' })] }))
     expect(c.header.meta).toBe('第3報　2026/08/24 12:34:00 発生')
   })
@@ -402,7 +406,7 @@ describe('buildShareCardContent — 共有の本文', () => {
     expect(lines[0]).toContain('最大震度')
     expect(lines[0]).toContain('日向灘')
     expect(lines[0]).toContain('M5.2')
-    expect(lines[1]).toContain('発生')
+    expect(lines[1]).toContain('ごろ')
     expect(lines[2]).toBe(APP_URL)
   })
 

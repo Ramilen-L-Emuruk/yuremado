@@ -118,6 +118,28 @@ export function formatQuakeTime(isoString: string): string | null {
   return `${M}月${d}日 ${h}:${m}ごろ`
 }
 
+/**
+ * 地震の時刻を、年つき・秒なし・「ごろ」付きで出す。**共有カードの画像で使う。**
+ *
+ * 画面のカード（{@link formatQuakeTime}）と同じ考え方で、**元データに秒が無いので秒を出さない**。
+ * 画像は日をまたいで共有されるため、年月日まで入れる。
+ * 例: 2024/01/01 16:10ごろ
+ *
+ * **以前は {@link formatDateTime} を通して `2024/01/01 16:10:00 発生` と焼いていた。**
+ * 電文に無い `:00` を画像へ残すうえ、`earthquake.time` は発現時刻（`ArrivalTime`）が先なのに
+ * 「発生」と名乗っていた（2026-10-22 ユーザー承認「5-A 秒と発生を落とす」）。
+ */
+export function formatQuakeDateTime(isoString: string): string | null {
+  const date = readDateTime('formatQuakeDateTime', isoString)
+  if (!date) return null
+  const y = date.getFullYear()
+  const M = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  const h = String(date.getHours()).padStart(2, '0')
+  const m = String(date.getMinutes()).padStart(2, '0')
+  return `${y}/${M}/${d} ${h}:${m}ごろ`
+}
+
 export function formatTime(isoString: string): string | null {
   const date = readDateTime('formatTime', isoString)
   if (!date) return null
@@ -189,9 +211,47 @@ export function hasMagnitude(magnitude: number): boolean {
   return Number.isFinite(magnitude) && magnitude >= 0
 }
 
-export function formatMagnitude(magnitude: number): string {
+/**
+ * 規模の前に置く記号（`jmx_eb:Magnitude@type`）。**電文の値をそのまま出す**
+ * （2026-10-22 ユーザー承認「1-A 電文のまま」）。
+ *
+ * `Mj` は気象庁マグニチュード、`M` は気象庁以外の機関が決めた値（`Hypocenter/Source` と対で現れる）。
+ * 全期間の控え 2,135 日（2020-11-18〜2026-10-18）で現れたのはこの 2 つだけ（国内の地震は
+ * ほぼ `Mj`、遠地地震は 184 通中 123 通が `M`）。緊急地震速報は `Mj` か、欄そのものが無い。
+ *
+ * **種別を持たない経路は従来どおり `M`。** P2PQuake・長期震源カタログは電文に相当する項目が無い。
+ * 知らない値が来ても**そのまま出す** —— 気象庁が種別を増やしたときに、こちらが黙って
+ * `M` へ丸めると発表と違う記号になる。
+ */
+export function magnitudePrefix(magnitudeType: string | undefined): string {
+  return magnitudeType || 'M'
+}
+
+/**
+ * 規模の種別を語で説明する文字列。**開いた地震カードのように、見出しが「マグニチュード」で
+ * 記号を出せない欄で使う。**
+ *
+ * **語を当てるのは `Mj` だけ**（2026-10-23 ユーザー承認「資料の裏付けがある分だけ」）。
+ * 気象庁の地震火山関連 解説資料が事例に「気象庁マグニチュードによる表現」と書いているのは
+ * `Mj` の行だけで、**`M` が何かはどこにも定められていない**。
+ *
+ * **`M` ＝「気象庁以外の値」とは言い切れない。** 控え 2,135 日では、震源決定機関
+ * （`Hypocenter/Source`）を伴う電文はすべて `M` だったが（113 通）、**`M` なのに機関が無い電文も
+ * 12 通あった**（うち 3 通は規模が数値。2022-07-27 フィリピン付近 M7.0 ほか）。気象庁の
+ * 「利用の手引き」は遠地地震について、気象庁 CMT による Mw を採ることがあるとも書いている ——
+ * **気象庁自身が決めた値に `M` が付く経路を否定できない。**
+ *
+ * 機関そのものは別の行で出す（→ `EarthquakeCard` の「震源決定: …（気象庁以外）」）。
+ * あちらは電文に機関が入っているときだけ出るので、言い過ぎにならない。
+ */
+export function magnitudeTypeLabel(magnitudeType: string | undefined): string | null {
+  if (magnitudeType === 'Mj') return '気象庁マグニチュード'
+  return null
+}
+
+export function formatMagnitude(magnitude: number, magnitudeType: string | undefined): string {
   if (!hasMagnitude(magnitude)) return '不明'
-  return `M${magnitude.toFixed(1)}`
+  return `${magnitudePrefix(magnitudeType)}${magnitude.toFixed(1)}`
 }
 
 /**
@@ -229,8 +289,8 @@ export function formatMagnitudeValue(magnitude: number, condition?: string): str
  *
  * 説明を持たない経路（P2PQuake・EEW・長期震源カタログ）では従来どおり「不明」を返す。
  */
-export function formatMagnitudeWithCondition(magnitude: number, condition?: string): string {
-  if (hasMagnitude(magnitude)) return formatMagnitude(magnitude)
+export function formatMagnitudeWithCondition(magnitude: number, condition: string | undefined, magnitudeType: string | undefined): string {
+  if (hasMagnitude(magnitude)) return formatMagnitude(magnitude, magnitudeType)
   return condition ? formatMagnitudeCondition(condition) : '不明'
 }
 

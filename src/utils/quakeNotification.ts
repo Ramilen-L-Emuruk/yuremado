@@ -94,8 +94,8 @@ export function scalePromptNotificationBody(quake: JMAQuake, areaPrefIndex: Area
 
 /** 震源が判った報の本文。例「石川県能登地方 最大震度5弱 M5.2」。 */
 export function hypocenterNotificationBody(quake: JMAQuake): string {
-  const { name, magnitude, magnitudeCondition } = quake.earthquake.hypocenter
-  return `${name} 最大震度${maxScaleLabel(quake)} ${formatMagnitudeWithCondition(magnitude, magnitudeCondition)}`
+  const { name, magnitude, magnitudeCondition, magnitudeType } = quake.earthquake.hypocenter
+  return `${name} 最大震度${maxScaleLabel(quake)} ${formatMagnitudeWithCondition(magnitude, magnitudeCondition, magnitudeType)}`
 }
 
 /**

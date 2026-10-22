@@ -68,7 +68,7 @@ function quakeSample(): QuakeSample {
     reportsRevise: true,
     cancelled: false,
     cancelText: '取消',
-    issue: { source: '気象庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
+    issue: { source: '気象庁', editorialOffice: '気象庁本庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
     earthquake: {
       time: iso(),
       hypocenter: {

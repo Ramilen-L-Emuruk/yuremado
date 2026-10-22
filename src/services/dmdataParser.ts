@@ -504,13 +504,26 @@ function xmlChild(parent: Element, localName: string): Element | null {
 // どちらも無ければ空文字を返す。
 //
 // **空の要素は「無い」と同じに扱う。** `||` なので `<EditorialOffice></EditorialOffice>`
-// （要素はあるが空）でも PublishingOffice へ落ちる。issue.source は現状どのコンポーネントからも
-// 読まれないため実害は無いが、この値を使うコードを足すときは見ておくこと。
+// （要素はあるが空）でも PublishingOffice へ落ちる。**この値は画面に出さない** ——
+// 落ちた先は発表官署なので、「編集官署」と名乗って出すと事実を誤らせる。
+// 画面へ出すのは下の `parseEditorialOfficeFromXml`（落とさない側）。
 function parseIssueSourceFromXml(doc: Document): string {
   const controlEl = xmlQ(doc, 'Control')
   if (!controlEl) return ''
   return xmlText(xmlChild(controlEl, 'EditorialOffice'))
     || xmlText(xmlChild(controlEl, 'PublishingOffice'))
+}
+
+/**
+ * 電文を編集した官署（`Control/EditorialOffice`）だけを読む。**発表官署へは落とさない。**
+ *
+ * 画面が「編集官署 …」と名乗って出すので（→ `JMAQuake.issue.editorialOffice`）、
+ * 編集官署そのものが入っているときだけ値を返す。無ければ undefined で、画面は行ごと出さない。
+ */
+function parseEditorialOfficeFromXml(doc: Document): string | undefined {
+  const controlEl = xmlQ(doc, 'Control')
+  if (!controlEl) return undefined
+  return xmlText(xmlChild(controlEl, 'EditorialOffice')) || undefined
 }
 
 function xmlText(el: Element | null): string {
@@ -1486,6 +1499,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   const quakeInfoName = readInfoName(doc)
   const issueType = resolveIssueType(headType, quakeInfoName)
   const source = parseIssueSourceFromXml(doc)
+  const editorialOffice = parseEditorialOfficeFromXml(doc)
 
   // 取消電文（InfoType === '取消'）: Earthquake 要素が存在しないため早期リターン
   if (infoType === '取消') {
@@ -1510,7 +1524,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       // 取消しの概要（`Body/Text`）。**`Comments` ではなく `Body` 直下**——取消電文は付加文を
       // 持たない（電文解説資料が「情報形態が"取消"の場合、本要素は出現しない」と定めている）。
       ...(cancelBodyText && { cancelText: cancelBodyText }),
-      issue: { source, time: reportDateTime, type: issueType, correct: 'なし' as CorrectType },
+      issue: { source, ...(editorialOffice && { editorialOffice }), time: reportDateTime, type: issueType, correct: 'なし' as CorrectType },
       earthquake: { time: '', hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: 0 }, maxScale: -1, domesticTsunami: '不明' },
       points: [],
     }
@@ -1841,6 +1855,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     time: reportDateTime,
     issue: {
       source,
+      ...(editorialOffice && { editorialOffice }),
       time: reportDateTime,
       type: issueType,
       correct,

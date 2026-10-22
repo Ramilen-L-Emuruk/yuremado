@@ -46,9 +46,15 @@ export interface Hypocenter {
    */
   magnitudeCondition?: string
   /**
-   * マグニチュードの種別（`jmx_eb:Magnitude@type`）。→ {@link TsunamiSourceEarthquake.magnitudeType}
+   * マグニチュードの種別（`jmx_eb:Magnitude@type`）。`Mj` は気象庁マグニチュード、`M` は
+   * 気象庁以外の機関が決めた値（`source` と対で現れる）。
    *
-   * P2PQuake 経路は相当する項目を配信しないため常に undefined。
+   * **画面に出す**（2026-10-22 ユーザー承認「1-A 電文のまま」「電文の値がある全部」）。
+   * 規模の前置きの記号として電文の値をそのまま出し（`M3.5` / `Mj3.5`）、見出しが
+   * 「マグニチュード」で記号を置けない欄（開いた地震カード）は語で添える
+   * （→ `formatters.ts` の `magnitudePrefix` / `magnitudeTypeLabel`）。
+   *
+   * P2PQuake 経路は相当する項目を配信しないため常に undefined。そのときは従来どおり `M`。
    */
   magnitudeType?: string
   /**
@@ -340,7 +346,24 @@ export interface JMAQuake {
    */
   cancelText?: string
   issue: {
+    /**
+     * 電文を出したところ。**DMDATA は編集官署（無ければ発表官署）、標準版は P2PQuake の
+     * 発表元（「気象庁」等）** —— 経路で意味が違うので、**画面には出さない**
+     * （→ `editorialOffice`）。
+     */
     source: string
+    /**
+     * 電文を編集した官署（`Control/EditorialOffice`）。**発表官署へは落とさない。**
+     *
+     * **画面へ「編集官署 …」と出す**（2026-10-21 ユーザー「常に出したいです。」・文面は
+     * 2026-10-22 ユーザー承認「3-B 編集官署 …」）。ラベルが「編集官署」と名乗る以上、
+     * 編集官署そのものが入っているときだけ出す —— `source` は発表官署や標準版の発表元へ
+     * 落ちるので、あれを出すとラベルが事実を誤らせる（2026-10-23 ユーザー承認「欄を分ける」）。
+     *
+     * 標準版（P2PQuake）は相当する項目を配信しないので常に undefined。
+     * 実測と規約は `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」。
+     */
+    editorialOffice?: string
     time: string
     type: IssueType
     correct: CorrectType
@@ -689,8 +712,8 @@ export interface TsunamiSourceEarthquake extends HypocenterAreaDetail {
    * マグニチュードの種別（`jmx_eb:Magnitude@type`）。`Mj` は気象庁マグニチュード、
    * `M` は気象庁以外の機関が決めた値（`source` と対で現れる）。
    *
-   * **画面には出さない。** 気象庁自身も本文では「Ｍ７．６」としか書かないため、種別を
-   * 添えると発表より詳しい顔になる。電文が述べている事実として持つだけ。
+   * **津波カードには出さない。** 地震カード側は 2026-10-22 に出すと決めたが（→
+   * {@link Hypocenter.magnitudeType}）、津波カードの原因地震の行はまだ諮っていない。
    */
   magnitudeType?: string
   /**
@@ -1369,6 +1392,12 @@ export interface EEWAlert {
    *
    * **通常の震央地名（`hypocenter.name`）を置き換えるものではない。** 幅が足りない場所で
    * 代わりに出すための短い呼び方で、気象庁が電文に載せている。
+   *
+   * **使うのは主要動の到達予測の行だけ**（2026-10-22 ユーザー承認「2-A 到達予測の行」。
+   * → `useSWaveCountdown.ts` の `hypocenterNameOf`）。カードの見出し・地図の吹き出し・
+   * ウィンドウタイトルは通常の震央地名を出す —— 短縮名は情報を落とすことがあるため。
+   * **地震情報の電文は持たない**（緊急地震速報だけが載せる）。
+   * 実測と規約は `docs/spec/eew-spec.md`「内陸判定・短縮用震央地名」。
    */
   reduceName?: string
   /**
@@ -1544,8 +1573,10 @@ export interface JMALpgm {
   /**
    * 電文が名乗る情報名（`Head/Title`）。読み取りは {@link JMATsunami.infoName} と同じ。
    *
-   * **読んで持つだけで画面には出さない。** 実電文 8 通すべてが「長周期地震動に関する観測情報」の
-   * 1 種類で、報ごとに変わらない（津波と違い名乗り分けが無い）。出しても情報が増えない。
+   * **地震カードの種別ヘッダーへ出す**（2026-10-22 ユーザー承認「4-B 種別ヘッダー」）。あのヘッダーは
+   * 「どの電文を受け取ったか」を並べる場所で、長周期もそこへ並べる。実電文 8 通すべてが
+   * 「長周期地震動に関する観測情報」の 1 種類で報ごとに変わらない（津波と違い名乗り分けが無い）ので、
+   * カード本体の帯は階級の見出しとして「長周期地震動」のまま短く残す。
    */
   infoName?: string
   originTime: string  // TTS 読み上げテキスト用

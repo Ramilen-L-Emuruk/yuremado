@@ -789,10 +789,37 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
     }
   })
 
-  // issue.source は現状どのコンポーネントからも読まれないが、両経路で同じ値になる状態を保つ。
+  // issue.source は画面に出さないが、両経路で同じ値になる状態を保つ。
   // XML 側を '気象庁' 固定にすると、電文が持つ編集官署（実電文では「気象庁本庁」）が落ちる。
   it('issue.source を電文の編集官署から読む', () => {
     expect(fromXml().issue.source).toBe('気象庁本庁')
+  })
+
+  // 編集官署の専用の欄（`issue.editorialOffice`）。**画面が「編集官署 …」と名乗って出す**ので、
+  // 発表官署へは落とさない（2026-10-23 ユーザー承認「欄を分ける」）。
+  //
+  // 正: 電文の編集官署をそのまま返す。
+  it('issue.editorialOffice を電文の編集官署から読む', () => {
+    expect(fromXml().issue.editorialOffice).toBe('気象庁本庁')
+  })
+
+  // 対照: **編集官署が無い電文では undefined。** `issue.source` と違い発表官署へ落とさない ——
+  // 落ちた値を「編集官署」と名乗って出すと、ラベルが事実を誤らせる（標準版の全カードに
+  // 「編集官署 気象庁」が出ていた。この守りを外すとそれが戻る）。
+  it('編集官署が無ければ undefined（発表官署へ落とさない）', () => {
+    const xml = VXSE53_XML
+      .replace('<EditorialOffice>気象庁本庁</EditorialOffice>', '')
+      .replace('<PublishingOffice>気象庁</PublishingOffice>', '<PublishingOffice>大阪管区気象台</PublishingOffice>')
+    const quake = parseEarthquakeFromXml('VXSE53', xml)!
+    expect(quake.issue.editorialOffice).toBeUndefined()
+    // 同じ電文で `issue.source` は従来どおり発表官署へ落ちる（2 本立てが効いていること）。
+    expect(quake.issue.source).toBe('大阪管区気象台')
+  })
+
+  // 安全弁: 要素はあるが空の電文も「無い」と同じ扱い（`||` で undefined へ倒す）。
+  it('編集官署が空の要素なら undefined', () => {
+    const xml = VXSE53_XML.replace('<EditorialOffice>気象庁本庁</EditorialOffice>', '<EditorialOffice></EditorialOffice>')
+    expect(parseEarthquakeFromXml('VXSE53', xml)!.issue.editorialOffice).toBeUndefined()
   })
 
   // 対照: 編集官署が無い電文では発表官署へ落ちる（両経路とも同じ順序で解決する）。

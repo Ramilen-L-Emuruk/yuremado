@@ -84,6 +84,9 @@ export function tsunamiSourceHypocenter(src: TsunamiSourceEarthquake): Hypocente
     magnitude: src.magnitude ?? NaN,
     ...(src.magnitudeCondition && { magnitudeCondition: src.magnitudeCondition }),
     ...(src.magnitudeType && { magnitudeType: src.magnitudeType }),
+    // **震源決定機関も種別と一緒に写す。** 片方だけだと、カードに規模の「気象庁以外の値」は
+    // 出るのに「震源決定: …（気象庁以外）」の行が出ない —— 同じ事実の半分が欠ける。
+    ...(src.source && { source: src.source }),
     ...(src.code && { code: src.code }),
     ...(src.detailedCode && { detailedCode: src.detailedCode }),
     ...(src.nameFromMark && { nameFromMark: src.nameFromMark }),

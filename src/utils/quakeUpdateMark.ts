@@ -100,11 +100,18 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
   // 規模は**数値と説明の両方**を鍵に含める。「Ｍ８を超える巨大地震」は本文が NaN で
   // `description` だけが値を持つので、数値だけで比べるとその変化が消える
   // （→ `docs/spec/quake-spec.md` §8）。**大小を比べられるのは数値があるときだけ。**
+  // **種別（`Mj` / `M`）も鍵に入れる。** 画面はこれを前置きの記号に出すので、数値が同じまま
+  // 種別だけ変わった続報でも表示は動く（`M6.8` → `Mj6.8`）。鍵から外すと印が付かない。
+  //
+  // **「値が無い」は鍵の文字列ではなく、材料そのもので見る。** 鍵の組み立てに項目を 1 つ足すと
+  // 区切りの数が変わるので、`magKey === '|'` のような文字列の突き合わせは黙って外れる
+  // （実際に種別を足したとき外れ、規模が無い報に `UNKNOWN` ではない鍵が付いた）。
   const hasMag = Number.isFinite(h.magnitude) && h.magnitude >= 0
-  const magKey = `${hasMag ? h.magnitude.toFixed(1) : ''}|${h.magnitudeCondition ?? ''}`
-  snap.set('magnitude', magKey === '|'
-    ? { key: UNKNOWN }
-    : { key: magKey, ...(hasMag ? { rank: h.magnitude } : {}) })
+  const hasMagFacts = hasMag || !!h.magnitudeCondition
+  const magKey = `${hasMag ? h.magnitude.toFixed(1) : ''}|${h.magnitudeCondition ?? ''}|${h.magnitudeType ?? ''}`
+  snap.set('magnitude', hasMagFacts
+    ? { key: magKey, ...(hasMag ? { rank: h.magnitude } : {}) }
+    : { key: UNKNOWN })
   // 深さの 0 は「ごく浅い」という有効値で、-1 が「読めなかった」の目印。
   // **浅いほど危険なので、順序は深さの符号を反転させる** —— 「上がった（赤）」が
   // 「より深刻になった」を指す約束を、どの欄でも守る。

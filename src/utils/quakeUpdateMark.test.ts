@@ -19,6 +19,7 @@ function makeQuake(over: {
   depth?: number
   magnitude?: number
   magnitudeCondition?: string
+  magnitudeType?: string
   nameFromMark?: string
   domesticTsunami?: JMAQuake['earthquake']['domesticTsunami']
   maxScale?: IntensityScale
@@ -37,6 +38,7 @@ function makeQuake(over: {
         depth: over.depth ?? 10,
         magnitude: over.magnitude ?? 7.6,
         ...(over.magnitudeCondition ? { magnitudeCondition: over.magnitudeCondition } : {}),
+        ...(over.magnitudeType ? { magnitudeType: over.magnitudeType } : {}),
         ...(over.nameFromMark ? { nameFromMark: over.nameFromMark } : {}),
       },
       maxScale: over.maxScale ?? 70,
@@ -77,6 +79,31 @@ describe('地震カードの更新の印', () => {
       const before = quakeFactSnapshot(makeQuake({ magnitude: 7.4 }))
       const after = quakeFactSnapshot(makeQuake({ magnitude: 7.6 }))
       expect(changedQuakeFacts(after, before, false).get('magnitude')).toBe('raised')
+    })
+
+    // 正: **数値が同じまま種別だけ変わっても印が出る。** 画面は種別を前置きの記号に出すので
+    // （`M6.8` → `Mj6.8`）、表示は動いている。鍵から種別を外すと、この変化だけ印が付かない。
+    it('規模の種別だけが変わっても印が出る', () => {
+      const before = quakeFactSnapshot(makeQuake({ magnitude: 6.8, magnitudeType: 'M' }))
+      const after = quakeFactSnapshot(makeQuake({ magnitude: 6.8, magnitudeType: 'Mj' }))
+      // 数値は動いていないので、向きの無い「変わった」。
+      expect(changedQuakeFacts(after, before, false).get('magnitude')).toBe('changed')
+    })
+
+    // 安全弁: **規模が無い報は、種別だけ持っていても「値なし」として扱う。** 鍵へ項目を足すと
+    // 区切りの数が変わるので、「値が無い」を鍵の文字列で見ていると黙って外れる（実際に外れた）。
+    // 種別が変わった報で欄が一斉に光るのを防ぐ守りが、これに依っている。
+    it('規模が無ければ種別を持っていても値なしとして扱う', () => {
+      const prompt = quakeFactSnapshot(makeQuake({ name: '', lat: -200, lng: -200, depth: -1, magnitude: -1, magnitudeType: 'Mj' }))
+      const settled = quakeFactSnapshot(makeQuake({ magnitudeType: 'Mj' }))
+      expect(changedQuakeFacts(settled, prompt, false).size).toBe(0)
+    })
+
+    // 対照: 種別も数値も同じなら印は出ない（上の鍵が過敏になっていないこと）。
+    it('種別も数値も同じなら印は出ない', () => {
+      const before = quakeFactSnapshot(makeQuake({ magnitude: 6.8, magnitudeType: 'Mj' }))
+      const after = quakeFactSnapshot(makeQuake({ magnitude: 6.8, magnitudeType: 'Mj' }))
+      expect(changedQuakeFacts(after, before, false).get('magnitude')).toBeUndefined()
     })
 
     // 対照: 下がったら別の印。**同じ「動いた」で畳まない。**
