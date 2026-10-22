@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
-  advanceQuakeMarks, changedQuakeFacts, diffQuakeRows, lpgmMarkKey, lpgmRowSnapshot,
-  pruneQuakeMarks, quakeFactSnapshot, quakeRowSnapshot, rowMarkKey, rowMarkOf,
+  advanceQuakeMarks, changedQuakeFacts, diffQuakeRows, lpgmMarkKey, lpgmRowSnapshot, lpgmTelegramRevise,
+  pruneQuakeMarks, quakeFactSnapshot, quakeRowSnapshot, quakeTelegramRevise, rowMarkKey, rowMarkOf,
   markIssuedAt, trimQuakeMarkMemory, MARK_MEMORY_MAX_ROWS,
   type QuakeMarkMemory,
   type QuakeMarkSnapshot,
@@ -9,7 +9,8 @@ import {
   type RowSnapshot,
 } from './quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from './updateMark'
-import type { EarthquakePoint, IntensityScale, JMAQuake, JMAQuakeCity } from '../types/earthquake'
+import type { EarthquakePoint, IntensityScale, JMALpgm, JMAQuake, JMAQuakeCity } from '../types/earthquake'
+import { log } from './logger'
 
 function makeQuake(over: {
   name?: string
@@ -75,49 +76,49 @@ describe('地震カードの更新の印', () => {
     it('規模が上がったら上がったの印が出る', () => {
       const before = quakeFactSnapshot(makeQuake({ magnitude: 7.4 }))
       const after = quakeFactSnapshot(makeQuake({ magnitude: 7.6 }))
-      expect(changedQuakeFacts(after, before).get('magnitude')).toBe('raised')
+      expect(changedQuakeFacts(after, before, false).get('magnitude')).toBe('raised')
     })
 
     // 対照: 下がったら別の印。**同じ「動いた」で畳まない。**
     it('規模が下がったら下がったの印が出る', () => {
       const before = quakeFactSnapshot(makeQuake({ magnitude: 7.6 }))
       const after = quakeFactSnapshot(makeQuake({ magnitude: 7.4 }))
-      expect(changedQuakeFacts(after, before).get('magnitude')).toBe('lowered')
+      expect(changedQuakeFacts(after, before, false).get('magnitude')).toBe('lowered')
     })
 
     // 正: **浅くなったら「上がった」**（浅いほど危険なので、赤が「より深刻」を指す約束を守る）。
     it('震源が浅くなったら上がったの印が出る', () => {
       const before = quakeFactSnapshot(makeQuake({ depth: 30 }))
       const after = quakeFactSnapshot(makeQuake({ depth: 10 }))
-      expect(changedQuakeFacts(after, before).get('depth')).toBe('raised')
+      expect(changedQuakeFacts(after, before, false).get('depth')).toBe('raised')
     })
 
     // 正: 大小の無い欄は向きを言わない。
     it('震央地名が変わったら向きの無い印が出る', () => {
       const before = quakeFactSnapshot(makeQuake({ name: '能登半島沖' }))
       const after = quakeFactSnapshot(makeQuake({ name: '石川県能登地方' }))
-      expect(changedQuakeFacts(after, before).get('hypocenterName')).toBe('changed')
+      expect(changedQuakeFacts(after, before, false).get('hypocenterName')).toBe('changed')
     })
 
     // 正: 震央補助表現の文が別の文へ変わったら向きの無い印（比べるのは電文の原文）。
     it('震央補助表現の文が変わったら向きの無い印が出る', () => {
       const before = quakeFactSnapshot(makeQuake({ nameFromMark: '輪島の東北東３０ｋｍ付近' }))
       const after = quakeFactSnapshot(makeQuake({ nameFromMark: '輪島の東北東４０ｋｍ付近' }))
-      expect(changedQuakeFacts(after, before).get('nameFromMark')).toBe('changed')
+      expect(changedQuakeFacts(after, before, false).get('nameFromMark')).toBe('changed')
     })
 
-    // 対照: 文が無かった報のあとに文が現れただけなら印を付けない（値が無い欄に値が付いたのと同じ）。
-    it('震央補助表現が現れただけの報では印を付けない', () => {
+    // 対照: 文が無かった報のあとに文が現れても、**種別が変わった報なら**印を付けない（値が無い欄に値が付いたのと同じ）。
+    it('震央補助表現が現れても、種別が変わった報では印を付けない', () => {
       const before = quakeFactSnapshot(makeQuake({}))
       const after = quakeFactSnapshot(makeQuake({ nameFromMark: '輪島の東北東３０ｋｍ付近' }))
-      expect(changedQuakeFacts(after, before).has('nameFromMark')).toBe(false)
+      expect(changedQuakeFacts(after, before, false).has('nameFromMark')).toBe(false)
     })
 
     // 安全弁: 座標だけ動いて文がそのままなら、印は座標の行にだけ出る（全期間の控えで 87 組あった形）。
     it('座標だけ動いて震央補助表現が同じなら、震央補助表現には印を付けない', () => {
       const before = quakeFactSnapshot(makeQuake({ lat: 37.5, lng: 137.2, nameFromMark: '輪島の東北東３０ｋｍ付近' }))
       const after = quakeFactSnapshot(makeQuake({ lat: 37.495, lng: 137.27, nameFromMark: '輪島の東北東３０ｋｍ付近' }))
-      const changed = changedQuakeFacts(after, before)
+      const changed = changedQuakeFacts(after, before, false)
       expect(changed.has('nameFromMark')).toBe(false)
       expect(changed.get('coordinate')).toBe('changed')
     })
@@ -127,38 +128,37 @@ describe('地震カードの更新の印', () => {
     it('震央補助表現が消えた報では向きの無い変化として残る（描く行は無い）', () => {
       const before = quakeFactSnapshot(makeQuake({ nameFromMark: '輪島の東北東３０ｋｍ付近' }))
       const after = quakeFactSnapshot(makeQuake({}))
-      expect(changedQuakeFacts(after, before).get('nameFromMark')).toBe('changed')
+      expect(changedQuakeFacts(after, before, false).get('nameFromMark')).toBe('changed')
     })
 
     // 対照: 津波区分の「調査中」「不明」は値ではなく「まだ決まっていない」なので、
-    // **そこから確定した報には印を付けない**（震源が未確定から確定した報と同じ扱い）。
-    it('津波区分は調査中から確定しても印を出さない', () => {
+    // **種別が変わった報で確定しても印を付けない**（震源が未確定から確定した報と同じ扱い）。
+    it('津波区分は調査中から確定しても、種別が変わった報では印を出さない', () => {
       const before = quakeFactSnapshot(makeQuake({ domesticTsunami: '調査中' }))
       const after = quakeFactSnapshot(makeQuake({ domesticTsunami: 'なし' }))
-      expect(changedQuakeFacts(after, before).size).toBe(0)
+      expect(changedQuakeFacts(after, before, false).size).toBe(0)
     })
 
     // 正: **逆向きは印を付ける。** 確定していた区分が調査中へ戻るのは気象庁が取り下げた事実。
     it('津波区分が確定から調査中へ戻ったら印を出す', () => {
       const before = quakeFactSnapshot(makeQuake({ domesticTsunami: 'なし' }))
       const after = quakeFactSnapshot(makeQuake({ domesticTsunami: '調査中' }))
-      expect(changedQuakeFacts(after, before).get('domesticTsunami')).toBe('changed')
+      expect(changedQuakeFacts(after, before, false).get('domesticTsunami')).toBe('changed')
     })
 
     // 対照: 重さの決まっている値どうしなら向きが出る。
     it('津波区分が警報等から注意報へ下がったら下がったの印が出る', () => {
       const before = quakeFactSnapshot(makeQuake({ domesticTsunami: '警報等' }))
       const after = quakeFactSnapshot(makeQuake({ domesticTsunami: '注意報' }))
-      expect(changedQuakeFacts(after, before).get('domesticTsunami')).toBe('lowered')
+      expect(changedQuakeFacts(after, before, false).get('domesticTsunami')).toBe('lowered')
     })
 
-    // 対照: **値が無いところへ値が付いただけなら印を付けない。** 震度速報 → 震源情報 の遷移が
-    // これで、付けると震源が確定した報で欄が一斉に光る。欄の顔ぶれは決まっていて常に見えて
-    // いるので、値が付いたこと自体をその欄が語っている。
-    it('震源が未確定から確定しただけでは印を出さない', () => {
+    // 対照: **種別が変わった報で値が付いただけなら印を付けない。** 震度速報 → 震源情報 の遷移が
+    // これで、付けると震源が確定した報で欄が一斉に光る。種別が変われば載せる欄の顔ぶれも変わる。
+    it('種別が変わった報で震源が未確定から確定しても印を出さない', () => {
       const prompt = quakeFactSnapshot(makeQuake({ name: '', lat: -200, lng: -200, depth: -1, magnitude: -1 }))
       const settled = quakeFactSnapshot(makeQuake())
-      expect(changedQuakeFacts(settled, prompt).size).toBe(0)
+      expect(changedQuakeFacts(settled, prompt, false).size).toBe(0)
     })
 
     // 正: 値が消えたのは向きの無い変化。**「下がった」ではない** —— 小さくなったのではなく
@@ -166,18 +166,34 @@ describe('地震カードの更新の印', () => {
     it('値が取り下げられたら向きの無い印が出る', () => {
       const before = quakeFactSnapshot(makeQuake({ magnitude: 7.6 }))
       const after = quakeFactSnapshot(makeQuake({ magnitude: -1 }))
-      expect(changedQuakeFacts(after, before).get('magnitude')).toBe('changed')
+      expect(changedQuakeFacts(after, before, false).get('magnitude')).toBe('changed')
     })
 
     // 対照: 前report が無ければ何も出ない（全欄が初出になって画面を埋める）。
     it('そのカードで最初に見た報では印を出さない', () => {
-      expect(changedQuakeFacts(quakeFactSnapshot(makeQuake()), undefined).size).toBe(0)
+      expect(changedQuakeFacts(quakeFactSnapshot(makeQuake()), undefined, false).size).toBe(0)
     })
 
     // 対照: 同じ値なら出ない。
     it('値が動いていなければ印を出さない', () => {
       const snap = quakeFactSnapshot(makeQuake())
-      expect(changedQuakeFacts(snap, snap).size).toBe(0)
+      expect(changedQuakeFacts(snap, snap, false).size).toBe(0)
+    })
+
+    // 正: **直前の電文と種別が同じなら、値の無かった欄に値が付いたら初出（緑）にする**
+    // （2026-10-21 ユーザー承認「自明でない組だけ緑 (Recommended)」。全期間の控えで震央補助表現 3 件・遠地地震の津波区分 22 件）。
+    it('同じ種別の続報で値の無かった欄に値が付いたら初出の印が出る', () => {
+      const before = quakeFactSnapshot(makeQuake({ domesticTsunami: '調査中' }))
+      const after = quakeFactSnapshot(makeQuake({ domesticTsunami: 'なし', nameFromMark: '輪島の東北東３０ｋｍ付近' }))
+      const changed = changedQuakeFacts(after, before, true)
+      expect(changed.get('domesticTsunami')).toBe('new')
+      expect(changed.get('nameFromMark')).toBe('new')
+    })
+
+    // 安全弁: 同じ種別でも、値が無いまま（番兵どうし）なら印を付けない。
+    it('同じ種別の続報でも値が無いままなら印を出さない', () => {
+      const snap = quakeFactSnapshot(makeQuake({ domesticTsunami: '調査中' }))
+      expect(changedQuakeFacts(snap, snap, true).size).toBe(0)
     })
 
     // 安全弁: 規模は**数値と説明の両方**を鍵に含める。「Ｍ８を超える巨大地震」は本文が NaN で
@@ -186,7 +202,7 @@ describe('地震カードの更新の印', () => {
       const before = quakeFactSnapshot(makeQuake({ magnitude: NaN, magnitudeCondition: '不明' }))
       const after = quakeFactSnapshot(makeQuake({ magnitude: NaN, magnitudeCondition: 'Ｍ８を超える巨大地震' }))
       // 数値が無いので大小は言えない。向きの無い変化として出す。
-      expect(changedQuakeFacts(after, before).get('magnitude')).toBe('changed')
+      expect(changedQuakeFacts(after, before, false).get('magnitude')).toBe('changed')
     })
 
     // 安全弁: 位置不明のセンチネル（-200）を座標として扱わない。
@@ -403,6 +419,7 @@ describe('地震カードの更新の印', () => {
     ): QuakeMarkSnapshot => ({
       facts: quakeFactSnapshot(q), rows: snapRows(points), reportType,
       issuedAt: markIssuedAt(q.issue.time),
+      telegramType: reportType, revise: null,
     })
 
     // 正: 続報で動いた分が印になり、記憶は進む。
@@ -635,7 +652,7 @@ describe('地震カードの更新の印', () => {
         key: lpgmMarkKey('20240101161000'),
         snapshot: {
           facts: new Map(), rows: lpgmRowSnapshot([{ name: '能登', maxLgInt: 4 }], [], []),
-          reportType: 'lpgm' as const, issuedAt: 0,
+          reportType: 'lpgm' as const, issuedAt: 0, telegramType: 'lpgm' as const, revise: null,
         },
         liveKeys: new Set(['q1', lpgmMarkKey('20240101161000')]),
         now: 2000,
@@ -700,7 +717,7 @@ describe('地震カードの更新の印', () => {
             ? new Map()
             : new Map([['maxScale', { key: String(maxScale), rank: maxScale }]] as const),
           rows: snap, rowsByType: new Map([['震源・震度情報', snap]]),
-          issuedAt: issuedAt ?? 0,
+          issuedAt: issuedAt ?? 0, telegramType: '震源・震度情報',
         }]
       }))
 
@@ -720,6 +737,7 @@ describe('地震カードの更新の印', () => {
         snapshot: {
           facts: target.facts, rows: target.rows,
           reportType: '震源・震度情報', issuedAt: target.issuedAt,
+          telegramType: '震源・震度情報', revise: null,
         },
         liveKeys: new Set(memory.keys()),
         now: 0,
@@ -829,7 +847,7 @@ describe('地震カードの更新の印', () => {
         ['after', half, 9_000, 20],
       ])
       // 刈り込みを起こすのは別の地震の受信（本震は `keep` で守られない）。
-      memory.set('trigger', { facts: new Map(), rows: new Map(), rowsByType: new Map(), issuedAt: 9_500 })
+      memory.set('trigger', { facts: new Map(), rows: new Map(), rowsByType: new Map(), issuedAt: 9_500, telegramType: null })
       capViaAdvance(memory, 'trigger')
       expect(memory.has('main')).toBe(true)
       expect(memory.has('after')).toBe(false)
@@ -886,5 +904,263 @@ describe('地震カードの更新の印', () => {
       expect(memory.has('gone')).toBe(false)
       expect(memory.has('alive')).toBe(true)
     })
+  })
+})
+
+describe('電文の Revise で行の印を付ける', () => {
+  /** DMDATA の電文の観測点（県名を持たない。県名を持つのは県の点だけ）。 */
+  const dmStation = (addr: string, scale: IntensityScale, over: Partial<EarthquakePoint> = {}): EarthquakePoint =>
+    station(addr, scale, { pref: '', ...over })
+
+  /** DMDATA の震源・震度情報の続報（`reportsRevise` が真）。 */
+  const reviseQuake = (points: EarthquakePoint[], cities: JMAQuakeCity[] = []): JMAQuake =>
+    ({ ...makeQuake(), points, cities, reportsRevise: true }) as JMAQuake
+
+  /** 同じ地震へ 2 通当てる。1 通目の電文の種別と 2 通目の写し・`Revise` を渡す。 */
+  const marksOf = (
+    prevPoints: EarthquakePoint[],
+    curPoints: EarthquakePoint[],
+    opts: {
+      prevTelegramType: MarkReportType | null
+      telegram: JMAQuake
+      cities?: { prev?: JMAQuakeCity[]; cur?: JMAQuakeCity[] }
+    },
+  ) => {
+    const q = makeQuake()
+    const first = advanceQuakeMarks({
+      prev: { memory: new Map(), marks: new Map() },
+      key: 'q1',
+      snapshot: {
+        facts: quakeFactSnapshot(q), rows: snapRows(prevPoints, opts.cities?.prev ?? []),
+        reportType: '震源・震度情報', issuedAt: 0, telegramType: opts.prevTelegramType, revise: null,
+      },
+      liveKeys: new Set(['q1']),
+      now: 0,
+    })
+    return advanceQuakeMarks({
+      prev: first,
+      key: 'q1',
+      snapshot: {
+        facts: quakeFactSnapshot(q), rows: snapRows(curPoints, opts.cities?.cur ?? []),
+        reportType: '震源・震度情報', issuedAt: 1, telegramType: opts.telegram.issue.type,
+        revise: quakeTelegramRevise(opts.telegram),
+      },
+      liveKeys: new Set(['q1']),
+      now: 1,
+    }).marks.get('q1')?.rows ?? new Map()
+  }
+
+  // 正: 同じ種別の続報では、`Revise` の付いた行に電文どおりの印が付く（追加＝初出・上方修正＝上がった）。
+  it('同じ種別の続報では Revise の付いた行に電文どおりの印を付ける', () => {
+    const cur = [
+      dmStation('輪島市鳳至町', 60, { revise: '上方修正' }),
+      dmStation('珠洲市正院町', 50, { revise: '追加' }),
+      { pref: '', addr: '石川県能登', isArea: true, scale: 60, revise: '上方修正' } as EarthquakePoint,
+    ]
+    const telegram = reviseQuake(cur, [city('輪島市', '石川県能登', 60, { revise: '追加' })])
+    const rows = marksOf(
+      [dmStation('輪島市鳳至町', 50), area('石川県能登', 50)],
+      cur,
+      { prevTelegramType: '震源・震度情報', telegram, cities: { cur: [city('輪島市', '石川県能登', 60)] } },
+    )
+    expect(rows.get(rowMarkKey.station('輪島市鳳至町'))).toBe('raised')
+    expect(rows.get(rowMarkKey.station('珠洲市正院町'))).toBe('new')
+    expect(rows.get(rowMarkKey.area('石川県能登'))).toBe('raised')
+    expect(rows.get(rowMarkKey.city('石川県能登', '輪島市'))).toBe('new')
+  })
+
+  // 正: `Revise` が受け持つ段では、**`Revise` の無い行に差分の印を付けない**（電文は「動いていない」と言っている）。
+  // **差分と食い違ったことは記録に残す**（全期間の控えでは起きていない形。崩れたとき画面からは見分けが付かない）。
+  it('Revise の無い行は値が違って見えても印を付けず、食い違いを記録に残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const cur = [dmStation('輪島市鳳至町', 60)]
+      const rows = marksOf([dmStation('輪島市鳳至町', 50)], cur, {
+        prevTelegramType: '震源・震度情報', telegram: reviseQuake(cur),
+      })
+      expect(rows.size).toBe(0)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0][0])).toMatch(/^\[quake\] .*Revise の無い行がある/)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 正: 一部の行にだけ `Revise` が欠けた形も記録に残す（ほかの行に `Revise` があっても黙らない）。
+  it('一部の行にだけ Revise が欠けても記録に残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const cur = [
+        dmStation('輪島市鳳至町', 60, { revise: '上方修正' }),
+        dmStation('珠洲市正院町', 60),
+      ]
+      const rows = marksOf([dmStation('輪島市鳳至町', 50), dmStation('珠洲市正院町', 50)], cur, {
+        prevTelegramType: '震源・震度情報', telegram: reviseQuake(cur),
+      })
+      expect(rows.get(rowMarkKey.station('輪島市鳳至町'))).toBe('raised')
+      expect(rows.has(rowMarkKey.station('珠洲市正院町'))).toBe(false)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0][1]).toMatchObject({ rows: 1 })
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 対照: `Revise` が 0 件でも、差分でも何も動いていなければ記録しない（全期間の控えの 4 通はこの形）。
+  it('Revise が 0 件で差分も動いていなければ記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const cur = [dmStation('輪島市鳳至町', 50)]
+      const rows = marksOf([dmStation('輪島市鳳至町', 50)], cur, {
+        prevTelegramType: '震源・震度情報', telegram: reviseQuake(cur),
+      })
+      expect(rows.size).toBe(0)
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 対照: 直前の電文と種別が違えば `Revise` は使わず、今の差分で付ける（2026-10-21 ユーザー承認「おすすめで」）。
+  it('直前の電文と種別が違えば今の差分で付ける', () => {
+    const cur = [dmStation('輪島市鳳至町', 60, { revise: '追加' })]
+    const rows = marksOf([dmStation('輪島市鳳至町', 50)], cur, {
+      prevTelegramType: '震度速報', telegram: reviseQuake(cur),
+    })
+    expect(rows.get(rowMarkKey.station('輪島市鳳至町'))).toBe('raised')
+  })
+
+  // 安全弁: 直前の記憶が電文の報でない（取消を当て直した姿）なら、`Revise` は使わない。
+  it('直前の記憶が電文の報でなければ Revise を使わない', () => {
+    const cur = [dmStation('輪島市鳳至町', 60)]
+    const rows = marksOf([dmStation('輪島市鳳至町', 50)], cur, {
+      prevTelegramType: null, telegram: reviseQuake(cur),
+    })
+    expect(rows.get(rowMarkKey.station('輪島市鳳至町'))).toBe('raised')
+  })
+
+  // 安全弁: カードの一覧に無い行の `Revise` は印にしない（指す先が無い）。
+  // 捨てた数は記録に残す（鍵の作り方がカード側とずれると、ずれた行だけ印が永久に出なくなる）。
+  it('カードに無い行の Revise は印にせず、捨てた数を記録に残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const telegram = reviseQuake([dmStation('幻の観測点', 30, { revise: '追加' })])
+      const rows = marksOf([dmStation('輪島市鳳至町', 50)], [dmStation('輪島市鳳至町', 50)], {
+        prevTelegramType: '震源・震度情報', telegram,
+      })
+      expect(rows.size).toBe(0)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0][1]).toMatchObject({ dropped: 1 })
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 安全弁: `reportsRevise` を持たない電文（P2PQuake・震度速報）は `Revise` を作らない。
+  it('Revise で変化を伝えない電文では作らない', () => {
+    expect(quakeTelegramRevise(makeQuake())).toBeNull()
+  })
+
+  // 安全弁: 知らない語は電文の印にせず、記録に残す（黙って捨てると「動いていない」と見分けが付かない）。
+  it('知らない Revise の語は印にせず記録に残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const revise = quakeTelegramRevise(reviseQuake([dmStation('輪島市鳳至町', 60, { revise: '新語' })]))
+      expect(revise?.marks.size).toBe(0)
+      expect(revise?.unreadable).toEqual(new Set([rowMarkKey.station('輪島市鳳至町')]))
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 安全弁: 知らない語の行は差分の印を残す（電文が何か言っているのに読めないので「動いていない」とは扱えない）。
+  // 対照として、同じ電文の `Revise` の無い行は差分が動いていても印を付けない。
+  it('知らない Revise の語の行だけは差分の印を残す', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const cur = [
+        dmStation('輪島市鳳至町', 60, { revise: '新語' }),
+        dmStation('珠洲市正院町', 60),
+      ]
+      const rows = marksOf([dmStation('輪島市鳳至町', 50), dmStation('珠洲市正院町', 50)], cur, {
+        prevTelegramType: '震源・震度情報', telegram: reviseQuake(cur),
+      })
+      expect(rows.get(rowMarkKey.station('輪島市鳳至町'))).toBe('raised')
+      expect(rows.has(rowMarkKey.station('珠洲市正院町'))).toBe(false)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  /** 長周期の同じ地震へ 2 通当てる（1 通目は印の記憶を作るだけ）。 */
+  const lpgmMarksOf = (prevLg: number, cur: { pref: number; area: number; station: number }, lpgm: JMALpgm) => {
+    const first = advanceQuakeMarks({
+      prev: { memory: new Map(), marks: new Map() },
+      key: lpgmMarkKey('e'),
+      snapshot: {
+        facts: new Map(),
+        rows: lpgmRowSnapshot([{ name: '石川県能登', maxLgInt: prevLg }], [{ name: '輪島', lgInt: prevLg }], [{ name: '石川県', maxLgInt: prevLg }]),
+        reportType: 'lpgm', issuedAt: 0, telegramType: 'lpgm', revise: null,
+      },
+      liveKeys: new Set([lpgmMarkKey('e')]),
+      now: 0,
+    })
+    return advanceQuakeMarks({
+      prev: first,
+      key: lpgmMarkKey('e'),
+      snapshot: {
+        facts: new Map(),
+        rows: lpgmRowSnapshot([{ name: '石川県能登', maxLgInt: cur.area }], [{ name: '輪島', lgInt: cur.station }], [{ name: '石川県', maxLgInt: cur.pref }]),
+        reportType: 'lpgm', issuedAt: 1, telegramType: 'lpgm', revise: lpgmTelegramRevise(lpgm),
+      },
+      liveKeys: new Set([lpgmMarkKey('e')]),
+      now: 1,
+    }).marks.get(lpgmMarkKey('e'))?.rows
+  }
+
+  // 正・安全弁: 長周期は県・区域だけを `Revise` で付け、`Revise` を持たない観測点は差分のまま。
+  it('長周期は県と区域を Revise で付け、観測点は差分で付ける', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const lpgm = {
+        id: 'L1',
+        reportsRevise: true,
+        prefs: [{ code: '17', name: '石川県', maxLgInt: 3, revise: '上方修正' }],
+        regions: [{ code: '390', name: '石川県能登', maxLgInt: 3 }],
+        points: [],
+      } as unknown as JMALpgm
+      expect(lpgmTelegramRevise(lpgm)?.kinds).toEqual(['pref:', 'area:'])
+      const rows = lpgmMarksOf(2, { pref: 3, area: 3, station: 3 }, lpgm)
+      expect(rows?.get(rowMarkKey.pref('石川県'))).toBe('raised')
+      // 区域は Revise が無いので「動いていない」（差分では上がって見えても付けない）
+      expect(rows?.has(rowMarkKey.area('石川県能登'))).toBe(false)
+      // 観測点は電文が Revise を持たないので差分のまま
+      expect(rows?.get(rowMarkKey.station('輪島'))).toBe('raised')
+      // 区域は差分では動いたのに Revise が無い —— 前提が崩れた形として長周期の印で記録に残す
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0][0])).toMatch(/^\[lpgm\] /)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 対照: 長周期で観測点だけが動いた報は記録しない（観測点の段は `Revise` の受け持ちではない）。
+  it('長周期で観測点だけが動いた報は Revise が 0 件でも記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const lpgm = {
+        id: 'L1',
+        reportsRevise: true,
+        prefs: [{ code: '17', name: '石川県', maxLgInt: 2 }],
+        regions: [{ code: '390', name: '石川県能登', maxLgInt: 2 }],
+        points: [],
+      } as unknown as JMALpgm
+      const rows = lpgmMarksOf(2, { pref: 2, area: 2, station: 3 }, lpgm)
+      expect(rows?.get(rowMarkKey.station('輪島'))).toBe('raised')
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

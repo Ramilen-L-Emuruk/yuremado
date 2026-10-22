@@ -48,6 +48,8 @@ import { extractQuakeEventIdFromId } from './quakeMerge'
 import { hasObservedHeightLowered, foldTsunamiReports, isObservationMissing, isPartialTsunamiRetraction, isSameTsunamiEvent, matchesArea, refoldTsunamiWithout } from './tsunami'
 import { linkTsunamiSources } from './tsunamiSourceLinks'
 import { applyLiveLpgm } from './lpgmRetraction'
+import { advanceQuakeMarks, markIssuedAt, quakeFactSnapshot, quakeRowSnapshot, quakeTelegramRevise, rowMarkKey, type QuakeCardMarks, type QuakeMarkMemory } from './quakeUpdateMark'
+import { quakeEventKey } from './quakeMerge'
 
 // テストデータが「名前で」外部データと突き合わせている箇所を固定する。
 //
@@ -475,6 +477,81 @@ describe('地震情報テストの points 形状', () => {
       expect(new Set(reports.map(q => q.earthquake.time)).size).toBe(1)
       // 発表時刻は進む（進めないと据え置き判定が続報を捨てる）。
       expect(reports.map(q => q.time)).toEqual([...reports.map(q => q.time)].sort())
+    })
+
+    // `Revise` は実電文の付き方に合わせる（全期間の控えで、`Revise` は震源・震度情報の同じ種別の続報に
+    // だけ載る）。元にした 16:24 の実電文の `Revise` が持ち越されると、電文に無い印が実機で出る。
+    describe('Revise（DMDSS 版）', () => {
+      const reports = () => createTestQuakeReportSequence(true)
+      const revisesOf = (q: JMAQuake) => [
+        ...q.points.filter(p => p.revise).map(p => p.revise),
+        ...(q.cities ?? []).filter(c => c.revise).map(c => c.revise),
+      ]
+
+      // 安全弁: 震度速報・震源情報、種別が変わった直後の震源・震度情報（4 通目）は `Revise` を持たない。
+      it('震度速報・震源情報と 4 通目は Revise を持たない', () => {
+        const r = reports()
+        for (const i of [0, 1, 2, 3, 5]) expect(revisesOf(r[i])).toEqual([])
+        // 震度速報・震源情報は `Revise` で変化を伝える種別ではない。
+        for (const i of [0, 1, 2, 5]) expect(r[i].reportsRevise).toBeUndefined()
+        expect(r[3].reportsRevise).toBe(true)
+      })
+
+      // 正: 5 通目は増えた観測点・市町村だけが「追加」、7 通目は動いた観測点だけが「上方修正」「下方修正」。
+      it('5 通目は追加、7 通目は上方修正・下方修正だけを持つ', () => {
+        const r = reports()
+        const fifth = revisesOf(r[4])
+        expect(fifth.length).toBeGreaterThan(0)
+        expect(new Set(fifth)).toEqual(new Set(['追加']))
+        expect(new Set(revisesOf(r[6]))).toEqual(new Set(['上方修正', '下方修正']))
+      })
+
+      // 対照: standard 版（P2PQuake）は `Revise` を配信しないので、どの報も持たない。
+      it('standard 版はどの報も Revise を持たない', () => {
+        for (const q of createTestQuakeReportSequence(false)) {
+          expect(revisesOf(q)).toEqual([])
+          expect(q.reportsRevise).toBeUndefined()
+        }
+      })
+
+      // 正: ライブと同じ形で 7 通を当てると、5 通目と 7 通目の行の印が電文の `Revise` どおりになる
+      // （受信のたびに `advanceQuakeMarks` を進める。据え置かれた 6 通目では進めない）。
+      it('ライブと同じ形で当てると、行の印が Revise どおりになる', () => {
+        let card: JMAQuake | undefined
+        let memory: ReadonlyMap<string, QuakeMarkMemory> = new Map()
+        let marks: ReadonlyMap<string, QuakeCardMarks> = new Map()
+        const rowsAfter: (ReadonlyMap<string, unknown> | undefined)[] = []
+        for (const q of reports()) {
+          const next = mergeQuakeInto(card, q)
+          if (next === card) { rowsAfter.push(undefined); continue }
+          card = next
+          const key = quakeEventKey(card)
+          const state = advanceQuakeMarks({
+            prev: { memory, marks },
+            key,
+            snapshot: {
+              facts: quakeFactSnapshot(card),
+              rows: quakeRowSnapshot(card.points, card.cities ?? [], null),
+              issuedAt: markIssuedAt(card.issue.time),
+              reportType: card.issue.type,
+              telegramType: q.issue.type,
+              revise: quakeTelegramRevise(q),
+            },
+            liveKeys: new Set([key]),
+            now: 0,
+          })
+          memory = state.memory
+          marks = state.marks
+          rowsAfter.push(state.marks.get(key)?.rows)
+        }
+        const r = reports()
+        const expected = (q: JMAQuake) => new Map([
+          ...q.points.filter(p => p.revise && !p.isArea).map(p => [rowMarkKey.station(p.addr), p.revise] as const),
+          ...(q.cities ?? []).filter(c => c.revise).map(c => [rowMarkKey.city(c.area, c.name), c.revise] as const),
+        ].map(([k, v]) => [k, v === '追加' ? 'new' : v === '上方修正' ? 'raised' : 'lowered']))
+        expect(rowsAfter[4]).toEqual(expected(r[4]))
+        expect(rowsAfter[6]).toEqual(expected(r[6]))
+      })
     })
   })
 

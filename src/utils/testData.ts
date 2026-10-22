@@ -238,6 +238,9 @@ export function createTestEarthquake(useDmdataShape: boolean, operationStatus?: 
     // そのバリアントの実電文には無い形になる。
     ...(useDmdataShape && { eventId }),
     time: now,
+    // 行ごとの `Revise` で続報の変化を伝える種別の印（→ `JMAQuake.reportsRevise`）。DMDATA の
+    // 震源・震度情報だけが持つ。standard 版（P2PQuake）は `Revise` を配信しない。
+    ...(useDmdataShape && { reportsRevise: true as const }),
     // 電文の運用種別（`Control/Status`）。訓練・試験のときだけ入り、通常の報には現れない。
     // **DMDATA 経路だけが運ぶ**（P2PQuake はヘッダを配信しない）ので standard 版では渡さない。
     ...(operationStatus ? { operationStatus } : {}),
@@ -473,6 +476,10 @@ const TEST_LATE_CITY_COUNT = 3
  * - **6 通目は震源・震度情報のあとに届く震度速報。** 据え置かれ、カードは変わらない
  * - **7 通目は観測点の震度が上下する続報**（上げる点と下げる点の数は関数内の定数）。動いた行に
  *   更新の印が付き、読み上げは「観測された震度が更新されました。」と読む
+ * - **`Revise` は実電文の付き方に合わせる（DMDSS 版）。** 全期間の控えでは、`Revise` は震源・震度情報の
+ *   同じ種別の続報にだけ載り、震度速報・震源情報と、種別が変わった直後の震源・震度情報（4 通目）には
+ *   1 件も無かった。5 通目は増えた観測点・市町村に「追加」、7 通目は動いた観測点に「上方修正」
+ *   「下方修正」を付ける。元にした 16:24 の実電文が持つ `Revise`（その前の報からの変化）は使わない
  */
 export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake[] {
   const base = createTestEarthquake(useDmdataShape)
@@ -505,10 +512,18 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
     .slice(0, Math.ceil(areaPoints.length * 0.6))
   const maxScaleOf = (points: EarthquakePoint[]): IntensityScale =>
     points.reduce<IntensityScale>((max, p) => (p.scale > max ? p.scale : max), -1)
+  /**
+   * 元にした実電文の `Revise` を外す。あれは 16:24 の報の「その前の報からの変化」で、この 7 通の
+   * どの報の前後関係とも合わない。付ける報では下で付け直す。
+   */
+  const withoutRevise = <T extends { revise?: string }>(rows: readonly T[]): T[] =>
+    rows.map(({ revise: _revise, ...row }) => row as T)
+  /** 震度速報・震源情報は `Revise` で変化を伝えない種別（→ `JMAQuake.reportsRevise`）。 */
+  const { reportsRevise: _reportsRevise, ...nonReviseBase } = base
 
   const prompt = (time: string, points: EarthquakePoint[]): JMAQuake => {
     return {
-      ...base,
+      ...nonReviseBase,
       telegramKey: keyOf('震度速報', time),
       time,
       issue: { ...base.issue, time, type: '震度速報' },
@@ -520,7 +535,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
         // （→ docs/spec/quake-spec.md §6.4）。実データ（能登の前震）でもこの値だった。
         domesticTsunami: '調査中',
       },
-      points,
+      points: withoutRevise(points),
       // 市町村の段は震源・震度情報だけが運ぶ。
       cities: undefined,
       ...(base.forecastText === undefined ? {} : { forecastText: '今後の情報に注意してください。' }),
@@ -529,7 +544,7 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
 
   const destinationTime = at(1)
   const destination: JMAQuake = {
-    ...base,
+    ...nonReviseBase,
     telegramKey: keyOf('震源に関する情報', destinationTime),
     time: destinationTime,
     issue: { ...base.issue, time: destinationTime, type: '震源情報' },
@@ -563,9 +578,12 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
     reportSerial: 1,
     time: detailTime,
     issue: { ...base.issue, time: detailTime },
-    points: base.points.filter(p => !lateStations.has(p)),
-    ...(base.cities ? { cities: base.cities.filter(c => !lateCities.has(c)) } : {}),
+    // **種別が変わった直後の報なので `Revise` は持たない**（実電文で 1,456 通とも無い）。
+    points: withoutRevise(base.points.filter(p => !lateStations.has(p))),
+    ...(base.cities ? { cities: withoutRevise(base.cities.filter(c => !lateCities.has(c))) } : {}),
   }
+  // 同じ種別の続報で付ける `Revise`。**DMDSS 版だけ**（standard 版は P2PQuake の形で、`Revise` を持たない）。
+  const reviseOf = (revise: string): { revise?: string } => (useDmdataShape ? { revise } : {})
 
   // 5 通目。**観測点・市町村が出そろうだけで、区域も震源要素も動かさない。**
   // 間隔だけは他より長く取る（理由は `TEST_REPORT_SEQUENCE_FOLLOWUP_DELAY_MS`）。
@@ -578,6 +596,16 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
     reportSerial: 2,
     time: followUpTime,
     issue: { ...base.issue, time: followUpTime },
+    // 4 通目から増えた観測点・市町村だけが「追加」。区域・県は値が動かないので付かない。
+    // **増えたかは元の点そのもので引く**（`lateStations` は元の配列の要素を持つ。複製してから引くと当たらない）。
+    points: base.points.map(p => (lateStations.has(p)
+      ? { ...withoutRevise([p])[0], ...reviseOf('追加') }
+      : withoutRevise([p])[0])),
+    ...(base.cities ? {
+      cities: base.cities.map(c => (lateCities.has(c)
+        ? { ...withoutRevise([c])[0], ...reviseOf('追加') }
+        : withoutRevise([c])[0])),
+    } : {}),
   }
 
   // 6 通目。**完全版のあとに届く震度速報。**
@@ -622,10 +650,10 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
     INTENSITY_SCALES_ASC.find(v => v > scale) ?? scale
   const lowerOne = (scale: IntensityScale): IntensityScale =>
     [...INTENSITY_SCALES_ASC].reverse().find(v => v < scale) ?? scale
-  const raisedPoints = base.points.map(p => {
+  const raisedPoints = withoutRevise(base.points).map(p => {
     if (p.isArea) return p
-    if (raiseTargets.has(p.addr)) return { ...p, scale: raiseOne(p.scale) }
-    if (lowerTargets.has(p.addr)) return { ...p, scale: lowerOne(p.scale) }
+    if (raiseTargets.has(p.addr)) return { ...p, scale: raiseOne(p.scale), ...reviseOf('上方修正') }
+    if (lowerTargets.has(p.addr)) return { ...p, scale: lowerOne(p.scale), ...reviseOf('下方修正') }
     return p
   })
   const raised: JMAQuake = {
@@ -635,6 +663,8 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
     time: raisedTime,
     issue: { ...base.issue, time: raisedTime },
     points: raisedPoints,
+    // 市町村は値が動かないので `Revise` は付かない（5 通目の「追加」も持ち越さない）。
+    ...(base.cities ? { cities: withoutRevise(base.cities) } : {}),
     earthquake: { ...base.earthquake, maxScale: maxScaleOf(raisedPoints) },
   }
 
@@ -2028,10 +2058,13 @@ export function createTestHypocenterFromTsunami(): (JMAQuake | JMATsunami)[] {
   // 1 通目は揺れの強い区域から 6 割だけ。続報で全区域そろい、最大震度が上がる。
   const firstPoints = [...areaPoints].sort((a, b) => b.scale - a.scale).slice(0, Math.ceil(areaPoints.length * 0.6))
 
+  // 震度速報は `Revise` で変化を伝えない種別（→ `JMAQuake.reportsRevise`）。元にした実電文の
+  // `Revise` も外す（16:24 の報の前後関係で、この並びとは合わない）。
+  const { reportsRevise: _reportsRevise, ...promptBase } = base
   const prompt = (step: number, points: EarthquakePoint[]): JMAQuake => {
     const time = at(step)
     return {
-      ...base,
+      ...promptBase,
       telegramKey: dmdataTelegramKey('震度速報', time),
       time,
       issue: { ...base.issue, time, type: '震度速報' },
@@ -2045,7 +2078,7 @@ export function createTestHypocenterFromTsunami(): (JMAQuake | JMATsunami)[] {
         // 種別に付く定型文で、その報の判断ではない（→ docs/spec/quake-spec.md §6.4）。
         domesticTsunami: '調査中',
       },
-      points,
+      points: points.map(({ revise: _revise, ...p }) => p),
       // 市町村の段は震源・震度情報だけが運ぶ。
       cities: undefined,
     }

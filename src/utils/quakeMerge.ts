@@ -1578,6 +1578,9 @@ export function mergeQuakeHistory(
           rows: quakeRowSnapshot(effect.card.points, effect.card.cities ?? [], areaPrefIndex),
           issuedAt: markIssuedAt(effect.card.issue.time),
           reportType: effect.card.issue.type,
+          // 取消を当て直した姿は電文の報ではない（ライブの同じ分岐と揃える）
+          telegramType: null,
+          revise: null,
         })
       }
       continue
@@ -1619,6 +1622,10 @@ export function mergeQuakeHistory(
         // **カードの種別を渡す**（`q.issue.type` ではない）。ライブ側も統合後のカードから
         // 採っており、片方だけ電文の種別にすると行の初出の判定基準がずれる。
         reportType: card.issue.type,
+        // 一方、`Revise` と欄の初出が見る「直前の電文の種別」は電文の側（→ `QuakeMarkSnapshot.telegramType`）。
+        // 履歴は印を出さないので `Revise` は渡さない。
+        telegramType: q.issue.type,
+        revise: null,
       })
     }
   }
@@ -1671,6 +1678,10 @@ export function mergeQuakeHistory(
       rows: quakeRowSnapshot(card.points, card.cities ?? [], areaPrefIndex),
       issuedAt: markIssuedAt(card.issue.time),
       reportType: card.issue.type,
+      // 写し直すのは吸収した姿で、電文が届いたわけではない。上のループがその鍵へ最後に当てた
+      // 電文の種別を引き継ぐ。
+      telegramType: markMemory.get(key)?.telegramType ?? null,
+      revise: null,
     })
   }
 

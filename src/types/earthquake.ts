@@ -112,10 +112,13 @@ export interface EarthquakePoint {
    * 2-1-3-2（都道府県）と 2-1-3-3-2（地域）—— 続報で新規に追加された場合は「追加」、
    * 最大震度が更新された場合は「上方修正」「下方修正」を記載する、と定められている。
    *
-   * **読んで持つだけで、いまはどこからも使っていない。** 読み上げは前報との突き合わせで
-   * 同じ判定を自前で出しており（`ttsText.ts` の差分ロジック。→ `CLAUDE.md`「続報は差分だけ
-   * 読む」）、そちらを電文の値へ置き換えるかは別の判断が要る。読み上げの差分判定は
-   * 単一情報源が何行も費やしている繊細な場所で、電文の網羅性点検の範囲を超えるため。
+   * **カードの更新の印に使う**（→ {@link JMAQuake.reportsRevise}・`utils/quakeUpdateMark.ts` の
+   * `quakeTelegramRevise`）。都道府県・地域・市町村に加え、**観測点（`IntensityStation`）も持つ**
+   * （全期間の控えで観測点の「追加」1,566 件・「上方修正」72 件）。
+   *
+   * **読み上げは使わない。** 読み上げは前報との突き合わせで同じ判定を自前で出しており
+   * （`ttsText.ts` の差分ロジック。→ `CLAUDE.md`「続報は差分だけ読む」）、既読は「声になった分」で
+   * 進むので、直前の電文からの差分である `Revise` とは比べる相手が違う。
    *
    * **津波の `Revise`（`TsunamiObservation.firstHeightRevise` ほか）とは別物。**
    * あちらは波高の更新で、こちらは震度。名前が同じなので取り違えないこと。
@@ -296,7 +299,7 @@ export interface JMAQuakeCity {
   code?: string
   /**
    * 続報でこの市町村がどう変わったか（電文の `Revise`）。→ {@link EarthquakePoint.revise}
-   * （意味も扱いも同じ。**読んで持つだけで、いまはどこからも使っていない**）
+   * （意味も扱いも同じ。カードの更新の印に使う）
    *
    * 解説資料 Ⅱ.33 は `Revise` を都道府県（2-1-3-2）・地域（2-1-3-3-2）・**市町村
    * （2-1-3-3-3-2）**の 3 階層に定めている。点検の集計は要素名でまとめるため
@@ -462,6 +465,17 @@ export interface JMAQuake {
    * {@link JMAQuake.time} へ落ちる。
    */
   createdAtMs?: number
+  /**
+   * この電文が行ごとの `Revise`（{@link EarthquakePoint.revise}・{@link JMAQuakeCity.revise}）で
+   * 続報の変化を伝える種別か。**真のとき、`Revise` の無い行は「直前の同じ種別の報から動いていない」**。
+   *
+   * DMDATA の XML 経路の震源・震度情報（VXSE53）だけが持つ。**遠地地震に関する情報は VXSE53 でも持たない**
+   * （震度の行が無い）。P2PQuake 経路は `Revise` を配信しない。全期間の控えでの付き方
+   * （同じ種別の続報にだけ載り、種別が変わった直後と震度速報の続報には無い）は
+   * `docs/spec/quake-spec.md` §8「電文の `Revise` で行の印を付ける」。
+   * 使い方は `utils/quakeUpdateMark.ts` の {@link quakeTelegramRevise}。
+   */
+  reportsRevise?: true
   /**
    * 電文が名乗る報番号（`Head/Serial`）。数値として読めないときは持たせない。
    *
@@ -1485,7 +1499,7 @@ export interface LpgmPref {
   maxInt?: IntensityScale
   /**
    * 続報でこの都道府県がどう変わったか（電文の `Revise`）。→ {@link EarthquakePoint.revise}
-   * （意味も扱いも同じ。**読んで持つだけで、いまはどこからも使っていない**）
+   * （意味も扱いも同じ。カードの更新の印に使う —— {@link JMALpgm.reportsRevise}）
    */
   revise?: string
 }
@@ -1500,7 +1514,7 @@ export interface LpgmRegion {
   maxInt?: IntensityScale
   /**
    * 続報でこの区域がどう変わったか（電文の `Revise`）。→ {@link EarthquakePoint.revise}
-   * （意味も扱いも同じ。**読んで持つだけで、いまはどこからも使っていない**）
+   * （意味も扱いも同じ。カードの更新の印に使う —— {@link JMALpgm.reportsRevise}）
    */
   revise?: string
 }
@@ -1511,6 +1525,15 @@ export interface JMALpgm {
   time: string
   /** 電文を作成した時刻（`Control/DateTime`）のミリ秒。意味と扱いは {@link JMAQuake.createdAtMs} と同じ。 */
   createdAtMs?: number
+  /**
+   * 県・区域の行の `Revise`（{@link LpgmPref.revise}・{@link LpgmRegion.revise}）で続報の変化を伝える電文か。
+   * 意味は {@link JMAQuake.reportsRevise} と同じ。**観測点の段は `Revise` を持たない**（電文の
+   * `IntensityStation` 直下は名前・コード・階級・震度・応答だけ）ので、そこは自前の比較のまま。
+   *
+   * DMDATA の XML 経路だけが持つ。全期間の控え（2020-11〜）に長周期の続報は 1 通も無く、
+   * 実電文の `Revise` はまだ確かめられていない。
+   */
+  reportsRevise?: true
   /**
    * 電文の運用種別（`Control/Status`）。訓練・試験のときだけ入る。→ {@link TelegramOperationStatus}
    *

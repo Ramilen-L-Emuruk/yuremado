@@ -21,7 +21,7 @@ import {
   mergeHistoryLoss,
 } from '../utils/telegramLoss'
 import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, extractQuakeEventId, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
-import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmRowSnapshot, lpgmMarkKey, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
+import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmRowSnapshot, lpgmMarkKey, lpgmTelegramRevise, quakeTelegramRevise, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
 import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, MAX_LPGM_RETRACTIONS, recordLpgmRetractions, type LpgmRetraction } from '../utils/lpgmRetraction'
@@ -653,6 +653,9 @@ function markedLpgmState(
       issuedAt: markIssuedAt(lpgm.time),
       // 長周期地震動観測情報は 1 種類しか無いので、種別が変わることがない。
       reportType: 'lpgm',
+      telegramType: 'lpgm',
+      // 県・区域の行は電文の `Revise` で付ける（観測点は差分のまま。→ `lpgmTelegramRevise`）
+      revise: lpgmTelegramRevise(lpgm),
     },
     liveKeys: liveMarkKeys(prev.earthquakes, next),
     now,
@@ -2139,6 +2142,10 @@ export function useEarthquakes(
                   rows: quakeRowSnapshot(card.points, card.cities ?? [], getAreaPrefIndexCache()),
                   issuedAt: markIssuedAt(card.issue.time),
                   reportType: card.issue.type,
+                  // 取消を当て直した姿は電文の報ではない。次の報が `Revise` を使えないようにする
+                  // （何に対する変化かを言えない）。
+                  telegramType: null,
+                  revise: null,
                 })
                 return card
               }
@@ -2221,6 +2228,9 @@ export function useEarthquakes(
               issuedAt: markIssuedAt(settled.issue.time),
               // 種別が変わった報では行の初出に印を付けない（→ `diffQuakeRows`）。
               reportType: settled.issue.type,
+              // **届いた電文そのものから取る**（`quake` は震度の控えで補った後の姿。→ `quakeTelegramRevise`）
+              telegramType: (event as JMAQuake).issue.type,
+              revise: quakeTelegramRevise(event as JMAQuake),
             },
             // **長周期の鍵も数える。** 地震の鍵だけを渡すと、地震を 1 通受けただけで
             // 長周期の記憶が丸ごと捨てられ、その次の長周期の続報が初報として扱われる。

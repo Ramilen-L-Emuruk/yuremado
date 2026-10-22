@@ -579,7 +579,7 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
   //
   // 気象庁が「この都道府県・地域は続報で新規に追加された（追加）」「最大震度が動いた
   // （上方修正／下方修正）」を電文で直接伝えている（解説資料 Ⅱ.33 の 2-1-3-2・2-1-3-3-2）。
-  // **読んで持つだけで、いまはどこからも使っていない**（→ `EarthquakePoint.revise`）。
+  // カードの更新の印に使う（→ `EarthquakePoint.revise`・`quakeTelegramRevise`）。
   //
   // 雛形は Revise を持たないので、都道府県と区域へ**別々の値**を入れて取り違えを検出する。
   // Pref の配下に Area があり、どちらも同名要素を持ちうるため、直下に限る読み方でないと
@@ -645,6 +645,35 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
   // 対照: `Revise` を持たない電文では市町村にも入らない。
   it('Revise が無ければ市町村にも入らない', () => {
     expect(fromXml().cities?.find(c => c.name === '普代村')?.revise).toBeUndefined()
+  })
+
+  // 正: 観測点にも `Revise` がある（全期間の控えで「追加」1,566 件・「上方修正」72 件）。
+  // 市町村と別の値を入れて、階層の取り違えを検出する。
+  it('続報での変化（Revise）を観測点からも読む', () => {
+    const xml = VXSE53_XML
+      .replace('<Name>普代村銅屋</Name>\n                <Code>0348532</Code>\n                <Int>3</Int>',
+        '<Name>普代村銅屋</Name>\n                <Code>0348532</Code>\n                <Int>3</Int>\n                <Revise>上方修正</Revise>')
+      .replace('<Name>普代村</Name>\n              <Code>0348500</Code>',
+        '<Name>普代村</Name>\n              <Code>0348500</Code>\n              <Revise>追加</Revise>')
+    // .replace() は対象が無くても黙って素通りする。当たったことを機械的に確かめる。
+    expect(xml).toContain('<Revise>上方修正</Revise>')
+    expect(xml).toContain('<Revise>追加</Revise>')
+    const quake = parseEarthquakeFromXml('VXSE53', xml)!
+    expect(quake.points.find(p => p.addr === '普代村銅屋')?.revise).toBe('上方修正')
+    expect(quake.cities?.find(c => c.name === '普代村')?.revise).toBe('追加')
+  })
+
+  // 対照: `Revise` を持たない電文では観測点にも入らない。
+  it('Revise が無ければ観測点にも入らない', () => {
+    expect(fromXml().points.find(p => p.addr === '普代村銅屋')?.revise).toBeUndefined()
+  })
+
+  // 正・対照・安全弁: `Revise` で変化を伝える種別の印（→ `JMAQuake.reportsRevise`）。
+  // 国内の震源・震度情報だけが持ち、震度速報と遠地地震（同じ VXSE53）は持たない。
+  it('Revise で変化を伝える種別の印は国内の震源・震度情報にだけ付く', () => {
+    expect(fromXml().reportsRevise).toBe(true)
+    expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.reportsRevise).toBeUndefined()
+    expect(parseEarthquakeFromXml('VXSE53', FOREIGN_XML)!.reportsRevise).toBeUndefined()
   })
 
   // ---- 震源の補助要素（震央補助表現・震源決定機関）----

@@ -1762,6 +1762,9 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       const stCode = xmlText(xmlChild(el, 'Code'))
       const intStr = xmlText(xmlChild(el, 'Int'))
       const { scale, unreceived } = readIntensity(intStr || null)
+      // 続報での変化（`Revise`）。都道府県・地域・市町村と同じ扱い（→ `EarthquakePoint.revise`）。
+      // 観測点の要素は同名の子を入れ子にしないが、ほかの段と揃えて直下だけを見る。
+      const stRevise = xmlText(xmlChild(el, 'Revise'))
       if (stName && scale >= 0) {
         // QUAKE-2: 観測点も区域と同じく pref を空にする。
         // 以前は pref: prefName を付けていたため EarthquakeCard.prefGroups が
@@ -1772,6 +1775,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
           ...(unreceived && { unreceived: true }),
           ...(stNonJma && { nonJma: true }),
           ...(stCode && { code: stCode }),
+          ...(stRevise && { revise: stRevise }),
           // 所属する市町村と一次細分区域（→ `EarthquakePoint.city` / `.area`）。
           // **どちらも座標表からは引けない**ので、電文の並びで拾えるここでしか持てない。
           // 区域まで持つのは、市町村名が全国で一意でないため（同名の市町村を取り違えない）
@@ -1829,6 +1833,10 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     eventId: eventId || undefined,
     ...(telegramKey && { telegramKey }),
     ...(createdAtMs !== undefined && { createdAtMs }),
+    // 行ごとの `Revise` で続報の変化を伝える種別か（→ `JMAQuake.reportsRevise`）。
+    // **震源・震度情報（VXSE53）に限る** —— 震度速報の続報には全期間で 1 件も載らない。
+    // 遠地地震も VXSE53 で届くが、震度の行を持たないので外す。
+    ...(headType === 'VXSE53' && issueType !== '遠地地震' && { reportsRevise: true as const }),
     ...(reportSerial !== undefined && { reportSerial }),
     time: reportDateTime,
     issue: {
@@ -2788,6 +2796,8 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }),
     ...(lpgmInfoName && { infoName: lpgmInfoName }),
     id, eventId, time: reportDateTime, ...(lpgmCreatedAtMs !== undefined && { createdAtMs: lpgmCreatedAtMs }),
+    // 県・区域の `Revise` で続報の変化を伝える電文（→ `JMALpgm.reportsRevise`）
+    reportsRevise: true,
     originTime, maxClass, cancelled: false, points, regions,
     ...(prefs.length > 0 && { prefs }),
     ...(obsMaxInt >= 0 && { maxInt: obsMaxInt }),

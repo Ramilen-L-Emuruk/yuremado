@@ -2198,6 +2198,8 @@ describe('mergeQuakeHistory が作る印の記憶', () => {
         rows: quakeRowSnapshot(settled.points, settled.cities ?? [], null),
         issuedAt: markIssuedAt(settled.issue.time),
         reportType: settled.issue.type,
+        telegramType: incoming.issue.type,
+        revise: null,
       },
       liveKeys: new Set([key]),
       now: Date.now(),
