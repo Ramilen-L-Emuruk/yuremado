@@ -41,6 +41,11 @@ let currentSessionId = 0
 // 完走してしまい、VOICEVOX 側の直列処理を占有して新規発話が待たされる。新セッション開始時に
 // abort() することで旧セッションのリクエストを即座に打ち切る。
 let currentAbortController: AbortController | null = null
+// 今のセッションの予約のうち、まだ鳴り始めていないものを「鳴っていない」と印す口
+// （{@link SpeechOutcome.spokenChunks}）。止める側（{@link stopSpeech}・次の発話の冒頭）が
+// `stop()` の前に呼ぶ。止めてからでは鳴り始めたかを見分けられない —— 合成は再生より速く
+// 終わるので、割り込まれた時点で後ろの句まで予約し終えていることが多い。
+let markUnstartedAsCut: (() => void) | null = null
 
 // 進行中の読み上げの本数（{@link isSpeaking}）。**数えるのは {@link speakWithVoicevox} の
 // 呼び出しであって「いま音が鳴っているか」ではない。** 合成待ちやチャンクとチャンクの隙間で
@@ -1433,6 +1438,8 @@ export function abortSpeechPrefetch(): void {
  */
 export function __resetAudioPlaybackStateForTest(): void {
   lastAudioEndedAt = 0
+  // 前のテストの発話の口（古い偽の AudioContext を掴んでいる）を次のテストへ持ち越さない
+  markUnstartedAsCut = null
 }
 
 /** テスト用に投機の状態を捨てる（本番経路では呼ばない）。 */
@@ -1618,7 +1625,26 @@ const PRE_START_CHECK_LEAD_SEC = 0.05
  * 間に対象が取り消されて読むものが無くなることはあるが、そのときは誤報取消の読み上げが別途
  * 流れるため情報は欠けない。
  */
+/**
+ * 今のセッションのまだ鳴り始めていない予約を「鳴っていない」と印し、口を外す
+ * （→ {@link markUnstartedAsCut}）。止める側の 2 箇所から、`stop()` の前に呼ぶ。
+ *
+ * **印付けが失敗しても止める処理は続ける。** ここから例外が抜けると、前の音が止まらず、
+ * 新しい発話は始まらず、`speakOnce` の「例外を投げない」約束も崩れる。失敗したときは
+ * 未鳴動の句が「鳴った」に数えられる（直す前と同じ扱い）だけなので、記録を残して先へ進む。
+ */
+function cutUnstartedOfCurrent(): void {
+  try {
+    markUnstartedAsCut?.()
+  } catch (err) {
+    log.warn('[VoiceVox] 割り込み時の印付けに失敗（止める処理は続行）', err)
+  } finally {
+    markUnstartedAsCut = null
+  }
+}
+
 export function stopSpeech(): void {
+  cutUnstartedOfCurrent()
   for (const src of activeSources) {
     try { src.stop() } catch { /* already stopped */ }
   }
@@ -1668,9 +1694,11 @@ export type SpeechOutcome = {
    * 予想震度なし。」）。繋いでから探せばそれも拾える。途中のチャンクだけ合成に失敗すると
    * 繋ぎ目が不連続になるが、そのときは見つからない側（＝声になっていない扱い）へ倒れる。
    *
-   * **割り込みで止められた分は区別しない。** `dropped` が立つのは {@link ShouldStillPlay} が
-   * 偽を返して取り下げた経路だけで、新しい発話が始まって `stop()` された予約には立たない。
-   * {@link spoke} が持っていた割り切りをそのまま引き継いでいる。
+   * **割り込みで止められた分も外す。** 新しい発話の冒頭や {@link stopSpeech} が止めたとき、
+   * その時点でまだ鳴り始めていなかった予約は「鳴っていない」に入る（`cut`）。合成は再生より
+   * 速く終わるので、割り込まれた時点で後ろの句まで予約し終えていることが多く、数えると
+   * **切られて鳴らなかった句を既読にする**。鳴り始めていた句は途中で切れても「鳴った」に
+   * 数える（`shouldStillPlay` で降りるときと同じ線引き）。
    *
    * **呼び出し側が待ちの上限で見切った場合は、この値を受け取れない。** そのとき
    * `useLiveEventHandler` は「全部鳴った」へ倒した代替値を自分で作る（＝ここが返した事実では
@@ -1726,7 +1754,9 @@ async function speakOnce(
   const startedAt = performance.now()
   log.debug(`[VoiceVox] 読み上げ: ${text}`, { speakerId, volume, prewarmed: !!prewarmed })
 
-  // 既存の再生を全て停止
+  // 既存の再生を全て停止。止める前に、前の発話のまだ鳴り始めていない予約を印す
+  // （→ {@link markUnstartedAsCut}）。
+  cutUnstartedOfCurrent()
   for (const src of activeSources) {
     try { src.stop() } catch { /* already stopped */ }
   }
@@ -1831,19 +1861,44 @@ async function speakOnce(
   // 取り下げた印、`ended` は再生が終わった印。完了を待つ対象を選ぶためにも使う。
   const scheduled: {
     source: AudioBufferSourceNode; startAt: number; dropped: boolean; ended: boolean
+    /**
+     * 割り込み（{@link stopSpeech}・次の発話）で、鳴り始める前に止められた印。
+     *
+     * **`dropped` と分けて持つ。** `dropped` は完了の待ち（`resolveWhenLastPlayingEnds`）が
+     * 「その `ended` では完了させない」と読む印で、割り込まれた予約に立てると、止めた拍子の
+     * `ended` を無視して割り込まれた側の完了がいつまでも来なくなる。
+     */
+    cut: boolean
     /** このチャンクの本文（{@link SpeechOutcome.spokenChunks} へ出す）。 */
     text: string
   }[] = []
 
   /**
-   * ここまでに鳴ったチャンク（{@link SpeechOutcome}）。**取り下げられていない予約が
-   * 鳴った分**と見なす —— 予約は再生の開始時刻付きで積まれ、落とすときは `dropped` が
-   * 立つため。合成に失敗したチャンクはそもそも予約されないので、自然に外れる。
+   * ここまでに鳴ったチャンク（{@link SpeechOutcome}）。**取り下げられず、割り込みで
+   * 鳴り始める前に止められてもいない予約が鳴った分**と見なす —— 予約は再生の開始時刻付きで
+   * 積まれ、取り下げには `dropped`、割り込みには `cut` が立つため。合成に失敗したチャンクは
+   * そもそも予約されないので、自然に外れる。
    */
   const outcome = (): SpeechOutcome => {
-    const played = scheduled.filter(s => !s.dropped)
+    const played = scheduled.filter(s => !s.dropped && !s.cut)
     return { spoke: played.length > 0, spokenChunks: played.map(s => s.text) }
   }
+  // 割り込む側が呼ぶ口を、このセッションのものへ差し替える（→ {@link markUnstartedAsCut}）。
+  // 鳴り始めているかの線引きは {@link abandonRemaining} と同じ（`startAt <= currentTime` は鳴った）。
+  //
+  // **差し替えるのは、自分がまだ最新のセッションのときだけ。** 直前の `ctx.resume()` を待つ間に
+  // 割り込まれていると、後から始まった発話の口をこちらの古い口で上書きし、その発話の未鳴動の句が
+  // 印されなくなる（直そうとした症状がそのまま戻る）。
+  const markMine = () => {
+    let count = 0
+    for (const s of scheduled) {
+      if (!s.dropped && !s.cut && s.startAt > ctx.currentTime) { s.cut = true; count++ }
+    }
+    // 「切られて鳴らなかった」と「合成に失敗した」は、既読が戻るという結果が同じで外からは
+    // 見分けられない。切った側の事実をここで残す（取り下げの `abandonRemaining` と同じ水準）。
+    if (count > 0) log.debug(`[VoiceVox] 割り込みで鳴り始める前の ${count} チャンクを止めた: ${text}`)
+  }
+  if (currentSessionId === sessionId) markUnstartedAsCut = markMine
   // 妥当性を失ったと判断したか。以降は合成も予約もしない
   let abandoned = false
 
@@ -1940,7 +1995,8 @@ async function speakOnce(
     // 更新するのは `onended`（非同期）—— **割り込みで止めた前の発話の `ended` が、この発話の
     // 最初の待ちの最中に発火する**。そのとき 1 音も鳴らしていないのに免除が働き、予算が
     // いちばん効くべき「最初の合成が返るか」の瞬間だけ素通りする。
-    // 予約が 1 つでもあれば、この発話は鳴り始めている（`outcome()` と同じ述語）。
+    // 予約が 1 つでもあれば、この発話は鳴り始めている（`outcome()` から `cut` を除いた述語。
+    // `cut` が立つのは割り込まれたときだけで、そのときはループが世代の照合で先に降りる）。
     const playingBeforeWait = scheduled.some(s => !s.dropped) && isAudioPlaying()
     const waitStartedAt = performance.now()
     const buffer = await raceSynthTimeout(
@@ -1980,7 +2036,7 @@ async function speakOnce(
     if (scheduleAt < ctx.currentTime) scheduleAt = ctx.currentTime
 
     const startAt = scheduleAt
-    const entry = { source, startAt, dropped: false, ended: false, text: chunks[i] }
+    const entry = { source, startAt, dropped: false, ended: false, cut: false, text: chunks[i] }
     scheduled.push(entry)
     source.onended = () => {
       entry.ended = true
@@ -2036,6 +2092,9 @@ async function speakOnce(
     completionResolve()
   }
   await completionPromise
+  // 鳴り終えた発話の口は外す（自分のものが残っているときだけ）。残しても未鳴動の予約は無いので
+  // 害は無いが、古い予約と AudioContext を次の割り込みまで抱え続ける。
+  if (markUnstartedAsCut === markMine) markUnstartedAsCut = null
   return outcome()
 }
 

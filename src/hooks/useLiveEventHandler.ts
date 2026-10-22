@@ -29,7 +29,7 @@ import {
 } from '../utils/replayEventLog'
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
-import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
+import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
 import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
@@ -504,6 +504,11 @@ const warnSpeechWaitHardCap = createLogThrottle(30000)
 // **正常系では出ない** —— 句と文を同じ材料から組み立てているので、出ていたらどちらかの
 // 組み立てがずれている。ずれは直るまで報のたびに繰り返すので間引く。
 const warnPhraseMissing = createLogThrottle(30000)
+
+// 警報の対象地方を読んだのに、締めの句か地方名のどれかが声にならず既読へ進めなかった記録。
+// 割り込み・合成の失敗で起き、続報のたびに読み直すことになる。**同じ原因が続くと報のたびに
+// 繰り返す**（数秒おき）ので間引く。読み直しが「正常な未読」と見分けられるように残す。
+const infoRegionsNotHeard = createLogThrottle(30000)
 
 /**
  * 発話の完了を待つ（上限付き）。EEW の読み上げは 1 本のチェーンで直列化するため、
@@ -4700,10 +4705,31 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                 // `shouldStillPlay` はチャンクの切れ目でしか呼ばれないので、最後のチャンクを
                 // 鳴らしている最中に届いた取消は捉えられない。
                 if (cancelled) return
-                // 地方の既読は、降りた回も 1 音も鳴らなかった回も進めない。前者は増えた分を
-                // 含めて読み直すため、後者は声になっていないため。**前置きと条件が違うのは、
-                // 地方名が文の後半にあって降りた時点では声になっていないから。**
-                if (abandoned || !outcome.spoke) return
+                // 地方の既読は、降りた回も締めの句まで声にならなかった回も進めない。前者は
+                // 増えた分を含めて読み直すため、後者は伝わっていないため。**前置きと条件が
+                // 違うのは、地方名が文の後半にあって降りた時点では声になっていないから。**
+                //
+                // **判定は締めの句（`EEW_WARNING_REGIONS_CLOSING`）が鳴ったかで行う。**
+                // `spoke`（1 チャンクでも鳴ったか）で代理すると、別の発話に割り込まれて
+                // 地方名だけ鳴った回・前置きだけ鳴った回に、「〜では強い揺れに警戒して
+                // ください」を言っていないのに既読になり、その地方は二度と声にならない。
+                // **地方名もすべて鳴ったかを見る。** 地方名は読点で別チャンクになり、合成に
+                // 失敗したチャンクは飛ばして次が鳴る —— 締めの句だけ見ると、名前の句が欠けた
+                // 回にその地方まで既読になり、二度と声にならない。地方ごとに既読を分けない
+                // のは、地方名と締めがそろって 1 つの意味になるから（欠けた回は全部読み直す）。
+                if (abandoned) return
+                const heard = outcome.spokenChunks.join('')
+                const closingSpoken = heard.includes(EEW_WARNING_REGIONS_CLOSING)
+                // 地方名はチャンクごとに照合する。繋いだ文字列で探すと、隣り合う 2 つの名前の
+                // 継ぎ目に別の地方名が現れうる（「関東」＋「北陸」に「東北」）。今は読点が
+                // 残るので起きないが、チャンクの割り方に頼らずに済む形にしておく。
+                const nameSpoken = (r: string) => outcome.spokenChunks.some(c => c.includes(r))
+                if (!closingSpoken || !speaking.every(nameSpoken)) {
+                  infoRegionsNotHeard(() => log.info('[eew] 警報の対象地方が最後まで声にならなかったため既読にしない（次の報で読み直す）', {
+                    key, regions: speaking, spokenChunks: outcome.spokenChunks.length, closingSpoken, spoke: outcome.spoke,
+                  }))
+                  return
+                }
                 const set = spokenEEWRegionsRef.current.get(key) ?? new Set<string>()
                 speaking.forEach(r => set.add(r))
                 spokenEEWRegionsRef.current.set(key, set)

@@ -2304,6 +2304,56 @@ describe('合成が 1 音も鳴らなかったとき', () => {
     expect(spokenTexts()).toEqual(['緊急地震速報に切り替わりました。予想最大震度5強。予想最大階級3。'])
   })
 
+  // 正: **前置きだけ鳴って地方名の文が切られた回は、地方を既読にしない。**
+  //
+  // 割り込まれた発話では `spoke` が真のまま、締めの句（「〜では強い揺れに警戒してください」）が
+  // 鳴っていないことがある（`utils/voicevox.ts` の `cut`）。`spoke` で判定すると、警戒を呼びかけて
+  // いない地方が既読になり、その地方は二度と声にならない。前置きは鳴ったので、次は前置き抜きで読む。
+  it('前置きだけ鳴って締めの句が切られた回は、地方を既読にしない', async () => {
+    speakMock.mockImplementation(((...args: unknown[]) => {
+      const text = args[1] as string
+      return Promise.resolve(text.includes('警戒してください')
+        ? { spoke: true, spokenChunks: ['緊急地震速報に切り替わりました。'] }
+        : { spoke: true, spokenChunks: [text] })
+    }) as never)
+    const handle = setup()
+    handle(makeEEW({ scaleTo: 50, warningRegions: ['北陸'] }))
+    await vi.advanceTimersByTimeAsync(20000)
+    await flushMicrotasks()
+
+    speakMock.mockImplementation(((...args: unknown[]) =>
+      Promise.resolve({ spoke: true, spokenChunks: [args[1] as string] })) as never)
+    speakMock.mockClear()
+    handle(makeEEW({ serial: 2, scaleTo: 50, warningRegions: ['北陸'] }))
+    await vi.advanceTimersByTimeAsync(20000)
+    await flushMicrotasks()
+    expect(spokenTexts()).toContain('北陸では強い揺れに警戒してください。')
+  })
+
+  // 正: **締めの句は鳴ったが、地方名の句が 1 つ欠けた回も既読にしない。** 地方名は読点で別チャンクに
+  // なり、合成に失敗したチャンクは飛ばして次が鳴る。締めだけ見ると、名前が声にならなかった地方まで
+  // 既読になり、二度と声にならない。
+  it('地方名の句が欠けた回は、締めの句が鳴っても既読にしない', async () => {
+    speakMock.mockImplementation(((...args: unknown[]) => {
+      const text = args[1] as string
+      return Promise.resolve(text.includes('警戒してください')
+        ? { spoke: true, spokenChunks: ['緊急地震速報に切り替わりました。', '北陸、', '東海では強い揺れに警戒してください。'] }
+        : { spoke: true, spokenChunks: [text] })
+    }) as never)
+    const handle = setup()
+    handle(makeEEW({ scaleTo: 50, warningRegions: ['北陸', '甲信', '東海'] }))
+    await vi.advanceTimersByTimeAsync(20000)
+    await flushMicrotasks()
+
+    speakMock.mockImplementation(((...args: unknown[]) =>
+      Promise.resolve({ spoke: true, spokenChunks: [args[1] as string] })) as never)
+    speakMock.mockClear()
+    handle(makeEEW({ serial: 2, scaleTo: 50, warningRegions: ['北陸', '甲信', '東海'] }))
+    await vi.advanceTimersByTimeAsync(20000)
+    await flushMicrotasks()
+    expect(spokenTexts().some(t => t.includes('甲信') && t.includes('警戒してください'))).toBe(true)
+  })
+
   // 対照: 鳴った回なら既読は残り、同じ続報は階級だけの短句になる（巻き戻しが常時効いて
   // いるわけではないこと）。
   it('鳴った回は第 2 フェーズの既読が残り、階級だけを読む', async () => {

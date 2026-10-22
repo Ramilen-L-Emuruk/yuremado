@@ -15,7 +15,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { __resetSpeechAudioCacheForTest } from './speechAudioCache'
 import { __resetAudioPlaybackStateForTest } from './voicevox'
-import { speakWithVoicevox, speakSequentially, warmFixedPhrases, splitIntoChunks, __resetFixedPhrasesForTest, SPEECH_SYNTH_BUDGET_MS } from './voicevox'
+import { speakWithVoicevox, speakSequentially, stopSpeech, warmFixedPhrases, splitIntoChunks, __resetFixedPhrasesForTest, SPEECH_SYNTH_BUDGET_MS } from './voicevox'
 import { eewAlertToText, EEW_LEAD_PHRASES, voicevoxPreviewTexts } from './ttsText'
 import type { EEWAlert } from '../types/earthquake'
 
@@ -387,6 +387,58 @@ describe('1 音でも鳴ったかを返す', () => {
     // **取り下げたチャンクは入らない。** ここが「途中で降りた発話で、前半だけを既読に残す」
     // 判断の土台になる
     expect(outcome.spokenChunks).toEqual(['予想最大震度5弱。'])
+  })
+})
+
+// 割り込みで止められた発話の「どこまで鳴ったか」。
+//
+// 合成は再生より速く終わるので、2 チャンク目は 1 チャンク目が鳴っている間に予約し終えている。
+// そこへ `stopSpeech()` や次の発話が割り込むと、2 チャンク目は 1 音も鳴らずに止まる。
+// **それを「鳴った」に数えると、切られた句を既読にする**（→ `useLiveEventHandler` の EEW 各フェーズ）。
+describe('割り込みで止められた句は鳴ったに数えない', () => {
+  // 正: 鳴り始める前に止めた 2 チャンク目は入らない
+  it('stopSpeech で止めた、まだ鳴り始めていない句は入らない', async () => {
+    synthDelaysMs = [100, 100]
+    const p = speakWithVoicevox('http://vv', TWO_CHUNKS, 1, 1)
+    await advance(300)
+    expect(sources).toHaveLength(2)              // 2 チャンク目も予約済み（1.1 秒に鳴る）
+    stopSpeech()
+    await flush()
+    const outcome = await p
+    expect(outcome.spoke).toBe(true)
+    expect(outcome.spokenChunks).toEqual(['予想最大震度5弱。'])
+  })
+
+  // 正: 次の発話が冒頭で止めた場合も同じ（止める経路はもう 1 つある）
+  it('次の発話に割り込まれた、まだ鳴り始めていない句は入らない', async () => {
+    synthDelaysMs = [100, 100, 100]
+    const first = speakWithVoicevox('http://vv', TWO_CHUNKS, 1, 1)
+    await advance(300)
+    void speakWithVoicevox('http://vv', '最大震度5弱です。', 1, 1)
+    await advance(100)
+    const outcome = await first
+    expect(outcome.spokenChunks).toEqual(['予想最大震度5弱。'])
+  })
+
+  // 対照: 2 チャンクとも鳴り始めた後に止めたら、両方入る（途中で切れても「鳴った」）
+  it('鳴り始めた後に止めた句は入る', async () => {
+    synthDelaysMs = [100, 100]
+    const p = speakWithVoicevox('http://vv', TWO_CHUNKS, 1, 1)
+    await advance(1500)                          // 2 チャンク目は 1.1 秒から鳴っている
+    stopSpeech()
+    await flush()
+    expect((await p).spokenChunks).toEqual(['予想最大震度5弱。', '予想最大階級1。'])
+  })
+
+  // 安全弁: 止められた側の完了が来る（`dropped` を使い回すと 'ended' を無視して宙に浮く）
+  it('止められた側の完了は待たされない', async () => {
+    synthDelaysMs = [100, 100]
+    let done = false
+    void speakWithVoicevox('http://vv', TWO_CHUNKS, 1, 1).then(() => { done = true })
+    await advance(300)
+    stopSpeech()
+    await flush()
+    expect(done).toBe(true)
   })
 })
 
