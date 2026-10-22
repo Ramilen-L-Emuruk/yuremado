@@ -46,6 +46,7 @@
   "devDependencies": {
     "@mapbox/tiny-sdf": "^2.2.0",
     "@napi-rs/canvas": "^1.0.2",
+    "@resvg/resvg-wasm": "^2.6.2",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/react": "^16.3.2",
     "@types/jsdom": "^28.0.3",

@@ -597,7 +597,7 @@ dev の注入値を保存対象から外す（`stripDevApiKey`）が、それだ
 - **base path**: `/yuremado/`（標準）または `/yuremado/dmdss/`
 - **outDir**: `dist/` または `dist-dmdss/`
 - **manifest.name / short_name / description**: バリアントで切り替え
-- **manifest.icons**: `public/icons/` には `icon.svg` のみ実在する。SEC-5 で manifest エントリを SVG 単一（`sizes: 'any', purpose: 'any maskable'`）に統合済み。以前は `icon-192.png` / `icon-512.png` を参照していたが実 PNG が無く 404 になっていた。iOS の `apple-touch-icon` は仕様上 PNG 前提で SVG 対応は未確定のため、ホーム画面追加時のアイコン表示は実機検証が必要（未実施・残課題）
+- **manifest.icons**: 元の絵は `public/icons/icon.svg` の 1 枚で、PNG は `node scripts/build-app-icons.mjs` がそこから焼く（SVG を描き直したら焼き直してコミットする）。manifest は SVG（`any`）・`icon-192.png`・`icon-512.png`（`any`、角丸のまま）・`icon-maskable-512.png`（`maskable`、背景を全面に塗り、絵を中心へ 0.9 倍に縮めた版。切り抜かれても残る範囲へ収めるため。寸法の根拠はスクリプトの `MASKABLE_SCALE`）の 4 つ。`index.html` の `apple-touch-icon` は `icon-180.png`（全面を塗った版）。iOS は apple-touch-icon に PNG を前提とし、角は端末の側が丸めるため、透明の角を残すと黒く埋まる。maskable も角を切り抜くので、角丸の絵と兼用しない
 
 ### Service Worker のスコープ
 
@@ -2814,6 +2814,7 @@ Playwright / Chrome DevTools でボタン発火後の DOM 状態を確認した�
   （ローカル履歴アーカイブは 7 日ぶんを全部返す。2026-10-14 ユーザー選択）。§6 時刻シフトの漏れ 3 件を直し、見本のテストを
   足した。再生用ペイロードの種別の一覧を `utils/replayPayloadKinds.ts` へ移した
 - 2026-10-21: §5.5 の表に「接続が切れていた間の電文を取り込めず（再読み込みで取得し直します）」（`RECONNECT_GAP_LOSS_NOTICE`）を足し、8 本にした（2026-10-21 ユーザー承認「A・X・揃える」。出す条件は [`data-sources-spec.md`](data-sources-spec.md) §2「繋がっていなかった間の電文を取り戻す」・§3）
+- 2026-10-21: §5 の manifest.icons を、icon.svg から焼いた PNG（apple-touch-icon の 180・manifest の 192・512・maskable の 512）を置く形へ改めた（`scripts/build-app-icons.mjs`。PNG を焼いて置く案を 2026-10-21 ユーザー選択「おすすめで」）
 - 2026-10-22: §7 に「EEW 遅れた誤報取消テスト」を足した（自動解除で画面から消えた後に誤報取消を届ける）。標準版の設定タブにも「試験報を受信（検証用）」の行を出した（「動作設定」）
 - 2026-10-22: §2「ブラウザ通知」に、最大震度が上がったときの出し直し・遠地地震の通知・見る地震（ライブで届いた報の地震すべて）・履歴では出さないことを足した。§2「最低表示震度」に津波の原因地震を対象外にすることを足した（それぞれ 2026-10-21・2026-10-22 のユーザー選択）
 - 2026-10-22: 種別遷移テストの 1 通目からいちばん強い震度の区域を外し、3 通目で最大震度が上がる形にした（§7 の一覧。ブラウザ通知の「最大震度更新」を実機で確かめるため。説明文は 2026-10-22 ユーザー承認「はい」）
