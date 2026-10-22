@@ -79,7 +79,7 @@ import { useArrivalTokenCheck } from './hooks/useArrivalToken'
 import { usePsWaveCalc } from './hooks/usePsWaveCalc'
 import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
 import { useDebouncedValue } from './hooks/useDebouncedValue'
-import { decideQuakeNotification, rememberQuakeNotified, type QuakeNotifiedState } from './utils/quakeNotification'
+import { collectQuakesToNotify, decideQuakeNotification, rememberQuakeNotified, type QuakeNotifiedState } from './utils/quakeNotification'
 import { formatDateTimeLocal } from './utils/formatters'
 import { computeEEWLevel, eewEventKey, eewMaxLpgmClass, isProvisionalHypocenter } from './utils/eew'
 import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
@@ -94,13 +94,14 @@ import {
   quakeOverlayChangeLog,
 } from './utils/quakeOverlay'
 import { findEndedTsunami, isTsunamiForecastOnly, tsunamiOverallGrade } from './utils/tsunami'
+import { filterDisplayedQuakes } from './utils/displayedQuakes'
 import { playCountdownBeep, unlockAudio, setSoundVolume, setKeepAliveEnabled } from './utils/alertSound'
 import { loadTtsPhraseBreakDict } from './utils/ttsPhraseBreakDict'
 import { loadTtsStationReadings } from './utils/ttsStationReadings'
 import { loadTtsEpicenterAccents } from './utils/ttsEpicenterAccents'
 import { warmFixedPhrases, isValidVoicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS, isSpeaking, msSinceAudible, onSpeechIdle, setSpeechSynthBudgetRelaxed } from './utils/voicevox'
 import { EEW_LEAD_PHRASES } from './utils/ttsText'
-import type { EEWAlert, JMAQuake, JMATsunami } from './types/earthquake'
+import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
 import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS } from './hooks/useReplayController'
 import { fetchDmdataReplayEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
 import { PREFERRED_CLASSIFICATIONS } from './services/dmdataClassifications'
@@ -143,6 +144,28 @@ const API_KEY_DEBOUNCE_MS = 800
 // 顕在化する）。overflow-x-hidden で塞ぎ、overscroll-x-none で iOS の横ラバーバンドも止める。
 const TAB_SCROLLER_CLASS = 'absolute inset-0 overflow-y-auto overflow-x-hidden overscroll-x-none'
 
+
+/**
+ * 地震情報のブラウザ通知を出す。投げたらそのまま投げ返す（呼び出し側が「出せなかった」と記録し、通知済みにしない）。
+ *
+ * `renotify` は型定義（lib.dom）に無いが、ブラウザは受け付ける。同じ tag の通知を置き換えるときに音を
+ * 鳴らし直す（最大震度が上がった報だけ）。**受け付けないブラウザでは `renotify` を外して出し直す** ——
+ * 音が鳴り直さないだけで、置き換え自体は伝わる。
+ */
+function showQuakeNotification(n: { title: string; body: string; tag: string; renotify: boolean }): void {
+  const base: NotificationOptions = { body: n.body, icon: `${import.meta.env.BASE_URL}icons/icon.svg`, tag: n.tag }
+  if (!n.renotify) {
+    new Notification(n.title, base)
+    return
+  }
+  try {
+    const options: NotificationOptions & { renotify: boolean } = { ...base, renotify: true }
+    new Notification(n.title, options)
+  } catch (err) {
+    log.warn(`[notify] 音を鳴らし直す指定（renotify）を受け付けなかったので、外して出し直す（${n.tag}）`, err)
+    new Notification(n.title, base)
+  }
+}
 
 export function App() {
   const { settings, updateSetting, replaceSettings } = useSettings()
@@ -814,6 +837,11 @@ export function App() {
   // 印と混ぜると、地震情報を読んでいるあいだ緊急地震速報のカードまで光る（鍵の体系も別）。
   const { speakingKey: speakingQuakeKey, follow: quakeSpeakingCard } = useEewSpeakingCard()
 
+  // ブラウザ通知を考える地震情報。**ライブで届き、カードが内容を採った報だけを積む**（下の通知の effect が
+  // 状態へ反映された後のカードを見て決め、空にする）。起動時の履歴・「もっと見る」・リプレイの初期状態は
+  // `onLiveEvent` を通らないので積まれず、過去の地震で通知が出ない（2026-10-21 選択「履歴では出さない (Recommended)」）。
+  // 据え置いた報（`quakeHeldBack`）と取消は積まない —— 音・読み上げと同じく、カードが採らない報では動かさない。
+  const pendingQuakeNotifyRef = useRef<JMAQuake[]>([])
   // ライブイベント受信処理（通知音・タイトル・タブ切替・読み上げ・ブラウザ通知）
   const { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict, eewNoForecastSettledKeys } = useLiveEventHandler({
     settings, title, earthquakesRef, tsunamisRef, kyoshinDetectedRef, defaultTabRef,
@@ -863,6 +891,10 @@ export function App() {
     )
   }, [requestAutoTab, settings.tsunamiPriorityDefault, settings.voicevoxEnabled])
 
+  const handleLiveEventWithNotify = useCallback((event: LiveEvent, meta?: LiveEventMeta) => {
+    if (event.kind === 'quake' && !event.cancelled && !meta?.quakeHeldBack) pendingQuakeNotifyRef.current.push(event)
+    handleLiveEvent(event, meta)
+  }, [handleLiveEvent])
   const {
     earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, connectionStatus, dmdataClassifications, lastUpdate, isLoading, isLoadingMore, hasMore, error,
     historyLoss, loadMoreFailed, reconnectGapLoss,
@@ -877,7 +909,7 @@ export function App() {
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     resetState, loadReplayEvents, peekUpcomingPayloads, restoreQuakeHistory,
-  } = useEarthquakes(handleLiveEvent, debouncedApiKey, settings.dmdataTestDelivery, replayTimeOffset, handleStartupRestore, restoreStartupEews)
+  } = useEarthquakes(handleLiveEventWithNotify, debouncedApiKey, settings.dmdataTestDelivery, replayTimeOffset, handleStartupRestore, restoreStartupEews)
   earthquakesRef.current = earthquakes
   // 配信元の上限に達して取得を待たせているあいだ、地震タブにその旨を出す。
   // **損失とは別**（枠が空けばそのまま取りに行くので、欠けは出ない）。
@@ -1122,16 +1154,10 @@ export function App() {
   // filter は毎回新規配列を返すため useMemo で参照を安定化する
   // （EarthquakeTab / TsunamiTab へ props として渡すため。毎レンダー新配列を渡すと
   // shallow compare で常に不一致となり React.memo が実質無効化される）。
-  // 遠地地震は国外の地震を伝える情報で国内震度を持たない（maxScale は常に -1）。
-  // 「最低表示震度」は国内の小さい地震を一覧から省く設定なので、震度で比べようがない
-  // 遠地地震まで巻き添えで消えないよう対象外にする（M7 以上でしか発表されない情報のため）。
+  // 何を外し、何を外さないか（遠地地震・津波の原因地震）は `filterDisplayedQuakes`。
   const filteredEarthquakes = useMemo(
-    () => earthquakes.filter(q =>
-      settings.minDisplayScale < 0
-      || q.issue.type === '遠地地震'
-      || q.earthquake.maxScale >= settings.minDisplayScale
-    ),
-    [earthquakes, settings.minDisplayScale],
+    () => filterDisplayedQuakes(earthquakes, settings.minDisplayScale, tsunamis),
+    [earthquakes, settings.minDisplayScale, tsunamis],
   )
 
   const latest = filteredEarthquakes[0] ?? null
@@ -1253,34 +1279,50 @@ export function App() {
     }
   }, [activeEEWs, activeLpgmEventId, activeLpgmSource])
 
-  // ブラウザ通知: 新しい地震が設定震度以上なら通知。中身と出すかどうかは `decideQuakeNotification`。
+  // ブラウザ通知。中身と出すかどうかは `decideQuakeNotification`（震度速報・震源が判った報・最大震度が
+  // 上がった報・遠地地震。回数と文面の決まりはそちら）。
+  // **見るのは、ライブで届いてカードが内容を採った報の地震すべて**（`pendingQuakeNotifyRef`）——
+  // 一覧の先頭 1 件だけを見ると、続けて届いた別の地震の報や、先頭でない地震の続報を取りこぼす
+  // （2026-10-21 選択「直す (Recommended)」）。報からカードは受信側と同じ当て方（`sameQuakeEntry`）で引く。
   // 重複抑止は eventKey で行う（earthquake.time では、同じ分に起きた 2 件目の地震が
-  // 「通知済み」と誤判定されて通知が出ない）。**1 つの地震で最大 2 回**——震度速報で出したあと、
-  // 震源が判った報でもう 1 度だけ出し、tag（地震ごとの鍵）で前の通知を置き換える
-  // （2026-10-19 ユーザー承認「速報の文＋震源で置き換え (推奨)」）。
-  // 覚えるのは地震ごと（`rememberQuakeNotified`）。1 件だけだと、2 つの地震の報が交互に先頭へ来たとき
-  // 前の地震を忘れて 3 回目を出す。
+  // 「通知済み」と誤判定されて通知が出ない）。
+  // 覚えるのは地震ごと（`rememberQuakeNotified`）。1 件だけだと、2 つの地震の報が交互に届いたとき
+  // 前の地震を忘れて同じ通知を出し直す。
   const notifiedQuakesRef = useRef(new Map<string, QuakeNotifiedState>())
+  const notifyMinScaleRef = useRef(settings.notifyMinScale)
+  notifyMinScaleRef.current = settings.notifyMinScale
   useEffect(() => {
-    const latestQuake = earthquakes[0]
-    if (!latestQuake) return
-    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
-    // **通知は補助の経路なので、ここで投げても画面を落とさない**（App のレンダー・effect の例外は
-    // 根の受け皿でしか拾えず、画面全体が消える）。失敗は記録に残す。
-    try {
-      const previous = notifiedQuakesRef.current.get(quakeEventKey(latestQuake)) ?? null
-      const decided = decideQuakeNotification(latestQuake, previous, settings.notifyMinScale, getAreaPrefIndexCache())
-      if (!decided) return
-      rememberQuakeNotified(notifiedQuakesRef.current, decided.next)
-      new Notification(decided.notification.title, {
-        body: decided.notification.body,
-        icon: `${import.meta.env.BASE_URL}icons/icon.svg`,
-        tag: decided.notification.tag,
-      })
-    } catch (err) {
-      log.error(`[notify] 地震の通知を出せず（${latestQuake.eventKey ?? latestQuake.id}・最大震度 ${latestQuake.earthquake.maxScale}）`, err)
+    const pending = pendingQuakeNotifyRef.current
+    if (pending.length === 0) return
+    pendingQuakeNotifyRef.current = []
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+      // 許可の無い間に届いた報は、後で許可しても通知しない（その時点の報ではないので）
+      log.debug(`[notify] 通知の許可が無いので、地震情報 ${pending.length} 通を通知しない（${typeof Notification === 'undefined' ? '通知に非対応' : Notification.permission}）`)
+      return
     }
-  }, [earthquakes, settings.notifyMinScale])
+    const index = getAreaPrefIndexCache()
+    const { cards, unmatched } = collectQuakesToNotify(pending, earthquakes, index)
+    // 引けなかった報は、状態が採らなかった（取消より前の報など）か、取り消されたカードに当たった報。
+    // 通知が出ない理由を後から追えるよう記録する
+    for (const incoming of unmatched) {
+      log.debug(`[notify] 地震情報の報からカードを引けず、通知を考えない（${incoming.id}・${incoming.issue.type}・最大震度 ${incoming.earthquake.maxScale}）`)
+    }
+    for (const card of cards) {
+      // **通知は補助の経路なので、ここで投げても画面を落とさない**（App のレンダー・effect の例外は
+      // 根の受け皿でしか拾えず、画面全体が消える）。1 件が投げても残りの地震は見る。失敗は記録に残す。
+      try {
+        const previous = notifiedQuakesRef.current.get(quakeEventKey(card)) ?? null
+        const decided = decideQuakeNotification(card, previous, notifyMinScaleRef.current, index)
+        if (!decided) continue
+        // **出せてから覚える。** 先に覚えると、出せなかった地震が「通知済み」になり、震源が判った報や
+        // 最大震度が上がった報でも出し直さない（Android の Chrome 系は `new Notification()` を受け付けない）
+        showQuakeNotification(decided.notification)
+        rememberQuakeNotified(notifiedQuakesRef.current, decided.next)
+      } catch (err) {
+        log.error(`[notify] 地震の通知を出せず（${card.eventKey ?? card.id}・最大震度 ${card.earthquake.maxScale}）`, err)
+      }
+    }
+  }, [earthquakes])
 
   // 情報更新時にウィンドウタイトルを変更し、平常時は既定タイトルに戻す。
   // 優先順位: 警報タイトル > アップデートカウントダウン > デフォルトタイトル
@@ -1804,7 +1846,9 @@ export function App() {
     // 切り替え前の状態へ戻す。
     setSpecialInfoPanelHold(null)
     // ブラウザ通知の重複抑止。残すと、同じ地震を再生したときに 2 回目の通知が出ない。
+    // 積んだままの報も捨てる（旧い時間軸の報で、新しい画面のカードを引き当てないように）。
     notifiedQuakesRef.current.clear()
+    pendingQuakeNotifyRef.current = []
     resetActionChecklistRef.current()
     // 別地点発報のエピソード状態。旧い時間軸の「発報済み」が残ると、新しい軸で鳴るべき
     // 別地点発報が黙って抑え込まれる（時刻の巻き戻りでは自動で切り替わるが、前へ飛ばした
