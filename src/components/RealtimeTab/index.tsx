@@ -22,6 +22,7 @@ import { SerialBadge } from '../SerialBadge'
 import { isEewWarningKindCode } from '../../utils/eewKind'
 import { serverNow } from '../../utils/clock'
 import { log } from '../../utils/logger'
+import { hasKnownEpicenter } from '../../utils/geo'
 
 interface Props {
   eews: EEWAlert[]
@@ -700,8 +701,9 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
           </div>
         )}
 
-        {/* マグニチュード・深さ（2カラムグリッド）：仮定震源要素のときは固定の仮定値のため非表示 */}
-        {hypocenter.name && !isAssumed && (
+        {/* マグニチュード・深さ（2カラムグリッド）：仮定震源要素のときは固定の仮定値のため非表示。
+            震央地名が空でも、座標が判っていれば出す（地名が付かないだけで震源は決まっている） */}
+        {!isAssumed && (hypocenter.name || hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)) && (
           <div className="grid grid-cols-2 gap-2">
             <div
               className="flex flex-col gap-0.5 rounded-lg p-2 roomy:gap-1 roomy:p-2.5"

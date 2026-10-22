@@ -651,7 +651,8 @@ describe('EEW の初期フレーミング', () => {
   })
 
   /**
-   * 能登沖の EEW。fixture は震源名を持たないため波円が作れず、第一報は震源 1 点へ直行する。
+   * 能登沖の EEW。fixture は深さが判らない（`-1`）ため波円が作れず、第一報は震源 1 点へ直行する。
+   * （震源名が空なだけでは波円は作れてしまう。→ `computeEewCircle`）
    * 実電文はどの経路でも `issue.eventId` を持つので、追従が見るキーもそちらになる。
    */
   const NOTO = {
@@ -659,7 +660,7 @@ describe('EEW の初期フレーミング', () => {
     issue: { eventId: 'ev-noto' },
     earthquake: {
       originTime: '2026-08-21T05:00:00+09:00',
-      hypocenter: { latitude: 37.5, longitude: 137.2, depth: 10 },
+      hypocenter: { latitude: 37.5, longitude: 137.2, depth: -1 },
     },
   } as unknown as EEWAlert
   /** 先に出ている別の EEW（九州沖）。合成範囲に含まれると西端が 131.0 になる。 */

@@ -197,7 +197,9 @@ function kyoshinContent(liveEews: EEWAlert[]): ContentWithoutNotices {
   // **`condition` を参照する箇所は eew-spec.md §5 に列挙する決まり。足したらそちらも更新すること。**
   // 「非常に強い揺れを検知」の報も同じ（→ `isProvisionalHypocenter`）。
   const assumedHypocenter = isProvisionalHypocenter(eew)
-  const parts = [hypocenter.name]
+  // 震央地名が空の報は、画面のカード・地図の吹き出しと同じ「震源調査中」を名前の位置に置く
+  // （2026-10-22 ユーザー承認「「震源調査中」を入れる」）
+  const parts = [hypocenter.name || '震源調査中']
   if (!assumedHypocenter && hasMagnitude(hypocenter.magnitude)) parts.push(formatMagnitude(hypocenter.magnitude))
   if (knownScale) parts.push(`予想最大震度 ${getIntensityLabelWithApproxAbove(info.scale, info.orAbove)}`)
   const serial = eew.issue?.serial

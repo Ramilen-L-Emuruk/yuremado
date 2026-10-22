@@ -289,6 +289,14 @@ describe('buildShareCardContent — 緊急地震速報', () => {
     expect(c.header.subtitle).toContain('予想最大震度')
   })
 
+  // 震央地名が空の報は、画面のカードと同じ「震源調査中」を名前の位置に置く
+  it('震央地名が空なら「震源調査中」で始め、規模と予想最大震度を続ける', () => {
+    const c = build(input({ mode: 'kyoshin', eews: [eew({ name: '' })] }))
+    expect(c.header.subtitle?.startsWith('震源調査中')).toBe(true)
+    expect(c.header.subtitle).toContain('M6.5')
+    expect(c.header.subtitle).toContain('予想最大震度')
+  })
+
   it('発報が無ければリアルタイム震度の見出しにする', () => {
     const c = build(input({ mode: 'kyoshin' }))
     expect(c.header.title).toBe('リアルタイム震度')
