@@ -163,7 +163,12 @@ export function outcomeJson<T>(outcome: JsonOutcome): T {
   return outcome.body.value as T
 }
 
-function abortErrorOf(signal: AbortSignal): unknown {
+/**
+ * 止められた合図から投げる値を作る。呼び出し側の「止めた打ち切りは失敗に数えない」判定
+ * （`isAbortedByCaller`）に必ず掛かる形（`AbortError`）へ揃える。取得口の手前で止める経路も
+ * これを通すこと（門の前と後で投げる値の型が食い違わないように）。
+ */
+export function abortErrorOf(signal: AbortSignal): unknown {
   const reason: unknown = signal.reason
   if (isAbortedByCaller(reason)) return reason
   return new DOMException('取得を止めました', 'AbortError')

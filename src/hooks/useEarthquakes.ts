@@ -3559,7 +3559,7 @@ export function useEarthquakes(
     // 空から組み直して丸ごと差し替えるので、取り戻しが先に終わると積んだ分を消してしまう。
     // 失敗しても下の `.catch` で受けるので、鎖は止まらない
     p2pBackfillChain = Promise.all([
-      fetchJmaQuake({ limit: MAX_HISTORY_RETAINED }, historyAbort.signal),
+      fetchJmaQuake({ limit: MAX_HISTORY_RETAINED }, historyAbort.signal, 'foreground'),
       fetchHistory([552], 10, 0, historyAbort.signal),
     ])
       .then(([quakeEvents, tsunamiEvents]) => {
@@ -3901,7 +3901,7 @@ export function useEarthquakes(
         })
       } else {
         const offset = p2pRawOffsetRef.current
-        const events = await fetchJmaQuake({ limit: LOAD_MORE_BATCH, offset }, signal)
+        const events = await fetchJmaQuake({ limit: LOAD_MORE_BATCH, offset }, signal, 'foreground')
         p2pRawOffsetRef.current += events.length
         // 既存カード群を base に新バッチを統合する（DMDSS 版と同じ扱い）。
         // バッチ跨ぎで同一イベントの続報が届いた場合もリアルタイムと同一結果になる。

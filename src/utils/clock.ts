@@ -85,6 +85,15 @@ export function serverNow(): number {
   return now
 }
 
+/**
+ * **リプレイ中でも本物の**サーバー現在時刻（epoch ms）。`serverNow()` はリプレイ中に再生時刻を返すので、
+ * 「いま取った控えがどれだけ古いか」のように実時間で測りたいものはこちらを使う。未較正なら壁時計。
+ */
+export function liveServerNow(): number {
+  if (kEpochMs !== null) return performance.now() + kEpochMs
+  return Date.now()
+}
+
 /** serverNow() の Date 版。 */
 export function serverDate(): Date {
   return new Date(serverNow())
