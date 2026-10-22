@@ -1,10 +1,7 @@
 import type { TelegramLogEntry, TelegramLogKind } from '../../types/earthquake'
 import { log } from '../../utils/logger'
-import {
-  QUAKE_TYPES, TSUNAMI_TYPES, EEW_HEAD_TYPES, LPGM_TYPES, NANKAI_TYPES, COMMENTARY_TYPES,
-  KOHATSU_TYPES, NOTICE_TYPES, QUAKE_COUNT_TYPES, ESTIMATED_INTENSITY_TYPES,
-} from '../../services/dmdataTelegramPayload'
-import { DISPATCHED_WITHOUT_PARSER } from '../../services/dmdata'
+import { TELEGRAM_KIND_OF_HEAD_TYPE } from '../../services/dmdataTelegramPayload'
+import { P2P_KIND_OF_CODE } from '../../services/p2pquake'
 
 /**
  * 電文種別コードから引く種別名。名前は気象庁の情報名に揃える。
@@ -74,25 +71,13 @@ export const KIND_LABEL: Readonly<Record<TelegramLogKind, string>> = {
 }
 
 /**
- * 電文種別コードが属する種別。DMDATA の種別の集合と P2PQuake のコードから引く。
- * パーサーを通らない VXSE42（配信テスト）・VXSE43・VXSE44 も緊急地震速報の一族として数える。
- *
- * **読めた行の `kind` とは別の表。** 読めた行の `kind` は `dmdata.ts` の `handleMessage` の分岐と
- * `p2pquake.ts` の `codeToLogKind` が付けるので、そちらで種別を付け替えたらここも揃えること
- * （食い違うと、同じ種別の電文が読めたかどうかで別の絞り込みに入る）。
+ * 電文種別コードが属する種別。**独自の表は持たず、受信の振り分けが引く 2 つの表を合わせて引く** ——
+ * DMDATA は `TELEGRAM_KIND_OF_HEAD_TYPE`（`dmdataTelegramPayload.ts`）、P2PQuake は `P2P_KIND_OF_CODE`（`p2pquake.ts`）。
+ * 読めた行と読めなかった行が同じ絞り込みに入るのはこのため。
  */
 const KIND_OF_HEAD_TYPE: ReadonlyMap<string, TelegramLogKind> = new Map<string, TelegramLogKind>([
-  ...[...EEW_HEAD_TYPES, ...DISPATCHED_WITHOUT_PARSER].map(code => [code, 'eew'] as const),
-  ...[...QUAKE_TYPES].map(code => [code, 'quake'] as const),
-  ...[...TSUNAMI_TYPES].map(code => [code, 'tsunami'] as const),
-  ...[...LPGM_TYPES].map(code => [code, 'lpgm'] as const),
-  ...[...NANKAI_TYPES].map(code => [code, 'nankai'] as const),
-  ...[...COMMENTARY_TYPES].map(code => [code, 'nankaiCommentary'] as const),
-  ...[...KOHATSU_TYPES].map(code => [code, 'kohatsu'] as const),
-  ...[...NOTICE_TYPES].map(code => [code, 'quakeNotice'] as const),
-  ...[...QUAKE_COUNT_TYPES].map(code => [code, 'earthquakeCount'] as const),
-  ...[...ESTIMATED_INTENSITY_TYPES].map(code => [code, 'estimatedIntensity'] as const),
-  ['551', 'quake'], ['552', 'tsunami'], ['556', 'eew'],
+  ...TELEGRAM_KIND_OF_HEAD_TYPE,
+  ...[...P2P_KIND_OF_CODE].map(([code, kind]) => [String(code), kind] as const),
 ])
 
 /**
