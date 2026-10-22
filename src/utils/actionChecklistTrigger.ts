@@ -33,9 +33,17 @@ import { eewAreas, eewMaxScale } from './eew'
 import { isValidIntensityScale } from './intensity'
 import type { DetectedPoint } from './kyoshinDetectionView'
 import { kyoshinIndexToJma } from './kyoshinIntensity'
+import { hasKnownEpicenter, haversineKm } from './geo'
+import { NEARBY_RADIUS_KM, type HomePoint } from './nearbyStations'
 
 /** 判定に使う「自宅の周り」。半径内に何も無ければ空になり、その場合は全国基準へ倒す。 */
 export interface NearbyScope {
+  /**
+   * 範囲の中心（行動チェックリストはホーム地点、地図の下端の波形は自作地震計の座標）。位置が無ければ空。
+   * 区域を持たない「非常に強い揺れを検知」の報を、検知した観測点からの距離で判定するのに使う
+   * （{@link eewScaleForScope}）。
+   */
+  centers: readonly HomePoint[]
   /** 強震モニタの観測点キー（`computeSiteKeys` 由来。検知エンジンのメンバーと突き合わせる）。 */
   kyoshinKeys: ReadonlySet<string>
   /**
@@ -60,6 +68,7 @@ export interface NearbyScope {
 
 /** 位置を持たない（または半径内に観測点が無い）ことを表す。全国基準で判定する。 */
 export const NO_SCOPE: NearbyScope = {
+  centers: [],
   kyoshinKeys: new Set(),
   stationNames: new Set(),
   regionNames: new Set(),
@@ -252,12 +261,28 @@ function scanPoints(
  * `EEWRegion.name` を突き合わせる。上限が定まらない報（`scaleTo` が「〜以上」の下限）でも
  * 下限側で比べれば足りる —— 下限が閾値に達していれば実際の揺れはそれ以上になる。
  *
- * **区域を持たない EEW がある。** standard 版は Yahoo hypoInfo（1Hz ポーリング）で先に検知し、
- * 後着の P2PQuake が区域を運ぶ（[eew-spec.md](../../docs/spec/eew-spec.md) §3「2 つの経路の報を 1 つにまとめる」）。
- * hypoInfo 由来の報は `areas` を持たず予想震度が `forecastMaxScale` にしか入らないため、
- * **P2PQuake の報が届く前の窓では区域で判定できない**。
- * 区域が無ければ `eewMaxScale`（`areas` が空のときに `forecastMaxScale` へ落ちる正規の取り出し）で
- * 全国基準として判定する。`eewAreas` を使うのは旧形式（`regions` だけを持つ電文）も拾うため。
+ * **区域を持たない EEW は、自宅の区域を引けるなら使わない**（2026-10-22 ユーザー承認。選ばれた選択肢は
+ * 「区域が無ければ使わない」）。区域を持たない報は 2 種類ある。
+ *
+ * - **予測震度の下限が震度 3 以下の報。** 気象庁は電文全体の予測震度の下限が震度 4 以上になって初めて
+ *   区域を並べる（[eew-spec.md](../../docs/spec/eew-spec.md) §4。実電文 4,651 通のうち 3,886 通が区域を持たない）
+ * - **standard 版の、区域が補われる前の報。** Yahoo hypoInfo（1Hz ポーリング）が先に検知し、後着の
+ *   P2PQuake が区域を運ぶ（同 §3「2 つの経路の報を 1 つにまとめる」）
+ *
+ * どちらも区域が無いので、自宅が揺れるかは気象庁の発表から読めない。ここで電文全体の最大で判定すると、
+ * **遠くの地震でも自宅に帯が出る**。気象庁の発表をそのまま伝える形を保つため、自前の予測で埋めることもしない
+ * （自宅に向けて自前の予想を出すことになる。`docs/forecast-computation-audit.md`）。この報の間は強震モニタと
+ * 地震情報の経路で拾う。代わりに、standard 版の初報では区域が届くまで数秒遅れる。
+ *
+ * **自宅の区域を引けないとき（地点が無い・区域名を引けない）は全国基準で判定する。** 地域を絞れない以上、
+ * 電文全体で見るほかない。`eewMaxScale` は区域が空なら `forecastMaxScale` を返すので、区域を持たない報も
+ * ここで拾える。`eewAreas` を使うのは旧形式（`regions` だけを持つ電文）も拾うため。
+ *
+ * **「非常に強い揺れを検知・最大予測震度のみ」の報は、検知した観測点からの距離で判定する**（2026-10-22 ユーザー承認。
+ * 選ばれた選択肢は「検知点から 30km」）。この報は区域を持たず、震央は揺れを検知した観測点の位置
+ * （`eew-spec.md` §5）。その点が範囲の中心のどれかから {@link NEARBY_RADIUS_KM} 以内なら、電文の最大予測震度を返す。
+ * 震度を予想しているのではなく、気象庁が「この点の付近で強く揺れた」と伝えた場所との距離を見ている
+ * （`docs/forecast-computation-audit.md` の 15）。中心が無ければ上と同じく全国基準で判定する。
  */
 export function eewScaleForScope(
   eew: EEWAlert,
@@ -265,10 +290,17 @@ export function eewScaleForScope(
   minScale: number,
 ): number | null {
   if (!isUsableThreshold(minScale)) return null
+  if (eew.strongShakingOnly === true && scope.centers.length > 0) {
+    const { latitude, longitude } = eew.earthquake.hypocenter
+    if (!hasKnownEpicenter(latitude, longitude)) return null
+    const near = scope.centers.some((c) => haversineKm(latitude, longitude, c.lat, c.lng) <= NEARBY_RADIUS_KM)
+    const max = eewMaxScale(eew)
+    return near && isValidIntensityScale(max) && max >= minScale ? max : null
+  }
   const regions = eewAreas(eew)
-  // 区域が無い、または自宅の区域を引けない場合は全国基準。`eewMaxScale` は区域が空なら
-  // `forecastMaxScale` を返すので、区域が補われる前の報もここで拾える。
-  if (regions.length === 0 || !hasNearby(scope) || scope.regionNames.size === 0) {
+  const canNarrow = hasNearby(scope) && scope.regionNames.size > 0
+  if (regions.length === 0 && canNarrow) return null
+  if (!canNarrow) {
     const max = eewMaxScale(eew)
     return isValidIntensityScale(max) && max >= minScale ? max : null
   }
