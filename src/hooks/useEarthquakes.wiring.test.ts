@@ -27,7 +27,7 @@ import {
 import { DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
 import { log } from '../utils/logger'
 import { CELL_LAT_DEG, CELL_LON_DEG } from '../utils/bufrEstimatedIntensity'
-import { ACTIVE_EEW_WINDOW_MS } from '../utils/eew'
+import { ACTIVE_EEW_WINDOW_MS, calcEEWCancelTime } from '../utils/eew'
 // **テストボタンのデータをここで先に読む。** 値は使わないが、これが無いと
 // `simulate*` を最初に呼ぶテストが「このファイルで初回のモジュール解決・変換」を
 // テスト本体の中で行うことになる —— 実データ 3 つで 824 KB あり、全ファイル並列実行では
@@ -6783,5 +6783,121 @@ describe('ライブの入口: 画面から消えた地震の報を採らない',
     await h.flush()
     await deliver(h, report(2))
     expect(h.current.activeEEWs.size).toBe(1)
+  })
+})
+
+// 自動解除の時刻（`calcEEWCancelTime`）を既に過ぎた報は、画面に出ていない地震のものなら採らない（→ `skipExpiredEew`）。
+// 標準版の Yahoo は終わった速報の最終報を一覧に 150〜180 秒残し、一覧を差分で見る処理（`diffHypoInfoEvents`）を作り直す（起動・リプレイの開始と終わり）と
+// それを新しい項目として出し直す。消えた地震の記憶はリセットで捨てるので、報の時刻だけで止める（2026-10-21 ユーザー承認「おすすめで」）
+describe('ライブの入口: 自動解除の時刻を過ぎた報を採らない', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.mocked(fetchDmdataActiveEews).mockReset()
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValue([])
+    // 時計を信じられる状態にする（再生の時計。ずれ 0 で壁時計と同じ）。時計を信じない場合は安全弁のテストで外す
+    setReplayOffset(0)
+    vi.mocked(log.info).mockClear()
+  })
+  afterEach(() => {
+    setReplayOffset(null)
+    vi.useRealTimers()
+  })
+
+  /** 10 分前に発表された、震源も 10 分前の報（M・深さによらず自動解除の時刻を過ぎている） */
+  const staleReport = (serial: number, over: Partial<EEWAlert> = {}): EEWAlert => {
+    const base = createTestEEWWarning(true, '20261021090000', serial, new Date(Date.now() - 10 * 60_000))
+    const issued = new Date(Date.now() - 10 * 60_000).toISOString()
+    return { ...base, time: issued, issue: { ...base.issue!, time: issued }, ...over }
+  }
+
+  const deliver = async (h: ReturnType<typeof setup>, eew: EEWAlert) => {
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: eew }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+  }
+
+  // 正: 自動解除の時刻を過ぎた報は出さない。弾いたことは記録に残す。
+  // **最終報ではなく続報で確かめる** —— 最終報は門が無くても、受けた直後に自動解除の予約（過ぎた時刻）が片付けるので、
+  // 画面に残らないことでは門の効き目を見分けられない（音と読み上げは鳴ってしまう。それを止めるのがこの門）
+  it('自動解除の時刻を過ぎた報は出さない（音・読み上げへも渡さない）', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    await deliver(h, staleReport(3))
+    expect(h.current.activeEEWs.size).toBe(0)
+    // 音と読み上げの入口（`onLiveEvent`）へ渡っていない —— この門が止めたいのはここ
+    expect(onLiveEvent.mock.calls.some(([e]) => e.kind === 'eew')).toBe(false)
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('ライブの受信') && String(c[0]).includes('自動解除の時刻を'))).toBe(true)
+  })
+
+  // 対照: 自動解除の時刻の手前の報（いま発表された最終報）は出す
+  it('自動解除の時刻の手前の最終報は出す（音・読み上げへも渡す）', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    await deliver(h, { ...createTestEEWWarning(true, '20261021090000', 3), isFinal: true })
+    expect(h.current.activeEEWs.size).toBe(1)
+    expect(onLiveEvent.mock.calls.some(([e]) => e.kind === 'eew')).toBe(true)
+  })
+
+  // 安全弁: 時計を信じられない（未較正で再生もしていない）ときは弾かない。進んだ壁時計で本物の報を捨てないため
+  it('時計を信じられないときは、時刻を過ぎて見える報も出す', async () => {
+    setReplayOffset(null)
+    const h = setup()
+    await h.flush()
+    await deliver(h, staleReport(3))
+    expect(h.current.activeEEWs.size).toBe(1)
+  })
+
+  // 安全弁: 画面に出ている地震の報には掛けない（表示中の地震は自動解除の予約が片付ける。続報を入口で落とさない）
+  it('画面に出ている地震の、時刻の古い続報は採る', async () => {
+    const h = setup()
+    await h.flush()
+    await deliver(h, createTestEEWWarning(true, '20261021090000', 1))
+    expect(h.current.activeEEWs.size).toBe(1)
+    await deliver(h, staleReport(2))
+    expect(h.current.activeEEWs.size).toBe(1)
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('自動解除の時刻を'))).toBe(false)
+  })
+
+  // 境界: 自動解除の時刻の約 1 秒手前は採り、約 1 秒過ぎは採らない（比べ方は `calcEEWCancelTime` と同じ発表時刻起点）。
+  // 取り出しまでに偽の時計が 100 ms ほど進むので、ちょうど等しい点（`<=` で弾く側）までは固定していない
+  it('自動解除の時刻の約 1 秒手前は採り、約 1 秒過ぎは採らない', async () => {
+    const issued = new Date(Date.now() - 60_000)
+    const make = (serial: number, eventId: string) => {
+      const base = createTestEEWWarning(true, eventId, serial, issued)
+      return { ...base, time: issued.toISOString(), issue: { ...base.issue!, time: issued.toISOString() } }
+    }
+    const before = make(1, '20261021091000')
+    const cancelMs = calcEEWCancelTime(before, new Date(Math.floor(issued.getTime() / 1000) * 1000)).getTime()
+    const h = setup()
+    await h.flush()
+    vi.setSystemTime(cancelMs - 1100)
+    await deliver(h, before)
+    expect(h.current.activeEEWs.size).toBe(1)
+    vi.setSystemTime(cancelMs + 1000)
+    await deliver(h, make(1, '20261021091100'))
+    expect(h.current.activeEEWs.size).toBe(1)
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('20261021091100') && String(c[0]).includes('自動解除の時刻を'))).toBe(true)
+  })
+
+  // 安全弁: 発表時刻が読めない報は弾かない（解除の時刻が震源時刻だけで決まり、「発表から 60 秒は残す」下限が外れるため）
+  it('発表時刻が読めない報は、震源時刻が古くても採る', async () => {
+    const h = setup()
+    await h.flush()
+    await deliver(h, staleReport(3, { time: '', issue: { ...staleReport(3).issue!, time: '' } }))
+    expect(h.current.activeEEWs.size).toBe(1)
+  })
+
+  // 安全弁: 起動時の復元が静かに積む報には掛けない。古さは取得側（`selectActiveEews`）が見ており、ここで落とすと
+  // 読み上げの記憶とタブ移動だけが「戻した」つもりで進む
+  it('起動時の復元が戻した報は、自動解除の時刻を過ぎて見えても画面に出す', async () => {
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValue([staleReport(2)])
+    const h = setup()
+    await h.flush()
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(1)
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('自動解除の時刻を'))).toBe(false)
   })
 })

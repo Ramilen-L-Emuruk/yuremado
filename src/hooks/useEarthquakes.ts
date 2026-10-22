@@ -39,7 +39,7 @@ import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayT
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
 import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState, tsunamiLiftText } from '../utils/tsunami'
 import { log } from '../utils/logger'
-import { serverNow, serverDate } from '../utils/clock'
+import { serverNow, serverDate, isServerClockTrusted } from '../utils/clock'
 import { isAbortedByCaller } from '../utils/fetchWithTimeout'
 
 import { isDmdss } from '../utils/env'
@@ -477,6 +477,39 @@ function skipEndedEew(ended: ReadonlyMap<string, EndedEew>, eew: EEWAlert, path:
       ? `消えるまでに第 ${record.serialByOrigin.get(eew.origin)} 報まで受けていた`
       : '消えるまでに受けた報より発表時刻が新しくない'
   log.info(`[eew] ${path}: ${key}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報）は ${Math.round((nowMs - record.endedAtMs) / 1000)} 秒前に画面から消えた地震の報なので採りません（${basis}）`)
+  return true
+}
+
+/**
+ * 届いた報が、**その報自身の自動解除の時刻（`calcEEWCancelTime`）を既に過ぎている**なら `true` を返し、弾いたことを記録に残す。
+ * ライブの入口（`handleEvent`）で、画面に出ていない地震の報にだけ使う。
+ *
+ * 標準版の Yahoo は、終わった速報の最終報を一覧に 150〜180 秒残す（2026-10-21 に 2 地震で実測）。一覧を前回との差分で見る処理（`diffHypoInfoEvents`）は作り直されると
+ * 前に見た項目を忘れるので（起動・リプレイの開始と終わり）、その間に作り直すと最終報を「新しい項目」として出し直す。
+ * 自動解除は最終報から 60 秒以上先なので、出直した報は音と読み上げを鳴らしてから、すぐ消える。消えた地震の記憶
+ * （`skipEndedEew`）はリセットで捨てるので、ここでは報の時刻だけで判定する。
+ *
+ * **時計を信じられないときは弾かない**（`isServerClockTrusted`）。未較正の端末は壁時計がずれていることがあり、
+ * 進んだ時計で比べると本物の報まで捨てる。弾かなかったことは debug に残す。
+ * **発表時刻が読めない報も弾かない。** `calcEEWCancelTime` は発表時刻が読めないと震源時刻だけで解除の時刻を決め、
+ * 「発表から 60 秒は残す」下限が外れる —— その値で比べると、届いたばかりの初報を古い報と取り違えうる。
+ * 2026-10-21 ユーザー承認「おすすめで」
+ */
+function skipExpiredEew(eew: EEWAlert, path: string): boolean {
+  const issueMs = eewIssueTimeMs(eew)
+  if (issueMs === null) return false
+  const cancelMs = calcEEWCancelTime(eew, new Date(issueMs)).getTime()
+  if (!Number.isFinite(cancelMs)) return false
+  const nowMs = serverNow()
+  if (cancelMs > nowMs) return false
+  const detail = `${eewEventKey(eew)}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報`
+    + ` 発表=${new Date(issueMs).toISOString()} 自動解除=${new Date(cancelMs).toISOString()} いま=${new Date(nowMs).toISOString()}`
+    + ` M=${eew.earthquake.hypocenter.magnitude} 深さ=${eew.earthquake.hypocenter.depth}）`
+  if (!isServerClockTrusted()) {
+    log.debug(`[eew] ${path}: ${detail}は自動解除の時刻を過ぎて見えますが、時計が未較正なので採ります`)
+    return false
+  }
+  log.info(`[eew] ${path}: ${detail}は自動解除の時刻を ${Math.round((nowMs - cancelMs) / 1000)} 秒過ぎた報なので採りません`)
   return true
 }
 
@@ -1721,6 +1754,17 @@ export function useEarthquakes(
         // （標準版の Yahoo は、一覧から 2 回続けて欠けた項目が戻ると同じ報を出し直す）。取消で終えた地震は
         // 報番号によらず採らない（取消は終端）。2026-10-21 ユーザー承認「おすすめで」
         if (!acceptance && !previous && skipEndedEew(eewEndedRef.current, incoming, 'ライブの受信')) {
+          recordSkippedTelegram(incoming, 'notApplied')
+          return
+        }
+        // **自動解除の時刻を過ぎた報も採らない**（→ `skipExpiredEew`）。消えた地震の記憶はリセットで捨てるので、
+        // 差分を見る処理を作り直した直後に Yahoo の一覧に残る最終報が届くと、上の判定では止まらない。
+        // **画面に出ている地震には掛けない** —— 出ている地震は最終報（自動解除の予約）か取消で終わるので、
+        // 古い時刻の続報を入口で落とすと、続報が運ぶ値が届かないだけになる。
+        // **静かに積まれた報（`isSilentRef`）にも掛けない** —— 起動時・張り直しの復元とリプレイの初期状態で、
+        // 鳴らないうえ、古さは取得側が判定している（`selectActiveEews`）。ここで落とすと、復元した側は読み上げの記憶と
+        // タブ移動を「戻した」つもりで進め、画面だけが空になる。
+        if (!acceptance && !previous && !isSilentRef.current && skipExpiredEew(incoming, 'ライブの受信')) {
           recordSkippedTelegram(incoming, 'notApplied')
           return
         }

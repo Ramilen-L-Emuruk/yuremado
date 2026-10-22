@@ -12,6 +12,7 @@ import {
   feedServerSample,
   getServerClockOffsetMs,
   getServerClockSampleAgeMs,
+  isServerClockTrusted,
   RESUME_DISCARD_THRESHOLD_MS,
   RESUME_REPLACE_MIN_DRIFT_MS,
   serverNow,
@@ -48,6 +49,21 @@ describe('サーバー時刻の較正状態', () => {
   afterEach(() => {
     setReplayOffset(null)
     vi.restoreAllMocks()
+  })
+
+  // 「いまの時刻と比べて古いから捨てる」判定（緊急地震速報の入口）がこれを見る。未較正を信じると、
+  // ずれた壁時計で本物の報を捨てる
+  it('時計を信じてよいのは、再生中か較正済みのときだけ', () => {
+    expect(isServerClockTrusted()).toBe(false)
+    setReplayOffset(0)
+    expect(isServerClockTrusted()).toBe(true)
+    setReplayOffset(null)
+    expect(isServerClockTrusted()).toBe(false)
+    feedServerSample(Date.now() + 500, 'primary')
+    expect(isServerClockTrusted()).toBe(true)
+    // タブ復帰で較正を捨てたら、また信じない
+    fireVisibleAfterWallJump(60_000)
+    expect(isServerClockTrusted()).toBe(false)
   })
 
   it('較正前は オフセットも鮮度も null（壁時計フォールバック中であることが分かる）', () => {
