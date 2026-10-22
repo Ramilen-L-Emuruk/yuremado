@@ -4,8 +4,8 @@ import { hasDepth, hasMagnitude } from './formatters'
 import { hasKnownEpicenter, haversineKm, hypocentralDistanceKm } from './geo'
 import type { AlertSoundType } from './alertSound'
 import { travelTimeSec } from './travelTime'
-import { isValidIntensityScale } from './intensity'
-import { isValidLpgmClass } from './lpgm'
+import { isValidIntensityScale, getIntensityLabelWithApproxAbove } from './intensity'
+import { isValidLpgmClass, getLpgmClassLabelWithApproxAbove } from './lpgm'
 import { hypoInfoItemToEEW, type YahooHypoInfoItem } from '../services/kyoshin'
 import { isEewArrivedKindCode, isEewPlumKindCode } from './eewKind'
 import { EEW_WARNING_REGION_ORDER } from './eewWarningRegions'
@@ -629,6 +629,43 @@ export function canPresentLpgmClass(scale: number, lpgmClass: number): boolean {
   return scale > 0 && lpgmClass > 0
 }
 
+/** ブラウザ通知に出した最大予想震度と最大予想長周期地震動階級（→ {@link eewNotifiedForecast}）。 */
+export interface EewNotifiedForecast {
+  readonly scale: EewMaxScaleInfo
+  /** 出せない階級（{@link canPresentLpgmClass} が偽）は 0 にしてある */
+  readonly lpgm: EewMaxLpgmClassInfo
+}
+
+/** その報で通知に出す最大予想震度・長周期地震動階級。階級は画面・読み上げと同じく {@link canPresentLpgmClass} を通す。 */
+export function eewNotifiedForecast(eew: EEWAlert): EewNotifiedForecast {
+  const scale = eewMaxScaleInfo(eew)
+  const lpgm = eewMaxLpgmClassInfo(eew)
+  return { scale, lpgm: canPresentLpgmClass(scale.scale, lpgm.cls) ? lpgm : { cls: 0, over: false } }
+}
+
+/**
+ * 緊急地震速報のブラウザ通知の本文。「石川県能登地方 最大震度5弱予想 長周期地震動階級2予想」の形で、
+ * 震度・階級は予想があるときだけ添える（2026-10-21 ユーザー承認「それで進めて。」）。
+ */
+export function eewNotificationBody(name: string, forecast: EewNotifiedForecast): string {
+  const { scale, lpgm } = forecast
+  return name
+    + (scale.scale > 0 ? ` 最大震度${getIntensityLabelWithApproxAbove(scale.scale, scale.orAbove)}予想` : '')
+    + (lpgm.cls > 0 ? ` 長周期地震動${getLpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over)}予想` : '')
+}
+
+/**
+ * 通知に出した予想より、いまの報の予想が上がったか（真なら同じ通知を出し直す。2026-10-21 ユーザー承認
+ * 「直す (Recommended)」）。上がったかは読み上げと同じ物差し（{@link isForecastScaleHigher}・
+ * {@link isForecastLpgmHigher}）で見る —— 数値が同じでも「程度以上」が付けば上がった扱い。
+ * **まだ通知を出していない地震では偽**（出し直す相手が無い。新規の通知は呼び出し側が出す）。
+ */
+export function raisesNotifiedForecast(latest: EewNotifiedForecast, notified: EewNotifiedForecast | undefined): boolean {
+  if (!notified) return false
+  return isForecastScaleHigher(latest.scale, notified.scale)
+    || (latest.lpgm.cls > 0 && isForecastLpgmHigher(latest.lpgm, notified.lpgm))
+}
+
 /**
  * 深発地震とみなす深さ [km]。気象庁はこれより深い地震について、**PLUM 法による 2 点以上の震度予測が
  * ある場合を除き**最大予測震度を発表しない（震源が深いと地表の揺れを予測しきれないため）。
@@ -794,6 +831,25 @@ export const EMPTY_EEW_ACCEPTANCE: EewAcceptance = {
 }
 
 /**
+ * 標準版の経路（強震モニタ・P2PQuake）が運ぶ訓練報・試験報を、設定「試験報を受信」に従って流せる形にする。
+ *
+ * - **設定が偽なら何もしない**（`test: true` のまま。受信側が捨てる。既定はこちら）
+ * - 設定が真なら `test: false` にして流し、**画面で本物と見分けられるよう運用種別の印を付ける**。強震モニタの
+ *   `isTraining` は「訓練」、P2PQuake の `test`（仕様の説明は「テストかどうか。」だけ）は「試験」
+ *   （2026-10-21 ユーザー承認・選んだ選択肢「「試験報」の印で出す (Recommended)」）
+ * - 強震モニタ・P2PQuake 以外の報はここを通っても変わらない。DMDATA は受信の時点で同じ設定を見て `test: false` に
+ *   してあり、印は電文の `Control/Status` が持つ（`services/dmdata.ts`）
+ *
+ * 取消（強震モニタの一覧から消えた報・P2PQuake の取消）も同じ印で通す。訓練の取消だけ捨てると、流した訓練報が
+ * 自動解除まで画面に残る。
+ */
+export function admitTrainingEew(eew: EEWAlert, receiveTest: boolean): EEWAlert {
+  if (!eew.test || !receiveTest) return eew
+  if (eew.origin !== 'yahoo' && eew.origin !== 'p2pquake') return eew
+  return { ...eew, test: false, operationStatus: eew.operationStatus ?? (eew.origin === 'yahoo' ? '訓練' : '試験') }
+}
+
+/**
  * 起動時・張り直しで「いま発表中の緊急地震速報」を探すときの窓（`fetchDmdataActiveEews`）。自動解除は震源時刻から
  * 最長でも約 8 分（M9・深さ 30km で 476 秒。`calcEEWAutoCancelSec` の実測。規模と深さの両方で変わる）なので、それを
  * 覆う幅を取る。**詳細取得を絞り込むふるいでしかなく**、実際に有効かどうかは `selectActiveEews` が `calcEEWCancelTime`
@@ -816,6 +872,17 @@ export interface EndedEew {
    * 同じ地震の報を採らない（2026-10-21 ユーザー承認「おすすめで」）
    */
   readonly cancelled: boolean
+  /**
+   * 消える直前に画面へ出していた報（取消の表示を付ける前の姿）。**消えた後に誤報取消が届いたとき、この報に取消を
+   * 載せて 10 秒だけ画面へ戻す**（2026-10-21 ユーザー承認「直す (Recommended)」。→ eew-spec.md §8）。
+   * 前に消えたときの記憶から引き継いだ値は、新しく消えたときの報で置き換える
+   */
+  readonly lastReport: EEWAlert | null
+  /**
+   * 手元で最初に受けた報の発表時刻（→ `rememberEewFirstIssueTime`）。消えた後に届いた誤報取消の読み上げが
+   * 「〇時〇分に発表された」と言うための値。`null` は拾えなかった印、`undefined` は覚えていない
+   */
+  readonly firstIssueTime: string | null | undefined
 }
 
 /** 終えた地震の報と見なした根拠。`null` は「終えた地震の報とは言えない」 */
@@ -845,6 +912,24 @@ export function endedEewMatch(
   const issueMs = eewIssueTimeMs(incoming)
   if (ended.latestIssueMs !== null && issueMs !== null) return issueMs <= ended.latestIssueMs ? 'issue-time' : null
   return null
+}
+
+/**
+ * 誤報取消が、**取消の前に画面から消えた（自動解除された）地震**に届いたものか。真なら、その取消は普通の誤報取消と
+ * 同じく音・読み上げ・通知・タブ移動で伝え、最後の報に取消を載せて 10 秒だけ画面へ戻す
+ * （2026-10-21 ユーザー承認「直す (Recommended)」）。
+ *
+ * - 自動解除（`expired`）の報は対象にしない —— 取消ではなく発表が終わっただけ
+ * - **取消で終えた地震は対象にしない**（もう伝えた取消。別の経路から同じ取消が遅れて届いた形）
+ * - 覚えておく窓（`keepMs`）を過ぎた記憶・時計が巻き戻って経過が負の記憶・最後の報を持たない記憶は使わない
+ */
+export function isLateEewCancel(
+  ended: EndedEew | undefined, incoming: EEWAlert, nowMs: number, keepMs: number,
+): ended is EndedEew & { readonly lastReport: EEWAlert } {
+  if (!ended || !incoming.cancelled || incoming.expired) return false
+  if (ended.cancelled || ended.lastReport === null) return false
+  const elapsed = nowMs - ended.endedAtMs
+  return elapsed >= 0 && elapsed <= keepMs
 }
 
 /**

@@ -269,10 +269,6 @@ function setup(over: { voicevoxEnabled?: boolean; soundEnabled?: boolean } = {})
     settings, title: title as never,
     earthquakesRef: { current: [] as JMAQuake[] },
     tsunamisRef,
-    kyoshinDetectedRef: { current: false },
-    defaultTabRef: { current: 'earthquake' },
-    setActiveTabRealtimeForKyoshin: vi.fn(),
-    revertToDefaultTab: vi.fn(),
     selectQuake: vi.fn(), openLpgmFromQuake: vi.fn(), closeDistributionOnQuakeReport: vi.fn(),
     ...spies,
   }))

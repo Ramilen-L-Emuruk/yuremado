@@ -258,14 +258,10 @@ function setup(
     title: title as never,
     earthquakesRef: { current: [] as JMAQuake[] },
     tsunamisRef: { current: [] as JMATsunami[] },
-    kyoshinDetectedRef: { current: false },
-    defaultTabRef: { current: 'earthquake' },
-    setActiveTabRealtimeForKyoshin: vi.fn(),
     setActiveTabNonRealtime: vi.fn(),
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(),
     followSpeechTab: (followSpeechTabSpy ?? vi.fn()) as never, preSpeechTab: vi.fn(() => true), quakeSpeakingCard: null, expandPanelForSpecialInfo: vi.fn(),
-    revertToDefaultTab: vi.fn(),
     selectQuake: vi.fn(),
     openLpgmFromQuake: vi.fn(),
     openEstimatedIntensity: vi.fn(),
@@ -2920,6 +2916,118 @@ describe('いま声が語っているカードの配線', () => {
       await flushMicrotasks()
 
       expect(spokenTexts()).toContain('12時45分に発表された緊急地震速報は取り消されました。')
+    })
+  })
+
+  // 通知に出した予想が上がったら、同じタグで出し直す（2026-10-21 ユーザー承認「直す (Recommended)」）
+  describe('緊急地震速報の通知の出し直し', () => {
+    const notices = () => vi.mocked(showBrowserNotification).mock.calls.filter(c => String(c[2]).startsWith('eew-') && !String(c[2]).startsWith('eew-cancel-'))
+
+    it('正: 予想震度が上がった続報で、同じタグの通知を新しい予想で出し直す', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ serial: 1, scaleTo: 45 }))
+      handle(makeEEW({ serial: 2, scaleTo: 50 }))
+      expect(notices().map(c => c[1])).toEqual(['日向灘 最大震度5弱予想', '日向灘 最大震度5強予想'])
+      expect(new Set(notices().map(c => c[2])).size).toBe(1)
+    })
+
+    it('対照: 予想が変わらない・下がった続報では出し直さない', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ serial: 1, scaleTo: 50 }))
+      handle(makeEEW({ serial: 2, scaleTo: 50 }))
+      handle(makeEEW({ serial: 3, scaleTo: 45 }))
+      expect(notices()).toHaveLength(1)
+    })
+
+    it('正: 長周期地震動階級だけが上がった続報でも出し直し、本文に階級を添える', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ serial: 1, scaleTo: 50, lgIntTo: 1 }))
+      handle(makeEEW({ serial: 2, scaleTo: 50, lgIntTo: 2 }))
+      expect(notices().map(c => c[1])).toEqual([
+        '日向灘 最大震度5強予想 長周期地震動階級1予想', '日向灘 最大震度5強予想 長周期地震動階級2予想',
+      ])
+    })
+
+    // 起動時に復元した速報は通知を出していないが、ライブの報で予想が上がったら通知を出す
+    // （2026-10-22 ユーザー承認「上がったら出す (Recommended)」）
+    const restoredEew = (scaleTo: IntensityScale) => ({ ...makeEEW({ eventId: 'evt-R', serial: 3, scaleTo, issueTime: '2026-01-01T03:44:00Z' }), firstIssueTime: '2026-01-01T03:40:00Z' })
+    it('正: 起動時に復元した速報も、ライブの報で予想が上がったら通知を出す', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      act(() => { capturedResult!.restoreStartupEews([restoredEew(45)]) })
+      handle(makeEEW({ eventId: 'evt-R', serial: 4, scaleTo: 50, issueTime: '2026-01-01T03:45:00Z' }))
+      expect(notices().map(c => c[1])).toEqual(['日向灘 最大震度5強予想'])
+    })
+
+    it('対照: 起動時に復元した速報で、ライブの報の予想が変わらなければ通知を出さない', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      act(() => { capturedResult!.restoreStartupEews([restoredEew(50)]) })
+      handle(makeEEW({ eventId: 'evt-R', serial: 4, scaleTo: 50, issueTime: '2026-01-01T03:45:00Z' }))
+      expect(notices()).toHaveLength(0)
+    })
+
+    it('安全弁: 基準は下げない。予想が下がってから元の値へ戻った続報では出し直さない', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ serial: 1, scaleTo: 50 }))
+      handle(makeEEW({ serial: 2, scaleTo: 45 }))
+      handle(makeEEW({ serial: 3, scaleTo: 50 }))
+      expect(notices()).toHaveLength(1)
+    })
+  })
+
+  // 取消の前に画面から消えた（自動解除された）地震へ届いた誤報取消（→ `LiveEventMeta.eewLateCancel`）。
+  // 普通の誤報取消と同じく伝える（2026-10-21 ユーザー承認「直す (Recommended)」）。読み上げ側の記憶は自動解除で
+  // 捨ててあるので、第 1 報の時刻と震央地名は印に載った値を使う
+  describe('画面から消えた後に届いた誤報取消', () => {
+    const late = { eewLateCancel: { firstIssueTime: '2026-01-01T03:40:00Z', hypocenterName: '日向灘' } }
+    const cancel = () => makeEEW({ eventId: 'evt-A', serial: 3, issueTime: '2026-01-01T03:48:00Z', cancelled: true, hypocenter: { name: '', latitude: -200, longitude: -200 } })
+    async function expireFirst(handle: ReturnType<typeof setup>) {
+      handle(makeEEW({ eventId: 'evt-A', serial: 1, issueTime: '2026-01-01T03:40:00Z' }))
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+      handle({ ...makeEEW({ eventId: 'evt-A', serial: 2, cancelled: true }), expired: true })
+      await flushMicrotasks()
+      speakMock.mockClear()
+      vi.mocked(showBrowserNotification).mockClear()
+    }
+
+    it('正: 印があれば、印に載った第 1 報の時刻で取消を読み、震央地名で通知する', async () => {
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      await expireFirst(handle)
+      handle(cancel(), late)
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(spokenTexts()).toContain('12時40分に発表された緊急地震速報は取り消されました。')
+      expect(vi.mocked(showBrowserNotification).mock.calls.filter(c => c[0] === '緊急地震速報 取消').map(c => c[1]))
+        .toEqual(['日向灘 の緊急地震速報は取り消されました'])
+    })
+
+    it('対照: 印が無ければ（記憶に無い地震の取消）通知だけで、読み上げない', async () => {
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      await expireFirst(handle)
+      handle(cancel())
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(spokenTexts().some(t => t.includes('取り消されました'))).toBe(false)
+      expect(vi.mocked(showBrowserNotification).mock.calls.filter(c => c[0] === '緊急地震速報 取消')).toHaveLength(1)
+    })
+
+    it('安全弁: 自動解除の報に印が付いていても、取消として伝えない', async () => {
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      await expireFirst(handle)
+      handle({ ...cancel(), expired: true }, late)
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushMicrotasks()
+
+      expect(spokenTexts().some(t => t.includes('取り消されました'))).toBe(false)
+      expect(vi.mocked(showBrowserNotification).mock.calls.filter(c => c[0] === '緊急地震速報 取消')).toHaveLength(0)
     })
   })
 

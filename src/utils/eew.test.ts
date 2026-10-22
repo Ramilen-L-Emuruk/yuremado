@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { calcShakingDurationSec, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew } from './eew'
+import { calcShakingDurationSec, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast } from './eew'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
 
@@ -1310,7 +1310,7 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
   // 発表中の速報の取り直しが、もう終えた地震の報を返したか（→ `useEarthquakes` の `eewEndedRef`）
   describe('endedEewMatch', () => {
     const ENDED_AT = 1_000_000
-    const ended: EndedEew = { serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT, cancelled: false }
+    const ended: EndedEew = { serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT, cancelled: false, lastReport: null, firstIssueTime: undefined }
     const match = (over: Partial<EndedEew> | undefined, eew: EEWAlert, nowMs = ENDED_AT + 1000) =>
       endedEewMatch(over === undefined ? undefined : { ...ended, ...over }, eew, nowMs, ACTIVE_EEW_WINDOW_MS)
     // 正: 同じ経路で、終えたときの報番号以下の報は終えた地震の報
@@ -1695,5 +1695,96 @@ describe('rememberEewHypocenterName', () => {
     expect(m.has('k0')).toBe(true)
     expect(m.has('k1')).toBe(false)
     expect(m.get('new')).toBe('x')
+  })
+})
+
+describe('admitTrainingEew（標準版の訓練報・試験報を設定に従って流す）', () => {
+  it('正: 設定が真なら、強震モニタの訓練報は test を外して「訓練」の印を付ける', () => {
+    const out = admitTrainingEew(makeEEW({ origin: 'yahoo', test: true }), true)
+    expect(out.test).toBe(false)
+    expect(out.operationStatus).toBe('訓練')
+  })
+
+  it('正: 設定が真なら、P2PQuake の試験報は test を外して「試験」の印を付ける（取消の報も同じ）', () => {
+    const out = admitTrainingEew(makeEEW({ origin: 'p2pquake', test: true, cancelled: true }), true)
+    expect(out.test).toBe(false)
+    expect(out.operationStatus).toBe('試験')
+    expect(out.cancelled).toBe(true)
+  })
+
+  it('対照: 設定が偽（既定）なら test のまま返す（受信側が捨てる）', () => {
+    const eew = makeEEW({ origin: 'yahoo', test: true })
+    expect(admitTrainingEew(eew, false)).toBe(eew)
+  })
+
+  it('安全弁: 本物の報（test: false）は設定によらず触らない', () => {
+    const eew = makeEEW({ origin: 'p2pquake', test: false })
+    expect(admitTrainingEew(eew, true)).toBe(eew)
+  })
+
+  it('安全弁: 強震モニタ・P2PQuake 以外の経路は変えない（DMDATA は受信の時点で同じ設定を見ている）', () => {
+    const eew = makeEEW({ origin: 'dmdata', test: true })
+    expect(admitTrainingEew(eew, true)).toBe(eew)
+  })
+})
+
+describe('isLateEewCancel（取消の前に画面から消えた地震へ届いた誤報取消）', () => {
+  const ENDED_AT = 1_000_000
+  const lastReport = makeEEW({ origin: 'dmdata' })
+  const ended: EndedEew = {
+    serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: null, endedAtMs: ENDED_AT, cancelled: false,
+    lastReport, firstIssueTime: '2026-01-01T12:00:05Z',
+  }
+  const cancel = makeEEW({ cancelled: true })
+  const at = (ms: number) => ENDED_AT + ms
+
+  it('正: 自動解除で消えた地震へ、窓の中で届いた誤報取消', () => {
+    expect(isLateEewCancel(ended, cancel, at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(true)
+    expect(isLateEewCancel(ended, cancel, at(ACTIVE_EEW_WINDOW_MS), ACTIVE_EEW_WINDOW_MS)).toBe(true)
+  })
+
+  it('対照: 窓を過ぎた・時計が巻き戻った記憶、記憶に無い地震では立たない', () => {
+    expect(isLateEewCancel(ended, cancel, at(ACTIVE_EEW_WINDOW_MS + 1), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+    expect(isLateEewCancel(ended, cancel, at(-1), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+    expect(isLateEewCancel(undefined, cancel, at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+  })
+
+  it('安全弁: 取消で終えた地震（もう伝えた取消）・自動解除の報・取消でない報・最後の報の無い記憶では立たない', () => {
+    expect(isLateEewCancel({ ...ended, cancelled: true }, cancel, at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+    expect(isLateEewCancel(ended, makeEEW({ cancelled: true, expired: true }), at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+    expect(isLateEewCancel(ended, makeEEW(), at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+    expect(isLateEewCancel({ ...ended, lastReport: null }, cancel, at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+  })
+})
+
+describe('緊急地震速報の通知の本文と出し直し', () => {
+  const withForecast = (scale: number, lpgm?: number, over: Partial<EEWAlert> = {}) =>
+    makeEEW({ forecastMaxScale: scale as IntensityScale, ...(lpgm !== undefined && { forecastMaxLpgmClass: lpgm as LpgmClass }), ...over })
+
+  it('本文: 震度と長周期地震動階級の予想を添える（承認された形）', () => {
+    expect(eewNotificationBody('石川県能登地方', eewNotifiedForecast(withForecast(45, 2))))
+      .toBe('石川県能登地方 最大震度5弱予想 長周期地震動階級2予想')
+  })
+
+  it('本文: 長周期の予想が無ければ添えない・震度を伝えられない報では階級も添えない', () => {
+    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(45)))).toBe('日向灘 最大震度5弱予想')
+    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(0, 2)))).toBe('日向灘')
+  })
+
+  it('正: 震度か階級が上がれば出し直す（「程度以上」が付いたのも上がった扱い）', () => {
+    const before = eewNotifiedForecast(withForecast(45, 1))
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(50, 1)), before)).toBe(true)
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(45, 2)), before)).toBe(true)
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(45, 1, { forecastMaxScaleOrAbove: true })), before)).toBe(true)
+  })
+
+  it('対照: 同じ・下がった予想では出し直さない', () => {
+    const before = eewNotifiedForecast(withForecast(50, 2))
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(50, 2)), before)).toBe(false)
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(45, 1)), before)).toBe(false)
+  })
+
+  it('安全弁: まだ通知を出していない地震では出し直さない', () => {
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(70, 4)), undefined)).toBe(false)
   })
 })

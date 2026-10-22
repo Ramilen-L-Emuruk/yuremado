@@ -93,7 +93,7 @@ export interface AppSettings {
    */
   arrivalToken: string
   dmdataApiKey: string             // DMDATA.JP APIキー（DMDSS版のみ使用、空文字 = 未設定）
-  dmdataTestDelivery: boolean      // 試験報・訓練報（EEW配信テスト VXSE42 等）を受信する（DMDSS版・検証用）
+  dmdataTestDelivery: boolean      // 試験報・訓練報を受信する（検証用）。DMDSS版は配信テスト VXSE42 等も、標準版は強震モニタ・P2PQuake の緊急地震速報の訓練報・試験報（→ admitTrainingEew）
   voicevoxEnabled: boolean         // VOICEVOX 読み上げを有効にする
   voicevoxUrl: string              // VOICEVOX の HTTP API ベース URL
   voicevoxSpeakerId: number        // VOICEVOX 話者 ID
