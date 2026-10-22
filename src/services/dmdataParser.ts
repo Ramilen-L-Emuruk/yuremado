@@ -34,6 +34,7 @@ import { NON_JMA_MARK } from '../utils/formatters'
 import { dmdataTelegramKey } from '../utils/telegramKey'
 import { quakeNoticeId } from '../utils/dmdataId'
 import { arr, obj, str } from './parseHelpers'
+import { unknownEewAccuracyRanks } from '../utils/eewAccuracyRanks'
 
 // EEW: "1","2","3","4","5-","5+","6-","6+","7","不明" 等
 // 地震情報: "1","2","3","4","5弱","5強","6弱","6強","7","不明" 等
@@ -1073,6 +1074,9 @@ function intText(el: Element | null): number | undefined {
   return Number.isInteger(n) ? n : undefined
 }
 
+/** 記録した表外の精度ランクの組（→ `parseEEWAccuracy`）。値の種類は少ないので上限は置かない */
+const loggedUnknownEewAccuracy = new Set<string>()
+
 /**
  * 震源要素の精度（`Hypocenter/Accuracy`。電文解説資料 Ⅱ.21 1-4-2）を読む。
  *
@@ -1088,6 +1092,15 @@ function parseEEWAccuracy(hypocenterEl: Element | null): EEWAccuracy | undefined
     depthRank: intAttr(xmlChild(el, 'Depth'), 'rank'),
     magnitudeRank: intAttr(xmlChild(el, 'MagnitudeCalculation'), 'rank'),
     magnitudePoints: intText(xmlChild(el, 'NumberOfMagnitudeCalculation')),
+  }
+  // 表に無いランクは画面では欄が空になる（→ `eewEpicenterRankLabel`）。黙って空にしないよう記録だけ残す
+  // （2026-10-21 ユーザー承認「記録し、表外はログへ (Recommended)」）。値はそのまま持つ
+  // 同じ値の組は 1 回だけ記録する（続報・履歴の読み直しのたびに同じ行が積もらないように）
+  const unknown = unknownEewAccuracyRanks(a)
+  const unknownKey = unknown.join(' ')
+  if (unknown.length > 0 && !loggedUnknownEewAccuracy.has(unknownKey)) {
+    loggedUnknownEewAccuracy.add(unknownKey)
+    log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の精度ランクに表に無い値があります（画面の欄は空にします）: ${unknown.join(' ')}`)
   }
   // 1 つも読めなければ持たせない（要素はあるが中身が読めない＝書式が変わった疑い）
   return Object.values(a).some(v => v !== undefined) ? a : undefined
@@ -1169,6 +1182,13 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
   // マグニチュードの種別（`Mj` / `M`）。地震情報・津波・長周期と同じく持つだけで画面には
   // 出さない。**緊急地震速報だけ別のパーサーを通るため落ちていた。**
   const eewMagnitudeType = eewMagnitudeEl?.getAttribute('type')?.trim() || undefined
+  const eewMagnitude = eewMagnitudeEl ? parseFloat(xmlText(eewMagnitudeEl)) : NaN
+  // 規模が数値にならないときに気象庁が添える説明（`Magnitude@description`）。地震情報・津波と同じ規則で読む
+  // （2026-10-21 ユーザー承認「揃えて読む (Recommended)」）。「Ｍ不明」と「Ｍ８を超える巨大地震」は本文がどちらも NaN で、
+  // この説明でしか見分けられない（→ `Hypocenter.magnitudeCondition`）。数値が読めたときは持たせない
+  const eewMagnitudeCondition = isNaN(eewMagnitude)
+    ? (eewMagnitudeEl?.getAttribute('description')?.trim() || undefined)
+    : undefined
   // 見出し文。**予報級では空だが、警報級の報には必ず入る**（「石川県で地震　北陸　甲信　東海
   // 関東で強い揺れ」の形。実電文で確認）。地震情報・長周期と同じく持つだけで画面には出さない
   // ——後半の地方名は下の `warningRegions` が構造化された形で持っており、そちらを使う。
@@ -1428,7 +1448,8 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
         longitude: isCanceled ? -200 : (Number.isFinite(lng) ? lng : -200),
         depth,
         ...(depthAtLeast && !isCanceled && { depthAtLeast: true }),
-        magnitude: eewMagnitudeEl ? parseFloat(xmlText(eewMagnitudeEl)) : NaN,
+        magnitude: eewMagnitude,
+        ...(eewMagnitudeCondition && { magnitudeCondition: eewMagnitudeCondition }),
         ...(eewMagnitudeType && { magnitudeType: eewMagnitudeType }),
         ...(eewAreaCode && { code: eewAreaCode }),
       },

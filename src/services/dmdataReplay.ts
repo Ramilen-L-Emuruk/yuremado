@@ -2922,7 +2922,7 @@ export async function fetchDmdataEewOrigins(
     tried += 1
     let found: LatestEewReport
     try {
-      found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, false)
+      found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, false, false)
     } catch (e) {
       log.warn(`[eew-origin] 最終報を取れませんでした eventId=${ev.eventId}`, e)
       found = { kind: 'failed' }

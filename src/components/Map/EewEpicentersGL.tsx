@@ -3,7 +3,7 @@ import type { MapGeoJSONFeature } from 'maplibre-gl'
 import { useMapGL } from './mapGLContext'
 import type { EewEpicenter } from '../../hooks/useEewLayerData'
 import { getIntensityColor, getIntensityLabelWithApproxAbove } from '../../utils/intensity'
-import { formatMagnitude, formatDepth, hasDepth } from '../../utils/formatters'
+import { formatMagnitudeWithCondition, formatDepth, hasDepth } from '../../utils/formatters'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPoint, type DepthPointLayer, type DepthPointShape } from './gl/depthPointLayer'
@@ -168,7 +168,9 @@ export function buildPopupHtml(ep: EewEpicenter): string {
     `<div style="margin-top:2px;font-size:11px;color:#94a3b8">` +
     (provisional
       ? '震源調査中'
-      : `${escapeHtml(formatMagnitude(ep.magnitude))} / 深さ ${escapeHtml(formatDepth(ep.depth, ep.depthAtLeast))}`) +
+      // 規模の説明（「Ｍ８を超える巨大地震」など）は地震情報の吹き出しと同じ部品で出す（2026-10-22 ユーザー承認
+      // 「吹き出しと共有カードも揃える (Recommended)」）
+      : `${escapeHtml(formatMagnitudeWithCondition(ep.magnitude, ep.magnitudeCondition))} / 深さ ${escapeHtml(formatDepth(ep.depth, ep.depthAtLeast))}`) +
     `</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     // 上限が定まらない報は「4以上」と出す。値だけにすると下限を断定した表示になる

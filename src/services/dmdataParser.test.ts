@@ -1255,6 +1255,8 @@ function eewXml(o: {
    * **警報級の報にだけ入る**ので、既定では要素ごと出さない（予報級の実電文と同じ形）。
    */
   headline?: string
+  /** `jmx_eb:Magnitude` 要素まるごと。既定は `Mj` 6.5 */
+  magnitude?: string
 } = {}): string {
   if (o.noEarthquake && o.area) throw new Error('eewXml: noEarthquake と area は同時に指定できない')
   const area = o.area ?? '<Name>茨城県沖</Name><jmx_eb:Coordinate>+36.2+141.0-30000/</jmx_eb:Coordinate>'
@@ -1281,7 +1283,7 @@ function eewXml(o: {
       '<OriginTime>2026-01-01T12:00:00+09:00</OriginTime>',
       '<ArrivalTime>2026-01-01T12:00:00+09:00</ArrivalTime>',
       '<Hypocenter><Area>' + area + '</Area>' + (o.accuracy ?? '') + '</Hypocenter>',
-      '<jmx_eb:Magnitude type="Mj">6.5</jmx_eb:Magnitude>',
+      o.magnitude ?? '<jmx_eb:Magnitude type="Mj">6.5</jmx_eb:Magnitude>',
       '</Earthquake>',
     ]),
     '<Intensity><Forecast>',
@@ -1661,6 +1663,31 @@ describe('parseEEWFromXml: severity・cancel・LPGM', () => {
       expect(eew.accuracy).toEqual({
         epicenterRank: 4, epicenterRank2: 4, depthRank: 4, magnitudeRank: 4, magnitudePoints: 5,
       })
+    })
+
+    // 表に無い精度ランクは値をそのまま持ち（画面の欄は空になる）、開発者向けの記録を残す
+    // （2026-10-21 ユーザー承認「記録し、表外はログへ (Recommended)」）
+    it('表に無い精度ランクは値を持ったまま記録する', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      try {
+        const accuracy = ACCURACY.replace('<Depth rank="4">', '<Depth rank="7">').replace('<MagnitudeCalculation rank="4">', '<MagnitudeCalculation rank="7">')
+        const eew = parseEEWFromXml('VXSE45', eewXml({ accuracy }))!
+        expect(eew.accuracy?.magnitudeRank).toBe(7)
+        const found = warn.mock.calls.map(c => c.join(' ')).filter(w => w.includes('精度ランクに表に無い値'))
+        expect(found).toHaveLength(1)
+        expect(found[0]).toContain('MagnitudeCalculation@rank=7')
+        // 深さのランク 7（EPOS・海域）は表にあるので挙げない
+        expect(found[0]).not.toContain('Depth@rank')
+      } finally { warn.mockRestore() }
+    })
+
+    // 対照: 表にあるランクと 0（不明）では記録しない
+    it('表にあるランクと 0（不明）では記録しない', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      try {
+        parseEEWFromXml('VXSE45', eewXml({ accuracy: ACCURACY.replace('<MagnitudeCalculation rank="4">', '<MagnitudeCalculation rank="0">') }))
+        expect(warn.mock.calls.map(c => c.join(' ')).filter(w => w.includes('精度ランク'))).toHaveLength(0)
+      } finally { warn.mockRestore() }
     })
 
     // 正: 内陸判定と短縮用震央地名。**短縮名は通常の震央地名を置き換えない**
@@ -6449,5 +6476,21 @@ describe('地震・津波に関するお知らせ（VZSE40）の自由付加文'
   // 対照: 自由付加文の無い電文では持たない
   it('対照: 自由付加文が無ければ持たない', () => {
     expect(parseQuakeNoticeFromXml(VZSE40_XML)!.freeText).toBeUndefined()
+  })
+})
+
+// 規模が数値にならないときの説明（`Magnitude@description`）を、地震情報・津波と同じく読む
+// （2026-10-21 ユーザー承認「揃えて読む (Recommended)」）。「Ｍ不明」と「Ｍ８を超える巨大地震」は本文がどちらも NaN
+describe('緊急地震速報の規模の説明', () => {
+  it('正: 規模が NaN なら説明を持つ', () => {
+    const eew = parseEEWFromXml('VXSE45', eewXml({ magnitude: '<jmx_eb:Magnitude type="Mj" condition="不明" description="Ｍ８を超える巨大地震">NaN</jmx_eb:Magnitude>' }))!
+    expect(eew.earthquake.hypocenter.magnitude).toBeNaN()
+    expect(eew.earthquake.hypocenter.magnitudeCondition).toBe('Ｍ８を超える巨大地震')
+  })
+
+  it('対照: 規模が数値なら説明を持たない', () => {
+    const eew = parseEEWFromXml('VXSE45', eewXml({ magnitude: '<jmx_eb:Magnitude type="Mj" description="Ｍ６．５">6.5</jmx_eb:Magnitude>' }))!
+    expect(eew.earthquake.hypocenter.magnitude).toBe(6.5)
+    expect(eew.earthquake.hypocenter.magnitudeCondition).toBeUndefined()
   })
 })

@@ -9,6 +9,7 @@ import { isValidLpgmClass, getLpgmClassLabelWithApproxAbove } from './lpgm'
 import { hypoInfoItemToEEW, type YahooHypoInfoItem } from '../services/kyoshin'
 import { isEewArrivedKindCode, isEewPlumKindCode } from './eewKind'
 import { EEW_WARNING_REGION_ORDER } from './eewWarningRegions'
+import { EPICENTER_RANK_LABEL, MAGNITUDE_RANK_LABEL } from './eewAccuracyRanks'
 import { log } from './logger'
 
 // 司・翠川(1999)の距離減衰式を使ってEEW最終報後の自動解除秒数を計算する。
@@ -1343,31 +1344,6 @@ export function diffHypoInfoEvents(
 // 言い換えはしない ―― 気象庁が「IPF 法（5 点以上）」と書いているものを「精度が高い」と
 // 要約すると、資料と突き合わせられなくなるうえ、こちらが評価を足したことになる。
 // ============================================================================
-
-/** 震央位置・深さの精度ランク（`Epicenter@rank` / `Depth@rank`）。解説資料 Ⅱ.21 1-4-2-1。 */
-const EPICENTER_RANK_LABEL: Readonly<Record<number, string>> = {
-  1: 'P波／S波レベル超え、IPF法（1点）、または仮定震源要素',
-  2: 'IPF法（2点）',
-  3: 'IPF法（3点／4点）',
-  4: 'IPF法（5点以上）',
-  5: '防災科研システム（4点以下、または精度情報なし）',
-  6: '防災科研システム（5点以上）',
-  // **「海域」「内陸」だけにしないこと。** 解説資料は「EPOS（海域〔観測網外〕）」
-  // 「EPOS（内陸〔観測網内〕）」と書いており、括弧書きが**観測網の外か内か**を言っている。
-  // 落とすと、その区別が画面から消える（「海域」だけでは何と対比しているのか分からない）。
-  7: 'EPOS（海域〔観測網外〕）',
-  8: 'EPOS（内陸〔観測網内〕）',
-}
-
-/** マグニチュードの精度ランク（`MagnitudeCalculation@rank`）。解説資料 Ⅱ.21 1-4-2-3。 */
-const MAGNITUDE_RANK_LABEL: Readonly<Record<number, string>> = {
-  2: '防災科研システム',
-  3: '全点P相',
-  4: 'P相／全相混在',
-  5: '全点全相',
-  6: 'EPOS',
-  8: 'P波／S波レベル超え、または仮定震源要素',
-}
 
 /**
  * 精度ランクの意味。**0（不明）と未知の値では何も返さない** ―― 「不明」と書いても

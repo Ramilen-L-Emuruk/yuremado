@@ -294,7 +294,8 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
       ? undefined
       : hasMagnitude(hypocenter.magnitude)
         ? { key: hypocenter.magnitude.toFixed(1), rank: hypocenter.magnitude }
-        : { key: '' },
+        // 規模の説明（「Ｍ不明」→「Ｍ８を超える巨大地震」など）が変わったら印を出す（→ `magnitudeCondition`）
+        : { key: hypocenter.magnitudeCondition ?? '' },
     // **浅いほど危険なので順序は符号を反転させる**（地震カードと揃える）。
     //
     // **深さが判らない報（センチネル `-1`）には順序を付けない。** 符号を反転させると

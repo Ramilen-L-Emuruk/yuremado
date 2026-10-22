@@ -1410,7 +1410,7 @@ const ACTIVE_EEW_MAX_PAGES = 10
  *
  * - `report`: 最新報を読めた。`firstIssueTime` は同じ応答から拾った第 1 報の発表時刻（{@link firstEewReportTime}。
  *   拾えなければ null。`firstIssueMiss` は拾えなかったときの内訳（{@link describeFirstReportMiss}。拾えたら null））
- * - `none`: 受けている種別の報が無い（警報だけを受けている人の、予報で終わった地震）・訓練の報だけだった
+ * - `none`: 受けている種別の報が無い（警報だけを受けている人の、予報で終わった地震）・訓練の報だけだった（試験報を受けない設定のとき）
  * - `failed`: 詳細か本文を取れなかった・報が 1 通も返らなかった・読めなかった
  */
 export type LatestEewReport =
@@ -1532,6 +1532,12 @@ export async function fetchLatestEewReport(
    * —— 過去分の発生時刻を確かめる経路（`dmdataReplay.ts` の `fetchDmdataEewOrigins`）は急がないので偽。
    */
   urgent: boolean,
+  /**
+   * 訓練・試験の報も戻すか（設定「試験報を受信（検証用）」）。起動時・張り直しの復元はライブと同じ設定に従う
+   * （2026-10-21 ユーザー承認「設定に従わせる (Recommended)」）。過去分の発生時刻を確かめる経路は偽
+   * （訓練の発生時刻で地震カードの線を引かない）
+   */
+  includeTest: boolean,
 ): Promise<LatestEewReport> {
   // **発表中の件数だけ繰り返し呼ばれる**ので枠を待つ（→ `services/dmdataRequestGates.ts`）。
   await waitForApiSlot()
@@ -1552,13 +1558,12 @@ export async function fetchLatestEewReport(
   for (const tg of latest.telegrams ?? []) {
     const headType = tg.head?.type
     if (!headType) continue
-    // **訓練・試験の報は復元しない。** ライブ受信であえて流しているのは検証のためで
-    // （`EEWAlert.test` とは別物。→ quake-spec.md §5「電文の運用種別」）、起動した利用者の
-    // 画面へ訓練報を出す理由は無い。
+    // **訓練・試験の報は、設定「試験報を受信（検証用）」が入っているときだけ戻す**（ライブ受信と同じ。
+    // 2026-10-21 ユーザー承認「設定に従わせる (Recommended)」）。戻した報には電文の `Control/Status` から印が付く。
     // **この判定は通らない見込み。** 配信元は `GD Eew List v2` / `GD Eew Event v2` の
     // 「APIの情報」に「テスト電文はこのAPIでは扱いません」と書いている。**それでも残してある**
     // —— 実測しておらず、資料が変われば通る（下の `allTest` も同じ理由で残している）。
-    if (tg.head?.test) continue
+    if (tg.head?.test && !includeTest) continue
     // 一覧が返すのは JSON 版を指す形のことがある。読み取りは XML へ一本化しているので
     // 元の XML の id（`originalId`）へ組み替える。XML 版がそのまま返る場合はそれを持たない。
     const xmlId = tg.originalId ?? tg.id
@@ -1587,20 +1592,21 @@ export async function fetchLatestEewReport(
       }
     }
   }
-  // **「訓練報だけだった」と「読めなかった」を分ける。** 前者は正常（訓練は復元しない）だが、
+  // **「訓練報だけだった」と「読めなかった」を分ける。** 前者は正常（試験報を受けない設定では訓練は復元しない）だが、
   // 後者は電文の書式が変わった・パーサーが落とすようになった等の異常で、記録が無いと
   // **復元が静かに空振りし続けても気づけない**。どちらも戻り値は同じ `null` になる。
   const telegrams = latest.telegrams ?? []
-  const allTest = telegrams.length > 0 && telegrams.every(tg => tg.head?.test)
+  // 試験報を受ける設定なら訓練の報も読みに行っているので、普通の報と同じく下の判定に掛ける
+  const skippedTest = !includeTest && telegrams.length > 0 && telegrams.every(tg => tg.head?.test)
   // **受けている側の種別が 1 通も無ければ、読めなかったのではない。** 警報だけを受けている人には、
   // 予報級だけで終わった地震（VXSE43 が出ない）がこの形になる
   const hasOwnType = telegrams.some(tg => tg.head?.type === eewHeadType)
   const hasOtherEewType = telegrams.some(tg => EEW_HEAD_TYPES.has(tg.head?.type ?? '') && tg.head?.type !== eewHeadType)
-  if (!hasOwnType && hasOtherEewType && !allTest) {
+  if (!hasOwnType && hasOtherEewType && !skippedTest) {
     log.info(`[DMDSS] 発表中の緊急地震速報に ${eewHeadType} の報が無いため復元しません eventId=${eventId}`)
     return { kind: 'none' }
   }
-  if (allTest) return { kind: 'none' }
+  if (skippedTest) return { kind: 'none' }
   log.warn(`[DMDSS] 発表中の緊急地震速報を読み取れませんでした eventId=${eventId}（報 ${telegrams.length} 通）`)
   return { kind: 'failed' }
 }
@@ -1620,8 +1626,10 @@ export async function fetchLatestEewReport(
  */
 export async function fetchDmdataActiveEews(
   apiKey: string, classifications: readonly DmdataClassification[],
+  /** 訓練・試験の報も戻すか（設定「試験報を受信（検証用）」。→ `fetchLatestEewReport`） */
+  includeTest: boolean,
 ): Promise<EEWAlert[]> {
-  return (await fetchDmdataActiveEewsOutcome(apiKey, classifications)).eews
+  return (await fetchDmdataActiveEewsOutcome(apiKey, classifications, includeTest)).eews
 }
 
 /** `fetchDmdataActiveEewsOutcome` の戻り値。 */
@@ -1645,6 +1653,8 @@ export interface ActiveEewsOutcome {
  */
 export async function fetchDmdataActiveEewsOutcome(
   apiKey: string, classifications: readonly DmdataClassification[],
+  /** 訓練・試験の報も戻すか（設定「試験報を受信（検証用）」。→ `fetchLatestEewReport`） */
+  includeTest: boolean,
 ): Promise<ActiveEewsOutcome> {
   const eewHeadType = eewHeadTypeFor(classifications)
   if (eewHeadType === null) {
@@ -1722,7 +1732,7 @@ export async function fetchDmdataActiveEewsOutcome(
       // ——JSON の破損・ネットワーク断——がそれを起こす）。複数が同時に発表中の場面こそ
       // この復元が効くところなので、そこで全滅させるのは割に合わない。
       try {
-        const found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, true)
+        const found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, true, includeTest)
         if (found.kind === 'report') {
           // **第 1 報の時刻を載せる**（誤報取消の読み上げが言う時刻。→ `EEWAlert.firstIssueTime`）。拾えなければ
           // null を載せ、取消は時刻を言わずに読む —— 復元した最新報の時刻で代えると、第 1 報ではない時刻を言う

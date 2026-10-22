@@ -1,7 +1,7 @@
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { MapMode } from '../components/Map/mapTypes'
 import { computeDisplayEEWLevel, eewKindLabel, eewMaxScale, eewMaxScaleInfo, isProvisionalHypocenter } from './eew'
-import { formatDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth, hasMagnitude } from './formatters'
+import { formatDateTime, formatTimeMin, formatDepth, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth } from './formatters'
 import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove, isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
 import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader } from './shareCard'
@@ -101,6 +101,16 @@ function buildShareText(header: ShareCardHeader, appUrl: string): string {
 
 type ContentWithoutNotices = Omit<ShareCardContent, 'notices' | 'shareText'>
 
+/**
+ * 共有カードに焼く規模。**「不明」は落とす**（画像は訂正できず、「不明」の語を並べても伝わらない）。電文の説明が「Ｍ不明」の
+ * ときも同じく落とす —— 整形すると「M不明」になり、「不明」との一致では落ちなかった。「Ｍ８を超える巨大地震」のように
+ * 不明でない説明は残す
+ */
+function shareMagnitudeText(magnitude: number, condition: string | undefined): string | null {
+  const text = formatMagnitudeWithCondition(magnitude, condition)
+  return text.includes('不明') ? null : text
+}
+
 function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   if (!quake) return { header: { title: '地震情報' }, filenameLabel: 'quake' }
   const { hypocenter, maxScale, time } = quake.earthquake
@@ -111,8 +121,8 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   const parts = [hypocenter.name]
   // 数値が無くても「Ｍ８を超える巨大地震」は落とさない。M8 を超えて速報できないという事実は、
   // 規模が判らないこととは別物で、最も伝えるべき場面に出る。「不明」の語だけは従来どおり落とす。
-  const magnitude = formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition)
-  if (magnitude !== '不明') parts.push(magnitude)
+  const magnitude = shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition)
+  if (magnitude !== null) parts.push(magnitude)
   if (hasDepth(hypocenter.depth)) parts.push(`深さ ${formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}`)
   // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、「null 発生」のような
   // 壊れた文字列を焼き付けるくらいなら出さない（規模・深さの「不明」を落とすのと同じ考え方）。
@@ -200,7 +210,10 @@ function kyoshinContent(liveEews: EEWAlert[]): ContentWithoutNotices {
   // 震央地名が空の報は、画面のカード・地図の吹き出しと同じ「震源調査中」を名前の位置に置く
   // （2026-10-22 ユーザー承認「「震源調査中」を入れる」）
   const parts = [hypocenter.name || '震源調査中']
-  if (!assumedHypocenter && hasMagnitude(hypocenter.magnitude)) parts.push(formatMagnitude(hypocenter.magnitude))
+  // 数値が無くても「Ｍ８を超える巨大地震」は落とさない（地震情報の共有カードと同じ。2026-10-22 ユーザー承認
+  // 「吹き出しと共有カードも揃える (Recommended)」）。「不明」の語だけは従来どおり落とす
+  const eewMagnitude = shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition)
+  if (!assumedHypocenter && eewMagnitude !== null) parts.push(eewMagnitude)
   if (knownScale) parts.push(`予想最大震度 ${getIntensityLabelWithApproxAbove(info.scale, info.orAbove)}`)
   const serial = eew.issue?.serial
   // 日時として読めない発生時刻は落とすが、**報番号は残す**（別の事実なので巻き込まない）。
