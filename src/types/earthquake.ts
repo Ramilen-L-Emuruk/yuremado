@@ -382,7 +382,7 @@ export interface JMAQuake {
    * 気象庁の付加文（津波に関する固定付加文）の原文。DMDATA 経路でのみ得られる。
    * 遠地地震は付加文コードが 021x 系だけでは表現しきれない（022x/023x 系を併用する）ため、
    * domesticTsunami への丸め込みで意味が落ちる。原文を読み上げに使う用途で保持する。
-   * P2PQuake 経路は付加文を配信しないため undefined。
+   * P2PQuake 経路は固定付加文を配信しないため undefined。
    */
   forecastText?: string
   /**
@@ -406,7 +406,7 @@ export interface JMAQuake {
    */
   varCommentCodes?: readonly string[]
   /**
-   * 気象庁の自由付加文（`Comments/FreeFormComment`）の原文。DMDATA 経路でのみ得られる。
+   * 気象庁の自由付加文（`Comments/FreeFormComment`）の原文。**両方の経路で得られる**（P2PQuake 経路の取り込み方は末尾）。
    *
    * 固定付加文（`forecastText`）が津波区分ごとの定型文であるのに対し、こちらは電文ごとに
    * 書き起こされる本文で、**続報で実際に更新されるのはこちら側**であることが多い（観測された

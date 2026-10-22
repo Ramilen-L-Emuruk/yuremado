@@ -4290,8 +4290,8 @@ export function useEarthquakes(
 
   const simulateForeignQuake = useCallback(async () => {
     const { createTestForeignQuake } = await loadTestData()
-    // 付加文（気象庁の固定付加文・自由付加文の原文）は DMDATA 経由でのみ配信される。standard 版では
-    // 実データで届かないため含めない（LPGM を isDmdss 限定にしているのと同じ理由）。
+    // 固定付加文は DMDATA 経由でのみ配信される。standard 版では実データで届かないため含めない
+    // （LPGM を isDmdss 限定にしているのと同じ理由）。自由付加文は P2PQuake も配信するので、版を問わず入る。
     handleEvent(createTestForeignQuake(isDmdss))
   }, [handleEvent])
 

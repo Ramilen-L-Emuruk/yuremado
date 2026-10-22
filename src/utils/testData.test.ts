@@ -245,7 +245,7 @@ describe('地震情報テストの points 形状', () => {
     expect(byType.get('震度速報')).toBe('今後の情報に注意してください。')
     expect(byType.get('震源情報')).toBe(TSUNAMI_WARNING_FORECAST_TEXT)
     expect(byType.get('震源・震度情報')).toBe(notoHonshinQuake.forecastText)
-    // 標準版はどの報も持たない（P2PQuake は付加文を配信しない）
+    // 標準版はどの報も持たない（P2PQuake は固定付加文を配信しない）
     expect(createTestQuakeReportSequence(false).every(q => q.forecastText === undefined)).toBe(true)
   })
 
@@ -523,7 +523,7 @@ describe('地震情報テストの points 形状', () => {
       expect(amended.issue.time).toBe(amended.time)
     })
 
-    // standard 版は付加文を配信しないが、訂正の印そのものは P2PQuake も配信する
+    // standard 版は固定付加文を配信しないが、訂正の印そのものは P2PQuake も配信する
     // （`DestinationOnly`）。印だけが出る形を確かめられること。
     it('standard 版は印だけを持ち、付加文は持たない', () => {
       const { initial, amended } = createTestQuakeAmendment(false)
@@ -1867,5 +1867,21 @@ describe('変化の小さい続報テストの 7 段目', () => {
     const reports = run()
     expect(reports[5].observations?.every(o => o.offshore)).toBe(true)
     expect(reports[6].observations?.some(o => !o.offshore)).toBe(true)
+  })
+})
+
+describe('createTestForeignQuake の付加文', () => {
+  // 正: 自由付加文は P2PQuake も配信するので、standard 版のテストにも持たせる
+  it('自由付加文は版を問わず持つ', async () => {
+    const { createTestForeignQuake } = await import('./testData')
+    expect(createTestForeignQuake(false).freeText).toBe('ＰＴＷＣでは１７日２３時５４分に津波情報を発表しています。')
+    expect(createTestForeignQuake(true).freeText).toBe('ＰＴＷＣでは１７日２３時５４分に津波情報を発表しています。')
+  })
+
+  // 対照: 固定付加文は DMDATA 経路だけが配信するので、standard 版には持たせない
+  it('固定付加文は DMDSS 版だけが持つ', async () => {
+    const { createTestForeignQuake } = await import('./testData')
+    expect(createTestForeignQuake(false).forecastText).toBeUndefined()
+    expect(createTestForeignQuake(true).forecastText).toBe('震源の近傍で津波発生の可能性があります。この地震による日本への津波の影響はありません。')
   })
 })
