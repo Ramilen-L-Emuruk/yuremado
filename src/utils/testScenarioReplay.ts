@@ -285,6 +285,9 @@ export function instantiateScenario(scenario: TestScenarioFile, now: Date): Repl
   return scenario.entries.map(entry => ({
     replayTime: new Date(now.getTime() + entry.offsetMs),
     silent: entry.silent,
+    // **電文ログへは載せない**（`logEntry: null`）。実地震テストシナリオは電文を読んだ結果を
+    // 収録したもので、電文の本文そのものを持っていない（ローカル履歴アーカイブと同じ）。
+    logEntry: null,
     payload: remapPayload(entry.payload, deltaMs, remapId),
   }))
 }

@@ -6332,6 +6332,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       payload: { kind: 'event', event: eew },
       replayTime: serverDate(),
       silent: true,
+      // 起動時の復元は、既に受け取った電文から組み直したカード。電文ログへは
+      // ライブ受信の時点で積まれている（二重に積まない）。
+      logEntry: null,
     })), 'startup')
     const titled = firstSeen.filter(eew => activeEEWLevelsRef.current.has(eewEventKey(eew)))
     if (titled.length === 0) {

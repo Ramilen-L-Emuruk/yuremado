@@ -216,7 +216,9 @@ export async function fetchLocalArchiveEvents(
       const t = new Date(e.time).getTime()
       return t >= fromTime.getTime() && t < toTime.getTime()
     })
-    .map((e) => ({ payload: e.payload, replayTime: new Date(e.time), silent: e.silent }))
+    // **電文ログへは載せない**（`logEntry: null`）。ローカル履歴アーカイブは電文を読んだ
+    // 結果を収録したもので、電文の本文そのものを持っていない。
+    .map((e) => ({ payload: e.payload, replayTime: new Date(e.time), silent: e.silent, logEntry: null }))
 
   entries.sort((a, b) => a.replayTime.getTime() - b.replayTime.getTime())
 
@@ -306,7 +308,7 @@ export async function fetchLocalArchiveQuakeHistory(
     // 同じ鍵なら新しいほうを残す（長周期は地震ごとに最新 1 通。帯は電文ごとに鍵が違うので全部残る）
     const prev = extraLatest.get(key)
     if (!prev || ms >= prev.replayTime.getTime()) {
-      extraLatest.set(key, { payload: entry.payload, replayTime: new Date(ms), silent: entry.silent })
+      extraLatest.set(key, { payload: entry.payload, replayTime: new Date(ms), silent: entry.silent, logEntry: null })
     }
   }
   const extras = [...extraLatest.values()].sort((a, b) => a.replayTime.getTime() - b.replayTime.getTime())

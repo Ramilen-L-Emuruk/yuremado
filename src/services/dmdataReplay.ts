@@ -35,6 +35,7 @@ import {
 import type { GateTag } from '../utils/requestGate'
 import { createSkipCounter, sumSkippedByDay, UNKNOWN_SKIP_DAY } from '../utils/telegramLoss'
 import { fetchDmdataEewEventList, fetchLatestEewReport, type DmdataEewListEvent, type LatestEewReport } from './dmdata'
+import { makeReplayLogEntry } from './telegramLogEntry'
 
 /**
  * 履歴を 1 回で読む窓の幅（日）。起動時の初回ロードと「もっと見る」1 回ぶんで共通。
@@ -1069,7 +1070,16 @@ export async function fetchDmdataReplayEvents(
             }
             if (binPayload) {
               // 再生時刻は窓の判定と同じ値（最後の断片を受信した時刻 → `planReplayEntries`）
-              entries.push({ payload: binPayload, replayTime: entryTime })
+              entries.push({
+                payload: binPayload,
+                replayTime: entryTime,
+                // 本文は要約だけ入れる（ライブと同じ理由 —— 1 断片が最大 512KB ある）
+                logEntry: makeReplayLogEntry({
+                  headType, origin: 'replay',
+                  rawBody: `（BUFR ${joined.length} バイト・${binPayload.data.count} セル）`,
+                  payload: binPayload, isTest: entry.head.test === true,
+                }),
+              })
             } else {
               log.warn(`[replay] 二進電文の読み取りに失敗しスキップ id=${entry.id} type=${headType}`)
               windowSkips.add(item.date)
@@ -1085,11 +1095,18 @@ export async function fetchDmdataReplayEvents(
             continue
           }
 
-          const payload = buildXmlPayload(headType, dec.decode(bodyBytes), eewHeadType)
+          const xml = dec.decode(bodyBytes)
+          const payload = buildXmlPayload(headType, xml, eewHeadType)
           if (payload) {
             // 再生時刻は窓の判定と同じ値（ファイル名の 17 桁＝ミリ秒精度の受信時刻 →
             // `manifestEntryTime`）。報が連続する EEW で順序と間隔を保つのにもミリ秒が要る。
-            entries.push({ payload, replayTime: entryTime })
+            entries.push({
+              payload,
+              replayTime: entryTime,
+              logEntry: makeReplayLogEntry({
+                headType, origin: 'replay', rawBody: xml, payload, isTest: entry.head.test === true,
+              }),
+            })
           } else {
             log.warn(`[replay] 電文のパースに失敗しスキップ id=${entry.id} type=${headType}`)
             windowSkips.add(item.date)
@@ -2626,7 +2643,10 @@ export async function fetchDmdataQuakeHistory(
   // 並んだ発表と取消が逆に当たると、取消が空振りしたあと発表が当たって取り消された帯が出る。
   const extras: ReplayEntry[] = [...extraLatest.values()]
     .sort((a, b) => a.timeMs - b.timeMs || compareExtraTieBreak(a.payload, b.payload))
-    .map((x) => ({ payload: x.payload, replayTime: new Date(x.timeMs), silent: true }))
+    // **電文ログへは載せない**（`logEntry: null`）。ここは地震カードの一覧を厚くするための
+    // 遡り（7 日）で、再生の窓で流れるものではない。載せると 200 件の上限を遡りぶんが
+    // 食い潰し、利用者が見たい「いま再生している電文」が押し出される。
+    .map((x) => ({ payload: x.payload, replayTime: new Date(x.timeMs), silent: true, logEntry: null }))
   // **打ち切ったときは出さない。** 上で打ち切りを記録済みで、こちらは「復元した」と名乗るため
   // 0 件の行が並ぶと復元できなかったのか静かだったのか読めない。
   if (!stoppedEarly) {

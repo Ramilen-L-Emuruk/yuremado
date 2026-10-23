@@ -113,39 +113,41 @@ describe('readKindFilter', () => {
 })
 
 describe('matchesTelegramFilter', () => {
-  const entry = (patch: Partial<TelegramLogEntry>): Pick<TelegramLogEntry, 'source' | 'status' | 'kind' | 'headType'> => ({
-    source: 'dmdss', status: 'parsed', kind: undefined, headType: '561', ...patch,
+  const entry = (
+    patch: Partial<TelegramLogEntry>,
+  ): Pick<TelegramLogEntry, 'source' | 'origin' | 'status' | 'kind' | 'headType'> => ({
+    source: 'dmdss', origin: 'live', status: 'parsed', kind: undefined, headType: '561', ...patch,
   })
 
   it('いままで絞れなかった 6 種別でも絞れる', () => {
     for (const kind of ['nankai', 'nankaiCommentary', 'kohatsu', 'quakeNotice', 'earthquakeCount', 'estimatedIntensity'] as const) {
-      expect(matchesTelegramFilter(entry({ kind }), 'all', kind)).toBe(true)
-      expect(matchesTelegramFilter(entry({ kind: 'quake' }), 'all', kind)).toBe(false)
+      expect(matchesTelegramFilter(entry({ kind }), 'all', kind, 'all')).toBe(true)
+      expect(matchesTelegramFilter(entry({ kind: 'quake' }), 'all', kind, 'all')).toBe(false)
     }
   })
 
   it('結合待ちの断片・読み取りに失敗した行も、電文種別コードから種別で当たる', () => {
     const fragment = entry({ status: 'filtered', headType: 'IXAC41' })
-    expect(matchesTelegramFilter(fragment, 'all', 'estimatedIntensity')).toBe(true)
-    expect(matchesTelegramFilter(fragment, 'all', 'filtered')).toBe(true)
+    expect(matchesTelegramFilter(fragment, 'all', 'estimatedIntensity', 'all')).toBe(true)
+    expect(matchesTelegramFilter(fragment, 'all', 'filtered', 'all')).toBe(true)
     const failed = entry({ status: 'error', headType: 'VYSE50' })
-    expect(matchesTelegramFilter(failed, 'all', 'nankai')).toBe(true)
-    expect(matchesTelegramFilter(failed, 'all', 'error')).toBe(true)
-    expect(matchesTelegramFilter(failed, 'all', 'kohatsu')).toBe(false)
+    expect(matchesTelegramFilter(failed, 'all', 'nankai', 'all')).toBe(true)
+    expect(matchesTelegramFilter(failed, 'all', 'error', 'all')).toBe(true)
+    expect(matchesTelegramFilter(failed, 'all', 'kohatsu', 'all')).toBe(false)
   })
 
   it('扱わないコードの行（種別を持たない）は種別では当たらず、スキップでは当たる', () => {
     const skipped = entry({ status: 'filtered' })
-    expect(matchesTelegramFilter(skipped, 'all', 'quake')).toBe(false)
-    expect(matchesTelegramFilter(skipped, 'all', 'filtered')).toBe(true)
-    expect(matchesTelegramFilter(skipped, 'all', 'error')).toBe(false)
-    expect(matchesTelegramFilter(skipped, 'all', 'all')).toBe(true)
+    expect(matchesTelegramFilter(skipped, 'all', 'quake', 'all')).toBe(false)
+    expect(matchesTelegramFilter(skipped, 'all', 'filtered', 'all')).toBe(true)
+    expect(matchesTelegramFilter(skipped, 'all', 'error', 'all')).toBe(false)
+    expect(matchesTelegramFilter(skipped, 'all', 'all', 'all')).toBe(true)
   })
 
   it('取得元の絞り込みは種別より先に効く', () => {
     const p2p = entry({ source: 'p2pquake', kind: 'eew' })
-    expect(matchesTelegramFilter(p2p, 'dmdss', 'eew')).toBe(false)
-    expect(matchesTelegramFilter(p2p, 'p2pquake', 'eew')).toBe(true)
-    expect(matchesTelegramFilter(p2p, 'all', 'eew')).toBe(true)
+    expect(matchesTelegramFilter(p2p, 'dmdss', 'eew', 'all')).toBe(false)
+    expect(matchesTelegramFilter(p2p, 'p2pquake', 'eew', 'all')).toBe(true)
+    expect(matchesTelegramFilter(p2p, 'all', 'eew', 'all')).toBe(true)
   })
 })

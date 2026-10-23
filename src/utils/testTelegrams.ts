@@ -25,6 +25,7 @@ import { buildXmlPayload, buildBinaryPayload, isBinaryTelegramType, EEW_HEAD_TYP
 import { instantiateScenario } from './testScenarioReplay'
 import { fetchWithTimeout } from './fetchWithTimeout'
 import { DATA_FETCH_TIMEOUT_MS } from './fetchJson'
+import { makeReplayLogEntry } from '../services/telegramLogEntry'
 
 /** 台本の 1 通。 */
 export interface TestTelegramStep {
@@ -282,5 +283,22 @@ export async function buildTestTelegramEntries(
   const kept = loaded.slice(0, options.limit)
   scenario.entries = kept.map(({ step, payload }) => ({ offsetMs: step.atMs, payload: alignBinaryTime(payload, scenario.baseTime, step.atMs) }))
   const entries = instantiateScenario(scenario, now)
-  return kept.map(({ step, xml }, i) => ({ step, xml, entry: entries[i] }))
+  // **電文ログの行はここで入れる。** `instantiateScenario` は収録済みのシナリオ用で電文の本文を
+  // 持たないが（→ そちらの `logEntry: null`）、テストボタンは読んだ本文が手元にある。
+  return kept.map(({ step, xml, payload }, i) => ({
+    step,
+    xml,
+    entry: {
+      ...entries[i],
+      logEntry: makeReplayLogEntry({
+        headType: step.headType,
+        origin: 'test',
+        // 二進電文は本文を持たない（ビット列）ので、ライブ・リプレイと同じく要約を入れる
+        rawBody: xml || `（BUFR ${step.file}）`,
+        payload,
+        // テストボタンの電文は訓練・試験報ではない（実配信の通常報を書き換えて作る）
+        isTest: false,
+      }),
+    },
+  }))
 }

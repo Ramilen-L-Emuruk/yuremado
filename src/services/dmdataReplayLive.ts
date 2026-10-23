@@ -33,6 +33,7 @@ import { eewHeadTypeFor, hasQuakeTelegrams, type DmdataClassification } from './
 import { waitForApiSlot } from './dmdataRequestGates'
 import { BufrFragmentStore, fragmentKey } from './bufrTelegramAssembly'
 import { createSkipCounter, UNKNOWN_SKIP_DAY } from '../utils/telegramLoss'
+import { makeReplayLogEntry } from './telegramLogEntry'
 
 const API_BASE = 'https://api.dmdata.jp/v2'
 /** 電文本体の配信元。一覧が返す `url` と同じ形を id から組むのに使う。 */
@@ -915,10 +916,19 @@ export async function fetchLiveReplayEntries(
           return
         }
         // 再生時刻は窓の判定と同じ値（最後の断片の受信時刻 → `liveEntryTimes`）
-        entries.push({ payload: binPayload, replayTime: times.get(item) ?? new Date(item.receivedTime) })
+        entries.push({
+          payload: binPayload,
+          replayTime: times.get(item) ?? new Date(item.receivedTime),
+          // 本文は要約だけ（ライブと同じ理由 —— 1 断片が最大 512KB ある）
+          logEntry: makeReplayLogEntry({
+            headType, origin: 'replay', rawBody: `（BUFR ${binPayload.data.count} セル）`,
+            payload: binPayload, isTest: item.head.test === true,
+          }),
+        })
         return
       }
-      const payload = buildXmlPayload(headType, await fetchBody(item.url, apiKey), eewHeadType)
+      const xml = await fetchBody(item.url, apiKey)
+      const payload = buildXmlPayload(headType, xml, eewHeadType)
       if (!payload) {
         log.warn(`[replay] 電文のパースに失敗しスキップ id=${item.id} type=${headType}`)
         skipCounter.add(skipDayOf(item.receivedTime))
@@ -926,7 +936,13 @@ export async function fetchLiveReplayEntries(
       }
       // 再生時刻は窓の判定と同じ受信時刻（ミリ秒精度。アーカイブ経路がファイル名の 17 桁から
       // 取っている値と同じもので、報が連続する EEW でも順序と間隔が保たれる）。
-      entries.push({ payload, replayTime: new Date(item.receivedTime) })
+      entries.push({
+        payload,
+        replayTime: new Date(item.receivedTime),
+        logEntry: makeReplayLogEntry({
+          headType, origin: 'replay', rawBody: xml, payload, isTest: item.head.test === true,
+        }),
+      })
     } catch (e) {
       // **429 の窓で見送った分は取りこぼしに数えない。** 待てば取れるものを恒久的な喪失として
       // 数えると、画面が「読めなかった」と伝え、記録も `error` で残って本当の障害と見分けが
@@ -1019,7 +1035,12 @@ async function collectHistoryTelegrams(
           return
         }
         // 受信時刻を入れる（窓の判定と同じ値。畳み込みの比較はアーカイブ経路も受信時刻）
-        extras.push({ payload: binPayload, replayTime: times.get(item) ?? new Date(item.receivedTime), silent: true })
+        // **電文ログへは載せない**（理由は `dmdataReplay.ts` の `extras` と同じ。遡りは
+        // 再生の窓で流れるものではなく、載せると上限を食い潰す）。
+        extras.push({
+          payload: binPayload, replayTime: times.get(item) ?? new Date(item.receivedTime),
+          silent: true, logEntry: null,
+        })
         return
       }
       // 履歴は緊急地震速報を扱わない（`HISTORY_EXTRA_TYPES` に入っていない）ので、取り込む EEW 種別は無し
@@ -1033,7 +1054,10 @@ async function collectHistoryTelegrams(
         // 受信時刻を入れておく（呼び出し側が長周期を地震ごとに畳むときの比較と、帯を古い順に並べるのに使う）。
         // **発表時刻を入れない** —— アーカイブ経路の畳み込みは受信時刻で比べるので、軸が揃わない。
         // 発表時刻は分に丸められるので同じ分の続報が同点になり、読めなければ NaN で畳み込みが固まる。
-        extras.push({ payload, replayTime: times.get(item) ?? new Date(item.receivedTime), silent: true })
+        extras.push({
+          payload, replayTime: times.get(item) ?? new Date(item.receivedTime),
+          silent: true, logEntry: null,
+        })
         return
       }
       if (TSUNAMI_TYPES.has(item.head.type)) {

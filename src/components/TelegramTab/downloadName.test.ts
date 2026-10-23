@@ -38,6 +38,7 @@ function entry(receivedAt: Date, headType = 'VXSE53'): TelegramLogEntry {
     id: `id-${receivedAt.getTime()}`,
     receivedAt,
     source: 'dmdss',
+    origin: 'live',
     headType,
     isTest: false,
     status: 'parsed',
@@ -182,7 +183,7 @@ describe('電文ログのダウンロード名', () => {
 // `JSON.stringify` に通すと全体がエスケープされ、改行が \n の 2 文字に潰れて 1 行になる。
 describe('電文ログの本文の見せ方・落とし方', () => {
   const xmlEntry = (body: string, head?: unknown): TelegramLogEntry => ({
-    id: 'x', receivedAt: new Date('2026-09-04T12:00:00+09:00'), source: 'dmdss',
+    id: 'x', receivedAt: new Date('2026-09-04T12:00:00+09:00'), source: 'dmdss', origin: 'live',
     headType: 'VXSE53', isTest: false, status: 'parsed', kind: 'quake',
     ...(head !== undefined ? { rawHead: head } : {}),
     rawBody: body,

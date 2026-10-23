@@ -1,4 +1,4 @@
-import type { TelegramLogEntry, TelegramLogKind } from '../../types/earthquake'
+import type { TelegramLogEntry, TelegramLogKind, TelegramOrigin } from '../../types/earthquake'
 import { log } from '../../utils/logger'
 import { TELEGRAM_KIND_OF_HEAD_TYPE } from '../../services/dmdataTelegramPayload'
 import { P2P_KIND_OF_CODE } from '../../services/p2pquake'
@@ -107,13 +107,43 @@ export function readKindFilter(value: string): KindFilter {
   return 'all'
 }
 
+/** 経路の絞り込み（ライブで届いたのか、こちらが流したのか）。 */
+export type OriginFilter = 'all' | TelegramOrigin
+
+/** 経路の絞り込みの選択肢と、画面に出す名前。 */
+export const ORIGIN_OPTIONS: ReadonlyArray<readonly [OriginFilter, string]> = [
+  ['all', 'すべての経路'],
+  ['live', 'ライブ'],
+  ['test', 'テスト'],
+  ['replay', '再生'],
+]
+
+/**
+ * `<select>` の値を経路の絞り込みとして読む。知らない値は「すべての経路」へ倒し、記録を残す
+ * （理由は `readKindFilter` と同じ）。
+ */
+export function readOriginFilter(value: string): OriginFilter {
+  if (ORIGIN_OPTIONS.some(([v]) => v === value)) return value as OriginFilter
+  log.warn(`[TelegramTab] 経路の絞り込みに知らない値が来たのですべての経路にした: ${value}`)
+  return 'all'
+}
+
+/** 行に出す経路の印。ライブは印を出さない（既定の経路なので、付けると全行が賑やかになる）。 */
+export function originBadgeOf(origin: TelegramOrigin): string | null {
+  return origin === 'test' ? 'テスト' : origin === 'replay' ? '再生' : null
+}
+
 /** その行が絞り込みに当たるか。 */
 export function matchesTelegramFilter(
-  entry: Pick<TelegramLogEntry, 'source' | 'status' | 'kind' | 'headType'>,
+  entry: Pick<TelegramLogEntry, 'source' | 'origin' | 'status' | 'kind' | 'headType'>,
   source: SourceFilter,
   kind: KindFilter,
+  // **任意（`?`）にしない。** 既定値を置くと、呼び出し側が渡し忘れても型検査が通り、
+  // その画面だけ経路の絞り込みが黙って効かなくなる。
+  origin: OriginFilter,
 ): boolean {
   if (source !== 'all' && entry.source !== source) return false
+  if (origin !== 'all' && entry.origin !== origin) return false
   if (kind === 'all') return true
   if (kind === 'filtered') return entry.status === 'filtered'
   if (kind === 'error') return entry.status === 'error'
