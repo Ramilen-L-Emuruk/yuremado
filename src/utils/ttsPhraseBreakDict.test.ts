@@ -785,6 +785,33 @@ describe('電文本文の語（実データの辞書で引く）', { timeout: 15
     expect(isPlaceNameKey('津波警報等'), '「津波警報等」は地名ではない').toBe(false)
   })
 
+  // 気象庁が書いた文の問い合わせ先「気象庁地震火山部〜課」は、**後ろに続く部署名によって**
+  // VOICEVOX が「火山部」を地名読みに切り、`キショオチョオジシンヒ | ヤマベ | …` と読む
+  // （単独や「管理課」が続く形では `ジシンカザンブ` のまま。実測は
+  // docs/spec/audio-tts-spec.md §3「何を収録するか」）。語を鍵にして切り出せば、後ろの部署名は
+  // 単独で読まれて正しい読みに戻る。
+  it('「地震火山部」は後ろの部署名と切り離して読む', async () => {
+    const { findPhraseBreakMatch, isPlaceNameKey, dict } = await loadedRealDictModule()
+
+    // 正: 実電文の問い合わせ先（2026-10-16 の緊急地震速報（警報）についてのお知らせ）
+    expect(
+      findPhraseBreakMatch('本件問い合わせ先：気象庁地震火山部地震火山技術・調査課　課長補佐', dict)?.key,
+    ).toBe('地震火山部')
+    // 正: 読みは単独で読ませたときのエンジンの値（核は「ン」の後）
+    expect(dict['地震火山部']).toBe("ジシンカザン'ブ")
+
+    // 対照: 部の名前を含まない部署名には当たらない（単独なら素の読みが正しい）
+    expect(findPhraseBreakMatch('地震火山技術・調査課', dict)?.key).toBeUndefined()
+    expect(findPhraseBreakMatch('火山監視課', dict)?.key).toBeUndefined()
+
+    // 安全弁: 「火山」「火山部」だけを鍵にしない（「火山監視課」「火山防災対策室」にも食い込む）
+    expect(Object.keys(dict)).not.toContain('火山')
+    expect(Object.keys(dict)).not.toContain('火山部')
+
+    // 安全弁: 地名ではないので鍵の直後にポーズを挟まない（_terms に列挙する）
+    expect(isPlaceNameKey('地震火山部'), '「地震火山部」は地名ではない').toBe(false)
+  })
+
   // 日付も「17日」→ `ジュウ[2] | シチニチ[2]` のように 2 つのアクセント句へ割れる。ただし
   // **1 句へまとめてはいけない。** VOICEVOX は「核が 1 モーラ目なら頭高、2 モーラ目以降なら
   // 頭は低い」という規則で鳴らすので、`ニジュウ[1]`（頭高）で始まる語を 1 句へ繋いだ瞬間に
