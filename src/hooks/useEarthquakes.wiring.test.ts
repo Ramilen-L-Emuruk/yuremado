@@ -3642,6 +3642,31 @@ describe('テストボタンの待ちの後始末', () => {
     expect([...h.current.activeEEWs.values()][0]?.issue?.serial).toBe('2')
   })
 
+  // 正: **種別遷移テストの続報で、動いた行に印が付く。** 同じ種別（震源・震度情報）の続報では、
+  // アプリは電文の `Revise` だけを採り、差分からは付けない（→ `utils/quakeUpdateMark.ts`）。
+  // 台本が印を付けていないと、**行が 1 つも光らない**（例外もログも出ない）。
+  it('種別遷移テストは、続報で動いた行に印が付く', async () => {
+    const h = setup()
+    await h.flush()
+    /** いま出ている行の印の数（カードは 1 枚に畳まれるので、鍵は 1 つ）。 */
+    const rowMarks = (): number => [...h.current.quakeUpdateMarks.values()][0]?.rows.size ?? 0
+    await act(async () => { await h.current.simulateQuakeReportSequence() })
+    // 4 通目（震源・震度情報の初報）まで。**初報に印は出さない**
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(rowMarks()).toBe(0)
+
+    // 5 通目（観測点・市町村が増える。電文の `Revise` = 追加）
+    await act(async () => { vi.advanceTimersByTime(30_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(rowMarks()).toBeGreaterThan(0)
+
+    // 7 通目（観測点の震度が上下する。`上方修正`・`下方修正`）
+    await act(async () => { vi.advanceTimersByTime(7_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(rowMarks()).toBeGreaterThan(0)
+  })
+
   // ── 失効時刻テスト（津波警報 → 津波予報）──
   //
   // **2 本のタイマーを 1 つのコールバックの中で入れ替える**ので、他のテストボタンより配線が

@@ -1,7 +1,7 @@
 // ParsedEewPage（historicalEewParser.ts の出力）を、アプリの HistoricalArchiveEntry 形式へ変換する。
 //
-// kindCode・severity の判定規則は src/utils/testData.ts の実地震テストシナリオ生成と同じ規約
-// （docs/spec/settings-pwa-spec.md §7「実電文の形に合わせる」参照）:
+// kindCode・severity の判定規則は、テストボタンが書き換えで電文を作るときと同じ規約
+// （docs/spec/settings-pwa-spec.md §7「実配信に無い形を作らない」参照）:
 //   - 地域別の予想震度 scaleTo が 45 以上 → kindCode '10'（警報級）、それ未満 → '00'
 //   - severity（電文全体が「警報」か「予報」か）は、地域別の予想震度から逆算しない。
 //     気象庁のページが公式に警報化した回だけに付ける `isPublicWarningRow` フラグを使う。

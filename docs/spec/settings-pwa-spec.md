@@ -2066,7 +2066,9 @@ Playwright / Chrome DevTools でボタン発火後の DOM 状態を確認した�
 - `src/components/SettingsTab/index.tsx` — 設定 UI
 - `src/hooks/useSettings.ts` — localStorage 読み書き
 - `src/hooks/useTestScenarios.ts` — シナリオ一覧・再生管理
-- `src/utils/testData.ts` — 合成テストデータ生成
+- `src/utils/testTelegrams.ts` — テストボタンの電文を読んで「いま」へ寄せる
+- `src/utils/testTelegramScripts.ts` — どのボタンが何をどの順で流すか（台本）
+- `src/utils/testTelegramRewrite.ts` — 実電文を書き換えて、実配信に標本の無い形を作る部品
 - `src/utils/testScenarioReplay.ts` — 時刻シフト・ID 再採番
 - `src/services/dmdataReplay.ts` — DMDSS 版の日次アーカイブ取得
 - `src/services/dmdataReplayLive.ts` — アーカイブがまだ無い日を埋める取得（当日経路）
@@ -2467,8 +2469,8 @@ Playwright / Chrome DevTools でボタン発火後の DOM 状態を確認した�
   2026-08-02〜09-12・42 日分・区域 753 件）で、区域は未到達・到達済み・PLUM 法の 3 通りしか
   取らないこと、最大予想震度が高い報ほど区域が多いことを確かめ、件数をその幅へ収めた。到達までの
   秒数は震源距離 ÷ 4.4km/s（同じ走査での見かけ速度の中央）で作ってあるので、区域を距離順に
-  並べれば到達の欄の並びとも一致する。**走査の数値は `src/utils/testData.ts` の種別コードの
-  説明に集約してある**
+  並べれば到達の欄の並びとも一致する。**走査の数値は当時の合成テストデータの説明に集約してあった**（その後、テストボタンは
+  実電文を流す形へ移した。→ §7）
 - 2026-09-14: 推計震度分布図テストが、分布の続報のあとに**地震情報の続報も流す**ようになった
   （§7）。この電文を受けると地図は分布モードを閉じて発表値へ戻るが（→
   [quake-spec.md](quake-spec.md) §9「震度分布モード」）、流さないとその遷移を実機で確かめられ

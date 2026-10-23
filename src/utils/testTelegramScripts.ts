@@ -244,6 +244,51 @@ const intRank = (v: string | undefined) => (v === undefined ? -1 : INT_ORDER.ind
  * それ以上の震度の観測点が残るものから弱い順に、抜く市町村は、同じ区域にそれ以上の震度の
  * 市町村が残るものから弱い順に選ぶ。
  */
+/**
+ * 4 通目で抜く市町村・観測点を選ぶ。
+ *
+ * **5 通目の「増えた」印と選び方を共有する。** 別々に選ぶと、抜いた点と印の付く点がずれて、
+ * 画面では「動いていない行が光り、動いた行が光らない」ことになる。
+ */
+function lateTargets(doc: Document): { cities: Element[]; stations: Element[] } {
+  const cities = descendants(doc, 'City')
+    .filter((city) => {
+      const area = city.parentElement
+      if (!area) return false
+      const mine = intRank(childText(city, 'MaxInt'))
+      return Array.from(area.children).some(o => o !== city && o.localName === 'City' && intRank(childText(o, 'MaxInt')) >= mine)
+    })
+    .sort((a, b) => intRank(childText(a, 'MaxInt')) - intRank(childText(b, 'MaxInt')))
+    .slice(0, LATE_CITY_COUNT)
+  if (cities.length < LATE_CITY_COUNT) throw new Error('テスト用の電文に、抜いてよい市町村が足りません')
+  const stations = stationsWithInt(doc)
+    .filter((station) => {
+      const city = station.parentElement
+      if (!city) return false
+      const mine = intRank(childText(station, 'Int'))
+      return Array.from(city.children).some(o => o !== station && o.localName === 'IntensityStation' && intRank(childText(o, 'Int')) >= mine)
+    })
+    .sort((a, b) => intRank(childText(a, 'Int')) - intRank(childText(b, 'Int')))
+    .slice(0, LATE_STATION_COUNT)
+  if (stations.length < LATE_STATION_COUNT) throw new Error('テスト用の電文に、抜いてよい観測点が足りません')
+  return { cities, stations }
+}
+
+/**
+ * 5 通目: 4 通目で抜いた市町村・観測点が**増えた**形。その行へ電文の印（`Revise` = 追加）を付ける。
+ *
+ * **印を付けないと、行の更新の印が画面に出ない。** 同じ種別の続報では、アプリは電文の印だけを
+ * 採り、差分からは付けない（→ `utils/quakeUpdateMark.ts`。実配信の震源・震度情報は必ず印を持つ）。
+ */
+function withAddedStations(serial: number, seconds: number): (xml: string) => string {
+  return xml => editXml(xml, (doc) => {
+    setSectionText(doc, 'Head', 'Serial', String(serial))
+    shiftIssueTime(doc, seconds)
+    const { cities, stations } = lateTargets(doc)
+    for (const node of [...cities, ...stations]) node.appendChild(el(doc, node, 'Revise', '追加'))
+  })
+}
+
 function withLateStations(xml: string): string {
   return editXml(xml, (doc) => {
     const cities = descendants(doc, 'City')
@@ -300,6 +345,10 @@ function withRaisedStations(xml: string): string {
     if (lowered.length < LOWERED_STATION_COUNT) throw new Error('テスト用の電文に、下げてよい観測点が足りません')
     for (const s of raised) childOf(s, 'Int')!.textContent = raiseInt(childText(s, 'Int')!)
     for (const s of lowered) childOf(s, 'Int')!.textContent = lowerInt(childText(s, 'Int')!)
+    // **動いた行へ電文の印を付ける。** 同じ種別の続報では、アプリは電文の印だけを採り、
+    // 差分からは付けない（→ `utils/quakeUpdateMark.ts`）。付けないと行が 1 つも光らない。
+    for (const s of raised) s.appendChild(el(doc, s, 'Revise', '上方修正'))
+    for (const s of lowered) s.appendChild(el(doc, s, 'Revise', '下方修正'))
     recomputeMaxInts(doc)
   })
 }
@@ -332,10 +381,7 @@ export const QUAKE_REPORT_SEQUENCE: TestTelegramScript = {
     { file: NOTO_FORESHOCK.detail, headType: 'VXSE53', atMs: REPORT_SEQUENCE_DELAY_MS * 3, rewrite: withLateStations },
     {
       file: NOTO_FORESHOCK.detail, headType: 'VXSE53', atMs: REPORT_SEQUENCE_DELAY_MS * 3 + REPORT_SEQUENCE_FOLLOWUP_DELAY_MS,
-      rewrite: xml => editXml(xml, (doc) => {
-        setSectionText(doc, 'Head', 'Serial', '2')
-        shiftIssueTime(doc, 60)
-      }),
+      rewrite: withAddedStations(2, 60),
     },
     {
       file: NOTO_FORESHOCK.prompt1, headType: 'VXSE51', atMs: REPORT_SEQUENCE_DELAY_MS * 4 + REPORT_SEQUENCE_FOLLOWUP_DELAY_MS,
@@ -631,6 +677,8 @@ const quietObservation = (
   stripRevise(doc)
   setSectionText(doc, 'Head', 'Serial', String(serial))
   setIssueTime(doc, quietIssueAt(atMs))
+  // **全段で値を落としておく。** 段 9 の「値は無いまま印だけが付く報」の前提（→ `makeValueless`）
+  makeValueless(doc, QUIET_VALUELESS_STATION)
   const { max, height } = maxHeightOf(doc, QUIET_HEIGHT_STATION)
   if (level >= 2) height.setAttribute('description', '３．２ｍ以上')
   if (level >= 3) childOf(max, 'DateTime')!.textContent = QUIET_MAX_HEIGHT_TIME
@@ -656,13 +704,30 @@ function advanceHighTide(doc: Document): void {
   for (const t of tides) t.textContent = new Date(Date.parse(t.textContent ?? '') + 12 * 3600_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
+/** 変化の小さい続報テストで、**値を 1 つも持たない形**にしておく観測点。 */
+const QUIET_VALUELESS_STATION = '石巻市鮎川'
+
 /**
- * 値を持たない観測点（「観測中」）へ、**電文の印だけ**を付ける。
+ * 観測点を「第１波識別不能・観測中」＝**値を 1 つも持たない形**にする（全段に効かせる）。
  *
- * **値が無いまま印が付く報は実配信にある。** カードの「到達時刻不明」「観測中」に印の色が
- * 当たる経路は、この形でしか通らない（→ docs/spec/tsunami-spec.md §9「どの項目が動いたかを文字色で示す」）。
+ * この形があって初めて、段 9 の「値は無いまま印だけが付く報」を作れる。素材では到達時刻を
+ * 持っているので、ここで落としておかないと段 9 が「値が消えた報」になってしまう。
  */
-function markObservingOnly(doc: Document, name: string): void {
+function makeValueless(doc: Document, name: string): void {
+  const first = childOf(stationNamed(doc, name), 'FirstHeight')
+  if (!first) throw new Error(`テスト用の電文の観測点「${name}」に第１波がありません`)
+  for (const tag of ['ArrivalTime', 'Initial']) childOf(first, tag)?.remove()
+  if (!childOf(first, 'Condition')) first.appendChild(el(doc, first, 'Condition', '第１波識別不能'))
+}
+
+/**
+ * 値を持たない観測点へ、**電文の印だけ**を付ける。
+ *
+ * **値が無いまま印が付く報は実配信にある**（実電文 168 件）。カードの「到達時刻不明」「観測中」に
+ * 印の色が当たる経路は、この形でしか通らない
+ * （→ docs/spec/tsunami-spec.md §9「どの項目が動いたかを文字色で示す」）。
+ */
+function markValuelessStation(doc: Document, name: string): void {
   const station = stationNamed(doc, name)
   for (const tag of ['FirstHeight', 'MaxHeight']) {
     const el2 = childOf(station, tag)
@@ -678,7 +743,7 @@ function advanceArrivalForecast(doc: Document, minutes: number): void {
   for (const t of times) {
     const ms = Date.parse(t.textContent ?? '')
     if (!Number.isFinite(ms)) continue
-    t.textContent = new Date(ms - minutes * 60_000).toISOString().replace(/.d{3}Z$/, 'Z')
+    t.textContent = new Date(ms - minutes * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
   }
 }
 
@@ -762,7 +827,7 @@ export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
     // 段 9: 値を持たない観測点へ、電文の印だけが付く報（カードの「観測中」に印の色が当たる）
     {
       file: T, headType: 'VTSE51', atMs: at(9), onlyIn: 'dmdss',
-      rewrite: quietObservation(9, 4, at(9), doc => markObservingOnly(doc, '石巻市鮎川')),
+      rewrite: quietObservation(9, 4, at(9), doc => markValuelessStation(doc, QUIET_VALUELESS_STATION)),
     },
     { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(10), onlyIn: 'dmdss', rewrite: quietTide(10, at(10)) },
     { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(11), onlyIn: 'dmdss', rewrite: quietTide(11, at(11), advanceHighTide) },

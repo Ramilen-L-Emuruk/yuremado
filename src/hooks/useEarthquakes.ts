@@ -341,7 +341,7 @@ function enrichEEWPref(eew: EEWAlert, index: ReadonlyMap<string, string> | null)
 }
 
 type TestEEWKind = 'special' | 'warning' | 'forecast' | 'assumed' | 'deep' | 'strongShaking'
-  | 'noForecast' | 'forecastZero' | 'retraction'
+  | 'noForecast' | 'forecastZero' | 'retraction' | 'lateRetraction'
 
 /**
  * 押すたびに進む台本の進み具合（→ `pressTestTelegramScript`）。
@@ -4085,7 +4085,7 @@ export function useEarthquakes(
    * **待ちは ref で追う**（リセット・アンマウントで落とす。→ `clearTestSimulationTimers`）。
    * 押し直したら前の待ちを捨てる。
    */
-  const simulateEEWLateRetraction = useCallback(async () => {
+  const simulateEEWLateRetraction = useCallback((): Promise<void> => enqueueTestPress('lateRetraction', async () => {
     const generation = testGenerationRef.current
     try {
       const scripts = await loadTestTelegramScripts()
@@ -4117,7 +4117,7 @@ export function useEarthquakes(
     } catch (err) {
       log.error('[test] テスト用の電文を流せませんでした', err)
     }
-  }, [])
+  }), [enqueueTestPress])
 
   /** 大津波警報テスト（2011 東北の気象庁サンプル電文。観測状態を一通り持つ。→ `TSUNAMI_MAJOR_WARNING`）。 */
   const simulateTsunami = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_MAJOR_WARNING), [runTestTelegramScript])

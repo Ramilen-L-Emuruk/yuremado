@@ -273,6 +273,21 @@ describe('種別遷移テスト', () => {
     expect(reportsText(cards[0].reports, cards[0].issue.type)).toBe('震源・震度情報#3')
   })
 
+  // 正: **動いた行は電文の印（`Revise`）を持つ。** 同じ種別の続報では、アプリは電文の印だけを
+  // 採り、差分からは付けない（→ `utils/quakeUpdateMark.ts`）。付いていないと行が 1 つも光らない。
+  it('5 通目は増えた行へ「追加」、7 通目は動いた行へ「上方修正」「下方修正」が付く', async () => {
+    const quakes = quakesOf(await build(scripts.QUAKE_REPORT_SEQUENCE))
+    const revises = (q: JMAQuake): string[] =>
+      (q.points ?? []).flatMap(p => (p.revise ? [p.revise] : []))
+    // 4 通目（抜いた形）は印を持たない —— 初報に印は出さない
+    expect(revises(quakes[3])).toEqual([])
+    // 5 通目: 抜いた分が戻り、その行に「追加」が付く
+    expect(new Set(revises(quakes[4]))).toEqual(new Set(['追加']))
+    expect(revises(quakes[4]).length).toBeGreaterThan(0)
+    // 7 通目: 上がった行と下がった行で印が分かれる
+    expect(new Set(revises(quakes[6]))).toEqual(new Set(['上方修正', '下方修正']))
+  })
+
   // 正: **1 通目は震度が出そろっていない。** 3 通目で上がるので、カードの最大震度の更新と
   // ブラウザ通知の「最大震度更新」を実機で通せる（→ `lowerAreaInts`）。
   it('速報の 1 通目は区域の最大震度が 1 段低く、3 通目で上がる', async () => {
@@ -449,6 +464,33 @@ describe('変化の小さい続報テスト', () => {
     // 1 通目は「観測中」で波高を持たない点が並び、2 通目で値が入る（サンプルの実物どおり）
     const withHeight = (t: JMATsunami) => (t.observations ?? []).filter(o => o.offshore && o.height).length
     expect(withHeight(second)).toBeGreaterThan(withHeight(first))
+  })
+
+  // 正: **値を 1 つも持たない観測点へ、印だけが付く報。** カードの「到達時刻不明」「観測中」に
+  // 印の色が当たる経路は、この形でしか通らない（→ tsunami-spec.md §9）。
+  it('段 9 は、値を持たない観測点へ電文の印だけが付く', async () => {
+    const tsunamis = tsunamisOf(await build(scripts.TSUNAMI_QUIET_REPORTS))
+    const at = (t: JMATsunami) => (t.observations ?? []).find(o => o.name === '石巻市鮎川')
+    const before = at(tsunamis[8])!
+    const marked = at(tsunamis[9])!
+    // 値はどちらの段でも持たない（到達時刻も波高も無い）
+    for (const o of [before, marked]) {
+      expect(o.height).toBeUndefined()
+      expect(o.arrivalTime).toBeUndefined()
+    }
+    // 印が付くのは段 9 だけ
+    expect(before.firstHeightRevise ?? before.maxHeightRevise).toBeUndefined()
+    expect(marked.maxHeightRevise).toBe('追加')
+  })
+
+  // 正: 到達予想時刻だけが動く段がある（満潮時刻・到達状況は前の段のまま）
+  it('段 13 は到達予想時刻だけを動かす', async () => {
+    const tsunamis = tsunamisOf(await build(scripts.TSUNAMI_QUIET_REPORTS))
+    const forecastOf = (t: JMATsunami) =>
+      t.areas.flatMap(a => a.stations ?? []).map(st => st.arrivalTime ?? '').join('|')
+    expect(forecastOf(tsunamis[13])).not.toBe(forecastOf(tsunamis[12]))
+    // 対照: 段 14 では動かない（同じ値の再送）
+    expect(forecastOf(tsunamis[14])).toBe(forecastOf(tsunamis[13]))
   })
 
   it('満潮時刻の続報は、満潮時刻の更新と到達状況の更新を別々の段で流す', async () => {

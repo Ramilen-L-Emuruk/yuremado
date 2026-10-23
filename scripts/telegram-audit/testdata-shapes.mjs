@@ -32,7 +32,6 @@ import { convertEvent } from './services/p2pquake'
 import { hypoInfoItemToEEW } from './services/kyoshin'
 import { decodeEstimatedIntensity } from './utils/bufrEstimatedIntensity'
 import { BufrFragmentStore, fragmentKey } from './services/bufrTelegramAssembly'
-import * as TD from './utils/testData'
 export const XML_PARSERS = {
   VTSE41: (h, x) => parseTsunamiFromXml(h, x),
   VTSE51: (h, x) => parseTsunamiFromXml(h, x),
