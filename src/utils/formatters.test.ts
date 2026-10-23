@@ -312,12 +312,12 @@ describe('hasHypocenterFacts', () => {
 describe('国内津波情報の語', () => {
   // 正: 気象庁の語（固定付加文と同じ「津波警報等」）を使う。読み上げとも揃う。
   it('警報等はまとめた語で出す', () => {
-    expect(formatDomesticTsunami('警報等').text).toBe('津波警報等')
+    expect(formatDomesticTsunami('警報等', undefined).text).toBe('津波警報等')
   })
 
   // 対照: 注意報だけの区分は等級が確定しているので、まとめた語にしない。
   it('注意報はまとめた語にしない', () => {
-    expect(formatDomesticTsunami('注意報').text).toBe('津波注意報')
+    expect(formatDomesticTsunami('注意報', undefined).text).toBe('津波注意報')
   })
 
   // 安全弁: **まとめた語を他の区分へ広げていない。** 「等」を付けてよいのは等級が確定して
@@ -325,8 +325,33 @@ describe('国内津波情報の語', () => {
   // （「津波の心配なし等」では何を言っているのか分からない）。
   it('等級が確定している区分に「等」を足していない', () => {
     for (const t of ['なし', '注意報', '若干の海面変動', '調査中', '不明'] as const) {
-      expect(formatDomesticTsunami(t).text, t).not.toContain('等')
+      expect(formatDomesticTsunami(t, undefined).text, t).not.toContain('等')
     }
+  })
+
+  // 区分は複数のコードを 1 つへ丸めているので、コードが分かれば気象庁の文に合う語を出す
+  // （コード表の文は docs/jma-wording-audit.md E1〜E3）。
+  // 正: 震度速報の 0217 は「今後の情報に注意してください。」で、「調査中」とは書いていない。
+  it('コードが分かれば気象庁の文に合う語を出す', () => {
+    expect(formatDomesticTsunami('調査中', '0217').text).toBe('今後の情報に注意')
+    expect(formatDomesticTsunami('若干の海面変動', '0213').text).toBe('海面変動に注意')
+    expect(formatDomesticTsunami('若干の海面変動', '0214').text).toBe('海面変動に注意')
+    expect(formatDomesticTsunami('海面変動の可能性', '0216').text).toBe('津波のおそれ（震源が海底の場合）')
+    expect(formatDomesticTsunami('なし', '0230').text).toBe('日本への影響なし')
+  })
+
+  // 対照: 区分の語が気象庁の文と合うコードと、コードを持たない経路（P2PQuake・借りた区分）は区分の語のまま。
+  it('区分の語で足りるコードとコードの無い経路は区分の語のまま', () => {
+    expect(formatDomesticTsunami('調査中', '0229').text).toBe('調査中')
+    expect(formatDomesticTsunami('なし', '0215').text).toBe('津波の心配なし')
+    expect(formatDomesticTsunami('警報等', '0211').text).toBe('津波警報等')
+    expect(formatDomesticTsunami('調査中', undefined).text).toBe('調査中')
+  })
+
+  // 安全弁: 色は区分で決める（コードで語を替えても深刻さは区分と同じ）。
+  it('語をコードで替えても色は区分のまま', () => {
+    expect(formatDomesticTsunami('調査中', '0217').color).toBe(formatDomesticTsunami('調査中', undefined).color)
+    expect(formatDomesticTsunami('なし', '0230').color).toBe(formatDomesticTsunami('なし', undefined).color)
   })
 })
 

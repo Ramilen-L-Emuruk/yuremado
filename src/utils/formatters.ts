@@ -1,4 +1,4 @@
-import type { CorrectType, DomesticTsunami, Hypocenter, IssueType, QuakeReportRecord, TsunamiGrade } from '../types/earthquake'
+import type { CorrectType, DomesticTsunami, DomesticTsunamiCode, Hypocenter, IssueType, QuakeReportRecord, TsunamiGrade } from '../types/earthquake'
 import {
   createLogThrottle, createPerLabelLogGate, log,
   UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS,
@@ -393,8 +393,30 @@ export const TSUNAMI_WARNING_GROUP_TITLE = '大津波警報・津波警報ある
  *
  * 等級そのものを知りたい場合は津波情報のカードを見ることになる。ここは地震カードなので、
  * その地震に津波の発表があるかどうかまでを伝える欄。
+ *
+ * **区分を決めた固定付加文のコードが分かれば、語はコードで選ぶ**（`code`。DMDATA 経路だけが持つ）。
+ * 区分は複数のコードを 1 つへ丸めているので、区分の語のままだと気象庁が書いていないことを言う
+ * （震度速報の 0217 は「今後の情報に注意してください。」で、「調査中」とは書いていない）。
+ * 語は気象庁の文から取った（2026-10-23 ユーザー選択「「今後の情報に注意」 (Recommended)」。
+ * 選択肢の説明は「0213・0214 は「海面変動に注意」、0216 は「津波のおそれ（震源が海底の場合）」、0230 は「日本への影響なし」」）。
+ * 色は区分で決める（コードが違っても深刻さは区分と同じ）。
  */
-export function formatDomesticTsunami(type: DomesticTsunami): { text: string; color: string } {
+export function formatDomesticTsunami(type: DomesticTsunami, code: DomesticTsunamiCode | undefined): { text: string; color: string } {
+  const base = formatDomesticTsunamiCategory(type)
+  const byCode = code ? DOMESTIC_TSUNAMI_CODE_LABEL[code] : undefined
+  return byCode ? { text: byCode, color: base.color } : base
+}
+
+/** 区分の語のままでは気象庁の文と食い違うコードだけを持つ。ほかのコードは区分の語で足りる。 */
+const DOMESTIC_TSUNAMI_CODE_LABEL: Partial<Record<DomesticTsunamiCode, string>> = {
+  '0213': '海面変動に注意',
+  '0214': '海面変動に注意',
+  '0216': '津波のおそれ（震源が海底の場合）',
+  '0217': '今後の情報に注意',
+  '0230': '日本への影響なし',
+}
+
+function formatDomesticTsunamiCategory(type: DomesticTsunami): { text: string; color: string } {
   const map: Record<DomesticTsunami, { text: string; color: string }> = {
     'なし': { text: '津波の心配なし', color: '#22c55e' },
     '不明': { text: '不明', color: '#94a3b8' },

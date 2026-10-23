@@ -790,6 +790,22 @@ function pickVarComment(
   return { varCommentText: from.varCommentText, varCommentCodes: from.varCommentCodes }
 }
 
+/**
+ * 津波区分と、それを決めた固定付加文のコードを、同じ報から組で取り出す（`earthquake` へスプレッドで使う）。
+ *
+ * **組で運ぶのは、地震カードの札がコードで出し分けるため**（→ `formatDomesticTsunami`）。区分だけ
+ * 採ってコードを土台の側に残すと、札が区分と違うことを言う。採った側がコードを持たなければ
+ * `undefined` で上書きされ、土台のコードは消える —— それが正しい（`pickVarComment` と同じ形）。
+ */
+function domesticTsunamiFrom(
+  from: Pick<JMAQuake, 'earthquake'>,
+): Pick<JMAQuake['earthquake'], 'domesticTsunami' | 'domesticTsunamiCode'> {
+  return {
+    domesticTsunami: from.earthquake.domesticTsunami,
+    domesticTsunamiCode: from.earthquake.domesticTsunamiCode,
+  }
+}
+
 export function mergeQuakeInto(
   existing: JMAQuake | undefined,
   incoming: JMAQuake,
@@ -865,9 +881,9 @@ function mergeQuakeIntoBody(
       earthquake: {
         ...existing.earthquake,
         hypocenter: incoming.earthquake.hypocenter,
-        domesticTsunami: incoming.earthquake.domesticTsunami !== '不明'
-          ? incoming.earthquake.domesticTsunami
-          : existing.earthquake.domesticTsunami,
+        // 区分を決めたコードも区分と同じ側から採る（札がコードで出し分けるので、片側だけ
+        // 動くと札が区分と違うことを言う。→ `JMAQuake.earthquake.domesticTsunamiCode`）。
+        ...domesticTsunamiFrom(incoming.earthquake.domesticTsunami !== '不明' ? incoming : existing),
       },
       // **借り物の印は落とす。** この報は震源そのものを更新するので、以後の震源は自前。
       // `...existing` を土台にしているため、明示的に消さないと印だけが残り、画面に
@@ -1113,9 +1129,7 @@ function mergeQuakeIntoBody(
       ...result,
       earthquake: {
         ...result.earthquake,
-        domesticTsunami: existing.earthquake.domesticTsunami !== '不明'
-          ? existing.earthquake.domesticTsunami
-          : result.earthquake.domesticTsunami,
+        ...domesticTsunamiFrom(existing.earthquake.domesticTsunami !== '不明' ? existing : result),
       },
       // **出どころの印も区分と一緒に運ぶ。** 既存の区分が津波電文の等級から借りたものなら、
       // それを据え置いた側も借り物。落とすと画面から出どころが消えるだけでなく、

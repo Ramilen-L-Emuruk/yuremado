@@ -18,6 +18,7 @@ import type {
   EEWRegion,
   IntensityScale,
   DomesticTsunami,
+  DomesticTsunamiCode,
   IssueType,
   CorrectType,
   TsunamiArea,
@@ -348,18 +349,30 @@ function warnIfNoIntensityPoints(
 // 海域の浅い領域で発生すると津波が発生することがある」）を併用する。これらは震源周辺・太平洋側の
 // 状況や一般論を述べるもので日本国内への影響区分ではないため、domesticTsunami には反映しない
 // （付加文の原文は forecastText に保持し、読み上げ側で使う）。
-function parseDomesticTsunamiFromComments(comments: Record<string, unknown>): DomesticTsunami {
+const DOMESTIC_TSUNAMI_BY_CODE: Readonly<Record<DomesticTsunamiCode, DomesticTsunami>> = {
+  '0211': '警報等',
+  '0212': '若干の海面変動',
+  '0213': '若干の海面変動',
+  '0214': '若干の海面変動',
+  '0215': 'なし',
+  '0216': '海面変動の可能性',
+  '0217': '調査中',
+  '0229': '調査中',
+  '0230': 'なし',
+}
+
+function isDomesticTsunamiCode(code: unknown): code is DomesticTsunamiCode {
+  return typeof code === 'string' && Object.prototype.hasOwnProperty.call(DOMESTIC_TSUNAMI_BY_CODE, code)
+}
+
+/**
+ * 区分と、それを決めたコードを組で返す。**組で返すのは、コードを区分と別々に導くと食い違いうるため**
+ * （地震カードの札はコードで出し分ける。→ `JMAQuake.earthquake.domesticTsunamiCode`）。
+ */
+function parseDomesticTsunamiFromComments(comments: Record<string, unknown>): { value: DomesticTsunami; code?: DomesticTsunamiCode } {
   const codes = arr(obj(comments.forecast).codes)
   for (const code of codes) {
-    if (code === '0211') return '警報等'
-    if (code === '0212') return '若干の海面変動'
-    if (code === '0213') return '若干の海面変動'
-    if (code === '0214') return '若干の海面変動'
-    if (code === '0215') return 'なし'
-    if (code === '0216') return '海面変動の可能性'
-    if (code === '0217') return '調査中'
-    if (code === '0229') return '調査中'
-    if (code === '0230') return 'なし'
+    if (isDomesticTsunamiCode(code)) return { value: DOMESTIC_TSUNAMI_BY_CODE[code], code }
   }
   // 022x 系（震源近傍・太平洋側で津波発生の可能性・規模による一般論）は日本国内への影響区分では
   // ないため、単独で来ても正常。警告は**既知のコードを取り除いて残ったもの**に絞る
@@ -372,7 +385,7 @@ function parseDomesticTsunamiFromComments(comments: Record<string, unknown>): Do
   if (unknownCodes.length > 0) {
     log.warn(`[dmdata] 付加文コードから津波区分を導出できません: ${unknownCodes.join(' ')} → 不明`)
   }
-  return '不明'
+  return { value: '不明' }
 }
 
 // 気象庁の固定付加文（複数行）を1行に整形する。各行は句点で終わるため連結で文が繋がる。
@@ -1892,7 +1905,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   const forecastCodes = forecastCommentEl
     ? xmlAll(forecastCommentEl, 'Code').flatMap(el => xmlText(el).split(/\s+/)).filter(Boolean)
     : []
-  const domestic = parseDomesticTsunamiFromComments({ forecast: { codes: forecastCodes } })
+  const { value: domestic, code: domesticCode } = parseDomesticTsunamiFromComments({ forecast: { codes: forecastCodes } })
   // 付加文の原文（ForecastComment > Text）。
   const forecastText = extractForecastText(
     forecastCommentEl ? xmlText(xmlQ(forecastCommentEl, 'Text')) : '',
@@ -1947,6 +1960,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       },
       maxScale: maxScale >= 0 ? maxScale as IntensityScale : -1,
       domesticTsunami: domestic,
+      ...(domesticCode && { domesticTsunamiCode: domesticCode }),
     },
     ...(quakeOperationStatus && { operationStatus: quakeOperationStatus }),
     ...(quakeHeadline && { headline: quakeHeadline }),

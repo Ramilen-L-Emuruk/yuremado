@@ -78,6 +78,7 @@ function quakeSample(): QuakeSample {
       },
       maxScale: 70,
       domesticTsunami: '警報等',
+      domesticTsunamiCode: '0211',
     },
     operationStatus: '訓練',
     points: [{

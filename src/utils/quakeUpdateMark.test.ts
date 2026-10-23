@@ -173,6 +173,18 @@ describe('地震カードの更新の印', () => {
       expect(changedQuakeFacts(after, before, false).get('domesticTsunami')).toBe('changed')
     })
 
+    // 正: 札は区分を決めたコードで語を選ぶので、区分が同じでもコードが変われば印を出す
+    // （0212「若干の海面変動」→ 0213「海面変動に注意」）。重さは区分で決まるので「変わった」。
+    it('津波区分が同じでもコードが変われば印を出す', () => {
+      const withCode = (code: '0212' | '0213') => {
+        const q = makeQuake({ domesticTsunami: '若干の海面変動' })
+        return quakeFactSnapshot({ ...q, earthquake: { ...q.earthquake, domesticTsunamiCode: code } })
+      }
+      expect(changedQuakeFacts(withCode('0213'), withCode('0212'), false).get('domesticTsunami')).toBe('changed')
+      // 対照: コードも同じなら印を出さない。
+      expect(changedQuakeFacts(withCode('0212'), withCode('0212'), false).get('domesticTsunami')).toBeUndefined()
+    })
+
     // 対照: 重さの決まっている値どうしなら向きが出る。
     it('津波区分が警報等から注意報へ下がったら下がったの印が出る', () => {
       const before = quakeFactSnapshot(makeQuake({ domesticTsunami: '警報等' }))
