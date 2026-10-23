@@ -37,6 +37,7 @@
   ],
   "binaryExtensions": [
     { "ext": "pbf", "reason": "地図のベクトルタイル・グリフ（公的データの生成物）" },
-    { "ext": "ttf", "reason": "フォント" }
+    { "ext": "ttf", "reason": "フォント" },
+    { "ext": "bufr", "reason": "テストボタンの推計震度分布図（自前で組んだ二進電文）。書き込むのは凡例・発現時刻・震源・規模・区域コード・メッシュ番号・計測震度だけで、文字列も付帯情報も持たない（scripts/build-test-estimated-intensity-bufr.ts）" }
   ]
 }
