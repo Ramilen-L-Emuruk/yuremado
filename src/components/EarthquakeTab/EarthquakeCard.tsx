@@ -5,6 +5,7 @@ import { QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
 import { getLpgmClassLabel, getLpgmClassColor, getLpgmClassBgColor, lpgmCategoryNote, buildLpgmRows, canOpenLpgmNotes } from '../../utils/lpgm'
 import { estimatedIntensityAvailability } from '../../utils/estimatedIntensity'
 import { telegramTextSubject } from '../../utils/ttsFollow'
+import { domesticTsunamiCardForecastText, warnIfDomesticTsunamiSentenceMissing } from '../../utils/domesticTsunamiComment'
 import { useAutoOpenWhileSpeakingIn } from '../../hooks/useAutoOpenWhileSpeaking'
 import { SerialBadge } from '../SerialBadge'
 import {
@@ -668,6 +669,21 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const borrowedDomesticTsunami = quake.domesticTsunamiSource
   // 説明は**常に 1 行**。詳しい出どころ（名乗り・発表時刻）はホバーの説明へ回す。
   const borrowedNote = borrowedSourceNote(borrowedHypocenter, borrowedDomesticTsunami)
+  // 気象庁が添えた文の段落（電文の並び順。空の段落は持たない）。何も残らなければ枠ごと出さない。
+  const forecastRest = quake.forecastText ? domesticTsunamiCardForecastText(quake.forecastText, earthquake.domesticTsunamiCode) : ''
+  const commentParagraphs = [
+    { key: 'forecast', text: forecastRest },
+    // 末尾だけ詰める（`pre-wrap` なので末尾の改行が段落の間隔に上乗せされる）。自由付加文は全角スペースで
+    // 桁を揃えた表が入るので、先頭は触らない。
+    { key: 'var', text: (quake.varCommentText ?? '').trimEnd() },
+    { key: 'free', text: (quake.freeText ?? '').trimEnd() },
+  ].filter(p => p.text.trim() !== '')
+  // 気象庁が文面を変えて表と一致しなくなったら記録を残す（一致しないと札の下に津波の文が重なって出るだけで、
+  // ほかに気づく手掛かりが無い）。描画中の副作用にしないよう effect で出し、間引きは記録側が持つ。
+  const domesticTsunamiCode = earthquake.domesticTsunamiCode
+  useEffect(() => {
+    if (quake.forecastText) warnIfDomesticTsunamiSentenceMissing(domesticTsunamiCode, quake.forecastText)
+  }, [quake.forecastText, domesticTsunamiCode])
   // 長周期の「観測情報の種類」から出す一文（値 2・4 のときだけ。→ `lpgmCategoryNote`）。
   // 条件と本文の両方で使うので一度だけ計算する。
   const categoryNote = lpgmCategoryNote(lpgm?.category)
@@ -1343,32 +1359,21 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             </div>
           )}
 
-          {/* 固定付加文（`ForecastComment/Text`）。原文をそのまま出す（2026-10-19 ユーザー承認。
-              パーサーが改行だけ詰めている → `normalizeForecastText`）。
-              上の津波の欄はこの付加文のコードを区分へ丸めたもので、区分にならない文
-              （例: 0245「この地震で緊急地震速報を発表しましたが、強い揺れは観測されませんでした。」）は
-              ここにしか現れない。1 文目は津波の欄と重なるが、文とコードの対応は電文に無く、
-              切り分けを推測しないために全文を出す。並びは電文と同じく「その他」の前。 */}
-          {quake.forecastText && (
-            <div className="w-full rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary whitespace-pre-wrap roomy:text-sm">
-              {quake.forecastText}
-            </div>
-          )}
-
-          {/* 固定付加文（その他）。長周期地震動の同じ枠と揃えて出す。 */}
-          {quake.varCommentText && (
-            <div className="w-full rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary whitespace-pre-wrap roomy:text-sm">
-              {quake.varCommentText}
-            </div>
-          )}
-
-          {/* 気象庁の自由付加文。津波区分の定型文（forecastText）と違い電文ごとに書き起こされ、
-              続報での更新はここに現れる（観測された津波の高さ・潮位変化の有無・次報の予定時刻など）。
-              全角スペースで整形された表が入るため `whitespace-pre-wrap` で改行と空白を保つ。
+          {/* 気象庁が添えた文（付加文 3 種）を **1 つの枠**に、電文と同じ並びで段落に分けて出す
+              （2026-10-23 ユーザー承認「一つにまとめましょうか。」）。3 種は電文の要素の区切りで、
+              読む人にとっての区切りではないので、枠を分けない。
+              - 固定付加文（`ForecastComment/Text`）: **津波の区分を決めるコードの文は除く**。上の津波の札が
+                同じ事実を伝えている。ただし札が伝えきれないコード（0211〜0214）は、カード自身のコードの文を残す
+                （同日の選択「Aでお願いします。」。→ `domesticTsunamiCardForecastText`）。区分にならない文
+                （例: 0245「この地震で緊急地震速報を発表しましたが、強い揺れは観測されませんでした。」）は、
+                この枠にしか現れない
+              - 固定付加文（その他）（`VarComment/Text`）: `＊` 印の説明など
+              - 自由付加文（`FreeFormComment`）: 電文ごとに書き起こされ、続報での更新はここに現れる。
+                全角スペースで整形された表が入るため `whitespace-pre-wrap` で改行と空白を保つ
               コンパクト表示（一覧）には出さない。行数が電文次第で読めず、カードの高さが揃わなくなるため。 */}
-          {quake.freeText && (
-            <div className="w-full rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary whitespace-pre-wrap roomy:text-sm">
-              {quake.freeText}
+          {commentParagraphs.length > 0 && (
+            <div className="flex w-full flex-col gap-2 rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary whitespace-pre-wrap roomy:text-sm">
+              {commentParagraphs.map(p => <div key={p.key}>{p.text}</div>)}
             </div>
           )}
 
