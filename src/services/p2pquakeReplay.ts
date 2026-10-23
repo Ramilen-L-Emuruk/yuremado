@@ -212,7 +212,7 @@ async function fetchAllPages(resource: 'quake' | 'tsunami', dateParam: string): 
       order: 1,
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
-    }, null)
+    }, null, 'foreground')
     for (const raw of raws) {
       // 種別そのものが読めない電文は「正常なフィルタ」ではなく破損。無言で捨てると検知できない。
       if (typeof raw?.code !== 'number') {
@@ -282,7 +282,7 @@ export async function fetchP2PQuakeHistory(
     untilDate: toDateParam(before),
     order: -1,
     limit: HISTORY_PAGE_SIZE,
-  }, signal)
+  }, signal, 'foreground')
 
   // 打ち切りの前に、読める電文だけを集めて発表時刻の新しい順に整える。
   // `order: -1` を渡しているので応答は既に新しい順のはずだが、**どこで切るかを外部 API の

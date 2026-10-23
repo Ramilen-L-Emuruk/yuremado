@@ -8,7 +8,7 @@ vi.mock('./logger', async (importOriginal) => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: warnMock, error: vi.fn() },
 }))
 
-import { formatCoordinate, formatDepth, formatDomesticTsunami, formatMagnitude, formatMagnitudeCondition, formatMagnitudeValue, formatMagnitudeWithCondition, formatNameFromMark, formatFileStamp, formatDateTime, formatDateTimeLocal, formatDateTimeMin, formatQuakeTime, formatTime, formatTimeMin, hasHypocenterFacts, withNonJmaMark, NON_JMA_MARK } from './formatters'
+import { formatCoordinate, formatDepth, formatDomesticTsunami, formatMagnitude, formatMagnitudeCondition, formatMagnitudeValue, formatMagnitudeWithCondition, magnitudePrefix, magnitudeTypeLabel, formatNameFromMark, formatFileStamp, formatDateTime, formatDateTimeLocal, formatDateTimeMin, formatQuakeDateTime, formatQuakeTime, formatTime, formatTimeMin, hasHypocenterFacts, withNonJmaMark, NON_JMA_MARK } from './formatters'
 import type { Hypocenter } from '../types/earthquake'
 import { withTz } from '../test-utils/withTz'
 import { getMagnitudeColor, getDepthColor } from './intensity'
@@ -66,19 +66,68 @@ describe('formatDepth', () => {
 
 describe('formatMagnitude', () => {
   it('負値は "不明"', () => {
-    expect(formatMagnitude(-1)).toBe('不明')
+    expect(formatMagnitude(-1, undefined)).toBe('不明')
   })
   it('通常値は "M X.Y"', () => {
-    expect(formatMagnitude(5.3)).toBe('M5.3')
+    expect(formatMagnitude(5.3, undefined)).toBe('M5.3')
   })
   it('NaN は "不明"', () => {
-    expect(formatMagnitude(Number.NaN)).toBe('不明')
+    expect(formatMagnitude(Number.NaN, undefined)).toBe('不明')
   })
   it('undefined 相当（Number 変換 NaN）は "不明"', () => {
-    expect(formatMagnitude(Number(undefined))).toBe('不明')
+    expect(formatMagnitude(Number(undefined), undefined)).toBe('不明')
   })
   it('Infinity は "不明"', () => {
-    expect(formatMagnitude(Number.POSITIVE_INFINITY)).toBe('不明')
+    expect(formatMagnitude(Number.POSITIVE_INFINITY, undefined)).toBe('不明')
+  })
+})
+
+// 規模の前に置く記号は電文の種別（`jmx_eb:Magnitude@type`）をそのまま出す
+// （2026-10-22 ユーザー承認「1-A 電文のまま」）。種別を持たない経路は従来どおり `M`。
+describe('規模の種別（Mj／M）', () => {
+  // 正: 電文の種別がそのまま前置きになる。
+  it('電文の種別を前置きにする', () => {
+    expect(formatMagnitude(3.5, 'Mj')).toBe('Mj3.5')
+    expect(formatMagnitude(6.8, 'M')).toBe('M6.8')
+    expect(formatMagnitudeWithCondition(3.5, undefined, 'Mj')).toBe('Mj3.5')
+  })
+
+  // 対照: 種別を持たない経路（P2PQuake・長期震源カタログ）は従来どおり `M`。
+  it('種別が無ければ M', () => {
+    expect(formatMagnitude(3.5, undefined)).toBe('M3.5')
+    expect(magnitudePrefix(undefined)).toBe('M')
+    expect(magnitudePrefix('')).toBe('M')
+  })
+
+  // 安全弁: **知らない値も丸めずにそのまま出す。** `M` へ寄せると、気象庁が種別を増やしたときに
+  // 発表と違う記号を出すことになる。
+  it('知らない種別もそのまま出す', () => {
+    expect(formatMagnitude(7.0, 'Mw')).toBe('Mw7.0')
+    expect(magnitudePrefix('mb')).toBe('mb')
+  })
+
+  // 正: 見出しが「マグニチュード」で記号を置けない欄は、語で添える。
+  it('語を当てるのは Mj だけ', () => {
+    expect(magnitudeTypeLabel('Mj')).toBe('気象庁マグニチュード')
+  })
+
+  // 対照: **`M` には語を添えない**（2026-10-23 ユーザー承認「資料の裏付けがある分だけ」）。
+  // 気象庁の資料が定めているのは `Mj` だけで、`M` が何かはどこにも書かれていない。控えでは
+  // `M` なのに震源決定機関が無い電文が 12 通あり、「気象庁以外の値」とは言い切れない。
+  it('M には語を添えない', () => {
+    expect(magnitudeTypeLabel('M')).toBeNull()
+  })
+
+  // 安全弁: **知らない値にも何も添えない。** 意味を推し量って言い換えない（記号なら電文のまま
+  // 出せるが、語は当てはめた瞬間に嘘になりうる）。
+  it('知らない種別には語を添えない', () => {
+    expect(magnitudeTypeLabel('Mw')).toBeNull()
+    expect(magnitudeTypeLabel(undefined)).toBeNull()
+  })
+
+  // 安全弁: 規模が数値にならないときは、種別があっても説明を優先する（前置きの出番が無い）。
+  it('数値が無ければ種別より説明', () => {
+    expect(formatMagnitudeWithCondition(NaN, 'Ｍ８を超える巨大地震', 'Mj')).toBe('M8を超える巨大地震')
   })
 })
 
@@ -194,23 +243,23 @@ describe('震源の座標の表記', () => {
 describe('見出しに M を持たない欄の規模', () => {
   // 正: 数値があれば従来どおり。
   it('数値があれば M 付きで出す', () => {
-    expect(formatMagnitudeWithCondition(7.6)).toBe('M7.6')
+    expect(formatMagnitudeWithCondition(7.6, undefined, undefined)).toBe('M7.6')
   })
 
   // 正: 数値が無くても説明があれば落とさない。
   it('説明があれば落とさない', () => {
-    expect(formatMagnitudeWithCondition(NaN, 'Ｍ８を超える巨大地震')).toBe('M8を超える巨大地震')
+    expect(formatMagnitudeWithCondition(NaN, 'Ｍ８を超える巨大地震', undefined)).toBe('M8を超える巨大地震')
   })
 
   // 対照: 説明が無ければ従来どおり「不明」（説明を持たない P2PQuake・EEW・カタログの経路）。
   it('説明が無ければ不明', () => {
-    expect(formatMagnitudeWithCondition(NaN)).toBe('不明')
-    expect(formatMagnitudeWithCondition(-1)).toBe('不明')
+    expect(formatMagnitudeWithCondition(NaN, undefined, undefined)).toBe('不明')
+    expect(formatMagnitudeWithCondition(-1, undefined, undefined)).toBe('不明')
   })
 
   // 安全弁: 数値が読めるなら説明より数値を優先する。
   it('数値が読めれば数値を優先する', () => {
-    expect(formatMagnitudeWithCondition(7.6, 'Ｍ８を超える巨大地震')).toBe('M7.6')
+    expect(formatMagnitudeWithCondition(7.6, 'Ｍ８を超える巨大地震', undefined)).toBe('M7.6')
   })
 })
 
@@ -326,6 +375,7 @@ describe('日時として読めない値のガード', () => {
     expect(formatDateTime('壊れた値-dateTime')).toBeNull()
     expect(formatDateTimeMin('壊れた値-dateTimeMin')).toBeNull()
     expect(formatQuakeTime('壊れた値-quakeTime')).toBeNull()
+    expect(formatQuakeDateTime('壊れた値-quakeDateTime')).toBeNull()
     expect(formatDateTimeLocal(new Date('壊れた値-local'))).toBeNull()
   })
 
@@ -337,6 +387,11 @@ describe('日時として読めない値のガード', () => {
       expect(formatDateTime('2026-01-02T03:04:05+09:00')).toBe('2026/01/02 03:04:05')
       expect(formatDateTimeMin('2026-01-02T03:04:05+09:00')).toBe('2026/01/02 03:04')
       expect(formatQuakeTime('2026-01-02T03:04:05+09:00')).toBe('1月2日 3:04ごろ')
+      // 共有カードの画像。**秒を出さない**（電文に秒が無い）。画像は日をまたいで共有されるので年月日まで入れる
+      // （2026-10-22 ユーザー承認「5-A 秒と発生を落とす」）。
+      expect(formatQuakeDateTime('2026-01-02T03:04:05+09:00')).toBe('2026/01/02 03:04ごろ')
+      // 対照: 秒まで出す `formatDateTime` は別の用途（電文の作成時刻など）に残る。
+      expect(formatDateTime('2026-01-02T03:04:05+09:00')).toBe('2026/01/02 03:04:05')
       expect(formatDateTimeLocal(new Date('2026-01-02T03:04:05+09:00'))).toBe('2026-01-02T03:04')
     })
   })

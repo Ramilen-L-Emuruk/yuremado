@@ -139,13 +139,11 @@ function setup(overSettings: Partial<AppSettings> = {}) {
     settings, title: title as never,
     earthquakesRef: { current: [] as JMAQuake[] },
     tsunamisRef: { current: [] as JMATsunami[] },
-    kyoshinDetectedRef: { current: false },
-    defaultTabRef: { current: 'earthquake' },
-    setActiveTabRealtimeForKyoshin: vi.fn(), setActiveTabNonRealtime: vi.fn(),
+    setActiveTabNonRealtime: vi.fn(),
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true),
     quakeSpeakingCard: null,
-    expandPanelForSpecialInfo, revertToDefaultTab: vi.fn(),
+    expandPanelForSpecialInfo,
     selectQuake: vi.fn(), openLpgmFromQuake: vi.fn(), openEstimatedIntensity: vi.fn(), closeDistributionOnQuakeReport: vi.fn(),
   }))
   // state を更新する関数は act() で包んでから返す。

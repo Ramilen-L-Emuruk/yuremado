@@ -323,7 +323,10 @@ function withRaisedStations(xml: string): string {
 export const QUAKE_REPORT_SEQUENCE: TestTelegramScript = {
   anchor: 6,
   steps: [
-    { file: NOTO_FORESHOCK.prompt1, headType: 'VXSE51', atMs: 0 },
+    // 1 通目は**区域の最大震度を 1 段下げる**（5強 → 5弱）。3 通目で 5強が出そろうので、
+    // **ブラウザ通知の「最大震度更新」を実機で確かめられる**のはここだけ（→ 設定タブの説明文）。
+    // 実配信でも、速報の続報で区域の震度が上がる（観測が増えるため）。
+    { file: NOTO_FORESHOCK.prompt1, headType: 'VXSE51', atMs: 0, rewrite: lowerAreaInts },
     { file: NOTO_FORESHOCK.destination, headType: 'VXSE52', atMs: REPORT_SEQUENCE_DELAY_MS },
     { file: NOTO_FORESHOCK.prompt2, headType: 'VXSE51', atMs: REPORT_SEQUENCE_DELAY_MS * 2 },
     { file: NOTO_FORESHOCK.detail, headType: 'VXSE53', atMs: REPORT_SEQUENCE_DELAY_MS * 3, rewrite: withLateStations },
@@ -474,6 +477,23 @@ const TOHOKU = {
   offshore: sample('61_11_01_250206_VTSE52'),
   /** 15:01 津波観測に関する情報（観測中・重要・上昇中を含む）。 */
   observation: sample('32-39_11_10_250206_VTSE51'),
+}
+
+/**
+ * 区域の最大震度（`Pref/Area/MaxInt`）を 1 段下げる。
+ *
+ * **速報の 1 通目を「まだ出そろっていない」形にするのに使う。** 続報で震度が上がる経路
+ * （カードの最大震度の更新・ブラウザ通知）を実機で通すには、上がる前の報が要る。
+ */
+function lowerAreaInts(xml: string): string {
+  return editXml(xml, (doc) => {
+    const ints = descendants(doc, 'MaxInt')
+    if (ints.length === 0) throw new Error('テスト用の電文に区域の最大震度がありません')
+    for (const node of ints) {
+      const lowered = lowerInt(node.textContent ?? '')
+      if (lowered) node.textContent = lowered
+    }
+  })
 }
 
 /** 名前で観測点（`Station`）を探す。 */
@@ -636,6 +656,32 @@ function advanceHighTide(doc: Document): void {
   for (const t of tides) t.textContent = new Date(Date.parse(t.textContent ?? '') + 12 * 3600_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
+/**
+ * 値を持たない観測点（「観測中」）へ、**電文の印だけ**を付ける。
+ *
+ * **値が無いまま印が付く報は実配信にある。** カードの「到達時刻不明」「観測中」に印の色が
+ * 当たる経路は、この形でしか通らない（→ docs/spec/tsunami-spec.md §9「どの項目が動いたかを文字色で示す」）。
+ */
+function markObservingOnly(doc: Document, name: string): void {
+  const station = stationNamed(doc, name)
+  for (const tag of ['FirstHeight', 'MaxHeight']) {
+    const el2 = childOf(station, tag)
+    if (!el2) throw new Error(`テスト用の電文の観測点「${name}」に ${tag} がありません`)
+    el2.appendChild(el(doc, el2, 'Revise', '追加'))
+  }
+}
+
+/** 区域の到達予想時刻（満潮時刻の報の `FirstHeight/ArrivalTime`）を早める。 */
+function advanceArrivalForecast(doc: Document, minutes: number): void {
+  const times = descendants(doc, 'ArrivalTime')
+  if (times.length === 0) throw new Error('テスト用の電文に到達予想時刻（ArrivalTime）がありません')
+  for (const t of times) {
+    const ms = Date.parse(t.textContent ?? '')
+    if (!Number.isFinite(ms)) continue
+    t.textContent = new Date(ms - minutes * 60_000).toISOString().replace(/.d{3}Z$/, 'Z')
+  }
+}
+
 /** 到達状況だけを確定へ変える（「津波到達中と推測」→「第１波の到達を確認」）。 */
 function confirmArrival(doc: Document): void {
   const targets = descendants(doc, 'Condition').filter(c => c.textContent === '津波到達中と推測')
@@ -662,7 +708,8 @@ function confirmArrival(doc: Document): void {
  * | 6 | 沖合の観測情報 | 沖合の観測点の最大波の観測時刻が動く（**カードの沖合の行に印が出るのはここだけ**） |
  * | 7 | 観測情報 | 何も動かない（同じ値の再送） |
  * | 8 | 観測情報 | 釜石の波高が下がり「以上」も外れる（**段 7 より後ろに置く** —— 読み上げの記憶は下げない） |
- * | 9〜12 | 満潮時刻 | 名乗りだけ／満潮時刻の更新／到達状況の更新／何も動かない |
+ * | 9 | 観測情報 | 値を持たない観測点（石巻市鮎川）へ、電文の印だけが付く（カードの「観測中」に印の色が当たる） |
+ * | 10〜14 | 満潮時刻 | 名乗りだけ／満潮時刻の更新／到達状況の更新／到達予想時刻の更新／何も動かない |
  */
 export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
   const T = TOHOKU.observation
@@ -712,22 +759,32 @@ export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
         max.appendChild(el(doc, max, 'Revise', '更新'))
       }),
     },
-    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(9), onlyIn: 'dmdss', rewrite: quietTide(9, at(9)) },
-    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(10), onlyIn: 'dmdss', rewrite: quietTide(10, at(10), advanceHighTide) },
+    // 段 9: 値を持たない観測点へ、電文の印だけが付く報（カードの「観測中」に印の色が当たる）
     {
-      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(11), onlyIn: 'dmdss',
-      rewrite: quietTide(11, at(11), (doc) => { advanceHighTide(doc); confirmArrival(doc) }),
+      file: T, headType: 'VTSE51', atMs: at(9), onlyIn: 'dmdss',
+      rewrite: quietObservation(9, 4, at(9), doc => markObservingOnly(doc, '石巻市鮎川')),
     },
+    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(10), onlyIn: 'dmdss', rewrite: quietTide(10, at(10)) },
+    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(11), onlyIn: 'dmdss', rewrite: quietTide(11, at(11), advanceHighTide) },
     {
       file: TOHOKU.tide, headType: 'VTSE51', atMs: at(12), onlyIn: 'dmdss',
       rewrite: quietTide(12, at(12), (doc) => { advanceHighTide(doc); confirmArrival(doc) }),
     },
+    // 段 13: 到達予想時刻だけを早める（満潮時刻・到達状況は前の段のまま）
+    {
+      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(13), onlyIn: 'dmdss',
+      rewrite: quietTide(13, at(13), (doc) => { advanceHighTide(doc); confirmArrival(doc); advanceArrivalForecast(doc, 10) }),
+    },
+    {
+      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(14), onlyIn: 'dmdss',
+      rewrite: quietTide(14, at(14), (doc) => { advanceHighTide(doc); confirmArrival(doc); advanceArrivalForecast(doc, 10) }),
+    },
     // 片付けの全区域解除。**時刻もこの時間軸の最後へ置く**（基準＝台本の `anchor`）
     {
-      file: TOHOKU.warning, headType: 'VTSE41', atMs: at(12) + TSUNAMI_QUIET_TAIL_MS,
+      file: TOHOKU.warning, headType: 'VTSE41', atMs: at(14) + TSUNAMI_QUIET_TAIL_MS,
       rewrite: xml => editXml(xml, (doc) => {
         toAllLifted(doc)
-        setIssueTime(doc, quietIssueAt(at(12) + TSUNAMI_QUIET_TAIL_MS))
+        setIssueTime(doc, quietIssueAt(at(14) + TSUNAMI_QUIET_TAIL_MS))
       }),
     },
   ]
@@ -1080,6 +1137,9 @@ const BUNGO = (n: number) => sample(`77_01_${String(n).padStart(2, '0')}_240613_
 /** 緊急地震速報のテストで、押されないまま最終報を流すまで（ミリ秒）。 */
 export const EEW_FINAL_SILENCE_MS = 10_000
 
+/** 遅れた誤報取消テストで、自動解除からこの長さだけ置いてから取消を流す（ミリ秒）。 */
+export const EEW_LATE_RETRACTION_AFTER_EXPIRY_MS = 10_000
+
 /**
  * 取消の報を、**直前の報のすぐ後ろ**へ置き直す。
  *
@@ -1160,6 +1220,23 @@ export const EEW_RETRACTION: TestTelegramScript = {
     { file: BUNGO(9), headType: 'VXSE45', atMs: 0 },
     // 直前は第 9 報（14:15:02Z）。取消をその 2 秒後へ寄せる（118 - 2 = 116 秒戻す）
     { file: BUNGO(33), headType: 'VXSE45', atMs: 0, rewrite: shiftIssue(-116) },
+  ],
+}
+
+/**
+ * 遅れた誤報取消テスト（**最終報 → 自動解除で画面から消えた後に取消**）。
+ *
+ * **押すたびには進まない。** 1 通目で最終報まで飛ばし、アプリが自動解除する時刻を待ってから
+ * 取消を流す（待つ長さはアプリ側が `calcEEWCancelTime` で求める。→ `useEarthquakes.ts` の
+ * `simulateEEWLateRetraction`）。台本は 2 通を持つだけで、間隔は持たない。
+ */
+export const EEW_LATE_RETRACTION: TestTelegramScript = {
+  anchor: 0,
+  pacedByApp: true,
+  steps: [
+    { file: BUNGO(9), headType: 'VXSE45', atMs: 0, rewrite: asFinal(10, 2) },
+    // 取消は、最終報（第 9 報の 2 秒後）のさらに 2 秒後へ寄せる（118 - 4 = 114 秒戻す）
+    { file: BUNGO(33), headType: 'VXSE45', atMs: 0, rewrite: shiftIssue(-114) },
   ],
 }
 
@@ -1465,6 +1542,6 @@ export const ALL_TEST_TELEGRAM_SCRIPTS: Readonly<Record<string, TestTelegramScri
   NANKAI_CHECKING, NANKAI_WATCH, NANKAI_WARNING, NANKAI_RETRACTION,
   NANKAI_COMMENTARY_AD_HOC, NANKAI_COMMENTARY_ROUTINE, KOHATSU, KOHATSU_RETRACTION,
   QUAKE_NOTICE, EARTHQUAKE_COUNT, EARTHQUAKE_COUNT_RETRACTION, LPGM_RETRACTION,
-  EEW_FORECAST, EEW_WARNING, EEW_SPECIAL_WARNING, EEW_RETRACTION, EEW_ASSUMED, EEW_DEEP,
+  EEW_FORECAST, EEW_WARNING, EEW_SPECIAL_WARNING, EEW_RETRACTION, EEW_LATE_RETRACTION, EEW_ASSUMED, EEW_DEEP,
   EEW_STRONG_SHAKING, EEW_NO_FORECAST, EEW_FORECAST_ZERO, ESTIMATED_INTENSITY,
 }

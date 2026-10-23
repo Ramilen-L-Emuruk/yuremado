@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   isRegistered, startClockSync, fetchRealtimeIntensity, clearKyoshinFrameCacheForTest, findFrontier,
+  hypoInfoItemToEEW, type YahooHypoInfoItem,
 } from './kyoshin'
 import { fetchServerTime, type ServerTimeSample } from './akamaiClock'
 import { log } from '../utils/logger'
@@ -666,5 +667,30 @@ describe('fetchRealtimeIntensity の控え', () => {
 
     // 1 回目の west(403) + east(200) の 2 回だけ。2 回目は控えから
     expect(fn).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('hypoInfoItemToEEW の規模', () => {
+  const item = (magnitude: string): YahooHypoInfoItem => ({
+    reportId: '20261022120000', reportNum: '3', reportTime: '2026/10/22 12:00:10',
+    originTime: '2026/10/22 12:00:00', regionName: '石川県能登地方',
+    latitude: '37.5N', longitude: '137.2E', depth: '10km', magnitude,
+    calcintensity: '04', isFinal: 'false', isCancel: 'false', isTraining: 'false',
+  })
+
+  // 正: 読めない規模は M0.0 ではなく「判らない」
+  it('空の規模は NaN（M0.0 にしない）', () => {
+    expect(hypoInfoItemToEEW(item('')).earthquake.hypocenter.magnitude).toBeNaN()
+  })
+  it('数値にならない規模も NaN', () => {
+    expect(hypoInfoItemToEEW(item('不明')).earthquake.hypocenter.magnitude).toBeNaN()
+  })
+  // 対照: 読める規模はそのまま
+  it('読める規模はその値', () => {
+    expect(hypoInfoItemToEEW(item('5.4')).earthquake.hypocenter.magnitude).toBe(5.4)
+  })
+  // 安全弁: 0.0 と書かれた規模は値として残す（空と区別する）
+  it('0.0 と書かれた規模は 0 のまま', () => {
+    expect(hypoInfoItemToEEW(item('0.0')).earthquake.hypocenter.magnitude).toBe(0)
   })
 })

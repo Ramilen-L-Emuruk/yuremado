@@ -72,6 +72,7 @@ async function main() {
       '2018年6月18日7時58分頃、大阪府北部を震源とするM6.1の地震が発生。大阪市北区・高槻市・枚方市・茨木市・箕面市で震度6弱を観測した（大阪府北部地震）。',
     windowStart: WINDOW_START,
     windowEnd: WINDOW_END,
+    dates: DATES,
     entries: [...eewEntries, ...quakeTsunamiEntries],
     outPath: OUT_PATH,
     indexPath: INDEX_PATH,

@@ -117,7 +117,14 @@ export function reportOrderKey(q: ReportAge): number {
 // 震度速報 → 震源情報 → 震度速報 → 震源・震度情報 の順で、最後に届いた 1 種別だけを出すと
 // 「震源情報も受け取っている」ことが画面から消える。
 
-/** 震源も震度も持つ種別。これが届いたら、速報段階の種別は見出しから落とす。 */
+/**
+ * 震源も震度も持つ種別。これが届いたら、速報段階の種別は見出しから落とす。
+ *
+ * **標準版（P2PQuake）の「各地の震度情報」も完全版に数える**（2026-10-21 ユーザー承認。選択
+ * 「標準版も同じにする (Recommended)」）。同じ内容（震源＋各地の震度）に付く情報種別が
+ * バリアントで違うだけなので（DMDATA は VXSE53 の「震源・震度情報」）、片方だけ完全版から
+ * 外すと、標準版では速報段階が完全版を上書きしてしまう。
+ */
 const FULL_REPORT_TYPES: readonly IssueType[] = ['震源・震度情報', '各地の震度情報']
 
 /** 完全版に呑み込まれる種別（震源だけ・震度だけの速報段階）。 */
@@ -277,8 +284,17 @@ function mergeReportRecord(a: QuakeReportRecord, b: QuakeReportRecord): QuakeRep
  * これを直さないのは、**同居させる経路が無い**ため —— 遠地地震は国内の震度を伴わない別の事象で、
  * 顕著な地震の震源要素更新のお知らせとは `sameQuakeEntry` が同一カードと見なさない。
  *
- * 代償として、**完全版を受け取った後に震度速報が届いても見出しには出ない**（記録そのものは
- * 残る）。**この順序は気象庁の発表で実際に起きる** —— 近接した時刻に 2 つの地震があると、
+ * **見出しからの呑み込みは 2026-09-13 にユーザーが求めたもの**（原文「震源・震度情報はすべて
+ * 置き換えになりませんか？／なので震源・震度情報が来た時点でそれだけでいいと思います。」。
+ * 会話記録 `ab047bec-233d-4a70-9d73-5cb848595c29.jsonl`）。**カードの中身を据え置くほうは別の発言**（2026-09-18。
+ * → `docs/spec/quake-spec.md` §6.3「完全版を受けた後の速報段階」）。
+ * 標準版の「各地の震度情報」を完全版に含める範囲は 2026-10-21 ユーザー承認。
+ *
+ * 代償として、**完全版を受け取った後に震度速報が届いても見出しには出ない**。この関数が見出しの
+ * 記録（`reports`）から落とすので、記録にも残らない。残るのは当て直し用の電文の控え
+ * （`sourceTelegrams`。→ `mergeQuakeInto` の `holdBack`）だけ。
+ *
+ * **この順序は気象庁の発表で実際に起きる** —— 近接した時刻に 2 つの地震があると、
  * あとから入電した区域の震度が先に検知していた地震へ紐づくため。そのときカードの中身は
  * `mergeQuakeInto` の `isSupersededByExistingCard` が据え置くので、**見出しにだけ出ない**。
  */
@@ -1269,6 +1285,61 @@ export function isRetractedQuakeReport(
 }
 
 /**
+ * {@link isRetractedQuakeReport} が `true` を返した報のうち、**取消と同じ時刻だったために**
+ * 取り下げ側へ倒したものなら、その取消を返す。**判定するだけで記録はしない**
+ * （記録は {@link logRetractionTie}）。捨てる扱いそのものは変えない。
+ *
+ * **同じ時刻は前後を決められないので、取消を尊重して捨てている**（→ `isRetractedQuakeReport`）。
+ * 取消より前に発表された報を捨てるのとは理由が違うのに、記録が同じだと見分けられない。出たら、
+ * 気象庁が取消と同じ秒に同じ種別の報を作ったか、作成時刻を持たない経路で同じ分になったかのどちらか
+ * （数えた範囲は `docs/spec/quake-spec.md` §6.2）。
+ *
+ * **ライブの更新関数の中からは呼ばない。** 入口で 1 回だけ決め、結果を渡す（更新関数はレンダー時に
+ * 走るぶん、別の時点の台帳を読む。`useEarthquakes` の `quakeRetracted` と同じ理由）。
+ */
+export function findRetractionTie(
+  retractions: readonly QuakeRetraction[],
+  incoming: JMAQuake,
+  areaPrefIndex: AreaPrefIndex,
+): QuakeRetraction | undefined {
+  if (!incoming.time) return undefined
+  const ages = retractions
+    .filter(r => r.issueType === incoming.issue.type && sameQuakeEntry(r.entry, incoming, areaPrefIndex))
+    .map(r => ({ r, age: compareReportAge(incoming, { time: r.reportTime, createdAtMs: r.reportCreatedAtMs }) }))
+  // 同じ時刻の取消があっても、**それより後の取消もあるなら**「取消より前の報」として捨てたのと
+  // 変わらない。同じ時刻だけが理由のときに限る。
+  if (ages.some(a => a.age < 0)) return undefined
+  return ages.find(a => a.age === 0)?.r
+}
+
+/**
+ * {@link findRetractionTie} が見つけた取消を、記録に 1 行残す。
+ *
+ * **ライブと履歴では、従来の「取消以前に発表された報を捨てた」の行に続けてもう 1 行出る。**
+ * リプレイの初期状態（`foldPreWindowQuakes`）は従来の行を持たない（件数をまとめて出す）ので、
+ * この行だけが単独で出る。
+ */
+export function logRetractionTie(incoming: JMAQuake, tied: QuakeRetraction): void {
+  log.warn('[quake] 取消と同じ時刻の報を、前後を決められないので取消を採って捨てた', {
+    id: incoming.id, issueType: incoming.issue.type, time: incoming.time,
+    cancelId: tied.entry.id, cancelTime: tied.reportTime,
+  })
+}
+
+/**
+ * 判定と記録を続けて行う。**台帳をその場で読める入口（履歴・リプレイの初期状態）だけが使う。**
+ * ライブは入口で {@link findRetractionTie} を呼び、その結果を更新関数へ渡す（理由はあちらの注記）。
+ */
+export function noteRetractionTie(
+  retractions: readonly QuakeRetraction[],
+  incoming: JMAQuake,
+  areaPrefIndex: AreaPrefIndex,
+): void {
+  const tied = findRetractionTie(retractions, incoming, areaPrefIndex)
+  if (tied) logRetractionTie(incoming, tied)
+}
+
+/**
  * カードへ当てた電文のうち、この取消が取り下げるもの（同じ種別で、取消より前に発表された報）。
  *
  * 前後の比べ方と「発表時刻が空なら取り下げ側へ倒す」は `isRetractedQuakeReport` と同じ。
@@ -1578,6 +1649,9 @@ export function mergeQuakeHistory(
           rows: quakeRowSnapshot(effect.card.points, effect.card.cities ?? [], areaPrefIndex),
           issuedAt: markIssuedAt(effect.card.issue.time),
           reportType: effect.card.issue.type,
+          // 取消を当て直した姿は電文の報ではない（ライブの同じ分岐と揃える）
+          telegramType: null,
+          revise: null,
         })
       }
       continue
@@ -1587,6 +1661,7 @@ export function mergeQuakeHistory(
       log.warn('[quake] 取消以前に発表された報を捨てた', {
         id: q.id, issueType: q.issue.type, time: q.time,
       })
+      noteRetractionTie(retractions, q, areaPrefIndex)
       continue
     }
     // 既存カードはライブ経路と同じ関数で選ぶ（取消表示中は選ばない・2 枚当たれば報の古い方。
@@ -1619,6 +1694,10 @@ export function mergeQuakeHistory(
         // **カードの種別を渡す**（`q.issue.type` ではない）。ライブ側も統合後のカードから
         // 採っており、片方だけ電文の種別にすると行の初出の判定基準がずれる。
         reportType: card.issue.type,
+        // 一方、`Revise` と欄の初出が見る「直前の電文の種別」は電文の側（→ `QuakeMarkSnapshot.telegramType`）。
+        // 履歴は印を出さないので `Revise` は渡さない。
+        telegramType: q.issue.type,
+        revise: null,
       })
     }
   }
@@ -1671,6 +1750,10 @@ export function mergeQuakeHistory(
       rows: quakeRowSnapshot(card.points, card.cities ?? [], areaPrefIndex),
       issuedAt: markIssuedAt(card.issue.time),
       reportType: card.issue.type,
+      // 写し直すのは吸収した姿で、電文が届いたわけではない。上のループがその鍵へ最後に当てた
+      // 電文の種別を引き継ぐ。
+      telegramType: markMemory.get(key)?.telegramType ?? null,
+      revise: null,
     })
   }
 

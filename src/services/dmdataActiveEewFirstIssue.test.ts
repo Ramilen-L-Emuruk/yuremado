@@ -68,7 +68,7 @@ describe('fetchDmdataActiveEews の第 1 報の時刻', () => {
       { serial: 3, dateTime: t3, isCanceled: false, telegrams: [{ id: 'xml-3', head: { type: 'VXSE45', test: false } }] },
     ], eewXml(id, 3, t3))
 
-    const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(got).toHaveLength(1)
     expect(got[0].issue?.serial).toBe('3')
@@ -84,7 +84,7 @@ describe('fetchDmdataActiveEews の第 1 報の時刻', () => {
       { serial: 2, telegrams: [{ id: 'xml-2', head: { type: 'VXSE45', test: false } }] },
     ], eewXml(id, 2, t2))
 
-    const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+    const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
 
     expect(got).toHaveLength(1)
     expect(got[0].firstIssueTime).toBeNull()
@@ -105,7 +105,7 @@ describe('fetchDmdataActiveEews の第 1 報の時刻', () => {
     it('途中の報が特別警報相当なら、最新報で下がっていても印を立てる', async () => {
       const id = '20261021130000'
       stub(id, items(['5+', '6-', '5+']), eewXml(id, 3, jst(serverNow() - 5_000)))
-      const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+      const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
       expect(got).toHaveLength(1)
       expect(got[0].everSpecialWarning).toBe(true)
     })
@@ -114,7 +114,7 @@ describe('fetchDmdataActiveEews の第 1 報の時刻', () => {
     it('どの報も 5 強以下なら印を立てない', async () => {
       const id = '20261021130001'
       stub(id, items(['5-', '5+', '5+']), eewXml(id, 3, jst(serverNow() - 5_000)))
-      const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+      const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
       expect(got).toHaveLength(1)
       expect(got[0].everSpecialWarning).toBeFalsy()
     })
@@ -124,7 +124,7 @@ describe('fetchDmdataActiveEews の第 1 報の時刻', () => {
       const id = '20261021130002'
       stub(id, items(['5+', '6-', '5+'], (i) => i === 1 ? { isCanceled: true } : i === 0 ? { intensity: undefined } : {}),
         eewXml(id, 3, jst(serverNow() - 5_000)))
-      const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)
+      const got = await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
       expect(got).toHaveLength(1)
       expect(got[0].everSpecialWarning).toBeFalsy()
       expect(warnings().some(w => w.includes('特別警報だったかを判定できない報が 1 通'))).toBe(true)
@@ -165,14 +165,14 @@ describe('fetchDmdataActiveEews の第 1 報の時刻', () => {
     it('取っている間に解除の時刻を過ぎた最終報は返さない', async () => {
       const id = '20261021120000'
       stubAdvancing(id, finalXml(id, 58_000), 5_000)
-      expect(await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)).toHaveLength(0)
+      expect(await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)).toHaveLength(0)
     })
 
     // 対照: 取り終えた時点でもまだ解除の時刻前なら返す
     it('取り終えた時点でまだ解除の時刻前なら返す', async () => {
       const id = '20261021120001'
       stubAdvancing(id, finalXml(id, 30_000), 5_000)
-      expect(await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS)).toHaveLength(1)
+      expect(await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)).toHaveLength(1)
     })
   })
 })

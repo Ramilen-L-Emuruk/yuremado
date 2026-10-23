@@ -65,9 +65,10 @@ function quakeSample(): QuakeSample {
     id: `dmdata-quake-${EVENT_ID}-1`,
     eventId: EVENT_ID,
     time: t,
+    reportsRevise: true,
     cancelled: false,
     cancelText: '取消',
-    issue: { source: '気象庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
+    issue: { source: '気象庁', editorialOffice: '気象庁本庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
     earthquake: {
       time: iso(),
       hypocenter: {
@@ -167,7 +168,8 @@ function eewRegion(): EewSample['areas'][number] {
 function eewSample(): EewSample {
   return {
     headline: '見出し',
-    warningRegions: ['北陸'],
+    warningRegions: ['北陸', '甲信'],
+    addedWarningRegions: ['甲信'],
     infoName: '緊急地震速報（警報）',
     cancelText: '取消',
     strongShakingOnly: true,
@@ -219,6 +221,7 @@ function lpgmSample(): DeepRequired<JMALpgm> {
     eventId: EVENT_ID,
     time: iso(),
     createdAtMs: Date.parse('2024-01-01T07:00:00Z'),
+    reportsRevise: true,
     operationStatus: '訓練',
     infoName: '長周期地震動に関する観測情報',
     originTime: iso(),

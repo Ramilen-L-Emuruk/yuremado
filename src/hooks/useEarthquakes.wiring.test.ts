@@ -17,7 +17,7 @@
 // 差し替えるのは外部 I/O（WebSocket・REST・観測点座標）だけ。時計や純粋関数は本物を使う。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, cleanup, act } from '@testing-library/react'
-import type { AppEvent, LiveEvent, LiveEventMeta, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, IntensityScale } from '../types/earthquake'
+import type { AppEvent, LiveEvent, LiveEventMeta, EEWAlert, JMALpgm, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, IntensityScale } from '../types/earthquake'
 import type { ReplayEntry, ReplayPayload } from '../types/replay'
 import type { JMAKohatsu } from '../types/earthquake'
 import { serverDate, setReplayOffset } from '../utils/clock'
@@ -27,7 +27,7 @@ import {
 import { DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
 import { log } from '../utils/logger'
 import { CELL_LAT_DEG, CELL_LON_DEG } from '../utils/bufrEstimatedIntensity'
-import { ACTIVE_EEW_WINDOW_MS } from '../utils/eew'
+import { ACTIVE_EEW_WINDOW_MS, calcEEWCancelTime } from '../utils/eew'
 // **テストボタンのデータをここで先に読む。** 値は使わないが、これが無いと
 // `simulate*` を最初に呼ぶテストが「このファイルで初回のモジュール解決・変換」を
 // テスト本体の中で行うことになる —— 実データ 3 つで 824 KB あり、全ファイル並列実行では
@@ -246,15 +246,17 @@ afterEach(cleanup)
 
 /** replayTimeOffset を差し替えられるハーネス。onLiveEvent は生の電文を覗きたいときだけ渡す。 */
 function setup(opts: {
-  apiKey?: string; offset?: number | null; onLiveEvent?: (event: LiveEvent) => void
+  apiKey?: string; offset?: number | null; onLiveEvent?: (event: LiveEvent, meta?: LiveEventMeta) => void
   /** 起動時に復元した緊急地震速報を読み上げ側へ渡す口（`App.tsx` では `restoreStartupEews`） */
   onStartupRestoreEews?: (eews: readonly EEWAlert[]) => void
   /** 起動時の復元が出す画面の要求（`App.tsx` では `handleStartupRestore`） */
   onStartupRestore?: Parameters<typeof useEarthquakes>[4]
+  /** 設定「試験報を受信（検証用）」（`dmdataTestDelivery`）。既定は偽（設定の既定と同じ） */
+  testDelivery?: boolean
 } = {}) {
   const view = renderHook(
     ({ offset }: { offset: number | null }) =>
-      useEarthquakes(opts.onLiveEvent, opts.apiKey ?? 'test-key', false, offset, opts.onStartupRestore, opts.onStartupRestoreEews),
+      useEarthquakes(opts.onLiveEvent, opts.apiKey ?? 'test-key', opts.testDelivery ?? false, offset, opts.onStartupRestore, opts.onStartupRestoreEews),
     { initialProps: { offset: opts.offset ?? null } },
   )
   return {
@@ -977,6 +979,26 @@ describe('EEW 発報テストの報の推移', () => {
     const cancel = eews[eews.length - 1]
     expect(cancel.cancelled).toBe(true)
     expect(cancel.cancelText).toBe('先ほどの、緊急地震速報（地震動予報）を取り消します。')
+  })
+
+  // 遅れた誤報取消テスト: 取消が**自動解除の後に**届くこと（先に届くと普通の誤報取消の経路を見てしまう）
+  it('遅れた誤報取消テスト: 自動解除で消えた後に取消が届き、消えた後の取消として扱われる', async () => {
+    const calls: Array<[LiveEvent, LiveEventMeta | undefined]> = []
+    const h = setup({ onLiveEvent: (e, meta) => { calls.push([e, meta]) } })
+    await act(async () => { await h.current.simulateEEWLateRetraction() })
+    // **受信と同じイベントキューへ積む**ので、ディスパッチャを 1 回回す
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(h.current.activeEEWs.size).toBe(1)
+    // 自動解除まで進める（取消はまだ届かない）
+    let guard = 0
+    while (h.current.activeEEWs.size > 0 && guard++ < 600) act(() => { vi.advanceTimersByTime(1_000) })
+    expect(h.current.activeEEWs.size).toBe(0)
+    expect(calls.some(([e]) => e.kind === 'eew' && (e as EEWAlert).cancelled && !(e as EEWAlert).expired)).toBe(false)
+    act(() => { vi.advanceTimersByTime(11_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    const late = calls.find(([e]) => e.kind === 'eew' && (e as EEWAlert).cancelled && !(e as EEWAlert).expired)
+    expect(late?.[1]?.eewLateCancel).toBeDefined()
+    expect([...h.current.activeEEWs.values()][0]?.cancelledAt).toBeTruthy()
   })
 })
 
@@ -2613,6 +2635,65 @@ describe('標準版: P2PQuake と Yahoo の緊急地震速報をまとめる', (
     act(() => { sockets[0].onEvent?.(p2p('1', now, ['石川県能登'])) })
     act(() => { vi.advanceTimersByTime(50) })
     expect(areasOf(h)).toEqual(['石川県能登'])
+  })
+
+  // 標準版の訓練報・試験報（2026-10-21 ユーザー承認「設定に従わせる (Recommended)」）
+  it('試験報: 設定「試験報を受信」が真なら、P2PQuake の試験報を「試験」の印つきで画面へ出す', async () => {
+    const h = setup({ testDelivery: true })
+    await h.flush()
+    const now = new Date(Math.floor(serverDate().getTime() / 1000) * 1000).toISOString()
+    act(() => { sockets[0].onEvent?.(p2p('1', now, ['石川県能登'], { test: true })) })
+    act(() => { vi.advanceTimersByTime(50) })
+    expect(shown(h)?.test).toBe(false)
+    expect(shown(h)?.operationStatus).toBe('試験')
+  })
+
+  it('試験報（対照）: 設定が偽（既定）なら、P2PQuake の試験報は画面に出さない', async () => {
+    const h = setup()
+    await h.flush()
+    const now = new Date(Math.floor(serverDate().getTime() / 1000) * 1000).toISOString()
+    act(() => { sockets[0].onEvent?.(p2p('1', now, ['石川県能登'], { test: true })) })
+    act(() => { vi.advanceTimersByTime(50) })
+    expect(h.current.activeEEWs.size).toBe(0)
+  })
+
+  it('訓練報: 設定が真なら強震モニタの訓練報を「訓練」の印つきで出し、本物の報には印を付けない', async () => {
+    const h = setup({ testDelivery: true })
+    await h.flush()
+    act(() => { h.current.injectEvent(yahoo('17', T1, { test: true })) })
+    expect(shown(h)?.operationStatus).toBe('訓練')
+    const real = setup({ testDelivery: true })
+    await real.flush()
+    act(() => { real.current.injectEvent(yahoo('17', T1)) })
+    expect(shown(real)?.operationStatus).toBeUndefined()
+  })
+
+  // 取消の前に画面から消えた地震の P2PQuake の誤報取消も通す（2026-10-22 ユーザー承認「効かせる (Recommended)」）
+  it('P2PQuake: 自動解除で消えた後に届いた誤報取消を、最後の報に載せて 10 秒戻す', async () => {
+    const h = setup()
+    await h.flush()
+    const now = new Date(Math.floor(serverDate().getTime() / 1000) * 1000).toISOString()
+    act(() => { sockets[0].onEvent?.(p2p('1', now, ['石川県能登'])) })
+    act(() => { vi.advanceTimersByTime(50) })
+    expect(h.current.activeEEWs.size).toBe(1)
+    act(() => { vi.advanceTimersByTime(10 * 60_000) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(0)
+
+    const later = new Date(serverDate().getTime()).toISOString()
+    act(() => { sockets[0].onEvent?.(p2p('2', later, [], { cancelled: true })) })
+    act(() => { vi.advanceTimersByTime(50) })
+    expect(shown(h)?.cancelledAt).toBeTruthy()
+    expect(areasOf(h)).toEqual(['石川県能登'])
+  })
+
+  it('P2PQuake（対照）: 画面に一度も出ていない地震の誤報取消は通さない', async () => {
+    const h = setup()
+    await h.flush()
+    const now = new Date(Math.floor(serverDate().getTime() / 1000) * 1000).toISOString()
+    act(() => { sockets[0].onEvent?.(p2p('2', now, [], { cancelled: true })) })
+    act(() => { vi.advanceTimersByTime(50) })
+    expect(h.current.activeEEWs.size).toBe(0)
   })
 
   // 本体 1: Yahoo の続報が P2PQuake の区域・仮定震源を消さない
@@ -4729,6 +4810,26 @@ describe('カードが採らない電文には「据え置き」の印を付け�
     expect(h.current.earthquakes.filter(q => !q.cancelledAt)).toHaveLength(0)
   })
 
+  // 正: **取消と同じ時刻の報を捨てたときは、その旨の記録が 1 行出る**（捨てる扱いは変えない）。
+  // 判定は入口で 1 回決め、更新関数へはその結果だけを渡す。対照: 取消より前の報では出ない。
+  it('取消と同じ時刻の報を捨てたときだけ、同じ時刻だったことを記録する', async () => {
+    // この配線テストは logger をモックしているので、`log.warn` を直接見る。
+    vi.mocked(log.warn).mockClear()
+    const tieLines = () => vi.mocked(log.warn).mock.calls.filter(c => String(c[0]).includes('取消と同じ時刻の報'))
+    const h = setup({ onLiveEvent: vi.fn() })
+    await h.flush()
+
+    act(() => { h.current.injectEvent(完全版(1, '2024-11-26T22:47:00+09:00')) })
+    act(() => { h.current.injectEvent(取消(2, '2024-11-26T22:50:00+09:00')) })
+    // 取消より前（対照）: 捨てるが、同じ時刻の記録は出ない
+    act(() => { h.current.injectEvent(完全版(3, '2024-11-26T22:48:00+09:00')) })
+    expect(tieLines()).toHaveLength(0)
+    // 取消と同じ時刻: 捨てて、記録が出る
+    act(() => { h.current.injectEvent(完全版(4, '2024-11-26T22:50:00+09:00')) })
+    expect(tieLines()).toHaveLength(1)
+    expect(h.current.earthquakes.filter(q => !q.cancelledAt)).toHaveLength(0)
+  })
+
   // 正: **震源要素更新（VXSE61）はどんな既存カードでも採る。** 統合側は専用の分岐で必ず受理して
   // 抜けるので、切り出した述語もその前提を持たなければならない。持たないと、1 通目でカードの
   // 種別が VXSE61 へ変わったあと、2 通目以降が「既存が VXSE61」の理由で据え置き扱いになり、
@@ -6677,8 +6778,8 @@ describe('ライブの入口: 画面から消えた地震の報を採らない',
     ({ ...createTestEEWWarning('20261020140000', serial), ...over })
 
   /** ライブで受けた最終報を自動解除させる */
-  async function expireLive() {
-    const h = setup()
+  async function expireLive(onLiveEvent?: (event: LiveEvent, meta?: LiveEventMeta) => void) {
+    const h = setup({ onLiveEvent })
     await h.flush()
     const final = report(3, { isFinal: true })
     console.log("PROBE onEvent", typeof sockets[0].onEvent, "status", h.current.connectionStatus)
@@ -6728,13 +6829,78 @@ describe('ライブの入口: 画面から消えた地震の報を採らない',
     expect(h.current.activeEEWs.size).toBe(0)
   })
 
-  // 正: 消えた後に取消が届いたら、その後の新しい報番号の報も出さない（取消は終端）
+  // 正: 消えた後に取消が届いたら、その後の新しい報番号の報も出さない（取消は終端）。取消そのものは最後の報に載せて
+  // 10 秒だけ戻す（→ 下の「画面から消えた後に届いた誤報取消」）
   it('消えた後に届いた取消も、その後の新しい報番号の報を止める', async () => {
     const h = await expireLive()
     await deliver(h, report(4, { cancelled: true }))
+    act(() => { vi.advanceTimersByTime(11_000) })
+    await h.flush()
     expect(h.current.activeEEWs.size).toBe(0)
     await deliver(h, report(5))
     expect(h.current.activeEEWs.size).toBe(0)
+  })
+
+  // 取消の前に画面から消えた（自動解除された）地震へ届いた誤報取消は、普通の誤報取消と同じく伝える
+  // （2026-10-21 ユーザー承認「直す (Recommended)」）。状態側は最後の報に取消を載せて 10 秒戻し、読み上げ側へ印を渡す
+  describe('画面から消えた後に届いた誤報取消', () => {
+    const lateMarks = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls
+      .filter(([e]) => (e as LiveEvent).kind === 'eew' && (e as EEWAlert).cancelled && !(e as EEWAlert).expired)
+      .map(([, meta]) => (meta as LiveEventMeta | undefined)?.eewLateCancel)
+
+    it('正: 最後の報に取消を載せて 10 秒戻し、読み上げ側へ第 1 報の時刻と震央地名を渡す', async () => {
+      const onLive = vi.fn()
+      const h = await expireLive(onLive)
+      await deliver(h, report(4, { cancelled: true }))
+      const shown = [...h.current.activeEEWs.values()][0]
+      expect(shown?.cancelledAt).toBeTruthy()
+      // 土台は最後の報（取消電文は震源を持たない）
+      expect(shown?.earthquake.hypocenter.name).toBe(h.final.earthquake.hypocenter.name)
+      expect(lateMarks(onLive)).toEqual([{
+        firstIssueTime: h.final.issue?.time ?? h.final.time,
+        hypocenterName: h.final.earthquake.hypocenter.name,
+      }])
+      act(() => { vi.advanceTimersByTime(11_000) })
+      await h.flush()
+      expect(h.current.activeEEWs.size).toBe(0)
+    })
+
+    it('対照: 覚えておく窓を過ぎてから届いた取消は戻さず、印も渡さない', async () => {
+      const onLive = vi.fn()
+      const h = await expireLive(onLive)
+      act(() => { vi.advanceTimersByTime(ACTIVE_EEW_WINDOW_MS + 1000) })
+      await h.flush()
+      await deliver(h, report(4, { cancelled: true }))
+      expect(h.current.activeEEWs.size).toBe(0)
+      expect(lateMarks(onLive)).toEqual([undefined])
+    })
+
+    // 自動解除と誤報取消が同じティックに並んでも、消えた後の取消として伝える（2026-10-22 ユーザー承認「直す (Recommended)」）
+    it('正: 自動解除と同じティックに届いた誤報取消も、消えた後の取消として扱う', async () => {
+      const onLive = vi.fn()
+      const h = setup({ onLiveEvent: onLive })
+      await h.flush()
+      await deliver(h, report(3))
+      expect(h.current.activeEEWs.size).toBe(1)
+      act(() => {
+        h.current.injectEvent({ ...report(3), cancelled: true, expired: true })
+        h.current.injectEvent(report(4, { cancelled: true }))
+      })
+      await h.flush()
+      expect([...h.current.activeEEWs.values()][0]?.cancelledAt).toBeTruthy()
+      expect(lateMarks(onLive).filter(m => m !== undefined)).toHaveLength(1)
+    })
+
+    it('安全弁: 同じ取消が重ねて届いても、2 度目は戻さず印も渡さない', async () => {
+      const onLive = vi.fn()
+      const h = await expireLive(onLive)
+      await deliver(h, report(4, { cancelled: true }))
+      act(() => { vi.advanceTimersByTime(11_000) })
+      await h.flush()
+      await deliver(h, report(4, { cancelled: true }))
+      expect(h.current.activeEEWs.size).toBe(0)
+      expect(lateMarks(onLive).filter(m => m !== undefined)).toHaveLength(1)
+    })
   })
 
   // 経路をまたぐと報番号を比べられないので発表時刻で比べる（標準版の Yahoo と P2PQuake）。同じ秒以前は弾き、新しければ出す
@@ -6756,5 +6922,168 @@ describe('ライブの入口: 画面から消えた地震の報を採らない',
     await h.flush()
     await deliver(h, report(2))
     expect(h.current.activeEEWs.size).toBe(1)
+  })
+})
+
+describe('DMDSS 版の WebSocket で届いた長周期地震動にも更新の印を付ける', () => {
+  // **経路は 2 つある**（キュー経路と `ws.onEvent`）。WebSocket 経路だけ印付けを呼んでいなかった頃は、
+  // キュー経路を通るテスト・リプレイでは印が付き、実機のライブでだけ付かなかった。
+  function lpgm(maxLgInt: number, time: string, cancelled = false): JMALpgm {
+    return {
+      id: `dmdata-lpgm-20240101161000-${time}`,
+      eventId: '20240101161000',
+      time,
+      originTime: '2024-01-01T16:10:00+09:00',
+      maxClass: maxLgInt,
+      cancelled,
+      ...(cancelled ? {} : { regions: [{ code: '390', name: '石川県能登', maxLgInt }], points: [], prefs: [] }),
+    }
+  }
+  const markKey = 'lpgm:20240101161000'
+
+  // 正: 続報で階級が動いた区域に印が付く。
+  it('続報で階級が上がった区域に印が付く', async () => {
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: lpgm(3, '2024-01-01T07:40:00Z') }) })
+    expect(h.current.quakeUpdateMarks.get(markKey)).toBeUndefined()
+    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: lpgm(4, '2024-01-01T07:50:00Z') }) })
+    expect(h.current.lpgmByEventId.get('20240101161000')?.maxClass).toBe(4)
+    expect(h.current.quakeUpdateMarks.get(markKey)?.rows.size).toBeGreaterThan(0)
+  })
+
+  // 安全弁: 取消では印を付けない（一覧ごと消えるため）。
+  it('取消では印を付けない', async () => {
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: lpgm(3, '2024-01-01T07:40:00Z') }) })
+    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: lpgm(3, '2024-01-01T08:00:00Z', true) }) })
+    expect(h.current.quakeUpdateMarks.get(markKey)).toBeUndefined()
+  })
+})
+
+// 自動解除の時刻（`calcEEWCancelTime`）を既に過ぎた報は、画面に出ていない地震のものなら採らない（→ `skipExpiredEew`）。
+// 標準版の Yahoo は終わった速報の最終報を一覧に 150〜180 秒残し、一覧を差分で見る処理（`diffHypoInfoEvents`）を作り直す（起動・リプレイの開始と終わり）と
+// それを新しい項目として出し直す。消えた地震の記憶はリセットで捨てるので、報の時刻だけで止める（2026-10-21 ユーザー承認「おすすめで」）
+describe('ライブの入口: 自動解除の時刻を過ぎた報を採らない', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.mocked(fetchDmdataActiveEews).mockReset()
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValue([])
+    // 時計を信じられる状態にする（再生の時計。ずれ 0 で壁時計と同じ）。時計を信じない場合は安全弁のテストで外す
+    setReplayOffset(0)
+    vi.mocked(log.info).mockClear()
+  })
+  afterEach(() => {
+    setReplayOffset(null)
+    vi.useRealTimers()
+  })
+
+  /** 10 分前に発表された、震源も 10 分前の報（M・深さによらず自動解除の時刻を過ぎている） */
+  const staleReport = (serial: number, over: Partial<EEWAlert> = {}): EEWAlert => {
+    const base = createTestEEWWarning('20261021090000', serial)
+    const issued = new Date(Date.now() - 10 * 60_000).toISOString()
+    // **発生時刻も古くする。** 自動解除の時刻は発生時刻から数えるので、発表時刻だけ古くしても過ぎない
+    return {
+      ...base,
+      time: issued,
+      issue: { ...base.issue!, time: issued },
+      earthquake: { ...base.earthquake, originTime: issued, arrivalTime: issued },
+      ...over,
+    }
+  }
+
+  const deliver = async (h: ReturnType<typeof setup>, eew: EEWAlert) => {
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: eew }) })
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+  }
+
+  // 正: 自動解除の時刻を過ぎた報は出さない。弾いたことは記録に残す。
+  // **最終報ではなく続報で確かめる** —— 最終報は門が無くても、受けた直後に自動解除の予約（過ぎた時刻）が片付けるので、
+  // 画面に残らないことでは門の効き目を見分けられない（音と読み上げは鳴ってしまう。それを止めるのがこの門）
+  it('自動解除の時刻を過ぎた報は出さない（音・読み上げへも渡さない）', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    await deliver(h, staleReport(3))
+    expect(h.current.activeEEWs.size).toBe(0)
+    // 音と読み上げの入口（`onLiveEvent`）へ渡っていない —— この門が止めたいのはここ
+    expect(onLiveEvent.mock.calls.some(([e]) => e.kind === 'eew')).toBe(false)
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('ライブの受信') && String(c[0]).includes('自動解除の時刻を'))).toBe(true)
+  })
+
+  // 対照: 自動解除の時刻の手前の報（いま発表された最終報）は出す
+  it('自動解除の時刻の手前の最終報は出す（音・読み上げへも渡す）', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    await deliver(h, { ...createTestEEWWarning('20261021090000', 3), isFinal: true })
+    expect(h.current.activeEEWs.size).toBe(1)
+    expect(onLiveEvent.mock.calls.some(([e]) => e.kind === 'eew')).toBe(true)
+  })
+
+  // 安全弁: 時計を信じられない（未較正で再生もしていない）ときは弾かない。進んだ壁時計で本物の報を捨てないため
+  it('時計を信じられないときは、時刻を過ぎて見える報も出す', async () => {
+    setReplayOffset(null)
+    const h = setup()
+    await h.flush()
+    await deliver(h, staleReport(3))
+    expect(h.current.activeEEWs.size).toBe(1)
+  })
+
+  // 安全弁: 画面に出ている地震の報には掛けない（表示中の地震は自動解除の予約が片付ける。続報を入口で落とさない）
+  it('画面に出ている地震の、時刻の古い続報は採る', async () => {
+    const h = setup()
+    await h.flush()
+    await deliver(h, createTestEEWWarning('20261021090000', 1))
+    expect(h.current.activeEEWs.size).toBe(1)
+    await deliver(h, staleReport(2))
+    expect(h.current.activeEEWs.size).toBe(1)
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('自動解除の時刻を'))).toBe(false)
+  })
+
+  // 境界: 自動解除の時刻の約 1 秒手前は採り、約 1 秒過ぎは採らない（比べ方は `calcEEWCancelTime` と同じ発表時刻起点）。
+  // 取り出しまでに偽の時計が 100 ms ほど進むので、ちょうど等しい点（`<=` で弾く側）までは固定していない
+  it('自動解除の時刻の約 1 秒手前は採り、約 1 秒過ぎは採らない', async () => {
+    const issued = new Date(Date.now() - 60_000)
+    const make = (serial: number, eventId: string) => {
+      const base = createTestEEWWarning(eventId, serial)
+      const iso = issued.toISOString()
+      // **発生時刻も揃える。** 台本の電文は「いま」へ寄せてあるので、発表時刻だけ戻すと
+      // 発生時刻のほうが新しい報になる（自動解除の時刻の計算が狂う）
+      return { ...base, time: iso, issue: { ...base.issue!, time: iso }, earthquake: { ...base.earthquake, originTime: iso, arrivalTime: iso } }
+    }
+    const before = make(1, '20261021091000')
+    const cancelMs = calcEEWCancelTime(before, new Date(Math.floor(issued.getTime() / 1000) * 1000)).getTime()
+    const h = setup()
+    await h.flush()
+    vi.setSystemTime(cancelMs - 1100)
+    await deliver(h, before)
+    expect(h.current.activeEEWs.size).toBe(1)
+    vi.setSystemTime(cancelMs + 1000)
+    await deliver(h, make(1, '20261021091100'))
+    expect(h.current.activeEEWs.size).toBe(1)
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('20261021091100') && String(c[0]).includes('自動解除の時刻を'))).toBe(true)
+  })
+
+  // 安全弁: 発表時刻が読めない報は弾かない（解除の時刻が震源時刻だけで決まり、「発表から 60 秒は残す」下限が外れるため）
+  it('発表時刻が読めない報は、震源時刻が古くても採る', async () => {
+    const h = setup()
+    await h.flush()
+    await deliver(h, staleReport(3, { time: '', issue: { ...staleReport(3).issue!, time: '' } }))
+    expect(h.current.activeEEWs.size).toBe(1)
+  })
+
+  // 安全弁: 起動時の復元が静かに積む報には掛けない。古さは取得側（`selectActiveEews`）が見ており、ここで落とすと
+  // 読み上げの記憶とタブ移動だけが「戻した」つもりで進む
+  it('起動時の復元が戻した報は、自動解除の時刻を過ぎて見えても画面に出す', async () => {
+    vi.mocked(fetchDmdataActiveEews).mockResolvedValue([staleReport(2)])
+    const h = setup()
+    await h.flush()
+    act(() => { vi.advanceTimersByTime(100) })
+    await h.flush()
+    expect(h.current.activeEEWs.size).toBe(1)
+    expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('自動解除の時刻を'))).toBe(false)
   })
 })

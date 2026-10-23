@@ -79,6 +79,14 @@ export interface TestTelegramScript {
     cancelIndex?: number
   }
   /**
+   * **流す間隔をアプリ側が決める台本**（`atMs` は届く時刻を表さない）。
+   *
+   * 遅れた誤報取消テストがこれ —— 取消を流すのは「アプリが自動解除する時刻の 10 秒後」で、
+   * その時刻は電文ではなく `calcEEWCancelTime` が決める（→ `useEarthquakes.ts` の
+   * `simulateEEWLateRetraction`）。`stepByPress` と同じく、台本は電文の並びだけを持つ。
+   */
+  pacedByApp?: true
+  /**
    * どの電文の時刻を「いま」に合わせるか（`steps` の添字）。
    *
    * 電文どうしの時刻の差は実電文のまま保つ（1 つの差分だけずらす）。地震情報は**最後の報**に

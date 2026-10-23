@@ -1,4 +1,4 @@
-import type { JMAQuake, JMAQuakeCity, EarthquakePoint, IssueType } from '../types/earthquake'
+import type { JMAQuake, JMAQuakeCity, JMALpgm, EarthquakePoint, IssueType } from '../types/earthquake'
 import { cityKey, higherIntensityEntry, isAreaPoint, type AreaPrefIndex, type IntensityEntry } from './quakePoints'
 import { log } from './logger'
 import { UPDATE_MARK_TTL_MS, statusOf, type SnapshotValue, type UpdateStatus } from './updateMark'
@@ -33,8 +33,8 @@ export type RowSnapshot = ReadonlyMap<string, SnapshotValue>
  * 「まだ決まっていない」なので、そこから確定しても上がった／下がったとは言えない。
  *
  * **載っていない値は「値が無い」として扱う**（{@link quakeFactSnapshot} が番兵へ倒す）。
- * 調査中から確定した報に印を付けないのは、震源が未確定から確定した報に付けないのと同じ理由 ——
- * 文言そのものが「調査中」から区分の名前へ変わるので、印が無くても目に入る。
+ * 調査中から確定した報は、震源が未確定から確定した報と同じく「値が付いた」扱いになり、
+ * 直前の電文と種別が同じときだけ初出の緑が付く（→ {@link changedQuakeFacts}）。
  */
 const DOMESTIC_TSUNAMI_RANK: Record<string, number> = {
   'なし': 0,
@@ -64,6 +64,8 @@ export const rowMarkKey = {
 
 /** {@link rowMarkKey} が作る鍵の種別。`diffQuakeRows` が「その段が初めて現れた報」を見分けるのに使う。 */
 const ROW_KINDS = ['pref:', 'area:', 'city:', 'st:'] as const
+/** 行の段（{@link rowMarkKey} の前置き）。 */
+export type RowKind = typeof ROW_KINDS[number]
 const kindOf = (key: string): string => ROW_KINDS.find(k => key.startsWith(k)) ?? ''
 
 /** 値が無い欄を表す番兵。**空文字を「比べない」の意味に使わない** —— 下記の理由を参照。 */
@@ -92,16 +94,24 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
   // 震央補助表現（「輪島の東北東３０ｋｍ付近」）も大小が無い。**電文の原文で比べる**（表示は半角へ直すが、
   // 持つ値は原文 —— `formatNameFromMark`）。全期間の控え（2020-11〜、続報 1,586 組）では、座標が動いても
   // 文はそのままで、文が別の文へ変わった組は 0 だった。震央地名と同じく、動かないのは標本の性質として入れておく
-  // （2026-10-19 ユーザー承認「1 で」＝文が別の文へ変わったときだけ印を付ける）。
+  // （2026-10-19 ユーザー承認「1 で」＝文が別の文へ変わったときだけ印を付ける）。文が無かった欄に文が現れたときは、
+  // 同じ種別の続報に限って初出の印を付ける（2026-10-21 に改めた。→ `changedQuakeFacts`）。
   snap.set('nameFromMark', { key: h.nameFromMark || UNKNOWN })
   // 規模は**数値と説明の両方**を鍵に含める。「Ｍ８を超える巨大地震」は本文が NaN で
   // `description` だけが値を持つので、数値だけで比べるとその変化が消える
   // （→ `docs/spec/quake-spec.md` §8）。**大小を比べられるのは数値があるときだけ。**
+  // **種別（`Mj` / `M`）も鍵に入れる。** 画面はこれを前置きの記号に出すので、数値が同じまま
+  // 種別だけ変わった続報でも表示は動く（`M6.8` → `Mj6.8`）。鍵から外すと印が付かない。
+  //
+  // **「値が無い」は鍵の文字列ではなく、材料そのもので見る。** 鍵の組み立てに項目を 1 つ足すと
+  // 区切りの数が変わるので、`magKey === '|'` のような文字列の突き合わせは黙って外れる
+  // （実際に種別を足したとき外れ、規模が無い報に `UNKNOWN` ではない鍵が付いた）。
   const hasMag = Number.isFinite(h.magnitude) && h.magnitude >= 0
-  const magKey = `${hasMag ? h.magnitude.toFixed(1) : ''}|${h.magnitudeCondition ?? ''}`
-  snap.set('magnitude', magKey === '|'
-    ? { key: UNKNOWN }
-    : { key: magKey, ...(hasMag ? { rank: h.magnitude } : {}) })
+  const hasMagFacts = hasMag || !!h.magnitudeCondition
+  const magKey = `${hasMag ? h.magnitude.toFixed(1) : ''}|${h.magnitudeCondition ?? ''}|${h.magnitudeType ?? ''}`
+  snap.set('magnitude', hasMagFacts
+    ? { key: magKey, ...(hasMag ? { rank: h.magnitude } : {}) }
+    : { key: UNKNOWN })
   // 深さの 0 は「ごく浅い」という有効値で、-1 が「読めなかった」の目印。
   // **浅いほど危険なので、順序は深さの符号を反転させる** —— 「上がった（赤）」が
   // 「より深刻になった」を指す約束を、どの欄でも守る。
@@ -122,15 +132,18 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
 }
 
 /**
- * 前report から動いた欄を、欄ごとの印にする。
+ * 前の報から動いた欄を、欄ごとの印にする。
  *
  * **前が無ければ何も返さない。** そのカードで最初に見た報は全欄が「初出」になり、
  * 印が画面を埋めるだけで何も指さない。
  *
- * **値が無い状態から値が付いた欄には印を付けない。** 震源要素の欄は顔ぶれが決まっていて
- * 常に見えている（値が無ければ「震源調査中」や空欄として出ている）ので、値が付いたこと自体を
- * その欄が語っている —— 印は何も足さない。震度速報のあとに震源情報が届く形がこれで、
- * 付けると**震源が確定した報で欄が一斉に光る**。
+ * **値が無い状態から値が付いた欄は、直前の電文と種別が同じときだけ初出（緑）にする**
+ * （2026-10-21 ユーザー承認。選択「自明でない組だけ緑 (Recommended)」。2026-10-19 の
+ * 「震央補助表現が現れただけでは付けない」はこれで改めた）。種別が変われば載せる欄の顔ぶれも
+ * 変わるので、値が付いたのは「報の粒度が変わった」ことでしかない —— 震度速報のあとに震源情報が
+ * 届く形がこれで、付けると**震源が確定した報で欄が一斉に光る**。同じ種別のまま値が付くのは
+ * 気象庁が続報で新たに伝えた事実で、全期間の控えでは震央補助表現が出た 3 件・遠地地震の津波区分が
+ * 調査中から確定した 22 件がこれにあたる。
  *
  * **一覧の行はこれと違う**（→ {@link diffQuakeRows}）。数百行のなかに 1 行増えても、それ自体では
  * 気づけないので初出の印が要る。
@@ -142,14 +155,19 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
 export function changedQuakeFacts(
   cur: QuakeFactSnapshot,
   prev: QuakeFactSnapshot | undefined,
+  /** 直前の電文と、いま届いた電文の種別が同じか（→ {@link QuakeMarkMemory.telegramType}） */
+  sameTelegramType: boolean,
 ): Map<QuakeUpdateField, UpdateStatus> {
   const out = new Map<QuakeUpdateField, UpdateStatus>()
   if (!prev) return out
   for (const [field, value] of cur) {
     const before = prev.get(field)
     if (before === undefined) continue
-    // 値が無いところへ値が付いただけなら印を付けない（上の注記）。
-    if (before.key === UNKNOWN) continue
+    // 値が無いところへ値が付いたら、種別が同じときだけ初出（上の注記）。
+    if (before.key === UNKNOWN) {
+      if (sameTelegramType && value.key !== UNKNOWN) out.set(field, 'new')
+      continue
+    }
     const status = statusOf(before, value)
     if (status) out.set(field, status)
   }
@@ -161,11 +179,9 @@ export function changedQuakeFacts(
  *
  * **併合後のカードの点を渡すこと**（理由は {@link quakeFactSnapshot} と同じ）。
  *
- * **電文の `Revise`（「追加」「上方修正」「下方修正」）は使わない。** あれは**直前の電文**からの
- * 差分で、カードが見せている状態からの差分ではない。カードは種別の違う報を併合した積み上げ
- * なので、既に見えている行が別の報の都合で「追加」と名乗ることがある。加えて P2PQuake 経路は
- * この値を配信しないため、使うと DMDSS 版でしか印が出ない非対称になる。
- * （読み上げ側が同じ理由でこれを使っていない —— `docs/spec/audio-tts-spec.md` §4）
+ * **ここで写すのは値だけで、電文の `Revise` は見ない。** `Revise` で付ける印は
+ * {@link quakeTelegramRevise} が届いた電文から作り、{@link advanceQuakeMarks} がこの写しの差分と
+ * 差し替える。写しは次の報が比べる相手でもあるので、`Revise` の有無で中身を変えない。
  */
 export function quakeRowSnapshot(
   points: readonly EarthquakePoint[],
@@ -299,6 +315,153 @@ export function lpgmRowSnapshot(
 }
 
 /**
+ * 届いた電文の `Revise` から作った行の印（→ {@link quakeTelegramRevise}・{@link lpgmTelegramRevise}）。
+ *
+ * **`kinds` に入っている段は、差分ではなくこの印だけで付ける**（ただし `unreadable` の行は差分を残す）。
+ * `Revise` の無い行は「直前の同じ種別の報から動いていない」（→ `JMAQuake.reportsRevise`）。`kinds` に無い段
+ * （長周期の観測点）は電文が `Revise` を持たないので、今までどおり差分で付ける。
+ */
+export interface TelegramRowRevise {
+  kinds: readonly RowKind[]
+  marks: ReadonlyMap<string, UpdateStatus>
+  /**
+   * `Revise` に知らない語が載っていた行の鍵。**この行は差分の印を残す**（電文が何かを言っているのに
+   * 読めないので、「動いていない」とは扱えない）。
+   */
+  unreadable: ReadonlySet<string>
+  /** 記録に添える電文の識別子。 */
+  source: string
+  /** 記録の頭に付ける種別の印（地震情報は `[quake]`、長周期地震動観測情報は `[lpgm]`）。 */
+  logTag: '[quake]' | '[lpgm]'
+}
+
+/**
+ * `Revise` の値を印へ直す。気象庁の語は 3 つ（解説資料 Ⅱ.33 2-1-3-2 ほか）。
+ *
+ * **緑と黄の使い分けは今の印と同じ**（→ `UPDATE_MARK_COLOR`）。「追加」は初出の緑、
+ * 「上方修正」「下方修正」は動いた黄（向きは添える言葉が言う）。
+ */
+const REVISE_STATUS: Record<string, UpdateStatus> = {
+  '追加': 'new',
+  '上方修正': 'raised',
+  '下方修正': 'lowered',
+}
+
+/** `Revise` の語を印の表へ積む。知らない語は、語を `unknown` へ・行の鍵を `unreadable` へ分ける（→ {@link quakeTelegramRevise}）。 */
+function collectRevise(
+  marks: Map<string, UpdateStatus>,
+  unknown: Set<string>,
+  unreadable: Set<string>,
+  key: string,
+  revise: string | undefined,
+): void {
+  if (!revise) return
+  const status = REVISE_STATUS[revise]
+  if (status) marks.set(key, status)
+  else { unknown.add(revise); unreadable.add(key) }
+}
+
+/**
+ * 届いた地震情報の電文の `Revise` から、行の印を作る。電文が `Revise` で変化を伝える種別で
+ * なければ `null`（→ `JMAQuake.reportsRevise`。DMDATA の震源・震度情報だけが真）。
+ *
+ * **併合後のカードではなく、届いた電文そのものを渡すこと。** `Revise` は電文が自分の行に
+ * 付けた印で、併合後のカードには前の報や震度の控え（`fillIntensityFromCache`）から写った点が
+ * 混ざる。
+ *
+ * **使うのは、直前に届いた電文が同じ種別のときだけ**（{@link advanceQuakeMarks} が決める）。
+ * 全期間の控えでは、種別が変わった直後の震源・震度情報（1,456 通）は `Revise` を 1 件も
+ * 持たなかった —— 電文が何も言っていないその報では、今の差分を続ける（2026-10-21 ユーザー承認
+ * 「おすすめで」。推したのは「今のアプリの比較を続ける」案）。
+ *
+ * **知らない語は電文の印にせず、その行は差分の印を残して記録にも出す。** 気象庁が語を足したとき、
+ * 黙って捨てると「動いていない」と区別が付かない。
+ */
+export function quakeTelegramRevise(q: JMAQuake): TelegramRowRevise | null {
+  if (!q.reportsRevise) return null
+  const marks = new Map<string, UpdateStatus>()
+  const unknown = new Set<string>()
+  const unreadable = new Set<string>()
+  for (const p of q.points) {
+    // 振り分けはパーサーが作る形に従う（DMDATA の電文は県の点だけが `pref` を持つ）。
+    if (p.pref) collectRevise(marks, unknown, unreadable, rowMarkKey.pref(p.pref), p.revise)
+    else if (p.isArea) collectRevise(marks, unknown, unreadable, rowMarkKey.area(p.addr), p.revise)
+    else collectRevise(marks, unknown, unreadable, rowMarkKey.station(p.addr), p.revise)
+  }
+  for (const c of q.cities ?? []) {
+    if (c.area && c.name) collectRevise(marks, unknown, unreadable, rowMarkKey.city(c.area, c.name), c.revise)
+  }
+  if (unknown.size > 0) {
+    log.warn('[quake] 震度の行の Revise に知らない語があり、その行は電文の印でなく差分で付けた', {
+      id: q.id, values: [...unknown], rows: [...unreadable],
+    })
+  }
+  return { kinds: ROW_KINDS, marks, unreadable, source: q.id, logTag: '[quake]' }
+}
+
+/**
+ * 届いた長周期地震動の電文の `Revise` から、県と区域の行の印を作る（→ {@link quakeTelegramRevise}）。
+ * **観測点の段は電文が `Revise` を持たないので `kinds` に入れない**（そこは差分のまま）。
+ */
+export function lpgmTelegramRevise(lpgm: JMALpgm): TelegramRowRevise | null {
+  if (!lpgm.reportsRevise) return null
+  const marks = new Map<string, UpdateStatus>()
+  const unknown = new Set<string>()
+  const unreadable = new Set<string>()
+  for (const p of lpgm.prefs ?? []) collectRevise(marks, unknown, unreadable, rowMarkKey.pref(p.name), p.revise)
+  for (const r of lpgm.regions ?? []) collectRevise(marks, unknown, unreadable, rowMarkKey.area(r.name), r.revise)
+  if (unknown.size > 0) {
+    log.warn('[lpgm] 長周期の行の Revise に知らない語があり、その行は電文の印でなく差分で付けた', {
+      id: lpgm.id, values: [...unknown], rows: [...unreadable],
+    })
+  }
+  return { kinds: ['pref:', 'area:'], marks, unreadable, source: lpgm.id, logTag: '[lpgm]' }
+}
+
+/**
+ * 差分で出した行の印のうち、`Revise` が受け持つ段を電文の印へ差し替える。
+ *
+ * **画面に無い行の印は捨てる**（`cur` に無い鍵）。電文が載せていても、カードの一覧に
+ * 行が無ければ指す先が無い。捨てた数は記録に残す（鍵の作り方がカード側とずれると、
+ * ずれた行だけ印が永久に出なくなるので）。
+ *
+ * **差分では動いたのに `Revise` の無い行（受け持つ段）があれば記録に残す**（印は電文どおり付けない）。
+ * 地震情報では全期間の控えで起きていない形（件数は `docs/spec/quake-spec.md` §8「電文の `Revise` で
+ * 行の印を付ける」）。長周期は続報の実電文がまだ無く、この前提を確かめられていない —— 崩れたとき、
+ * 画面からは「動いていない」と見分けが付かない。
+ */
+function withTelegramRevise(
+  diff: ReadonlyMap<string, UpdateStatus>,
+  cur: RowSnapshot,
+  revise: TelegramRowRevise,
+): Map<string, UpdateStatus> {
+  const covered = new Set<string>(revise.kinds)
+  const out = new Map<string, UpdateStatus>()
+  let silentRows = 0
+  for (const [key, status] of diff) {
+    if (!covered.has(kindOf(key))) out.set(key, status)
+    else if (revise.unreadable.has(key)) out.set(key, status)
+    else if (!revise.marks.has(key)) silentRows++
+  }
+  let dropped = 0
+  for (const [key, status] of revise.marks) {
+    if (cur.has(key)) out.set(key, status)
+    else dropped++
+  }
+  if (dropped > 0) {
+    log.warn(`${revise.logTag} 電文の Revise が指す行がカードの一覧に無く、その印を捨てた`, {
+      id: revise.source, dropped,
+    })
+  }
+  if (silentRows > 0) {
+    log.warn(`${revise.logTag} 同じ種別の続報で、差分では動いたのに Revise の無い行がある（電文の印を採った）`, {
+      id: revise.source, rows: silentRows,
+    })
+  }
+  return out
+}
+
+/**
  * 長周期地震動の印を指す鍵。
  *
  * **地震の印と同じ入れ物に入れるが、鍵の名前空間を分ける。** 長周期の一覧はカードの中で
@@ -354,6 +517,21 @@ export interface QuakeMarkSnapshot {
    * `'震源・震度情報'` へ落とす点は、ここでは「未知の種別どうしを同じ範囲とみなす」に留まる。
    */
   reportType: MarkReportType
+  /**
+   * **届いた電文そのものの種別**（`reportType` はカードの種別）。`null` は「電文の報ではない」——
+   * 取消を当て直した姿と、畳み込みの吸収を写し直した姿がこれにあたる。
+   *
+   * **カードの種別と分けて持つ。** 併合は震度速報を震源・震度情報のカードへ当ててもカードの
+   * 種別を変えないことがある（`mergeQuakeInto`）。`Revise` も欄の初出も「直前の電文と同じ種別か」
+   * で決まるので、カードの種別で見ると、間に別の種別の電文が挟まった報を同じ種別の続報と
+   * 取り違える。
+   */
+  telegramType: MarkReportType | null
+  /**
+   * 届いた電文の `Revise` から作った行の印。電文が `Revise` で変化を伝えないなら `null`
+   * （→ {@link quakeTelegramRevise}）。
+   */
+  revise: TelegramRowRevise | null
   /**
    * その報の発表時刻（epoch ms）。刈り込みの順序に使う（→ {@link QuakeMarkMemory.issuedAt}）。
    *
@@ -414,6 +592,11 @@ export interface QuakeMarkMemory {
    */
   rowsByType: ReadonlyMap<MarkReportType, RowSnapshot>
   /**
+   * この記憶を作った電文の種別（→ {@link QuakeMarkSnapshot.telegramType}）。次の電文が
+   * `Revise` を使うか・欄の初出を出すかを、これと同じ種別かで決める。`null` なら使わない・出さない。
+   */
+  telegramType: MarkReportType | null
+  /**
    * この記憶を作った報の発表時刻（epoch ms）。**刈り込みで落とす順の第 2 キーに使う**
    * （第 1 キーは最大震度。→ {@link MARK_MEMORY_MAX_ROWS}・{@link capQuakeMarkMemory}）。
    *
@@ -462,12 +645,22 @@ export function advanceQuakeMarks(args: {
 }): { memory: Map<string, QuakeMarkMemory>; marks: Map<string, QuakeCardMarks> } {
   const { prev, key, snapshot, liveKeys, now } = args
   const before = prev.memory.get(key)
-  const facts = changedQuakeFacts(snapshot.facts, before?.facts)
+  // 直前の電文と同じ種別か。**どちらかが電文の報でない（`null`）なら偽** —— 取消を当て直した
+  // あとの報では、`Revise` が何に対する変化かを言えない。
+  const sameTelegramType = before !== undefined && before.telegramType !== null
+    && before.telegramType === snapshot.telegramType
+  const facts = changedQuakeFacts(snapshot.facts, before?.facts, sameTelegramType)
   // 欄（`facts`）は種別をまたいでも差分を取る。**震源要素更新（VXSE61）は必ず種別が変わる報**
   // なので、ここまで種別で止めると座標・深さが動いた印が出なくなる。
   //
   // 行は**値の変化を直前の報と、初出を同じ種別で前に見た報と**比べる（→ `diffQuakeRows`）。
-  const rows = diffQuakeRows(snapshot.rows, before?.rows, before?.rowsByType.get(snapshot.reportType))
+  // **電文が `Revise` を持ち、直前の電文と種別が同じなら、`Revise` が受け持つ段はそちらで付ける**
+  // （2026-10-21 ユーザー承認。選択「カードは電文の印 (Recommended)」）。気象庁が「初出か」「動いたか」を
+  // 直接伝えているので、自前の比較で推し量らない。
+  const diff = diffQuakeRows(snapshot.rows, before?.rows, before?.rowsByType.get(snapshot.reportType))
+  const rows = snapshot.revise && sameTelegramType
+    ? withTelegramRevise(diff, snapshot.rows, snapshot.revise)
+    : diff
 
   // 種別ごとの写しを進める。**捨てない** —— 鍵の値域は有限で、溜まりようがない
   // （→ `QuakeMarkMemory.rowsByType`）。
@@ -478,6 +671,7 @@ export function advanceQuakeMarks(args: {
   for (const [k, v] of prev.memory) if (liveKeys.has(k) && k !== key) memory.set(k, v)
   memory.set(key, {
     facts: snapshot.facts, rows: snapshot.rows, rowsByType, issuedAt: snapshot.issuedAt,
+    telegramType: snapshot.telegramType,
   })
   // **持ち回る重さに上限を置く。** `liveKeys` はカード一覧の件数までしか絞らず、その一覧に
   // 件数の上限が無い（→ `MARK_MEMORY_MAX_ROWS`）。
@@ -523,6 +717,7 @@ export function rememberQuakeCard(
   // 意味を持たせない（「もっと見る」が古い地震を後から積むため。→ `MARK_MEMORY_MAX_ROWS`）。
   memory.set(key, {
     facts: snapshot.facts, rows: snapshot.rows, rowsByType, issuedAt: snapshot.issuedAt,
+    telegramType: snapshot.telegramType,
   })
 }
 

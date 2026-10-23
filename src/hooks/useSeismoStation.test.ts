@@ -628,6 +628,8 @@ describe('useSeismoStation', () => {
     await settleDirectory()
     expect(vi.mocked(connectSeismoStream)).not.toHaveBeenCalled()
     expect(off.result.current.stream).toBeNull()
+    // 切っているのは URL の誤りではない（地図に「地震計 未接続」を出さない）
+    expect(off.result.current.urlUnusable).toBe(false)
     off.unmount()
 
     // **形が違えば `fetch` が投げるだけだが、繋ぎ直しの輪が 1 秒ごとに
@@ -636,6 +638,24 @@ describe('useSeismoStation', () => {
     await settleDirectory()
     expect(vi.mocked(connectSeismoStream)).not.toHaveBeenCalled()
     expect(bad.result.current.stream).toBeNull()
+    // 繋ぎに行けないことは別に返す（2026-10-21 ユーザー選択「おすすめで」。URL が空でも同じ）
+    expect(bad.result.current.urlUnusable).toBe(true)
+    bad.unmount()
+    const empty = renderHook(() => useSeismoStation({ ...options, baseUrl: '' }))
+    await settleDirectory()
+    expect(empty.result.current.urlUnusable).toBe(true)
+    empty.unmount()
+    // 安全弁: 切っている（再生中も App が enabled を落とす）なら、URL が不正でも立たない
+    const offBad = renderHook(() => useSeismoStation({ ...options, enabled: false, baseUrl: '' }))
+    await settleDirectory()
+    expect(offBad.result.current.urlUnusable).toBe(false)
+  })
+
+  // 安全弁: 繋げる URL なら立たない（繋ぎ直し中は `stream` 側が受け持つ）。
+  it('対照: 正しい URL なら urlUnusable は立たない', async () => {
+    const h = renderHook(() => useSeismoStation(options))
+    await settleDirectory()
+    expect(h.result.current.urlUnusable).toBe(false)
   })
 
   // **App は再生（テスト時刻設定）のあいだ `enabled` を落とす。** ホストが押し出すのは

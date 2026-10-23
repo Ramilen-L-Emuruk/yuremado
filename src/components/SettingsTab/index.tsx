@@ -1,4 +1,5 @@
 import { ensureWaveSpanSec, WAVE_SPAN_CHOICES } from '../../utils/waveSpan'
+import { formatArchiveCoverage } from '../../utils/historicalArchiveCoverage'
 import { memo, useState, useCallback, useEffect, useRef } from 'react'
 import type { AppSettings, TtsUnreceivedDetail } from '../../hooks/useSettings'
 import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX } from '../../hooks/useSettings'
@@ -50,6 +51,8 @@ export interface TestFunctions {
   /** 最大予想震度 0 の初報から震度1 へ上がる EEW。震度0 は DMDATA 経路しか運ばないので、ボタンは DMDSS 版にだけ出す。 */
   eewForecastZero: () => void
   eewRetraction: () => void
+  /** 自動解除で画面から消えた後に、同じ地震の誤報取消を届ける EEW（→ `isLateEewCancel`） */
+  eewLateRetraction: () => void
   tsunami: () => void
   tsunamiWarning: () => void
   tsunamiWatch: () => void
@@ -1499,6 +1502,16 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりませんが、地名ラベルの位置調整が数秒遅れ、揺れ検知の診断ログを保存しません">
           <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
         </Row>
+        {/* 標準版の行。DMDSS 版は「DM-D.S.S 接続設定」に同じ設定の行がある（あちらは緊急地震速報以外の試験報にも効く）。
+            文面は 2026-10-21 ユーザー承認 */}
+        {!isDmdss && (
+          <Row label="試験報を受信（検証用）" description="緊急地震速報の訓練報・試験報も受信します。画面には「訓練報」「試験報」の印を付けて出します">
+            <Toggle
+              checked={settings.dmdataTestDelivery}
+              onChange={v => onUpdate('dmdataTestDelivery', v)}
+            />
+          </Row>
+        )}
       </Section>
 
       <Section title="通知設定">
@@ -1951,6 +1964,10 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="緊急地震速報（誤報取消）" description="警報まで上がったあと、実電文の取消が届く – eewCancel 音（通知・読み上げあり）">
           <TestButton color="purple" onClick={onTest.eewRetraction}>誤報取消テスト</TestButton>
         </Row>
+        {/* 文面は 2026-10-22 ユーザー承認（「この形で進めてよいか、テストボタンの文面もこれでよいか」への「進めて」） */}
+        <Row label="緊急地震速報（自動解除の後の誤報取消）" description="最終報まで流し、自動解除で画面から消えた 10 秒後に取消が届く – eewCancel 音（通知・読み上げあり）">
+          <TestButton color="purple" onClick={onTest.eewLateRetraction}>遅れた誤報取消テスト</TestButton>
+        </Row>
         {/* ── 地震情報 ── */}
         <Row label="地震情報" description="令和6年能登半島地震・本震 M7.6 最大震度7（実データ）をリストと地図に追加">
           <TestButton color="red" onClick={onTest.earthquake}>地震テスト</TestButton>
@@ -1979,7 +1996,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="訂正報" description="地震情報 → 規模を訂正した報（M7.4 → M7.6）。同じカードが更新され「震源を訂正」の印が付き、気象庁の「震源要素を訂正します。」の一文も並ぶ">
           <TestButton color="yellow" onClick={onTest.quakeAmendment}>訂正報テスト</TestButton>
         </Row>
-        <Row label="種別が前後する報" description="震度速報 → 震源情報 → 震度速報 → 震源・震度情報 → その続報 → 震度速報 → その続報、の7通（前半4通は2024年能登半島地震の前震と同じ順序）。見出しに受け取った種別が並び、震源・震度情報で速報段階が畳まれる。遅れて届く震度速報でカードが動かないこと、震度が上下した行に印が付くこともここで見られる">
+        <Row label="種別が前後する報" description="震度速報 → 震源情報 → 震度速報 → 震源・震度情報 → その続報 → 震度速報 → その続報、の7通（前半4通は2024年能登半島地震の前震と同じ順序）。見出しに受け取った種別が並び、震源・震度情報で速報段階が畳まれる。1通目は震度がまだ出そろっていない形（最大震度5弱）で、3通目で5強が出るため、ブラウザ通知を有効にしていれば「最大震度更新」の通知が出る。遅れて届く震度速報でカードが動かないこと、震度が上下した行に印が付くこともここで見られる">
           <TestButton color="yellow" onClick={onTest.quakeReportSequence}>種別遷移テスト</TestButton>
         </Row>
         {isDmdss && onTest.quakeCancel && (
@@ -2031,7 +2048,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {isDmdss && onTest.tsunamiQuietReports && (
-          <Row label="津波警報・注意報（変化の小さい続報）" description="大津波警報（2011年東北地方太平洋沖地震のサンプル電文）→ 10秒おきに続報を12通。等級も波高の数値も動かない報が、通知音だけ鳴って何も声にならないことを確かめる。1通ずつ釜石・大船渡の値が動く">
+          <Row label="津波警報・注意報（変化の小さい続報）" description="大津波警報（2011年東北地方太平洋沖地震のサンプル電文）→ 10秒おきに続報を14通。等級も波高の数値も動かない報が、通知音だけ鳴って何も声にならないことを確かめる。1通ずつ釜石・大船渡・沖合の値が動き、値を持たない観測点に印だけが付く報もある">
             <TestButton color="blue" onClick={onTest.tsunamiQuietReports}>変化の小さい続報テスト</TestButton>
           </Row>
         )}
@@ -2166,7 +2183,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                 <div key={a.id} className="flex items-center gap-2">
                   <DescriptionTip
                     label={a.label}
-                    description={`${new Date(a.from).toLocaleString('ja-JP')} 〜 ${new Date(a.to).toLocaleString('ja-JP')}`}
+                    description={formatArchiveCoverage(a)}
                   />
                   <button
                     onClick={() => onStartReplay(new Date(new Date(a.firstEventTime).getTime() - 60_000))}

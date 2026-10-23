@@ -261,7 +261,35 @@ interface IndexEntry {
   description: string
   from: string
   to: string
+  coveredRanges: { from: string; to: string }[]
   firstEventTime: string
+}
+
+/**
+ * 電文一覧を取った日（`YYYYMMDD`・日本時間）から、実際に集めた範囲を作る。続いた日は 1 つにまとめ、
+ * 収録範囲（`windowStart`〜`windowEnd`）で切る。**日を選んで集めたアーカイブで、間の日を「何も無かった」と
+ * 取り違えないための印**（読む側は `findUncollectedArchiveSync`）。
+ */
+export function coveredRangesFromDates(dates: string[], windowStart: Date, windowEnd: Date): { from: string; to: string }[] {
+  const DAY_MS = 24 * 60 * 60 * 1000
+  const starts = [...new Set(dates)].map((d) => {
+    if (!/^\d{8}$/.test(d)) throw new Error(`取得日の書式が YYYYMMDD ではありません: ${d}`)
+    return new Date(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T00:00:00+09:00`).getTime()
+  }).sort((a, b) => a - b)
+  const merged: [number, number][] = []
+  for (const s of starts) {
+    const last = merged[merged.length - 1]
+    if (last && last[1] === s) last[1] = s + DAY_MS
+    else merged.push([s, s + DAY_MS])
+  }
+  const lo = windowStart.getTime()
+  const hi = windowEnd.getTime()
+  const ranges = merged
+    .map(([s, e]) => [Math.max(s, lo), Math.min(e, hi)] as const)
+    .filter(([s, e]) => s < e)
+    .map(([s, e]) => ({ from: new Date(s).toISOString(), to: new Date(e).toISOString() }))
+  if (ranges.length === 0) throw new Error('取得日が収録範囲に 1 日も掛かっていません')
+  return ranges
 }
 
 /**
@@ -280,6 +308,8 @@ export interface FinalizeArchiveOptions {
   description: string
   windowStart: Date
   windowEnd: Date
+  /** 電文一覧を取った日（`YYYYMMDD`）。集めた範囲（`coveredRanges`）はここから作る。 */
+  dates: string[]
   entries: HistoricalArchiveEntry[]
   outPath: string
   indexPath: string
@@ -295,7 +325,7 @@ export interface FinalizeArchiveOptions {
  * （レビューで指摘）。地震活動に依らない処理なのでここに集約する。
  */
 export async function finalizeArchive(opts: FinalizeArchiveOptions): Promise<void> {
-  const { id, label, description, windowStart, windowEnd, entries, outPath, indexPath, hypocenterNames } = opts
+  const { id, label, description, windowStart, windowEnd, dates, entries, outPath, indexPath, hypocenterNames } = opts
 
   if (entries.length === 0) throw new Error('entriesが1件もありません（firstEventTimeを決定できません）')
 
@@ -332,6 +362,7 @@ export async function finalizeArchive(opts: FinalizeArchiveOptions): Promise<voi
     description,
     from: windowStart.toISOString(),
     to: windowEnd.toISOString(),
+    coveredRanges: coveredRangesFromDates(dates, windowStart, windowEnd),
     firstEventTime: allEntries[0].time,
     entries: allEntries,
   }
@@ -342,7 +373,7 @@ export async function finalizeArchive(opts: FinalizeArchiveOptions): Promise<voi
 
   const indexRaw = await readFile(indexPath, 'utf-8')
   const index = JSON.parse(indexRaw) as IndexEntry[]
-  const newIndexEntry: IndexEntry = { id: out.id, label: out.label, description: out.description, from: out.from, to: out.to, firstEventTime: out.firstEventTime }
+  const newIndexEntry: IndexEntry = { id: out.id, label: out.label, description: out.description, from: out.from, to: out.to, coveredRanges: out.coveredRanges, firstEventTime: out.firstEventTime }
   const updatedIndex = mergeIndexEntry(index, newIndexEntry)
   await writeFile(indexPath, JSON.stringify(updatedIndex, null, 2) + '\n', 'utf-8')
   console.log('index.json を更新しました')

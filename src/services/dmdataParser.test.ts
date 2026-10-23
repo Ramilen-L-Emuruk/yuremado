@@ -579,7 +579,7 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
   //
   // 気象庁が「この都道府県・地域は続報で新規に追加された（追加）」「最大震度が動いた
   // （上方修正／下方修正）」を電文で直接伝えている（解説資料 Ⅱ.33 の 2-1-3-2・2-1-3-3-2）。
-  // **読んで持つだけで、いまはどこからも使っていない**（→ `EarthquakePoint.revise`）。
+  // カードの更新の印に使う（→ `EarthquakePoint.revise`・`quakeTelegramRevise`）。
   //
   // 雛形は Revise を持たないので、都道府県と区域へ**別々の値**を入れて取り違えを検出する。
   // Pref の配下に Area があり、どちらも同名要素を持ちうるため、直下に限る読み方でないと
@@ -645,6 +645,35 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
   // 対照: `Revise` を持たない電文では市町村にも入らない。
   it('Revise が無ければ市町村にも入らない', () => {
     expect(fromXml().cities?.find(c => c.name === '普代村')?.revise).toBeUndefined()
+  })
+
+  // 正: 観測点にも `Revise` がある（全期間の控えで「追加」1,566 件・「上方修正」72 件）。
+  // 市町村と別の値を入れて、階層の取り違えを検出する。
+  it('続報での変化（Revise）を観測点からも読む', () => {
+    const xml = VXSE53_XML
+      .replace('<Name>普代村銅屋</Name>\n                <Code>0348532</Code>\n                <Int>3</Int>',
+        '<Name>普代村銅屋</Name>\n                <Code>0348532</Code>\n                <Int>3</Int>\n                <Revise>上方修正</Revise>')
+      .replace('<Name>普代村</Name>\n              <Code>0348500</Code>',
+        '<Name>普代村</Name>\n              <Code>0348500</Code>\n              <Revise>追加</Revise>')
+    // .replace() は対象が無くても黙って素通りする。当たったことを機械的に確かめる。
+    expect(xml).toContain('<Revise>上方修正</Revise>')
+    expect(xml).toContain('<Revise>追加</Revise>')
+    const quake = parseEarthquakeFromXml('VXSE53', xml)!
+    expect(quake.points.find(p => p.addr === '普代村銅屋')?.revise).toBe('上方修正')
+    expect(quake.cities?.find(c => c.name === '普代村')?.revise).toBe('追加')
+  })
+
+  // 対照: `Revise` を持たない電文では観測点にも入らない。
+  it('Revise が無ければ観測点にも入らない', () => {
+    expect(fromXml().points.find(p => p.addr === '普代村銅屋')?.revise).toBeUndefined()
+  })
+
+  // 正・対照・安全弁: `Revise` で変化を伝える種別の印（→ `JMAQuake.reportsRevise`）。
+  // 国内の震源・震度情報だけが持ち、震度速報と遠地地震（同じ VXSE53）は持たない。
+  it('Revise で変化を伝える種別の印は国内の震源・震度情報にだけ付く', () => {
+    expect(fromXml().reportsRevise).toBe(true)
+    expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.reportsRevise).toBeUndefined()
+    expect(parseEarthquakeFromXml('VXSE53', FOREIGN_XML)!.reportsRevise).toBeUndefined()
   })
 
   // ---- 震源の補助要素（震央補助表現・震源決定機関）----
@@ -760,10 +789,37 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
     }
   })
 
-  // issue.source は現状どのコンポーネントからも読まれないが、両経路で同じ値になる状態を保つ。
+  // issue.source は画面に出さないが、両経路で同じ値になる状態を保つ。
   // XML 側を '気象庁' 固定にすると、電文が持つ編集官署（実電文では「気象庁本庁」）が落ちる。
   it('issue.source を電文の編集官署から読む', () => {
     expect(fromXml().issue.source).toBe('気象庁本庁')
+  })
+
+  // 編集官署の専用の欄（`issue.editorialOffice`）。**画面が「編集官署 …」と名乗って出す**ので、
+  // 発表官署へは落とさない（2026-10-23 ユーザー承認「欄を分ける」）。
+  //
+  // 正: 電文の編集官署をそのまま返す。
+  it('issue.editorialOffice を電文の編集官署から読む', () => {
+    expect(fromXml().issue.editorialOffice).toBe('気象庁本庁')
+  })
+
+  // 対照: **編集官署が無い電文では undefined。** `issue.source` と違い発表官署へ落とさない ——
+  // 落ちた値を「編集官署」と名乗って出すと、ラベルが事実を誤らせる（標準版の全カードに
+  // 「編集官署 気象庁」が出ていた。この守りを外すとそれが戻る）。
+  it('編集官署が無ければ undefined（発表官署へ落とさない）', () => {
+    const xml = VXSE53_XML
+      .replace('<EditorialOffice>気象庁本庁</EditorialOffice>', '')
+      .replace('<PublishingOffice>気象庁</PublishingOffice>', '<PublishingOffice>大阪管区気象台</PublishingOffice>')
+    const quake = parseEarthquakeFromXml('VXSE53', xml)!
+    expect(quake.issue.editorialOffice).toBeUndefined()
+    // 同じ電文で `issue.source` は従来どおり発表官署へ落ちる（2 本立てが効いていること）。
+    expect(quake.issue.source).toBe('大阪管区気象台')
+  })
+
+  // 安全弁: 要素はあるが空の電文も「無い」と同じ扱い（`||` で undefined へ倒す）。
+  it('編集官署が空の要素なら undefined', () => {
+    const xml = VXSE53_XML.replace('<EditorialOffice>気象庁本庁</EditorialOffice>', '<EditorialOffice></EditorialOffice>')
+    expect(parseEarthquakeFromXml('VXSE53', xml)!.issue.editorialOffice).toBeUndefined()
   })
 
   // 対照: 編集官署が無い電文では発表官署へ落ちる（両経路とも同じ順序で解決する）。
@@ -1255,6 +1311,8 @@ function eewXml(o: {
    * **警報級の報にだけ入る**ので、既定では要素ごと出さない（予報級の実電文と同じ形）。
    */
   headline?: string
+  /** `jmx_eb:Magnitude` 要素まるごと。既定は `Mj` 6.5 */
+  magnitude?: string
 } = {}): string {
   if (o.noEarthquake && o.area) throw new Error('eewXml: noEarthquake と area は同時に指定できない')
   const area = o.area ?? '<Name>茨城県沖</Name><jmx_eb:Coordinate>+36.2+141.0-30000/</jmx_eb:Coordinate>'
@@ -1281,7 +1339,7 @@ function eewXml(o: {
       '<OriginTime>2026-01-01T12:00:00+09:00</OriginTime>',
       '<ArrivalTime>2026-01-01T12:00:00+09:00</ArrivalTime>',
       '<Hypocenter><Area>' + area + '</Area>' + (o.accuracy ?? '') + '</Hypocenter>',
-      '<jmx_eb:Magnitude type="Mj">6.5</jmx_eb:Magnitude>',
+      o.magnitude ?? '<jmx_eb:Magnitude type="Mj">6.5</jmx_eb:Magnitude>',
       '</Earthquake>',
     ]),
     '<Intensity><Forecast>',
@@ -1661,6 +1719,31 @@ describe('parseEEWFromXml: severity・cancel・LPGM', () => {
       expect(eew.accuracy).toEqual({
         epicenterRank: 4, epicenterRank2: 4, depthRank: 4, magnitudeRank: 4, magnitudePoints: 5,
       })
+    })
+
+    // 表に無い精度ランクは値をそのまま持ち（画面の欄は空になる）、開発者向けの記録を残す
+    // （2026-10-21 ユーザー承認「記録し、表外はログへ (Recommended)」）
+    it('表に無い精度ランクは値を持ったまま記録する', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      try {
+        const accuracy = ACCURACY.replace('<Depth rank="4">', '<Depth rank="7">').replace('<MagnitudeCalculation rank="4">', '<MagnitudeCalculation rank="7">')
+        const eew = parseEEWFromXml('VXSE45', eewXml({ accuracy }))!
+        expect(eew.accuracy?.magnitudeRank).toBe(7)
+        const found = warn.mock.calls.map(c => c.join(' ')).filter(w => w.includes('精度ランクに表に無い値'))
+        expect(found).toHaveLength(1)
+        expect(found[0]).toContain('MagnitudeCalculation@rank=7')
+        // 深さのランク 7（EPOS・海域）は表にあるので挙げない
+        expect(found[0]).not.toContain('Depth@rank')
+      } finally { warn.mockRestore() }
+    })
+
+    // 対照: 表にあるランクと 0（不明）では記録しない
+    it('表にあるランクと 0（不明）では記録しない', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      try {
+        parseEEWFromXml('VXSE45', eewXml({ accuracy: ACCURACY.replace('<MagnitudeCalculation rank="4">', '<MagnitudeCalculation rank="0">') }))
+        expect(warn.mock.calls.map(c => c.join(' ')).filter(w => w.includes('精度ランク'))).toHaveLength(0)
+      } finally { warn.mockRestore() }
     })
 
     // 正: 内陸判定と短縮用震央地名。**短縮名は通常の震央地名を置き換えない**
@@ -6278,6 +6361,51 @@ describe('緊急地震速報の警報対象地方（Head/Headline/Information）
     expect(eew?.warningRegions).toEqual(['北陸', '甲信', '東海', '関東'])
   })
 
+  // 正: 2 つ目の Item（LastKind が「なし」）の地方を、新たに加わった地方として分けて持つ
+  it('新たに加わった地方を分けて持つ', () => {
+    const eew = parseEEWFromXml('VXSE45', eewXml({ headline: notoHeadline }))
+    expect(eew?.addedWarningRegions).toEqual(['甲信', '東海', '関東'])
+  })
+
+  // 対照: 既に警報だった地方しかない報では持たせない
+  it('加わった地方が無ければ持たせない', () => {
+    const eew = parseEEWFromXml('VXSE45', eewXml({ headline: '<Text>x</Text>' + regionInfo(ITEM_EXISTING) }))
+    expect(eew?.warningRegions).toEqual(['北陸'])
+    expect(eew?.addedWarningRegions).toBeUndefined()
+  })
+
+  // 安全弁: 既存の Item にもいる地方は「加わった」に入れない（実電文では起きない重なり）
+  it('既存の Item にもいる地方は加わったと見なさない', () => {
+    const addedHokuriku = ITEM_ADDED.replace('<Area><Name>甲信</Name><Code>9935</Code></Area>', '<Area><Name>北陸</Name><Code>9934</Code></Area>')
+    const eew = parseEEWFromXml('VXSE45', eewXml({ headline: '<Text>x</Text>' + regionInfo(ITEM_EXISTING + addedHokuriku) }))
+    expect(eew?.addedWarningRegions).toEqual(['東海', '関東'])
+  })
+
+  // 正: 前の報での種別（LastKind）が読めない Item は「続いている」側へ倒し、記録を残す
+  it('LastKind を読めない Item は記録して加わった地方に入れない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const noLastKind = ITEM_ADDED.replace('<LastKind><Name>なし</Name><Code>00</Code></LastKind>', '')
+      const eew = parseEEWFromXml('VXSE45', eewXml({ headline: '<Text>x</Text>' + regionInfo(ITEM_EXISTING + noLastKind) }))
+      expect(eew?.warningRegions).toEqual(['北陸', '甲信', '東海', '関東'])
+      expect(eew?.addedWarningRegions).toBeUndefined()
+      expect(warn.mock.calls.some(c => String(c[0]).includes('前の報での種別（LastKind）を判定できません（1 件'))).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 対照: 実電文の形（なし／いまの種別と同じ）では記録しない
+  it('LastKind が「なし」かいまの種別と同じなら記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      parseEEWFromXml('VXSE45', eewXml({ headline: notoHeadline }))
+      expect(warn.mock.calls.some(c => String(c[0]).includes('LastKind'))).toBe(false)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   // 対照: 見出しを持たない報（予報級の実電文と同じ形）では空
   it('見出しを持たない報では持たせない', () => {
     const eew = parseEEWFromXml('VXSE45', eewXml())
@@ -6449,5 +6577,62 @@ describe('地震・津波に関するお知らせ（VZSE40）の自由付加文'
   // 対照: 自由付加文の無い電文では持たない
   it('対照: 自由付加文が無ければ持たない', () => {
     expect(parseQuakeNoticeFromXml(VZSE40_XML)!.freeText).toBeUndefined()
+  })
+})
+
+// 規模が数値にならないときの説明（`Magnitude@description`）を、地震情報・津波と同じく読む
+// （2026-10-21 ユーザー承認「揃えて読む (Recommended)」）。「Ｍ不明」と「Ｍ８を超える巨大地震」は本文がどちらも NaN
+describe('緊急地震速報の規模の説明', () => {
+  it('正: 規模が NaN なら説明を持つ', () => {
+    const eew = parseEEWFromXml('VXSE45', eewXml({ magnitude: '<jmx_eb:Magnitude type="Mj" condition="不明" description="Ｍ８を超える巨大地震">NaN</jmx_eb:Magnitude>' }))!
+    expect(eew.earthquake.hypocenter.magnitude).toBeNaN()
+    expect(eew.earthquake.hypocenter.magnitudeCondition).toBe('Ｍ８を超える巨大地震')
+  })
+
+  it('対照: 規模が数値なら説明を持たない', () => {
+    const eew = parseEEWFromXml('VXSE45', eewXml({ magnitude: '<jmx_eb:Magnitude type="Mj" description="Ｍ６．５">6.5</jmx_eb:Magnitude>' }))!
+    expect(eew.earthquake.hypocenter.magnitude).toBe(6.5)
+    expect(eew.earthquake.hypocenter.magnitudeCondition).toBeUndefined()
+  })
+})
+
+// 表示は電文全体の最大予測値を区域の最大より先に採る（`utils/eew.ts` の `eewMaxScaleInfo`）。
+// 全期間の実電文では 2 つが 1 通も食い違わないので、電文全体のほうが低い報は異常として記録する。
+describe('緊急地震速報の電文全体の最大予測値が区域の最大より低い報', () => {
+  const lowCount = (warn: { mock: { calls: unknown[][] } }): string[] =>
+    warn.mock.calls.filter(c => String(c[0]).includes('区域の最大')).map(c => String(c[0]))
+
+  // 正: 震度が区域の最大より低ければ記録する
+  it('最大予測震度が区域の最大より低ければ記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const e = parseEEWFromXml('VXSE45', eewXml({ forecastInt: '<From>4</From><To>4</To>', pref: eewPref('<From>5-</From><To>5+</To>') }))
+      expect(e?.forecastMaxScale).toBe(40)
+      expect(lowCount(warn).some(t => t.includes('最大予測震度（40）が区域の最大（50）'))).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 対照: 一致していれば記録しない（実電文の形）
+  it('一致していれば記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      parseEEWFromXml('VXSE45', eewXml({ pref: eewPref('<From>5-</From><To>5+</To>') }))
+      expect(lowCount(warn)).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 安全弁: 区域を持たない報（震度 3 以下の予想）では比べる相手が無いので記録しない
+  it('区域が無ければ記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      parseEEWFromXml('VXSE45', eewXml({ forecastInt: '<From>3</From><To>3</To>' }))
+      expect(lowCount(warn)).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

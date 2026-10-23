@@ -59,10 +59,13 @@ describe('台本はどれも置いてある電文から組める', () => {
       // 報の新旧を作成時刻で比べる経路（→ quake-spec.md §6.3）が実配信と違う並びを見る。
       // **押すたびに進む台本は対象外** —— 届く時刻は押した人が決めるので、電文どうしの間隔より
       // 速く押せばその分だけ発表時刻が先になる。
-      if (!script.stepByPress) {
+      // **`pacedByApp` の台本も対象外** —— 届く時刻はアプリが決める（取消は自動解除の後）
+      if (!script.stepByPress && !script.pacedByApp) {
         for (const b of built) {
           const p = b.entry.payload
           const issued = Date.parse(p.kind === 'event' ? p.event.time : p.data.time)
+          // **取消の報は時刻を持たない**（実配信どおり。→ eew-spec.md §8）。比べる相手が無い
+          if (!Number.isFinite(issued)) continue
           expect(`${b.step.file} ${new Date(issued).toISOString()}`)
             .toBe(`${b.step.file} ${new Date(Math.min(issued, b.entry.replayTime.getTime())).toISOString()}`)
         }
@@ -269,6 +272,14 @@ describe('種別遷移テスト', () => {
     expect(cards).toHaveLength(1)
     expect(reportsText(cards[0].reports, cards[0].issue.type)).toBe('震源・震度情報#3')
   })
+
+  // 正: **1 通目は震度が出そろっていない。** 3 通目で上がるので、カードの最大震度の更新と
+  // ブラウザ通知の「最大震度更新」を実機で通せる（→ `lowerAreaInts`）。
+  it('速報の 1 通目は区域の最大震度が 1 段低く、3 通目で上がる', async () => {
+    const quakes = quakesOf(await build(scripts.QUAKE_REPORT_SEQUENCE))
+    expect(quakes[0].earthquake.maxScale).toBe(45)
+    expect(quakes[2].earthquake.maxScale).toBe(50)
+  })
 })
 
 describe('訂正報テスト', () => {
@@ -383,13 +394,13 @@ function tsunamisOf(built: BuiltTestTelegram[]): JMATsunami[] {
 
 describe('変化の小さい続報テスト', () => {
   // 正: 段の並び（発表 → 観測情報 → 沖合 → 観測情報 → 満潮時刻 → 全解除）と、津波が 1 つの事象で続く
-  it('発表のあと 12 通の続報が同じ津波へ届き、最後に全解除で終わる', async () => {
+  it('発表のあと 14 通の続報が同じ津波へ届き、最後に全解除で終わる', async () => {
     const tsunamis = tsunamisOf(await build(scripts.TSUNAMI_QUIET_REPORTS))
-    expect(tsunamis).toHaveLength(14)
+    expect(tsunamis).toHaveLength(16)
     // 沖合（VTSE52）は 2 通。**1 通目は次の段の前提**で、2 通目で初めて値が動く
     expect(tsunamis.map(t => t.headType)).toEqual([
       'VTSE41', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE52', 'VTSE52', 'VTSE51',
-      'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE41',
+      'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE41',
     ])
     expect(new Set(tsunamis.map(t => t.eventId)).size).toBe(1)
     // 津波情報（VTSE51）の id は報番号から作るので、報ごとに違う（重なると再送として捨てられる）。
@@ -397,7 +408,7 @@ describe('変化の小さい続報テスト', () => {
     // 発表時刻で新旧を見る（→ docs/spec/quake-spec.md §6.3）
     const infoIds = tsunamis.filter(t => t.headType === 'VTSE51').map(t => t.id)
     expect(new Set(infoIds).size).toBe(infoIds.length)
-    expect(tsunamis[13].cancelled).toBe(true)
+    expect(tsunamis[15].cancelled).toBe(true)
   })
 
   const kamaishi = (t: JMATsunami) => t.observations?.find(o => o.name === '釜石')
@@ -445,10 +456,10 @@ describe('変化の小さい続報テスト', () => {
     const tideOf = (t: JMATsunami) => t.areas.flatMap(a => a.stations ?? []).map(s => s.highTideDateTime).join('|')
     // 到達状況は区域の欄（`Forecast/Item/FirstHeight/Condition`）。観測点の側ではない
     const arrivalOf = (t: JMATsunami) => t.areas.map(a => a.firstHeight?.condition ?? '').join('|')
-    const [, , , , , , , , , t9, t10, t11] = tsunamis
-    expect(tideOf(t10)).not.toBe(tideOf(t9))
-    expect(arrivalOf(t10)).toBe(arrivalOf(t9))
-    expect(arrivalOf(t11)).not.toBe(arrivalOf(t10))
+    const [, , , , , , , , , , t10, t11, t12] = tsunamis
+    expect(tideOf(t11)).not.toBe(tideOf(t10))
+    expect(arrivalOf(t11)).toBe(arrivalOf(t10))
+    expect(arrivalOf(t12)).not.toBe(arrivalOf(t11))
   })
 })
 

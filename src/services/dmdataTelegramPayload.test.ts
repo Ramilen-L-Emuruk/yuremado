@@ -8,11 +8,17 @@
 // 「EEW は VXSE45 だけを受ける」）。予報が無く警報だけの人は、VXSE43 が唯一の緊急地震速報になる。
 // この判定はライブ（services/dmdata.ts）とリプレイ（dmdataReplay.ts / dmdataReplayLive.ts）が
 // 共有する。かつて二重定義でライブ側だけ VXSE43 を含み、ライブでのみ塗りが削られていた。
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   isHandledType, buildXmlPayload,
   buildBinaryPayload, isFilteredBinaryTelegram, historyExtraKey,
+  TELEGRAM_KIND_OF_HEAD_TYPE, telegramKindOfHeadType, telegramKindOfPayload,
+  NON_EEW_HANDLED_TYPES, EEW_HEAD_TYPES, DISPATCHED_WITHOUT_PARSER, resetUnreadableNankaiWarnForTest,
+  QUAKE_TYPES, TSUNAMI_TYPES, LPGM_TYPES, NANKAI_TYPES, COMMENTARY_TYPES, KOHATSU_TYPES,
+  NOTICE_TYPES, QUAKE_COUNT_TYPES, ESTIMATED_INTENSITY_TYPES,
 } from './dmdataTelegramPayload'
+import { KIND_OPTIONS } from '../components/TelegramTab/labels'
+import { log } from '../utils/logger'
 import { PREFERRED_CLASSIFICATIONS, eewHeadTypeFor } from './dmdataClassifications'
 import { buildSampleTelegram } from '../test-utils/bufrBuild'
 import type { ReplayPayload } from '../types/replay'
@@ -233,5 +239,64 @@ describe('帯の historyExtraKey', () => {
   it('長周期は地震ごとの鍵のまま', () => {
     const lpgm = (id: string) => ({ kind: 'lpgm' as const, data: { id, eventId: 'e1' } as never })
     expect(historyExtraKey(lpgm('x'))).toBe(historyExtraKey(lpgm('y')))
+  })
+})
+
+// 電文種別 → 何の電文か の表は、受信の振り分け（`buildXmlPayload`・ライブ）と電文ログが引く唯一の表。
+describe('TELEGRAM_KIND_OF_HEAD_TYPE', () => {
+  // 正: 扱う種別がすべて載り、扱わない種別は載らない（表と集合が食い違わない）
+  it('扱う電文種別とちょうど一致する', () => {
+    const handled = new Set([...NON_EEW_HANDLED_TYPES, ...EEW_HEAD_TYPES, ...DISPATCHED_WITHOUT_PARSER])
+    expect([...TELEGRAM_KIND_OF_HEAD_TYPE.keys()].sort()).toEqual([...handled].sort())
+  })
+
+  // 安全弁: 同じ電文種別が 2 つの集合に載って別々の種別へ割り当てられていない
+  // （表は後勝ちで上書きするので、重なると黙ってどちらかに倒れる）
+  it('同じ電文種別を別の種別へ二重に割り当てていない', () => {
+    // 表を作る個々の集合をそのまま並べる（緊急地震速報の 2 つは同じ種別なので重なってよい）
+    const groups: Array<[ReadonlySet<string>, string]> = [
+      [EEW_HEAD_TYPES, 'eew'], [DISPATCHED_WITHOUT_PARSER, 'eew'],
+      [QUAKE_TYPES, 'quake'], [TSUNAMI_TYPES, 'tsunami'], [LPGM_TYPES, 'lpgm'],
+      [NANKAI_TYPES, 'nankai'], [COMMENTARY_TYPES, 'nankaiCommentary'], [KOHATSU_TYPES, 'kohatsu'],
+      [NOTICE_TYPES, 'quakeNotice'], [QUAKE_COUNT_TYPES, 'earthquakeCount'],
+      [ESTIMATED_INTENSITY_TYPES, 'estimatedIntensity'],
+    ]
+    const seen = new Map<string, string>()
+    const clashes: string[] = []
+    for (const [set, kind] of groups) {
+      for (const code of set) {
+        const before = seen.get(code)
+        if (before !== undefined && before !== kind) clashes.push(`${code}: ${before} と ${kind}`)
+        seen.set(code, kind)
+      }
+    }
+    expect(clashes).toEqual([])
+    // 対照: 並べた集合が表と同じものを作る（集合を足して上の並びへ書き忘れたら落ちる）
+    expect([...seen].sort()).toEqual([...TELEGRAM_KIND_OF_HEAD_TYPE].sort())
+  })
+
+  // 正: 電文ログの種別のすべてに、少なくとも 1 つの電文種別が対応する（絞り込みに空の選択肢を作らない）
+  it('電文ログの全種別に電文種別がある', () => {
+    const kinds = new Set(TELEGRAM_KIND_OF_HEAD_TYPE.values())
+    expect(KIND_OPTIONS.filter(k => !kinds.has(k))).toEqual([])
+  })
+
+  // 安全弁: 読み取った結果の種別は表の種別と同じ（読めた行と読めなかった行が別の絞り込みに入らない）
+  it('読み取り結果の種別は表の種別と一致する', () => {
+    const payload = buildXmlPayload('VXSE45', EEW_XML, 'VXSE45')
+    expect(payload && telegramKindOfPayload(payload)).toBe(telegramKindOfHeadType('VXSE45'))
+  })
+
+  // 正: 南海トラフ臨時情報の段階が読めないことは、ライブに限らずどの経路でも記録する
+  it('VYSE50 の段階が読めなければ記録する（経路によらない）', () => {
+    // 間引きの枠はモジュールに残るので、先に白紙へ戻す（他のテストが同じ種別を読んでいても落ちない）
+    resetUnreadableNankaiWarnForTest()
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      expect(buildXmlPayload('VYSE50', '<Report/>', 'VXSE45')).toBeNull()
+      expect(warn.mock.calls.some(c => String(c[0]).includes('[dmdata] 南海トラフ臨時情報 (VYSE50) の段階を解析できませんでした'))).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

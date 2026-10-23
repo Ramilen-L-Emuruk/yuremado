@@ -1,11 +1,11 @@
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { MapMode } from '../components/Map/mapTypes'
 import { computeDisplayEEWLevel, eewKindLabel, eewMaxScale, eewMaxScaleInfo, isProvisionalHypocenter } from './eew'
-import { formatDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth, hasMagnitude } from './formatters'
+import { formatDateTime, formatQuakeDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth } from './formatters'
 import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove, isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
 import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader } from './shareCard'
-import { sourceEarthquakeTime, tsunamiOverallGrade } from './tsunami'
+import { isTsunamiForecastOnly, sourceEarthquakeTime, tsunamiOverallGrade } from './tsunami'
 
 // 共有カードの見出しと出典行を、いま地図が見せているものから組み立てる。
 //
@@ -101,6 +101,16 @@ function buildShareText(header: ShareCardHeader, appUrl: string): string {
 
 type ContentWithoutNotices = Omit<ShareCardContent, 'notices' | 'shareText'>
 
+/**
+ * 共有カードに焼く規模。**「不明」は落とす**（画像は訂正できず、「不明」の語を並べても伝わらない）。電文の説明が「Ｍ不明」の
+ * ときも同じく落とす —— 整形すると「M不明」になり、「不明」との一致では落ちなかった。「Ｍ８を超える巨大地震」のように
+ * 不明でない説明は残す
+ */
+function shareMagnitudeText(magnitude: number, condition: string | undefined, magnitudeType: string | undefined): string | null {
+  const text = formatMagnitudeWithCondition(magnitude, condition, magnitudeType)
+  return text.includes('不明') ? null : text
+}
+
 function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   if (!quake) return { header: { title: '地震情報' }, filenameLabel: 'quake' }
   const { hypocenter, maxScale, time } = quake.earthquake
@@ -111,12 +121,17 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   const parts = [hypocenter.name]
   // 数値が無くても「Ｍ８を超える巨大地震」は落とさない。M8 を超えて速報できないという事実は、
   // 規模が判らないこととは別物で、最も伝えるべき場面に出る。「不明」の語だけは従来どおり落とす。
-  const magnitude = formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition)
-  if (magnitude !== '不明') parts.push(magnitude)
+  const magnitude = shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)
+  if (magnitude !== null) parts.push(magnitude)
   if (hasDepth(hypocenter.depth)) parts.push(`深さ ${formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}`)
-  // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、「null 発生」のような
-  // 壊れた文字列を焼き付けるくらいなら出さない（規模・深さの「不明」を落とすのと同じ考え方）。
-  const timeText = formatDateTime(time)
+  // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、壊れた文字列を
+  // 焼き付けるくらいなら出さない（規模・深さの「不明」を落とすのと同じ考え方）。
+  //
+  // **画面のカードと同じ書式（秒なし・「ごろ」）にする**（2026-10-22 ユーザー承認
+  // 「5-A 秒と発生を落とす」）。`earthquake.time` は発現時刻（`ArrivalTime`）が先で、
+  // 電文に秒は無い —— 以前は `2024/01/01 16:10:00 発生` と出しており、**電文に無い `:00` を
+  // 画像へ焼き付けたうえ、発現時刻を「発生」と名乗っていた**。
+  const timeText = formatQuakeDateTime(time)
   return {
     header: {
       // 未入電なら「以上」を付ける。**画像は訂正できない**ので、下限だけが確定した値を
@@ -126,17 +141,25 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
         : '地震情報',
       titleColor: knownScale ? getIntensityColor(maxScale) : undefined,
       subtitle: parts.join(SUBTITLE_SEPARATOR),
-      meta: timeText ? `${timeText} 発生` : undefined,
+      meta: timeText ?? undefined,
     },
     filenameLabel: 'quake',
   }
 }
 
 function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
-  const live = tsunamis.filter((t) => !t.cancelled)
-  const grade = tsunamiOverallGrade(live)
+  // **解除表示中（`cancelledAt`）も外す。** 等級の判定（`tsunamiOverallGrade`・`isTsunamiForecastOnly`）は
+  // どちらも外すので、ここで残すと見出しは発表中の津波、区域数・震源・時刻は解除された津波、と出どころが割れる。
+  const live = tsunamis.filter((t) => !t.cancelled && !t.cancelledAt)
+  // **予報だけの津波も等級を名乗る**（2026-10-21 ユーザー選択「おすすめで」）。`tsunamiOverallGrade` は
+  // 予報を数えないので、それだけで決めると予報の画像は「津波情報」の一語になり、震源も区域も載らない。
+  // 等級の読めない区域が混じれば予報と言い切らず（`isTsunamiForecastOnly`）、従来どおり「津波情報」に落とす。
+  const grade = tsunamiOverallGrade(live) ?? (isTsunamiForecastOnly(live) ? 'Forecast' : null)
   if (!grade) return { header: { title: '津波情報' }, filenameLabel: 'tsunami' }
-  const { text, color } = formatTsunamiGrade(grade)
+  // **見出しの文字色は付けない**（既定の白。2026-10-21 ユーザー選択「おすすめで」）。`formatTsunamiGrade` の
+  // `color` は等級の地の色（`bg`）に載せる文字の色で、注意報では黒になる —— 暗い見出し帯の上では読めない。
+  // 地の色を文字色にすると、大津波警報の紫がこの帯の上でコントラスト比 2.5 ほどしか取れない。
+  const { text } = formatTsunamiGrade(grade)
   const areaCount = new Set(live.flatMap((t) => t.areas.map((a) => a.name))).size
   // 原因地震が複数あれば（EventID に番号が足された津波）全件を「／」で並べる。長いと折り返す
   // （2026-10-15 ユーザー承認「全件を並べる」）。同じ地震を複数の報が運ぶので、震源名・規模・発生時刻の組で重ねる。
@@ -146,8 +169,11 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   for (const source of live.flatMap((t) => t.sourceEarthquakes ?? [])) {
     // 規模が数値で無いときは説明を出す（「Ｍ８を超える巨大地震」）。落とすと、**最も重大な
     // 地震ほど震源名だけの薄い画像になる**。
+    // **種別は渡さない（`M` のまま）。** 津波カードの原因地震の行はまだ諮っていない
+    // （→ `types/earthquake.ts` の `TsunamiSourceEarthquake.magnitudeType`）。**直書きの `M` には
+    // しない** —— 必須引数の網から外れ、後で出すと決めたときに渡し忘れても型検査が落ちなくなる。
     const magnitudeText = source.magnitude != null
-      ? `　M${source.magnitude.toFixed(1)}`
+      ? `　${formatMagnitude(source.magnitude, undefined)}`
       // 地震側と同じ述語を通す。素通しにすると同じ電文由来の同じ事実が、地震の共有カードでは
       // 半角・津波の共有カードでは全角、と表記が割れる
       : (source.magnitudeCondition ? `　${formatMagnitudeCondition(source.magnitudeCondition)}` : '')
@@ -177,7 +203,6 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   return {
     header: {
       title: text,
-      titleColor: color,
       subtitle: parts.join(SUBTITLE_SEPARATOR),
       meta: issuedText ? `${issuedText} 発表` : undefined,
     },
@@ -197,8 +222,13 @@ function kyoshinContent(liveEews: EEWAlert[]): ContentWithoutNotices {
   // **`condition` を参照する箇所は eew-spec.md §5 に列挙する決まり。足したらそちらも更新すること。**
   // 「非常に強い揺れを検知」の報も同じ（→ `isProvisionalHypocenter`）。
   const assumedHypocenter = isProvisionalHypocenter(eew)
-  const parts = [hypocenter.name]
-  if (!assumedHypocenter && hasMagnitude(hypocenter.magnitude)) parts.push(formatMagnitude(hypocenter.magnitude))
+  // 震央地名が空の報は、画面のカード・地図の吹き出しと同じ「震源調査中」を名前の位置に置く
+  // （2026-10-22 ユーザー承認「「震源調査中」を入れる」）
+  const parts = [hypocenter.name || '震源調査中']
+  // 数値が無くても「Ｍ８を超える巨大地震」は落とさない（地震情報の共有カードと同じ。2026-10-22 ユーザー承認
+  // 「吹き出しと共有カードも揃える (Recommended)」）。「不明」の語だけは従来どおり落とす
+  const eewMagnitude = shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)
+  if (!assumedHypocenter && eewMagnitude !== null) parts.push(eewMagnitude)
   if (knownScale) parts.push(`予想最大震度 ${getIntensityLabelWithApproxAbove(info.scale, info.orAbove)}`)
   const serial = eew.issue?.serial
   // 日時として読めない発生時刻は落とすが、**報番号は残す**（別の事実なので巻き込まない）。

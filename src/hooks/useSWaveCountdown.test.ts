@@ -205,6 +205,29 @@ describe('useSWaveCountdown: 複数の地震は地震ごとに行を出す', () 
     expect(nearRow.distanceKm!).toBeCloseTo(haversineKm(37.5, 137.2, HOME.lat, HOME.lng), 6)
   })
 
+  // 短縮用震央地名（`Hypocenter/Area/ReduceName`）。**この行だけで使う**
+  // （2026-10-22 ユーザー承認「2-A 到達予測の行」）。1 行で末尾を省略するうえ、同じ行に
+  // 「震源から N km」が並ぶので、アプリの中でいちばん幅が足りない。
+  //
+  // 正: 電文が短い呼び方を載せていれば、そちらを出す。
+  it('短縮用震央地名があればそちらを出す', () => {
+    const e = { ...eew([area({ arrivalTime: '2024-01-01T16:19:20+09:00' })]), reduceName: '能登沖' }
+    expect(run([e], false, [])?.rows[0].hypocenterName).toBe('能登沖')
+  })
+
+  // 対照: 載せていなければ通常の震央地名。**地震情報の電文はこの要素を持たない**ので、
+  // 実質こちらが既定（全期間の控え 19,345 通で 1 件も無かった）。
+  it('短縮用震央地名が無ければ通常の震央地名', () => {
+    expect(run([eew([area({ arrivalTime: '2024-01-01T16:19:20+09:00' })])], false, [])?.rows[0].hypocenterName)
+      .toBe('能登半島沖')
+  })
+
+  // 安全弁: **空文字は通常の震央地名へ倒す。** 短い呼び方が空のまま行が無名にならないこと。
+  it('短縮用震央地名が空なら通常の震央地名へ倒す', () => {
+    const e = { ...eew([area({ arrivalTime: '2024-01-01T16:19:20+09:00' })]), reduceName: '' }
+    expect(run([e], false, [])?.rows[0].hypocenterName).toBe('能登半島沖')
+  })
+
   // 対照: ホーム地点の区域について値を出していない速報の行は作らない。
   // 意図的に覆した（2026-10-14 ユーザー承認「距離だけのカードを出す」・並べ方は 2026-10-19 ユーザー承認
   // 「行として最後に並べる (推奨)」）: 以前はホーム地点の区域に値の無い速報の行を作らなかった。
@@ -247,9 +270,10 @@ describe('useSWaveCountdown: 複数の地震は地震ごとに行を出す', () 
     expect(got?.rows.map((r) => r.key).sort()).toEqual(['far', 'near'])
   })
 
-  // 安全弁: 解除までに届かない地震は、その地震の行だけを落とす。もう 1 つの地震の行は残す
+  // 意図的に覆した（2026-10-21 ユーザー承認「直す (Recommended)」）: 解除までに届かない地震は、自前計算の行は出さず、
+  // 気象庁の発表値の行へ戻す（この地震はホーム地点の区域に値が無いので距離だけの行）。もう 1 つの地震の行は残す
   // （以前は選んだ 1 件が届かないと判定されるとカードごと消え、近い別の地震も出なかった）。
-  it('解除までに届かない地震の行だけを落とし、ほかの地震の行は残す', () => {
+  it('解除までに届かない地震は発表値の行へ戻し、ほかの地震の自前計算の行は残す', () => {
     const near = eew([], 'near')
     const tiny = eew([], 'tiny', { name: '奄美大島近海', latitude: 28.3, longitude: 129.5, depth: 10, magnitude: 2.0 })
     const waves: PsWaveCircle[] = [
@@ -257,7 +281,69 @@ describe('useSWaveCountdown: 複数の地震は地震ごとに行を出す', () 
       // 円は大きいが規模が小さく遠い（以前の「いちばん大きい円」を選ぶ形ならこちらが選ばれていた）。
       { eventId: 'tiny', lat: 28.3, lng: 129.5, pRadius: 200, sRadius: 120, depth: 10, magnitude: 2.0 },
     ]
-    expect(run([near, tiny], true, waves)?.rows.map((r) => r.key)).toEqual(['near'])
+    const got = run([near, tiny], true, waves)
+    expect(got?.rows.map((r) => [r.key, r.source, r.noForecast])).toEqual([['near', 'own', false], ['tiny', 'telegram', true]])
+    expect(got?.source).toBe('mixed')
+  })
+})
+
+// 到達予想キーの端末で、自前計算できない地震（予報円の無い報・解除までに届かない地震）は気象庁の発表値の行へ戻す
+// （2026-10-21 ユーザー承認「直す (Recommended)」）。キーの無い端末なら同じ報で発表値が出るので、キーを入れたほうが
+// 伝わる情報が減っていた。
+describe('useSWaveCountdown: 自前計算できない地震は発表値へ戻す', () => {
+  const ARRIVAL = '2024-01-01T16:19:20+09:00' // NOW から 20 秒後
+
+  // 深さが判らない報（予報円を作らない。→ `computeEewCircle`）
+  const DEPTH_UNKNOWN = { name: '能登半島沖', latitude: 37.5, longitude: 137.2, depth: -1, magnitude: 6.0 }
+
+  // 正: 予報円の無い報（深さ不明・仮の震源など）は、ホーム地点の区域の発表値で秒数を出す
+  it('予報円の無い報は、発表値の秒数を区域名付きで出す', () => {
+    const got = run([eew([area({ arrivalTime: ARRIVAL })], 'e1', DEPTH_UNKNOWN)], true, [])
+    expect(got?.source).toBe('telegram')
+    expect(got?.areaName).toBe(NOTO.name)
+    expect(got?.rows.map((r) => [r.source, r.etaSec])).toEqual([['telegram', 20]])
+  })
+
+  // 正: 自前計算できる地震とできない地震が並べば、枠は混ざった形になる
+  it('自前計算の行と発表値の行が並べば、枠の出どころは混ざった形になる', () => {
+    const near = eew([area({ arrivalTime: ARRIVAL })], 'near')
+    const noCircle = eew([area({ arrivalTime: '2024-01-01T16:19:30+09:00' })], 'other', { ...DEPTH_UNKNOWN, name: '石川県能登地方', latitude: 37.3, longitude: 136.8 })
+    const got = run([near, noCircle], true, [{ ...CIRCLE, eventId: 'near' }])
+    expect(got?.source).toBe('mixed')
+    expect(got?.areaName).toBe(NOTO.name)
+    expect(got?.rows.map((r) => [r.key, r.source]).sort()).toEqual([['near', 'own'], ['other', 'telegram']])
+  })
+
+  // 対照: 自前計算で行を作れた地震には、発表値の行を重ねない（同じ地震に 2 行出さない）
+  it('自前計算で行を作れた地震には、発表値の行を足さない', () => {
+    const got = run([eew([area({ arrivalTime: ARRIVAL })])], true)
+    expect(got?.source).toBe('own')
+    expect(got?.rows).toHaveLength(1)
+  })
+
+  // 安全弁: 円を作れる速報で、円がまだ届いていないだけなら発表値の行を出さずに待つ（次の更新で自前計算の行になる。
+  // 先に発表値の行を出すと秒数が跳ぶ）
+  it('円が作れる速報で円がまだ届いていなければ、発表値の行を出さない', () => {
+    expect(run([eew([area({ arrivalTime: ARRIVAL })])], true, [])).toBeNull()
+  })
+
+  // 正: S 波がまだ地表に出ていない間でも、解除までに届かない地震は最初から発表値の行にする（推定中の行を挟まない）
+  it('地表に出る前でも、解除までに届かない地震は最初から発表値の行にする', () => {
+    const tiny = eew([], 'tiny', { name: '奄美大島近海', latitude: 28.3, longitude: 129.5, depth: 10, magnitude: 2.0 })
+    const got = run([tiny], true, [{ eventId: 'tiny', lat: 28.3, lng: 129.5, pRadius: 0, sRadius: 0, depth: 10, magnitude: 2.0 }])
+    expect(got?.rows.map((r) => [r.source, r.noForecast])).toEqual([['telegram', true]])
+  })
+
+  // 対照: 地表に出る前で、解除までに届く地震は自前計算の「推定中」の行のまま
+  it('地表に出る前で解除までに届く地震は、自前計算の推定中の行のまま', () => {
+    const got = run([eew([])], true, [{ ...CIRCLE, pRadius: 0, sRadius: 0 }])
+    expect(got?.rows.map((r) => [r.source, r.etaSec])).toEqual([['own', null]])
+  })
+
+  // 安全弁: キーの無い端末は従来どおり（自前計算へは倒れない）
+  it('キーの無い端末は、予報円があっても発表値だけを出す', () => {
+    const got = run([eew([area({ arrivalTime: ARRIVAL })])], false)
+    expect(got?.rows.every((r) => r.source === 'telegram')).toBe(true)
   })
 })
 
@@ -303,7 +389,7 @@ describe('useSWaveCountdown: 円を作った速報を引けなければ行を作
 
 describe('compareArrivalRows', () => {
   const row = (key: string, etaSec: number | null, arrived = false, noForecast = false): Row =>
-    ({ key, hypocenterName: null, provisional: false, distanceKm: noForecast ? 100 : null, etaSec, arrived, noForecast })
+    ({ key, source: 'telegram', hypocenterName: null, provisional: false, distanceKm: noForecast ? 100 : null, etaSec, arrived, noForecast })
 
   it('到達済みを先頭、残りは秒数の短い順、推定中を最後に並べる', () => {
     const sorted = [row('a', 20), row('b', null), row('c', 0, true), row('d', 5)].sort(compareArrivalRows)
@@ -324,7 +410,7 @@ describe('compareArrivalRows', () => {
 
 describe('countdownBeepTarget', () => {
   const row = (key: string, etaSec: number | null, arrived = false, noForecast = false): Row =>
-    ({ key, hypocenterName: null, provisional: false, distanceKm: noForecast ? 100 : null, etaSec, arrived, noForecast })
+    ({ key, source: 'telegram', hypocenterName: null, provisional: false, distanceKm: noForecast ? 100 : null, etaSec, arrived, noForecast })
   const of = (rows: Row[]) => ({ source: 'telegram' as const, areaName: NOTO.name, rows: [...rows].sort(compareArrivalRows) })
 
   // 正（2026-10-18 ユーザー承認「いちばん早く届く地震」）: まだ届いていない地震のうち到達がいちばん早いもの。

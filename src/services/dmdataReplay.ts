@@ -11,7 +11,7 @@ import {
   fetchWithTimeout, isAbortedByCaller, ARCHIVE_BODY_FETCH_TIMEOUT_MS, API_FETCH_TIMEOUT_MS,
 } from '../utils/fetchWithTimeout'
 import {
-  addQuakeRetraction, createQuakeFoldKeys, extractQuakeEventIdFromId, isRetractedQuakeReport,
+  addQuakeRetraction, createQuakeFoldKeys, extractQuakeEventIdFromId, isRetractedQuakeReport, noteRetractionTie,
   quakeRetractionOf, QUAKE_ISSUE_PRIORITY, reportOrderKey, type QuakeRetraction,
 } from '../utils/quakeMerge'
 import type { AreaPrefIndex } from '../utils/quakePoints'
@@ -1478,6 +1478,7 @@ function foldPreWindowQuakes(
     try {
       if (!quake.cancelled && isRetractedQuakeReport(retractions, quake, areaPrefIndex)) {
         retracted++
+        noteRetractionTie(retractions, quake, areaPrefIndex)
         continue
       }
       folded = foldKeyOf(quake)
@@ -2922,7 +2923,7 @@ export async function fetchDmdataEewOrigins(
     tried += 1
     let found: LatestEewReport
     try {
-      found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, false)
+      found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, false, false)
     } catch (e) {
       log.warn(`[eew-origin] 最終報を取れませんでした eventId=${ev.eventId}`, e)
       found = { kind: 'failed' }

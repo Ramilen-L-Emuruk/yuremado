@@ -179,6 +179,7 @@ const makeEp = (over: Partial<EewEpicenter> = {}): EewEpicenter => ({
   isAssumed: false,
   name: '日向灘',
   magnitude: 6.5,
+  magnitudeCondition: undefined,
   depth: 30,
   depthAtLeast: false,
   serial: '1',
@@ -210,11 +211,27 @@ describe('EEW 震源ポップアップの文言', () => {
     expect(html).not.toContain('NaN')
   })
 
+  // 規模が数値にならない報は気象庁の説明を出す（地震情報の吹き出しと同じ部品。2026-10-22 ユーザー承認
+  // 「吹き出しと共有カードも揃える (Recommended)」）
+  it('規模が数値にならない報は、規模の説明を出す', () => {
+    const html = buildPopupHtml(makeEp({ magnitude: NaN, magnitudeCondition: 'Ｍ８を超える巨大地震' }))
+    expect(html).toContain('M8を超える巨大地震')
+    expect(html).not.toContain('不明')
+  })
+
   // 対照: 確定震源では但し書きを出さない（出すと確定した震源まで疑わせる）。
   it('確定震源では但し書きを出さず M・深さを見せる', () => {
     const html = buildPopupHtml(makeEp())
     expect(html).not.toContain('震源未確定')
     expect(html).not.toContain('観測点の位置')
+    expect(html).toContain('深さ')
+  })
+
+  // 正: 震央地名が空の報は見出しを「震源調査中」にし、M・深さは確定震源と同じく出す
+  it('震央地名が空なら見出しを「震源調査中」にし、M・深さは出す', () => {
+    const html = buildPopupHtml(makeEp({ name: '' }))
+    expect(html).toContain('>震源調査中</span>')
+    expect(html).toContain('M6.5')
     expect(html).toContain('深さ')
   })
 

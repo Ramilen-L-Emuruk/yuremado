@@ -12,9 +12,9 @@ import type { SeismoIntensityLike, SeismoWaveMode } from '../utils/seismoWaveTri
 import { NO_SCOPE } from '../utils/actionChecklistTrigger'
 
 /** 震度1 を出している観測点（`intensity >= 0.5`）。 */
-const SHAKING = [{ intensity: 1.2, usualMeasured: null }]
+const SHAKING = [{ stationId: 's1', lat: null, lon: null, intensity: 1.2, usualMeasured: null }]
 /** 静穏時の実機（負の計測震度）。 */
-const QUIET = [{ intensity: -0.04, usualMeasured: null }]
+const QUIET = [{ stationId: 's1', lat: null, lon: null, intensity: -0.04, usualMeasured: null }]
 
 function setup(mode: SeismoWaveMode, stations: readonly SeismoIntensityLike[]) {
   return renderHook(

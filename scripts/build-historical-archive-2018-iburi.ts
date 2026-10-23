@@ -96,6 +96,7 @@ async function main() {
       '2018年9月6日3時8分頃、胆振地方中東部を震源とするM6.7の地震が発生。厚真町で震度7を観測した（北海道胆振東部地震）。',
     windowStart: WINDOW_START,
     windowEnd: WINDOW_END,
+    dates: DATES,
     entries: [...eewEntries, ...quakeTsunamiEntries],
     outPath: OUT_PATH,
     indexPath: INDEX_PATH,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew } from './eew'
+import { calcShakingDurationSec, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast } from './eew'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
 
@@ -431,13 +431,37 @@ describe('eewMaxScaleInfo: 「〜以上」の集約', () => {
   })
 
   // 安全弁: 区域別予想を先に見る順序は変えていない。
-  it('仮定震源要素でも areas があればそちらを優先する', () => {
+  // 2026-10-22 に覆した: 以前は区域を先に見ていた。DMDATA の報は電文全体の値（最大予測震度）を先に採る
+  // （ユーザー承認「電文全体の値を使う (Recommended)」）。仮定震源要素でも値を捨てないことは変わらない。
+  it('DMDATA の報は仮定震源要素でも電文全体の値を区域より先に採る', () => {
     const eew = makeEEW({
       earthquake: { ...makeEEW().earthquake, condition: '仮定震源要素' },
       areas: [area({ scaleFrom: 40, scaleTo: 40, scaleToOrAbove: true })],
       forecastMaxScale: 70,
     })
+    expect(eewMaxScaleInfo(eew)).toEqual({ scale: 70, orAbove: false })
+  })
+
+  // 対照: standard 版は区域（P2PQuake）と電文全体の値（Yahoo）が別の経路なので、印が無ければ区域を先に見る
+  it('standard 版は印が無ければ区域を先に見る', () => {
+    const eew = makeEEW({
+      origin: 'p2pquake',
+      areas: [area({ scaleFrom: 40, scaleTo: 40, scaleToOrAbove: true })],
+      forecastMaxScale: 70,
+    })
     expect(eewMaxScaleInfo(eew)).toEqual({ scale: 40, orAbove: true })
+  })
+
+  // 安全弁: 電文全体の値を採っても、同じ階級の区域の「以上」は落とさない
+  it('電文全体の値と同じ階級の区域が「以上」なら残す', () => {
+    const eew = makeEEW({ areas: [area({ scaleFrom: 50, scaleTo: 50, scaleToOrAbove: true })], forecastMaxScale: 50 })
+    expect(eewMaxScaleInfo(eew)).toEqual({ scale: 50, orAbove: true })
+  })
+
+  // 安全弁: 電文全体の値が無い（震度0・未設定）なら区域の最大へ戻る
+  it('電文全体の値が無ければ区域の最大を採る', () => {
+    const eew = makeEEW({ areas: [area({ scaleFrom: 40, scaleTo: 40 })] })
+    expect(eewMaxScaleInfo(eew)).toEqual({ scale: 40, orAbove: false })
   })
 
   it('震度が取れないときは orAbove を立てない（「不明以上」を作らない）', () => {
@@ -570,12 +594,13 @@ describe('eewMaxLpgmClass', () => {
     expect(eewMaxLpgmClass(eew)).toBe(2)
   })
 
-  it('areas内のlgIntTo最大値をforecastMaxLpgmClassより優先する', () => {
+  // 2026-10-22 に覆した: 以前は区域の最大を先に見ていた（ユーザー承認「電文全体の値を使う (Recommended)」）
+  it('電文全体の forecastMaxLpgmClass を区域の lgIntTo より先に採る', () => {
     const eew = makeEEW({
       areas: [{ pref: 'A県', name: 'A地域', scaleFrom: 30, scaleTo: 40, kindCode: '10', arrivalTime: null, lgIntTo: 2 }],
       forecastMaxLpgmClass: 4,
     })
-    expect(eewMaxLpgmClass(eew)).toBe(2)
+    expect(eewMaxLpgmClass(eew)).toBe(4)
   })
 
   it('areas内にlgIntToを持つ地域が無ければforecastMaxLpgmClassにフォールバックする', () => {
@@ -706,6 +731,30 @@ describe('calcEEWAutoCancelSec: 自動解除までの秒数（有感半径のS�
   it('30 秒（FIXED_BUFFER_SEC）以上を返す', () => {
     expect(calcEEWAutoCancelSec(5.0, 10)).toBeGreaterThanOrEqual(30)
     expect(calcEEWAutoCancelSec(3.0, 10)).toBeGreaterThanOrEqual(30)
+  })
+})
+
+describe('calcEEWAutoCancelSec: 規模が判らない値は M6.0 として求める', () => {
+  // 正: NaN（強震モニタ・DMDATA の規模不明）と -1（P2PQuake の規模不明）は M6.0 と同じ秒数
+  it('NaN と -1 は M6.0 と同じ', () => {
+    expect(calcEEWAutoCancelSec(Number.NaN, 10)).toBe(calcEEWAutoCancelSec(6.0, 10))
+    expect(calcEEWAutoCancelSec(-1, 10)).toBe(calcEEWAutoCancelSec(6.0, 10))
+  })
+  // 対照: 読める規模はその値で求める（M6 と同じにならない）
+  it('読める規模はその値で求める', () => {
+    expect(calcEEWAutoCancelSec(4.0, 10)).toBeLessThan(calcEEWAutoCancelSec(6.0, 10))
+  })
+  // 安全弁: M0.0 は値として扱う（判らない値とは分ける）
+  it('0 は M6 に倒さない', () => {
+    expect(calcEEWAutoCancelSec(0, 10)).toBeLessThan(calcEEWAutoCancelSec(6.0, 10))
+  })
+})
+
+describe('calcShakingDurationSec: 規模が判らないときは既定値', () => {
+  it('NaN と -1 は undefined と同じ既定値、読める規模は表の値', () => {
+    expect(calcShakingDurationSec(Number.NaN, 0)).toBe(calcShakingDurationSec(undefined, 0))
+    expect(calcShakingDurationSec(-1, 0)).toBe(calcShakingDurationSec(undefined, 0))
+    expect(calcShakingDurationSec(4.0, 0)).not.toBe(calcShakingDurationSec(undefined, 0))
   })
 })
 
@@ -1286,7 +1335,7 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
   // 発表中の速報の取り直しが、もう終えた地震の報を返したか（→ `useEarthquakes` の `eewEndedRef`）
   describe('endedEewMatch', () => {
     const ENDED_AT = 1_000_000
-    const ended: EndedEew = { serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT, cancelled: false }
+    const ended: EndedEew = { serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT, cancelled: false, lastReport: null, firstIssueTime: undefined }
     const match = (over: Partial<EndedEew> | undefined, eew: EEWAlert, nowMs = ENDED_AT + 1000) =>
       endedEewMatch(over === undefined ? undefined : { ...ended, ...over }, eew, nowMs, ACTIVE_EEW_WINDOW_MS)
     // 正: 同じ経路で、終えたときの報番号以下の報は終えた地震の報
@@ -1507,6 +1556,44 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
       expect(merged.areas?.map(a => a.name)).toEqual(['石川県能登'])
     })
 
+    describe('Yahoo の規模が読めない報（NaN）', () => {
+      const p2pM = report('p2pquake', '1', P2P_TIME, {
+        earthquake: { ...makeEEW().earthquake, hypocenter: { name: '古い震源', latitude: 37, longitude: 137, depth: 10, magnitude: 6.1 } },
+      })
+      const yahooAt = (magnitude: number) => report('yahoo', '19', LATER, {
+        earthquake: { ...makeEEW().earthquake, hypocenter: { name: '新しい震源', latitude: 40, longitude: 140, depth: 20, magnitude } },
+      })
+
+      // 正: 読めなかった規模で前の値を消さない（震源のほかの欄は差し替える）
+      it('前の報の規模を保ち、震源のほかの欄は差し替える', () => {
+        const merged = mergeEewReport(p2pM, yahooAt(Number.NaN))
+        expect(merged.earthquake.hypocenter.magnitude).toBe(6.1)
+        expect(merged.earthquake.hypocenter.name).toBe('新しい震源')
+        expect(merged.earthquake.hypocenter.depth).toBe(20)
+      })
+      // 対照: 読めた規模は差し替える
+      it('読めた規模は差し替える', () => {
+        expect(mergeEewReport(p2pM, yahooAt(6.8)).earthquake.hypocenter.magnitude).toBe(6.8)
+      })
+      // 正: Yahoo が先に着き、遅れて届いた P2PQuake の報が規模を埋める
+      it('遅れて届いた P2PQuake の報で、読めていない規模を埋める', () => {
+        const merged = supplementEewReport(mergeEewReport(undefined, yahooAt(Number.NaN)), p2pM)
+        expect(merged.earthquake.hypocenter.magnitude).toBe(6.1)
+        expect(merged.earthquake.hypocenter.name).toBe('新しい震源')
+      })
+      // 安全弁: 届いた報も規模を持たない（P2PQuake の -1）なら書き込まない
+      it('遅れて届いた報も規模不明なら、表示中の値を変えない', () => {
+        const unknown = { ...p2pM, earthquake: { ...p2pM.earthquake, hypocenter: { ...p2pM.earthquake.hypocenter, magnitude: -1 } } }
+        const merged = supplementEewReport(mergeEewReport(undefined, yahooAt(Number.NaN)), unknown)
+        expect(merged.earthquake.hypocenter.magnitude).toBeNaN()
+      })
+      // 安全弁: 読めている規模は、遅れて届いた古い報で戻さない
+      it('読めている規模は遅れて届いた報で上書きしない', () => {
+        const merged = supplementEewReport(mergeEewReport(undefined, yahooAt(6.8)), p2pM)
+        expect(merged.earthquake.hypocenter.magnitude).toBe(6.8)
+      })
+    })
+
     it('区域を持たない P2PQuake の報は前の区域を消さない', () => {
       const merged = mergeEewReport(p2p, report('p2pquake', '2', LATER, { areas: undefined }))
       expect(merged.areas?.map(a => a.name)).toEqual(['石川県能登'])
@@ -1633,5 +1720,96 @@ describe('rememberEewHypocenterName', () => {
     expect(m.has('k0')).toBe(true)
     expect(m.has('k1')).toBe(false)
     expect(m.get('new')).toBe('x')
+  })
+})
+
+describe('admitTrainingEew（標準版の訓練報・試験報を設定に従って流す）', () => {
+  it('正: 設定が真なら、強震モニタの訓練報は test を外して「訓練」の印を付ける', () => {
+    const out = admitTrainingEew(makeEEW({ origin: 'yahoo', test: true }), true)
+    expect(out.test).toBe(false)
+    expect(out.operationStatus).toBe('訓練')
+  })
+
+  it('正: 設定が真なら、P2PQuake の試験報は test を外して「試験」の印を付ける（取消の報も同じ）', () => {
+    const out = admitTrainingEew(makeEEW({ origin: 'p2pquake', test: true, cancelled: true }), true)
+    expect(out.test).toBe(false)
+    expect(out.operationStatus).toBe('試験')
+    expect(out.cancelled).toBe(true)
+  })
+
+  it('対照: 設定が偽（既定）なら test のまま返す（受信側が捨てる）', () => {
+    const eew = makeEEW({ origin: 'yahoo', test: true })
+    expect(admitTrainingEew(eew, false)).toBe(eew)
+  })
+
+  it('安全弁: 本物の報（test: false）は設定によらず触らない', () => {
+    const eew = makeEEW({ origin: 'p2pquake', test: false })
+    expect(admitTrainingEew(eew, true)).toBe(eew)
+  })
+
+  it('安全弁: 強震モニタ・P2PQuake 以外の経路は変えない（DMDATA は受信の時点で同じ設定を見ている）', () => {
+    const eew = makeEEW({ origin: 'dmdata', test: true })
+    expect(admitTrainingEew(eew, true)).toBe(eew)
+  })
+})
+
+describe('isLateEewCancel（取消の前に画面から消えた地震へ届いた誤報取消）', () => {
+  const ENDED_AT = 1_000_000
+  const lastReport = makeEEW({ origin: 'dmdata' })
+  const ended: EndedEew = {
+    serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: null, endedAtMs: ENDED_AT, cancelled: false,
+    lastReport, firstIssueTime: '2026-01-01T12:00:05Z',
+  }
+  const cancel = makeEEW({ cancelled: true })
+  const at = (ms: number) => ENDED_AT + ms
+
+  it('正: 自動解除で消えた地震へ、窓の中で届いた誤報取消', () => {
+    expect(isLateEewCancel(ended, cancel, at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(true)
+    expect(isLateEewCancel(ended, cancel, at(ACTIVE_EEW_WINDOW_MS), ACTIVE_EEW_WINDOW_MS)).toBe(true)
+  })
+
+  it('対照: 窓を過ぎた・時計が巻き戻った記憶、記憶に無い地震では立たない', () => {
+    expect(isLateEewCancel(ended, cancel, at(ACTIVE_EEW_WINDOW_MS + 1), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+    expect(isLateEewCancel(ended, cancel, at(-1), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+    expect(isLateEewCancel(undefined, cancel, at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+  })
+
+  it('安全弁: 取消で終えた地震（もう伝えた取消）・自動解除の報・取消でない報・最後の報の無い記憶では立たない', () => {
+    expect(isLateEewCancel({ ...ended, cancelled: true }, cancel, at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+    expect(isLateEewCancel(ended, makeEEW({ cancelled: true, expired: true }), at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+    expect(isLateEewCancel(ended, makeEEW(), at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+    expect(isLateEewCancel({ ...ended, lastReport: null }, cancel, at(10_000), ACTIVE_EEW_WINDOW_MS)).toBe(false)
+  })
+})
+
+describe('緊急地震速報の通知の本文と出し直し', () => {
+  const withForecast = (scale: number, lpgm?: number, over: Partial<EEWAlert> = {}) =>
+    makeEEW({ forecastMaxScale: scale as IntensityScale, ...(lpgm !== undefined && { forecastMaxLpgmClass: lpgm as LpgmClass }), ...over })
+
+  it('本文: 震度と長周期地震動階級の予想を添える（承認された形）', () => {
+    expect(eewNotificationBody('石川県能登地方', eewNotifiedForecast(withForecast(45, 2))))
+      .toBe('石川県能登地方 最大震度5弱予想 長周期地震動階級2予想')
+  })
+
+  it('本文: 長周期の予想が無ければ添えない・震度を伝えられない報では階級も添えない', () => {
+    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(45)))).toBe('日向灘 最大震度5弱予想')
+    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(0, 2)))).toBe('日向灘')
+  })
+
+  it('正: 震度か階級が上がれば出し直す（「程度以上」が付いたのも上がった扱い）', () => {
+    const before = eewNotifiedForecast(withForecast(45, 1))
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(50, 1)), before)).toBe(true)
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(45, 2)), before)).toBe(true)
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(45, 1, { forecastMaxScaleOrAbove: true })), before)).toBe(true)
+  })
+
+  it('対照: 同じ・下がった予想では出し直さない', () => {
+    const before = eewNotifiedForecast(withForecast(50, 2))
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(50, 2)), before)).toBe(false)
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(45, 1)), before)).toBe(false)
+  })
+
+  it('安全弁: まだ通知を出していない地震では出し直さない', () => {
+    expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(70, 4)), undefined)).toBe(false)
   })
 })

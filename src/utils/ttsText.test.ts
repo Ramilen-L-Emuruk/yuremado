@@ -262,8 +262,10 @@ describe('eewIntensityToText: 長周期地震動階級の読み上げ', () => {
   // 以下 3 件は、読み上げが電文全体の forecastMaxLpgmClass を直読みしていた頃の回帰テスト。
   // 震度は eewMaxScale を通していたのに階級だけ生フィールドを見ており、集約関数が持つ
   // 「地域別優先」「仮定震源要素の除外」の 2 つのガードが読み上げにだけ効いていなかった。
-  it('地域別 lgIntTo があれば電文全体の forecastMaxLpgmClass より地域別の最大を優先する', () => {
-    const eew = makeEEW(1, {
+  // 2026-10-22 に順序を覆した（電文全体の値を先に採る。ユーザー承認「電文全体の値を使う (Recommended)」）ので、
+  // 集約を通ることは「電文全体の値が無い報で地域別の最大を読む」形で確かめる。
+  it('電文全体の forecastMaxLpgmClass が無ければ地域別の最大を読む', () => {
+    const eew = makeEEW(undefined, {
       areas: [
         { pref: '宮崎県', name: '宮崎県北部平野部', scaleFrom: 45, scaleTo: 50, kindCode: '10', arrivalTime: null, lgIntTo: 3 },
         { pref: '大分県', name: '大分県南部', scaleFrom: 30, scaleTo: 40, kindCode: '10', arrivalTime: null, lgIntTo: 2 },

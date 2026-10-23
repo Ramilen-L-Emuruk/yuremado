@@ -59,7 +59,8 @@ function formatCatalogDepth(depthKm: number): string {
  * 「不明 / 深さ 10.0km」では何が不明なのか読めない。
  */
 function formatCatalogMagnitude(magnitude: number): string {
-  return hasMagnitude(magnitude) ? formatMagnitude(magnitude) : 'M 不明'
+  // 長期震源カタログは電文の種別（`@type`）を持たないので、従来どおり `M` で出す。
+  return hasMagnitude(magnitude) ? formatMagnitude(magnitude, undefined) : 'M 不明'
 }
 
 function buildPopupHtml(cloud: CatalogPointCloud, i: number): string {

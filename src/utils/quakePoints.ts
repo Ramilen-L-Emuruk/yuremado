@@ -453,6 +453,12 @@ export function buildIntensityRows(
   const prefNames = new Set<string>([...prefMax.keys(), ...regionNames.keys(), ...looseByPref.keys()])
   const prefRows: IntensityTopRow[] = Array.from(prefNames)
     .map((pref): IntensityPrefRow => {
+      // **震度が「不明」（-1）の行は出さない**（2026-10-21 ユーザー承認）。
+      // `-1` は電文が震度を伝えていない印で、配下の最大も
+      // 取れなかったということ。「不明」と並べても読み手に伝わるものが無いので行ごと落とす。
+      // **落としたことは記録に残さない** —— 標準版では平常時の電文が毎回この形になる
+      // （「震度0」が `-1` へ寄るため。→ `docs/spec/quake-spec.md` §8「震度一覧は 4 段の入れ子」）。
+      // 同じ判断を下の県（`row.scale >= 0`）と、県に属さない区域にも当てる。
       const regions = Array.from(regionNames.get(pref) ?? [])
         .map(name => regionRow(name, areaByPref.get(pref)?.get(name)))
         .filter(r => r.scale >= 0)

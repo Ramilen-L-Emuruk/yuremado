@@ -75,6 +75,7 @@ async function main() {
       '2016年10月21日14時7分頃、鳥取県中部を震源とするM6.6の地震が発生。倉吉市・湯梨浜町・北栄町で震度6弱を観測した（鳥取県中部地震）。',
     windowStart: WINDOW_START,
     windowEnd: WINDOW_END,
+    dates: DATES,
     entries: [...eewEntries, ...quakeTsunamiEntries],
     outPath: OUT_PATH,
     indexPath: INDEX_PATH,

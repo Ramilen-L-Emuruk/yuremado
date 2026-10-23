@@ -34,6 +34,7 @@ import { NON_JMA_MARK } from '../utils/formatters'
 import { dmdataTelegramKey } from '../utils/telegramKey'
 import { quakeNoticeId } from '../utils/dmdataId'
 import { arr, obj, str } from './parseHelpers'
+import { unknownEewAccuracyRanks } from '../utils/eewAccuracyRanks'
 
 // EEW: "1","2","3","4","5-","5+","6-","6+","7","不明" 等
 // 地震情報: "1","2","3","4","5弱","5強","6弱","6強","7","不明" 等
@@ -504,13 +505,26 @@ function xmlChild(parent: Element, localName: string): Element | null {
 // どちらも無ければ空文字を返す。
 //
 // **空の要素は「無い」と同じに扱う。** `||` なので `<EditorialOffice></EditorialOffice>`
-// （要素はあるが空）でも PublishingOffice へ落ちる。issue.source は現状どのコンポーネントからも
-// 読まれないため実害は無いが、この値を使うコードを足すときは見ておくこと。
+// （要素はあるが空）でも PublishingOffice へ落ちる。**この値は画面に出さない** ——
+// 落ちた先は発表官署なので、「編集官署」と名乗って出すと事実を誤らせる。
+// 画面へ出すのは下の `parseEditorialOfficeFromXml`（落とさない側）。
 function parseIssueSourceFromXml(doc: Document): string {
   const controlEl = xmlQ(doc, 'Control')
   if (!controlEl) return ''
   return xmlText(xmlChild(controlEl, 'EditorialOffice'))
     || xmlText(xmlChild(controlEl, 'PublishingOffice'))
+}
+
+/**
+ * 電文を編集した官署（`Control/EditorialOffice`）だけを読む。**発表官署へは落とさない。**
+ *
+ * 画面が「編集官署 …」と名乗って出すので（→ `JMAQuake.issue.editorialOffice`）、
+ * 編集官署そのものが入っているときだけ値を返す。無ければ undefined で、画面は行ごと出さない。
+ */
+function parseEditorialOfficeFromXml(doc: Document): string | undefined {
+  const controlEl = xmlQ(doc, 'Control')
+  if (!controlEl) return undefined
+  return xmlText(xmlChild(controlEl, 'EditorialOffice')) || undefined
 }
 
 function xmlText(el: Element | null): string {
@@ -952,6 +966,9 @@ function readHeadlineText(doc: Document): string {
 /** 見出しの構造化（`Head/Headline/Information`）のうち、地方予報区を並べるブロックの `type`。 */
 const EEW_REGION_INFORMATION_TYPE = '緊急地震速報（地方予報区）'
 
+/** 地方予報区ブロックの `Item/LastKind/Code` で「前の報では警報の対象でなかった」を表す値（名前は「なし」）。 */
+const EEW_LAST_KIND_NONE_CODE = '00'
+
 /**
  * 緊急地震速報の警報対象地方（`Head/Headline/Information` の地方予報区ブロック）。
  *
@@ -963,30 +980,55 @@ const EEW_REGION_INFORMATION_TYPE = '緊急地震速報（地方予報区）'
  * 出ていることが例外なく一致した（警報ありの 240 通すべてが持ち、警報 0 の 527 通は 1 通も
  * 持たない）。予報級では空配列を返す。
  *
- * **`Item` を全部たどって文書順で連結する。** 気象庁は続報で新しく警報対象になった地方を
- * 2 つ目の `Item`（`LastKind` が「なし」）に分けて示すが、**その区別は使わない** ——
- * あれは「前報からの差分」で、こちらが前報を取りこぼしていれば一緒に落ちる。何を新しく
- * 伝えるかは「自分が何を声にしたか」から決める（`useLiveEventHandler` の第 1.5 フェーズ）。
+ * **`Item` を全部たどって文書順で連結する（`regions`）。** 気象庁は続報で新しく警報対象に
+ * なった地方を 2 つ目の `Item`（`LastKind` が「なし」・コード `00`）に分けて示す。
+ * その分け方は `added` として別に返し、**カードで新たに加わった地方に色を付けるのにだけ使う**
+ * （→ `docs/spec/eew-spec.md` §3「警報の対象地方」）。**読み上げには使わない** —— あれは
+ * 「前報からの差分」で、こちらが前報を取りこぼしていれば一緒に落ちる。何を新しく声にするかは
+ * 「自分が何を声にしたか」から決める（`useLiveEventHandler` の第 1.5 フェーズ）。
  */
-function readEewWarningRegions(doc: Document): { regions: string[]; unreadable: number } {
+function readEewWarningRegions(doc: Document): { regions: string[]; added: string[]; unreadable: number; unreadableLastKind: number } {
   const headEl = xmlQ(doc, 'Head')
   const headlineEl = headEl ? xmlChild(headEl, 'Headline') : null
-  if (!headlineEl) return { regions: [], unreadable: 0 }
+  if (!headlineEl) return { regions: [], added: [], unreadable: 0, unreadableLastKind: 0 }
   const names: string[] = []
+  const added: string[] = []
+  const carried = new Set<string>()
   let unreadable = 0
+  let unreadableLastKind = 0
   for (const info of xmlAll(headlineEl, 'Information')) {
     if (info.getAttribute('type') !== EEW_REGION_INFORMATION_TYPE) continue
-    for (const area of xmlAll(info, 'Area')) {
-      const name = xmlText(xmlChild(area, 'Name'))
-      // **要素はあるのに名前が読めない**のは異常。数えて呼び出し元へ返す —— 黙って捨てると、
-      // 警報の対象が画面からも声からも欠けたことに気づけない（他の要素と同じ規律）。
-      if (name) names.push(name)
-      else unreadable++
+    for (const item of xmlAll(info, 'Item')) {
+      const lastKindEl = xmlChild(item, 'LastKind')
+      const lastKindCode = lastKindEl ? xmlText(xmlChild(lastKindEl, 'Code')) : ''
+      const isAdded = lastKindCode === EEW_LAST_KIND_NONE_CODE
+      // `LastKind` は「なし」（`00`）か、いまの `Kind` と同じ値（前の報から続いている）のどちらか。
+      // **どちらでもない・どちらかのコードが読めない `Item` は「続いている」側へ倒れる**（加わった地方が光らないだけ）ので、
+      // 書式が変わったことに気づけるよう数えて返す。
+      const kindEl = xmlChild(item, 'Kind')
+      const kindCode = kindEl ? xmlText(xmlChild(kindEl, 'Code')) : ''
+      if (!isAdded && (lastKindCode === '' || lastKindCode !== kindCode)) unreadableLastKind++
+      for (const area of xmlAll(item, 'Area')) {
+        const name = xmlText(xmlChild(area, 'Name'))
+        // **要素はあるのに名前が読めない**のは異常。数えて呼び出し元へ返す —— 黙って捨てると、
+        // 警報の対象が画面からも声からも欠けたことに気づけない（他の要素と同じ規律）。
+        if (name) {
+          names.push(name)
+          if (isAdded) added.push(name)
+          else carried.add(name)
+        } else unreadable++
+      }
     }
   }
   // 実電文では同じ地方が 2 つの `Item` にまたがることは無い（既存と新規で排他）。
   // それでも除くのは、重なれば読み上げが同じ地名を 2 度言うため。
-  return { regions: [...new Set(names)], unreadable }
+  // 既存の `Item` にもいる地方は「加わった」と言えないので外す（重なりは上と同じく実電文では起きない）。
+  return {
+    regions: [...new Set(names)],
+    added: [...new Set(added)].filter(name => !carried.has(name)),
+    unreadable,
+    unreadableLastKind,
+  }
 }
 
 /**
@@ -1073,6 +1115,9 @@ function intText(el: Element | null): number | undefined {
   return Number.isInteger(n) ? n : undefined
 }
 
+/** 記録した表外の精度ランクの組（→ `parseEEWAccuracy`）。値の種類は少ないので上限は置かない */
+const loggedUnknownEewAccuracy = new Set<string>()
+
 /**
  * 震源要素の精度（`Hypocenter/Accuracy`。電文解説資料 Ⅱ.21 1-4-2）を読む。
  *
@@ -1088,6 +1133,15 @@ function parseEEWAccuracy(hypocenterEl: Element | null): EEWAccuracy | undefined
     depthRank: intAttr(xmlChild(el, 'Depth'), 'rank'),
     magnitudeRank: intAttr(xmlChild(el, 'MagnitudeCalculation'), 'rank'),
     magnitudePoints: intText(xmlChild(el, 'NumberOfMagnitudeCalculation')),
+  }
+  // 表に無いランクは画面では欄が空になる（→ `eewEpicenterRankLabel`）。黙って空にしないよう記録だけ残す
+  // （2026-10-21 ユーザー承認「記録し、表外はログへ (Recommended)」）。値はそのまま持つ
+  // 同じ値の組は 1 回だけ記録する（続報・履歴の読み直しのたびに同じ行が積もらないように）
+  const unknown = unknownEewAccuracyRanks(a)
+  const unknownKey = unknown.join(' ')
+  if (unknown.length > 0 && !loggedUnknownEewAccuracy.has(unknownKey)) {
+    loggedUnknownEewAccuracy.add(unknownKey)
+    log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の精度ランクに表に無い値があります（画面の欄は空にします）: ${unknown.join(' ')}`)
   }
   // 1 つも読めなければ持たせない（要素はあるが中身が読めない＝書式が変わった疑い）
   return Object.values(a).some(v => v !== undefined) ? a : undefined
@@ -1169,12 +1223,19 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
   // マグニチュードの種別（`Mj` / `M`）。地震情報・津波・長周期と同じく持つだけで画面には
   // 出さない。**緊急地震速報だけ別のパーサーを通るため落ちていた。**
   const eewMagnitudeType = eewMagnitudeEl?.getAttribute('type')?.trim() || undefined
+  const eewMagnitude = eewMagnitudeEl ? parseFloat(xmlText(eewMagnitudeEl)) : NaN
+  // 規模が数値にならないときに気象庁が添える説明（`Magnitude@description`）。地震情報・津波と同じ規則で読む
+  // （2026-10-21 ユーザー承認「揃えて読む (Recommended)」）。「Ｍ不明」と「Ｍ８を超える巨大地震」は本文がどちらも NaN で、
+  // この説明でしか見分けられない（→ `Hypocenter.magnitudeCondition`）。数値が読めたときは持たせない
+  const eewMagnitudeCondition = isNaN(eewMagnitude)
+    ? (eewMagnitudeEl?.getAttribute('description')?.trim() || undefined)
+    : undefined
   // 見出し文。**予報級では空だが、警報級の報には必ず入る**（「石川県で地震　北陸　甲信　東海
   // 関東で強い揺れ」の形。実電文で確認）。地震情報・長周期と同じく持つだけで画面には出さない
   // ——後半の地方名は下の `warningRegions` が構造化された形で持っており、そちらを使う。
   const eewHeadline = readHeadlineText(doc)
   // 警報の対象地方。予報級では空（→ `readEewWarningRegions`）。
-  const { regions: eewWarningRegions, unreadable: unreadableWarningRegions } = readEewWarningRegions(doc)
+  const { regions: eewWarningRegions, added: eewAddedWarningRegions, unreadable: unreadableWarningRegions, unreadableLastKind: unreadableWarningLastKind } = readEewWarningRegions(doc)
   const eewInfoName = readInfoName(doc)
   const hypocenterEl = eqEl ? xmlQ(eqEl, 'Hypocenter') : null
   const areaEl = eqEl ? xmlQ(hypocenterEl ?? eqEl, 'Area') : null
@@ -1342,6 +1403,25 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     // 地方予報区の `Area` はあるのに名前が読めなかった。**画面にも声にも出ない**ので残す。
     log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の警報対象地方の名前を読めません（${unreadableWarningRegions} 件を無視します）`)
   }
+  if (unreadableWarningLastKind > 0) {
+    // 前の報での種別（`Item/LastKind/Code`）が「なし」でも、いまの種別と同じでもない。
+    // 新たに加わった地方をカードで光らせられないだけで、画面の顔ぶれと読み上げは変わらない。
+    log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の警報対象地方で、前の報での種別（LastKind）を判定できません（${unreadableWarningLastKind} 件。LastKind か Kind のコードが欠けているか、どちらとも合いません。新たに加わった地方として扱いません）: EventID=${eventId} 第${serial}報`)
+  }
+  if (!isCanceled) {
+    // **電文全体の最大予測値が区域の最大より低い。** 表示・判定は電文全体の値を先に採る
+    // （`utils/eew.ts` の `eewMaxScaleInfo`）ので、この形では区域に出ている震度より低い最大が出る。
+    // 控えにある実電文では 1 通も無い組み合わせ（→ `docs/spec/eew-spec.md` §4「予想最大震度は電文全体の値」）
+    // なので、起きたら書式か値の異常として残す。
+    const areasMaxScale = Math.max(0, ...areas.map(a => (a.scaleTo > 0 ? a.scaleTo : 0)))
+    const areasMaxLg = Math.max(0, ...areas.map(a => a.lgIntTo ?? 0))
+    if (forecastScale > 0 && areasMaxScale > forecastScale) {
+      log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の最大予測震度（${forecastScale}）が区域の最大（${areasMaxScale}）より低い報です（電文全体の値を採ります）: EventID=${eventId} 第${serial}報`)
+    }
+    if (lgClass != null && lgClass > 0 && areasMaxLg > lgClass) {
+      log.warn(`${DMDATA_LOG_PREFIX} 緊急地震速報の最大予測長周期地震動階級（${lgClass}）が区域の最大（${areasMaxLg}）より低い報です（電文全体の値を採ります）: EventID=${eventId} 第${serial}報`)
+    }
+  }
   if (sawWarningKind && eewWarningRegions.length === 0) {
     // **警報級と判定したのに対象地方が 1 つも無い。** 実電文では警報ありの 240 通すべてが
     // 地方予報区ブロックを持つので、この組み合わせは電文の書式が変わった印。
@@ -1409,6 +1489,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     test: false,
     ...(eewHeadline && { headline: eewHeadline }),
     ...(eewWarningRegions.length > 0 && { warningRegions: eewWarningRegions }),
+    ...(eewAddedWarningRegions.length > 0 && { addedWarningRegions: eewAddedWarningRegions }),
     ...(eewInfoName && { infoName: eewInfoName }),
     ...(eewCancelText && { cancelText: eewCancelText }),
     ...(strongShakingOnly && { strongShakingOnly: true as const }),
@@ -1428,7 +1509,8 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
         longitude: isCanceled ? -200 : (Number.isFinite(lng) ? lng : -200),
         depth,
         ...(depthAtLeast && !isCanceled && { depthAtLeast: true }),
-        magnitude: eewMagnitudeEl ? parseFloat(xmlText(eewMagnitudeEl)) : NaN,
+        magnitude: eewMagnitude,
+        ...(eewMagnitudeCondition && { magnitudeCondition: eewMagnitudeCondition }),
         ...(eewMagnitudeType && { magnitudeType: eewMagnitudeType }),
         ...(eewAreaCode && { code: eewAreaCode }),
       },
@@ -1486,6 +1568,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   const quakeInfoName = readInfoName(doc)
   const issueType = resolveIssueType(headType, quakeInfoName)
   const source = parseIssueSourceFromXml(doc)
+  const editorialOffice = parseEditorialOfficeFromXml(doc)
 
   // 取消電文（InfoType === '取消'）: Earthquake 要素が存在しないため早期リターン
   if (infoType === '取消') {
@@ -1510,7 +1593,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       // 取消しの概要（`Body/Text`）。**`Comments` ではなく `Body` 直下**——取消電文は付加文を
       // 持たない（電文解説資料が「情報形態が"取消"の場合、本要素は出現しない」と定めている）。
       ...(cancelBodyText && { cancelText: cancelBodyText }),
-      issue: { source, time: reportDateTime, type: issueType, correct: 'なし' as CorrectType },
+      issue: { source, ...(editorialOffice && { editorialOffice }), time: reportDateTime, type: issueType, correct: 'なし' as CorrectType },
       earthquake: { time: '', hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: 0 }, maxScale: -1, domesticTsunami: '不明' },
       points: [],
     }
@@ -1762,6 +1845,9 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       const stCode = xmlText(xmlChild(el, 'Code'))
       const intStr = xmlText(xmlChild(el, 'Int'))
       const { scale, unreceived } = readIntensity(intStr || null)
+      // 続報での変化（`Revise`）。都道府県・地域・市町村と同じ扱い（→ `EarthquakePoint.revise`）。
+      // 観測点の要素は同名の子を入れ子にしないが、ほかの段と揃えて直下だけを見る。
+      const stRevise = xmlText(xmlChild(el, 'Revise'))
       if (stName && scale >= 0) {
         // QUAKE-2: 観測点も区域と同じく pref を空にする。
         // 以前は pref: prefName を付けていたため EarthquakeCard.prefGroups が
@@ -1772,6 +1858,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
           ...(unreceived && { unreceived: true }),
           ...(stNonJma && { nonJma: true }),
           ...(stCode && { code: stCode }),
+          ...(stRevise && { revise: stRevise }),
           // 所属する市町村と一次細分区域（→ `EarthquakePoint.city` / `.area`）。
           // **どちらも座標表からは引けない**ので、電文の並びで拾えるここでしか持てない。
           // 区域まで持つのは、市町村名が全国で一意でないため（同名の市町村を取り違えない）
@@ -1829,10 +1916,15 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     eventId: eventId || undefined,
     ...(telegramKey && { telegramKey }),
     ...(createdAtMs !== undefined && { createdAtMs }),
+    // 行ごとの `Revise` で続報の変化を伝える種別か（→ `JMAQuake.reportsRevise`）。
+    // **震源・震度情報（VXSE53）に限る** —— 震度速報の続報には全期間で 1 件も載らない。
+    // 遠地地震も VXSE53 で届くが、震度の行を持たないので外す。
+    ...(headType === 'VXSE53' && issueType !== '遠地地震' && { reportsRevise: true as const }),
     ...(reportSerial !== undefined && { reportSerial }),
     time: reportDateTime,
     issue: {
       source,
+      ...(editorialOffice && { editorialOffice }),
       time: reportDateTime,
       type: issueType,
       correct,
@@ -2788,6 +2880,8 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }),
     ...(lpgmInfoName && { infoName: lpgmInfoName }),
     id, eventId, time: reportDateTime, ...(lpgmCreatedAtMs !== undefined && { createdAtMs: lpgmCreatedAtMs }),
+    // 県・区域の `Revise` で続報の変化を伝える電文（→ `JMALpgm.reportsRevise`）
+    reportsRevise: true,
     originTime, maxClass, cancelled: false, points, regions,
     ...(prefs.length > 0 && { prefs }),
     ...(obsMaxInt >= 0 && { maxInt: obsMaxInt }),

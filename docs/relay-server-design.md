@@ -443,9 +443,13 @@ DMDATA の経路は、繋ぐ先（`API_BASE`・`TELEGRAM_DATA_BASE` ほか）と
 
 **中継のための差し替えでは、パーサー（`buildXmlPayload`・`buildBinaryPayload`）から下には手を入れない。** 中継に繋いでも自分の鍵で繋いでも、読み取りの経路を 2 本持たないため（§3）。
 
-**ライブの受信だけが種別ごとの分岐を自前で持っている**（`dmdata.ts` の `handleMessage`）。リプレイと当日ぶんは
-`buildXmlPayload` を通るので、2 本の分岐が並んでいる。中継のために `handleMessage` を流用する前に、
-ここを `buildXmlPayload` へ寄せる（`dmdataTelegramPayload.ts` の冒頭が、2 本あった頃に不具合が出たことを記録している）。
+**ライブの受信も、一覧・リプレイ・取り戻しと同じ `buildXmlPayload` を通る。**
+
+- **共通のもの**: 電文の読み取り（`buildXmlPayload`）と、電文種別から何の電文かを決める表（`dmdataTelegramPayload.ts` の
+  `TELEGRAM_KIND_OF_HEAD_TYPE`。電文ログもこれを引く）
+- **`handleMessage` にだけあるもの**: 受信の手前の処理（試験報の破棄・本文の復号・二進電文の結合・受け取り済みの印）と、
+  ライブだけの振り分け（VXSE42・購読していない EEW の警告・VXSE44・設定「試験報を受信（検証用）」のときに試験報の
+  EEW を `test: false` にして画面へ流す扱い）
 
 ### 7.2 `isDmdss` を外す
 

@@ -97,6 +97,31 @@ describe('tideReportChange', () => {
     expect(collectTideEntries([a, b]).size).toBe(2)
   })
 
+  // 正: 満潮時刻も到達状況も据え置きで、津波の到達予想時刻だけが動いた報（全期間の控えで 11 地点。
+  // 2024-01-01 16:23 の坂井市三国 17:10 → 17:00 など）。none にすると「変わりはありません」と言う
+  it('到達予想時刻だけが動いたら arrivalTime', () => {
+    const withArrival = [area('210', [
+      { ...station('宮古', '2024-01-02T05:00:00+09:00', '津波到達中と推測'), arrivalTime: '2024-01-01T17:10:00+09:00' },
+    ])]
+    const spoken = collectTideEntries(withArrival)
+    const next = [area('210', [
+      { ...station('宮古', '2024-01-02T05:00:00+09:00', '津波到達中と推測'), arrivalTime: '2024-01-01T17:00:00+09:00' },
+    ])]
+    expect(tideReportChange(next, spoken)).toBe('arrivalTime')
+  })
+
+  // 安全弁: 優先は 満潮時刻 ＞ 到達状況 ＞ 到達予想時刻（1 つの報で 1 つだけを言う）
+  it('到達状況と到達予想時刻が同時に動いたら arrival を優先する', () => {
+    const withArrival = [area('210', [
+      { ...station('宮古', '2024-01-02T05:00:00+09:00', '津波到達中と推測'), arrivalTime: '2024-01-01T17:10:00+09:00' },
+    ])]
+    const spoken = collectTideEntries(withArrival)
+    const next = [area('210', [
+      { ...station('宮古', '2024-01-02T05:00:00+09:00', '第１波の到達を確認'), arrivalTime: '2024-01-01T17:00:00+09:00' },
+    ])]
+    expect(tideReportChange(next, spoken)).toBe('arrival')
+  })
+
   it('rememberTideEntries はその報の全地点を既読へ移す', () => {
     const spoken = new Map<string, SpokenTideEntry>()
     rememberTideEntries(areas, spoken)
@@ -142,6 +167,10 @@ describe('tsunamiTideToSegments', () => {
 
   it('none では変化が無いことを伝える', () => {
     expect(text(tsunamiTideToSegments('none', headline))).toBe(`${headline}内容に変わりはありません。`)
+  })
+
+  it('到達予想時刻だけが動いた報は、それを言う', () => {
+    expect(text(tsunamiTideToSegments('arrivalTime', headline))).toBe(`${headline}津波の到達予想時刻が更新されました。`)
   })
 
   // 安全弁: 名乗りを欠かさない（見出し文が無い電文でも文が成立する）

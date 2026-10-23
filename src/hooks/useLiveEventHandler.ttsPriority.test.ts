@@ -274,11 +274,9 @@ function setup(over: Partial<AppSettings> = {}) {
     settings, title: title as never,
     earthquakesRef: { current: [] as JMAQuake[] },
     tsunamisRef: { current: [] as JMATsunami[] },
-    kyoshinDetectedRef: { current: false },
-    defaultTabRef: { current: 'earthquake' },
-    setActiveTabRealtimeForKyoshin: vi.fn(), setActiveTabNonRealtime: lpgmScreenSpies.setActiveTabNonRealtime,
+    setActiveTabNonRealtime: lpgmScreenSpies.setActiveTabNonRealtime,
     setActiveTabRealtimeOnUpdate: vi.fn(),
-    setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true), quakeSpeakingCard: null, expandPanelForSpecialInfo: vi.fn(), revertToDefaultTab: vi.fn(),
+    setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true), quakeSpeakingCard: null, expandPanelForSpecialInfo: vi.fn(),
     selectQuake: lpgmScreenSpies.selectQuake, openLpgmFromQuake: lpgmScreenSpies.openLpgmFromQuake, openEstimatedIntensity: openEstimatedIntensitySpy, closeDistributionOnQuakeReport: vi.fn(),
   }))
   // `result.current` は呼ぶたびに引き直す（控えると最初のレンダーの関数に固定される）

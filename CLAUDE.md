@@ -731,7 +731,7 @@ window.fetch = async (input, init) => {
 - 上限に達したら**記録を残す**。黙って切ると取りこぼしが「静かな時間帯」に化ける
 - 規約と実測値は [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2
   「ページを辿るループには上限を置く」が単一情報源
-- 現在の上限は 8 箇所（アプリ側）＋生成・調査スクリプト側の 2 つ。**ページ数が揃っていない**ので
+- 現在の上限は 9 箇所（アプリ側）＋生成・調査スクリプト側の 2 つ。**ページ数が揃っていない**ので
   値は上記の仕様書の表を見ること（`MAX_PAGES_PER_DAY` は 5 ページ・`ACTIVE_EEW_MAX_PAGES` は 10 ページ）
 - **1 ページの件数（`limit`）は明示して渡す。** 既定に任せると少ない件数で返り、同じ範囲を読むのに
   余計なページを辿る（アーカイブの目録が実際にそうなっていた）。**`cursorToken` で 2 ページ目を
@@ -1417,6 +1417,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | `npm run find-locale-strings -- <言語ファイル> <語…>` | ほかのアプリ（Chrome の `ja.pak`・VS Code の日本語パック）の画面の文言を、手元の言語ファイルから探す。言語ファイルの場所は同じ手順書の「3. 語の出どころを探す」 |
 | `node scripts/build-tsunami-zones.mjs` | 津波予報区 海岸線データ（`public/data/tsunami-zones.json`）の再生成 |
 | `node scripts/build-tsunami-obs-coords.mjs` | 津波観測点の座標（`public/data/tsunami-obs-coords.json`）の再生成。**API キー不要**。**電文は観測点の座標を持たない**ので、名前から引くこの表が無いと観測棒も到達確認の印も地図に出ない。**名前から座標へ直接引ける表はどこにも無い** —— 気象庁の名前（「岩手沖６０ｋｍＡ」）と運用機関側の施設名（「三陸沖１」）は別の体系なので、気象庁の観測点図を仲立ちにして図上の位置から施設へ突き合わせる（取得元 5 つ・仕組みと限界は [`docs/spec/data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「津波観測点の座標」）。**観測点が新設されたら実行する**。全 459 点に座標が付いたか・取得元ごとの件数・同じ場所の二重割り当て・防災科学技術研究所の座標との照合・名前が示す距離との釣り合い・既知 9 点との一致を検査し、合わなければ exit 1 で止まる |
+| `node scripts/build-app-icons.mjs` | ホーム画面のアイコンの PNG（`public/icons/icon-180.png`・`icon-192.png`・`icon-512.png`・`icon-maskable-512.png`）を `public/icons/icon.svg` から焼く。**API キー不要・通信なし**（要 `npm ci`。devDependencies の `@resvg/resvg-wasm` の wasm を直接読む）。 **`icon.svg` を描き直したら実行し、PNG もコミットする** —— 焼き直し忘れは型チェックにもテストにも掛からず、PNG だけが古い絵のまま残る。背景の `<rect>`（角丸の指定を含む 1 行）が想定と 1 字でも違えば exit 1 で止まる（色や属性の順を変えたときも。直すのはスクリプトの `ROUNDED_BACKGROUND`）。詳細は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §5「バリアント別の設定」の `manifest.icons` |
 | `node scripts/build-prefectures.mjs` | 都道府県境界データ（`public/data/prefectures.json`）の再生成（ベースマップ用） |
 | `node scripts/build-subregions.mjs` | 一次細分区域境界データ（`public/data/subregions.json`）の再生成 |
 | `node scripts/build-glyphs.mjs` | 地名ラベル用 SDF グリフ（`public/fonts/`）の再生成。**地名（地方・県・区域）が増減したら実行する**（`npm run build` が前段で `--check` を走らせ、未生成の文字があればビルドを止める。詳細は [`docs/spec/map-rendering-spec.md`](docs/spec/map-rendering-spec.md) §5）。県名・区域名は `public/data/*.json` から読むため、**`build-prefectures.mjs`・`build-subregions.mjs` を先に実行すること** |
@@ -1956,7 +1957,8 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 震度0を閾値によらず対象外にする規則を崩すと、震度0と震度1の階級値が同じ（どちらも10）であるため震度1まで下げた設定で平常時のノイズが閾値を通り帯が鳴りっぱなしになる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
 | 観測点名の突き合わせに県名を含めると、DMDATAの電文は `pref` が常に空なのでDMDSS版では構造的に1件も一致せず、地点を登録した人ほど判定が死ぬ | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §3「3 つの照合対象」 |
 | 地震情報の判定で観測点の点だけを見て区域の点を見ないと、区域別震度しか持たない震度速報（多くの地震で最初に届く報）で何も出せなくなる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
-| 区域を持たないEEW（区域が補われる前のhypoInfo由来の報）を全国基準へ落とさないと、その窓でEEW経路が死ぬ | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
+| 区域を持たない EEW（予測震度の下限が震度 3 以下の報・区域が補われる前の hypoInfo 由来の報）を、自宅の区域を引けるのに全国基準で判定すると、遠くの地震でも自宅に帯が出る。自前の予測震度で埋めると、自宅に向けて自前の予想を出すことになる。「非常に強い揺れを検知」の報まで区域なしとして捨てると、自宅のすぐ近くで強く揺れていても帯が出ない（この報だけは検知点からの距離で見る） | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
+| 地図の下端の自作地震計の波形を EEW で出す判定を区域の突き合わせへ戻すと、区域を持たない小さい報で遠くの地震でも出る。範囲の中心をホーム地点へ戻すと、地点が無い端末では全国どこの検知でも出る。普段が読めない観測点の下限を地震カードと同じ「下限なし」へ揃えると、ホストの起動直後に遠くの小さい地震で出る | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §4.5「EEW の経路は予測計測震度で決める」 |
 | 階級表に無い震度を判定・表示から弾かないと、型検査を通らない経路（実地震テストシナリオの手書きJSON等）から来た壊れた値がそのまま使われる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「階級表に無い震度は見なかったことにする」 |
 | 畳んだままにする3条件（いま畳んでいる・期限内・震度が畳んだときを超えていない）を全部満たすことを崩すと、震度条件が欠けた場合は震度5弱で閉じたあとの震度6強のような引き上げが伝わらない | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §4「畳んだままにする 3 条件」 |
 | 畳んでいる間の揺れで基準の震度を上書きすると、余震で下がっていく値に追随してそのうち小さな揺れでも「上がった」と見なして開いてしまう | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §4「畳んだままにする 3 条件」 |

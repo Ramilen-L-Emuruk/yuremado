@@ -3,6 +3,18 @@ import { extractQuakeEventIdFromId } from './quakeMerge'
 import { hasKnownEpicenter } from './geo'
 import { formatMagnitude, formatMagnitudeWithCondition } from './formatters'
 
+/** ヒートマップに出す期間（日）。 */
+export const HEATMAP_DAYS = 30
+
+/**
+ * 地震の時刻が「いま」から遡って `HEATMAP_DAYS` 日の中か。**「いま」より後は外す** —— リプレイ中、
+ * 再生時刻より後に起きた地震を地図に出さないため。時刻が読めないものも外す。
+ */
+export function isWithinHeatWindow(timeIso: string, nowMs: number): boolean {
+  const t = new Date(timeIso).getTime()
+  return Number.isFinite(t) && t <= nowMs && t >= nowMs - HEATMAP_DAYS * 24 * 60 * 60 * 1000
+}
+
 export interface HeatPoint {
   lat: number
   lng: number
@@ -110,8 +122,9 @@ export function heatMagnitudeRank(magnitude: number, condition: string | null): 
  * それ以外の数値にならない規模は「不明」のまま（「Ｍ不明」の説明を持っていても「M不明」とは出さない）。
  */
 export function heatMagnitudeLabel(magnitude: number, condition: string | null): string {
-  if (isHugeMagnitudeCondition(condition)) return formatMagnitudeWithCondition(magnitude, condition ?? undefined)
-  return formatMagnitude(magnitude)
+  // 長期震源カタログは電文の種別（`@type`）を持たないので、従来どおり `M` で出す。
+  if (isHugeMagnitudeCondition(condition)) return formatMagnitudeWithCondition(magnitude, condition ?? undefined, undefined)
+  return formatMagnitude(magnitude, undefined)
 }
 
 /** 吹き出しの札の色。巨大地震は M8 と同じ色（最上位の段）にする。 */

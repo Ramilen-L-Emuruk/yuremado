@@ -85,6 +85,15 @@ export function serverNow(): number {
   return now
 }
 
+/**
+ * **リプレイ中でも本物の**サーバー現在時刻（epoch ms）。`serverNow()` はリプレイ中に再生時刻を返すので、
+ * 「いま取った控えがどれだけ古いか」のように実時間で測りたいものはこちらを使う。未較正なら壁時計。
+ */
+export function liveServerNow(): number {
+  if (kEpochMs !== null) return performance.now() + kEpochMs
+  return Date.now()
+}
+
 /** serverNow() の Date 版。 */
 export function serverDate(): Date {
   return new Date(serverNow())
@@ -125,6 +134,17 @@ export function feedServerSample(trueServerEpochMs: number, source: ServerSample
 export function getServerClockSampleAgeMs(): number | null {
   if (lastSampleAtPerfMs === null) return null
   return Math.round(performance.now() - lastSampleAtPerfMs)
+}
+
+/**
+ * `serverNow()` が壁時計へのフォールバックでなく、信じてよい時刻を返しているか。
+ * リプレイ・手動時刻の最中か、サーバー時刻で一度でも較正できていれば `true`。
+ *
+ * 「いまの時刻と比べて古いから捨てる」判定はこれを見てから行う —— 未較正の端末は壁時計がずれていることがあり
+ * （→ `serverNow` の CLK-3）、その時刻で比べると本物の報まで捨てうる。
+ */
+export function isServerClockTrusted(): boolean {
+  return replayOffsetMs !== null || kEpochMs !== null
 }
 
 /**
