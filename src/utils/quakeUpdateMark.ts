@@ -122,9 +122,12 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
   // 気象庁が取り下げた事実なので、こちらは伝える。
   const tsunami = q.earthquake.domesticTsunami
   const tsunamiRank = tsunami ? DOMESTIC_TSUNAMI_RANK[tsunami] : undefined
+  // **鍵には区分を決めたコードも入れる。** 札はコードで語を選ぶ（→ `formatDomesticTsunami`）ので、
+  // 区分が同じでもコードが変われば表示は動く（0212「若干の海面変動」→ 0213「海面変動に注意」）。
+  const tsunamiCode = q.earthquake.domesticTsunamiCode
   snap.set('domesticTsunami', tsunamiRank === undefined
     ? { key: UNKNOWN }
-    : { key: tsunami, rank: tsunamiRank })
+    : { key: tsunamiCode ? `${tsunami}:${tsunamiCode}` : tsunami, rank: tsunamiRank })
   snap.set('maxScale', q.earthquake.maxScale >= 0
     ? { key: String(q.earthquake.maxScale), rank: q.earthquake.maxScale }
     : { key: UNKNOWN })

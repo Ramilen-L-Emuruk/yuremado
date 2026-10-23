@@ -384,6 +384,16 @@ describe('withBorrowedFromTsunami', () => {
     expect(applied.domesticTsunamiSource?.shortLabel).toBe('津波情報')
   })
 
+  // 借りた区分は津波電文の等級から来ていて、地震情報の付加文のコードとは関係が無い。
+  // 正: 借りるときにコードを捨てる（残すと「警報等」の区分に 0217 の札が付く）。
+  it('区分を借りるときは付加文のコードを捨てる', () => {
+    const prompt = makePrompt()
+    const withCode: JMAQuake = { ...prompt, earthquake: { ...prompt.earthquake, domesticTsunamiCode: '0217' } }
+    const applied = withBorrowedFromTsunami(withCode, [warned], [])
+    expect(applied.earthquake.domesticTsunami).toBe('警報等')
+    expect(applied.earthquake.domesticTsunamiCode).toBeUndefined()
+  })
+
   // 対照: 読み上げ用の関数は区分を借りない（同じ津波の読み上げが等級を語るので二重になる）。
   it('読み上げ用（withBorrowedHypocenter）は津波区分を借りない', () => {
     const applied = withBorrowedHypocenter(makePrompt(), [warned], [])

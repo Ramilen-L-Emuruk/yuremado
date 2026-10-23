@@ -116,6 +116,8 @@ export function createTestForeignQuake(includeComments: boolean): JMAQuake {
       maxScale: -1,
       // 0230（この地震による日本への津波の影響はありません）由来。
       domesticTsunami: 'なし',
+      // 区分を決めたコード（付加文 0226 0230 のうち区分を決めるのは 0230。付加文を持つときだけ）
+      ...(includeComments ? { domesticTsunamiCode: '0230' as const } : {}),
     },
     points: [],
     forecastText: includeComments
@@ -176,6 +178,8 @@ export function createTestForeignQuakeHuge(withDmdssFields: boolean): JMAQuake {
       maxScale: -1,
       // 0229（日本への津波の有無については現在調査中です）由来
       domesticTsunami: '調査中',
+      // 区分を決めたコード（DMDSS 版だけ。P2PQuake はコードを運ばない）
+      ...(withDmdssFields ? { domesticTsunamiCode: '0229' as const } : {}),
     },
     points: [],
     forecastText: withDmdssFields
@@ -306,6 +310,8 @@ export function createTestEarthquake(useDmdataShape: boolean, operationStatus?: 
       },
       maxScale: 70,
       domesticTsunami: '警報等',
+      // 区分を決めたコード（実電文の 0211。DMDSS 版だけ。P2PQuake はコードを運ばない）
+      ...(useDmdataShape && { domesticTsunamiCode: '0211' as const }),
     },
     // 震度の点。**都道府県ごとの代表点だけでは足りない** —— 寄ったときにその県の観測点が
     // 1 つも出ない、区域集約で「観測点のある区域だけ塗られ隣は無色」になる、という 2 つの
@@ -576,6 +582,10 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
         // **震度速報の津波区分と固定付加文は種別に付く定型文で、その報の判断ではない**
         // （→ docs/spec/quake-spec.md §6.4）。実データ（能登の前震）でもこの値だった。
         domesticTsunami: '調査中',
+        // 区分を決めたコードも実電文どおり 0217（DMDSS 版だけ。P2PQuake はコードを運ばない）。
+        // **明示して上書きする** —— 土台（本震の電文）は 0211 を持っているので、広げたままだと
+        // 「調査中」の区分に 0211 のコードが付き、札と原文の読み上げが区分と違うことを言う。
+        domesticTsunamiCode: base.forecastText === undefined ? undefined : '0217',
       },
       points: withoutRevise(points),
       // 市町村の段は震源・震度情報だけが運ぶ。
@@ -2141,7 +2151,11 @@ export function createTestHypocenterFromTsunami(): (JMAQuake | JMATsunami)[] {
         maxScale: maxScaleOf(points),
         // 種別に付く定型文で、その報の判断ではない（→ docs/spec/quake-spec.md §6.4）。
         domesticTsunami: '調査中',
+        // 区分を決めたコードと原文も実電文どおり 0217 にする。土台（本震の電文）は 0211 と
+        // 「津波警報等…を発表中です」を持っているので、広げたままだと区分と食い違う。
+        domesticTsunamiCode: '0217',
       },
+      forecastText: '今後の情報に注意してください。',
       points: points.map(({ revise: _revise, ...p }) => p),
       // 市町村の段は震源・震度情報だけが運ぶ。
       cities: undefined,

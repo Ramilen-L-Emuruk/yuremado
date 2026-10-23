@@ -436,6 +436,7 @@ function KyoshinImportRow({ historicalArchives }: { historicalArchives: Historic
  * 付けない。全部に付けると説明が数字で埋まる。
  */
 const TELEGRAM_TEXT_BLOCK_DESCRIPTIONS: Record<TelegramTextBlockKey, string> = {
+  quakeForecast: '津波の一文のほかに添えられる定型文です。津波の一文そのものは、この設定によらず読み上げます。例:「震源の近傍で津波発生の可能性があります。」',
   quakeVarComment: '気象庁以外が運用する観測点（＊印）の説明や、「震源要素を訂正します。」といった定型文です。例:「＊印は気象庁以外の震度観測点についての情報です。」',
   quakeFreeText: 'その電文にだけ添えられる説明です。内容は報ごとに変わります。例:「この地震とほぼ同時刻に別の地震が発生していますが、緊急作業中で震度を分離できないため、この情報で震度を取りまとめて発表しています。」',
   tsunamiBody: '津波がいつ来て、いつまで続くかの説明です。津波予報では区域に波高も到達時刻も付かないため、この文にしか書かれていません。例:「これらの沿岸では今後２、３時間程度は若干の海面変動が継続する可能性が高いと考えられます。」',
@@ -458,6 +459,7 @@ const TELEGRAM_TEXT_BLOCK_DESCRIPTIONS: Record<TelegramTextBlockKey, string> = {
 }
 
 const TELEGRAM_TEXT_BLOCK_LABELS: Record<TelegramTextBlockKey, string> = {
+  quakeForecast: '固定付加文',
   quakeVarComment: '固定付加文（その他）',
   quakeFreeText: '自由付加文',
   tsunamiBody: '本文',
@@ -490,7 +492,7 @@ const TELEGRAM_TEXT_BLOCK_GROUPS: readonly {
   readonly title: string
   readonly keys: readonly TelegramTextBlockKey[]
 }[] = [
-  { title: '地震情報', keys: ['quakeVarComment', 'quakeFreeText'] },
+  { title: '地震情報', keys: ['quakeForecast', 'quakeVarComment', 'quakeFreeText'] },
   { title: '津波情報', keys: ['tsunamiBody', 'tsunamiVarComment', 'tsunamiFreeText'] },
   { title: '長周期地震動に関する観測情報', keys: ['lpgmForecast', 'lpgmVarComment', 'lpgmFreeText'] },
   { title: '南海トラフ地震臨時情報', keys: ['nankaiSummary', 'nankaiBody', 'nankaiNextAdvisory'] },

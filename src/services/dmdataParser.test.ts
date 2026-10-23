@@ -1063,6 +1063,20 @@ describe('遠地地震に関する情報（VXSE53・Head/Title で識別）', ()
     expect(parseEarthquakeFromXml('VXSE53', xml)!.earthquake.domesticTsunami).toBe('調査中')
   })
 
+  // 地震カードの札はコードで出し分ける（→ `formatDomesticTsunami`）ので、区分を決めたコードも持たせる。
+  // 正: 022x と並んでいても、区分を決めたコード（0230）を持つ。
+  it('区分を決めた付加文のコードを区分と組で持つ', () => {
+    const quake = parseEarthquakeFromXml('VXSE53', FOREIGN_XML)!
+    expect(quake.earthquake.domesticTsunami).toBe('なし')
+    expect(quake.earthquake.domesticTsunamiCode).toBe('0230')
+  })
+
+  // 対照: 区分を決めるコードが無ければコードも持たない（022x は区分を決めない）。
+  it('区分を決めるコードが無ければコードを持たない', () => {
+    const xml = FOREIGN_XML.replace('<Code>0226 0230</Code>', '<Code>0228</Code>')
+    expect(parseEarthquakeFromXml('VXSE53', xml)!.earthquake.domesticTsunamiCode).toBeUndefined()
+  })
+
   // 安全弁: 0228 は「一般的に、この規模の地震が海域の浅い領域で発生すると…」という一般論で、
   // 日本国内への影響区分ではない。区分に写さないのは 022x 系と同じだが、既知として扱わないと
   // 単独で届いたときに「導出できません」の警告が出る（正常系で鳴らすと警告の価値が下がる）

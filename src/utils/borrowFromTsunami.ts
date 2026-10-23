@@ -343,7 +343,9 @@ export function withBorrowedFromTsunami(quake: JMAQuake, tsunamis: readonly JMAT
     && withHypocenter.earthquake.domesticTsunami === borrowed.domesticTsunami) return withHypocenter
   return {
     ...withHypocenter,
-    earthquake: { ...withHypocenter.earthquake, domesticTsunami: borrowed.domesticTsunami },
+    // **固定付加文のコードは捨てる。** 借りた区分は津波電文の等級から来ていて、地震情報の付加文の
+    // コードとは関係が無い。残すと、札がコードを見て区分と違うことを言う（→ `formatDomesticTsunami`）。
+    earthquake: { ...withHypocenter.earthquake, domesticTsunami: borrowed.domesticTsunami, domesticTsunamiCode: undefined },
     domesticTsunamiSource: borrowed.source,
   }
 }

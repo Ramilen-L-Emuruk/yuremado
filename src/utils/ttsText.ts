@@ -1,4 +1,4 @@
-import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
+import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
 import { eewNoForecastReason, canPresentLpgmClass, type EewMaxScaleInfo } from './eew'
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from './intensity'
 import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, TSUNAMI_GRADE_LIFTED, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
@@ -208,7 +208,7 @@ export type TtsUnreceivedDetail = 'stations' | 'areas' | 'none'
  */
 export const TELEGRAM_TEXT_BLOCK_KEYS = [
   // 地震情報
-  'quakeVarComment', 'quakeFreeText',
+  'quakeForecast', 'quakeVarComment', 'quakeFreeText',
   // 津波
   'tsunamiBody', 'tsunamiVarComment', 'tsunamiFreeText',
   // 長周期地震動観測情報
@@ -1646,6 +1646,54 @@ function domesticTsunamiSegment(t: DomesticTsunami): SpeechSegment {
 }
 
 /**
+ * 区分を決める固定付加文の文（地震火山関連コード表・固定付加文の原文）。
+ *
+ * **固定付加文は文面がコードごとに決まっている**ので、電文の原文を読むのと同じ文になる。電文の原文
+ * （`forecastText`）を読まないのは、そこに津波の文以外（0226「震源の近傍で津波発生の可能性があります。」・
+ * 0241 の緊急地震速報の文など）も入るため —— それらは「気象庁の発表文」の内訳「固定付加文」で選んで読む
+ * （→ `telegramTextToSpeak` の `quakeForecast`。2026-10-23 ユーザー選択「A: 発表文の内訳に足す (Recommended)」）。
+ */
+export const DOMESTIC_TSUNAMI_CODE_TEXT: Readonly<Record<DomesticTsunamiCode, string>> = {
+  '0211': '津波警報等（大津波警報・津波警報あるいは津波注意報）を発表中です。',
+  '0212': 'この地震により、日本の沿岸では若干の海面変動があるかもしれませんが、被害の心配はありません。',
+  '0213': '今後もしばらく海面変動が続くと思われますので、海水浴や磯釣り等を行う際は注意してください。',
+  '0214': '今後もしばらく海面変動が続くと思われますので、磯釣り等を行う際は注意してください。',
+  '0215': 'この地震による津波の心配はありません。',
+  '0216': '震源が海底の場合、津波が発生するおそれがあります。',
+  '0217': '今後の情報に注意してください。',
+  '0229': '日本への津波の有無については現在調査中です。',
+  '0230': 'この地震による日本への津波の影響はありません。',
+}
+
+/**
+ * 津波区分の既読・差分の鍵。**区分とコードの組で作る** —— 区分が同じでもコードが違えば読み上げる文が
+ * 違う（0212 と 0213 はどちらも「若干の海面変動」）ので、区分だけで比べると続報で文が変わっても黙る。
+ */
+export function domesticTsunamiFactValue(t: DomesticTsunami, code: DomesticTsunamiCode | undefined): string {
+  return code ? `${t}:${code}` : t
+}
+
+/**
+ * 国内の地震情報の津波の一文。**区分を決めたコードを持てば、そのコードの気象庁の文を読む**
+ * （2026-10-23 ユーザー選択「気象庁の原文を読む (Recommended)」、範囲は同日の選択「A: 発表文の内訳に足す (Recommended)」で
+ * 津波の文だけにした）。
+ *
+ * 区分から文を起こすと、区分へ丸めたぶん気象庁が書いていないことを言う —— 0230「この地震による日本への
+ * 津波の影響はありません。」を 0215 の文で読み、0213・0214 の「注意してください」を「被害の心配はありません」に、
+ * 0216 の「震源が海底の場合」を「ため」に変える（コード表との突き合わせは docs/jma-wording-audit.md E1〜E3）。
+ *
+ * **コードを持たないときは区分の文を読む。** 原文を持たない経路（P2PQuake）と、区分を津波電文から借りたとき
+ * （借りるときにコードを捨てる）。
+ */
+function domesticTsunamiSegmentOf(event: JMAQuake): SpeechSegment {
+  const { domesticTsunami: t, domesticTsunamiCode: code } = event.earthquake
+  return {
+    text: code ? DOMESTIC_TSUNAMI_CODE_TEXT[code] : domesticTsunamiText(t),
+    refs: [{ kind: 'quakeFact', fact: 'domesticTsunami', value: domesticTsunamiFactValue(t, code) }],
+  }
+}
+
+/**
  * 「震源の深さは〇〇に更新されました。」の〇〇部分。
  *
  * {@link depthSourcePhrase} は「深さ10キロメートル」を返すため、この文には使えない
@@ -1752,8 +1800,8 @@ function changedFactSegments(event: JMAQuake, spoken: QuakeSpokenState, opts?: T
   if (changed('depth', depthFactValue(hypocenter))) {
     segments.push({ text: `震源の深さは${depthUpdateValue(hypocenter)}に更新されました。`, refs: [{ kind: 'quakeFact', fact: 'depth', value: depthFactValue(hypocenter) }] })
   }
-  if (changed('domesticTsunami', domesticTsunami)) {
-    segments.push(domesticTsunamiSegment(domesticTsunami))
+  if (changed('domesticTsunami', domesticTsunamiFactValue(domesticTsunami, event.earthquake.domesticTsunamiCode))) {
+    segments.push(domesticTsunamiSegmentOf(event))
   }
   return segments
 }
@@ -2145,7 +2193,7 @@ function buildEarthquakeSegments(
     // 読み始めるので、文としては「地震情報。石川県能登地方で地震が発生しました。」になる。
     plain(`${prefix}${time ? `${time}頃、` : ''}`),
     ...quakeOccurrenceSegments(hypocenter, opts),
-    domesticTsunamiSegment(domesticTsunami),
+    domesticTsunamiSegmentOf(event),
   ]
   if (!isEpicenterOnly) {
     const regionSegs = buildRegionSegments(event.points, maxScale, opts, hypocenter, readAllRegions ? undefined : spoken)
@@ -4431,6 +4479,43 @@ function telegramSpeech(prefix: string, body: string, subject: string): Telegram
 }
 
 /**
+ * 地震情報の固定付加文のうち、「気象庁の発表文」の内訳「固定付加文」で読む分（`quakeForecast`）。
+ *
+ * **津波の一文は除く。** 本体の読み上げが津波の一文を読んでいる（区分を決めたコードの文か、コードが無ければ
+ * 区分の文。→ `domesticTsunamiSegmentOf`）ので、ここで残すと同じ事実を 2 度言う。残るのは 0226「震源の近傍で
+ * 津波発生の可能性があります。」や 0241・0245 の緊急地震速報の文で、定型文の設定（`stripBoilerplate`）は
+ * このあと `joinTelegramTexts` が通す。
+ *
+ * **区分を決めるコードの文は、コードの有無によらず全部除く。** 原文が本体の読む津波の一文と別の報のものに
+ * なる形が 3 つある —— 区分を津波電文から借りた（コードを捨てる）・震源要素更新が区分だけを運んだ
+ * （原文は前の報のまま）・コードを持たない経路。どれも原文に残った津波の文を読むと、本体と食い違う事実を
+ * 続けて言う（「津波警報等を発表中です」のあとに「津波の心配はありません」）。
+ *
+ * コードを持つのに、区分を決めるコードの文が原文に 1 つも無いとき（気象庁が文面を変えた疑い）は、残りをそのまま読み、
+ * 記録をコードごとに間引いて残す。**原文に別のコードの文があるだけなら記録しない** —— 震源要素更新が区分だけを運んだ
+ * 形（原文は前の報のまま）がこれで、文面の変更ではない。
+ *
+ * **呼ぶのは内訳「固定付加文」を読む設定のときだけ**（記録も読む枠についてだけ出す。隣の `warnUnmatchedBoilerplate` と同じ規約）。
+ *
+ * **遠地地震は読まない**（本体の読み上げが固定付加文を全文読む）。
+ */
+function quakeForecastRemainder(event: JMAQuake): string | undefined {
+  const text = event.forecastText
+  if (!text || event.issue.type === '遠地地震') return undefined
+  const code = event.earthquake.domesticTsunamiCode
+  const sentences = Object.values(DOMESTIC_TSUNAMI_CODE_TEXT)
+  if (code && !sentences.some(sentence => text.includes(sentence))) {
+    forecastSentenceMissingGate(code, text, () => log.warn(`[tts] 地震情報の固定付加文に、区分を決めるコードの文が見つかりません（コード ${code}。気象庁が文面を変えた疑い）: ${text}`))
+  }
+  let rest = text
+  for (const sentence of sentences) rest = rest.split(sentence).join('')
+  return rest.trim() || undefined
+}
+
+/** 区分を決めるコードの文が原文に見つからなかった記録。コードごとに間引く（毎報出ると記録が埋まり、1 本だと別のコードの変更が隠れる）。 */
+const forecastSentenceMissingGate = createPerLabelLogGate(4, 60_000)
+
+/**
  * 電文が運ぶ「気象庁が書いた文」を読み上げ文にする。設定で有効にしたときだけ中身を返す。
  *
  * **電文本体の読み上げへ足さず、別の発話として最下位の層で読むこと。**
@@ -4491,6 +4576,7 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
         warnUnmatchedBoilerplate(event.varCommentCodes, event.varCommentText, reads, '地震情報の固定付加文（その他）')
       }
       const body = joinTelegramTexts([
+        on('quakeForecast') ? quakeForecastRemainder(event) : undefined,
         pick('quakeVarComment', event.varCommentText),
         pick('quakeFreeText', event.freeText),
       ], reads)

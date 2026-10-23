@@ -474,6 +474,33 @@ describe('mergeQuakeInto — VXSE61（顕著地震）', () => {
     expect(mergeQuakeInto(e, n).earthquake.domesticTsunami).toBe('警報等')
   })
 
+  // 札は区分を決めたコードで語を選ぶので、区分と同じ側からコードも採る。
+  describe('顕著地震の津波区分を決めたコード', () => {
+    const withCode = (q: JMAQuake, code: '0215' | '0211' | undefined): JMAQuake =>
+      ({ ...q, earthquake: { ...q.earthquake, domesticTsunamiCode: code } })
+
+    // 正: 区分を採るならコードも採る。
+    it('区分を採るとコードも採る', () => {
+      const e = withCode(makeQuake({ tsunami: 'なし' }), '0215')
+      const n = withCode(makeNoIntensity({ type: '顕著な地震の震源要素更新のお知らせ', tsunami: '警報等' }), '0211')
+      expect(mergeQuakeInto(e, n).earthquake.domesticTsunamiCode).toBe('0211')
+    })
+
+    // 対照: 区分を据え置くならコードも据え置く（顕著地震が区分を伝えていない＝不明）。
+    it('区分を据え置くとコードも据え置く', () => {
+      const e = withCode(makeQuake({ tsunami: 'なし' }), '0215')
+      const n = withCode(makeNoIntensity({ type: '顕著な地震の震源要素更新のお知らせ', tsunami: '不明' }), undefined)
+      expect(mergeQuakeInto(e, n).earthquake.domesticTsunamiCode).toBe('0215')
+    })
+
+    // 安全弁: 採った側がコードを持たなければ、土台のコードを残さない（区分と食い違うため）。
+    it('採った側にコードが無ければ土台のコードを残さない', () => {
+      const e = withCode(makeQuake({ tsunami: 'なし' }), '0215')
+      const n = withCode(makeNoIntensity({ type: '顕著な地震の震源要素更新のお知らせ', tsunami: '警報等' }), undefined)
+      expect(mergeQuakeInto(e, n).earthquake.domesticTsunamiCode).toBeUndefined()
+    })
+  })
+
   // VXSE61 は自由付加文を必ず持ち、定型文だけのこともあれば精査後のモーメントマグニチュードが
   // 添えられることもある。土台が `...existing` なので、明示的に採らないと更新前の付加文が残る
   it('顕著地震が自由付加文を持てば更新する', () => {
@@ -891,6 +918,17 @@ describe('mergeQuakeInto — 通常電文どうし', () => {
       const merged = mergeQuakeInto(afterEpicenter, secondPrompt)
       expect(merged.earthquake.domesticTsunami).toBe('なし')
       expect(merged.forecastText).toBe('この地震による津波の心配はありません。')
+    })
+
+    // 地震カードの札はコードで出し分けるので、区分を据え置くならコードも据え置く。
+    // 片側だけ動くと「なし」の区分に 0217 の札（今後の情報に注意）が付く。
+    it('正: 震度速報の続報で区分を据え置くとき、区分を決めたコードも据え置く', () => {
+      const afterEpicenter = mergeQuakeInto(firstPrompt, epicenterOnly)
+      const withCode: JMAQuake = { ...afterEpicenter, earthquake: { ...afterEpicenter.earthquake, domesticTsunamiCode: '0215' } }
+      const promptWithCode: JMAQuake = { ...secondPrompt, earthquake: { ...secondPrompt.earthquake, domesticTsunamiCode: '0217' } }
+      const merged = mergeQuakeInto(withCode, promptWithCode)
+      expect(merged.earthquake.domesticTsunami).toBe('なし')
+      expect(merged.earthquake.domesticTsunamiCode).toBe('0215')
     })
 
     it('対照: 既存が津波区分を持たない（不明）なら震度速報の値を使う', () => {

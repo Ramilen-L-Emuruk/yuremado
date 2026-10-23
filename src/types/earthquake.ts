@@ -271,6 +271,16 @@ export type DomesticTsunami =
   | '警報等'
 
 /**
+ * 国内の津波区分（{@link DomesticTsunami}）を決めた固定付加文のコード（`Comments/ForecastComment/Code`）。
+ *
+ * 区分は複数のコードを 1 つの値へ丸めている（0212・0213・0214 →「若干の海面変動」など）ので、
+ * 区分だけでは気象庁が何と書いたかが分からない。地震カードの札をコードで出し分けるために持つ
+ * （→ `formatDomesticTsunami`）。**画面にコードそのものは出さない**（→ quake-spec.md §8「電文のコード値」）。
+ */
+export type DomesticTsunamiCode =
+  | '0211' | '0212' | '0213' | '0214' | '0215' | '0216' | '0217' | '0229' | '0230'
+
+/**
  * 市町村ごとの震度（電文の `Pref/Area/City`。電文解説資料 Ⅱ.33 2-1-3-3-3）。
  *
  * **`points` へ混ぜない。** `points` は「都道府県ロールアップ点／区域／観測点」の 3 種を
@@ -383,6 +393,14 @@ export interface JMAQuake {
      */
     maxScale: IntensityScale
     domesticTsunami: DomesticTsunami
+    /**
+     * `domesticTsunami` を決めた固定付加文のコード。**DMDATA 経路でだけ入る**（P2PQuake は区分の値だけを配る）。
+     *
+     * **区分と必ず一緒に動かす。** 区分を書き換える箇所（統合で片側を採る・津波電文から借りる）で
+     * コードだけ古い側に残ると、札が区分と違うことを言う。借りた区分は電文の付加文から来ていないので、
+     * 借りるときは消す（→ `utils/borrowFromTsunami.ts`）。
+     */
+    domesticTsunamiCode?: DomesticTsunamiCode
   }
   /**
    * 電文の運用種別（`Control/Status`）。訓練・試験のときだけ入る。→ {@link TelegramOperationStatus}

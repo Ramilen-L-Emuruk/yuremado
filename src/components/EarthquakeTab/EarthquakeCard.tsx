@@ -625,7 +625,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   // **語は縮められない**（気象庁の表現をそのまま使う決まり）ので、大きさで受ける。
   const maxScaleLabel = maxScale === -1 ? '?' : getIntensityLabel(maxScale)
   const maxScaleOrAbove = maxScale !== -1 && isMaxScaleUnreceived(maxScale, quake.points)
-  const tsunamiInfo = formatDomesticTsunami(domesticTsunami)
+  const tsunamiInfo = formatDomesticTsunami(domesticTsunami, earthquake.domesticTsunamiCode)
   const hasLocation = hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)
   // **震央地名は名前の有無で出す**（座標の有無で決めない）。津波電文から借りた震源は名前があっても
   // 座標を読めないことがあり（`readHypocenterAreaDetail` が座標を落とす経路）、座標で決めると
