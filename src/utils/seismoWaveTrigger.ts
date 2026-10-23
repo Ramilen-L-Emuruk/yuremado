@@ -5,7 +5,8 @@
 // あちらは「緊急度の順に 1 つ選ぶ」——出す文言が経路で変わるため。こちらは
 // 出すか出さないかだけなので選ぶ必要が無い）。
 //
-//   - **EEW の有感範囲** … 揺れる前。いちばん早い
+//   - **EEW の有感範囲** … 揺れる前。いちばん早い。**地震計の場所での予測計測震度で決める**
+//     （地震カードと同じ物差し。2026-10-22 ユーザー承認。下記 `eewReachesSeismo`）
 //   - **強震モニタの検知** … 揺れている最中。直下型では EEW が間に合わない
 //   - **自作地震計自身の震度** … 外部の判定に依存しない。**普段の計測震度より
 //     はっきり上がったら出す**（`SEISMO_WAVE_USUAL_MARGIN`）。置き場所の静かさで
@@ -23,8 +24,10 @@ import {
   kyoshinScaleForScope,
   type NearbyScope,
 } from './actionChecklistTrigger'
+import { isProvisionalHypocenter } from './eew'
 import type { DetectedPoint } from './kyoshinDetectionView'
 import { measuredIntensityToGrade } from './measuredIntensity'
+import { judgeQuakeReach, type ReachStation } from './seismoQuakeReach'
 
 /**
  * 波形グラフの出し方（設定タブ）。
@@ -75,16 +78,28 @@ export const SEISMO_WAVE_USUAL_MARGIN = 0.5
 export const SEISMO_WAVE_ALWAYS_RANK = 3
 
 /**
- * 自作地震計の震度だけを見るための最小の形。
+ * EEW の経路で、普段の計測震度が読めない観測点に置く下限。**−1.5。**
+ *
+ * 2026-10-22 ユーザー承認（選ばれた選択肢は「−1.5 を下限にする」）。地震カードは下限を置かない
+ * （出す側へ倒す）が、こちらで同じにすると、ホストの起動直後など普段が読めない間は予測が少しでも数になれば
+ * 届いた側へ倒れ、遠くの小さな地震でも波形が出る —— 直したかった症状そのものに戻る。
+ * −1.5 は公開観測点を選ぶ予測計測震度の下限と同じ値で、自作地震計の静穏時（計測震度で −1.3 ほど）の
+ * すぐ下に当たる。
+ */
+export const EEW_REACH_FLOOR_WITHOUT_USUAL = -1.5
+
+/**
+ * 自作地震計の観測点を見るための最小の形。
  *
  * **`SeismoStationState` を型として受け取らない。** `utils/` から `hooks/` を
- * 参照する向きを作らないため。ここで要るのは計測震度と普段の計測震度だけ。
+ * 参照する向きを作らないため。ここで要るのは計測震度・普段の計測震度・座標だけ。
+ * 座標と普段は EEW の経路（`eewReachesSeismo`）が予測計測震度を出すのに使う。
  */
-export interface SeismoIntensityLike {
+export interface SeismoIntensityLike extends ReachStation {
   readonly intensity: number | null
   /**
    * 普段の計測震度。**読めない・震度と比べられない（観測点の合成でない）なら `null`**
-   * （そのときは震度1 以上で見る）。
+   * （そのときは震度1 以上で見る。EEW の経路では下限を置かない）。
    */
   readonly usualMeasured: number | null
 }
@@ -116,12 +131,49 @@ function seismoStationShaking(stations: readonly SeismoIntensityLike[]): boolean
 }
 
 /**
+ * その EEW の揺れが自作地震計まで届くと見込めるか。
+ *
+ * **地震計の場所での予測計測震度で決める**（2026-10-22 ユーザー承認。選ばれた選択肢は「カードと同じ予測震度」）。
+ * 予測は地震カードと同じ `judgeQuakeReach`（司・翠川式。震源からの距離・M・深さ）で、「その観測点の普段 −
+ * `USUAL_MARGIN`」を上回れば出す（地震カードの判定。2026-10-13 ユーザー承認）。普段が読めない観測点だけは
+ * 地震カードと違い、{@link EEW_REACH_FLOOR_WITHOUT_USUAL} を下限にする。
+ *
+ * **区域の突き合わせでは決めない。** 気象庁は電文全体の予測震度の下限が震度 4 以上になって初めて区域を並べる
+ * （`docs/spec/eew-spec.md` §4。実電文 4,651 通のうち 3,886 通が区域を持たない）。区域で決めると、小さい地震では
+ * 区域が無いので電文全体の最大で判定され、**遠くの地震でも出る**。区域があっても、震度1〜2 の予想の地域は
+ * 載らないので、自作地震計が捉える近くの中くらいの地震で出ない。
+ *
+ * 予測した値は画面にも記録にも出さない（出すのは地震計が実際に測った波形だけ）。予報業務の整理は
+ * `docs/forecast-computation-audit.md` の 14。
+ *
+ * **予測できないときだけ区域の判定へ戻す**（地震カードと同じ）。予測できないのは、仮の震源の報（仮定震源要素・
+ * 「非常に強い揺れを検知」。M・深さが仮の値なので有感範囲を引かない。`eew-spec.md` §5）、震央・深さ・規模の
+ * どれかが判らない報、座標のある観測点が無いとき。座標の無い観測点が混じるときも、その観測点のぶんは区域で見る。
+ */
+function eewReachesSeismo(
+  eew: EEWAlert,
+  scope: NearbyScope,
+  stations: readonly SeismoIntensityLike[],
+): boolean {
+  const byArea = () => eewScaleForScope(eew, scope, WAVE_TRIGGER_MIN_SCALE) !== null
+  if (isProvisionalHypocenter(eew)) return byArea()
+  const reach = judgeQuakeReach(eew.earthquake.hypocenter, stations, EEW_REACH_FLOOR_WITHOUT_USUAL)
+  if (reach.kind === 'unknown') return byArea()
+  if (reach.stationIds.length > 0) return true
+  return reach.unknownStationIds.length > 0 && byArea()
+}
+
+/**
  * いま波形を出すべきか。
  *
  * **これは「いまこの瞬間」だけを見る。** 揺れが収まってから一定時間は出し続ける
  * 余韻の扱いは、状態を持つ側（`useSeismoWaveVisibility`）の担当。
  */
 export function seismoWaveTriggered(params: {
+  /**
+   * 自作地震計の周り（半径 30 km）。**中心は地震計の座標で、座標が無ければホーム地点**
+   * （2026-10-22 ユーザー承認。`hooks/useSeismoScope.ts`）。
+   */
   scope: NearbyScope
   eews: readonly EEWAlert[]
   /** 検知エンジンが確定した揺れのメンバー観測点（音・地図の検知点と同じ集合）。 */
@@ -133,7 +185,7 @@ export function seismoWaveTriggered(params: {
   for (const eew of eews) {
     // 取り消された報で出さない（行動チェックリストと同じ扱い）。
     if (eew.cancelled) continue
-    if (eewScaleForScope(eew, scope, WAVE_TRIGGER_MIN_SCALE) !== null) return true
+    if (eewReachesSeismo(eew, scope, stations)) return true
   }
   return kyoshinScaleForScope(detectedPoints, scope, WAVE_TRIGGER_MIN_SCALE) !== null
 }

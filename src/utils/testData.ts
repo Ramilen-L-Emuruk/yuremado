@@ -1,4 +1,4 @@
-import type { JMAQuake, JMATsunami, EEWAlert, EEWForecastChange, JMANankai, JMANankaiCommentary, JMAKohatsu, EarthquakePoint, IntensityScale, JMALpgm, JMAQuakeCity, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAEstimatedIntensityGrade, EEWRegion, TsunamiArea, TsunamiGrade, TelegramOperationStatus } from '../types/earthquake'
+import type { JMAQuake, JMATsunami, EEWAlert, EEWForecastChange, JMANankai, JMANankaiCommentary, JMAKohatsu, EarthquakePoint, IntensityScale, JMALpgm, JMAQuakeCity, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAEstimatedIntensityGrade, EEWRegion, TsunamiArea, TsunamiGrade, TsunamiObservation, TelegramOperationStatus } from '../types/earthquake'
 import { serverNow, serverDate } from './clock'
 import { extractQuakeEventIdFromId } from './quakeMerge'
 import { dmdataTelegramKey } from './telegramKey'
@@ -87,9 +87,10 @@ export function toEventIdTimestamp(d: Date): string {
  * 津波の影響なし）という、遠地地震特有の組み合わせになる報を選んでいる。
  * これにより「深さ句の省略」「付加文原文の読み上げ」「0230 の津波区分マップ」を一度に確認できる。
  *
- * @param includeComments 付加文（固定・自由の両方）を含めるか。付加文は DMDATA 経路でのみ
- *   配信され、P2PQuake（標準版）には存在しないため、standard 版のテストでは false を渡して
- *   実データで起こり得ない読み上げ・表示が出ないようにする。
+ * @param includeComments 固定付加文を含めるか。固定付加文は DMDATA 経路でのみ配信され、
+ *   P2PQuake（標準版）には存在しないため、standard 版のテストでは false を渡して
+ *   実データで起こり得ない読み上げ・表示が出ないようにする。**自由付加文はこの引数に関わらず持たせる**
+ *   —— P2PQuake も `comments.freeFormComment` で配信する（`services/p2pquake.ts`）。
  */
 export function createTestForeignQuake(includeComments: boolean): JMAQuake {
   const nowDate = serverDate()
@@ -123,9 +124,8 @@ export function createTestForeignQuake(includeComments: boolean): JMAQuake {
     // 自由付加文も実電文どおり。この報では津波情報の発表元を 1 行添えるだけだが、
     // 続報が出る事象（火山噴火・津波を伴う海外地震）ではここに観測状況が書かれ、
     // 固定付加文が動かないまま**自由付加文だけが更新される**。
-    freeText: includeComments
-      ? 'ＰＴＷＣでは１７日２３時５４分に津波情報を発表しています。'
-      : undefined,
+    // 自由付加文は両方の版が配信するので、版を問わず持たせる。
+    freeText: 'ＰＴＷＣでは１７日２３時５４分に津波情報を発表しています。',
   }
 }
 
@@ -181,7 +181,7 @@ export function createTestForeignQuakeHuge(withDmdssFields: boolean): JMAQuake {
     forecastText: withDmdssFields
       ? '日本への津波の有無については現在調査中です。太平洋の広域に津波発生の可能性があります。一般的に、この規模の地震が海域の浅い領域で発生すると、津波が発生することがあります。'
       : undefined,
-    // **P2PQuake は付加文を運ばず、海外への見通しを値 1 つで運ぶ**（`foreignTsunami`）。DMDSS 版の
+    // **P2PQuake は固定付加文を運ばず、海外への見通しを値 1 つで運ぶ**（`foreignTsunami`）。DMDSS 版の
     // 付加文の 2 文目（0221）にあたる `WarningPacificWide` を、読み取りと同じ文面で持たせる
     // （→ `services/p2pquake.ts` の `FOREIGN_TSUNAMI_TEXT`）。
     ...(withDmdssFields ? {} : { foreignTsunamiText: '太平洋の広域に津波発生の可能性があります。' }),
@@ -353,7 +353,7 @@ export function createTestEarthquake(useDmdataShape: boolean, operationStatus?: 
     // （→ docs/spec/quake-spec.md §5「市町村の震度」）。
     ...(useDmdataShape && { cities: notoHonshinQuake.cities as JMAQuakeCity[] }),
     // 固定付加文（その他）。**DMDATA 経路だけが運ぶ**ので standard 版では渡さない
-    // （P2PQuake は付加文を配信しない）。中身の決め方は `NOTO_HONSHIN_VAR_COMMENT_TEXT`。
+    // （P2PQuake は固定付加文を配信しない）。中身の決め方は `NOTO_HONSHIN_VAR_COMMENT_TEXT`。
     ...(useDmdataShape && NOTO_HONSHIN_VAR_COMMENT_TEXT
       ? { varCommentText: NOTO_HONSHIN_VAR_COMMENT_TEXT }
       : {}),
@@ -501,7 +501,8 @@ const TEST_LATE_CITY_COUNT = 3
  * - **震度速報は震源を持たない。** 電文に `Earthquake` 要素が無く、パーサーは震源名を空・
  *   座標を -200（位置不明センチネル）・深さを -1・規模を `NaN` で埋める
  * - **震源情報は震度を持たない**
- * - **続報で区域が増える。** 1 通目は一部の区域だけで、3 通目で出そろう
+ * - **続報で区域が増える。** 1 通目は一部の区域だけで、3 通目で出そろう。1 通目にはいちばん強い震度の区域を
+ *   入れないので、3 通目で最大震度が上がる（ブラウザ通知の「最大震度更新」が出る）
  * - **報番号（`Head/Serial`）を持つのは震源・震度情報だけ。** 震度速報・震源情報は空要素で届くので
  *   `id` の末尾は 4 通とも `-1` のまま。**通数を数える鍵は電文の種別名と作成時刻の組**（`telegramKey`）で、
  *   ここを持たせないと 2 通目の震度速報が「同じ電文の再送」と見なされて数えられない
@@ -543,9 +544,6 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
   const areaPoints = areaSource
     .filter(p => p.isArea)
     .map(p => (useDmdataShape || p.pref ? p : { ...p, pref: areaPrefByName.get(p.addr) ?? p.pref }))
-  const firstPoints = [...areaPoints]
-    .sort((a, b) => b.scale - a.scale)
-    .slice(0, Math.ceil(areaPoints.length * 0.6))
   const maxScaleOf = (points: EarthquakePoint[]): IntensityScale =>
     points.reduce<IntensityScale>((max, p) => (p.scale > max ? p.scale : max), -1)
   /**
@@ -556,6 +554,14 @@ export function createTestQuakeReportSequence(useDmdataShape: boolean): JMAQuake
     rows.map(({ revise: _revise, ...row }) => row as T)
   /** 震度速報・震源情報は `Revise` で変化を伝えない種別（→ `JMAQuake.reportsRevise`）。 */
   const { reportsRevise: _reportsRevise, ...nonReviseBase } = base
+  // 1 通目は**いちばん強い震度の区域がまだ入っていない形**にする（能登の本震なら震度7の 2 行を外し、最大震度6弱）。
+  // 3 通目で出そろって最大震度が上がるので、2 通目の震源情報のあとで最大震度が上がった報になり、
+  // ブラウザ通知の「最大震度更新」（→ `utils/quakeNotification.ts`）を実機で確かめられる入口はここだけ。
+  const topScale = maxScaleOf(areaPoints)
+  const firstPoints = [...areaPoints]
+    .filter(p => p.scale !== topScale)
+    .sort((a, b) => b.scale - a.scale)
+    .slice(0, Math.ceil(areaPoints.length * 0.6))
 
   const prompt = (time: string, points: EarthquakePoint[]): JMAQuake => {
     return {
@@ -737,7 +743,9 @@ export const TEST_QUAKE_CANCEL_DELAY_MS = 10_000
  * 緊急地震速報だけ）。
  */
 export function createTestQuakeCancel(): [JMAQuake, JMAQuake] {
-  const prompt = createTestQuakeReportSequence(true)[0]
+  // **区域が出そろった 3 通目を採る。** 1 通目はいちばん強い震度の区域を外してある（最大震度が上がる形を
+  // 作るため）ので、採ると震度7 の再送という実電文の形から外れる
+  const prompt = createTestQuakeReportSequence(true)[2]
   const cancelTime = new Date(new Date(prompt.time).getTime() + TEST_QUAKE_CANCEL_DELAY_MS).toISOString()
   const cancel: JMAQuake = {
     kind: 'quake',
@@ -1216,8 +1224,8 @@ export function createTestEEWWarning(withDmdssFields: boolean, eventId?: string,
     },
     severity: 'Warning',
     cancelled: false,
-    // 電文全体の最大予測震度。区域があるときの表示は区域を優先するが（`utils/eew.ts` の
-    // `eewMaxScale`）、**実電文はどちらの経路もこの欄を持つ** —— DMDATA は `Intensity/
+    // 電文全体の最大予測震度。DMDATA の報はこちらを区域より先に採り、standard 版は区域を先に見る
+    // （`utils/eew.ts` の `eewMaxScale`）。**実電文はどちらの経路もこの欄を持つ** —— DMDATA は `Intensity/
     // Forecast/MaxInt`、standard 版は Yahoo hypoInfo の `calcintensity` がここへ入る。
     forecastMaxScale: 50,
     ...(withDmdssFields ? {
@@ -1428,9 +1436,10 @@ export function createTestEEWStrongShaking(eventId?: string, serial = 1, baseTim
       originTime: isStrongShaking ? '' : new Date(anchor.getTime() - 1_000).toISOString(),
       arrivalTime: arrival,
       condition: isStrongShaking ? '' : '仮定震源要素',
-      // 第 1 報の震央地名は観測点を含む地方（「北陸地方」）、第 2 報は短縮用震央地名と同じ「富山湾」
+      // 第 1 報の震央地名は観測点を含む地方（「北陸地方」）、第 2 報は短縮用震央地名と同じ「富山湾」。
+      // 第 1 報の規模は実電文どおり `NaN` に説明「Ｍ不明」が付く（`Magnitude@description`。→ `dmdataParser.strongShaking.test.ts`）
       hypocenter: isStrongShaking
-        ? { name: '北陸地方', latitude: 37.4, longitude: 137.4, depth: 10, magnitude: NaN }
+        ? { name: '北陸地方', latitude: 37.4, longitude: 137.4, depth: 10, magnitude: NaN, magnitudeCondition: 'Ｍ不明' }
         : { name: '富山湾', latitude: 37.4, longitude: 137.4, depth: 10, magnitude: 1.0 },
     },
     severity: 'Forecast',
@@ -1645,8 +1654,8 @@ export function createTestEEW(withDmdssFields: boolean, eventId?: string, serial
     //
     // 電文全体の最大予測震度も同じ遷移をする（`Intensity/Forecast/MaxInt` の `To="over"`）。
     // **区域が無い報ではこれだけが予想震度になる** —— standard 版の初報がまさにその形で、
-    // 「震度6強程度以上」を区域なしで伝える経路はここでしか通らない（`utils/eew.ts` の
-    // `eewMaxScale` は区域があればそちらを優先するため）。
+    // 「震度6強程度以上」を区域なしで伝える経路はここでしか通らない（standard 版の
+    // `eewMaxScale`（`utils/eew.ts`）は区域があればそちらを優先するため）。
     forecastMaxScale: isDowngradeReport ? 45 : 60,
     // **上限が定まらないことを伝えられるのは DMDATA だけ。** P2PQuake は電文全体の最大予測震度を
     // 配信せず（区域ごとの `scaleTo: 99` は運ぶ）、Yahoo hypoInfo の `calcintensity` にも
@@ -1669,7 +1678,12 @@ export function createTestEEW(withDmdssFields: boolean, eventId?: string, serial
     // **続報で地方が増える形まで再現する。** 実配信では 4 年に 3 例しかないが（能登本震は
     // 1→4→6 地方）、読み上げが「新たに、〜でも強い揺れに警戒してください。」と差分を言う経路は
     // ここでしか通らない。ボタンを 1 回押すと 1 地方、もう 1 回で 2 地方へ広がる。
+    //
+    // **加わった地方を電文が分けて示すのは、加わったその報だけ**（2 つ目の `Item` の `LastKind` が
+    // 「なし」）。次の報では前の報でも警報だったので 1 つ目の `Item` へ戻る。カードはこれで
+    // 「関東」にだけ一瞬色を付ける。
     ...(withDmdssFields ? { warningRegions: isFirstReport ? ['東北'] : ['東北', '関東'] } : {}),
+    ...(withDmdssFields && serial === 2 ? { addedWarningRegions: ['関東'] } : {}),
     issue: { eventId: eid, serial: String(serial), time: report },
     // 実データに合わせ areas を使用（参照は utils/eew.ts の eewAreas() で吸収）
     //
@@ -2597,7 +2611,19 @@ export const TEST_TSUNAMI_QUIET_STEP_MS = 10000
  */
 export const TEST_TSUNAMI_QUIET_TAIL_MS = 20000
 
-/** 観測情報の報に共通の差し替え（種別の名乗りと見出し文）。 */
+/**
+ * 観測点から電文の印（`FirstHeight/Revise`・`MaxHeight/Revise`）を剥がす。
+ *
+ * **前の段の印を次の段へ持ち越さないため。** 実電文の `Revise` は、その報で追加・更新した項目にだけ付く
+ * （全期間の控えで、値を持つ観測点の再送に印が残った形は無い）。持ち越すと、画面は電文の印でも項目に
+ * 印を付けるので（→ `changedObservationFields`）、「変化なし」の段まで全行が光る。印を立てるのは
+ * 動かす段だけ。
+ */
+function withoutRevise(observations: readonly TsunamiObservation[] | undefined): TsunamiObservation[] | undefined {
+  return observations?.map(({ firstHeightRevise: _f, maxHeightRevise: _m, ...o }) => o)
+}
+
+/** 観測情報の報に共通の差し替え（種別の名乗りと見出し文。観測点の電文の印は剥がす）。 */
 function asObservationReport(base: JMATsunami, suffix: string): JMATsunami {
   const nowDate = serverDate()
   const now = nowDate.toISOString()
@@ -2611,6 +2637,7 @@ function asObservationReport(base: JMATsunami, suffix: string): JMATsunami {
     id: `${base.id}-${suffix}`,
     time: now,
     issue: { ...base.issue, time: now },
+    observations: withoutRevise(base.observations),
     infoName: '津波観測に関する情報',
     // 観測情報は VTSE51（沖合だけを運ぶ報は呼び出し側で VTSE52 へ差し替える）。
     headType: 'VTSE51',
@@ -2645,7 +2672,7 @@ export function createTestTsunamiMaxHeightTimeUpdate(prev: JMATsunami): JMATsuna
   const advanced = new Date(new Date(report.time).getTime() - 60000).toISOString()
   return {
     ...report,
-    observations: (prev.observations ?? []).map(o =>
+    observations: (report.observations ?? []).map(o =>
       o.height && !o.offshore && !o.condition?.maxHeightMissing
         ? { ...o, maxHeightRevise: '更新', maxHeightDateTime: advanced }
         : o),
@@ -2675,7 +2702,7 @@ export function createTestTsunamiOffshoreMaxHeightTimeUpdate(prev: JMATsunami): 
     ...report,
     infoName: '沖合の津波観測に関する情報',
     headType: 'VTSE52',
-    observations: (prev.observations ?? [])
+    observations: (report.observations ?? [])
       .filter(o => o.offshore)
       .map(o => o.height && !o.condition?.observing
         ? { ...o, maxHeightRevise: '更新', maxHeightDateTime: advanced }
@@ -2704,7 +2731,7 @@ export function createTestTsunamiFirstWaveUpdate(prev: JMATsunami): JMATsunami {
   const report = asObservationReport(prev, 'firstwave')
   return {
     ...report,
-    observations: (prev.observations ?? []).map(o =>
+    observations: (report.observations ?? []).map(o =>
       o.name === FIRST_WAVE_UPDATE_STATION && o.arrivalTime
         ? {
           ...o,
@@ -2737,7 +2764,7 @@ export function createTestTsunamiObservationOverUpgrade(prev: JMATsunami): JMATs
   const report = asObservationReport(prev, 'obs-over')
   return {
     ...report,
-    observations: (prev.observations ?? []).map(o =>
+    observations: (report.observations ?? []).map(o =>
       o.name === OVER_UPGRADE_STATION && o.height
         // `description` は実電文をパーサーが通した後の形（半角・「以上」を含む）に揃える。
         ? { ...o, height: { ...o.height, description: `${o.height.value}m以上`, over: true } }
@@ -2773,9 +2800,38 @@ export function createTestTsunamiObservationLowered(prev: JMATsunami, coastal: J
   const report = asObservationReport(prev, 'obs-lowered')
   return {
     ...report,
-    observations: (coastal.observations ?? []).map(o =>
+    observations: (withoutRevise(coastal.observations) ?? []).map(o =>
       o.name === OVER_UPGRADE_STATION && o.height
         ? { ...o, height: { value: 0.6, description: '0.6m' } }
+        : o),
+  }
+}
+
+/** 電文の印だけが動いたことを伝える観測点（欠測から戻る。発表報では第1波・最大波とも欠測）。 */
+const REVISE_ONLY_STATION = 'いわき市小名浜'
+
+/**
+ * 値は何も持たないまま、電文の印（`FirstHeight/Revise`・`MaxHeight/Revise` = 追加）だけが動いた観測情報の報。
+ *
+ * **自前の比較では何も拾えない形。** 欠測だった観測点が戻り、第1波は「第１波識別不能」、最大波は
+ * 「観測中」として載り直す —— どちらも値を持たないので、前の報と比べる相手が無い。全期間 19 津波・
+ * 延べ 8,085 観測点で、電文だけが印を持つ形は 168 あり、どれもこの「第１波識別不能・観測中・欠測の追加」
+ * だった（→ `changedObservationFields`）。カードの行の「到達時刻不明」「観測中」に色が当たるのは
+ * ここでしか実機に出ない。
+ *
+ * 観測点は `coastal` から採る（理由は {@link createTestTsunamiQuietReportSteps}）。
+ */
+export function createTestTsunamiObservationReviseOnly(prev: JMATsunami, coastal: JMATsunami): JMATsunami {
+  const report = asObservationReport(prev, 'obs-revise')
+  return {
+    ...report,
+    observations: (withoutRevise(coastal.observations) ?? []).map(o =>
+      o.name === REVISE_ONLY_STATION
+        ? {
+          name: o.name, districtCode: o.districtCode, districtName: o.districtName,
+          condition: { firstWaveUnidentifiable: true, observing: true },
+          firstHeightRevise: '追加', maxHeightRevise: '追加',
+        }
         : o),
   }
 }
@@ -2797,9 +2853,11 @@ export function createTestTsunamiQuietReportSteps(base: JMATsunami): ((prev: JMA
     createTestTsunamiOffshoreMaxHeightTimeUpdate,
     createTestTsunamiObservationNoChange,
     prev => createTestTsunamiObservationLowered(prev, lastCoastal),
+    prev => createTestTsunamiObservationReviseOnly(prev, lastCoastal),
     prev => createTestTsunamiHighTide(base, prev),
     prev => createTestTsunamiHighTideFollowUp(prev, 'tide'),
     prev => createTestTsunamiHighTideFollowUp(prev, 'arrival'),
+    prev => createTestTsunamiHighTideFollowUp(prev, 'arrivalTime'),
     prev => createTestTsunamiHighTideFollowUp(prev, 'none'),
   ]
   return steps.map(step => (prev: JMATsunami) => {
@@ -2816,11 +2874,15 @@ export function createTestTsunamiQuietReportSteps(base: JMATsunami): ((prev: JMA
  * （2024 年能登半島地震の 01/01 20:30・01/02 02:31）。**3 通りを撃ち分けられないと、
  * 読み上げの言い分け（→ `tideReportChange`）を実機で確かめられない。**
  *
- * @param kind `tide` 満潮時刻を進める／`arrival` 到達状況だけ変える／`none` 何も変えない
+ * **到達予想時刻だけが動く形も撃てる**（`arrivalTime`）。全期間の控えで 11 地点（2024-01-01 16:23 の
+ * 坂井市三国 17:10 → 17:00 など）がこの形で、かつては「内容に変わりはありません」と読んでいた。
+ *
+ * @param kind `tide` 満潮時刻を進める／`arrival` 到達状況だけ変える／`arrivalTime` 到達予想時刻だけ
+ *   10 分早める／`none` 何も変えない
  */
 export function createTestTsunamiHighTideFollowUp(
   prev: JMATsunami,
-  kind: 'tide' | 'arrival' | 'none',
+  kind: 'tide' | 'arrival' | 'arrivalTime' | 'none',
 ): JMATsunami {
   const now = new Date(serverNow()).toISOString()
   const base: JMATsunami = { ...prev, id: `${prev.id}-${kind}`, time: now, issue: { ...prev.issue, time: now } }
@@ -2832,6 +2894,9 @@ export function createTestTsunamiHighTideFollowUp(
       stations: a.stations?.map(s => kind === 'tide'
         // 次の満潮へ進む（実電文でも半日ほど先へ飛ぶ）。
         ? { ...s, highTideDateTime: s.highTideDateTime ? new Date(new Date(s.highTideDateTime).getTime() + 12 * 3600_000).toISOString() : undefined }
+        // 到達予想時刻だけを 10 分早める（実電文と同じ向き・同じ幅）。到達状況を運ぶ地点は予想時刻を持たない。
+        : kind === 'arrivalTime'
+          ? (s.arrivalTime ? { ...s, arrivalTime: new Date(new Date(s.arrivalTime).getTime() - 10 * 60000).toISOString() } : s)
         // 到達状況だけが確定へ変わる（「津波到達中と推測」→「第１波の到達を確認」）。
         // 到達状況を持たない地点（まだ予想時刻を運んでいる）は動かさない —— 予想時刻と到達の確認は同時に載らない。
         : s.arrivalCondition ? { ...s, arrivalCondition: '第１波の到達を確認' } : s),

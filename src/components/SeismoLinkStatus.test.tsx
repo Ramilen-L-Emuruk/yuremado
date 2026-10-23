@@ -28,7 +28,7 @@ function advance(ms: number): void {
 
 describe('自作地震計に繋がらないことを知らせる行', () => {
   it('正: 繋がらない状態が 5 秒続けば出る', () => {
-    render(<SeismoLinkStatus stream={{ kind: 'reconnecting', detail: '応答なし', nextAttemptInMs: 1000 }} />)
+    render(<SeismoLinkStatus stream={{ kind: 'reconnecting', detail: '応答なし', nextAttemptInMs: 1000 }} urlUnusable={false} />)
 
     expect(screen.queryByText(TEXT)).toBeNull()
     advance(5000)
@@ -37,20 +37,20 @@ describe('自作地震計に繋がらないことを知らせる行', () => {
   })
 
   it('対照: 5 秒に満たないうちに繋がれば出ない（瞬断でちらつかない）', () => {
-    const { rerender } = render(<SeismoLinkStatus stream={{ kind: 'connecting' }} />)
+    const { rerender } = render(<SeismoLinkStatus stream={{ kind: 'connecting' }} urlUnusable={false} />)
     advance(4000)
-    rerender(<SeismoLinkStatus stream={{ kind: 'open' }} />)
+    rerender(<SeismoLinkStatus stream={{ kind: 'open' }} urlUnusable={false} />)
     advance(10_000)
 
     expect(screen.queryByText(TEXT)).toBeNull()
   })
 
   it('正: 出たあとでも、繋がれば消える', () => {
-    const { rerender } = render(<SeismoLinkStatus stream={{ kind: 'connecting' }} />)
+    const { rerender } = render(<SeismoLinkStatus stream={{ kind: 'connecting' }} urlUnusable={false} />)
     advance(5000)
     expect(screen.getByText(TEXT)).toBeTruthy()
 
-    rerender(<SeismoLinkStatus stream={{ kind: 'open' }} />)
+    rerender(<SeismoLinkStatus stream={{ kind: 'open' }} urlUnusable={false} />)
 
     expect(screen.queryByText(TEXT)).toBeNull()
   })
@@ -59,27 +59,43 @@ describe('自作地震計に繋がらないことを知らせる行', () => {
   // 待ち時間（`nextAttemptInMs`）の違う別の値で届くので、オブジェクトを依存に
   // すると 5 秒に届く前に毎回作り直される。
   it('安全弁: 繋ぎ直しを繰り返しても、通算 5 秒で出る', () => {
-    const { rerender } = render(<SeismoLinkStatus stream={{ kind: 'connecting' }} />)
+    const { rerender } = render(<SeismoLinkStatus stream={{ kind: 'connecting' }} urlUnusable={false} />)
     advance(2000)
-    rerender(<SeismoLinkStatus stream={{ kind: 'reconnecting', detail: '応答なし', nextAttemptInMs: 1000 }} />)
+    rerender(<SeismoLinkStatus stream={{ kind: 'reconnecting', detail: '応答なし', nextAttemptInMs: 1000 }} urlUnusable={false} />)
     advance(2000)
-    rerender(<SeismoLinkStatus stream={{ kind: 'reconnecting', detail: '応答なし', nextAttemptInMs: 2000 }} />)
+    rerender(<SeismoLinkStatus stream={{ kind: 'reconnecting', detail: '応答なし', nextAttemptInMs: 2000 }} urlUnusable={false} />)
     advance(1000)
 
     expect(screen.getByText(TEXT)).toBeTruthy()
   })
 
-  // 機能を切っている・URL の形が違うときは `null` が来る。**繋がらないのは当然**
-  // なので、知らせる相手がいない（設定タブの 1 行が受け持つ）。
-  it('安全弁: 繋ぎに行っていないとき（null）は何も描かない', () => {
-    const { container } = render(<SeismoLinkStatus stream={null} />)
+  // 機能を切っているときは `null` が来る。**繋がらないのは当然**なので、知らせる相手がいない。
+  it('安全弁: 機能を切っているとき（null・URL の誤りなし）は何も描かない', () => {
+    const { container } = render(<SeismoLinkStatus stream={null} urlUnusable={false} />)
     advance(60_000)
 
     expect(container.firstChild).toBeNull()
   })
 
+  // 正: 機能は入っているのに URL が使えないときも、同じ 5 秒で出す（2026-10-21 ユーザー選択「おすすめで」）。
+  it('URL が使えず繋ぎに行けないときも、5 秒で出す', () => {
+    render(<SeismoLinkStatus stream={null} urlUnusable={true} />)
+    advance(4999)
+    expect(screen.queryByText(TEXT)).toBeNull()
+    advance(1)
+    expect(screen.getByText(TEXT)).toBeTruthy()
+  })
+
+  // 対照: URL を直して繋がったら消える。
+  it('対照: URL を直して繋がれば消える', () => {
+    const { rerender, container } = render(<SeismoLinkStatus stream={null} urlUnusable={true} />)
+    advance(5000)
+    rerender(<SeismoLinkStatus stream={{ kind: 'open' }} urlUnusable={false} />)
+    expect(container.firstChild).toBeNull()
+  })
+
   it('対照: 繋がっているときは何も描かない', () => {
-    const { container } = render(<SeismoLinkStatus stream={{ kind: 'open' }} />)
+    const { container } = render(<SeismoLinkStatus stream={{ kind: 'open' }} urlUnusable={false} />)
     advance(60_000)
 
     expect(container.firstChild).toBeNull()

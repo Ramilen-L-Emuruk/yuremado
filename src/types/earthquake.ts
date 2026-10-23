@@ -91,8 +91,10 @@ export interface Hypocenter {
  * 電文の運用種別（`Control/Status`。電文解説資料 Ⅰ.3）。
  *
  * **`EEWAlert.test` とは別物。** あちらは「画面・音・地図へ流さない」ための抑制フラグで、
- * 検証用に受信した試験報はあえて `test: false` にして流している（`services/dmdata.ts`）。
- * こちらは**電文が自分で名乗っている種別**で、表示に印を付けるためだけに持つ。
+ * 検証用に受信した試験報はあえて `test: false` にして流している（DMDATA は `services/dmdata.ts`、
+ * 標準版の緊急地震速報は `utils/eew.ts` の `admitTrainingEew`）。
+ * こちらは**報の運用種別**で、表示に印を付けるためだけに持つ。DMDATA は電文が自分で名乗る値、
+ * 標準版の緊急地震速報は経路の旗（強震モニタの `isTraining`・P2PQuake の `test`）から付けた値。
  *
  * 「通常」は持たせない（既定の状態に欄を割く意味がない）。
  */
@@ -406,7 +408,7 @@ export interface JMAQuake {
    * 気象庁の付加文（津波に関する固定付加文）の原文。DMDATA 経路でのみ得られる。
    * 遠地地震は付加文コードが 021x 系だけでは表現しきれない（022x/023x 系を併用する）ため、
    * domesticTsunami への丸め込みで意味が落ちる。原文を読み上げに使う用途で保持する。
-   * P2PQuake 経路は付加文を配信しないため undefined。
+   * P2PQuake 経路は固定付加文を配信しないため undefined。
    */
   forecastText?: string
   /**
@@ -430,7 +432,7 @@ export interface JMAQuake {
    */
   varCommentCodes?: readonly string[]
   /**
-   * 気象庁の自由付加文（`Comments/FreeFormComment`）の原文。DMDATA 経路でのみ得られる。
+   * 気象庁の自由付加文（`Comments/FreeFormComment`）の原文。**両方の経路で得られる**（P2PQuake 経路の取り込み方は末尾）。
    *
    * 固定付加文（`forecastText`）が津波区分ごとの定型文であるのに対し、こちらは電文ごとに
    * 書き起こされる本文で、**続報で実際に更新されるのはこちら側**であることが多い（観測された
@@ -1238,9 +1240,19 @@ export interface EEWAlert {
    */
   warningRegions?: string[]
   /**
+   * {@link warningRegions} のうち、**この報で新たに警報の対象に加わった地方**。電文が 2 つ目の
+   * `Item`（`LastKind` が「なし」）に分けて示すものをそのまま持つ。無ければ持たない。
+   *
+   * **カードで、その地方名にだけ一瞬色を付けるのに使う**（→ `docs/spec/eew-spec.md` §3「警報の対象地方」）。
+   * **読み上げには使わない** —— 前報からの差分なので、前報を取りこぼしていれば一緒に落ちる
+   * （→ `docs/spec/eew-spec.md` §3「警報の対象地方」）。DMDSS 版限定。
+   */
+  addedWarningRegions?: string[]
+  /**
    * 電文が名乗る情報名（`Head/Title`）。→ {@link JMATsunami.infoName}（読み取りも扱いも同じ）
    *
-   * **読んで持つだけで画面には出さない。** アプリが受信する VXSE45 では実電文 8 通すべてが
+   * **読んで持つだけで画面には出さない**（2026-10-22 ユーザー承認「出さない (Recommended)」。
+   * → `docs/spec/eew-spec.md` §3「電文の名称と表示・読み上げ」）。アプリが受信する VXSE45 では実電文 8 通すべてが
    * 「緊急地震速報（地震動予報）」の 1 種類で、報ごとに変わらない。しかも画面の見出しは
    * 電文の区分（`severity`）から「地震動予報」「緊急地震速報（警報）」を組み立てており
    * （`docs/spec/eew-spec.md` §3）、並べると同じ語が二重に出る。
@@ -1302,13 +1314,15 @@ export interface EEWAlert {
      * 地震発現時刻（`Earthquake/ArrivalTime`。観測点が地震を検知した時刻）。
      * 発生時刻（`originTime`）と別物。
      *
-     * **読んで持つだけで、画面・読み上げ・共有カードのどこにも出していない。** 1 日分の実測では
-     * 地震ごとに 1 通も動かず `EventID` と全通一致していた（母数と限界は下記リンク先）。中身は
-     * 観測網の配置で決まる値で、**「仕様上不変」と確かめたわけではない**
-     * （据え置きの根拠は → `docs/spec/eew-spec.md` §3「地震の時刻は発生時刻を出す」）。
+     * **カードには「地震発現時刻」の見出しで発生時刻の下に出す**（2026-10-22 ユーザー承認「2 行とも名前を付ける」）。
+     * 読み上げ・共有カードには出していない。計算（予報円・自動解除ほか）はこの値を読まない。
+     * 1 日分の実測では地震ごとに 1 通も動かず `EventID` と全通一致していた（母数と限界は下記リンク先）。
+     * 中身は観測網の配置で決まる値で、**「仕様上不変」と確かめたわけではない**
+     * （→ `docs/spec/eew-spec.md` §3「地震の時刻は発生時刻を出す」）。
      *
-     * **出すことにするなら空文字を先に弾くこと** —— Yahoo hypoInfo 経路（standard 版）は
-     * この値を配信しないため `services/kyoshin.ts` が空文字を入れる。
+     * **空文字を先に弾くこと** —— Yahoo hypoInfo 経路（standard 版）は
+     * この値を配信しないため `services/kyoshin.ts` が空文字を入れる（カードは空なら行を出さない）。
+     * P2PQuake 経路は値を持ち、Yahoo の続報はその値を保つ（`mergeEewReport`）。
      */
     arrivalTime: string
     condition: string
@@ -1746,6 +1760,20 @@ export interface LiveEventMeta {
    * 変わりうるので、読み上げは既読との差分で判断させる。区分が上がった報には立たない。
    */
   eewSameReport?: boolean
+  /**
+   * その緊急地震速報の誤報取消が、**取消の前に画面から消えた（自動解除された）地震**に届いたものか（取消の報にだけ立つ。
+   * 入口が `isLateEewCancel` で決める）。
+   *
+   * 立てば読み上げ側は、画面に出ていた地震の誤報取消と同じく音・読み上げ・通知・タブ移動を出す。読み上げ側の追跡は
+   * 消えた時点で捨ててあるので、取消の文に要る値はここで渡す（2026-10-21 ユーザー承認「直す (Recommended)」）。
+   *
+   * - `firstIssueTime`: 手元で最初に受けた報の発表時刻（`null` は拾えなかった印、`undefined` は覚えていない）
+   * - `hypocenterName`: 消える直前の報の震央地名（空なら名乗らなかった）
+   */
+  eewLateCancel?: {
+    firstIssueTime: string | null | undefined
+    hypocenterName: string
+  }
 }
 
 // 南海トラフ地震臨時情報 (VYSE50)

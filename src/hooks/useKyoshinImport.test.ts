@@ -31,7 +31,7 @@ const mockSave = vi.mocked(saveImportedEvent)
 const mockHasStorageError = vi.mocked(hasImportStorageError)
 
 const archives: HistoricalArchiveIndex = [
-  { id: '2018-osaka', label: '2018年大阪府北部地震', description: 'test', from: '2018-06-17T15:00:00Z', to: '2018-06-19T15:00:00Z', firstEventTime: '2018-06-17T22:58:00Z' },
+  { id: '2018-osaka', label: '2018年大阪府北部地震', description: 'test', from: '2018-06-17T15:00:00Z', to: '2018-06-19T15:00:00Z', coveredRanges: [{ from: '2018-06-17T15:00:00Z', to: '2018-06-19T15:00:00Z' }], firstEventTime: '2018-06-17T22:58:00Z' },
 ]
 
 function makeEvent(originTimeJst: string): EventResult {

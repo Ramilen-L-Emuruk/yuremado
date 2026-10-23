@@ -11,8 +11,9 @@ import {
   parseQuakeNoticeFromXml, parseEarthquakeCountFromXml,
 } from './dmdataParser'
 import { decodeEstimatedIntensity, TELEGRAM_KIND_NORMAL } from '../utils/bufrEstimatedIntensity'
-import { log } from '../utils/logger'
+import { log, createLogThrottle } from '../utils/logger'
 import type { ReplayPayload } from '../types/replay'
+import type { TelegramLogKind } from '../types/earthquake'
 
 // 電文本体を取りに行く URL の基底。一覧・目録が返す電文 id をこの後ろへ繋ぐ。
 // **取得元をまたいで共有する**——リプレイの当日経路とライブ起動時の復元が同じ形で組み立てるので、
@@ -60,6 +61,48 @@ export const ESTIMATED_INTENSITY_TYPES = new Set(['IXAC41', 'IXAC40'])
 /** その種別が二進で届くか。取得元ごとに本文の取り方（テキストか bytes か）を分けるのに使う。 */
 export function isBinaryTelegramType(headType: string): boolean {
   return ESTIMATED_INTENSITY_TYPES.has(headType)
+}
+
+// パーサーへは渡さないが、ライブ受信（`dmdata.ts` の `handleMessage`）が扱う種別。**本文の復号を種別で
+// 絞るときの例外一覧**で、ここから漏らすとその扱いごと届かなくなる。
+//   VXSE42 … 配信テスト。本文は見ない（debug のときにログへ出すだけで、電文ログには残さない）
+//   VXSE43 … 予報を受けている人には購読外。届いたら配信分類の変わり目を疑う警告を上げ、本文を電文ログへ残す
+//             （予報が無く警報を受けている人には EEW そのもの。→ `EEW_HEAD_TYPES`）
+//   VXSE44 … 廃止予定の旧 EEW。想定内なので警告は上げず、本文を電文ログへ残す
+export const DISPATCHED_WITHOUT_PARSER: ReadonlySet<string> = new Set(['VXSE42', 'VXSE43', 'VXSE44'])
+
+/**
+ * 電文種別 → その電文が何の電文か（電文ログの種別と同じ語）。**受信の分岐と電文ログが引く唯一の表。**
+ *
+ * `buildXmlPayload`（ライブ・一覧・リプレイ・取り戻しの読み取り）はこの表で振り分け、電文ログは
+ * 読めなかった行の種別をこの表から引く（`components/TelegramTab/labels.ts`）。**別々に持つと、
+ * 片方を付け替えても食い違いを捕まえる検査が無い**（同じ種別の電文が、読めたかどうかで別の
+ * 絞り込みに入る）。パーサーを通らない VXSE42・VXSE43・VXSE44 も緊急地震速報の一族として載せる。
+ */
+export const TELEGRAM_KIND_OF_HEAD_TYPE: ReadonlyMap<string, TelegramLogKind> = new Map<string, TelegramLogKind>([
+  ...[...EEW_HEAD_TYPES, ...DISPATCHED_WITHOUT_PARSER].map(code => [code, 'eew'] as const),
+  ...[...QUAKE_TYPES].map(code => [code, 'quake'] as const),
+  ...[...TSUNAMI_TYPES].map(code => [code, 'tsunami'] as const),
+  ...[...LPGM_TYPES].map(code => [code, 'lpgm'] as const),
+  ...[...NANKAI_TYPES].map(code => [code, 'nankai'] as const),
+  ...[...COMMENTARY_TYPES].map(code => [code, 'nankaiCommentary'] as const),
+  ...[...KOHATSU_TYPES].map(code => [code, 'kohatsu'] as const),
+  ...[...NOTICE_TYPES].map(code => [code, 'quakeNotice'] as const),
+  ...[...QUAKE_COUNT_TYPES].map(code => [code, 'earthquakeCount'] as const),
+  ...[...ESTIMATED_INTENSITY_TYPES].map(code => [code, 'estimatedIntensity'] as const),
+])
+
+/** 電文種別が何の電文か。扱わない種別なら `undefined`。表は {@link TELEGRAM_KIND_OF_HEAD_TYPE}。 */
+export function telegramKindOfHeadType(headType: string): TelegramLogKind | undefined {
+  return TELEGRAM_KIND_OF_HEAD_TYPE.get(headType)
+}
+
+/**
+ * ペイロードが何の電文として読まれたか（{@link telegramKindOfHeadType} と同じ語）。電文ログの
+ * 読めた行の種別はこちらで付ける —— 読んだ結果そのものなので、表と食い違えばそれは分岐の誤り。
+ */
+export function telegramKindOfPayload(payload: ReplayPayload): TelegramLogKind {
+  return payload.kind === 'event' ? payload.event.kind : payload.kind
 }
 
 // 緊急地震速報を除いて、アプリが取り込む電文種別の全体。取得元の目録には対象外の種別も多数
@@ -143,6 +186,25 @@ export function historyExtraKey(payload: ReplayPayload): string | null {
   }
 }
 
+// 南海トラフの 2 種別で読めなかったことの警告を間引く。ライブ・一覧・リプレイ・取り戻しのどれでも出るので、
+// 書式が変わったときアーカイブの走査や控えの読み直しのたびに同じ行が並ばないようにする（種別ごとに 1 分に 1 回）。
+// **枠は経路をまたいで共有する** —— リプレイの走査で枠を使った直後の 1 分は、ライブで読めなくても警告が出ない
+// （電文ログには毎回残る）。
+const warnUnreadableNankai = new Map<string, ReturnType<typeof createLogThrottle>>()
+
+/** テスト専用: 南海トラフの警告の間引きを白紙へ戻す（テストどうしが枠を食い合わないように）。 */
+export function resetUnreadableNankaiWarnForTest(): void {
+  warnUnreadableNankai.clear()
+}
+function warnUnreadableNankaiOnce(headType: string, message: string): void {
+  let throttle = warnUnreadableNankai.get(headType)
+  if (!throttle) {
+    throttle = createLogThrottle(60_000)
+    warnUnreadableNankai.set(headType, throttle)
+  }
+  throttle(() => log.warn(message))
+}
+
 /**
  * 電文本体（気象庁の XML）から再生用ペイロードを組み立てる。
  *
@@ -156,52 +218,68 @@ export function historyExtraKey(payload: ReplayPayload): string | null {
  * @returns 組み立てたペイロード。対象外の種別・パース失敗なら null
  */
 export function buildXmlPayload(headType: string, xml: string, eewHeadType: EewHeadType | null): ReplayPayload | null {
-  if (EEW_HEAD_TYPES.has(headType)) {
-    // 受けている区分で取らないと決めた側（予報があるときの VXSE43 など）は読まない
-    if (headType !== eewHeadType) return null
-    const event = parseEEWFromXml(headType, xml)
-    return event ? { kind: 'event', event } : null
+  const kind = telegramKindOfHeadType(headType)
+  if (kind === undefined) return null
+  switch (kind) {
+    case 'eew': {
+      // 受けている区分で取らないと決めた側（予報があるときの VXSE43 など）と、パーサーを通さない
+      // 種別（VXSE42・VXSE44）は読まない
+      if (headType !== eewHeadType) return null
+      const event = parseEEWFromXml(headType, xml)
+      return event ? { kind: 'event', event } : null
+    }
+    case 'quake': {
+      const event = parseEarthquakeFromXml(headType, xml)
+      return event ? { kind: 'event', event } : null
+    }
+    case 'tsunami': {
+      const event = parseTsunamiFromXml(headType, xml)
+      return event ? { kind: 'event', event } : null
+    }
+    case 'lpgm': {
+      const lpgm = parseLpgmFromXml(xml)
+      return lpgm ? { kind: 'lpgm', data: lpgm } : null
+    }
+    case 'nankai': {
+      const nankai = parseNankaiFromXml(xml)
+      // VYSE50 は必ず段階（調査中・巨大地震注意等）を持つ電文なので、読めないのは書式が変わった等の異常。
+      // 電文ログだけに残すと開かないと気づけないため、コンソールへ出す（経路によらない。呼び出し側の
+      // 「読めなかった」の記録と重なることがあるが、どの種別が読めなかったかはここでしか言えない）
+      if (!nankai) warnUnreadableNankaiOnce(headType, `[dmdata] 南海トラフ臨時情報 (${headType}) の段階を解析できませんでした`)
+      return nankai ? { kind: 'nankai', data: nankai } : null
+    }
+    case 'nankaiCommentary': {
+      const commentary = parseNankaiCommentaryFromXml(xml)
+      // 取消電文は cancelled を立てて返るので、null は書式の異常だけ
+      if (!commentary) warnUnreadableNankaiOnce(headType, `[dmdata] 南海トラフ関連解説情報 (${headType}) を解析できませんでした`)
+      return commentary ? { kind: 'nankaiCommentary', data: commentary } : null
+    }
+    case 'kohatsu': {
+      const kohatsu = parseVyse60FromXml(xml)
+      return kohatsu ? { kind: 'kohatsu', data: kohatsu } : null
+    }
+    case 'quakeNotice': {
+      const notice = parseQuakeNoticeFromXml(xml)
+      return notice ? { kind: 'quakeNotice', data: notice } : null
+    }
+    case 'earthquakeCount': {
+      const count = parseEarthquakeCountFromXml(xml)
+      return count ? { kind: 'earthquakeCount', data: count } : null
+    }
+    case 'estimatedIntensity':
+      // **二進電文がここへ来たら、その経路がバイナリの受け口を持っていない。** `NON_EEW_HANDLED_TYPES`
+      // には入っているので手前の絞り込みは通り抜け、`xml` には壊れた文字列が入っている。
+      // 黙って null を返すと「対象外だった」のと見分けが付かないので記録する。
+      log.warn(`[dmdata] ${headType} は二進電文です。XML の経路へ流れています（buildBinaryPayload を通すこと）`)
+      return null
+    default: {
+      // 種別を足したらここが型エラーになる（読み取りを書き足し忘れたまま表にだけ載せない）。
+      // 型を迂回して届いたときは、ペイロードの形をしていない値を返さず、記録して落とす
+      const unhandled: never = kind
+      log.warn(`[dmdata] ${headType} の種別（${String(unhandled)}）を読む分岐がありません`)
+      return null
+    }
   }
-  if (QUAKE_TYPES.has(headType)) {
-    const event = parseEarthquakeFromXml(headType, xml)
-    return event ? { kind: 'event', event } : null
-  }
-  if (TSUNAMI_TYPES.has(headType)) {
-    const event = parseTsunamiFromXml(headType, xml)
-    return event ? { kind: 'event', event } : null
-  }
-  if (LPGM_TYPES.has(headType)) {
-    const lpgm = parseLpgmFromXml(xml)
-    return lpgm ? { kind: 'lpgm', data: lpgm } : null
-  }
-  if (NANKAI_TYPES.has(headType)) {
-    const nankai = parseNankaiFromXml(xml)
-    return nankai ? { kind: 'nankai', data: nankai } : null
-  }
-  if (COMMENTARY_TYPES.has(headType)) {
-    const commentary = parseNankaiCommentaryFromXml(xml)
-    return commentary ? { kind: 'nankaiCommentary', data: commentary } : null
-  }
-  if (KOHATSU_TYPES.has(headType)) {
-    const kohatsu = parseVyse60FromXml(xml)
-    return kohatsu ? { kind: 'kohatsu', data: kohatsu } : null
-  }
-  if (NOTICE_TYPES.has(headType)) {
-    const notice = parseQuakeNoticeFromXml(xml)
-    return notice ? { kind: 'quakeNotice', data: notice } : null
-  }
-  if (QUAKE_COUNT_TYPES.has(headType)) {
-    const count = parseEarthquakeCountFromXml(xml)
-    return count ? { kind: 'earthquakeCount', data: count } : null
-  }
-  if (isBinaryTelegramType(headType)) {
-    // **二進電文がここへ来たら、その経路がバイナリの受け口を持っていない。** `NON_EEW_HANDLED_TYPES`
-    // には入っているので手前の絞り込みは通り抜け、`xml` には壊れた文字列が入っている。
-    // 黙って null を返すと「対象外だった」のと見分けが付かないので記録する。
-    log.warn(`[dmdata] ${headType} は二進電文です。XML の経路へ流れています（buildBinaryPayload を通すこと）`)
-    return null
-  }
-  return null
 }
 
 /**

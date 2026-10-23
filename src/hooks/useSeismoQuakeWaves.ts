@@ -22,7 +22,7 @@ import { fetchSeismoWaveHistory, buildWaveHistoryRange } from '../services/seism
 import { fetchSeismoStatus, isValidSeismoHostUrl, type SeismoStationWaveRevised } from '../services/seismoStream'
 import { RangeCoalescer } from '../services/seismoWaveRefill'
 import { quakeScaleForScope, type NearbyScope } from '../utils/actionChecklistTrigger'
-import { judgeQuakeReach, type ReachStation } from '../utils/seismoQuakeReach'
+import { judgeQuakeReach, NO_FLOOR_WITHOUT_USUAL, type ReachStation } from '../utils/seismoQuakeReach'
 import { serverNow } from '../utils/clock'
 import { log } from '../utils/logger'
 import { quakeEventKey } from '../utils/quakeMerge'
@@ -302,7 +302,7 @@ function sameHostStations(a: readonly HostStation[], b: readonly HostStation[]):
  * 予測できないことを「届かない」と読むと、震源が判る前の報で、観測していても出ない。
  */
 function reachedStationIds(q: JMAQuake, scope: NearbyScope, stations: readonly ReachStation[]): readonly string[] {
-  const reach = judgeQuakeReach(q.earthquake.hypocenter, stations)
+  const reach = judgeQuakeReach(q.earthquake.hypocenter, stations, NO_FLOOR_WITHOUT_USUAL)
   const observedNearby = (): boolean => quakeScaleForScope(q, scope, WAVE_TRIGGER_MIN_SCALE) !== null
   if (reach.kind === 'unknown') return observedNearby() ? stations.map((s) => s.stationId) : []
   if (reach.unknownStationIds.length === 0 || !observedNearby()) return reach.stationIds

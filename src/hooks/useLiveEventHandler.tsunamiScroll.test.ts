@@ -127,13 +127,11 @@ function setup(displayed: JMATsunami[] = []) {
     settings, title: title as never,
     earthquakesRef: { current: [] as JMAQuake[] },
     tsunamisRef: { current: displayed },
-    kyoshinDetectedRef: { current: false },
-    defaultTabRef: { current: 'earthquake' },
-    setActiveTabRealtimeForKyoshin: vi.fn(), setActiveTabNonRealtime: vi.fn(),
+    setActiveTabNonRealtime: vi.fn(),
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true),
     quakeSpeakingCard: null,
-    expandPanelForSpecialInfo: vi.fn(), revertToDefaultTab: vi.fn(),
+    expandPanelForSpecialInfo: vi.fn(),
     selectQuake: vi.fn(), openLpgmFromQuake: vi.fn(), openEstimatedIntensity: vi.fn(), closeDistributionOnQuakeReport: vi.fn(),
   }))
   return result

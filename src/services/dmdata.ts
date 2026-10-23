@@ -7,16 +7,17 @@
 // `formatMode: 'raw'` で購読しているため、復号して得られるのは気象庁の XML そのもの。
 
 import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, EEWAlert, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
-import { parseForecastInt, parseForecastLgInt, parseEEWFromXml, parseEarthquakeFromXml, parseTsunamiFromXml, parseLpgmFromXml, parseNankaiFromXml, parseNankaiCommentaryFromXml, parseVyse60FromXml, parseQuakeNoticeFromXml, parseEarthquakeCountFromXml } from './dmdataParser'
-import { serverNow, serverDate } from '../utils/clock'
+import { parseForecastInt, parseForecastLgInt } from './dmdataParser'
+import { serverNow, serverDate, liveServerNow } from '../utils/clock'
 import { selectActiveEews, computeEverSpecialWarningEventIds, eewEventKey, ACTIVE_EEW_WINDOW_MS, isSpecialWarningForecast, computeSingleEEWLevel } from '../utils/eew'
 import { gunzip } from '../utils/gzip'
 import {
-  EEW_HEAD_TYPES, type EewHeadType, NANKAI_TYPES, COMMENTARY_TYPES, KOHATSU_TYPES, NOTICE_TYPES,
-  QUAKE_COUNT_TYPES, NON_EEW_HANDLED_TYPES, isBinaryTelegramType, buildBinaryPayload, buildXmlPayload,
-  isFilteredBinaryTelegram,
+  EEW_HEAD_TYPES, type EewHeadType, DISPATCHED_WITHOUT_PARSER,
+  NON_EEW_HANDLED_TYPES, isBinaryTelegramType, buildBinaryPayload, buildXmlPayload,
+  isFilteredBinaryTelegram, telegramKindOfHeadType, telegramKindOfPayload,
   TELEGRAM_DATA_BASE,
 } from './dmdataTelegramPayload'
+import type { ReplayPayload } from '../types/replay'
 import { BufrFragmentStore, fragmentKey } from './bufrTelegramAssembly'
 import { log, createLogThrottle } from '../utils/logger'
 import { authHeader, DmdataApiKeyError, dmdataApiKeyProblem, dmdataApiKeyMessage } from '../utils/dmdataApiKey'
@@ -35,13 +36,10 @@ const API_BASE = 'https://api.dmdata.jp/v2'
 // 配信分類の変わり目だが、連続発報で溢れると他の警告が見えなくなるため間引く
 // （`createLogThrottle` の使い方は utils/logger.ts）。
 const warnUnsubscribedEew = createLogThrottle(60_000)
-// パーサーへは渡さないが、`handleMessage` の分岐が扱う種別。**本文の復号を種別で絞るときの
-// 例外一覧**で、ここから漏らすとその分岐ごと届かなくなる。復号を種別で絞るのは `handleMessage`。
-//   VXSE42 … 配信テスト。本文は見ないが、疎通確認として記録する
-//   VXSE43 … 予報を受けている人には購読外。届いたら配信分類の変わり目を疑う警告を上げ、本文を電文ログへ残す
-//             （予報が無く警報を受けている人には EEW そのもの。→ `EEW_HEAD_TYPES`）
-//   VXSE44 … 廃止予定の旧 EEW。想定内なので警告は上げず、本文を電文ログへ残す
-export const DISPATCHED_WITHOUT_PARSER: ReadonlySet<string> = new Set(['VXSE42', 'VXSE43', 'VXSE44'])
+// 本文を復号する種別なのに種別の表に無い電文の警告。同じ理由で間引く
+const warnUnknownKind = createLogThrottle(60_000)
+// パーサーへは渡さないが `handleMessage` が扱う種別（`DISPATCHED_WITHOUT_PARSER`）の定義は
+// `dmdataTelegramPayload.ts`（種別の表と一緒に持つ）。
 
 /**
  * その種別の本文を復号する必要があるか。**テストから直接呼べるよう export している**
@@ -439,6 +437,27 @@ export type DmdataEvent =
   | { kind: 'quakeNotice'; data: JMAQuakeNotice }
   | { kind: 'earthquakeCount'; data: JMAEarthquakeCount }
   | { kind: 'estimatedIntensity'; data: JMAEstimatedIntensity }
+
+/**
+ * 読み取り結果（{@link ReplayPayload}）を、ライブの通知の形へ直す。
+ *
+ * **検証用に受信した試験報の EEW はカード・音・地図へ流すため `test: false` にする**（設定
+ * 「試験報を受信（検証用）」が入っているときだけここへ届く。入っていなければ `handleMessage` の手前で捨てる）。
+ */
+function toDmdataEvent(payload: ReplayPayload, isTest: boolean): DmdataEvent {
+  if (payload.kind !== 'event') return payload
+  const event = payload.event
+  switch (event.kind) {
+    case 'eew': return { kind: 'eew', data: isTest ? { ...event, test: false } : event }
+    case 'quake': return { kind: 'quake', data: event }
+    case 'tsunami': return { kind: 'tsunami', data: event }
+    default: {
+      // `AppEvent` に種別を足したらここが型エラーになる
+      const unhandled: never = event
+      return unhandled
+    }
+  }
+}
 
 export class DmdataWebSocket {
   private ws: WebSocket | null = null
@@ -1007,112 +1026,45 @@ export class DmdataWebSocket {
       return
     }
 
-    if (NANKAI_TYPES.has(headType)) {
-      const nankai = parseNankaiFromXml(xml)
-      if (nankai) {
-        if (this.debug) dlog('南海トラフ臨時情報受信', { headType, kindName: nankai.kindName })
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', 'nankai'))
-        this.onEvent?.({ kind: 'nankai', data: nankai })
-      } else {
-        // VYSE50 は必ず段階（調査中・巨大地震注意等）を持つ電文なので、読めないのは書式が
-        // 変わった等の異常。電文ログ（設定タブ）だけに残すと開かないと気づけないため、
-        // debug フラグに関わらずコンソールへ出す。
-        log.warn(`[DMDSS] 南海トラフ臨時情報 (${headType}) の段階を解析できませんでした`)
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
+    // **読み取りは一覧・リプレイ・取り戻しと同じ `buildXmlPayload` を通す。** 経路ごとに分岐を持つと、
+    // 片方だけ読み方を変えたとき同じ電文が経路によって違って見える。種別も同じ表から引く
+    // （→ `TELEGRAM_KIND_OF_HEAD_TYPE`）。ライブだけの扱い（上の VXSE42 とあわせて、購読していない EEW の警告・
+    // VXSE44）は手前で済ませる。
+    const kind = telegramKindOfHeadType(headType)
+    if (kind === 'eew' && headType !== this.eewHeadType) {
+      if (EEW_HEAD_TYPES.has(headType)) {
+        // 取り込まないと決めた側の EEW。予報を受けている人の VXSE43 は購読していない区分（`eew.warning`）に
+        // しか無いので、届いたら配信分類の変わり目を疑う（警報だけを受けている人の VXSE43 は
+        // `eewHeadType` なのでここへ来ない）。
+        // 取り込まないことと、届いたのに気づけないことは別なので、**debug に依らず**記録する。
+        // 連続発報で溢れないよう間引くが、電文ログには毎回残して後から追えるようにする。
+        warnUnsubscribedEew(() => log.warn(`[dmdata] 購読していない ${headType}（緊急地震速報）を受信しました。配信分類の変更の可能性があります`))
       }
-    } else if (COMMENTARY_TYPES.has(headType)) {
-      const commentary = parseNankaiCommentaryFromXml(xml)
-      if (commentary) {
-        if (this.debug) dlog('南海トラフ関連解説情報受信', { headType, serialName: commentary.serialName })
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', 'nankaiCommentary'))
-        this.onEvent?.({ kind: 'nankaiCommentary', data: commentary })
-      } else {
-        // 取消電文は cancelled を立てて返るためここには来ない。null は書式の異常だけ
-        log.warn(`[DMDSS] 南海トラフ関連解説情報 (${headType}) を解析できませんでした`)
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
-      }
-    } else if (KOHATSU_TYPES.has(headType)) {
-      const kohatsu = parseVyse60FromXml(xml)
-      if (kohatsu) {
-        if (this.debug) dlog('後発地震注意情報受信', { headType })
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', 'kohatsu'))
-        this.onEvent?.({ kind: 'kohatsu', data: kohatsu })
-      } else {
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
-      }
-    } else if (NOTICE_TYPES.has(headType)) {
-      const notice = parseQuakeNoticeFromXml(xml)
-      if (notice) {
-        if (this.debug) dlog('地震・津波に関するお知らせ受信', { headType, headline: notice.headline })
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', 'quakeNotice'))
-        this.onEvent?.({ kind: 'quakeNotice', data: notice })
-      } else {
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
-      }
-    } else if (QUAKE_COUNT_TYPES.has(headType)) {
-      const count = parseEarthquakeCountFromXml(xml)
-      if (count) {
-        if (this.debug) dlog('地震回数に関する情報受信', { headType, items: count.items.length })
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', 'earthquakeCount'))
-        this.onEvent?.({ kind: 'earthquakeCount', data: count })
-      } else {
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
-      }
-    } else if (headType === this.eewHeadType) {
-      const eew = parseEEWFromXml(headType, xml)
-      if (!eew) {
-        if (this.debug) dlog('EEW パース結果が null', { headType })
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
-        return
-      }
-      if (this.debug) dlog('EEW 受信 → 通知', { headType, test: isTest, eventId: eew.issue?.eventId, severity: eew.severity, forecastMaxScale: eew.forecastMaxScale })
-      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', 'eew'))
-      // 検証用に受信した試験報 EEW はカード・音・地図へ流すため test:false で通知する。
-      this.onEvent?.({ kind: 'eew', data: isTest ? { ...eew, test: false } : eew })
-    } else if (headType === 'VXSE51' || headType === 'VXSE52' || headType === 'VXSE53' || headType === 'VXSE61') {
-      const quake = parseEarthquakeFromXml(headType, xml)
-      if (this.debug) dlog('地震情報', { headType, parsed: !!quake })
-      if (quake) {
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', 'quake'))
-        this.onEvent?.({ kind: 'quake', data: quake })
-      } else {
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
-      }
-    } else if (headType === 'VTSE41' || headType === 'VTSE51' || headType === 'VTSE52') {
-      const tsunami = parseTsunamiFromXml(headType, xml)
-      if (this.debug) dlog('津波情報', { headType, parsed: !!tsunami })
-      if (tsunami) {
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', 'tsunami'))
-        this.onEvent?.({ kind: 'tsunami', data: tsunami })
-      } else {
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
-      }
-    } else if (headType === 'VXSE62') {
-      const lpgm = parseLpgmFromXml(xml)
-      if (lpgm) {
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', 'lpgm'))
-        this.onEvent?.({ kind: 'lpgm', data: lpgm })
-      } else {
-        this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
-      }
-    } else if (EEW_HEAD_TYPES.has(headType)) {
-      // 取り込まないと決めた側の EEW。予報を受けている人の VXSE43 は購読していない区分（`eew.warning`）に
-      // しか無いので、届いたら配信分類の変わり目を疑う（上の分岐が `eewHeadType` で先に拾うので、
-      // 警報だけを受けている人の VXSE43 はここへ来ない）。
-      // 取り込まないことと、届いたのに気づけないことは別なので、**debug に依らず**記録する。
-      // 連続発報で溢れないよう間引くが、電文ログには毎回残して後から追えるようにする。
-      warnUnsubscribedEew(() => log.warn(`[dmdata] 購読していない ${headType}（緊急地震速報）を受信しました。配信分類の変更の可能性があります`))
-      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
-    } else if (headType === 'VXSE44') {
       // VXSE44 は購読中の `eew.forecast` に含まれ、予報級 EEW のたびに毎報届く**想定内**の電文。
-      // 廃止予定の旧形式で VXSE45 の下位互換のため取り込まない（→ dmdataTelegramPayload.ts）。
+      // 廃止予定の旧形式で VXSE45 の下位互換のため取り込まない（→ `dmdataTelegramPayload.ts` の `EEW_HEAD_TYPES`）。
       // 異常ではないので warn を上げず、電文ログにだけ残す。
       this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
-    } else if (this.debug) {
-      // 対象外の種別は復号の手前で落ちるので、ここへ来るのは
-      // 「`NON_EEW_HANDLED_TYPES` に入れたのに、この分岐を足し忘れた」ときだけ。
-      dlog('分岐の無い電文種別（NON_EEW_HANDLED_TYPES への追加漏れ）', { headType })
+      return
     }
+    if (kind === undefined) {
+      // 対象外の種別は復号の手前で落ちるので、ここへ来るのは「本文を復号する種別に入れたのに、
+      // 種別の表へ載せ忘れた」ときだけ（表と集合の一致は `dmdataTelegramPayload.test.ts` が見る）。
+      // **debug に依らず**残す —— 黙ると、その種別の電文が画面にも電文ログにも出ないまま消える。
+      warnUnknownKind(() => log.warn(`[dmdata] ${headType} は種別の表に無いため読みません（TELEGRAM_KIND_OF_HEAD_TYPE への追加漏れ）`))
+      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
+      return
+    }
+    const payload = buildXmlPayload(headType, xml, this.eewHeadType)
+    if (!payload) {
+      // 読めなかった理由のうち書式の異常と見なすものは `buildXmlPayload` が記録する
+      if (this.debug) dlog('パース結果が null', { headType, kind })
+      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
+      return
+    }
+    const event = toDmdataEvent(payload, isTest)
+    if (this.debug) dlog('電文を受信 → 通知', { headType, kind: event.kind })
+    this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', telegramKindOfPayload(payload)))
+    this.onEvent?.(event)
   }
 
   /**
@@ -1218,6 +1170,167 @@ function gdDepthKm(depth?: { value?: string | null }): number {
 
 const GD_EARTHQUAKE_MAX_PAGES = 20
 
+/** GD Earthquake List の 1 件（応答の形のまま。欠けうる欄は optional）。 */
+interface RawGdEarthquakeItem {
+  eventId: string
+  // 震源が未決定の地震（震度速報だけが出て震源・震度情報がまだ発表されていない等）は、
+  // originTime も hypocenter も持たない項目として返る（eventId・arrivalTime・maxInt のみ）。
+  // 実データに合わせて optional とし、読む側で必ず存在を確かめる。必須と宣言すると
+  // 「あるはず」の思い込みのまま参照して例外になり、1件の欠測で全ページ分を失う。
+  originTime?: string
+  hypocenter?: {
+    // 震源地名・深さはヒートマップのポップアップ表示に使う。契約や電文の種別によっては
+    // 欠けることがあるため optional として扱い、欠測時は空文字 / -1 に倒す。
+    name?: string
+    coordinate?: { latitude?: { value?: string }; longitude?: { value?: string } }
+    depth?: { value?: string | null }
+  }
+  magnitude?: { value?: string }
+}
+
+/**
+ * 1 件を地図に置ける形へ読む。置く場所（震源）か時刻が無ければ、捨てた理由を返す。
+ * 新しい順に辿って期間で打ち切る経路と、日付で絞って取る経路（リプレイ）で同じ読み方をするため切り出した。
+ */
+function readGdEarthquakeItem(it: RawGdEarthquakeItem): GdEarthquakeItem | 'noTime' | 'noCoord' {
+  const originTime = it.originTime
+  const originMs = originTime ? new Date(originTime).getTime() : NaN
+  if (!originTime || !Number.isFinite(originMs)) return 'noTime'
+  const latitude = parseFloat(it.hypocenter?.coordinate?.latitude?.value ?? '')
+  const longitude = parseFloat(it.hypocenter?.coordinate?.longitude?.value ?? '')
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return 'noCoord'
+  const magnitude = parseFloat(it.magnitude?.value ?? '')
+  return {
+    eventId: it.eventId,
+    originTime,
+    latitude,
+    longitude,
+    // 深さと同じく、値なし・数値化できない場合は -1（不明）に倒す。NaN のまま流すと
+    // 重みの計算結果も NaN になり、ヒートマップの描画が壊れる。
+    magnitude: Number.isFinite(magnitude) ? magnitude : -1,
+    name: it.hypocenter?.name ?? '',
+    depth: gdDepthKm(it.hypocenter?.depth),
+  }
+}
+
+/** 日付で絞った取得で、1 日に辿るページの上限（1 ページ 100 件）。 */
+const GD_EARTHQUAKE_DAY_MAX_PAGES = 5
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** 日本時間の暦日を YYYY-MM-DD で（`date` は日本時間の日で切る。2026-10-22 に 1 件投げて確かめた）。 */
+function jstDateParam(ms: number): string {
+  const d = new Date(ms + 9 * 60 * 60 * 1000)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
+/** 日付指定の取得で、続けて失敗したら残りの日を投げずに打ち切る日数。 */
+const GD_EARTHQUAKE_DAY_MAX_CONSECUTIVE_FAILURES = 3
+
+/** 日付に依らない失敗（キー・権限・頻度）。残りの日を投げずに取得ごと失敗にする。 */
+class GdDayAbortError extends Error {}
+
+/**
+ * 震源カタログを、`untilMs` より前の `days` 日について **日付で絞って** 取る（リプレイ中のヒートマップ用）。
+ * 一覧は新しい順にしか辿れないので、過去の再生時刻からは遡り切れない。`date`（日本時間の 1 日）を
+ * 日ごとに投げる —— 30 日なら最低 31 リクエスト。混んだ日は 1 日 `GD_EARTHQUAKE_DAY_MAX_PAGES` ページまで辿り、
+ * 達したら記録を残して読めた分を返す（`fetchDmdataGdEarthquakes` と同じく、投げると控えが空になるため）。
+ * 期間の外（`untilMs` より後・`days` 日より前）は落とす。止める合図で残りの日を打ち切る。
+ *
+ * **1 日の失敗で 30 日を捨てない。** 失敗した日は `failedDays` に載せて次の日へ進む（呼び出し側は
+ * 欠けた日があれば控えず、次の再生で取り直す）。**全部の日が失敗したとき**と、**読めた件数が 0 で
+ * 捨てた件数だけがあるとき**（応答の形が変わった疑い。ライブ側の全滅判定と同じ考え）だけ投げる。
+ * **ただし日付に依らない失敗は撃ち切らない** —— 401・403・429 はその場で投げ、ほかの失敗も 3 日続いたら
+ * 残りの日を投げずに失敗した日へ数える（配信が止まっている間に 31 件を投げ切らない）。
+ */
+export async function fetchDmdataGdEarthquakesBefore(
+  apiKey: string,
+  untilMs: number,
+  days: number,
+  signal: AbortSignal | null,
+): Promise<{ items: GdEarthquakeItem[]; failedDays: string[] }> {
+  const headers = { Authorization: authHeader(apiKey) }
+  const fromMs = untilMs - days * DAY_MS
+  const collected: GdEarthquakeItem[] = []
+  let skippedNoTime = 0
+  let skippedNoCoord = 0
+  const cappedDays: string[] = []
+  const failedDays: string[] = []
+  let lastError: unknown = null
+  const dates: string[] = []
+  for (let ms = fromMs; jstDateParam(ms) <= jstDateParam(untilMs); ms += DAY_MS) dates.push(jstDateParam(ms))
+  // 続けて失敗した日の数。3 日続いたら残りの日は投げない（配信が止まっている・回線が切れているときに
+  // 30 日ぶんを撃ち切らない）
+  let consecutiveFailures = 0
+  for (const [dateIndex, date] of dates.entries()) {
+    if (consecutiveFailures >= GD_EARTHQUAKE_DAY_MAX_CONSECUTIVE_FAILURES) {
+      failedDays.push(...dates.slice(dateIndex))
+      break
+    }
+    let cursorToken: string | undefined
+    let page = 0
+    try {
+      for (; page < GD_EARTHQUAKE_DAY_MAX_PAGES; page++) {
+        if (signal?.aborted) return { items: collected, failedDays }
+        const qs = cursorToken ? `&cursorToken=${cursorToken}` : ''
+        // ページを辿るループなので枠を待つ（→ `services/dmdataRequestGates.ts`）
+        await waitForApiSlot()
+        const res = await fetchJsonOutcome(`${API_BASE}/gd/earthquake?date=${date}&limit=100${qs}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers } }, (r) => r.ok)
+        if (!res.ok) {
+          logRestFailure('震源カタログ (gd/earthquake・日付指定)', res.status)
+          // キー・権限・頻度の失敗は日付に依らない。次の日を投げても同じ答えが返るだけなので、ここで投げる
+          if (res.status === 401 || res.status === 403 || res.status === 429) {
+            throw new GdDayAbortError(`gd/earthquake: ${res.status}`)
+          }
+          throw new Error(`gd/earthquake: ${res.status}`)
+        }
+        const json = outcomeJson<{ items?: RawGdEarthquakeItem[]; nextToken?: string }>(res)
+        for (const it of json.items ?? []) {
+          const item = readGdEarthquakeItem(it)
+          if (item === 'noTime') { skippedNoTime++; continue }
+          if (item === 'noCoord') { skippedNoCoord++; continue }
+          const t = new Date(item.originTime).getTime()
+          if (t < fromMs || t > untilMs) continue
+          collected.push(item)
+        }
+        if (!json.nextToken) break
+        cursorToken = json.nextToken
+      }
+    } catch (e) {
+      // 止めた打ち切りは失敗に数えない
+      if (signal?.aborted) return { items: collected, failedDays }
+      if (e instanceof GdDayAbortError) throw e
+      failedDays.push(date)
+      lastError = e
+      consecutiveFailures++
+      continue
+    }
+    consecutiveFailures = 0
+    if (page >= GD_EARTHQUAKE_DAY_MAX_PAGES) cappedDays.push(date)
+  }
+  if (failedDays.length === dates.length) {
+    throw lastError instanceof Error ? lastError : new Error('gd/earthquake: 全日の取得に失敗')
+  }
+  if (failedDays.length > 0) {
+    log.warn(`[DMDSS] GD Earthquake List（日付指定）: ${failedDays.length} 日の取得に失敗しました（${failedDays.join('・')}）。その日の地震は出ません`)
+  }
+  if (cappedDays.length > 0) {
+    log.warn(
+      `[DMDSS] GD Earthquake List（日付指定）: 1 日のページ上限（${GD_EARTHQUAKE_DAY_MAX_PAGES}）に達した日があります`
+      + `（${cappedDays.join('・')}）。その日の古い側が欠けている可能性があります`,
+    )
+  }
+  const skipped = skippedNoTime + skippedNoCoord
+  if (skipped > 0) {
+    log.warn(
+      `[DMDSS] GD Earthquake List（日付指定）: ${skipped} 件をスキップしました（発生時刻なし ${skippedNoTime} 件 / 震源座標なし ${skippedNoCoord} 件）`,
+    )
+  }
+  if (collected.length === 0 && skipped > 0) {
+    throw new Error(`gd/earthquake: 日付指定で走査した ${skipped} 件すべてを除外。地図に置ける項目がありません`)
+  }
+  return { items: collected, failedDays }
+}
+
 // DMDATA REST API で震源カタログ（GD Earthquake List）を取得し、直近 `days` 日分に絞って返す。
 // 通常版の fetchJmaQuakeHistory に相当するヒートマップ用データ源。
 // 震源または発生時刻が決まっていない項目は地図に置けないため、その1件だけ除いて取得を続ける。
@@ -1229,7 +1342,9 @@ const GD_EARTHQUAKE_MAX_PAGES = 20
 // gd.earthquake スコープが契約に含まれない場合は 403 で例外を投げる。
 export async function fetchDmdataGdEarthquakes(apiKey: string, days: number): Promise<GdEarthquakeItem[]> {
   const headers = { Authorization: authHeader(apiKey) }
-  const cutoffMs = serverNow() - days * 24 * 60 * 60 * 1000
+  // 「いま」は実時間（`liveServerNow`）。`serverNow` はリプレイ中に再生時刻を返すので、再生を止めた直後
+  // （時計が戻る前）に走る取り直しが過去を基準にして、ページ上限まで遡ってしまう。
+  const cutoffMs = liveServerNow() - days * 24 * 60 * 60 * 1000
   const collected: GdEarthquakeItem[] = []
   let cursorToken: string | undefined
   // 捨てた件数。取得後に 1 行だけ出す（P2PQuake 側の warnField/warnMissing と同じく、
@@ -1253,25 +1368,7 @@ export async function fetchDmdataGdEarthquakes(apiKey: string, days: number): Pr
       logRestFailure('震源カタログ (gd/earthquake)', res.status)
       throw new Error(`gd/earthquake: ${res.status}`)
     }
-    const json = outcomeJson<{
-      items?: Array<{
-        eventId: string
-        // 震源が未決定の地震（震度速報だけが出て震源・震度情報がまだ発表されていない等）は、
-        // originTime も hypocenter も持たない項目として返る（eventId・arrivalTime・maxInt のみ）。
-        // 実データに合わせて optional とし、読む側で必ず存在を確かめる。必須と宣言すると
-        // 「あるはず」の思い込みのまま参照して例外になり、1件の欠測で全ページ分を失う。
-        originTime?: string
-        hypocenter?: {
-          // 震源地名・深さはヒートマップのポップアップ表示に使う。契約や電文の種別によっては
-          // 欠けることがあるため optional として扱い、欠測時は空文字 / -1 に倒す。
-          name?: string
-          coordinate?: { latitude?: { value?: string }; longitude?: { value?: string } }
-          depth?: { value?: string | null }
-        }
-        magnitude?: { value?: string }
-      }>
-      nextToken?: string
-    }>(res)
+    const json = outcomeJson<{ items?: RawGdEarthquakeItem[]; nextToken?: string }>(res)
     const items = json.items ?? []
     if (items.length === 0) break
 
@@ -1281,23 +1378,11 @@ export async function fetchDmdataGdEarthquakes(apiKey: string, days: number): Pr
       const originTime = it.originTime
       const originMs = originTime ? new Date(originTime).getTime() : NaN
       if (Number.isFinite(originMs) && originMs < cutoffMs) { reachedCutoff = true; break }
-      const latitude = parseFloat(it.hypocenter?.coordinate?.latitude?.value ?? '')
-      const longitude = parseFloat(it.hypocenter?.coordinate?.longitude?.value ?? '')
       // 置く場所（震源）と時刻のどちらかが無ければヒートマップに載せられない。この1件だけ捨てる。
-      if (!originTime || !Number.isFinite(originMs)) { skippedNoTime++; continue }
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) { skippedNoCoord++; continue }
-      const magnitude = parseFloat(it.magnitude?.value ?? '')
-      collected.push({
-        eventId: it.eventId,
-        originTime,
-        latitude,
-        longitude,
-        // 深さと同じく、値なし・数値化できない場合は -1（不明）に倒す。NaN のまま流すと
-        // 重みの計算結果も NaN になり、ヒートマップの描画が壊れる。
-        magnitude: Number.isFinite(magnitude) ? magnitude : -1,
-        name: it.hypocenter?.name ?? '',
-        depth: gdDepthKm(it.hypocenter?.depth),
-      })
+      const item = readGdEarthquakeItem(it)
+      if (item === 'noTime') { skippedNoTime++; continue }
+      if (item === 'noCoord') { skippedNoCoord++; continue }
+      collected.push(item)
     }
     if (reachedCutoff || !json.nextToken) break
     // 1 ページ丸ごと捨てて 1 件も残らなかったなら、応答の形が変わった可能性が高い。残りのページを
@@ -1410,7 +1495,7 @@ const ACTIVE_EEW_MAX_PAGES = 10
  *
  * - `report`: 最新報を読めた。`firstIssueTime` は同じ応答から拾った第 1 報の発表時刻（{@link firstEewReportTime}。
  *   拾えなければ null。`firstIssueMiss` は拾えなかったときの内訳（{@link describeFirstReportMiss}。拾えたら null））
- * - `none`: 受けている種別の報が無い（警報だけを受けている人の、予報で終わった地震）・訓練の報だけだった
+ * - `none`: 受けている種別の報が無い（警報だけを受けている人の、予報で終わった地震）・訓練の報だけだった（試験報を受けない設定のとき）
  * - `failed`: 詳細か本文を取れなかった・報が 1 通も返らなかった・読めなかった
  */
 export type LatestEewReport =
@@ -1532,6 +1617,12 @@ export async function fetchLatestEewReport(
    * —— 過去分の発生時刻を確かめる経路（`dmdataReplay.ts` の `fetchDmdataEewOrigins`）は急がないので偽。
    */
   urgent: boolean,
+  /**
+   * 訓練・試験の報も戻すか（設定「試験報を受信（検証用）」）。起動時・張り直しの復元はライブと同じ設定に従う
+   * （2026-10-21 ユーザー承認「設定に従わせる (Recommended)」）。過去分の発生時刻を確かめる経路は偽
+   * （訓練の発生時刻で地震カードの線を引かない）
+   */
+  includeTest: boolean,
 ): Promise<LatestEewReport> {
   // **発表中の件数だけ繰り返し呼ばれる**ので枠を待つ（→ `services/dmdataRequestGates.ts`）。
   await waitForApiSlot()
@@ -1552,13 +1643,12 @@ export async function fetchLatestEewReport(
   for (const tg of latest.telegrams ?? []) {
     const headType = tg.head?.type
     if (!headType) continue
-    // **訓練・試験の報は復元しない。** ライブ受信であえて流しているのは検証のためで
-    // （`EEWAlert.test` とは別物。→ quake-spec.md §5「電文の運用種別」）、起動した利用者の
-    // 画面へ訓練報を出す理由は無い。
+    // **訓練・試験の報は、設定「試験報を受信（検証用）」が入っているときだけ戻す**（ライブ受信と同じ。
+    // 2026-10-21 ユーザー承認「設定に従わせる (Recommended)」）。戻した報には電文の `Control/Status` から印が付く。
     // **この判定は通らない見込み。** 配信元は `GD Eew List v2` / `GD Eew Event v2` の
     // 「APIの情報」に「テスト電文はこのAPIでは扱いません」と書いている。**それでも残してある**
     // —— 実測しておらず、資料が変われば通る（下の `allTest` も同じ理由で残している）。
-    if (tg.head?.test) continue
+    if (tg.head?.test && !includeTest) continue
     // 一覧が返すのは JSON 版を指す形のことがある。読み取りは XML へ一本化しているので
     // 元の XML の id（`originalId`）へ組み替える。XML 版がそのまま返る場合はそれを持たない。
     const xmlId = tg.originalId ?? tg.id
@@ -1587,20 +1677,21 @@ export async function fetchLatestEewReport(
       }
     }
   }
-  // **「訓練報だけだった」と「読めなかった」を分ける。** 前者は正常（訓練は復元しない）だが、
+  // **「訓練報だけだった」と「読めなかった」を分ける。** 前者は正常（試験報を受けない設定では訓練は復元しない）だが、
   // 後者は電文の書式が変わった・パーサーが落とすようになった等の異常で、記録が無いと
   // **復元が静かに空振りし続けても気づけない**。どちらも戻り値は同じ `null` になる。
   const telegrams = latest.telegrams ?? []
-  const allTest = telegrams.length > 0 && telegrams.every(tg => tg.head?.test)
+  // 試験報を受ける設定なら訓練の報も読みに行っているので、普通の報と同じく下の判定に掛ける
+  const skippedTest = !includeTest && telegrams.length > 0 && telegrams.every(tg => tg.head?.test)
   // **受けている側の種別が 1 通も無ければ、読めなかったのではない。** 警報だけを受けている人には、
   // 予報級だけで終わった地震（VXSE43 が出ない）がこの形になる
   const hasOwnType = telegrams.some(tg => tg.head?.type === eewHeadType)
   const hasOtherEewType = telegrams.some(tg => EEW_HEAD_TYPES.has(tg.head?.type ?? '') && tg.head?.type !== eewHeadType)
-  if (!hasOwnType && hasOtherEewType && !allTest) {
+  if (!hasOwnType && hasOtherEewType && !skippedTest) {
     log.info(`[DMDSS] 発表中の緊急地震速報に ${eewHeadType} の報が無いため復元しません eventId=${eventId}`)
     return { kind: 'none' }
   }
-  if (allTest) return { kind: 'none' }
+  if (skippedTest) return { kind: 'none' }
   log.warn(`[DMDSS] 発表中の緊急地震速報を読み取れませんでした eventId=${eventId}（報 ${telegrams.length} 通）`)
   return { kind: 'failed' }
 }
@@ -1620,8 +1711,10 @@ export async function fetchLatestEewReport(
  */
 export async function fetchDmdataActiveEews(
   apiKey: string, classifications: readonly DmdataClassification[],
+  /** 訓練・試験の報も戻すか（設定「試験報を受信（検証用）」。→ `fetchLatestEewReport`） */
+  includeTest: boolean,
 ): Promise<EEWAlert[]> {
-  return (await fetchDmdataActiveEewsOutcome(apiKey, classifications)).eews
+  return (await fetchDmdataActiveEewsOutcome(apiKey, classifications, includeTest)).eews
 }
 
 /** `fetchDmdataActiveEewsOutcome` の戻り値。 */
@@ -1645,6 +1738,8 @@ export interface ActiveEewsOutcome {
  */
 export async function fetchDmdataActiveEewsOutcome(
   apiKey: string, classifications: readonly DmdataClassification[],
+  /** 訓練・試験の報も戻すか（設定「試験報を受信（検証用）」。→ `fetchLatestEewReport`） */
+  includeTest: boolean,
 ): Promise<ActiveEewsOutcome> {
   const eewHeadType = eewHeadTypeFor(classifications)
   if (eewHeadType === null) {
@@ -1722,7 +1817,7 @@ export async function fetchDmdataActiveEewsOutcome(
       // ——JSON の破損・ネットワーク断——がそれを起こす）。複数が同時に発表中の場面こそ
       // この復元が効くところなので、そこで全滅させるのは割に合わない。
       try {
-        const found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, true)
+        const found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, true, includeTest)
         if (found.kind === 'report') {
           // **第 1 報の時刻を載せる**（誤報取消の読み上げが言う時刻。→ `EEWAlert.firstIssueTime`）。拾えなければ
           // null を載せ、取消は時刻を言わずに読む —— 復元した最新報の時刻で代えると、第 1 報ではない時刻を言う

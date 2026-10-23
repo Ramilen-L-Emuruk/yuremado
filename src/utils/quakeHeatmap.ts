@@ -3,6 +3,18 @@ import { extractQuakeEventIdFromId } from './quakeMerge'
 import { hasKnownEpicenter } from './geo'
 import { formatMagnitude, formatMagnitudeWithCondition } from './formatters'
 
+/** ヒートマップに出す期間（日）。 */
+export const HEATMAP_DAYS = 30
+
+/**
+ * 地震の時刻が「いま」から遡って `HEATMAP_DAYS` 日の中か。**「いま」より後は外す** —— リプレイ中、
+ * 再生時刻より後に起きた地震を地図に出さないため。時刻が読めないものも外す。
+ */
+export function isWithinHeatWindow(timeIso: string, nowMs: number): boolean {
+  const t = new Date(timeIso).getTime()
+  return Number.isFinite(t) && t <= nowMs && t >= nowMs - HEATMAP_DAYS * 24 * 60 * 60 * 1000
+}
+
 export interface HeatPoint {
   lat: number
   lng: number

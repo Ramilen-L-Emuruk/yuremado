@@ -29,14 +29,17 @@ function quake(over: { maxScale?: number; magnitude?: number; depth?: number; ti
 }
 
 function eew(
-  over: { severity?: string; scaleTo?: number; cancelled?: boolean; name?: string; condition?: string; originTime?: string; serial?: string } = {},
+  over: { severity?: string; scaleTo?: number; cancelled?: boolean; name?: string; condition?: string; originTime?: string; serial?: string; magnitude?: number; magnitudeCondition?: string } = {},
 ): EEWAlert {
   return {
     id: 'e1',
     earthquake: {
       originTime: over.originTime ?? '2026/08/24 12:34:00',
       condition: over.condition ?? '',
-      hypocenter: { name: over.name ?? '日向灘', latitude: 32, longitude: 131.6, depth: 30, magnitude: 6.5 },
+      hypocenter: {
+        name: over.name ?? '日向灘', latitude: 32, longitude: 131.6, depth: 30, magnitude: over.magnitude ?? 6.5,
+        ...(over.magnitudeCondition && { magnitudeCondition: over.magnitudeCondition }),
+      },
     },
     ...(over.serial ? { issue: { serial: over.serial } } : {}),
     severity: over.severity ?? 'Forecast',
@@ -293,6 +296,14 @@ describe('buildShareCardContent — 緊急地震速報', () => {
     expect(c.header.subtitle).toContain('予想最大震度')
   })
 
+  // 震央地名が空の報は、画面のカードと同じ「震源調査中」を名前の位置に置く
+  it('震央地名が空なら「震源調査中」で始め、規模と予想最大震度を続ける', () => {
+    const c = build(input({ mode: 'kyoshin', eews: [eew({ name: '' })] }))
+    expect(c.header.subtitle?.startsWith('震源調査中')).toBe(true)
+    expect(c.header.subtitle).toContain('M6.5')
+    expect(c.header.subtitle).toContain('予想最大震度')
+  })
+
   it('発報が無ければリアルタイム震度の見出しにする', () => {
     const c = build(input({ mode: 'kyoshin' }))
     expect(c.header.title).toBe('リアルタイム震度')
@@ -303,6 +314,56 @@ describe('buildShareCardContent — 津波', () => {
   it('等級が無ければ見出しを「津波情報」に落とす', () => {
     const c = build(input({ mode: 'tsunami' }))
     expect(c.header.title).toBe('津波情報')
+  })
+
+  // 正: 予報だけの津波も等級を名乗り、震源・区域数・発表時刻は他の等級と同じに出す（2026-10-21 ユーザー選択「おすすめで」）。
+  it('予報だけなら見出しを「津波予報（若干の海面変動）」にし、震源と区域数を出す', () => {
+    const c = build(input({ mode: 'tsunami', tsunamis: [tsunami({ grade: 'Forecast' })] }))
+    expect(c.header.title).toBe('津波予報（若干の海面変動）')
+    expect(c.header.subtitle).toContain('日向灘')
+    expect(c.header.subtitle).toContain('1 区域')
+    expect(c.header.meta).toContain('発表')
+  })
+
+  // 対照: 予報に等級の読めない区域が混じれば予報と言い切らず、従来どおり「津波情報」に落とす。
+  it('予報と等級の読めない区域が混じれば「津波情報」に落とす', () => {
+    const t = { ...tsunami({ grade: 'Forecast' }), areas: [
+      { grade: 'Forecast', immediate: false, name: '宮崎県' },
+      { grade: 'Unknown', immediate: false, name: '鹿児島県東部' },
+    ] } as unknown as JMATsunami
+    const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
+    expect(c.header.title).toBe('津波情報')
+  })
+
+  // 安全弁: 警報・注意報があれば、予報の区域が混じっても重いほうを名乗る。
+  it('注意報と予報が混じれば注意報を名乗る', () => {
+    const t = { ...tsunami({ grade: 'Watch' }), areas: [
+      { grade: 'Watch', immediate: false, name: '宮崎県' },
+      { grade: 'Forecast', immediate: false, name: '鹿児島県東部' },
+    ] } as unknown as JMATsunami
+    const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
+    expect(c.header.title).toBe('津波注意報')
+  })
+
+  // 解除表示中の津波は、見出しにも副見出しにも数えない（材料の出どころを 1 つの集合に揃える）。
+  it('解除表示中の警報と発表中の予報が並べば、区域数と時刻は予報の側から取る', () => {
+    const ended = { ...tsunami({ grade: 'Warning', areaName: '高知県' }), id: 't0', cancelledAt: 1,
+      sourceEarthquakes: [{ hypocenterName: '土佐湾', magnitude: 7.0 }] } as unknown as JMATsunami
+    const forecast = { ...tsunami({ grade: 'Forecast' }), id: 't2' } as JMATsunami
+    const c = build(input({ mode: 'tsunami', tsunamis: [ended, forecast] }))
+    expect(c.header.title).toBe('津波予報（若干の海面変動）')
+    expect(c.header.subtitle).toContain('日向灘')
+    expect(c.header.subtitle).not.toContain('土佐湾')
+    expect(c.header.subtitle).toContain('1 区域')
+  })
+
+  // 見出しの文字色は付けない。注意報の `formatTsunamiGrade().color` は黒で、暗い見出し帯の上では読めなかった。
+  it('どの等級でも見出しの文字色を付けない（既定の白）', () => {
+    for (const grade of ['MajorWarning', 'Warning', 'Watch', 'Forecast']) {
+      const c = build(input({ mode: 'tsunami', tsunamis: [tsunami({ grade })] }))
+      expect(c.header.titleColor, grade).toBeUndefined()
+    }
+    expect(build(input({ mode: 'tsunami' })).header.titleColor).toBeUndefined()
   })
 
   // 原因地震が複数ある津波（EventID に番号が足された形）は全件を並べる（2026-10-15 ユーザー承認「全件を並べる」）。
@@ -464,5 +525,24 @@ describe('buildShareCardContent — 共有の本文', () => {
   it('津波で等級が無ければ見出しと URL だけにする', () => {
     const c = build(input({ mode: 'tsunami' }))
     expect(c.shareText).toBe(`津波情報\n${APP_URL}`)
+  })
+})
+
+// 緊急地震速報の規模の説明（「Ｍ８を超える巨大地震」）も地震情報と同じく画像に出す（2026-10-22 ユーザー承認
+// 「吹き出しと共有カードも揃える (Recommended)」）。「不明」の語だけは落とす
+describe('buildShareCardContent — 緊急地震速報の規模の説明', () => {
+  it('正: 規模が数値にならない報は気象庁の説明を出す', () => {
+    const c = build(input({ mode: 'kyoshin', eews: [eew({ magnitude: NaN, magnitudeCondition: 'Ｍ８を超える巨大地震' })] }))
+    expect(JSON.stringify(c.header)).toContain('M8を超える巨大地震')
+  })
+
+  it('対照: 説明が「Ｍ不明」の規模も出さない', () => {
+    const c = build(input({ mode: 'kyoshin', eews: [eew({ magnitude: NaN, magnitudeCondition: 'Ｍ不明' })] }))
+    expect(JSON.stringify(c.header)).not.toContain('不明')
+  })
+
+  it('対照: 説明の無い不明の規模は出さない', () => {
+    const c = build(input({ mode: 'kyoshin', eews: [eew({ magnitude: NaN })] }))
+    expect(JSON.stringify(c.header)).not.toContain('不明')
   })
 })

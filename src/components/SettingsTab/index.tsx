@@ -1,4 +1,5 @@
 import { ensureWaveSpanSec, WAVE_SPAN_CHOICES } from '../../utils/waveSpan'
+import { formatArchiveCoverage } from '../../utils/historicalArchiveCoverage'
 import { memo, useState, useCallback, useEffect, useRef } from 'react'
 import type { AppSettings, TtsUnreceivedDetail } from '../../hooks/useSettings'
 import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX } from '../../hooks/useSettings'
@@ -50,6 +51,8 @@ export interface TestFunctions {
   /** 最大予想震度 0 の初報から震度1 へ上がる EEW。震度0 は DMDATA 経路しか運ばないので、ボタンは DMDSS 版にだけ出す。 */
   eewForecastZero: () => void
   eewRetraction: () => void
+  /** 自動解除で画面から消えた後に、同じ地震の誤報取消を届ける EEW（→ `isLateEewCancel`） */
+  eewLateRetraction: () => void
   tsunami: () => void
   tsunamiWarning: () => void
   tsunamiWatch: () => void
@@ -1499,6 +1502,16 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりませんが、地名ラベルの位置調整が数秒遅れ、揺れ検知の診断ログを保存しません">
           <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
         </Row>
+        {/* 標準版の行。DMDSS 版は「DM-D.S.S 接続設定」に同じ設定の行がある（あちらは緊急地震速報以外の試験報にも効く）。
+            文面は 2026-10-21 ユーザー承認 */}
+        {!isDmdss && (
+          <Row label="試験報を受信（検証用）" description="緊急地震速報の訓練報・試験報も受信します。画面には「訓練報」「試験報」の印を付けて出します">
+            <Toggle
+              checked={settings.dmdataTestDelivery}
+              onChange={v => onUpdate('dmdataTestDelivery', v)}
+            />
+          </Row>
+        )}
       </Section>
 
       <Section title="通知設定">
@@ -1948,6 +1961,10 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="緊急地震速報（誤報取消）" description="警報相当（日向灘 M6.5） – eewCancel 音 / 10秒後に誤報として取消（音・通知・読み上げあり）">
           <TestButton color="purple" onClick={onTest.eewRetraction}>誤報取消テスト</TestButton>
         </Row>
+        {/* 文面は 2026-10-22 ユーザー承認（「この形で進めてよいか、テストボタンの文面もこれでよいか」への「進めて」） */}
+        <Row label="緊急地震速報（自動解除の後の誤報取消）" description="警報相当（日向灘 M6.5） – 最終報まで流し、自動解除で画面から消えた 10 秒後に誤報として取消（音・通知・読み上げあり）">
+          <TestButton color="purple" onClick={onTest.eewLateRetraction}>遅れた誤報取消テスト</TestButton>
+        </Row>
         {/* ── 地震情報 ── */}
         <Row label="地震情報" description="令和6年能登半島地震・本震 M7.6 最大震度7（実データ）をリストと地図に追加">
           <TestButton color="red" onClick={onTest.earthquake}>地震テスト</TestButton>
@@ -1976,7 +1993,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="訂正報" description="地震情報を出し、3秒後に規模を訂正した報を流す（M7.4 → M7.6。2024年能登半島地震の実電文どおり）。同じカードが更新され、「震源を訂正」の印が付く。DMDSS 版では気象庁の「震源要素を訂正します。」の一文も並ぶ">
           <TestButton color="yellow" onClick={onTest.quakeAmendment}>訂正報テスト</TestButton>
         </Row>
-        <Row label="種別が前後する報" description="3秒おきに4通を流し、その30秒後から3秒おきに3通を流す（震度速報 → 震源情報 → 震度速報 → 震源・震度情報 → その続報 → 震度速報 → その続報。前半4通は2024年能登半島地震の前震と同じ順序）。カードの見出しが「震度速報#2/震源情報」と受け取った種別を並べ、震源・震度情報で速報段階が畳まれる。5通目は観測地点が遅れて入電した形で、地域ごとの最大震度は変わらないため読み上げがその旨を伝える。6通目は震源・震度情報のあとに届く震度速報で、カードは変わらない。7通目は観測点の震度が上下する続報で、動いた行に印が付き、読み上げは「観測された震度が更新されました。」と伝える">
+        <Row label="種別が前後する報" description="3秒おきに4通を流し、その30秒後から3秒おきに3通を流す（震度速報 → 震源情報 → 震度速報 → 震源・震度情報 → その続報 → 震度速報 → その続報。前半4通は2024年能登半島地震の前震と同じ順序）。カードの見出しが「震度速報#2/震源情報」と受け取った種別を並べ、震源・震度情報で速報段階が畳まれる。1通目の震度速報は震度7の地域がまだ入っていない形（最大震度6弱）で、3通目で震度7が出そろうため、ブラウザ通知を有効にしていれば3通目で「最大震度更新」の通知が出る。5通目は観測地点が遅れて入電した形で、地域ごとの最大震度は変わらないため読み上げがその旨を伝える。6通目は震源・震度情報のあとに届く震度速報で、カードは変わらない。7通目は観測点の震度が上下する続報で、動いた行に印が付き、読み上げは「観測された震度が更新されました。」と伝える">
           <TestButton color="yellow" onClick={onTest.quakeReportSequence}>種別遷移テスト</TestButton>
         </Row>
         {isDmdss && onTest.quakeCancel && (
@@ -2028,7 +2045,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {isDmdss && onTest.tsunamiQuietReports && (
-          <Row label="津波警報・注意報（変化の小さい続報）" description="大津波警報 → 10秒おきに続報を11通（観測値 → 八戸港の波高に「以上」が付く → 最大波の観測時刻だけ更新 → 室蘭港の第1波の到達時刻が訂正される → 沖合の観測点の最大波の観測時刻が更新される → 変化なし → 八戸港の波高が下がり「以上」が外れる → 各地の満潮時刻 → 満潮時刻の更新 → 到達状況の更新 → 変化なし）→ 最後の報の20秒後に全解除。気象庁が続報を出しているのに、等級も観測波高の数値も動かない報がどう伝わるかを確かめる。2通目は潮位計が振り切れて真の波高が読めなくなった報で、数値は 1.8m のまま変わらない。最後の6通（変化なし・波高が下がった報と満潮時刻）は緊急地震速報や津波警報の読み上げを切らないので、そうした上位の読み上げが続いている間は鳴らずに見送られる。5通目は沖合の観測点だけを載せた報で、カードの沖合の行に更新の印が出るのはここだけ">
+          <Row label="津波警報・注意報（変化の小さい続報）" description="大津波警報 → 10秒おきに続報を13通（観測値 → 八戸港の波高に「以上」が付く → 最大波の観測時刻だけ更新 → 室蘭港の第1波の到達時刻が訂正される → 沖合の観測点の最大波の観測時刻が更新される → 変化なし → 八戸港の波高が下がり「以上」が外れる → いわき市小名浜が欠測から戻る（値は無く、電文の印だけが付く） → 各地の満潮時刻 → 満潮時刻の更新 → 到達状況の更新 → 到達予想時刻の更新 → 変化なし）→ 最後の報の20秒後に全解除。気象庁が続報を出しているのに、等級も観測波高の数値も動かない報がどう伝わるかを確かめる。2通目は潮位計が振り切れて真の波高が読めなくなった報で、数値は 1.8m のまま変わらない。最後の8通（変化なし・波高が下がった報・電文の印だけの報と満潮時刻）は緊急地震速報や津波警報の読み上げを切らないので、そうした上位の読み上げが続いている間は鳴らずに見送られる。5通目は沖合の観測点だけを載せた報で、カードの沖合の行に更新の印が出るのはここだけ。8通目は値を持たない観測点の行で、「到達時刻不明」「観測中」に更新の印の色が出るのはここだけ">
             <TestButton color="blue" onClick={onTest.tsunamiQuietReports}>変化の小さい続報テスト</TestButton>
           </Row>
         )}
@@ -2163,7 +2180,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                 <div key={a.id} className="flex items-center gap-2">
                   <DescriptionTip
                     label={a.label}
-                    description={`${new Date(a.from).toLocaleString('ja-JP')} 〜 ${new Date(a.to).toLocaleString('ja-JP')}`}
+                    description={formatArchiveCoverage(a)}
                   />
                   <button
                     onClick={() => onStartReplay(new Date(new Date(a.firstEventTime).getTime() - 60_000))}

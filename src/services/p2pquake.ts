@@ -3,11 +3,12 @@ import type {
   EarthquakePoint, Hypocenter, IntensityScale,
   IssueType, CorrectType, DomesticTsunami, TsunamiArea, TsunamiGrade, TelegramLogEntry,
 } from '../types/earthquake'
-import { serverNow, serverDate } from '../utils/clock'
+import { serverNow, serverDate, liveServerNow } from '../utils/clock'
+import { createRateGate, type RateLimitWindow } from '../utils/requestGate'
 import { quakeIdentityKey } from '../utils/quakeHeatmap'
 import { isValidIntensityScale } from '../utils/intensity'
 import { log } from '../utils/logger'
-import { fetchWithTimeout, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
+import { fetchWithTimeout, abortErrorOf, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { parseJstTimeMs } from '../utils/quakeOriginSeconds'
 // 数値はローカルの readNumber で読む（理由は readNumber の注記）
 import { arr, obj, str } from './parseHelpers'
@@ -18,11 +19,18 @@ const WS_URL = 'wss://api.p2pquake.net/v2/ws'
 // P2PQuake API はイベント種別を数値 code で返すため、内部の kind 識別子に変換する
 export type RawP2PEvent = { code: number; [key: string]: unknown }
 
+/**
+ * P2PQuake のイベントコード → 何の電文か（電文ログの種別と同じ語）。**扱うコードの唯一の表**で、
+ * 扱うかの判定（`isSupportedCode`）・読み取りの振り分け（`convertEvent`）・読めた行の種別・
+ * 電文ログが読めなかった行に付ける種別（`components/TelegramTab/labels.ts`）がすべてここを引く。
+ * 値は読み取れる 3 種に限る（足すと `convertEvent` の振り分けが型エラーで知らせる）。
+ */
+export const P2P_KIND_OF_CODE: ReadonlyMap<number, AppEvent['kind']> = new Map([
+  [551, 'quake'], [552, 'tsunami'], [556, 'eew'],
+])
+
 function codeToLogKind(code: number): TelegramLogEntry['kind'] {
-  if (code === 551) return 'quake'
-  if (code === 552) return 'tsunami'
-  if (code === 556) return 'eew'
-  return undefined
+  return P2P_KIND_OF_CODE.get(code)
 }
 
 const CORRECT_TYPE_MAP: Record<string, CorrectType> = {
@@ -484,12 +492,19 @@ export function convertEvent(raw: RawP2PEvent): AppEvent | null {
   // 型注釈を信用しない。配列や null が来ても落ちないように obj() で受け直す。
   const data = obj(raw)
   const code = readNumber(data.code)
-  if (!isSupportedCode(code)) return null
+  const kind = typeof code === 'number' ? P2P_KIND_OF_CODE.get(code) : undefined
+  if (kind === undefined) return null
   warnCounts = new Map()
   try {
-    if (code === 551) return parseQuake(data)
-    if (code === 552) return parseTsunami(data)
-    return parseEEW(data)
+    switch (kind) {
+      case 'quake': return parseQuake(data)
+      case 'tsunami': return parseTsunami(data)
+      case 'eew': return parseEEW(data)
+      default: {
+        const unhandled: never = kind
+        return unhandled
+      }
+    }
   } finally {
     flushWarnCounts(`${code} id=${str(data.id)}`)
   }
@@ -497,7 +512,7 @@ export function convertEvent(raw: RawP2PEvent): AppEvent | null {
 
 /** 内部型へ変換できる電文種別か。未対応 code は障害ではなく設計どおりの読み飛ばし。 */
 export function isSupportedCode(code: unknown): boolean {
-  return code === 551 || code === 552 || code === 556
+  return typeof code === 'number' && P2P_KIND_OF_CODE.has(code)
 }
 
 export async function fetchHistory(
@@ -627,6 +642,28 @@ export interface JmaArchiveQuery {
 }
 
 /**
+ * `/jma/*` の上限（IP ごとに 10 リクエスト／分。→ docs/spec/data-sources-spec.md §3）を、**取得の経路をまたいで**守る門。
+ * リプレイの開始では、日ごとの取得（`p2pquakeReplay.ts`）・開始時刻より前の履歴・ヒートマップの前 30 日が
+ * 同時に `/jma/quake` を引く。経路ごとに間隔を空けても、合わせると上限を超えて 429 になる。
+ * `/jma/*` は必ず `fetchJmaArchiveRaw` を通るので、ここ 1 か所に置けば足りる。上限に達するまでは待たせない。
+ */
+const JMA_LIMITS: readonly RateLimitWindow[] = [{ windowMs: 60_000, max: 10 }]
+let jmaGate = createRateGate(JMA_LIMITS)
+
+/** テスト用。`ms > 0` なら「`ms` ごとに 1 件」へ、0 なら門を外す。 */
+export function setJmaGateIntervalForTest(ms: number): void {
+  jmaGate = createRateGate(ms > 0 ? [{ windowMs: ms, max: 1 }] : [])
+}
+
+/** テスト用。本番の上限へ戻す。 */
+export function resetJmaGateForTest(): void {
+  jmaGate = createRateGate(JMA_LIMITS)
+}
+
+/** `/jma/*` の門での順番（→ {@link fetchJmaArchiveRaw}）。 */
+export type JmaLane = 'foreground' | 'background'
+
+/**
  * `/jma/*` の生レスポンスを取得する。
  *
  * 変換前の配列を返すのは、呼び出し側が「取得できた件数」と「内部型へ変換できた件数」の差を
@@ -637,7 +674,17 @@ export async function fetchJmaArchiveRaw(
   query: JmaArchiveQuery,
   /** 止める合図（止める手立てを持たない呼び出しは `null`）。 */
   signal: AbortSignal | null,
+  /**
+   * 門での順番。`'foreground'`（リプレイ・地震カードの履歴）は、待っている `'background'`
+   * （ヒートマップの遡り）を追い越して先に通る。遡りは 20 ページまで続くので、同じ列に並ばせると
+   * リプレイの開始が 1 分以上待たされる。
+   */
+  lane: JmaLane,
 ): Promise<RawP2PEvent[]> {
+  // 止めた取得は列に並ばない。待っている間に止められた分は、門を抜けたところで投げずに抜ける
+  // 手立てが無いので取得口（fetchWithTimeout）に任せる（枠を 1 つ使うが、取得は飛ばない）
+  if (signal?.aborted) throw abortErrorOf(signal)
+  await jmaGate.wait({ urgent: lane === 'foreground' })
   const params = new URLSearchParams({ limit: String(query.limit ?? 50) })
   if (query.offset) params.set('offset', String(query.offset))
   if (query.sinceDate) params.set('since_date', query.sinceDate)
@@ -662,14 +709,14 @@ export async function fetchJmaArchiveRaw(
 }
 
 // /v2/history より大幅に深い履歴（地震情報は 2015-01-10 〜）を持つ地震情報専用エンドポイント
-export async function fetchJmaQuake(query: JmaArchiveQuery, signal: AbortSignal | null): Promise<JMAQuake[]> {
-  const raws = await fetchJmaArchiveRaw('quake', query, signal)
+export async function fetchJmaQuake(query: JmaArchiveQuery, signal: AbortSignal | null, lane: JmaLane): Promise<JMAQuake[]> {
+  const raws = await fetchJmaArchiveRaw('quake', query, signal, lane)
   return raws.flatMap(r => { const e = convertEvent(r); return e && e.kind === 'quake' ? [e] : [] })
 }
 
 // 津波予報の履歴（2016-11-22 〜）。地震情報と同じクエリで引ける。
-export async function fetchJmaTsunami(query: JmaArchiveQuery, signal: AbortSignal | null): Promise<JMATsunami[]> {
-  const raws = await fetchJmaArchiveRaw('tsunami', query, signal)
+export async function fetchJmaTsunami(query: JmaArchiveQuery, signal: AbortSignal | null, lane: JmaLane): Promise<JMATsunami[]> {
+  const raws = await fetchJmaArchiveRaw('tsunami', query, signal, lane)
   return raws.flatMap(r => { const e = convertEvent(r); return e && e.kind === 'tsunami' ? [e] : [] })
 }
 
@@ -678,20 +725,38 @@ export async function fetchJmaTsunami(query: JmaArchiveQuery, signal: AbortSigna
 const JMA_QUAKE_HISTORY_REQUEST_INTERVAL_MS = 6500
 const JMA_QUAKE_HISTORY_MAX_PAGES = 20
 
-// ヒートマップ用: 直近 `days` 日分の地震履歴を offset ページングでまとめて取得する。
-export async function fetchJmaQuakeHistory(days: number): Promise<JMAQuake[]> {
-  const cutoffMs = serverNow() - days * 24 * 60 * 60 * 1000
+/** 日本時間の暦日を yyyyMMdd で（`since_date` / `until_date` は日本時間の日で切る）。 */
+function jstYmd(ms: number): string {
+  const d = new Date(ms + 9 * 60 * 60 * 1000)
+  return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
+// ヒートマップ用: `days` 日分の地震履歴を offset ページングでまとめて取得する。
+// `untilMs` が null ならいまから遡り、時刻を渡せばその時刻より前の `days` 日を日付で絞って取る（リプレイ中）。
+// `until_date` は日単位なので、その日の `untilMs` より後の地震も混ざる。それは最後に落とす。
+// 「いま」は `liveServerNow` で測る。`serverNow` はリプレイ中に再生時刻を返すので、再生を止めた直後
+// （時計が戻る前）に走るライブの取り直しが、過去を基準にして 20 ページまで遡ってしまう。
+export async function fetchJmaQuakeHistory(days: number, untilMs: number | null, signal: AbortSignal | null): Promise<JMAQuake[]> {
+  const endMs = untilMs ?? liveServerNow()
+  const cutoffMs = endMs - days * 24 * 60 * 60 * 1000
+  const dateRange = untilMs === null ? {} : { sinceDate: jstYmd(cutoffMs), untilDate: jstYmd(untilMs) }
   const collected: JMAQuake[] = []
   let offset = 0
   let page = 0
   for (; page < JMA_QUAKE_HISTORY_MAX_PAGES; page++) {
-    const batch = await fetchJmaQuake({ limit: 100, offset }, null)
+    if (signal?.aborted) break
+    const batch = await fetchJmaQuake({ limit: 100, offset, ...dateRange }, signal, 'background')
     if (batch.length === 0) break
     collected.push(...batch)
     const oldestTime = new Date(batch[batch.length - 1].earthquake.time).getTime()
     if (oldestTime < cutoffMs || batch.length < 100) break
     offset += batch.length
-    await new Promise(resolve => setTimeout(resolve, JMA_QUAKE_HISTORY_REQUEST_INTERVAL_MS))
+    // 止める合図で待ちも解く（再生を止めたあとにタイマーだけ残さない）。解いたらループの頭で抜ける
+    await new Promise<void>(resolve => {
+      const onAbort = () => { clearTimeout(timer); resolve() }
+      const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve() }, JMA_QUAKE_HISTORY_REQUEST_INTERVAL_MS)
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
   }
   // **上限に達したことは記録する。** ここは読めた分を返す経路なので投げない（投げると
   // 呼び出し側の 6 時間キャッシュへ空が入り、取れていた分まで捨てることになる）。
@@ -715,7 +780,10 @@ export async function fetchJmaQuakeHistory(days: number): Promise<JMAQuake[]> {
     seenKeys.add(key)
     return true
   })
-  return deduped.filter(q => new Date(q.earthquake.time).getTime() >= cutoffMs)
+  return deduped.filter(q => {
+    const t = new Date(q.earthquake.time).getTime()
+    return t >= cutoffMs && t <= endMs
+  })
 }
 
 /**

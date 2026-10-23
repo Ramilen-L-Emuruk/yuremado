@@ -29,8 +29,8 @@ const GRACE_MS = READING_STALE_MS
  * **「【何が】【どうなった】」だけ。** 隣に並ぶ波形の「波形 途絶」と同じ形で、
  * 地図の隅は 1 行しか使えない —— 折り返すと何本出ているか読めなくなる。
  *
- * **行動の案内（「ホストが起動しているか確認」の類）は付けない。** 繋がらない理由は
- * 4 通りあり（切っている・URL が空・URL の形が違う・ホストが応えない）、**どれか 1 つを
+ * **行動の案内（「ホストが起動しているか確認」の類）は付けない。** この行が出る理由は
+ * 3 通りあり（URL が空・URL の形が違う・ホストが応えない。機能を切っているときは出ない）、**どれか 1 つを
  * 括弧へ書くと残りでは誤った案内になる** —— 購読の上限（同時 8 本）で断られている
  * ときは、ホストは元気に動いている。切り分けは設定タブの 1 行が受け持つ
  * （`SettingsTab/seismoStatusLine.ts`）。
@@ -40,6 +40,14 @@ const TEXT = '地震計 未接続'
 interface Props {
   /** 押し出しの繋がり具合。**機能が切れている・URL の形が違うときは `null`。** */
   readonly stream: SeismoStreamState | null
+  /**
+   * 機能は入っているのに、URL が空か形が違うので繋ぎに行けない（`useSeismoStation` の `urlUnusable`）。
+   *
+   * **これも「繋がっていない」に数える**（2026-10-21 ユーザー選択「おすすめで」）。`stream` が `null` に
+   * なるので、`stream` だけを見ると黙ってしまう。文言は同じ「地震計 未接続」のまま —— どこを直せば
+   * よいかは設定タブの 1 行が出し分ける。
+   */
+  readonly urlUnusable: boolean
 }
 
 /**
@@ -56,11 +64,11 @@ interface Props {
  *
  * **正常時は何も描かない**（`MapDataStatus`・`MapRenderStatus` と同じ作法）。
  */
-export function SeismoLinkStatus({ stream }: Props) {
+export function SeismoLinkStatus({ stream, urlUnusable }: Props) {
   // **`stream` そのものを依存にしない。** 繋ぎ直しのたびに待ち時間の載った別の値が
   // 来るので（`reconnecting` の `nextAttemptInMs`）、オブジェクトを見張ると**待ちが
   // 張り直され続けて永久に出ない**。見るのは「繋がっていないか」の真偽だけ。
-  const down = stream !== null && stream.kind !== 'open'
+  const down = urlUnusable || (stream !== null && stream.kind !== 'open')
   const [shown, setShown] = useState(false)
 
   useEffect(() => {

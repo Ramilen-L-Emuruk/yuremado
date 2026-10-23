@@ -1844,3 +1844,62 @@ describe('expiryNeedsDate', () => {
     expect(expiryNeedsDate('2024-01-02T08:00:00+09:00', '2024-01-02T10:00:00+09:00')).toBe(false)
   })
 })
+
+// 電文の印（`FirstHeight/Revise`・`MaxHeight/Revise`）でも項目に印を付ける。
+// 自前の比較だけでは、値を持たない観測点（第１波識別不能・観測中・欠測の「追加」）に
+// 比べる相手が無く、気象庁が「追加」「更新」と書いた報でも行が光らなかった
+// （全期間 19 津波・延べ 8,085 観測点で 168。2026-10-21 ユーザー選択「どちらかにあれば付ける」）。
+describe('changedObservationFields: 電文の Revise', () => {
+  const obs = (o: Partial<TsunamiObservation>): TsunamiObservation => ({ name: '大船渡', ...o })
+  const seen = new Map([['大船渡', { value: 1.2 }]])
+
+  // 正: 第1波の Revise があれば、到達時刻を持たない行でも第1波に印が付く
+  it('正: FirstHeight/Revise があれば第1波に印が付く（第１波識別不能の追加）', () => {
+    const f = changedObservationFields(
+      obs({ firstHeightRevise: '追加', condition: { firstWaveUnidentifiable: true } }),
+      undefined, undefined, seen,
+    )
+    expect(f.has('firstWave')).toBe(true)
+  })
+
+  // 正: 最大波の Revise は、自前の比較で何も付かなければ波高へ付ける（観測中の追加）
+  it('正: MaxHeight/Revise だけがあれば波高に印が付く', () => {
+    const f = changedObservationFields(
+      obs({ maxHeightRevise: '追加', condition: { observing: true } }),
+      undefined, undefined, seen,
+    )
+    expect([...f]).toEqual(['height'])
+  })
+
+  // 対照: 自前の比較が最大波の観測時刻を拾えていれば、波高へは付けない（どの項目かは比較が正しく言える）
+  it('対照: 自前の比較で印が付いていれば MaxHeight/Revise は波高へ足さない', () => {
+    const f = changedObservationFields(
+      obs({
+        height: { value: 1.2, description: '1.2m' },
+        maxHeightRevise: '更新',
+        maxHeightDateTime: '2024-01-01T16:41:00+09:00',
+      }),
+      '2024-01-01T16:23:00+09:00', undefined, seen,
+    )
+    expect([...f]).toEqual(['maxHeightTime'])
+  })
+
+  // 安全弁: 電文の第1波の印は「自前の比較」に数えない（両方の Revise が立った観測中の初出で、波高が白く残らない）
+  it('安全弁: FirstHeight/Revise の印があっても MaxHeight/Revise は波高へ付く', () => {
+    const f = changedObservationFields(
+      obs({ firstHeightRevise: '追加', maxHeightRevise: '追加', condition: { observing: true, firstWaveUnidentifiable: true } }),
+      undefined, undefined, seen,
+    )
+    expect(f.has('height')).toBe(true)
+    expect(f.has('firstWave')).toBe(true)
+  })
+
+  // 対照: どちらの Revise も無く値も動かなければ印は付かない（毎報光らせない）
+  it('対照: Revise が無く値も据え置きなら印は付かない', () => {
+    const f = changedObservationFields(
+      obs({ height: { value: 1.2, description: '1.2m' }, condition: { observing: true } }),
+      undefined, undefined, seen,
+    )
+    expect(f.size).toBe(0)
+  })
+})

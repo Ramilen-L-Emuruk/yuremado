@@ -206,7 +206,7 @@ describe('落とし漏れの検出', () => {
   })
 
   it('コードを持たない経路では記録しない', () => {
-    // P2PQuake は付加文を配信しない。自由付加文はコードそのものを持たない。
+    // P2PQuake は固定付加文を配信しない。自由付加文はどちらの経路でもコードそのものを持たない。
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
     warnUnmatchedBoilerplate(undefined, '何かの文', TELEGRAM_BOILERPLATE_DEFAULT_READS, '地震情報の固定付加文（その他）')
     warnUnmatchedBoilerplate([], '何かの文', TELEGRAM_BOILERPLATE_DEFAULT_READS, '地震情報の固定付加文（その他）')

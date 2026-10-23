@@ -429,9 +429,10 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
                 text: obsArrivalHm
                   ? `${obsArrivalHm}${obs.initial ? ` ${obs.initial}波` : ''}`
                   : observationArrivalFallbackText(obs),
-                // 到達時刻が出せていない行（「到達時刻不明」）には色を当てない —— 動いたのは
-                // 第1波そのものではないため。
-                color: obsArrivalHm ? fieldColor('firstWave') : undefined,
+                // **到達時刻が出せていない行（「第１波識別不能」など）にも色を当てる。** 第1波の印は
+                // 電文の `FirstHeight/Revise` からも付き、そのときに動いたのはこの文字そのもの
+                // （2026-10-21 ユーザー選択「おすすめで」）。
+                color: fieldColor('firstWave'),
               },
               // 第1波についての話が続くので、実測の到達時刻と同じ位置に置く。
               { text: forecastArrivalText },
@@ -491,7 +492,9 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
                       {observationHeightText(obs)}
                     </span>
                   ) : observationHeightText(obs) && (
-                    <span className="shrink-0" style={{ fontSize: '0.8125rem', color: '#9ca3af' }}>{observationHeightText(obs)}</span>
+                    /* 数値の代わりの文字（「観測中」など）にも波高の印を当てる。`MaxHeight/Revise` の
+                       「追加」で付く印は、値を持たないこの形にしか出番が無い */
+                    <span className="shrink-0" style={{ fontSize: '0.8125rem', color: '#9ca3af', ...(fieldColor('height') ? { color: fieldColor('height'), fontWeight: 600 } : {}) }}>{observationHeightText(obs)}</span>
                   )}
                 </div>
               </div>
@@ -611,7 +614,8 @@ function TsunamiObservationRow({ obs, onObservationClick, canFocusObs, registerS
           </span>
         ) : (arrivalFallbackText || maxHeightTimeText || obs.sensor) && (
           <span className="block mt-1 text-secondary" style={{ fontSize: '0.8125rem' }}>
-            {arrivalFallbackText}
+            {/* 区域に紐づく行と同じく、代わりの文字にも第1波の印を当てる */}
+            {arrivalFallbackText && <span style={fieldColor('firstWave') ? { color: fieldColor('firstWave'), fontWeight: 600 } : undefined}>{arrivalFallbackText}</span>}
             {maxHeightTimeText && <>{arrivalFallbackText ? '　' : ''}<span style={fieldColor('maxHeightTime') ? { color: fieldColor('maxHeightTime'), fontWeight: 600 } : undefined}>{maxHeightTimeText}</span></>}
             {obs.sensor && `${arrivalFallbackText || maxHeightTimeText ? '　' : ''}（${obs.sensor}）`}
           </span>

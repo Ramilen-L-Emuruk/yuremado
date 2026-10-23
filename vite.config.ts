@@ -178,7 +178,7 @@ export default defineConfig(configEnv => ({
     },
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['icons/*.svg'],
+      includeAssets: ['icons/*.svg', 'icons/*.png'],
       manifest: {
         name: strings.title,
         short_name: strings.shortName,
@@ -189,17 +189,15 @@ export default defineConfig(configEnv => ({
         lang: 'ja',
         start_url: base,
         scope: base,
-        // SEC-5: public/icons/ には icon.svg しか存在しないため、以前は manifest に列挙されていた
-        // icon-192.png / icon-512.png が本番で 404 になっていた。SVG は sizes: 'any' 対応で
-        // Android/iOS のホーム画面追加でも正しくラスタライズされるため、SVG 単一に統合する。
-        // maskable も同じ SVG を purpose に併記して兼用（icon.svg 側でセーフゾーン考慮）。
+        // 元の絵は icon.svg 1 枚。PNG は scripts/build-app-icons.mjs がそこから焼く（描き直したら焼き直す）。
+        // - 192・512 の PNG（any）: SVG を読まないランチャー向け。角丸のまま
+        // - maskable の 512: 角を端末が切るので、背景を全面に塗った版を別に置く。角丸の絵を maskable に
+        //   兼用すると、切り抜きの外へ透明の角が残る
         icons: [
-          {
-            src: 'icons/icon.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
-            purpose: 'any maskable',
-          },
+          { src: 'icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
         screenshots: [],
       },

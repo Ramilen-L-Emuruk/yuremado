@@ -33,11 +33,14 @@ export function computeEewCircle(eew: EEWAlert, now: number): PsWaveCircle | nul
   // 仮定震源要素では円を描かない。震源・M・深さが固定の仮定値であることに加え、**気象庁は
   // PLUM 法による予測の報で主要動の到達予測時刻を出さない**（PLUM は震源を使わないため猶予時間を
   // 算出できず、受信端末向けのガイドラインも「まもなく到達」等の表現を推奨している）。予報円は
-  // 猶予時間の図示なので、描けば根拠のない秒数を見せることになる。震源名が空の報も同じ扱い。
+  // 猶予時間の図示なので、描けば根拠のない秒数を見せることになる。
   //
   // **「非常に強い揺れを検知」の報も同じ**（→ `isProvisionalHypocenter`）。震央は検知した観測点で、
   // 発生時刻も持たない。
-  if (!hypocenter.name || isProvisionalHypocenter(eew)) return null
+  //
+  // **震央地名が空なだけの報は描く。** 円に要るのは座標・深さ・発生時刻で、地名は使わない
+  // （座標は上の `hasKnownEpicenter` が、深さはすぐ下の `hasDepth` が見る）。
+  if (isProvisionalHypocenter(eew)) return null
   // 震源の深さが判らない報でも円を描かない。**`0` は「ごく浅い」という有効値**で、
   // 判らないことは `-1` で表す（`Hypocenter.depth`）。丸めて 0 として扱うと最も浅い地震の
   // 速さで円が広がり、**深い地震ほど「まだ地表へ届いていない」時間帯に円を見せる**

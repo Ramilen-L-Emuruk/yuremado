@@ -288,6 +288,64 @@ describe('eewScaleForScope', () => {
     const emptyRegions = scope({ stationNames: new Set(['新宿区西新宿']) })
     expect(eewScaleForScope(e, emptyRegions, MIN)).toBe(50)
   })
+
+  // 区域を持たない報（予測震度の下限が震度 3 以下・standard 版で区域が補われる前）は、電文全体の最大で
+  // 判定すると遠くの地震でも自宅に帯が出る（2026-10-22 ユーザー承認「区域が無ければ使わない」）。
+  // 以前は全国基準へ倒していた —— この 3 件はその判断を覆したもの。
+  describe('区域を持たない報', () => {
+    const noAreas = (forecastMaxScale: number) =>
+      ({ id: 'e1', areas: [], forecastMaxScale }) as unknown as EEWAlert
+
+    // 正: 自宅の区域を引けるなら使わない。
+    it('自宅の区域を引けるなら、電文全体の予想が閾値を超えていても出さない', () => {
+      expect(eewScaleForScope(noAreas(60), NEAR_REGION, MIN)).toBe(null)
+    })
+
+    // 対照: 地点が無ければ絞れないので、従来どおり電文全体で見る。
+    it('地域を絞れないときは電文全体の予想で判定する', () => {
+      expect(eewScaleForScope(noAreas(60), NO_SCOPE, MIN)).toBe(60)
+    })
+
+    // 安全弁: 地点はあっても区域名を引けないときは、区域の有無によらず全国基準のまま。
+    it('区域名を引けない地点では、区域を持たない報も全国基準で判定する', () => {
+      const emptyRegions = scope({ stationNames: new Set(['新宿区西新宿']) })
+      expect(eewScaleForScope(noAreas(60), emptyRegions, MIN)).toBe(60)
+    })
+  })
+
+  // 「非常に強い揺れを検知・最大予測震度のみ」の報は、検知した観測点（仮の震央）からの距離で判定する
+  // （2026-10-22 ユーザー承認「検知点から 30km」）。座標は架空の丸めた値。
+  describe('非常に強い揺れを検知した報', () => {
+    const HOME = scope({ regionNames: new Set(['区域甲']), centers: [{ lat: 35.0, lng: 135.0 }] })
+    const detected = (lat: number, lon: number) =>
+      ({
+        id: 'e1',
+        areas: [],
+        forecastMaxScale: 45,
+        strongShakingOnly: true,
+        earthquake: { hypocenter: { name: '', latitude: lat, longitude: lon, depth: 10, magnitude: -1 } },
+      }) as unknown as EEWAlert
+
+    // 正: 検知点が 30 km 以内なら、区域が無くても電文の最大予測震度を返す（約 22 km 先）。
+    it('検知点が中心から 30 km 以内なら出す', () => {
+      expect(eewScaleForScope(detected(35.2, 135.0), HOME, MIN)).toBe(45)
+    })
+
+    // 対照: 30 km を超えたら出さない（約 33 km 先）。
+    it('検知点が中心から 30 km より遠ければ出さない', () => {
+      expect(eewScaleForScope(detected(35.3, 135.0), HOME, MIN)).toBe(null)
+    })
+
+    // 安全弁: 中心が無ければ絞れないので、ほかの報と同じく電文全体の予想で判定する。
+    it('中心が無いときは電文全体の予想で判定する', () => {
+      expect(eewScaleForScope(detected(35.3, 135.0), NO_SCOPE, MIN)).toBe(45)
+    })
+
+    // 安全弁: 検知点の位置が判らなければ距離を測れないので、区域の無い報と同じく出さない。
+    it('検知点の位置が判らなければ出さない', () => {
+      expect(eewScaleForScope(detected(-200, -200), HOME, MIN)).toBe(null)
+    })
+  })
 })
 
 describe('hasNearby', () => {
@@ -431,11 +489,14 @@ describe('区域を持たない EEW（standard 版・Yahoo hypoInfo 由来の初
     expect(eewScaleForScope(eewNoAreas(30), NO_SCOPE, MIN)).toBe(null)
   })
 
-  it('地点を登録していても、区域が無ければ全国基準で判定する', () => {
+  // 以前は「地点を登録していても全国基準で判定する」を固定していた。それだと遠くの地震でも自宅に帯が出るので、
+  // 自宅の区域を引けるなら区域の無い報を使わない形へ覆した（2026-10-22 ユーザー承認「区域が無ければ使わない」）。
+  // この窓は強震モニタと地震情報の経路で拾う。
+  it('地点を登録していれば、区域が無い報では出さない（全国基準へ倒さない）', () => {
     const near = scope({
       stationNames: new Set(['新宿区西新宿']),
       regionNames: new Set(['東京都23区']),
     })
-    expect(eewScaleForScope(eewNoAreas(50), near, MIN)).toBe(50)
+    expect(eewScaleForScope(eewNoAreas(50), near, MIN)).toBe(null)
   })
 })

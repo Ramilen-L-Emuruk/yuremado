@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { predictMeasuredIntensity } from './eew'
 import { haversineKm } from './geo'
-import { judgeQuakeReach, USUAL_MARGIN, type ReachStation } from './seismoQuakeReach'
+import { judgeQuakeReach, NO_FLOOR_WITHOUT_USUAL, USUAL_MARGIN, type ReachStation } from './seismoQuakeReach'
 import type { Hypocenter } from '../types/earthquake'
 
 // 架空の観測点（どこの家でもない丸めた座標）。
@@ -23,7 +23,7 @@ describe('judgeQuakeReach', () => {
     const h = hypo()
     const p = predicted(h)
     const s = { ...STATION, usualMeasured: p + USUAL_MARGIN - 0.01 }
-    expect(judgeQuakeReach(h, [s])).toEqual({ kind: 'predicted', stationIds: ['station-1'], unknownStationIds: [] })
+    expect(judgeQuakeReach(h, [s], NO_FLOOR_WITHOUT_USUAL)).toEqual({ kind: 'predicted', stationIds: ['station-1'], unknownStationIds: [] })
   })
 
   // 対照: 境目の手前（予測 ≦ 普段 − 余裕）では出さない。
@@ -31,19 +31,35 @@ describe('judgeQuakeReach', () => {
     const h = hypo()
     const p = predicted(h)
     const s = { ...STATION, usualMeasured: p + USUAL_MARGIN + 0.01 }
-    expect(judgeQuakeReach(h, [s])).toEqual({ kind: 'predicted', stationIds: [], unknownStationIds: [] })
+    expect(judgeQuakeReach(h, [s], NO_FLOOR_WITHOUT_USUAL)).toEqual({ kind: 'predicted', stationIds: [], unknownStationIds: [] })
   })
 
   it('遠い地震は届かない', () => {
     const far = hypo({ latitude: 43.0, longitude: 145.0, magnitude: 4.0 })
-    expect(judgeQuakeReach(far, [STATION])).toEqual({ kind: 'predicted', stationIds: [], unknownStationIds: [] })
+    expect(judgeQuakeReach(far, [STATION], NO_FLOOR_WITHOUT_USUAL)).toEqual({ kind: 'predicted', stationIds: [], unknownStationIds: [] })
   })
 
   // 安全弁: 普段が読めない間は下限を置かない（予測できる地震はすべて出す）。
   it('普段が読めなければ下限を置かない', () => {
     const far = hypo({ latitude: 43.0, longitude: 145.0, magnitude: 4.0 })
     const s = { ...STATION, usualMeasured: null }
-    expect(judgeQuakeReach(far, [s])).toEqual({ kind: 'predicted', stationIds: ['station-1'], unknownStationIds: [] })
+    expect(judgeQuakeReach(far, [s], NO_FLOOR_WITHOUT_USUAL)).toEqual({ kind: 'predicted', stationIds: ['station-1'], unknownStationIds: [] })
+  })
+
+  // 正・対照: 普段が読めない観測点の下限は呼び出し側が渡した値で切る（地図の下端の波形は −1.5。2026-10-22 ユーザー承認）。
+  it('普段が読めなければ、渡された下限を上回るときだけ届く', () => {
+    const far = hypo({ latitude: 43.0, longitude: 145.0, magnitude: 4.0 })
+    const s = { ...STATION, usualMeasured: null }
+    const p = predicted(far, s)
+    expect(judgeQuakeReach(far, [s], p - 0.01)).toEqual({ kind: 'predicted', stationIds: ['station-1'], unknownStationIds: [] })
+    expect(judgeQuakeReach(far, [s], p + 0.01)).toEqual({ kind: 'predicted', stationIds: [], unknownStationIds: [] })
+  })
+
+  // 安全弁: 普段が読めるときは渡された下限を見ない（普段 − 余裕のまま）。
+  it('普段が読めるときは、渡された下限を使わない', () => {
+    const h = hypo()
+    const s = { ...STATION, usualMeasured: predicted(h) + USUAL_MARGIN - 0.01 }
+    expect(judgeQuakeReach(h, [s], Infinity)).toEqual({ kind: 'predicted', stationIds: ['station-1'], unknownStationIds: [] })
   })
 
   // 安全弁: 予測に要る値が欠けたら決めない（呼び出し側が気象庁の観測で判定する）。
@@ -53,12 +69,12 @@ describe('judgeQuakeReach', () => {
     ['規模が判らない', { magnitude: -1 }],
     ['規模が数値でない', { magnitude: Number.NaN }],
   ] as const)('%s地震は予測しない', (_label, overrides) => {
-    expect(judgeQuakeReach(hypo(overrides), [STATION])).toEqual({ kind: 'unknown' })
+    expect(judgeQuakeReach(hypo(overrides), [STATION], NO_FLOOR_WITHOUT_USUAL)).toEqual({ kind: 'unknown' })
   })
 
   it('座標の無い観測点は予測できない側へ回す', () => {
     const noPos = { ...STATION, stationId: 'station-2', lat: null, lon: null }
-    expect(judgeQuakeReach(hypo(), [STATION, noPos])).toEqual({
+    expect(judgeQuakeReach(hypo(), [STATION, noPos], NO_FLOOR_WITHOUT_USUAL)).toEqual({
       kind: 'predicted',
       stationIds: ['station-1'],
       unknownStationIds: ['station-2'],
@@ -67,12 +83,12 @@ describe('judgeQuakeReach', () => {
 
   it('座標のある観測点が 1 つも無ければ決めない', () => {
     const noPos = { ...STATION, lat: null, lon: null }
-    expect(judgeQuakeReach(hypo(), [noPos])).toEqual({ kind: 'unknown' })
+    expect(judgeQuakeReach(hypo(), [noPos], NO_FLOOR_WITHOUT_USUAL)).toEqual({ kind: 'unknown' })
   })
 
   it('観測点ごとに判定する', () => {
     const near = STATION
     const far = { ...STATION, stationId: 'station-far', lat: 26.0, lon: 127.7 }
-    expect(judgeQuakeReach(hypo({ magnitude: 4.0 }), [near, far])).toEqual({ kind: 'predicted', stationIds: ['station-1'], unknownStationIds: [] })
+    expect(judgeQuakeReach(hypo({ magnitude: 4.0 }), [near, far], NO_FLOOR_WITHOUT_USUAL)).toEqual({ kind: 'predicted', stationIds: ['station-1'], unknownStationIds: [] })
   })
 })

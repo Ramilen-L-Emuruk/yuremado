@@ -3,7 +3,7 @@ import type { MapGeoJSONFeature } from 'maplibre-gl'
 import { useMapGL } from './mapGLContext'
 import type { EewEpicenter } from '../../hooks/useEewLayerData'
 import { getIntensityColor, getIntensityLabelWithApproxAbove } from '../../utils/intensity'
-import { formatMagnitude, formatDepth, hasDepth } from '../../utils/formatters'
+import { formatMagnitudeWithCondition, formatDepth, hasDepth } from '../../utils/formatters'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { addOrderedLayer } from './gl/layerOrder'
 import { createDepthPointLayer, type DepthPoint, type DepthPointLayer, type DepthPointShape } from './gl/depthPointLayer'
@@ -159,7 +159,8 @@ export function buildPopupHtml(ep: EewEpicenter): string {
   return (
     `<div style="min-width:170px">` +
     `<div style="display:flex;align-items:baseline;gap:8px">` +
-    `<span style="font-weight:700;font-size:13px">${escapeHtml(ep.name)}</span>` +
+    // 震央地名が空の報はカードと同じ「震源調査中」を出す（見出しが空のまま番号だけ並ばないように）
+    `<span style="font-weight:700;font-size:13px">${escapeHtml(ep.name || '震源調査中')}</span>` +
     (serialText ? `<span style="font-size:11px;color:#94a3b8">${serialText}</span>` : '') +
     `</div>` +
     // EEW-6: 仮定震源要素（震源未確定）は M・深さが未確定なので数値を隠す。
@@ -167,7 +168,9 @@ export function buildPopupHtml(ep: EewEpicenter): string {
     `<div style="margin-top:2px;font-size:11px;color:#94a3b8">` +
     (provisional
       ? '震源調査中'
-      : `${escapeHtml(formatMagnitude(ep.magnitude, ep.magnitudeType))} / 深さ ${escapeHtml(formatDepth(ep.depth, ep.depthAtLeast))}`) +
+      // 規模の説明（「Ｍ８を超える巨大地震」など）は地震情報の吹き出しと同じ部品で出す（2026-10-22 ユーザー承認
+      // 「吹き出しと共有カードも揃える (Recommended)」）。前置きの記号は電文の種別どおり（同日「1-A 電文のまま」）。
+      : `${escapeHtml(formatMagnitudeWithCondition(ep.magnitude, ep.magnitudeCondition, ep.magnitudeType))} / 深さ ${escapeHtml(formatDepth(ep.depth, ep.depthAtLeast))}`) +
     `</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     // 上限が定まらない報は「4以上」と出す。値だけにすると下限を断定した表示になる

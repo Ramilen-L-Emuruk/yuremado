@@ -1,7 +1,7 @@
 // リアルタイムタブの右パネル。地図エリアは JapanMap が強震モニタ（観測点）と
 // 予報円を描画し、ここでは EEW 情報カード・強震モニタ検知(V2)カード・注記を表示する。
 // 震度スケールの凡例は地図へ重ねる `MapLegend` が持つ（同じものを 2 箇所に出さない）。
-import { memo, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useRef, useState } from 'react'
 import { useFieldFlash, type FieldFlash } from '../../hooks/useFieldFlash'
 import { EEW_FLASH_COLOR, UPDATE_MARK_WASH, EEW_HIGHLIGHT_FADE_MS } from '../../utils/updateMark'
 import type { EEWAlert } from '../../types/earthquake'
@@ -9,7 +9,7 @@ import type { DetectionEvent, Confidence } from '../../utils/kyoshinDetector'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdown'
 import { usePageVisible } from '../../hooks/usePageVisible'
-import { formatDateTime, formatDepth, hasDepth, magnitudeTypeLabel } from '../../utils/formatters'
+import { formatDateTime, formatDepth, formatMagnitudeValue, hasDepth, hasMagnitude, magnitudeTypeLabel } from '../../utils/formatters'
 import { getIntensityColor, getIntensityLabel, getIntensityLabelWithApproxAbove, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
 import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst, eewIssueTimeMs } from '../../utils/eew'
@@ -22,6 +22,15 @@ import { SerialBadge } from '../SerialBadge'
 import { isEewWarningKindCode } from '../../utils/eewKind'
 import { serverNow } from '../../utils/clock'
 import { log } from '../../utils/logger'
+import { hasKnownEpicenter } from '../../utils/geo'
+
+/**
+ * カードの「地震発現時刻」の見出しに添える吹き出しの文（ホバー・タップで出る）。発生時刻と数秒しか
+ * 違わないことが多く、違いを知らないと食い違いに見えるため（2026-10-22 ユーザー承認「ホバーで説明を出す」。
+ * 文面は選択肢に書いた「観測点が地震を検知した時刻」のまま）。発生時刻の行には添えない。
+ */
+const EEW_ARRIVAL_TIME_DESCRIPTION = '観測点が地震を検知した時刻'
+
 
 interface Props {
   eews: EEWAlert[]
@@ -270,6 +279,9 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
   // **値が無いときは整形を呼ばない。** 呼ぶと「読めない値が来た」として記録され、
   // 「電文が時刻を持たない」ことと区別が付かなくなる（他の呼び出しと表記も揃う）。
   const originTimeText = eew.earthquake.originTime ? formatDateTime(eew.earthquake.originTime) : null
+  // 地震発現時刻（`Earthquake/ArrivalTime`）。Yahoo hypoInfo の報（standard 版）は配信せず空文字が入るので、
+  // 空なら整形を呼ばずに行ごと出さない（上と同じ理由）。P2PQuake の報は値を持つ。
+  const arrivalTimeText = eew.earthquake.arrivalTime ? formatDateTime(eew.earthquake.arrivalTime) : null
   // 震源が決まっていない報（仮定震源要素と「非常に強い揺れを検知」の報。→ `isProvisionalHypocenter`）。
   // 震源・規模・深さは仮の値（観測点直下 10km）なので、数値は伏せ、地名には未確定である旨を添える。
   const isAssumed = isProvisionalHypocenter(eew)
@@ -288,7 +300,13 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
   const flash = useFieldFlash(eew.issue?.eventId ?? eew.id, {
     // 震央地名には大小が無いので `rank` を付けない（動いたことしか言えない）。
     hypocenterName: hypocenter.name ? { key: hypocenter.name } : undefined,
-    magnitude: isAssumed ? undefined : { key: hypocenter.magnitude.toFixed(1), rank: hypocenter.magnitude },
+    // 規模が判らない報（`NaN`）にも順序を付けない（深さの番兵と同じ形）。
+    magnitude: isAssumed
+      ? undefined
+      : hasMagnitude(hypocenter.magnitude)
+        ? { key: hypocenter.magnitude.toFixed(1), rank: hypocenter.magnitude }
+        // 規模の説明（「Ｍ不明」→「Ｍ８を超える巨大地震」など）が変わったら印を出す（→ `magnitudeCondition`）
+        : { key: hypocenter.magnitudeCondition ?? '' },
     // **浅いほど危険なので順序は符号を反転させる**（地震カードと揃える）。
     //
     // **深さが判らない報（センチネル `-1`）には順序を付けない。** 符号を反転させると
@@ -305,6 +323,13 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
       // 上限が定まらない報（「震度4程度以上」）は同じ階級でも別の値。**順序は階級で見る**
       // —— 「程度以上」が付いたかどうかは大小ではない。
       ? { key: `${maxScale}${maxScaleOrAbove ? '+' : ''}`, rank: maxScale }
+      : undefined,
+    // 新たに警報の対象に加わった地方（電文の 2 つ目の `Item`。→ `addedWarningRegions`）。
+    // **色を当てるのはその地方名だけ**（2026-10-22 ユーザー承認「一瞬色を付ける」）。
+    // 順序は地方の数で見る —— 加わったなら数が増えるので「上がった」の色になる。
+    // 警報の地方が無い報では欄ごと無いので、初めて警報になった報では光らない（欄の初出は動いたことにしない）。
+    addedWarningRegions: (eew.warningRegions?.length ?? 0) > 0
+      ? { key: (eew.addedWarningRegions ?? []).join('・'), rank: eew.warningRegions!.length }
       : undefined,
   })
   /**
@@ -505,9 +530,9 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
         }}
       >
         {headerLabel}
-        {/* 電文が自分で名乗っている運用種別（`Control/Status`）。**本物と見分けられるようにする** ——
-            設定「試験報・訓練報を受信する」を有効にすると、検証用にこれらもカード・音・地図へ
-            流している（`services/dmdata.ts`）ので、印が無いと画面では区別がつかない。 */}
+        {/* 運用種別（DMDATA は電文の `Control/Status`、標準版は強震モニタの `isTraining`・P2PQuake の `test` から
+            `admitTrainingEew` が付ける）。**本物と見分けられるようにする** —— 設定「試験報を受信（検証用）」を
+            有効にすると、検証用にこれらもカード・音・地図へ流しているので、印が無いと画面では区別がつかない。 */}
         {eew.operationStatus && (
           <span
             className="ml-2 px-1.5 py-0.5 rounded-sm font-bold"
@@ -619,8 +644,20 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
                 {/* **並びは読み上げと同じ標準順へ揃える**（`sortEewWarningRegions`）。
                     電文の文書順は続報で入れ替わるので、そのまま出すと聞いた順と食い違う。
                     区切りが下の「対象地域」欄（` / `）と違うのは、こちらを見出しの大きさで
-                    並べているため —— 日本語で地名を続ける書き方に寄せてある。 */}
-                {sortEewWarningRegions(eew.warningRegions!).join('・')}
+                    並べているため —— 日本語で地名を続ける書き方に寄せてある。
+                    新たに加わった地方だけを、他の欄と同じ減衰で一瞬光らせる（`flash.addedWarningRegions`）。 */}
+                {sortEewWarningRegions(eew.warningRegions!).map((name, i) => {
+                  const added = eew.addedWarningRegions?.includes(name) === true
+                  const f = added ? fade(flash.addedWarningRegions) : undefined
+                  return (
+                    <Fragment key={name}>
+                      {i > 0 && '・'}
+                      {f
+                        ? <span key={f.key} className={`rounded${f.className}`} style={f.style}>{name}</span>
+                        : name}
+                    </Fragment>
+                  )
+                })}
               </div>
             )}
             {eew.warningComment && (
@@ -639,11 +676,20 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
             どれを「最新」とみなすかの並び順も同じ値を読む。据え置きの根拠・読む場所の一覧・実測は
             → `docs/spec/eew-spec.md` §3「地震の時刻は発生時刻を出す」。
 
-            日時として読めなければ欄ごと出さない（「ごろ」だけが残ると、時刻を
+            地震発現時刻（`Earthquake/ArrivalTime`）を下に並べる。見出しはどちらも気象庁の名前のまま
+            （2026-10-22 ユーザー承認「2 行とも名前を付ける」）。秒まで電文の値なので「ごろ」は付けない。
+            発現時刻の行にだけ、見出しへ意味の吹き出しを添える（→ `EEW_ARRIVAL_TIME_DESCRIPTION`。同じカードの「精度情報」と同じ部品）。
+
+            日時として読めなければその行ごと出さない（見出しだけが残ると、時刻を
             読み落としたのか電文が出していないのか分からない）。 */}
-        {originTimeText && (
+        {(originTimeText || arrivalTimeText) && (
           <div className="text-secondary text-[0.9375rem] roomy:text-[1.125rem]">
-            {originTimeText}ごろ
+            {originTimeText && <div>地震発生時刻 {originTimeText}</div>}
+            {arrivalTimeText && (
+              <div>
+                <DescriptionTip label="地震発現時刻" description={EEW_ARRIVAL_TIME_DESCRIPTION} /> {arrivalTimeText}
+              </div>
+            )}
           </div>
         )}
 
@@ -695,8 +741,9 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
           </div>
         )}
 
-        {/* マグニチュード・深さ（2カラムグリッド）：仮定震源要素のときは固定の仮定値のため非表示 */}
-        {hypocenter.name && !isAssumed && (
+        {/* マグニチュード・深さ（2カラムグリッド）：仮定震源要素のときは固定の仮定値のため非表示。
+            震央地名が空でも、座標が判っていれば出す（地名が付かないだけで震源は決まっている） */}
+        {!isAssumed && (hypocenter.name || hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)) && (
           <div className="grid grid-cols-2 gap-2">
             <div
               className="flex flex-col gap-0.5 rounded-lg p-2 roomy:gap-1 roomy:p-2.5"
@@ -713,7 +760,7 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
                 className={`font-black leading-none text-[1.25rem] roomy:text-[1.5rem] rounded${fade(flash.magnitude).className}`}
                 style={{ color: '#ffffff', ...fade(flash.magnitude).style }}
               >
-                {hypocenter.magnitude.toFixed(1)}
+                {formatMagnitudeValue(hypocenter.magnitude, hypocenter.magnitudeCondition)}
               </span>
               {/* 規模の種別（`jmx_eb:Magnitude@type`）。**開いた地震カードと同じ扱い** ——
                   見出しが「マグニチュード」で記号を置けないので語で添える（2026-10-22 ユーザー承認
@@ -983,7 +1030,7 @@ const LABEL_ORDER = ['7', '6強', '6弱', '5強', '5弱', '4', '3', '2', '1', '0
  */
 function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
   // **地震が複数あれば、1 枚の中に地震ごとの行を並べる**（2026-10-18 ユーザー承認「1 枚に行を並べる」）。
-  // 区域名と注記は 1 回だけ出す（どの行も同じ区域・同じ出どころの値）。地震の名前は 2 件以上のときだけ添え、
+  // 区域名と注記は 1 回だけ出す（どの行も同じ区域・同じ出どころの値。混ざった枠だけは下の `mixed` のとおり行ごと）。地震の名前は 2 件以上のときだけ添え、
   // 1 件のときは今までと同じ見た目のまま。枠の色と見出しは先頭の行に合わせる（2026-10-18 ユーザー承認
   // 「先頭の行に合わせる」）—— 並びは到達済みが先頭なので、どれか 1 つでも届いていれば到達済みになる。
   //
@@ -996,9 +1043,18 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
   // 並びは予測の無い行を最後へ置くので、先頭が予測なしなら全行が予測なし
   const noForecastOnly = lead.noForecast
   const borderColor = noForecastOnly ? '#6b7280' : lead.arrived ? '#ef4444' : '#f97316'
-  const scopeLabel = arrival.source === 'telegram' && arrival.areaName
-    ? arrival.areaName
-    : 'ホーム地点'
+  // **自前計算の行と発表値の行が混ざった枠（`'mixed'`）は、範囲を行ごとに出し、注記を 2 つとも出す**
+  // （2026-10-22 ユーザー承認「行ごとに範囲を出す (Recommended)」）。1 回だけ出すと、どちらかの行の範囲を偽って伝える
+  const mixed = arrival.source === 'mixed'
+  const scopeOf = (source: 'telegram' | 'own') => source === 'telegram' && arrival.areaName ? arrival.areaName : 'ホーム地点'
+  const scopeLabel = scopeOf(arrival.source === 'own' ? 'own' : 'telegram')
+  // 注記はそれが説明する行があるときだけ出す。気象庁の注記は**到達予測時刻を出した発表値の行**があるときだけ（距離だけの行は
+  // 時刻を出していない。2026-10-22 ユーザー承認「時刻のある行があるときだけ (Recommended)」）
+  const notes = [
+    ...(arrival.rows.some((r) => r.source === 'telegram' && !r.noForecast)
+      ? ['※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'] : []),
+    ...(arrival.rows.some((r) => r.source === 'own') ? ['※推定値。実際の到達時間は異なる場合があります'] : []),
+  ]
   const heading = noForecastOnly
     ? (single && lead.distanceKm !== null ? `震源から ${lead.distanceKm.toFixed(0)} km` : '主要動の到達予測なし')
     : lead.arrived ? '主要動 到達済み' : '主要動 到達カウントダウン'
@@ -1017,7 +1073,7 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
           <span className="text-xs text-secondary ml-auto">震源から {lead.distanceKm.toFixed(0)} km</span>
         )}
       </div>
-      <p className="text-xs text-secondary mb-1">{scopeLabel}</p>
+      {!mixed && <p className="text-xs text-secondary mb-1">{scopeLabel}</p>}
       {single ? (
         <SWaveArrivalCountdown row={lead} />
       ) : (
@@ -1032,17 +1088,16 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
                 <span className="text-xs text-secondary ml-auto shrink-0">震源から {row.distanceKm.toFixed(0)} km</span>
               )}
             </div>
+            {mixed && <p className="text-xs text-secondary">{scopeOf(row.source)}</p>}
             <SWaveArrivalCountdown row={row} />
           </div>
         ))
       )}
-      {!noForecastOnly && (
-        <p className={`text-xs text-secondary mt-1${single ? '' : ' border-t border-border pt-1'}`}>
-          {arrival.source === 'telegram'
-            ? '※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'
-            : '※推定値。実際の到達時間は異なる場合があります'}
+      {!noForecastOnly && notes.map((note, i) => (
+        <p key={note} className={`text-xs text-secondary ${i === 0 ? 'mt-1' : ''}${i === 0 && !single ? ' border-t border-border pt-1' : ''}`}>
+          {note}
         </p>
-      )}
+      ))}
     </div>
   )
 }

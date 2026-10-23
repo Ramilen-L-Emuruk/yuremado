@@ -168,7 +168,8 @@ function eewRegion(): EewSample['areas'][number] {
 function eewSample(): EewSample {
   return {
     headline: '見出し',
-    warningRegions: ['北陸'],
+    warningRegions: ['北陸', '甲信'],
+    addedWarningRegions: ['甲信'],
     infoName: '緊急地震速報（警報）',
     cancelText: '取消',
     strongShakingOnly: true,

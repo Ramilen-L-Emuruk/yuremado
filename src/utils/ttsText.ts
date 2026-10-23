@@ -1420,9 +1420,17 @@ export function eewWarningRegionsText(
   const names = regions.join('、')
   const prefix = announceUpgrade ? EEW_UPGRADE_PHRASE : ''
   return prefix + (isAdditional
-    ? `新たに、${names}でも強い揺れに警戒してください。`
-    : `${names}では強い揺れに警戒してください。`)
+    ? `新たに、${names}でも${EEW_WARNING_REGIONS_CLOSING}。`
+    : `${names}では${EEW_WARNING_REGIONS_CLOSING}。`)
 }
+
+/**
+ * {@link eewWarningRegionsText} の締めの句。**地方名の既読はこの句が声になったかで決める**
+ * （`useLiveEventHandler` の第 1.5 フェーズ）。地方名だけ鳴って締めが切られた回は、
+ * 「どこで何に警戒するか」が伝わっていないので、既読にせず次の報で読み直す。
+ * 文を作る側と判定する側が同じ文字列を見るよう、ここに 1 つだけ置く。
+ */
+export const EEW_WARNING_REGIONS_CLOSING = '強い揺れに警戒してください'
 
 /**
  * 予想震度が付いていないときの句。理由の判定は `eewNoForecastReason` に委ねる
@@ -3470,6 +3478,7 @@ export function tsunamiTideToSegments(
   const headlinePart = speakableHeadline(headline) || TIDE_REPORT_FALLBACK_HEADLINE
   const tail = change === 'tide' ? '満潮時刻が更新されました。'
     : change === 'arrival' ? '津波の到達状況が更新されました。'
+    : change === 'arrivalTime' ? '津波の到達予想時刻が更新されました。'
     : change === 'none' ? '内容に変わりはありません。'
     : ''
   return [plain(`${headlinePart}${tail}`)]

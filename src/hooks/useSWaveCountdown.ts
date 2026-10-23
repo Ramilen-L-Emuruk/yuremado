@@ -7,6 +7,7 @@ import { hasKnownEpicenter, haversineKm } from '../utils/geo'
 import { serverNow } from '../utils/clock'
 import { log } from '../utils/logger'
 import { homeAreaArrivalOf, useHomeAreaName } from './useHomeAreaArrival'
+import { computeEewCircle } from './usePsWaveCalc'
 
 /**
  * 登録地点への主要動到達の見込み。**地震ごとに 1 行**（`rows`）。
@@ -25,9 +26,12 @@ import { homeAreaArrivalOf, useHomeAreaName } from './useHomeAreaArrival'
  * どちらを出しているか判らない表示にすると、区域の値が地点の値として読まれる。
  */
 export interface SWaveArrival {
-  /** `'telegram'` = 気象庁の区域ごとの発表値／`'own'` = 自前の走時計算（地点） */
-  source: 'telegram' | 'own'
-  /** 気象庁が値を出した区域の名前。`source === 'own'` では null。どの行も同じ区域の値なので 1 つだけ持つ。 */
+  /**
+   * 行の出どころ。`'telegram'` = どの行も気象庁の区域ごとの発表値／`'own'` = どの行も自前の走時計算（地点）／
+   * `'mixed'` = 両方の行がある（自前計算の端末で、自前計算できない地震の行だけ発表値へ戻したとき。→ 各行の `source`）
+   */
+  source: 'telegram' | 'own' | 'mixed'
+  /** 気象庁が値を出した区域の名前。発表値の行が無ければ null。発表値の行はどれも同じ区域の値なので 1 つだけ持つ。 */
   areaName: string | null
   /**
    * 地震ごとの行。**1 件以上**（出す行が無ければ `SWaveArrival` ごと null）。
@@ -41,6 +45,8 @@ export interface SWaveArrival {
 export interface SWaveArrivalRow {
   /** 地震の鍵（`eewEventKey`）。行の見分けと、並びが同点のときの決め手。 */
   key: string
+  /** この行の出どころ（`'telegram'` = 気象庁の区域ごとの発表値／`'own'` = 自前の走時計算）。画面は混ざった枠でこれを行ごとに出す */
+  source: 'telegram' | 'own'
   /**
    * 震央地名。**短縮用震央地名（`ReduceName`）があればそちらで、無ければ通常の震央地名**
    * （→ {@link hypocenterNameOf}）。カードの見出しとは別の名前になりうる。無ければ null。
@@ -152,6 +158,42 @@ function hypocenterNameOf(eew: EEWAlert | undefined): string | null {
   return name ? name : null
 }
 
+/**
+ * 気象庁の発表値の 1 行（公開版の経路と、自前計算できない地震を戻す経路が共有する）。
+ *
+ * **登録地点の区域に値を出していない速報も、震源が判っていれば距離だけの行にする**（`noForecast`。
+ * 2026-10-14 ユーザー承認「距離だけのカードを出す」）。震源が決まっていない報・位置不明・取消済みは距離を出せないので
+ * 行を作らず null を返す。距離は同じ速報の震源から測る —— 秒数と距離が別の地震を指さないように。
+ */
+function telegramRow(eew: EEWAlert, home: { lat: number; lng: number }, homeAreaName: string, now: number): SWaveArrivalRow | null {
+  // 取り消された速報は出さない（呼び出し元の一覧は取消済みを外してあるが、距離の判定と同じ流儀でここでも弾く）
+  if (eew.cancelled || eew.cancelledAt) return null
+  const area = homeAreaArrivalOf(eew, homeAreaName)
+  if (area === null) {
+    const distanceKm = epicenterDistanceKm(eew, home)
+    if (distanceKm === null) return null
+    return {
+      key: eewEventKey(eew), source: 'telegram', hypocenterName: hypocenterNameOf(eew),
+      provisional: false, distanceKm, etaSec: null, arrived: false, noForecast: true,
+    }
+  }
+  const etaSec = area.arrivalMs === null ? null : Math.max(0, Math.round((area.arrivalMs - now) / 1000))
+  return {
+    key: eewEventKey(eew), source: 'telegram', hypocenterName: hypocenterNameOf(eew),
+    provisional: isProvisionalHypocenter(eew), distanceKm: epicenterDistanceKm(eew, home),
+    etaSec, arrived: area.arrived || etaSec === 0, noForecast: false,
+  }
+}
+
+/** 行の並びから枠の出どころを決める（→ `SWaveArrival.source`）。 */
+function arrivalOf(rows: SWaveArrivalRow[], homeAreaName: string | null): SWaveArrival | null {
+  if (rows.length === 0) return null
+  const hasOwn = rows.some((r) => r.source === 'own')
+  const hasTelegram = rows.some((r) => r.source === 'telegram')
+  const source = hasOwn && hasTelegram ? 'mixed' : hasOwn ? 'own' : 'telegram'
+  return { source, areaName: hasTelegram ? homeAreaName : null, rows: rows.sort(compareArrivalRows) }
+}
+
 /** 自前計算の経路で、地震ごとに持ち越す値（S 波の波面がまだ地表に出ていない間の速度の見積もり）。 */
 interface OwnCalcTrack {
   prevSRadius: number | null
@@ -182,11 +224,12 @@ export function useSWaveCountdown(
 
   // 発表値を使う経路の計時。予報円の更新に相乗りできない理由は TELEGRAM_TICK_MS のコメント。
   const [tick, setTick] = useState(0)
+  // **自前計算の端末でも回す** —— 自前計算できない地震の行は発表値へ戻すので（→ 下の自前計算の経路）、その行の秒数もこれで進める
   useEffect(() => {
-    if (!hasActiveEEW || home === null || allowOwnCalculation) return
+    if (!hasActiveEEW || home === null) return
     const id = setInterval(() => setTick((t) => t + 1), TELEGRAM_TICK_MS)
     return () => clearInterval(id)
-  }, [hasActiveEEW, home, allowOwnCalculation])
+  }, [hasActiveEEW, home])
 
   useEffect(() => {
     if (home === null || !hasActiveEEW) {
@@ -197,12 +240,7 @@ export function useSWaveCountdown(
 
     if (!allowOwnCalculation) {
       // **気象庁の発表値を伝えるだけ。** 区域の値なので区域名を添える。
-      // 地震ごとに、その速報が登録地点の区域について出した値を使う（別の地震の値と混ぜない）。
-      // 距離も同じ速報の震源から測る —— 秒数と距離が別の地震を指さないように。
-      //
-      // **登録地点の区域に値を出していない速報も、震源が判っていれば距離だけの行にする**（`noForecast`。
-      // 2026-10-14 ユーザー承認「距離だけのカードを出す」）。以前は行ごと捨てていたので、距離は観測事実なのに
-      // 「区域が載らない地震」では何も出なかった。震源が決まっていない報・位置不明・取消済みは距離を出せないので行を作らない。
+      // 地震ごとに、その速報が登録地点の区域について出した値を使う（別の地震の値と混ぜない。→ `telegramRow`）。
       tracksRef.current.clear()
       if (homeAreaName === null) {
         setArrival(null)
@@ -211,33 +249,10 @@ export function useSWaveCountdown(
       const now = serverNow()
       const rows: SWaveArrivalRow[] = []
       for (const eew of eews) {
-        const area = homeAreaArrivalOf(eew, homeAreaName)
-        if (area === null) {
-          const distanceKm = epicenterDistanceKm(eew, home)
-          if (distanceKm === null) continue
-          rows.push({
-            key: eewEventKey(eew),
-            hypocenterName: hypocenterNameOf(eew),
-            provisional: false,
-            distanceKm,
-            etaSec: null,
-            arrived: false,
-            noForecast: true,
-          })
-          continue
-        }
-        const etaSec = area.arrivalMs === null ? null : Math.max(0, Math.round((area.arrivalMs - now) / 1000))
-        rows.push({
-          key: eewEventKey(eew),
-          hypocenterName: hypocenterNameOf(eew),
-          provisional: isProvisionalHypocenter(eew),
-          distanceKm: epicenterDistanceKm(eew, home),
-          etaSec,
-          arrived: area.arrived || etaSec === 0,
-          noForecast: false,
-        })
+        const row = telegramRow(eew, home, homeAreaName, now)
+        if (row !== null) rows.push(row)
       }
-      setArrival(rows.length === 0 ? null : { source: 'telegram', areaName: homeAreaName, rows: rows.sort(compareArrivalRows) })
+      setArrival(arrivalOf(rows, homeAreaName))
       return
     }
 
@@ -247,6 +262,10 @@ export function useSWaveCountdown(
     const tracks = tracksRef.current
     const live = new Set<string>()
     const rows: SWaveArrivalRow[] = []
+    // 自前計算で行を作れた地震。**作れなかった地震（予報円の無い報・解除までに届かない地震）は、下で気象庁の発表値の行へ戻す**
+    // —— キーの無い端末なら同じ報で発表値が出るので、キーを入れたほうが伝わる情報が減っていた
+    // （2026-10-21 ユーザー承認「直す (Recommended)」）
+    const ownKeys = new Set<string>()
     for (const circle of psWave) {
       live.add(circle.eventId)
       let track = tracks.get(circle.eventId)
@@ -272,10 +291,22 @@ export function useSWaveCountdown(
       }
       const row = ownCalcRow(circle, home, track, eew)
       track.prevSRadius = circle.sRadius
-      if (row !== null) rows.push(row)
+      if (row !== null) { rows.push(row); ownKeys.add(row.key) }
     }
     for (const key of [...tracks.keys()]) if (!live.has(key)) tracks.delete(key)
-    setArrival(rows.length === 0 ? null : { source: 'own', areaName: null, rows: rows.sort(compareArrivalRows) })
+    if (homeAreaName !== null) {
+      const now = serverNow()
+      for (const eew of eews) {
+        const key = eewEventKey(eew)
+        if (ownKeys.has(key)) continue
+        // **円が作れる速報で、円がまだ届いていないだけなら待つ。** 予報円は別の更新（`usePsWaveCalc`）で作られるので、
+        // 新しい速報の最初の一瞬は円が無い。ここで発表値の行を出すと、次の更新で自前計算の行へ替わって秒数が跳ぶ
+        if (!live.has(key) && computeEewCircle(eew, now) !== null) continue
+        const row = telegramRow(eew, home, homeAreaName, now)
+        if (row !== null) rows.push(row)
+      }
+    }
+    setArrival(arrivalOf(rows, homeAreaName))
     // `eews` は行の地名と、発表値の経路で区域の値を引くのに要る。
   }, [psWave, eews, home, hasActiveEEW, allowOwnCalculation, homeAreaName, tick])
 
@@ -295,6 +326,13 @@ function ownCalcRow(
   const distanceKm = haversineKm(circle.lat, circle.lng, home.lat, home.lng)
   const sRadiusKm = circle.sRadius
   let arrived = sRadiusKm >= distanceKm
+
+  // **S 波がまだ地表に出ていない間も、解除までに届かない地震は先に見分ける**（下の判定と同じ式）。待つと「推定中」の
+  // 自前計算の行を数秒出してから発表値の行へ替わり、範囲と注記が途中で入れ替わる（深い地震ほど長い）
+  if (sRadiusKm <= 0 && circle.depth !== undefined && circle.magnitude !== undefined) {
+    const tArrivalWithMargin = travelTimeSec('S', distanceKm, circle.depth) + calcArrivalSafetyMarginSec(distanceKm)
+    if (tArrivalWithMargin >= calcEEWAutoCancelSec(circle.magnitude, circle.depth)) return null
+  }
 
   let etaSec: number | null
   if (circle.depth !== undefined && sRadiusKm > 0) {
@@ -352,6 +390,7 @@ function ownCalcRow(
 
   return {
     key: circle.eventId,
+    source: 'own',
     hypocenterName: hypocenterNameOf(eew),
     provisional: false,
     distanceKm,
