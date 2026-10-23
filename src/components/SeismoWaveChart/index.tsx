@@ -34,7 +34,7 @@
 // 置いて間引く。**`setInterval` ではなく rAF を使うのは、タブが隠れている間は
 // 止まってほしいから。**
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { SeismoStationState, SeismoStations } from '../../hooks/useSeismoStation'
 import { PUBLIC_WAVE_STALE_MS, type PublicWaves } from '../../hooks/usePublicWaves'
 import type { SeismoWaveCollapsedView } from '../../hooks/useSettings'
@@ -166,6 +166,17 @@ interface Props {
    * **自作地震計の段は寄せない** —— 自宅の位置を地図に出さないため（同 §7）。
    */
   onFocusStation: (positions: LatLng[]) => void
+  /**
+   * 先頭の段の高さ（px）が変わったら知らせる。縦積みのレイアウトが、地図を正方形に保ったうえで波形の 1 段ぶんを
+   * 残すのに使う（`utils/squareMapLayout.ts`）。枠の上限（`STACK_MAX_HEIGHT_CLASS`）で頭打ちにした値で、
+   * 枠を外したときは `null`。
+   */
+  onLeadRowHeightChange: (px: number | null) => void
+  /**
+   * 枠が隠れているか（縦積みでパネルを広げたとき。`utils/squareMapLayout.ts`）。**隠れている間は絵を組まない**
+   * （見えない枠のために全段を描き続けない）。出たらすぐ組み直す。
+   */
+  paused: boolean
 }
 
 /**
@@ -203,7 +214,7 @@ interface LiveWaveSource {
 /** 段を積む枠の高さの上限（画面の 3 分の 1。`docs/public-waveform-design.md` §0）。超えた分は枠の中で上下にずらして見る。 */
 const STACK_MAX_HEIGHT_CLASS = 'max-h-[33vh]'
 
-export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView, expanded, onToggleExpanded, arrivalEews, spanSec, onFocusStation }: Props) {
+export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView, expanded, onToggleExpanded, arrivalEews, spanSec, onFocusStation, onLeadRowHeightChange, paused }: Props) {
   // **公開観測点の段は縦の範囲を全段で揃え、縦を対数に近い曲線で圧縮する**（2026-10-19 ユーザー選択「線形で始めて測る
   // (Recommended)」、続けて「縦を圧縮する (Recommended)」）。段ごとに伸ばすと、揺れた 1 点だけ線が縮み、どこが揺れているか・
   // どれだけ揺れたかを見比べられない。揃えて線形のままだと、遠い観測点が平らになる（`verticalMap.ts`）。
@@ -247,10 +258,42 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
       })
     })
   }
+  const leadId = sources.length > 0 ? sources[0].id : null
+  const stackRef = useRef<HTMLDivElement>(null)
+  const onLeadRowHeightChangeRef = useRef(onLeadRowHeightChange)
+  onLeadRowHeightChangeRef.current = onLeadRowHeightChange
+  // **先頭の段の高さを見張る**（展開・畳む、文字の倍率で変わる）。先頭の観測点が入れ替わったら付け直す。
+  // 段は枠の中で縮まない（枠がスクロールする）ので、枠が詰められていても段そのものの高さが読める。
+  // **知らせるのは枠の上限で頭打ちにした値** —— 展開して段が上限を超えても、枠はそこまでしか使わない。
+  // 上限は画面の高さで決まるので、画面の大きさが変わったときも測り直す。
+  // **描く前に知らせ、外すときは `null` へ戻す** —— 古い高さが残ると、次に枠が出た最初の描画を前回の高さで組んでしまう。
+  useLayoutEffect(() => {
+    const stack = stackRef.current
+    const row = stack?.firstElementChild
+    if (!stack || !(row instanceof HTMLElement)) return
+    const report = () => {
+      const rowHeight = row.getBoundingClientRect().height
+      const cap = Number.parseFloat(getComputedStyle(stack).maxHeight)
+      onLeadRowHeightChangeRef.current(Number.isFinite(cap) ? Math.min(rowHeight, cap) : rowHeight)
+    }
+    report()
+    if (typeof ResizeObserver === 'undefined') {
+      log.warn('[seismo-wave] 波形の段の高さを見張れないため、縦積みの画面で地図を正方形に保つ配り方は最初に測った高さのまま動きます')
+      return () => onLeadRowHeightChangeRef.current(null)
+    }
+    const observer = new ResizeObserver(report)
+    observer.observe(row)
+    window.addEventListener('resize', report)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', report)
+      onLeadRowHeightChangeRef.current(null)
+    }
+  }, [leadId])
   // 段が 0 なら何も描かない。判定は呼び出し側（App の帯の下端の余白）と共有する（→ chartRows.ts）
   if (!hasWaveChartRows(stations, publicWaves)) return null
   return (
-    <div className={`w-full ${STACK_MAX_HEIGHT_CLASS} overflow-y-auto overscroll-contain`}>
+    <div ref={stackRef} className={`w-full ${STACK_MAX_HEIGHT_CLASS} overflow-y-auto overscroll-contain`}>
       {sources.map((source, i) => (
         <StationWave
           key={source.id}
@@ -262,6 +305,7 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
           onToggleExpanded={onToggleExpanded}
           arrivalEews={arrivalEews}
           spanSec={spanSec}
+          paused={paused}
         />
       ))}
     </div>
@@ -276,7 +320,8 @@ function StationWave({
   onToggleExpanded,
   arrivalEews,
   spanSec,
-}: Omit<Props, 'stations' | 'readWave' | 'publicWaves' | 'onFocusStation'> & { source: LiveWaveSource; showControls: boolean }) {
+  paused,
+}: Omit<Props, 'stations' | 'readWave' | 'publicWaves' | 'onFocusStation' | 'onLeadRowHeightChange'> & { source: LiveWaveSource; showControls: boolean }) {
   const axes = useWaveAxes()
   const lanes = useMemo<readonly Lane[]>(() => {
     if (!expanded) return [{ kind: collapsedView }]
@@ -347,6 +392,8 @@ function StationWave({
   useEffect(() => {
     redrawNowRef.current = true
   }, [lanes, spanSec])
+  const pausedRef = useRef(paused)
+  pausedRef.current = paused
   const arrivalsRef = useRef(arrivals)
   arrivalsRef.current = arrivals
   const scaleTextsRef = useRef(scaleTexts)
@@ -505,6 +552,11 @@ function StationWave({
 
     const tick = (now: number): void => {
       raf = requestAnimationFrame(tick)
+      // 隠れている間は組まない。出たら間隔を待たずに組み直す。
+      if (pausedRef.current) {
+        redrawNowRef.current = true
+        return
+      }
       const composeDue = now - lastComposeAt >= COMPOSE_INTERVAL_MS || redrawNowRef.current
       if (!composeDue && now - lastFrameAt < FRAME_INTERVAL_MS - FRAME_SLACK_MS) return
       lastFrameAt = now
