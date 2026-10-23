@@ -335,6 +335,57 @@ describe('convertEvent', () => {
       expect(convert({ ...REAL_EEW, id: '' })).toBeNull()
     })
   })
+  // **WebSocket は番号を `id` ではなく `_id` で配る**（公式の API 定義は `id` と書いている）。
+  // 素材は 2026-10-24 01:09 に WebSocket で届いた実物（震度速報）。電文ログから写した。
+  describe('WebSocket の電文（番号は `_id`）', () => {
+    const WS_QUAKE = {
+      _id: '6adb86c6e88ee598246bf413',
+      code: 551,
+      comments: { freeFormComment: '' },
+      earthquake: {
+        domesticTsunami: 'Checking',
+        foreignTsunami: 'Unknown',
+        hypocenter: { depth: -1, latitude: -200, longitude: -200, magnitude: -1, name: '' },
+        maxScale: 30,
+        time: '2026/10/24 01:07:00',
+      },
+      issue: { correct: 'None', source: '気象庁', time: '2026/10/24 01:09:41', type: 'ScalePrompt' },
+      points: [{ addr: '岩手県内陸北部', isArea: true, pref: '岩手県', scale: 30 }],
+      time: '2026/10/24 01:09:42.83',
+      timestamp: { convert: '2026/10/24 01:09:42.731', register: '2026/10/24 01:09:42.83' },
+      user_agent: 'jmaxml-seis-parser-go, relay, register-api',
+      ver: '20231023',
+    }
+
+    it('551: `_id` を番号として読む（ライブの地震情報が 1 通残らず捨てられていた）', () => {
+      const q = convert(WS_QUAKE) as JMAQuake
+      expect(q).not.toBeNull()
+      expect(q.id).toBe('6adb86c6e88ee598246bf413')
+      expect(q.telegramKey).toBe('6adb86c6e88ee598246bf413')
+      expect(q.points).toHaveLength(1)
+    })
+
+
+    // 552・556 の WebSocket の実物は採れていない（サンドボックスに 5 分繋いで 551 しか来なかった）。
+    // 採れた 4 種別（551・555・561・9611）がすべて `_id` だったので、同じ形を当てて固定する
+    it('552 / 556: `_id` を番号として読む', () => {
+      const { id: tsunamiId, ...tsunami } = SPEC_TSUNAMI
+      const { id: eewId, ...eew } = REAL_EEW
+      expect((convert({ ...tsunami, _id: tsunamiId }) as JMATsunami).id).toBe(tsunamiId)
+      expect((convert({ ...eew, _id: eewId }) as EEWAlert).id).toBe(eewId)
+    })
+
+
+    it('`id` と `_id` の両方があれば `id` を採る（REST の形を変えない）', () => {
+      expect((convert({ ...REAL_QUAKE, _id: 'ws-side' }) as JMAQuake).id).toBe(REAL_QUAKE.id)
+    })
+
+    it('`id` も `_id` も無ければ、これまでどおり破棄する', () => {
+      const { _id: _drop, ...noId } = WS_QUAKE
+      expect(convert(noId)).toBeNull()
+      expect(warnSpy).toHaveBeenCalledWith('[p2pquake] 551: id が無いため電文を破棄', expect.anything())
+    })
+  })
 
   describe('震度値の正規化', () => {
     function pointScale(scale: unknown) {

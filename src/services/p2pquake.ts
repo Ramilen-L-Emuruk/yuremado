@@ -227,6 +227,19 @@ function requiredStr(v: unknown, context: string, field: string): string {
   return s
 }
 
+/**
+ * 電文の番号（情報を一意に識別する ID）を読む。無ければ空文字。
+ *
+ * **REST（`/history`・`/jma`）は `id`、WebSocket は `_id` という名前で配る。** 公式の API 定義は
+ * どちらも `id` と書き、WebSocket は「JSON API と全く同じもの」と言っているが、実物は違う
+ * （2026-10-24 にライブの電文ログ 127 通を見ると、届いていた 4 種別（551・555・561・9611）は全部 `_id` で、
+ * `id` は 0 通だった。552・556 は届いておらず未観測だが、同じ口から同じ形で配ると見込んで同じ読み方を当てる）。
+ * `id` だけを読むと、WebSocket で届いた地震情報が 1 通残らず捨てられる。
+ */
+function readTelegramId(raw: Record<string, unknown>): string {
+  return str(raw.id) || str(raw._id)
+}
+
 /** API 仕様上は必須の真偽値フィールド。欠落は false に倒す（警報を勝手に消さない安全側）。 */
 function requiredBool(v: unknown, context: string, field: string): boolean {
   if (typeof v !== 'boolean') warnMissing(context, field)
@@ -270,7 +283,7 @@ function parseQuakePoints(v: unknown, context: string): EarthquakePoint[] {
 }
 
 function parseQuake(raw: Record<string, unknown>): JMAQuake | null {
-  const id = str(raw.id)
+  const id = readTelegramId(raw)
   // id と地震の時刻（`earthquake.time`）は同一性キー（quakeIdentityKey）の材料。どちらかが欠けると別々の地震が
   // 同じキーに潰れ、統合・選択・通知がまとめて狂う。ここだけは電文ごと捨てる。
   // API 仕様上いずれも必須フィールドなので、欠けていれば本当に壊れた電文。
@@ -371,7 +384,7 @@ function parseTsunamiAreas(v: unknown, context: string): TsunamiArea[] {
 }
 
 function parseTsunami(raw: Record<string, unknown>): JMATsunami | null {
-  const id = str(raw.id)
+  const id = readTelegramId(raw)
   if (!id) {
     log.warn('[p2pquake] 552: id が無いため電文を破棄', { time: raw.time })
     return null
@@ -434,7 +447,7 @@ function parseEEWRegions(v: unknown, context: string): EEWRegion[] {
 }
 
 function parseEEW(raw: Record<string, unknown>): EEWAlert | null {
-  const id = str(raw.id)
+  const id = readTelegramId(raw)
   if (!id) {
     log.warn('[p2pquake] 556: id が無いため電文を破棄', { time: raw.time })
     return null
@@ -506,7 +519,7 @@ export function convertEvent(raw: RawP2PEvent): AppEvent | null {
       }
     }
   } finally {
-    flushWarnCounts(`${code} id=${str(data.id)}`)
+    flushWarnCounts(`${code} id=${readTelegramId(data)}`)
   }
 }
 
