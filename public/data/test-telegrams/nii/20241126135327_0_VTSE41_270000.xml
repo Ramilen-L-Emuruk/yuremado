@@ -1,0 +1,146 @@
+<Report xmlns="http://xml.kishou.go.jp/jmaxml1/" xmlns:jmx="http://xml.kishou.go.jp/jmaxml1/">
+<Control>
+	<Title>津波警報・注意報・予報a</Title>
+	<DateTime>2024-11-26T13:53:27Z</DateTime>
+	<Status>通常</Status>
+	<EditorialOffice>大阪管区気象台</EditorialOffice>
+	<PublishingOffice>気象庁</PublishingOffice>
+</Control>
+<Head xmlns="http://xml.kishou.go.jp/jmaxml1/informationBasis1/">
+	<Title>津波予報</Title>
+	<ReportDateTime>2024-11-26T22:53:00+09:00</ReportDateTime>
+	<TargetDateTime>2024-11-26T22:53:00+09:00</TargetDateTime>
+	<ValidDateTime>2024-11-27T02:00:00+09:00</ValidDateTime>
+	<EventID>20241126224709</EventID>
+	<InfoType>発表</InfoType>
+	<Serial/>
+	<InfoKind>津波警報・注意報・予報</InfoKind>
+	<InfoKindVersion>1.0_1</InfoKindVersion>
+	<Headline>
+		<Text>津波予報（若干の海面変動）を発表しました。</Text>
+	</Headline>
+</Head>
+<Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/seismology1/" xmlns:jmx_eb="http://xml.kishou.go.jp/jmaxml1/elementBasis1/">
+	<Tsunami>
+	<Forecast>
+		<CodeDefine>
+			<Type xpath="Item/Area/Code">津波予報区</Type>
+			<Type xpath="Item/Category/Kind/Code">警報等情報要素／津波警報・注意報・予報</Type>
+			<Type xpath="Item/Category/LastKind/Code">警報等情報要素／津波警報・注意報・予報</Type>
+		</CodeDefine>
+		<Item>
+			<Area><Name>石川県能登</Name><Code>360</Code></Area>
+			<Category>
+				<Kind><Name>津波予報（若干の海面変動）</Name><Code>71</Code></Kind>
+				<LastKind><Name>津波なし</Name><Code>00</Code></LastKind>
+			</Category>
+			<MaxHeight>
+				<jmx_eb:TsunamiHeight type="津波の高さ" unit="m" description="０．２ｍ未満">0.2</jmx_eb:TsunamiHeight>
+			</MaxHeight>
+		</Item>
+		<Item>
+			<Area><Name>石川県加賀</Name><Code>361</Code></Area>
+			<Category>
+				<Kind><Name>津波予報（若干の海面変動）</Name><Code>71</Code></Kind>
+				<LastKind><Name>津波なし</Name><Code>00</Code></LastKind>
+			</Category>
+			<MaxHeight>
+				<jmx_eb:TsunamiHeight type="津波の高さ" unit="m" description="０．２ｍ未満">0.2</jmx_eb:TsunamiHeight>
+			</MaxHeight>
+		</Item>
+		<Item>
+			<Area><Name>福井県</Name><Code>370</Code></Area>
+			<Category>
+				<Kind><Name>津波予報（若干の海面変動）</Name><Code>71</Code></Kind>
+				<LastKind><Name>津波なし</Name><Code>00</Code></LastKind>
+			</Category>
+			<MaxHeight>
+				<jmx_eb:TsunamiHeight type="津波の高さ" unit="m" description="０．２ｍ未満">0.2</jmx_eb:TsunamiHeight>
+			</MaxHeight>
+		</Item>
+		<Item>
+			<Area><Name>京都府</Name><Code>500</Code></Area>
+			<Category>
+				<Kind><Name>津波予報（若干の海面変動）</Name><Code>71</Code></Kind>
+				<LastKind><Name>津波なし</Name><Code>00</Code></LastKind>
+			</Category>
+			<MaxHeight>
+				<jmx_eb:TsunamiHeight type="津波の高さ" unit="m" description="０．２ｍ未満">0.2</jmx_eb:TsunamiHeight>
+			</MaxHeight>
+		</Item>
+		<Item>
+			<Area><Name>兵庫県北部</Name><Code>520</Code></Area>
+			<Category>
+				<Kind><Name>津波予報（若干の海面変動）</Name><Code>71</Code></Kind>
+				<LastKind><Name>津波なし</Name><Code>00</Code></LastKind>
+			</Category>
+			<MaxHeight>
+				<jmx_eb:TsunamiHeight type="津波の高さ" unit="m" description="０．２ｍ未満">0.2</jmx_eb:TsunamiHeight>
+			</MaxHeight>
+		</Item>
+		<Item>
+			<Area><Name>鳥取県</Name><Code>540</Code></Area>
+			<Category>
+				<Kind><Name>津波予報（若干の海面変動）</Name><Code>71</Code></Kind>
+				<LastKind><Name>津波なし</Name><Code>00</Code></LastKind>
+			</Category>
+			<MaxHeight>
+				<jmx_eb:TsunamiHeight type="津波の高さ" unit="m" description="０．２ｍ未満">0.2</jmx_eb:TsunamiHeight>
+			</MaxHeight>
+		</Item>
+		<Item>
+			<Area><Name>島根県出雲・石見</Name><Code>550</Code></Area>
+			<Category>
+				<Kind><Name>津波予報（若干の海面変動）</Name><Code>71</Code></Kind>
+				<LastKind><Name>津波なし</Name><Code>00</Code></LastKind>
+			</Category>
+			<MaxHeight>
+				<jmx_eb:TsunamiHeight type="津波の高さ" unit="m" description="０．２ｍ未満">0.2</jmx_eb:TsunamiHeight>
+			</MaxHeight>
+		</Item>
+		<Item>
+			<Area><Name>隠岐</Name><Code>551</Code></Area>
+			<Category>
+				<Kind><Name>津波予報（若干の海面変動）</Name><Code>71</Code></Kind>
+				<LastKind><Name>津波なし</Name><Code>00</Code></LastKind>
+			</Category>
+			<MaxHeight>
+				<jmx_eb:TsunamiHeight type="津波の高さ" unit="m" description="０．２ｍ未満">0.2</jmx_eb:TsunamiHeight>
+			</MaxHeight>
+		</Item>
+	</Forecast>
+	</Tsunami>
+	<Earthquake>
+		<OriginTime>2024-11-26T22:47:00+09:00</OriginTime>
+		<ArrivalTime>2024-11-26T22:47:00+09:00</ArrivalTime>
+		<Hypocenter>
+			<Area>
+				<Name>石川県西方沖</Name>
+				<Code type="震央地名">494</Code>
+				<jmx_eb:Coordinate description="北緯３７．０度　東経１３６．５度　深さ　１０ｋｍ" datum="日本測地系">+37.0+136.5-10000/</jmx_eb:Coordinate>
+				<NameFromMark>輪島の南西６０ｋｍ付近</NameFromMark>
+				<MarkCode type="震央補助">308</MarkCode>
+				<Direction>南西</Direction>
+				<Distance unit="km">60</Distance>
+			</Area>
+		</Hypocenter>
+		<jmx_eb:Magnitude type="Mj" description="Ｍ６．４">6.4</jmx_eb:Magnitude>
+	</Earthquake>
+	<Text>　これらの沿岸では今後２、３時間程度は若干の海面変動が継続する可能性が高いと考えられます。
+</Text>
+	<Comments>
+		<WarningComment codeType="固定付加文">
+			<Text>＜津波予報（若干の海面変動）＞
+若干の海面変動が予想されますが、被害の心配はありません。</Text>
+			<Code>0124</Code>
+		</WarningComment>
+		<FreeFormComment>［予想される津波の高さの解説］
+予想される津波が高いほど、より甚大な被害が生じます。
+１０ｍ超　　巨大な津波が襲い壊滅的な被害が生じる。木造家屋が全壊・流失し、人は津波による流れに巻き込まれる。
+１０ｍ　　　巨大な津波が襲い甚大な被害が生じる。木造家屋が全壊・流失し、人は津波による流れに巻き込まれる。
+　５ｍ　　　津波が襲い甚大な被害が生じる。木造家屋が全壊・流失し、人は津波による流れに巻き込まれる。
+　３ｍ　　　標高の低いところでは津波が襲い被害が生じる。木造家屋で浸水被害が発生し、人は津波による流れに巻き込まれる。
+　１ｍ　　　海の中では人は速い流れに巻き込まれる。養殖いかだが流失し小型船舶が転覆する。</FreeFormComment>
+	</Comments>
+</Body>
+</Report>

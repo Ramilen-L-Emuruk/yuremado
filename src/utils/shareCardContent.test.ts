@@ -5,7 +5,7 @@ import { ATTRIBUTION_SOURCES, EEW_NOTICE } from './shareCard'
 import { buildShareCardContent, type ShareCardContent, type ShareCardContentInput } from './shareCardContent'
 // テスト本体で初めて読むと、並列実行のときだけ解決と変換の待ちが 1 件目の時間に乗って 5 秒を超える。
 // 先頭で読んでおけば待ちはファイル読み込み時へ移る（CLAUDE.md「テスト本体の中で対象モジュールを初めて読まないこと」）。
-import { createTestEEWStrongShaking } from './testData'
+import { first, telegramEews } from '../test-utils/testTelegramFixtures'
 
 function quake(over: { maxScale?: number; magnitude?: number; depth?: number; time?: string } = {}): JMAQuake {
   return {
@@ -276,10 +276,12 @@ describe('buildShareCardContent — 緊急地震速報', () => {
 
   // 「非常に強い揺れを検知」の報も震源は仮。規模（NaN）と発生時刻（無い）を画像へ焼かず、
   // 予想最大震度は出す。
-  it('強い揺れ検知の報では規模も発生時刻も出さず、予想最大震度は出す', () => {
-    const strong = createTestEEWStrongShaking('s', 1, new Date('2026-01-14T10:41:15Z'))
+  it('強い揺れ検知の報では規模も発生時刻も出さず、予想最大震度は出す', async () => {
+    // テストボタンと同じ電文（→ `utils/testTelegramScripts.ts` の `EEW_STRONG_SHAKING`）。
+    // 仮定震源要素のまま予想震度を持つ形で、初報がそれにあたる
+    const strong = first(await telegramEews('EEW_STRONG_SHAKING'), '強い揺れ検知の初報')
     const c = build(input({ mode: 'kyoshin', eews: [strong] }))
-    expect(c.header.subtitle).toContain('北陸地方')
+    expect(c.header.subtitle).toContain('豊後水道')
     expect(c.header.subtitle).not.toMatch(/M|NaN|発生/)
     expect(c.header.subtitle).toContain('予想最大震度')
   })

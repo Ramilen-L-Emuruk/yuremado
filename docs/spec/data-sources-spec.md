@@ -343,8 +343,7 @@ Git Bash では `grep` の正規表現に `/` や `\` を含めると黙って 0
   **アプリ側とスクリプト側で別の実装になっている**（後者は `archive-cache.mjs`）—— 控えの置き場所が
   ブラウザと `.claude/` 配下で違うため。**どちらも素の `fetch` を足さない**
 - **スクリプト側でアーカイブを取る経路は `archive-cache.mjs` の 1 本だけにすること。**
-  調査スクリプト（`scripts/telegram-audit/*.mjs`）とテストデータの生成スクリプト
-  （`build-test-quake` / `build-test-lpgm` / `build-test-estimated-intensity`）が同じものを通る。
+  調査スクリプト（`scripts/telegram-audit/*.mjs`）が通る。
   **控えは分類・日・アーカイブ id で引くので、どちらが先に取っても他方はリクエストを出さない**
   （実測: 監査が取っていた 2024-01-01 を生成 2 本が「控えから 1 件 / 取得 0 件」で読んだ）
 - **`StrictMode` の二重実行を数に入れる。** dev サーバーでは React が effect を 2 回走らせるため、

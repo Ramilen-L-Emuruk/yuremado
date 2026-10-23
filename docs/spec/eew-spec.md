@@ -465,10 +465,10 @@ VXSE43 を緊急地震速報として取り込む**（同 §2「一部の区分�
 > この値を決めていない。** 変化なしの報では帯を消さないので、報が何秒後に来るかは関係がない。
 > 最大値が 10 秒と一致しているのは偶然で、根拠にしていない。
 
-**テストボタンのデータも実電文の形にする**（`src/utils/testData.ts`）。第 1 報は
-`forecastChange` 要素なし・2 報目で値が立ち・3 報目で 0 に戻す。表示寿命
-（`useHeldForecastChange`）を実機で確かめるには、毎報「大きくなった」を立てず
-3 報目で 0 に戻るところまで再現する必要がある。
+**テストボタン（警報テスト）はこの形を実電文のまま流す。** 第 1 報は `forecastChange` 要素なし・
+2 報目で値が立ち・3 報目で 0 に戻る。表示寿命（`useHeldForecastChange`）を実機で確かめるには、
+毎報「大きくなった」が立つ形では足りない —— 値が戻ったあとも帯が残ることを見るため、
+0 に戻る報まで押し進める（→ [`settings-pwa-spec.md`](settings-pwa-spec.md) §7）。
 
 > **読み上げの安定待ちはこの値へ載せ替えていない。** あそこは実地震で調整した経路で、
 > しかも階級インデックス差で測っている。載せ替えるなら実データでの検証を伴う別の作業にする。
@@ -952,7 +952,7 @@ standard 版では `eewMaxLpgmClass` が常に 0 になり震度のみでレベ�
     **この範囲では確かめられなかった**ということ
   - 例外の 1 通（2026-05-20 11:46:34 発表）は、全体が「震度 5 弱程度以上」なのに区域を持たない。
     震源を 1 点でしか決められていない報で、規模も「Ｍ不明」だった（→ §5）
-- 合成テストデータもこの節の規則に従う（→ [`settings-pwa-spec.md`](settings-pwa-spec.md) §7「実電文の形に合わせる」）
+- テストボタンが書き換えで作る報もこの節の規則に従う（→ [`settings-pwa-spec.md`](settings-pwa-spec.md) §7「実配信に無い形を作らない」）
 
 #### 「警報:」「予報:」欄の出し方
 
@@ -1644,9 +1644,8 @@ DMDATA・P2PQuake で明示的な取消電文（`cancelled: true`）が来た場
 **取消電文は予想も震源も持たない**: DMDATA の取消電文は `Earthquake` 要素を持たないので、`dmdataParser` は
 震央地名を空・震源座標を位置不明のセンチネル（`-200`）・深さを `-1`・規模を `NaN`・発生時刻と発現時刻を空にし、
 `forecastMaxScale` / `forecastMaxLpgmClass` を入れない。区域も空。表示側は `activeEEWs` の直前の確定状態を保つため
-取消電文の中身を使わない。合成テストデータ（設定タブの取消・予想震度なしのテスト）も同じ形を作る
-（`useEarthquakes.ts` の `cancelledEewEarthquake`。→ [`settings-pwa-spec.md`](settings-pwa-spec.md) §7「実電文の形に合わせる」）。
-テストデータに前の報の名前を残すと、本物の取消で名前が空になる経路を実機で通せない。
+取消電文の中身を使わない。設定タブの取消・予想震度なしのテストは**実電文の取消をそのまま流す**ので、
+この形がそのまま届く（→ [`settings-pwa-spec.md`](settings-pwa-spec.md) §7）。
 
 **ブラウザ通知の本文は、その地震が最後に名乗った震央地名を使う**（`useLiveEventHandler.ts` の
 `eewLastHypocenterNameRef`・`utils/eew.ts` の `rememberEewHypocenterName` / `eewCancelNotificationBody`）。
@@ -1817,8 +1816,7 @@ DMDATA・P2PQuake で明示的な取消電文（`cancelled: true`）が来た場
 | `MAX_FELT_RADIUS_KM` | 2500 | 有感半径の上限（巨大地震での飽和防止） |
 | `UPDATE_INTERVAL_MS` | 100 | P/S 波半径の更新周期（`usePsWaveCalc`） |
 | `EEW_BLINK` | 1 ↔ 0.1 | 震源×印の点滅（明側・暗側の不透明度）。仮定震源要素も同じ値（区別は形で付ける） |
-| `EEW_FINAL_SILENCE_MS` | 10000 | 最終報後の再クリック続報テスト受付時間 |
-| `EEW_RETRACTION_CANCEL_MS` | 10000 | 誤報取消テストの遅延 |
+| `EEW_FINAL_SILENCE_MS` | 10000 | テストボタンで、押されないまま最終報（取消を持つ台本では取消）を流すまで |
 
 ## 12. 関連実装ファイル
 

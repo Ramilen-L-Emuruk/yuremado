@@ -554,9 +554,10 @@ yuremado/
 │   │   ├── voicevox.ts        # VOICEVOX 連携
 │   │   ├── kyoshinDetector.ts # 揺れ検知エンジン → kyoshin-detection-spec.md
 │   │   ├── clock.ts           # サーバー同期時刻（serverNow）
-│   │   ├── testData.ts        # 合成テストデータ生成
+│   │   ├── testTelegrams.ts  # テストボタンの電文を読んで押した時刻へずらす → settings-pwa-spec.md §7
+│   │   ├── testTelegramScripts.ts # どのボタンが何をどの順で流すか（台本）
+│   │   ├── testTelegramRewrite.ts # 実電文を書き換えて、実配信に無い形を作る部品
 │   │   └── testScenarioReplay.ts # 実地震シナリオの時刻シフト・ID 再採番
-│   ├── data/                  # 合成テストデータ用の実データサンプル（noto-honshin-2024-*）
 │   └── types/                 # 型定義
 ├── public/
 │   ├── data/                  # 事前生成データ（座標・境界・辞書）→ data-sources-spec.md §6

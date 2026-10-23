@@ -1,39 +1,40 @@
 /**
- * テストボタン用のデータ（`utils/testData.ts`）を**押されてから読む**ための入口。
+ * テストボタンの台本（`utils/testTelegramScripts.ts`）を**押されてから読む**ための入口。
  *
  * ## なぜ静的に取り込まないのか
  *
- * `testData.ts` が抱える実データ 6 本（`src/data/noto-honshin-2024-*.json` の 3 つと
- * `src/data/test-estimated-intensity.json`・`src/data/hyuganada-2022-quake.json`・
- * `src/data/ishikawa-seihooki-2024-quake.json`）は合わせて 1.4 MB ある。静的に取り込むと
- * **テストボタンを一度も押さない利用者にも初回表示で届く**うえ、2026-09-09 にはメインバンドルが
- * Service Worker のプリキャッシュ上限
- * （`vite.config.ts` の `maximumFileSizeToCacheInBytes`＝2 MiB）を超えて本番ビルドが落ちた。
+ * 台本は全テストボタンぶんの電文の並びと書き換えを抱える。静的に取り込むと**テストボタンを一度も
+ * 押さない利用者にも初回表示で届く**うえ、かつてメインバンドルが Service Worker の
+ * プリキャッシュ上限（`vite.config.ts` の `maximumFileSizeToCacheInBytes`＝2 MiB）を超えて
+ * 本番ビルドが落ちたことがある（2026-09-09。当時は実データの JSON を抱えていた）。
  *
  * **静的 import を 1 つでも戻すと分割は無言で解ける** —— 同じモジュールを静的に参照する箇所が
  * あれば Rollup はメインバンドルへ畳み込む。ビルドが上限に触れるまで気づけない。
+ *
+ * **電文そのものはここでは読まない。** 台本が指す XML・二進電文は、ボタンが押されてから
+ * `fetch` で取る（→ `utils/testTelegrams.ts`）。
  */
 
-type TestDataModule = typeof import('./testData')
-type TestDataImporter = () => Promise<TestDataModule>
+type TestTelegramScriptsModule = typeof import('./testTelegramScripts')
+type TestTelegramScriptsImporter = () => Promise<TestTelegramScriptsModule>
 
 /**
  * 実際の取り込み。**この形の `import()` がまとまりの切れ目を作る**ので、書き換えるときは
  * 静的 import へ倒れていないか確かめること。
  */
-const defaultImporter: TestDataImporter = () => import('./testData')
+const defaultImporter: TestTelegramScriptsImporter = () => import('./testTelegramScripts')
 
-let pending: Promise<TestDataModule> | null = null
+let pending: Promise<TestTelegramScriptsModule> | null = null
 
 /**
- * テストデータを読む（2 回目以降は読み込み済みのものを返す）。
+ * テストボタンの台本を読む（2 回目以降は読み込み済みのものを返す）。
  *
  * **失敗したら覚えない。** `??=` で握ったままにすると、一度 reject した Promise を以後ずっと
  * 返し続け、**ページを開き直すまで全てのテストボタンが無反応になる**。動的 import の失敗は
  * PWA では現実に起きる —— 画面を開いたまま新しい版がデプロイされると、古いハッシュ付きの
  * chunk が 404 になる。次に押したときに取り直せるよう、失敗は捨てる。
  */
-export function loadTestData(importer: TestDataImporter = defaultImporter): Promise<TestDataModule> {
+export function loadTestTelegramScripts(importer: TestTelegramScriptsImporter = defaultImporter): Promise<TestTelegramScriptsModule> {
   if (!pending) {
     pending = importer().catch(err => {
       pending = null
@@ -52,8 +53,8 @@ export function loadTestData(importer: TestDataImporter = defaultImporter): Prom
  * 静的に取り込んでいた頃と同じ「無し」に戻る。
  *
  * **失敗は握りつぶす。** これは前倒しにすぎず、本当に要るのは押されたときで、そのときに
- * `loadTestData()` が取り直す。ここで例外を投げると、設定タブを開いただけで画面が壊れる。
+ * `loadTestTelegramScripts()` が取り直す。ここで例外を投げると、設定タブを開いただけで画面が壊れる。
  */
-export function prefetchTestData(importer: TestDataImporter = defaultImporter): void {
-  void loadTestData(importer).catch(() => {})
+export function prefetchTestData(importer: TestTelegramScriptsImporter = defaultImporter): void {
+  void loadTestTelegramScripts(importer).catch(() => {})
 }

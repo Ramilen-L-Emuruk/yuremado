@@ -22,9 +22,17 @@ import { log } from '../utils/logger'
 import { PREFERRED_CLASSIFICATIONS, eewHeadTypeFor } from './dmdataClassifications'
 import { buildSampleTelegram } from '../test-utils/bufrBuild'
 import type { ReplayPayload } from '../types/replay'
+// テストボタンと同じ電文（→ `utils/testTelegramScripts.ts`）。**トップレベルで読む** ——
+// テスト本体の中で初めて読むと、電文の読み込みが 1 件目の所要時間に乗って時間切れになる。
 import {
-  createTestNankai, createTestNankaiCommentary, createTestKohatsu, createTestQuakeNotice, createTestEarthquakeCount,
-} from '../utils/testData'
+  first, telegramNankais, telegramCommentaries, telegramKohatsus, telegramNotices, telegramCounts,
+} from '../test-utils/testTelegramFixtures'
+
+const nankai = first(await telegramNankais('NANKAI_CHECKING'), '南海トラフ臨時情報')
+const nankaiCommentary = first(await telegramCommentaries('NANKAI_COMMENTARY_AD_HOC'), '南海トラフ関連解説情報')
+const kohatsu = first(await telegramKohatsus('KOHATSU'), '後発地震注意情報')
+const quakeNotice = first(await telegramNotices('QUAKE_NOTICE'), '地震・津波に関するお知らせ')
+const earthquakeCount = first(await telegramCounts('EARTHQUAKE_COUNT'), '地震回数に関する情報')
 
 // 2024-01-01 能登半島地震の緊急地震速報（地震動予報・警報級）を最小化したもの。
 const EEW_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -195,11 +203,11 @@ describe('帯の historyExtraKey', () => {
   // `kind:undefined|undefined|issue` に化けたまま通ってしまう）。
   type BandPayload = Extract<ReplayPayload, { kind: 'nankai' | 'nankaiCommentary' | 'kohatsu' | 'quakeNotice' | 'earthquakeCount' }>
   const bands: BandPayload[] = [
-    { kind: 'nankai', data: createTestNankai('調査中') },
-    { kind: 'nankaiCommentary', data: createTestNankaiCommentary('臨時解説') },
-    { kind: 'kohatsu', data: createTestKohatsu() },
-    { kind: 'quakeNotice', data: createTestQuakeNotice() },
-    { kind: 'earthquakeCount', data: createTestEarthquakeCount() },
+    { kind: 'nankai', data: nankai },
+    { kind: 'nankaiCommentary', data: nankaiCommentary },
+    { kind: 'kohatsu', data: kohatsu },
+    { kind: 'quakeNotice', data: quakeNotice },
+    { kind: 'earthquakeCount', data: earthquakeCount },
   ]
   const withData = (p: BandPayload, patch: { id?: string; reportDateTime?: string; cancelled?: boolean }): BandPayload =>
     ({ ...p, data: { ...p.data, ...patch } } as BandPayload)

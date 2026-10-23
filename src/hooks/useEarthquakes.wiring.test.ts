@@ -38,7 +38,7 @@ import { ACTIVE_EEW_WINDOW_MS, calcEEWCancelTime } from '../utils/eew'
 // **アプリの分割には影響しない。** 分割を作っているのは `utils/testDataLoader.ts` の
 // `import()` で、テストファイルは本番ビルドの依存グラフに入らない
 // （`utils/testData.test.ts` も同じく静的に取り込んでいる）。
-import '../utils/testData'
+import '../utils/testTelegramScripts'
 
 // isDmdss はモジュールスコープの定数。テストごとに切り替えるため getter で公開する。
 let mockIsDmdss = true
@@ -208,7 +208,15 @@ const { useEarthquakes } = await import('./useEarthquakes')
 //
 // 引き換えに、読み込みに失敗したときはこのファイルが丸ごと落ちる（前は `simulate*` を使う
 // テストだけが落ちた）。読むのは生成済みの JSON なので失敗の目は薄いと見て、単純さを採る。
-await import('../utils/testData')
+await import('../utils/testTelegramScripts')
+
+// テストボタンと同じ電文（→ `utils/testTelegramScripts.ts`）。**トップレベルで読む** ——
+// テスト本体の中で初めて読むと、電文の読み込みが 1 件目の所要時間に乗って時間切れになる。
+const { makeEewReport, eewWarningBase, telegramQuakes, telegramEstimatedIntensities } = await import('../test-utils/testTelegramFixtures')
+// 緊急地震速報の報の土台。**同期的に報を作れるよう、電文はここで読んでおく**
+const eewBase = await eewWarningBase()
+const cancelReports = await telegramQuakes('QUAKE_CANCEL')
+const partialCancelReports = await telegramQuakes('QUAKE_PARTIAL_CANCEL')
 const { totalSkipped } = await import('../utils/telegramLoss')
 
 
@@ -850,6 +858,15 @@ describe('キューは配列を差し替えない（同じ電文を二度処理�
 //   - 基準時刻が現在時刻へ張り替わる → 予報円が押すたび中心に戻り、発生時刻表示も動く
 //   - 震源時刻まで固定される → 続報で予報円の半径が跳ねる形を実機で一度も見られない
 // のいずれも画面上は「それらしく」見えてしまうため、値そのものを固定して守る。
+/**
+ * テストボタンを押した後、キューのディスパッチャを 1 周させるために進める時間。
+ *
+ * **テストボタンは電文をイベントキューへ積むだけ**（→ `utils/testTelegrams.ts`）。受信と同じ
+ * 経路を通すためで、画面へ出すのは 10ms 間隔のディスパッチャ。偽のタイマーを使うテストでは
+ * ここを進めないと、押しても何も起きない。
+ */
+const QUEUE_TICK_MS = 20
+
 describe('EEW 発報テストの報の推移', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
@@ -861,90 +878,89 @@ describe('EEW 発報テストの報の推移', () => {
     return list[0]
   }
 
-  // **かつて「震源時刻は初報のまま保つ」と固定していたテストを覆したもの。** 実電文の震源時刻は
-  // 続報で動く（→ `docs/spec/eew-spec.md` §3「地震の時刻は発生時刻を出す」）。
-  it('続報は報番号・発表時刻・震源時刻を進め、地震発現時刻だけを引き継ぐ', async () => {
+  // **押すたびに台本の次の報が届く。** 報番号・震源時刻・予想は電文のもので、こちらが組むのは
+  // 「どの電文を何通目に流すか」だけ（→ `utils/testTelegramScripts.ts` の `EEW_FORECAST`）。
+  // 電文そのものの形（予報のまま進む・最終報が付く等）は `testTelegramScripts.test.ts` が持つ。
+  it('押すたびに台本の次の報が届き、同じ地震のまま報番号が進む', async () => {
     const h = setup()
 
     await act(async () => { await h.current.simulateEEWForecast() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     const first = onlyEEW(h)
-    expect(first.issue?.serial).toBe('1')
     expect(first.isFinal).toBeFalsy()
 
     // 沈黙時間（10 秒）より短い間隔なら続報になる
     act(() => { vi.advanceTimersByTime(3_000) })
     await act(async () => { await h.current.simulateEEWForecast() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     const second = onlyEEW(h)
 
-    expect(second.issue?.serial).toBe('2')
-    expect(second.isFinal).toBeFalsy()
-    // 対照: 地震発現時刻は動かない（実測では 15 地震すべてで 1 通も動かなかった）
-    expect(second.earthquake.arrivalTime).toBe(first.earthquake.arrivalTime)
-    // 正: 震源時刻はずれる。実電文は震源推定が更新されるたび動くため
-    // （`utils/testData.ts` の `EEW_ORIGIN_DRIFT_SEC`）
-    expect(Date.parse(second.earthquake.originTime) - Date.parse(first.earthquake.originTime)).toBe(-3_000)
-    // 発表時刻と id は報ごとに変わる（issue.time は型上 optional なので解釈可能かも見る）
-    const firstIssued = Date.parse(first.issue?.time ?? '')
-    const secondIssued = Date.parse(second.issue?.time ?? '')
-    expect(Number.isNaN(firstIssued)).toBe(false)
-    expect(secondIssued).toBeGreaterThan(firstIssued)
+    // 正: 報番号が進み、同じ地震のまま（カードが 2 枚に割れない）
+    expect(Number(second.issue?.serial)).toBeGreaterThan(Number(first.issue?.serial))
+    expect(second.issue?.eventId).toBe(first.issue?.eventId)
     expect(second.id).not.toBe(first.id)
+    // 対照: 地震発現時刻は動かない（同じ地震なので、実電文でも続報で動かない）
+    expect(second.earthquake.arrivalTime).toBe(first.earthquake.arrivalTime)
+    // 発表時刻は進む（進まないと据え置き判定が続報を捨てる）
+    expect(Date.parse(second.issue?.time ?? '')).toBeGreaterThan(Date.parse(first.issue?.time ?? ''))
   })
 
-  // 「非常に強い揺れを検知」の第 1 報の印と本文は、続報（仮定震源要素）で持ち越さない。
+  // 「非常に強い揺れを検知」の第 1 報の印と本文は、続報（震源が決まった報）で持ち越さない。
   // 続報は報を丸ごと置き換えるので、印が残ると確定へ進んだ後も予報円が出ず本文が居座る。
   it('強い揺れ検知の第 1 報の印と本文は、続報で消える', async () => {
     const h = setup()
 
     await act(async () => { await h.current.simulateEEWStrongShaking() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     const first = onlyEEW(h)
     expect(first.strongShakingOnly).toBe(true)
     expect(first.strongShakingText).toBeTruthy()
 
     act(() => { vi.advanceTimersByTime(3_000) })
     await act(async () => { await h.current.simulateEEWStrongShaking() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     const second = onlyEEW(h)
-    expect(second.issue?.serial).toBe('2')
-    expect(second.strongShakingOnly).toBeUndefined()
-    expect(second.strongShakingText).toBeUndefined()
-    expect(second.earthquake.condition).toBe('仮定震源要素')
+    expect(second.strongShakingOnly).toBeFalsy()
+    expect(second.strongShakingText).toBeFalsy()
+    // 対照: 続報は震源が決まっている（規模が数値で入る）
+    expect(Number.isNaN(second.earthquake.hypocenter.magnitude)).toBe(false)
   })
 
-  it('最終報も独立した 1 報として報番号を進める', async () => {
+  it('押さないまま沈黙時間が過ぎると最終報が届く', async () => {
     const h = setup()
 
     await act(async () => { await h.current.simulateEEWForecast() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     const first = onlyEEW(h)
 
-    // 再クリックが無いまま沈黙時間が過ぎると最終報が確定する
-    act(() => { vi.advanceTimersByTime(10_000) })
+    // 再クリックが無いまま沈黙時間（10 秒）が過ぎると最終報が確定する
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     const final = onlyEEW(h)
 
     expect(final.isFinal).toBe(true)
-    expect(final.issue?.serial).toBe('2')
-    // 同じ地震の報なので地震発現時刻は引き継ぐ（震源時刻は続報と同じくずれる）
+    // 同じ地震の報（地震発現時刻を引き継ぐ）
     expect(final.earthquake.arrivalTime).toBe(first.earthquake.arrivalTime)
-    expect(Date.parse(final.earthquake.originTime) - Date.parse(first.earthquake.originTime)).toBe(-3_000)
   })
 
   // activeEEWs は取消を受けても直前の確定状態を保つ（表示を空にしないための実装）ため、
   // 取消電文そのものの形は state からは見えない。onLiveEvent に届く生の電文で確かめる。
-  it('誤報取消も独立した 1 報として報番号を進め、対象地域を持たない', async () => {
+  it('誤報取消は実電文の取消として届き、対象地域も震源も持たない', async () => {
     const events: LiveEvent[] = []
     const h = setup({ onLiveEvent: (e) => { events.push(e) } })
 
     await act(async () => { await h.current.simulateEEWRetraction() })
-    act(() => { vi.advanceTimersByTime(10_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
     const eews = events.filter((e): e is EEWAlert => e.kind === 'eew')
-    expect(eews.length).toBe(2)
-    const [report, cancel] = eews
+    expect(eews.length).toBeGreaterThanOrEqual(2)
+    const report = eews[0]
+    const cancel = eews[eews.length - 1]
 
-    expect(report.issue?.serial).toBe('1')
     expect(report.areas?.length).toBeGreaterThan(0)
-
     expect(cancel.cancelled).toBe(true)
-    expect(cancel.issue?.serial).toBe('2')
     expect(cancel.areas).toEqual([])
     // 実運用の取消電文は `Earthquake` 要素を持たない —— `dmdataParser` と同じく震源名は空・
     // 座標は位置不明（-200）。**以前は名前を残し座標を 0 にしていた**（実電文に無い形で、
@@ -956,38 +972,25 @@ describe('EEW 発報テストの報の推移', () => {
     // 予想も持たない（実運用の取消電文は forecastMaxScale / forecastMaxLpgmClass が入らない）
     expect(cancel.forecastMaxScale).toBeUndefined()
     expect(cancel.forecastMaxLpgmClass).toBeUndefined()
-    // 取消は最終報ではない（自動解除と区別され、音・通知・読み上げを伴う）
-    expect(cancel.isFinal).toBeFalsy()
     expect(h.current.activeEEWs.size).toBe(1)
   })
 
-  // 取消しの概要（電文の `Body/Text`）は XML を読む dmdataParser でしか作れない。
-  // 津波の解除テストと同じ形で、バリアントの境目を正・対照の対で固定する。
-  it('DMDSS 版: 誤報取消は取消しの概要を持つ', async () => {
+  // 取消しの概要（電文の `Body/Text`）は実電文が持つ一文。**両版とも同じ電文を流す**ので
+  // 差は出ない（標準版の受信元は廃止予定。→ `utils/testTelegrams.ts` の `onlyIn`）。
+  it('誤報取消は取消しの概要を持つ', async () => {
     const events: LiveEvent[] = []
-    const h = setup({ onLiveEvent: (e) => { events.push(e) } })
+    setup({ onLiveEvent: (e) => { events.push(e) } })
+    const h2 = setup({ onLiveEvent: (e) => { events.push(e) } })
 
-    await act(async () => { await h.current.simulateEEWRetraction() })
-    act(() => { vi.advanceTimersByTime(10_000) })
+    await act(async () => { await h2.current.simulateEEWRetraction() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
-    const cancel = events.filter((e): e is EEWAlert => e.kind === 'eew')[1]
+    const eews = events.filter((e): e is EEWAlert => e.kind === 'eew')
+    const cancel = eews[eews.length - 1]
     expect(cancel.cancelled).toBe(true)
-    expect(cancel.cancelText).toBeTruthy()
-  })
-
-  // 対照: standard 版の P2PQuake には対応するフィールドが無い。テストボタンが実電文の形から
-  // 外れると、実機では一度も起きない表示・読み上げが「起きる」ように見える
-  it('standard 版: 取消しの概要を持たない（P2PQuake には無い項目）', async () => {
-    mockIsDmdss = false
-    const events: LiveEvent[] = []
-    const h = setup({ onLiveEvent: (e) => { events.push(e) } })
-
-    await act(async () => { await h.current.simulateEEWRetraction() })
-    act(() => { vi.advanceTimersByTime(10_000) })
-
-    const cancel = events.filter((e): e is EEWAlert => e.kind === 'eew')[1]
-    expect(cancel.cancelled).toBe(true)
-    expect(cancel.cancelText).toBeUndefined()
+    expect(cancel.cancelText).toBe('先ほどの、緊急地震速報（地震動予報）を取り消します。')
   })
 
   // 遅れた誤報取消テスト: 取消が**自動解除の後に**届くこと（先に届くと普通の誤報取消の経路を見てしまう）
@@ -995,6 +998,8 @@ describe('EEW 発報テストの報の推移', () => {
     const calls: Array<[LiveEvent, LiveEventMeta | undefined]> = []
     const h = setup({ onLiveEvent: (e, meta) => { calls.push([e, meta]) } })
     await act(async () => { await h.current.simulateEEWLateRetraction() })
+    // **受信と同じイベントキューへ積む**ので、ディスパッチャを 1 回回す
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.activeEEWs.size).toBe(1)
     // 自動解除まで進める（取消はまだ届かない）
     let guard = 0
@@ -1002,6 +1007,7 @@ describe('EEW 発報テストの報の推移', () => {
     expect(h.current.activeEEWs.size).toBe(0)
     expect(calls.some(([e]) => e.kind === 'eew' && (e as EEWAlert).cancelled && !(e as EEWAlert).expired)).toBe(false)
     act(() => { vi.advanceTimersByTime(11_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     const late = calls.find(([e]) => e.kind === 'eew' && (e as EEWAlert).cancelled && !(e as EEWAlert).expired)
     expect(late?.[1]?.eewLateCancel).toBeDefined()
     expect([...h.current.activeEEWs.values()][0]?.cancelledAt).toBeTruthy()
@@ -1015,11 +1021,16 @@ describe('津波テストの解除電文', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
-  /** 発表 → 解除の 2 通を取り出す。 */
+  /**
+   * 発表の報と、片付けの報（最後の 1 通）を取り出す。
+   *
+   * **途中の続報を数に入れない。** 台本は実電文の並びをそのまま流すので、発表と解除の間に
+   * 満潮時刻の情報などが挟まる（→ `utils/testTelegramScripts.ts`）。
+   */
   function tsunamiPair(events: LiveEvent[]): [JMATsunami, JMATsunami] {
     const list = events.filter((e): e is JMATsunami => e.kind === 'tsunami')
-    expect(list.length).toBe(2)
-    return [list[0], list[1]]
+    expect(list.length).toBeGreaterThanOrEqual(2)
+    return [list[0], list[list.length - 1]]
   }
 
   /**
@@ -1044,7 +1055,8 @@ describe('津波テストの解除電文', () => {
     await flushInitialLoad()
 
     await act(async () => { await h.current.simulateTsunamiWatch() })
-    act(() => { vi.advanceTimersByTime(90_000) })
+    await act(async () => { vi.advanceTimersByTime(90_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
     const [first, cancel] = tsunamiPair(events)
     expect(first.areas.length).toBeGreaterThan(0)
@@ -1055,7 +1067,8 @@ describe('津波テストの解除電文', () => {
     expect(cancel.areas).toEqual([])
     expect(cancel.cancelReason).toBe('lifted')
     expect(new Date(cancel.time).getTime()).toBeGreaterThan(new Date(first.time).getTime())
-    expect(cancel.id).not.toBe(first.id)
+    // **`id` は重なってよい。** 津波警報（VTSE41）は実電文でも報番号が空で、`id` は
+    // 識別子と種別から作るので発表と解除で同じになる（新旧は発表時刻で見る）
 
     // 電文の形だけでなく、state が実際に解除されたことまで見る。onLiveEvent は reducer の
     // 成否に関わらず呼ばれるため、ここを見ないと「音は鳴るがカードは残る」状態を通してしまう。
@@ -1070,7 +1083,8 @@ describe('津波テストの解除電文', () => {
     const h = setup()
     await flushInitialLoad()
     await act(async () => { await h.current.simulateTsunamiRetraction() })
-    act(() => { vi.advanceTimersByTime(90_000) })
+    await act(async () => { vi.advanceTimersByTime(90_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
     expect(h.current.tsunamis[0]?.cancelReason).toBe('retracted')
     expect(h.current.tsunamis[0]?.cancelText).toBeTruthy()
@@ -1081,7 +1095,8 @@ describe('津波テストの解除電文', () => {
     const h = setup()
     await flushInitialLoad()
     await act(async () => { await h.current.simulateTsunamiWatch() })
-    act(() => { vi.advanceTimersByTime(90_000) })
+    await act(async () => { vi.advanceTimersByTime(90_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
     expect(h.current.tsunamis[0]?.cancelReason).toBe('lifted')
     expect(h.current.tsunamis[0]?.cancelText).toBeUndefined()
@@ -1093,7 +1108,8 @@ describe('津波テストの解除電文', () => {
     const h = setup()
     await flushInitialLoad()
     await act(async () => { await h.current.simulateTsunamiWatch() })
-    act(() => { vi.advanceTimersByTime(90_000) })
+    await act(async () => { vi.advanceTimersByTime(90_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
     expect(h.current.tsunamis[0]?.cancelReason).toBe('lifted')
     expect(h.current.tsunamis[0]?.liftText).toContain('現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。')
@@ -1103,24 +1119,31 @@ describe('津波テストの解除電文', () => {
     const h = setup()
     await flushInitialLoad()
     await act(async () => { await h.current.simulateTsunamiRetraction() })
-    act(() => { vi.advanceTimersByTime(90_000) })
+    await act(async () => { vi.advanceTimersByTime(90_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
     expect(h.current.tsunamis[0]?.cancelReason).toBe('retracted')
     expect(h.current.tsunamis[0]?.liftText).toBeUndefined()
   })
 
-  it('安全弁: standard 版の解除は文を持たないので、カードにも付けない', async () => {
+  // **テストボタンは両版とも同じ電文を流す**ので、標準版でも全区域解除の文がカードへ付く
+  // （標準版の受信元は廃止予定。→ `utils/testTelegrams.ts` の `onlyIn`）。
+  // **実配信の標準版（P2PQuake）はこの文を運ばない** —— そちらの読み取りは `p2pquake.test.ts` が持つ。
+  it('標準版でも、テストボタンは同じ電文を流す（全区域解除の文が付く）', async () => {
     mockIsDmdss = false
     const h = setup()
     await flushInitialLoad()
     await act(async () => { await h.current.simulateTsunamiWatch() })
-    act(() => { vi.advanceTimersByTime(90_000) })
+    await act(async () => { vi.advanceTimersByTime(90_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
     expect(h.current.tsunamis[0]?.cancelledAt).toBeInstanceOf(Date)
-    expect(h.current.tsunamis[0]?.liftText).toBeUndefined()
+    expect(h.current.tsunamis[0]?.liftText).toBeTruthy()
   })
 
-  it('standard 版: 解除理由と eventId を持たない（P2PQuake では判別できない項目）', async () => {
+  // **テストボタンは両版とも同じ電文を流す**ので、標準版でも識別子と解除の理由が入る（理由は上に同じ）。
+  // ここで確かめるのは、標準版でも解除が state へ届くこと。
+  it('標準版でも、テストボタンの解除が state へ届く', async () => {
     mockIsDmdss = false
     const events: LiveEvent[] = []
     const h = setup({ onLiveEvent: (e) => { events.push(e) } })
@@ -1128,19 +1151,19 @@ describe('津波テストの解除電文', () => {
     await flushInitialLoad()
 
     await act(async () => { await h.current.simulateTsunamiRetraction() })
-    act(() => { vi.advanceTimersByTime(90_000) })
+    await act(async () => { vi.advanceTimersByTime(90_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
     const [first, cancel] = tsunamiPair(events)
-    expect(first.eventId).toBeUndefined()
+    expect(first.eventId).toBeTruthy()
     expect(cancel.cancelled).toBe(true)
     expect(cancel.areas).toEqual([])
-    // 誤報取消でも standard 版は「取消」と判別できないため理由を付けない
-    expect(cancel.cancelReason).toBeUndefined()
+    expect(cancel.cancelReason).toBe('retracted')
 
-    // eventId が無く id も別物（実運用の P2PQuake と同じ形）でも解除が state へ届くこと。
-    // ここを id 照合で捨てていたのが standard 版の「カードが消えない」不具合だった。
+    // **解除が state へ届くこと。** 識別子の無い経路（実配信の標準版）でも受け入れることは、
+    // 下の「eventId を持たない経路では、id が違っても解除を受け入れる」が電文を直に作って確かめる
     expect(h.current.tsunamis[0]?.cancelledAt).toBeInstanceOf(Date)
-    expect(h.current.tsunamis[0]?.cancelReason).toBeUndefined()
+    expect(h.current.tsunamis[0]?.cancelReason).toBe('retracted')
   })
 
   // 上の 2 件はテストボタン経由。こちらは reducer の解除照合そのものを、実運用の
@@ -3481,31 +3504,41 @@ describe('南海トラフ臨時情報の取消の適用先', () => {
 })
 
 // テストボタンが張る「待ち」を、リセットとアンマウントで確実に落とすこと。
-// 落とす先は `clearTestSimulationTimers` の 1 箇所に集約してある。
 //
-// **多くがキューを通らない経路。** 津波と EEW のテストは `handleEvent` を直接呼ぶので、
-// `eventQueueRef.current.clear()` では止まらない。待ちを ref で追えていないと、
-// リセット済みの画面へ電文が 1 通だけ単独で届く —— **例外もログも出ない。**
+// **落とす先は 2 つある。**
 //
-// 症状は待ちの種類で重さが違う。津波の解除は画面に出ないぶん音と読み上げだけが鳴るが、
-// **EEW の最終報はカードごと生える。**
+// - 間を置いて次の報を流す待ち（台本の `atMs`）は**イベントキューが抱える**ので、
+//   キューを空にすれば止まる
+// - 押すたびに進む緊急地震速報の「黙ったら最終報」だけは自前のタイマーで、
+//   `clearTestSimulationTimers` が落とす
 //
-// 地震回数・南海トラフの取消テストも同じ形の待ちを持つ（そちらはキュー経由だが、
-// **待ちそのものは同じように取り残されうる**）。
+// **どちらも、電文を組んでいる途中（`await` の中）には効かない。** 台本の読み込みと電文の
+// 取得を待つ間にリセットが入ると、キューにもタイマーにも載っていないので落としようがない ——
+// そこは世代（`testGenerationRef`）で捨てる。取り残すと、リセット済みの画面へ電文が届く
+// （**例外もログも出ない**。EEW ならカードごと生える）。
 describe('テストボタンの待ちの後始末', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })
 
+  /** 石川県能登の等級。台本（能登本震の実電文）はこの区域が警報 → 大津波警報 → 警報と動く。 */
+  const notoGrade = (h: ReturnType<typeof setup>) =>
+    h.current.tsunamis[0]?.areas.find(a => a.name === '石川県能登')?.grade
+
   // 正: 押しっぱなしにすれば続報は届く（待ちが機能していることの確認）。
+  //
+  // **「前回の等級の印」では段を見分けられない。** 実電文は 1 通目から `LastKind` を持つので、
+  // 等級そのものを見る（→ `utils/testTelegramScripts.ts` の `TSUNAMI_GRADE_CHANGE`）。
   it('津波の等級変化テストは続報を届ける', async () => {
     const h = setup()
     await h.flush()
     await act(async () => { await h.current.simulateTsunamiGradeChange() })
-    expect(h.current.tsunamis[0]?.areas.some(a => a.lastGrade)).toBe(false)
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(notoGrade(h)).toBe('Warning')
 
-    // TEST_AUTO_DISMISS_MS(90s) の半分で続報が入る
-    act(() => { vi.advanceTimersByTime(46_000) })
-    expect(h.current.tsunamis[0]?.areas.some(a => a.lastGrade)).toBe(true)
+    // 15 秒後に大津波警報へ引き上げ
+    await act(async () => { vi.advanceTimersByTime(16_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(notoGrade(h)).toBe('MajorWarning')
   })
 
   // 対照: リセットを挟めば、その後に待ちが明けても何も起きない。
@@ -3514,6 +3547,7 @@ describe('テストボタンの待ちの後始末', () => {
     const h = setup()
     await h.flush()
     await act(async () => { await h.current.simulateTsunamiGradeChange() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.tsunamis.length).toBeGreaterThan(0)
 
     act(() => { h.current.resetState() })
@@ -3541,21 +3575,108 @@ describe('テストボタンの待ちの後始末', () => {
 
   // 安全弁: 押し直したときに前の待ちを引きずらない。**前の待ちが生きていると、
   // 2 回目の発表に対して 1 回目の続報が割り込む**（報番号も内容も噛み合わない）。
-  it('押し直すと前の待ちは落ちる', async () => {
+  // 安全弁: 押し直しても、2 回目の段が順に届く。
+  //
+  // **台本の電文はキューへ積む**ので、押し直すと 2 回目の分がキューに並ぶ（1 回目の分も
+  // 残るが、同じ事象の同じ報なので据え置かれる）。確かめるのは「押し直した後も段が進むこと」。
+  it('押し直しても段は順に進む', async () => {
     const h = setup()
     await h.flush()
     await act(async () => { await h.current.simulateTsunamiGradeChange() })
-    act(() => { vi.advanceTimersByTime(30_000) })
-    // 30 秒目で押し直す（1 回目の続報はまだ来ていない）
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     await act(async () => { await h.current.simulateTsunamiGradeChange() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(notoGrade(h)).toBe('Warning')
 
-    // 1 回目の待ちが生きていれば、ここで続報が入ってしまう（押し直しから 16 秒しか経っていない）
-    act(() => { vi.advanceTimersByTime(16_000) })
-    expect(h.current.tsunamis[0]?.areas.some(a => a.lastGrade)).toBe(false)
+    await act(async () => { vi.advanceTimersByTime(16_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(notoGrade(h)).toBe('MajorWarning')
+  })
 
-    // 2 回目の待ちは正しく明ける
-    act(() => { vi.advanceTimersByTime(30_000) })
-    expect(h.current.tsunamis[0]?.areas.some(a => a.lastGrade)).toBe(true)
+  // 正: **組んでいる途中にリセットが入ったら、その電文は捨てる。** キューにもタイマーにも
+  // まだ載っていないので、ここで捨てないとリセット済みの画面へ届く。
+  it('組んでいる途中でリセットすると、テスト用の電文は届かない', async () => {
+    const h = setup()
+    await h.flush()
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const original = globalThis.fetch
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => { await gate; return original(...args) }) as typeof fetch
+    try {
+      const pending = h.current.simulateEarthquake()   // **await しない**（組んでいる途中を作る）
+      act(() => { h.current.resetState() })
+      release()
+      await act(async () => { await pending })
+      act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+      expect(h.current.earthquakes).toEqual([])
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  // 対照: リセットを挟まなければ、同じ経路で電文は届く（世代の判定が効きすぎていないこと）。
+  it('リセットを挟まなければ、組み終わった電文は届く', async () => {
+    const h = setup()
+    await h.flush()
+    await act(async () => { await h.current.simulateEarthquake() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(h.current.earthquakes.length).toBeGreaterThan(0)
+  })
+
+  // 安全弁: **組んでいる途中に押し直しても、段が飛ばず順に進む。** 押すたびに進む台本は種別ごとの
+  // 待ち行列で 1 本ずつ処理する —— 並べずに触ると、2 回目が 1 回目の書いた進み具合を読めないまま
+  // 同じ段を流し、同じ報が 2 通（「いま」が違えば 2 枚のカード）になる。
+  it('組んでいる途中に押し直しても、段が飛ばず順に進む', async () => {
+    const h = setup()
+    await h.flush()
+    const first = h.current.simulateEEWForecast()
+    const second = h.current.simulateEEWForecast()
+    await act(async () => { await Promise.all([first, second]) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(h.current.activeEEWs.size).toBe(1)
+    // 2 回押したぶん、2 通目まで進んでいる（待ち行列が無いと、2 回目が 1 回目の進み具合を
+    // 読めないまま同じ 1 通目を流し、報番号は 1 のまま）
+    expect([...h.current.activeEEWs.values()][0]?.issue?.serial).toBe('2')
+  })
+
+  // 対照: **待ち行列は種別ごと。** 別の種別を挟んでも、先に押した種別の進み具合は戻らない
+  // （1 本の通し番号で割り込みを捨てる形にすると、ここで予報が捨てられて 1 通目のままになる）。
+  //
+  // **カードは 1 枚のまま** —— 緊急地震速報のテストはどれも同じサンプル電文が元で、事象の識別子も
+  // 同じになる。確かめるのは枚数ではなく、報番号が進んでいること。
+  it('別の種別を挟んでも、先に押した種別の進み具合は戻らない', async () => {
+    const h = setup()
+    await h.flush()
+    await act(async () => { await h.current.simulateEEWForecast() })
+    await act(async () => { await h.current.simulateEEWDeep() })
+    await act(async () => { await h.current.simulateEEWForecast() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect([...h.current.activeEEWs.values()][0]?.issue?.serial).toBe('2')
+  })
+
+  // 正: **種別遷移テストの続報で、動いた行に印が付く。** 同じ種別（震源・震度情報）の続報では、
+  // アプリは電文の `Revise` だけを採り、差分からは付けない（→ `utils/quakeUpdateMark.ts`）。
+  // 台本が印を付けていないと、**行が 1 つも光らない**（例外もログも出ない）。
+  it('種別遷移テストは、続報で動いた行に印が付く', async () => {
+    const h = setup()
+    await h.flush()
+    /** いま出ている行の印の数（カードは 1 枚に畳まれるので、鍵は 1 つ）。 */
+    const rowMarks = (): number => [...h.current.quakeUpdateMarks.values()][0]?.rows.size ?? 0
+    await act(async () => { await h.current.simulateQuakeReportSequence() })
+    // 4 通目（震源・震度情報の初報）まで。**初報に印は出さない**
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(rowMarks()).toBe(0)
+
+    // 5 通目（観測点・市町村が増える。電文の `Revise` = 追加）
+    await act(async () => { vi.advanceTimersByTime(30_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(rowMarks()).toBeGreaterThan(0)
+
+    // 7 通目（観測点の震度が上下する。`上方修正`・`下方修正`）
+    await act(async () => { vi.advanceTimersByTime(7_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(rowMarks()).toBeGreaterThan(0)
   })
 
   // ── 失効時刻テスト（津波警報 → 津波予報）──
@@ -3570,25 +3691,33 @@ describe('テストボタンの待ちの後始末', () => {
     const h = setup()
     await h.flush()
     await act(async () => { await h.current.simulateTsunamiExpiry() })
-    // 1 段目は津波警報。失効時刻はまだ無い
-    expect(h.current.tsunamis[0]?.areas.some(a => a.grade === 'Warning')).toBe(true)
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    // 1 段目は津波注意報。失効時刻はまだ無い
+    expect(h.current.tsunamis[0]?.areas.some(a => a.grade === 'Watch')).toBe(true)
     expect(h.current.tsunamis[0]?.validDateTime).toBeUndefined()
 
-    act(() => { vi.advanceTimersByTime(46_000) })
-    expect(h.current.tsunamis[0]?.areas.some(a => a.grade === 'Warning')).toBe(false)
+    await act(async () => { vi.advanceTimersByTime(46_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(h.current.tsunamis[0]?.areas.some(a => a.grade === 'Watch')).toBe(false)
     expect(h.current.tsunamis[0]?.validDateTime).toBeTruthy()
   })
 
   // 正: そのまま待てば、解除電文ではなく**失効**で消える（予報だけになった津波に解除は出ない）。
+  //
+  // **失効時刻は電文が名乗るもの**（実電文は発表の約 7 時間後）。台本は電文の時刻を「いま」へ
+  // 寄せるだけなので、失効までの長さも実電文のまま。そこまで時計を進めて確かめる。
   it('失効時刻テストは解除電文ではなく失効でカードを閉じる', async () => {
     const h = setup()
     await h.flush()
     await act(async () => { await h.current.simulateTsunamiExpiry() })
-    act(() => { vi.advanceTimersByTime(46_000) })
+    await act(async () => { vi.advanceTimersByTime(46_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.tsunamis[0]?.cancelledAt).toBeUndefined()
+    expect(h.current.tsunamis[0]?.validDateTime).toBeTruthy()
 
-    // 降格報から 45 秒で失効時刻に達する
-    act(() => { vi.advanceTimersByTime(46_000) })
+    // 降格の報から 45 秒で失効時刻に達する（テストボタン向けに詰めてある）
+    await act(async () => { vi.advanceTimersByTime(46_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.tsunamis[0]?.cancelledAt).toBeInstanceOf(Date)
     expect(h.current.tsunamis[0]?.cancelReason).toBe('expired')
   })
@@ -3599,6 +3728,7 @@ describe('テストボタンの待ちの後始末', () => {
     const h = setup()
     await h.flush()
     await act(async () => { await h.current.simulateTsunamiExpiry() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.tsunamis.length).toBeGreaterThan(0)
 
     act(() => { h.current.resetState() })
@@ -3608,21 +3738,18 @@ describe('テストボタンの待ちの後始末', () => {
     expect(h.current.tsunamis).toEqual([])
   })
 
-  // 安全弁: 押し直したときに前の待ちを引きずらない。
-  it('失効時刻テストを押し直すと前の待ちは落ちる', async () => {
+  // 安全弁: 押し直しても段は順に進む（理由は上の「押し直しても段は順に進む」に同じ）。
+  it('失効時刻テストを押し直しても段は順に進む', async () => {
     const h = setup()
     await h.flush()
     await act(async () => { await h.current.simulateTsunamiExpiry() })
-    act(() => { vi.advanceTimersByTime(30_000) })
-    // 30 秒目で押し直す（1 回目の続報はまだ来ていない）
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     await act(async () => { await h.current.simulateTsunamiExpiry() })
-
-    // 1 回目の待ちが生きていれば、ここで降格報が入ってしまう（押し直しから 16 秒しか経っていない）
-    act(() => { vi.advanceTimersByTime(16_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.tsunamis[0]?.validDateTime).toBeUndefined()
 
-    // 2 回目の待ちは正しく明ける
-    act(() => { vi.advanceTimersByTime(30_000) })
+    await act(async () => { vi.advanceTimersByTime(46_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.tsunamis[0]?.validDateTime).toBeTruthy()
   })
 
@@ -3638,7 +3765,9 @@ describe('テストボタンの待ちの後始末', () => {
     await h.flush()
 
     await act(async () => { await h.current.simulateEEWForecast() })
-    act(() => { vi.advanceTimersByTime(10_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    await act(async () => { vi.advanceTimersByTime(10_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
     const eews = kindsOf(events, 'eew') as EEWAlert[]
     expect(eews.length).toBe(2)
@@ -3653,6 +3782,7 @@ describe('テストボタンの待ちの後始末', () => {
     await h.flush()
 
     await act(async () => { await h.current.simulateEEWForecast() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.activeEEWs.size).toBe(1)
 
     act(() => { h.current.resetState() })
@@ -3672,6 +3802,7 @@ describe('テストボタンの待ちの後始末', () => {
     await h.flush()
 
     await act(async () => { await h.current.simulateEEWRetraction() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.activeEEWs.size).toBe(1)
 
     act(() => { h.current.resetState() })
@@ -3690,6 +3821,7 @@ describe('テストボタンの待ちの後始末', () => {
     await h.flush()
 
     await act(async () => { await h.current.simulateTsunamiWatch() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.tsunamis.length).toBeGreaterThan(0)
 
     act(() => { h.current.resetState() })
@@ -3726,15 +3858,18 @@ describe('テストボタンの待ちの後始末', () => {
     await h.flush()
 
     await act(async () => { await h.current.simulateEEWForecast() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     const first = [...h.current.activeEEWs.values()][0]
     expect(first.issue?.serial).toBe('1')
 
     act(() => { vi.advanceTimersByTime(3_000) })
     await act(async () => { await h.current.simulateEEWForecast() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect([...h.current.activeEEWs.values()][0].issue?.serial).toBe('2')
 
     act(() => { h.current.resetState() })
     await act(async () => { await h.current.simulateEEWForecast() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     const restarted = [...h.current.activeEEWs.values()][0]
     expect(restarted.issue?.serial).toBe('1')
     expect(restarted.issue?.eventId).not.toBe(first.issue?.eventId)
@@ -3747,6 +3882,7 @@ describe('テストボタンの待ちの後始末', () => {
     await h.flush()
 
     await act(async () => { await h.current.simulateEstimatedIntensity() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.estimatedIntensities).toHaveLength(0)
 
     act(() => { vi.advanceTimersByTime(5_000) })
@@ -3762,6 +3898,7 @@ describe('テストボタンの待ちの後始末', () => {
     await h.flush()
 
     await act(async () => { await h.current.simulateEstimatedIntensity() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     // 続報は初報の 16 秒後（`TEST_ESTIMATED_INTENSITY_FOLLOW_UP_DELAY_MS`）。初報の読み上げが
     // 鳴り終わるまで空けてあるので、10 秒では届かない。
     act(() => { vi.advanceTimersByTime(30_000) })
@@ -3776,8 +3913,8 @@ describe('テストボタンの待ちの後始末', () => {
   // 扱いになり、反映はされるのに読み上げは初報と同じ文へ戻る（上のテストだけでは、印が
   // `[true, true]` になった理由が発現時刻のずれなのか写像のせいなのか分からない）。
   it('推計震度分布図テストの続報は同じ地震の発現時刻を保つ', async () => {
-    const { createTestEstimatedIntensity } = await import('../utils/testData')
-    const { quake, estimated, followUp } = createTestEstimatedIntensity()
+    const [quake] = await telegramQuakes('ESTIMATED_INTENSITY')
+    const [estimated, followUp] = await telegramEstimatedIntensities('ESTIMATED_INTENSITY')
     expect(followUp.arrivalTime).toBe(estimated.arrivalTime)
     expect(followUp.arrivalTime).toBe(quake.earthquake.time)
     // 発表時刻だけが進む（反映の判定はここしか見ない）
@@ -3792,6 +3929,7 @@ describe('テストボタンの待ちの後始末', () => {
     await h.flush()
 
     await act(async () => { await h.current.simulateQuakeAmendment() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     // キューのディスパッチャは 10ms 周期なので、積んだ直後はまだ届いていない。
     act(() => { vi.advanceTimersByTime(100) })
     expect(h.current.earthquakes.length).toBe(1)
@@ -3830,6 +3968,7 @@ describe('テストボタンの待ちの後始末', () => {
     await h.flush()
 
     await act(async () => { await h.current.simulateEstimatedIntensity() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     act(() => { h.current.resetState() })
 
     act(() => { vi.advanceTimersByTime(10_000) })
@@ -3850,11 +3989,17 @@ describe('テストボタンの待ちの後始末', () => {
     // 待ちを持つテストを全種類起こす（津波の 2 つは同じ `testTsunamiRef` を共有するため、
     // 後から押したほうが前の自動解除を畳む。それでも待ちは 1 本残る）
     await act(async () => { await h.current.simulateEEWForecast() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     await act(async () => { await h.current.simulateEEWRetraction() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     await act(async () => { await h.current.simulateTsunamiWatch() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     await act(async () => { await h.current.simulateTsunamiGradeChange() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     await act(async () => { await h.current.simulateNankaiRetraction() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     await act(async () => { await h.current.simulateEarthquakeCountRetraction() })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
 
     events.length = 0
     cleanup()
@@ -5582,13 +5727,12 @@ describe('取消の効き方を読み上げへ渡す（LiveEventMeta.quakeCancel
       .map(([, meta]) => (meta as LiveEventMeta | undefined)?.quakeCancel)
 
   it('正: 一部の取消では、取り下げた情報名と当たったカードが渡る', async () => {
-    const { createTestQuakePartialCancel } = await import('../utils/testData')
     const onLiveEvent = vi.fn()
     const h = setup({ onLiveEvent })
     await h.flush()
 
     // 同じティックで流す（状態がまだ追いついていなくても、写しで当たり先を引ける）
-    act(() => { for (const q of createTestQuakePartialCancel()) h.current.injectEvent(q) })
+    act(() => { for (const q of partialCancelReports) h.current.injectEvent(q) })
 
     const [decided] = 取消の判断(onLiveEvent)
     expect(decided?.target).toBeDefined()
@@ -5596,12 +5740,11 @@ describe('取消の効き方を読み上げへ渡す（LiveEventMeta.quakeCancel
   })
 
   it('対照: 取り消された種別の報しか受けていなければ、全体の取消として渡る（retracted なし）', async () => {
-    const { createTestQuakeCancel } = await import('../utils/testData')
     const onLiveEvent = vi.fn()
     const h = setup({ onLiveEvent })
     await h.flush()
 
-    act(() => { for (const q of createTestQuakeCancel()) h.current.injectEvent(q) })
+    act(() => { for (const q of cancelReports) h.current.injectEvent(q) })
 
     const [decided] = 取消の判断(onLiveEvent)
     expect(decided?.target).toBeDefined()
@@ -5609,12 +5752,11 @@ describe('取消の効き方を読み上げへ渡す（LiveEventMeta.quakeCancel
   })
 
   it('安全弁: 当たるカードが無い取消は、当たり先なしで渡る（画面の古いカードを拾わない）', async () => {
-    const { createTestQuakeCancel } = await import('../utils/testData')
     const onLiveEvent = vi.fn()
     const h = setup({ onLiveEvent })
     await h.flush()
 
-    const [, cancel] = createTestQuakeCancel()
+    const [, cancel] = cancelReports
     act(() => { h.current.injectEvent(cancel) })
 
     const [decided] = 取消の判断(onLiveEvent)
@@ -5622,12 +5764,11 @@ describe('取消の効き方を読み上げへ渡す（LiveEventMeta.quakeCancel
   })
 
   it('安全弁: 同じ取消が二度届いたら、2 通目はもう伝えた取消として渡る（1 通目は渡らない）', async () => {
-    const { createTestQuakeCancel } = await import('../utils/testData')
     const onLiveEvent = vi.fn()
     const h = setup({ onLiveEvent })
     await h.flush()
 
-    const [prompt, cancel] = createTestQuakeCancel()
+    const [prompt, cancel] = cancelReports
     act(() => { h.current.injectEvent(prompt) })
     act(() => { h.current.injectEvent(cancel) })
     act(() => { h.current.injectEvent(cancel) })
@@ -5638,12 +5779,11 @@ describe('取消の効き方を読み上げへ渡す（LiveEventMeta.quakeCancel
   it('安全弁: 同じティックで一部の取消が二度届いても、2 通目は一部の取消を名乗らない（写しで完結する）', async () => {
     // 写しには 1 通目で当て直したカードが載る。2 通目が画面の状態（まだ当て直す前）へ落ちると、
     // 取り下げた震度速報がまだ残るカードを拾って「一部の取消」を名乗る
-    const { createTestQuakePartialCancel } = await import('../utils/testData')
     const onLiveEvent = vi.fn()
     const h = setup({ onLiveEvent })
     await h.flush()
 
-    const telegrams = createTestQuakePartialCancel()
+    const telegrams = partialCancelReports
     const cancel = telegrams[telegrams.length - 1]
     act(() => {
       for (const q of telegrams) h.current.injectEvent(q)
@@ -5662,7 +5802,9 @@ describe('取消の効き方を読み上げへ渡す（LiveEventMeta.quakeCancel
 // 409 が続けば最大 15 秒、履歴と復元が待たされていた（2026-10-19 実測）。
 const { fetchDmdataActiveEews } = await import('../services/dmdata')
 const { rememberClassifications, loadRememberedClassifications } = await import('../services/dmdataClassificationMemory')
-const { createTestEEWWarning } = await import('../utils/testData')
+// テストボタンと同じ電文（→ `utils/testTelegramScripts.ts` の `EEW_WARNING`）から、
+// 事象の識別子と報番号を指定して報を作る（→ `test-utils/testTelegramFixtures.ts`）。
+const createTestEEWWarning = (eventId: string, serial = 1) => makeEewReport(eewBase, eventId, serial)
 
 describe('DMDSS 版: 前回受け付けられた区分で、履歴と復元を申し込みの結果より先に始める', () => {
   beforeEach(() => {
@@ -5761,7 +5903,7 @@ describe('DMDSS 版: 前回受け付けられた区分で、履歴と復元を�
 
   // 取り直しで、発表中の緊急地震速報を二重に積まない（前の版が積み終えた電文は数えない）
   it('取り直しで同じ緊急地震速報が返っても、復元は 1 度だけ積む', async () => {
-    const eew = createTestEEWWarning(true, '20261019120000')
+    const eew = createTestEEWWarning('20261019120000')
     // 1 回だけの指定にする（既定の空配列を後のテストへ持ち越さない）
     vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([eew]).mockResolvedValueOnce([eew])
     vi.mocked(log.info).mockClear()
@@ -5779,7 +5921,7 @@ describe('DMDSS 版: 前回受け付けられた区分で、履歴と復元を�
   // 起動時に復元した緊急地震速報を読み上げ側へも渡す。渡さないと、その後に届いた取消が
   // 「表示中の速報ではない」と判定されて鳴らず読まれない（→ `useLiveEventHandler` の `restoreStartupEews`）
   it('復元した緊急地震速報を、読み上げ側の口へも渡す', async () => {
-    const eew = createTestEEWWarning(true, '20261019120000')
+    const eew = createTestEEWWarning('20261019120000')
     vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([eew])
     rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
     const received: (readonly EEWAlert[])[] = []
@@ -5791,7 +5933,7 @@ describe('DMDSS 版: 前回受け付けられた区分で、履歴と復元を�
 
   // 安全弁: 読み上げ側で投げても、画面の要求（発表中の速報を見せる）は出す
   it('読み上げ側の口が投げても、画面の要求は出す', async () => {
-    const eew = createTestEEWWarning(true, '20261019120000')
+    const eew = createTestEEWWarning('20261019120000')
     vi.mocked(fetchDmdataActiveEews).mockResolvedValueOnce([eew])
     rememberClassifications('test-key', ['eew.forecast', 'telegram.earthquake'])
     const requested: string[] = []
@@ -6004,7 +6146,8 @@ describe('DMDSS 版: 起動時履歴は、ライブで当てた津波の報よ�
       await settle(h)
       act(() => { vi.advanceTimersByTime(31_000) })
       expect(h.current.tsunamis[0].cancelledAt).toBeUndefined()
-      act(() => { vi.advanceTimersByTime(90_000) })
+      await act(async () => { vi.advanceTimersByTime(90_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
       expect(h.current.tsunamis[0].cancelReason).toBe('expired')
     })
 
@@ -6444,9 +6587,9 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
 
   // 正: 張り直しで戻す緊急地震速報は、受け取った報番号より新しい報だけ（表示中の速報の続報も入る）
   it('張り直しで戻す緊急地震速報は、ライブで受け取った報番号より新しい報だけ', async () => {
-    const r1 = createTestEEWWarning(true, '20261020120000', 1)
-    const r2 = createTestEEWWarning(true, '20261020120000', 2)
-    const r3 = createTestEEWWarning(true, '20261020120000', 3)
+    const r1 = createTestEEWWarning('20261020120000', 1)
+    const r2 = createTestEEWWarning('20261020120000', 2)
+    const r3 = createTestEEWWarning('20261020120000', 3)
     const handed: (readonly EEWAlert[])[] = []
     const h = setup({ onStartupRestoreEews: (eews) => { handed.push(eews) } })
     await h.flush()
@@ -6472,7 +6615,7 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
   // 正: 受け取り済みの報番号の報は積まないが、詳細の全報から載せた特別警報の印は表示中の速報へ移す。
   // 取得の間にライブが追いつくとここで落ちるので、移さないと切れていた間に特別警報だった速報が警報のまま残る
   it('張り直しで積まない受け取り済みの報でも、運んできた特別警報の印は移す', async () => {
-    const r2 = createTestEEWWarning(true, '20261020120000', 2)
+    const r2 = createTestEEWWarning('20261020120000', 2)
     const handed: (readonly EEWAlert[])[] = []
     const h = setup({ onStartupRestoreEews: (eews) => { handed.push(eews) } })
     await h.flush()
@@ -6491,7 +6634,7 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
 
   // 対照: 印を運ばない受け取り済みの報では立たない
   it('張り直しで積まない受け取り済みの報が印を運ばなければ、印は立たない', async () => {
-    const r2 = createTestEEWWarning(true, '20261020120000', 2)
+    const r2 = createTestEEWWarning('20261020120000', 2)
     const h = setup()
     await h.flush()
     act(() => { sockets[0].onEvent?.({ kind: 'eew', data: { ...r2, everSpecialWarning: undefined } }) })
@@ -6510,7 +6653,7 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     const h = setup({ onStartupRestore: (tab) => { requested.push(tab) } })
     await h.flush()
     requested.length = 0
-    vi.mocked(fetchDmdataActiveEewsOutcome).mockResolvedValueOnce({ eews: [createTestEEWWarning(true, '20261020121500', 2)], complete: true })
+    vi.mocked(fetchDmdataActiveEewsOutcome).mockResolvedValueOnce({ eews: [createTestEEWWarning('20261020121500', 2)], complete: true })
     act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
     await h.flush()
     expect(requested).toEqual(['realtime'])
@@ -6521,11 +6664,11 @@ describe('DMDSS 版: 繋がっていなかった間の電文を取り戻す', ()
     const requested: string[] = []
     const h = setup({ onStartupRestore: (tab) => { requested.push(tab) } })
     await h.flush()
-    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: createTestEEWWarning(true, '20261020121500', 1) }) })
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: createTestEEWWarning('20261020121500', 1) }) })
     act(() => { vi.advanceTimersByTime(100) })
     await h.flush()
     requested.length = 0
-    vi.mocked(fetchDmdataActiveEewsOutcome).mockResolvedValueOnce({ eews: [createTestEEWWarning(true, '20261020121500', 2)], complete: true })
+    vi.mocked(fetchDmdataActiveEewsOutcome).mockResolvedValueOnce({ eews: [createTestEEWWarning('20261020121500', 2)], complete: true })
     act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
     await h.flush()
     expect(h.current.activeEEWs.size).toBe(1)
@@ -6546,7 +6689,7 @@ describe('DMDSS 版: 取り直しの最中に終えた緊急地震速報を戻�
   })
   afterEach(() => { vi.useRealTimers() })
 
-  const finalReport = (serial: number) => ({ ...createTestEEWWarning(true, '20261020130000', serial), isFinal: true })
+  const finalReport = (serial: number) => ({ ...createTestEEWWarning('20261020130000', serial), isFinal: true })
 
   /** 最終報をライブで受け、張り直しの取り直しを返さずに待たせたまま自動解除させる */
   async function expireDuringReconnectRestore(handed: (readonly EEWAlert[])[]) {
@@ -6602,7 +6745,7 @@ describe('DMDSS 版: 取り直しの最中に終えた緊急地震速報を戻�
     expect(h.current.activeEEWs.size).toBe(0)
 
     // 対照: 同じ取り直しに入っていた、終えていない地震の速報は戻す（起動時の経路そのものが働いている証拠）
-    const other = createTestEEWWarning(true, '20261020130600', 1)
+    const other = createTestEEWWarning('20261020130600', 1)
     await act(async () => { resolve([finalReport(3), other]) })
     await h.flush()
     expect(handed).toHaveLength(1)
@@ -6616,11 +6759,11 @@ describe('DMDSS 版: 取り直しの最中に終えた緊急地震速報を戻�
     const handed: (readonly EEWAlert[])[] = []
     const h = setup({ onStartupRestoreEews: (eews) => { handed.push(eews) } })
     await h.flush()
-    const live = createTestEEWWarning(true, '20261020131000', 3)
+    const live = createTestEEWWarning('20261020131000', 3)
     act(() => { sockets[0].onEvent?.({ kind: 'eew', data: live }) })
     act(() => { vi.advanceTimersByTime(100) })
     await h.flush()
-    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: { ...createTestEEWWarning(true, '20261020131000', 4), cancelled: true } }) })
+    act(() => { sockets[0].onEvent?.({ kind: 'eew', data: { ...createTestEEWWarning('20261020131000', 4), cancelled: true } }) })
     act(() => { vi.advanceTimersByTime(100) })
     await h.flush()
     expect([...h.current.activeEEWs.values()][0]?.cancelledAt).toBeTruthy()
@@ -6650,7 +6793,7 @@ describe('DMDSS 版: 取り直しの最中に終えた緊急地震速報を戻�
     const handed: (readonly EEWAlert[])[] = []
     const h = setup({ onStartupRestoreEews: (eews) => { handed.push(eews) } })
     await h.flush()
-    vi.mocked(fetchDmdataActiveEewsOutcome).mockResolvedValueOnce({ eews: [createTestEEWWarning(true, '20261020130500', 2)], complete: true })
+    vi.mocked(fetchDmdataActiveEewsOutcome).mockResolvedValueOnce({ eews: [createTestEEWWarning('20261020130500', 2)], complete: true })
     act(() => { sockets[0].onStarted?.({ previousAliveAtMs: Date.now() - 60_000 }) })
     await h.flush()
     expect(handed).toHaveLength(1)
@@ -6669,13 +6812,14 @@ describe('ライブの入口: 画面から消えた地震の報を採らない',
   afterEach(() => { vi.useRealTimers() })
 
   const report = (serial: number, over: Partial<EEWAlert> = {}) =>
-    ({ ...createTestEEWWarning(true, '20261020140000', serial), ...over })
+    ({ ...createTestEEWWarning('20261020140000', serial), ...over })
 
   /** ライブで受けた最終報を自動解除させる */
   async function expireLive(onLiveEvent?: (event: LiveEvent, meta?: LiveEventMeta) => void) {
     const h = setup({ onLiveEvent })
     await h.flush()
     const final = report(3, { isFinal: true })
+    console.log("PROBE onEvent", typeof sockets[0].onEvent, "status", h.current.connectionStatus)
     act(() => { sockets[0].onEvent?.({ kind: 'eew', data: final }) })
     act(() => { vi.advanceTimersByTime(100) })
     await h.flush()
@@ -6874,9 +7018,16 @@ describe('ライブの入口: 自動解除の時刻を過ぎた報を採らな�
 
   /** 10 分前に発表された、震源も 10 分前の報（M・深さによらず自動解除の時刻を過ぎている） */
   const staleReport = (serial: number, over: Partial<EEWAlert> = {}): EEWAlert => {
-    const base = createTestEEWWarning(true, '20261021090000', serial, new Date(Date.now() - 10 * 60_000))
+    const base = createTestEEWWarning('20261021090000', serial)
     const issued = new Date(Date.now() - 10 * 60_000).toISOString()
-    return { ...base, time: issued, issue: { ...base.issue!, time: issued }, ...over }
+    // **発生時刻も古くする。** 自動解除の時刻は発生時刻から数えるので、発表時刻だけ古くしても過ぎない
+    return {
+      ...base,
+      time: issued,
+      issue: { ...base.issue!, time: issued },
+      earthquake: { ...base.earthquake, originTime: issued, arrivalTime: issued },
+      ...over,
+    }
   }
 
   const deliver = async (h: ReturnType<typeof setup>, eew: EEWAlert) => {
@@ -6904,7 +7055,7 @@ describe('ライブの入口: 自動解除の時刻を過ぎた報を採らな�
     const onLiveEvent = vi.fn()
     const h = setup({ onLiveEvent })
     await h.flush()
-    await deliver(h, { ...createTestEEWWarning(true, '20261021090000', 3), isFinal: true })
+    await deliver(h, { ...createTestEEWWarning('20261021090000', 3), isFinal: true })
     expect(h.current.activeEEWs.size).toBe(1)
     expect(onLiveEvent.mock.calls.some(([e]) => e.kind === 'eew')).toBe(true)
   })
@@ -6922,7 +7073,7 @@ describe('ライブの入口: 自動解除の時刻を過ぎた報を採らな�
   it('画面に出ている地震の、時刻の古い続報は採る', async () => {
     const h = setup()
     await h.flush()
-    await deliver(h, createTestEEWWarning(true, '20261021090000', 1))
+    await deliver(h, createTestEEWWarning('20261021090000', 1))
     expect(h.current.activeEEWs.size).toBe(1)
     await deliver(h, staleReport(2))
     expect(h.current.activeEEWs.size).toBe(1)
@@ -6934,8 +7085,11 @@ describe('ライブの入口: 自動解除の時刻を過ぎた報を採らな�
   it('自動解除の時刻の約 1 秒手前は採り、約 1 秒過ぎは採らない', async () => {
     const issued = new Date(Date.now() - 60_000)
     const make = (serial: number, eventId: string) => {
-      const base = createTestEEWWarning(true, eventId, serial, issued)
-      return { ...base, time: issued.toISOString(), issue: { ...base.issue!, time: issued.toISOString() } }
+      const base = createTestEEWWarning(eventId, serial)
+      const iso = issued.toISOString()
+      // **発生時刻も揃える。** 台本の電文は「いま」へ寄せてあるので、発表時刻だけ戻すと
+      // 発生時刻のほうが新しい報になる（自動解除の時刻の計算が狂う）
+      return { ...base, time: iso, issue: { ...base.issue!, time: iso }, earthquake: { ...base.earthquake, originTime: iso, arrivalTime: iso } }
     }
     const before = make(1, '20261021091000')
     const cancelMs = calcEEWCancelTime(before, new Date(Math.floor(issued.getTime() / 1000) * 1000)).getTime()

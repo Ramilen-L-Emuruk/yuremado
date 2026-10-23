@@ -23,7 +23,11 @@ import {
 } from './ttsText'
 import { splitIntoChunks } from './voicevox'
 import { joinSegments } from './ttsFollow'
-import { createTestKohatsu } from './testData'
+// テストボタンと同じ電文（→ `utils/testTelegramScripts.ts`）。**トップレベルで読む** ——
+// テスト本体の中で初めて読むと、電文の読み込みが 1 件目の所要時間に乗って時間切れになる。
+import { first, telegramKohatsus } from '../test-utils/testTelegramFixtures'
+
+const testKohatsu = first(await telegramKohatsus('KOHATSU'), '後発地震注意情報')
 import type { JMAQuake, TsunamiObservation } from '../types/earthquake'
 
 const TTS_OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
@@ -62,7 +66,7 @@ const PLACES: ReadonlyArray<readonly [string, (text: string) => string]> = [
   ['遠地地震の付加文', (t) => earthquakeToText(distantQuake(t), TTS_OPTS, true)],
   ['津波観測情報の見出し文', (t) => tsunamiObservationUpdateToText([OBSERVATION], t)],
   ['各地の満潮時刻の見出し文', (t) => joinSegments(tsunamiTideToSegments('tide', t))],
-  ['後発地震注意情報の見出し文', (t) => kohatsuToText({ ...createTestKohatsu(), headline: t })],
+  ['後発地震注意情報の見出し文', (t) => kohatsuToText({ ...testKohatsu, headline: t })],
 ]
 
 // 取消の宣言の形（「先ほどの、〇〇を取り消します。」）にすると、読み上げを省く判定に掛かって

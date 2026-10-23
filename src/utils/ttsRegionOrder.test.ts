@@ -10,6 +10,13 @@ import { readFileSync } from 'node:fs'
 import type { EarthquakePoint, IntensityScale, JMAQuake, JMALpgm } from '../types/earthquake'
 import type { TtsSpeechOptions } from './ttsText'
 import { joinSegments } from './ttsFollow'
+// テストボタンと同じ電文（能登本震）。**トップレベルで読む** —— テスト本体の中で初めて読むと、
+// 電文の読み込みが 1 件目の所要時間に丸ごと乗って時間切れになる（→ CLAUDE.md「検証」）。
+import { first, telegramQuakes } from '../test-utils/testTelegramFixtures'
+
+/** 能登本震の観測点（区域の点は落とす）。かつては生成済みの JSON を読んでいた。 */
+const notoPoints = (first(await telegramQuakes('EARTHQUAKE'), '地震情報').points ?? [])
+  .filter(p => !p.isArea)
 
 type TtsModule = typeof import('./ttsText')
 
@@ -484,10 +491,6 @@ describe('震度の地域列挙: 観測点しか持たない電文（P2PQuake �
 // 県名へのまとめ判定は階級ごとに独立して走る。上の階級で区域名を出した県を下の階級で丸ごと
 // まとめると、県の震度を過小に伝える。能登半島地震の本震の実データがこの形をそのまま含む。
 describe('震度の地域列挙: 階級をまたぐ県名まとめ', () => {
-  const notoPoints = (
-    JSON.parse(readFileSync('src/data/noto-honshin-2024-points.json', 'utf8')) as EarthquakePoint[]
-  ).filter(p => !p.isArea)
-
   /** 全階級を読ませる（上限なし）。まとめ判定そのものを見たいので選抜と打ち切りは効かせない。 */
   const ALL: TtsSpeechOptions = { intensityLevels: 8, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
   /** 本震の最大震度は 7。共有ヘルパーは 4 固定なので上書きする（ここから下の階級を辿るため）。 */
@@ -508,9 +511,16 @@ describe('震度の地域列挙: 階級をまたぐ県名まとめ', () => {
       .filter(k => k.startsWith('福井県|')).map(k => k.slice(k.indexOf('|') + 1))
     expect(fukuiAreas).toEqual(['福井県嶺北', '福井県嶺南'])
 
+    // **観測点名だけで引く。** DMDATA の電文は観測点に県名を持たない（`pref` が常に空）ので、
+    // `福井県|観測点名` では 1 件も一致しない（→ CLAUDE.md「行動チェックリスト」の同じ罠）。
+    const regionOf = new Map<string, string>()
+    for (const [key, st] of Object.entries(data.stations)) {
+      if (st[2] !== undefined) regionOf.set(key.slice(key.indexOf('|') + 1), data.regionNames[st[2]]!)
+    }
     const regionsAt = (scale: number) => new Set(
-      notoPoints.filter(p => p.pref === '福井県' && p.scale === scale)
-        .map(p => data.regionNames[data.stations[`福井県|${p.addr}`]![2]!]))
+      notoPoints.filter(p => p.scale === scale)
+        .map(p => regionOf.get(p.addr))
+        .filter((r): r is string => r !== undefined && r.startsWith('福井県')))
     expect([...regionsAt(50)]).toEqual(['福井県嶺北'])
     expect([...regionsAt(40)].sort()).toEqual(['福井県嶺北', '福井県嶺南'])
   })

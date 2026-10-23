@@ -8,7 +8,7 @@ import type { IssueType, QuakeReportRecord } from '../types/earthquake'
  * （→ `components/SerialBadge.tsx`）。ここで見たいのは「どの種別が何通と記録されたか」
  * なので、読みやすい形へ畳んで比べる。
  *
- * **2 つのテストファイルで共有する**（`utils/quakeMerge.test.ts` と `utils/testData.test.ts`）。
+ * **2 つのテストファイルで共有する**（`utils/quakeMerge.test.ts` と `utils/testTelegramScripts.test.ts`）。
  * 別々に持つと、畳み方を変えたときに片方だけ古くなる。
  */
 export const reportsText = (reports: QuakeReportRecord[] | undefined, fallback: IssueType): string =>

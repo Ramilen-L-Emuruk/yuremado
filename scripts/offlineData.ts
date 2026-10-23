@@ -54,6 +54,7 @@ export const OFFLINE_DATA_EXCLUDED: readonly { path: string; reason: string }[] 
   { path: 'historical-archives/', reason: 'ローカル履歴アーカイブ。再生するときだけ読む' },
   { path: 'historical-archives-kyoshin/', reason: '手元で生成した K-NET 由来の再生データ（Git 管理外）' },
   { path: 'test-scenarios/', reason: '実地震テストのシナリオ（Git 管理外）。再生するときだけ読む' },
+  { path: 'test-telegrams/', reason: 'テストボタンが流す電文。押されたときだけ読む（検証用で、オフラインで要らない）' },
 ]
 
 /**

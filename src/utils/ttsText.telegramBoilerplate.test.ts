@@ -19,7 +19,11 @@ import type { LiveEvent } from '../types/earthquake'
 import { log } from './logger'
 // **トップレベルで読む。** `testData` は実電文由来の JSON を静的に取り込むので、テスト本体の
 // 中で初めて読むとその待ちが 1 件目の所要時間へ丸ごと乗る（→ CLAUDE.md「検証」）。
-import { createTestEarthquake, createTestLpgm, createTestTsunami } from './testData'
+import { first, telegramQuakes, telegramLpgms, telegramTsunamis } from '../test-utils/testTelegramFixtures'
+
+const testQuake = first(await telegramQuakes('EARTHQUAKE'), '地震情報')
+const testLpgm = first(await telegramLpgms('EARTHQUAKE'), '長周期地震動に関する観測情報')
+const testTsunami = first(await telegramTsunamis('TSUNAMI_MAJOR_WARNING'), '津波警報')
 
 const BASE: TtsSpeechOptions = {
   intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0, readTelegramText: true,
@@ -221,21 +225,21 @@ describe('落とし漏れの検出', () => {
 // 一度も「落ちた状態」を見られない**。実際に津波のデータが短縮版のまま残っていた。
 describe('テストボタンのデータで落ちる', () => {
   it('津波テストの自由付加文は「高さの目安」として落ちる', () => {
-    const t = createTestTsunami(true)
+    const t = testTsunami
     expect(telegramTextToSpeak(tsunami({ freeText: t.freeText }), BASE)).toBeNull()
   })
 
   it('地震テストの固定付加文（その他）から＊印の説明が落ちる', () => {
     // このデータは同じ枠に「震源要素を訂正します。」も持つ（実電文の `Code="0256 0262"` の形）。
     // **そちらは残る**ので、落ちるのは＊印の説明だけ。
-    const q = createTestEarthquake(true)
+    const q = testQuake
     const speech = telegramTextToSpeak(quake({ varCommentText: q.varCommentText }), BASE)
     expect(speech?.body ?? '').not.toContain('＊印は')
     expect(speech?.body ?? '').toContain('震源要素を訂正します。')
   })
 
   it('長周期テストの付加文は 2 項目とも落ち、読み上げごと起きない', () => {
-    const l = createTestLpgm('test-event')
+    const l = testLpgm
     const speech = telegramTextToSpeak(lpgm({
       forecastText: l.forecastText,
       varCommentText: l.varCommentText,
