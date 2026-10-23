@@ -1,7 +1,7 @@
 // リアルタイムタブの右パネル。地図エリアは JapanMap が強震モニタ（観測点）と
 // 予報円を描画し、ここでは EEW 情報カード・強震モニタ検知(V2)カード・注記を表示する。
 // 震度スケールの凡例は地図へ重ねる `MapLegend` が持つ（同じものを 2 箇所に出さない）。
-import { Fragment, memo, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useFieldFlash, type FieldFlash } from '../../hooks/useFieldFlash'
 import { EEW_FLASH_COLOR, UPDATE_MARK_WASH, EEW_HIGHLIGHT_FADE_MS } from '../../utils/updateMark'
 import type { EEWAlert } from '../../types/earthquake'
@@ -9,6 +9,8 @@ import type { DetectionEvent, Confidence } from '../../utils/kyoshinDetector'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdown'
 import { usePageVisible } from '../../hooks/usePageVisible'
+import { useFollowScroll, scrollParentOf } from '../../hooks/useFollowScroll'
+import { cancelBlockOffset } from '../../utils/cancelBlockOffset'
 import { formatDateTime, formatDepth, formatMagnitudeValue, hasDepth, hasMagnitude, magnitudeTypeLabel } from '../../utils/formatters'
 import { getIntensityColor, getIntensityLabel, getIntensityLabelWithApproxAbove, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
@@ -245,7 +247,75 @@ function useSecondTick(active: boolean): number {
 }
 
 
-function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: {
+/** 取消の文字の塊の高さに上限を付けるとき、枠の上下に残しておく幅（合わせて 2 倍を引く）。 */
+const CANCEL_BLOCK_VIEW_MARGIN_PX = 8
+
+/**
+ * 緊急地震速報のカードの取消の幕で、文字の塊（「取消」・定型文・理由）を、カードのうち見えている範囲の
+ * 真ん中へ置く（位置の決め方は {@link cancelBlockOffset}）。
+ *
+ * **塊を幕の縦の真ん中に固定すると、枠より高いカードでは頭を見ている間ずっと「取消」が枠の外にある**
+ * （スマホで実際に起きた）。そこで枠のスクロールと、枠・カード・塊の寸法の変化を見張り、そのたびに
+ * 位置を決め直す。
+ *
+ * - **ずらすのは `transform` で行う。** レイアウトを変えないので、寸法の見張りが自分の書き込みで
+ *   また呼ばれることがない。塊が幕の中でふだんどこにあるか（`offsetTop`）も、ずらす前の値のまま読める
+ * - **スクロールのたびの計算は 1 コマに 1 回へまとめる**（`requestAnimationFrame`）。スクロールの
+ *   知らせは 1 コマに何度も来ることがある
+ * - **塊の高さには上限を付ける**（枠の高さから上下の余白を引いた高さ。`--cancel-view-h`）。上限を超える
+ *   ぶんは理由の文が縮み、その中でスクロールする。枠より高い塊は真ん中に置いても上下が切れる
+ *
+ * 値はレンダーを通さず要素へ直接書く —— スクロールのたびにカードを描き直す理由が無い。
+ * 見張りを持たない環境（テストの jsdom）では何もせず、塊は幕の縦の真ん中に置いたままにする。
+ */
+function useCancelOverlayPlacement(cardRef: React.RefObject<HTMLElement | null>, active: boolean) {
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const blockRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const card = cardRef.current
+    const overlay = overlayRef.current
+    const block = blockRef.current
+    if (!active || !card || !overlay || !block || typeof ResizeObserver !== 'function') return
+    const scroller = scrollParentOf(card)
+    if (!scroller) return
+    const place = () => {
+      const viewH = scroller.clientHeight
+      // 枠の高さが 0（パネルを畳んでいる）の間は何も変えない（開いたときに枠の見張りが測り直す）。
+      if (viewH <= 0) return
+      overlay.style.setProperty('--cancel-view-h', `${viewH}px`)
+      const view = scroller.getBoundingClientRect()
+      const ov = overlay.getBoundingClientRect()
+      const dy = cancelBlockOffset({
+        overlayTop: ov.top,
+        overlayBottom: ov.bottom,
+        viewTop: view.top,
+        viewBottom: view.top + viewH,
+        blockNaturalTop: ov.top + block.offsetTop,
+        blockHeight: block.offsetHeight,
+      })
+      if (dy !== null) block.style.transform = `translateY(${Math.round(dy)}px)`
+    }
+    let frame: number | null = null
+    const onScroll = () => {
+      if (frame !== null) return
+      frame = requestAnimationFrame(() => { frame = null; place() })
+    }
+    place()
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    const observer = new ResizeObserver(place)
+    observer.observe(block)
+    observer.observe(card)
+    observer.observe(scroller)
+    return () => {
+      scroller.removeEventListener('scroll', onScroll)
+      observer.disconnect()
+      if (frame !== null) cancelAnimationFrame(frame)
+    }
+  }, [cardRef, active])
+  return { overlayRef, blockRef }
+}
+
+function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: {
   eew: EEWAlert
   /** 予想震度の付かない待ちが切れたか（`NoForecastBanner` の同名引数）。 */
   noForecastWaited: boolean
@@ -255,6 +325,8 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
    * 検知カードが受け取るものと同じ合成（→ `KyoshinDetectionSummary`）。
    */
   visible: boolean
+  /** 取消が届いたときにこのカードを寄せるか（取消がいちばん新しいカードだけ真）。 */
+  followCancel: boolean
   /**
    * 読み上げがいまこの地震を語っているか。縁を強調し、視野に無ければ寄せる。
    *
@@ -463,21 +535,53 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
   }, [brokenArrivalsKey])
 
   /**
-   * 読み上げが語り始めたら、そのカードを視野へ入れる。
+   * カードを視野へ寄せる。寄せるのは 2 つの場面だけ（寄せ方は地震カードと共有の `useFollowScroll`）。
    *
-   * **`block: 'nearest'` は視野内なら動かさない** —— 見ている位置を奪わないための指定で、
-   * 津波カードの追従が明示的に持っている「視野内なら動かさない」判定をここでは
-   * ブラウザ側に任せている（対象が 1 枚のカードなので、送り先を計算する必要が無い）。
+   * - **読み上げが語り始めたとき**（語り終えて、また語り始めたときも）
+   * - **取消が届いたとき** —— 読み上げが無効な端末では語らないので、こちらが無いと寄らない。
+   *   読み上げが有効でも、取消の読み上げは通知音のぶん遅れて始まるので、届いた時点で寄せる。
+   *   **寄せるのは取消がいちばん新しいカードだけ**（`followCancel`。親が決める）—— 複数のカードが
+   *   同じ回に取消になると、カードの数だけ寄せが走り、最後に呼ばれたもの（いちばん古いカード）が勝つ
    *
    * **`visible` を見る** —— 別のタブを見ている・パネルを畳んでいる間に寄せても意味が無く、
-   * 戻ってきたときに勝手に位置が動いていることになる。タブへ移った直後は `visible` が
-   * 真へ変わった時点で寄せる（声はまだ語っている）。
+   * 戻ってきたときに勝手に位置が動いていることになる。見えない間は合図を出さず、タブへ移った
+   * 時点で出す（取消の表示も声も、そのときにはまだ残っている）。
    */
   const cardRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!speaking || !visible) return
-    cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  }, [speaking, visible])
+  // **合図は「寄せる出来事が起きた回数」1 本で持つ。** 回数は増えるだけで、減ったり元へ戻ったりしない。
+  // 状態（語っているか・取消があるか・いちばん新しい取消か）から合図を組むと、その状態が落ちたときに合図が
+  // 変わって寄せ直す —— 取消の読み上げを終えた瞬間や、別のカードに新しい取消が来て `followCancel` が
+  // 偽へ落ちた瞬間に、読み進めていた位置をカードの頭へ引き戻す（2 巡のレビューでどちらも出た）。
+  //
+  // 回数を増やすのは次の 2 つだけ。
+  // - 「語っていて、かつ見えている」に入ったとき（見えない間に語り終えた発話では寄せない）
+  // - 新しい取消の時刻が届き、そのときこのカードが取消のいちばん新しいカードだったとき。**取消の時刻は
+  //   いちばん新しいかどうかに関わらず覚える** —— 覚えないと、より新しい取消のカードが片付いて
+  //   繰り上がったときに、古い取消を「届いた」と取り違えて寄せる
+  //
+  // 取消が見えない間に届いたときは回数だけ増え、見えた時点で寄せる（合図は見えない間 null）。
+  // レンダー中に前の値と比べて更新する、React が勧める形（effect で数えると 1 回ぶん遅れる）。
+  const speakingVisible = speaking && visible
+  const cancelMs = eew.cancelledAt?.getTime() ?? null
+  const [follow, setFollow] = useState({
+    count: speakingVisible || (followCancel && cancelMs !== null) ? 1 : 0,
+    prevSpeakingVisible: speakingVisible,
+    seenCancelMs: cancelMs,
+  })
+  const newCancel = cancelMs !== null && (follow.seenCancelMs === null || cancelMs > follow.seenCancelMs)
+  if (speakingVisible !== follow.prevSpeakingVisible || newCancel) {
+    const bump = (speakingVisible && !follow.prevSpeakingVisible) || (newCancel && followCancel)
+    setFollow({
+      count: follow.count + (bump ? 1 : 0),
+      prevSpeakingVisible: speakingVisible,
+      seenCancelMs: newCancel ? cancelMs : follow.seenCancelMs,
+    })
+  }
+  const followSignature = !visible || follow.count === 0 ? null : String(follow.count)
+  useFollowScroll(cardRef, followSignature, () => cardRef.current)
+
+  // 取消の文字を、カードのうち枠に見えている範囲の真ん中へ置く（→ `useCancelOverlayPlacement`）。
+  const cancelOverlay = useCancelOverlayPlacement(cardRef, eew.cancelledAt !== undefined)
 
   return (
     <div
@@ -502,22 +606,35 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
       onClick={onDeactivateLpgm}
     >
       {eew.cancelledAt && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-lg px-4">
-          <span className="font-black text-white" style={{ fontSize: '3rem', lineHeight: 1.1 }}>取消</span>
-          <span className="text-sm font-bold text-white/90 mt-1">この緊急地震速報は取り消されました</span>
-          {/* 気象庁が書いた取消しの概要（電文の `Body/Text`）。アプリが組み立てた文言ではないので
-              そのまま出す。地震情報のカードと同じ扱い（quake-spec.md §8）。 */}
-          {eew.cancelText && (
-            // カードは `overflow-hidden` で、オーバーレイは `absolute inset-0`。**本文が下地の
-            // 高さを超えると下が切れる**（読み上げは長文を画面へ委ねる設計なので、そこで切れると
-            // 理由がどこにも残らない）。この要素の中でスクロールできるようにしておく。
-            <span
-              className="mt-2 text-center text-white/80 overflow-y-auto"
-              style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-line', maxHeight: '40%' }}
-            >
-              {eew.cancelText}
-            </span>
-          )}
+        // 幕はカード全体を覆い、文字の塊はふだんその縦の真ん中にある。見えている範囲の真ん中へ
+        // ずらすのは `useCancelOverlayPlacement`。
+        <div
+          ref={cancelOverlay.overlayRef}
+          className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-lg px-4"
+        >
+          <div
+            ref={cancelOverlay.blockRef}
+            className="flex flex-col items-center min-h-0"
+            style={{
+              // 塊が枠より高いと上下が切れる。理由の文（下）を縮めて、枠から上下の余白を引いた高さに収める。
+              maxHeight: `min(100%, calc(var(--cancel-view-h, 100%) - ${CANCEL_BLOCK_VIEW_MARGIN_PX * 2}px))`,
+            }}
+          >
+            <span className="font-black text-white shrink-0" style={{ fontSize: '3rem', lineHeight: 1.1 }}>取消</span>
+            <span className="text-sm font-bold text-white/90 mt-1 shrink-0">この緊急地震速報は取り消されました</span>
+            {/* 気象庁が書いた取消しの概要（電文の `Body/Text`）。アプリが組み立てた文言ではないので
+                そのまま出す。地震情報のカードと同じ扱い（quake-spec.md §8）。 */}
+            {eew.cancelText && (
+              // 塊の高さに上限があるので、**本文が長いとここが縮む**。読み上げは長文を画面へ委ねる
+              // 設計なので、そこで切れると理由がどこにも残らない。この要素の中でスクロールできるようにする。
+              <span
+                className="mt-2 text-center text-white/80 overflow-y-auto min-h-0"
+                style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-line' }}
+              >
+                {eew.cancelText}
+              </span>
+            )}
+          </div>
         </div>
       )}
       {/* 種別ヘッダー */}
@@ -1404,6 +1521,13 @@ function KyoshinDetectionSummary({ events, points, visible }: {
 export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections, kyoshinDetectedPoints, swaveArrival, visible, speakingEewKey, eewNoForecastSettledKeys, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: Props) {
   // ブラウザのタブ・ウィンドウ側の可視性は App では判らないため、ここで合成する。
   const pageVisible = usePageVisible()
+  // 取消が届いたときに寄せるのは、取消がいちばん新しいカード 1 枚だけ（→ EEWCard の `followCancel`）。
+  let latestCancelKey: string | null = null
+  let latestCancelMs = -Infinity
+  for (const eew of eews) {
+    const ms = eew.cancelledAt?.getTime()
+    if (ms !== undefined && ms > latestCancelMs) { latestCancelMs = ms; latestCancelKey = eewEventKey(eew) }
+  }
   return (
     <div className="flex flex-col min-h-full p-2 gap-2 roomy:p-3 roomy:gap-3">
       {/* データカード */}
@@ -1414,6 +1538,7 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
             key={eew.issue?.eventId ?? eew.id}
             eew={eew}
             visible={visible && pageVisible}
+            followCancel={latestCancelKey !== null && eewEventKey(eew) === latestCancelKey}
             speaking={speakingEewKey !== null && speakingEewKey !== undefined && eewEventKey(eew) === speakingEewKey}
             noForecastWaited={eewNoForecastSettledKeys.has(eewEventKey(eew))}
             activeLpgmEventId={activeLpgmEventId}
