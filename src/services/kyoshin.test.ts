@@ -694,3 +694,27 @@ describe('hypoInfoItemToEEW の規模', () => {
     expect(hypoInfoItemToEEW(item('0.0')).earthquake.hypocenter.magnitude).toBe(0)
   })
 })
+
+// Yahoo の時刻も P2PQuake と同じく入口で ISO の形（`+09:00`）へ直す。標準版の緊急地震速報は 2 経路を
+// 時刻で並べるので、片方だけ時間帯なしのまま残すと、日本国外の端末でこの経路だけ端末の時間帯で読まれる
+describe('hypoInfoItemToEEW の時刻', () => {
+  const item = (originTime: string, reportTime: string): YahooHypoInfoItem => ({
+    reportId: '20261022120000', reportNum: '3', reportTime, originTime, regionName: '石川県能登地方',
+    latitude: '37.5N', longitude: '137.2E', depth: '10km', magnitude: '5.4',
+    calcintensity: '04', isFinal: 'false', isCancel: 'false', isTraining: 'false',
+  })
+
+  it('発生時刻・発表時刻を ISO の形へ直す', () => {
+    const e = hypoInfoItemToEEW(item('2026/10/22 12:00:00', '2026/10/22 12:00:10'))
+    expect(e.earthquake.originTime).toBe('2026-10-22T12:00:00.000+09:00')
+    expect(e.time).toBe('2026-10-22T12:00:10.000+09:00')
+    expect(e.issue?.time).toBe('2026-10-22T12:00:10.000+09:00')
+  })
+
+  // 対照: 時計表記でない値・空は触らない
+  it('時計表記でない値と空はそのまま', () => {
+    const e = hypoInfoItemToEEW(item('', 'こわれた時刻'))
+    expect(e.earthquake.originTime).toBe('')
+    expect(e.time).toBe('こわれた時刻')
+  })
+})

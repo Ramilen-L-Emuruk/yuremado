@@ -3457,9 +3457,18 @@ export function useEarthquakes(
         //
         // **時刻を読めない電文は選ぶ前に外す。** `selectQuakeHistory` は並べ替えに時刻を使うので、
         // `NaN` が混ざると並びが壊れる（外した分は畳み込みへも渡さない —— どのみち新旧を決められない）。
-        const historyCandidates = quakeEvents
-          .map(q => ({ q, time: new Date(q.time).getTime() }))
-          .filter(c => Number.isFinite(c.time))
+        // P2PQuake の時刻は読み取りの入口で ISO の形へ直してあるので（`services/p2pquake.ts` の `p2pTime`）、
+        // ここで外れるのは入口でも直せなかった電文だけ。**外したら記録する** —— 黙ると、一覧から地震が
+        // 消えた理由が残らない（かつて Safari で受信時刻を読めず、全件がここで黙って消えた）。
+        const historyTimed = quakeEvents.map(q => ({ q, time: new Date(q.time).getTime() }))
+        const historyCandidates = historyTimed.filter(c => Number.isFinite(c.time))
+        const historyUntimed = historyTimed.filter(c => !Number.isFinite(c.time))
+        if (historyUntimed.length > 0) {
+          log.warn(
+            `[p2pquake] 初回履歴で時刻を読めない地震情報 ${historyUntimed.length} 通を外した`,
+            historyUntimed.slice(0, 3).map(c => ({ id: c.q.id, time: c.q.time })),
+          )
+        }
         const selected = selectQuakeHistory(
           historyCandidates, c => c.q, c => c.time,
           { maxEvents: MAX_HISTORY_RETAINED, windowStartMs: null },
@@ -3472,7 +3481,7 @@ export function useEarthquakes(
         // **持ち越すのは選抜に掛けた電文のうち漏れたものだけ。** `quakeEvents` から引くと、
         // 時刻を読めず選抜の手前で外した電文まで持ち越してしまい、次の「もっと見る」では
         // 畳み込みへ入る —— 同じ電文が初回では外れ、次では入る食い違いになる
-        // （`readTime` は読めない時刻でも警告を出して文字列を返すので、この形は通り抜ける）。
+        // （`readTime` は直せない時刻でも警告を出して元の文字列を返すので、この形は通り抜ける）。
         const selectedSet = new Set(selectedQuakes)
         p2pCarryOverRef.current = historyCandidates.filter(c => !selectedSet.has(c.q)).map(c => c.q)
         // 畳み込みが作った記憶も受け取る（印は出さない。→ `marksFromHistory`）。

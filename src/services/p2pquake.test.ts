@@ -96,12 +96,12 @@ describe('convertEvent', () => {
       const q = convert(REAL_QUAKE) as JMAQuake
       expect(q.kind).toBe('quake')
       expect(q.id).toBe('6a809077e88ee598246bf1f0')
-      expect(q.time).toBe('2026/08/16 01:14:47.041')
+      expect(q.time).toBe('2026-08-16T01:14:47.041+09:00')
       expect(q.issue).toEqual({
-        source: '気象庁', time: '2026/08/16 01:14:46', type: '各地の震度情報', correct: 'なし',
+        source: '気象庁', time: '2026-08-16T01:14:46.000+09:00', type: '各地の震度情報', correct: 'なし',
       })
       expect(q.earthquake).toEqual({
-        time: '2026/08/16 01:12:00',
+        time: '2026-08-16T01:12:00.000+09:00',
         hypocenter: { name: '熊本県熊本地方', latitude: 32.5, longitude: 130.6, depth: 10, magnitude: 2.9 },
         maxScale: 10,
         domesticTsunami: 'なし',
@@ -195,14 +195,14 @@ describe('convertEvent', () => {
       expect(e.id).toBe('6a69fdf1e88ee598246bf002')
       expect(e.test).toBe(false)
       expect(e.cancelled).toBe(false)
-      expect(e.earthquake.originTime).toBe('2026/07/29 22:19:36')
+      expect(e.earthquake.originTime).toBe('2026-07-29T22:19:36.000+09:00')
       expect(e.earthquake.hypocenter).toEqual({
         name: '熊本県天草・芦北地方', latitude: 32.4, longitude: 130.5, depth: 10, magnitude: 4.5,
       })
-      expect(e.issue).toEqual({ eventId: '20260729221939', serial: '1', time: '2026/07/29 22:19:44' })
+      expect(e.issue).toEqual({ eventId: '20260729221939', serial: '1', time: '2026-07-29T22:19:44.000+09:00' })
       expect(e.areas).toEqual([
-        { pref: '熊本', name: '熊本県熊本', scaleFrom: 45, scaleTo: 45, kindCode: '19', arrivalTime: '2026/07/29 22:19:44' },
-        { pref: '熊本', name: '熊本県球磨', scaleFrom: 40, scaleTo: 40, kindCode: '19', arrivalTime: '2026/07/29 22:19:43' },
+        { pref: '熊本', name: '熊本県熊本', scaleFrom: 45, scaleTo: 45, kindCode: '19', arrivalTime: '2026-07-29T22:19:44.000+09:00' },
+        { pref: '熊本', name: '熊本県球磨', scaleFrom: 40, scaleTo: 40, kindCode: '19', arrivalTime: '2026-07-29T22:19:43.000+09:00' },
       ])
       expect(warnSpy).not.toHaveBeenCalled()
     })
@@ -252,7 +252,7 @@ describe('convertEvent', () => {
       const t = convert(SPEC_TSUNAMI) as JMATsunami
       expect(t.kind).toBe('tsunami')
       expect(t.cancelled).toBe(false)
-      expect(t.issue).toEqual({ source: '気象庁', time: '2026/01/01 16:22:00', type: 'Focus' })
+      expect(t.issue).toEqual({ source: '気象庁', time: '2026-01-01T16:22:00.000+09:00', type: 'Focus' })
       expect(t.areas).toHaveLength(2)
       expect(warnSpy).not.toHaveBeenCalled()
     })
@@ -273,7 +273,7 @@ describe('convertEvent', () => {
 
     it('firstHeight が無い区域は undefined にする（2023年11月より前のデータ）', () => {
       const t = convert(SPEC_TSUNAMI) as JMATsunami
-      expect(t.areas[0].firstHeight).toEqual({ arrivalTime: '2026/01/01 16:22:00', condition: 'ただちに津波来襲と予測' })
+      expect(t.areas[0].firstHeight).toEqual({ arrivalTime: '2026-01-01T16:22:00.000+09:00', condition: 'ただちに津波来襲と予測' })
       expect(t.areas[1].firstHeight).toBeUndefined()
     })
 
@@ -335,6 +335,7 @@ describe('convertEvent', () => {
       expect(convert({ ...REAL_EEW, id: '' })).toBeNull()
     })
   })
+
   // **WebSocket は番号を `id` ではなく `_id` で配る**（公式の API 定義は `id` と書いている）。
   // 素材は 2026-10-24 01:09 に WebSocket で届いた実物（震度速報）。電文ログから写した。
   describe('WebSocket の電文（番号は `_id`）', () => {
@@ -365,6 +366,13 @@ describe('convertEvent', () => {
       expect(q.points).toHaveLength(1)
     })
 
+    // 受信時刻は小数の秒の桁数が揃わない（`.83`）。この形のまま持つと Safari が読めない
+    it('551: 受信時刻を ISO の形で持つ', () => {
+      const q = convert(WS_QUAKE) as JMAQuake
+      expect(q.time).toBe('2026-10-24T01:09:42.830+09:00')
+      expect(q.earthquake.time).toBe('2026-10-24T01:07:00.000+09:00')
+      expect(q.issue.time).toBe('2026-10-24T01:09:41.000+09:00')
+    })
 
     // 552・556 の WebSocket の実物は採れていない（サンドボックスに 5 分繋いで 551 しか来なかった）。
     // 採れた 4 種別（551・555・561・9611）がすべて `_id` だったので、同じ形を当てて固定する
@@ -375,6 +383,13 @@ describe('convertEvent', () => {
       expect((convert({ ...eew, _id: eewId }) as EEWAlert).id).toBe(eewId)
     })
 
+    // 安全弁: 直せない時刻は電文を捨てず、元の文字列のまま持って警告を残す（`readTime` を通らない欄も）
+    it('直せない時刻は元の文字列のまま持ち、警告を残す', () => {
+      const e = convert({ ...REAL_EEW, earthquake: { ...REAL_EEW.earthquake, originTime: '2026/07/29 22:19:75' } }) as EEWAlert
+      expect(e).not.toBeNull()
+      expect(e.earthquake.originTime).toBe('2026/07/29 22:19:75')
+      expect(warnSpy.mock.calls.some((c: unknown[]) => String(c[0]).includes('earthquake.originTime'))).toBe(true)
+    })
 
     it('`id` と `_id` の両方があれば `id` を採る（REST の形を変えない）', () => {
       expect((convert({ ...REAL_QUAKE, _id: 'ws-side' }) as JMAQuake).id).toBe(REAL_QUAKE.id)

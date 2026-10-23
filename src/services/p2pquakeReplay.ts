@@ -23,6 +23,7 @@ import { selectQuakeHistory } from '../utils/quakeHistorySelection'
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import { log } from '../utils/logger'
 import { createSkipCounter, UNKNOWN_SKIP_DAY } from '../utils/telegramLoss'
+import { parseJstTimeMs } from '../utils/quakeOriginSeconds'
 import { makeReplayLogEntry } from './telegramLogEntry'
 
 /** 1 ページの取得件数（API 側の上限）。 */
@@ -301,7 +302,9 @@ export async function fetchP2PQuakeHistory(
   // `offset` で遡るので日で区切られておらず、鍵には「その電文が属する日」を使う。
   const skipCounter = createSkipCounter()
   const dayOf = (raw: RawP2PEvent | undefined): string => {
-    const ms = Date.parse(typeof raw?.time === 'string' ? raw.time : '')
+    // 生の電文の時刻（`2026/10/24 01:09:42.83`）は `Date.parse` では Safari が読めない（小数の秒つき）ので、
+    // 時計表記を日本時間として読む関数で読む
+    const ms = parseJstTimeMs(typeof raw?.time === 'string' ? raw.time : '')
     return Number.isFinite(ms) ? toDateParam(new Date(ms)) : UNKNOWN_SKIP_DAY
   }
   for (const raw of raws) {
