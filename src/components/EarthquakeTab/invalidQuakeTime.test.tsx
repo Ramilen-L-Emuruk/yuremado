@@ -77,27 +77,25 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
   return result
 }
 
-// **語は「時刻不明」。** `earthquake.time` は発現時刻（`ArrivalTime`）が先なので、「発生」と
-// 名乗ると電文が言っていない事実になる（2026-10-22 ユーザー承認「5-A 秒と発生を落とす」）。
-describe('地震カードの地震の時刻が読めないとき', () => {
+describe('地震カードの地震発現時刻が読めないとき', () => {
   // 対照: 読める値では従来どおりの表記。ガードが正常な値まで止めていないこと。
-  it('読める値では従来どおり「◯月◯日 ◯:◯◯ごろ」を出す', async () => {
+  it('読める値では「地震発現時刻 ◯月◯日 ◯:◯◯」を出す', async () => {
     await renderTab(makeQuake('2024-01-01T07:10:00Z'), true)
-    expect(screen.getAllByText(/1月1日 \d{1,2}:\d{2}ごろ/).length).toBeGreaterThan(0)
-    expect(screen.queryByText('時刻不明')).toBeNull()
+    expect(screen.getAllByText(/^地震発現時刻 1月1日 \d{1,2}:\d{2}$/).length).toBeGreaterThan(0)
+    expect(screen.queryByText('地震発現時刻不明')).toBeNull()
   })
 
   // 正: 開いた表示（選択中のカード）で語を出す。
-  it('開いた表示では「時刻不明」を出す', async () => {
+  it('開いた表示では「地震発現時刻不明」を出す', async () => {
     await renderTab(makeQuake('壊れた値'), true)
-    expect(screen.getAllByText('時刻不明').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('地震発現時刻不明').length).toBeGreaterThan(0)
   })
 
   // 正: 畳んだ表示にも同じ語を出す。**2 か所あるのがこのテストの要**
   // （片方だけ直しても型検査は通り、例外も出ない）。
   it('畳んだ表示にも同じ語を出す', async () => {
     await renderTab(makeQuake('壊れた値'), false)
-    expect(screen.getAllByText('時刻不明').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('地震発現時刻不明').length).toBeGreaterThan(0)
   })
 
   // 安全弁: `NaN` がそのまま画面へ出ない（これが元の症状）。

@@ -105,8 +105,28 @@ export function formatDateTimeMin(isoString: string): string | null {
 }
 
 /**
- * 地震の時刻（`earthquake.time`）。元データに秒が含まれないため、秒を出さず「ごろ」を付ける。
- * 例: 6月6日 8:47ごろ
+ * 地震の時刻（`earthquake.time`）に付ける名前。値は電文の `Earthquake/ArrivalTime`
+ * 【地震発現時刻】で、震度速報は `Head/TargetDateTime`【基点時刻】だが、資料はその中身を
+ * 「最初に地震波を自動検知した観測点における地震波の検知時刻」と書いており、同じものを指す。
+ * P2PQuake の `earthquake.time` も、確かめた 2 件では発現時刻と一致した（発生時刻と分が違う地震。
+ * 仕様としての保証は確かめていない。→ `docs/spec/quake-spec.md` §1「地震の時刻」）。
+ *
+ * **`OriginTime` へ落ちた値にもこの名前を付けてよい。** 資料は `ArrivalTime` を必ず 1 回出る要素とし
+ * （国外で発現時刻が不明なときも、要素は出たまま中身に発生時刻の値を入れる）、
+ * 読み取りが `OriginTime` へ落ちるのは要素が空か壊れているときだけ（`parseEarthquakeFromXml`・`sourceEarthquakeTime`）。
+ *
+ * **「発生」とは書かない。** 「地震発生時刻」は `OriginTime` の公式名で、別の値。
+ * 気象庁の公式の名前に合わせる（2026-10-23 ユーザー選択「公式名を付ける (Recommended)」、続けて緊急地震速報のカードの見出しと揃える選択「「地震発現時刻」に揃える」）。
+ * 緊急地震速報のカード・津波カード・共有カードも同じ語を使うので、ここから引く。
+ */
+export const QUAKE_ARRIVAL_TIME_LABEL = '地震発現時刻'
+
+/** 地震発現時刻を日時として読めなかったときに出す語。 */
+export const QUAKE_ARRIVAL_TIME_UNKNOWN = '地震発現時刻不明'
+
+/**
+ * 地震の時刻（`earthquake.time`）。元データは分まで（秒を持たない）なので秒は出さない。
+ * 例: 6月6日 8:47
  */
 export function formatQuakeTime(isoString: string): string | null {
   const date = readDateTime('formatQuakeTime', isoString)
@@ -115,19 +135,29 @@ export function formatQuakeTime(isoString: string): string | null {
   const d = date.getDate()
   const h = date.getHours()
   const m = String(date.getMinutes()).padStart(2, '0')
-  return `${M}月${d}日 ${h}:${m}ごろ`
+  return `${M}月${d}日 ${h}:${m}`
 }
 
 /**
- * 地震の時刻を、年つき・秒なし・「ごろ」付きで出す。**共有カードの画像で使う。**
+ * 名前つきの地震の時刻。例: 地震発現時刻 6月6日 8:47。
+ * 読めなければ {@link QUAKE_ARRIVAL_TIME_UNKNOWN}（空欄にすると、時刻を読み落としたのか電文に無いのか分からない）。
+ */
+export function formatQuakeTimeLabeled(isoString: string): string {
+  const t = formatQuakeTime(isoString)
+  return t ? `${QUAKE_ARRIVAL_TIME_LABEL} ${t}` : QUAKE_ARRIVAL_TIME_UNKNOWN
+}
+
+/**
+ * 地震の時刻を、年つき・秒なしで出す。**共有カードの画像で使う。**
  *
  * 画面のカード（{@link formatQuakeTime}）と同じ考え方で、**元データに秒が無いので秒を出さない**。
- * 画像は日をまたいで共有されるため、年月日まで入れる。
- * 例: 2024/01/01 16:10ごろ
+ * 画像は日をまたいで共有されるため、年月日まで入れる。名前（{@link QUAKE_ARRIVAL_TIME_LABEL}）は呼び出し側が付ける。
+ * 例: 2024/01/01 16:10
  *
  * **以前は {@link formatDateTime} を通して `2024/01/01 16:10:00 発生` と焼いていた。**
  * 電文に無い `:00` を画像へ残すうえ、`earthquake.time` は発現時刻（`ArrivalTime`）が先なのに
  * 「発生」と名乗っていた（2026-10-22 ユーザー承認「5-A 秒と発生を落とす」）。
+ * 「ごろ」も付けない（画面のカードと同じ。2026-10-23 ユーザー選択「公式名を付ける (Recommended)」）。
  */
 export function formatQuakeDateTime(isoString: string): string | null {
   const date = readDateTime('formatQuakeDateTime', isoString)
@@ -137,7 +167,7 @@ export function formatQuakeDateTime(isoString: string): string | null {
   const d = String(date.getDate()).padStart(2, '0')
   const h = String(date.getHours()).padStart(2, '0')
   const m = String(date.getMinutes()).padStart(2, '0')
-  return `${y}/${M}/${d} ${h}:${m}ごろ`
+  return `${y}/${M}/${d} ${h}:${m}`
 }
 
 export function formatTime(isoString: string): string | null {

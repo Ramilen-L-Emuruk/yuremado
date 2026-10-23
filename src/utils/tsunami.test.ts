@@ -178,7 +178,7 @@ describe('sourceEarthquakeTime', () => {
   })
 
   // 対照: 空文字は「無い」と同じ扱い。`??` で書くと空文字を採ってしまい、
-  // 時刻の無い「　発生」だけが行に残る
+  // 時刻の無い「　地震発現時刻」だけが行に残る
   it('発現時刻が空文字なら発生時刻へ落ちる', () => {
     expect(sourceEarthquakeTime({
       hypocenterName: '三陸沖',
