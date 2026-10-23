@@ -143,8 +143,18 @@ export function formatQuakeTime(isoString: string): string | null {
  * 読めなければ {@link QUAKE_ARRIVAL_TIME_UNKNOWN}（空欄にすると、時刻を読み落としたのか電文に無いのか分からない）。
  */
 export function formatQuakeTimeLabeled(isoString: string): string {
+  return quakeTimeLabeledParts(isoString).join(' ')
+}
+
+/**
+ * {@link formatQuakeTimeLabeled} を、半角空白で繋ぐ前の塊に分けたもの。
+ * 例: `['地震発現時刻', '6月6日 8:47']`。読めなければ `['地震発現時刻不明']`。
+ * 塊の途中では折り返させたくない表示（畳んだ地震カード）が使う。文字列はこちらだけで組むので、
+ * 塊で出す表示と 1 本の文字列で出す表示がずれない。
+ */
+export function quakeTimeLabeledParts(isoString: string): readonly string[] {
   const t = formatQuakeTime(isoString)
-  return t ? `${QUAKE_ARRIVAL_TIME_LABEL} ${t}` : QUAKE_ARRIVAL_TIME_UNKNOWN
+  return t ? [QUAKE_ARRIVAL_TIME_LABEL, t] : [QUAKE_ARRIVAL_TIME_UNKNOWN]
 }
 
 /**
