@@ -325,9 +325,13 @@ function sourceOf(tsunami: JMATsunami): BorrowedFromTsunami {
  * 震源と津波区分を、同じ地震の津波電文から借りた写しを返す。何も変わらなければ**元の参照を
  * そのまま**返す（{@link withBorrowedHypocenter} と同じ約束）。
  *
- * **画面のカード向け。読み上げには使わない。** 読み上げ側が借りるのは震源だけで、津波区分は
- * 借りない —— 同じ津波の読み上げが既に等級と行動指示を語っているので、地震情報の側でも
- * 区分を言うと二重になる（→ `ttsText.ts`）。
+ * **画面のカード向け。読み上げには使わない。** 地震情報の読み上げは**震源も津波区分も借りない** ——
+ * 借りた震源を声にするのは津波の側で、地震電文から読み上げ文を組むときは生の電文をそのまま使う
+ * （→ `docs/spec/quake-spec.md` §5「借りるのは画面のカードだけ」）。津波区分も同じで、同じ津波の
+ * 読み上げが既に等級と行動指示を語っているので、地震情報の側でも区分を言うと二重になる。
+ *
+ * **「読み上げ側が借りるのは震源だけ」と書いていたのは誤り**（2026-10-21 ユーザー選択
+ * 「記録し、文書を直す (Recommended)」で直した）。読み上げ用に借りる関数は存在しない。
  */
 export function withBorrowedFromTsunami(quake: JMAQuake, tsunamis: readonly JMATsunami[], quakes: readonly JMAQuake[]): JMAQuake {
   const withHypocenter = withBorrowedHypocenter(quake, tsunamis, quakes)
