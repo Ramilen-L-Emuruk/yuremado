@@ -23,6 +23,7 @@ import { selectQuakeHistory } from '../utils/quakeHistorySelection'
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import { log } from '../utils/logger'
 import { createSkipCounter, UNKNOWN_SKIP_DAY } from '../utils/telegramLoss'
+import { makeReplayLogEntry } from './telegramLogEntry'
 
 /** 1 ページの取得件数（API 側の上限）。 */
 const PAGE_SIZE = 100
@@ -252,7 +253,15 @@ function toEntry(raw: RawP2PEvent): ReplayEntry | null {
     log.warn(`[replay] 時刻を読めない電文をスキップ id=${event.id} time=${event.time}`)
     return null
   }
-  return { payload: { kind: 'event', event }, replayTime }
+  return {
+    payload: { kind: 'event', event },
+    replayTime,
+    // 本文は元の JSON をそのまま（ライブの行と同じ。→ `p2pquake.ts` の `onRawMessage`）
+    logEntry: makeReplayLogEntry({
+      headType: String(raw.code), origin: 'replay', rawBody: raw,
+      payload: { kind: 'event', event }, isTest: false, source: 'p2pquake',
+    }),
+  }
 }
 
 /**

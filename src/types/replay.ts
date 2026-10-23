@@ -6,7 +6,7 @@
 //   - 実地震テストシナリオ: 収録済み JSON（utils/testScenarioReplay.ts）
 import type {
   AppEvent, JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu,
-  JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity,
+  JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, TelegramLogEntry,
 } from './earthquake'
 
 export type ReplayPayload =
@@ -26,6 +26,17 @@ export interface ReplayEntry {
   replayTime: Date
   /** true なら音・通知を鳴らさずに状態だけ復元する（初期状態の再現に使う）。 */
   silent?: boolean
+  /**
+   * 電文ログへ積む行。電文から組んだものでなければ `null`。
+   *
+   * **任意（`?`）にしない。** 電文を組む経路を新しく足したとき、渡し忘れると
+   * その経路の電文だけ電文ログに出なくなる —— 画面からは「届かなかった」のと
+   * 見分けが付かず、例外もログも出ない。必須にしておけば型検査が落とす。
+   *
+   * `null` を書くのは「電文を読んで組んだものではない」ときだけ（統合の結果として
+   * 作り直したカード・合成のイベント）。
+   */
+  logEntry: TelegramLogEntry | null
 }
 
 /**

@@ -2195,10 +2195,24 @@ export type TelegramLogKind =
   | 'eew' | 'quake' | 'tsunami' | 'lpgm' | 'nankai' | 'nankaiCommentary' | 'kohatsu'
   | 'quakeNotice' | 'earthquakeCount' | 'estimatedIntensity'
 
+/**
+ * 電文ログの行が、どの経路でアプリへ入ったか。
+ *
+ * **発信元（`source`）とは別の軸。** あちらは「どの配信元の電文か」で、こちらは
+ * 「ライブで届いたのか、こちらが流したのか」。テストボタンとリプレイの電文は実電文
+ * そのものなので、`source` だけでは本番の受信と見分けが付かない。
+ *
+ * **`isTest` とも混ぜない。** あちらは気象庁が訓練・試験として流した印
+ * （`Control/Status`）で、本番の配信にも載る。
+ */
+export type TelegramOrigin = 'live' | 'test' | 'replay'
+
 export interface TelegramLogEntry {
   id: string
   receivedAt: Date
   source: 'dmdss' | 'p2pquake'
+  /** この行がどの経路で入ったか（→ `TelegramOrigin`）。 */
+  origin: TelegramOrigin
   headType: string
   isTest: boolean
   status: 'parsed' | 'filtered' | 'error'

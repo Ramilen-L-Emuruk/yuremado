@@ -2856,7 +2856,7 @@ describe('filterPreWindowEvents の津波', () => {
         ? []
         : [{ grade: 'Forecast', immediate: false, name: '石川県能登', code: '360' }],
     }
-    return { replayTime: new Date(time), payload: { kind: 'event', event: tsunami } }
+    return { replayTime: new Date(time), payload: { kind: 'event', event: tsunami }, logEntry: null }
   }
 
   function keptTsunamis(entries: ReplayEntry[], target: string): JMATsunami[] {
@@ -3016,7 +3016,11 @@ describe('filterPreWindowEvents の EEW（解除時刻を決められないと�
       isFinal: true,
       issue: { eventId, serial: '1', time },
     }
-    return { replayTime: new Date(time || '2026-01-01T12:00:00+09:00'), payload: { kind: 'event', event: eew } }
+    return {
+      replayTime: new Date(time || '2026-01-01T12:00:00+09:00'),
+      payload: { kind: 'event', event: eew },
+      logEntry: null,
+    }
   }
 
   const keptEews = (entries: ReplayEntry[], target: string): EEWAlert[] =>
@@ -3397,6 +3401,7 @@ describe('本体は目録の filename で引く', () => {
 describe('filterPreWindowEvents の EEW（第 1 報の時刻）', () => {
   const report = (serial: number, time: string, eventId = 'EEW1'): ReplayEntry => ({
     replayTime: new Date(time),
+    logEntry: null,
     payload: {
       kind: 'event',
       event: {
@@ -3482,7 +3487,11 @@ describe('filterPreWindowEvents の畳み込み（地震）', () => {
       },
       points: o.points ?? [AREA],
     }
-    return { replayTime: new Date(o.at), payload: { kind: 'event', event: quake as unknown as JMAQuake } }
+    return {
+      replayTime: new Date(o.at),
+      payload: { kind: 'event', event: quake as unknown as JMAQuake },
+      logEntry: null,
+    }
   }
 
   function keptQuakeIds(entries: ReplayEntry[]): string[] {
@@ -3659,6 +3668,7 @@ describe('filterPreWindowEvents の畳み込み（長周期地震動・帯）', 
   function lpgmEntry(eventId: string, at: string, maxClass: number): ReplayEntry {
     return {
       replayTime: new Date(at),
+      logEntry: null,
       payload: { kind: 'lpgm', data: { eventId, maxClass, regions: [], points: [], prefs: [] } as never },
     }
   }
@@ -3693,6 +3703,7 @@ describe('filterPreWindowEvents の畳み込み（長周期地震動・帯）', 
   it('安全弁: 帯（南海トラフ解説情報）は畳まない', () => {
     const band = (at: string): ReplayEntry => ({
       replayTime: new Date(at),
+      logEntry: null,
       payload: { kind: 'nankaiCommentary', data: { id: at } as never },
     })
     const entries = [band('2026-09-29T04:50:00+09:00'), band('2026-09-29T05:50:00+09:00')]

@@ -81,6 +81,7 @@ function entry(id: string): ReplayEntry {
       },
     },
     replayTime: new Date('2026-08-15T12:00:00+09:00'),
+    logEntry: null,
   }
 }
 
@@ -757,6 +758,7 @@ function countEntry(id: string, time = '2026-08-15T12:00:00+09:00'): ReplayEntry
       } as unknown as import('../types/earthquake').JMAEarthquakeCount,
     },
     replayTime: new Date(time),
+    logEntry: null,
   }
 }
 
@@ -771,7 +773,7 @@ function forecastTsunami(id: string, time: string, validDateTime?: string): impo
 }
 
 function tsunamiEntry(t: import('../types/earthquake').JMATsunami): ReplayEntry {
-  return { payload: { kind: 'event', event: t }, replayTime: new Date(t.time) }
+  return { payload: { kind: 'event', event: t }, replayTime: new Date(t.time), logEntry: null }
 }
 
 function kindOf(e: ReplayEntry): string {

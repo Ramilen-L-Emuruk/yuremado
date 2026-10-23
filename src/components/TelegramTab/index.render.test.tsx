@@ -11,6 +11,7 @@ const entry = (id: string, patch: Partial<TelegramLogEntry>): TelegramLogEntry =
   id,
   receivedAt: new Date('2026-10-15T00:00:00Z'),
   source: 'dmdss',
+  origin: 'live',
   headType: 'VXSE53',
   isTest: false,
   status: 'parsed',

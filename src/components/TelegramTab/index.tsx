@@ -4,8 +4,9 @@ import type { TelegramLogEntry } from '../../types/earthquake'
 import { isDmdss } from '../../utils/env'
 import { formatFileStamp, readDateTime } from '../../utils/formatters'
 import {
-  KIND_LABEL, KIND_OPTIONS, headTypeLabel, matchesTelegramFilter, readKindFilter, telegramLogKindOf,
-  type KindFilter, type SourceFilter,
+  KIND_LABEL, KIND_OPTIONS, ORIGIN_OPTIONS, headTypeLabel, matchesTelegramFilter, originBadgeOf,
+  readKindFilter, readOriginFilter, telegramLogKindOf,
+  type KindFilter, type OriginFilter, type SourceFilter,
 } from './labels'
 
 const STATUS_BADGE: Record<TelegramLogEntry['status'], { label: string; className: string }> = {
@@ -89,11 +90,12 @@ interface Props {
 export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
+  const [originFilter, setOriginFilter] = useState<OriginFilter>('all')
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
   const [copied, setCopied] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
-  const filtered = telegramLog.filter(entry => matchesTelegramFilter(entry, sourceFilter, kindFilter))
+  const filtered = telegramLog.filter(entry => matchesTelegramFilter(entry, sourceFilter, kindFilter, originFilter))
 
   const allFilteredSelected = filtered.length > 0 && filtered.every(e => selectedIds.has(e.id))
 
@@ -141,6 +143,9 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
     if (entries.length === 0) return
     const payload = entries.map(e => ({
       source: e.source,
+      // **経路も書き出す。** 画面ではバッジで分かるが、書き出したファイルでは
+      // テスト・再生で流した電文が本番の受信と見分けられなくなる。
+      origin: e.origin,
       headType: e.headType,
       // **`toISOString()` を素で呼ばない。** `Invalid Date` に対しては `RangeError` を
       // **投げる**（`NaN` を返すだけの `getTime()` とは違う）。選んだ電文に 1 件でも壊れた
@@ -227,6 +232,15 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
           <option value="filtered">スキップ</option>
           <option value="error">エラー</option>
         </select>
+        <select
+          value={originFilter}
+          onChange={e => setOriginFilter(readOriginFilter(e.target.value))}
+          className="flex-1 text-xs bg-card border border-border rounded-sm px-2 py-1 text-secondary focus:text-white focus:outline-hidden"
+        >
+          {ORIGIN_OPTIONS.map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
       </div>
 
       {selectedIds.size > 0 && (
@@ -285,6 +299,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                 const kind = telegramLogKindOf(entry)
                 const kindLabel = kind ? KIND_LABEL[kind] : null
                 const sourceLabel = entry.source === 'dmdss' ? 'DM' : 'P2'
+                const originBadge = originBadgeOf(entry.origin)
 
                 return (
                   <li key={entry.id} className={`border-b border-border last:border-b-0 ${isSelected ? 'bg-white/5' : ''}`}>
@@ -311,6 +326,11 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                                 隣の値が時刻の位置に見える。 */}
                             <span className="text-xs text-secondary font-mono shrink-0">{formatTime(entry.receivedAt) ?? '時刻不明'}</span>
                             <span className="text-xs font-mono bg-white/10 rounded-sm px-1 shrink-0 text-secondary">{sourceLabel}</span>
+                            {/* 経路の印。ライブには出さない（既定の経路なので、付けると全行が賑やかになる）。
+                                発信元（DM/P2）とは別の軸なので、色を変えて並べる。 */}
+                            {originBadge && (
+                              <span className="text-xs font-mono bg-amber-400/20 text-amber-200 rounded-sm px-1 shrink-0">{originBadge}</span>
+                            )}
                             <span className="text-xs font-mono text-white shrink-0">{entry.headType}</span>
                             <span className="text-xs text-secondary truncate">
                               {entry.isTest ? '訓練' : (kindLabel ? `${kindLabel} · ` : '') + typeLabel}

@@ -140,7 +140,8 @@ export function assemblePreWindowMaterial(
       continue
     }
     tsunamiKeys.add(reportKey)
-    added.push({ payload: { kind: 'event', event: tsunami }, replayTime: new Date(timeMs) })
+    // 遡りから拾った報なので電文ログへは載せない（`history.extras` と同じ扱い）
+    added.push({ payload: { kind: 'event', event: tsunami }, replayTime: new Date(timeMs), logEntry: null })
   }
   for (const e of history.extras) {
     const key = historyExtraKey(e.payload)
@@ -463,7 +464,11 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
         log.error('[replay] 初期状態の絞り込みに失敗（窓の手前の状態なしで再生を続ける）', e)
       }
       const preFiltered = preWindow
-        .map(e => ({ ...e, replayTime: new Date(targetDate.getTime() - 1), silent: true }))
+        // **電文ログへは載せない**（`logEntry: null`）。これは窓の手前 24 時間を再現するための
+        // 材料で、再生の窓で流れるものではない（履歴の遡りと同じ扱い。→ `dmdataReplay.ts` の
+        // `extras`）。載せると再生開始の 1 tick で 24 時間ぶんが一斉に積まれ、枠を食い潰した
+        // うえ「いま再生している電文」と見分けが付かないまま並ぶ。
+        .map(e => ({ ...e, replayTime: new Date(targetDate.getTime() - 1), silent: true, logEntry: null }))
       // フェッチ中に WS 切断タイミングで ref が再セットされる競合を排除するため直前に再リセット
       d.resetTracking()
       // pre-window イベントから T 時点の追跡 ref を復元する（サイレント注入後の正確な音判定に必要）

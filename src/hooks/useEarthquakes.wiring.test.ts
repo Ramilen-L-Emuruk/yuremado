@@ -137,7 +137,7 @@ function history(opts: {
 
 /** 帯・長周期を `extras` の 1 件として包む。 */
 function extra(payload: ReplayPayload): ReplayEntry {
-  return { payload, replayTime: new Date('2026-01-01T00:00:00Z'), silent: true }
+  return { payload, replayTime: new Date('2026-01-01T00:00:00Z'), silent: true, logEntry: null }
 }
 
 // **丸ごと差し替える（`importOriginal` を混ぜない）。** 実物を残すと、ここでモックし忘れた
@@ -766,8 +766,8 @@ describe('キューは配列を差し替えない（同じ電文を二度処理�
     // その後ろに無いと差し替えの影響を受けるエントリが存在しない。
     act(() => {
       h.current.loadReplayEvents([
-        { payload: { kind: 'event', event: 津波(at, 60_000) }, replayTime: at },
-        { payload: { kind: 'event', event: 地震情報(at) }, replayTime: at },
+        { payload: { kind: 'event', event: 津波(at, 60_000) }, replayTime: at, logEntry: null },
+        { payload: { kind: 'event', event: 地震情報(at) }, replayTime: at, logEntry: null },
       ])
     })
 
@@ -790,10 +790,10 @@ describe('キューは配列を差し替えない（同じ電文を二度処理�
 
     act(() => {
       h.current.loadReplayEvents([
-        { payload: { kind: 'event', event: 津波(at, 60_000, 1) }, replayTime: at },
-        { payload: { kind: 'event', event: 地震情報(at, 1) }, replayTime: at },
-        { payload: { kind: 'event', event: 津波(at, 90_000, 2) }, replayTime: at },
-        { payload: { kind: 'event', event: 地震情報(at, 2) }, replayTime: at },
+        { payload: { kind: 'event', event: 津波(at, 60_000, 1) }, replayTime: at, logEntry: null },
+        { payload: { kind: 'event', event: 地震情報(at, 1) }, replayTime: at, logEntry: null },
+        { payload: { kind: 'event', event: 津波(at, 90_000, 2) }, replayTime: at, logEntry: null },
+        { payload: { kind: 'event', event: 地震情報(at, 2) }, replayTime: at, logEntry: null },
       ])
     })
 
@@ -816,8 +816,8 @@ describe('キューは配列を差し替えない（同じ電文を二度処理�
 
     act(() => {
       h.current.loadReplayEvents([
-        { payload: { kind: 'event', event: 地震情報(at, 1) }, replayTime: new Date(NaN) },
-        { payload: { kind: 'event', event: 地震情報(at, 2) }, replayTime: at },
+        { payload: { kind: 'event', event: 地震情報(at, 1) }, replayTime: new Date(NaN), logEntry: null },
+        { payload: { kind: 'event', event: 地震情報(at, 2) }, replayTime: at, logEntry: null },
       ])
     })
 
@@ -1331,6 +1331,7 @@ describe('南海トラフ関連解説情報の帯は期限で畳む', () => {
       h.current.loadReplayEvents([{
         payload: { kind: 'nankaiCommentary', data: { ...commentary('c-live', 60_000), cancelled: true } },
         replayTime: serverDate(),
+        logEntry: null,
       }])
     })
     act(() => { vi.advanceTimersByTime(50) })
@@ -1349,6 +1350,7 @@ describe('南海トラフ関連解説情報の帯は期限で畳む', () => {
       h.current.loadReplayEvents([{
         payload: { kind: 'nankaiCommentary', data: { ...commentary('c-other', 60_000), cancelled: true } },
         replayTime: serverDate(),
+        logEntry: null,
       }])
     })
     act(() => { vi.advanceTimersByTime(50) })
@@ -1370,6 +1372,7 @@ describe('南海トラフ関連解説情報の帯は期限で畳む', () => {
       h.current.loadReplayEvents([{
         payload: { kind: 'nankaiCommentary', data: { ...commentary('c-other', 60_000), cancelled: true } },
         replayTime: serverDate(),
+        logEntry: null,
       }])
     })
     act(() => { vi.advanceTimersByTime(50) })
@@ -1511,7 +1514,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
 
   /** キュー経由で 1 件流す（`injectEvent` は AppEvent 専用なのでこちらを使う）。 */
   function push(h: ReturnType<typeof setup>, payload: import('../types/replay').ReplayPayload) {
-    act(() => { h.current.loadReplayEvents([{ payload, replayTime: serverDate() }]) })
+    act(() => { h.current.loadReplayEvents([{ payload, replayTime: serverDate(), logEntry: null }]) })
     act(() => { vi.advanceTimersByTime(50) })
   }
 
@@ -1731,7 +1734,11 @@ describe('推計震度分布図の結線', () => {
   const KUMA_FOLLOW = ei('2026-07-28T07:27:00.000Z', '2026-07-28T07:40:00+09:00', 1700)
 
   function push(h: ReturnType<typeof setup>, data: JMAEstimatedIntensity, silent = false) {
-    act(() => { h.current.loadReplayEvents([{ payload: { kind: 'estimatedIntensity', data }, replayTime: serverDate(), silent }]) })
+    act(() => {
+      h.current.loadReplayEvents([
+        { payload: { kind: 'estimatedIntensity', data }, replayTime: serverDate(), silent, logEntry: null },
+      ])
+    })
     act(() => { vi.advanceTimersByTime(50) })
   }
 
@@ -4337,7 +4344,7 @@ describe('後発地震注意情報の期限タイマーは、帯を書き換え�
   }
 
   const inject = (h: ReturnType<typeof setup>, k: JMAKohatsu) => {
-    act(() => { h.current.loadReplayEvents([{ payload: { kind: 'kohatsu', data: k }, replayTime: serverDate() }]) })
+    act(() => { h.current.loadReplayEvents([{ payload: { kind: 'kohatsu', data: k }, replayTime: serverDate(), logEntry: null }]) })
     act(() => { vi.advanceTimersByTime(50) })
   }
 
@@ -4535,8 +4542,8 @@ describe('近く発火する電文を覗く', () => {
     const now = serverDate()
     act(() => {
       h.current.loadReplayEvents([
-        { payload: commentaryPayload('in-10s'), replayTime: new Date(now.getTime() + 10_000) },
-        { payload: commentaryPayload('in-30s'), replayTime: new Date(now.getTime() + 30_000) },
+        { payload: commentaryPayload('in-10s'), replayTime: new Date(now.getTime() + 10_000), logEntry: null },
+        { payload: commentaryPayload('in-30s'), replayTime: new Date(now.getTime() + 30_000), logEntry: null },
       ])
     })
     expect(idsOf(h.current.peekUpcomingPayloads(60_000))).toEqual(['in-10s', 'in-30s'])
@@ -4548,8 +4555,8 @@ describe('近く発火する電文を覗く', () => {
     const now = serverDate()
     act(() => {
       h.current.loadReplayEvents([
-        { payload: commentaryPayload('in-10s'), replayTime: new Date(now.getTime() + 10_000) },
-        { payload: commentaryPayload('in-5m'), replayTime: new Date(now.getTime() + 300_000) },
+        { payload: commentaryPayload('in-10s'), replayTime: new Date(now.getTime() + 10_000), logEntry: null },
+        { payload: commentaryPayload('in-5m'), replayTime: new Date(now.getTime() + 300_000), logEntry: null },
       ])
     })
     expect(idsOf(h.current.peekUpcomingPayloads(60_000))).toEqual(['in-10s'])
@@ -4562,8 +4569,8 @@ describe('近く発火する電文を覗く', () => {
     const now = serverDate()
     act(() => {
       h.current.loadReplayEvents([
-        { payload: commentaryPayload('past'), replayTime: new Date(now.getTime() - 1000) },
-        { payload: commentaryPayload('future'), replayTime: new Date(now.getTime() + 10_000) },
+        { payload: commentaryPayload('past'), replayTime: new Date(now.getTime() - 1000), logEntry: null },
+        { payload: commentaryPayload('future'), replayTime: new Date(now.getTime() + 10_000), logEntry: null },
       ])
     })
     expect(idsOf(h.current.peekUpcomingPayloads(60_000))).toEqual(['future'])
@@ -4578,8 +4585,8 @@ describe('近く発火する電文を覗く', () => {
     const now = serverDate()
     act(() => {
       h.current.loadReplayEvents([
-        { payload: commentaryPayload('silent'), replayTime: new Date(now.getTime() + 10_000), silent: true },
-        { payload: commentaryPayload('normal'), replayTime: new Date(now.getTime() + 20_000) },
+        { payload: commentaryPayload('silent'), replayTime: new Date(now.getTime() + 10_000), silent: true, logEntry: null },
+        { payload: commentaryPayload('normal'), replayTime: new Date(now.getTime() + 20_000), logEntry: null },
       ])
     })
     expect(idsOf(h.current.peekUpcomingPayloads(60_000))).toEqual(['normal'])
@@ -4591,7 +4598,7 @@ describe('近く発火する電文を覗く', () => {
     const now = serverDate()
     act(() => {
       h.current.loadReplayEvents([
-        { payload: commentaryPayload('in-10s'), replayTime: new Date(now.getTime() + 10_000) },
+        { payload: commentaryPayload('in-10s'), replayTime: new Date(now.getTime() + 10_000), logEntry: null },
       ])
     })
     expect(h.current.peekUpcomingPayloads(Number.NaN)).toEqual([])
@@ -5088,7 +5095,7 @@ describe('据え置かれた震度速報は震度キャッシュを汚さない'
     const retracted = 震度速報(3, '2026-01-01T12:01:00+09:00', 30, '福井県嶺南')
     act(() => {
       h.current.loadReplayEvents([
-        { payload: { kind: 'event', event: retracted }, replayTime: new Date(serverDate().getTime() - 1000), silent: true },
+        { payload: { kind: 'event', event: retracted }, replayTime: new Date(serverDate().getTime() - 1000), silent: true, logEntry: null },
       ])
     })
     act(() => { vi.advanceTimersByTime(50) })
@@ -5174,6 +5181,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
           },
         },
         replayTime: now,
+        logEntry: null,
       }])
     })
     // キューは 10ms 間隔で捌く（`injectEvent` と違い即時ではない）
@@ -5195,8 +5203,8 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     }
     act(() => {
       h.current.loadReplayEvents([
-        { payload: { kind: 'quakeNotice', data: { ...base, id: 'notice-a', eventId: 'a', cancelled: false } }, replayTime: now },
-        { payload: { kind: 'quakeNotice', data: { ...base, id: 'notice-b', eventId: 'b', cancelled: true } }, replayTime: now },
+        { payload: { kind: 'quakeNotice', data: { ...base, id: 'notice-a', eventId: 'a', cancelled: false } }, replayTime: now, logEntry: null },
+        { payload: { kind: 'quakeNotice', data: { ...base, id: 'notice-b', eventId: 'b', cancelled: true } }, replayTime: now, logEntry: null },
       ])
     })
     act(() => { vi.advanceTimersByTime(50) })
@@ -5224,6 +5232,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
           },
         },
         replayTime: now,
+        logEntry: null,
       }])
     })
     act(() => { vi.advanceTimersByTime(50) })
@@ -5254,6 +5263,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
           },
         },
         replayTime: now,
+        logEntry: null,
         silent: true,
       }])
     })
@@ -5283,6 +5293,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
           },
         },
         replayTime: now,
+        logEntry: null,
       }])
     })
     act(() => { vi.advanceTimersByTime(50) })
@@ -5309,6 +5320,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
           },
         },
         replayTime: now,
+        logEntry: null,
       }])
     })
     act(() => { vi.advanceTimersByTime(50) })
@@ -5341,6 +5353,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
       h.current.loadReplayEvents([{
         payload: { kind: 'lpgm', data: lpgmData({ cancelled: true }) },
         replayTime: serverDate(),
+        logEntry: null,
       }])
     })
     act(() => { vi.advanceTimersByTime(50) })
@@ -5358,6 +5371,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
       h.current.loadReplayEvents([{
         payload: { kind: 'lpgm', data: lpgmData({ maxClass: 0 }) },
         replayTime: serverDate(),
+        logEntry: null,
       }])
     })
     act(() => { vi.advanceTimersByTime(50) })
@@ -5377,6 +5391,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
       h.current.loadReplayEvents([{
         payload: { kind: 'lpgm', data: lpgmData() },
         replayTime: serverDate(),
+        logEntry: null,
         silent: true,
       }])
     })

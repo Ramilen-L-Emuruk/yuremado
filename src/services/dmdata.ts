@@ -901,6 +901,8 @@ export class DmdataWebSocket {
       id: `${Date.now()}-${Math.random()}`,
       receivedAt: serverDate(),
       source: 'dmdss',
+      // この経路は WebSocket で届いたものだけ（リプレイ・テストボタンは通らない）
+      origin: 'live',
       headType,
       isTest,
       status,

@@ -20,6 +20,7 @@ import {
   type TelegramLoss, createEmptyTelegramLoss, telegramLossFrom, isTelegramLossEmpty,
   mergeHistoryLoss,
 } from '../utils/telegramLoss'
+import { appendToTelegramLog, dropTelegramLogOrigins } from '../utils/telegramLogBuffer'
 import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, findRetractionTie, logRetractionTie, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
 import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmRowSnapshot, lpgmMarkKey, lpgmTelegramRevise, quakeTelegramRevise, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
@@ -128,7 +129,7 @@ export const MAX_HISTORY_RETAINED = 50
 // 地震 50 件を選ぶ母数で、ここから `selectQuakeHistory` が地震の単位で絞る。
 const INITIAL_HISTORY_PAGE_SIZE = 100
 const LOAD_MORE_BATCH = 50        // 「もっと見る」1回あたりの取得件数
-const MAX_TELEGRAM_LOG = 200      // 電文ログの最大保持件数
+// 電文ログの保持件数は経路ごとに分ける（→ `utils/telegramLogBuffer.ts` の `TELEGRAM_LOG_LIMITS`）
 
 /**
  * 起動後、地震カードの履歴をどこから先へ遡るか（次の窓の上端）。
@@ -215,6 +216,18 @@ interface QueueEntry {
   eventTime: Date
   payload: QueuePayload
   silent?: boolean
+  /**
+   * 電文ログへ積む行。電文から組んだものでなければ `null`。
+   *
+   * **積むのは発火のとき**（ディスパッチャが取り出した時点）。リプレイは窓ぶんを先に
+   * 組んでキューへ入れるので、入れた時点で積むと**まだ画面に出ていない電文がログに並ぶ**。
+   * ライブの行は受信＝画面反映なので、揃えるならこちら。
+   *
+   * **任意（`?`）にしない**（理由は `ReplayEntry.logEntry` と同じ）。キューへ積む経路は
+   * 20 箇所を超えるので、渡し忘れても型が通る形にすると、その経路の電文だけ黙ってログから
+   * 落ちる。
+   */
+  logEntry: TelegramLogEntry | null
 }
 
 /**
@@ -745,12 +758,7 @@ export function useEarthquakes(
   })
 
   const appendTelegramLog = useCallback((entry: TelegramLogEntry) => {
-    setState(prev => ({
-      ...prev,
-      telegramLog: prev.telegramLog.length >= MAX_TELEGRAM_LOG
-        ? [entry, ...prev.telegramLog.slice(0, MAX_TELEGRAM_LOG - 1)]
-        : [entry, ...prev.telegramLog],
-    }))
+    setState(prev => ({ ...prev, telegramLog: appendToTelegramLog(prev.telegramLog, entry) }))
   }, [])
 
   const clearTelegramLog = useCallback(() => {
@@ -1061,7 +1069,9 @@ export function useEarthquakes(
     // ここは捨てさせず、**現在時刻で代替して必ず流す**。ライブ受信の電文は画面に出ないと
     // 気づけないため、時刻が壊れていても「いま届いた」として扱うほうが害が小さい。
     const eventTime = Number.isFinite(parsed.getTime()) ? parsed : serverDate()
-    eventQueueRef.current.push({ eventTime, payload: { kind: 'event', event } })
+    // 電文ログの行は付けない。この口を通るのはライブ受信（`onLiveEvent`）で、行は
+    // 受信側（`dmdata.ts`・`p2pquake.ts`）が既に積んでいる。
+    eventQueueRef.current.push({ eventTime, payload: { kind: 'event', event }, logEntry: null })
   }, [])
 
   // 時刻ソースはアプリ時計(serverDate)に一元化。ライブ時はサーバー同期、
@@ -1868,6 +1878,7 @@ export function useEarthquakes(
           eventQueueRef.current.push({
             eventTime: cancelTime,
             payload: { kind: 'eew-watch-expiry', key, receipts },
+            logEntry: null,
           })
         }
       }
@@ -1888,6 +1899,7 @@ export function useEarthquakes(
           eventQueueRef.current.push({
             eventTime: cancelTime,
             payload: { kind: 'event', event: { ...eew, cancelled: true, expired: true } as AppEvent },
+            logEntry: null,
           })
         }
       }
@@ -1971,6 +1983,7 @@ export function useEarthquakes(
             silent: alreadyExpired ? true : undefined,
             // 畳んだ報（`foldedReports`）は失効の判定に要らないので持ち回さない。
             payload: { kind: 'event', event: { ...base, foldedReports: undefined, cancelled: true, cancelReason: 'expired' } as AppEvent },
+            logEntry: null,
           })
         }
       }
@@ -2082,6 +2095,7 @@ export function useEarthquakes(
                 eventTime: new Date(now.getTime() + 10_000),
                 payload: { kind: 'purge-cancelled-quake', id: e.id },
                 silent: true,
+                logEntry: null,
               })
               // 津波側と同じく、取消電文だけが持つ項目は名指しで移す（土台は表示中のカード）。
               return { ...e, cancelledAt: now, ...(quake.cancelText && { cancelText: quake.cancelText }) }
@@ -2200,6 +2214,7 @@ export function useEarthquakes(
                 eventTime: new Date(now.getTime() + 10_000),
                 payload: { kind: 'purge-cancelled-tsunami', id: current.id },
                 silent: true,
+                logEntry: null,
               })
               // **解除・取消の報から移すのは 3 つ（`cancelReason`・`cancelText`・`liftText`。`cancelledAt` はいまの時刻）。** 表示中のカードを土台にするので、
               // その報だけが持つ項目は名指しで移さないと落ちる（`cancelText` は気象庁が書いた取消しの
@@ -2265,6 +2280,7 @@ export function useEarthquakes(
               eventTime: new Date(now.getTime() + 10_000),
               payload: { kind: 'purge-cancelled-eew', key },
               silent: true,
+              logEntry: null,
             })
             const next = new Map(prev.activeEEWs)
             // 地震・津波と同じく、取消電文だけが持つ項目は名指しで移す（土台は表示中の EEW）。
@@ -2362,6 +2378,15 @@ export function useEarthquakes(
         if (!entry) break
         const { payload, silent } = entry
         isSilentRef.current = !!silent
+        // **電文ログへはここで積む。** 画面へ出るのと同じ時点なので、ライブの行（受信＝反映）
+        // と並びの意味が揃う。**この下の `continue`（取消済みの報を捨てる等）より手前に置く**
+        // —— 捨てた電文も「届いた」ことは事実なので、行は残す（ただし取消済みの報を捨てた
+        // ことは行に出ない。ライブ側もその棄却は `parsed` のままで、`filtered` が付くのは
+        // 受信側の振り分け＝扱わない種別・結合待ちの断片・試験報の破棄だけ）。
+        //
+        // **`receivedAt` はここで打ち直す。** 組んだ時刻のままだと、窓ぶんをまとめて組む
+        // リプレイで 1 時間ぶんが同じ秒を名乗る（→ `makeReplayLogEntry`）。
+        if (entry.logEntry) appendTelegramLog({ ...entry.logEntry, receivedAt: now })
         if (payload.kind === 'event') {
           handleEvent(payload.event)
         } else if (payload.kind === 'lpgm') {
@@ -2455,6 +2480,7 @@ export function useEarthquakes(
                 eventQueueRef.current.push({
                   eventTime: cancelTime,
                   payload: { kind: 'eew-watch-expiry', key, receipts: acceptance.receipts },
+                  logEntry: null,
                 })
                 log.debug(`[eew] 見張りの解除を新しい報から張り直した: key=${key} 解除=${cancelTime.toISOString()}`)
               } else {
@@ -2917,6 +2943,7 @@ export function useEarthquakes(
                 eventQueueRef.current.push({
                   eventTime: expireTime,
                   payload: { kind: 'event', event: { ...latestTsunami, cancelled: true, cancelReason: 'expired' } as AppEvent },
+                  logEntry: null,
                 })
               }
             }
@@ -2968,6 +2995,7 @@ export function useEarthquakes(
                 eventTime: serverDate(),
                 silent: true,
                 payload: { kind: 'event', event: eew as AppEvent },
+                logEntry: null,
               })
             }
             log.info(`[data] 発表中の緊急地震速報を復元しました: ${fresh.length} 件`)
@@ -3250,7 +3278,10 @@ export function useEarthquakes(
           // 受け取った順に当てる（キューは同じ発火時刻なら積んだ順に出す）
           timed.sort((a, b) => a.at - b.at)
           const eventTime = serverDate()
-          for (const { payload } of timed) eventQueueRef.current.push({ eventTime, silent: true, payload })
+          // **取り戻した電文は電文ログに載らない**（`logEntry: null`）。この経路は WebSocket を
+          // 通らないので `onRawMessage` が呼ばれず、本文も `ReplayPayload` へ読んだ後しか
+          // 手元に無い。**今回の変更より前からの穴**で、載せるには取得側が本文を保つ必要がある。
+          for (const { payload } of timed) eventQueueRef.current.push({ eventTime, silent: true, payload, logEntry: null })
           log.info(`[DMDSS] ${reason}の取り戻し（${from.toISOString()}〜${to.toISOString()}）: 地震情報 ${got.quakes.length} 通・津波 ${got.tsunamis.length} 通・ほか ${got.extras.length} 通を当てます（ライブで受け取り済み ${got.alreadyReceivedCount} 通）`)
           // 持ち越すときの左端。ページの上限に当たったなら、読めた新しい側だけに絞る（古い側をまた引くと同じところで止まる）
           let carryFromMs = startMs
@@ -3330,7 +3361,8 @@ export function useEarthquakes(
         }
         for (const eew of fresh) {
           restoredQueueKeys.add(`eew:${eew.id}`)
-          eventQueueRef.current.push({ eventTime: serverDate(), silent: true, payload: { kind: 'event', event: eew as AppEvent } })
+          // 1 つ上の取り戻しと同じ理由で電文ログには載らない（`logEntry: null`）
+          eventQueueRef.current.push({ eventTime: serverDate(), silent: true, payload: { kind: 'event', event: eew as AppEvent }, logEntry: null })
         }
         log.info(`[DMDSS] 張り直しの間に発表された緊急地震速報を戻しました: ${fresh.length} 件（発表中 ${eews.length} 件のうち。受け取り済みの報 ${eews.length - fresh.length - endedCount} 件・画面から消えた地震の報 ${endedCount} 件は戻さない）${startedWhileAway ? '。切れていた間に始まった地震があるので実時間タブを要求します' : ''}`)
         try {
@@ -3400,6 +3432,7 @@ export function useEarthquakes(
         eventQueueRef.current.push({
           eventTime: expireTime,
           payload: { kind: 'event', event: { ...latestTsunami, cancelled: true, cancelReason: 'expired' } as AppEvent },
+          logEntry: null,
         })
       }
     }
@@ -3868,7 +3901,7 @@ export function useEarthquakes(
         return
       }
       for (const { entry } of built) {
-        eventQueueRef.current.push({ eventTime: entry.replayTime, payload: entry.payload })
+        eventQueueRef.current.push({ eventTime: entry.replayTime, payload: entry.payload, logEntry: entry.logEntry })
       }
     } catch (err) {
       log.error('[test] テスト用の電文を流せませんでした', err)
@@ -4082,7 +4115,7 @@ export function useEarthquakes(
         return
       }
       if (prev) window.clearTimeout(prev.finalizeTimer)
-      eventQueueRef.current.push({ eventTime: serverDate(), payload: current.entry.payload })
+      eventQueueRef.current.push({ eventTime: serverDate(), payload: current.entry.payload, logEntry: current.entry.logEntry })
       const finalizeTimer = window.setTimeout(() => {
         // **最終報も同じ列へ並べる。** 押下と重なると、台帳を見る順番で取り違える
         void enqueueTestPress(kind, async () => {
@@ -4093,7 +4126,7 @@ export function useEarthquakes(
               log.debug(`[test] 組んでいる間にリセットされたので、テスト用の最終報（${kind}）を捨てました`)
               return
             }
-            if (last) eventQueueRef.current.push({ eventTime: serverDate(), payload: last.entry.payload })
+            if (last) eventQueueRef.current.push({ eventTime: serverDate(), payload: last.entry.payload, logEntry: last.entry.logEntry })
             testEEWPressRef.current.delete(kind)
           } catch (err) {
             log.error('[test] テスト用の最終報を流せませんでした', err)
@@ -4158,7 +4191,7 @@ export function useEarthquakes(
         return
       }
       if (testEEWLateRetractionTimerRef.current !== null) window.clearTimeout(testEEWLateRetractionTimerRef.current)
-      eventQueueRef.current.push({ eventTime: serverDate(), payload: final.entry.payload })
+      eventQueueRef.current.push({ eventTime: serverDate(), payload: final.entry.payload, logEntry: final.entry.logEntry })
       const payload = final.entry.payload
       const eew = payload.kind === 'event' && payload.event.kind === 'eew' ? payload.event : null
       const expiresAtMs = eew ? calcEEWCancelTime(eew, new Date(eew.time)).getTime() : NaN
@@ -4173,7 +4206,7 @@ export function useEarthquakes(
           log.debug('[test] 待っている間にリセットされたので、遅れた誤報取消を捨てました')
           return
         }
-        eventQueueRef.current.push({ eventTime: serverDate(), payload: cancel.entry.payload })
+        eventQueueRef.current.push({ eventTime: serverDate(), payload: cancel.entry.payload, logEntry: cancel.entry.logEntry })
       }, delayMs)
     } catch (err) {
       log.error('[test] テスト用の電文を流せませんでした', err)
@@ -4312,6 +4345,11 @@ export function useEarthquakes(
       historyLoss: createEmptyTelegramLoss(),
       loadMoreFailed: false,
       reconnectGapLoss: false,
+      // **電文ログは、テストと再生の行だけ空にする。** 再生は「その窓を見る」ための機能なので
+      // 始めた時点で窓に合わせるが、**ライブで受けた記録は残す** —— あれは後から「本物がいつ
+      // 何を受け取ったか」を調べる唯一の記録で、作り直せない
+      // （2026-10-23 ユーザー選択「守る（推奨）」）。
+      telegramLog: dropTelegramLogOrigins(prev.telegramLog, ['test', 'replay']),
     }))
     eventQueueRef.current.clear()
     quakeIntensityCacheRef.current.clear()
@@ -4364,8 +4402,9 @@ export function useEarthquakes(
   }, [])
 
   const loadReplayEvents = useCallback((entries: import('../types/replay').ReplayEntry[]) => {
-    for (const { payload, replayTime, silent } of entries) {
-      eventQueueRef.current.push({ eventTime: replayTime, payload, silent })
+    for (const { payload, replayTime, silent, logEntry } of entries) {
+      // 電文ログの行はキューへ預け、発火のときに積む（理由は `QueueEntry.logEntry`）
+      eventQueueRef.current.push({ eventTime: replayTime, payload, silent, logEntry })
     }
   }, [])
 

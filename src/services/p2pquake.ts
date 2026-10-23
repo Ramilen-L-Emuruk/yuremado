@@ -908,6 +908,8 @@ export class P2PQuakeWebSocket {
           id: `${Date.now()}-${Math.random()}`,
           receivedAt: serverDate(),
           source: 'p2pquake',
+          // この経路は WebSocket で届いたものだけ（リプレイ・テストボタンは通らない）
+          origin: 'live',
           headType: String(raw?.code),
           isTest: false,
           status: appEvent ? 'parsed' : isBroken ? 'error' : 'filtered',
