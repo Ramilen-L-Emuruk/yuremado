@@ -182,12 +182,13 @@ vi.mock('../services/p2pquake', () => ({
   fetchHistory: vi.fn(),
   fetchHistorySince: vi.fn(),
   fetchJmaQuake: vi.fn(),
+  fetchJmaQuakePage: vi.fn(),
 }))
 
 // 1 回の窓の幅は実装側の定数を正とする（テストへ数値を書き写すと、窓を動かしたときに
 // テストだけが古い値のまま通ってしまう）。モックのファクトリで実物を展開しているので本物が来る。
 const { fetchDmdataQuakeHistory, HISTORY_WINDOW_DAYS } = await import('../services/dmdataReplay')
-const { fetchHistory, fetchHistorySince, fetchJmaQuake } = await import('../services/p2pquake')
+const { fetchHistory, fetchHistorySince, fetchJmaQuake, fetchJmaQuakePage } = await import('../services/p2pquake')
 
 const { useEarthquakes } = await import('./useEarthquakes')
 
@@ -232,9 +233,20 @@ beforeEach(() => {
   vi.mocked(fetchHistory).mockResolvedValue([])
   vi.mocked(fetchHistorySince).mockResolvedValue({ events: [], rawCount: 0, truncated: false })
   vi.mocked(fetchJmaQuake).mockResolvedValue([])
+  vi.mocked(fetchJmaQuakePage).mockResolvedValue({ events: [], rawCount: 0 })
 })
 
 afterEach(cleanup)
+
+/**
+ * 標準版の初回履歴・「もっと見る」の応答を 1 回ぶん仕込む。
+ *
+ * **`rawCount` は配信元が返した電文の数**（読めた数ではない）。既定では渡した電文の数にするが、
+ * 読めない電文が混ざった形を作るときは `rawCount` を別に渡す。
+ */
+function mockPage(events: JMAQuake[], rawCount = events.length) {
+  vi.mocked(fetchJmaQuakePage).mockResolvedValueOnce({ events, rawCount })
+}
 
 /** replayTimeOffset を差し替えられるハーネス。onLiveEvent は生の電文を覗きたいときだけ渡す。 */
 function setup(opts: {
@@ -498,8 +510,8 @@ describe('standard 版も再生中はライブ受信を止める（VAR-1）', ()
     it('起動時の履歴が片付くまで取り戻しを始めず、取り戻した分が残る', async () => {
       // 起動時の取得を止めておく（setup が effect を走らせる前に仕込む。既定値は beforeEach が後から入れない）
       let releaseStartup: () => void = () => {}
-      vi.mocked(fetchJmaQuake).mockImplementationOnce(() => new Promise(resolve => {
-        releaseStartup = () => resolve([])
+      vi.mocked(fetchJmaQuakePage).mockImplementationOnce(() => new Promise(resolve => {
+        releaseStartup = () => resolve({ events: [], rawCount: 0 })
       }))
       vi.mocked(fetchHistorySince).mockClear()
       vi.mocked(fetchHistorySince).mockResolvedValue({ events: [backfilledQuake()], rawCount: 1, truncated: false })
@@ -6956,5 +6968,181 @@ describe('ライブの入口: 自動解除の時刻を過ぎた報を採らな�
     await h.flush()
     expect(h.current.activeEEWs.size).toBe(1)
     expect(vi.mocked(log.info).mock.calls.some(c => String(c[0]).includes('自動解除の時刻を'))).toBe(false)
+  })
+})
+
+// 標準版のライブの初回履歴を、電文ではなく**地震の件数**で切る（2026-10-14 ユーザー選択
+// 「ライブも地震 50 件に揃える」）。API のページングは電文単位なので、そのまま畳むと
+// 地震の多い期間ほど一覧が薄くなり、同じ設定でもリプレイと枚数が食い違っていた。
+describe('標準版のライブ: 初回履歴は地震の件数で切る', () => {
+  beforeEach(() => { mockIsDmdss = false })
+
+  /** `n` 件の地震を、1 件あたり `reportsPerQuake` 通の報で作る（新しい順）。 */
+  function quakes(n: number, reportsPerQuake: number): JMAQuake[] {
+    const out: JMAQuake[] = []
+    for (let e = 0; e < n; e++) {
+      // 地震ごとに時刻をずらす（`selectQuakeHistory` は時刻で新しい順に選ぶ）。
+      const quakeTime = new Date(Date.UTC(2024, 0, 1, 0, 0, 0) - e * 3_600_000).toISOString()
+      const eventId = `2024010100${String(100 - e).padStart(4, '0')}`
+      for (let r = 0; r < reportsPerQuake; r++) {
+        out.push({
+          kind: 'quake',
+          id: `p2p-${eventId}-${r}`,
+          time: new Date(Date.parse(quakeTime) + r * 60_000).toISOString(),
+          issue: { source: '気象庁', time: quakeTime, type: r === 0 ? '震度速報' : '震源・震度情報', correct: 'なし' },
+          earthquake: {
+            time: quakeTime,
+            hypocenter: { name: `テスト${e}`, latitude: 35 + e * 0.1, longitude: 135 + e * 0.1, depth: 10, magnitude: 4.0 },
+            maxScale: 30,
+            domesticTsunami: 'なし',
+          },
+          points: [{ pref: '東京都', addr: `地点${e}`, isArea: true, scale: 30 }],
+        })
+      }
+    }
+    return out
+  }
+
+  // 正: 1 地震が 3 通の報を持つ 40 地震（120 通）を引いても、一覧は 40 枚。
+  // 電文で切っていた頃は 50 通で止まり、17 枚しか残らなかった。
+  it('報の多い地震が並んでも、地震の数だけカードが並ぶ', async () => {
+    mockPage(quakes(40, 3))
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.earthquakes).toHaveLength(40)
+  })
+
+  // 対照: 上限（50 件）を超える地震が入っていれば、50 枚で切る。
+  it('地震が上限を超えたら上限の枚数で切る', async () => {
+    mockPage(quakes(60, 1))
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.earthquakes).toHaveLength(50)
+  })
+
+  // 安全弁: **選んだ地震の報は全部採る。** 件数に達した時点で並びを抜ける作りだと、
+  // いちばん古いカードだけが震度速報のまま残る（報は数分にわたって出るため）。
+  it('選んだ地震の古い報も落とさない', async () => {
+    mockPage(quakes(2, 2))
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    // 2 通目（震源・震度情報）まで当たっていれば、種別がそちらへ進んでいる。
+    expect(h.current.earthquakes.every(q => q.issue.type === '震源・震度情報')).toBe(true)
+  })
+
+  // 正: 「もっと見る」は**引けた電文の数**で出す（2026-10-23 ユーザー承認「引けた電文の数で見る」）。
+  // 上限（100 通）まで返ってきたなら、その先にまだ電文がある。
+  it('上限まで電文が返ってきたら、もっと見るを出す', async () => {
+    mockPage(quakes(100, 1))
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.hasMore).toBe(true)
+  })
+
+  // 対照: 上限に満たなければ、その先は無い。
+  it('上限に満たなければ、もっと見るは出さない', async () => {
+    mockPage(quakes(10, 1))
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.hasMore).toBe(false)
+  })
+
+  // 安全弁: **選んだ地震の数では見ない。** 地震が少ない期間に 50 件へ届かないと、
+  // 先があるのにボタンが消える（100 通あるが 30 地震しかない形）。
+  it('地震が上限に届かなくても、電文が上限なら、もっと見るを出す', async () => {
+    mockPage(quakes(25, 4))
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.earthquakes).toHaveLength(25)
+    expect(h.current.hasMore).toBe(true)
+  })
+
+  // 正: **選から漏れた地震を「もっと見る」で拾う。** `offset` は引いた電文の数だけ進むので、
+  // 捨てるとその地震は一覧に二度と出ない（100 通に 51 地震以上が入る形＝地震の多い期間）。
+  it('選から漏れた地震を、次のもっと見るで拾う', async () => {
+    // 100 地震・100 通。50 件を選び、50 件が漏れる（`hasMore` も立つ）。
+    mockPage(quakes(100, 1))
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.earthquakes).toHaveLength(50)
+    expect(h.current.hasMore).toBe(true)
+
+    mockPage([])                     // 取得そのものは空でも、持ち越した 50 件が出る
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+    expect(h.current.earthquakes).toHaveLength(100)
+  })
+
+  // 安全弁: **持ち越しは 1 回で空にする。** 残すと次のもっと見るでも同じ電文を畳み直す。
+  it('持ち越した電文は一度しか使わない', async () => {
+    mockPage(quakes(100, 1))
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    // 1 回目は持ち越しを取り込む。**2 回目に備えて配信元が上限まで返す形にする**（`hasMore` を保つ）。
+    mockPage(quakes(0, 1), 50)
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+    expect(h.current.earthquakes).toHaveLength(100)
+    // 2 回目は持ち越しが空なので増えない。
+    mockPage([])
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+    expect(h.current.earthquakes).toHaveLength(100)
+  })
+
+  // 正: **読めなかった電文があっても、もっと見るは消えない**（2026-10-23 ユーザー承認「生の件数で見る」）。
+  // 配信元が上限まで返していれば先がある。読めた数で見ると、1 通落ちただけでボタンが消える。
+  it('読めない電文が混ざっても、配信元が上限まで返していればもっと見るを出す', async () => {
+    mockPage(quakes(99, 1), 100)     // 配信元は 100 通返したが、読めたのは 99 通
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.hasMore).toBe(true)
+  })
+
+  // 安全弁: **持ち越しがあるなら、上限に届かない応答でも「もっと見る」を出す。**
+  // ボタンが無いと、漏れた地震は一覧に二度と出ない（上限で切る側と同じ穴が、小さい母数に残る）。
+  it('上限に届かない応答でも、漏れた地震があればもっと見るを出す', async () => {
+    mockPage(quakes(60, 1))          // 60 通しか返らないが 60 地震あり、10 件が漏れる
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.earthquakes).toHaveLength(50)
+    expect(h.current.hasMore).toBe(true)
+
+    mockPage([])
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+    expect(h.current.earthquakes).toHaveLength(60)
+  })
+
+  // 対照: 漏れが無く上限にも届かなければ、ボタンは出ない。
+  it('漏れが無く上限にも届かなければ、もっと見るは出ない', async () => {
+    mockPage(quakes(10, 1))
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.hasMore).toBe(false)
+  })
+
+  // 安全弁: **時刻を読めない電文は持ち越さない。** `readTime` は読めない時刻でも文字列を返すので
+  // この形は通り抜ける。持ち越すと、同じ電文が初回では外れ、次のもっと見るでは畳み込みへ入る。
+  it('時刻を読めない電文は持ち越さない', async () => {
+    const broken = quakes(1, 1).map(q => ({ ...q, time: '壊れた値' }))
+    mockPage([...quakes(60, 1), ...broken])
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.earthquakes).toHaveLength(50)
+
+    mockPage([])
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+    // 漏れた 10 件だけが増える（壊れた 1 通は initial でも more でも入らない）。
+    expect(h.current.earthquakes).toHaveLength(60)
+  })
+
+  // 安全弁: **起点も配信元が返した数で進める。** 読めた数で進めると、次の取得が同じ電文を引き直す。
+  it('読めない電文の分も起点を進める', async () => {
+    mockPage(quakes(99, 1), 100)
+    const h = setup({ apiKey: '' })
+    await h.flush()
+    expect(h.current.hasMore).toBe(true)
+    mockPage([])
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+    // **読めた 99 ではなく、配信元が返した 100 から続ける**（99 だと 1 通を引き直す）。
+    const calls = vi.mocked(fetchJmaQuakePage).mock.calls
+    expect(calls[calls.length - 1]?.[0]).toMatchObject({ offset: 100 })
   })
 })
