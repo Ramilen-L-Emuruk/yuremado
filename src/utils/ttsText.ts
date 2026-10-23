@@ -13,6 +13,7 @@ import { tsunamiSourceHypocenter } from './borrowFromTsunami'
 import { createLogThrottle, createPerLabelLogGate, log } from './logger'
 import { hasKnownEpicenter } from './geo'
 import { pickEarthquakeCountSummaryItem } from './earthquakeCountSummary'
+import { DOMESTIC_TSUNAMI_CODE_TEXT, warnIfDomesticTsunamiSentenceMissing, withoutDomesticTsunamiSentences } from './domesticTsunamiComment'
 
 /**
  * 等級を読む順（重い等級が先）。**カードが等級カードを積む順と同じ並びを使う**
@@ -1645,25 +1646,8 @@ function domesticTsunamiSegment(t: DomesticTsunami): SpeechSegment {
   return { text: domesticTsunamiText(t), refs: [{ kind: 'quakeFact', fact: 'domesticTsunami', value: t }] }
 }
 
-/**
- * 区分を決める固定付加文の文（地震火山関連コード表・固定付加文の原文）。
- *
- * **固定付加文は文面がコードごとに決まっている**ので、電文の原文を読むのと同じ文になる。電文の原文
- * （`forecastText`）を読まないのは、そこに津波の文以外（0226「震源の近傍で津波発生の可能性があります。」・
- * 0241 の緊急地震速報の文など）も入るため —— それらは「気象庁の発表文」の内訳「固定付加文」で選んで読む
- * （→ `telegramTextToSpeak` の `quakeForecast`。2026-10-23 ユーザー選択「A: 発表文の内訳に足す (Recommended)」）。
- */
-export const DOMESTIC_TSUNAMI_CODE_TEXT: Readonly<Record<DomesticTsunamiCode, string>> = {
-  '0211': '津波警報等（大津波警報・津波警報あるいは津波注意報）を発表中です。',
-  '0212': 'この地震により、日本の沿岸では若干の海面変動があるかもしれませんが、被害の心配はありません。',
-  '0213': '今後もしばらく海面変動が続くと思われますので、海水浴や磯釣り等を行う際は注意してください。',
-  '0214': '今後もしばらく海面変動が続くと思われますので、磯釣り等を行う際は注意してください。',
-  '0215': 'この地震による津波の心配はありません。',
-  '0216': '震源が海底の場合、津波が発生するおそれがあります。',
-  '0217': '今後の情報に注意してください。',
-  '0229': '日本への津波の有無については現在調査中です。',
-  '0230': 'この地震による日本への津波の影響はありません。',
-}
+// 区分を決める固定付加文の文の表は、地震カードと共有するため `domesticTsunamiComment.ts` に置く。
+export { DOMESTIC_TSUNAMI_CODE_TEXT }
 
 /**
  * 津波区分の既読・差分の鍵。**区分とコードの組で作る** —— 区分が同じでもコードが違えば読み上げる文が
@@ -4502,18 +4486,9 @@ function telegramSpeech(prefix: string, body: string, subject: string): Telegram
 function quakeForecastRemainder(event: JMAQuake): string | undefined {
   const text = event.forecastText
   if (!text || event.issue.type === '遠地地震') return undefined
-  const code = event.earthquake.domesticTsunamiCode
-  const sentences = Object.values(DOMESTIC_TSUNAMI_CODE_TEXT)
-  if (code && !sentences.some(sentence => text.includes(sentence))) {
-    forecastSentenceMissingGate(code, text, () => log.warn(`[tts] 地震情報の固定付加文に、区分を決めるコードの文が見つかりません（コード ${code}。気象庁が文面を変えた疑い）: ${text}`))
-  }
-  let rest = text
-  for (const sentence of sentences) rest = rest.split(sentence).join('')
-  return rest.trim() || undefined
+  warnIfDomesticTsunamiSentenceMissing(event.earthquake.domesticTsunamiCode, text)
+  return withoutDomesticTsunamiSentences(text) || undefined
 }
-
-/** 区分を決めるコードの文が原文に見つからなかった記録。コードごとに間引く（毎報出ると記録が埋まり、1 本だと別のコードの変更が隠れる）。 */
-const forecastSentenceMissingGate = createPerLabelLogGate(4, 60_000)
 
 /**
  * 電文が運ぶ「気象庁が書いた文」を読み上げ文にする。設定で有効にしたときだけ中身を返す。
