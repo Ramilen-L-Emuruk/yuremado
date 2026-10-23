@@ -9,6 +9,7 @@ import { useAutoOpenWhileSpeakingIn } from '../../hooks/useAutoOpenWhileSpeaking
 import { SerialBadge } from '../SerialBadge'
 import {
   formatQuakeTimeLabeled,
+  quakeTimeLabeledParts,
   formatDepth,
   formatDomesticTsunami,
   TSUNAMI_WARNING_GROUP_TITLE,
@@ -517,6 +518,26 @@ function borrowedSourceNote(
     text: `${BORROWED_MARK} 津波情報より`,
     title: parts.join(''),
   }
+}
+
+/**
+ * 名前つきの地震の時刻（{@link formatQuakeTimeLabeled} と同じ文字列）を、名前と日時の境目でだけ
+ * 折り返せる形で出す。畳んだカードの日時の段で使う（理由は呼び出し側）。
+ * 縮める余地を持たせるため `shrink-0` は付けない。flex の既定の最小幅（中身の min-content）が
+ * 折れない塊の幅になるので、それより細くはならない。そのため UI 倍率を大きくすると、塊 1 つが
+ * 列より広くなってはみ出しうる。
+ */
+function QuakeTimeLabeledWrapping({ time }: { time: string }) {
+  return (
+    <span className="text-base text-secondary">
+      {quakeTimeLabeledParts(time).map((part, i) => (
+        <Fragment key={i}>
+          {i > 0 && ' '}
+          <span className="whitespace-nowrap">{part}</span>
+        </Fragment>
+      ))}
+    </span>
+  )
 }
 
 /**
@@ -1744,8 +1765,12 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               2 つでも折り返す。詰め切って情報を欠けさせるより、カードが 1 行分高くなる方を
               選んでいる（震度バッジは寸法固定なので正方形は崩れない）。 */}
           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-            {/* 畳んだ表示。開いた表示（上）と同じ語を出す。 */}
-            <span className="text-base text-secondary shrink-0">{formatQuakeTimeLabeled(earthquake.time)}</span>
+            {/* 畳んだ表示。開いた表示（上）と同じ語を出す。
+                **名前と日時の境目でだけ折り返す。** 右の列は震度バッジ（7rem 角）の残りで、スマホの
+                横画面では 181px しか無く、1 行の「地震発現時刻 10月23日 11:17」（209px）が枠の外へ
+                はみ出していた。`shrink-0` を外すだけだと漢字の途中（「地震発現時｜刻」）でも折れるので、
+                名前と日時をそれぞれ折れない塊にし、その間の空白だけを折り返す場所にする。 */}
+            <QuakeTimeLabeledWrapping time={earthquake.time} />
             {/* **長周期の名乗りは渡さない。** この段は `truncate` で末尾を省略するうえ、地名に幅を
                 明け渡している段。長い名乗りを足すと種別そのものが押し出される（開いた表示には出す）。 */}
             <span className={`text-xs px-1.5 py-0.5 rounded-sm min-w-0 truncate ${issueTypeBadgeClass(issue.type)}`}>
