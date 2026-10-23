@@ -6,22 +6,12 @@
 // 第 1 段だけなので、予想値の発話を聞いてもどの地震のものか判らない（理由は
 // `hooks/useEewSpeakingCard.ts`）。**「どちらか」を画面が担う**ので、鍵の引き当てと
 // 縁の強調はここで固定する —— 外れても症状は「カードが光らない」だけで例外もログも出ない。
-import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
 import { RealtimeTab } from './index'
 import type { EEWAlert } from '../../types/earthquake'
 
 afterEach(cleanup)
-
-/**
- * jsdom は `scrollIntoView` を持たない（ブラウザには必ずある）。**全テストで生やす** ——
- * 印が付いた時点で実装が呼ぶので、寄せることに関心の無いテストでも要る。
- */
-let scrollSpy = vi.fn()
-beforeEach(() => {
-  scrollSpy = vi.fn()
-  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { value: scrollSpy, writable: true, configurable: true })
-})
 
 function makeEEW(eventId: string, name: string): EEWAlert {
   return {
@@ -101,30 +91,5 @@ describe('いま声が語っているカードの印', () => {
     const card = cardOf(on.container, '宮城県沖')
     expect(card.style.border).toBe(borderOff)
     expect(isLit(card)).toBe(true)
-  })
-
-  // 正: 印が付いたら視野へ入れる。**`block: 'nearest'` を渡すこと** —— 既定（`'start'`）だと
-  // 視野内にあるカードまで先頭へ引き寄せ、見ている位置を奪う。
-  it('印が付いたカードを視野へ入れる（視野内なら動かさない指定で）', () => {
-    renderTab([makeEEW('evt-A', '宮城県沖')], 'evt-A')
-    expect(scrollSpy).toHaveBeenCalled()
-    expect(scrollSpy.mock.calls[0][0]).toMatchObject({ block: 'nearest' })
-  })
-
-  // 安全弁: **別のタブを見ている・パネルを畳んでいる間は寄せない。** 戻ってきたときに
-  // 勝手に位置が動いていることになる。
-  it('見えていないときは寄せない', () => {
-    render(
-      <RealtimeTab
-        eewNoForecastSettledKeys={new Set()}
-        eews={[makeEEW('evt-A', '宮城県沖')]}
-        swaveArrival={null}
-        kyoshinV2Detections={[]}
-        kyoshinDetectedPoints={[]}
-        visible={false}
-        speakingEewKey="evt-A"
-      />,
-    )
-    expect(scrollSpy).not.toHaveBeenCalled()
   })
 })

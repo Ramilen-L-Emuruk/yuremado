@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useRef } from 'react'
+import { memo, useRef } from 'react'
 import type { JMAQuake, JMALpgm, JMAEstimatedIntensity } from '../../types/earthquake'
 import { EarthquakeCard } from './EarthquakeCard'
 import { LoadMoreButton } from './LoadMoreButton'
@@ -9,7 +9,7 @@ import { lpgmMarkKey, type QuakeCardMarks } from '../../utils/quakeUpdateMark'
 import { estimatedIntensityFor } from '../../utils/estimatedIntensity'
 import type { LatLng } from '../../utils/stationCoords'
 import { quakeCardScrollTarget, QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
-import { planFollowScroll } from '../../utils/ttsFollow'
+import { useFollowScroll } from '../../hooks/useFollowScroll'
 import {
   type TelegramLoss, formatHistoryLossNotice, HISTORY_LOAD_MORE_FAILED_NOTICE, RECONNECT_GAP_LOSS_NOTICE,
   formatRateLimitedNotice, FETCH_THROTTLED_NOTICE,
@@ -117,87 +117,16 @@ function HistoryNotice({ tone, children }: { tone: 'loss' | 'info'; children: Re
   )
 }
 
-/** 縦にスクロールする最も近い祖先（タブごとの枠。`App.tsx` の `TAB_SCROLLER_CLASS`）。 */
-function scrollParentOf(el: HTMLElement): HTMLElement | null {
-  for (let p = el.parentElement; p; p = p.parentElement) {
-    const overflowY = getComputedStyle(p).overflowY
-    if (overflowY === 'auto' || overflowY === 'scroll') return p
-  }
-  return null
-}
-
-/**
- * 寄せる相手のカードを、一覧の枠の中で見える位置へ寄せる（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。
- *
- * **寄せるのは合図（`signature`）が変わったときだけ。** 相手が替わった・相手へ続報が届いた・
- * 取消が付いた、のいずれか。利用者がスクロールして読んでいる位置を、関係のない更新で動かさない。
- *
- * **寄せる量は津波カードの追従と同じ `planFollowScroll` が決める。** 収まっていれば動かさず、
- * 外れていればカードの頭を枠の上端から余白を取って揃え、枠より高いカードは頭に揃える。
- * 以前の `scrollIntoView({ block: 'nearest' })` は、枠より高いカードに対して「上端揃え・
- * 下端揃え・何もしない」のどれになるかが直前の位置で変わり、余白も取らずに縁を切っていた。
- *
- * **寄せられなかった合図は持ち越す。** 一覧がまだ描かれていない（読み込み中）・枠の高さが 0
- * （パネルを畳んでいる）ときは何もせず、次に描かれたときにやり直す。タブが隠れているだけなら
- * （`invisible`）寸法は保たれているので、その場で寄せる。
- */
-function useQuakeCardScroll(
-  listRef: React.RefObject<HTMLDivElement | null>,
-  target: { key: string; signature: string } | null,
-): void {
-  const appliedRef = useRef<string | null>(null)
-  // 見張りのコールバックから最新の相手を読むため（レンダーごとに書き換える）。
-  const targetRef = useRef(target)
-  targetRef.current = target
-  const observerRef = useRef<{ observer: ResizeObserver; scroller: HTMLElement } | null>(null)
-
-  // 寄せを試みる。寄せられない回（一覧が無い・枠の高さが 0・カード要素が無い）は合図を書かずに返す。
-  const tryApply = useRef(() => {
-    const t = targetRef.current
-    if (!t || appliedRef.current === t.signature) return
-    const list = listRef.current
-    if (!list) return
-    const scroller = scrollParentOf(list)
-    if (!scroller) return
-    // **枠の寸法の変化を見張る。** パネルの開閉・比率の変更は CSS 変数だけで起き、この一覧を
-    // 描き直さない（props が変わらないので memo が止める）。描き直しを待つ形だと、畳んでいる間に
-    // 届いた取消へ、開き直しても寄らない（津波タブと同じ穴。あちらも ResizeObserver で塞いでいる）。
-    // 見張りを持たない環境（テストの jsdom）では張らない。そのときは描き直しのたびに拾い直すだけになる。
-    if (typeof ResizeObserver === 'function' && observerRef.current?.scroller !== scroller) {
-      observerRef.current?.observer.disconnect()
-      const observer = new ResizeObserver(() => tryApply.current())
-      observer.observe(scroller)
-      observerRef.current = { observer, scroller }
-    }
-    if (scroller.clientHeight <= 0) return
-    const card = list.querySelector<HTMLElement>(`[${QUAKE_CARD_KEY_ATTR}="${CSS.escape(t.key)}"]`)
-    if (!card) return
-    appliedRef.current = t.signature
-    const view = scroller.getBoundingClientRect()
-    const rect = card.getBoundingClientRect()
-    const next = planFollowScroll({
-      viewTop: view.top,
-      viewBottom: view.top + scroller.clientHeight,
-      currentRects: [{ top: rect.top, bottom: rect.bottom }],
-      upcomingRects: [],
-      currentScrollTop: scroller.scrollTop,
-      maxScrollTop: scroller.scrollHeight - scroller.clientHeight,
-    })
-    if (next !== null) scroller.scrollTo({ top: next, behavior: 'smooth' })
-  })
-
-  // 依存を持たせない: 寄せられなかった合図を、次のレンダーでも拾い直すため（判定は軽い）。
-  useLayoutEffect(() => { tryApply.current() })
-  useLayoutEffect(() => () => { observerRef.current?.observer.disconnect() }, [])
-}
-
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
 export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
-  useQuakeCardScroll(listRef, quakeCardScrollTarget({ earthquakes, selectedKey: selectedId, speakingKey, followSpeech }))
+  // 寄せる相手と寄せ直す合図は `quakeCardScrollTarget`、寄せ方は共有のフック（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。
+  const scrollTarget = quakeCardScrollTarget({ earthquakes, selectedKey: selectedId, speakingKey, followSpeech })
+  useFollowScroll(listRef, scrollTarget?.signature ?? null, () =>
+    scrollTarget ? listRef.current?.querySelector<HTMLElement>(`[${QUAKE_CARD_KEY_ATTR}="${CSS.escape(scrollTarget.key)}"]`) ?? null : null)
   // 履歴について知らせる帯。**5 つを別に持つ**（確定した損失／429 で見送った分／押し直せば
   // 回復しうる失敗／接続が切れていた間の取りこぼし／いま待っているだけ）。混ぜると、戻せない損失と戻せるものが同じ重さに見える。
   //
