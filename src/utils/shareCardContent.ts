@@ -124,7 +124,7 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   const magnitude = shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition)
   if (magnitude !== null) parts.push(magnitude)
   if (hasDepth(hypocenter.depth)) parts.push(`深さ ${formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}`)
-  // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、「地震発現 null」のような
+  // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、「地震発現時刻 null」のような
   // 壊れた文字列を焼き付けるくらいなら出さない（規模・深さの「不明」を落とすのと同じ考え方）。
   const timeText = formatDateTime(time)
   return {

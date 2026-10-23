@@ -79,9 +79,9 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
 
 describe('地震カードの地震発現時刻が読めないとき', () => {
   // 対照: 読める値では従来どおりの表記。ガードが正常な値まで止めていないこと。
-  it('読める値では「地震発現 ◯月◯日 ◯:◯◯」を出す', async () => {
+  it('読める値では「地震発現時刻 ◯月◯日 ◯:◯◯」を出す', async () => {
     await renderTab(makeQuake('2024-01-01T07:10:00Z'), true)
-    expect(screen.getAllByText(/^地震発現 1月1日 \d{1,2}:\d{2}$/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/^地震発現時刻 1月1日 \d{1,2}:\d{2}$/).length).toBeGreaterThan(0)
     expect(screen.queryByText('地震発現時刻不明')).toBeNull()
   })
 

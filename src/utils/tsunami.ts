@@ -757,7 +757,7 @@ export function isTsunamiNewFire(next: JMATsunami, current: JMATsunami | undefin
  * **どちらを出すかは気象庁自身の文が決めている** —— 津波電文は本文で
  * 「２０日１６時５３分に発生した三陸沖を震源とする地震の…」と**発現時刻**で述べる
  * （2026-04-20 の VTSE41。発生は 16:52）。つまり気象庁の言う「◯時◯分に発生した地震」は
- * 発現時刻を指している。画面では、この値に公式の名前（`QUAKE_ARRIVAL_TIME_LABEL`＝「地震発現」）を付けて出す。
+ * 発現時刻を指している。画面では、この値に公式の名前（`QUAKE_ARRIVAL_TIME_LABEL`＝「地震発現時刻」）を付けて出す。
  * **実電文で測った数字と、この規則を 3 箇所が個別に実装していることは
  * `docs/spec/tsunami-spec.md` §4 が正**（ここへ写すと、測り直したとき片方が古いまま残る）。
  *
@@ -772,7 +772,7 @@ export function sourceEarthquakeTime(eq: TsunamiSourceEarthquake): string | unde
   // いまのパーサーは空文字を持たせないので（`...(値 && { arrivalTime })` のガードで落とす）、
   // 現状この違いは表に出ない。**それでも `||` にしておく** —— 型は `string | undefined` で
   // 空文字を許すため、別の入力源（永続化からの復元など）が足されたときに `??` だと空文字を
-  // 採ってしまい、時刻の無い「　地震発現」だけが行に残る。例外もログも出ない形で崩れる。
+  // 採ってしまい、時刻の無い「　地震発現時刻」だけが行に残る。例外もログも出ない形で崩れる。
   return eq.arrivalTime || eq.originTime || undefined
 }
 

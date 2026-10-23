@@ -188,7 +188,7 @@ function SourceEarthquakeLine({ eq, prefix, link }: {
 }) {
   const quakeTime = sourceEarthquakeTime(eq)
   // 日時として読めなければ句ごと落とす（→ `formatters.ts` の `readDateTime`）。震源名・規模・
-  // 深さが並ぶ行の付随情報なので、「地震発現」の語だけが残るより出さないほうがよい。
+  // 深さが並ぶ行の付随情報なので、「地震発現時刻」の語だけが残るより出さないほうがよい。
   const quakeHm = quakeTime ? formatTimeMin(quakeTime) : null
   return (
     <div>

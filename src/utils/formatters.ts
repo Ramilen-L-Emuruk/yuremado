@@ -116,10 +116,10 @@ export function formatDateTimeMin(isoString: string): string | null {
  * 読み取りが `OriginTime` へ落ちるのは要素が空か壊れているときだけ（`parseEarthquakeFromXml`・`sourceEarthquakeTime`）。
  *
  * **「発生」とは書かない。** 「地震発生時刻」は `OriginTime` の公式名で、別の値。
- * 気象庁の公式の名前に合わせる（2026-10-23 ユーザー選択「公式名を付ける (Recommended)」）。
+ * 気象庁の公式の名前に合わせる（2026-10-23 ユーザー選択「公式名を付ける (Recommended)」、続けて緊急地震速報のカードの見出しと揃える選択「「地震発現時刻」に揃える」）。
  * 緊急地震速報のカード・津波カード・共有カードも同じ語を使うので、ここから引く。
  */
-export const QUAKE_ARRIVAL_TIME_LABEL = '地震発現'
+export const QUAKE_ARRIVAL_TIME_LABEL = '地震発現時刻'
 
 /** 地震発現時刻を日時として読めなかったときに出す語。 */
 export const QUAKE_ARRIVAL_TIME_UNKNOWN = '地震発現時刻不明'
@@ -139,7 +139,7 @@ export function formatQuakeTime(isoString: string): string | null {
 }
 
 /**
- * 名前つきの地震の時刻。例: 地震発現 6月6日 8:47。
+ * 名前つきの地震の時刻。例: 地震発現時刻 6月6日 8:47。
  * 読めなければ {@link QUAKE_ARRIVAL_TIME_UNKNOWN}（空欄にすると、時刻を読み落としたのか電文に無いのか分からない）。
  */
 export function formatQuakeTimeLabeled(isoString: string): string {
