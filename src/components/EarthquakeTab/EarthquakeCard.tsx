@@ -16,8 +16,7 @@ import {
   formatCorrectType,
   hasHypocenterFacts,
   hasMagnitude,
-  formatMagnitudeValue,
-  magnitudeTypeLabel,
+  magnitudeHeading,
   formatMagnitudeWithCondition,
   formatCoordinate,
   formatNameFromMark,
@@ -1254,8 +1253,11 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   // 枠は器の色（規模の段階）なので触らない。印は値の肩の点で出す。
                 }}
               >
+                {/* 見出しは種別の名前、値は記号つき（`Mj7.0`）。**名前と記号を同じ枠に並べ、記号の読み方を
+                    見出しで示す**（2026-10-23 ユーザー承認「まあそれで行きましょう」。値の下へ名前を添えていた版は
+                    「マグニチュード 7.0 気象庁マグニチュード」と読めた）。→ `magnitudeHeading` */}
                 <span className="text-xs font-medium tracking-wide" style={{ color: magColor }}>
-                  マグニチュード
+                  {magnitudeHeading(hypocenter.magnitudeType)}
                   {borrowedHypocenter && <BorrowedMark />}
                 </span>
                 {/* 規模不明（-1／NaN）を toFixed に通すと "-1.0"／"NaN" と表示される。深さ側の formatDepth と揃える。
@@ -1265,17 +1267,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   className={`font-black leading-none ${hypocenter.magnitudeCondition && !hasMagnitude(hypocenter.magnitude) ? 'text-[0.9375rem] roomy:text-[1.125rem] leading-snug' : 'text-[1.375rem] roomy:text-[1.75rem]'}`}
                   style={{ color: '#ffffff' }}
                 >
-                  {formatMagnitudeValue(hypocenter.magnitude, hypocenter.magnitudeCondition)}
+                  {formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)}
                   {markDot('magnitude', 'md', 'align-top ml-1')}
                 </span>
-                {/* 規模の種別（`jmx_eb:Magnitude@type`）。**見出しが「マグニチュード」なので記号を置けず、
-                    語で添える**（2026-10-22 ユーザー承認「1-A 電文のまま」。畳んだ表示は前置きの記号で出す）。
-                    知らない値には何も添えない（→ `magnitudeTypeLabel`）。 */}
-                {magnitudeTypeLabel(hypocenter.magnitudeType) && (
-                  <span className="text-[0.625rem] roomy:text-xs leading-tight text-secondary">
-                    {magnitudeTypeLabel(hypocenter.magnitudeType)}
-                  </span>
-                )}
               </div>
               <div
                 className="flex flex-col gap-0.5 rounded-lg p-2 roomy:gap-1 roomy:p-2.5"

@@ -112,10 +112,13 @@ describe('規模の種別（Mj／M）', () => {
     expect(screen.queryByText(/Mj7\.6/)).toBeNull()
   })
 
-  // 正: 開いた表示は見出しが「マグニチュード」なので、記号ではなく語で添える。
-  it('開いた表示は語で添える', async () => {
+  // 正: 開いた表示は、見出しが種別の名前を名乗り、値は記号つきで出す（2026-10-23 ユーザー承認
+  // 「まあそれで行きましょう」）。値の下へ名前を添えていた版は「マグニチュード 7.6 気象庁マグニチュード」と読めた。
+  it('開いた表示は見出しで種別を名乗り、値に記号を付ける', async () => {
     await renderTab(makeQuake({ hypocenter: { magnitudeType: 'Mj' } }), true)
-    expect(screen.getAllByText('気象庁マグニチュード').length).toBeGreaterThan(0)
+    const heading = screen.getByText('気象庁マグニチュード')
+    expect(heading.nextElementSibling?.textContent).toMatch(/^Mj7\.6/)
+    expect(screen.queryByText('マグニチュード')).toBeNull()
   })
 
   // 対照: **`M` には語を添えない**（2026-10-23 ユーザー承認「資料の裏付けがある分だけ」）。
@@ -124,6 +127,7 @@ describe('規模の種別（Mj／M）', () => {
   it('M には語を添えない', async () => {
     await renderTab(makeQuake({ hypocenter: { magnitudeType: 'M' } }), true)
     expect(screen.queryByText('気象庁マグニチュード')).toBeNull()
+    expect(screen.getByText('マグニチュード').nextElementSibling?.textContent).toMatch(/^M7\.6/)
     expect(screen.queryByText('気象庁以外の値')).toBeNull()
   })
 

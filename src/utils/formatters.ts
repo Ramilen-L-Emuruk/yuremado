@@ -258,10 +258,13 @@ export function magnitudePrefix(magnitudeType: string | undefined): string {
 }
 
 /**
- * 規模の種別を語で説明する文字列。**開いた地震カードのように、見出しが「マグニチュード」で
- * 記号を出せない欄で使う。**
+ * 規模の欄の見出し。**開いた地震カードと緊急地震速報のカードのように、見出しの下に値を大きく出す欄で使う。**
+ * 値の側は {@link formatMagnitudeWithCondition} で記号ごと出す（`Mj7.0`）ので、見出しは記号の読み方を示す。
  *
- * **語を当てるのは `Mj` だけ**（2026-10-23 ユーザー承認「資料の裏付けがある分だけ」）。
+ * 名前を見出しへ置き、値に記号を付ける形は 2026-10-23 ユーザー承認「まあそれで行きましょう」。
+ *
+ * **種別の名前を当てるのは `Mj` だけ**（2026-10-23 ユーザー承認「資料の裏付けがある分だけ」）。
+ * それ以外は「マグニチュード」。
  * 気象庁の地震火山関連 解説資料が事例に「気象庁マグニチュードによる表現」と書いているのは
  * `Mj` の行だけで、**`M` が何かはどこにも定められていない**。
  *
@@ -274,9 +277,9 @@ export function magnitudePrefix(magnitudeType: string | undefined): string {
  * 機関そのものは別の行で出す（→ `EarthquakeCard` の「震源決定: …（気象庁以外）」）。
  * あちらは電文に機関が入っているときだけ出るので、言い過ぎにならない。
  */
-export function magnitudeTypeLabel(magnitudeType: string | undefined): string | null {
+export function magnitudeHeading(magnitudeType: string | undefined): string {
   if (magnitudeType === 'Mj') return '気象庁マグニチュード'
-  return null
+  return 'マグニチュード'
 }
 
 export function formatMagnitude(magnitude: number, magnitudeType: string | undefined): string {
@@ -300,17 +303,7 @@ export function formatMagnitudeCondition(condition: string): string {
 }
 
 /**
- * 「マグニチュード」の見出しを別に出している欄（地震カードの詳細表示）で、値として出す文字列。
- * 見出しと重ならないよう説明の先頭の「M」を落とす。説明が無ければ従来どおり「不明」。
- */
-export function formatMagnitudeValue(magnitude: number, condition?: string): string {
-  if (hasMagnitude(magnitude)) return magnitude.toFixed(1)
-  if (!condition) return '不明'
-  return formatMagnitudeCondition(condition).replace(/^M/, '')
-}
-
-/**
- * {@link formatMagnitude} の、説明を落とさない版。見出しに「M」を持たない欄で使う。
+ * {@link formatMagnitude} の、説明を落とさない版。
  *
  * **規模を出す箇所はすべてこれを通すこと。** 呼び出し側ごとに `hasMagnitude` の分岐を書くと、
  * 経路を 1 つ足すたびに漏れる —— 実際、説明を読むようにした最初の版では、地震カードの

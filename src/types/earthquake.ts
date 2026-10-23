@@ -50,9 +50,9 @@ export interface Hypocenter {
    * 気象庁以外の機関が決めた値（`source` と対で現れる）。
    *
    * **画面に出す**（2026-10-22 ユーザー承認「1-A 電文のまま」「電文の値がある全部」）。
-   * 規模の前置きの記号として電文の値をそのまま出し（`M3.5` / `Mj3.5`）、見出しが
-   * 「マグニチュード」で記号を置けない欄（開いた地震カード）は語で添える
-   * （→ `formatters.ts` の `magnitudePrefix` / `magnitudeTypeLabel`）。
+   * 規模の前置きの記号として電文の値をそのまま出し（`M3.5` / `Mj3.5`）、値の上に見出しを
+   * 置く欄（開いた地震カード・緊急地震速報のカード）は、`Mj` なら見出しが種別の名前を名乗る
+   * （→ `formatters.ts` の `magnitudePrefix` / `magnitudeHeading`）。
    *
    * P2PQuake 経路は相当する項目を配信しないため常に undefined。そのときは従来どおり `M`。
    */
