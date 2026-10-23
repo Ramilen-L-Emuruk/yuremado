@@ -48,25 +48,25 @@ describe('EEW カード: 震央地名が空の報', () => {
     renderTab(makeEEW())
     expect(screen.getByText('震源調査中')).toBeTruthy()
     expect(screen.getByText('マグニチュード')).toBeTruthy()
-    expect(screen.getByText('6.5')).toBeTruthy()
+    expect(screen.getByText('M6.5')).toBeTruthy()
     expect(screen.getByText('深さ')).toBeTruthy()
   })
 
   // 対照: 地名も座標も判らない報は出さない
   it('座標も判らなければマグニチュードの欄を出さない', () => {
     renderTab(makeEEW({ latitude: -200, longitude: -200 }))
-    expect(screen.queryByText('マグニチュード')).toBeNull()
+    expect(screen.queryByText(/マグニチュード/)).toBeNull()
   })
 
   // 安全弁: 仮定震源要素は地名の有無によらず伏せたまま
   it('仮定震源要素ならマグニチュードの欄を出さない', () => {
     renderTab(makeEEW({ condition: '仮定震源要素' }))
-    expect(screen.queryByText('マグニチュード')).toBeNull()
+    expect(screen.queryByText(/マグニチュード/)).toBeNull()
   })
 
   // 安全弁: 「非常に強い揺れを検知」の報も地名の有無によらず伏せたまま
   it('「非常に強い揺れを検知」の報ならマグニチュードの欄を出さない', () => {
     renderTab(makeEEW({ strongShakingOnly: true }))
-    expect(screen.queryByText('マグニチュード')).toBeNull()
+    expect(screen.queryByText(/マグニチュード/)).toBeNull()
   })
 })

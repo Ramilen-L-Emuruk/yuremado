@@ -8,7 +8,7 @@ vi.mock('./logger', async (importOriginal) => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: warnMock, error: vi.fn() },
 }))
 
-import { formatCoordinate, formatDepth, formatDomesticTsunami, formatMagnitude, formatMagnitudeCondition, formatMagnitudeValue, formatMagnitudeWithCondition, magnitudePrefix, magnitudeTypeLabel, formatNameFromMark, formatFileStamp, formatDateTime, formatDateTimeLocal, formatDateTimeMin, formatQuakeDateTime, formatQuakeTime, formatQuakeTimeLabeled, formatTime, formatTimeMin, hasHypocenterFacts, withNonJmaMark, NON_JMA_MARK } from './formatters'
+import { formatCoordinate, formatDepth, formatDomesticTsunami, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, magnitudePrefix, magnitudeHeading, formatNameFromMark, formatFileStamp, formatDateTime, formatDateTimeLocal, formatDateTimeMin, formatQuakeDateTime, formatQuakeTime, formatQuakeTimeLabeled, formatTime, formatTimeMin, hasHypocenterFacts, withNonJmaMark, NON_JMA_MARK } from './formatters'
 import type { Hypocenter } from '../types/earthquake'
 import { withTz } from '../test-utils/withTz'
 import { getMagnitudeColor, getDepthColor } from './intensity'
@@ -106,23 +106,23 @@ describe('規模の種別（Mj／M）', () => {
     expect(magnitudePrefix('mb')).toBe('mb')
   })
 
-  // 正: 見出しが「マグニチュード」で記号を置けない欄は、語で添える。
-  it('語を当てるのは Mj だけ', () => {
-    expect(magnitudeTypeLabel('Mj')).toBe('気象庁マグニチュード')
+  // 正: 値の上の見出しは、`Mj` なら種別の名前を名乗る（値は `Mj7.0` で出る）。
+  it('Mj の見出しは「気象庁マグニチュード」', () => {
+    expect(magnitudeHeading('Mj')).toBe('気象庁マグニチュード')
   })
 
   // 対照: **`M` には語を添えない**（2026-10-23 ユーザー承認「資料の裏付けがある分だけ」）。
   // 気象庁の資料が定めているのは `Mj` だけで、`M` が何かはどこにも書かれていない。控えでは
   // `M` なのに震源決定機関が無い電文が 12 通あり、「気象庁以外の値」とは言い切れない。
-  it('M には語を添えない', () => {
-    expect(magnitudeTypeLabel('M')).toBeNull()
+  it('M の見出しは「マグニチュード」のまま', () => {
+    expect(magnitudeHeading('M')).toBe('マグニチュード')
   })
 
   // 安全弁: **知らない値にも何も添えない。** 意味を推し量って言い換えない（記号なら電文のまま
   // 出せるが、語は当てはめた瞬間に嘘になりうる）。
-  it('知らない種別には語を添えない', () => {
-    expect(magnitudeTypeLabel('Mw')).toBeNull()
-    expect(magnitudeTypeLabel(undefined)).toBeNull()
+  it('知らない種別の見出しは「マグニチュード」のまま', () => {
+    expect(magnitudeHeading('Mw')).toBe('マグニチュード')
+    expect(magnitudeHeading(undefined)).toBe('マグニチュード')
   })
 
   // 安全弁: 規模が数値にならないときは、種別があっても説明を優先する（前置きの出番が無い）。
@@ -188,23 +188,6 @@ describe('規模の説明の表示', () => {
   // 安全弁: 数字を含まない語はそのまま残す。
   it('数字を含まない説明はそのまま残す', () => {
     expect(formatMagnitudeCondition('Ｍ不明')).toBe('M不明')
-  })
-
-  // 正: 「マグニチュード」の見出しを別に出す欄では、重ならないよう先頭の記号を落とす。
-  it('見出しがある欄では先頭の記号を落とす', () => {
-    expect(formatMagnitudeValue(NaN, 'Ｍ８を超える巨大地震')).toBe('8を超える巨大地震')
-    expect(formatMagnitudeValue(NaN, 'Ｍ不明')).toBe('不明')
-  })
-
-  // 対照: 数値が読めるなら説明があっても数値を出す。
-  it('数値が読めれば数値を出す', () => {
-    expect(formatMagnitudeValue(7.6, 'Ｍ８を超える巨大地震')).toBe('7.6')
-  })
-
-  // 安全弁: 説明が無い規模不明は従来どおり「不明」。
-  it('説明が無ければ不明のまま', () => {
-    expect(formatMagnitudeValue(NaN)).toBe('不明')
-    expect(formatMagnitudeValue(-1)).toBe('不明')
   })
 })
 

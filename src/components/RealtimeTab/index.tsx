@@ -9,7 +9,7 @@ import type { DetectionEvent, Confidence } from '../../utils/kyoshinDetector'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdown'
 import { usePageVisible } from '../../hooks/usePageVisible'
-import { formatDateTime, formatDepth, formatMagnitudeValue, hasDepth, hasMagnitude, magnitudeTypeLabel } from '../../utils/formatters'
+import { formatDateTime, formatDepth, formatMagnitudeWithCondition, hasDepth, hasMagnitude, magnitudeHeading } from '../../utils/formatters'
 import { getIntensityColor, getIntensityLabel, getIntensityLabelWithApproxAbove, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
 import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst, eewIssueTimeMs } from '../../utils/eew'
@@ -752,25 +752,20 @@ function EEWCard({ eew, visible, speaking, noForecastWaited, activeLpgmEventId, 
                 border: `2px solid ${magColor}`,
               }}
             >
+              {/* 開いた地震カードと同じ形 —— 見出しは種別の名前、値は記号つき（→ `magnitudeHeading`）。
+                  緊急地震速報の電文は `Mj` か欄なしで、控えの 82,561 通に `M` は 1 通も無い。 */}
               <span className="text-xs font-medium tracking-wide" style={{ color: magColor }}>
-                マグニチュード
+                {magnitudeHeading(hypocenter.magnitudeType)}
               </span>
               <span
                 key={fade(flash.magnitude).key}
-                className={`font-black leading-none text-[1.25rem] roomy:text-[1.5rem] rounded${fade(flash.magnitude).className}`}
+                // 数値が無く説明（「M8を超える巨大地震」）を出すときは、半幅の枠で行が重ならないよう字を小さくする
+                // （開いた地震カードと同じ分岐）。
+                className={`font-black rounded ${hypocenter.magnitudeCondition && !hasMagnitude(hypocenter.magnitude) ? 'text-[0.9375rem] roomy:text-[1.125rem] leading-snug' : 'text-[1.25rem] roomy:text-[1.5rem] leading-none'}${fade(flash.magnitude).className}`}
                 style={{ color: '#ffffff', ...fade(flash.magnitude).style }}
               >
-                {formatMagnitudeValue(hypocenter.magnitude, hypocenter.magnitudeCondition)}
+                {formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)}
               </span>
-              {/* 規模の種別（`jmx_eb:Magnitude@type`）。**開いた地震カードと同じ扱い** ——
-                  見出しが「マグニチュード」で記号を置けないので語で添える（2026-10-22 ユーザー承認
-                  「1-A 電文のまま」「電文の値がある全部」）。緊急地震速報の電文は `Mj` か欄なしで、
-                  控えの 82,561 通に `M` は 1 通も無い。知らない値には何も添えない。 */}
-              {magnitudeTypeLabel(hypocenter.magnitudeType) && (
-                <span className="text-[0.625rem] roomy:text-xs leading-tight text-secondary">
-                  {magnitudeTypeLabel(hypocenter.magnitudeType)}
-                </span>
-              )}
             </div>
             <div
               className="flex flex-col gap-0.5 rounded-lg p-2 roomy:gap-1 roomy:p-2.5"

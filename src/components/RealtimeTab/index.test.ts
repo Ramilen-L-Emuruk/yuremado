@@ -424,7 +424,7 @@ describe('EEW カードの仮定震源要素の見せ方', () => {
   it('仮定震源要素では震源名に注記を添え、M・深さを出さない', () => {
     renderEEW(assumedEEW())
     expect(screen.getByText('（震源未確定）')).toBeTruthy()
-    expect(screen.queryByText('マグニチュード')).toBeNull()
+    expect(screen.queryByText(/マグニチュード/)).toBeNull()
   })
 
   // 対照: 震源が確定している報では注記を出さない（出すと確定値まで疑わせる）。
