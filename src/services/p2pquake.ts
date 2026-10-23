@@ -710,8 +710,34 @@ export async function fetchJmaArchiveRaw(
 
 // /v2/history より大幅に深い履歴（地震情報は 2015-01-10 〜）を持つ地震情報専用エンドポイント
 export async function fetchJmaQuake(query: JmaArchiveQuery, signal: AbortSignal | null, lane: JmaLane): Promise<JMAQuake[]> {
+  return (await fetchJmaQuakePage(query, signal, lane)).events
+}
+
+/** {@link fetchJmaQuakePage} の答え。 */
+export interface JmaQuakePage {
+  /** 読めた地震情報。 */
+  events: JMAQuake[]
+  /**
+   * **配信元が返した電文の数**（読めなかったものも数える）。
+   *
+   * **ページが埋まったかの判定と `offset` の進め方には、必ずこちらを使う。** `events.length` は
+   * 読めなかった電文のぶん少なくなるので、1 通でも落ちると「上限ちょうど」の判定が外れて
+   * 「もっと見る」が消え、`offset` も実際より手前に止まって同じ電文を引き直す。
+   */
+  rawCount: number
+}
+
+/**
+ * {@link fetchJmaQuake} の、配信元が返した電文の数も併せて返す版。
+ *
+ * ページを辿る側（ライブの初回履歴・「もっと見る」）が使う。
+ */
+export async function fetchJmaQuakePage(query: JmaArchiveQuery, signal: AbortSignal | null, lane: JmaLane): Promise<JmaQuakePage> {
   const raws = await fetchJmaArchiveRaw('quake', query, signal, lane)
-  return raws.flatMap(r => { const e = convertEvent(r); return e && e.kind === 'quake' ? [e] : [] })
+  return {
+    events: raws.flatMap(r => { const e = convertEvent(r); return e && e.kind === 'quake' ? [e] : [] }),
+    rawCount: raws.length,
+  }
 }
 
 // 津波予報の履歴（2016-11-22 〜）。地震情報と同じクエリで引ける。

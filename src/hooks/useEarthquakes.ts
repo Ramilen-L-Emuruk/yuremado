@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLazyRef } from './useLazyRef'
 import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, EEWAlert, IntensityScale, EarthquakePoint, AppEvent, LiveEvent, LiveEventMeta, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
-import { fetchHistory, fetchHistorySince, fetchJmaQuake, P2PQuakeWebSocket } from '../services/p2pquake'
+import { fetchHistory, fetchHistorySince, fetchJmaQuakePage, P2PQuakeWebSocket } from '../services/p2pquake'
 // 種別ごとの取得関数（`fetchDmdataEarthquakes` ほか 8 本）は撤去済み。履歴はアーカイブ経由の
 // 1 本へ寄せてある（→ `data-sources-spec.md` §2「大量に取るならアーカイブを使う」）。
 // **発表中の緊急地震速報だけは別**で、`/v2/telegram` にも当日のアーカイブにも無いため
@@ -26,6 +26,7 @@ import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
 import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, MAX_LPGM_RETRACTIONS, recordLpgmRetractions, type LpgmRetraction } from '../utils/lpgmRetraction'
 import { withBorrowedFromTsunami, borrowFromTsunamiIntoCards } from '../utils/borrowFromTsunami'
+import { selectQuakeHistory } from '../utils/quakeHistorySelection'
 import { loadStationCoords, onStationCoordsLoaded, areaPrefIndexOf, getAreaPrefIndexCache } from '../utils/stationCoords'
 import type { AreaPrefIndex } from '../utils/quakePoints'
 import {
@@ -111,10 +112,20 @@ function lpgmNotifiable(lpgm: JMALpgm, cancelHitShown: boolean): boolean {
   return lpgm.cancelled ? cancelHitShown : lpgm.maxClass >= 1
 }
 
-// 初回取得件数（設定の最大選択値に合わせる。standard 版の経路だけが使う —— DMDSS 版は日数で
-// 区切る）。リプレイ開始時の履歴復元（App の `fetchReplayQuakeHistory`）もこの値をそのまま使うため
-// export している。片方だけ動かすと、ライブと再生でカードの厚みが黙って食い違う。
+// 初回に一覧へ並べる**地震の件数**（設定の最大選択値に合わせる。standard 版の経路だけが使う ——
+// DMDSS 版は日数で区切る）。リプレイ開始時の履歴復元（App の `fetchReplayQuakeHistory`）も
+// この値をそのまま使うため export している。片方だけ動かすと、ライブと再生でカードの厚みが
+// 黙って食い違う。
+//
+// **数えるのは地震で、電文ではない**（2026-10-14 ユーザー選択「ライブも地震 50 件に揃える」）。
+// 電文で数えると、地震の多い期間ほど 1 地震あたりの報が枠を食い、同じ設定でも一覧の枚数が
+// 期間ごとに変わる（実測で standard 版だけ 84 枚になったり、電文 50 通で切って 52 地震のうち
+// 18 枚しか残らなかったりした）。選び方は `selectQuakeHistory`（リプレイの履歴と共有）。
 export const MAX_HISTORY_RETAINED = 50
+
+// ライブの初回履歴で 1 回に引く電文数（`/jma` の上限）。**リクエストは 1 回のまま。**
+// 地震 50 件を選ぶ母数で、ここから `selectQuakeHistory` が地震の単位で絞る。
+const INITIAL_HISTORY_PAGE_SIZE = 100
 const LOAD_MORE_BATCH = 50        // 「もっと見る」1回あたりの取得件数
 const MAX_TELEGRAM_LOG = 200      // 電文ログの最大保持件数
 
@@ -1231,6 +1242,13 @@ export function useEarthquakes(
   // 通常版「もっと見る」用の生 API 取得件数（重複除去後の earthquakes.length とは別管理）
   // offset = earthquakes.length だと重複除去ズレで古いデータが抜け落ちるため、API 呼び出し回数ベースで管理する
   const p2pRawOffsetRef = useRef(0)
+  /**
+   * 初回履歴で**選から漏れた電文**（標準版）。次の「もっと見る」で、新しい取得分と一緒に畳む。
+   *
+   * **捨てると、その地震は一覧に二度と出ない。** `offset` は引いた電文の数だけ進むので、次の取得は
+   * 漏れた電文より古いところから始まる。100 通に 51 地震以上が入る形＝**地震の多い期間ほど起きる**。
+   */
+  const p2pCarryOverRef = useRef<JMAQuake[]>([])
 
   // 予約の発火時刻は、リプレイ中でもそのまま使う。キューへ入るものはすべて再生時計の
   // 時間軸に乗っているため:
@@ -3603,19 +3621,47 @@ export function useEarthquakes(
     // 空から組み直して丸ごと差し替えるので、取り戻しが先に終わると積んだ分を消してしまう。
     // 失敗しても下の `.catch` で受けるので、鎖は止まらない
     p2pBackfillChain = Promise.all([
-      fetchJmaQuake({ limit: MAX_HISTORY_RETAINED }, historyAbort.signal, 'foreground'),
+      fetchJmaQuakePage({ limit: INITIAL_HISTORY_PAGE_SIZE }, historyAbort.signal, 'foreground'),
       fetchHistory([552], 10, 0, historyAbort.signal),
     ])
-      .then(([quakeEvents, tsunamiEvents]) => {
+      .then(([quakePage, tsunamiEvents]) => {
+        const quakeEvents = quakePage.events
         if (cancelled) return
         // 種別横断の生電文をイベントごとに統合する（DMDSS 版・リアルタイムと同一ロジック）。
         // 以前は earthquake.time をキーにした Map で「優先度が最も高い 1 報」を選んでいたが、
         // P2PQuake の earthquake.time は分単位のため、同じ分に起きた別の地震が 1 枚に潰れていた。
         rememberQuakeRetractionsFromBatch(quakeEvents)
+        // **地震の単位で選ぶ**（→ `MAX_HISTORY_RETAINED`・`selectQuakeHistory`）。API のページングは
+        // 電文単位なので、そのまま畳むと地震の多い期間ほど一覧が薄くなる。**取消の台帳へは選ぶ前の
+        // 全電文を積む** —— 選から漏れた地震の取消でも、後から届いた古い報を弾くのに要る。
+        //
+        // **時刻を読めない電文は選ぶ前に外す。** `selectQuakeHistory` は並べ替えに時刻を使うので、
+        // `NaN` が混ざると並びが壊れる（外した分は畳み込みへも渡さない —— どのみち新旧を決められない）。
+        const historyCandidates = quakeEvents
+          .map(q => ({ q, time: new Date(q.time).getTime() }))
+          .filter(c => Number.isFinite(c.time))
+        const selected = selectQuakeHistory(
+          historyCandidates, c => c.q, c => c.time,
+          { maxEvents: MAX_HISTORY_RETAINED, windowStartMs: null },
+          getAreaPrefIndexCache(),
+        )
+        const selectedQuakes = selected.map(c => c.q)
+        // **選から漏れた電文は次の「もっと見る」へ回す。** 捨てると、その地震は一覧に二度と出ない ——
+        // `offset` は引いた電文の数だけ進むので、次の取得はこれより古い電文から始まる
+        // （100 通に 51 地震以上が入る形＝地震の多い期間ほど起きる）。
+        // **持ち越すのは選抜に掛けた電文のうち漏れたものだけ。** `quakeEvents` から引くと、
+        // 時刻を読めず選抜の手前で外した電文まで持ち越してしまい、次の「もっと見る」では
+        // 畳み込みへ入る —— 同じ電文が初回では外れ、次では入る食い違いになる
+        // （`readTime` は読めない時刻でも警告を出して文字列を返すので、この形は通り抜ける）。
+        const selectedSet = new Set(selectedQuakes)
+        p2pCarryOverRef.current = historyCandidates.filter(c => !selectedSet.has(c.q)).map(c => c.q)
         // 畳み込みが作った記憶も受け取る（印は出さない。→ `marksFromHistory`）。
-        const { cards: earthquakes, markMemory } = mergeQuakeHistory(quakeEvents, [], quakeRetractionsRef.current, getAreaPrefIndexCache())
+        const { cards: earthquakes, markMemory } = mergeQuakeHistory(selectedQuakes, [], quakeRetractionsRef.current, getAreaPrefIndexCache())
         const { latest: latestTsunami, active: tsunamis } = selectP2pTsunamiSnapshot(tsunamiEvents as JMATsunami[], serverDate())
-        p2pRawOffsetRef.current = quakeEvents.length
+        // **「もっと見る」の起点は配信元が返した電文の数。** 選んだ地震の数でも、読めた電文の数でも
+        // ない —— API の `offset` は配信元が並べた電文で数えるので、読めなかった分まで進めないと
+        // 次の取得が同じ電文を引き直す（漏れた地震は上の `p2pCarryOverRef` が持ち越す）。
+        p2pRawOffsetRef.current = quakePage.rawCount
         setState(prev => ({
           ...prev,
           // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
@@ -3627,7 +3673,14 @@ export function useEarthquakes(
           tsunamis,
           lastUpdate: serverDate(),
           isLoading: false,
-          hasMore: quakeEvents.length === MAX_HISTORY_RETAINED,
+          // **配信元が返した電文の数で見る**（2026-10-23 ユーザー承認「引けた電文の数で見る」
+          // 「生の件数で見る」）。上限まで返ってきたなら、その先にまだ電文がある。
+          // **読めた電文の数では見ない** —— 1 通でも読めないと上限に届かず、先があるのに
+          // ボタンが消える。選んだ地震の数でも見ない（地震の少ない期間に 50 件へ届かない）。
+          //
+          // **持ち越しがあるときも出す。** 上限に届かない応答でも 50 地震を超えていれば漏れが出る
+          // （配信元の障害・短い応答）。ボタンが無いと、その地震は一覧に二度と出ない。
+          hasMore: quakePage.rawCount === INITIAL_HISTORY_PAGE_SIZE || p2pCarryOverRef.current.length > 0,
           error: null,
         }))
         noteP2pTsunamiSeen(latestTsunami)
@@ -3945,8 +3998,14 @@ export function useEarthquakes(
         })
       } else {
         const offset = p2pRawOffsetRef.current
-        const events = await fetchJmaQuake({ limit: LOAD_MORE_BATCH, offset }, signal, 'foreground')
-        p2pRawOffsetRef.current += events.length
+        const page = await fetchJmaQuakePage({ limit: LOAD_MORE_BATCH, offset }, signal, 'foreground')
+        // **配信元が返した数だけ進める**（読めた数ではない。理由は初回履歴の側と同じ）。
+        p2pRawOffsetRef.current += page.rawCount
+        // **初回に選から漏れた電文をここで合流させる**（→ `p2pCarryOverRef`）。取り込んだら空にする ——
+        // 残すと次の「もっと見る」でも同じ電文を畳み直す（`mergeQuakeHistory` は冪等なので
+        // カードは壊れないが、毎回無駄に畳むことになる）。
+        const events = [...p2pCarryOverRef.current, ...page.events]
+        p2pCarryOverRef.current = []
         // 既存カード群を base に新バッチを統合する（DMDSS 版と同じ扱い）。
         // バッチ跨ぎで同一イベントの続報が届いた場合もリアルタイムと同一結果になる。
         // 台帳への記録は setState の外で行う（理由は DMDSS 版側と同じ）。
@@ -3960,7 +4019,9 @@ export function useEarthquakes(
             ...prev,
             ...marksFromHistory(markMemory, cards, prev.lpgmByEventId, prev.quakeUpdateMarks),
             earthquakes: borrowFromTsunamiIntoCards(cards, prev.tsunamis),
-            hasMore: events.length === LOAD_MORE_BATCH,
+            // **配信元が返した数で見る**（持ち越し分を足した `events.length` では見ない ——
+            // 足したぶん上限を超えて、先が無いのにボタンが残る）。
+            hasMore: page.rawCount === LOAD_MORE_BATCH,
             // 成功したので、押し直せば回復しうる側の表示は消す（DMDSS 版と揃える）
             loadMoreFailed: false,
           }
