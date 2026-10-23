@@ -56,6 +56,14 @@
 
 import { afterAll, afterEach } from 'vitest'
 import { isActWarning } from './test-utils/muteConsoleError'
+import { installTestTelegramFetch } from './test-utils/testTelegramFetch'
+
+// テストボタンの電文（`public/data/test-telegrams/`）への取得を、ファイル読み込みへ向ける。
+//
+// **アプリ側は `fetch` で取る**（→ `utils/testTelegrams.ts`）が、テスト環境ではその URL を
+// 解決できない。ここで向け直さないと、テストボタンを押しても**何も起きないだけ**で、
+// 例外も出ないまま「押したのに電文が来ない」テストが静かに落ちる。
+installTestTelegramFetch()
 
 if (typeof document !== 'undefined') {
   const { cleanup } = await import('@testing-library/react')

@@ -20,7 +20,7 @@ import {
   type TelegramLoss, createEmptyTelegramLoss, telegramLossFrom, isTelegramLossEmpty,
   mergeHistoryLoss,
 } from '../utils/telegramLoss'
-import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, extractQuakeEventId, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
+import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
 import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmRowSnapshot, lpgmMarkKey, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
@@ -46,7 +46,8 @@ import { isDmdss } from '../utils/env'
 import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
 // テストデータは押されてから読む（静的に取り込まない理由・失敗したときの扱い・先読みの
 // 段取りは `utils/testDataLoader.ts` にまとめてある）。
-import { loadTestData } from '../utils/testDataLoader'
+import { loadTestTelegramScripts } from '../utils/testDataLoader'
+import { buildTestTelegramEntries, type TestTelegramScript } from '../utils/testTelegrams'
 
 /**
  * 画面・音へ回らずに落とした電文を、録画ツール向けに記録する
@@ -181,33 +182,6 @@ function findQuakeCancelTarget(
 ): JMAQuake | undefined {
   return cards.find(card => isLiveQuakeCancelTarget(card, cancel, areaPrefIndex))
 }
-/**
- * 推計震度分布図テストで、地震情報を出してから分布を流すまでの間。
- *
- * 実運用の数分をそのまま待たせても意味が無いので詰めるが、**0 にはしない** ——
- * 地震カードが一覧に載る前に分布が届くと、自動で開く側が引き当てる相手を見つけられない。
- */
-const TEST_ESTIMATED_INTENSITY_DELAY_MS = 3000
-/**
- * 推計震度分布図テストで、初報から続報までを空ける間隔。
- *
- * **初報の読み上げが鳴り終わるまでの長さが要る。** 続報は初報と同じ主題なので、読み上げの
- * 到来順の裁きが初報を取り下げて割り込む（実運用では 6 分空くので起きない）。上の 3 秒のままだと
- * 初報が「〜について、」で切れ、**確かめたい「受信しました」が一度も鳴らない**。
- * 実測で通知音・間・2 チャンクの合成と再生に 8 秒前後かかるので、その倍を取る。
- */
-const TEST_ESTIMATED_INTENSITY_FOLLOW_UP_DELAY_MS = 16000
-/**
- * 推計震度分布図テストで、分布の続報から地震情報の続報までを空ける間隔。
- *
- * **分布の続報の読み上げが鳴り終わるまでの長さが要る。** 短すぎると「更新されました」が
- * 途中で切れ、そちらを確かめられなくなる（上の 16 秒と同じ理由）。地震情報の続報は主題が
- * 別なので割り込みでは切られないが、聞き分けられる間は空ける。
- */
-const TEST_ESTIMATED_INTENSITY_QUAKE_FOLLOW_UP_DELAY_MS = 16000
-const EEW_FINAL_SILENCE_MS = 10000 // EEW発報テスト（特別警報・警報・予報）: この間隔クリックが無ければ最終報として確定する
-const EEW_RETRACTION_CANCEL_MS = 10000 // EEW誤報取消テスト: 発報からこの秒数後に取消電文を送る
-
 type QueuePayload =
   | { kind: 'event'; event: AppEvent }
   | { kind: 'lpgm'; data: JMALpgm }
@@ -367,98 +341,15 @@ function enrichEEWPref(eew: EEWAlert, index: ReadonlyMap<string, string> | null)
 }
 
 type TestEEWKind = 'special' | 'warning' | 'forecast' | 'assumed' | 'deep' | 'strongShaking'
-// baseTime（**地震発現時刻**の基準）を初報から続報・最終報まで持ち回る
-// （→ `runSimulateEEW` のコメント）。
-type TestEEWEntry = { eventId: string; serial: number; baseTime: Date; finalizeTimer: number }
-type TestEEWRetractionEntry = { eventId: string; serial: number; baseTime: Date; cancelTimer: number }
-
-type TestTsunamiRef = React.MutableRefObject<{ cancelTimer: number; tsunami: JMATsunami } | null>
-
-// 津波テスト: 発表 → cancelMs 後に解除（または誤報取消）。
-//
-// 解除・取消の報は `createTestTsunamiCancel` が実運用（dmdataParser / p2pquake の 552）と同じ形で作る
-// （発表の報を広げない・発表時刻と id は解除の報自身のもの・理由は DMDSS 限定）。
-function runSimulateTsunami(
-  createFn: () => JMATsunami,
-  cancelMs: number,
-  ref: TestTsunamiRef,
-  handleEvent: (event: AppEvent) => void,
-  createCancel: typeof import('../utils/testData').createTestTsunamiCancel,
-  cancelReason: 'lifted' | 'retracted' = 'lifted',
-) {
-  if (ref.current) window.clearTimeout(ref.current.cancelTimer)
-  const tsunami = createFn()
-  handleEvent(tsunami)
-  const cancelTimer = window.setTimeout(() => {
-    handleEvent(createCancel(tsunami, serverDate().toISOString(), cancelReason, isDmdss))
-    ref.current = null
-  }, cancelMs)
-  ref.current = { cancelTimer, tsunami }
-}
-
-// EEW発報テスト（特別警報・警報・予報）: クリックのたびに続報（isFinal未設定）を送る。
-// silenceMs 経過しても再クリックが無ければ、最終報（isFinal:true）を確定送信する。
-// 確定後は本番と全く同じ calcEEWCancelTime ベースの自動解除（無音・即消去）がそのままかかる
-// （DMDSS版の実運用と同一経路。Standard版は実データに isFinal が来ないため、この検知経路
-// 自体は実運用で通らないが、解除後の共有ロジックはバリアント共通のため検証できる）。
-//
-// 報の推移は実運用（dmdataParser.parseEEW）に合わせる:
-//   - 報番号（issue.serial）・id・発表時刻（time / issue.time）は報ごとに進める。
-//     最終報も独立した 1 報なので、直前の電文を流用せず serial を 1 つ進めて作り直す。
-//   - baseTime（地震発現時刻の基準）を持ち回る。**現在時刻から作り直すと予報円が続報ごとに
-//     中心へ戻り、実運用では起きない挙動になる。** 地震発現時刻は実電文でも続報で動かないので
-//     （1 日分・VXSE45 の実測で 15 地震すべてが不動）、この基準は固定でよい。
-//   - **震源時刻はその基準からずらす。** 実電文は震源推定が更新されるたび動く。ずらす値と
-//     根拠は `utils/testData.ts` の `EEW_ORIGIN_DRIFT_SEC`（→ `docs/spec/eew-spec.md` §3
-//     「地震の時刻は発生時刻を出す」）。**区域の到達予想時刻は震源時刻に追従する** ——
-//     理由は `EEW_ORIGIN_DRIFT_SEC` の直上に書いてある。
-function runSimulateEEW(
-  kind: TestEEWKind,
-  createFn: (eventId: string, serial: number, baseTime: Date) => EEWAlert,
-  silenceMs: number,
-  timers: Map<TestEEWKind, TestEEWEntry>,
-  handleEvent: (event: AppEvent) => void,
-) {
-  const prev = timers.get(kind)
-  const isContinuation = prev !== undefined
-  const eventId = isContinuation ? prev.eventId : `test-${kind}-${Date.now()}`
-  const serial = isContinuation ? prev.serial + 1 : 1
-  const baseTime = isContinuation ? prev.baseTime : serverDate()
-  if (prev) window.clearTimeout(prev.finalizeTimer)
-  handleEvent(createFn(eventId, serial, baseTime))
-  // **後始末は `finally` で保証する。** `createFn` や `handleEvent` が投げると `timers` に古い
-  // 報番号が残り、次の押下が「続報」と誤認されて同じ報番号が二度出る。
-  //
-  // **`catch` は置かない。** `setTimeout` の中の例外はここで握らなくても
-  // `utils/globalErrorLog.ts` がアプリ時計つきで拾う（あのモジュールは `setTimeout` を名指しで
-  // 守備範囲に入れている）。握ると記録がそちらへ届かなくなるうえ、**止めたいのは `createFn` の
-  // 失敗なのに `handleEvent`（状態更新・音・読み上げ・タブ移動の入口）の例外まで飲む。**
-  const finalizeTimer = window.setTimeout(() => {
-    try {
-      handleEvent({ ...createFn(eventId, serial + 1, baseTime), isFinal: true })
-    } finally {
-      timers.delete(kind)
-    }
-  }, silenceMs)
-  timers.set(kind, { eventId, serial, baseTime, finalizeTimer })
-}
+  | 'noForecast' | 'forecastZero' | 'retraction'
 
 /**
- * テストボタンの取消電文が持つ地震の欄。**実電文の形にする** —— 取消電文は `Earthquake` 要素を
- * 持たないので、`dmdataParser` は震源名を空・座標を位置不明（-200）・深さを不明（-1）・M を NaN・
- * 発生時刻と発現時刻を空にして返す。名前を残していた頃は、取消の通知が震源名の空の電文で崩れる
- * 経路（→ `useLiveEventHandler` の `eewLastHypocenterNameRef`）をテストボタンで一度も通れなかった。
- * **取消を流すテストボタンはすべてこれを使う**（書き写すとまた片方だけ実電文から外れる）。
+ * 押すたびに進む台本の進み具合（→ `pressTestTelegramScript`）。
+ *
+ * **読み書きするのは待ち行列の中だけ**（種別ごとに 1 本ずつ処理する）。並べずに触ると、
+ * 電文を組む `await` の間に次の押下が同じ値を読み、同じ段が 2 回流れる。
  */
-function cancelledEewEarthquake(): EEWAlert['earthquake'] {
-  return {
-    originTime: '',
-    arrivalTime: '',
-    condition: '',
-    hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: NaN },
-  }
-}
-
+type TestEEWPressEntry = { index: number; now: Date; finalizeTimer: number }
 /**
  * 届いた報が、画面から消えた地震の報なら `true` を返し、弾いたことを記録に残す（→ `endedEewMatch`）。
  * 発表中の速報の取り直し（起動時・張り直し）と、ライブの入口（`handleEvent`）の両方が通る。
@@ -506,56 +397,6 @@ function mergeEndedEew(previous: EndedEew | undefined, acceptance: EewAcceptance
 //   - 対象地域は空、予想最大震度・予想最大長周期階級も持たない（取消電文は予想を持たない）。
 //   - 地震の欄も持たない形にする（震源名は空・座標は位置不明）。通知の本文は、直前の報が
 //     名乗った震央地名を覚えておいて使う（→ `useLiveEventHandler` の `eewLastHypocenterNameRef`）。
-function runSimulateEEWRetraction(
-  createFn: (eventId: string, serial: number, baseTime: Date) => EEWAlert,
-  cancelMs: number,
-  ref: React.MutableRefObject<TestEEWRetractionEntry | null>,
-  handleEvent: (event: AppEvent) => void,
-) {
-  const prev = ref.current
-  const eventId = prev ? prev.eventId : `test-eew-retraction-${Date.now()}`
-  const serial = prev ? prev.serial + 1 : 1
-  const baseTime = prev ? prev.baseTime : serverDate()
-  if (prev) window.clearTimeout(prev.cancelTimer)
-  handleEvent(createFn(eventId, serial, baseTime))
-  // 後始末は `finally` で保証する（理由は `runSimulateEEW` のコメント）。
-  const cancelTimer = window.setTimeout(() => {
-    try {
-      const report = createFn(eventId, serial + 1, baseTime)
-      handleEvent({
-        ...report,
-        cancelled: true,
-        // 取消しの概要（電文の `Body/Text`）。**実電文の値をそのまま置く** —— アプリが受信する
-        // VXSE45（地震動予報）の取消の本文は、観測できた 23 通すべてがこの 1 文で理由を含まない
-        // （走査の範囲と通数は → quake-spec.md §8「取消しの理由は電文にしかない」）。この形で
-        // ないと、読み上げが宣言だけの本文を落とす経路（→ audio-tts-spec.md §4「取消の宣言だけの
-        // 本文は読まない」）を EEW で一度も実機で通れない。**理由が入っている本文を読む側は
-        // `ttsText.test.ts` が両方向とも固定している** —— 文字列の判定だけで画面・音・タブ移動を
-        // 伴わないので、実在しない形をテストボタンへ置いてまで実機で押す必要はない。
-        // **このボタンは警報級を取り消すが、本文の名前は予報級のまま** —— VXSE45 の種別名は区分に
-        // 関わらずこれ 1 つで（→ eew-spec.md §3）、警報かどうかは電文内の `isWarning` が示す。
-        // 警報級を取り消した実電文の標本は無いので、名前が変わる形は置かない。
-        // **DMDSS 版限定**: この項目を作れるのは XML を読む dmdataParser だけで、
-        // P2PQuake 経路（standard 版）には対応するフィールドが無い。津波の解除テストと同じ扱い
-        ...(isDmdss ? { cancelText: '先ほどの、緊急地震速報（地震動予報）を取り消します。' } : {}),
-        areas: [],
-        // **「程度以上」の印も値と一緒に落とす。** 印だけ残ると、値が無いのに上限が定まって
-        // いないことになり、表示・読み上げが語を補う条件（→ eew-spec.md §4）と食い違う。
-        forecastMaxScale: undefined,
-        forecastMaxScaleOrAbove: undefined,
-        forecastMaxScaleBelow1: undefined,
-        forecastMaxLpgmClass: undefined,
-        forecastMaxLpgmClassOver: undefined,
-        forecastMaxLpgmBelowClass1: undefined,
-        earthquake: cancelledEewEarthquake(),
-      })
-    } finally {
-      ref.current = null
-    }
-  }, cancelMs)
-  ref.current = { eventId, serial, baseTime, cancelTimer }
-}
-
 /**
  * 印と記憶を残しておく鍵の集合（地震カードと長周期）。
  *
@@ -827,28 +668,31 @@ export function useEarthquakes(
   onStartupRestoreEewsRef.current = onStartupRestoreEews
   // キューディスパッチャーがサイレントエントリを処理中は true にして通知音を抑制する
   const isSilentRef = useRef(false)
-  // テスト EEW の発報状態を種別ごとに独立管理（複数EEW同時テスト対応）
-  const testEEWTimersRef = useRef<Map<TestEEWKind, TestEEWEntry>>(new Map())
-  // EEW 誤報取消テストの発報状態
-  const testEEWRetractionRef = useRef<TestEEWRetractionEntry | null>(null)
-  // 「予想震度なしのまま取消」テストが続報と取消を流すまでの待ち（`simulateEEWNoForecast`）
-  const testEEWNoForecastTimersRef = useRef<number[]>([])
-  // 「予想震度0」テストが続報を流すまでの待ち（`simulateEEWForecastZero`）
-  const testEEWForecastZeroTimersRef = useRef<number[]>([])
-  // テスト津波の発報状態を種別ごとに独立管理
-  const testTsunamiRef = useRef<{ cancelTimer: number; tsunami: JMATsunami } | null>(null)
-  // 南海トラフ臨時情報の取消テストで、発表から取消までを待つタイマー
-  const testNankaiRetractionTimerRef = useRef<number | undefined>(undefined)
-  // 後発地震注意情報の取消テストで、発表から取消までを待つタイマー
-  const testKohatsuRetractionTimerRef = useRef<number | undefined>(undefined)
-  const testEarthquakeCountRetractionTimerRef = useRef<number | undefined>(undefined)
-  // 長周期地震動の取消テストで、発表から取消までを待つタイマー（`simulateLpgmRetraction`）
-  const testLpgmRetractionTimerRef = useRef<number | undefined>(undefined)
-  const testTsunamiGradeChangeTimerRef = useRef<number | undefined>(undefined)
-  // 「警報 → 予報（失効時刻つき）」テストが発表から降格報までを待つ待ち（`simulateTsunamiExpiry`）。
-  const testTsunamiExpiryTimerRef = useRef<number | undefined>(undefined)
-  // 「変化の小さい続報」テストが 6 通を順に流すあいだの待ち（`simulateTsunamiQuietReports`）。
-  const testTsunamiQuietTimerRef = useRef<number | undefined>(undefined)
+  // 緊急地震速報のテストの進み具合を種別ごとに独立管理（複数の EEW を同時に流せる）
+  const testEEWPressRef = useRef<Map<TestEEWKind, TestEEWPressEntry>>(new Map())
+  /**
+   * テストボタンの世代。**リセット（リプレイの開始・停止）とアンマウントで進める。**
+   *
+   * **電文を組むには `await` が要る**（台本の読み込みと電文の取得）。その間にリセットが入ると、
+   * 待ちをキューに持たせていても**まだキューに載っていない**ので落とせない —— リセット後の
+   * 画面へ、消したはずの電文がまるごと届く。積む直前に世代を照らし合わせて捨てる。
+   */
+  const testGenerationRef = useRef(0)
+  /**
+   * 押すたびに進む台本の待ち行列（種別ごとに 1 本）。
+   *
+   * **連打と最終報を、同じ列へ並べて 1 本ずつ処理する。** 電文を組むには `await` が要るので、
+   * 並べないと「前の押下が台帳を書く前に、次の押下が台帳を読む」が起きる —— 同じ段が違う
+   * 識別子で 2 枚のカードになり、待ちも二重に張られる（→ `pressTestTelegramScript`）。
+   */
+  const testPressChainRef = useRef<Map<TestEEWKind, Promise<void>>>(new Map())
+  /** 待ち行列の末尾へ足す。**失敗しても列は止めない**（次の押下が動かなくなる）。 */
+  const enqueueTestPress = useCallback((kind: TestEEWKind, task: () => Promise<void>): Promise<void> => {
+    const prev = testPressChainRef.current.get(kind) ?? Promise.resolve()
+    const next = prev.then(task, task)
+    testPressChainRef.current.set(kind, next.catch(() => {}))
+    return next
+  }, [])
 
   /**
    * テストボタンが張った「待ち」をすべて落とす。**アンマウントと `resetState` の両方から呼ぶ。**
@@ -865,56 +709,15 @@ export function useEarthquakes(
    * **待ちを持つ ref を増やしたら、ここへ足すこと。**
    */
   const clearTestSimulationTimers = useCallback(() => {
-    // 津波テスト 5 種が共有する自動解除（TEST_AUTO_DISMISS_MS）。
-    if (testTsunamiRef.current) {
-      window.clearTimeout(testTsunamiRef.current.cancelTimer)
-      testTsunamiRef.current = null
-    }
-    // EEW 発報テスト 5 種の最終報（EEW_FINAL_SILENCE_MS）。**種別ごとに独立して張られる**ので
-    // Map を走査する。1 つでも残ると、リセット後の画面へ EEW がまるごと 1 通生える。
-    for (const entry of testEEWTimersRef.current.values()) {
+    // 緊急地震速報のテストが張った最終報の待ち。**種別ごとに独立して張られる**ので Map を走査する。
+    // 1 つでも残ると、リセット後の画面へ緊急地震速報がまるごと 1 通生える。
+    for (const entry of testEEWPressRef.current.values()) {
       window.clearTimeout(entry.finalizeTimer)
     }
-    testEEWTimersRef.current.clear()
-    // EEW 誤報取消テストの取消（EEW_RETRACTION_CANCEL_MS）。
-    if (testEEWRetractionRef.current) {
-      window.clearTimeout(testEEWRetractionRef.current.cancelTimer)
-      testEEWRetractionRef.current = null
-    }
-    // 「予想震度なしのまま取消」テストの続報と取消（TEST_EEW_NO_FORECAST_*）。
-    for (const timer of testEEWNoForecastTimersRef.current) window.clearTimeout(timer)
-    testEEWNoForecastTimersRef.current = []
-    // 「予想震度0」テストの続報（TEST_EEW_FORECAST_ZERO_REPORT_OFFSETS_MS）。
-    for (const timer of testEEWForecastZeroTimersRef.current) window.clearTimeout(timer)
-    testEEWForecastZeroTimersRef.current = []
-    if (testNankaiRetractionTimerRef.current !== undefined) {
-      window.clearTimeout(testNankaiRetractionTimerRef.current)
-      testNankaiRetractionTimerRef.current = undefined
-    }
-    if (testKohatsuRetractionTimerRef.current !== undefined) {
-      window.clearTimeout(testKohatsuRetractionTimerRef.current)
-      testKohatsuRetractionTimerRef.current = undefined
-    }
-    if (testEarthquakeCountRetractionTimerRef.current !== undefined) {
-      window.clearTimeout(testEarthquakeCountRetractionTimerRef.current)
-      testEarthquakeCountRetractionTimerRef.current = undefined
-    }
-    if (testLpgmRetractionTimerRef.current !== undefined) {
-      window.clearTimeout(testLpgmRetractionTimerRef.current)
-      testLpgmRetractionTimerRef.current = undefined
-    }
-    if (testTsunamiGradeChangeTimerRef.current !== undefined) {
-      window.clearTimeout(testTsunamiGradeChangeTimerRef.current)
-      testTsunamiGradeChangeTimerRef.current = undefined
-    }
-    if (testTsunamiQuietTimerRef.current !== undefined) {
-      window.clearTimeout(testTsunamiQuietTimerRef.current)
-      testTsunamiQuietTimerRef.current = undefined
-    }
-    if (testTsunamiExpiryTimerRef.current !== undefined) {
-      window.clearTimeout(testTsunamiExpiryTimerRef.current)
-      testTsunamiExpiryTimerRef.current = undefined
-    }
+    testEEWPressRef.current.clear()
+    // **組んでいる途中のものも捨てる。** タイマーを落とすだけでは、`await` の中にいる押下が
+    // この後でキューへ積んでしまう（→ `testGenerationRef`）。
+    testGenerationRef.current++
   }, [])
   // 帯に出している南海トラフ臨時情報・後発地震注意情報の識別情報（無ければ null）。取消の照合に使う。
   //
@@ -3818,22 +3621,45 @@ export function useEarthquakes(
     }
   }, [])
 
-  const simulateEarthquake = useCallback(async () => {
-    const { createTestEarthquake, createTestLpgm } = await loadTestData()
-    // points の形状・情報種別は経路で異なる（DMDATA は観測点が pref 空＋都道府県ロールアップ、
-    // P2PQuake は観測点に pref が入る）。バリアントに合わせて実電文の形を再現する。
-    const quake = createTestEarthquake(isDmdss)
-    handleEvent(quake)
-    // VAR-2: 長周期地震動観測情報（VXSE62）は DMDATA 経由でのみ配信される。standard 版で
-    // 「地震テスト」ボタンから LPGM を注入すると、実データでは絶対に届かないバッジ表示が
-    // テストで出て混乱するため isDmdss のときだけ LPGM を注入する。
-    const eventId = extractQuakeEventId(quake)
-    if (eventId && isDmdss) {
-      const lpgm = createTestLpgm(eventId)
-      setState(prev => ({ ...prev, lpgmByEventId: new Map(prev.lpgmByEventId).set(eventId, lpgm) }))
-      onLiveEventRef.current?.({ kind: 'lpgm', data: lpgm })
+  /**
+   * テストボタンの台本（電文 XML の並び）を読み、**受信と同じイベントキューへ積む**
+   * （→ `utils/testTelegrams.ts`）。
+   *
+   * 電文は**ライブ・リプレイと同じ入口**（`buildXmlPayload`）でパーサーを通るので、テストボタンが
+   * 電文の読み取りまで確かめる。間を置いて次の報を流す待ちはキューが抱えるので、リセット
+   * （リプレイの開始・停止）とアンマウントでキューごと落ちる。
+   *
+   * **ただしキューへ積むまでに `await` が 2 つある**（台本の読み込みと電文の取得）。その間に
+   * リセットが入ると、キューを空にしても間に合わない —— 積む直前に世代を照らし合わせて捨てる
+   * （→ `testGenerationRef`）。
+   *
+   * **失敗は記録に残す。** ボタンは Promise を待たないので、ここで握らないと「押したのに何も
+   * 起きない」だけになる（電文の取得失敗・台本の書き換え先が見つからない、など）。
+   */
+  const runTestTelegramScript = useCallback(async (
+    pick: (scripts: Awaited<ReturnType<typeof loadTestTelegramScripts>>) => TestTelegramScript,
+  ) => {
+    const generation = testGenerationRef.current
+    try {
+      const scripts = await loadTestTelegramScripts()
+      const built = await buildTestTelegramEntries(pick(scripts), { isDmdss, now: serverDate() })
+      if (generation !== testGenerationRef.current) {
+        log.debug('[test] 組んでいる間にリセットされたので、テスト用の電文を捨てました')
+        return
+      }
+      for (const { entry } of built) {
+        eventQueueRef.current.push({ eventTime: entry.replayTime, payload: entry.payload })
+      }
+    } catch (err) {
+      log.error('[test] テスト用の電文を流せませんでした', err)
     }
-  }, [handleEvent])
+  }, [])
+
+  /**
+   * 地震テスト（能登本震の震源・震度に関する情報。→ `testTelegramScripts.ts` の `EARTHQUAKE`）。
+   * 長周期地震動の観測情報も一緒に流す（DMDSS 版だけ。電文そのものが標準版の受信元から届かない）。
+   */
+  const simulateEarthquake = useCallback(() => runTestTelegramScript(s => s.EARTHQUAKE), [runTestTelegramScript])
 
   /**
    * 津波の続報で区域ごとに等級が動くテスト（一部解除・一部引き上げ）。
@@ -3850,96 +3676,16 @@ export function useEarthquakes(
    *
    * **DMDSS 版のみ。** 前回の等級（`LastKind`）は P2PQuake が配信しない。
    */
-  const simulateTsunamiGradeChange = useCallback(async () => {
-    const { createTestTsunami, createTestTsunamiCancel, createTestTsunamiGradeChange, createTestTsunamiHighTide, TEST_AUTO_DISMISS_MS, TEST_TSUNAMI_HIGH_TIDE_DELAY_MS } = await loadTestData()
-    const base = createTestTsunami(isDmdss)
-    if (testTsunamiGradeChangeTimerRef.current !== undefined) {
-      window.clearTimeout(testTsunamiGradeChangeTimerRef.current)
-    }
-    runSimulateTsunami(() => base, TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
-    // 解除の待ちは `runSimulateTsunami` が張っている。続報はその手前へ差し込む。
-    //
-    // **待ちは ref で追う。** アンマウントとリセット（リプレイの開始・停止）で落とせるようにする
-    // —— 追えないと、画面を消した後や再生へ切り替えた後に 45 秒前の続報だけが単独で届き、
-    // 消えたはずの津波カードが復活する。しかもこの経路は `handleEvent` を直接呼ぶので、
-    // キューを空にしても止まらない。
-    testTsunamiGradeChangeTimerRef.current = window.setTimeout(() => {
-      testTsunamiGradeChangeTimerRef.current = undefined
-      // 解除が先に走った後は流さない（ボタンを押し直したときに古い続報が紛れ込む）
-      if (testTsunamiRef.current?.tsunami.id !== base.id) return
-      const changed = createTestTsunamiGradeChange(base)
-      handleEvent(changed)
-      // 4 段目。**同じ ref を使い回す** —— 追う先が 1 本なら、リセットとアンマウントの落とし方を
-      // 増やさずに済む（2 本目を足すと、どちらかを落とし忘れても型検査には掛からない）。
-      testTsunamiGradeChangeTimerRef.current = window.setTimeout(() => {
-        testTsunamiGradeChangeTimerRef.current = undefined
-        if (testTsunamiRef.current?.tsunami.id !== base.id) return
-        handleEvent(createTestTsunamiHighTide(base, changed))
-      }, TEST_TSUNAMI_HIGH_TIDE_DELAY_MS)
-    }, TEST_AUTO_DISMISS_MS / 2)
-  }, [handleEvent])
+  const simulateTsunamiGradeChange = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_GRADE_CHANGE), [runTestTelegramScript])
 
   /**
-   * 「変化の小さい続報」テスト（DMDSS 版のみ）。
+   * 「変化の小さい続報」テスト（DMDSS 版のみ。→ `testTelegramScripts.ts` の `TSUNAMI_QUIET_REPORTS`）。
    *
-   * **通知音だけが鳴って何も声にならなかった報を、実機で確かめる唯一の入口。**
-   * 2024 年能登半島地震の 26 時間では、取消を除く津波電文 56 通のうち 7 通がこの形だった
-   * （→ docs/spec/tsunami-spec.md §10「変化を伝えない続報」）。発表 → 11 通の続報 → 満了で解除、
-   * と進む。
-   *
-   * | 段 | 報 | 確かめるもの |
-   * |---|---|---|
-   * | 1 | 観測情報 | 波高の文（既存）。**次の段の前提** —— ここで波高が既読にならないと、続く 2 段が波高の文に食われる |
-   * | 2 | 観測情報 | 波高の値は据え置きで「○m以上」だけが付いた報。読み上げ・バッジ・地図のカメラが揃って動く |
-   * | 3 | 観測情報 | 「次の地点で最大波の観測時刻が更新されました」 |
-   * | 4 | 観測情報 | 「次の地点で第1波が更新されました」（到達時刻の訂正。→ `createTestTsunamiFirstWaveUpdate`） |
-   * | 5 | 沖合の観測情報 | 沖合の観測点の最大波の観測時刻が動く。**カードの沖合の行に印が出るのはここだけ** |
-   * | 6 | 観測情報 | 「観測された波高に変わりはありません」 |
-   * | 7 | 観測情報 | 段 2 の観測点（八戸港）の波高が下がり「以上」も外れた報。「津波観測に関する情報が発表されました」（**段 6 より後ろに置く** —— 読み上げの記憶は下げないので、後の観測情報も同じ一文になる） |
-   * | 8 | 満潮時刻 | 名乗りだけ（初報） |
-   * | 9 | 満潮時刻 | 「満潮時刻が更新されました」 |
-   * | 10 | 満潮時刻 | 「津波の到達状況が更新されました」 |
-   * | 11 | 満潮時刻 | 「内容に変わりはありません」 |
-   *
-   * **間隔は読み上げが終わる程度に空ける**（`TEST_TSUNAMI_QUIET_STEP_MS`）。これらは最下位の層で
-   * 読むので、前の発話が続いていると待たされ、待ちきれなければ黙る。
+   * **通知音だけが鳴って何も声にならなかった報を、実機で確かめる唯一の入口。** 発表 → 11 通の続報 →
+   * 全解除と進む。段の表と、段ごとに動かす 1 項目は台本にある。間隔は読み上げが終わる程度に空ける
+   * （これらは最下位の層で読むので、前の発話が続いていると待たされ、待ちきれなければ黙る）。
    */
-  const simulateTsunamiQuietReports = useCallback(async () => {
-    const {
-      createTestTsunami, createTestTsunamiCancel,
-      createTestTsunamiQuietReportSteps,
-      TEST_TSUNAMI_QUIET_STEP_MS, TEST_TSUNAMI_QUIET_TAIL_MS,
-    } = await loadTestData()
-    const base = createTestTsunami(isDmdss)
-    if (testTsunamiQuietTimerRef.current !== undefined) {
-      window.clearTimeout(testTsunamiQuietTimerRef.current)
-    }
-    // **同じ ref を使い回して連鎖させる**（等級変化テストと同じ流儀。追う先が 1 本なら、
-    // リセットとアンマウントの落とし方を増やさずに済む）。段の並びは testData 側が持つ
-    // （ユニットテストが同じ列を流して 7 段目が空振りしないことを確かめる）。
-    const steps = createTestTsunamiQuietReportSteps(base)
-    // 解除は**最後の報を流してから**数える（他のテストと違って `TEST_AUTO_DISMISS_MS` を使わない）。
-    // 段数から導くので、段を足しても最後の報が読み終わる余裕は変わらない（→ `TEST_TSUNAMI_QUIET_TAIL_MS`）。
-    runSimulateTsunami(
-      () => base,
-      TEST_TSUNAMI_QUIET_STEP_MS * steps.length + TEST_TSUNAMI_QUIET_TAIL_MS,
-      testTsunamiRef,
-      handleEvent,
-      createTestTsunamiCancel,
-    )
-    let prev = base
-    const runStep = (i: number) => {
-      testTsunamiQuietTimerRef.current = window.setTimeout(() => {
-        testTsunamiQuietTimerRef.current = undefined
-        // 解除が先に走った後は流さない（ボタンを押し直したときに古い続報が紛れ込む）
-        if (testTsunamiRef.current?.tsunami.id !== base.id) return
-        prev = steps[i](prev)
-        handleEvent(prev)
-        if (i + 1 < steps.length) runStep(i + 1)
-      }, TEST_TSUNAMI_QUIET_STEP_MS)
-    }
-    runStep(0)
-  }, [handleEvent, isDmdss])
+  const simulateTsunamiQuietReports = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_QUIET_REPORTS), [runTestTelegramScript])
 
   /**
    * 訓練報のテスト。
@@ -3951,90 +3697,40 @@ export function useEarthquakes(
    * **その印を出す手段がこれしかない。** 実配信の訓練報は事前に予告されて流れるもので、
    * こちらの都合では受け取れない。印が出るかどうかを実機で確かめられる唯一の入口になる。
    */
-  const simulateTrainingQuake = useCallback(async () => {
-    const { createTestEarthquake } = await loadTestData()
-    handleEvent(createTestEarthquake(isDmdss, '訓練'))
-  }, [handleEvent])
+  const simulateTrainingQuake = useCallback(() => runTestTelegramScript(s => s.TRAINING_QUAKE), [runTestTelegramScript])
 
   /**
-   * 訂正報のテスト。**初報を先に出し、少し置いてから訂正報を流す。**
+   * 訂正報のテスト。**初報を先に出し、少し置いてから訂正報を流す**（初報 M7.4 → 訂正報 M7.6。
+   * 電文と書き換えの中身は → `testTelegramScripts.ts` の `QUAKE_AMENDMENT`）。
    *
    * 訂正報は前の報を直すもので、単独では届かない。1 通だけ流すと「訂正」の印は出せても
-   * **何が訂正されたのかが画面に出ない**ので、規模が変わる前後を続けて流す
-   * （初報 M7.4 → 訂正報 M7.6。実電文の値は → `createTestQuakeAmendment`）。
-   *
-   * **受信と同じ経路（イベントキュー）へ積む**ので、同一性の判定も続報のマージも実運用と
-   * 同じところを踏む。待ちをキューに持たせているため、リセット（リプレイの開始・停止）で
-   * 一緒に落ちる —— `handleEvent` を直接呼ぶ津波・EEW のテストと違い、`clearTestSimulationTimers`
-   * へ足す必要は無い（→ docs/spec/settings-pwa-spec.md §7「待ちはリセットとアンマウントで落とす」）。
+   * **何が訂正されたのかが画面に出ない**ので、規模が変わる前後を続けて流す。
    */
-  const simulateQuakeAmendment = useCallback(async () => {
-    const { createTestQuakeAmendment } = await loadTestData()
-    const { initial, amended } = createTestQuakeAmendment(isDmdss)
-    // 放出の時刻は電文の発表時刻そのものを使う（間隔の決め方はテストデータ側に閉じる）。
-    eventQueueRef.current.push({ eventTime: new Date(initial.time), payload: { kind: 'event', event: initial } })
-    eventQueueRef.current.push({ eventTime: new Date(amended.time), payload: { kind: 'event', event: amended } })
-  }, [])
+  const simulateQuakeAmendment = useCallback(() => runTestTelegramScript(s => s.QUAKE_AMENDMENT), [runTestTelegramScript])
 
   /**
-   * 種別が前後して届く報のテスト。**7 通を順に流す。**
+   * 種別が前後して届く報のテスト。**7 通を順に流す**（→ `testTelegramScripts.ts` の `QUAKE_REPORT_SEQUENCE`）。
    *
-   * 気象庁は同じ地震について種別の違う電文を前後して発表する（震度速報 → 震源情報 →
-   * 震度速報 → 震源・震度情報）。3 通目で見出しが「震度速報#2/震源情報」になり、4 通目で
-   * 速報段階が畳まれる（→ docs/spec/quake-spec.md §8「見出しには受け取った種別を並べる」）。
+   * 3 通目で見出しが「震度速報#2/震源情報」になり、4 通目で速報段階が畳まれる
+   * （→ docs/spec/quake-spec.md §8「見出しには受け取った種別を並べる」）。5 通目は観測点・市町村だけが
+   * 増える続報、6 通目は完全版のあとに届く震度速報（据え置かれて**何も動かない**のが正しい。→
+   * `utils/quakeMerge.ts` の `isSupersededByExistingCard`）、7 通目は観測点の震度が上下する続報。
    * **その見え方を実機で確かめられる入口がここしかない。**
-   *
-   * **5 通目は観測点・市町村だけが増える続報。** 区域の最大震度が据え置きのまま観測点が
-   * 遅れて入電する形で、読み上げが「観測地点が追加されましたが、地域ごとの最大震度は
-   * 変わっていません。」と読むところを確かめられる（→ `createTestQuakeReportSequence`）。
-   *
-   * **6 通目は完全版のあとに届く震度速報。** 気象庁の発表で実際に起きる順序で、採るとカードの
-   * 中身が区域だけへ痩せる。据え置くのが正しい挙動（→ `utils/quakeMerge.ts` の
-   * `isSupersededByExistingCard`）なので、実機では**何も動かないこと**を見る —— 見出し・
-   * カードの色・4 段の入れ子（県 → 区域 → 市町村 → 観測点）・最大震度のどれも変わらない。
-   *
-   * **7 通目は観測点の震度が上下する続報。** 動いた行に更新の印が付き、読み上げは「観測された
-   * 震度が更新されました。」と読む（→ `createTestQuakeReportSequence`）。
-   *
-   * **受信と同じ経路（イベントキュー）へ積む**ので、同一性の判定も続報のマージも実運用と
-   * 同じところを踏む。待ちをキューに持たせているため、リセット（リプレイの開始・停止）で
-   * 一緒に落ちる（理由は → `simulateQuakeAmendment`）。
    */
-  const simulateQuakeReportSequence = useCallback(async () => {
-    const { createTestQuakeReportSequence } = await loadTestData()
-    for (const report of createTestQuakeReportSequence(isDmdss)) {
-      eventQueueRef.current.push({ eventTime: new Date(report.time), payload: { kind: 'event', event: report } })
-    }
-  }, [])
+  const simulateQuakeReportSequence = useCallback(() => runTestTelegramScript(s => s.QUAKE_REPORT_SEQUENCE), [runTestTelegramScript])
 
   /**
-   * 地震情報の取消のテスト（→ `createTestQuakeCancel`）。**DMDSS 版のみ**（P2PQuake は地震情報の
-   * 取消を配信しない）。
-   *
-   * **受信と同じ経路（イベントキュー）へ積む。** 取消はカードへ印を付け、10 秒後に一覧から外す
-   * 予約もキューへ積む（`useEarthquakes` の取消の分岐）。キューを通れば、リプレイの開始・停止で
-   * まとめて捨てられる（独自のタイマーを持たない）。
+   * 地震情報の取消のテスト（2024-01-01 23:05 の誤発表と 23:13 の取消。→ `QUAKE_CANCEL`）。
+   * **DMDSS 版のみ**（P2PQuake は地震情報の取消を配信しない）。取消はカードへ印を付け、
+   * 10 秒後に一覧から外す予約もキューへ積む（`useEarthquakes` の取消の分岐）。
    */
-  const simulateQuakeCancel = useCallback(async () => {
-    const { createTestQuakeCancel } = await loadTestData()
-    for (const report of createTestQuakeCancel()) {
-      eventQueueRef.current.push({ eventTime: new Date(report.time), payload: { kind: 'event', event: report } })
-    }
-  }, [])
+  const simulateQuakeCancel = useCallback(() => runTestTelegramScript(s => s.QUAKE_CANCEL), [runTestTelegramScript])
+
+  /** 地震情報の一部の取消のテスト（→ `QUAKE_PARTIAL_CANCEL`）。**DMDSS 版のみ**。 */
+  const simulateQuakePartialCancel = useCallback(() => runTestTelegramScript(s => s.QUAKE_PARTIAL_CANCEL), [runTestTelegramScript])
 
   /**
-   * 地震情報の一部の取消のテスト（→ `createTestQuakePartialCancel`）。**DMDSS 版のみ**。
-   * 積み方は上の取消テストと同じ（受信と同じイベントキュー）。
-   */
-  const simulateQuakePartialCancel = useCallback(async () => {
-    const { createTestQuakePartialCancel } = await loadTestData()
-    for (const report of createTestQuakePartialCancel()) {
-      eventQueueRef.current.push({ eventTime: new Date(report.time), payload: { kind: 'event', event: report } })
-    }
-  }, [])
-
-  /**
-   * 震源を津波電文から借りる場面のテスト（→ `createTestHypocenterFromTsunami`）。
+   * 震源を津波電文から借りる場面のテスト（能登本震の実電文の並び。→ `HYPOCENTER_FROM_TSUNAMI`）。
    *
    * **受信と同じ経路（イベントキュー）へ積む。** 借りる処理は状態更新と読み上げの両方に
    * 入っているので、`handleEvent` を直接呼ぶと片方しか踏まない。
@@ -4042,12 +3738,7 @@ export function useEarthquakes(
    * **DMDSS 版のみ。** P2PQuake は津波電文の原因地震を配信しないため、standard 版では
    * 借りる相手が居ない。
    */
-  const simulateHypocenterFromTsunami = useCallback(async () => {
-    const { createTestHypocenterFromTsunami } = await loadTestData()
-    for (const report of createTestHypocenterFromTsunami()) {
-      eventQueueRef.current.push({ eventTime: new Date(report.time), payload: { kind: 'event', event: report } })
-    }
-  }, [])
+  const simulateHypocenterFromTsunami = useCallback(() => runTestTelegramScript(s => s.HYPOCENTER_FROM_TSUNAMI), [runTestTelegramScript])
 
   /**
    * 津波の原因地震が後から加わる場面のテスト（→ `createTestTsunamiSourceAdded`）。
@@ -4057,12 +3748,7 @@ export function useEarthquakes(
    *
    * **DMDSS 版のみ。** P2PQuake は津波電文の `EventID` も原因地震も配信しない。
    */
-  const simulateTsunamiSourceAdded = useCallback(async () => {
-    const { createTestTsunamiSourceAdded } = await loadTestData()
-    for (const report of createTestTsunamiSourceAdded()) {
-      eventQueueRef.current.push({ eventTime: new Date(report.time), payload: { kind: 'event', event: report } })
-    }
-  }, [])
+  const simulateTsunamiSourceAdded = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_SOURCE_ADDED), [runTestTelegramScript])
 
   /**
    * 津波情報（VTSE51）だけが取り消される場面のテスト（→ `createTestTsunamiInfoRetraction`）。
@@ -4070,12 +3756,7 @@ export function useEarthquakes(
    * 積み方は {@link simulateTsunamiSourceAdded} と同じ。**DMDSS 版のみ**（P2PQuake は情報名称ごとの
    * 取消を配信しない）。
    */
-  const simulateTsunamiInfoRetraction = useCallback(async () => {
-    const { createTestTsunamiInfoRetraction } = await loadTestData()
-    for (const report of createTestTsunamiInfoRetraction()) {
-      eventQueueRef.current.push({ eventTime: new Date(report.time), payload: { kind: 'event', event: report } })
-    }
-  }, [])
+  const simulateTsunamiInfoRetraction = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_INFO_RETRACTION), [runTestTelegramScript])
 
   /**
    * 市町村の未入電を含む地震情報のテスト（日向灘 2022-01-22）。
@@ -4087,10 +3768,7 @@ export function useEarthquakes(
    *
    * **DMDSS 版のみ。** 市町村の粒度は DMDATA 経路でしか配信されない。
    */
-  const simulateUnreceivedQuake = useCallback(async () => {
-    const { createTestUnreceivedQuake } = await loadTestData()
-    handleEvent(createTestUnreceivedQuake())
-  }, [handleEvent])
+  const simulateUnreceivedQuake = useCallback(() => runTestTelegramScript(s => s.UNRECEIVED_QUAKE), [runTestTelegramScript])
 
   /**
    * 最大震度に「以上」が付く地震情報のテスト（石川県西方沖 2024-11-26）。
@@ -4102,10 +3780,7 @@ export function useEarthquakes(
    *
    * **DMDSS 版のみ。** 未入電は DMDATA 経路でしか配信されない。
    */
-  const simulateMaxScaleOrAboveQuake = useCallback(async () => {
-    const { createTestMaxScaleOrAboveQuake } = await loadTestData()
-    handleEvent(createTestMaxScaleOrAboveQuake())
-  }, [handleEvent])
+  const simulateMaxScaleOrAboveQuake = useCallback(() => runTestTelegramScript(s => s.MAX_SCALE_OR_ABOVE_QUAKE), [runTestTelegramScript])
 
   /**
    * 区域まるごと「震度5弱以上未入電」の地震情報のテスト（日向灘の未入電テストの組み替え）。
@@ -4116,379 +3791,204 @@ export function useEarthquakes(
    *
    * **DMDSS 版のみ。** 未入電は DMDATA 経路でしか配信されない。
    */
-  const simulateAreaUnreceivedQuake = useCallback(async () => {
-    const { createTestAreaUnreceivedQuake } = await loadTestData()
-    handleEvent(createTestAreaUnreceivedQuake())
-  }, [handleEvent])
+  const simulateAreaUnreceivedQuake = useCallback(() => runTestTelegramScript(s => s.AREA_UNRECEIVED_QUAKE), [runTestTelegramScript])
 
   /**
-   * 推計震度分布図のテスト。**地震情報を先に出し、少し置いてから分布を流す。**
+   * 推計震度分布図のテスト（→ `testTelegramScripts.ts` の `ESTIMATED_INTENSITY`）。
    *
-   * 実運用では地震から数分後に届くもので、そのころ地震カードは既に画面にある。
-   * 同時に流すと、分布モードを開く側がカードを見つけられない（引き当ては発現時刻だが、
-   * 探す先の一覧にまだ載っていない）。**受信と同じ経路（イベントキュー）へ積む**ので、
-   * 取り違え防止の分岐も自動オープンも実運用と同じところを踏む。
+   * **地震情報を先に出し、少し置いてから分布を流す。** 実運用では地震から数分後に届くもので、
+   * そのころ地震カードは既に画面にある。同時に流すと、分布モードを開く側がカードを見つけられない
+   * （引き当ては発現時刻だが、探す先の一覧にまだ載っていない）。続報と、そのあとの地震情報まで
+   * 流すので、読み上げの言い分け（「受信しました」／「更新されました」）と、分布モードが閉じて
+   * 発表値へ戻る遷移まで確かめられる。
    */
-  const simulateEstimatedIntensity = useCallback(async () => {
-    const { createTestEstimatedIntensity } = await loadTestData()
-    const { quake, estimated, followUp, quakeFollowUp } = createTestEstimatedIntensity()
-    const now = serverDate()
-    eventQueueRef.current.push({ eventTime: now, payload: { kind: 'event', event: quake } })
-    eventQueueRef.current.push({
-      eventTime: new Date(now.getTime() + TEST_ESTIMATED_INTENSITY_DELAY_MS),
-      payload: { kind: 'estimatedIntensity', data: estimated },
-    })
-    // **続報も流す。** 読み上げの「受信しました」／「更新されました」の言い分けは、続報が
-    // 届かないと実機で一度も聞けない。**新しいタイマーは足さない** —— キューへ積むだけなので、
-    // リプレイ開始・リセットの `eventQueueRef.current.clear()` でそのまま落ちる。
-    eventQueueRef.current.push({
-      eventTime: new Date(now.getTime() + TEST_ESTIMATED_INTENSITY_DELAY_MS + TEST_ESTIMATED_INTENSITY_FOLLOW_UP_DELAY_MS),
-      payload: { kind: 'estimatedIntensity', data: followUp },
-    })
-    // **地震情報の続報も流す。** 分布が届いたあとに同じ地震の地震情報を受けると、地図は
-    // 分布モードを閉じて発表値へ戻る（→ `utils/quakeOverlay.ts` の
-    // `closeDistributionOverlayOnQuakeReport`）。流さないとその遷移を実機で確かめられない。
-    eventQueueRef.current.push({
-      eventTime: new Date(
-        now.getTime() + TEST_ESTIMATED_INTENSITY_DELAY_MS + TEST_ESTIMATED_INTENSITY_FOLLOW_UP_DELAY_MS
-        + TEST_ESTIMATED_INTENSITY_QUAKE_FOLLOW_UP_DELAY_MS,
-      ),
-      payload: { kind: 'event', event: quakeFollowUp },
-    })
-  }, [])
+  const simulateEstimatedIntensity = useCallback(() => runTestTelegramScript(s => s.ESTIMATED_INTENSITY), [runTestTelegramScript])
 
-  const simulateForeignQuake = useCallback(async () => {
-    const { createTestForeignQuake } = await loadTestData()
-    // 付加文（気象庁の固定付加文・自由付加文の原文）は DMDATA 経由でのみ配信される。standard 版では
-    // 実データで届かないため含めない（LPGM を isDmdss 限定にしているのと同じ理由）。
-    handleEvent(createTestForeignQuake(isDmdss))
-  }, [handleEvent])
+  /** 遠地地震テスト（2026-07-17 メキシコ、チアパス州沿岸。→ `testTelegramScripts.ts` の `FOREIGN_QUAKE`）。 */
+  const simulateForeignQuake = useCallback(() => runTestTelegramScript(s => s.FOREIGN_QUAKE), [runTestTelegramScript])
 
-  const simulateForeignQuakeHuge = useCallback(async () => {
-    const { createTestForeignQuakeHuge } = await loadTestData()
-    handleEvent(createTestForeignQuakeHuge(isDmdss))
-  }, [handleEvent])
-
-  // EEW のテストデータもバリアントを渡す。**standard 版で押せるボタンが DMDATA 経路にしか
-  // 無い項目を画面へ出さないため** —— 震源要素の精度・内陸/海域・短縮名・固定付加文・
-  // 最大予測値の変化・長周期地震動階級は、P2PQuake も Yahoo hypoInfo も配信しない。
-  const simulateEEW = useCallback(async () => {
-    const { createTestEEW } = await loadTestData()
-    runSimulateEEW('special', (e, s, b) => createTestEEW(isDmdss, e, s, b), EEW_FINAL_SILENCE_MS, testEEWTimersRef.current, handleEvent)
-  }, [handleEvent])
-
-  const simulateEEWWarning = useCallback(async () => {
-    const { createTestEEWWarning } = await loadTestData()
-    runSimulateEEW('warning', (e, s, b) => createTestEEWWarning(isDmdss, e, s, b), EEW_FINAL_SILENCE_MS, testEEWTimersRef.current, handleEvent)
-  }, [handleEvent])
-
-  const simulateEEWForecast = useCallback(async () => {
-    const { createTestEEWForecast } = await loadTestData()
-    runSimulateEEW('forecast', (e, s, b) => createTestEEWForecast(isDmdss, e, s, b), EEW_FINAL_SILENCE_MS, testEEWTimersRef.current, handleEvent)
-  }, [handleEvent])
-
-  const simulateEEWAssumed = useCallback(async () => {
-    const { createTestEEWAssumed } = await loadTestData()
-    runSimulateEEW('assumed', (e, s, b) => createTestEEWAssumed(isDmdss, e, s, b), EEW_FINAL_SILENCE_MS, testEEWTimersRef.current, handleEvent)
-  }, [handleEvent])
-
-  // 「非常に強い揺れを検知」の形は DMDATA 経路でしか届かないので、ボタンも DMDSS 版にだけ出す
-  // （→ `createTestEEWStrongShaking`）。
-  const simulateEEWStrongShaking = useCallback(async () => {
-    const { createTestEEWStrongShaking } = await loadTestData()
-    runSimulateEEW('strongShaking', (e, s, b) => createTestEEWStrongShaking(e, s, b), EEW_FINAL_SILENCE_MS, testEEWTimersRef.current, handleEvent)
-  }, [handleEvent])
-
-  const simulateEEWDeep = useCallback(async () => {
-    const { createTestEEWDeep } = await loadTestData()
-    runSimulateEEW('deep', (e, s, b) => createTestEEWDeep(isDmdss, e, s, b), EEW_FINAL_SILENCE_MS, testEEWTimersRef.current, handleEvent)
-  }, [handleEvent])
+  /** 規模が「Ｍ８を超える巨大地震」の遠地地震テスト（→ `testTelegramScripts.ts` の `FOREIGN_QUAKE_HUGE`）。 */
+  const simulateForeignQuakeHuge = useCallback(() => runTestTelegramScript(s => s.FOREIGN_QUAKE_HUGE), [runTestTelegramScript])
 
   /**
-   * 「予想震度なしのまま取消」テスト（DMDSS 版のみ）。精度ランク 1 で予想震度の付かない報を
-   * 3 通流し、値が付かないまま取り消す（→ `createTestEEWNoForecast`・`TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS`）。
+   * 押すたびに台本の次の 1 通を流す（緊急地震速報のテスト。→ `TestTelegramScript.stepByPress`）。
    *
-   * **待ちは ref で追う。** この経路は `handleEvent` を直接呼ぶので、キューを空にしても止まらない
-   * （→ `clearTestSimulationTimers`）。押し直したら前の待ちを捨てて最初から流す。
+   * **「いま」は最初の押下のものを使い回す。** 時刻の寄せ方と事象の識別子はそこから決まるので
+   * （→ `utils/testScenarioReplay.ts` の `instantiateScenario`）、押すたびに取り直すと続報が
+   * 別の地震として立ち、カードが増える。
+   *
+   * **何も押されないまま `silenceMs` が過ぎたら、残りを飛ばして最後の報を流す**（最終報か取消）。
+   * 実配信では続報が自動で届くが、テストボタンは押した人が段を進める作りにしてある
+   * （2026-10-22 ユーザー選択「押すたびに 1 通のまま」）。
+   *
+   * ## 種別ごとに 1 本ずつ、順に処理する
+   *
+   * 電文を組むには台本の読み込みと取得を待つ。**待っている間に次が始まると、どれも例外も
+   * ログも出ないまま緊急地震速報が 1 通余計に生える** —— 連打で同じ段が 2 枚のカードになる、
+   * 最終報と押下が同時に走って台帳から待ちが外れる、など。
+   *
+   * 割り込みを見つけて捨てる形は**判定が増えるほど穴が残る**（種別をまたいで捨ててしまう、
+   * 照合を 1 か所書き忘れる）。代わりに**種別ごとの待ち行列へ並べて 1 本ずつ処理する** ——
+   * 連打しても捨てずに順に進み、最終報も同じ列に乗るので押下と重ならない。
+   *
+   * 残る競合はリセット（`resetState`）だけで、そちらは世代（`testGenerationRef`）で捨てる。
    */
-  const simulateEEWNoForecast = useCallback(async () => {
-    const { createTestEEWNoForecast, TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS, TEST_EEW_NO_FORECAST_CANCEL_MS } = await loadTestData()
-    for (const timer of testEEWNoForecastTimersRef.current) window.clearTimeout(timer)
-    testEEWNoForecastTimersRef.current = []
-    const eventId = `test-no-forecast-${Date.now()}`
-    const baseTime = serverDate()
-    const lastSerial = TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS.length
-    TEST_EEW_NO_FORECAST_REPORT_OFFSETS_MS.forEach((offset, i) => {
-      const send = () => handleEvent(createTestEEWNoForecast(eventId, i + 1, baseTime))
-      if (offset === 0) send()
-      else testEEWNoForecastTimersRef.current.push(window.setTimeout(send, offset))
-    })
-    testEEWNoForecastTimersRef.current.push(window.setTimeout(() => {
-      testEEWNoForecastTimersRef.current = []
-      const report = createTestEEWNoForecast(eventId, lastSerial, baseTime)
-      // 取消は最後の報と同じ報番号で届く（実電文 `VXSE45_JPOS_20241126141510487` が第 3 報の取消）。
-      // 取消の本文・予想を持たない形は `runSimulateEEWRetraction` と同じ（理由はそちらのコメント）
-      handleEvent({
-        ...report,
-        id: `${report.id}-cancel`,
-        cancelled: true,
-        cancelText: '先ほどの、緊急地震速報（地震動予報）を取り消します。',
-        areas: [],
-        earthquake: cancelledEewEarthquake(),
-      })
-    }, TEST_EEW_NO_FORECAST_CANCEL_MS))
-  }, [handleEvent])
+  const pressTestTelegramScript = useCallback((
+    kind: TestEEWKind,
+    pick: (scripts: Awaited<ReturnType<typeof loadTestTelegramScripts>>) => TestTelegramScript,
+  ): Promise<void> => enqueueTestPress(kind, async () => {
+    const generation = testGenerationRef.current
+    try {
+      const scripts = await loadTestTelegramScripts()
+      const script = pick(scripts)
+      const byPress = script.stepByPress
+      if (!byPress) throw new Error('押すたびに進む台本ではありません')
+      const prev = testEEWPressRef.current.get(kind)
+      const now = prev?.now ?? serverDate()
+      // **最後の 1 通は押しても出さない。** そこは最終報（または取消）で、黙ったときに流す
+      const lastIndex = script.steps.length - 1
+      const next = (prev?.index ?? -1) + 1
+      if (next > lastIndex - 1) {
+        // **末尾まで進んだら、押しても何もしない。** 同じ報をもう一度積んでも、報番号が同じなので
+        // 古い報として弾かれる —— 画面からは「進まない」のか「壊れた」のか見分けが付かない。
+        log.debug(`[test] 緊急地震速報のテスト（${kind}）は最後まで進んでいます（黙れば最終報が届きます）`)
+        return
+      }
+      const built = await buildTestTelegramEntries(script, { isDmdss, now, limit: next + 1 })
+      const current = built[next]
+      if (!current) throw new Error(`テスト用の台本の ${next + 1} 通目を組めませんでした`)
+      if (generation !== testGenerationRef.current) {
+        log.debug(`[test] 組んでいる間にリセットされたので、テスト用の電文（${kind}）を捨てました`)
+        return
+      }
+      if (prev) window.clearTimeout(prev.finalizeTimer)
+      eventQueueRef.current.push({ eventTime: serverDate(), payload: current.entry.payload })
+      const finalizeTimer = window.setTimeout(() => {
+        // **最終報も同じ列へ並べる。** 押下と重なると、台帳を見る順番で取り違える
+        void enqueueTestPress(kind, async () => {
+          try {
+            const tail = await buildTestTelegramEntries(script, { isDmdss, now })
+            const last = tail[byPress.cancelIndex ?? tail.length - 1]
+            if (generation !== testGenerationRef.current) {
+              log.debug(`[test] 組んでいる間にリセットされたので、テスト用の最終報（${kind}）を捨てました`)
+              return
+            }
+            if (last) eventQueueRef.current.push({ eventTime: serverDate(), payload: last.entry.payload })
+            testEEWPressRef.current.delete(kind)
+          } catch (err) {
+            log.error('[test] テスト用の最終報を流せませんでした', err)
+          }
+        })
+      }, byPress.silenceMs)
+      testEEWPressRef.current.set(kind, { index: next, now, finalizeTimer })
+    } catch (err) {
+      log.error('[test] テスト用の電文を流せませんでした', err)
+    }
+  }), [enqueueTestPress])
+
+  /** 予報テスト（豊後水道の第 1〜3 報。→ `testTelegramScripts.ts` の `EEW_FORECAST`）。 */
+  const simulateEEWForecast = useCallback(() => pressTestTelegramScript('forecast', s => s.EEW_FORECAST), [pressTestTelegramScript])
+
+  /** 警報テスト（**予報 → 警報の格上げ**を含む。→ `EEW_WARNING`）。 */
+  const simulateEEWWarning = useCallback(() => pressTestTelegramScript('warning', s => s.EEW_WARNING), [pressTestTelegramScript])
+
+  /** 特別警報テスト（震度6弱まで上がる。→ `EEW_SPECIAL_WARNING`）。 */
+  const simulateEEW = useCallback(() => pressTestTelegramScript('special', s => s.EEW_SPECIAL_WARNING), [pressTestTelegramScript])
+
+  /** 単独点処理テスト（仮定震源要素の初報 → 震源が決まった続報。→ `EEW_ASSUMED`）。 */
+  const simulateEEWAssumed = useCallback(() => pressTestTelegramScript('assumed', s => s.EEW_ASSUMED), [pressTestTelegramScript])
+
+  /** 強い揺れ検知テスト（仮定震源要素のまま予想震度を持つ報。→ `EEW_STRONG_SHAKING`）。 */
+  const simulateEEWStrongShaking = useCallback(() => pressTestTelegramScript('strongShaking', s => s.EEW_STRONG_SHAKING), [pressTestTelegramScript])
+
+  /** 深発地震テスト（深さ 450km。警報へ上がらない。→ `EEW_DEEP`）。 */
+  const simulateEEWDeep = useCallback(() => pressTestTelegramScript('deep', s => s.EEW_DEEP), [pressTestTelegramScript])
 
   /**
-   * 「予想震度0」テスト（DMDSS 版のみ）。最大予想震度 0 の初報から、震度1 へ上がる続報・最終報までの
-   * 5 通を実電文の間隔で流す（→ `createTestEEWForecastZero`・`TEST_EEW_FORECAST_ZERO_REPORT_OFFSETS_MS`）。
-   * 最終報は `isFinal` を持つので、後は通常の自動解除に任せる。
-   *
-   * **待ちは ref で追う**（理由は `simulateEEWNoForecast` と同じ）。押し直したら前の待ちを捨てて最初から流す。
+   * 「予想震度なしのまま取消」テスト（DMDSS 版のみ。→ `EEW_NO_FORECAST`）。予想震度の欄そのものを
+   * 持たない報が続き、値が付かないまま取り消される。
    */
-  const simulateEEWForecastZero = useCallback(async () => {
-    const { createTestEEWForecastZero, TEST_EEW_FORECAST_ZERO_REPORT_OFFSETS_MS } = await loadTestData()
-    for (const timer of testEEWForecastZeroTimersRef.current) window.clearTimeout(timer)
-    testEEWForecastZeroTimersRef.current = []
-    const eventId = `test-forecast-zero-${Date.now()}`
-    const baseTime = serverDate()
-    TEST_EEW_FORECAST_ZERO_REPORT_OFFSETS_MS.forEach((offset, i) => {
-      const send = () => handleEvent(createTestEEWForecastZero(eventId, i + 1, baseTime))
-      if (offset === 0) send()
-      else testEEWForecastZeroTimersRef.current.push(window.setTimeout(send, offset))
-    })
-  }, [handleEvent])
+  const simulateEEWNoForecast = useCallback(() => pressTestTelegramScript('noForecast', s => s.EEW_NO_FORECAST), [pressTestTelegramScript])
 
-  const simulateEEWRetraction = useCallback(async () => {
-    const { createTestEEWWarning } = await loadTestData()
-    runSimulateEEWRetraction((e, s, b) => createTestEEWWarning(isDmdss, e, s, b), EEW_RETRACTION_CANCEL_MS, testEEWRetractionRef, handleEvent)
-  }, [handleEvent])
+  /** 「予想震度0」テスト（震度1 未満の予想から、震度3 へ上がる。→ `EEW_FORECAST_ZERO`）。 */
+  const simulateEEWForecastZero = useCallback(() => pressTestTelegramScript('forecastZero', s => s.EEW_FORECAST_ZERO), [pressTestTelegramScript])
 
-  const simulateTsunami = useCallback(async () => {
-    const { createTestTsunami, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    runSimulateTsunami(() => createTestTsunami(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
-  }, [handleEvent])
+  /** 誤報取消テスト（**実電文の取消**で終わる。→ `EEW_RETRACTION`）。 */
+  const simulateEEWRetraction = useCallback(() => pressTestTelegramScript('retraction', s => s.EEW_RETRACTION), [pressTestTelegramScript])
 
-  const simulateTsunamiWarning = useCallback(async () => {
-    const { createTestTsunamiWarning, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    runSimulateTsunami(() => createTestTsunamiWarning(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
-  }, [handleEvent])
+  /** 大津波警報テスト（2011 東北の気象庁サンプル電文。観測状態を一通り持つ。→ `TSUNAMI_MAJOR_WARNING`）。 */
+  const simulateTsunami = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_MAJOR_WARNING), [runTestTelegramScript])
 
-  const simulateTsunamiWatch = useCallback(async () => {
-    const { createTestTsunamiWatch, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    runSimulateTsunami(() => createTestTsunamiWatch(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
-  }, [handleEvent])
+  /** 津波警報テスト（能登本震 16:12。→ `testTelegramScripts.ts` の `TSUNAMI_WARNING`）。 */
+  const simulateTsunamiWarning = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_WARNING), [runTestTelegramScript])
 
-  // 予報のみは DMDSS の実運用では ValidDateTime の期限切れで静かに消える（明示的な解除電文を
-  // 伴わない）ため、DMDSS では runSimulateTsunami（明示的キャンセル）を使わず期限切れ経路に任せる。
-  // standard 版（P2PQuake）は validDateTime を持たないため、実運用と同じく解除電文で消す。
-  const simulateTsunamiForecast = useCallback(async () => {
-    const { createTestTsunamiForecast, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    if (!isDmdss) {
-      runSimulateTsunami(() => createTestTsunamiForecast(false), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
-      return
-    }
-    if (testTsunamiRef.current) {
-      window.clearTimeout(testTsunamiRef.current.cancelTimer)
-      testTsunamiRef.current = null
-    }
-    handleEvent(createTestTsunamiForecast(true))
-  }, [handleEvent])
+  /** 津波注意報テスト（2015-11-14 薩摩半島西方沖。→ `TSUNAMI_WATCH`）。 */
+  const simulateTsunamiWatch = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_WATCH), [runTestTelegramScript])
 
   /**
-   * 「津波警報 → 津波予報（失効時刻つき）」テスト（DMDSS 版のみ）。
+   * 津波予報テスト（2024-11-26 石川県西方沖。→ `TSUNAMI_FORECAST`）。
    *
-   * **等級の引き下げとして失効時刻が届く形を実機へ出せる入口はここだけ。** 気象庁が期限を載せる
-   * 2 通りのうち、予報のみの発表は「津波予報」ボタンが通す（あちらの電文も `validDateTime` を
-   * 持つので、押した直後から画面と読み上げに失効時刻が出る）。こちらが通すのは「警報・注意報が
-   * 解除されて予報だけが残る」報 —— 実電文で観測されているのはこの形で、アプリはこれを降格の
-   * 読み上げへ流す（→ `createTestTsunamiExpiry`）。**1 通だけ流しても降格にならない** ——
-   * 判定は前報の最上位等級との比較なので、警報の発表報を先に通す必要がある。
-   *
-   * | 段 | 報 | 確かめるもの |
-   * |---|---|---|
-   * | 1 | 津波警報・津波注意報 | 発表の表示と読み上げ（既存）。**次の段の前提** —— この等級から下がることで降格の経路へ入る |
-   * | 2 | 津波予報（失効時刻つき） | バナー右上の「失効」の行と、読み上げの末尾の「この津波予報の失効時刻は、◯時◯分です。」 |
-   *
-   * **解除電文は流さない。** 予報だけになった津波に気象庁は解除を出さないので、消えるのは
-   * 失効時刻が来たときだけ（`cancelReason: 'expired'`）。2 段目を受け取った時点で失効の予約が
-   * 積まれるため、こちらで待ちを張る必要はない。
+   * 予報だけの津波は、DMDSS 版の実運用では失効時刻（`validDateTime`）で静かに消える（解除の電文を
+   * 伴わない）。標準版は失効の予約を持たないので、台本が片付けの報を標準版だけに流す。
    */
-  const simulateTsunamiExpiry = useCallback(async () => {
-    const { createTestTsunamiWarning, createTestTsunamiExpiry, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    const base = createTestTsunamiWarning(true)
-    if (testTsunamiExpiryTimerRef.current !== undefined) {
-      window.clearTimeout(testTsunamiExpiryTimerRef.current)
-    }
-    // 1 段目は他の津波テストと同じ入口を通す。**解除の待ちもいったん張る** —— 2 段目が
-    // 届かなかったとき（押し直し・リセット）に警報が画面へ居座らないようにするため。
-    // 2 段目を流すところで落とす（下）。
-    runSimulateTsunami(() => base, TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel)
-    // **待ちは ref で追う。** アンマウントとリセット（リプレイの開始・停止）で落とせるように
-    // する —— 追えないと、画面を消した後や再生へ切り替えた後に 45 秒前の続報だけが単独で
-    // 届き、消えたはずの津波カードが復活する。この経路は `handleEvent` を直接呼ぶので、
-    // キューを空にしても止まらない（→ `clearTestSimulationTimers`）。
-    testTsunamiExpiryTimerRef.current = window.setTimeout(() => {
-      testTsunamiExpiryTimerRef.current = undefined
-      // 解除が先に走った後は流さない（ボタンを押し直したときに古い続報が紛れ込む）
-      if (testTsunamiRef.current?.tsunami.id !== base.id) return
-      // **ここから先は解除電文を流さない。** 予報だけになった津波に気象庁は解除を出さず、
-      // 消えるのは失効時刻が来たときだけ。2 段目を受け取った時点でアプリが失効の予約を
-      // 積むので（`cancelReason: 'expired'`）、張っておいた解除の待ちは落とす。
-      window.clearTimeout(testTsunamiRef.current.cancelTimer)
-      testTsunamiRef.current = null
-      handleEvent(createTestTsunamiExpiry(base))
-    }, TEST_AUTO_DISMISS_MS / 2)
-  }, [handleEvent])
-
-  const simulateTsunamiRetraction = useCallback(async () => {
-    const { createTestTsunamiRetraction, createTestTsunamiCancel, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    runSimulateTsunami(() => createTestTsunamiRetraction(isDmdss), TEST_AUTO_DISMISS_MS, testTsunamiRef, handleEvent, createTestTsunamiCancel, 'retracted')
-  }, [handleEvent])
-
-  const simulateNankai = useCallback(async (kindName: '調査中' | '巨大地震注意' | '巨大地震警戒') => {
-    const { createTestNankai } = await loadTestData()
-    // **受信と同じ関数を通す。** state を直書きすると、表示中の識別情報を覚える ref が進まず、
-    // 直後に取消テストを走らせたときの照合が実運用と食い違う。
-    const nankai = createTestNankai(kindName)
-    if (applyNankai(nankai)) {
-      onLiveEventRef.current?.({ kind: 'nankai', data: nankai })
-    }
-  }, [applyNankai])
+  const simulateTsunamiForecast = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_FORECAST), [runTestTelegramScript])
 
   /**
-   * 南海トラフ臨時情報の取消テスト。発表を出し、`TEST_AUTO_DISMISS_MS` 後に**同じ `eventId` の
-   * 取消**を流す（取消は対象の情報単位を指すため。`createTestNankaiRetraction`）。
+   * 「津波注意報 → 津波予報（失効時刻つき）」テスト（DMDSS 版のみ。→ `TSUNAMI_EXPIRY`）。
    *
-   * **受信と同じ経路（イベントキュー）へ積む。** 上の `simulateNankai` のように state を直接
-   * 書き換えると、取消の照合（`eventId` の一致確認）を一度も通らないテストになる ―― 実運用で
-   * 効く分岐を踏まないテストボタンは、あってもこの穴を見つけられない。
+   * **等級の引き下げとして失効時刻が届く形を実機へ出せる入口はここだけ。** 1 通だけ流しても降格に
+   * ならない —— 判定は前報の最上位等級との比較なので、注意報の報を先に通す。解除の報は流さない
+   * （予報だけになった津波は失効時刻で消える）。
    */
-  const simulateNankaiRetraction = useCallback(async () => {
-    const { createTestNankai, createTestNankaiRetraction, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    if (testNankaiRetractionTimerRef.current !== undefined) {
-      window.clearTimeout(testNankaiRetractionTimerRef.current)
-    }
-    const nankai = createTestNankai('巨大地震注意')
-    const retraction = createTestNankaiRetraction(nankai)
-    eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'nankai', data: nankai } })
-    testNankaiRetractionTimerRef.current = window.setTimeout(() => {
-      testNankaiRetractionTimerRef.current = undefined
-      eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'nankai', data: retraction } })
-    }, TEST_AUTO_DISMISS_MS)
-  }, [])
+  const simulateTsunamiExpiry = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_EXPIRY), [runTestTelegramScript])
 
-  const simulateNankaiCommentary = useCallback(async (serialName: '臨時解説' | '定例解説') => {
-    const { createTestNankaiCommentary } = await loadTestData()
-    const commentary = createTestNankaiCommentary(serialName)
-    if (applyNankaiCommentary(commentary)) {
-      onLiveEventRef.current?.({ kind: 'nankaiCommentary', data: commentary })
-    }
-  }, [applyNankaiCommentary])
+  /** 津波の誤報取消テスト（→ `TSUNAMI_RETRACTION`）。 */
+  const simulateTsunamiRetraction = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_RETRACTION), [runTestTelegramScript])
 
-  const simulateKohatsu = useCallback(async () => {
-    const { createTestKohatsu } = await loadTestData()
-    // 受信と同じ関数を通す（理由は `simulateNankai` に同じ）。期限タイマーもそちらが張る。
-    const kohatsu = createTestKohatsu()
-    if (applyKohatsu(kohatsu)) {
-      onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
-    }
-  }, [applyKohatsu])
+  /** 南海トラフ地震臨時情報のテスト（調査中・巨大地震注意は 2024-08-08 の実電文、巨大地震警戒はサンプル電文）。 */
+  const simulateNankai = useCallback((kindName: '調査中' | '巨大地震注意' | '巨大地震警戒') =>
+    runTestTelegramScript(s => (kindName === '調査中' ? s.NANKAI_CHECKING : kindName === '巨大地震注意' ? s.NANKAI_WATCH : s.NANKAI_WARNING)),
+  [runTestTelegramScript])
 
   /**
-   * 後発地震注意情報の取消テスト。発表を出し、`TEST_AUTO_DISMISS_MS` 後に**同じ `eventId` の取消**を流す。
-   * 受信と同じ経路（イベントキュー）へ積む理由は `simulateNankaiRetraction` に同じ。
+   * 南海トラフ地震臨時情報の取消テスト（調査中 → `TSUNAMI_DISMISS_MS` 後に同じ `eventId` の取消。
+   * → `NANKAI_RETRACTION`）。受信と同じ経路（イベントキュー）へ積むので、取消の照合（`eventId` の
+   * 一致確認）を実運用と同じところで通る。
    */
-  const simulateKohatsuRetraction = useCallback(async () => {
-    const { createTestKohatsu, createTestKohatsuRetraction, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    if (testKohatsuRetractionTimerRef.current !== undefined) {
-      window.clearTimeout(testKohatsuRetractionTimerRef.current)
-    }
-    const kohatsu = createTestKohatsu()
-    const retraction = createTestKohatsuRetraction(kohatsu)
-    eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'kohatsu', data: kohatsu } })
-    testKohatsuRetractionTimerRef.current = window.setTimeout(() => {
-      testKohatsuRetractionTimerRef.current = undefined
-      eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'kohatsu', data: retraction } })
-    }, TEST_AUTO_DISMISS_MS)
-  }, [])
+  const simulateNankaiRetraction = useCallback(() => runTestTelegramScript(s => s.NANKAI_RETRACTION), [runTestTelegramScript])
 
-  const simulateQuakeNotice = useCallback(async () => {
-    const { createTestQuakeNotice } = await loadTestData()
-    // 受信と同じ関数を通す（理由は `simulateNankai` に同じ）。期限タイマーもそちらが張る。
-    const notice = createTestQuakeNotice()
-    // **受信と同じく、帯へ反映できたら `onLiveEvent` へ流す。** 流さないと、音・読み上げ・パネルの展開が
-    // テストボタンでは一度も起きず、実機で確かめる入口が無くなる。
-    if (applyQuakeNotice(notice)) {
-      onLiveEventRef.current?.({ kind: 'quakeNotice', data: notice })
-    }
-  }, [applyQuakeNotice])
+  /** 南海トラフ地震関連解説情報のテスト（臨時解説は 2024-08-15 第７号、定例解説は 2026-09-07 第109回の実電文）。 */
+  const simulateNankaiCommentary = useCallback((serialName: '臨時解説' | '定例解説') =>
+    runTestTelegramScript(s => (serialName === '臨時解説' ? s.NANKAI_COMMENTARY_AD_HOC : s.NANKAI_COMMENTARY_ROUTINE)),
+  [runTestTelegramScript])
+
+  /** 北海道・三陸沖後発地震注意情報のテスト（サンプル電文。→ `KOHATSU`）。 */
+  const simulateKohatsu = useCallback(() => runTestTelegramScript(s => s.KOHATSU), [runTestTelegramScript])
+
+  /** 後発地震注意情報の取消テスト（→ `KOHATSU_RETRACTION`）。 */
+  const simulateKohatsuRetraction = useCallback(() => runTestTelegramScript(s => s.KOHATSU_RETRACTION), [runTestTelegramScript])
+
+  /** 地震・津波に関するお知らせのテスト（サンプル電文。→ `QUAKE_NOTICE`）。 */
+  const simulateQuakeNotice = useCallback(() => runTestTelegramScript(s => s.QUAKE_NOTICE), [runTestTelegramScript])
 
   /**
-   * 地震回数に関する情報のテスト。
-   *
-   * **`onLiveEvent` へも流す。** 音の無い VZSE40（読み上げは設定で有効にしたときだけ）と違い、こちらは通知音と読み上げを起こす
-   * （群発の総数は他のどの経路でも伝わらない）。実運用の分岐と同じところを踏ませる。
+   * 地震回数に関する情報のテスト（→ `EARTHQUAKE_COUNT`）。音の無いお知らせと違い、こちらは通知音と
+   * 読み上げを起こす（群発の総数は他のどの経路でも伝わらない）。
    */
-  const simulateEarthquakeCount = useCallback(async () => {
-    const { createTestEarthquakeCount } = await loadTestData()
-    const count = createTestEarthquakeCount()
-    if (applyEarthquakeCount(count)) {
-      onLiveEventRef.current?.({ kind: 'earthquakeCount', data: count })
-    }
-  }, [applyEarthquakeCount])
+  const simulateEarthquakeCount = useCallback(() => runTestTelegramScript(s => s.EARTHQUAKE_COUNT), [runTestTelegramScript])
 
   /**
-   * 地震回数に関する情報の取消テスト。発表を出し、`TEST_AUTO_DISMISS_MS` 後に**同じ `eventId` の
-   * 取消**を流す（照合は `eventId`。`applyEarthquakeCount`）。
-   *
-   * **取消の理由が届く先はこの種別だけ読み上げしかない** —— 帯ごと消えるのでカードに残せない。
-   * ボタンが無いと、その文が一度も声にならないまま気づけない。
-   *
-   * 受信と同じ経路（イベントキュー）へ積む理由は `simulateNankaiRetraction` に同じ。
+   * 地震回数に関する情報の取消テスト（→ `EARTHQUAKE_COUNT_RETRACTION`）。**取消の理由が届く先は
+   * 読み上げだけ** —— 帯ごと消えるのでカードに残せない。ボタンが無いと、その文が一度も声にならない。
    */
-  const simulateEarthquakeCountRetraction = useCallback(async () => {
-    const { createTestEarthquakeCount, createTestEarthquakeCountRetraction, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    if (testEarthquakeCountRetractionTimerRef.current !== undefined) {
-      window.clearTimeout(testEarthquakeCountRetractionTimerRef.current)
-    }
-    const count = createTestEarthquakeCount()
-    const retraction = createTestEarthquakeCountRetraction(count)
-    eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'earthquakeCount', data: count } })
-    testEarthquakeCountRetractionTimerRef.current = window.setTimeout(() => {
-      testEarthquakeCountRetractionTimerRef.current = undefined
-      eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'earthquakeCount', data: retraction } })
-    }, TEST_AUTO_DISMISS_MS)
-  }, [])
+  const simulateEarthquakeCountRetraction = useCallback(() => runTestTelegramScript(s => s.EARTHQUAKE_COUNT_RETRACTION), [runTestTelegramScript])
 
   /**
-   * 長周期地震動の取消テスト。地震テストと同じ地震情報と長周期地震動を流し、
-   * `TEST_AUTO_DISMISS_MS` 後にその長周期だけを取り消す（DMDSS 版のみ。長周期は DMDATA 経由でしか
-   * 配信されない）。
-   *
-   * **取消の理由が届く先は読み上げだけ** —— 取消で長周期の一覧・バッジごと消える。ボタンが無いと、
-   * 取消の文が一度も声にならないまま気づけない。
-   *
-   * 発表も取消も受信と同じ経路（イベントキュー）へ積む。取消が表示中の長周期を消したかの判定
-   * （`noteLiveLpgm`）と、読み上げへ渡すかの判定（`lpgmNotifiable`）をライブと同じ形で通すため。
+   * 長周期地震動の取消テスト（→ `LPGM_RETRACTION`。DMDSS 版のみ）。**取消の理由が届く先は読み上げだけ**
+   * —— 取消で長周期の一覧・バッジごと消える。取消が表示中の長周期を消したかの判定（`noteLiveLpgm`）と、
+   * 読み上げへ渡すかの判定（`lpgmNotifiable`）をライブと同じ形で通す。
    */
-  const simulateLpgmRetraction = useCallback(async () => {
-    if (!isDmdss) return
-    const { createTestEarthquake, createTestLpgm, createTestLpgmRetraction, TEST_AUTO_DISMISS_MS } = await loadTestData()
-    if (testLpgmRetractionTimerRef.current !== undefined) {
-      window.clearTimeout(testLpgmRetractionTimerRef.current)
-    }
-    const quake = createTestEarthquake(true)
-    handleEvent(quake)
-    const eventId = extractQuakeEventId(quake)
-    if (!eventId) return
-    const lpgm = createTestLpgm(eventId)
-    eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'lpgm', data: lpgm } })
-    testLpgmRetractionTimerRef.current = window.setTimeout(() => {
-      testLpgmRetractionTimerRef.current = undefined
-      eventQueueRef.current.push({ eventTime: serverDate(), payload: { kind: 'lpgm', data: createTestLpgmRetraction(lpgm) } })
-    }, TEST_AUTO_DISMISS_MS)
-  }, [handleEvent])
+  const simulateLpgmRetraction = useCallback(() => runTestTelegramScript(s => s.LPGM_RETRACTION), [runTestTelegramScript])
 
   const resetState = useCallback(() => {
     // 台帳もここで空にする。掃除の `useEffect` に任せると、リセットから次のコミットまでの間に

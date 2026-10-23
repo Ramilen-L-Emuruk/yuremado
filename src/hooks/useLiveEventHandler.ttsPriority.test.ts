@@ -22,7 +22,12 @@ import { CELL_LAT_DEG, CELL_LON_DEG } from '../utils/bufrEstimatedIntensity'
 import { useLiveEventHandler } from './useLiveEventHandler'
 import { DEFAULTS, type AppSettings } from './useSettings'
 import type { JMAQuake, JMATsunami, IssueType, EEWAlert, ExtraLiveEvent } from '../types/earthquake'
-import { createTestKohatsu, createTestKohatsuRetraction, createTestNankai } from '../utils/testData'
+// テストボタンと同じ電文（→ `utils/testTelegramScripts.ts`）。**トップレベルで読む** ——
+// テスト本体の中で初めて読むと、電文の読み込みが 1 件目の所要時間に乗って時間切れになる。
+import { first, telegramKohatsus, telegramNankais } from '../test-utils/testTelegramFixtures'
+
+const [kohatsuIssue, kohatsuCancel] = await telegramKohatsus('KOHATSU_RETRACTION')
+const nankaiChecking = first(await telegramNankais('NANKAI_CHECKING'), '南海トラフ臨時情報（調査中）')
 
 /**
  * 発話ごとに「まだ再生中」の Promise を返し、解決関数を控えておく。
@@ -959,8 +964,8 @@ describe('非 EEW の読み上げの優先度', () => {
   // テストボタンも足す」）。主題を落とすと到来順の枠に載らず、発表の予約が待っている最中に取消が届いても
   // 発表を取り下げられない（取り消されたはずの注意情報を読む）。
   describe('後発地震注意情報の取消の読み上げ', () => {
-    const issue = createTestKohatsu()
-    const cancel = createTestKohatsuRetraction(issue)
+    const issue = kohatsuIssue
+    const cancel = kohatsuCancel
     const CANCEL_TEXT = '北海道・三陸沖後発地震注意情報は取り消されました。'
 
     it('正: 発表の間が明ける前に取消が届けば、発表は読まずに取消だけを読む', async () => {
@@ -982,7 +987,7 @@ describe('非 EEW の読み上げの優先度', () => {
 
     it('安全弁: 主題の違う臨時情報の予約は、後発地震の取消では取り下げない', async () => {
       const handle = setup()
-      handle({ kind: 'nankai', data: createTestNankai('調査中') })
+      handle({ kind: 'nankai', data: nankaiChecking })
       await advanceTimers(200)
       await flush()
       handle({ kind: 'kohatsu', data: cancel })

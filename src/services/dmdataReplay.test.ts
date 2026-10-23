@@ -17,7 +17,11 @@ import {
   clearParseCachesForTest, filterPreWindowEvents, isArchiveCacheable, HISTORY_WINDOW_DAYS, fetchDmdataEewOrigins, needsPerEventFetch,
   compareExtraTieBreak,
 } from './dmdataReplay'
-import { createTestKohatsu, createTestKohatsuRetraction } from '../utils/testData'
+// テストボタンと同じ電文（→ `utils/testTelegramScripts.ts`）。**トップレベルで読む** ——
+// テスト本体の中で初めて読むと、電文の読み込みが 1 件目の所要時間に乗って時間切れになる。
+import { telegramKohatsus } from '../test-utils/testTelegramFixtures'
+
+const [kohatsuIssue, kohatsuCancel] = await telegramKohatsus('KOHATSU_RETRACTION')
 import { clearArchiveBodyDb } from '../utils/archiveBodyDb'
 
 /**
@@ -2329,8 +2333,8 @@ describe('fetchDmdataQuakeHistory', () => {
   // 受信時刻が同じ帯どうしの並び。取消が発表より先に当たると、取消は空振りし、そのあと発表が当たって
   // 取り消された帯が出る。
   describe('compareExtraTieBreak', () => {
-    const issue = createTestKohatsu()
-    const cancel = createTestKohatsuRetraction(issue)
+    const issue = kohatsuIssue
+    const cancel = kohatsuCancel
     const k = (data: typeof issue) => ({ kind: 'kohatsu' as const, data })
 
     it('正: 発表時刻が同じなら、取消を発表の後ろへ回す', () => {

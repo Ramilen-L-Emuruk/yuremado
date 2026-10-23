@@ -1872,16 +1872,16 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           <TestButton color="blue" onClick={() => { unlockAudio(); playAlertSound('earthquakeInfo') }}>▶ 試聴</TestButton>
         </Row>
         {/* ── 津波情報 ── */}
-        <Row label="津波予報（若干の海面変動）" description="sine 380→460Hz 往復スイープ × 2回">
+        <Row label="津波予報（若干の海面変動）" description={`石川県能登・加賀ほか – tsunamiForecast 音 / ${isDmdss ? '90秒後に失効' : '90秒後に解除（standard 版は失効時刻を持たないため解除電文で消える）'}`}>
           <TestButton color="blue" onClick={() => { unlockAudio(); playAlertSound('tsunamiForecast') }}>▶ 試聴</TestButton>
         </Row>
-        <Row label="津波注意報" description="sine 300→500Hz 往復スイープ × 2回">
+        <Row label="津波注意報" description="鹿児島県西部・種子島屋久島ほか – tsunamiWatch 音">
           <TestButton color="blue" onClick={() => { unlockAudio(); playAlertSound('tsunamiWatch') }}>▶ 試聴</TestButton>
         </Row>
-        <Row label="津波警報" description="sawtooth 260→560Hz 往復スイープ × 3回">
+        <Row label="津波警報" description="新潟・富山・石川県能登ほか – tsunami 音">
           <TestButton color="purple" onClick={() => { unlockAudio(); playAlertSound('tsunami') }}>▶ 試聴</TestButton>
         </Row>
-        <Row label="大津波警報" description="sawtooth 220→620Hz 上昇スイープ × 5回（一気に駆け上がり、一瞬で戻る）">
+        <Row label="大津波警報" description="岩手・宮城・福島ほか – tsunamiMajor 音">
           <TestButton color="red" onClick={() => { unlockAudio(); playAlertSound('tsunamiMajor') }}>▶ 試聴</TestButton>
         </Row>
         <Row label="津波情報更新（等級はそのまま）" description="純音2音 F#4→C#5（穏やかな通知）">
@@ -1911,41 +1911,44 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
       <Section title="テスト機能">
         <div className="px-4 py-2 bg-yellow-900/30 border-b border-yellow-700/40">
           <p className="text-yellow-400 text-xs">動作確認用です。実際のデータは変更されません。</p>
+          <p className="text-yellow-400/80 text-xs mt-1">
+            緊急地震速報は押すたびに次の報が届き、10 秒押さないと最終報で終わります（どれも 2024-04-17 豊後水道 M6.6 の気象庁サンプル電文が元です）。津波と特別情報は 90 秒後に解除・取消が届きます。
+          </p>
         </div>
         {/* ── 緊急地震速報（EEW）: 軽 → 重、取消は末尾 ── */}
-        <Row label="地震動予報" description="震度4程度（予報域） – eewForecast 音 / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
+        <Row label="地震動予報" description="予報のまま進む報。押すと予想震度が 3 → 4 と上がる – eewForecast 音">
           <TestButton color="yellow" onClick={onTest.eewForecast}>予報テスト</TestButton>
         </Row>
         {isDmdss && onTest.eewStrongShaking && (
-          <Row label="地震動予報（非常に強い揺れを検知）" description="震源を決める前に、強い揺れを検知した観測点だけで出る第1報（北陸地方・最大震度5弱程度以上。2024年6月3日の実電文の形） – eewForecast 音 / M・深さは出さず、気象庁の本文を震源名の下に出す。10秒以内に再度押すと仮定震源要素の続報、押さなければ最終報確定→無音で自動解除（数分後）">
+          <Row label="地震動予報（非常に強い揺れを検知）" description="震源を決める前に、強い揺れを検知した観測点だけで出る第1報（最大震度5弱）。M・深さ・発生時刻を出さず、気象庁の本文を震源名の下に出す – eewForecast 音">
             <TestButton color="yellow" onClick={onTest.eewStrongShaking}>強い揺れ検知テスト</TestButton>
           </Row>
         )}
-        <Row label="地震動予報（単独点処理）" description="震源が特定できていない初報（日向灘・気象庁が入れる固定値 M1.0 深さ10km） – eewForecast 音 / 予想震度が載らないため「単独点処理のため、予想震度なし。」を待たずに読み上げ。10秒以内に再度押すと震源確定＋震度5強予想の警報へ格上げ（eew 音）。格上げの伝え方は押すタイミングで変わる（読み上げ中に押すと割り込んで言い直し）。押さなくても最終報が確定震源になるため同じ格上げが起きる→無音で自動解除（数分後）">
+        <Row label="地震動予報（単独点処理）" description="震源が決まっていない初報（気象庁が入れる固定値 M1.0 深さ10km）。押すと震源が決まり、震度5弱予想の警報へ格上げされる。格上げの伝え方は、読み上げ中に押すか読み終えてから押すかで変わる – eewForecast 音">
           <TestButton color="yellow" onClick={onTest.eewAssumed}>単独点処理テスト</TestButton>
         </Row>
-        <Row label="地震動予報（深発地震）" description="深さ450km（小笠原諸島西方沖 M6.5） – eewForecast 音 / 深発地震には地域別の震度予想が発表されないため「深発地震のため、予想震度なし。」を待たずに読み上げ。続報も予報級のまま / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
+        <Row label="地震動予報（深発地震）" description="深さ450km（小笠原諸島西方沖 M6.5）。地域別の震度予想が出ないため「深発地震のため、予想震度なし。」と読み、続報も予報級のまま – eewForecast 音">
           <TestButton color="yellow" onClick={onTest.eewDeep}>深発地震テスト</TestButton>
         </Row>
         {/* 文面は 2026-10-15 ユーザー承認「足す(推奨)」 */}
         {isDmdss && (
-          <Row label="地震動予報（予想震度なしのまま取消）" description="震源の確からしさが低い初報（石川県西方沖 M4.4 深さ10km。2024年11月26日の実電文の形） – eewForecast 音 / 3通続けて予想震度が載らず、3秒待っても付かないため「単独点処理のため、予想震度なし。」と読み上げ。約12秒後に取消（eewCancel 音・読み上げあり）">
+          <Row label="地震動予報（予想震度なしのまま取消）" description="予想震度の欄そのものが無い報。3秒待っても値が付かないため「単独点処理のため、予想震度なし。」と読み、最後は取消で終わる – eewForecast 音 → eewCancel 音">
             <TestButton color="yellow" onClick={onTest.eewNoForecast}>予想震度なしテスト</TestButton>
           </Row>
         )}
         {/* 文面は 2026-10-20 ユーザー承認「1 で、足してコミットして」 */}
         {isDmdss && (
-          <Row label="地震動予報（予想震度0）" description="最大予想震度が0の初報（九州地方南東沖 深さ10km。2023年4月21日の実電文の形） – eewForecast 音 / 予想震度0は値が出ているため待たずに「予想震度なし。」と読み上げ。約16秒後に予想震度1の続報（eewUpdate 音・「予想最大震度1。」と言い直し）→無音で自動解除（数分後）">
+          <Row label="地震動予報（予想震度0）" description="最大予想震度が0の初報。値は出ているので待たずに「予想震度なし。」と読み、押すと予想震度4へ言い直す – eewForecast 音">
             <TestButton color="yellow" onClick={onTest.eewForecastZero}>予想震度0テスト</TestButton>
           </Row>
         )}
-        <Row label="緊急地震速報（警報）" description="震度5強相当 – eew 音 / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
+        <Row label="緊急地震速報（警報）" description="予報から警報へ上がる報。押すと予想震度が 5弱 → 5強 – eew 音">
           <TestButton color="orange" onClick={onTest.eewWarning}>警報テスト</TestButton>
         </Row>
-        <Row label="緊急地震速報（特別警報）" description="震度6強 – eewSpecial 音 / 10秒以内に再度押すと続報、押さなければ最終報確定→無音で自動解除（数分後）">
+        <Row label="緊急地震速報（特別警報）" description="震度6弱まで上がり、特別警報相当になる – eewSpecial 音">
           <TestButton color="red" onClick={onTest.eew}>特別警報テスト</TestButton>
         </Row>
-        <Row label="緊急地震速報（誤報取消）" description="警報相当（日向灘 M6.5） – eewCancel 音 / 10秒後に誤報として取消（音・通知・読み上げあり）">
+        <Row label="緊急地震速報（誤報取消）" description="警報まで上がったあと、実電文の取消が届く – eewCancel 音（通知・読み上げあり）">
           <TestButton color="purple" onClick={onTest.eewRetraction}>誤報取消テスト</TestButton>
         </Row>
         {/* ── 地震情報 ── */}
@@ -1953,30 +1956,30 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           <TestButton color="red" onClick={onTest.earthquake}>地震テスト</TestButton>
         </Row>
         {isDmdss && onTest.unreceivedQuake && (
-          <Row label="地震情報（震度を入手していない地点が多い報）" description="日向灘 M6.4 最大震度5強（実データ）– 震度を入手していない地点が 60。震度一覧では、その地点を含む市町村・区域・県の行に「未入電あり」の印が付く。市町村の値そのものが届いていない 18 市町村は「5弱以上」と出る">
+          <Row label="地震情報（震度を入手していない地点が多い報）" description="日向灘 M6.4 最大震度5強（実電文）– 震度を入手していない地点が 60。市町村・区域・県の行に「未入電あり」の印が付き、値そのものが届いていない 18 市町村は「5弱以上」と出る">
             <TestButton color="orange" onClick={onTest.unreceivedQuake}>未入電テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.maxScaleOrAboveQuake && (
-          <Row label="地震情報（最大震度が「5弱以上」になる報）" description="石川県西方沖 M6.4 最大震度5弱（実データ）– 震度を入手していない地点が 1。観測できた最大震度と同じ階級のため、カードの最大震度が「5弱以上」と出る（この形になるのは最大震度が5弱の地震だけで、地震テストの震度7・未入電テストの5強では出ない）">
+          <Row label="地震情報（最大震度が「5弱以上」になる報）" description="石川県西方沖 M6.4 最大震度5弱（実電文）– 未入電の地点が 1。観測できた最大震度と同じ階級なので、カードの最大震度が「5弱以上」と出る（この形になるのは最大震度が5弱の地震だけ）">
             <TestButton color="orange" onClick={onTest.maxScaleOrAboveQuake}>5弱以上テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.areaUnreceivedQuake && (
-          <Row label="地震情報（区域まるごと「5弱以上・未入電」の報）" description="日向灘の未入電テストの1区域を、配下の市町村がすべて未入電の形へ組み替えたもの（気象庁の資料が定める形で、実電文の標本は無い）。区域の最大震度が載らなくても、一覧と読み上げに残る">
+          <Row label="地震情報（区域まるごと「5弱以上・未入電」の報）" description="未入電テストの1区域を、配下の市町村がすべて未入電の形へ組み替えたもの（気象庁の資料が定める形で、実電文の標本は無い）。区域の最大震度が載らなくても一覧と読み上げに残る">
             <TestButton color="orange" onClick={onTest.areaUnreceivedQuake}>区域未入電テスト</TestButton>
           </Row>
         )}
         <Row label="遠地地震" description="メキシコ・チアパス州沿岸 M7.4 深さ不明（実データ）– earthquakeInfo 音 / 国内震度なし・日本への津波影響なし">
           <TestButton color="purple" onClick={onTest.foreignQuake}>遠地地震テスト</TestButton>
         </Row>
-        <Row label="遠地地震（規模を速報できない報）" description="チリ中部沿岸 M8を超える巨大地震・深さ不明 – earthquakeInfo 音 / 規模が数値で出ない第一報。日本への津波の有無は調査中">
+        <Row label="遠地地震（規模を速報できない報）" description="チリ中部沿岸 M8を超える巨大地震 – earthquakeInfo 音 / 規模が数値で出ない第一報。日本への津波の有無は調査中">
           <TestButton color="purple" onClick={onTest.foreignQuakeHuge}>巨大地震テスト</TestButton>
         </Row>
-        <Row label="訂正報" description="地震情報を出し、3秒後に規模を訂正した報を流す（M7.4 → M7.6。2024年能登半島地震の実電文どおり）。同じカードが更新され、「震源を訂正」の印が付く。DMDSS 版では気象庁の「震源要素を訂正します。」の一文も並ぶ">
+        <Row label="訂正報" description="地震情報 → 規模を訂正した報（M7.4 → M7.6）。同じカードが更新され「震源を訂正」の印が付き、気象庁の「震源要素を訂正します。」の一文も並ぶ">
           <TestButton color="yellow" onClick={onTest.quakeAmendment}>訂正報テスト</TestButton>
         </Row>
-        <Row label="種別が前後する報" description="3秒おきに4通を流し、その30秒後から3秒おきに3通を流す（震度速報 → 震源情報 → 震度速報 → 震源・震度情報 → その続報 → 震度速報 → その続報。前半4通は2024年能登半島地震の前震と同じ順序）。カードの見出しが「震度速報#2/震源情報」と受け取った種別を並べ、震源・震度情報で速報段階が畳まれる。5通目は観測地点が遅れて入電した形で、地域ごとの最大震度は変わらないため読み上げがその旨を伝える。6通目は震源・震度情報のあとに届く震度速報で、カードは変わらない。7通目は観測点の震度が上下する続報で、動いた行に印が付き、読み上げは「観測された震度が更新されました。」と伝える">
+        <Row label="種別が前後する報" description="震度速報 → 震源情報 → 震度速報 → 震源・震度情報 → その続報 → 震度速報 → その続報、の7通（前半4通は2024年能登半島地震の前震と同じ順序）。見出しに受け取った種別が並び、震源・震度情報で速報段階が畳まれる。遅れて届く震度速報でカードが動かないこと、震度が上下した行に印が付くこともここで見られる">
           <TestButton color="yellow" onClick={onTest.quakeReportSequence}>種別遷移テスト</TestButton>
         </Row>
         {isDmdss && onTest.quakeCancel && (
@@ -1985,12 +1988,12 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {isDmdss && onTest.quakePartialCancel && (
-          <Row label="地震情報（一部の取消）" description="震度速報と震源・震度情報を出し、10秒後に震度速報だけを取り消す。カードは残り、見出しの下に「震度速報は取り消されました」と気象庁の取消の本文が出る">
+          <Row label="地震情報（一部の取消）" description="震度速報と震源・震度情報を出し、震源・震度情報の10秒後に震度速報だけを取り消す。カードは残り、見出しの下に「震度速報は取り消されました」と気象庁の本文が出る">
             <TestButton color="purple" onClick={onTest.quakePartialCancel}>一部取消テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.borrowFromTsunami && (
-          <Row label="津波が先に伝える震源" description="4秒おきに4通を流す（震度速報 → 津波警報 → 震度速報の続報 → 津波の続報。2024年能登半島地震の本震と同じ順序）。震度速報は震源を持たない電文だが、津波警報が載せている震源（石川県能登地方・Ｍ７．４・ごく浅い）を借りてカードと読み上げに出す。震源の行に「津波情報より」と出どころが付き、津波の続報でＭ７．６へ更新される">
+          <Row label="津波が先に伝える震源" description="震度速報 → 津波警報 → 震度速報の続報 → 津波の続報（2024年能登半島地震の本震と同じ順序）。震度速報は震源を持たないが、津波警報が載せている震源を借りてカードと読み上げに出し、行に「津波情報より」と出どころが付く">
             <TestButton color="yellow" onClick={onTest.borrowFromTsunami}>震源の借用テスト</TestButton>
           </Row>
         )}
@@ -2013,30 +2016,30 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           <TestButton color="purple" onClick={onTest.tsunami}>大津波警報テスト</TestButton>
         </Row>
         {isDmdss && onTest.tsunamiExpiry && (
-          <Row label="津波警報 → 津波予報（失効時刻つき）" description="津波警報・注意報 → 45秒後に続報（青森県太平洋沿岸は津波警報から、北海道太平洋沿岸東部は津波注意報から、それぞれ津波予報へ／茨城県は解除）→ さらに45秒後、失効時刻が来てカードが消える。失効時刻が載るのは続報だけなので、バナー右上の「失効」の行と、読み上げの最後の「この津波予報の失効時刻は、◯時◯分です。」をここで確かめられる。津波予報だけになった津波に解除電文は出ないため、消えるのは失効時刻が来たときだけ">
+          <Row label="津波警報 → 津波予報（失効時刻つき）" description="津波注意報 → 続報で17区域すべてが津波予報へ下がる → 失効時刻が来てカードが消える。予報だけになった津波に解除電文は出ないので、消えるのは失効時刻のときだけ。バナー右上の「失効」の行と、読み上げの末尾の失効時刻をここで確かめられる">
             <TestButton color="blue" onClick={onTest.tsunamiExpiry}>失効時刻テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.tsunamiGradeChange && (
-          <Row label="津波警報・注意報（区域ごとに等級が動く続報）" description="大津波警報 → 45秒後に続報（岩手・福島は津波警報へ降格／青森県太平洋沿岸は注意報へ／茨城は大津波警報へ引き上げ／北海道は津波予報へ／青森県日本海沿岸は解除）→ 60秒後に各地の満潮時刻の報 → 90秒後に全解除。全体の最上位等級は動かないので、区域ごとの「〇〇から切り替え」「〇〇から引き上げ」と、いちばん下の「解除」の枠でしか変化が分からない。満潮時刻の報は等級について何も言わないので、そこで印が消えないことも確かめられる">
+          <Row label="津波警報・注意報（区域ごとに等級が動く続報）" description="津波警報 → 石川県能登が大津波警報へ上がり、やがて警報へ戻る続報（間に満潮時刻の報を挟む）。全体の等級が動かない報では、区域ごとの「〇〇から引き上げ」「〇〇から切り替え」の印でしか変化が分からない">
             <TestButton color="orange" onClick={onTest.tsunamiGradeChange}>区域の等級変化テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.tsunamiSourceAdded && (
-          <Row label="津波警報（原因の地震が加わる）" description="30秒おきに4通を流す（震源・震度情報 → 津波警報 → 2つ目の地震の震源・震度情報 → 2つの地震を原因とする津波警報）→ 最後の報の60秒後に全解除。後の地震が津波に加わると、気象庁は同じ津波の続報として地震の番号を書き足す。カードは別の津波に入れ替わらず、バナーに2つの地震が並び、どちらからも地震情報へ移れる。読み上げは2つ目の震源を「また、もう一つの地震の震源は」で伝える">
+          <Row label="津波注意報（原因の地震が加わる）" description="津波注意報 → 原因の地震 → 2つ目の地震 → 2つの地震を原因とする続報。カードは別の津波に入れ替わらず、バナーに2つの地震が並ぶ（気象庁は同じ津波の続報として地震の番号を書き足す）">
             <TestButton color="orange" onClick={onTest.tsunamiSourceAdded}>原因地震の追加テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.tsunamiQuietReports && (
-          <Row label="津波警報・注意報（変化の小さい続報）" description="大津波警報 → 10秒おきに続報を11通（観測値 → 八戸港の波高に「以上」が付く → 最大波の観測時刻だけ更新 → 室蘭港の第1波の到達時刻が訂正される → 沖合の観測点の最大波の観測時刻が更新される → 変化なし → 八戸港の波高が下がり「以上」が外れる → 各地の満潮時刻 → 満潮時刻の更新 → 到達状況の更新 → 変化なし）→ 最後の報の20秒後に全解除。気象庁が続報を出しているのに、等級も観測波高の数値も動かない報がどう伝わるかを確かめる。2通目は潮位計が振り切れて真の波高が読めなくなった報で、数値は 1.8m のまま変わらない。最後の6通（変化なし・波高が下がった報と満潮時刻）は緊急地震速報や津波警報の読み上げを切らないので、そうした上位の読み上げが続いている間は鳴らずに見送られる。5通目は沖合の観測点だけを載せた報で、カードの沖合の行に更新の印が出るのはここだけ">
+          <Row label="津波警報・注意報（変化の小さい続報）" description="大津波警報（2011年東北地方太平洋沖地震のサンプル電文）→ 10秒おきに続報を12通。等級も波高の数値も動かない報が、通知音だけ鳴って何も声にならないことを確かめる。1通ずつ釜石・大船渡の値が動く">
             <TestButton color="blue" onClick={onTest.tsunamiQuietReports}>変化の小さい続報テスト</TestButton>
           </Row>
         )}
-        <Row label="津波警報・注意報（取消）" description={`青森・北海道等 – tsunami 音 / 90秒後に${isDmdss ? '誤報として取消' : '解除（standard 版は取消と解除を区別できないため「解除」表示）'}`}>
+        <Row label="津波注意報（取消）" description={`鹿児島県西部・種子島屋久島ほか – tsunamiWatch 音 / ${isDmdss ? '90秒後に誤報として取消' : '90秒後に解除（standard 版は取消と解除を区別できないため「解除」表示）'}`}>
           <TestButton color="red" onClick={onTest.tsunamiRetraction}>誤報取消テスト</TestButton>
         </Row>
         {isDmdss && onTest.tsunamiInfoRetraction && (
-          <Row label="津波情報の取消（警報は続く）" description="津波警報 → 20秒後に津波情報（観測点つき）→ さらに20秒後、津波情報だけを取り消す → 90秒後に解除。消えるのは津波情報が運んだ観測点だけで、津波警報の区域は残る。読み上げは「津波情報は取り消されました。」とだけ伝え、音は鳴らない">
+          <Row label="津波情報の取消（注意報は続く）" description="津波注意報 → 各地の満潮時刻・到達予想の情報 → その情報だけを取り消す。消えるのはその情報が運んだ観測点だけで、注意報の区域は残る。読み上げは取り消された事実だけを伝え、音は鳴らない">
             <TestButton color="red" onClick={onTest.tsunamiInfoRetraction}>津波情報の取消テスト</TestButton>
           </Row>
         )}
@@ -2057,7 +2060,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {isDmdss && onTest.nankaiRetraction && (
-          <Row label="南海トラフ地震臨時情報（取消）" description="巨大地震注意を発表し、90秒後に同じ識別情報の取消を流す。バナーが消え、読み上げは取り消された事実だけを伝える（発生可能性については何も述べない）">
+          <Row label="南海トラフ地震臨時情報（取消）" description="調査中を発表し、同じ識別情報の取消を流す。バナーが消え、読み上げは取り消された事実だけを伝える（発生可能性については何も述べない）">
             <TestButton color="blue" onClick={onTest.nankaiRetraction}>取消テスト</TestButton>
           </Row>
         )}
@@ -2077,28 +2080,28 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {isDmdss && onTest.kohatsuRetraction && (
-          <Row label="北海道・三陸沖後発地震注意情報（取消）" description="後発地震注意情報を発表し、90秒後に同じ識別情報の取消を流す。バナーが消え、読み上げは取り消された事実だけを伝える">
+          <Row label="北海道・三陸沖後発地震注意情報（取消）" description="後発地震注意情報を発表し、同じ識別情報の取消を流す。バナーが消え、読み上げは取り消された事実だけを伝える">
             <TestButton color="blue" onClick={onTest.kohatsuRetraction}>取消テスト</TestButton>
           </Row>
         )}
         {/* ── その他の地震情報 ── */}
         {isDmdss && onTest.estimatedIntensity && (
-          <Row label="推計震度分布図" description="気象庁が推計した震度の広がり。地図とカードのボタンが公式の表示へ替わる + 地震情報と同じ音・短い読み上げ。テストでは地震情報の3秒後に初報、さらに16秒後に続報を流し、読み上げが「受信しました」から「更新されました」へ変わる（実際の発表は地震から数分後、続報はその6分後）">
+          <Row label="推計震度分布図" description="気象庁が推計した震度の広がり。地図とカードのボタンが公式の表示へ替わる。初報 → 続報 → 地震情報の続報と流れ、読み上げが「受信しました」から「更新されました」へ変わり、最後に地図が発表値へ戻る（実際の発表は地震から数分後）">
             <TestButton color="teal" onClick={onTest.estimatedIntensity}>推計震度分布図テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.lpgmRetraction && (
-          <Row label="長周期地震動に関する観測情報（取消）" description="地震テストの長周期地震動 → 90秒後に取消。取消は音を鳴らさず、取り消されたことと理由の文を読み上げる（長周期の表示は消える）">
+          <Row label="長周期地震動に関する観測情報（取消）" description="地震テストの長周期地震動 → その取消。取消は音を鳴らさず、取り消されたことと理由の文を読み上げる（長周期の表示は消える）">
             <TestButton color="teal" onClick={onTest.lpgmRetraction}>長周期 取消テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.earthquakeCount && (
-          <Row label="地震回数に関する情報（バナー）" description="群発時の回数経過（21時間で有感1回）をバナー表示 + earthquakeCount 音・短い読み上げ（閉じるボタンあり・7日で自動消去）">
+          <Row label="地震回数に関する情報（バナー）" description="群発時の回数経過（21時間で有感1回）をバナー表示 + earthquakeCount 音・短い読み上げ。有感以外は「発表なし」で届くので、表には「—」が並ぶ（閉じるボタンあり・7日で自動消去）">
             <TestButton color="teal" onClick={onTest.earthquakeCount}>地震回数テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.earthquakeCountRetraction && (
-          <Row label="地震回数に関する情報（取消）" description="発表 → 90秒後に取消。取消では帯ごと消えるため、理由の文が届く先は読み上げだけ（実電文どおり回数の表は持たない）">
+          <Row label="地震回数に関する情報（取消）" description="発表 → その取消。取消では帯ごと消えるため、理由の文が届く先は読み上げだけ（実電文どおり回数の表は持たない）">
             <TestButton color="teal" onClick={onTest.earthquakeCountRetraction}>地震回数 取消テスト</TestButton>
           </Row>
         )}

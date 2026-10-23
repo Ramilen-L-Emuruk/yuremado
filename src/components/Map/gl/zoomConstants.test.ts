@@ -3,7 +3,11 @@ import { ringBounds } from './psWaveRing'
 import { distributionMaxZoomForPane, DISTRIBUTION_SPAN_KM, fitMaxZoomForPane, focusMaxZoomForPane, FOCUS_SPAN_KM, FIT_MIN_SPAN_KM, REFERENCE_FIT_MAX_ZOOM, EEW_ZOOM_SNAP, snapZoomDown, snapZoomNearest } from './camera'
 import { CELL_LAT_DEG, CELL_LON_DEG } from '../../../utils/bufrEstimatedIntensity'
 import { EARTH_RADIUS_KM } from '../../../utils/geo'
-import narrowestDistribution from '../../../data/test-estimated-intensity.json'
+// テストボタンと同じ電文（→ `utils/testTelegramScripts.ts`）。**トップレベルで読む** ——
+// テスト本体の中で初めて読むと、電文の読み込みが 1 件目の所要時間に乗って時間切れになる。
+import { first, telegramEstimatedIntensities } from '../../../test-utils/testTelegramFixtures'
+
+const narrowestDistribution = first(await telegramEstimatedIntensities('ESTIMATED_INTENSITY'), '推計震度分布図')
 import {
   desiredTileZoom,
   GEBCO_HIRES_MIN_ZOOM,
@@ -180,18 +184,16 @@ describe('震度分布モードの寄り上限', () => {
     expect(distributionMaxZoomForPane(1600)).toBeGreaterThan(ABSOLUTE_MAX_ZOOM)
   })
 
-  // 安全弁: この上限が担うのは「分布が極端に狭いときの歯止め」だけ。**手元の実電文では当たらない**
-  // ことを、テストボタンのデータ（推計震度分布図が出た地震のうちセル数が最少のもの）の広がりから
-  // 確かめる —— 数字を写すと、データを作り直したときに古い値のまま緑になる。
-  // **これは「実配信のどの分布でも当たらない」の証明ではない**（セル数が最少であることは外接矩形が
-  // 最小であることを意味しない）。当たった場合も面が画いっぱいになる手前で止まるだけ。
-  it('安全弁: 手元の実電文の分布では、この上限に当たらない', () => {
-    const { latIdx, lonIdx } = narrowestDistribution.estimated
+  // 安全弁: この上限が担うのは「分布が極端に狭いときの歯止め」だけ。**テストボタンの分布では
+  // 当たらない**ことを、その外接矩形から確かめる —— 数字を写すと、データを作り直したときに
+  // 古い値のまま緑になる。
+  // **これは「実配信のどの分布でも当たらない」の証明ではない。** 当たった場合も面が画いっぱいに
+  // なる手前で止まるだけ。
+  it('安全弁: テストボタンの分布では、この上限に当たらない', () => {
+    const { south, north, west, east } = narrowestDistribution.bounds
     const kmPerDegree = (EARTH_RADIUS_KM * Math.PI) / 180
-    const southDeg = Math.min(...latIdx) * CELL_LAT_DEG
-    const spanLatKm = (Math.max(...latIdx) - Math.min(...latIdx) + 1) * CELL_LAT_DEG * kmPerDegree
-    const spanLonKm = (Math.max(...lonIdx) - Math.min(...lonIdx) + 1) * CELL_LON_DEG
-      * kmPerDegree * Math.cos((southDeg * Math.PI) / 180)
+    const spanLatKm = (north - south + CELL_LAT_DEG) * kmPerDegree
+    const spanLonKm = (east - west + CELL_LON_DEG) * kmPerDegree * Math.cos((south * Math.PI) / 180)
     // 短い側がこの上限より広ければ、ペインの向きに関わらず上限へは届かない。
     expect(Math.min(spanLatKm, spanLonKm)).toBeGreaterThan(DISTRIBUTION_SPAN_KM)
   })

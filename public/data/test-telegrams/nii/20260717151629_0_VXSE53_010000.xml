@@ -1,0 +1,47 @@
+<Report xmlns="http://xml.kishou.go.jp/jmaxml1/" xmlns:jmx="http://xml.kishou.go.jp/jmaxml1/">
+<Control>
+<Title>震源・震度に関する情報</Title>
+<DateTime>2026-07-17T15:16:29Z</DateTime>
+<Status>通常</Status>
+<EditorialOffice>気象庁本庁</EditorialOffice>
+<PublishingOffice>気象庁</PublishingOffice>
+</Control>
+<Head xmlns="http://xml.kishou.go.jp/jmaxml1/informationBasis1/">
+<Title>遠地地震に関する情報</Title>
+<ReportDateTime>2026-07-18T00:16:00+09:00</ReportDateTime>
+<TargetDateTime>2026-07-18T00:16:00+09:00</TargetDateTime>
+<EventID>20260717235535</EventID>
+<InfoType>発表</InfoType>
+<Serial>1</Serial>
+<InfoKind>地震情報</InfoKind>
+<InfoKindVersion>1.0_1</InfoKindVersion>
+<Headline>
+<Text>１７日２３時４９分ころ、海外で規模の大きな地震がありました。</Text>
+</Headline>
+</Head>
+<Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/seismology1/" xmlns:jmx_eb="http://xml.kishou.go.jp/jmaxml1/elementBasis1/">
+<Earthquake>
+<OriginTime>2026-07-17T23:49:00+09:00</OriginTime>
+<ArrivalTime>2026-07-17T23:49:00+09:00</ArrivalTime>
+<Hypocenter>
+<Area>
+<Name>中米</Name>
+<Code type="震央地名">945</Code>
+<jmx_eb:Coordinate description="北緯１４．４度　西経　９３．０度　深さ不明">+14.4-093.0/</jmx_eb:Coordinate>
+<DetailedName>メキシコ、チアパス州沿岸</DetailedName>
+<DetailedCode type="詳細震央地名">1069</DetailedCode>
+</Area>
+<Source>ＰＴＷＣ</Source>
+</Hypocenter>
+<jmx_eb:Magnitude type="M" description="Ｍ７．４">7.4</jmx_eb:Magnitude>
+</Earthquake>
+<Comments>
+<ForecastComment codeType="固定付加文">
+<Text>震源の近傍で津波発生の可能性があります。
+この地震による日本への津波の影響はありません。</Text>
+<Code>0226 0230</Code>
+</ForecastComment>
+<FreeFormComment>ＰＴＷＣでは１７日２３時５４分に津波情報を発表しています。</FreeFormComment>
+</Comments>
+</Body>
+</Report>

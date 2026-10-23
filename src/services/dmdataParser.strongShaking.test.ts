@@ -11,7 +11,11 @@ import { parseEEWFromXml } from './dmdataParser'
 import { log } from '../utils/logger'
 import { calcEEWCancelTime, compareEewNewestFirst, eewMaxScale, eewNoForecastReason, eewSortTimeMs, isProvisionalHypocenter } from '../utils/eew'
 import { computeEewCircle } from '../hooks/usePsWaveCalc'
-import { createTestEEWStrongShaking } from '../utils/testData'
+// テストボタンと同じ電文（→ `utils/testTelegramScripts.ts`）。**トップレベルで読む** ——
+// テスト本体の中で初めて読むと、電文の読み込みが 1 件目の所要時間に乗って時間切れになる。
+import { first, telegramEews } from '../test-utils/testTelegramFixtures'
+
+const strongShakingReport = first(await telegramEews('EEW_STRONG_SHAKING'), '強い揺れ検知の初報')
 import type { EEWAlert } from '../types/earthquake'
 
 afterEach(() => {
@@ -151,8 +155,16 @@ describe('仮の震源の報を確定した震源として扱わない', () => {
   })
 
   it('他の地震と並べても、発生時刻の無い報を最も古い扱いにしない（書式の違う時刻も揃えて比べる）', () => {
-    // 1 秒前に起きた別の地震（時刻は `Z` の書式）
-    const older = createTestEEWStrongShaking('older', 2, new Date('2026-01-14T10:41:14Z'))
+    // 1 秒前に起きた別の地震（時刻は `Z` の書式）。台本の報を土台に時刻だけ置く
+    const older: EEWAlert = {
+      ...strongShakingReport,
+      earthquake: {
+        ...strongShakingReport.earthquake,
+        originTime: '2026-01-14T10:41:14Z',
+        arrivalTime: '2026-01-14T10:41:14Z',
+        hypocenter: { ...strongShakingReport.earthquake.hypocenter, name: '別の地震' },
+      },
+    }
     const sorted = [older, strong()].sort(compareEewNewestFirst)
     expect(sorted[0].earthquake.hypocenter.name).toBe('千葉県東方沖')
     // 安全弁: どちらの時刻も読めない報は最後へ回る
@@ -202,21 +214,6 @@ describe('calcEEWCancelTime: 規模が判らない報', () => {
   })
 })
 
-describe('createTestEEWStrongShaking（テストボタン）', () => {
-  it('第 1 報はこの形、第 2 報は仮定震源要素（実電文の流れ）', () => {
-    const first = createTestEEWStrongShaking('e', 1, new Date('2026-01-14T10:41:15Z'))
-    expect(first.strongShakingOnly).toBe(true)
-    expect(first.strongShakingText).toContain('最大震度５弱程度以上と推定')
-    expect(first.earthquake.originTime).toBe('')
-    expect(isProvisionalHypocenter(first)).toBe(true)
-    const second = createTestEEWStrongShaking('e', 2, new Date('2026-01-14T10:41:15Z'))
-    expect(second.strongShakingOnly).toBeUndefined()
-    expect(second.earthquake.condition).toBe('仮定震源要素')
-    expect(isProvisionalHypocenter(second)).toBe(true)
-  })
-
-  it('本文の日時は全角・JST・ゼロ詰め', () => {
-    const first = createTestEEWStrongShaking('e', 1, new Date('2026-01-14T10:41:05Z'))
-    expect(first.strongShakingText!.startsWith('１４日１９時４１分０５秒頃')).toBe(true)
-  })
-})
+// **テストボタンの中身は `utils/testTelegramScripts.test.ts` が確かめる**
+// （「強い揺れ検知テストは、震源を決めないまま予想震度だけを持つ」）。電文から組むようになったので、
+// 確かめる先も電文の側へ移した。

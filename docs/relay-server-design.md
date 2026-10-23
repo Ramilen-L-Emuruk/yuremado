@@ -481,7 +481,7 @@ DMDATA の経路は、繋ぐ先（`API_BASE`・`TELEGRAM_DATA_BASE` ほか）と
 - 津波の観測点・観測波高・到達確認・失効時刻・解除と取消の区別
 
 テストボタン（設定タブで `isDmdss &&` に包まれているもの。2026-10-14 時点で `SettingsTab/index.tsx` に 24 箇所）・
-テストデータの形（`createTestEarthquake(isDmdss)`）・仕様書の「標準版は〜」の記述も、§7.2 の割り当てに合わせて直す。
+テストボタンの台本がバリアントを分けている箇所（`testTelegramScripts.ts` の `onlyIn`）・仕様書の「標準版は〜」の記述も、§7.2 の割り当てに合わせて直す。
 
 ### 7.5 中継と関係しないもの
 
