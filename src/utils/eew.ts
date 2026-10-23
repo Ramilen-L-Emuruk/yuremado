@@ -809,7 +809,8 @@ export function eewSerial(eew: EEWAlert): number | null {
  * （→ `EewOrigin`）が、発表時刻は秒まで一致する（2026-10-16 千島列島の報で Yahoo と P2PQuake を
  * 突き合わせて確かめた）。ミリ秒は経路で揃わない（P2PQuake は受信時刻のミリ秒を持つ）ので落とす。
  *
- * 時間帯を持たない表記（P2PQuake の `2026/10/16 12:40:02`）は日本時間として読む（→ `parseJstTimeMs`）。
+ * 時間帯を持たない表記は日本時間として読む（→ `parseJstTimeMs`）。P2PQuake と Yahoo の時刻は入口で
+ * `+09:00` つきの ISO の形へ直してあるが、直せなかった値はこの表記のまま来うる。
  */
 export function eewIssueTimeMs(eew: EEWAlert): number | null {
   const t = eew.issue?.time || eew.time

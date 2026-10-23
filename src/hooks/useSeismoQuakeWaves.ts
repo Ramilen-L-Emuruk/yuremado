@@ -341,7 +341,8 @@ export function pickTargets(
   const found: Omit<SeismoWaveTarget, 'cutoffMs'>[] = []
   const seen = new Set<string>()
   for (const q of quakes) {
-    // **時間帯を持たない値（P2PQuake の `2026/10/03 13:26:00`）は日本時間として読む。**
+    // **時間帯を持たない値（`2026/10/03 13:26:00`）は日本時間として読む。** P2PQuake の時刻は入口で
+    // `+09:00` つきの ISO の形へ直してあるが、直せなかった値はこの表記のまま来うる。
     // 端末の時間帯で読むと、日本国外の端末だけ窓と時間軸の 0 がずれる（ホストの記録は
     // 絶対時刻なので、ずれた分だけ別の区間を取りに行く）。
     const originMs = parseJstTimeMs(q.earthquake.time)

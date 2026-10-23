@@ -14,6 +14,7 @@ import { feedServerSample, getServerClockSampleAgeMs, serverNow } from '../utils
 import { createLogThrottle, log } from '../utils/logger'
 import { fetchServerTime, SERVER_TIME_SKIPPED } from './akamaiClock'
 import { createKyoshinFrameCache } from '../utils/kyoshinFrameCache'
+import { jstWallClockToIso } from '../utils/quakeOriginSeconds'
 import {
   fetchJsonOutcome, outcomeJson, API_FETCH_TIMEOUT_MS, KYOSHIN_FRAME_FETCH_TIMEOUT_MS, FetchTimeoutError,
   type JsonOutcome,
@@ -190,6 +191,18 @@ function calcintensityToScale(s: string): IntensityScale {
  */
 export const YAHOO_EEW_ID_PREFIX = 'yahoo-eew-'
 
+/**
+ * Yahoo hypoInfo の時刻（`2026/10/22 12:00:00`。時間帯を持たない日本時間）を ISO の形（`+09:00` つき）へ直す。
+ * 時計表記でなければ元の文字列のまま。
+ *
+ * **標準版の緊急地震速報は P2PQuake とこの経路の 2 本から来て、経路をまたいで時刻で並べ・比べる**
+ * （`eewSortTimeMs` ほか）。P2PQuake 側は入口で ISO の形へ直している（`services/p2pquake.ts` の `p2pTime`）ので、
+ * こちらも揃えないと、日本国外の端末ではこの経路の時刻だけが端末の時間帯で読まれて前後がずれる。
+ */
+function yahooTime(time: string): string {
+  return time ? jstWallClockToIso(time) ?? time : time
+}
+
 /** Yahoo hypoInfo の1件を EEWAlert に変換する。 */
 export function hypoInfoItemToEEW(item: YahooHypoInfoItem): EEWAlert {
   const scale = calcintensityToScale(item.calcintensity)
@@ -198,10 +211,10 @@ export function hypoInfoItemToEEW(item: YahooHypoInfoItem): EEWAlert {
     kind: 'eew',
     origin: 'yahoo',
     id: `${YAHOO_EEW_ID_PREFIX}${item.reportId}`,
-    time: item.reportTime,
+    time: yahooTime(item.reportTime),
     test: item.isTraining === 'true',
     earthquake: {
-      originTime: item.originTime,
+      originTime: yahooTime(item.originTime),
       arrivalTime: '',
       // 震源要素の補足情報（電文の `Condition`）。**値域は「仮定震源要素」の 1 つだけ**で、
       // 該当しなければ要素ごと出ない（電文解説資料 Ⅱ.21 1-2。実電文 26 通でも `''` か
@@ -226,7 +239,7 @@ export function hypoInfoItemToEEW(item: YahooHypoInfoItem): EEWAlert {
     issue: {
       eventId: item.reportId,
       serial: item.reportNum,
-      time: item.reportTime,
+      time: yahooTime(item.reportTime),
     },
     areas: [],
   }

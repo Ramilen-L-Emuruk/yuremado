@@ -4,6 +4,7 @@ import {
   catalogYearsFor,
   findCatalogOriginMs,
   findJmaEventId,
+  jstWallClockToIso,
   parseJstTimeMs,
   resolveOriginSeconds,
   usableEewOrigin,
@@ -240,6 +241,50 @@ describe('parseJstTimeMs', () => {
 
   test('存在しない日時・読めない文字列は NaN', () => {
     expect(parseJstTimeMs('2026/02/30 12:00:00')).toBeNaN()
+    // 秒・分の範囲の外も繰り上げずに弾く（`jstWallClockToIso` と同じ照合を通る）
+    expect(parseJstTimeMs('2026/10/24 01:09:75')).toBeNaN()
+    expect(parseJstTimeMs('2026/10/24 01:60:00')).toBeNaN()
     expect(parseJstTimeMs('こわれた時刻')).toBeNaN()
+  })
+})
+
+describe('jstWallClockToIso', () => {
+  // 正: P2PQuake の受信時刻（小数の秒つき・桁数が揃っていない）を日本時間の ISO の形へ直す。
+  // **Safari はこの形のままだと読めない**（WebKit 26.5 で `NaN` を実測）
+  test('小数の秒つきの時計表記を、ミリ秒 3 桁の ISO の形へ直す', () => {
+    expect(jstWallClockToIso('2026/10/24 01:09:42.83')).toBe('2026-10-24T01:09:42.830+09:00')
+    expect(jstWallClockToIso('2026/10/24 01:12:15.236')).toBe('2026-10-24T01:12:15.236+09:00')
+    expect(jstWallClockToIso('2026/10/24 01:12:15.2369')).toBe('2026-10-24T01:12:15.236+09:00')
+  })
+
+  test('小数の秒なし・秒なし・1 桁の月日時も直す', () => {
+    expect(jstWallClockToIso('2026/10/24 01:07:00')).toBe('2026-10-24T01:07:00.000+09:00')
+    expect(jstWallClockToIso('2026/1/2 3:04')).toBe('2026-01-02T03:04:00.000+09:00')
+  })
+
+  // 直した値が、元の表記を日本時間として読んだ時刻と同じ瞬間を指すこと
+  test('直した値は parseJstTimeMs と同じ瞬間を指す', () => {
+    for (const s of ['2026/10/24 01:09:42.83', '2026/12/31 23:59:59', '2027/01/01 00:00:00']) {
+      expect(Math.floor(Date.parse(jstWallClockToIso(s)!) / 1000)).toBe(parseJstTimeMs(s) / 1000)
+    }
+  })
+
+  // 対照: 時間帯を持つ表記（DMDATA の ISO の形）は時計表記ではないので触らない
+  test('時間帯を持つ表記は null（呼び出し側が元の文字列のまま扱う）', () => {
+    expect(jstWallClockToIso('2026-10-24T01:09:42.830+09:00')).toBeNull()
+    expect(jstWallClockToIso('2026-10-23T16:09:42Z')).toBeNull()
+  })
+
+  // 安全弁: 暦に無い日時・読めない文字列を、ずらした正しそうな日時へ化けさせない
+  // `Date.UTC` は範囲の外を黙って繰り上げる。分・秒の照合を省くと、繰り上がった別の日時が通る
+  test('暦に無い日時・読めない文字列は null', () => {
+    expect(jstWallClockToIso('2026/02/30 12:00:00')).toBeNull()
+    expect(jstWallClockToIso('2026/10/24 25:00:00')).toBeNull()
+    expect(jstWallClockToIso('2026/10/24 24:00:00')).toBeNull()
+    expect(jstWallClockToIso('2026/10/24 01:60:00')).toBeNull()
+    expect(jstWallClockToIso('2026/10/24 01:09:60')).toBeNull()
+    expect(jstWallClockToIso('2026/10/24 01:09:75')).toBeNull()
+    expect(jstWallClockToIso('こわれた時刻')).toBeNull()
+    expect(jstWallClockToIso('')).toBeNull()
   })
 })

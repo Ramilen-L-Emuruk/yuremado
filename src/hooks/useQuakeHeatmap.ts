@@ -13,9 +13,12 @@ import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dm
 // このキャッシュ自体はやや古くても実害は小さい。
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000
 // 保存形式に震源名・深さ・地震の時刻を足したため、旧形式と混ざらないようキーを変える（v2）。
-const CACHE_KEY = isDmdss ? 'quake-heatmap-cache-dmdss-v2' : 'quake-heatmap-cache-v2'
+// 標準版は v3: P2PQuake の時刻を ISO の形へ揃えたため、点の鍵（`quakeIdentityKey` は地震の時刻の
+// 文字列を含む）の形が変わった。v2 を読むと、控えの点とライブの点が同じ地震で別の鍵になり 2 つ並ぶ。
+// DMDSS 版の時刻は元から ISO の形なので v2 のまま。
+const CACHE_KEY = isDmdss ? 'quake-heatmap-cache-dmdss-v2' : 'quake-heatmap-cache-v3'
 // 旧形式のキャッシュは二度と読まないので、見かけたら掃除する。
-const LEGACY_CACHE_KEYS = ['quake-heatmap-cache', 'quake-heatmap-cache-dmdss']
+const LEGACY_CACHE_KEYS = ['quake-heatmap-cache', 'quake-heatmap-cache-dmdss', 'quake-heatmap-cache-v2']
 
 // quakeIdentityKey で重複排除できるよう、キャッシュ側の点にもキーを持たせる。
 interface KeyedHeatPoint extends HeatPoint {

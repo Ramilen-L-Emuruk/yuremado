@@ -61,7 +61,49 @@ export function withinQuakeMinute(quakeTimeMs: number, originMs: number): boolea
 }
 
 /** 時計表記（`YYYY/MM/DD hh:mm[:ss[.sss]]`・`YYYY-MM-DD hh:mm…` も可）。時間帯を持たない。 */
-const WALL_CLOCK_PATTERN = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/
+const WALL_CLOCK_PATTERN = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$/
+
+/**
+ * 時計表記を読んで、暦にある日時かを確かめる。**時計表記でない・暦に無い日時は `null`。**
+ *
+ * 暦の確かめは、組み立てた日時を `Date.UTC` へ通して読み戻し、**年月日・時・分・秒がすべて元と一致するか**で見る。
+ * `Date.UTC` は範囲の外の値を黙って繰り上げる（2 月 30 日 → 3 月 2 日、75 秒 → 1 分 15 秒）ので、
+ * どれか 1 つでも照合を省くと、そこだけ繰り上がった別の日時が「読めた」として通る。
+ * 小数の秒はミリ秒の 3 桁へ揃えた文字列で返す（4 桁目からは切り捨て）。
+ */
+function readWallClock(time: string): { y: number; mo: number; d: number; h: number; mi: number; s: number; fraction: string } | null {
+  const m = WALL_CLOCK_PATTERN.exec(time.trim())
+  if (m === null) return null
+  const [y, mo, d, h, mi] = m.slice(1, 6).map(Number)
+  const s = m[6] === undefined ? 0 : Number(m[6])
+  const back = new Date(Date.UTC(y, mo - 1, d, h, mi, s))
+  if (
+    back.getUTCFullYear() !== y || back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d
+    || back.getUTCHours() !== h || back.getUTCMinutes() !== mi || back.getUTCSeconds() !== s
+  ) return null
+  return { y, mo, d, h, mi, s, fraction: (m[7] ?? '').padEnd(3, '0').slice(0, 3) }
+}
+
+/**
+ * 時間帯を持たない日本時間の時計表記を、ISO の形（`2026-10-24T01:09:42.830+09:00`）へ直す。
+ * **時計表記でないもの・暦にない日時は `null`**（呼び出し側が元の文字列のまま扱う）。
+ *
+ * P2PQuake の時刻を内部の型へ入れる前に通す（→ `services/p2pquake.ts` の `p2pTime`）。
+ * そのまま `new Date()` へ渡すと 2 つの穴がある。
+ * - **Safari は小数の秒が付いた形（`2026/10/24 01:09:42.83`）を読めない**（WebKit 26.5 で `NaN` を
+ *   実測した。小数の秒が無い形は読める）。受信時刻は必ずこの形なので、Safari では受信時刻で
+ *   並べる・比べる処理がまとめて効かなくなる
+ * - **時間帯を持たないので、端末の時間帯で読まれる**（日本国外の端末では Chrome でも時刻がずれる）
+ *
+ * DMDATA 版の時刻は元から時間帯つきの ISO の形なので、ここで揃えると両バリアントで下流の読み方が 1 つになる。
+ * 小数の秒は 3 桁（ミリ秒）に揃え、4 桁目からは切り捨てる。
+ */
+export function jstWallClockToIso(time: string): string | null {
+  const c = readWallClock(time)
+  if (c === null) return null
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${String(c.y).padStart(4, '0')}-${two(c.mo)}-${two(c.d)}T${two(c.h)}:${two(c.mi)}:${two(c.s)}.${c.fraction}+09:00`
+}
 
 /**
  * 地震カードの時刻をエポックミリ秒へ直す。**読めなければ `NaN`。**
@@ -72,14 +114,10 @@ const WALL_CLOCK_PATTERN = /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})[ T](\d{1,2}):(\d{
  * 時間帯を持つ表記（DMDATA の ISO 形式）はそのまま読む。
  */
 export function parseJstTimeMs(time: string): number {
-  const m = WALL_CLOCK_PATTERN.exec(time.trim())
-  if (m === null) return Date.parse(time)
-  const [y, mo, d, h, mi] = m.slice(1, 6).map(Number)
-  const s = m[6] === undefined ? 0 : Number(m[6])
-  const utc = Date.UTC(y, mo - 1, d, h, mi, s)
-  const back = new Date(utc)
-  if (back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d || back.getUTCHours() !== h) return Number.NaN
-  return utc - JST_OFFSET_MS
+  if (!WALL_CLOCK_PATTERN.test(time.trim())) return Date.parse(time)
+  const c = readWallClock(time)
+  if (c === null) return Number.NaN
+  return Date.UTC(c.y, c.mo - 1, c.d, c.h, c.mi, c.s) - JST_OFFSET_MS
 }
 
 /**

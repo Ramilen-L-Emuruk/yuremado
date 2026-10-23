@@ -9,7 +9,7 @@ import { quakeIdentityKey } from '../utils/quakeHeatmap'
 import { isValidIntensityScale } from '../utils/intensity'
 import { log } from '../utils/logger'
 import { fetchWithTimeout, abortErrorOf, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
-import { parseJstTimeMs } from '../utils/quakeOriginSeconds'
+import { jstWallClockToIso, parseJstTimeMs } from '../utils/quakeOriginSeconds'
 // 数値はローカルの readNumber で読む（理由は readNumber の注記）
 import { arr, obj, str } from './parseHelpers'
 
@@ -177,9 +177,12 @@ function readNumber(v: unknown): number {
  * 読めない時刻をイベントキューへ渡すと何が起きるかは `EventQueue`（`hooks/useEarthquakes.ts`）の
  * `push` の注記にまとめてある。
  *
- * 一方「値はあるが読めない」を破棄しないのは、P2PQuake の時刻が `2026/01/02 15:04:05.999` という
- * スラッシュ区切りの非 ISO 形式で、`Date` のパース可否がブラウザ実装に依存するため。
- * 厳格な実装に当たったときに全電文を捨てるより、時刻表示が崩れても地震を出す方が実害が小さい。
+ * **返す値は ISO の形（`2026-01-02T15:04:05.999+09:00`）へ直してある**（→ {@link p2pTime}）。
+ * P2PQuake の時刻は `2026/01/02 15:04:05.999` という時間帯を持たない日本時間の時計表記で、
+ * そのまま `new Date()` へ渡すと Safari では読めず、ほかのブラウザでも端末の時間帯で読まれる。
+ *
+ * 一方「値はあるが読めない」を破棄しないのは、時計表記として読めない形が来ても、全電文を捨てるより
+ * 時刻表示が崩れても地震を出す方が実害が小さいため。その文字列のまま返す。
  * 読めないまま下流へ渡っても電文は失われない。`enqueueEvent` が現在時刻で代替してキューへ積む。
  */
 function readTime(v: unknown, context: string, field: string): string | null {
@@ -188,7 +191,23 @@ function readTime(v: unknown, context: string, field: string): string | null {
     warnMissing(context, field)
     return null
   }
-  if (!Number.isFinite(new Date(time).getTime())) warnField(context, field, v)
+  return p2pTime(time, context, field)
+}
+
+/**
+ * P2PQuake の時刻を ISO の形（`+09:00` つき）へ直す。空はそのまま返す。
+ * **直せない値（時計表記でない・暦に無い日時）は警告を残し、元の文字列のまま返す**（電文は捨てない）。
+ *
+ * **P2PQuake の時刻の欄は、内部の型へ入れる前に必ずこれ（か {@link readTime}）を通す。** 通さない欄は
+ * Safari と日本国外の端末で読み違える（理由は `jstWallClockToIso`）。DMDATA 版の時刻は元から ISO の形で、
+ * 下流はこの形を前提に読む。
+ */
+function p2pTime(time: string, context: string, field: string): string {
+  if (!time) return time
+  const iso = jstWallClockToIso(time)
+  if (iso !== null) return iso
+  // 時計表記でなくても、時間帯つきの ISO の形などで読めるなら黙って通す（配信元が形を変えたときの受け口）
+  if (!Number.isFinite(new Date(time).getTime())) warnField(context, field, time)
   return time
 }
 
@@ -225,6 +244,19 @@ function requiredStr(v: unknown, context: string, field: string): string {
   const s = str(v)
   if (!s) warnMissing(context, field)
   return s
+}
+
+/**
+ * 電文の番号（情報を一意に識別する ID）を読む。無ければ空文字。
+ *
+ * **REST（`/history`・`/jma`）は `id`、WebSocket は `_id` という名前で配る。** 公式の API 定義は
+ * どちらも `id` と書き、WebSocket は「JSON API と全く同じもの」と言っているが、実物は違う
+ * （2026-10-24 にライブの電文ログ 127 通を見ると、届いていた 4 種別（551・555・561・9611）は全部 `_id` で、
+ * `id` は 0 通だった。552・556 は届いておらず未観測だが、同じ口から同じ形で配ると見込んで同じ読み方を当てる）。
+ * `id` だけを読むと、WebSocket で届いた地震情報が 1 通残らず捨てられる。
+ */
+function readTelegramId(raw: Record<string, unknown>): string {
+  return str(raw.id) || str(raw._id)
 }
 
 /** API 仕様上は必須の真偽値フィールド。欠落は false に倒す（警報を勝手に消さない安全側）。 */
@@ -270,7 +302,7 @@ function parseQuakePoints(v: unknown, context: string): EarthquakePoint[] {
 }
 
 function parseQuake(raw: Record<string, unknown>): JMAQuake | null {
-  const id = str(raw.id)
+  const id = readTelegramId(raw)
   // id と地震の時刻（`earthquake.time`）は同一性キー（quakeIdentityKey）の材料。どちらかが欠けると別々の地震が
   // 同じキーに潰れ、統合・選択・通知がまとめて狂う。ここだけは電文ごと捨てる。
   // API 仕様上いずれも必須フィールドなので、欠けていれば本当に壊れた電文。
@@ -316,7 +348,7 @@ function parseQuake(raw: Record<string, unknown>): JMAQuake | null {
     time,
     issue: {
       source: str(issue.source),
-      time: requiredStr(issue.time, context, 'issue.time'),
+      time: p2pTime(requiredStr(issue.time, context, 'issue.time'), context, 'issue.time'),
       // 未知の種別は 'その他' へ格下げする。落とすと種別を持たない電文になり、
       // 統合時の優先度判定（quakeMerge）が働かなくなる。
       type: issueType ?? 'その他',
@@ -349,7 +381,7 @@ function parseTsunamiAreas(v: unknown, context: string): TsunamiArea[] {
     if (rawGrade && !isKnownGrade) warnField(context, 'areas[].grade', rawGrade)
 
     const firstHeight = obj(a.firstHeight)
-    const arrivalTime = str(firstHeight.arrivalTime)
+    const arrivalTime = p2pTime(str(firstHeight.arrivalTime), context, 'areas[].firstHeight.arrivalTime')
     const condition = str(firstHeight.condition)
     const maxHeight = obj(a.maxHeight)
     const description = str(maxHeight.description)
@@ -371,7 +403,7 @@ function parseTsunamiAreas(v: unknown, context: string): TsunamiArea[] {
 }
 
 function parseTsunami(raw: Record<string, unknown>): JMATsunami | null {
-  const id = str(raw.id)
+  const id = readTelegramId(raw)
   if (!id) {
     log.warn('[p2pquake] 552: id が無いため電文を破棄', { time: raw.time })
     return null
@@ -394,7 +426,7 @@ function parseTsunami(raw: Record<string, unknown>): JMATsunami | null {
     cancelled: requiredBool(raw.cancelled, context, 'cancelled'),
     issue: {
       source: requiredStr(issue.source, context, 'issue.source'),
-      time: requiredStr(issue.time, context, 'issue.time'),
+      time: p2pTime(requiredStr(issue.time, context, 'issue.time'), context, 'issue.time'),
       type: 'Focus',
     },
     areas: parseTsunamiAreas(raw.areas, context),
@@ -426,7 +458,7 @@ function parseEEWRegions(v: unknown, context: string): EEWRegion[] {
       ...(isOrAbove && scaleFrom > 0 && { scaleToOrAbove: true }),
       kindCode: str(r.kindCode),
       // 内部型は「到達予想なし」を null で表す（undefined ではない）
-      arrivalTime: str(r.arrivalTime) || null,
+      arrivalTime: p2pTime(str(r.arrivalTime), context, 'areas[].arrivalTime') || null,
       // 長周期地震動階級は P2PQuake が配信しないため常に undefined（DMDATA 経路のみ取得できる）
     })
   }
@@ -434,7 +466,7 @@ function parseEEWRegions(v: unknown, context: string): EEWRegion[] {
 }
 
 function parseEEW(raw: Record<string, unknown>): EEWAlert | null {
-  const id = str(raw.id)
+  const id = readTelegramId(raw)
   if (!id) {
     log.warn('[p2pquake] 556: id が無いため電文を破棄', { time: raw.time })
     return null
@@ -460,8 +492,8 @@ function parseEEW(raw: Record<string, unknown>): EEWAlert | null {
     earthquake: {
       // originTime は予報円（usePsWaveCalc の computeEewCircle）の起点。読めないと円が
       // 半径 0 のまま描画され続けるため、欠落は必ず警告する。
-      originTime: hasEarthquake ? requiredStr(earthquake.originTime, context, 'earthquake.originTime') : '',
-      arrivalTime: hasEarthquake ? requiredStr(earthquake.arrivalTime, context, 'earthquake.arrivalTime') : '',
+      originTime: hasEarthquake ? p2pTime(requiredStr(earthquake.originTime, context, 'earthquake.originTime'), context, 'earthquake.originTime') : '',
+      arrivalTime: hasEarthquake ? p2pTime(requiredStr(earthquake.arrivalTime, context, 'earthquake.arrivalTime'), context, 'earthquake.arrivalTime') : '',
       // '仮定震源要素' の判別に使う（`eewNoForecastReason`・予報円の抑止・カードの M/深さ非表示など。
       // 参照箇所の一覧は docs/spec/eew-spec.md §5）。
       condition: str(earthquake.condition),
@@ -478,7 +510,7 @@ function parseEEW(raw: Record<string, unknown>): EEWAlert | null {
     issue: {
       eventId: requiredStr(issue.eventId, context, 'issue.eventId') || undefined,
       serial: requiredStr(issue.serial, context, 'issue.serial') || undefined,
-      time: requiredStr(issue.time, context, 'issue.time') || undefined,
+      time: p2pTime(requiredStr(issue.time, context, 'issue.time'), context, 'issue.time') || undefined,
     },
     // 地域が 1 件も無いとき（取消電文など）は undefined にする。空配列を入れると
     // 統合（`utils/eew.ts` の `mergeEewReport`・`incoming.areas ?? existing.areas`）が既存の地域別予想を
@@ -506,7 +538,7 @@ export function convertEvent(raw: RawP2PEvent): AppEvent | null {
       }
     }
   } finally {
-    flushWarnCounts(`${code} id=${str(data.id)}`)
+    flushWarnCounts(`${code} id=${readTelegramId(data)}`)
   }
 }
 
