@@ -118,11 +118,12 @@ describe('buildShareCardContent — 地震', () => {
 // （`formatDateTime` が `null` を返してもテンプレートリテラルは型検査を通る）。
 // 規模・深さの「不明」を落とすのと同じ考え方で、欄ごと落とす。
 describe('buildShareCardContent — 読めない時刻', () => {
-  it('地震の時刻が読めなければ meta を出さない', () => {
-    // 対照: 読める値では入る。**画面のカードと同じ書式（秒なし・「ごろ」）**
-    // （2026-10-22 ユーザー承認「5-A 秒と発生を落とす」）。`earthquake.time` は発現時刻が先で
-    // 電文に秒が無いので、以前の `… 12:34:00 発生` は秒を捏造し、発現時刻を「発生」と名乗っていた。
-    expect(build(input({ mode: 'quake', quake: quake() })).header.meta).toBe('2026/08/24 12:34ごろ')
+  it('地震発現時刻が読めなければ meta を出さない', () => {
+    // 対照: 読める値では公式の名前つきで入る。秒は出さない（電文に秒が無い。2026-10-22 ユーザー承認
+    // 「5-A 秒と発生を落とす」）。「ごろ」も付けない（2026-10-23 ユーザー選択「公式名を付ける (Recommended)」）。
+    const ok = build(input({ mode: 'quake', quake: quake() })).header.meta
+    expect(ok).toBe('地震発現時刻 2026/08/24 12:34')
+    expect(ok).not.toContain('発生')
     const c = build(input({ mode: 'quake', quake: quake({ time: '壊れた値' }) }))
     expect(c.header.meta).toBeUndefined()
   })
@@ -391,7 +392,7 @@ describe('buildShareCardContent — 津波', () => {
       ],
     } as unknown as JMATsunami
     const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
-    expect(c.header.subtitle).toBe('フィリピン付近　M7.7 ／ フィリピン付近　M7.0（19:36 発生） ／ フィリピン付近　M7.0（04:50 発生）　1 区域')
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.7 ／ フィリピン付近　M7.0（地震発現時刻 19:36） ／ フィリピン付近　M7.0（地震発現時刻 04:50）　1 区域')
   })
 
   // 安全弁: 時刻を読めない側は別の地震と決められないので、同じ文の地震と重ねる（時刻なしの行が並ばない）
@@ -418,7 +419,7 @@ describe('buildShareCardContent — 津波', () => {
       ],
     } as unknown as JMATsunami
     const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
-    expect(c.header.subtitle).toBe('フィリピン付近　M7.0（19:36 発生） ／ フィリピン付近　M7.0（04:50 発生）　1 区域')
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.0（地震発現時刻 19:36） ／ フィリピン付近　M7.0（地震発現時刻 04:50）　1 区域')
   })
 
   // 対照: 同じ瞬間を違う表記で運んでも 1 つの地震として重ねる
@@ -467,7 +468,8 @@ describe('buildShareCardContent — 共有の本文', () => {
     expect(lines[0]).toContain('最大震度')
     expect(lines[0]).toContain('日向灘')
     expect(lines[0]).toContain('M5.2')
-    expect(lines[1]).toContain('ごろ')
+    // 地震の時刻は地震発現時刻なので、公式の名前で出す（「発生」は地震発生時刻の名前）。
+    expect(lines[1]).toMatch(/^地震発現時刻 /)
     expect(lines[2]).toBe(APP_URL)
   })
 

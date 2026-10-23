@@ -1,7 +1,7 @@
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { MapMode } from '../components/Map/mapTypes'
 import { computeDisplayEEWLevel, eewKindLabel, eewMaxScale, eewMaxScaleInfo, isProvisionalHypocenter } from './eew'
-import { formatDateTime, formatQuakeDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth } from './formatters'
+import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTime, formatQuakeDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth } from './formatters'
 import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove, isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
 import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader } from './shareCard'
@@ -124,13 +124,11 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   const magnitude = shareMagnitudeText(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)
   if (magnitude !== null) parts.push(magnitude)
   if (hasDepth(hypocenter.depth)) parts.push(`深さ ${formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}`)
-  // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、壊れた文字列を
-  // 焼き付けるくらいなら出さない（規模・深さの「不明」を落とすのと同じ考え方）。
+  // 日時として読めない時刻は欄ごと落とす。**画像は訂正できない**ので、「地震発現時刻 null」のような
+  // 壊れた文字列を焼き付けるくらいなら出さない（規模・深さの「不明」を落とすのと同じ考え方）。
   //
-  // **画面のカードと同じ書式（秒なし・「ごろ」）にする**（2026-10-22 ユーザー承認
-  // 「5-A 秒と発生を落とす」）。`earthquake.time` は発現時刻（`ArrivalTime`）が先で、
-  // 電文に秒は無い —— 以前は `2024/01/01 16:10:00 発生` と出しており、**電文に無い `:00` を
-  // 画像へ焼き付けたうえ、発現時刻を「発生」と名乗っていた**。
+  // **秒は出さない**（電文に秒が無い。2026-10-22 ユーザー承認「5-A 秒と発生を落とす」）。
+  // 名前は値の公式名「地震発現時刻」で、「ごろ」は付けない（2026-10-23 ユーザー選択「公式名を付ける (Recommended)」）。
   const timeText = formatQuakeDateTime(time)
   return {
     header: {
@@ -141,7 +139,7 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
         : '地震情報',
       titleColor: knownScale ? getIntensityColor(maxScale) : undefined,
       subtitle: parts.join(SUBTITLE_SEPARATOR),
-      meta: timeText ?? undefined,
+      meta: timeText ? `${QUAKE_ARRIVAL_TIME_LABEL} ${timeText}` : undefined,
     },
     filenameLabel: 'quake',
   }
@@ -162,8 +160,8 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   const { text } = formatTsunamiGrade(grade)
   const areaCount = new Set(live.flatMap((t) => t.areas.map((a) => a.name))).size
   // 原因地震が複数あれば（EventID に番号が足された津波）全件を「／」で並べる。長いと折り返す
-  // （2026-10-15 ユーザー承認「全件を並べる」）。同じ地震を複数の報が運ぶので、震源名・規模・発生時刻の組で重ねる。
-  // **震源名と規模が同じ別の地震には発生時刻を添える**（2026-10-21 ユーザー選択「B は案1」。全期間の津波電文 651 通のうち
+  // （2026-10-15 ユーザー承認「全件を並べる」）。同じ地震を複数の報が運ぶので、震源名・規模・地震発現時刻の組で重ねる。
+  // **震源名と規模が同じ別の地震には地震発現時刻を添える**（2026-10-21 ユーザー選択「B は案1」。全期間の津波電文 651 通のうち
   // 1 通。2023-12-03 の VTSE41 がフィリピン付近の M7.0 を 2 つ載せた）。添えないと同じ文が 2 つ並ぶか、1 つに畳まれて地震が消える。
   const collected: { text: string; time: string | undefined; ms: number }[] = []
   for (const source of live.flatMap((t) => t.sourceEarthquakes ?? [])) {
@@ -192,7 +190,7 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   const sourceTexts = sourceEntries.map(({ text, time }) => {
     if (sourceEntries.filter((e) => e.text === text).length < 2) return text
     const hm = time ? formatTimeMin(time) : null
-    return hm ? `${text}（${hm} 発生）` : text
+    return hm ? `${text}（${QUAKE_ARRIVAL_TIME_LABEL} ${hm}）` : text
   })
   const parts: string[] = []
   if (sourceTexts.length > 0) parts.push(sourceTexts.join(' ／ '))

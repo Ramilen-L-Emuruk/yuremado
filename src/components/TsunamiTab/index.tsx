@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAutoOpenWhileSpeaking } from '../../hooks/useAutoOpenWhileSpeaking'
 import type { JMAQuake, JMATsunami, TsunamiArea, TsunamiObservation, TsunamiWarningComment } from '../../types/earthquake'
-import { formatDateTimeMin, formatDepth, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
+import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTimeMin, formatDepth, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
 import { quakeEventKey, extractQuakeEventId } from '../../utils/quakeMerge'
 import { linkTsunamiSources } from '../../utils/tsunamiSourceLinks'
 import { groupAreasForCardDisplay, tsunamiLiftedAreas, matchesArea, observationBadges, observationHeightText, observationArrivalFallbackText, observationMaxHeightTimeText, estimationBadges, estimationHeightText, forecastHeightImportantBadge, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, isTsunamiGradeRaised, sourceEarthquakeTime, tsunamiAreaKey, tsunamiEventIds, evacuationActionLine, fallbackEvacuationAction, type ObsUpdateMark, type ObsUpdateField } from '../../utils/tsunami'
@@ -188,7 +188,7 @@ function SourceEarthquakeLine({ eq, prefix, link }: {
 }) {
   const quakeTime = sourceEarthquakeTime(eq)
   // 日時として読めなければ句ごと落とす（→ `formatters.ts` の `readDateTime`）。震源名・規模・
-  // 深さが並ぶ行の付随情報なので、「発生」だけが残るより出さないほうがよい。
+  // 深さが並ぶ行の付随情報なので、「地震発現時刻」の語だけが残るより出さないほうがよい。
   const quakeHm = quakeTime ? formatTimeMin(quakeTime) : null
   return (
     <div>
@@ -206,7 +206,7 @@ function SourceEarthquakeLine({ eq, prefix, link }: {
       {/* 地震の時刻は `sourceEarthquakeTime` を通す（**発現時刻を先に採る**）。発生時刻を出すと、
           同じ地震が地震カードと津波カードで 1 分違って見える。理由と実電文で測った数字は
           `docs/spec/tsunami-spec.md` §4 が正。 */}
-      {quakeHm && `　${quakeHm}発生`}
+      {quakeHm && `　${QUAKE_ARRIVAL_TIME_LABEL} ${quakeHm}`}
       {link}
       {/* 震央補助表現（「御前崎の北東40km付近」）と震源決定機関（「ＰＴＷＣ」等）。
           前者は震央地名より具体的に場所が分かり、後者は誰が決めた値かを示す。
