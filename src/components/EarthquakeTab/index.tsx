@@ -209,6 +209,16 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
     loadMoreFailed ? HISTORY_LOAD_MORE_FAILED_NOTICE : null,
     reconnectGapLoss ? RECONNECT_GAP_LOSS_NOTICE : null,
   ].filter((t): t is string => t !== null).map(text => ({ text, tone: 'loss' as const }))
+  // **取得に失敗しても、カードがあれば一覧は残す**（2026-10-21 ユーザー承認「直す (Recommended)」。
+  // カードがあれば一覧を残し、失敗は既存の帯で。文言は足さない）。起動時の履歴より先に、または失敗の後に
+  // ライブで届いた地震は state にあるので、画面ごと差し替えると張り直すまでそれが見えない。
+  // 文面は 1 件も無いときの全面表示と同じ語（2026-10-21 ユーザー選択「おすすめで」＝括弧に中身を添える形）。
+  // 損失の帯の先頭に置く —— 履歴がまるごと取れていないので、日ごとの欠けより重い。
+  // 中身が空の例外（`new Error('')`）でも失敗は失敗なので、`null` かどうかで見る。空なら括弧を付けない。
+  const failed = error !== null
+  if (failed && earthquakes.length > 0) {
+    notices.unshift({ text: error.trim() === '' ? 'データの取得に失敗' : `データの取得に失敗（${error}）`, tone: 'loss' })
+  }
   if (fetchThrottled) notices.push({ text: FETCH_THROTTLED_NOTICE, tone: 'info' })
   // **1 件も無いときだけ読み込み中の画面にする。**
   // DMDSS 版は日ごとにアーカイブを読むので、全件が揃うのは数秒後になる
@@ -226,7 +236,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
     )
   }
 
-  if (error) {
+  if (failed && earthquakes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full p-4">
         <div className="text-center">

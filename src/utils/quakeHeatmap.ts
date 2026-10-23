@@ -122,8 +122,9 @@ export function heatMagnitudeRank(magnitude: number, condition: string | null): 
  * それ以外の数値にならない規模は「不明」のまま（「Ｍ不明」の説明を持っていても「M不明」とは出さない）。
  */
 export function heatMagnitudeLabel(magnitude: number, condition: string | null): string {
-  if (isHugeMagnitudeCondition(condition)) return formatMagnitudeWithCondition(magnitude, condition ?? undefined)
-  return formatMagnitude(magnitude)
+  // 長期震源カタログは電文の種別（`@type`）を持たないので、従来どおり `M` で出す。
+  if (isHugeMagnitudeCondition(condition)) return formatMagnitudeWithCondition(magnitude, condition ?? undefined, undefined)
+  return formatMagnitude(magnitude, undefined)
 }
 
 /** 吹き出しの札の色。巨大地震は M8 と同じ色（最上位の段）にする。 */

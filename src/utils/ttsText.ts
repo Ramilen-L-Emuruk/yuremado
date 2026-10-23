@@ -1664,7 +1664,13 @@ function depthUpdateValue(h: DepthFact): string {
  * 深さの条件が生成側とだけ食い違い、記録される機会の無い事実を待って**その地震だけ永久に
  * 全文読みへ戻る**不具合を作った（docs/spec/audio-tts-spec.md §4）。
  *
- * **深さは震源名の句の中でしか読まれない。** 震源名が空の電文では「〇〇、深さ10キロメートルを
+ * **深さは震源名の句の中でしか読まれない**（2026-10-21 ユーザー承認）**。**
+ *
+ * **先に件数を数えてから決めた。** ユーザー選択「先に件数を数える (Recommended)」に応えて、
+ * DMDATA のアーカイブの控え（`.claude/dmdata-archive-cache/telegram-earthquake`。2,135 日・
+ * 2020-11-18〜2026-10-18）の地震情報を数えた。震源名が空なのは震源要素を持たない震度速報
+ * 1,771 通だけで、**「深さは判っているのに名前が無い」電文は 0 件**（震度速報は深さも持たない）。
+ * 起きない形として残す。**標準版（P2PQuake）は数えていない** —— あちらの控えを持たないため。 震源名が空の電文では「〇〇、深さ10キロメートルを
  * 震源とする」の句ごと落ちるため、深さが判っていても声にならない。
  */
 function tellableHypocenterFacts(hypocenter: Hypocenter, opts?: TtsSpeechOptions): Set<QuakeFact> {

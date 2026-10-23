@@ -65,9 +65,10 @@ function quakeSample(): QuakeSample {
     id: `dmdata-quake-${EVENT_ID}-1`,
     eventId: EVENT_ID,
     time: t,
+    reportsRevise: true,
     cancelled: false,
     cancelText: '取消',
-    issue: { source: '気象庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
+    issue: { source: '気象庁', editorialOffice: '気象庁本庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
     earthquake: {
       time: iso(),
       hypocenter: {
@@ -220,6 +221,7 @@ function lpgmSample(): DeepRequired<JMALpgm> {
     eventId: EVENT_ID,
     time: iso(),
     createdAtMs: Date.parse('2024-01-01T07:00:00Z'),
+    reportsRevise: true,
     operationStatus: '訓練',
     infoName: '長周期地震動に関する観測情報',
     originTime: iso(),

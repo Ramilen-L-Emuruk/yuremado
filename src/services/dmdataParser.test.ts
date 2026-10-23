@@ -579,7 +579,7 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
   //
   // 気象庁が「この都道府県・地域は続報で新規に追加された（追加）」「最大震度が動いた
   // （上方修正／下方修正）」を電文で直接伝えている（解説資料 Ⅱ.33 の 2-1-3-2・2-1-3-3-2）。
-  // **読んで持つだけで、いまはどこからも使っていない**（→ `EarthquakePoint.revise`）。
+  // カードの更新の印に使う（→ `EarthquakePoint.revise`・`quakeTelegramRevise`）。
   //
   // 雛形は Revise を持たないので、都道府県と区域へ**別々の値**を入れて取り違えを検出する。
   // Pref の配下に Area があり、どちらも同名要素を持ちうるため、直下に限る読み方でないと
@@ -645,6 +645,35 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
   // 対照: `Revise` を持たない電文では市町村にも入らない。
   it('Revise が無ければ市町村にも入らない', () => {
     expect(fromXml().cities?.find(c => c.name === '普代村')?.revise).toBeUndefined()
+  })
+
+  // 正: 観測点にも `Revise` がある（全期間の控えで「追加」1,566 件・「上方修正」72 件）。
+  // 市町村と別の値を入れて、階層の取り違えを検出する。
+  it('続報での変化（Revise）を観測点からも読む', () => {
+    const xml = VXSE53_XML
+      .replace('<Name>普代村銅屋</Name>\n                <Code>0348532</Code>\n                <Int>3</Int>',
+        '<Name>普代村銅屋</Name>\n                <Code>0348532</Code>\n                <Int>3</Int>\n                <Revise>上方修正</Revise>')
+      .replace('<Name>普代村</Name>\n              <Code>0348500</Code>',
+        '<Name>普代村</Name>\n              <Code>0348500</Code>\n              <Revise>追加</Revise>')
+    // .replace() は対象が無くても黙って素通りする。当たったことを機械的に確かめる。
+    expect(xml).toContain('<Revise>上方修正</Revise>')
+    expect(xml).toContain('<Revise>追加</Revise>')
+    const quake = parseEarthquakeFromXml('VXSE53', xml)!
+    expect(quake.points.find(p => p.addr === '普代村銅屋')?.revise).toBe('上方修正')
+    expect(quake.cities?.find(c => c.name === '普代村')?.revise).toBe('追加')
+  })
+
+  // 対照: `Revise` を持たない電文では観測点にも入らない。
+  it('Revise が無ければ観測点にも入らない', () => {
+    expect(fromXml().points.find(p => p.addr === '普代村銅屋')?.revise).toBeUndefined()
+  })
+
+  // 正・対照・安全弁: `Revise` で変化を伝える種別の印（→ `JMAQuake.reportsRevise`）。
+  // 国内の震源・震度情報だけが持ち、震度速報と遠地地震（同じ VXSE53）は持たない。
+  it('Revise で変化を伝える種別の印は国内の震源・震度情報にだけ付く', () => {
+    expect(fromXml().reportsRevise).toBe(true)
+    expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.reportsRevise).toBeUndefined()
+    expect(parseEarthquakeFromXml('VXSE53', FOREIGN_XML)!.reportsRevise).toBeUndefined()
   })
 
   // ---- 震源の補助要素（震央補助表現・震源決定機関）----
@@ -760,10 +789,37 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
     }
   })
 
-  // issue.source は現状どのコンポーネントからも読まれないが、両経路で同じ値になる状態を保つ。
+  // issue.source は画面に出さないが、両経路で同じ値になる状態を保つ。
   // XML 側を '気象庁' 固定にすると、電文が持つ編集官署（実電文では「気象庁本庁」）が落ちる。
   it('issue.source を電文の編集官署から読む', () => {
     expect(fromXml().issue.source).toBe('気象庁本庁')
+  })
+
+  // 編集官署の専用の欄（`issue.editorialOffice`）。**画面が「編集官署 …」と名乗って出す**ので、
+  // 発表官署へは落とさない（2026-10-23 ユーザー承認「欄を分ける」）。
+  //
+  // 正: 電文の編集官署をそのまま返す。
+  it('issue.editorialOffice を電文の編集官署から読む', () => {
+    expect(fromXml().issue.editorialOffice).toBe('気象庁本庁')
+  })
+
+  // 対照: **編集官署が無い電文では undefined。** `issue.source` と違い発表官署へ落とさない ——
+  // 落ちた値を「編集官署」と名乗って出すと、ラベルが事実を誤らせる（標準版の全カードに
+  // 「編集官署 気象庁」が出ていた。この守りを外すとそれが戻る）。
+  it('編集官署が無ければ undefined（発表官署へ落とさない）', () => {
+    const xml = VXSE53_XML
+      .replace('<EditorialOffice>気象庁本庁</EditorialOffice>', '')
+      .replace('<PublishingOffice>気象庁</PublishingOffice>', '<PublishingOffice>大阪管区気象台</PublishingOffice>')
+    const quake = parseEarthquakeFromXml('VXSE53', xml)!
+    expect(quake.issue.editorialOffice).toBeUndefined()
+    // 同じ電文で `issue.source` は従来どおり発表官署へ落ちる（2 本立てが効いていること）。
+    expect(quake.issue.source).toBe('大阪管区気象台')
+  })
+
+  // 安全弁: 要素はあるが空の電文も「無い」と同じ扱い（`||` で undefined へ倒す）。
+  it('編集官署が空の要素なら undefined', () => {
+    const xml = VXSE53_XML.replace('<EditorialOffice>気象庁本庁</EditorialOffice>', '<EditorialOffice></EditorialOffice>')
+    expect(parseEarthquakeFromXml('VXSE53', xml)!.issue.editorialOffice).toBeUndefined()
   })
 
   // 対照: 編集官署が無い電文では発表官署へ落ちる（両経路とも同じ順序で解決する）。

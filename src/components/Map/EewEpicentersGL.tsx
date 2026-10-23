@@ -169,8 +169,8 @@ export function buildPopupHtml(ep: EewEpicenter): string {
     (provisional
       ? '震源調査中'
       // 規模の説明（「Ｍ８を超える巨大地震」など）は地震情報の吹き出しと同じ部品で出す（2026-10-22 ユーザー承認
-      // 「吹き出しと共有カードも揃える (Recommended)」）
-      : `${escapeHtml(formatMagnitudeWithCondition(ep.magnitude, ep.magnitudeCondition))} / 深さ ${escapeHtml(formatDepth(ep.depth, ep.depthAtLeast))}`) +
+      // 「吹き出しと共有カードも揃える (Recommended)」）。前置きの記号は電文の種別どおり（同日「1-A 電文のまま」）。
+      : `${escapeHtml(formatMagnitudeWithCondition(ep.magnitude, ep.magnitudeCondition, ep.magnitudeType))} / 深さ ${escapeHtml(formatDepth(ep.depth, ep.depthAtLeast))}`) +
     `</div>` +
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     // 上限が定まらない報は「4以上」と出す。値だけにすると下限を断定した表示になる

@@ -505,13 +505,26 @@ function xmlChild(parent: Element, localName: string): Element | null {
 // どちらも無ければ空文字を返す。
 //
 // **空の要素は「無い」と同じに扱う。** `||` なので `<EditorialOffice></EditorialOffice>`
-// （要素はあるが空）でも PublishingOffice へ落ちる。issue.source は現状どのコンポーネントからも
-// 読まれないため実害は無いが、この値を使うコードを足すときは見ておくこと。
+// （要素はあるが空）でも PublishingOffice へ落ちる。**この値は画面に出さない** ——
+// 落ちた先は発表官署なので、「編集官署」と名乗って出すと事実を誤らせる。
+// 画面へ出すのは下の `parseEditorialOfficeFromXml`（落とさない側）。
 function parseIssueSourceFromXml(doc: Document): string {
   const controlEl = xmlQ(doc, 'Control')
   if (!controlEl) return ''
   return xmlText(xmlChild(controlEl, 'EditorialOffice'))
     || xmlText(xmlChild(controlEl, 'PublishingOffice'))
+}
+
+/**
+ * 電文を編集した官署（`Control/EditorialOffice`）だけを読む。**発表官署へは落とさない。**
+ *
+ * 画面が「編集官署 …」と名乗って出すので（→ `JMAQuake.issue.editorialOffice`）、
+ * 編集官署そのものが入っているときだけ値を返す。無ければ undefined で、画面は行ごと出さない。
+ */
+function parseEditorialOfficeFromXml(doc: Document): string | undefined {
+  const controlEl = xmlQ(doc, 'Control')
+  if (!controlEl) return undefined
+  return xmlText(xmlChild(controlEl, 'EditorialOffice')) || undefined
 }
 
 function xmlText(el: Element | null): string {
@@ -1555,6 +1568,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   const quakeInfoName = readInfoName(doc)
   const issueType = resolveIssueType(headType, quakeInfoName)
   const source = parseIssueSourceFromXml(doc)
+  const editorialOffice = parseEditorialOfficeFromXml(doc)
 
   // 取消電文（InfoType === '取消'）: Earthquake 要素が存在しないため早期リターン
   if (infoType === '取消') {
@@ -1579,7 +1593,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       // 取消しの概要（`Body/Text`）。**`Comments` ではなく `Body` 直下**——取消電文は付加文を
       // 持たない（電文解説資料が「情報形態が"取消"の場合、本要素は出現しない」と定めている）。
       ...(cancelBodyText && { cancelText: cancelBodyText }),
-      issue: { source, time: reportDateTime, type: issueType, correct: 'なし' as CorrectType },
+      issue: { source, ...(editorialOffice && { editorialOffice }), time: reportDateTime, type: issueType, correct: 'なし' as CorrectType },
       earthquake: { time: '', hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: 0 }, maxScale: -1, domesticTsunami: '不明' },
       points: [],
     }
@@ -1831,6 +1845,9 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       const stCode = xmlText(xmlChild(el, 'Code'))
       const intStr = xmlText(xmlChild(el, 'Int'))
       const { scale, unreceived } = readIntensity(intStr || null)
+      // 続報での変化（`Revise`）。都道府県・地域・市町村と同じ扱い（→ `EarthquakePoint.revise`）。
+      // 観測点の要素は同名の子を入れ子にしないが、ほかの段と揃えて直下だけを見る。
+      const stRevise = xmlText(xmlChild(el, 'Revise'))
       if (stName && scale >= 0) {
         // QUAKE-2: 観測点も区域と同じく pref を空にする。
         // 以前は pref: prefName を付けていたため EarthquakeCard.prefGroups が
@@ -1841,6 +1858,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
           ...(unreceived && { unreceived: true }),
           ...(stNonJma && { nonJma: true }),
           ...(stCode && { code: stCode }),
+          ...(stRevise && { revise: stRevise }),
           // 所属する市町村と一次細分区域（→ `EarthquakePoint.city` / `.area`）。
           // **どちらも座標表からは引けない**ので、電文の並びで拾えるここでしか持てない。
           // 区域まで持つのは、市町村名が全国で一意でないため（同名の市町村を取り違えない）
@@ -1898,10 +1916,15 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     eventId: eventId || undefined,
     ...(telegramKey && { telegramKey }),
     ...(createdAtMs !== undefined && { createdAtMs }),
+    // 行ごとの `Revise` で続報の変化を伝える種別か（→ `JMAQuake.reportsRevise`）。
+    // **震源・震度情報（VXSE53）に限る** —— 震度速報の続報には全期間で 1 件も載らない。
+    // 遠地地震も VXSE53 で届くが、震度の行を持たないので外す。
+    ...(headType === 'VXSE53' && issueType !== '遠地地震' && { reportsRevise: true as const }),
     ...(reportSerial !== undefined && { reportSerial }),
     time: reportDateTime,
     issue: {
       source,
+      ...(editorialOffice && { editorialOffice }),
       time: reportDateTime,
       type: issueType,
       correct,
@@ -2857,6 +2880,8 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     ...(lpgmOperationStatus && { operationStatus: lpgmOperationStatus }),
     ...(lpgmInfoName && { infoName: lpgmInfoName }),
     id, eventId, time: reportDateTime, ...(lpgmCreatedAtMs !== undefined && { createdAtMs: lpgmCreatedAtMs }),
+    // 県・区域の `Revise` で続報の変化を伝える電文（→ `JMALpgm.reportsRevise`）
+    reportsRevise: true,
     originTime, maxClass, cancelled: false, points, regions,
     ...(prefs.length > 0 && { prefs }),
     ...(obsMaxInt >= 0 && { maxInt: obsMaxInt }),

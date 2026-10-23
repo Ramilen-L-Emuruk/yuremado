@@ -17,6 +17,7 @@ import {
   hasHypocenterFacts,
   hasMagnitude,
   formatMagnitudeValue,
+  magnitudeTypeLabel,
   formatMagnitudeWithCondition,
   formatCoordinate,
   formatNameFromMark,
@@ -548,16 +549,31 @@ function QuakeCancelOverlay({ cancelText, compact }: { cancelText?: string; comp
   )
 }
 
-function QuakeReportHeading({ reports, fallback }: { reports?: QuakeReportRecord[]; fallback: IssueType }) {
+/**
+ * 受け取った電文の名乗りを `/` でつないで出す。
+ *
+ * **長周期地震動は電文の名乗り（`Head/Title`）をそのまま足す**（2026-10-22 ユーザー承認
+ * 「4-B 種別ヘッダー」）。地震情報の側は `issue.type`（種別）で、長周期は種別を持たないので
+ * 名乗りで並べる。カード本体の帯は階級の見出しなので「長周期地震動」のまま短く残す。
+ * 実電文の名乗りは「長周期地震動に関する観測情報」の 1 種類だけで、報ごとには変わらない。
+ */
+function QuakeReportHeading({ reports, fallback, lpgmInfoName }: { reports?: QuakeReportRecord[]; fallback: IssueType; lpgmInfoName?: string }) {
+  const labels = quakeReportLabels(reports, fallback)
   return (
     <>
-      {quakeReportLabels(reports, fallback).map((label, index) => (
+      {labels.map((label, index) => (
         <Fragment key={`${index}:${label.type}`}>
           {index > 0 && ' / '}
           {label.type}
           {label.count != null && <SerialBadge serial={label.count} />}
         </Fragment>
       ))}
+      {lpgmInfoName && (
+        <>
+          {labels.length > 0 && ' / '}
+          {lpgmInfoName}
+        </>
+      )}
     </>
   )
 }
@@ -1002,7 +1018,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           {/* 受け取った電文種別を `/` でつないで出す（→ `QuakeReportHeading`）。気象庁は
               震度速報 → 震源情報 → 震度速報 … と前後して発表するため、最後に届いた 1 種別だけ
               だと「震源情報も受け取っている」ことが画面から消える。**色は代表種別のまま**。 */}
-          <QuakeReportHeading reports={quake.reports} fallback={issue.type} />
+          <QuakeReportHeading reports={quake.reports} fallback={issue.type} lpgmInfoName={lpgm?.infoName} />
           {/* 電文が自分で名乗っている運用種別（`Control/Status`）。訓練・試験のときだけ出す。
               **本物と見分けられるようにする** —— 検証用に受信した試験報もカードへ流している。 */}
           {quake.operationStatus && (
@@ -1170,12 +1186,19 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               隣の種別バッジだけが残り、時刻を読み落としたのか電文に無いのか分からない。 */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-secondary text-base roomy:text-xl">
-              {formatQuakeTime(earthquake.time) ?? '発生時刻不明'}
+              {formatQuakeTime(earthquake.time) ?? '時刻不明'}
             </span>
             {isKnownCorrection(issue.correct) && (
               <span className="text-xs bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded-sm font-medium shrink-0">
                 {formatCorrectType(issue.correct)}
               </span>
+            )}
+            {/* 電文を編集した官署（`Control/EditorialOffice`）。**常に出す**（2026-10-22 ユーザー承認
+                「3-B 編集官署 …」）。**`issue.source` ではなく専用の欄を見る** —— あちらは発表官署や
+                標準版の発表元へ落ちるので、出すとラベルが事実を誤らせる。実測と規約は
+                `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」。 */}
+            {issue.editorialOffice && (
+              <span className="text-xs text-secondary shrink-0">編集官署 {issue.editorialOffice}</span>
             )}
           </div>
 
@@ -1201,6 +1224,15 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               {formatNameFromMark(hypocenter.nameFromMark)}
               {borrowedHypocenter && <BorrowedMark />}
               {markDot('nameFromMark', 'sm', 'align-top ml-1')}
+            </div>
+          )}
+          {/* 震源を決めた機関（`Hypocenter/Source`）。**気象庁以外が決めた震源を採ったときだけ**
+              電文に入る（Ⅱ.33 1-3-2）ので、機関名だけでは含意（気象庁の決定ではない）が伝わらない。
+              ラベルに書く。**津波カードと同じ文面にする**（2026-10-22 ユーザー承認「6-A 津波タブと同じ」。
+              同じ事実を 2 箇所で別の言い方にしない）。機関名は原文のまま出す（例: 「ＵＳＧＳ」）。 */}
+          {hypocenter.source && (
+            <div className="text-xs text-secondary roomy:text-sm">
+              震源決定: {hypocenter.source}（気象庁以外）
             </div>
           )}
           {hasLocation && (
@@ -1236,6 +1268,14 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   {formatMagnitudeValue(hypocenter.magnitude, hypocenter.magnitudeCondition)}
                   {markDot('magnitude', 'md', 'align-top ml-1')}
                 </span>
+                {/* 規模の種別（`jmx_eb:Magnitude@type`）。**見出しが「マグニチュード」なので記号を置けず、
+                    語で添える**（2026-10-22 ユーザー承認「1-A 電文のまま」。畳んだ表示は前置きの記号で出す）。
+                    知らない値には何も添えない（→ `magnitudeTypeLabel`）。 */}
+                {magnitudeTypeLabel(hypocenter.magnitudeType) && (
+                  <span className="text-[0.625rem] roomy:text-xs leading-tight text-secondary">
+                    {magnitudeTypeLabel(hypocenter.magnitudeType)}
+                  </span>
+                )}
               </div>
               <div
                 className="flex flex-col gap-0.5 rounded-lg p-2 roomy:gap-1 roomy:p-2.5"
@@ -1628,7 +1668,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           <QuakeSeismoWave
             waves={seismoWaves ?? []}
             view={seismoWaveView}
-            quakeLabel={`${formatQuakeTime(earthquake.time) ?? '発生時刻不明'} ${epicenterLabel}`}
+            quakeLabel={`${formatQuakeTime(earthquake.time) ?? '時刻不明'} ${epicenterLabel}`}
           />
         </div>
       </button>
@@ -1705,7 +1745,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               選んでいる（震度バッジは寸法固定なので正方形は崩れない）。 */}
           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             {/* 畳んだ表示。開いた表示（上）と同じ語を出す。 */}
-            <span className="text-base text-secondary shrink-0">{formatQuakeTime(earthquake.time) ?? '発生時刻不明'}</span>
+            <span className="text-base text-secondary shrink-0">{formatQuakeTime(earthquake.time) ?? '時刻不明'}</span>
+            {/* **長周期の名乗りは渡さない。** この段は `truncate` で末尾を省略するうえ、地名に幅を
+                明け渡している段。長い名乗りを足すと種別そのものが押し出される（開いた表示には出す）。 */}
             <span className={`text-xs px-1.5 py-0.5 rounded-sm min-w-0 truncate ${issueTypeBadgeClass(issue.type)}`}>
               <QuakeReportHeading reports={quake.reports} fallback={issue.type} />
             </span>
@@ -1731,7 +1773,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   className="inline-block w-1.5 h-3.5 rounded-xs shrink-0"
                   style={{ backgroundColor: getDepthColor(hypocenter.depth) }}
                 />
-                <span className="text-white font-medium">{formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition)}</span>
+                <span className="text-white font-medium">{formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)}</span>
                 <span
                   className="inline-block w-1.5 h-3.5 rounded-xs shrink-0"
                   style={{ backgroundColor: getMagnitudeColor(hypocenter.magnitude) }}

@@ -17,7 +17,7 @@
 // 差し替えるのは外部 I/O（WebSocket・REST・観測点座標）だけ。時計や純粋関数は本物を使う。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, cleanup, act } from '@testing-library/react'
-import type { AppEvent, LiveEvent, LiveEventMeta, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, IntensityScale } from '../types/earthquake'
+import type { AppEvent, LiveEvent, LiveEventMeta, EEWAlert, JMALpgm, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, IntensityScale } from '../types/earthquake'
 import type { ReplayEntry, ReplayPayload } from '../types/replay'
 import type { JMAKohatsu } from '../types/earthquake'
 import { serverDate, setReplayOffset } from '../utils/clock'
@@ -4690,6 +4690,26 @@ describe('カードが採らない電文には「据え置き」の印を付け�
     expect(h.current.earthquakes.filter(q => !q.cancelledAt)).toHaveLength(0)
   })
 
+  // 正: **取消と同じ時刻の報を捨てたときは、その旨の記録が 1 行出る**（捨てる扱いは変えない）。
+  // 判定は入口で 1 回決め、更新関数へはその結果だけを渡す。対照: 取消より前の報では出ない。
+  it('取消と同じ時刻の報を捨てたときだけ、同じ時刻だったことを記録する', async () => {
+    // この配線テストは logger をモックしているので、`log.warn` を直接見る。
+    vi.mocked(log.warn).mockClear()
+    const tieLines = () => vi.mocked(log.warn).mock.calls.filter(c => String(c[0]).includes('取消と同じ時刻の報'))
+    const h = setup({ onLiveEvent: vi.fn() })
+    await h.flush()
+
+    act(() => { h.current.injectEvent(完全版(1, '2024-11-26T22:47:00+09:00')) })
+    act(() => { h.current.injectEvent(取消(2, '2024-11-26T22:50:00+09:00')) })
+    // 取消より前（対照）: 捨てるが、同じ時刻の記録は出ない
+    act(() => { h.current.injectEvent(完全版(3, '2024-11-26T22:48:00+09:00')) })
+    expect(tieLines()).toHaveLength(0)
+    // 取消と同じ時刻: 捨てて、記録が出る
+    act(() => { h.current.injectEvent(完全版(4, '2024-11-26T22:50:00+09:00')) })
+    expect(tieLines()).toHaveLength(1)
+    expect(h.current.earthquakes.filter(q => !q.cancelledAt)).toHaveLength(0)
+  })
+
   // 正: **震源要素更新（VXSE61）はどんな既存カードでも採る。** 統合側は専用の分岐で必ず受理して
   // 抜けるので、切り出した述語もその前提を持たなければならない。持たないと、1 通目でカードの
   // 種別が VXSE61 へ変わったあと、2 通目以降が「既存が VXSE61」の理由で据え置き扱いになり、
@@ -6783,6 +6803,43 @@ describe('ライブの入口: 画面から消えた地震の報を採らない',
     await h.flush()
     await deliver(h, report(2))
     expect(h.current.activeEEWs.size).toBe(1)
+  })
+})
+
+describe('DMDSS 版の WebSocket で届いた長周期地震動にも更新の印を付ける', () => {
+  // **経路は 2 つある**（キュー経路と `ws.onEvent`）。WebSocket 経路だけ印付けを呼んでいなかった頃は、
+  // キュー経路を通るテスト・リプレイでは印が付き、実機のライブでだけ付かなかった。
+  function lpgm(maxLgInt: number, time: string, cancelled = false): JMALpgm {
+    return {
+      id: `dmdata-lpgm-20240101161000-${time}`,
+      eventId: '20240101161000',
+      time,
+      originTime: '2024-01-01T16:10:00+09:00',
+      maxClass: maxLgInt,
+      cancelled,
+      ...(cancelled ? {} : { regions: [{ code: '390', name: '石川県能登', maxLgInt }], points: [], prefs: [] }),
+    }
+  }
+  const markKey = 'lpgm:20240101161000'
+
+  // 正: 続報で階級が動いた区域に印が付く。
+  it('続報で階級が上がった区域に印が付く', async () => {
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: lpgm(3, '2024-01-01T07:40:00Z') }) })
+    expect(h.current.quakeUpdateMarks.get(markKey)).toBeUndefined()
+    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: lpgm(4, '2024-01-01T07:50:00Z') }) })
+    expect(h.current.lpgmByEventId.get('20240101161000')?.maxClass).toBe(4)
+    expect(h.current.quakeUpdateMarks.get(markKey)?.rows.size).toBeGreaterThan(0)
+  })
+
+  // 安全弁: 取消では印を付けない（一覧ごと消えるため）。
+  it('取消では印を付けない', async () => {
+    const h = setup()
+    await h.flush()
+    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: lpgm(3, '2024-01-01T07:40:00Z') }) })
+    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: lpgm(3, '2024-01-01T08:00:00Z', true) }) })
+    expect(h.current.quakeUpdateMarks.get(markKey)).toBeUndefined()
   })
 })
 

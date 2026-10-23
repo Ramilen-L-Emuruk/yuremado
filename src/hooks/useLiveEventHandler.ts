@@ -474,7 +474,7 @@ function sleep(ms: number): Promise<void> {
  * ここで落とすと最大級の地震ほどタイトルが震央地名だけになる。
  */
 function magnitudeTitlePart(hypocenter: Hypocenter): string {
-  const text = formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition)
+  const text = formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)
   // 「不明」はタイトルに出さない（震央地名だけのほうが短く読める）
   return text === '不明' ? '' : ` ${text}`
 }

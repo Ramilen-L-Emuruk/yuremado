@@ -106,8 +106,8 @@ export function scalePromptNotificationBody(quake: JMAQuake, areaPrefIndex: Area
 
 /** 震源が判った報の本文。例「石川県能登地方 最大震度5弱 M5.2」。 */
 export function hypocenterNotificationBody(quake: JMAQuake): string {
-  const { name, magnitude, magnitudeCondition } = quake.earthquake.hypocenter
-  return `${name} 最大震度${maxScaleLabel(quake)} ${formatMagnitudeWithCondition(magnitude, magnitudeCondition)}`
+  const { name, magnitude, magnitudeCondition, magnitudeType } = quake.earthquake.hypocenter
+  return `${name} 最大震度${maxScaleLabel(quake)} ${formatMagnitudeWithCondition(magnitude, magnitudeCondition, magnitudeType)}`
 }
 
 /** 最大震度が上がった報の本文。例「最大震度更新 石川県能登地方 最大震度6強 M7.6」。 */
@@ -120,8 +120,8 @@ export function maxScaleRaisedNotificationBody(quake: JMAQuake): string {
  * （パーサーが `Area/DetailedName` を優先して入れる）。名前が無ければ省く。
  */
 export function foreignQuakeNotificationBody(quake: JMAQuake): string {
-  const { name, magnitude, magnitudeCondition } = quake.earthquake.hypocenter
-  const mag = formatMagnitudeWithCondition(magnitude, magnitudeCondition)
+  const { name, magnitude, magnitudeCondition, magnitudeType } = quake.earthquake.hypocenter
+  const mag = formatMagnitudeWithCondition(magnitude, magnitudeCondition, magnitudeType)
   return name ? `遠地地震 ${name} ${mag}` : `遠地地震 ${mag}`
 }
 
