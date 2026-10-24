@@ -3376,15 +3376,26 @@ export function parseEarthquakeCountFromXml(xml: string): JMAEarthquakeCount | n
     // `-1` 以外の負の値は書式の外なので、読めない値として扱う。
     const number = readCountValue(numberText)
     const feltNumber = readCountValue(feltText)
-    if (!type || number === undefined || feltNumber === undefined) {
+    // **総回数と有感回数のどちらか一方でも読めれば区間を残す**（2026-10-22 ユーザー選択「総回数だけでも残す (Recommended)」、
+    // 逆向き＝総回数が読めず有感だけ読めた場合も 2026-10-24 選択「両方向で残す (Recommended)」）。
+    // 読めなかった側は「発表なし」（`null`）と同じく句ごと出さない（表のセルは「—」）。読めなかったことは下で記録する。
+    if (!type || (number === undefined && feltNumber === undefined)) {
       tally.unreadable(type || '(種類なし)', numberText)
       // **一部だけ読めないときも残す。** 全滅の記録（`warnIfNoneReadable`）だけでは、累積の区間だけが
       // 落ちたとき、見出しと読み上げが黙って別の区間の数を伝える（→ `pickEarthquakeCountSummaryItem`）。
       log.warn(`${DMDATA_LOG_PREFIX} VXSE60（地震回数に関する情報）の区間を読めず捨てました: type="${type}" Number="${numberText}" FeltNumber="${feltText}"`)
       continue
     }
-    items.push({ type, startTime, endTime, number, feltNumber })
-    tally.readable()
+    items.push({ type, startTime, endTime, number: number ?? null, feltNumber: feltNumber ?? null })
+    if (number === undefined || feltNumber === undefined) {
+      // **片方だけ読めない区間も集計では「読めない」に数える。** 読めた側で区間は残すが、全区間が
+      // 片方だけ読めない形（書式が変わった）は全滅の記録で拾いたい。区間ごとの記録も残す
+      // （この種別は実配信でほぼ観測できず、出るのは書式が変わったときだけ）。
+      tally.unreadable(type, number === undefined ? numberText : feltText)
+      log.warn(`${DMDATA_LOG_PREFIX} VXSE60（地震回数に関する情報）の区間の${number === undefined ? '回数' : '有感回数'}を読めず、その欄を空けて残しました: type="${type}" Number="${numberText}" FeltNumber="${feltText}"`)
+    } else {
+      tally.readable()
+    }
   }
   tally.warnIfNoneReadable(DMDATA_LOG_PREFIX)
 

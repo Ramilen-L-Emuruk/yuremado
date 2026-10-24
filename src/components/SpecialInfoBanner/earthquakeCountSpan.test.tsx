@@ -60,13 +60,21 @@ describe('地震回数の区間が読めないとき', () => {
     expect(container.textContent).not.toContain('Invalid Date')
   })
 
-  // 正: 片方だけ読めても期間としては出さない。端が 1 つでは何日ぶんの数字か決まらず、
-  // 読める側だけを出すと区間が確定しているように見える。
-  it('片方だけ読めても「期間不明」へ倒す', () => {
+  // 意図的に覆した（2026-10-22 ユーザー選択「読めた側を出す (Recommended)」、形は 2026-10-24 選択
+  // 「この形でよい (Recommended)」）: 片方だけ読めたら、読めた側を日付つきで出し、「〜」を読めない端の側に置く。
+  it('開始だけ読めたら「開始〜」を出す', () => {
     withTz('Asia/Tokyo', () => {
       const { container } = render(<EarthquakeCountDetail count={count([item({ endTime: '' })])} />)
-      expect(screen.getByText('期間不明')).toBeTruthy()
-      expect(container.textContent).not.toContain('1/1 09:00')
+      expect(container.textContent).toContain('1/1 09:00〜')
+      expect(container.textContent).not.toContain('期間不明')
+    })
+  })
+
+  it('終了だけ読めたら「〜終了」を出す', () => {
+    withTz('Asia/Tokyo', () => {
+      const { container } = render(<EarthquakeCountDetail count={count([item({ startTime: '' })])} />)
+      expect(container.textContent).toContain('〜1/2 12:00')
+      expect(container.textContent).not.toContain('期間不明')
     })
   })
 

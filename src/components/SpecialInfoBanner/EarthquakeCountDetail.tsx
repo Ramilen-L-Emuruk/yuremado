@@ -26,21 +26,21 @@ const fmtTimeOnly = new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: 
  * 数字ばかりになって回数のほうが読み取りにくくなる。**日をまたぐ区間では省かない** ——
  * 累積区間は初めの地震から現在までを指すので、何日ぶんの数字かが分からなくなる。
  */
-function formatSpan(startTime: string, endTime: string): string {
+export function formatSpan(startTime: string, endTime: string): string {
   const start = new Date(startTime)
   const end = new Date(endTime)
-  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
-    // **電文に入っていた文字列はここへ届かない。** 読み取りの時点で捨てて記録に残す作りに
-    // なっている（`dmdataParser.ts` の `readTelegramDateTime`）ので、ここへ来るのは空文字だけ。
-    // 生の値を出していた頃の名残で `${startTime}〜${endTime}` と書くと、区切りの「〜」だけが
-    // 並んで値を読み落としたように見える。**原因はコンソールの
-    // `[dmdata XML] 地震回数の区間の…` を見ること。**
-    //
-    // **片方だけ読めても期間としては出さない。** 端が 1 つでは何日ぶんの数字か決まらず、
-    // 読める側だけを出すと区間が確定しているように見える（読み上げ側が同じ場面で
-    // 「これまで」へ落とすのと揃えてある）。
-    return '期間不明'
-  }
+  const startOk = Number.isFinite(start.getTime())
+  const endOk = Number.isFinite(end.getTime())
+  // **電文に入っていた文字列はここへ届かない。** 読み取りの時点で捨てて記録に残す作りに
+  // なっている（`dmdataParser.ts` の `readTelegramDateTime`）ので、読めない端は空文字で来る。
+  // **原因はコンソールの `[dmdata XML] 地震回数の区間の…` を見ること。**
+  //
+  // **片方だけ読めたら、読めた側を出す**（2026-10-22 ユーザー選択「読めた側を出す (Recommended)」、
+  // 形は 2026-10-24 選択「この形でよい (Recommended)」）。相手の端が無いので日付は省かない。
+  // 「〜」を読めない端の側に置いて、区間が閉じていないことを見せる。
+  if (startOk && !endOk) return `${fmt.format(start)}〜`
+  if (!startOk && endOk) return `〜${fmt.format(end)}`
+  if (!startOk || !endOk) return '期間不明'
   const sameDay = start.getFullYear() === end.getFullYear()
     && start.getMonth() === end.getMonth()
     && start.getDate() === end.getDate()

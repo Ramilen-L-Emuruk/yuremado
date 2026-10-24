@@ -5701,13 +5701,41 @@ describe('地震回数に関する情報（VXSE60）', () => {
     expect(count.cancelText).toBe('先ほどの、地震回数に関する情報を取り消します。')
   })
 
-  // 安全弁: 回数として読めない区間は捨て、**全滅したときだけ記録する**。
-  // 部分脱落で鳴らすのは他の集計と同じ方針（正常な電文でログを埋めない）。
-  it('回数を読めない区間は捨て、全滅したら記録する', () => {
+  // 意図的に覆した（2026-10-22 ユーザー選択「総回数だけでも残す (Recommended)」・逆向きは 2026-10-24 選択
+  // 「両方向で残す (Recommended)」）: 回数が読めなくても有感回数が読めれば区間を残し、読めなかった欄は空ける。
+  it('回数を読めなくても有感回数が読めれば区間を残し、記録する', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
     try {
       const xml = VXSE60_XML.split('<Number>').join('<Numbr>').split('</Number>').join('</Numbr>')
       expect(xml).not.toBe(VXSE60_XML)
+      const items = parseEarthquakeCountFromXml(xml)!.items
+      expect(items).toHaveLength(3)
+      expect(items.map(i => i.number)).toEqual([null, null, null])
+      expect(items.map(i => i.feltNumber)).toEqual([1, 0, 1])
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('回数を読めず、その欄を空けて残しました')
+    } finally { warn.mockRestore() }
+  })
+
+  // 正: 有感回数が読めなくても総回数が読めれば区間を残す
+  it('有感回数を読めなくても回数が読めれば区間を残し、記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VXSE60_XML.replace('<FeltNumber>1</FeltNumber>', '<FeltNumber>不明</FeltNumber>')
+      expect(xml).not.toBe(VXSE60_XML)
+      const items = parseEarthquakeCountFromXml(xml)!.items
+      expect(items).toHaveLength(3)
+      expect(items[0]).toMatchObject({ number: 1587, feltNumber: null })
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('有感回数を読めず、その欄を空けて残しました')
+    } finally { warn.mockRestore() }
+  })
+
+  // 安全弁: どちらも読めない区間は捨て、**全滅したときは集計の記録も出す**
+  it('回数も有感回数も読めない区間は捨て、全滅したら記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VXSE60_XML
+        .split('<Number>').join('<Numbr>').split('</Number>').join('</Numbr>')
+        .split('<FeltNumber>').join('<FeltNumbr>').split('</FeltNumber>').join('</FeltNumbr>')
       expect(parseEarthquakeCountFromXml(xml)!.items).toEqual([])
       expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('地震回数の区間')
     } finally { warn.mockRestore() }
@@ -5794,10 +5822,12 @@ describe('地震回数に関する情報（VXSE60）', () => {
     expect(count.items[0]).toMatchObject({ number: 1587, feltNumber: null })
   })
 
-  // 安全弁: -1 以外の負の値は書式の外。読めない値として区間ごと捨てる（-1 と同じに丸めない）。
-  it('-1 以外の負の値は読めない値として捨てる', () => {
+  // 安全弁: -1 以外の負の値は書式の外。読めない値として扱い、その欄を空ける（区間は有感回数で残る）
+  it('-1 以外の負の値は読めない値として欄を空ける', () => {
     const xml = VXSE60_XML.replace('<Number>1587</Number>', '<Number>-2</Number>')
-    expect(parseEarthquakeCountFromXml(xml)!.items.map(i => i.type)).toEqual(['１時間地震回数', '累積地震回数'])
+    const items = parseEarthquakeCountFromXml(xml)!.items
+    expect(items.map(i => i.type)).toEqual(['地震回数', '１時間地震回数', '累積地震回数'])
+    expect(items[0].number).toBeNull()
   })
 
   // 正: 累積の区間が無い報もそのまま返す（どの区間を伝えるかは表示・読み上げ側が選ぶ）。
@@ -5807,13 +5837,13 @@ describe('地震回数に関する情報（VXSE60）', () => {
     expect(parseEarthquakeCountFromXml(xml)!.items.map(i => i.type)).toEqual(['地震回数', '１時間地震回数'])
   })
 
-  // 対照: 1 件でも読めていれば記録しない（部分脱落では黙る）。
-  it('一部だけ読めなければ記録しない', () => {
+  // 対照: 1 件でも読めていれば全滅の記録は出さない（部分脱落では集計の記録は黙る）
+  it('一部だけ読めなければ全滅の記録は出さない', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
     try {
       const xml = VXSE60_XML.replace('<Number>1587</Number>', '<Number>いっぱい</Number>')
       expect(xml).not.toBe(VXSE60_XML)
-      expect(parseEarthquakeCountFromXml(xml)!.items).toHaveLength(2)
+      expect(parseEarthquakeCountFromXml(xml)!.items).toHaveLength(3)
       expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).not.toContain('地震回数の区間')
     } finally { warn.mockRestore() }
   })
