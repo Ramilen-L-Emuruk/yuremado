@@ -3200,6 +3200,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側）。
         // 取消・終了では呼ばない（帯が消えるので、開いて見せるものが無い）。
         expandPanelForSpecialInfo()
+        // 臨時情報と後発地震注意情報で同じ音（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）
         if (settings.soundEnabled) {
           playAlertSound('specialInfo')
         }
