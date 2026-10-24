@@ -53,7 +53,7 @@ function setup() {
   const titleCalls: string[] = []
   const watched = new Set([
     'setTitle', 'setOngoingTitle', 'applyPriority', 'showTsunamiTitle', 'showTsunamiEndTitle',
-    'endTsunamiTitleWindow', 'scheduleTitleRevert', 'clearTitleTimer',
+    'endTsunamiTitleWindow', 'scheduleTitleRevert', 'clearTitleTimer', 'releaseTitle',
   ])
   const title = new Proxy({ alertTitle: null } as Record<string, unknown>, {
     get: (t, k) => {
@@ -66,6 +66,7 @@ function setup() {
     settings, title: title as never,
     earthquakesRef: { current: [] as JMAQuake[] },
     tsunamisRef: { current: displayed },
+    nankaiActiveRef: { current: false },
     setActiveTabNonRealtime: vi.fn(),
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true),

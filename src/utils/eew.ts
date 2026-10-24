@@ -662,9 +662,12 @@ export function eewNotifiedForecast(eew: EEWAlert): EewNotifiedForecast {
  */
 export function eewNotificationBody(name: string, forecast: EewNotifiedForecast): string {
   const { scale, lpgm } = forecast
-  return name
-    + (scale.scale > 0 ? ` 最大震度${getIntensityLabelWithApproxAbove(scale.scale, scale.orAbove)}予想` : '')
-    + (lpgm.cls > 0 ? ` 長周期地震動${getLpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over)}予想` : '')
+  // 震央地名が空の報（起こりうるのは標準版の取得元。実配信では未観測）でも先頭に空白を残さない（2026-10-24 ユーザー選択「備えとして直す (Recommended)」）
+  return [
+    name.trim(),
+    scale.scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale.scale, scale.orAbove)}予想` : '',
+    lpgm.cls > 0 ? `長周期地震動${getLpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over)}予想` : '',
+  ].filter(p => p !== '').join(' ')
 }
 
 /**

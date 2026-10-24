@@ -611,6 +611,12 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
    * する設計のため、強い地震ほど起こりやすい）。
    */
   const lostWhileStalledRef = useRef(false)
+  /**
+   * 揺れ検知の通知に出した推定最大震度の段（`kyoshinLevel`。-1 は、この揺れでまだ通知していない）。
+   * 強まったときの書き換え（`renotifyStronger`）は、これより段が上がったときだけ出す —— 確定の瞬間に開始の通知と
+   * 同じ値で二重に出さず、復帰で通知を省いた揺れにも出さない（省いた揺れは途絶の前に通知を出している）。
+   */
+  const notifiedLevelRef = useRef(-1)
   /** 途絶に入る直前に確定していた検知地点（復帰後との照合用）。 */
   const shocksBeforeStallRef = useRef<readonly ConfirmedShock[]>([])
   useEffect(() => {
@@ -628,12 +634,16 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
       if (resumed) {
         log.info('[kyoshin] 検知の復帰につき検知音とブラウザ通知は省略（同じ地震の続き）')
       } else {
+        // 新しい揺れは、通知を出すかによらず段の記憶を戻してから始める（前の揺れの段が残ると、後から通知を
+        // 入れたときに強まりの書き換えだけが出る）
+        notifiedLevelRef.current = -1
         if (settings.soundEnabled) {
           playAlertSound('kyoshin')
         }
-        if (settings.notifyMinScale >= 0 && settings.notifyDetection) {
+        if (settings.notifyDetection) {
           const label = kyoshinIndexToLabel(effectiveKyoshinMaxIndex) ?? '?'
           showBrowserNotification('揺れを検知中', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection')
+          notifiedLevelRef.current = kyoshinLevel(effectiveKyoshinMaxIndex)
         }
       }
     } else if (!confirmed && prevConfirmedRef.current) {
@@ -641,6 +651,8 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
       // 照合のために直前の検知地点を控える。
       lostWhileStalledRef.current = stalled
       shocksBeforeStallRef.current = stalled ? lastConfirmedShocksRef.current : []
+      // 揺れが収まって消えたら、次の揺れは改めて通知から始める（途絶で消えたときは、復帰が同じ揺れの続きかもしれないので残す）
+      if (!stalled) notifiedLevelRef.current = -1
       title.applyPriority({ kyoshinDetected: false })
       if (activeEEWsRef.current.size === 0) {
         log.info(`[tab] ${defaultTabRef.current} を要求 (揺れ検知終了 V3)`)
@@ -691,6 +703,20 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
   // まだ確定していない検知に確信度以上の大きさで反応しないようにする。
   const maxSoundLevelRef = useRef(-1)
   const postPeakMinLevelRef = useRef(-1)
+  /**
+   * 確定（confirmed）中に揺れが強まったら、揺れ検知の通知を同じ札（`kyoshin-detection`）で書き換える
+   * （2026-10-22 ユーザー選択「強まったら通知し直す (Recommended)」）。文面は確定したときと同じで、推定最大震度だけが
+   * 新しい値になる。**揺れの可能性（likely）では出さない**（likely での通知は今のまま行わない。同じ選択）。
+   */
+  const renotifyStronger = (confirmedNow: boolean) => {
+    if (!confirmedNow || !settings.notifyDetection) return
+    // 通知を出していない揺れ（この揺れで出していない・前の段と同じ）には出さない（→ `notifiedLevelRef`）
+    const level = kyoshinLevel(effectiveKyoshinMaxIndex)
+    if (notifiedLevelRef.current < 0 || level <= notifiedLevelRef.current) return
+    const label = kyoshinIndexToLabel(effectiveKyoshinMaxIndex) ?? '?'
+    showBrowserNotification('揺れを検知中', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection')
+    notifiedLevelRef.current = level
+  }
   useEffect(() => {
     if (!confirmed && !candidate) {
       maxSoundLevelRef.current = -1
@@ -710,6 +736,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
         if (settings.soundEnabled) {
           playKyoshinUpdateSound(effectiveKyoshinMaxIndex, gainScale)
         }
+        renotifyStronger(confirmed)
       }
     } else if (currLevel < postPeakMinLevelRef.current) {
       postPeakMinLevelRef.current = currLevel
@@ -723,6 +750,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
       if (settings.soundEnabled) {
         playKyoshinUpdateSound(effectiveKyoshinMaxIndex, gainScale)
       }
+      renotifyStronger(confirmed)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 音の再鳴を安定させるため依存は限定する
   }, [effectiveKyoshinMaxIndex, confirmed, candidate, settings.soundEnabled])
@@ -750,7 +778,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     // （現状の実装には無い）。寄らずに黙って終わるより、旧来どおり重心へ落とす方が害が小さい。
     requestShakeFocus(alert.peak ?? { lat: alert.lat, lng: alert.lng })
     if (settings.soundEnabled) playAlertSound('kyoshin')
-    if (settings.notifyMinScale >= 0 && settings.notifyDetection) {
+    if (settings.notifyDetection) {
       // 全体の最大震度ではなく、発報した地域自身の推定震度を出す（「別の地点」の報せなので）
       const label = kyoshinIndexToLabel(alert.index) ?? '?'
       showBrowserNotification('別の地点で揺れを検知', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection-new')

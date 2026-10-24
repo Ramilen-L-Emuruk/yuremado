@@ -1192,7 +1192,8 @@ export function earthquakeReportCancelToText(issueType: string, time: string | n
  * {@link CANCEL_REASON_INLINE_MAX_CHARS}。
  */
 function cancelReasonSentence(cancelText: string | undefined): string {
-  // **この関数は 6 種別（EEW・地震情報・津波・地震回数・長周期地震動・地震・津波に関するお知らせ）の
+  // **この関数は 9 種別（EEW・地震情報・津波・地震回数・長周期地震動・地震・津波に関するお知らせ・
+  // 南海トラフ地震臨時情報・関連解説情報・後発地震注意情報）の
   // 取消が共有している。**
   const reason = classifyCancelReason(cancelText)
   if (reason.kind === 'declaration') {
@@ -1343,9 +1344,17 @@ const CANCEL_DECLARATION_SUBJECTS: ReadonlySet<string> = new Set([
  * ことから「警報が出た」と聞こえてしまい、実際より重く伝わる。
  *
  * 震源更新では区分に触れない。すでに伝えてあるうえ、変わったのは震源だから。
+ *
+ * **震央地名が空なら名乗りだけを言い切る**（「緊急地震速報。」。2026-10-24 ユーザー選択「備えとして直す
+ * (Recommended)」）。空の名前をそのまま埋めると「緊急地震速報、で地震。」と壊れる。名前が空になりうるのは
+ * 標準版の取得元（P2PQuake は仕様上 `hypocenter.name` が必須でない・Yahoo の `regionName`。どちらも実配信では未観測）で、
+ * DMDATA は全期間 45,079 通すべて名前を持つ。震源更新（`hypocenterUpdate`）で名前が空のときは、
+ * 呼び出し側が言い直しそのものを読まない（言い直す地名が無い）。
  */
 export function eewAlertToText(event: EEWAlert, kind: 'forecast' | 'warning' | 'hypocenterUpdate'): string {
-  return `${EEW_LEAD_PHRASE[kind]}${event.earthquake.hypocenter.name}で地震。`
+  const name = event.earthquake.hypocenter.name.trim()
+  if (!name) return EEW_LEAD_PHRASE[kind].replace(/、$/, '。')
+  return `${EEW_LEAD_PHRASE[kind]}${name}で地震。`
 }
 
 /**
@@ -3642,20 +3651,39 @@ export function tsunamiWarningLevelToText(
   return joinSegments(tsunamiWarningLevelToSegments(obs, maxPoints))
 }
 
+/**
+ * 臨時情報（調査中）のきっかけ。キーは地震関連情報番号コード（`JMANankai.kindCode`。意味は型の注記）。
+ *
+ * 111・112 は気象庁の発表条件の語（「監視領域内でマグニチュード6.8以上の地震が発生」「ひずみ計での有意な変化」）。
+ * 113 は発表条件の「通常とは異なる現象が観測された場合」から取った。
+ */
+const NANKAI_INVESTIGATION_TRIGGER: Readonly<Record<string, string>> = {
+  '111': '監視領域内でマグニチュード6.8以上の地震が発生した',
+  '112': 'ひずみ計で有意な変化を観測した',
+  '113': '通常とは異なる現象を観測した',
+}
+
 /** 南海トラフ地震臨時情報（VYSE50/51/52）の読み上げテキストを生成する。 */
 export function nankaiToText(event: JMANankai): string {
   // **取消と調査終了を混ぜない。** 取消は「その電文を撤回する」だけで、地震の発生可能性に
   // ついての判断を含まない（電文解説資料 Ⅰ.別紙ウ。→ `JMANankai.retracted`）。ここで
   // 「通常の範囲内でした」と言うと、**気象庁が発表していない安心情報をアプリが作る**ことになる。
   // 取り消された事実だけを伝え、状況の断定も行動指示も足さない。
+  //
+  // **取消の理由（電文の `Body/Text`。パーサーは `body` に入れる）も読む**（2026-10-22 ユーザー選択「理由を声にする
+  // (Recommended)」。地震・津波・地震回数の取消と同じ書き方 → `cancelReasonSentence`）。帯は取消で消えるので、
+  // 理由が届く先は読み上げだけ。長すぎる理由は別の発話で読む（→ `deferredCancelReasonToSpeak`）。
   if (event.retracted) {
-    return '南海トラフ地震臨時情報は取り消されました。'
+    return '南海トラフ地震臨時情報は取り消されました。' + cancelReasonSentence(event.body)
   }
   if (event.cancelled || event.kindName === '調査終了') {
     return '南海トラフ地震臨時情報、調査終了。南海トラフ地震の発生可能性は通常の範囲内でした。'
   }
   if (event.kindName === '調査中') {
-    return '南海トラフ地震臨時情報、調査中。南海トラフ地震の発生可能性について調査しています。今後の情報に注意してください。'
+    // **きっかけも読む**（2026-10-22 ユーザー選択「きっかけも読む (Recommended)」、文面は 2026-10-24 ユーザー選択
+    // 「この案でよい (Recommended)」）。きっかけはコード（`kindCode`）にしか出ない。読めない報は従来の文のまま。
+    const trigger = NANKAI_INVESTIGATION_TRIGGER[event.kindCode]
+    return `南海トラフ地震臨時情報、調査中。${trigger ? `${trigger}ため、` : ''}南海トラフ地震の発生可能性について調査しています。今後の情報に注意してください。`
   }
   if (event.kindName === '巨大地震警戒') {
     return '南海トラフ地震臨時情報、巨大地震警戒。南海トラフ地震の想定震源域内で大規模な地震が発生しました。直ちに防災対応をとってください。'
@@ -3674,6 +3702,9 @@ export function nankaiToText(event: JMANankai): string {
  * 臨時情報（nankaiToText）のような防災対応の呼びかけも付けない。
  */
 export function nankaiCommentaryToText(event: JMANankaiCommentary): string {
+  // **取消は取り消された事実と理由を読む**（2026-10-22 ユーザー選択「設定を入れたときだけ鳴らし読む (Recommended)」、
+  // 文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。理由はパーサーが `body` に入れる。
+  if (event.cancelled) return '南海トラフ地震関連解説情報は取り消されました。' + cancelReasonSentence(event.body)
   if (event.serialName === '定例解説') {
     return '南海トラフ地震関連解説情報。南海トラフ沿いの地震に関する評価検討会の定例会合による調査結果が発表されました。'
   }
@@ -3782,10 +3813,10 @@ export function quakeNoticeToText(event: JMAQuakeNotice): string {
 
 /** 北海道・三陸沖後発地震注意情報（VYSE60）の読み上げテキストを生成する。 */
 export function kohatsuToText(event: JMAKohatsu): string {
-  // **取消は取り消された事実だけを伝える**（2026-10-14 ユーザー選択「提案どおり読み、テストボタンも足す」）。
-  // 後発地震注意情報に「終了」の電文は無いので、`cancelled` が立つのは取消だけ。理由は読まない —— 臨時情報の
-  // 取消（`nankaiToText`）と揃える。音は鳴らさない（呼び出し側）。
-  if (event.cancelled) return '北海道・三陸沖後発地震注意情報は取り消されました。'
+  // **取消は取り消された事実と理由を伝える**（取消を読むのは 2026-10-14 ユーザー選択「提案どおり読み、テストボタンも足す」。
+  // 理由を読むのは臨時情報の取消と揃える —— 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。
+  // 後発地震注意情報に「終了」の電文は無いので、`cancelled` が立つのは取消だけ。理由はパーサーが `body` に入れる。
+  if (event.cancelled) return '北海道・三陸沖後発地震注意情報は取り消されました。' + cancelReasonSentence(event.body)
   // **句点は無条件に足さない** —— 気象庁の見出し文は句点で終わることが多く、
   // 重ねると「。。」になる（→ {@link endTelegramSentence}）。
   const headline = endTelegramSentence(event.headline.replace(/北海道・三陸沖後発地震注意情報/g, ''))

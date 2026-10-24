@@ -111,6 +111,7 @@ function setup(existingCards: JMAQuake[] = [], spies: {
     settings, title: title as never,
     earthquakesRef: { current: existingCards },
     tsunamisRef: { current: [] as JMATsunami[] },
+    nankaiActiveRef: { current: false },
     setActiveTabNonRealtime: vi.fn(),
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true),

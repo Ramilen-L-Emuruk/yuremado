@@ -112,6 +112,7 @@ function setup(overSettings: Partial<AppSettings> = {}) {
     settings, title: title as never,
     earthquakesRef,
     tsunamisRef: { current: [] as JMATsunami[] },
+    nankaiActiveRef: { current: false },
     setActiveTabNonRealtime: vi.fn(),
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true),

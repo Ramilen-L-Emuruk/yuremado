@@ -270,6 +270,7 @@ function setup(over: { voicevoxEnabled?: boolean; soundEnabled?: boolean } = {})
     settings, title: title as never,
     earthquakesRef: { current: [] as JMAQuake[] },
     tsunamisRef,
+    nankaiActiveRef: { current: false },
     selectQuake: vi.fn(), openLpgmFromQuake: vi.fn(), closeDistributionOnQuakeReport: vi.fn(),
     ...spies,
   }))

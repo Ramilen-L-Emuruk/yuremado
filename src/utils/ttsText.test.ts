@@ -2,7 +2,7 @@
 // 「〇時〇分」はローカルタイムゾーン依存のため、時刻の数値そのものではなく
 // 「日から読む／時分だけ読む」という書式の違いを正規表現で検証する。
 import { describe, it, expect, vi } from 'vitest'
-import { earthquakeCancelToText, tsunamiCancelToText, eewCancelToText, CANCEL_REASON_INLINE_MAX_CHARS, deferredCancelReasonToSpeak, nankaiToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText,
+import { earthquakeCancelToText, tsunamiCancelToText, eewCancelToText, CANCEL_REASON_INLINE_MAX_CHARS, deferredCancelReasonToSpeak, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText,
   estimatedIntensityToText, earthquakeToText, earthquakeToSegments, createQuakeSpokenState, applySpokenRefs, eewAlertToText, eewIntensityText, voicevoxPreviewTexts, lpgmToText, tsunamiToText, tsunamiToSegments, tsunamiDowngradeToText, tsunamiDowngradeToSegments, tsunamiArrivalToText, tsunamiMissingToText, tsunamiObservationUpdateToText, tsunamiAreaGradeChangeToText, tsunamiWarningLevelToText, selectWarningLevelToSpeak, selectObservationUpdatesToSpeak, selectMissingToSpeak, selectArrivalsToSpeak, WARNING_LEVEL_SPEAK_MAX_POINTS, joinWithAlso, telegramTextToSpeak, TELEGRAM_TEXT_BLOCK_KEYS, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, applyTsunamiSpokenRefs } from './ttsText'
 import { INTENSITY_SCALE_COUNT } from './intensity'
 import { joinSegments, mapChunksToRefs, plain, type SpeechSegment } from './ttsFollow'
@@ -11,7 +11,7 @@ import { log } from './logger'
 import { tsunamiAreaGradeChanges, tsunamiLiftText } from './tsunami'
 import { getStationCoordsCache } from './stationCoords'
 import { eewMaxScaleInfo, eewMaxLpgmClassInfo } from './eew'
-import type { TsunamiObservation, LiveEvent, JMAQuake, JMALpgm, EarthquakePoint, IssueType, DomesticTsunami, IntensityScale, EEWAlert, LpgmClass, JMATsunami, TsunamiArea, JMANankai, JMAEarthquakeCount } from '../types/earthquake'
+import type { TsunamiObservation, LiveEvent, JMAQuake, JMALpgm, EarthquakePoint, IssueType, DomesticTsunami, IntensityScale, EEWAlert, LpgmClass, JMATsunami, TsunamiArea, JMANankai, JMANankaiCommentary, JMAEarthquakeCount } from '../types/earthquake'
 
 const TTS_OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
 
@@ -2430,6 +2430,70 @@ describe('nankaiToText: 取消と調査終了の言い分け', () => {
     expect(nankaiToText(nankai({ kindName: '巨大地震警戒' }))).toContain('巨大地震警戒')
     expect(nankaiToText(nankai({ kindName: '調査中' }))).toContain('調査中')
   })
+
+  // 取消の理由も読む（2026-10-22 ユーザー選択「理由を声にする (Recommended)」）。本文は気象庁の公式サンプル
+  // （74_03_01_220318_VYSE50）の形
+  it('正: 取消は理由を続けて読む', () => {
+    const text = nankaiToText(nankai({
+      cancelled: true, retracted: true,
+      body: '１８日１９時３６分に発表した「南海トラフ地震臨時情報（調査中）」は誤りですので取り消します。',
+    }))
+    expect(text).toBe('南海トラフ地震臨時情報は取り消されました。18日19時36分に発表した「南海トラフ地震臨時情報（調査中）」は誤りですので取り消します。')
+  })
+})
+
+// 調査中のきっかけ（2026-10-22 ユーザー選択「きっかけも読む (Recommended)」、文面は 2026-10-24 ユーザー選択
+// 「この案でよい (Recommended)」）。
+describe('nankaiToText: 調査中のきっかけ', () => {
+  const checking = (kindCode: string): JMANankai => ({
+    id: 'n1', time: '2026-08-20T17:00:00+09:00', eventId: '20260820170000',
+    kindCode, kindName: '調査中', headline: '', body: '',
+    cancelled: false, reportDateTime: '2026-08-20T17:00:00+09:00',
+  })
+  const tail = '南海トラフ地震の発生可能性について調査しています。今後の情報に注意してください。'
+
+  it('正: 111 は M6.8 以上の地震', () => {
+    expect(nankaiToText(checking('111'))).toBe(`南海トラフ地震臨時情報、調査中。監視領域内でマグニチュード6.8以上の地震が発生したため、${tail}`)
+  })
+  it('正: 112 はひずみ計', () => {
+    expect(nankaiToText(checking('112'))).toBe(`南海トラフ地震臨時情報、調査中。ひずみ計で有意な変化を観測したため、${tail}`)
+  })
+  it('正: 113 はその他の現象', () => {
+    expect(nankaiToText(checking('113'))).toBe(`南海トラフ地震臨時情報、調査中。通常とは異なる現象を観測したため、${tail}`)
+  })
+  it('対照: コードが読めない報（`Head/Title` から段階を拾った報）は従来の文のまま', () => {
+    expect(nankaiToText(checking(''))).toBe(`南海トラフ地震臨時情報、調査中。${tail}`)
+  })
+  it('安全弁: 調査中でない段階には、きっかけを付けない', () => {
+    expect(nankaiToText({ ...checking('111'), kindName: '巨大地震注意' })).not.toContain('6.8')
+  })
+})
+
+// 解説情報の取消（2026-10-22 ユーザー選択「設定を入れたときだけ鳴らし読む (Recommended)」）
+describe('nankaiCommentaryToText: 取消', () => {
+  const commentary = (o: Partial<JMANankaiCommentary>): JMANankaiCommentary => ({
+    id: 'c', time: '', eventId: 'c', serialCode: '210', serialName: '臨時解説',
+    headline: '南海トラフ地震関連解説情報（第１号）', body: '', cancelled: false, reportDateTime: '', expireAt: '', ...o,
+  })
+  it('正: 取消は取り消された事実と理由', () => {
+    expect(nankaiCommentaryToText(commentary({ cancelled: true, body: '誤りがあったため取り消します。' })))
+      .toBe('南海トラフ地震関連解説情報は取り消されました。誤りがあったため取り消します。')
+  })
+  it('対照: 発表は従来どおり号数を読む', () => {
+    expect(nankaiCommentaryToText(commentary({}))).toContain('第１号')
+  })
+})
+
+// 震央地名が空の緊急地震速報（2026-10-24 ユーザー選択「備えとして直す (Recommended)」）
+describe('eewAlertToText: 震央地名が空', () => {
+  const eew = (name: string) => ({ earthquake: { hypocenter: { name } } }) as unknown as EEWAlert
+  it('正: 名乗りだけを言い切る', () => {
+    expect(eewAlertToText(eew(''), 'warning')).toBe('緊急地震速報。')
+    expect(eewAlertToText(eew('  '), 'forecast')).toBe('地震動予報。')
+  })
+  it('対照: 名前があれば従来どおり', () => {
+    expect(eewAlertToText(eew('三陸沖'), 'warning')).toBe('緊急地震速報、三陸沖で地震。')
+  })
 })
 
 // 取消の述語は種別をまたいで「取り消されました」でそろえる。
@@ -3892,7 +3956,8 @@ describe('津波の読み上げ: 語り済みの原因地震の震源が変わ�
   })
 })
 
-// 後発地震注意情報の取消は、取り消された事実だけを伝える（臨時情報の取消と揃える）。
+// 後発地震注意情報の取消は、取り消された事実と理由を伝える（臨時情報の取消と揃える。2026-10-24 ユーザー選択
+// 「この案でよい (Recommended)」で「理由は読まない」を覆した）。
 describe('kohatsuToText: 取消', () => {
   const kohatsu = (over: Record<string, unknown> = {}) => ({
     id: 'k-1', time: '2026-07-18T01:00:00+09:00', eventId: 'k',
@@ -3902,9 +3967,16 @@ describe('kohatsuToText: 取消', () => {
     ...over,
   }) as unknown as Parameters<typeof kohatsuToText>[0]
 
-  // 正: 取消は事実だけ。見出しも理由も読まない
-  it('取消は「取り消されました」とだけ伝える', () => {
-    expect(kohatsuToText(kohatsu({ cancelled: true, retracted: true }))).toBe('北海道・三陸沖後発地震注意情報は取り消されました。')
+  // 正（覆した）: 取消は事実と理由を読む。見出しは読まない
+  it('取消は「取り消されました」に理由を続ける', () => {
+    expect(kohatsuToText(kohatsu({ cancelled: true, retracted: true }))).toBe(
+      '北海道・三陸沖後発地震注意情報は取り消されました。システムの障害により、先に発表した北海道・三陸沖後発地震注意情報を取り消します。',
+    )
+  })
+
+  // 対照: 理由が無ければ事実だけ
+  it('理由の無い取消は「取り消されました」だけ', () => {
+    expect(kohatsuToText(kohatsu({ cancelled: true, retracted: true, body: '' }))).toBe('北海道・三陸沖後発地震注意情報は取り消されました。')
   })
 
   // 対照: 発表は従来どおり見出しと呼びかけを読む

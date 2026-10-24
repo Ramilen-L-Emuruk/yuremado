@@ -100,8 +100,9 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
  * lpgm が `onLiveEvent`（音・読み上げ・タブ移動）の対象になるか。
  *
  * - **発表**は階級 1 以上だけ（階級 0 は音読み上げの対象外と決めている）
- * - **取消**は表示中の長周期を実際に消したときだけ（`cancelHitShown`。→ `noteLiveLpgm`）。
- *   受け手は音もタブ移動も起こさず読み上げだけにする（→ `useLiveEventHandler.ts` の lpgm の枝）
+ * - **取消**は常に（画面に出していない地震への取消でも伝える。2026-10-22 ユーザー選択「地震情報に揃えて伝える
+ *   (Recommended)」で 2026-10-15 の「表示中を消した時だけ（推奨）」を覆した）。同じ取消の 2 通目は
+ *   呼び出し側（`shouldDispatch`）が止める
  *
  * **他の 5 種別（nankai 等）と違い、これは「反映されたか」と一致しない。** あちらは
  * `applyXxx` が期限切れ等で棄却すると `lpgmByEventId` 相当の state 自体を書き換えないが、
@@ -110,8 +111,8 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
  * ので、記録の理由はどちらも `notApplied`（＝反映されなかった）ではなく
  * `notDispatched`（＝音読み上げの対象外と決めている）にする（3 巡目レビューで指摘）。
  */
-function lpgmNotifiable(lpgm: JMALpgm, cancelHitShown: boolean): boolean {
-  return lpgm.cancelled ? cancelHitShown : lpgm.maxClass >= 1
+function lpgmNotifiable(lpgm: JMALpgm): boolean {
+  return lpgm.cancelled || lpgm.maxClass >= 1
 }
 
 // 初回に一覧へ並べる**地震の件数**（設定の最大選択値に合わせる。standard 版の経路だけが使う ——
@@ -887,30 +888,73 @@ export function useEarthquakes(
   const pendingQuakeCardsRef = useRef<JMAQuake[]>([])
   pendingQuakeCardsRef.current = []
   /**
-   * **同じティックで当てた長周期地震動の写し**（地震ごと。`null` は取消で消したこと）。
+   * **もう受け手へ流した取消の電文**（`<種別>:<電文の id>|<発表時刻>`）。同じ取消が二度届いたら 2 通目は流さない。
    *
-   * 取消が表示中の長周期を消したかで読み上げを決める（→ `lpgmCancelHitsShown`）が、
-   * `stateRef` はレンダー時にしか進まない。発表と取消が同じティックで捌かれると、取消は
-   * 発表を見られず「表示していない地震への取消」と誤って黙る。理由と捨て方は
-   * `pendingQuakeCardsRef` と同じ。
+   * 臨時情報・後発地震・関連解説情報・長周期・地震回数の取消は、**画面に出していない情報への取消でも
+   * 音と声で伝える**（2026-10-22 ユーザー選択「地震情報に揃えて伝える (Recommended)」。解説情報は 2026-10-24
+   * ユーザー選択「伝える (Recommended)」）。帯や一覧を消したかでは判定しないので、二重配信を見分ける手掛かりは
+   * 電文そのものになる。2 通目を黙らせるのは地震情報の取消と同じ（2026-10-15 ユーザー承認「2通目は鳴らさない（推奨）」）。
+   *
+   * **鍵に発表時刻を含める。** 取消の id は取り消す対象と同じ形（EventID と号数）で作られ、号数が欠けると `1` に倒れる
+   * ので、id だけだと別の取消を二重配信と取り違えうる。テストボタンも同じ実電文を時刻だけずらして流すので、id だけだと
+   * 2 回目に押した取消が無音になる。本当の二重配信は時刻まで同じ。
+   *
+   * リプレイの開始・リセットで空にする（前の時間軸で伝えた取消を、新しい軸で黙らせないため）。
    */
-  const pendingLpgmRef = useRef<Map<string, JMALpgm | null>>(new Map())
-  pendingLpgmRef.current = new Map()
+  const conveyedCancelsRef = useRef<Set<string>>(new Set())
   /**
-   * ライブの長周期 1 通を写しへ当て、**取消なら表示中の長周期を実際に消したか**を返す
-   * （発表なら常に `false`）。消した判定は `applyLiveLpgm` と同じ規則（取消より前に発表された
-   * 報だけを消す）。地震回数の取消（`applyEarthquakeCount`）と同じく、表示していない地震への
-   * 取消は読み上げない（2026-10-15 ユーザー選択「表示中を消した時だけ（推奨）」）。
+   * 帯の電文（と長周期）を受け手へ流すかを決める。戻り値は流すなら `'dispatch'`、流さないなら記録の理由。
+   *
+   * - **取消でない報**は画面へ当てたか（`applied`）で決める（従来どおり）
+   * - **取消**は画面へ当てたかによらず流し、同じ電文の 2 通目だけ止める（`'notDispatched'`）
+   * - **サイレント注入**（リプレイの初期状態）は流さない。取消なら「伝えた」に数える —— 画面は既に取消を
+   *   反映しているので、同じ取消が後からライブで届いても鳴らさない（地震情報の取消と同じ）
+   * - **別の情報単位の帯が出ているときの、古い単位への取消**（`otherUnitShown`。臨時情報・後発地震注意情報）は流さない。
+   *   「〇〇は取り消されました」と言うと、いま出ている帯の情報が取り消されたように聞こえる（2026-10-24 ユーザー選択
+   *   「別単位の帯が出ていれば黙る (Recommended)」）。帯が何も出ていないときの取消は伝える
    */
-  const noteLiveLpgm = (lpgm: JMALpgm): boolean => {
-    const pending = pendingLpgmRef.current
-    const shown = pending.has(lpgm.eventId) ? pending.get(lpgm.eventId) ?? undefined : stateRef.current.lpgmByEventId.get(lpgm.eventId)
-    const next = applyLiveLpgm(shown ? new Map([[lpgm.eventId, shown]]) : new Map(), lpgm).get(lpgm.eventId)
-    pending.set(lpgm.eventId, next ?? null)
-    // 階級 0 の長周期は一覧もバッジも出さない（`EarthquakeCard` は `maxClass >= 1` だけを描く）ので、
-    // それを消した取消は「表示中を消した」に当たらない
-    return lpgm.cancelled && shown !== undefined && shown.maxClass >= 1 && next === undefined
+  const decideDispatch = (
+    kind: string, telegram: { id: string; time: string; cancelled: boolean }, applied: boolean, silent: boolean | undefined,
+    otherUnitShown: boolean,
+  ): 'dispatch' | ReplayTelegramSkip => {
+    if (!telegram.cancelled) return !applied ? 'notApplied' : silent ? 'silentReplayInit' : 'dispatch'
+    const duplicate = !noteConveyedCancel(kind, telegram)
+    if (silent) return 'silentReplayInit'
+    if (otherUnitShown) {
+      log.info(`[${kind}] 別の情報単位の帯を出しているので、古い単位への取消は音と読み上げを出さない id=${telegram.id}`)
+      return 'notApplied'
+    }
+    if (duplicate) {
+      log.info(`[${kind}] 既に伝えた取消なので音と読み上げを出さない id=${telegram.id}`)
+      return 'notDispatched'
+    }
+    if (!applied) log.info(`[${kind}] 画面に出していない情報への取消も伝えます id=${telegram.id}`)
+    return 'dispatch'
   }
+  /**
+   * 取消を「伝えた」に数える。**初めてなら真**（もう数えてあれば偽＝二重配信）。起動時の履歴で当てた取消も
+   * ここを通す —— 通さないと、同じ取消が後からライブで届いたとき（再接続・重複配信）に鳴り直す。
+   */
+  const noteConveyedCancel = (kind: string, telegram: { id: string; time: string }): boolean => {
+    const key = `${kind}:${telegram.id}|${telegram.time}`
+    if (conveyedCancelsRef.current.has(key)) return false
+    // 取消は年に数通しか無いが、上限は置く（長く開いたままの端末で増え続けないように）
+    if (conveyedCancelsRef.current.size >= 500) conveyedCancelsRef.current.clear()
+    conveyedCancelsRef.current.add(key)
+    return true
+  }
+  /** 履歴の長周期を記録する理由（流さない経路。取消は「伝えた」に数える。→ {@link decideDispatch}）。 */
+  const silentLpgmSkip = (lpgm: JMALpgm): ReplayTelegramSkip => {
+    if (!lpgmNotifiable(lpgm)) return 'notDispatched'
+    const decision = decideDispatch('lpgm', lpgm, true, true, false)
+    return decision === 'dispatch' ? 'silentReplayInit' : decision
+  }
+  /**
+   * 臨時情報・後発地震注意情報の取消が、**いま出ている別の情報単位の帯の下で届いた古い取消か**。帯へ当てる前に見る
+   * （当てた後では、消したのか元から別だったのかが分からない）。判定の形は `applyNankai`・`applyKohatsu` の照合と同じ。
+   */
+  const cancelOverOtherUnit = (shownEventId: string | null, telegram: { eventId: string; cancelled: boolean; retracted?: boolean }): boolean =>
+    telegram.cancelled && telegram.retracted === true && shownEventId !== null && shownEventId !== telegram.eventId
   // 受理した EEW の報番号（キーは `eewEventKey`）。古い報の判定に使う。
   //
   // **`stateRef` では判定できない。** あれはレンダー時にしか進まないが、キューのディスパッチャは
@@ -1095,8 +1139,8 @@ export function useEarthquakes(
    * 同じ規則を 2 箇所に書くと片方だけ更新が漏れる ―― 実際に、取消の照合をキュー側だけに入れて
    * ライブ受信が素通りする状態を作った。関連解説情報（`applyNankaiCommentary`）と同じ形に揃える。
    *
-   * @returns 反映したか。取消を見送った場合は `false` で、**呼び出し側は音・読み上げも起こさない**
-   *   （表示していないものの取消を告げても伝わらない）。
+   * @returns 帯へ反映したか。**取消は `false` でも呼び出し側が音と読み上げを起こす**（画面に出していない
+   *   情報への取消も伝える。→ `decideDispatch`）。
    */
   const applyNankai = useCallback((nankai: JMANankai): boolean => {
     if (!nankai.cancelled) {
@@ -1113,10 +1157,9 @@ export function useEarthquakes(
     // 取消は「その電文が指す情報単位」を取り消すので、対象と同じ識別情報を持つ（電文解説資料
     // Ⅰ.別紙ウ）。遅れて届いた古い取消が新しい段階の帯を消さないよう、そちらだけ照合する。
     if (nankai.retracted && shownNankaiEventIdRef.current !== nankai.eventId) {
-      // 表示していない場合（記憶が空）もここへ来る。**帯が無いまま「取り消されました」と
-      // 告げないため**——利用者は取り消された情報自体を見ていない。
+      // 表示していない場合（記憶が空）もここへ来る。帯は触らない（音と読み上げは呼び出し側が起こす）。
       log.info(shownNankaiEventIdRef.current === null
-        ? `[nankai] 表示していない情報単位への取消のため何もしません received=${nankai.eventId}`
+        ? `[nankai] 表示していない情報単位への取消のため帯は触りません received=${nankai.eventId}`
         : `[nankai] 別の情報単位への取消のため帯を残します received=${nankai.eventId} shown=${shownNankaiEventIdRef.current}`)
       return false
     }
@@ -1168,7 +1211,7 @@ export function useEarthquakes(
     if (kohatsu.retracted && shownKohatsuEventIdRef.current !== kohatsu.eventId) {
       // 表示していない場合もここへ来る（理由は `applyNankai` の同じ箇所に同じ）
       log.info(shownKohatsuEventIdRef.current === null
-        ? `[kohatsu] 表示していない情報単位への取消のため何もしません received=${kohatsu.eventId}`
+        ? `[kohatsu] 表示していない情報単位への取消のため帯は触りません received=${kohatsu.eventId}`
         : `[kohatsu] 別の情報単位への取消のため帯を残します received=${kohatsu.eventId} shown=${shownKohatsuEventIdRef.current}`)
       return false
     }
@@ -1179,8 +1222,9 @@ export function useEarthquakes(
   }, [])
 
   const applyNankaiCommentary = useCallback((commentary: JMANankaiCommentary): boolean => {
-    // 取消電文は帯を消す。false を返すので音・読み上げも起こさない（取消を告げる必要のある
-    // 重さの情報ではないため。臨時情報の取消とは扱いが違う）
+    // 取消電文は帯を消す。**戻り値は帯を消したか**（他の帯と同じ）。音と読み上げは帯を消したかによらず
+    // 起こす（解説情報の設定がオンの端末だけ。2026-10-22 ユーザー選択「設定を入れたときだけ鳴らし読む
+    // (Recommended)」・2026-10-24 ユーザー選択「伝える (Recommended)」。→ `decideDispatch`）
     if (commentary.cancelled) {
       // 失効の予約と同じく、消す前に `id` を照合する（待っている間に新しい解説へ入れ替わって
       // いた場合にそちらを消さないため）。
@@ -1205,7 +1249,7 @@ export function useEarthquakes(
       }
       shownCommentaryIdRef.current = null
       setState(prev => ({ ...prev, nankaiCommentary: null }))
-      return false
+      return true
     }
 
     const remainMs = new Date(commentary.expireAt).getTime() - getTimeRef.current().getTime()
@@ -2403,7 +2447,6 @@ export function useEarthquakes(
             isSilentRef.current = false
             continue
           }
-          const lpgmCancelHitShown = noteLiveLpgm(lpgm)
           // 印付けの規則は `applyLiveLpgmWithMarks`（WebSocket 経路と共通）
           setState(prev => ({ ...prev, ...applyLiveLpgmWithMarks(prev, lpgm, Date.now()) }))
           // **他の 6 種別（nankai/nankaiCommentary/kohatsu/earthquakeCount/estimatedIntensity/
@@ -2416,32 +2459,31 @@ export function useEarthquakes(
           // **理由は `notApplied` ではなく `notDispatched`。** `lpgmNotifiable` が偽でも
           // `lpgmByEventId` は必ず書き換わるので、「反映されなかった」を意味する `notApplied`
           // を使うと嘘になる（他の 5 種別は棄却＝ state 不変が一致するが lpgm だけ一致しない）。
-          const lpgmCanNotify = lpgmNotifiable(lpgm, lpgmCancelHitShown)
-          if (!silent && lpgmCanNotify) {
+          const lpgmDecision = lpgmNotifiable(lpgm) ? decideDispatch('lpgm', lpgm, true, silent, false) : 'notDispatched'
+          if (lpgmDecision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'lpgm', data: lpgm })
           } else {
-            recordSkippedTelegram(
-              { kind: 'lpgm', data: lpgm },
-              lpgmCanNotify ? 'silentReplayInit' : 'notDispatched',
-            )
+            recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmDecision)
           }
         } else if (payload.kind === 'nankai') {
           const nankai = payload.data
-          // 反映しなかった取消では音も読み上げも起こさない（判定は `applyNankai`）。
-          const applied = applyNankai(nankai)
-          if (applied && !silent) {
+          // 取消は帯へ当てたかによらず伝える（→ `decideDispatch`）
+          const otherUnit = cancelOverOtherUnit(shownNankaiEventIdRef.current, nankai)
+          const decision = decideDispatch('nankai', nankai, applyNankai(nankai), silent, otherUnit)
+          if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'nankai', data: nankai })
           } else {
-            recordSkippedTelegram({ kind: 'nankai', data: nankai }, applied ? 'silentReplayInit' : 'notApplied')
+            recordSkippedTelegram({ kind: 'nankai', data: nankai }, decision)
           }
         } else if (payload.kind === 'nankaiCommentary') {
           const commentary = payload.data
-          // 期限切れなら反映も通知もしない（画面に出ないものを読み上げても意味がない）
-          const applied = applyNankaiCommentary(commentary)
-          if (applied && !silent) {
+          // 期限切れなら反映も通知もしない（画面に出ないものを読み上げても意味がない）。取消は帯へ当てたかに
+          // よらず伝える（→ `decideDispatch`）
+          const decision = decideDispatch('nankaiCommentary', commentary, applyNankaiCommentary(commentary), silent, false)
+          if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'nankaiCommentary', data: commentary })
           } else {
-            recordSkippedTelegram({ kind: 'nankaiCommentary', data: commentary }, applied ? 'silentReplayInit' : 'notApplied')
+            recordSkippedTelegram({ kind: 'nankaiCommentary', data: commentary }, decision)
           }
         } else if (payload.kind === 'purge-cancelled-quake') {
           const { id } = payload
@@ -2513,11 +2555,12 @@ export function useEarthquakes(
           })
         } else if (payload.kind === 'kohatsu') {
           const kohatsu = payload.data
-          const applied = applyKohatsu(kohatsu)
-          if (applied && !silent) {
+          const otherUnit = cancelOverOtherUnit(shownKohatsuEventIdRef.current, kohatsu)
+          const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), silent, otherUnit)
+          if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
           } else {
-            recordSkippedTelegram({ kind: 'kohatsu', data: kohatsu }, applied ? 'silentReplayInit' : 'notApplied')
+            recordSkippedTelegram({ kind: 'kohatsu', data: kohatsu }, decision)
           }
         } else if (payload.kind === 'quakeNotice') {
           const notice = payload.data
@@ -2531,11 +2574,11 @@ export function useEarthquakes(
           }
         } else if (payload.kind === 'earthquakeCount') {
           const count = payload.data
-          const applied = applyEarthquakeCount(count)
-          if (applied && !silent) {
+          const decision = decideDispatch('earthquakeCount', count, applyEarthquakeCount(count), silent, false)
+          if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'earthquakeCount', data: count })
           } else {
-            recordSkippedTelegram({ kind: 'earthquakeCount', data: count }, applied ? 'silentReplayInit' : 'notApplied')
+            recordSkippedTelegram({ kind: 'earthquakeCount', data: count }, decision)
           }
         } else if (payload.kind === 'estimatedIntensity') {
           const ei = payload.data
@@ -2807,9 +2850,8 @@ export function useEarthquakes(
               // **キュー経路（`lpgmNotifiable`）と同じ判定で記録する。** ここも `onLiveEvent` を
               // 呼ばないサイレント経路なので、通知しうる中身（階級1以上の発表）でも
               // `silentReplayInit`、それ以外は `notDispatched`（→ `lpgmNotifiable` のコメント）。
-              // 取消は表示中の長周期を消したときだけ通知しうるが、履歴の畳み込みは画面と突き合わせないので
-              // 消したかは決まらない。`notDispatched` の側へ置く（従来どおり）。
-              recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmNotifiable(lpgm, false) ? 'silentReplayInit' : 'notDispatched')
+              // 取消は「伝えた」に数える（→ `decideDispatch`）—— 同じ取消が後からライブで届いても鳴らさない。
+              recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, silentLpgmSkip(lpgm))
             }
             if (stale()) return
             // 地震ごとの 1 通へ畳む。**取消を台帳へ積み、その地震の取消より前の報は採らない**
@@ -2883,21 +2925,29 @@ export function useEarthquakes(
                 // `notApplied`。ここも `onLiveEvent` を呼ばないので、他 3 種別と同じ記録が漏れていた。
                 case 'nankai': {
                   const applied = tryApplyExtra('南海トラフ臨時情報', p.data, applyNankai)
+                  // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
+                  if (p.data.cancelled) noteConveyedCancel('nankai', p.data)
                   recordSkippedTelegram({ kind: 'nankai', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
                   break
                 }
                 case 'nankaiCommentary': {
                   const applied = tryApplyExtra('南海トラフ関連解説情報', p.data, applyNankaiCommentary)
+                  // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
+                  if (p.data.cancelled) noteConveyedCancel('nankaiCommentary', p.data)
                   recordSkippedTelegram({ kind: 'nankaiCommentary', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
                   break
                 }
                 case 'kohatsu': {
                   const applied = tryApplyExtra('後発地震注意情報', p.data, applyKohatsu)
+                  // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
+                  if (p.data.cancelled) noteConveyedCancel('kohatsu', p.data)
                   recordSkippedTelegram({ kind: 'kohatsu', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
                   break
                 }
                 case 'earthquakeCount': {
                   const applied = tryApplyExtra('地震回数に関する情報', p.data, applyEarthquakeCount)
+                  // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
+                  if (p.data.cancelled) noteConveyedCancel('earthquakeCount', p.data)
                   recordSkippedTelegram({ kind: 'earthquakeCount', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
                   break
                 }
@@ -3050,41 +3100,43 @@ export function useEarthquakes(
             recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, 'notApplied')
             return
           }
-          const lpgmCancelHitShown = noteLiveLpgm(lpgm)
           // 印付けもキュー経路と同じ関数で（→ `applyLiveLpgmWithMarks`）
           setState(prev => ({ ...prev, ...applyLiveLpgmWithMarks(prev, lpgm, Date.now()) }))
-          if (lpgmNotifiable(lpgm, lpgmCancelHitShown)) {
+          // 流すかの判定もキュー経路と同じ（→ `lpgmNotifiable`・`decideDispatch`）。この経路は常にライブ
+          // （silent の概念を持たない）。流さないものは録画ツール向けに必ず記録する（3巡目レビューで、ここだけ
+          // else が無く記録が丸ごと抜けていたのを検出した）。
+          const lpgmDecision = lpgmNotifiable(lpgm) ? decideDispatch('lpgm', lpgm, true, false, false) : 'notDispatched'
+          if (lpgmDecision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'lpgm', data: lpgm })
           } else {
-            // 録画ツール向けの記録。この経路は常にライブ（silent の概念を持たない）なので
-            // `notDispatched` 一択——音読み上げの対象外と決めている（表示していない地震への取消・階級 0）。
-            // キュー経路（`handleEvent`）の同じ判定と揃える（3巡目レビューで検出。ここだけ
-            // else が無く記録が丸ごと抜けていた）。
-            recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, 'notDispatched')
+            recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmDecision)
           }
         } else if (ev.kind === 'nankai') {
           const nankai = ev.data
           // キュー経路と同じ関数を通す（規則を 2 箇所に書かない。理由は `applyNankai`）。
-          if (applyNankai(nankai)) {
+          const otherUnit = cancelOverOtherUnit(shownNankaiEventIdRef.current, nankai)
+          const decision = decideDispatch('nankai', nankai, applyNankai(nankai), false, otherUnit)
+          if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'nankai', data: nankai })
           } else {
-            // 録画ツール向けの記録。この経路は常にライブ（silent の概念を持たない）なので
-            // `notApplied` 一択——反映されなかった（期限切れの取消 等）。
-            recordSkippedTelegram({ kind: 'nankai', data: nankai }, 'notApplied')
+            recordSkippedTelegram({ kind: 'nankai', data: nankai }, decision)
           }
         } else if (ev.kind === 'nankaiCommentary') {
           const commentary = ev.data
-          if (applyNankaiCommentary(commentary)) {
+          const decision = decideDispatch('nankaiCommentary', commentary, applyNankaiCommentary(commentary), false, false)
+          if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'nankaiCommentary', data: commentary })
           } else {
-            recordSkippedTelegram({ kind: 'nankaiCommentary', data: commentary }, 'notApplied')
+            recordSkippedTelegram({ kind: 'nankaiCommentary', data: commentary }, decision)
           }
         } else if (ev.kind === 'kohatsu') {
           const kohatsu = ev.data
-          if (applyKohatsu(kohatsu)) {
+          const otherUnit = cancelOverOtherUnit(shownKohatsuEventIdRef.current, kohatsu)
+          const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), false, otherUnit)
+          if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
           } else {
-            recordSkippedTelegram({ kind: 'kohatsu', data: kohatsu }, 'notApplied')
+            recordSkippedTelegram({ kind: 'kohatsu', data: kohatsu }, decision)
           }
         } else if (ev.kind === 'quakeNotice') {
           const notice = ev.data
@@ -3095,10 +3147,11 @@ export function useEarthquakes(
           }
         } else if (ev.kind === 'earthquakeCount') {
           const count = ev.data
-          if (applyEarthquakeCount(count)) {
+          const decision = decideDispatch('earthquakeCount', count, applyEarthquakeCount(count), false, false)
+          if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'earthquakeCount', data: count })
           } else {
-            recordSkippedTelegram({ kind: 'earthquakeCount', data: count }, 'notApplied')
+            recordSkippedTelegram({ kind: 'earthquakeCount', data: count }, decision)
           }
         } else if (ev.kind === 'estimatedIntensity') {
           const ei = ev.data
@@ -3741,8 +3794,8 @@ export function useEarthquakes(
         // 反映しない種別でも、録画ログの原則（onLiveEvent を呼ぶかどうかに関わらず全件記録する）
         // に従い、届いた事実は記録する（お知らせも他の帯と同じく記録する）。
         for (const lpgm of lpgmEvents) {
-          // 取消の扱いは起動時と同じ（消したかは決まらないので `notDispatched`）
-          recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmNotifiable(lpgm, false) ? 'silentReplayInit' : 'notDispatched')
+          // 取消の扱いは起動時と同じ（「伝えた」に数える。→ `decideDispatch`）
+          recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, silentLpgmSkip(lpgm))
         }
         for (const e of history.extras) {
           const p = e.payload
@@ -4268,6 +4321,9 @@ export function useEarthquakes(
     runTestTelegramScript(s => (serialName === '臨時解説' ? s.NANKAI_COMMENTARY_AD_HOC : s.NANKAI_COMMENTARY_ROUTINE)),
   [runTestTelegramScript])
 
+  /** 関連解説情報の取消テスト（→ `NANKAI_COMMENTARY_RETRACTION`）。 */
+  const simulateNankaiCommentaryRetraction = useCallback(() => runTestTelegramScript(s => s.NANKAI_COMMENTARY_RETRACTION), [runTestTelegramScript])
+
   /** 北海道・三陸沖後発地震注意情報のテスト（サンプル電文。→ `KOHATSU`）。 */
   const simulateKohatsu = useCallback(() => runTestTelegramScript(s => s.KOHATSU), [runTestTelegramScript])
 
@@ -4291,8 +4347,8 @@ export function useEarthquakes(
 
   /**
    * 長周期地震動の取消テスト（→ `LPGM_RETRACTION`。DMDSS 版のみ）。**取消の理由が届く先は読み上げだけ**
-   * —— 取消で長周期の一覧・バッジごと消える。取消が表示中の長周期を消したかの判定（`noteLiveLpgm`）と、
-   * 読み上げへ渡すかの判定（`lpgmNotifiable`）をライブと同じ形で通す。
+   * —— 取消で長周期の一覧・バッジごと消える。読み上げへ渡すかの判定（`lpgmNotifiable`・`decideDispatch`）を
+   * ライブと同じ形で通す。
    */
   const simulateLpgmRetraction = useCallback(() => runTestTelegramScript(s => s.LPGM_RETRACTION), [runTestTelegramScript])
 
@@ -4318,6 +4374,8 @@ export function useEarthquakes(
     shownCommentaryIdRef.current = null
     shownQuakeNoticeRef.current = null
     shownEarthquakeCountEventIdRef.current = null
+    // 伝えた取消の記憶も前の時間軸のもの（→ `conveyedCancelsRef`）
+    conveyedCancelsRef.current.clear()
     estimatedIntensitiesRef.current = []
     // 分布を伝えた地震の台帳も空にする。リプレイの開始・リセットで時間軸が変わるため、前の軸で
     // 伝えた分布を「もう伝えた」と数えると、新しい軸の初報が「更新されました」と読まれる。
@@ -4473,7 +4531,7 @@ export function useEarthquakes(
     simulateForeignQuakeHuge,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence,

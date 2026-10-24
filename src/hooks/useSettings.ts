@@ -82,6 +82,7 @@ export interface AppSettings {
   notifyEEW: boolean               // 緊急地震速報の発報・昇格時にブラウザ通知を送る
   notifyTsunami: boolean           // 津波のブラウザ通知（予報以上の発表・続報と全区域解除。→ audio-tts-spec §7）
   notifyDetection: boolean         // 強震モニタの揺れ検知時にブラウザ通知を送る
+  notifyNankai: boolean            // 南海トラフ地震臨時情報・後発地震注意情報・臨時の解説情報のブラウザ通知（DMDSS 版。2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
   homeLat: number | null           // ホーム地点 緯度（null = 未設定）
   homeLng: number | null           // ホーム地点 経度（null = 未設定）
   /**
@@ -265,6 +266,7 @@ export const DEFAULTS: AppSettings = {
   notifyEEW: true,
   notifyTsunami: true,
   notifyDetection: false,
+  notifyNankai: true,
   homeLat: null,
   homeLng: null,
   arrivalToken: '',
@@ -428,6 +430,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     notifyEEW: ensureBool(partial.notifyEEW, DEFAULTS.notifyEEW),
     notifyTsunami: ensureBool(partial.notifyTsunami, DEFAULTS.notifyTsunami),
     notifyDetection: ensureBool(partial.notifyDetection, DEFAULTS.notifyDetection),
+    notifyNankai: ensureBool(partial.notifyNankai, DEFAULTS.notifyNankai),
     homeLat: clampNumberOrNull(partial.homeLat, -90, 90),
     homeLng: clampNumberOrNull(partial.homeLng, -180, 180),
     arrivalToken: ensureString(partial.arrivalToken, DEFAULTS.arrivalToken),
@@ -598,11 +601,34 @@ function loadStored(): AppSettings {
       log.warn('[settings] localStorage の値が object でないため既定値で復旧', { key: STORAGE_KEY })
       return DEFAULTS
     }
-    return sanitize(parsed as Partial<AppSettings>)
+    return migrateDetachedNotifications(parsed as Partial<AppSettings>, sanitize(parsed as Partial<AppSettings>))
   } catch (e) {
     log.warn('[settings] localStorage の読み込みに失敗、既定値で復旧', e)
     return DEFAULTS
   }
+}
+
+/**
+ * 緊急地震速報・津波・南海トラフの通知を地震情報の通知から切り離す前に保存された設定を、**一度だけ**移し替える
+ * （2026-10-24 ユーザー選択「一度だけ移し替える」）。
+ *
+ * かつては「ブラウザ通知」（`notifyMinScale` が負）を切ると、緊急地震速報・津波の通知もまとめて止まっていた。
+ * 切り離した後もそのまま読むと、通知を全部止めたつもりの端末で、既定オンの緊急地震速報・津波と、新しい南海トラフの
+ * 通知が出始める。そこで、**切り離す前の設定（`notifyNankai` を持たない）で地震情報の通知が切ってあれば**、3 つも切る。
+ * 読み込みで変えた値は保存しない（保存は利用者が設定を変えたときだけ）ので、保存されるまでは読み込みのたびに同じ移し替えが
+ * 走る（結果は同じ）。保存した時点で `notifyNankai` が入るので、以後は効かない（利用者が後から入れ直したものを戻さない）。
+ *
+ * **`sanitize()` の中では行わない。** 設定ファイルの読み込み（`settingsIo.ts`）は `sanitize()` の結果をファイルの中身と
+ * 突き合わせて「読めなかった項目」を出すので、中で値を変えると誤ってそれに数えられる。端末の設定（`loadStored`）と
+ * 設定ファイル（`parseSettingsFile`。2026-10-24 ユーザー選択「ファイルにも掛ける (Recommended)」）は、`sanitize()` の後でこれを通す。
+ * 揺れ検知の通知（`notifyDetection`）は選んだ範囲に入っていないので変えない（既定はオフ）。
+ */
+export function migrateDetachedNotifications(stored: Partial<AppSettings>, settings: AppSettings): AppSettings {
+  // 地震情報の通知を**切ってあると保存されているとき**だけ（値が無い＝選んでいない設定は、既定のまま読む）
+  if (stored.notifyNankai !== undefined || stored.notifyMinScale === undefined || settings.notifyMinScale >= 0) return settings
+  if (!settings.notifyEEW && !settings.notifyTsunami && !settings.notifyNankai) return settings
+  log.info('[settings] 地震情報の通知を切っていた設定なので、緊急地震速報・津波・南海トラフの通知も切ります（一度だけ）')
+  return { ...settings, notifyEEW: false, notifyTsunami: false, notifyNankai: false }
 }
 
 export function useSettings() {

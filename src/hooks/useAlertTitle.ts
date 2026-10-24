@@ -49,9 +49,22 @@ export function computeEEWTitle(eews: ReadonlyMap<string, EEWAlert>): string {
   // 該当すれば電文に値が入らない）
   const maxLevel = Array.from(eews.values())
     .reduce<0 | 1 | 2>((m, e) => Math.max(m, computeDisplayEEWLevel(e)) as 0 | 1 | 2, 0)
-  return `${eewKindLabel(maxLevel)} ${primary.earthquake.hypocenter.name}` +
-    (scale > 0 ? ` 最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}予想` : '') +
-    (eews.size > 1 ? ` 他${eews.size - 1}件` : '')
+  return joinTitleParts(
+    eewKindLabel(maxLevel), primary.earthquake.hypocenter.name,
+    scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}予想` : '',
+    eews.size > 1 ? `他${eews.size - 1}件` : '',
+  )
+}
+
+/**
+ * ウィンドウタイトルを、空でない部品だけ空白 1 つで繋いで作る（緊急地震速報・長周期地震動）。
+ *
+ * **震央地名が空の報（起こりうるのは標準版の取得元。実配信では未観測。→ `eewAlertToText`）で空白を二重に残さない。**
+ * 受信時のタイトル（`useLiveEventHandler` の `eewOngoingTitleText`）と再評価のタイトル（{@link computeEEWTitle}）が
+ * 同じ形になるよう、両方からこれを呼ぶ。
+ */
+export function joinTitleParts(...parts: string[]): string {
+  return parts.map(p => p.trim()).filter(p => p !== '').join(' ')
 }
 
 function applyPriorityTitle(
@@ -70,14 +83,29 @@ function applyPriorityTitle(
   else { setState(TSUNAMI_ACTIVE_TITLE) }
 }
 
-// 情報タイトルが平常タイトルへ戻るまでの表示時間 [ms]。
-// 自動復帰秒数が15秒設定のときのみ15秒、それ以外は30秒に揃える。
-function titleResetMs(idleRevertSec: number): number {
-  return idleRevertSec === 15 ? 15000 : 30000
+/**
+ * 情報タイトルが平常タイトルへ戻るまでの表示時間 [ms]。**`null` は戻さない**（次の情報まで出し続ける）。
+ *
+ * **自動復帰の秒数に合わせる**（2026-10-23 ユーザー選択「自動復帰に合わせる (Recommended)」）。タブが既定へ戻る
+ * 時刻にタイトルも平常へ戻る。自動復帰を無効にした端末（0 以下）では戻さない（→ audio-tts-spec.md §5「タイマー管理」）。
+ * かつては自動復帰が 15 秒のときだけ 15 秒、それ以外はどの設定でも 30 秒で、仕様書と食い違っていた。
+ */
+export function titleResetMs(idleRevertSec: number): number | null {
+  return idleRevertSec > 0 ? idleRevertSec * 1000 : null
 }
 
+/**
+ * 「津波のタイトルを一定時間に制限」の一定時間 [ms]。自動復帰が有効ならその秒数（{@link titleResetMs}）、
+ * **無効なら 30 秒のまま**（2026-10-24 ユーザー選択「30 秒のまま (Recommended)」）—— 無効な端末で「次の情報まで」に
+ * すると、制限の設定がその端末では効かなくなる。
+ */
+export const TSUNAMI_TEMPORARY_TITLE_FALLBACK_MS = 30000
+
 /** タイトル復帰タイマーの種別（情報種別ごとに独立して管理する） */
-export type TitleTimerKind = 'earthquake' | 'eew' | 'tsunami' | 'specialInfo'
+export type TitleTimerKind = 'earthquake' | 'eew' | 'tsunami' | 'specialInfo' | 'kohatsu' | 'lpgm' | 'earthquakeCount' | 'nankaiCommentary'
+
+const TITLE_TIMER_KINDS: readonly TitleTimerKind[] =
+  ['earthquake', 'eew', 'tsunami', 'specialInfo', 'kohatsu', 'lpgm', 'earthquakeCount', 'nankaiCommentary']
 
 export interface AlertTitleApi {
   /** 現在の情報タイトル（null = 平常時タイトル）。画面へ出すときは `resolveAlertTitle` を通す */
@@ -129,10 +157,30 @@ export interface AlertTitleApi {
    * 理由の値が表に無いとき（型を迂回した値）は「解除」の語へ倒し、記録に残す。
    */
   showTsunamiEndTitle: (reason: JMATsunami['cancelReason']) => void
-  /** タイトル復帰タイマーを登録する（既存タイマーはクリアして張り直す） */
-  scheduleTitleRevert: (kind: TitleTimerKind) => void
+  /**
+   * タイトル復帰タイマーを登録する（既存タイマーはクリアして張り直す）。**直前に `setTitle` / `setOngoingTitle` で
+   * 出したタイトルの持ち主を、この種別とその電文の識別子（`ownerId`）にする**（→ `releaseTitle`）。
+   * 取消で下ろさない種別（地震情報・緊急地震速報）は `ownerId` に null を渡す。
+   * 待ちが切れたときに戻すのは、そのときも持ち主がこの種別のときだけ（後から別の情報が取ったタイトルを早く消さない）。
+   */
+  scheduleTitleRevert: (kind: TitleTimerKind, ownerId: string | null) => void
+  /**
+   * タイトルを書き換えなかった報で、**いまのタイトルがその種別のものなら**待ちだけ張り直す（震度を伝えない
+   * 地震情報で、出している震度のタイトルを残すとき）。持ち主は変えない。
+   */
+  extendTitle: (kind: TitleTimerKind) => void
   /** タイトル復帰タイマーをクリアのみ行う（即時に優先度を再評価するケースで使用） */
   clearTitleTimer: (kind: TitleTimerKind) => void
+  /**
+   * その種別の取消・終了でタイトルを下ろす。**いま出ているタイトルをその種別が出したときだけ**優先度を
+   * 再評価する（`setTitle` の直後に `scheduleTitleRevert(kind, ownerId)` を呼んだものが「その種別のタイトル」）。
+   * 後から別の情報がタイトルを取っていれば、そちらを消さない。
+   *
+   * @param ownerId 取り消された電文の識別子。**持ち主の識別子と一致するときだけ**下ろす（同じ種別の別の電文
+   *   ——別の地震の長周期・古い情報単位の臨時情報——のタイトルを消さない）。null なら種別だけで判定する
+   *   （臨時情報の調査終了は、段階の報と識別子が違う）
+   */
+  releaseTitle: (kind: TitleTimerKind, ownerId: string | null) => void
   /** 津波タイトルの表示ウィンドウを閉じ、津波タイマーをクリアする（解除・取消時） */
   endTsunamiTitleWindow: () => void
   /**
@@ -159,10 +207,13 @@ export function useAlertTitle(opts: {
   // デフォルトタブへ戻るタイミングで null に戻す。
   const [alertTitle, setAlertTitle] = useState<AlertTitle>(null)
 
-  // 各情報タイトルのリセットタイマー（自動復帰秒数が15秒の場合は15秒、それ以外は30秒）
+  // 各情報タイトルのリセットタイマー（長さは `titleResetMs`）
   const timersRef = useRef<Record<TitleTimerKind, number>>({
-    earthquake: 0, eew: 0, tsunami: 0, specialInfo: 0,
+    earthquake: 0, eew: 0, tsunami: 0, specialInfo: 0, kohatsu: 0, lpgm: 0, earthquakeCount: 0, nankaiCommentary: 0,
   })
+  // いま出ているタイトルを出した種別と電文の識別子（`scheduleTitleRevert` を呼んだもの）。null は種別に属さない
+  // タイトル（揺れ検知・優先度の再評価・平常）。取消で下ろすか・待ちが切れたときに戻すかの判定に使う（→ `releaseTitle`）。
+  const titleOwnerRef = useRef<{ kind: TitleTimerKind; id: string | null } | null>(null)
   // 終わりのタイトルの待ちと、出している語（null = 出していない）。**津波の待ち（`timersRef.tsunami`）
   // とは分ける** —— あちらは解除の検出で `endTsunamiTitleWindow` が落とすので、相乗りすると
   // 出したばかりの終わりの語が戻らなくなる。
@@ -188,6 +239,7 @@ export function useAlertTitle(opts: {
     tsunamiTitleTemporaryRef.current ? tsunamiTitleWindowActiveRef.current : tsunamiActiveRef.current
 
   const applyPriority: AlertTitleApi['applyPriority'] = (overrides) => {
+    titleOwnerRef.current = null
     applyPriorityTitle(
       overrides?.eews ?? activeEEWsRef.current,
       overrides?.tsunami ?? tsunamiTitleFlag(),
@@ -202,11 +254,33 @@ export function useAlertTitle(opts: {
     window.clearTimeout(timersRef.current[kind])
   }
 
-  const scheduleTitleRevert = (kind: TitleTimerKind) => {
+  const armTimer = (kind: TitleTimerKind) => {
     window.clearTimeout(timersRef.current[kind])
+    const ms = titleResetMs(idleRevertSecRef.current)
+    // 自動復帰が無効な端末では張らない（次の情報まで出し続ける）
+    if (ms === null) return
     timersRef.current[kind] = window.setTimeout(() => {
-      applyPriority()
-    }, titleResetMs(idleRevertSecRef.current))
+      // **持ち主が自分のときだけ戻す。** 種別ごとの待ちは独立しているので、無条件に戻すと、後から別の種別が
+      // 出したタイトル（地震情報の数分後に届いた長周期など）を、先の種別の待ちが早く消す
+      if (titleOwnerRef.current?.kind === kind) applyPriority()
+    }, ms)
+  }
+
+  const scheduleTitleRevert: AlertTitleApi['scheduleTitleRevert'] = (kind, ownerId) => {
+    titleOwnerRef.current = { kind, id: ownerId }
+    armTimer(kind)
+  }
+
+  const extendTitle: AlertTitleApi['extendTitle'] = (kind) => {
+    if (titleOwnerRef.current?.kind === kind) armTimer(kind)
+  }
+
+  const releaseTitle: AlertTitleApi['releaseTitle'] = (kind, ownerId) => {
+    const owner = titleOwnerRef.current
+    if (owner?.kind !== kind) return
+    if (ownerId !== null && owner.id !== ownerId) return
+    window.clearTimeout(timersRef.current[kind])
+    applyPriority()
   }
 
   const dropEndTitle = () => {
@@ -216,13 +290,19 @@ export function useAlertTitle(opts: {
 
   const showTsunamiTitle = () => {
     dropEndTitle()
+    titleOwnerRef.current = null
     setAlertTitle(TSUNAMI_ACTIVE_TITLE)
     tsunamiTitleWindowActiveRef.current = true
     window.clearTimeout(timersRef.current.tsunami)
+    // 「一定時間に制限」では自動復帰が無効でも 30 秒で閉じる（→ TSUNAMI_TEMPORARY_TITLE_FALLBACK_MS）。
+    // 制限しない（既定）なら、再評価しても発表中の限り同じタイトルになるだけなので、無効な端末では張らない。
+    const ms = titleResetMs(idleRevertSecRef.current)
+      ?? (tsunamiTitleTemporaryRef.current ? TSUNAMI_TEMPORARY_TITLE_FALLBACK_MS : null)
+    if (ms === null) return
     timersRef.current.tsunami = window.setTimeout(() => {
       if (tsunamiTitleTemporaryRef.current) tsunamiTitleWindowActiveRef.current = false
       applyPriority()
-    }, titleResetMs(idleRevertSecRef.current))
+    }, ms)
   }
 
   const endTsunamiTitleWindow = () => {
@@ -240,10 +320,14 @@ export function useAlertTitle(opts: {
     const label = CANCEL_REASON_LABEL[known ? reason : 'lifted'].title
     endTsunamiTitleWindow()
     window.clearTimeout(endTimerRef.current)
-    endTimerRef.current = window.setTimeout(() => {
-      endLabelRef.current = null
-      applyPriority()
-    }, titleResetMs(idleRevertSecRef.current))
+    // 長さは他の報と同じ。自動復帰が無効な端末では次の情報まで出す
+    const ms = titleResetMs(idleRevertSecRef.current)
+    if (ms !== null) {
+      endTimerRef.current = window.setTimeout(() => {
+        endLabelRef.current = null
+        applyPriority()
+      }, ms)
+    }
     endLabelRef.current = label
     applyPriority({ tsunami: false })
   }
@@ -252,11 +336,13 @@ export function useAlertTitle(opts: {
   // （そちらが新しい事実を伝えている以上、終わった津波の語を後から出し直さない）。
   const setTitle: AlertTitleApi['setTitle'] = (v) => {
     dropEndTitle()
+    titleOwnerRef.current = null
     setAlertTitle(v)
   }
 
   // 進行中のものは層の上に乗るだけ。終わりの語は残し、再評価で戻ってこられるようにする。
   const setOngoingTitle: AlertTitleApi['setOngoingTitle'] = (v) => {
+    titleOwnerRef.current = null
     setAlertTitle(v)
   }
 
@@ -267,10 +353,7 @@ export function useAlertTitle(opts: {
     const timers = timersRef.current
     const endTimer = endTimerRef
     return () => {
-      window.clearTimeout(timers.earthquake)
-      window.clearTimeout(timers.eew)
-      window.clearTimeout(timers.tsunami)
-      window.clearTimeout(timers.specialInfo)
+      for (const kind of TITLE_TIMER_KINDS) window.clearTimeout(timers[kind])
       window.clearTimeout(endTimer.current)
     }
   }, [])
@@ -284,7 +367,9 @@ export function useAlertTitle(opts: {
     showTsunamiTitle,
     showTsunamiEndTitle,
     scheduleTitleRevert,
+    extendTitle,
     clearTitleTimer,
+    releaseTitle,
     endTsunamiTitleWindow,
     syncInputs,
   }
