@@ -1,0 +1,149 @@
+<Report xmlns="http://xml.kishou.go.jp/jmaxml1/" xmlns:jmx="http://xml.kishou.go.jp/jmaxml1/">
+<Control>
+<Title>長周期地震動に関する観測情報</Title>
+<DateTime>2024-01-01T08:05:21Z</DateTime>
+<Status>通常</Status>
+<EditorialOffice>気象庁本庁</EditorialOffice>
+<PublishingOffice>気象庁</PublishingOffice>
+</Control>
+<Head xmlns="http://xml.kishou.go.jp/jmaxml1/informationBasis1/">
+<Title>長周期地震動に関する観測情報</Title>
+<ReportDateTime>2024-01-01T17:05:00+09:00</ReportDateTime>
+<TargetDateTime>2024-01-01T17:05:00+09:00</TargetDateTime>
+<EventID>20240101165652</EventID>
+<InfoType>発表</InfoType>
+<Serial>1</Serial>
+<InfoKind>長周期地震動に関する観測情報</InfoKind>
+<InfoKindVersion>1.3_0</InfoKindVersion>
+<Headline>
+<Text>０１日１６時５６分ころの地震により、長周期地震動階級２を観測した地域があります。</Text>
+<Information type="長周期地震動に関する観測情報（細分区域）">
+<Item>
+<Kind><Name>長周期地震動階級２</Name></Kind>
+<Areas codeType="地震情報／細分区域">
+<Area><Name>石川県能登</Name><Code>390</Code></Area>
+</Areas>
+</Item>
+</Information>
+</Headline>
+</Head>
+<Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/seismology1/" xmlns:jmx_eb="http://xml.kishou.go.jp/jmaxml1/elementBasis1/">
+<Earthquake>
+<OriginTime>2024-01-01T16:56:00+09:00</OriginTime>
+<ArrivalTime>2024-01-01T16:56:00+09:00</ArrivalTime>
+<Hypocenter>
+<Area>
+<Name>石川県能登地方</Name>
+<Code type="震央地名">390</Code>
+<jmx_eb:Coordinate description="北緯３７．３度　東経１３６．９度　深さ　２０ｋｍ" datum="日本測地系">+37.3+136.9-20000/</jmx_eb:Coordinate>
+<NameFromMark>輪島の南南西２０ｋｍ付近</NameFromMark>
+<MarkCode type="震央補助">308</MarkCode>
+<Direction>南南西</Direction>
+<Distance unit="km">20</Distance>
+</Area>
+</Hypocenter>
+<jmx_eb:Magnitude type="Mj" description="Ｍ５．７">5.7</jmx_eb:Magnitude>
+</Earthquake>
+<Intensity>
+<Observation>
+<CodeDefine>
+<Type xpath="Pref/Code">地震情報／都道府県等</Type>
+<Type xpath="Pref/Area/Code">地震情報／細分区域</Type>
+<Type xpath="Pref/Area/IntensityStation/Code">長周期地震動観測点</Type>
+</CodeDefine>
+<MaxInt>5+</MaxInt>
+<MaxLgInt>2</MaxLgInt>
+<LgCategory>1</LgCategory>
+<Pref>
+<Name>石川県</Name>
+<Code>17</Code>
+<MaxInt>5+</MaxInt>
+<MaxLgInt>2</MaxLgInt>
+<Area>
+<Name>石川県能登</Name>
+<Code>390</Code>
+<MaxInt>5+</MaxInt>
+<MaxLgInt>2</MaxLgInt>
+<IntensityStation>
+<Name>輪島市鳳至町</Name>
+<Code>1720402</Code>
+<Int>4</Int>
+<LgInt>2</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">2</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">41.6</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">41.6</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">14.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">7.6</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">5.5</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">4.2</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">3.8</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">3.7</SvaPerPeriod>
+</IntensityStation>
+<IntensityStation>
+<Name>志賀町富来領家町</Name>
+<Code>1738400</Code>
+<Int>5-</Int>
+<LgInt>2</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">2</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">18.3</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">18.3</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">10.9</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">4.9</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">3.1</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">2.5</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">2.5</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">2.4</SvaPerPeriod>
+</IntensityStation>
+<IntensityStation>
+<Name>七尾市本府中町</Name>
+<Code>1720200</Code>
+<Int>4</Int>
+<LgInt>1</LgInt>
+<LgIntPerPeriod PeriodicBand="1" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="2" PeriodUnit="秒台">1</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="3" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="4" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="5" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="6" PeriodUnit="秒台">0</LgIntPerPeriod>
+<LgIntPerPeriod PeriodicBand="7" PeriodUnit="秒台">0</LgIntPerPeriod>
+<Sva unit="cm/s">13.6</Sva>
+<SvaPerPeriod unit="cm/s" PeriodicBand="1" PeriodUnit="秒台">13.6</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="2" PeriodUnit="秒台">8.9</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="3" PeriodUnit="秒台">2.4</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="4" PeriodUnit="秒台">1.2</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="5" PeriodUnit="秒台">0.9</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="6" PeriodUnit="秒台">0.7</SvaPerPeriod>
+<SvaPerPeriod unit="cm/s" PeriodicBand="7" PeriodUnit="秒台">0.5</SvaPerPeriod>
+</IntensityStation>
+</Area>
+</Pref>
+</Observation>
+</Intensity>
+<Comments>
+<ForecastComment codeType="固定付加文">
+<Text>この地震について、緊急地震速報を発表しています。</Text>
+<Code>0241</Code>
+</ForecastComment>
+<FreeFormComment>各長周期地震動階級に対する簡易な現象表現
+ 階級１やや大きな揺れ
+ 階級２大きな揺れ
+ 階級３非常に大きな揺れ
+ 階級４極めて大きな揺れ
+波形、スペクトル等、本地震の長周期地震動に関する詳細な情報は気象庁の長周期地震動に関する観測情報のウェブサイト ( https://www.data.jma.go.jp/eew/data/ltpgm/event.php?eventId=20240101165652 ) もあわせてご活用ください。
+</FreeFormComment>
+<URI>https://www.data.jma.go.jp/eew/data/ltpgm/event.php?eventId=20240101165652</URI>
+</Comments>
+</Body>
+</Report>

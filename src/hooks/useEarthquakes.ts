@@ -4295,6 +4295,10 @@ export function useEarthquakes(
    * 読み上げへ渡すかの判定（`lpgmNotifiable`）をライブと同じ形で通す。
    */
   const simulateLpgmRetraction = useCallback(() => runTestTelegramScript(s => s.LPGM_RETRACTION), [runTestTelegramScript])
+  /** 階級 0 の長周期地震動テスト（→ `LPGM_CLASS_ZERO`。DMDSS 版のみ）。画面にだけ出て、音と読み上げは無い。 */
+  const simulateLpgmClassZero = useCallback(() => runTestTelegramScript(s => s.LPGM_CLASS_ZERO), [runTestTelegramScript])
+  /** 長周期地震動の観測情報の種類 1・3 のテスト（→ `LPGM_CATEGORIES`。DMDSS 版のみ）。 */
+  const simulateLpgmCategories = useCallback(() => runTestTelegramScript(s => s.LPGM_CATEGORIES), [runTestTelegramScript])
 
   const resetState = useCallback(() => {
     // 台帳もここで空にする。掃除の `useEffect` に任せると、リセットから次のコミットまでの間に
@@ -4474,7 +4478,7 @@ export function useEarthquakes(
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
-    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
+    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence,
     simulateQuakeCancel,

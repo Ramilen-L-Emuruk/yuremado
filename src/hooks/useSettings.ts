@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import { log } from '../utils/logger'
 import { isDmdss } from '../utils/env'
 import { isValidIntensityScale } from '../utils/intensity'
+import { isValidLpgmClass } from '../utils/lpgm'
 // 読み上げ文の作り方を決める値なので、定義は読み上げ側（`utils/ttsText.ts`）に置く。
 // ここ（設定）から生やすと utils → hooks の向きで参照が要り、依存が逆流する。
 import type { TtsUnreceivedDetail, TelegramTextBlockKey, TelegramTextBlocks, TelegramBoilerplateKey, TelegramBoilerplateReads } from '../utils/ttsText'
@@ -100,6 +101,13 @@ export interface AppSettings {
   ttsIntensityLevels: number       // 読み上げる震度階数（最大震度に加えて何階級下まで。0 = 最大震度のみ）
   ttsMaxRegions: number            // 読み上げる最大地域数（0 = 無制限）
   ttsAlwaysReadScale: number       // 階数の設定を超えても読み上げる下限震度 (-1 = 無効)
+  /**
+   * 階数の設定を超えても読み上げる長周期地震動階級の下限（1〜4。-1 = 無効）。
+   * 震度の下限（`ttsAlwaysReadScale`）は長周期には効かないので、別に持つ
+   * （2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」。既定と文言は 2026-10-24 選択「この形でよい (Recommended)」）。
+   * 階級 0 はそもそも読まないので選べない。
+   */
+  ttsAlwaysReadLpgmClass: number
   ttsRegionTolerance: number       // 最大地域数をこの数まで超える場合は省略せず全地域を読む (0 = 無効)
   /**
    * 気象庁が書いた文（本文・付加文）を読み上げる。既定は無効（画面にだけ出す従来の挙動）。
@@ -276,6 +284,9 @@ export const DEFAULTS: AppSettings = {
   ttsIntensityLevels: 2,
   ttsMaxRegions: 10,
   ttsAlwaysReadScale: 30,
+  // **既定は階級1（＝観測した階級をすべて読む）。** 「設定を入れる前の挙動」には揃えない ——
+  // 前の挙動は上位 3 階級で切れ、4 階級そろった報で階級 1 の地域が声に出なかった（それを直す設定）。
+  ttsAlwaysReadLpgmClass: 1,
   ttsRegionTolerance: 2,
   // 以下 5 項目の既定は「この設定を入れる前の挙動」に揃えてある。既存の利用者の耳に
   // 届く内容を、設定を足しただけで変えないため。
@@ -388,6 +399,15 @@ function ensureIntensityScale(value: unknown, fallback: number, key: string): nu
   return fallback
 }
 
+/** 必ず読む長周期地震動階級。1〜4 か -1（無効）だけを通す。 */
+function ensureAlwaysReadLpgmClass(value: unknown, fallback: number): number {
+  if (value === -1 || (typeof value === 'number' && isValidLpgmClass(value))) return value
+  if (value !== undefined) {
+    log.warn(`[settings] ttsAlwaysReadLpgmClass が長周期地震動階級（1〜4）でも無効（-1）でもないため既定値（${fallback}）に戻した`, value)
+  }
+  return fallback
+}
+
 function clampNumberOrNull(value: unknown, min: number, max: number): number | null {
   if (value === null) return null
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
@@ -441,6 +461,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     // sanitize の上限を UI に合わせると選択肢を増やすたび両方直す必要があるため、緩いままにする。
     ttsMaxRegions: clampNumber(partial.ttsMaxRegions, 0, 100, DEFAULTS.ttsMaxRegions),
     ttsAlwaysReadScale: ensureIntensityScale(partial.ttsAlwaysReadScale, DEFAULTS.ttsAlwaysReadScale, 'ttsAlwaysReadScale'),
+    ttsAlwaysReadLpgmClass: ensureAlwaysReadLpgmClass(partial.ttsAlwaysReadLpgmClass, DEFAULTS.ttsAlwaysReadLpgmClass),
     ttsRegionTolerance: clampNumber(partial.ttsRegionTolerance, 0, 100, DEFAULTS.ttsRegionTolerance),
     ttsReadTelegramText: ensureBool(partial.ttsReadTelegramText, DEFAULTS.ttsReadTelegramText),
     ttsTelegramTextBlocks: ensureTelegramTextBlocks(partial.ttsTelegramTextBlocks),

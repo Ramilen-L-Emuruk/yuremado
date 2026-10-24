@@ -11,7 +11,7 @@
 
 | 置き場所 | 本数 | 出どころ | ライセンス |
 |---|---|---|---|
-| `nii/` | 37 | 国立情報学研究所「気象庁防災情報XMLデータベース」（CPS-IIP, Asanobu KITAMOTO）が収集した実電文 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja) |
+| `nii/` | 41 | 国立情報学研究所「気象庁防災情報XMLデータベース」（CPS-IIP, Asanobu KITAMOTO）が収集した実電文 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja) |
 | `jma-sample/` | 24 | 気象庁「[防災情報XMLフォーマット 技術資料](https://xml.kishou.go.jp/tec_material.html)」のサンプル電文（`jmaxml_20260917_Samples.zip`） | 公共データ利用規約 第1.0版 |
 | `synthetic/` | 2 | 推計震度分布図の二進電文（BUFR）。配布されているものが無いので自前で組んだ | — |
 

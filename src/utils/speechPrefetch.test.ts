@@ -43,6 +43,7 @@ const OPTS: TtsSpeechOptions = {
   intensityLevels: 2,
   maxRegions: 10,
   alwaysReadScale: 30,
+  alwaysReadLpgmClass: 1,
   regionTolerance: 2,
 }
 

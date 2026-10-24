@@ -1,6 +1,9 @@
 // 長周期地震動階級のラベル・配色ユーティリティ（JMA公式色）と、カードの行の組み立て
 import type { IntensityScale, JMALpgm, LpgmClass, LpgmPoint, LpgmPref, LpgmRegion } from '../types/earthquake'
+// 階級 0 は「階級1以上を観測していない」観測値。気象庁の配色に当たる色が無いので、
+// 階級 1〜4 の色の外の灰色にする（2026-10-24 ユーザー選択「この形でよい (Recommended)」）。
 const LPGM_COLORS: Record<number, string> = {
+  0: '#9ca3af',
   1: '#c8c800',
   2: '#ff9600',
   3: '#ff2800',
@@ -8,6 +11,7 @@ const LPGM_COLORS: Record<number, string> = {
 }
 
 const LPGM_BG_COLORS: Record<number, string> = {
+  0: 'rgba(156,163,175,0.15)',
   1: 'rgba(200,200,0,0.15)',
   2: 'rgba(255,150,0,0.15)',
   3: 'rgba(255,40,0,0.15)',
@@ -26,8 +30,20 @@ export function isValidLpgmClass(v: number): v is LpgmClass {
   return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 4
 }
 
+/**
+ * 観測された長周期地震動階級として妥当な値か（0〜4）。
+ *
+ * **観測情報（VXSE62）専用。** 0 は「階級1以上を観測していない」という正常な観測値で、
+ * 画面には残す（2026-10-22 ユーザー選択「画面には残す (Recommended)」。音と読み上げは鳴らさない）。
+ * 緊急地震速報の予測階級は {@link isValidLpgmClass}（1〜4）で見る —— あちらの 0 は予測が無いことを表す。
+ */
+export function isObservedLpgmClass(v: number): boolean {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 4
+}
+
 export function getLpgmClassLabel(cls: number): string {
-  return isValidLpgmClass(cls) ? `階級${cls}` : '階級不明'
+  // 0 は観測情報にだけ現れる（予測の側は 1〜4 だけを通してから呼ぶ）
+  return isObservedLpgmClass(cls) ? `階級${cls}` : '階級不明'
 }
 
 /**
@@ -72,7 +88,8 @@ export function getLpgmClassBgColor(cls: number): string {
  * **分類番号そのものは出さない。**「種類2」と書いても何も伝わらない。値 2・4 が意味するのは
  * 「長周期地震動階級を観測した地域のうち、最大震度が4以下の地域がある」＝**揺れそのものは
  * 強くないのに、高層階が大きく揺れた地域がある**という状況で、高い建物にいる人にはこれが効く。
- * 1・3 は階級を観測した地域がどこも震度5弱以上なので、震度の表示だけで状況が伝わる。
+ * 1・3 は数える地域（1 は階級1以上・3 は階級3以上）がどこも震度5弱以上という意味で、
+ * それも一文で書く（2026-10-22 ユーザー選択「1・3 にも一文を出す (Recommended)」）。
  *
  * **文は「地域があります」で受ける。** 電文が主張しているのは「そういう地域が存在する」ことで、
  * 震度が小さかった地域すべてがそうだったとは言っていない。
@@ -80,11 +97,16 @@ export function getLpgmClassBgColor(cls: number): string {
  * 値ごとの定義表と、この受け方にした理由の全文は
  * `docs/spec/quake-spec.md` §8「長周期地震動の「観測情報の種類」は意味を出す」。
  *
- * @returns 伝えることがなければ空文字
+ * @returns 分類が無い・読めないときは空文字
  */
 export function lpgmCategoryNote(category: number | undefined): string {
-  if (category !== 2 && category !== 4) return ''
-  return '震度が小さくても高層階が大きく揺れた地域があります'
+  if (category === 2 || category === 4) return '震度が小さくても高層階が大きく揺れた地域があります'
+  // 1・3 は「数える地域がどこも震度5弱以上」。**数える地域の階級の下限を書く** —— 縮めて
+  // 「高層階が揺れた地域は」と書くと、種類 3 で階級 1・2 の地域まで含めて言うことになり誤りになる。
+  // （2026-10-22 ユーザー選択「1・3 にも一文を出す (Recommended)」、文面は 2026-10-24 選択「この文面でよい (Recommended)」）
+  if (category === 1) return '長周期地震動階級1以上を観測した地域は、いずれも震度5弱以上です'
+  if (category === 3) return '長周期地震動階級3以上を観測した地域は、いずれも震度5弱以上です'
+  return ''
 }
 
 
@@ -146,6 +168,14 @@ export interface LpgmRowDeps {
   prefOfArea: (name: string) => string | null
   /** 気象庁の標準順（北から南）の順位。索引が無いときは 0 を返してよい */
   rank: (name: string) => number
+  /**
+   * 区域も都道府県も分からず、行を立てる場所が無かった観測点を知らせる。
+   *
+   * **黙って消さないための口**（2026-10-22 ユーザー選択「消すときに記録を残す (Recommended)」）。
+   * この関数は描画のたびに呼ばれうる純関数なので、ここでは記録せず呼び出し側に任せる
+   * （同じ報で何度も記録しないよう、間引きは呼び出し側が持つ）。
+   */
+  onUnplaceableStation: (name: string) => void
 }
 
 const maxIntensityOf = (values: readonly (IntensityScale | undefined)[]): IntensityScale | undefined => {
@@ -199,7 +229,8 @@ export function buildLpgmRows(
   }
 
   for (const r of regions) {
-    if (!(r.maxLgInt >= 1)) continue
+    // **階級 0 も行にする**（2026-10-22 ユーザー選択「画面には残す (Recommended)」）。
+    if (!isObservedLpgmClass(r.maxLgInt)) continue
     // **電文が都道府県名を書いているならそれを使う。** 座標表からの逆引きは電文に無かった
     // 頃の代理で、表に載っていない区域では引けずにまとめが崩れる。
     const entry = areaOf(r.name, r.pref || deps.prefOfArea(r.name))
@@ -210,7 +241,7 @@ export function buildLpgmRows(
 
   const looseStations = new Map<string, LpgmStationRow[]>()
   for (const p of points) {
-    if (!(p.lgInt >= 1)) continue
+    if (!isObservedLpgmClass(p.lgInt)) continue
     const row: LpgmStationRow = {
       name: p.name,
       lgInt: p.lgInt,
@@ -221,7 +252,10 @@ export function buildLpgmRows(
       areaOf(p.area, p.pref || deps.prefOfArea(p.area)).stations.push(row)
       continue
     }
-    if (!p.pref) continue
+    if (!p.pref) {
+      deps.onUnplaceableStation(p.name)
+      continue
+    }
     const list = looseStations.get(p.pref)
     if (list) list.push(row); else looseStations.set(p.pref, [row])
   }
@@ -234,8 +268,9 @@ export function buildLpgmRows(
   const orphanAreaRows: LpgmPrefRow[] = []
   for (const entry of areas.values()) {
     const stations = sortStations(entry.stations)
-    const maxLgInt = entry.telegramLgInt ?? Math.max(0, ...stations.map(s => s.lgInt))
-    if (maxLgInt < 1) continue
+    // 区域は電文の値か配下の観測点から必ず作られるので、ここで値が無いことは無い（-1 は念のため）
+    const maxLgInt = entry.telegramLgInt ?? Math.max(-1, ...stations.map(s => s.lgInt))
+    if (maxLgInt < 0) continue
     const maxInt = entry.telegramInt ?? maxIntensityOf(stations.map(s => s.int))
     const row: LpgmAreaRow = { name: entry.name, maxLgInt, ...(maxInt !== undefined && { maxInt }), stations }
     if (!entry.pref) {
@@ -246,7 +281,7 @@ export function buildLpgmRows(
     if (list) list.push(row); else areaRowsByPref.set(entry.pref, [row])
   }
 
-  const prefLgInt = new Map(prefs.filter(p => p.maxLgInt >= 1).map(p => [p.name, p.maxLgInt]))
+  const prefLgInt = new Map(prefs.filter(p => isObservedLpgmClass(p.maxLgInt)).map(p => [p.name, p.maxLgInt]))
   const prefInt = new Map(prefs.flatMap(p => (p.maxInt === undefined ? [] : [[p.name, p.maxInt] as const])))
 
   const rows: LpgmPrefRow[] = [...orphanAreaRows]
@@ -258,8 +293,8 @@ export function buildLpgmRows(
     const areaList = (areaRowsByPref.get(pref) ?? []).sort(byValueDesc(a => a.maxLgInt, a => a.name))
     const loose = sortStations(looseStations.get(pref) ?? [])
     const maxLgInt = prefLgInt.get(pref)
-      ?? Math.max(0, ...areaList.map(a => a.maxLgInt), ...loose.map(s => s.lgInt))
-    if (maxLgInt < 1) continue
+      ?? Math.max(-1, ...areaList.map(a => a.maxLgInt), ...loose.map(s => s.lgInt))
+    if (maxLgInt < 0) continue
     const maxInt = prefInt.get(pref)
       ?? maxIntensityOf([...areaList.map(a => a.maxInt), ...loose.map(s => s.int)])
     rows.push({ kind: 'pref', name: pref, maxLgInt, ...(maxInt !== undefined && { maxInt }), areas: areaList, stations: loose })
@@ -279,6 +314,7 @@ export function buildLpgmRows(
  * どちらかになる（→ docs/spec/audio-tts-spec.md §6「読み上げに合わせて気象庁の文を開く」）。
  */
 export function canOpenLpgmNotes(lpgm: JMALpgm | null | undefined): boolean {
-  if (!lpgm || lpgm.maxClass < 1) return false
+  // 階級 0 の報も補足を開ける（画面には残すため。読み上げは階級 0 では鳴らない）
+  if (!lpgm || lpgm.cancelled || !isObservedLpgmClass(lpgm.maxClass)) return false
   return !!(lpgm.forecastText || lpgm.varCommentText || lpgm.freeFormText || lpgm.uri)
 }

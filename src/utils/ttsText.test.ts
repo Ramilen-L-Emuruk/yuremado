@@ -13,7 +13,7 @@ import { getStationCoordsCache } from './stationCoords'
 import { eewMaxScaleInfo, eewMaxLpgmClassInfo } from './eew'
 import type { TsunamiObservation, LiveEvent, JMAQuake, JMALpgm, EarthquakePoint, IssueType, DomesticTsunami, IntensityScale, EEWAlert, LpgmClass, JMATsunami, TsunamiArea, JMANankai, JMAEarthquakeCount } from '../types/earthquake'
 
-const TTS_OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+const TTS_OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
 
 function makeQuake(over: {
   type?: IssueType
@@ -438,6 +438,47 @@ describe('lpgmToText: 階級ごとの地域列挙', () => {
   it('最大階級のみ読み上げる設定では文が変わらない', () => {
     const text = lpgmToText(makeLpgm(), TTS_OPTS, true)
     expect(text).toContain('長周期地震動階級3を東京都23区で観測しました。')
+  })
+
+  // 「必ず読み上げる長周期地震動階級」（2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」）。
+  // 4 階級そろった報（実電文では 2024-01-01 能登・2026-07-28）で、階数の設定（既定 2＝上位 3 階級）だと
+  // 階級 1 の地域が声に出なかった。
+  const fourClasses = (): JMALpgm => ({
+    ...makeLpgm(),
+    maxClass: 4,
+    regions: [
+      { code: '390', name: '石川県能登', maxLgInt: 4 },
+      { code: '391', name: '石川県加賀', maxLgInt: 3 },
+      { code: '370', name: '新潟県上越', maxLgInt: 2 },
+      { code: '130', name: '東京都23区', maxLgInt: 1 },
+      { code: '140', name: '神奈川県東部', maxLgInt: 0 },
+    ],
+  })
+
+  // 正: 下限が階級 1 なら、階数を超えても階級 1 の地域まで読む
+  it('必ず読む階級が 1 なら、階数を超えた階級 1 の地域も読む', () => {
+    const text = lpgmToText(fourClasses(), { ...TTS_OPTS, intensityLevels: 2, alwaysReadLpgmClass: 1 }, true)
+    expect(text).toContain('階級1を東京都23区')
+  })
+
+  // 対照: 無効（-1）なら従来どおり階数で切る
+  it('必ず読む階級が無効なら、階数の外の階級 1 は読まない', () => {
+    const text = lpgmToText(fourClasses(), { ...TTS_OPTS, intensityLevels: 2, alwaysReadLpgmClass: -1 }, true)
+    expect(text).toContain('階級2を新潟県上越')
+    expect(text).not.toContain('東京都23区')
+  })
+
+  // 対照: 下限より下の階級は、階数の外なら読まない
+  it('必ず読む階級が 2 なら、階数の外の階級 1 は読まない', () => {
+    const text = lpgmToText(fourClasses(), { ...TTS_OPTS, intensityLevels: 0, alwaysReadLpgmClass: 2 }, true)
+    expect(text).toContain('階級2を新潟県上越')
+    expect(text).not.toContain('東京都23区')
+  })
+
+  // 安全弁: 階級 0 の区域はどの設定でも読まない（階級 0 は画面にだけ出す）
+  it('階級 0 の区域は、必ず読む階級によらず読まない', () => {
+    const text = lpgmToText(fourClasses(), { ...TTS_OPTS, intensityLevels: 8, alwaysReadLpgmClass: 1 }, true)
+    expect(text).not.toContain('神奈川県東部')
   })
 
   // **この関数は空文字列を返さない。** 受信側（`useLiveEventHandler`）には「読み上げ文が
@@ -1199,7 +1240,7 @@ describe('earthquakeToSegments: 続報は差分だけ読む', () => {
     }
   }
 
-  const OPTS: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+  const OPTS: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
 
   /**
    * 読み上げた内容を記録へ反映する。**規則は本番と同じものを使う**（`applySpokenRefs`）。
@@ -3194,7 +3235,7 @@ describe('設定タブの試聴文', () => {
 // **どの群も「正・対照・安全弁」を対にする。** 「切ったら消える」だけを書くと、既定値を
 // 取り違えたときに従来の利用者の耳へ届く内容が変わったことを誰も検出できない。
 describe('読み上げの詳しさの設定', () => {
-  const BASE: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+  const BASE: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
 
   function quakeWithPoints(points: EarthquakePoint[], maxScale: number): JMAQuake {
     const base = makeQuake({ type: '震度速報', maxScale: maxScale as IntensityScale })
@@ -3326,7 +3367,7 @@ describe('読み上げの詳しさの設定', () => {
 // 気象庁が書いた文（本文・付加文）の読み上げ。**電文本体とは別の発話**として返す
 // （→ audio-tts-spec.md §6「気象庁が書いた文は最下位の層で読む」）。
 describe('telegramTextToSpeak: 気象庁が書いた文', () => {
-  const OFF: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+  const OFF: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
   const ON: TtsSpeechOptions = { ...OFF, readTelegramText: true }
 
   // **題材に「＊印は…」を使わない** —— あれは読み上げから落とす定型文なので、
@@ -3467,7 +3508,7 @@ describe('telegramTextToSpeak: 気象庁が書いた文', () => {
 })
 
 describe('緊急地震速報の長周期地震動階級を読むかの設定', () => {
-  const BASE: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+  const BASE: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
   const eew = { kind: 'eew', id: 'e1', time: '' } as unknown as EEWAlert
   const scale = { scale: 40 as IntensityScale, orAbove: false }
 
@@ -3491,7 +3532,7 @@ describe('緊急地震速報の長周期地震動階級を読むかの設定', (
 
 // 上限を「無制限」にできること（設定の選択肢を広げた分）。
 describe('読み上げ件数の無制限', () => {
-  const BASE: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+  const BASE: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
 
   function obsOf(n: number): TsunamiObservation[] {
     return Array.from({ length: n }, (_, i) => ({
@@ -3535,7 +3576,7 @@ describe('読み上げ件数の無制限', () => {
 // 読み上げから URL を落とす（→ `stripUrlsForSpeech`）。
 describe('気象庁が書いた文の URL', () => {
   const ON: TtsSpeechOptions = {
-    intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0, readTelegramText: true,
+    intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0, readTelegramText: true,
   }
   const lpgmWith = (freeFormText: string): LiveEvent => ({
     kind: 'lpgm',
@@ -3581,7 +3622,7 @@ describe('気象庁が書いた文の URL', () => {
 // なので、同じ行に並んだ別の文は残る（下の「前後の文を巻き込まない」）。
 describe('気象庁が書いた文のうち読み上げから落とす定型文', () => {
   const ON: TtsSpeechOptions = {
-    intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0, readTelegramText: true,
+    intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0, readTelegramText: true,
   }
   const quakeWith = (varCommentText: string): JMAQuake => ({
     ...makeQuake({ type: '震源・震度情報' }), varCommentText,
@@ -3917,7 +3958,7 @@ describe('kohatsuToText: 取消', () => {
 
 // 全区域解除の報は、気象庁が書いた文を最下位の層で読む（2026-10-14 ユーザー選択「画面にも出し、読み上げる」）。
 describe('telegramTextToSpeak: 津波の全区域解除', () => {
-  const ON: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0, readTelegramText: true }
+  const ON: TtsSpeechOptions = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0, readTelegramText: true }
   const LIFT_COMMENT = '現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。'
   const lift = (over: Partial<JMATsunami> = {}): JMATsunami => ({
     kind: 'tsunami', id: 'dmdata-tsunami-20260728162718-VTSE41-', eventId: '20260728162718', headType: 'VTSE41',

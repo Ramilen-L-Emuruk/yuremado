@@ -500,7 +500,9 @@ export function useQuakeLayerData(
     const maxByName = new Map(lpgm.regions.map((r) => [r.name, r.maxLgInt]))
     const maxIntByName = new Map(lpgm.regions.map((r) => [r.name, r.maxInt]))
     return subregions
-      .filter((sr) => (maxByName.get(sr.name) ?? 0) >= 1)
+      // 階級 0 の区域も塗る（灰色。2026-10-22 ユーザー選択「画面には残す (Recommended)」）。
+      // 電文に載っていない区域だけを外す（以前は `?? 0` と `>= 1` で、0 と「載っていない」をまとめて外していた）
+      .filter((sr) => maxByName.has(sr.name))
       .map((sr) => ({
         name: sr.name, maxLgInt: maxByName.get(sr.name)!, rings: sr.rings, label: sr.label,
         ...(maxIntByName.get(sr.name) !== undefined && { maxInt: maxIntByName.get(sr.name) }),
@@ -538,15 +540,20 @@ export function useQuakeLayerData(
     }
     if (lpgmActive) {
       const positions: LatLng[] = []
+      // 寄せるのは階級 1 以上の区域・観測点。**階級 0 まで含めると、階級を観測した地域より広く
+      // 引いてしまう**。報全体が階級 0（階級1以上を観測していない）ときだけ、階級 0 へ寄せる
+      // （画面には残すと決めた報。2026-10-22 ユーザー選択「画面には残す (Recommended)」）。
+      const fitFloor = (lpgm?.maxClass ?? 0) >= 1 ? 1 : 0
       if (lpgm?.regions?.length && subregionIndex.length > 0) {
-        const names = new Set(lpgm.regions.filter((r) => r.maxLgInt >= 1).map((r) => r.name))
+        const names = new Set(lpgm.regions.filter((r) => r.maxLgInt >= fitFloor).map((r) => r.name))
         for (const e of subregionIndex) {
           if (!names.has(e.sr.name)) continue
           positions.push([e.minLat, e.minLng], [e.maxLat, e.maxLng])
         }
       }
       if (positions.length === 0) {
-        for (const m of lpgmMarkers) positions.push(m.position)
+        // 区域を引けなかったときの落ち先も同じ下限で絞る（階級 0 の点まで含めて広く引かない）
+        for (const m of lpgmMarkers) if (m.lgInt >= fitFloor) positions.push(m.position)
       }
       // quake が LPGM と同一イベントのときのみ震源を加える（無関係な地震の震源を混ぜない）。
       if (epicenter && quake && lpgm && extractQuakeEventId(quake) === lpgm.eventId) {

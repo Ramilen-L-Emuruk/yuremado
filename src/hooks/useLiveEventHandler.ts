@@ -581,6 +581,7 @@ export function ttsRegionOptions(settings: AppSettings): TtsSpeechOptions {
     intensityLevels: settings.ttsIntensityLevels,
     maxRegions: settings.ttsMaxRegions,
     alwaysReadScale: settings.ttsAlwaysReadScale,
+    alwaysReadLpgmClass: settings.ttsAlwaysReadLpgmClass,
     regionTolerance: settings.ttsRegionTolerance,
     unreceivedDetail: settings.ttsUnreceivedDetail,
     readHypocenterDetail: settings.ttsReadHypocenterDetail,
@@ -6196,7 +6197,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             rememberAreaGrades(tsunamiAreaGradeChanges(tsunami), spokenAreaGradeRef.current)
           }
         }
-      } else if (payload.kind === 'lpgm' && !payload.data.cancelled) {
+      } else if (payload.kind === 'lpgm' && !payload.data.cancelled && payload.data.maxClass >= 1) {
+        // **階級 0 の報は読まない**（→ `useEarthquakes.ts` の `lpgmNotifiable`）ので、既読にもしない。
+        // 入れると、そのあと階級 1 以上へ上がった報を「更新されました」と読む（前の報は一度も声にしていない）。
         seenLpgmEventIdsRef.current.add(payload.data.eventId)
       }
     }

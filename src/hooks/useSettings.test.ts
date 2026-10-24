@@ -127,6 +127,22 @@ describe('sanitize', () => {
     expect(sanitize({ notifyMinScale: 35 }).notifyMinScale).toBe(-1)
   })
 
+  // 必ず読み上げる長周期地震動階級（2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」）
+  it('必ず読む長周期地震動階級は、既定が階級1', () => {
+    expect(sanitize({}).ttsAlwaysReadLpgmClass).toBe(1)
+  })
+
+  it('必ず読む長周期地震動階級は、1〜4 と無効値(-1)を通す', () => {
+    for (const v of [-1, 1, 2, 3, 4]) expect(sanitize({ ttsAlwaysReadLpgmClass: v }).ttsAlwaysReadLpgmClass).toBe(v)
+  })
+
+  // 安全弁: 階級 0 は読まないので選べない。値域の外・整数でない値・数値以外は既定値に落とす
+  it('必ず読む長周期地震動階級は、0・値域の外・数値以外を既定値に落とす', () => {
+    for (const v of [0, 5, 1.5, '2']) {
+      expect(sanitize({ ttsAlwaysReadLpgmClass: v as number }).ttsAlwaysReadLpgmClass).toBe(1)
+    }
+  })
+
   it('震度項目は範囲外の値を既定値に落とす（クランプしない）', () => {
     expect(sanitize({ ttsAlwaysReadScale: 999 }).ttsAlwaysReadScale).toBe(30)
     expect(sanitize({ minDisplayScale: -999 }).minDisplayScale).toBe(-1)

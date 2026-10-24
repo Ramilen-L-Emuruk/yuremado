@@ -293,6 +293,11 @@ export interface TtsSpeechOptions {
   intensityLevels: number   // 最大震度に加えて何階級下まで読むか（0 = 最大のみ。観測がある階級だけを数える）
   maxRegions: number        // 読み上げる最大地域数（0 = 無制限）
   alwaysReadScale: number   // 階数を超えても読み上げる下限震度（-1 = 無効。長周期地震動には適用しない）
+  /**
+   * 階数を超えても読み上げる長周期地震動階級の下限（-1 = 無効）。震度の下限とは別の軸
+   * （2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」）。
+   */
+  alwaysReadLpgmClass: number
   regionTolerance: number   // maxRegions をこの数まで超える場合は省略せず全地域を読む（0 = 無効）
   /**
    * 「震度5弱以上・未入電」の読み方（→ `TtsUnreceivedDetail`）。
@@ -3850,10 +3855,14 @@ function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
   // 上位の階級で区域名を出した県（震度側と同じ持ち回り。理由は aggregateLpgmNamesByPref のコメント）。
   const prefsWithAreaShown = new Set<string>()
   // 長周期地震動階級（1〜4）は震度スケールと別軸のため、opts.alwaysReadScale（震度の下限）は
-  // ここでは適用しない。使い忘れではないので、必要になったら階級側の下限を別に設けること。
-  for (let i = 0; i <= opts.intensityLevels; i++) {
+  // ここでは適用しない。階級側の下限（`alwaysReadLpgmClass`）を別に持つ。
+  // 打ち切りの考え方は震度側（`buildRegionSegments`）と同じ —— 階数以内か、下限以上の階級を読む。
+  // どちらも上位の階級ほど成立しやすいので、両方を外れた時点で以降も外れる。
+  for (let i = 0; i < classes.length; i++) {
     const cls = classes[i]
-    if (cls == null) break
+    const withinLevels = i <= opts.intensityLevels
+    const withinAlwaysRead = opts.alwaysReadLpgmClass >= 1 && cls >= opts.alwaysReadLpgmClass
+    if (!withinLevels && !withinAlwaysRead) break
     const aggregated = aggregateLpgmNamesByPref((byClass.get(cls) ?? []), areaPrefIndex, prefAreaNames, prefsWithAreaShown)
     // 区域名を出した県を次の階級へ持ち回る。`mentioned` で落とす前に数えるのは、あちらが
     // 「同じ名前を二度読まない」ための仕組みで、粒度の判断とは別の関心事だから。

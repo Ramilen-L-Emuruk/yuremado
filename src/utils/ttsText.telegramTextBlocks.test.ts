@@ -30,7 +30,7 @@ const allBoilerplateRead = Object.fromEntries(
 ) as TelegramBoilerplateReads
 
 const BASE: TtsSpeechOptions = {
-  intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0, readTelegramText: true,
+  intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0, readTelegramText: true,
   telegramBoilerplate: allBoilerplateRead,
 }
 

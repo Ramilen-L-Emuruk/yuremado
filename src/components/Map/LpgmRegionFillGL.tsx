@@ -75,7 +75,7 @@ function buildLabelFC(regions: LpgmRegionAggregate[], iconScale: number): Featur
 }
 
 function clickHtml(f: MapGeoJSONFeature): string {
-  const lgInt = Number(f.properties?.lgInt ?? 0)
+  const lgInt = Number(f.properties?.lgInt ?? 0)  // 地物は組み立てで必ず lgInt（0〜4）を持つ。欠けるのは組み立てが壊れたときだけ
   const name = String(f.properties?.name ?? '')
   const int = Number(f.properties?.int ?? -1)
   return (

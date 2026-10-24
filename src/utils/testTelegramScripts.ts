@@ -7,7 +7,7 @@ import { replaceOnce } from './testTelegrams'
 import {
   editXml, descendants, childOf, childText, setSectionText, shiftIssueTime, only, moveToEvent,
   toCancelForm, toAllLifted, toFinalEew, stripRevise, stationsWithInt, raiseInt, lowerInt, recomputeMaxInts, INT_ORDER,
-  setIssueTime,
+  setIssueTime, setHeadlineText,
 } from './testTelegramRewrite'
 
 const nii = (id: string) => `nii/${id}.xml`
@@ -60,6 +60,9 @@ const NOTO_FORESHOCK = {
  * 同じ日 23:04 の佐渡付近の地震（EventID 20240101230402）。**23:05 の震度速報は本震の震度を誤って
  * 流したもの**で、23:13 に取り消され、23:14 に正しい震源・震度に関する情報が出た。
  */
+/** 佐渡付近の地震の EventID（→ `SADO`）。 */
+const SADO_EVENT_ID = '20240101230402'
+
 const SADO = {
   prompt: nii('20240101140549_0_VXSE51_010000'),
   cancel: nii('20240101141346_0_VXSE51_010000'),
@@ -1182,6 +1185,91 @@ export const LPGM_RETRACTION: TestTelegramScript = {
   ],
 }
 
+/**
+ * 階級 0 の長周期地震動の観測情報を、佐渡付近の地震（2024-01-01 23:04・M4.6・最大震度3。→ `SADO`）へ付けて流す。DMDSS 版のみ。
+ *
+ * **階級 0 の報の標本は無い。** 全期間のアーカイブ（2020-11〜2026-10 の 68 通・1,032 地点）に、最大階級 0 の報も
+ * 階級 0 の観測点も 1 件も無い。資料の値域は 0〜4 で 0 は来うるので、画面に残すと決めた
+ * （2026-10-22 ユーザー選択「画面には残す (Recommended)」・ボタンは 2026-10-24 選択「ボタンを足す (Recommended)」）。
+ * **そこに無い形は実機で一度も画面に出ない**ので、能登本震の長周期の電文（→ `NOTO.lpgm`）を書き換えて作る。
+ *
+ * 書き換えるもの（震度 3 の地震に震度 7 の値が残ると、画面で食い違って見える）:
+ * - 階級（全国・県・区域・観測点・周期帯ごと）をすべて 0 にし、観測情報の種類（`LgCategory`）を外す
+ *   （種類の定義は最大階級が 1 以上の場合しか無い。→ docs/spec/quake-spec.md §8）
+ * - 震度を佐渡付近の地震の最大（3）で頭打ちにする
+ * - 地震の要素（時刻・震源・規模）を佐渡付近の地震の値へ替え、`EventID` を移す（地震カードへ付くように）
+ * - 見出しの構造化（`Information`。階級ごとの区域の一覧）を外し、文を空にする
+ *
+ * **応答スペクトル（`Sva`）は能登本震の値のまま。** アプリは値の大きさを階級と突き合わせないので、
+ * 画面の経路（地図の吹き出しの周期帯の表）を通すことだけが目的のこのテストでは替えていない。
+ */
+export const LPGM_CLASS_ZERO: TestTelegramScript = {
+  anchor: 1,
+  steps: [
+    { file: SADO.detail, headType: 'VXSE53', atMs: 0 },
+    {
+      file: NOTO.lpgm, headType: 'VXSE62', atMs: 0,
+      rewrite: xml => editXml(xml, (doc) => {
+        moveToEvent(doc, SADO_EVENT_ID, isoZ(Date.parse('2024-01-01T14:14:10Z') + 60_000))
+        for (const tag of ['MaxLgInt', 'LgInt']) {
+          for (const el of descendants(doc, tag)) el.textContent = '0'
+        }
+        for (const el of descendants(doc, 'LgIntPerPeriod')) el.textContent = '0'
+        for (const el of descendants(doc, 'LgCategory')) el.parentNode?.removeChild(el)
+        const cap = INT_ORDER.indexOf('3')
+        for (const tag of ['MaxInt', 'Int']) {
+          for (const el of descendants(doc, tag)) {
+            if (INT_ORDER.indexOf((el.textContent ?? '').trim() as typeof INT_ORDER[number]) > cap) el.textContent = '3'
+          }
+        }
+        const quake = only(doc, 'Earthquake')
+        childOf(quake, 'OriginTime')!.textContent = '2024-01-01T23:03:00+09:00'
+        childOf(quake, 'ArrivalTime')!.textContent = '2024-01-01T23:03:00+09:00'
+        const area = only(quake, 'Area')
+        childOf(area, 'Name')!.textContent = '佐渡付近'
+        childOf(area, 'Code')!.textContent = '498'
+        const coord = only(area, 'Coordinate')
+        coord.textContent = '+37.7+137.7-10000/'
+        coord.setAttribute('description', '北緯３７．７度　東経１３７．７度　深さ　１０ｋｍ')
+        for (const tag of ['NameFromMark', 'MarkCode', 'Direction', 'Distance']) {
+          const el = childOf(area, tag)
+          if (el) area.removeChild(el)
+        }
+        const magnitude = only(quake, 'Magnitude')
+        magnitude.textContent = '4.6'
+        magnitude.setAttribute('description', 'Ｍ４．６')
+        const headline = childOf(only(doc, 'Head'), 'Headline')!
+        for (const el of descendants(headline, 'Information')) headline.removeChild(el)
+        // 見出しの文は能登本震の階級を述べているので空にする（気象庁の文面を作らない。画面には出ない要素）
+        setHeadlineText(doc, '')
+      }),
+    },
+  ],
+}
+
+/**
+ * 長周期地震動の観測情報の種類（`LgCategory`）1・3 の実電文を流す。DMDSS 版のみ。
+ *
+ * 種類 1・3 にも一文を出すと決めたが（2026-10-22 ユーザー選択「1・3 にも一文を出す (Recommended)」）、収録していた
+ * 長周期は能登本震の種類 4 だけで、画面で確かめる入口が無かった（ボタンは 2026-10-24 選択「ボタンを足す (Recommended)」）。
+ * どちらも国立情報学研究所の実電文で、書き換えない。
+ *
+ * - 種類 1: 2024-01-01 16:56 石川県能登地方 M5.7・最大震度5強（最大階級 2）
+ * - 種類 3: 2024-08-08 16:42 日向灘 M7.1・最大震度6弱（最大階級 3）
+ *
+ * **時刻のずらし方は 1 つの差分**（→ `TestTelegramScript.anchor`）なので、基準にした日向灘の地震が「いま」になり、
+ * 能登の地震は実電文の差のまま約 7 か月前に置かれる。
+ */
+export const LPGM_CATEGORIES: TestTelegramScript = {
+  anchor: 2,
+  steps: [
+    { file: nii('20240101080010_0_VXSE53_270000'), headType: 'VXSE53', atMs: 0 },
+    { file: nii('20240101080522_0_VXSE62_010000'), headType: 'VXSE62', atMs: 0 },
+    { file: nii('20240808075502_0_VXSE53_010000'), headType: 'VXSE53', atMs: 3000 },
+    { file: nii('20240808075139_0_VXSE62_010000'), headType: 'VXSE62', atMs: 3000 },
+  ],
+}
+
 // ───────────────────────── 緊急地震速報 ─────────────────────────
 
 /**
@@ -1606,7 +1694,7 @@ export const ALL_TEST_TELEGRAM_SCRIPTS: Readonly<Record<string, TestTelegramScri
   TSUNAMI_SOURCE_ADDED, TSUNAMI_RETRACTION, TSUNAMI_INFO_RETRACTION,
   NANKAI_CHECKING, NANKAI_WATCH, NANKAI_WARNING, NANKAI_RETRACTION,
   NANKAI_COMMENTARY_AD_HOC, NANKAI_COMMENTARY_ROUTINE, KOHATSU, KOHATSU_RETRACTION,
-  QUAKE_NOTICE, EARTHQUAKE_COUNT, EARTHQUAKE_COUNT_RETRACTION, LPGM_RETRACTION,
+  QUAKE_NOTICE, EARTHQUAKE_COUNT, EARTHQUAKE_COUNT_RETRACTION, LPGM_RETRACTION, LPGM_CLASS_ZERO, LPGM_CATEGORIES,
   EEW_FORECAST, EEW_WARNING, EEW_SPECIAL_WARNING, EEW_RETRACTION, EEW_LATE_RETRACTION, EEW_ASSUMED, EEW_DEEP,
   EEW_STRONG_SHAKING, EEW_NO_FORECAST, EEW_FORECAST_ZERO, ESTIMATED_INTENSITY,
 }

@@ -26,7 +26,7 @@ const testLpgm = first(await telegramLpgms('EARTHQUAKE'), '長周期地震動に
 const testTsunami = first(await telegramTsunamis('TSUNAMI_MAJOR_WARNING'), '津波警報')
 
 const BASE: TtsSpeechOptions = {
-  intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0, readTelegramText: true,
+  intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0, readTelegramText: true,
 }
 
 /** 全項目を読む指定（落とさない）。 */

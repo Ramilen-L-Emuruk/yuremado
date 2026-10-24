@@ -26,7 +26,7 @@ let earthquakeToSegments: TtsModule['earthquakeToSegments']
 let createQuakeSpokenState: TtsModule['createQuakeSpokenState']
 let applySpokenRefs: TtsModule['applySpokenRefs']
 
-const OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+const OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
 
 /** 実配信データを読む。境界リングは読み上げに使わないので落として軽くする。 */
 function readData(file: string): unknown {
@@ -492,7 +492,7 @@ describe('震度の地域列挙: 観測点しか持たない電文（P2PQuake �
 // まとめると、県の震度を過小に伝える。能登半島地震の本震の実データがこの形をそのまま含む。
 describe('震度の地域列挙: 階級をまたぐ県名まとめ', () => {
   /** 全階級を読ませる（上限なし）。まとめ判定そのものを見たいので選抜と打ち切りは効かせない。 */
-  const ALL: TtsSpeechOptions = { intensityLevels: 8, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+  const ALL: TtsSpeechOptions = { intensityLevels: 8, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
   /** 本震の最大震度は 7。共有ヘルパーは 4 固定なので上書きする（ここから下の階級を辿るため）。 */
   function notoQuake(): JMAQuake {
     const base = makeQuake(notoPoints, { lat: 37.5, lon: 137.2 })
@@ -562,7 +562,7 @@ describe('長周期地震動の地域列挙: 階級をまたぐ県名まとめ',
       regions,
     }
   }
-  const ALL: TtsSpeechOptions = { intensityLevels: 8, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+  const ALL: TtsSpeechOptions = { intensityLevels: 8, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
 
   it('正: 上位階級で区域名を出した県は、下位階級でも県名にまとめない', () => {
     // 福井県は嶺北・嶺南の 2 区域。階級3 で嶺北だけ、階級2 で両方が揃う形。
@@ -584,7 +584,7 @@ describe('長周期地震動の地域列挙: 階級をまたぐ県名まとめ',
 // なければならない。落とした後で数えると、既出の区域が「今回は声にならない」ために県の全区域が
 // 揃って見え、県名へまとめてしまう ＝ このコミットが直したはずの過小伝達が続報でだけ復活する。
 describe('震度の地域列挙: 続報でも階級をまたぐまとめを抑える', () => {
-  const OPTS_ALL: TtsSpeechOptions = { intensityLevels: 8, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+  const OPTS_ALL: TtsSpeechOptions = { intensityLevels: 8, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
   const FUKUI_HYPO = { lat: 36.0, lon: 136.2 }
 
   function quakeOf(points: EarthquakePoint[], maxScale: number): JMAQuake {

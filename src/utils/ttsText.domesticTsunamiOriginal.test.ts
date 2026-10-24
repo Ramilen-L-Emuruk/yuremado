@@ -13,7 +13,7 @@ import {
 import { joinSegments } from './ttsFollow'
 import type { DomesticTsunami, DomesticTsunamiCode, IssueType, JMAQuake } from '../types/earthquake'
 
-const OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+const OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
 
 // コード表（地震火山関連コード表・固定付加文）の文。
 const TEXT_0230 = 'この地震による日本への津波の影響はありません。'
