@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 // ringsBounds は純関数でモジュール状態（cache / inflight）に依存しないため静的 import で使う。
-import { ringsBounds, ringsBoundsIndex, type SubRegion } from './subregions'
+import { ringsBounds, ringsBoundsIndex, subRegionNameAt, SUBREGION_NEAREST_KM, type SubRegion } from './subregions'
 import { DATA_FETCH_TIMEOUT_MS } from './fetchJson'
 
 // subregions.ts はモジュールスコープに cache / inflight / 購読者を持つため、
@@ -225,5 +225,34 @@ describe('外接矩形の索引', () => {
     const zones: Record<string, [number, number][][]> = { 岩手県沿岸: [[[39, 141], [41, 142]]] }
     const index = ringsBoundsIndex(zones, () => Object.entries(zones))
     expect(index.get('岩手県沿岸')).toEqual({ minLat: 39, maxLat: 41, minLng: 141, maxLng: 142 })
+  })
+})
+
+describe('subRegionNameAt（座標 → 区域名）', () => {
+  // 経度 139〜140・緯度 35〜36 の正方形（辺に沿って 0.01 度刻みの頂点を持たせる）
+  const edge: [number, number][] = []
+  for (let i = 0; i <= 100; i++) edge.push([35, 139 + i / 100])
+  for (let i = 0; i <= 100; i++) edge.push([35 + i / 100, 140])
+  for (let i = 100; i >= 0; i--) edge.push([36, 139 + i / 100])
+  for (let i = 100; i >= 0; i--) edge.push([35 + i / 100, 139])
+  const subs: SubRegion[] = [{ name: '四角', label: [35.5, 139.5], room: [0, 0], rings: [edge] }]
+
+  it('正: 境界の内側の点は、その区域の名前', () => {
+    expect(subRegionNameAt(35.5, 139.5, subs)).toBe('四角')
+  })
+
+  it('正: 境界の外でも SUBREGION_NEAREST_KM 以内なら最寄りの区域（海岸の観測点）', () => {
+    // 東の辺（経度 140）から約 2km 外
+    expect(subRegionNameAt(35.5, 140.022, subs)).toBe('四角')
+  })
+
+  it('対照: それより遠ければ null', () => {
+    // 東の辺から約 9km 外
+    expect(SUBREGION_NEAREST_KM).toBeLessThan(9)
+    expect(subRegionNameAt(35.5, 140.1, subs)).toBeNull()
+  })
+
+  it('安全弁: 座標が数でなければ null', () => {
+    expect(subRegionNameAt(NaN, 139.5, subs)).toBeNull()
   })
 })

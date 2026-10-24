@@ -60,6 +60,7 @@ function tabElement(detections: DetectionEvent[], points: DetectedPoint[], visib
     swaveArrival: null,
     kyoshinV2Detections: detections,
     kyoshinDetectedPoints: points,
+    kyoshinDemoted: [],
     visible,
   })
 }
@@ -414,6 +415,7 @@ function renderEEW(eew: EEWAlert, settledKeys: ReadonlySet<string> = new Set<str
     swaveArrival: null,
     kyoshinV2Detections: [],
     kyoshinDetectedPoints: [],
+    kyoshinDemoted: [],
     visible: true,
   }))
 }

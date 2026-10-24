@@ -6,6 +6,7 @@
 
 import type { LabelRoom, LatLng } from './prefectures'
 import { fetchJsonWithTimeout } from './fetchJson'
+import { haversineKm, pointInRings } from './geo'
 
 export interface SubRegion {
   /** 区域名（例: 神奈川県東部・石狩地方北部） */
@@ -153,4 +154,68 @@ export function loadSubRegions(): Promise<SubRegion[]> {
       })
   }
   return inflight
+}
+
+/**
+ * 境界の外に出た点を、最寄りの区域へ寄せてよい距離(km)。
+ *
+ * 境界データは海岸線を簡略化しているので、海岸の観測点が線の外に出る。強震モニタの 1,725 点では
+ * 200 点がどの区域にも入らず、境界までの距離は中央値 1.4km・200 点中 192 点が 5km 以内だった
+ * （2026-10-24 実測。残る 8 点は最大 33km）。5km 以内なら最寄りの区域の名前を出す
+ * （2026-10-24 ユーザー選択「5km 以内なら最寄りの区域 (Recommended)」）。
+ */
+export const SUBREGION_NEAREST_KM = 5
+
+/** 区域データ（参照）ごとの、座標 → 区域名の控え。観測点の座標は変わらないので、毎秒引き直さない。 */
+const nameAtCache = new WeakMap<object, Map<string, string | null>>()
+
+/**
+ * 座標がどの区域に入るかを引き、その区域名を返す。どの区域にも入らないときは、境界から
+ * `SUBREGION_NEAREST_KM` 以内の最寄りの区域の名前を返し、それも無ければ null。
+ *
+ * 外接矩形で先に絞ってから点内包判定（`pointInRings`）を掛ける。矩形の索引は `ringsBoundsIndex` が
+ * 区域データの参照ごとに 1 度だけ作る。最寄りの区域は境界の頂点までの距離で測る（頂点の間隔は
+ * 区域の大きさに比べて十分細かい）。
+ */
+export function subRegionNameAt(lat: number, lng: number, subregions: readonly SubRegion[]): string | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  let cache = nameAtCache.get(subregions)
+  if (!cache) {
+    cache = new Map()
+    nameAtCache.set(subregions, cache)
+  }
+  const key = `${lat},${lng}`
+  const hit = cache.get(key)
+  if (hit !== undefined) return hit
+  const name = lookupSubRegionName(lat, lng, subregions)
+  cache.set(key, name)
+  return name
+}
+
+function lookupSubRegionName(lat: number, lng: number, subregions: readonly SubRegion[]): string | null {
+  const index = ringsBoundsIndex(subregions, () => subregions.map((sr) => [sr.name, sr.rings] as const))
+  for (const sr of subregions) {
+    const b = index.get(sr.name)
+    if (!b || lat < b.minLat || lat > b.maxLat || lng < b.minLng || lng > b.maxLng) continue
+    if (pointInRings(lat, lng, sr.rings)) return sr.name
+  }
+  // 矩形を寄せてよい距離ぶん広げて絞る（緯度 1 度≒111km。経度は緯度で縮むので広めに取る）
+  const padLat = SUBREGION_NEAREST_KM / 111
+  const padLng = SUBREGION_NEAREST_KM / (111 * Math.max(0.1, Math.cos((lat * Math.PI) / 180)))
+  let best: string | null = null
+  let bestKm = SUBREGION_NEAREST_KM
+  for (const sr of subregions) {
+    const b = index.get(sr.name)
+    if (!b || lat < b.minLat - padLat || lat > b.maxLat + padLat || lng < b.minLng - padLng || lng > b.maxLng + padLng) continue
+    for (const ring of sr.rings) {
+      for (const [vLat, vLng] of ring) {
+        const d = haversineKm(lat, lng, vLat, vLng)
+        if (d <= bestKm) {
+          bestKm = d
+          best = sr.name
+        }
+      }
+    }
+  }
+  return best
 }

@@ -55,7 +55,7 @@ function makeEEW(serial: string, forecastChange?: EEWForecastChange, overrides: 
 }
 
 const tab = (eews: EEWAlert[]) => (
-  <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={eews} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />
+  <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={eews} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} kyoshinDemoted={[]} visible />
 )
 
 /** 時間を進める（保持タイマーの発火に伴う再描画を取りこぼさないよう act で包む）。 */

@@ -48,10 +48,9 @@ export function gateShortfall(e: DetectionEvent): string | null {
       : `${c.size}点・震度${scaleLabel(c.intensity)}で確定`
   }
 
-  // 単点のまま居座って降ろされたもの（設計書§33）。確信度は weak になり、検知カードは weak を
-  // 除いた配列を渡してくるので、**いまのアプリにこの分岐へ届く経路は無い**。
-  // weak を含む配列を渡す消費者（診断ログの閲覧画面など）を作ったときに黙って空欄にならないよう
-  // 置いてある
+  // 単点のまま居座って降ろされたもの（設計書§33）。確信度は weak になる。検知カードは weak を除くが、
+  // 降ろした検知は別のカード（`KyoshinDemotedCard`・`utils/kyoshinDemotedEvents.ts`）が理由として
+  // この文を出す（2026-10-22 ユーザー選択「理由をカードに残す (Recommended)」）。
   // 孤立点（周囲に観測点が無い）は対を作れないので、値が動かないまま続いたことで降ろす（設計書§37）。
   // 文面は 2026-10-15 ユーザー承認
   if (g.soloStale) return g.soloStaleFlat ? '値が動かないまま続いたため取り下げ' : '広がりが続かなかったため取り下げ'

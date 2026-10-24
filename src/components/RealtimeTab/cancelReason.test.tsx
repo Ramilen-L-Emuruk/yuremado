@@ -40,7 +40,7 @@ const renderTab = (eews: EEWAlert[]) =>
       eews={eews}
       swaveArrival={null}
       kyoshinV2Detections={[]}
-      kyoshinDetectedPoints={[]}
+      kyoshinDetectedPoints={[]} kyoshinDemoted={[]}
       visible
     />,
   )

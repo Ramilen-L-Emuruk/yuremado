@@ -133,6 +133,8 @@ const DEFAULT_TITLE = isDmdss
 // 空配列を freeze せず可変配列として扱っているのは既存 SiteCoords 型定義が可変配列のため。
 const EMPTY_SITES: [number, number][] = []
 const EMPTY_INDICES: number[] = []
+/** 降ろした検知が無いときに RealtimeTab へ渡す空の並び（参照を保って memo を効かせる）。 */
+const NO_DEMOTED_EVENTS: DetectionEvent[] = []
 // 公開観測点の波形を出していないときに地図へ渡す空の印（毎回の新しい配列で地図の印を作り直させない）。
 const NO_PUBLIC_STATIONS: readonly PublicStationMarker[] = []
 
@@ -2784,6 +2786,7 @@ export function App() {
                 eews={eewsForPanel}
                 kyoshinV2Detections={kyoshinV2.detections}
                 kyoshinDetectedPoints={kyoshinDetectedPoints}
+                kyoshinDemoted={kyoshinDemoted}
                 swaveArrival={swaveArrival}
                 visible={activeTab === 'realtime' && !panelCollapsed}
                 speakingEewKey={speakingEewKey}

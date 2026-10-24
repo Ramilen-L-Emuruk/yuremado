@@ -56,7 +56,7 @@ const renderTab = (eews: EEWAlert[], speakingEewKey?: string | null) =>
       eews={eews}
       swaveArrival={null}
       kyoshinV2Detections={[]}
-      kyoshinDetectedPoints={[]}
+      kyoshinDetectedPoints={[]} kyoshinDemoted={[]}
       visible
       speakingEewKey={speakingEewKey}
     />,
