@@ -2054,7 +2054,6 @@ export function App() {
     kyoshinIndicesGated,
     kyoshin.dataTime,
     kyoshin.indicesSiteConfigId,
-    !settings.recordingMode,
   )
   // V2 検知イベント → 表示状態（confirmed/candidate・検知点・候補点）へ変換する
   const kyoshinView = useMemo(
