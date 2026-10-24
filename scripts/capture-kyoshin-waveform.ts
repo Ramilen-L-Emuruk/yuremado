@@ -210,8 +210,9 @@ async function processEvent(
   console.log(`ダウンロード完了（${zip.byteLength}バイト）。解凍・パース・震度算出中...`)
 
   let result: EventResult
+  let excludedStations: number
   try {
-    result = buildEventResultFromZip(zip, stepSec)
+    ;({ event: result, excludedStations } = buildEventResultFromZip(zip, stepSec))
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     // buildEventResultFromZipは、地震の識別（originTimeJst）がZIPヘッダーから導出できた
@@ -224,6 +225,9 @@ async function processEvent(
       `  注意: ZIPヘッダーのOrigin Time(${result.originTimeJst})が--origin指定値(${originTimeJst})と`
       + '一致しません（気象庁発表時刻の情報源によるわずかな差の可能性）',
     )
+  }
+  if (excludedStations > 0) {
+    console.warn(`  注意: 読めないファイル・震度を計算できない観測点 ${excludedStations} 点を除きました`)
   }
   console.log(`${result.stationSeries.length}観測点。このイベントのピーク計測震度（近似値）: ${result.peakIntensity.toFixed(2)}`)
 

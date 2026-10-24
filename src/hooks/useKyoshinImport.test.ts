@@ -38,6 +38,10 @@ function makeEvent(originTimeJst: string): EventResult {
   return { originTimeJst, stationSeries: [{ stationCode: 'AAA', latitude: 1, longitude: 1, points: [] }], peakIntensity: 5.0 }
 }
 
+function makeBuild(originTimeJst: string, excludedStations = 0) {
+  return { event: makeEvent(originTimeJst), excludedStations, excluded: Array.from({ length: excludedStations }, (_, i) => ({ station: `S${i}`, reason: 'テスト' })) }
+}
+
 /** Array.from(files)で回せれば十分なため、実際のFileListは作らずFile配列で代用する。 */
 function fakeFileList(files: File[]): FileList {
   return files as unknown as FileList
@@ -52,7 +56,7 @@ beforeEach(() => {
 
 describe('useKyoshinImport', () => {
   it('正: 対応するアーカイブが見つかれば保存し、errorsは空になる', async () => {
-    mockBuildEvent.mockReturnValue(makeEvent('20180618075834'))
+    mockBuildEvent.mockReturnValue(makeBuild('20180618075834'))
     mockParseJst.mockReturnValue(new Date('2018-06-18T07:58:34+09:00'))
     mockFindCovering.mockReturnValue(archives[0] as HistoricalArchiveMeta)
     mockSave.mockResolvedValue(true)
@@ -67,7 +71,7 @@ describe('useKyoshinImport', () => {
   })
 
   it('対照: 対応するアーカイブが見つからなければ、そのファイルだけerrorsに積まれる', async () => {
-    mockBuildEvent.mockReturnValue(makeEvent('19990101000000'))
+    mockBuildEvent.mockReturnValue(makeBuild('19990101000000'))
     mockParseJst.mockReturnValue(new Date('1999-01-01T00:00:00+09:00'))
     mockFindCovering.mockReturnValue(null)
 
@@ -87,7 +91,7 @@ describe('useKyoshinImport', () => {
     mockBuildEvent.mockImplementation((zip) => {
       const marker = new Uint8Array(zip)[0]
       if (marker === 0) throw new Error('パースに失敗しました')
-      return makeEvent('20180618075834')
+      return makeBuild('20180618075834')
     })
     mockFindCovering.mockReturnValue(archives[0] as HistoricalArchiveMeta)
     mockSave.mockResolvedValue(true)
@@ -103,6 +107,51 @@ describe('useKyoshinImport', () => {
     expect(result.current.errors).toHaveLength(1)
     expect(result.current.errors[0].fileName).toBe('broken.zip')
     expect(mockSave).toHaveBeenCalledTimes(1)
+  })
+
+  it('正: 観測点を外して取り込んだファイルは exclusions に積まれ、保存もされる', async () => {
+    mockBuildEvent.mockReturnValue(makeBuild('20180618075834', 3))
+    mockParseJst.mockReturnValue(new Date('2018-06-18T07:58:34+09:00'))
+    mockFindCovering.mockReturnValue(archives[0] as HistoricalArchiveMeta)
+    mockSave.mockResolvedValue(true)
+
+    const { result } = renderHook(() => useKyoshinImport(archives))
+    await act(async () => {
+      await result.current.importFiles(fakeFileList([new File([new Uint8Array([1])], 'osaka.zip')]))
+    })
+
+    expect(result.current.exclusions).toEqual([{ fileName: 'osaka.zip', excludedStations: 3 }])
+    expect(result.current.errors).toEqual([])
+    expect(mockSave).toHaveBeenCalledTimes(1)
+  })
+
+  it('対照: 外さずに済んだファイルは exclusions に積まれない', async () => {
+    mockBuildEvent.mockReturnValue(makeBuild('20180618075834', 0))
+    mockParseJst.mockReturnValue(new Date('2018-06-18T07:58:34+09:00'))
+    mockFindCovering.mockReturnValue(archives[0] as HistoricalArchiveMeta)
+    mockSave.mockResolvedValue(true)
+
+    const { result } = renderHook(() => useKyoshinImport(archives))
+    await act(async () => {
+      await result.current.importFiles(fakeFileList([new File([new Uint8Array([1])], 'osaka.zip')]))
+    })
+
+    expect(result.current.exclusions).toEqual([])
+  })
+
+  it('安全弁: 保存に失敗したファイルは、観測点を外していても exclusions には積まずエラーへ回す', async () => {
+    mockBuildEvent.mockReturnValue(makeBuild('20180618075834', 2))
+    mockParseJst.mockReturnValue(new Date('2018-06-18T07:58:34+09:00'))
+    mockFindCovering.mockReturnValue(archives[0] as HistoricalArchiveMeta)
+    mockSave.mockResolvedValue(false)
+
+    const { result } = renderHook(() => useKyoshinImport(archives))
+    await act(async () => {
+      await result.current.importFiles(fakeFileList([new File([new Uint8Array([1])], 'osaka.zip')]))
+    })
+
+    expect(result.current.exclusions).toEqual([])
+    expect(result.current.errors).toHaveLength(1)
   })
 
   it('正: deleteArchiveが成功すればdeleteErrorはnullのまま', async () => {

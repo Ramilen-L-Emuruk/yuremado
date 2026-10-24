@@ -343,7 +343,7 @@ function DiagnosticLogRow() {
  * ZIPヘッダーのOrigin Timeから自動検出するため、ファイルを選ぶだけでよい（useKyoshinImport参照）。
  */
 function KyoshinImportRow({ historicalArchives }: { historicalArchives: HistoricalArchiveIndex }) {
-  const { summaries, importing, deletingArchiveId, errors, deleteError, storageError, importFiles, deleteArchive } = useKyoshinImport(historicalArchives)
+  const { summaries, importing, deletingArchiveId, errors, exclusions, deleteError, storageError, importFiles, deleteArchive } = useKyoshinImport(historicalArchives)
   const inputRef = useRef<HTMLInputElement>(null)
   const busy = importing || deletingArchiveId !== null
 
@@ -395,6 +395,17 @@ function KyoshinImportRow({ historicalArchives }: { historicalArchives: Historic
         </span>
       )}
       {deleteError && <span className="text-xs text-red-400 text-right">{deleteError}</span>}
+      {/* 文面は 2026-10-24 ユーザー選択「1 行出す (Recommended)」・「理由をまとめて書く (Recommended)」。
+          取り込みは成功しているので赤にしない。どの観測点をなぜ外したかは記録（log.warn）に残る */}
+      {exclusions.length > 0 && (
+        <div className="flex flex-col gap-0.5 items-end">
+          {exclusions.map((e, i) => (
+            <span key={`${i}-${e.fileName}`} className="text-xs text-secondary text-right break-all">
+              {`${e.fileName}：読めない、または震度を計算できない観測点 ${e.excludedStations} 点を除いて取り込みました`}
+            </span>
+          ))}
+        </div>
+      )}
       {errors.length > 0 && (
         <div className="flex flex-col gap-0.5 items-end">
           {errors.map((e, i) => (
