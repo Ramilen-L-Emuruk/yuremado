@@ -51,6 +51,38 @@ describe('createTsunamiBlink', () => {
     b.dispose()
   })
 
+  // 正: 共有カードの撮影の間は点灯のまま止める（消灯の間に撮ると画像から海岸線が丸ごと消える）
+  it('止めている間は消灯の時刻でも点灯のまま、戻すとそのときの位相へ戻る', () => {
+    const applied: number[] = []
+    const apply = vi.fn((opacity: number) => { applied.push(opacity); return true })
+    const b = createTsunamiBlink(apply, clock)
+    b.setActive(true)
+    vi.advanceTimersByTime(ON + 10)
+    expect(applied[applied.length - 1]).toBe(0)
+    b.hold(true)
+    expect(applied[applied.length - 1]).toBe(TSUNAMI_LINE_OPACITY_ON)
+    // 止めている間は切り替わりの時刻を何度過ぎても当て直さない
+    const calls = apply.mock.calls.length
+    vi.advanceTimersByTime(P * 3)
+    expect(apply.mock.calls.length).toBe(calls)
+    // 戻すと、そのときの位相（消灯の中）の値を当て、点滅を続ける
+    b.hold(false)
+    expect(applied[applied.length - 1]).toBe(0)
+    vi.advanceTimersByTime(P - ON)
+    expect(applied[applied.length - 1]).toBe(TSUNAMI_LINE_OPACITY_ON)
+    b.dispose()
+  })
+
+  // 対照: 海岸線が見えていないときは止めても何も当てない（見えていない線のために描き直さない）
+  it('無効のときに止めても当てない', () => {
+    const apply = vi.fn(() => true)
+    const b = createTsunamiBlink(apply, clock)
+    b.hold(true)
+    b.hold(false)
+    expect(apply).not.toHaveBeenCalled()
+    b.dispose()
+  })
+
   // 対照: 切り替わりの間は 1 回も当てない。旧実装は毎フレーム当てていた（＝毎フレーム描き直し）。
   it('10 周期のあいだに当てる回数は切り替わりの回数だけ（毎フレーム当てない）', () => {
     const apply = vi.fn(() => true)

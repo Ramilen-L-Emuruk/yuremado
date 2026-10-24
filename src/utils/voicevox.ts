@@ -126,6 +126,7 @@ export const CHUNK_SYNTH_TIMEOUT_MS = 5000
  * 音が {@link AUDIO_GAP_GRACE_MS} を超えて途切れたら消費を再開する。そこまで途切れているなら
  * チェーン側も打ち切る側へ倒れるので、宙吊りの保険は保たれる。
  */
+// 超えたら残りを読まないことは 2026-10-23 ユーザー選択「今のまま記録する (Recommended)」
 export const SPEECH_SYNTH_BUDGET_MS = 6000
 
 /**

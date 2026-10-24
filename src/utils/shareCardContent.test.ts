@@ -78,6 +78,7 @@ function input(over: Partial<ShareCardContentInput> & { mode: MapMode }): ShareC
     showActiveFaults: true,
     showPlateBoundaries: true,
     showPublicStations: false,
+    kyoshinDetection: null,
     ...over,
   }
 }
@@ -99,11 +100,29 @@ describe('buildShareCardContent — 地震', () => {
     expect(c.header.titleColor).toBeUndefined()
   })
 
-  // 「不明」という語を並べても読み手には何も伝わらない。項目ごと落とす。
-  it('規模・深さが不明なら副見出しから項目ごと落とす', () => {
+  // 正（2026-10-23 ユーザー選択「「不明」も焼く」で覆した。語は 2026-10-24 ユーザー選択「この語で (Recommended)」）:
+  // 規模・深さが不明でも「M不明」「深さ 不明」と焼く（落とすと「伝えていない」と「判らない」が見分けられない）
+  it('規模・深さが不明なら「M不明」「深さ 不明」と焼く', () => {
     const c = build(input({ mode: 'quake', quake: quake({ magnitude: NaN, depth: -1 }) }))
-    expect(c.header.subtitle).toBe('日向灘')
+    expect(c.header.subtitle).toBe('日向灘　M不明　深さ 不明')
+  })
+
+  // 安全弁: 震源そのものを伝えていない電文（震度速報。座標がセンチネル）では規模・深さを足さない
+  it('安全弁: 震源を伝えていない電文では規模・深さを足さない', () => {
+    const q = quake({ magnitude: NaN, depth: -1 })
+    q.earthquake.hypocenter.latitude = -200
+    q.earthquake.hypocenter.longitude = -200
+    const c = build(input({ mode: 'quake', quake: q }))
     expect(c.header.subtitle).not.toContain('不明')
+  })
+
+  // 対照: 位置だけが判らない電文（震源要素不明）では、判っている規模を位置と一緒に伏せない（地震カードと同じ `hasHypocenterFacts`）
+  it('位置が判らなくても規模が判っていれば規模を焼き、深さは「不明」と焼く', () => {
+    const q = quake({ magnitude: 5.1, depth: -1 })
+    q.earthquake.hypocenter.latitude = -200
+    q.earthquake.hypocenter.longitude = -200
+    const c = build(input({ mode: 'quake', quake: q }))
+    expect(c.header.subtitle).toBe('日向灘　M5.1　深さ 不明')
   })
 
   it('地震が無くても見出しだけは作る', () => {
@@ -217,13 +236,22 @@ describe('buildShareCardContent — 出典', () => {
     expect(line).toContain(ATTRIBUTION_SOURCES.jma)
   })
 
-  // 活断層とプレート境界は地震／リアルタイム震度モードでしか描かれない（JapanMapGL の
-  // showOverlayLines）。設定が入りでも津波モードの画像には写らないので挙げない。
-  it('津波モードでは、設定が入りでも活断層・プレート境界を挙げない', () => {
+  // 活断層は地震／リアルタイム震度／震源カタログモードで、プレート境界はそれに津波モードを加えて描かれる（JapanMapGL の
+  // showOverlayLines・showPlateLines）。描かないモードでは挙げない。
+  // 正（2026-10-22 ユーザー選択「プレート境界だけ出す (Recommended)」で覆した）: 津波モードでもプレート境界は挙げる
+  it('津波モードでは、プレート境界は挙げ、活断層は挙げない', () => {
     const c = build(input({ mode: 'tsunami' }))
     const line = c.notices.join('\n')
     expect(line).not.toContain(ATTRIBUTION_SOURCES.activeFaults)
-    expect(line).not.toContain(ATTRIBUTION_SOURCES.plateBoundaries)
+    expect(line).toContain(ATTRIBUTION_SOURCES.plateBoundaries)
+  })
+
+  // 正（2026-10-24 ユーザー選択「一緒に直す (Recommended)」）: 震源カタログモードも両方を描くので挙げる
+  it('震源カタログモードでは、活断層・プレート境界の両方を挙げる', () => {
+    const c = build(input({ mode: 'catalog' }))
+    const line = c.notices.join('\n')
+    expect(line).toContain(ATTRIBUTION_SOURCES.activeFaults)
+    expect(line).toContain(ATTRIBUTION_SOURCES.plateBoundaries)
   })
 })
 
@@ -379,7 +407,7 @@ describe('buildShareCardContent — 津波', () => {
       ],
     } as unknown as JMATsunami
     const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
-    expect(c.header.subtitle).toBe('石川県能登地方　M7.6 ／ 佐渡付近　M6.1　1 区域')
+    expect(c.header.subtitle).toBe('石川県能登地方　M7.6　深さ 不明 ／ 佐渡付近　M6.1　深さ 不明　1 区域')
   })
 
   // 正: 震源名と規模が同じ別の地震は 1 つに畳まず、発生時刻を添えて見分ける（2026-10-21 ユーザー選択「B は案1」。
@@ -394,7 +422,7 @@ describe('buildShareCardContent — 津波', () => {
       ],
     } as unknown as JMATsunami
     const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
-    expect(c.header.subtitle).toBe('フィリピン付近　M7.7 ／ フィリピン付近　M7.0（地震発現時刻 19:36） ／ フィリピン付近　M7.0（地震発現時刻 04:50）　1 区域')
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.7　深さ 不明 ／ フィリピン付近　M7.0　深さ 不明（地震発現時刻 19:36） ／ フィリピン付近　M7.0　深さ 不明（地震発現時刻 04:50）　1 区域')
   })
 
   // 安全弁: 時刻を読めない側は別の地震と決められないので、同じ文の地震と重ねる（時刻なしの行が並ばない）
@@ -407,7 +435,7 @@ describe('buildShareCardContent — 津波', () => {
       ],
     } as unknown as JMATsunami
     const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
-    expect(c.header.subtitle).toBe('フィリピン付近　M7.0　1 区域')
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.0　深さ 不明　1 区域')
   })
 
   // 安全弁: 時刻を持たない地震が先に並んでも、時刻の違う 2 つの地震は畳まない（届いた順によらない）
@@ -421,7 +449,7 @@ describe('buildShareCardContent — 津波', () => {
       ],
     } as unknown as JMATsunami
     const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
-    expect(c.header.subtitle).toBe('フィリピン付近　M7.0（地震発現時刻 19:36） ／ フィリピン付近　M7.0（地震発現時刻 04:50）　1 区域')
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.0　深さ 不明（地震発現時刻 19:36） ／ フィリピン付近　M7.0　深さ 不明（地震発現時刻 04:50）　1 区域')
   })
 
   // 対照: 同じ瞬間を違う表記で運んでも 1 つの地震として重ねる
@@ -434,19 +462,19 @@ describe('buildShareCardContent — 津波', () => {
       ],
     } as unknown as JMATsunami
     const c = build(input({ mode: 'tsunami', tsunamis: [t] }))
-    expect(c.header.subtitle).toBe('フィリピン付近　M7.0　1 区域')
+    expect(c.header.subtitle).toBe('フィリピン付近　M7.0　深さ 不明　1 区域')
   })
 
   // 対照: 1 件なら区切りは入らない。
   it('原因地震が 1 件なら区切りを入れない', () => {
     const c = build(input({ mode: 'tsunami', tsunamis: [tsunami()] }))
-    expect(c.header.subtitle).toBe('日向灘　M8.1　1 区域')
+    expect(c.header.subtitle).toBe('日向灘　M8.1　深さ 不明　1 区域')
   })
 
   // 安全弁: 同じ津波の報が並んでも、同じ原因地震を二度書かない。
   it('複数の報が同じ原因地震を運んでも重ねない', () => {
     const c = build(input({ mode: 'tsunami', tsunamis: [tsunami(), { ...tsunami(), id: 't2' } as JMATsunami] }))
-    expect(c.header.subtitle).toBe('日向灘　M8.1　1 区域')
+    expect(c.header.subtitle).toBe('日向灘　M8.1　深さ 不明　1 区域')
   })
 })
 
@@ -540,13 +568,59 @@ describe('buildShareCardContent — 緊急地震速報の規模の説明', () =>
     expect(JSON.stringify(c.header)).toContain('M8を超える巨大地震')
   })
 
-  it('対照: 説明が「Ｍ不明」の規模も出さない', () => {
+  // 正（2026-10-23 ユーザー選択「「不明」も焼く」で覆した）: 説明が「Ｍ不明」でも、説明が無くても「M不明」と焼く
+  it('正: 説明が「Ｍ不明」の規模は「M不明」と焼く', () => {
     const c = build(input({ mode: 'kyoshin', eews: [eew({ magnitude: NaN, magnitudeCondition: 'Ｍ不明' })] }))
-    expect(JSON.stringify(c.header)).not.toContain('不明')
+    expect(c.header.subtitle).toContain('M不明')
   })
 
-  it('対照: 説明の無い不明の規模は出さない', () => {
+  it('正: 説明の無い不明の規模も「M不明」と焼く（「不明」だけにしない）', () => {
     const c = build(input({ mode: 'kyoshin', eews: [eew({ magnitude: NaN })] }))
-    expect(JSON.stringify(c.header)).not.toContain('不明')
+    expect(c.header.subtitle).toContain('M不明')
+    expect(c.header.subtitle).not.toMatch(/(^|　)不明/)
+  })
+})
+
+// 2026-10-23 の棚卸し⑨⑩⑪の決定（C1d・C2a・C2b・C3）
+describe('buildShareCardContent — 複数の緊急地震速報・深さ・揺れ検知', () => {
+  // 正（2026-10-23 ユーザー選択「全件を並べる」・並べ方は 2026-10-24 ユーザー選択「副見出しで折り返す (Recommended)」）
+  it('正: 複数の緊急地震速報が発表中なら、副見出しに深刻な順で全件を並べる', () => {
+    const mild = eew({ name: '福島県沖', scaleTo: 30 })
+    const severe = eew({ name: '日向灘', severity: 'Warning', scaleTo: 55 })
+    const c = build(input({ mode: 'kyoshin', eews: [mild, severe] }))
+    expect(c.header.subtitle).toBe('日向灘　M6.5　深さ 30km　予想最大震度 6弱 ／ 福島県沖　M6.5　深さ 30km　予想最大震度 3')
+  })
+
+  // 正（2026-10-23 ユーザー選択「どちらも出す (Recommended)」）: 緊急地震速報の深さを焼く。安全弁: 仮の震源では規模も深さも出さない
+  it('正: 緊急地震速報の深さを焼き、仮定震源要素の報では規模も深さも出さない', () => {
+    expect(build(input({ mode: 'kyoshin', eews: [eew()] })).header.subtitle).toContain('深さ 30km')
+    const provisional = build(input({ mode: 'kyoshin', eews: [eew({ condition: '仮定震源要素' })] })).header.subtitle ?? ''
+    expect(provisional).not.toContain('深さ')
+    expect(provisional).not.toContain('M')
+  })
+
+  // 正（2026-10-23 ユーザー選択「どちらも出す (Recommended)」）: 津波の原因地震の深さを焼く
+  it('正: 津波の原因地震の深さを焼く', () => {
+    const t = tsunami()
+    t.sourceEarthquakes = [{ hypocenterName: '日向灘', magnitude: 8.1, depth: 20 }]
+    expect(build(input({ mode: 'tsunami', tsunamis: [t] })).header.subtitle).toBe('日向灘　M8.1　深さ 20km　1 区域')
+  })
+
+  // 正（2026-10-23 ユーザー選択「揺れ検知中は推定最大震度を出す (Recommended)」・文面は 2026-10-24「この文面で (Recommended)」）
+  it('正: 緊急地震速報が無く揺れを検知していれば、見出しは「揺れ検知」と推定最大震度', () => {
+    const c = build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'confirmed', maxIndex: 30 } }))
+    expect(c.header.title).toBe('揺れ検知')
+    expect(c.header.subtitle).toMatch(/^推定最大震度 .+（強震モニタ）$/)
+    expect(build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'candidate', maxIndex: 30 } })).header.title).toBe('揺れの可能性')
+  })
+
+  it('対照: 揺れを検知していなければ従来どおり「リアルタイム震度」', () => {
+    expect(build(input({ mode: 'kyoshin' })).header.title).toBe('リアルタイム震度')
+  })
+
+  // 安全弁: 緊急地震速報があれば揺れ検知より緊急地震速報の見出しを優先する
+  it('安全弁: 緊急地震速報が発表中なら、揺れ検知より緊急地震速報を見出しにする', () => {
+    const c = build(input({ mode: 'kyoshin', eews: [eew()], kyoshinDetection: { state: 'confirmed', maxIndex: 30 } }))
+    expect(c.header.title).not.toBe('揺れ検知')
   })
 })

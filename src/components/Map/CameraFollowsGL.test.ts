@@ -11,6 +11,7 @@ import type { EEWAlert } from '../../types/earthquake'
 import type { ShakeFocus } from './mapTypes'
 import type { PsWaveCircle } from '../../services/kyoshin'
 import { openPopupAt, closeMapPopup } from './gl/popupRegistry'
+import { openTsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 import { distributionMaxZoom, fitMaxZoom, focusMaxZoom } from './gl/camera'
 
 // 「確定検知の終了」と「候補クラスタの継続」が重なる遷移を固定する回帰テスト。
@@ -61,6 +62,7 @@ vi.mock('maplibre-gl', () => {
 // 吹き出しの調停役は本物の Popup（DOM）を作るため、呼ばれたことだけを見る。
 // ここで確かめたいのは「いつ・どこで開くよう頼んだか」であって、吹き出しの中身ではない。
 vi.mock('./gl/popupRegistry', () => ({ openPopupAt: vi.fn(), closeMapPopup: vi.fn() }))
+vi.mock('./gl/tsunamiMarkerPopup', () => ({ openTsunamiMarkerPopup: vi.fn(() => true), closeTsunamiMarkerPopups: vi.fn() }))
 
 // fitJapan は padding 20、点群へのフィット（fitToPositions / flyToBoundsSnapped）は padding 60 で
 // 呼ばれる（gl/camera.ts の各既定値）。「日本全体へ戻した」のか「点群へ寄せた」のかの区別に使う。
@@ -1260,6 +1262,7 @@ function tsunamiHarness(map: maplibregl.Map, props: TsunamiProps = {}) {
       tsunamiEventId: props.eventId ?? EVENT_ID,
       tsunamiOperationStatus: props.operationStatus ?? '',
       tsunamiFitPositions: props.coast ?? COAST,
+      forecastStationPoints: [],
       observationBars: props.bars ?? [],
       arrivalMarkers: props.arrivals ?? [],
       missingMarkers: props.missing ?? [],
@@ -1753,6 +1756,23 @@ describe('津波モードの帰還（観測点 → 俯瞰）', () => {
     expect(fitTargets(map)).toEqual([OBS_WEST])
   })
 
+  // 正（2026-10-21 ユーザー選択「動いた観測点を全部入れる (Recommended)」で覆した）: 津波タブの外で観測点の更新が
+  // 重なっても、入室時は動いた観測点を全部画に入れる（以前は最後の報の観測点だけに寄っていた）。
+  it('津波タブの外で観測点の更新が 2 回重なったら、入室時は両方の観測点を画に入れる', () => {
+    const map = createFakeMap()
+    const view = render(tsunamiHarness(map, { mode: 'kyoshin', signature: '', coast: [] }))
+    view.rerender(tsunamiHarness(map, { mode: 'kyoshin', bars: OBS_BARS }))
+    // A だけが上がる → B だけが上がる（どちらも津波タブの外）
+    const aRaised = [bar('A', 33.0, 130.0, 1.5), bar('B', 34.0, 131.0, 2.0)]
+    const bRaised = [bar('A', 33.0, 130.0, 1.5), bar('B', 34.0, 131.0, 2.5)]
+    view.rerender(tsunamiHarness(map, { mode: 'kyoshin', bars: aRaised }))
+    view.rerender(tsunamiHarness(map, { mode: 'kyoshin', bars: bRaised }))
+    const before = fitTargets(map).length
+    view.rerender(tsunamiHarness(map, { mode: 'tsunami', bars: bRaised }))
+    // 寄り先の西端は A（130）。最後の報（B だけ）なら 131 になる
+    expect(fitTargets(map).slice(before)).toEqual([OBS_WEST])
+  })
+
   it('津波モードにいても、現れた評価では観測点より対象海域を先に出す', () => {
     // Arrange: 津波タブにいて、発表中の津波はまだ無い。
     const map = createFakeMap()
@@ -1955,6 +1975,32 @@ describe('観測行クリックのフォーカス', () => {
     render(focusHarness(map, { name: 'A', ts: 1 }, OBS_BARS))
 
     expect(flyZooms(map)[0]).toBeGreaterThan(fitMaxZoom(map))
+  })
+
+  // 正: 着地したらその観測点の吹き出しを開く（2026-10-21 ユーザー選択「吹き出しも開く (Recommended)」）。
+  // **飛行中に観測棒の配列が作り直されても開く** —— 作り直しで effect が走り直すたびに購読を外していた頃は、
+  // 寄せたのに開かないまま終わった（`ts` を消費済みなので張り直さない）。
+  it('飛行中に観測棒が作り直されても、着地したら吹き出しを開く', () => {
+    const open = openTsunamiMarkerPopup as unknown as Mock
+    open.mockClear()
+    const map = createFakeMap()
+    const view = render(focusHarness(map, { name: 'B', ts: 1 }, OBS_BARS))
+    expect(open).not.toHaveBeenCalled()
+    view.rerender(focusHarness(map, { name: 'B', ts: 1 }, [...OBS_BARS]))
+    act(() => { (map as unknown as { fire: (e: string) => void }).fire('moveend') })
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(open.mock.calls[0][1]).toBe('B')
+  })
+
+  // 対照: 着地を待つ間に別の行を押したら、前の観測点の吹き出しは開かない（後から押した側だけ）
+  it('着地の前に別の行を押したら、後の観測点だけを開く', () => {
+    const open = openTsunamiMarkerPopup as unknown as Mock
+    open.mockClear()
+    const map = createFakeMap()
+    const view = render(focusHarness(map, { name: 'B', ts: 1 }, OBS_BARS))
+    view.rerender(focusHarness(map, { name: 'A', ts: 2 }, OBS_BARS))
+    act(() => { (map as unknown as { fire: (e: string) => void }).fire('moveend') })
+    expect(open.mock.calls.map(c => c[1])).toEqual(['A'])
   })
 })
 

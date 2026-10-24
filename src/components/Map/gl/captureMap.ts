@@ -19,7 +19,7 @@ import { log } from '../../../utils/logger'
 // `toBlob()` のような非同期 API へ差し替えると、コールバックを抜けたあとに読むことになり空になる。
 // 写し取ったあとの加工（ヘッダ・フッタの合成）は 2D キャンバス上の話なので、いくら時間をかけてもよい。
 
-/** タイルの読み込みを待つ上限。超えたら欠けたまま撮る（撮れないより撮る）。 */
+/** タイルの読み込みを待つ上限。超えたら欠けたまま撮る（撮れないより撮る。2026-10-23 ユーザー選択「今のまま記録する (Recommended)」）。 */
 const CAPTURE_IDLE_TIMEOUT_MS = 8000
 /**
  * 1 フレームの描画を待つ上限。
@@ -63,6 +63,42 @@ export interface MapCaptureResult {
  * 別の Map インスタンスを立てないのは、このアプリのレイヤーが `Map/` 配下のコンポーネント十数個に
  * 分かれて登録されており、二つ目の地図に同じ絵を再現できないため。
  */
+/**
+ * 撮影の間だけ見た目を止めたい描画物の登録先（地図ごと）。いまは津波の海岸線の点滅だけ（`TsunamiLinesGL`）。
+ * 点滅は消灯の間（周期の 2 割）に撮ると画像から丸ごと消えるので、撮影の間は点灯のまま止める。
+ */
+const captureHolds = new WeakMap<maplibregl.Map, Set<(held: boolean) => void>>()
+/** いま撮影している数（地図ごと）。**0 になったときだけ戻す** —— 撮影が重なっても、先に終わった側で戻さない。 */
+const captureDepth = new WeakMap<maplibregl.Map, number>()
+
+/**
+ * 撮影の始まりと終わりに呼ばれる関数を登録する。戻り値で外す。**撮影の最中に登録したら、その場で止める**
+ * （描画物を作り直したときに、止まっていない新しい点滅で撮らないため）。
+ */
+export function registerCaptureHold(map: maplibregl.Map, hold: (held: boolean) => void): () => void {
+  let set = captureHolds.get(map)
+  if (!set) {
+    set = new Set()
+    captureHolds.set(map, set)
+  }
+  set.add(hold)
+  if ((captureDepth.get(map) ?? 0) > 0) {
+    try { hold(true) } catch (e) { log.error('[shareCard] 撮影の間の見た目の固定に失敗しました', e) }
+  }
+  return () => { captureHolds.get(map)?.delete(hold) }
+}
+
+function setCaptureHold(map: maplibregl.Map, held: boolean): void {
+  const depth = Math.max(0, (captureDepth.get(map) ?? 0) + (held ? 1 : -1))
+  captureDepth.set(map, depth)
+  // 止めるのは最初の撮影で、戻すのは最後の撮影が終わったときだけ
+  if (held ? depth !== 1 : depth !== 0) return
+  for (const hold of captureHolds.get(map) ?? []) {
+    // 1 つが投げても撮影と他の描画物を止めない
+    try { hold(held) } catch (e) { log.error('[shareCard] 撮影の間の見た目の固定に失敗しました', e) }
+  }
+}
+
 export async function captureMapImage(map: maplibregl.Map, opts: MapCaptureOptions): Promise<MapCaptureResult> {
   const { width, height, drawOverlay, freeze = true, idleTimeoutMs = CAPTURE_IDLE_TIMEOUT_MS } = opts
   const container = map.getContainer()
@@ -70,8 +106,12 @@ export async function captureMapImage(map: maplibregl.Map, opts: MapCaptureOptio
   const savedWidth = container.style.width
   const savedHeight = container.style.height
   const savedParentOverflow = parent?.style.overflow ?? ''
-  const freezeEl = freeze ? await createFreezeOverlay(map) : null
+  // 点滅などは画面を覆う静止画を撮る前に止める（静止画が消灯の瞬間になると、覆っている間だけ海岸線が消えて見える）。
+  // 戻すのは finally の最後なので、静止画の作成が投げても止まったままにはならない。
+  setCaptureHold(map, true)
+  let freezeEl: HTMLElement | null = null
   try {
+    freezeEl = freeze ? await createFreezeOverlay(map) : null
     // **出力寸法は画面の地図領域より大きいことが多い。** 親（position:absolute の枠）は overflow を
     // 持たないため、広げた分がそのまま隣のパネルへはみ出して見える。実測では 929×454 の地図領域に
     // 対し 1200×630 で撮ると、下のパネルへ 176px かぶさっていた。被せる静止画も親と同じ大きさ
@@ -104,6 +144,7 @@ export async function captureMapImage(map: maplibregl.Map, opts: MapCaptureOptio
     })
     restoreQuietly('地図の再計測', () => map.resize())
     restoreQuietly('静止画の除去', () => freezeEl?.remove())
+    restoreQuietly('見た目の固定の解除', () => setCaptureHold(map, false))
   }
 }
 

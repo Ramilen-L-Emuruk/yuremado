@@ -6,9 +6,11 @@ import { log } from '../utils/logger'
 import {
   composeShareCard,
   currentAppUrl,
-  DEFAULT_SHARE_CARD_FORMAT,
   shareCardMapHeight,
+  shareCardSubtitleLines,
+  shareCardNoticeLines,
   shareOrDownloadImage,
+  type ShareCardFormat,
 } from '../utils/shareCard'
 import { buildShareCardContent, type ShareCardContentInput } from '../utils/shareCardContent'
 import type { LegendBlock } from '../components/MapLegend/legendBlocks'
@@ -41,11 +43,15 @@ export function useShareCard(
   handle: MapHandle | null,
   content: ShareCardContentInput,
   legend: LegendBlock[],
+  /** カード全体の寸法（設定の `shareCardFormat`）。撮影と合成の両方へ同じものを渡す。 */
+  format: ShareCardFormat,
 ): UseShareCard {
   const [state, setState] = useState<ShareCardState>('idle')
   // 見出しの材料は毎レンダー新しいオブジェクトになる。依存に置くと share が作り直され、
   // それを受け取るボタンも毎回描き直しになるため、ref 越しに読む。
   const contentRef = useRef(content)
+  const formatRef = useRef(format)
+  formatRef.current = format
   useEffect(() => {
     contentRef.current = content
   }, [content])
@@ -71,10 +77,12 @@ export function useShareCard(
           // **見出しと出典を先に決める。** 出典の行数で地図に割ける高さが変わるため、撮影の
           // 寸法はここが確定してからでないと出せない（`shareCardMapHeight`）。
           const built = buildShareCardContent(contentRef.current, currentAppUrl())
-          const format = DEFAULT_SHARE_CARD_FORMAT
+          const format = formatRef.current
           const capture = await captureMapImage(handle.map, {
             width: format.width,
-            height: shareCardMapHeight(format, built.notices.length),
+            // 副見出しが折り返すと見出しの帯が伸び、そのぶん地図が縮む（`shareCardSubtitleLines`）。
+            // 注意文・出典も幅の狭い寸法では折り返すので、件数ではなく行数で渡す（`shareCardNoticeLines`）。
+            height: shareCardMapHeight(format, shareCardNoticeLines(built.notices, format), shareCardSubtitleLines(built.header.subtitle, format)),
             drawOverlay: handle.drawExtras,
           })
           const blob = await composeShareCard({ capture, header: built.header, notices: built.notices, format, legend: legendRef.current })

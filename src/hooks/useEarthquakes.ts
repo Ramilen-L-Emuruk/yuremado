@@ -1971,7 +1971,7 @@ export function useEarthquakes(
       const tsunami = event as JMATsunami
       const now = getTimeRef.current()
       // 失効の予約を積む（既に過ぎていれば、初期状態の再現に限りその場で失効させる）
-      const pushExpiry = (expireTime: Date, base: JMATsunami) => {
+      const pushExpiry = (expireTime: Date, base: JMATsunami, failsafe: boolean) => {
         // 初期状態の再現では、遡り幅（24 時間）の境目ぶんだけ「発表から 24 時間を過ぎた」
         // 電文が紛れうる。未来の予約しか積まないと、そういう津波は失効予約を持たないまま
         // 画面に残り、リプレイ中はライブ更新も止まっているので消す手段が無くなる。
@@ -1982,7 +1982,8 @@ export function useEarthquakes(
             eventTime: alreadyExpired ? now : expireTime,
             silent: alreadyExpired ? true : undefined,
             // 畳んだ報（`foldedReports`）は失効の判定に要らないので持ち回さない。
-            payload: { kind: 'event', event: { ...base, foldedReports: undefined, cancelled: true, cancelReason: 'expired' } as AppEvent },
+            // 標準版の安全弁で積んだ消去には印を付ける（→ `JMATsunami.failsafeExpiry`。「失効」と名乗らずに畳む）。
+            payload: { kind: 'event', event: { ...base, foldedReports: undefined, cancelled: true, cancelReason: 'expired', ...(failsafe && { failsafeExpiry: true as const }) } as AppEvent },
             logEntry: null,
           })
         }
@@ -2028,13 +2029,16 @@ export function useEarthquakes(
         if (step.kind !== 'ignored') {
           purgeExpiry()
           const expireTime = step.kind === 'live' ? parseValid(step.tsunami) : null
-          if (step.kind === 'live' && expireTime) pushExpiry(expireTime, step.tsunami)
+          if (step.kind === 'live' && expireTime) pushExpiry(expireTime, step.tsunami, false)
         }
       } else {
         let expireTime: Date | null = null
+        // 実際の失効時刻（中継などで `validDateTime` が届いた報）なら、その時刻で「失効」と名乗る。安全弁は名乗らない。
+        let failsafe = false
         if (!tsunami.cancelled) {
           expireTime = parseValid(tsunami)
           if (!expireTime) {
+            failsafe = true
             const FAILSAFE_MS = 24 * 60 * 60 * 1000
             // 初期状態の再現（silent 注入）では、過去に発表された電文をまとめて「いま」流し直す。
             // 受信時刻を基準にすると、20 時間前に出ていた津波が再生開始からさらに 24 時間残り、
@@ -2048,7 +2052,7 @@ export function useEarthquakes(
         }
         // 明示解除電文でも purge するのは、TSU-5A の 24h 予約を解決済み津波に対して発火させないため。
         if (tsunami.cancelled || expireTime) purgeExpiry()
-        if (expireTime) pushExpiry(expireTime, tsunami)
+        if (expireTime) pushExpiry(expireTime, tsunami, failsafe)
       }
     }
 
@@ -2206,6 +2210,13 @@ export function useEarthquakes(
               return { ...prev, tsunamis: [], lastUpdate: now }
             }
             if (step.reason === 'outdated') return { ...prev, tsunamis: [], lastUpdate: now }
+            // **標準版の 24 時間の安全弁は帯を出さずに消す**（→ `JMATsunami.failsafeExpiry`）。気象庁が言っていない時刻に
+            // 「津波予報 失効」と出すと、発表値の顔で推測を並べることになる。タイトルも、解除の表示を経ずに消えた津波として
+            // 終わりの語を出さない（`App.tsx` の `findEndedTsunami`）。
+            if (tsunami.failsafeExpiry) {
+              log.info(`[tsunami] 標準版の安全弁（24 時間）で津波を外します（失効とは名乗らない）: id=${current?.id}`)
+              return { ...prev, tsunamis: [], lastUpdate: now }
+            }
             // 解除・取消・期限切れのいずれも同じ10秒表示を経る。表示内容は cancelReason で出し分ける（TsunamiTab側）。
             if (current && !current.cancelledAt) {
               // TSU-4: purge 予約に対象 id を持たせ、他イベントが後で置換した場合に誤って

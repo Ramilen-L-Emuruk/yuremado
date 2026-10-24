@@ -12,6 +12,7 @@ import { render, cleanup } from '@testing-library/react'
 import { TsunamiTab } from './index'
 import { sortObservationsForCardDisplay, tsunamiAreaGradeChanges, TSUNAMI_GRADE_LIFTED } from '../../utils/tsunami'
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../../types/earthquake'
+import { NO_TSUNAMI_VALUE_MARKS } from '../../utils/tsunami'
 
 afterEach(cleanup)
 
@@ -32,7 +33,7 @@ const obs = (name: string, districtName: string, code: string, value?: number): 
 
 /** 描画されたカードから観測点名の出現順を読む（観測点名は互いに部分文字列にならない名前を使う）。 */
 function renderedOrder(tsunami: JMATsunami, names: string[]): string[] {
-  const { container } = render(createElement(TsunamiTab, { tsunamis: [tsunami] }))
+  const { container } = render(createElement(TsunamiTab, { tsunamiValueMarks: NO_TSUNAMI_VALUE_MARKS, tsunamis: [tsunami] }))
   const text = container.textContent ?? ''
   return names
     .map(name => ({ name, at: text.indexOf(name) }))

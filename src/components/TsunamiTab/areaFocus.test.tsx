@@ -10,6 +10,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { TsunamiTab } from './index'
 import type { JMATsunami, TsunamiArea } from '../../types/earthquake'
+import { NO_TSUNAMI_VALUE_MARKS } from '../../utils/tsunami'
 
 // 海岸線は実行時に fetch で取る。**福島県だけ**を与え、岩手県は与えない
 // （境界を引けない区域が押せないことの対照）。
@@ -48,7 +49,7 @@ const TSUNAMI: JMATsunami = {
 }
 
 function renderTab(onFocusMap: (positions: [number, number][]) => void) {
-  render(<TsunamiTab tsunamis={[TSUNAMI]} onFocusMap={onFocusMap} />)
+  render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[TSUNAMI]} onFocusMap={onFocusMap} />)
 }
 
 describe('津波の区域名をクリックしたときの寄り先', () => {
@@ -79,7 +80,7 @@ describe('津波の区域名をクリックしたときの寄り先', () => {
   // 安全弁: 寄せ先を渡していない呼び出し元では、区域名が押せる見た目にならない。
   // **押せる見た目だけ与えて何も起きない**のがいちばん困る形なので、経路の有無で分ける。
   it('寄せ先の受け口が無ければ区域名は押せない', () => {
-    render(<TsunamiTab tsunamis={[TSUNAMI]} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[TSUNAMI]} />)
 
     expect(screen.getByText('福島県').getAttribute('role')).toBeNull()
   })

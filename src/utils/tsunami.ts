@@ -2,7 +2,7 @@ import type { JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiEstimationCondi
 import { formatTimeMin, readDateTime } from './formatters'
 import { log } from './logger'
 import { compareReportAge, reportOrderKey } from './quakeMerge'
-import type { UpdateMark } from './updateMark'
+import type { UpdateMark, UpdateStatus } from './updateMark'
 
 /**
  * 等級の重さ。値が大きいほど深刻。
@@ -275,9 +275,13 @@ export function refoldTsunamiWithout(
   current: JMATsunami,
   retraction: Pick<JMATsunami, 'headType' | 'eventId' | 'operationStatus'>,
 ): JMATsunami | null {
-  return reportsOf(current)
+  const folded = reportsOf(current)
     .filter(r => !isRetractedBy(r, retraction))
-    .reduce<JMATsunami | undefined>(applyTsunamiReport, undefined) ?? null
+    .reduce<JMATsunami | undefined>(applyTsunamiReport, undefined)
+  if (!folded) return null
+  // 前の津波の原因地震は報ではなく状態が持つので、組み直しの外から戻す（`mergeTsunamiReports` と同じ。→
+  // `JMATsunami.previousSourceEarthquakes`）。戻さないと、置き換えのあとに一部取消が届いただけで前の地震の行が消える。
+  return current.previousSourceEarthquakes ? { ...folded, previousSourceEarthquakes: current.previousSourceEarthquakes } : folded
 }
 
 /**
@@ -427,7 +431,27 @@ export function stepTsunamiState(current: JMATsunami | undefined, report: JMATsu
   }
   // 表示中の津波と別の（または表示中が無いときの）期限の過ぎた報は、何も変えない。表示中の津波は消さない
   if (isTsunamiExpired(report, now)) return { kind: 'ignored' }
-  return { kind: 'live', tsunami: report, continued: false }
+  // **別の地震の津波で置き換えるときは、前の津波の原因地震を残す**（区域は新しい報のとおり。
+  // → `JMATsunami.previousSourceEarthquakes`）。解除表示中の津波（`cancelledAt`）からは持ち込まない —— 終わった津波。
+  const previous = current && !current.cancelledAt ? previousSourcesOnReplace(current, report) : []
+  return { kind: 'live', tsunami: previous.length > 0 ? { ...report, previousSourceEarthquakes: previous } : report, continued: false }
+}
+
+/**
+ * 別の地震の津波で置き換えるとき、前の津波から残す原因地震（前の津波がさらに前から持っていた分も含める）。
+ * 新しい報が名乗る原因地震と同じもの（発現時刻と震源名が同じ）は残さない —— 同じ行が 2 回並ぶ。
+ */
+function previousSourcesOnReplace(current: JMATsunami, report: JMATsunami): TsunamiSourceEarthquake[] {
+  const keyOf = (eq: TsunamiSourceEarthquake) => `${sourceEarthquakeTime(eq) ?? ''}|${eq.hypocenterName}`
+  const seen = new Set((report.sourceEarthquakes ?? []).map(keyOf))
+  const result: TsunamiSourceEarthquake[] = []
+  for (const eq of [...(current.previousSourceEarthquakes ?? []), ...(current.sourceEarthquakes ?? [])]) {
+    const key = keyOf(eq)
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(eq)
+  }
+  return result
 }
 
 /**
@@ -640,9 +664,9 @@ function warnIfActionLineGoesStale(current: JMATsunami, next: JMATsunami): void 
  */
 function warnIfCancelStopsEchoing(current: JMATsunami, next: JMATsunami): void {
   if (next.areas.length === 0) return
-  const before = describableCancelledAreas(current)
+  const before = announcedCancelledAreas(current)
   if (before.length === 0) return
-  const after = new Set(describableCancelledAreas(next).map(tsunamiAreaKey))
+  const after = new Set(announcedCancelledAreas(next).map(tsunamiAreaKey))
   const dropped = before.filter(a => !after.has(tsunamiAreaKey(a)))
   if (dropped.length === 0) return
   log.warn(`[tsunami] 前報で解除を伝えていた区域が、区域を伝える続報では解除として読めなくなりました（「解除」の表示はここで消えます）: ${dropped.map(a => a.name).join('・')}`)
@@ -683,7 +707,9 @@ function warnIfCancelStopsEchoing(current: JMATsunami, next: JMATsunami): void {
 export function mergeTsunamiReports(current: JMATsunami, next: JMATsunami): JMATsunami {
   if (arrivesOutOfOrder(current, next)) {
     // `arrivesOutOfOrder` は全報の時刻を読めるときしか真にならないので、畳み込みは空にならない（`?? next` は型のため）。
-    return foldTsunamiReports([...reportsOf(current), ...reportsOf(next)]) ?? next
+    const folded = foldTsunamiReports([...reportsOf(current), ...reportsOf(next)]) ?? next
+    // 前の津波の原因地震は報ではなく状態が持つので、重ね直しの外から戻す（→ `JMATsunami.previousSourceEarthquakes`）。
+    return current.previousSourceEarthquakes ? { ...folded, previousSourceEarthquakes: current.previousSourceEarthquakes } : folded
   }
   warnIfActionLineGoesStale(current, next)
   warnIfCancelStopsEchoing(current, next)
@@ -712,6 +738,8 @@ export function mergeTsunamiReports(current: JMATsunami, next: JMATsunami): JMAT
     observationDateTime: next.observationDateTime ?? current.observationDateTime,
     freeText: next.freeText ?? current.freeText,
     estimations: next.estimations ?? current.estimations,
+    // 前の津波の原因地震は状態だけが持つ（電文には無い）ので、続報では常に引き継ぐ。
+    previousSourceEarthquakes: current.previousSourceEarthquakes,
   }
 }
 
@@ -803,8 +831,15 @@ export const TSUNAMI_GRADE_LIFTED = 'Lifted'
 
 /** 1 つの報の中で、区域の等級が「どこから、どこへ」動いたかの組。 */
 export interface TsunamiAreaGradeChange {
-  /** 前回この区域に発表されていた等級（`TsunamiArea.lastGrade`） */
-  from: TsunamiGrade
+  /**
+   * 前回この区域に発表されていた等級（`TsunamiArea.lastGrade`）。
+   *
+   * **`undefined` は「前回の等級を読めなかった解除区域」だけ**（`to` は必ず {@link TSUNAMI_GRADE_LIFTED}）。
+   * 何から解除されたかは言えないが、解除された事実は伝える —— 画面は「解除」とだけ、読み上げは
+   * 「〇〇の津波警報等が解除されました。」（2026-10-21 ユーザー選択「「解除」とだけ出す」・文面は 2026-10-24
+   * ユーザー選択「「津波警報等が解除」 (Recommended)」）。全期間 19,906 区域で 0 件。
+   */
+  from: TsunamiGrade | undefined
   /** 今回この区域に発表されている等級。解除された区域は {@link TSUNAMI_GRADE_LIFTED} */
   to: TsunamiGrade | typeof TSUNAMI_GRADE_LIFTED
   /** この遷移をした区域。カードの表示順に並ぶ */
@@ -848,7 +883,8 @@ export function tsunamiAreaGradeChanges(
   const byTransition = new Map<string, TsunamiAreaGradeChange>()
   const add = (area: TsunamiArea, to: TsunamiGrade | typeof TSUNAMI_GRADE_LIFTED) => {
     const from = area.lastGrade
-    if (from === undefined || from === to) return
+    // 前回の等級を読めない区域は、解除のときだけ数える（何から解除されたかは言えないが、解除された事実はある）。
+    if ((from === undefined && to !== TSUNAMI_GRADE_LIFTED) || from === to) return
     const key = `${from}>${to}`
     const found = byTransition.get(key)
     if (found) found.areas.push(area)
@@ -858,7 +894,7 @@ export function tsunamiAreaGradeChanges(
       from,
       to,
       areas: [area],
-      raised: to !== TSUNAMI_GRADE_LIFTED && isTsunamiGradeRaised(from, to),
+      raised: to !== TSUNAMI_GRADE_LIFTED && from !== undefined && isTsunamiGradeRaised(from, to),
     })
   }
   for (const area of tsunami.areas) {
@@ -867,8 +903,8 @@ export function tsunamiAreaGradeChanges(
   }
   // **`cancelledAreas` を直に舐めないこと。** 前回も津波なし（`lastGrade` が `'Unknown'`）の
   // 区域は何も起きていないのに「津波なしから解除」という組になる。絞り込みは
-  // `describableCancelledAreas` に集約し、カードと同じものを見る。
-  for (const area of describableCancelledAreas(tsunami)) add(area, TSUNAMI_GRADE_LIFTED)
+  // `announcedCancelledAreas` に集約し、カードと同じものを見る。
+  for (const area of announcedCancelledAreas(tsunami)) add(area, TSUNAMI_GRADE_LIFTED)
   const changes = [...byTransition.values()]
   for (const change of changes) {
     change.areas = sortAreasForCardDisplay(change.areas, [...observations])
@@ -876,7 +912,8 @@ export function tsunamiAreaGradeChanges(
   return changes.sort((a, b) => {
     if (a.raised !== b.raised) return a.raised ? -1 : 1
     if (transitionRank(a.to) !== transitionRank(b.to)) return transitionRank(b.to) - transitionRank(a.to)
-    return GRADE_PRIORITY[b.from] - GRADE_PRIORITY[a.from]
+    // 前回の等級を読めない解除区域は、解除の組の最後に置く（遷移元の重さを言えない）。
+    return (b.from === undefined ? -1 : GRADE_PRIORITY[b.from]) - (a.from === undefined ? -1 : GRADE_PRIORITY[a.from])
   })
 }
 
@@ -892,15 +929,6 @@ function transitionRank(to: TsunamiGrade | typeof TSUNAMI_GRADE_LIFTED): number 
 }
 
 /**
- * 解除された区域のうち、**何から解除されたかを言えるもの**だけを返す。
- *
- * 読み上げ（`tsunamiAreaGradeChanges` 経由）とカードの「解除」の枠が同じ述語を使うこと。
- * 別々に絞ると、声は伝えるのに画面に出ない（またはその逆）形でずれる。
- *
- * 落ちるのは 2 つ。**前回も津波なし**（`lastGrade` が `'Unknown'`。何も起きていない）と、
- * **前回の等級を読めなかった**もの（`undefined`。パーサーが記録を残す）。
- */
-/**
  * カードの解除の枠に並ぶ区域（`tsunamiAreaGradeChanges` の解除の組を、組の順に平らにしたもの）。
  * カード（`TsunamiTab`）と読み上げの観測点の並び（`tsunamiCardOrderBasis`）が同じこの関数を通す ——
  * 別々に書くと、片方だけ条件が変わったときに型にもテストにも掛からず画面と声の順がずれる。
@@ -909,8 +937,18 @@ export function tsunamiLiftedAreas(tsunami: JMATsunami, observations: readonly T
   return tsunamiAreaGradeChanges(tsunami, observations).filter(c => c.to === TSUNAMI_GRADE_LIFTED).flatMap(c => c.areas)
 }
 
-export function describableCancelledAreas(tsunami: JMATsunami): TsunamiArea[] {
-  return (tsunami.cancelledAreas ?? []).filter(a => a.lastGrade !== undefined && a.lastGrade !== 'Unknown')
+/**
+ * 解除された区域のうち、**解除を伝えるもの**だけを返す。
+ *
+ * 読み上げ（`tsunamiAreaGradeChanges` 経由）とカードの「解除」の枠が同じ述語を使うこと。
+ * 別々に絞ると、声は伝えるのに画面に出ない（またはその逆）形でずれる。
+ *
+ * 落とすのは**前回も津波なし**（`lastGrade` が `'Unknown'`。何も起きていない）だけ。**前回の等級を読めなかった**
+ * もの（`undefined`）は残す —— 何から解除されたかは言えないが、解除された事実はある（2026-10-21 ユーザー選択
+ * 「「解除」とだけ出す」。以前は画面にも音にも出さず記録だけを残していた）。
+ */
+export function announcedCancelledAreas(tsunami: JMATsunami): TsunamiArea[] {
+  return (tsunami.cancelledAreas ?? []).filter(a => a.lastGrade !== 'Unknown')
 }
 
 /**
@@ -1305,7 +1343,8 @@ export function observationBadges(obs: TsunamiObservation): string[] {
  *
  * **沿岸の観測点（VTSE51）には当てない。** 同じ「観測中」でも、資料が注意を書いているのは
  * 沖合の側だけ。仕組みとしては沿岸でも成り立ちそうに見えるが、電文が定めていないことを
- * 先回りして読むと、気象庁が言っていない警告をアプリが作ることになる。
+ * 先回りして読むと、気象庁が言っていない警告をアプリが作ることになる（2026-10-21 ユーザー選択
+ * 「今のまま記録する (Recommended)」）。
  */
 export function isWarningLevelWhileObserving(obs: TsunamiObservation): boolean {
   return !!obs.offshore && !!obs.condition?.observing && obs.maxHeightRevise === '更新'
@@ -1401,6 +1440,20 @@ export function observationMaxHeightTimeText(obs: TsunamiObservation): string {
   if (!obs.maxHeightDateTime || !obs.height) return ''
   const hm = formatTimeMin(obs.maxHeightDateTime)
   return hm ? `最大波 ${hm}` : ''
+}
+
+/**
+ * 地図の吹き出しに出す第1波の行（「第1波 05:12 押し波」。時刻が出せず電文が「第１波識別不能」と言っていれば
+ * 「第1波 到達時刻不明」）。伝えるものが無ければ空を返す。
+ *
+ * **観測棒・到達確認・欠測の 3 つの吹き出しが同じこの関数を通す**（2026-10-24 ユーザー選択「この形で揃える
+ * (Recommended)」。以前は到達確認が「05:12 到達（押し波）」・欠測が「05:12 到達」と形が割れていた）。
+ * 判定は整形の結果で行う（日時として読めない時刻は「第1波 」だけを残さない）。
+ */
+export function observationFirstWaveText(obs: { arrivalTime?: string; initial?: string; condition?: { firstWaveUnidentifiable?: boolean } }): string {
+  const hm = obs.arrivalTime ? formatTimeMin(obs.arrivalTime) : null
+  if (hm) return `第1波 ${hm}${obs.initial ? ` ${obs.initial}波` : ''}`
+  return obs.condition?.firstWaveUnidentifiable ? '第1波 到達時刻不明' : ''
 }
 
 /**
@@ -1796,6 +1849,11 @@ export function changedObservationFields(
   prevMaxHeightTime: string | undefined,
   prevFirstWave: string | undefined,
   prevHeights: ReadonlyMap<string, { value: number; over?: boolean }>,
+  /**
+   * **直前の報が載せていた波高**（最高値の記憶ではない）。下方修正の印に使う。
+   * `prevHeights` は最高値しか持たないので、それと比べると下がったまま続く間ずっと毎報に印が付く。
+   */
+  prevReportedHeight: { value: number; over?: boolean } | undefined,
 ): Set<ObsUpdateField> {
   const fields = new Set<ObsUpdateField>()
   // **初出も印を付ける。** `hasMaxHeightTimeAdvanced` は「気象庁が更新と言ったか」
@@ -1813,9 +1871,15 @@ export function changedObservationFields(
   }
   const firstWave = firstWaveSpokenKey(obs)
   if (firstWave && firstWave !== prevFirstWave) fields.add('firstWave')
-  // **波高は「深刻になったか」で見る**（→ {@link hasObservedHeightRisen}）。記憶が高水位マーク式
-  // なのと対で、下方修正では印を付けない。向きを問わず拾うのは地図のカメラだけ。
+  // **上がったかは最高値の記憶と比べる**（→ {@link hasObservedHeightRisen}）。
   if (hasObservedHeightRisen(obs, prevHeights)) fields.add('height')
+  // **下がったときも印を付ける**（2026-10-21 ユーザー選択「黄色の印を付ける (Recommended)」。全期間の
+  // 観測情報 313 通で 0 件だが、テストボタンの「変化の小さい続報」が作る形）。比べる相手は**直前の報の値**
+  // —— 最高値と比べると、下がった値のまま続く報のたびに印が付く。「以上」が外れた確定も下方修正に数える。
+  if (obs.height && prevReportedHeight
+    && (obs.height.value < prevReportedHeight.value || (!!prevReportedHeight.over && !obs.height.over))) {
+    fields.add('height')
+  }
   // **電文の印（`Revise`）も拾う。** 気象庁が「追加」「更新」と書いた項目は、自前の比較で
   // 動いて見えなくても印を付ける（どちらかにあれば付ける。2026-10-21 ユーザー選択
   // 「どちらかにあれば付ける (Recommended)」）。全期間 19 津波・延べ 8,085 観測点で、
@@ -2025,4 +2089,179 @@ export function sortObservationsForCardDisplay(
   // どの区域にも紐づかない観測点（沖合の観測点）はカードでも最後に来る。
   for (const obs of observations) if (!placed.has(obs)) ordered.push(obs)
   return ordered
+}
+
+/**
+ * 観測点以外の値に付ける「この報で動いた」印（津波タブのカード）。観測点の印（{@link ObsUpdateMark}）と同じく
+ * **電文の印（`Revise`）か自前の比較のどちらかで**付ける（2026-10-21 ユーザー選択。観測点・予想区域・推定で揃える）。
+ *
+ * - `highTide` … 満潮時刻が前の報から動いた潮位観測点（{@link tideStationKey}）。**時刻の文字だけに色を付け、行の
+ *   縦線は付けない**（2026-10-21 ユーザー選択「時刻に色を付ける (Recommended)」。動くときは 41/52 点が一斉に動くので、
+ *   縦線まで付けるとカードが総黄色になる）
+ * - `forecastHeight` … 予想波高が動いた区域（{@link tsunamiAreaKey}）。電文の `MaxHeight/Revise`（全期間 延べ 585 区域）か、
+ *   前の報の予想波高との違い（2026-10-21 ユーザー選択「カードの印に使う (Recommended)」。置き場所は 2026-10-24
+ *   ユーザー選択「見出し＋行の縦線 (Recommended)」）
+ * - `estimation` … 沿岸への推定の行（区域名）。最大波を推定した時刻・予想高さ・到達の項目ごと（2026-10-21 ユーザー選択
+ *   「時刻も印も出す (Recommended)」）
+ *
+ * **初めて載った値には印を付けない**（電文が `Revise` を付けたときだけ付ける）。予想区域と推定は発表の報で一斉に
+ * 現れるので、初出に印を付けるとカード全体が緑になる。観測点の行が初出を緑にするのは、観測点は 1 つずつ現れるため。
+ */
+export type EstimationUpdateField = 'height' | 'maxHeightTime' | 'firstWave'
+export interface TsunamiValueMarks {
+  readonly highTide: ReadonlySet<string>
+  readonly forecastHeight: ReadonlyMap<string, UpdateMark<never>>
+  readonly estimation: ReadonlyMap<string, UpdateMark<EstimationUpdateField>>
+}
+export const NO_TSUNAMI_VALUE_MARKS: TsunamiValueMarks = { highTide: new Set(), forecastHeight: new Map(), estimation: new Map() }
+
+/** {@link tsunamiValueMarks} が比べる、前の報までに画面へ出した値（画面用。受信時に進める）。 */
+export interface TsunamiValueMemory {
+  readonly highTide: Map<string, string | undefined>
+  readonly forecastHeight: Map<string, string>
+  readonly estimation: Map<string, { height?: string; maxHeightTime?: string; arrival?: string }>
+}
+export function createTsunamiValueMemory(): TsunamiValueMemory {
+  return { highTide: new Map(), forecastHeight: new Map(), estimation: new Map() }
+}
+export function clearTsunamiValueMemory(memory: TsunamiValueMemory): void {
+  memory.highTide.clear()
+  memory.forecastHeight.clear()
+  memory.estimation.clear()
+}
+
+/** `Revise` の語から印の種類を引く（「追加」＝初めて現れた・「更新」＝動いた）。それ以外の語は印にしない。 */
+function reviseStatus(revise: string | undefined): UpdateStatus | undefined {
+  return revise === '追加' ? 'new' : revise === '更新' ? 'changed' : undefined
+}
+
+/**
+ * その報で動いた値の印を数え上げる（記憶は進めない。進めるのは {@link rememberTsunamiValues}）。
+ *
+ * 返すのは**その報が載せた種類だけ**（`carries`）。満潮時刻を持たない報で満潮時刻の印を消さないよう、呼び出し側は
+ * 載せた種類だけを置き換える。
+ */
+export function tsunamiValueMarks(event: JMATsunami, memory: TsunamiValueMemory): {
+  marks: TsunamiValueMarks
+  carries: { highTide: boolean; forecastHeight: boolean; estimation: boolean }
+} {
+  const highTide = new Set<string>()
+  const forecastHeight = new Map<string, UpdateMark<never>>()
+  const estimation = new Map<string, UpdateMark<EstimationUpdateField>>()
+  let carriesTide = false
+  let carriesForecast = false
+  for (const area of event.areas) {
+    for (const station of area.stations ?? []) {
+      carriesTide = true
+      const key = tideStationKey(area, station)
+      // 前も今も時刻を持つときだけ比べる。**片方が無いのは「動いた」ではない** —— 初めて載った時刻（前が無い）に印を付けず、
+      // 時刻を載せない報が 1 通挟まっても、次に同じ時刻が戻っただけで印を付けない（記憶は時刻を持つ報でだけ進める）。
+      const prev = memory.highTide.get(key)
+      if (prev !== undefined && station.highTideDateTime !== undefined && prev !== station.highTideDateTime) highTide.add(key)
+    }
+    if (!area.maxHeight) continue
+    carriesForecast = true
+    const key = tsunamiAreaKey(area)
+    const byRevise = reviseStatus(area.maxHeight.revise)
+    const prev = memory.forecastHeight.get(key)
+    const status = byRevise ?? (prev !== undefined && prev !== area.maxHeight.description ? 'changed' : undefined)
+    if (status) forecastHeight.set(key, { status, fields: new Set() })
+  }
+  for (const est of event.estimations ?? []) {
+    const prev = memory.estimation.get(est.name)
+    const fields = new Set<EstimationUpdateField>()
+    const heightNow = estimationHeightText(est) || undefined
+    if (est.maxHeightRevise || (prev && prev.height !== heightNow)) fields.add('height')
+    if (est.maxHeightDateTime && ((prev && prev.maxHeightTime !== est.maxHeightDateTime) || (!prev && est.maxHeightRevise))) {
+      fields.add('maxHeightTime')
+    }
+    const arrivalNow = est.arrivalTime ?? est.arrivalCondition
+    if (est.firstHeightRevise || (prev && prev.arrival !== arrivalNow)) fields.add('firstWave')
+    if (fields.size === 0) continue
+    // 「追加」が 1 つでもあれば初めて現れた側。電文の印が無い（自前の比較だけ）なら動いた側。
+    const status: UpdateStatus = reviseStatus(est.maxHeightRevise) === 'new' || reviseStatus(est.firstHeightRevise) === 'new'
+      ? 'new' : 'changed'
+    estimation.set(est.name, { status, fields })
+  }
+  return {
+    marks: { highTide, forecastHeight, estimation },
+    carries: { highTide: carriesTide, forecastHeight: carriesForecast, estimation: (event.estimations?.length ?? 0) > 0 },
+  }
+}
+
+/** その報が載せた値で、画面用の記憶を進める（{@link tsunamiValueMarks} の後に呼ぶ）。 */
+export function rememberTsunamiValues(event: JMATsunami, memory: TsunamiValueMemory): void {
+  for (const area of event.areas) {
+    for (const station of area.stations ?? []) {
+      if (station.highTideDateTime !== undefined) memory.highTide.set(tideStationKey(area, station), station.highTideDateTime)
+    }
+    if (area.maxHeight) memory.forecastHeight.set(tsunamiAreaKey(area), area.maxHeight.description)
+  }
+  for (const est of event.estimations ?? []) {
+    memory.estimation.set(est.name, {
+      height: estimationHeightText(est) || undefined,
+      maxHeightTime: est.maxHeightDateTime,
+      arrival: est.arrivalTime ?? est.arrivalCondition,
+    })
+  }
+}
+
+/**
+ * 区域・潮位観測点の到達状況（`FirstHeight/Condition`）をバッジの文言へ写す（→ {@link arrivalConditionBadge}）。
+ *
+ * **3 つは意味が違う。** 「ただちに津波来襲と予測」はこれから来る予測、「津波到達中と推測」は
+ * いま来ている推測、「第１波の到達を確認」は実際に到達した事実。**どれも同じ「到達中」と
+ * 出していたため、これから来るのか既に来たのかが読み取れなかった。**
+ *
+ * **表に無い文言も、そのままの文字でバッジにする**（2026-10-21 ユーザー選択「表に無くてもバッジ」。全期間で
+ * 文言は 3 種類・表に無いもの 0 件）。以前は本文へ素の文字で残していたが、到達状況は区域・観測点のどちらでも
+ * 同じ場所（バッジ）に出す。
+ *
+ * **3 値は気象庁の電文解説資料（地震火山関連）の事例と、実電文の両方で確かめてある。**
+ * 「津波到達中と推測」「第１波の到達を確認」は令和6年能登半島地震の電文に実在した
+ * （同じ欄には「第１波識別不能」「観測中」「微弱」も現れる。それらは観測状態として
+ * `parseTsunamiObservationCondition` が拾う）。
+ *
+ * **全角・半角の「1」を両方引けるようにしておく**（解説資料の表記は全角）。同じ欄を読む
+ * `FIRST_HEIGHT_CONDITIONS`（`tsunami.ts`）が既に両方を持っており、片方だけ想定しないと
+ * 同じ電文の同じ欄で扱いが割れる。
+ */
+export const ARRIVAL_CONDITION_BADGE: Record<string, string> = {
+  'ただちに津波来襲と予測': 'まもなく到達',
+  '津波到達中と推測': '到達中',
+  '第１波の到達を確認': '第1波到達',
+  '第1波の到達を確認': '第1波到達',
+}
+
+/**
+ * 到達状況の語から、バッジの語を引く。**津波タブの区域の行・潮位観測点の行と、地図の海岸線の吹き出しが同じこの関数を通す**（別々に引くと、同じ電文の
+ * 同じ欄で扱いが割れる）。表に無い語は**語そのもの**をバッジにし、記録を残す（語ごとに 1 回）。
+ */
+const warnedArrivalConditions = new Set<string>()
+export function arrivalConditionBadge(condition: string | undefined): string | undefined {
+  if (!condition) return undefined
+  // 自前のキーだけを引く（`toString` のような語で原型の関数を拾わないため）。
+  if (Object.prototype.hasOwnProperty.call(ARRIVAL_CONDITION_BADGE, condition)) return ARRIVAL_CONDITION_BADGE[condition]
+  if (!warnedArrivalConditions.has(condition)) {
+    warnedArrivalConditions.add(condition)
+    log.warn(`[tsunami] 到達状況「${condition}」は表に無い語なので、電文の語のままバッジにします`)
+  }
+  return condition
+}
+
+/**
+ * 地図の海岸線（津波予報区）の吹き出しに、区域名・等級の下へ足す行（予想波高と到達予想）。
+ *
+ * 「予想 3m」（数値にならないときは電文の語「巨大」など）と、「到達予想 23:30」か、時刻が無ければカードのバッジと同じ語
+ * （「まもなく到達」「到達中」「第1波到達」）。2026-10-21 ユーザー選択「波高と到達予想も出す (Recommended)」・
+ * 形は 2026-10-24 ユーザー選択「この形で (Recommended)」。**語はカードと同じ関数から採る**（`arrivalConditionBadge`）。
+ */
+export function tsunamiAreaPopupLines(area: TsunamiArea): string[] {
+  const lines: string[] = []
+  if (hasForecastHeight(area)) lines.push(`予想 ${area.maxHeight!.description}`)
+  const hm = area.firstHeight?.arrivalTime ? formatTimeMin(area.firstHeight.arrivalTime) : null
+  const arrival = hm ? `到達予想 ${hm}`
+    : (arrivalConditionBadge(area.firstHeight?.condition) ?? (area.immediate ? ARRIVAL_CONDITION_BADGE['ただちに津波来襲と予測'] : undefined))
+  if (arrival) lines.push(arrival)
+  return lines
 }

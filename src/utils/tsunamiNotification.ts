@@ -1,5 +1,5 @@
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../types/earthquake'
-import { tsunamiMaxGrade, tsunamiLiftText, sortAreasAcrossGradesForCardDisplay } from './tsunami'
+import { tsunamiMaxGrade, tsunamiLiftText, sortAreasAcrossGradesForCardDisplay, observationHeightText, isObservationMissing } from './tsunami'
 import { TSUNAMI_ALL_LIFTED_SENTENCE } from './ttsText'
 
 /** 津波のブラウザ通知に出す中身。`showBrowserNotification` の引数へそのまま渡す。 */
@@ -77,4 +77,71 @@ export function tsunamiLiftNotification(event: Pick<JMATsunami, 'bodyText' | 'wa
     body: tsunamiLiftText(event) ?? TSUNAMI_ALL_LIFTED_SENTENCE,
     requireInteraction: false,
   }
+}
+
+/** 観測情報の通知で名前を挙げる観測点の数。超えた分は「ほか N 地点」にまとめる（区域の 5 件と揃える）。 */
+export const TSUNAMI_OBS_NOTIFY_MAX_POINTS = 5
+
+/**
+ * 観測点を通知の 1 行へ並べるときの、観測点ごとの語（「輪島港 1.2m」「珠洲市長橋 到達確認」「富山 欠測」）。
+ *
+ * 値の語はカードの行と同じ関数から採る（波高は {@link observationHeightText}、欠測・到達確認は
+ * {@link observationBadges} の語）。波高を持つ欠測は「富山 0.3m 欠測」、微弱のまま欠測は「〇〇 微弱 欠測」になる —— 値を
+ * 観測できていたことと、いま観測できていないことの両方が事実なので、片方へ丸めない（この 2 つの形は 2026-10-24 ユーザー選択
+ * 「この形で残す (Recommended)」）。
+ */
+function observationNotifyLabel(o: TsunamiObservation): string {
+  const height = observationHeightText(o)
+  const missing = isObservationMissing(o)
+  if (o.height) return missing ? `${o.name} ${height} 欠測` : `${o.name} ${height}`
+  if (missing) return o.condition?.weak ? `${o.name} 微弱 欠測` : `${o.name} 欠測`
+  if (height && height !== '観測中') return `${o.name} ${height}`
+  return `${o.name} 到達確認`
+}
+
+/** 観測情報の通知の札。発表中の通知（`tsunami`）と分ける（理由は {@link tsunamiObservationNotification}）。 */
+export const TSUNAMI_OBS_NOTIFICATION_TAG = 'tsunami-obs'
+
+/**
+ * 等級を伝えていない報（観測情報だけ）の通知（2026-10-21 ユーザー選択「観測でも通知する」。
+ * 形は 2026-10-24 ユーザー選択「別の通知にする (Recommended)」）。
+ *
+ * - 見出しは電文が名乗る情報名（「津波観測に関する情報」「沖合の津波観測に関する情報」）
+ * - 本文はその報で**カードに印が付いた観測点**を、カードの並びで 5 件まで（例「輪島港 1.2m、珠洲市長橋 到達確認、
+ *   富山 欠測 ほか 2 地点」）。印の付いた観測点が無い報（同じ値の再送）は呼び出し側が通知しない
+ * - **閉じるまでは残さない**。札（tag）は発表中の通知と分ける —— 同じ札にすると、閉じるまで残す
+ *   大津波警報の通知が観測の通知に置き換わって消える
+ */
+export function tsunamiObservationNotification(
+  event: Pick<JMATsunami, 'infoName'>,
+  marked: readonly TsunamiObservation[],
+): TsunamiNotification {
+  const shown = marked.slice(0, TSUNAMI_OBS_NOTIFY_MAX_POINTS).map(observationNotifyLabel).join('、')
+  const rest = marked.length - TSUNAMI_OBS_NOTIFY_MAX_POINTS
+  return {
+    title: event.infoName || '津波観測に関する情報',
+    body: rest > 0 ? `${shown} ほか ${rest} 地点` : shown,
+    requireInteraction: false,
+  }
+}
+
+/**
+ * 津波警報等の取消（`cancelReason: 'retracted'`）と津波予報の失効（`'expired'`）の通知
+ * （2026-10-21 ユーザー選択「取消も失効も通知 (Recommended)」。文面は 2026-10-24 ユーザー選択「この文面で (Recommended)」）。
+ *
+ * 札は発表中の通知と同じなので、閉じるまで残していた前の通知はこれで置き換わる（解除の通知と同じ）。
+ * 閉じるまでは残さない。**津波情報だけの取消（警報等は続いている）は対象外**で、呼び出し側が通さない。
+ */
+export function tsunamiEndNotification(event: Pick<JMATsunami, 'cancelReason' | 'cancelText'>): TsunamiNotification | null {
+  if (event.cancelReason === 'retracted') {
+    return {
+      title: '津波警報等の取消',
+      body: event.cancelText?.trim() || '津波警報等は誤って発表されたため取り消されました。',
+      requireInteraction: false,
+    }
+  }
+  if (event.cancelReason === 'expired') {
+    return { title: '津波予報の失効', body: '津波予報は失効しました。', requireInteraction: false }
+  }
+  return null
 }

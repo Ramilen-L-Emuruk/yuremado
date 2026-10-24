@@ -563,6 +563,40 @@ describe('津波観測に関する情報の読み上げ: 欠測', () => {
     expect(text.indexOf('到達を確認')).toBeLessThan(text.indexOf('欠測'))
   })
 
+  // 欠測のまま最大波の観測時刻だけが更新された報（2026-10-21 ユーザー選択「読む (Recommended)」。
+  // 文面は 2026-10-24 ユーザー選択「欠測を前に置く (Recommended)」）。
+  const withTime = (r: JMATsunami, time: string, revise?: string): JMATsunami => ({
+    ...r,
+    observations: r.observations!.map(o => ({ ...o, maxHeightDateTime: time, ...(revise && { maxHeightRevise: revise }) })),
+  })
+  it('正: 欠測のまま最大波の観測時刻だけが更新されたら、欠測を先に言って時刻を読む', async () => {
+    const handle = setup()
+    handle(withTime(makeMissingReport([{ name: '輪島港', value: 1.2 }]), '2026-01-01T21:10:00+09:00') as never)
+    await settle()
+    handle(withTime(makeMissingReport([{ name: '輪島港', value: 1.2 }], 'tsunami-missing-2'), '2026-01-01T21:26:00+09:00', '更新') as never)
+    await settle()
+    expect(spokenTexts()[1]).toBe('津波観測に関する情報。欠測となっている観測点で、最大波の観測時刻が更新されました。石川県能登、輪島港で21時26分へ更新されました。')
+  })
+
+  // 対照: 気象庁が更新と言っていなければ読まない（観測できている観測点と同じ規律）
+  it('対照: Revise の無い欠測では、時刻が違っても読まない', async () => {
+    const handle = setup()
+    handle(withTime(makeMissingReport([{ name: '輪島港', value: 1.2 }]), '2026-01-01T21:10:00+09:00') as never)
+    await settle()
+    handle(withTime(makeMissingReport([{ name: '輪島港', value: 1.2 }], 'tsunami-missing-2'), '2026-01-01T21:26:00+09:00') as never)
+    await settle()
+    expect(spokenTexts().join('')).not.toContain('最大波の観測時刻')
+  })
+
+  // 安全弁: 初めて欠測になった報では、欠測の文だけを読む（同じ地点を 2 回挙げない）
+  it('安全弁: 初めて欠測になった報では時刻の文を重ねない', async () => {
+    const handle = setup()
+    handle(withTime(makeMissingReport([{ name: '輪島港', value: 1.2 }]), '2026-01-01T21:26:00+09:00', '更新') as never)
+    await settle()
+    expect(spokenTexts()[0]).toContain('欠測となっています。')
+    expect(spokenTexts()[0]).not.toContain('最大波の観測時刻')
+  })
+
   // 安全弁: 同じ欠測を続報で読み直さない
   it('同じ欠測は続報で読み直さない', async () => {
     const handle = setup()

@@ -11,6 +11,7 @@ import { render } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
 import { TsunamiTab, type FocusedDistrict } from './index'
 import type { JMATsunami } from '../../types/earthquake'
+import { NO_TSUNAMI_VALUE_MARKS } from '../../utils/tsunami'
 
 // 観測点座標は取得しない（fetch を呼ばせない）。マーカーの有無はこのテストの対象外。
 vi.mock('../../utils/tsunamiObsCoords', () => ({
@@ -50,19 +51,19 @@ afterEach(() => { vi.restoreAllMocks() })
 
 describe('寄せ先が無い受信のスクロール', () => {
   it('正: resetToTop が false なら動かさない', async () => {
-    render(<TsunamiTab tsunamis={[TSUNAMI]} focusedDistrict={focus(false)} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[TSUNAMI]} focusedDistrict={focus(false)} />)
     await flushDataEffects()
     expect(scrollTo).not.toHaveBeenCalled()
   })
 
   it('対照: resetToTop が true なら先頭へ戻す', async () => {
-    render(<TsunamiTab tsunamis={[TSUNAMI]} focusedDistrict={focus(true)} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[TSUNAMI]} focusedDistrict={focus(true)} />)
     await flushDataEffects()
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
   })
 
   it('安全弁: 要求が無ければどちらでもない（スクロールしない）', async () => {
-    render(<TsunamiTab tsunamis={[TSUNAMI]} focusedDistrict={null} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[TSUNAMI]} focusedDistrict={null} />)
     await flushDataEffects()
     expect(scrollTo).not.toHaveBeenCalled()
   })

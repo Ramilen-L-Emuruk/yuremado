@@ -9,6 +9,7 @@ import { TELEGRAM_TEXT_BLOCK_KEYS, TELEGRAM_BOILERPLATE_KEYS, TELEGRAM_BOILERPLA
 // 同じ理由（依存の向き）で、波形グラフの出し方の定義も utils 側に置いてある。
 import type { SeismoWaveMode } from '../utils/seismoWaveTrigger'
 import { DEFAULT_WAVE_SPAN_SEC, ensureWaveSpanSec, type WaveSpanSec } from '../utils/waveSpan'
+import { SHARE_CARD_FORMATS, type ShareCardFormatId } from '../utils/shareCard'
 
 /** 波形を展開していないときに出すもの（→ {@link AppSettings.seismoWaveCollapsedView}）。 */
 export type SeismoWaveCollapsedView = 'composite' | 'overlay'
@@ -16,7 +17,8 @@ export type SeismoWaveCollapsedView = 'composite' | 'overlay'
 export type { TtsUnreceivedDetail, TelegramTextBlockKey, TelegramTextBlocks }
 export { TELEGRAM_TEXT_BLOCK_KEYS, TELEGRAM_BOILERPLATE_KEYS }
 
-// アイドル復帰時に戻すデフォルトタブの選択肢（津波情報・設定は対象外）
+// アイドル復帰時に戻すデフォルトタブの選択肢（津波情報・設定は対象外。津波の発表中は「津波発表中は津波情報を優先」で
+// 津波へ戻れる。2026-10-23 ユーザー選択「今のまま記録する (Recommended)」）
 export type DefaultTabSetting = 'earthquake' | 'realtime'
 
 /**
@@ -66,8 +68,10 @@ export interface AppSettings {
   showActiveFaults: boolean // 地震情報・リアルタイムタブの地図に活断層線を表示する
   activeFaultOpacity: number // 活断層線の不透明度（濃さ、0.05〜1.0）
   showQuakeHeatmap: boolean // 地震情報・リアルタイムタブの地図に直近1ヶ月の地震活動ヒートマップを表示する
-  showPlateBoundaries: boolean // 地震情報・リアルタイムタブの地図にプレート境界線を表示する
+  showPlateBoundaries: boolean // 地震情報・リアルタイム・津波情報・震源カタログタブの地図にプレート境界線を表示する
   showMapLegend: boolean    // 地図に色の凡例（震度・津波の等級・深さなど）を重ねる
+  /** 共有カード（地図を画像にして共有する）の寸法（→ `utils/shareCard.ts` の `SHARE_CARD_FORMATS`）。 */
+  shareCardFormat: ShareCardFormatId
   mapLegendCollapsed: MapLegendCollapseSetting // 凡例を畳んでいるか（'auto' = 地図の高さで決める）
   showDayNight: boolean     // 地図に夜の側を重ねる（日の入りから夜が深まるまでを濃淡で表す）
   dayNightOpacity: number   // 夜側の濃さ（0.2〜0.95）
@@ -247,6 +251,7 @@ export const DEFAULTS: AppSettings = {
   showQuakeHeatmap: false,
   showPlateBoundaries: true,
   showMapLegend: true,
+  shareCardFormat: 'wide16x9',
   // 既定は画面任せ。**利用者が一度も触っていない状態を表す値**で、`true`/`false` を初期値に
   // すると狭い画面と広い画面のどちらかで必ず具合が悪くなる。
   mapLegendCollapsed: 'auto',
@@ -289,6 +294,7 @@ export const DEFAULTS: AppSettings = {
   // 定義側（`TELEGRAM_BOILERPLATE_DEFAULT_READS`）に書いた。
   ttsTelegramBoilerplate: TELEGRAM_BOILERPLATE_DEFAULT_READS,
   ttsUnreceivedDetail: 'stations',
+  // 既定 5 件（設定で 0〜20）は 2026-10-21 ユーザー選択「今のまま記録する (Recommended)」
   ttsMaxObservationPoints: 5,
   ttsReadHypocenterDetail: true,
   ttsReadEewLpgmClass: true,
@@ -328,6 +334,10 @@ function ensureDefaultTab(value: unknown, fallback: DefaultTabSetting): DefaultT
 
 function ensureMapLegendCollapse(value: unknown, fallback: MapLegendCollapseSetting): MapLegendCollapseSetting {
   return value === 'auto' || value === 'open' || value === 'collapsed' ? value : fallback
+}
+
+function ensureShareCardFormat(value: unknown, fallback: ShareCardFormatId): ShareCardFormatId {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(SHARE_CARD_FORMATS, value) ? value as ShareCardFormatId : fallback
 }
 
 function ensureSeismoWave(value: unknown, fallback: SeismoWaveMode): SeismoWaveMode {
@@ -416,6 +426,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     showQuakeHeatmap: ensureBool(partial.showQuakeHeatmap, DEFAULTS.showQuakeHeatmap),
     showPlateBoundaries: ensureBool(partial.showPlateBoundaries, DEFAULTS.showPlateBoundaries),
     showMapLegend: ensureBool(partial.showMapLegend, DEFAULTS.showMapLegend),
+    shareCardFormat: ensureShareCardFormat(partial.shareCardFormat, DEFAULTS.shareCardFormat),
     mapLegendCollapsed: ensureMapLegendCollapse(partial.mapLegendCollapsed, DEFAULTS.mapLegendCollapsed),
     showDayNight: ensureBool(partial.showDayNight, DEFAULTS.showDayNight),
     dayNightOpacity: clampNumber(partial.dayNightOpacity, DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX, DEFAULTS.dayNightOpacity),

@@ -116,6 +116,7 @@ import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/
 import { isDmdss } from './utils/env'
 import { isLiveFeedHalted } from './utils/connectionStatus'
 import { ROOT_FRAME_CLASS } from './rootFrame'
+import { SHARE_CARD_FORMATS } from './utils/shareCard'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
@@ -845,7 +846,7 @@ export function App() {
   // 据え置いた報（`quakeHeldBack`）と取消は積まない —— 音・読み上げと同じく、カードが採らない報では動かさない。
   const pendingQuakeNotifyRef = useRef<JMAQuake[]>([])
   // ライブイベント受信処理（通知音・タイトル・タブ切替・読み上げ・ブラウザ通知）
-  const { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict, eewNoForecastSettledKeys } = useLiveEventHandler({
+  const { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks, focusedDistrict, eewNoForecastSettledKeys } = useLiveEventHandler({
     settings, title, earthquakesRef, tsunamisRef,
     setActiveTabNonRealtime, setActiveTabRealtimeOnUpdate, setActiveTabRealtimeUrgent,
     followSpeechTab, preSpeechTab, speechFollow, unreceivedFollow, telegramTextFollow,
@@ -1078,7 +1079,7 @@ export function App() {
   // 通知音・読み上げのどちらかが有効なときだけキープアライブを鳴らす（両方無効なら
   // 実際に鳴らすものが無く、常時再生する意味も無い）。setSoundVolume() 側の
   // 「音量0=無音」という既存の契約と同じ理由で、鳴らす予定が無いのに鳴らし続けない。
-  // **録画モード中は止める。** 20Hz の常時ループ音は動画のエンコード・シークで可聴の
+  // **録画モード中は止める**（2026-09-27 13:26 JST ユーザー選択「このまま進める（推奨）」）。20Hz の常時ループ音は動画のエンコード・シークで可聴の
   // アーティファクトに化けうるため、それを消すことを優先する。**このトレードオフとして、
   // 通知音の間隔が長く空く録画中はキープアライブが守っていたハードウェア起床遅延が
   // 再発しうる**ことを受け入れている（→ audio-tts-spec.md §2「キープアライブ」）。
@@ -1516,7 +1517,8 @@ export function App() {
   }, [catalogActive, catalog.years, settledFilter, settledView])
 
   // 津波発表中フラグ（解除済みでない津波情報があるか。Forecast＝若干の海面変動も含む）とバッジ用グレード
-  // tsunamiGrade は色分け用のため MajorWarning/Warning/Watch のみ（Forecast は除外）
+  // tsunamiGrade は色分け用のため MajorWarning/Warning/Watch のみ（Forecast は除外）。ナビのバッジへ渡すときだけ、予報だけの
+  // 津波を `Forecast` として足す（→ IconNav へ渡す箇所）
   // cancelledAt（10秒表示中）は解除表示に切り替わっているため非アクティブ扱いにする（EEW・地震カードと同じ扱い）
   const tsunamiGrade = tsunamiOverallGrade(tsunamis)
   const tsunamiActive = tsunamis.some(t => !t.cancelled && !t.cancelledAt)
@@ -1545,7 +1547,8 @@ export function App() {
   // 津波解除検出: true→false の遷移でタイマーをキャンセルし優先度ロジックを即時適用
   //
   // **終わったことをタイトルへ出すのもここ**（「津波予報 失効」など。2026-10-12 ユーザー承認）。画面で
-  // 発表中として出ていた津波が、画面の上で解除・取消・失効の表示へ変わったときだけ出す（`findEndedTsunami`）。
+  // 発表中として出ていた津波が、画面の上で解除・取消・失効の表示へ変わったときだけ出す（`findEndedTsunami`）。起動時から
+  // 解除の表示で入った津波・黙って消えた津波に出さないのは 2026-10-21 ユーザー選択「今のまま記録する (Recommended)」。
   // 受信処理ではなくここで決めるのは、どの津波に向いた解除かを画面の更新が既に決めているから（理由は
   // `findEndedTsunami`）。遷移は津波ごとに 1 度しか起きないので、重ねて届いた解除で出し直すこともない。
   const prevTsunamiActiveRef = useRef(false)
@@ -2447,7 +2450,14 @@ export function App() {
     showPlateBoundaries: settings.showPlateBoundaries,
     // 公開観測点の三角は、下部に波形を出している間か、地震カードを開いている間だけ地図に描く（`PublicStationMarkersGL`）。
     showPublicStations: publicStationMarkers.length > 0,
-  }, settings.showMapLegend ? legendBlocks : EMPTY_LEGEND_BLOCKS)
+    // 揺れ検知中の見出し（緊急地震速報が無いとき）。推定最大震度の段は、ブラウザ通知の本文が使う値と同じ式で決める
+    // （確定中は確定した点の最大・可能性の段階は主候補の最大。`useKyoshinAlerts` の `effectiveKyoshinMaxIndex`）。
+    kyoshinDetection: kyoshinView.confirmed
+      ? { state: 'confirmed', maxIndex: kyoshinView.confirmedShocks.reduce((max, s) => Math.max(max, s.index), 0) }
+      : kyoshinView.candidate
+        ? { state: 'candidate', maxIndex: kyoshinView.candidateMaxIndex }
+        : null,
+  }, settings.showMapLegend ? legendBlocks : EMPTY_LEGEND_BLOCKS, SHARE_CARD_FORMATS[settings.shareCardFormat])
   // 絵を出すかどうかは受け取るかどうかと別に決める（→ hooks/useSeismoWaveVisibility.ts）。
   //
   // **再生中は明示的に落とす。** 繋いでいないので観測点が 1 つも無く、結果として絵は
@@ -2806,6 +2816,7 @@ export function App() {
                 focusedDistrict={focusedDistrict}
                 obsUpdateStatus={obsUpdateStatus}
               areaGradeChangedKeys={areaGradeChangedKeys}
+              tsunamiValueMarks={tsunamiValueMarks}
                 speechSession={speechFollowSession}
                 speakingTelegramText={speakingTelegramTextSubject === telegramTextSubject('tsunami')}
                 /* 読み上げ追従の可否。タブは invisible で隠すだけなので**非表示でもスクロールは
@@ -2875,7 +2886,7 @@ export function App() {
           activeTab={activeTab}
           onTabChange={handleTabChange}
           panelCollapsed={panelCollapsed}
-          tsunamiGrade={tsunamiGrade}
+          tsunamiGrade={tsunamiGrade ?? (isTsunamiForecastOnly(tsunamis) ? 'Forecast' : null)}
           eewLevel={computeEEWLevel(activeEEWsNoCancelled)}
         />
       </div>

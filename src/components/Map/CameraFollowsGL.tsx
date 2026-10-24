@@ -34,6 +34,7 @@ import { eewFirstFocusTarget, type EewFirstFocusTarget } from './gl/bounds'
 import { hasObservedHeightChanged, hasMaxHeightTimeAdvanced, firstWaveSpokenKey, type ObservedHeightRank } from '../../utils/tsunami'
 import type { TsunamiObsBar } from '../../hooks/useTsunamiLayerData'
 import { openPopupAt, closeMapPopup } from './gl/popupRegistry'
+import { openTsunamiMarkerPopup, closeTsunamiMarkerPopups } from './gl/tsunamiMarkerPopup'
 import { log } from '../../utils/logger'
 
 // MapLibre 版のカメラ自動追従群（Leaflet 版 JapanMap 内の Fit* コンポーネント相当）。
@@ -1206,6 +1207,7 @@ export function TsunamiFitGL({
   observationBars,
   arrivalMarkers,
   missingMarkers,
+  forecastStationPoints,
   focusObsName = null,
   focusTarget = null,
 }: {
@@ -1242,6 +1244,11 @@ export function TsunamiFitGL({
    * 場所は、津波が来ていないことの保証にならないため画面に出す必要がある。
    */
   missingMarkers: { name: string; lat: number; lng: number }[]
+  /**
+   * 予測だけの潮位観測点（印は描かない）。**寄り先にはしない** —— カードの予測だけの行を押したときに
+   * `FocusObsGL` が寄せるので、その操作で猶予を数え直すかの判定にだけ使う。
+   */
+  forecastStationPoints: { name: string; lat: number; lng: number }[]
   /** 観測行クリックで FocusObsGL が寄せた観測点。猶予を数え直すためだけに見る（フィットはしない）。 */
   focusObsName?: { name: string; ts: number } | null
   /**
@@ -1307,11 +1314,11 @@ export function TsunamiFitGL({
     if (focusObsTs === 0 || focusObsTs === lastFocusObsTsRef.current) return
     // 実際に寄せられるクリックだけを数え直しの対象にする。カメラが動かないクリックで猶予を
     // 延ばすと、何も起きていないのに俯瞰への復帰が遅れる（判定は findObsBar に集約）。
-    if (!findObsBar([...observationBars, ...arrivalMarkers, ...missingMarkers], focusObsName?.name)) return
+    if (!findObsBar([...observationBars, ...arrivalMarkers, ...missingMarkers, ...forecastStationPoints], focusObsName?.name)) return
     lastFocusObsTsRef.current = focusObsTs
     idleReturnDueRef.current = false
     armIdleReturnTimer()
-  }, [focusObsTs, focusObsName, observationBars, arrivalMarkers, missingMarkers, armIdleReturnTimer])
+  }, [focusObsTs, focusObsName, observationBars, arrivalMarkers, missingMarkers, forecastStationPoints, armIdleReturnTimer])
 
   // 区域名クリック（`FocusTargetGL` が寄せる）でも同じく猶予を数え直す。寄り先は座標で渡って
   // くるため、観測点の側と違って「寄せられるか」を確かめる必要は無い。
@@ -1432,18 +1439,23 @@ export function TsunamiFitGL({
       // （差し替わったことが画面のどこにも現れない）。落としておけば対象海域全体が必ず出る。
       lastTsunamiSigRef.current = ''
     } else if (hasObsDiff) {
-      // 持ち越しは「最後に届いたぶん」で置き換える（溜めて合成しない）。フィットを見送っている間に
-      // 複数の電文が届いた場合、全部を束ねると離れた観測点の和で引きの画になり、どこで新しく
-      // 観測されたのかが読めなくなる。取りこぼすのは枠の選び方だけで、観測値はカードにも
-      // 波高バーにも残る。
-      //
       // 実測の更新と新規到達が同じ電文で届いたときは両方を収める。片方だけ映すと、もう一方が
       // 画面外に残って「更新はあったのに見えない」状態になる。
-      pendingObsPositionsRef.current = [
+      const fresh = [
         ...updatedBars.map((b) => [b.lat, b.lng] as LatLng),
         ...newArrivals.map((m) => [m.lat, m.lng] as LatLng),
         ...newMissing.map((m) => [m.lat, m.lng] as LatLng),
       ]
+      // **津波タブを開いていない間は、動いた観測点をためておき、入室時にまとめて画に入れる**（2026-10-21 ユーザー選択
+      // 「動いた観測点を全部入れる (Recommended)」）。以前は最後に届いた電文のぶんだけで置き換えていて、タブの外で
+      // 観測点の更新が重なると、入室時に最後の報の観測点しか映らなかった。同じ場所は 1 度だけ持つ。
+      //
+      // **津波タブを見ている間は従来どおり置き換える。** フィットを見送っている（手で動かしている）間に届いた報を
+      // 束ねると、離れた観測点の和で引きの画になる —— 見ている人には直前の更新を見せる方がよい。
+      // 入室と同じ評価で届いた報は「タブの外でためた分」に足す（置き換えると、入室の直前までためた分を捨てる）。
+      pendingObsPositionsRef.current = mode === 'tsunami' && !enteredTsunamiMode
+        ? fresh
+        : mergeLatLngs(pendingObsPositionsRef.current, fresh)
       lastTsunamiSigRef.current = tsunamiSignature
     }
 
@@ -1506,6 +1518,17 @@ export function FocusObsGL({
 }) {
   const map = useMapGL()
   const handledTsRef = useRef(0)
+  // 着地を待って吹き出しを開く購読。**下の effect の後始末では外さない** —— あの effect は観測棒の配列が作り直される
+  // たびに走り直す（飛行中に電文が届くと 1 秒の間にも起きる）が、`ts` を消費済みなので張り直さない。後始末で外すと、
+  // 寄せたのに吹き出しが開かないまま終わる（例外もログも出ない）。外すのは次のクリックを寄せるときとアンマウントだけ。
+  const pendingOpenRef = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    if (!map) return
+    return () => {
+      if (pendingOpenRef.current) map.off('moveend', pendingOpenRef.current)
+      pendingOpenRef.current = null
+    }
+  }, [map])
   useEffect(() => {
     if (!map || !focusObsName) return
     // クリック 1 回につき 1 度だけ寄せる。観測棒の配列は電文のたびに作り直されるため、
@@ -1517,10 +1540,29 @@ export function FocusObsGL({
     if (!bar) return
     handledTsRef.current = focusObsName.ts
     log.debug(`[mapGL] 観測点フォーカス flyTo ${bar.name}`)
+    // 前に開いていた吹き出しは、カメラを動かす前に閉じる（`FocusTargetGL` と同じ）。
+    closeMapPopup(map)
+    closeTsunamiMarkerPopups(map)
     // **寄り上限は `FocusTargetGL` と同じ**（`focusMaxZoom`）。どちらも「一覧の 1 点を指す行を
     // 押した」という同じ操作で、着地の深さが一覧によって違う理由が無い。観測棒は細いので、
     // 自動フィットの上限では隣の点と見分けが付かない。
     flyToPoint(map, [bar.lat, bar.lng], focusMaxZoom(map), 1.0)
+    // **着地したら、その観測点の印の吹き出しを開く**（2026-10-21 ユーザー選択「吹き出しも開く (Recommended)」）。
+    // 印を描いていない観測点（予測だけの観測点）は寄せるだけで終わる。購読はカメラを動かした「あと」に張り、
+    // 動いていなければその場で開く —— 理由は `FocusTargetGL` の同じ箇所。
+    if (pendingOpenRef.current) map.off('moveend', pendingOpenRef.current)
+    pendingOpenRef.current = null
+    const openPopup = () => {
+      pendingOpenRef.current = null
+      // 印の無い観測点（予測だけの観測点・印がまだ描かれていない）では開かない。画面には「寄っただけ」としか出ないので残す。
+      if (!openTsunamiMarkerPopup(map, bar.name)) log.debug(`[mapGL] 観測点 ${bar.name} の印が無いので吹き出しは開かない`)
+    }
+    if (!map.isMoving()) {
+      openPopup()
+      return
+    }
+    pendingOpenRef.current = openPopup
+    map.once('moveend', openPopup)
   }, [map, focusObsName, observationBars])
   return null
 }
@@ -1567,6 +1609,7 @@ export function FocusTargetGL({ focusTarget }: { focusTarget: MapFocusTarget | n
     // 前に選んだ点の吹き出しは、カメラを動かす前に閉じる。1 点へ寄せる場合も、着地までの
     // 1 秒のあいだ古い選択を引きずらない。
     closeMapPopup(map)
+    closeTsunamiMarkerPopups(map)
     if (positions.length !== 1) {
       fitToPositions(map, positions, { durationSec: 1.0, maxZoom: focusMaxZoom(map) })
       return
@@ -1590,6 +1633,19 @@ export function FocusTargetGL({ focusTarget }: { focusTarget: MapFocusTarget | n
     return () => { map.off('moveend', openPopup) }
   }, [map, focusTarget])
   return null
+}
+
+/** 位置の一覧を、同じ位置を 1 度だけ持つ形で足し合わせる（並びは先に持っていた分が先）。 */
+function mergeLatLngs(a: readonly LatLng[], b: readonly LatLng[]): LatLng[] {
+  const seen = new Set(a.map(p => `${p[0]},${p[1]}`))
+  const out = [...a]
+  for (const p of b) {
+    const key = `${p[0]},${p[1]}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(p)
+  }
+  return out
 }
 
 /** 半角スペースで並んだ地震の識別番号どうしが 1 つでも重なるか（→ `useTsunamiLayerData` の `tsunamiEventId`）。 */

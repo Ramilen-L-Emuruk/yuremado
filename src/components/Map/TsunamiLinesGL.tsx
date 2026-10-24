@@ -7,14 +7,16 @@ import { TSUNAMI_STYLE } from '../../utils/tsunamiStyle'
 import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { twoLinePopupHtml } from './gl/popupHtml'
+import { escapeHtml } from './gl/popupHtml'
+import { tsunamiAreaPopupLines } from '../../utils/tsunami'
 import { createTsunamiBlink, TSUNAMI_LINE_OPACITY_ON, type TsunamiBlink } from './gl/tsunamiBlink'
+import { registerCaptureHold } from './gl/captureMap'
 
 // 津波予報区の海岸線を等級ごとに色分けして描画する MapLibre 版（Leaflet の tsunami-lines 相当）。
 // 等級1件=MultiLineString feature 1件にまとめ、色・太さを feature プロパティに前計算して
 // paint 式で読む（太さは iconScale 連動）。発報中は line-opacity を切り替えて点滅させる
 // （切り替えるのは点く・消える瞬間だけ。理由は `gl/tsunamiBlink.ts`）。
-// クリック時は bbox tolerance で当たり判定し、区域名＋等級ラベルのポップアップを出す。
+// クリック時は bbox tolerance で当たり判定し、区域名＋等級ラベル＋予想波高・到達予想のポップアップを出す。
 
 const SRC = 'tsunami-lines'
 const LYR = 'tsunami-lines'
@@ -34,11 +36,29 @@ function buildFC(lines: TsunamiLine[], iconScale: number): FeatureCollection<Mul
     const style = TSUNAMI_STYLE[line.grade]
     return {
       type: 'Feature',
-      properties: { color: style.color, width: style.weight * iconScale, label: style.label, name: line.name },
+      // 吹き出しの補足の行（予想波高・到達予想。→ `tsunamiAreaPopupLines`）。地物の属性は平らな値しか持てないので、
+      // 改行で繋いで持たせ、吹き出しを組むときに割る。
+      properties: {
+        color: style.color, width: style.weight * iconScale, label: style.label, name: line.name,
+        details: tsunamiAreaPopupLines(line.area).join('\n'),
+      },
       geometry: { type: 'MultiLineString', coordinates: line.segments.map(ringToLngLat) },
     }
   })
   return { type: 'FeatureCollection', features }
+}
+
+/**
+ * 海岸線の吹き出し。区域名・等級に、予想波高と到達予想の行を足す（2026-10-21 ユーザー選択「波高と到達予想も出す
+ * (Recommended)」）。海岸線は全タブで描くので、地震・リアルタイムタブの吹き出しも同じ中身になる。
+ */
+export function tsunamiLinePopupHtml(name: string, label: string, details: readonly string[]): string {
+  return (
+    `<div class="text-sm"><div class="font-bold">${escapeHtml(name)}</div>` +
+    `<div class="text-xs" style="color:#94a3b8">${escapeHtml(label)}</div>` +
+    details.map(d => `<div class="text-xs" style="color:#e5e7eb">${escapeHtml(d)}</div>`).join('') +
+    `</div>`
+  )
 }
 
 export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
@@ -73,8 +93,11 @@ export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
       layerId: LYR,
       priority: 'line',
       tolPx: HIT_TOL_PX,
-      buildClickHtml: (f) =>
-        twoLinePopupHtml(String(f.properties?.name ?? ''), String(f.properties?.label ?? '津波予報')),
+      buildClickHtml: (f) => tsunamiLinePopupHtml(
+        String(f.properties?.name ?? ''),
+        String(f.properties?.label ?? '津波予報'),
+        String(f.properties?.details ?? '').split('\n').filter(Boolean),
+      ),
     })
     // 点滅（Leaflet の tsunami-blink CSS を再現）: 2.5s 周期で前 8 割は不透明・残り 2 割は消灯の
     // ハード切替（step-end 相当）。**海岸線が見えていない間は止める** —— 止めないと、津波が
@@ -86,6 +109,8 @@ export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
     })
     blink.setActive(visibleRef.current)
     blinkRef.current = blink
+    // 共有カードの撮影の間は点灯のまま止める（消灯の間に撮ると画像から海岸線が消える。`gl/captureMap.ts`）
+    const releaseCaptureHold = registerCaptureHold(map, (held) => blink.hold(held))
     // 隠れていたタブ（PWA のウィンドウ）が前面へ戻ったら位相を合わせ直す。隠れている間は
     // タイマーが間引かれ、戻った時点で次の切り替わりの予約が数十秒先に残っていることがある。
     const onVisibilityChange = () => {
@@ -95,6 +120,7 @@ export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
     addedRef.current = true
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      releaseCaptureHold()
       blink.dispose()
       blinkRef.current = null
       popupRef.current?.remove()

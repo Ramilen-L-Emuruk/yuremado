@@ -10,6 +10,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { TsunamiTab } from './index'
 import type { JMATsunami, TsunamiObservation } from '../../types/earthquake'
+import { NO_TSUNAMI_VALUE_MARKS } from '../../utils/tsunami'
 
 afterEach(cleanup)
 
@@ -54,19 +55,19 @@ function cardOf(name: string): Element | null {
 describe('解除された区域の観測点', () => {
   // 2026-10-19 ユーザー選択「解除の区域の下へ移す（推奨）」
   it('正: 解除された区域の観測点は、解除のカードの中に出す', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami()]} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami()]} />)
     const card = cardOf('深浦')
     expect(card?.textContent).toContain('解除')
     expect(card?.textContent).not.toContain('沖合観測')
   })
 
   it('対照: どの区域にも当たらない観測点は「沖合観測」に残す', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami()]} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami()]} />)
     expect(cardOf('岩手釜石沖')?.textContent).toContain('沖合観測')
   })
 
   it('安全弁: 表示中の区域の観測点は、その区域のカードから動かない', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami()]} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami()]} />)
     const card = cardOf('八戸')
     expect(card?.textContent).toContain('青森県太平洋沿岸')
     expect(card?.textContent).not.toContain('沖合観測')
@@ -74,7 +75,7 @@ describe('解除された区域の観測点', () => {
   })
 
   it('観測点はどれも 1 回だけ出る', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami()]} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami()]} />)
     for (const name of ['深浦', '八戸', '岩手釜石沖']) expect(screen.getAllByText(name)).toHaveLength(1)
   })
 })
@@ -90,12 +91,12 @@ describe('全区域解除の報の気象庁の文', () => {
 
   // 2026-10-14 ユーザー選択「画面にも出し、読み上げる」
   it('正: 解除の表示の間、気象庁の文を出す', () => {
-    render(<TsunamiTab tsunamis={[ended(LIFT_TEXT)]} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[ended(LIFT_TEXT)]} />)
     expect(screen.getByText(LIFT_TEXT)).toBeTruthy()
   })
 
   it('対照: 文を持たない解除では何も足さない', () => {
-    render(<TsunamiTab tsunamis={[ended()]} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[ended()]} />)
     expect(screen.queryByText(LIFT_TEXT)).toBeNull()
   })
 })

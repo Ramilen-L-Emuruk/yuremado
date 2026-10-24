@@ -34,6 +34,7 @@ import {
 } from './seismoStatusLine'
 import { useKyoshinImport } from '../../hooks/useKyoshinImport'
 import { buildSettingsFile, parseSettingsFile, settingsFileName, type SettingsVariant } from '../../utils/settingsIo'
+import { SHARE_CARD_FORMATS } from '../../utils/shareCard'
 
 export interface TestFunctions {
   earthquake: () => void
@@ -1274,7 +1275,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </div>
           </Row>
         )}
-        <Row label="プレート境界線を表示" description="地震情報・リアルタイムタブの地図に世界のプレート境界線を表示します（PB2002モデル）">
+        <Row label="プレート境界線を表示" description="地震情報・リアルタイム・津波情報タブの地図に世界のプレート境界線を表示します（PB2002モデル）">
           <Toggle
             checked={settings.showPlateBoundaries}
             onChange={v => onUpdate('showPlateBoundaries', v)}
@@ -1315,6 +1316,16 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             checked={settings.showMapLegend}
             onChange={v => onUpdate('showMapLegend', v)}
           />
+        </Row>
+        {/* 2026-10-23 ユーザー選択「やることとして積む (Recommended)」・寸法と文面は 2026-10-24 ユーザー選択 */}
+        <Row label="共有カードの寸法" description="地図を画像にして共有するときの縦横の比率です。">
+          <select
+            value={settings.shareCardFormat}
+            onChange={e => onUpdate('shareCardFormat', e.target.value as AppSettings['shareCardFormat'])}
+            className="bg-panel border border-border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500"
+          >
+            {Object.values(SHARE_CARD_FORMATS).map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
+          </select>
         </Row>
       </Section>
 
@@ -2035,7 +2046,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           <TestButton color="purple" onClick={onTest.tsunami}>大津波警報テスト</TestButton>
         </Row>
         {isDmdss && onTest.tsunamiExpiry && (
-          <Row label="津波警報 → 津波予報（失効時刻つき）" description="津波注意報 → 続報で17区域すべてが津波予報へ下がる → 失効時刻が来てカードが消える。予報だけになった津波に解除電文は出ないので、消えるのは失効時刻のときだけ。バナー右上の「失効」の行と、読み上げの末尾の失効時刻をここで確かめられる">
+          <Row label="津波警報 → 津波予報（失効時刻つき）" description="津波注意報 → 続報で17区域すべてが津波予報へ下がる → 等級は同じまま期限だけが延びる続報 → 失効時刻が来てカードが消える。予報だけになった津波に解除電文は出ないので、消えるのは失効時刻のときだけ。バナー右上の「失効」の行と、読み上げの末尾の失効時刻をここで確かめられる">
             <TestButton color="blue" onClick={onTest.tsunamiExpiry}>失効時刻テスト</TestButton>
           </Row>
         )}
@@ -2050,7 +2061,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {isDmdss && onTest.tsunamiQuietReports && (
-          <Row label="津波警報・注意報（変化の小さい続報）" description="大津波警報（2011年東北地方太平洋沖地震のサンプル電文）→ 10秒おきに続報を14通。等級も波高の数値も動かない報が、通知音だけ鳴って何も声にならないことを確かめる。1通ずつ釜石・大船渡・沖合の値が動き、値を持たない観測点に印だけが付く報もある">
+          <Row label="津波警報・注意報（変化の小さい続報）" description="大津波警報（2011年東北地方太平洋沖地震のサンプル電文）→ 10秒おきに続報を16通。等級も波高の数値も動かない報が、通知音だけ鳴って何も声にならないことを確かめる。1通ずつ釜石・大船渡・沖合の値が動き、値を持たない観測点に印だけが付く報もある、釜石が欠測へ転じ、欠測のまま最大波の観測時刻だけが進む報もある">
             <TestButton color="blue" onClick={onTest.tsunamiQuietReports}>変化の小さい続報テスト</TestButton>
           </Row>
         )}

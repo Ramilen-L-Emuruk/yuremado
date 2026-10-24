@@ -19,23 +19,39 @@ import type { LegendBlock, LegendChip } from '../components/MapLegend/legendBloc
  */
 export interface ShareCardFormat {
   /** 設定で選ぶときの識別子。 */
-  id: string
+  id: ShareCardFormatId
   /** 利用者に見せる名前。 */
   label: string
   width: number
   height: number
 }
 
-/** 選べる寸法。**追加するときは全体の比率で定義すること**（地図の比率ではない）。 */
-export const SHARE_CARD_FORMATS: Record<string, ShareCardFormat> = {
+/** 設定で選べる寸法の識別子（`AppSettings.shareCardFormat`）。 */
+export type ShareCardFormatId = 'wide16x9' | 'square1x1' | 'portrait4x5'
+
+/**
+ * 選べる寸法。**追加するときは全体の比率で定義すること**（地図の比率ではない）。
+ *
+ * 2026-10-24 ユーザー選択「16:9・1:1・4:5 (Recommended)」・名前は同日「この文面で (Recommended)」。各サービスの公式の推奨は
+ * 見つからず、寸法の解説サイト（Hootsuite・socialk.it・SocialPilot など）が挙げる値から選んだ —— 正方形と縦長は
+ * Instagram のフィード（1080×1080・1080×1350）と Bluesky（1200×1200・1080×1350）が共通して挙がる形。
+ */
+export const SHARE_CARD_FORMATS: Record<ShareCardFormatId, ShareCardFormat> = {
+  // 既定の 16:9 は 2026-08-30 19:23 JST ユーザー「解像度に関してなのですが、Twitterに合わせてほしいです。…」
   wide16x9: { id: 'wide16x9', label: 'X（16:9）', width: 1600, height: 900 },
+  square1x1: { id: 'square1x1', label: '正方形（1:1）', width: 1080, height: 1080 },
+  portrait4x5: { id: 'portrait4x5', label: '縦長（4:5）', width: 1080, height: 1350 },
 }
 
 /** 既定の寸法。X のタイムラインは 16:9 で切り抜く。 */
 export const DEFAULT_SHARE_CARD_FORMAT: ShareCardFormat = SHARE_CARD_FORMATS.wide16x9
 
-/** 見出し帯の高さ（論理 px）。 */
+/** 見出し帯の高さ（論理 px。副見出しが 1 行のとき）。副見出しが折り返すと 1 行ごとに `SUBTITLE_LINE_HEIGHT` 伸びる。 */
 const HEADER_HEIGHT = 124
+/** 副見出しの行送りと、折り返す行数の上限（超えた分は最後の行の末尾を「…」で切る）。 */
+const SUBTITLE_LINE_HEIGHT = 30
+export const SUBTITLE_MAX_LINES = 3
+const SUBTITLE_FONT = '400 24px'
 /** 左右の余白（論理 px）。 */
 const PADDING_X = 36
 /** 出典行の行送りと帯の上下余白（論理 px）。 */
@@ -50,9 +66,11 @@ const TEXT_MUTED = '#7c8797'
 const DIVIDER = '#232a35'
 
 const FONT_STACK = 'system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif'
+/** 注意文・出典の字体（行数を数える側と描く側で共有する）。 */
+const NOTICE_FONT = `400 15px ${FONT_STACK}`
 
 /**
- * 出典として挙げうるデータ。**画像に写っているものだけを並べる。**
+ * 出典として挙げうるデータ。**画像に写っているものだけを並べる**（2026-10-23 ユーザー選択「今のまま記録する (Recommended)」）。
  *
  * 画像は本文から切り離されて流通するため、帰属表示は画像そのものへ焼く。とくにプレート境界の
  * 出典（PB2002）は Open Data Commons Attribution License で、**成果物を公に利用する際の帰属表示
@@ -91,7 +109,8 @@ export interface AttributionParts {
  * 出典を 1 行にまとめる。
  *
  * 行を分けて並べると、そのぶん地図に割ける高さが減る（`shareCardMapHeight`）。出典は
- * 読み飛ばされる情報ではないが、地図を潰してまで行を増やす性質のものでもない。
+ * 読み飛ばされる情報ではないが、地図を潰してまで行を増やす性質のものでもない。幅の狭い寸法で 1 行に
+ * 収まらなければ、描くときに区切りで折り返す（`layoutNoticeLines`。切り詰めない）。
  *
  * **「加工して作成」を全部に掛けない。** 境界線や活断層は元データを GeoJSON へ変換して使う
  * （加工にあたる）が、海底地形は配信されるタイルをそのまま描いている。まとめて括ると、
@@ -148,19 +167,116 @@ export interface ShareCardOptions {
   legend?: LegendBlock[]
 }
 
-/** 出典帯の高さ（論理 px）。行が無ければ帯ごと出さない。 */
-function noticeAreaHeight(noticeCount: number): number {
-  return noticeCount > 0 ? noticeCount * NOTICE_LINE_HEIGHT + NOTICE_PADDING_Y * 2 : 0
+/** 出典帯の高さ（論理 px）。行が無ければ帯ごと出さない。行数は折り返した後の数（{@link shareCardNoticeLines}）。 */
+function noticeAreaHeight(noticeLines: number): number {
+  return noticeLines > 0 ? noticeLines * NOTICE_LINE_HEIGHT + NOTICE_PADDING_Y * 2 : 0
+}
+
+/** 見出し帯の高さ（論理 px）。副見出しの行数で決まる（行が無くても 1 行ぶんの高さは取る）。 */
+function headerHeight(subtitleLines: number): number {
+  return HEADER_HEIGHT + Math.max(0, Math.min(subtitleLines, SUBTITLE_MAX_LINES) - 1) * SUBTITLE_LINE_HEIGHT
 }
 
 /**
  * 地図に割り当てられる高さ（論理 px）。
  *
  * **撮影側と合成側の両方がこれを使うこと。** 撮影はこの高さで地図をレンダーし、合成は同じ高さへ
- * 貼る。片方だけ別の計算を持つと、貼るときに引き伸ばされて縮尺が狂う。
+ * 貼る。片方だけ別の計算を持つと、貼るときに引き伸ばされて縮尺が狂う。副見出しの行数も同じ関数
+ * （{@link shareCardSubtitleLines}）で数えた値を渡すこと。
  */
-export function shareCardMapHeight(format: ShareCardFormat, noticeCount: number): number {
-  return format.height - HEADER_HEIGHT - noticeAreaHeight(noticeCount)
+export function shareCardMapHeight(format: ShareCardFormat, noticeLines: number, subtitleLines: number): number {
+  return format.height - headerHeight(subtitleLines) - noticeAreaHeight(noticeLines)
+}
+
+/**
+ * 文を、区切りのところで幅に収まる行へ折り返す（行数の上限は持たない）。区切りの無い長い塊だけは文字の途中で折る。
+ *
+ * `token` は 1 つの塊とその後ろの区切りに当たる正規表現（`g` 付き）。副見出しと注意文・出典で区切りが違うので、呼び出し側が渡す。
+ */
+function wrapAtSeparators(measure: (text: string) => number, text: string, maxWidth: number, token: RegExp): string[] {
+  const tokens = text.match(token) ?? []
+  const lines: string[] = []
+  let current = ''
+  const pushChars = (chunk: string) => {
+    for (const ch of chunk) {
+      if (current && measure(current + ch) > maxWidth) { lines.push(current); current = '' }
+      current += ch
+    }
+  }
+  for (const t of tokens) {
+    // 行末の区切りの空きは描かない（`trimEnd`）ので、幅にも数えない
+    if (measure((current + t).trimEnd()) <= maxWidth) { current += t; continue }
+    if (current) { lines.push(current.trimEnd()); current = '' }
+    // 行の頭に区切りの空きを残さない
+    const head = t.trimStart()
+    if (measure(head.trimEnd()) <= maxWidth) current = head
+    else pushChars(head)
+  }
+  if (current.trim()) lines.push(current.trimEnd())
+  return lines
+}
+
+/** 副見出しの区切り（全角の空き・「／」と、その前後の半角の空き）。 */
+const SUBTITLE_TOKEN = /[^　／]+[　／ ]*|[　／ ]+/g
+/** 注意文・出典の区切り（読点・句点・「／」）。**文の途中で切らずに折る**ためだけに使う（文は全部描く）。 */
+const NOTICE_TOKEN = /[^、。／]+[、。／]*|[、。／]+/g
+
+/**
+ * 副見出しを、帯の幅に収まる行へ折り返す（最大 {@link SUBTITLE_MAX_LINES} 行。超えた分は最後の行の末尾を「…」で切る）。
+ *
+ * **区切り（全角の空き・「／」）のところで折る。** 1 つの項目（「石川県能登地方 M7.6」）が行をまたぐと読みにくい。
+ * 区切りの無い長い項目だけは文字の途中で折る。複数の緊急地震速報・津波の原因地震を全件並べると 1 行に収まらない
+ * （2026-10-23 ユーザー選択「全件を並べる」・並べ方は 2026-10-24 ユーザー選択「副見出しで折り返す (Recommended)」）。
+ */
+export function layoutSubtitleLines(measure: (text: string) => number, subtitle: string, maxWidth: number): string[] {
+  const lines = wrapAtSeparators(measure, subtitle, maxWidth, SUBTITLE_TOKEN)
+  if (lines.length <= SUBTITLE_MAX_LINES) return lines
+  const kept = lines.slice(0, SUBTITLE_MAX_LINES)
+  // **切るのは項目の境目まで**（1 文字ずつ削ると「M7.6」が「M7…」になり、数値の欠けが省略の印と見分けられない。
+  // 画像は後から訂正できない）。区切りが 1 つも無い行だけは文字の途中で切る。
+  let cut = kept[SUBTITLE_MAX_LINES - 1]
+  while (cut && measure(`${cut}…`) > maxWidth) {
+    const at = Math.max(cut.lastIndexOf('　'), cut.lastIndexOf('／'))
+    cut = at > 0 ? cut.slice(0, at).replace(/[　／ ]+$/, '') : cut.slice(0, -1)
+  }
+  kept[SUBTITLE_MAX_LINES - 1] = `${cut}…`
+  return kept
+}
+
+/**
+ * 注意文と出典を、帯の幅に収まる行へ折り返す。**切り詰めない** —— 注意文の「震源に近い場所では強い揺れに間に合わないことが
+ * あります」は末尾にあり、出典の PB2002 は帰属表示が利用条件なので、どちらも落とせない。幅の狭い寸法（1080）では
+ * 緊急地震速報の注意文が 1 行に収まらない（16:9 の 1600 では収まる）。
+ */
+export function layoutNoticeLines(measure: (text: string) => number, notices: readonly string[], maxWidth: number): string[] {
+  return notices.flatMap(n => wrapAtSeparators(measure, n, maxWidth, NOTICE_TOKEN))
+}
+
+/** 注意文・出典の行数（撮影の前に地図の高さを決めるため。合成と同じ字体・幅で数える）。 */
+export function shareCardNoticeLines(notices: readonly string[], format: ShareCardFormat): number {
+  if (notices.length === 0) return 0
+  const ctx = document.createElement('canvas').getContext('2d')
+  if (!ctx) {
+    log.warn('[shareCard] 注意文の行数を測れません（2D の文脈を取れない）。1 件 1 行として扱います')
+    return notices.length
+  }
+  ctx.font = NOTICE_FONT
+  return layoutNoticeLines(t => ctx.measureText(t).width, notices, format.width - PADDING_X * 2).length
+}
+
+/**
+ * 副見出しの行数を数える（撮影の前に地図の高さを決めるため）。合成（{@link composeShareCard}）と同じ字体・幅で数える。
+ * 文字幅を測れない環境（2D の文脈が取れない）では 1 行として扱う。
+ */
+export function shareCardSubtitleLines(subtitle: string | undefined, format: ShareCardFormat): number {
+  if (!subtitle) return 1
+  const ctx = document.createElement('canvas').getContext('2d')
+  if (!ctx) {
+    log.warn('[shareCard] 副見出しの行数を測れません（2D の文脈を取れない）。1 行として扱います')
+    return 1
+  }
+  ctx.font = `${SUBTITLE_FONT} ${FONT_STACK}`
+  return Math.max(1, layoutSubtitleLines(t => ctx.measureText(t).width, subtitle, format.width - PADDING_X * 2).length)
 }
 
 /**
@@ -172,7 +288,10 @@ export function shareCardMapHeight(format: ShareCardFormat, noticeCount: number)
 export async function composeShareCard(opts: ShareCardOptions): Promise<Blob> {
   const { capture, header, notices, format = DEFAULT_SHARE_CARD_FORMAT } = opts
   const s = capture.scale
-  const mapHeight = shareCardMapHeight(format, notices.length)
+  const subtitleLines = shareCardSubtitleLines(header.subtitle, format)
+  const noticeLines = shareCardNoticeLines(notices, format)
+  const mapHeight = shareCardMapHeight(format, noticeLines, subtitleLines)
+  const headerH = headerHeight(subtitleLines)
   const capturedWidth = capture.canvas.width / s
   const capturedHeight = capture.canvas.height / s
   // 撮影と合成が別々の寸法を見ていると、貼るときに引き伸ばされて縮尺が狂う。黙って歪ませない。
@@ -203,24 +322,24 @@ export async function composeShareCard(opts: ShareCardOptions): Promise<Blob> {
   ctx.fillStyle = BACKGROUND
   ctx.fillRect(0, 0, format.width, format.height)
 
-  drawHeader(ctx, header, format.width)
+  drawHeader(ctx, header, format.width, headerH)
   // 撮影の画素数が出力より大きければ、ここで縮小される（上記の注記）。
-  ctx.drawImage(capture.canvas, 0, HEADER_HEIGHT, format.width, mapHeight)
+  ctx.drawImage(capture.canvas, 0, headerH, format.width, mapHeight)
   // 凡例は地図の左下へ重ねる（画面と同じ位置）。撮り切れなかった注記は右下なので衝突しない。
   if (opts.legend && opts.legend.length > 0) {
-    drawLegend(ctx, opts.legend, HEADER_HEIGHT + mapHeight)
+    drawLegend(ctx, opts.legend, headerH + mapHeight)
   }
-  if (capture.timedOut) drawIncompleteNotice(ctx, format.width, HEADER_HEIGHT + mapHeight)
-  if (notices.length > 0) drawNotices(ctx, notices, format.width, HEADER_HEIGHT + mapHeight)
+  if (capture.timedOut) drawIncompleteNotice(ctx, format.width, headerH + mapHeight)
+  if (noticeLines > 0) drawNotices(ctx, notices, format.width, headerH + mapHeight)
 
   return await canvasToPngBlob(out)
 }
 
-function drawHeader(ctx: CanvasRenderingContext2D, header: ShareCardHeader, width: number): void {
+function drawHeader(ctx: CanvasRenderingContext2D, header: ShareCardHeader, width: number, height: number): void {
   ctx.fillStyle = HEADER_BACKGROUND
-  ctx.fillRect(0, 0, width, HEADER_HEIGHT)
+  ctx.fillRect(0, 0, width, height)
   ctx.fillStyle = DIVIDER
-  ctx.fillRect(0, HEADER_HEIGHT - 1, width, 1)
+  ctx.fillRect(0, height - 1, width, 1)
 
   // 右端の時刻を先に描いて占有幅を確定させ、見出しの折り返し幅をその手前までに絞る。
   let rightEdge = width - PADDING_X
@@ -239,9 +358,15 @@ function drawHeader(ctx: CanvasRenderingContext2D, header: ShareCardHeader, widt
   ctx.fillText(clipText(ctx, header.title, rightEdge - PADDING_X), PADDING_X, 62)
 
   if (header.subtitle) {
-    ctx.font = `400 24px ${FONT_STACK}`
+    ctx.font = `${SUBTITLE_FONT} ${FONT_STACK}`
     ctx.fillStyle = TEXT_SECONDARY
-    ctx.fillText(clipText(ctx, header.subtitle, width - PADDING_X * 2), PADDING_X, 100)
+    // 行数は撮影の前に数えたもの（`shareCardSubtitleLines`）と同じ関数で割る。
+    const lines = layoutSubtitleLines(t => ctx.measureText(t).width, header.subtitle, width - PADDING_X * 2)
+    // 上限で切ったら記録する（画像からは何が落ちたか読めない。本文（共有シートの文）には全文が載る）。
+    if (lines.length === SUBTITLE_MAX_LINES && lines[SUBTITLE_MAX_LINES - 1].endsWith('…')) {
+      log.warn('[shareCard] 副見出しが上限の行数に収まらず、末尾を省きました', { subtitle: header.subtitle })
+    }
+    lines.forEach((line, i) => ctx.fillText(line, PADDING_X, 100 + i * SUBTITLE_LINE_HEIGHT))
   }
 }
 
@@ -451,11 +576,12 @@ function drawLegend(ctx: CanvasRenderingContext2D, blocks: LegendBlock[], mapBot
 function drawNotices(ctx: CanvasRenderingContext2D, notices: string[], width: number, top: number): void {
   ctx.fillStyle = DIVIDER
   ctx.fillRect(0, top, width, 1)
-  ctx.font = `400 15px ${FONT_STACK}`
+  ctx.font = NOTICE_FONT
   ctx.fillStyle = TEXT_SECONDARY
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
-  notices.forEach((line, i) => {
+  // 行数は撮影の前に数えたもの（`shareCardNoticeLines`）と同じ関数で割る。`clipText` は想定外に長い塊への歯止めとして残す。
+  layoutNoticeLines(t => ctx.measureText(t).width, notices, width - PADDING_X * 2).forEach((line, i) => {
     ctx.fillText(
       clipText(ctx, line, width - PADDING_X * 2),
       PADDING_X,
@@ -526,7 +652,7 @@ export interface ShareOutcome {
 /**
  * 本文へ載せるアプリの URL。
  *
- * **DMDSS 版から共有しても standard 版の URL を載せる。** DMDSS 版は DMDATA.JP の API キーが
+ * **DMDSS 版から共有しても standard 版の URL を載せる**（2026-08-31 15:57 JST ユーザー選択「常に standard 版（推奨）」）。 DMDSS 版は DMDATA.JP の API キーが
  * 要るため、受け取った人がそのまま開くと設定画面に突き当たる。
  */
 export function currentAppUrl(): string {

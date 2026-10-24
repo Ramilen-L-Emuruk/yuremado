@@ -409,13 +409,13 @@ function tsunamisOf(built: BuiltTestTelegram[]): JMATsunami[] {
 
 describe('変化の小さい続報テスト', () => {
   // 正: 段の並び（発表 → 観測情報 → 沖合 → 観測情報 → 満潮時刻 → 全解除）と、津波が 1 つの事象で続く
-  it('発表のあと 14 通の続報が同じ津波へ届き、最後に全解除で終わる', async () => {
+  it('発表のあと 16 通の続報が同じ津波へ届き、最後に全解除で終わる', async () => {
     const tsunamis = tsunamisOf(await build(scripts.TSUNAMI_QUIET_REPORTS))
-    expect(tsunamis).toHaveLength(16)
+    expect(tsunamis).toHaveLength(18)
     // 沖合（VTSE52）は 2 通。**1 通目は次の段の前提**で、2 通目で初めて値が動く
     expect(tsunamis.map(t => t.headType)).toEqual([
       'VTSE41', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE52', 'VTSE52', 'VTSE51',
-      'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE41',
+      'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE51', 'VTSE41',
     ])
     expect(new Set(tsunamis.map(t => t.eventId)).size).toBe(1)
     // 津波情報（VTSE51）の id は報番号から作るので、報ごとに違う（重なると再送として捨てられる）。
@@ -423,7 +423,7 @@ describe('変化の小さい続報テスト', () => {
     // 発表時刻で新旧を見る（→ docs/spec/quake-spec.md §6.3）
     const infoIds = tsunamis.filter(t => t.headType === 'VTSE51').map(t => t.id)
     expect(new Set(infoIds).size).toBe(infoIds.length)
-    expect(tsunamis[15].cancelled).toBe(true)
+    expect(tsunamis[17].cancelled).toBe(true)
   })
 
   const kamaishi = (t: JMATsunami) => t.observations?.find(o => o.name === '釜石')
@@ -483,14 +483,40 @@ describe('変化の小さい続報テスト', () => {
     expect(marked.maxHeightRevise).toBe('追加')
   })
 
+  // 正: 段 10 で釜石が欠測へ転じ（値は持ったまま）、段 11 で欠測のまま最大波の観測時刻だけが進む
+  // （2026-10-21 ユーザー選択「印を付ける (Recommended)」「読む (Recommended)」の経路を実機で通す形）
+  it('段 10 で釜石が欠測へ転じ、段 11 で欠測のまま最大波の観測時刻だけが更新される', async () => {
+    const tsunamis = tsunamisOf(await build(scripts.TSUNAMI_QUIET_REPORTS))
+    const [before, turned, timed] = [kamaishi(tsunamis[9])!, kamaishi(tsunamis[10])!, kamaishi(tsunamis[11])!]
+    expect(before.condition?.maxHeightMissing).toBeFalsy()
+    expect(turned.condition?.maxHeightMissing).toBe(true)
+    expect(turned.height).toBeDefined()
+    expect(timed.condition?.maxHeightMissing).toBe(true)
+    expect(timed.height).toEqual(turned.height)
+    expect(timed.maxHeightRevise).toBe('更新')
+    expect(Date.parse(timed.maxHeightDateTime!)).toBeGreaterThan(Date.parse(turned.maxHeightDateTime!))
+  })
+
+  // 安全弁: どの段でも、最大波の観測時刻は観測状況を確定した時刻・発表時刻より後にならない（まだ来ていない波を観測した形にしない）
+  it('最大波の観測時刻は、どの段でも観測状況を確定した時刻より後にならない', async () => {
+    const tsunamis = tsunamisOf(await build(scripts.TSUNAMI_QUIET_REPORTS))
+    for (const t of tsunamis) {
+      const limit = Date.parse(t.observationDateTime ?? t.time)
+      expect(limit).toBeLessThanOrEqual(Date.parse(t.time))
+      for (const o of t.observations ?? []) {
+        if (o.maxHeightDateTime) expect(Date.parse(o.maxHeightDateTime)).toBeLessThanOrEqual(limit)
+      }
+    }
+  })
+
   // 正: 到達予想時刻だけが動く段がある（満潮時刻・到達状況は前の段のまま）
-  it('段 13 は到達予想時刻だけを動かす', async () => {
+  it('段 15 は到達予想時刻だけを動かす', async () => {
     const tsunamis = tsunamisOf(await build(scripts.TSUNAMI_QUIET_REPORTS))
     const forecastOf = (t: JMATsunami) =>
       t.areas.flatMap(a => a.stations ?? []).map(st => st.arrivalTime ?? '').join('|')
-    expect(forecastOf(tsunamis[13])).not.toBe(forecastOf(tsunamis[12]))
-    // 対照: 段 14 では動かない（同じ値の再送）
-    expect(forecastOf(tsunamis[14])).toBe(forecastOf(tsunamis[13]))
+    expect(forecastOf(tsunamis[15])).not.toBe(forecastOf(tsunamis[14]))
+    // 対照: 段 16 では動かない（同じ値の再送）
+    expect(forecastOf(tsunamis[16])).toBe(forecastOf(tsunamis[15]))
   })
 
   it('満潮時刻の続報は、満潮時刻の更新と到達状況の更新を別々の段で流す', async () => {
@@ -498,7 +524,7 @@ describe('変化の小さい続報テスト', () => {
     const tideOf = (t: JMATsunami) => t.areas.flatMap(a => a.stations ?? []).map(s => s.highTideDateTime).join('|')
     // 到達状況は区域の欄（`Forecast/Item/FirstHeight/Condition`）。観測点の側ではない
     const arrivalOf = (t: JMATsunami) => t.areas.map(a => a.firstHeight?.condition ?? '').join('|')
-    const [, , , , , , , , , , t10, t11, t12] = tsunamis
+    const [, , , , , , , , , , , , t10, t11, t12] = tsunamis
     expect(tideOf(t11)).not.toBe(tideOf(t10))
     expect(arrivalOf(t11)).toBe(arrivalOf(t10))
     expect(arrivalOf(t12)).not.toBe(arrivalOf(t11))
@@ -555,6 +581,14 @@ describe('津波のテスト', () => {
     expect(watch.areas.some(a => a.grade === 'Watch')).toBe(true)
     expect(expiry.areas.every(a => a.grade === 'Forecast')).toBe(true)
     expect(Date.parse(expiry.validDateTime!)).toBeGreaterThan(Date.parse(expiry.time))
+  })
+
+  // 等級は同じまま期限だけを延ばした続報（2026-10-24 ユーザー選択「延長と言う (Recommended)」の文が通る形）
+  it('失効時刻テストの最後の報は、等級も前回の等級も予報のまま、期限だけが後ろへ延びる', async () => {
+    const [, expiry, extended] = tsunamisOf(await build(scripts.TSUNAMI_EXPIRY))
+    expect(extended.areas.every(a => a.grade === 'Forecast' && a.lastGrade === 'Forecast')).toBe(true)
+    expect(Date.parse(extended.validDateTime!) - Date.parse(expiry.validDateTime!)).toBe(scripts.TSUNAMI_EXPIRY_EXTEND_BY_MS)
+    expect(Date.parse(extended.time)).toBeGreaterThan(Date.parse(expiry.time))
   })
 
   it('等級変化テストは引き上げと引き下げの両方を含む', async () => {

@@ -712,14 +712,13 @@ export interface TsunamiEstimation {
    * 最大波を推定した時刻（`MaxHeight/DateTime`）。「推定中」では出現しない。
    * 意味は観測点側の {@link TsunamiObservation.maxHeightDateTime} と同じ。
    *
-   * **読んで持つが、画面には出していない。** 推定の行が出しているのは到達予想時刻と
-   * 説明で、そこへ 3 つ目の時刻を並べると何の時刻か読み取れなくなる。観測点の行に
-   * 出しているのは、あちらが実測値でいつの観測かが値の意味を変えるため。
+   * **推定の行に「最大波 23:26」として出す**（2026-10-21 ユーザー選択「時刻も印も出す (Recommended)」・
+   * 語は 2026-10-24 ユーザー選択「「最大波 23:26」 (Recommended)」）。全期間 46 項目中 14 項目が持つ。
    */
   maxHeightDateTime?: string
   /**
    * 続報での位置づけ（`FirstHeight/Revise` / `MaxHeight/Revise`）。「追加」または「更新」。
-   * **読んで持つが、画面には出していない**（観測点側の同名フィールドと同じ扱い）。
+   * 推定の行の印に使う（→ `utils/tsunami.ts` の `tsunamiValueMarks`）。
    */
   firstHeightRevise?: string
   maxHeightRevise?: string
@@ -799,6 +798,11 @@ export interface TsunamiArea {
     // 数値表現[m]。「巨大」「高い」のように数値化されない予想波高では欠落する
     // （P2PQuake の仕様どおりの挙動。表示・読み上げはいずれも description しか見ない）。
     value?: number
+    /**
+     * 続報での位置づけ（`Forecast/Item/MaxHeight/Revise`）。「追加」または「更新」。DMDATA 経路のみ。
+     * カードの予想波高の印に使う（→ `utils/tsunami.ts` の `tsunamiValueMarks`）。読み上げは使わない。
+     */
+    revise?: string
   }
   /**
    * 予想波高が大津波警報の区域で初めて数値になった、または上方修正された
@@ -1049,6 +1053,29 @@ export interface JMATsunami {
    * 読むと、残りの震源が画面から消える。表示は 1 件目を主に扱い、残りを併記する。
    */
   sourceEarthquakes?: TsunamiSourceEarthquake[]
+  /**
+   * **別の地震の津波で置き換わる前に表示していた津波**の原因地震（電文には無い。状態にだけ載る）。
+   *
+   * 津波は 1 件しか持てず、別の地震の津波が届くと区域はその報のとおりに置き換わる（全期間で 2 回。
+   * 2023-05-14 八丈島近海の 2 つの地震、2023-05-20 南太平洋 M7.7 の予報が残る中での M7.4）。
+   * そのとき**前の地震も原因地震の行に並べて残す**（2026-10-21 ユーザー選択「置き換え、前の地震も残す
+   * (Recommended)」。並べ方は 2026-10-24 ユーザー選択「同じ形で後に並べる (Recommended)」）。
+   *
+   * **`sourceEarthquakes` へ混ぜないこと。** あちらは「この報が名乗る原因地震」で、地震カードとの結び付け
+   * （`linkTsunamiSources`）・読み上げの「もう一つの地震の震源は」・同一性の判定（`isTsunamiNewFire`）が
+   * それを前提にしている。前の津波の地震は画面に並べるだけで、それらのどれにも使わない。
+   */
+  previousSourceEarthquakes?: TsunamiSourceEarthquake[]
+  /**
+   * **標準版（P2PQuake）の 24 時間の安全弁が積んだ消去**であることの印（電文には無い。アプリが積む失効の予約にだけ付く）。
+   *
+   * 標準版は失効時刻を受け取れないので、解除電文が届かない場合に備えて 24 時間後に津波を消す。**その時刻は気象庁が
+   * 言っていないので「失効」と名乗らない** —— 画面の帯・タイトル・音・読み上げ・通知のどれも出さずに畳む
+   * （2026-10-23 ユーザー選択「安全弁では「失効」と名乗らない (Recommended)」・帯は 2026-10-24 ユーザー選択
+   * 「帯を出さず消す (Recommended)」）。受信側の記憶の後始末は本物の失効と同じく行う。
+   * 実際の失効時刻が届いた（`validDateTime` を持つ）報の予約には付かない。
+   */
+  failsafeExpiry?: true
   // 若干の海面変動など予報のみの場合、JMAは明示的なキャンセル電文を送らず
   // ValidDateTime の経過でのみ有効期限が示される。
   validDateTime?: string

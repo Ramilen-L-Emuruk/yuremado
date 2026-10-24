@@ -179,4 +179,84 @@ describe('津波の失効時刻の読み上げ（フックの結線）', () => {
   // （カードの追従で区域行を優先するため）。上のモックは文全体を 1 チャンクにするので、
   // 実運用では別チャンクになる失効時刻の参照がここでは引けない。
   // **既読の固定は `ttsText.test.ts`（断片列を直接見る）が担う。**
+
+  // 等級が動かない続報で、期限だけが延びた報（全期間 436 通のうち 3 通。例 2022-01-17 13:59）。
+  // 観測点も等級の変化も持たないので、従来は一言も声にならなかった（2026-10-21 ユーザー選択「延びたら読む
+  // (Recommended)」。文面は 2026-10-24 ユーザー選択「延長と言う (Recommended)」）。
+  it('正: 期限だけが延びた予報の続報で「延長されました」と読む', async () => {
+    const { handle } = setup()
+    handle(makeReport(allAt('Forecast'), EXPIRY))
+    await settle()
+    handle(makeReport(allAt('Forecast', 'Forecast'), '2024-01-03T17:00:00+09:00'))
+    await settle()
+    expect(spokenTexts()).toHaveLength(2)
+    expect(spokenTexts()[1]).toContain('津波予報の失効時刻が、')
+    expect(spokenTexts()[1]).toContain('17時0分に延長されました。')
+  })
+
+  it('正: 期限が早まった続報では「変更されました」と読む', async () => {
+    const { handle } = setup()
+    handle(makeReport(allAt('Forecast'), EXPIRY))
+    await settle()
+    handle(makeReport(allAt('Forecast', 'Forecast'), '2024-01-02T15:00:00+09:00'))
+    await settle()
+    expect(spokenTexts()[1]).toContain('15時0分に変更されました。')
+  })
+
+  // 安全弁: 分より細かい違いだけの延長は言わない（「同じ時刻へ延長されました」と聞こえる。ブラウザ確認で見つけた形）
+  it('安全弁: 読み上げで同じ時刻に聞こえる延長は言わない', async () => {
+    const { handle } = setup()
+    handle(makeReport(allAt('Forecast'), EXPIRY))
+    await settle()
+    handle(makeReport(allAt('Forecast', 'Forecast'), '2024-01-02T17:00:20+09:00'))
+    await settle()
+    expect(spokenTexts()).toHaveLength(1)
+  })
+
+  // 安全弁: 順番が前後して届いた古い報の期限は状態に採られない（作成時刻の順に重ね直す）。報自身の期限と比べると、
+  // 表示していない古い期限を「変更されました」と読んでしまう（張り直しの取り戻し・履歴との行き違いで起きる）。
+  it('安全弁: 後から届いた古い報の期限は読まない', async () => {
+    const { handle } = setup()
+    handle(makeReport(allAt('Forecast'), EXPIRY))
+    await settle()
+    // 新しい報（作成 10:30）が期限を 18 時へ延ばし、そのあと古い報（作成 10:10・期限 15 時）が遅れて届く
+    handle({ ...makeReport(allAt('Forecast', 'Forecast'), '2024-01-02T18:00:00+09:00'), createdAtMs: Date.parse('2024-01-02T10:30:00+09:00') } as JMATsunami)
+    await settle()
+    handle({ ...makeReport(allAt('Forecast', 'Forecast'), '2024-01-02T15:00:00+09:00'), createdAtMs: Date.parse('2024-01-02T10:10:00+09:00') } as JMATsunami)
+    await settle()
+    expect(spokenTexts()).toHaveLength(2)
+    expect(spokenTexts()[1]).toContain('18時0分に延長されました。')
+  })
+
+  // 対照: 同じ期限を載せ直しただけの続報では何も言わない（全期間で 1 通。2026-03-26 23:36）
+  it('対照: 同じ期限の続報では何も読まない', async () => {
+    const { handle } = setup()
+    handle(makeReport(allAt('Forecast'), EXPIRY))
+    await settle()
+    handle(makeReport(allAt('Forecast', 'Forecast'), EXPIRY))
+    await settle()
+    expect(spokenTexts()).toHaveLength(1)
+  })
+
+  // 別の地震の津波の最初の報が、前の津波と同じ等級だと一言も読まれなかった（全期間 2 回。2023-05-14 19:17、
+  // 2023-05-20 11:28。2026-10-21 ユーザー選択「新しい津波として読む (Recommended)」）。
+  it('正: 前の津波と同じ等級でも、別の津波の初報は発表として読む', async () => {
+    const { handle } = setup()
+    handle(makeReport(allAt('Forecast')))
+    await settle()
+    handle({ ...makeReport(allAt('Forecast')), eventId: '20240102000000' })
+    await settle()
+    expect(spokenTexts()).toHaveLength(2)
+    expect(spokenTexts()[1]).toContain('津波予報が発表されました')
+  })
+
+  // 対照: 同じ津波の同じ等級の続報は、従来どおり発表として読み直さない
+  it('対照: 同じ津波の同じ等級の続報は発表として読み直さない', async () => {
+    const { handle } = setup()
+    handle(makeReport(allAt('Forecast')))
+    await settle()
+    handle(makeReport(allAt('Forecast')))
+    await settle()
+    expect(spokenTexts().slice(1).some(t => t.includes('津波予報が発表されました'))).toBe(false)
+  })
 })

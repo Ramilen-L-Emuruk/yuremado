@@ -12,6 +12,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
 import { TsunamiTab } from './index'
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../../types/earthquake'
+import { NO_TSUNAMI_VALUE_MARKS } from '../../utils/tsunami'
 
 afterEach(cleanup)
 
@@ -60,7 +61,7 @@ function makeTsunami(over: {
   }
 }
 
-const renderTab = (t: JMATsunami) => render(<TsunamiTab tsunamis={[t]} isVisible />)
+const renderTab = (t: JMATsunami) => render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[t]} isVisible />)
 
 describe('津波カードの時刻が読めないとき', () => {
   // 対照: 読める値では従来どおり「◯◯ HH:MM」が並ぶ。ガードが正常な値まで止めていないこと。

@@ -15,6 +15,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { TsunamiTab } from './index'
 import type { JMATsunami, TsunamiArea } from '../../types/earthquake'
+import { NO_TSUNAMI_VALUE_MARKS } from '../../utils/tsunami'
 
 afterEach(cleanup)
 
@@ -51,7 +52,7 @@ function makeTsunami(overrides: Partial<JMATsunami> = {}): JMATsunami {
   }
 }
 
-const renderTab = (tsunamis: JMATsunami[]) => render(<TsunamiTab tsunamis={tsunamis} isVisible />)
+const renderTab = (tsunamis: JMATsunami[]) => render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={tsunamis} isVisible />)
 
 describe('バナーから開く付加文の面', () => {
   // 正: 行動指示の行が入口を兼ね、押すと気象庁の文が出る。
@@ -88,7 +89,7 @@ describe('バナーから開く付加文の面', () => {
       time: '2026-04-20T16:56:00Z',
       observations: [{ name: '久慈港', height: { value: 0.3, description: '0.3m' } }],
     })
-    rerender(<TsunamiTab tsunamis={[next]} isVisible />)
+    rerender(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[next]} isVisible />)
     expect(container.textContent).toContain(BODY_ONLY)
   })
 
@@ -100,7 +101,7 @@ describe('バナーから開く付加文の面', () => {
     expect(container.textContent).toContain(BODY_ONLY)
 
     const switched = makeTsunami({ id: 'test-tsunami-2', time: '2026-04-20T16:56:00Z', eventId: '20260420160000 20260420165000' })
-    rerender(<TsunamiTab tsunamis={[switched]} isVisible />)
+    rerender(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[switched]} isVisible />)
     expect(container.textContent).toContain(BODY_ONLY)
   })
 
@@ -111,7 +112,7 @@ describe('バナーから開く付加文の面', () => {
     expect(container.textContent).toContain(BODY_ONLY)
 
     const other = makeTsunami({ id: 'test-tsunami-9', time: '2026-04-20T18:00:00Z', eventId: '20260420175500' })
-    rerender(<TsunamiTab tsunamis={[other]} isVisible />)
+    rerender(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[other]} isVisible />)
     expect(container.textContent).not.toContain(BODY_ONLY)
   })
 
@@ -126,16 +127,27 @@ describe('バナーから開く付加文の面', () => {
       time: '2026-04-20T16:56:00Z',
       areas: [{ code: '100', name: '岩手県', grade: 'MajorWarning', immediate: true, maxHeight: { description: '5m', value: 5.0 } }],
     })
-    rerender(<TsunamiTab tsunamis={[upgraded]} isVisible />)
+    rerender(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[upgraded]} isVisible />)
     expect(container.textContent).not.toContain(BODY_ONLY)
   })
 
-  // 安全弁: 取消し・解除の表示中は中身を出さない。押せる見た目だけ与えると、
-  // 何も起きない理由が利用者に分からない。
-  it('取消しの表示中は入口にしない', () => {
-    const { container } = renderTab([makeTsunami({ cancelled: true, cancelledAt: new Date('2026-04-20T18:00:00Z') })])
-    expect(screen.queryByRole('button')).toBeNull()
+  // 正（2026-10-21 ユーザー選択「開けるようにする (Recommended)」で覆した）: 取消・解除の表示中も開ける。
+  // 面の先頭には取消の理由を置き、その下に取消前の文を並べる（2026-10-24 ユーザー選択「取消・解除の文も面に入れる」）。
+  it('取消しの表示中も開け、取消の理由を先頭に、取消前の文をその下に出す', () => {
+    const reason = '先ほどの津波警報を取り消します。'
+    const { container } = renderTab([makeTsunami({ cancelled: true, cancelReason: 'retracted', cancelText: reason, cancelledAt: new Date('2026-04-20T18:00:00Z') })])
     expect(container.textContent).not.toContain(BODY_ONLY)
+    fireEvent.click(screen.getByRole('button'))
+    const text = container.textContent ?? ''
+    expect(text).toContain(BODY_ONLY)
+    // 理由はバナーにも出ているので、面の側（2 つ目）が本文より前にあることを見る
+    expect(text.lastIndexOf(reason)).toBeLessThan(text.indexOf(BODY_ONLY))
+  })
+
+  // 対照: 開くものが 1 つも無い取消は入口にしない（押せる見た目だけ与えない）
+  it('対照: 取消の理由も取消前の文も無い取消しの表示では入口にしない', () => {
+    renderTab([makeTsunami({ cancelled: true, cancelledAt: new Date('2026-04-20T18:00:00Z'), bodyText: undefined, warningComments: undefined, freeText: undefined })])
+    expect(screen.queryByRole('button')).toBeNull()
   })
 })
 
@@ -146,17 +158,17 @@ describe('バナーから開く付加文の面', () => {
 // フックの単体テストとは別に、**この画面で実際に繋がっていること**をここで固定する。
 describe('読み上げに合わせて気象庁の文を開く', () => {
   const renderWithSpeech = (speaking: boolean, tsunamis = [makeTsunami()]) =>
-    render(<TsunamiTab tsunamis={tsunamis} isVisible speakingTelegramText={speaking} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={tsunamis} isVisible speakingTelegramText={speaking} />)
 
   // 正: 読み始めで開き、読み終わりで閉じる
   it('読み始めで開き、読み終わりで閉じる', () => {
     const { container, rerender } = renderWithSpeech(false)
     expect(container.textContent).not.toContain(BODY_ONLY)
 
-    rerender(<TsunamiTab tsunamis={[makeTsunami()]} isVisible speakingTelegramText />)
+    rerender(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami()]} isVisible speakingTelegramText />)
     expect(container.textContent).toContain(BODY_ONLY)
 
-    rerender(<TsunamiTab tsunamis={[makeTsunami()]} isVisible speakingTelegramText={false} />)
+    rerender(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami()]} isVisible speakingTelegramText={false} />)
     expect(container.textContent).not.toContain(BODY_ONLY)
   })
 
@@ -172,7 +184,7 @@ describe('読み上げに合わせて気象庁の文を開く', () => {
     fireEvent.click(screen.getAllByRole('button')[0])
     expect(container.textContent).toContain(BODY_ONLY)
 
-    rerender(<TsunamiTab tsunamis={[makeTsunami()]} isVisible speakingTelegramText={false} />)
+    rerender(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami()]} isVisible speakingTelegramText={false} />)
     expect(container.textContent).toContain(BODY_ONLY)
   })
 
@@ -183,7 +195,7 @@ describe('読み上げに合わせて気象庁の文を開く', () => {
     expect(container.textContent).not.toContain(BODY_ONLY)
 
     // 同じ読み上げが続いても開き直さない
-    rerender(<TsunamiTab tsunamis={[makeTsunami()]} isVisible speakingTelegramText />)
+    rerender(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami()]} isVisible speakingTelegramText />)
     expect(container.textContent).not.toContain(BODY_ONLY)
   })
 
@@ -193,8 +205,8 @@ describe('読み上げに合わせて気象庁の文を開く', () => {
     fireEvent.click(screen.getAllByRole('button')[0])
     expect(container.textContent).toContain(BODY_ONLY)
 
-    rerender(<TsunamiTab tsunamis={[makeTsunami()]} isVisible speakingTelegramText />)
-    rerender(<TsunamiTab tsunamis={[makeTsunami()]} isVisible speakingTelegramText={false} />)
+    rerender(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami()]} isVisible speakingTelegramText />)
+    rerender(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami()]} isVisible speakingTelegramText={false} />)
     expect(container.textContent).toContain(BODY_ONLY)
   })
 })
