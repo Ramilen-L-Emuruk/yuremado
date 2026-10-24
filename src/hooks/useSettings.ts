@@ -37,8 +37,16 @@ export const TTS_MAX_OBSERVATION_POINTS_MAX = 20
 
 export interface AppSettings {
   minDisplayScale: number   // 最低表示震度 (-1 = すべて)
-  notifyMinScale: number    // 通知最低震度 (-1 = 通知しない)
-  // 地震後の行動チェックリストを出す最低震度 (-1 = 出さない)。ホーム地点を設定していれば
+  /**
+   * ブラウザ通知をまとめて止める（false で、種類ごとの設定によらずどの通知も出さない）。
+   * 種類ごとの値は書き換えないので、戻せば元どおり効く。判定は `utils/notificationGate.ts`。
+   */
+  notifyEnabled: boolean
+  notifyQuake: boolean      // 地震情報（長周期地震動・推計震度分布図・地震回数を含む）のブラウザ通知を送る
+  notifyMinScale: number    // 地震情報を通知する最低震度（階級値。入り切りは `notifyQuake`）
+  // 地震後の行動チェックリストを出すか。最低震度とは別に持つ（切って入れ直しても最低震度を忘れないため）
+  actionChecklistEnabled: boolean
+  // 地震後の行動チェックリストを出す最低震度。ホーム地点を設定していれば
   // その周り（半径 NEARBY_RADIUS_KM）で、していなければ全国のどこかで、この震度に達したら出す
   actionChecklistMinScale: number
   soundEnabled: boolean     // 地震・EEW・津波の受信時に音を鳴らす
@@ -246,7 +254,10 @@ export const DEFAULTS: AppSettings = {
   minDisplayScale: -1,
   // **地震情報の通知は既定で震度4以上**（2026-10-23 選択「既定で震度4以上を通知 (Recommended)」）。実際に出るのは
   // 利用者が通知を許可してから。保存済みの設定は変えない（読み込んだ値がそのまま勝つ）。
+  notifyEnabled: true,
+  notifyQuake: true,
   notifyMinScale: 40,
+  actionChecklistEnabled: true,
   actionChecklistMinScale: 45,
   soundEnabled: true,
   soundVolume: 1.0,
@@ -411,7 +422,7 @@ function ensureTelegramBoilerplate(value: unknown): TelegramBoilerplateReads {
 // 表示だけが壊れて原因を追えない。階級値でなければ既定値へ落とす。
 //
 // 範囲外の値をクランプせず既定値へ落とすため、notifyMinScale では「震度7以上のみ通知」ではなく
-// 「通知しない」（既定 -1）に倒れる。無言で通知が止まると原因を追えないので、値があるのに弾いた
+// 既定の最低震度に倒れる。無言で通知の範囲が変わると原因を追えないので、値があるのに弾いた
 // ときだけログに残す（未設定は初回起動・項目追加時に必ず通るため対象外）。
 function ensureIntensityScale(value: unknown, fallback: number, key: string): number {
   if (typeof value === 'number' && isValidIntensityScale(value)) return value
@@ -442,7 +453,10 @@ function clampNumberOrNull(value: unknown, min: number, max: number): number | n
 export function sanitize(partial: Partial<AppSettings>): AppSettings {
   return {
     minDisplayScale: ensureIntensityScale(partial.minDisplayScale, DEFAULTS.minDisplayScale, 'minDisplayScale'),
+    notifyEnabled: ensureBool(partial.notifyEnabled, DEFAULTS.notifyEnabled),
+    notifyQuake: ensureBool(partial.notifyQuake, DEFAULTS.notifyQuake),
     notifyMinScale: ensureIntensityScale(partial.notifyMinScale, DEFAULTS.notifyMinScale, 'notifyMinScale'),
+    actionChecklistEnabled: ensureBool(partial.actionChecklistEnabled, DEFAULTS.actionChecklistEnabled),
     actionChecklistMinScale: ensureIntensityScale(partial.actionChecklistMinScale, DEFAULTS.actionChecklistMinScale, 'actionChecklistMinScale'),
     soundEnabled: ensureBool(partial.soundEnabled, DEFAULTS.soundEnabled),
     soundVolume: clampNumber(partial.soundVolume, 0, 1, DEFAULTS.soundVolume),
@@ -643,7 +657,7 @@ function loadStored(): AppSettings {
       log.warn('[settings] localStorage の値が object でないため既定値で復旧', { key: STORAGE_KEY })
       return DEFAULTS
     }
-    return migrateDetachedNotifications(parsed as Partial<AppSettings>, sanitize(parsed as Partial<AppSettings>))
+    return migrateStoredSettings(parsed as Partial<AppSettings>, sanitize(parsed as Partial<AppSettings>))
   } catch (e) {
     log.warn('[settings] localStorage の読み込みに失敗、既定値で復旧', e)
     return DEFAULTS
@@ -671,6 +685,45 @@ export function migrateDetachedNotifications(stored: Partial<AppSettings>, setti
   if (!settings.notifyEEW && !settings.notifyTsunami && !settings.notifyNankai) return settings
   log.info('[settings] 地震情報の通知を切っていた設定なので、緊急地震速報・津波・南海トラフの通知も切ります（一度だけ）')
   return { ...settings, notifyEEW: false, notifyTsunami: false, notifyNankai: false }
+}
+
+/**
+ * 「切る」を最低震度の -1 で表していた頃の設定を、入り切りと最低震度に分けて読む（地震情報の通知・行動チェックリスト）。
+ *
+ * かつては切ると最低震度を -1 に書き換え、入れ直すと決まった値（地震情報は震度4・行動チェックリストは震度5弱）へ
+ * 戻していた。そのため、入れ直すと選んでいた最低震度を忘れていた。いまは入り切りを別の値で持つ。
+ *
+ * - 入り切りの値（`notifyQuake` / `actionChecklistEnabled`）が無い古い設定で、最低震度が -1 なら「切ってある」と読む
+ * - 最低震度が -1 のまま残っていれば、既定の最低震度へ戻す（-1 は「切る」の印で、震度ではない）
+ *
+ * **`sanitize()` の中では行わない**（理由は `migrateDetachedNotifications` と同じ。設定ファイルの「読めなかった項目」を
+ * 誤って数える）。読み込んだ値は保存しないので、保存されるまでは読み込みのたびに同じ読み替えが走る（結果は同じ）。
+ */
+export function migrateScaleToggles(stored: Partial<AppSettings>, settings: AppSettings): AppSettings {
+  let next = settings
+  // 入り切りが「保存されている」とみなすのは boolean のときだけ。壊れた値は `sanitize()` が既定（入れる）へ
+  // 落とすので、それを採ると、-1 で切ってあった設定が黙って「入れる」へ反転する
+  if (next.notifyMinScale < 0) {
+    const savedToggle = typeof stored.notifyQuake === 'boolean'
+    next = { ...next, notifyQuake: savedToggle ? next.notifyQuake : false, notifyMinScale: DEFAULTS.notifyMinScale }
+    log.info(`[settings] 地震情報の通知の最低震度が -1 だったので、${savedToggle ? '入り切りは保存された値のまま' : '通知を切ったものとして'}最低震度を既定（${DEFAULTS.notifyMinScale}）へ戻して読む`)
+  }
+  if (next.actionChecklistMinScale < 0) {
+    const savedToggle = typeof stored.actionChecklistEnabled === 'boolean'
+    next = { ...next, actionChecklistEnabled: savedToggle ? next.actionChecklistEnabled : false, actionChecklistMinScale: DEFAULTS.actionChecklistMinScale }
+    log.info(`[settings] 行動チェックリストの最低震度が -1 だったので、${savedToggle ? '入り切りは保存された値のまま' : '切ったものとして'}最低震度を既定（${DEFAULTS.actionChecklistMinScale}）へ戻して読む`)
+  }
+  return next
+}
+
+/**
+ * 保存されていた設定の読み替えを順に掛ける（端末の設定と設定ファイルの両方で使う）。
+ *
+ * **順序に意味がある。** `migrateDetachedNotifications` は「地震情報の通知を切ってあったか」を最低震度の -1 で見るので、
+ * -1 を消す `migrateScaleToggles` より先に掛ける。
+ */
+export function migrateStoredSettings(stored: Partial<AppSettings>, settings: AppSettings): AppSettings {
+  return migrateScaleToggles(stored, migrateDetachedNotifications(stored, settings))
 }
 
 export function useSettings() {

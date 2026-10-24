@@ -302,6 +302,45 @@ describe('load', () => {
     expect(result.notifyNankai).toBe(true)
   })
 
+  // 「切る」を最低震度の -1 で表していた設定は、入り切りと最低震度に分けて読む（→ `migrateScaleToggles`）
+  it('正: 地震情報の通知を -1 で切っていた設定は、通知を切ったまま最低震度を既定へ戻して読む', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ notifyMinScale: -1, notifyNankai: true }))
+    const result = load()
+    expect(result.notifyQuake).toBe(false)
+    expect(result.notifyMinScale).toBe(40)
+  })
+
+  it('正: 行動チェックリストを -1 で切っていた設定は、切ったまま最低震度を既定へ戻して読む', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ actionChecklistMinScale: -1 }))
+    const result = load()
+    expect(result.actionChecklistEnabled).toBe(false)
+    expect(result.actionChecklistMinScale).toBe(45)
+  })
+
+  it('対照: 最低震度を選んで入れていた設定は、その最低震度のまま入れて読む', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ notifyMinScale: 50, actionChecklistMinScale: 55 }))
+    const result = load()
+    expect(result.notifyQuake).toBe(true)
+    expect(result.notifyMinScale).toBe(50)
+    expect(result.actionChecklistEnabled).toBe(true)
+    expect(result.actionChecklistMinScale).toBe(55)
+  })
+
+  it('安全弁: 入り切りを持つ設定で最低震度だけ -1 が残っていても、入り切りは書いてあるほうを使う', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ notifyQuake: true, notifyMinScale: -1 }))
+    const result = load()
+    expect(result.notifyQuake).toBe(true)
+    expect(result.notifyMinScale).toBe(40)
+  })
+
+  it('安全弁: 切り離す前の移し替えは、-1 を消す読み替えより先に効く', () => {
+    // 地震情報の通知を -1 で切っていた古い設定。-1 を先に消すと「切っていた」ことが見えなくなる
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ notifyMinScale: -1, notifyEEW: true }))
+    const result = load()
+    expect(result.notifyQuake).toBe(false)
+    expect(result.notifyEEW).toBe(false)
+  })
+
   it('正常な部分設定は sanitize 後にマージ', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ soundVolume: 0.5, uiScale: 1.5 }))
     const result = load()

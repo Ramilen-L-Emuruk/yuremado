@@ -115,7 +115,7 @@ function setup(displayed: JMATsunami[] = []) {
     // **読み上げは無効にする。** 有効だと受信時スクロールが猶予を待つ経路へ入り、
     // このテストが見たい「要求の中身」とは別の分岐が混ざる。
     voicevoxEnabled: false, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
-    soundEnabled: false, soundVolume: 1, notifyMinScale: -1,
+    soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: 2, ttsMaxRegions: 10, ttsAlwaysReadScale: 30, ttsRegionTolerance: 2,
     minDisplayScale: -1,

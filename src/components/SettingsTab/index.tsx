@@ -1705,11 +1705,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
         <Row label="行動チェックリスト" description="強い揺れのときに、とるべき行動と持ち出すものを画面上部に出します。緊急地震速報・リアルタイム震度・地震情報のいずれかで判定します">
           <Toggle
-            checked={settings.actionChecklistMinScale >= 0}
-            onChange={v => onUpdate('actionChecklistMinScale', v ? 45 : -1)}
+            checked={settings.actionChecklistEnabled}
+            onChange={v => onUpdate('actionChecklistEnabled', v)}
           />
         </Row>
-        {settings.actionChecklistMinScale >= 0 && (
+        {settings.actionChecklistEnabled && (
           <Row label="出す最低震度" description="地点を登録していればその周辺（半径30km）で、していなければ全国のどこかでこの震度に達したときに出します">
             <div className="flex items-center gap-2">
               <IntensityBadge scale={settings.actionChecklistMinScale} />
@@ -1721,41 +1721,51 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </div>
           </Row>
         )}
-        {/* **種別のトグルは地震情報の通知から独立させる**（2026-10-22 ユーザー選択「3 種を切り離す (Recommended)」。
-            行の文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。かつては地震情報の通知を切ると
-            揺れ検知・緊急地震速報・津波の通知もまとめて止まっていた。 */}
-        <Row label="地震情報の通知" description="地震情報・長周期地震動・推計震度分布図・地震回数に関する情報を受けたときに通知します">
-          <Toggle
-            checked={settings.notifyMinScale >= 0}
-            onChange={v => onUpdate('notifyMinScale', v ? 40 : -1)}
-          />
+        {/* ブラウザ通知をまとめて止める。**止めると、種類ごとの行を隠す**（値は書き換えないので、戻せば元どおり効く。
+            文言とこの見せ方は 2026-10-25 ユーザー承認）。通知を出すかの判定は `utils/notificationGate.ts` の 1 箇所。
+            「通知許可」だけは止めていても出す（許可はブラウザ側の状態で、この設定とは別）。 */}
+        <Row label="通知を表示" description="オフにすると、ブラウザ通知をすべて止めます">
+          <Toggle checked={settings.notifyEnabled} onChange={v => onUpdate('notifyEnabled', v)} />
         </Row>
-        {settings.notifyMinScale >= 0 && (
-          <Row label="通知する最低震度" description="この震度以上で通知を送信します">
-            <div className="flex items-center gap-2">
-              <IntensityBadge scale={settings.notifyMinScale} />
-              <ScaleSelect
-                value={settings.notifyMinScale}
-                onChange={v => onUpdate('notifyMinScale', v === -1 ? 10 : v)}
-                noneLabel="震度1以上"
+        {settings.notifyEnabled && (
+          <>
+            {/* **種別のトグルは地震情報の通知から独立させる**（2026-10-22 ユーザー選択「3 種を切り離す (Recommended)」。
+                行の文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。かつては地震情報の通知を切ると
+                揺れ検知・緊急地震速報・津波の通知もまとめて止まっていた。 */}
+            <Row label="地震情報の通知" description="地震情報・長周期地震動・推計震度分布図・地震回数に関する情報を受けたときに通知します">
+              <Toggle
+                checked={settings.notifyQuake}
+                onChange={v => onUpdate('notifyQuake', v)}
               />
-            </div>
-          </Row>
-        )}
-        {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 → 南海トラフ の順 ── */}
-        <Row label="揺れ検知通知" description="強震モニタで揺れを検知したときに通知します。推定値のため、通知は多めになります">
-          <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
-        </Row>
-        <Row label="緊急地震速報の通知" description="緊急地震速報が出たときと、警報・特別警報へ上がったときに通知します">
-          <Toggle checked={settings.notifyEEW} onChange={v => onUpdate('notifyEEW', v)} />
-        </Row>
-        <Row label="津波通知" description="津波警報・注意報・予報が発表されたときと、全て解除されたときに通知します">
-          <Toggle checked={settings.notifyTsunami} onChange={v => onUpdate('notifyTsunami', v)} />
-        </Row>
-        {isDmdss && (
-          <Row label="南海トラフ・後発地震の通知" description="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報と、臨時の解説情報を受けたときに通知します">
-            <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
-          </Row>
+            </Row>
+            {settings.notifyQuake && (
+              <Row label="通知する最低震度" description="この震度以上で通知を送信します">
+                <div className="flex items-center gap-2">
+                  <IntensityBadge scale={settings.notifyMinScale} />
+                  <ScaleSelect
+                    value={settings.notifyMinScale}
+                    onChange={v => onUpdate('notifyMinScale', v === -1 ? 10 : v)}
+                    noneLabel="震度1以上"
+                  />
+                </div>
+              </Row>
+            )}
+            {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 → 南海トラフ の順 ── */}
+            <Row label="揺れ検知通知" description="強震モニタで揺れを検知したときに通知します。推定値のため、通知は多めになります">
+              <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
+            </Row>
+            <Row label="緊急地震速報の通知" description="緊急地震速報が出たときと、警報・特別警報へ上がったときに通知します">
+              <Toggle checked={settings.notifyEEW} onChange={v => onUpdate('notifyEEW', v)} />
+            </Row>
+            <Row label="津波通知" description="津波警報・注意報・予報が発表されたときと、全て解除されたときに通知します">
+              <Toggle checked={settings.notifyTsunami} onChange={v => onUpdate('notifyTsunami', v)} />
+            </Row>
+            {isDmdss && (
+              <Row label="南海トラフ・後発地震の通知" description="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報と、臨時の解説情報を受けたときに通知します">
+                <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
+              </Row>
+            )}
+          </>
         )}
         <Row label="通知許可" description="ブラウザの通知権限を確認・許可します">
           <NotificationPermissionButton />

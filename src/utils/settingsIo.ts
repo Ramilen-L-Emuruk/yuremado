@@ -8,7 +8,7 @@
  * 書式の決まりと検証をテストで固定できるようにする。
  */
 import type { AppSettings } from '../hooks/useSettings'
-import { sanitize, migrateDetachedNotifications } from '../hooks/useSettings'
+import { sanitize, migrateStoredSettings } from '../hooks/useSettings'
 import { formatFileStamp } from './formatters'
 
 /** 書き出したファイルの中身。 */
@@ -110,9 +110,9 @@ export function parseSettingsFile(raw: unknown, current: AppSettings): ParseResu
   const sanitized = sanitize(incoming)
   // 「読めなかった項目」は移し替える前の値で集める（移し替えで変えた値を、読めなかったと誤って数えないため）
   const rejectedKeys = collectRejectedKeys(incoming, sanitized)
-  // 通知を地震情報の通知から切り離す前に書き出したファイルも、端末の設定と同じく移し替える
-  // （2026-10-24 ユーザー選択「ファイルにも掛ける (Recommended)」。→ `migrateDetachedNotifications`）
-  const settings = migrateDetachedNotifications(incoming, sanitized)
+  // 古い版で書き出したファイルも、端末の設定と同じく読み替える（通知の切り離し・入り切りと最低震度の分離）
+  // （通知の切り離しは 2026-10-24 ユーザー選択「ファイルにも掛ける (Recommended)」。→ `migrateStoredSettings`）
+  const settings = migrateStoredSettings(incoming, sanitized)
 
   // API キーは書き出しに含めないので、通常はファイル側が空になる。**空のときは今の値を残す**
   // ——空で塗ると、入力済みのキーが読み込みのたびに消える。
