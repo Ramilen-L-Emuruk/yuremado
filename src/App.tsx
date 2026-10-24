@@ -42,7 +42,7 @@ import { useHypocenterCatalog } from './hooks/useHypocenterCatalog'
 import {
   buildCatalogPointCloud, DEPTH_FILTER_MAX_KM, MAGNITUDE_FILTER_RANGE,
   LATITUDE_FILTER_RANGE, LONGITUDE_FILTER_RANGE,
-  CATALOG_REBUILD_DEBOUNCE_MS, oldestYearOf, withCompleteMagnitudeFloor,
+  CATALOG_REBUILD_DEBOUNCE_MS,
   jstYearOf, jstYearStartMs, jstYearEndMs, clampPeriodToRange, catalogPeriodBounds,
   type CatalogFilter, type CatalogViewOptions, type CatalogPointCloud,
 } from './utils/hypocenterCatalogView'
@@ -1478,10 +1478,14 @@ export function App() {
     mapTab === 'catalog',
   )
   const catalogIndex = catalog.index
-  // 索引が届いたら、期間を収録範囲へ収め、マグニチュードの下限をその期間の完全性に合わせる。
+  // 索引が届いたら、期間を収録範囲へ収める。
   // **収める側も必要。** 年が明けた直後は「今年」がまだ収録されておらず、選択肢に無い値が残る。
   // **終わりはデータの最終日へ収める**（`catalogPeriodBounds`）。既定の終わり（今年の 12 月 31 日）は
   // 索引が来るまでの仮の値で、ここでデータの終端（2 日前前後）まで下がる。
+  //
+  // **マグニチュードの下限・上限は期間に合わせて動かさない**（2026-10-23 ユーザー選択「引き上げず
+  // 注記で示す (Recommended)」）。完全性を割っていることは、手で下げたときと同じ注記
+  // （`catalogCompleteness` → 震源カタログタブ）で示す。
   useEffect(() => {
     if (!catalogIndex || catalogIndex.years.length === 0) return
     setCatalogFilter((prev) => {
@@ -1490,26 +1494,13 @@ export function App() {
       // 期間が丸ごと収録の外にあるときに同じ 1 点へ潰れ、1 件も残らないのに見出しは
       // 「1 日ぶん」と出る。
       const { fromMs, toMs } = clampPeriodToRange(prev, lo, hi)
-      const next = withCompleteMagnitudeFloor(catalogIndex, prev, { ...prev, fromMs, toMs })
-      if (
-        fromMs === prev.fromMs && toMs === prev.toMs &&
-        next.minMagnitude === prev.minMagnitude && next.maxMagnitude === prev.maxMagnitude
-      ) return prev
-      return next
+      if (fromMs === prev.fromMs && toMs === prev.toMs) return prev
+      return { ...prev, fromMs, toMs }
     })
   }, [catalogIndex])
-  // 期間の始まりを変えたら、その期間で網羅されている下限へ合わせ直す。
-  // **手で下げるのは妨げない**（下げたときは注意書きが出る）。合わせ直すのは期間を動かした時だけ。
   const handleCatalogFilterChange = useCallback((next: CatalogFilter) => {
-    setCatalogFilter((prev) => {
-      if (!catalogIndex) return next
-      // **見るのは期間の最も古い年**（`oldestYearOf`）。「開始」だけを見ると、終了側を古い年へ
-      // 動かしたときに下限が付いてこない。合わせ方は `withCompleteMagnitudeFloor` に集約
-      //（下限が上限を追い越す経路と、手で選んだ下限を残す判断があるため、単に代入してはいけない）。
-      if (oldestYearOf(next) === oldestYearOf(prev)) return next
-      return withCompleteMagnitudeFloor(catalogIndex, prev, next)
-    })
-  }, [catalogIndex])
+    setCatalogFilter(next)
+  }, [])
   // **タブを離れても点群は捨てない。** 捨てると往復のたびに数十万点を詰め直すことになる
   // （地図側は visible で隠すだけ）。
   //

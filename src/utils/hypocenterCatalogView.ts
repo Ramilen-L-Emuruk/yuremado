@@ -499,46 +499,6 @@ export function catalogCompleteness(
 }
 
 /**
- * 期間の古い側が変わったときに、マグニチュードの下限をその期間の完全性へ合わせる。
- *
- * **手で選んだ下限は捨てない。** 合わせ直してよいのは、前の下限が前の期間の完全性そのもの
- * だったとき——つまりこの関数が置いた値をそのまま持っているときだけ。M6.0 に絞って大きい
- * 地震だけを見ている最中に期間のつまみを少し動かしただけで下限が M2.0 へ戻ると、絞り込みが
- * 無言で解ける（戻った値はちょうど完全性の下限なので、注意書きも出ない）。
- *
- * 手で選ばれていた場合に行うのは**引き上げだけ**。完全性を割る側へ勝手に下げると、記録に
- * 残っていない地震を数えることになる。逆に引き上げたまま据え置かないのは、期間を戻したときに
- * 下限が下がらず「動かして戻しただけなのに件数が減ったまま」になるため（合わせた値であれば
- * 往復できる）。
- *
- * **上限も一緒に見ること。** 下限だけ上げると上限を追い越すことがある——M2.0〜3.0 に絞った
- * まま期間を 1919 年まで広げると、下限が 5.0 になって上限 3.0 を越える。そうなると 1 件も
- * 残らないうえ、**「なぜ 0 件なのか」が画面のどこにも出ない**（完全性の注意書きは
- * 「下限が完全性を割っているか」しか見ないので、この状態では黙っている）。
- *
- * 追い越すなら上限を外す。利用者が選んだ上限は別の下限を前提に選ばれたもので、
- * 新しい下限より下に留め置く意味が無いため。
- *
- * @param prev 変更前の絞り込み。**下限が「合わせた値」か「手で選んだ値」かの判別にだけ使う**
- * @param next 変更後の絞り込み
- */
-export function withCompleteMagnitudeFloor(
-  index: HypocenterIndex,
-  prev: CatalogFilter,
-  next: CatalogFilter,
-): CatalogFilter {
-  const completeMin = completeMinMagnitude(index, oldestYearOf(next))
-  // 下限に手が入っていない（`next` が前と同じ値を持つ）うえ、その値が前の期間の完全性と
-  // 一致するなら、この関数が置いた値。付け替えてよい。
-  const wasAuto =
-    next.minMagnitude === prev.minMagnitude &&
-    prev.minMagnitude === completeMinMagnitude(index, oldestYearOf(prev))
-  const minMagnitude = wasAuto ? completeMin : Math.max(next.minMagnitude, completeMin)
-  if (minMagnitude <= next.maxMagnitude) return { ...next, minMagnitude }
-  return { ...next, minMagnitude, maxMagnitude: MAGNITUDE_FILTER_RANGE.max }
-}
-
-/**
  * 範囲の見出しを 1 つの文にする。
  *
  * **片側だけ制限があるなら、その側だけを書く。** 「M 4.0 以上 〜 制限なし」は読みにくく、
@@ -710,7 +670,8 @@ interface Bounds {
  * 動かしただけで消えると「小さい地震を除いた」ように見えてしまう。
  *
  * 1997 年以降は完全性の下限（M2.0）が「制限なし」と同じ値なので、既定の絞り込みで出る。
- * それより前の期間は既定の下限が上がるため出ない（`withCompleteMagnitudeFloor`）。
+ * それより前の期間でも、下限を手で上げない限り出る（期間に合わせて下限を引き上げない。
+ * 2026-10-23 ユーザー選択「引き上げず注記で示す (Recommended)」）。
  */
 export function unknownMagnitudePasses(minMagnitude: number): boolean {
   return minMagnitude <= MAGNITUDE_FILTER_RANGE.min
