@@ -2,9 +2,9 @@
 // 震度速報 → 震源が判った報の 2 回（2026-10-19 ユーザー承認「速報の文＋震源で置き換え (推奨)」）に加え、
 // 震源が判ったあとに最大震度が上がったら出し直す（2026-10-22 選択「頭に「最大震度更新」 (Recommended)」）。
 // 遠地地震は震度に関係なく 1 回（2026-10-22 選択「全部出す (Recommended)」）。tag は地震ごとで、置き換える。
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import type { EarthquakePoint, IntensityScale, JMAQuake } from '../types/earthquake'
-import { collectQuakesToNotify, decideQuakeNotification, maxScaleAreaLabel, rememberQuakeNotified, scalePromptNotificationBody, type QuakeNotifiedState } from './quakeNotification'
+import { collectQuakesToNotify, decideQuakeNotification, maxScaleAreaLabel, rememberQuakeNotified, scalePromptNotificationBody, scheduleQuakeNotification, type QuakeNotification, type QuakeNotifiedState } from './quakeNotification'
 
 /** DMDATA 経路の区域の点（`pref` は空。→ quake-spec.md §4）。 */
 const area = (addr: string, scale: IntensityScale, unreceived = false): EarthquakePoint =>
@@ -224,5 +224,93 @@ describe('collectQuakesToNotify', () => {
   it('取り消されたカードには当てない', () => {
     const cancelled = { ...card, cancelledAt: new Date('2026-01-01T07:30:00Z') } as JMAQuake
     expect(collectQuakesToNotify([card], [cancelled], null).cards).toEqual([])
+  })
+})
+
+// 通知は Service Worker の返事を待つので、出せたかがすぐには分からない。同じ地震の通知は前が済んでから
+// 判定し、出せたときだけ覚える（`scheduleQuakeNotification`）
+describe('scheduleQuakeNotification', () => {
+  /** 呼ばれた順に記録し、`results` の順に成功・失敗を返す `show`。 */
+  function makeShow(results: ('ok' | 'fail')[]) {
+    const shown: QuakeNotification[] = []
+    const show = vi.fn((n: QuakeNotification) => {
+      shown.push(n)
+      return results.shift() === 'fail' ? Promise.reject(new TypeError('Illegal constructor')) : Promise.resolve()
+    })
+    return { shown, show }
+  }
+  const prompt = makeQuake()
+  const withHypo = makeQuake({ hypoName: '石川県能登地方' })
+
+  function schedule(chains: Map<string, Promise<void>>, memory: Map<string, QuakeNotifiedState>, quake: JMAQuake, show: (n: QuakeNotification) => Promise<void>) {
+    return scheduleQuakeNotification({ chains, memory, quake, notifyMinScale: 30, areaPrefIndex: null, show })
+  }
+
+  it('正: 出せたら覚え、同じ内容の報が続いても 2 度は出さない', async () => {
+    const chains = new Map<string, Promise<void>>()
+    const memory = new Map<string, QuakeNotifiedState>()
+    const { shown, show } = makeShow(['ok', 'ok'])
+    const a = schedule(chains, memory, prompt, show)
+    const b = schedule(chains, memory, prompt, show)
+    await Promise.all([a, b])
+    expect(shown).toHaveLength(1)
+    expect(memory.size).toBe(1)
+  })
+
+  // 先に覚えて失敗で戻す形だと、2 通とも出せなかったとき、1 通目が通知済みとして残った
+  it('安全弁: 続けて 2 通とも出せなければ、何も覚えない', async () => {
+    const chains = new Map<string, Promise<void>>()
+    const memory = new Map<string, QuakeNotifiedState>()
+    const { show } = makeShow(['fail', 'fail'])
+    const a = schedule(chains, memory, prompt, show)
+    const b = schedule(chains, memory, withHypo, show)
+    await expect(a).rejects.toThrow()
+    await expect(b).rejects.toThrow()
+    expect(memory.size).toBe(0)
+  })
+
+  it('正: 前が出せなくても、次の報はその前提（何も出ていない）で判定して出す', async () => {
+    const chains = new Map<string, Promise<void>>()
+    const memory = new Map<string, QuakeNotifiedState>()
+    const { shown, show } = makeShow(['fail', 'ok'])
+    const a = schedule(chains, memory, prompt, show)
+    const b = schedule(chains, memory, prompt, show)
+    await expect(a).rejects.toThrow()
+    await b
+    expect(shown).toHaveLength(2)
+    expect(memory.size).toBe(1)
+  })
+
+  it('対照: 同じ地震の次の報は、前の通知が済むまで出さない', async () => {
+    const chains = new Map<string, Promise<void>>()
+    const memory = new Map<string, QuakeNotifiedState>()
+    let release!: () => void
+    const order: string[] = []
+    const show = vi.fn((n: QuakeNotification) => {
+      order.push(n.title)
+      return order.length === 1 ? new Promise<void>(resolve => { release = resolve }) : Promise.resolve()
+    })
+    const a = schedule(chains, memory, prompt, show)
+    const b = schedule(chains, memory, withHypo, show)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(show).toHaveBeenCalledTimes(1)
+    release()
+    await Promise.all([a, b])
+    expect(show).toHaveBeenCalledTimes(2)
+    expect(chains.size).toBe(0)
+  })
+
+  // 出せたかが分かるのは返事が来てから。返事の前に覚えると、出せなかった通知が通知済みになる
+  it('安全弁: 返事が来るまでは覚えず、出せてから渡した memory へ覚える', async () => {
+    const chains = new Map<string, Promise<void>>()
+    const memory = new Map<string, QuakeNotifiedState>()
+    let release!: () => void
+    const show = vi.fn(() => new Promise<void>(resolve => { release = resolve }))
+    const a = schedule(chains, memory, prompt, show)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(memory.size).toBe(0)
+    release()
+    await a
+    expect(memory.size).toBe(1)
   })
 })
