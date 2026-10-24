@@ -13,6 +13,7 @@ export type AlertSoundType =
   | 'tsunami' | 'tsunamiMajor' | 'tsunamiWatch' | 'tsunamiForecast' | 'tsunamiUpdate' | 'tsunamiCancel'
   | 'kyoshin' | 'kyoshinCandidate'
   | 'specialInfo' | 'specialInfoCommentary' | 'earthquakeCount'
+  | 'earthquakeCancel' | 'specialInfoCancel'
 
 let audioCtx: AudioContext | null = null
 
@@ -826,6 +827,30 @@ const PLAYERS: Record<AlertSoundType, SoundPlayer> = {
     ding(ctx, 523.3, base + 0.14, 0.30, g)
     ding(ctx, 523.3, base + 0.28, 0.70, g)
   },
+
+  // ─── 取消の音は系統ごとに持つ（2026-10-23 ユーザー選択「各系統の取消音を作る (Recommended)」、
+  //     音の形は 2026-10-24 ユーザー選択「この案でよい (Recommended)」） ───
+  //
+  // 系統と同じ音色で、発表の音を下へたどる。**緊急地震速報の取消（eewCancel）と津波の解除（tsunamiCancel）は
+  // 別に持つ** —— かつて地震情報の取消は eewCancel を借りていて、音だけでは EEW の取消と区別できなかった。
+
+  // 地震情報の系統（地震情報・長周期地震動・地震回数）の取消: ピアノの降下 3 音 E5→B4→E4。
+  // 地震情報の上昇 4 音（E4→G#4→B4→E5）を逆にたどる。eewCancel（ダークピアノ A4→F4→C4）とは音色と音域で分かれる。
+  earthquakeCancel: (ctx, base) => {
+    const g = BASE_GAIN.piano * SEVERITY.update
+    pianoNote(ctx, 659.3, base + 0.00, 0.80, g)
+    pianoNote(ctx, 493.9, base + 0.14, 0.80, g)
+    pianoNote(ctx, 329.6, base + 0.28, 1.00, g)
+  },
+
+  // 南海トラフの系統（臨時情報・後発地震注意情報・関連解説情報の取消と、臨時情報の調査終了）: 純音の降下 3 音 D5→A4→D4。
+  // 解説情報（D5→A4）の続きで、さらに 1 オクターブ下まで降りる。津波の解除（G4→C4 の 2 音）とは音の数と終わりの高さで分かれる。
+  specialInfoCancel: (ctx, base) => {
+    const g = BASE_GAIN.ding * SEVERITY.update
+    ding(ctx, 587.3, base + 0.00, 0.50, g)
+    ding(ctx, 440.0, base + 0.18, 0.50, g)
+    ding(ctx, 293.7, base + 0.36, 0.90, g)
+  },
 }
 
 // ─── 通知音を鳴らしてから声を出すまでの間 ─────────────────────────
@@ -867,6 +892,8 @@ export const SOUND_AUDIBLE_END_MS: Record<AlertSoundType, number> = {
   specialInfo:            920,
   specialInfoCommentary:  700,
   earthquakeCount:        580,
+  earthquakeCancel:       660,
+  specialInfoCancel:      740,
 }
 
 /**
@@ -894,8 +921,8 @@ const ABRUPT_SOUNDS: readonly AlertSoundType[] =
  * **電文の種別ではなく音の種別で決まる。** 同じ音を使う経路（地震情報の取消と EEW 誤報取消、
  * 地震情報と長周期地震動）に別々の値が書かれる余地を消すため、呼び出し側はこの関数だけを使う。
  *
- * この関数を呼ばない音は 2 種類ある。**読み上げはあるが間を置かないもの**（EEW の発報・南海トラフの
- * 取消と終了）と、**読み上げそのものを持たないもの**（揺れ検知。音・通知・タブ移動だけ）。EEW は
+ * この関数を呼ばない音は 2 種類ある。**読み上げはあるが間を置かないもの**（EEW の発報。南海トラフの
+ * 取消と終了も、取消音を鳴らすようにしたので間を置く）と、**読み上げそのものを持たないもの**（揺れ検知。音・通知・タブ移動だけ）。EEW は
  * 最も急を要するため間を置かず、代わりに切り出し語の作り置きで合成の往復を消している
  * （`voicevox.ts` の `warmFixedPhrases`）。
  */

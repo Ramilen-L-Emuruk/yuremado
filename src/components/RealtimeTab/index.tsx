@@ -215,6 +215,7 @@ function useHeldForecastChange(eew: EEWAlert): string {
   // 取消を `{ ...表示中の EEW, cancelledAt }` の形で当てるため（`useEarthquakes` の eew ケース）、
   // **直前の報の `forecastChange` がそのまま残る**。`text` が空になることを当てにして
   // この判定を外すと、取り下げた予想の帯が復活する。
+  // 取消の報で帯を出さないことは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」。
   return eew.cancelledAt ? '' : held
 }
 
@@ -356,6 +357,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   const arrivalTimeText = eew.earthquake.arrivalTime ? formatDateTime(eew.earthquake.arrivalTime) : null
   // 震源が決まっていない報（仮定震源要素と「非常に強い揺れを検知」の報。→ `isProvisionalHypocenter`）。
   // 震源・規模・深さは仮の値（観測点直下 10km）なので、数値は伏せ、地名には未確定である旨を添える。
+  // M・深さを伏せることは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」。
   const isAssumed = isProvisionalHypocenter(eew)
   const prefAreas = areas.filter(a => a.pref)
 
@@ -485,6 +487,8 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   // | まだ到達していない | `ArrivalTime`（到達予測時刻） | 残り秒数（「42秒」。0 以下は「まもなく」） |
   // | 既に到達したと推測 | `Condition`（→ `EEWRegion.arrived`）。時刻は出ない | 「到達済み」 |
   // | PLUM 法で予測 | `ArrivalTime`（**震度を初めて予測した時刻**＝過去） | 「時刻不明」 |
+  //
+  // PLUM 法の区域を「時刻不明」と出すことは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」。
   //
   // **到達済みの地域を落とさない。** 時刻の有無だけで絞ると一覧から黙って消え、「到達した」のか
   // 「予想から外れた」のかが利用者に判らない。
@@ -920,7 +924,8 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
         {prefAreas.length > 0 && (() => {
           // 種別は府県予報区より細かい一次細分区域ごとに付くため、1 つの県に警報の区域と
           // 予報の区域が混ざる（能登本震では石川・新潟・長野などが該当）。**両方へ出さず
-          // 警報の側だけに残す** —— 並べると、警報が出ている県が予報の列にも現れて一段軽く見える。
+          // 警報の側だけに残す** —— 並べると、警報が出ている県が予報の列にも現れて一段軽く見える
+          // （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
           const warningPrefSet = new Set(prefAreas.filter(a => isEewWarningKindCode(a.kindCode)).map(a => a.pref))
           const warningPrefs = [...warningPrefSet]
           const forecastPrefs = [...new Set(prefAreas.filter(a => !isEewWarningKindCode(a.kindCode)).map(a => a.pref))]

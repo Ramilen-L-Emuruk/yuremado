@@ -48,6 +48,25 @@ describe('設定の読み込み', () => {
     expect(round.variant).toBe('dmdss')
   })
 
+  // 通知を地震情報の通知から切り離す前に書き出したファイルも、端末の設定と同じく移し替える
+  // （2026-10-24 ユーザー選択「ファイルにも掛ける (Recommended)」）
+  it('正: 切り離す前のファイルで地震情報の通知を切っていれば、緊急地震速報・津波・南海トラフも切って入れ、読めなかった項目に数えない', () => {
+    const { notifyNankai: _drop, ...old } = { ...DEFAULTS, notifyMinScale: -1, notifyEEW: true, notifyTsunami: true }
+    const file = buildSettingsFile(old as AppSettings, 'dmdss')
+    const r = parseSettingsFile(file, DEFAULTS)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.settings.notifyEEW).toBe(false)
+    expect(r.settings.notifyTsunami).toBe(false)
+    expect(r.settings.notifyNankai).toBe(false)
+    expect(r.rejectedKeys).toEqual([])
+  })
+
+  it('対照: 切り離した後に書き出したファイルは移し替えない', () => {
+    const r = parseSettingsFile(buildSettingsFile({ ...DEFAULTS, notifyMinScale: -1, notifyEEW: true }, 'dmdss'), DEFAULTS)
+    expect(r.ok && r.settings.notifyEEW).toBe(true)
+  })
+
   it('安全弁: 読み込んでも、いま入力してあるAPIキーが消えない', () => {
     // 書き出しにキーが入らない以上、ファイル側は空。空で塗ると読み込むたびにキーが消える。
     const file = buildSettingsFile(DEFAULTS, 'dmdss')

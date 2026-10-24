@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AppEvent, ExtraLiveEvent, LiveEvent, LiveEventMeta, EEWAlert, Hypocenter, JMAQuake, JMATsunami, TsunamiArea, TsunamiObservation, TsunamiGrade } from '../types/earthquake'
 import type { TabId } from '../components/IconNav'
 import type { AppSettings } from './useSettings'
-import type { AlertTitleApi } from './useAlertTitle'
+import { joinTitleParts, type AlertTitleApi } from './useAlertTitle'
 import type { ReplayEntry, ReplayPayload } from '../types/replay'
 import { getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove } from '../utils/intensity'
 import { isMaxScaleUnreceived } from '../utils/quakePoints'
-import { formatMagnitudeWithCondition } from '../utils/formatters'
+import { formatMagnitudeWithCondition, formatMagnitudeCondition } from '../utils/formatters'
 import {
   eewMaxScaleInfo, isForecastScaleHigher, isForecastLpgmHigher, eewNoForecastReason, computeSingleEEWLevel, computeDisplayEEWLevel, canPresentLpgmClass,
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
@@ -17,6 +17,11 @@ import {
 } from '../utils/eew'
 import { hasKnownEpicenter } from '../utils/geo'
 import { showBrowserNotification } from '../utils/notifications'
+import {
+  nankaiNotification, kohatsuNotification, nankaiCommentaryNotification, lpgmNotification,
+  estimatedIntensityNotification, earthquakeCountNotification,
+} from '../utils/specialInfoNotification'
+import { earthquakeCountHeadline } from '../components/SpecialInfoBanner/EarthquakeCountDetail'
 import { tsunamiIssueNotification, tsunamiLiftNotification } from '../utils/tsunamiNotification'
 import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, isTsunamiExpired, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry } from '../utils/tsunami'
 import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
@@ -446,6 +451,10 @@ const SEEN_QUAKE_REPORT_KEYS_MAX = 200
 // （その回だけ従来どおり割り込みで裁かれる）。
 const LATEST_SPEECH_TOPIC_MAX = 200
 
+// 長周期の発表で覚えた震央地名（`lpgmNotifiedNameRef`）の件数の上限（超えたらまとめて捨てる）。
+// 捨てても取消の通知が地名を言わなくなるだけ。
+const LPGM_NAME_MEMORY_MAX = 200
+
 // 津波カードの「今回の受信で何が変わったか」を示す印（観測点の新規/更新バッジと、区域の
 // 「〇〇から切り替え」）が消えるまでの時間。
 //
@@ -472,11 +481,13 @@ function sleep(ms: number): Promise<void> {
  *
  * 数値が無くても「Ｍ８を超える巨大地震」は出す。**遠地地震はタイトルが規模だけを伝える経路**で、
  * ここで落とすと最大級の地震ほどタイトルが震央地名だけになる。
+ *
+ * **規模が判らなければ「M不明」と出す**（2026-10-23 ユーザー選択「「M不明」を出す方へ揃える (Recommended)」）。
+ * DMDSS 版は電文の説明（`Ｍ不明`）を通して既に「M不明」と出ていて、説明を持たない標準版だけが落としていた。
  */
 function magnitudeTitlePart(hypocenter: Hypocenter): string {
   const text = formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)
-  // 「不明」はタイトルに出さない（震央地名だけのほうが短く読める）
-  return text === '不明' ? '' : ` ${text}`
+  return text === '不明' ? ` ${formatMagnitudeCondition('Ｍ不明')}` : ` ${text}`
 }
 
 // 待ちきれずに割り込むことを選んだときの警告。VOICEVOX が無応答だと読み上げごとに起こりうるため
@@ -1096,6 +1107,11 @@ export interface LiveEventHandlerDeps {
   /** 津波リスト（App 所有・useEarthquakes の直後に毎レンダー更新）。
    *  津波続報の判定（同一 eventId の観測点更新でタブを毎回奪わない）に使う。 */
   tsunamisRef: React.MutableRefObject<JMATsunami[]>
+  /**
+   * 南海トラフ地震臨時情報が発表中か（帯に出す電文があるか。App 所有・useEarthquakes の直後に毎レンダー更新）。
+   * 関連解説情報をウィンドウタイトルに出すかの判定に使う（臨時情報を出していないときだけ出す）。
+   */
+  nankaiActiveRef: React.MutableRefObject<boolean>
   setActiveTabNonRealtime: (tab: Exclude<TabId, 'realtime'>) => void
   setActiveTabRealtimeOnUpdate: () => void
   /** EEW の新規発報・レベルアップ・誤報取消による realtime 移動（手動選択より強い） */
@@ -1257,14 +1273,17 @@ function eewOngoingTitleText(levels: ReadonlyMap<string, 0 | 1 | 2>, event: EEWA
   // 上限が定まらない報は「以上」を添える（値だけでは下限の断定になる）。
   const { scale, orAbove } = eewMaxScaleInfo(event)
   const titleLevel = Array.from(levels.values()).reduce<0 | 1 | 2>((m, l) => Math.max(m, l) as 0 | 1 | 2, 0)
-  return `${eewKindLabel(titleLevel)} ${event.earthquake.hypocenter.name}` +
-    (scale > 0 ? ` 最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}予想` : '') +
-    (levels.size > 1 ? ` 他${levels.size - 1}件` : '')
+  // 震央地名が空でも空白を残さない（→ `joinTitleParts`）
+  return joinTitleParts(
+    eewKindLabel(titleLevel), event.earthquake.hypocenter.name,
+    scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}予想` : '',
+    levels.size > 1 ? `他${levels.size - 1}件` : '',
+  )
 }
 
 export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   const {
-    settings, title, earthquakesRef, tsunamisRef,
+    settings, title, earthquakesRef, tsunamisRef, nankaiActiveRef,
     setActiveTabNonRealtime, setActiveTabRealtimeOnUpdate,
     setActiveTabRealtimeUrgent, followSpeechTab, preSpeechTab, speechFollow, unreceivedFollow, telegramTextFollow,
     borrowedHypocenterFollow, eewSpeakingCard, quakeSpeakingCard,
@@ -1654,6 +1673,18 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   const activeEEWAnnouncedHypocentersRef = useRef<Map<string, AnnouncedHypocenter[]>>(new Map())
   // 長周期地震動情報の更新検出: 受信済み eventId を追跡する
   const seenLpgmEventIdsRef = useRef<Set<string>>(new Set())
+  // 長周期の発表で読んだ震央地名（地震ごと）。取消の通知で地名を言うために使う（取消の電文は震源を持たない）
+  const lpgmNotifiedNameRef = useRef<Map<string, string>>(new Map())
+  // 発表のブラウザ通知を出した電文（`<種別>:<識別子>`。長周期・地震回数・関連解説情報）。**取消の通知はここに
+  // 載っているものにだけ出す**（同じ札で置き換える。2026-10-24 ユーザー選択「発表を通知したものだけ (Recommended)」）。
+  // 発表を通知していない情報（定例解説・この端末が受けていない報）への取消の通知は、何が取り消されたか手掛かりが無い
+  const notifiedSpecialInfoRef = useRef<Set<string>>(new Set())
+  const rememberNotified = (key: string) => {
+    if (notifiedSpecialInfoRef.current.size >= LPGM_NAME_MEMORY_MAX) notifiedSpecialInfoRef.current.clear()
+    notifiedSpecialInfoRef.current.add(key)
+  }
+  /** 発表を通知した電文への取消か（真なら記憶から外す）。 */
+  const takeNotified = (key: string): boolean => notifiedSpecialInfoRef.current.delete(key)
   // 津波解除/取消/失効: 音・TTS を発火済みの eventId を追跡する（AUD-6 の重複鳴り防止）。
   // TSU-3 で同一スロットに別 eventId を上書きするケースもあるため eventId 単位で管理する。
   // 直前状態（lastTsunamiGradeRef===null）で判定するとリロード後の初回解除を握り潰す。
@@ -2760,25 +2791,34 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     if (event.kind === 'lpgm') {
       const lpgmEvent = event.data
       if (lpgmEvent.cancelled) {
-        // **取消は音を鳴らさず、タブも動かさず、取り消された事実と理由だけを読む**
-        // （2026-10-14 ユーザー選択「読み上げる・音は鳴らさない」。地震回数の取消と同じ扱い）。
-        // ここへ来るのは表示中の長周期を消した取消だけ（→ `useEarthquakes.ts` の `noteLiveLpgm`）。
+        // **取消は地震情報の系統の取消音を鳴らし、取り消された事実と理由を読む**（音は 2026-10-22 ユーザー選択
+        // 「長周期の取消も鳴らす (Recommended)」で 2026-10-14 の「読み上げる・音は鳴らさない」を覆した）。
+        // **画面に出していない地震への取消もここへ来る**（2026-10-22 ユーザー選択「地震情報に揃えて伝える
+        // (Recommended)」。同じ取消の 2 通目は `useEarthquakes` の `decideDispatch` が止める）。タブは動かさない。
         // **主題は発表と共有する** —— 分けると到来順の枠に載らず、発表の予約が待っている最中に
         // 取消が届いても取り下げられない（取り消された階級をそのあと読み上げる）。
         // 一覧ごと消えるので、見せる先が無い（追従先を渡さない）。
         // **既読の記憶も落とす** —— 残すと、取り消された地震の長周期が発表し直されたとき
         // （画面には初めて出る）に「更新」の前置きで読む。
         seenLpgmEventIdsRef.current.delete(lpgmEvent.eventId)
+        if (settings.soundEnabled) playAlertSound('earthquakeCancel')
+        // 発表の通知を同じ札で置き換える（2026-10-24 ユーザー選択「出す (Recommended)」）。地名は発表で覚えた値から引く
+        if (settings.notifyMinScale >= 0 && takeNotified(`lpgm:${lpgmEvent.eventId}`)) {
+          const n = lpgmNotification(lpgmEvent, lpgmNotifiedNameRef.current.get(lpgmEvent.eventId) ?? '')
+          showBrowserNotification(n.title, n.body, n.tag)
+        }
+        lpgmNotifiedNameRef.current.delete(lpgmEvent.eventId)
+        title.releaseTitle('lpgm', lpgmEvent.eventId)
         if (settings.voicevoxEnabled) {
           speakNonEEWDelayed(
             lpgmToText(lpgmEvent, ttsRegionOptions(settings), false),
-            SPEECH_PRIORITY.normal, 0, `lpgm:${lpgmEvent.eventId}`,
+            SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeCancel'), `lpgm:${lpgmEvent.eventId}`,
             undefined, undefined, undefined,
             () => speakDeferredCancelReason('長周期地震動に関する観測情報', lpgmEvent.cancelText, `lpgm:${lpgmEvent.eventId}`),
           )
         } else {
           // 読み上げが無効な端末では、取消は一覧とバッジが消えるだけで理由がどこにも残らない
-          log.info(`[lpgm] 表示中の長周期地震動が取り消されました（${lpgmEvent.eventId}）${lpgmEvent.cancelText ? `: ${lpgmEvent.cancelText}` : ''}`)
+          log.info(`[lpgm] 長周期地震動が取り消されました（${lpgmEvent.eventId}）${lpgmEvent.cancelText ? `: ${lpgmEvent.cancelText}` : ''}`)
         }
         return
       }
@@ -2802,6 +2842,21 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (settings.soundEnabled) {
         playAlertSound('earthquake')
       }
+      // ウィンドウタイトルとブラウザ通知に最大長周期地震動階級を出す（2026-10-22 ユーザー選択「タイトルと通知を出す
+      // (Recommended)」、文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。ここへ来るのは階級 1 以上の報だけ
+      // （→ `useEarthquakes` の `lpgmNotifiable`）なので、通知の階級の下限（2026-10-24 ユーザー選択「階級1以上
+      // (Recommended)」）はここでは見ない。通知は地震情報の通知の設定に従う。
+      const lpgmName = lpgmEvent.hypocenter?.name.trim() ?? ''
+      title.setTitle(joinTitleParts('長周期地震動', lpgmName, `最大階級${lpgmEvent.maxClass}`))
+      title.scheduleTitleRevert('lpgm', lpgmEvent.eventId)
+      if (settings.notifyMinScale >= 0) {
+        const n = lpgmNotification(lpgmEvent, '')
+        showBrowserNotification(n.title, n.body, n.tag)
+        rememberNotified(`lpgm:${lpgmEvent.eventId}`)
+      }
+      // 取消の通知で地名を言うために覚える（取消の電文は震源を持たない）
+      if (lpgmNotifiedNameRef.current.size >= LPGM_NAME_MEMORY_MAX) lpgmNotifiedNameRef.current.clear()
+      lpgmNotifiedNameRef.current.set(lpgmEvent.eventId, lpgmName)
       if (lpgmSpeech) {
         // 主題は地震情報と分ける。内容が別軸（震度と長周期地震動階級）なので、片方が
         // もう片方の言い換えにはならない（割り込みは従来どおり許す）。
@@ -2868,6 +2923,12 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // **震度の描き方が公式のものへ替わった**という報せ。地震情報と同じ音で足りる。
         playAlertSound('earthquakeInfo')
       }
+      // 受信したことをブラウザ通知に出す（推計の最大震度は出さない。2026-10-22 ユーザー選択「「受信した」を通知する」）。
+      // 地震情報の通知の設定に従う（2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
+      if (settings.notifyMinScale >= 0) {
+        const n = estimatedIntensityNotification(ei, isNew !== false)
+        showBrowserNotification(n.title, n.body, n.tag)
+      }
       if (settings.voicevoxEnabled) {
         // **読み上げ文は常に非空**（`estimatedIntensityToText` は時刻が読めなくても末尾の句を
         // 返す）。長周期のような「文が空なら受信時要求へ落とす」分岐が要らないのはそのため。
@@ -2891,19 +2952,27 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 揺れ検知が繰り返し発火してリアルタイムタブへ画面を持っていくため、タブの中へ置くと
     // いちばん見たいときに見えない。**そのためタブは動かさない**（帯はどのタブからも見える）。
     //
-    // **ウィンドウタイトルは書き換えない。** 震度を伝える情報ではないので、震度を出している
-    // タイトルを上書きすると、いま何が起きているかの表示が後退する。
+    // **ウィンドウタイトルとブラウザ通知は臨時情報と揃えて出す**（2026-10-23 ユーザー選択「タイトルと通知を臨時情報と
+    // 揃える (Recommended)」、文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。かつては「震度を伝える情報
+    // ではないので書き換えない」としていたが、群発の最中に回数が更新されたことがタイトルに出ず、気づく手掛かりが帯だけだった。
     if (event.kind === 'earthquakeCount') {
       const count = event.data
       if (count.cancelled) {
-        // **取消は音を鳴らさず、取り消された事実だけを読む**（南海トラフの取消と同じ扱い）。
-        // 直前に「1704 回発生しています」と読んだ耳へ訂正を届けるため、黙って消さない。
+        // **取消は地震情報の系統の取消音を鳴らし、取り消された事実と理由を読む**（音は 2026-10-22 ユーザー選択
+        // 「取消でも音を鳴らす (Recommended)」）。直前に「1704 回発生しています」と読んだ耳へ訂正を届けるため、黙って消さない。
+        // 画面に出していない群発への取消もここへ来る（→ `useEarthquakes` の `decideDispatch`）。
         // **主題は発表と共有する** —— 分けると到来順の枠に載らず、発表の予約が待っている
         // 最中に取消が届いても取り下げられない（取り消された回数をそのあと読み上げる）。
         // 帯が消えるので、パネルの展開も要らない。
+        if (settings.soundEnabled) playAlertSound('earthquakeCancel')
+        if (settings.notifyMinScale >= 0 && takeNotified(`earthquakeCount:${count.eventId}`)) {
+          const n = earthquakeCountNotification(count, '')
+          showBrowserNotification(n.title, n.body, n.tag)
+        }
+        title.releaseTitle('earthquakeCount', count.eventId)
         if (settings.voicevoxEnabled) {
           speakNonEEWDelayed(
-            earthquakeCountToText(count), SPEECH_PRIORITY.normal, 0, 'earthquakeCount',
+            earthquakeCountToText(count), SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeCancel'), 'earthquakeCount',
             undefined, undefined, undefined,
             () => speakDeferredCancelReason('地震回数に関する情報', count.cancelText, `earthquakeCount:${count.id}`),
           )
@@ -2915,6 +2984,15 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       expandPanelForSpecialInfo()
       if (settings.soundEnabled) {
         playAlertSound('earthquakeCount')
+      }
+      // タイトルと通知は帯の見出しと同じ数字を出す（見出しが種別名だけの報はタイトルも種別名だけ）
+      const countHeadline = earthquakeCountHeadline(count)
+      title.setTitle(countHeadline === '地震回数に関する情報' ? countHeadline : `地震回数に関する情報 ${countHeadline}`)
+      title.scheduleTitleRevert('earthquakeCount', count.eventId)
+      if (settings.notifyMinScale >= 0) {
+        const n = earthquakeCountNotification(count, countHeadline)
+        showBrowserNotification(n.title, n.body, n.tag)
+        rememberNotified(`earthquakeCount:${count.eventId}`)
       }
       if (settings.voicevoxEnabled) {
         // 帯で伝える情報なのでタブは動かさない（理由は上）。伝える区間を選べない報
@@ -2972,12 +3050,44 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
 
     // 南海トラフ関連解説情報（DMDSS版のみ）。臨時情報とは別の帯に出るため、ここでも別扱いにする。
     //
-    // **ウィンドウタイトルは書き換えない。** 臨時情報の発表期間中は解説情報が毎日届くため、
-    // 書き換えると「南海トラフ臨時情報（巨大地震注意）」のタイトル表示を毎日上書きしてしまう。
+    // **ウィンドウタイトルは、臨時情報を出していないときだけ書き換える**（2026-10-23 ユーザー選択「臨時情報が無いときだけ
+    // 出す」）。臨時情報の発表期間中は解説情報が毎日届くため、書き換えると「南海トラフ臨時情報（巨大地震注意）」の
+    // タイトル表示を毎日上書きしてしまう。
     if (event.kind === 'nankaiCommentary') {
       // 通知を切っている種別は本文も読まない（この設定は音・帯・読み上げをまとめて止めるもの）。
       if (!settings.nankaiCommentaryAlerts) { skipTelegramTextRef.current = true; return }
       const commentary = event.data
+      if (commentary.cancelled) {
+        // **取消は南海トラフの系統の取消音を鳴らし、取り消された事実と理由を読む**（2026-10-22 ユーザー選択「設定を
+        // 入れたときだけ鳴らし読む (Recommended)」）。帯に出していない号への取消もここへ来る（2026-10-24 ユーザー選択
+        // 「伝える (Recommended)」。→ `useEarthquakes` の `decideDispatch`）。帯は消えるのでパネルは開かない。
+        // 主題は発表と共有する（理由は地震回数の取消と同じ）。
+        if (settings.soundEnabled) playAlertSound('specialInfoCancel')
+        if (settings.notifyNankai && takeNotified(`nankaiCommentary:${commentary.id}`)) {
+          const n = nankaiCommentaryNotification(commentary)
+          showBrowserNotification(n.title, n.body, n.tag)
+        }
+        title.releaseTitle('nankaiCommentary', commentary.id)
+        if (settings.voicevoxEnabled) {
+          speakNonEEWDelayed(
+            nankaiCommentaryToText(commentary), SPEECH_PRIORITY.commentary, ttsDelayFor('specialInfoCancel'),
+            'nankaiCommentary', undefined, undefined, undefined,
+            () => speakDeferredCancelReason('南海トラフ地震関連解説情報', commentary.body, `nankaiCommentary:${commentary.eventId}`),
+          )
+        }
+        return
+      }
+      if (!nankaiActiveRef.current) {
+        // 見出しは電文の情報名（「（第１号）」を含む）。読めなければ種別名
+        title.setTitle(commentary.headline.trim() || '南海トラフ地震関連解説情報')
+        title.scheduleTitleRevert('nankaiCommentary', commentary.id)
+      }
+      // 臨時解説だけ通知する（定例解説は平常時にも毎月届く。2026-10-24 ユーザー選択「出す (Recommended)」）
+      if (settings.notifyNankai && commentary.serialName === '臨時解説') {
+        const n = nankaiCommentaryNotification(commentary)
+        showBrowserNotification(n.title, n.body, n.tag)
+        rememberNotified(`nankaiCommentary:${commentary.id}`)
+      }
       // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側）。
       expandPanelForSpecialInfo()
       if (settings.soundEnabled) {
@@ -3020,21 +3130,39 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           ? `南海トラフ地震臨時情報（${event.data.kindName}）`
           : '北海道・三陸沖後発地震注意情報 発表中'
         title.setTitle(specialTitle)
-        title.scheduleTitleRevert('specialInfo')
+        title.scheduleTitleRevert(event.kind === 'nankai' ? 'specialInfo' : 'kohatsu', event.data.eventId)
       } else {
-        // 取消・終了時はタイマーをクリアして即時リセット
-        title.clearTitleTimer('specialInfo')
-        title.applyPriority()
+        // **取消・調査終了も南海トラフの系統の取消音を鳴らし、パネルを開く**（2026-10-22 ユーザー選択「取消も調査終了も
+        // 鳴らす (Recommended)」「臨時情報と揃えて鳴らす (Recommended)」。音は 2026-10-24 ユーザー選択「この案でよい
+        // (Recommended)」）。帯は消えるが、開いたパネルで他の帯と地図が見える。
+        // 画面に出していない情報単位への取消もここへ来る（→ `useEarthquakes` の `decideDispatch`）。
+        expandPanelForSpecialInfo()
+        if (settings.soundEnabled) playAlertSound('specialInfoCancel')
+        // タイトルは、いま出ているのが取り消された（調査を終えた）情報のタイトルのときだけ下ろす（後から別の情報が
+        // 取っていれば残す）。**調査終了は段階の報と識別情報が違う**ので、種別だけで見る（→ `applyNankai`）
+        title.releaseTitle(event.kind === 'nankai' ? 'specialInfo' : 'kohatsu', event.data.retracted ? event.data.eventId : null)
         if (settings.voicevoxEnabled) {
-          // 取消・終了も発表と同じ主題で予約する（間は置かない）。**主題を渡さないと到来順の枠に
+          // 取消・終了も発表と同じ主題で予約する。**主題を渡さないと到来順の枠に
           // 載らず**、発表の予約が待っている最中に取消が届いても取り下げられない
           // （取り消されたはずの臨時情報を、そのあと読み上げてしまう）。
           // 後発地震注意情報の取消も読む（2026-10-14 ユーザー選択「提案どおり読み、テストボタンも足す」）。
+          // 取消の長い理由は別の発話で読む（→ `speakDeferredCancelReason`。理由は電文の `body`）。
+          const name = event.kind === 'nankai' ? '南海トラフ地震臨時情報' : '北海道・三陸沖後発地震注意情報'
+          const retracted = event.data.retracted === true
           speakNonEEWDelayed(
             event.kind === 'nankai' ? nankaiToText(event.data) : kohatsuToText(event.data),
-            SPEECH_PRIORITY.high, 0, event.kind === 'nankai' ? 'nankai' : 'kohatsu',
+            SPEECH_PRIORITY.high, ttsDelayFor('specialInfoCancel'), event.kind === 'nankai' ? 'nankai' : 'kohatsu',
+            undefined, undefined, undefined,
+            retracted ? () => speakDeferredCancelReason(name, event.data.body, `${event.kind}:${event.data.eventId}`) : undefined,
           )
         }
+      }
+      // ブラウザ通知（発表・調査終了・取消。2026-10-22 ユーザー選択「通知を出す (Recommended)」、設定は 2026-10-24 ユーザー
+      // 選択「南海は新設、他は地震情報に (Recommended)」）。本文は気象庁の要約（2026-10-23 ユーザー選択「通知の本文に使う
+      // (Recommended)」）
+      if (settings.notifyNankai) {
+        const n = event.kind === 'nankai' ? nankaiNotification(event.data) : kohatsuNotification(event.data)
+        showBrowserNotification(n.title, n.body, n.tag)
       }
       return
     }
@@ -3319,7 +3447,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       log.info('[quake] 既に伝えた取消なので音と読み上げを出さない', { id: event.id, issueType: event.issue.type })
     } else if (event.kind === 'quake' && event.cancelled) {
       // 地震情報取消: カード削除は useEarthquakes reducer が担う。通知音・読み上げのみここで処理する。
-      if (settings.soundEnabled) playAlertSound('eewCancel')
+      // 音は地震情報の系統の取消音（2026-10-23 ユーザー選択「各系統の取消音を作る (Recommended)」）。かつては
+      // EEW の誤報取消と同じ音で、音だけでは区別できなかった。
+      if (settings.soundEnabled) playAlertSound('earthquakeCancel')
       // 読み上げがあるならタブ移動は読み上げに任せる（下の speakNonEEW に渡す follow）。
       // 取消の読み上げ文は常に非空なので、voicevoxEnabled だけで分岐できる。
       if (!settings.voicevoxEnabled) {
@@ -3369,7 +3499,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             ? earthquakeReportCancelToText(retracted.issueType, retracted.reportTime, event.cancelText)
             : earthquakeCancelToText(original?.time ?? null, event.cancelText),
           SPEECH_PRIORITY.normal,
-          ttsDelayFor('eewCancel'),
+          ttsDelayFor('earthquakeCancel'),
           `quake:${cancelQuakeKey}`,
           { tab: 'earthquake', priority: TAB_PRIORITY.quake },
           undefined,
@@ -3463,6 +3593,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 既存カードを引けなかった（同一 tick に複数電文が捌けて `earthquakesRef` が追いつかない）
         // と切り分けられる。
         log.debug(`[title] 震度なしの電文なのでタイトルを更新しない (既存の最大震度=${existingCard?.earthquake.maxScale})`)
+        // **出しているのが地震情報のタイトルのときだけ、待ちを張り直す**（`extendTitle`）。無条件に張り直すと、
+        // 別の情報（臨時情報・長周期など）のタイトルが出ているのに持ち主だけが地震情報へ移り、その情報の取消で
+        // タイトルが下りなくなる
+        title.extendTitle('earthquake')
       } else {
         // 遠地地震は国内で震度を観測しない（maxScale は常に -1）。「最大震度不明」と出すと
         // 震度が判明していないだけに読めてしまうため、規模を出す別書式にする。
@@ -3470,8 +3604,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           ? `遠地地震 ${hypocenter.name}${magnitudeTitlePart(hypocenter)}`
           // ウィンドウタイトルも断定形にしない（理由は App.tsx の通知と同じ）。
           : `地震情報 ${hypocenter.name} 最大震度${getIntensityLabelWithOrAbove(maxScale, isMaxScaleUnreceived(maxScale, event.points))}`)
+        title.scheduleTitleRevert('earthquake', null)
       }
-      if (!quakeHeldBack) title.scheduleTitleRevert('earthquake')
     } else if (event.kind === 'tsunami' && !event.cancelled) {
       // タブ移動の規則:
       //   - 読み上げがあるなら**読み上げに任せる**（共通の TTS ブロックが follow を渡す）。
@@ -3644,7 +3778,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 「津波警報等の解除」へ置き換えてしまう。警報を終わったと伝える誤りは、解除の通知を 1 つ
         // 落とすより重い。
         if ((event.cancelReason ?? 'lifted') === 'lifted' && tsunamiStep?.kind === 'ended'
-          && settings.notifyMinScale >= 0 && settings.notifyTsunami) {
+          && settings.notifyTsunami) {
           const n = tsunamiLiftNotification(event)
           showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction)
         }
@@ -3698,6 +3832,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (event.cancelled) {
         // EEW キャンセル（誤報取消）または解除（最終報満了）: レベル追跡から除去
         // expired: true は最終報タイマー満了による自動解除 → 音は鳴らさない
+        //   （自動解除で音もタブ移動も起こさないことは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）
         // hadKey: P2PQuake WS と Yahoo の両方から cancel が来た場合の二重鳴り防止（AUD-2）
         const hadKey = activeEEWLevelsRef.current.has(key)
         // 取消の前に画面から消えた地震の誤報取消（→ `eewLateCancel`）。画面に出ていた地震と同じく伝える
@@ -3777,7 +3912,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               ))
             }
           }
-          if (settings.notifyMinScale >= 0 && settings.notifyEEW) {
+          if (settings.notifyEEW) {
             const cancelName = event.earthquake.hypocenter.name || eewLastHypocenterNameRef.current.get(key)
               || lateCancel?.hypocenterName
             // 画面に出ていた地震（hadKey・消えた後の取消）なのに名前を引けないのは、記憶の鍵がずれたか記憶が消えた印。
@@ -3881,7 +4016,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (!notifyBaseline || raisesNotifiedForecast(notifyForecast, notifyBaseline)) {
         eewNotifyBaselineRef.current.set(key, notifyForecast)
       }
-      if (settings.notifyMinScale >= 0 && settings.notifyEEW && (isNew || levelUpgraded || forecastRaised)) {
+      if (settings.notifyEEW && (isNew || levelUpgraded || forecastRaised)) {
         // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。通知の見出しも実態に合わせる
         const eewNotifyTitle = currentLevel === 2 ? '緊急地震速報 特別警報'
           : currentLevel === 1 ? '緊急地震速報 警報' : eewKindLabel(0)
@@ -3894,7 +4029,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       // EEW タイトルをイベントデータから構築（state は未更新のため event 直接参照）
       title.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, event))
-      title.scheduleTitleRevert('eew')
+      title.scheduleTitleRevert('eew', null)
 
       // VOICEVOX: 2フェーズ読み上げ
       // 第1フェーズ（isNew 即時／続報での震源の言い直し／予報から警報への言い直し）:
@@ -4022,6 +4157,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             const { level, spoken: spokenLevel, upgraded: levelUpgraded } = levelUpgradeOf(latest)
             // まだ一度も予想値を読んでいなければ無条件に読む（初報・震源更新の読み直し）。
             // 読んだ後は、実際に発話した値より上がったものが一つも無ければ黙る（引き下げは追わない）。
+            // 下がった・「以上」が取れたときに黙ることは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」
             if (eewPhase2DoneRef.current.has(key)
               && !isForecastScaleHigher(confirmedScale, spokenEEWScalesRef.current.get(key))
               && !isForecastLpgmHigher(
@@ -4524,7 +4660,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               // 名乗る必要が無いなら、**いま読もうとしている震源が本当にまだ声にしていない場所か**を
               // ここで確かめ直す。予約した時点では動いていても、順番が来るまでに既に名乗った場所へ
               // 戻っていることがある（速報の初期は区域の境目を往復する）。
-              if (!needsLead && !isUnannouncedHypocenter(announced, latestHypo)) {
+              // **震央地名が空なら言い直さない**（言い直す地名が無い。2026-10-24 ユーザー選択「備えとして
+              // 直す (Recommended)」。→ `eewAlertToText`）。
+              if (!needsLead && (!latestHypo.name.trim() || !isUnannouncedHypocenter(announced, latestHypo))) {
                 restorePhase2Read()
                 return null
               }
@@ -4853,7 +4991,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // ため、この形の電文では「本文が空の津波注意報」という実態と違う通知になる
     // （`isTsunamiObservationOnly`。観測値の更新そのものは津波タブのカードで伝わる）。
     if (event.kind === 'tsunami' && !event.cancelled && !isTsunamiObservationOnly(event)
-      && settings.notifyMinScale >= 0 && settings.notifyTsunami) {
+      && settings.notifyTsunami) {
       // 中身（見出し・区域の並び・「ほか N 区域」・解除の行・閉じるまで残すか）は `tsunamiIssueNotification`。
       // **区域はカードの材料（`tsunamiCardBasis`）から取る**——電文順で切ると、カードの先頭に並ぶ
       // 深刻な区域が通知から落ちる。
@@ -5802,6 +5940,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     spokenTideRef.current.clear()
     spokenAreaGradeRef.current.clear()
     seenLpgmEventIdsRef.current.clear()
+    lpgmNotifiedNameRef.current.clear()
+    notifiedSpecialInfoRef.current.clear()
     // 津波の取消・解除・失効を「もう伝えた」記憶も落とす。**残すと、同じ `eventId` の取消を
     // リプレイで流したときに音・読み上げ・タブ移動のすべてが黙る**（`alreadySpoken` が真に
     // なる経路）。しかも 200 件溜まるまで自己クリアされないので、実質そのセッション中ずっと
@@ -6345,7 +6485,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // タイトルの失敗は呼び出し元の catch（「読み上げ側へ渡せませんでした」）へ流さない。記憶は書き込み済みなので文面が事実と違う
     try {
       titleRef.current.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, titled[titled.length - 1]))
-      titleRef.current.scheduleTitleRevert('eew')
+      titleRef.current.scheduleTitleRevert('eew', null)
     } catch (err) {
       log.warn('[eew] 復元した緊急地震速報のウィンドウタイトルを付けられませんでした（次の報で付きます）:', err)
     }

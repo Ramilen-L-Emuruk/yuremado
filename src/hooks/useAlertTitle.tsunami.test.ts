@@ -156,7 +156,7 @@ describe('津波が終わったときのタイトル', () => {
     sync(false)
     act(() => {
       h.result.current.setTitle('地震情報 能登半島沖 最大震度3')
-      h.result.current.scheduleTitleRevert('earthquake')
+      h.result.current.scheduleTitleRevert('earthquake', null)
     })
     act(() => { vi.advanceTimersByTime(20_000) })
     act(() => { h.result.current.showTsunamiEndTitle('expired') })

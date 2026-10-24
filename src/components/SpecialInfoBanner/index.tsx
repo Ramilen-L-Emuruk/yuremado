@@ -147,9 +147,9 @@ export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, atScre
         {/* 南海トラフの 2 枚（臨時情報とその解説情報）を隣り合わせる。臨時情報の発表期間中は
             解説情報が毎日届いて両方が同時に出るため、間に別の事象（後発地震＝北海道・三陸沖）を
             挟むと同じ事象の話が分断されて読みにくい。重さの順よりこちらを優先する。 */}
-        {nankai && <NankaiBanner nankai={nankai} speaking={speaking('nankai')} />}
+        {nankai && <NankaiBanner nankai={nankai} speaking={speaking('nankai')} onDismiss={() => banners.dismiss('nankai')} />}
         {nankaiCommentary && <CommentaryBanner commentary={nankaiCommentary} speaking={speaking('nankaiCommentary')} onDismiss={() => banners.dismiss('nankaiCommentary')} />}
-        {kohatsu && <KohatsuBanner kohatsu={kohatsu} speaking={speaking('kohatsu')} />}
+        {kohatsu && <KohatsuBanner kohatsu={kohatsu} speaking={speaking('kohatsu')} onDismiss={() => banners.dismiss('kohatsu')} />}
         {earthquakeCount && <EarthquakeCountBanner count={earthquakeCount} speaking={speaking('earthquakeCount')} onDismiss={() => banners.dismiss('earthquakeCount')} />}
         {/* お知らせ（運用連絡）は最後。上の 4 枚は「いま起きている・起こりうる地震」の話で、
             こちらは観測点の入電停止・配信試験といった裏方の連絡。同時に出たときに
@@ -249,27 +249,40 @@ function OperationStatusBadge({ status }: { status?: TelegramOperationStatus }) 
   )
 }
 
-function NankaiBanner({ nankai, speaking }: { nankai: JMANankai; speaking: boolean }) {
+// 臨時情報と後発地震注意情報の帯にも閉じるボタンを付ける（2026-10-22 ユーザー選択「閉じられるようにする」。
+// ボタンの名前は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。閉じても段階が変われば出直す
+// （→ `useSpecialInfoBanners` の `DISMISSED_KEYS`）。
+function NankaiBanner({ nankai, speaking, onDismiss }: { nankai: JMANankai; speaking: boolean; onDismiss: () => void }) {
   // 読み上げているあいだだけ開く（自分が開いた分だけ閉じる）
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'nankai')
   const { bg, border, badge } = nankaiColors(nankai.kindName)
 
   return (
     <div className={`${bg} border-t-2 ${border}`}>
-      <button
-        className="w-full px-3 py-2 flex items-center gap-2 text-left"
-        onClick={() => setOpen(!open)}
-      >
-        <NankaiIcon />
-        <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
-          <span className={`text-xs font-bold text-white px-1.5 py-0.5 rounded-sm ${badge}`}>
-            {nankai.kindName}
-          </span>
-          <OperationStatusBadge status={nankai.operationStatus} />
-          <span className="text-white text-sm font-bold leading-tight truncate">{nankai.headline}</span>
-        </div>
-        <ChevronIcon open={open} />
-      </button>
+      {/* 展開トグルと閉じるボタンを横に並べる（button の入れ子は不正な HTML になるため） */}
+      <div className="w-full px-3 py-2 flex items-center gap-2">
+        <button
+          className="min-w-0 flex-1 flex items-center gap-2 text-left"
+          onClick={() => setOpen(!open)}
+        >
+          <NankaiIcon />
+          <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
+            <span className={`text-xs font-bold text-white px-1.5 py-0.5 rounded-sm ${badge}`}>
+              {nankai.kindName}
+            </span>
+            <OperationStatusBadge status={nankai.operationStatus} />
+            <span className="text-white text-sm font-bold leading-tight truncate">{nankai.headline}</span>
+          </div>
+          <ChevronIcon open={open} />
+        </button>
+        <button
+          className="shrink-0 p-1 text-white/70 hover:text-white"
+          onClick={onDismiss}
+          aria-label="臨時情報を閉じる"
+        >
+          <CloseIcon />
+        </button>
+      </div>
       {open && (
         <EarthquakeInfoDetail info={nankai} footer={
           <p className="text-white/60 text-xs">
@@ -281,27 +294,37 @@ function NankaiBanner({ nankai, speaking }: { nankai: JMANankai; speaking: boole
   )
 }
 
-function KohatsuBanner({ kohatsu, speaking }: { kohatsu: JMAKohatsu; speaking: boolean }) {
+function KohatsuBanner({ kohatsu, speaking, onDismiss }: { kohatsu: JMAKohatsu; speaking: boolean; onDismiss: () => void }) {
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'kohatsu')
 
   return (
     <div className="bg-blue-900/95 border-t-2 border-blue-400">
-      <button
-        className="w-full px-3 py-2 flex items-center gap-2 text-left"
-        onClick={() => setOpen(!open)}
-      >
-        <KohatsuIcon />
-        <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
-          {/* **情報名の札は置かない。** 南海トラフの帯は気象庁のキーワード（「巨大地震注意」等）を
-              札に出すが、後発地震注意情報にはそれに当たる語が無い。情報名を入れると、すぐ隣の
-              見出し（電文の `Head/Headline/Text`。実電文は「北海道・三陸沖後発地震注意情報」）と
-              同じ文字列が 2 つ並ぶ。**幅は足りる**（390px 幅でも札 186px・行 314px で収まり、
-              見出しが次行へ回るだけ）が、同じ言葉を二度読ませる意味が無い。 */}
-          <OperationStatusBadge status={kohatsu.operationStatus} />
-          <span className="text-white text-sm font-bold leading-tight truncate">{kohatsu.headline}</span>
-        </div>
-        <ChevronIcon open={open} />
-      </button>
+      {/* 展開トグルと閉じるボタンを横に並べる（button の入れ子は不正な HTML になるため） */}
+      <div className="w-full px-3 py-2 flex items-center gap-2">
+        <button
+          className="min-w-0 flex-1 flex items-center gap-2 text-left"
+          onClick={() => setOpen(!open)}
+        >
+          <KohatsuIcon />
+          <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
+            {/* **情報名の札は置かない。** 南海トラフの帯は気象庁のキーワード（「巨大地震注意」等）を
+                札に出すが、後発地震注意情報にはそれに当たる語が無い。情報名を入れると、すぐ隣の
+                見出し（電文の `Head/Headline/Text`。実電文は「北海道・三陸沖後発地震注意情報」）と
+                同じ文字列が 2 つ並ぶ。**幅は足りる**（390px 幅でも札 186px・行 314px で収まり、
+                見出しが次行へ回るだけ）が、同じ言葉を二度読ませる意味が無い。 */}
+            <OperationStatusBadge status={kohatsu.operationStatus} />
+            <span className="text-white text-sm font-bold leading-tight truncate">{kohatsu.headline}</span>
+          </div>
+          <ChevronIcon open={open} />
+        </button>
+        <button
+          className="shrink-0 p-1 text-white/70 hover:text-white"
+          onClick={onDismiss}
+          aria-label="後発地震注意情報を閉じる"
+        >
+          <CloseIcon />
+        </button>
+      </div>
       {open && (
         // **期限は出さない**（2026-10-19 ユーザー選択「発表時刻だけにする (Recommended)」）。
         // 電文に期限の要素は無く、帯を 7 日で畳むのはアプリの都合（`expireAt`）。これを「まで有効」と

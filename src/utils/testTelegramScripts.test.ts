@@ -626,6 +626,14 @@ describe('南海トラフ・後発地震・お知らせ・地震回数・長周�
     expect(retraction.eventId).toBe(issued.eventId)
   })
 
+  // 帯を消すには、表示中の号（`id` ＝ EventID と号数）と同じ取消でなければならない（→ `applyNankaiCommentary`）
+  it('関連解説情報の取消は、発表と同じ号の取消として読まれる', async () => {
+    const [issued, retraction] = dataOf(await build(scripts.NANKAI_COMMENTARY_RETRACTION), 'nankaiCommentary') as { id: string; cancelled: boolean; body: string }[]
+    expect(issued.cancelled).toBe(false)
+    expect(retraction).toMatchObject({ cancelled: true, body: '先ほどの、南海トラフ地震関連解説情報を取り消します。' })
+    expect(retraction.id).toBe(issued.id)
+  })
+
   it('お知らせは本文の後に自由付加文を持ち、問い合わせ先は持たない', async () => {
     const [notice] = dataOf(await build(scripts.QUAKE_NOTICE), 'quakeNotice') as { body: string; freeText?: string }[]
     expect(notice.body).toContain('沖縄県の震度データ入電停止のお知らせ')

@@ -274,6 +274,7 @@ function setup(over: Partial<AppSettings> = {}) {
     settings, title: title as never,
     earthquakesRef: { current: [] as JMAQuake[] },
     tsunamisRef: { current: [] as JMATsunami[] },
+    nankaiActiveRef: { current: false },
     setActiveTabNonRealtime: lpgmScreenSpies.setActiveTabNonRealtime,
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(), followSpeechTab: vi.fn(), preSpeechTab: vi.fn(() => true), quakeSpeakingCard: null, expandPanelForSpecialInfo: vi.fn(),
@@ -366,10 +367,10 @@ describe('非 EEW の読み上げの優先度', () => {
     expect(spokenTexts()[1]).toContain('長周期')
   })
 
-  // 正: 長周期地震動の取消は、取り消された事実と理由を読むだけ。音を鳴らさず、タブも動かさず、
-  // 一覧も開かない（2026-10-14 ユーザー選択「読み上げる・音は鳴らさない」。一覧ごと消えるので
-  // 見せる先も無い）。
-  it('長周期地震動の取消は、音もタブ移動も無く読み上げだけ', async () => {
+  // 正: 長周期地震動の取消は、地震情報の系統の取消音を鳴らし、取り消された事実と理由を読む。タブは動かさず、
+  // 一覧も開かない（一覧ごと消えるので見せる先も無い）。**音は覆した** —— 2026-10-14 ユーザー選択
+  // 「読み上げる・音は鳴らさない」を、2026-10-22 ユーザー選択「長周期の取消も鳴らす (Recommended)」で改めた。
+  it('長周期地震動の取消は、取消音と読み上げだけでタブは動かさない', async () => {
     const { playAlertSound } = await import('../utils/alertSound')
     vi.mocked(playAlertSound).mockClear()
     const handle = setup({ soundEnabled: true })
@@ -383,7 +384,7 @@ describe('非 EEW の読み上げの優先度', () => {
     } as never)
     await settle()
     expect(spokenTexts()).toEqual(['長周期地震動に関する観測情報は取り消されました。システム障害のため取り消します。'])
-    expect(playAlertSound).not.toHaveBeenCalled()
+    expect(vi.mocked(playAlertSound).mock.calls).toEqual([['earthquakeCancel']])
     expect(lpgmScreenSpies.setActiveTabNonRealtime).not.toHaveBeenCalled()
     expect(lpgmScreenSpies.selectQuake).not.toHaveBeenCalled()
     expect(lpgmScreenSpies.openLpgmFromQuake).not.toHaveBeenCalled()
@@ -964,7 +965,10 @@ describe('非 EEW の読み上げの優先度', () => {
   describe('後発地震注意情報の取消の読み上げ', () => {
     const issue = kohatsuIssue
     const cancel = kohatsuCancel
-    const CANCEL_TEXT = '北海道・三陸沖後発地震注意情報は取り消されました。'
+    // 取消の本文（理由）も続けて読む（2026-10-24 ユーザー選択「この案でよい (Recommended)」）。テストボタンの取消は
+    // 書き換え部品の宣言文を本文に持つ。後発地震の取消は実配信にも公式サンプルにも標本が無いので、宣言の主語の集合へは
+    // 足していない（→ ttsText.ts の CANCEL_DECLARATION_SUBJECTS）—— 二度述べが残るのはそのため
+    const CANCEL_TEXT = '北海道・三陸沖後発地震注意情報は取り消されました。先ほどの、北海道・三陸沖後発地震注意情報を取り消します。'
 
     it('正: 発表の間が明ける前に取消が届けば、発表は読まずに取消だけを読む', async () => {
       const handle = setup()

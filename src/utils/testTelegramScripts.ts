@@ -1077,6 +1077,26 @@ export const NANKAI_COMMENTARY_AD_HOC: TestTelegramScript = {
   anchor: 0, steps: [{ file: nii('20240815080252_0_VYSE51_010000'), headType: 'VYSE51', atMs: 0 }],
 }
 
+/**
+ * 南海トラフ地震関連解説情報の取消テスト。臨時解説（上と同じ実電文）を出し、90 秒後に同じ号の取消を流す
+ * （2026-10-24 ユーザー選択「足す (Recommended)」）。**解説情報の取消は実配信にも公式サンプルにも標本が無い**ので、
+ * 取消の形は書き換え部品（`toCancelForm`）で作る。本文が宣言だけになるため、読み上げは「取り消されました」の後に
+ * 宣言を二度述べる（2026-10-24 ユーザー選択「規約どおり残す (Recommended)」。→ ttsText.ts の `CANCEL_DECLARATION_SUBJECTS`）。
+ */
+export const NANKAI_COMMENTARY_RETRACTION: TestTelegramScript = {
+  anchor: 1,
+  steps: [
+    { file: nii('20240815080252_0_VYSE51_010000'), headType: 'VYSE51', atMs: 0 },
+    {
+      file: nii('20240815080252_0_VYSE51_010000'), headType: 'VYSE51', atMs: TSUNAMI_DISMISS_MS,
+      rewrite: xml => editXml(xml, (doc) => {
+        toCancelForm(doc, '南海トラフ地震関連解説情報')
+        shiftIssueTime(doc, 180)
+      }),
+    },
+  ],
+}
+
 /** 南海トラフ地震関連解説情報（定例解説）テスト（2026-09-07 第109回の実電文）。 */
 export const NANKAI_COMMENTARY_ROUTINE: TestTelegramScript = {
   anchor: 0, steps: [{ file: nii('20260907080008_0_VYSE52_010000'), headType: 'VYSE52', atMs: 0 }],
@@ -1605,7 +1625,7 @@ export const ALL_TEST_TELEGRAM_SCRIPTS: Readonly<Record<string, TestTelegramScri
   TSUNAMI_MAJOR_WARNING, TSUNAMI_QUIET_REPORTS, TSUNAMI_WARNING, TSUNAMI_WATCH, TSUNAMI_FORECAST, TSUNAMI_EXPIRY, TSUNAMI_GRADE_CHANGE,
   TSUNAMI_SOURCE_ADDED, TSUNAMI_RETRACTION, TSUNAMI_INFO_RETRACTION,
   NANKAI_CHECKING, NANKAI_WATCH, NANKAI_WARNING, NANKAI_RETRACTION,
-  NANKAI_COMMENTARY_AD_HOC, NANKAI_COMMENTARY_ROUTINE, KOHATSU, KOHATSU_RETRACTION,
+  NANKAI_COMMENTARY_AD_HOC, NANKAI_COMMENTARY_RETRACTION, NANKAI_COMMENTARY_ROUTINE, KOHATSU, KOHATSU_RETRACTION,
   QUAKE_NOTICE, EARTHQUAKE_COUNT, EARTHQUAKE_COUNT_RETRACTION, LPGM_RETRACTION,
   EEW_FORECAST, EEW_WARNING, EEW_SPECIAL_WARNING, EEW_RETRACTION, EEW_LATE_RETRACTION, EEW_ASSUMED, EEW_DEEP,
   EEW_STRONG_SHAKING, EEW_NO_FORECAST, EEW_FORECAST_ZERO, ESTIMATED_INTENSITY,

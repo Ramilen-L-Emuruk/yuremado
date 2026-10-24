@@ -149,6 +149,7 @@ export function buildPopupHtml(ep: EewEpicenter): string {
   const isWarning = ep.severity === 'Warning'
   const kindColor = isWarning ? '#f87171' : '#fbbf24'
   // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。表示も実態に合わせる
+  // 特別警報の条件を満たしても「警報」と出す（2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）
   const kind = isWarning ? '警報' : '地震動予報'
   // 報番号は電文由来。最終報なら第N報より「最終報」の方が状態が伝わる。
   const serialText = ep.isFinal ? '最終報' : ep.serial ? `第${escapeHtml(ep.serial)}報` : ''
@@ -164,7 +165,8 @@ export function buildPopupHtml(ep: EewEpicenter): string {
     (serialText ? `<span style="font-size:11px;color:#94a3b8">${serialText}</span>` : '') +
     `</div>` +
     // EEW-6: 仮定震源要素（震源未確定）は M・深さが未確定なので数値を隠す。
-    // カード表示（RealtimeTab の EEWCard）と同じ扱いにする。
+    // カード表示（RealtimeTab の EEWCard）と同じ扱いにする。M・深さを隠して地表へ置き「震源調査中」と出すことは
+    // 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」。
     `<div style="margin-top:2px;font-size:11px;color:#94a3b8">` +
     (provisional
       ? '震源調査中'

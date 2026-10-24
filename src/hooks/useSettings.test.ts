@@ -262,6 +262,30 @@ describe('load', () => {
     expect(result.soundVolume).toBe(1.0)
   })
 
+  // 緊急地震速報・津波・南海トラフの通知を地震情報の通知から切り離す前の設定は、一度だけ移し替える
+  // （2026-10-24 ユーザー選択「一度だけ移し替える」。→ `migrateDetachedNotifications`）
+  it('正: 切り離す前の設定で地震情報の通知を切っていれば、緊急地震速報・津波・南海トラフの通知も切って読む', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ notifyMinScale: -1, notifyEEW: true, notifyTsunami: true, notifyDetection: true }))
+    const result = load()
+    expect(result.notifyEEW).toBe(false)
+    expect(result.notifyTsunami).toBe(false)
+    expect(result.notifyNankai).toBe(false)
+    // 揺れ検知の通知は選んだ範囲に入っていないので変えない
+    expect(result.notifyDetection).toBe(true)
+  })
+
+  it('対照: 地震情報の通知を入れていた設定は移し替えない', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ notifyMinScale: 40, notifyEEW: true }))
+    expect(load().notifyEEW).toBe(true)
+  })
+
+  it('安全弁: 切り離した後に保存した設定（notifyNankai を持つ）は移し替えない —— 後から入れ直した通知を戻さない', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ notifyMinScale: -1, notifyEEW: true, notifyNankai: true }))
+    const result = load()
+    expect(result.notifyEEW).toBe(true)
+    expect(result.notifyNankai).toBe(true)
+  })
+
   it('正常な部分設定は sanitize 後にマージ', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ soundVolume: 0.5, uiScale: 1.5 }))
     const result = load()

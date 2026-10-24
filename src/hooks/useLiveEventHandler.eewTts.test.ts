@@ -250,6 +250,7 @@ function setup(
     applyPriority: vi.fn(),
     scheduleTitleRevert: vi.fn(),
     clearTitleTimer: vi.fn(),
+    releaseTitle: vi.fn(),
   }
   capturedTitle = title
 
@@ -258,6 +259,7 @@ function setup(
     title: title as never,
     earthquakesRef: { current: [] as JMAQuake[] },
     tsunamisRef: { current: [] as JMATsunami[] },
+    nankaiActiveRef: { current: false },
     setActiveTabNonRealtime: vi.fn(),
     setActiveTabRealtimeOnUpdate: vi.fn(),
     setActiveTabRealtimeUrgent: vi.fn(),

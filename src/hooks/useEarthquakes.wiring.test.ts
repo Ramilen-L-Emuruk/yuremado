@@ -3475,27 +3475,68 @@ describe('南海トラフ臨時情報の取消の適用先', () => {
     expect(h.current.nankai).toBeNull()
   })
 
-  it('安全弁: 見送った取消では読み上げ・通知のイベントを起こさない', async () => {
+  // **画面に出していない情報への取消も伝える**（2026-10-22 ユーザー選択「地震情報に揃えて伝える (Recommended)」で
+  // 「帯を消した取消だけ伝える」を覆した）。帯は従来どおり、出している情報単位への取消でしか消さない。
+  // 安全弁: 別の情報単位の帯が出ているときの古い単位への取消は流さない。「取り消されました」と言うと、いま出ている
+  // 帯の情報が取り消されたように聞こえる（2026-10-24 ユーザー選択「別単位の帯が出ていれば黙る (Recommended)」）
+  it('安全弁: 別の情報単位の帯が出ているときの、古い単位への取消は流さない', async () => {
     const events: unknown[] = []
     const h = setup({ onLiveEvent: (e: unknown) => { events.push(e) } })
     await h.flush()
     act(() => { sockets[0].onEvent?.(nankai('evt-A')) })
     const before = events.length
     act(() => { sockets[0].onEvent?.(nankai('evt-OLD', { cancelled: true, retracted: true, kindCode: '', kindName: '' })) })
-    // 帯を消していないので、「取り消されました」を伝える経路にも乗せない
     expect(events.length).toBe(before)
+    expect(h.current.nankai?.eventId).toBe('evt-A')
   })
 
-  it('正: 何も表示していないときの取消は、読み上げ・通知を起こさない', async () => {
-    // 帯を出していない状態で古い取消が届く経路（起動直後・再接続直後）。取り消された情報
-    // そのものを利用者は見ていないので、「取り消されました」と告げても伝わらない
+  it('安全弁: 後発地震注意情報も、別の情報単位の帯が出ているときの古い単位への取消は流さない', async () => {
+    const events: unknown[] = []
+    const h = setup({ onLiveEvent: (e: unknown) => { events.push(e) } })
+    await h.flush()
+    const expireAt = new Date(serverDate().getTime() + 86_400_000).toISOString()
+    const kohatsu = (eventId: string, o: Record<string, unknown> = {}) => ({
+      kind: 'kohatsu' as const,
+      data: { id: `k-${eventId}`, time: serverDate().toISOString(), eventId, headline: '北海道・三陸沖後発地震注意情報', body: '',
+        cancelled: false, reportDateTime: serverDate().toISOString(), expireAt, ...o },
+    })
+    act(() => { sockets[0].onEvent?.(kohatsu('k-A')) })
+    const before = events.length
+    act(() => { sockets[0].onEvent?.(kohatsu('k-OLD', { cancelled: true, retracted: true })) })
+    expect(events.length).toBe(before)
+    expect(h.current.kohatsu?.eventId).toBe('k-A')
+  })
+
+  it('対照: 同じ取消でも発表時刻が違えば別の電文として流す（テストボタンの押し直し）', async () => {
+    const events: unknown[] = []
+    const h = setup({ onLiveEvent: (e: unknown) => { events.push(e) } })
+    await h.flush()
+    const cancel = nankai('evt-X', { cancelled: true, retracted: true, kindCode: '', kindName: '' })
+    const before = events.length
+    act(() => { sockets[0].onEvent?.(cancel) })
+    act(() => { sockets[0].onEvent?.({ ...cancel, data: { ...cancel.data, time: '2099-01-01T00:00:00+09:00' } }) })
+    expect(events.length).toBe(before + 2)
+  })
+
+  it('正（覆した）: 何も表示していないときの取消も、読み上げ・通知へ流す', async () => {
     const events: unknown[] = []
     const h = setup({ onLiveEvent: (e: unknown) => { events.push(e) } })
     await h.flush()
     const before = events.length
     act(() => { sockets[0].onEvent?.(nankai('evt-X', { cancelled: true, retracted: true, kindCode: '', kindName: '' })) })
-    expect(events.length).toBe(before)
+    expect(events.length).toBe(before + 1)
     expect(h.current.nankai).toBeNull()
+  })
+
+  it('安全弁: 同じ取消の電文が二度届いたら、2 通目は流さない', async () => {
+    const events: unknown[] = []
+    const h = setup({ onLiveEvent: (e: unknown) => { events.push(e) } })
+    await h.flush()
+    const cancel = nankai('evt-X', { cancelled: true, retracted: true, kindCode: '', kindName: '' })
+    const before = events.length
+    act(() => { sockets[0].onEvent?.(cancel) })
+    act(() => { sockets[0].onEvent?.(cancel) })
+    expect(events.length).toBe(before + 1)
   })
 
   it('対照: 何も表示していなくても「調査終了」は伝える', async () => {
@@ -5302,21 +5343,22 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
   })
 
   // 安全弁: 反映されなかった電文（棄却）は `notApplied` として記録する——サイレントかどうかとは
-  // 独立の理由。「表示していない情報単位への取消」で `applyNankai` が偽を返すケースを使う。
-  it('反映されなかった南海トラフ臨時情報の取消には notApplied が付く', async () => {
+  // 独立の理由。期限切れの後発地震注意情報で `applyKohatsu` が偽を返すケースを使う。
+  // **取消は使わない** —— 画面に出していない情報への取消も受け手へ流すようにしたので
+  // （2026-10-22 ユーザー選択「地震情報に揃えて伝える (Recommended)」）、取消は棄却されても `notApplied` にならない。
+  it('反映されなかった後発地震注意情報（期限切れ）には notApplied が付く', async () => {
     vi.useFakeTimers()
     const h = setup()
     await h.flush()
     const now = serverDate()
+    const past = new Date(now.getTime() - 60_000).toISOString()
     act(() => {
-      // 表示中の情報が無い状態で、取消（retracted）だけを流す → `applyNankai` は偽を返す
       h.current.loadReplayEvents([{
         payload: {
-          kind: 'nankai',
+          kind: 'kohatsu',
           data: {
-            id: 'n-replaylog-notapplied', time: now.toISOString(), eventId: 'nankai-replaylog-notapplied',
-            kindCode: '', kindName: '',
-            headline: '', body: '', cancelled: true, retracted: true, reportDateTime: now.toISOString(),
+            id: 'k-replaylog-notapplied', time: past, eventId: 'kohatsu-replaylog-notapplied',
+            headline: '', body: '', cancelled: false, reportDateTime: past, expireAt: past,
           },
         },
         replayTime: now,
@@ -5327,7 +5369,33 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
 
     const notApplied = loggedTelegrams().filter(t => t.skipped === 'notApplied')
     expect(notApplied).toHaveLength(1)
-    expect(notApplied[0].kind).toBe('nankai')
+    expect(notApplied[0].kind).toBe('kohatsu')
+  })
+
+  it('対照: 表示していない情報単位への臨時情報の取消は、記録せず受け手へ流す', async () => {
+    vi.useFakeTimers()
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    const now = serverDate()
+    act(() => {
+      h.current.loadReplayEvents([{
+        payload: {
+          kind: 'nankai',
+          data: {
+            id: 'n-replaylog-cancel', time: now.toISOString(), eventId: 'nankai-replaylog-cancel',
+            kindCode: '', kindName: '',
+            headline: '', body: '', cancelled: true, retracted: true, reportDateTime: now.toISOString(),
+          },
+        },
+        replayTime: now,
+        logEntry: null,
+      }])
+    })
+    act(() => { vi.advanceTimersByTime(50) })
+
+    expect(loggedTelegrams().filter(t => t.kind === 'nankai')).toHaveLength(0)
+    expect(onLiveEvent.mock.calls.filter(c => (c[0] as LiveEvent).kind === 'nankai')).toHaveLength(1)
   })
 
   // 安全弁: `lpgm` だけ `cancelled`（取消）・`maxClass < 1`（階級 0）のとき、
@@ -5342,12 +5410,16 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     }
   }
 
-  // **理由は `notApplied` ではなく `notDispatched`。** `lpgmByEventId` は取消・階級 0 でも
+  // **理由は `notApplied` ではなく `notDispatched`。** `lpgmByEventId` は階級 0 でも
   // 必ず書き換わる（＝反映される）ので、「反映されなかった」を意味する `notApplied` は
   // 使えない（3 巡目レビューで検出）。
-  it('取消された長周期地震動にも notDispatched の記録が残る', async () => {
+  //
+  // **取消は受け手へ流す**（画面に出していない地震への取消も伝える。2026-10-22 ユーザー選択「地震情報に
+  // 揃えて伝える (Recommended)」で 2026-10-15 の「表示中を消した時だけ（推奨）」を覆した）。流すので記録は残らない。
+  it('取消された長周期地震動は受け手へ流し、記録は残らない', async () => {
     vi.useFakeTimers()
-    const h = setup()
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
     await h.flush()
     act(() => {
       h.current.loadReplayEvents([{
@@ -5358,9 +5430,8 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     })
     act(() => { vi.advanceTimersByTime(50) })
 
-    const notDispatched = loggedTelegrams().filter(t => t.skipped === 'notDispatched')
-    expect(notDispatched).toHaveLength(1)
-    expect(notDispatched[0].kind).toBe('lpgm')
+    expect(loggedTelegrams().filter(t => t.kind === 'lpgm')).toHaveLength(0)
+    expect(onLiveEvent.mock.calls.filter(c => (c[0] as LiveEvent).kind === 'lpgm')).toHaveLength(1)
   })
 
   it('階級 0 の長周期地震動にも notDispatched の記録が残る', async () => {
@@ -5405,12 +5476,16 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
   // 安全弁: ライブ WebSocket（`ws.onEvent`）経由の lpgm にも同じ穴があった——else 節が
   // 無く、取消・階級 0 のときは記録もされずに黙って処理が終わっていた（3 巡目レビューで
   // 検出。キュー経路とは別のコードパスなので、キュー経路を直しても波及しない）。
-  it('ライブ WebSocket 経由で取消された長周期地震動にも notDispatched の記録が残る', async () => {
+  it('ライブ WebSocket 経由で取消された長周期地震動も受け手へ流し、2 通目は notDispatched で記録する', async () => {
     vi.useFakeTimers()
-    const h = setup()
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
     await h.flush()
-    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: lpgmData({ cancelled: true }) }) })
+    const cancel = lpgmData({ cancelled: true })
+    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancel }) })
+    act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancel }) })
 
+    expect(onLiveEvent.mock.calls.filter(c => (c[0] as LiveEvent).kind === 'lpgm')).toHaveLength(1)
     const notDispatched = loggedTelegrams().filter(t => t.skipped === 'notDispatched')
     expect(notDispatched).toHaveLength(1)
     expect(notDispatched[0].kind).toBe('lpgm')
@@ -5481,20 +5556,20 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
       expect(calls[1].kind === 'lpgm' && calls[1].data.cancelled).toBe(true)
     })
 
-    // 対照: 消すものが無い取消は渡さない（画面に何も起きていないのに「取り消されました」と言わない）。
-    it('表示に無い長周期の取消は受け手へ渡さない', async () => {
+    // 正（覆した）: 表示に無い長周期への取消も渡す（2026-10-22 ユーザー選択「地震情報に揃えて伝える (Recommended)」）。
+    it('表示に無い長周期の取消も受け手へ渡す', async () => {
       vi.useFakeTimers()
       const onLiveEvent = vi.fn()
       const h = setup({ onLiveEvent })
       await h.flush()
       act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(lpgmData()) }) })
 
-      expect(lpgmCalls(onLiveEvent)).toHaveLength(0)
+      expect(lpgmCalls(onLiveEvent)).toHaveLength(1)
     })
 
-    // 対照: 階級 0 の長周期は画面に出ない（カードは階級 1 以上だけを描く）ので、それを消した取消は
-    // 「表示中を消した」に当たらず、受け手へ渡さない。
-    it('階級 0 の長周期を消した取消は受け手へ渡さない', async () => {
+    // 正（覆した）: 階級 0 の長周期を消した取消も渡す。表示に出ていたかで決めなくなったので、階級 0 を
+    // 画面に残すようにしても（⑤ L1）取消が黙らない。
+    it('階級 0 の長周期を消した取消も受け手へ渡す', async () => {
       vi.useFakeTimers()
       const onLiveEvent = vi.fn()
       const h = setup({ onLiveEvent })
@@ -5503,10 +5578,11 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
       act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: shown }) })
       act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) }) })
 
-      expect(lpgmCalls(onLiveEvent)).toHaveLength(0)
+      expect(lpgmCalls(onLiveEvent)).toHaveLength(1)
+      expect(lpgmCalls(onLiveEvent)[0].kind === 'lpgm' && lpgmCalls(onLiveEvent)[0].data.cancelled).toBe(true)
     })
 
-    // 安全弁: 同じ取消が 2 通届いても、2 通目は消すものが無いので渡さない（二重に読まない）。
+    // 安全弁: 同じ取消が 2 通届いても、2 通目は渡さない（二重に読まない。→ `decideDispatch`）。
     it('同じ取消の 2 通目は受け手へ渡さない', async () => {
       vi.useFakeTimers()
       const onLiveEvent = vi.fn()
@@ -5565,9 +5641,22 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         expect(notApplied[0].eventId).toBe('n-startup-notapplied-event')
       })
 
-      // 安全弁: lpgm は `lpgmEvents` の構築ループ側で記録する。取消は `lpgmByEventId` に
-      // 反映されない（＝画面にも出ない）が、キュー経路と同じ理由で notDispatched を使う。
-      it('安全弁: 取消された長周期地震動にも notDispatched の記録が残る', async () => {
+      // 安全弁: 起動時の履歴で当てた取消は「伝えた」に数える。同じ取消が後からライブで届いても（再接続・重複配信）鳴り直さない
+      it('安全弁: 起動時の履歴で見た臨時情報の取消は、同じ電文がライブで届いても流さない', async () => {
+        const cancel = nankaiData('n-startup-cancel', { cancelled: true, retracted: true })
+        vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(
+          history({ extras: [extra({ kind: 'nankai', data: cancel })] }),
+        )
+        const onLiveEvent = vi.fn()
+        const h = setup({ onLiveEvent })
+        await h.flush()
+        act(() => { sockets[0].onEvent?.({ kind: 'nankai', data: cancel }) })
+        expect(onLiveEvent.mock.calls.filter(c => (c[0] as LiveEvent).kind === 'nankai')).toHaveLength(0)
+      })
+
+      // 安全弁: lpgm は `lpgmEvents` の構築ループ側で記録する。取消は流しうる中身なので、サイレント経路では
+      // silentReplayInit（キュー経路と同じ判定。→ `silentLpgmSkip`）。
+      it('安全弁: 取消された長周期地震動にも silentReplayInit の記録が残る', async () => {
         vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(
           history({ extras: [extra({ kind: 'lpgm', data: lpgmData({ cancelled: true }) })] }),
         )
@@ -5575,8 +5664,22 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         await h.flush()
 
         expect(h.current.lpgmByEventId.has('lpgm-replaylog-event')).toBe(false)
-        const notDispatched = loggedTelegrams().filter(t => t.kind === 'lpgm' && t.skipped === 'notDispatched')
-        expect(notDispatched).toHaveLength(1)
+        const silentInit = loggedTelegrams().filter(t => t.kind === 'lpgm' && t.skipped === 'silentReplayInit')
+        expect(silentInit).toHaveLength(1)
+      })
+
+      // 安全弁: 履歴で見た取消と同じ電文が後からライブで届いても、もう伝えたものとして流さない
+      it('安全弁: 履歴で見た長周期の取消は、同じ電文がライブで届いても流さない', async () => {
+        const cancel = lpgmData({ cancelled: true })
+        vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(
+          history({ extras: [extra({ kind: 'lpgm', data: cancel })] }),
+        )
+        const onLiveEvent = vi.fn()
+        const h = setup({ onLiveEvent })
+        await h.flush()
+        act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancel }) })
+
+        expect(onLiveEvent.mock.calls.filter(c => (c[0] as LiveEvent).kind === 'lpgm')).toHaveLength(0)
       })
 
       // 安全弁: `applyNankai` が例外を投げても、`history.extras` の後続要素（ここでは

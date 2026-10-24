@@ -63,6 +63,7 @@ export interface TestFunctions {
   nankaiWarning?: () => void
   nankaiRetraction?: () => void
   nankaiCommentaryAdHoc?: () => void
+  nankaiCommentaryRetraction?: () => void
   nankaiCommentaryRoutine?: () => void
   kohatsu?: () => void
   kohatsuRetraction?: () => void
@@ -1673,35 +1674,41 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </div>
           </Row>
         )}
-        <Row label="ブラウザ通知" description="地震発生時にブラウザ通知を表示します">
+        {/* **種別のトグルは地震情報の通知から独立させる**（2026-10-22 ユーザー選択「3 種を切り離す (Recommended)」。
+            行の文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。かつては地震情報の通知を切ると
+            揺れ検知・緊急地震速報・津波の通知もまとめて止まっていた。 */}
+        <Row label="地震情報の通知" description="地震情報・長周期地震動・推計震度分布図・地震回数に関する情報を受けたときに通知します">
           <Toggle
             checked={settings.notifyMinScale >= 0}
             onChange={v => onUpdate('notifyMinScale', v ? 40 : -1)}
           />
         </Row>
         {settings.notifyMinScale >= 0 && (
-          <>
-            <Row label="通知する最低震度" description="この震度以上で通知を送信します">
-              <div className="flex items-center gap-2">
-                <IntensityBadge scale={settings.notifyMinScale} />
-                <ScaleSelect
-                  value={settings.notifyMinScale}
-                  onChange={v => onUpdate('notifyMinScale', v === -1 ? 10 : v)}
-                  noneLabel="震度1以上"
-                />
-              </div>
-            </Row>
-            {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 の順 ── */}
-            <Row label="揺れ検知通知" description="強震モニタで揺れを検知したときに通知します。推定値のため、通知は多めになります">
-              <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
-            </Row>
-            <Row label="緊急地震速報の通知" description="緊急地震速報が出たときと、警報・特別警報へ上がったときに通知します">
-              <Toggle checked={settings.notifyEEW} onChange={v => onUpdate('notifyEEW', v)} />
-            </Row>
-            <Row label="津波通知" description="津波警報・注意報・予報が発表されたときと、全て解除されたときに通知します">
-              <Toggle checked={settings.notifyTsunami} onChange={v => onUpdate('notifyTsunami', v)} />
-            </Row>
-          </>
+          <Row label="通知する最低震度" description="この震度以上で通知を送信します">
+            <div className="flex items-center gap-2">
+              <IntensityBadge scale={settings.notifyMinScale} />
+              <ScaleSelect
+                value={settings.notifyMinScale}
+                onChange={v => onUpdate('notifyMinScale', v === -1 ? 10 : v)}
+                noneLabel="震度1以上"
+              />
+            </div>
+          </Row>
+        )}
+        {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 → 南海トラフ の順 ── */}
+        <Row label="揺れ検知通知" description="強震モニタで揺れを検知したときに通知します。推定値のため、通知は多めになります">
+          <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
+        </Row>
+        <Row label="緊急地震速報の通知" description="緊急地震速報が出たときと、警報・特別警報へ上がったときに通知します">
+          <Toggle checked={settings.notifyEEW} onChange={v => onUpdate('notifyEEW', v)} />
+        </Row>
+        <Row label="津波通知" description="津波警報・注意報・予報が発表されたときと、全て解除されたときに通知します">
+          <Toggle checked={settings.notifyTsunami} onChange={v => onUpdate('notifyTsunami', v)} />
+        </Row>
+        {isDmdss && (
+          <Row label="南海トラフ・後発地震の通知" description="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報と、臨時の解説情報を受けたときに通知します">
+            <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
+          </Row>
         )}
         <Row label="通知許可" description="ブラウザの通知権限を確認・許可します">
           <NotificationPermissionButton />
@@ -1886,6 +1893,9 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="地震情報（震源情報・遠地地震）" description="ピアノ2音 G4→B4">
           <TestButton color="blue" onClick={() => { unlockAudio(); playAlertSound('earthquakeInfo') }}>▶ 試聴</TestButton>
         </Row>
+        <Row label="地震情報・長周期地震動・地震回数の取消" description="ピアノ降下3音 E5→B4→E4">
+          <TestButton color="blue" onClick={() => { unlockAudio(); playAlertSound('earthquakeCancel') }}>▶ 試聴</TestButton>
+        </Row>
         {/* ── 津波情報 ── */}
         <Row label="津波予報（若干の海面変動）" description={`石川県能登・加賀ほか – tsunamiForecast 音 / ${isDmdss ? '90秒後に失効' : '90秒後に解除（standard 版は失効時刻を持たないため解除電文で消える）'}`}>
           <TestButton color="blue" onClick={() => { unlockAudio(); playAlertSound('tsunamiForecast') }}>▶ 試聴</TestButton>
@@ -1919,6 +1929,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {isDmdss && (
           <Row label="地震回数に関する情報" description="純音の同音3連 C5（上の2つと違い音程を動かさない）">
             <TestButton color="teal" onClick={() => { unlockAudio(); playAlertSound('earthquakeCount') }}>▶ 試聴</TestButton>
+          </Row>
+        )}
+        {isDmdss && (
+          <Row label="南海トラフ・後発地震の取消" description="純音の降下3音 D5→A4→D4">
+            <TestButton color="teal" onClick={() => { unlockAudio(); playAlertSound('specialInfoCancel') }}>▶ 試聴</TestButton>
           </Row>
         )}
       </Section>
@@ -2079,13 +2094,18 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {isDmdss && onTest.nankaiRetraction && (
-          <Row label="南海トラフ地震臨時情報（取消）" description="調査中を発表し、同じ識別情報の取消を流す。バナーが消え、読み上げは取り消された事実だけを伝える（発生可能性については何も述べない）">
+          <Row label="南海トラフ地震臨時情報（取消）" description="調査中を発表し、同じ識別情報の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える（発生可能性については何も述べない）">
             <TestButton color="blue" onClick={onTest.nankaiRetraction}>取消テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.nankaiCommentaryAdHoc && (
           <Row label="南海トラフ地震関連解説情報（臨時解説）" description="バナー表示 + specialInfoCommentary 音（閉じるボタンあり・7日で自動消去）">
             <TestButton color="teal" onClick={onTest.nankaiCommentaryAdHoc}>臨時解説テスト</TestButton>
+          </Row>
+        )}
+        {isDmdss && onTest.nankaiCommentaryRetraction && (
+          <Row label="南海トラフ地震関連解説情報（取消）" description="臨時解説を発表し、同じ号の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
+            <TestButton color="teal" onClick={onTest.nankaiCommentaryRetraction}>解説情報 取消テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.nankaiCommentaryRoutine && (
@@ -2099,7 +2119,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {isDmdss && onTest.kohatsuRetraction && (
-          <Row label="北海道・三陸沖後発地震注意情報（取消）" description="後発地震注意情報を発表し、同じ識別情報の取消を流す。バナーが消え、読み上げは取り消された事実だけを伝える">
+          <Row label="北海道・三陸沖後発地震注意情報（取消）" description="後発地震注意情報を発表し、同じ識別情報の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
             <TestButton color="blue" onClick={onTest.kohatsuRetraction}>取消テスト</TestButton>
           </Row>
         )}

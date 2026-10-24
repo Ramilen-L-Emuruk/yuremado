@@ -20,6 +20,9 @@ import { P2P_KIND_OF_CODE } from '../../services/p2pquake'
  *
  * VXSE43 は、予報が無く警報だけを受けている人には緊急地震速報そのもの。予報を受けている人には
  * 購読外だが、配信分類が変わって届いた場合に `filtered` として記録する（services/dmdata.ts）。
+ *
+ * 緊急地震速報の行は種別で引くので、特別警報の条件を満たした報も特別警報とは出ない
+ * （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
  */
 export const HEAD_TYPE_LABEL: Readonly<Record<string, string>> = {
   VXSE42: 'EEW配信テスト',

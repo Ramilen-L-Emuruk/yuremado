@@ -399,6 +399,8 @@ export function App() {
   const earthquakesRef = useRef<JMAQuake[]>([])
   // 津波リスト（続報判定に使う）。値の確定は下方で毎レンダー tsunamis で更新する。
   const tsunamisRef = useRef<JMATsunami[]>([])
+  // 南海トラフ地震臨時情報が発表中か（受信処理が関連解説情報をタイトルに出すかの判定に使う。代入は下）
+  const nankaiActiveRef = useRef(false)
   const defaultTabRef = useRef<TabId>(settings.defaultTab)
   // 自動復帰までの時間。**読み上げ中に既定の状態へ戻すのを見送ってよいか**の判定に使う
   // （`shouldDeferRevertWhileSpeaking`）。ref で持つのは、`revertToDefaultTab` を受け取る側
@@ -846,7 +848,7 @@ export function App() {
   const pendingQuakeNotifyRef = useRef<JMAQuake[]>([])
   // ライブイベント受信処理（通知音・タイトル・タブ切替・読み上げ・ブラウザ通知）
   const { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, focusedDistrict, eewNoForecastSettledKeys } = useLiveEventHandler({
-    settings, title, earthquakesRef, tsunamisRef,
+    settings, title, earthquakesRef, tsunamisRef, nankaiActiveRef,
     setActiveTabNonRealtime, setActiveTabRealtimeOnUpdate, setActiveTabRealtimeUrgent,
     followSpeechTab, preSpeechTab, speechFollow, unreceivedFollow, telegramTextFollow,
     borrowedHypocenterFollow, eewSpeakingCard, quakeSpeakingCard,
@@ -904,7 +906,7 @@ export function App() {
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
@@ -919,6 +921,7 @@ export function App() {
   // 周期処理だけが無駄に走る。
   const fetchThrottled = useFetchThrottled(isDmdss)
   tsunamisRef.current = tsunamis
+  nankaiActiveRef.current = nankai !== null
 
   // EarthquakeTab のカードクリックからの選択。ユーザーが自らカードをクリックした挙動なので
   // explicit=true を渡し、QuakeFitGL に isUserInteracting を無視して強制フィットさせる。
@@ -976,6 +979,7 @@ export function App() {
     nankaiWarning:     () => simulateNankai('巨大地震警戒'),
     nankaiRetraction:  simulateNankaiRetraction,
     nankaiCommentaryAdHoc:   () => simulateNankaiCommentary('臨時解説'),
+    nankaiCommentaryRetraction: simulateNankaiCommentaryRetraction,
     nankaiCommentaryRoutine: () => simulateNankaiCommentary('定例解説'),
     kohatsu:           simulateKohatsu,
     kohatsuRetraction: simulateKohatsuRetraction,
@@ -1013,7 +1017,7 @@ export function App() {
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateKohatsu, simulateKohatsuRetraction,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
@@ -1633,6 +1637,11 @@ export function App() {
         forceTab('realtime', idleRevertPriority(hasActiveEew), 'idleRevert')
       } else if (activeTabRef.current === 'catalog') {
         log.info(`[tab] 震源カタログのためアイドル復帰を見送り (idleRevertSec=${settings.idleRevertSec})`)
+        // **タイトルだけは他のタブと同じ時刻に平常へ戻す**（2026-10-23 ユーザー選択「復帰しないまま、タイトルだけ戻す
+        // (Recommended)」）。カタログを眺めている間に古い地震情報のタイトルが出続けると、いま起きているように見える。
+        if (!title.tsunamiTitleFlag()) {
+          title.setTitle(null)
+        }
       } else {
         log.info(`[tab] ${defaultTabRef.current} を要求 (アイドル復帰 idleRevertSec=${settings.idleRevertSec})`)
         revertToDefaultTab(`アイドル復帰 idleRevertSec=${settings.idleRevertSec}`)

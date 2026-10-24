@@ -217,6 +217,28 @@ describe('閉じた帯と「いま出す帯」', () => {
     expect(localStorage.getItem('earthquake-count-dismissed')).toBe('ec1')
   })
 
+  // 臨時情報と後発地震注意情報も閉じられる（2026-10-22 ユーザー選択「閉じられるようにする」）
+  it('正: 臨時情報と後発地震注意情報も閉じられ、それぞれのキーへ書く', () => {
+    const n = nankai()
+    const k = kohatsu()
+    render(<Banners items={{ ...none, nankai: n, kohatsu: k }} />)
+    fireEvent.click(screen.getByLabelText('臨時情報を閉じる'))
+    expect(localStorage.getItem('nankai-dismissed')).toBe(n.id)
+    expect(localStorage.getItem('kohatsu-dismissed')).toBeNull()
+    expect(screen.queryByLabelText('臨時情報を閉じる')).toBeNull()
+    fireEvent.click(screen.getByLabelText('後発地震注意情報を閉じる'))
+    expect(localStorage.getItem('kohatsu-dismissed')).toBe(k.id)
+  })
+
+  // 対照: 段階が変わった臨時情報（別の id）は、閉じても出直す
+  it('対照: 閉じた臨時情報も、新しい報が届けば出直す', () => {
+    const n = nankai()
+    const { rerender } = render(<Banners items={{ ...none, nankai: n }} />)
+    fireEvent.click(screen.getByLabelText('臨時情報を閉じる'))
+    rerender(<Banners items={{ ...none, nankai: { ...n, id: `${n.id}-next` } }} />)
+    expect(screen.getByLabelText('臨時情報を閉じる')).toBeTruthy()
+  })
+
   // 正: 閉じた当時の書式（dmdata-xml-）の id でも、今の書式の電文を閉じたままにする
   it('閉じた id は書式を揃えてから突き合わせる', () => {
     localStorage.setItem('quake-notice-dismissed', 'dmdata-xml-abc')
