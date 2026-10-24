@@ -31,7 +31,7 @@ import {
 } from '../../utils/arrivalToken'
 import { fetchSeismoStatus, isValidSeismoHostUrl } from '../../services/seismoStream'
 import {
-  seismoStatusLine, SEISMO_STATUS_TONE_CLASS, type SeismoUiStatus,
+  seismoStatusLine, seismoUnreadableLine, SEISMO_STATUS_TONE_CLASS, type SeismoUiStatus,
 } from './seismoStatusLine'
 import { useKyoshinImport } from '../../hooks/useKyoshinImport'
 import { buildSettingsFile, parseSettingsFile, settingsFileName, type SettingsVariant } from '../../utils/settingsIo'
@@ -131,6 +131,11 @@ interface Props {
   /** 上記一覧の読み込みが完了していないか。読み込み中に「確定」を押すとローカルアーカイブが判定から漏れるため、完了まで「確定」を無効化する。 */
   historicalArchivesLoading?: boolean
   scenarioTest: UseTestScenariosResult
+  /**
+   * 自作地震計の押し出しのうち、読めなかったものの累計（`useSeismoStation` の `unreadableCount`）。
+   * 0 でなければ自作地震計の節に赤い行で出す（2026-10-22 選択「設定タブに出す (Recommended)」）。
+   */
+  seismoUnreadableCount: number
 }
 
 // historicalArchivesはoptionalなpropのため、未指定時に`?? []`をインライン展開すると毎レンダーで
@@ -1070,7 +1075,7 @@ function ArrivalTokenField(
   )
 }
 
-export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arrivalTokenStatus, onReplaceSettings, onTest, kyoshinTimeOffset, kyoshinInputDateTime, onSetKyoshinInputDateTime, dmdataConnectionStatus, dmdataClassifications, replayIsFetching, replayError, onStartReplay, onStopReplay, historicalArchives, historicalArchivesLoading, scenarioTest }: Props) {
+export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arrivalTokenStatus, onReplaceSettings, onTest, kyoshinTimeOffset, kyoshinInputDateTime, onSetKyoshinInputDateTime, dmdataConnectionStatus, dmdataClassifications, replayIsFetching, replayError, onStartReplay, onStopReplay, historicalArchives, historicalArchivesLoading, scenarioTest, seismoUnreadableCount }: Props) {
   const [voicevoxStatus, setVoicevoxStatus] = useState<'idle' | 'checking' | 'available' | 'unavailable' | 'invalid'>('idle')
   const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<VoicevoxSpeaker[]>([])
 
@@ -1139,7 +1144,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
       // ここで漏れると設定タブが「確認中…」のまま固まる。
       .catch((error: unknown) => {
         log.warn('[seismo] 接続確認が失敗した', error)
-        if (!cancelled) setSeismoStatus({ kind: 'unreachable', detail: 'check-threw' })
+        if (!cancelled) setSeismoStatus({ kind: 'unreachable', detail: 'check-threw', reason: 'unknown' })
       })
     return () => { cancelled = true }
   }, [settings.seismoEnabled, debouncedSeismoUrl])
@@ -1388,14 +1393,23 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               />
             </Row>
             <Row label="接続状態" description="">
-              <span
-                className={`text-xs w-56 text-right leading-snug ${
-                  isSeismoCheckPending
-                    ? SEISMO_STATUS_TONE_CLASS.muted
-                    : SEISMO_STATUS_TONE_CLASS[seismoStatusText.tone]
-                }`}
-              >
-                {isSeismoCheckPending ? '確認中…' : seismoStatusText.text}
+              <span className="flex flex-col items-end gap-0.5 w-56">
+                <span
+                  className={`text-xs text-right leading-snug ${
+                    isSeismoCheckPending
+                      ? SEISMO_STATUS_TONE_CLASS.muted
+                      : SEISMO_STATUS_TONE_CLASS[seismoStatusText.tone]
+                  }`}
+                >
+                  {isSeismoCheckPending ? '確認中…' : seismoStatusText.text}
+                </span>
+                {/* 読めない押し出しが届いているときだけ 2 行目に出す（文面は 2026-10-24 ユーザー選択「その文でよい (Recommended)」）。
+                    地図には出さない（2026-09-30 の決定「接続だけ出す」）。 */}
+                {seismoUnreadableCount > 0 && (
+                  <span className={`text-xs text-right leading-snug ${SEISMO_STATUS_TONE_CLASS.problem}`}>
+                    {seismoUnreadableLine(seismoUnreadableCount)}
+                  </span>
+                )}
               </span>
             </Row>
             {seismoStatus.kind === 'ok' && seismoStatus.stations.length > 0 && (
@@ -1408,10 +1422,13 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             {/* **「揺れたときだけ」でも波形は受け取り続ける。** 揺れてから受け取り始めたのでは
                 立ち上がりが絵に入らないので、切り替えるのは表示だけ（→
                 `utils/seismoWaveTrigger.ts`）。通信量が増えることは hint で伝える。 */}
+            {/* 説明の 2 文目は 2026-10-24 ユーザー選択「その文でよい (Recommended)」（「表示しない」は地震カードの波形と震度も止める
+                —— `App.tsx` の `useSeismoQuakeWaves` の `enabled`）。注記の通信量は同日の選択「「（1日約1.3GB）」を添える
+                (Recommended)」（合成の押し出しは毎秒約 15 KB。`services/seismoStream.ts` の `SeismoWaveWant`）。 */}
             <Row
               label="波形グラフ"
-              description="地図の下端に直近の揺れを表示します"
-              hint="「表示しない」以外は波形を受信し続けます"
+              description="地図の下端に直近の揺れを表示します。「表示しない」にすると、地震カードの自作地震計の波形と震度も表示しません"
+              hint="「表示しない」以外は波形を受信し続けます（1日約1.3GB）"
             >
               <select
                 value={settings.seismoWave}

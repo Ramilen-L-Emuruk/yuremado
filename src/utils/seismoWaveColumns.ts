@@ -171,6 +171,22 @@ export function trimAfter(base: TimedColumns, limitMs: number): TimedColumns {
 }
 
 /**
+ * 読み返した列の後ろへ、続けて読み返した列を継ぐ。**刻みが揃い、続きの頭がちょうど前の末尾に来るときだけ**
+ * （範囲の端をミリ秒へ丸めたぶんのずれは許す。頭は 1 ms・刻みは 0.1%）。継げなければ `null`。
+ * 呼び出し側は**刻みの整数倍の長さで訊く**こと（端数の長さだと、ホストが返す刻みが前の列とずれる）。
+ *
+ * **ずれたまま継がない。** 列の位置で時刻を読むので、半端にずれた列を足すと、後ろ半分の時刻がまるごとずれる。
+ */
+export function appendHistoryColumns(base: TimedColumns, next: TimedColumns): TimedColumns | null {
+  const span = base.columnSpanMs
+  // 刻みのずれは 0.1% まで許す（範囲の端をミリ秒へ丸めたぶん。960 列で 1 列に満たない）。
+  if (!(span > 0) || Math.abs(next.columnSpanMs - span) > span * 1e-3) return null
+  const endMs = base.fromMs + base.columns.length * span
+  if (Math.abs(next.fromMs - endMs) > 1) return null
+  return { ...base, columns: [...base.columns, ...next.columns] }
+}
+
+/**
  * 末尾の一定時間ぶんが静穏か（＝揺れが収まったか）。
  *
  * **時間で打ち切るのではなく、収まったかで決めるための判定**（2026-09-30 のユーザー判断）。

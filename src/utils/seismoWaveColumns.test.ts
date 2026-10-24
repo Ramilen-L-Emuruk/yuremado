@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 import type { WaveHistoryColumn } from '../services/seismoWaveHistory'
 import type { SeismoWaveWindow } from './seismoWaveBuffer'
 import {
+  appendHistoryColumns,
   appendWaveWindow,
   compositeCoverage,
   isSettled,
@@ -445,3 +446,27 @@ describe('compositeCoverage', () => {
     expect(compositeCoverage([{ ...col(1), magMin: NaN, magMax: 1 }]).complete).toBe(false)
   })
 })
+
+describe('appendHistoryColumns（読み返しを伸ばす）', () => {
+  const col = (v: number): WaveHistoryColumn => ({ min: [-v, -v, -v], max: [v, v, v], minMembers: 3, magMin: 0, magMax: v, magSum: Number.NaN, magCount: 0 })
+  const base: TimedColumns = { fromMs: 1000, columnSpanMs: 250, columns: [col(1), col(2)] }
+
+  it('正: 刻みが同じで頭が前の末尾に来れば後ろへ継ぐ', () => {
+    const next: TimedColumns = { fromMs: 1500, columnSpanMs: 250, columns: [col(3)] }
+    expect(appendHistoryColumns(base, next)?.columns.map((c) => c?.max[0])).toEqual([1, 2, 3])
+  })
+
+  it('正: 範囲の端をミリ秒へ丸めたぶんのずれ（頭 1 ms・刻み 0.1%）は許す', () => {
+    const next: TimedColumns = { fromMs: 1500.6, columnSpanMs: 250.2, columns: [col(3)] }
+    expect(appendHistoryColumns(base, next)).not.toBeNull()
+  })
+
+  it('対照: 刻みが違えば継がない（後ろ半分の時刻がずれる）', () => {
+    expect(appendHistoryColumns(base, { fromMs: 1500, columnSpanMs: 260, columns: [col(3)] })).toBeNull()
+  })
+
+  it('安全弁: 頭が前の末尾と離れていれば継がない（間が詰まる）', () => {
+    expect(appendHistoryColumns(base, { fromMs: 1750, columnSpanMs: 250, columns: [col(3)] })).toBeNull()
+  })
+})
+

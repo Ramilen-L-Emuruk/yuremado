@@ -68,6 +68,11 @@ function sourceText(source: SeismoStationState['source'], hasValue: boolean): st
     // 見分けが付かない。
     return '波形のみ'
   }
+  if (source.kind === 'unseen') {
+    // **割り当ててあるのに一度も何も届いていない**（猶予の後。→ `useSeismoStation` の `UNSEEN_GRACE_MS`）。
+    // 行は途絶と同じく赤くし、途絶と見分けられるよう「未着」と名乗る（2026-10-24 ユーザー選択「「未着」でよい (Recommended)」）。
+    return '未着'
+  }
   // **1 本しか無いことは言い切る。** 「単独 1本の最大」は最大と呼べる相手がいない。
   if (source.sensorCount <= 1) return '単独（裏付けなし）'
   return hasValue ? `単独 ${source.sensorCount}本の最大` : `単独 ${source.sensorCount}本`
@@ -96,7 +101,8 @@ export function seismoOverlayRows(
       // **`intensity === null` では代われない。** あちらは「センサーは届いているが
       // 震度を出せない」（非有限の値・起動直後）でも真になるので、途絶えていない行まで
       // 赤くしてしまう。見るのは出どころの種類だけ。
-      silent: station.source.kind === 'silent',
+      // **未着も赤くする**（届くはずのものが届いていない点で途絶と同じ。名乗りは出どころの欄が分ける）。
+      silent: station.source.kind === 'silent' || station.source.kind === 'unseen',
     }
   })
 }

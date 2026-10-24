@@ -65,7 +65,7 @@ describe('createLocalKyoshinArchiveSource', () => {
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const enqueue = vi.fn()
     const setStalled = vi.fn()
-    source.start({ enqueue, setStalled, prefill: vi.fn() })
+    source.start({ enqueue, setStalled, prefill: vi.fn(), backfill: vi.fn() })
 
     await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(2))
     expect(enqueue.mock.calls[0][0]).toMatchObject({
@@ -84,7 +84,7 @@ describe('createLocalKyoshinArchiveSource', () => {
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const enqueue = vi.fn()
     const setStalled = vi.fn()
-    source.start({ enqueue, setStalled, prefill: vi.fn() })
+    source.start({ enqueue, setStalled, prefill: vi.fn(), backfill: vi.fn() })
 
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
     expect(enqueue).not.toHaveBeenCalled()
@@ -101,7 +101,7 @@ describe('createLocalKyoshinArchiveSource', () => {
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const enqueue = vi.fn()
     const setStalled = vi.fn()
-    source.start({ enqueue, setStalled, prefill: vi.fn() })
+    source.start({ enqueue, setStalled, prefill: vi.fn(), backfill: vi.fn() })
 
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
     await new Promise((r) => setTimeout(r, 0))
@@ -117,7 +117,7 @@ describe('createLocalKyoshinArchiveSource', () => {
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const enqueue = vi.fn()
     const setStalled = vi.fn()
-    source.start({ enqueue, setStalled, prefill: vi.fn() })
+    source.start({ enqueue, setStalled, prefill: vi.fn(), backfill: vi.fn() })
 
     await vi.waitFor(() => expect(log.warn).toHaveBeenCalled())
     expect(enqueue).not.toHaveBeenCalled()
@@ -128,7 +128,7 @@ describe('createLocalKyoshinArchiveSource', () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, { ...validArchive, frames: [] }))
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const setStalled = vi.fn()
-    source.start({ enqueue: vi.fn(), setStalled, prefill: vi.fn() })
+    source.start({ enqueue: vi.fn(), setStalled, prefill: vi.fn(), backfill: vi.fn() })
 
     await vi.waitFor(() => expect(setStalled).toHaveBeenCalledWith(true))
     expect(log.warn).toHaveBeenCalled()
@@ -140,7 +140,7 @@ describe('createLocalKyoshinArchiveSource', () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(503, {}))
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const setStalled = vi.fn()
-    source.start({ enqueue: vi.fn(), setStalled, prefill: vi.fn() })
+    source.start({ enqueue: vi.fn(), setStalled, prefill: vi.fn(), backfill: vi.fn() })
 
     await vi.waitFor(() => expect(setStalled).toHaveBeenCalledWith(true))
     expect(log.warn).toHaveBeenCalled()
@@ -150,7 +150,7 @@ describe('createLocalKyoshinArchiveSource', () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const setStalled = vi.fn()
-    source.start({ enqueue: vi.fn(), setStalled, prefill: vi.fn() })
+    source.start({ enqueue: vi.fn(), setStalled, prefill: vi.fn(), backfill: vi.fn() })
 
     await vi.waitFor(() => expect(setStalled).toHaveBeenCalledWith(true))
     expect(log.warn).toHaveBeenCalled()
@@ -161,7 +161,7 @@ describe('createLocalKyoshinArchiveSource', () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(503, {}))
     const source1 = createLocalKyoshinArchiveSource('2018-iburi')
     const setStalled1 = vi.fn()
-    source1.start({ enqueue: vi.fn(), setStalled: setStalled1, prefill: vi.fn() })
+    source1.start({ enqueue: vi.fn(), setStalled: setStalled1, prefill: vi.fn(), backfill: vi.fn() })
     // fetch呼び出し自体は同期的にカウントされるため、それだけを待つと「取得失敗の判定・キャッシュの
     // 破棄」という非同期の後始末より先にsource2を作ってしまい、破棄前の失敗結果をキャッシュから
     // 再利用してしまう（レビューで実際に踏んだ）。setStalled(true)まで待てば後始末は完了している。
@@ -170,7 +170,7 @@ describe('createLocalKyoshinArchiveSource', () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(200, validArchive))
     const source2 = createLocalKyoshinArchiveSource('2018-iburi')
     const enqueue2 = vi.fn()
-    source2.start({ enqueue: enqueue2, setStalled: vi.fn(), prefill: vi.fn() })
+    source2.start({ enqueue: enqueue2, setStalled: vi.fn(), prefill: vi.fn(), backfill: vi.fn() })
     await vi.waitFor(() => expect(enqueue2).toHaveBeenCalledTimes(2))
     expect(fetch).toHaveBeenCalledTimes(2)
   })
@@ -181,7 +181,7 @@ describe('createLocalKyoshinArchiveSource', () => {
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const enqueue = vi.fn()
     const setStalled = vi.fn()
-    source.start({ enqueue, setStalled, prefill: vi.fn() })
+    source.start({ enqueue, setStalled, prefill: vi.fn(), backfill: vi.fn() })
     source.stop()
     resolveFetch(jsonResponse(200, validArchive))
 
@@ -193,12 +193,12 @@ describe('createLocalKyoshinArchiveSource', () => {
   it('同一idの2回目のstart呼び出しはfetchをキャッシュから再利用する', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, validArchive))
     const source1 = createLocalKyoshinArchiveSource('2018-iburi')
-    source1.start({ enqueue: vi.fn(), setStalled: vi.fn(), prefill: vi.fn() })
+    source1.start({ enqueue: vi.fn(), setStalled: vi.fn(), prefill: vi.fn(), backfill: vi.fn() })
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
 
     const source2 = createLocalKyoshinArchiveSource('2018-iburi')
     const enqueue2 = vi.fn()
-    source2.start({ enqueue: enqueue2, setStalled: vi.fn(), prefill: vi.fn() })
+    source2.start({ enqueue: enqueue2, setStalled: vi.fn(), prefill: vi.fn(), backfill: vi.fn() })
     await vi.waitFor(() => expect(enqueue2).toHaveBeenCalledTimes(2))
     expect(fetch).toHaveBeenCalledTimes(1)
   })
@@ -219,7 +219,7 @@ describe('IndexedDBとの優先順位', () => {
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const enqueue = vi.fn()
     const setStalled = vi.fn()
-    source.start({ enqueue, setStalled, prefill: vi.fn() })
+    source.start({ enqueue, setStalled, prefill: vi.fn(), backfill: vi.fn() })
 
     await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(2))
     expect(setStalled).toHaveBeenCalledWith(false)
@@ -231,7 +231,7 @@ describe('IndexedDBとの優先順位', () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(200, validArchive))
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const enqueue = vi.fn()
-    source.start({ enqueue, setStalled: vi.fn(), prefill: vi.fn() })
+    source.start({ enqueue, setStalled: vi.fn(), prefill: vi.fn(), backfill: vi.fn() })
 
     await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(2))
     expect(fetch).toHaveBeenCalledTimes(1)
@@ -243,7 +243,7 @@ describe('IndexedDBとの優先順位', () => {
     vi.mocked(getMergedKyoshinArchive).mockRejectedValue(new Error('IndexedDB error'))
     const source = createLocalKyoshinArchiveSource('2018-iburi')
     const setStalled = vi.fn()
-    source.start({ enqueue: vi.fn(), setStalled, prefill: vi.fn() })
+    source.start({ enqueue: vi.fn(), setStalled, prefill: vi.fn(), backfill: vi.fn() })
 
     await vi.waitFor(() => expect(setStalled).toHaveBeenCalledWith(true))
     expect(log.warn).toHaveBeenCalled()

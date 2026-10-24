@@ -129,6 +129,9 @@ export function axisZeroLabel(zero: WaveAxisZero): string {
   return formatTime(new Date(zero.ms).toISOString()) ?? ''
 }
 
+/** 合成で描いた絵に、合成の無い列が混ざっているときの見出しの印（2026-10-24 ユーザー選択「その文でよい (Recommended)」）。 */
+const COMPOSITE_PARTIAL_LABEL = '合成の無い区間あり'
+
 /**
  * 地震カードの波形を、描く列へ畳む。
  *
@@ -143,6 +146,8 @@ export function axisZeroLabel(zero: WaveAxisZero): string {
  * @param unit 列の単位（自作地震計は gal・公開観測点は μm/s）。下限の物差しはこれで決まる
  */
 export function foldQuakeWaveColumns(params: {
+  /** 観測点（測れないとき、最後に測れた静かさを引く。→ `WaveUnit.rememberedQuietLevel`）。 */
+  readonly stationId: string
   readonly base: TimedColumns
   readonly trimmed: TimedColumns
   readonly zeroMs: number
@@ -150,18 +155,25 @@ export function foldQuakeWaveColumns(params: {
   readonly columnCount: number
   readonly unit: WaveUnit
 }): PaintableColumns {
-  const { base, trimmed, zeroMs, visibleAxes, columnCount, unit } = params
+  const { stationId, base, trimmed, zeroMs, visibleAxes, columnCount, unit } = params
   return foldHistoryColumns({
     source: trimmed.columns,
     columnCount,
-    minScaleGal: quakeMinScale(base, zeroMs, unit),
+    minScaleGal: quakeMinScale(stationId, base, zeroMs, unit),
     visibleAxes,
   })
 }
 
-/** カードの縦の下限（列の単位で）。3 成分を重ねるときも合成のときも同じ値を使う。 */
-function quakeMinScale(base: TimedColumns, zeroMs: number, unit: WaveUnit): number {
-  return unit.minScale('card', measureQuietLevel(base, zeroMs))
+/**
+ * カードの縦の下限（列の単位で）。3 成分を重ねるときも合成のときも同じ値を使う。
+ *
+ * **0 の手前で測れなければ、その観測点で最後に測れた静かさを使う**（2026-10-24 ユーザー選択「アプリが最後に測った値
+ * (Recommended)」）。測れたら控える —— 控えは新しいデータ時刻でしか書き換わらないので、古いカードを開いても戻らない。
+ */
+function quakeMinScale(stationId: string, base: TimedColumns, zeroMs: number, unit: WaveUnit): number {
+  const measured = measureQuietLevel(base, zeroMs)
+  unit.rememberQuietLevel(stationId, zeroMs, measured)
+  return unit.minScale('card', measured ?? unit.rememberedQuietLevel(stationId))
 }
 
 /** 震度の行の 1 項目。**画面には短い名前と値だけ**を出し、正式な名前はホバーで見せる。 */
@@ -294,6 +306,8 @@ function HistoryWave({
   }, [detailId])
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [scaleText, setScaleText] = useState<string | null>(null)
+  /** 合成で描いたが、合成の無い列が混ざっている（見出しに「合成の無い区間あり」を出す）。 */
+  const [compositePartial, setCompositePartial] = useState(false)
   // 「範囲を切れなかった」を記録へ残した組。**同じ理由は 1 回だけ** —— 描き直しは列が伸びるたび
   // （0.3 秒ごと）に走るので、間引かないと同じ行で埋まる。
   const loggedUntrimmedRef = useRef<string | null>(null)
@@ -339,10 +353,11 @@ function HistoryWave({
           widthPx,
         })
       const marks = buildArrivalMarks(trimmed, wave.arrival)
-      const minScale = quakeMinScale(wave.columns, wave.axisZero.ms, wave.unit)
+      const minScale = quakeMinScale(wave.stationId, wave.columns, wave.axisZero.ms, wave.unit)
       let lastBuilt: PaintableColumns | null = null
       const build = (columnCount: number) => {
         lastBuilt = foldQuakeWaveColumns({
+          stationId: wave.stationId,
           base: wave.columns,
           trimmed,
           zeroMs: wave.axisZero.ms,
@@ -372,10 +387,14 @@ function HistoryWave({
       // 代わりにはできない** —— あちらはライブ接続の生死なので、過去に完結した
       // 7 日ぶんのカードまで薄くなる。
       if (view === 'composite') {
-        // **値のある列がすべて合成を持つときだけ合成で描く**（`compositeCoverage`）。1 列でも欠けていれば
-        // 3 成分を重ねた絵へ戻し、記録へ残す —— 画面からは「合成を選んだのに 3 本出ている」としか見えない。
+        // **合成のある列だけで合成を描く**（2026-10-22 ユーザーの答え「合成のある列だけで、なんか記載はしようよ」）。
+        // 合成の無い列は線を切り（`paintCompositeColumns` は値の無い列を描かない）、見出しに「合成の無い区間あり」を出す
+        // （文面は 2026-10-24 ユーザー選択「その文でよい (Recommended)」）。以前は 1 列でも欠けると黙って 3 成分の絵へ
+        // 戻していたので、「合成を選んだのに 3 本出ている」としか見えなかった。
+        // **1 列も合成を持たない**（合成を返さない古いホストだけの区間）ときは、描ける線が無いので 3 成分の絵へ戻す。
         const coverage = compositeCoverage(trimmed.columns)
-        if (coverage.complete) {
+        setCompositePartial(coverage.withComposite > 0 && !coverage.complete)
+        if (coverage.withComposite > 0) {
           // **線が 1 本だけなので、前後 1 秒で均した線を重ねる**（2026-10-13 ユーザー承認。地図の下端の合成の段と
           // 同じ見せ方）。材料（列の和と数）を返さない古いホストの列では引かない ——記録へ残す。
           const smooth = smoothCompositeWithin(wave.columns, trimmed, MEAN_LINE_WINDOW_MS)
@@ -405,13 +424,15 @@ function HistoryWave({
           publish()
           return
         }
-        const logKey = `${wave.stationId}:${coverage.withComposite === 0 ? 'none' : 'partial'}`
+        const logKey = `${wave.stationId}:none`
         if (loggedNoMagRef.current !== logKey) {
           loggedNoMagRef.current = logKey
           log.debug(
-            `[seismo] 地震カードの波形に合成の無い列がある（${wave.stationId}）: 値のある ${coverage.valued} 列のうち合成は ${coverage.withComposite} 列。3 成分を重ねて描く`,
+            `[seismo] 地震カードの波形に合成が 1 列も無い（${wave.stationId}）: 値のある ${coverage.valued} 列。3 成分を重ねて描く`,
           )
         }
+      } else {
+        setCompositePartial(false)
       }
       setScaleText(paintWaveColumns(canvas, buildShared, wave.interrupted, { marks, visibleAxes: CARD_VISIBLE_AXES, ticks, unit: wave.unit.label, vertical }))
       publish()
@@ -450,6 +471,7 @@ function HistoryWave({
         </span>
         {/* **震度は観測点名と同じ行へ置く**（行を増やさない。2026-10-05 のユーザー判断）。 */}
         {intensityParts !== null && <QuakeIntensityLine parts={intensityParts} className="text-white/85" />}
+        {compositePartial && <span className="text-secondary truncate">{COMPOSITE_PARTIAL_LABEL}</span>}
         {/* 縦を圧縮している段だけ、ホバーで一言添える（文面と承認は `COMPRESSED_VERTICAL_NOTE`）。 */}
         <span
           className="ml-auto font-mono tabular-nums text-secondary"

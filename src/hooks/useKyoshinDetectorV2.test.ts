@@ -7,13 +7,14 @@
 // どちらも「静かに劣化する」タイプの問題で、検知コアの単体テストでは捉えられない。
 //
 // React を動かすため、このファイルだけ jsdom 環境で実行する。
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { muteConsoleError } from '../test-utils/muteConsoleError'
 import { renderHook, cleanup } from '@testing-library/react'
 import { siteSignature, RESULT_STALL_RESET_FRAMES, WARMUP_WAIT_MAX_FRAMES, useKyoshinDetectorV2 } from './useKyoshinDetectorV2'
-import type { KyoshinWarmup } from './useKyoshinRealtime'
+import type { KyoshinBackfill, KyoshinWarmup } from './useKyoshinRealtime'
 import * as detector from '../utils/kyoshinDetector'
 import type { SiteCoords } from '../services/kyoshin'
+import { log } from '../utils/logger'
 
 /** この一連のテストで使う供給の識別子。 */
 const SUPPLY_KEY = 'test-supply'
@@ -78,7 +79,7 @@ describe('useKyoshinDetectorV2: step() が壊れ続けたら検知結果を空�
   /** dataTime を進めながらフックを再レンダーする（step() は dataTime 更新でのみ走る）。 */
   function driveFrames(count: number, startMs = Date.UTC(2026, 0, 1, 0, 0, 0)) {
     const { result, rerender } = renderHook(
-      ({ t }: { t: string }) => useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+      ({ t }: { t: string }) => useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { t: new Date(startMs).toISOString() } },
     )
     for (let i = 1; i < count; i++) {
@@ -126,7 +127,7 @@ describe('useKyoshinDetectorV2: 近傍メタのキャッシュ判定', () => {
   function drive(frames: { sites: SiteCoords; t: string }[]) {
     const { rerender } = renderHook(
       ({ sites, t }: { sites: SiteCoords; t: string }) =>
-        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: frames[0] },
     )
     for (const f of frames.slice(1)) rerender(f)
@@ -175,7 +176,7 @@ describe('useKyoshinDetectorV2: 床は観測点の並びで返す', () => {
   function driveFloors(count: number, values: number[] = indices) {
     const startMs = Date.UTC(2026, 0, 1, 0, 0, 0)
     const { result, rerender } = renderHook(
-      ({ t }: { t: string }) => useKyoshinDetectorV2(sites, values, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+      ({ t }: { t: string }) => useKyoshinDetectorV2(sites, values, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { t: new Date(startMs).toISOString() } },
     )
     for (let i = 1; i < count; i++) rerender({ t: new Date(startMs + i * 1000).toISOString() })
@@ -209,7 +210,7 @@ describe('useKyoshinDetectorV2: 床は観測点の並びで返す', () => {
     const startMs = Date.UTC(2026, 0, 1, 0, 0, 0)
     const { result, rerender } = renderHook(
       ({ t, v }: { t: string; v: number[] }) =>
-        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { t: new Date(startMs).toISOString(), v: indices } },
     )
     // 3 点目もいったん観測して床を持たせる
@@ -267,7 +268,7 @@ describe('useKyoshinDetectorV2: 床が追いつくまでは古い観測点配列
     const startMs = Date.UTC(2026, 0, 1, 0, 0, 0)
     const { result, rerender } = renderHook(
       ({ sites, t }: { sites: SiteCoords; t: string }) =>
-        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { sites: a, t: new Date(startMs).toISOString() } },
     )
     expect(result.current.floorsSites).toBe(a)
@@ -301,7 +302,7 @@ describe('useKyoshinDetectorV2: 観測点数と震度の件数が食い違うと
   function drive(values: number[], sitesCfg = 'cfg', indicesCfg = 'cfg', frames = 1) {
     const startMs = Date.UTC(2026, 0, 1, 0, 0, 0)
     const { rerender } = renderHook(
-      ({ t }: { t: string }) => useKyoshinDetectorV2(sites, values, t, sitesCfg, indicesCfg, true, false, SUPPLY_KEY, NO_WARMUP),
+      ({ t }: { t: string }) => useKyoshinDetectorV2(sites, values, t, sitesCfg, indicesCfg, true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { t: new Date(startMs).toISOString() } },
     )
     for (let i = 1; i < frames; i++) rerender({ t: new Date(startMs + i * 1000).toISOString() })
@@ -336,7 +337,7 @@ describe('useKyoshinDetectorV2: 観測点数と震度の件数が食い違うと
     const startMs = Date.UTC(2026, 0, 1, 0, 0, 0)
     const { result, rerender } = renderHook(
       ({ t, v }: { t: string; v: number[] }) =>
-        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { t: new Date(startMs).toISOString(), v: [12, 12, 12] } },
     )
     for (let i = 1; i <= mismatchFrames; i++) {
@@ -374,7 +375,7 @@ describe('useKyoshinDetectorV2: 観測点数と震度の件数が食い違うと
     })
     const { result, rerender } = renderHook(
       ({ t, v }: { t: string; v: number[] }) =>
-        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { t: new Date(startMs).toISOString(), v: [12, 12, 12] } },
     )
     // 例外を 2 回（件数は揃えて step() まで通す）
@@ -412,7 +413,7 @@ describe('useKyoshinDetectorV2: 供給が作り直されたら結果を空にす
   function drive(frames = 3) {
     const view = renderHook(
       ({ t, v }: { t: string; v: number[] }) =>
-        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { t: new Date(startMs).toISOString(), v: indices } },
     )
     for (let i = 1; i < frames; i++) {
@@ -461,7 +462,7 @@ describe('useKyoshinDetectorV2: 供給が作り直されたら結果を空にす
     const spy = vi.spyOn(detector, 'step')
     const { result, rerender } = renderHook(
       ({ t, v }: { t: string; v: number[] }) =>
-        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { t: '', v: [] as number[] } },
     )
     rerender({ t: '', v: [] })
@@ -477,7 +478,7 @@ describe('useKyoshinDetectorV2: 供給が作り直されたら結果を空にす
     const shake = [12, 12, 12]
     const view = renderHook(
       ({ t, v }: { t: string; v: number[] }) =>
-        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { t: new Date(startMs).toISOString(), v: quiet } },
     )
     let ms = startMs
@@ -495,7 +496,7 @@ describe('useKyoshinDetectorV2: 供給が作り直されたら結果を空にす
     const shake = [12, 12, 12]
     const view = renderHook(
       ({ t, v }: { t: string; v: number[] }) =>
-        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP),
+        useKyoshinDetectorV2(sites, v, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, null),
       { initialProps: { t: new Date(startMs).toISOString(), v: quiet } },
     )
     let ms = startMs
@@ -542,7 +543,7 @@ describe('useKyoshinDetectorV2: 助走', () => {
   function render(warmup: KyoshinWarmup | null) {
     return renderHook(
       ({ t, w }: { t: string; w: KyoshinWarmup | null }) =>
-        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w),
+        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w, null),
       { initialProps: { t: at(0), w: warmup } },
     )
   }
@@ -598,6 +599,71 @@ describe('useKyoshinDetectorV2: 助走', () => {
     expect(steppedTimes(spy)).toEqual([startMs])
   })
 
+  describe('全滅区間の取り直し（#986）', () => {
+    function renderWithBackfill() {
+      return renderHook(
+        ({ t, b }: { t: string; b: KyoshinBackfill | null }) =>
+          useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, NO_WARMUP, b),
+        { initialProps: { t: at(0), b: null as KyoshinBackfill | null } },
+      )
+    }
+    /** 開始の `fromSec`〜`toSec` 秒後（含まない）を 1 秒刻みで。 */
+    function holeFrames(fromSec: number, toSec: number) {
+      const frames = []
+      for (let s = fromSec; s < toSec; s++) frames.push({ time: new Date(startMs + s * 1000), dataTime: at(s), sitesKey: 'cfg', indices })
+      return frames
+    }
+
+    it('正: 取り直しが始まったら通常フレームを待たせ、穴のフレームを先に食わせる（状態は作り直さない）', () => {
+      const spy = vi.spyOn(detector, 'step')
+      const reset = vi.spyOn(detector, 'resetTransientState')
+      const { rerender } = renderWithBackfill()
+      // 1〜9 秒後は全滅していて、10 秒後に戻った。戻った秒より先に `begin` が届く。
+      rerender({ t: at(10), b: { supplyKey: SUPPLY_KEY, id: 1, frames: null } })
+      rerender({ t: at(11), b: { supplyKey: SUPPLY_KEY, id: 1, frames: null } })
+      expect(steppedTimes(spy)).toEqual([startMs])
+      rerender({ t: at(11), b: { supplyKey: SUPPLY_KEY, id: 1, frames: holeFrames(1, 10) } })
+      expect(steppedTimes(spy)).toEqual(Array.from({ length: 12 }, (_, s) => startMs + s * 1000))
+      expect(reset).not.toHaveBeenCalled()
+    })
+
+    it('対照: 取り直しが無ければ待たない', () => {
+      const spy = vi.spyOn(detector, 'step')
+      const { rerender } = renderWithBackfill()
+      rerender({ t: at(10), b: null })
+      expect(steppedTimes(spy)).toEqual([startMs, startMs + 10_000])
+    })
+
+    it('安全弁: 助走を待っている間に始まった取り直しは使わない（助走が穴の手前の履歴を作るので、穴は巻き戻りになる）', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      const spy = vi.spyOn(detector, 'step')
+      const { rerender } = renderHook(
+        ({ t, w, b }: { t: string; w: KyoshinWarmup | null; b: KyoshinBackfill | null }) =>
+          useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w, b),
+        { initialProps: { t: at(0), w: null as KyoshinWarmup | null, b: null as KyoshinBackfill | null } },
+      )
+      const begin = { supplyKey: SUPPLY_KEY, id: 1, frames: null }
+      rerender({ t: at(1), w: null, b: begin })
+      // 助走が届いたら、取り直しを待たずに進む
+      rerender({ t: at(2), w: warmupFrames(2), b: begin })
+      expect(steppedTimes(spy)).toEqual([startMs - 2000, startMs - 1000, startMs, startMs + 1000, startMs + 2000])
+      // 後から穴のフレームが届いても食わせない
+      rerender({ t: at(3), w: warmupFrames(2), b: { supplyKey: SUPPLY_KEY, id: 1, frames: [] } })
+      expect(steppedTimes(spy)).toEqual([startMs - 2000, startMs - 1000, startMs, startMs + 1000, startMs + 2000, startMs + 3000])
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('助走を待っている間に全滅区間の取り直しが始まった'))).toBe(true)
+    })
+
+    it('安全弁: 穴のフレームが届かないまま上限に達したら、穴のまま進む（同じ番号で待ち直さない）', () => {
+      const spy = vi.spyOn(detector, 'step')
+      const { rerender } = renderWithBackfill()
+      const begin = { supplyKey: SUPPLY_KEY, id: 1, frames: null }
+      for (let i = 10; i < 10 + WARMUP_WAIT_MAX_FRAMES; i++) rerender({ t: at(i), b: begin })
+      expect(spy).toHaveBeenCalledTimes(1 + WARMUP_WAIT_MAX_FRAMES)
+      rerender({ t: at(10 + WARMUP_WAIT_MAX_FRAMES), b: begin })
+      expect(spy).toHaveBeenCalledTimes(2 + WARMUP_WAIT_MAX_FRAMES)
+    })
+  })
+
   it('安全弁: 助走の消化で例外が出ても、今のフレームの検知は続ける', () => {
     const real = detector.step
     let calls = 0
@@ -637,7 +703,7 @@ describe('useKyoshinDetectorV2: 助走が遅れて届いたとき', () => {
   it('正: 助走だけが届いたレンダーでも、待たせていた最後のフレームの検知結果を画面へ出す', () => {
     const { result, rerender } = renderHook(
       ({ t, w }: { t: string; w: KyoshinWarmup | null }) =>
-        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w),
+        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w, null),
       { initialProps: { t: at(0), w: null as KyoshinWarmup | null } },
     )
     // 助走が来ないので待たせている
@@ -656,7 +722,7 @@ describe('useKyoshinDetectorV2: 助走が遅れて届いたとき', () => {
     const spy = vi.spyOn(detector, 'step')
     const { rerender } = renderHook(
       ({ t, w }: { t: string; w: KyoshinWarmup | null }) =>
-        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w),
+        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w, null),
       { initialProps: { t: at(0), w: null as KyoshinWarmup | null } },
     )
     rerender({ t: at(0), w: null })
@@ -691,7 +757,7 @@ describe('useKyoshinDetectorV2: 助走を待つのは時間軸が変わったと
     const spy = vi.spyOn(detector, 'step')
     const { rerender } = renderHook(
       ({ t, k, w }: { t: string; k: string; w: KyoshinWarmup | null }) =>
-        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, k, w),
+        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, k, w, null),
       { initialProps: { t: at(0), k: SUPPLY_KEY, w: NO_WARMUP as KyoshinWarmup | null } },
     )
     rerender({ t: at(1), k: 'other-supply', w: NO_WARMUP })
@@ -703,7 +769,7 @@ describe('useKyoshinDetectorV2: 助走を待つのは時間軸が変わったと
     const spy = vi.spyOn(detector, 'step')
     const { rerender } = renderHook(
       ({ t, w }: { t: string; w: KyoshinWarmup | null }) =>
-        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w),
+        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w, null),
       { initialProps: { t: at(0), w: NO_WARMUP as KyoshinWarmup | null } },
     )
     // 供給が作り直された（リプレイの開始・停止）
@@ -721,7 +787,7 @@ describe('useKyoshinDetectorV2: 助走を待つのは時間軸が変わったと
     const sitesB: SiteCoords = [[36.0, 140.0], [36.1, 140.1], [36.2, 140.2]]
     const { rerender } = renderHook(
       ({ t, s, cfg, w }: { t: string; s: SiteCoords; cfg: string; w: KyoshinWarmup | null }) =>
-        useKyoshinDetectorV2(s, indices, t, cfg, cfg, true, false, SUPPLY_KEY, w),
+        useKyoshinDetectorV2(s, indices, t, cfg, cfg, true, false, SUPPLY_KEY, w, null),
       { initialProps: { t: at(0), s: sites, cfg: 'cfg-a', w: null as KyoshinWarmup | null } },
     )
     rerender({ t: at(1), s: sitesB, cfg: 'cfg-b', w: null })
@@ -768,7 +834,7 @@ describe('useKyoshinDetectorV2: 助走の消化で例外が出たとき', () => 
     })
     const { rerender } = renderHook(
       ({ t, w }: { t: string; w: KyoshinWarmup | null }) =>
-        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w),
+        useKyoshinDetectorV2(sites, indices, t, 'cfg', 'cfg', true, false, SUPPLY_KEY, w, null),
       { initialProps: { t: at(0), w: null as KyoshinWarmup | null } },
     )
     expect(() => {

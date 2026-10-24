@@ -9,7 +9,14 @@ import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { log } from '../utils/logger'
-import { fetchSeismoWaveSamples, readWaveSamples, SAMPLES_RANGE_MAX_MS, SAMPLES_SPAN_MAX_MS } from './seismoWaveSamples'
+import {
+  fetchSeismoWaveSamples,
+  fetchSeismoWaveSamplesParts,
+  readWaveSamples,
+  SAMPLES_DETAIL_SPAN_MAX_MS,
+  SAMPLES_RANGE_MAX_MS,
+  SAMPLES_SPAN_MAX_MS,
+} from './seismoWaveSamples'
 
 vi.mock('../utils/logger', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/logger')>()
@@ -142,3 +149,35 @@ describe('fetchSeismoWaveSamples', () => {
     expect(vi.mocked(log.warn).mock.calls.some((c) => String(c[0]).includes('読み込みの欠け'))).toBe(true)
   })
 })
+
+describe('fetchSeismoWaveSamplesParts（詳細の窓・S13・S18）', () => {
+  it('正: 一部が取れなくても、取れた区切りを返し、取れなかった区切りを並べる', async () => {
+    let n = 0
+    const fetchImpl = vi.fn(async () => {
+      n += 1
+      return n === 2 ? jsonResponse({}, 500) : jsonResponse(body(T0))
+    }) as unknown as typeof fetch
+    const r = await fetchSeismoWaveSamplesParts({ baseUrl: BASE, stationId: 'station-1', fromMs: T0, toMs: T0 + 270_000, fetchImpl })
+    expect(n).toBe(3)
+    expect(r.kind).toBe('ok')
+    if (r.kind !== 'ok') return
+    expect(r.missing).toEqual([{ fromMs: T0 + SAMPLES_RANGE_MAX_MS, toMs: T0 + 2 * SAMPLES_RANGE_MAX_MS }])
+  })
+
+  it('対照: 1 つも取れなければ失敗を返す', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({}, 503)) as unknown as typeof fetch
+    const r = await fetchSeismoWaveSamplesParts({ baseUrl: BASE, stationId: 'station-1', fromMs: T0, toMs: T0 + 270_000, fetchImpl })
+    expect(r).toEqual({ kind: 'http-error', status: 503 })
+  })
+
+  it('安全弁: 10 分を超える区間も取るが、32 分を超えれば 1 件も出さずに弾く', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(body(T0))) as unknown as typeof fetch
+    const long = await fetchSeismoWaveSamplesParts({ baseUrl: BASE, stationId: 'station-1', fromMs: T0, toMs: T0 + 20 * 60_000, fetchImpl })
+    expect(long.kind).toBe('ok')
+    expect(fetchImpl).toHaveBeenCalledTimes(10)
+    const tooLong = await fetchSeismoWaveSamplesParts({ baseUrl: BASE, stationId: 'station-1', fromMs: T0, toMs: T0 + SAMPLES_DETAIL_SPAN_MAX_MS + 1, fetchImpl })
+    expect(tooLong.kind).toBe('bad-request')
+    expect(fetchImpl).toHaveBeenCalledTimes(10)
+  })
+})
+

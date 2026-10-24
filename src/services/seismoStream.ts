@@ -165,9 +165,25 @@ export interface SeismoStationWaveRevised {
   readonly toMs: number
 }
 
+/**
+ * センサー単独の波形（`event: wave`。`?wave=all` のときだけ届く）。
+ *
+ * **3 軸のセンサーだけを読む。** 2 軸のセンサーはホストが `gal: null` で送り、測る向きごとの値（`axes`）だけを
+ * 載せる —— 東・北・上の 3 成分に解けないので、合成の代わりには描けない。
+ */
+export interface SeismoSensorWave {
+  readonly boardKey: string
+  readonly sensorId: string
+  readonly firstSampleMs: number
+  readonly msPerSample: number
+  /** 3 成分の加速度（gal。東・北・上）。 */
+  readonly gal: readonly [readonly number[], readonly number[], readonly number[]]
+}
+
 /** 押し出しで届く 1 件。 */
 export type SeismoMessage =
   | { readonly kind: 'reading'; readonly reading: SeismoSensorReading }
+  | { readonly kind: 'sensor-wave'; readonly wave: SeismoSensorWave }
   | { readonly kind: 'station-reading'; readonly reading: SeismoStationReading }
   | { readonly kind: 'station-wave'; readonly wave: SeismoStationWave }
   | { readonly kind: 'station-wave-revised'; readonly revised: SeismoStationWaveRevised }
@@ -175,17 +191,17 @@ export type SeismoMessage =
 /**
  * 波形をどこまで要求するか。**ホストの `?wave=` に対応する。**
  *
- * **`'all'`（センサー単独の波形）は用意しない。** あれは管理コンソールの波形タブが
- * 使うもので、実測で毎秒 65 KB ある。こちらが描くのは観測点の合成 1 本だけなので、
- * 要求する理由が無い（口の側の粒度は `seismo-host/src/receiver/readingHub.ts` の
- * `WaveWant`）。
+ * **`'all'`（センサー単独の波形も）は、観測点の合成波形が止まった・無い間だけ使う**
+ * （2026-10-24 ユーザー選択「止まった間だけ全部入りへ (Recommended)」。→ `hooks/useSeismoStation.ts`）。
+ * 実測で毎秒 65 KB あり、合成（毎秒 15 KB）の 4 倍を超えるので、常には要求しない（口の側の粒度は
+ * `seismo-host/src/receiver/readingHub.ts` の `WaveWant`）。
  *
  * **震度はここで選り分けられない。** `reading`（センサー単独）も
  * `station-reading`（観測点の合成）も波形の粒度に関わらず配られる。
  * 捨てずに読むのは、**観測点に 1 台しか割り当てていない場合ホストは合成を作らず、
  * `station-reading` が出ない**ため —— そのときの震度は `reading` からしか取れない。
  */
-export type SeismoWaveWant = 'none' | 'station'
+export type SeismoWaveWant = 'none' | 'station' | 'all'
 
 /**
  * 繋がり具合。
@@ -279,6 +295,51 @@ export interface SeismoSensorInfo {
  * 数秒出すことになる（`useSeismoStation.ts` が古さを端末側の経過時間で測るのは
  * まさにそのため）。
  */
+/**
+ * 応答が返らなかった理由。
+ *
+ * - `timeout`: 待ちの上限（{@link STATUS_TIMEOUT_MS}）で打ち切った
+ * - `mixed-content`: ページが https で宛先が http（localhost 以外）。**ブラウザが通信の前に止める**ので、問い合わせずに返す
+ * - `offline`: 端末がオフライン（`navigator.onLine` が偽）
+ * - `unknown`: それ以外（ホストが落ちている・名前が引けない・CORS など。ブラウザは区別を明かさない）
+ */
+export type SeismoUnreachableReason = 'timeout' | 'mixed-content' | 'offline' | 'unknown'
+
+/** 接続確認の待ちの上限（ms）。設定タブの文言（「5秒待って打ち切った」）もこの値から作る。 */
+export const SEISMO_STATUS_TIMEOUT_MS = STATUS_TIMEOUT_MS
+
+/**
+ * ページが https で、宛先が http のときに真。**localhost・ループバックは除く**（ブラウザは信頼できる宛先として通す）。
+ *
+ * @param pageProtocol 開いているページの `location.protocol`（ページが無い環境では `null`）
+ */
+export function isBlockedMixedContent(baseUrl: string, pageProtocol: string | null): boolean {
+  if (pageProtocol !== 'https:') return false
+  try {
+    const url = new URL(baseUrl)
+    if (url.protocol !== 'http:') return false
+    const host = url.hostname
+    return !(host === 'localhost' || host.endsWith('.localhost') || host === '[::1]' || /^127\./.test(host))
+  } catch {
+    return false
+  }
+}
+
+/** {@link fetchSeismoStatus} が繋がらない理由を見分けるのに読む、ブラウザの状態。 */
+export interface SeismoStatusEnv {
+  /** 開いているページの `location.protocol`。**ページが無い環境では `null`。** */
+  readonly pageProtocol: string | null
+  /** 端末がオンラインか（`navigator.onLine`）。**分からなければ `null`。** 失敗した時点で読む。 */
+  readonly online: () => boolean | null
+}
+
+function browserStatusEnv(): SeismoStatusEnv {
+  return {
+    pageProtocol: typeof location === 'undefined' ? null : location.protocol,
+    online: () => (typeof navigator === 'undefined' || typeof navigator.onLine !== 'boolean' ? null : navigator.onLine),
+  }
+}
+
 export type SeismoHostCheck =
   /** 繋がって、形も読めた。 */
   | {
@@ -297,6 +358,11 @@ export type SeismoHostCheck =
        * `stations` の意味（観測点の座標・地震カードの対象）は変えない。
        */
       readonly assignedStationCount: number | null
+      /**
+       * 割り当てた観測点の識別子（{@link assignedStationCount} と同じ数え方で、重複なし）。**古いホストは `null`。**
+       * 一度も値の届いていない観測点を地図の帯へ「未着」として出すのに使う（`hooks/useSeismoStation.ts`）。
+       */
+      readonly assignedStationIds: readonly string[] | null
       /** センサーごとの割り当て。**素性を読めなかったものは並ばない。** */
       readonly sensors: readonly SeismoSensorInfo[]
       /**
@@ -306,8 +372,14 @@ export type SeismoHostCheck =
        */
       readonly usualIntensities: ReadonlyMap<string, number>
     }
-  /** 応答が返らなかった（落ちている・経路が無い・混在コンテンツで止められた）。 */
-  | { readonly kind: 'unreachable'; readonly detail: string }
+  /**
+   * 応答が返らなかった（落ちている・経路が無い・混在コンテンツで止められた）。
+   *
+   * @param reason **ブラウザから分かる範囲の理由**（設定タブの行に出す。2026-10-22 選択「分かる理由を出す (Recommended)」）。
+   *   `fetch` は理由を例外の文面でしか言わず、文面はブラウザごとに違うので、文面では見分けない ——
+   *   こちらが知っている事実（自分で打ち切った・ページが https で宛先が http・端末がオフライン）だけで分ける
+   */
+  | { readonly kind: 'unreachable'; readonly detail: string; readonly reason: SeismoUnreachableReason }
   /** 応答は返ったが HTTP が成功ではない。 */
   | { readonly kind: 'http-error'; readonly status: number }
   /** 応答は返ったが、こちらが期待する形ではない（別のものが応えている・版が古い）。 */
@@ -448,6 +520,25 @@ function readStationWave(data: unknown): ReadResult<SeismoStationWave> {
   return { value: { stationId, firstSampleMs, msPerSample, gal, memberCount } }
 }
 
+/**
+ * センサー単独の波形を読む。**2 軸のセンサー（`gal: null`）は `null`**（読めないのではなく、描けないだけ）。
+ */
+function readSensorWave(data: unknown): ReadResult<SeismoSensorWave | null> {
+  const o = obj(data)
+  const boardKey = str(o.boardKey)
+  const sensorId = str(o.sensorId)
+  if (boardKey === '' || sensorId === '') return { detail: 'wave に boardKey / sensorId が無い' }
+  if (o.gal === null) return { value: null }
+  const firstSampleMs = readFinite(o.firstSampleMs)
+  const msPerSample = readFinite(o.msPerSample)
+  if (firstSampleMs === null || msPerSample === null || msPerSample <= 0) {
+    return { detail: 'wave の時刻・刻みが読めない' }
+  }
+  const gal = readGal(o.gal)
+  if (gal === null) return { detail: 'wave の gal が読めない' }
+  return { value: { boardKey, sensorId, firstSampleMs, msPerSample, gal } }
+}
+
 function readStationWaveRevised(data: unknown): ReadResult<SeismoStationWaveRevised> {
   const o = obj(data)
   const stationId = str(o.stationId)
@@ -466,13 +557,15 @@ function readStationWaveRevised(data: unknown): ReadResult<SeismoStationWaveRevi
  *
  * **知らない `event` 名は「読めない」に数えない。** ホストが将来種別を足しても
  * こちらは困らない（要らないものが届いているだけ）ので、`null` を返して黙って捨てる。
- * **`wave`（センサー単独の波形）もここへ落ちる** —— 要求していないのに届くのは
- * ホスト側が `?wave=station` を知らない古い版のときだが、それで画面が壊れる
- * わけではない。
+ * **2 軸のセンサーの `wave` も `null`**（3 成分に解けないので描けない。読めないわけではない）。
  */
-function readMessage(event: string, data: string): ReadResult<SeismoMessage> | null {
+function readMessage(event: string, data: string, wantSensorWave: boolean): ReadResult<SeismoMessage> | null {
+  // **要求していない `wave` は読まずに捨てる**（届くのはホストが `?wave=station` を知らない古い版のとき。
+  // 画面が壊れるわけではないので「読めない」にも数えない）。
+  if (event === 'wave' && !wantSensorWave) return null
   if (
     event !== 'reading' &&
+    event !== 'wave' &&
     event !== 'station-reading' &&
     event !== 'station-wave' &&
     event !== 'station-wave-revised'
@@ -489,6 +582,11 @@ function readMessage(event: string, data: string): ReadResult<SeismoMessage> | n
     case 'reading': {
       const r = readSensorReading(parsed)
       return 'value' in r ? { value: { kind: 'reading', reading: r.value } } : r
+    }
+    case 'wave': {
+      const r = readSensorWave(parsed)
+      if (!('value' in r)) return r
+      return r.value === null ? null : { value: { kind: 'sensor-wave', wave: r.value } }
     }
     case 'station-reading': {
       const r = readStationReading(parsed)
@@ -633,7 +731,7 @@ async function runOnce(
   noteUnreadable: (detail: string) => void,
 ): Promise<string | null> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch
-  const url = `${apiBase(options.baseUrl)}/stream${options.wave === 'station' ? '?wave=station' : ''}`
+  const url = `${apiBase(options.baseUrl)}/stream${options.wave === 'none' ? '' : `?wave=${options.wave}`}`
 
   // **停滞したらこちらから切る。** `reader.read()` は黙って切れた繋ぎでは
   // 終わりも例外も返さない（{@link STALL_MS}）。
@@ -679,7 +777,7 @@ async function runOnce(
     onOpen()
     const parse = createSseParser(
       (event, data) => {
-        const read = readMessage(event, data)
+        const read = readMessage(event, data, options.wave === 'all')
         // 知らない種別は黙って捨てる（{@link readMessage}）。
         if (read === null) return
         if ('detail' in read) {
@@ -833,6 +931,8 @@ export function connectSeismoStream(options: SeismoStreamOptions): SeismoStreamH
 export async function fetchSeismoStatus(
   baseUrl: string,
   fetchImpl: typeof fetch = globalThis.fetch,
+  /** 繋がらない理由を見分けるための、ブラウザの状態（試験で差し替える）。 */
+  env: SeismoStatusEnv = browserStatusEnv(),
 ): Promise<SeismoHostCheck> {
   // **失敗の理由を記録へ 1 行残す。** 画面に出すのは「何を確かめればよいか」だけで
   // （`SettingsTab/seismoStatusLine.ts`）、`fetch` が返す文面は利用者の行動に
@@ -860,10 +960,19 @@ export async function fetchSeismoStatus(
   if (!isValidSeismoHostUrl(baseUrl)) {
     return fail({ kind: 'unreadable' as const, detail: 'URL の形が正しくない' }, 'URL の形が正しくない')
   }
+  // **ページが https で宛先が http なら問い合わせない。** ブラウザが通信の前に止めるので、投げても同じ失敗が返るだけ。
+  if (isBlockedMixedContent(baseUrl, env.pageProtocol)) {
+    const detail = 'https のページから http の宛先へは繋げない（混在コンテンツ）'
+    return fail({ kind: 'unreachable' as const, detail, reason: 'mixed-content' as const }, detail)
+  }
   let res: Response
+  let timedOut = false
   try {
     const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), STATUS_TIMEOUT_MS)
+    const timer = setTimeout(() => {
+      timedOut = true
+      ctrl.abort()
+    }, STATUS_TIMEOUT_MS)
     try {
       res = await fetchImpl(`${apiBase(baseUrl)}/status`, { signal: ctrl.signal, cache: 'no-store' })
     } finally {
@@ -871,7 +980,8 @@ export async function fetchSeismoStatus(
     }
   } catch (error) {
     const detail = describeError(error)
-    return fail({ kind: 'unreachable' as const, detail }, detail)
+    const reason: SeismoUnreachableReason = timedOut ? 'timeout' : env.online() === false ? 'offline' : 'unknown'
+    return fail({ kind: 'unreachable' as const, detail, reason }, `${reason}: ${detail}`)
   }
   if (!res.ok) return fail({ kind: 'http-error' as const, status: res.status }, `HTTP ${res.status}`)
 
@@ -919,13 +1029,15 @@ export async function fetchSeismoStatus(
     })
   }
 
+  const assigned = readAssignedStationIds(root)
   return {
     kind: 'ok',
     stations: [...stations.values()],
     sensorCount: root.sensors.length,
     sensors,
     usualIntensities: readUsualIntensities(root),
-    assignedStationCount: readAssignedStationCount(root),
+    assignedStationCount: assigned === null ? null : assigned.length,
+    assignedStationIds: assigned,
   }
 }
 
@@ -939,8 +1051,18 @@ export async function fetchSeismoStatus(
 /** 割り当ての形が崩れたことの記録の間引き（状態の確かめは繰り返し走るので、毎回は出さない）。 */
 const throttledAssignedBoardsLog = createLogThrottle(FAILURE_LOG_INTERVAL_MS)
 
-function readAssignedStationCount(root: Record<string, unknown>): number | null {
-  if (root.assignedBoards === undefined) return null
+/** 古いホスト（`assignedBoards` を返さない）だと 1 度だけ記録したか。 */
+let notedNoAssignedBoards = false
+
+function readAssignedStationIds(root: Record<string, unknown>): readonly string[] | null {
+  if (root.assignedBoards === undefined) {
+    // **数え方が黙って変わるので 1 度だけ残す**（割り当てた観測点ではなく、届いた観測点で数える。未着の行も出ない）。
+    if (!notedNoAssignedBoards) {
+      notedNoAssignedBoards = true
+      log.info('[seismo] /status に assignedBoards が無い（古いホスト）。割り当てではなく届いた観測点で数え、未着の行は出さない')
+    }
+    return null
+  }
   // **欄はあるのに形が違うときは記録する。** 黙って `null`（古いホストと同じ数え方）や 0
   //（「観測点は未設定」）へ落ちると、ホストの形が変わったことに気づけない。
   if (!Array.isArray(root.assignedBoards)) {
@@ -957,7 +1079,7 @@ function readAssignedStationCount(root: Record<string, unknown>): number | null 
     throttledAssignedBoardsLog(() => log.warn(`[seismo] /status の assignedBoards ${count} 件から stationId を 1 件も読めません（割り当てから観測点を数えません）`))
     return null
   }
-  return ids.size
+  return [...ids]
 }
 
 /**
@@ -1024,6 +1146,10 @@ export class SeismoHostDirectory {
    * そのブラウザが生きている間は震度が出ず、記録にも何も残らない。
    */
   private boards = new Map<string, string | null>()
+  /** 割り当てた観測点（一度も届いていないものも含む）。**読めていない・古いホストなら `null`。** */
+  private assigned: readonly string[] | null = null
+  /** 観測点の割り当てが台帳に初めて現れた時刻（{@link now} の時計）。「未着」の猶予の起点。 */
+  private readonly assignedSince = new Map<string, number>()
   /** 観測点ごとの普段の計測震度（{@link usualMeasured}）。 */
   private usual: ReadonlyMap<string, number> = new Map()
   /** {@link usual} を読めた時刻（{@link now} の時計）。**一度も読めていなければ `-Infinity`。** */
@@ -1106,6 +1232,17 @@ export class SeismoHostDirectory {
 
   get stations(): readonly SeismoStationInfo[] {
     return [...this.names.values()]
+  }
+
+  /**
+   * 割り当てた観測点と、その割り当てが台帳に初めて現れた時刻（{@link now} の時計）。**読めていなければ空。**
+   *
+   * **起点を観測点ごとに持つ。** ホストの起動時刻 1 つにすると、稼働中に足した観測点が足した瞬間に
+   * 「未着」になる（ホスト側の `assignedReception.ts` が基板ごとに起点を持つのと同じ理由）。
+   */
+  assignedStations(): readonly { readonly stationId: string; readonly sinceMs: number }[] {
+    if (this.assigned === null) return []
+    return this.assigned.map((stationId) => ({ stationId, sinceMs: this.assignedSince.get(stationId) ?? this.now() }))
   }
 
   /**
@@ -1196,6 +1333,9 @@ export class SeismoHostDirectory {
       }
       this.names = nextNames
       this.boards = nextBoards
+      this.assigned = result.assignedStationIds
+      const at = this.now()
+      for (const id of result.assignedStationIds ?? []) if (!this.assignedSince.has(id)) this.assignedSince.set(id, at)
       this.usual = result.usualIntensities
       this.usualReadAtMs = this.now()
     } finally {

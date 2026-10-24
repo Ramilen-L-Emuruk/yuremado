@@ -22,7 +22,7 @@ describe('seismoStatusLine', () => {
     const texts = (['disabled', 'no-url', 'invalid'] as const).map(
       (kind) => seismoStatusLine({ kind }).text,
     )
-    texts.push(seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch' }).text)
+    texts.push(seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' }).text)
     expect(new Set(texts).size).toBe(4)
   })
 
@@ -75,7 +75,7 @@ describe('seismoStatusLine', () => {
   })
 
   it('安全弁: 到達できないときは何を確かめるかを書く', () => {
-    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch' })
+    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' })
     expect(line.text).toContain('起動')
     expect(line.tone).toBe('problem')
   })
@@ -83,7 +83,7 @@ describe('seismoStatusLine', () => {
   it('対照: 確認事項を 2 つ詰めない', () => {
     // ホーム画面から開く前提は、この行の上にある常時表示の但し書きが受け持つ。
     // 両方に書くと狭いパネルで折り返して読みにくくなる。
-    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch' })
+    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' })
     expect(line.text).not.toContain('ホーム画面')
   })
 
@@ -97,7 +97,7 @@ describe('seismoStatusLine', () => {
       { kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: null },
       { kind: 'ok', stations: [], sensorCount: 0, assignedStationCount: 2 },
       { kind: 'ok', stations: [{ stationId: 'a', displayName: 'A', lat: 35, lon: 139 }], sensorCount: 3, assignedStationCount: null },
-      { kind: 'unreachable', detail: 'Failed to fetch' },
+      { kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' },
       { kind: 'http-error', status: 503 },
       { kind: 'unreadable', detail: 'x' },
     ]
@@ -107,7 +107,7 @@ describe('seismoStatusLine', () => {
   it('安全弁: 失敗の詳細を画面へ出さない', () => {
     // `fetch` が返す文面（`Failed to fetch` 等）は利用者の行動に繋がらない。
     // 詳細は記録へ出る（`seismoStream.ts`）。
-    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch' })
+    const line = seismoStatusLine({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' })
     expect(line.text).not.toContain('Failed to fetch')
     const unreadable = seismoStatusLine({ kind: 'unreadable', detail: 'sensors が無い' })
     expect(unreadable.text).not.toContain('sensors')
@@ -120,5 +120,25 @@ describe('seismoStatusLine', () => {
 
   it('安全弁: 色調の表は 3 種すべてを持つ', () => {
     expect(Object.keys(SEISMO_STATUS_TONE_CLASS).sort()).toEqual(['muted', 'ok', 'problem'])
+  })
+
+  describe('繋がらない理由を分ける（2026-10-24 ユーザー選択「3 つともその文でよい (Recommended)」）', () => {
+    it('正: 時間切れ・混在コンテンツ・オフラインはそれぞれの文', () => {
+      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'timeout' }).text).toBe(
+        '応答がない: 5秒待って打ち切った。ホストが起動しているか確かめてください',
+      )
+      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'mixed-content' }).text).toBe(
+        '繋げない: このページは https なので http のホストへは繋げない。https:// のURLを入力してください',
+      )
+      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'offline' }).text).toBe(
+        '繋げない: この端末がオフライン。ネットワークに繋いでください',
+      )
+    })
+
+    it('対照: 理由が分からなければ従来の文', () => {
+      expect(seismoStatusLine({ kind: 'unreachable', detail: 'x', reason: 'unknown' }).text).toBe(
+        '応答がない。ホストが起動しているか確かめてください',
+      )
+    })
   })
 })

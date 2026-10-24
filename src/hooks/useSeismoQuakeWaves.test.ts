@@ -39,7 +39,7 @@ vi.mock('../services/seismoWaveHistory', async (importOriginal) => ({
 
 // **トップレベルで一度読む。** テスト本体で初めて解決すると、その待ちが 1 件目の
 // 所要時間に乗って並列実行のときだけ時間切れになる（CLAUDE.md「検証」）。
-const { pickTargets, rememberPicks, useSeismoQuakeWaves, judgeWaveInterrupted } = await import(
+const { pickTargets, rememberPicks, useSeismoQuakeWaves, useSeismoQuakeWavesWithStatus, judgeWaveInterrupted } = await import(
   './useSeismoQuakeWaves'
 )
 
@@ -691,45 +691,53 @@ describe('useSeismoQuakeWaves', () => {
     }
   })
 
-  it('古い地震は 1 度失敗したら取り直さない', async () => {
-    // **安全弁。** ホストが落ちている間、7 日ぶんのカードを延々と叩き続けないため。
-    // 前のテストと同じ失敗を、発生から 30 分を過ぎた時計で起こす。
+  /** 失敗を続けさせ、30 秒 → 1 分 → 2 分 → 4 分 → 5 分で取り直して 5 回で諦めることを見る。 */
+  async function expectBackoffThenGiveUp(fn: { mock: { calls: unknown[] } }): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10)
+    })
+    expect(fn.mock.calls.length).toBe(1)
+    let calls = 1
+    for (const wait of [30_000, 60_000, 120_000, 240_000, 300_000]) {
+      // 最初の 10 ms ぶん予約がずれるので、境目の手前は 100 ms 余裕を見て確かめる。
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(wait - 100)
+      })
+      expect(fn.mock.calls.length).toBe(calls)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100)
+      })
+      calls += 1
+      expect(fn.mock.calls.length).toBe(calls)
+    }
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30 * 60_000)
+    })
+    expect(fn.mock.calls.length).toBe(6)
+  }
+
+  it('覆した（2026-10-22 選択「間隔を広げて取り直す」）: 古い地震も間隔を広げて取り直し、5 回で諦める', async () => {
+    // **以前は 1 度の失敗で諦めていた。** 回数に上限を置けば、ホストが落ちている間 7 日ぶんのカードを
+    // 叩き続けることはない（→ `utils/retrySchedule.ts`）。
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026/09/29 23:00:00'))
     try {
       fetchSeismoStatus.mockResolvedValue(okStatus())
       fetchSeismoWaveHistory.mockResolvedValue({ kind: 'unreachable', detail: 'Failed to fetch' })
       setup()
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(10)
-      })
-      expect(fetchSeismoWaveHistory).toHaveBeenCalledTimes(1)
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(60_000)
-      })
-      expect(fetchSeismoWaveHistory).toHaveBeenCalledTimes(1)
+      await expectBackoffThenGiveUp(fetchSeismoWaveHistory)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('古い地震しか無ければ、状態の口が落ちていても叩き直さない', async () => {
-    // **同じ歯止めを `/status` 側にも置く**（2 巡目のレビューの HIGH）。
-    // ここを無条件に「取り直す」にすると、ホストが落ちている間ずっと 30 秒ごとに
-    // 問い合わせ続ける。
+  it('覆した: 古い地震しか無くても、状態の口が落ちていれば間隔を広げて取り直し、5 回で諦める', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026/09/29 23:00:00'))
     try {
-      fetchSeismoStatus.mockResolvedValue({ kind: 'unreachable', detail: 'Failed to fetch' })
+      fetchSeismoStatus.mockResolvedValue({ kind: 'unreachable', detail: 'Failed to fetch', reason: 'unknown' })
       setup()
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(10)
-      })
-      expect(fetchSeismoStatus).toHaveBeenCalledTimes(1)
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(60_000)
-      })
-      expect(fetchSeismoStatus).toHaveBeenCalledTimes(1)
+      await expectBackoffThenGiveUp(fetchSeismoStatus)
     } finally {
       vi.useRealTimers()
     }
@@ -779,9 +787,7 @@ describe('useSeismoQuakeWaves', () => {
     }
   })
 
-  it('対照: 古い地震しか無ければ、観測点が 0 件でも叩き直さない', async () => {
-    // 落ちている `/status` に置いたのと同じ歯止め（発生から 30 分）。**取り直しを足した
-    // ぶん、こちらの線も引き直せているかを見る。**
+  it('覆した: 古い地震しか無くても、観測点が 0 件なら取り直す', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026/09/29 23:00:00'))
     try {
@@ -792,9 +798,9 @@ describe('useSeismoQuakeWaves', () => {
       })
       expect(fetchSeismoStatus).toHaveBeenCalledTimes(1)
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(60_000)
+        await vi.advanceTimersByTimeAsync(30_000)
       })
-      expect(fetchSeismoStatus).toHaveBeenCalledTimes(1)
+      expect(fetchSeismoStatus).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
     }
@@ -1192,8 +1198,9 @@ describe('震度を訊けなかったときの取り直し（#494 段3）', () =
     }
   })
 
-  // 安全弁: 発生から 30 分を過ぎた地震は取り直さない（ホストが落ちている間、古いカードのために叩き続けない）。
-  it('古い地震は失敗しても取り直さない', async () => {
+  // 覆した（2026-10-22 選択「間隔を広げて取り直す (Recommended)」）: 古い地震も取り直す。
+  // 安全弁は回数の上限（30 秒から倍々・5 回で諦める。→ `utils/retrySchedule.ts`）。
+  it('古い地震も間隔を広げて取り直し、5 回で諦める', async () => {
     vi.useFakeTimers()
     try {
       fetchSeismoQuakeIntensity.mockResolvedValue(unreachable)
@@ -1203,10 +1210,75 @@ describe('震度を訊けなかったときの取り直し（#494 段3）', () =
         await vi.advanceTimersByTimeAsync(1000)
       })
       expect(fetchSeismoQuakeIntensity).toHaveBeenCalledTimes(1)
+      let calls = 1
+      for (const wait of [30_000, 60_000, 120_000, 240_000, 300_000]) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(wait)
+        })
+        calls += 1
+        expect(fetchSeismoQuakeIntensity).toHaveBeenCalledTimes(calls)
+      }
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(120_000)
+        await vi.advanceTimersByTimeAsync(30 * 60_000)
       })
-      expect(fetchSeismoQuakeIntensity).toHaveBeenCalledTimes(1)
+      expect(fetchSeismoQuakeIntensity).toHaveBeenCalledTimes(6)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('取れなかった地震を知らせる（S21）', () => {
+  function render(replayOffsetMs: number | null) {
+    return renderHook(() =>
+      useSeismoQuakeWavesWithStatus({
+        enabled: true,
+        baseUrl: 'http://host:50506',
+        quakes: [SECONDS_QUAKE],
+        scope: NO_SCOPE,
+        readWave: () => null,
+        replayOffsetMs,
+        originSeconds: SECONDS,
+        subscribeWaveRevised: NO_REVISED,
+      }),
+    )
+  }
+
+  it('正: ライブで読み返せなければ、取り直している間もその地震を載せ、取れたら外す', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026/09/29 22:00:05'))
+    try {
+      fetchSeismoStatus.mockResolvedValue(okStatus())
+      fetchSeismoWaveHistory
+        .mockResolvedValueOnce({ kind: 'unreachable', detail: 'Failed to fetch' })
+        .mockResolvedValue(history())
+      const { result } = render(null)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10)
+      })
+      expect(result.current.failedEventKeys.has(quakeEventKey(SECONDS_QUAKE))).toBe(true)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(result.current.waves.size).toBe(1)
+      expect(result.current.failedEventKeys.size).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('対照: 再生中は取れなくても載せない（記録が無いときは何も出さない）', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026/09/29 22:00:05'))
+    try {
+      fetchSeismoStatus.mockResolvedValue(okStatus())
+      fetchSeismoWaveHistory.mockResolvedValue({ kind: 'unreachable', detail: 'Failed to fetch' })
+      const { result } = render(-3600_000)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10)
+      })
+      expect(fetchSeismoWaveHistory).toHaveBeenCalled()
+      expect(result.current.failedEventKeys.size).toBe(0)
     } finally {
       vi.useRealTimers()
     }
@@ -1340,3 +1412,90 @@ describe('useSeismoQuakeWaves: 作り直しの知らせ', () => {
     warn.mockRestore()
   })
 })
+
+describe('揺れが収まるまで読み返しを伸ばす（S16）', () => {
+  /** 区間 `[fromMs, toMs)` を 250 ms の列で返す。`shaking` が真なら 5 gal、偽なら 0.01 gal の振れ。 */
+  function columnsFor(fromMs: number, toMs: number, shaking: boolean) {
+    const span = 250
+    const n = Math.round((toMs - fromMs) / span)
+    // **発生より前は静かにする**（静かさの物差しは 0 の手前で測る。揺らすと物差しが揺れの大きさになる）。
+    const valueAt = (i: number): number => (shaking && fromMs + i * span >= ORIGIN_SECONDS_MS ? 5 : 0.01)
+    return history({
+      fromMs,
+      columnSpanMs: span,
+      columns: Array.from({ length: n }, (_, i) => {
+        const v = valueAt(i)
+        return { min: [-v, -v, -v] as const, max: [v, v, v] as const, minMembers: 3 }
+      }),
+    })
+  }
+
+  function render() {
+    return renderHook(() =>
+      useSeismoQuakeWaves({
+        enabled: true,
+        baseUrl: 'http://host:50506',
+        quakes: [SECONDS_QUAKE],
+        scope: NO_SCOPE,
+        readWave: () => null,
+        // 再生中（押し出しで伸ばさない）。再生時刻は発生の 1 時間後。
+        replayOffsetMs: -3600_000,
+        originSeconds: SECONDS,
+        subscribeWaveRevised: NO_REVISED,
+      }),
+    )
+  }
+
+  it('正: 窓の終わりでまだ揺れていれば、続きを読み返して継ぐ', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026/09/29 23:00:05'))
+    try {
+      fetchSeismoStatus.mockResolvedValue(okStatus())
+      let call = 0
+      fetchSeismoWaveHistory.mockImplementation(async (p: { range: { fromMs: number; toMs: number } }) => {
+        call += 1
+        // 1 回目（最初の窓）は最後まで揺れている。2 回目（続き）は静か。
+        return columnsFor(p.range.fromMs, p.range.toMs, call === 1)
+      })
+      const { result } = render()
+      await settleStations()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      expect(fetchSeismoWaveHistory).toHaveBeenCalledTimes(2)
+      const [first, second] = fetchSeismoWaveHistory.mock.calls as unknown as [{ range: { fromMs: number; toMs: number } }][]
+      expect(second[0].range.fromMs).toBe(first[0].range.toMs)
+      const wave = result.current.get(quakeEventKey(SECONDS_QUAKE))?.[0]
+      const n1 = Math.round((first[0].range.toMs - first[0].range.fromMs) / 250)
+      const n2 = Math.round((second[0].range.toMs - second[0].range.fromMs) / 250)
+      expect(wave?.columns.columns.length).toBe(n1 + n2)
+      // 2 回目で収まったので、それ以上は伸ばさない（安全弁）。
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(fetchSeismoWaveHistory).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('対照: 窓の中で収まっていれば伸ばさない', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026/09/29 23:00:05'))
+    try {
+      fetchSeismoStatus.mockResolvedValue(okStatus())
+      fetchSeismoWaveHistory.mockImplementation(async (p: { range: { fromMs: number; toMs: number } }) =>
+        columnsFor(p.range.fromMs, p.range.toMs, false),
+      )
+      render()
+      await settleStations()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000)
+      })
+      expect(fetchSeismoWaveHistory).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+

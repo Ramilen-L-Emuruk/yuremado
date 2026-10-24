@@ -18,6 +18,7 @@ import type { JMAQuake, JMATsunami } from '../types/earthquake'
 import { serverNow, serverDate } from '../utils/clock'
 import { log } from '../utils/logger'
 import { recordReplayEvent } from '../utils/replayEventLog'
+import { retryDelayAfter } from '../utils/retrySchedule'
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import {
   type TelegramLoss, createEmptyTelegramLoss, addTelegramLoss, describeTelegramLossParts,
@@ -33,6 +34,9 @@ export const WINDOW_MS = 3600_000
 export const PRE_WINDOW_MS = 24 * 3600_000
 /** 読み込み済みの終端がこれを切ったら次のウィンドウを先読みする。 */
 export const PREFETCH_MARGIN_MS = 10 * 60_000
+
+/** 失敗した先読みの取り直しの待ちが明けたかを見る間隔（ms）。 */
+const PREFETCH_RETRY_POLL_MS = 5_000
 
 /**
  * 再生を受け付ける最も古い時刻。**これより前はどの取得元にもデータが無い。**
@@ -266,12 +270,12 @@ export function createSessionGuard(): SessionGuard {
  */
 export interface ReplayLoss extends TelegramLoss {
   /**
-   * 先読みに失敗した区間の数。
+   * 先読みに失敗して、**まだ取れていない**区間の数。
    *
-   * 先読みは取得を始める前に「ここまで読んだ」印（prefetchEnd）を先へ進めるため、失敗しても
-   * その区間を読み直さない。読み直す作りにすると、恒久的な失敗（レート制限・認証切れ）のときに
-   * 同じ区間へ延々と再要求を投げ続けることになるため、あえて進めたままにしている。
-   * 代わりに欠けた事実をここへ確定として残す（後続の先読みが成功しても消さない）。
+   * 先読みは取得を始める前に「ここまで読んだ」印（prefetchEnd）を先へ進める。失敗した区間は、その印とは別に
+   * **間隔を広げつつ上限つきで取り直す**（2026-10-23 選択「取り直す (Recommended)」・値は 2026-10-24 選択
+   * 「30秒から倍々・5回 (Recommended)」。→ `utils/retrySchedule.ts`）。上限があるので、恒久的な失敗（レート制限・
+   * 認証切れ）でも同じ区間へ延々と再要求を投げ続けない。**取り直して取れたら数から外す。** 諦めた区間は残る。
    */
   failedPrefetches: number
 }
@@ -301,6 +305,19 @@ export function addLoss(loss: ReplayLoss, r: {
 /** 先読み 1 区間ぶんの失敗を損失に足し込む。 */
 export function addFailedPrefetch(loss: ReplayLoss): ReplayLoss {
   return { ...loss, failedPrefetches: loss.failedPrefetches + 1 }
+}
+
+/** 取り直して取れた先読み 1 区間ぶんを損失から外す。 */
+export function removeFailedPrefetch(loss: ReplayLoss): ReplayLoss {
+  return { ...loss, failedPrefetches: Math.max(0, loss.failedPrefetches - 1) }
+}
+
+/**
+ * 取り直して取れた先読みの電文のうち、**再生時刻を過ぎたものは音・読み上げを鳴らさず状態だけ入れる**。
+ * 遅れて届いた分をそのまま流すと、過ぎた電文が一斉に鳴る（取得の遅れを再生の中身に見せない）。
+ */
+export function lateEntriesSilenced(entries: readonly ReplayEntry[], nowMs: number): ReplayEntry[] {
+  return entries.map((e) => (e.replayTime.getTime() < nowMs ? { ...e, silent: true } : e))
 }
 
 /**
@@ -338,6 +355,10 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
   const [loss, setLoss] = useState<ReplayLoss>(createEmptyLoss)
   /** 先読み済みの終端時刻。 */
   const prefetchEndRef = useRef<Date | null>(null)
+  /** 失敗した先読みの区間（取り直しの待ち。`retryAt` は単調時計）。止める・始め直すと捨てる。 */
+  const prefetchRetriesRef = useRef<{ from: Date; to: Date; failures: number; retryAt: number; inFlight: boolean }[]>([])
+  /** 先読みの取り直しを知らせるために出した文言（取り直しが済んだら、**これと同じ文言のときだけ**消す）。 */
+  const prefetchRetryingMessageRef = useRef<string | null>(null)
   // 世代照合。開始・停止のたびに世代を進め、非同期の完了時に現役かどうかを照合する。
   // これが無いと「停止 → 別の日で再開」した直後に、前の日の電文が後から注入されたり、
   // 古い側の finally が新しい取得中の表示を消したりする。
@@ -384,6 +405,8 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
     d.clearCache()
     d.setTimeOffset(offset)
     prefetchEndRef.current = toTime
+    prefetchRetriesRef.current = []
+    prefetchRetryingMessageRef.current = null
     setIsFetching(true)
     setFetchError(null)
     setHistoryError(null)
@@ -544,6 +567,8 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
     const d = depsRef.current
     d.setTimeOffset(null)
     prefetchEndRef.current = null
+    prefetchRetriesRef.current = []
+    prefetchRetryingMessageRef.current = null
     d.resetState()
     d.resetTracking()
     d.resetLocalState()
@@ -579,24 +604,44 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
           log.info('[replay] 先読み完了時に別セッションへ切り替わっていたため結果を破棄')
           return
         }
-        depsRef.current.loadReplayEvents(result.entries)
+        // **積む途中で投げたら、その区間は取り直さずに諦める**（途中まで積んだかもしれず、取り直すと同じ電文を 2 度積む）。
+        // 取得の失敗と分けるのは取り直しの側と同じ理由（下の `.then(成功, 失敗)`）。
+        try {
+          depsRef.current.loadReplayEvents(result.entries)
+        } catch (e) {
+          log.error(`[replay] 先読みした ${fmt(nextFrom)} からの 1 時間を積む途中で投げた（取り直さない）`, e)
+          setLoss((prev) => addFailedPrefetch(addLoss(prev, result)))
+          setFetchError(`先読みに失敗しました。${fmt(nextFrom)} からの 1 時間ぶんは再生されません: ${msgOf(e)}`)
+          recordReplayEvent({ type: 'fetch', phase: 'error', target: 'prefetch', message: msgOf(e) })
+          return
+        }
         // 取得自体は通ったので、一過性のエラー表示は消してよい（残ったままだと
         // 「まだ失敗中」と誤認される）。ただし確定した損失はここでは消さない。
-        setFetchError(null)
+        // **別の区間の取り直しがまだ残っているなら、それを知らせる文言は残す**（取り直しはまだ続いている）。
+        setFetchError((prev) =>
+          prev !== null && prev === prefetchRetryingMessageRef.current && prefetchRetriesRef.current.length > 0 ? prev : null)
         setLoss(prev => addLoss(prev, result))
-      })
-      .catch((e) => {
+      }, (e) => {
         // 記録は世代の照合の後（本編の失敗と同じ理由。止めた打ち切りをエラーとして並べない）
         if (!guard.isCurrent(session)) {
           log.info('[replay] 先読み失敗時に別セッションへ切り替わっていたためエラー表示を抑制', msgOf(e))
           return
         }
         log.error('[replay] 先読み取得失敗', e)
-        // 失敗した区間は読み直さない（理由は ReplayLoss.failedPrefetches の注記）。欠けた事実は
-        // 損失として確定させ、次の先読みが成功しても消えないようにする。原因の文言は回復しうる
-        // 情報なので fetchError 側に出す（次の成功で消えてよい）。
+        // 失敗した区間は損失へ数え、取り直しへ積む（理由は ReplayLoss.failedPrefetches の注記）。取れたら損失から外す。
+        // 原因の文言は回復しうる情報なので fetchError 側に出す（次の成功で消えてよい）。
         setLoss(addFailedPrefetch)
-        setFetchError(`先読みに失敗しました。${fmt(nextFrom)} からの 1 時間ぶんは再生されません: ${msgOf(e)}`)
+        // **取り直しへ積む**（上の効果が、待ちが明けたら 1 本ずつ取り直す）。
+        const delay = retryDelayAfter(1)
+        if (delay !== null) {
+          prefetchRetriesRef.current = [
+            ...prefetchRetriesRef.current,
+            { from: nextFrom, to: nextTo, failures: 1, retryAt: performance.now() + delay, inFlight: false },
+          ]
+        }
+        const retrying = `先読みに失敗しました。${fmt(nextFrom)} からの 1 時間ぶんを取り直しています: ${msgOf(e)}`
+        prefetchRetryingMessageRef.current = retrying
+        setFetchError(retrying)
         // 世代の照合を通った後に置く（本編の失敗と同じ理由）
         recordReplayEvent({ type: 'fetch', phase: 'error', target: 'prefetch', message: msgOf(e) })
       })
@@ -607,7 +652,83 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
           recordReplayEvent({ type: 'fetch', phase: 'done', target: 'prefetch', message: null })
         }
       })
+      .catch((e) => log.error('[replay] 先読みの後始末で投げた', e))
   }, [replayCurrentTime, timeOffset, isFetching, fetchEvents])
+
+  // **失敗した先読みの区間を取り直す**（`ReplayLoss.failedPrefetches`）。1 本ずつ、待ちが明けたものから。
+  useEffect(() => {
+    if (timeOffset === null) return
+    const session = guard.current()
+    let busy = false
+    const timer = setInterval(() => {
+      if (busy || !guard.isCurrent(session)) return
+      const now = performance.now()
+      // **取得中の区間は拾わない**（効果が張り直されると `busy` は新しい偽に戻るので、それだけでは同じ区間を二重に取る）。
+      const item = prefetchRetriesRef.current.find((r) => !r.inFlight && r.retryAt <= now)
+      if (item === undefined) return
+      busy = true
+      item.inFlight = true
+      recordReplayEvent({ type: 'fetch', phase: 'start', target: 'prefetch', message: null })
+      // **取得の失敗と、取れた後の後処理の失敗を分ける**（`.then(成功, 失敗)`）。後処理の例外まで失敗側で拾うと、
+      // 待ちから外した区間の回数を数えるだけで終わり、その区間は二度と取られないまま「取り直しています」が残る。
+      fetchEvents(item.from, item.to, guard.signal(), 'prefetch')
+        .then((result) => {
+          if (!guard.isCurrent(session)) return
+          prefetchRetriesRef.current = prefetchRetriesRef.current.filter((r) => r !== item)
+          try {
+            const nowMs = serverNow()
+            const late = result.entries.filter((e) => e.replayTime.getTime() < nowMs)
+            // **過ぎた電文は、初期状態と同じ復元で既読へ載せる**（音も読み上げも鳴らさず状態だけ入れるので、載せないと
+            // その地震の続報を初報として読み直す）。復元が投げても電文は積む（読み直すだけで済む）。
+            if (late.length > 0) {
+              try {
+                depsRef.current.restorePreWindowTracking(late)
+              } catch (e) {
+                log.error('[replay] 取り直した先読みの過ぎた電文から状態を復元できなかった（積むのは続ける）', e)
+              }
+            }
+            depsRef.current.loadReplayEvents(lateEntriesSilenced(result.entries, nowMs))
+          } catch (e) {
+            // **取り直さない**（途中まで積んだかもしれず、取り直すと同じ電文を 2 度積む）。諦めたことを残す。
+            log.error(`[replay] 先読みに失敗していた ${fmt(item.from)} からの 1 時間を取り直せたが、積む途中で投げた（取り直さない）`, e)
+            if (prefetchRetriesRef.current.length === 0) prefetchRetryingMessageRef.current = null
+            // 区間の欠けは数えたまま（`failedPrefetches` は外さない）。電文の取りこぼしの内訳だけ足す。
+            setLoss((prev) => addLoss(prev, result))
+            setFetchError(`先読みに失敗しました。${fmt(item.from)} からの 1 時間ぶんは再生されません: ${msgOf(e)}`)
+            recordReplayEvent({ type: 'fetch', phase: 'error', target: 'prefetch', message: msgOf(e) })
+            return
+          }
+          // **取り直しを知らせた文言のときだけ、待ちが残っていなければ消す**（諦めた区間の文言・別の取得の失敗は消さない）。
+          if (prefetchRetriesRef.current.length === 0) {
+            const shown = prefetchRetryingMessageRef.current
+            prefetchRetryingMessageRef.current = null
+            setFetchError((prev) => (prev !== null && prev === shown ? null : prev))
+          }
+          setLoss((prev) => removeFailedPrefetch(addLoss(prev, result)))
+          log.info(`[replay] 先読みに失敗していた ${fmt(item.from)} からの 1 時間を取り直した（${item.failures} 回目の失敗の後）`)
+        }, (e) => {
+          if (!guard.isCurrent(session)) return
+          item.failures += 1
+          const delay = retryDelayAfter(item.failures)
+          if (delay === null) {
+            prefetchRetriesRef.current = prefetchRetriesRef.current.filter((r) => r !== item)
+            log.error(`[replay] 先読みに失敗した ${fmt(item.from)} からの 1 時間を ${item.failures} 回続けて取れず、取り直しを諦めた`, e)
+            setFetchError(`先読みに失敗しました。${fmt(item.from)} からの 1 時間ぶんは再生されません: ${msgOf(e)}`)
+          } else {
+            item.retryAt = performance.now() + delay
+            log.warn(`[replay] 先読みに失敗していた ${fmt(item.from)} からの 1 時間をまた取れなかった（${item.failures} 回目）。${Math.round(delay / 1000)} 秒後に取り直す:`, msgOf(e))
+          }
+          recordReplayEvent({ type: 'fetch', phase: 'error', target: 'prefetch', message: msgOf(e) })
+        })
+        .finally(() => {
+          busy = false
+          item.inFlight = false
+          if (guard.isCurrent(session)) recordReplayEvent({ type: 'fetch', phase: 'done', target: 'prefetch', message: null })
+        })
+        .catch((e) => log.error('[replay] 先読みの取り直しの後始末で投げた', e))
+    }, PREFETCH_RETRY_POLL_MS)
+    return () => clearInterval(timer)
+  }, [timeOffset, fetchEvents])
 
   // 取得エラー・履歴の失敗・確定した損失はそれぞれ別の事実なので、あるものは全部出す。
   // 片方を優先して隠すと「先読みが失敗した」表示の裏で、既に確定していた

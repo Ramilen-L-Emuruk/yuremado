@@ -90,6 +90,7 @@ async function renderTab(opts: {
       onFocusMap={() => {}}
       speakingTelegramTextSubject={null}
       seismoWaves={new Map()}
+      seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
     />,
   )

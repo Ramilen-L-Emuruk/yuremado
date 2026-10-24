@@ -12,7 +12,9 @@
 //     `buildGroups` が `list.length < 2` で組まない）。そのときはこちらしか無い
 //   - **途絶**（`'silent'`）。どちらも来なくなった状態。**行は残して値だけ落とす**
 //     —— 消すと「揺れていない」と見分けが付かなくなる（→ `utils/seismoSilence.ts`）。
-//     **一度も届いていない観測点はここへ来ない**（そちらは行を作らない）
+//     **一度も届いていない観測点はここへ来ない**（そちらは下の「未着」）
+//   - **未着**（`'unseen'`）。ホストに割り当ててあるのに、割り当てが見えてから {@link UNSEEN_GRACE_MS} 経っても
+//     何も届かない観測点（2026-10-22 選択「猶予の後に『未着』行を出す (Recommended)」、猶予は 2026-10-24 選択「60秒 (Recommended)」）
 //
 // **震度が一度も届かず、波形だけ届く観測点もある**（`'wave-only'`）。3 方向のうち解けない向きが
 // ある観測点（水平の 2 軸のセンサーだけで上下を測れない等）では、ホストは解ける成分の合成波形だけを
@@ -130,6 +132,31 @@ const REBUILD_INTERVAL_MS = 500
 /** 同じ理由の記録を間引く間隔（ms）。 */
 const LOG_THROTTLE_MS = 300_000
 
+/**
+ * 割り当ててある観測点から何も届かないとき、「未着」の行を出すまでの猶予（ms）。**60 秒。**
+ *
+ * **ホストが「割り当てた基板が届いていない」と判定する猶予と揃える**（`seismo-host/src/receiver/assignedReception.ts` の
+ * `STALE_AFTER_MS`。2026-10-24 ユーザー選択「60秒 (Recommended)」）。短くすると、繋いだ直後やホストの起動直後
+ * （基板は時計が合うまで送らない）に毎回赤く出る。**起点は割り当てが台帳に見えた時刻**（`SeismoHostDirectory.assignedStations`）。
+ */
+export const UNSEEN_GRACE_MS = 60_000
+
+/**
+ * 合成の波形が戻ってから、センサー単独の波形の購読（`?wave=all`）をやめるまで待つ時間（ms）。**30 秒。**
+ *
+ * **すぐ戻さない。** 戻すたびに押し出しを繋ぎ直すので、合成が途切れ途切れに届く間（センサーが出たり入ったり）に
+ * 繋ぎ直しを繰り返すことになる。単独を描いている間も合成は届くので、戻すのを待っても絵は合成へ戻る。
+ */
+export const SENSOR_WAVE_RETURN_HOLD_MS = 30_000
+
+/**
+ * 全部入りを要求してから、描ける単独の波形が来ないと見なすまで（ms）。**30 秒**（繋ぎ直しと最初のまとまりが届くまでに十分）。
+ */
+export const SENSOR_WAVE_PROBE_MS = 30_000
+
+/** 届かなくなったセンサー単独の波形の入れ物を捨てるまで（ms）。合成へ戻った後に抱え続けないため。 */
+const SENSOR_WAVE_DROP_MS = 60_000
+
 /** その震度をどこから採ったか。 */
 export type SeismoIntensitySource =
   /** 観測点の合成（`station-reading`）。複数センサーで裏付けた値。 */
@@ -150,7 +177,7 @@ export type SeismoIntensitySource =
    * **接続の状態では代われない** —— 黙って切れた繋ぎは停滞の検出（45 秒）を待つし、
    * **繋がっているのにその観測点だけ沈黙する形はいつまでも `'open'` のまま**。
    *
-   * **一度も届いていない観測点はここへ来ない**（そちらは行を作らない）。購読を始めた
+   * **一度も届いていない観測点はここへ来ない**（割り当ててあれば猶予の後に `unseen`。それ以外は行を作らない）。購読を始めた
    * 直後に全部の行が「値が来ていない」と名乗ると、警告が常態になって意味を失う。
    *
    * **波形だけ届いていた観測点（{@link SeismoIntensitySource} の `'wave-only'`）が、波形も
@@ -166,6 +193,24 @@ export type SeismoIntensitySource =
    * **震度が一度でも届いた観測点はここへ来ない**（震度が止まれば `'silent'`。#707 の判断）。
    */
   | { readonly kind: 'wave-only' }
+  /**
+   * **割り当ててあるのに、一度も何も届いていない**（{@link UNSEEN_GRACE_MS} を過ぎた）。途絶と同じく赤い行で出し、
+   * 出どころの欄に「未着」と名乗る（2026-10-24 ユーザー選択「「未着」でよい (Recommended)」）。
+   *
+   * **表示名は識別子のままのことがある。** ホストの `/status` が名前を載せるのは実際に届いたセンサーの観測点だけで、
+   * 割り当ての一覧（`assignedBoards`）は名前を持たない。
+   */
+  | { readonly kind: 'unseen' }
+
+/** 下端の波形をどこから描いているか。 */
+export type SeismoWaveSource =
+  /** 観測点の合成波形（`station-wave`）。 */
+  | 'station'
+  /**
+   * センサー単独の波形（`wave`）。**合成が止まった・届かない間だけ**、震度の帯と同じくいちばん強く振れているセンサーを
+   * 描く（2026-10-22 選択「合成が止まったら単独へ落とす (Recommended)」、取り方は 2026-10-24 選択「止まった間だけ全部入りへ (Recommended)」）。
+   */
+  | 'sensor'
 
 /** 観測点 1 つの、いまの姿。 */
 export interface SeismoStationState {
@@ -197,8 +242,10 @@ export interface SeismoStationState {
   /** その値が代表する時刻（ホストの時計）。読めなければ `null`。 */
   readonly atMs: number | null
   readonly source: SeismoIntensitySource
-  /** 抱えている波形のサンプル数。**0 なら波形は届いていない。** */
+  /** 抱えている波形のサンプル数（{@link waveSource} の側）。**0 なら波形は届いていない。** */
   readonly waveSampleCount: number
+  /** 下端の波形をどこから描いているか（{@link SeismoStations.readLiveWave} が返す側）。 */
+  readonly waveSource: SeismoWaveSource
   /**
    * 波形が届かなくなっているか（{@link WAVE_STALE_MS}）。
    *
@@ -235,11 +282,15 @@ export interface SeismoStations {
    * 「おすすめで」で、この場合も「地震計 未接続」を出すと決めた）。再生中は `enabled` が偽なので立たない。
    */
   readonly urlUnusable: boolean
-  // **読めない押し出しはここへ載せない。** 画面へ出さないと決めたので
-  // （→ `docs/spec/data-sources-spec.md` §4.5「繋がらなくなったことを地図の右上へ出す」）、
-  // 受け取ると**誰も読まない値のために再描画だけが起きる** —— しかもホストと PWA の版が
-  // 食い違っている間は押し出しが毎秒 10 件とも読めないので、**障害が起きているときほど
-  // 重くなる**。累計と理由は接続層が記録へ出す（`seismoStream.ts` の `noteUnreadable`）。
+  /**
+   * この接続先で届いた、読めない押し出しの累計（設定タブの自作地震計の行に出す。2026-10-22 選択「設定タブに出す
+   * (Recommended)」。地図は 09-30 の決定どおり出さない）。**接続先が変わったら 0 へ戻す。**
+   *
+   * **1 件ごとには差し替えない。** 版が食い違っている間は毎秒 10 件とも読めないので、受けるたびに描き直すと
+   * 障害が起きているときほど重くなる。観測点の姿の作り直し（{@link REBUILD_INTERVAL_MS}）と一緒に、変わったときだけ出す。
+   * 理由は接続層が記録へ出す（`seismoStream.ts` の `noteUnreadable`）。
+   */
+  readonly unreadableCount: number
   /**
    * その観測点の波形を読む。**参照は安定**（毎レンダー変わらない）。
    *
@@ -248,6 +299,13 @@ export interface SeismoStations {
    * （`requestAnimationFrame` で回すか、間引くか）が決める。`fromMs` より前は写さない（`null` なら抱えている全部）。
    */
   readonly readWave: (stationId: string, fromMs: number | null) => SeismoWaveWindow | null
+  /**
+   * 下端の波形が描く窓を読む。**合成が止まって単独を描いている間はそのセンサーの窓**、それ以外は {@link readWave} と同じ。
+   *
+   * **{@link readWave} と分ける。** 地震カードは合成の列を継ぎ足す（`hooks/useSeismoQuakeWaves.ts`）ので、そちらへ
+   * 単独の値が混ざると、同じ絵の中で合成と単独が見分けられなくなる。参照は安定。
+   */
+  readonly readLiveWave: (stationId: string, fromMs: number | null) => SeismoWaveWindow | null
   /**
    * ホストが取り戻した区間の合成波形を作り直した知らせ（`station-wave-revised`・#597）を受け取る。
    * **戻り値を呼ぶと受け取りをやめる。参照は安定。**
@@ -273,7 +331,7 @@ export interface UseSeismoStationOptions {
 }
 
 /** 帳面に積む 1 観測点ぶん。**state を作る材料。** */
-interface StationEntry {
+export interface StationEntry {
   /** 合成（`station-reading`）の最新。 */
   station: { intensity: number | null; atMs: number | null; receivedAt: number } | null
   /** センサー単独（`reading`）の最新。**鍵は `boardKey/sensorId`。** */
@@ -281,6 +339,12 @@ interface StationEntry {
   wave: SeismoWaveBuffer | null
   /** 波形のまとまりを最後に受け取った時刻。**一度も受け取っていなければ `null`。** */
   waveReceivedAt: number | null
+  /** センサー単独の波形（`?wave=all` の間だけ届く）。**鍵は `boardKey/sensorId`**（{@link sensors} と同じ）。 */
+  sensorWaves: Map<string, { buffer: SeismoWaveBuffer; receivedAt: number }>
+  /** 下端の波形に描いているセンサーの鍵。**合成を描いていれば `null`。** */
+  liveSensorKey: string | null
+  /** 全部入りを要求しても描ける単独の波形が来なかった（2 軸のセンサーだけ等）。**要求の理由から外す。** */
+  sensorWaveUseless: boolean
   /**
    * 震度（合成・単独のどちらでも）を最後に受け取った時刻。
    * **一度も受け取っていなければ `null`。**
@@ -308,7 +372,7 @@ function sameTally(a: SeismoWaveTally, b: SeismoWaveTally): boolean {
 }
 
 /** 2 つの姿が同じかを見る。**同じなら state を差し替えない。** */
-function sameStates(
+export function sameStates(
   a: readonly SeismoStationState[],
   b: readonly SeismoStationState[],
 ): boolean {
@@ -326,6 +390,7 @@ function sameStates(
       x.atMs !== y.atMs ||
       x.source.kind !== y.source.kind ||
       x.waveSampleCount !== y.waveSampleCount ||
+      x.waveSource !== y.waveSource ||
       x.waveStale !== y.waveStale ||
       !sameTally(x.waveTally, y.waveTally)
     ) {
@@ -353,13 +418,33 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
   const { enabled, baseUrl, wave } = options
   const [stations, setStations] = useState<readonly SeismoStationState[]>(EMPTY_STATIONS)
   const [stream, setStream] = useState<SeismoStreamState | null>(null)
+  const [unreadableCount, setUnreadableCount] = useState(0)
+  /**
+   * センサー単独の波形も要るか（合成の波形が止まった・届かない観測点がある間）。**変えると押し出しを繋ぎ直す。**
+   * 決めるのは観測点の姿の作り直し（`rebuild`）で、戻すときは {@link SENSOR_WAVE_RETURN_HOLD_MS} 待つ。
+   */
+  const [needSensorWave, setNeedSensorWave] = useState(false)
 
   // **帳面は ref に持つ。** 押し出しは毎秒 10 件届くので、1 件ごとに state を
   // 差し替えると再描画がそのぶん増える（{@link REBUILD_INTERVAL_MS}）。
   const bookRef = useRef<Map<string, StationEntry>>(new Map())
+  /** 押し出しの受け手。**帳面の効果が作り、繋ぎの効果が呼ぶ**（繋ぎ直しで帳面を捨てないため）。 */
+  const onMessageRef = useRef<((message: SeismoMessage) => void) | null>(null)
+  /** 読めない押し出しの累計（この接続先で）。state へは作り直しの巡回で写す。 */
+  const unreadableRef = useRef(0)
 
   const readWave = useCallback((stationId: string, fromMs: number | null): SeismoWaveWindow | null => {
     return bookRef.current.get(stationId)?.wave?.snapshot(fromMs) ?? null
+  }, [])
+
+  const readLiveWave = useCallback((stationId: string, fromMs: number | null): SeismoWaveWindow | null => {
+    const entry = bookRef.current.get(stationId)
+    if (entry === undefined) return null
+    if (entry.liveSensorKey !== null) {
+      const sensor = entry.sensorWaves.get(entry.liveSensorKey)
+      if (sensor !== undefined) return sensor.buffer.snapshot(fromMs)
+    }
+    return entry.wave?.snapshot(fromMs) ?? null
   }, [])
 
   // **繋ぎ直しをまたいで持つ。** 受け手（地震カード）は一度だけ登録し、繋ぎ直しのたびに登録し直さない。
@@ -378,14 +463,27 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
   // **URL の形はここでも見る。** 形が違えば `fetch` が投げるだけだが、
   // 繋ぎ直しの輪が 1 秒ごとに同じ例外を繰り返すことになる。
   const canConnect = enabled && isValidSeismoHostUrl(baseUrl)
+  // **波形の要求は設定（`wave`）が決め、合成が止まった間だけ単独まで広げる。** 設定が `'none'` なら広げない。
+  const streamWave: SeismoWaveWant = wave === 'station' && needSensorWave ? 'all' : wave
+  /** 帳面の効果から、設定の要求を読む（その効果の依存に入れると、設定を変えるたびに帳面ごと捨てる）。 */
+  const waveRef = useRef(wave)
+  waveRef.current = wave
+  /** 押し出しが開いているか。**全部入りの探りの時計は、開いている間しか進めない**（下の `rebuild`）。 */
+  const streamOpenRef = useRef(false)
+  streamOpenRef.current = stream?.kind === 'open'
 
+  // 帳面（観測点の姿・台帳・穴埋め）。**接続先が変わったときだけ作り直す** —— 要求の切り替え（合成 ↔ 全部入り）で
+  // 繋ぎ直しても、抱えている波形と震度は捨てない。
   useEffect(() => {
     // **繋がない間は帳面ごと捨てる。** 残すと、URL を書き換えて繋ぎ直したときに
     // 前のホストの観測点が混ざる。
     bookRef.current = new Map()
     setStations(EMPTY_STATIONS)
+    unreadableRef.current = 0
+    setUnreadableCount(0)
+    setNeedSensorWave(false)
     if (!canConnect) {
-      setStream(null)
+      onMessageRef.current = null
       return
     }
 
@@ -402,6 +500,7 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
     // 「初めて起きた 1 行」を隠す（接続層が同じ理由で分けている）。
     const throttledUnassigned = createLogThrottle(LOG_THROTTLE_MS)
     const throttledRebuildError = createLogThrottle(LOG_THROTTLE_MS)
+    const throttledSensorWave = createLogThrottle(LOG_THROTTLE_MS)
 
     // **波形の作り直しは観測点ごとに枠を持つ。** 1 つを共有すると、ホストの
     // 再起動や時刻の補正で**複数の観測点が同時に作り直されたとき、最初の 1 件しか
@@ -455,6 +554,13 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
         log.debug(`[seismo] 下部の波形の穴埋めを見送った（${stationId}）: ${SKIP_REASON_TEXT[reason]}`),
       onError: (stationId, error) =>
         throttledRevisedListener(() => log.error(`[seismo] 下部の波形の穴を埋める途中で投げた（${stationId}）`, error)),
+      // **諦めたことは必ず残す**（画面からは「埋まらない」としか見えない）。取り直す番は debug で。
+      onFailed: (stationId, failures, retryInMs) =>
+        failures === 0
+          ? log.warn(`[seismo] 下部の波形の穴を取りに行く範囲が通らなかったので、取り直さない（${stationId}）`)
+          : retryInMs === null
+          ? log.warn(`[seismo] 下部の波形の穴を ${failures} 回続けて取れず、取り直しを諦めた（${stationId}）`)
+          : log.debug(`[seismo] 下部の波形の穴を取れなかった（${stationId}・${failures} 回目）: ${Math.round(retryInMs / 1000)} 秒後に取り直す`),
     })
 
     /** その観測点の項目。**無ければ作る。** */
@@ -466,13 +572,16 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
         sensors: new Map(),
         wave: null,
         waveReceivedAt: null,
+        sensorWaves: new Map(),
+        liveSensorKey: null,
+        sensorWaveUseless: false,
         readingReceivedAt: null,
       }
       book.set(stationId, created)
       return created
     }
 
-    const onMessage = (message: SeismoMessage): void => {
+    onMessageRef.current = (message: SeismoMessage): void => {
       // **経過時間は `performance.now()` で測る**（{@link READING_STALE_MS}）。
       // 端末の壁時計を使うと、スリープからの復帰や時刻補正で跳ねたときに
       // 届いている値がまとめて「古い」へ倒れる。ホストが言う `atMs` も
@@ -521,6 +630,29 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
           entry.readingReceivedAt = receivedAt
           return
         }
+        case 'sensor-wave': {
+          const w = message.wave
+          const stationId = directory.stationIdForBoard(w.boardKey)
+          // 震度と同じく、観測点へ寄せられないセンサーは持たない（記録は震度の側が残す）。**帳面の項目も作らない** ——
+          // 震度より先に単独の波形だけが届いた観測点に項目を作ると、震度も合成も「一度も届いていない」のに項目があるので、
+          // 未着にも途絶にもならず行が出ない。震度が届けば項目はそちらで作られる。
+          if (stationId === null) return
+          const entry = book.get(stationId)
+          if (entry === undefined) return
+          const key = `${w.boardKey}/${w.sensorId}`
+          let found = entry.sensorWaves.get(key)
+          if (found === undefined) {
+            found = { buffer: new SeismoWaveBuffer(WAVE_RETAIN_SEC), receivedAt }
+            entry.sensorWaves.set(key, found)
+          }
+          found.receivedAt = receivedAt
+          // 1 台ぶんなので、効いた本数はどのサンプルも 1。
+          const result = found.buffer.push({ ...w, memberCount: w.gal[0].map(() => 1) })
+          if (result.kind === 'restarted') {
+            throttledSensorWave(() => log.debug(`[seismo] センサー単独の波形を作り直した（${key}）: ${result.why}`))
+          }
+          return
+        }
         case 'station-wave': {
           const w = message.wave
           directory.require(w.stationId)
@@ -566,162 +698,53 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
       }
     }
 
-    const handle = connectSeismoStream({
-      baseUrl,
-      wave,
-      signal: ctrl.signal,
-      onMessage,
-      onState: setStream,
-    })
+    /** 単独へ落ちる理由が最後にあった時刻。**`null` なら理由が無い**（要求を戻す待ちの起点）。 */
+    let sensorWaveNeededAt: number | null = null
+    /** 全部入りを要求し始めた時刻。**要求していなければ `null`**（描ける単独の波形が来ない観測点を見分ける起点）。 */
+    let sensorWaveSince: number | null = null
 
-    /** 帳面から姿を作り、変わっていれば差し替える。 */
+    /** 作り直し 1 巡ぶん。帳面から姿を作り、変わっていれば差し替える。 */
     const rebuild = (): void => {
       const now = performance.now()
-      const next: SeismoStationState[] = []
-      for (const [stationId, entry] of book) {
-        const waveSampleCount = entry.wave?.sampleCount ?? 0
-        const waveTally = entry.wave?.tally ?? EMPTY_TALLY
-        // **一度も届いていないうちは立てない。** 購読を始めた直後と区別が付かない。
-        // **判定は `utils/seismoSilence.ts` の 1 箇所へ寄せてある** —— 震度・波形・
-        // 有感カードの波形で同じ述語を使う（別々に書くと後から食い違う）。
-        const waveStale =
-          judgeSilence({ lastReceivedAt: entry.waveReceivedAt, now, staleMs: WAVE_STALE_MS })
-            .kind === 'silent'
-
-        // **合成が古くなければそれを採る。** 単独へ落ちるのは、合成が
-        // 一度も届いていないか、届かなくなったとき。
-        //
-        // **判定は同じ述語へ通す**（→ `utils/seismoSilence.ts`）。境目を直に書くと、
-        // 同じ「届かなくなった」に判定が 2 つできて、片方だけ動かしたときに
-        // 静かに食い違う（`flowing` は「一度は届いていて、まだ新しい」だけ）。
-        const fresh =
-          judgeSilence({
-            lastReceivedAt: entry.station?.receivedAt ?? null,
-            now,
-            staleMs: READING_STALE_MS,
-          }).kind === 'flowing'
-        if (fresh && entry.station !== null) {
-          next.push({
-            stationId,
-            displayName: directory.displayName(stationId),
-            ...directory.location(stationId),
-            usualMeasured: directory.usualMeasured(stationId),
-            intensity: entry.station.intensity,
-            atMs: entry.station.atMs,
-            source: { kind: 'station' },
-            waveSampleCount,
-            waveStale,
-            waveTally,
-          })
-          continue
-        }
-
-        // **単独は最大値を採る。** 同じ観測点の複数センサーのうち、いちばん強く
-        // 振れたものがそこで観測された揺れ（合成が組めない＝裏付けが無い状態なので、
-        // 平均や中央で薄める根拠が無い）。**何本から採ったかを添える**ので、
-        // 裏付けの有無は受け取る側が示せる。
-        let best: number | null = null
-        let bestAtMs: number | null = null
-        let count = 0
-        for (const [key, r] of entry.sensors) {
-          // **古い項目はここで落とす。** 残すと、止まったセンサーの値が
-          // 「いまの震度」として最大値の選抜に残り続ける。
-          if (now - r.receivedAt >= READING_STALE_MS) {
-            entry.sensors.delete(key)
-            continue
-          }
-          count += 1
-          if (r.intensity !== null && (best === null || r.intensity > best)) {
-            best = r.intensity
-            bestAtMs = r.atMs
-          }
-        }
-        if (count === 0) {
-          // **ここは 3 つの意味を持つので、必ず分ける。**
-          //
-          //   - **震度も波形も一度も届いていない** → 並べない。「震度不明の行」は作らない。
-          //     **購読を始めた直後も必ずここを通る**
-          //   - **震度は一度も届いていないが、波形は届いている** → `'wave-only'` で並べる
-          //     （3 方向のうち解けない向きがある観測点。2026-10-12 ユーザー承認）。波形も
-          //     止まれば下の途絶へ合流する
-          //   - **届いていたのに途絶えた** → **残す。** 消すと「揺れていない」と
-          //     見分けが付かなくなる（→ `SeismoIntensitySource` の `'silent'`）
-          //
-          // **帳面からは消さない** —— 波形の入れ物を捨てると、震度が戻ったときに
-          // 絵が抱えている長さぶん巻き戻る。
-          const readingSilence = judgeSilence({
-            lastReceivedAt: entry.readingReceivedAt,
-            now,
-            staleMs: READING_STALE_MS,
-          })
-          // **震度が一度も届いていなければ、波形で決める。** 震度が一度でも届いた観測点は
-          // 波形が流れていても途絶として扱う（震度が止まったこと自体が知らせるべき事実・#707）。
-          const silence =
-            readingSilence.kind === 'never'
-              ? judgeSilence({ lastReceivedAt: entry.waveReceivedAt, now, staleMs: WAVE_STALE_MS })
-              : readingSilence
-          if (readingSilence.kind === 'never' && silence.kind === 'flowing') {
-            next.push({
-              stationId,
-              displayName: directory.displayName(stationId),
-              ...directory.location(stationId),
-              // 普段はホストが観測点の合成波形から測った値なので、合成でない震度とは比べない。
-              usualMeasured: null,
-              intensity: null,
-              atMs: null,
-              source: { kind: 'wave-only' },
-              waveSampleCount,
-              waveStale,
-              waveTally,
-            })
-            continue
-          }
-          if (silence.kind !== 'silent') continue
+      // **繋がっていない間は探りの起点を進めない**（今から数え直す）。繋ぎ直しが 30 秒を超えると、描けるセンサーを持つ
+      // 観測点まで「描けない」と見なして全部入りの理由から外し、合成が戻るまで単独の波形を二度と要求しない。
+      if (sensorWaveSince !== null && !streamOpenRef.current) sensorWaveSince = now
+      const { states, sensorWaveNeeded } = buildStationStates(book, directory, now, sensorWaveSince, {
+        onSilent: (stationId, readingNever, forMs) =>
           // **どれだけ途絶えているかは記録にしか出ない**（画面は色だけで長さを語らない）。
-          // 瞬断と本物の途絶を事後に分ける手掛かりがここにしか無いので、観測点ごとに
-          // 間引いて残す。
+          // 瞬断と本物の途絶を事後に分ける手掛かりがここにしか無いので、観測点ごとに間引いて残す。
           throttledSilentReading(stationId, () =>
             log.warn(
-              readingSilence.kind === 'never'
+              readingNever
                 ? `[seismo] 波形だけ届いていた観測点の波形が途絶えた（${stationId}）: ` +
-                    `${Math.round(silence.forMs / 1000)} 秒前から届いていない（震度は一度も届いていない）`
-                : `[seismo] 観測点の震度が途絶えた（${stationId}）: ` +
-                    `${Math.round(silence.forMs / 1000)} 秒前から届いていない`,
+                    `${Math.round(forMs / 1000)} 秒前から届いていない（震度は一度も届いていない）`
+                : `[seismo] 観測点の震度が途絶えた（${stationId}）: ${Math.round(forMs / 1000)} 秒前から届いていない`,
             ),
-          )
-          next.push({
-            stationId,
-            displayName: directory.displayName(stationId),
-            ...directory.location(stationId),
-            // 普段はホストが観測点の合成波形から測った値なので、合成でない震度とは比べない。
-            usualMeasured: null,
-            intensity: null,
-            atMs: null,
-            source: { kind: 'silent' },
-            waveSampleCount,
-            waveStale,
-            waveTally,
-          })
-          continue
-        }
-        next.push({
-          stationId,
-          displayName: directory.displayName(stationId),
-          ...directory.location(stationId),
-          // 普段はホストが観測点の合成波形から測った値なので、合成でない震度とは比べない。
-          usualMeasured: null,
-          intensity: best,
-          atMs: bestAtMs,
-          source: { kind: 'sensor', sensorCount: count },
-          waveSampleCount,
-          waveStale,
-          waveTally,
-        })
+          ),
+        onSensorWaveUseless: (stationId) =>
+          log.warn(
+            `[seismo] センサー単独の波形を受けても描けるもの（3 軸のセンサー）が届かない（${stationId}）。` +
+              'この観測点のために全部入りを受けるのをやめる',
+          ),
+      })
+      setStations((prev) => (sameStates(prev, states) ? prev : states))
+      setUnreadableCount(unreadableRef.current)
+
+      // **単独の波形の要求は、理由が消えてから {@link SENSOR_WAVE_RETURN_HOLD_MS} 待って戻す。**
+      // 設定が合成だけを求めているときに限る（`'none'` なら広げない）。
+      if (waveRef.current === 'station' && sensorWaveNeeded) sensorWaveNeededAt = now
+      const need = sensorWaveNeededAt !== null && now - sensorWaveNeededAt < SENSOR_WAVE_RETURN_HOLD_MS
+      if (!need) sensorWaveNeededAt = null
+      // 記録は更新関数の外で出す（更新関数は開発時に 2 回呼ばれるので、中で出すと記録が重なる）。
+      if (need !== (sensorWaveSince !== null)) {
+        log.info(
+          need
+            ? '[seismo] 観測点の合成波形が止まっているので、センサー単独の波形も受け取る（?wave=all）'
+            : '[seismo] 観測点の合成波形が戻ったので、センサー単独の波形の受け取りをやめる',
+        )
+        sensorWaveSince = need ? now : null
       }
-      // **並びを固定する。** 帳面の順（初めて届いた順）で出すと、ホストを
-      // 繋ぎ直すたびに行が入れ替わる。
-      next.sort((a, b) => a.displayName.localeCompare(b.displayName, 'ja'))
-      setStations((prev) => (sameStates(prev, next) ? prev : next))
+      setNeedSensorWave(need)
     }
 
     // **投げても飲み込む。** ここが例外で抜けると、そのひと巡ぶんの「古い震度を
@@ -739,16 +762,260 @@ export function useSeismoStation(options: UseSeismoStationOptions): SeismoStatio
 
     return () => {
       clearInterval(timer)
+      onMessageRef.current = null
+      // 穴埋めの取得と待っている予約を打ち切る。
+      ctrl.abort()
+    }
+  }, [canConnect, baseUrl])
+
+  // 押し出しの繋ぎ。**要求（合成 ↔ 全部入り）が変わったら繋ぎ直す**が、帳面は上の効果が持ち続ける。
+  useEffect(() => {
+    if (!canConnect) {
+      setStream(null)
+      return
+    }
+    const ctrl = new AbortController()
+    const handle = connectSeismoStream({
+      baseUrl,
+      wave: streamWave,
+      signal: ctrl.signal,
+      onMessage: (message) => onMessageRef.current?.(message),
+      onState: setStream,
+      // 累計は接続先ごとに数える（接続層の数は繋ぎ直しのたびに 0 から数え直すので使わない）。
+      onUnreadable: () => {
+        unreadableRef.current += 1
+      },
+    })
+    return () => {
       // **`signal` を落としてから閉じる。** どちらか一方でも購読は畳まれるが、
       // 揃えておくと「閉じたのに枠が空かない」形を作らない。
       ctrl.abort()
       handle.close()
     }
-  }, [canConnect, baseUrl, wave])
+  }, [canConnect, baseUrl, streamWave])
 
   const urlUnusable = enabled && !canConnect
   return useMemo(
-    () => ({ stations, stream, urlUnusable, readWave, subscribeWaveRevised }),
-    [stations, stream, urlUnusable, readWave, subscribeWaveRevised],
+    () => ({ stations, stream, urlUnusable, unreadableCount, readWave, readLiveWave, subscribeWaveRevised }),
+    [stations, stream, urlUnusable, unreadableCount, readWave, readLiveWave, subscribeWaveRevised],
   )
+}
+
+/** {@link buildStationStates} が知らせる記録の口。 */
+interface BuildStationStatesHooks {
+  /** 一度は届いていた観測点が途絶えた（`readingNever` は震度が一度も届いていない＝波形だけの観測点）。 */
+  readonly onSilent: (stationId: string, readingNever: boolean, forMs: number) => void
+  /** 全部入りを要求しても描ける単独の波形が来ない観測点を、要求の理由から外した。 */
+  readonly onSensorWaveUseless: (stationId: string) => void
+}
+
+/**
+ * 下端の波形に描くセンサーを選ぶ。**合成の波形が流れていれば `null`**（合成を描く）。
+ *
+ * 選ぶのは、届いているセンサーのうち**震度がいちばん大きいもの**（帯の「単独 N本の最大」と同じ相手）。
+ * どれも震度が無ければ前に選んでいたもの、それも無ければ最初に見つかったもの。
+ */
+export function pickLiveSensor(
+  sensorWaves: ReadonlyMap<string, { readonly receivedAt: number }>,
+  sensors: ReadonlyMap<string, { readonly intensity: number | null }>,
+  previous: string | null,
+  now: number,
+  compositeFlowing: boolean,
+): string | null {
+  if (compositeFlowing) return null
+  let best: string | null = null
+  let bestIntensity = Number.NEGATIVE_INFINITY
+  let first: string | null = null
+  let previousFresh = false
+  for (const [key, w] of sensorWaves) {
+    if (now - w.receivedAt >= WAVE_STALE_MS) continue
+    first ??= key
+    if (key === previous) previousFresh = true
+    const intensity = sensors.get(key)?.intensity ?? null
+    if (intensity !== null && intensity > bestIntensity) {
+      best = key
+      bestIntensity = intensity
+    }
+  }
+  // **前に選んだセンサーに粘る**（{@link LIVE_SENSOR_SWITCH_MARGIN} 以上上回る相手が出るまで乗り換えない）。静穏時は
+  // センサーどうしの震度がほぼ同じ値で入れ替わるので、粘らないと 0.5 秒ごとに別のセンサーの線へ切り替わる。
+  if (previousFresh && previous !== null) {
+    if (best === null) return previous
+    const prevIntensity = sensors.get(previous)?.intensity ?? null
+    if (prevIntensity !== null && bestIntensity < prevIntensity + LIVE_SENSOR_SWITCH_MARGIN) return previous
+  }
+  return best ?? first
+}
+
+/** 単独の線を別のセンサーへ乗り換えるのに要る震度の差（計測震度）。 */
+export const LIVE_SENSOR_SWITCH_MARGIN = 0.3
+
+/**
+ * 帳面から観測点の姿を作る（{@link useSeismoStation} の作り直し 1 巡ぶん）。**帳面の古い項目はここで落とす。**
+ *
+ * 戻り値の `sensorWaveNeeded` は、合成の波形が止まった・無いのに震度は届いている観測点があるか
+ * （センサー単独の波形を要求する理由）。
+ */
+export function buildStationStates(
+  book: Map<string, StationEntry>,
+  directory: Pick<SeismoHostDirectory, 'displayName' | 'location' | 'usualMeasured' | 'assignedStations'>,
+  now: number,
+  /** 全部入り（`?wave=all`）を要求し始めた時刻。**要求していなければ `null`。** */
+  sensorWaveSince: number | null,
+  hooks: BuildStationStatesHooks,
+): { readonly states: SeismoStationState[]; readonly sensorWaveNeeded: boolean } {
+  const next: SeismoStationState[] = []
+  let sensorWaveNeeded = false
+  for (const [stationId, entry] of book) {
+    // **届かなくなったセンサー単独の入れ物は捨てる**（合成へ戻った後に抱え続けない）。
+    for (const [key, w] of entry.sensorWaves) {
+      if (now - w.receivedAt >= SENSOR_WAVE_DROP_MS) entry.sensorWaves.delete(key)
+    }
+    // **一度も届いていないうちは立てない。** 購読を始めた直後と区別が付かない。
+    // **判定は `utils/seismoSilence.ts` の 1 箇所へ寄せてある** —— 震度・波形・
+    // 有感カードの波形で同じ述語を使う（別々に書くと後から食い違う）。
+    const compositeWave = judgeSilence({ lastReceivedAt: entry.waveReceivedAt, now, staleMs: WAVE_STALE_MS })
+    const readingsFlowing =
+      judgeSilence({ lastReceivedAt: entry.readingReceivedAt, now, staleMs: READING_STALE_MS }).kind === 'flowing'
+    // **合成の波形が止まった・無いのに震度は届いている観測点がある間は、単独の波形も要る**（S10）。
+    // 震度が届いていない観測点は、センサーも黙っているので要求しても描けない。
+    //
+    // **全部入りを要求しても描ける単独の波形が {@link SENSOR_WAVE_PROBE_MS} 来ない観測点は、理由から外す**（2 軸のセンサー
+    // だけの観測点は `gal: null` で届き、描けない）。外さないと、毎秒約 65 KB を受け続けても何も描けない。合成が戻るか
+    // 震度が止まれば数え直す。
+    const wantsSensorWave = compositeWave.kind !== 'flowing' && readingsFlowing
+    const hasFreshSensorWave = [...entry.sensorWaves.values()].some((w) => now - w.receivedAt < WAVE_STALE_MS)
+    if (!wantsSensorWave || hasFreshSensorWave) entry.sensorWaveUseless = false
+    else if (sensorWaveSince !== null && now - sensorWaveSince >= SENSOR_WAVE_PROBE_MS && !entry.sensorWaveUseless) {
+      entry.sensorWaveUseless = true
+      hooks.onSensorWaveUseless(stationId)
+    }
+    if (wantsSensorWave && !entry.sensorWaveUseless) sensorWaveNeeded = true
+    entry.liveSensorKey = pickLiveSensor(
+      entry.sensorWaves,
+      entry.sensors,
+      entry.liveSensorKey,
+      now,
+      compositeWave.kind === 'flowing',
+    )
+    const liveSensor = entry.liveSensorKey === null ? undefined : entry.sensorWaves.get(entry.liveSensorKey)
+    const waveSource: SeismoWaveSource = liveSensor === undefined ? 'station' : 'sensor'
+    const waveSampleCount = liveSensor?.buffer.sampleCount ?? entry.wave?.sampleCount ?? 0
+    const waveTally = liveSensor?.buffer.tally ?? entry.wave?.tally ?? EMPTY_TALLY
+    // **単独を描いている間は「途絶」と名乗らない**（線は流れている。合成が止まったことは見出しが言う）。
+    const waveStale = liveSensor === undefined && compositeWave.kind === 'silent'
+    const waveParts = { waveSampleCount, waveSource, waveStale, waveTally }
+    const located = { displayName: directory.displayName(stationId), ...directory.location(stationId) }
+
+    // **合成が古くなく、値を持っていればそれを採る。** 単独へ落ちるのは、合成が
+    // 一度も届いていないか、届かなくなったとき、**または合成の震度が空のとき**
+    // （2026-10-22 選択「空なら単独へ落とす (Recommended)」。古いときと揃える）。
+    //
+    // **判定は同じ述語へ通す**（→ `utils/seismoSilence.ts`）。境目を直に書くと、
+    // 同じ「届かなくなった」に判定が 2 つできて、片方だけ動かしたときに
+    // 静かに食い違う（`flowing` は「一度は届いていて、まだ新しい」だけ）。
+    const station = entry.station
+    const fresh =
+      station !== null &&
+      judgeSilence({ lastReceivedAt: station.receivedAt, now, staleMs: READING_STALE_MS }).kind === 'flowing'
+    const stationRow = (s: NonNullable<StationEntry['station']>): SeismoStationState => ({
+      stationId,
+      ...located,
+      usualMeasured: directory.usualMeasured(stationId),
+      intensity: s.intensity,
+      atMs: s.atMs,
+      source: { kind: 'station' },
+      ...waveParts,
+    })
+    if (fresh && station.intensity !== null) {
+      next.push(stationRow(station))
+      continue
+    }
+
+    // **単独は最大値を採る。** 同じ観測点の複数センサーのうち、いちばん強く
+    // 振れたものがそこで観測された揺れ（合成が組めない＝裏付けが無い状態なので、
+    // 平均や中央で薄める根拠が無い）。**何本から採ったかを添える**ので、
+    // 裏付けの有無は受け取る側が示せる。
+    let best: number | null = null
+    let bestAtMs: number | null = null
+    let count = 0
+    for (const [key, r] of entry.sensors) {
+      // **古い項目はここで落とす。** 残すと、止まったセンサーの値が
+      // 「いまの震度」として最大値の選抜に残り続ける。
+      if (now - r.receivedAt >= READING_STALE_MS) {
+        entry.sensors.delete(key)
+        continue
+      }
+      count += 1
+      if (r.intensity !== null && (best === null || r.intensity > best)) {
+        best = r.intensity
+        bestAtMs = r.atMs
+      }
+    }
+    // **合成は新しいが値が空で、単独にも値が無い**なら、合成の行のまま出す（震度は「—」）。
+    // 単独へ落とすのは「単独に値があるとき」だけ —— 値の無い単独へ落とすと「合成」が「単独」に
+    // 名乗り替わるだけで、何も良くならない。
+    if (fresh && best === null) {
+      next.push(stationRow(station))
+      continue
+    }
+    if (count === 0) {
+      // **ここは 3 つの意味を持つので、必ず分ける。**
+      //
+      //   - **震度も波形も一度も届いていない** → 並べない。「震度不明の行」は作らない。
+      //     **購読を始めた直後も必ずここを通る**（割り当ててあれば、猶予の後に下の「未着」が拾う）
+      //   - **震度は一度も届いていないが、波形は届いている** → `'wave-only'` で並べる
+      //     （3 方向のうち解けない向きがある観測点。2026-10-12 ユーザー承認）。波形も
+      //     止まれば下の途絶へ合流する
+      //   - **届いていたのに途絶えた** → **残す。** 消すと「揺れていない」と
+      //     見分けが付かなくなる（→ `SeismoIntensitySource` の `'silent'`）
+      //
+      // **帳面からは消さない** —— 波形の入れ物を捨てると、震度が戻ったときに
+      // 絵が抱えている長さぶん巻き戻る。
+      const readingSilence = judgeSilence({ lastReceivedAt: entry.readingReceivedAt, now, staleMs: READING_STALE_MS })
+      // **震度が一度も届いていなければ、波形で決める。** 震度が一度でも届いた観測点は
+      // 波形が流れていても途絶として扱う（震度が止まったこと自体が知らせるべき事実・#707）。
+      const silence = readingSilence.kind === 'never' ? compositeWave : readingSilence
+      // 普段はホストが観測点の合成波形から測った値なので、合成でない震度とは比べない（以下の行はどれも `null`）。
+      if (readingSilence.kind === 'never' && silence.kind === 'flowing') {
+        next.push({ stationId, ...located, usualMeasured: null, intensity: null, atMs: null, source: { kind: 'wave-only' }, ...waveParts })
+        continue
+      }
+      if (silence.kind !== 'silent') continue
+      hooks.onSilent(stationId, readingSilence.kind === 'never', silence.forMs)
+      next.push({ stationId, ...located, usualMeasured: null, intensity: null, atMs: null, source: { kind: 'silent' }, ...waveParts })
+      continue
+    }
+    next.push({
+      stationId,
+      ...located,
+      usualMeasured: null,
+      intensity: best,
+      atMs: bestAtMs,
+      source: { kind: 'sensor', sensorCount: count },
+      ...waveParts,
+    })
+  }
+  // **割り当ててあるのに何も届かない観測点を「未着」で並べる**（S1）。帳面に項目があるものは
+  // 何かが一度は届いているので、上の判定（途絶・波形のみ）に任せる。
+  for (const { stationId, sinceMs } of directory.assignedStations()) {
+    if (book.has(stationId) || now - sinceMs < UNSEEN_GRACE_MS) continue
+    next.push({
+      stationId,
+      displayName: directory.displayName(stationId),
+      ...directory.location(stationId),
+      usualMeasured: null,
+      intensity: null,
+      atMs: null,
+      source: { kind: 'unseen' },
+      waveSampleCount: 0,
+      waveSource: 'station',
+      waveStale: false,
+      waveTally: EMPTY_TALLY,
+    })
+  }
+  // **並びを固定する。** 帳面の順（初めて届いた順）で出すと、ホストを
+  // 繋ぎ直すたびに行が入れ替わる。
+  next.sort((a, b) => a.displayName.localeCompare(b.displayName, 'ja'))
+  return { states: next, sensorWaveNeeded }
 }

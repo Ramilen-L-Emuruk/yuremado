@@ -1,6 +1,7 @@
 // 過ぎた合成波形を、列に畳まずサンプルのまま取る（`GET /waves` を `columns` なしで呼ぶ）。
 //
-// **使うのは詳細の窓（`components/SeismoWaveDetail`）と、下部の波形の穴埋め（`services/seismoWaveRefill.ts`）。**
+// **使うのは詳細の窓（`components/SeismoWaveDetail`。区切りごとに取れたかを返す {@link fetchSeismoWaveSamplesParts}）と、
+// 下部の波形の穴埋め（`services/seismoWaveRefill.ts`）・再生中の下部の波形（`hooks/useSeismoReplay.ts`）。**
 // 穴埋めは抱えている 180 秒の中の穴の範囲だけを取る（2 分を超える穴なら、下の分割で 2 回に分かれる）。
 // 詳細の窓について —— カードの列（上下の端）では、
 // 寄せたときにサンプルが時間順にどう動いたかが分からず、波の形を描けない
@@ -19,7 +20,7 @@ import { isValidSeismoHostUrl } from './seismoStream'
 /** ホストが 1 回で返す範囲の上限（ms）。**`seismo-host` の `WAVE_RAW_RANGE_MAX_MS` と同じ値。** */
 export const SAMPLES_RANGE_MAX_MS = 2 * 60 * 1000
 
-/** 1 回の取り込みで扱う範囲の上限（ms）。**読み返しの窓（5 分）より広く、ホストの列の上限（10 分）以下。** */
+/** {@link fetchSeismoWaveSamples} が 1 回に扱う範囲の上限（ms）。**ホストの列の上限（10 分）以下。** 詳細の窓は {@link SAMPLES_DETAIL_SPAN_MAX_MS}。 */
 export const SAMPLES_SPAN_MAX_MS = 10 * 60 * 1000
 
 /** 取るときの打ち切り（ms）。1 回で 500 KB 前後になるので列より長めに取る。 */
@@ -167,6 +168,89 @@ async function fetchOnce(params: {
   const read = readWaveSamples(parsed)
   if ('detail' in read) return fail({ kind: 'unreadable' as const, detail: read.detail }, read.detail)
   return { kind: 'ok', samples: read.value }
+}
+
+/**
+ * 詳細の窓が 1 回に取る長さの上限（ms）。**地震カードの区間の最長（発生の 60 秒前〜発生 + 30 分の安全弁）を覆う 32 分。**
+ * 区間を全部描くため（2026-10-22 選択「区間を全部描く (Recommended)」）。ホストへは 2 分ずつ順に訊くので、1 回の重さは変わらない。
+ */
+export const SAMPLES_DETAIL_SPAN_MAX_MS = 32 * 60 * 1000
+
+/** {@link fetchSeismoWaveSamplesParts} の結果。 */
+export type WaveSamplePartsResult =
+  /**
+   * 1 つ以上の区切りが取れた。**取れなかった区切りは `missing` に並ぶ**（時刻順）。描く側は、そこを「揺れていなかった」と
+   * 読ませないよう別の描き方にする（`components/SeismoWaveDetail`）。
+   */
+  | { readonly kind: 'ok'; readonly samples: WaveSamples; readonly missing: readonly { readonly fromMs: number; readonly toMs: number }[] }
+  /** 1 つも取れなかった（最後の失敗を返す）・範囲が不正・取り消された。 */
+  | Exclude<WaveSamplesResult, { kind: 'ok' }>
+
+/**
+ * 区間のサンプルを 2 分ずつ取り、**取れた区切りだけを返す**（2026-10-22 選択「取れた区間だけ生で描き、残りは粗い絵」）。
+ * {@link fetchSeismoWaveSamples} と違い、1 つの失敗で全部を捨てない。1 つも取れなければその失敗を返す。
+ */
+export async function fetchSeismoWaveSamplesParts(params: {
+  baseUrl: string
+  stationId: string
+  fromMs: number
+  toMs: number
+  signal?: AbortSignal
+  fetchImpl?: typeof fetch
+}): Promise<WaveSamplePartsResult> {
+  const { baseUrl, stationId, signal } = params
+  const fetchImpl = params.fetchImpl ?? globalThis.fetch
+  const fromMs = Math.floor(params.fromMs)
+  const toMs = Math.ceil(params.toMs)
+  if (!isValidSeismoHostUrl(baseUrl)) return fail({ kind: 'bad-request' as const, detail: 'URL の形が正しくない' }, 'URL の形が正しくない')
+  if (stationId === '') return fail({ kind: 'bad-request' as const, detail: '観測点が空' }, '観測点が空')
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) {
+    return fail({ kind: 'bad-request' as const, detail: '範囲が不正' }, '範囲が不正')
+  }
+  if (toMs - fromMs > SAMPLES_DETAIL_SPAN_MAX_MS) {
+    return fail({ kind: 'bad-request' as const, detail: '範囲が上限を超える' }, '範囲が上限を超える')
+  }
+  const chunks: WaveSampleChunk[] = []
+  const missing: { fromMs: number; toMs: number }[] = []
+  let stationKnown = true
+  let filesFailed = 0
+  let skippedBytes = 0
+  let truncated = false
+  let lastFailure: Exclude<WaveSamplesResult, { kind: 'ok' }> | null = null
+  let gotAny = false
+  for (let from = fromMs; from < toMs; from += SAMPLES_RANGE_MAX_MS) {
+    const to = Math.min(toMs, from + SAMPLES_RANGE_MAX_MS)
+    const got = await fetchOnce({ baseUrl, stationId, fromMs: from, toMs: to, signal, fetchImpl })
+    if (got.kind === 'aborted') return got
+    if (got.kind !== 'ok') {
+      lastFailure = got
+      // 続けて欠けた区切りは 1 つへまとめる（境目の線を区切りごとに引かない）。
+      const prev = missing[missing.length - 1]
+      if (prev !== undefined && prev.toMs === from) prev.toMs = to
+      else missing.push({ fromMs: from, toMs: to })
+      continue
+    }
+    gotAny = true
+    stationKnown &&= got.samples.stationKnown
+    filesFailed += got.samples.filesFailed
+    skippedBytes += got.samples.skippedBytes
+    truncated ||= got.samples.truncated
+    chunks.push(...got.samples.chunks)
+  }
+  if (!gotAny && lastFailure !== null) return lastFailure
+  if (missing.length > 0) {
+    log.warn(
+      `[seismo] 過ぎた波形のサンプルを一部取れなかった（${stationId}）: ` +
+        missing.map((m) => `${new Date(m.fromMs).toISOString()}〜${new Date(m.toMs).toISOString()}`).join('・'),
+    )
+  }
+  if (filesFailed > 0 || skippedBytes > 0 || truncated) {
+    log.warn(
+      `[seismo] 過ぎた波形のサンプルに読み込みの欠け（${stationId}）: 読めなかったファイル ${filesFailed}・読み飛ばし ${skippedBytes} バイト${truncated ? '・打ち切りあり' : ''}`,
+    )
+  }
+  if (!stationKnown) log.warn(`[seismo] 過ぎた波形のサンプル: ホストがこの観測点を知らない（${stationId}）`)
+  return { kind: 'ok', samples: { stationKnown, chunks, filesFailed, skippedBytes, truncated }, missing }
 }
 
 /**

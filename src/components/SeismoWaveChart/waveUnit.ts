@@ -6,6 +6,7 @@
 //   物差しの下限と、測れなかったときの値を別に持つ。倍率（畳むと ×3・展開すると ×1.5）は自作地震計と揃える
 
 import { NOISE_FLOOR_GAL } from '../../utils/seismoQuakeWindow'
+import { rememberedQuietLevel, rememberQuietLevel } from '../../utils/seismoQuietMemo'
 import { QUIET_LEVEL_MIN_GAL, QUIET_SCALE_RATIO, quietScaledGal } from '../../utils/seismoQuietScale'
 
 /** 縦の下限を決める用途（畳んだ絵か、展開した段か）。 */
@@ -26,6 +27,13 @@ export interface WaveUnit {
    * ユーザー選択「揃えて圧縮する (推奨)」。経緯は docs/public-waveform-design.md §0）。自作地震計は観測点が 1 つなので揃える相手がいない。
    */
   readonly sharesVerticalScale: boolean
+  /**
+   * その観測点で最後に測れた静かさ（この単位で）。**測れない間に {@link minScale} へ渡す。** 控えが無ければ `null`。
+   * 自作地震計だけが持つ（`utils/seismoQuietMemo.ts`。2026-10-24 ユーザー選択「アプリが最後に測った値 (Recommended)」）。
+   */
+  readonly rememberedQuietLevel: (stationId: string) => number | null
+  /** 測れた静かさを控える（`atMs` はその測り値のデータ時刻）。控えない単位では何もしない。 */
+  readonly rememberQuietLevel: (stationId: string, atMs: number, level: number | null) => void
 }
 
 export const SEISMO_WAVE_UNIT: WaveUnit = {
@@ -34,6 +42,8 @@ export const SEISMO_WAVE_UNIT: WaveUnit = {
   onsetNoiseFloor: NOISE_FLOOR_GAL,
   minScale: quietScaledGal,
   sharesVerticalScale: false,
+  rememberedQuietLevel,
+  rememberQuietLevel,
 }
 
 /**
@@ -61,4 +71,7 @@ export const PUBLIC_WAVE_UNIT: WaveUnit = {
     return QUIET_SCALE_RATIO[use] * Math.max(quietLevel, PUBLIC_QUIET_LEVEL_MIN_UMS)
   },
   sharesVerticalScale: true,
+  // **控えない。** 公開観測点の縦の下限は §12 で未決のまま（静かなときの振れを測ってから合わせる）。
+  rememberedQuietLevel: () => null,
+  rememberQuietLevel: () => {},
 }

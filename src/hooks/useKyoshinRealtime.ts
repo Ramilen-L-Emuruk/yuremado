@@ -20,6 +20,16 @@ export interface KyoshinWarmup {
   frames: KyoshinFrame[]
 }
 
+/**
+ * リプレイで取得が全滅した区間を、取得が戻ったあとに取り直したもの（#986。→ `KyoshinSourceSink.backfill`）。
+ * **検知エンジンだけが使う**（画面の震度・データ時刻には出さない）。`frames` が `null` の間は「取り直している最中」。
+ */
+export interface KyoshinBackfill {
+  supplyKey: string
+  id: number
+  frames: KyoshinFrame[] | null
+}
+
 export interface KyoshinRealtime {
   sites: SiteCoords
   indices: number[]
@@ -49,6 +59,8 @@ export interface KyoshinRealtime {
    * （`KyoshinSourceSink.prefill`）なので、待ちが解けないままにはならない。
    */
   warmup: KyoshinWarmup | null
+  /** 全滅区間の取り直し（→ {@link KyoshinBackfill}）。無ければ `null`。 */
+  backfill: KyoshinBackfill | null
 }
 
 /**
@@ -125,6 +137,7 @@ export function useKyoshinRealtime(
   const [indicesSiteConfigId, setIndicesSiteConfigId] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const [warmup, setWarmup] = useState<KyoshinWarmup | null>(null)
+  const [backfill, setBackfill] = useState<KyoshinBackfill | null>(null)
   // 現在 sites に反映済みの観測点集合の識別子（Yahoo では siteConfigId）。
   const currentSitesKeyRef = useRef<string | null>(null)
   const prevHypoInfoRef = useRef<YahooHypoInfoItem[]>([])
@@ -300,6 +313,8 @@ export function useKyoshinRealtime(
       }
     }
 
+    // 前の供給の取り直しは持ち越さない（照合は `supplyKey` でもするが、古い値を残さない）。
+    setBackfill(null)
     source.start({
       enqueue: (frame) => {
         queue.enqueue(frame)
@@ -315,6 +330,10 @@ export function useKyoshinRealtime(
       prefill: (frames) => {
         if (!active) return
         setWarmup({ supplyKey, frames })
+      },
+      backfill: (event) => {
+        if (!active) return
+        setBackfill(event.kind === 'begin' ? { supplyKey, id: event.id, frames: null } : { supplyKey, id: event.id, frames: event.frames })
       },
     })
 
@@ -332,5 +351,5 @@ export function useKyoshinRealtime(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, timeOffset, localArchiveId])
 
-  return { sites, indices, dataTime, sitesSiteConfigId, indicesSiteConfigId, error, supplyKey, warmup }
+  return { sites, indices, dataTime, sitesSiteConfigId, indicesSiteConfigId, error, supplyKey, warmup, backfill }
 }

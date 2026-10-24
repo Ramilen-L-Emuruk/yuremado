@@ -240,12 +240,15 @@ const STORAGE_KEY = isDmdss
  */
 export const DEFAULTS: AppSettings = {
   minDisplayScale: -1,
-  notifyMinScale: -1,
+  // **地震情報の通知は既定で震度4以上**（2026-10-23 選択「既定で震度4以上を通知 (Recommended)」）。実際に出るのは
+  // 利用者が通知を許可してから。保存済みの設定は変えない（読み込んだ値がそのまま勝つ）。
+  notifyMinScale: 40,
   actionChecklistMinScale: 45,
   soundEnabled: true,
   soundVolume: 1.0,
   nankaiCommentaryAlerts: true,
   quakeNoticeBanner: true,
+  // 既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」）。
   quakeNoticeAlerts: false,
   uiScale: 1,
   mapIconScale: 1,
@@ -253,6 +256,7 @@ export const DEFAULTS: AppSettings = {
   showBathymetry: true,
   showActiveFaults: true,
   activeFaultOpacity: 0.4,
+  // 既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」）。
   showQuakeHeatmap: false,
   showPlateBoundaries: true,
   showMapLegend: true,
@@ -273,6 +277,7 @@ export const DEFAULTS: AppSettings = {
   recordingMode: false,
   notifyEEW: true,
   notifyTsunami: true,
+  // 揺れ検知の通知は既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」。検知ベンチの静かな窓 22 本・11.3 時間のうち 2 本で確定まで進んだ）。
   notifyDetection: false,
   notifyNankai: true,
   homeLat: null,
@@ -294,6 +299,7 @@ export const DEFAULTS: AppSettings = {
   // 届く内容を、設定を足しただけで変えないため。
   // 南海トラフ地震関連解説情報の本文も、これが偽なので既定では読まない（設定で読める）。
   // 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」。
+  // 気象庁の発表文の読み上げは既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」）。
   ttsReadTelegramText: false,
   // **全ブロックを読む。** マスタートグル（`ttsReadTelegramText`）を入れた利用者は
   // 「気象庁の発表文を読む」ことを選んだのだから、内訳の既定は全部読む側へ倒す。
@@ -314,8 +320,10 @@ export const DEFAULTS: AppSettings = {
   // 自作地震計は既定で無効。**URL の既定値も置かない** —— 繋ぎ先は端末ごとに違う。
   seismoEnabled: false,
   seismoHostUrl: '',
-  // 波形は既定で受け取らない（合成波形は毎秒 15 KB ある）。
-  seismoWave: 'off',
+  // **波形は既定で「揺れたときだけ」**（2026-10-23 選択「既定を「揺れたときだけ」にする」）。合成波形は毎秒 15 KB
+  // （1 日約 1.3 GB）を受け取り続けるので、設定タブの注記にその量を出す。自作地震計そのものが既定で無効なので、
+  // 繋いでいない端末では何も受け取らない。保存済みの「表示しない」は変えない。
+  seismoWave: 'auto',
   seismoWaveCollapsedView: 'composite',
   seismoWaveExpanded: false,
   waveSpanSec: DEFAULT_WAVE_SPAN_SEC,

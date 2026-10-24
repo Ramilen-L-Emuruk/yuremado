@@ -24,7 +24,7 @@ import { RangeCoalescer } from '../services/seismoWaveRefill'
 import { quakeScaleForScope, type NearbyScope } from '../utils/actionChecklistTrigger'
 import { judgeQuakeReach, NO_FLOOR_WITHOUT_USUAL, type ReachStation } from '../utils/seismoQuakeReach'
 import { serverNow } from '../utils/clock'
-import { log } from '../utils/logger'
+import { createLogThrottle, log } from '../utils/logger'
 import { quakeEventKey } from '../utils/quakeMerge'
 import { parseJstTimeMs, type OriginSeconds } from '../utils/quakeOriginSeconds'
 import {
@@ -39,13 +39,16 @@ import {
 import { computeHypocentralDistanceKm, computeWaveArrival, type WaveArrival } from '../utils/seismoWaveArrival'
 import {
   appendWaveWindow,
+  appendHistoryColumns,
   isSettled,
   revisedColumnSpan,
   spliceRevisedColumns,
   trimAfter,
   type TimedColumns,
 } from '../utils/seismoWaveColumns'
+import { rememberedQuietLevel } from '../utils/seismoQuietMemo'
 import { quietScaledGal } from '../utils/seismoQuietScale'
+import { RETRY_FIRST_DELAY_MS, retryDelayAfter } from '../utils/retrySchedule'
 import { judgeSilence } from '../utils/seismoSilence'
 import { WAVE_TRIGGER_MIN_SCALE } from '../utils/seismoWaveTrigger'
 import { WAVE_STALE_MS } from './useSeismoStation'
@@ -88,8 +91,9 @@ const SETTLE_WINDOW_MS = 60_000
  * 下がり、3 gal のままでは弱い地震の揺れの最中でも「収まった」と判定していた。
  * 0 の手前を測れなければ決め打ちだった値（3 gal）を使う。
  */
-function quietGalFor(columns: TimedColumns, zeroMs: number): number {
-  return quietScaledGal('settle', measureQuietLevel(columns, zeroMs))
+function quietGalFor(stationId: string, columns: TimedColumns, zeroMs: number): number {
+  // 測れなければ、その観測点で最後に測れた静かさを使う（2026-10-24 ユーザー選択「アプリが最後に測った値 (Recommended)」）。
+  return quietScaledGal('settle', measureQuietLevel(columns, zeroMs) ?? rememberedQuietLevel(stationId))
 }
 
 /**
@@ -104,6 +108,13 @@ function quietGalFor(columns: TimedColumns, zeroMs: number): number {
  */
 const MIN_GROW_MS = 90_000
 
+/** 読み返しを伸ばすとき、1 回に読む長さ（ms）。**最初の窓の後ろ側と同じ 4 分**（`WAVE_HISTORY_TAIL_MS`）。 */
+const EXTEND_CHUNK_MS = 240_000
+/** 読み返しを伸ばす係が見に行く間隔（ms）。 */
+const EXTEND_INTERVAL_MS = 5_000
+/** これより新しい時刻は、まだ控えへ入りきっていないとみなして読まない（ms）。 */
+const EXTEND_LAG_MS = 10_000
+
 /**
  * 継ぎ足しの安全弁（ms）。**発生から 30 分。**
  *
@@ -113,17 +124,10 @@ const MIN_GROW_MS = 90_000
  */
 const GROW_SAFETY_MS = 30 * 60 * 1000
 
-/**
- * 読み返しに失敗したときに取り直すまでの間隔（ms）。**30 秒。**
- *
- * **1 度の失敗で諦めない。** ホストが重くなるのは地震の直後 ——いちばん取りたい
- * 瞬間で、そこで外すとそのカードは永久に波形を持たない（しかも画面上は「記録が
- * 無かった」と見分けが付かない）。
- *
- * **取り直すのは発生から {@link GROW_SAFETY_MS} までの地震だけ。** ホストが落ちて
- * いる間、7 日ぶんのカードを延々と叩き続けないため。
- */
-const RETRY_INTERVAL_MS = 30_000
+// **読み返し・震度・観測点の読み直しに失敗したら、間隔を広げつつ回数に上限を置いて取り直す**（`utils/retrySchedule.ts`。
+// 30 秒から倍々・5 回。2026-10-24 ユーザー選択）。**1 度の失敗で諦めない** —— ホストが重くなるのは地震の直後で、
+// いちばん取りたい瞬間に外すとそのカードは永久に波形を持たない。**古い地震も取り直す**（以前は発生から 30 分を
+// 過ぎた地震を 1 回で諦めていた）。上限があるので、ホストが落ちている間 7 日ぶんのカードを叩き続けることもない。
 
 /**
  * 1 件の地震に確保する窓の最小の長さ（ms）。
@@ -481,6 +485,10 @@ interface IntensityAsk {
   /** `done` = 取れた／`failed` = 一時的な失敗で取り直す／`gave-up` = この区間では訊かない。 */
   readonly kind: 'done' | 'failed' | 'gave-up'
   readonly atMs: number
+  /** 続けて失敗した回数（`failed` のときだけ数える。→ `utils/retrySchedule.ts`）。 */
+  readonly failures: number
+  /** 次に訊いてよい時刻（`serverNow()` 基準）。`failed` 以外では使わない。 */
+  readonly retryAt: number
 }
 
 interface Entry {
@@ -511,6 +519,8 @@ interface Entry {
   grownOut: boolean
   /** 訊けた震度（→ {@link SeismoQuakeWave.intensity}）。 */
   intensity: QuakeIntensity | null
+  /** 揺れが収まるまでの読み返しを伸ばし終えたか（収まった・上限に届いた・続きが無い・諦めた）。 */
+  extended: boolean
 }
 
 /**
@@ -520,7 +530,8 @@ interface Entry {
  * 呼び出し側は「載っていなければ描かない」だけでよい（2026-09-29 のユーザー判断で、
  * 記録が無いことを画面へ出さないと決めた。理由の記録は取得層が残す）。
  */
-export function useSeismoQuakeWaves(params: {
+/** {@link useSeismoQuakeWavesWithStatus} の引数。 */
+export interface UseSeismoQuakeWavesParams {
   /** 自作地震計の機能そのものが有効か（設定）。 */
   enabled: boolean
   baseUrl: string
@@ -544,9 +555,27 @@ export function useSeismoQuakeWaves(params: {
    * 届かなかったところが穴のまま残っている。
    */
   subscribeWaveRevised: (listener: (revised: SeismoStationWaveRevised) => void) => () => void
-}): ReadonlyMap<string, readonly SeismoQuakeWave[]> {
+}
+
+/** 地震カードの波形（地震の鍵ごと）だけを返す。取れなかった地震も知りたいときは {@link useSeismoQuakeWavesWithStatus}。 */
+export function useSeismoQuakeWaves(params: UseSeismoQuakeWavesParams): ReadonlyMap<string, readonly SeismoQuakeWave[]> {
+  return useSeismoQuakeWavesWithStatus(params).waves
+}
+
+export interface SeismoQuakeWavesWithStatus {
+  readonly waves: ReadonlyMap<string, readonly SeismoQuakeWave[]>
+  /**
+   * **ライブで**波形を読み返せなかった地震（取り直している最中も含む）。その地震の波形が 1 本も無いときだけ載る。
+   * 地震カードに「自作地震計: 波形を取得できなかった」を出すのに使う（2026-10-22 選択「取れなかったと出す (Recommended)」、
+   * 文面と「取り直し中も出す」は 2026-10-24 ユーザー選択）。**再生中は空**（記録が無いときは何も出さない。09-29 13:56 の判断）。
+   */
+  readonly failedEventKeys: ReadonlySet<string>
+}
+
+export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams): SeismoQuakeWavesWithStatus {
   const { enabled, baseUrl, quakes, scope, readWave, replayOffsetMs, originSeconds, subscribeWaveRevised } = params
   const [waves, setWaves] = useState<ReadonlyMap<string, readonly SeismoQuakeWave[]>>(new Map())
+  const [failedEventKeys, setFailedEventKeys] = useState<ReadonlySet<string>>(EMPTY_KEYS)
 
   const canFetch = enabled && isValidSeismoHostUrl(baseUrl)
   // ホストの観測点（座標・普段の計測震度）。**どの地震を出すかを決める材料**（→ {@link pickTargets}）。
@@ -617,6 +646,15 @@ export function useSeismoQuakeWaves(params: {
 
   // 取り終えた組。**もう取りに行かないための帳面。**
   const doneRef = useRef(new Set<string>())
+  /**
+   * 読み返せなかった組（鍵は `${eventKey}|${stationId}`）。**取り直しの待ち**（`retryAt` は単調時計）と、
+   * 使い切って諦めたか。取れたら消す。
+   */
+  const failuresRef = useRef(new Map<string, { failures: number; retryAt: number; gaveUp: boolean }>())
+  /** 取れなかった地震を出し直す（{@link SeismoQuakeWavesWithStatus.failedEventKeys}）。 */
+  const publishFailedRef = useRef<() => void>(() => {})
+  /** 読み返しを伸ばす係をすぐ 1 回回す（読み返しが届いたとき）。 */
+  const extendSoonRef = useRef<() => void>(() => {})
   // いま取りに行っている組。**中断されたらここから外して、次の機会に取り直す。**
   const inFlightRef = useRef(new Set<string>())
   const bookRef = useRef<Map<string, Entry[]>>(new Map())
@@ -660,7 +698,8 @@ export function useSeismoQuakeWaves(params: {
           displayName: e.displayName,
           columns: e.columns,
           interrupted: e.interrupted,
-          complete: key !== headKey || e.grownOut,
+          // **読み返しを伸ばし終えるまでは完結にしない**（震度は揺れ全体に 1 回出す量なので、伸びる前に訊かない）。
+          complete: (key !== headKey || e.grownOut) && e.extended,
           intensity: e.intensity,
           // **秒が取れていない地震は線を引かない**（→ `SeismoWaveTarget.arrivalOriginMs`）。
           arrival: axisZero.kind === 'origin' ? fromZero : null,
@@ -706,6 +745,8 @@ export function useSeismoQuakeWaves(params: {
     // **前に出した内容も捨てる。** 残すと、震度を訊く巡回が前の接続先・時間軸の区間を読む。
     publishedRef.current = new Map()
     doneRef.current = new Set()
+    failuresRef.current = new Map()
+    setFailedEventKeys(EMPTY_KEYS)
     inFlightRef.current = new Set()
     bookRef.current = new Map()
     setWaves(new Map())
@@ -716,15 +757,32 @@ export function useSeismoQuakeWaves(params: {
     if (!canFetch || candidateKey === '') return
     const ctrl = new AbortController()
     let retryTimer: ReturnType<typeof setTimeout> | undefined
+    /** 続けて読めなかった回数（取り直しの間隔を決める。→ `utils/retrySchedule.ts`）。 */
+    let failures = 0
 
-    /** **取り直す値打ちのある地震**（＝発生から {@link GROW_SAFETY_MS} 以内）があるか。 */
-    const hasFreshQuake = (): boolean =>
-      quakesRef.current.some((q) => {
-        const originMs = parseJstTimeMs(q.earthquake.time)
-        return Number.isFinite(originMs) && serverNow() <= originMs + GROW_SAFETY_MS
-      })
+    /** 読めなかった回を数えて取り直しを仕込む（使い切ったら諦めて記録へ残す）。 */
+    const retryLater = (): void => {
+      failures += 1
+      const delay = retryDelayAfter(failures)
+      if (delay === null) {
+        log.warn(`[seismo] 地震カードの波形のための観測点を ${failures} 回続けて読めず、取り直しを諦めた（地震が増えたら読み直す）`)
+        return
+      }
+      retryTimer = setTimeout(() => void run(), delay)
+    }
 
+    // **投げても取り直しを仕込む**（仕込まないと、地震が増えるまで波形の対象を二度と選ばない）。
     const run = async (): Promise<void> => {
+      try {
+        await attempt()
+      } catch (error) {
+        if (ctrl.signal.aborted) return
+        log.error('[seismo] 地震カードの波形のための観測点を読む途中で投げた', error)
+        retryLater()
+      }
+    }
+
+    const attempt = async (): Promise<void> => {
       const status = await fetchSeismoStatus(baseUrl)
       if (ctrl.signal.aborted) return
       if (status.kind === 'ok' && status.stations.length > 0) {
@@ -751,9 +809,10 @@ export function useSeismoQuakeWaves(params: {
         )
         return
       }
-      // 理由は `fetchSeismoStatus` が記録へ残している。**取り直すのは新しい地震が
-      // あるときだけ** —— 状態の口が一時的に返らないだけなら取り直す値打ちがあるが、
-      // ホストが落ちている間、古いカードのために延々と叩き続ける理由は無い。
+      // 理由は `fetchSeismoStatus` が記録へ残している。**間隔を広げつつ回数に上限を置いて取り直す**
+      // （2026-10-22 選択「間隔を広げて取り直す (Recommended)」・値は 2026-10-24 選択「30秒から倍々・5回 (Recommended)」）。
+      // 以前は新しい地震があるときだけ 30 秒ごとに取り直し、古い地震しか無ければ 1 回で諦めていた ——
+      // 古いカードは開いても波形が出ないままになる。上限があるので、ホストが落ちている間叩き続けることもない。
       //
       // **観測点が 0 件でも取り直す。** 通信は成功しているので `kind` は `'ok'` だが、
       // **ホストの起動直後は必ずこの形を通る** ——`seismo-host` の `sensorHealth.ts` は
@@ -766,8 +825,7 @@ export function useSeismoQuakeWaves(params: {
       // **記録も残す。** 同じファイルの他の失敗分岐はすべて理由を記録に残しているのに、
       // ここだけ沈黙していた（2026-09-30 のレビューで見つかった）。
       if (status.kind === 'ok') log.warn('[seismo] /status は応答したが観測点が 0 件（まだ繋がっていない可能性）')
-      if (!hasFreshQuake()) return
-      retryTimer = setTimeout(() => void run(), RETRY_INTERVAL_MS)
+      retryLater()
     }
     void run()
 
@@ -786,38 +844,53 @@ export function useSeismoQuakeWaves(params: {
     const ctrl = new AbortController()
     let retryTimer: ReturnType<typeof setTimeout> | undefined
 
-    /** 一巡する。**取り直す値打ちのある失敗が残ったか**を返す。 */
-    const sweep = async (): Promise<boolean> => {
-      // **取り直す値打ちのある失敗**（＝古すぎない地震で、一時的な理由で取れなかったもの）。
-      let retryable = false
+    /**
+     * 一巡する。**取り直しを待っている組のうち、いちばん早く明ける時刻**（単調時計）を返す。無ければ `Infinity`。
+     *
+     * **古い地震も取り直す**（2026-10-22 選択「間隔を広げて取り直す (Recommended)」）。以前は発生から 30 分を過ぎた
+     * 地震を 1 回の失敗で諦めていた —— 理由の「ホストが落ちている間、7 日ぶんのカードを叩き続ける」は、
+     * 回数に上限を置けば起きない（→ `utils/retrySchedule.ts`。値は 2026-10-24 選択「30秒から倍々・5回 (Recommended)」）。
+     */
+    const sweep = async (): Promise<number> => {
+      let nextDueAt = Infinity
       for (const target of targets) {
         const range = rangeFor(target)
         if (range === null) continue
-        // **古い地震は取り直さない。** 継ぎ足しの安全弁と同じ線（発生 + 30 分）で切る ——
-        // ホストが落ちている間、7 日ぶんのカードを何十分も叩き続けることになる。
-        // **初回は取りに行く**（過去のカードを開いたときも波形は見たい）。
-        const fresh = serverNow() <= target.originMs + GROW_SAFETY_MS
         for (const station of stationList) {
-          if (ctrl.signal.aborted) return false
+          if (ctrl.signal.aborted) return Infinity
           // **揺れが届いたと見込めた観測点だけ取りに行く**（→ {@link pickTargets}）。
           if (!target.stationIds.includes(station.stationId)) continue
           // **地震ごとに数える。** 窓を鍵にすると、同じ分に起きた別の地震で 2 件目が
           // 「取得済み」と見なされ、片方のカードにだけ波形が出ない。
           const key = `${target.eventKey}|${station.stationId}`
           if (doneRef.current.has(key) || inFlightRef.current.has(key)) continue
+          // **取り直しの待ちが明けていなければ飛ばす**（明ける時刻だけ覚えて、次の一巡の時計にする）。
+          const failed = failuresRef.current.get(key)
+          if (failed !== undefined && failed.retryAt > performance.now()) {
+            nextDueAt = Math.min(nextDueAt, failed.retryAt)
+            continue
+          }
           inFlightRef.current.add(key)
 
-          const result = await fetchSeismoWaveHistory({
-            baseUrl,
-            stationId: station.stationId,
-            range,
-            columns: WAVE_HISTORY_COLUMNS,
-            signal: ctrl.signal,
-          })
-          inFlightRef.current.delete(key)
+          // **投げても取得中の印は外す**（外さないと、その組は対象が入れ替わるまで二度と取りに行かれない）。投げた回は
+          // 一時的な失敗として数える（取得層は失敗を値で返すので、ここへ来るのは想定外の例外だけ）。
+          let result: Awaited<ReturnType<typeof fetchSeismoWaveHistory>> | null = null
+          try {
+            result = await fetchSeismoWaveHistory({
+              baseUrl,
+              stationId: station.stationId,
+              range,
+              columns: WAVE_HISTORY_COLUMNS,
+              signal: ctrl.signal,
+            })
+          } catch (error) {
+            if (!ctrl.signal.aborted) log.error(`[seismo] 地震カードの波形を読み返す途中で投げた（${station.stationId}）`, error)
+          } finally {
+            inFlightRef.current.delete(key)
+          }
           // **中断は「取った」に数えない。** 数えると、対象が入れ替わった拍子に取りかけて
           // いた観測点が二度と取りに行かれなくなる（群発・余震ほど起きやすい）。
-          if (ctrl.signal.aborted) return false
+          if (ctrl.signal.aborted) return Infinity
           // **一時的な失敗も数えない。** 相手に届かなかった・5xx・応答が読めなかった、の
           // いずれも**次の機会には取れる**（ホストが重いのは地震の直後ほど起きやすい）。
           // 数えてしまうと、いちばん混む瞬間に 1 度外しただけでそのカードは永久に
@@ -826,15 +899,26 @@ export function useSeismoQuakeWaves(params: {
           // **`bad-request` だけは数える。** こちらが組み立てた窓が通らなかったという
           // ことなので、同じ窓で投げ直しても結果は変わらない。
           //
-          // **古い地震はここで諦める**（＝「取った」に数える）。取り直さないものを
-          // 帳面へ入れずにおくと、**新しい地震が失敗を繰り返している間ずっと、
-          // 一巡のたびに古いカードのぶんまで叩き直す**ことになる。
-          if (result.kind !== 'ok' && result.kind !== 'bad-request' && fresh) {
-            retryable = true
-            continue
+          // **取り直しを使い切ったら諦める**（＝「取った」に数える）。帳面へ入れずにおくと、
+          // 一巡のたびに叩き直すことになる。諦めたことは記録へ残し、カードには「取得できなかった」が残る。
+          if (result === null || (result.kind !== 'ok' && result.kind !== 'bad-request')) {
+            const failures = (failuresRef.current.get(key)?.failures ?? 0) + 1
+            const delay = retryDelayAfter(failures)
+            if (delay !== null) {
+              const retryAt = performance.now() + delay
+              failuresRef.current.set(key, { failures, retryAt, gaveUp: false })
+              nextDueAt = Math.min(nextDueAt, retryAt)
+              publishFailedRef.current()
+              continue
+            }
+            failuresRef.current.set(key, { failures, retryAt: Infinity, gaveUp: true })
+            log.warn(`[seismo] 地震カードの波形を ${failures} 回続けて読み返せず、取り直しを諦めた（${station.stationId}・${result?.kind ?? 'exception'}）`)
+          } else {
+            failuresRef.current.delete(key)
           }
           doneRef.current.add(key)
-          if (result.kind !== 'ok') continue
+          publishFailedRef.current()
+          if (result === null || result.kind !== 'ok') continue
           // **ホストが記録の欠けを申告していたら残す。** 絵は出るので画面からは
           // 分からない ——ホスト側のディスクや保存の不調を追える唯一の手掛かり。
           const { filesMissing, filesFailed, skippedBytes, truncated } = result.history
@@ -871,21 +955,31 @@ export function useSeismoQuakeWaves(params: {
               interrupted: false,
               // 伸ばすかどうかは継ぎ足しの巡回が決める（先頭でなければ出すときに伸ばし終えた扱い）。
               grownOut: false,
+              extended: false,
               intensity: null,
             },
           ])
           // **1 件ごとに画面へ出す。** まとめて出すと、観測点が増えたとき最後の 1 本を
           // 待って全部が遅れる。
           publishRef.current()
+          extendSoonRef.current()
         }
       }
-      return retryable
+      return nextDueAt
     }
 
     const run = async (): Promise<void> => {
-      const retryable = await sweep()
-      if (ctrl.signal.aborted || !retryable) return
-      retryTimer = setTimeout(() => void run(), RETRY_INTERVAL_MS)
+      let nextDueAt: number
+      try {
+        nextDueAt = await sweep()
+      } catch (error) {
+        // **一巡の途中で投げても、次の一巡は仕込む**（仕込まないと、対象が入れ替わるまで二度と読み返さない）。
+        if (ctrl.signal.aborted) return
+        log.error('[seismo] 地震カードの波形を読み返す一巡が途中で投げた。間を置いて読み直す', error)
+        nextDueAt = performance.now() + RETRY_FIRST_DELAY_MS
+      }
+      if (ctrl.signal.aborted || !Number.isFinite(nextDueAt)) return
+      retryTimer = setTimeout(() => void run(), Math.max(0, nextDueAt - performance.now()))
     }
     void run()
 
@@ -942,6 +1036,7 @@ export function useSeismoQuakeWaves(params: {
           }
         }
         if (cleared) publishRef.current()
+        extendSoonRef.current()
         return
       }
 
@@ -959,6 +1054,7 @@ export function useSeismoQuakeWaves(params: {
       const pushLive = replayOffsetRef.current === null
 
       let changed = false
+      let grewOut = false
       for (const entry of entries) {
         // **伸ばす番かどうかを先に決める。** ここで `continue` して次の観測点へ
         // 移ると、**伸ばさなくなった後も「途切れている」が立ったまま残る**
@@ -967,7 +1063,7 @@ export function useSeismoQuakeWaves(params: {
           pushLive &&
           !(
             atMs > target.originMs + MIN_GROW_MS &&
-            isSettled(entry.columns, SETTLE_WINDOW_MS, quietGalFor(entry.columns, target.originMs))
+            isSettled(entry.columns, SETTLE_WINDOW_MS, quietGalFor(entry.stationId, entry.columns, target.originMs))
           )
         if (growing) {
           const next = appendWaveWindow({
@@ -1001,9 +1097,12 @@ export function useSeismoQuakeWaves(params: {
         if (entry.grownOut === growing) {
           entry.grownOut = !growing
           changed = true
+          // 伸ばし終えたら、読み返しを伸ばす係にすぐ見せる（収まっていればそこで完結し、震度を訊ける）。
+          if (entry.grownOut) grewOut = true
         }
       }
       if (changed) publishRef.current()
+      if (grewOut) extendSoonRef.current()
     }, APPEND_INTERVAL_MS)
     return () => clearInterval(timer)
   }, [canFetch])
@@ -1083,6 +1182,154 @@ export function useSeismoQuakeWaves(params: {
     }
   }, [canFetch, baseUrl, subscribeWaveRevised])
 
+  // **揺れが収まるまで読み返しを伸ばす**（2026-10-22 選択「揺れが収まるまで読む (Recommended)」）。
+  //
+  // 最初の読み返しは発生の 60 秒前〜240 秒後の固定の窓（`services/seismoWaveHistory.ts`）。長く揺れる地震・遠い地震では
+  // 240 秒の時点でまだ揺れていて、**押し出しで伸ばさないカード**（再生中・先頭でない地震・アプリを後から開いた古い地震）は
+  // そこで切れていた。収まりの判定（`isSettled`・押し出しの継ぎ足しと同じ物差し）が付くまで、続きを読み返して継ぐ。
+  // **収まって 15 秒で切る描き方はそのまま**（`utils/seismoQuakeWindow.ts`）。上限は継ぎ足しと同じ安全弁（発生 + 30 分）と
+  // 次の有感地震の発生（`cutoffMs`）。**1 本ずつ**読む（震度の問い合わせと同じく、ホストの受信を止めないため）。
+  useEffect(() => {
+    if (!canFetch) return
+    const ctrl = new AbortController()
+    let busy = false
+    /** 続きを読めなかった組（鍵は `${eventKey}|${stationId}`）。取り直しの待ち（単調時計）。 */
+    const failures = new Map<string, { failures: number; retryAt: number }>()
+    const throttledExtendError = createLogThrottle(300_000)
+    /** いま続きを読み返している組（投げたときに、その組の失敗として数えるため）。 */
+    let current: { key: string; entry: Entry } | null = null
+    /** 失敗帳を付けた時間軸の印。**時間軸が変わったら失敗帳を捨てる**（ライブで失敗した組の待ちと回数を再生へ持ち越さない）。 */
+    let failuresToken = resetKeyRef.current
+    /** 読めなかった回を数え、待ちを張る（使い切ったら伸ばすのを諦める）。 */
+    const noteExtendFailure = (key: string, entry: Entry, why: string): void => {
+      const n = (failures.get(key)?.failures ?? 0) + 1
+      const delay = retryDelayAfter(n)
+      if (delay === null) {
+        log.warn(`[seismo] 地震カードの波形の続きを ${n} 回続けて読み返せず、伸ばすのを諦めた（${entry.stationId}・${why}）`)
+        failures.delete(key)
+        entry.extended = true
+        publishRef.current()
+      } else {
+        failures.set(key, { failures: n, retryAt: performance.now() + delay })
+      }
+    }
+    /** 1 巡ぶん。**投げても `busy` を戻して記録する**（張り付くと、そのマウントの間は全観測点の続きを二度と取らない）。 */
+    const tick = async (): Promise<void> => {
+      if (busy || ctrl.signal.aborted) return
+      current = null
+      try {
+        await tickOnce()
+      } catch (error) {
+        if (ctrl.signal.aborted) return
+        throttledExtendError(() => log.error('[seismo] 地震カードの波形の続きを読み返す途中で投げた', error))
+        // **投げた回もその組の失敗に数える**（数えないと、待ちも上限も通らずに 5 秒ごとに同じ区間を訊き直す）。
+        // `tickOnce` の中で書き換わるので、ここでの型の絞り込み（直前の `null`）に従わせない。
+        const failedPair = current as { key: string; entry: Entry } | null
+        if (failedPair !== null) noteExtendFailure(failedPair.key, failedPair.entry, 'exception')
+      } finally {
+        busy = false
+        current = null
+      }
+    }
+    const tickOnce = async (): Promise<void> => {
+      if (resetKeyRef.current !== failuresToken) {
+        failures.clear()
+        failuresToken = resetKeyRef.current
+      }
+      const headKey = targetsRef.current[0]?.eventKey
+      const pushLive = replayOffsetRef.current === null
+      const now = serverNow()
+      for (const target of targetsRef.current) {
+        const entries = bookRef.current.get(target.eventKey)
+        if (entries === undefined) continue
+        for (const entry of entries) {
+          if (entry.extended) continue
+          // **判定の段から組を覚える**（収まりの判定で投げた回も、その組の失敗に数える）。
+          current = { key: `${target.eventKey}|${entry.stationId}`, entry }
+          // **押し出しで伸ばしている間は触らない**（同じ区間を 2 か所から継ぐと重なる）。
+          if (pushLive && target.eventKey === headKey && !entry.grownOut) continue
+          const span = entry.columns.columnSpanMs
+          const endMs = entry.columns.fromMs + entry.columns.columns.length * span
+          const hardLimitMs = Math.min(target.cutoffMs, target.originMs + GROW_SAFETY_MS)
+          const settled =
+            endMs > target.originMs + MIN_GROW_MS &&
+            isSettled(entry.columns, SETTLE_WINDOW_MS, quietGalFor(entry.stationId, entry.columns, target.originMs))
+          if (settled || !(span > 0) || endMs >= hardLimitMs - span) {
+            entry.extended = true
+            publishRef.current()
+            continue
+          }
+          // **まだ記録に入りきっていない時刻は待つ**（ホストは届いた順に控えへ書く）。
+          // **列の刻みの整数倍で切る。** 端数の長さで訊くと、ホストが返す列の刻み（長さ ÷ 列数）が前の列とずれて継げない。
+          const columns = Math.floor((Math.min(endMs + EXTEND_CHUNK_MS, hardLimitMs, now - EXTEND_LAG_MS) - endMs) / span)
+          if (columns < 1) continue
+          const toMs = endMs + columns * span
+          const key = `${target.eventKey}|${entry.stationId}`
+          const failed = failures.get(key)
+          if (failed !== undefined && failed.retryAt > performance.now()) continue
+          busy = true
+          // **照合の印は訊くたびに取る。** この効果は接続先が変わったときしか張り直されないので、最初に 1 回だけ取ると、
+          // 再生の開始・停止（時間軸が変わる）のあと結果が必ず捨てられ、同じ区間を延々と訊き直す。
+          const token = resetKeyRef.current
+          const result = await fetchSeismoWaveHistory({
+            baseUrl,
+            stationId: entry.stationId,
+            range: { fromMs: Math.round(endMs), toMs: Math.round(toMs) },
+            columns,
+            signal: ctrl.signal,
+          })
+          busy = false
+          // **取りに行っている間に帳面が捨てられていたら書かない**（接続先・時間軸が変わった）。
+          if (ctrl.signal.aborted || resetKeyRef.current !== token) return
+          if (result.kind === 'ok') {
+            if (!result.history.hasAnyValue) {
+              // 続きに記録が無い（ホストが止まっていた・まだ書けていない）。この先は伸ばさない。
+              log.debug(`[seismo] 地震カードの波形の続きに記録が無いので、読み返しを伸ばすのをやめた（${entry.stationId}）`)
+              entry.extended = true
+            } else {
+              const next = appendHistoryColumns(entry.columns, {
+                fromMs: result.history.fromMs,
+                columnSpanMs: result.history.columnSpanMs,
+                columns: result.history.columns,
+              })
+              if (next === null) {
+                // 刻みの整数倍で訊いているので、ふだんは起きない（起きたらホストの列の返し方が変わった印）。
+                log.warn(`[seismo] 地震カードの波形の続きを継げなかった（列の刻みか境目が合わない・${entry.stationId}）。伸ばすのをやめる`)
+                entry.extended = true
+              } else {
+                entry.columns = next
+              }
+            }
+            // **継ぎ終えてから失敗の数を戻す**（先に戻すと、継ぐ途中で投げた回が毎回 1 回目に数え直される）。
+            failures.delete(key)
+            current = null
+            publishRef.current()
+            // **取れたら待たずに次を見る**（5 秒待つのは失敗の後だけ。古いカードの震度が出るまでを伸ばさない）。
+            setTimeout(() => void tick(), 0)
+            return
+          }
+          if (result.kind === 'bad-request') {
+            log.warn(`[seismo] 地震カードの波形の続きの範囲が通らなかった（${entry.stationId}・${result.detail}）。伸ばすのをやめる`)
+            entry.extended = true
+            publishRef.current()
+            return
+          }
+          current = null
+          noteExtendFailure(key, entry, result.kind)
+          return
+        }
+      }
+    }
+    const timer = setInterval(() => void tick(), EXTEND_INTERVAL_MS)
+    // **読み返しが届いたらすぐ 1 回見る**（収まっていれば伸ばさずに済み、震度をすぐ訊ける）。
+    extendSoonRef.current = () => void tick()
+    return () => {
+      clearInterval(timer)
+      extendSoonRef.current = () => {}
+      ctrl.abort()
+    }
+  }, [canFetch, baseUrl])
+
   // **震源が動いたら到達の線を引き直す。**
   //
   // **取得の鍵（`targetKey`）と分ける。** あちらに震源を混ぜると、続報が届くたびに
@@ -1134,12 +1381,12 @@ export function useSeismoQuakeWaves(params: {
           // 同じ区間で取れたもの・諦めたもの・取り直しを待っているものは飛ばす
           // （待ちが明けたらタイマーが呼び直す）。
           if (prev.kind !== 'failed') continue
-          if (now - prev.atMs < RETRY_INTERVAL_MS) {
-            nextDueMs = Math.min(nextDueMs, prev.atMs + RETRY_INTERVAL_MS)
+          if (now < prev.retryAt) {
+            nextDueMs = Math.min(nextDueMs, prev.retryAt)
             continue
           }
         }
-        void askOne({ eventKey, stationId: wave.stationId, span, fresh: now <= target.originMs + GROW_SAFETY_MS })
+        void askOne({ eventKey, stationId: wave.stationId, span, failures: prev?.kind === 'failed' ? prev.failures : 0 })
         return
       }
     }
@@ -1154,7 +1401,8 @@ export function useSeismoQuakeWaves(params: {
     eventKey: string
     stationId: string
     span: { fromMs: number; toMs: number }
-    fresh: boolean
+    /** この区間でこれまでに続けて失敗した回数。 */
+    failures: number
   }): Promise<void> => {
     const ctrl = new AbortController()
     intensityCtrlRef.current = ctrl
@@ -1175,8 +1423,8 @@ export function useSeismoQuakeWaves(params: {
       askIntensityRef.current()
       return
     }
-    const mark = (kind: IntensityAsk['kind']): void => {
-      intensityAsksRef.current.set(askKey, { ...job.span, kind, atMs: serverNow() })
+    const mark = (kind: IntensityAsk['kind'], failures = 0, retryAt = Infinity): void => {
+      intensityAsksRef.current.set(askKey, { ...job.span, kind, atMs: serverNow(), failures, retryAt })
     }
     switch (result.kind) {
       case 'ok': {
@@ -1223,12 +1471,18 @@ export function useSeismoQuakeWaves(params: {
         break
       // `aborted` は来ない（取り消しは上の `ctrl.signal.aborted` で先に返している）。
       default:
-        // **一時的な失敗は、新しい地震だけ取り直す**（読み返しと同じ線。古いカードのために
-        // ホストを叩き続けない）。
+        // **一時的な失敗は、間隔を広げつつ上限つきで取り直す**（読み返しと同じ規則。古い地震も取り直す ——
+        // 2026-10-22 選択「間隔を広げて取り直す (Recommended)」）。
         // 取り直しのタイマーは次の巡回が張る（待ちが明ける時刻のうち最も早いものへ）。
-        mark(job.fresh ? 'failed' : 'gave-up')
-        if (!job.fresh) {
-          log.debug(`[seismo] 地震の区間の震度を訊くのを諦めた（${job.stationId}・${result.kind}）: 発生から 30 分を過ぎた地震は取り直さない`)
+        {
+          const failures = job.failures + 1
+          const delay = retryDelayAfter(failures)
+          if (delay === null) {
+            mark('gave-up')
+            log.warn(`[seismo] 地震の区間の震度を ${failures} 回続けて訊けず、取り直しを諦めた（${job.stationId}・${result.kind}）`)
+          } else {
+            mark('failed', failures, serverNow() + delay)
+          }
         }
     }
     askIntensityRef.current()
@@ -1265,6 +1519,11 @@ export function useSeismoQuakeWaves(params: {
       if (!alive.has(eventKey)) doneRef.current.delete(doneKey)
     }
     let changed = false
+    // 読み返せなかった記録のうち、対象から外れた地震のものを捨てる（一度も取れていない地震は帳面に無いので、別に見る）。
+    for (const failKey of [...failuresRef.current.keys()]) {
+      if (!alive.has(failKey.slice(0, failKey.lastIndexOf('|')))) failuresRef.current.delete(failKey)
+    }
+    publishFailedRef.current()
     for (const [key, entries] of [...bookRef.current]) {
       const target = alive.get(key)
       // 取消・表示する震度の設定変更で対象から外れたもの。
@@ -1273,6 +1532,10 @@ export function useSeismoQuakeWaves(params: {
         // 震度を訊いた記録も同じ鍵で捨てる（残すと 7 日ぶん積み上がる）。
         for (const askKey of [...intensityAsksRef.current.keys()]) {
           if (askKey.startsWith(`${key}|`)) intensityAsksRef.current.delete(askKey)
+        }
+        // 読み返せなかった記録も捨てる（残すと「取得できなかった」の鍵が積み上がる）。
+        for (const failKey of [...failuresRef.current.keys()]) {
+          if (failKey.startsWith(`${key}|`)) failuresRef.current.delete(failKey)
         }
         changed = true
         continue
@@ -1308,10 +1571,36 @@ export function useSeismoQuakeWaves(params: {
     resetIntensityRef.current()
     publishedRef.current = new Map()
     doneRef.current = new Set()
+    failuresRef.current = new Map()
+    setFailedEventKeys(EMPTY_KEYS)
     inFlightRef.current = new Set()
     bookRef.current = new Map()
     setWaves(new Map())
   }, [canFetch])
 
-  return waves
+  publishFailedRef.current = () => {
+    // **再生中は出さない**（記録が無い時刻は何も出さない）。
+    if (replayOffsetRef.current !== null) {
+      setFailedEventKeys((prev) => (prev.size === 0 ? prev : EMPTY_KEYS))
+      return
+    }
+    const next = new Set<string>()
+    for (const key of failuresRef.current.keys()) {
+      const eventKey = key.slice(0, key.lastIndexOf('|'))
+      // **1 本でも描けていれば出さない**（取れなかった観測点があっても、カードには波形がある）。
+      if ((bookRef.current.get(eventKey)?.length ?? 0) > 0) continue
+      next.add(eventKey)
+    }
+    setFailedEventKeys((prev) => (sameKeys(prev, next) ? prev : next))
+  }
+
+  return useMemo(() => ({ waves, failedEventKeys }), [waves, failedEventKeys])
+}
+
+const EMPTY_KEYS: ReadonlySet<string> = new Set()
+
+function sameKeys(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) return false
+  for (const k of a) if (!b.has(k)) return false
+  return true
 }

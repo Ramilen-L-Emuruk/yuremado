@@ -103,6 +103,7 @@ const renderTab = async (lpgm: JMALpgm) => {
     onFocusMap={() => {}}
     speakingTelegramTextSubject={null}
     seismoWaves={new Map()}
+    seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
   />
   )
@@ -140,6 +141,7 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     onFocusMap={() => {}}
     speakingTelegramTextSubject={subject}
     seismoWaves={new Map()}
+    seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
   />
 )

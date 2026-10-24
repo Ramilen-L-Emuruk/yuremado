@@ -87,6 +87,8 @@ interface Props {
    * 同じ分に起きた別の地震で片方のカードへ他方の波形が出る。
    */
   seismoWaves: ReadonlyMap<string, readonly SeismoQuakeWave[]>
+  /** ライブで自作地震計の波形を読み返せなかった地震の鍵（→ `useSeismoQuakeWavesWithStatus` の `failedEventKeys`）。 */
+  seismoWaveFailedKeys: ReadonlySet<string>
   /** 波形を畳んでいるときに出すもの（設定「波形の表示」。地図の下端の波形と共有）。 */
   seismoWaveView: SeismoWaveCollapsedView
 }
@@ -120,7 +122,7 @@ function HistoryNotice({ tone, children }: { tone: 'loss' | 'info'; children: Re
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 寄せる相手と寄せ直す合図は `quakeCardScrollTarget`、寄せ方は共有のフック（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。
@@ -220,6 +222,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
           onFocusMap={onFocusMap}
           speakingTelegramTextSubject={speakingTelegramTextSubject}
           seismoWaves={seismoWaves.get(quakeEventKey(quake))}
+          seismoWaveFailed={seismoWaveFailedKeys.has(quakeEventKey(quake))}
           seismoWaveView={seismoWaveView}
         />
       ))}

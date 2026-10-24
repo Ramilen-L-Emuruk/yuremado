@@ -26,7 +26,7 @@ const BADGE_CLASS = 'font-bold leading-none rounded-sm px-1.5 py-1 min-w-5 text-
 
 export function SeismoOverlay({ stations }: Props) {
   const rows = seismoOverlayRows(stations)
-  // **震度が 1 件も届いていなければ出さない。** 接続の状態では判定しない ——
+  // **行が 1 つも無ければ出さない**（震度が 1 件も届いておらず、猶予を過ぎた「未着」も無い）。接続の状態では判定しない ——
   // 短い切断なら状態層が 5 秒は値を保つので消えず、長い切断なら消える。
   // ここで別に接続を見ると、同じ事実に判定が 2 つできる。
   //
@@ -68,7 +68,8 @@ export function SeismoOverlay({ stations }: Props) {
               {row.displayName}
             </span>
             <span className={`font-mono ${tone} tabular-nums`}>{row.valueText ?? '—'}</span>
-            <span className="text-xs text-secondary roomy:text-base">{row.sourceText}</span>
+            {/* 途絶は名乗りが空。未着だけ「未着」を行と同じ赤で出す。 */}
+            <span className={`text-xs roomy:text-base ${row.silent ? 'text-red-400' : 'text-secondary'}`}>{row.sourceText}</span>
           </div>
         )
       })}

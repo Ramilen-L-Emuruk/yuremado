@@ -11,6 +11,7 @@
 import type { SeismoStationWaveRevised } from './seismoStream'
 import type { WaveSamplesResult } from './seismoWaveSamples'
 import type { SeismoWaveBuffer } from '../utils/seismoWaveBuffer'
+import { retryDelayAfter } from '../utils/retrySchedule'
 
 /** 取りに行く範囲 `[fromMs, toMs)`。 */
 export interface RefillRange {
@@ -122,6 +123,13 @@ export interface SeismoWaveRefillerDeps {
   readonly onSkipped: (stationId: string, reason: SeismoWaveRefillSkip) => void
   /** 取りに行く途中で投げた（こちらの不具合。記録用）。 */
   readonly onError: (stationId: string, error: unknown) => void
+  /**
+   * 取れなかった（通信の失敗・ホストのエラー・読めない応答）。記録用。
+   *
+   * @param failures 続けて失敗した回数。**0 は「こちらの組み立てが通らなかったので取り直さない」**
+   * @param retryInMs 次に取り直すまでの間隔。**取り直しを使い切って諦めた・取り直さないなら `null`**（→ `utils/retrySchedule.ts`）
+   */
+  readonly onFailed: (stationId: string, failures: number, retryInMs: number | null) => void
 }
 
 /**
@@ -140,6 +148,14 @@ export class SeismoWaveRefiller {
   private readonly runner: RangeCoalescer
   /** 予約して待っている範囲。**待っている間に届いた予約はここで束ねる。** */
   private readonly waiting = new Map<string, { range: { fromMs: number; toMs: number }; timer: ReturnType<typeof setTimeout> }>()
+  /**
+   * 取れずに取り直しを待っている範囲と、続けて失敗した回数（観測点ごと）。
+   *
+   * **取り直すのは範囲で、穴そのものではない。** 取り直す時点で入れ物のいまの姿から取る分を決め直すので
+   * （{@link refill}）、**待っている間に穴が抱える長さの外へ流れたら、取りに行かずに終わる**
+   * （窓の外へ出た穴は諦める。2026-10-22 選択「取り直す (Recommended)」）。
+   */
+  private readonly retrying = new Map<string, { range: { fromMs: number; toMs: number }; failures: number; timer: ReturnType<typeof setTimeout> | null }>()
 
   constructor(private readonly deps: SeismoWaveRefillerDeps) {
     this.runner = new RangeCoalescer((stationId, range) => this.refill(stationId, range), deps.signal, deps.onError)
@@ -147,6 +163,8 @@ export class SeismoWaveRefiller {
     deps.signal.addEventListener('abort', () => {
       for (const w of this.waiting.values()) clearTimeout(w.timer)
       this.waiting.clear()
+      for (const r of this.retrying.values()) if (r.timer !== null) clearTimeout(r.timer)
+      this.retrying.clear()
     })
   }
 
@@ -186,6 +204,36 @@ export class SeismoWaveRefiller {
     this.waiting.set(stationId, entry)
   }
 
+  /**
+   * 取れなかった範囲を、間隔を広げつつ取り直す。**待っている間に届いた失敗の範囲は束ねる**（回数は増やさない ——
+   * 同じ取り直しの番を待っているだけなので）。
+   */
+  private retryLater(stationId: string, range: RefillRange): void {
+    const cur = this.retrying.get(stationId)
+    if (cur !== undefined && cur.timer !== null) {
+      cur.range.fromMs = Math.min(cur.range.fromMs, range.fromMs)
+      cur.range.toMs = Math.max(cur.range.toMs, range.toMs)
+      return
+    }
+    const failures = (cur?.failures ?? 0) + 1
+    const delay = retryDelayAfter(failures)
+    this.deps.onFailed(stationId, failures, delay)
+    if (delay === null) {
+      this.retrying.delete(stationId)
+      return
+    }
+    const entry = {
+      range: { fromMs: range.fromMs, toMs: range.toMs },
+      failures,
+      timer: null as ReturnType<typeof setTimeout> | null,
+    }
+    entry.timer = setTimeout(() => {
+      entry.timer = null
+      this.runner.push(stationId, entry.range)
+    }, delay)
+    this.retrying.set(stationId, entry)
+  }
+
   private async refill(stationId: string, range: RefillRange): Promise<void> {
     const before = this.deps.bufferOf(stationId)
     const oldestMs = before?.oldestSampleMs ?? null
@@ -210,13 +258,31 @@ export class SeismoWaveRefiller {
       fromMs = holes.fromMs
       toMs = holes.toMs
     } else {
+      // **取り直しの番で穴が無くなっていたら（抱える長さの外へ流れた・別の取得が埋めた）、数え直す。**
+      // 待っている取り直し（`timer` がある）は消さない —— そちらの範囲はまだ片付いていない。
+      if (this.retrying.get(stationId)?.timer === null) this.retrying.delete(stationId)
       this.deps.onSkipped(stationId, 'nothing-to-do')
       return
     }
     const got = await this.deps.fetchSamples({ stationId, fromMs, toMs })
-    // **失敗は取得の層が記録へ残す**（`seismoWaveSamples.ts` の `fail`）。ここでは次の予約・知らせを待つ ——
-    // 同じ範囲を訊き直し続けると、ホストが落ちている間ずっと叩くことになる。
-    if (got.kind !== 'ok' || this.deps.signal.aborted) return
+    if (this.deps.signal.aborted || got.kind === 'aborted') return
+    // **失敗の理由は取得の層が記録へ残す**（`seismoWaveSamples.ts` の `fail`）。ここでは間隔を広げつつ
+    // 上限つきで取り直す（→ `utils/retrySchedule.ts`）。**取り直さないと、穴は次の予約・知らせが来るまで
+    // 埋まらない** —— 一度きりの欠けなら二度と来ない。`bad-request` はこちらの組み立てが通らなかったので
+    // 同じ範囲で投げ直しても変わらない。
+    if (got.kind !== 'ok') {
+      if (got.kind !== 'bad-request') this.retryLater(stationId, range)
+      // こちらの組み立てが通らなかった。取り直さないことも記録する（画面からは「埋まらない」としか見えない）。
+      else this.deps.onFailed(stationId, 0, null)
+      return
+    }
+    // **取れたら数え直す。** 別の範囲の取り直しを待っているなら、その時計は残す（その範囲はまだ片付いていない）——
+    // 時計ごと消すと残った時計が後で発火し、失敗の回数が 1 から数え直しになる。
+    const pending = this.retrying.get(stationId)
+    if (pending !== undefined) {
+      if (pending.timer === null) this.retrying.delete(stationId)
+      else pending.failures = 0
+    }
     // **取りに行っている間に起点から作り直されていたら、書かない**（{@link SeismoWaveRefillSkip}）。
     // 作り直した回数で見分ける。**最も古いサンプルの時刻では見分けない** —— 抱える長さが埋まった後は、
     // 新しいまとまりが届くたびに古い側が押し出されてそこが動くので、ふだんの穴埋めまで見送ることになる。

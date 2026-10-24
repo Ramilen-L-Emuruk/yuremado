@@ -18,11 +18,14 @@ import {
   STALLED_BACKOFF_AFTER_FAILURES,
   STALLED_RETRY_MAX_MS,
   stalledRetryDelayMs,
+  type KyoshinBackfillEvent,
   type KyoshinFrame,
+  WARMUP_CONCURRENCY,
 } from './kyoshinSource'
 import { fetchRealtimeIntensity, fetchSiteList, startClockSync } from './kyoshin'
 import type { RealtimeIntensity } from './kyoshin'
 import { setReplayOffset } from '../utils/clock'
+import { log } from '../utils/logger'
 
 // 取得そのものではなくスケジューリング（いつ・どのデータ時刻を取りに行くか、何回で諦めるか）を
 // 検証するため、通信層はモジュール単位でモックする。
@@ -61,13 +64,17 @@ function createSink() {
   const stalled: boolean[] = []
   /** 助走として渡された回ぶんのフレーム列（1 度しか呼ばれない契約を確かめるため配列で持つ）。 */
   const prefilled: KyoshinFrame[][] = []
+  /** 全滅区間の取り直しとして渡されたもの（#986）。 */
+  const backfills: KyoshinBackfillEvent[] = []
   return {
     frames,
     stalled,
     prefilled,
+    backfills,
     enqueue: (frame: KyoshinFrame) => frames.push(frame),
     setStalled: (s: boolean) => stalled.push(s),
     prefill: (fs: KyoshinFrame[]) => prefilled.push(fs),
+    backfill: (e: KyoshinBackfillEvent) => backfills.push(e),
   }
 }
 
@@ -560,6 +567,7 @@ describe('Yahoo 強震モニタソース', () => {
         enqueue: () => { throw new Error('下流のバグ') },
         setStalled: () => {},
         prefill: () => {},
+        backfill: () => {},
       })
       await vi.advanceTimersByTimeAsync(POLL_MS)
 
@@ -717,6 +725,119 @@ describe('取得が失敗し続けたときの間隔と打ち切り', () => {
 
       expect(sink.frames.length).toBeGreaterThan(0)
       expect(sink.stalled[sink.stalled.length - 1]).toBe(false)
+    })
+
+    // 正（#986）: 全滅から戻ったら、飛ばした区間を取り直して検知エンジンへ渡す。**`begin` は戻った秒より先に出す**
+    // （後だと、受け取る側が戻った秒を先に食わせて、穴のフレームが巻き戻りとして捨てられる）。
+    it('正: 全滅から戻ったら、飛ばした区間を取り直して渡す（begin は戻った秒より先）', async () => {
+      fetchMock.mockRejectedValue(new Error('missing'))
+      const order: string[] = []
+      const backfills: KyoshinBackfillEvent[] = []
+      const source = createYahooArchiveSource(OFFSET)
+      source.start({
+        enqueue: () => order.push('frame'),
+        setStalled: () => {},
+        prefill: () => {},
+        backfill: (e) => {
+          order.push(e.kind)
+          backfills.push(e)
+        },
+      })
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(order).not.toContain('frame')
+      fetchMock.mockResolvedValue(response())
+      await vi.advanceTimersByTimeAsync(30_000)
+      source.stop()
+
+      expect(order.indexOf('begin')).toBeGreaterThanOrEqual(0)
+      expect(order.indexOf('begin')).toBeLessThan(order.indexOf('frame'))
+      const frames = backfills.find((e) => e.kind === 'frames')
+      expect(frames?.kind === 'frames' ? frames.frames.length : 0).toBeGreaterThan(0)
+      // 渡すのは時刻の昇順。
+      const times = frames?.kind === 'frames' ? frames.frames.map((f) => f.time.getTime()) : []
+      expect([...times].sort((a, b) => a - b)).toEqual(times)
+    })
+
+    // 対照（#986）: 全滅していなければ取り直しを出さない。
+    it('対照: 全滅していなければ、取り直しは出さない', async () => {
+      fetchMock.mockResolvedValue(response())
+      const backfills: KyoshinBackfillEvent[] = []
+      const source = createYahooArchiveSource(OFFSET)
+      source.start({ enqueue: () => {}, setStalled: () => {}, prefill: () => {}, backfill: (e) => backfills.push(e) })
+      await vi.advanceTimersByTimeAsync(30_000)
+      source.stop()
+      expect(backfills).toEqual([])
+    })
+
+    // 安全弁（#986）: 取り直しの最中にまた全滅から戻っても、2 本目は重ねない（重ねると、受け取る側が先の穴を
+    // 食わせた後に次の穴が巻き戻りとして捨てられる）。重ねなかったことは warn で残す。
+    it('安全弁: 取り直しの最中にまた全滅から戻っても、2 本目の取り直しは始めない', async () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      let phase: 'down' | 'up' = 'down'
+      let firstHoleEnd = Number.NEGATIVE_INFINITY
+      fetchMock.mockImplementation(async (target: Date) => {
+        const t = target.getTime()
+        if (phase === 'down') {
+          firstHoleEnd = Math.max(firstHoleEnd, t)
+          throw new Error('missing')
+        }
+        // 1 本目の穴の秒は返さない（取り直しが終わらない状態を作る）
+        if (t <= firstHoleEnd) return new Promise<RealtimeIntensity>(() => {})
+        return response()
+      })
+      const backfills: KyoshinBackfillEvent[] = []
+      const source = createYahooArchiveSource(OFFSET)
+      source.start({ enqueue: () => {}, setStalled: () => {}, prefill: () => {}, backfill: (e) => backfills.push(e) })
+      await vi.advanceTimersByTimeAsync(120_000)
+      phase = 'up'
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(backfills.filter((e) => e.kind === 'begin')).toHaveLength(1)
+      const holeEnd = firstHoleEnd
+      // 2 度目の全滅と回復（1 本目の穴の秒は、まだ返らない）
+      phase = 'down'
+      await vi.advanceTimersByTimeAsync(120_000)
+      firstHoleEnd = holeEnd
+      phase = 'up'
+      await vi.advanceTimersByTimeAsync(30_000)
+      source.stop()
+
+      expect(backfills.filter((e) => e.kind === 'begin')).toHaveLength(1)
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('取り直しの最中にまた全滅から戻った'))).toBe(true)
+      warn.mockRestore()
+    })
+
+    // 安全弁（#986）: 穴の秒がどれも取れない（配信元にその時間帯のファイルが無い）なら、続けて取れなかった時点でやめる。
+    // 歯止めが無いと、120 秒の穴で 120 秒 × 4 回 = 480 件を投げる。近い側から 1 まとまり（並列数）ぶんで止まる。
+    it('安全弁: 穴の秒がどれも取れなければ、続けて取れなかった時点で取り直しをやめる', async () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      let phase: 'down' | 'up' = 'down'
+      // 戻った秒（回復後に最初に訊かれた秒）より前は全部無い。探りの間に飛ばした秒も穴に入るので、全滅中に見た秒では区切らない。
+      let recoveredAt: number | null = null
+      let holeRequests = 0
+      fetchMock.mockImplementation(async (target: Date) => {
+        const t = target.getTime()
+        if (phase === 'down') throw new Error('missing')
+        recoveredAt ??= t
+        if (t < recoveredAt) {
+          holeRequests += 1
+          throw new Error('missing')
+        }
+        return response()
+      })
+      const backfills: KyoshinBackfillEvent[] = []
+      const source = createYahooArchiveSource(OFFSET)
+      source.start({ enqueue: () => {}, setStalled: () => {}, prefill: () => {}, backfill: (e) => backfills.push(e) })
+      await vi.advanceTimersByTimeAsync(120_000)
+      phase = 'up'
+      await vi.advanceTimersByTimeAsync(60_000)
+      source.stop()
+
+      const frames = backfills.find((e) => e.kind === 'frames')
+      expect(frames?.kind === 'frames' ? frames.frames : null).toEqual([])
+      expect(holeRequests).toBeGreaterThanOrEqual(REPLAY_MAX_CONSECUTIVE_GIVEUPS)
+      expect(holeRequests).toBeLessThanOrEqual(WARMUP_CONCURRENCY * REPLAY_MAX_ATTEMPTS_PER_TARGET)
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('続けて取れなかった'))).toBe(true)
+      warn.mockRestore()
     })
 
     // 対照: 1 件でも取れたら数え直す（欠損が散らばっている時間帯で止めない）。

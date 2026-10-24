@@ -30,6 +30,13 @@ export function paintSampleLane(
      * **幅（デバイスピクセル）を受け取って作る**（{@link geometry} と同じ理由）。
      */
     readonly singleMember: (widthPx: number) => Uint8Array
+    /**
+     * **生のサンプルを取れなかった区間**に重ねる粗い絵（カードの列の上下の端）。無ければ `null`。
+     * 生の線より薄く描き、取れなかった区間だと分かるようにする（2026-10-22 選択「取れた区間だけ生で描き、残りは粗い絵」）。
+     */
+    readonly coarse: { readonly geometry: (widthPx: number) => LaneGeometry; readonly color: string } | null
+    /** 生のサンプルを取れなかった区間（横の比 0〜1）。淡く塗る。**無ければ空。** 境目の線は `marks` に入れて渡す。 */
+    readonly shades: readonly { readonly fromRatio: number; readonly toRatio: number }[]
     readonly scaleGal: number
     readonly stale: boolean
     readonly marks: readonly WaveMark[]
@@ -50,6 +57,15 @@ export function paintSampleLane(
   const axisH = params.ticks !== undefined ? Math.round(AXIS_BAND_PX * dpr) : 0
   const plotH = Math.max(1, h - axisH)
   paintTicks(ctx, ticks, w, plotH, h, dpr)
+  // 取れなかった区間を淡く塗る（線より先に。文言は足さない —— 10-13 の「文言を足さない」）。
+  if (params.shades.length > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,0.06)'
+    for (const s of params.shades) {
+      const x0 = Math.max(0, Math.round(s.fromRatio * w))
+      const x1 = Math.min(w, Math.round(s.toRatio * w))
+      if (x1 > x0) ctx.fillRect(x0, 0, x1 - x0, plotH)
+    }
+  }
   // 0 の線。下端に置くときは線の太さぶん内側へ（切れないように）。
   const zeroY = params.baseline === 'center' ? plotH / 2 : plotH - dpr
   ctx.strokeStyle = 'rgba(255,255,255,0.18)'
@@ -69,6 +85,8 @@ export function paintSampleLane(
     const yOf = (v: number): number => zeroY - (v / scale) * reach
     // 途切れていれば薄く（カードと同じ 0.25）。段に 1 本しか無いので、カードのように下の線を
     // 透かす必要は無い。
+    // 粗い絵は生の線より薄く、先に描く（生の線を覆わない）。
+    if (params.coarse !== null) strokeGeometry(ctx, params.coarse.geometry(w), yOf, params.coarse.color, dpr, params.stale ? 0.15 : 0.45)
     strokeGeometry(ctx, params.geometry(w), yOf, params.color, dpr, params.stale ? 0.25 : 0.85)
     // 重ねる線は太く・はっきり。元の線の上に描く。
     for (const overlay of params.overlays) {

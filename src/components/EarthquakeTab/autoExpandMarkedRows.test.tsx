@@ -87,6 +87,7 @@ const renderTab = async (updateMarks: ReadonlyMap<string, QuakeCardMarks>, selec
     onFocusMap={() => {}}
     speakingTelegramTextSubject={null}
     seismoWaves={new Map()}
+    seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
   />,
   )
@@ -151,6 +152,7 @@ describe('印の付いた行の自動展開（カードとの配線）', () => {
         onFocusMap={() => {}}
         speakingTelegramTextSubject={null}
         seismoWaves={new Map()}
+        seismoWaveFailedKeys={new Set()}
         seismoWaveView="composite"
       />,
     )
