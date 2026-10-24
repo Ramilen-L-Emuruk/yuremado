@@ -52,6 +52,8 @@ verify-*.jpg
 # そこで始めたセッションが別のリストを見る。
 # 端末ごとの設定（許可リスト等）は settings.local.json に置き、こちらは追跡しない。
 !.claude/settings.json
+# 配布元へ書き戻す候補（CLAUDE.md「他のリポジトリにも効く教訓に気づいたとき」）。コミットして別の端末と配布元へ届ける。
+!.claude/writeback/
 # .claude/agents/ 配下はホワイトリスト方式:
 # ディレクトリ自体は再包含して走査可能にし、中身は原則無視、
 # 本プロジェクトで共通利用する定義だけを明示的に許可する。
@@ -61,8 +63,10 @@ verify-*.jpg
 !.claude/agents/
 .claude/agents/*
 !.claude/agents/adversarial-reviewer.md
+!.claude/agents/code-explorer.md
 !.claude/agents/doc-objectivity-reviewer.md
 !.claude/agents/meta-reviewer.md
+!.claude/agents/silent-failure-hunter.md
 # .claude/skills/ も同じホワイトリスト方式。スキルは 1 つがディレクトリ単位のため、
 # ディレクトリを再包含する行（!.claude/skills/<name>/）が要る。
 # ただし ! でディレクトリを再包含すると配下が既定で追跡側に回るので、
