@@ -49,7 +49,7 @@ export const REGION_MATCH_KM = 300
  * 発報の機会を失う窓が広がる——数を減らせないなら、その代償だけを負うことになる。
  *
  * 連発を止めているのは `absorbedByEew`・エピソード起点（`AlertRegionState.outbreakAtMs`）・
- * `PROPAGATION_MAX_KM`・`NEW_REGION_MIN_INDEX` の 4 つ（設計書§24）。
+ * `PROPAGATION_MAX_KM` の 3 つ（設計書§24。震度の下限も 4 つ目として効いていたが、2026-10-22 に外した）。
  */
 export const NEW_REGION_COOLDOWN_MS = 5_000
 /**
@@ -65,19 +65,11 @@ export const NEW_REGION_COOLDOWN_MS = 5_000
  * 緩さは承知の上で、長さの一貫性を取っている（設計書§31）。
  */
 const REGION_PERSIST_MS = 2_000
-/**
- * 別地点として発報する最小の計測震度インデックス（11 = 震度3の下端。`kyoshinLevel` と同じ境界）。
- *
- * 距離の条件だけでは、巨大地震の表面波が遠地へ広がっていく過程を抑えきれない。2026-08-20 の能登半島
- * 地震リプレイ検証（EEW なし条件）では、発報した 8 件のうち 6 件が**震度2以下**（index 7〜10・
- * 震央から 600〜1350km）で、いずれも本震の揺れが遠くへ届いたものだった。距離の上限
- * （`PROPAGATION_MAX_KM`）を上げれば吸収できるが、それは「本当に別の場所で起きた地震」を
- * 取りこぼす方向に働く。**遠さではなく揺れの強さで線を引けば両立する。**
- *
- * 震度3を境にしたのは、地震として体感される水準であり、フル音量の検知音で知らせるに値するため。
- * これを下回る地域も検知カードと地図には出る（音を鳴らさないだけ）。
- */
-export const NEW_REGION_MIN_INDEX = 11
+// 別地点の発報に震度の下限は置かない（2026-10-22 ユーザー選択「下限を外す」）。以前は震度3 未満の
+// 地域を鳴らさなかった（`NEW_REGION_MIN_INDEX`）。巨大地震の表面波が遠地へ届く過程を抑えるためだったが、
+// 震度更新音の段も震度0・1・2 を分けた（`kyoshinLevel`）ので、同じ震度3 の境目を根拠にしていた
+// この下限も外した。控えの 795 窓（EEW なし）では発報が 34 回から 40 回に増える。伝播の吸収は距離の
+// 側（`isSameEarthquake`・`PROPAGATION_MAX_KM`）と `absorbedByEew` が引き続き担う。
 /**
  * confirmed から外れて地域を破棄するまでの猶予(ms)。最後に現れてからこれを超えたフレーム末で捨てる。
  *
@@ -431,7 +423,6 @@ export function stepAlertRegions(
       reg.lastSeenAtMs = nowMs
       if (
         !reg.fired && !reg.absorbedByEew && state.anyConfirmedPrev
-        && s.index >= NEW_REGION_MIN_INDEX
         && nowMs - reg.firstSeenAtMs >= REGION_PERSIST_MS
         && (state.lastNewRegionAtMs == null || nowMs - state.lastNewRegionAtMs >= NEW_REGION_COOLDOWN_MS)
       ) {
@@ -683,7 +674,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
   // likely/confirmed 中の音再鳴ロジック（同一地震の揺れ強まり）
   // - 過去最大レベルを超えたとき（新たな最大）→ 音を鳴らす
   // - ピーク後に一度落ちてから再上昇したとき（再エスカレーション）→ 音を鳴らす
-  // 生インデックスではなく音レベル（0〜6）で比較することで、フレーム間の微細な数値変動による誤再鳴を防ぐ。
+  // 生インデックスではなく音レベル（0〜9）で比較することで、フレーム間の微細な数値変動による誤再鳴を防ぐ。
   // 「未観測」は -1 で表す（0 は有効な音レベルのため）。likely 中もリセットせず追跡を続けることで、
   // likely→confirmed の遷移で「最初から高いレベルで確定した」場合も正しく「レベルが上がった」と
   // 検出できる（likely 中に基準値が育っているため）。confirmed か candidate のどちらもなくなったら

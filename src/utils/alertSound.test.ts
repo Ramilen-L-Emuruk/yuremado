@@ -155,9 +155,9 @@ beforeEach(() => {
 
 /**
  * 震度更新音の段ごとに、その段へ落ちる強震モニタのインデックスを 1 つずつ。
- * 気象庁の階級（震度2以下 / 3 / 4 / 5弱 / 5強 / 6弱 / 6強 / 7）と 1 対 1 で並ぶ。
+ * 気象庁の階級（震度0 / 1 / 2 / 3 / 4 / 5弱 / 5強 / 6弱 / 6強 / 7）と 1 対 1 で並ぶ。
  */
-const KYOSHIN_INDEX_BY_LEVEL = [9, 11, 13, 15, 16, 17, 18, 19] as const
+const KYOSHIN_INDEX_BY_LEVEL = [6, 7, 9, 11, 13, 15, 16, 17, 18, 19] as const
 
 describe('通知音: アタックのノイズを持ち込まない', () => {
   // 正: プチプチの原因だった広帯域ノイズバースト（AudioBufferSourceNode）を
@@ -438,7 +438,7 @@ describe('震度更新音: 震度5弱以上で低音が厚くなる', () => {
     expect(subRatio(freqs)).toBeCloseTo(0.20 / 0.40, 5)
   })
 
-  it('安全弁: 段階ごとの音数は変えていない（震度2以下 2 音 → 震度7 8 音）', () => {
+  it('安全弁: 段階ごとの音数は変えていない（震度0 1 音 → 震度7 8 音）', () => {
     // 1 音 4 本。音数が変わると段階の勾配（音数・間隔・音量）が崩れる。
     // 震度4 と 5弱だけが並ぶ（`deep` の有無で分かれる）
     const counts = KYOSHIN_INDEX_BY_LEVEL.map(index => {
@@ -446,7 +446,28 @@ describe('震度更新音: 震度5弱以上で低音が厚くなる', () => {
       sound.playKyoshinUpdateSound(index)
       return ctx.oscillators.length / 4
     })
-    expect(counts).toEqual([2, 3, 4, 4, 5, 6, 7, 8])
+    expect(counts).toEqual([1, 2, 2, 3, 4, 4, 5, 6, 7, 8])
+  })
+})
+
+describe('震度更新音: 段は気象庁の階級と 1 対 1（震度0・1・2 も分ける）', () => {
+  // 2026-10-22 ユーザー選択「0・1・2 を分ける」。以前は震度0〜2 を 1 段に畳んでいた
+  it('正: 震度0・1・2・3 が別々の段になる', () => {
+    expect([6, 7, 9, 11].map(sound.kyoshinLevel)).toEqual([0, 1, 2, 3])
+  })
+
+  it('正: 同じ階級の中の 2 つのインデックスは同じ段', () => {
+    expect(sound.kyoshinLevel(7)).toBe(sound.kyoshinLevel(8))   // 震度1
+    expect(sound.kyoshinLevel(9)).toBe(sound.kyoshinLevel(10))  // 震度2
+  })
+
+  it('対照: 震度0 未満と欠測は震度0 の段に入る（段を分けない）', () => {
+    expect([-1, 0, 5, 6].map(sound.kyoshinLevel)).toEqual([0, 0, 0, 0])
+  })
+
+  it('安全弁: 震度3 以上の段の境目は分ける前と変わらない', () => {
+    const levels = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map(sound.kyoshinLevel)
+    expect(levels).toEqual([3, 3, 4, 4, 5, 6, 7, 8, 9, 9])
   })
 })
 
@@ -668,7 +689,7 @@ describe('音量は「系統 × 深刻度」で決まる', () => {
     // **較正そのものを固定する意図はない。** 目標の dBFS へ寄せる値は実測で詰めるものなので、
     // 触るたびに落ちるテストは邪魔になる。ここで捕まえたいのは桁を取り違えた場合だけ
     // （`BASE_GAIN.beep` を 0.40 のつもりで 0.04 と書くと、震度更新音が全段聞こえなくなる）。
-    // 現状の実測は 0.040（震度2以下）〜0.341（EEW 特別警報）。
+    // 現状の実測は 0.032（震度0）〜0.341（EEW 特別警報）。
     const all: number[] = ALL_TYPES.map(loudestVoice)
     for (const index of KYOSHIN_INDEX_BY_LEVEL) {
       ctx.reset()
@@ -686,9 +707,12 @@ describe('音量は「系統 × 深刻度」で決まる', () => {
     }
   })
 
-  it('安全弁: 震度更新音は段が上がるほど大きくなる', () => {
-    // 音量の勾配が段階の重さを伝える。1 段でも逆転すると、強い揺れが弱く聞こえる
-    const byLevel = KYOSHIN_INDEX_BY_LEVEL.map(index => {
+  it('安全弁: 震度更新音は段が上がるほど大きくなる（2 音以上の段）', () => {
+    // 音量の勾配が段階の重さを伝える。1 段でも逆転すると、強い揺れが弱く聞こえる。
+    // **震度0（1 音）は比べない。** 1 音は重なりで音圧が積み上がらないので、係数を大きくして
+    // 鳴らした音圧（−19.8 dBFS）を震度1（−18.4）の下へ合わせてある。ここが見るのは係数で、
+    // 鳴らした音圧は見られない（jsdom に OfflineAudioContext が無い）。
+    const byLevel = KYOSHIN_INDEX_BY_LEVEL.slice(1).map(index => {
       ctx.reset()
       sound.playKyoshinUpdateSound(index)
       return Math.max(...ctx.gains.flatMap(g => g.gain.events.map(e => e.value)))

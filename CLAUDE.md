@@ -1561,7 +1561,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 |---|---|
 | `PLAYERS` の周波数・音数を仕様書「音の種類」表や設定タブの説明文と食い違わせると、試聴した音と説明文の内容が一致しなくなる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「音の種類」 |
 | `COUNTDOWN_PULSES`（S波カウントダウンのパルス数）を説明文と食い違わせると、「秒が減るほど速く・多く鳴る」という説明と実際のパルス数がずれる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「発火 API」 |
-| `kyoshinLevel` を気象庁の階級と1対1（8段）で対応させる規則、またはまとめてよいのは震度0〜2だけという規則を崩すと、ある震度で鳴るべき音が鳴らない、または `useKyoshinAlerts` が段の上昇で起動する検知音・タブ移動・揺れフォーカスの3つが畳んだ範囲内の悪化に対して起動しなくなる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「震度更新音の段は気象庁の階級と対応させる」 |
+| `kyoshinLevel` を気象庁の階級と1対1（10段。震度0未満だけ震度0の段へ含める）で対応させる規則を崩すと、ある震度で鳴るべき音が鳴らない、または `useKyoshinAlerts` が段の上昇で起動する更新音・タブ移動・揺れフォーカスの3つが畳んだ範囲内の悪化に対して起動しなくなる。震度0（1音）の音量の係数だけ震度1より大きいのは重なりの無い1音の音圧を実測で合わせたためで、係数の大小で段の重さを読むと崩す | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「震度更新音の段は気象庁の階級と対応させる」 |
 | 上位3段（6弱・6強・7）を音数・音量ではなく音程で分ける規則、震度7だけ880Hzの外（C6/1047Hz）へ出す規則、1047Hzより上へ音域を上げない規則のいずれかを崩すと、1音の差が聞き取れず隣接段と判別できなくなる、または2度にわたって下げてきた音域を戻す意味が失われる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「震度更新音の段は気象庁の階級と対応させる」 |
 | 種別ごとに個別の音量値を書く、または震度更新音で `BEEP_PATTERNS` に音量を持たせる（`BEEP_SEVERITY` と二重管理にする）と、`BASE_GAIN`×`SEVERITY` で揃えた一貫性が崩れる、またはパターン変更のたびに音量が食い違う | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「種別ごとの音量は「系統 × 深刻度」で決める」 |
 | 音圧を揃えるため `BASE_GAIN` か `SEVERITY` の片方だけを動かすと、音数・重なりが違う他種別の音圧までつられて変わる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「種別ごとの音量は「系統 × 深刻度」で決める」 |
@@ -1777,7 +1777,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 検知カードの震度分布バーの分母（`scalePeakRef`）を可視中も下げると、揺れが収まっていく最中にバーが伸びて「増えた」と誤読させる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「検知カードの震度分布バーの幅スケール」 |
 | 非可視中だけ現在値へ張り直す規則を崩すと、前の揺れの減衰を見続けている最中に分母がピークのままでバーが実際より細く見え続ける（検知イベントが一度でも0件になればカードごとアンマウントされて分母は独立にリセットされるため、影響が及ぶのは同じ検知が続いている間だけ） | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「検知カードの震度分布バーの幅スケール」 |
 | 「別地点」の動的距離閾値（EEW ごとの個別判定を優先し、無ければエピソード起点でフォールバック・上下限で打ち止め）を崩すと、広域地震の伝播中に周辺地域を誤って「別地点」と連発する | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「別地点」判定の動的距離閾値 |
-| 距離条件に加えた3つの抑制（EEW 吸収の記憶・震度の下限・発報済みの地域は二度鳴らない）を崩すと、EEW 解除後の一斉発報・弱い揺れでの過剰発報・同じ地域での再発報のいずれかが起きる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「別地点」判定の動的距離閾値 |
+| 距離条件に加えた2つの抑制（EEW 吸収の記憶・発報済みの地域は二度鳴らない）を崩すと、EEW 解除後の一斉発報・同じ地域での再発報のいずれかが起きる（震度3の下限は2026-10-22に外した） | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「別地点」判定の動的距離閾値 |
 | 「別地点」の3つの窓（持続・クールダウン・破棄猶予）をフレーム数ではなくデータ時刻で測る・持続を観測回数ではなく初検知からの経過で見る規則を崩すと、ライブと過去再生とで実際の長さがずれる、または欠測を挟む揺れの持続判定が壊れる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「別地点」判定の動的距離閾値 |
 | 破棄判定をフレームの末尾（その地域の確定点更新の後）に置く規則を崩し冒頭で破棄すると、コマ飛びの直後に現存する地域がまとめて捨てられ、同じフレームの確定点が新規地域として登録し直されて発報済みの地域が別地点として鳴り直す | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「別地点」判定の動的距離閾値・[`kyoshin-detection-v3-design.md`](docs/spec/kyoshin-detection-v3-design.md) §31 |
 

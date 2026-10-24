@@ -61,7 +61,7 @@ describe('useKyoshinAlerts の揺れフォーカス要求', () => {
 
   it('[正] レベルが上がったら、レベルを担ったイベントの代表点を通知する', () => {
     const onShakeFocus = vi.fn()
-    // 震度3（index 11 → レベル1）で確定。初観測なので基準値を作るだけで音は鳴らない。
+    // 震度3（index 11 → レベル3）で確定。初観測なので基準値を作るだけで音は鳴らない。
     const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
       initialProps: makeDeps({
         confirmed: true,
@@ -72,7 +72,7 @@ describe('useKyoshinAlerts の揺れフォーカス要求', () => {
     expect(playKyoshinUpdateSound).not.toHaveBeenCalled()
     expect(onShakeFocus).not.toHaveBeenCalled()
 
-    // 震度4（index 13 → レベル2）へ上がる。弱いままの地域も残しておく——寄り先は
+    // 震度4（index 13 → レベル4）へ上がる。弱いままの地域も残しておく——寄り先は
     // 「レベルを担った方」でなければならない。
     rerender(makeDeps({
       confirmed: true,
@@ -119,14 +119,14 @@ describe('useKyoshinAlerts の揺れフォーカス要求', () => {
     const props = (i: number, shocks: typeof NOTO[]) =>
       makeDeps({ confirmed: true, confirmedShocks: shocks, dataTime: at(i), onShakeFocus })
 
-    // 震度4（index 13 → レベル2）で確定し、遠方が登録されて持続する。
+    // 震度4（index 13 → レベル4）で確定し、遠方が登録されて持続する。
     const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
       initialProps: props(0, [{ ...NOTO, index: 13 }]),
     })
     for (let i = 1; i <= 2; i++) rerender(props(i, [{ ...NOTO, index: 13 }, FUKUOKA]))
     expect(onShakeFocus).not.toHaveBeenCalled()
 
-    // 別地点の発報が成立するフレームで、同時に最大震度も上がる（5弱 → レベル3）。
+    // 別地点の発報が成立するフレームで、同時に最大震度も上がる（5弱 → レベル5）。
     rerender(props(3, [{ ...NOTO, index: 15 }, FUKUOKA]))
 
     // 強まりと別地点の両方が要求を出し、最後は別地点。

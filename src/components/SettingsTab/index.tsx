@@ -9,6 +9,7 @@ import type { ConnectionStatus } from '../../types/earthquake'
 import { dmdataConnectionLabel } from './connectionLabel'
 import { classificationLabel, type DmdataClassification } from '../../services/dmdataClassifications'
 import { INTENSITY_SCALE_COUNT, getIntensityLabel, getIntensityColor, INTENSITY_LABELS } from '../../utils/intensity'
+import { kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { readableTextColor } from '../../utils/contrast'
 import { playAlertSound, playCountdownBeep, playKyoshinUpdateSound, unlockAudio } from '../../utils/alertSound'
 import { checkVoicevoxAvailable, fetchVoicevoxSpeakers, isValidVoicevoxUrl, speakSequentially, VOICEVOX_URL_DEBOUNCE_MS, type VoicevoxSpeaker } from '../../utils/voicevox'
@@ -844,8 +845,9 @@ async function speakVoicevoxPreview(baseUrl: string, speakerId: number, volume: 
   await speakSequentially(baseUrl, voicevoxPreviewTexts(), speakerId, volume)
 }
 
-// 震度別の色付き小ボタン（通知音テスト用）
-function IntensityPlayButton({ scale, kyoshinIndex }: { scale: number; kyoshinIndex: number }) {
+// 震度別の色付き小ボタン（通知音テスト用）。表記と色は強震モニタのインデックスから引く
+// （震度0 は地震情報の階級表に無いため。地図の強震モニタの点と同じ色になる）
+function IntensityPlayButton({ kyoshinIndex }: { kyoshinIndex: number }) {
   const [active, setActive] = useState(false)
   const handle = () => {
     unlockAudio()
@@ -853,15 +855,16 @@ function IntensityPlayButton({ scale, kyoshinIndex }: { scale: number; kyoshinIn
     setActive(true)
     setTimeout(() => setActive(false), 600)
   }
-  const fill = getIntensityColor(scale)
+  const label = kyoshinIndexToLabel(kyoshinIndex) ?? '?'
+  const fill = kyoshinIntensityColor(kyoshinIndex) ?? '#666666'
   return (
     <button
       onClick={handle}
-      title={`震度${getIntensityLabel(scale)} の更新音を試聴`}
+      title={`震度${label} の更新音を試聴`}
       className={`text-xs font-bold px-2 py-1 rounded-sm transition-opacity ${active ? 'opacity-40' : 'hover:opacity-75'}`}
       style={{ backgroundColor: fill, color: readableTextColor(fill) }}
     >
-      {getIntensityLabel(scale)}
+      {label}
     </button>
   )
 }
@@ -1848,14 +1851,16 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
         <Row label="揺れ検知・震度更新" description="警告ビープ。震度が上がるほど音数が増え間隔が詰まる。震度をタップして試聴">
           <div className="flex flex-wrap gap-1.5 justify-end">
-            <IntensityPlayButton scale={20} kyoshinIndex={9}  />
-            <IntensityPlayButton scale={30} kyoshinIndex={11} />
-            <IntensityPlayButton scale={40} kyoshinIndex={13} />
-            <IntensityPlayButton scale={45} kyoshinIndex={15} />
-            <IntensityPlayButton scale={50} kyoshinIndex={16} />
-            <IntensityPlayButton scale={55} kyoshinIndex={17} />
-            <IntensityPlayButton scale={60} kyoshinIndex={18} />
-            <IntensityPlayButton scale={70} kyoshinIndex={19} />
+            <IntensityPlayButton kyoshinIndex={6} />
+            <IntensityPlayButton kyoshinIndex={7} />
+            <IntensityPlayButton kyoshinIndex={9} />
+            <IntensityPlayButton kyoshinIndex={11} />
+            <IntensityPlayButton kyoshinIndex={13} />
+            <IntensityPlayButton kyoshinIndex={15} />
+            <IntensityPlayButton kyoshinIndex={16} />
+            <IntensityPlayButton kyoshinIndex={17} />
+            <IntensityPlayButton kyoshinIndex={18} />
+            <IntensityPlayButton kyoshinIndex={19} />
           </div>
         </Row>
         {/* ── 緊急地震速報（EEW） ── */}
