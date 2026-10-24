@@ -75,12 +75,95 @@ export function isSameEstimatedIntensityQuake(
   a: Pick<JMAEstimatedIntensity, 'arrivalTime' | 'hypocenter'>,
   b: Pick<JMAEstimatedIntensity, 'arrivalTime' | 'hypocenter'>,
 ): boolean {
+  return sameEstimatedIntensityQuakeBy(a, b) !== null
+}
+
+/**
+ * {@link isSameEstimatedIntensityQuake} と同じ判定で、**何を見て同じと決めたか**を返す。
+ *
+ * - `'distance'` … 発現時刻の分が同じで、震源も {@link MATCH_MAX_KM} 以内
+ * - `'timeOnly'` … 発現時刻の分が同じで、**どちらかの震源が読めないので距離を見ていない**
+ * - `null` … 別の地震
+ *
+ * `'timeOnly'` は同じ分に起きた別の地震を取り違えうる形なので、結び付けたら記録する
+ * （2026-10-22 ユーザー選択「そのときだけ記録を残す (Recommended)」。→ {@link upsertEstimatedIntensity}）。
+ */
+export function sameEstimatedIntensityQuakeBy(
+  a: Pick<JMAEstimatedIntensity, 'arrivalTime' | 'hypocenter'>,
+  b: Pick<JMAEstimatedIntensity, 'arrivalTime' | 'hypocenter'>,
+): 'distance' | 'timeOnly' | null {
   const ka = toMinuteKey(a.arrivalTime)
   const kb = toMinuteKey(b.arrivalTime)
-  if (ka === null || kb === null || ka !== kb) return false
-  if (!hasKnownEpicenter(a.hypocenter.lat, a.hypocenter.lon)) return true
-  if (!hasKnownEpicenter(b.hypocenter.lat, b.hypocenter.lon)) return true
+  if (ka === null || kb === null || ka !== kb) return null
+  if (!hasKnownEpicenter(a.hypocenter.lat, a.hypocenter.lon)) return 'timeOnly'
+  if (!hasKnownEpicenter(b.hypocenter.lat, b.hypocenter.lon)) return 'timeOnly'
   return haversineKm(a.hypocenter.lat, a.hypocenter.lon, b.hypocenter.lat, b.hypocenter.lon) <= MATCH_MAX_KM
+    ? 'distance' : null
+}
+
+/**
+ * 震源を見ずに結び付けた記録を、同じ組で 1 回だけ出す（2026-10-22 ユーザー選択「そのときだけ記録を残す (Recommended)」）。
+ * 同じ地震の続報やリプレイの繰り返しで同じ文面が並ばないように覚えておく。上限を超えたら忘れる
+ * （全期間の電文では 1 件も起きていない形なので、溢れるのは書式が変わったときだけ）。
+ */
+const notedTimeOnlyMatches = new Set<string>()
+const NOTED_TIME_ONLY_MAX = 64
+function noteTimeOnlyMatch(key: string, message: string): void {
+  if (notedTimeOnlyMatches.has(key)) return
+  if (notedTimeOnlyMatches.size >= NOTED_TIME_ONLY_MAX) notedTimeOnlyMatches.clear()
+  notedTimeOnlyMatches.add(key)
+  log.warn(message)
+}
+
+/** 読み上げの話題を地震ごとに分けるための、覚えておく地震 1 件。→ {@link estimatedIntensityTopicKey} */
+export interface EstimatedIntensityTopicAnchor {
+  readonly key: string
+  readonly arrivalTime: string
+  readonly hypocenter: JMAEstimatedIntensity['hypocenter']
+}
+
+/**
+ * 推計震度分布図の読み上げの話題（同じ話題どうしは後発が先発を取り下げる）を、**地震ごとに**決める鍵。
+ *
+ * 話題を種別で 1 つにしていた頃は、別の地震の分布図が続くと、先の地震の読み上げが
+ * 「同じ話題の新しい報」として取り下げられていた（2026-10-22 ユーザー選択「地震ごとに分ける (Recommended)」）。
+ *
+ * **同じ地震かは {@link isSameEstimatedIntensityQuake} で決める**（一覧を地震ごとに 1 通へ保つ物差しと同じ）。
+ * 鍵は文字列でしか持てず「300km 以内」は文字列の一致で表せないので、見た地震を `anchors` に覚えておき、
+ * 同じ地震と判定できたものの鍵を返す。初めて見る地震なら覚えて、その発現時刻と震源から鍵を作る。
+ *
+ * `anchors` は呼び出し側が持ち、ここで書き換える。上限を超えたら古いものから落とす
+ * （落とした地震の続報は、別の話題として読まれるだけ —— 取り下げが起きないので声は失われない）。
+ */
+export function estimatedIntensityTopicKey(
+  anchors: EstimatedIntensityTopicAnchor[],
+  ei: Pick<JMAEstimatedIntensity, 'arrivalTime' | 'hypocenter'>,
+): string {
+  // **当てはまる地震が 2 つ以上なら、どれにも結び付けず新しい話題にする。** 震源が読めない報は、同じ分の
+  // 地震すべてに当てはまる。最初に覚えた方へ寄せると別の地震の読み上げを取り下げうるが、新しい話題なら
+  // 取り下げが起きないので声は失われない。
+  const hits = anchors.filter(a => isSameEstimatedIntensityQuake(a, ei))
+  const hit = hits.length === 1 ? hits[0] : undefined
+  if (hit) {
+    // 震源を見ずに同じ話題にしたなら記録する。同じ分に起きた別の地震なら、先の読み上げを取り下げうる
+    if (sameEstimatedIntensityQuakeBy(hit, ei) === 'timeOnly') {
+      noteTimeOnlyMatch(`topic\n${hit.key}\n${ei.arrivalTime}\n${ei.hypocenter.lat},${ei.hypocenter.lon}`,
+        `[ixac41] 震源が読めない推計震度分布図を、発現時刻の分だけで同じ地震の読み上げの話題にしました（発現時刻 ${ei.arrivalTime}・話題 ${hit.key}）`)
+    }
+    return hit.key
+  }
+  const key = `${ei.arrivalTime}@${ei.hypocenter.lat},${ei.hypocenter.lon}`
+  if (hits.length > 1) {
+    noteTimeOnlyMatch(`topic-ambiguous\n${key}`,
+      `[ixac41] 震源が読めない推計震度分布図が同じ分の地震 ${hits.length} 件に当てはまるため、どれにも結び付けず別の読み上げの話題にしました（発現時刻 ${ei.arrivalTime}）`)
+  }
+  // 同じ報の続報（同じ鍵）は覚えを重ねない
+  if (anchors.some(a => a.key === key)) return key
+  anchors.push({ key, arrivalTime: ei.arrivalTime, hypocenter: ei.hypocenter })
+  if (anchors.length > MAX_SHOWN_ESTIMATED_INTENSITY_ARRIVALS) {
+    anchors.splice(0, anchors.length - MAX_SHOWN_ESTIMATED_INTENSITY_ARRIVALS)
+  }
+  return key
 }
 
 /**
@@ -280,6 +363,13 @@ export function upsertEstimatedIntensity(
 ): { list: readonly JMAEstimatedIntensity[]; update: EstimatedIntensityUpdate } {
   const index = list.findIndex(e => isSameEstimatedIntensityQuake(e, next))
   const update = decideEstimatedIntensityUpdate(index >= 0 ? list[index] : null, next)
+  // **震源を見ずに同じ地震と決めて置き換えたときは記録する**（→ `sameEstimatedIntensityQuakeBy`）。
+  // 同じ分に起きた別の地震の分布を置き換えていても、画面からは見分けが付かない。置き換えない報
+  // （古い報・重複配信）では画面が変わらないので記録しない。同じ組は 1 回だけ。
+  if (update.apply && index >= 0 && sameEstimatedIntensityQuakeBy(list[index], next) === 'timeOnly') {
+    noteTimeOnlyMatch(`upsert\n${next.arrivalTime}\n${list[index].time}\n${next.time}`,
+      `[ixac41] 震源が読めない推計震度分布図を、発現時刻の分だけで同じ地震の分布と結び付けました（発現時刻 ${next.arrivalTime}・前の発表 ${list[index].time}・今回の発表 ${next.time}）`)
+  }
   if (!update.apply) return { list, update }
   if (index < 0) return { list: [...list, next], update }
   const replaced = list.slice()

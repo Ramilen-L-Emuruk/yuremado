@@ -406,6 +406,41 @@ describe('気象庁が書いた文の読み上げ（配線）', () => {
     expect(telegramSpeeches().some(t => t.includes(COMMENT)), '地震情報の本文が取り下げられている').toBe(true)
   })
 
+  // 気象庁の文の主題は地震（事象）ごと（2026-10-23 ユーザー選択「地震ごとに分ける (Recommended)」）。
+  // 種別ごとに 1 枠を取り合っていた頃は、別の地震の文が続くと先の地震の文が取り下げられていた。
+  // 本体を鳴らしたまま時間を進めるのは上のテストと同じ理由（即完了させると追い越しが起きず、穴があっても通る）。
+  const runWithBodiesHeld = async () => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000)
+      await flush()
+      for (let i = 0; i < 10; i++) {
+        for (const s of speeches) if (!s.done) { s.done = true; s.finish() }
+        await vi.advanceTimersByTimeAsync(5_000)
+        await flush()
+      }
+    })
+  }
+
+  // 正: 別の地震の文が続いても、先の地震の文を取り下げない
+  it('別の地震の気象庁の文が続いても、先の地震の文は取り下げられない', async () => {
+    const { handleLiveEvent } = setup()
+    handleLiveEvent(makeQuake({ id: 'quake-a', eventId: 'event-a', varCommentText: '地震Aの補足です。' }))
+    handleLiveEvent(makeQuake({ id: 'quake-b', eventId: 'event-b', varCommentText: '地震Bの補足です。' }))
+    await runWithBodiesHeld()
+    expect(telegramSpeeches().some(t => t.includes('地震Aの補足です。')), '先の地震の文が取り下げられている').toBe(true)
+    expect(telegramSpeeches().some(t => t.includes('地震Bの補足です。'))).toBe(true)
+  })
+
+  // 対照: 同じ地震の続報なら、先の報の文は取り下げて新しい文を読む（言い換えなので）
+  it('同じ地震の続報なら、先の報の文は取り下げて新しい文を読む', async () => {
+    const { handleLiveEvent } = setup()
+    handleLiveEvent(makeQuake({ id: 'quake-a1', eventId: 'event-a', varCommentText: '第1報の補足です。' }))
+    handleLiveEvent(makeQuake({ id: 'quake-a2', eventId: 'event-a', varCommentText: '第2報の補足です。' }))
+    await runWithBodiesHeld()
+    expect(telegramSpeeches().some(t => t.includes('第1報の補足です。'))).toBe(false)
+    expect(telegramSpeeches().some(t => t.includes('第2報の補足です。'))).toBe(true)
+  })
+
   // 安全弁: 通知を切っている種別では本文も読まない。
   //
   // `nankaiCommentaryAlerts` は南海トラフ関連解説情報の音・帯・読み上げをまとめて止めるトグル。

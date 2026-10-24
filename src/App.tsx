@@ -2696,6 +2696,8 @@ export function App() {
                 </div>
               )}
               <SpecialInfoBanner banners={specialInfoBanners} speakingTelegramTextSubject={speakingTelegramTextSubject}
+                // 参考情報を読む設定なら、読んでいる間は帯の「この種類の情報について」も開く
+                readsAppendix={settings.voicevoxEnabled && settings.ttsReadTelegramText && settings.ttsTelegramBoilerplate.earthquakeInfoAppendix}
                 // 地図の下に波形が出ていると、帯は画面の下端に届かない（下端の余白を付けない）
                 atScreenBottom={!waveChartShown}
               />

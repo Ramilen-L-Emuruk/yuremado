@@ -39,6 +39,7 @@ import { applyQuakeCancelToCard, compareReportAge, createQuakeFoldKeys, extractQ
 
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import { serverDate } from '../utils/clock'
+import { estimatedIntensityTopicKey, type EstimatedIntensityTopicAnchor } from '../utils/estimatedIntensity'
 
 // ─── 録画ツール向けイベントログの記録（→ `docs/spec/recording-interface-spec.md`）────────
 //
@@ -275,7 +276,14 @@ type SpeechTopic =
    */
   | `cancelReason:${string}`
   | 'tsunami' | 'tsunamiObs' | 'nankai' | 'kohatsu' | 'nankaiCommentary' | 'earthquakeCount'
-  | 'estimatedIntensity'
+  /**
+   * 推計震度分布図。**地震ごとに分ける**（鍵は `estimatedIntensityTopicKey`）。
+   *
+   * 種別で 1 つにしていた頃は、別の地震の分布図が続くと、先の地震の読み上げが「同じ話題の新しい報」
+   * として取り下げられていた（2026-10-22 ユーザー選択「地震ごとに分ける (Recommended)」）。
+   * 別の地震どうしは相互譲り（`isMutualYieldTopic`）で互いに待つ。
+   */
+  | `estimatedIntensity:${string}`
   /**
    * 地震・津波に関するお知らせ（見出しと取消）。最下位の層（`commentary`）で読む。
    *
@@ -335,7 +343,9 @@ const MUTUAL_YIELD_TOPICS: ReadonlySet<SpeechTopic> = new Set<SpeechTopic>([
   // 推計震度分布図も同じ理由。地震発生から数分後に届くので「各地の震度」の続報と
   // かち合いやすく、載せないとそちらを切る。伝える内容も重ならない —— あちらは観測した震度、
   // こちらは**その描き方が公式のものへ替わった**という別の事実。
-  'tsunami', 'tsunamiObs', 'nankai', 'kohatsu', 'earthquakeCount', 'estimatedIntensity',
+  // 推計震度分布図は地震ごとの主題（`estimatedIntensity:*`）なので、ここではなく
+  // `isMutualYieldTopic` の接頭辞で判定する。
+  'tsunami', 'tsunamiObs', 'nankai', 'kohatsu', 'earthquakeCount',
   // お知らせは最下位の層で読むので、上位を切ることはもともと無い。ここに載せるのは同じ層の
   // 解説情報を切らないため（→ `SpeechTopic` の 'quakeNotice'）。
   'quakeNotice',
@@ -348,13 +358,16 @@ const MUTUAL_YIELD_TOPICS: ReadonlySet<SpeechTopic> = new Set<SpeechTopic>([
  * どの主題とも内容が重ならない —— 切ると補足だけが失われる。とくに南海トラフ関連解説情報は
  * 同じ最下位の層にいて読み切りに数分かかるため、待たずに割り込むと両方が中途半端になる。
  *
- * 主題を種別ごとに分けている（`telegramText:${kind}`）ので、集合ではなく接頭辞で判定する。
+ * 主題を事象ごとに分けている（`telegramText:<種別>:<事象の識別子>`）ので、集合ではなく接頭辞で判定する。
  * **同主題どうしは呼び出し側で除外済み**（言い換えなので最新に置き換えるのが正しい）。
  */
 function isMutualYieldTopic(topic: SpeechTopic): boolean {
   // 取消の長い理由（`cancelReason:*`）も同じ扱い。取り消された事実は本体が先に伝えており、
   // 理由はその補足なので、どの主題とも内容が重ならない。
+  // 推計震度分布図（`estimatedIntensity:*`）も地震ごとに主題を分けたので接頭辞で見る。
+  // 理由は `MUTUAL_YIELD_TOPICS` のコメント（「各地の震度」の続報を切らない）。
   return MUTUAL_YIELD_TOPICS.has(topic) || topic.startsWith('telegramText:') || topic.startsWith('cancelReason:')
+    || topic.startsWith('estimatedIntensity:')
 }
 
 /**
@@ -1655,6 +1668,12 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   const activeEEWAnnouncedHypocentersRef = useRef<Map<string, AnnouncedHypocenter[]>>(new Map())
   // 長周期地震動情報の更新検出: 受信済み eventId を追跡する
   const seenLpgmEventIdsRef = useRef<Set<string>>(new Set())
+  /**
+   * 推計震度分布図の読み上げの主題を地震ごとに決めるための、見た地震の覚え（→ `estimatedIntensityTopicKey`）。
+   * 上限つき。**時間軸が変わったら空にする**（`resetTracking`）—— ライブで覚えた地震へ、再生で届いた
+   * 震源不明の分布図が結び付くのを避けるため。
+   */
+  const estimatedIntensityTopicAnchorsRef = useRef<EstimatedIntensityTopicAnchor[]>([])
   // 津波解除/取消/失効: 音・TTS を発火済みの eventId を追跡する（AUD-6 の重複鳴り防止）。
   // TSU-3 で同一スロットに別 eventId を上書きするケースもあるため eventId 単位で管理する。
   // 直前状態（lastTsunamiGradeRef===null）で判定するとリロード後の初回解除を握り潰す。
@@ -2874,7 +2893,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 返す）。長周期のような「文が空なら受信時要求へ落とす」分岐が要らないのはそのため。
         speakNonEEWDelayed(
           estimatedIntensityToText(ei.arrivalTime, isNew !== false), SPEECH_PRIORITY.normal,
-          ttsDelayFor('earthquakeInfo'), 'estimatedIntensity',
+          ttsDelayFor('earthquakeInfo'), `estimatedIntensity:${estimatedIntensityTopicKey(estimatedIntensityTopicAnchorsRef.current, ei)}`,
           { tab: 'earthquake', priority: TAB_PRIORITY.quake },
           undefined, undefined, () => openDistribution(true),
           // **取り下げられても分布モードを開く機会は残す。** 声が出ないことと地図に出ないことは
@@ -3112,8 +3131,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 直接呼ぶと**先発がまだ鳴り出す前に後発が届いたとき、両方がキューに入って重なる**
     // （既読は声に出す瞬間にしか進まないので、予約の時点では弾けない）。
     //
-    // **主題は電文の種別。** 同じ種別の本文どうしは後発が勝つ（最新の本文を読む）。
-    // 本体の読み上げとは別の主題にしてあるので、到来順の裁きが本体の予約を取り下げることはない。
+    // **主題は事象（地震・津波など）ごと**（下の `telegramText:${speech.subject}`）。同じ事象の本文どうしは
+    // 後発が勝つ（最新の本文を読む）。本体の読み上げとは別の主題にしてあるので、到来順の裁きが
+    // 本体の予約を取り下げることはない。
     //
     // **参照つきの断片で渡す。** 読み上げているあいだ、画面のその表示を開いておくため
     // （→ `ttsFollow.ts` の `telegramText`）。文の中身では分けず 1 つにまとめている ——
@@ -3139,7 +3159,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       text,
       SPEECH_PRIORITY.commentary,
       0,
-      `telegramText:${event.kind}`,
+      // **主題は地震（事象）ごと**（2026-10-23 ユーザー選択「地震ごとに分ける (Recommended)」）。
+      // 種別ごとに 1 枠を取り合っていた頃は、別の地震の文が続くと先の地震の文が取り下げられていた。
+      // 鍵は既読の鍵と同じ主題（`speech.subject`。種別＋事象の識別子）を使う —— 同じ事象の続報は
+      // 同じ主題になり、後発が勝つ（最新の本文を読む）。別の事象どうしは相互譲りで互いに待つ。
+      `telegramText:${speech.subject}`,
       undefined,
       segments,
       undefined,
@@ -5774,6 +5798,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     activeNonEewSpeechRef.current = null
     latestScheduledSeqByTopicRef.current.clear()
     latestScheduledSeqByPriorityRef.current.clear()
+    // 推計震度分布図の主題の覚えも時間軸ごとに持つ（ライブで覚えた地震へ再生の分布図を結び付けない）
+    estimatedIntensityTopicAnchorsRef.current.length = 0
     eewPhase2DoneRef.current.clear()
     // 第 1.5 フェーズ（警報の対象地方）の既読と予約。**第 2 フェーズの対と揃えて落とす** ——
     // 落とし忘れると、同じ `eventId` を再生し直したとき「もう声にした」と判定されて

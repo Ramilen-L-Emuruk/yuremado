@@ -6,11 +6,13 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   matchEstimatedIntensity, matchEstimatedIntensityArrival, estimatedIntensityFor,
   estimatedIntensityAvailability, decideEstimatedIntensityUpdate, isNewEstimatedIntensity,
-  isSameEstimatedIntensityQuake, upsertEstimatedIntensity,
+  isSameEstimatedIntensityQuake, upsertEstimatedIntensity, sameEstimatedIntensityQuakeBy,
+  estimatedIntensityTopicKey, type EstimatedIntensityTopicAnchor,
   rememberShownEstimatedIntensity, MAX_SHOWN_ESTIMATED_INTENSITY_ARRIVALS,
 } from './estimatedIntensity'
 import type { JMAQuake, JMAEstimatedIntensity, IntensityScale } from '../types/earthquake'
 import { CELL_LAT_DEG, CELL_LON_DEG } from './bufrEstimatedIntensity'
+import { log } from './logger'
 
 function quake(time: string, lat = 32.6, lng = 130.7, maxScale: IntensityScale = 70): JMAQuake {
   return {
@@ -335,5 +337,88 @@ describe('isNewEstimatedIntensity / rememberShownEstimatedIntensity', () => {
     } finally {
       info.mockRestore()
     }
+  })
+})
+
+// 震源を見ずに同じ地震と決めたとき（2026-10-22 ユーザー選択「そのときだけ記録を残す (Recommended)」）
+describe('sameEstimatedIntensityQuakeBy と記録', () => {
+  const T = '2026-07-28T07:27:00.000Z'
+  // 正: 片方の震源が読めなければ、時刻だけで同じと決めたことを返す
+  it('震源が読めなければ timeOnly', () => {
+    expect(sameEstimatedIntensityQuakeBy(ei(T), ei(T, -200.1, -200.1))).toBe('timeOnly')
+  })
+  // 対照: 両方読めて近ければ distance
+  it('両方の震源が読めて近ければ distance', () => {
+    expect(sameEstimatedIntensityQuakeBy(ei(T), ei(T, 32.7, 130.8))).toBe('distance')
+  })
+  // 安全弁: 分が違えば震源によらず別の地震
+  it('分が違えば null', () => {
+    expect(sameEstimatedIntensityQuakeBy(ei(T), ei('2026-07-28T07:28:00.000Z', -200.1, -200.1))).toBeNull()
+  })
+
+  it('震源を見ずに結び付けたら記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const prev = ei(T)
+      const next = { ...ei(T, -200.1, -200.1), time: '2026-07-28T16:38:00+09:00' }
+      upsertEstimatedIntensity([prev], next)
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('発現時刻の分だけで同じ地震の分布と結び付けました')
+    } finally { warn.mockRestore() }
+  })
+
+  it('震源で確かめて結び付けたときは記録しない', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      upsertEstimatedIntensity([ei(T)], { ...ei(T, 32.7, 130.8), time: '2026-07-28T16:38:00+09:00' })
+      expect(warn).not.toHaveBeenCalled()
+    } finally { warn.mockRestore() }
+  })
+})
+
+// 読み上げの主題を地震ごとに分ける（2026-10-22 ユーザー選択「地震ごとに分ける (Recommended)」）
+describe('estimatedIntensityTopicKey', () => {
+  const T = '2026-07-28T07:27:00.000Z'
+  // 正: 同じ地震の続報は同じ鍵（後発が先発を取り下げる＝言い換え）
+  it('同じ地震の続報は同じ鍵', () => {
+    const anchors: EstimatedIntensityTopicAnchor[] = []
+    const a = estimatedIntensityTopicKey(anchors, ei(T))
+    const b = estimatedIntensityTopicKey(anchors, ei(T, 32.7, 130.8))
+    expect(b).toBe(a)
+    expect(anchors).toHaveLength(1)
+  })
+  // 対照: 別の地震は別の鍵（同じ分でも震源が離れていれば別）
+  it('別の地震は別の鍵', () => {
+    const anchors: EstimatedIntensityTopicAnchor[] = []
+    const a = estimatedIntensityTopicKey(anchors, ei(T))
+    expect(estimatedIntensityTopicKey(anchors, ei(T, 43.0, 145.0))).not.toBe(a)
+    expect(estimatedIntensityTopicKey(anchors, ei('2026-07-28T07:31:00.000Z'))).not.toBe(a)
+  })
+  // 安全弁: 震源が読めない報が同じ分の地震 2 つに当てはまるなら、どちらにも寄せない（取り下げを起こさない）
+  it('震源が読めない報が 2 つの地震に当てはまるなら、新しい鍵にする', () => {
+    const anchors: EstimatedIntensityTopicAnchor[] = []
+    const a = estimatedIntensityTopicKey(anchors, ei(T))
+    const b = estimatedIntensityTopicKey(anchors, ei(T, 43.0, 145.0))
+    const unknown = estimatedIntensityTopicKey(anchors, ei(T, -200.1, -200.1))
+    expect(unknown).not.toBe(a)
+    expect(unknown).not.toBe(b)
+    // 同じ報の続報は同じ鍵のまま（覚えを重ねない）
+    expect(estimatedIntensityTopicKey(anchors, ei(T, -200.1, -200.1))).toBe(unknown)
+    expect(anchors).toHaveLength(3)
+  })
+
+  // 対照: 当てはまる地震が 1 つだけなら、震源が読めなくてもその地震の鍵
+  it('震源が読めない報も、当てはまる地震が 1 つならその鍵', () => {
+    const anchors: EstimatedIntensityTopicAnchor[] = []
+    const a = estimatedIntensityTopicKey(anchors, ei(T))
+    expect(estimatedIntensityTopicKey(anchors, ei(T, -200.1, -200.1))).toBe(a)
+  })
+
+  // 安全弁: 覚える数には上限があり、古いものから落とす
+  it('覚える数は上限で切る', () => {
+    const anchors: EstimatedIntensityTopicAnchor[] = []
+    for (let i = 0; i < MAX_SHOWN_ESTIMATED_INTENSITY_ARRIVALS + 5; i++) {
+      estimatedIntensityTopicKey(anchors, ei(new Date(Date.parse(T) + i * 60_000).toISOString()))
+    }
+    expect(anchors).toHaveLength(MAX_SHOWN_ESTIMATED_INTENSITY_ARRIVALS)
   })
 })

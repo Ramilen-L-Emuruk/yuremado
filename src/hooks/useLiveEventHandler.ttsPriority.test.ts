@@ -1147,6 +1147,43 @@ describe('内容が重ならない同格どうしは互いに待つ', () => {
     expect(spokenTexts()[1]).toContain('震度速報')
   })
 
+  // 推計震度分布図の主題は地震ごと（2026-10-22 ユーザー選択「地震ごとに分ける (Recommended)」）。
+  // 種別で 1 つにしていた頃は、別の地震の分布図が続くと、先の地震の読み上げが「同じ話題の新しい報」
+  // として取り下げられていた。
+  const eiOf = (arrivalTime: string, lat: number, lon: number, id: string): ExtraLiveEvent => {
+    const base = makeEstimatedIntensity()
+    if (base.kind !== 'estimatedIntensity') throw new Error('推計震度分布図の事象を作れません')
+    return { ...base, data: { ...base.data, id, arrivalTime, hypocenter: { lat, lon, depthKm: 10 } } }
+  }
+
+  // 正: 待っている間に別の地震の分布図が届いても、先の地震の分布図を取り下げない
+  it('別の地震の推計震度分布図が続いても、先の地震の分布図を取り下げない', async () => {
+    const handle = setup()
+    handle(makeQuake())
+    await settle()
+    handle(eiOf('2026-01-01T03:00:00.000Z', 35, 139, 'ix-a'))
+    handle(eiOf('2026-01-01T03:07:00.000Z', 32.7, 130.8, 'ix-b'))
+    await settle()
+    finishSpeech(0)
+    await flush()
+    finishSpeech(1)
+    await flush()
+    expect(spokenTexts().filter(t => t.includes('推計震度分布図'))).toHaveLength(2)
+  })
+
+  // 対照: 同じ地震の続報なら、先の報は取り下げて新しい報だけを読む（言い換えなので）
+  it('同じ地震の推計震度分布図の続報なら、先の報は取り下げる', async () => {
+    const handle = setup()
+    handle(makeQuake())
+    await settle()
+    handle(eiOf('2026-01-01T03:00:00.000Z', 35, 139, 'ix-a'))
+    handle(eiOf('2026-01-01T03:00:00.000Z', 35.1, 139.1, 'ix-a2'))
+    await settle()
+    finishSpeech(0)
+    await flush()
+    expect(spokenTexts().filter(t => t.includes('推計震度分布図'))).toHaveLength(1)
+  })
+
   // 相互譲りで待つのは「同格の相手」に対してだけ。待っているあいだに**重い**相手が届いたら、
   // それは到来順が逆転する形なので取り下げる。
   //

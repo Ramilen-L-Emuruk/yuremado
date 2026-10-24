@@ -3472,7 +3472,7 @@ describe('telegramTextToSpeak: 気象庁が書いた文', () => {
     // 読む側にしたときの整形なので、その項目だけ読む指定にして回す。
     const ON_WITH_TABLE: TtsSpeechOptions = {
       ...ON,
-      telegramBoilerplate: { starMark: false, eewIssued: false, lpgmClassTable: true, tsunamiHeightLegend: false },
+      telegramBoilerplate: { starMark: false, eewIssued: false, lpgmClassTable: true, tsunamiHeightLegend: false, earthquakeInfoAppendix: false },
     }
     const lpgmWithFreeText = (freeFormText: string): LiveEvent => ({
       kind: 'lpgm',

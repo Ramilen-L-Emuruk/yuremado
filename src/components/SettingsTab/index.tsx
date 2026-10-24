@@ -572,6 +572,7 @@ const TELEGRAM_BOILERPLATE_LABELS: Record<TelegramBoilerplateKey, string> = {
   eewIssued: '緊急地震速報の発表告知',
   lpgmClassTable: '長周期地震動階級の目安',
   tsunamiHeightLegend: '津波の高さの目安',
+  earthquakeInfoAppendix: '南海トラフ・後発地震の情報の参考情報',
 }
 
 /**
@@ -586,6 +587,8 @@ const TELEGRAM_BOILERPLATE_DESCRIPTIONS: Record<TelegramBoilerplateKey, string> 
   eewIssued: '例:「この地震について、緊急地震速報を発表しています。」緊急地震速報そのものは画面と音でお知らせしているため、切っても取り逃しません',
   lpgmClassTable: '階級と揺れの大きさの対応表と、詳しい観測結果の参照先です。例:「各長周期地震動階級に対する簡易な現象表現」に続けて「階級１やや大きな揺れ」から階級４までが並びます。長周期地震動観測情報のほぼ全報に入ります',
   tsunamiHeightLegend: '予想される津波の高さと被害の対応表です。例:「［予想される津波の高さの解説］」に続けて、１０ｍ超から１ｍまで 5 段階の被害が書かれます（307 字。読み上げるとおよそ 50 秒）',
+  // 文面は 2026-10-24 ユーザー選択「この文面でよい (Recommended)」。実配信の文面を確かめていないので例は載せていない
+  earthquakeInfoAppendix: '南海トラフ地震臨時情報・同関連解説情報・北海道・三陸沖後発地震注意情報の末尾に付く、情報の種類や発表条件の説明です。毎報ほぼ同じ文です。画面では帯の「この種類の情報について」で開けます',
 }
 
 /**

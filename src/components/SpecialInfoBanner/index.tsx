@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useAutoOpenWhileSpeaking } from '../../hooks/useAutoOpenWhileSpeaking'
 import { telegramTextSubject } from '../../utils/ttsFollow'
 import type {
@@ -19,6 +18,12 @@ interface Props {
    * 帯は自分が対象なら中身を開く（→ `useAutoOpenWhileSpeaking`）。
    */
   speakingTelegramTextSubject: string | null
+  /**
+   * 気象庁が書いた文の読み上げに参考情報（`Appendix`）を含める設定か（→ `telegramTextToSpeak` の
+   * `earthquakeInfoAppendix`）。真なら、南海トラフ・後発地震の帯は文を読んでいる間「この種類の情報について」も開く
+   * （2026-10-24 ユーザー選択「読む間は開く (Recommended)」）。
+   */
+  readsAppendix: boolean
   /**
    * 帯の束がいま画面の下端に接しているか。地図の下に波形が出ていれば、帯は地図の中にあって
    * 下端には届かないので false。真のときだけ下端の余白（`SAFE_BOTTOM`）を付ける —— ただし
@@ -114,7 +119,7 @@ export function shareButtonBottomClass(bannerShown: boolean, atScreenBottom: boo
     : 'bottom-2'
 }
 
-export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, atScreenBottom }: Props) {
+export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, readsAppendix, atScreenBottom }: Props) {
   /**
    * この帯の文をいま読み上げているか。**主題は `telegramText:<電文の kind>`**
    * （→ `useLiveEventHandler` の `speakTelegramText`）。
@@ -147,9 +152,9 @@ export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, atScre
         {/* 南海トラフの 2 枚（臨時情報とその解説情報）を隣り合わせる。臨時情報の発表期間中は
             解説情報が毎日届いて両方が同時に出るため、間に別の事象（後発地震＝北海道・三陸沖）を
             挟むと同じ事象の話が分断されて読みにくい。重さの順よりこちらを優先する。 */}
-        {nankai && <NankaiBanner nankai={nankai} speaking={speaking('nankai')} />}
-        {nankaiCommentary && <CommentaryBanner commentary={nankaiCommentary} speaking={speaking('nankaiCommentary')} onDismiss={() => banners.dismiss('nankaiCommentary')} />}
-        {kohatsu && <KohatsuBanner kohatsu={kohatsu} speaking={speaking('kohatsu')} />}
+        {nankai && <NankaiBanner nankai={nankai} speaking={speaking('nankai')} readsAppendix={readsAppendix} />}
+        {nankaiCommentary && <CommentaryBanner commentary={nankaiCommentary} speaking={speaking('nankaiCommentary')} readsAppendix={readsAppendix} onDismiss={() => banners.dismiss('nankaiCommentary')} />}
+        {kohatsu && <KohatsuBanner kohatsu={kohatsu} speaking={speaking('kohatsu')} readsAppendix={readsAppendix} />}
         {earthquakeCount && <EarthquakeCountBanner count={earthquakeCount} speaking={speaking('earthquakeCount')} onDismiss={() => banners.dismiss('earthquakeCount')} />}
         {/* お知らせ（運用連絡）は最後。上の 4 枚は「いま起きている・起こりうる地震」の話で、
             こちらは観測点の入電停止・配信試験といった裏方の連絡。同時に出たときに
@@ -178,11 +183,18 @@ export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, atScre
  *    「この情報について」ではなく「この種類の」と冠するのは、**今回届いた発表の補足ではなく
  *    制度そのものの説明**だと分かるようにするため
  */
-function EarthquakeInfoDetail({ info, footer }: {
+function EarthquakeInfoDetail({ info, speakingAppendix, subject, footer }: {
   info: EarthquakeInfoMeta & { body: string }
+  /**
+   * いま参考情報を含む文を読み上げているか。真のあいだ「この種類の情報について」を開く
+   * （開き方の規約は帯の本文と同じ `useAutoOpenWhileSpeaking`。自分が開いた分だけ読み終わりで閉じる）。
+   */
+  speakingAppendix: boolean
+  /** 録画ツール向けの記録に載せる主題（電文の種別）。`:appendix` を付けて本文の開閉と分ける */
+  subject: string
   footer: React.ReactNode
 }) {
-  const [appendixOpen, setAppendixOpen] = useState(false)
+  const [appendixOpen, setAppendixOpen] = useAutoOpenWhileSpeaking(speakingAppendix && !!info.appendix, `${subject}:appendix`)
   return (
     <div className="px-3 pb-2">
       {info.summary && (
@@ -201,7 +213,7 @@ function EarthquakeInfoDetail({ info, footer }: {
         <div className="mb-1">
           <button
             className="text-white/70 hover:text-white text-[0.6875rem] underline decoration-dotted underline-offset-2"
-            onClick={() => setAppendixOpen(v => !v)}
+            onClick={() => setAppendixOpen(!appendixOpen)}
           >
             この種類の情報について{appendixOpen ? '（閉じる）' : '（開く）'}
           </button>
@@ -249,7 +261,7 @@ function OperationStatusBadge({ status }: { status?: TelegramOperationStatus }) 
   )
 }
 
-function NankaiBanner({ nankai, speaking }: { nankai: JMANankai; speaking: boolean }) {
+function NankaiBanner({ nankai, speaking, readsAppendix }: { nankai: JMANankai; speaking: boolean; readsAppendix: boolean }) {
   // 読み上げているあいだだけ開く（自分が開いた分だけ閉じる）
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'nankai')
   const { bg, border, badge } = nankaiColors(nankai.kindName)
@@ -271,7 +283,7 @@ function NankaiBanner({ nankai, speaking }: { nankai: JMANankai; speaking: boole
         <ChevronIcon open={open} />
       </button>
       {open && (
-        <EarthquakeInfoDetail info={nankai} footer={
+        <EarthquakeInfoDetail info={nankai} speakingAppendix={speaking && readsAppendix} subject="nankai" footer={
           <p className="text-white/60 text-xs">
             発表: {new Date(nankai.reportDateTime).toLocaleString('ja-JP')}
           </p>
@@ -281,7 +293,7 @@ function NankaiBanner({ nankai, speaking }: { nankai: JMANankai; speaking: boole
   )
 }
 
-function KohatsuBanner({ kohatsu, speaking }: { kohatsu: JMAKohatsu; speaking: boolean }) {
+function KohatsuBanner({ kohatsu, speaking, readsAppendix }: { kohatsu: JMAKohatsu; speaking: boolean; readsAppendix: boolean }) {
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'kohatsu')
 
   return (
@@ -306,7 +318,7 @@ function KohatsuBanner({ kohatsu, speaking }: { kohatsu: JMAKohatsu; speaking: b
         // **期限は出さない**（2026-10-19 ユーザー選択「発表時刻だけにする (Recommended)」）。
         // 電文に期限の要素は無く、帯を 7 日で畳むのはアプリの都合（`expireAt`）。これを「まで有効」と
         // 言い切ると、気象庁が定めた期間のように読める。注意を呼びかける期間は気象庁の本文が語っている。
-        <EarthquakeInfoDetail info={kohatsu} footer={
+        <EarthquakeInfoDetail info={kohatsu} speakingAppendix={speaking && readsAppendix} subject="kohatsu" footer={
           <p className="text-white/60 text-xs">
             発表: {new Date(kohatsu.reportDateTime).toLocaleString('ja-JP')}
           </p>
@@ -323,7 +335,7 @@ function KohatsuBanner({ kohatsu, speaking }: { kohatsu: JMAKohatsu; speaking: b
 //
 // 有効期限は出さない。内部では発表から 7 日で畳んでいるが、それは帯を常駐させないための
 // 表示上の都合であって、気象庁が期限を定めているわけではない（後発地震注意情報の帯の 7 日も同じ）。
-function CommentaryBanner({ commentary, speaking, onDismiss }: { commentary: JMANankaiCommentary; speaking: boolean; onDismiss: () => void }) {
+function CommentaryBanner({ commentary, speaking, readsAppendix, onDismiss }: { commentary: JMANankaiCommentary; speaking: boolean; readsAppendix: boolean; onDismiss: () => void }) {
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'nankaiCommentary')
   return (
     <div className="bg-teal-900/95 border-t-2 border-teal-400">
@@ -353,7 +365,7 @@ function CommentaryBanner({ commentary, speaking, onDismiss }: { commentary: JMA
         </button>
       </div>
       {open && (
-        <EarthquakeInfoDetail info={commentary} footer={
+        <EarthquakeInfoDetail info={commentary} speakingAppendix={speaking && readsAppendix} subject="nankaiCommentary" footer={
           <p className="text-white/60 text-xs">
             発表: {new Date(commentary.reportDateTime).toLocaleString('ja-JP')}
           </p>

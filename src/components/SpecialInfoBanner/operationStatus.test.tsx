@@ -20,7 +20,7 @@ beforeEach(() => localStorage.clear())
 /** 帯の束の状態はフックが持つので、テストでは App と同じく呼び出し側でフックを呼んで渡す。 */
 function Banners({ items, atScreenBottom = true }: { items: SpecialInfoItems; atScreenBottom?: boolean }) {
   const banners = useSpecialInfoBanners(items)
-  return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} atScreenBottom={atScreenBottom} />
+  return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom={atScreenBottom} />
 }
 
 const nankai = (operationStatus?: TelegramOperationStatus): JMANankai => ({
@@ -183,7 +183,7 @@ describe('閉じた帯と「いま出す帯」', () => {
     function Probe({ items }: { items: SpecialInfoItems }) {
       const b = useSpecialInfoBanners(items)
       shown = b.shown
-      return <SpecialInfoBanner banners={b} speakingTelegramTextSubject={null} atScreenBottom />
+      return <SpecialInfoBanner banners={b} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom />
     }
     render(<Probe items={{ ...none, earthquakeCount: earthquakeCount() }} />)
     expect(shown).toBe(true)
