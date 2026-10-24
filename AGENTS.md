@@ -263,7 +263,7 @@ done
 
 ### ワークツリーを消す前に、ジャンクションを外す
 
-**ワークツリーの `node_modules` をメインの checkout へのジャンクションにしたまま `git worktree remove` を掛けると、git はジャンクションを辿り、メインの `node_modules` の中身を消す。**
+**Windows では、ワークツリーの中のフォルダ（`node_modules`・ビルド出力・依存のキャッシュなど）をメインの checkout へのジャンクションにしたまま `git worktree remove` を掛けると、git はジャンクションを辿り、メイン側の中身を消す。** 終了コードは 0 で、警告も出ない。
 
 ジャンクションは、Windows のフォルダを別の場所へ向ける仕掛け（シンボリックリンクの一種で、管理者権限なしで張れる）。`npm install` を省くために張ることがある（張ること自体は禁じない）。ただし git にもエクスプローラーにも普通のフォルダに見えるので、消すときに中まで再帰する。**張ったら、手放す前に外すこと。** 張り方は問わない。見分け方と外し方だけ知っていればよい。
 
@@ -273,37 +273,42 @@ done
 - 上記「マージ後の自己クリーンアップ」
 - リリース手続きのクリーンアップ（`/release` スキル）と、`worktree-workflow` スキルの片付け
 
-リポジトリのトップレベルで、Git Bash から実行する。ジャンクションがあれば外し、**外れたことを確かめてから**消す。
+**リポジトリのトップレベルで、PowerShell から下のコマンドを実行する**（Windows PowerShell 5.1 で確かめてある）。ワークツリーの中のジャンクションをすべて外し、**外れたことを確かめてから**消す。**途中で何か 1 つでも失敗したら、消さずに止まる。**
 
-```bash
-wt=.codex/worktrees/<name>
-if [ -L "$wt/node_modules" ]; then
-  powershell.exe -NoProfile -Command "[System.IO.Directory]::Delete((Resolve-Path '$wt/node_modules').Path, \$false)"
-fi
-if [ -L "$wt/node_modules" ]; then
-  echo "JUNCTION-STILL-THERE: $wt/node_modules（git worktree remove へ進まない）"
-else
-  git worktree remove "$wt"
-fi
+```powershell
+$target = '.codex/worktrees/<name>'
+try {
+  if (-not (Test-Path -LiteralPath $target)) {
+    "ALREADY-GONE: $target"
+  } else {
+    $wt = (Resolve-Path -LiteralPath $target -ErrorAction Stop).Path
+    if ((Get-Item -LiteralPath $wt -Force -ErrorAction Stop).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+      throw "ワークツリーのルート自体がジャンクションになっている: $wt"
+    }
+    Get-ChildItem -LiteralPath $wt -Recurse -Force -Directory -Attributes ReparsePoint -ErrorAction Stop |
+      ForEach-Object { [System.IO.Directory]::Delete($_.FullName, $false) }
+    $left = @(Get-ChildItem -LiteralPath $wt -Recurse -Force -Directory -Attributes ReparsePoint -ErrorAction Stop)
+    if ($left.Count -gt 0) {
+      "JUNCTION-STILL-THERE（ワークツリーは消さない）:"; $left.FullName
+    } else {
+      git worktree remove $wt
+      if ($LASTEXITCODE -eq 0) { "WORKTREE-REMOVED: $wt" } else { "WORKTREE-REMOVE-FAILED（終了コード $LASTEXITCODE）" }
+    }
+  }
+} catch {
+  "CHECK-FAILED（ワークツリーは消さない）: $($_.Exception.Message)"
+}
 ```
 
-- `[ -L ]` は Git Bash でジャンクションに真を返し、普通のフォルダと「無い」には偽を返す。ワークツリーの中で `npm install` した本物の `node_modules` には手を出さず、そのまま `git worktree remove` が消す
-- 外すのは `[System.IO.Directory]::Delete(<path>, $false)` に限る。ジャンクションそのものだけを消し、向け先には触れない。**ほかの消し方（`rm -r`・`Remove-Item -Recurse` など）を試して代えないこと**
-- **`JUNCTION-STILL-THERE` が出たら、ワークツリーは消えていない。** 状況をユーザーに提示する
-- `git worktree remove` が失敗したら `--force` で押し通さない。扱いは呼び出し元の経路の決まりに従う
-- 消し終えたら、メインの `node_modules/.bin` が残っていることを確かめる。**無くなっていたら、メインの `node_modules` が既に削られている**（この消し方を通さない片付けが、いつかどこかで走った）。`npm install` で戻し、ユーザーに報告する
+- **結果は最後に出る 1 行で読む。** 消えたのは `WORKTREE-REMOVED` が出たときだけ。それ以外（何も出ないときを含む）は消えていないとみなす。`ALREADY-GONE` は「そのパスに何も無い」で、他の経路が先に片付けただけなら正常。**ただしパスの書き間違い・トップレベル以外での実行でも出る**ので、`git worktree list` にもそのワークツリーが無いことを確かめてから正常と読む
+- **見つけ方はフォルダの属性（ReparsePoint）。** ジャンクションも、向け先が消えた宙吊りのものも拾う。`Get-ChildItem -Recurse` は**拾ったジャンクションの中へは降りない**ので、向け先（メイン側）までは走らない
+- 外すのは `[System.IO.Directory]::Delete(<絶対パス>, $false)` に限る。ジャンクションそのものだけを消し、向け先には触れない。**ほかの消し方（`rm -r`・`Remove-Item -Recurse` など）を試して代えないこと**
+- **`-ErrorAction Stop` と `try` で、一覧が取れない・外せない・ルート自体がジャンクション、といった失敗をすべて `CHECK-FAILED` へ落とす。** 失敗を見過ごして `git worktree remove` へ進む経路を作らない
+- **`JUNCTION-STILL-THERE`・`CHECK-FAILED` が出たら、ワークツリーは消えていない。** 出た内容をユーザーに提示する
+- `WORKTREE-REMOVE-FAILED` が出ても `--force` で押し通さない。扱いは呼び出し元の経路の決まりに従う。別のシェルが掴んでいて消せないときに `Remove-Item -Recurse -Force` へ切り替えるのも、このコマンドでジャンクションが残っていないことを確かめた後に限る
+- 消し終えたら、メインの `node_modules/.bin` が残っていることを確かめる。**無くなっていたら、メインの `node_modules` が既に削られている**（このコマンドを通さない片付けが、いつかどこかで走った）。`npm install` で戻し、ユーザーに報告する
 
-上のコマンドは、使い捨てのリポジトリで試して確かめてある（2026-10-06）。
-
-| 状況 | 結果 |
-|---|---|
-| ジャンクションを残したまま素の `git worktree remove` | 向け先の中身が全部消えた（終了コード 0・警告なし） |
-| 上のコマンド（ジャンクションあり） | 向け先は残り、ワークツリーは消えた |
-| 上のコマンド（ワークツリーの中の本物の `node_modules`） | ワークツリーごと消えた |
-| 上のコマンド（`node_modules` なし） | ワークツリーが消えた |
-| 外せないまま 2 つ目の判定に来たとき | `JUNCTION-STILL-THERE` を出し、ワークツリーは残った |
-
-使い捨てのリポジトリには掴まれたファイルが無かったので、最後まで消えた。**実際の環境では、別のプロセスが掴んでいるファイルのところで止まり、途中まで消える**（下の注記）。どちらの場合も、消えた分は戻らない。
+**素の `git worktree remove` で消えた分は戻らない。** 上のコマンドは、消す行を表示に置き換えて確かめてある（2026-10-20。入れ子・宙吊りのジャンクションが外れて向け先が残ること、外せないもの・読めないフォルダ・ルート自体がジャンクションのときに `CHECK-FAILED` で止まること、パスが無いときに `ALREADY-GONE` になること）。実際の環境では、別のプロセスが掴んでいるファイルのところで止まり、途中まで消える（下の注記）。
 
 > 2026-10-06: メインの checkout で `npx vitest` が「認識されていません」になった。調べると、メインの `node_modules` から `.bin`・`.package-lock.json` と、名前順で `@babel`〜`@playwright` までが消えていた。消えたのは、dev サーバーが掴んでいたネイティブモジュール（`@rollup/rollup-win32-x64-msvc`）の手前まで。そこで止まったとみられる。ジャンクションを張ったワークツリーを外さずに片付けたためと考えられるが、消したのがどの片付けだったか、そのとき画面に何が出たかは記録が無い。`npm install` で戻した。
 
