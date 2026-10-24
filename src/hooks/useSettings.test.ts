@@ -124,7 +124,7 @@ describe('sanitize', () => {
   it('震度項目は範囲内でも階級値でない中間値(35)を既定値に落とす', () => {
     expect(sanitize({ ttsAlwaysReadScale: 35 }).ttsAlwaysReadScale).toBe(30)
     expect(sanitize({ minDisplayScale: 35 }).minDisplayScale).toBe(-1)
-    expect(sanitize({ notifyMinScale: 35 }).notifyMinScale).toBe(-1)
+    expect(sanitize({ notifyMinScale: 35 }).notifyMinScale).toBe(40)
   })
 
   it('震度項目は範囲外の値を既定値に落とす（クランプしない）', () => {
@@ -133,13 +133,13 @@ describe('sanitize', () => {
   })
 
   it('震度項目は数値以外を既定値に落とす', () => {
-    expect(sanitize({ notifyMinScale: '30' as unknown as number }).notifyMinScale).toBe(-1)
+    expect(sanitize({ notifyMinScale: '30' as unknown as number }).notifyMinScale).toBe(40)
   })
 
   // typeof が number でも階級値でない特殊値（isValidIntensityScale の実装が変わったときの回帰検知）
   it('震度項目は NaN・Infinity を既定値に落とす', () => {
     expect(sanitize({ minDisplayScale: NaN }).minDisplayScale).toBe(-1)
-    expect(sanitize({ notifyMinScale: Infinity }).notifyMinScale).toBe(-1)
+    expect(sanitize({ notifyMinScale: Infinity }).notifyMinScale).toBe(40)
     expect(sanitize({ ttsAlwaysReadScale: -Infinity }).ttsAlwaysReadScale).toBe(30)
   })
 

@@ -20,6 +20,7 @@ function station(
     atMs: 1_700_000_000_000,
     source,
     waveSampleCount: 0,
+    waveSource: 'station',
     waveStale: false,
     waveTally: { gapSamples: 0, restarts: 0, droppedSamples: 0 },
   }
@@ -152,5 +153,18 @@ describe('seismoOverlayRows', () => {
       { ...station(0.2), stationId: 'a', displayName: '自宅' },
     ])
     expect(rows.map((r) => r.stationId)).toEqual(['b', 'a'])
+  })
+
+  it('未着は赤い行で「未着」と名乗る（2026-10-24 ユーザー選択）', () => {
+    const [row] = seismoOverlayRows([station(null, { kind: 'unseen' })])
+    expect(row.silent).toBe(true)
+    expect(row.sourceText).toBe('未着')
+    expect(row.valueText).toBeNull()
+  })
+
+  it('対照: 途絶は赤いが名乗らない', () => {
+    const [row] = seismoOverlayRows([station(null, { kind: 'silent' })])
+    expect(row.silent).toBe(true)
+    expect(row.sourceText).toBe('')
   })
 })

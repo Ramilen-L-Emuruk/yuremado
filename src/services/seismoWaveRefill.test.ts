@@ -57,6 +57,7 @@ describe('SeismoWaveRefiller', () => {
       onFilled: (_id, r) => filled.push(r.filled),
       onSkipped: () => {},
       onError: (_id, e) => { throw e },
+      onFailed: () => {},
     })
 
     refiller.notice({ stationId: 'home', fromMs: 0, toMs: 10_000 })
@@ -80,6 +81,7 @@ describe('SeismoWaveRefiller', () => {
       onFilled: () => {},
       onSkipped: () => {},
       onError: (_id, e) => { throw e },
+      onFailed: () => {},
     })
 
     // 穴（1300〜1590 ms）より後だけを作り直した知らせ。
@@ -107,6 +109,7 @@ describe('SeismoWaveRefiller', () => {
       onFilled: () => {},
       onSkipped: () => {},
       onError: (_id, e) => { throw e },
+      onFailed: () => {},
     })
 
     refiller.notice({ stationId: 'home', fromMs: 1300, toMs: 1400 })
@@ -141,6 +144,7 @@ describe('SeismoWaveRefiller', () => {
       onFilled: () => {},
       onSkipped: () => {},
       onError: (_id, e) => { throw e },
+      onFailed: () => {},
     })
 
     refiller.notice({ stationId: 'home', fromMs: 0, toMs: 10_000 })
@@ -164,6 +168,7 @@ describe('SeismoWaveRefiller', () => {
       onFilled: () => {},
       onSkipped: () => {},
       onError: (_id, e) => { throw e },
+      onFailed: () => {},
     })
 
     ctrl.abort()
@@ -196,6 +201,7 @@ describe('SeismoWaveRefiller.schedule', () => {
       onFilled: (_id, r) => results.push({ filled: r.filled, prepended: r.prepended }),
       onSkipped: () => {},
       onError: (_id, e) => { throw e },
+      onFailed: () => {},
     })
   }
 
@@ -262,6 +268,7 @@ describe('SeismoWaveRefiller.schedule', () => {
         onFilled: (_id, r) => results.push({ filled: r.filled, prepended: r.prepended }),
         onSkipped: (_id, why) => skipped.push(why),
         onError: (_id, e) => { throw e },
+      onFailed: () => {},
       })
 
       refiller.schedule('home', { fromMs: Number.NEGATIVE_INFINITY, toMs: 10_000 })
@@ -300,6 +307,7 @@ describe('SeismoWaveRefiller.schedule', () => {
       onFilled: (_id, r) => results.push(r.filled),
       onSkipped: (_id, why) => { throw new Error(`見送った: ${why}`) },
       onError: (_id, e) => { throw e },
+      onFailed: () => {},
     })
 
     refiller.notice({ stationId: 'home', fromMs: 0, toMs: 10_000 })
@@ -324,6 +332,7 @@ describe('SeismoWaveRefiller.schedule', () => {
         onFilled: () => {},
         onSkipped: (id, why) => skipped.push(`${id}:${why}`),
         onError: (_id, e) => { throw e },
+      onFailed: () => {},
       })
 
       refiller.notice({ stationId: 'shed', fromMs: 0, toMs: 10_000 })
@@ -397,4 +406,106 @@ describe('SeismoWaveRefiller.schedule', () => {
       vi.useRealTimers()
     }
   })
+
+  describe('取れなかったら間隔を広げて取り直す（2026-10-22 選択「取り直す (Recommended)」）', () => {
+    function setup(results: WaveSamplesResult[]) {
+      const buffer = withHole()
+      const fetchSamples = vi.fn(async () => results.shift() ?? ok([chunk(1300, 7)]))
+      const failed: (number | null)[] = []
+      const refiller = new SeismoWaveRefiller({
+        bufferOf: () => buffer,
+        fetchSamples,
+        signal: new AbortController().signal,
+        delayMs: 3000,
+        onFilled: () => {},
+        onSkipped: () => {},
+        onError: (_id, e) => { throw e },
+        onFailed: (_id, _n, retryInMs) => failed.push(retryInMs),
+      })
+      return { buffer, fetchSamples, failed, refiller }
+    }
+
+    it('正: 1 回目が届かなければ 30 秒後に取り直して埋める', async () => {
+      vi.useFakeTimers()
+      try {
+        const { buffer, fetchSamples, failed, refiller } = setup([{ kind: 'unreachable', detail: 'x' }])
+        refiller.notice({ stationId: 'home', fromMs: 0, toMs: 10_000 })
+        await settle()
+        expect(failed).toEqual([30_000])
+        await vi.advanceTimersByTimeAsync(29_999)
+        expect(fetchSamples).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(1)
+        await settle()
+        expect(fetchSamples).toHaveBeenCalledTimes(2)
+        expect(buffer.holesIn(0, 10_000)).toBeNull()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('対照: こちらの組み立てが通らない（bad-request）ときは取り直さない', async () => {
+      vi.useFakeTimers()
+      try {
+        const { fetchSamples, failed, refiller } = setup([{ kind: 'bad-request', detail: 'x' }])
+        refiller.notice({ stationId: 'home', fromMs: 0, toMs: 10_000 })
+        await settle()
+        await vi.advanceTimersByTimeAsync(20 * 60_000)
+        expect(fetchSamples).toHaveBeenCalledTimes(1)
+        // 取り直さないことは記録へ残す（回数 0・間隔なし）。
+        expect(failed).toEqual([null])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('安全弁: 取り直しは 5 回までで、6 回目の失敗で諦める', async () => {
+      vi.useFakeTimers()
+      try {
+        const fail: WaveSamplesResult = { kind: 'http-error', status: 503 }
+        const { fetchSamples, failed, refiller } = setup([fail, fail, fail, fail, fail, fail, fail])
+        refiller.notice({ stationId: 'home', fromMs: 0, toMs: 10_000 })
+        for (let i = 0; i < 8; i += 1) {
+          await settle()
+          await vi.advanceTimersByTimeAsync(5 * 60_000)
+        }
+        expect(fetchSamples).toHaveBeenCalledTimes(6)
+        expect(failed).toEqual([30_000, 60_000, 120_000, 240_000, 300_000, null])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
+
+  it('安全弁: 取り直しを待っている間に別の範囲が取れても、待っている時計は残り、回数は数え直す', async () => {
+    vi.useFakeTimers()
+    try {
+      const buffer = withHole()
+      const results: WaveSamplesResult[] = [{ kind: 'unreachable', detail: 'x' }, ok([]), { kind: 'unreachable', detail: 'x' }]
+      const fetchSamples = vi.fn(async () => results.shift() ?? ok([chunk(1300, 7)]))
+      const failed: (number | null)[] = []
+      const counts: number[] = []
+      const refiller = new SeismoWaveRefiller({
+        bufferOf: () => buffer,
+        fetchSamples,
+        signal: new AbortController().signal,
+        delayMs: 0,
+        onFilled: () => {},
+        onSkipped: () => {},
+        onError: (_id, e) => { throw e },
+        onFailed: (_id, n, retryInMs) => { counts.push(n); failed.push(retryInMs) },
+      })
+      refiller.notice({ stationId: 'home', fromMs: 0, toMs: 10_000 })
+      await settle()
+      // 待っている間に、同じ観測点の別の取得が取れた（中身は空）。
+      refiller.notice({ stationId: 'home', fromMs: 0, toMs: 10_000 })
+      await settle()
+      // 待っていた時計が発火して取り直し、また失敗する。回数は 1 から数え直し（取れたので）。
+      await vi.advanceTimersByTimeAsync(30_000)
+      await settle()
+      expect(counts).toEqual([1, 1])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
+

@@ -11,7 +11,7 @@ import { WAVE_HISTORY_LEAD_MS, WAVE_HISTORY_TAIL_MS } from '../services/seismoWa
 
 /** S 波の到達から、揺れを見せるために足す余白（ms）。**仮の値**（設計書 §12）。 */
 export const PUBLIC_S_ARRIVAL_PAD_MS = 60_000
-/** 範囲の長さの上限（ms）。伸ばしても超えない。**仮の値**（設計書 §12）。 */
+/** 範囲の長さの上限（ms）。伸ばしても超えない。**15 分で決めた**（設計書 §0。2026-10-23 選択「15 分で決めて記録する (Recommended)」）。 */
 export const PUBLIC_WAVE_RANGE_MAX_MS = 15 * 60_000
 /**
  * 範囲の終わりから、取り終えたと見なすまでの余裕（ms）。**仮の値**（設計書 §12）。保存庫へ入る遅れの実測（8〜19 秒）に

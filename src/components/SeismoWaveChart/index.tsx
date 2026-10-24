@@ -95,6 +95,13 @@ export function publicStationHeading(number: number, nameJa: string): string {
 const COMPOSITE_LABEL = '合成'
 
 /**
+ * 合成が止まってセンサー単独を描いている間の、段の名前と見出しの印（2026-10-24 ユーザー選択「その案でよい (Recommended)」）。
+ * 何を描いているかを書かないと、合成と単独の絵が見分けられない（`useSeismoStation` の `SeismoWaveSource`）。
+ */
+const SENSOR_LANE_LABEL = '単独'
+const COMPOSITE_STOPPED_LABEL = '合成 途絶'
+
+/**
  * 静かさを測り直す間隔（データの時刻で ms）。**1 秒。**
  *
  * 描き直しは 0.3 秒ごとだが、測るのは 30 秒ぶんの中央値なので、0.3 秒ごとに測っても値はほとんど
@@ -145,7 +152,8 @@ const DRAW_WARN_INTERVAL_MS = 60_000
 interface Props {
   /** 自作地震計の観測点。**出さないなら空**（出すかどうかは呼び出し側が決める）。 */
   stations: readonly SeismoStationState[]
-  readWave: SeismoStations['readWave']
+  /** 自作地震計の窓を読む（`useSeismoStation` の `readLiveWave`。合成が止まった間は単独のセンサーの窓）。 */
+  readWave: SeismoStations['readLiveWave']
   /** 公開観測点の波形。**出さないなら `null`**（`usePublicWaves` の `visible`）。自作地震計の段の下に番号順に積む。 */
   publicWaves: Pick<PublicWaves, 'stations' | 'status' | 'readWave'> | null
   /** 畳んでいるときに出すもの（設定）。 */
@@ -193,8 +201,16 @@ interface LiveWaveSource {
   readonly stale: boolean
   /** 見出しに添える数え上げ（自作地震計の欠測など）。無ければ `null`。 */
   readonly tallyText: string | null
-  /** 見出しに添える印（公開観測点の接続数の上限）。無ければ `null`。 */
+  /** 見出しに添える印（公開観測点の接続数の上限・自作地震計の合成が止まった）。無ければ `null`。 */
   readonly notice: string | null
+  /** 合成の段の名前（単独を描いている間は「単独」）。 */
+  readonly compositeLabel: string
+  /** 測れた静かさを端末へ控えるか（単独のセンサーを描いている間は控えない）。 */
+  readonly rememberQuiet: boolean
+  /**
+   * 静かさの控えの鍵。**地震カード・詳細の窓と同じ観測点の識別子**（`id` は種類の接頭辞付きなので使わない）。
+   */
+  readonly quietKey: string
   readonly unit: WaveUnit
   /**
    * 最後のサンプルが「いま」からこれより後ろへずれていたら記録する（ms）。**届き方で違う** —— 公開観測点は約 21 秒ぶんの
@@ -229,7 +245,10 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
       lon: station.lon,
       stale: station.waveStale,
       tallyText: formatWaveTally(station.waveTally),
-      notice: null,
+      notice: station.waveSource === 'sensor' ? COMPOSITE_STOPPED_LABEL : null,
+      compositeLabel: station.waveSource === 'sensor' ? SENSOR_LANE_LABEL : COMPOSITE_LABEL,
+      rememberQuiet: station.waveSource === 'station',
+      quietKey: station.stationId,
       unit: SEISMO_WAVE_UNIT,
       sampleBehindWarnMs: SEISMO_SAMPLE_BEHIND_WARN_MS,
       read: (fromMs) => readWave(station.stationId, fromMs),
@@ -249,6 +268,9 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
         tallyText: null,
         // **印は公開観測点の先頭の段にだけ出す**（接続は 1 本なので、段ごとに並べても同じことしか言わない）。
         notice: refused && i === 0 ? PUBLIC_REFUSED_LABEL : null,
+        compositeLabel: COMPOSITE_LABEL,
+        rememberQuiet: false,
+        quietKey: ps.code,
         unit: PUBLIC_WAVE_UNIT,
         // 途絶とみなす長さまでは遅れて当たり前（届く単位が粗い）。
         sampleBehindWarnMs: PUBLIC_WAVE_STALE_MS,
@@ -376,6 +398,10 @@ function StationWave({
   readRef.current = source.read
   const stationIdRef = useRef(source.id)
   stationIdRef.current = source.id
+  const rememberQuietRef = useRef(source.rememberQuiet)
+  rememberQuietRef.current = source.rememberQuiet
+  const quietKeyRef = useRef(source.quietKey)
+  quietKeyRef.current = source.quietKey
   // 単位は観測点の種類で決まる（鍵に種類が入っているので、同じ段のまま種類が変わることは無い）。
   const unitRef = useRef(source.unit)
   unitRef.current = source.unit
@@ -466,6 +492,10 @@ function StationWave({
         if (endMs - lastMeasuredMs >= QUIET_MEASURE_INTERVAL_MS || endMs < lastMeasuredMs) {
           lastMeasuredMs = endMs
           quiet.observe(endMs, measureWindowQuietLevel(win))
+          // **控えるのは直近 5 分のいちばん静かだった値**（その場の測り値は揺れの最中に大きく出る）。次に測れない間
+          // （繋いだ直後の 10 秒・ホストの起動直後）に使う（`WaveUnit.rememberedQuietLevel`）。**単独のセンサーを描いている間は
+          // 控えない** —— 合成と静かさの違う線で測った値になる。
+          if (rememberQuietRef.current) unitRef.current.rememberQuietLevel(quietKeyRef.current, endMs, quiet.current())
         }
       }
       // **描き終えてから確定する。** 途中で投げたとき、裏の絵が古いまま時間の取り方だけ新しくなると、
@@ -492,7 +522,8 @@ function StationWave({
         expanded: expandedRef.current,
         win,
         stale: staleRef.current,
-        quietLevel: quiet.current(),
+        // 測れていない間は、最後に測れた値を使う（2026-10-24 ユーザー選択「アプリが最後に測った値 (Recommended)」）。
+        quietLevel: quiet.current() ?? unitRef.current.rememberedQuietLevel(quietKeyRef.current),
         arrivals: arrivalsRef.current,
         timeline: nextTimeline,
         unit: unitRef.current,
@@ -639,7 +670,7 @@ function StationWave({
               {lanes.length > 1 && (
                 <div className="pointer-events-none absolute left-0 right-0 top-0 flex justify-between text-[9px] roomy:text-[10px] leading-none">
                   <span style={{ color: lane.kind === 'axis' ? AXIS_COLORS[lane.axis] : COMPOSITE_COLOR }}>
-                    {lane.kind === 'axis' ? AXIS_LABELS[lane.axis] : COMPOSITE_LABEL}
+                    {lane.kind === 'axis' ? AXIS_LABELS[lane.axis] : source.compositeLabel}
                   </span>
                   {/* 見出しの帯は押しても下の波形へ通す作りなので、ホバーを受けるこの字だけ受け取る。 */}
                   <span

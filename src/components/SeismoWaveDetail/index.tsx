@@ -23,7 +23,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { createPortal } from 'react-dom'
 
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
-import { fetchSeismoWaveSamples, SAMPLES_SPAN_MAX_MS } from '../../services/seismoWaveSamples'
+import { fetchSeismoWaveSamplesParts, SAMPLES_DETAIL_SPAN_MAX_MS } from '../../services/seismoWaveSamples'
+import { coarseGeometry, coarseMaxAbs, missingRatios, type MsRange } from './coarseFill'
 import { createLogThrottle, log } from '../../utils/logger'
 import { columnsSpan, measureQuietLevel, selectQuakeWindow } from '../../utils/seismoQuakeWindow'
 import { trimTrailingGap } from '../../utils/seismoWaveColumns'
@@ -88,6 +89,9 @@ const SERIES_GAP_MS = 1_500
  */
 const SAMPLES_COVER_TOLERANCE_MS = 1_000
 
+/** 生のサンプルを取れなかった区間の境目の線（P/S・最大より控えめに）。 */
+const MISSING_EDGE_MARK = { color: 'rgba(255,255,255,0.35)', dashed: true } as const
+
 /** ホイール 1 刻みで変える幅の割合。 */
 const WHEEL_ZOOM = 1.25
 
@@ -115,7 +119,8 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
   // **生のサンプル。** 届くまで・取れなかったときは `null`（カードの列で描く）。
-  const [samples, setSamples] = useState<{ series: SampleSeries; range: ViewRange } | null>(null)
+  // `missing` は取れなかった区切り（時刻順）。そこはカードの列で粗く埋め、境目を示す（→ `coarseFill.ts`）。
+  const [samples, setSamples] = useState<{ series: SampleSeries; range: ViewRange; missing: readonly MsRange[] } | null>(null)
 
   // 持っている記録の範囲（末尾の空は落とす）。**継ぎ足しで伸びればここも伸びる。**
   const bounds = useMemo(() => columnsRange(trimTrailingGap(wave.columns)), [wave.columns])
@@ -177,7 +182,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
   // 拡大・送りでは取りに行かない。
   //
   // **「伸ばし終えた」は一度立ったら戻さない。** `wave.complete` は余震で揺れがぶり返すと偽へ戻り、
-  // 収まるとまた真になる —— そのたびに最大 10 分ぶんを取り直すことになる。
+  // 収まるとまた真になる —— そのたびに区間をまるごと（最大 32 分ぶん）取り直すことになる。
   const boundsRef = useRef(bounds)
   boundsRef.current = bounds
   const everCompleteRef = useRef(wave.complete)
@@ -200,7 +205,7 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
       log.debug(`[seismo] 詳細の窓: 手元の生のサンプルが 1 点も無い（${wave.stationId}）。カードの列で描く`)
       return
     }
-    setSamples({ series, range })
+    setSamples({ series, range, missing: [] })
   }, [heldWindow, wave.stationId])
 
   const hostBaseUrl = wave.samples.kind === 'host' ? wave.samples.baseUrl : null
@@ -209,9 +214,10 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
     const b = boundsRef.current
     if (!(b.toMs > b.fromMs)) return
     const ctrl = new AbortController()
-    // **ホストの列の上限（10 分）を超える区間は頭から 10 分ぶん**（揺れは頭のほうにある）。
-    const toMs = Math.min(b.toMs, b.fromMs + SAMPLES_SPAN_MAX_MS)
-    void fetchSeismoWaveSamples({
+    // **区間を全部取る**（2026-10-22 選択「区間を全部描く (Recommended)」。以前は 10 分を超える区間を頭の 10 分で切っていた）。
+    // 上限は地震カードの区間の最長（→ `SAMPLES_DETAIL_SPAN_MAX_MS`）。**取れなかった区切りがあっても捨てない**（→ `coarseFill.ts`）。
+    const toMs = Math.min(b.toMs, b.fromMs + SAMPLES_DETAIL_SPAN_MAX_MS)
+    void fetchSeismoWaveSamplesParts({
       baseUrl: hostBaseUrl,
       stationId: wave.stationId,
       fromMs: b.fromMs,
@@ -228,12 +234,19 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
         log.error(`[seismo] 詳細の窓: 生のサンプルを並べられなかった（${wave.stationId}）。カードの列で描く:`, error)
         return
       }
-      const range = seriesRange(series)
-      if (range === null) {
+      const got = seriesRange(series)
+      if (got === null) {
         log.debug(`[seismo] 詳細の窓: 生のサンプルが 1 点も無い（${wave.stationId}）。カードの列で描く`)
         return
       }
-      setSamples({ series, range })
+      // **取れなかった区切りがあれば、生で描く範囲は訊いた範囲まるごと**（欠けはカードの列で埋める）。
+      // 取れたサンプルの端で切ると、欠けが頭か尻にあるとき、その区間へ寄せた瞬間に窓全体が粗い絵へ戻る。
+      const range = result.missing.length > 0 ? { fromMs: b.fromMs, toMs } : got
+      setSamples({ series, range, missing: result.missing })
+    }).catch((error) => {
+      // 取得層は失敗を値で返すので、ここへ来るのは想定外の例外だけ。**カードの列のまま描く**（記録だけ残す）。
+      if (ctrl.signal.aborted) return
+      log.error(`[seismo] 詳細の窓: 生のサンプルを取る途中で投げた（${wave.stationId}）。カードの列で描く:`, error)
     })
     return () => ctrl.abort()
   }, [hostBaseUrl, wave.stationId, everComplete])
@@ -288,9 +301,14 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
   // **縦の下限**。0 の手前の静かさから決める（`utils/seismoQuietScale.ts` の `detail`）。
   // カードより低い倍率にする —— カードは「一覧で見て、揺れたかどうか」を見せるために静かなときの振れを
   // 小さく抑え、こちらは寄せて読むための窓なので小さな揺れも段の高さいっぱいに出す。
+  // 測れなければ、その観測点で最後に測れた静かさを使う（`WaveUnit.rememberedQuietLevel`。2026-10-24 ユーザー選択）。
   const detailFloorGal = useMemo(
-    () => wave.unit.minScale('detail', measureQuietLevel(wave.columns, wave.axisZero.ms)),
-    [wave.columns, wave.axisZero.ms, wave.unit],
+    () =>
+      wave.unit.minScale(
+        'detail',
+        measureQuietLevel(wave.columns, wave.axisZero.ms) ?? wave.unit.rememberedQuietLevel(wave.stationId),
+      ),
+    [wave.columns, wave.axisZero.ms, wave.unit, wave.stationId],
   )
 
   useEffect(() => {
@@ -322,6 +340,18 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
         const identity = (_a: number, v: number): number => v
         // 成分ごとの振れ。3 段の縦は見えている成分のいちばん大きい振れで揃える。
         const maxes: number[] = maxAbsInRange(samples.series, view, identity)
+        // **取れなかった区間**（→ `coarseFill.ts`）。粗い絵で埋め、淡く塗って境目に点線を引く。縦の物差しにも入れる。
+        const missing = samples.missing
+        const shades = missingRatios(missing, view)
+        const boundaryMarks: WaveMark[] = shades.flatMap((r) =>
+          [r.fromRatio, r.toRatio].filter((x) => x > 0 && x < 1).map((ratio) => ({ ratio, label: '', ...MISSING_EDGE_MARK })),
+        )
+        if (shades.length > 0) {
+          for (const a of [0, 1, 2] as const) {
+            const m = coarseMaxAbs(wave.columns, missing, view, a)
+            if (Number.isFinite(m) && !(m <= maxes[a])) maxes[a] = m
+          }
+        }
         let best = -1
         for (const a of visibleIdx) if (Number.isFinite(maxes[a]) && (best < 0 || maxes[a] > maxes[best])) best = a
         const scaleGal = Math.max(detailFloorGal, best < 0 ? 0 : maxes[best])
@@ -352,9 +382,18 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
                       laneGeometry({ series: samples.series, values: axisAverages[a][side], range: view, widthPx, map: (v) => v }),
                   })),
             singleMember,
+            coarse:
+              shades.length === 0
+                ? null
+                : {
+                    color: AXIS_COLORS[a],
+                    geometry: (widthPx: number) =>
+                      coarseGeometry({ columns: wave.columns, missing, view, widthPx, component: a as 0 | 1 | 2 }),
+                  },
+            shades,
             scaleGal,
             stale: wave.interrupted,
-            marks: laneMarks(a, a === visibleIdx[0] && !showComposite),
+            marks: [...laneMarks(a, a === visibleIdx[0] && !showComposite), ...boundaryMarks],
             ticks: ticksFor(a),
           })
           if (!ok) throttledNoContext(() => log.error('[seismo] 詳細の窓の波形を描く 2D コンテキストを取れなかった'))
@@ -365,7 +404,8 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
         const cc = compositeRef.current
         if (cc !== null && composite !== null) {
           const peakInView = peakInRange(samples.series, composite.magnitude, view)
-          const compositeScale = Math.max(detailFloorGal, peakInView?.value ?? 0)
+          const coarseComposite = shades.length === 0 ? Number.NaN : coarseMaxAbs(wave.columns, missing, view, 'composite')
+          const compositeScale = Math.max(detailFloorGal, peakInView?.value ?? 0, Number.isFinite(coarseComposite) ? coarseComposite : 0)
           const ok = paintSampleLane(cc, {
             color: COMPOSITE_COLOR,
             baseline: 'bottom',
@@ -379,9 +419,19 @@ export function SeismoWaveDetail({ wave, quakeLabel, onClose }: Props) {
               },
             ],
             singleMember,
+            // 合成の粗い絵は列の合成の上端から（成分の向きの切り替えは効かない —— 列は選んだ向きだけの合成を持たない）。
+            coarse:
+              shades.length === 0
+                ? null
+                : {
+                    color: COMPOSITE_COLOR,
+                    geometry: (widthPx: number) =>
+                      coarseGeometry({ columns: wave.columns, missing, view, widthPx, component: 'composite' }),
+                  },
+            shades,
             scaleGal: compositeScale,
             stale: wave.interrupted,
-            marks: [...arrivalMarks, ...peakMarkAt(compositePeak?.atMs)],
+            marks: [...arrivalMarks, ...peakMarkAt(compositePeak?.atMs), ...boundaryMarks],
           })
           if (!ok) throttledNoContext(() => log.error('[seismo] 詳細の窓の波形を描く 2D コンテキストを取れなかった'))
           setCompositeScaleText(`0〜${formatGal(compositeScale)} ${wave.unit.label}`)

@@ -20,7 +20,8 @@ import { useShareCard } from './hooks/useShareCard'
 import { SeismoLinkStatus } from './components/SeismoLinkStatus'
 import { SeismoOverlay } from './components/SeismoOverlay'
 import { useSeismoStation, type SeismoStationState } from './hooks/useSeismoStation'
-import { useSeismoQuakeWaves, type SeismoQuakeWave } from './hooks/useSeismoQuakeWaves'
+import { useSeismoQuakeWavesWithStatus, type SeismoQuakeWave } from './hooks/useSeismoQuakeWaves'
+import { useSeismoReplay } from './hooks/useSeismoReplay'
 import { usePublicQuakeWaves } from './hooks/usePublicQuakeWaves'
 import { mergeQuakeWaves } from './utils/mergeQuakeWaves'
 import { useQuakeOriginSeconds } from './hooks/useQuakeOriginSeconds'
@@ -2025,7 +2026,7 @@ export function App() {
   })
   // 強震モニタの揺れ検知は V2 エンジン（純粋コア step）で行う。
   // 検知結果は音・自動タブ切替・自動フィット・地図オーバーレイ・リアルタイムタブのカードを駆動する。
-  const kyoshinV2 = useKyoshinDetectorV2(kyoshin.sites, kyoshin.indices, kyoshin.dataTime, kyoshin.sitesSiteConfigId, kyoshin.indicesSiteConfigId, true, hasActiveNonAssumedEEW, kyoshin.supplyKey, kyoshin.warmup)
+  const kyoshinV2 = useKyoshinDetectorV2(kyoshin.sites, kyoshin.indices, kyoshin.dataTime, kyoshin.sitesSiteConfigId, kyoshin.indicesSiteConfigId, true, hasActiveNonAssumedEEW, kyoshin.supplyKey, kyoshin.warmup, kyoshin.backfill)
   // siteConfigId 切替直後の一時的な「新 indices・旧 sites」状態では sites[i] と indices[i] を
   // 位置対応で使う下流（描画・タブ表示・派生ビュー）でも誤ペアリングが起きるため、両者の
   // siteConfigId が揃うまで空配列にゲートする。sitelist の非同期取得が完了した次フレームで
@@ -2355,10 +2356,10 @@ export function App() {
 
   // 自作地震計（`seismo-host/`）の観測点の震度。**設定が切れていれば繋がない。**
   //
-  // **再生中も繋がない。** ホストが押し出すのは「いまの震度」だけで、再生している
-  // 過去の時刻ぶんを返す口がまだ無い（`seismo-host` 側の課題）。繋いだままにすると
-  // **画面の他が過去なのにここだけ現在**という食い違いが起き、しかも見分ける手掛かりが
-  // 画面に出ない。ライブ接続を止めるのと同じ扱いへ揃える（`ConnectionStatus` の `replay`）。
+  // **再生中は押し出しへ繋がない。** ホストが押し出すのは「いまの震度」だけなので、繋いだままにすると
+  // **画面の他が過去なのにここだけ現在**という食い違いが起きる。ライブ接続を止めるのと同じ扱いへ揃える
+  // （`ConnectionStatus` の `replay`）。**代わりに再生時刻のぶんをホストから読み返して出す**（`useSeismoReplay`。
+  // 2026-10-22 選択「当時のデータで出す (Recommended)」）。
   //
   // 波形は「表示しない」以外で要求する。**「揺れたときだけ」でも受け取り続ける** ——
   // 切り替えると SSE を繋ぎ直すので、揺れを検知してから上げたのでは間に合わない
@@ -2369,6 +2370,19 @@ export function App() {
     baseUrl: settings.seismoHostUrl,
     wave: settings.seismoWave === 'off' ? 'none' : 'station',
   })
+  const seismoReplay = useSeismoReplay({
+    enabled: settings.seismoEnabled,
+    baseUrl: settings.seismoHostUrl,
+    replayOffsetMs: replayTimeOffset,
+    wave: settings.seismoWave === 'off' ? 'none' : 'station',
+  })
+  // 地図の帯・下端の波形・波形を出すかの判定が見る観測点。**再生中は読み返した再生時刻のぶん。**
+  const seismoView = replayTimeOffset === null ? seismo : seismoReplay
+  // **帯は震度のある行だけ**（再生中に震度の記録が無い時刻は出さない。波形だけ読めた行は下端の波形のために残す）。
+  const seismoOverlayStations = useMemo(
+    () => (replayTimeOffset === null ? seismoView.stations : seismoView.stations.filter((s) => s.source.kind === 'station')),
+    [replayTimeOffset, seismoView.stations],
+  )
   // 有感の地震カードへ出す、その区間の波形（→ hooks/useSeismoQuakeWaves.ts）。
   //
   // **押し出しと違って再生中も動かす。** 時刻の範囲を指定して取るので、
@@ -2390,7 +2404,7 @@ export function App() {
     activeEEWs,
     replayOffsetMs: replayTimeOffset,
   })
-  const seismoQuakeWaves = useSeismoQuakeWaves({
+  const { waves: seismoQuakeWaves, failedEventKeys: seismoWaveFailedKeys } = useSeismoQuakeWavesWithStatus({
     enabled: settings.seismoEnabled && settings.seismoWave !== 'off',
     baseUrl: settings.seismoHostUrl,
     quakes: filteredEarthquakes,
@@ -2450,22 +2464,21 @@ export function App() {
   }, settings.showMapLegend ? legendBlocks : EMPTY_LEGEND_BLOCKS)
   // 絵を出すかどうかは受け取るかどうかと別に決める（→ hooks/useSeismoWaveVisibility.ts）。
   //
-  // **再生中は明示的に落とす。** 繋いでいないので観測点が 1 つも無く、結果として絵は
-  // 出ない —— が、それは「`stations` が空だから」という偶然に頼った形で、判定の中では
-  // EEW と強震モニタ（再生中も動いている）に反応して内部の状態が立ってしまう。
+  // **再生中も設定どおりに判定する**（観測点は再生時刻のぶん。→ `useSeismoReplay`）。再生している EEW・強震モニタの
+  // 検知・自作地震計の震度で、ライブと同じく出し入れする。
   // 波形を出すかを見る範囲は、ホーム地点ではなく自作地震計の周り（座標が無ければホーム地点。→ hooks/useSeismoScope.ts）。
   const seismoScope = useSeismoScope({
-    stations: seismo.stations,
+    stations: seismoView.stations,
     homeScope: nearbyScope,
     stationCoords: stationCoordsForChecklist,
     kyoshinSites: kyoshinSitesGated,
   })
   const showSeismoWave = useSeismoWaveVisibility({
-    mode: replayTimeOffset === null ? settings.seismoWave : 'off',
+    mode: settings.seismoWave,
     scope: seismoScope,
     eews: eewListNoCancelled,
     detectedPoints: kyoshinView.detectedPoints,
-    stations: seismo.stations,
+    stations: seismoView.stations,
   })
   // 地図に重ねる特別情報の帯の束。**閉じた帯を除いた「いま出す帯」を、帯の描画と共有ボタンの置き場所が同じ値で見る。**
   // お知らせの帯は設定で隠せるので、隠しているときは元データごと渡さない。
@@ -2475,7 +2488,7 @@ export function App() {
     earthquakeCount,
   })
   // 地図の下の波形の枠に渡すもの。**出さないなら空・null**（出すかどうかはここで決める）。
-  const waveChartStations = showSeismoWave ? seismo.stations : EMPTY_SEISMO_STATIONS
+  const waveChartStations = showSeismoWave ? seismoView.stations : EMPTY_SEISMO_STATIONS
   const waveChartPublic = publicWaves.visible ? publicWaves : null
   // 枠が実際に段を描くか。描くと地図の高さが削れ、地図に重ねた帯は画面の下端に届かなくなる。
   // **「出す」と判定しただけでは足りない** —— 段が 0 なら枠は何も描かない（→ SeismoWaveChart/chartRows.ts）。
@@ -2618,7 +2631,7 @@ export function App() {
                 left: 'max(0.5rem, env(safe-area-inset-left, 0px))',
               }}
             >
-              <SeismoOverlay stations={seismo.stations} />
+              <SeismoOverlay stations={seismoOverlayStations} />
             </div>
             {/* 地図右上。アプリの状態を上から更新時刻・生成データの取得状況・地図描画の不調・
                 自作地震計との繋がり具合の順で。**自作地震計の観測値（左上）とは左右で分ける** ——
@@ -2636,7 +2649,7 @@ export function App() {
               <MapUpdateTime lastUpdate={overlayUpdateTime} error={overlayError} />
               <MapDataStatus />
               <MapRenderStatus />
-              <SeismoLinkStatus stream={seismo.stream} urlUnusable={seismo.urlUnusable} />
+              <SeismoLinkStatus stream={seismoView.stream} urlUnusable={seismoView.urlUnusable} />
             </div>
             {/* 地図に重ねる縦並び。上端に行動チェックリスト、下端に凡例・特別情報バナー。
                 **地図の高さを 1 本の縦並びで分け合う**（足りないときは中身が縮み、それぞれの中で
@@ -2706,7 +2719,7 @@ export function App() {
             <div className={`min-h-0 flex flex-col overflow-hidden${squareLayout.waveHidden ? ' h-0 invisible' : ''}`}>
             <SeismoWaveChart
               stations={waveChartStations}
-              readWave={seismo.readWave}
+              readWave={seismoView.readLiveWave}
               publicWaves={waveChartPublic}
               collapsedView={settings.seismoWaveCollapsedView}
               expanded={settings.seismoWaveExpanded}
@@ -2775,6 +2788,7 @@ export function App() {
                 onFocusMap={focusMapTarget}
                 speakingTelegramTextSubject={speakingTelegramTextSubject}
                 seismoWaves={quakeWaves}
+                seismoWaveFailedKeys={seismoWaveFailedKeys}
                 seismoWaveView={settings.seismoWaveCollapsedView}
               />
             </ErrorBoundary>
@@ -2865,6 +2879,7 @@ export function App() {
                 historicalArchives={historicalArchives}
                 historicalArchivesLoading={historicalArchivesLoading}
                 scenarioTest={scenarioTest}
+                seismoUnreadableCount={seismo.unreadableCount}
               />
             </ErrorBoundary>
           </div>

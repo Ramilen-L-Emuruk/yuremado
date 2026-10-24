@@ -15,7 +15,19 @@
 // React を動かすため、このファイルだけ jsdom 環境で実行する。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, cleanup } from '@testing-library/react'
-import { useSeismoStation, WAVE_REFILL_DELAY_MS, WAVE_RETAIN_SEC } from './useSeismoStation'
+import {
+  buildStationStates,
+  LIVE_SENSOR_SWITCH_MARGIN,
+  pickLiveSensor,
+  SENSOR_WAVE_PROBE_MS,
+  SENSOR_WAVE_RETURN_HOLD_MS,
+  type StationEntry,
+  UNSEEN_GRACE_MS,
+  useSeismoStation,
+  WAVE_REFILL_DELAY_MS,
+  WAVE_RETAIN_SEC,
+  WAVE_STALE_MS,
+} from './useSeismoStation'
 import { log } from '../utils/logger'
 import {
   connectSeismoStream,
@@ -143,6 +155,7 @@ describe('useSeismoStation', () => {
         atMs: 2000,
         source: { kind: 'station' },
         waveSampleCount: 0,
+        waveSource: 'station',
         // **一度も届いていないうちは「止まっている」と言わない**（購読を始めた直後と
         // 区別が付かない）。
         waveStale: false,
@@ -746,16 +759,21 @@ describe('useSeismoStation', () => {
     expect(h.result.current.stream).toEqual({ kind: 'open' })
   })
 
-  // **読めない押し出しは画面へ出さないと決めた**（累計と理由は接続層が記録へ出す。
-  // → `docs/spec/data-sources-spec.md` §4.5「繋がらなくなったことを地図の右上へ出す」）。
-  // **受け取らないことを固定する** —— 受け取って state に載せると、ホストと PWA の版が
-  // 食い違っている間は押し出しが毎秒 10 件とも読めないので、**誰も読まない値のために
-  // 毎秒 10 回の再描画が起きる**（障害が起きているときほど重くなる）。
-  it('安全弁: 読めない押し出しは受け取らない', async () => {
-    renderHook(() => useSeismoStation(options))
+  // **読めない押し出しは設定タブへ出す**（2026-10-22 選択「設定タブに出す (Recommended)」）。ただし **1 件ごとには
+  // 描き直さない** —— 版が食い違っている間は毎秒 10 件とも読めないので、作り直しの巡回でまとめて写す。
+  it('読めない押し出しの累計は、作り直しの巡回でまとめて出す', async () => {
+    const h = renderHook(() => useSeismoStation(options))
     await settleDirectory()
-
-    expect(lastOptions?.onUnreadable).toBeUndefined()
+    expect(h.result.current.unreadableCount).toBe(0)
+    act(() => {
+      lastOptions?.onUnreadable?.(1, 'x')
+      lastOptions?.onUnreadable?.(2, 'x')
+      lastOptions?.onUnreadable?.(3, 'x')
+    })
+    // 受けただけでは描き直さない（対照）。
+    expect(h.result.current.unreadableCount).toBe(0)
+    await tick()
+    expect(h.result.current.unreadableCount).toBe(3)
   })
 
   it('安全弁: 台帳が引けなくても、識別子のまま震度を出す', async () => {
@@ -928,5 +946,247 @@ describe('useSeismoStation: 作り直しの知らせ', () => {
 
     expect(h.result.current.readWave('home', null)?.gal[0][3]).toBe(11)
     expect(error).toHaveBeenCalledTimes(1)
+  })
+})
+
+/** センサー単独の波形（10 ms 刻み・3 サンプル）。 */
+function sensorWave(boardKey: string, sensorId: string, firstSampleMs: number): SeismoMessage {
+  return {
+    kind: 'sensor-wave',
+    wave: { boardKey, sensorId, firstSampleMs, msPerSample: 10, gal: [[1, 1, 1], [2, 2, 2], [3, 3, 3]] },
+  }
+}
+
+describe('useSeismoStation（2026-10-24 の追加）', () => {
+  const options = { enabled: true, baseUrl: 'http://host:50506', wave: 'station' as const }
+
+  describe('未着（S1・猶予 60 秒）', () => {
+    const withAssigned = { ...STATUS, assignedBoards: [{ boardKey: 'mac:aa', stationId: 'home' }, { boardKey: 'mac:dd', stationId: 'shed' }] }
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(withAssigned), { status: 200 })))
+    })
+
+    it('正: 割り当ててあるのに何も届かない観測点は、猶予の後に「未着」で並ぶ', async () => {
+      const h = renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      deliver(stationReading('home', 0.25))
+      await tick(UNSEEN_GRACE_MS)
+      const kinds = new Map(h.result.current.stations.map((s) => [s.stationId, s.source.kind]))
+      expect(kinds.get('shed')).toBe('unseen')
+      // 名前は台帳に無いので識別子のまま（`assignedBoards` は名前を持たない）。
+      expect(h.result.current.stations.find((s) => s.stationId === 'shed')?.displayName).toBe('shed')
+    })
+
+    it('対照: 猶予の手前では並ばない', async () => {
+      const h = renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      await tick(UNSEEN_GRACE_MS - 1000)
+      expect(h.result.current.stations.some((s) => s.source.kind === 'unseen')).toBe(false)
+    })
+
+    it('安全弁: 一度でも届いた観測点は「未着」にならない（途絶の側へ）', async () => {
+      const h = renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      deliver(stationReading('home', 0.25))
+      await tick(UNSEEN_GRACE_MS + 10_000)
+      const home = h.result.current.stations.find((s) => s.stationId === 'home')
+      expect(home?.source.kind).toBe('silent')
+    })
+  })
+
+  describe('合成の震度が空なら単独へ（S3）', () => {
+    it('正: 合成が新しくても値が空なら、単独の値を採る', async () => {
+      const h = renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      deliver({ kind: 'station-reading', reading: { stationId: 'home', atMs: 2000, intensity: null } })
+      deliver(reading('mac:aa', 'i2c0-68', 1.2))
+      await tick()
+      expect(h.result.current.stations[0]).toMatchObject({ intensity: 1.2, source: { kind: 'sensor', sensorCount: 1 } })
+    })
+
+    it('対照: 合成に値があれば合成を採る', async () => {
+      const h = renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      deliver(stationReading('home', 0.25))
+      deliver(reading('mac:aa', 'i2c0-68', 1.2))
+      await tick()
+      expect(h.result.current.stations[0]).toMatchObject({ intensity: 0.25, source: { kind: 'station' } })
+    })
+
+    it('安全弁: 単独にも値が無ければ合成の行のまま（「単独」へ名乗り替えない）', async () => {
+      const h = renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      deliver({ kind: 'station-reading', reading: { stationId: 'home', atMs: 2000, intensity: null } })
+      await tick()
+      expect(h.result.current.stations[0]).toMatchObject({ intensity: null, source: { kind: 'station' } })
+    })
+  })
+
+  describe('合成の波形が止まったら単独の波形へ（S10）', () => {
+    it('正: 合成の波形が無く震度が届いていれば全部入りへ繋ぎ直し、届いた単独の波形を描く', async () => {
+      const h = renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      expect(lastOptions?.wave).toBe('station')
+      deliver(reading('mac:aa', 'i2c0-68', 1.2))
+      await tick()
+      expect(lastOptions?.wave).toBe('all')
+      deliver(reading('mac:aa', 'i2c0-68', 1.2))
+      deliver(sensorWave('mac:aa', 'i2c0-68', 10_000))
+      await tick()
+      expect(h.result.current.stations[0]).toMatchObject({ waveSource: 'sensor', waveStale: false, waveSampleCount: 3 })
+      expect(h.result.current.readLiveWave('home', null)?.gal[2][0]).toBe(3)
+      // 地震カードが継ぎ足す合成の口には単独を混ぜない。
+      expect(h.result.current.readWave('home', null)).toBeNull()
+    })
+
+    it('対照: 合成の波形が流れていれば合成のまま（全部入りへ繋がない）', async () => {
+      const h = renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      deliver(stationReading('home', 0.25))
+      deliver(stationWave('home', 10_000))
+      await tick()
+      expect(lastOptions?.wave).toBe('station')
+      expect(h.result.current.stations[0].waveSource).toBe('station')
+    })
+
+    it('安全弁: 合成が戻っても、30 秒たつまで全部入りをやめない（繋ぎ直しを繰り返さない）', async () => {
+      renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      deliver(reading('mac:aa', 'i2c0-68', 1.2))
+      await tick()
+      expect(lastOptions?.wave).toBe('all')
+      deliver(stationReading('home', 0.25))
+      deliver(stationWave('home', 10_000))
+      await tick()
+      expect(lastOptions?.wave).toBe('all')
+      // 合成を流し続けて待つ。
+      for (let t = 0; t < SENSOR_WAVE_RETURN_HOLD_MS; t += 2000) {
+        deliver(stationReading('home', 0.25))
+        deliver(stationWave('home', 10_030 + t))
+        await tick(2000)
+      }
+      expect(lastOptions?.wave).toBe('station')
+    })
+
+    // 2 軸のセンサーだけの観測点は、全部入りを受けても描ける単独の波形が来ない。待ちを過ぎたら理由から外して戻す。
+    it('正: 押し出しが開いたまま描ける単独の波形が来なければ、待ちを過ぎて全部入りをやめる', async () => {
+      renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      deliver(reading('mac:aa', 'i2c0-68', 1.2))
+      await tick()
+      expect(lastOptions?.wave).toBe('all')
+      act(() => lastOptions?.onState({ kind: 'open' }))
+      for (let t = 0; t < SENSOR_WAVE_PROBE_MS + SENSOR_WAVE_RETURN_HOLD_MS + 4000; t += 2000) {
+        deliver(reading('mac:aa', 'i2c0-68', 1.2))
+        await tick(2000)
+      }
+      expect(lastOptions?.wave).toBe('station')
+    })
+
+    // 繋ぎ直しの間は単独の波形が届きようがない。その時間を待ちに数えると、描けるセンサーを持つ観測点まで外してしまう。
+    it('安全弁: 押し出しが繋がっていない間は、描ける単独の波形が来ないことを待ちに数えない', async () => {
+      renderHook(() => useSeismoStation(options))
+      await settleDirectory()
+      deliver(reading('mac:aa', 'i2c0-68', 1.2))
+      await tick()
+      expect(lastOptions?.wave).toBe('all')
+      act(() => lastOptions?.onState({ kind: 'reconnecting', detail: 'x', nextAttemptInMs: 60_000 }))
+      for (let t = 0; t < SENSOR_WAVE_PROBE_MS + SENSOR_WAVE_RETURN_HOLD_MS + 4000; t += 2000) {
+        deliver(reading('mac:aa', 'i2c0-68', 1.2))
+        await tick(2000)
+      }
+      expect(lastOptions?.wave).toBe('all')
+    })
+
+    it('安全弁: 設定が「波形を受け取らない」なら全部入りへ広げない', async () => {
+      renderHook(() => useSeismoStation({ ...options, wave: 'none' }))
+      await settleDirectory()
+      deliver(reading('mac:aa', 'i2c0-68', 1.2))
+      await tick()
+      expect(lastOptions?.wave).toBe('none')
+    })
+  })
+})
+
+
+describe('pickLiveSensor: 単独の線に粘る', () => {
+  const now = 100_000
+  const waves = (...keys: string[]) => new Map(keys.map((k) => [k, { receivedAt: now - 100 }]))
+  const sensors = (entries: Record<string, number>) => new Map(Object.entries(entries).map(([k, v]) => [k, { intensity: v }]))
+
+  // 正: 差が粘りの幅に届かない間は、前に選んだセンサーのまま
+  it('相手が粘りの幅より小さく上回るだけなら乗り換えない', () => {
+    const picked = pickLiveSensor(waves('a', 'b'), sensors({ a: 1.0, b: 1.0 + LIVE_SENSOR_SWITCH_MARGIN - 0.01 }), 'a', now, false)
+    expect(picked).toBe('a')
+  })
+
+  // 対照: 粘りの幅以上上回れば乗り換える
+  it('粘りの幅以上上回れば乗り換える', () => {
+    const picked = pickLiveSensor(waves('a', 'b'), sensors({ a: 1.0, b: 1.0 + LIVE_SENSOR_SWITCH_MARGIN }), 'a', now, false)
+    expect(picked).toBe('b')
+  })
+
+  // 安全弁: 前のセンサーの波形が途絶えたら粘らない／合成が流れていれば単独を選ばない
+  it('前のセンサーの波形が古ければ粘らず、合成が流れていれば単独を選ばない', () => {
+    const stale = new Map([
+      ['a', { receivedAt: now - WAVE_STALE_MS }],
+      ['b', { receivedAt: now - 100 }],
+    ])
+    expect(pickLiveSensor(stale, sensors({ a: 3.0, b: 1.0 }), 'a', now, false)).toBe('b')
+    expect(pickLiveSensor(waves('a'), sensors({ a: 1.0 }), null, now, true)).toBeNull()
+  })
+})
+
+describe('buildStationStates: 描ける単独の波形が来ない観測点を全部入りの理由から外す', () => {
+  const now = 1_000_000
+  const directory = {
+    displayName: () => null,
+    location: () => null,
+    usualMeasured: () => null,
+    assignedStations: () => [],
+  } as unknown as Parameters<typeof buildStationStates>[1]
+  /** 合成の波形は一度も来ず、震度だけが流れている観測点（2 軸のセンサーだけの観測点の形）。 */
+  const entry = (): StationEntry => ({
+    station: { intensity: 1.2, atMs: now - 500, receivedAt: now - 500 },
+    sensors: new Map(),
+    wave: null,
+    waveReceivedAt: null,
+    sensorWaves: new Map(),
+    liveSensorKey: null,
+    sensorWaveUseless: false,
+    readingReceivedAt: now - 500,
+  })
+  const run = (e: StationEntry, sensorWaveSince: number | null, at = now) => {
+    const onSensorWaveUseless = vi.fn()
+    const result = buildStationStates(new Map([['st1', e]]), directory, at, sensorWaveSince, { onSilent: () => {}, onSensorWaveUseless })
+    return { result, onSensorWaveUseless }
+  }
+
+  // 正: 全部入りを要求して待ちを過ぎても単独が来なければ、理由から外して 1 度だけ知らせる
+  it('待ちを過ぎたら理由から外し、知らせは 1 度だけ', () => {
+    const e = entry()
+    const first = run(e, now - SENSOR_WAVE_PROBE_MS)
+    expect(first.result.sensorWaveNeeded).toBe(false)
+    expect(e.sensorWaveUseless).toBe(true)
+    expect(first.onSensorWaveUseless).toHaveBeenCalledTimes(1)
+    const second = run(e, now - SENSOR_WAVE_PROBE_MS)
+    expect(second.onSensorWaveUseless).not.toHaveBeenCalled()
+  })
+
+  // 対照: 待ちの手前（または要求する前）は理由に数える
+  it('待ちの手前・要求する前は理由に数える', () => {
+    expect(run(entry(), now - SENSOR_WAVE_PROBE_MS + 1).result.sensorWaveNeeded).toBe(true)
+    expect(run(entry(), null).result.sensorWaveNeeded).toBe(true)
+  })
+
+  // 安全弁: 震度が止まれば外した印を戻す（次に流れ出したら数え直す）
+  it('震度が止まれば外した印を戻す', () => {
+    const e = entry()
+    run(e, now - SENSOR_WAVE_PROBE_MS)
+    expect(e.sensorWaveUseless).toBe(true)
+    e.readingReceivedAt = now - 600_000
+    e.station = null
+    run(e, now - SENSOR_WAVE_PROBE_MS)
+    expect(e.sensorWaveUseless).toBe(false)
   })
 })

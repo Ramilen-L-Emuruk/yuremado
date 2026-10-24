@@ -22,8 +22,8 @@ export const PUBLIC_STATION_MIN_PREDICTED_INTENSITY = -1.5
 export const PUBLIC_STATION_DETECTION_RADIUS_KM = 150
 
 /**
- * 震源の要素が欠け、揺れ検知も無いときに震央の近い順に出す点数。**§0 は「数点」とだけ決めていて、数は決まっていない**
- * （§12）。仮に 3 点。
+ * 震源の要素が欠け、揺れ検知も無いときに震央の近い順に出す点数。**3 点で決めた**（設計書 §0。2026-10-23 選択「3 点で決めて
+ * 記録する (Recommended)」。§0 のもとの決定は「数点」）。
  */
 export const PUBLIC_STATION_NEAREST_COUNT = 3
 

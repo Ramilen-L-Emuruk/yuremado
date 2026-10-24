@@ -18,6 +18,7 @@ import {
   useReplayController, WINDOW_MS, PRE_WINDOW_MS, PREFETCH_MARGIN_MS,
   assemblePreWindowMaterial,
   REPLAY_EARLIEST_MS, REPLAY_FUTURE_MARGIN_MS, replayTargetProblem,
+  createEmptyLoss, lateEntriesSilenced, removeFailedPrefetch,
 } from './useReplayController'
 import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
 import type { JMAQuake } from '../types/earthquake'
@@ -599,18 +600,92 @@ describe('useReplayController の先読み', () => {
     expect(h.current.error).toBeNull()
   })
 
-  // 失敗した区間は読み直さない作りなので、記録が残らないと欠落を知る手段が無くなる。
+  // 失敗した区間は取り直すまで欠けているので、損失として数えて出す（取れたら外す）。
   // 原因（回復しうる情報）だけを出す形にすると、次の先読みが成功した時点で警告ごと消え、
-  // 黙って減った電文がそのまま埋もれる。確定した損失として別に数えるのはそのため
-  //（成功時に損失を維持することは addLoss / addFailedPrefetch の単体テストが担保する）。
-  it('先読みが失敗したら、原因とあわせて欠落を確定した損失として記録する', async () => {
+  // 黙って減った電文がそのまま埋もれる。
+  it('先読みが失敗したら、原因とあわせて欠落を損失として記録し、取り直していることを出す', async () => {
     const h = await startUntilPrefetching()
 
     h.fetches[2].reject(new Error('boom'))
     await h.flush()
 
-    expect(h.current.error).toMatch(/再生されません/)
+    expect(h.current.error).toMatch(/取り直しています/)
     expect(h.current.error).toMatch(/先読み1区間/)
+  })
+
+  // 正（#1015）: 失敗した 1 時間は 30 秒後に取り直し、取れたら積んで損失から外す。過ぎた電文は鳴らさない。
+  it('失敗した先読みの 1 時間を取り直し、取れたら損失から外す', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] })
+    try {
+      const h = await startUntilPrefetching()
+      h.fetches[2].reject(new Error('boom'))
+      await h.flush()
+      const failedRange = h.ranges[2]
+      await act(async () => {
+        vi.advanceTimersByTime(35_000)
+      })
+      expect(h.fetches).toHaveLength(4)
+      expect(h.ranges[3]).toEqual(failedRange)
+      h.fetches[3].resolve(fetched([entry('retried')]))
+      await h.flush()
+      const calls = h.deps.loadReplayEvents.mock.calls
+      expect(calls[calls.length - 1][0].map(idOf)).toEqual(['retried'])
+      expect(h.current.error ?? '').not.toMatch(/先読み/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // 安全弁: 取り直して取れたのに積む途中で投げたら、取り直さずに諦めたことを出す。取得の失敗として数えると、
+  // 待ちから外した区間の回数を数えるだけで終わり、二度と取られないまま「取り直しています」が残る。
+  it('安全弁: 取り直した 1 時間を積む途中で投げたら、取り直さずに諦めたことを出す', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] })
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {})
+    try {
+      const h = await startUntilPrefetching()
+      h.fetches[2].reject(new Error('boom'))
+      await h.flush()
+      await act(async () => {
+        vi.advanceTimersByTime(35_000)
+      })
+      expect(h.fetches).toHaveLength(4)
+      // 積む直前に置く（先に置くと、それまでの呼び出しに食われる）
+      h.deps.loadReplayEvents.mockImplementationOnce(() => {
+        throw new Error('積めない')
+      })
+      h.fetches[3].resolve(fetched([entry('retried')]))
+      await h.flush()
+      expect(h.current.error).toMatch(/再生されません/)
+      expect(h.current.error ?? '').not.toMatch(/取り直しています/)
+      await act(async () => {
+        vi.advanceTimersByTime(10 * 60_000)
+      })
+      expect(h.fetches).toHaveLength(4)
+    } finally {
+      error.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  // 安全弁: 通常の先読みでも、積む途中で投げたら取り直さない（取り直すと途中まで積んだ電文を 2 度積む）。
+  it('安全弁: 先読みした 1 時間を積む途中で投げたら、取り直さずに諦めたことを出す', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] })
+    try {
+      const h = await startUntilPrefetching()
+      h.deps.loadReplayEvents.mockImplementationOnce(() => {
+        throw new Error('積めない')
+      })
+      h.fetches[2].resolve(fetched([entry('prefetched')]))
+      await h.flush()
+      expect(h.current.error).toMatch(/再生されません/)
+      expect(h.current.error).toMatch(/先読み1区間/)
+      await act(async () => {
+        vi.advanceTimersByTime(10 * 60_000)
+      })
+      expect(h.fetches).toHaveLength(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('先読みが成功すれば、続きの電文を積んで取得中表示を戻す', async () => {
@@ -914,5 +989,19 @@ describe('useReplayController: 24 時間より前の津波を初期状態に載�
     expect(loaded[0].silent).toBe(true)
     expect(loaded[0].replayTime.getTime()).toBe(target.getTime() - 1)
     expect(h.deps.restorePreWindowTracking.mock.calls[0][0]).toEqual(loaded)
+  })
+})
+
+describe('lateEntriesSilenced（#1015）', () => {
+  const at = (ms: number) => ({ ...entry(`e${ms}`), replayTime: new Date(ms) })
+  it('正: 再生時刻を過ぎた電文は鳴らさず状態だけ入れる', () => {
+    expect(lateEntriesSilenced([at(1000)], 2000)[0].silent).toBe(true)
+  })
+  it('対照: まだ来ていない電文はそのまま流す', () => {
+    expect(lateEntriesSilenced([at(3000)], 2000)[0].silent).toBeFalsy()
+  })
+  it('安全弁: 取り直して取れたら損失の区間を 1 つ外し、0 より下げない', () => {
+    expect(removeFailedPrefetch({ ...createEmptyLoss(), failedPrefetches: 1 }).failedPrefetches).toBe(0)
+    expect(removeFailedPrefetch(createEmptyLoss()).failedPrefetches).toBe(0)
   })
 })

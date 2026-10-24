@@ -82,6 +82,7 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     onFocusMap={() => {}}
     speakingTelegramTextSubject={null}
     seismoWaves={new Map()}
+    seismoWaveFailedKeys={new Set()}
     seismoWaveView="composite"
   />
   )
@@ -150,6 +151,7 @@ describe('未入電トグル', () => {
         onFocusMap={() => {}}
         speakingTelegramTextSubject={null}
         seismoWaves={new Map()}
+        seismoWaveFailedKeys={new Set()}
         seismoWaveView="composite"
       />,
     )

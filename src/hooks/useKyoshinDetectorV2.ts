@@ -22,7 +22,7 @@ import {
   type PendingFrame,
   type WarmupNotice,
 } from '../utils/kyoshinWarmupConsumer'
-import type { KyoshinWarmup } from './useKyoshinRealtime'
+import type { KyoshinBackfill, KyoshinWarmup } from './useKyoshinRealtime'
 import { createLogThrottle, log } from '../utils/logger'
 import { profileSpan } from '../utils/frameProfiler'
 
@@ -202,7 +202,22 @@ export const WARMUP_WAIT_MAX_FRAMES = 90
  * **文面はここが持ち、`consumeWarmup` は事実だけを返す。** 同じ出来事を 2 通りの言葉で書くと、
  * 片方だけ直したときに記録と実装が食い違う。
  */
-function logWarmupNotice(notice: WarmupNotice, supplyKey: string, sitesSiteConfigId: string): void {
+function logWarmupNotice(notice: WarmupNotice, supplyKey: string, sitesSiteConfigId: string, what: '助走' | '全滅区間の取り直し' = '助走'): void {
+  if (what !== '助走') {
+    // **全滅区間の取り直し**（#986）は同じ消化を通るが、語を分ける（助走と取り違えると原因を追えない）。
+    const detail =
+      notice.kind === 'gave-up'
+        ? `${notice.waitedFrames} フレーム待っても届かないため、穴のまま検知を続けます`
+        : notice.kind === 'all-unusable'
+          ? `${notice.total} フレームを 1 件も使えませんでした（版違い ${notice.versionMismatch} 件）`
+          : notice.kind === 'feed-failed'
+            ? `${notice.count} 件の消化が例外`
+            : `消化を途中で打ち切りました（${notice.phase}）`
+    const error = notice.kind === 'feed-failed' || notice.kind === 'aborted' ? notice.error : undefined
+    if (error === undefined) log.warn(`[kyoshinV2] ${what}: ${detail}（supplyKey=${supplyKey}・sites=${sitesSiteConfigId}）`)
+    else log.error(`[kyoshinV2] ${what}: ${detail}（supplyKey=${supplyKey}・sites=${sitesSiteConfigId}）`, error)
+    return
+  }
   switch (notice.kind) {
     case 'gave-up':
       log.warn(
@@ -269,6 +284,8 @@ function logWarmupNotice(notice: WarmupNotice, supplyKey: string, sitesSiteConfi
  * @param supplyKey いま動いている供給を表す文字列（`useKyoshinRealtime.supplyKey`）
  * @param warmup その供給の助走フレーム（`useKyoshinRealtime.warmup`）。届くまでは通常フレームを
  *   待たせる。詳細は `utils/kyoshinWarmup`
+ * @param backfill リプレイで全滅した区間の取り直し（`useKyoshinRealtime.backfill`。#986）。始まったら助走と同じく
+ *   通常フレームを待たせ、届いたら穴のフレームを先に食わせる。無ければ `null`
  */
 export function useKyoshinDetectorV2(
   sites: SiteCoords,
@@ -280,6 +297,7 @@ export function useKyoshinDetectorV2(
   hasActiveNonAssumedEEW: boolean,
   supplyKey: string,
   warmup: KyoshinWarmup | null,
+  backfill: KyoshinBackfill | null,
 ): KyoshinDetectorV2Result {
   // `useRef(loadInitialState())` と書いてはいけない——**引数式は毎レンダー評価される**ため、
   // 1Hz の再レンダーのたびに localStorage の読み取りと学習資産の復元が走り、結果は捨てられる
@@ -314,6 +332,14 @@ export function useKyoshinDetectorV2(
    * 時間軸が変わったことを観測できないまま `true` へ戻りうる。
    */
   const waitingWarmupRef = useRef(true)
+  /**
+   * 全滅区間の取り直しを待っているなら、その番号（#986）。**待っていなければ `null`。**
+   * 待つ間は助走と同じく通常フレームを {@link pendingRef} へ溜める（先に食わせると、後から届いた穴のフレームが
+   * 「時刻の巻き戻り」として捨てられる）。上限（{@link WARMUP_WAIT_MAX_FRAMES}）まで待って届かなければ穴のまま進む。
+   */
+  const waitingBackfillRef = useRef<number | null>(null)
+  /** 消化を済ませた取り直しの番号（同じ番号の `begin` で待ち直さないため）。 */
+  const doneBackfillRef = useRef<number | null>(null)
   /**
    * 助走が届くまで待たせている通常フレーム（時刻の昇順）。
    *
@@ -371,6 +397,9 @@ export function useKyoshinDetectorV2(
         stateRef.current = resetTransientState(stateRef.current)
         // 新しい軸では検知エンジンの状態が空なので、また助走から始める。
         waitingWarmupRef.current = true
+        // 前の軸の取り直しも待たない（新しい軸の穴ではない）。
+        waitingBackfillRef.current = null
+        doneBackfillRef.current = null
       }
       return
     }
@@ -420,6 +449,25 @@ export function useKyoshinDetectorV2(
     // 以降は step() へ渡す分と床を並べ直す分で同じメタを使う（`meta.keys` が sites と同じ並び）。
     const stationMeta = metaRef.current.meta
 
+    // ---- 全滅区間の取り直しを待つか（#986。消化は助走の後）----
+    //
+    // **助走の待ちより先に見る。** 助走を待っている間は下で早く戻るので、後に置くと、待ちの間に届いた `begin` を
+    // 見ないまま助走が明け、明けた後で古い `begin` に従って通常フレームを待たせてしまう。
+    if (backfill !== null && backfill.supplyKey === supplyKey && backfill.id !== doneBackfillRef.current) {
+      if (waitingWarmupRef.current) {
+        // **助走を待っている間の取り直しは使わない。** 助走の消化が最後に食わせた時刻を今のフレームの手前まで進めるので、
+        // 後から届く穴のフレームは巻き戻りとして全部捨てられる（助走が穴の手前の履歴を作る）。
+        // 始まりと届いたフレームが 1 回の描画にまとまると、ここには `frames` しか見えない。どちらでも残す。
+        log.warn(
+          `[kyoshinV2] 助走を待っている間に全滅区間の取り直しが始まったので使わない（supplyKey=${supplyKey}`
+            + (backfill.frames === null ? '）' : `・捨てたフレーム ${backfill.frames.length} 件）`),
+        )
+        doneBackfillRef.current = backfill.id
+      } else if (waitingBackfillRef.current !== backfill.id) {
+        waitingBackfillRef.current = backfill.id
+      }
+    }
+
     // ---- 助走（`utils/kyoshinWarmup`）----
     //
     // 供給が始まった時点で既に揺れていると、検知エンジンには「ずっと高いまま静止している点」に
@@ -454,6 +502,37 @@ export function useKyoshinDetectorV2(
       pendingRef.current = []
       waitingWarmupRef.current = false
       for (const notice of consumed.notices) logWarmupNotice(notice, supplyKey, sitesSiteConfigId)
+    }
+
+    // ---- 全滅区間の取り直し（#986）----
+    //
+    // 供給元は取得が戻った秒を渡す**前に** `begin` を出すので、ここで待ちに入れば穴のフレームを先に食わせられる。
+    // 消化は助走と同じ純関数（`consumeWarmup`）。**検知エンジンの状態は作り直さない**（同じ時間軸の続き）。
+    if (waitingBackfillRef.current !== null && !waitingWarmupRef.current) {
+      pendingRef.current = pushPendingFrame(pendingRef.current, {
+        dataTimeMs,
+        indices,
+        sitesKey: indicesSiteConfigId,
+      })
+      const ready =
+        backfill !== null && backfill.supplyKey === supplyKey && backfill.id === waitingBackfillRef.current && backfill.frames !== null
+      if (!ready && pendingRef.current.length < WARMUP_WAIT_MAX_FRAMES) return
+      const consumed = consumeWarmup({
+        state: stateRef.current,
+        lastSteppedMs: lastSteppedMsRef.current,
+        warmupFrames: ready ? backfill.frames : null,
+        pending: pendingRef.current,
+        sites,
+        sitesSiteConfigId,
+        meta: stationMeta,
+        eewActive: hasActiveNonAssumedEEWRef.current,
+      })
+      stateRef.current = consumed.state
+      lastSteppedMsRef.current = consumed.lastSteppedMs
+      pendingRef.current = []
+      doneBackfillRef.current = waitingBackfillRef.current
+      waitingBackfillRef.current = null
+      for (const notice of consumed.notices) logWarmupNotice(notice, supplyKey, sitesSiteConfigId, '全滅区間の取り直し')
     }
 
     // 助走と重なる時刻・巻き戻った時刻は、ここでも落とす（助走の消化と同じ理由 ―― 同じ時刻を
@@ -568,7 +647,7 @@ export function useKyoshinDetectorV2(
     // `warmup` を deps に含めるのは、助走は**データ時刻とは別のタイミングで届く**ため。
     // 含めないと、助走が届いた時点では何も起きず、次のフレームが来るまで待たされる。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataTime, enabled, warmup])
+  }, [dataTime, enabled, warmup, backfill])
 
   return result
 }

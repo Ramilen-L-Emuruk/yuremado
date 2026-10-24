@@ -13,7 +13,9 @@ import {
   createSseParser,
   fetchSeismoStatus,
   USUAL_INTENSITY_STALE_MS,
+  isBlockedMixedContent,
   isValidSeismoHostUrl,
+  SEISMO_STATUS_TIMEOUT_MS,
   SeismoHostDirectory,
   type SeismoMessage,
 } from './seismoStream'
@@ -220,7 +222,7 @@ describe('fetchSeismoStatus', () => {
   it('対照: sensors が空配列なら「繋がったが観測点 0 件」', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ sensors: [] })) as unknown as typeof fetch
     const result = await fetchSeismoStatus('http://host:50506', fetchImpl)
-    expect(result).toEqual({ kind: 'ok', stations: [], sensorCount: 0, sensors: [], usualIntensities: new Map(), assignedStationCount: null })
+    expect(result).toEqual({ kind: 'ok', stations: [], sensorCount: 0, sensors: [], usualIntensities: new Map(), assignedStationCount: null, assignedStationIds: null })
   })
 
   it('正: 観測点ごとの普段の計測震度を読み、古いものと読めないものは載せない', async () => {
@@ -329,7 +331,7 @@ describe('fetchSeismoStatus', () => {
     expect(result.kind).toBe('ok')
     if (result.kind !== 'ok') return
     // `usualIntensities` は別の欄（普段の計測震度）。古さはホストの時計どうしで測る（`readUsualIntensities`）。
-    expect(Object.keys(result).sort()).toEqual(['assignedStationCount', 'kind', 'sensorCount', 'sensors', 'stations', 'usualIntensities'])
+    expect(Object.keys(result).sort()).toEqual(['assignedStationCount', 'assignedStationIds', 'kind', 'sensorCount', 'sensors', 'stations', 'usualIntensities'])
   })
 
   it('安全弁: HTTP エラー・到達不能・URL 不正を言い分ける', async () => {
@@ -1168,3 +1170,55 @@ describe('SeismoHostDirectory.refresh は投げない', () => {
     expect(vi.mocked(fetchImpl).mock.calls.length).toBe(2)
   })
 })
+
+describe('fetchSeismoStatus の繋がらない理由（S30）', () => {
+  const env = (pageProtocol: string | null, online: boolean | null = true) => ({ pageProtocol, online: () => online })
+
+  it('正: https のページから http の宛先へは問い合わせずに混在コンテンツと返す', async () => {
+    const fetchImpl = vi.fn()
+    const r = await fetchSeismoStatus('http://192.0.2.1:50506', fetchImpl as unknown as typeof fetch, env('https:'))
+    expect(r).toMatchObject({ kind: 'unreachable', reason: 'mixed-content' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('対照: localhost と https の宛先、http のページは混在に数えない', () => {
+    expect(isBlockedMixedContent('http://localhost:50506', 'https:')).toBe(false)
+    expect(isBlockedMixedContent('http://127.0.0.1:50506', 'https:')).toBe(false)
+    expect(isBlockedMixedContent('https://seismo.example.ts.net', 'https:')).toBe(false)
+    expect(isBlockedMixedContent('http://192.0.2.1:50506', 'http:')).toBe(false)
+  })
+
+  it('正: 失敗した時点でオフラインならオフラインと返す', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    const r = await fetchSeismoStatus('http://host:50506', fetchImpl as unknown as typeof fetch, env('http:', false))
+    expect(r).toMatchObject({ kind: 'unreachable', reason: 'offline' })
+  })
+
+  it('安全弁: 理由が分からない失敗は unknown（文面では見分けない）', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('NetworkError when attempting to fetch resource.')
+    })
+    const r = await fetchSeismoStatus('http://host:50506', fetchImpl as unknown as typeof fetch, env('http:', true))
+    expect(r).toMatchObject({ kind: 'unreachable', reason: 'unknown' })
+  })
+
+  it('正: 待ちの上限で打ち切ったら時間切れと返す', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+          }),
+      )
+      const p = fetchSeismoStatus('http://host:50506', fetchImpl as unknown as typeof fetch, env('http:', true))
+      await vi.advanceTimersByTimeAsync(SEISMO_STATUS_TIMEOUT_MS)
+      expect(await p).toMatchObject({ kind: 'unreachable', reason: 'timeout' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+

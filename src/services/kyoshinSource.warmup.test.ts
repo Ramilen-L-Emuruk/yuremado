@@ -4,7 +4,7 @@
 // **あちらは助走を止めてある**（取得の回数を数えるテストが多く、混ざると読めなくなるため）ので、
 // 助走そのものはこちらで見る。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { createYahooArchiveSource, createYahooLiveSource, type KyoshinFrame } from './kyoshinSource'
+import { createYahooArchiveSource, createYahooLiveSource, type KyoshinBackfillEvent, type KyoshinFrame } from './kyoshinSource'
 import { fetchRealtimeIntensity, fetchSiteList, startClockSync } from './kyoshin'
 import type { RealtimeIntensity } from './kyoshin'
 import { WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, WARMUP_QUIET_MAX_POINTS } from '../utils/kyoshinWarmup'
@@ -36,12 +36,15 @@ const QUIET_INDICES = [0, 0, 0]
 function createSink() {
   const frames: KyoshinFrame[] = []
   const prefilled: KyoshinFrame[][] = []
+  const backfills: KyoshinBackfillEvent[] = []
   return {
     frames,
     prefilled,
+    backfills,
     enqueue: (f: KyoshinFrame) => frames.push(f),
     setStalled: () => {},
     prefill: (fs: KyoshinFrame[]) => prefilled.push(fs),
+    backfill: (e: KyoshinBackfillEvent) => backfills.push(e),
   }
 }
 

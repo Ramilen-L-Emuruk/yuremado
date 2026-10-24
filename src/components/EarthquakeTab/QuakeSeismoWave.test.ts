@@ -3,12 +3,13 @@
 // **固定するのは 3 つ** ——0〜1 の比になること・**絵の外の時刻を範囲の外として返すこと**
 // （描く側が捨てる）・**分母が「末尾を切った後」の列であること**。
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { axisZeroLabel, buildArrivalMarks, foldQuakeWaveColumns, formatQuakeIntensityParts } from './QuakeSeismoWave'
 import { P_WAVE_COLOR, S_WAVE_COLOR } from '../Map/gl/psWaveStyle'
 import { SEISMO_WAVE_UNIT } from '../SeismoWaveChart/waveUnit'
 import type { TimedColumns } from '../../utils/seismoWaveColumns'
+import { rememberQuietLevel, resetSeismoQuietMemoForTest } from '../../utils/seismoQuietMemo'
 
 const FROM_MS = 1_000_000
 
@@ -16,6 +17,11 @@ const FROM_MS = 1_000_000
 function columns(count: number): TimedColumns {
   return { fromMs: FROM_MS, columnSpanMs: 100, columns: new Array(count).fill(null) }
 }
+
+beforeEach(() => {
+  globalThis.localStorage?.clear()
+  resetSeismoQuietMemoForTest()
+})
 
 describe('buildArrivalMarks', () => {
   it('P と S を左端 0・右端 1 の比で返す', () => {
@@ -104,7 +110,7 @@ describe('foldQuakeWaveColumns', () => {
   // 正（2026-10-13 に覆した）: 潰さない（強調をやめた）。縦は揺れの上端そのまま。
   it('ノイズを潰さず、揺れの上端をそのまま縦にする', () => {
     const base = quake()
-    const r = foldQuakeWaveColumns({ base, trimmed: trimmedOf(base), zeroMs: ZERO, visibleAxes: ALL, columnCount: 10, unit: SEISMO_WAVE_UNIT })
+    const r = foldQuakeWaveColumns({ stationId: 'home', base, trimmed: trimmedOf(base), zeroMs: ZERO, visibleAxes: ALL, columnCount: 10, unit: SEISMO_WAVE_UNIT })
     // 下限は 1 × 3 = 3 gal、揺れは 5 gal なので 5。
     expect(r.scaleGal).toBeCloseTo(5)
     // 0 の後の列は ±5 のまま（潰していれば ±3.5 になる）。
@@ -119,7 +125,7 @@ describe('foldQuakeWaveColumns', () => {
       cols.push({ min: [-v, -v, -v] as const, max: [v, v, v] as const, minMembers: 3, magMin: NaN, magMax: NaN, magSum: NaN, magCount: 0 })
     }
     const base: TimedColumns = { fromMs: FROM_MS, columnSpanMs: SPAN, columns: cols }
-    const r = foldQuakeWaveColumns({ base, trimmed: trimmedOf(base), zeroMs: ZERO, visibleAxes: ALL, columnCount: 10, unit: SEISMO_WAVE_UNIT })
+    const r = foldQuakeWaveColumns({ stationId: 'home', base, trimmed: trimmedOf(base), zeroMs: ZERO, visibleAxes: ALL, columnCount: 10, unit: SEISMO_WAVE_UNIT })
     expect(r.scaleGal).toBeCloseTo(3)
   })
 
@@ -131,21 +137,38 @@ describe('foldQuakeWaveColumns', () => {
       cols.push({ min: [-v, -v, -v] as const, max: [v, v, v] as const, minMembers: 3, magMin: NaN, magMax: NaN, magSum: NaN, magCount: 0 })
     }
     const base: TimedColumns = { fromMs: FROM_MS, columnSpanMs: SPAN, columns: cols }
-    const r = foldQuakeWaveColumns({ base, trimmed: trimmedOf(base), zeroMs: ZERO, visibleAxes: ALL, columnCount: 10, unit: SEISMO_WAVE_UNIT })
+    const r = foldQuakeWaveColumns({ stationId: 'home', base, trimmed: trimmedOf(base), zeroMs: ZERO, visibleAxes: ALL, columnCount: 10, unit: SEISMO_WAVE_UNIT })
     expect(r.scaleGal).toBeCloseTo(0.6)
   })
 
-  // 安全弁: 0 の手前が無くて静かさを測れなければ、決め打ちだった 10 gal へ倒す（ノイズを枠いっぱいに広げない）。
-  it('0 の手前が無ければ縦の下限は 10 gal', () => {
+  // 安全弁: 0 の手前が無くて静かさを測れず、控えも無ければ、決め打ちだった 10 gal へ倒す（ノイズを枠いっぱいに広げない）。
+  it('0 の手前が無く控えも無ければ縦の下限は 10 gal', () => {
     const trimmed = trimmedOf(quake())
-    const r = foldQuakeWaveColumns({ base: trimmed, trimmed, zeroMs: ZERO, visibleAxes: ALL, columnCount: 10, unit: SEISMO_WAVE_UNIT })
+    const r = foldQuakeWaveColumns({ stationId: 'home', base: trimmed, trimmed, zeroMs: ZERO, visibleAxes: ALL, columnCount: 10, unit: SEISMO_WAVE_UNIT })
+    expect(r.scaleGal).toBe(10)
+  })
+
+  // 正: 0 の手前が無くても、その観測点で最後に測れた静かさがあればそれを使う（2026-10-24 ユーザー選択）。
+  it('0 の手前が無ければ最後に測れた静かさから決める', () => {
+    rememberQuietLevel('home', ZERO - 60_000, 0.2)
+    const trimmed = trimmedOf(quake())
+    const r = foldQuakeWaveColumns({ stationId: 'home', base: trimmed, trimmed, zeroMs: ZERO, visibleAxes: ALL, columnCount: 10, unit: SEISMO_WAVE_UNIT })
+    // 下限は 0.2 × 3 = 0.6 gal なので、縦は揺れの振れ（5 gal）で決まる（決め打ちの 10 gal なら 10 のまま）。
+    expect(r.scaleGal).toBeCloseTo(5)
+  })
+
+  // 対照: 控えは観測点ごと。別の観測点の値は使わない。
+  it('別の観測点の控えは使わない', () => {
+    rememberQuietLevel('other', ZERO - 60_000, 0.2)
+    const trimmed = trimmedOf(quake())
+    const r = foldQuakeWaveColumns({ stationId: 'home', base: trimmed, trimmed, zeroMs: ZERO, visibleAxes: ALL, columnCount: 10, unit: SEISMO_WAVE_UNIT })
     expect(r.scaleGal).toBe(10)
   })
 
   it('消した向きは縦に数えない', () => {
     // 上下だけ 0 から後に ±9 gal。消さなければ上下が上端を決める。
     const base = quake(9)
-    const args = { base, trimmed: trimmedOf(base), zeroMs: ZERO, columnCount: 10, unit: SEISMO_WAVE_UNIT }
+    const args = { stationId: 'home', base, trimmed: trimmedOf(base), zeroMs: ZERO, columnCount: 10, unit: SEISMO_WAVE_UNIT }
     expect(foldQuakeWaveColumns({ ...args, visibleAxes: ALL }).scaleGal).toBeCloseTo(9)
     expect(foldQuakeWaveColumns({ ...args, visibleAxes: [true, true, false] }).scaleGal).toBeCloseTo(5)
   })

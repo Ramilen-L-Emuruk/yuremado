@@ -7,6 +7,7 @@ import { serverNow } from '../utils/clock'
 import { hasDepth, hasMagnitude } from '../utils/formatters'
 import { hasKnownEpicenter } from '../utils/geo'
 import { log } from '../utils/logger'
+import { retryDelayAfter } from '../utils/retrySchedule'
 import { groupMseed2ByStation } from '../utils/miniseed2Stream'
 import { decodePublicQuakeWave, hasSamplesFrom, publicQuakeColumns } from '../utils/publicQuakeColumns'
 import { isPublicWaveRangeSettled, publicWaveRange, type PublicWaveRange } from '../utils/publicQuakeRange'
@@ -46,10 +47,9 @@ const LIVE_QUAKE_MS = 10 * 60_000
 const RECHECK_MS = 30_000
 /** 同じ分の別地震で範囲が潰れないための下限（自作地震計の `MIN_WINDOW_MS` と同じ）。 */
 const MIN_WINDOW_MS = 30_000
-/** 取れなかった（通信の失敗・時間切れ・状態番号の誤り）ときに、次に試すまで空ける長さ（ms）。仮の値（設計書 §12）。 */
-const FAILURE_RETRY_MS = 5 * 60_000
-/** 取れなかったときに取りに行く回数の上限（初回を含む。この起動の間）。仮の値（設計書 §12）。 */
-const FAILURE_MAX_TRIES = 2
+// 取れなかった（通信の失敗・時間切れ・状態番号の誤り）ときは、**間隔を広げつつ回数に上限を置いて取り直す**
+// （`utils/retrySchedule.ts`。30 秒から倍々・5 回で諦める。2026-10-23 選択「R11・K15 と揃えて取り直す (Recommended)」、
+// 値は 2026-10-24 選択「30秒から倍々・5回 (Recommended)」）。以前は 5 分あけて 2 回までだった（設計書 §0）。
 
 export interface PublicQuakeWave {
   readonly code: string
@@ -235,17 +235,25 @@ export function usePublicQuakeWaves(params: {
         if (prev?.busy) continue
         const extended = prev !== undefined && range.toMs > prev.toMs
         if (prev?.done && !extended) continue
-        // 失敗の上限と待ちは、範囲が伸びたときも守る（伸びるたびに取り直すと上限が効かない）
-        if (prev !== undefined && prev.failures >= FAILURE_MAX_TRIES) continue
+        // 失敗の上限と待ちは、範囲が伸びたときも守る（伸びるたびに取り直すと上限が効かない）。諦めたら待ちは無限。
         if (prev !== undefined && Date.now() < prev.retryAtMs) continue
         const slot: Slot = prev ?? { wave: null, epoch: s.epoch, rawBytes: null, busy: false, done: false, toMs: range.toMs, failures: 0, retryAtMs: 0 }
         slot.busy = true
         slotsRef.current.set(slotKey, slot)
-        jobs.push({ slot, epoch: s.epoch, number: s.number, range })
+        jobs.push({ slot, epoch: s.epoch, number: s.number, range, settled: false })
       }
       if (jobs.length === 0) return
       void loadQuake({ target: t, jobs, urgent, signal: ctrl.signal })
-        .catch((e) => log.warn(`[public-wave] ${t.eventKey} の公開観測点の波形を組み立てられなかった`, e))
+        .catch((e) => {
+          log.warn(`[public-wave] ${t.eventKey} の公開観測点の波形を組み立てられなかった`, e)
+          // **投げた回も失敗に数える**（数えないと、待ちも上限も通らずに見直しのたびに組み立て直す）。この回で結果が決まった組は数えない。
+          if (ctrl.signal.aborted) return
+          for (const j of jobs) {
+            if (j.settled) continue
+            j.settled = true
+            noteSlotFailure(j.slot, j.epoch.code)
+          }
+        })
         .finally(() => {
           for (const j of jobs) j.slot.busy = false
           if (!ctrl.signal.aborted) setVersion((v) => v + 1)
@@ -348,6 +356,20 @@ interface StationJob {
   readonly epoch: PublicStationEpoch
   readonly number: number
   readonly range: PublicWaveRange
+  /**
+   * この回で結果が決まったか（取れた・控えを使った・失敗として数えた）。**投げた回は、これが偽の組だけを失敗に数える**
+   * （真の組まで数えると、取れた組を待たせ、数えた組を二重に数えて上限へ倍の速さで届く）。
+   */
+  settled: boolean
+}
+
+
+/** 取れなかった回を数え、次に取りに行く時刻を決める（使い切ったら諦めて記録へ残す）。 */
+function noteSlotFailure(slot: Slot, code: string): void {
+  slot.failures += 1
+  const delay = retryDelayAfter(slot.failures)
+  slot.retryAtMs = delay === null ? Number.POSITIVE_INFINITY : Date.now() + delay
+  if (delay === null) log.warn(`[public-wave] 地震カードの公開観測点の波形を ${slot.failures} 回続けて取れず、取り直しを諦めた（${code}）`)
 }
 
 /**
@@ -379,8 +401,8 @@ async function loadQuake(job: {
   if (signal.aborted) return
   const failedAttempt = (p: (typeof prepared)[number]) => {
     p.failed = true
-    p.j.slot.failures += 1
-    p.j.slot.retryAtMs = Date.now() + FAILURE_RETRY_MS
+    p.j.settled = true
+    noteSlotFailure(p.j.slot, p.j.epoch.code)
   }
   const refetch = prepared.filter((p) => p.verdict === 'refetch')
   if (refetch.length > 0) {
@@ -431,6 +453,10 @@ async function loadQuake(job: {
         if (!ok) log.debug(`[public-wave] ${p.j.epoch.code} の波形を控えに書けなかった（そのまま出す）`)
         p.j.slot.toMs = p.j.range.toMs
         p.j.slot.done = state !== 'provisional' || retries >= PUBLIC_WAVE_MAX_RETRIES
+        // **取れたら失敗の回数を数え直す**（上限は「続けて」失敗した回数。成功をはさんだ散発の失敗を積み上げて諦めない）。
+        p.j.slot.failures = 0
+        p.j.slot.retryAtMs = 0
+        p.j.settled = true
         p.bytes = bytes
       }
     }
@@ -440,6 +466,7 @@ async function loadQuake(job: {
     if (p.verdict !== 'refetch') {
       p.j.slot.toMs = p.cached!.meta.toMs
       p.j.slot.done = p.verdict === 'use'
+      p.j.settled = true
     }
     // 取れなかった回は、前に出していた絵を残す。まだ何も出していなければ、控えにある分（仮の控え）を出す
     if (p.failed) {

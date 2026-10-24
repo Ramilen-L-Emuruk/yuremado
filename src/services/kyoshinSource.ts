@@ -69,7 +69,21 @@ export interface KyoshinSourceSink {
    * **検知が上限まで沈黙する**。
    */
   prefill(frames: KyoshinFrame[]): void
+  /**
+   * リプレイで取得が全滅した区間を、**取得が戻ったあとに検知エンジンだけへ流す**（#986。2026-10-22 選択「戻ったら取りに行く
+   * (Recommended)」・2026-10-24 選択「検知へ流し、画面は今のまま (Recommended)」「今の取得の規則で取る (Recommended)」）。
+   *
+   * 先に `begin` を渡し（受け取る側は助走と同じく通常フレームを待たせる）、穴のフレームが揃ったら同じ `id` で `frames` を渡す。
+   * **`begin` を渡したら、取れなくても必ず `frames` を渡すこと**（空配列でよい）—— 受け取る側は上限まで検知を待たせる。
+   * 画面の震度・データ時刻には出さない（`prefill` と同じ）。
+   */
+  backfill(event: KyoshinBackfillEvent): void
 }
+
+/** {@link KyoshinSourceSink.backfill} へ渡すもの。 */
+export type KyoshinBackfillEvent =
+  | { readonly kind: 'begin'; readonly id: number }
+  | { readonly kind: 'frames'; readonly id: number; readonly frames: KyoshinFrame[] }
 
 /** 強震モニタのフレーム供給元。 */
 export interface KyoshinSource {
@@ -250,7 +264,7 @@ export function stalledRetryDelayMs(attemptFailures: number): number {
  * 60 件が 889ms・30 並列で 30 件が 220ms。通常の取得（1 秒に 1 件）とは桁が違うので、
  * 上げすぎて Yahoo 側に負荷を掛けない範囲に留める。
  */
-const WARMUP_CONCURRENCY = 24
+export const WARMUP_CONCURRENCY = 24
 /** 同種の失敗を記録し直す最小間隔 (ms)。1Hz で再発する失敗を間引きつつ、継続を見失わない幅。 */
 const LOG_THROTTLE_MS = 60_000
 
@@ -307,6 +321,70 @@ async function fetchFramesConcurrently(
     for (const f of got) if (f !== null) out.push(f)
   }
   return out
+}
+
+/**
+ * 全滅した区間を、取得が戻ったあとに取り直す長さの上限（ms）。**15 分**（助走が遡る上限 `WARMUP_MAX_BLOCKS` × `WARMUP_BLOCK_SEC`
+ * と同じ長さ）。それより長い穴は、取得が戻った時刻に近い側だけを取る（検知が見るのは直前の履歴なので、古い側は効かない）。
+ * **助走の定数から組まない** —— 試験は助走を止めるためにブロック数を 0 にするので、組むとここまで 0 になる。
+ */
+export const REPLAY_BACKFILL_MAX_MS = 15 * 60_000
+
+/** 全滅した区間を取り直した結果。 */
+interface HoleFrames {
+  /** 取れたフレーム（時刻の昇順）。 */
+  readonly frames: KyoshinFrame[]
+  /** 取り終えた理由。**記録に出す**（取れた秒が足りないとき、恒久的な欠落か一時的な失敗かを追うため）。 */
+  readonly stoppedBy: '取り終えた' | '続けて取れなかった' | '供給が止まった'
+  /** 最後に受けた失敗（1 件も失敗していなければ `null`）。 */
+  readonly lastError: unknown
+}
+
+/**
+ * 全滅した区間 `[fromMs, toMs)` のフレームを取る。**1 秒ずつ、先読みと同じ規則で試し直す**
+ * （`REPLAY_MAX_ATTEMPTS_PER_TARGET` 回・`replayRetryDelayMs` の間隔。2026-10-24 ユーザー選択「今の取得の規則で取る」）。
+ * 取れなかった秒は抜けたまま返す（検知エンジンは途切れとして扱う）。返すのは時刻の昇順。
+ *
+ * **戻った時刻に近い側から遡って取り、{@link REPLAY_MAX_CONSECUTIVE_GIVEUPS} 秒続けて取れなければやめる**（先読みと同じ歯止め）。
+ * 配信元にその時間帯のファイルが無いと、ほぼ全秒が失敗して 1 回の復帰で最大 3600 件を投げる。近い側から取るのは、検知が見るのは
+ * 直前の履歴なので、途中でやめても役に立つ側が残るため。並列で取るので、やめるまでに 1 まとまり（`WARMUP_CONCURRENCY` 秒）は余分に投げる。
+ */
+async function fetchHoleFrames(fromMs: number, toMs: number, isActive: () => boolean): Promise<HoleFrames> {
+  const targets: Date[] = []
+  for (let t = toMs - POLL_MS; t >= Math.max(fromMs, toMs - REPLAY_BACKFILL_MAX_MS); t -= POLL_MS) targets.push(new Date(t))
+  const out: KyoshinFrame[] = []
+  let lastError: unknown = null
+  let consecutiveMisses = 0
+  for (let i = 0; i < targets.length; i += WARMUP_CONCURRENCY) {
+    if (!isActive()) return { frames: out.reverse(), stoppedBy: '供給が止まった', lastError }
+    const chunk = targets.slice(i, i + WARMUP_CONCURRENCY)
+    const got = await Promise.all(chunk.map(async (t): Promise<KyoshinFrame | null> => {
+      for (let attempts = 1; attempts <= REPLAY_MAX_ATTEMPTS_PER_TARGET; attempts += 1) {
+        if (!isActive()) return null
+        try {
+          const rt = await fetchRealtimeIntensity(t, { cache: true })
+          // **hypoInfo は載せない**（助走と同じ。過ぎた速報を新規発報として鳴らさない）。
+          return { time: t, dataTime: rt.dataTime, sitesKey: rt.siteConfigId, indices: rt.indices }
+        } catch (err) {
+          lastError = err
+          if (attempts < REPLAY_MAX_ATTEMPTS_PER_TARGET) await new Promise((r) => setTimeout(r, replayRetryDelayMs(attempts)))
+        }
+      }
+      return null
+    }))
+    if (!isActive()) return { frames: out.reverse(), stoppedBy: '供給が止まった', lastError }
+    // 新しい側から順に数える（`targets` は降順）。
+    for (const f of got) {
+      if (f === null) {
+        consecutiveMisses += 1
+        continue
+      }
+      consecutiveMisses = 0
+      out.push(f)
+    }
+    if (consecutiveMisses >= REPLAY_MAX_CONSECUTIVE_GIVEUPS) return { frames: out.reverse(), stoppedBy: '続けて取れなかった', lastError }
+  }
+  return { frames: out.reverse(), stoppedBy: '取り終えた', lastError }
 }
 
 /**
@@ -745,6 +823,57 @@ function createYahooPipelineSource(timeOffsetMs: number): KyoshinSource {
        * 復帰の通知が投げた回に**取れていたフレームが丸ごと落ちた**（記録は残るが、
        * そのフレームを取り直す手段は無い）。
        */
+      /** 取り直しの番号（受け取る側が `begin` と `frames` を突き合わせる）。 */
+      let backfillId = 0
+      /** 取り直しの最中か。**1 本ずつにする**（重ねると、受け取る側が先の穴を食わせた後に次の穴が巻き戻りとして捨てられる）。 */
+      let backfillRunning = false
+      const startBackfill = (fromMs: number, toMs: number): void => {
+        if (backfillRunning) {
+          log.warn(
+            `[kyoshinSource] 全滅区間の取り直しの最中にまた全滅から戻ったので、この区間（${new Date(fromMs).toISOString()}〜`
+            + `${new Date(toMs).toISOString()}）は取り直さない`,
+          )
+          return
+        }
+        backfillRunning = true
+        backfillId += 1
+        const id = backfillId
+        try {
+          sink.backfill({ kind: 'begin', id })
+        } catch (err) {
+          backfillRunning = false
+          reportHandoffError('[kyoshinSource] 全滅区間の取り直しの開始を渡す途中の例外（取得の失敗とは別）', err)
+          return
+        }
+        void (async () => {
+          let result: HoleFrames = { frames: [], stoppedBy: '取り終えた', lastError: null }
+          try {
+            result = await fetchHoleFrames(fromMs, toMs, () => active)
+          } catch (err) {
+            log.warn('[kyoshinSource] 全滅区間の取り直しに失敗（穴のまま検知を続ける）', err)
+          }
+          backfillRunning = false
+          if (!active) return
+          const { frames } = result
+          const wanted = Math.round((toMs - Math.max(fromMs, toMs - REPLAY_BACKFILL_MAX_MS)) / POLL_MS)
+          const skipped = Math.max(0, Math.round((toMs - fromMs - REPLAY_BACKFILL_MAX_MS) / POLL_MS))
+          // **足りなければ warn**（取れなかった秒は検知に穴のまま残る）。やめた理由・上限で切った秒数・最後の失敗も添える。
+          const line = `[kyoshinSource] 全滅区間を取り直して検知へ流す: ${frames.length} / ${wanted} 秒（${result.stoppedBy}）`
+            + (skipped > 0 ? `（古い側の ${skipped} 秒は上限 ${REPLAY_BACKFILL_MAX_MS / 60_000} 分を超えるので取らない）` : '')
+          if (frames.length < wanted || skipped > 0) {
+            if (result.lastError === null) log.warn(line)
+            else log.warn(`${line}。最後の失敗:`, result.lastError)
+          } else {
+            log.info(line)
+          }
+          try {
+            sink.backfill({ kind: 'frames', id, frames })
+          } catch (err) {
+            reportHandoffError('[kyoshinSource] 全滅区間のフレームを渡す途中の例外（取得の失敗とは別）', err)
+          }
+        })()
+      }
+
       const handoff = (targetMs: number, rt: RealtimeIntensity) => {
         if (stalledNotified && notifyStalled(false)) stalledNotified = false
         try {
@@ -848,6 +977,10 @@ function createYahooPipelineSource(timeOffsetMs: number): KyoshinSource {
                 + `${probingEpisodes} 回目のエピソード）。${how}`,
               ))
               nextPlanMs = Math.max(nextPlanMs, targetMs + POLL_MS)
+              // **飛ばした区間を取り直して、検知エンジンだけへ流す**（#986。→ `KyoshinSourceSink.backfill`）。
+              // 画面は今の再生時刻のまま（過ぎた秒を描き直さない）。`begin` はこの秒を渡す**前に**出す ——
+              // 後に出すと、受け取る側がこの秒を先に食わせて、穴のフレームが「時刻の巻き戻り」として捨てられる。
+              if (probingFromMs < targetMs) startBackfill(probingFromMs, targetMs)
             }
             // **本筋（フレームの受け渡しと次の計画）を先に通す。** 先読みは脇の処理なので、
             // 順番を逆にすると、そちらの不調が本筋を遅らせる余地を残す。

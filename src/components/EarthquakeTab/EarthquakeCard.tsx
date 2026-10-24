@@ -456,6 +456,12 @@ interface Props {
    * 決めてあるので（2026-09-29 のユーザー判断）、載せるものが無い＝枠ごと出ない。
    */
   seismoWaves?: readonly SeismoQuakeWave[]
+  /**
+   * ライブで自作地震計の波形を読み返せなかった（取り直している最中も含む）。**波形が 1 本も無いときだけ真。**
+   * 「自作地震計: 波形を取得できなかった」を出す（2026-10-22 選択「取れなかったと出す (Recommended)」、文面と
+   * 「取り直し中も出す」は 2026-10-24 ユーザー選択）。再生中に記録が無いときは偽のまま（09-29 の判断どおり何も出さない）。
+   */
+  seismoWaveFailed: boolean
   /** 波形を畳んでいるときに出すもの（設定「波形の表示」）。 */
   seismoWaveView: SeismoWaveCollapsedView
 }
@@ -470,6 +476,9 @@ interface Props {
  * `mergeQuakeReports` が種別ごとに 1 件へ畳む）が保証しているが、**そこが崩れたときの症状が
  * 「種別が 1 つ黙って消える」になる** —— React は鍵が重なった要素を畳むだけで例外を投げない。
  */
+/** 自作地震計の波形をライブで読み返せなかったときの 1 行（2026-10-24 ユーザー選択「取り直し中も出す (Recommended)」の文面）。 */
+const SEISMO_WAVE_FAILED_TEXT = '自作地震計: 波形を取得できなかった'
+
 /** 津波電文から借りた値の欄に添える印。説明は {@link borrowedSourceNote} がカードへ 1 行出す。 */
 const BORROWED_MARK = '※'
 
@@ -611,7 +620,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   quake, isLatest, isSelected, onSelect, lpgm, activeLpgmEventId, onToggleLpgm,
   estimatedIntensity = null, distributionActive = false, onToggleDistribution,
   unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
-  marks, lpgmMarks, seismoWaves, seismoWaveView,
+  marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView,
 }: Props) {
   /** このカードの地震を指す鍵。**親へ返すときに使う。** */
   const eventKey = quakeEventKey(quake)
@@ -1684,7 +1693,11 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           })()}
 
           {/* 自作地震計が捉えたこの地震の区間（→ `useSeismoQuakeWaves`）。
-              **記録が無ければ枠ごと出ない** —— 渡ってくるのは載せるものがあるときだけ。 */}
+              **記録が無ければ枠ごと出ない** —— 渡ってくるのは載せるものがあるときだけ。
+              ライブで読み返せなかったときだけ、その旨を 1 行出す（`seismoWaveFailed`）。 */}
+          {seismoWaveFailed && (seismoWaves === undefined || seismoWaves.length === 0) && (
+            <div className="text-xs text-secondary mt-1">{SEISMO_WAVE_FAILED_TEXT}</div>
+          )}
           <QuakeSeismoWave
             waves={seismoWaves ?? []}
             view={seismoWaveView}

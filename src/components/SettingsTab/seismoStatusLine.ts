@@ -10,7 +10,7 @@
 // 状態は言い切り、内訳は「: X」、次にすることは丁寧形の 1 文で続ける
 // （「応答がない。ホストが起動しているか確かめてください」）。括弧は使わない。
 
-import type { SeismoHostCheck } from '../../services/seismoStream'
+import { SEISMO_STATUS_TIMEOUT_MS, type SeismoHostCheck } from '../../services/seismoStream'
 
 /**
  * 画面に出す前の状態。**`SeismoHostCheck` に、通信する手前で決まる 4 つを足したもの。**
@@ -81,15 +81,41 @@ export function seismoStatusLine(status: SeismoUiStatus): SeismoStatusLine {
       }
     }
     case 'unreachable':
+      // **ブラウザから分かる範囲の理由で分ける**（2026-10-22 選択「分かる理由を出す (Recommended)」、文面は
+      // 2026-10-24 選択「3 つともその文でよい (Recommended)」）。分からないときは従来の 1 文のまま。
+      //
       // **確かめることは 1 つに絞る。** ホーム画面から開く前提は、この行の上にある
       // 常時表示の但し書き（「要：ホーム画面に追加してから開く」）が受け持つ ——
       // 両方に書くと確認事項が 2 つに膨らみ、狭いパネルで折り返して読みにくくなる。
-      return { text: '応答がない。ホストが起動しているか確かめてください', tone: 'problem' }
+      switch (status.reason) {
+        case 'timeout':
+          return {
+            text: `応答がない: ${Math.round(SEISMO_STATUS_TIMEOUT_MS / 1000)}秒待って打ち切った。ホストが起動しているか確かめてください`,
+            tone: 'problem',
+          }
+        case 'mixed-content':
+          return {
+            text: '繋げない: このページは https なので http のホストへは繋げない。https:// のURLを入力してください',
+            tone: 'problem',
+          }
+        case 'offline':
+          return { text: '繋げない: この端末がオフライン。ネットワークに繋いでください', tone: 'problem' }
+        case 'unknown':
+          return { text: '応答がない。ホストが起動しているか確かめてください', tone: 'problem' }
+      }
     case 'http-error':
       return { text: `応答がエラー: HTTP ${status.status}`, tone: 'problem' }
     case 'unreadable':
       return { text: '応答を読めない。URLが地震計のホストを指しているか確かめてください', tone: 'problem' }
   }
+}
+
+/**
+ * 読めない押し出しが届いていることを伝える 1 行（2026-10-22 選択「設定タブに出す (Recommended)」、文面は 2026-10-24
+ * 選択「その文でよい (Recommended)」）。件数はこの接続先での累計。**版の食い違い**がいちばんありそうな原因なので、それを確かめさせる。
+ */
+export function seismoUnreadableLine(count: number): string {
+  return `読めないデータが届いている: ${count} 件。ホストとアプリの版が合っているか確かめてください`
 }
 
 export const SEISMO_STATUS_TONE_CLASS: Record<SeismoStatusTone, string> = {

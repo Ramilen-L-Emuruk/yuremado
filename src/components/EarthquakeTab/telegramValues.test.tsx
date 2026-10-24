@@ -91,6 +91,7 @@ const renderTab = async (quake: JMAQuake, selected: boolean, lpgm?: JMALpgm) => 
       onFocusMap={() => {}}
       speakingTelegramTextSubject={null}
       seismoWaves={new Map()}
+      seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
     />
   )

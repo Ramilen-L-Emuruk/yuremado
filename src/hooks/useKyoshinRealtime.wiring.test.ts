@@ -18,6 +18,7 @@ import { useKyoshinRealtime } from './useKyoshinRealtime'
 import {
   createYahooLiveSource,
   createYahooArchiveSource,
+  type KyoshinBackfillEvent,
   type KyoshinFrame,
   type KyoshinSource,
   type KyoshinSourceSink,
@@ -72,6 +73,7 @@ function createFakeSource(sites: SiteCoords = TOKYO) {
     setStalled: (stalled: boolean) => sink?.setStalled(stalled),
     /** 助走フレームを渡す。 */
     prefill: (frames: KyoshinFrame[]) => sink?.prefill(frames),
+    backfill: (e: KyoshinBackfillEvent) => sink?.backfill(e),
   }
 }
 
