@@ -69,7 +69,7 @@ export function lpgmPointPopupTitle(f: MapGeoJSONFeature): string {
 }
 
 function hoverHtml(f: MapGeoJSONFeature): string {
-  const lgInt = Number(f.properties?.lgInt ?? 0)
+  const lgInt = Number(f.properties?.lgInt ?? 0)  // 地物は組み立てで必ず lgInt（0〜4）を持つ。欠けるのは組み立てが壊れたときだけ
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
     `${badgeHtml(String(lgInt), getLpgmClassColor(lgInt))}` +
@@ -118,7 +118,7 @@ export function lpgmPeriodsHtml(json: string): string {
 }
 
 function clickHtml(f: MapGeoJSONFeature): string {
-  const lgInt = Number(f.properties?.lgInt ?? 0)
+  const lgInt = Number(f.properties?.lgInt ?? 0)  // 地物は組み立てで必ず lgInt（0〜4）を持つ。欠けるのは組み立てが壊れたときだけ
   const pref = String(f.properties?.pref ?? '')
   const int = Number(f.properties?.int ?? -1)
   const sva = Number(f.properties?.sva ?? -1)

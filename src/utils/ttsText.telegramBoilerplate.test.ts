@@ -19,14 +19,19 @@ import type { LiveEvent } from '../types/earthquake'
 import { log } from './logger'
 // **トップレベルで読む。** `testData` は実電文由来の JSON を静的に取り込むので、テスト本体の
 // 中で初めて読むとその待ちが 1 件目の所要時間へ丸ごと乗る（→ CLAUDE.md「検証」）。
-import { first, telegramQuakes, telegramLpgms, telegramTsunamis } from '../test-utils/testTelegramFixtures'
+import {
+  first, telegramQuakes, telegramLpgms, telegramTsunamis, telegramNankais, telegramCommentaries, telegramKohatsus,
+} from '../test-utils/testTelegramFixtures'
 
 const testQuake = first(await telegramQuakes('EARTHQUAKE'), '地震情報')
 const testLpgm = first(await telegramLpgms('EARTHQUAKE'), '長周期地震動に関する観測情報')
 const testTsunami = first(await telegramTsunamis('TSUNAMI_MAJOR_WARNING'), '津波警報')
+const testNankai = first(await telegramNankais('NANKAI_WATCH'), '南海トラフ地震臨時情報')
+const testCommentary = first(await telegramCommentaries('NANKAI_COMMENTARY_AD_HOC'), '南海トラフ地震関連解説情報')
+const testKohatsu = first(await telegramKohatsus('KOHATSU'), '北海道・三陸沖後発地震注意情報')
 
 const BASE: TtsSpeechOptions = {
-  intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0, readTelegramText: true,
+  intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0, readTelegramText: true,
 }
 
 /** 全項目を読む指定（落とさない）。 */
@@ -160,7 +165,7 @@ describe('気象庁が書いた文の定型文を落とす', () => {
     expect(speech).toBeNull()
   })
 
-  it('既定は 4 項目とも落とす側', () => {
+  it('既定は全項目とも落とす側', () => {
     // 既定を読む側へ倒すと、この設定より前から落ちていた＊印の説明が鳴り出す（逆向きの破壊）。
     for (const key of TELEGRAM_BOILERPLATE_KEYS) {
       expect(TELEGRAM_BOILERPLATE_DEFAULT_READS[key]).toBe(false)
@@ -246,5 +251,44 @@ describe('テストボタンのデータで落ちる', () => {
       freeFormText: l.freeFormText,
     }), BASE)
     expect(speech).toBeNull()
+  })
+})
+
+// 参考情報（`Body/EarthquakeInfo/Appendix`）。南海トラフ・後発地震の 3 種別が末尾に付ける、情報の種類と
+// 発表条件の説明（2026-10-23 ユーザー選択「設定で読めるようにする (Recommended)」。既定は読まない）。
+// 中身はテストボタンの実電文のものをそのまま使う。
+describe('参考情報（earthquakeInfoAppendix）', () => {
+  const cases: [string, LiveEvent][] = [
+    ['臨時情報', { kind: 'nankai', data: testNankai } as LiveEvent],
+    ['関連解説情報', { kind: 'nankaiCommentary', data: testCommentary } as LiveEvent],
+    ['後発地震注意情報', { kind: 'kohatsu', data: testKohatsu } as LiveEvent],
+  ]
+  const appendixOf = (e: LiveEvent): string => (e as { data: { appendix?: string } }).data.appendix ?? ''
+
+  // 前提: 実電文が参考情報を持っていること（持っていなければ下のテストは空振りで通る）
+  it.each(cases)('%s の実電文は参考情報を持つ', (_, e) => {
+    expect(appendixOf(e).length).toBeGreaterThan(20)
+  })
+
+  // 正: 読む側にすれば、本文に続けて参考情報を読む
+  it.each(cases)('%s: 読む指定なら参考情報も読む', (_, e) => {
+    const speech = telegramTextToSpeak(e, { ...BASE, telegramBoilerplate: { ...TELEGRAM_BOILERPLATE_DEFAULT_READS, earthquakeInfoAppendix: true } })
+    const head = appendixOf(e).replace(/\s+/g, '').slice(0, 10)
+    expect(speech?.text.replace(/\s+/g, '')).toContain(head)
+  })
+
+  // 対照: 既定では読まない（これまでと同じ）
+  it.each(cases)('%s: 既定では参考情報を読まない', (_, e) => {
+    const speech = telegramTextToSpeak(e, BASE)
+    const head = appendixOf(e).replace(/\s+/g, '').slice(0, 10)
+    expect(speech?.text.replace(/\s+/g, '') ?? '').not.toContain(head)
+  })
+
+  // 安全弁: 他の定型文を読む指定にしても、参考情報は別の項目なので読まない
+  it('他の定型文だけを読む指定にしても、参考情報は読まない', () => {
+    const [, e] = cases[0]
+    const speech = telegramTextToSpeak(e, { ...BASE, telegramBoilerplate: { ...allRead, earthquakeInfoAppendix: false } })
+    const head = appendixOf(e).replace(/\s+/g, '').slice(0, 10)
+    expect(speech?.text.replace(/\s+/g, '') ?? '').not.toContain(head)
   })
 })

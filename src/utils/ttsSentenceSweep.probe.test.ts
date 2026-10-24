@@ -59,7 +59,7 @@ const TEXTS = process.env.TTS_SWEEP_TEXTS ?? ''
 const LONG_PHRASE_MORAS = 8
 
 /** 句を落とさせない設定（読み上げの詳しさは既定で全部読む側へ寄せる）。 */
-const OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+const OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
 
 const SCALES = [10, 20, 30, 40, 45, 50, 55, 60, 70] as IntensityScale[]
 /** 気象庁の深さは 10km 刻み。0 は「ごく浅い」で語形が変わる。 */

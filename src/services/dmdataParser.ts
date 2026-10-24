@@ -27,7 +27,7 @@ import type {
   LpgmClass,
   TelegramOperationStatus,
 } from '../types/earthquake'
-import { isValidLpgmClass } from '../utils/lpgm'
+import { isValidLpgmClass, isObservedLpgmClass } from '../utils/lpgm'
 import { isEewForecastKindCode, isEewWarningKindCode, isEewArrivedKindCode } from '../utils/eewKind'
 import { parseTsunamiEstimationCondition, parseTsunamiForecastHeightImportant, parseTsunamiObservationCondition } from '../utils/tsunami'
 import { createPerLabelLogGate, log, UNREADABLE_VALUE_LOG_KINDS, UNREADABLE_VALUE_LOG_INTERVAL_MS } from '../utils/logger'
@@ -292,15 +292,14 @@ function createReadTally(kindLabel: string): ReadTally {
   }
 }
 
-// 長周期地震動観測情報が階級1以上を伝えているのに、その階級を持つ区域が 1 件も無い場合を記録する。
+// 長周期地震動観測情報の区域が 1 件も取り出せなかった場合を記録する。
 //
-// ここまで来た電文は `maxClass` が 1〜4 に収まっている（0 は「階級1以上を観測していない」報として
-// 手前で `null` を返す）。**電文が最大階級を名乗っている以上、その値を持つ区域が必ずある**はずで、
-// 0 件なら区域を読めていない。種別ごとの検知（`ReadTally`）は「元要素はあるのに読めなかった」しか
+// ここまで来た電文は `maxClass` が 0〜4 に収まっている。**電文が最大階級を名乗っている以上、
+// その値を持つ区域が必ずある**はずで（階級 0 の報でも、階級 0 の区域を持つ）、0 件なら区域を読めていない。種別ごとの検知（`ReadTally`）は「元要素はあるのに読めなかった」しか
 // 拾えないため、`Pref`/`Area` の位置が変わって元要素ごと見えなくなった場合はこちらで拾う。
 function warnIfNoLpgmRegions(maxClass: number, regionCount: number, logPrefix: string): void {
   if (regionCount > 0) return
-  log.warn(`${logPrefix} VXSE62 は最大長周期地震動階級 ${maxClass} を伝えていますが、階級を持つ区域を 1 件も取り出せませんでした`)
+  log.warn(`${logPrefix} VXSE62 は最大長周期地震動階級 ${maxClass} を伝えていますが、区域を 1 件も取り出せませんでした`)
 }
 
 // 震度を伝える電文（VXSE51/53）なのに点を 1 件も取り出せなかった場合を記録する。
@@ -2679,15 +2678,12 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   const maxClassStr = obsEl ? xmlText(xmlQ(obsEl, 'MaxLgInt')) : ''
   const maxClass    = parseInt(maxClassStr, 10)
 
-  // **階級 0 と「読めない」を同じ `return null` に落とさないこと。** 0 は「階級1以上を
-  // 観測していない」という正常な報で、記録すると長周期地震動を伴わない地震のたびに鳴る。
-  // 読めない値（欠損・想定外の表記）は電文を捨てた理由として残す。区域・観測点の階級で
-  // 同じ区別をしているのに、それを読みにいくかを決めるこのゲートだけ素通しだった。
-  //
-  // **0 の報は電文ごと捨てる**（同じ電文の震度・付加文も載らない）。資料の値域は 0〜4 で 0 は来うるが、
+  // **階級 0 の報も捨てない。** 0 は「階級1以上を観測していない」という正常な観測値で、
+  // 画面には残す（2026-10-22 ユーザー選択「画面には残す (Recommended)」）。音と読み上げは
+  // 鳴らさない（→ `useEarthquakes.ts` の `lpgmNotifiable`）。資料の値域は 0〜4 で 0 は来うるが、
   // 標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）では見つかっていない（→ docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）。
-  if (maxClass === 0) return null
-  if (!(maxClass >= 1 && maxClass <= 4)) {
+  // 読めない値（欠損・想定外の表記）は電文を捨てた理由として残す。
+  if (!isObservedLpgmClass(maxClass)) {
     return dropTelegram(DMDATA_LOG_PREFIX, `VXSE62 の最大長周期地震動階級を読めません: "${maxClassStr}"`)
   }
 
@@ -2717,7 +2713,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     const prefCode = xmlText(xmlChild(prefEl, 'Code'))
     // 都道府県の最大値。**区域から計算し直さない** —— 気象庁が電文に書いている値を使う
     // （積み上げると、区域を 1 つ読み落としたときに静かにずれる）。
-    // **採用の基準は区域（`regions`）と揃える** —— 階級 1 以上だけを積む。同じ関数の中で
+    // **採用の基準は区域（`regions`）と揃える** —— 階級 0〜4 を積む。同じ関数の中で
     // 同じ性質の値に別の基準を当てると、次に触る人がどちらが正しいのか読めない。
     const prefRawLgInt = xmlText(xmlChild(prefEl, 'MaxLgInt'))
     const prefMaxLgInt = parseInt(prefRawLgInt, 10)
@@ -2730,7 +2726,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     // 続報での変化（`Revise`）。地震情報と同じ扱い（→ `EarthquakePoint.revise`）。
     // **直下に限る** —— 配下の Area も同名要素を持つ。
     const prefLgRevise = xmlText(xmlChild(prefEl, 'Revise'))
-    if (isValidLpgmClass(prefMaxLgInt)) {
+    if (isObservedLpgmClass(prefMaxLgInt)) {
       prefs.push({
         code: xmlText(xmlChild(prefEl, 'Code')),
         name: prefName,
@@ -2762,15 +2758,16 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
       }
       // 続報での変化（`Revise`）。都道府県側と同じ扱い（解説資料 Ⅱ.37 2-1-5-4-3）。
       const areaLgRevise = xmlText(xmlChild(areaEl, 'Revise'))
-      if (Number.isFinite(areaMaxLgInt)) {
+      // 階級 0 の区域も積む（画面には残す。読み上げ・地図の寄せは呼び出し側が階級で決める）。
+      // **値域（0〜4）の外は読めない値として数える** —— 数としては読めても、積まずに黙って
+      // 落とすと書式の変化に気づけない。
+      if (isObservedLpgmClass(areaMaxLgInt)) {
         lgRegionTally.readable()
-        if (areaMaxLgInt >= 1) {
-          regions.push({
-            code: areaCode, name: areaName, maxLgInt: areaMaxLgInt, pref: prefName,
-            ...(areaMaxInt >= 0 && { maxInt: areaMaxInt }),
-            ...(areaLgRevise && { revise: areaLgRevise }),
-          })
-        }
+        regions.push({
+          code: areaCode, name: areaName, maxLgInt: areaMaxLgInt, pref: prefName,
+          ...(areaMaxInt >= 0 && { maxInt: areaMaxInt }),
+          ...(areaLgRevise && { revise: areaLgRevise }),
+        })
       } else {
         lgRegionTally.unreadable(areaName || codeOnlyLabel(areaCode), areaRawLgInt)
       }
@@ -2801,19 +2798,18 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
         const stRawSva = xmlText(xmlChild(stEl, 'Sva'))
         const stSva = parseFloat(stRawSva)
         const periods = readLpgmPeriodBands(stEl, lgPeriodTally)
-        if (Number.isFinite(lgInt)) {
+        // 区域と同じく、階級 0 も積み、値域の外は読めない値として数える。
+        if (isObservedLpgmClass(lgInt)) {
           lgStationTally.readable()
-          if (lgInt >= 1) {
-            points.push({
-              // **区域は電文の入れ子からしか拾えない**（→ `LpgmPoint.area`）。
-              // ここで拾わないと、カードの「県 → 区域 → 観測点」で行き先が決まらない。
-              code: stCode, name: stName, pref: prefName, ...(areaName && { area: areaName }), lgInt,
-              ...(stNonJma && { nonJma: true }),
-              ...(stInt >= 0 && { int: stInt }),
-              ...(Number.isFinite(stSva) && stSva >= 0 && { sva: stSva }),
-              ...(periods.length > 0 && { periods }),
-            })
-          }
+          points.push({
+            // **区域は電文の入れ子からしか拾えない**（→ `LpgmPoint.area`）。
+            // ここで拾わないと、カードの「県 → 区域 → 観測点」で行き先が決まらない。
+            code: stCode, name: stName, pref: prefName, ...(areaName && { area: areaName }), lgInt,
+            ...(stNonJma && { nonJma: true }),
+            ...(stInt >= 0 && { int: stInt }),
+            ...(Number.isFinite(stSva) && stSva >= 0 && { sva: stSva }),
+            ...(periods.length > 0 && { periods }),
+          })
         } else {
           lgStationTally.unreadable(stName || codeOnlyLabel(stCode), stRawLgInt)
         }
@@ -2848,7 +2844,9 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
 
   // 震源の要素。**読んで持つが、画面には出していない**（→ `LpgmHypocenter`）。
   // 同じ地震の震源・規模は地震カードが出すため重複する。電文が持っているものを落とさない
-  // ために保持している。
+  // ために保持している。長周期の報の震源・規模・最大震度を出さず地震カードに任せることは
+  // 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」（全期間の 68 通はすべて最初の地震情報の
+  // 309〜773 秒後に届き、長周期が先に届いた例は 0 件）。
   const lpgmHypoEl = earthquakeEl ? xmlQ(earthquakeEl, 'Hypocenter') : null
   const lpgmHypoAreaEl = lpgmHypoEl ? xmlQ(lpgmHypoEl, 'Area') : null
   let lpgmHypocenter: import('../types/earthquake').LpgmHypocenter | undefined
@@ -3383,15 +3381,26 @@ export function parseEarthquakeCountFromXml(xml: string): JMAEarthquakeCount | n
     // `-1` 以外の負の値は書式の外なので、読めない値として扱う。
     const number = readCountValue(numberText)
     const feltNumber = readCountValue(feltText)
-    if (!type || number === undefined || feltNumber === undefined) {
+    // **総回数と有感回数のどちらか一方でも読めれば区間を残す**（2026-10-22 ユーザー選択「総回数だけでも残す (Recommended)」、
+    // 逆向き＝総回数が読めず有感だけ読めた場合も 2026-10-24 選択「両方向で残す (Recommended)」）。
+    // 読めなかった側は「発表なし」（`null`）と同じく句ごと出さない（表のセルは「—」）。読めなかったことは下で記録する。
+    if (!type || (number === undefined && feltNumber === undefined)) {
       tally.unreadable(type || '(種類なし)', numberText)
       // **一部だけ読めないときも残す。** 全滅の記録（`warnIfNoneReadable`）だけでは、累積の区間だけが
       // 落ちたとき、見出しと読み上げが黙って別の区間の数を伝える（→ `pickEarthquakeCountSummaryItem`）。
       log.warn(`${DMDATA_LOG_PREFIX} VXSE60（地震回数に関する情報）の区間を読めず捨てました: type="${type}" Number="${numberText}" FeltNumber="${feltText}"`)
       continue
     }
-    items.push({ type, startTime, endTime, number, feltNumber })
-    tally.readable()
+    items.push({ type, startTime, endTime, number: number ?? null, feltNumber: feltNumber ?? null })
+    if (number === undefined || feltNumber === undefined) {
+      // **片方だけ読めない区間も集計では「読めない」に数える。** 読めた側で区間は残すが、全区間が
+      // 片方だけ読めない形（書式が変わった）は全滅の記録で拾いたい。区間ごとの記録も残す
+      // （この種別は実配信でほぼ観測できず、出るのは書式が変わったときだけ）。
+      tally.unreadable(type, number === undefined ? numberText : feltText)
+      log.warn(`${DMDATA_LOG_PREFIX} VXSE60（地震回数に関する情報）の区間の${number === undefined ? '回数' : '有感回数'}を読めず、その欄を空けて残しました: type="${type}" Number="${numberText}" FeltNumber="${feltText}"`)
+    } else {
+      tally.readable()
+    }
   }
   tally.warnIfNoneReadable(DMDATA_LOG_PREFIX)
 

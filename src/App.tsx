@@ -912,7 +912,7 @@ export function App() {
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
-    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
+    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
@@ -992,6 +992,8 @@ export function App() {
     earthquakeCount:   simulateEarthquakeCount,
     earthquakeCountRetraction: simulateEarthquakeCountRetraction,
     lpgmRetraction:    isDmdss ? simulateLpgmRetraction : undefined,
+    lpgmClassZero:     isDmdss ? simulateLpgmClassZero : undefined,
+    lpgmCategories:    isDmdss ? simulateLpgmCategories : undefined,
     trainingQuake:     simulateTrainingQuake,
     quakeAmendment:    simulateQuakeAmendment,
     quakeReportSequence: simulateQuakeReportSequence,
@@ -1023,7 +1025,7 @@ export function App() {
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
-    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateEstimatedIntensity,
+    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
@@ -2758,6 +2760,8 @@ export function App() {
                 </div>
               )}
               <SpecialInfoBanner banners={specialInfoBanners} speakingTelegramTextSubject={speakingTelegramTextSubject}
+                // 参考情報を読む設定なら、読んでいる間は帯の「この種類の情報について」も開く
+                readsAppendix={settings.voicevoxEnabled && settings.ttsReadTelegramText && settings.ttsTelegramBoilerplate.earthquakeInfoAppendix}
                 // 地図の下に波形が出ていると、帯は画面の下端に届かない（下端の余白を付けない）
                 atScreenBottom={!waveChartShown}
               />

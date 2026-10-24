@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isValidLpgmClass, getLpgmClassLabel, getLpgmClassColor, getLpgmClassRadius, lpgmCategoryNote, lpgmPeriodLabel, buildLpgmRows, canOpenLpgmNotes, type LpgmRowDeps } from './lpgm'
+import { isValidLpgmClass, isObservedLpgmClass, getLpgmClassLabel, getLpgmClassColor, getLpgmClassRadius, lpgmCategoryNote, lpgmPeriodLabel, buildLpgmRows, canOpenLpgmNotes, type LpgmRowDeps } from './lpgm'
 import type { JMALpgm, LpgmPoint, LpgmRegion } from '../types/earthquake'
 import { LPGM_ICON_BASE_RADIUS } from '../components/Map/gl/lpgmIcons'
 
@@ -33,13 +33,39 @@ describe('getLpgmClassLabel', () => {
 
   // 以前はフォールバックが無く、壊れた入力がそのまま「階級99」として地図ラベルに出ていた。
   it('範囲外の値は「階級不明」にフォールバックする', () => {
-    for (const v of [0, 5, 99, NaN]) expect(getLpgmClassLabel(v)).toBe('階級不明')
+    for (const v of [-1, 5, 99, NaN, 1.5]) expect(getLpgmClassLabel(v)).toBe('階級不明')
+  })
+
+  // 意図的に覆した（2026-10-22 ユーザー選択「画面には残す (Recommended)」・表記は 2026-10-24 選択「この形でよい (Recommended)」）:
+  // 階級 0 は観測情報の正常な値で、「階級0」と出す
+  it('階級 0 は「階級0」', () => {
+    expect(getLpgmClassLabel(0)).toBe('階級0')
   })
 })
 
 describe('getLpgmClassColor', () => {
   it('範囲外の値はグレーにフォールバックする', () => {
     expect(getLpgmClassColor(99)).toBe('#9ca3af')
+  })
+
+  it('階級 0 は灰色（階級 1〜4 の色の外）', () => {
+    expect(getLpgmClassColor(0)).toBe('#9ca3af')
+    for (const cls of [1, 2, 3, 4]) expect(getLpgmClassColor(cls)).not.toBe('#9ca3af')
+  })
+})
+
+describe('isObservedLpgmClass', () => {
+  it('観測情報の値域は 0〜4', () => {
+    for (const v of [0, 1, 2, 3, 4]) expect(isObservedLpgmClass(v)).toBe(true)
+  })
+
+  // 対照: 予測の側（`isValidLpgmClass`）は 0 を通さない。0 の意味が違うので混ぜない
+  it('予測の判定は 0 を通さない', () => {
+    expect(isValidLpgmClass(0)).toBe(false)
+  })
+
+  it('値域の外・整数でない値は通さない', () => {
+    for (const v of [-1, 5, 1.5, NaN]) expect(isObservedLpgmClass(v)).toBe(false)
   })
 })
 
@@ -76,9 +102,10 @@ describe('長周期の観測情報の種類', () => {
   })
 
   // 対照: 1・3 は階級を観測した地域がどこも震度5弱以上。震度の表示だけで状況が伝わるので何も足さない
-  it('1 と 3 では何も出さない', () => {
-    expect(lpgmCategoryNote(1)).toBe('')
-    expect(lpgmCategoryNote(3)).toBe('')
+  // 意図的に覆した（2026-10-22 ユーザー選択「1・3 にも一文を出す (Recommended)」、文面は 2026-10-24 選択「この文面でよい (Recommended)」）
+  it('1 と 3 では、数える地域の階級の下限を書いて震度5弱以上と伝える', () => {
+    expect(lpgmCategoryNote(1)).toBe('長周期地震動階級1以上を観測した地域は、いずれも震度5弱以上です')
+    expect(lpgmCategoryNote(3)).toBe('長周期地震動階級3以上を観測した地域は、いずれも震度5弱以上です')
   })
 
   // 安全弁: 種類を持たない電文・値域の外では何も出さない（分類番号を画面に漏らさない）
@@ -107,7 +134,7 @@ describe('lpgmPeriodLabel', () => {
 
 describe('buildLpgmRows', () => {
   // 座標表からの逆引きは「電文が県を書いていない区域」の代理なので、既定では引けない状態で試す。
-  const deps: LpgmRowDeps = { prefOfArea: () => null, rank: () => 0 }
+  const deps: LpgmRowDeps = { prefOfArea: () => null, rank: () => 0, onUnplaceableStation: () => {} }
   const region = (name: string, maxLgInt: number, extra: Partial<LpgmRegion> = {}): LpgmRegion =>
     ({ code: '', name, maxLgInt, ...extra })
   const station = (name: string, lgInt: number, extra: Partial<LpgmPoint> = {}): LpgmPoint =>
@@ -147,6 +174,7 @@ describe('buildLpgmRows', () => {
     const rows = buildLpgmRows([region('石川県能登', 4)], [], [], {
       prefOfArea: n => (n === '石川県能登' ? '石川県' : null),
       rank: () => 0,
+      onUnplaceableStation: () => {},
     })
     expect(rows[0].name).toBe('石川県')
   })
@@ -213,13 +241,46 @@ describe('buildLpgmRows', () => {
     expect(rows[0].areas[0]).toMatchObject({ name: '石川県能登', maxLgInt: 4, maxInt: 55 })
   })
 
-  it('階級を観測していない区域・観測点は行にしない', () => {
+  // 意図的に覆した（2026-10-22 ユーザー選択「画面には残す (Recommended)」）: 階級 0 の区域・観測点も行にする
+  it('階級 0 の区域・観測点も行にする', () => {
     const rows = buildLpgmRows(
       [region('石川県能登', 0, { pref: '石川県' })],
       [station('七尾市本府中町', 0, { pref: '石川県', area: '石川県能登' })],
       [], deps,
     )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: 'pref', name: '石川県', maxLgInt: 0 })
+    expect(rows[0].areas[0]).toMatchObject({ name: '石川県能登', maxLgInt: 0 })
+    expect(rows[0].areas[0].stations.map(s => s.lgInt)).toEqual([0])
+  })
+
+  // 安全弁: 値域の外（負の値）は今までどおり行にしない
+  it('値域の外の階級は行にしない', () => {
+    const rows = buildLpgmRows(
+      [region('石川県能登', -1, { pref: '石川県' })],
+      [station('七尾市本府中町', 5, { pref: '石川県', area: '石川県能登' })],
+      [], deps,
+    )
     expect(rows).toEqual([])
+  })
+
+  // 正: 区域も県も分からない観測点は置き場が無い。黙って消さず、呼び出し側へ知らせる
+  // （2026-10-22 ユーザー選択「消すときに記録を残す (Recommended)」）
+  it('区域も県も分からない観測点は、置けなかったことを知らせる', () => {
+    const dropped: string[] = []
+    const rows = buildLpgmRows(
+      [], [station('どこか', 2)], [],
+      { ...deps, onUnplaceableStation: name => dropped.push(name) },
+    )
+    expect(rows).toEqual([])
+    expect(dropped).toEqual(['どこか'])
+  })
+
+  // 対照: 県だけ分かる観測点は県の直下に置けるので、知らせない
+  it('県だけ分かる観測点は知らせない', () => {
+    const dropped: string[] = []
+    buildLpgmRows([], [station('どこか', 2, { pref: '石川県' })], [], { ...deps, onUnplaceableStation: name => dropped.push(name) })
+    expect(dropped).toEqual([])
   })
 
   it('並びは階級の降順、同じ階級どうしは気象庁の標準順', () => {
@@ -230,7 +291,7 @@ describe('buildLpgmRows', () => {
         region('青森県津軽北部', 2, { pref: '青森県' }),
         region('石川県能登', 4, { pref: '石川県' }),
       ],
-      [], [], { prefOfArea: () => null, rank: n => ranks[n] ?? 99 },
+      [], [], { prefOfArea: () => null, rank: n => ranks[n] ?? 99, onUnplaceableStation: () => {} },
     )
     expect(rows.map(r => r.name)).toEqual(['石川県', '青森県', '岩手県'])
   })
@@ -276,7 +337,13 @@ describe('canOpenLpgmNotes', () => {
 
   // 安全弁: **階級を観測していない電文では見出しごと出ない。** 中身があっても開けないので、
   // 読み上げ側はここを「開く先が無い」と判定できなければならない
-  it('階級を観測していなければ、中身があっても開けない', () => {
-    expect(canOpenLpgmNotes(make({ maxClass: 0, freeFormText: 'あ' }))).toBe(false)
+  // 意図的に覆した: 階級 0 の報も画面に残すので、補足も開ける
+  it('階級 0 の報でも、中身があれば開ける', () => {
+    expect(canOpenLpgmNotes(make({ maxClass: 0, freeFormText: 'あ' }))).toBe(true)
+  })
+
+  // 安全弁: 取消の報は開けない（取消は一覧ごと消える）
+  it('取消の報は中身があっても開けない', () => {
+    expect(canOpenLpgmNotes(make({ maxClass: 0, cancelled: true, freeFormText: 'あ' }))).toBe(false)
   })
 })

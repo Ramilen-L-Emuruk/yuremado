@@ -221,7 +221,7 @@ describe('種別遷移テスト', () => {
   // 正: 読み上げが実際に「観測地点が追加されましたが」と読む（このデータの目的そのもの）
   it('5 通目は「観測地点が追加されましたが」と読まれる', async () => {
     const quakes = quakesOf(await build(scripts.QUAKE_REPORT_SEQUENCE))
-    const opts = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+    const opts = { intensityLevels: 2, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
     const state = createQuakeSpokenState()
     quakes.slice(0, 4).forEach((report, i) => {
       const authoritative = report.issue.type === '震源・震度情報'

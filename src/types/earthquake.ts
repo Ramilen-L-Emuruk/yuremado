@@ -1470,7 +1470,7 @@ export interface LpgmPoint {
    * 行き先が決まらない。
    */
   area?: string
-  lgInt: number     // 長周期地震動階級 1〜4
+  lgInt: number     // 長周期地震動階級 0〜4
   /**
    * その観測点の震度（`IntensityStation/Int`）。
    *
@@ -1568,7 +1568,7 @@ export interface LpgmPref {
 export interface LpgmRegion {
   code: string      // 一次細分区域コード（例: "102"）
   name: string      // 一次細分区域名（例: "石狩地方南部"）
-  maxLgInt: number  // 区域内最大長周期地震動階級 1〜4
+  maxLgInt: number  // 区域内最大長周期地震動階級 0〜4
   /** その区域が属する都道府県名（電文の `Pref/Name` から補う） */
   pref?: string
   /** 区域内の最大震度（`Area/MaxInt`）。階級と並べると、揺れの高さと長さの差が出る */
@@ -1612,7 +1612,7 @@ export interface JMALpgm {
    */
   infoName?: string
   originTime: string  // TTS 読み上げテキスト用
-  maxClass: number    // 1〜4
+  maxClass: number    // 0〜4（0 は「階級1以上を観測していない」報。画面には出し、音と読み上げは鳴らさない。取消の報も 0）
   cancelled: boolean
   /** 取消しの理由（`Body/Text`）。取消電文だけが持つ（→ {@link JMAEarthquakeCount.cancelText}） */
   cancelText?: string

@@ -20,7 +20,8 @@ const STROKE_WIDTH = LPGM_ICON_BASE_RADIUS / 8
 const CORNER_RADIUS = (LPGM_ICON_BASE_RADIUS * 3) / 16
 const SHADOW_BLUR = (LPGM_ICON_BASE_RADIUS * 3) / 16
 
-const CLASSES = [1, 2, 3, 4]
+// 0 は観測情報の「階級1以上を観測していない」点・区域（灰色。→ `getLpgmClassColor`）
+const CLASSES = [0, 1, 2, 3, 4]
 
 export function lpgmIconId(lgInt: number): string {
   return `lpgm-badge-${lgInt}`

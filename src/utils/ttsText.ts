@@ -262,6 +262,11 @@ export const TELEGRAM_BOILERPLATE_KEYS = [
   'eewIssued',
   'lpgmClassTable',
   'tsunamiHeightLegend',
+  // 南海トラフ・後発地震の情報の参考情報（`Body/EarthquakeInfo/Appendix`）。他の 4 つと違って
+  // 文の照合で落とすものではなく、**要素ごと**読むかを決める（電文がこの文を独立した要素で運ぶため）。
+  // 定型文の並びに置くのは、性質（情報の種類の説明で、事象によらずほぼ同じ文）と既定（読まない）が
+  // 同じだから（2026-10-23 ユーザー選択「設定で読めるようにする (Recommended)」の「A1 の階級表などと揃える」）。
+  'earthquakeInfoAppendix',
 ] as const
 
 export type TelegramBoilerplateKey = typeof TELEGRAM_BOILERPLATE_KEYS[number]
@@ -280,19 +285,26 @@ export type TelegramBoilerplateReads = Readonly<Record<TelegramBoilerplateKey, b
  * 伝わらない。`lpgmClassTable` と `tsunamiHeightLegend` は等級・階級の意味を説明する表で、
  * 声にすると一続きに聞こえるうえ事象に依らない（津波の高さの目安は 307 字で、読み上げの実測
  * レート 5.8 字/秒なら約 53 秒）。`eewIssued` はアプリが緊急地震速報そのものを画面と音で
- * 扱っているため二度述べになる。**画面には従来どおり全文を出す**ので、情報は失われない。
+ * 扱っているため二度述べになる。`earthquakeInfoAppendix`（参考情報）は情報の種類と発表条件を説明する
+ * 固定文で、毎報ほぼ同じ（これまでは設定によらず読まなかった）。**画面には従来どおり全文を出す**ので、情報は失われない。
  */
 export const TELEGRAM_BOILERPLATE_DEFAULT_READS: TelegramBoilerplateReads = {
   starMark: false,
   eewIssued: false,
   lpgmClassTable: false,
   tsunamiHeightLegend: false,
+  earthquakeInfoAppendix: false,
 }
 
 export interface TtsSpeechOptions {
   intensityLevels: number   // 最大震度に加えて何階級下まで読むか（0 = 最大のみ。観測がある階級だけを数える）
   maxRegions: number        // 読み上げる最大地域数（0 = 無制限）
   alwaysReadScale: number   // 階数を超えても読み上げる下限震度（-1 = 無効。長周期地震動には適用しない）
+  /**
+   * 階数を超えても読み上げる長周期地震動階級の下限（-1 = 無効）。震度の下限とは別の軸
+   * （2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」）。
+   */
+  alwaysReadLpgmClass: number
   regionTolerance: number   // maxRegions をこの数まで超える場合は省略せず全地域を読む（0 = 無効）
   /**
    * 「震度5弱以上・未入電」の読み方（→ `TtsUnreceivedDetail`）。
@@ -3722,7 +3734,8 @@ export function nankaiCommentaryToText(event: JMANankaiCommentary): string {
  * 地震回数に関する情報（VXSE60）の読み上げテキストを生成する。
  *
  * **読むのは総数と有感の数だけ。** 区間は 1 時間ごとに何本も並ぶので、全部読むと数字の羅列に
- * なって総数が耳に残らない。経過の細かさは画面のカードに委ねる。
+ * なって総数が耳に残らない。経過の細かさは画面のカードに委ねる。1 時間ごとの並びと場所を
+ * 読まないことは 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」。
  *
  * **場所は言わない。** 電文が場所を構造化して持つのは震源要素のある種別だけで、この電文では
  * 自由文（`freeText`）の中にしか出てこない。文から地名を抜くと、書き方が変わったときに
@@ -3886,10 +3899,14 @@ function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
   // 上位の階級で区域名を出した県（震度側と同じ持ち回り。理由は aggregateLpgmNamesByPref のコメント）。
   const prefsWithAreaShown = new Set<string>()
   // 長周期地震動階級（1〜4）は震度スケールと別軸のため、opts.alwaysReadScale（震度の下限）は
-  // ここでは適用しない。使い忘れではないので、必要になったら階級側の下限を別に設けること。
-  for (let i = 0; i <= opts.intensityLevels; i++) {
+  // ここでは適用しない。階級側の下限（`alwaysReadLpgmClass`）を別に持つ。
+  // 打ち切りの考え方は震度側（`buildRegionSegments`）と同じ —— 階数以内か、下限以上の階級を読む。
+  // どちらも上位の階級ほど成立しやすいので、両方を外れた時点で以降も外れる。
+  for (let i = 0; i < classes.length; i++) {
     const cls = classes[i]
-    if (cls == null) break
+    const withinLevels = i <= opts.intensityLevels
+    const withinAlwaysRead = opts.alwaysReadLpgmClass >= 1 && cls >= opts.alwaysReadLpgmClass
+    if (!withinLevels && !withinAlwaysRead) break
     const aggregated = aggregateLpgmNamesByPref((byClass.get(cls) ?? []), areaPrefIndex, prefAreaNames, prefsWithAreaShown)
     // 区域名を出した県を次の階級へ持ち回る。`mentioned` で落とす前に数えるのは、あちらが
     // 「同じ名前を二度読まない」ための仕組みで、粒度の判断とは別の関心事だから。
@@ -3984,6 +4001,10 @@ export { tsunamiMaxGrade }
  * どちらが発表値か区別できないまま、2 つの「最大震度」が耳に入ることになる。
  *
  * **場所も言わない。** 電文が持つのは震央地名の**番号**だけで、名前はアプリの側に無い。
+ *
+ * 声を「受信しました」だけにし、推計の最大震度・場所を言わず画面にも最大を数字で出さないことは
+ * 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」（全期間の 110 通で、推計の最大は
+ * 発表の最大と一致 84・1 階級高い 9・低い 0／93 地震、続報で変わった例 0）。
  *
  * @param arrivalTime 地震発現時刻。**本体（最大 3MB）ではなくこの値だけを受け取る** ――
  *   文に要るのはこれ 1 つで、引数を見れば何に依存しているかが分かる
@@ -4538,7 +4559,9 @@ function quakeForecastRemainder(event: JMAQuake): string | undefined {
  * 保証しているので、そこへ置けば本来の情報を塞がない。
  *
  * **含めないもの**:
- * - 参考情報（`appendix`）—— 情報の種類を説明する固定文で、画面でも折りたたみに入れている
+ * - 参考情報（`appendix`）—— **既定では含めない。** 情報の種類を説明する固定文で、画面でも折りたたみに
+ *   入れている。定型文の設定（`earthquakeInfoAppendix`）で読む側に倒せる（2026-10-23 ユーザー選択
+ *   「設定で読めるようにする (Recommended)」）。並びは本文・次回発表予定の後
  * - 見出し文（`headline`）—— 型定義が「本文や既読の要素に無い事実は含まない」と断っており、
  *   読むと本体の読み上げと二度述べになる
  * - 取消電文の理由 —— 既に本体の読み上げが読んでいる（`cancelReasonSentence`）
@@ -4647,6 +4670,7 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
         pick(isAdvisory ? 'nankaiSummary' : 'nankaiCommentarySummary', event.data.summary),
         pick(isAdvisory ? 'nankaiBody' : 'nankaiCommentaryBody', event.data.body),
         pick(isAdvisory ? 'nankaiNextAdvisory' : 'nankaiCommentaryNextAdvisory', event.data.nextAdvisory),
+        reads.earthquakeInfoAppendix ? event.data.appendix : undefined,
       ], reads)
       const label = isAdvisory ? '南海トラフ地震臨時情報' : '南海トラフ地震関連解説情報'
       return telegramSpeech(`${label}について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
@@ -4659,6 +4683,7 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
       const body = joinTelegramTexts([
         pick('kohatsuSummary', event.data.summary),
         pick('kohatsuBody', event.data.body),
+        reads.earthquakeInfoAppendix ? event.data.appendix : undefined,
       ], reads)
       return telegramSpeech(`北海道・三陸沖後発地震注意情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, event.data.eventId))
     }

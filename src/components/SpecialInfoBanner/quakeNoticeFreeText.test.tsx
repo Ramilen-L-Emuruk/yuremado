@@ -13,7 +13,7 @@ beforeEach(() => localStorage.clear())
 
 function Banner({ notice }: { notice: JMAQuakeNotice }) {
   const banners = useSpecialInfoBanners({ nankai: null, nankaiCommentary: null, kohatsu: null, quakeNotice: notice, earthquakeCount: null })
-  return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} atScreenBottom />
+  return <SpecialInfoBanner banners={banners} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom />
 }
 
 const notice = (over: Partial<JMAQuakeNotice> = {}): JMAQuakeNotice => ({

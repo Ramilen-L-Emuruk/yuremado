@@ -30,7 +30,7 @@ import { first, telegramKohatsus } from '../test-utils/testTelegramFixtures'
 const testKohatsu = first(await telegramKohatsus('KOHATSU'), '後発地震注意情報')
 import type { JMAQuake, TsunamiObservation } from '../types/earthquake'
 
-const TTS_OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, regionTolerance: 0 }
+const TTS_OPTS: TtsSpeechOptions = { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }
 
 /** 遠地地震（`forecastText` が本文の主体になる唯一の種別）。 */
 function distantQuake(forecastText: string): JMAQuake {

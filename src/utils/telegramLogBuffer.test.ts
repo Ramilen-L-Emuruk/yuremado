@@ -6,6 +6,9 @@
 import { describe, it, expect } from 'vitest'
 import { appendToTelegramLog, dropTelegramLogOrigins, TELEGRAM_LOG_LIMITS } from './telegramLogBuffer'
 import type { TelegramLogEntry, TelegramOrigin } from '../types/earthquake'
+// **トップレベルで読む。** テスト本体の中で初めて読むと、モジュールの解決・変換の待ち（全ファイルを並列で
+// 回すと数秒）が 1 件目の所要時間へ丸ごと乗り、既定の 5 秒で時間切れになる（→ CLAUDE.md「検証」）。
+import { makeReplayLogEntry } from '../services/telegramLogEntry'
 
 const entry = (origin: TelegramOrigin, id: string): TelegramLogEntry => ({
   id,
@@ -100,8 +103,7 @@ describe('dropTelegramLogOrigins', () => {
 // 渡さない**ので `filtered` は実運用では通らないが、載せると決めたときにここを通す。
 // 未テストのまま残すと、通した途端に壊れていても気づけない。
 describe('makeReplayLogEntry', () => {
-  it('読めた電文は parsed、読めなかった電文は filtered として組む', async () => {
-    const { makeReplayLogEntry } = await import('../services/telegramLogEntry')
+  it('読めた電文は parsed、読めなかった電文は filtered として組む', () => {
     const parsed = makeReplayLogEntry({
       headType: 'VXSE53', origin: 'test', rawBody: '<Report/>',
       payload: { kind: 'nankai', data: {} as never }, isTest: false,
@@ -117,8 +119,7 @@ describe('makeReplayLogEntry', () => {
     expect(failed.kind).toBe('quake')
   })
 
-  it('配信元は既定で DMDSS、指定すれば標準版になる', async () => {
-    const { makeReplayLogEntry } = await import('../services/telegramLogEntry')
+  it('配信元は既定で DMDSS、指定すれば標準版になる', () => {
     const base = { headType: '551', origin: 'replay' as const, rawBody: {}, payload: null, isTest: false }
     expect(makeReplayLogEntry(base).source).toBe('dmdss')
     expect(makeReplayLogEntry({ ...base, source: 'p2pquake' }).source).toBe('p2pquake')

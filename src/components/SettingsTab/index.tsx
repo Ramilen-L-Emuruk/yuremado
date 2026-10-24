@@ -72,6 +72,8 @@ export interface TestFunctions {
   earthquakeCount?: () => void
   earthquakeCountRetraction?: () => void
   lpgmRetraction?: () => void
+  lpgmClassZero?: () => void
+  lpgmCategories?: () => void
   areaUnreceivedQuake?: () => void
   trainingQuake?: () => void
   quakeAmendment: () => void
@@ -583,6 +585,7 @@ const TELEGRAM_BOILERPLATE_LABELS: Record<TelegramBoilerplateKey, string> = {
   eewIssued: '緊急地震速報の発表告知',
   lpgmClassTable: '長周期地震動階級の目安',
   tsunamiHeightLegend: '津波の高さの目安',
+  earthquakeInfoAppendix: '南海トラフ・後発地震の情報の参考情報',
 }
 
 /**
@@ -597,6 +600,8 @@ const TELEGRAM_BOILERPLATE_DESCRIPTIONS: Record<TelegramBoilerplateKey, string> 
   eewIssued: '例:「この地震について、緊急地震速報を発表しています。」緊急地震速報そのものは画面と音でお知らせしているため、切っても取り逃しません',
   lpgmClassTable: '階級と揺れの大きさの対応表と、詳しい観測結果の参照先です。例:「各長周期地震動階級に対する簡易な現象表現」に続けて「階級１やや大きな揺れ」から階級４までが並びます。長周期地震動観測情報のほぼ全報に入ります',
   tsunamiHeightLegend: '予想される津波の高さと被害の対応表です。例:「［予想される津波の高さの解説］」に続けて、１０ｍ超から１ｍまで 5 段階の被害が書かれます（307 字。読み上げるとおよそ 50 秒）',
+  // 文面は 2026-10-24 ユーザー選択「この文面でよい (Recommended)」。実配信の文面を確かめていないので例は載せていない
+  earthquakeInfoAppendix: '南海トラフ地震臨時情報・同関連解説情報・北海道・三陸沖後発地震注意情報の末尾に付く、情報の種類や発表条件の説明です。毎報ほぼ同じ文です。画面では帯の「この種類の情報について」で開けます',
 }
 
 /**
@@ -1759,6 +1764,20 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               />
             </div>
           </Row>
+          <Row label="必ず読み上げる長周期地震動階級" description="階数の設定を超えても、この階級以上の地域名を読み上げます">
+            {/* 震度の下限は長周期に効かないので別に持つ（2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」、
+                文言は 2026-10-24 選択「この形でよい (Recommended)」）。階級 0 は読まないので選択肢に無い。 */}
+            <select
+              value={settings.ttsAlwaysReadLpgmClass}
+              onChange={e => onUpdate('ttsAlwaysReadLpgmClass', Number(e.target.value))}
+              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+            >
+              <option value={-1}>階数の設定どおり</option>
+              {[1, 2, 3, 4].map(n => (
+                <option key={n} value={n}>{`階級${n}`}</option>
+              ))}
+            </select>
+          </Row>
           <Row label="読み上げ最大地域数" description="1階級あたりに読み上げる地域名の上限です">
             <select
               value={settings.ttsMaxRegions}
@@ -2148,6 +2167,18 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {isDmdss && onTest.lpgmRetraction && (
           <Row label="長周期地震動に関する観測情報（取消）" description="地震テストの長周期地震動 → その取消。取消は音を鳴らさず、取り消されたことと理由の文を読み上げる（長周期の表示は消える）">
             <TestButton color="teal" onClick={onTest.lpgmRetraction}>長周期 取消テスト</TestButton>
+          </Row>
+        )}
+        {/* ボタン名と説明は 2026-10-24 ユーザー選択「ボタンを足す (Recommended)」で決めた文面 */}
+        {isDmdss && onTest.lpgmClassZero && (
+          <Row label="長周期地震動に関する観測情報（階級0）" description="階級1以上を観測しなかった長周期地震動の観測情報を流します。画面にだけ出て、音と読み上げはありません">
+            <TestButton color="teal" onClick={onTest.lpgmClassZero}>長周期地震動（階級0）テスト</TestButton>
+          </Row>
+        )}
+        {/* 文面は 2026-10-24 ユーザー選択「この文面でよい (Recommended)」 */}
+        {isDmdss && onTest.lpgmCategories && (
+          <Row label="長周期地震動に関する観測情報（種類1・3）" description="観測情報の種類1・3の実電文（2024年1月1日 石川県能登地方・2024年8月8日 日向灘）を流します。長周期地震動の欄の下に、階級を観測した地域がいずれも震度5弱以上だったことを伝える一文が出ます">
+            <TestButton color="teal" onClick={onTest.lpgmCategories}>長周期地震動（種類1・3）テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.earthquakeCount && (

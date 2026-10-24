@@ -2050,9 +2050,18 @@ describe('parseLpgmFromXml: xmlChild が Area 直下の値を拾い、配下 Cit
     expect(lpgm).not.toHaveProperty('cancelText')
   })
 
-  it('MaxLgInt が 0 のときは null（対象階級外）', () => {
+  // 意図的に覆した（2026-10-22 ユーザー選択「画面には残す (Recommended)」）: 階級 0 の報も捨てない。
+  it('MaxLgInt が 0 の報も捨てずに返す（階級 0 は画面に残す）', () => {
     const noClassXml = VXSE62_XML.replace('<MaxLgInt>3</MaxLgInt>\n        <Pref>', '<MaxLgInt>0</MaxLgInt>\n        <Pref>')
-    expect(parseLpgmFromXml(noClassXml)).toBeNull()
+    const lpgm = parseLpgmFromXml(noClassXml)
+    expect(lpgm?.maxClass).toBe(0)
+    expect(lpgm?.cancelled).toBe(false)
+  })
+
+  // 安全弁: 値域（0〜4）の外は今までどおり読めない値として捨てる
+  it('MaxLgInt が 5 なら捨てる', () => {
+    const outXml = VXSE62_XML.replace('<MaxLgInt>3</MaxLgInt>\n        <Pref>', '<MaxLgInt>5</MaxLgInt>\n        <Pref>')
+    expect(parseLpgmFromXml(outXml)).toBeNull()
   })
 })
 
@@ -2301,11 +2310,10 @@ describe('XML 経路が落としてはいけない項目（長周期地震動）
     expect(parseLpgmFromXml(xml)!.cancelled).toBe(true)
   })
 
-  // 対照: 対象階級（1〜4）の外は両経路とも null。階級 0 は「長周期地震動なし」であって
-  // 「階級 0 の観測」ではないため、イベントとして立てない。
-  it('最大階級が対象外なら両経路とも null', () => {
+  // 意図的に覆した: 階級 0 の報も返す（画面には残す。音と読み上げは `lpgmNotifiable` が止める）
+  it('最大階級 0 の報も返す', () => {
     const xml = PARITY_LPGM_XML.replace('<MaxLgInt>2</MaxLgInt>\n        <Pref>', '<MaxLgInt>0</MaxLgInt>\n        <Pref>')
-    expect(parseLpgmFromXml(xml)).toBeNull()
+    expect(parseLpgmFromXml(xml)?.maxClass).toBe(0)
   })
 })
 
@@ -2503,7 +2511,7 @@ describe('長周期地震動: 読めなかった要素の記録', () => {
   const matching = (warnings: string[], label: string) => warnings.filter(w => w.includes(label))
   const LG_REGION = '長周期地震動の区域'
   const LG_STATION = '長周期地震動の観測点'
-  const NO_LG_REGION = '階級を持つ区域を 1 件も取り出せませんでした'
+  const NO_LG_REGION = '区域を 1 件も取り出せませんでした'
 
   // 対照: 手を入れていない実電文どおりの形では 1 件も鳴らない
   it('そのままの電文では何も鳴らない', () => {
@@ -2524,14 +2532,26 @@ describe('長周期地震動: 読めなかった要素の記録', () => {
     expect(matching(captureWarnings(() => { parseLpgmFromXml(broken) }), LG_STATION)).toHaveLength(1)
   })
 
-  /** 区域（Area）を丸ごと差し替える。`<Area>` は 1 つしかないので単純置換でよい。 */
+  /**
+   * 都道府県の配下の区域（Area）を丸ごと差し替える。
+   *
+   * **`<Pref>` より後ろだけを見ること。** 震源（`Hypocenter`）も `<Area>` を持つので、文書の先頭から
+   * 探すと震源の `<Area>` から県の `</Area>` までを食い、壊れた XML になる（電文ごと読めずに null が
+   * 返り、記録の有無を見るテストが何を試しても通っていた）。
+   */
   const withAreas = (...areas: { name: string; code: string; lgInt: string }[]) =>
     PARITY_LPGM_XML.replace(
-      /<Area>[\s\S]*<\/Area>/,
-      areas.map(a =>
+      /(<Pref>[\s\S]*?)<Area>[\s\S]*<\/Area>/,
+      (_, beforeArea: string) => beforeArea + areas.map(a =>
         `<Area><Name>${a.name}</Name><Code>${a.code}</Code><MaxInt>3</MaxInt><MaxLgInt>${a.lgInt}</MaxLgInt></Area>`,
       ).join(''),
     )
+
+  // 部品そのものの確かめ: 差し替えた電文が読めること（読めないと、記録を見るテストが空振りで通る）
+  it('区域を差し替えた電文も読める', () => {
+    const lpgm = parseLpgmFromXml(withAreas({ name: '新潟県上越', code: '370', lgInt: '2' }))
+    expect(lpgm?.regions?.map(r => r.name)).toEqual(['新潟県上越'])
+  })
 
   // 対照: 階級 0 は「読めている」。該当なしを表す正常な値なので鳴らしてはいけない
   it('階級 0 の区域が混ざっても鳴らない', () => {
@@ -2575,14 +2595,28 @@ describe('長周期地震動: 読めなかった要素の記録', () => {
     expect(xmlWarnings.filter(w => w.includes('最大長周期地震動階級を読めません'))).toHaveLength(1)
   })
 
-  // 対照: 階級1以上を観測していない報（maxLgInt 0）は手前で null を返す正常な振り分け。
-  // ここで鳴らすと、長周期地震動を伴わない地震のたびに記録が出る
+  // 対照: 階級1以上を観測していない報（maxLgInt 0）は正常な報。区域も観測点も階級 0 で読めるので鳴らさない
   it('階級1以上を観測していない報では鳴らない', () => {
-    const xml = PARITY_LPGM_XML.replace('<MaxLgInt>2</MaxLgInt>', '<MaxLgInt>0</MaxLgInt>')
+    const xml = PARITY_LPGM_XML
+      .replace(/<MaxLgInt>[0-9]<\/MaxLgInt>/g, '<MaxLgInt>0</MaxLgInt>')
+      .replace(/<LgInt>[0-9]<\/LgInt>/g, '<LgInt>0</LgInt>')
     const warnings = captureWarnings(() => {
-      expect(parseLpgmFromXml(xml)).toBeNull()
+      const lpgm = parseLpgmFromXml(xml)
+      expect(lpgm?.maxClass).toBe(0)
+      // 階級 0 の区域・観測点も持つ（画面の一覧と地図に出す）
+      expect(lpgm?.regions?.length).toBeGreaterThan(0)
+      expect(lpgm?.regions?.every(r => r.maxLgInt === 0)).toBe(true)
+      expect(lpgm?.points?.length).toBeGreaterThan(0)
+      expect(lpgm?.points?.every(p => p.lgInt === 0)).toBe(true)
     })
     expect(warnings).toHaveLength(0)
+  })
+
+  // 安全弁: 区域の階級が値域（0〜4）の外なら、数としては読めても読めない値として数える（黙って落とさない）
+  it('区域の階級が値域の外なら、読めない値として数える', () => {
+    const xml = withAreas({ name: '新潟県上越', code: '370', lgInt: '5' })
+    const warnings = captureWarnings(() => { parseLpgmFromXml(xml) })
+    expect(matching(warnings, LG_REGION)).toHaveLength(1)
   })
 })
 
@@ -5667,13 +5701,41 @@ describe('地震回数に関する情報（VXSE60）', () => {
     expect(count.cancelText).toBe('先ほどの、地震回数に関する情報を取り消します。')
   })
 
-  // 安全弁: 回数として読めない区間は捨て、**全滅したときだけ記録する**。
-  // 部分脱落で鳴らすのは他の集計と同じ方針（正常な電文でログを埋めない）。
-  it('回数を読めない区間は捨て、全滅したら記録する', () => {
+  // 意図的に覆した（2026-10-22 ユーザー選択「総回数だけでも残す (Recommended)」・逆向きは 2026-10-24 選択
+  // 「両方向で残す (Recommended)」）: 回数が読めなくても有感回数が読めれば区間を残し、読めなかった欄は空ける。
+  it('回数を読めなくても有感回数が読めれば区間を残し、記録する', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
     try {
       const xml = VXSE60_XML.split('<Number>').join('<Numbr>').split('</Number>').join('</Numbr>')
       expect(xml).not.toBe(VXSE60_XML)
+      const items = parseEarthquakeCountFromXml(xml)!.items
+      expect(items).toHaveLength(3)
+      expect(items.map(i => i.number)).toEqual([null, null, null])
+      expect(items.map(i => i.feltNumber)).toEqual([1, 0, 1])
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('回数を読めず、その欄を空けて残しました')
+    } finally { warn.mockRestore() }
+  })
+
+  // 正: 有感回数が読めなくても総回数が読めれば区間を残す
+  it('有感回数を読めなくても回数が読めれば区間を残し、記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VXSE60_XML.replace('<FeltNumber>1</FeltNumber>', '<FeltNumber>不明</FeltNumber>')
+      expect(xml).not.toBe(VXSE60_XML)
+      const items = parseEarthquakeCountFromXml(xml)!.items
+      expect(items).toHaveLength(3)
+      expect(items[0]).toMatchObject({ number: 1587, feltNumber: null })
+      expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('有感回数を読めず、その欄を空けて残しました')
+    } finally { warn.mockRestore() }
+  })
+
+  // 安全弁: どちらも読めない区間は捨て、**全滅したときは集計の記録も出す**
+  it('回数も有感回数も読めない区間は捨て、全滅したら記録する', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+    try {
+      const xml = VXSE60_XML
+        .split('<Number>').join('<Numbr>').split('</Number>').join('</Numbr>')
+        .split('<FeltNumber>').join('<FeltNumbr>').split('</FeltNumber>').join('</FeltNumbr>')
       expect(parseEarthquakeCountFromXml(xml)!.items).toEqual([])
       expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('地震回数の区間')
     } finally { warn.mockRestore() }
@@ -5760,10 +5822,12 @@ describe('地震回数に関する情報（VXSE60）', () => {
     expect(count.items[0]).toMatchObject({ number: 1587, feltNumber: null })
   })
 
-  // 安全弁: -1 以外の負の値は書式の外。読めない値として区間ごと捨てる（-1 と同じに丸めない）。
-  it('-1 以外の負の値は読めない値として捨てる', () => {
+  // 安全弁: -1 以外の負の値は書式の外。読めない値として扱い、その欄を空ける（区間は有感回数で残る）
+  it('-1 以外の負の値は読めない値として欄を空ける', () => {
     const xml = VXSE60_XML.replace('<Number>1587</Number>', '<Number>-2</Number>')
-    expect(parseEarthquakeCountFromXml(xml)!.items.map(i => i.type)).toEqual(['１時間地震回数', '累積地震回数'])
+    const items = parseEarthquakeCountFromXml(xml)!.items
+    expect(items.map(i => i.type)).toEqual(['地震回数', '１時間地震回数', '累積地震回数'])
+    expect(items[0].number).toBeNull()
   })
 
   // 正: 累積の区間が無い報もそのまま返す（どの区間を伝えるかは表示・読み上げ側が選ぶ）。
@@ -5773,13 +5837,13 @@ describe('地震回数に関する情報（VXSE60）', () => {
     expect(parseEarthquakeCountFromXml(xml)!.items.map(i => i.type)).toEqual(['地震回数', '１時間地震回数'])
   })
 
-  // 対照: 1 件でも読めていれば記録しない（部分脱落では黙る）。
-  it('一部だけ読めなければ記録しない', () => {
+  // 対照: 1 件でも読めていれば全滅の記録は出さない（部分脱落では集計の記録は黙る）
+  it('一部だけ読めなければ全滅の記録は出さない', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
     try {
       const xml = VXSE60_XML.replace('<Number>1587</Number>', '<Number>いっぱい</Number>')
       expect(xml).not.toBe(VXSE60_XML)
-      expect(parseEarthquakeCountFromXml(xml)!.items).toHaveLength(2)
+      expect(parseEarthquakeCountFromXml(xml)!.items).toHaveLength(3)
       expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).not.toContain('地震回数の区間')
     } finally { warn.mockRestore() }
   })

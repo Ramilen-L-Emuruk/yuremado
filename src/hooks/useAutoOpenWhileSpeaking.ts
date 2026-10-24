@@ -21,7 +21,7 @@ import { recordReplayEvent } from '../utils/replayEventLog'
  * @param isOpen いま開いているか
  * @param setOpen 開閉を書き換える
  * @param subject 録画ツール向けの記録に載せる主題（→ `docs/spec/recording-interface-spec.md`）。
- *   このフックは 6 箇所（地震カードの補足・南海トラフ臨時情報・後発地震注意情報・関連解説情報・
+ *   このフックは複数の箇所（地震カードの補足・南海トラフ臨時情報・後発地震注意情報・関連解説情報・南海トラフと後発地震の参考情報・
  *   地震回数・津波のコメント欄）から同じ `overlay: 'telegramText'` で呼ばれるため、これが
  *   無いと記録からどの表示が開いたか区別できない。**必須引数にしてある** —— 既定値を
  *   持たせると、呼び出し元を増やしたときに渡し忘れても型検査を通ってしまう。

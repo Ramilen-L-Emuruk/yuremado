@@ -67,6 +67,23 @@ function regionDescendantKeys(region: IntensityRegionRow): string[] {
 const LPGM_NOTES_KEY = 'lpgm:notes'
 
 /**
+ * 区域も都道府県も分からず、長周期の一覧に置けなかった観測点を記録する
+ * （2026-10-22 ユーザー選択「消すときに記録を残す (Recommended)」。→ `buildLpgmRows` の `onUnplaceableStation`）。
+ *
+ * 一覧は選択し直すたびに組み直されるので、**同じ報の同じ観測点は 1 回だけ**残す。覚えておく数は
+ * 上限で切る（実電文では 1 件も起きていない形なので、溢れるのは書式が変わったときだけ）。
+ */
+const notedUnplaceableLpgm = new Set<string>()
+const NOTED_UNPLACEABLE_LPGM_MAX = 500
+function noteUnplaceableLpgmStation(lpgmId: string, stationName: string): void {
+  const key = `${lpgmId}\n${stationName}`
+  if (notedUnplaceableLpgm.has(key)) return
+  if (notedUnplaceableLpgm.size >= NOTED_UNPLACEABLE_LPGM_MAX) notedUnplaceableLpgm.clear()
+  notedUnplaceableLpgm.add(key)
+  log.warn(`[lpgm] 区域も都道府県も分からない長周期地震動の観測点を、一覧に置けず省きました（${lpgmId}・${stationName}）`)
+}
+
+/**
  * 自動展開へ「開く先が無い」と渡すための空集合。
  *
  * **その場で `new Set()` を作らない** —— 呼ぶたびに別の参照になり、中身が変わらないのに
@@ -683,9 +700,11 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   useEffect(() => {
     if (quake.forecastText) warnIfDomesticTsunamiSentenceMissing(domesticTsunamiCode, quake.forecastText)
   }, [quake.forecastText, domesticTsunamiCode])
-  // 長周期の「観測情報の種類」から出す一文（値 2・4 のときだけ。→ `lpgmCategoryNote`）。
+  // 長周期の「観測情報の種類」から出す一文（→ `lpgmCategoryNote`）。
   // 条件と本文の両方で使うので一度だけ計算する。
-  const categoryNote = lpgmCategoryNote(lpgm?.category)
+  // **最大階級 0 の報では出さない。** 種類の定義は階級 1 以上の地域を数えるもので、階級1以上を
+  // 観測していない報の上に「階級1以上を観測した地域は…」と出すと食い違う（種類が付くかは標本が無く未確認）。
+  const categoryNote = lpgm && lpgm.maxClass >= 1 ? lpgmCategoryNote(lpgm.category) : ''
   /** 補足の見出しを出すか（判定は読み上げ側の診断と共有する → `canOpenLpgmNotes`）。 */
   const hasLpgmNotes = canOpenLpgmNotes(lpgm)
   // 震度分布ボタン。引き当ては一覧の側で済んでいる（→ {@link Props.estimatedIntensity}）。
@@ -966,8 +985,21 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     return buildLpgmRows(lpgm.regions ?? [], lpgm.points ?? [], lpgm.prefs ?? [], {
       prefOfArea: name => areaPrefIndex?.get(name) ?? null,
       rank: name => regionOrderRank(name, order),
+      onUnplaceableStation: name => noteUnplaceableLpgmStation(lpgm.id, name),
     })
   }, [isSelected, lpgm, stationData])
+
+  // **一覧を組めずに震度一覧へ戻るときは記録する**（2026-10-22 ユーザー選択「戻すときに記録を残す (Recommended)」）。
+  // 押した利用者には震度一覧が出るだけで、長周期の行が組めなかったことは画面から分からない。
+  // 同じ報で 1 回だけ残す（選択し直すたびに並ばないように）。
+  const lpgmActiveHere = !!lpgm && !lpgm.cancelled && activeLpgmEventId === lpgm.eventId
+  const lpgmFallbackNotedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!isSelected || !lpgmActiveHere || !lpgm || lpgmGroups.length > 0) return
+    if (lpgmFallbackNotedRef.current === lpgm.id) return
+    lpgmFallbackNotedRef.current = lpgm.id
+    log.warn(`[lpgm] 長周期地震動の一覧を組めず、震度一覧のまま出しました（${lpgm.id}・区域 ${lpgm.regions?.length ?? 0} 件・観測点 ${lpgm.points?.length ?? 0} 件・都道府県 ${lpgm.prefs?.length ?? 0} 件）`)
+  }, [isSelected, lpgmActiveHere, lpgm, lpgmGroups])
 
   /**
    * 印の付いた行が見えるように、その祖先を自動で開く。
@@ -1113,7 +1145,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
           {/* 長周期地震動観測情報（クリックで地図表示トグル）。
               カード自体が<button>のため、ネスト禁止のHTML仕様に合わせ<div role="button">にする。 */}
-          {lpgm && lpgm.maxClass >= 1 && (
+          {lpgm && !lpgm.cancelled && (
             <div
               role="button"
               tabIndex={0}
@@ -1143,7 +1175,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               震度が小さい地域があるかどうか。**分類番号は出さず意味だけ書く**（→ `lpgmCategoryNote`）。
               **この一文だけは畳まない。** 1 行しかないうえ、その地震でしか言えない事実で、
               下の折りたたみに入れても縮む量はほとんど変わらない。 */}
-          {lpgm && lpgm.maxClass >= 1 && categoryNote && (
+          {lpgm && !lpgm.cancelled && categoryNote && (
             <div className="text-secondary" style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
               {categoryNote}
             </div>
@@ -1183,17 +1215,17 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             </div>
           )}
           {/* **自由付加文は改行と空白を保つ**（地震情報側と同じ扱い。全角スペースの表が入る）。 */}
-          {lpgm && lpgm.maxClass >= 1 && lpgmNotesOpen && lpgm.forecastText && (
+          {lpgm && !lpgm.cancelled && lpgmNotesOpen && lpgm.forecastText && (
             <div className="text-secondary" style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
               {lpgm.forecastText}
             </div>
           )}
-          {lpgm && lpgm.maxClass >= 1 && lpgmNotesOpen && lpgm.varCommentText && (
+          {lpgm && !lpgm.cancelled && lpgmNotesOpen && lpgm.varCommentText && (
             <div className="text-secondary" style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
               {lpgm.varCommentText}
             </div>
           )}
-          {lpgm && lpgm.maxClass >= 1 && lpgmNotesOpen && lpgm.freeFormText && (
+          {lpgm && !lpgm.cancelled && lpgmNotesOpen && lpgm.freeFormText && (
             <div
               className="text-secondary"
               style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}
@@ -1204,7 +1236,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           {/* **アプリが出せないもの（波形・スペクトル）の在りかを電文自身が示している**ので、
               そこへ行ける導線を残す。自由付加文も同じ URL を文中で案内しているため、
               畳む単位はこの 4 つで 1 つにまとめている。 */}
-          {lpgm && lpgm.maxClass >= 1 && lpgmNotesOpen && lpgm.uri && (
+          {lpgm && !lpgm.cancelled && lpgmNotesOpen && lpgm.uri && (
             <a
               href={lpgm.uri}
               target="_blank"
@@ -1431,9 +1463,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
           {/* 各地の震度 / 長周期地震動階級（LPGM トグルオン時は階級表示に切り替え） */}
           {(() => {
-            const isLpgmActive = lpgm && activeLpgmEventId === lpgm.eventId
-
-            if (isLpgmActive && lpgmGroups.length > 0) {
+            if (lpgmActiveHere && lpgmGroups.length > 0) {
               return (
                 <div className="flex flex-col gap-0.5 pt-1 border-t border-white/10">
                   {/* 最上段は都道府県か、都道府県を引けなかった区域（→ `LpgmPrefRow.kind`）。

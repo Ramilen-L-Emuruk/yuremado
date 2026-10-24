@@ -40,6 +40,7 @@ function makeDeps(over: Partial<KyoshinAlertsDeps> = {}, settings: Partial<AppSe
     setActiveTab: vi.fn(),
     revertToDefaultTab: vi.fn(),
     onShakeFocus: vi.fn(),
+    reonset: null,
     ...over,
   }
 }
