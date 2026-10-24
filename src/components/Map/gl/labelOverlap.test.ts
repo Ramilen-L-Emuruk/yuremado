@@ -176,9 +176,38 @@ describe('computeLabelPlacements', () => {
     })
   })
 
-  it('退避させないラベル（地方名＝ shiftEm なし）は重なったら薄くなる', () => {
+  it('退避させないラベル（shiftEm なし）は重なったら薄くなる', () => {
     const t = target({ shiftEm: undefined, room: undefined })
     expect(only(fakeMap([{ x: 0, y: 0 }]), t)).toEqual({ shift: 'none', dimmed: true })
+  })
+
+  // 地方名は境界データを持たないので room が無い。余地を見ずに上下へ逃がす（unboundedShift）。
+  describe('余地を持たないラベル（地方名）', () => {
+    // 正: room が無くても退避する（上を先に試す）。
+    it('room が無くても上へ逃がす', () => {
+      const t = target({ room: undefined, unboundedShift: true })
+      expect(only(fakeMap([{ x: 0, y: 0 }]), t)).toEqual({ shift: 'up', dimmed: false })
+    })
+
+    // 正: 上が塞がっていれば下へ回る。
+    it('上が塞がっていれば下へ回る', () => {
+      const map = fakeMap([
+        { x: 0, y: 0 },
+        { x: 0, y: -20 },
+      ])
+      expect(only(map, target({ room: undefined, unboundedShift: true }))).toEqual({ shift: 'down', dimmed: false })
+    })
+
+    // 対照: 印が無ければ、room が無いラベルは今までどおり退避せず薄くなる（県名・区域名の安全側）。
+    it('印が無く room も無ければ薄くなる', () => {
+      expect(only(fakeMap([{ x: 0, y: 0 }]), target({ room: undefined }))).toEqual({ shift: 'none', dimmed: true })
+    })
+
+    // 安全弁: 退避量（shiftEm）が無ければ、印があっても動かさない。
+    it('shiftEm が無ければ印があっても退避しない', () => {
+      const t = target({ shiftEm: undefined, room: undefined, unboundedShift: true })
+      expect(only(fakeMap([{ x: 0, y: 0 }]), t)).toEqual({ shift: 'none', dimmed: true })
+    })
   })
 
   it('判定対象のレイヤーが 1 つも無ければ、重なりを見ずにそのまま表示する', () => {

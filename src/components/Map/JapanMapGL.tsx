@@ -656,7 +656,7 @@ export function JapanMapGL({
           {/* 後続フェーズのレイヤーコンポーネントはここに置く（map を Context で購読） */}
           <BaseMapGL showBathymetry={showBathymetry} recording={recording} />
           {/* 地名ラベル（地方/県/区域名・最前面）。 */}
-          <LabelsGL overlapSignature={overlapSignature} iconScale={iconScale} recording={recording} />
+          <LabelsGL overlapSignature={overlapSignature} iconScale={iconScale} />
           {/* 活断層・プレート境界（quake/kyoshin モード）。kyoshin ドット群の下に敷く。 */}
           {/* 地震活動ヒートマップ（quake/kyoshin モードで heatPoints があるとき・区域塗りより背面）。
               GeoJSON source を持つレイヤーは mode に関わらず常時マウントし visible だけで切り替える
