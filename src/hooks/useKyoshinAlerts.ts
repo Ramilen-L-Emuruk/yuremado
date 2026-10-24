@@ -123,6 +123,12 @@ export const OUTBREAK_PROPAGATION_WINDOW_MS = 5 * 60_000
  * 以降で（震源深さ 10〜15km の範囲。深いほどわずかに遅い）、それまでは経過時間に応じた半径が使われる。
  */
 export const PROPAGATION_MAX_KM = 800
+/**
+ * 別地点として鳴らしたフレームから、同じ場所の 2 つ目の地震の合図を鳴らさない幅（ms・データ時刻）。
+ * 2 つの合図は動くレンダーが 1 つずれる（別地点は強震モニタの時刻、2 つ目は検知結果の更新）ので、
+ * 1 秒間隔のフレーム 2〜3 つぶんの幅を取る。
+ */
+export const REONSET_AFTER_REGION_MS = 3_000
 
 export interface AlertRegion {
   lat: number
@@ -343,17 +349,16 @@ function resetEpisode(state: AlertRegionState): void {
  *  - 既存地域とマッチした（新規登録された地域は、初検知エフェクトが鳴らす分と重複するため対象外）
  *  - まだ発報しておらず、EEW の伝播範囲に入ったこともない（`absorbedByEew`）
  *  - 前フレームにも confirmed があった（＝進行中の検知に後から加わった地域である）
- *  - その地域の最大震度が `NEW_REGION_MIN_INDEX` 以上（遠地へ届いた弱い揺れを除く）
  *  - 初検知から `REGION_PERSIST_MS` 以上のデータ時刻が経った（一過性の分裂フラグメントを除く）
  *  - 前回の発報から `NEW_REGION_COOLDOWN_MS` 以上空いている
  *
  * **持続・クールダウン・破棄猶予はいずれもフレームの到来回数ではなくデータ時刻で測る。** そう決めた
  * 理由と、それぞれの測り方の癖は各定数の宣言に書いてある（設計書§31）。
  *
- * **既知の限界**: 一度発報した地域は二度と鳴らない（`fired`）。その地域の閾値の内側で後から本当に
- * 別の地震が起きても、既存地域へのマッチとして扱われ音も通知も出ない（地図と検知カードには出る）。
- * 発報済みを吸収の対象から外す案を実データで試したが、同じ地震の伝播が新規地域として登録し直され、
- * **同じ場所が二度鳴る**方に振れたため採らなかった（2026-08-20 の検証。設計書§24）。
+ * **一度発報した地域は二度と鳴らない**（`fired`）。その地域の閾値の内側で後から本当に別の地震が
+ * 起きても、別地点としては鳴らない。発報済みを吸収の対象から外す案を実データで試したが、同じ地震の
+ * 伝播が新規地域として登録し直され、**同じ場所が二度鳴る**方に振れたため採らなかった（2026-08-20 の
+ * 検証。設計書§24）。内側の 2 つ目は `utils/kyoshinReonset.ts` が別の見分け方で拾う（設計書§40）。
  *
  * @param nowMs 現フレームのデータ時刻。NaN のときは距離も EEW 範囲も判定できないため、地域には
  *   触れずフレームを見送る。前フレームより過去へ戻った場合はエピソードの切り替えとして状態を捨てる
@@ -468,6 +473,19 @@ export function isSameShakeAsBefore(
   return now.every((s) => before.some((b) => haversineKm(s.lat, s.lng, b.lat, b.lng) <= PARAMS.MERGE_EVENT_KM))
 }
 
+/** 同じ場所の 2 つ目の地震の合図（`KyoshinAlertsDeps.reonset`）。 */
+export interface ReonsetSignal {
+  /**
+   * 合図の印（イベント ID と合図を出したデータ時刻）。**鳴らす側はこれが変わったときだけ動く。**
+   * オブジェクトの参照で見ると、同じ合図が作り直されたとき（`useMemo` の再計算）に鳴り直す。
+   */
+  key: string
+  /** 合図を出したフレームのデータ時刻（ms）。別地点の発報との重複をデータ時刻で見るのに使う */
+  atMs: number
+  /** 寄せる先。引けなければ null（寄せずに音とタブ移動だけ出す） */
+  focus: { lat: number; lng: number } | null
+}
+
 export interface KyoshinAlertsDeps {
   /** confirmed イベントが1件以上あるか（V3 検知の確定） */
   confirmed: boolean
@@ -517,12 +535,18 @@ export interface KyoshinAlertsDeps {
    * 「音は鳴るのに画は動かない」形で機能ごと静かに失われる。
    */
   onShakeFocus: (point: { lat: number; lng: number }) => void
+  /**
+   * 同じ場所の 2 つ目の地震の合図（`utils/kyoshinReonset.ts`）。そのフレームだけ値を持ち、ほかは null。
+   * `focus` は寄せる先（立ち上がった点のうち最も強い点、引けなければイベントの重心）。どちらも引けなければ
+   * null で、そのときは寄せずに音とタブ移動だけ出す。**必須にしている**（渡し忘れると黙って鳴らなくなるため）。
+   */
+  reonset: ReonsetSignal | null
 }
 
 export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () => void } {
   const {
     confirmed, candidate, candidateMaxIndex, confirmedShocks, dataTime, stalled, settings, title,
-    activeEEWsRef, defaultTabRef, setActiveTab, revertToDefaultTab, onShakeFocus,
+    activeEEWsRef, defaultTabRef, setActiveTab, revertToDefaultTab, onShakeFocus, reonset,
   } = deps
 
   // 以下の発報エフェクトは、音の再鳴を安定させるため依存配列を絞ってある（各 effect の
@@ -723,11 +747,20 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
   // 初検知だけでは進行中の別地点を鳴らせない）。
   // 判定そのものは stepAlertRegions（純関数）が持つ。ここは発報の合図を受けて音・タブ・通知を出す。
   const regionStateRef = useRef<AlertRegionState>(createAlertRegionState())
+  /**
+   * 別地点として鳴らしたフレームのデータ時刻（ms）。前後の「2 つ目」の合図と二重に鳴らさないため。
+   *
+   * **同じフレームの一致では見ない。** 別地点はこの効果が強震モニタの時刻（`dataTime`）で動き、
+   * 2 つ目の合図は検知結果の更新で作られるので、同じ揺れでも動くレンダーが 1 つずれる。データ時刻の
+   * 差（`REONSET_AFTER_REGION_MS` 以内）で見る。壁時計で見るとリプレイの倍速で幅が変わる。
+   */
+  const regionFiredAtRef = useRef<number | null>(null)
   useEffect(() => {
     if (!dataTime) return
     const nowMs = new Date(dataTime).getTime()
     const alert = stepAlertRegions(regionStateRef.current, confirmedShocks, nowMs, activeEEWsRef.current)
     if (!alert) return
+    regionFiredAtRef.current = nowMs
     log.info('[tab] realtime を要求 (別地点で揺れ検知 V3)')
     setActiveTab('realtime')
     // 発報した地域自身の代表点へ寄せる（全体の最大震度ではなく「別の地点」を見せる報せなので、
@@ -749,6 +782,28 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dataTime を毎フレーム駆動キーにし他は最新クロージャを参照
   }, [dataTime])
 
+  // 同じ場所の 2 つ目の地震（設計書§40）: 確定が続く中で、静けさを挟んでまとまった立ち上がりが
+  // 来たら検知音を鳴らし、realtime タブへ移して、その点へ寄せる。判定は `utils/kyoshinReonset.ts`。
+  // **ブラウザ通知は出さない**（2026-10-24 ユーザー選択は「検知音を鳴らす」。通知の条件は別に決める）。
+  // 別地点として鳴らしたデータ時刻から `REONSET_AFTER_REGION_MS` 以内なら、そちらに任せて鳴らさない
+  // （同じ揺れを 2 回知らせない）。**別地点が後から鳴る向きは防いでいない**（別地点の効果は触らない）。
+  //
+  // **合図の印（`reonset.key`）が変わったときだけ動く。** 強震モニタの時刻（`dataTime`）で動かすと、
+  // 検知結果が止まっている間は同じ合図のまま時刻だけ進んで毎秒鳴り直す。合図の参照で動かすと、同じ合図が
+  // 作り直されたとき（`useMemo` の再計算）に鳴り直す。どちらもレビューで実際に指摘された（設計書§40）。
+  const reonsetRef = useRef(reonset)
+  reonsetRef.current = reonset
+  useEffect(() => {
+    const signal = reonsetRef.current
+    if (!signal) return
+    if (regionFiredAtRef.current != null && Math.abs(signal.atMs - regionFiredAtRef.current) <= REONSET_AFTER_REGION_MS) return
+    log.info('[tab] realtime を要求 (同じ場所の 2 つ目の揺れ V3)')
+    setActiveTab('realtime')
+    if (signal.focus) requestShakeFocus(signal.focus)
+    if (settings.soundEnabled) playAlertSound('kyoshin')
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 合図の印だけを駆動キーにし他は最新を ref で読む
+  }, [reonset?.key])
+
   /**
    * リプレイの開始・停止で落とす。**時間軸に紐づくものだけ。**
    *
@@ -764,6 +819,8 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
    */
   const resetForReplay = useCallback(() => {
     regionStateRef.current = createAlertRegionState()
+    // 別地点として鳴らしたフレームの時刻も落とす（巻き戻した先の同じ時刻で、2 つ目の合図を誤って抑えない）
+    regionFiredAtRef.current = null
   }, [])
 
   return { resetForReplay }
