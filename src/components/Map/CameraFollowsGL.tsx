@@ -233,6 +233,8 @@ const SHAKE_FOCUS_SUPPRESS_MS = 3000
 // （優先度）で realtime へ移れないことがある（EEW・津波が出ている間）。その場合に要求だけが残り、
 // 後から手動で入室したときに「もう収まった揺れの点」へ寄ってしまうのを防ぐ。
 // EEW の `NEW_EEW_FOCUS_WINDOW_MS`（10 秒）より短いのは、揺れの強まりが数秒で移り変わるため。
+// 5 秒を過ぎた要求は捨てる（2026-10-14 選択「5 秒で捨ててよい（推奨）」）。利用者が地図を操作して
+// いる間に来た要求も見送って取り戻さない（2026-08-23 選択「見送る（推奨）」、2026-10-14 に維持）。
 const SHAKE_FOCUS_WINDOW_MS = 5000
 
 // ── 揺れ検知点にフィットし、検知終了時は日本全体に戻す（EEW 中は戻さない） ──────────
@@ -760,6 +762,16 @@ export function FitToEEWGL({
   // 震源訂正フォローが動けなかった理由。**同じ理由では 1 度しか記録しない**——判定は波円の
   // 再計算で 100ms ごとに走るため、素通しにすると 3 秒の抑制中に同じ行が 30 本並ぶ。
   const relocationSkipRef = useRef<string | null>(null)
+  // 件数減少の寄り直しを見送っている間の印（2026-10-22 ユーザー承認。選んだ選択肢は「抑制が明けたら
+  // 寄せ直す (Recommended)」）。操作中・抑制中に減ったら立て、明けた時点で残っている速報へ寄せ直して
+  // 落とす。**新しい第一報と、速報が 0 件になったときにも落とす**——前者は第一報のフォーカスが画を
+  // 作り直し、後者は寄せる相手が無いため。見送りの理由は変わったときだけ記録する（判定は波円の
+  // 再計算で 100ms ごとに走る）。
+  const pendingRefitRef = useRef(false)
+  const pendingRefitSkipRef = useRef<string | null>(null)
+  // 抑制の期限が来たときに件数減少の effect を走らせ直すための刻み。抑制は時刻で切れるので、
+  // 依存配列の値が変わらない（円を持たない速報だけが残った等）と、明けたことに誰も気づかない。
+  const [refitRetryTick, setRefitRetryTick] = useState(0)
 
   // 最新 EEW（発生時刻の降順。発生時刻を持たない報は発現時刻で並べる → `compareEewNewestFirst`）を追従対象とする。
   const latest =
@@ -860,6 +872,9 @@ export function FitToEEWGL({
       // 訂正の振れ幅の記録を、この震源から始め直す（上記 ref の注記）。円へ寄せるか震源 1 点へ
       // 寄せるかに関わらず、画の中心にあるのはこの震源。座標の無い報では空から始める。
       relocationSpanRef.current = epicenter ? [epicenter] : []
+      // 見送っていた件数減少の寄り直しは捨てる（`pendingRefitRef` の注記）
+      pendingRefitRef.current = false
+      pendingRefitSkipRef.current = null
       // 揺れフォーカスに譲らせる猶予はこれとは別の長さで張る（役割が違う。上記の定数参照）。
       newEewYieldUntilRef.current = Date.now() + SHAKE_FOCUS_YIELD_AFTER_EEW_MS
       if (target.kind === 'bounds') {
@@ -959,24 +974,40 @@ export function FitToEEWGL({
     prevPsWaveCountRef.current = psWave.length
     const eewDecreased = eews.length < prevCount
     const psWaveDecreased = psWave.length < prevPsCount
-    if (!eewDecreased && !psWaveDecreased) return
-    if (eews.length === 0) return
-    // 以下 2 つの見送りは、いずれも「その回の寄り直しを永久に失う」（件数の記録は上で更新済みなので
-    // 同じ減少が後から再検出されることはない）。無言で失うと実地震のあとに「抑制が働いたのか
-    // 不具合なのか」を切り分けられないため、他のスキップ分岐と同じくログに残す。
+    if (eews.length === 0) {
+      // 寄せる相手が無い。解除の帰還は第一報の effect が受け持つ
+      pendingRefitRef.current = false
+      pendingRefitSkipRef.current = null
+      return
+    }
+    // 件数の記録は上で更新済みなので、同じ減少が後から再検出されることはない。見送るなら印で覚えておく
+    // （`pendingRefitRef` の注記）。
+    if (eewDecreased || psWaveDecreased) pendingRefitRef.current = true
+    if (!pendingRefitRef.current) return
+    // 見送りは理由が変わったときだけ記録する。無言で見送ると実地震のあとに「抑制が働いたのか
+    // 不具合なのか」を切り分けられない。
+    const noteSkip = (reason: string) => {
+      if (pendingRefitSkipRef.current === reason) return
+      pendingRefitSkipRef.current = reason
+      log.debug(`[mapGL] EEW数減少の再フィット 見送り (${reason})。明けたら寄せ直す`)
+    }
+    // 操作が明けると isUserInteracting の変化でこの effect が走り直す
     if (isUserInteracting) {
-      log.debug('[mapGL] EEW数減少の再フィット スキップ (userInteracting)')
+      noteSkip('userInteracting')
       return
     }
-    // 第一報のフォーカスを見せている間は寄り直さない（成長フォローと同じ抑制を効かせる）。
+    // 第一報・揺れフォーカスの画を見せている間は寄り直さない（成長フォローと同じ抑制を効かせる）。
     // 抑制中にここが発火すると、抑制が防いでいる「一瞬寄って即ズームアウト」を別のトリガーで
-    // 再現してしまう。
-    // ただし残りが画面外にはみ出していれば、抑制が明けた直後に成長フォローの収まり判定が拾って
-    // 引き直す（最大で抑制時間ぶん遅れる）。
-    if (Date.now() < suppressGrowthUntilRef.current) {
-      log.debug('[mapGL] EEW数減少の再フィット スキップ (第一報直後の抑制中)')
-      return
+    // 再現してしまう。期限が来たら刻みを進めて走り直す。
+    const suppressRestMs = suppressGrowthUntilRef.current - Date.now()
+    if (suppressRestMs > 0) {
+      noteSkip('寄せた直後の抑制中')
+      const timer = setTimeout(() => setRefitRetryTick((t) => t + 1), suppressRestMs + 1)
+      return () => clearTimeout(timer)
     }
+    if (pendingRefitSkipRef.current !== null) log.debug('[mapGL] 見送っていた EEW数減少の再フィットを行う')
+    pendingRefitRef.current = false
+    pendingRefitSkipRef.current = null
 
     // 円のある EEW は円の box、円が無い（仮定震源要素等の）EEW も震源座標一点は必ず含める
     // （円だけを見ると、その EEW が画面から取り残される）。
@@ -1000,7 +1031,7 @@ export function FitToEEWGL({
     }
     log.debug(`[mapGL] EEW数減少・残り${eews.length}件へ再フィット`)
     flyToBoundsSnapped(map, bounds, { padding: 60, durationSec: 0.8 })
-  }, [eews, psWave, latest, map, isUserInteracting, detectedPoints, forecastAreaPositions])
+  }, [eews, psWave, latest, map, isUserInteracting, detectedPoints, forecastAreaPositions, refitRetryTick])
 
   // 予報円・震源座標・揺れ検知点・予想の区域塗りの広がりに追従（表示に収まらなくなった時のみズームアウト）。
   // 目標は「有感半径 bounds ∪ 震源座標 ∪ 検知点 ∪ 予想の区域塗り」の単一 bounds。EEW 発報中の追従はこの

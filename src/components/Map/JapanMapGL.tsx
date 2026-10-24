@@ -815,11 +815,9 @@ export function JapanMapGL({
                 shakeFocus={shakeFocus}
                 lastConsumedFocusTickRef={lastConsumedShakeFocusTickRef}
               />
-              {/* EEW 追従（idle 抑制つき）。
-                  MAP-5 の常時マウント化は QuakeFitGL/TsunamiFitGL との flyTo 争い・EEW 解除後の
-                  帰還未実装等の副作用が広範で、正しい対応には大規模リファクタが必要と判明したため
-                  revert。kyoshin モード限定のままとし、他モード滞在中の EEW 追従中断は既知の限界
-                  として仕様書に明記する。 */}
+              {/* EEW 追従（idle 抑制つき）。リアルタイム震度タブの間だけ追う（MAP-5）。
+                  2026-10-14 の問い「EEW の追従はリアルタイム震度タブだけ」に選択「今のまま（推奨）」。
+                  他のタブへ移ると追従は止まる（仕様書 map-rendering-spec §6「MAP-5」）。 */}
               <FitToEEWGL
                 eews={eews}
                 psWave={kyoshinPsWave}

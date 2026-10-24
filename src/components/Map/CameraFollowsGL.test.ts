@@ -2424,6 +2424,122 @@ describe('揺れフォーカス（EEW 発報中）', () => {
   })
 })
 
+// ── EEW の件数が減ったときの寄せ直し（見送った分を持ち越す） ──────────────────────────
+// 抑制中・操作中に件数が減った回を見送ったまま失うと、取り消された速報の場所を含んだ画が残る。
+// 見送った分を覚え、抑制が明けたら残っている速報へ寄せ直す（2026-10-22 選択「抑制が明けたら寄せ直す
+// (Recommended)」）。
+describe('EEW の件数が減ったときの寄せ直し', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const eewAt = (eventId: string, lat: number, lng: number) => ({
+    id: `${eventId}-report-1`,
+    issue: { eventId },
+    earthquake: {
+      originTime: '2026-08-24T05:00:00+09:00',
+      hypocenter: { latitude: lat, longitude: lng, depth: 10 },
+    },
+  } as unknown as EEWAlert)
+  const NOTO = eewAt('ev-noto', 37.5, 137.2)
+  const HYUGA = eewAt('ev-hyuga', 31.8, 131.8)
+  const FAR = { lat: 33.6, lng: 130.4 }
+
+  function frame(
+    map: maplibregl.Map,
+    eews: EEWAlert[],
+    refs: {
+      focusTickRef: { current: number }
+      firstSeenAtRef: { current: Map<string, number> }
+      focusedEewIdRef: { current: string | null }
+    },
+    shakeFocus: ShakeFocus | null = null,
+  ) {
+    return h(
+      MapGLContext.Provider,
+      { value: map },
+      h(FitToEEWGL, {
+        eews,
+        psWave: [],
+        detectedPoints: [],
+        hasDetection: false,
+        candidatePoints: [],
+        forecastAreaPositions: [],
+        firstSeenAtRef: refs.firstSeenAtRef,
+        focusedEewIdRef: refs.focusedEewIdRef,
+        shakeFocus,
+        lastConsumedFocusTickRef: refs.focusTickRef,
+      }),
+    )
+  }
+
+  /** 2 つの EEW が発報中のところへ入室し、入室フィットの飛行を終えた状態。 */
+  function settledWithTwo() {
+    const map = createFakeMap({ fitZoom: 7 })
+    const refs = {
+      focusTickRef: { current: 0 },
+      firstSeenAtRef: { current: new Map([['ev-noto', Date.now() - 60_000], ['ev-hyuga', Date.now() - 60_000]]) },
+      focusedEewIdRef: { current: null as string | null },
+    }
+    const view = render(frame(map, [NOTO, HYUGA], refs))
+    expect(moveCount(map)).toBe(1)
+    act(() => {
+      vi.advanceTimersByTime(4000)
+    })
+    return { map, view, refs }
+  }
+
+  it('[対照] 抑制が無ければ、減った時点で残りへ寄せ直す', () => {
+    const { map, view, refs } = settledWithTwo()
+
+    view.rerender(frame(map, [NOTO], refs))
+
+    expect(moveCount(map)).toBe(2)
+  })
+
+  it('[正] 抑制中に減った回は見送り、抑制が明けたら残りへ寄せ直す', () => {
+    const { map, view, refs } = settledWithTwo()
+    // 揺れフォーカスで寄せて 3 秒の抑制を張る。
+    const focus: ShakeFocus = { ...FAR, tick: 1, atMs: Date.now() }
+    view.rerender(frame(map, [NOTO, HYUGA], refs, focus))
+    expect(moveCount(map)).toBe(2)
+
+    // 抑制の内側で 1 件が消える。
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    view.rerender(frame(map, [NOTO], refs, focus))
+    expect(moveCount(map)).toBe(2)
+
+    // 抑制が明けると、依存配列の値が変わらなくても寄せ直す。
+    act(() => {
+      vi.advanceTimersByTime(2500)
+    })
+    expect(moveCount(map)).toBe(3)
+  })
+
+  it('[安全弁] 寄せ直しは 1 回だけ（明けた後に同じ減少で何度も寄らない）', () => {
+    const { map, view, refs } = settledWithTwo()
+    const focus: ShakeFocus = { ...FAR, tick: 1, atMs: Date.now() }
+    view.rerender(frame(map, [NOTO, HYUGA], refs, focus))
+    view.rerender(frame(map, [NOTO], refs, focus))
+    act(() => {
+      vi.advanceTimersByTime(3500)
+    })
+    expect(moveCount(map)).toBe(3)
+
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
+    view.rerender(frame(map, [NOTO], refs, focus))
+    expect(moveCount(map)).toBe(3)
+  })
+})
+
 
 // ── 揺れフォーカスの担当の受け渡し（両方をマウントした結合） ──────────────────────────
 // 「EEW が出ていなければ検知追従・出ていれば EEW 追従が寄せる」という排他は、両者が同じ `eews` から
