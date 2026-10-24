@@ -107,7 +107,9 @@ Yahoo RealTimeData (1Hz JSON)
 2. `recentOnset` を K 近傍グラフ（`neighbors`）で連結成分に分解する
 3. 成分サイズが `requiredClusterSize`（成分内の最大震度で決まる下限）以上の成分だけを「確定揺れ点
    （confirmed-shaking）」とする。通常は `MIN_CLUSTER`、震度3以上（`HIGH_CONFIRM_INTENSITY`）を含むなら
-   `HIGH_CLUSTER_POINTS`、震度4以上（`SOLO_CLUSTER_INTENSITY`）を含むなら 1 点で認める（設計書§29）
+   `HIGH_CLUSTER_POINTS`、震度4以上（`SOLO_CLUSTER_INTENSITY`）を含むなら 1 点で認める（設計書§29）。
+   **成分の全員が疎な点（`R_KM` 以内の近傍が `SPARSE_AVAIL_MAX` 以下）なら、通常の `MIN_CLUSTER` を
+   `SPARSE_MIN_POINTS` へ下げる**（設計書§39）
 
 散在する単発ノイズは近傍が揃わず成分が育たないため脱落する。時間差で onset した観測点（初期微動→
 主要動など）も同一成分として束ねられる。
@@ -194,9 +196,10 @@ Yahoo RealTimeData (1Hz JSON)
      バーで再び通さないため）。判定に `lastSize` を使わないのは、これが時間で減衰する量（`TRIG_ACTIVE_MS`
      の onset 途絶で 0 になる）で、成分の出自を表さないため。`confirmFramesReq` の連続要求は (a) (b) 共通で
      免除しない（単フレームの跳ね値を弾く安全弁）
-   - `effectiveConfirmReq` は密度正規化済み: `max(MIN_LIKELY_POINTS, min(confirmPointsBase(+慢性活性なら
+   - `effectiveConfirmReq` は密度正規化済み: `max(下限, min(confirmPointsBase(+慢性活性なら
      CHRONIC_POINT_BUMP), ceil((局所実在近傍数+1) × CONFIRM_DENSITY_FRAC)))`。疎地域（離島等）は
-     点数要件を自動的に下げる
+     点数要件を自動的に下げる。下限は通常 `MIN_LIKELY_POINTS`、局所実在近傍数が `SPARSE_AVAIL_MAX` 以下なら
+     `SPARSE_MIN_POINTS`（設計書§39）
    - `confirmPointsBase`・`confirmFramesReq` は `frame.eewActive`（呼び出し側が「震源要素が確定した
      （＝仮定震源要素でない）EEW が発表中か」を渡す。severity は推定震度の大小を示す軸に
      過ぎず判定に使わない）が true の間、`CONFIRM_POINTS`/`CONFIRM_FRAMES` の代わりに緩和値
@@ -208,7 +211,8 @@ Yahoo RealTimeData (1Hz JSON)
      （後述の第2軸）
    - `intenseCount`（`confirmIntensityReq` 以上に達した levelActive メンバー数）が `CONFIRM_INTENSE_POINTS`
      未満なら confirmed にしない（「単点だけ確定震度・周囲は震度0」という局所ノイズの分布を弾く第3軸）
-2. **likely / faint 判定**: `everConfirmed` でなければ、`lastSize ≥ MIN_LIKELY_POINTS` を一度でも
+2. **likely / faint 判定**: `everConfirmed` でなければ、`lastSize ≥ MIN_LIKELY_POINTS`（局所実在近傍数が
+   `SPARSE_AVAIL_MAX` 以下なら `SPARSE_MIN_POINTS`）を一度でも
    満たした（`hasSpread`）イベントは `LIKELY_HOLD_MS` の間ティアを保持する（`spreadHeld`）。保持中は
    `maxIntensity ≥ MIN_LIKELY_INTENSITY` **かつ周囲の同時上昇（下記）を一度でも満たしていれば** `likely`、
    そうでなければ `faint`
@@ -328,6 +332,8 @@ Yahoo RealTimeData (1Hz JSON)
 | `LIKELY_HOLD_MS` | likely/faint ティアの保持 | 10,000 ms |
 | `NEIGHBOR_RADIUS_KM` | 周囲の同時上昇を見る半径（設計書§32） | 50 km |
 | `NEIGHBOR_RISE_FRAC` | likely に要する「圏内で同時に立ち上がっている点」の割合（同上） | 0.15 |
+| `SPARSE_AVAIL_MAX` | 「疎な点」とみなす近傍数（`R_KM` 以内の実在点数）の上限。-1 で無効（設計書§39） | 2 |
+| `SPARSE_MIN_POINTS` | 疎な地域で成分・広がり・確定に要する点数（同上） | 2 |
 | `SOLO_CONFIRM_GRACE_MS` | 単点のまま確定が居座るのを許す時間（設計書§33） | 20,000 ms |
 | `SOLO_ISOLATED_FLAT_MS` | 孤立点の値が動かないまま続いたら確定を降ろす時間（設計書§37） | 120,000 ms |
 | `SOLO_DECAY_SIZE` | 「単点ではなくなった」とみなす点数（隣接する対であること） | 2 |
