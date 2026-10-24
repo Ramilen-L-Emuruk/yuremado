@@ -839,10 +839,10 @@
    "unrelatedAt": []
   },
   "jq20-0817-1355": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "13:55:13",
+   "firstConfirmed": "13:55:14",
+   "confirmedFrames": 76,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -992,9 +992,9 @@
   },
   "jq39-0819-2043": {
    "tier": "confirmed",
-   "firstLikely": "20:44:33",
-   "firstConfirmed": "20:44:34",
-   "confirmedFrames": 69,
+   "firstLikely": "20:44:30",
+   "firstConfirmed": "20:44:32",
+   "confirmedFrames": 71,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -1160,7 +1160,7 @@
   },
   "jq60-0821-2102": {
    "tier": "confirmed",
-   "firstLikely": "21:02:31",
+   "firstLikely": "21:02:30",
    "firstConfirmed": "21:02:36",
    "confirmedFrames": 144,
    "unrelated": 1,
@@ -1611,10 +1611,10 @@
    "unrelatedAt": []
   },
   "wq53-0802-1910": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "19:10:47",
+   "firstConfirmed": "19:10:51",
+   "confirmedFrames": 79,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -1877,8 +1877,8 @@
    "unrelatedAt": []
   },
   "wq86-0804-1215": {
-   "tier": "none",
-   "firstLikely": null,
+   "tier": "likely",
+   "firstLikely": "12:15:31",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -2014,7 +2014,7 @@
   },
   "wq103-0805-0321": {
    "tier": "confirmed",
-   "firstLikely": "03:21:57",
+   "firstLikely": "03:21:56",
    "firstConfirmed": "03:21:57",
    "confirmedFrames": 73,
    "unrelated": 0,
@@ -3289,10 +3289,10 @@
    "unrelatedAt": []
   },
   "oq0-0501-0212": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "02:12:36",
+   "firstConfirmed": "02:12:38",
+   "confirmedFrames": 62,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -3313,8 +3313,8 @@
    "unrelatedAt": []
   },
   "oq3-0501-2140": {
-   "tier": "none",
-   "firstLikely": null,
+   "tier": "likely",
+   "firstLikely": "21:40:59",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -3425,10 +3425,10 @@
    "unrelatedAt": []
   },
   "oq17-0504-0119": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "01:19:36",
+   "firstConfirmed": "01:19:37",
+   "confirmedFrames": 63,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -3505,10 +3505,10 @@
    "unrelatedAt": []
   },
   "oq27-0505-1558": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "15:59:04",
+   "firstConfirmed": "15:59:08",
+   "confirmedFrames": 32,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -3537,8 +3537,8 @@
    "unrelatedAt": []
   },
   "oq31-0506-1700": {
-   "tier": "none",
-   "firstLikely": null,
+   "tier": "likely",
+   "firstLikely": "17:00:09",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -3652,10 +3652,10 @@
    "unrelatedAt": []
   },
   "oq45-0509-1027": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "10:27:15",
+   "firstConfirmed": "10:27:18",
+   "confirmedFrames": 74,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -3700,10 +3700,10 @@
    "unrelatedAt": []
   },
   "oq51-0510-0118": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "01:19:03",
+   "firstConfirmed": "01:19:05",
+   "confirmedFrames": 35,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -3748,10 +3748,10 @@
    "unrelatedAt": []
   },
   "oq57-0511-1041": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "10:42:00",
+   "firstConfirmed": "10:42:01",
+   "confirmedFrames": 39,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -3805,7 +3805,7 @@
   },
   "oq64-0512-1932": {
    "tier": "confirmed",
-   "firstLikely": "19:32:31",
+   "firstLikely": "19:32:29",
    "firstConfirmed": "19:32:31",
    "confirmedFrames": 69,
    "unrelated": 0,
@@ -4100,18 +4100,18 @@
    "unrelatedAt": []
   },
   "oq101-0518-0821": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "08:21:35",
+   "firstConfirmed": "08:21:37",
+   "confirmedFrames": 63,
    "unrelated": 0,
    "unrelatedAt": []
   },
   "oq102-0518-0824": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "08:24:12",
+   "firstConfirmed": "08:24:14",
+   "confirmedFrames": 79,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -4172,10 +4172,10 @@
    "unrelatedAt": []
   },
   "oq110-0520-0229": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "02:29:16",
+   "firstConfirmed": "02:29:23",
+   "confirmedFrames": 72,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -4189,7 +4189,7 @@
   },
   "oq112-0520-1146": {
    "tier": "confirmed",
-   "firstLikely": "11:46:38",
+   "firstLikely": "11:46:37",
    "firstConfirmed": "11:46:38",
    "confirmedFrames": 62,
    "unrelated": 0,
@@ -4389,7 +4389,7 @@
   },
   "oq137-0526-0649": {
    "tier": "confirmed",
-   "firstLikely": "06:50:06",
+   "firstLikely": "06:50:01",
    "firstConfirmed": "06:50:07",
    "confirmedFrames": 33,
    "unrelated": 0,
@@ -4534,8 +4534,8 @@
    "unrelatedAt": []
   },
   "oq155-0530-0521": {
-   "tier": "none",
-   "firstLikely": null,
+   "tier": "likely",
+   "firstLikely": "05:21:12",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -4574,10 +4574,10 @@
    "unrelatedAt": []
   },
   "oq160-0531-1058": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "10:58:37",
+   "firstConfirmed": "10:58:38",
+   "confirmedFrames": 62,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -4742,10 +4742,10 @@
    "unrelatedAt": []
   },
   "oq181-0604-1136": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "11:36:22",
+   "firstConfirmed": "11:36:23",
+   "confirmedFrames": 71,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -4807,9 +4807,9 @@
   },
   "oq189-0606-2029": {
    "tier": "confirmed",
-   "firstLikely": "20:30:16",
-   "firstConfirmed": "20:30:19",
-   "confirmedFrames": 21,
+   "firstLikely": "20:30:03",
+   "firstConfirmed": "20:30:05",
+   "confirmedFrames": 35,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -5318,10 +5318,10 @@
    "unrelatedAt": []
   },
   "oq253-0623-0720": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "07:20:54",
+   "firstConfirmed": "07:20:56",
+   "confirmedFrames": 44,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -5830,10 +5830,10 @@
    "unrelatedAt": []
   },
   "oq317-0630-1359": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "13:59:32",
+   "firstConfirmed": "13:59:33",
+   "confirmedFrames": 67,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -5872,10 +5872,10 @@
    "unrelatedAt": []
   },
   "oq322-0701-0555": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "05:55:42",
+   "firstConfirmed": "05:55:43",
+   "confirmedFrames": 57,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -6008,10 +6008,10 @@
    "unrelatedAt": []
   },
   "oq339-0702-2344": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "23:45:20",
+   "firstConfirmed": "23:45:21",
+   "confirmedFrames": 19,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -6058,8 +6058,8 @@
   "oq345-0703-1305": {
    "tier": "confirmed",
    "firstLikely": "13:05:27",
-   "firstConfirmed": "13:05:30",
-   "confirmedFrames": 70,
+   "firstConfirmed": "13:05:28",
+   "confirmedFrames": 72,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -6280,10 +6280,10 @@
    "unrelatedAt": []
   },
   "oq373-0709-1737": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "17:37:43",
+   "firstConfirmed": "17:37:46",
+   "confirmedFrames": 54,
    "unrelated": 0,
    "unrelatedAt": []
   },
@@ -6315,10 +6315,10 @@
    ]
   },
   "oq377-0710-0122": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "01:22:03",
+   "firstConfirmed": "01:22:15",
+   "confirmedFrames": 80,
    "unrelated": 0,
    "unrelatedAt": []
   },

@@ -25,6 +25,7 @@ import { isEewWarningKindCode } from '../../utils/eewKind'
 import { serverNow } from '../../utils/clock'
 import { log } from '../../utils/logger'
 import { hasKnownEpicenter } from '../../utils/geo'
+import { getSubRegionsCache, onSubRegionsLoaded, subRegionNameAt, type SubRegion } from '../../utils/subregions'
 
 /**
  * カードの「地震発現時刻」の見出しに添える吹き出しの文（ホバー・タップで出る）。発生時刻と数秒しか
@@ -59,6 +60,11 @@ interface Props {
    * （`deriveKyoshinView` が孤立した震度0点を除いて用意する。両者で別々に計算すると黙って食い違う）。
    */
   kyoshinDetectedPoints: DetectedPoint[]
+  /**
+   * 確定を降ろした検知（`utils/kyoshinDemotedEvents.ts`）。降ろしてから決まった時間だけ、
+   * 理由を添えたカードとして残す。
+   */
+  kyoshinDemoted: DetectionEvent[]
   /**
    * このタブがユーザーの目に入っているか（リアルタイムタブが選ばれていて、かつパネルが
    * 畳まれていない）。タブは選ばれていなくてもマウントされたまま描画が走るため、可視性は
@@ -1259,6 +1265,47 @@ const KYOSHIN_FAINT_HEADING_INTENSITY = 0.5
 
 
 /**
+ * 一次細分区域の境界を、**読み込まれたら受け取る**（自分では取得を始めない）。
+ *
+ * 地図が起動時に同じデータを読み込むので（`useSubRegions`）、ここで取得を重ねる理由が無い。
+ * 取得に失敗したときの扱い（記録・再試行）も地図の側が持つ。未読み込みの間は null で、
+ * 検知カードは区域名を出さないだけになる。
+ */
+function useLoadedSubRegions(): SubRegion[] | null {
+  const [data, setData] = useState<SubRegion[] | null>(getSubRegionsCache)
+  useEffect(() => onSubRegionsLoaded(setData), [])
+  return data
+}
+
+/**
+ * 点の集まりのうち最も強い点（現在震度0以上に限る）。同じ強さなら先に現れた点。
+ * `keys` を渡すとその観測点だけから選ぶ（地域ごとの内訳用）。
+ */
+function strongestPoint(points: readonly DetectedPoint[], keys?: ReadonlySet<string>): DetectedPoint | null {
+  let best: DetectedPoint | null = null
+  for (const p of points) {
+    if (keys && !keys.has(p.key)) continue
+    if (!kyoshinIndexToLabel(p.index)) continue
+    if (!best || p.index > best.index) best = p
+  }
+  return best
+}
+
+/**
+ * 最も強い観測点が入る区域の名前（2026-10-22 ユーザー選択「地域名を出す (Recommended)」）。
+ * 区域データが未読み込み・どの区域にも寄せられないときは null（呼び出し側は名前を出さない）。
+ */
+function strongestRegionName(
+  points: readonly DetectedPoint[],
+  subregions: readonly SubRegion[] | null,
+  keys?: ReadonlySet<string>,
+): string | null {
+  if (!subregions) return null
+  const p = strongestPoint(points, keys)
+  return p ? subRegionNameAt(p.lat, p.lng, subregions) : null
+}
+
+/**
  * 検知の根拠（判定の内訳）。既定は畳んでおき、開いたときだけ表を出す。
  *
  * 一般利用者に読ませたいのは 1 行の要約（`gateShortfall`）までで、表のほうは検知エンジンの
@@ -1267,7 +1314,12 @@ const KYOSHIN_FAINT_HEADING_INTENSITY = 0.5
  * **地域ごとに 1 ブロック出す。** カード自体は複数の連結成分を「1 つの揺れ」として集約するが、
  * 判定は地域ごとに独立して走っているため、まとめると「どの地域の話か」が消える。
  */
-function KyoshinGateDetail({ events }: { events: DetectionEvent[] }) {
+function KyoshinGateDetail({ events, points, subregions }: {
+  events: DetectionEvent[]
+  /** 検知カードと同じ点列（地域ごとの区域名を引くのに使う） */
+  points: readonly DetectedPoint[]
+  subregions: readonly SubRegion[] | null
+}) {
   const [open, setOpen] = useState(false)
   return (
     <div className="mt-1">
@@ -1288,9 +1340,16 @@ function KyoshinGateDetail({ events }: { events: DetectionEvent[] }) {
             const notes = gateNotes(e)
             return (
               <div key={e.id} className="rounded-sm p-2" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                {events.length >= 2 && (
-                  <div className="text-xs text-secondary mb-1">{`地域 ${i + 1}（${V2_TIER[e.confidence].label}）`}</div>
-                )}
+                {events.length >= 2 && (() => {
+                  // 区域名はその地域のメンバーのうち最も強い観測点から引く（2026-10-24 ユーザー選択
+                  // 「本文と内訳の両方 (Recommended)」）。引けなければ番号だけ
+                  const name = strongestRegionName(points, subregions, new Set(e.memberKeys))
+                  return (
+                    <div className="text-xs text-secondary mb-1">
+                      {`地域 ${i + 1}${name ? `・${name}` : ''}（${V2_TIER[e.confidence].label}）`}
+                    </div>
+                  )
+                })()}
                 {/* 幅は中身に合わせる（`w-full` にすると見出しと数値が横いっぱいに離れて対応が読めない） */}
                 <table className="text-xs">
                   <tbody>
@@ -1335,10 +1394,12 @@ function KyoshinGateDetail({ events }: { events: DetectionEvent[] }) {
 // 複数の confirmed/likely イベントを同時に返す。これを「1 つの揺れ」として 1 枚に集約表示する
 // （震源を推定しないため、揺れている地域数と全体の震度分布・推定最大震度を主情報とする）。
 // 複数地域にまたがる場合は「広域」を示し、N 件の別地震のように見えるのを防ぐ。
-function KyoshinDetectionSummary({ events, points, visible }: {
+function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   events: DetectionEvent[]
   /** 地図の検知点マーカーが描くのと同一の点列（`deriveKyoshinView` が用意する）。 */
   points: DetectedPoint[]
+  /** 一次細分区域の境界（最も強い観測点の区域名を引く）。未読み込みなら null */
+  subregions: readonly SubRegion[] | null
   /** カードがユーザーの目に入っているか。バー幅スケールの張り直しの可否に使う。 */
   visible: boolean
 }) {
@@ -1445,12 +1506,13 @@ function KyoshinDetectionSummary({ events, points, visible }: {
   // 約 7:1 で、いずれも読める濃さを保ったまま赤の主張だけが消える。
   //
   // なお activeCount は毎秒の生インデックスから算出するため、終息期に 0 と非 0 を往復すれば
-  // 表示も往復する。猶予（ヒステリシス）は入れていない。猶予中の本文をどうするかで
+  // 表示も往復する。猶予（ヒステリシス）は入れていない（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。猶予中の本文をどうするかで
   // 「activeCount が 0 なのに 0観測点で反応と出す」「本文とヘッダーで別条件を使い、今回揃えた
   // 『両者が同じ基準を見る』性質を壊す」「中間状態の文言を新設する」のいずれかになり、
   // 前 2 つは不整合、3 つ目は状態が 3 つに増える割に、往復自体が実地震のリプレイ検証
   // （2026-08-18・50 サンプル超）では観測されていないため見合わないと判断した。
   const settled = activeCount === 0
+  const strongestName = strongestRegionName(points, subregions)
 
   return (
     <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${frameBorder}`, backgroundColor: frameBg }}>
@@ -1502,6 +1564,10 @@ function KyoshinDetectionSummary({ events, points, visible }: {
               ))}
             </div>
           )}
+          {/* 最も強い観測点の区域名。反応が収まって点が無いときは出さない */}
+          {strongestName && (
+            <span className="text-xs text-secondary">{`最も強い観測点：${strongestName}`}</span>
+          )}
           <span className="text-xs text-secondary">
             {activeCount > 0
               ? `${activeCount}観測点で反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
@@ -1510,17 +1576,42 @@ function KyoshinDetectionSummary({ events, points, visible }: {
           {/* 確信度チップが「どの段か」を示すのに対し、この行は「なぜその段なのか」を示す。
               言うことが無ければ行ごと出さない（`gateShortfall` が null を返す） */}
           {shortfall && <span className="text-xs text-secondary">{shortfall}</span>}
-          <KyoshinGateDetail events={events} />
+          <KyoshinGateDetail events={events} points={points} subregions={subregions} />
         </div>
       </div>
     </div>
   )
 }
 
+/**
+ * 確定を降ろした検知のカード（`utils/kyoshinDemotedEvents.ts`）。降ろした理由を残す。
+ *
+ * チップの「取り下げ」と、理由の文（`gateShortfall`。2026-10-15 ユーザー承認の文面）だけを出す。
+ * 降ろした検知は地図の検知点からも消えている（weak は描かない）ので、震度の分布は出さない。
+ * 残す長さは `DEMOTED_CARD_MS`（2026-10-24 ユーザー選択「10 秒 (Recommended)」）。
+ */
+function KyoshinDemotedCard({ event }: { event: DetectionEvent }) {
+  const reason = gateShortfall(event)
+  const time = new Date(event.originTimeMs).toLocaleTimeString('ja-JP', { hour12: false })
+  return (
+    <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${SHINDO0_COLOR}`, backgroundColor: 'rgba(42,42,42,0.6)' }}>
+      <div className="flex items-center gap-2 px-3 py-1.5">
+        <span className="text-xs font-bold px-1.5 py-0.5 rounded-sm shrink-0" style={{ backgroundColor: SETTLED_CHIP_BG, color: '#fff' }}>
+          取り下げ
+        </span>
+        <span className="text-xs text-secondary">強震モニタ検知</span>
+        <span className="text-xs text-secondary ml-auto font-mono">{time}</span>
+      </div>
+      {reason && <p className="text-xs text-secondary px-3 pb-2">{reason}</p>}
+    </div>
+  )
+}
+
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections, kyoshinDetectedPoints, swaveArrival, visible, speakingEewKey, eewNoForecastSettledKeys, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: Props) {
+export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections, kyoshinDetectedPoints, kyoshinDemoted, swaveArrival, visible, speakingEewKey, eewNoForecastSettledKeys, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: Props) {
   // ブラウザのタブ・ウィンドウ側の可視性は App では判らないため、ここで合成する。
   const pageVisible = usePageVisible()
+  const subregions = useLoadedSubRegions()
   // 取消が届いたときに寄せるのは、取消がいちばん新しいカード 1 枚だけ（→ EEWCard の `followCancel`）。
   let latestCancelKey: string | null = null
   let latestCancelMs = -Infinity
@@ -1554,10 +1645,14 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
           N 件の別地震に見せず「広域・N地域」として 1 枚にまとめる。 */}
       {(() => {
         const events = [...kyoshinV2Detections].filter(d => d.confidence !== 'weak')
-        if (events.length === 0) return null
+        if (events.length === 0 && kyoshinDemoted.length === 0) return null
         return (
           <div className="flex flex-col gap-2">
-            <KyoshinDetectionSummary events={events} points={kyoshinDetectedPoints} visible={visible && pageVisible} />
+            {events.length > 0 && (
+              <KyoshinDetectionSummary events={events} points={kyoshinDetectedPoints} visible={visible && pageVisible} subregions={subregions} />
+            )}
+            {/* 確定を降ろした検知は、主のカードの下に理由を添えて並べる */}
+            {kyoshinDemoted.map(e => <KyoshinDemotedCard key={e.id} event={e} />)}
             <p className="text-xs text-secondary">※強震モニタによる推定値。気象庁発表とは異なる場合があります。</p>
           </div>
         )

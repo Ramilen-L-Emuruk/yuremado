@@ -234,7 +234,7 @@ export interface DetectionEvent {
    * あちらが「動いていない」証拠を数えるもので、見ていない間を証拠にしないため
    */
   isolatedSilentKeys: string[]
-  /** 最後に spread（size ≥ MIN_LIKELY_POINTS）を持った dataTime(ms)。LIKELY_HOLD_MS の likely/faint 保持に使う。未達は 0 */
+  /** 最後に spread（size ≥ MIN_LIKELY_POINTS。疎な地域では SPARSE_MIN_POINTS）を持った dataTime(ms)。LIKELY_HOLD_MS の likely/faint 保持に使う。未達は 0 */
   lastSpreadAtMs: number
   /**
    * 一度でも周囲の同時上昇（`NEIGHBOR_RISE_FRAC`）を満たしたか。likely へ上げる条件のラッチ（§32）。
@@ -545,7 +545,8 @@ export const PARAMS = {
   CONFIRM_POINTS: 5,
   /**
    * 確定点数の密度正規化（改良5・疎地域救済）。局所に実在する観測点が少ない地域（離島・過疎網）では
-   * CONFIRM_POINTS を「(局所実在近傍数+1) × この割合」まで下げる（下限 MIN_LIKELY_POINTS）。
+   * CONFIRM_POINTS を「(局所実在近傍数+1) × この割合」まで下げる（下限 MIN_LIKELY_POINTS。近傍が
+   * SPARSE_AVAIL_MAX 以下なら SPARSE_MIN_POINTS。§39）。
    * 例: 奄美（局所実在 ~3）は 3 点で確定可。密な網（局所実在 ≥8）は CONFIRM_POINTS のまま。
    * 近傍一致（L2）自体が空間コヒーレンスを要求するので、平常時ノイズは点数を下げても通らない。
    */
@@ -614,7 +615,7 @@ export const PARAMS = {
   EEW_CONFIRM_FRAMES: 1,
   /**
    * likely/faint のティア保持(ms)。一度 likely/faint に達した（spread を持った）イベントは、揺れの面が
-   * 一時的に MIN_LIKELY_POINTS を割ってもこの間はティアを維持する（confirmed の everConfirmed ラッチに
+   * 一時的に MIN_LIKELY_POINTS（疎な地域では SPARSE_MIN_POINTS）を割ってもこの間はティアを維持する（confirmed の everConfirmed ラッチに
    * 相当するが、こちらは「最後に spread を持ったフレームからの経過」で切る時間上限付き）。confirmed 未達の
    * 弱いイベント（例: 福岡 M2.4 震度1）が面の収縮で数秒後に weak＝非表示へ即転落し「検知が一瞬で消える」
    * のを防ぐ。1 局居残りで無限表示にならないよう survival(HOLD_MS)ではなく spread 基準で上限を切る。
@@ -638,8 +639,26 @@ export const PARAMS = {
    *  - 気象庁が発表した地震で likely 止まりだったもの（＝福岡型。音を鳴らしたい弱い実地震）は 22〜26%
    *  - 都市部の常習点による誤検知は 2〜12%
    *  - 実地震 735 件で確定検知（confirmed）の到達時刻は 1 件も動かない。likely を失うのは熊本 M2.1 の 1 件
+   *
+   * **likely に周囲の同時上昇を要することは承認済み**（2026-10-22 ユーザー選択「今のまま記録する
+   * (Recommended)」）。熊本 M2.1 の候補音は失うが、止めた誤検知（64→22 件）のほうが大きい。離島で裏付けを
+   * 取りにくいことは §39 の疎な地域の要件で扱う。
    */
   NEIGHBOR_RISE_FRAC: 0.15,
+
+  // ---- 疎な地域（設計書§39） ----
+  /**
+   * 「疎な点」とみなす近傍数（`R_KM` 以内の実在点数）の上限。-1 にすると無効（どの点も疎にならない）。
+   * 疎な点だけでできた成分・イベントは、点数の要件（成分の `MIN_CLUSTER`・広がりの
+   * `MIN_LIKELY_POINTS`・確定点数の下限）を `SPARSE_MIN_POINTS` まで下げる。
+   *
+   * 2 の根拠（ベンチ 795 窓・2026-10-24）: 離島・南西諸島の地震の検知率が 14% → 41%（本土 84% → 85%）。
+   * 1 では 33%。地震と無関係な検知は 24 件のまま（平常の窓 14.3 時間で 0 件のまま）で、悪くなった窓は 0。
+   * 2026-10-24 ユーザー選択「案 A を入れる (Recommended)」。
+   */
+  SPARSE_AVAIL_MAX: 2,
+  /** 疎な地域で要求する点数。 */
+  SPARSE_MIN_POINTS: 2,
 
   // ---- 特異度・第2軸（セル別慢性活性） ----
   /** セル慢性活性の学習時定数(ms)。長時定数で「その地域が平常時どれだけ点を出すか」を学ぶ */
@@ -894,12 +913,21 @@ function windowRate(hist: { t: number; v: number }[], now: number): number | nul
  * 高い震度ほどノイズ床（FLOOR_CAP=1.5）から離れていることが根拠。判定は成分ごとに閉じているため、
  * 他所のノイズの有無で本物の判定が変わることはない。
  *
+ * **成分の全員が疎な点（近傍数が `SPARSE_AVAIL_MAX` 以下）なら、通常の段を `SPARSE_MIN_POINTS` へ下げる**
+ * （設計書§39）。離島・過疎網では、そもそも 3 点の面を作れる点が無い。
+ *
  * @param maxValue 成分内メンバーの現在 value の最大
+ * @param sparse 成分の全員が疎な点か
  */
-function requiredClusterSize(maxValue: number): number {
+function requiredClusterSize(maxValue: number, sparse: boolean): number {
   if (maxValue >= PARAMS.SOLO_CLUSTER_INTENSITY) return 1
   if (maxValue >= PARAMS.HIGH_CONFIRM_INTENSITY) return PARAMS.HIGH_CLUSTER_POINTS
-  return PARAMS.MIN_CLUSTER
+  return sparse ? Math.min(PARAMS.MIN_CLUSTER, PARAMS.SPARSE_MIN_POINTS) : PARAMS.MIN_CLUSTER
+}
+
+/** 近傍数が `SPARSE_AVAIL_MAX` 以下の点か（設計書§39）。無効（-1）なら常に偽。 */
+function isSparseAvail(avail: number): boolean {
+  return avail <= PARAMS.SPARSE_AVAIL_MAX
 }
 
 function connectedComponents(keys: string[], neighbors: Record<string, string[]>): string[][] {
@@ -1217,7 +1245,7 @@ export function step(
       const v = cur.get(k)?.value
       if (v != null && v > maxV) maxV = v
     }
-    return c.length >= requiredClusterSize(maxV)
+    return c.length >= requiredClusterSize(maxV, c.every((k) => isSparseAvail(m.avail[k] ?? 0)))
   })
   const confirmedShaking = clusters.flat()
   const shakingSet = new Set(confirmedShaking)
@@ -1353,6 +1381,15 @@ function associate(
   for (const comp of components) {
     const compSet = new Set(comp)
     const compCells = new Set(comp.map((k) => cellOf[k]).filter(Boolean))
+    // 高震度の免除（`updateEventMetrics` の `smallCluster`）に渡す成分の点数。**成分の最大が高震度のときだけ**
+    // 渡し、そうでなければ 0（免除しない）。疎な地域（§39）では低震度の 2 点も成分になるので、点数だけを
+    // 渡すと「高震度で認められた小さな成分」という免除の根拠が「疎な 2 点の成分」にすり替わる
+    let compMax = -Infinity
+    for (const k of comp) {
+      const v = cur.get(k)?.value
+      if (v != null && v > compMax) compMax = v
+    }
+    const exemptCompSize = compMax >= PARAMS.HIGH_CONFIRM_INTENSITY ? comp.length : 0
 
     // 既存イベントへの帰属: メンバー重複率 or セル共有（震央ジッタでも同一 ID を保つ）。
     let target: DetectionEvent | undefined
@@ -1381,7 +1418,7 @@ function associate(
         sites,
         now,
         eewActive,
-        comp.length,
+        exemptCompSize,
       )
       updated.add(target.id)
     } else {
@@ -1418,7 +1455,7 @@ function associate(
         sites,
         now,
         eewActive,
-        comp.length,
+        exemptCompSize,
       )
       events.push(ev)
       updated.add(ev.id)
@@ -1627,14 +1664,17 @@ function updateEventMetrics(
   const isChronic = chronic >= PARAMS.CHRONIC_THRESHOLD
 
   // 確定点数: 密な網では CONFIRM_POINTS（＋慢性活性セルは引き上げ）。疎地域（局所実在近傍が少ない
-  // 離島・過疎網）では「(局所実在数+1)×CONFIRM_DENSITY_FRAC」まで下げる（下限 MIN_LIKELY_POINTS）。
+  // 離島・過疎網）では「(局所実在数+1)×CONFIRM_DENSITY_FRAC」まで下げる（下限 MIN_LIKELY_POINTS、疎なら SPARSE_MIN_POINTS）。
   // EEW 発表中は基礎点数を EEW_CONFIRM_POINTS に差し替えて確定を早める（震源非依存のまま・§19）。
   // 慢性活性セルの引き上げ幅はそのまま適用し、EEW 中でも慢性ノイズ地域の慎重さは維持する。
   const confirmPointsBase = eewActive ? PARAMS.EEW_CONFIRM_POINTS : PARAMS.CONFIRM_POINTS
   const confirmPointsReq = confirmPointsBase + (isChronic ? PARAMS.CHRONIC_POINT_BUMP : 0)
   const densityReq = Math.ceil((availLocal + 1) * PARAMS.CONFIRM_DENSITY_FRAC)
+  // 疎な地域（設計書§39）では点数の下限も下げる。広がり（hasSpread）と同じ基準
+  const sparseEvent = isSparseAvail(availLocal)
+  const minPoints = sparseEvent ? Math.min(PARAMS.MIN_LIKELY_POINTS, PARAMS.SPARSE_MIN_POINTS) : PARAMS.MIN_LIKELY_POINTS
   const effectiveConfirmReq = Math.max(
-    PARAMS.MIN_LIKELY_POINTS,
+    minPoints,
     Math.min(confirmPointsReq, densityReq),
   )
   const confirmIntensityReq = isChronic
@@ -1666,6 +1706,8 @@ function updateEventMetrics(
   // 成立する。§29）。単点・2点の成分は毎フレーム requiredClusterSize を満たし直す必要があるため、
   // 値が閾値付近で 1 フレーム沈むと確定が遅れるが、それは受容している（変更前は単点では永久に
   // 確定しなかったので劣化ではない。実データ 34 窓では保持の有無で結果が一切変わらなかった）。
+  // compSize は高震度の成分のときだけ渡る（呼び出し側の `exemptCompSize`）。疎な地域の低震度の 2 点の成分
+  // （§39）は 0 で渡り、免除の根拠にならない
   const smallCluster = compSize > 0 && compSize < PARAMS.MIN_CLUSTER
   const highIntenseCount = activeVals.filter((v) => v >= PARAMS.HIGH_CONFIRM_INTENSITY).length
   const meetsHighFastPath =
@@ -1753,9 +1795,9 @@ function updateEventMetrics(
   // 確信度: 実在性（広がり size）は L2 で担保済み。ここで点数・最大震度から段階化する。
   //  - confirmed/likely は震度1以上（音を鳴らす重み）。confirmed 到達後は HOLD 中ラッチで維持。
   //  - faint は同期 onset の広がりはあるが震度1未満（震度0級）。無音で控えめに可視化する。
-  const hasSpread = size >= PARAMS.MIN_LIKELY_POINTS
+  const hasSpread = size >= minPoints
   if (hasSpread) e.lastSpreadAtMs = now
-  // spread を持った likely/faint は、面が一時的に MIN_LIKELY_POINTS を割っても LIKELY_HOLD_MS の間は
+  // spread を持った likely/faint は、面が一時的に MIN_LIKELY_POINTS（疎なら SPARSE_MIN_POINTS）を割っても LIKELY_HOLD_MS の間は
   // ティアを維持する（confirmed の everConfirmed ラッチに相当・時間上限付き）。confirmed 未達の弱い
   // イベントが数秒で weak（非表示）へ即転落し「検知が一瞬で消える」のを防ぐ。
   const spreadHeld =
@@ -1767,7 +1809,7 @@ function updateEventMetrics(
     e.confidence = 'confirmed'
   } else if (soloTooLong) {
     // **降ろした確定を下位ティアへ回り込ませない。** 3 点以上が鎖状に併合されると（併合は重心間
-    // 100km で greedy に連なるため、互いに 40km 超でも成立する）`size` が MIN_LIKELY_POINTS に届き、
+    // 100km で greedy に連なるため、互いに 40km 超でも成立する）`size` が MIN_LIKELY_POINTS（疎なら SPARSE_MIN_POINTS）に届き、
     // `spreadHeld` が立って `faint`、条件次第では `likely` にまで上がる。likely は候補音を鳴らす。
     // 「本物ではない」と判断して降ろしたものが下から出てくるのでは降ろした意味が無い
     e.confidence = 'weak'
@@ -1796,7 +1838,7 @@ function updateEventMetrics(
     likelyIntensityReq: PARAMS.MIN_LIKELY_INTENSITY,
     chronic: isChronic,
     // 疎地域の引き下げが「実際に効いたか」を見る。`densityReq < confirmPointsReq` で判定すると、
-    // 下限（MIN_LIKELY_POINTS）に頭を押さえられて結局下がらなかった場合まで真になる
+    // 下限（MIN_LIKELY_POINTS、疎なら SPARSE_MIN_POINTS）に頭を押さえられて結局下がらなかった場合まで真になる
     sparse: effectiveConfirmReq < confirmPointsReq,
     eewActive,
     soloStale: soloTooLong,

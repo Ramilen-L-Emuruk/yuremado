@@ -187,6 +187,8 @@ export interface KnetStation {
  * 前提に依存しているため、この前提を経由しない新しい呼び出し元を追加する場合は要注意。
  */
 export function groupIntoStations(files: KnetAsciiFile[]): { stations: KnetStation[]; skippedIncomplete: number } {
+  // 地中の記録を使わないことは承認済み（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。気象庁の震度に対応するのは地表の記録。
+  // 3 成分の揃わない観測点を取り込まないこと（下）も承認済み（同日・同じ選択）
   const surface = files.filter((f) => f.depthKind === 'surface')
   const byStation = new Map<string, Partial<Record<KnetComponent, KnetAsciiFile>>>()
   for (const f of surface) {

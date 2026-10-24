@@ -256,6 +256,8 @@ export function deriveKyoshinView(
   // confirmed 各イベント（地域）の代表点＋メンバー最大インデックス（地域単位発報の入力）と、
   // その最大を記録した観測点の座標（揺れフォーカスの寄り先）。
   const confirmedShocks = confirmedEvents.flatMap<ConfirmedShock>((e) => {
+    // 重心を持たない確定は地域単位の発報から外れる。作りの上ほぼ起きない（795 窓で 0 フレーム）ので、
+    // このままにする（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）
     if (!e.epicenter) return []
     // 同じ最大値が並んだときは先に現れた観測点を採る（`memberKeys` の並び順＝検知エンジンが
     // メンバーを束ねた順。どちらも「最も強く揺れている点」なので優劣を付ける根拠が無い）。

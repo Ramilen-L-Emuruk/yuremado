@@ -19,6 +19,13 @@ export interface KyoshinImportFileError {
   message: string
 }
 
+/** 取り込めたが、読めない観測点を外したファイル。 */
+export interface KyoshinImportExclusion {
+  fileName: string
+  /** 外した観測点の数（1 以上） */
+  excludedStations: number
+}
+
 export interface UseKyoshinImportResult {
   /** インポート済みイベントが1件以上あるアーカイブだけを列挙する。 */
   summaries: KyoshinImportSummary[]
@@ -28,6 +35,8 @@ export interface UseKyoshinImportResult {
   deletingArchiveId: string | null
   /** 直近の`importFiles`呼び出しで失敗したファイル（成功したファイルはここに含めない）。 */
   errors: KyoshinImportFileError[]
+  /** 直近の`importFiles`呼び出しで、観測点を外して取り込んだファイル。外さずに済んだファイルは含めない。 */
+  exclusions: KyoshinImportExclusion[]
   /** 直近の`deleteArchive`呼び出しが失敗した場合のメッセージ。成功時・未実行時はnull。 */
   deleteError: string | null
   /**
@@ -44,6 +53,7 @@ export function useKyoshinImport(historicalArchives: HistoricalArchiveIndex): Us
   const [importing, setImporting] = useState(false)
   const [deletingArchiveId, setDeletingArchiveId] = useState<string | null>(null)
   const [errors, setErrors] = useState<KyoshinImportFileError[]>([])
+  const [exclusions, setExclusions] = useState<KyoshinImportExclusion[]>([])
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [storageError, setStorageError] = useState(false)
 
@@ -76,10 +86,11 @@ export function useKyoshinImport(historicalArchives: HistoricalArchiveIndex): Us
       // （対応するアーカイブが無い・破損したZIP等）で残りの取り込みを無駄にしないため
       // （capture-kyoshin-waveform.tsのイベント単位try/catchと同じ考え方）。
       const fileErrors: KyoshinImportFileError[] = []
+      const fileExclusions: KyoshinImportExclusion[] = []
       for (const file of Array.from(files)) {
         try {
           const zip = new Uint8Array(await file.arrayBuffer())
-          const event = buildEventResultFromZip(zip, STEP_SEC_DEFAULT)
+          const { event, excludedStations } = buildEventResultFromZip(zip, STEP_SEC_DEFAULT)
           const originTime = parseJstTimestamp(event.originTimeJst)
           const meta = findCoveringArchiveSync(historicalArchives, originTime, new Date(originTime.getTime() + 1))
           if (!meta) {
@@ -88,11 +99,14 @@ export function useKyoshinImport(historicalArchives: HistoricalArchiveIndex): Us
           if (!(await saveImportedEvent(meta.id, event))) {
             throw new Error('保存に失敗しました（この端末では保存機能が使えない可能性があります）')
           }
+          // 保存まで済んだものだけ知らせる（失敗したファイルはエラーの側に出る）
+          if (excludedStations > 0) fileExclusions.push({ fileName: file.name, excludedStations })
         } catch (err) {
           fileErrors.push({ fileName: file.name, message: err instanceof Error ? err.message : String(err) })
         }
       }
       setErrors(fileErrors)
+      setExclusions(fileExclusions)
     } finally {
       setImporting(false)
     }
@@ -110,5 +124,5 @@ export function useKyoshinImport(historicalArchives: HistoricalArchiveIndex): Us
     }
   }, [])
 
-  return { summaries, importing, deletingArchiveId, errors, deleteError, storageError, importFiles, deleteArchive }
+  return { summaries, importing, deletingArchiveId, errors, exclusions, deleteError, storageError, importFiles, deleteArchive }
 }

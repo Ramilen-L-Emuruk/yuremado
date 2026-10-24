@@ -48,6 +48,7 @@ function makeDeps(over: Partial<KyoshinAlertsDeps> = {}): KyoshinAlertsDeps {
     defaultTabRef: { current: 'earthquake' as TabId },
     setActiveTab: vi.fn(),
     revertToDefaultTab: vi.fn(),
+    reonset: null,
     onShakeFocus: vi.fn(),
     ...over,
   }
@@ -61,7 +62,7 @@ describe('useKyoshinAlerts の揺れフォーカス要求', () => {
 
   it('[正] レベルが上がったら、レベルを担ったイベントの代表点を通知する', () => {
     const onShakeFocus = vi.fn()
-    // 震度3（index 11 → レベル1）で確定。初観測なので基準値を作るだけで音は鳴らない。
+    // 震度3（index 11 → レベル3）で確定。初観測なので基準値を作るだけで音は鳴らない。
     const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
       initialProps: makeDeps({
         confirmed: true,
@@ -72,7 +73,7 @@ describe('useKyoshinAlerts の揺れフォーカス要求', () => {
     expect(playKyoshinUpdateSound).not.toHaveBeenCalled()
     expect(onShakeFocus).not.toHaveBeenCalled()
 
-    // 震度4（index 13 → レベル2）へ上がる。弱いままの地域も残しておく——寄り先は
+    // 震度4（index 13 → レベル4）へ上がる。弱いままの地域も残しておく——寄り先は
     // 「レベルを担った方」でなければならない。
     rerender(makeDeps({
       confirmed: true,
@@ -119,14 +120,14 @@ describe('useKyoshinAlerts の揺れフォーカス要求', () => {
     const props = (i: number, shocks: typeof NOTO[]) =>
       makeDeps({ confirmed: true, confirmedShocks: shocks, dataTime: at(i), onShakeFocus })
 
-    // 震度4（index 13 → レベル2）で確定し、遠方が登録されて持続する。
+    // 震度4（index 13 → レベル4）で確定し、遠方が登録されて持続する。
     const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
       initialProps: props(0, [{ ...NOTO, index: 13 }]),
     })
     for (let i = 1; i <= 2; i++) rerender(props(i, [{ ...NOTO, index: 13 }, FUKUOKA]))
     expect(onShakeFocus).not.toHaveBeenCalled()
 
-    // 別地点の発報が成立するフレームで、同時に最大震度も上がる（5弱 → レベル3）。
+    // 別地点の発報が成立するフレームで、同時に最大震度も上がる（5弱 → レベル5）。
     rerender(props(3, [{ ...NOTO, index: 15 }, FUKUOKA]))
 
     // 強まりと別地点の両方が要求を出し、最後は別地点。
@@ -154,5 +155,87 @@ describe('useKyoshinAlerts の揺れフォーカス要求', () => {
     // 別地点も同じく、その地域で最大震度を記録した観測点へ寄せる（重心ではない）。
     expect(onShakeFocus).toHaveBeenCalledWith(FUKUOKA.peak)
     expect(onShakeFocus).not.toHaveBeenCalledWith({ lat: FUKUOKA.lat, lng: FUKUOKA.lng })
+  })
+
+  describe('同じ場所の 2 つ目の地震（設計書§40）', () => {
+    const t0 = new Date('2026-08-23T12:00:00.000Z').getTime()
+    const at = (i: number) => new Date(t0 + i * 1000).toISOString()
+    const SECOND = { lat: 37.3, lng: 137.0 }
+    /** 合図。`atMs` はフレームのデータ時刻（`at(i)` と同じ物差し）。印はイベント ID と時刻から作る */
+    const signalAt = (i: number, focus: typeof SECOND | null = SECOND) => ({ key: `evt-1@${t0 + i * 1000}`, atMs: t0 + i * 1000, focus })
+    const SIGNAL = signalAt(1)
+
+    it('[正] 合図があれば検知音を鳴らし、その点へ寄せる', () => {
+      const onShakeFocus = vi.fn()
+      const setActiveTab = vi.fn()
+      const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
+        initialProps: makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(0), onShakeFocus, setActiveTab }),
+      })
+      vi.mocked(playAlertSound).mockClear()
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(1), onShakeFocus, setActiveTab, reonset: SIGNAL }))
+      expect(playAlertSound).toHaveBeenCalledWith('kyoshin')
+      expect(onShakeFocus).toHaveBeenLastCalledWith(SECOND)
+      expect(setActiveTab).toHaveBeenLastCalledWith('realtime')
+    })
+
+    it('[安全弁] 寄せ先が引けない合図でも、音とタブ移動は出す（寄せだけ省く）', () => {
+      const onShakeFocus = vi.fn()
+      const setActiveTab = vi.fn()
+      const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
+        initialProps: makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(0), onShakeFocus, setActiveTab }),
+      })
+      vi.mocked(playAlertSound).mockClear()
+      onShakeFocus.mockClear()
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(1), onShakeFocus, setActiveTab, reonset: signalAt(1, null) }))
+      expect(playAlertSound).toHaveBeenCalledWith('kyoshin')
+      expect(setActiveTab).toHaveBeenLastCalledWith('realtime')
+      expect(onShakeFocus).not.toHaveBeenCalled()
+    })
+
+    it('[安全弁] 同じ合図のまま時刻だけ進んでも、作り直された同じ印の合図でも、鳴り直さない', () => {
+      // 検知結果が止まっている間（時刻だけ進む）と、`useMemo` の再計算（同じ中身の新しいオブジェクト）
+      const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
+        initialProps: makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(0) }),
+      })
+      vi.mocked(playAlertSound).mockClear()
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(1), reonset: signalAt(1) }))
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(1), reonset: signalAt(1) }))
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(2), reonset: signalAt(1) }))
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(3), reonset: signalAt(1) }))
+      expect(vi.mocked(playAlertSound).mock.calls.filter(([t]) => t === 'kyoshin')).toHaveLength(1)
+    })
+
+    it('[正] 印が変われば（次の合図）また鳴らす', () => {
+      const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
+        initialProps: makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(0) }),
+      })
+      vi.mocked(playAlertSound).mockClear()
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(1), reonset: signalAt(1) }))
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(2), reonset: null }))
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(70), reonset: signalAt(70) }))
+      expect(vi.mocked(playAlertSound).mock.calls.filter(([t]) => t === 'kyoshin')).toHaveLength(2)
+    })
+
+    it('[対照] 合図が無ければ鳴らさない', () => {
+      const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
+        initialProps: makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(0) }),
+      })
+      vi.mocked(playAlertSound).mockClear()
+      rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO], dataTime: at(1) }))
+      expect(playAlertSound).not.toHaveBeenCalled()
+    })
+
+    it('[安全弁] 同じフレームで別地点として鳴らしていたら、重ねて鳴らさない', () => {
+      const onShakeFocus = vi.fn()
+      const props = (i: number, reonset: ReturnType<typeof signalAt> | null = null) =>
+        makeDeps({ confirmed: true, confirmedShocks: i === 0 ? [NOTO] : [NOTO, FUKUOKA], dataTime: at(i), onShakeFocus, reonset })
+      const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), { initialProps: props(0) })
+      for (let i = 1; i <= 2; i++) rerender(props(i))
+      vi.mocked(playAlertSound).mockClear()
+      // 別地点の発報が成立するフレームに、2 つ目の合図も重なる
+      rerender(props(3, signalAt(3)))
+      expect(vi.mocked(playAlertSound).mock.calls.filter(([t]) => t === 'kyoshin')).toHaveLength(1)
+      expect(onShakeFocus).toHaveBeenLastCalledWith(FUKUOKA.peak)
+    })
   })
 })

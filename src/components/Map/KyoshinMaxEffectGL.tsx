@@ -2,13 +2,20 @@ import { useEffect, useRef } from 'react'
 import type { GeoJSONSource } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import type { SiteCoords } from '../../services/kyoshin'
+import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import { kyoshinIntensityColor, kyoshinIndexToJma } from '../../utils/kyoshinIntensity'
 import { addOrderedLayer } from './gl/layerOrder'
 
 // 最大震度更新時の波紋エフェクトを描画する MapLibre 版（Leaflet の KyoshinMaxEffect 相当）。
-// 波紋は表示上のJMA震度階級（kyoshinIndexToJma の rank）が MIN_TRIGGER_RANK 以上へ
-// 1段階以上上がったときに発生する短命アニメーション（同時に有効なのは通常 0〜1 個）。
+// 波紋は**検知に入った点**（地図の検知点バッジと同じ点の集まり）の中での最大の表示階級
+// （kyoshinIndexToJma の rank）が MIN_TRIGGER_RANK 以上へ 1 段階以上上がったときに発生する
+// 短命アニメーション（同時に有効なのは通常 0〜1 個）。
+//
+// 以前は全観測点の生値の最大を見ていて、控えの 795 窓では波紋 1,554 回のうち 1,126 回（72%）が
+// 検知の外の点だった（平常の 14.3 時間では 290 回中 289 回）。検知エンジンを通らない 1 点の跳ねで
+// 光るため、検知に入った点だけに絞った（2026-10-22 ユーザー選択「検知に入った点だけにする」）。
+// 対象は確定・可能性・兆候のメンバー（weak を除く。孤立した震度0 を落とした後）で、
+// 検知点バッジ・検知カードと同じ集合（2026-10-24 ユーザー選択「検知点バッジと同じ点」）。
 // 円の stroke を DURATION ミリ秒かけて拡大＋フェードさせる。
 //
 // MapLibre では波紋 1 個を circle feature 1 個で表し、rAF ループで半径・stroke 不透明度を
@@ -70,6 +77,31 @@ function getRippleExpansion(scale: number): number {
   return RIPPLE_EXPANSION[scale] ?? 2.5
 }
 
+/**
+ * 波紋を出すかの判定（描画から切り離した純粋関数）。
+ *
+ * @param points 検知に入った点
+ * @param prevRank 前回見た最大の表示階級（未観測は -1）
+ * @returns 次に覚えておく階級と、波紋を出す点とその階級値（出さないなら null）
+ */
+export function decideRipple(
+  points: readonly DetectedPoint[],
+  prevRank: number,
+): { rank: number; trigger: { point: DetectedPoint; scale: number } | null } {
+  // 検知が無ければ最大は -1 のまま＝「下がった」扱いで前回の階級を落とす。次の検知では
+  // 最初の点が階級を持った時点で波紋が出る。
+  let maxPoint: DetectedPoint | null = null
+  for (const p of points) {
+    if (maxPoint === null || p.index > maxPoint.index) maxPoint = p
+  }
+  const jma = maxPoint ? kyoshinIndexToJma(maxPoint.index) : null
+  const rank = jma?.rank ?? -1
+  // rank が下がった（揺れが収まった・再生リセット等）場合は前回 rank を追従させるだけ。
+  if (rank <= prevRank) return { rank, trigger: null }
+  if (!jma || !maxPoint || rank < MIN_TRIGGER_RANK) return { rank, trigger: null }
+  return { rank, trigger: { point: maxPoint, scale: jma.scale } }
+}
+
 interface Ripple {
   id: number
   color: string
@@ -80,13 +112,13 @@ interface Ripple {
 }
 
 interface Props {
-  sites: SiteCoords
-  indices: number[]
+  /** 検知に入った点（`detectedMarkerPoints` と `unconfirmedPoints` を合わせたもの）。 */
+  points: readonly DetectedPoint[]
   iconScale: number
   visible: boolean
 }
 
-export function KyoshinMaxEffectGL({ sites, indices, iconScale, visible }: Props) {
+export function KyoshinMaxEffectGL({ points, iconScale, visible }: Props) {
   const map = useMapGL()
   const ripplesRef = useRef<Ripple[]>([])
   const rafRef = useRef<number | null>(null)
@@ -174,32 +206,14 @@ export function KyoshinMaxEffectGL({ sites, indices, iconScale, visible }: Props
   // 最大震度階級（rank）の監視。MIN_TRIGGER_RANK 以上へ1段階以上上がったら波紋を発生させる。
   // MAP-2: 非表示中は監視・波紋発生・rAF ループを止める（24/7 常駐 PWA の無駄な GPU/CPU 消費対策）。
   useEffect(() => {
-    if (!map || !addedRef.current || indices.length === 0 || sites.length === 0 || !visible) return
+    if (!map || !addedRef.current || !visible) return
 
-    let maxIdx = -1
-    let maxSiteIdx = -1
-    for (let i = 0; i < indices.length; i++) {
-      if (indices[i] > maxIdx) {
-        maxIdx = indices[i]
-        maxSiteIdx = i
-      }
-    }
-
-    const jma = kyoshinIndexToJma(maxIdx)
-    const rank = jma?.rank ?? -1
-
-    // rank が下がった（揺れが収まった・再生リセットやデータソース切替で最大値が変わった等）場合は
-    // 前回 rank を追従させるだけで、波紋は発生させない。
-    if (rank < prevRankRef.current) {
-      prevRankRef.current = rank
-      return
-    }
-
-    if (jma && rank >= MIN_TRIGGER_RANK && rank > prevRankRef.current && maxSiteIdx >= 0) {
-      const [lat, lng] = sites[maxSiteIdx]
-      const color = kyoshinIntensityColor(maxIdx) ?? '#ffffff'
-      const baseRadius = getRippleBaseRadius(jma.scale) * iconScale
-      const expansion = getRippleExpansion(jma.scale)
+    const { rank, trigger } = decideRipple(points, prevRankRef.current)
+    if (trigger) {
+      const { lat, lng, index } = trigger.point
+      const color = kyoshinIntensityColor(index) ?? '#ffffff'
+      const baseRadius = getRippleBaseRadius(trigger.scale) * iconScale
+      const expansion = getRippleExpansion(trigger.scale)
       const id = nextIdRef.current++
       const feature: Feature<Point> = {
         type: 'Feature',
@@ -213,7 +227,7 @@ export function KyoshinMaxEffectGL({ sites, indices, iconScale, visible }: Props
     }
 
     prevRankRef.current = rank
-  }, [map, indices, sites, iconScale, visible])
+  }, [map, points, iconScale, visible])
 
   // 表示切替（モード切替用）。
   useEffect(() => {

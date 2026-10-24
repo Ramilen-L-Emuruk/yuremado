@@ -79,7 +79,8 @@ describe('buildEventResultFromZip', () => {
       ...buildStationEntries('AAA001'),
       ...buildStationEntries('BBB002'),
     })
-    const result = buildEventResultFromZip(zip, 5)
+    const { event: result, excludedStations } = buildEventResultFromZip(zip, 5)
+    expect(excludedStations).toBe(0)
     expect(result.originTimeJst).toBe('20180906030759')
     expect(result.stationSeries).toHaveLength(2)
     expect(result.stationSeries.map((s) => s.stationCode).sort()).toEqual(['AAA001', 'BBB002'])
@@ -88,8 +89,104 @@ describe('buildEventResultFromZip', () => {
 
   test('対照: 観測点1件でも欠損なく算出できる', () => {
     const zip = zipSync(buildStationEntries('AAA001'))
-    const result = buildEventResultFromZip(zip, 5)
+    const { event: result } = buildEventResultFromZip(zip, 5)
     expect(result.stationSeries).toHaveLength(1)
+  })
+
+  // 以前は 1 本でも読めないと ZIP ごと失敗していた。2026-10-22 ユーザー選択「その観測点だけ外す (Recommended)」で覆した
+  test('正: 読めないファイルを持つ観測点だけを外し、外した数を返す', () => {
+    const broken = buildStationEntries('CCC003')
+    broken['CCC003.EW'] = strToU8('壊れたファイル')
+    const zip = zipSync({
+      ...buildStationEntries('AAA001'),
+      ...buildStationEntries('BBB002'),
+      ...broken,
+    })
+    const { event, excludedStations } = buildEventResultFromZip(zip, 5)
+    expect(excludedStations).toBe(1)
+    expect(event.stationSeries.map((s) => s.stationCode).sort()).toEqual(['AAA001', 'BBB002'])
+  })
+
+  test('正: 震度を計算できない観測点（サンプリング周波数が低すぎる）も外して数える', () => {
+    // 2026-10-24 ユーザー選択「外して数える (Recommended)」。以前はこの 1 点で ZIP ごと失敗していた
+    const low: Record<string, Uint8Array> = {}
+    for (const comp of ['NS', 'EW', 'UD'] as const) {
+      low[`CCC003.${comp}`] = strToU8(
+        buildStationFileText({ stationCode: 'CCC003', samplingHz: 1, data: sineWave(0.1, 300, 1, 600) }),
+      )
+    }
+    const zip = zipSync({ ...buildStationEntries('AAA001'), ...buildStationEntries('BBB002'), ...low })
+    const { event, excludedStations } = buildEventResultFromZip(zip, 5)
+    expect(excludedStations).toBe(1)
+    expect(event.stationSeries.map((s) => s.stationCode).sort()).toEqual(['AAA001', 'BBB002'])
+  })
+
+  test('対照: 読めないのが地中のファイル（.NS1 等）だけなら、何も外さない', () => {
+    const zip = zipSync({
+      ...buildStationEntries('AAA001'),
+      'AAA001.NS1': strToU8('壊れたファイル'),
+    })
+    const { event, excludedStations } = buildEventResultFromZip(zip, 5)
+    expect(excludedStations).toBe(0)
+    expect(event.stationSeries).toHaveLength(1)
+  })
+
+  test('安全弁: 外した観測点が半数を超えたら ZIP ごと断る', () => {
+    const entries: Record<string, Uint8Array> = { ...buildStationEntries('AAA001') }
+    for (const code of ['BBB002', 'CCC003']) {
+      Object.assign(entries, buildStationEntries(code))
+      entries[`${code}.UD`] = strToU8('壊れたファイル')
+    }
+    expect(() => buildEventResultFromZip(zipSync(entries), 5)).toThrow(/外した観測点が67%/)
+  })
+
+  test('安全弁: 3 成分が揃わない観測点と読めない観測点を合わせて半数を超えたら断る', () => {
+    // 2026-10-24 ユーザー選択「合わせて数える (Recommended)」。
+    // 揃う 3 点・揃わない 3 点（揃わない側だけなら 3/6 = 50% で止まらない）・読めない 2 点 → 合わせて 5/8
+    const entries: Record<string, Uint8Array> = {}
+    for (const code of ['AAA001', 'BBB002', 'CCC003']) Object.assign(entries, buildStationEntries(code))
+    for (const code of ['DDD004', 'EEE005', 'FFF006']) {
+      entries[`${code}.NS`] = strToU8(buildStationFileText({ stationCode: code, samplingHz: 100, data: sineWave(2, 300, 100, 2048) }))
+    }
+    for (const code of ['GGG007', 'HHH008']) {
+      Object.assign(entries, buildStationEntries(code))
+      entries[`${code}.UD`] = strToU8('壊れたファイル')
+    }
+    expect(() => buildEventResultFromZip(zipSync(entries), 5)).toThrow(/外した観測点が63%/)
+  })
+
+  test('対照: 揃わない観測点だけでちょうど半数なら断らない', () => {
+    const entries: Record<string, Uint8Array> = {}
+    for (const code of ['AAA001', 'BBB002', 'CCC003']) Object.assign(entries, buildStationEntries(code))
+    for (const code of ['DDD004', 'EEE005', 'FFF006']) {
+      entries[`${code}.NS`] = strToU8(buildStationFileText({ stationCode: code, samplingHz: 100, data: sineWave(2, 300, 100, 2048) }))
+    }
+    expect(buildEventResultFromZip(zipSync(entries), 5).event.stationSeries).toHaveLength(3)
+  })
+
+  test('正: 外した観測点ごとの名前と理由を返す（保存する記録には入れない）', () => {
+    const broken = buildStationEntries('CCC003')
+    broken['CCC003.EW'] = strToU8('壊れたファイル')
+    const zip = zipSync({ ...buildStationEntries('AAA001'), ...buildStationEntries('BBB002'), ...broken })
+    const r = buildEventResultFromZip(zip, 5)
+    expect(r.excluded).toHaveLength(1)
+    expect(r.excluded[0].station).toBe('CCC003')
+    expect(r.excluded[0].reason).toMatch(/^読めない（CCC003\.EW: /)
+    expect(Object.keys(r.event)).toEqual(['originTimeJst', 'stationSeries', 'peakIntensity'])
+  })
+
+  test('安全弁: 全部読めなければ、読めなかった理由を添えて断る', () => {
+    const zip = zipSync({ 'AAA001.NS': strToU8('壊れたファイル') })
+    expect(() => buildEventResultFromZip(zip, 5)).toThrow(/パースに失敗し、読めた観測点がありません/)
+  })
+
+  test('安全弁: 読めないファイルがあっても、別の地震の混在は今どおり断る', () => {
+    const zip = zipSync({
+      ...buildStationEntries('AAA001', { originTime: '2018/09/06 03:07:59' }),
+      ...buildStationEntries('BBB002', { originTime: '2018/10/05 08:58:53' }),
+      'CCC003.NS': strToU8('壊れたファイル'),
+    })
+    expect(() => buildEventResultFromZip(zip, 5)).toThrow(/異なる地震のOrigin Timeが混在/)
   })
 
   test('安全弁: ZIP内にNS/EW/UDファイルが1件も無いとエラーになる', () => {

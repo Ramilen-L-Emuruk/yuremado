@@ -3,7 +3,7 @@ import {
   dynamicRegionThresholdKm, isSameEarthquake, isRegionWithinAnyEew,
   createAlertRegionState, stepAlertRegions,
   REGION_MATCH_KM, DEFAULT_VIRTUAL_DEPTH_KM, DYNAMIC_THRESHOLD_SAFETY_FACTOR,
-  OUTBREAK_PROPAGATION_WINDOW_MS, NEW_REGION_COOLDOWN_MS, NEW_REGION_MIN_INDEX,
+  OUTBREAK_PROPAGATION_WINDOW_MS, NEW_REGION_COOLDOWN_MS,
   PROPAGATION_MAX_KM, isSameShakeAsBefore, type AlertRegion,
 } from './useKyoshinAlerts'
 import { reachRadiusKm } from '../utils/travelTime'
@@ -282,16 +282,29 @@ describe('stepAlertRegions', () => {
     expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 3000, new Map())).toEqual(FUKUOKA)
   })
 
-  it('震度が NEW_REGION_MIN_INDEX 未満の地域は鳴らさない（遠地へ届いた弱い揺れ）', () => {
+  // 意図的に覆した: 以前は震度3 未満（index 11 未満）の地域を鳴らさなかった。2026-10-22 に下限を外した
+  it.each([
+    ['震度2（index 10）', 10],
+    ['震度1（index 7）', 7],
+  ])('震度3 未満の地域でも、持続すれば別地点として鳴らす: %s', (_name, index) => {
     const t = 1_000_000
-    const weakFar = { ...FUKUOKA, index: NEW_REGION_MIN_INDEX - 1 }
+    const weakFar = { ...FUKUOKA, index }
     const state = createAlertRegionState()
     stepAlertRegions(state, [NOTO], t, new Map())
     let fired: unknown = null
     for (let i = 1; i <= COOLDOWN_FRAMES + 5; i++) {
       fired = stepAlertRegions(state, [NOTO, weakFar], t + i * 1000, new Map()) ?? fired
     }
-    expect(fired).toBeNull()
+    expect(fired).toEqual(weakFar)
+  })
+
+  it('安全弁: 震度が低くても、持続の前（登録から 2 秒未満）には鳴らさない', () => {
+    const t = 1_000_000
+    const weakFar = { ...FUKUOKA, index: 7 }
+    const state = createAlertRegionState()
+    stepAlertRegions(state, [NOTO], t, new Map())
+    expect(stepAlertRegions(state, [NOTO, weakFar], t + 1000, new Map())).toBeNull() // 登録
+    expect(stepAlertRegions(state, [NOTO, weakFar], t + 2000, new Map())).toBeNull() // 1 秒
   })
 
   it('EEW に吸収済みと記録された地域は、EEW が解除された後も鳴らさない', () => {

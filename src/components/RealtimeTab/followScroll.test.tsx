@@ -64,7 +64,7 @@ const tab = (eew: EEWAlert | EEWAlert[], opts: { speaking?: boolean; visible?: b
       eews={Array.isArray(eew) ? eew : [eew]}
       swaveArrival={null}
       kyoshinV2Detections={[]}
-      kyoshinDetectedPoints={[]}
+      kyoshinDetectedPoints={[]} kyoshinDemoted={[]}
       visible={opts.visible ?? true}
       speakingEewKey={opts.speaking ? 'evt-A' : null}
     />

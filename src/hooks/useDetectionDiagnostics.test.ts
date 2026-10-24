@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 //
-// 揺れ検知の診断記録を「保存するかどうか」を固定するテスト。
+// 揺れ検知の診断記録を保存することを固定するテスト。
 //
-// 録画モードでは保存を止める（IndexedDB への書き込みと、上限を超えたときの読み戻しが
-// 地震の最中に集中するため）。**止めるのは保存だけで、前後の切り出しは通したまま**という
-// ところが要点で、ここを一緒に止めると録画モードを解いた直後の検知で前側が欠ける。
+// 以前は録画モードで保存を止めていたが、2026-10-23 に録画モード中も保存すると決めた
+// （ユーザー選択「録画モード中も保存する (Recommended)」）。録画モードを渡す口そのものを外した。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, cleanup } from '@testing-library/react'
 import { initGates } from '../utils/kyoshinDetector'
@@ -38,7 +37,7 @@ function flushChain(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0))
 }
 
-function mount(enabled: boolean) {
+function mount() {
   return renderHook(() =>
     useDetectionDiagnostics(
       [DETECTION],
@@ -46,7 +45,6 @@ function mount(enabled: boolean) {
       INDICES,
       '2026-09-02T00:00:00.000Z',
       '20260123000000',
-      enabled,
     ),
   )
 }
@@ -61,26 +59,21 @@ describe('useDetectionDiagnostics の保存', () => {
     vi.unstubAllGlobals()
   })
 
-  it('正: 通常は記録を保存する', async () => {
+  it('正: 記録を保存する', async () => {
     // アンマウント（画面を閉じる相当）で、開いている記録が後ろ側の足りないまま確定する
-    mount(true).unmount()
+    mount().unmount()
     await flushChain()
     expect(saveRecord).toHaveBeenCalled()
   })
 
-  it('対照: 録画モードでは保存しない', async () => {
-    mount(false).unmount()
+  it('安全弁: 続けて開いた記録もそれぞれ保存する', async () => {
+    mount().unmount()
     await flushChain()
-    expect(saveRecord).not.toHaveBeenCalled()
-  })
+    const first = saveRecord.mock.calls.length
+    expect(first).toBeGreaterThan(0)
 
-  it('安全弁: 録画モードを解けばまた保存する（止めているのは保存だけ）', async () => {
-    mount(false).unmount()
+    mount().unmount()
     await flushChain()
-    expect(saveRecord).not.toHaveBeenCalled()
-
-    mount(true).unmount()
-    await flushChain()
-    expect(saveRecord).toHaveBeenCalled()
+    expect(saveRecord.mock.calls.length).toBeGreaterThan(first)
   })
 })

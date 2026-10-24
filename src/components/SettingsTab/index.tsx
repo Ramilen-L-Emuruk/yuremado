@@ -9,6 +9,7 @@ import type { ConnectionStatus } from '../../types/earthquake'
 import { dmdataConnectionLabel } from './connectionLabel'
 import { classificationLabel, type DmdataClassification } from '../../services/dmdataClassifications'
 import { INTENSITY_SCALE_COUNT, getIntensityLabel, getIntensityColor, INTENSITY_LABELS } from '../../utils/intensity'
+import { kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { readableTextColor } from '../../utils/contrast'
 import { playAlertSound, playCountdownBeep, playKyoshinUpdateSound, unlockAudio } from '../../utils/alertSound'
 import { checkVoicevoxAvailable, fetchVoicevoxSpeakers, isValidVoicevoxUrl, speakSequentially, VOICEVOX_URL_DEBOUNCE_MS, type VoicevoxSpeaker } from '../../utils/voicevox'
@@ -344,7 +345,7 @@ function DiagnosticLogRow() {
  * ZIPヘッダーのOrigin Timeから自動検出するため、ファイルを選ぶだけでよい（useKyoshinImport参照）。
  */
 function KyoshinImportRow({ historicalArchives }: { historicalArchives: HistoricalArchiveIndex }) {
-  const { summaries, importing, deletingArchiveId, errors, deleteError, storageError, importFiles, deleteArchive } = useKyoshinImport(historicalArchives)
+  const { summaries, importing, deletingArchiveId, errors, exclusions, deleteError, storageError, importFiles, deleteArchive } = useKyoshinImport(historicalArchives)
   const inputRef = useRef<HTMLInputElement>(null)
   const busy = importing || deletingArchiveId !== null
 
@@ -396,6 +397,17 @@ function KyoshinImportRow({ historicalArchives }: { historicalArchives: Historic
         </span>
       )}
       {deleteError && <span className="text-xs text-red-400 text-right">{deleteError}</span>}
+      {/* 文面は 2026-10-24 ユーザー選択「1 行出す (Recommended)」・「理由をまとめて書く (Recommended)」。
+          取り込みは成功しているので赤にしない。どの観測点をなぜ外したかは記録（log.warn）に残る */}
+      {exclusions.length > 0 && (
+        <div className="flex flex-col gap-0.5 items-end">
+          {exclusions.map((e, i) => (
+            <span key={`${i}-${e.fileName}`} className="text-xs text-secondary text-right break-all">
+              {`${e.fileName}：読めない、または震度を計算できない観測点 ${e.excludedStations} 点を除いて取り込みました`}
+            </span>
+          ))}
+        </div>
+      )}
       {errors.length > 0 && (
         <div className="flex flex-col gap-0.5 items-end">
           {errors.map((e, i) => (
@@ -834,8 +846,9 @@ async function speakVoicevoxPreview(baseUrl: string, speakerId: number, volume: 
   await speakSequentially(baseUrl, voicevoxPreviewTexts(), speakerId, volume)
 }
 
-// 震度別の色付き小ボタン（通知音テスト用）
-function IntensityPlayButton({ scale, kyoshinIndex }: { scale: number; kyoshinIndex: number }) {
+// 震度別の色付き小ボタン（通知音テスト用）。表記と色は強震モニタのインデックスから引く
+// （震度0 は地震情報の階級表に無いため。地図の強震モニタの点と同じ色になる）
+function IntensityPlayButton({ kyoshinIndex }: { kyoshinIndex: number }) {
   const [active, setActive] = useState(false)
   const handle = () => {
     unlockAudio()
@@ -843,15 +856,16 @@ function IntensityPlayButton({ scale, kyoshinIndex }: { scale: number; kyoshinIn
     setActive(true)
     setTimeout(() => setActive(false), 600)
   }
-  const fill = getIntensityColor(scale)
+  const label = kyoshinIndexToLabel(kyoshinIndex) ?? '?'
+  const fill = kyoshinIntensityColor(kyoshinIndex) ?? '#666666'
   return (
     <button
       onClick={handle}
-      title={`震度${getIntensityLabel(scale)} の更新音を試聴`}
+      title={`震度${label} の更新音を試聴`}
       className={`text-xs font-bold px-2 py-1 rounded-sm transition-opacity ${active ? 'opacity-40' : 'hover:opacity-75'}`}
       style={{ backgroundColor: fill, color: readableTextColor(fill) }}
     >
-      {getIntensityLabel(scale)}
+      {label}
     </button>
   )
 }
@@ -1502,7 +1516,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             onChange={v => onUpdate('periodicReloadHours', v ? 1 : 0)}
           />
         </Row>
-        <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりませんが、地名ラベルの位置調整が数秒遅れ、揺れ検知の診断ログを保存しません">
+        <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりませんが、地名ラベルの位置調整が数秒遅れます">
           <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
         </Row>
         {/* 標準版の行。DMDSS 版は「DM-D.S.S 接続設定」に同じ設定の行がある（あちらは緊急地震速報以外の試験報にも効く）。
@@ -1844,14 +1858,16 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
         <Row label="揺れ検知・震度更新" description="警告ビープ。震度が上がるほど音数が増え間隔が詰まる。震度をタップして試聴">
           <div className="flex flex-wrap gap-1.5 justify-end">
-            <IntensityPlayButton scale={20} kyoshinIndex={9}  />
-            <IntensityPlayButton scale={30} kyoshinIndex={11} />
-            <IntensityPlayButton scale={40} kyoshinIndex={13} />
-            <IntensityPlayButton scale={45} kyoshinIndex={15} />
-            <IntensityPlayButton scale={50} kyoshinIndex={16} />
-            <IntensityPlayButton scale={55} kyoshinIndex={17} />
-            <IntensityPlayButton scale={60} kyoshinIndex={18} />
-            <IntensityPlayButton scale={70} kyoshinIndex={19} />
+            <IntensityPlayButton kyoshinIndex={6} />
+            <IntensityPlayButton kyoshinIndex={7} />
+            <IntensityPlayButton kyoshinIndex={9} />
+            <IntensityPlayButton kyoshinIndex={11} />
+            <IntensityPlayButton kyoshinIndex={13} />
+            <IntensityPlayButton kyoshinIndex={15} />
+            <IntensityPlayButton kyoshinIndex={16} />
+            <IntensityPlayButton kyoshinIndex={17} />
+            <IntensityPlayButton kyoshinIndex={18} />
+            <IntensityPlayButton kyoshinIndex={19} />
           </div>
         </Row>
         {/* ── 緊急地震速報（EEW） ── */}
@@ -2195,6 +2211,9 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             リアルタイム震度は直近の期間と、下記の地震でのみ再生できます。
           </p>
         </div>
+        {/* 公開版の履歴アーカイブにリアルタイム震度が入らないこと（NIED の再配布禁止）と、案内をここだけに
+            出し、再生中のリアルタイムタブには出さないことは承認済み（2026-10-22 ユーザー選択
+            「今のまま記録する」）。 */}
         {historicalArchives != null && historicalArchives.length > 0 && (
           <Row
             label="収録済みの地震"

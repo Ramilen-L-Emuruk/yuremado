@@ -5,6 +5,7 @@ import { SHINDO0_COLOR } from '../../../utils/measuredIntensity'
 import { guardRender } from './guardRender'
 import { clearRenderFailure, clearRenderFailuresFor, reportRenderFailure } from '../../../utils/renderHealth'
 import { log } from '../../../utils/logger'
+import { MISSING_HOLD_OPACITY } from '../../../utils/kyoshinMissingHold'
 
 // 強震モニタの震度0以下（index 1〜6）を描く MapLibre カスタムレイヤーの GL 実装。
 // Leaflet の KyoshinSubThreshold は「同レベルのドット同士が重なっても濃くならない」非加算合成
@@ -22,6 +23,20 @@ import { log } from '../../../utils/logger'
 // 対象は index 1〜6（震度0以下）。index 0 はデータ無し（subThresholdOpacity(0)=0）で非表示。
 // 呼び出し側の KyoshinSubThresholdGL.tsx でも levels[] 値域の上限として使うため export する。
 export const MAX_SUB_IDX = 6
+/**
+ * 欠測の保持中（`utils/kyoshinMissingHold.ts` の `stale`）の点は、段に**これを足した値**で渡す
+ * （段 1〜6 → 7〜12）。保持中の点だけを別にまとめて `MISSING_HOLD_OPACITY` を掛けて合成するため。
+ *
+ * 以前は保持中でも薄くしていなかった（点ごとの不透明度を持たない作りのため）。震度1以上のドットと
+ * 検知点バッジは薄くしており、同じ観測点が震度0 未満へ下がった途端に濃さの意味が変わっていた
+ * （2026-10-22 ユーザー選択「震度0 未満も薄くする (Recommended)」）。
+ *
+ * 保持中と保持していない点は別の束で合成するので、**同じ段の 2 つが重なった部分だけは濃くなる**
+ * （束の中は今どおり重なっても濃くならない）。保持は最長 2 秒（`MISSING_HOLD_MS`）なので許容した。
+ */
+export const STALE_LEVEL_OFFSET = MAX_SUB_IDX
+/** 束の数（段 0〜6 と保持中の段 7〜12）。 */
+const BUCKET_COUNT = MAX_SUB_IDX + STALE_LEVEL_OFFSET + 1
 // 本番の実半径（BASE_RADIUS×iconScale）。Leaflet 版 KyoshinSubThreshold と揃える。
 const BASE_RADIUS = 2.5
 // index バッファは Uint16Array のため 65,535 点が上限（強震モニタは約1,725点で十分収まる）。
@@ -39,6 +54,12 @@ export function subThresholdOpacity(idx: number): number {
   if (idx <= 0) return 0
   const t = idx / MAX_SUB_IDX
   return ((Math.exp(t) - 1) / (Math.E - 1)) * 0.35
+}
+
+/** 束（段、または保持中の段）を合成するときの不透明度。index 0 の束は 0。 */
+export function bucketOpacity(bucket: number): number {
+  if (bucket > MAX_SUB_IDX) return subThresholdOpacity(bucket - STALE_LEVEL_OFFSET) * MISSING_HOLD_OPACITY
+  return subThresholdOpacity(bucket)
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -92,7 +113,10 @@ void main() {
 export interface SubThresholdLayer {
   /** MapLibre へ addLayer する custom レイヤー本体。 */
   layer: OrderedCustomLayer
-  /** 毎秒の震度更新。levels は各点のレベル(0〜6)。GPU 反映と再描画は呼び出し側の triggerRepaint。 */
+  /**
+   * 毎秒の震度更新。levels は各点のレベル(0〜6。保持中の点は `STALE_LEVEL_OFFSET` を足した 7〜12)。
+   * GPU 反映と再描画は呼び出し側の triggerRepaint。
+   */
   setLevels(levels: Uint8Array): void
   /** UI 倍率の変化で点の半径を更新（次フレームから反映）。呼び出し側で triggerRepaint する。 */
   setIconScale(scale: number): void
@@ -122,8 +146,8 @@ export function makeSubThresholdLayer(
 
   // レベル順 index と、レベルごとの描画レンジ(start/count)。index 0 も並ぶが描画しない。
   const sortedIndices = new Uint16Array(n)
-  const rangeStart = new Int32Array(MAX_SUB_IDX + 1) // lv 0..6
-  const rangeCount = new Int32Array(MAX_SUB_IDX + 1)
+  const rangeStart = new Int32Array(BUCKET_COUNT) // lv 0..6・保持中 7..12
+  const rangeCount = new Int32Array(BUCKET_COUNT)
   let dirtyIdx = false // setLevels 後、次の render で index を bufferSubData する必要がある
 
   // レベル配列 → レベル順 index（カウンティングソート O(n)）。dirtyIdx を立てる（GPU 反映は render）。
@@ -131,7 +155,7 @@ export function makeSubThresholdLayer(
     rangeCount.fill(0)
     for (let i = 0; i < n; i++) rangeCount[levels[i]]++
     let acc = 0
-    for (let lv = 0; lv <= MAX_SUB_IDX; lv++) {
+    for (let lv = 0; lv < BUCKET_COUNT; lv++) {
       rangeStart[lv] = acc
       acc += rangeCount[lv]
     }
@@ -351,8 +375,8 @@ ${POINT_VS_BODY}`,
       const size = BASE_RADIUS * 2 * dpr * iconScale
 
       // scissor 最適化は敷かない（平常時 index1 は全国分散で BBox がほぼ全画面になり効かない・PoC LOW2）。
-      for (let lv = 1; lv <= MAX_SUB_IDX; lv++) {
-        const count = rangeCount[lv]
+      for (let bucket = 1; bucket < BUCKET_COUNT; bucket++) {
+        const count = rangeCount[bucket]
         if (!count) continue
 
         // ① オフスクリーン FBO へ「不透明」で描く（同レベル重なりは上書き＝濃くならない）。
@@ -372,7 +396,7 @@ ${POINT_VS_BODY}`,
         gl.enableVertexAttribArray(aPos)
         gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0)
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf)
-        gl.drawElements(gl.POINTS, count, gl.UNSIGNED_SHORT, rangeStart[lv] * 2) // offset はバイト(Uint16=2)
+        gl.drawElements(gl.POINTS, count, gl.UNSIGNED_SHORT, rangeStart[bucket] * 2) // offset はバイト(Uint16=2)
 
         // ② 本描画 FBO へ opacity を掛けて over 合成（レベル間は積み重なる）
         gl.bindFramebuffer(gl.FRAMEBUFFER, mainFBO)
@@ -382,7 +406,7 @@ ${POINT_VS_BODY}`,
         gl.activeTexture(gl.TEXTURE0)
         gl.bindTexture(gl.TEXTURE_2D, tex)
         gl.uniform1i(uTex, 0)
-        gl.uniform1f(uOpacity, subThresholdOpacity(lv))
+        gl.uniform1f(uOpacity, bucketOpacity(bucket))
         gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf)
         gl.enableVertexAttribArray(aQuad)
         gl.vertexAttribPointer(aQuad, 2, gl.FLOAT, false, 0, 0)

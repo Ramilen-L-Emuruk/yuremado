@@ -45,6 +45,8 @@ export const MAX_GAP_MS = 10_000
  * 「地震が無いのに鳴った」記録が押し出される。
  */
 export const OPEN_COOLDOWN_MS = 60_000
+// 60 秒以内の検知を記録しないこと・50 件まで（`MAX_RECORDS`）は承認済み（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。
+// 控えの 795 窓で記録 678 件・間引き 363 件のうち、同じ地震の割れが 354 件・無関係が 9 件だった。
 
 /** 記録 1 件の観測フレーム。`intensity` は 1 文字 1 観測点（Yahoo の生の形と同じ）。 */
 export interface DiagnosticFrame {

@@ -74,6 +74,9 @@ import { useDetectionDiagnostics } from './hooks/useDetectionDiagnostics'
 import { createSpeechFollowController, telegramTextSubject, type SpeechFollowSession } from './utils/ttsFollow'
 import { useTelegramTextSpeechFollow } from './hooks/useTelegramTextSpeechFollow'
 import { deriveKyoshinView } from './utils/kyoshinDetectionView'
+import { createDemotedEventsState, stepDemotedEvents } from './utils/kyoshinDemotedEvents'
+import { createReonsetState, stepReonset } from './utils/kyoshinReonset'
+import type { DetectionEvent } from './utils/kyoshinDetector'
 import { filterSubThresholdIndices } from './utils/kyoshinSubThresholdFilter'
 import { countdownBeepTarget, useSWaveCountdown } from './hooks/useSWaveCountdown'
 import { pickArrivalEews, pickPublicWaveEews } from './utils/countdownEew'
@@ -133,6 +136,8 @@ const DEFAULT_TITLE = isDmdss
 // 空配列を freeze せず可変配列として扱っているのは既存 SiteCoords 型定義が可変配列のため。
 const EMPTY_SITES: [number, number][] = []
 const EMPTY_INDICES: number[] = []
+/** 降ろした検知が無いときに RealtimeTab へ渡す空の並び（参照を保って memo を効かせる）。 */
+const NO_DEMOTED_EVENTS: DetectionEvent[] = []
 // 公開観測点の波形を出していないときに地図へ渡す空の印（毎回の新しい配列で地図の印を作り直させない）。
 const NO_PUBLIC_STATIONS: readonly PublicStationMarker[] = []
 
@@ -1893,6 +1898,11 @@ export function App() {
   const resetActionChecklistRef = useRef<() => void>(() => {})
   /** 別地点発報のエピソード状態のリセット。上と同じ理由で ref 経由に渡す。 */
   const resetKyoshinAlertsRef = useRef<() => void>(() => {})
+  // 同じ場所の 2 つ目の地震（`utils/kyoshinReonset.ts`）と、確定を降ろした検知のカード
+  // （`utils/kyoshinDemotedEvents.ts`）の記憶。使うのは下の `useMemo` だが、リプレイの開始・停止で
+  // 落とすために `resetLocalState` より前に置く
+  const reonsetStateRef = useRef(createReonsetState())
+  const demotedStateRef = useRef(createDemotedEventsState())
   /**
    * リプレイの開始・停止で落とす画面側の一時状態。
    *
@@ -1921,6 +1931,10 @@ export function App() {
     // 別地点発報が黙って抑え込まれる（時刻の巻き戻りでは自動で切り替わるが、前へ飛ばした
     // 切替では発火しない）。
     resetKyoshinAlertsRef.current()
+    // 2 つ目の地震と取り下げカードの記憶。時刻の巻き戻りでは自動で捨てるが、前へ飛ばした切替では
+    // 旧い時間軸の「立ち上がった点」「降ろした検知」が残る
+    reonsetStateRef.current = createReonsetState()
+    demotedStateRef.current = createDemotedEventsState()
   }, [selectQuake])
 
   const replay = useReplayController({
@@ -2063,7 +2077,6 @@ export function App() {
     kyoshinIndicesGated,
     kyoshin.dataTime,
     kyoshin.indicesSiteConfigId,
-    !settings.recordingMode,
   )
   // V2 検知イベント → 表示状態（confirmed/candidate・検知点・候補点）へ変換する
   const kyoshinView = useMemo(
@@ -2084,6 +2097,47 @@ export function App() {
     () => [...kyoshinView.detectedMarkerPoints, ...kyoshinView.unconfirmedPoints],
     [kyoshinView],
   )
+  // 同じ場所の 2 つ目の地震の合図（`utils/kyoshinReonset.ts`）。寄せる先は、まとまって立ち上がった
+  // 観測点のうち最も強い点（保持値を含む表示用の値で比べる。揺れフォーカスの寄せ先と同じ考え方）。
+  // 同じフレームを二度渡しても結果は変わらない（StrictMode の二重実行で崩れない）。
+  //
+  // **時刻は検知結果の `kyoshinV2.dataTime` を使う**（強震モニタの取得の時刻 `kyoshin.dataTime` ではない）。
+  // 検知結果は取得の時刻が進んだ後のレンダーで更新されるので、取得の時刻を使うと「時刻 T・検知 T-1」で
+  // 呼ばれ、同じ時刻の二度目を捨てる `stepReonset` が検知を常に 1 フレーム遅れて取り込む。
+  const kyoshinReonset = useMemo(() => {
+    const alert = stepReonset(
+      reonsetStateRef.current,
+      kyoshinV2.detections,
+      kyoshinV2.recentOnsetKeys,
+      new Date(kyoshinV2.dataTime).getTime(),
+    )
+    if (!alert) return null
+    const keys = new Set(alert.keys)
+    let best: { lat: number; lng: number; index: number } | null = null
+    for (const p of kyoshinView.detectedPoints) {
+      if (keys.has(p.key) && (best === null || p.index > best.index)) best = p
+    }
+    // 印（`key`）はイベント ID と合図を出したデータ時刻から作る。同じ合図を作り直しても（依存の
+    // `kyoshinView` だけが変わったレンダー・StrictMode の二重描画）印は同じなので、鳴らす側は 1 回だけ動く
+    const stamp = { key: `${alert.eventId}@${alert.atMs}`, atMs: alert.atMs }
+    if (best) return { ...stamp, focus: { lat: best.lat, lng: best.lng } }
+    // 立ち上がった点が引けない（観測点リストの入れ替え中など）ときは、イベントの重心へ寄せる。
+    // **合図は捨てない** —— `stepReonset` は既に鳴らしたことにしているので、ここで捨てると
+    // 音もタブ移動も無いまま 60 秒鳴らなくなる（`confirmedShocks` の寄せ先と同じ考え方）
+    const ep = kyoshinV2.detections.find((d) => d.id === alert.eventId)?.epicenter
+    if (ep) return { ...stamp, focus: { lat: ep[0], lng: ep[1] } }
+    log.warn(`[kyoshin] 同じ場所の 2 つ目の揺れの寄せ先を引けなかった（${alert.eventId}）。寄せずに音だけ鳴らす`)
+    return { ...stamp, focus: null }
+  }, [kyoshinV2.detections, kyoshinV2.recentOnsetKeys, kyoshinV2.dataTime, kyoshinView])
+  // 確定を降ろした検知を、理由を添えて検知カードへしばらく残す（`utils/kyoshinDemotedEvents.ts`）。
+  // 同じフレームを二度渡しても結果は変わらない（StrictMode の二重実行で崩れない）。
+  // 時刻は 2 つ目の地震と同じく検知結果の `kyoshinV2.dataTime`（検知と同じ値から取る）
+  const kyoshinDemotedRaw = useMemo(
+    () => stepDemotedEvents(demotedStateRef.current, kyoshinV2.detections, new Date(kyoshinV2.dataTime).getTime()),
+    [kyoshinV2.detections, kyoshinV2.dataTime],
+  )
+  // 中身が空のときは同じ参照を渡す（RealtimeTab は memo 化されている）
+  const kyoshinDemoted = kyoshinDemotedRaw.length === 0 ? NO_DEMOTED_EVENTS : kyoshinDemotedRaw
   // 震度0ドット表示専用: 検知エンジンが学習した慢性ノイズ床でフィルタする（震度1+表示には手を入れない）
   // PERF-1: kyoshin モード以外では KyoshinSubThreshold レイヤーが表示されないため、
   // 他モードのとき filterSubThresholdIndices の毎秒 1725 点走査をスキップする
@@ -2249,6 +2303,7 @@ export function App() {
     setActiveTab: requestTabForKyoshin,
     revertToDefaultTab,
     onShakeFocus: handleShakeFocus,
+    reonset: kyoshinReonset,
   })
   // 宣言が useReplayController より後になるため ref 経由で渡す（上記 resetLocalState 参照）。
   resetKyoshinAlertsRef.current = kyoshinAlerts.resetForReplay
@@ -2794,6 +2849,7 @@ export function App() {
                 eews={eewsForPanel}
                 kyoshinV2Detections={kyoshinV2.detections}
                 kyoshinDetectedPoints={kyoshinDetectedPoints}
+                kyoshinDemoted={kyoshinDemoted}
                 swaveArrival={swaveArrival}
                 visible={activeTab === 'realtime' && !panelCollapsed}
                 speakingEewKey={speakingEewKey}

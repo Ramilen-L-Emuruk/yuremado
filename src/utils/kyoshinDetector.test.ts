@@ -881,6 +881,67 @@ describe('step: 特異度（散在ノイズを排除）', () => {
   })
 })
 
+describe('step: 疎な地域の点数の要件（設計書§39）', () => {
+  // 近傍（R_KM 以内）が SPARSE_AVAIL_MAX 以下の点だけでできた揺れは、点数の要件を SPARSE_MIN_POINTS へ下げる。
+  // 2026-10-24 ユーザー選択「案 A を入れる (Recommended)」。以前は 3 点の面が要り、離島の地震の 86% を落としていた
+  /** 互いに 15km ほど離れた 2 点だけの島（近傍数は各 1）。 */
+  const pair: StationDef[] = [
+    { lat: 24.3, lng: 124.0 },
+    { lat: 24.4, lng: 124.1 },
+  ]
+
+  it('正: 疎な 2 点が揃って揺れれば confirmed になる', () => {
+    const meta = buildStationMeta(sitesOf(pair))
+    expect(meta.avail[siteKey(24.3, 124.0)]).toBe(1)
+    const { detections } = drive(quietThenShake(pair, { quietCount: 5, shakeCount: 6, shakeValue: 2.0 }), meta)
+    expect(detections.some((d) => d.confidence === 'confirmed')).toBe(true)
+  })
+
+  it('対照: 密な網で 2 点だけ揺れても検知しない（3 点の面の要件は残る）', () => {
+    const defs = grid3x3(35.0, 139.0, 0.1)
+    const meta = buildStationMeta(sitesOf(defs))
+    const frames: Frame[] = []
+    let t = 0
+    for (let i = 0; i < 5; i++, t += 1000) frames.push(uniformFrame(defs, t, 0))
+    for (let i = 0; i < 6; i++, t += 1000) frames.push(frameWith(defs, t, (k) => (k === 0 || k === 1 ? 2.0 : 0)))
+    const { detections } = drive(frames, meta)
+    expect(detections.some((d) => d.confidence === 'confirmed' || d.confidence === 'likely')).toBe(false)
+  })
+
+  it('対照: 近傍が SPARSE_AVAIL_MAX を超える点の 2 点では検知しない（境界）', () => {
+    // 4 点が互いに近傍（各 3）。疎とみなす上限 2 を超える
+    const defs: StationDef[] = [
+      { lat: 24.3, lng: 124.0 },
+      { lat: 24.35, lng: 124.05 },
+      { lat: 24.4, lng: 124.0 },
+      { lat: 24.35, lng: 123.95 },
+    ]
+    const meta = buildStationMeta(sitesOf(defs))
+    expect(meta.avail[siteKey(24.3, 124.0)]).toBeGreaterThan(PARAMS.SPARSE_AVAIL_MAX)
+    const frames: Frame[] = []
+    let t = 0
+    for (let i = 0; i < 5; i++, t += 1000) frames.push(uniformFrame(defs, t, 0))
+    for (let i = 0; i < 6; i++, t += 1000) frames.push(frameWith(defs, t, (k) => (k === 0 || k === 1 ? 2.0 : 0)))
+    const { detections } = drive(frames, meta)
+    expect(detections.some((d) => d.confidence === 'confirmed' || d.confidence === 'likely')).toBe(false)
+  })
+
+  it('安全弁: 疎な地域でも 1 点だけの揺れ（震度2）は検知しない', () => {
+    const meta = buildStationMeta(sitesOf(pair))
+    const frames: Frame[] = []
+    let t = 0
+    for (let i = 0; i < 5; i++, t += 1000) frames.push(uniformFrame(pair, t, 0))
+    for (let i = 0; i < 6; i++, t += 1000) frames.push(frameWith(pair, t, (k) => (k === 0 ? 2.0 : 0)))
+    const { detections } = drive(frames, meta)
+    expect(detections.some((d) => d.confidence === 'confirmed' || d.confidence === 'likely')).toBe(false)
+  })
+
+  it('安全弁: 下げる先は 2 点で、1 点には下げない（単点ノイズを通さない）', () => {
+    expect(PARAMS.SPARSE_MIN_POINTS).toBeGreaterThanOrEqual(2)
+    expect(PARAMS.SPARSE_MIN_POINTS).toBeLessThanOrEqual(PARAMS.MIN_CLUSTER)
+  })
+})
+
 describe('step: 欠測点(missing)の扱い', () => {
   /**
    * 実データ調査（2026-07-29）で判明: Yahoo 強震モニタは観測点の約3%が index=-1（charCode 99）を

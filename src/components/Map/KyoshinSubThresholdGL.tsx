@@ -6,6 +6,7 @@ import { addOrderedLayer } from './gl/layerOrder'
 import {
   makeSubThresholdLayer,
   MAX_SUB_IDX,
+  STALE_LEVEL_OFFSET,
   SUB_THRESHOLD_LABEL,
   SUB_THRESHOLD_LAYER_ID,
   type SubThresholdLayer,
@@ -25,6 +26,12 @@ import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from 
 interface Props {
   sites: SiteCoords
   indices: number[]
+  /**
+   * 欠測の保持中の点（`indices` と同じ並び。`utils/kyoshinMissingHold.ts`）。保持中の点は
+   * `MISSING_HOLD_OPACITY` で薄く描く。**必須にしている** —— 渡し忘れても型が通る形にすると、
+   * 保持中の点だけが濃いままになる不具合が黙って戻る。保持を通さない呼び出しは空配列を渡す。
+   */
+  stale: readonly boolean[]
   iconScale: number
   /**
    * 表示/非表示（モード切替用）。false のときは毎秒の triggerRepaint を止め、
@@ -34,13 +41,14 @@ interface Props {
   visible: boolean
 }
 
-export function KyoshinSubThresholdGL({ sites, indices, iconScale, visible }: Props) {
+export function KyoshinSubThresholdGL({ sites, indices, stale, iconScale, visible }: Props) {
   const map = useMapGL()
   const layerRef = useRef<SubThresholdLayer | null>(null)
   // restore 直後に「マウント時点の値」ではなく現在の props を復元するため ref で保持する。
   const iconScaleRef = useRef(iconScale)
   const visibleRef = useRef(visible)
   const levelsRef = useRef<Uint8Array | null>(null)
+  const warnedStaleLengthRef = useRef(false)
   iconScaleRef.current = iconScale
   visibleRef.current = visible
 
@@ -117,16 +125,22 @@ export function KyoshinSubThresholdGL({ sites, indices, iconScale, visible }: Pr
   useEffect(() => {
     const sub = layerRef.current
     if (!map || !sub) return
+    // 保持中の印の並びが観測点と食い違うと、保持中の点が濃いまま・別の点が薄くなる（見た目では
+    // 気づきにくい）。空は「保持を通さない」の意味なので除き、食い違いだけを 1 度記録する
+    if (stale.length !== 0 && stale.length !== sites.length && !warnedStaleLengthRef.current) {
+      warnedStaleLengthRef.current = true
+      log.warn(`[KyoshinSubThresholdGL] 保持中の印の数（${stale.length}）が観測点の数（${sites.length}）と合わない`)
+    }
     const levels = new Uint8Array(sites.length)
     for (let i = 0; i < sites.length; i++) {
       const idx = indices[i] ?? 0
-      levels[i] = idx >= 1 && idx <= MAX_SUB_IDX ? idx : 0
+      levels[i] = idx >= 1 && idx <= MAX_SUB_IDX ? idx + (stale[i] === true ? STALE_LEVEL_OFFSET : 0) : 0
     }
     // restore 直後の再適用用に直近の levels を保持する（MAP-1 対応）。
     levelsRef.current = levels
     sub.setLevels(levels)
     if (visible) map.triggerRepaint()
-  }, [map, indices, sites, visible])
+  }, [map, indices, stale, sites, visible])
 
   // 表示切替。非表示→表示になった瞬間、裏で更新済みのレベルを1回だけ描画に反映する。
   useEffect(() => {

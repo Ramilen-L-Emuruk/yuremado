@@ -49,6 +49,7 @@ function makeDeps(over: Partial<KyoshinAlertsDeps> = {}): KyoshinAlertsDeps {
     defaultTabRef: { current: 'earthquake' as TabId },
     setActiveTab: vi.fn(),
     revertToDefaultTab: vi.fn(),
+    reonset: null,
     onShakeFocus: vi.fn(),
     ...over,
   }
