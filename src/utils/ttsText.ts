@@ -1345,6 +1345,9 @@ const CANCEL_DECLARATION_SUBJECTS: ReadonlySet<string> = new Set([
  *
  * 震源更新では区分に触れない。すでに伝えてあるうえ、変わったのは震源だから。
  *
+ * **M・深さは読まない。** 続報のたびに動くので、読むなら震度と同じく確定を待つ仕組みが要る
+ * （2026-10-21 ユーザー承認「その理由で記録する (Recommended)」）。
+ *
  * **震央地名が空なら名乗りだけを言い切る**（「緊急地震速報。」。2026-10-24 ユーザー選択「備えとして直す
  * (Recommended)」）。空の名前をそのまま埋めると「緊急地震速報、で地震。」と壊れる。名前が空になりうるのは
  * 標準版の取得元（P2PQuake は仕様上 `hypocenter.name` が必須でない・Yahoo の `regionName`。どちらも実配信では未観測）で、
@@ -1515,6 +1518,8 @@ export function eewLpgmOnlyText(lpgmClass: number, over = false): string {
  * **「特別警報」は読み上げない。** 特別警報の条件を満たしていても、格上げとして読み上げるのは
  * 予報→警報のときだけ。気象庁が発表時にこの名称を用いないため（根拠と条件は
  * docs/spec/eew-spec.md §4）。画面表示・ブラウザ通知・通知音は内部の重大度区分として 2 段階を保つ。
+ * 声・地図の吹き出し・ウィンドウタイトル・電文ログでは特別警報と警報を言い分けない
+ * （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
  *
  * 引き上げ専用の短句（「震度6弱に引き上げ。」）は持たない。同じ形で言い直せば足りるうえ、
  * 差分の言い方は「基準にした値を実際に発話したか」に依存し、割り込みで消えた発話を基準に
@@ -4557,7 +4562,8 @@ function quakeForecastRemainder(event: JMAQuake): string | undefined {
  */
 export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): TelegramTextSpeech | null {
   // **緊急地震速報の固定付加文は読まない。** 秒を争うため、定型文を挟むと肝心の震度・地域が
-  // 遅れる（画面には出している。→ eew-spec.md §3「固定付加文」）。
+  // 遅れる（画面には出している。→ eew-spec.md §3「固定付加文」）。気象庁の文を読む設定でも読まないのは、
+  // 同じ内容を対象地方と一緒に既に言っているため（2026-10-21 ユーザー承認「読まないまま記録する (Recommended)」）。
   // 読ませる形にするなら、この設定とは別に「震度・地域を伝えたあとへ確実に回す」仕組みが要る。
   if (event.kind === 'eew') return null
   if (!opts.readTelegramText) return null

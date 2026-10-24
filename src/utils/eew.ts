@@ -508,7 +508,7 @@ export interface AnnouncedHypocenter {
 
 /**
  * 「震源を更新、〇〇で地震。」と言い直す距離の下限。これ以下しか動いていなければ、
- * 地名が変わっていても同じ場所を指しているとみなす。
+ * 地名が変わっていても同じ場所を指しているとみなす（2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
  */
 export const EEW_HYPOCENTER_RESTATE_KM = 50
 
@@ -551,6 +551,7 @@ export function isUnannouncedHypocenter(
  * 変化なので、同じ階級では「以上」を上に置く。
  *
  * 逆向き（「震度4以上」→「震度4」＝上限が確定した）は引き下げと同じ扱いで黙る。
+ * 引き下げ・「以上」が取れたときに黙ることは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」。
  * `spoken` が無い（まだ何も読んでいない）ときは、読む値があるなら真。
  */
 export function isForecastScaleHigher(latest: EewMaxScaleInfo, spoken: EewMaxScaleInfo | undefined): boolean {
@@ -631,7 +632,8 @@ export function eewMaxLpgmClassInfo(eew: EEWAlert): EewMaxLpgmClassInfo {
  * （`ForecastInt`・1 回）で、長周期地震動階級のほうが任意（`ForecastLgInt`・0 回/1 回）。
  * つまり「震度なし・階級あり」という電文は作れない。深さ 150km 超では階級のほうが先に落ちる
  * （震度と違い PLUM 法による例外規定を持たない）。到達したら電文の異常で、そのまま出せば
- * 「予想震度なし」と階級の断言が同じ画面・同じ発話に並ぶ。
+ * 「予想震度なし」と階級の断言が同じ画面・同じ発話に並ぶ。この扱いは
+ * 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」。
  *
  * **3 経路で共有すること**——カード（`RealtimeTab` の階級バッジ）・読み上げ（`eewIntensityText`）・
  * 第 2 フェーズの言い直し（`useLiveEventHandler` の震度据え置き分岐）。片方だけに置くと画面と音声が
@@ -1174,6 +1176,8 @@ export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAler
  * アプリが受信するのは VXSE45 だけで、区分は電文種別ではなく `severity` が決めるが、
  * 呼び方は気象庁の名称から借りている。呼び出し箇所が複数あるため、文言がずれないようここに置く。
  * 対応表は docs/spec/eew-spec.md §3「電文の名称と表示・読み上げ」。
+ * レベル 1 と 2（特別警報）は同じ名前を返すので、ウィンドウタイトルでは特別警報と警報の差が出ない
+ * （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
  */
 export function eewKindLabel(level: 0 | 1 | 2): string {
   return level >= 1 ? '緊急地震速報' : '地震動予報'
@@ -1363,7 +1367,8 @@ export function diffHypoInfoEvents(
 
 /**
  * 精度ランクの意味。**0（不明）と未知の値では何も返さない** ―― 「不明」と書いても
- * 利用者には伝わらず、欄が埋まるだけになる。
+ * 利用者には伝わらず、欄が埋まるだけになる（画面の欄を消すことは 2026-10-21 ユーザー承認
+ * 「記録し、表外はログへ (Recommended)」。表外の値の記録は `unknownEewAccuracyRanks`）。
  */
 export function eewEpicenterRankLabel(rank: number | undefined): string {
   return rank === undefined ? '' : (EPICENTER_RANK_LABEL[rank] ?? '')

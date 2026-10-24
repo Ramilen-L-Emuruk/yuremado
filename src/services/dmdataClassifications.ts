@@ -171,6 +171,8 @@ export async function negotiateClassifications(
 /**
  * 受けている区分のうち、緊急地震速報としてどの電文種別を取り込むか。
  * 予報があれば VXSE45 だけ、予報が無く警報があれば VXSE43 だけ、どちらも無ければ null。
+ * 予報を受けている人が VXSE43 を取り込まず VXSE44 も扱わないことは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」
+ * （理由は docs/spec/data-sources-spec.md §2「EEW は VXSE45 だけを受ける」）。
  */
 export function eewHeadTypeFor(classifications: readonly DmdataClassification[]): 'VXSE45' | 'VXSE43' | null {
   if (classifications.includes('eew.forecast')) return 'VXSE45'

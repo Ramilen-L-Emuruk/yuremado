@@ -3832,6 +3832,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (event.cancelled) {
         // EEW キャンセル（誤報取消）または解除（最終報満了）: レベル追跡から除去
         // expired: true は最終報タイマー満了による自動解除 → 音は鳴らさない
+        //   （自動解除で音もタブ移動も起こさないことは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）
         // hadKey: P2PQuake WS と Yahoo の両方から cancel が来た場合の二重鳴り防止（AUD-2）
         const hadKey = activeEEWLevelsRef.current.has(key)
         // 取消の前に画面から消えた地震の誤報取消（→ `eewLateCancel`）。画面に出ていた地震と同じく伝える
@@ -4156,6 +4157,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             const { level, spoken: spokenLevel, upgraded: levelUpgraded } = levelUpgradeOf(latest)
             // まだ一度も予想値を読んでいなければ無条件に読む（初報・震源更新の読み直し）。
             // 読んだ後は、実際に発話した値より上がったものが一つも無ければ黙る（引き下げは追わない）。
+            // 下がった・「以上」が取れたときに黙ることは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」
             if (eewPhase2DoneRef.current.has(key)
               && !isForecastScaleHigher(confirmedScale, spokenEEWScalesRef.current.get(key))
               && !isForecastLpgmHigher(

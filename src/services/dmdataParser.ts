@@ -139,6 +139,9 @@ const EEW_AREA_ARRIVED_CONDITION = '既に主要動到達と推測'
  * これを震度7と読むと、仮定震源要素の初報のように下限しか決まっていない報が
  * 最大震度7として塗られ・読み上げられる。上限には下限側の値を採り、「以上」は
  * フラグで持ち越して表示・読み上げで語を補う（P2PQuake の `scaleTo: 99` と同じ扱い）。
+ *
+ * 電文全体の予想震度（`ForecastInt`）も幅（`From`〜`To`）の上限だけを持ち、下限は出さない
+ * （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
  */
 export function parseForecastInt(range: Record<string, unknown>): { scale: IntensityScale; orAbove: boolean } {
   const fromStr = str(range.from)

@@ -203,7 +203,12 @@ function yahooTime(time: string): string {
   return time ? jstWallClockToIso(time) ?? time : time
 }
 
-/** Yahoo hypoInfo の1件を EEWAlert に変換する。 */
+/**
+ * Yahoo hypoInfo の1件を EEWAlert に変換する。
+ *
+ * 区域（`areas`）と仮定震源要素の区別（`condition`）は運ばないので空にする。取得元の制約として扱う
+ * （2026-10-21 ユーザー承認「取得元の制約として記録 (Recommended)」）。
+ */
 export function hypoInfoItemToEEW(item: YahooHypoInfoItem): EEWAlert {
   const scale = calcintensityToScale(item.calcintensity)
   const scaleNum = scale === -1 ? 0 : scale
