@@ -85,7 +85,7 @@ import { useArrivalTokenCheck } from './hooks/useArrivalToken'
 import { usePsWaveCalc } from './hooks/usePsWaveCalc'
 import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
 import { useDebouncedValue } from './hooks/useDebouncedValue'
-import { collectQuakesToNotify, decideQuakeNotification, rememberQuakeNotified, type QuakeNotifiedState } from './utils/quakeNotification'
+import { collectQuakesToNotify, scheduleQuakeNotification, type QuakeNotifiedState } from './utils/quakeNotification'
 import { formatDateTimeLocal } from './utils/formatters'
 import { computeEEWLevel, eewEventKey, eewMaxLpgmClass, isProvisionalHypocenter } from './utils/eew'
 import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
@@ -115,6 +115,7 @@ import { fetchP2PReplayEvents, fetchP2PQuakeHistory, clearP2PReplayCache } from 
 import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerdict, emptyReplayFetchResult, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
 import { useHistoricalArchiveIndex } from './hooks/useHistoricalArchiveIndex'
 import { log } from './utils/logger'
+import { deliverBrowserNotification, NOTIFICATION_ICON, showBrowserNotification } from './utils/notifications'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isDmdss } from './utils/env'
@@ -155,25 +156,11 @@ const TAB_SCROLLER_CLASS = 'absolute inset-0 overflow-y-auto overflow-x-hidden o
 
 
 /**
- * 地震情報のブラウザ通知を出す。投げたらそのまま投げ返す（呼び出し側が「出せなかった」と記録し、通知済みにしない）。
- *
- * `renotify` は型定義（lib.dom）に無いが、ブラウザは受け付ける。同じ tag の通知を置き換えるときに音を
- * 鳴らし直す（最大震度が上がった報だけ）。**受け付けないブラウザでは `renotify` を外して出し直す** ——
- * 音が鳴り直さないだけで、置き換え自体は伝わる。
+ * 地震情報のブラウザ通知を出す。出せなければ reject する（呼び出し側が「出せなかった」と記録し、通知済みを取り消す）。
+ * `renotify`（最大震度が上がった報だけ真）を受け付けないブラウザの扱いは {@link deliverBrowserNotification}。
  */
-function showQuakeNotification(n: { title: string; body: string; tag: string; renotify: boolean }): void {
-  const base: NotificationOptions = { body: n.body, icon: `${import.meta.env.BASE_URL}icons/icon.svg`, tag: n.tag }
-  if (!n.renotify) {
-    new Notification(n.title, base)
-    return
-  }
-  try {
-    const options: NotificationOptions & { renotify: boolean } = { ...base, renotify: true }
-    new Notification(n.title, options)
-  } catch (err) {
-    log.warn(`[notify] 音を鳴らし直す指定（renotify）を受け付けなかったので、外して出し直す（${n.tag}）`, err)
-    new Notification(n.title, base)
-  }
+function showQuakeNotification(n: { title: string; body: string; tag: string; renotify: boolean }): Promise<void> {
+  return deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: n.renotify })
 }
 
 export function App() {
@@ -1016,11 +1003,7 @@ export function App() {
         alert('先に「通知を許可する」を押してください。')
         return
       }
-      new Notification('地震情報テスト', {
-        body: '東京都内陸部（テスト） 最大震度4 M5.5',
-        icon: `${import.meta.env.BASE_URL}icons/icon.svg`,
-        tag: 'test-notification',
-      })
+      showBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
     },
   }), [
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
@@ -1311,6 +1294,8 @@ export function App() {
   // 覚えるのは地震ごと（`rememberQuakeNotified`）。1 件だけだと、2 つの地震の報が交互に届いたとき
   // 前の地震を忘れて同じ通知を出し直す。
   const notifiedQuakesRef = useRef(new Map<string, QuakeNotifiedState>())
+  // 地震ごとの通知の列（同じ地震の通知を、前が済んでから出す。→ `scheduleQuakeNotification`）
+  const quakeNotifyChainsRef = useRef(new Map<string, Promise<void>>())
   const notifyMinScaleRef = useRef(settings.notifyMinScale)
   notifyMinScaleRef.current = settings.notifyMinScale
   useEffect(() => {
@@ -1333,13 +1318,19 @@ export function App() {
       // **通知は補助の経路なので、ここで投げても画面を落とさない**（App のレンダー・effect の例外は
       // 根の受け皿でしか拾えず、画面全体が消える）。1 件が投げても残りの地震は見る。失敗は記録に残す。
       try {
-        const previous = notifiedQuakesRef.current.get(quakeEventKey(card)) ?? null
-        const decided = decideQuakeNotification(card, previous, notifyMinScaleRef.current, index)
-        if (!decided) continue
         // **出せてから覚える。** 先に覚えると、出せなかった地震が「通知済み」になり、震源が判った報や
-        // 最大震度が上がった報でも出し直さない（Android の Chrome 系は `new Notification()` を受け付けない）
-        showQuakeNotification(decided.notification)
-        rememberQuakeNotified(notifiedQuakesRef.current, decided.next)
+        // 最大震度が上がった報でも出し直さない。出せたかは Service Worker の返事を待たないと分からないので、
+        // 同じ地震の通知は前が済んでから判定する（`scheduleQuakeNotification`）
+        scheduleQuakeNotification({
+          chains: quakeNotifyChainsRef.current,
+          memory: notifiedQuakesRef.current,
+          quake: card,
+          notifyMinScale: notifyMinScaleRef.current,
+          areaPrefIndex: index,
+          show: showQuakeNotification,
+        }).catch((err: unknown) => {
+          log.error(`[notify] 地震の通知を出せず（${card.eventKey ?? card.id}・最大震度 ${card.earthquake.maxScale}）`, err)
+        })
       } catch (err) {
         log.error(`[notify] 地震の通知を出せず（${card.eventKey ?? card.id}・最大震度 ${card.earthquake.maxScale}）`, err)
       }
@@ -1930,7 +1921,10 @@ export function App() {
     setSpecialInfoPanelHold(null)
     // ブラウザ通知の重複抑止。残すと、同じ地震を再生したときに 2 回目の通知が出ない。
     // 積んだままの報も捨てる（旧い時間軸の報で、新しい画面のカードを引き当てないように）。
-    notifiedQuakesRef.current.clear()
+    // **空にせず差し替える。** 通知は Service Worker の返事を待ってから覚えるので、リセットより前に出した
+    // 通知が後から済むと、同じ Map なら新しい時間軸の記憶へ覚えてしまう。差し替えれば古いほうへ覚えるだけ。
+    notifiedQuakesRef.current = new Map()
+    quakeNotifyChainsRef.current = new Map()
     pendingQuakeNotifyRef.current = []
     resetActionChecklistRef.current()
     // 別地点発報のエピソード状態。旧い時間軸の「発報済み」が残ると、新しい軸で鳴るべき

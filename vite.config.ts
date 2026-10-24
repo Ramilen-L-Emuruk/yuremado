@@ -206,6 +206,8 @@ export default defineConfig(configEnv => ({
         // 検査スクリプトと同じ値を見るため。片方だけ書き換えると検査がすり抜ける）。
         globPatterns: [...PRECACHE_GLOB_PATTERNS],
         maximumFileSizeToCacheInBytes: PRECACHE_MAX_FILE_BYTES,
+        // 通知を押したときの処理（`public/sw-notification-click.js`）。sw.js と同じ場所に置かれるので相対で書く
+        importScripts: ['sw-notification-click.js'],
         // SEC-3: standard 版の scope が /yuremado/ で DMDSS 版の /dmdss/
         // サブパスも包含するため、両バリアントを同一オリジンで訪れると standard の SW が
         // DMDSS 版のナビゲーションリクエストを横取りしうる。standard 版のみ /dmdss/ を
