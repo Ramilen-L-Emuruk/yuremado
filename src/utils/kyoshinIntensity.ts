@@ -13,7 +13,8 @@ export function kyoshinIndexToJma(index: number | undefined): IntensityGrade | n
   if (index == null) return null
   const value = -3.0 + index * 0.5
   // **震度0 未満は描かない。** これは強震モニタ側の決め事（地図に点を出す下限）で、
-  // 気象庁の階級表の話ではない —— あちらの震度0 に下限は無い。
+  // 気象庁の階級表の話ではない —— あちらの震度0 に下限は無い。描かないことは承認済み
+  // （2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。
   if (!(value >= 0.0)) return null
   return measuredIntensityToGrade(value)
 }

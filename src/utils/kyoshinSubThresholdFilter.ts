@@ -25,6 +25,8 @@ import { indexToValue, PARAMS } from './kyoshinDetector'
  * 直後の観測点集合の入れ替わり）はフィルタをかけず生データをそのまま返す。位置で対応づける以上、
  * 長さのずれは添字のずれ＝別地点の床での判定になるため、消すより出す方へ倒す。
  */
+// 慢性ノイズ点の震度0 を平常時に隠すこと（このフィルタ）・揺れの後の孤立した震度0 の検知点を落とすこと
+// （`dropIsolatedZeroPoints`）・震度0 未満を描かないこと（`kyoshinIndexToJma`）は承認済み（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）
 export function filterSubThresholdIndices(
   sites: SiteCoords,
   indices: number[],

@@ -2191,6 +2191,9 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             リアルタイム震度は直近の期間と、下記の地震でのみ再生できます。
           </p>
         </div>
+        {/* 公開版の履歴アーカイブにリアルタイム震度が入らないこと（NIED の再配布禁止）と、案内をここだけに
+            出し、再生中のリアルタイムタブには出さないことは承認済み（2026-10-22 ユーザー選択
+            「今のまま記録する」）。 */}
         {historicalArchives != null && historicalArchives.length > 0 && (
           <Row
             label="収録済みの地震"

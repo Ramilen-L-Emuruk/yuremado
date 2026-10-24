@@ -124,6 +124,7 @@ export function buildEventResultFromZip(zip: Uint8Array, stepSec: number): ZipEv
 
   const { stations, skippedIncomplete } = groupIntoStations(files)
   if (stations.length === 0) throw new Error(`origin=${originTimeJst}: 3成分が揃った観測点が0件です`)
+  // 半数を超えたら ZIP ごと断ることは承認済み（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。
   // 除外が大半を占める場合、component/depthKindの判定ロジック（resolveComponentFromFileName）に
   // 系統的な誤りがある可能性が高い。無警告で続けると、実質ほぼ空のデータが「成功」として
   // 扱われるのに気付けない。
