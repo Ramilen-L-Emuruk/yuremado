@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import * as maplibregl from 'maplibre-gl'
 // maplibre-gl.css は main.tsx が index.css より前に読む（カスケード順を固定するため。詳細は main.tsx）。
 // ?worker&url でワーカーとその依存（maplibre-gl-shared.mjs）を1ファイルにバンドルし URL を得る。
@@ -80,6 +81,13 @@ maplibregl.setWorkerUrl(maplibreWorkerUrl)
 
 // 初期ズーム（load 後に fitJapan で日本全体フレーミングへ合わせるため暫定値）。
 const INITIAL_ZOOM = 5
+/** 保持中の印が渡されないとき（強震モニタのモード以外）に震度0未満の層へ渡す空の並び。 */
+const NO_STALE: readonly boolean[] = []
+/**
+ * 検知点が渡されないときの空の並び。**既定値を `[]` と書くと毎レンダー新しい配列になり**、波紋へ渡す
+ * `rippleCandidatePoints` の `useMemo` が毎回作り直される。
+ */
+const NO_DETECTED_POINTS: DetectedPoint[] = []
 
 /**
  * 凡例で先に読ませるもの（モードごと）。**畳んだときに残る 1 つもここの先頭で決まる。**
@@ -117,9 +125,9 @@ export function JapanMapGL({
   kyoshinStale,
   kyoshinSubIndices,
   detectedPoints = [],
-  detectedMarkerPoints = [],
+  detectedMarkerPoints = NO_DETECTED_POINTS,
   candidatePoints = [],
-  unconfirmedPoints = [],
+  unconfirmedPoints = NO_DETECTED_POINTS,
   candidateId = null,
   shakeFocus = null,
   iconScale = 1,
@@ -290,6 +298,11 @@ export function JapanMapGL({
   const detectedFitPoints = useMemo(
     () => detectedMarkerPoints.filter((p) => kyoshinIndexToJma(p.index) !== null),
     [detectedMarkerPoints],
+  )
+  // 波紋（`KyoshinMaxEffectGL`）の対象。検知点バッジ（`KyoshinDetectedPointsGL`）と同じ 2 本を合わせる。
+  const rippleCandidatePoints = useMemo(
+    () => [...detectedMarkerPoints, ...unconfirmedPoints],
+    [detectedMarkerPoints, unconfirmedPoints],
   )
   // EEW の派生データ（予想震度塗り／予想長周期塗り／震源／カメラ追従に含める区域の範囲）。
   const { eewAreaFills, eewLpgmRegionAggregates, eewEpicenters, eewFitPositions } = useEewLayerData(
@@ -701,6 +714,7 @@ export function JapanMapGL({
           <KyoshinSubThresholdGL
             sites={kyoshinSites}
             indices={kyoshinSubIndices ?? kyoshinIndices}
+            stale={kyoshinStale ?? NO_STALE}
             iconScale={iconScale}
             visible={mode === 'kyoshin'}
           />
@@ -711,7 +725,7 @@ export function JapanMapGL({
             iconScale={iconScale}
             visible={mode === 'kyoshin'}
           />
-          <KyoshinMaxEffectGL sites={kyoshinSites} indices={kyoshinIndices} iconScale={iconScale} visible={mode === 'kyoshin'} />
+          <KyoshinMaxEffectGL points={rippleCandidatePoints} iconScale={iconScale} visible={mode === 'kyoshin'} />
           <PublicStationMarkersGL markers={publicStationMarkers} iconScale={iconScale} visible={publicStationMarkers.length > 0} />
           {/* 長期震源カタログの点群。**常時マウントして visible だけ切り替える**——
               カスタムレイヤーの付け外しはシェーダーの作り直しを伴い、タブを往復するたびに

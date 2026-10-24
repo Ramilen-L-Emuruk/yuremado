@@ -9,7 +9,8 @@
 // 回復手段が無かった。
 //
 // jsdom なのは `render` が `window.devicePixelRatio` を読むため。
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+
 import { muteConsoleError } from '../../../test-utils/muteConsoleError'
 import type * as maplibregl from 'maplibre-gl'
 import { getRenderHealth, resetRenderHealthForTest } from '../../../utils/renderHealth'
@@ -25,7 +26,8 @@ vi.mock('./projectionProgram', () => ({
   applyProjectionUniforms: () => {},
 }))
 
-const { makeSubThresholdLayer, SUB_THRESHOLD_LABEL, MAX_SUB_IDX } = await import('./subThresholdLayer')
+const { makeSubThresholdLayer, SUB_THRESHOLD_LABEL, MAX_SUB_IDX, STALE_LEVEL_OFFSET, bucketOpacity, subThresholdOpacity } = await import('./subThresholdLayer')
+const { MISSING_HOLD_OPACITY } = await import('../../../utils/kyoshinMissingHold')
 
 interface GlOptions {
   /** `getProgramParameter`（リンク判定）の戻り値。 */
@@ -236,5 +238,46 @@ describe('makeSubThresholdLayer', () => {
 
   it('対象は index 1〜6（震度0以下）', () => {
     expect(MAX_SUB_IDX).toBe(6)
+  })
+})
+
+// 欠測の保持中の点も薄く描く（2026-10-22 ユーザー選択「震度0 未満も薄くする (Recommended)」）。
+// 以前はこの層だけ、保持中でも薄くしていなかった。
+describe('保持中の点', () => {
+  beforeEach(() => {
+    resetRenderHealthForTest()
+    projectionProgramStub = { program: {}, u: {} }
+  })
+
+  /** 合成の不透明度（`u_opacity` へ渡した値）を描いた順に集める。 */
+  function renderOpacities(levels: number[]): number[] {
+    const { gl } = fakeGl({ linkOk: true })
+    const opacities: number[] = []
+    ;(gl as unknown as { uniform1f: (loc: { name?: string }, v: number) => void }).uniform1f = (loc, v) => {
+      if (loc?.name === 'u_opacity') opacities.push(v)
+    }
+    const positions = new Float32Array(levels.flatMap((_, i) => [0.5 + i * 0.001, 0.4]))
+    const layer = makeSubThresholdLayer(positions, levels.length, 1)
+    layer.setLevels(new Uint8Array(levels))
+    layer.layer.onAdd?.(MAP, gl)
+    layer.layer.render(gl, ARGS)
+    return opacities
+  }
+
+  it('正: 保持中の点は MISSING_HOLD_OPACITY を掛けて描く', () => {
+    expect(renderOpacities([3 + STALE_LEVEL_OFFSET])).toEqual([subThresholdOpacity(3) * MISSING_HOLD_OPACITY])
+  })
+
+  it('対照: 保持していない点は今の濃さのまま', () => {
+    expect(renderOpacities([3])).toEqual([subThresholdOpacity(3)])
+  })
+
+  it('安全弁: 同じ段の保持中と保持していない点は、別々の束として両方描く', () => {
+    expect(renderOpacities([3, 3 + STALE_LEVEL_OFFSET])).toHaveLength(2)
+  })
+
+  it('安全弁: 段 0（データ無し）は保持の有無によらず描かない', () => {
+    expect(bucketOpacity(0)).toBe(0)
+    expect(STALE_LEVEL_OFFSET).toBe(MAX_SUB_IDX)
   })
 })
