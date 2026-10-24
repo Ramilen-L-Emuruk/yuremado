@@ -78,10 +78,13 @@ export const TAB_LABELS: Record<TabId, string> = Object.fromEntries(
   ITEMS.map((i) => [i.id, i.label]),
 ) as Record<TabId, string>
 
-const TSUNAMI_BADGE_COLOR: Record<string, string> = {
+const TSUNAMI_BADGE_COLOR: Record<NonNullable<Props['tsunamiGrade']>, string> = {
   MajorWarning: 'bg-purple-500',
   Warning:      'bg-red-500',
   Watch:        'bg-yellow-400',
+  // 津波予報だけのときも印を付ける。**色は注意報より軽く**、地図の予報の海岸線の色（`TSUNAMI_STYLE.Forecast`＝#22d3ee）に
+  // 揃える（2026-10-21 ユーザー選択「予報でも印を付ける (Recommended)」）。
+  Forecast:     'bg-cyan-400',
 }
 
 const EEW_BADGE_COLOR: Record<number, string> = {
@@ -95,7 +98,8 @@ interface Props {
   onTabChange: (tab: TabId) => void
   /** パネルが折りたたまれているか（表示中タブのボタンの状態表示に使う）。 */
   panelCollapsed: boolean
-  tsunamiGrade: 'MajorWarning' | 'Warning' | 'Watch' | null
+  /** ナビの津波アイコンに付ける印の等級。津波予報だけのときは `Forecast`。発表中の津波が無ければ null。 */
+  tsunamiGrade: 'MajorWarning' | 'Warning' | 'Watch' | 'Forecast' | null
   eewLevel: 0 | 1 | 2 | null
 }
 

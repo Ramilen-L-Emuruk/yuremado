@@ -15,6 +15,7 @@ import { render, screen, cleanup } from '@testing-library/react'
 import { TsunamiTab } from './index'
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../../types/earthquake'
 import { log } from '../../utils/logger'
+import { NO_TSUNAMI_VALUE_MARKS } from '../../utils/tsunami'
 
 afterEach(cleanup)
 
@@ -63,7 +64,7 @@ const missing: TsunamiObservation = {
 describe('観測点の行の到達予想', () => {
   // 正: 実測の到達時刻が無い行に、予報側の到達予想が語つきで出る。
   it('欠測の地点に予報の到達予想を出す', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami(
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami(
       [{ name: 'いわき市小名浜', code: '25002', arrivalTime: '2026-04-20T05:12:00', highTideDateTime: HIGH_TIDE }],
       [missing],
     )]} isVisible />)
@@ -72,7 +73,7 @@ describe('観測点の行の到達予想', () => {
 
   // 対照: 実測の到達時刻がある行には出さない。予報の値で観測の事実を上書きしないこと。
   it('実測の到達時刻がある地点には出さない', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami(
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami(
       [{ name: '相馬', code: '25001', arrivalTime: '2026-04-20T05:08:00', highTideDateTime: HIGH_TIDE }],
       [{
         name: '相馬', districtCode: '250', districtName: '福島県',
@@ -89,7 +90,7 @@ describe('観測点の行の到達予想', () => {
   // **先頭に区切りが残らないこと**まで見る。区切りを前置きする書き方だと、到達時刻の欄が
   // 空のときに満潮時刻だけが字下げされた行になる（到達予想を足す前の実際の見た目）。
   it('予報に到達予想が無ければ何も足さず、先頭に区切りも残さない', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami(
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami(
       [{ name: 'いわき市小名浜', code: '25002', highTideDateTime: HIGH_TIDE }],
       [missing],
     )]} isVisible />)
@@ -98,14 +99,14 @@ describe('観測点の行の到達予想', () => {
 
   // 安全弁: 予報側に同名の観測点が無ければ、時刻の欄そのものを出さない。
   it('同名の予報観測点が無ければ時刻の欄を出さない', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami([], [missing])]} isVisible />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami([], [missing])]} isVisible />)
     expect(timeLineOf('いわき市小名浜')).toBeNull()
   })
 
   // 安全弁: 実測を持たない観測点だけの行（「予測」バッジ）も同じ語を使う。同じ
   // `TsunamiStation.arrivalTime` を、実測のエントリが有るか無いかで呼び分けないこと。
   it('予報だけの行も同じ語で出す', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami(
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami(
       [{ name: '相馬', code: '25001', arrivalTime: '2026-04-20T05:08:00', highTideDateTime: HIGH_TIDE }],
       [],
     )]} isVisible />)
@@ -116,7 +117,7 @@ describe('観測点の行の到達予想', () => {
   // 名前だけの観測点は電文の構造上ありうる —— `FirstHeight` も `HighTideDateTime` も
   // `Station` の必須要素ではない。
   it('予報だけの行が時刻を持たなければ欄を出さない', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami([{ name: '相馬', code: '25001' }], [])]} isVisible />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami([{ name: '相馬', code: '25001' }], [])]} isVisible />)
     expect(timeLineOf('相馬')).toBeNull()
   })
 })
@@ -133,19 +134,20 @@ describe('実測の無い観測点の行の到達状況', () => {
   }
 
   it('正: 「津波到達中と推測」なら「予測」の代わりに「到達中」を出す', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami([{ name: '相馬', code: '25001', arrivalCondition: '津波到達中と推測' }], [])]} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami([{ name: '相馬', code: '25001', arrivalCondition: '津波到達中と推測' }], [])]} />)
     expect(badgeOf('相馬')).toBe('到達中')
   })
 
   it('対照: 到達状況が無ければ「予測」のまま', () => {
-    render(<TsunamiTab tsunamis={[makeTsunami([{ name: '相馬', code: '25001' }], [])]} />)
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami([{ name: '相馬', code: '25001' }], [])]} />)
     expect(badgeOf('相馬')).toBe('予測')
   })
 
-  it('安全弁: 表に無い語は「予測」へ倒し、語を記録へ残す', () => {
+  // 正（2026-10-21 ユーザー選択「表に無くてもバッジ」で覆した）: 表に無い語は、その文字のままバッジにする。記録も残す
+  it('正: 表に無い語は電文の語のままバッジにし、語を記録へ残す', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
-    render(<TsunamiTab tsunamis={[makeTsunami([{ name: '相馬', code: '25001', arrivalCondition: 'まだ無い語' }], [])]} />)
-    expect(badgeOf('相馬')).toBe('予測')
+    render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami([{ name: '相馬', code: '25001', arrivalCondition: 'まだ無い語' }], [])]} />)
+    expect(badgeOf('相馬')).toBe('まだ無い語')
     expect(warn.mock.calls.map(c => c.join(' ')).join(' | ')).toContain('まだ無い語')
   })
 })

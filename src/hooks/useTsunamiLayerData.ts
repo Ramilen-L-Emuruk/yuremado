@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import type { JMATsunami, TsunamiGrade, TsunamiObservation } from '../types/earthquake'
+import type { JMATsunami, TsunamiArea, TsunamiGrade, TsunamiObservation, TsunamiObservationCondition } from '../types/earthquake'
 import type { LatLng } from '../utils/tsunamiZones'
 import { useTsunamiZones } from './useTsunamiZones'
 import { useTsunamiObsCoords } from './useTsunamiObsCoords'
@@ -15,6 +15,11 @@ export interface TsunamiLine {
   name: string
   grade: TsunamiGrade
   segments: LatLng[][]
+  /**
+   * 線にした区域（区域名ごとに最大等級へまとめたときに選んだもの）。**吹き出しに予想波高と到達予想を出すために持つ**
+   * （2026-10-21 ユーザー選択「波高と到達予想も出す (Recommended)」）。
+   */
+  area: TsunamiArea
 }
 
 export interface TsunamiObsBar {
@@ -42,6 +47,8 @@ export interface TsunamiObsBar {
    */
   arrivalTime?: string
   initial?: string
+  /** 観測状態（吹き出しの「第1波 到達時刻不明」に使う。→ `observationFirstWaveText`）。 */
+  condition?: TsunamiObservationCondition
   blinking: boolean
 }
 
@@ -60,6 +67,8 @@ export interface TsunamiArrivalMarker {
   arrivalTime?: string
   /** 押し波・引き波。電文に無ければ undefined。 */
   initial?: string
+  /** 観測状態（吹き出しの「第1波 到達時刻不明」に使う）。 */
+  condition?: TsunamiObservationCondition
   blinking: boolean
 }
 
@@ -82,7 +91,20 @@ export interface TsunamiMissingMarker {
   arrivalTime?: string
   /** これまでに観測できた最大波（欠測になる前の値）。無いこともある。 */
   height?: { value: number; description: string; over?: boolean }
+  /** 押し波・引き波と観測状態（吹き出しの第1波の行に使う。観測棒・到達確認と同じ形で出す）。 */
+  initial?: string
+  condition?: TsunamiObservationCondition
   blinking: boolean
+}
+
+/**
+ * 予測だけの潮位観測点（区域の `stations` にあり、実測の観測点に無いもの）の位置。**地図には描かない。**
+ * 津波タブの予測だけの行を押したときの寄り先として持つ（2026-10-21 ユーザー選択「押せるようにする (Recommended)」）。
+ */
+export interface TsunamiStationPoint {
+  name: string
+  lat: number
+  lng: number
 }
 
 // 観測棒の高さ→ピクセル換算パラメータ（Leaflet 版と一致）。
@@ -97,6 +119,7 @@ export function useTsunamiLayerData(
 ): {
   tsunamiLines: TsunamiLine[]
   observationBars: TsunamiObsBar[]
+  forecastStationPoints: TsunamiStationPoint[]
   arrivalMarkers: TsunamiArrivalMarker[]
   missingMarkers: TsunamiMissingMarker[]
   tsunamiFitPositions: LatLng[]
@@ -110,20 +133,20 @@ export function useTsunamiLayerData(
 
   const tsunamiLines = useMemo<TsunamiLine[]>(() => {
     if (!tsunamiZones) return []
-    // 区域名→最大等級にまとめる。
-    const grades = new Map<string, TsunamiGrade>()
+    // 区域名→最大等級の区域にまとめる。
+    const byName = new Map<string, TsunamiArea>()
     tsunamis
       .filter((t) => !t.cancelled)
       .forEach((t) => {
         t.areas.forEach((a) => {
-          const current = grades.get(a.name)
-          if (!current || GRADE_PRIORITY[a.grade] > GRADE_PRIORITY[current]) grades.set(a.name, a.grade)
+          const current = byName.get(a.name)
+          if (!current || GRADE_PRIORITY[a.grade] > GRADE_PRIORITY[current.grade]) byName.set(a.name, a)
         })
       })
     const lines: TsunamiLine[] = []
-    grades.forEach((grade, name) => {
+    byName.forEach((area, name) => {
       const segments = tsunamiZones[name]
-      if (segments) lines.push({ name, grade, segments })
+      if (segments) lines.push({ name, grade: area.grade, segments, area })
     })
     // 弱い等級を先（下）、強い等級を後（前面）に。
     return lines.sort((a, b) => GRADE_PRIORITY[a.grade] - GRADE_PRIORITY[b.grade])
@@ -144,7 +167,7 @@ export function useTsunamiLayerData(
       bars.push({
         name: o.name, lat: latLng[0], lng: latLng[1], barPx, color, height: o.height,
         maxHeightDateTime: o.maxHeightDateTime, maxHeightRevise: o.maxHeightRevise,
-        arrivalTime: o.arrivalTime, initial: o.initial, blinking,
+        arrivalTime: o.arrivalTime, initial: o.initial, condition: o.condition, blinking,
       })
     }
     // 北→南（後に描くほど手前）。
@@ -174,6 +197,7 @@ export function useTsunamiLayerData(
         lng: latLng[1],
         arrivalTime: o.arrivalTime,
         initial: o.initial,
+        condition: o.condition,
         blinking: obsUpdateStatus?.has(o.name) ?? false,
       })
     }
@@ -197,11 +221,32 @@ export function useTsunamiLayerData(
         lng: latLng[1],
         arrivalTime: o.arrivalTime,
         height: o.height,
+        initial: o.initial,
+        condition: o.condition,
         blinking: obsUpdateStatus?.has(o.name) ?? false,
       })
     }
     return markers.sort((a, b) => b.lat - a.lat)
   }, [tsunamiObsCoords, observations, obsUpdateStatus])
+
+  // 予測だけの潮位観測点の位置（寄り先だけ。地図には描かない）。実測の観測点と同じ名前は外す —— 寄り先は
+  // 実測の印のほうが先に引かれる（`findObsBar`）が、同じ名前を二重に持つ理由も無い。
+  const forecastStationPoints = useMemo<TsunamiStationPoint[]>(() => {
+    if (!tsunamiObsCoords) return []
+    const observed = new Set(observations.map((o) => o.name))
+    const points = new Map<string, TsunamiStationPoint>()
+    for (const t of tsunamis) {
+      if (t.cancelled) continue
+      for (const a of t.areas) {
+        for (const st of a.stations ?? []) {
+          if (observed.has(st.name) || points.has(st.name)) continue
+          const latLng = tsunamiObsCoords[st.name]
+          if (latLng) points.set(st.name, { name: st.name, lat: latLng[0], lng: latLng[1] })
+        }
+      }
+    }
+    return [...points.values()]
+  }, [tsunamiObsCoords, tsunamis, observations])
 
   // 座標表（`tsunami-obs-coords.json`）に名前が無く、地図へ出せなかった観測点。
   //
@@ -221,6 +266,25 @@ export function useTsunamiLayerData(
     for (const n of fresh) reportedMissingRef.current.add(n)
     log.warn('[tsunami] 座標表に無い観測点は地図に出せません（カードには表示されます）', { names: fresh })
   }, [missingCoordNames])
+
+  // 予測だけの観測点（区域の到達予想に並ぶ潮位観測点）も同じ表を引く。引けない名前はカードの行を押せない（寄り先が無い）
+  // ので、観測点の側と同じく名前ごとに 1 度だけ残す（新しい観測点を座標表へ足し忘れたことに気づく手掛かりはこれだけ）。
+  const forecastMissingCoordNames = useMemo<string[]>(() => {
+    if (!tsunamiObsCoords) return []
+    const names = new Set<string>()
+    for (const t of tsunamis) {
+      if (t.cancelled) continue
+      for (const a of t.areas) for (const st of a.stations ?? []) if (!tsunamiObsCoords[st.name]) names.add(st.name)
+    }
+    return [...names]
+  }, [tsunamiObsCoords, tsunamis])
+  const reportedForecastMissingRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const fresh = forecastMissingCoordNames.filter((n) => !reportedForecastMissingRef.current.has(n))
+    if (fresh.length === 0) return
+    for (const n of fresh) reportedForecastMissingRef.current.add(n)
+    log.warn('[tsunami] 座標表に無い潮位観測点は、行を押しても地図を寄せられません（カードには表示されます）', { names: fresh })
+  }, [forecastMissingCoordNames])
 
   // カメラフィット対象（描画する海岸線の全座標）とフィット発火判定用シグネチャ。
   const tsunamiFitPositions = useMemo<LatLng[]>(
@@ -243,7 +307,7 @@ export function useTsunamiLayerData(
   const tsunamiOperationStatus = liveTsunami?.operationStatus ?? ''
 
   return {
-    tsunamiLines, observationBars, arrivalMarkers, missingMarkers,
+    tsunamiLines, observationBars, forecastStationPoints, arrivalMarkers, missingMarkers,
     tsunamiFitPositions, tsunamiSignature, tsunamiEventId, tsunamiOperationStatus,
   }
 }

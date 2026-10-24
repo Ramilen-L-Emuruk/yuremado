@@ -3601,7 +3601,7 @@ describe('テストボタンの待ちの後始末', () => {
     act(() => { h.current.resetState() })
     expect(h.current.tsunamis).toEqual([])
 
-    act(() => { vi.advanceTimersByTime(120_000) })
+    act(() => { vi.advanceTimersByTime(240_000) })
     expect(h.current.tsunamis).toEqual([])
   })
 
@@ -3763,8 +3763,12 @@ describe('テストボタンの待ちの後始末', () => {
     expect(h.current.tsunamis[0]?.cancelledAt).toBeUndefined()
     expect(h.current.tsunamis[0]?.validDateTime).toBeTruthy()
 
-    // 降格の報から 45 秒で失効時刻に達する（テストボタン向けに詰めてある）
+    // 降格の報から 45 秒の時点では、続報（期限だけを延ばした報）が期限を 2 分延ばしているので、まだ失効しない
     await act(async () => { vi.advanceTimersByTime(46_000) })
+    act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
+    expect(h.current.tsunamis[0]?.cancelledAt).toBeUndefined()
+    // 延ばした期限に達すると失効する（テストボタン向けに詰めてある）
+    await act(async () => { vi.advanceTimersByTime(121_000) })
     act(() => { vi.advanceTimersByTime(QUEUE_TICK_MS) })
     expect(h.current.tsunamis[0]?.cancelledAt).toBeInstanceOf(Date)
     expect(h.current.tsunamis[0]?.cancelReason).toBe('expired')
@@ -7416,5 +7420,46 @@ describe('標準版のライブ: 初回履歴は地震の件数で切る', () =>
     // **読めた 99 ではなく、配信元が返した 100 から続ける**（99 だと 1 通を引き直す）。
     const calls = vi.mocked(fetchJmaQuakePage).mock.calls
     expect(calls[calls.length - 1]?.[0]).toMatchObject({ offset: 100 })
+  })
+})
+
+// 標準版（P2PQuake）の 24 時間の安全弁（2026-10-23 ユーザー選択「安全弁では「失効」と名乗らない (Recommended)」・
+// 帯は 2026-10-24 ユーザー選択「帯を出さず消す (Recommended)」）
+describe('標準版の 24 時間の安全弁', () => {
+  beforeEach(() => { mockIsDmdss = false; vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+  const tsunami = (validForMs?: number): JMATsunami => {
+    const iso = new Date().toISOString()
+    return {
+      kind: 'tsunami', id: 'p2p-tsunami', time: iso, cancelled: false,
+      ...(validForMs !== undefined && { validDateTime: new Date(Date.now() + validForMs).toISOString() }),
+      issue: { source: '気象庁', time: iso, type: 'Focus' },
+      areas: [{ grade: 'Forecast', immediate: false, name: 'テスト沿岸' }],
+    }
+  }
+
+  it('正: 期限を持たない津波は 24 時間後に、「失効」の帯を経ずに消え、受け手へ安全弁の印を付けて渡す', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    act(() => { h.current.injectEvent(tsunami()) })
+    expect(h.current.tsunamis).toHaveLength(1)
+    // 24 時間ぶん回すと定期の処理が数万回走って遅いので、時計を進めてから次のタイマーまで進める
+    act(() => { vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000 + 1000); vi.advanceTimersByTime(2000) })
+    expect(h.current.tsunamis).toEqual([])
+    const ended = onLiveEvent.mock.calls.map(c => c[0] as JMATsunami).find(e => e.kind === 'tsunami' && e.cancelled)
+    expect(ended?.failsafeExpiry).toBe(true)
+  })
+
+  it('対照: 実際の失効時刻を持つ報は、その時刻に「失効」として帯を経て消える（安全弁の印は付かない）', async () => {
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
+    await h.flush()
+    act(() => { h.current.injectEvent(tsunami(60_000)) })
+    act(() => { vi.advanceTimersByTime(61_000) })
+    expect(h.current.tsunamis[0]?.cancelReason).toBe('expired')
+    expect(h.current.tsunamis[0]?.cancelledAt).toBeInstanceOf(Date)
+    const ended = onLiveEvent.mock.calls.map(c => c[0] as JMATsunami).find(e => e.kind === 'tsunami' && e.cancelled)
+    expect(ended?.failsafeExpiry).toBeUndefined()
   })
 })

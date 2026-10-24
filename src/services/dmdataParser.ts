@@ -2316,8 +2316,14 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
       },
       // 数値が無くても `description`（「巨大」等）があれば持たせる。`value` は型でも
       // オプショナルで、表示・読み上げはどちらも `description` しか見ない。
+      // **続報での位置づけ（`MaxHeight/Revise`）も持つ**（全期間 延べ 585 区域。カードの予想波高の印に使う。
+      // 2026-10-21 ユーザー選択「カードの印に使う (Recommended)」）。`Revise` は直下にしか出ないので `xmlChild`。
       maxHeight: (!isNaN(heightVal) || heightDesc)
-        ? { description: heightDesc, ...(!isNaN(heightVal) && { value: heightVal }) }
+        ? {
+          description: heightDesc,
+          ...(!isNaN(heightVal) && { value: heightVal }),
+          ...(mhEl && xmlText(xmlChild(mhEl, 'Revise')) && { revise: xmlText(xmlChild(mhEl, 'Revise')) }),
+        }
         : undefined,
       // 大津波警報の区域で予想波高が初めて数値になった／上方修正された合図。
       // 観測・推定の「重要」とは意味が違う（→ TsunamiArea.forecastHeightImportant）。
@@ -2557,9 +2563,10 @@ function isKnownCancelCode(code: string): boolean {
  * 解除された区域（`Kind/Code` = 00/50/60）のうち、**前回の等級を読めなかったもの**を記録する。
  *
  * 解除そのものは `cancelledAreas` で持ち回るので画面にも読み上げにも出る。ただし
- * 「何から解除されたか」は `LastKind` にしか無く、そこが読めないと文にできない
- * （`tsunamiAreaGradeChanges` が遷移元を持たない区域を落とす）。**その区域だけは画面にも音にも
- * 現れない**ので、追う手がかりをここに残す。
+ * 「何から解除されたか」は `LastKind` にしか無く、そこが読めないと等級の名前を言えない。
+ * その区域は画面に「解除」とだけ出し、読み上げは「津波警報等が解除されました」と言う
+ * （2026-10-21 ユーザー選択「「解除」とだけ出す」）。**何から解除されたかが画面にも音にも出ない**ので、
+ * 追う手がかりをここに残す。
  *
  * 実電文で `LastKind` を欠く区域は観測できていない（走査した区域 19,906 件で 0 件。範囲と
  * 数え直す手順は → docs/spec/tsunami-spec.md §10「区域の顔ぶれが報ごとに変わること」）。
@@ -2567,7 +2574,7 @@ function isKnownCancelCode(code: string): boolean {
  */
 function warnUndescribableCancel(cancelledNames: string[], logPrefix: string): void {
   if (cancelledNames.length === 0) return
-  log.warn(`${logPrefix} 解除された区域の前回の等級を読めませんでした（解除を伝えられません）: ${cancelledNames.join('・')}`)
+  log.warn(`${logPrefix} 解除された区域の前回の等級を読めませんでした（何から解除されたかは伝えず「解除」とだけ出します）: ${cancelledNames.join('・')}`)
 }
 
 /**

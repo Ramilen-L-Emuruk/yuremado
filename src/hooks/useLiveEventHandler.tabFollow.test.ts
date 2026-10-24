@@ -149,7 +149,9 @@ function makeTsunamiArrivalOnly(over: { id?: string } = {}): JMATsunami {
   return {
     kind: 'tsunami',
     id: over.id ?? 'tsunami-arr-1',
-    eventId: over.id ?? 'tsunami-arr-1',
+    // **津波の番号は報ごとに変えない**（実電文と同じ形。同じ津波の続報は同じ EventID を持つ）。
+    // 報の id から作ると、続報のつもりの報が「別の津波」になり、前の津波の記憶を落とす経路へ入る。
+    eventId: 'tsunami-arr-evt',
     time: '2026-01-01T12:10:00Z',
     cancelled: false,
     issue: { source: 'JMA', time: '2026-01-01T12:10:00Z', type: 'Focus' },
@@ -512,6 +514,45 @@ describe('読み上げとタブ切替の同調', () => {
     expect(result.current.obsUpdateStatus.get('輪島港')?.fields.has('maxHeightTime')).toBe(false)
   })
 
+  // 観測点が欠測へ転じた報（2026-10-21 ユーザー選択「印を付ける (Recommended)」）。
+  const missingOf = (r: JMATsunami, id: string): JMATsunami => ({
+    ...r, id,
+    observations: r.observations!.map(o => ({ ...o, condition: { maxHeightMissing: true } })),
+  })
+  it('正: 前の報で観測できていた観測点が欠測へ転じたら、行に印が立つ', async () => {
+    const { handle, result } = setup({ voicevoxEnabled: false })
+    handle(makeTsunami())
+    handle(makeTsunamiObsUpdate())
+    await settle()
+    handle(missingOf(makeTsunamiObsUpdate(), 'tsunami-missing'))
+    await settle()
+    expect(result.current.obsUpdateStatus.get('輪島港')?.status).toBe('changed')
+  })
+
+  it('対照: 欠測のまま続く報では印が立たない', async () => {
+    const { handle, result } = setup({ voicevoxEnabled: false })
+    handle(makeTsunami())
+    handle(makeTsunamiObsUpdate())
+    await settle()
+    handle(missingOf(makeTsunamiObsUpdate(), 'tsunami-missing'))
+    await settle()
+    handle(missingOf(makeTsunamiObsUpdate(), 'tsunami-missing-2'))
+    await settle()
+    expect(result.current.obsUpdateStatus.get('輪島港')).toBeUndefined()
+  })
+
+  // 観測波高が下がった報（2026-10-21 ユーザー選択「黄色の印を付ける (Recommended)」）
+  it('正: 波高が直前の報より下がったら、波高の項目に印が立つ', async () => {
+    const { handle, result } = setup({ voicevoxEnabled: false })
+    handle(makeTsunami())
+    handle(makeTsunamiObsUpdate())
+    await settle()
+    const lowered = makeTsunamiObsUpdate()
+    handle({ ...lowered, id: 'tsunami-lowered', observations: [{ ...lowered.observations![0], height: { value: 2.0, over: false, description: '2.0m' } }] })
+    await settle()
+    expect(result.current.obsUpdateStatus.get('輪島港')?.fields.has('height')).toBe(true)
+  })
+
   // 正: 第1波だけが動いた報でも、行の印と項目の印が立つ。
   // **読み上げは「第一波が更新されました」と名指しするので、画面が黙ると声が指した観測点を
   // どこにも示せない**（最大波の時刻で一度踏んだ穴と同型）。
@@ -706,7 +747,7 @@ describe('読み上げとタブ切替の同調', () => {
     expect(result.current.obsUpdateStatus.get('輪島港')?.status).toBe('new')
 
     // 直前に受信した津波に向けた解除（`eventId` を揃える）
-    handle(makeTsunamiCancelEvent({ eventId: 'tsunami-arr-1' }))
+    handle(makeTsunamiCancelEvent({ eventId: 'tsunami-arr-evt' }))
     await settle()
 
     // 別の津波で同じ観測点に再び到達（画面用の記憶も落ちているので新規として扱われる）

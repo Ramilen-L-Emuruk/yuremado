@@ -366,8 +366,8 @@ describe('区域単位で等級が動いた報の読み上げ', () => {
 
   // **印の鍵は区域コードだけで、どの津波のものかを持たない。** 据え置くようにしたぶん、
   // 別の津波へ切り替わったときに落とす契機が要る（据え置く前は毎報置き換えていたので、
-  // 次の報が来た時点で必ず消えていた）。区域も等級も前と同じ形にして、既読で全部落ちる
-  // ——つまり「等級を語らない報」と同じ見え方——にしてある。
+  // 次の報が来た時点で必ず消えていた）。新しい津波の初報は等級の変化を持たない形にして、
+  // 前の津波の印が持ち越されないことだけを見る。
   it('安全弁: 別の津波へ切り替わったら印を落とす', async () => {
     const { handle, keys } = setup()
     handle(makeReport(WATCH_ALL))
@@ -375,9 +375,22 @@ describe('区域単位で等級が動いた報の読み上げ', () => {
     handle(makeReport(PARTIAL_LIFT))
     await settle()
     expect([...keys()].sort()).toEqual(['711', '720'])
-    handle({ ...makeReport(PARTIAL_LIFT), eventId: '20240102000000' })
+    handle({ ...makeReport(WATCH_ALL), eventId: '20240102000000' })
     await settle()
     expect([...keys()]).toEqual([])
+  })
+
+  // 正（2026-10-21 ユーザー選択「新しい津波として読む (Recommended)」）: 別の津波の初報は、前の津波の既読で
+  // 消さない。区域の等級の既読は津波を識別しないので、残すと新しい津波の報が伝える等級の変化まで「既読」に見える。
+  it('正: 別の津波の初報が運ぶ等級の変化は、前の津波の既読で消さない', async () => {
+    const { handle, keys } = setup()
+    handle(makeReport(WATCH_ALL))
+    await settle()
+    handle(makeReport(PARTIAL_LIFT))
+    await settle()
+    handle({ ...makeReport(PARTIAL_LIFT), eventId: '20240102000000' })
+    await settle()
+    expect([...keys()].sort()).toEqual(['711', '720'])
   })
 
   // **印を落とす判定に `tsunamisRef` を使わないこと。** あちらは App の render 本体で代入されるので、

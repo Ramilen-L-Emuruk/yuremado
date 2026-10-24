@@ -4,6 +4,11 @@ import {
   DEFAULT_SHARE_CARD_FORMAT,
   legendChipLayout,
   shareCardMapHeight,
+  layoutSubtitleLines,
+  layoutNoticeLines,
+  EEW_NOTICE,
+  SHARE_CARD_FORMATS,
+  SUBTITLE_MAX_LINES,
   shareOrDownloadImage,
   standardAppUrl,
 } from './shareCard'
@@ -16,16 +21,16 @@ describe('shareCardMapHeight', () => {
   const format = DEFAULT_SHARE_CARD_FORMAT
 
   it('出典が増えるほど地図は縮む', () => {
-    const h0 = shareCardMapHeight(format, 0)
-    const h1 = shareCardMapHeight(format, 1)
-    const h2 = shareCardMapHeight(format, 2)
+    const h0 = shareCardMapHeight(format, 0, 1)
+    const h1 = shareCardMapHeight(format, 1, 1)
+    const h2 = shareCardMapHeight(format, 2, 1)
     expect(h0).toBeGreaterThan(h1)
     expect(h1).toBeGreaterThan(h2)
   })
 
   it('どの行数でも地図の高さは正で、カード全体に収まる', () => {
     for (const count of [0, 1, 2, 3, 4]) {
-      const h = shareCardMapHeight(format, count)
+      const h = shareCardMapHeight(format, count, 1)
       expect(h).toBeGreaterThan(0)
       expect(h).toBeLessThan(format.height)
     }
@@ -34,8 +39,8 @@ describe('shareCardMapHeight', () => {
   // 出典が 1 行も無ければ帯ごと出さない。そのぶん 1 行目の減り幅だけが、2 行目以降
   // （行送りのみ）より大きくなる。
   it('出典が 0 行のときは帯ごと出ない', () => {
-    const firstLineCost = shareCardMapHeight(format, 0) - shareCardMapHeight(format, 1)
-    const secondLineCost = shareCardMapHeight(format, 1) - shareCardMapHeight(format, 2)
+    const firstLineCost = shareCardMapHeight(format, 0, 1) - shareCardMapHeight(format, 1, 1)
+    const secondLineCost = shareCardMapHeight(format, 1, 1) - shareCardMapHeight(format, 2, 1)
     expect(firstLineCost).toBeGreaterThan(secondLineCost)
   })
 
@@ -230,5 +235,80 @@ describe('legendChipLayout', () => {
 
   it('線・丸の文字位置は従来どおり 24px（縦棒を足しても見た目を変えない）', () => {
     expect(legendChipLayout('line').labelOffset).toBe(24)
+  })
+})
+
+// 副見出しの折り返し（2026-10-24 ユーザー選択「副見出しで折り返す (Recommended)」）
+describe('layoutSubtitleLines', () => {
+  // 1 文字 = 1 の幅で測る
+  const measure = (t: string) => [...t].length
+
+  it('正: 区切り（全角の空き・「／」）のところで折る', () => {
+    expect(layoutSubtitleLines(measure, '石川県能登地方　M7.6 ／ 新潟県上越地方　M5.0', 14))
+      .toEqual(['石川県能登地方　M7.6 ／', '新潟県上越地方　M5.0'])
+  })
+
+  it('対照: 収まれば 1 行のまま', () => {
+    expect(layoutSubtitleLines(measure, '日向灘　M5.2', 40)).toEqual(['日向灘　M5.2'])
+  })
+
+  it('安全弁: 上限の行数を超えた分は最後の行の末尾を「…」で切る', () => {
+    const lines = layoutSubtitleLines(measure, Array.from({ length: 8 }, (_, i) => `地域${i}`).join('　'), 4)
+    expect(lines).toHaveLength(SUBTITLE_MAX_LINES)
+    expect(lines[SUBTITLE_MAX_LINES - 1].endsWith('…')).toBe(true)
+  })
+
+  // 1 文字ずつ削ると「M7.6」が「M7…」になり、数値の欠けが省略の印と見分けられない（画像は訂正できない）
+  it('安全弁: 上限を超えて切るときは項目の境目で切り、数値の途中で切らない', () => {
+    const subtitle = ['日向灘　M7.6', '石川県能登地方　M5.0', '新潟県上越地方　M4.8', '千葉県東方沖　M4.2'].join(' ／ ')
+    const lines = layoutSubtitleLines(measure, subtitle, 16)
+    expect(lines).toHaveLength(SUBTITLE_MAX_LINES)
+    const last = lines[SUBTITLE_MAX_LINES - 1]
+    expect(last.endsWith('…')).toBe(true)
+    expect(last).not.toMatch(/M\d(\.\d)?…$/)
+    expect(measure(last)).toBeLessThanOrEqual(16)
+    // 残った項目は電文の項目そのまま（どこかの項目の頭から始まる）
+    expect(subtitle).toContain(last.slice(0, -1).trim())
+  })
+
+  it('正: 副見出しの行が増えるぶん地図が縮む', () => {
+    const format = SHARE_CARD_FORMATS.wide16x9
+    expect(shareCardMapHeight(format, 1, 1) - shareCardMapHeight(format, 1, 2)).toBe(30)
+    // 上限を超えて数えても伸びない
+    expect(shareCardMapHeight(format, 1, SUBTITLE_MAX_LINES + 2)).toBe(shareCardMapHeight(format, 1, SUBTITLE_MAX_LINES))
+  })
+})
+
+// 注意文・出典は切り詰めずに折り返す（幅 1080 の寸法では緊急地震速報の注意文が 1 行に収まらない）
+describe('layoutNoticeLines', () => {
+  const measure = (t: string) => [...t].length
+
+  it('正: 句読点・「／」のところで折り返し、文を落とさない', () => {
+    const lines = layoutNoticeLines(measure, ['誤報や誤差を伴うことがあり、震源に近い場所では間に合わないことがあります。'], 20)
+    expect(lines.length).toBeGreaterThan(1)
+    expect(lines.join('')).toBe('誤報や誤差を伴うことがあり、震源に近い場所では間に合わないことがあります。')
+    for (const l of lines) expect(measure(l)).toBeLessThanOrEqual(20)
+  })
+
+  it('対照: 収まれば 1 件 1 行', () => {
+    expect(layoutNoticeLines(measure, ['出典: 気象庁', '注意文'], 40)).toEqual(['出典: 気象庁', '注意文'])
+  })
+
+  it('正: 緊急地震速報の注意文は、幅 1080 では 2 行・16:9 では 1 行（全角 15px として数える）', () => {
+    const wide = (t: string) => [...t].length * 15
+    expect(layoutNoticeLines(wide, [EEW_NOTICE], 1080 - 72).length).toBe(2)
+    expect(layoutNoticeLines(wide, [EEW_NOTICE], 1600 - 72).length).toBe(1)
+    expect(layoutNoticeLines(wide, [EEW_NOTICE], 1080 - 72).join('')).toBe(EEW_NOTICE)
+  })
+})
+
+// 共有カードの寸法（2026-10-24 ユーザー選択「16:9・1:1・4:5 (Recommended)」）
+describe('SHARE_CARD_FORMATS', () => {
+  it('正: 16:9・1:1・4:5 の 3 つを、全体の比率で持つ', () => {
+    const ratios = Object.values(SHARE_CARD_FORMATS).map(f => [f.id, Math.round((f.width / f.height) * 100) / 100])
+    expect(ratios).toEqual([['wide16x9', 1.78], ['square1x1', 1], ['portrait4x5', 0.8]])
+  })
+  it('安全弁: どの寸法でも地図に高さが残る（出典 2 行・副見出し上限でも）', () => {
+    for (const f of Object.values(SHARE_CARD_FORMATS)) expect(shareCardMapHeight(f, 2, SUBTITLE_MAX_LINES)).toBeGreaterThan(400)
   })
 })

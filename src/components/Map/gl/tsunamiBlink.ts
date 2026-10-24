@@ -55,6 +55,11 @@ export interface TsunamiBlink {
    */
   resync(): void
   /**
+   * 点灯のまま止める（真）／点滅へ戻す（偽）。**共有カードの撮影の間に使う** —— 止めないと、消灯の間（周期の 2 割）に
+   * 撮ると画像から海岸線が丸ごと消える。止めている間も `setActive` は受け付け、戻すときに位相を当て直す。
+   */
+  hold(held: boolean): void
+  /**
    * 予約を落とし、以後は何もしない。**レイヤーを外すときに必ず呼ぶ**（残すと外した後も
    * `apply` が呼ばれる）。破棄した後に `setActive(true)` を受けても動き出さない。
    */
@@ -73,6 +78,7 @@ export function createTsunamiBlink(
 ): TsunamiBlink {
   const origin = now()
   let active = false
+  let held = false
   let disposed = false
   let applied: number | undefined
   // `setTimeout` の戻り値の型はブラウザ（number）と node（Timeout）で違う。中身を見ず
@@ -80,7 +86,7 @@ export function createTsunamiBlink(
   let timer: ReturnType<typeof setTimeout> | undefined
 
   const applyCurrent = (): void => {
-    const opacity = tsunamiBlinkOpacity(now() - origin)
+    const opacity = held ? TSUNAMI_LINE_OPACITY_ON : tsunamiBlinkOpacity(now() - origin)
     // タイマーは少し早く発火することがある。そのときは値が変わっていないので当てない ——
     // 当てると、変わらない値のために地図を描き直すことになる。
     if (opacity === applied) return
@@ -123,13 +129,21 @@ export function createTsunamiBlink(
         return
       }
       applyCurrent()
-      schedule()
+      if (!held) schedule()
     },
     resync() {
       if (disposed || !active) return
       cancel()
       applyCurrent()
-      schedule()
+      if (!held) schedule()
+    },
+    hold(value) {
+      if (disposed || value === held) return
+      held = value
+      cancel()
+      if (!active) return
+      applyCurrent()
+      if (!held) schedule()
     },
     dispose() {
       disposed = true

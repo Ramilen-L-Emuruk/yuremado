@@ -27,7 +27,7 @@ import {
   latestValidDateTime,
   withInheritedTsunamiFacts,
   tsunamiAreaGradeChanges,
-  describableCancelledAreas,
+  announcedCancelledAreas,
   TSUNAMI_GRADE_LIFTED,
   selectUnspokenAreaGradeChanges,
   rememberAreaGrades,
@@ -44,6 +44,10 @@ import {
   mergeTsunamiReports,
   expiryNeedsDate,
   WARNING_COMMENT_ORDER,
+  tsunamiValueMarks,
+  rememberTsunamiValues,
+  createTsunamiValueMemory,
+  stepTsunamiState,
 } from './tsunami'
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../types/earthquake'
 import { log } from './logger'
@@ -1040,16 +1044,17 @@ describe('解除された区域（cancelledAreas）', () => {
       cancelledAreas: [makeArea({ code: '200', name: '青森県日本海沿岸', grade: 'Unknown', lastGrade: 'Unknown' })],
     })
     expect(tsunamiAreaGradeChanges(tsunami).map(c => c.to)).toEqual(['Forecast'])
-    expect(describableCancelledAreas(tsunami)).toEqual([])
+    expect(announcedCancelledAreas(tsunami)).toEqual([])
   })
 
-  it('対照: 前回の等級を読めない解除は組にならない（何から解除されたか言えない）', () => {
+  // 正（2026-10-21 ユーザー選択「「解除」とだけ出す」で覆した）: 前回の等級を読めない解除も、遷移元の無い解除の組にする
+  it('正: 前回の等級を読めない解除は、遷移元の無い解除の組になる（以前は組にならなかった）', () => {
     const tsunami = makeTsunami({
       areas: [],
       cancelledAreas: [makeArea({ code: '200', name: '青森県日本海沿岸', grade: 'Unknown' })],
     })
-    expect(tsunamiAreaGradeChanges(tsunami)).toEqual([])
-    expect(describableCancelledAreas(tsunami)).toEqual([])
+    expect(tsunamiAreaGradeChanges(tsunami).map(c => [c.from, c.to])).toEqual([[undefined, TSUNAMI_GRADE_LIFTED]])
+    expect(announcedCancelledAreas(tsunami).map(a => a.name)).toEqual(['青森県日本海沿岸'])
   })
 
   it('安全弁: `areas` の中の Unknown（等級を読めなかった区域）は解除として扱わない', () => {
@@ -1355,28 +1360,45 @@ describe('changedObservationFields: どの項目が動いたか', () => {
   // 正: 波高が上がったら波高の印
   it('正: 波高が上がったら波高に印が付く', () => {
     const f = changedObservationFields(
-      obs({ height: { value: 3.0, description: '3.0m' } }), undefined, undefined, heights({ value: 1.2 }),
+      obs({ height: { value: 3.0, description: '3.0m' } }), undefined, undefined, heights({ value: 1.2 }), undefined,
     )
     expect(f.has('height')).toBe(true)
   })
 
-  // 対照: 据え置きなら付かない（下方修正も。記憶が高水位マーク式なのと対）
-  it('対照: 波高が据え置き・下方修正なら印は付かない', () => {
+  // 対照: 直前の報と同じ値なら付かない
+  it('対照: 波高が直前の報と同じなら印は付かない', () => {
     const same = changedObservationFields(
-      obs({ height: { value: 3.0, description: '3.0m' } }), undefined, undefined, heights({ value: 3.0 }),
+      obs({ height: { value: 3.0, description: '3.0m' } }), undefined, undefined, heights({ value: 3.0 }), { value: 3.0 },
     )
     expect(same.has('height')).toBe(false)
+  })
+
+  // 正（2026-10-21 ユーザー選択「黄色の印を付ける (Recommended)」で覆した）: 下方修正にも印を付ける。
+  // 比べる相手は直前の報の値で、最高値の記憶ではない。
+  it('正: 直前の報より下がったら印が付く（「以上」が外れた確定も）', () => {
     const lowered = changedObservationFields(
-      obs({ height: { value: 1.2, description: '1.2m' } }), undefined, undefined, heights({ value: 3.0 }),
+      obs({ height: { value: 1.2, description: '1.2m' } }), undefined, undefined, heights({ value: 3.0 }), { value: 3.0 },
     )
-    expect(lowered.has('height')).toBe(false)
+    expect(lowered.has('height')).toBe(true)
+    const confirmed = changedObservationFields(
+      obs({ height: { value: 3.0, description: '3.0m' } }), undefined, undefined, heights({ value: 3.0, over: true }), { value: 3.0, over: true },
+    )
+    expect(confirmed.has('height')).toBe(true)
+  })
+
+  // 安全弁: 下がった値のまま続く報では光らない（最高値と比べると毎報に印が付く）
+  it('安全弁: 下がった値が続くだけの報では印は付かない', () => {
+    const f = changedObservationFields(
+      obs({ height: { value: 1.2, description: '1.2m' } }), undefined, undefined, heights({ value: 3.0 }), { value: 1.2 },
+    )
+    expect(f.has('height')).toBe(false)
   })
 
   // 安全弁: 「○m以上」への昇格は値が同じでも印を付ける（潮位計が振り切れた＝いちばん見せたい変化）
   it('安全弁: 値が同じでも「以上」が付いたら印が付く', () => {
     const f = changedObservationFields(
       obs({ height: { value: 1.2, description: '1.2m以上', over: true } }),
-      undefined, undefined, heights({ value: 1.2 }),
+      undefined, undefined, heights({ value: 1.2 }), undefined,
     )
     expect(f.has('height')).toBe(true)
   })
@@ -1391,7 +1413,7 @@ describe('changedObservationFields: どの項目が動いたか', () => {
         arrivalTime: '2024-01-01T16:13:00+09:00',
         initial: '引き',
       }),
-      '2024-01-01T16:23:00+09:00', undefined, heights({ value: 3.0 }),
+      '2024-01-01T16:23:00+09:00', undefined, heights({ value: 3.0 }), undefined,
     )
     expect(f.has('maxHeightTime')).toBe(true)
     expect(f.has('firstWave')).toBe(true)
@@ -1413,7 +1435,7 @@ describe('changedObservationFields: どの項目が動いたか', () => {
 
     // 正: 前に時刻を見ていなければ、`Revise` が無くても印を付ける
     it('正: 初出なら Revise が無くても最大波の観測時刻に印が付く', () => {
-      const f = changedObservationFields(firstReport, undefined, undefined, heights())
+      const f = changedObservationFields(firstReport, undefined, undefined, heights(), undefined)
       expect(f.has('maxHeightTime')).toBe(true)
       // 同じ報で他の 2 項目も立つ（3 項目そろって初出として扱う）
       expect(f.has('height')).toBe(true)
@@ -1423,7 +1445,7 @@ describe('changedObservationFields: どの項目が動いたか', () => {
     // 対照: 一度見た時刻は、`Revise` が無ければ据え置きとして扱う（毎報光らせない）
     it('対照: 前に見た時刻と同じで Revise も無ければ印は付かない', () => {
       const f = changedObservationFields(
-        firstReport, '2024-01-01T16:23:00+09:00', undefined, heights({ value: 1.2 }),
+        firstReport, '2024-01-01T16:23:00+09:00', undefined, heights({ value: 1.2 }), undefined,
       )
       expect(f.has('maxHeightTime')).toBe(false)
     })
@@ -1431,7 +1453,7 @@ describe('changedObservationFields: どの項目が動いたか', () => {
     // 対照: 時刻を持たない電文では印を作らない（色を当てる先が無い）
     it('対照: 最大波の観測時刻が無ければ印は付かない', () => {
       const f = changedObservationFields(
-        obs({ height: { value: 1.2, description: '1.2m' } }), undefined, undefined, heights(),
+        obs({ height: { value: 1.2, description: '1.2m' } }), undefined, undefined, heights(), undefined,
       )
       expect(f.has('maxHeightTime')).toBe(false)
     })
@@ -1857,7 +1879,7 @@ describe('changedObservationFields: 電文の Revise', () => {
   it('正: FirstHeight/Revise があれば第1波に印が付く（第１波識別不能の追加）', () => {
     const f = changedObservationFields(
       obs({ firstHeightRevise: '追加', condition: { firstWaveUnidentifiable: true } }),
-      undefined, undefined, seen,
+      undefined, undefined, seen, undefined,
     )
     expect(f.has('firstWave')).toBe(true)
   })
@@ -1866,7 +1888,7 @@ describe('changedObservationFields: 電文の Revise', () => {
   it('正: MaxHeight/Revise だけがあれば波高に印が付く', () => {
     const f = changedObservationFields(
       obs({ maxHeightRevise: '追加', condition: { observing: true } }),
-      undefined, undefined, seen,
+      undefined, undefined, seen, undefined,
     )
     expect([...f]).toEqual(['height'])
   })
@@ -1879,7 +1901,7 @@ describe('changedObservationFields: 電文の Revise', () => {
         maxHeightRevise: '更新',
         maxHeightDateTime: '2024-01-01T16:41:00+09:00',
       }),
-      '2024-01-01T16:23:00+09:00', undefined, seen,
+      '2024-01-01T16:23:00+09:00', undefined, seen, undefined,
     )
     expect([...f]).toEqual(['maxHeightTime'])
   })
@@ -1888,7 +1910,7 @@ describe('changedObservationFields: 電文の Revise', () => {
   it('安全弁: FirstHeight/Revise の印があっても MaxHeight/Revise は波高へ付く', () => {
     const f = changedObservationFields(
       obs({ firstHeightRevise: '追加', maxHeightRevise: '追加', condition: { observing: true, firstWaveUnidentifiable: true } }),
-      undefined, undefined, seen,
+      undefined, undefined, seen, undefined,
     )
     expect(f.has('height')).toBe(true)
     expect(f.has('firstWave')).toBe(true)
@@ -1898,8 +1920,136 @@ describe('changedObservationFields: 電文の Revise', () => {
   it('対照: Revise が無く値も据え置きなら印は付かない', () => {
     const f = changedObservationFields(
       obs({ height: { value: 1.2, description: '1.2m' }, condition: { observing: true } }),
-      undefined, undefined, seen,
+      undefined, undefined, seen, undefined,
     )
     expect(f.size).toBe(0)
+  })
+})
+
+// 観測点以外の値の印（満潮時刻・予想波高・沿岸への推定。2026-10-21 の棚卸し④の決定）
+describe('tsunamiValueMarks', () => {
+  const area = (over: Partial<TsunamiArea> = {}): TsunamiArea => ({
+    code: '250', name: '福島県', grade: 'Warning', immediate: false,
+    maxHeight: { description: '3m', value: 3 },
+    stations: [{ name: '相馬', code: '25001', highTideDateTime: '2026-04-20T07:30:00Z' }],
+    ...over,
+  })
+  const report = (areas: TsunamiArea[], extra: Partial<JMATsunami> = {}): JMATsunami => ({
+    kind: 'tsunami', id: 't', eventId: 'e', time: '2026-04-20T05:30:00Z', cancelled: false,
+    issue: { source: 'JMA', time: '2026-04-20T05:30:00Z', type: 'Focus' }, areas, ...extra,
+  })
+  const step = (m: ReturnType<typeof createTsunamiValueMemory>, r: JMATsunami) => {
+    const out = tsunamiValueMarks(r, m)
+    rememberTsunamiValues(r, m)
+    return out
+  }
+
+  // 安全弁: 初めて載った値には印を付けない（発表の報でカード全体が緑にならないように）
+  it('安全弁: 初めて載った値には、電文の印が無ければ印を付けない', () => {
+    const m = createTsunamiValueMemory()
+    const { marks } = step(m, report([area()]))
+    expect(marks.highTide.size).toBe(0)
+    expect(marks.forecastHeight.size).toBe(0)
+  })
+
+  it('正: 満潮時刻が前の報から動いたら、その潮位観測点に印を付ける', () => {
+    const m = createTsunamiValueMemory()
+    step(m, report([area()]))
+    const { marks } = step(m, report([area({ stations: [{ name: '相馬', code: '25001', highTideDateTime: '2026-04-20T19:30:00Z' }] })]))
+    expect([...marks.highTide]).toEqual(['250/25001'])
+  })
+
+  it('対照: 満潮時刻が同じなら印を付けない', () => {
+    const m = createTsunamiValueMemory()
+    step(m, report([area()]))
+    expect(step(m, report([area()])).marks.highTide.size).toBe(0)
+  })
+
+  it('正: 予想波高が変わったら、電文の印が無くても印を付ける（どちらかにあれば付ける）', () => {
+    const m = createTsunamiValueMemory()
+    step(m, report([area()]))
+    const { marks } = step(m, report([area({ maxHeight: { description: '5m', value: 5 } })]))
+    expect(marks.forecastHeight.get('250')?.status).toBe('changed')
+  })
+
+  it('正: 電文の MaxHeight/Revise「追加」は、自前の比較で同じでも初めて現れた印にする', () => {
+    const m = createTsunamiValueMemory()
+    const { marks } = step(m, report([area({ maxHeight: { description: '3m', value: 3, revise: '追加' } })]))
+    expect(marks.forecastHeight.get('250')?.status).toBe('new')
+  })
+
+  // 安全弁: 満潮時刻を持たない報（観測情報）は、満潮時刻の印を置き換えない
+  it('安全弁: その種類を載せていない報は、その種類の印を置き換える対象にしない', () => {
+    const m = createTsunamiValueMemory()
+    const { carries } = step(m, report([]))
+    expect(carries).toEqual({ highTide: false, forecastHeight: false, estimation: false })
+  })
+
+  it('正: 沿岸への推定の最大波の時刻が動いたら、その項目に印を付ける', () => {
+    const m = createTsunamiValueMemory()
+    step(m, report([], { estimations: [{ name: '宮城県', maxHeight: { description: '1m' }, maxHeightDateTime: '2026-04-20T05:50:00Z' }] }))
+    const { marks } = step(m, report([], { estimations: [{ name: '宮城県', maxHeight: { description: '1m' }, maxHeightDateTime: '2026-04-20T06:10:00Z' }] }))
+    expect([...(marks.estimation.get('宮城県')?.fields ?? [])]).toEqual(['maxHeightTime'])
+  })
+})
+
+// 別の地震の津波で置き換えるとき、前の津波の原因地震を残す（2026-10-21 ユーザー選択「置き換え、前の地震も残す (Recommended)」）
+describe('stepTsunamiState: 前の津波の原因地震', () => {
+  const tsunami = (eventId: string, name: string, extra: Partial<JMATsunami> = {}): JMATsunami => ({
+    kind: 'tsunami', id: eventId, eventId, time: '2026-04-20T05:30:00Z', cancelled: false,
+    issue: { source: 'JMA', time: '2026-04-20T05:30:00Z', type: 'Focus' },
+    areas: [{ code: '250', name: '福島県', grade: 'Forecast', immediate: false }],
+    sourceEarthquakes: [{ hypocenterName: name, arrivalTime: '2026-04-20T05:20:00Z' }],
+    ...extra,
+  })
+
+  it('正: 番号の重ならない津波で置き換えると、前の原因地震を previousSourceEarthquakes に残す', () => {
+    const step = stepTsunamiState(tsunami('20230514191700', '八丈島近海'), tsunami('20230514193000', '鳥島近海'), null)
+    expect(step.kind).toBe('live')
+    if (step.kind !== 'live') return
+    expect(step.tsunami.areas).toHaveLength(1)
+    expect(step.tsunami.sourceEarthquakes?.map(e => e.hypocenterName)).toEqual(['鳥島近海'])
+    expect(step.tsunami.previousSourceEarthquakes?.map(e => e.hypocenterName)).toEqual(['八丈島近海'])
+  })
+
+  it('正: 続報でも前の原因地震を持ち続ける', () => {
+    const first = stepTsunamiState(tsunami('A', '八丈島近海'), tsunami('B', '鳥島近海'), null)
+    if (first.kind !== 'live') throw new Error('置き換えられていない')
+    const next = stepTsunamiState(first.tsunami, tsunami('B', '鳥島近海', { id: 'B-2', time: '2026-04-20T05:40:00Z' }), null)
+    expect(next.kind === 'live' && next.tsunami.previousSourceEarthquakes?.map(e => e.hypocenterName)).toEqual(['八丈島近海'])
+  })
+
+  // 一部取消（津波情報の取消）は状態を報から組み直す。前の原因地震は報に載らないので、組み直しの外から戻すこと
+  it('正: 置き換えのあとに一部取消が届いても、前の原因地震を持ち続ける', () => {
+    const first = stepTsunamiState(tsunami('A', '八丈島近海'), tsunami('B', '鳥島近海', { headType: 'VTSE41' }), null)
+    if (first.kind !== 'live') throw new Error('置き換えられていない')
+    const withObs = stepTsunamiState(first.tsunami, tsunami('B', '鳥島近海', { id: 'B-obs', headType: 'VTSE51', time: '2026-04-20T05:40:00Z' }), null)
+    if (withObs.kind !== 'live') throw new Error('続報が当たっていない')
+    const retracted = stepTsunamiState(withObs.tsunami, tsunami('B', '鳥島近海', {
+      id: 'B-obs-cancel', headType: 'VTSE51', cancelled: true, cancelReason: 'retracted', time: '2026-04-20T05:50:00Z',
+    }), null)
+    expect(retracted.kind).toBe('live')
+    expect(retracted.kind === 'live' && retracted.tsunami.previousSourceEarthquakes?.map(e => e.hypocenterName)).toEqual(['八丈島近海'])
+  })
+
+  it('対照: 解除表示中の津波からは持ち込まない', () => {
+    const step = stepTsunamiState(tsunami('A', '八丈島近海', { cancelledAt: new Date() }), tsunami('B', '鳥島近海'), null)
+    expect(step.kind === 'live' && step.tsunami.previousSourceEarthquakes).toBeUndefined()
+  })
+})
+
+// 前の等級を読めない解除区域（2026-10-21 ユーザー選択「「解除」とだけ出す」）
+describe('tsunamiAreaGradeChanges: 前の等級を読めない解除区域', () => {
+  const r = (cancelledAreas: TsunamiArea[]): JMATsunami => ({
+    kind: 'tsunami', id: 't', eventId: 'e', time: '2026-04-20T05:30:00Z', cancelled: false,
+    issue: { source: 'JMA', time: '2026-04-20T05:30:00Z', type: 'Focus' },
+    areas: [{ code: '250', name: '福島県', grade: 'Watch', lastGrade: 'Watch', immediate: false }], cancelledAreas,
+  })
+  it('正: 前の等級を読めない解除区域も、遷移元の無い解除の組として返す', () => {
+    const changes = tsunamiAreaGradeChanges(r([{ code: '220', name: '宮城県', grade: 'Unknown', immediate: false }]))
+    expect(changes).toEqual([expect.objectContaining({ from: undefined, to: TSUNAMI_GRADE_LIFTED })])
+  })
+  it('対照: 前回も津波なしの解除区域は返さない', () => {
+    expect(tsunamiAreaGradeChanges(r([{ code: '220', name: '宮城県', grade: 'Unknown', lastGrade: 'Unknown', immediate: false }]))).toEqual([])
   })
 })

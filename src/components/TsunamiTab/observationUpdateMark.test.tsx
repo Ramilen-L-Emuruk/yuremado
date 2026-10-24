@@ -15,6 +15,7 @@ import { TsunamiTab } from './index'
 import { UPDATE_MARK_COLOR } from '../../utils/updateMark'
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../../types/earthquake'
 import type { ObsUpdateMark } from '../../utils/tsunami'
+import { NO_TSUNAMI_VALUE_MARKS } from '../../utils/tsunami'
 
 afterEach(cleanup)
 
@@ -62,7 +63,7 @@ const marks = (name: string, fields: ObsUpdateMark['fields']): Map<string, ObsUp
   new Map([[name, { status: 'changed' as const, fields }]])
 
 const draw = (obs: TsunamiObservation, obsUpdateStatus?: Map<string, ObsUpdateMark>) =>
-  render(<TsunamiTab tsunamis={[makeTsunami([obs])]} earthquakes={[]} obsUpdateStatus={obsUpdateStatus} />)
+  render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[makeTsunami([obs])]} earthquakes={[]} obsUpdateStatus={obsUpdateStatus} />)
 
 /** `#fbbf24` を jsdom が正規化した形。印の色（動いた＝黄）。 */
 const MARK_RGB = 'rgb(251, 191, 36)'

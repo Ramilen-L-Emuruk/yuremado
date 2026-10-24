@@ -78,6 +78,8 @@ export const MAP_LAYER_ORDER = [
   // 地震情報の震源と EEW の震源は同じ仕組みで描く（gl/depthPointLayer.ts）。EEW を前面に置くのは、
   // 進行中の揺れの方が過去の地震より優先して見えるべきだから。
   'hypocenter-depth',
+  // 津波の原因地震の震源（津波タブだけ。EEW の震源と同じ仕組み）。地震情報の震源とは同じタブに出ない。
+  'tsunami-source-epicenters',
   'eew-epicenters',
   // 地名ラベル（地方/県/区域名）は最前面（Leaflet の basemap-labels z450 相当）。
   'basemap-region-labels',

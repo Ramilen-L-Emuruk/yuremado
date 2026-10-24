@@ -39,6 +39,8 @@ type QuakeSample = DeepRequired<Omit<JMAQuake,
 type TsunamiSample = DeepRequired<Omit<JMATsunami,
   | 'cancelledAt' // 解除を当てたときに受信処理が付ける（Date）
   | 'foldedReports' // 報を畳んだときに統合が積む
+  | 'previousSourceEarthquakes' // 別の地震の津波で置き換えたときに統合が積む（時刻は積む前の報で既にずれている）
+  | 'failsafeExpiry' // 標準版の安全弁の予約にだけ付く印（電文には無い）
 >>
 type EewSample = DeepRequired<Omit<EEWAlert, 'cancelledAt'>>
 
@@ -105,7 +107,7 @@ function tsunamiArea(): TsunamiSample['areas'][number] {
   return {
     grade: 'MajorWarning', lastGrade: 'Warning', immediate: true, name: '能登', code: '191',
     firstHeight: { arrivalTime: iso(), condition: 'ただちに津波来襲と予測', revise: '追加' },
-    maxHeight: { description: '５ｍ', value: 5 },
+    maxHeight: { description: '５ｍ', value: 5, revise: '更新' },
     forecastHeightImportant: true,
     stations: [{
       name: '輪島港', code: '19101', highTideDateTime: iso(), arrivalTime: iso(),

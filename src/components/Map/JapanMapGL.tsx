@@ -31,6 +31,8 @@ import { TsunamiLinesGL } from './TsunamiLinesGL'
 import { TsunamiObsBarsGL } from './TsunamiObsBarsGL'
 import { TsunamiArrivalMarkersGL } from './TsunamiArrivalMarkersGL'
 import { TsunamiMissingMarkersGL } from './TsunamiMissingMarkersGL'
+import { TsunamiSourceEpicentersGL } from './TsunamiSourceEpicentersGL'
+import type { TsunamiSourceEarthquake } from '../../types/earthquake'
 import { EewRegionFillGL } from './EewRegionFillGL'
 import { EewLpgmRegionFillGL } from './EewLpgmRegionFillGL'
 import { EewEpicentersGL } from './EewEpicentersGL'
@@ -101,6 +103,9 @@ const LEGEND_PRIMARY_BY_MODE: Record<MapMode, LegendKey[]> = {
   tsunami: ['tsunamiGrade', 'tsunamiObsHeight', 'tsunamiStation'],
   catalog: ['catalog'],
 }
+
+/** 原因地震が無いときに渡す空の配列（参照を固定し、レイヤーの作り直しを起こさない）。 */
+const NO_TSUNAMI_SOURCES: TsunamiSourceEarthquake[] = []
 
 export function JapanMapGL({
   mode,
@@ -198,6 +203,10 @@ export function JapanMapGL({
   // **カタログを足したのは、深さを持つ点群を読むのに沈み込み帯の位置が要るため**
   //（点群だけ見ても、その並びがプレートの沈み込みだと判らない）。
   const showOverlayLines = mode === 'quake' || mode === 'kyoshin' || mode === 'catalog'
+  // **プレート境界だけは津波タブでも出す**（2026-10-22 ユーザー選択「プレート境界だけ出す (Recommended)」）。津波の原因地震は
+  // 沈み込み帯で起きることが多く、震源の×印と並べて見るのに要る。活断層は今どおり出さない。
+  // **地図・凡例・共有カードの出典はこの式を通す**（`shareCardContent.ts` の `showsPlateBoundaryLines` と揃える）。
+  const showPlateLines = showOverlayLines || mode === 'tsunami'
   // 地震モードの派生データ（震度点／区域集約／震源）。Leaflet 版と共有の導出フック。
   const {
     stationMarkers,
@@ -247,13 +256,30 @@ export function JapanMapGL({
   // 津波の派生データ（海岸線＋観測棒＋到達確認マーカー＋欠測マーカー）。発報中は全モードで海岸線を
   // 描くため常時計算する。
   const {
-    tsunamiLines, observationBars, arrivalMarkers, missingMarkers,
+    tsunamiLines, observationBars, forecastStationPoints, arrivalMarkers, missingMarkers,
     tsunamiFitPositions, tsunamiSignature, tsunamiEventId, tsunamiOperationStatus,
   } = useTsunamiLayerData(
     tsunamis,
     observations,
     obsUpdateStatus,
   )
+  // 表示中の津波の原因地震（×印に使う）。地震カードで選んだ地震ではなく、津波電文が名乗るもの。
+  // **海岸線と同じく、解除されていない津波を全部見る**（`useTsunamiLayerData` の `tsunamiLines`）。1 件目だけにすると、
+  // 線は出ているのに震源の×が欠ける津波ができる。同じ地震（震源名と時刻が同じ）は 1 度だけ。
+  const tsunamiSources = useMemo(() => {
+    const seen = new Set<string>()
+    const out: TsunamiSourceEarthquake[] = []
+    for (const t of tsunamis) {
+      if (t.cancelled) continue
+      for (const s of t.sourceEarthquakes ?? []) {
+        const key = `${s.hypocenterName}|${s.originTime ?? ''}|${s.arrivalTime ?? ''}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        out.push(s)
+      }
+    }
+    return out.length > 0 ? out : NO_TSUNAMI_SOURCES
+  }, [tsunamis])
   // 観測行クリックで寄せられる点。**カードに出ている観測点をすべて含める**こと——
   // 実測（観測棒）だけにすると、到達確認の行をクリックしても地図が動かない。
   const focusablePoints = useMemo(
@@ -263,8 +289,11 @@ export function JapanMapGL({
       // 欠測の観測点もカードに行があるので寄せられるようにする（数値を持つ欠測は観測棒にも
       // 入るが、`focusablePoints` は名前で引くだけなので重複しても寄り先は同じ）。
       ...missingMarkers.map((m) => ({ name: m.name, lat: m.lat, lng: m.lng })),
+      // 予測だけの潮位観測点（印は描かない）。カードの予測だけの行を押したときの寄り先
+      // （2026-10-21 ユーザー選択「押せるようにする (Recommended)」）。印のある観測点より後ろに置く —— 同じ名前なら印が先に引かれる。
+      ...forecastStationPoints,
     ],
-    [observationBars, arrivalMarkers, missingMarkers],
+    [observationBars, arrivalMarkers, missingMarkers, forecastStationPoints],
   )
   // 撮影した画像へ描き足すもの。いまは津波の観測棒・到達確認マーカー・欠測マーカーで、いずれも
   // DOM マーカーのため WebGL のキャンバスに写らない（gl/tsunamiObsBar.ts・
@@ -554,8 +583,8 @@ export function JapanMapGL({
   // 地図の外に置く凡例へ「いま描いている色スケール」を知らせる。
   //
   // **各レイヤーの `visible` と同じ式から組むこと。** 地図モードから組み直すと、モードだけでは
-  // 決まらないもので食い違う——津波の海岸線は全モードで描かれ（`TsunamiLinesGL`）、活断層と
-  // プレート境界は津波モードでは描かれない（`showOverlayLines`）。
+  // 決まらないもので食い違う——津波の海岸線は全モードで描かれ（`TsunamiLinesGL`）、活断層は
+  // 津波モードでは描かれない（`showOverlayLines`）。プレート境界は津波モードでも描く（`showPlateLines`）。
   //
   // **中身が空のものは数えない。** `visible` が真でも件数が 0 なら地図に色は出ていないので、
   // 凡例に並べると「地図に無い色」を探させることになる。
@@ -585,7 +614,7 @@ export function JapanMapGL({
     tsunamiMissing: mode === 'tsunami' && missingMarkers.length > 0,
     heatmap: (mode === 'quake' || mode === 'kyoshin') && !!heatPoints && heatPoints.length > 0,
     activeFaults: showOverlayLines && showActiveFaults && (activeFaults?.length ?? 0) > 0,
-    plateBoundaries: showOverlayLines && showPlateBoundaries && (plateBoundaries?.length ?? 0) > 0,
+    plateBoundaries: showPlateLines && showPlateBoundaries && (plateBoundaries?.length ?? 0) > 0,
     // いま見ている画面の主役。**中身を絞るのではなく並べる順を決める**（`MapLegendSources.primary`）。
     // モードで決めてよいのはここだけ——「何を出すか」は上の真偽値が各レイヤーの表示条件から導く。
     primary: LEGEND_PRIMARY_BY_MODE[mode],
@@ -641,7 +670,7 @@ export function JapanMapGL({
           {/* 夜の側の重ね塗り。地図の照明条件にあたるので、モードを問わず出す
               （夜間の津波は避難の条件が変わるため、津波モードでも意味を持つ）。 */}
           <DayNightGL visible={showDayNight} opacity={dayNightOpacity} />
-          <PlateBoundariesGL plateBoundaries={plateBoundaries} visible={showOverlayLines && showPlateBoundaries} />
+          <PlateBoundariesGL plateBoundaries={plateBoundaries} visible={showPlateLines && showPlateBoundaries} />
           <ActiveFaultsGL activeFaults={activeFaults} visible={showOverlayLines && showActiveFaults} opacity={activeFaultOpacity} />
           {/* 通常の震度表示（LPGM 進行中は非表示＝下の LPGM 表示に置き換わる）。
               区域集約時は一次細分区域塗り＋震度ラベル、高ズーム時は観測点ごとの震度点。
@@ -843,6 +872,8 @@ export function JapanMapGL({
           {mode === 'tsunami' && missingMarkers.length > 0 && (
             <TsunamiMissingMarkersGL markers={missingMarkers} iconScale={iconScale} />
           )}
+          {/* 津波の原因地震の震源（津波タブだけ。カスタムレイヤーなので常時マウントし、他のタブでは空を渡す）。 */}
+          <TsunamiSourceEpicentersGL sources={mode === 'tsunami' ? tsunamiSources : NO_TSUNAMI_SOURCES} iconScale={iconScale} />
           {/* 津波カメラ追従・観測フォーカス（モード切替をまたいで ref 保持するため常時マウント）。 */}
           <TsunamiFitGL
             mode={mode}
@@ -853,6 +884,7 @@ export function JapanMapGL({
             observationBars={observationBars}
             arrivalMarkers={arrivalMarkers}
             missingMarkers={missingMarkers}
+            forecastStationPoints={forecastStationPoints}
             focusObsName={focusObsName}
             focusTarget={focusTarget}
           />

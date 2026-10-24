@@ -2,7 +2,8 @@
 //
 // **「いま地図が実際に描いているもの」だけを並べる。地図モードから推し量らない。**
 // 津波の海岸線はモードに関わらず描かれ（`JapanMapGL` の `TsunamiLinesGL` は `tsunamiLines.length > 0`
-// だけを見る）、活断層とプレート境界は津波モードでは描かれない（`showOverlayLines`）。モードで
+// だけを見る）、活断層は津波モードでは描かれない（`showOverlayLines`。プレート境界は津波モードでも
+// 描く —— `showPlateLines`）。モードで
 // 決め打つと、地図に無い色が凡例へ並ぶ。判定に使う値は `JapanMapGL` が各レイヤーの `visible` と
 // 同じ式から組んで渡す（`MapLegendSources`）。
 //

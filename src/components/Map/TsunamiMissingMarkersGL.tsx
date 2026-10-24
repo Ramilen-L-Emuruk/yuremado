@@ -6,8 +6,8 @@ import { arrivalMetrics, popupOffset, ARRIVAL_RING_COLOR, ARRIVAL_OPACITY } from
 import { missingMarkMetrics } from './gl/tsunamiMissingMarker'
 import { BADGE_SHADOW_BLUR, BADGE_SHADOW_COLOR } from './gl/tsunamiObsBar'
 import { TSUNAMI_MISSING_COLOR } from '../../utils/tsunamiStyle'
-import { overSuffixedHeight } from '../../utils/tsunami'
-import { formatTimeMin } from '../../utils/formatters'
+import { overSuffixedHeight, observationFirstWaveText } from '../../utils/tsunami'
+import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 
 // 観測データが欠測となっている観測点の印を描画する。
 //
@@ -15,13 +15,14 @@ import { formatTimeMin } from '../../utils/formatters'
 // （理由と寸法は `gl/tsunamiMissingMarker.ts` の冒頭）。差分更新・点滅・後始末の作りは
 // 到達確認マーカーと揃えてある。
 
-function tooltipHtml(marker: TsunamiMissingMarker): string {
+export function missingTooltipHtml(marker: TsunamiMissingMarker): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const lines = [`<div class="font-bold">${esc(marker.name)}</div>`]
-  // 日時として読めない時刻は行ごと落とす（「 到達」だけが残ると時刻を読み落としたように見える）。
-  const arrivalHm = marker.arrivalTime ? formatTimeMin(marker.arrivalTime) : null
-  if (arrivalHm) {
-    lines.push(`<div class="text-xs" style="color:#e5e7eb">${arrivalHm} 到達</div>`)
+  // 第1波の行は観測棒・到達確認の吹き出しと同じ形（「第1波 05:12 押し波」。2026-10-24 ユーザー選択「この形で揃える
+  // (Recommended)」）。日時として読めない時刻は行ごと落とす（→ `observationFirstWaveText`）。
+  const firstWave = observationFirstWaveText(marker)
+  if (firstWave) {
+    lines.push(`<div class="text-xs" style="color:#e5e7eb">${esc(firstWave)}</div>`)
   }
   // これまでに観測できた波高があれば出す。欠測になる前の値であることを添えないと、いまの波高だと読める。
   if (marker.height) {
@@ -71,6 +72,8 @@ interface MarkerEntry {
   marker: maplibregl.Marker
   popup: maplibregl.Popup
   el: HTMLDivElement
+  data: TsunamiMissingMarker
+  opener: TsunamiMarkerPopup
 }
 
 export function TsunamiMissingMarkersGL({ markers, iconScale }: Props) {
@@ -86,7 +89,8 @@ export function TsunamiMissingMarkersGL({ markers, iconScale }: Props) {
       const existing = entries.get(m.name)
       if (existing) {
         updateMarkerEl(existing.el, m, iconScale)
-        existing.popup.setHTML(tooltipHtml(m)).setOffset(popupOffset(iconScale))
+        existing.data = m
+        existing.popup.setHTML(missingTooltipHtml(m)).setOffset(popupOffset(iconScale))
         continue
       }
       const el = buildMissingMarkerEl(m, iconScale)
@@ -97,15 +101,15 @@ export function TsunamiMissingMarkersGL({ markers, iconScale }: Props) {
         closeButton: false,
         closeOnClick: false,
         offset: popupOffset(iconScale),
-      }).setHTML(tooltipHtml(m))
-      el.addEventListener('mouseenter', () => popup.setLngLat([m.lng, m.lat]).addTo(map))
-      el.addEventListener('mouseleave', () => popup.remove())
-      entries.set(m.name, { marker, popup, el })
+      }).setHTML(missingTooltipHtml(m))
+      const entry: MarkerEntry = { marker, popup, el, data: m, opener: null as unknown as TsunamiMarkerPopup }
+      entry.opener = attachTsunamiMarkerPopup(map, el, popup, m.name, 'missing', () => [entry.data.lng, entry.data.lat])
+      entries.set(m.name, entry)
     }
     // 欠測が解けた・区域が減った等で消えたものを後始末する。
     for (const [name, entry] of entries) {
       if (seen.has(name)) continue
-      entry.popup.remove()
+      entry.opener.dispose()
       entry.marker.remove()
       entries.delete(name)
     }
@@ -116,7 +120,7 @@ export function TsunamiMissingMarkersGL({ markers, iconScale }: Props) {
     const entries = entriesRef.current
     return () => {
       for (const entry of entries.values()) {
-        entry.popup.remove()
+        entry.opener.dispose()
         entry.marker.remove()
       }
       entries.clear()

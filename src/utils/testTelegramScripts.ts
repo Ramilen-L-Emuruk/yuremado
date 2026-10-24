@@ -707,6 +707,23 @@ function advanceHighTide(doc: Document): void {
   for (const t of tides) t.textContent = new Date(Date.parse(t.textContent ?? '') + 12 * 3600_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
+/**
+ * 段 11 で、欠測のまま進める釜石の最大波の観測時刻。**段 3 の値（14:58）より後で、段 11 の観測状況を確定した時刻より前**
+ * にする —— 確定時刻より後の観測は「まだ来ていない波を観測した」形になる（実配信に無い）。段 11 の確定時刻は見本の
+ * 15:00:00 に `at(11)`（110 秒）を足した 15:01:50、発表時刻は 15:03:45。
+ */
+const QUIET_MISSING_MAX_HEIGHT_TIME = '2011-03-11T15:01:00+09:00'
+
+/**
+ * 観測点の最大波を「欠測」にする（**値は持ったまま**。これまでの最大波を観測した後に観測が途切れた形）。
+ * 電文解説資料 Ⅱ.12 事例 6（「欠測」と数値が並ぶ）と同じ形にする。
+ */
+function markMissing(doc: Document, name: string): void {
+  const { max } = maxHeightOf(doc, name)
+  childOf(max, 'Condition')?.remove()
+  max.appendChild(el(doc, max, 'Condition', '欠測'))
+}
+
 /** 変化の小さい続報テストで、**値を 1 つも持たない形**にしておく観測点。 */
 const QUIET_VALUELESS_STATION = '石巻市鮎川'
 
@@ -777,7 +794,9 @@ function confirmArrival(doc: Document): void {
  * | 7 | 観測情報 | 何も動かない（同じ値の再送） |
  * | 8 | 観測情報 | 釜石の波高が下がり「以上」も外れる（**段 7 より後ろに置く** —— 読み上げの記憶は下げない） |
  * | 9 | 観測情報 | 値を持たない観測点（石巻市鮎川）へ、電文の印だけが付く（カードの「観測中」に印の色が当たる） |
- * | 10〜14 | 満潮時刻 | 名乗りだけ／満潮時刻の更新／到達状況の更新／到達予想時刻の更新／何も動かない |
+ * | 10 | 観測情報 | 釜石が欠測へ転じる（これまでの最大波の値は持ったまま。行に印が付き、欠測の文が読まれる） |
+ * | 11 | 観測情報 | 釜石が欠測のまま、最大波の観測時刻だけが更新される（「欠測となっている観測点で、…」の文） |
+ * | 12〜16 | 満潮時刻 | 名乗りだけ／満潮時刻の更新／到達状況の更新／到達予想時刻の更新／何も動かない |
  */
 export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
   const T = TOHOKU.observation
@@ -832,27 +851,39 @@ export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
       file: T, headType: 'VTSE51', atMs: at(9), onlyIn: 'dmdss',
       rewrite: quietObservation(9, 4, at(9), doc => markValuelessStation(doc, QUIET_VALUELESS_STATION)),
     },
-    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(10), onlyIn: 'dmdss', rewrite: quietTide(10, at(10)) },
-    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(11), onlyIn: 'dmdss', rewrite: quietTide(11, at(11), advanceHighTide) },
+    // 段 10: 釜石が欠測へ転じる（これまでの最大波の値は持ったまま。電文解説資料 Ⅱ.12 事例 6 の形）
+    { file: T, headType: 'VTSE51', atMs: at(10), onlyIn: 'dmdss', rewrite: quietObservation(10, 4, at(10), doc => markMissing(doc, QUIET_HEIGHT_STATION)) },
+    // 段 11: 釜石が欠測のまま、最大波の観測時刻だけが更新される（断続的な欠測。`Revise`＝更新）
     {
-      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(12), onlyIn: 'dmdss',
-      rewrite: quietTide(12, at(12), (doc) => { advanceHighTide(doc); confirmArrival(doc) }),
+      file: T, headType: 'VTSE51', atMs: at(11), onlyIn: 'dmdss',
+      rewrite: quietObservation(11, 4, at(11), (doc) => {
+        markMissing(doc, QUIET_HEIGHT_STATION)
+        const { max } = maxHeightOf(doc, QUIET_HEIGHT_STATION)
+        childOf(max, 'DateTime')!.textContent = QUIET_MISSING_MAX_HEIGHT_TIME
+        max.appendChild(el(doc, max, 'Revise', '更新'))
+      }),
     },
-    // 段 13: 到達予想時刻だけを早める（満潮時刻・到達状況は前の段のまま）
-    {
-      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(13), onlyIn: 'dmdss',
-      rewrite: quietTide(13, at(13), (doc) => { advanceHighTide(doc); confirmArrival(doc); advanceArrivalForecast(doc, 10) }),
-    },
+    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(12), onlyIn: 'dmdss', rewrite: quietTide(12, at(12)) },
+    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(13), onlyIn: 'dmdss', rewrite: quietTide(13, at(13), advanceHighTide) },
     {
       file: TOHOKU.tide, headType: 'VTSE51', atMs: at(14), onlyIn: 'dmdss',
-      rewrite: quietTide(14, at(14), (doc) => { advanceHighTide(doc); confirmArrival(doc); advanceArrivalForecast(doc, 10) }),
+      rewrite: quietTide(14, at(14), (doc) => { advanceHighTide(doc); confirmArrival(doc) }),
+    },
+    // 段 15: 到達予想時刻だけを早める（満潮時刻・到達状況は前の段のまま）
+    {
+      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(15), onlyIn: 'dmdss',
+      rewrite: quietTide(15, at(15), (doc) => { advanceHighTide(doc); confirmArrival(doc); advanceArrivalForecast(doc, 10) }),
+    },
+    {
+      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(16), onlyIn: 'dmdss',
+      rewrite: quietTide(16, at(16), (doc) => { advanceHighTide(doc); confirmArrival(doc); advanceArrivalForecast(doc, 10) }),
     },
     // 片付けの全区域解除。**時刻もこの時間軸の最後へ置く**（基準＝台本の `anchor`）
     {
-      file: TOHOKU.warning, headType: 'VTSE41', atMs: at(14) + TSUNAMI_QUIET_TAIL_MS,
+      file: TOHOKU.warning, headType: 'VTSE41', atMs: at(16) + TSUNAMI_QUIET_TAIL_MS,
       rewrite: xml => editXml(xml, (doc) => {
         toAllLifted(doc)
-        setIssueTime(doc, quietIssueAt(at(14) + TSUNAMI_QUIET_TAIL_MS))
+        setIssueTime(doc, quietIssueAt(at(16) + TSUNAMI_QUIET_TAIL_MS))
       }),
     },
   ]
@@ -915,6 +946,16 @@ export const TSUNAMI_FORECAST: TestTelegramScript = {
   ],
 }
 
+/** 失効時刻テストで、降格の報から失効までの長さ（ミリ秒）。期限を延ばした続報でも、その報から同じ長さを置く。 */
+export const TSUNAMI_EXPIRY_AFTER_MS = 45_000
+/** 失効時刻テストで、降格の報から「期限だけを延ばした続報」までの長さ（ミリ秒）。 */
+export const TSUNAMI_EXPIRY_EXTEND_AT_MS = 20_000
+/**
+ * 失効時刻テストで、続報が期限を延ばす幅（ミリ秒）。**読み上げで違う時刻に聞こえる幅にする**（読み上げは分の単位。
+ * 1 分未満だと「同じ時刻へ延長」になり、読み上げは黙る）。
+ */
+export const TSUNAMI_EXPIRY_EXTEND_BY_MS = 120_000
+
 /**
  * 失効時刻テスト（能登 01/02 07:30 の津波注意報 → 10:00 に解除されて予報だけが残る報）。DMDSS 版のみ。
  *
@@ -944,11 +985,31 @@ export const TSUNAMI_EXPIRY: TestTelegramScript = {
         valid.textContent = `${new Date(expireAt).toISOString().slice(0, 19)}+00:00`
       }),
     },
+    // **等級は同じまま、期限だけを延ばした続報**（実電文 2022-01-17 13:59 と同じ形。全期間 436 通のうち 3 通）。
+    // 「津波予報の失効時刻が、〜に延長されました。」が声になる経路は、この形でしか通らない
+    // （2026-10-24 ユーザー選択「延長と言う (Recommended)」）。前回の等級は今回と同じにする —— 実電文も
+    // 予報が続いている間は `LastKind` が予報を指す。期限は延ばした分だけ後ろへずれる（失効で消える確認も兼ねる）。
+    {
+      file: NOTO_TSUNAMI.forecastWithExpiry, headType: 'VTSE41', atMs: TSUNAMI_DISMISS_MS / 2 + TSUNAMI_EXPIRY_EXTEND_AT_MS,
+      rewrite: xml => editXml(xml, (doc) => {
+        for (const category of descendants(doc, 'Category')) {
+          const kind = childOf(category, 'Kind')
+          const last = childOf(category, 'LastKind')
+          if (!kind || !last) continue
+          childOf(last, 'Name')!.textContent = childText(kind, 'Name') ?? ''
+          childOf(last, 'Code')!.textContent = childText(kind, 'Code') ?? ''
+        }
+        const created = Date.parse(childText(only(doc, 'Control'), 'DateTime') ?? '')
+        const report = Date.parse(childText(only(doc, 'Head'), 'ReportDateTime') ?? '')
+        if (!Number.isFinite(created) || !Number.isFinite(report)) throw new Error('テスト用の電文の時刻を読めません')
+        setIssueTime(doc, new Date(created + TSUNAMI_EXPIRY_EXTEND_AT_MS).toISOString())
+        const expireAt = report + TSUNAMI_DISMISS_MS / 2 + TSUNAMI_EXPIRY_AFTER_MS + TSUNAMI_EXPIRY_EXTEND_BY_MS
+        only(doc, 'ValidDateTime').textContent = `${new Date(expireAt).toISOString().slice(0, 19)}+00:00`
+      }),
+    },
   ],
 }
 
-/** 失効時刻テストで、降格の報から失効までの長さ（ミリ秒）。 */
-export const TSUNAMI_EXPIRY_AFTER_MS = 45_000
 
 /**
  * 区域の等級変化テスト（能登本震の実電文の並び）。DMDSS 版のみ（前回の等級 `LastKind` は P2PQuake が

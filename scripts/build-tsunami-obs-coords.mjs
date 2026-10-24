@@ -84,6 +84,33 @@ const UNLISTED_COORDS = new Map([
   ['久米島', [26.35, 126.8]],
 ])
 
+/**
+ * いまの個別コード表（PointTsunami）に無いが、過去の電文に現れる観測点名。
+ *
+ * この表は名前から座標を引くので、過去の電文をリプレイやテストボタンで流すと、ここに無い観測点は
+ * 地図から落ち、行を押しても寄らない。**座標はここに書かない** —— 観測点図にも載っていないので、
+ * 施設の表から名前だけで引く。引けなければ生成を止める（`verify` の「座標を決められなかった観測点」）。
+ * コードは電文の `Station/Code`（いまの表では使われていない）。
+ *
+ * **改称されただけで、いまの観測点と同じ施設を指すものがある**（`sameAs`）。その組だけは同じ場所を 2 つの名前へ
+ * 割り当てるのが正しいので、`verify` の二重割り当ての検査から外す。**外すのはその組だけ** —— 旧名が無関係な観測点と
+ * 同じ場所を掴んだら、従来どおり取り違えとして止める。
+ */
+const FORMER_STATIONS = [
+  // 2024-01-01 の能登半島地震の津波観測に関する情報（nii/20240101071324_0_VTSE51 ほか）に現れる。
+  { code: 37003, name: '坂井市三国' },
+  // 気象庁の見本の電文（jma-sample/32-39_11_03・32-39_11_10）に現れる。潮位観測点の「石廊崎」
+  // （南伊豆町手石）で、いまの表の「南伊豆町手石港」と同じ場所。
+  { code: 38004, name: '南伊豆町石廊崎', sameAs: '南伊豆町手石港' },
+  // 同上。いまの表の「八戸港」（20121）と同じ場所。
+  { code: 20101, name: '八戸', sameAs: '八戸港' },
+]
+/** 改称の組（旧名 → いまの名前）。二重割り当ての検査で、この組だけを同じ場所として許す。 */
+const RENAMED_PAIRS = new Map(FORMER_STATIONS.filter((s) => s.sameAs).map((s) => [s.name, s.sameAs]))
+function isRenamedPair(a, b) {
+  return RENAMED_PAIRS.get(a) === b || RENAMED_PAIRS.get(b) === a
+}
+
 /** 同じ名前の施設がこれだけ近ければ、取得元が違うだけの同じ場所とみなす（km）。 */
 const SAME_PLACE_MAX_KM = 2
 /**
@@ -177,6 +204,12 @@ const EXPECTED = [
   { name: '宮古島平良', lat: 24.8133, lng: 125.2783 },
   // 潮位観測点の「奥尻」（奥尻町松江）。同名がもう 1 件 10km 離れてあり、別名で振り分けている。
   { name: '奥尻島松江', lat: 42.0783, lng: 139.4892 },
+  // 潮位観測点の「石廊崎」（南伊豆町手石）。いまの表に無く、過去の電文にだけ現れる観測点（`FORMER_STATIONS`）。
+  { name: '南伊豆町石廊崎', lat: 34.6283, lng: 138.8892 },
+  // 同じく過去の電文にだけ現れる観測点。潮位観測点の「三国」（国土地理院・坂井市三国町）。
+  { name: '坂井市三国', lat: 36.2547, lng: 136.1489 },
+  // 同じく。検潮・津波観測施設の「八戸」（国土交通省東北地方整備局）の公表座標。
+  { name: '八戸', lat: 40.5353, lng: 141.5556 },
 
   // --- 生成結果の固定（前と変わっていないことだけを見る） ---
   // 防災科学技術研究所 S-net。名前と施設の対応は観測点図を通してしか辿れない。
@@ -642,7 +675,7 @@ function verify(resolved, stations, nied, fits, inputs, crossCheck = {}) {
       // 捉えようとすると閾値を `SAME_PLACE_MAX_KM`（2km）まで広げることになり、1.71km しか
       // 離れていない別々の観測点（三浦市三崎漁港と三浦市油壺）を誤って束ねてしまう。**
       const sameFacility = a.facility && a.facility === b.facility && apart <= SAME_PLACE_MAX_KM
-      if (apart <= DUPLICATE_PLACE_MAX_KM || sameFacility) shared.push(`${nameA} と ${nameB}`)
+      if ((apart <= DUPLICATE_PLACE_MAX_KM || sameFacility) && !isRenamedPair(nameA, nameB)) shared.push(`${nameA} と ${nameB}`)
     }
   }
   if (shared.length) {
@@ -756,13 +789,16 @@ function verify(resolved, stations, nied, fits, inputs, crossCheck = {}) {
 // --- 本体 --------------------------------------------------------------------------
 
 async function main() {
-  const [{ stations, tidal, brokenMinutes }, mapPoints, jishin, nied] = await Promise.all([
+  const [{ stations: current, tidal, brokenMinutes }, mapPoints, jishin, nied] = await Promise.all([
     fetchJmaCodeTables(),
     fetchObservationMaps(),
     fetchJishinStations(),
     fetchNiedStations(),
   ])
-  console.log(`観測点名 ${stations.length} 点 / 図の点 ${mapPoints.length} / 潮位観測点 ${tidal.length} / 検潮・津波観測施設 ${jishin.length} / 海底観測網 ${nied.length}`)
+  // 過去の電文にだけ現れる観測点は、いまの表に同じ名前が無いときだけ足す（復活していたら表の側を正とする）。
+  const currentNames = new Set(current.map((s) => s.name))
+  const stations = [...current, ...FORMER_STATIONS.filter((s) => !currentNames.has(s.name))]
+  console.log(`観測点名 ${current.length} 点（ほかに過去の電文にだけ現れるもの ${stations.length - current.length} 点） / 図の点 ${mapPoints.length} / 潮位観測点 ${tidal.length} / 検潮・津波観測施設 ${jishin.length} / 海底観測網 ${nied.length}`)
 
   // 沿岸は気象庁の潮位観測点を先に見る（津波情報の観測点名と同じ体系にあるため名前で引ける）。
   // 沖合はそこに無いので、結果として地震調査研究推進本部の施設が選ばれる。
@@ -794,7 +830,7 @@ async function main() {
 
   const crossCheck = {}
   const problems = verify(resolved, stations, nied, fits, {
-    stations: stations.length, tidal: tidal.length, jishin: jishin.length,
+    stations: current.length, tidal: tidal.length, jishin: jishin.length,
     nied: nied.length, mapPoints: mapPoints.length, brokenMinutes,
   }, crossCheck)
   const byVia = new Map()

@@ -277,6 +277,9 @@ export type TelegramBoilerplateReads = Readonly<Record<TelegramBoilerplateKey, b
  * 落とす・読むの既定。**「音にして伝わらないもの」と「アプリが別の経路で伝えているもの」は
  * 落とす側に倒す。**
  *
+ * 既定で落とすことは 2026-09-18 04:12 JST ユーザー「「この地震について、緊急地震速報を発表しています。」もいらないです。 /
+ * それらの定型落としはボタンで変えられるようにしませんか？」、04:17「その線引きで進めて」。
+ *
  * 他の読み上げ設定は「設定を入れる前の挙動」を既定にしてあるが（→ `useSettings.ts` の
  * `DEFAULTS`）、ここはその原則を当てられない —— `＊` 印の説明は**この設定より前から無条件で
  * 落ちていた**ので、読む側を既定にすると設定を足した瞬間に鳴り出す。逆向きの破壊になる。
@@ -2690,10 +2693,11 @@ function sourceHypocenterChangedSegments(
  * 実際に降格文で落とし、どの検証にも掛からなかった。穴の形と守り方は
  * `useLiveEventHandler.tsunamiExpiry.test.ts` の冒頭が持つ。
  *
- * **観測点更新・区域単位の等級変化・変化を伝えない続報の 3 経路には足していない。** あちらへ渡る
- * のは「等級は動いていない」報で、生の電文が `ValidDateTime` を持たない（引き継ぎが載せるのは
- * カードの状態のほうで、読み上げが見る `event` には乗らない）。**期限を載せた電文がその 3 経路へ
- * 流れうると分かったら、ここも足すこと。**
+ * **観測点更新・区域単位の等級変化・変化を伝えない続報の 3 経路は、この句ではなく
+ * {@link tsunamiExpiryChangeSegments} が受け持つ。** あちらへ渡るのは「等級は動いていない」報で、
+ * 期限を載せることは稀だが無くはない（全期間 436 通のうち 4 通。うち 3 通は期限だけが延びた報）。
+ * 発表文の形（「この〜の失効時刻は、…です。」）は等級の名乗りの後ろに置く前提なので、名乗りの無い
+ * 報では「延長されました」の形で言う。
  *
  * **`spoken` が無いときは毎回読む。** 呼び出し側の既読は地震ごと（`quake:<eventId>`）に持つので、
  * `eventId` を持たない電文では `undefined` が渡る（→ `useLiveEventHandler.ts` の
@@ -2719,6 +2723,59 @@ function tsunamiExpirySegments(
     plain(`この${gradeLabel}の失効時刻は、`),
     { text: value, refs: [{ kind: 'quakeFact', fact: 'tsunamiExpiry', value }] },
     plain('です。'),
+  ]
+}
+
+/**
+ * 等級を名乗らない報で、**失効時刻が前の報から動いたこと**を伝える文。
+ *
+ * 「津波予報の失効時刻が、19日14時に延長されました。」（早まったときは「〜に変更されました。」。
+ * 2026-10-24 ユーザー選択「延長と言う (Recommended)」）。
+ *
+ * **等級が動かない続報でも期限は延びる。** 津波予報が長引くと、気象庁は等級を変えずに期限だけを
+ * 延ばした報を出す（全期間の津波警報等 436 通のうち、何も声にならなかった続報 4 通のうち 3 通。例 2022-01-17 13:59、1/17 14:00 → 1/18 14:00）。
+ * その報は観測点も等級の変化も持たないので、従来は一言も声にならなかった（2026-10-21 ユーザー選択
+ * 「延びたら読む (Recommended)」）。等級を名乗る 2 つの文（{@link tsunamiToSegments}・
+ * {@link tsunamiDowngradeToSegments}）は期限を {@link tsunamiExpirySegments} で語るので、
+ * この文を呼ぶのはそれ以外の経路（観測点の更新・区域単位の等級変化・変化を伝えない続報）だけ。
+ *
+ * **既読は発表文と同じ鍵**（`tsunamiExpiry`）に積む。どちらの文で語っても、同じ値を二度言わない。
+ * 前の報が期限を持たない（初めて付いた）・同じ値・読めない値のときは何も言わない ——
+ * 「延長」か「変更」かを言い分けられないため（初めて付いたときに黙るのは 2026-10-24 ユーザー選択「今のまま黙る (Recommended)」。
+ * 等級を名乗る発表文・降格文は期限を自分で語るので、そちらで伝わる）。
+ *
+ * **比べるのは「当てる前」と「当てた後」の津波の期限**で、届いた報自身の期限ではない。順番が前後して届いた古い報は
+ * 状態に採られない（作成時刻の順に重ね直す。`mergeTsunamiReports`）ので、報の値を読むと、表示していない古い期限を
+ * 「変更されました」と言うことになる。当てた後で比べれば、古い報では期限が動かず黙る。等級も当てた後の津波から採る
+ * （観測点だけの報は区域を持たない）。
+ *
+ * @param previousValidDateTime 前の報までに知っていた失効時刻（受信処理が当てる前の津波の値）
+ * @param applied その報を当てた後の津波（受信処理の `stepTsunamiState` の結果。津波が終わったなら undefined）
+ */
+export function tsunamiExpiryChangeSegments(
+  event: JMATsunami,
+  previousValidDateTime: string | undefined,
+  applied: JMATsunami | undefined,
+  spoken: TsunamiQuakeSpoken | undefined,
+): SpeechSegment[] {
+  const current = applied?.validDateTime
+  if (event.cancelled || !applied || !current || !previousValidDateTime) return []
+  const now = Date.parse(current)
+  const prev = Date.parse(previousValidDateTime)
+  if (!Number.isFinite(now) || !Number.isFinite(prev) || now === prev) return []
+  const topGrade = GRADE_ORDER.find(g => applied.areas.some(a => a.grade === g))
+  if (!topGrade) return []
+  const format = (iso: string) => (expiryNeedsDate(event.time, iso) ? formatDayTime(iso) : formatTime(iso))
+  const value = format(current)
+  if (!value) return []
+  if (spoken?.expiry?.facts.get('tsunamiExpiry') === value) return []
+  // **読み上げで同じ時刻に聞こえる変化は言わない**（分より細かい違いだけの延長。「16時22分に延長されました」と
+  // 前と同じ時刻を言うことになる）。
+  if (format(previousValidDateTime) === value) return []
+  return [
+    plain(`${tsunamiGradeLabel(topGrade)}の失効時刻が、`),
+    { text: value, refs: [{ kind: 'quakeFact', fact: 'tsunamiExpiry', value }] },
+    plain(now > prev ? 'に延長されました。' : 'に変更されました。'),
   ]
 }
 
@@ -2803,7 +2860,9 @@ export function tsunamiDowngradeToSegments(
   const gradeLabel = tsunamiGradeLabel(topGrade)
   const heights = areaHeightSentence(rawTopAreas, observations)
   // **失効時刻は文の最後。** 発表文と同じ置き場所（→ `tsunamiExpirySegments`）。
-  // **降格文は震源を語らない**ので、発表文の並びにある震源の句はここには無い。
+  // **降格文は震源を語らない**ので、発表文の並びにある震源の句はここには無い（まだ声にしていなくても語らない。
+  // 最初の報が降格報になるのは起動・リプレイで状況を再現しきれないときだけ —— 2026-10-21 ユーザー「だからその時の状況を
+  // 再現するって言ってますよね。」で、推した「まだなら語る」を採らずこのまま残した）。
   const expiry = tsunamiExpirySegments(event, gradeLabel, quakeSpoken)
 
   if (heights.length > 0) {
@@ -2853,7 +2912,8 @@ export function tsunamiDowngradeToText(
  * 文のことで、利用者が耳にする「気象庁の発表文」（→ `telegramTextToSpeak`）とは別物。**
  *
  * **行動指示（「海岸から離れてください」等）も付けない。** 等級の発表と違い、この報は
- * 「どこがどう変わったか」を伝えるためのもの。
+ * 「どこがどう変わったか」を伝えるためのもの（残りの区域と行動指示を読まないのは 2026-10-21 ユーザー選択
+ * 「今のまま記録する (Recommended)」）。
  *
  * 遷移の組ごとに 1 文を置き、2 文目以降を「また、」で継ぐ（等級ごとに文を分ける
  * `lowerGradeSentence` と同じ作法）。区域名は自分の組の中で読点連結し、助詞は述語の直前に
@@ -2870,14 +2930,20 @@ export function tsunamiDowngradeToText(
 export function tsunamiAreaGradeChangeToSegments(changes: readonly TsunamiAreaGradeChange[]): SpeechSegment[] {
   const segments: SpeechSegment[] = []
   changes.forEach((change, i) => {
+    // 遷移元を読めないのは解除の組だけ（`TsunamiAreaGradeChange.from`）。それ以外の組で来たら文にしない
+    // （何から何へ動いたかを言えない。`tsunamiAreaGradeChanges` がこの形を作らない）。
+    if (change.from === undefined && change.to !== TSUNAMI_GRADE_LIFTED) return
     if (i > 0) segments.push(plain('また、'))
     segments.push(...areaNameSegments(change.areas))
     if (change.to === TSUNAMI_GRADE_LIFTED) {
       // 解除された区域。遷移先に等級の名前が無いので「〜に切り替えられました」とは言えない。
       // **残っている区域の話も、行動の指示も足さない**（他の遷移と同じ方針）。
-      segments.push(plain(`の${tsunamiGradeLabel(change.from)}が解除されました。`))
+      // 前回の等級を読めない区域は「津波警報等」と言う（2026-10-24 ユーザー選択「「津波警報等が解除」 (Recommended)」。
+      // 全区域の解除の文「津波警報等は全て解除されました。」と同じ語）。
+      segments.push(plain(`の${change.from === undefined ? '津波警報等' : tsunamiGradeLabel(change.from)}が解除されました。`))
       return
     }
+    if (change.from === undefined) return
     if (change.from === 'Unknown') {
       // 前回は津波なし（`LastKind` が 00 等）。「〜の津波なしが」とは言えないので、
       // 波高が付いていない発表文と同じ言い方に落とす。
@@ -3361,8 +3427,8 @@ export function selectMaxHeightTimeUpdatesToSpeak(
  * 最大波の時刻だけが動いた」報は読み上げ文が空になり、通知音だけが鳴っていた。
  *
  * **同じ高さの波がまた来たという事実を伝える。** 危険度が上がったわけではないので、
- * **波高は読まない**（前の報で既に声にしている値を繰り返すだけになる）。読むのは地点名と
- * 新しい観測時刻だけ。波高を言い直すと、値が上がったのか時刻だけが動いたのかを聞き分け
+ * **波高は読まない**（前の報で既に声にしている値を繰り返すだけになる。2026-10-21 ユーザー選択
+ * 「今のまま記録する (Recommended)」）。読むのは地点名と新しい観測時刻だけ。波高を言い直すと、値が上がったのか時刻だけが動いたのかを聞き分け
  * られなくなる —— 群を分けている意味がそこにある。
  *
  * **更新の着点は「へ」。** 「23時26分**に**更新」だと「23時26分に更新した」とも読め、更新の時刻
@@ -3403,6 +3469,47 @@ export function tsunamiMaxHeightTimeToSegments(
         // 続くので、読点を挟まないと最後の地点名と主語が繋がって聞こえる。到達確認の受け皿
         // （{@link tsunamiArrivalToSegments}）が「で到達を確認しました」と読点なしなのは、
         // あちらは「で」の直後が動詞句だから。**形を揃えるために片方を機械的に合わせない。**
+        plain('で、最大波の観測時刻が更新されました。'),
+      ]),
+    ...omittedPointsSentence(obs.length, shown.length, '更新されています'),
+  ]
+}
+
+/**
+ * **欠測となっている観測点**で、最大波の観測時刻だけが更新された報の読み上げ。
+ *
+ * 「欠測となっている観測点で、最大波の観測時刻が更新されました。〇〇で23時26分へ更新されました。」
+ * （2026-10-24 ユーザー選択「欠測を前に置く (Recommended)」。2026-10-21 選択「読む (Recommended)」）。
+ *
+ * 欠測の観測点も、電文は「これまでの最大波」とその観測時刻を `Revise`「更新」で送り直すことがある
+ * （断続的な欠測）。{@link tsunamiMaxHeightTimeToSegments} は欠測を外している —— 観測できていない地点に
+ * 「更新されました」とだけ言うと、いま観測できているように聞こえるため。そこで**欠測であることを先に
+ * 言ってから**時刻を伝える。件数の上限と選び方は時刻の群と共有する（{@link selectMaxHeightTimeUpdatesToSpeak}）。
+ */
+export function tsunamiMissingMaxHeightTimeToSegments(
+  obs: TsunamiObservation[],
+  maxPoints = MAX_HEIGHT_TIME_SPEAK_MAX_POINTS,
+): SpeechSegment[] {
+  if (obs.length === 0) return []
+  const shown = selectMaxHeightTimeUpdatesToSpeak(obs, maxPoints)
+  const anyTimed = shown.some(o => (o.maxHeightDateTime ? formatTime(o.maxHeightDateTime) : null) !== null)
+  return [
+    ...(anyTimed
+      ? [
+        plain('欠測となっている観測点で、最大波の観測時刻が更新されました。'),
+        ...observationListSegments(
+          shown,
+          o => {
+            const at = o.maxHeightDateTime ? formatTime(o.maxHeightDateTime) : null
+            return at ? `で${at}へ更新` : 'で更新'
+          },
+          'されました。',
+        ),
+      ]
+      // 時刻を 1 つも読めなければ地点名を連ねる形へ落とす（時刻の群と同じ扱い）。
+      : [
+        plain('欠測となっている'),
+        ...observationDetailSegments(shown, () => ''),
         plain('で、最大波の観測時刻が更新されました。'),
       ]),
     ...omittedPointsSentence(obs.length, shown.length, '更新されています'),
@@ -3523,7 +3630,7 @@ const TIDE_REPORT_FALLBACK_HEADLINE = '各地の満潮時刻と津波到達予�
  * 通るので何も足さない ―― まだ一度も伝えていないものを「更新されました」とは言えない。
  *
  * **地点名も件数も読まない。** 満潮時刻は 46〜52 地点ぶん載るので読み切れず、件数を言っても
- * 聞き手にできることが増えない（どこが動いたかはカードで見る）。
+ * 聞き手にできることが増えない（どこが動いたかはカードで見る。2026-10-21 ユーザー選択「今のまま記録する (Recommended)」）。
  */
 export function tsunamiTideToSegments(
   change: TideReportChange,

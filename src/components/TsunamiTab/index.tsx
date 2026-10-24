@@ -1,13 +1,13 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAutoOpenWhileSpeaking } from '../../hooks/useAutoOpenWhileSpeaking'
-import type { JMAQuake, JMATsunami, TsunamiArea, TsunamiObservation, TsunamiWarningComment } from '../../types/earthquake'
+import type { JMAQuake, JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiObservation, TsunamiWarningComment } from '../../types/earthquake'
 import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTimeMin, formatDepth, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
 import { quakeEventKey, extractQuakeEventId } from '../../utils/quakeMerge'
 import { linkTsunamiSources } from '../../utils/tsunamiSourceLinks'
-import { groupAreasForCardDisplay, tsunamiLiftedAreas, matchesArea, observationBadges, observationHeightText, observationArrivalFallbackText, observationMaxHeightTimeText, estimationBadges, estimationHeightText, forecastHeightImportantBadge, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, isTsunamiGradeRaised, sourceEarthquakeTime, tsunamiAreaKey, tsunamiEventIds, evacuationActionLine, fallbackEvacuationAction, type ObsUpdateMark, type ObsUpdateField } from '../../utils/tsunami'
+import { groupAreasForCardDisplay, tsunamiLiftedAreas, matchesArea, observationBadges, observationHeightText, observationArrivalFallbackText, observationMaxHeightTimeText, estimationBadges, estimationHeightText, forecastHeightImportantBadge, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, isTsunamiGradeRaised, sourceEarthquakeTime, tsunamiAreaKey, tsunamiEventIds, evacuationActionLine, fallbackEvacuationAction, tideStationKey, arrivalConditionBadge, ARRIVAL_CONDITION_BADGE, type ObsUpdateMark, type ObsUpdateField, type TsunamiValueMarks, type EstimationUpdateField } from '../../utils/tsunami'
 import { TSUNAMI_MISSING_COLOR as MISSING_COLOR } from '../../utils/tsunamiStyle'
 import { CANCEL_REASON_LABEL } from '../../utils/tsunamiCancelLabel'
-import { UPDATE_MARK_COLOR } from '../../utils/updateMark'
+import { UPDATE_MARK_COLOR, type UpdateMark } from '../../utils/updateMark'
 import { mapChunksToRefs, planFollowScroll, followViewHasRoom, hasFollowContext, type FollowRect, type SpeechFollowSession, type SpeechRef } from '../../utils/ttsFollow'
 import { getSpeechClock } from '../../utils/voicevox'
 import { INTERACTION_HOLD_SEC } from '../Map/gl/camera'
@@ -61,6 +61,11 @@ interface Props {
    * 「たった今切り替わった」ように見え続ける（→ docs/spec/tsunami-spec.md §10）。
    */
   areaGradeChangedKeys?: ReadonlySet<string>
+  /**
+   * 観測点以外の値（満潮時刻・予想波高・沿岸への推定）に付ける「この報で動いた」印（→ `utils/tsunami.ts` の
+   * `TsunamiValueMarks`）。判定は受信処理（`useLiveEventHandler`）が前の報と突き合わせて作る。
+   */
+  tsunamiValueMarks: TsunamiValueMarks
   /** 進行中の読み上げ。渡されるとカードが読み上げに追従する（`null` なら追従しない） */
   speechSession?: SpeechFollowSession | null
   /**
@@ -166,10 +171,14 @@ function districtMatchesArea(district: { code?: string; name?: string }, area: T
   return !!district.name && district.name === area.name
 }
 
-function TsunamiHeightHeader({ label, style }: { label: string; style: GradeStyle }) {
+/**
+ * 予想波高ごとの見出し。**その高さの区域に予想波高の印が付いていれば、文字にその色を当てる**（どの区域かは
+ * 区域の行の縦線が示す。2026-10-24 ユーザー選択「見出し＋行の縦線 (Recommended)」）。
+ */
+function TsunamiHeightHeader({ label, style, markColor }: { label: string; style: GradeStyle; markColor: string | undefined }) {
   return (
     <div className="px-3 py-1 font-black leading-none text-[1.125rem] roomy:px-4 roomy:text-[1.375rem]"
-      style={{ color: style.heightColor, backgroundColor: `${style.cardBorder}14`, borderBottom: `1px solid ${style.cardBorder}33` }}>
+      style={{ color: markColor ?? style.heightColor, backgroundColor: `${style.cardBorder}14`, borderBottom: `1px solid ${style.cardBorder}33` }}>
       {label}
     </div>
   )
@@ -219,50 +228,7 @@ function SourceEarthquakeLine({ eq, prefix, link }: {
   )
 }
 
-/**
- * 区域の到達状況（`FirstHeight/Condition`）をバッジの文言へ写す。
- *
- * **3 つは意味が違う。** 「ただちに津波来襲と予測」はこれから来る予測、「津波到達中と推測」は
- * いま来ている推測、「第１波の到達を確認」は実際に到達した事実。**どれも同じ「到達中」と
- * 出していたため、これから来るのか既に来たのかが読み取れなかった。**
- *
- * 表に無い文言はバッジにしない（`arrivalText` として本文にそのまま出る）。気象庁が語を
- * 増やしたとき、知らない語を赤いバッジで強調してしまわないため。
- *
- * **3 値は気象庁の電文解説資料（地震火山関連）の事例と、実電文の両方で確かめてある。**
- * 「津波到達中と推測」「第１波の到達を確認」は令和6年能登半島地震の電文に実在した
- * （同じ欄には「第１波識別不能」「観測中」「微弱」も現れる。それらは観測状態として
- * `parseTsunamiObservationCondition` が拾う）。
- *
- * **全角・半角の「1」を両方引けるようにしておく**（解説資料の表記は全角）。同じ欄を読む
- * `FIRST_HEIGHT_CONDITIONS`（`tsunami.ts`）が既に両方を持っており、片方だけ想定しないと
- * 同じ電文の同じ欄で扱いが割れる。
- */
-const ARRIVAL_CONDITION_BADGE: Record<string, string> = {
-  'ただちに津波来襲と予測': 'まもなく到達',
-  '津波到達中と推測': '到達中',
-  '第１波の到達を確認': '第1波到達',
-  '第1波の到達を確認': '第1波到達',
-}
-
-/**
- * 観測点の到達状況の語から、行のバッジの語を引く。**表に無い語は「予測」へ倒すが、記録を残す**
- * （語ごとに 1 回）。黙って倒すと、気象庁が新しい語で「すでに来ている」と伝えた観測点が「予測」と出て、
- * この表を足した理由そのものの誤表示へ戻ったことに気づけない。
- */
-const warnedStationArrivalConditions = new Set<string>()
-function stationArrivalBadge(condition: string | undefined): string | undefined {
-  if (!condition) return undefined
-  // 自前のキーだけを引く（`toString` のような語で原型の関数を拾わないため）。
-  const badge = Object.prototype.hasOwnProperty.call(ARRIVAL_CONDITION_BADGE, condition) ? ARRIVAL_CONDITION_BADGE[condition] : undefined
-  if (badge === undefined && !warnedStationArrivalConditions.has(condition)) {
-    warnedStationArrivalConditions.add(condition)
-    log.warn(`[tsunami] 観測点の到達状況「${condition}」を表示の語へ写せません（「予測」として出します）`)
-  }
-  return badge
-}
-
-function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocusObs, onAreaFocus, isChanged, isTop, registerRow, registerSpeechRow, registerSpeechAnchor, obsUpdateStatus, areaGradeChangedKeys }: { area: TsunamiArea; observations: TsunamiObservation[]; style: GradeStyle; onObservationClick?: (name: string) => void; canFocusObs: (name: string) => boolean; onAreaFocus?: (name: string) => (() => void) | undefined; isChanged: boolean; isTop: boolean; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void; registerSpeechAnchor: (keys: string[], el: HTMLElement | null) => void; obsUpdateStatus?: Map<string, ObsUpdateMark>; areaGradeChangedKeys?: ReadonlySet<string> }) {
+function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocusObs, onAreaFocus, isChanged, isTop, registerRow, registerSpeechRow, registerSpeechAnchor, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks }: { area: TsunamiArea; observations: TsunamiObservation[]; style: GradeStyle; onObservationClick?: (name: string) => void; canFocusObs: (name: string) => boolean; onAreaFocus?: (name: string) => (() => void) | undefined; isChanged: boolean; isTop: boolean; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void; registerSpeechAnchor: (keys: string[], el: HTMLElement | null) => void; obsUpdateStatus?: Map<string, ObsUpdateMark>; areaGradeChangedKeys?: ReadonlySet<string>; tsunamiValueMarks: TsunamiValueMarks }) {
   const areaFocus = onAreaFocus?.(area.name)
   const setRowRef = useCallback((el: HTMLDivElement | null) => {
     registerRow?.(area, isChanged, isTop, el)
@@ -270,21 +236,19 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
     registerSpeechRow?.(speechRowKeys({ kind: 'area', code: area.code, name: area.name }), el)
   }, [registerRow, registerSpeechRow, area, isChanged, isTop])
 
-  // バッジにする文言は本文から外す（同じことを 2 度書かない）。表に無い文言は本文へ残す。
+  // 到達状況はバッジに出す（表に無い語もその文字のまま。→ `arrivalConditionBadge`）。本文には時刻だけを出す。
   //
-  // **バッジが出ない区域では本文へ戻す。** バッジは実測がある区域では出さない（下記）ため、
-  // 無条件に本文から外すと**到達状況が画面のどこにも出ない**。
-  const badgeSuppressed = observations.length > 0
-  const arrivalBadgeLabel = !badgeSuppressed && area.firstHeight?.condition
-    ? ARRIVAL_CONDITION_BADGE[area.firstHeight.condition]
-    : undefined
-  // 時刻が日時として読めないときは、時刻そのものが無い電文と同じ扱いにする（バッジか、
-  // バッジが出ない区域では電文の到達状況の語へ戻す）。「到達予想 」とラベルだけ残すより、
-  // 気象庁が書いた語のほうが利用者に届く。
+  // **実測がある区域でもバッジを出す**（2026-10-21 ユーザー選択「バッジも出す (Recommended)」。全期間で 434 報中 288 報・
+  // 延べ 3,874 区域＝到達状況のある 5,288 区域の約 7 割がこの形）。以前は実測行で代わると見て出さず、語を本文へ
+  // 戻していた。
+  const arrivalBadgeLabel = arrivalConditionBadge(area.firstHeight?.condition)
+  // 時刻が日時として読めないときは、時刻そのものが無い電文と同じ扱いにする（「到達予想 」とラベルだけ残さない）。
   const areaArrivalHm = area.firstHeight?.arrivalTime ? formatTimeMin(area.firstHeight.arrivalTime) : null
-  const arrivalText = areaArrivalHm
-    ? `到達予想 ${areaArrivalHm}`
-    : (arrivalBadgeLabel ? null : (area.firstHeight?.condition ?? null))
+  const arrivalText = areaArrivalHm ? `到達予想 ${areaArrivalHm}` : null
+  // 予想波高の印（→ `TsunamiValueMarks.forecastHeight`）。行の左端に縦線を引く（見出しの文字の色は等級カードが付ける。
+  // 2026-10-24 ユーザー選択「見出し＋行の縦線 (Recommended)」）。
+  const forecastMark = tsunamiValueMarks.forecastHeight.get(tsunamiAreaKey(area))
+  const forecastMarkColor = forecastMark ? UPDATE_MARK_COLOR[forecastMark.status] : undefined
 
   // 直近の受信で等級が動いた区域に、その移り変わりを 1 行で示す。
   //
@@ -301,21 +265,24 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
     : null
 
   const stations = area.stations ?? []
-  // 実測値がある観測点名のセット（到達済み判定・到達中バッジ抑制に使用）
+  // 実測値がある観測点名のセット（予測だけの行から外す）
   const observedNames = new Set(observations.map(o => o.name))
-  // 区域内に1件でも実測値があれば到達のバッジは不要（実測行で代替できる）。
-  //
   // **`immediate` は文言が読めないときの補い。** P2PQuake も 3 値の文言をそのまま配信するが、
   // `firstHeight` を持たない古いデータでは真偽値しか残らない。**「ただちに津波来襲と予測」と
   // 1 対 1 ではなく**、実データでは「津波到達中と推測」の区域でも真になる（第１波の到達を
   // 確認では偽）ので、文言が読めるならそちらを優先する
   // （→ [`tsunami-spec.md`](../../../docs/spec/tsunami-spec.md) §9「区域の到達状況」）。
-  const arrivalBadge = badgeSuppressed
-    ? undefined
-    : (arrivalBadgeLabel ?? (area.immediate ? ARRIVAL_CONDITION_BADGE['ただちに津波来襲と予測'] : undefined))
+  const arrivalBadge = arrivalBadgeLabel ?? (area.immediate ? ARRIVAL_CONDITION_BADGE['ただちに津波来襲と予測'] : undefined)
+  /** 満潮時刻が前の報から動いた潮位観測点の、時刻の文字の色（行の縦線は付けない。→ `TsunamiValueMarks.highTide`）。 */
+  const highTideColor = (stationName: string): string | undefined => {
+    const st = stations.find(x => x.name === stationName)
+    return st && tsunamiValueMarks.highTide.has(tideStationKey(area, st)) ? UPDATE_MARK_COLOR.changed : undefined
+  }
 
   return (
-    <div ref={setRowRef} className="border-b border-white/5 last:border-0">
+    <div ref={setRowRef} className="border-b border-white/5 last:border-0"
+      /* 予想波高の印。**印が無い行でも幅を取る**（透明で置く。付いたり消えたりで行の中身が横へずれないように）。 */
+      style={{ borderLeft: `3px solid ${forecastMarkColor ?? 'transparent'}` }}>
       {/* 読み上げが配下の観測点を読むときの前置き。**この見出し 1 行だけを登録する** ――
           読み上げ文は読点でチャンクが割れるので「石川県能登、」と「輪島港で〜」は別のチャンクに
           なり、観測点のチャンクに入った時点でここが視野から流れ出る（→ `contextElementFor`）。
@@ -439,8 +406,8 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
               // 最大波を観測した時刻。第1波の到達時刻と紛れないよう語を冠する
               // （決め方は `observationMaxHeightTimeText`）。
               { text: observationMaxHeightTimeText(obs), color: fieldColor('maxHeightTime') },
-              // 同名 station があれば満潮時刻をここに表示
-              { text: matchedHighTideHm ? `満潮 ${matchedHighTideHm}` : '' },
+              // 同名 station があれば満潮時刻をここに表示。動いたら時刻の文字に色を付ける（→ `highTideColor`）
+              { text: matchedHighTideHm ? `満潮 ${matchedHighTideHm}` : '', color: highTideColor(obs.name) },
             ].filter(p => p.text)
             return (
               <div
@@ -509,13 +476,22 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
             // 日時として読めない時刻はラベルごと落とす（「到達予想 」だけが残ると値があるように見える）。
             const stArrivalHm = st.arrivalTime ? formatTimeMin(st.arrivalTime) : null
             const stHighTideHm = st.highTideDateTime ? formatTimeMin(st.highTideDateTime) : null
-            const stArrivalBadge = stationArrivalBadge(st.arrivalCondition)
-            const timeTexts = [
-              stArrivalHm ? `到達予想 ${stArrivalHm}` : '',
-              stHighTideHm ? `満潮 ${stHighTideHm}` : '',
-            ].filter(Boolean)
+            const stArrivalBadge = arrivalConditionBadge(st.arrivalCondition)
+            const timeParts: { text: string; color?: string }[] = [
+              { text: stArrivalHm ? `到達予想 ${stArrivalHm}` : '' },
+              { text: stHighTideHm ? `満潮 ${stHighTideHm}` : '', color: highTideColor(st.name) },
+            ].filter(p => p.text)
+            // **予測だけの行も押すと地図が寄る**（2026-10-21 ユーザー選択「押せるようにする (Recommended)」。全期間 延べ
+            // 10,100 行）。押せるかは実測の行と同じく座標表に名前があるか（`canFocusObs`）。
+            const stClickable = !!onObservationClick && canFocusObs(st.name)
             return (
-              <div key={i} className="px-3 py-2 rounded-sm" style={{ border: '1px solid rgba(255,255,255,0.09)', background: 'rgba(255,255,255,0.03)' }}>
+              <div key={i}
+                className={`px-3 py-2 rounded-sm${stClickable ? ' cursor-pointer hover:brightness-125 transition-[filter]' : ''}`}
+                style={{ border: '1px solid rgba(255,255,255,0.09)', background: 'rgba(255,255,255,0.03)' }}
+                onClick={stClickable ? () => onObservationClick!(st.name) : undefined}
+                role={stClickable ? 'button' : undefined}
+                tabIndex={stClickable ? 0 : undefined}
+                onKeyDown={stClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onObservationClick!(st.name) } : undefined}>
                 <div className="flex items-baseline gap-2 flex-wrap">
                   <span className="font-semibold" style={{ fontSize: '0.8125rem', color: '#d1d5db' }}>{st.name}</span>
                   {/* 観測点ごとの到達状況（「津波到達中と推測」「第１波の到達を確認」）があれば、「予測」の代わりに
@@ -530,9 +506,14 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
                     <span className="text-xs font-bold px-1.5 py-0.5 rounded-sm" style={{ background: 'rgba(255,255,255,0.08)', color: '#9ca3af' }}>予測</span>
                   )}
                 </div>
-                {timeTexts.length > 0 && (
+                {timeParts.length > 0 && (
                   <div className="mt-1" style={{ fontSize: '0.6875rem', color: '#9ca3af' }}>
-                    {timeTexts.join('　')}
+                    {timeParts.map((part, pi) => (
+                      <Fragment key={pi}>
+                        {pi > 0 ? '　' : ''}
+                        <span style={part.color ? { color: part.color, fontWeight: 600 } : undefined}>{part.text}</span>
+                      </Fragment>
+                    ))}
                   </div>
                 )}
               </div>
@@ -633,7 +614,7 @@ function TsunamiObservationRow({ obs, onObservationClick, canFocusObs, registerS
   )
 }
 
-function TsunamiGradeCard({ grade, areas, observations, onObservationClick, canFocusObs, onAreaFocus, focusedDistrict, registerRow, registerSpeechRow, registerSpeechAnchor, obsUpdateStatus, areaGradeChangedKeys }: { grade: TsunamiGrade; areas: TsunamiArea[]; observations: TsunamiObservation[]; onObservationClick?: (name: string) => void; canFocusObs: (name: string) => boolean; onAreaFocus?: (name: string) => (() => void) | undefined; focusedDistrict?: FocusedDistrict | null; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void; registerSpeechAnchor: (keys: string[], el: HTMLElement | null) => void; obsUpdateStatus?: Map<string, ObsUpdateMark>; areaGradeChangedKeys?: ReadonlySet<string> }) {
+function TsunamiGradeCard({ grade, areas, observations, onObservationClick, canFocusObs, onAreaFocus, focusedDistrict, registerRow, registerSpeechRow, registerSpeechAnchor, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks }: { grade: TsunamiGrade; areas: TsunamiArea[]; observations: TsunamiObservation[]; onObservationClick?: (name: string) => void; canFocusObs: (name: string) => boolean; onAreaFocus?: (name: string) => (() => void) | undefined; focusedDistrict?: FocusedDistrict | null; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void; registerSpeechAnchor: (keys: string[], el: HTMLElement | null) => void; obsUpdateStatus?: Map<string, ObsUpdateMark>; areaGradeChangedKeys?: ReadonlySet<string>; tsunamiValueMarks: TsunamiValueMarks }) {
   if (areas.length === 0) return null
   const style = getGradeStyle(grade)
   const groups = groupAreasForCardDisplay(areas, observations)
@@ -656,7 +637,13 @@ function TsunamiGradeCard({ grade, areas, observations, onObservationClick, canF
       </div>
       {groups.map((group, gi) => (
         <div key={gi}>
-          {group.heightLabel && <TsunamiHeightHeader label={group.heightLabel} style={style} />}
+          {group.heightLabel && (() => {
+            // その高さの区域のどれかに予想波高の印があれば、見出しにも色を当てる。「追加」（緑）が混ざれば緑を優先する。
+            const marks = group.areas.map(a => tsunamiValueMarks.forecastHeight.get(tsunamiAreaKey(a))).filter(m => !!m)
+            const markColor = marks.length === 0 ? undefined
+              : UPDATE_MARK_COLOR[marks.some(m => m.status === 'new') ? 'new' : 'changed']
+            return <TsunamiHeightHeader label={group.heightLabel} style={style} markColor={markColor} />
+          })()}
           {group.areas.map((area, i) => (
             <TsunamiAreaRow
               canFocusObs={canFocusObs}
@@ -673,6 +660,7 @@ function TsunamiGradeCard({ grade, areas, observations, onObservationClick, canF
               registerSpeechAnchor={registerSpeechAnchor}
               obsUpdateStatus={obsUpdateStatus}
               areaGradeChangedKeys={areaGradeChangedKeys}
+              tsunamiValueMarks={tsunamiValueMarks}
             />
           ))}
         </div>
@@ -692,7 +680,7 @@ function TsunamiGradeCard({ grade, areas, observations, onObservationClick, canF
  * 付く（`areaGradeChangedKeys`。`lastGrade` が続報にも載り続けるため）が、こちらは枠そのものが
  * 「この報で解除された区域」を意味するので、印を絞る理由が無い。
  */
-function TsunamiCancelledCard({ areas, observations, onObservationClick, canFocusObs, obsUpdateStatus, focusedDistrict, registerRow, registerSpeechRow, registerSpeechAnchor }: { areas: TsunamiArea[]; observations: TsunamiObservation[]; onObservationClick?: (name: string) => void; canFocusObs: (name: string) => boolean; obsUpdateStatus?: ReadonlyMap<string, ObsUpdateMark>; focusedDistrict?: FocusedDistrict | null; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void; registerSpeechAnchor: (keys: string[], el: HTMLElement | null) => void }) {
+function TsunamiCancelledCard({ areas, observations, onObservationClick, canFocusObs, onAreaFocus, obsUpdateStatus, focusedDistrict, registerRow, registerSpeechRow, registerSpeechAnchor }: { areas: TsunamiArea[]; observations: TsunamiObservation[]; onObservationClick?: (name: string) => void; canFocusObs: (name: string) => boolean; onAreaFocus?: (name: string) => (() => void) | undefined; obsUpdateStatus?: ReadonlyMap<string, ObsUpdateMark>; focusedDistrict?: FocusedDistrict | null; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void; registerSpeechAnchor: (keys: string[], el: HTMLElement | null) => void }) {
   if (areas.length === 0) return null
   // 無彩色。解除は「もう出ていない」という報せなので、等級の色を借りない。
   const style = getGradeStyle('Unknown')
@@ -716,6 +704,7 @@ function TsunamiCancelledCard({ areas, observations, onObservationClick, canFocu
           <TsunamiCancelledRow
             area={area}
             style={style}
+            onAreaFocus={onAreaFocus}
             isChanged={focusedDistrict?.districts.some(d => districtMatchesArea(d, area)) ?? false}
             isTop={focusedDistrict?.top != null && districtMatchesArea(focusedDistrict.top, area)}
             registerRow={registerRow}
@@ -735,7 +724,10 @@ function TsunamiCancelledCard({ areas, observations, onObservationClick, canFocu
  * 解除カードの行。読み上げの追従と受信時スクロールの寄せ先になるため、等級カードの行と同じ
  * 2 つの登録（`registerRow` / `registerSpeechRow`）を通す。
  */
-function TsunamiCancelledRow({ area, style, isChanged, isTop, registerRow, registerSpeechRow }: { area: TsunamiArea; style: GradeStyle; isChanged: boolean; isTop: boolean; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void }) {
+function TsunamiCancelledRow({ area, style, onAreaFocus, isChanged, isTop, registerRow, registerSpeechRow }: { area: TsunamiArea; style: GradeStyle; onAreaFocus?: (name: string) => (() => void) | undefined; isChanged: boolean; isTop: boolean; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void }) {
+  // **解除された区域名も押すと地図が寄る**（2026-10-21 ユーザー選択「押すと寄る (Recommended)」。海岸線は描かず
+  // 場所だけ寄せる —— 地図は解除された区域の海岸線を描かない）。押せるのは境界を引ける区域だけ（等級カードの行と同じ）。
+  const areaFocus = onAreaFocus?.(area.name)
   const setRowRef = useCallback((el: HTMLDivElement | null) => {
     registerRow?.(area, isChanged, isTop, el)
     registerSpeechRow?.(speechRowKeys({ kind: 'area', code: area.code, name: area.name }), el)
@@ -744,16 +736,25 @@ function TsunamiCancelledRow({ area, style, isChanged, isTop, registerRow, regis
     <div ref={setRowRef} className="border-b border-white/5 last:border-0">
       <div className="flex items-center gap-2 px-3 py-2 roomy:gap-3 roomy:px-4 roomy:py-3">
         <div className="flex-1 min-w-0">
-          <span className="text-white font-semibold block text-[1.0625rem] roomy:text-[1.25rem]" style={{ lineHeight: '1.2' }}>
+          <span
+            className={`text-white font-semibold block text-[1.0625rem] roomy:text-[1.25rem]${areaFocus ? ' cursor-pointer hover:underline' : ''}`}
+            style={{ lineHeight: '1.2' }}
+            {...(areaFocus ? {
+              role: 'button' as const,
+              tabIndex: 0,
+              onClick: (e: React.MouseEvent) => { e.stopPropagation(); areaFocus() },
+              onKeyDown: (e: React.KeyboardEvent) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); areaFocus() }
+              },
+            } : {})}
+          >
             {area.name}
           </span>
-          {/* 等級の呼び名は読み上げと共有する（`TSUNAMI_GRADE_SHORT_LABEL`）。
-              `lastGrade` の有無は `describableCancelledAreas` が保証している。 */}
-          {area.lastGrade && (
-            <span className="block mt-1" style={{ fontSize: '0.8125rem', color: style.arrivalColor }}>
-              {TSUNAMI_GRADE_SHORT_LABEL[area.lastGrade]}を解除
-            </span>
-          )}
+          {/* 等級の呼び名は読み上げと共有する（`TSUNAMI_GRADE_SHORT_LABEL`）。**前回の等級を読めない区域は「解除」とだけ
+              出す**（2026-10-21 ユーザー選択「「解除」とだけ出す」。全期間 19,906 区域で 0 件）。 */}
+          <span className="block mt-1" style={{ fontSize: '0.8125rem', color: style.arrivalColor }}>
+            {area.lastGrade && area.lastGrade !== 'Unknown' ? `${TSUNAMI_GRADE_SHORT_LABEL[area.lastGrade]}を解除` : '解除'}
+          </span>
         </div>
       </div>
     </div>
@@ -775,8 +776,11 @@ function getTopGrade(tsunamis: JMATsunami[]): TsunamiGrade {
  * 区切り線だけで分ける。並びは電文の本文 → 固定付加文（主題順・`WARNING_COMMENT_ORDER`）→
  * 自由付加文。
  */
-function TsunamiCommentBody({ bodyText, comments, freeText, borderColor, textColor }: { bodyText?: string; comments?: TsunamiWarningComment[]; freeText?: string; borderColor: string; textColor: string }) {
+function TsunamiCommentBody({ endText, bodyText, comments, freeText, borderColor, textColor }: { endText?: string; bodyText?: string; comments?: TsunamiWarningComment[]; freeText?: string; borderColor: string; textColor: string }) {
   const blocks: { key: string; text: string; pre: boolean }[] = [
+    // 取消・解除の表示中は、その文（取消の理由・全区域解除の文）を先頭に置き、その下に取消前の文を並べる
+    // （2026-10-24 ユーザー選択「取消・解除の文も面に入れる」）。
+    ...(endText ? [{ key: '__end', text: endText, pre: true }] : []),
     // 電文の本文。**バナーには出していない**ので、ここが唯一の出しどころ。
     ...(bodyText ? [{ key: '__body', text: bodyText, pre: true }] : []),
     ...(comments ?? []).map(c => ({ key: c.key, text: c.text, pre: false })),
@@ -801,7 +805,7 @@ function TsunamiCommentBody({ bodyText, comments, freeText, borderColor, textCol
   )
 }
 
-export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEarthquakeLink, onObservationClick, onFocusMap, focusedDistrict, obsUpdateStatus, areaGradeChangedKeys, speechSession, speakingTelegramText, isVisible, speechFollowEnabled, autoShowTick }: Props) {
+export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEarthquakeLink, onObservationClick, onFocusMap, focusedDistrict, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks, speechSession, speakingTelegramText, isVisible, speechFollowEnabled, autoShowTick }: Props) {
   // 行をクリックできるかは「地図がその観測点へ寄れるか」で決める。
   //
   // 座標表（`tsunami-obs-coords.json`）に無い観測点は地図に印が出ず、`FocusObsGL` も寄せ先を
@@ -840,9 +844,11 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   const bannerFreeText = active[0]?.freeText
   // 行動指示の行に出す文。気象庁の避難行動の付加文が採れればそれを使う（→ `evacuationActionLine`）。
   const bannerActionLine = evacuationActionLine(bannerComments)
+  // 取消・解除の表示中に面の先頭へ置く文（取消の理由・全区域解除の文）。
+  const bannerEndText = isCancelledDisplay ? (active[0]?.cancelText ?? active[0]?.liftText) : undefined
   // 開くものが 1 つも無ければ、その行はタップの入口にしない（押せる見た目だけ与えない）。
-  // 取消し・解除の表示中も中身を出さないので、そこでも入口にしない。
-  const hasCommentsToShow = (bannerComments?.length ?? 0) > 0 || !!bannerBodyText || !!bannerFreeText
+  // **取消・解除の表示中も開ける**（2026-10-21 ユーザー選択「開けるようにする (Recommended)」）。表示中は 10 秒で消える。
+  const hasCommentsToShow = (bannerComments?.length ?? 0) > 0 || !!bannerBodyText || !!bannerFreeText || !!bannerEndText
   // 読み上げているあいだだけ開く（→ `useAutoOpenWhileSpeaking`）。**バナー 4 種と同じフックを使う。**
   // 自前で組んでいた頃は「手で開き直したら読み終わりで閉じない」という安全弁が抜けており、
   // 利用者が開いた面を読み終わりで閉じていた。
@@ -942,7 +948,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   const stickyBannerHeight = bannerSticky ? bannerHeight : 0
   // **出す場所が無いときも入口にしない。** パネルを縮めるとバナーだけで埋まり、面は
   // 高さ 0 になる。開くと矢印が ▶→▼ に変わるだけで中身は 1 行も見えず、理由も出ない。
-  const canOpenComments = hasCommentsToShow && !isCancelledDisplay && canShowCommentsOverlay(commentsMaxHeight)
+  const canOpenComments = hasCommentsToShow && canShowCommentsOverlay(commentsMaxHeight)
 
   const registerRow = useCallback((area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => {
     const key = area.code ?? area.name ?? ''
@@ -1398,7 +1404,8 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   // 解除されて予報だけが残った段階なので、ふだん出るのは津波予報のカード。
   //
   // **解除表示中は出さない。** 終わったことは帯が伝えており、そこへ「いつ終わる予定だったか」を
-  // 並べても読み手の行動を変えない。
+  // 並べても読み手の行動を変えない（2026-10-21 ユーザー選択「今のまま記録する (Recommended)」。全期間の解除の報 2 通は
+  // どちらも失効時刻を持たない）。
   //
   // **standard 版（P2PQuake）では出ない** —— あちらの API はこの値を持たない。アプリが積む
   // 24 時間のフェイルセーフ（`useEarthquakes.ts`）は気象庁が言っていない時刻なので、
@@ -1413,12 +1420,17 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   // 1 件目を主に扱い、残りは下に併記する（電文は複数の地震を持ちうる）。
   const sourceEarthquakes = active[0]?.sourceEarthquakes ?? []
   const sourceEarthquake = sourceEarthquakes[0]
+  // 別の地震の津波で置き換える前に出していた津波の原因地震（→ `JMATsunami.previousSourceEarthquakes`）。
+  // 今の報の原因地震のあとに同じ形で並べる（2026-10-24 ユーザー選択「同じ形で後に並べる (Recommended)」）。
+  const previousSourceEarthquakes = active[0]?.previousSourceEarthquakes ?? []
 
 
   // 原因地震ごとに、対応する地震カードを引く。**結び方は `linkTsunamiSources` だけが決める**
   // （番号が足された津波は原因地震を 2 つ以上持ち、どれがどの地震かは発現時刻で突き合わせる）。
   // バナー全体を押したときは、結べた原因地震のうち先頭のカードへ寄せる（従来の 1 件のときと同じ）。
   const sourceLinks = active[0] && earthquakes ? linkTsunamiSources(active[0], earthquakes) : []
+  // 取り消された地震カードへは結ばない（2026-10-21 ユーザー選択「今のまま記録する (Recommended)」。全期間で原因地震の
+  // 地震情報が取り消された例は 0 件）。
   const linkedQuakes = sourceLinks.map(link => link.eventId && earthquakes
     ? earthquakes.find(q => extractQuakeEventId(q) === link.eventId && !q.cancelledAt)
     : undefined)
@@ -1546,8 +1558,10 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 {active[0].liftText}
               </div>
             )}
-            {!isCancelledDisplay && sourceEarthquake && (
-              <div className="mt-1.5 pt-1.5" style={{ fontSize: '0.6875rem', color: topStyle.arrivalColor, opacity: 0.9, borderTop: `1px solid ${topStyle.cardBorder}40` }}>
+            {/* **取消・解除の表示中も出す**（2026-10-21 ユーザー選択「原因地震も出す (Recommended)」。全期間の解除 2 通とも
+                原因地震を持つ）。色は取消表示の灰色に揃える。 */}
+            {(sourceEarthquake || previousSourceEarthquakes.length > 0) && (
+              <div className="mt-1.5 pt-1.5" style={{ fontSize: '0.6875rem', color: isCancelledDisplay ? '#9ca3af' : topStyle.arrivalColor, opacity: 0.9, borderTop: `1px solid ${isCancelledDisplay ? '#4b556366' : `${topStyle.cardBorder}40`}` }}>
                 {/* 短い間に複数の地震が起きると、1 つの津波情報にまとめて発表される。
                     2 件目以降を落とすと、どの地震による津波なのかが読み取れなくなる。
                     **1 件目と 2 件目以降で別々に書かない** —— 項目を足したとき片方に漏れる
@@ -1578,6 +1592,16 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                       : null}
                   />
                 ))}
+                {/* 前の津波の原因地震。地震カードへの印は付けない —— 結び付け（`linkTsunamiSources`）は今の報の原因地震だけを
+                    相手にする。1 件目だけ、今の報に原因地震が無ければ「震源: 」を前置きする。 */}
+                {previousSourceEarthquakes.map((eq, i) => (
+                  <SourceEarthquakeLine
+                    key={`prev-${i}`}
+                    eq={eq}
+                    prefix={i === 0 && !sourceEarthquake ? '震源: ' : ''}
+                    link={null}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -1595,17 +1619,18 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
               top: '100%',
               marginTop: '-0.5rem',
               background: isCancelledDisplay ? '#1a1a1a' : topStyle.headerBg,
-              border: `2px solid ${topStyle.cardBorder}`,
+              border: `2px solid ${isCancelledDisplay ? '#4b5563' : topStyle.cardBorder}`,
               borderTop: 'none',
               maxHeight: commentsMaxHeight,
               boxShadow: '0 8px 16px rgba(0,0,0,0.45)',
             }}>
             <TsunamiCommentBody
+              endText={bannerEndText}
               bodyText={bannerBodyText}
               comments={bannerComments}
               freeText={bannerFreeText}
-              borderColor={`${topStyle.cardBorder}40`}
-              textColor={topStyle.headerColor}
+              borderColor={isCancelledDisplay ? '#4b556366' : `${topStyle.cardBorder}40`}
+              textColor={isCancelledDisplay ? '#9ca3af' : topStyle.headerColor}
             />
           </div>
         )}
@@ -1643,12 +1668,13 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 registerSpeechAnchor={registerSpeechAnchor}
                 obsUpdateStatus={obsUpdateStatus}
                 areaGradeChangedKeys={areaGradeChangedKeys}
+                tsunamiValueMarks={tsunamiValueMarks}
               />
             ))}
             {/* この報で解除された区域。等級カードの後ろ＝いちばん軽い遷移先として置く
                 （読み上げも引き下げの組の最後に読む）。
 
-                **並びは読み上げが作る組をそのまま使う。** ここで `describableCancelledAreas` を
+                **並びは読み上げが作る組をそのまま使う。** ここで `announcedCancelledAreas` を
                 独自に並べ替えると、**前回の等級が違う区域が同時に解除された報**で声と画面が
                 食い違う —— 読み上げは `(遷移元, 遷移先)` の組ごとに分けて遷移元の重い順に読むが、
                 こちらは全部を 1 つのリストとして扱うので電文順のまま残る。追従スクロールが
@@ -1658,6 +1684,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
               observations={observations}
               onObservationClick={onObservationClick}
               canFocusObs={canFocusObs}
+              onAreaFocus={onAreaFocus}
               obsUpdateStatus={obsUpdateStatus}
               focusedDistrict={focusedDistrict}
               registerRow={registerRow}
@@ -1691,35 +1718,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                       沿岸への推定（気象庁発表）
                     </div>
                     {t.estimations.map((est, i) => (
-                      <div key={i} className="px-4 py-1.5 border-b border-white/5 last:border-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="flex items-center gap-2 flex-wrap min-w-0">
-                            <span className="text-white text-[0.9375rem] truncate">{est.name}</span>
-                            {estimationBadges(est).map(label => (
-                              <span key={label} className="text-xs font-bold px-1.5 py-0.5 rounded-sm"
-                                style={{ background: 'rgba(29,78,216,0.3)', color: '#93c5fd' }}>
-                                {label}
-                              </span>
-                            ))}
-                          </span>
-                          <span className="shrink-0 text-right" style={{ fontSize: '0.8125rem', color: '#93c5fd' }}>
-                            {/* 数値が無ければ、無い理由（電文の「推定中」）を出す。 */}
-                            {estimationHeightText(est) && <span className="font-bold">{estimationHeightText(est)}</span>}
-                            {/* 日時として読めない時刻は句ごと落とす（「到達予想」だけが残ると、
-                                いつ来るのかを述べているように見える）。到達についての説明は
-                                すぐ下に別の行として出るので、情報が全部消えるわけではない。 */}
-                            {(() => {
-                              const hm = est.arrivalTime ? formatTimeMin(est.arrivalTime) : null
-                              return hm ? <span className="ml-2">{hm}到達予想</span> : null
-                            })()}
-                          </span>
-                        </div>
-                        {/* 到達についての説明は時刻と併存する（電文解説資料 Ⅱ.13 1-2-2-2 の事例１）。
-                            時刻があるときに隠すと、時刻を出せる沿岸ほど注意喚起が落ちる。 */}
-                        {est.arrivalCondition && (
-                          <div className="mt-0.5" style={{ fontSize: '0.6875rem', color: '#9ca3af' }}>{est.arrivalCondition}</div>
-                        )}
-                      </div>
+                      <EstimationRow key={i} est={est} mark={tsunamiValueMarks.estimation.get(est.name)} />
                     ))}
                   </>
                 )}
@@ -1732,6 +1731,59 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
     </div>
   )
 })
+
+/**
+ * 沿岸への推定の行。**最大波を推定した時刻（「最大波 23:26」）と、追加・更新の印を出す**（2026-10-21 ユーザー選択
+ * 「時刻も印も出す (Recommended)」。語は 2026-10-24 ユーザー選択「「最大波 23:26」 (Recommended)」。全期間 46 項目中
+ * 時刻 14・最大波の印 9）。印の付け方は観測点の行と同じ（縦線＝その行で何かあった・文字色＝どの項目か）。
+ */
+function EstimationRow({ est, mark }: { est: TsunamiEstimation; mark: UpdateMark<EstimationUpdateField> | undefined }) {
+  const markColor = mark ? UPDATE_MARK_COLOR[mark.status] : undefined
+  const fieldStyle = (field: EstimationUpdateField) =>
+    markColor && mark?.fields.has(field) ? { color: markColor, fontWeight: 600 } : undefined
+  // 日時として読めない時刻は句ごと落とす（「最大波 」だけが残らないように）。
+  const maxHeightHm = est.maxHeightDateTime ? formatTimeMin(est.maxHeightDateTime) : null
+  return (
+    <div className="px-4 py-1.5 border-b border-white/5 last:border-0"
+      /* 印が無い行でも幅を取る（観測点の行と同じ） */
+      style={{ borderLeft: `3px solid ${markColor ?? 'transparent'}` }}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2 flex-wrap min-w-0">
+          <span className="text-white text-[0.9375rem] truncate">{est.name}</span>
+          {estimationBadges(est).map(label => (
+            <span key={label} className="text-xs font-bold px-1.5 py-0.5 rounded-sm"
+              style={{ background: 'rgba(29,78,216,0.3)', color: '#93c5fd' }}>
+              {label}
+            </span>
+          ))}
+        </span>
+        <span className="shrink-0 text-right" style={{ fontSize: '0.8125rem', color: '#93c5fd' }}>
+          {/* 数値が無ければ、無い理由（電文の「推定中」）を出す。 */}
+          {estimationHeightText(est) && <span className="font-bold" style={fieldStyle('height')}>{estimationHeightText(est)}</span>}
+          {/* 日時として読めない時刻は句ごと落とす（「到達予想」だけが残ると、
+              いつ来るのかを述べているように見える）。到達についての説明は
+              すぐ下に別の行として出るので、情報が全部消えるわけではない。 */}
+          {(() => {
+            const hm = est.arrivalTime ? formatTimeMin(est.arrivalTime) : null
+            return hm ? <span className="ml-2" style={fieldStyle('firstWave')}>{hm}到達予想</span> : null
+          })()}
+        </span>
+      </div>
+      {maxHeightHm && (
+        <div className="mt-0.5" style={{ fontSize: '0.6875rem', color: '#9ca3af' }}>
+          <span style={fieldStyle('maxHeightTime')}>最大波 {maxHeightHm}</span>
+        </div>
+      )}
+      {/* 到達についての説明は時刻と併存する（電文解説資料 Ⅱ.13 1-2-2-2 の事例１）。
+          時刻があるときに隠すと、時刻を出せる沿岸ほど注意喚起が落ちる。 */}
+      {est.arrivalCondition && (
+        <div className="mt-0.5" style={{ fontSize: '0.6875rem', color: '#9ca3af' }}>
+          <span style={fieldStyle('firstWave')}>{est.arrivalCondition}</span>
+        </div>
+      )}
+    </div>
+  )
+}
 
 /**
  * 付加文の面を閉じる判定で使う「同じ津波か」（`TsunamiTab` の `commentsIdentity` どうし）。

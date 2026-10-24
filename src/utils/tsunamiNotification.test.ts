@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import type { JMATsunami, TsunamiArea, TsunamiGrade } from '../types/earthquake'
+import type { JMATsunami, TsunamiArea, TsunamiGrade, TsunamiObservation } from '../types/earthquake'
 import { tsunamiLiftedAreas } from './tsunami'
-import { joinAreaNamesForNotification, tsunamiIssueNotification, tsunamiLiftNotification, TSUNAMI_NOTIFY_MAX_AREAS } from './tsunamiNotification'
+import { joinAreaNamesForNotification, tsunamiIssueNotification, tsunamiLiftNotification, tsunamiObservationNotification, tsunamiEndNotification, TSUNAMI_NOTIFY_MAX_AREAS, TSUNAMI_OBS_NOTIFY_MAX_POINTS } from './tsunamiNotification'
 import { TSUNAMI_ALL_LIFTED_SENTENCE } from './ttsText'
 
 const area = (name: string, code: string, grade: TsunamiGrade, lastGrade?: TsunamiGrade): TsunamiArea =>
@@ -78,5 +78,49 @@ describe('全区域解除の報の通知', () => {
   // 2026-10-19 ユーザー選択「読み上げと同じ文 (Recommended)」
   it('対照: 文を持たない報は読み上げと同じ文にする', () => {
     expect(tsunamiLiftNotification({}).body).toBe(TSUNAMI_ALL_LIFTED_SENTENCE)
+  })
+})
+
+// 観測情報だけの報の通知（2026-10-24 ユーザー選択「別の通知にする (Recommended)」）
+describe('tsunamiObservationNotification', () => {
+  const o = (name: string, extra: Partial<TsunamiObservation> = {}): TsunamiObservation => ({ name, ...extra } as TsunamiObservation)
+
+  it('正: 観測点ごとに波高・到達確認・欠測を並べ、見出しは電文の情報名', () => {
+    const n = tsunamiObservationNotification({ infoName: '沖合の津波観測に関する情報' }, [
+      o('輪島港', { height: { value: 1.2, description: '1.2m' } }),
+      o('珠洲市長橋'),
+      o('富山', { condition: { maxHeightMissing: true } }),
+    ])
+    expect(n).toEqual({ title: '沖合の津波観測に関する情報', body: '輪島港 1.2m、珠洲市長橋 到達確認、富山 欠測', requireInteraction: false })
+  })
+
+  it('正: 上限を超えた分は「ほか N 地点」にまとめる', () => {
+    const many = Array.from({ length: TSUNAMI_OBS_NOTIFY_MAX_POINTS + 2 }, (_, i) => o(`地点${i}`))
+    expect(tsunamiObservationNotification({}, many).body).toMatch(/ ほか 2 地点$/)
+  })
+
+  // 安全弁: 値を観測できていた欠測は値も残す（片方へ丸めない）
+  it('安全弁: 波高を持つ欠測は値と欠測の両方を出す', () => {
+    const n = tsunamiObservationNotification({}, [o('富山', { height: { value: 0.3, description: '0.3m' }, condition: { maxHeightMissing: true } })])
+    expect(n.title).toBe('津波観測に関する情報')
+    expect(n.body).toBe('富山 0.3m 欠測')
+  })
+})
+
+// 取消と失効の通知（2026-10-24 ユーザー選択「この文面で (Recommended)」）
+describe('tsunamiEndNotification', () => {
+  it('正: 取消は理由を本文に、無ければ定型の文', () => {
+    expect(tsunamiEndNotification({ cancelReason: 'retracted', cancelText: '取り消します。' }))
+      .toEqual({ title: '津波警報等の取消', body: '取り消します。', requireInteraction: false })
+    expect(tsunamiEndNotification({ cancelReason: 'retracted' })?.body).toBe('津波警報等は誤って発表されたため取り消されました。')
+  })
+
+  it('正: 失効は「津波予報の失効」', () => {
+    expect(tsunamiEndNotification({ cancelReason: 'expired' }))
+      .toEqual({ title: '津波予報の失効', body: '津波予報は失効しました。', requireInteraction: false })
+  })
+
+  it('対照: 解除はこの関数では作らない（解除の通知は別の関数）', () => {
+    expect(tsunamiEndNotification({ cancelReason: 'lifted' })).toBeNull()
   })
 })

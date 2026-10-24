@@ -107,12 +107,69 @@ describe('津波のブラウザ通知（受け手）', () => {
     expect(notify).toHaveBeenCalledTimes(1)
   })
 
-  it('安全弁: 誤報の取消と失効は通知しない（問うたのは全区域解除だけ）', () => {
+  // 正（2026-10-21 ユーザー選択「取消も失効も通知 (Recommended)」で覆した。文面は 2026-10-24 ユーザー選択「この文面で (Recommended)」）
+  it('正: 誤報の取消は取消理由を本文にして送り、前の通知を書き換える', () => {
+    const { handle } = setup()
+    handle(report([area('石川県能登', '360', 'Watch')]))
+    notify.mockClear()
+    handle(report([], { cancelled: true, cancelReason: 'retracted', headType: 'VTSE41', cancelText: '津波注意報を取り消します。' } as Partial<JMATsunami>))
+    expect(notify).toHaveBeenCalledWith('津波警報等の取消', '津波注意報を取り消します。', 'tsunami', false)
+  })
+
+  it('正: 取消理由を持たない取消は定型の文を送る', () => {
     const { handle } = setup()
     handle(report([area('石川県能登', '360', 'Watch')]))
     notify.mockClear()
     handle(report([], { cancelled: true, cancelReason: 'retracted', headType: 'VTSE41' } as Partial<JMATsunami>))
-    handle(report([], { cancelled: true, cancelReason: 'expired', eventId: '20240102000000' } as Partial<JMATsunami>))
+    expect(notify).toHaveBeenCalledWith('津波警報等の取消', '津波警報等は誤って発表されたため取り消されました。', 'tsunami', false)
+  })
+
+  it('正: 失効は「津波予報の失効」を送る', () => {
+    const { handle } = setup()
+    handle(report([area('石川県能登', '360', 'Forecast')]))
+    notify.mockClear()
+    handle(report([], { cancelled: true, cancelReason: 'expired' } as Partial<JMATsunami>))
+    expect(notify).toHaveBeenCalledWith('津波予報の失効', '津波予報は失効しました。', 'tsunami', false)
+  })
+
+  // 安全弁（2026-10-23 ユーザー選択「安全弁では「失効」と名乗らない (Recommended)」）: 標準版の 24 時間の安全弁は通知しない
+  it('安全弁: 標準版の安全弁で消える津波は「失効」の通知を出さない', () => {
+    const { handle } = setup()
+    handle(report([area('石川県能登', '360', 'Forecast')], { eventId: undefined }))
+    notify.mockClear()
+    handle(report([], { eventId: undefined, cancelled: true, cancelReason: 'expired', failsafeExpiry: true } as Partial<JMATsunami>))
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  // 安全弁: 津波情報だけの取消（警報等は続いている）は通知しない。終わったと読める通知で警報の通知を置き換えないため
+  it('安全弁: 津波情報だけの取消は通知しない', () => {
+    const { handle } = setup()
+    handle(report([area('石川県能登', '360', 'Watch')]))
+    handle(report([], { headType: 'VTSE51', observations: [{ name: '輪島港', height: { value: 0.5, description: '0.5m' } }] } as Partial<JMATsunami>))
+    notify.mockClear()
+    handle(report([], { cancelled: true, cancelReason: 'retracted', headType: 'VTSE51' } as Partial<JMATsunami>))
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  // 観測情報だけの報（2026-10-21 ユーザー選択「観測でも通知する」・2026-10-24 ユーザー選択「別の通知にする (Recommended)」）
+  it('正: 観測情報だけの報は、印の付いた観測点を別の札で送る', () => {
+    const { handle } = setup()
+    handle(report([area('石川県能登', '360', 'Warning')]))
+    notify.mockClear()
+    handle(report([], { headType: 'VTSE51', infoName: '津波観測に関する情報', observations: [
+      { name: '輪島港', height: { value: 1.2, description: '1.2m' } },
+      { name: '珠洲市長橋' },
+    ] } as Partial<JMATsunami>))
+    expect(notify).toHaveBeenCalledWith('津波観測に関する情報', '輪島港 1.2m、珠洲市長橋 到達確認', 'tsunami-obs', false)
+  })
+
+  it('対照: 何も変わらない再送では観測情報の通知を出さない', () => {
+    const { handle } = setup()
+    handle(report([area('石川県能登', '360', 'Warning')]))
+    const obs = { headType: 'VTSE51', infoName: '津波観測に関する情報', observations: [{ name: '輪島港', height: { value: 1.2, description: '1.2m' } }] } as Partial<JMATsunami>
+    handle(report([], obs))
+    notify.mockClear()
+    handle(report([], obs))
     expect(notify).not.toHaveBeenCalled()
   })
 

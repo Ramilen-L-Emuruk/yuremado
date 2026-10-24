@@ -2270,6 +2270,13 @@ describe('tsunamiAreaGradeChangeToText（区域単位で等級が動いた報）
     expect(textOf(partialLift)).toBe('福岡県日本海沿岸、佐賀県北部の津波注意報が津波予報に切り替えられました。')
   })
 
+  // 前の等級を読めない解除区域（2026-10-21 ユーザー選択「「解除」とだけ出す」・文面は 2026-10-24 ユーザー選択
+  // 「「津波警報等が解除」 (Recommended)」）。全期間 19,906 区域で 0 件
+  it('正: 前の等級を読めない解除区域は「津波警報等が解除されました」と読む', () => {
+    const tsunami = { ...makeAreaChangeTsunami([partialLift[0]]), cancelledAreas: [{ grade: 'Unknown', immediate: false, code: '200', name: '青森県日本海沿岸' } as TsunamiArea] }
+    expect(tsunamiAreaGradeChangeToText(tsunamiAreaGradeChanges(tsunami))).toBe('青森県日本海沿岸の津波警報等が解除されました。')
+  })
+
   it('等級が上がった区域は動詞が「引き上げられました」になる', () => {
     expect(textOf([
       { grade: 'Warning', lastGrade: 'Watch', immediate: false, code: '500', name: '京都府' },

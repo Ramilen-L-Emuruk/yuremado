@@ -5,22 +5,33 @@ import type { TsunamiObsBar } from '../../hooks/useTsunamiLayerData'
 import {
   barMetrics, popupOffset, BAR_RADIUS, BAR_RING_COLOR, BADGE_SHADOW_BLUR, BADGE_SHADOW_COLOR,
 } from './gl/tsunamiObsBar'
-import { overSuffixedHeight } from '../../utils/tsunami'
+import { overSuffixedHeight, observationFirstWaveText, observationMaxHeightTimeText } from '../../utils/tsunami'
+import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 
 // 津波観測棒（波高バー）を描画する MapLibre 版（Leaflet の tsunami-obs-bars 相当）。
 // 各観測点に、波高に比例した高さの縦バーを HTML マーカー（底辺アンカー）で立てる。
-// 更新中の点は tsunami-obs-blink クラスで点滅（Leaflet と同じ CSS）。ホバーで観測点名・波高を表示。
+// 更新中の点は tsunami-obs-blink クラスで点滅（Leaflet と同じ CSS）。吹き出しの開き方は `gl/tsunamiMarkerPopup.ts`。
 //
 // 観測点名をキーに差分更新する（Marker/Popup/DOM要素は使い回し、内容だけ書き換える）。
 // 全remove→全再生成だと、発報中の高頻度な観測値更新のたびに全観測棒が一瞬消えてから
 // 再生成され、ちらつく。
 
-function tooltipHtml(bar: TsunamiObsBar): string {
+/**
+ * 観測棒の吹き出し。観測点名・波高に、**最大波の観測時刻と第1波も出す**（2026-10-21 ユーザー選択「時刻と第1波も出す
+ * (Recommended)」。形は 2026-10-24 ユーザー選択「この形で揃える (Recommended)」＝「最大波 23:26」「第1波 05:12 押し波」）。
+ * 語はカードの行と同じ関数から採る（`observationMaxHeightTimeText`・`observationFirstWaveText`）。
+ */
+export function obsBarTooltipHtml(bar: TsunamiObsBar): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const desc = overSuffixedHeight(bar.height)
+  const maxTime = observationMaxHeightTimeText(bar)
+  const firstWave = observationFirstWaveText(bar)
   return (
     `<div class="text-sm"><div class="font-bold">${esc(bar.name)}</div>` +
-    `<div class="text-xs" style="color:${bar.color}">${esc(desc)}</div></div>`
+    `<div class="text-xs" style="color:${bar.color}">${esc(desc)}</div>` +
+    (maxTime ? `<div class="text-xs" style="color:#e5e7eb">${esc(maxTime)}</div>` : '') +
+    (firstWave ? `<div class="text-xs" style="color:#e5e7eb">${esc(firstWave)}</div>` : '') +
+    `</div>`
   )
 }
 
@@ -74,6 +85,8 @@ interface BarEntry {
   marker: maplibregl.Marker
   popup: maplibregl.Popup
   el: HTMLDivElement
+  bar: TsunamiObsBar
+  opener: TsunamiMarkerPopup
 }
 
 export function TsunamiObsBarsGL({ bars, iconScale }: Props) {
@@ -89,27 +102,27 @@ export function TsunamiObsBarsGL({ bars, iconScale }: Props) {
       const existing = entries.get(bar.name)
       if (existing) {
         updateBarEl(existing.el, bar, iconScale)
-        existing.popup.setHTML(tooltipHtml(bar)).setOffset(popupOffset(bar, iconScale))
+        existing.bar = bar
+        existing.popup.setHTML(obsBarTooltipHtml(bar)).setOffset(popupOffset(bar, iconScale))
         continue
       }
       const el = buildBarEl(bar, iconScale)
       const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
         .setLngLat([bar.lng, bar.lat])
         .addTo(map)
-      // ホバーでツールチップ（波高）を表示。
       const popup = new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
         offset: popupOffset(bar, iconScale),
-      }).setHTML(tooltipHtml(bar))
-      el.addEventListener('mouseenter', () => popup.setLngLat([bar.lng, bar.lat]).addTo(map))
-      el.addEventListener('mouseleave', () => popup.remove())
-      entries.set(bar.name, { marker, popup, el })
+      }).setHTML(obsBarTooltipHtml(bar))
+      const entry: BarEntry = { marker, popup, el, bar, opener: null as unknown as TsunamiMarkerPopup }
+      entry.opener = attachTsunamiMarkerPopup(map, el, popup, bar.name, 'bar', () => [entry.bar.lng, entry.bar.lat])
+      entries.set(bar.name, entry)
     }
     // 今回の更新に含まれなくなった観測点（区域が減った・別の事象に切り替わった等）を後始末。
     for (const [name, entry] of entries) {
       if (seen.has(name)) continue
-      entry.popup.remove()
+      entry.opener.dispose()
       entry.marker.remove()
       entries.delete(name)
     }
@@ -120,7 +133,7 @@ export function TsunamiObsBarsGL({ bars, iconScale }: Props) {
     const entries = entriesRef.current
     return () => {
       for (const entry of entries.values()) {
-        entry.popup.remove()
+        entry.opener.dispose()
         entry.marker.remove()
       }
       entries.clear()
