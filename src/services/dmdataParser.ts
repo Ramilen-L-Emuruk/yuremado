@@ -2841,7 +2841,9 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
 
   // 震源の要素。**読んで持つが、画面には出していない**（→ `LpgmHypocenter`）。
   // 同じ地震の震源・規模は地震カードが出すため重複する。電文が持っているものを落とさない
-  // ために保持している。
+  // ために保持している。長周期の報の震源・規模・最大震度を出さず地震カードに任せることは
+  // 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」（全期間の 68 通はすべて最初の地震情報の
+  // 309〜773 秒後に届き、長周期が先に届いた例は 0 件）。
   const lpgmHypoEl = earthquakeEl ? xmlQ(earthquakeEl, 'Hypocenter') : null
   const lpgmHypoAreaEl = lpgmHypoEl ? xmlQ(lpgmHypoEl, 'Area') : null
   let lpgmHypocenter: import('../types/earthquake').LpgmHypocenter | undefined
