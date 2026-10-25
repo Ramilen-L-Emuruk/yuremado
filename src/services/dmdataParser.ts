@@ -2181,14 +2181,15 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   // 沖合の潮位観測点かどうか。「重要」の基準が沿岸と違うためここで分ける。
   const offshore = headType === 'VTSE52'
 
-  // Observation のみ（VTSE51②: 津波観測に関する情報 / VTSE52: 沖合の津波観測に関する情報）
+  // Observation のみ（実配信では VTSE52: 沖合の津波観測に関する情報だけ）。VTSE51 は「津波観測に関する情報」も
+  // 区域（Forecast）を載せる（実電文での件数は tsunami-spec.md §10「等級を伝えていない電文」）。
   if (!forecastEl && observationEl) {
     const observations = parseTsunamiObservationsFromXml(observationEl, offshore)
     if (observations.length === 0) {
       return dropTelegram(TSUNAMI_LOG_PREFIX, 'Observation はありますが観測点を 1 件も読めません')
     }
     // **`infoName` と `observationDateTime` をここにも載せる。** この分岐は VTSE52（沖合の津波
-    // 観測）と VTSE51 の観測のみ続報が通る主経路で、まさに観測時点が最も効く形。載せ忘れると
+    // 観測）が通る主経路で、まさに観測時点が最も効く形。載せ忘れると
     // 「観測 ◯◯ 時点」が肝心の電文で一度も出ない（続報のマージは `?? current` で前報へ倒れる
     // ため、画面には古い時点が残るか、前報が無ければ何も出ない）。
     return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: false, headline, infoName, warningComments, carriesForecastStations, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas: [], observations, observationDateTime, estimations }
@@ -2373,7 +2374,7 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   if (areas.length === 0) return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'lifted', headline, infoName, warningComments, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas: [] }
   forecastStationTally.warnIfNoneReadable(TSUNAMI_LOG_PREFIX)
 
-  // Observation も含む場合（VTSE51①: Forecast + Observation 両方あり）
+  // Observation も含む場合（VTSE51: 津波観測に関する情報は Forecast と Observation の両方を載せる）
   const observations = observationEl ? parseTsunamiObservationsFromXml(observationEl, offshore) : undefined
 
   return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: false, validDateTime, headline, infoName, warningComments, carriesForecastStations, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas, cancelledAreas: cancelledAreas.length > 0 ? cancelledAreas : undefined, observations: observations && observations.length > 0 ? observations : undefined, observationDateTime, estimations }

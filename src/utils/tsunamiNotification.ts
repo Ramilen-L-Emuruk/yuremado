@@ -37,8 +37,8 @@ export function joinAreaNamesForNotification(areas: readonly TsunamiArea[]): str
 }
 
 /**
- * 発表中の津波の報の通知。**等級を伝えていない報（区域が空）・解除と取消の報は対象外**で、
- * 呼び出し側が弾く（`isTsunamiObservationOnly`・`cancelled`）。
+ * 発表中の津波の報の通知。**等級を発表しない報（VTSE51・VTSE52）・解除と取消の報は対象外**で、
+ * 呼び出し側が弾く（`isTsunamiGradeReport`・`isTsunamiObservationOnly`・`cancelled`）。
  *
  * - 見出しは発表中のいちばん高い等級
  * - 1 行目はいま出ている区域を**カードの並び**で（受信処理の `tsunamiCardOrderBasis` が作る材料。電文順＝気象庁の地理順で
@@ -103,8 +103,9 @@ function observationNotifyLabel(o: TsunamiObservation): string {
 export const TSUNAMI_OBS_NOTIFICATION_TAG = 'tsunami-obs'
 
 /**
- * 等級を伝えていない報（観測情報だけ）の通知（2026-10-21 ユーザー選択「観測でも通知する」。
- * 形は 2026-10-24 ユーザー選択「別の通知にする (Recommended)」）。
+ * 等級を発表しない報（津波情報 VTSE51・沖合の観測 VTSE52）の通知（2026-10-21 ユーザー選択「観測でも通知する」。
+ * 形は 2026-10-24 ユーザー選択「別の通知にする (Recommended)」。VTSE51 を区域の有無に関わらずこちらへ回すのは
+ * 2026-10-25 ユーザー選択「A 発表は VTSE41 だけ (Recommended)」）。
  *
  * - 見出しは電文が名乗る情報名（「津波観測に関する情報」「沖合の津波観測に関する情報」）
  * - 本文はその報で**カードに印が付いた観測点**を、カードの並びで 5 件まで（例「輪島港 1.2m、珠洲市長橋 到達確認、
