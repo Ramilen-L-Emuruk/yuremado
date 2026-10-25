@@ -1586,14 +1586,14 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 
 | 項目 | 単一情報源となる仕様書 |
 |---|---|
-| 撮影がカメラ（中心・ズーム・傾き・回転）に触れると、利用者が合わせた構図を撮影が動かしてしまう | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「カメラには触らない」 |
-| 将来カメラを動かす経路を足すとき `camera.ts` の fit 系関数を通さず `beginProgrammaticFlight` の印を渡さないと、印の無いカメラ操作はユーザーの手動操作として扱われ、地図の自動追従が `INTERACTION_HOLD_SEC`（30秒）止まる | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「カメラには触らない」 |
+| 撮影で寄せ直さずに画面の構図のまま撮ると、カードと画面の縦横比が違うぶん余計な範囲まで写り込む（縦長の画面から 16:9 で撮ると横へ 2 倍以上）。カメラを動かす関数を `camera.ts` の寄せる関数の外に足すと、その寄せは目標として覚えられず、撮影が古い目標へ寄せ直す | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「追従の目標へ寄せ直す」 |
+| 撮影の寄せ直しと戻しに `beginProgrammaticFlight` の印を渡さないと、印の無いカメラ操作はユーザーの手動操作として扱われ、地図の自動追従が `INTERACTION_HOLD_SEC`（30秒）止まる。撮影の間に来た追従の寄せを預からず動かすと、タイルを待つ間に撮影の寸法のまま飛び始めて構図が崩れる（寄せる関数の冒頭の `beginFit` を通さない寄せを足したときも同じ） | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「追従の目標へ寄せ直す」 |
 | 仮定震源要素（震源未確定）の緊急地震速報の共有カードで規模を出すと、地震学的に意味を持たない仮の値を画像へ焼き込むことになる（画像は後から訂正できない） | [`share-card-spec.md`](docs/spec/share-card-spec.md) §3「カードの構成」 |
 | 出典を描いているものだけに絞らず、地図へレイヤーを足したときに `ATTRIBUTION_SOURCES` と載せる条件を見直さないと、描いていないものを挙げて読み手が画像の中に見つけられない、または描いているのに挙げず帰属表示の欠落になる（プレート境界PB2002は帰属表示自体が利用条件） | [`share-card-spec.md`](docs/spec/share-card-spec.md) §4「出典と注意文」 |
 | 緊急地震速報の注意文の要否を地図のモードで判定すると、予報円と震源はモードに関わらず描かれるため、予報円が写っているのに注意文が無い画像を作ってしまう | [`share-card-spec.md`](docs/spec/share-card-spec.md) §4「出典と注意文」 |
 | WebGLキャンバスの写し取り（`ctx.drawImage`）を `render` コールバックの同期実行の外（`toBlob()` 等の非同期API）で行うと、フレームバッファは既に捨てられており空の画像を撮ることになる | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「フレームバッファは同期の窓でしか読めない」 |
 | `preserveDrawingBuffer` を撮影のたびに切り替えようとしても、Mapの初期化オプションで実行時には変えられないため、地図を作り直さない限り効かない（レイヤー・データを丸ごと積み直すことになる） | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「フレームバッファは同期の窓でしか読めない」 |
-| 撮影中に地図コンテナの親を切り抜かないと、出力寸法が画面の地図領域より大きいため広げた分がそのまま隣のパネルへはみ出して見える | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「出力寸法でレンダーし直す」 |
+| 撮影中に地図コンテナの親を切り抜かないと、描く寸法が画面の地図領域より大きいとき広げた分がそのまま隣のパネルへはみ出して見える。描く寸法を出力寸法の CSS px にすると、画面の地図領域が小さい端末ほど記号が画像に対して小さくなる。自前の描画レイヤーが `window.devicePixelRatio` を直に読むと、撮影のときだけ点や線が小さく描かれる | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「カードの縦横比でレンダーし直す」 |
 | 撮影後の後始末（寸法・切り抜き・地図の再計測・静止画の除去）を個別に囲わず束ねて実行すると、途中の1つが失敗した時点で以降が飛び、とくに静止画の除去に届かないと地図が撮影直前の画で覆われたままになる（リロードするまで戻らない） | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「後始末は 1 つずつ」 |
 | 津波の観測棒・到達確認マーカー（`maplibregl.Marker` のDOM要素）を撮影後の2Dキャンバスへ描き直さないと画像から消える。描き直しを撮影の同期窓の外（復元後）で行うと `map.project()` が画面寸法で答え、棒が別の場所に立つ | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「地図キャンバスに写らないもの」 |
 | 共有先の本文を見出しと別の材料で組み立てると、画像と本文で違うことを述べる矛盾したカードになる | [`share-card-spec.md`](docs/spec/share-card-spec.md) §6「本文の中身」 |

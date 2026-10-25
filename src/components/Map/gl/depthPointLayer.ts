@@ -997,7 +997,7 @@ export function createDepthPointLayer(id: MapLayerId, map: MapLibreMap, label: s
       }
       const u = display.u
       const pu = picker.u
-      const dpr = window.devicePixelRatio || 1
+      const dpr = map.getPixelRatio()
       // MapLibre の far は地下を含まない。**このレイヤーで描く最深点までが入るぶんだけ広げる**
       // （闇雲に伸ばすと深度精度が落ち、点どうしの前後関係が乱れる）。
       const mpp = metersPerPixelAt(map.getCenter().lat, map.getZoom())
