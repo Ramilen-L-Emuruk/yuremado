@@ -19,7 +19,10 @@
     { "value": "35.68123, 139.76711", "reason": "東京駅の公表位置の近くに置いたテスト用の座標" },
     { "value": "35.68119, 139.76713", "reason": "同上" },
     { "value": "27°46′", "reason": "気象庁の震源カタログに載る 1926-06-29 の地震の震央の緯度（公的なデータ。長期震源カタログの M の種類の例外として docs/spec/data-sources-spec.md に引いた）" },
-    { "value": "127°12′", "reason": "同上の経度" }
+    { "value": "127°12′", "reason": "同上の経度" },
+    { "value": "〒100-8122", "reason": "気象庁が公表している代表の連絡先（公的なデータ）。Wayback に控えられた気象庁の予報の発表状況ページを見本にした scripts/fc-hist-*.fixture.html のフッターに載る" },
+    { "value": "東京都千代田区大手町1-3-4", "reason": "同上の所在地" },
+    { "value": "03-3212-8341", "reason": "同上の代表電話" }
   ],
   "fileValues": [
     { "path": "seismo-host/src/receiver/stationXml.ts", "value": "el.local", "reason": "XML 要素の名前空間を除いた名前（プロパティの参照）。機器名ではない。この 4 件のファイルは作業中の worktree/feat/seismo-mseed-only にしかまだ無いので、出すときに式が変わっていないか確かめる" },
