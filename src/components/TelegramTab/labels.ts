@@ -136,6 +136,23 @@ export function originBadgeOf(origin: TelegramOrigin): string | null {
   return origin === 'test' ? 'テスト' : origin === 'replay' ? '再生' : null
 }
 
+/**
+ * 訓練・試験の印。**訓練と試験を同じ印にしない** —— 毎正時の配信テスト（VXSE42 の「試験」）まで
+ * 「訓練」と出ていて、年に数回の訓練の電文が埋もれていた（2026-10-23 ユーザー選択「種別名を出し、
+ * 訓練と試験を分ける (Recommended)」）。
+ *
+ * 本文の名乗り（`operationStatus`）を先に見る。名乗りが読めず配信元が試験報の印（`isTest`）だけを
+ * 立てているときは、どちらか言えないので「訓練・試験」と出す。
+ */
+export function operationBadgeOf(
+  entry: Pick<TelegramLogEntry, 'operationStatus' | 'isTest'>,
+): { label: string; className: string } | null {
+  if (entry.operationStatus === '訓練') return { label: '訓練', className: 'bg-sky-400/20 text-sky-200' }
+  if (entry.operationStatus === '試験') return { label: '試験', className: 'bg-violet-400/20 text-violet-200' }
+  if (entry.isTest) return { label: '訓練・試験', className: 'bg-white/10 text-secondary' }
+  return null
+}
+
 /** その行が絞り込みに当たるか。 */
 export function matchesTelegramFilter(
   entry: Pick<TelegramLogEntry, 'source' | 'origin' | 'status' | 'kind' | 'headType'>,

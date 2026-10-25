@@ -11,7 +11,7 @@ import { renderHook, act } from '@testing-library/react'
 import { useActionChecklist, SUPPRESS_MS } from './useActionChecklist'
 import type { EEWAlert, JMAQuake } from '../types/earthquake'
 import type { DetectedPoint } from '../utils/kyoshinDetectionView'
-import { NO_SCOPE } from '../utils/actionChecklistTrigger'
+import { NO_SCOPE, type NearbyScope } from '../utils/actionChecklistTrigger'
 import { drainReplayEvents, __resetReplayEventLogForTest, type ReplayOverlayEvent } from '../utils/replayEventLog'
 
 const MIN = 45 // 震度5弱
@@ -845,5 +845,92 @@ describe('判定する地震の期限と取消', () => {
     const { result, rerender } = setup(card('ev1', 70, 'ev1-1'))
     act(() => rerender({ qs: [cancelled(card('ev2', 30, 'ev2-1')), card('ev1', 70, 'ev1-1')] }))
     expect(result.current.state?.key).toBe('quake:ev1')
+  })
+})
+
+// 判定した範囲（`scope`）は帯の見出しと根拠の 1 行にしか効かない。強震モニタは毎秒判定し、半径内の点が
+// 欠測を出入りすると範囲だけが往復するので、そのたびに「帯が出た」を記録すると録画の記録が積み上がる。
+describe('判定した範囲だけが変わった回', () => {
+  const HOME: NearbyScope = {
+    ...NO_SCOPE,
+    stationNames: new Set(['新宿区西新宿']),
+    regionNames: new Set(['東京都23区']),
+    knownStationNames: new Set(['新宿区西新宿']),
+    knownRegionNames: new Set(['東京都23区']),
+  }
+  function withPoints(q: JMAQuake, points: JMAQuake['points']): JMAQuake {
+    return { ...q, points }
+  }
+  const AREA_ONLY = withPoints(quake('ev1', 50), [{ pref: '', addr: '東京都23区', isArea: true, scale: 50 }] as JMAQuake['points'])
+  const WITH_STATION = withPoints(quake('ev1', 50), [
+    { pref: '', addr: '東京都23区', isArea: true, scale: 45 },
+    { pref: '', addr: '新宿区西新宿', isArea: false, scale: 50 },
+  ] as JMAQuake['points'])
+  const STATION_HIGHER = withPoints(quake('ev1', 55), [
+    { pref: '', addr: '東京都23区', isArea: true, scale: 45 },
+    { pref: '', addr: '新宿区西新宿', isArea: false, scale: 55 },
+  ] as JMAQuake['points'])
+
+  function setupHome(initial: JMAQuake) {
+    return renderHook(
+      ({ q }: { q: JMAQuake }) =>
+        useActionChecklist({
+          minScale: MIN,
+          scope: HOME,
+          detectedPoints: NO_POINTS,
+          kyoshinStalled: false,
+          eews: NO_EEWS,
+          quakes: listOf(q),
+        }),
+      { initialProps: { q: initial } },
+    )
+  }
+  function openedLog() {
+    return drainReplayEvents().events
+      .filter((e): e is ReplayOverlayEvent => e.type === 'overlay' && e.overlay === 'actionChecklist')
+  }
+
+  // 正: 範囲は描き直すが、記録は増やさない
+  it('名乗りは描き直し、帯が出た記録は増やさない', () => {
+    const { result, rerender } = setupHome(AREA_ONLY)
+    expect(result.current.state?.scope).toBe('nearArea')
+    __resetReplayEventLogForTest()
+    act(() => rerender({ q: WITH_STATION }))
+    expect(result.current.state?.scope).toBe('near')
+    expect(result.current.state?.scale).toBe(50)
+    act(() => rerender({ q: AREA_ONLY }))
+    expect(result.current.state?.scope).toBe('nearArea')
+    expect(openedLog()).toEqual([])
+  })
+
+  // 対照: 震度が変わった回は従来どおり記録する
+  it('震度も変わった回は記録する', () => {
+    const { rerender } = setupHome(AREA_ONLY)
+    __resetReplayEventLogForTest()
+    act(() => rerender({ q: STATION_HIGHER }))
+    expect(openedLog().map(e => [e.open, e.reason])).toEqual([[true, '揺れを検知']])
+  })
+
+  // 安全弁: 畳んでいる間に範囲だけが変わっても、畳んだまま・記録も増やさない
+  it('畳んだまま範囲だけが変わった回は、畳みを保ち記録しない', () => {
+    const { result, rerender } = setupHome(AREA_ONLY)
+    act(() => result.current.dismiss())
+    __resetReplayEventLogForTest()
+    act(() => rerender({ q: WITH_STATION }))
+    expect(result.current.state?.scope).toBe('near')
+    expect(result.current.collapsed).toBe(true)
+    expect(openedLog()).toEqual([])
+    expect(localStorage.getItem('action-checklist-suppress')).not.toBe(null)
+  })
+
+  // 対照: 範囲と一緒に震度が上がって開き直す回は、記録し、畳んだ記録も消す
+  it('範囲と一緒に震度が上がって開き直す回は、記録して畳んだ記録を消す', () => {
+    const { result, rerender } = setupHome(AREA_ONLY)
+    act(() => result.current.dismiss())
+    __resetReplayEventLogForTest()
+    act(() => rerender({ q: STATION_HIGHER }))
+    expect(result.current.collapsed).toBe(false)
+    expect(openedLog().map(e => [e.open, e.reason])).toEqual([[true, '揺れを検知']])
+    expect(localStorage.getItem('action-checklist-suppress')).toBe(null)
   })
 })

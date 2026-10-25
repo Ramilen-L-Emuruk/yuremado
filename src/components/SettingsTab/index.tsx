@@ -2,7 +2,7 @@ import { ensureWaveSpanSec, WAVE_SPAN_CHOICES } from '../../utils/waveSpan'
 import { formatArchiveCoverage } from '../../utils/historicalArchiveCoverage'
 import { memo, useState, useCallback, useEffect, useRef } from 'react'
 import type { AppSettings, TtsUnreceivedDetail } from '../../hooks/useSettings'
-import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX } from '../../hooks/useSettings'
+import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX, devInjectedKeys } from '../../hooks/useSettings'
 import { Toggle } from '../Toggle'
 import { TELEGRAM_TEXT_BLOCK_KEYS, TELEGRAM_BOILERPLATE_KEYS, type TelegramTextBlockKey, type TelegramTextBlocks, type TelegramBoilerplateKey, type TelegramBoilerplateReads } from '../../utils/ttsText'
 import type { ConnectionStatus } from '../../types/earthquake'
@@ -34,7 +34,8 @@ import {
   seismoStatusLine, seismoUnreadableLine, SEISMO_STATUS_TONE_CLASS, type SeismoUiStatus,
 } from './seismoStatusLine'
 import { useKyoshinImport } from '../../hooks/useKyoshinImport'
-import { buildSettingsFile, parseSettingsFile, settingsFileName, type SettingsVariant } from '../../utils/settingsIo'
+import { buildSettingsFile, parseSettingsFile, settingsFileHasKeys, settingsFileName, type SettingsVariant } from '../../utils/settingsIo'
+import { isValidHomeLocation, parseCoordinateNumber, splitPastedLatLng } from '../../utils/homeLocationInput'
 import { SHARE_CARD_FORMATS } from '../../utils/shareCard'
 import { HEATMAP_PERIODS, isHeatmapPeriod } from '../../utils/quakeHeatmap'
 
@@ -199,6 +200,9 @@ function SettingsIoRow({ settings, onReplace }: {
   const inputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  // 鍵も含めるか。**既定は含めない**（2026-10-23 ユーザー選択「含めるかを書き出すときに選べる」）。
+  // 端末へは保存しない —— 開くたびに外れた状態から始め、うっかり鍵入りのファイルを作らないようにする。
+  const [includeKeys, setIncludeKeys] = useState(false)
   const variant: SettingsVariant = isDmdss ? 'dmdss' : 'standard'
 
   const download = useCallback(() => {
@@ -206,7 +210,8 @@ function SettingsIoRow({ settings, onReplace }: {
     setNotice(null)
     try {
       const now = new Date()
-      const blob = new Blob([JSON.stringify(buildSettingsFile(settings, variant, now), null, 2)], { type: 'application/json' })
+      const file = buildSettingsFile(settings, variant, { includeKeys, injected: devInjectedKeys() }, now)
+      const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -217,12 +222,13 @@ function SettingsIoRow({ settings, onReplace }: {
       a.click()
       a.remove()
       URL.revokeObjectURL(url)
-      setNotice(isDmdss ? '書き出しました（APIキーは含まれていません）' : '書き出しました')
+      // 文面は 2026-10-25 ユーザー選択「この文面で、含めない時も直す (Recommended)」
+      setNotice(settingsFileHasKeys(file) ? '書き出しました（鍵も含まれています）' : '書き出しました（鍵は含まれていません）')
     } catch (e) {
       // 黙って飲み込むと、押しても何も起きない理由が利用者に分からない
       setError(`書き出しに失敗しました: ${e instanceof Error ? e.message : String(e)}`)
     }
-  }, [settings, variant])
+  }, [settings, variant, includeKeys])
 
   const handleFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -275,6 +281,15 @@ function SettingsIoRow({ settings, onReplace }: {
     <div className="flex flex-col items-end gap-1">
       <input ref={inputRef} type="file" accept=".json,application/json" onChange={e => { void handleFile(e) }} className="hidden" />
       <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1 text-xs text-secondary cursor-pointer">
+          <input
+            type="checkbox"
+            checked={includeKeys}
+            onChange={e => setIncludeKeys(e.target.checked)}
+            className="accent-white w-3 h-3"
+          />
+          鍵も含める
+        </label>
         <button onClick={download} className="px-3 py-1.5 rounded-sm text-xs bg-panel border border-border text-white">
           書き出す
         </button>
@@ -282,6 +297,9 @@ function SettingsIoRow({ settings, onReplace }: {
           読み込む
         </button>
       </div>
+      {includeKeys && (
+        <span className="text-xs text-amber-300 text-right">鍵が入ったファイルは、人に渡したり公開の場所に置いたりしないでください</span>
+      )}
       {notice && <span className="text-xs text-secondary text-right whitespace-pre-line">{notice}</span>}
       {error && <span className="text-xs text-red-400 text-right">{error}</span>}
     </div>
@@ -1015,6 +1033,35 @@ function HomeLocationSection({
 
   const isSet = homeLat !== null && homeLng !== null
 
+  // 手で入れる欄（2026-10-25 ユーザー選択「緯度・経度の欄だけ (Recommended)」）。いまの地点を入れた状態から始め、
+  // 現在地の取得やクリアで地点が変わったら欄も追う。
+  const [latText, setLatText] = useState(homeLat === null ? '' : String(homeLat))
+  const [lngText, setLngText] = useState(homeLng === null ? '' : String(homeLng))
+  useEffect(() => {
+    setLatText(homeLat === null ? '' : String(homeLat))
+    setLngText(homeLng === null ? '' : String(homeLng))
+  }, [homeLat, homeLng])
+  const typedLat = parseCoordinateNumber(latText)
+  const typedLng = parseCoordinateNumber(lngText)
+  // 範囲の外・読めない値ではボタンを押せない（文言は足さない。欄の名前とボタンだけで伝える）
+  const canApply = isValidHomeLocation(typedLat, typedLng) && (typedLat !== homeLat || typedLng !== homeLng)
+  // 地図の道具から「37.5, 137.2」を 1 つの欄へ貼った形は、どちらの欄へ貼っても 2 つの欄へ割って入れる
+  const handleCoordinateChange = useCallback((text: string, setOwn: (t: string) => void) => {
+    const pair = splitPastedLatLng(text)
+    if (pair) {
+      setLatText(pair.lat)
+      setLngText(pair.lng)
+      return
+    }
+    setOwn(text)
+  }, [])
+  const handleApply = useCallback(() => {
+    if (typedLat === null || typedLng === null || !isValidHomeLocation(typedLat, typedLng)) return
+    onUpdate('homeLat', typedLat)
+    onUpdate('homeLng', typedLng)
+    setError(null)
+  }, [typedLat, typedLng, onUpdate])
+
   return (
     <div className="px-4 py-3 space-y-2">
       <p className="text-xs text-secondary">現在地を主要動到達の基準点として使用します。HTTPS または localhost が必要です。</p>
@@ -1041,6 +1088,35 @@ function HomeLocationSection({
             </button>
           )}
         </div>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <label className="flex items-center gap-1 text-xs text-secondary">
+          緯度
+          <input
+            type="text"
+            inputMode="decimal"
+            value={latText}
+            onChange={e => handleCoordinateChange(e.target.value, setLatText)}
+            className="w-24 bg-panel border border-border rounded-sm px-1.5 py-0.5 text-xs text-white font-mono"
+          />
+        </label>
+        <label className="flex items-center gap-1 text-xs text-secondary">
+          経度
+          <input
+            type="text"
+            inputMode="decimal"
+            value={lngText}
+            onChange={e => handleCoordinateChange(e.target.value, setLngText)}
+            className="w-24 bg-panel border border-border rounded-sm px-1.5 py-0.5 text-xs text-white font-mono"
+          />
+        </label>
+        <button
+          onClick={handleApply}
+          disabled={!canApply}
+          className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white px-3 py-1.5 rounded-sm transition-colors"
+        >
+          この地点にする
+        </button>
       </div>
       {error && <p className="text-xs text-red-400">{error}</p>}
     </div>

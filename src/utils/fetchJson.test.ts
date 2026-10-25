@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { fetchJsonWithTimeout, DATA_FETCH_TIMEOUT_MS } from './fetchJson'
+import { fetchJsonWithTimeout, DATA_FETCH_TIMEOUT_MS, NO_RETRY } from './fetchJson'
+import { retryDelayAfter } from './retrySchedule'
 
 function okResponse(body: unknown) {
   return { ok: true, json: async () => body } as unknown as Response
@@ -53,14 +54,14 @@ describe('fetchJsonWithTimeout', () => {
   it('HTTP エラーはステータス付きの例外にする', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 }) as unknown as Response))
 
-    await expect(fetchJsonWithTimeout('/data/x.json', 'x')).rejects.toThrow('x を取得できなかった: 404')
+    await expect(fetchJsonWithTimeout('/data/x.json', 'x', { retryDelay: NO_RETRY })).rejects.toThrow('x を取得できなかった: 404')
   })
 
   it('応答が返らないときはタイムアウトで失敗する（永久に pending にしない）', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('fetch', hangingFetch())
 
-    const assertion = expect(fetchJsonWithTimeout('/data/x.json', 'x', { timeoutMs: 5000 })).rejects.toThrow(
+    const assertion = expect(fetchJsonWithTimeout('/data/x.json', 'x', { timeoutMs: 5000, retryDelay: NO_RETRY })).rejects.toThrow(
       'x の取得が 5000ms で時間切れになった',
     )
     await vi.advanceTimersByTimeAsync(5000)
@@ -71,7 +72,7 @@ describe('fetchJsonWithTimeout', () => {
     vi.useFakeTimers()
     vi.stubGlobal('fetch', headerOnlyFetch())
 
-    const assertion = expect(fetchJsonWithTimeout('/data/x.json', 'x', { timeoutMs: 5000 })).rejects.toThrow(
+    const assertion = expect(fetchJsonWithTimeout('/data/x.json', 'x', { timeoutMs: 5000, retryDelay: NO_RETRY })).rejects.toThrow(
       'x の取得が 5000ms で時間切れになった',
     )
     await vi.advanceTimersByTimeAsync(5000)
@@ -104,7 +105,7 @@ describe('fetchJsonWithTimeout', () => {
     expect(vi.getTimerCount()).toBe(0)
 
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 }) as unknown as Response))
-    await expect(fetchJsonWithTimeout('/data/x.json', 'x')).rejects.toThrow(/500/)
+    await expect(fetchJsonWithTimeout('/data/x.json', 'x', { retryDelay: NO_RETRY })).rejects.toThrow(/500/)
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -126,7 +127,7 @@ describe('fetchJsonWithTimeout', () => {
       }),
     )
 
-    const assertion = expect(fetchJsonWithTimeout('/data/x.json', 'x', { timeoutMs: 5000 })).rejects.toThrow(
+    const assertion = expect(fetchJsonWithTimeout('/data/x.json', 'x', { timeoutMs: 5000, retryDelay: NO_RETRY })).rejects.toThrow(
       'Unexpected token <',
     )
     await vi.advanceTimersByTimeAsync(5000)
@@ -136,7 +137,7 @@ describe('fetchJsonWithTimeout', () => {
   it('通信エラーはタイムアウトに化けさせず、そのまま伝える', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
 
-    await expect(fetchJsonWithTimeout('/data/x.json', 'x')).rejects.toThrow('network down')
+    await expect(fetchJsonWithTimeout('/data/x.json', 'x', { retryDelay: NO_RETRY })).rejects.toThrow('network down')
   })
 
   it('既定のタイムアウトは 60 秒', () => {
@@ -172,28 +173,29 @@ describe('取得状況の集約', { timeout: 15_000 }, () => {
     const { fetchJsonWithTimeout, getDataLoadStatus } = await freshModule()
 
     const p = fetchJsonWithTimeout('/data/x.json', 'x')
-    expect(getDataLoadStatus()).toEqual({ pending: 1, failed: 0 })
+    expect(getDataLoadStatus()).toMatchObject({ pending: 1, failed: 0 })
 
     resolve(okResponse({ ok: 1 }))
     await p
 
-    expect(getDataLoadStatus()).toEqual({ pending: 0, failed: 0 })
+    expect(getDataLoadStatus()).toMatchObject({ pending: 0, failed: 0 })
   })
 
   // validate をこの関数の中で呼ぶ理由がここにある。呼び出し側の .then() で検証すると、
-  // 既に「成功」として数え終わった後なので、地図の「データN件を取り込めず」に出ない。
+  // 既に「成功」として数え終わった後なので、地図の「〇〇を取り込めず」に出ない。
   it('validate が投げたら通信失敗と同じく failed に数える', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse({})))
     const { fetchJsonWithTimeout, getDataLoadStatus } = await freshModule()
 
     await expect(
       fetchJsonWithTimeout('/data/x.json', 'x', {
+        retryDelay: NO_RETRY,
         validate: (data) => {
           if (!data || Object.keys(data).length === 0) throw new Error('x fetch returned no data')
         },
       }),
     ).rejects.toThrow(/no data/)
-    expect(getDataLoadStatus()).toEqual({ pending: 0, failed: 1 })
+    expect(getDataLoadStatus()).toMatchObject({ pending: 0, failed: 1 })
   })
 
   it('validate が通れば失敗には数えず、前回の失敗の記録も消す', async () => {
@@ -207,11 +209,11 @@ describe('取得状況の集約', { timeout: 15_000 }, () => {
       if (!data || Object.keys(data).length === 0) throw new Error('x fetch returned no data')
     }
 
-    await expect(fetchJsonWithTimeout('/data/x.json', 'x', { validate })).rejects.toThrow()
-    expect(getDataLoadStatus()).toEqual({ pending: 0, failed: 1 })
+    await expect(fetchJsonWithTimeout('/data/x.json', 'x', { validate, retryDelay: NO_RETRY })).rejects.toThrow()
+    expect(getDataLoadStatus()).toMatchObject({ pending: 0, failed: 1 })
 
     expect(await fetchJsonWithTimeout('/data/x.json', 'x', { validate })).toEqual({ a: 1 })
-    expect(getDataLoadStatus()).toEqual({ pending: 0, failed: 0 })
+    expect(getDataLoadStatus()).toMatchObject({ pending: 0, failed: 0 })
   })
 
   it('失敗を failed に数え、取り直しに成功したら消す', async () => {
@@ -219,16 +221,16 @@ describe('取得状況の集約', { timeout: 15_000 }, () => {
     vi.stubGlobal('fetch', fetchMock)
     const { fetchJsonWithTimeout, getDataLoadStatus } = await freshModule()
 
-    const failing = fetchJsonWithTimeout('/data/x.json', 'x')
+    const failing = fetchJsonWithTimeout('/data/x.json', 'x', { retryDelay: NO_RETRY })
     reject(new Error('network down'))
     await expect(failing).rejects.toThrow('network down')
-    expect(getDataLoadStatus()).toEqual({ pending: 0, failed: 1 })
+    expect(getDataLoadStatus()).toMatchObject({ pending: 0, failed: 1 })
 
     // 同じ label を取り直して成功させる（フォールバックからの復帰）
     vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ok: 1 })))
     await fetchJsonWithTimeout('/data/x.json', 'x')
 
-    expect(getDataLoadStatus()).toEqual({ pending: 0, failed: 0 })
+    expect(getDataLoadStatus()).toMatchObject({ pending: 0, failed: 0 })
   })
 
   it('状態が変わったときだけ購読者に通知する', async () => {
@@ -263,15 +265,15 @@ describe('取得状況の集約', { timeout: 15_000 }, () => {
 
     const first = fetchJsonWithTimeout('/data/a.json', 'scenario')
     const second = fetchJsonWithTimeout('/data/b.json', 'scenario')
-    expect(getDataLoadStatus()).toEqual({ pending: 1, failed: 0 })
+    expect(getDataLoadStatus()).toMatchObject({ pending: 1, failed: 0 })
 
     settlers[0](okResponse({ ok: 1 }))
     await first
-    expect(getDataLoadStatus()).toEqual({ pending: 1, failed: 0 })  // 2 本目が残っている
+    expect(getDataLoadStatus()).toMatchObject({ pending: 1, failed: 0 })  // 2 本目が残っている
 
     settlers[1](okResponse({ ok: 2 }))
     await second
-    expect(getDataLoadStatus()).toEqual({ pending: 0, failed: 0 })
+    expect(getDataLoadStatus()).toMatchObject({ pending: 0, failed: 0 })
   })
 
   it('trackStatus: false のデータは数えない（地図と無関係な失敗を地図上に出さない）', async () => {
@@ -282,7 +284,7 @@ describe('取得状況の集約', { timeout: 15_000 }, () => {
       fetchJsonWithTimeout('/data/x.json', 'tts-phrase-break-dict', { trackStatus: false }),
     ).rejects.toThrow(/404/)
 
-    expect(getDataLoadStatus()).toEqual({ pending: 0, failed: 0 })
+    expect(getDataLoadStatus()).toMatchObject({ pending: 0, failed: 0 })
   })
 
   it('状態が同じ間は同じ参照を返す（useSyncExternalStore の再レンダリング要件）', async () => {
@@ -296,5 +298,70 @@ describe('取得状況の集約', { timeout: 15_000 }, () => {
 
     // pending が 0 → 1 → 0 と戻るので、値としては初期状態と等しい
     expect(getDataLoadStatus()).toEqual(before)
+  })
+})
+
+describe('取り直し', { timeout: 15_000 }, () => {
+  async function freshModule() {
+    vi.resetModules()
+    return await import('./fetchJson')
+  }
+
+  // 本番の既定: 数えるデータだけ共有の規則で取り直す（テスト実行中は取り直さない理由は defaultRetryDelay）
+  it('既定では数えるデータだけ取り直す', async () => {
+    const { defaultRetryDelay } = await freshModule()
+    // 読み直したモジュールでは関数の同一性が変わるので、値で比べる（30 秒から・6 回目で諦める）
+    expect(defaultRetryDelay(true, 'production')(1)).toBe(30_000)
+    expect(defaultRetryDelay(true, 'production')(6)).toBeNull()
+    expect(defaultRetryDelay(true, 'development')(1)).toBe(30_000)
+    expect(defaultRetryDelay(false, 'production')(1)).toBeNull()
+    expect(defaultRetryDelay(true, 'test')(1)).toBeNull()
+  })
+
+  // 正: 地図のデータ（取得状況に数えるもの）は、失敗しても間隔を空けて取り直し、取れたら同じ Promise で返す
+  it('数えるデータは 30 秒あけて取り直し、取れたら返して失敗の記録を消す', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce(okResponse({ ok: 1 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { fetchJsonWithTimeout, getDataLoadStatus } = await freshModule()
+
+    const p = fetchJsonWithTimeout('/data/x.json', 'prefectures', { retryDelay: retryDelayAfter })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(getDataLoadStatus().failures).toEqual([{ label: 'prefectures', state: 'retrying' }])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await p).toEqual({ ok: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(getDataLoadStatus().failures).toEqual([])
+  })
+
+  // 安全弁: 取り直しには上限がある（5 回で諦め、最後の失敗を投げる）
+  it('5 回取り直しても取れなければ諦めて投げ、「諦めた」と記録する', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => { throw new Error('network down') })
+    vi.stubGlobal('fetch', fetchMock)
+    const { fetchJsonWithTimeout, getDataLoadStatus } = await freshModule()
+
+    const assertion = expect(fetchJsonWithTimeout('/data/x.json', 'active-faults', { retryDelay: retryDelayAfter })).rejects.toThrow('network down')
+    // 30 秒 → 1 分 → 2 分 → 4 分 → 5 分
+    await vi.advanceTimersByTimeAsync(30_000 + 60_000 + 120_000 + 240_000 + 300_000)
+    await assertion
+    expect(fetchMock).toHaveBeenCalledTimes(6)
+    expect(getDataLoadStatus().failures).toEqual([{ label: 'active-faults', state: 'gaveUp' }])
+  })
+
+  // 対照: 数えないデータ（呼び手が自分の取り直しを持つ）はここで取り直さない（二重にしない）
+  it('数えないデータは取り直さずにすぐ投げる', async () => {
+    const fetchMock = vi.fn(async () => { throw new Error('network down') })
+    vi.stubGlobal('fetch', fetchMock)
+    const { fetchJsonWithTimeout } = await freshModule()
+
+    await expect(fetchJsonWithTimeout('/data/x.json', 'hypocenter-index', { trackStatus: false })).rejects.toThrow('network down')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

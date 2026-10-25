@@ -24,6 +24,8 @@ export type RawP2PEvent = { code: number; [key: string]: unknown }
  * 扱うかの判定（`isSupportedCode`）・読み取りの振り分け（`convertEvent`）・読めた行の種別・
  * 電文ログが読めなかった行に付ける種別（`components/TelegramTab/labels.ts`）がすべてここを引く。
  * 値は読み取れる 3 種に限る（足すと `convertEvent` の振り分けが型エラーで知らせる）。
+ * P2PQuake 独自の地震感知情報（554・561・9611）は載せない（2026-10-23 選択「出さないまま、一本化で無くなることを
+ * 書き添える (Recommended)」。→ `docs/relay-server-design.md` §12）。
  */
 export const P2P_KIND_OF_CODE: ReadonlyMap<number, AppEvent['kind']> = new Map([
   [551, 'quake'], [552, 'tsunami'], [556, 'eew'],

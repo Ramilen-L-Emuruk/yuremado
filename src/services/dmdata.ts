@@ -23,6 +23,7 @@ import { log, createLogThrottle } from '../utils/logger'
 import { authHeader, DmdataApiKeyError, dmdataApiKeyProblem, dmdataApiKeyMessage } from '../utils/dmdataApiKey'
 import { fetchJsonOutcome, outcomeJson, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { fetchTelegramText } from './telegramBody'
+import { readTelegramOperationStatus } from '../utils/telegramOperationStatus'
 import { waitForApiSlot } from './dmdataRequestGates'
 import {
   negotiateClassifications, eewHeadTypeFor, classificationLabel, PREFERRED_CLASSIFICATIONS,
@@ -905,6 +906,7 @@ export class DmdataWebSocket {
       origin: 'live',
       headType,
       isTest,
+      operationStatus: typeof rawBody === 'string' ? readTelegramOperationStatus(rawBody) : undefined,
       status,
       kind,
       rawHead,
@@ -980,7 +982,23 @@ export class DmdataWebSocket {
     // **非 XML 電文の判定は本文から読む**（下の `isFilteredBinaryTelegram`）。
     if (isTest && !this.includeTest) {
       if (this.debug) dlog('試験報を破棄（includeTest 無効）', { headType })
-      if (headType) this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, true, 'filtered'))
+      if (headType) {
+        // **本文を復号してから積む。** 訓練と試験を分けるのは本文の `Control/Status` で、復号しないと
+        // 毎正時の配信テストまで「訓練・試験」としか出せない。XML 電文の試験報は小さい（VXSE42 は数 KB）。
+        // 二進電文はこの経路へ来ない（配信元は非 XML の試験報に `test` を立てない）。
+        // 本文を使わない種別は、通常の経路と同じく復号しない（`needsBodyDecode`）。
+        if (!needsBodyDecode(headType) || isBinaryTelegramType(headType)) {
+          this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, true, 'filtered'))
+          return
+        }
+        const body = await decodeTelegramText(msg)
+        if (body === null) {
+          // 通常の経路の復号失敗と同じ形で積む（圧縮されたままの本文を「捨てた試験報」に見せない）
+          this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, true, 'error', undefined, 'body decode failed'))
+          return
+        }
+        this.onRawMessage?.(this.makeLogEntry(headType, head, body, true, 'filtered'))
+      }
       return
     }
     if (!headType) return

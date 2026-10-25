@@ -20,10 +20,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { EEWAlert, JMAQuake } from '../types/earthquake'
 import { recordReplayEvent } from '../utils/replayEventLog'
 import {
-  eewScaleForScope,
-  hasNearby,
-  kyoshinScaleForScope,
-  quakeScaleForScope,
+  judgeEewForScope,
+  judgeKyoshinForScope,
+  judgeQuakeForScope,
+  type ChecklistScope,
   type NearbyScope,
 } from '../utils/actionChecklistTrigger'
 import type { DetectedPoint } from '../utils/kyoshinDetectionView'
@@ -79,8 +79,11 @@ interface SuppressRecord {
 export interface ChecklistState {
   reason: ChecklistReason
   scale: number
-  /** ホーム地点の周りで判定したか。見出しの言い回しを選ぶのに使う（false = 全国基準）。 */
-  scoped: boolean
+  /**
+   * 実際にどの範囲で判定したか（→ `ChecklistScope`）。帯の見出しの言い回しと、見出しの下の 1 行に使う。
+   * **「地点を登録しているか」ではない** —— 地点があっても判定が全国基準へ倒れることがある。
+   */
+  scope: ChecklistScope
   /** 畳んだ対象を見分けるための識別子。 */
   key: string
 }
@@ -277,10 +280,6 @@ export function useActionChecklist(params: {
   // 端末で次の余震が帯として開き直し、閉じた意味が無くなる（記録の永続化だけでは足りない）。
   const [collapsed, setCollapsed] = useState(() => suppress !== null)
 
-  // ホーム地点の周りで判定できているか。**判定側と同じ述語を使う** —— 別に書くと、区域だけが
-  // 引けている端末で「自宅の区域で判定したのに全国基準の言い回しを出す」ずれが生まれる。
-  const scoped = hasNearby(scope)
-
   const stateRef = useRef(state)
   stateRef.current = state
   const collapsedRef = useRef(collapsed)
@@ -336,12 +335,16 @@ export function useActionChecklist(params: {
     // 同じ EEW の続報で予想が上がることがあり、キーだけで弾くとその引き上げを取りこぼす。
     const cur = stateRef.current
     if (
-      cur && cur.key === next.key && cur.scale === next.scale && cur.scoped === next.scoped
+      cur && cur.key === next.key && cur.scale === next.scale && cur.scope === next.scope
       && wasCollapsed === keepCollapsed
     ) return true
 
     setState(next)
     setCollapsed(keepCollapsed)
+    // 判定した範囲（`scope`）だけが変わった回は、見出しと根拠の 1 行を描き直すだけで記録しない。
+    // 強震モニタは毎秒判定し、半径内の点が欠測を出入りすると `near` と `nationwide` が往復するので、
+    // 記録すると同じ揺れで「帯が出た」が積み上がる
+    if (cur && cur.key === next.key && cur.scale === next.scale && wasCollapsed === keepCollapsed) return true
     // 録画ツール向けの記録（→ `docs/spec/recording-interface-spec.md`）。**中身が変わらない
     // 回は上で抜けている**ので、ここへ来るのは画面が実際に動いたときだけ。畳んだまま出す
     // 場合（`keepCollapsed`）も「帯は出ている」ので開いた側として残す。
@@ -361,10 +364,11 @@ export function useActionChecklist(params: {
   //
   // 検知エンジンが詰まっている間は判定しない。空の検知結果を「揺れていない」と読むと、揺れの
   // 最中に帯を引っ込めることになる（下の `kyoshinStalled` の扱いと対になっている）。
-  const hitScale = useMemo(
-    () => (kyoshinStalled ? null : kyoshinScaleForScope(detectedPoints, scope, minScale)),
+  const kyoshinHit = useMemo(
+    () => (kyoshinStalled ? null : judgeKyoshinForScope(detectedPoints, scope, minScale)),
     [detectedPoints, scope, minScale, kyoshinStalled],
   )
+  const hitScale = kyoshinHit?.scale ?? null
 
   // 強震モニタの識別子は「その揺れの区切り」を表す必要があるが、強震モニタ自体は地震を区別
   // しない。直近の EEW か地震があればそれに紐づけ、無ければ**閾値を超えた時刻**を使う。
@@ -442,24 +446,24 @@ export function useActionChecklist(params: {
     }
 
     function pickChecklist(): ChecklistState | null {
-      let eewHit: { scale: number; key: string } | null = null
+      let eewHit: { scale: number; scope: ChecklistScope; key: string } | null = null
       for (const eew of eews) {
         if (isEewCancelled(eew)) continue
-        const scale = eewScaleForScope(eew, scope, minScale)
-        if (scale == null) continue
+        const hit = judgeEewForScope(eew, scope, minScale)
+        if (hit == null) continue
         // **報番号を含む `eew.id` は使わない。** 続報のたびにキーが変わり、畳んだものが開き直す。
-        if (eewHit == null || scale > eewHit.scale) eewHit = { scale, key: `eew:${eewEventKey(eew)}` }
+        if (eewHit == null || hit.scale > eewHit.scale) eewHit = { ...hit, key: `eew:${eewEventKey(eew)}` }
       }
-      if (eewHit) return { reason: 'eew', scale: eewHit.scale, scoped, key: eewHit.key }
+      if (eewHit) return { reason: 'eew', scale: eewHit.scale, scope: eewHit.scope, key: eewHit.key }
 
-      if (hitScale != null) {
+      if (kyoshinHit != null) {
         if (kyoshinAnchorRef.current == null) {
           const eewAnchor = eews.find(e => !isEewCancelled(e))
           kyoshinAnchorRef.current = (eewAnchor ? eewEventKey(eewAnchor) : null)
             ?? (latestQuake ? quakeEventKey(latestQuake) : null)
             ?? new Date().toISOString()
         }
-        return { reason: 'kyoshin', scale: hitScale, scoped, key: `kyoshin:${kyoshinAnchorRef.current}` }
+        return { reason: 'kyoshin', scale: kyoshinHit.scale, scope: kyoshinHit.scope, key: `kyoshin:${kyoshinAnchorRef.current}` }
       }
 
       // **詰まっている間に地震情報へ落とさない。** 揺れが続いているのに「強い揺れがありました」
@@ -472,7 +476,7 @@ export function useActionChecklist(params: {
       // **取消表示中のカードは外す。** 顔ぶれ（`updateJudgedQuakes`）は鍵で持つので、同じ鍵の生きた
       // カードと並んでいると取消カードもここまで来る。**寿命が尽きて消したものも選ぶ前に外す** ——
       // 外さないと、それが最大のとき `show` で弾かれ、閾値に達した別の地震まで出なくなる。
-      let quakeHit: { scale: number; key: string } | null = null
+      let quakeHit: { scale: number; scope: ChecklistScope; key: string } | null = null
       for (const q of quakes) {
         if (isQuakeCancelled(q)) continue
         const eventKey = quakeEventKey(q)
@@ -480,14 +484,14 @@ export function useActionChecklist(params: {
         if (judgedAt === undefined || !isJudgedFresh(judgedAt, now)) continue
         const key = `quake:${eventKey}`
         if (doneKeysRef.current.includes(key)) continue
-        const scale = quakeScaleForScope(q, scope, minScale)
-        if (scale == null) continue
-        if (quakeHit == null || scale > quakeHit.scale) quakeHit = { scale, key }
+        const hit = judgeQuakeForScope(q, scope, minScale)
+        if (hit == null) continue
+        if (quakeHit == null || hit.scale > quakeHit.scale) quakeHit = { ...hit, key }
       }
-      if (quakeHit) return { reason: 'quake', scale: quakeHit.scale, scoped, key: quakeHit.key }
+      if (quakeHit) return { reason: 'quake', scale: quakeHit.scale, scope: quakeHit.scope, key: quakeHit.key }
       return null
     }
-  }, [eews, hitScale, kyoshinStalled, quakes, latestQuake, scope, minScale, scoped, show, applySuppress])
+  }, [eews, kyoshinHit, kyoshinStalled, quakes, latestQuake, scope, minScale, show, applySuppress])
 
   // 設定で「出さない」に切り替えたら、いま出ているものも引っ込める。判定側で早期に抜けるだけ
   // では、開いたままの帯が手動で閉じるまで残り続ける（開いている間は寿命でも消さない設計のため）。

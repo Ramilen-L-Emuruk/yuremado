@@ -22,6 +22,8 @@ import {
   COLLAPSED_ACTION_COUNT,
 } from '../../utils/actionChecklist'
 import { getIntensityLabel } from '../../utils/intensity'
+import type { ChecklistScope } from '../../utils/actionChecklistTrigger'
+import { NEARBY_RADIUS_KM } from '../../utils/nearbyStations'
 
 /** どの経路で出たか。文言を変えるために持つ。 */
 export type ChecklistReason = 'eew' | 'kyoshin' | 'quake'
@@ -31,12 +33,10 @@ interface Props {
   /** 判定のもとになった震度階級（気象庁の値）。 */
   scale: number
   /**
-   * ホーム地点の周りで判定したか。false なら全国基準（地点が未登録・近くに観測点なし）。
-   *
-   * **見出しの言い回しを選ぶためだけに使う。** 判定の根拠そのものは画面に出さない
-   * （揺れた直後に読むのは行動だけでよい）。
+   * 実際にどの範囲で判定したか（→ `ChecklistScope`）。見出しの言い回しと、見出しの下の 1 行に使う。
+   * **地点を登録しているかではない** —— 地点があっても全国基準へ倒れることがある。
    */
-  scoped: boolean
+  scope: ChecklistScope
   /** 畳んでいるか。true なら小さなボタンだけを出す。 */
   collapsed: boolean
   onDismiss: () => void
@@ -54,6 +54,38 @@ const HEADLINE: Record<ChecklistReason, { scoped: string; global: string }> = {
   eew: { scoped: '強い揺れが来ます', global: '強い揺れが予想されています' },
   kyoshin: { scoped: '強い揺れを観測しています', global: '強い揺れを観測しています' },
   quake: { scoped: '強い揺れがありました', global: '強い揺れがありました' },
+}
+
+/**
+ * 帯の見出し。**判定に実際に使った範囲で言い分ける** —— ホーム地点の周りで判定したとき（`near`・`nearArea`・`nearDetected`）だけ
+ * 場所を主張する言い方にし、全国基準へ倒れたとき・地点が無いとき（`nationwide`）は場所を主張しない言い方にする。
+ */
+export function checklistHeadline(reason: ChecklistReason, scope: ChecklistScope): string {
+  return scope !== 'nationwide' ? HEADLINE[reason].scoped : HEADLINE[reason].global
+}
+
+/**
+ * 見出しの下に添える 1 行。どの経路の・どの範囲の値で出したかを短く言う
+ * （2026-10-25 ユーザー選択「この文面で直す (Recommended)」）。
+ */
+const SOURCE_LABEL: Record<ChecklistReason, string> = {
+  eew: '緊急地震速報',
+  kyoshin: '強震モニタ',
+  quake: '地震情報',
+}
+
+export function checklistBasisText(reason: ChecklistReason, scope: ChecklistScope): string {
+  const source = SOURCE_LABEL[reason]
+  if (scope === 'nationwide') return `${source}・全国の最大`
+  if (reason === 'eew') {
+    return scope === 'nearDetected'
+      ? `${source}・ホーム地点から ${NEARBY_RADIUS_KM}km 以内で検知`
+      : `${source}・ホーム地点の地域の予想`
+  }
+  if (reason === 'kyoshin') return `${source}・ホーム地点から ${NEARBY_RADIUS_KM}km 以内`
+  // 区域の点（震度速報など）で判定したときは、円ではなく区域名の一致で引いている（2026-10-25 選択「観測点と区域で分ける」）
+  if (scope === 'nearArea') return `${source}・ホーム地点の地域`
+  return `${source}・ホーム地点から ${NEARBY_RADIUS_KM}km 以内の観測点`
 }
 
 /**
@@ -152,7 +184,7 @@ function ChecklistIcon() {
   )
 }
 
-export function ActionChecklist({ reason, scale, scoped, collapsed, onDismiss, onRestore }: Props) {
+export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, onRestore }: Props) {
   const [open, setOpen] = useState(false)
   const [kitOpen, setKitOpen] = useState(false)
 
@@ -184,15 +216,15 @@ export function ActionChecklist({ reason, scale, scoped, collapsed, onDismiss, o
           地図を無駄に覆う。展開すれば中身が増えて自然に広がり、max-w-2xl で頭打ちにする。 */}
       <div className="pointer-events-auto w-fit max-w-2xl min-h-0 max-h-[70dvh] overflow-y-auto overflow-x-hidden overscroll-x-none rounded-lg bg-red-950/95 border-2 border-red-400 shadow-lg">
         <div className="px-3 py-2 flex items-start gap-2">
-          {/* 判定の根拠（全国基準か周辺基準か）はここに書かない。揺れた直後に読むのは行動だけで、
-              仕組みの説明は要らない。その説明は設定タブの「出す最低震度」の項目に置いてある。 */}
-          <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
+          {/* 判定の根拠は見出しの下に 1 行だけ。仕組みの説明は設定タブの「出す最低震度」の項目に置いてある。 */}
+          <div className="min-w-0 flex-1 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
             <span className={`text-xs font-bold text-white px-1.5 py-0.5 rounded-sm bg-red-500 shrink-0 ${SCALE_WIDTH_BADGE}`}>
               <ScaleText reason={reason} label={label} />
             </span>
             <span className="text-white text-sm font-bold leading-tight">
-              {scoped ? HEADLINE[reason].scoped : HEADLINE[reason].global}
+              {checklistHeadline(reason, scope)}
             </span>
+            <span className="basis-full text-white/70 text-xs leading-tight">{checklistBasisText(reason, scope)}</span>
           </div>
           <button
             className="text-white/70 hover:text-white p-1 -m-1 shrink-0"

@@ -66,6 +66,27 @@ export interface NearbyScope {
   knownRegionNames: ReadonlySet<string>
 }
 
+/**
+ * 実際にどの範囲で判定したか（行動チェックリストの帯に添える 1 行と、見出しの言い回しに使う）。
+ *
+ * **「地点を登録しているか」とは別物。** 地点があっても、近くの観測点が電文に引けない・
+ * 近くの観測点がそろって欠測している・自宅の区域を引けない、のどれかで全国基準へ倒れる。
+ * 帯が「ホーム地点から 30km 以内」と名乗ってよいのは、本当にその範囲で判定したときだけ。
+ *
+ * - `near` … ホーム地点の周り（地震情報・強震モニタは半径内の観測点、EEW は自宅の区域）
+ * - `nearArea` … 地震情報で、最大値が区域の点（震度速報などの地域別の震度）から来た。
+ *   区域は 30km の円ではなく区域名の一致で引くので、`near` と同じ「30km 以内の観測点」とは名乗れない
+ * - `nearDetected` … 「非常に強い揺れを検知」の EEW を、検知した観測点からの距離で見た
+ * - `nationwide` … 全国の最大
+ */
+export type ChecklistScope = 'near' | 'nearArea' | 'nearDetected' | 'nationwide'
+
+/** 判定の結果（閾値に達した最大震度と、判定に使った範囲）。 */
+export interface ChecklistJudgement {
+  scale: number
+  scope: ChecklistScope
+}
+
 /** 位置を持たない（または半径内に観測点が無い）ことを表す。全国基準で判定する。 */
 export const NO_SCOPE: NearbyScope = {
   centers: [],
@@ -105,15 +126,26 @@ export function quakeScaleForScope(
   scope: NearbyScope,
   minScale: number,
 ): number | null {
+  return judgeQuakeForScope(quake, scope, minScale)?.scale ?? null
+}
+
+/** {@link quakeScaleForScope} と同じ判定で、判定に使った範囲も返す。 */
+export function judgeQuakeForScope(
+  quake: JMAQuake,
+  scope: NearbyScope,
+  minScale: number,
+): ChecklistJudgement | null {
   if (!isUsableThreshold(minScale)) return null
-  const nationwide = () => {
+  const nationwide = (): ChecklistJudgement | null => {
     const max = quake.earthquake.maxScale
-    return isValidIntensityScale(max) && max >= minScale ? max : null
+    return isValidIntensityScale(max) && max >= minScale ? { scale: max, scope: 'nationwide' } : null
   }
   if (!hasNearby(scope)) return nationwide()
 
   let matched = false
   let max: number | null = null
+  // 最大値を区域の点から採ったか。同じ震度なら観測点の側を採る（範囲を狭く名乗れる方）。
+  let maxFromArea = false
   for (const p of quake.points ?? []) {
     // `pref` は見ない。DMDATA は常に空、P2PQuake は非空という非対称があるため、
     // 名前だけで引き当てる（`nearbyStationNames` / `nearbyRegionNames` も名前で持つ）。
@@ -125,7 +157,13 @@ export function quakeScaleForScope(
     // 有効な点が 1 つも無い電文で全国基準へ倒れなくなる（黙って出なくなる）。
     if (!isValidIntensityScale(p.scale)) continue
     matched = true
-    if (p.scale >= minScale && (max == null || p.scale > max)) max = p.scale
+    if (p.scale < minScale) continue
+    if (max == null || p.scale > max) {
+      max = p.scale
+      maxFromArea = p.isArea
+    } else if (p.scale === max && !p.isArea) {
+      maxFromArea = false
+    }
   }
   // 半径内に該当する点が 1 つも無かったときの読み方は 2 通りある。
   //
@@ -152,7 +190,7 @@ export function quakeScaleForScope(
     if (!hasStationPoint && minScale < AREA_REPORT_FLOOR) return nationwide()
     return null
   }
-  return max
+  return max == null ? null : { scale: max, scope: maxFromArea ? 'nearArea' : 'near' }
 }
 
 /**
@@ -203,10 +241,22 @@ export function kyoshinScaleForScope(
   scope: NearbyScope,
   minScale: number,
 ): number | null {
+  return judgeKyoshinForScope(points, scope, minScale)?.scale ?? null
+}
+
+/** {@link kyoshinScaleForScope} と同じ判定で、判定に使った範囲も返す。 */
+export function judgeKyoshinForScope(
+  points: readonly DetectedPoint[],
+  scope: NearbyScope,
+  minScale: number,
+): ChecklistJudgement | null {
   if (!isUsableThreshold(minScale)) return null
   // 確定した揺れが無ければ、値の高い点があっても出さない。
   if (points.length === 0) return null
-  const scanAll = () => scanPoints(points, minScale, null).max
+  const scanAll = (): ChecklistJudgement | null => {
+    const max = scanPoints(points, minScale, null).max
+    return max == null ? null : { scale: max, scope: 'nationwide' }
+  }
   // 半径内に強震モニタの観測点が 1 つも無ければ絞れないので、確定メンバー全体で見る（地点が
   // 未登録の場合と、登録されていても近くに観測点が無い離島などの両方がここに入る）。
   if (scope.kyoshinKeys.size === 0) return scanAll()
@@ -221,7 +271,8 @@ export function kyoshinScaleForScope(
   // 確定メンバーが欠測を持ちうるのは、`deriveKyoshinView` が値の有無に関わらず点を作るため
   // （`buildSiteIndex`）。渡ってくる値は瞬断を直前値で埋めた保持値だが、途絶が保持期間を過ぎれば
   // 欠測のセンチネルへ戻る。
-  return near.observed ? near.max : scanAll()
+  if (!near.observed) return scanAll()
+  return near.max == null ? null : { scale: near.max, scope: 'near' }
 }
 
 /**
@@ -289,20 +340,29 @@ export function eewScaleForScope(
   scope: NearbyScope,
   minScale: number,
 ): number | null {
+  return judgeEewForScope(eew, scope, minScale)?.scale ?? null
+}
+
+/** {@link eewScaleForScope} と同じ判定で、判定に使った範囲も返す。 */
+export function judgeEewForScope(
+  eew: EEWAlert,
+  scope: NearbyScope,
+  minScale: number,
+): ChecklistJudgement | null {
   if (!isUsableThreshold(minScale)) return null
   if (eew.strongShakingOnly === true && scope.centers.length > 0) {
     const { latitude, longitude } = eew.earthquake.hypocenter
     if (!hasKnownEpicenter(latitude, longitude)) return null
     const near = scope.centers.some((c) => haversineKm(latitude, longitude, c.lat, c.lng) <= NEARBY_RADIUS_KM)
     const max = eewMaxScale(eew)
-    return near && isValidIntensityScale(max) && max >= minScale ? max : null
+    return near && isValidIntensityScale(max) && max >= minScale ? { scale: max, scope: 'nearDetected' } : null
   }
   const regions = eewAreas(eew)
   const canNarrow = hasNearby(scope) && scope.regionNames.size > 0
   if (regions.length === 0 && canNarrow) return null
   if (!canNarrow) {
     const max = eewMaxScale(eew)
-    return isValidIntensityScale(max) && max >= minScale ? max : null
+    return isValidIntensityScale(max) && max >= minScale ? { scale: max, scope: 'nationwide' } : null
   }
   // ここで `eewMaxScaleInfo` を使わないのは、あれが「電文全体の最大」を返す関数だから。
   // 欲しいのは自宅の区域だけの最大なので、区域を絞ってから同じ検証（階級表にある値か）を当てる。
@@ -315,5 +375,5 @@ export function eewScaleForScope(
     }
   }
   // 区域はあるが自宅の区域が対象外だった場合は「自宅は閾値未満」と読める。ここは倒さない。
-  return max
+  return max == null ? null : { scale: max, scope: 'near' }
 }

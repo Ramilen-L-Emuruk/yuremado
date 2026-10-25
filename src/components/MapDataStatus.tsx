@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { subscribeDataLoadStatus, getDataLoadStatus } from '../utils/fetchJson'
+import { mapDataFailureText } from '../utils/mapDataStatusText'
 
 /**
  * 「取得中」を出すまでの猶予（ミリ秒）。
@@ -12,8 +13,9 @@ const SHOW_PENDING_AFTER_MS = 3000
  * 生成データ（境界・観測点座標など）の取得状況を地図に重ねて知らせる。
  *
  * 取得できなかったデータがあると地図から県境や震度が欠けるが、それだけでは
- * 「まだ来ていない」のか「来ない」のかが利用者に分からない。`console` には
- * 従来どおり詳細を出しているので、ここでは件数だけを伝える。
+ * 「まだ来ていない」のか「来ない」のかが利用者に分からない。**何が欠けたかを名前で出し**、
+ * 取り直している最中か、諦めて再読み込みを待っているかを括弧で言い分ける（文面は
+ * `utils/mapDataStatusText.ts`）。詳細は `console` に出している。
  * 正常時（取得中が短く、失敗も無い）は何も描かない。
  *
  * 対象は地図の見た目に関わるデータだけ（読み上げ辞書・実地震テストシナリオは
@@ -45,12 +47,10 @@ export function MapDataStatus() {
         failed ? 'text-amber-300' : 'text-white/70'
       }`}
     >
-      {/* 括弧の中は、自動での取り直しを行わないため利用者が打てる手。
-          要求元が 1 箇所しかないローダ（津波海岸線・活断層・プレート境界・津波観測点）は、
-          その 1 回が失敗すると再読み込みまで復帰しない。
+      {/* 取り直しは取得口（`utils/fetchJson.ts`）が 30 秒から倍々で 5 回行い、諦めたら再読み込みを促す。
           主節を言い切りで止めて 1 行へ収める形は、地震タブの通知に揃えてある
           （→ `utils/telegramLoss.ts` の `formatHistoryLossNotice`）。 */}
-      {failed ? `データ${status.failed}件を取り込めず（再読み込みで取得し直します）` : 'データを取得中…'}
+      {failed ? mapDataFailureText(status.failures) : 'データを取得中…'}
     </div>
   )
 }

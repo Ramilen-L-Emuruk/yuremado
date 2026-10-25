@@ -2122,9 +2122,10 @@ export interface JMAEstimatedIntensityGrade {
  * 大きい電文は分割配信され、受け側で結合してから読む（→ `bufrTelegramAssembly.ts`。
  * **分割の符号の体系は 2 種別で違う**）。
  *
- * **セルは列指向の型付き配列で持つ。** 実電文の最大は 364,993 セル（2026-04-20 の M7.5。
- * 形式が定める上限ではない）で、1 セル 1 オブジェクトにすると桁違いに重くなる。震源カタログの
- * 点群（`map-rendering-spec.md` §16）が同じ持ち方をしている。
+ * **セルは列指向の型付き配列で持つ。** 実電文は 50 万セルを超える（電文一覧 13 か月の最大は 2026-04-20 の
+ * M7.5 で 364,993 セル、能登本震（2024-01-01）は 518,037 セル。どちらも形式が定める上限ではない）ので、
+ * 1 セル 1 オブジェクトにすると桁違いに重くなる。震源カタログの点群（`map-rendering-spec.md` §16）が
+ * 同じ持ち方をしている。
  */
 export interface JMAEstimatedIntensity {
   id: string
@@ -2242,6 +2243,11 @@ export interface TelegramLogEntry {
   origin: TelegramOrigin
   headType: string
   isTest: boolean
+  /**
+   * 訓練か試験か（電文の `Control/Status`）。`isTest` が真でも、二進電文と本文を読めなかった電文は
+   * 空のまま —— そのときは電文ログが「訓練・試験」と出す（→ `utils/telegramOperationStatus.ts`）。
+   */
+  operationStatus?: TelegramOperationStatus
   status: 'parsed' | 'filtered' | 'error'
   kind?: TelegramLogKind
   rawHead?: unknown

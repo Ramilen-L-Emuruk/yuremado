@@ -15,12 +15,19 @@
 // 写した読み取り順と 1 対 1 で、**読めなければここで失敗する**（書き出す前に自分で復号し直す）。
 //
 // **分布そのものは合成**。実電文の分布を写すことはできないので、震源を中心に距離で減衰する
-// 同心円を置く。確かめたいのは「二進を読めること・地図に塗れること・地震カードと結び付くこと」で、
-// 分布の細かな形ではない。
-import { writeFileSync, mkdirSync } from 'node:fs'
+// 同心円を置く。**大きさだけは実物に合わせる**（2026-10-25 ユーザー選択「実物と同じ規模で作り直す
+// (Recommended)」）—— 能登本震の実電文は 518,037 セル・2 断片（511,900 ＋ 402,970 バイト）。
+// 小さく作ると、分割配信の結合・50 万セルの塗りという実配信でしか通らない経路が一度も通らない。
+//
+// ## 分割して書き出す
+//
+// 実配信と同じく **1 報目を 511,900 バイトで切り、残りを続きの断片（`RRA`）にする**
+// （→ `src/services/bufrTelegramAssembly.ts`）。台本はこれを本番の結合部品へ通してから読む。
+import { writeFileSync, mkdirSync, rmSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { decodeEstimatedIntensity, CELL_LAT_DEG, CELL_LON_DEG } from '../src/utils/bufrEstimatedIntensity'
+import { BufrFragmentStore } from '../src/services/bufrTelegramAssembly'
 
 /** 書き出し先。テストボタンの台本が読む場所。 */
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'data', 'test-telegrams', 'synthetic')
@@ -249,24 +256,47 @@ export function buildEstimatedIntensityBufr(spec: SyntheticEstimatedIntensity): 
 }
 
 /**
+ * 1 報目の大きさ（バイト）。能登本震の実電文の 1 報目がちょうどこの長さで、残りが `RRA` で届いた。
+ * 気象庁の分割の規則そのもの（どこで切るか）は確かめていないので、**実測の値をそのまま使う**。
+ */
+export const FIRST_FRAGMENT_BYTES = 511_900
+
+/** 続きの断片の分割報符号（IXAC41 の遅延報。→ `bufrTelegramAssembly.ts` の `fragmentIndex`）。 */
+const CONTINUATION_DESIGNATIONS = ['RRA', 'RRB', 'RRC'] as const
+
+/** 断片のファイル名。1 報目は `<name>.bufr`、続きは `<name>.rra.bufr` のように符号を挟む。 */
+export function fragmentFileName(base: string, designation: string | null): string {
+  return designation === null ? `${base}.bufr` : `${base}.${designation.toLowerCase()}.bufr`
+}
+
+/** 組んだ電文を実配信と同じ大きさで切る。 */
+export function splitIntoFragments(bytes: Uint8Array): { designation: string | null; bytes: Uint8Array }[] {
+  const out: { designation: string | null; bytes: Uint8Array }[] = []
+  for (let offset = 0, i = 0; offset < bytes.length; offset += FIRST_FRAGMENT_BYTES, i++) {
+    const designation = i === 0 ? null : CONTINUATION_DESIGNATIONS[i - 1]
+    if (designation === undefined) throw new Error(`断片が多すぎます（${bytes.length} バイト）`)
+    out.push({ designation, bytes: bytes.subarray(offset, offset + FIRST_FRAGMENT_BYTES) })
+  }
+  return out
+}
+
+/**
  * 書き出す電文。**地震テストと同じ能登本震の震源**に合わせる（地震カードとは発現時刻で結び付く）。
  *
- * **広がりは実電文の規模に合わせて小さく取る。** 置き換える前のテストデータ（2026-07-28 熊本県
- * 熊本地方 M4.2・推計震度分布図が出た地震でいちばんセルが少ないもの）が 1,693 セルで、同じ桁に
- * 収める。分布の形ではなく「二進を読めること・地図に塗れること・カードと結び付くこと」を
- * 確かめるものなので、広げても得るものが無く、リポジトリと precache の予算を食うだけ。
+ * **続報は実電文と同じ規模**（518,037 セル・最大は震度7）に合わせる。初報はそれより狭く弱い分布にして、
+ * 続報で広がる形を作る（続報で分布が差し替わることを見るため）。どちらも 2 断片になる。
  */
 const TARGETS = [
   {
-    file: 'estimated-intensity-1.bufr',
+    base: 'estimated-intensity-1',
     label: '初報',
     // 能登本震（2024-01-01 16:10 JST = 07:10 UTC）
-    spec: { arrival: new Date(Date.UTC(2024, 0, 1, 7, 10)), lat: 37.5, lon: 137.2, depthKm: 16, magnitude: 7.6, areaCode: 390, peakSi: 62, radiusDeg: 0.05 },
+    spec: { arrival: new Date(Date.UTC(2024, 0, 1, 7, 10)), lat: 37.5, lon: 137.2, depthKm: 16, magnitude: 7.6, areaCode: 390, peakSi: 62, radiusDeg: 0.78 },
   },
   {
-    file: 'estimated-intensity-2.bufr',
+    base: 'estimated-intensity-2',
     label: '続報（分布が広がる）',
-    spec: { arrival: new Date(Date.UTC(2024, 0, 1, 7, 10)), lat: 37.5, lon: 137.2, depthKm: 16, magnitude: 7.6, areaCode: 390, peakSi: 67, radiusDeg: 0.07 },
+    spec: { arrival: new Date(Date.UTC(2024, 0, 1, 7, 10)), lat: 37.5, lon: 137.2, depthKm: 16, magnitude: 7.6, areaCode: 390, peakSi: 67, radiusDeg: 0.923 },
   },
 ] as const
 
@@ -284,8 +314,9 @@ function verify(built: BuiltBufr, spec: SyntheticEstimatedIntensity, file: strin
     if (got !== want) throw new Error(`${file}: ${name} が合いません（組んだ値 ${String(want)} / 読めた値 ${String(got)}）`)
   }
   check('セル数', decoded.count, built.cellCount)
-  // `si` は確保長が `count` より長いことがあるので、有効な範囲だけ見る
-  check('最大計測震度', Math.max(...decoded.si.subarray(0, decoded.count)), built.maxSi)
+  // `si` は確保長が `count` より長いことがあるので、有効な範囲だけ見る。**展開（`Math.max(...)`）は
+  // 使わない** —— 実物と同じ 50 万セルでは引数が多すぎて呼び出しの積み上げが溢れる。
+  check('最大計測震度', extent(decoded.si, decoded.count).max, built.maxSi)
   check('地震発現時刻', decoded.arrivalTime, spec.arrival.toISOString())
   check('震源の緯度', Math.round(decoded.hypocenter.lat * 100), Math.round(spec.lat * 100))
   check('震源の経度', Math.round(decoded.hypocenter.lon * 100), Math.round(spec.lon * 100))
@@ -296,17 +327,45 @@ function verify(built: BuiltBufr, spec: SyntheticEstimatedIntensity, file: strin
   // **セルの位置も見る。** 件数と最大値だけでは、メッシュ番号の逆算が崩れて格子ごとずれても
   // 通る（塗られる場所だけが動くので、画面でも気づきにくい）。組んだ分布は震源を中心にした
   // 半径 `radiusDeg` の円なので、復号した座標がその範囲（セル 1 つ分の余裕つき）に収まるか見る。
-  const lats = Array.from(decoded.lat.subarray(0, decoded.count))
-  const lons = Array.from(decoded.lon.subarray(0, decoded.count))
-  const outside = (values: number[], center: number, span: number): boolean =>
-    Math.min(...values) < center - span || Math.max(...values) > center + span
+  const lats = extent(decoded.lat, decoded.count)
+  const lons = extent(decoded.lon, decoded.count)
+  const outside = (e: { min: number; max: number }, center: number, span: number): boolean =>
+    e.min < center - span || e.max > center + span
   // **経度は緯度で縮む。** 距離の判定が `経度差 × cos(緯度)` なので、経度方向は 1/cos だけ広がる
   const lonSpan = spec.radiusDeg / Math.cos((spec.lat * Math.PI) / 180) + CELL_LON_DEG
   if (outside(lats, spec.lat, spec.radiusDeg + CELL_LAT_DEG) || outside(lons, spec.lon, lonSpan)) {
     throw new Error(`${file}: セルの位置が組んだ範囲から外れています`
-      + `（緯度 ${Math.min(...lats).toFixed(4)}〜${Math.max(...lats).toFixed(4)}`
-      + ` / 経度 ${Math.min(...lons).toFixed(4)}〜${Math.max(...lons).toFixed(4)}`
+      + `（緯度 ${lats.min.toFixed(4)}〜${lats.max.toFixed(4)}`
+      + ` / 経度 ${lons.min.toFixed(4)}〜${lons.max.toFixed(4)}`
       + ` / 震源 ${spec.lat},${spec.lon} 半径 ${spec.radiusDeg}）`)
+  }
+}
+
+/** 先頭 `count` 個の最小・最大。 */
+function extent(values: ArrayLike<number>, count: number): { min: number; max: number } {
+  let min = Infinity
+  let max = -Infinity
+  for (let i = 0; i < count; i++) {
+    if (values[i] < min) min = values[i]
+    if (values[i] > max) max = values[i]
+  }
+  return { min, max }
+}
+
+/**
+ * 切った断片を**本番の結合部品へ通し**、元のバイト列へ戻ることを確かめる。台本も同じ部品で
+ * 組み立てるので、ここで戻らなければテストボタンでは分布が 1 セルも出ない。
+ */
+function verifyFragments(fragments: { designation: string | null; bytes: Uint8Array }[], whole: Uint8Array, base: string): void {
+  if (fragments.length < 2) throw new Error(`${base}: 実配信と同じく 2 断片以上になる大きさで組んでください（${whole.length} バイト）`)
+  const store = new BufrFragmentStore()
+  let assembled: Uint8Array | null = null
+  for (const f of fragments) {
+    assembled = store.add(base, f.designation, f.bytes, 0)
+  }
+  if (assembled === null) throw new Error(`${base}: 断片を結合できませんでした`)
+  if (assembled.length !== whole.length || assembled.some((b, i) => b !== whole[i])) {
+    throw new Error(`${base}: 結合した電文が組んだものと一致しません`)
   }
 }
 
@@ -316,12 +375,19 @@ function main(): void {
   // 初報と続報が食い違ったまま残る。
   const built = TARGETS.map((target) => {
     const b = buildEstimatedIntensityBufr(target.spec)
-    verify(b, target.spec, target.file)
-    return { target, built: b }
+    verify(b, target.spec, target.base)
+    const fragments = splitIntoFragments(b.bytes)
+    verifyFragments(fragments, b.bytes, target.base)
+    return { target, built: b, fragments }
   })
-  for (const { target, built: b } of built) {
-    writeFileSync(join(OUT_DIR, target.file), b.bytes)
-    console.log(`${target.file}（${target.label}）: ${b.bytes.length} バイト・${b.cellCount} セル・最大計測震度 ${b.maxSi / 10}`)
+  // 前の版の断片を消す（断片の数が減ったとき、古い続きが残って台本と食い違わないように）
+  for (const name of readdirSync(OUT_DIR)) {
+    if (TARGETS.some(t => name.startsWith(`${t.base}.`) && name.endsWith('.bufr'))) rmSync(join(OUT_DIR, name))
+  }
+  for (const { target, built: b, fragments } of built) {
+    for (const f of fragments) writeFileSync(join(OUT_DIR, fragmentFileName(target.base, f.designation)), f.bytes)
+    const sizes = fragments.map(f => f.bytes.length).join(' ＋ ')
+    console.log(`${target.base}（${target.label}）: ${b.bytes.length} バイト（${sizes}）・${b.cellCount} セル・最大計測震度 ${b.maxSi / 10}`)
   }
 }
 

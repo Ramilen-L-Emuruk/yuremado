@@ -588,6 +588,15 @@ function devArrivalToken(): string | undefined {
   return resolveDevArrivalToken(import.meta.env)
 }
 
+/**
+ * dev サーバーが注入した鍵（API キーと到達予想トークン）。設定の書き出し（`utils/settingsIo.ts`）が
+ * 「鍵も含める」を選ばれても、注入値だけは外すために使う —— 利用者が入れた鍵ではなく `.env.local` の値なので、
+ * 端末へ保存しない（`settingsToStore`）のと同じ扱いにする。
+ */
+export function devInjectedKeys(): { apiKey: string | undefined; arrivalToken: string | undefined } {
+  return { apiKey: devApiKey(), arrivalToken: devArrivalToken() }
+}
+
 /** 未設定のときだけ dev のトークンを差し込む。手入力した値は踏み潰さない。 */
 export function injectDevArrivalToken(settings: AppSettings, token: string | undefined): AppSettings {
   if (!token || settings.arrivalToken !== '') return settings

@@ -315,98 +315,100 @@ export function LabelsGL({ overlapSignature, iconScale }: Props) {
     ])
 
     // 県名・区域名は境界データ（label 座標・退避の余地 room）に依存するため取得後に追加する。
-    Promise.allSettled([loadPrefectures(), loadSubRegions()]).then(([prefRes, subRes]) => {
+    //
+    // **2 つを待ち合わせない。** 取得は失敗すると間を空けて取り直し（`utils/fetchJson.ts`）、その間は決着しない
+    // （取り直しの間隔の合計で約 12 分半）。待ち合わせると、取れた側のラベルまで出ないまま待たされる。
+    //
+    // 失敗ログには「どのズーム帯のラベルが欠けるか」を書く。ラベルはズーム帯ごとに粒度を
+    // 切り替える（上の対応表）ため、これが無いと「取得に失敗して出ない」のか「そのズーム帯では
+    // 元々出さない設計」なのかを、地図を見ても console を見ても区別できない。
+    loadPrefectures().then((prefs) => {
       if (cancelled || !map.getSource(REGION_SRC)) return
-      // 失敗ログには「どのズーム帯のラベルが欠けるか」を書く。ラベルはズーム帯ごとに粒度を
-      // 切り替える（上の対応表）ため、これが無いと「取得に失敗して出ない」のか「そのズーム帯では
-      // 元々出さない設計」なのかを、地図を見ても console を見ても区別できない。
-      if (prefRes.status === 'rejected')
-        log.warn(
-          `[LabelsGL] prefectures 取得失敗（zoom ${REGION_MAX_ZOOM}〜${CITY_LABEL_MIN_ZOOM} の県名ラベルが出ない。他ズーム帯の地方名・区域名ラベルは影響なし）`,
-          prefRes.reason,
-        )
-      if (subRes.status === 'rejected')
-        log.warn(
-          `[LabelsGL] subregions 取得失敗（zoom ${CITY_LABEL_MIN_ZOOM} 以上の区域名ラベルが出ない。それ未満の地方名・県名ラベルは影響なし）`,
-          subRes.reason,
-        )
-
       // 県名ラベル。県中心の最大震度バッジと重なったときだけ、県内に収まる範囲で上下へ退避する。
-      const prefs = prefRes.status === 'fulfilled' ? prefRes.value : null
-      if (prefs) {
-        const prefTargets: LabelOverlapTarget[] = Object.entries(prefs).map(([name, shape], i) => ({
-          source: PREF_SRC,
-          id: i,
-          lngLat: [shape.label[1], shape.label[0]],
-          text: name,
-          textSize: PREF_TEXT_SIZE,
-          shiftEm: PREF_SHIFT_EM,
-          room: shape.room,
-        }))
-        warnIfRoomMissing(prefTargets, 'prefectures.json', '県名')
-        targetsRef.current = [...targetsRef.current, ...prefTargets]
-        map.addSource(PREF_SRC, { type: 'geojson', data: initialFeatureCollection(prefTargets) })
-        addOrderedLayer(map, {
-          id: PREF_SRC,
-          type: 'symbol',
-          source: PREF_SRC,
-          minzoom: REGION_MAX_ZOOM,
-          maxzoom: CITY_LABEL_MIN_ZOOM,
-          layout: {
-            'text-field': ['get', 'name'],
-            'text-font': JP_TEXT_FONT,
-            'text-size': PREF_TEXT_SIZE * iconScaleRef.current,
-            'text-offset': labelTextOffsetExpr(PREF_SHIFT_EM),
-          },
-          paint: {
-            'text-color': '#e3e9f0',
-            'text-halo-color': HALO_COLOR,
-            'text-halo-width': 1.7,
-            'text-halo-blur': 0.6,
-            'text-opacity': LABEL_TEXT_OPACITY_EXPR,
-          },
-        })
-      }
-
+      const prefTargets: LabelOverlapTarget[] = Object.entries(prefs).map(([name, shape], i) => ({
+        source: PREF_SRC,
+        id: i,
+        lngLat: [shape.label[1], shape.label[0]],
+        text: name,
+        textSize: PREF_TEXT_SIZE,
+        shiftEm: PREF_SHIFT_EM,
+        room: shape.room,
+      }))
+      warnIfRoomMissing(prefTargets, 'prefectures.json', '県名')
+      targetsRef.current = [...targetsRef.current, ...prefTargets]
+      map.addSource(PREF_SRC, { type: 'geojson', data: initialFeatureCollection(prefTargets) })
+      addOrderedLayer(map, {
+        id: PREF_SRC,
+        type: 'symbol',
+        source: PREF_SRC,
+        minzoom: REGION_MAX_ZOOM,
+        maxzoom: CITY_LABEL_MIN_ZOOM,
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': JP_TEXT_FONT,
+          'text-size': PREF_TEXT_SIZE * iconScaleRef.current,
+          'text-offset': labelTextOffsetExpr(PREF_SHIFT_EM),
+        },
+        paint: {
+          'text-color': '#e3e9f0',
+          'text-halo-color': HALO_COLOR,
+          'text-halo-width': 1.7,
+          'text-halo-blur': 0.6,
+          'text-opacity': LABEL_TEXT_OPACITY_EXPR,
+        },
+      })
+      scheduleOverlapCheckRef.current()
+    }, (reason) => {
+      if (cancelled) return
+      log.warn(
+        `[LabelsGL] prefectures 取得失敗（zoom ${REGION_MAX_ZOOM}〜${CITY_LABEL_MIN_ZOOM} の県名ラベルが出ない。他ズーム帯の地方名・区域名ラベルは影響なし）`,
+        reason,
+      )
+    })
+    loadSubRegions().then((subs) => {
+      if (cancelled || !map.getSource(REGION_SRC)) return
       // 区域名ラベル。区域中心の震度バッジ（QuakeRegionFillGL・同じ label 座標にアイコンを置く）と
       // 重なったときだけ、区域内に収まる範囲で上下へ退避する（退避量は SUB_SHIFT_EM）。
-      const subs = subRes.status === 'fulfilled' ? subRes.value : null
-      if (subs) {
-        const subTargets: LabelOverlapTarget[] = subs.map((sr, i) => ({
-          source: SUB_SRC,
-          id: i,
-          lngLat: [sr.label[1], sr.label[0]],
-          text: sr.name,
-          textSize: SUB_TEXT_SIZE,
-          shiftEm: SUB_SHIFT_EM,
-          room: sr.room,
-          // 自分の区域の塗り（当然重なる）は無視し、隣接する別区域の塗りとだけ重なりを判定する。
-          excludeName: sr.name,
-        }))
-        warnIfRoomMissing(subTargets, 'subregions.json', '区域名')
-        targetsRef.current = [...targetsRef.current, ...subTargets]
-        map.addSource(SUB_SRC, { type: 'geojson', data: initialFeatureCollection(subTargets) })
-        addOrderedLayer(map, {
-          id: SUB_SRC,
-          type: 'symbol',
-          source: SUB_SRC,
-          minzoom: CITY_LABEL_MIN_ZOOM,
-          layout: {
-            'text-field': ['get', 'name'],
-            'text-font': JP_TEXT_FONT,
-            'text-size': SUB_TEXT_SIZE * iconScaleRef.current,
-            'text-offset': labelTextOffsetExpr(SUB_SHIFT_EM),
-          },
-          paint: {
-            'text-color': '#b3bece',
-            'text-halo-color': HALO_COLOR,
-            'text-halo-width': 1.4,
-            'text-halo-blur': 0.5,
-            'text-opacity': LABEL_TEXT_OPACITY_EXPR,
-          },
-        })
-      }
+      const subTargets: LabelOverlapTarget[] = subs.map((sr, i) => ({
+        source: SUB_SRC,
+        id: i,
+        lngLat: [sr.label[1], sr.label[0]],
+        text: sr.name,
+        textSize: SUB_TEXT_SIZE,
+        shiftEm: SUB_SHIFT_EM,
+        room: sr.room,
+        // 自分の区域の塗り（当然重なる）は無視し、隣接する別区域の塗りとだけ重なりを判定する。
+        excludeName: sr.name,
+      }))
+      warnIfRoomMissing(subTargets, 'subregions.json', '区域名')
+      targetsRef.current = [...targetsRef.current, ...subTargets]
+      map.addSource(SUB_SRC, { type: 'geojson', data: initialFeatureCollection(subTargets) })
+      addOrderedLayer(map, {
+        id: SUB_SRC,
+        type: 'symbol',
+        source: SUB_SRC,
+        minzoom: CITY_LABEL_MIN_ZOOM,
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': JP_TEXT_FONT,
+          'text-size': SUB_TEXT_SIZE * iconScaleRef.current,
+          'text-offset': labelTextOffsetExpr(SUB_SHIFT_EM),
+        },
+        paint: {
+          'text-color': '#b3bece',
+          'text-halo-color': HALO_COLOR,
+          'text-halo-width': 1.4,
+          'text-halo-blur': 0.5,
+          'text-opacity': LABEL_TEXT_OPACITY_EXPR,
+        },
+      })
       scheduleOverlapCheckRef.current()
+    }, (reason) => {
+      if (cancelled) return
+      log.warn(
+        `[LabelsGL] subregions 取得失敗（zoom ${CITY_LABEL_MIN_ZOOM} 以上の区域名ラベルが出ない。それ未満の地方名・県名ラベルは影響なし）`,
+        reason,
+      )
     })
 
     return () => {

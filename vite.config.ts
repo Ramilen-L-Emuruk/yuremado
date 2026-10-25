@@ -11,6 +11,7 @@ import { outDirForVariant } from './scripts/buildOutDir'
 import { PRECACHE_GLOB_PATTERNS, PRECACHE_MAX_FILE_BYTES } from './scripts/precacheBudget'
 import { cleanupOutdatedCachesForVariant } from './scripts/precacheCleanup'
 import { offlineDataRuntimeCaching } from './scripts/offlineData'
+import { offlineBathymetryRuntimeCaching } from './scripts/offlineBathymetry'
 
 const variant = process.env.VITE_VARIANT ?? 'standard'
 const isDmdss = variant === 'dmdss'
@@ -227,7 +228,8 @@ export default defineConfig(configEnv => ({
         // 地図タイルの CacheFirst 規則（`basemaps.cartocdn.com`）は初期実装の
         // React-Leaflet + Carto Dark 時代の残りで、MapLibre へ移ったあとは叩く側が無かった
         // ため外した（`package.json` に leaflet 依存は無く、地図は自前の GeoJSON 描画と
-        // GEBCO ラスタだけ）。GEBCO のタイルは配信元の `Cache-Control` に任せている。
+        // GEBCO ラスタだけ）。GEBCO のタイルは日本周辺の z8 までだけ下の規則で控え、それ以外は配信元の
+        // `Cache-Control` に任せている。
         //
         // **既にあの規則でキャッシュを作った端末には `map-tiles` が残る。** `cleanupOutdatedCaches`
         // が消すのはプリキャッシュだけで、`runtimeCaching` が作った独自の cacheName は誰も
@@ -239,6 +241,8 @@ export default defineConfig(configEnv => ({
           // 対象のファイル名・規則・キャッシュ名は `scripts/offlineData.ts`（事前キャッシュに
           // 載せられない理由もそちら）。
           offlineDataRuntimeCaching(base, variant),
+          // 海底地形のタイルを、日本周辺の枠の z8 までだけ控える（範囲と理由は `scripts/offlineBathymetry.ts`）。
+          offlineBathymetryRuntimeCaching(variant),
           {
             // **`cache: 'no-store'` の要求は控えに通さない。** 標準版の接続を張り直したときの取り戻し
             // （`fetchHistorySince`）がそれを付ける。NetworkFirst は通信に失敗すると控えを普通の

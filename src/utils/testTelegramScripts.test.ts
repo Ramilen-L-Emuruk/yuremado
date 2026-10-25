@@ -862,6 +862,25 @@ describe('推計震度分布図のテスト', () => {
     // 続報で分布が広がる
     expect(distributions[1].count).toBeGreaterThan(distributions[0].count)
     expect(distributions[0].count).toBeGreaterThan(0)
+    // 続報は能登本震の実電文と同じ規模（518,037 セル・最大は震度7）。小さく作ると 50 万セルの塗りが
+    // テストボタンでは一度も通らない（2026-10-25 ユーザー選択「実物と同じ規模で作り直す (Recommended)」）
+    expect(distributions[1].count).toBeGreaterThan(500_000)
+    expect(Math.max(...distributions[1].grades.map(g => g.scale))).toBe(7)
+  })
+
+  // 実配信と同じく 2 断片で置く（結合して読めることは上の件数の検査が見る）
+  it('分布の台本は続きの断片を持つ', () => {
+    const binarySteps = scripts.ESTIMATED_INTENSITY.steps.filter(s => s.headType === 'IXAC41')
+    expect(binarySteps.map(s => s.continuations?.map(c => c.designation))).toEqual([['RRA'], ['RRA']])
+  })
+
+  // 安全弁: 続きの断片が欠けたら全体を失敗にする（欠けたまま読むと分布が 1 セルも出ず、気づけない）
+  it('続きの断片が無ければ台本ごと失敗する', async () => {
+    const script = {
+      ...scripts.ESTIMATED_INTENSITY,
+      steps: scripts.ESTIMATED_INTENSITY.steps.map(s => (s.continuations ? { ...s, continuations: [] } : s)),
+    }
+    await expect(build(script)).rejects.toThrow()
   })
 })
 

@@ -22,7 +22,7 @@ import {
   type TelegramLoss, createEmptyTelegramLoss, telegramLossFrom, isTelegramLossEmpty,
   mergeHistoryLoss,
 } from '../utils/telegramLoss'
-import { appendToTelegramLog, dropTelegramLogOrigins } from '../utils/telegramLogBuffer'
+import { appendToTelegramLog, dropTelegramLogOrigins, pruneTelegramLog } from '../utils/telegramLogBuffer'
 import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, findRetractionTie, logRetractionTie, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
 import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmRowSnapshot, lpgmMarkKey, lpgmTelegramRevise, quakeTelegramRevise, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
@@ -131,7 +131,9 @@ export const MAX_HISTORY_RETAINED = 50
 // ライブの初回履歴で 1 回に引く電文数（`/jma` の上限）。**リクエストは 1 回のまま。**
 // 地震 50 件を選ぶ母数で、ここから `selectQuakeHistory` が地震の単位で絞る。
 const INITIAL_HISTORY_PAGE_SIZE = 100
-// 電文ログの保持件数は経路ごとに分ける（→ `utils/telegramLogBuffer.ts` の `TELEGRAM_LOG_LIMITS`）
+// 電文ログの保持は経路ごとに分ける（ライブは 24 時間・テストと再生は件数。→ `utils/telegramLogBuffer.ts`）
+/** 何も届かない間に 24 時間より古いライブの行を捨てる間隔（ミリ秒）。 */
+const TELEGRAM_LOG_PRUNE_INTERVAL_MS = 10 * 60 * 1000
 
 const MAX_QUAKE_RETRACTIONS = 20  // 取消を見た事実の台帳の最大保持件数（`rememberQuakeRetraction`）
 
@@ -720,8 +722,21 @@ export function useEarthquakes(
     telegramLog: [],
   })
 
+  // 「いま」は行の `receivedAt` と同じ時計で測る（→ `utils/telegramLogBuffer.ts` の `isExpiredLive`）
   const appendTelegramLog = useCallback((entry: TelegramLogEntry) => {
-    setState(prev => ({ ...prev, telegramLog: appendToTelegramLog(prev.telegramLog, entry) }))
+    setState(prev => ({ ...prev, telegramLog: appendToTelegramLog(prev.telegramLog, entry, serverNow()) }))
+  }, [])
+
+  // 何も届かない間も 24 時間より古いライブの行を捨てる。積むときだけでは、静かな時間が続くと残り続ける。
+  // 捨てるものが無ければ同じ配列が返るので、描き直しは起きない。
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setState(prev => {
+        const next = pruneTelegramLog(prev.telegramLog, serverNow())
+        return next === prev.telegramLog ? prev : { ...prev, telegramLog: next }
+      })
+    }, TELEGRAM_LOG_PRUNE_INTERVAL_MS)
+    return () => clearInterval(timer)
   }, [])
 
   const clearTelegramLog = useCallback(() => {

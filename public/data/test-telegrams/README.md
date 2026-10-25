@@ -13,7 +13,7 @@
 |---|---|---|---|
 | `nii/` | 41 | 国立情報学研究所「気象庁防災情報XMLデータベース」（CPS-IIP, Asanobu KITAMOTO）が収集した実電文 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja) |
 | `jma-sample/` | 26 | 気象庁「[防災情報XMLフォーマット 技術資料](https://xml.kishou.go.jp/tec_material.html)」のサンプル電文（`jmaxml_20260917_Samples.zip`） | 公共データ利用規約 第1.0版 |
-| `synthetic/` | 2 | 推計震度分布図の二進電文（BUFR）。配布されているものが無いので自前で組んだ | — |
+| `synthetic/` | 4 | 推計震度分布図の二進電文（BUFR）。配布されているものが無いので自前で組んだ（2 通を 2 断片ずつ） | — |
 
 **DMDATA.JP から取った電文は置かない。** 規約第15条で二次配信が制限されており、このリポジトリは
 GitHub Pages で公開している（とくに緊急地震速報）。ここにある緊急地震速報は、どれも気象庁の
@@ -24,7 +24,8 @@ GitHub Pages で公開している（とくに緊急地震速報）。ここに�
 - `nii/` は配信時のファイル名（`YYYYMMDDhhmmss_0_<電文種別>_<官署コード>.xml`）。
   データベースの収録分だけ UUID 形式のものがある
 - `jma-sample/` は技術資料の章番号・例番号・版（`<章>_<例>_<枝番>_<版 YYMMDD>_<電文種別>.xml`）
-- `synthetic/` は `estimated-intensity-<段>.bufr`（1 が初報、2 が続報。続報のほうが分布が広い）
+- `synthetic/` は `estimated-intensity-<段>.bufr`（1 が初報、2 が続報。続報のほうが分布が広い）。
+  続きの断片は分割報符号を挟んで `estimated-intensity-<段>.rra.bufr`
 
 ## 実電文に無い形は、実電文を書き換えて作る
 
@@ -38,3 +39,5 @@ GitHub Pages で公開している（とくに緊急地震速報）。ここに�
 
 `synthetic/estimated-intensity-*.bufr` は `npm run build-test-estimated-intensity-bufr` で作り直す。
 生成したものは本番の復号器へ通して、書き出した格子が読み戻せることを確かめてから保存する。
+大きさは能登本震の実電文に合わせてあり（続報は約 52 万セル）、実配信と同じ 511,900 バイトで切って
+続きの断片を作る。切った断片も本番の結合部品へ通し、元の電文へ戻ることを確かめる。
