@@ -9,6 +9,7 @@ import type { ReplayPayload } from '../types/replay'
 import type { TelegramLogEntry, TelegramOrigin } from '../types/earthquake'
 import { telegramKindOfHeadType, telegramKindOfPayload } from './dmdataTelegramPayload'
 import { serverDate } from '../utils/clock'
+import { readTelegramOperationStatus } from '../utils/telegramOperationStatus'
 
 /**
  * 行の識別子に添える通し番号。
@@ -56,6 +57,8 @@ export function makeReplayLogEntry(input: ReplayLogEntryInput): TelegramLogEntry
     origin,
     headType,
     isTest,
+    // ライブ（`dmdata.ts` の `makeLogEntry`）と同じく本文から読む。リプレイの電文は XML のまま届く
+    operationStatus: typeof rawBody === 'string' ? readTelegramOperationStatus(rawBody) : undefined,
     status: payload ? 'parsed' : 'filtered',
     // 読めたものは読んだ結果から、読めなかったものは種別コードから引く（ライブと同じ）
     kind: payload ? telegramKindOfPayload(payload) : telegramKindOfHeadType(headType),

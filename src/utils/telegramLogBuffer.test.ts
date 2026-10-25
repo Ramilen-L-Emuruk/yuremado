@@ -4,15 +4,19 @@
 // 記録が押し出される症状は、例外もログも出ず、画面からは「その電文は届かなかった」のと
 // 見分けが付かない。
 import { describe, it, expect } from 'vitest'
-import { appendToTelegramLog, dropTelegramLogOrigins, TELEGRAM_LOG_LIMITS } from './telegramLogBuffer'
+import {
+  appendToTelegramLog, dropTelegramLogOrigins, pruneTelegramLog,
+  TELEGRAM_LOG_COUNT_LIMITS, TELEGRAM_LOG_LIVE_WINDOW_MS,
+} from './telegramLogBuffer'
 import type { TelegramLogEntry, TelegramOrigin } from '../types/earthquake'
 // **トップレベルで読む。** テスト本体の中で初めて読むと、モジュールの解決・変換の待ち（全ファイルを並列で
 // 回すと数秒）が 1 件目の所要時間へ丸ごと乗り、既定の 5 秒で時間切れになる（→ CLAUDE.md「検証」）。
 import { makeReplayLogEntry } from '../services/telegramLogEntry'
 
-const entry = (origin: TelegramOrigin, id: string): TelegramLogEntry => ({
+const NOW = Date.parse('2026-10-23T12:00:00Z')
+const entry = (origin: TelegramOrigin, id: string, receivedAtMs = NOW): TelegramLogEntry => ({
   id,
-  receivedAt: new Date('2026-10-23T12:00:00Z'),
+  receivedAt: new Date(receivedAtMs),
   source: 'dmdss',
   origin,
   headType: 'VXSE53',
@@ -24,7 +28,7 @@ const entry = (origin: TelegramOrigin, id: string): TelegramLogEntry => ({
 /** `n` 件積む（古い順に積むので、戻り値の先頭が最後に積んだもの）。 */
 const fill = (origin: TelegramOrigin, n: number, prefix = origin): TelegramLogEntry[] => {
   let log: TelegramLogEntry[] = []
-  for (let i = 0; i < n; i++) log = appendToTelegramLog(log, entry(origin, `${prefix}-${i}`))
+  for (let i = 0; i < n; i++) log = appendToTelegramLog(log, entry(origin, `${prefix}-${i}`), NOW)
   return log
 }
 
@@ -36,8 +40,8 @@ describe('appendToTelegramLog', () => {
 
   // 正: その経路が上限を超えたら、同じ経路の古い行から捨てる
   it('上限を超えたら、その経路の古い行から捨てる', () => {
-    const log = fill('test', TELEGRAM_LOG_LIMITS.test + 5)
-    expect(log).toHaveLength(TELEGRAM_LOG_LIMITS.test)
+    const log = fill('test', TELEGRAM_LOG_COUNT_LIMITS.test + 5)
+    expect(log).toHaveLength(TELEGRAM_LOG_COUNT_LIMITS.test)
     // 最初に積んだ 5 件が落ちている
     expect(log.some(e => e.id === 'test-0')).toBe(false)
     expect(log.some(e => e.id === 'test-4')).toBe(false)
@@ -46,20 +50,20 @@ describe('appendToTelegramLog', () => {
 
   // 対照: 上限の手前では 1 件も落ちない
   it('上限に達していなければ落とさない', () => {
-    const log = fill('test', TELEGRAM_LOG_LIMITS.test)
-    expect(log).toHaveLength(TELEGRAM_LOG_LIMITS.test)
+    const log = fill('test', TELEGRAM_LOG_COUNT_LIMITS.test)
+    expect(log).toHaveLength(TELEGRAM_LOG_COUNT_LIMITS.test)
     expect(log.some(e => e.id === 'test-0')).toBe(true)
   })
 
   // 安全弁: **これが落ちたら枠が 1 本に戻っている。**
   // テストの電文をいくら積んでも、ライブの行は 1 件も押し出されてはならない。
   it('テストの電文を上限いっぱい積んでも、ライブの行は 1 件も消えない', () => {
-    let log = fill('live', TELEGRAM_LOG_LIMITS.live)
-    for (let i = 0; i < TELEGRAM_LOG_LIMITS.test * 3; i++) {
-      log = appendToTelegramLog(log, entry('test', `test-${i}`))
+    let log = fill('live', 300)
+    for (let i = 0; i < TELEGRAM_LOG_COUNT_LIMITS.test * 3; i++) {
+      log = appendToTelegramLog(log, entry('test', `test-${i}`), NOW)
     }
     const live = log.filter(e => e.origin === 'live')
-    expect(live).toHaveLength(TELEGRAM_LOG_LIMITS.live)
+    expect(live).toHaveLength(300)
     // いちばん古いライブの行も残っている
     expect(live.some(e => e.id === 'live-0')).toBe(true)
   })
@@ -67,12 +71,51 @@ describe('appendToTelegramLog', () => {
   // 安全弁: 再生も同じ（こちらの枠だけで収まる）
   it('再生の電文を積んでも、ライブとテストの行は消えない', () => {
     let log = [...fill('test', 3), ...fill('live', 3)]
-    for (let i = 0; i < TELEGRAM_LOG_LIMITS.replay + 10; i++) {
-      log = appendToTelegramLog(log, entry('replay', `replay-${i}`))
+    for (let i = 0; i < TELEGRAM_LOG_COUNT_LIMITS.replay + 10; i++) {
+      log = appendToTelegramLog(log, entry('replay', `replay-${i}`), NOW)
     }
     expect(log.filter(e => e.origin === 'live')).toHaveLength(3)
     expect(log.filter(e => e.origin === 'test')).toHaveLength(3)
-    expect(log.filter(e => e.origin === 'replay')).toHaveLength(TELEGRAM_LOG_LIMITS.replay)
+    expect(log.filter(e => e.origin === 'replay')).toHaveLength(TELEGRAM_LOG_COUNT_LIMITS.replay)
+  })
+})
+
+// ライブは件数ではなく 24 時間で持つ（2026-10-23 ユーザー選択「直近 24 時間ぶんを持つ (Recommended)」）
+describe('ライブの行の 24 時間', () => {
+  // 正: 24 時間より古いライブの行は、次の 1 行を積んだときに捨てる
+  it('24 時間より古いライブの行を捨てる', () => {
+    const old = entry('live', 'old', NOW - TELEGRAM_LOG_LIVE_WINDOW_MS - 1)
+    const log = appendToTelegramLog([old], entry('live', 'new'), NOW)
+    expect(log.map(e => e.id)).toEqual(['new'])
+  })
+
+  // 対照: ちょうど 24 時間の行は残す。件数が 200 を超えても残す（以前の上限で切らない）
+  it('24 時間以内なら件数によらず残す', () => {
+    const edge = entry('live', 'edge', NOW - TELEGRAM_LOG_LIVE_WINDOW_MS)
+    let log: TelegramLogEntry[] = [edge]
+    for (let i = 0; i < 500; i++) log = appendToTelegramLog(log, entry('live', `l-${i}`), NOW)
+    expect(log).toHaveLength(501)
+    expect(log.some(e => e.id === 'edge')).toBe(true)
+  })
+
+  // 安全弁: **再生中は時計が再生時刻を名乗る。** そのとき、再生前に受けたライブの行（「未来」の時刻）を消さない
+  it('時計が過去（再生時刻）を指していても、ライブの行は消えない', () => {
+    const live = entry('live', 'live-now', NOW)
+    const replayNow = NOW - 30 * 24 * 60 * 60 * 1000
+    const log = appendToTelegramLog([live], entry('replay', 'r', replayNow), replayNow)
+    expect(log.map(e => e.id)).toEqual(['r', 'live-now'])
+  })
+
+  // 安全弁: 24 時間はライブだけ。テストと再生の行は古くても件数の枠で持つ（2026-10-25 ユーザー選択「ライブだけ24時間 (Recommended)」）
+  it('テストと再生の行は 24 時間より古くても捨てない', () => {
+    const old = NOW - 2 * TELEGRAM_LOG_LIVE_WINDOW_MS
+    const log = pruneTelegramLog([entry('test', 't', old), entry('replay', 'r', old)], NOW)
+    expect(log).toHaveLength(2)
+  })
+
+  it('捨てるものが無ければ同じ配列を返す（定期の見回りで描き直させない）', () => {
+    const log = [entry('live', 'a')]
+    expect(pruneTelegramLog(log, NOW)).toBe(log)
   })
 })
 

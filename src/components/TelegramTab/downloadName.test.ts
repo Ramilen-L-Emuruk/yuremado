@@ -76,7 +76,7 @@ describe('電文ログのダウンロード名', () => {
     withTz('Asia/Tokyo', () => {
       const cap = captureDownloads()
       try {
-        const { container } = render(h(TelegramTab, { telegramLog: [entry(RECEIVED())], onClear: () => {} }))
+        const { container } = render(h(TelegramTab, { telegramLog: [entry(RECEIVED())], onClear: () => {}, active: true }))
         expandRow(container, 'VXSE53')
         click(container, 'ダウンロード')
         expect(cap.names).toEqual(['20260823_150405+0900_DMDSS_VXSE53.json'])
@@ -91,7 +91,7 @@ describe('電文ログのダウンロード名', () => {
       vi.spyOn(Date, 'now').mockReturnValue(NOW())
       const cap = captureDownloads()
       try {
-        const { container } = render(h(TelegramTab, { telegramLog: [entry(RECEIVED())], onClear: () => {} }))
+        const { container } = render(h(TelegramTab, { telegramLog: [entry(RECEIVED())], onClear: () => {}, active: true }))
         const box = container.querySelector('input[type=checkbox]')
         if (!box) throw new Error('選択のチェックボックスが無い')
         fireEvent.click(box)
@@ -111,7 +111,7 @@ describe('電文ログのダウンロード名', () => {
       // 期待値もこの中で作る。`RECEIVED()` は壁時計から Date を組むので、外で呼ぶと実行環境の
       // 時間帯で解釈される。UTC で走る CI では中身（JST 解釈）と 9 時間ずれて落ちる
       const expectedIso = withTz('Asia/Tokyo', () => {
-        const { container } = render(h(TelegramTab, { telegramLog: [entry(RECEIVED())], onClear: () => {} }))
+        const { container } = render(h(TelegramTab, { telegramLog: [entry(RECEIVED())], onClear: () => {}, active: true }))
         const box = container.querySelector('input[type=checkbox]')
         if (!box) throw new Error('選択のチェックボックスが無い')
         fireEvent.click(box)
@@ -138,7 +138,7 @@ describe('電文ログのダウンロード名', () => {
       withTz('Asia/Tokyo', () => {
         vi.spyOn(Date, 'now').mockReturnValue(NOW())
         const broken = { ...entry(RECEIVED(), 'VXSE51'), id: 'broken', receivedAt: new Date('壊れた値') }
-        const { container } = render(h(TelegramTab, { telegramLog: [broken, entry(RECEIVED())], onClear: () => {} }))
+        const { container } = render(h(TelegramTab, { telegramLog: [broken, entry(RECEIVED())], onClear: () => {}, active: true }))
         const box = container.querySelector('input[type=checkbox]')
         if (!box) throw new Error('選択のチェックボックスが無い')
         fireEvent.click(box)
@@ -161,7 +161,7 @@ describe('電文ログのダウンロード名', () => {
     try {
       withTz('Asia/Tokyo', () => {
         vi.spyOn(Date, 'now').mockReturnValue(NOW())
-        const { container } = render(h(TelegramTab, { telegramLog: [entry(RECEIVED())], onClear: () => {} }))
+        const { container } = render(h(TelegramTab, { telegramLog: [entry(RECEIVED())], onClear: () => {}, active: true }))
         const box = container.querySelector('input[type=checkbox]')
         if (!box) throw new Error('選択のチェックボックスが無い')
         fireEvent.click(box)

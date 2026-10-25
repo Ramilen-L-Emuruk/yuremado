@@ -4,7 +4,7 @@ import type { TelegramLogEntry } from '../../types/earthquake'
 import { isDmdss } from '../../utils/env'
 import { formatFileStamp, readDateTime } from '../../utils/formatters'
 import {
-  KIND_LABEL, KIND_OPTIONS, ORIGIN_OPTIONS, headTypeLabel, matchesTelegramFilter, originBadgeOf,
+  KIND_LABEL, KIND_OPTIONS, ORIGIN_OPTIONS, headTypeLabel, matchesTelegramFilter, operationBadgeOf, originBadgeOf,
   readKindFilter, readOriginFilter, telegramLogKindOf,
   type KindFilter, type OriginFilter, type SourceFilter,
 } from './labels'
@@ -84,6 +84,20 @@ function triggerDownload(text: string, filename: string) {
 interface Props {
   telegramLog: TelegramLogEntry[]
   onClear: () => void
+  /** このタブを開いているか。開いていない間は、電文が届いても描き直さない（{@link skipWhileHidden}）。 */
+  active: boolean
+}
+
+/**
+ * 開いていない間は描き直さない（`React.memo` の比較）。
+ *
+ * 電文ログは直近 24 時間ぶん（最大 2,022 行）を持つ。タブは隠しても DOM ごと残るので、memo だけでは
+ * 電文が届くたびに全行を描き直す（2026-10-25 ユーザー選択「開いていない間は描かない (Recommended)」）。
+ * 開いた時点で、そのときの全行を一度だけ描く。絞り込み・選択の状態は部品の中に残る。
+ */
+function skipWhileHidden(prev: Props, next: Props): boolean {
+  if (!prev.active && !next.active) return true
+  return prev.telegramLog === next.telegramLog && prev.onClear === next.onClear && prev.active === next.active
 }
 
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
@@ -300,6 +314,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                 const kindLabel = kind ? KIND_LABEL[kind] : null
                 const sourceLabel = entry.source === 'dmdss' ? 'DM' : 'P2'
                 const originBadge = originBadgeOf(entry.origin)
+                const operationBadge = operationBadgeOf(entry)
 
                 return (
                   <li key={entry.id} className={`border-b border-border last:border-b-0 ${isSelected ? 'bg-white/5' : ''}`}>
@@ -332,8 +347,13 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                               <span className="text-xs font-mono bg-amber-400/20 text-amber-200 rounded-sm px-1 shrink-0">{originBadge}</span>
                             )}
                             <span className="text-xs font-mono text-white shrink-0">{entry.headType}</span>
+                            {/* 訓練・試験の印。種別名は消さずに後ろへ並べる（何の訓練かが分からなくなるため）。
+                                経路の印とは別の軸なので、色も分ける。 */}
+                            {operationBadge && (
+                              <span className={`text-xs rounded-sm px-1 shrink-0 ${operationBadge.className}`}>{operationBadge.label}</span>
+                            )}
                             <span className="text-xs text-secondary truncate">
-                              {entry.isTest ? '訓練' : (kindLabel ? `${kindLabel} · ` : '') + typeLabel}
+                              {(kindLabel ? `${kindLabel} · ` : '') + typeLabel}
                             </span>
                           </div>
                           {entry.errorMessage && (
@@ -373,4 +393,4 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
       </div>
     </div>
   )
-})
+}, skipWhileHidden)

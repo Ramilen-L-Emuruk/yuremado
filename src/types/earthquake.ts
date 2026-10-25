@@ -2242,6 +2242,11 @@ export interface TelegramLogEntry {
   origin: TelegramOrigin
   headType: string
   isTest: boolean
+  /**
+   * 訓練か試験か（電文の `Control/Status`）。`isTest` が真でも、二進電文と本文を読めなかった電文は
+   * 空のまま —— そのときは電文ログが「訓練・試験」と出す（→ `utils/telegramOperationStatus.ts`）。
+   */
+  operationStatus?: TelegramOperationStatus
   status: 'parsed' | 'filtered' | 'error'
   kind?: TelegramLogKind
   rawHead?: unknown

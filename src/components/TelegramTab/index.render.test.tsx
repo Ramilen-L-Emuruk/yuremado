@@ -33,7 +33,7 @@ const rowTexts = () => screen.getAllByRole('listitem').map(li => li.textContent 
 
 describe('TelegramTab', () => {
   it('いままで種別名の出なかった電文も、短い名前と種別名を並べて出す', () => {
-    render(<TelegramTab telegramLog={log} onClear={() => {}} />)
+    render(<TelegramTab telegramLog={log} onClear={() => {}} active />)
     const rows = rowTexts()
     expect(rows[0]).toContain('南海トラフ解説情報 · 南海トラフ地震関連解説情報（臨時解説）')
     expect(rows[1]).toContain('推計震度分布図 · 推計震度分布図作図用データ')
@@ -45,7 +45,7 @@ describe('TelegramTab', () => {
   })
 
   it('いままで絞れなかった種別で絞れる', () => {
-    render(<TelegramTab telegramLog={log} onClear={() => {}} />)
+    render(<TelegramTab telegramLog={log} onClear={() => {}} active />)
     const select = screen.getAllByRole('combobox').find(s =>
       within(s).queryByRole('option', { name: 'エラー' }) !== null) as HTMLSelectElement
     fireEvent.change(select, { target: { value: 'estimatedIntensity' } })
@@ -53,5 +53,29 @@ describe('TelegramTab', () => {
     const rows = rowTexts()
     expect(rows).toHaveLength(2)
     expect(rows.every(row => row.includes('IXAC41'))).toBe(true)
+  })
+
+  // 電文ログは最大 2,022 行を持つ。隠したタブは DOM ごと残るので、届くたびに描き直さない
+  describe('開いていない間', () => {
+    // 正: 閉じている間に届いた行は出ない（描き直していない）
+    it('閉じている間に届いた行は描かない', () => {
+      const { rerender } = render(<TelegramTab telegramLog={log.slice(0, 1)} onClear={() => {}} active={false} />)
+      rerender(<TelegramTab telegramLog={log} onClear={() => {}} active={false} />)
+      expect(rowTexts()).toHaveLength(1)
+    })
+
+    // 対照: 開いた時点で全行を描く
+    it('開いたら、その時点の全行を描く', () => {
+      const { rerender } = render(<TelegramTab telegramLog={log.slice(0, 1)} onClear={() => {}} active={false} />)
+      rerender(<TelegramTab telegramLog={log} onClear={() => {}} active />)
+      expect(rowTexts()).toHaveLength(log.length)
+    })
+
+    // 安全弁: 開いている間は届くたびに描き直す
+    it('開いている間は届いた行を描く', () => {
+      const { rerender } = render(<TelegramTab telegramLog={log.slice(0, 1)} onClear={() => {}} active />)
+      rerender(<TelegramTab telegramLog={log} onClear={() => {}} active />)
+      expect(rowTexts()).toHaveLength(log.length)
+    })
   })
 })

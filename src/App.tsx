@@ -2970,7 +2970,7 @@ export function App() {
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'telegrams' ? ' invisible pointer-events-none' : ''}`}>
             <ErrorBoundary variant="region" label={TAB_LABELS.telegrams}>
-              <TelegramTab telegramLog={telegramLog} onClear={clearTelegramLog} />
+              <TelegramTab telegramLog={telegramLog} onClear={clearTelegramLog} active={activeTab === 'telegrams'} />
             </ErrorBoundary>
           </div>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'settings' ? ' invisible pointer-events-none' : ''}`}>

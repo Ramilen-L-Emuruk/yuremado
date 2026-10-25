@@ -186,3 +186,31 @@ describe('ライブ受信の振り分け', () => {
     expect(logs).toEqual([])
   })
 })
+
+// 試験報を受け付けない設定のとき、試験報は通知せず電文ログへだけ積む。訓練と試験の印は本文の
+// `Control/Status` から読む（配信元の `head.test` はどちらも同じ真）。
+describe('受け付けない試験報の電文ログ', () => {
+  const withStatus = (status: string) =>
+    `<Report><Control><Title>x</Title><Status>${status}</Status></Control><Head><Title>x</Title></Head></Report>`
+
+  // 正: 本文を復号して訓練・試験を読み分ける
+  it('本文の名乗りで訓練と試験を分けて積む', async () => {
+    const { events, logs, send } = setup(false)
+    await send('VXSE53', withStatus('試験'), true)
+    await send('VXSE53', withStatus('訓練'), true)
+    expect(events).toEqual([])
+    expect(logs.map(l => [l.status, l.isTest, l.operationStatus])).toEqual([
+      ['filtered', true, '試験'],
+      ['filtered', true, '訓練'],
+    ])
+    expect(vi.mocked(buildXmlPayload)).not.toHaveBeenCalled()
+  })
+
+  // 対照: 本文を使わない種別は、通常の経路と同じく復号せずに積む（名乗りは読めない）
+  it('本文を使わない種別は復号せず、印は付けない', async () => {
+    const { logs, send } = setup(false)
+    // 実配信の本文は base64 ＋ gzip。復号しないので、届いたままの文字列が行に残る
+    await send('XXXX99', 'H4sIAAAAAAAA', true)
+    expect(logs.map(l => [l.status, l.isTest, l.operationStatus, l.rawBody])).toEqual([['filtered', true, undefined, 'H4sIAAAAAAAA']])
+  })
+})
