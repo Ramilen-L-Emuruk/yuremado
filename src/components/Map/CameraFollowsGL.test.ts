@@ -8,9 +8,9 @@ import { FitToCandidateGL, FitToDetectionGL, FitToEEWGL, TsunamiFitGL, FocusObsG
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import type { LatLng } from '../../utils/stationCoords'
 import type { EEWAlert } from '../../types/earthquake'
-import type { ShakeFocus } from './mapTypes'
+import type { MapFocusTarget, ShakeFocus } from './mapTypes'
 import type { PsWaveCircle } from '../../services/kyoshin'
-import { openPopupAt, closeMapPopup } from './gl/popupRegistry'
+import { openPopupAt, openPopupHtmlAt, closeMapPopup } from './gl/popupRegistry'
 import { openTsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 import { distributionMaxZoom, fitMaxZoom, focusMaxZoom } from './gl/camera'
 
@@ -61,7 +61,7 @@ vi.mock('maplibre-gl', () => {
 
 // 吹き出しの調停役は本物の Popup（DOM）を作るため、呼ばれたことだけを見る。
 // ここで確かめたいのは「いつ・どこで開くよう頼んだか」であって、吹き出しの中身ではない。
-vi.mock('./gl/popupRegistry', () => ({ openPopupAt: vi.fn(), closeMapPopup: vi.fn() }))
+vi.mock('./gl/popupRegistry', () => ({ openPopupAt: vi.fn(), openPopupHtmlAt: vi.fn(), closeMapPopup: vi.fn() }))
 vi.mock('./gl/tsunamiMarkerPopup', () => ({ openTsunamiMarkerPopup: vi.fn(() => true), closeTsunamiMarkerPopups: vi.fn() }))
 
 // fitJapan は padding 20、点群へのフィット（fitToPositions / flyToBoundsSnapped）は padding 60 で
@@ -1249,7 +1249,7 @@ interface TsunamiProps {
   arrivals?: typeof ARRIVALS
   missing?: typeof ARRIVALS
   focus?: { name: string; ts: number } | null
-  focusTarget?: { positions: LatLng[]; ts: number } | null
+  focusTarget?: { positions: LatLng[]; stationName: string | null; ts: number } | null
 }
 
 function tsunamiHarness(map: maplibregl.Map, props: TsunamiProps = {}) {
@@ -1697,7 +1697,7 @@ describe('津波モードの帰還（観測点 → 俯瞰）', () => {
     act(() => { vi.advanceTimersByTime(20_000) })
     view.rerender(tsunamiHarness(map, {
       arrivals: ARRIVALS,
-      focusTarget: { positions: [[38.0, 141.0], [39.0, 142.0]], ts: 1 },
+      focusTarget: { positions: [[38.0, 141.0], [39.0, 142.0]], stationName: null, ts: 1 },
     }))
     act(() => { vi.advanceTimersByTime(20_000) })
 
@@ -1708,7 +1708,7 @@ describe('津波モードの帰還（観測点 → 俯瞰）', () => {
   // 消費を記録しないと猶予が延び続けて俯瞰へ二度と帰らなくなる。
   it('同じ寄せ要求で再レンダーされても猶予は延びない', () => {
     const map = createFakeMap()
-    const target = { positions: [[38.0, 141.0], [39.0, 142.0]] as LatLng[], ts: 1 }
+    const target = { positions: [[38.0, 141.0], [39.0, 142.0]] as LatLng[], stationName: null, ts: 1 }
     const view = renderWithObsUpdate(map, { arrivals: ARRIVALS, focusTarget: target })
     const before = fitTargets(map).length
 
@@ -2424,6 +2424,122 @@ describe('揺れフォーカス（EEW 発報中）', () => {
   })
 })
 
+// ── EEW の件数が減ったときの寄せ直し（見送った分を持ち越す） ──────────────────────────
+// 抑制中・操作中に件数が減った回を見送ったまま失うと、取り消された速報の場所を含んだ画が残る。
+// 見送った分を覚え、抑制が明けたら残っている速報へ寄せ直す（2026-10-22 ユーザー選択「抑制が明けたら寄せ直す
+// (Recommended)」）。
+describe('EEW の件数が減ったときの寄せ直し', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const eewAt = (eventId: string, lat: number, lng: number) => ({
+    id: `${eventId}-report-1`,
+    issue: { eventId },
+    earthquake: {
+      originTime: '2026-08-24T05:00:00+09:00',
+      hypocenter: { latitude: lat, longitude: lng, depth: 10 },
+    },
+  } as unknown as EEWAlert)
+  const NOTO = eewAt('ev-noto', 37.5, 137.2)
+  const HYUGA = eewAt('ev-hyuga', 31.8, 131.8)
+  const FAR = { lat: 33.6, lng: 130.4 }
+
+  function frame(
+    map: maplibregl.Map,
+    eews: EEWAlert[],
+    refs: {
+      focusTickRef: { current: number }
+      firstSeenAtRef: { current: Map<string, number> }
+      focusedEewIdRef: { current: string | null }
+    },
+    shakeFocus: ShakeFocus | null = null,
+  ) {
+    return h(
+      MapGLContext.Provider,
+      { value: map },
+      h(FitToEEWGL, {
+        eews,
+        psWave: [],
+        detectedPoints: [],
+        hasDetection: false,
+        candidatePoints: [],
+        forecastAreaPositions: [],
+        firstSeenAtRef: refs.firstSeenAtRef,
+        focusedEewIdRef: refs.focusedEewIdRef,
+        shakeFocus,
+        lastConsumedFocusTickRef: refs.focusTickRef,
+      }),
+    )
+  }
+
+  /** 2 つの EEW が発報中のところへ入室し、入室フィットの飛行を終えた状態。 */
+  function settledWithTwo() {
+    const map = createFakeMap({ fitZoom: 7 })
+    const refs = {
+      focusTickRef: { current: 0 },
+      firstSeenAtRef: { current: new Map([['ev-noto', Date.now() - 60_000], ['ev-hyuga', Date.now() - 60_000]]) },
+      focusedEewIdRef: { current: null as string | null },
+    }
+    const view = render(frame(map, [NOTO, HYUGA], refs))
+    expect(moveCount(map)).toBe(1)
+    act(() => {
+      vi.advanceTimersByTime(4000)
+    })
+    return { map, view, refs }
+  }
+
+  it('[対照] 抑制が無ければ、減った時点で残りへ寄せ直す', () => {
+    const { map, view, refs } = settledWithTwo()
+
+    view.rerender(frame(map, [NOTO], refs))
+
+    expect(moveCount(map)).toBe(2)
+  })
+
+  it('[正] 抑制中に減った回は見送り、抑制が明けたら残りへ寄せ直す', () => {
+    const { map, view, refs } = settledWithTwo()
+    // 揺れフォーカスで寄せて 3 秒の抑制を張る。
+    const focus: ShakeFocus = { ...FAR, tick: 1, atMs: Date.now() }
+    view.rerender(frame(map, [NOTO, HYUGA], refs, focus))
+    expect(moveCount(map)).toBe(2)
+
+    // 抑制の内側で 1 件が消える。
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    view.rerender(frame(map, [NOTO], refs, focus))
+    expect(moveCount(map)).toBe(2)
+
+    // 抑制が明けると、依存配列の値が変わらなくても寄せ直す。
+    act(() => {
+      vi.advanceTimersByTime(2500)
+    })
+    expect(moveCount(map)).toBe(3)
+  })
+
+  it('[安全弁] 寄せ直しは 1 回だけ（明けた後に同じ減少で何度も寄らない）', () => {
+    const { map, view, refs } = settledWithTwo()
+    const focus: ShakeFocus = { ...FAR, tick: 1, atMs: Date.now() }
+    view.rerender(frame(map, [NOTO, HYUGA], refs, focus))
+    view.rerender(frame(map, [NOTO], refs, focus))
+    act(() => {
+      vi.advanceTimersByTime(3500)
+    })
+    expect(moveCount(map)).toBe(3)
+
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
+    view.rerender(frame(map, [NOTO], refs, focus))
+    expect(moveCount(map)).toBe(3)
+  })
+})
+
 
 // ── 揺れフォーカスの担当の受け渡し（両方をマウントした結合） ──────────────────────────
 // 「EEW が出ていなければ検知追従・出ていれば EEW 追従が寄せる」という排他は、両者が同じ `eews` から
@@ -2575,17 +2691,36 @@ describe('揺れフォーカスの担当の受け渡し', () => {
 // 地震カードの観測点の行から座標で渡される経路。津波（FocusObsGL）との違いは、寄り先を
 // 名前ではなく座標で受け取ること。**鍵は座標ではなく `ts`** で、同じ行を続けて押しても効く。
 
-function pointFocusHarness(map: maplibregl.Map, focus: { positions: LatLng[]; ts: number } | null) {
+function pointFocusHarness(
+  map: maplibregl.Map,
+  focus: { positions: LatLng[]; ts: number; stationName?: string | null } | null,
+  hiddenPointPopupHtml: (position: LatLng, stationName: string | null) => string | null = () => null,
+) {
   return h(
     MapGLContext.Provider,
     { value: map },
-    h(FocusTargetGL, { focusTarget: focus }),
+    h(FocusTargetGL, { focusTarget: withStationName(focus), hiddenPointPopupHtml }),
   )
+}
+
+/**
+ * 観測点名を省いた要求に `null` を補う。**同じ要求には同じオブジェクトを返す** ——
+ * 寄せの effect は要求の参照で張り直すので、描き直しのたびに作り直すと着地を待つ購読が外れる。
+ */
+const focusWithName = new WeakMap<object, MapFocusTarget>()
+function withStationName(focus: { positions: LatLng[]; ts: number; stationName?: string | null } | null): MapFocusTarget | null {
+  if (!focus) return null
+  const cached = focusWithName.get(focus)
+  if (cached) return cached
+  const target: MapFocusTarget = { positions: focus.positions, ts: focus.ts, stationName: focus.stationName ?? null }
+  focusWithName.set(focus, target)
+  return target
 }
 
 describe('一覧の行クリックによる地点フォーカス', () => {
   beforeEach(() => {
     vi.mocked(openPopupAt).mockClear()
+    vi.mocked(openPopupHtmlAt).mockClear()
     vi.mocked(closeMapPopup).mockClear()
   })
 
@@ -2697,6 +2832,59 @@ describe('一覧の行クリックによる地点フォーカス', () => {
     // 新しい飛行が着地して初めて開く。
     act(() => { map.fire('moveend') })
     expect(openPopupAt).toHaveBeenCalledWith(map, [131.0, 34.0])
+  })
+
+  // 震度分布モードのあいだは観測点ドットを描かないので、地図の当たり判定では開けない。
+  // 押した行の吹き出しだけは、渡された中身で開く（2026-10-22 ユーザー選択「押した行の吹き出しだけ出す (Recommended)」）。
+  it('[正] 寄り先の点が描かれていなければ、渡された中身で吹き出しを開く', () => {
+    const map = createFakeMap()
+    render(pointFocusHarness(map, { positions: [[34.0, 131.0]], ts: 1 }, () => '<div>観測点</div>'))
+
+    act(() => { map.fire('moveend') })
+
+    expect(openPopupHtmlAt).toHaveBeenCalledWith(map, [131.0, 34.0], '<div>観測点</div>')
+    expect(openPopupAt).not.toHaveBeenCalled()
+  })
+
+  // 座標が同じ観測点が別にあるとき、押した行の観測点名で選べるよう、名前を中身の判定まで渡す
+  // （2026-10-25 ユーザー選択「名前で引く (Recommended)」）。範囲の行は名前を持たない（`null`）。
+  it('[正] 押した行の観測点名を、吹き出しの中身を決める判定へ渡す', () => {
+    const map = createFakeMap()
+    const seen: (string | null)[] = []
+    render(pointFocusHarness(map, { positions: [[34.0, 131.0]], stationName: '甲', ts: 1 }, (_p, name) => {
+      seen.push(name)
+      return `<div>${name}</div>`
+    }))
+
+    act(() => { map.fire('moveend') })
+
+    expect(seen).toEqual(['甲'])
+    expect(openPopupHtmlAt).toHaveBeenCalledWith(map, [131.0, 34.0], '<div>甲</div>')
+  })
+
+  it('[対照] 寄り先の点が描かれていれば、地図の当たり判定で開く', () => {
+    const map = createFakeMap()
+    render(pointFocusHarness(map, { positions: [[34.0, 131.0]], ts: 1 }, () => null))
+
+    act(() => { map.fire('moveend') })
+
+    expect(openPopupAt).toHaveBeenCalledWith(map, [131.0, 34.0])
+    expect(openPopupHtmlAt).not.toHaveBeenCalled()
+  })
+
+  // 安全弁: 描かれているかは着地した時点で決める。飛んでいる間に分布モードを閉じた（または開いた）
+  // ときに、押した瞬間の表示で決めると、描いている点に別の吹き出しを重ねるか、描いていない点で空振りする。
+  it('[安全弁] 描かれているかは押した時点ではなく着地した時点で決める', () => {
+    const map = createFakeMap()
+    // 地図の親は同じ寄せの要求（同じオブジェクト）を持ったまま、表示だけが変わって描き直される。
+    const focus = { positions: [[34.0, 131.0]] as LatLng[], ts: 1 }
+    const view = render(pointFocusHarness(map, focus, () => '<div>観測点</div>'))
+    view.rerender(pointFocusHarness(map, focus, () => null))
+
+    act(() => { map.fire('moveend') })
+
+    expect(openPopupAt).toHaveBeenCalledWith(map, [131.0, 34.0])
+    expect(openPopupHtmlAt).not.toHaveBeenCalled()
   })
 
   // 安全弁: 着地を待っている間に別の行が押されたら、前の予約は降ろす。

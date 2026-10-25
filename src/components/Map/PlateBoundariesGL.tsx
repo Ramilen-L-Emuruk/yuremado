@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
+import type { ExpressionSpecification } from 'maplibre-gl'
 import { useMapGL } from './mapGLContext'
-import type { PlateBoundarySegment } from '../../utils/plateBoundaries'
+import { PLATE_BOUNDARY_CLASSES, type PlateBoundaryClass, type PlateBoundarySegment } from '../../utils/plateBoundaries'
 import { segmentsToMultiLineFC } from './gl/geojson'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { twoLinePopupHtml } from './gl/popupHtml'
@@ -12,18 +13,38 @@ import {
   putOverlayLines,
   type OverlayLineProps,
 } from './gl/overlayLineSource'
-import { SUBDUCTION_COLOR, PLATE_OTHER_COLOR } from './gl/overlayLineStyle'
+import {
+  SUBDUCTION_COLOR,
+  PLATE_CONVERGENT_COLOR,
+  PLATE_DIVERGENT_COLOR,
+  PLATE_TRANSFORM_COLOR,
+} from './gl/overlayLineStyle'
 
 // 全球のプレート境界線（PB2002モデル）を描画する MapLibre 版（Leaflet の PlateBoundariesLayer 相当）。
-// セグメント1件=MultiLineString feature 1件にまとめ、1枚の line レイヤーで描く。沈み込み境界と
-// その他で色を変えるため type を feature プロパティに持たせ、line-color を match 式で分岐する。
+// セグメント1件=MultiLineString feature 1件にまとめ、1枚の line レイヤーで描く。原典の 7 分類を
+// 4 系統の色に分けるため type を feature プロパティに持たせ、line-color を match 式で分岐する。
 // 破線は Leaflet の dashArray '6 4'（px）相当を、MapLibre の線幅単位 dasharray で weight2 に合わせ [3,2]。
 //
 // geojson ソースは活断層線と共有する（gl/overlayLineSource.ts）。自分の分は `kind: 'plate'` で
 // 区別し、レイヤー側は filter で拾う。
 
 // 色は gl/overlayLineStyle.ts が単一情報源（凡例と共有する）。
-const OTHER_COLOR = PLATE_OTHER_COLOR
+const GROUP_COLOR = {
+  subduction: SUBDUCTION_COLOR,
+  convergent: PLATE_CONVERGENT_COLOR,
+  divergent: PLATE_DIVERGENT_COLOR,
+  transform: PLATE_TRANSFORM_COLOR,
+} as const
+/** `type`（7 分類）→ 系統の色。表に無い値もトランスフォームの色で描く（線そのものは消さない）。 */
+const LINE_COLOR_EXPR = [
+  'match',
+  ['get', 'type'],
+  ...(Object.keys(PLATE_BOUNDARY_CLASSES) as PlateBoundaryClass[]).flatMap((c) => [
+    c,
+    GROUP_COLOR[PLATE_BOUNDARY_CLASSES[c].group],
+  ]),
+  PLATE_TRANSFORM_COLOR,
+] as unknown as ExpressionSpecification
 // 線クリックの当たり判定許容（px）。旧 Leaflet の Canvas ヒットレンダラー tolerance:8 に揃える。
 const HIT_TOL_PX = 8
 
@@ -63,7 +84,7 @@ export function PlateBoundariesGL({ plateBoundaries, visible }: Props) {
         visibility: visible ? 'visible' : 'none',
       },
       paint: {
-        'line-color': ['match', ['get', 'type'], 'subduction', SUBDUCTION_COLOR, OTHER_COLOR],
+        'line-color': LINE_COLOR_EXPR,
         'line-width': 2,
         'line-opacity': 0.55,
         'line-dasharray': [3, 2],
@@ -75,10 +96,10 @@ export function PlateBoundariesGL({ plateBoundaries, visible }: Props) {
       tolPx: HIT_TOL_PX,
       buildClickHtml: (f) => {
         const p = f.properties ?? {}
-        const type = p.type === 'subduction' ? '沈み込み境界' : '境界種別不明'
+        const cls = PLATE_BOUNDARY_CLASSES[p.type as PlateBoundaryClass]
         return twoLinePopupHtml(
           `${p.plateA ?? ''} – ${p.plateB ?? ''}`,
-          `プレート境界（${type}・PB2002モデル）`,
+          cls ? `プレート境界（${cls.label}・PB2002モデル）` : 'プレート境界（PB2002モデル）',
         )
       },
     })

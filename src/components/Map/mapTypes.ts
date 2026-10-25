@@ -47,6 +47,11 @@ export interface ShakeFocus {
 export interface MapFocusTarget {
   /** 寄り先。1 点ならその点へ、複数点ならそれらの外接矩形へ寄る。 */
   positions: LatLng[]
+  /**
+   * 押した行が観測点 1 つを指すときの観測点名（範囲の行・観測点でない行は `null`）。
+   * 座標が同じ観測点が別にあるとき（全国で 56 組）、吹き出しをどちらで開くかを名前で決める。
+   */
+  stationName: string | null
   ts: number
 }
 
@@ -129,6 +134,8 @@ export interface JapanMapProps {
   showActiveFaults?: boolean
   activeFaultOpacity?: number
   heatPoints?: HeatPoint[] | null
+  /** ヒートマップの濃さの係数（期間の長さに合わせて下げる。`utils/quakeHeatmap.ts` の `heatIntensityScale`）。 */
+  heatIntensityScale: number
   showPlateBoundaries?: boolean
   /** 夜の側を重ねて描くか（DayNightGL）。 */
   showDayNight?: boolean

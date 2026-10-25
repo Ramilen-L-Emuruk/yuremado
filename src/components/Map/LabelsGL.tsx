@@ -15,6 +15,7 @@ import {
   isUsableRoom,
   labelTextOffsetExpr,
   prepareOverlapContext,
+  regionAnchorOffsetExpr,
   type LabelOverlapTarget,
   type LabelPlacement,
 } from './gl/labelOverlap'
@@ -88,16 +89,17 @@ const PREF_TEXT_SIZE = 14
 const SUB_TEXT_SIZE = 13
 
 /**
- * 地方ラベルが重なったときに MapLibre が試す位置。**上下だけ**にしてある
- * （左右を含めない理由はレイヤーを作る箇所のコメント）。`center` を先頭に置くことで、
- * 重なっていない平常時は代表点の真上に出る。
- */
-const REGION_VARIABLE_ANCHOR: ('center' | 'top' | 'bottom')[] = ['center', 'top', 'bottom']
-/**
- * 上下へ逃がす量（em＝text-size に対する比）。地図アイコン倍率が既定（100%）なら 17px。
- * 倍率を変えても文字サイズと同じ比で動くので、見た目の関係は崩れない。
+ * 地方ラベルどうしが重なったときに MapLibre が上下へ逃がす量（em＝text-size に対する比）。
+ * 地図アイコン倍率が既定（100%）なら 17px。倍率を変えても文字サイズと同じ比で動くので、
+ * 見た目の関係は崩れない。試す位置は `center`・`top`・`bottom` の順（左右を含めない理由は
+ * レイヤーを作る箇所のコメント。式は `gl/labelOverlap.ts` の `regionAnchorOffsetExpr`）。
  */
 const REGION_RADIAL_OFFSET_EM = 1.0
+/**
+ * 震度バッジ等と重なったときに地方名を退避させる量（em）。県名と同じ 1.5em。
+ * 地方名も県名・区域名と同じく退避させる（2026-10-22 ユーザー選択「地方名も退避させる」）。
+ */
+const REGION_SHIFT_EM = 1.5
 
 // 震度バッジ等と重なったときに退避する量（em＝text-size に対する比）。**平常時は退避しない**——
 // 重なりを検知したときだけ、この量だけ上下へ逃がす（gl/labelOverlap.ts の判定）。
@@ -243,15 +245,9 @@ interface Props {
   overlapSignature: string
   /** 地図アイコンの倍率（設定値）。震度バッジ等と揃えてラベルも拡縮する。 */
   iconScale: number
-  /**
-   * 録画モード（設定値）。**有効なあいだは `overlapSignature` の変化で再評価しない**——
-   * 判定はカメラが止まったときだけ走る。検知点が入れ替わってもラベルの退避が数秒遅れるだけで、
-   * 録画した映像には現れない。
-   */
-  recording?: boolean
 }
 
-export function LabelsGL({ overlapSignature, iconScale, recording = false }: Props) {
+export function LabelsGL({ overlapSignature, iconScale }: Props) {
   const map = useMapGL()
   // レイヤー構築は [map] 依存の useEffect 内で行い、県名・区域名は非同期ロード後に追加される。
   // その追加が倍率変更より後になることがあるため、構築時は ref 経由で最新の倍率を読む
@@ -272,16 +268,18 @@ export function LabelsGL({ overlapSignature, iconScale, recording = false }: Pro
 
     // 地方ラベルは定数（境界データ非依存）なので即座に用意する。
     //
-    // **ラベルどうしの重なりは MapLibre に上下だけで逃がさせる**（`text-variable-anchor`）。
-    // 下の「バッジとの重なり」（`gl/labelOverlap.ts` の自前判定）とは別の機構で、地方ラベルは
-    // そちらの退避の対象外。左右へ逃がさない理由と実測は map-rendering-spec.md §5
-    // 「地方名どうしの重なりは MapLibre に上下だけで逃がさせる」。
+    // **ラベルどうしの重なりは MapLibre に上下だけで逃がさせる**（`text-variable-anchor-offset`）。
+    // 左右へ逃がさない理由と実測は map-rendering-spec.md §5「地方名どうしの重なりは MapLibre に
+    // 上下だけで逃がさせる」。**バッジとの重なりは県名・区域名と同じ自前の判定で退避させる**
+    // （`gl/labelOverlap.ts`）。地方は境界データを持たないので、余地を見ずに上下へ逃がす（`unboundedShift`）。
     targetsRef.current = REGIONS.map((r, i) => ({
       source: REGION_SRC,
       id: i,
       lngLat: [r.lng, r.lat],
       text: r.name,
       textSize: REGION_TEXT_SIZE,
+      shiftEm: REGION_SHIFT_EM,
+      unboundedShift: true,
     }))
     map.addSource(REGION_SRC, { type: 'geojson', data: initialFeatureCollection(targetsRef.current) })
     addOrderedLayer(map, {
@@ -295,10 +293,10 @@ export function LabelsGL({ overlapSignature, iconScale, recording = false }: Pro
         'text-font': JP_TEXT_FONT,
         'text-size': REGION_TEXT_SIZE * iconScaleRef.current,
         'text-letter-spacing': 0.05,
-        // 重なったら上下へ逃がす（理由と、左右を含めない理由は上のコメント）。
-        'text-variable-anchor': REGION_VARIABLE_ANCHOR,
-        'text-radial-offset': REGION_RADIAL_OFFSET_EM,
-        // `text-variable-anchor` を使うときは 'auto' にする（anchor に合わせて揃え方が決まる）。
+        // 地方名どうしが重なったら上下へ逃がし、バッジと重なったら全体を上下へずらす
+        // （`regionAnchorOffsetExpr`。`text-offset` では `center` のずれが潰れるので使えない）。
+        'text-variable-anchor-offset': regionAnchorOffsetExpr(REGION_SHIFT_EM, REGION_RADIAL_OFFSET_EM),
+        // 可変アンカーを使うときは 'auto' にする（anchor に合わせて揃え方が決まる）。
         'text-justify': 'auto',
       },
       paint: {
@@ -550,13 +548,15 @@ export function LabelsGL({ overlapSignature, iconScale, recording = false }: Pro
     }
   }, [map])
 
-  // マーカー側の位置が変わったら再評価を要求する。**録画モードでは要求しない**（`recording`）——
-  // 判定は地図が止まったときだけ走ればよく、ラベルの退避が数秒遅れても録画した映像には現れない。
-  // `moveend` の購読は上の effect が持っているので、こちらを止めても地図の移動では走る。
+  // マーカー側の位置が変わったら再評価を要求する。**録画モードでも要求する**（2026-10-23 ユーザー
+  // 選択「承認どおり間隔を広げる形にする (Recommended)」、2026-10-25「測って問題なければ 1 秒
+  // (Recommended)」）。以前は録画中に止めていたため、検知点が入れ替わってもラベルが重なったまま
+  // 録画に残っていた。判定は 1 フレーム 5ms ずつに分けて進めるので（上の effect）、録画中も間隔は
+  // 録画していないときと同じ `OVERLAP_MIN_INTERVAL_MS`。
   useEffect(() => {
-    if (!map || recording) return
+    if (!map) return
     scheduleOverlapCheckRef.current()
-  }, [map, overlapSignature, recording])
+  }, [map, overlapSignature])
 
   return null
 }

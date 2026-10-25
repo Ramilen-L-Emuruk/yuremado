@@ -29,7 +29,9 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { unzipSync } from 'fflate'
-import { parseHypocenterRecord, parseMagnitudeField, parseTrailingBlankDecimal } from './hypocenterRecord'
+import { parseDepthField, parseHypocenterRecord, parseMagnitudeField } from './hypocenterRecord'
+import { SOURCE_REVISION as EPICENTER_REGION_REVISION, SOURCE_URL as EPICENTER_REGION_URL } from './build-epicenter-accents'
+import { buildEpicenterRegionIndex, type EpicenterRegionIndex } from './lib/epicenterRegion'
 import { isYearMagColumnValid, isZipCacheStale } from './hypocenterCacheRules'
 import { extractDailyHypocenterRows, parseDailyHypocenterLine } from './hypocenterDailyRecord'
 // 格納単位と「その単位で元データを表せるか」の検査はここが単一情報源。
@@ -71,35 +73,8 @@ const ZIP_FETCH_INTERVAL_MS = 1000
 /** 日別ページの取得を諦めるまでの試行回数。 */
 const DAILY_FETCH_ATTEMPTS = 3
 
-/**
- * 読めない行がこの割合を超えたら警告する。**分母は M で絞る前の J レコード全件。**
- *
- * 実測の最大は 2016 年の 18 件 / 313,356 件 ＝ 0.0057%（他の年は 0 件）。その約 3.5 倍を
- * 目安に置いた。上流の形式が変わったときに、件数の増加が埋もれずに目に入るようにするための線。
- *
- * **分母を「採用した件数」にしない。** 読めるかどうかは M を見る前に決まるので、絞った後の
- * 件数で割ると M の下限を変えただけで比率が動く。
- *
- * **年ごとではなく全期間で見る。** 古い年は J レコードが年 300 件しかなく（1951〜1960 年）、
- * 年単位の比率では 2 件の異常で 0.25% に跳ねる。実例: 1923 年に深さ欄が `"   0 "` と
- * 書かれた行が 2 件あり（0km を通常と違う詰め方で書いたもの・1919〜1950 年で 2 件だけ）、
- * 年で割ると警告するが 1919〜1950 年の全体では 0.007% でしかない。**形式が変わったかを
- * 知りたいのだから、見るべき分母は取得元の全体。**
- */
-const UNREADABLE_WARN_RATIO = 0.0002
-
-/**
- * 深さ欄の既知の変則で落ちる行の、1 年あたりの許容割合。**超えたら生成を失敗させる。**
- *
- * 実測の最大は **1967 年の 29/1666 件 ＝ 1.741%**（大半が松代群発地震）。次が 1961 年の 0.23%。
- * 3% は「観測された最大の 1.7 倍」で、桁がずれる形式変更（ほぼ全件が落ちる）とは大きく離れている。
- *
- * **理由で分けて数えるのが要点。** 以前は理由を問わず 1 つの比率で見ていたため、
- * 1923 年の 0.25%（同じ深さ欄の変則・2 件）を誤発火として抑えようと全期間の比率へ緩めた結果、
- * **1967 年の 1.741% という本物の信号まで黙らせていた**（全期間の分母 577 万件では 0.001%）。
- * 既知の理由には実測に見合った閾値を当て、それ以外は 1 件でも失敗させる。
- */
-const UNREADABLE_DEPTH_WARN_RATIO = 0.03
+// 深さ欄の書式の外の形は、既知の 3 通りを `parseDepthField` が 0 km か深さ不明へ振り分ける。
+// **それ以外の形は 1 件でも生成を失敗させる**（読めない行はすべて `unreadableOther` へ数える）。
 
 /**
  * まとめて 1 ファイルに入っている年代。気象庁の配布単位そのまま。
@@ -253,10 +228,23 @@ interface SourceRecord {
   timeMs: number
   lat: number
   lng: number
-  depth: number
+  /** 深さ (km)。`null` は深さ不明（`parseDepthField`）。日別経路は常に値を持つ。 */
+  depth: number | null
   magnitude: number | null
   /** 最大震度の生コード。日別経路には震度欄が無いので常に null。 */
   intensity: string | null
+  /**
+   * 気象庁以外の機関が決めた震源か（年 ZIP のレコード種別 `U`＝米国地質調査所・`I`＝その他の国際機関）。
+   * 既定の表示には出さず、カタログタブの切り替えで足す（2026-10-25 ユーザー選択「既定は J だけ・切り替えで足す (Recommended)」）。
+   */
+  external: boolean
+  /** 取得元が持つ震央地名。年 ZIP は英字、日別経路は日本語。 */
+  regionText: string
+  /**
+   * 日本語の名前を座標から引き直すか。年 ZIP は英字しか持たないので引き直し、
+   * 引けなければ英字のまま使う。日別経路は日本語の名前をそのまま使う。
+   */
+  regionFromCoords: boolean
 }
 
 interface Collected {
@@ -268,18 +256,17 @@ interface Collected {
   hasIntensity: boolean
   /** この年のデータが「いつまで」を覆っているか（UTC epoch ミリ秒）。 */
   coveredThroughMs: number
-  /** 読めた J レコード数（読めない行の割合の分母）。 */
+  /** 読めた J レコード数。 */
   kindJ: number
+  /** 気象庁以外の機関のレコード数（`U`・`I`）。 */
+  kindExternal: number
   /**
-   * 深さ欄の既知の変則で落ちた行。**理由を分けて数える** ——
-   * 実測に見合う閾値（`UNREADABLE_DEPTH_WARN_RATIO`）で監視する。
-   */
-  unreadableDepth: number
-  /**
-   * 深さ以外の理由で落ちた行。**1 件でも生成を失敗させる。**
-   * 現状の実測は 0 件なので、出たら上流の形式が変わったということ。
+   * 読めずに落ちた行。**1 件でも生成を失敗させる。**
+   * 深さ欄の既知の変則は `parseDepthField` が振り分けるので、現状の実測は 0 件。
+   * 出たら上流の形式が変わったということ。
    */
   unreadableOther: number
+  /** J・U・I のどれでもないレコード。想定 0 件（フォーマット仕様の種別はこの 3 つ）。 */
   skippedKind: number
   secondUnknown: number
   /**
@@ -323,8 +310,13 @@ interface YearCatalog {
   lat: number[]
   /** 経度 × coordScale。 */
   lng: number[]
-  /** 深さ (km) × depthScale。 */
-  dep: number[]
+  /**
+   * 深さ (km) × depthScale。**深さ不明は `null`**（深さ欄が 2 通りに取れる形。`parseDepthField`）。
+   * 落とすと、震源は決まっているのにカタログから消える。
+   */
+  dep: (number | null)[]
+  /** `dep` が `null` の件数。 */
+  unknownDepthCount: number
   /**
    * M × magScale。**M が決まっていない地震は `null`**（取得元の M 欄が空・`-`）。
    *
@@ -346,6 +338,23 @@ interface YearCatalog {
    * 欄が空でなければそのまま積むので、コード表の全種が現れうる（一覧は `hypocenterRecord.ts`）。
    */
   intCode: string[]
+  /**
+   * 震央地名の表。**地震ごとには名前を持たず、`nameIdx` でこの表を指す** —— 同じ名前が
+   * 年に数万回現れるので、地震ごとに書くと年ファイルが何倍にもなる。
+   *
+   * 年 ZIP の年は、いまの震央地名の区域に座標を当てた日本語の名前（区域の外なら取得元の英字の名前）。
+   * 日別経路の年は取得元の日本語の名前をそのまま使う（2026-10-25 ユーザー選択「座標から今の震央地名 (Recommended)」）。
+   */
+  names: string[]
+  /** 地震ごとの `names` の添字。名前が無い地震は `-1`。 */
+  nameIdx: number[]
+  /**
+   * 気象庁以外の機関が決めた震源の添字（昇順）。**疎に持つ** —— 全期間で 2 万件余りしかない。
+   * 機関名は持たない（2026-10-25 ユーザー選択「入れない (Recommended)」）。
+   */
+  extIdx: number[]
+  /** `extIdx` の件数。 */
+  externalCount: number
 }
 
 function argValue(name: string, fallback: number): number {
@@ -472,6 +481,14 @@ function zipFilesFor(year: number): readonly string[] {
   return grouped ? [grouped.file] : [String(year)]
 }
 
+/**
+ * レコード種別（1 桁目）が採るものか。フォーマット仕様の種別は 3 つだけ ——
+ * `J`＝気象庁・`U`＝米国地質調査所（USGS）・`I`＝その他の国際機関（ISC など）。
+ */
+function isKnownKind(kind: string | undefined): boolean {
+  return kind === 'J' || kind === 'U' || kind === 'I'
+}
+
 async function collectFromZip(year: number): Promise<Collected> {
   const files = zipFilesFor(year)
   const out: Collected = {
@@ -482,7 +499,7 @@ async function collectFromZip(year: number): Promise<Collected> {
     // 確定値は通年ぶんある。終端は翌年の頭。
     coveredThroughMs: yearStart(year + 1),
     kindJ: 0,
-    unreadableDepth: 0,
+    kindExternal: 0,
     unreadableOther: 0,
     skippedKind: 0,
     secondUnknown: 0,
@@ -500,26 +517,31 @@ async function collectFromZip(year: number): Promise<Collected> {
         // **年欄が数字で無い行は別に数える。** どの年にも振り分けられず黙って消えるため。
         // まとめ ZIP を跨いだ通算はできないので、その年の集計として最後に突き合わせる
         // （実測は 4 ファイルすべてで 0 件）。
-        if (line[0] === 'J' && !/^\d{4}$/.test(line.slice(1, 5))) out.unassigned++
+        if (isKnownKind(line[0]) && !/^\d{4}$/.test(line.slice(1, 5))) out.unassigned++
         continue
       }
-      // 気象庁が決定した震源（J）だけを採る。ほかの種別は年 100 件に満たず、決定の
-      // 経緯が違うため統計に混ぜない。**パースより先に弾く** —— 海外の震源（U）は
-      // 緯度経度の書き方が違い、読めない行として数えられて「壊れた行がある」ように見える。
-      if (line[0] !== 'J') {
+      // 気象庁（J）に加えて、気象庁以外の機関（U・I）の震源も印を付けて採る
+      // （2026-10-23 選択「J 以外も印を分けて入れる」）。J 以外は全期間で 2 万 5 千行余りで、
+      // 既定の表示・統計には混ぜない（読み込み側が `extIdx` で分ける）。
+      if (!isKnownKind(line[0])) {
         out.skippedKind++
         continue
       }
-      out.kindJ++
+      const external = line[0] !== 'J'
+      if (external) out.kindExternal++
+      else out.kindJ++
       const r = parseHypocenterRecord(line)
       if (!r) {
-        // **理由を分ける。** 深さ欄が読めないなら既知の変則（実測 90 件）。深さは読めるのに
-        // 落ちたなら、時刻か座標か M 欄の形が変わったということ —— そちらは 1 件でも失敗させる。
-        // **M 欄を先に見る。** 深さの変則と重なった行を深さ側（許容の閾値つき）へ数えると、
-        // M 欄の書式変更が深さ欄の状態しだいで見逃される。
-        if (parseMagnitudeField(line.slice(52, 54)) === 'unreadable') out.unreadableOther++
-        else if (parseTrailingBlankDecimal(line.slice(44, 49), 3) == null) out.unreadableDepth++
-        else out.unreadableOther++
+        // 深さ欄の既知の変則は `parseDepthField` が振り分けるので、ここへ来るのは形の変わった行だけ。
+        // **どの欄で落ちたかを出す** —— 1 件でも生成を失敗させるので、直す場所をすぐ探せるように。
+        const field =
+          parseMagnitudeField(line.slice(52, 54)) === 'unreadable'
+            ? 'M 欄'
+            : parseDepthField(line.slice(44, 49)) === 'unreadable'
+              ? '深さ欄'
+              : '時刻か座標の欄'
+        out.unreadableOther++
+        if (out.unreadableOther <= 5) console.error(`  読めない行（${field}）: ${JSON.stringify(line)}`)
         continue
       }
       if (r.secondUnknown) out.secondUnknown++
@@ -530,6 +552,9 @@ async function collectFromZip(year: number): Promise<Collected> {
         depth: r.depth,
         magnitude: r.magnitude,
         intensity: r.intensity,
+        external,
+        regionText: r.regionName,
+        regionFromCoords: true,
       })
     }
   }
@@ -594,9 +619,10 @@ async function collectFromDaily(year: number): Promise<Collected> {
     hasIntensity: false, // 震源リストに震度欄は無い
     coveredThroughMs: yearStart(year),
     kindJ: 0,
-    unreadableDepth: 0,
+    // 震源リストは気象庁の震源だけを載せる。
+    kindExternal: 0,
     // 日別経路に深さ欄の変則は無い（実測 11,537 行すべてが読めた）ので、
-    // 読めない行が出たら上流の列幅が変わったということ。すべて other へ数える。
+    // 読めない行が出たら上流の列幅が変わったということ。
     unreadableOther: 0,
     skippedKind: 0,
     secondUnknown: 0,
@@ -633,6 +659,9 @@ async function collectFromDaily(year: number): Promise<Collected> {
           depth: r.depth,
           magnitude: r.magnitude,
           intensity: null,
+          external: false,
+          regionText: r.region,
+          regionFromCoords: false,
         })
       }
       // その日の終わり（＝翌日の 00:00 JST）まで覆えた。
@@ -661,7 +690,12 @@ async function collectYear(year: number): Promise<Collected> {
   }
 }
 
-function buildYear(year: number, collected: Collected, minMagnitude: number): YearCatalog {
+function buildYear(
+  year: number,
+  collected: Collected,
+  minMagnitude: number,
+  regions: EpicenterRegionIndex,
+): YearCatalog {
   const startMs = yearStart(year)
   const out: YearCatalog = {
     year,
@@ -679,11 +713,28 @@ function buildYear(year: number, collected: Collected, minMagnitude: number): Ye
     lat: [],
     lng: [],
     dep: [],
+    unknownDepthCount: 0,
     mag: [],
     unknownMagnitudeCount: 0,
     intIdx: [],
     intCode: [],
+    names: [],
+    nameIdx: [],
+    extIdx: [],
+    externalCount: 0,
   }
+  const nameIndex = new Map<string, number>()
+  const indexOfName = (name: string): number => {
+    if (name === '') return -1
+    let k = nameIndex.get(name)
+    if (k === undefined) {
+      k = out.names.length
+      out.names.push(name)
+      nameIndex.set(name, k)
+    }
+    return k
+  }
+  let regionFallback = 0
 
   // **時刻順に並べる。** ZIP はおおむね時刻順だが日別経路は日ごとの連結なので、
   // 揃えておかないと読む側が二分探索できない。
@@ -697,7 +748,12 @@ function buildYear(year: number, collected: Collected, minMagnitude: number): Ye
     out.t.push(Math.round(((r.timeMs - startMs) * TIME_SCALE) / 1000))
     out.lat.push(Math.round(r.lat * COORD_SCALE))
     out.lng.push(Math.round(r.lng * COORD_SCALE))
-    out.dep.push(Math.round(r.depth * DEPTH_SCALE))
+    if (r.depth == null) {
+      out.dep.push(null)
+      out.unknownDepthCount++
+    } else {
+      out.dep.push(Math.round(r.depth * DEPTH_SCALE))
+    }
     if (r.magnitude == null) {
       out.mag.push(null)
       out.unknownMagnitudeCount++
@@ -708,31 +764,35 @@ function buildYear(year: number, collected: Collected, minMagnitude: number): Ye
       out.intIdx.push(i)
       out.intCode.push(r.intensity)
     }
+    if (r.external) out.extIdx.push(i)
+    let name = r.regionText
+    if (r.regionFromCoords) {
+      const ja = regions.lookup(r.lat, r.lng)
+      if (ja != null) name = ja
+      else regionFallback++
+    }
+    out.nameIdx.push(indexOfName(name))
   }
   out.count = out.t.length
+  out.externalCount = out.extIdx.length
 
-  // 深さ欄の変則で落ちた行。値を推測して混ぜるより捨てる方が安全なので落としている
-  // （書式の詳細は hypocenterRecord.ts の parseTrailingBlankDecimal）。
-  if (collected.unreadableDepth > 0) {
-    const ratio = collected.kindJ > 0 ? collected.unreadableDepth / collected.kindJ : 0
-    const text = `  深さ欄が読めず捨てた行: ${collected.unreadableDepth} (${(ratio * 100).toFixed(3)}%)`
-    if (ratio > UNREADABLE_DEPTH_WARN_RATIO) {
-      console.error(`${text} ← 実測の最大（1967 年の 1.741%）を大きく超えています。書式を確認すること`)
-    } else {
-      console.log(text)
-    }
-  }
-  // **こちらは 1 件でも異常。** 深さは読めているのに落ちたということは、時刻か座標の形が変わった。
+  // **1 件でも異常。** 深さ欄の既知の変則は `parseDepthField` が振り分けるので、
+  // ここに数が出たのは時刻・座標・M・深さのどれかの形が変わったということ。
   if (collected.unreadableOther > 0) {
     console.error(
-      `  深さ以外の理由で読めなかった行: ${collected.unreadableOther}` +
-        ' ← 想定 0 件。上流の形式が変わった疑いがあります',
+      `  読めなかった行: ${collected.unreadableOther}` + ' ← 想定 0 件。上流の形式が変わった疑いがあります',
     )
   }
   if (collected.unassigned > 0) {
-    console.error(`  年欄が数字でない J レコード: ${collected.unassigned} ← 想定 0 件`)
+    console.error(`  年欄が数字でないレコード: ${collected.unassigned} ← 想定 0 件`)
   }
-  if (collected.skippedKind > 0) console.log(`  気象庁以外の震源として除外: ${collected.skippedKind}`)
+  if (collected.skippedKind > 0) {
+    console.error(`  種別が J・U・I のどれでもないレコード: ${collected.skippedKind} ← 想定 0 件`)
+  }
+  if (out.externalCount > 0) console.log(`  気象庁以外の機関の震源: ${out.externalCount}`)
+  if (out.unknownDepthCount > 0) console.log(`  深さ不明: ${out.unknownDepthCount}`)
+  // 区域の外は日本から離れた海域・海外の震源。取得元の英字の名前で収録する。
+  if (regionFallback > 0) console.log(`  震央地名の区域の外（英字の名前で収録）: ${regionFallback}`)
   if (collected.secondUnknown > 0) {
     console.log(`  秒が判らない記録: ${collected.secondUnknown}（分までで採用）`)
   }
@@ -749,6 +809,7 @@ function verifyKnown(cat: YearCatalog, source: string): void {
   const known = KNOWN.find((k) => k.year === cat.year)
   if (!known) return
   const wantMs = Date.parse(known.timeIso)
+  const extSet = new Set(cat.extIdx)
   // **時刻の完全一致で引かない。** 速報値と確定値では発生時刻が 0.1 秒単位で動きうるため、
   // 一致検索にすると確定値へ入れ替わった日に「見つからない」で落ちる。最も近いものを採る。
   let best = -1
@@ -757,6 +818,8 @@ function verifyKnown(cat: YearCatalog, source: string): void {
     // **M が決まっていない記録は候補にしない。** 既知の地震はどれも M を持つので、
     // 本震の直後に M 未決定の記録が並ぶと、そちらを最も近いものとして掴んでしまう。
     if (cat.mag[i] == null) continue
+    // 同じ地震を気象庁以外の機関も決めていることがある（大きい地震ほどそう）。照合するのは気象庁の震源。
+    if (extSet.has(i) || cat.dep[i] == null) continue
     const diff = Math.abs(cat.startMs + (cat.t[i] * 1000) / TIME_SCALE - wantMs)
     if (diff < bestDiff) {
       bestDiff = diff
@@ -769,8 +832,8 @@ function verifyKnown(cat: YearCatalog, source: string): void {
   const got = {
     lat: cat.lat[best] / COORD_SCALE,
     lng: cat.lng[best] / COORD_SCALE,
-    depth: cat.dep[best] / DEPTH_SCALE,
-    // 上の探索で M が決まっている記録だけを選んでいる。
+    // 上の探索で深さと M が決まっている記録だけを選んでいる。
+    depth: (cat.dep[best] as number) / DEPTH_SCALE,
     magnitude: (cat.mag[best] as number) / MAG_SCALE,
   }
   // 許容差は「カラムがずれたら必ず超える」幅に取る。位置が 1 列ずれれば桁ごと変わるので、
@@ -857,6 +920,36 @@ async function readExistingMinMagnitude(): Promise<number | null> {
   }
 }
 
+/**
+ * 震央地名の区域の控え。Git 管理外（CACHE_DIR）。**名前に取得元のコミットを入れる** ——
+ * 版を上げたら控えが外れて取り直す（古い版の控えを新しい版として読まない）。
+ */
+const EPICENTER_REGION_CACHE = join(CACHE_DIR, `epicenter-region-${EPICENTER_REGION_REVISION.slice(0, 12)}.geojson`)
+
+/**
+ * 震央地名の区域（0Quake/JMA_Region の `震央地名.geojson`）を読む。**控えがあれば取りに行かない**
+ * ——全期間を作り直しても 1 回で済む。上流の版を上げれば控えの名前が変わって取り直す。
+ */
+async function loadEpicenterRegions(): Promise<EpicenterRegionIndex> {
+  let text: string
+  try {
+    text = await readFile(EPICENTER_REGION_CACHE, 'utf-8')
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+    console.log(`震央地名の区域を取得: ${EPICENTER_REGION_URL}`)
+    const res = await fetch(EPICENTER_REGION_URL)
+    if (!res.ok) throw new Error(`震央地名の区域を取得できません: HTTP ${res.status}`)
+    text = await res.text()
+    // **形を確かめてから残す。** 壊れた応答を残すと、取り直されないまま毎回失敗する。
+    buildEpicenterRegionIndex(JSON.parse(text))
+    await writeFile(`${EPICENTER_REGION_CACHE}.tmp`, text, 'utf-8')
+    await rename(`${EPICENTER_REGION_CACHE}.tmp`, EPICENTER_REGION_CACHE)
+  }
+  const index = buildEpicenterRegionIndex(JSON.parse(text))
+  console.log(`震央地名の区域: ${index.size} 件`)
+  return index
+}
+
 async function main(): Promise<void> {
   const latest = latestDailyDate()
   const from = argValue('--from', FIRST_YEAR)
@@ -876,12 +969,10 @@ async function main(): Promise<void> {
     )
   }
 
+  const regions = await loadEpicenterRegions()
   const built = new Map<number, YearSummary>()
   const missing: number[] = []
   const verifiedPaths: string[] = []
-  // 深さ欄の変則は全期間でも見る（傾向の把握用。失敗の判定は年ごとに行う）。
-  let totalUnreadableDepth = 0
-  let totalKindJ = 0
   // **生成を失敗させる理由。** 1 つでも溜まったら最後に exit 1 する。
   // 途中で throw しないのは、何がいくつ起きたかをまとめて見せたいため。
   const failures: string[] = []
@@ -898,20 +989,17 @@ async function main(): Promise<void> {
       missing.push(year)
       continue
     }
-    totalUnreadableDepth += collected.unreadableDepth
-    totalKindJ += collected.kindJ
-    const cat = buildYear(year, collected, minMagnitude)
+    const cat = buildYear(year, collected, minMagnitude, regions)
     console.log(`${cat.count} 件（うち M 未決定 ${cat.unknownMagnitudeCount} 件）`)
     // 検知した異常はここで失敗理由へ積む（buildYear が既に画面へ出している）。
-    const depthRatio = collected.kindJ > 0 ? collected.unreadableDepth / collected.kindJ : 0
-    if (depthRatio > UNREADABLE_DEPTH_WARN_RATIO) {
-      failures.push(`${year} 年: 深さ欄が読めない行が ${(depthRatio * 100).toFixed(3)}%`)
-    }
     if (collected.unreadableOther > 0) {
-      failures.push(`${year} 年: 深さ以外の理由で読めない行が ${collected.unreadableOther} 件`)
+      failures.push(`${year} 年: 読めない行が ${collected.unreadableOther} 件`)
     }
     if (collected.unassigned > 0) {
-      failures.push(`${year} 年: 年欄が数字でない J レコードが ${collected.unassigned} 件`)
+      failures.push(`${year} 年: 年欄が数字でないレコードが ${collected.unassigned} 件`)
+    }
+    if (collected.skippedKind > 0) {
+      failures.push(`${year} 年: 種別が J・U・I のどれでもないレコードが ${collected.skippedKind} 件`)
     }
     // 格納単位で表せない値は、丸められた状態で出力に入る。**件数 0 を保つのが正常。**
     const unrepresentable = countUnrepresentable(collected.records)
@@ -1012,17 +1100,6 @@ async function main(): Promise<void> {
   for (const k of KNOWN) {
     if (!verifiedPaths.includes(k.path)) {
       console.log(`※ ${k.year} 年を含めなかったため、${k.path} の照合は行っていません`)
-    }
-  }
-  if (totalUnreadableDepth > 0) {
-    const ratio = totalKindJ > 0 ? totalUnreadableDepth / totalKindJ : 0
-    console.log(
-      `深さ欄が読めず捨てた行（全期間）: ${totalUnreadableDepth} / ${totalKindJ}` +
-        ` (${(ratio * 100).toFixed(4)}%)`,
-    )
-    if (ratio > UNREADABLE_WARN_RATIO) {
-      // 年ごとの判定を通り抜けても、全期間で薄く広く増えていれば形式の変化を疑う。
-      console.warn('※ 全期間の比率が想定より高い。フォーマットが変わっていないか確認すること')
     }
   }
   if (missing.length > 0) {

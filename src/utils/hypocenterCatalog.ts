@@ -15,9 +15,11 @@
 //      無いのは 1997 年以降だけ。** 1919〜1950 年は年 505 件しか記録がない（現代は 2 万件超）。
 //      統計に使うなら `completeMinMagnitude()` で閾値を上げること。
 //
-// 【直近 30 日とは母集団が違う】このカタログは M2.0 以上の全地震。ヒートマップが使う
-// `useQuakeHeatmap`（DMDATA / P2PQuake）は**震度を観測した地震だけ**で、1 日あたり 6〜7 件
-// （カタログは 88 件）。10 倍以上違うので、繋いで日別回数や統計に使わない。
+// 【電文の地震とは母集団が違う】このカタログは M2.0 以上の全地震。DMDATA / P2PQuake の地震情報は
+// **震度を観測した地震だけ**で、1 日あたり 6〜7 件（カタログは 88 件）。10 倍以上違うので、
+// 繋いで日別回数や統計に使わない。ヒートマップ（`useQuakeHeatmap`）だけはカタログを主にし、
+// 終端より後の数日だけを電文で埋めて繋ぐ（2026-10-22 ユーザー承認「カタログ＋末尾の空きだけ API」）。
+// 密度の見た目に使うだけで、回数は数えない。
 //
 // 【列で持つ】1 件 1 オブジェクトに展開すると数十万件でメモリを大きく食う。列ごとの
 // TypedArray で保持し、利用側は添字で読む。
@@ -85,8 +87,26 @@ export interface HypocenterYear {
   lat: Float64Array
   /** 経度（度）。 */
   lng: Float64Array
-  /** 深さ (km)。 */
+  /**
+   * 深さ (km)。**決まっていない地震は `NaN`**（深さ欄が 2 通りに取れる形。1961〜1966 年に 24 件）。
+   * 比較はどれも偽になるので、絞り込み・色分けでは呼び出し側が `Number.isNaN` で分けること。
+   */
   depth: Float32Array
+  /**
+   * 震央地名の表（`nameIdx` が指す）。年 ZIP の年はいまの震央地名の区域に座標を当てた名前、
+   * 区域の外は気象庁の英字の名前。日別の速報値の年は震源リストの名前そのまま。
+   */
+  names: readonly string[]
+  /** 地震ごとの `names` の添字。名前が無い地震は `-1`。 */
+  nameIdx: Int32Array
+  /** 気象庁以外の機関（米国地質調査所・その他の国際機関）が決めた震源なら 1。 */
+  external: Uint8Array
+  /**
+   * 最大震度の生コード（添字 → コード）。**有感の地震だけが載る。** 震度ではないコード
+   * （`F` 有感地震・`X` 付近有感・`L`〜`R` 最大有感距離による顕著度）も入る。
+   * 表示の語は `hypocenterIntensityLabel`。速報値の年は取得元に震度が無いので空。
+   */
+  intensityCode: ReadonlyMap<number, string>
   /**
    * マグニチュード。**決まっていない地震は `NaN`**（取得元の M 欄が空・`-`）。
    *
@@ -110,14 +130,23 @@ interface RawYear {
   t: number[]
   lat: number[]
   lng: number[]
-  dep: number[]
+  /** 深さが決まっていない地震は `null`。 */
+  dep: (number | null)[]
+  /** `dep` の `null` の数。 */
+  unknownDepthCount: number
   /** M が決まっていない地震は `null`。 */
   mag: (number | null)[]
   /** `mag` の `null` の数（生成側が書く。列と食い違えば壊れた年として弾く）。 */
   unknownMagnitudeCount?: number
-  // 年ファイルは最大震度の疎な 2 列（`intIdx`・`intCode`）も持つが、アプリはどこからも読まない
-  // ので、型にも読み取り結果にも載せず、検査もしない（2026-10-19 ユーザー承認「F20 で使う列を残し、
-  // 他を外す (推奨)」。F20 は期間の上限を収録の終端に揃える修正で、使う列は coveredThroughMs と quality）。列の意味は生成スクリプト（scripts/build-hypocenter-catalog.ts）にある。
+  // 最大震度の疎な 2 列は、点の吹き出しに最大震度を出すために読む（2026-10-25 ユーザー承認
+  // 「C の案でよい (Recommended)」）。列の意味は生成スクリプト（scripts/build-hypocenter-catalog.ts）にある。
+  intIdx: number[]
+  intCode: string[]
+  names: string[]
+  nameIdx: number[]
+  extIdx: number[]
+  /** `extIdx` の件数（生成側が書く。食い違えば壊れた年として弾く）。 */
+  externalCount: number
 }
 
 let indexCache: HypocenterIndex | null = null
@@ -156,6 +185,79 @@ export function completeMinMagnitude(index: HypocenterIndex, fromYear: number): 
   }
   // **収録の下限より下は返さない。** 入っていない地震を数えようとしても意味がない。
   return Math.max(threshold, index.minMagnitude)
+}
+
+/** 震度の階級を表す記号（`5`・`6` は弱強の区分が無かった 1996 年 9 月までの震度 5・6）。 */
+const INTENSITY_SCALE_LABEL: Readonly<Record<string, string>> = {
+  '1': '1',
+  '2': '2',
+  '3': '3',
+  '4': '4',
+  '5': '5',
+  '6': '6',
+  '7': '7',
+  A: '5弱',
+  B: '5強',
+  C: '6弱',
+  D: '6強',
+}
+
+/**
+ * 震度ではない記号の語。L〜R は気象庁のフォーマット仕様の語そのまま。F は「有感」と出す
+ * （2026-10-25 ユーザー承認「C の案でよい (Recommended)」。仕様の語は「有感地震」）。
+ */
+const INTENSITY_OTHER_LABEL: Readonly<Record<string, string>> = {
+  F: '有感',
+  X: '付近有感',
+  L: '局発地震',
+  S: '小局発地震',
+  M: 'やや顕著地震',
+  R: '顕著地震',
+}
+
+/**
+ * 最大震度の記号を吹き出しの 1 行にする。階級なら「最大震度 5弱」、震度ではない記号は語だけ。
+ * 表に無い記号は `null`（行を出さない）。
+ */
+export function hypocenterIntensityLabel(code: string): string | null {
+  const scale = INTENSITY_SCALE_LABEL[code]
+  if (scale !== undefined) return `最大震度 ${scale}`
+  return INTENSITY_OTHER_LABEL[code] ?? null
+}
+
+/**
+ * 震央地名・気象庁以外の印・最大震度の列を確かめる。**添字が範囲の外なら年ごと弾く** ——
+ * ずれた添字は別の地震の名前や印を黙って付ける。
+ */
+function validateSideColumns(raw: RawYear, year: number): void {
+  const n = raw.count
+  const isIndex = (v: unknown, limit: number) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < limit
+  if (!Array.isArray(raw.names) || raw.names.some((s) => typeof s !== 'string' || s === '')) {
+    throw new Error(`hypocenter ${year}: names が不正です`)
+  }
+  if (!Array.isArray(raw.nameIdx) || raw.nameIdx.length !== n) {
+    throw new Error(`hypocenter ${year}: nameIdx の長さが count と一致しません`)
+  }
+  for (const v of raw.nameIdx) {
+    if (v !== -1 && !isIndex(v, raw.names.length)) throw new Error(`hypocenter ${year}: nameIdx が範囲の外です`)
+  }
+  if (!Array.isArray(raw.extIdx) || raw.extIdx.some((v) => !isIndex(v, n))) {
+    throw new Error(`hypocenter ${year}: extIdx が不正です`)
+  }
+  // **件数も申告と突き合わせる。** 列が途中で切れても添字は範囲に収まるので、上の検査を通る ——
+  // 気象庁以外の機関の震源が黙って気象庁の震源として描かれる。
+  if (raw.externalCount !== raw.extIdx.length) {
+    throw new Error(`hypocenter ${year}: 気象庁以外の機関の震源の数が年ファイルの申告と一致しません`)
+  }
+  if (
+    !Array.isArray(raw.intIdx) ||
+    !Array.isArray(raw.intCode) ||
+    raw.intIdx.length !== raw.intCode.length ||
+    raw.intIdx.some((v) => !isIndex(v, n)) ||
+    raw.intCode.some((c) => typeof c !== 'string' || c.length !== 1)
+  ) {
+    throw new Error(`hypocenter ${year}: intIdx・intCode が不正です`)
+  }
 }
 
 /** 索引を取得する。初回のみ fetch し、以降はキャッシュを返す。 */
@@ -255,9 +357,9 @@ export function loadHypocenterYear(year: number): Promise<HypocenterYear> {
         // **0 になる** —— 北緯 0 度・東経 0 度という「もっともらしい嘘」が静かに紛れ込み、
         // 地図にアフリカ沖の地震として現れる。NaN なら下流で崩れて気づけるが、0 は気づけない。
         //
-        // **`null` を許すのは M の列だけ。** M が決まっていない地震を表す値で、下で `NaN` へ
-        // 写す（`null / magScale` の 0 にはしない —— M0.0 という「もっともらしい嘘」になる）。
-        const nullable = key === 'mag'
+        // **`null` を許すのは M と深さの列だけ。** 決まっていない値を表し、下で `NaN` へ
+        // 写す（`null / magScale` の 0 にはしない —— M0.0・深さ 0 km という「もっともらしい嘘」になる）。
+        const nullable = key === 'mag' || key === 'dep'
         for (let i = 0; i < col.length; i++) {
           const v = col[i]
           if (v === null && nullable) continue
@@ -277,6 +379,12 @@ export function loadHypocenterYear(year: number): Promise<HypocenterYear> {
       if (raw.count > 0 && unknown === raw.count) {
         throw new Error(`hypocenter ${year}: M の列がすべて null です`)
       }
+      // **深さ不明の数も申告と突き合わせる**（M と同じ理由。深さの列だけ壊れても長さは揃う）。
+      const unknownDepth = raw.dep.reduce<number>((n, d) => (d === null ? n + 1 : n), 0)
+      if (raw.unknownDepthCount !== unknownDepth) {
+        throw new Error(`hypocenter ${year}: 深さ不明の数が年ファイルの申告と一致しません`)
+      }
+      validateSideColumns(raw, year)
       if (typeof raw.startMs !== 'number' || !Number.isFinite(raw.startMs)) {
         throw new Error(`hypocenter ${year}: startMs がありません`)
       }
@@ -314,14 +422,20 @@ export function loadHypocenterYear(year: number): Promise<HypocenterYear> {
         lng: new Float64Array(n),
         depth: new Float32Array(n),
         magnitude: new Float32Array(n),
+        names: raw.names,
+        nameIdx: Int32Array.from(raw.nameIdx),
+        external: new Uint8Array(n),
+        intensityCode: new Map(raw.intIdx.map((idx, k) => [idx, raw.intCode[k]] as const)),
       }
+      for (const idx of raw.extIdx) out.external[idx] = 1
       for (let i = 0; i < n; i++) {
         // 時刻は「その年の頭からの経過時間 × timeScale」で入っている。起点も刻みも年ファイルが
         // 持っているので、ここで日本時間を意識する必要はない。
         out.timeMs[i] = raw.startMs + (raw.t[i] * 1000) / raw.timeScale
         out.lat[i] = raw.lat[i] / raw.coordScale
         out.lng[i] = raw.lng[i] / raw.coordScale
-        out.depth[i] = raw.dep[i] / raw.depthScale
+        const dep = raw.dep[i]
+        out.depth[i] = dep === null ? NaN : dep / raw.depthScale
         const mag = raw.mag[i]
         out.magnitude[i] = mag === null ? NaN : mag / raw.magScale
       }

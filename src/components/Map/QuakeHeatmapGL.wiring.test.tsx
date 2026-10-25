@@ -41,11 +41,11 @@ function fakeMap() {
 }
 
 const point = (name: string): HeatPoint =>
-  ({ lat: 35, lng: 139, weight: 0.5, name, time: '2026-10-10T00:00:00+09:00', depth: 10, magnitude: 3 }) as HeatPoint
+  ({ lat: 35, lng: 139, weight: 0.5, name, time: '2026-10-10T00:00:00+09:00', depth: 10, magnitude: 3, count: 1 }) as HeatPoint
 
 const view = (map: MapLibreMap, points: readonly HeatPoint[] | null) => (
   <MapGLContext.Provider value={map}>
-    <QuakeHeatmapGL points={points} iconScale={1} visible={points !== null && points.length > 0} />
+    <QuakeHeatmapGL points={points} iconScale={1} intensityScale={1} visible={points !== null && points.length > 0} />
   </MapGLContext.Provider>
 )
 

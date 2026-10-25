@@ -61,10 +61,40 @@ export function labelTextOffsetExpr(shiftEm: number): ExpressionSpecification {
   ]
 }
 
+/**
+ * 地方名の `text-variable-anchor-offset` の式。
+ *
+ * 地方名は、ラベルどうしの重なりを MapLibre に上下だけで逃がさせている（`center`・`top`・`bottom`、
+ * 逃がす量 `radialEm`。LabelsGL）。そのうえでバッジとの重なりでも退避させるには、地物ごとにずらせる
+ * 式が要る。**`text-offset` は使えない** —— `text-variable-anchor` と併せると、`center` のときの
+ * ずれが 0 に潰される（MapLibre の `evaluateVariableOffset`）。`text-variable-anchor-offset` は
+ * アンカーごとのずれをそのまま足し、データで変えられる。
+ *
+ * 退避方向（`shift`）のぶんを 3 つのアンカーすべてに同じだけ足す。退避の判定は代表点の真上
+ * （`center`）に置いた前提で行うので、MapLibre が地方名どうしの重なりで `top`・`bottom` へ逃がした
+ * 場合は、判定した位置とずれる。
+ */
+export function regionAnchorOffsetExpr(shiftEm: number, radialEm: number): ExpressionSpecification {
+  const set = (dy: number): ExpressionSpecification => [
+    'literal',
+    ['center', [0, dy], 'top', [0, radialEm + dy], 'bottom', [0, -radialEm + dy]],
+  ] as unknown as ExpressionSpecification
+  return [
+    'case',
+    ['==', ['get', 'shift'], 'up'],
+    set(-shiftEm),
+    ['==', ['get', 'shift'], 'down'],
+    set(shiftEm),
+    set(0),
+  ]
+}
+
 // 重なり判定の対象レイヤー。区域塗り（fill）は対象外——面が大きく、テキストが多少乗っても
-// 情報として一体的に見えるため対象にしない（ユーザー判断）。震度バッジ・観測点ドット・検知点・
-// 波紋等の「マーカー」のみを対象にする。custom layer（kyoshin-subthreshold）と HTML Marker
-// （震源×印・津波観測棒）は map.queryRenderedFeatures() の対象にできないため対象外（既知の制約）。
+// 情報として一体的に見えるため対象にしない（2026-08-10 ユーザー「塗りとの当たり判定は行わなくて
+// いいです。 / マーカーのみでいいです」。2026-10-14 の諮り直しでも「ラベルは塗りを避けない」で維持）。
+// 震度バッジ・観測点ドット・検知点・波紋等の「マーカー」のみを対象にする。custom layer
+// （kyoshin-subthreshold）と HTML Marker（震源×印・津波観測棒）は map.queryRenderedFeatures() の
+// 対象にできないため対象外（既知の制約。2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。
 const OVERLAP_CHECK_LAYER_IDS = [
   'quake-region-label',
   'quake-lpgm-region-label',
@@ -94,7 +124,7 @@ export interface LabelOverlapTarget {
   text: string
   /** text-size（px・iconScale 適用前の基準値）。実描画サイズは判定側で iconScale を掛ける。 */
   textSize: number
-  /** 重なったときにずらす量（em）。**省略すると退避せず、重なった時点で薄くする**（地方名）。 */
+  /** 重なったときにずらす量（em）。**省略すると退避せず、重なった時点で薄くする**。 */
   shiftEm?: number
   /**
    * 代表点から北・南へずらせる余地 `[北, 南]`（緯度差の度数）。生成データが持つ値で、
@@ -102,6 +132,15 @@ export interface LabelOverlapTarget {
    * `shiftEm` を持つラベルのみ指定する。
    */
   room?: readonly [number, number]
+  /**
+   * 領域の余地を見ずに上下どちらへも逃がしてよいか（地方名）。
+   *
+   * 地方は境界データを持たない（代表点は手置き。`utils/regions.ts`）ので `room` を作れない。
+   * 地方名が出る引いた画では、退避量（1.5em ≒ 26px）は地方の広がりに比べて小さく、地方の外まで
+   * 文字が飛ぶことは無い。**県名・区域名には付けない** —— あちらは寄った画で出るので、余地を見ないと
+   * 文字が隣の県・区域へはみ出す。
+   */
+  unboundedShift?: boolean
   /**
    * **退避したあとの位置**で、重なりに数えない feature の名前（properties.name と比較）。
    *
@@ -214,7 +253,10 @@ function shiftCandidates(
   halfH: number,
   centerY: number,
 ): LabelShift[] {
-  if (!t.shiftEm || !isUsableRoom(t.room)) return []
+  if (!t.shiftEm) return []
+  // 地方名は余地を持たないので、上・下の順に試す（どちらへ逃がしても地方の内側に収まる。上の定義）。
+  if (t.unboundedShift) return ['up', 'down']
+  if (!isUsableRoom(t.room)) return []
   // 退避量そのものは呼び出し側で算出したものを使う（`isOffScreen` の余白と同じ値でなければ、
   // 「逃がせば見える」と見た位置と「逃がせる」と判断する位置がずれる）。
   const need = shiftPx + halfH

@@ -1,7 +1,7 @@
 import type { MapCaptureResult } from '../components/Map/gl/captureMap'
 import { log } from './logger'
 import { readableTextColor } from './contrast'
-import type { LegendBlock, LegendChip } from '../components/MapLegend/legendBlocks'
+import { heatmapPeriodText, type LegendBlock, type LegendChip } from '../components/MapLegend/legendBlocks'
 
 // 共有カードの合成と書き出し。地図の撮影は components/Map/gl/captureMap.ts の担当で、
 // ここは「撮れた地図に見出しと出典を足して 1 枚の画像にする」ところだけを持つ。
@@ -396,6 +396,37 @@ const LEGEND_MAX_W = 560
 const LEGEND_BG = 'rgba(10,12,16,0.86)'
 const LEGEND_BORDER = 'rgba(255,255,255,0.16)'
 const LEGEND_TITLE_COLOR = 'rgba(255,255,255,0.55)'
+/** 完全性の注記の色。画面の凡例（`text-yellow-400`）に合わせる。 */
+const LEGEND_NOTE_COLOR = '#facc15'
+
+/** ヒートマップの期間の行 1 本の高さ。 */
+const LEGEND_PERIOD_LINE_H = 20
+
+/**
+ * ヒートマップの期間の行（期間・完全性の注記）を、枠の幅で折り返した行の並びにする。
+ * **計測と描画の両方がこれを使う**（別々に数えると背景の高さがずれる）。期間を持たない欄は空。
+ *
+ * 画面の凡例と同じ文を焼く（2026-10-25 ユーザー選択「期間＋注記 (Recommended)」）。画像は後から
+ * 開けないので、期間を焼かないと何日分の密度かが読めない。
+ */
+function legendPeriodLines(ctx: CanvasRenderingContext2D, block: LegendBlock, maxWidth: number): { text: string; note: boolean }[] {
+  const period = block.heatmapPeriod
+  if (!period) return []
+  ctx.font = `400 13px ${FONT_STACK}`
+  const out: { text: string; note: boolean }[] = [{ text: heatmapPeriodText(period), note: false }]
+  if (period.note) {
+    let line = ''
+    for (const ch of period.note) {
+      if (line !== '' && ctx.measureText(line + ch).width > maxWidth) {
+        out.push({ text: line, note: true })
+        line = ''
+      }
+      line += ch
+    }
+    if (line !== '') out.push({ text: line, note: true })
+  }
+  return out
+}
 
 /** 色の升目 1 つの幅。文字の幅に合わせて伸ばす。 */
 function legendCellWidth(ctx: CanvasRenderingContext2D, label: string): number {
@@ -466,9 +497,12 @@ function legendBlockSize(ctx: CanvasRenderingContext2D, block: LegendBlock, maxW
     0,
     ...chipRows.map((row) => row.reduce((sum, chip, i) => sum + (i > 0 ? LEGEND_CHIP_GAP : 0) + legendChipWidth(ctx, chip), 0)),
   )
+  const periodLines = legendPeriodLines(ctx, block, maxWidth)
+  ctx.font = `400 13px ${FONT_STACK}`
+  const periodW = Math.max(0, ...periodLines.map((line) => ctx.measureText(line.text).width))
   return {
-    w: Math.max(titleW, LEGEND_RAMP_W, chipsW),
-    h: LEGEND_TITLE_H + LEGEND_RAMP_H + tickH + LEGEND_ROW_H * chipRows.length,
+    w: Math.max(titleW, LEGEND_RAMP_W, chipsW, periodW),
+    h: LEGEND_TITLE_H + LEGEND_RAMP_H + tickH + LEGEND_ROW_H * chipRows.length + LEGEND_PERIOD_LINE_H * periodLines.length,
   }
 }
 
@@ -485,6 +519,13 @@ function drawLegendChipRows(ctx: CanvasRenderingContext2D, rows: LegendChip[][],
       } else if (chip.shape === 'bar') {
         // 観測棒は縦長。占める幅も細いので左端から描く。
         ctx.fillRect(x, rowY + 4, markWidth, 16)
+      } else if (chip.shape === 'ring') {
+        // 中を抜いた丸（震源カタログで気象庁以外の機関の震源を描く形）。
+        ctx.beginPath()
+        ctx.arc(x + markWidth / 2, rowY + 11, 7, 0, Math.PI * 2)
+        ctx.strokeStyle = chip.color
+        ctx.lineWidth = 3
+        ctx.stroke()
       } else {
         ctx.beginPath()
         ctx.arc(x + markWidth / 2, rowY + 11, 8, 0, Math.PI * 2)
@@ -567,11 +608,16 @@ function drawLegend(ctx: CanvasRenderingContext2D, blocks: LegendBlock[], mapBot
         ctx.fillText(tick.label, tx, bodyY + LEGEND_RAMP_H + 14)
       }
       ctx.textAlign = 'left'
-      if (block.swatch.chips) {
-        const tickH = block.swatch.ticks.length > 0 ? LEGEND_TICK_H : 0
-        const rows = legendChipRows(ctx, block.swatch.chips, boxW - LEGEND_PAD * 2)
-        drawLegendChipRows(ctx, rows, left + LEGEND_PAD, bodyY + LEGEND_RAMP_H + tickH)
-      }
+      const tickH = block.swatch.ticks.length > 0 ? LEGEND_TICK_H : 0
+      const chipRows = block.swatch.chips ? legendChipRows(ctx, block.swatch.chips, boxW - LEGEND_PAD * 2) : []
+      if (chipRows.length > 0) drawLegendChipRows(ctx, chipRows, left + LEGEND_PAD, bodyY + LEGEND_RAMP_H + tickH)
+      // 期間の行は見本の下。画面の凡例と同じく、注記は黄色で出す。
+      const periodTop = bodyY + LEGEND_RAMP_H + tickH + LEGEND_ROW_H * chipRows.length
+      legendPeriodLines(ctx, block, boxW - LEGEND_PAD * 2).forEach((line, li) => {
+        ctx.font = `400 13px ${FONT_STACK}`
+        ctx.fillStyle = line.note ? LEGEND_NOTE_COLOR : TEXT_MUTED
+        ctx.fillText(line.text, left + LEGEND_PAD, periodTop + LEGEND_PERIOD_LINE_H * li + 15)
+      })
     }
     y += size.h + LEGEND_BLOCK_GAP
   })

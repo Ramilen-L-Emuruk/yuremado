@@ -11,6 +11,7 @@ import { TELEGRAM_TEXT_BLOCK_KEYS, TELEGRAM_BOILERPLATE_KEYS, TELEGRAM_BOILERPLA
 import type { SeismoWaveMode } from '../utils/seismoWaveTrigger'
 import { DEFAULT_WAVE_SPAN_SEC, ensureWaveSpanSec, type WaveSpanSec } from '../utils/waveSpan'
 import { SHARE_CARD_FORMATS, type ShareCardFormatId } from '../utils/shareCard'
+import { DEFAULT_HEATMAP_PERIOD, isHeatmapPeriod, type HeatmapPeriod } from '../utils/quakeHeatmap'
 
 /** 波形を展開していないときに出すもの（→ {@link AppSettings.seismoWaveCollapsedView}）。 */
 export type SeismoWaveCollapsedView = 'composite' | 'overlay'
@@ -76,7 +77,9 @@ export interface AppSettings {
   showBathymetry: boolean   // 背景に海底地形（GEBCO・NOAA NCEI）を表示する
   showActiveFaults: boolean // 地震情報・リアルタイムタブの地図に活断層線を表示する
   activeFaultOpacity: number // 活断層線の不透明度（濃さ、0.05〜1.0）
-  showQuakeHeatmap: boolean // 地震情報・リアルタイムタブの地図に直近1ヶ月の地震活動ヒートマップを表示する
+  showQuakeHeatmap: boolean // 地震情報・リアルタイムタブの地図に地震活動ヒートマップを表示する
+  /** ヒートマップの期間（凡例のヒートマップ欄のスライダーで選ぶ。→ `utils/quakeHeatmap.ts` の `HEATMAP_PERIODS`）。 */
+  heatmapPeriod: HeatmapPeriod
   showPlateBoundaries: boolean // 地震情報・リアルタイム・津波情報・震源カタログタブの地図にプレート境界線を表示する
   showMapLegend: boolean    // 地図に色の凡例（震度・津波の等級・深さなど）を重ねる
   /** 共有カード（地図を画像にして共有する）の寸法（→ `utils/shareCard.ts` の `SHARE_CARD_FORMATS`）。 */
@@ -90,7 +93,7 @@ export interface AppSettings {
   idleRevertSec: number            // 操作なしでデフォルトタブへ戻るまでの秒数 (0 = 無効)
   periodicReloadHours: number      // 定期自動リロード（0 = 無効、1以上 = 毎日午前5時に実行）
   // 画面録画のあいだ、表示に要らない再計算を控える。表示される内容そのものは変わらない
-  // （地名ラベルの退避が数秒遅れる・揺れ検知の診断ログを保存しない）。
+  // （止めるのは通知音・読み上げのキープアライブだけ。詳細は settings-pwa-spec §2）。
   recordingMode: boolean
   notifyEEW: boolean               // 緊急地震速報の発報・昇格時にブラウザ通知を送る
   notifyTsunami: boolean           // 津波のブラウザ通知（予報以上の発表・続報と全区域解除。→ audio-tts-spec §7）
@@ -273,6 +276,8 @@ export const DEFAULTS: AppSettings = {
   activeFaultOpacity: 0.4,
   // 既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」）。
   showQuakeHeatmap: false,
+  // 既定は 30 日（2026-10-25 ユーザー選択「E の案でよい (Recommended)」）。
+  heatmapPeriod: DEFAULT_HEATMAP_PERIOD,
   showPlateBoundaries: true,
   showMapLegend: true,
   shareCardFormat: 'wide16x9',
@@ -470,6 +475,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     showActiveFaults: ensureBool(partial.showActiveFaults, DEFAULTS.showActiveFaults),
     activeFaultOpacity: clampNumber(partial.activeFaultOpacity, 0.05, 1, DEFAULTS.activeFaultOpacity),
     showQuakeHeatmap: ensureBool(partial.showQuakeHeatmap, DEFAULTS.showQuakeHeatmap),
+    heatmapPeriod: isHeatmapPeriod(partial.heatmapPeriod) ? partial.heatmapPeriod : DEFAULTS.heatmapPeriod,
     showPlateBoundaries: ensureBool(partial.showPlateBoundaries, DEFAULTS.showPlateBoundaries),
     showMapLegend: ensureBool(partial.showMapLegend, DEFAULTS.showMapLegend),
     shareCardFormat: ensureShareCardFormat(partial.shareCardFormat, DEFAULTS.shareCardFormat),

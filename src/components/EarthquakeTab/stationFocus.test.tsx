@@ -167,7 +167,7 @@ describe('地震カードの観測点の行をクリックしたときの寄り�
     const row = clickRow(f.KNOWN)
 
     expect(row.getAttribute('role')).toBe('button')
-    expect(onFocusMap).toHaveBeenCalledWith([f.KNOWN_POS])
+    expect(onFocusMap).toHaveBeenCalledWith([f.KNOWN_POS], f.KNOWN)
   })
 
   // 正: 同じ行を続けて押しても、そのたびに要求が立つ。
@@ -193,7 +193,7 @@ describe('地震カードの観測点の行をクリックしたときの寄り�
     const row = clickRow(f.OTHER_PREF_STATION)
 
     expect(row.getAttribute('role')).toBe('button')
-    expect(onFocusMap).toHaveBeenCalledWith([f.OTHER_PREF_POS])
+    expect(onFocusMap).toHaveBeenCalledWith([f.OTHER_PREF_POS], f.OTHER_PREF_STATION)
   })
 
   // 対照: 座標を引けない観測点は押せる見た目にしない（押しても何も起きない行を作らない）。
@@ -251,7 +251,7 @@ describe('「震度を入手していない地点」の地名をクリックし�
 
     fireEvent.click(screen.getByText(f.KNOWN))
 
-    expect(onFocusMap).toHaveBeenCalledWith([f.KNOWN_POS])
+    expect(onFocusMap).toHaveBeenCalledWith([f.KNOWN_POS], f.KNOWN)
   })
 
   // 正: 区域の行は区域の代表点へ寄る。**観測点の表を引いても見つからない**ので、
@@ -262,7 +262,7 @@ describe('「震度を入手していない地点」の地名をクリックし�
 
     fireEvent.click(screen.getByText(f.BARE_AREA))
 
-    expect(onFocusMap).toHaveBeenCalledWith([f.BARE_AREA_POS])
+    expect(onFocusMap).toHaveBeenCalledWith([f.BARE_AREA_POS], null)
   })
 
   // 対照: 座標を引けない地点は押せる見た目にしない。
@@ -306,7 +306,7 @@ describe('長周期地震動の観測点の行をクリックしたときの寄�
     const row = clickRow(f.KNOWN)
 
     expect(row.getAttribute('role')).toBe('button')
-    expect(onFocusMap).toHaveBeenCalledWith([f.KNOWN_POS])
+    expect(onFocusMap).toHaveBeenCalledWith([f.KNOWN_POS], f.KNOWN)
   })
 
   // 正: 県・区域も震度一覧と同じく地名の部分が押せる（段数の非対称を作らない）。
@@ -315,11 +315,11 @@ describe('長周期地震動の観測点の行をクリックしたときの寄�
     renderCard(QUAKE, onFocusMap, { lpgm: LPGM })
 
     fireEvent.click(labelOf(f.PREF))
-    expect(onFocusMap).toHaveBeenCalledWith([[39.0, 141.0], [41.0, 142.0]])
+    expect(onFocusMap).toHaveBeenCalledWith([[39.0, 141.0], [41.0, 142.0]], null)
 
     openIntensityRows(f.PREF)
     fireEvent.click(labelOf(f.AREA))
-    expect(onFocusMap).toHaveBeenLastCalledWith([[39.5, 141.5], [40.5, 141.9]])
+    expect(onFocusMap).toHaveBeenLastCalledWith([[39.5, 141.5], [40.5, 141.9]], null)
   })
 
   // 対照: 座標を引けない観測点は押せない。**長周期地震動観測点は座標表に無いことがある**
@@ -358,7 +358,7 @@ describe('県・区域・市町村の地名をクリックしたときの寄り�
     expect(label.getAttribute('role')).toBe('button')
     fireEvent.click(label)
 
-    expect(onFocusMap).toHaveBeenCalledWith([[39.0, 141.0], [41.0, 142.0]])
+    expect(onFocusMap).toHaveBeenCalledWith([[39.0, 141.0], [41.0, 142.0]], null)
   })
 
   // 正: 区域も同じく境界の外接矩形へ。
@@ -368,7 +368,7 @@ describe('県・区域・市町村の地名をクリックしたときの寄り�
 
     fireEvent.click(labelOf(f.AREA))
 
-    expect(onFocusMap).toHaveBeenCalledWith([[39.5, 141.5], [40.5, 141.9]])
+    expect(onFocusMap).toHaveBeenCalledWith([[39.5, 141.5], [40.5, 141.9]], null)
   })
 
   // 正: 市町村は境界データが無いので配下の観測点の範囲で代用する。
@@ -379,7 +379,7 @@ describe('県・区域・市町村の地名をクリックしたときの寄り�
 
     fireEvent.click(labelOf(f.CITY))
 
-    expect(onFocusMap).toHaveBeenCalledWith(expect.arrayContaining([f.KNOWN_POS, f.OTHER_PREF_POS]))
+    expect(onFocusMap).toHaveBeenCalledWith(expect.arrayContaining([f.KNOWN_POS, f.OTHER_PREF_POS]), null)
     // 座標を引けない観測点（UNKNOWN）は入らない。
     expect(onFocusMap.mock.calls[0][0]).toHaveLength(2)
   })

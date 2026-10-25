@@ -2,8 +2,11 @@
 // 全球のプレート境界線を地図表示用の軽量なテーブルへ変換する。
 //
 // 出力: public/data/plate-boundaries.json
-//   [ { "plateA": "太平洋プレート", "plateB": "オホーツクプレート", "type": "subduction",
+//   [ { "plateA": "太平洋プレート", "plateB": "オホーツクプレート", "type": "SUB",
 //       "lines": [ [ [lat,lon], ... ] ] }, ... ]
+//   type は原典の 7 分類（SUB・OCB・CCB・OSR・CRB・OTF・CTF。→ lib/plateSteps.mjs）。
+//   **分類は配布元の GeoJSON に無い**ので、原典の PB2002_steps.dat（歩ごとの分類）を端点で突き合わせ、
+//   同じ分類が続く区間ごとに線を割って 1 件にする。
 //
 // 遠地地震（震源が国外）を選ぶと地図は世界規模まで引くため、日本周辺だけを切り出すと
 // 線が宙に浮いて見える。全球を保持しても座標は約 6,300 点（生成物で約 130KB）に収まり、
@@ -17,9 +20,14 @@
 import { writeFile, mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { indexSteps, parseSteps, splitLineByClass } from './lib/plateSteps.mjs'
 
 const SOURCE_URL =
   'https://raw.githubusercontent.com/fraxen/tectonicplates/master/GeoJSON/PB2002_boundaries.json'
+/** 原典の歩（7 分類）。配布元の GeoJSON は分類を持たないので、原典の配布元から取る。 */
+const STEPS_URL = 'http://peterbird.name/oldFTP/PB2002/PB2002_steps.dat.txt'
+/** 歩に当たらない区間の割合の上限。超えたら原典か配布元の形が変わっている。 */
+const MAX_UNMATCHED_RATIO = 0.01
 
 // PB2002 のプレート略号 → 日本語表記（全 52 プレート）。
 // 英語の正式名称は配布元 PB2002_plates.json の PlateName に一致させている。
@@ -96,15 +104,40 @@ async function main() {
   const res = await fetch(SOURCE_URL)
   if (!res.ok) throw new Error(`元データを取得できなかった: ${res.status}`)
   const geojson = await res.json()
+  console.log(`取得中: ${STEPS_URL}`)
+  const stepsRes = await fetch(STEPS_URL)
+  if (!stepsRes.ok) throw new Error(`原典の歩を取得できなかった: ${stepsRes.status}`)
+  const grid = indexSteps(parseSteps(await stepsRes.text()))
 
   // 配布元データは日付変更線で既に分割済み（経度は -180〜180 に収まり、隣接点の経度差が
   // 180 を超える箇所は無い）。そのため地球を一周する横線は生じず、追加の分割処理は不要。
-  const segments = geojson.features.map((f) => ({
-    plateA: plateName(f.properties.PlateA),
-    plateB: plateName(f.properties.PlateB),
-    type: f.properties.Type === 'subduction' ? 'subduction' : 'other',
-    lines: [f.geometry.coordinates.map(toLatLng)],
-  }))
+  const segments = []
+  let total = 0
+  let unmatched = 0
+  const unclassified = []
+  for (const f of geojson.features) {
+    const coords = f.geometry.coordinates
+    total += coords.length - 1
+    const split = splitLineByClass(grid, coords)
+    const plateA = plateName(f.properties.PlateA)
+    const plateB = plateName(f.properties.PlateB)
+    if (!split) {
+      unclassified.push(`${f.properties.PlateA}-${f.properties.PlateB}`)
+      continue
+    }
+    unmatched += split.unmatched
+    for (const run of split.runs) {
+      segments.push({ plateA, plateB, type: run.cls, lines: [run.coords.map(toLatLng)] })
+    }
+  }
+  // **分類を推測で付けない。** 1 区間も歩に当たらない線は止める（配布元か原典の形が変わっている）。
+  if (unclassified.length > 0) {
+    throw new Error(`原典の歩に 1 区間も当たらない境界線があります: ${unclassified.join(', ')}`)
+  }
+  console.log(`区間 ${total} のうち、歩に当たらず隣の分類を引き継いだもの ${unmatched}`)
+  if (unmatched / total > MAX_UNMATCHED_RATIO) {
+    throw new Error(`歩に当たらない区間が ${unmatched}/${total} あります。原典か配布元の座標が変わっています`)
+  }
 
   const unknown = [...new Set(
     geojson.features.flatMap((f) => [f.properties.PlateA, f.properties.PlateB]),

@@ -140,6 +140,8 @@ interface Registry {
   openGeneration: number
   /** 開いているクリック吹き出しを閉じる（`closeMapPopup` から呼ぶ）。 */
   closeClick: () => void
+  /** 当たり判定を通さず、渡した中身でクリック吹き出しを開く（`openPopupHtmlAt` から呼ぶ）。 */
+  openHtml: (lngLat: maplibregl.LngLatLike, html: string) => void
   /** クリックと同じ経路で吹き出しを開く（`openPopupAt` から呼ぶ）。 */
   openAt: (
     point: maplibregl.Point,
@@ -244,6 +246,7 @@ function createRegistry(map: MapLibreMap): Registry {
     refresh: null,
     openGeneration: 0,
     closeClick: () => {},
+    openHtml: () => {},
     openAt: () => {},
     detach: () => {},
   }
@@ -280,6 +283,14 @@ function createRegistry(map: MapLibreMap): Registry {
     reg.clickPopup.remove()
   }
   reg.closeClick = closeClick
+
+  reg.openHtml = (lngLat, html) => {
+    // 聞き直しの途中にある系列は降ろす（後から来た要求が勝つ。`openGeneration` の注記）。
+    reg.openGeneration++
+    stopRefresh()
+    closeHover()
+    reg.clickPopup.setLngLat(lngLat).setHTML(html).addTo(map)
+  }
 
   const releaseCursor = () => {
     if (!reg.cursorOwned) return
@@ -402,9 +413,9 @@ function createRegistry(map: MapLibreMap): Registry {
       // **外から開く要求が空振りしたら記録を残す。** 画面には「寄ったのに吹き出しだけ出ない」
       // としか現れないので、記録が無いと聞き直しの予算や距離の値が実運用で妥当かを確かめられない。
       //
-      // **ただし異常とは限らない。** 震度分布モードのあいだは観測点ドットを出さない決まりなので
-      // （`JapanMapGL` の `QuakeIntensityPointsGL` に渡す `visible`）、そのとき観測点の行を押せば
+      // **ただし異常とは限らない。** 描いていない点を指す行（長周期・未入電の表示中に押した観測点など）は
       // 正常に空振りする。だから警告ではなく詳細の側へ置く。クリックの空振りは数えない。
+      // 震度分布モード中の観測点の行は、ここへ来る前に `openPopupHtmlAt` で開いている（`FocusTargetGL`）。
       if (retryOnMiss) logGaveUp('開ける点が無い', lngLat, stats)
       closeClick()
       return
@@ -548,6 +559,23 @@ export function openPopupAt(map: MapLibreMap, lngLat: maplibregl.LngLatLike): vo
     return
   }
   reg.openAt(map.project(lngLat), lngLat, EXTERNAL_OPEN_RETRY_FRAMES, true, POINT_ONLY, true)
+}
+
+/**
+ * 当たり判定を通さず、渡した中身でクリック吹き出しを開く。
+ *
+ * **描いていない点の吹き出しを、一覧の行から開くときだけに使う。** 震度分布モードのあいだは観測点ドットを
+ * 描かない決まりなので（`JapanMapGL`）、押した行の観測点は当たり判定に現れない。そのときでも押した行の
+ * 吹き出しだけは出す（2026-10-22 ユーザー選択「押した行の吹き出しだけ出す (Recommended)」）。
+ * 地図のクリックはこれを通らない —— 描いていない点を地図の上で押させない。
+ */
+export function openPopupHtmlAt(map: MapLibreMap, lngLat: maplibregl.LngLatLike, html: string): void {
+  const reg = registries.get(map)
+  if (!reg) {
+    warnNoRegistry('openPopupHtmlAt')
+    return
+  }
+  reg.openHtml(lngLat, html)
 }
 
 /**

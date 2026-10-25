@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   buildLegendBlocks,
   representativeBlock,
+  withHeatmapPeriod,
+  heatmapCompletenessNote,
   EMPTY_LEGEND_SOURCES,
   type MapLegendSources,
 } from './legendBlocks'
@@ -69,11 +71,16 @@ describe('buildLegendBlocks', () => {
       expect(block.swatch.chips.map((c) => c.label)).toEqual(['活断層'])
     })
 
-    it('プレート境界は沈み込み帯とその他を別の色として出す', () => {
+    it('プレート境界は 4 系統を別の色として出す', () => {
       const [block] = buildLegendBlocks(sources({ plateBoundaries: true }))
       if (block.swatch.kind !== 'chips') throw new Error('chips ではない')
-      expect(block.swatch.chips).toHaveLength(2)
-      expect(block.swatch.chips[0].color).not.toBe(block.swatch.chips[1].color)
+      expect(block.swatch.chips.map((c) => c.label)).toEqual([
+        'プレート境界（沈み込み帯）',
+        'プレート境界（収束）',
+        'プレート境界（拡大・リフト）',
+        'プレート境界（トランスフォーム断層）',
+      ])
+      expect(new Set(block.swatch.chips.map((c) => c.color)).size).toBe(4)
     })
 
     it('潮位観測点は到達確認と欠測をそれぞれ出ているぶんだけ並べる', () => {
@@ -137,6 +144,40 @@ describe('buildLegendBlocks', () => {
       )
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.chips).toBeUndefined()
+    })
+
+    // 正: 深さの色帯の下に、点を塗る灰色と同じ色で「深さ不明」を添える。
+    it('深さ不明の点を描いているときは深さの色帯に「深さ不明」を添える', () => {
+      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'depth', catalogUnknownDepth: true }))
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips).toEqual([{ label: '深さ不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' }])
+    })
+
+    // 対照: 灰色で塗るのは深さの色分けのときだけ。M・発生年の色分けでは深さ不明の点も色帯の色で塗る。
+    it.each(['magnitude', 'time'] as const)('%s の色分けでは「深さ不明」を添えない', (colorBy) => {
+      const [block] = buildLegendBlocks(
+        sources({ catalogColorBy: colorBy, catalogUnknownDepth: true, catalogYearRange: { lo: 0, hi: 1 } }),
+      )
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips).toBeUndefined()
+    })
+
+    // 正: 気象庁以外の機関の震源は、どの色分けでも輪の見本を添える（輪は色分けに関わらず描く）。
+    it.each(['depth', 'magnitude', 'time'] as const)('%s の色分けでも気象庁以外の機関の震源に輪の見本を添える', (colorBy) => {
+      const [block] = buildLegendBlocks(
+        sources({ catalogColorBy: colorBy, catalogExternal: true, catalogYearRange: { lo: 0, hi: 1 } }),
+      )
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips?.map((c) => [c.label, c.shape])).toEqual([['気象庁以外の機関の震源', 'ring']])
+    })
+
+    // 安全弁: 不明の見本と輪の見本は両方並ぶ（片方が他方を押し出さない）。
+    it('M 不明と気象庁以外の機関の震源を両方描いていれば両方添える', () => {
+      const [block] = buildLegendBlocks(
+        sources({ catalogColorBy: 'magnitude', catalogUnknownMagnitude: true, catalogExternal: true }),
+      )
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips?.map((c) => c.label)).toEqual(['M 不明', '気象庁以外の機関の震源'])
     })
   })
 
@@ -209,6 +250,10 @@ const SOLO_SOURCES: { [K in keyof MapLegendSources]: Partial<MapLegendSources> |
   catalogYearRange: null,
   // マグニチュードの色帯に添える見本の有無だけを決める。色帯が無ければ何も出ない。
   catalogUnknownMagnitude: null,
+  // 深さの色帯に添える見本の有無だけを決める。色帯が無ければ何も出ない。
+  catalogUnknownDepth: null,
+  // 震源カタログの色帯に添える輪の見本の有無だけを決める。色帯が無ければ何も出ない。
+  catalogExternal: null,
 }
 
 describe('描いているものを凡例に出し忘れていないか', () => {
@@ -301,5 +346,34 @@ describe('representativeBlock', () => {
 
   it('1 つも無ければ null', () => {
     expect(representativeBlock([])).toBeNull()
+  })
+})
+
+describe('ヒートマップの期間の欄', () => {
+  const period = { period: '1y' as const, startLabel: '2026/01/01', replay: false, note: null }
+
+  it('[正] 見出しは期間を含めず、密度の欄にだけ期間を載せる', () => {
+    const blocks = withHeatmapPeriod(buildLegendBlocks(sources({ quakeIntensity: true, heatmap: true })), period)
+    const heat = blocks.find((b) => b.key === 'heatmap')
+    expect(heat?.title).toBe('地震活動の密度')
+    expect(heat?.heatmapPeriod).toEqual(period)
+    expect(blocks.find((b) => b.key === 'intensity')?.heatmapPeriod).toBeUndefined()
+  })
+
+  it('[対照] 密度を描いていなければ何も足さず、同じ配列を返す', () => {
+    const blocks = buildLegendBlocks(sources({ quakeIntensity: true }))
+    expect(withHeatmapPeriod(blocks, period)).toBe(blocks)
+  })
+
+  it('[安全弁] 期間が無ければ密度の欄にも載せない', () => {
+    const blocks = buildLegendBlocks(sources({ heatmap: true }))
+    expect(withHeatmapPeriod(blocks, null)[0].heatmapPeriod).toBeUndefined()
+  })
+
+  it('完全性の注記はカタログタブと同じ文で、掛からなければ出さない', () => {
+    expect(heatmapCompletenessNote({ fromYear: 1960, minMagnitude: 3 })).toBe(
+      '1960 年まで遡ると、記録が揃うのは M 3.0 以上です。それより小さい地震は少なく見えます。',
+    )
+    expect(heatmapCompletenessNote(null)).toBeNull()
   })
 })

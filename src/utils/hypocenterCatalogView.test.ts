@@ -22,7 +22,6 @@ import {
   DEPTH_FILTER_MAX_KM,
   MAGNITUDE_FILTER_RANGE,
   oldestYearOf,
-  withCompleteMagnitudeFloor,
   rangeLabel,
   formatMissingYears,
   DEPTH_RAMP_MAX_KM,
@@ -53,7 +52,16 @@ import type { HypocenterIndex, HypocenterYear } from './hypocenterCatalog'
 /** 1 年ぶんの作り物。配列の長さをそろえるのが面倒なので、ここでまとめて作る。 */
 const makeYear = (
   year: number,
-  events: readonly { lng: number; lat: number; depth: number; mag: number; timeMs: number }[],
+  events: readonly {
+    lng: number
+    lat: number
+    depth: number
+    mag: number
+    timeMs: number
+    external?: boolean
+    name?: string
+    intensity?: string
+  }[],
 ): HypocenterYear => ({
   year,
   count: events.length,
@@ -66,6 +74,12 @@ const makeYear = (
   lng: Float64Array.from(events.map((e) => e.lng)),
   depth: Float32Array.from(events.map((e) => e.depth)),
   magnitude: Float32Array.from(events.map((e) => e.mag)),
+  names: events.flatMap((e) => (e.name ? [e.name] : [])),
+  nameIdx: Int32Array.from(
+    events.map((e) => (e.name ? events.filter((x) => x.name).findIndex((x) => x === e) : -1)),
+  ),
+  external: Uint8Array.from(events.map((e) => (e.external ? 1 : 0))),
+  intensityCode: new Map(events.flatMap((e, i) => (e.intensity ? [[i, e.intensity] as const] : []))),
 })
 
 const FILTER: CatalogFilter = {
@@ -79,6 +93,7 @@ const FILTER: CatalogFilter = {
   maxLat: 56,
   minLng: 110,
   maxLng: 165,
+  includeExternal: false,
 }
 const VIEW: CatalogViewOptions = { colorBy: 'depth', sizeBy: 'fixed', sizePx: 3 }
 
@@ -255,62 +270,6 @@ describe('catalogCompleteness', () => {
   // 対照: 順方向でも同じ答えになる（逆順の扱いが特別な分岐になっていないこと）。
   it('順方向と逆方向で同じ', () => {
     expect(catalogCompleteness(INDEX, f(2020, 1919, 2))).toEqual(catalogCompleteness(INDEX, f(1919, 2020, 2)))
-  })
-})
-
-describe('withCompleteMagnitudeFloor', () => {
-  const f = (over: Partial<CatalogFilter>): CatalogFilter => ({ ...FILTER, ...over })
-  /** 期間だけを動かす（下限には手を触れない）。実際の操作で起きる形。 */
-  const movePeriod = (prev: CatalogFilter, fromYear: number, toYear: number) =>
-    withCompleteMagnitudeFloor(INDEX, prev, {
-      ...prev,
-      fromMs: jstYearStartMs(fromYear),
-      toMs: jstYearEndMs(toYear),
-    })
-
-  // 正: 期間の古い側に応じて下限が上がる。
-  it('古い期間なら下限が上がる', () => {
-    expect(movePeriod(f({}), 1919, 2022).minMagnitude).toBe(5)
-  })
-
-  // 対照: 上限に余裕があれば上限は触らない。
-  it('上限に余裕があれば触らない', () => {
-    expect(movePeriod(f({ maxMagnitude: 8 }), 1919, 2022).maxMagnitude).toBe(8)
-  })
-
-  // **安全弁: 下限が上限を追い越したら上限を外す。**
-  // 追い越したままにすると 1 件も残らず、しかも「なぜ 0 件か」が画面のどこにも出ない
-  // （完全性の注意書きは「下限が完全性を割っているか」しか見ないため黙る）。
-  it('下限が上限を追い越したら上限を外す', () => {
-    const r = movePeriod(f({ minMagnitude: 2, maxMagnitude: 3 }), 1919, 2022)
-    expect(r.minMagnitude).toBe(5)
-    expect(r.maxMagnitude).toBe(MAGNITUDE_FILTER_RANGE.max)
-    expect(r.minMagnitude).toBeLessThanOrEqual(r.maxMagnitude)
-  })
-
-  // 安全弁: どの期間へ動かしても下限が上限を越えない。
-  it.each([1919, 1960, 1997, 2020])('%i 年からでも下限は上限を越えない', (fromYear) => {
-    const r = movePeriod(f({ minMagnitude: 2, maxMagnitude: 2.5 }), fromYear, 2022)
-    expect(r.minMagnitude).toBeLessThanOrEqual(r.maxMagnitude)
-  })
-
-  // **正: 手で上げた下限は期間を動かしても残る。**
-  // 大きい地震だけを見ている最中に期間のつまみを触っただけで M2.0 へ戻ると、絞り込みが
-  // 無言で解ける（戻った値はちょうど完全性の下限なので注意書きも出ない）。
-  it('手で上げた下限は期間を動かしても残る', () => {
-    expect(movePeriod(f({ minMagnitude: 6 }), 1919, 2022).minMagnitude).toBe(6)
-  })
-
-  // 対照: 手で選んだ値でも、完全性を割るなら引き上げる（記録に無い地震を数えないため）。
-  it('手で選んだ下限でも完全性を割るなら引き上げる', () => {
-    expect(movePeriod(f({ minMagnitude: 3 }), 1919, 2022).minMagnitude).toBe(5)
-  })
-
-  // **安全弁: 合わせた値なら期間を戻したときに下がる（往復できる）。**
-  // 引き上げたまま据え置くと「動かして戻しただけなのに件数が減ったまま」になる。
-  it('合わせた値は期間を戻せば下がる', () => {
-    const wide = f({ fromMs: jstYearStartMs(1919), toMs: jstYearEndMs(2022), minMagnitude: 5 })
-    expect(movePeriod(wide, 2020, 2022).minMagnitude).toBe(2)
   })
 })
 
@@ -625,18 +584,20 @@ describe('buildCatalogPointCloud', () => {
     expect(c.columns.sizePx.length).toBe(c.columns.count)
   })
 
-  // 安全弁: 深さの欠測（NaN）は落とす。**通すと点が地表の上下へ飛ぶ。**
-  // 覆した振る舞い: 以前はマグニチュードの NaN も落としていた。M の NaN は「M が決まっていない」という
-  // 収録の値で、座標と深さは揃っているので点は正しい位置に描ける。下限が「制限なし」なら残す
-  // （扱いの詳細は下の「M が決まっていない地震（NaN）」）。
-  it('深さが NaN の地震は落とし、M が NaN の地震は既定の絞り込みで残す（以前は M の NaN も落としていた）', () => {
+  // 覆した振る舞い: 以前は M の NaN も深さの NaN も落としていた。どちらも「決まっていない」という
+  // 収録の値で、M は既定の絞り込みで残す（下の「M が決まっていない地震（NaN）」）。深さも絞り込みの
+  // 両端が「制限なし」なら残し、地表に置く（収録は 2026-10-23 ユーザー選択「ISC と照らして決める
+  // (Recommended)」。扱いは下の「深さが決まっていない地震（NaN）」）。
+  it('M と深さが NaN の地震も既定の絞り込みで残す（以前はどちらも落としていた）', () => {
     const bad = makeYear(2020, [
       { lng: 139, lat: 35, depth: 10, mag: Number.NaN, timeMs: 1 },
       { lng: 140, lat: 36, depth: Number.NaN, mag: 4, timeMs: 2 },
       { lng: 141, lat: 37, depth: 10, mag: 4, timeMs: 3 },
     ])
     const c = buildCatalogPointCloud([bad], FILTER, VIEW)
-    expect(Array.from(c.columns.lng)).toEqual([139, 141])
+    expect(Array.from(c.columns.lng)).toEqual([139, 140, 141])
+    // 地表に置く。NaN のまま渡すと点が地表の上下へ飛ぶ。
+    expect(Array.from(c.columns.depthKm).every(Number.isFinite)).toBe(true)
   })
 
   // 正: 発生年で色を付けるとき、**分母は絞り込みに残った点で測る**。
@@ -1195,5 +1156,76 @@ describe('preliminaryNote', () => {
 
   it('速報値の年が無い索引では出さない', () => {
     expect(preliminaryNote({ years: [2023], quality: { 2023: 'final' } }, period('2023-01-01', '2023-12-31'))).toBeNull()
+  })
+})
+
+describe('気象庁以外の機関の震源', () => {
+  const y = makeYear(2020, [
+    { lng: 139, lat: 35, depth: 10, mag: 3, timeMs: 1 },
+    { lng: 140, lat: 36, depth: 20, mag: 4, timeMs: 2, external: true },
+  ])
+
+  // 正: 切り替えを入れたら残り、輪の形で描く。
+  it('切り替えを入れたら残り、輪で描く', () => {
+    const c = buildCatalogPointCloud([y], { ...FILTER, includeExternal: true }, VIEW)
+    expect(c.columns.count).toBe(2)
+    expect(Array.from(c.external)).toEqual([0, 1])
+    expect(Array.from(c.columns.shapeIds!)).toEqual([0, 4])
+  })
+
+  // 対照: 既定（切り替えなし）では出さず、形の列も作らない。
+  it('既定では出さず、形の列も作らない', () => {
+    const c = buildCatalogPointCloud([y], FILTER, VIEW)
+    expect(Array.from(c.columns.lat)).toEqual([35])
+    expect(c.columns.shapeIds).toBeUndefined()
+  })
+
+  // 安全弁: 気象庁以外が残らなければ、切り替えを入れても形の列は作らない（全点共通の円）。
+  it('残った点に気象庁以外が無ければ形の列を作らない', () => {
+    const only = makeYear(2020, [{ lng: 139, lat: 35, depth: 10, mag: 3, timeMs: 1 }])
+    const c = buildCatalogPointCloud([only], { ...FILTER, includeExternal: true }, VIEW)
+    expect(c.columns.shapeIds).toBeUndefined()
+  })
+})
+
+describe('深さが決まっていない地震（NaN）', () => {
+  const y = makeYear(2020, [
+    { lng: 139, lat: 35, depth: 10, mag: 3, timeMs: 1 },
+    { lng: 140, lat: 36, depth: Number.NaN, mag: 4, timeMs: 2 },
+  ])
+
+  // 正: 深さの両端が「制限なし」なら残し、地表に置いて灰色で塗る。
+  it('両端が制限なしなら残り、地表に灰色で置く', () => {
+    const c = buildCatalogPointCloud([y], FILTER, VIEW)
+    expect(c.columns.count).toBe(2)
+    expect(Array.from(c.depthUnknown)).toEqual([0, 1])
+    expect(c.columns.depthKm[1]).toBe(0)
+    expect(Array.from(c.columns.color.slice(3, 6))).toEqual(UNKNOWN_MAGNITUDE_RGB.map((v) => Math.fround(v)))
+  })
+
+  // 対照: 深さで絞ったら外す（指定した範囲に入るとも言えない）。
+  it('下限か上限を動かしたら外れる', () => {
+    expect(Array.from(buildCatalogPointCloud([y], { ...FILTER, minDepthKm: 5 }, VIEW).columns.lat)).toEqual([35])
+    expect(Array.from(buildCatalogPointCloud([y], { ...FILTER, maxDepthKm: 100 }, VIEW).columns.lat)).toEqual([35])
+  })
+
+  // 安全弁: マグニチュードで色を付けるときは M の色のまま（灰色にするのは深さの色分けだけ）。
+  it('マグニチュードの色分けでは M の色', () => {
+    const c = buildCatalogPointCloud([y], FILTER, { ...VIEW, colorBy: 'magnitude' })
+    expect(Array.from(c.columns.color.slice(3, 6))).not.toEqual(UNKNOWN_MAGNITUDE_RGB.map((v) => Math.fround(v)))
+  })
+})
+
+describe('震央地名と最大震度を点へ持ち回す', () => {
+  // 正: 名前と震度の生コードを、残った点の並びで返す。
+  it('名前の無い地震は null', () => {
+    const y = makeYear(2020, [
+      { lng: 139, lat: 35, depth: 10, mag: 3, timeMs: 1, name: '茨城県南部', intensity: '4' },
+      { lng: 140, lat: 36, depth: 20, mag: 4, timeMs: 2 },
+      { lng: 141, lat: 37, depth: 30, mag: 5, timeMs: 3, name: '福島県沖' },
+    ])
+    const c = buildCatalogPointCloud([y], FILTER, VIEW)
+    expect(c.names).toEqual(['茨城県南部', null, '福島県沖'])
+    expect(c.intensityCode).toEqual(['4', null, null])
   })
 })

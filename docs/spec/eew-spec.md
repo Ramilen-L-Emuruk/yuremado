@@ -1744,7 +1744,7 @@ DMDATA・P2PQuake で明示的な取消電文（`cancelled: true`）が来た場
 - **カメラフィット**: `FitToEEWGL` が発火。第一報は S 波円（円が無ければ震源）へ寄り、以降は
   予想の区域塗りまで含めた範囲を追う。追従の主な起点は EEW 電文と予報円の更新で、区域塗りの範囲
   （`useEewLayerData` の `eewFitPositions`）は発報中の追従にのみ加わる。kyoshin モード限定。
-  詳細・モード限定の理由は [`map-rendering-spec.md`](map-rendering-spec.md) §6（後段「既知の限界（MAP-5）」）参照
+  詳細・モード限定の理由は [`map-rendering-spec.md`](map-rendering-spec.md) §6（後段「EEW の追従はリアルタイム震度タブだけ（MAP-5）」）参照
 
 **音種別の優先順位**（`selectEEWSoundType` の判定順）:
 1. **新規発報またはレベル格上げ**（`isNew || levelUpgraded`）→ `currentLevel` に応じて

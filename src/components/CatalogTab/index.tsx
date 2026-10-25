@@ -198,7 +198,7 @@ export const CatalogTab = memo(function CatalogTab({
       <Section title="絞り込み">
         <RangeRow
           label="期間"
-          description="表示する期間です。スライダーは年ごとに動き、日付を選ぶと年の途中から指定できます。日付を選んだ側は、もう一方のつまみを動かしても保たれます。古い側の年が変わると、その期間で網羅されている下限にマグニチュードを合わせます（観測網が疎だった時代は小さい地震が記録に残っていないため）"
+          description="表示する期間です。スライダーは年ごとに動き、日付を選ぶと年の途中から指定できます。日付を選んだ側は、もう一方のつまみを動かしても保たれます"
           valueText={`${formatJstDate(filter.fromMs)} 〜 ${formatJstDate(filter.toMs)}（${periodDayCount(filter.fromMs, filter.toMs).toLocaleString()}日ぶん）`}
           note={index ? preliminaryNote(index, filter) : null}
         >
@@ -239,7 +239,7 @@ export const CatalogTab = memo(function CatalogTab({
         <RangeRow
           label="マグニチュード"
           note={null}
-          description="表示する規模の範囲です。端に置くとその側の制限を外します。期間の古い側を昔へ動かすと、その期間で記録に残っている下限まで自動で引き上がります"
+          description="表示する規模の範囲です。端に置くとその側の制限を外します"
           valueText={rangeLabel(
             magnitudeBoundLabel(filter.minMagnitude, 'min'),
             magnitudeBoundLabel(filter.maxMagnitude, 'max'),
@@ -306,6 +306,19 @@ export const CatalogTab = memo(function CatalogTab({
             onChange={(minLng, maxLng) => onFilterChange({ ...filter, minLng, maxLng })}
           />
         </RangeRow>
+
+        {/* 既定は出さず、切り替えで足す（2026-10-25 ユーザー選択「既定は J だけ・切り替えで足す (Recommended)」）。
+            文言は 2026-10-25 ユーザー承認「D の案でよい (Recommended)」。 */}
+        <Row
+          label="気象庁以外の機関の震源"
+          description="気象庁以外の機関が決めた震源も表示します。ほとんどが海外の地震で、日本付近の一部は気象庁の震源と重なります。"
+        >
+          <Toggle
+            label="気象庁以外の機関の震源"
+            checked={filter.includeExternal}
+            onChange={(v) => onFilterChange({ ...filter, includeExternal: v })}
+          />
+        </Row>
       </Section>
 
       <Section title="見せ方">

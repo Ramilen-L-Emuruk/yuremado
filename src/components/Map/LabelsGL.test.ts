@@ -135,7 +135,7 @@ vi.mock('./gl/layerOrder', () => ({
   addOrderedLayer: (m: MapLibreMap, layer: { id: string }) => m.addLayer(layer as never),
 }))
 
-function mount(map: MapLibreMap, props: { overlapSignature?: string; recording?: boolean } = {}) {
+function mount(map: MapLibreMap, props: { overlapSignature?: string } = {}) {
   const element = (p: typeof props) =>
     createElement(
       MapGLContext.Provider,
@@ -363,9 +363,11 @@ describe('LabelsGL の重なり判定の分割実行', () => {
   })
 })
 
-// 録画モードは「判定をカメラが止まったときだけに絞る」もの。moveend まで止めてしまうと、
-// 移動後にラベルが重なったままになる。
-describe('LabelsGL の録画モード', () => {
+// 録画モードでも、マーカーの位置が変わったら判定をやり直す（2026-10-23 ユーザー選択「承認どおり
+// 間隔を広げる形にする (Recommended)」・2026-10-25「測って問題なければ 1 秒 (Recommended)」）。
+// 以前は録画モードの間だけ止めていて、録画にラベルが重なったまま残っていた。LabelsGL は録画モードを
+// 受け取らないので、ここでは「位置が変わると判定が走る」ことだけを固定する。
+describe('LabelsGL はマーカーの位置が変わると判定をやり直す', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     loaders.reset()
@@ -376,17 +378,7 @@ describe('LabelsGL の録画モード', () => {
     vi.useRealTimers()
   })
 
-  it('正: マーカーの位置が変わっても判定を走らせない', async () => {
-    const h = fakeMap()
-    const view = mount(h.map, { recording: true, overlapSignature: 'a' })
-    await vi.advanceTimersByTimeAsync(1100)
-    const before = h.queryCalls
-    view.setProps({ recording: true, overlapSignature: 'b' })
-    await vi.advanceTimersByTimeAsync(1100)
-    expect(h.queryCalls).toBe(before)
-  })
-
-  it('対照: 録画モードでなければ、位置が変わると判定が走る', async () => {
+  it('正: 位置が変わると判定が走る', async () => {
     const h = fakeMap()
     const view = mount(h.map, { overlapSignature: 'a' })
     await vi.advanceTimersByTimeAsync(1100)
@@ -396,13 +388,13 @@ describe('LabelsGL の録画モード', () => {
     expect(h.queryCalls).toBeGreaterThan(before)
   })
 
-  it('安全弁: 録画モードでも地図の移動では判定が走る', async () => {
+  it('対照: 位置が変わらなければ走らない', async () => {
     const h = fakeMap()
-    mount(h.map, { recording: true })
+    const view = mount(h.map, { overlapSignature: 'a' })
     await vi.advanceTimersByTimeAsync(1100)
     const before = h.queryCalls
-    h.fire('moveend')
+    view.setProps({ overlapSignature: 'a' })
     await vi.advanceTimersByTimeAsync(1100)
-    expect(h.queryCalls).toBeGreaterThan(before)
+    expect(h.queryCalls).toBe(before)
   })
 })

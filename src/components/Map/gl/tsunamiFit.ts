@@ -16,7 +16,10 @@ export type TsunamiFitAction =
   | 'none'
 
 export interface TsunamiFitInput {
-  /** 地図が津波モードか。津波以外のモードでは津波側からカメラを動かさない。 */
+  /**
+   * 地図が津波モードか。津波以外のモードでは津波側からカメラを動かさない（2026-10-14 の問い
+   * 「津波タブ以外では津波側からカメラを動かさない」に選択「今のまま（推奨）」）。
+   */
   isTsunamiMode: boolean
   /** ユーザーが地図を手動操作中か（操作ガード）。 */
   isUserInteracting: boolean

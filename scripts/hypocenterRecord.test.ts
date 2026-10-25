@@ -7,7 +7,7 @@
 // （出典: https://www.data.jma.go.jp/eqev/data/bulletin/hypo.html ・公共データ利用規約 第1.0版）。
 
 import { describe, it, expect } from 'vitest'
-import { parseHypocenterRecord, parseTrailingBlankDecimal, RECORD_LENGTH } from './hypocenterRecord'
+import { parseDepthField, parseHypocenterRecord, parseTrailingBlankDecimal, RECORD_LENGTH } from './hypocenterRecord'
 
 // 2011年3月11日 東北地方太平洋沖地震の本震。気象庁の発表値は
 // 38.1035°N / 142.8610°E / 深さ 23.7km / M9.0（2011 年カタログより）。
@@ -94,12 +94,37 @@ describe('parseHypocenterRecord', () => {
 const ODD_DEPTH =
   'J2016041811492482 024 323107 024 1303660 024  0 420707V   511   7271SOUTHERN KUMAMOTO PREF   24A'
 
-describe('読めない行', () => {
-  // 値を推測して混ぜるより捨てる方が安全。**「読めない」ことをここで固定しておく** ——
-  // 将来この形を読めるようにするなら、意図的な変更としてこのテストを反転させること。
-  it('仕様外の深さ欄は読まない', () => {
-    expect(parseHypocenterRecord(ODD_DEPTH)).toBe(null)
+describe('仕様外の深さ欄', () => {
+  // 2 通りに取れる形は値を推測せず深さ不明にする。行ごと捨てると、時刻・位置・M が分かっている
+  // 地震がカタログから消える（2026-10-23 ユーザー選択「ISC と照らして決める (Recommended)」）。
+  it('正: 小数部に空白が挟まる形（熊本の余震）は深さ不明で読む', () => {
+    const r = parseHypocenterRecord(ODD_DEPTH)!
+    expect(r.depth).toBe(null)
+    expect(r.lat).toBeCloseTo(32 + 31.07 / 60, 4)
   })
+
+  it('正: 整数部が空白で小数部が 1〜9 の形は深さ不明', () => {
+    expect(parseDepthField('   7 ')).toBe(null)
+    expect(parseDepthField('  0 4')).toBe(null)
+  })
+
+  it('対照: 整数部が空白で小数部が 0 の形は 0 km', () => {
+    expect(parseDepthField('   0 ')).toBe(0)
+  })
+
+  it('対照: 書式どおりの深さはそのまま', () => {
+    expect(parseDepthField(' 2374')).toBeCloseTo(23.74, 6)
+    expect(parseDepthField(' 50  ')).toBe(50)
+  })
+
+  it('安全弁: 上のどれでもない形は読めない行として捨てる', () => {
+    expect(parseDepthField('  1 2 ')).toBe('unreadable')
+    expect(parseDepthField(' a   ')).toBe('unreadable')
+    expect(parseHypocenterRecord(ODD_DEPTH.slice(0, 44) + ' x   ' + ODD_DEPTH.slice(49))).toBe(null)
+  })
+})
+
+describe('読めない行', () => {
 
   it('長さが足りない行は null', () => {
     expect(parseHypocenterRecord('J2011031114461812')).toBe(null)

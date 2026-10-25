@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { LatLng } from '../../utils/stationCoords'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import * as maplibregl from 'maplibre-gl'
 // maplibre-gl.css は main.tsx が index.css より前に読む（カスケード順を固定するため。詳細は main.tsx）。
@@ -17,7 +18,7 @@ import { KyoshinMaxEffectGL } from './KyoshinMaxEffectGL'
 import { ActiveFaultsGL } from './ActiveFaultsGL'
 import { PlateBoundariesGL } from './PlateBoundariesGL'
 import { DayNightGL } from './DayNightGL'
-import { QuakeIntensityPointsGL } from './QuakeIntensityPointsGL'
+import { QuakeIntensityPointsGL, quakePointClickHtml } from './QuakeIntensityPointsGL'
 import { QuakeUnreceivedPointsGL } from './QuakeUnreceivedPointsGL'
 import { QuakeIntensitySurfaceGL } from './QuakeIntensitySurfaceGL'
 import { QuakeEstimatedIntensityGL } from './QuakeEstimatedIntensityGL'
@@ -124,6 +125,7 @@ export function JapanMapGL({
   focusObsName = null,
   focusTarget = null,
   heatPoints,
+  heatIntensityScale,
   showBathymetry = true,
   kyoshinSites = [],
   kyoshinIndices = [],
@@ -348,6 +350,18 @@ export function JapanMapGL({
   // 凡例・重なり判定の合図・描画の 3 か所で同じものを使う（片方だけ直すと食い違う）。
   const drawnUnreceivedMarkers = unreceivedMode || !aggregateByRegion ? unreceivedMarkers : orphanUnreceivedMarkers
   const unreceivedMarkersVisible = mode === 'quake' && !lpgmActive && !distributionMode
+
+  // 震度分布モードのあいだは観測点ドットを描かないので、一覧の行から寄せた観測点は地図の上で
+  // 当たらない。押した行の吹き出しだけは出す（2026-10-22 ユーザー選択「押した行の吹き出しだけ出す (Recommended)」）。
+  // ドットは出さない・続報で分布モードを閉じる、は従来どおり（2026-09-12・09-13 承認）。
+  // **座標が同じ観測点は名前で選ぶ**（全国で 56 組。2026-10-25 ユーザー選択「名前で引く (Recommended)」）。
+  // 名前が合うものが無いとき（範囲の行・表記の揺れ）だけ、座標の合う最初の点へ倒す。
+  const hiddenPointPopupHtml = useCallback((position: LatLng, stationName: string | null): string | null => {
+    if (mode !== 'quake' || !distributionMode) return null
+    const atPosition = stationMarkers.filter((p) => p.position[0] === position[0] && p.position[1] === position[1])
+    const m = (stationName !== null ? atPosition.find((p) => p.addr === stationName) : undefined) ?? atPosition[0]
+    return m ? quakePointClickHtml(m, epicenter) : null
+  }, [mode, distributionMode, stationMarkers, epicenter])
   const overlapSignature = useMemo(() => {
     const parts = [
       aggregateByRegion ? regionAggregates.map((r) => r.name).join(',') : '',
@@ -606,7 +620,8 @@ export function JapanMapGL({
     eewLpgm: mode === 'kyoshin' && eewLpgmRegionAggregates.length > 0,
     // **予報円はリアルタイム震度モードのときだけ凡例へ出す。** 描画自体は全モードで走るが、
     // それ以外のモードでは半透明で添えるだけ（`PsWaveGL` の `fullOpacity`）。同じ扱いの
-    // EEW 震源の×印を凡例に入れていないので、こちらだけ枠を取ると釣り合わない。
+    // EEW 震源の×印を凡例に入れていないので、こちらだけ枠を取ると釣り合わない
+    // （2026-10-22 ユーザー選択「今のまま記録する」。map-rendering-spec §7 の M4）。
     psWave: mode === 'kyoshin' && kyoshinPsWave.length > 0,
     tsunamiGrade: tsunamiLines.length > 0,
     tsunamiObsHeight: mode === 'tsunami' && observationBars.length > 0,
@@ -621,6 +636,8 @@ export function JapanMapGL({
     catalogColorBy: mode === 'catalog' && catalogCloud && catalogCloud.columns.count > 0 ? catalogColorBy : null,
     catalogYearRange: catalogCloud?.timeRange ?? null,
     catalogUnknownMagnitude: mode === 'catalog' && (catalogCloud?.unknownMagnitudeCount ?? 0) > 0,
+    catalogUnknownDepth: mode === 'catalog' && (catalogCloud?.unknownDepthCount ?? 0) > 0,
+    catalogExternal: mode === 'catalog' && (catalogCloud?.externalCount ?? 0) > 0,
   }
   // **中身が変わったときだけ知らせる。** この関数は強震モニタの毎秒更新で呼び直されるので、
   // 素直に依存へ置くと毎秒通知が飛ぶ。小さなオブジェクトなので文字列にして比べる。
@@ -656,7 +673,7 @@ export function JapanMapGL({
           {/* 後続フェーズのレイヤーコンポーネントはここに置く（map を Context で購読） */}
           <BaseMapGL showBathymetry={showBathymetry} recording={recording} />
           {/* 地名ラベル（地方/県/区域名・最前面）。 */}
-          <LabelsGL overlapSignature={overlapSignature} iconScale={iconScale} recording={recording} />
+          <LabelsGL overlapSignature={overlapSignature} iconScale={iconScale} />
           {/* 活断層・プレート境界（quake/kyoshin モード）。kyoshin ドット群の下に敷く。 */}
           {/* 地震活動ヒートマップ（quake/kyoshin モードで heatPoints があるとき・区域塗りより背面）。
               GeoJSON source を持つレイヤーは mode に関わらず常時マウントし visible だけで切り替える
@@ -665,6 +682,7 @@ export function JapanMapGL({
           <QuakeHeatmapGL
             points={heatPoints ?? null}
             iconScale={iconScale}
+            intensityScale={heatIntensityScale}
             visible={(mode === 'quake' || mode === 'kyoshin') && !!heatPoints && heatPoints.length > 0}
           />
           {/* 夜の側の重ね塗り。地図の照明条件にあたるので、モードを問わず出す
@@ -815,11 +833,9 @@ export function JapanMapGL({
                 shakeFocus={shakeFocus}
                 lastConsumedFocusTickRef={lastConsumedShakeFocusTickRef}
               />
-              {/* EEW 追従（idle 抑制つき）。
-                  MAP-5 の常時マウント化は QuakeFitGL/TsunamiFitGL との flyTo 争い・EEW 解除後の
-                  帰還未実装等の副作用が広範で、正しい対応には大規模リファクタが必要と判明したため
-                  revert。kyoshin モード限定のままとし、他モード滞在中の EEW 追従中断は既知の限界
-                  として仕様書に明記する。 */}
+              {/* EEW 追従（idle 抑制つき）。リアルタイム震度タブの間だけ追う（MAP-5）。
+                  2026-10-14 の問い「EEW の追従はリアルタイム震度タブだけ」に選択「今のまま（推奨）」。
+                  他のタブへ移ると追従は止まる（仕様書 map-rendering-spec §6「MAP-5」）。 */}
               <FitToEEWGL
                 eews={eews}
                 psWave={kyoshinPsWave}
@@ -891,7 +907,7 @@ export function JapanMapGL({
           <FocusObsGL focusObsName={focusObsName} observationBars={focusablePoints} />
           {/* 一覧の行クリックで渡された地点へ寄せる（いまの呼び出し元は地震カードの観測点の行）。
               モード切替をまたいで「処理済みの ts」を保つため常時マウントする。 */}
-          <FocusTargetGL focusTarget={focusTarget} />
+          <FocusTargetGL focusTarget={focusTarget} hiddenPointPopupHtml={hiddenPointPopupHtml} />
         </MapGLContext.Provider>
       </div>
     </div>

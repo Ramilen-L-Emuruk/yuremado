@@ -42,7 +42,7 @@ import { useHypocenterCatalog } from './hooks/useHypocenterCatalog'
 import {
   buildCatalogPointCloud, DEPTH_FILTER_MAX_KM, MAGNITUDE_FILTER_RANGE,
   LATITUDE_FILTER_RANGE, LONGITUDE_FILTER_RANGE,
-  CATALOG_REBUILD_DEBOUNCE_MS, oldestYearOf, withCompleteMagnitudeFloor,
+  CATALOG_REBUILD_DEBOUNCE_MS,
   jstYearOf, jstYearStartMs, jstYearEndMs, clampPeriodToRange, catalogPeriodBounds,
   type CatalogFilter, type CatalogViewOptions, type CatalogPointCloud,
 } from './utils/hypocenterCatalogView'
@@ -50,7 +50,8 @@ import { SpecialInfoBanner, shareButtonBottomClass } from './components/SpecialI
 import { useSpecialInfoBanners } from './components/SpecialInfoBanner/useSpecialInfoBanners'
 import { MapLegend } from './components/MapLegend'
 import { isMapAreaShort } from './components/MapLegend/autoCollapse'
-import { buildLegendBlocks, EMPTY_LEGEND_SOURCES, type MapLegendSources, type LegendBlock } from './components/MapLegend/legendBlocks'
+import { buildLegendBlocks, EMPTY_LEGEND_SOURCES, withHeatmapPeriod, heatmapCompletenessNote, type MapLegendSources, type LegendBlock, type LegendHeatmapPeriod } from './components/MapLegend/legendBlocks'
+import { formatHeatmapDate, type HeatmapPeriod } from './utils/quakeHeatmap'
 
 import { ActionChecklist } from './components/ActionChecklist'
 import { useActionChecklist } from './hooks/useActionChecklist'
@@ -387,9 +388,11 @@ export function App() {
   // カードの一覧の行をクリックしたときに、その場所を地図の寄り先として通知する。
   // 座標の解決はカード側が行う（押せるかどうかの判定と同じ引き当てを使うため）。
   // 1 点なら flyTo、複数点ならその外接矩形へ寄る（→ `FocusTargetGL`）。
-  const focusMapTarget = useCallback((positions: LatLng[]) => {
-    setFocusedMapTarget({ positions, ts: Date.now() })
+  const focusMapTarget = useCallback((positions: LatLng[], stationName: string | null) => {
+    setFocusedMapTarget({ positions, stationName, ts: Date.now() })
   }, [])
+  // 観測点名を持たない一覧（津波の区域・公開観測点の段）から寄せる口。
+  const focusMapPositions = useCallback((positions: LatLng[]) => focusMapTarget(positions, null), [focusMapTarget])
   // EEW 発報中（cancelledAt 除外済み）・揺れ検知フラグ・地震情報リスト・デフォルトタブを
   // タイマーコールバック内やフック間で参照するための ref。
   // 値の確定はレンダー後半（useEarthquakes / useKyoshinDetectorV2 の後）で毎レンダー代入する。
@@ -1062,7 +1065,12 @@ export function App() {
 
   const scenarioTest = useTestScenarios(loadReplayEvents)
 
-  const { points: quakeHeatPoints } = useQuakeHeatmap(settings.showQuakeHeatmap, debouncedApiKey, earthquakes, replayTimeOffset)
+  const {
+    points: quakeHeatPoints,
+    windowStartMs: heatWindowStartMs,
+    completeness: heatCompleteness,
+    intensityScale: heatIntensityScale,
+  } = useQuakeHeatmap(settings.showQuakeHeatmap, debouncedApiKey, earthquakes, replayTimeOffset, settings.heatmapPeriod)
 
   // 最新の非解除津波電文から観測データを収集（地図バー描画用）
   const latestTsunamiObservations = useMemo(() => {
@@ -1451,9 +1459,8 @@ export function App() {
     // **年は日本時間で数える。** 端末の時計が別のタイムゾーンだと、年明け前後に収録の無い年を選ぶ。
     const thisYear = jstYearOf(Date.now())
     return {
-      // 初期表示は直近 10 年。マグニチュードの下限は索引が届いた時点でその期間の
-      // 完全性へ合わせ直す（下の効果）。ここでの 2 は索引が来るまでの仮の値。
-      // 終わりも仮の値で、索引が届いたらデータの最終日へ収める（下の効果）。
+      // 初期表示は直近 10 年。マグニチュードの下限は期間に合わせて引き上げない（下の効果の注記）。
+      // 終わりは仮の値で、索引が届いたらデータの最終日へ収める（下の効果）。
       fromMs: jstYearStartMs(thisYear - 9),
       toMs: jstYearEndMs(thisYear),
       minMagnitude: MAGNITUDE_FILTER_RANGE.min,
@@ -1464,6 +1471,7 @@ export function App() {
       maxLat: LATITUDE_FILTER_RANGE.max,
       minLng: LONGITUDE_FILTER_RANGE.min,
       maxLng: LONGITUDE_FILTER_RANGE.max,
+      includeExternal: false,
     }
   })
   const [catalogView, setCatalogView] = useState<CatalogViewOptions>({ colorBy: 'depth', sizeBy: 'fixed', sizePx: 3 })
@@ -1481,10 +1489,14 @@ export function App() {
     mapTab === 'catalog',
   )
   const catalogIndex = catalog.index
-  // 索引が届いたら、期間を収録範囲へ収め、マグニチュードの下限をその期間の完全性に合わせる。
+  // 索引が届いたら、期間を収録範囲へ収める。
   // **収める側も必要。** 年が明けた直後は「今年」がまだ収録されておらず、選択肢に無い値が残る。
   // **終わりはデータの最終日へ収める**（`catalogPeriodBounds`）。既定の終わり（今年の 12 月 31 日）は
   // 索引が来るまでの仮の値で、ここでデータの終端（2 日前前後）まで下がる。
+  //
+  // **マグニチュードの下限・上限は期間に合わせて動かさない**（2026-10-23 ユーザー選択「引き上げず
+  // 注記で示す (Recommended)」）。完全性を割っていることは、手で下げたときと同じ注記
+  // （`catalogCompleteness` → 震源カタログタブ）で示す。
   useEffect(() => {
     if (!catalogIndex || catalogIndex.years.length === 0) return
     setCatalogFilter((prev) => {
@@ -1493,26 +1505,13 @@ export function App() {
       // 期間が丸ごと収録の外にあるときに同じ 1 点へ潰れ、1 件も残らないのに見出しは
       // 「1 日ぶん」と出る。
       const { fromMs, toMs } = clampPeriodToRange(prev, lo, hi)
-      const next = withCompleteMagnitudeFloor(catalogIndex, prev, { ...prev, fromMs, toMs })
-      if (
-        fromMs === prev.fromMs && toMs === prev.toMs &&
-        next.minMagnitude === prev.minMagnitude && next.maxMagnitude === prev.maxMagnitude
-      ) return prev
-      return next
+      if (fromMs === prev.fromMs && toMs === prev.toMs) return prev
+      return { ...prev, fromMs, toMs }
     })
   }, [catalogIndex])
-  // 期間の始まりを変えたら、その期間で網羅されている下限へ合わせ直す。
-  // **手で下げるのは妨げない**（下げたときは注意書きが出る）。合わせ直すのは期間を動かした時だけ。
   const handleCatalogFilterChange = useCallback((next: CatalogFilter) => {
-    setCatalogFilter((prev) => {
-      if (!catalogIndex) return next
-      // **見るのは期間の最も古い年**（`oldestYearOf`）。「開始」だけを見ると、終了側を古い年へ
-      // 動かしたときに下限が付いてこない。合わせ方は `withCompleteMagnitudeFloor` に集約
-      //（下限が上限を追い越す経路と、手で選んだ下限を残す判断があるため、単に代入してはいけない）。
-      if (oldestYearOf(next) === oldestYearOf(prev)) return next
-      return withCompleteMagnitudeFloor(catalogIndex, prev, next)
-    })
-  }, [catalogIndex])
+    setCatalogFilter(next)
+  }, [])
   // **タブを離れても点群は捨てない。** 捨てると往復のたびに数十万点を詰め直すことになる
   // （地図側は visible で隠すだけ）。
   //
@@ -1834,7 +1833,25 @@ export function App() {
   // 地図に重ねる凡例。**中身は地図が決める** —— 各レイヤーの表示条件から組んだものを受け取り、
   // ここでは並べ方（`buildLegendBlocks`）だけを担う。
   const [legendSources, setLegendSources] = useState<MapLegendSources>(EMPTY_LEGEND_SOURCES)
-  const legendBlocks = useMemo(() => buildLegendBlocks(legendSources), [legendSources])
+  const heatLegendPeriod = useMemo<LegendHeatmapPeriod | null>(
+    () =>
+      heatWindowStartMs === null
+        ? null
+        : {
+            period: settings.heatmapPeriod,
+            startLabel: formatHeatmapDate(heatWindowStartMs),
+            replay: replayTimeOffset !== null,
+            note: heatmapCompletenessNote(heatCompleteness),
+          },
+    [heatWindowStartMs, settings.heatmapPeriod, replayTimeOffset, heatCompleteness],
+  )
+  const legendBlocks = useMemo(
+    () => withHeatmapPeriod(buildLegendBlocks(legendSources), heatLegendPeriod),
+    [legendSources, heatLegendPeriod],
+  )
+  const changeHeatmapPeriod = useCallback((period: HeatmapPeriod) => {
+    updateSetting('heatmapPeriod', period)
+  }, [updateSetting])
   // 地図が低い画面では畳んだ状態から始める。**測るのは地図領域の実寸**で、画面の幅や
   // ブレークポイントでは決まらない（上下分割の比率つまみと折りたたみで変わる）。
   const mapAreaRef = useRef<HTMLDivElement | null>(null)
@@ -2687,6 +2704,7 @@ export function App() {
                 showActiveFaults={settings.showActiveFaults}
                 activeFaultOpacity={settings.activeFaultOpacity}
                 heatPoints={quakeHeatPoints}
+                heatIntensityScale={heatIntensityScale}
                 showPlateBoundaries={settings.showPlateBoundaries}
                 showDayNight={settings.showDayNight}
                 dayNightOpacity={settings.dayNightOpacity}
@@ -2779,7 +2797,7 @@ export function App() {
                 // 切られ、指で押せる範囲が縮む —— 余白で逃がす（`pointer-events-none` なので地図の操作は妨げない）。
                 // 包みは凡例が描くものを持つときだけ出す（`MapLegend` は空なら何も描かないが、包みの余白は残る）。
                 <div className="min-h-0 pt-[0.6rem] shrink-8 overflow-y-auto overflow-x-hidden overscroll-x-none flex flex-col items-start">
-                  <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} />
+                  <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} onHeatmapPeriodChange={changeHeatmapPeriod} />
                 </div>
               )}
               {/* 地図右下の共有ボタン（表示中の地図を画像にする）。**特別情報の帯のすぐ上に置く** —— 縦並びの外に
@@ -2820,7 +2838,7 @@ export function App() {
               onToggleExpanded={toggleSeismoWaveExpanded}
               arrivalEews={seismoArrivalEews}
               spanSec={settings.waveSpanSec}
-              onFocusStation={focusMapTarget}
+              onFocusStation={focusMapPositions}
               onLeadRowHeightChange={setWaveLeadRowHeight}
               paused={squareLayout.waveHidden}
             />
@@ -2911,7 +2929,7 @@ export function App() {
                 earthquakes={filteredEarthquakes}
                 onEarthquakeLink={linkTsunamiToEarthquake}
                 onObservationClick={focusTsunamiObs}
-                onFocusMap={focusMapTarget}
+                onFocusMap={focusMapPositions}
                 focusedDistrict={focusedDistrict}
                 obsUpdateStatus={obsUpdateStatus}
               areaGradeChangedKeys={areaGradeChangedKeys}

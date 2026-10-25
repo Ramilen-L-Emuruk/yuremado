@@ -36,6 +36,7 @@ import {
 import { useKyoshinImport } from '../../hooks/useKyoshinImport'
 import { buildSettingsFile, parseSettingsFile, settingsFileName, type SettingsVariant } from '../../utils/settingsIo'
 import { SHARE_CARD_FORMATS } from '../../utils/shareCard'
+import { HEATMAP_PERIODS, isHeatmapPeriod } from '../../utils/quakeHeatmap'
 
 export interface TestFunctions {
   earthquake: () => void
@@ -1681,12 +1682,26 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </div>
           </Row>
         )}
-        <Row label="地震活動ヒートマップを表示" description="地震情報・リアルタイムタブの地図に直近1ヶ月の地震活動をヒートマップで表示します">
+        <Row label="地震活動ヒートマップを表示" description="地震情報・リアルタイムタブの地図に地震活動をヒートマップで表示します。期間は下の欄か地図の凡例で変えられます">
           <Toggle
             checked={settings.showQuakeHeatmap}
             onChange={v => onUpdate('showQuakeHeatmap', v)}
           />
         </Row>
+        {/* 凡例を出さない設定や点が 0 件のときも期間を変えられるように置く（2026-10-25 ユーザー選択「A1 設定タブにも足す (Recommended)」）。 */}
+        {settings.showQuakeHeatmap && (
+          <Row label="ヒートマップの期間" description="どこまで遡った地震を描くかを選びます。地図の凡例のつまみと同じ設定です">
+            <select
+              value={settings.heatmapPeriod}
+              onChange={e => { if (isHeatmapPeriod(e.target.value)) onUpdate('heatmapPeriod', e.target.value) }}
+              className="bg-panel border border-border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500"
+            >
+              {HEATMAP_PERIODS.map(p => (
+                <option key={p.key} value={p.key}>{p.label}</option>
+              ))}
+            </select>
+          </Row>
+        )}
         <Row label="凡例を表示" description="地図の左下に、いま地図で使っている色の意味（震度・津波の等級・震源の深さなど）を重ねます。見出しをタップすると畳めます">
           <Toggle
             checked={settings.showMapLegend}
@@ -1773,7 +1788,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             onChange={v => onUpdate('periodicReloadHours', v ? 1 : 0)}
           />
         </Row>
-        <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりませんが、地名ラベルの位置調整が数秒遅れます">
+        <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりません">
           <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
         </Row>
       </Section>

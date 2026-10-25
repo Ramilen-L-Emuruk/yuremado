@@ -36,7 +36,7 @@ const card = {
 } as unknown as JMAQuake
 const QUAKES = [card]
 const NO_EEWS: ReadonlyMap<string, EEWAlert> = new Map()
-const YEAR_2026 = { year: 2026, timeMs: [CATALOG_MS], lat: [32.5], lng: [130.5], magnitude: [3.5] }
+const YEAR_2026 = { year: 2026, timeMs: [CATALOG_MS], lat: [32.5], lng: [130.5], magnitude: [3.5], external: new Uint8Array([0]) }
 
 /** 待っている Promise を流し切る（偽のタイマーは進めない）。 */
 const flush = () => act(async () => { await vi.advanceTimersByTimeAsync(0) })

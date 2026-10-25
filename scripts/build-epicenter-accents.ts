@@ -38,9 +38,14 @@ import { openLongVowelsInEntries, verifyOpenedEntries, type PhraseOrigin } from 
  * セルのルビとして読みを持つが、ルビが付くのは漢字の一部だけで（`東北地方` は「とうほく」しか
  * 付かない）読みとして復元できない。こちらは同じ気象庁のデータから全件のふりがなを整えた
  * 二次データで、ライセンスは CC0。
+ *
+ * **コミットで固定する。** 同じ一覧から長期震源カタログの震央地名（区域の線で引く）も作るので、
+ * `main` を指したままだと、上流が線を引き直した日を境に、作り直した年だけ別の区域で名前が付く。
+ * 版を上げるときは両方（`build-epicenter-accents`・`build-hypocenter-catalog` の全期間）を作り直す。
  */
+export const SOURCE_REVISION = '0f2d44dc3ccd1a9abe8c13c305786717fee466a4'
 export const SOURCE_URL =
-  'https://raw.githubusercontent.com/0Quake/JMA_Region/main/%E9%9C%87%E5%A4%AE%E5%9C%B0%E5%90%8D.geojson'
+  `https://raw.githubusercontent.com/0Quake/JMA_Region/${SOURCE_REVISION}/%E9%9C%87%E5%A4%AE%E5%9C%B0%E5%90%8D.geojson`
 
 const DEFAULT_ENGINE = 'http://localhost:50021'
 const DEFAULT_SPEAKER = 6

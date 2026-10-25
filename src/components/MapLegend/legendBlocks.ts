@@ -24,7 +24,14 @@ import { UNRECEIVED_COLOR } from '../Map/gl/intensityIcons'
 import { ARRIVAL_COLOR } from '../Map/gl/tsunamiArrivalMarker'
 import { S_WAVE_COLOR, P_WAVE_COLOR } from '../Map/gl/psWaveStyle'
 import { HEATMAP_DENSITY_STOPS } from '../Map/gl/heatmapRamp'
-import { FAULT_COLOR, SUBDUCTION_COLOR, PLATE_OTHER_COLOR } from '../Map/gl/overlayLineStyle'
+import type { HeatmapPeriod } from '../../utils/quakeHeatmap'
+import {
+  FAULT_COLOR,
+  SUBDUCTION_COLOR,
+  PLATE_CONVERGENT_COLOR,
+  PLATE_DIVERGENT_COLOR,
+  PLATE_TRANSFORM_COLOR,
+} from '../Map/gl/overlayLineStyle'
 import {
   DEPTH_RAMP,
   MAGNITUDE_RAMP,
@@ -65,7 +72,7 @@ export interface LegendCell {
 export interface LegendChip {
   label: string
   color: string
-  shape: 'line' | 'dot' | 'bar'
+  shape: 'line' | 'dot' | 'bar' | 'ring'
 }
 
 /** 連続した色帯の折れ点。`at` は 0〜1。 */
@@ -94,6 +101,27 @@ export type LegendSwatch =
       chips?: LegendChip[]
     }
 
+/**
+ * ヒートマップ欄に添える期間（スライダーと「期間 ○ 〜 いま」の行）。地図の描き方ではなく利用者の
+ * 選択なので、`MapLegendSources` ではなく `withHeatmapPeriod` で後から載せる。
+ */
+export interface LegendHeatmapPeriod {
+  period: HeatmapPeriod
+  /** 期間の始まり（`2026/09/25`）。 */
+  startLabel: string
+  /** 再生中か（終わりを「いま」ではなく「再生時刻」と書く）。 */
+  replay: boolean
+  /** 観測網の疎な時代に掛かるときの注記。掛からなければ `null`。 */
+  note: string | null
+}
+
+/**
+ * 期間の行の文（「期間 2026/09/25 〜 いま」）。**画面の凡例と共有カードの画像が同じ文を出すよう、ここで組む。**
+ */
+export function heatmapPeriodText(period: LegendHeatmapPeriod): string {
+  return `期間 ${period.startLabel} 〜 ${period.replay ? '再生時刻' : 'いま'}`
+}
+
 export interface LegendBlock {
   key: LegendKey
   /** 展開時の見出し。 */
@@ -101,6 +129,8 @@ export interface LegendBlock {
   /** 畳んだときに色見本へ添える短い名前。 */
   shortTitle: string
   swatch: LegendSwatch
+  /** ヒートマップ欄だけが持つ。 */
+  heatmapPeriod?: LegendHeatmapPeriod
 }
 
 /**
@@ -161,6 +191,16 @@ export interface MapLegendSources {
    * マグニチュードで色を付けているときだけ、色帯の下に「M 不明」の見本を添える。
    */
   catalogUnknownMagnitude: boolean
+  /**
+   * 描いている点群に、深さが決まっていない地震が 1 件でも入っているか（`CatalogPointCloud.unknownDepthCount`）。
+   * 深さで色を付けているときだけ、色帯の下に「深さ不明」の見本を添える（灰色で塗るのはそのときだけ）。
+   */
+  catalogUnknownDepth: boolean
+  /**
+   * 描いている点群に、気象庁以外の機関が決めた震源が 1 件でも入っているか（`CatalogPointCloud.externalCount`）。
+   * 色分けによらず、輪の見本を添える（形で見分けるので、どの色分けでも輪で描く）。
+   */
+  catalogExternal: boolean
 }
 
 /** 何も描いていない状態。テストと、地図がまだ出来ていないときの既定値に使う。 */
@@ -183,6 +223,8 @@ export const EMPTY_LEGEND_SOURCES: MapLegendSources = {
   catalogColorBy: null,
   catalogYearRange: null,
   catalogUnknownMagnitude: false,
+  catalogUnknownDepth: false,
+  catalogExternal: false,
 }
 
 /** 気象庁の震度階級（不明を除く）を階級値の昇順で。 */
@@ -237,6 +279,9 @@ function yearTicks(range: { lo: number; hi: number }): LegendTick[] {
   ]
 }
 
+/** 気象庁以外の機関の震源を示す輪の見本の色。輪の実際の色は点ごとの色分けに従うので、見本は中立の灰色にする。 */
+const EXTERNAL_RING_HEX = '#d1d5db'
+
 const CATALOG_TITLES: Record<CatalogColorBy, { title: string; shortTitle: string }> = {
   depth: { title: '震源の深さ', shortTitle: '深さ' },
   magnitude: { title: 'マグニチュード', shortTitle: 'M' },
@@ -255,25 +300,39 @@ function catalogBlock(sources: MapLegendSources): LegendBlock | null {
   if (!colorBy) return null
   const { title, shortTitle } = CATALOG_TITLES[colorBy]
   const base = { key: 'catalog' as const, title, shortTitle }
+  // 気象庁以外の機関の震源は、色分けによらず輪で描く。描かれているときだけ見本を添える
+  // （2026-10-25 ユーザー選択「足す (Recommended)」）。輪の色は点ごとに違うので、見本は中立の灰色。
+  const externalChip: LegendChip[] = sources.catalogExternal
+    ? [{ label: '気象庁以外の機関の震源', color: EXTERNAL_RING_HEX, shape: 'ring' }]
+    : []
+  const withChips = (chips: LegendChip[]) => (chips.length > 0 ? { chips } : {})
   switch (colorBy) {
-    case 'depth':
-      return { ...base, swatch: { kind: 'ramp', stops: rampStops(DEPTH_RAMP), ticks: depthTicks() } }
+    case 'depth': {
+      // **深さ不明の点が描かれているときだけ添える**（2026-10-25 ユーザー選択「足す (Recommended)」）。
+      // 灰色で塗るのは深さで色を付けているときだけなので、見本もこの枝だけに置く。色は点を塗る側と同じ定数。
+      const chips: LegendChip[] = [
+        ...(sources.catalogUnknownDepth ? [{ label: '深さ不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' as const }] : []),
+        ...externalChip,
+      ]
+      return { ...base, swatch: { kind: 'ramp', stops: rampStops(DEPTH_RAMP), ticks: depthTicks(), ...withChips(chips) } }
+    }
     case 'magnitude': {
       // **M 不明の点が描かれているときだけ添える**（2026-10-18 ユーザー選択「灰色＋凡例「M 不明」」）。
       // 色は点を塗る側と同じ定数から採る。
-      const chips: LegendChip[] | undefined = sources.catalogUnknownMagnitude
-        ? [{ label: 'M 不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' }]
-        : undefined
+      const chips: LegendChip[] = [
+        ...(sources.catalogUnknownMagnitude ? [{ label: 'M 不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' as const }] : []),
+        ...externalChip,
+      ]
       return {
         ...base,
-        swatch: { kind: 'ramp', stops: rampStops(MAGNITUDE_RAMP), ticks: magnitudeTicks(), ...(chips ? { chips } : {}) },
+        swatch: { kind: 'ramp', stops: rampStops(MAGNITUDE_RAMP), ticks: magnitudeTicks(), ...withChips(chips) },
       }
     }
     case 'time': {
       // **両端が判らなければ目盛りを出さない**（色の向きだけは伝わる）。点が 1 件も残って
       // いないときに `timeRange` が `null` で来る。
       const ticks = sources.catalogYearRange ? yearTicks(sources.catalogYearRange) : []
-      return { ...base, swatch: { kind: 'ramp', stops: rampStops(TIME_RAMP), ticks } }
+      return { ...base, swatch: { kind: 'ramp', stops: rampStops(TIME_RAMP), ticks, ...withChips(externalChip) } }
     }
     default: {
       const exhaustive: never = colorBy
@@ -301,6 +360,18 @@ function lpgmTitle(sources: MapLegendSources): string {
   if (sources.lpgm) names.push('長周期地震動階級')
   if (sources.eewLpgm) names.push('緊急地震速報の予想')
   return names.join('・')
+}
+
+/** ヒートマップ欄に期間を載せる。ヒートマップ欄が無ければそのまま返す。 */
+export function withHeatmapPeriod(blocks: LegendBlock[], period: LegendHeatmapPeriod | null): LegendBlock[] {
+  if (!period || !blocks.some((b) => b.key === 'heatmap')) return blocks
+  return blocks.map((b) => (b.key === 'heatmap' ? { ...b, heatmapPeriod: period } : b))
+}
+
+/** 観測網の疎な時代に掛かるときの注記。文はカタログタブの注記と同じ。 */
+export function heatmapCompletenessNote(completeness: { fromYear: number; minMagnitude: number } | null): string | null {
+  if (!completeness) return null
+  return `${completeness.fromYear} 年まで遡ると、記録が揃うのは M ${completeness.minMagnitude.toFixed(1)} 以上です。それより小さい地震は少なく見えます。`
 }
 
 /**
@@ -405,7 +476,8 @@ export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
   if (sources.heatmap) {
     blocks.push({
       key: 'heatmap',
-      title: '地震活動の密度（30日）',
+      // 期間は下の行とスライダーで示すので、見出しには書かない（2026-10-25 ユーザー選択「E の案でよい (Recommended)」）。
+      title: '地震活動の密度',
       shortTitle: '地震活動の密度',
       swatch: {
         kind: 'ramp',
@@ -422,8 +494,11 @@ export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
     const chips: LegendChip[] = []
     if (sources.activeFaults) chips.push({ label: '活断層', color: FAULT_COLOR, shape: 'line' })
     if (sources.plateBoundaries) {
+      // 7 分類を 4 系統にまとめて出す（2026-10-25 ユーザー承認「B の案でよい (Recommended)」）。
       chips.push({ label: 'プレート境界（沈み込み帯）', color: SUBDUCTION_COLOR, shape: 'line' })
-      chips.push({ label: 'プレート境界（その他）', color: PLATE_OTHER_COLOR, shape: 'line' })
+      chips.push({ label: 'プレート境界（収束）', color: PLATE_CONVERGENT_COLOR, shape: 'line' })
+      chips.push({ label: 'プレート境界（拡大・リフト）', color: PLATE_DIVERGENT_COLOR, shape: 'line' })
+      chips.push({ label: 'プレート境界（トランスフォーム断層）', color: PLATE_TRANSFORM_COLOR, shape: 'line' })
     }
     blocks.push({ key: 'lines', title: '線', shortTitle: '線', swatch: { kind: 'chips', chips } })
   }

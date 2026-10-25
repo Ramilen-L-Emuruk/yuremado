@@ -70,8 +70,11 @@ interface Props {
   /** 未入電の一覧を開いている地震の `eventKey`。 */
   unreceivedQuakeKey: string | null
   onToggleUnreceived: (eventKey: string) => void
-  /** 一覧の行をクリックしたときに、その場所へ地図を寄せる（1 点でも範囲でも）。 */
-  onFocusMap: (positions: LatLng[]) => void
+  /**
+   * 一覧の行をクリックしたときに、その場所へ地図を寄せる（1 点でも範囲でも）。観測点の行は観測点名も渡す
+   * （座標が同じ観測点の吹き出しを取り違えないため。範囲の行は `null`）。
+   */
+  onFocusMap: (positions: LatLng[], stationName: string | null) => void
   /**
    * いま気象庁が書いた文を読み上げている主題（読んでいなければ null）。
    * 長周期の補足を読み上げているあいだ、そのカードの補足を開く。

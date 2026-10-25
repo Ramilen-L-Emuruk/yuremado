@@ -21,6 +21,7 @@ interface Station {
   name?: string
   furigana?: string
   pref?: { name?: string }
+  city?: { code?: string }
 }
 
 interface Revision {
@@ -144,6 +145,45 @@ describe('collectUnlistedStations', () => {
     const unlisted = await collectUnlistedStations(LISTED)
 
     expect([...unlisted.keys()]).toEqual([])
+  })
+
+  // 上流には県だけが抜けた行が実在する（伊豆大島町岡田）。市町村は県をまたがないので、
+  // 同じ版で同じ市町村コードを持つ観測点の県で補う。
+  it('正: 県が無い観測点は、同じ版の同じ市町村の観測点から県を補って拾う', async () => {
+    stubUpstream(revisionsWith({
+      retired: [
+        { ...station('東京都', '同じ町の点'), city: { code: '1336100' } },
+        { name: '県が抜けた点', furigana: 'てすと', city: { code: '1336100' } },
+      ],
+    }))
+
+    const unlisted = await collectUnlistedStations(LISTED)
+
+    expect([...unlisted.keys()]).toContain('東京都|県が抜けた点')
+  })
+
+  it('対照: 同じ市町村の観測点が版の中に無ければ、県を補わず落とす', async () => {
+    stubUpstream(revisionsWith({
+      retired: [{ name: '県が抜けた点', furigana: 'てすと', city: { code: '9999900' } }],
+    }))
+
+    const unlisted = await collectUnlistedStations(LISTED)
+
+    expect([...unlisted.keys()]).toEqual([])
+  })
+
+  it('安全弁: 県を持つ観測点は、同じ市町村の別の観測点の県で上書きしない', async () => {
+    stubUpstream(revisionsWith({
+      retired: [
+        { ...station('東京都', '先に居る点'), city: { code: '1336100' } },
+        { ...station('神奈川県', '自分の県を持つ点'), city: { code: '1336100' } },
+      ],
+    }))
+
+    const unlisted = await collectUnlistedStations(LISTED)
+
+    expect([...unlisted.keys()]).toContain('神奈川県|自分の県を持つ点')
+    expect([...unlisted.keys()]).not.toContain('東京都|自分の県を持つ点')
   })
 
   it('固定リビジョンが上流の一覧に無ければ止める', async () => {

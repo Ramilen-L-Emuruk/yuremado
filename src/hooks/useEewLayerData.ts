@@ -159,6 +159,10 @@ export function useEewLayerData(
   // LpgmRegionFillGL）と同じ地図に並ぶと実測と見分けがつかない。eewAreaFills と同じく
   // kyoshin モードに限定する（表示制限は呼び出し側の visible prop・トグル元も RealtimeTab の
   // EEW カードのみ）。
+  // **利用者がカードの「予想長周期地震動」を開くまでは予想震度の塗りを出す。** 長周期の塗りを出して
+  // いる間は予想震度の塗りが隠れるが、切り替えはこのボタンが担う（2026-10-22 の答え「切り替えを足して、
+  // ユーザーが開くまで予想震度塗りを行って。」に対し、既にこの形だったことを 2026-10-25 に確かめ、
+  // 選択「満たしていると記録 (Recommended)」で記録した）。
   const eewLpgmRegionAggregates = useMemo<EewLpgmRegionAggregate[]>(() => {
     if (!eewLpgmEventId || !subregions) return []
     const eew = eews.find((e) => (e.issue?.eventId ?? e.id) === eewLpgmEventId)
