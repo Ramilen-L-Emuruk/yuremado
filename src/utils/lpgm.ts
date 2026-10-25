@@ -1,5 +1,5 @@
 // 長周期地震動階級のラベル・配色ユーティリティ（JMA公式色）と、カードの行の組み立て
-import type { IntensityScale, JMALpgm, LpgmClass, LpgmPoint, LpgmPref, LpgmRegion } from '../types/earthquake'
+import type { IntensityScale, JMALpgm, LpgmClass, LpgmPeriodBand, LpgmPoint, LpgmPref, LpgmRegion } from '../types/earthquake'
 // 階級 0 は「階級1以上を観測していない」観測値。気象庁の配色に当たる色が無いので、
 // 階級 1〜4 の色の外の灰色にする（2026-10-24 ユーザー選択「この形でよい (Recommended)」）。
 const LPGM_COLORS: Record<number, string> = {
@@ -122,12 +122,93 @@ export function lpgmPeriodLabel(band: number): string {
   return `${band + 1}秒`
 }
 
+/** 周期ごとの内訳の見出し。地図の観測点の吹き出しとカードの観測点の行で同じ文を出す。 */
+export const LPGM_PERIODS_HEADING = '揺れの周期ごと（階級・揺れの大きさ）'
+/** 周期ごとの内訳の読み方。見出しと同じく 2 か所で共有する。 */
+export const LPGM_PERIODS_NOTE = '周期が長いほど、高い建物が大きく揺れます'
+
+/** 周期ごとの内訳の 1 行（{@link lpgmPeriodRows}）。 */
+export interface LpgmPeriodRow {
+  /** 中心周期の表示（`2秒` … `8秒`。→ {@link lpgmPeriodLabel}） */
+  label: string
+  /**
+   * 階級（1〜4）。**階級 0（その周期帯では該当なし）と読めない値は null** で、画面では行を残して
+   * 階級の欄を「−」にする（観測点の吹き出しが元から採っていた見せ方）。値域の外はパーサーが記録して捨てる
+   */
+  lgInt: number | null
+  /** 絶対速度応答スペクトル（cm/s）を小数 1 桁にしたもの。読めなければ空文字 */
+  sva: string
+}
+
+/**
+ * 周期ごとの内訳を、画面へ出す行の形に直す。**地図の観測点の吹き出しとカードの観測点の行が
+ * これを共有する** —— 書き写すと、同じ観測点が 2 か所で違う見え方になる。
+ *
+ * 階級 0 の帯も行として残す —— 0 は「その周期帯では該当なし」で、落とすと
+ * 「短い周期だけ強く出た」形が「短い周期しか観測していない」ように見える（→ quake-spec.md §8）。
+ */
+export function lpgmPeriodRows(bands: readonly LpgmPeriodBand[]): LpgmPeriodRow[] {
+  return bands.map(b => ({
+    label: lpgmPeriodLabel(b.band),
+    lgInt: typeof b.lgInt === 'number' && b.lgInt >= 1 ? b.lgInt : null,
+    sva: typeof b.sva === 'number' && Number.isFinite(b.sva) ? b.sva.toFixed(1) : '',
+  }))
+}
+
 /** 長周期地震動の観測点の行（`buildLpgmRows` の 3 段目）。 */
 export interface LpgmStationRow {
   name: string
   lgInt: number
   int?: IntensityScale
   nonJma?: boolean
+  /**
+   * 周期ごとの内訳（電文の `LgIntPerPeriod` / `SvaPerPeriod`）。**電文は区域や県の段に内訳を持たず、
+   * 観測点の下にだけ持つ**ので、カードで内訳を開けるのはこの段だけ。内訳が無い観測点では持たせない
+   */
+  periods?: LpgmPeriodBand[]
+}
+
+/** 電文の観測点 1 件を、カードと地図の区域の吹き出しで使う行の形に直す。 */
+export function lpgmStationRow(p: LpgmPoint): LpgmStationRow {
+  return {
+    name: p.name,
+    lgInt: p.lgInt,
+    ...(p.int !== undefined && { int: p.int }),
+    ...(p.nonJma && { nonJma: true }),
+    ...(p.periods && p.periods.length > 0 && { periods: p.periods }),
+  }
+}
+
+/**
+ * 観測点の行を並べる（階級の降順、同じ階級どうしは `rank` の昇順）。**カードの一覧（`buildLpgmRows`）と
+ * 地図の区域の吹き出し（`lpgmStationsByArea`）が必ずこれを通す** —— 並べ方を 2 か所に書くと、
+ * 片方だけ変えたときにカードと吹き出しで並びが食い違う。`rank` が同じなら入力の順を保つ（sort は安定）。
+ */
+export function sortLpgmStations(rows: LpgmStationRow[], rank: (name: string) => number): LpgmStationRow[] {
+  return rows.sort((a, b) => b.lgInt - a.lgInt || rank(a.name) - rank(b.name))
+}
+
+/**
+ * 一次細分区域ごとに、その区域の観測点を並べる（地図の区域の印の吹き出し用）。
+ *
+ * **カードで区域の行を開いたときと同じ顔ぶれ・同じ順にする**（2026-10-25 ユーザー選択「観測点を並べる (Recommended)」）。
+ * 区域は電文の入れ子（`LpgmPoint.area`）から取り、階級 0 も含める。並べ方はカードと同じ
+ * {@link sortLpgmStations} に、カードと同じ `rank` を渡す。区域の分からない観測点はどの区域にも入らない
+ * （カードでは県の直下に出る）。
+ */
+export function lpgmStationsByArea(
+  points: readonly LpgmPoint[],
+  rank: (name: string) => number,
+): Map<string, LpgmStationRow[]> {
+  const byArea = new Map<string, LpgmStationRow[]>()
+  for (const p of points) {
+    if (!p.area || !isObservedLpgmClass(p.lgInt)) continue
+    const row = lpgmStationRow(p)
+    const list = byArea.get(p.area)
+    if (list) list.push(row); else byArea.set(p.area, [row])
+  }
+  for (const list of byArea.values()) sortLpgmStations(list, rank)
+  return byArea
 }
 
 /** 長周期地震動の一次細分区域の行（`buildLpgmRows` の 2 段目）。 */
@@ -242,12 +323,7 @@ export function buildLpgmRows(
   const looseStations = new Map<string, LpgmStationRow[]>()
   for (const p of points) {
     if (!isObservedLpgmClass(p.lgInt)) continue
-    const row: LpgmStationRow = {
-      name: p.name,
-      lgInt: p.lgInt,
-      ...(p.int !== undefined && { int: p.int }),
-      ...(p.nonJma && { nonJma: true }),
-    }
+    const row = lpgmStationRow(p)
     if (p.area) {
       areaOf(p.area, p.pref || deps.prefOfArea(p.area)).stations.push(row)
       continue
@@ -262,7 +338,8 @@ export function buildLpgmRows(
 
   const byValueDesc = <T,>(value: (x: T) => number, name: (x: T) => string) =>
     (a: T, b: T) => value(b) - value(a) || deps.rank(name(a)) - deps.rank(name(b))
-  const sortStations = (rows: LpgmStationRow[]) => rows.sort(byValueDesc(s => s.lgInt, s => s.name))
+  // 観測点の並べ方は地図の区域の吹き出しと共有する（→ `sortLpgmStations`）
+  const sortStations = (rows: LpgmStationRow[]) => sortLpgmStations(rows, deps.rank)
 
   const areaRowsByPref = new Map<string, LpgmAreaRow[]>()
   const orphanAreaRows: LpgmPrefRow[] = []

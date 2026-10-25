@@ -3,7 +3,7 @@ import { frontSortKeyExpression, mercatorProps } from './gl/screenDepth'
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Point } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import { getLpgmClassColor, getLpgmClassLabel, getLpgmClassRadius, lpgmPeriodLabel } from '../../utils/lpgm'
+import { getLpgmClassColor, getLpgmClassLabel, getLpgmClassRadius, lpgmPeriodRows, LPGM_PERIODS_HEADING, LPGM_PERIODS_NOTE } from '../../utils/lpgm'
 import { getIntensityLabel } from '../../utils/intensity'
 import type { LpgmMarker } from '../../hooks/useQuakeLayerData'
 import { addOrderedLayer } from './gl/layerOrder'
@@ -93,17 +93,16 @@ export function lpgmPeriodsHtml(json: string): string {
     return ''
   }
   if (!Array.isArray(bands) || bands.length === 0) return ''
-  const rows = bands.map(b => {
-    const cls = typeof b.lgInt === 'number' ? b.lgInt : -1
-    const chip = cls >= 1
-      ? badgeHtml(String(cls), getLpgmClassColor(cls))
+  // 行の中身はカードの観測点の行と共有する（→ `lpgmPeriodRows`）。
+  const rows = lpgmPeriodRows(bands).map(r => {
+    const chip = r.lgInt !== null
+      ? badgeHtml(String(r.lgInt), getLpgmClassColor(r.lgInt))
       : `<span style="display:inline-block;width:16px;text-align:center;color:#64748b">−</span>`
-    const sva = typeof b.sva === 'number' ? b.sva.toFixed(1) : ''
     return (
       `<div style="display:flex;align-items:center;gap:6px;line-height:1.6">` +
-      `<span style="width:32px;color:#94a3b8;text-align:right">${escapeHtml(lpgmPeriodLabel(b.band))}</span>` +
+      `<span style="width:32px;color:#94a3b8;text-align:right">${escapeHtml(r.label)}</span>` +
       `${chip}` +
-      `<span style="color:#cbd5e1;font-variant-numeric:tabular-nums">${escapeHtml(sva)}</span></div>`
+      `<span style="color:#cbd5e1;font-variant-numeric:tabular-nums">${escapeHtml(r.sva)}</span></div>`
     )
   }).join('')
   // **専門用語をそのまま出さない。** このアプリは分類番号を平易な一文へ直す作法を取っている
@@ -111,9 +110,9 @@ export function lpgmPeriodsHtml(json: string): string {
   // 数字は残したうえで、読み方を一行添える。
   return (
     `<div style="margin-top:8px;border-top:1px solid #334155;padding-top:6px">` +
-    `<div style="font-size:10px;color:#94a3b8;margin-bottom:2px">揺れの周期ごと（階級・揺れの大きさ）</div>` +
+    `<div style="font-size:10px;color:#94a3b8;margin-bottom:2px">${escapeHtml(LPGM_PERIODS_HEADING)}</div>` +
     `<div style="font-size:11px">${rows}</div>` +
-    `<div style="font-size:10px;color:#94a3b8;margin-top:4px">周期が長いほど、高い建物が大きく揺れます</div></div>`
+    `<div style="font-size:10px;color:#94a3b8;margin-top:4px">${escapeHtml(LPGM_PERIODS_NOTE)}</div></div>`
   )
 }
 
