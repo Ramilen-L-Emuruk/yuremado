@@ -5,6 +5,9 @@
 // 「読み込み中」で固まり、取得失敗時のフォールバック（区域塗り → 観測点ドット等）も
 // 失敗ログも発生しない。それを避けるため、生成データの取得は必ずここを通す。
 
+import { retryDelayAfter } from './retrySchedule'
+import { log } from './logger'
+
 /**
  * 生成データ取得のタイムアウト（ミリ秒）。
  *
@@ -13,8 +16,8 @@
  * （実効 50KB/s ≒ 35 秒）でも取り切れる余裕を持たせた値。
  *
  * 値を詰めないこと。短くしても遅い回線の表示が早くなるわけではなく、正常な取得を
- * 打ち切った側の損失のほうが大きい。再取得の機会を持たないローダ（活断層・津波海岸線など）
- * では、一度切ってしまうとセッション終了までその表示が欠けたままになる。
+ * 打ち切った側の損失のほうが大きい。取り直し（{@link FetchJsonOptions.retryDelay}）は 1 回ごとに
+ * この上限を持つので、短くするとそのぶん取り直しの回数を無駄に使う。
  */
 export const DATA_FETCH_TIMEOUT_MS = 60_000
 
@@ -26,12 +29,22 @@ function isAbortError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { name?: unknown }).name === 'AbortError'
 }
 
+/** 取れていないデータ 1 つ。 */
+export interface DataLoadFailure {
+  /** 取得の名前（`fetchJsonWithTimeout` の `label`） */
+  label: string
+  /** `retrying` … 間隔を空けて取り直している／`gaveUp` … 取り直しを諦めた（再読み込みまで戻らない） */
+  state: 'retrying' | 'gaveUp'
+}
+
 /** 生成データの取得状況。UI（MapDataStatus）が購読する。 */
 export interface DataLoadStatus {
   /** 取得中のデータ数 */
   pending: number
-  /** 取得に失敗し、まだ取り直せていないデータ数 */
+  /** 取得に失敗し、まだ取り直せていないデータ数（`failures.length` と同じ） */
   failed: number
+  /** 取れていないデータ（名前を画面に出すため。並びは失敗した順） */
+  failures: readonly DataLoadFailure[]
 }
 
 // 取得状況は label 単位で持つ。全ローダがこのヘルパーを通るため、ここで数えれば
@@ -41,7 +54,8 @@ export interface DataLoadStatus {
 // あり（実地震テストシナリオの連続再生など）、Set だと 1 本終わっただけで残りが in-flight でも
 // 「取得中が無くなった」と見えてしまう。
 const pendingCounts = new Map<string, number>()
-const failedLabels = new Set<string>()
+// Map は入れた順を保つので、画面の名前の並びは失敗した順になる
+const failedLabels = new Map<string, DataLoadFailure['state']>()
 
 function addPending(label: string): void {
   pendingCounts.set(label, (pendingCounts.get(label) ?? 0) + 1)
@@ -55,11 +69,22 @@ function removePending(label: string): void {
 const statusListeners = new Set<() => void>()
 // useSyncExternalStore は getSnapshot が同じ状態に対して同じ参照を返すことを要求する
 // （毎回新しいオブジェクトを作ると再レンダリングが止まらない）ため、変化時だけ作り直す。
-let statusSnapshot: DataLoadStatus = { pending: 0, failed: 0 }
+let statusSnapshot: DataLoadStatus = { pending: 0, failed: 0, failures: [] }
+
+function sameFailures(a: readonly DataLoadFailure[]): boolean {
+  if (a.length !== failedLabels.size) return false
+  let i = 0
+  for (const [label, state] of failedLabels) {
+    if (a[i].label !== label || a[i].state !== state) return false
+    i++
+  }
+  return true
+}
 
 function publishStatus(): void {
-  if (statusSnapshot.pending === pendingCounts.size && statusSnapshot.failed === failedLabels.size) return
-  statusSnapshot = { pending: pendingCounts.size, failed: failedLabels.size }
+  if (statusSnapshot.pending === pendingCounts.size && sameFailures(statusSnapshot.failures)) return
+  const failures = [...failedLabels].map(([label, state]) => ({ label, state }))
+  statusSnapshot = { pending: pendingCounts.size, failed: failures.length, failures }
   for (const fn of statusListeners) fn()
 }
 
@@ -96,11 +121,41 @@ export interface FetchJsonOptions {
    * して検知されない。
    *
    * ここに渡す理由は**失敗の数え方**にある。取得後に呼び出し側で検証しても、この関数は既に
-   * 成功として返した後——失敗の記録（{@link getDataLoadStatus}）は消され、地図の「データの一部を
-   * 取得できませんでした」に出ない。検分をこの中で行えば、下の `catch` が拾って通信失敗と同じ扱いに
-   * なる。**呼び出し側の `.then()` に置くと、console にしか残らない。**
+   * 成功として返した後——失敗の記録（{@link getDataLoadStatus}）は消され、地図の「〇〇を取り込めず」に
+   * 出ず、取り直しも走らない。検分をこの中で行えば、通信失敗と同じ扱いになる。**呼び出し側の `.then()` に置くと、console にしか残らない。**
    */
   validate?: (data: unknown) => void
+  /**
+   * 失敗を `failures` 回重ねたあと、次に取り直すまでの間隔（ms）。`null` で諦める。
+   *
+   * **既定は、取得状況に数えるデータ（`trackStatus`）だけ共有の規則で取り直す**（30 秒から倍々・5 回。
+   * → `utils/retrySchedule.ts`。2026-10-23 ユーザー選択「取り直し、欠けたものを名前で出す (Recommended)」）。
+   * 地図のデータは要求元が 1 箇所しかないものが多く（活断層・プレート境界・津波海岸線・津波観測点）、
+   * その 1 回が失敗すると再読み込みまで欠けたままになる。**数えないデータは取り直さない** —— 震源カタログ・
+   * 気象庁の地震一覧は呼び手が自分の取り直しを持っていて、ここでも取り直すと二重になる。
+   *
+   * 取り直している間も Promise は解決しないまま待つ（呼び手は取れた時点でそのまま描ける）。
+   */
+  retryDelay?: (failures: number) => number | null
+}
+
+/** 取り直さない（{@link FetchJsonOptions.retryDelay} に渡す）。 */
+export const NO_RETRY = (): null => null
+
+/**
+ * 取り直しの既定。数えるデータだけ共有の規則で取り直す（{@link FetchJsonOptions.retryDelay}）。
+ *
+ * **テストの実行中（`mode === 'test'`）は取り直さない。** 生成データのローダーのテストは「失敗したら
+ * 例外になる」ことを確かめており、既定で取り直すと実時間で 30 秒待たされる（`vi.resetModules()` で
+ * 読み直すテストがあるので、テストの設定から差し替える形では届かない）。取り直しそのものは
+ * `retryDelay` を明示したテストと、この関数のテストで確かめる。
+ */
+export function defaultRetryDelay(trackStatus: boolean, mode: string): (failures: number) => number | null {
+  return trackStatus && mode !== 'test' ? retryDelayAfter : NO_RETRY
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /**
@@ -109,7 +164,8 @@ export interface FetchJsonOptions {
  * タイムアウトは fetch 本体だけでなく `res.json()` による body 読み込みまでを含む
  * （ヘッダだけ返って body が流れてこない場合も同じ症状になるため）。
  * タイムアウトは通常の取得失敗と同じ経路（例外）に載せる。呼び出し側は成功／失敗の
- * 2 通りだけを扱えばよく、リトライは既存どおり「次に要求されたときに再取得する」で足りる。
+ * 2 通りだけを扱えばよい。取り直しはこの中で行い（{@link FetchJsonOptions.retryDelay}）、
+ * 諦めたときだけ最後の失敗を投げる。
  *
  * @param url 取得先
  * @param label 例外メッセージに載せるデータ名（例: `subregions`）
@@ -120,6 +176,27 @@ export async function fetchJsonWithTimeout<T>(
   label: string,
   options: FetchJsonOptions = {},
 ): Promise<T> {
+  const { trackStatus = true, retryDelay = defaultRetryDelay(trackStatus, import.meta.env.MODE) } = options
+  for (let failures = 1; ; failures++) {
+    try {
+      return await fetchJsonOnce<T>(url, label, options)
+    } catch (err) {
+      const delay = retryDelay(failures)
+      if (trackStatus) {
+        failedLabels.set(label, delay === null ? 'gaveUp' : 'retrying')
+        publishStatus()
+      }
+      if (delay === null) throw err
+      // 諦めるまで最長で十数分かかるので、取り直すたびに原因を残す（諦めたときの例外は呼び手が記録する）。
+      // 時間切れか・応答の形の崩れかは、ここに残さないと諦めるまで分からない
+      log.warn(`[data] ${label} の取得に失敗（${failures} 回目。${Math.round(delay / 1000)} 秒後に取り直す）`, err)
+      await wait(delay)
+    }
+  }
+}
+
+/** 1 回だけ取る（失敗の記録は呼び手の {@link fetchJsonWithTimeout} が付ける）。 */
+async function fetchJsonOnce<T>(url: string, label: string, options: FetchJsonOptions): Promise<T> {
   const { timeoutMs = DATA_FETCH_TIMEOUT_MS, trackStatus = true, validate } = options
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -131,15 +208,13 @@ export async function fetchJsonWithTimeout<T>(
     const res = await fetch(url, { signal: controller.signal })
     if (!res.ok) throw new Error(`${label} を取得できなかった: ${res.status}`)
     const data = (await res.json()) as T
-    // 検分は **この try の中で**呼ぶ。投げた例外を下の catch が拾い、通信失敗と同じく failed に
-    // 計上される（呼び出し側の `.then()` に置くと、この関数は成功として返した後なので計上されない）。
-    // 成功の記録より前に置いてあるのは筋を通すためで、後ろでも catch が add し直すため結果は同じ。
+    // 検分は **この try の中で**呼ぶ。投げた例外は通信失敗と同じく呼び手の取り直しと失敗の記録へ
+    // 回る（呼び出し側の `.then()` に置くと、成功として返した後なので計上も取り直しもされない）。
     validate?.(data)
     // 取り直しに成功したら失敗の記録を消す（フォールバックからの復帰を表示にも反映する）
     if (trackStatus) failedLabels.delete(label)
     return data
   } catch (err) {
-    if (trackStatus) failedLabels.add(label)
     // abort 由来の例外（AbortError）は原因が読み取れないため、タイムアウトと分かる文言に置き換える。
     // signal はこの関数内でしか使わないので、aborted が立つのはタイムアウトのときだけ。
     // ただし aborted だけで判定すると、時間切れの直後に届いた別種の例外（配信データ破損による

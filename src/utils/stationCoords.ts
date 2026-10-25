@@ -101,7 +101,7 @@ export function loadStationCoords(): Promise<StationCoordsData> {
       // 中身の形まで見る。ビルドや配信の破損で空の表が 200 で返ると、呼び出し側は
       // 「取得成功・観測点 0 件」として扱ってしまい、地図に震度が出ない状態が失敗として
       // 検知されないまま進む。取得側の `validate` に渡すのは、ここで投げれば地図の
-      // 「データN件を取り込めず」にも計上されるため（`.then()` では計上されない）。
+      // 「〇〇を取り込めず」にも計上されるため（`.then()` では計上されない）。
       // areas も必須。欠けたまま通すと areaPrefIndexOf・lookupPointCoords が
       // Object.keys(undefined) で TypeError を投げ、レンダー中の例外になる。ErrorBoundary が
       // 受け止めはするが、例外の起きた範囲（地図なりタブなり）が丸ごとフォールバック表示へ

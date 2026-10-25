@@ -46,8 +46,9 @@ export const OFFLINE_DATA_FILES = [
  * 控えない生成データ（`public/data/` からの相対パス。`/` で終わるものはその配下すべて）。
  *
  * **新しく生成データを足したら、`OFFLINE_DATA_FILES` かここのどちらかへ必ず載せる。**
- * 載せ忘れは `scripts/offlineData.test.ts` が落とす。理由はオフライン対応の範囲を決めたときのもの
- * （2026-10-14 ユーザー承認。カタログ・履歴アーカイブは対象外）。
+ * 載せ忘れは `scripts/offlineData.test.ts` が落とす。2026-10-14 に控える範囲として選ばれたのは
+ * 「地図 7 本＋読み上げ辞書 3 本 (Recommended)」で、ここに並ぶものはその範囲に入っていない
+ * （控えないこと自体を諮って決めたわけではない）。
  */
 export const OFFLINE_DATA_EXCLUDED: readonly { path: string; reason: string }[] = [
   { path: 'hypocenter/', reason: '長期震源カタログ（合計 約 34 MB）。眺めた年だけを取りに行く' },

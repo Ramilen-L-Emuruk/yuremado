@@ -764,8 +764,16 @@ precache に置くと、初回インストールが 1 本の太いリクエス�
 | 地図（7 本） | `subregions` ・ `prefectures` ・ `tsunami-zones` ・ `active-faults` ・ `station-coords` ・ `plate-boundaries` ・ `tsunami-obs-coords` |
 | 読み上げ辞書（3 本） | `tts-phrase-break-dict` ・ `tts-station-readings` ・ `tts-epicenter-accents` |
 
-- **控えない生成データ**: 長期震源カタログ（`hypocenter/`・合計 約 34 MB）・ローカル履歴アーカイブ・実地震テストのシナリオ
-  （2026-10-14 ユーザー承認）。海底地形のタイル（GEBCO）も配信元の `Cache-Control` に任せたまま
+- **いまは控えない生成データ**: 長期震源カタログ（`hypocenter/`・合計 約 34 MB）・ローカル履歴アーカイブ・実地震テストのシナリオ。
+  控えるかどうかは決まっていない（未決）。2026-10-14 に選ばれた範囲「地図 7 本＋読み上げ辞書 3 本 (Recommended)」に入っていないだけで、
+  控えないと決めたわけではない
+- **海底地形のタイル（GEBCO）は、日本周辺の枠（`JAPAN_WIDE_BOUNDS`）の z8 までだけ控える**（2026-10-23 選択「日本周辺だけ控える (Recommended)」、
+  境は 2026-10-25 選択「z8 まで・約 8 MB」）。枠の中の z0〜z8 は 569 枚で、2026-10-25 に 48 枚を取って測った 1 枚の平均から見積もると
+  全部見ても約 8 MB（z5 まで約 0.5 MB・z7 まで約 3 MB・z9 まで約 27 MB）。生成データと同じく NetworkFirst（3 秒）で、通信できる間は
+  今までどおり配信元から取る。入るのは実際に表示したタイルと録画モードの先読みが取ったタイルだけで、まとめて取りに行くことはしない
+  （配信元のサービスはタイルの一括書き出しを許していない。`exportTilesAllowed:false`）。枠の外と z9 より深いタイルは、配信元の
+  `Cache-Control` に任せたまま。キャッシュの名前は `bathymetry-tiles-standard` / `bathymetry-tiles-dmdss`。
+  範囲表と規則は [`scripts/offlineBathymetry.ts`](../../scripts/offlineBathymetry.ts)
 - **キャッシュの名前はバリアントで分ける**（`generated-data-standard` / `generated-data-dmdss`）。キャッシュの名前は
   オリジン全体で共有されるため
 - **規則は自分の配信パスの直下の `data/` だけに当てる。** standard 版の配信パスは DMDSS 版を包むので、`/data/` だけで当てると、
@@ -814,7 +822,7 @@ precache に置くと、初回インストールが 1 本の太いリクエス�
 | `HISTORY_LOAD_MORE_FAILED_NOTICE` | 続きの読み込みに失敗（もう一度お試しください） |
 | `RECONNECT_GAP_LOSS_NOTICE` | 接続が切れていた間の電文を取り込めず（再読み込みで取得し直します） |
 | `FETCH_THROTTLED_NOTICE` | リクエスト過多のため、取得制限中（自動で再開します） |
-| `MapDataStatus` | データN件を取り込めず（再読み込みで取得し直します） |
+| `MapDataStatus` | 県境・活断層を取り込めず（取り直しています）／（再読み込みで取得し直します）。名前は 3 つまでで「ほかN件」（→ [`data-sources-spec.md`](data-sources-spec.md) §6「取得状況の表示」） |
 | `MapRenderStatus` | 〇〇を描けず／〇〇はクリックに応じず ＋ 再読み込みで直ることがあります |
 | `formatLossNotice`（再生） | 取得元N件・電文N件を取り込めず（再生は継続中・詳細はコンソール） |
 

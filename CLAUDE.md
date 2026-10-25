@@ -2418,7 +2418,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | クロック同期でYahoo経路を主経路と同時に供給すると、精度の良い方にバイアスが混ざる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §4「クロック同期（`startClockSync`）」 |
 | 外部時刻サービスの応答を中点換算すると -RTT/2 の系統誤差が乗り、`?ms` を落とすと精度が秒単位に劣化する | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §4「主経路: 外部の時刻サービス（`akamaiClock.ts`）」 |
 | 生成データ取得のタイムアウト値と失敗時の扱いを仕様書と揃えず個別に決めると、低速回線向けの一括 60 秒と読み上げ専用の短縮 5 秒がずれる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「生成データ」 |
-| 生成データの中身の検分を取得後（呼び出し側）で行うと、失敗が「データN件を取り込めず」に計上されず console にしか残らない | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「生成データ」 |
+| 生成データの中身の検分を取得後（呼び出し側）で行うと、失敗が地図の「〇〇を取り込めず」に計上されず取り直しも走らず、console にしか残らない | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「生成データ」 |
 | README「ライセンス」節の地図データ出典表記を仕様書側の用語へ揃えると、配信元 GIS レイヤーの実名を言い換えたことになり出典表示として不正確になる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §1「概要」 |
 | 報の新旧を比べる・並べる箇所で `compareReportAge` / `reportOrderKey` を通さず分単位の発表時刻（ReportDateTime）を直接比べると、同じ分に発表された報の前後が入力順で決まり、履歴・リプレイの並びが発表順と食い違う | [`quake-spec.md`](docs/spec/quake-spec.md) §6.3「報の新旧は電文の作成時刻（秒）で比べる」 |
 | 作成時刻を持たない報どうしの比較で ReportDateTime と Control/DateTime のタイムゾーン表記を混在させると、その報だけ辞書順比較で永久に「古い」と判定され捨てられる | [`quake-spec.md`](docs/spec/quake-spec.md) §6.3「報の新旧は電文の作成時刻（秒）で比べる」 |

@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react'
-import type { Map as MapLibreMap, RasterLayerSpecification } from 'maplibre-gl'
+import type { GeoJSONSource, Map as MapLibreMap, RasterLayerSpecification } from 'maplibre-gl'
 import { useMapGL } from './mapGLContext'
-import { loadPrefectures } from '../../utils/prefectures'
-import { loadSubRegions } from '../../utils/subregions'
+import { loadPrefectures, type Prefectures } from '../../utils/prefectures'
+import { loadSubRegions, type SubRegion } from '../../utils/subregions'
 import { basemapKindFilter, buildBasemapFC } from './gl/basemapFeatures'
 import { addOrderedLayer, type MapLayerId } from './gl/layerOrder'
 import { detailMinZoom } from './gl/zoomLevels'
@@ -129,82 +129,86 @@ export function BaseMapGL({ showBathymetry, recording }: Props) {
       minZoom: GEBCO_HIRES_MIN_ZOOM,
     })
     // 陸地塗り・境界線は生成データ（遅延読込）の到着後に追加する。
-    Promise.allSettled([loadPrefectures(), loadSubRegions()]).then(([prefRes, subRes]) => {
-      if (cancelled) return
-      const prefs = prefRes.status === 'fulfilled' ? prefRes.value : null
-      const subs = subRes.status === 'fulfilled' ? subRes.value : null
-      // 何が欠けるかを具体的に書く（陸地が真っ黒＝海底地形ラスタだけ、という見た目から
-      // 原因を辿れるようにする）。ベースマップの塗り・境界線は全ズームで出す想定のため、
-      // ラベル（LabelsGL）と違いズーム帯による出し分けは無い。
-      if (prefRes.status === 'rejected')
-        log.warn('[data] prefectures 取得失敗（陸地塗りと県境が全ズームで出ない。海底地形ラスタのみになる）', prefRes.reason)
-      if (subRes.status === 'rejected')
-        log.warn('[data] subregions 取得失敗（区域境界線と区域名ポップアップの当たり判定が全ズームで出ない）', subRes.reason)
-
+    //
+    // **2 つを待ち合わせない。** 取得は失敗すると間を空けて取り直し（`utils/fetchJson.ts`）、その間は決着しない
+    // （取り直しの間隔の合計で約 12 分半）。待ち合わせると、取れた側の陸地塗り・県境まで出ないまま待たされる。
+    // 届いた順に、その時点の手持ちで共有ソースを作り直し（無ければ作り）、届いた側のレイヤーを足す。
+    let prefs: Prefectures | null = null
+    let subs: SubRegion[] | null = null
+    const syncSource = () => {
       // 4 枚のレイヤーは 1 つのソースを共有する。取れたデータの分だけ feature が入り、
       // レイヤー側は `kind` の filter で自分の分を拾う（gl/basemapFeatures.ts）。
-      // 両方の取得に失敗したときは下のレイヤーが 1 枚も足されないので、ソースも作らない
-      // （この effect は [map] 依存で再走しないため、後から埋まることもない）。
-      if (prefs || subs) {
-        map.addSource(SRC_BASEMAP, { type: 'geojson', data: buildBasemapFC(prefs, subs) })
-      }
-
-      // MAP_LAYER_ORDER に従い最下層スロット（land-fill < sub-borders < pref-borders）へ挿入する。
-      // 遅延読込で faults/plates 等のオーバーレイより後に追加されても、常にその背面へ入る。
+      const data = buildBasemapFC(prefs, subs)
+      const src = map.getSource(SRC_BASEMAP) as GeoJSONSource | undefined
+      if (src) src.setData(data)
+      else map.addSource(SRC_BASEMAP, { type: 'geojson', data })
+    }
+    // MAP_LAYER_ORDER に従い最下層スロット（land-fill < sub-borders < pref-borders）へ挿入する。
+    // 遅延読込で faults/plates 等のオーバーレイより後に追加されても、常にその背面へ入る。
+    // 何が欠けるかは失敗のログに具体的に書く（陸地が真っ黒＝海底地形ラスタだけ、という見た目から
+    // 原因を辿れるようにする）。ベースマップの塗り・境界線は全ズームで出す想定のため、
+    // ラベル（LabelsGL）と違いズーム帯による出し分けは無い。
+    loadPrefectures().then((value) => {
+      if (cancelled) return
+      prefs = value
+      syncSource()
       // 1) 陸地塗り（都道府県ポリゴン・塗りのみ）
-      if (prefs) {
-        addOrderedLayer(map, {
-          id: LYR_LAND,
-          type: 'fill',
-          source: SRC_BASEMAP,
-          filter: basemapKindFilter('land'),
-          paint: { 'fill-color': LAND_FILL },
-        })
-      }
+      addOrderedLayer(map, {
+        id: LYR_LAND,
+        type: 'fill',
+        source: SRC_BASEMAP,
+        filter: basemapKindFilter('land'),
+        paint: { 'fill-color': LAND_FILL },
+      })
+      // 3) 県境（強調・細線より前面）
+      addOrderedLayer(map, {
+        id: LYR_PREF,
+        type: 'line',
+        source: SRC_BASEMAP,
+        filter: basemapKindFilter('pref-line'),
+        minzoom: clampMinZoom(detailMinZoom(map)),
+        paint: { 'line-color': PREF_BORDER, 'line-width': 1 },
+      })
+    }, (reason) => {
+      if (!cancelled) log.warn('[data] prefectures 取得失敗（陸地塗りと県境が全ズームで出ない。海底地形ラスタのみになる）', reason)
+    })
+    loadSubRegions().then((value) => {
+      if (cancelled) return
+      subs = value
+      syncSource()
       // 2) 一次細分区域の細い境界線（陸地塗りより前面）
       // 区域線・県境は引いた画で網目が潰れるため下限を設ける（視野の実距離基準・gl/zoomLevels.ts）。
       // 陸地塗りには設けない（列島のシルエットは低ズームでも位置の手掛かりになるため）。
-      if (subs) {
-        addOrderedLayer(map, {
-          id: LYR_SUB,
-          type: 'line',
-          source: SRC_BASEMAP,
-          filter: basemapKindFilter('sub-line'),
-          minzoom: clampMinZoom(detailMinZoom(map)),
-          paint: { 'line-color': SUBREGION_BORDER, 'line-width': 0.5 },
-        })
-        // 区域名ポップアップの当たり判定。塗りは完全透明で見た目に出さず、区域名だけを載せる。
-        // 地図のどこを押しても「そこがどの一次細分区域か」は分かる、という最後の受け皿にする
-        // （優先度 basemap ＝ 観測点・線・区域塗り・ヒートマップのどれにも当たらなかったときだけ出る）。
-        // 区域線が消える倍率では当たり判定も消す（線が見えないのに区域名だけ出るのを避ける）。
-        addOrderedLayer(map, {
-          id: LYR_SUB_HIT,
-          type: 'fill',
-          source: SRC_BASEMAP,
-          filter: basemapKindFilter('sub-hit'),
-          minzoom: clampMinZoom(detailMinZoom(map)),
-          paint: { 'fill-color': '#000000', 'fill-opacity': 0 },
-        })
-        popupRef.current = registerPopupSource(map, {
-          layerId: LYR_SUB_HIT,
-          priority: 'basemap',
-          tolPx: 1,
-          // 全面を覆うレイヤーなので、カーソルは変えない（どこでも指マークになってしまう）。
-          hoverCursor: false,
-          buildClickHtml: (f) => twoLinePopupHtml(String(f.properties?.name ?? ''), '一次細分区域'),
-        })
-      }
-      // 3) 県境（強調・細線より前面）
-      if (prefs) {
-        addOrderedLayer(map, {
-          id: LYR_PREF,
-          type: 'line',
-          source: SRC_BASEMAP,
-          filter: basemapKindFilter('pref-line'),
-          minzoom: clampMinZoom(detailMinZoom(map)),
-          paint: { 'line-color': PREF_BORDER, 'line-width': 1 },
-        })
-      }
+      addOrderedLayer(map, {
+        id: LYR_SUB,
+        type: 'line',
+        source: SRC_BASEMAP,
+        filter: basemapKindFilter('sub-line'),
+        minzoom: clampMinZoom(detailMinZoom(map)),
+        paint: { 'line-color': SUBREGION_BORDER, 'line-width': 0.5 },
+      })
+      // 区域名ポップアップの当たり判定。塗りは完全透明で見た目に出さず、区域名だけを載せる。
+      // 地図のどこを押しても「そこがどの一次細分区域か」は分かる、という最後の受け皿にする
+      // （優先度 basemap ＝ 観測点・線・区域塗り・ヒートマップのどれにも当たらなかったときだけ出る）。
+      // 区域線が消える倍率では当たり判定も消す（線が見えないのに区域名だけ出るのを避ける）。
+      addOrderedLayer(map, {
+        id: LYR_SUB_HIT,
+        type: 'fill',
+        source: SRC_BASEMAP,
+        filter: basemapKindFilter('sub-hit'),
+        minzoom: clampMinZoom(detailMinZoom(map)),
+        paint: { 'fill-color': '#000000', 'fill-opacity': 0 },
+      })
+      popupRef.current = registerPopupSource(map, {
+        layerId: LYR_SUB_HIT,
+        priority: 'basemap',
+        tolPx: 1,
+        // 全面を覆うレイヤーなので、カーソルは変えない（どこでも指マークになってしまう）。
+        hoverCursor: false,
+        buildClickHtml: (f) => twoLinePopupHtml(String(f.properties?.name ?? ''), '一次細分区域'),
+      })
+    }, (reason) => {
+      if (!cancelled) log.warn('[data] subregions 取得失敗（区域境界線と区域名ポップアップの当たり判定が全ズームで出ない）', reason)
     })
 
     return () => {
