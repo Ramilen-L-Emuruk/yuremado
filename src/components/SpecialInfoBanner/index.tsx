@@ -358,6 +358,7 @@ function KohatsuBanner({ kohatsu, speaking, readsAppendix, onDismiss }: { kohats
 //
 // 有効期限は出さない。内部では発表から 7 日で畳んでいるが、それは帯を常駐させないための
 // 表示上の都合であって、気象庁が期限を定めているわけではない（後発地震注意情報の帯の 7 日も同じ）。
+// 7 日で畳み期限を出さない形は 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」（お知らせ・地震回数の帯も同じ）。
 function CommentaryBanner({ commentary, speaking, readsAppendix, onDismiss }: { commentary: JMANankaiCommentary; speaking: boolean; readsAppendix: boolean; onDismiss: () => void }) {
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'nankaiCommentary')
   return (
@@ -409,7 +410,7 @@ function CommentaryBanner({ commentary, speaking, readsAppendix, onDismiss }: { 
 // 全角スペースの字下げで組んでおり、詰めると期間や連絡先の対応が崩れる。
 //
 // 有効期限（発表から 7 日）は出さない。解説情報と同じく帯を常駐させないための表示上の都合で、
-// 気象庁が定めた期限ではない。
+// 気象庁が定めた期限ではない（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。
 function NoticeBanner({ notice, speaking, onDismiss }: { notice: JMAQuakeNotice; speaking: boolean; onDismiss: () => void }) {
   // 本文を読み上げている間は開く（他の帯と同じ。読み上げは設定で有効にしたときだけ）
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'quakeNotice')

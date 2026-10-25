@@ -3200,6 +3200,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側）。
         // 取消・終了では呼ばない（帯が消えるので、開いて見せるものが無い）。
         expandPanelForSpecialInfo()
+        // 臨時情報と後発地震注意情報で同じ音（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）
         if (settings.soundEnabled) {
           playAlertSound('specialInfo')
         }
@@ -4142,9 +4143,14 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         eewNotifyBaselineRef.current.set(key, notifyForecast)
       }
       if (settings.notifyEEW && (isNew || levelUpgraded || forecastRaised)) {
-        // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。通知の見出しも実態に合わせる
-        const eewNotifyTitle = currentLevel === 2 ? '緊急地震速報 特別警報'
-          : currentLevel === 1 ? '緊急地震速報 警報' : eewKindLabel(0)
+        // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。通知の見出しも実態に合わせる。
+        // **見出しは表示用の区分で決める**（特別警報の下げ止まり。→ eew-spec.md §4）。一度でも特別警報だった地震は、
+        // 続報で震度が下がってから長周期の予想が上がる・格上げが立つなどで出し直しても「特別警報」のまま。
+        // `event` は入口で統合した報で、印（`everSpecialWarning`）を運んでいる（`useEarthquakes` の `mergeEewReport`）。
+        // 出すかどうか（格上げ・予想の引き上げ）は生の区分のまま —— 下げ止まりは見出しの文言だけに効かせる
+        const notifyLevel = computeDisplayEEWLevel(event)
+        const eewNotifyTitle = notifyLevel === 2 ? '緊急地震速報 特別警報'
+          : notifyLevel === 1 ? '緊急地震速報 警報' : eewKindLabel(0)
         showBrowserNotification(
           eewNotifyTitle,
           eewNotificationBody(event.earthquake.hypocenter.name, notifyForecast),
