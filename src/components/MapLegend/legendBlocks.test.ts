@@ -71,11 +71,16 @@ describe('buildLegendBlocks', () => {
       expect(block.swatch.chips.map((c) => c.label)).toEqual(['活断層'])
     })
 
-    it('プレート境界は沈み込み帯とその他を別の色として出す', () => {
+    it('プレート境界は 4 系統を別の色として出す', () => {
       const [block] = buildLegendBlocks(sources({ plateBoundaries: true }))
       if (block.swatch.kind !== 'chips') throw new Error('chips ではない')
-      expect(block.swatch.chips).toHaveLength(2)
-      expect(block.swatch.chips[0].color).not.toBe(block.swatch.chips[1].color)
+      expect(block.swatch.chips.map((c) => c.label)).toEqual([
+        'プレート境界（沈み込み帯）',
+        'プレート境界（収束）',
+        'プレート境界（拡大・リフト）',
+        'プレート境界（トランスフォーム断層）',
+      ])
+      expect(new Set(block.swatch.chips.map((c) => c.color)).size).toBe(4)
     })
 
     it('潮位観測点は到達確認と欠測をそれぞれ出ているぶんだけ並べる', () => {

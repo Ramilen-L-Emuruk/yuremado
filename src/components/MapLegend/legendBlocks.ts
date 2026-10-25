@@ -25,7 +25,13 @@ import { ARRIVAL_COLOR } from '../Map/gl/tsunamiArrivalMarker'
 import { S_WAVE_COLOR, P_WAVE_COLOR } from '../Map/gl/psWaveStyle'
 import { HEATMAP_DENSITY_STOPS } from '../Map/gl/heatmapRamp'
 import type { HeatmapPeriod } from '../../utils/quakeHeatmap'
-import { FAULT_COLOR, SUBDUCTION_COLOR, PLATE_OTHER_COLOR } from '../Map/gl/overlayLineStyle'
+import {
+  FAULT_COLOR,
+  SUBDUCTION_COLOR,
+  PLATE_CONVERGENT_COLOR,
+  PLATE_DIVERGENT_COLOR,
+  PLATE_TRANSFORM_COLOR,
+} from '../Map/gl/overlayLineStyle'
 import {
   DEPTH_RAMP,
   MAGNITUDE_RAMP,
@@ -452,8 +458,11 @@ export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
     const chips: LegendChip[] = []
     if (sources.activeFaults) chips.push({ label: '活断層', color: FAULT_COLOR, shape: 'line' })
     if (sources.plateBoundaries) {
+      // 7 分類を 4 系統にまとめて出す（2026-10-25 ユーザー承認「B の案でよい (Recommended)」）。
       chips.push({ label: 'プレート境界（沈み込み帯）', color: SUBDUCTION_COLOR, shape: 'line' })
-      chips.push({ label: 'プレート境界（その他）', color: PLATE_OTHER_COLOR, shape: 'line' })
+      chips.push({ label: 'プレート境界（収束）', color: PLATE_CONVERGENT_COLOR, shape: 'line' })
+      chips.push({ label: 'プレート境界（拡大・リフト）', color: PLATE_DIVERGENT_COLOR, shape: 'line' })
+      chips.push({ label: 'プレート境界（トランスフォーム断層）', color: PLATE_TRANSFORM_COLOR, shape: 'line' })
     }
     blocks.push({ key: 'lines', title: '線', shortTitle: '線', swatch: { kind: 'chips', chips } })
   }

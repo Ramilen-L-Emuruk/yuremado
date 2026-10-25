@@ -4397,7 +4397,7 @@ K は使えなくなるので、タブが表示に戻ったときにその関係
 | `prefectures.json` | `scripts/build-prefectures.mjs` | 都道府県境界 |
 | `subregions.json` | `scripts/build-subregions.mjs` | 一次細分区域境界（**一次細分区域** の定義は [`quake-spec.md`](quake-spec.md) §1 参照） |
 | `active-faults.json` | `scripts/build-active-faults.mjs` | 全国活断層線 |
-| `plate-boundaries.json` | `scripts/build-plate-boundaries.mjs` | プレート境界線（全球・52 プレート） |
+| `plate-boundaries.json` | `scripts/build-plate-boundaries.mjs` | プレート境界線（全球・52 プレート・境界の種別 7 分類つき。→ 下記） |
 | `tts-phrase-break-dict.json` | 手動整備 | 読み上げ用の句区切り辞書 |
 | `tts-station-readings.json` | `scripts/build-station-readings.ts` | 震度観測点名の読み（誤読する点だけ・→ [`audio-tts-spec.md`](audio-tts-spec.md) §3） |
 | `tts-epicenter-accents.json` | `scripts/build-epicenter-accents.ts` | 震央地名の句割り（1 句にまとまる長い名前だけ・→ 同上） |
@@ -4938,6 +4938,36 @@ M 未決定の記録が並ぶことがあり（2025 年 1 月の日向灘の地�
 それになると照合が誤って失敗する。範囲を絞って生成したときは、**照合していない経路を名指しで出す**
 （「照合済み」と思い込まないため）。
 
+### プレート境界の種別（`public/data/plate-boundaries.json` の `type`）
+
+**線の形は配布元（fraxen/tectonicplates の GeoJSON）から、種別は原典（Bird 2003 の `PB2002_steps.dat`）から取る。**
+配布元の GeoJSON は「沈み込みか、それ以外か」しか持たない。原典は境界を約 1 度ごとの「歩」に割り、歩ごとに
+7 分類のどれかを付けている（同じ 2 枚のプレートの境界でも、向きによって収束にもすれ違いにもなる）。
+
+| 分類 | 吹き出しの語 | 凡例・色の系統 |
+|---|---|---|
+| SUB | 沈み込み帯 | 沈み込み帯（赤） |
+| OCB・CCB | 海洋の収束境界・大陸の収束境界 | 収束（橙） |
+| OSR・CRB | 海洋の拡大軸・大陸のリフト | 拡大・リフト（緑） |
+| OTF・CTF | 海洋のトランスフォーム断層・大陸のトランスフォーム断層 | トランスフォーム断層（青） |
+
+吹き出しは 7 分類のまま、凡例と色は 4 系統にまとめる（2026-10-25 ユーザー承認「B の案でよい (Recommended)」）。
+日本語の語は原典の分類名（readme の定義）を訳したもので、気象庁などの公的な訳語ではない。
+表は `src/utils/plateBoundaries.ts` の `PLATE_BOUNDARY_CLASSES`、色は `src/components/Map/gl/overlayLineStyle.ts`。
+
+**突き合わせ方**（`scripts/lib/plateSteps.mjs`）: 配布元の線の隣り合う 2 点を、原典の歩の始点・終点へ
+0.0015 度の幅で当てる（配布元は小数 4 桁、原典は 3 桁なので丸めの差が出る）。同じ分類が続く区間ごとに線を割り、
+1 本を 1 件にする（2026-10-25 の生成で 241 本 → 1,750 件）。
+
+- **配布元が日付変更線で線を割るために足した ±180 度の点**は原典に無い。その切れ端は、もう一方の端から出て
+  日付変更線をまたぐ歩の分類を取る
+- それでも当たらない区間は、同じ線の隣の区間の分類を引き継ぐ。**引き継いだ区間の数は生成のたびに出し、
+  全区間の 1% を超えたら止める**（2026-10-25 の生成では 6,051 区間のうち 0）
+- **1 区間も当たらない線があれば止める**（推測で分類を付けない）。表に無い分類の行が原典に現れても止める
+
+**取得は 2 件**（配布元の GeoJSON と原典の歩のファイル）。原典は
+`http://peterbird.name/oldFTP/PB2002/PB2002_steps.dat.txt`（570,262 バイト）。
+
 ### JMA2001 走時表（`src/data/jma2001TravelTime.ts`）
 
 **ここだけ `public/data/` に置かず、バンドルへ埋め込む。** 予報円と自動解除は電文を受け取った
@@ -4980,7 +5010,7 @@ M 未決定の記録が並ぶことがあり（2025 年 1 月の日向灘の地�
 - 長期震源カタログ: 気象庁 [地震月報（カタログ編）震源データ](https://www.data.jma.go.jp/eqev/data/bulletin/hypo.html)（1919〜2024 年）・[震源リスト](https://www.data.jma.go.jp/eqev/data/daily_map/)（2025 年〜）（いずれも公共データ利用規約 第1.0版・加工して作成）
 - GEBCO 海底地形: [GEBCO Basemap (NCEI)](https://tiles.arcgis.com/tiles/C8EMgrsFcRFL6LrL/arcgis/rest/services/GEBCO_basemap_NCEI/MapServer)
 - 活断層: 産業技術総合研究所 [活断層データベース](https://gbank.gsj.jp/activefault/)（政府標準利用規約 2.0）
-- プレート境界: [PB2002](http://peterbird.name/publications/2003_pb2002/2003_pb2002.htm)（Peter Bird）／データ整備: Hugo Ahlenius・Nordpil [fraxen/tectonicplates](https://github.com/fraxen/tectonicplates)（[Open Data Commons Attribution License 1.0](http://opendatacommons.org/licenses/by/1.0/)）
+- プレート境界: [PB2002](http://peterbird.name/publications/2003_pb2002/2003_pb2002.htm)（Peter Bird。境界の種別は原典の `PB2002_steps.dat` から）／データ整備: Hugo Ahlenius・Nordpil [fraxen/tectonicplates](https://github.com/fraxen/tectonicplates)（[Open Data Commons Attribution License 1.0](http://opendatacommons.org/licenses/by/1.0/)）
 
 ## 7. リプレイ機能
 
@@ -6103,3 +6133,4 @@ EEW の予想震度は範囲（下限・上限）で配信され、**上限が�
 - 2026-10-25: §2「震源カタログ」・§3 のヒートマップ用の取得を、長期震源カタログの終端より後ろだけを取る形に書き直した
   （リプレイでは終端から再生時刻まで）。§6 の「直近 30 日のヒートマップとは母集団が違う」を、ヒートマップだけは繋ぐ形に書き直した
 - 2026-10-25: §6「現行の一覧に無い観測点」に、履歴より前に消えた観測点 27 点を震度データベースの座標と電文コードが同じ今の観測点の座標で補うこと（2026-10-25 ユーザー承認）・引けなかった 2 点を名前ごと出すこと・都道府県だけが抜けた行を同じ市町村の観測点の県で補うことを足した
+- 2026-10-25: §6 に「プレート境界の種別」を足した。プレート境界を原典 PB2002 の 7 分類で持ち、吹き出しは 7 分類、凡例と色は 4 系統にした

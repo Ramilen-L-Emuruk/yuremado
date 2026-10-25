@@ -3106,7 +3106,7 @@ canvas source へ視野ぶんだけ焼いていた頃は、2 つの限界があ�
 |---|---|
 | `gl/psWaveStyle.ts` | 予報円（`PsWaveGL`） |
 | `gl/heatmapRamp.ts` | 地震活動の密度（`QuakeHeatmapGL`） |
-| `gl/overlayLineStyle.ts` | 活断層・プレート境界（`ActiveFaultsGL` / `PlateBoundariesGL`） |
+| `gl/overlayLineStyle.ts` | 活断層・プレート境界（`ActiveFaultsGL` / `PlateBoundariesGL`）。プレート境界は 4 系統の色（沈み込み帯・収束・拡大とリフト・トランスフォーム断層。7 分類との対応は [`data-sources-spec.md`](data-sources-spec.md) §6「プレート境界の種別」） |
 | `gl/tsunamiObsBarStyle.ts` | 津波の観測棒（`useTsunamiLayerData` → `TsunamiObsBarsGL`） |
 
 震度・長周期階級・津波の等級は既存の定数（`utils/intensity.ts`・`utils/lpgm.ts`・
@@ -3798,3 +3798,4 @@ canvas source へ視野ぶんだけ焼いていた頃は、2 つの限界があ�
 - 2026-10-25: §14 の地震活動ヒートマップを、長期震源カタログとその終端より後ろの API の区間を繋いで描く形にし、
   期間を凡例の欄のつまみで 7 日〜1919 年からの 10 段から選べるようにした（既定 30 日）。API キーが無いときはカタログの区間だけを描く。
   1 年より長い段はカタログの区間を 0.05 度の格子にまとめ（吹き出しは件数・最大・最新）、30 日より長い期間では濃さを期間の比の平方根で下げた
+- 2026-10-25: §20 の色の表に、プレート境界を 4 系統の色で描くことを書き添えた
