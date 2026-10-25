@@ -1849,16 +1849,22 @@ export const ESTIMATED_INTENSITY_QUAKE_FOLLOW_UP_DELAY_MS = 15_000
  *
  * **分布だけは合成の二進電文**（`scripts/build-test-estimated-intensity-bufr.ts` が組む。
  * 2026-10-22 ユーザー選択「合成の二進電文を作る」）。この電文は BUFR で、国立情報学研究所の
- * アーカイブにも気象庁のサンプル電文集にも無い。
+ * アーカイブにも気象庁のサンプル電文集にも無い。**大きさは能登本震の実電文に合わせ**（続報は約 52 万
+ * セル・最大は震度7）、**実配信と同じく 2 断片で流す**（2026-10-25 ユーザー選択「実物と同じ規模で
+ * 作り直す (Recommended)」）。
  */
 export const ESTIMATED_INTENSITY: TestTelegramScript = {
   anchor: 3,
   steps: [
     { file: NOTO.detail1, headType: 'VXSE53', atMs: 0 },
-    { file: 'synthetic/estimated-intensity-1.bufr', headType: 'IXAC41', atMs: ESTIMATED_INTENSITY_DELAY_MS },
+    {
+      file: 'synthetic/estimated-intensity-1.bufr', headType: 'IXAC41', atMs: ESTIMATED_INTENSITY_DELAY_MS,
+      continuations: [{ designation: 'RRA', file: 'synthetic/estimated-intensity-1.rra.bufr' }],
+    },
     {
       file: 'synthetic/estimated-intensity-2.bufr', headType: 'IXAC41',
       atMs: ESTIMATED_INTENSITY_DELAY_MS + ESTIMATED_INTENSITY_FOLLOW_UP_DELAY_MS,
+      continuations: [{ designation: 'RRA', file: 'synthetic/estimated-intensity-2.rra.bufr' }],
     },
     {
       file: NOTO.detail2, headType: 'VXSE53',

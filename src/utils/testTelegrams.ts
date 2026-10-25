@@ -22,6 +22,7 @@
 import type { ReplayEntry, ReplayPayload } from '../types/replay'
 import type { TestScenarioFile } from '../types/testScenario'
 import { buildXmlPayload, buildBinaryPayload, isBinaryTelegramType, EEW_HEAD_TYPES, type EewHeadType } from '../services/dmdataTelegramPayload'
+import { BufrFragmentStore } from '../services/bufrTelegramAssembly'
 import { instantiateScenario } from './testScenarioReplay'
 import { fetchWithTimeout } from './fetchWithTimeout'
 import { DATA_FETCH_TIMEOUT_MS } from './fetchJson'
@@ -57,6 +58,14 @@ export interface TestTelegramStep {
    * 電文の時刻をずらしても本文は追随しないので、組むときの時刻から作る必要がある。
    */
   rewrite?: (xml: string, ctx: { now: Date }) => string
+  /**
+   * 二進電文の**続きの断片**（分割報符号と、`public/data/test-telegrams/` からの相対パス）。`file` が 1 報目。
+   *
+   * 実配信の大きい電文は分割して届き、受け側で結合してから読む（→ `services/bufrTelegramAssembly.ts`）。
+   * テストでも**同じ結合部品へ通す** —— ここで結合を自前で書くと、実配信でしか通らない経路が
+   * テストボタンでは一度も通らない。
+   */
+  continuations?: readonly { designation: string; file: string }[]
 }
 
 /** テストボタン 1 つぶんの台本。 */
@@ -231,6 +240,23 @@ export interface BuildTestTelegramOptions {
  * **1 通でも読めなければ全体を失敗にする。** 一部だけ流すと、続報が前の報を欠いたまま届き、
  * 確かめたい形にならない（しかも画面からは欠けたことが分からない）。
  */
+/**
+ * 二進電文の断片を読み、本番の結合部品（`BufrFragmentStore`）で 1 通へ戻す。分割していなければ
+ * 1 報目をそのまま返す。**揃わなければ例外** —— 欠けたまま読むと分布が 1 セルも出ず、画面からは
+ * 「ボタンが効かない」としか見えない。
+ */
+async function assembleTestTelegramBytes(step: TestTelegramStep, fetcher: TestTelegramBinaryFetcher): Promise<Uint8Array> {
+  const first = await loadTestTelegramBytes(step.file, fetcher)
+  if (!step.continuations || step.continuations.length === 0) return first
+  const rest = await Promise.all(step.continuations.map(c => loadTestTelegramBytes(c.file, fetcher)))
+  const store = new BufrFragmentStore()
+  // 時刻は時限の判定にしか使わない（断片はその場で揃うので、どの値でも切れない）
+  let assembled = store.add(step.file, null, first, 0)
+  step.continuations.forEach((c, i) => { assembled = store.add(step.file, c.designation, rest[i], 0) })
+  if (assembled === null) throw new Error(`テスト用の電文の断片が揃いませんでした: ${step.file}`)
+  return assembled
+}
+
 export async function buildTestTelegramEntries(
   script: TestTelegramScript,
   options: BuildTestTelegramOptions,
@@ -254,7 +280,7 @@ export async function buildTestTelegramEntries(
       // 二進電文（推計震度分布図）。**書き換えは持たせない** —— ビット列なので文字列の置換が
       // 効かず、形を変えるなら組み直す側（`scripts/build-test-estimated-intensity-bufr.ts`）を直す。
       if (step.rewrite) throw new Error(`二進の電文は書き換えられません: ${step.file}`)
-      const bytes = await loadTestTelegramBytes(step.file, binaryFetcher)
+      const bytes = await assembleTestTelegramBytes(step, binaryFetcher)
       // **発表時刻は段ごとに違えること。** 二進電文（BUFR）は発表時刻を本文に持たないので、
       // 読むときに外から渡す。同じ時刻を渡すと、続報が「同じ発表時刻の再送」になって
       // 反映されない（判定は発表時刻しか見ない。→ `utils/estimatedIntensity.ts`）。
@@ -263,6 +289,7 @@ export async function buildTestTelegramEntries(
       if (!payload) throw new Error(`テスト用の電文を読めませんでした: ${step.file}（${step.headType}）`)
       return { step, xml: '', payload }
     }
+    if (step.continuations) throw new Error(`XML の電文は分割しません: ${step.file}`)
     const raw = await loadTestTelegramXml(step.file, fetcher)
     const xml = step.rewrite ? step.rewrite(raw, { now }) : raw
     const payload = buildXmlPayload(step.headType, xml, EEW_HEAD_TYPES.has(step.headType) ? eewHeadType : null)
