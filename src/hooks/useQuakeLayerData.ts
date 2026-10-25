@@ -7,11 +7,14 @@ import {
   lookupStationRegion,
   areaPrefIndexOf,
   stationPrefIndexOf,
+  regionOrderIndexOf,
+  regionOrderRank,
   type LatLng,
 } from '../utils/stationCoords'
 import { pointInRings, normalizeEpicenterLng, hasKnownEpicenter } from '../utils/geo'
 import { ringsBounds, type SubRegion } from '../utils/subregions'
 import { extractQuakeEventId } from '../utils/quakeMerge'
+import { lpgmStationsByArea, type LpgmStationRow } from '../utils/lpgm'
 import { japanWideCornersLatLng } from '../components/Map/gl/bounds'
 import type { FitZoomPolicy } from '../components/Map/gl/camera'
 import { log } from '../utils/logger'
@@ -125,6 +128,12 @@ export interface LpgmRegionAggregate {
    * ここだけ落とすと、寄り引きしただけで情報が消える。
    */
   maxInt?: IntensityScale
+  /**
+   * この区域の観測点（カードで区域を開いたときと同じ顔ぶれ・同じ順。→ `lpgmStationsByArea`）。区域の印の吹き出しに並べる。
+   * **電文は区域の段に周期ごとの内訳を持たない**ので、区域の吹き出しで伝えられるのは
+   * 観測点の顔ぶれと階級・震度まで（内訳は観測点の吹き出しとカードの観測点の行が持つ）
+   */
+  stations: LpgmStationRow[]
 }
 
 /**
@@ -513,6 +522,9 @@ export function useQuakeLayerData(
     if (!lpgmActive || !lpgm?.regions?.length || !subregions) return []
     const maxByName = new Map(lpgm.regions.map((r) => [r.name, r.maxLgInt]))
     const maxIntByName = new Map(lpgm.regions.map((r) => [r.name, r.maxInt]))
+    // 並べ方はカードの一覧と同じ順位表で決める（→ `sortLpgmStations`。カードは `EarthquakeCard` の `lpgmGroups`）
+    const order = stationCoords ? regionOrderIndexOf(stationCoords) : null
+    const stationsByArea = lpgmStationsByArea(lpgm.points ?? [], name => regionOrderRank(name, order))
     return subregions
       // 階級 0 の区域も塗る（灰色。2026-10-22 ユーザー選択「画面には残す (Recommended)」）。
       // 電文に載っていない区域だけを外す（以前は `?? 0` と `>= 1` で、0 と「載っていない」をまとめて外していた）
@@ -520,9 +532,10 @@ export function useQuakeLayerData(
       .map((sr) => ({
         name: sr.name, maxLgInt: maxByName.get(sr.name)!, rings: sr.rings, label: sr.label,
         ...(maxIntByName.get(sr.name) !== undefined && { maxInt: maxIntByName.get(sr.name) }),
+        stations: stationsByArea.get(sr.name) ?? [],
       }))
       .sort((a, b) => a.maxLgInt - b.maxLgInt)
-  }, [lpgmActive, lpgm, subregions])
+  }, [lpgmActive, lpgm, subregions, stationCoords])
 
   // 地震モードのカメラフィット対象。観測点の代表点ではなく、実際に塗られる一次細分区域ポリゴンの
   // 外接矩形（bbox）でフィットする（区域が代表点よりはみ出た形のときにフレームから溢れるのを防ぐ）。

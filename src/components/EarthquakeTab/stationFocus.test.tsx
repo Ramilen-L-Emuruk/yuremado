@@ -336,6 +336,66 @@ describe('長周期地震動の観測点の行をクリックしたときの寄�
   })
 })
 
+// 観測点の行の周期ごとの内訳（2026-10-25 ユーザー選択「行を開ける形 (Recommended)」）。
+// 内訳を持つ観測点の行は開閉になり、寄せは観測点名へ移る（県・区域の行と同じ作法）。
+const LPGM_WITH_PERIODS: JMALpgm = {
+  ...LPGM,
+  points: [
+    { code: '1', name: f.KNOWN, pref: f.PREF, area: f.AREA, lgInt: 4, periods: [
+      { band: 1, lgInt: 4, sva: 52.3 }, { band: 2, lgInt: 0, sva: 1.2 },
+    ] },
+    { code: '2', name: f.UNKNOWN, pref: f.PREF, area: f.AREA, lgInt: 3 },
+  ],
+}
+
+describe('長周期地震動の観測点の行に出す周期ごとの内訳', () => {
+  // 正: 行を押すと内訳が開き、見出し・帯・読み方が出る。行を押しても地図は寄らない。
+  it('内訳を持つ観測点の行は押すと内訳を開く', () => {
+    const onFocusMap = vi.fn()
+    renderCard(QUAKE, onFocusMap, { lpgm: LPGM_WITH_PERIODS })
+    openIntensityRows(f.PREF, f.AREA)
+    expect(screen.queryByText('揺れの周期ごと（階級・揺れの大きさ）')).toBeNull()
+
+    const row = clickRow(f.KNOWN)
+
+    expect(row.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('揺れの周期ごと（階級・揺れの大きさ）')).toBeTruthy()
+    expect(screen.getByText('2秒')).toBeTruthy()
+    expect(screen.getByText('52.3')).toBeTruthy()
+    // 階級 0 の帯も「−」で残る
+    expect(screen.getByText('3秒')).toBeTruthy()
+    expect(screen.getByText('周期が長いほど、高い建物が大きく揺れます')).toBeTruthy()
+    expect(onFocusMap).not.toHaveBeenCalled()
+
+    // もう一度押すと畳む
+    clickRow(f.KNOWN)
+    expect(screen.queryByText('揺れの周期ごと（階級・揺れの大きさ）')).toBeNull()
+  })
+
+  // 安全弁: 開閉を持っても、観測点名を押せば地図はその地点へ寄る（寄せを失わない）。
+  it('内訳を持つ観測点も、名前を押せば地図へ寄る', () => {
+    const onFocusMap = vi.fn()
+    renderCard(QUAKE, onFocusMap, { lpgm: LPGM_WITH_PERIODS })
+    openIntensityRows(f.PREF, f.AREA)
+
+    fireEvent.click(labelOf(f.KNOWN))
+
+    expect(onFocusMap).toHaveBeenCalledWith([f.KNOWN_POS], f.KNOWN)
+    expect(screen.queryByText('揺れの周期ごと（階級・揺れの大きさ）')).toBeNull()
+  })
+
+  // 対照: 内訳を持たない観測点は開閉を持たない（座標も引けないので押せないまま）。
+  it('内訳を持たない観測点の行は開けない', () => {
+    renderCard(QUAKE, vi.fn(), { lpgm: LPGM_WITH_PERIODS })
+    openIntensityRows(f.PREF, f.AREA)
+
+    const row = clickRow(f.UNKNOWN)
+
+    expect(row.getAttribute('aria-expanded')).toBeNull()
+    expect(screen.queryByText('揺れの周期ごと（階級・揺れの大きさ）')).toBeNull()
+  })
+})
+
 // ── 上位 3 段（県・区域・市町村） ──────────────────────────────────────────────
 // 行全体は開閉に使っているので、**寄せは地名の部分だけ**に置いてある。
 // 県・区域は境界の外接矩形へ、市町村は境界データが無いので配下の観測点の範囲へ寄る。

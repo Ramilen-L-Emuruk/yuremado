@@ -1,8 +1,9 @@
 import { Fragment, memo, useMemo, useRef, useEffect, useState } from 'react'
-import type { JMAQuake, JMALpgm, IssueType, EarthquakePoint, IntensityScale, JMAEstimatedIntensity, QuakeReportRecord, BorrowedFromTsunami } from '../../types/earthquake'
+import type { JMAQuake, JMALpgm, IssueType, EarthquakePoint, IntensityScale, JMAEstimatedIntensity, QuakeReportRecord, BorrowedFromTsunami, LpgmPeriodBand } from '../../types/earthquake'
 import { quakeEventKey, isKnownCorrection } from '../../utils/quakeMerge'
 import { QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
-import { getLpgmClassLabel, getLpgmClassColor, getLpgmClassBgColor, lpgmCategoryNote, buildLpgmRows, canOpenLpgmNotes } from '../../utils/lpgm'
+import { getLpgmClassLabel, getLpgmClassColor, getLpgmClassBgColor, lpgmCategoryNote, buildLpgmRows, canOpenLpgmNotes, lpgmPeriodRows, LPGM_PERIODS_HEADING, LPGM_PERIODS_NOTE, type LpgmStationRow } from '../../utils/lpgm'
+import { readableTextColor } from '../../utils/contrast'
 import { estimatedIntensityAvailability } from '../../utils/estimatedIntensity'
 import { telegramTextSubject } from '../../utils/ttsFollow'
 import { domesticTsunamiCardForecastText, warnIfDomesticTsunamiSentenceMissing } from '../../utils/domesticTsunamiComment'
@@ -262,6 +263,38 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
           {canExpand ? (isOpen ? '▾' : '▸') : ''}
         </span>
       </span>
+    </div>
+  )
+}
+
+/**
+ * 観測点の行を開いたときに出す、周期ごとの内訳（2026-10-25 ユーザー選択「行を開ける形 (Recommended)」、
+ * 語は「今の語のまま (Recommended)」）。**地図の観測点の吹き出しと同じ行・同じ文**（→ `lpgmPeriodRows`・
+ * `LPGM_PERIODS_HEADING`・`LPGM_PERIODS_NOTE`）。電文は区域や県の段に内訳を持たないので、開けるのは観測点だけ。
+ */
+function LpgmPeriodList({ periods, depth }: { periods: readonly LpgmPeriodBand[]; depth: 1 | 2 }) {
+  // 観測点の行より一段深く字下げする（観測点の行の字下げは `LpgmRow` の pl-5 / pl-8）
+  const pad = depth === 1 ? 'pl-8' : 'pl-11'
+  return (
+    <div className={`${pad} pr-2 pb-1 text-[0.75rem] roomy:text-[0.875rem]`}>
+      <div className="text-gray-400">{LPGM_PERIODS_HEADING}</div>
+      {lpgmPeriodRows(periods).map((r, i) => (
+        <div key={i} className="flex items-center gap-1.5 leading-relaxed">
+          <span className="w-[2.5em] text-right text-gray-400">{r.label}</span>
+          {r.lgInt !== null ? (
+            <span
+              className="inline-block min-w-[1.5em] px-1 text-center font-bold rounded-sm"
+              style={{ background: getLpgmClassColor(r.lgInt), color: readableTextColor(getLpgmClassColor(r.lgInt)) }}
+            >
+              {r.lgInt}
+            </span>
+          ) : (
+            <span className="inline-block min-w-[1.5em] text-center text-slate-500">−</span>
+          )}
+          <span className="tabular-nums text-gray-300">{r.sva}</span>
+        </div>
+      ))}
+      <div className="mt-0.5 text-gray-400">{LPGM_PERIODS_NOTE}</div>
     </div>
   )
 }
@@ -1476,6 +1509,32 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           {/* 各地の震度 / 長周期地震動階級（LPGM トグルオン時は階級表示に切り替え） */}
           {(() => {
             if (lpgmActiveHere && lpgmGroups.length > 0) {
+              // 観測点の行。内訳を持つ観測点は開けて、開くと周期ごとの内訳を出す（→ `LpgmPeriodList`）。
+              // 開閉があると行を押すのは開閉になり、地図への寄せは観測点名へ移る（県・区域の行と同じ作法）。
+              // 開閉の鍵は県と区域で区切る（区域の分からない観測点は区域を空にする）。同じ名前の観測点が
+              // 別の区域・県にあっても、片方を開いたらもう片方まで開く、ということが起きないように
+              const lpgmStationNode = (st: LpgmStationRow, prefName: string, areaName: string, depth: 1 | 2) => {
+                const stationKey = st.periods ? `lpgm:station:${prefName}:${areaName}:${st.name}` : null
+                return (
+                  <Fragment key={st.name}>
+                    <LpgmRow
+                      label={st.name}
+                      lgInt={st.lgInt}
+                      int={st.int}
+                      nonJma={st.nonJma}
+                      mark={lpgmRowMark(rowMarkKey.station(st.name))}
+                      depth={depth}
+                      expandKey={stationKey}
+                      expanded={expanded}
+                      onToggle={toggle}
+                      onFocus={focusHandlerFor(prefName, st.name)}
+                    />
+                    {stationKey && st.periods && expanded.has(stationKey) && (
+                      <LpgmPeriodList periods={st.periods} depth={depth} />
+                    )}
+                  </Fragment>
+                )
+              }
               return (
                 <div className="flex flex-col gap-0.5 pt-1 border-t border-white/10">
                   {/* 最上段は都道府県か、都道府県を引けなかった区域（→ `LpgmPrefRow.kind`）。
@@ -1517,39 +1576,11 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                                 onToggle={toggle}
                                 onFocus={focusBoundsHandler(areaBounds.get(area.name) ?? null)}
                               />
-                              {expanded.has(`lpgm:area:${area.name}`) && area.stations.map(st => (
-                                <LpgmRow
-                                  key={st.name}
-                                  label={st.name}
-                                  lgInt={st.lgInt}
-                                  int={st.int}
-                                  nonJma={st.nonJma}
-                                  mark={lpgmRowMark(rowMarkKey.station(st.name))}
-                                  depth={2}
-                                  expandKey={null}
-                                  expanded={expanded}
-                                  onToggle={toggle}
-                                  onFocus={focusHandlerFor(prefRow.name, st.name)}
-                                />
-                              ))}
+                              {expanded.has(`lpgm:area:${area.name}`) && area.stations.map(st => lpgmStationNode(st, prefRow.name, area.name, 2))}
                             </div>
                           ))}
                           {/* 区域が分からない観測点（→ `LpgmPrefRow.stations`）。 */}
-                          {prefRow.stations.map(st => (
-                            <LpgmRow
-                              key={st.name}
-                              label={st.name}
-                              lgInt={st.lgInt}
-                              int={st.int}
-                              nonJma={st.nonJma}
-                              mark={lpgmRowMark(rowMarkKey.station(st.name))}
-                              depth={1}
-                              expandKey={null}
-                              expanded={expanded}
-                              onToggle={toggle}
-                              onFocus={focusHandlerFor(prefRow.name, st.name)}
-                            />
-                          ))}
+                          {prefRow.stations.map(st => lpgmStationNode(st, prefRow.name, '', 1))}
                         </>
                       )}
                     </div>

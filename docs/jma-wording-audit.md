@@ -110,7 +110,7 @@
 | E9 | `この種類の情報について（開く）` | `components/SpecialInfoBanner/index.tsx:206`（画面） | `Body/EarthquakeInfo/Appendix` | 【参考情報】eq:2634 | 言い換え | 高 | `参考情報（開く）` |
 | E10 | `要約` | `components/SettingsTab/index.tsx:466・469・472`（設定タブ） | `Head/Headline/Text` | 【見出し文】eq:96 | 言い換え | 高 | `見出し文` |
 | E11 | 帯の札 `お知らせ`・`地震回数`・`解説情報`（電文に名前が無いときの代わりの名） | `components/SpecialInfoBanner/index.tsx:340・392・448`（画面）、`services/dmdataParser.ts:3025` | 地震・津波に関するお知らせ・地震回数に関する情報・南海トラフ地震関連解説情報 | eq:27-29 の情報名 | 短縮 | 低 | — |
-| E12 | `揺れの大きさ 最大 {n} cm/s`・`揺れの周期ごと（階級・揺れの大きさ）` | `components/Map/LpgmPointsGL.tsx:144・114`（地図の吹き出し） | 観測点の `Sva`・`SvaPerPeriod` | 「絶対速度応答スペクトルの…最大値」・「周期別階級」eq:2587 | 言い換え | 高 | — |
+| E12 | `揺れの大きさ 最大 {n} cm/s`・`揺れの周期ごと（階級・揺れの大きさ）` | `components/Map/LpgmPointsGL.tsx`（揺れの大きさ 最大）・`utils/lpgm.ts` の `LPGM_PERIODS_HEADING`（地図の吹き出しと地震カードの観測点の行） | 観測点の `Sva`・`SvaPerPeriod` | 「絶対速度応答スペクトルの…最大値」・「周期別階級」eq:2587 | 言い換え | 高 | — |
 | E13 | `震度が小さくても高層階が大きく揺れた地域があります` | `utils/lpgm.ts:87`（画面） | `LgCategory` の 2・4 | 2 は「長周期地震動階級１以上が観測された地域のうち最大震度が４以下となる地域が存在」eq:2552-2556 | 言い換え（2 のときは強すぎる） | 低 | 電文の条件どおりの文 |
 | E14 | `震源を訂正`・`訂正（内容不明）` | `utils/formatters.ts:364-366`（画面） | 固定付加文 0256・`Head/InfoType`＝訂正 | 0256「震源要素を訂正します。」eq:2413 | 短縮 | 低 | `震源要素を訂正` |
 | E15 | `震源調査中`（震源名の欄） | `components/EarthquakeTab/EarthquakeCard.tsx:618`（画面） | 震央地名が無い報（主に震度速報） | 確かめていない | 公式の名なし | 低 | — |
