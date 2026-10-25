@@ -1033,6 +1033,35 @@ function HomeLocationSection({
 
   const isSet = homeLat !== null && homeLng !== null
 
+  // 手で入れる欄（2026-10-25 ユーザー選択「緯度・経度の欄だけ (Recommended)」）。いまの地点を入れた状態から始め、
+  // 現在地の取得やクリアで地点が変わったら欄も追う。
+  const [latText, setLatText] = useState(homeLat === null ? '' : String(homeLat))
+  const [lngText, setLngText] = useState(homeLng === null ? '' : String(homeLng))
+  useEffect(() => {
+    setLatText(homeLat === null ? '' : String(homeLat))
+    setLngText(homeLng === null ? '' : String(homeLng))
+  }, [homeLat, homeLng])
+  const typedLat = parseCoordinateNumber(latText)
+  const typedLng = parseCoordinateNumber(lngText)
+  // 範囲の外・読めない値ではボタンを押せない（文言は足さない。欄の名前とボタンだけで伝える）
+  const canApply = isValidHomeLocation(typedLat, typedLng) && (typedLat !== homeLat || typedLng !== homeLng)
+  // 地図の道具から「37.5, 137.2」を 1 つの欄へ貼った形は、どちらの欄へ貼っても 2 つの欄へ割って入れる
+  const handleCoordinateChange = useCallback((text: string, setOwn: (t: string) => void) => {
+    const pair = splitPastedLatLng(text)
+    if (pair) {
+      setLatText(pair.lat)
+      setLngText(pair.lng)
+      return
+    }
+    setOwn(text)
+  }, [])
+  const handleApply = useCallback(() => {
+    if (typedLat === null || typedLng === null || !isValidHomeLocation(typedLat, typedLng)) return
+    onUpdate('homeLat', typedLat)
+    onUpdate('homeLng', typedLng)
+    setError(null)
+  }, [typedLat, typedLng, onUpdate])
+
   return (
     <div className="px-4 py-3 space-y-2">
       <p className="text-xs text-secondary">現在地を主要動到達の基準点として使用します。HTTPS または localhost が必要です。</p>
@@ -1059,6 +1088,35 @@ function HomeLocationSection({
             </button>
           )}
         </div>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <label className="flex items-center gap-1 text-xs text-secondary">
+          緯度
+          <input
+            type="text"
+            inputMode="decimal"
+            value={latText}
+            onChange={e => handleCoordinateChange(e.target.value, setLatText)}
+            className="w-24 bg-panel border border-border rounded-sm px-1.5 py-0.5 text-xs text-white font-mono"
+          />
+        </label>
+        <label className="flex items-center gap-1 text-xs text-secondary">
+          経度
+          <input
+            type="text"
+            inputMode="decimal"
+            value={lngText}
+            onChange={e => handleCoordinateChange(e.target.value, setLngText)}
+            className="w-24 bg-panel border border-border rounded-sm px-1.5 py-0.5 text-xs text-white font-mono"
+          />
+        </label>
+        <button
+          onClick={handleApply}
+          disabled={!canApply}
+          className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white px-3 py-1.5 rounded-sm transition-colors"
+        >
+          この地点にする
+        </button>
       </div>
       {error && <p className="text-xs text-red-400">{error}</p>}
     </div>
