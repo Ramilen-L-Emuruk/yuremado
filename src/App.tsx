@@ -2780,7 +2780,7 @@ export function App() {
                 <ActionChecklist
                   reason={actionChecklist.state.reason}
                   scale={actionChecklist.state.scale}
-                  scoped={actionChecklist.state.scoped}
+                  scope={actionChecklist.state.scope}
                   collapsed={actionChecklist.collapsed}
                   onDismiss={actionChecklist.dismiss}
                   onRestore={actionChecklist.restore}
