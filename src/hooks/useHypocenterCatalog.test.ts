@@ -50,6 +50,10 @@ const makeYear = (year: number): HypocenterYear => {
     lng: new Float64Array(0),
     depth: new Float32Array(0),
     magnitude: new Float32Array(0),
+    names: [],
+    nameIdx: new Int32Array(0),
+    external: new Uint8Array(0),
+    intensityCode: new Map(),
   }
   YEAR_CACHE.set(year, y)
   return y

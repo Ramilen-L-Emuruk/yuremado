@@ -77,8 +77,13 @@ export interface DepthPointColumns {
   color: Float32Array
   /** 直径（CSS px）。長さは `count`。 */
   sizePx: Float32Array
-  /** 全点共通の形（既定は円）。点ごとに変えたいなら `setPoints` を使う。 */
+  /** 全点共通の形（既定は円）。`shapeIds` を渡したときはそちらが勝つ。 */
   shape?: DepthPointShape
+  /**
+   * 点ごとの形（`depthPointShapeId` の番号）。長さは `count`。**1 バイトで持つ** —— 数十万点に
+   * 形のオブジェクトを持たせると、`setPoints` を避けた意味がなくなる。
+   */
+  shapeIds?: Uint8Array
   /** 全点共通の不透明度（既定 1）。 */
   alpha?: number
 }
@@ -311,10 +316,15 @@ void main() {
  * 選んだ形は 2026-10-15 ユーザー承認（→ `docs/spec/map-rendering-spec.md` §16）。
  * **判定（クリック）は形を見ない**（円で拾う）ので、形を足しても当たり判定は変わらない。
  */
-export type DepthPointShape = 'circle' | 'cross' | 'crossRing' | 'crossBroken'
+export type DepthPointShape = 'circle' | 'cross' | 'crossRing' | 'crossBroken' | 'ring'
 
 /** シェーダーへ渡す形の番号。属性で持たせるので、1 レイヤーに混在できる。 */
-const SHAPE_ID: Record<DepthPointShape, number> = { circle: 0, cross: 1, crossRing: 2, crossBroken: 3 }
+const SHAPE_ID: Record<DepthPointShape, number> = { circle: 0, cross: 1, crossRing: 2, crossBroken: 3, ring: 4 }
+
+/** 形の番号。`DepthPointColumns.shapeIds` に詰めるときに使う。 */
+export function depthPointShapeId(shape: DepthPointShape): number {
+  return SHAPE_ID[shape]
+}
 
 const FRAG_SRC = `#version 300 es
 precision highp float;
@@ -328,6 +338,10 @@ void main() {
   if (v_shape < 0.5) {
     // 円。縁だけアンチエイリアス（gl/subThresholdLayer.ts と同じ作り）。
     a = 1.0 - smoothstep(0.44, 0.5, length(p));
+  } else if (v_shape > 3.5) {
+    // 中抜きの丸（ring）。点が数 px でも輪が潰れないよう、穴は半径の半分ほどに留める。
+    float r = length(p);
+    a = (1.0 - smoothstep(0.44, 0.5, r)) * smoothstep(0.22, 0.28, r);
   } else {
     // 45 度に傾けた十字（× 印）。
     float arm = min(abs(p.x + p.y), abs(p.x - p.y));
@@ -641,7 +655,7 @@ function applyDepthSlab(
  * **名前に反して「画面上の実際の長さ」ではない。** 正射影で測った量で、透視投影の視差を含まない。
  * そのため真上（pitch 0）では深さもズームに関わらず必ず 0 を返す——**真上から見ているあいだは丸と
  * 縦線を出さない**という意図した判定で、測り損ねているのではない（2026-08-29「真上に近づいたら線と
- * 震央は消すのはどうですか？」→「OKです。 残りに行きましょう」、2026-10-14 選択「真上では震央と柄を
+ * 震央は消すのはどうですか？」→「OKです。 残りに行きましょう」、2026-10-14 ユーザー選択「真上では震央と柄を
  * 消す」で維持）。実際の長さとの差（zoom 15・pitch 0 で
  * 0px 対 278px 等）と、閾値を触るときの注意は docs/spec/map-rendering-spec.md §16「補助の点と柄」。
  *
@@ -1198,7 +1212,7 @@ export function createDepthPointLayer(id: MapLayerId, map: MapLibreMap, label: s
       data = new Float32Array(count * STRIDE_FLOATS)
       const shapeId = SHAPE_ID[cols.shape ?? 'circle']
       const alpha = cols.alpha ?? 1
-      const { lng, lat, depthKm, color, sizePx } = cols
+      const { lng, lat, depthKm, color, sizePx, shapeIds } = cols
       for (let i = 0; i < count; i++) {
         const d = depthKm[i]
         const c = i * 3
@@ -1212,7 +1226,7 @@ export function createDepthPointLayer(id: MapLayerId, map: MapLibreMap, label: s
           color[c + 1],
           color[c + 2],
           sizePx[i],
-          shapeId,
+          shapeIds ? shapeIds[i] : shapeId,
           0,
           alpha,
           alpha,

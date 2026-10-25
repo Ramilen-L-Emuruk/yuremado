@@ -36,8 +36,11 @@ export interface HypocenterRecord {
   lat: number
   /** 経度（度）。西経は負。 */
   lng: number
-  /** 深さ (km)。 */
-  depth: number
+  /**
+   * 深さ (km)。**`null` は深さ欄が 2 通りに取れる形で、深さを決められない地震**
+   * （`parseDepthField`。1961〜1966 年に 24 件・2016 年に 18 件）。
+   */
+  depth: number | null
   /**
    * マグニチュード。**`null` は気象庁が M を求められなかった地震**（欄が空白 2 文字）。
    *
@@ -87,6 +90,11 @@ export interface HypocenterRecord {
    * ので、足すのは出力側だけで済む）。
    */
   quality: string
+  /**
+   * 震央地名（69〜92 欄）。**英字**（`NOTO PENINSULA REGION` など）で、気象庁は日本語の対応表を
+   * 公表していない。空欄なら空文字。日本語の震央地名は生成側が座標から引く（`build-hypocenter-catalog.ts`）。
+   */
+  regionName: string
 }
 
 /**
@@ -124,8 +132,8 @@ export function parseHypocenterRecord(line: string): HypocenterRecord | null {
   if (lat == null || lng == null) return null
 
   // 深さは「整数 3 桁 ＋ 小数部」。固定深さは小数部が空白になる（` 50  ` = 50km）。
-  const depth = parseTrailingBlankDecimal(line.slice(44, 49), 3)
-  if (depth == null) return null
+  const depth = parseDepthField(line.slice(44, 49))
+  if (depth === 'unreadable') return null
 
   const magnitude = parseMagnitudeField(line.slice(52, 54))
   if (magnitude === 'unreadable') return null
@@ -142,19 +150,43 @@ export function parseHypocenterRecord(line: string): HypocenterRecord | null {
     kind: line.slice(0, 1),
     intensity: intensityText.trim() === '' ? null : intensityText,
     quality: line.slice(95, 96),
+    regionName: line.slice(68, 92).trim(),
   }
+}
+
+/**
+ * 深さ欄（5 文字）を読む。
+ *
+ * 書式どおりなら値。**書式の外の形が 3 通りあり、扱いを分ける**（2026-10-23 ユーザー選択
+ * 「ISC と照らして決める (Recommended)」）。
+ *
+ * | 形 | 件数 | 扱い |
+ * |---|---|---|
+ * | `   0 `（整数部が空白で小数部が 0） | 48 件（1958〜1987 年） | **0 km**。0.0 km と 0 km のどちらに取っても同じ値 |
+ * | `   N `（N は 1〜9） | 24 件（1961〜1966 年） | **深さ不明（`null`）**。0.N km とも N km とも取れる |
+ * | `  0 N` | 18 件（2016 年の熊本の余震） | **深さ不明（`null`）**。同上 |
+ *
+ * `   N ` の 24 件は ISC の震源と突き合わせたが、当たったのは 6 件だけで、どれも気象庁ではなく
+ * ISC 自身の決め直し（0 km・2.3 km・20 km 固定など）だった。どちらの読み方とも決められないので
+ * 深さ不明で収録する（突き合わせの記録は `docs/spec/data-sources-spec.md` §6「長期震源カタログ」）。
+ *
+ * @returns 深さ (km)／`null`（深さ不明）／`'unreadable'`（上のどれでもない）
+ */
+export function parseDepthField(text: string): number | null | 'unreadable' {
+  const depth = parseTrailingBlankDecimal(text, 3)
+  if (depth != null) return depth
+  if (text === '   0 ') return 0
+  if (/^ {3}[1-9] $/.test(text) || /^ {2}0 \d$/.test(text)) return null
+  return 'unreadable'
 }
 
 /**
  * 「整数部（右詰め）＋ 小数部（左詰め・空白埋め）」の数値欄を読む。
  *
- * **深さ欄には仕様外の形が実在し、読めずに `null` を返す。** 整数部が空白なのに小数部に
- * 数字がある形（`   0 ` `   7 ` 等・1958〜1987 年に 72 件。最多は 1967 年の 29 件で大半が
- * 松代群発地震）と、小数部の途中に空白が挟まる形（`  0 4`・2016 年の熊本の余震に 18 件）。
- * **値を推測しない** —— 前者は 0〜9 のすべてが現れるため「0km の別表記」ではなく桁の解釈が
- * 変わっており、0.7km と 7km のどちらなのかがデータからは決まらない。標準誤差も 39・50 と
- * 異常で、M 欄が空の記録が多い。生成側はこれを理由ごとに数えて閾値で監視する
- * （`build-hypocenter-catalog.ts` の `UNREADABLE_DEPTH_WARN_RATIO`）。
+ * **深さ欄には仕様外の形が実在し、ここでは読めずに `null` を返す。** 整数部が空白なのに小数部に
+ * 数字がある形（`   0 ` `   7 ` 等・1958〜1987 年に 72 件）と、小数部の途中に空白が挟まる形
+ * （`  0 4`・2016 年の熊本の余震に 18 件）。**深さ欄はこの関数を直に使わず `parseDepthField` を通す**
+ * —— そちらが既知の形を 0 km か深さ不明へ振り分ける。
  *
  * 秒・緯度分・経度分・深さがこの形。**小数部の桁数が年代で変わる**ため、桁数を決め打つと
  * 片方の年代で 10 倍ずれた値を黙って返す。空白を落としてから、残った桁数で割ること。

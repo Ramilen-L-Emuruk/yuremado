@@ -55,8 +55,8 @@ export interface ScaleCheckTarget {
   timeMs: number
   lat: number
   lng: number
-  /** 深さ (km)。 */
-  depth: number
+  /** 深さ (km)。深さ不明（null）は検査しない。 */
+  depth: number | null
   /** M。読めなかった行は null で、その場合 M は検査しない。 */
   magnitude: number | null
 }
@@ -78,7 +78,7 @@ export function countUnrepresentable(
     if ((r.timeMs * TIME_SCALE) % 1000 !== 0) reasons.push(`時刻 ${new Date(r.timeMs).toISOString()}`)
     if (!fitsScale(r.lat, COORD_SCALE)) reasons.push(`緯度 ${r.lat}`)
     if (!fitsScale(r.lng, COORD_SCALE)) reasons.push(`経度 ${r.lng}`)
-    if (!fitsScale(r.depth, DEPTH_SCALE)) reasons.push(`深さ ${r.depth}`)
+    if (r.depth != null && !fitsScale(r.depth, DEPTH_SCALE)) reasons.push(`深さ ${r.depth}`)
     if (r.magnitude != null && !fitsScale(r.magnitude, MAG_SCALE)) reasons.push(`M ${r.magnitude}`)
     if (reasons.length === 0) continue
     count++

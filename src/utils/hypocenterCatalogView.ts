@@ -4,7 +4,7 @@
 // 背景と判断は docs/spec/data-sources-spec.md §6「長期震源カタログ」。
 import type { HypocenterIndex, HypocenterYear } from './hypocenterCatalog'
 import { completeMinMagnitude } from './hypocenterCatalog'
-import type { DepthPointColumns } from '../components/Map/gl/depthPointLayer'
+import { depthPointShapeId, type DepthPointColumns } from '../components/Map/gl/depthPointLayer'
 
 /**
  * 絞り込みを変えてから点群を作り直すまでの待ち（ミリ秒）。
@@ -41,6 +41,11 @@ export interface CatalogFilter extends CatalogPeriod {
   /** 経度の範囲（度・両端を含む）。 */
   minLng: number
   maxLng: number
+  /**
+   * 気象庁以外の機関が決めた震源も出すか。**既定は出さない**（2026-10-25 ユーザー選択
+   * 「既定は J だけ・切り替えで足す (Recommended)」）。
+   */
+  includeExternal: boolean
 }
 
 /** 見せ方。 */
@@ -64,6 +69,21 @@ export interface CatalogPointCloud {
   magnitude: Float32Array
   /** 残った点のうち、M が決まっていない地震の数（件数欄の内訳と凡例に使う）。 */
   unknownMagnitudeCount: number
+  /** 残った点のうち、深さが決まっていない地震の数（凡例に使う）。 */
+  unknownDepthCount: number
+  /** 残った点のうち、気象庁以外の機関が決めた震源の数（凡例に使う）。 */
+  externalCount: number
+  /** 震央地名。名前が無い地震は `null`。 */
+  names: (string | null)[]
+  /** 最大震度の生コード。記録が無い地震は `null`。 */
+  intensityCode: (string | null)[]
+  /** 気象庁以外の機関が決めた震源なら 1。 */
+  external: Uint8Array
+  /**
+   * 深さが決まっていない地震なら 1。**`columns.depthKm` には 0 を入れてある**（地表に置く）ので、
+   * 深さを説明するときはこちらを見ること。
+   */
+  depthUnknown: Uint8Array
   /**
    * 発生年で色を付けるときに使った両端（UTC epoch ミリ秒）。点が 1 つも残らなければ `null`。
    *
@@ -655,6 +675,10 @@ interface Bounds {
   keepUnknownMagnitude: boolean
   minDepthKm: number
   maxDepthKm: number
+  /** 深さが決まっていない地震を残すか。深さの両端が「制限なし」のときだけ残す。 */
+  keepUnknownDepth: boolean
+  /** 気象庁以外の機関の震源を残すか。 */
+  includeExternal: boolean
   minLat: number
   maxLat: number
   minLng: number
@@ -684,17 +708,23 @@ function passes(
   depthKm: number,
   lat: number,
   lng: number,
+  external: boolean,
   b: Bounds,
 ): boolean {
   // NaN はどの比較でも偽になるので、欠測はここで落ちる。
-  // **M だけは例外。** NaN は「M が決まっていない」という収録の値で、残すかどうかを別に決める。
+  // **M と深さだけは例外。** NaN は「決まっていない」という収録の値で、残すかどうかを別に決める。
+  if (external && !b.includeExternal) return false
   if (!(timeMs >= b.minTimeMs && timeMs <= b.maxTimeMs)) return false
   if (Number.isNaN(magnitude)) {
     if (!b.keepUnknownMagnitude) return false
   } else if (!(magnitude >= b.minMagnitude && magnitude <= b.maxMagnitude)) {
     return false
   }
-  if (!(depthKm >= b.minDepthKm && depthKm <= b.maxDepthKm)) return false
+  if (Number.isNaN(depthKm)) {
+    if (!b.keepUnknownDepth) return false
+  } else if (!(depthKm >= b.minDepthKm && depthKm <= b.maxDepthKm)) {
+    return false
+  }
   if (!(lat >= b.minLat && lat <= b.maxLat)) return false
   return lng >= b.minLng && lng <= b.maxLng
 }
@@ -725,6 +755,11 @@ export function buildCatalogPointCloud(
     keepUnknownMagnitude: unknownMagnitudePasses(filter.minMagnitude),
     minDepthKm: effectiveMinDepthKm(filter.minDepthKm),
     maxDepthKm: effectiveMaxDepthKm(filter.maxDepthKm),
+    // **深さで絞った人には出さない。** 深さが分からない地震は、指定した範囲に入るとも言えない
+    // （M の下限と同じ考え方。`unknownMagnitudePasses`）。
+    keepUnknownDepth:
+      effectiveMinDepthKm(filter.minDepthKm) === -Infinity && effectiveMaxDepthKm(filter.maxDepthKm) === Infinity,
+    includeExternal: filter.includeExternal,
     minLat,
     maxLat,
     minLng,
@@ -734,12 +769,14 @@ export function buildCatalogPointCloud(
   // **分母は絞り込みに残った点だけで測る。** 年ファイルの端で測ると、深さや M で絞った結果
   // 実際には狭い範囲しか残っていないときに、色が 1 段ぶんしか出ない。
   let count = 0
+  let externalCount = 0
   let timeLo = Infinity
   let timeHi = -Infinity
   for (const y of years) {
     for (let i = 0; i < y.count; i++) {
-      if (!passes(y.timeMs[i], y.magnitude[i], y.depth[i], y.lat[i], y.lng[i], bounds)) continue
+      if (!passes(y.timeMs[i], y.magnitude[i], y.depth[i], y.lat[i], y.lng[i], y.external[i] === 1, bounds)) continue
       count++
+      if (y.external[i] === 1) externalCount++
       const t = y.timeMs[i]
       if (t < timeLo) timeLo = t
       if (t > timeHi) timeHi = t
@@ -754,24 +791,47 @@ export function buildCatalogPointCloud(
   const timeMs = new Float64Array(count)
   const color = new Float32Array(count * 3)
   const sizePx = new Float32Array(count)
+  const names: (string | null)[] = new Array(count)
+  const intensityCode: (string | null)[] = new Array(count)
+  const external = new Uint8Array(count)
+  const depthUnknown = new Uint8Array(count)
+  // **形の列は気象庁以外の点が残ったときだけ作る。** 既定の表示では作らず、全点共通の円で描く。
+  const shapeIds = externalCount > 0 ? new Uint8Array(count) : undefined
+  const ringId = depthPointShapeId('ring')
+  const circleId = depthPointShapeId('circle')
 
   let k = 0
   let unknownMagnitudeCount = 0
+  let unknownDepthCount = 0
   for (const y of years) {
     for (let i = 0; i < y.count; i++) {
       const m = y.magnitude[i]
       const d = y.depth[i]
-      if (!passes(y.timeMs[i], m, d, y.lat[i], y.lng[i], bounds)) continue
+      const isExternal = y.external[i] === 1
+      if (!passes(y.timeMs[i], m, d, y.lat[i], y.lng[i], isExternal, bounds)) continue
       const unknownMagnitude = Number.isNaN(m)
       if (unknownMagnitude) unknownMagnitudeCount++
+      const unknownDepth = Number.isNaN(d)
+      if (unknownDepth) unknownDepthCount++
       lng[k] = y.lng[i]
       lat[k] = y.lat[i]
-      depthKm[k] = d
+      // 深さ不明は地表に置く（地下の位置を決められない）。色は下で灰色にする（見せ方は 2026-10-25
+      // ユーザー選択「今の実装でよい (Recommended)」）。
+      depthKm[k] = unknownDepth ? 0 : d
       magnitude[k] = m
       timeMs[k] = y.timeMs[i]
+      const nameIdx = y.nameIdx[i]
+      names[k] = nameIdx >= 0 ? y.names[nameIdx] : null
+      intensityCode[k] = y.intensityCode.get(i) ?? null
+      external[k] = isExternal ? 1 : 0
+      depthUnknown[k] = unknownDepth ? 1 : 0
+      if (shapeIds) shapeIds[k] = isExternal ? ringId : circleId
       const [r, g, b] =
         options.colorBy === 'depth'
-          ? sampleRamp(DEPTH_RAMP, depthRampT(d))
+          ? // **色帯へ通さない。** 深さの分からない地震を、どこかの深さの色で塗らない。
+            unknownDepth
+            ? UNKNOWN_MAGNITUDE_RGB
+            : sampleRamp(DEPTH_RAMP, depthRampT(d))
           : options.colorBy === 'magnitude'
             ? // **色帯へ通さない。** `sampleRamp` は NaN を下端（M2 の色）へ倒すので、
               // M の分からない地震が M2 として読める。
@@ -792,10 +852,16 @@ export function buildCatalogPointCloud(
   }
 
   return {
-    columns: { count, lng, lat, depthKm, color, sizePx, shape: 'circle' },
+    columns: { count, lng, lat, depthKm, color, sizePx, shape: 'circle', shapeIds },
     timeMs,
     magnitude,
     unknownMagnitudeCount,
+    unknownDepthCount,
+    externalCount,
+    names,
+    intensityCode,
+    external,
+    depthUnknown,
     // **色を付けるのに使った幅をそのまま渡す。** 凡例が期間の指定から目盛りを組むと、
     // 絞り込みで端まで点が残っていないときに色と食い違う。点が 0 件なら `timeLo` は
     // `Infinity` のままなので `null` にする（そのまま渡すと目盛りが 1970 年になる）。

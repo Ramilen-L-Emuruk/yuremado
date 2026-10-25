@@ -306,6 +306,19 @@ export const CatalogTab = memo(function CatalogTab({
             onChange={(minLng, maxLng) => onFilterChange({ ...filter, minLng, maxLng })}
           />
         </RangeRow>
+
+        {/* 既定は出さず、切り替えで足す（2026-10-25 ユーザー選択「既定は J だけ・切り替えで足す (Recommended)」）。
+            文言は 2026-10-25 ユーザー承認「D の案でよい (Recommended)」。 */}
+        <Row
+          label="気象庁以外の機関の震源"
+          description="気象庁以外の機関が決めた震源も表示します。ほとんどが海外の地震で、日本付近の一部は気象庁の震源と重なります。"
+        >
+          <Toggle
+            label="気象庁以外の機関の震源"
+            checked={filter.includeExternal}
+            onChange={(v) => onFilterChange({ ...filter, includeExternal: v })}
+          />
+        </Row>
       </Section>
 
       <Section title="見せ方">

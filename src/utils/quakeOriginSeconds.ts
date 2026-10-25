@@ -162,6 +162,12 @@ export interface CatalogColumns {
   readonly lat: ArrayLike<number>
   readonly lng: ArrayLike<number>
   readonly magnitude: ArrayLike<number>
+  /**
+   * 気象庁以外の機関が決めた震源なら 1。**突き合わせに使わない** —— 同じ地震を気象庁と他の機関が
+   * 両方載せていると候補が 2 つになって引けなくなり、気象庁の行が無い地震では他の機関の秒を
+   * 気象庁の発生時刻として線に使ってしまう。
+   */
+  readonly external: ArrayLike<number>
 }
 
 /** 突き合わせる側（地震カード）の材料。 */
@@ -229,6 +235,7 @@ export function findCatalogOriginMs(
     for (let i = lowerBound(y.timeMs, fromMs); i < y.timeMs.length && y.timeMs[i] <= toMs; i += 1) {
       // **許容に 1e-6 を足す。** カタログの規模は Float32 で持つ（5.3 は 5.300000190734863）ので、
       // ちょうど 0.3 違う地震が丸めの誤差で外れないように。
+      if (y.external[i] === 1) continue
       if (Math.abs(y.magnitude[i] - quake.magnitude) > CATALOG_MAX_MAGNITUDE_DIFF + 1e-6) continue
       if (haversineKm(quake.latitude, quake.longitude, y.lat[i], y.lng[i]) > CATALOG_MAX_DISTANCE_KM) continue
       if (found !== null) return null

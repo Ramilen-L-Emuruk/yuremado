@@ -21,6 +21,9 @@ describe('取得元', () => {
     // 取得元を変えるときは build-epicenter-accents.ts の SOURCE_URL のコメントも見直すこと。
     expect(SOURCE_URL).toContain('0Quake/JMA_Region')
   })
+  it('ブランチではなくコミットで固定する（長期震源カタログの震央地名が作り直した年だけ変わらないように）', () => {
+    expect(SOURCE_URL).toMatch(/^https:\/\/raw\.githubusercontent\.com\/0Quake\/JMA_Region\/[0-9a-f]{40}\//)
+  })
 })
 
 // 「〜地方」で終わる名前は句割りではなく**核だけを直す**担当（→ build-epicenter-accents.ts の

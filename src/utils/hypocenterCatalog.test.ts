@@ -11,7 +11,8 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 // 順番待ちで数秒に伸びる。テスト本体の中で最初に読むとその待ちが 1 件目の所要時間に丸ごと乗り、既定の
 // 5 秒を超えて時間切れになる。ここで通せば待ちはファイル読み込み時へ移る
 // （経緯と、モックを併用する場合のつまずきどころは `../services/akamaiClock.test.ts` の同じ import）。
-import './hypocenterCatalog'
+// 状態を持たない `hypocenterIntensityLabel` は、ここで読んだものをそのまま使う。
+import { hypocenterIntensityLabel } from './hypocenterCatalog'
 
 async function freshModule() {
   vi.resetModules()
@@ -40,9 +41,16 @@ const YEAR_2023 = {
   lng: [843927, 857166],
   dep: [5000, 2374],
   mag: [45, 90],
+  unknownDepthCount: 0,
   // 震度は疎に持つ。2 件目（M9.0）だけが震度 7。
   intIdx: [1],
   intCode: ['7'],
+  // 震央地名は表と添字。1 件目だけ名前がある。
+  names: ['千葉県東方沖'],
+  nameIdx: [0, -1],
+  // 気象庁以外の機関の震源は疎に持つ。この年は無い。
+  extIdx: [] as number[],
+  externalCount: 0,
 }
 
 /** 索引の最小形。**終端と完全性は必須**なので、素の years / counts だけでは通らない。 */
@@ -281,23 +289,89 @@ describe('データの終端と確からしさ', () => {
 // 以前はここで「添字とコードを読む」「長さが合わなければ失敗する」「片方だけ欠けても失敗する」
 // 「範囲外の添字なら失敗する」を固定していた。読まない列の壊れで年ごと取れなくなるのを避けるため、
 // 意図して覆した。
-describe('最大震度の 2 列は読まない', () => {
-  it('読み取り結果に震度の列は載らない', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => okResponse(YEAR_2023)))
+// 覆した振る舞い: 以前は最大震度の 2 列を読まず、壊れていても年を通していた。点の吹き出しに
+// 最大震度と震央地名を出すので（2026-10-25 ユーザー承認「C の案でよい (Recommended)」）、読んだうえで
+// 壊れた列は年ごと弾く —— ずれた添字は別の地震の震度・名前・印を黙って付ける。
+describe('最大震度・震央地名・気象庁以外の印の列', () => {
+  // 正: 疎な列を地震の並びへ戻す。
+  it('震度は添字の地震へ、名前は表から、印は 0/1 の列で返す', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...YEAR_2023, extIdx: [1], externalCount: 1 })))
     const { loadHypocenterYear } = await freshModule()
     const y = await loadHypocenterYear(2023)
-    expect(Object.keys(y)).not.toContain('intensityIdx')
-    expect(Object.keys(y)).not.toContain('intensityCode')
+    expect([...y.intensityCode]).toEqual([[1, '7']])
+    expect(y.names).toEqual(['千葉県東方沖'])
+    expect(Array.from(y.nameIdx)).toEqual([0, -1])
+    expect(Array.from(y.external)).toEqual([0, 1])
   })
 
+  // 安全弁: どの列が壊れても年ごと失敗する。
   it.each([
-    ['長さが合わない', { ...YEAR_2023, intCode: ['7', '5'] }],
-    ['片方だけ欠けている', { ...YEAR_2023, intCode: undefined }],
-    ['範囲外の添字がある', { ...YEAR_2023, intIdx: [5], intCode: ['7'] }],
-  ])('震度の列が壊れていても（%s）年は読める', async (_label, body) => {
+    ['震度の長さが合わない', { ...YEAR_2023, intCode: ['7', '5'] }, /intIdx・intCode/],
+    ['震度の片方だけ欠けている', { ...YEAR_2023, intCode: undefined }, /intIdx・intCode/],
+    ['震度の添字が範囲の外', { ...YEAR_2023, intIdx: [5], intCode: ['7'] }, /intIdx・intCode/],
+    ['震度の記号が 2 文字', { ...YEAR_2023, intCode: ['5-'] }, /intIdx・intCode/],
+    ['名前の添字の長さが合わない', { ...YEAR_2023, nameIdx: [0] }, /nameIdx の長さ/],
+    ['名前の添字が表の外', { ...YEAR_2023, nameIdx: [1, -1] }, /nameIdx が範囲の外/],
+    ['名前の表に空文字', { ...YEAR_2023, names: [''] }, /names が不正/],
+    ['印の添字が範囲の外', { ...YEAR_2023, extIdx: [2] }, /extIdx/],
+    ['印の列が無い', { ...YEAR_2023, extIdx: undefined }, /extIdx/],
+    // 列が途中で切れても添字は範囲に収まる。件数の申告で見つける。
+    ['印の数が申告と食い違う', { ...YEAR_2023, extIdx: [1], externalCount: 2 }, /気象庁以外の機関の震源の数/],
+    ['印の数の申告が無い', { ...YEAR_2023, extIdx: [1], externalCount: undefined }, /気象庁以外の機関の震源の数/],
+  ])('%s なら失敗する', async (_label, body, message) => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse(body)))
     const { loadHypocenterYear } = await freshModule()
-    expect((await loadHypocenterYear(2023)).count).toBe(2)
+    await expect(loadHypocenterYear(2023)).rejects.toThrow(message)
+  })
+})
+
+describe('深さが決まっていない地震', () => {
+  // 正: dep の null は NaN で読む（0 km という「もっともらしい嘘」にしない）。
+  it('dep の null は NaN で読む', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...YEAR_2023, dep: [null, 2374], unknownDepthCount: 1 })))
+    const { loadHypocenterYear } = await freshModule()
+    const y = await loadHypocenterYear(2023)
+    expect(Number.isNaN(y.depth[0])).toBe(true)
+    expect(y.depth[1]).toBeCloseTo(23.74)
+  })
+
+  // 対照: 申告と列が食い違えば失敗する（深さの列だけ壊れても長さは揃う）。
+  it('深さ不明の数が申告と食い違えば失敗する', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...YEAR_2023, dep: [null, 2374], unknownDepthCount: 0 })))
+    const { loadHypocenterYear } = await freshModule()
+    await expect(loadHypocenterYear(2023)).rejects.toThrow(/深さ不明の数/)
+  })
+})
+
+describe('hypocenterIntensityLabel', () => {
+  // 正: 階級は「最大震度」を冠し、A〜D は弱強へ読み替える。
+  it.each([
+    ['1', '最大震度 1'],
+    ['5', '最大震度 5'],
+    ['A', '最大震度 5弱'],
+    ['B', '最大震度 5強'],
+    ['C', '最大震度 6弱'],
+    ['D', '最大震度 6強'],
+    ['7', '最大震度 7'],
+  ])('%s → %s', (code, want) => {
+    expect(hypocenterIntensityLabel(code)).toBe(want)
+  })
+
+  // 正: 震度ではない記号は語だけ（「最大震度」を冠さない）。
+  it.each([
+    ['F', '有感'],
+    ['X', '付近有感'],
+    ['L', '局発地震'],
+    ['S', '小局発地震'],
+    ['M', 'やや顕著地震'],
+    ['R', '顕著地震'],
+  ])('%s → %s', (code, want) => {
+    expect(hypocenterIntensityLabel(code)).toBe(want)
+  })
+
+  // 安全弁: 表に無い記号は行を出さない（推し量って震度を名乗らない）。
+  it.each(['0', 'Z', '', ' '])('%o は null', (code) => {
+    expect(hypocenterIntensityLabel(code)).toBeNull()
   })
 })
 
@@ -339,7 +413,10 @@ describe('completeMinMagnitude', () => {
 describe('嘘の値が紛れ込む経路を塞ぐ', () => {
   // **`null / 10000` は例外にも NaN にもならず 0 になる。** 北緯 0 度・東経 0 度という
   // 「もっともらしい嘘」が地図に現れる。NaN なら下流で崩れて気づけるが、0 は気づけない。
-  it.each(['t', 'lat', 'lng', 'dep'])('%s に null が混ざれば失敗する', async (key) => {
+  // 覆した振る舞い: 以前は dep の null も失敗させていた。深さ欄を読めない地震を深さ不明として収録するので
+  // （2026-10-23 ユーザー選択「ISC と照らして決める (Recommended)」）、dep の null は深さ不明として読む
+  // （上の「深さが決まっていない地震」）。
+  it.each(['t', 'lat', 'lng'])('%s に null が混ざれば失敗する', async (key) => {
     const broken = { ...YEAR_2023, [key]: [null, 0] }
     vi.stubGlobal('fetch', vi.fn(async () => okResponse(broken)))
     const { loadHypocenterYear } = await freshModule()

@@ -38,7 +38,7 @@ const decided = (originMs: number): EewOriginEntry => ({ originMs, assumed: fals
 
 /** 2026 年の長期震源カタログ（その地震 1 件だけ）。 */
 const CATALOG: LoadedCatalog = {
-  years: new Map([[2026, { timeMs: [CATALOG_MS], lat: [32.5], lng: [130.5], magnitude: [3.5] }]]),
+  years: new Map([[2026, { timeMs: [CATALOG_MS], lat: [32.5], lng: [130.5], magnitude: [3.5], external: [0] }]]),
   coveredThroughMs: CATALOG_MS + 10 * 24 * 3600_000,
 }
 
@@ -112,11 +112,11 @@ describe('buildOriginSecondsMap（カタログの年）', () => {
     const newYear = Date.parse('2026-01-01T00:00:00+09:00')
     const card = quake('dmdata-quake-20251231235900-1', '2025-12-31T23:59:00+09:00', '熊本県天草・芦北地方', 3.5)
     const only2026: LoadedCatalog = {
-      years: new Map([[2026, { timeMs: [newYear + 3_000], lat: [32.5], lng: [130.5], magnitude: [3.5] }]]),
+      years: new Map([[2026, { timeMs: [newYear + 3_000], lat: [32.5], lng: [130.5], magnitude: [3.5], external: [0] }]]),
       coveredThroughMs: newYear + 86400_000,
     }
     expect(buildOriginSecondsMap({ quakes: [card], isDmdss: true, eewOrigins: new Map(), jmaList: [], catalog: only2026 }).size).toBe(0)
-    const both: LoadedCatalog = { ...only2026, years: new Map([...only2026.years, [2025, { timeMs: [], lat: [], lng: [], magnitude: [] }]]) }
+    const both: LoadedCatalog = { ...only2026, years: new Map([...only2026.years, [2025, { timeMs: [], lat: [], lng: [], magnitude: [], external: [] }]]) }
     expect(buildOriginSecondsMap({ quakes: [card], isDmdss: true, eewOrigins: new Map(), jmaList: [], catalog: both })
       .get(quakeEventKey(card))).toEqual({ originMs: newYear + 3_000, source: 'catalog' })
   })

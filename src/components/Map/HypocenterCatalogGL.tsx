@@ -8,6 +8,8 @@ import { formatCoordinate, formatMagnitude, hasMagnitude } from '../../utils/for
 import { log } from '../../utils/logger'
 import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
 import type { CatalogPointCloud } from '../../utils/hypocenterCatalogView'
+import { hypocenterIntensityLabel } from '../../utils/hypocenterCatalog'
+import { escapeHtml } from './gl/popupHtml'
 
 // 長期震源カタログの点群。**深さを持つ点**として地下へ描く（gl/depthPointLayer.ts）。
 //
@@ -67,12 +69,25 @@ function buildPopupHtml(cloud: CatalogPointCloud, i: number): string {
   const lat = cloud.columns.lat[i]
   const lng = cloud.columns.lng[i]
   const coord = formatCoordinate(lat, lng, 3)
+  // 行の並びは 2026-10-25 ユーザー承認「C の案でよい (Recommended)」・「D の案でよい (Recommended)」。
+  // 震央地名と最大震度は、記録が無い地震では行ごと出さない。
+  const name = cloud.names[i]
+  const code = cloud.intensityCode[i]
+  const intensity = code != null ? hypocenterIntensityLabel(code) : null
+  // **深さ不明は列に 0 を入れてある**（地表に置くため）。0.0km と書かないこと。
+  // 「深さ不明」の文言は 2026-10-25 ユーザー選択「今の実装でよい (Recommended)」。
+  const depth = cloud.depthUnknown[i] === 1 ? '深さ不明' : `深さ ${formatCatalogDepth(cloud.columns.depthKm[i])}`
   return (
     `<div class="text-sm" style="min-width:170px">` +
     `<div class="font-bold" style="margin-bottom:4px">${formatCatalogTime(cloud.timeMs[i])}</div>` +
+    (name != null ? `<div class="text-xs">${escapeHtml(name)}</div>` : '') +
+    (intensity != null ? `<div class="text-xs">${escapeHtml(intensity)}</div>` : '') +
     `<div class="text-xs" style="color:#94a3b8">` +
-    `${formatCatalogMagnitude(cloud.magnitude[i])} / 深さ ${formatCatalogDepth(cloud.columns.depthKm[i])}</div>` +
+    `${formatCatalogMagnitude(cloud.magnitude[i])} / ${depth}</div>` +
     `<div class="text-xs" style="color:#64748b;margin-top:4px">${coord}</div>` +
+    (cloud.external[i] === 1
+      ? `<div class="text-xs" style="color:#64748b;margin-top:4px">気象庁以外の機関の震源</div>`
+      : '') +
     `</div>`
   )
 }

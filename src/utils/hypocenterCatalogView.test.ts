@@ -52,7 +52,16 @@ import type { HypocenterIndex, HypocenterYear } from './hypocenterCatalog'
 /** 1 年ぶんの作り物。配列の長さをそろえるのが面倒なので、ここでまとめて作る。 */
 const makeYear = (
   year: number,
-  events: readonly { lng: number; lat: number; depth: number; mag: number; timeMs: number }[],
+  events: readonly {
+    lng: number
+    lat: number
+    depth: number
+    mag: number
+    timeMs: number
+    external?: boolean
+    name?: string
+    intensity?: string
+  }[],
 ): HypocenterYear => ({
   year,
   count: events.length,
@@ -65,6 +74,12 @@ const makeYear = (
   lng: Float64Array.from(events.map((e) => e.lng)),
   depth: Float32Array.from(events.map((e) => e.depth)),
   magnitude: Float32Array.from(events.map((e) => e.mag)),
+  names: events.flatMap((e) => (e.name ? [e.name] : [])),
+  nameIdx: Int32Array.from(
+    events.map((e) => (e.name ? events.filter((x) => x.name).findIndex((x) => x === e) : -1)),
+  ),
+  external: Uint8Array.from(events.map((e) => (e.external ? 1 : 0))),
+  intensityCode: new Map(events.flatMap((e, i) => (e.intensity ? [[i, e.intensity] as const] : []))),
 })
 
 const FILTER: CatalogFilter = {
@@ -78,6 +93,7 @@ const FILTER: CatalogFilter = {
   maxLat: 56,
   minLng: 110,
   maxLng: 165,
+  includeExternal: false,
 }
 const VIEW: CatalogViewOptions = { colorBy: 'depth', sizeBy: 'fixed', sizePx: 3 }
 
@@ -568,18 +584,20 @@ describe('buildCatalogPointCloud', () => {
     expect(c.columns.sizePx.length).toBe(c.columns.count)
   })
 
-  // 安全弁: 深さの欠測（NaN）は落とす。**通すと点が地表の上下へ飛ぶ。**
-  // 覆した振る舞い: 以前はマグニチュードの NaN も落としていた。M の NaN は「M が決まっていない」という
-  // 収録の値で、座標と深さは揃っているので点は正しい位置に描ける。下限が「制限なし」なら残す
-  // （扱いの詳細は下の「M が決まっていない地震（NaN）」）。
-  it('深さが NaN の地震は落とし、M が NaN の地震は既定の絞り込みで残す（以前は M の NaN も落としていた）', () => {
+  // 覆した振る舞い: 以前は M の NaN も深さの NaN も落としていた。どちらも「決まっていない」という
+  // 収録の値で、M は既定の絞り込みで残す（下の「M が決まっていない地震（NaN）」）。深さも絞り込みの
+  // 両端が「制限なし」なら残し、地表に置く（収録は 2026-10-23 ユーザー選択「ISC と照らして決める
+  // (Recommended)」。扱いは下の「深さが決まっていない地震（NaN）」）。
+  it('M と深さが NaN の地震も既定の絞り込みで残す（以前はどちらも落としていた）', () => {
     const bad = makeYear(2020, [
       { lng: 139, lat: 35, depth: 10, mag: Number.NaN, timeMs: 1 },
       { lng: 140, lat: 36, depth: Number.NaN, mag: 4, timeMs: 2 },
       { lng: 141, lat: 37, depth: 10, mag: 4, timeMs: 3 },
     ])
     const c = buildCatalogPointCloud([bad], FILTER, VIEW)
-    expect(Array.from(c.columns.lng)).toEqual([139, 141])
+    expect(Array.from(c.columns.lng)).toEqual([139, 140, 141])
+    // 地表に置く。NaN のまま渡すと点が地表の上下へ飛ぶ。
+    expect(Array.from(c.columns.depthKm).every(Number.isFinite)).toBe(true)
   })
 
   // 正: 発生年で色を付けるとき、**分母は絞り込みに残った点で測る**。
@@ -1138,5 +1156,76 @@ describe('preliminaryNote', () => {
 
   it('速報値の年が無い索引では出さない', () => {
     expect(preliminaryNote({ years: [2023], quality: { 2023: 'final' } }, period('2023-01-01', '2023-12-31'))).toBeNull()
+  })
+})
+
+describe('気象庁以外の機関の震源', () => {
+  const y = makeYear(2020, [
+    { lng: 139, lat: 35, depth: 10, mag: 3, timeMs: 1 },
+    { lng: 140, lat: 36, depth: 20, mag: 4, timeMs: 2, external: true },
+  ])
+
+  // 正: 切り替えを入れたら残り、輪の形で描く。
+  it('切り替えを入れたら残り、輪で描く', () => {
+    const c = buildCatalogPointCloud([y], { ...FILTER, includeExternal: true }, VIEW)
+    expect(c.columns.count).toBe(2)
+    expect(Array.from(c.external)).toEqual([0, 1])
+    expect(Array.from(c.columns.shapeIds!)).toEqual([0, 4])
+  })
+
+  // 対照: 既定（切り替えなし）では出さず、形の列も作らない。
+  it('既定では出さず、形の列も作らない', () => {
+    const c = buildCatalogPointCloud([y], FILTER, VIEW)
+    expect(Array.from(c.columns.lat)).toEqual([35])
+    expect(c.columns.shapeIds).toBeUndefined()
+  })
+
+  // 安全弁: 気象庁以外が残らなければ、切り替えを入れても形の列は作らない（全点共通の円）。
+  it('残った点に気象庁以外が無ければ形の列を作らない', () => {
+    const only = makeYear(2020, [{ lng: 139, lat: 35, depth: 10, mag: 3, timeMs: 1 }])
+    const c = buildCatalogPointCloud([only], { ...FILTER, includeExternal: true }, VIEW)
+    expect(c.columns.shapeIds).toBeUndefined()
+  })
+})
+
+describe('深さが決まっていない地震（NaN）', () => {
+  const y = makeYear(2020, [
+    { lng: 139, lat: 35, depth: 10, mag: 3, timeMs: 1 },
+    { lng: 140, lat: 36, depth: Number.NaN, mag: 4, timeMs: 2 },
+  ])
+
+  // 正: 深さの両端が「制限なし」なら残し、地表に置いて灰色で塗る。
+  it('両端が制限なしなら残り、地表に灰色で置く', () => {
+    const c = buildCatalogPointCloud([y], FILTER, VIEW)
+    expect(c.columns.count).toBe(2)
+    expect(Array.from(c.depthUnknown)).toEqual([0, 1])
+    expect(c.columns.depthKm[1]).toBe(0)
+    expect(Array.from(c.columns.color.slice(3, 6))).toEqual(UNKNOWN_MAGNITUDE_RGB.map((v) => Math.fround(v)))
+  })
+
+  // 対照: 深さで絞ったら外す（指定した範囲に入るとも言えない）。
+  it('下限か上限を動かしたら外れる', () => {
+    expect(Array.from(buildCatalogPointCloud([y], { ...FILTER, minDepthKm: 5 }, VIEW).columns.lat)).toEqual([35])
+    expect(Array.from(buildCatalogPointCloud([y], { ...FILTER, maxDepthKm: 100 }, VIEW).columns.lat)).toEqual([35])
+  })
+
+  // 安全弁: マグニチュードで色を付けるときは M の色のまま（灰色にするのは深さの色分けだけ）。
+  it('マグニチュードの色分けでは M の色', () => {
+    const c = buildCatalogPointCloud([y], FILTER, { ...VIEW, colorBy: 'magnitude' })
+    expect(Array.from(c.columns.color.slice(3, 6))).not.toEqual(UNKNOWN_MAGNITUDE_RGB.map((v) => Math.fround(v)))
+  })
+})
+
+describe('震央地名と最大震度を点へ持ち回す', () => {
+  // 正: 名前と震度の生コードを、残った点の並びで返す。
+  it('名前の無い地震は null', () => {
+    const y = makeYear(2020, [
+      { lng: 139, lat: 35, depth: 10, mag: 3, timeMs: 1, name: '茨城県南部', intensity: '4' },
+      { lng: 140, lat: 36, depth: 20, mag: 4, timeMs: 2 },
+      { lng: 141, lat: 37, depth: 30, mag: 5, timeMs: 3, name: '福島県沖' },
+    ])
+    const c = buildCatalogPointCloud([y], FILTER, VIEW)
+    expect(c.names).toEqual(['茨城県南部', null, '福島県沖'])
+    expect(c.intensityCode).toEqual(['4', null, null])
   })
 })

@@ -89,12 +89,13 @@ describe('resolveOriginSeconds', () => {
 })
 
 /** カタログの 1 年ぶんを組む（時刻の昇順で渡す）。 */
-function catalog(rows: readonly { t: number; lat: number; lng: number; m: number }[]): CatalogColumns {
+function catalog(rows: readonly { t: number; lat: number; lng: number; m: number; ext?: boolean }[]): CatalogColumns {
   return {
     timeMs: rows.map((r) => r.t),
     lat: rows.map((r) => r.lat),
     lng: rows.map((r) => r.lng),
     magnitude: rows.map((r) => r.m),
+    external: rows.map((r) => (r.ext ? 1 : 0)),
   }
 }
 
@@ -117,6 +118,20 @@ describe('findCatalogOriginMs', () => {
       { t: CATALOG_MS, lat: 32.5, lng: 130.5, m: 3.5 },
       { t: CATALOG_MS + 20_000, lat: 32.51, lng: 130.5, m: 3.4 },
     ])
+    expect(findCatalogOriginMs(quake, [y], covered)).toBeNull()
+  })
+
+  // 気象庁以外の機関の震源は同じ地震の別決定。候補に数えると、気象庁の行と 2 つになって引けなくなる
+  test('気象庁以外の機関の震源は候補に数えない', () => {
+    const y = catalog([
+      { t: CATALOG_MS, lat: 32.52, lng: 130.48, m: 3.6 },
+      { t: CATALOG_MS + 1_500, lat: 32.5, lng: 130.5, m: 3.5, ext: true },
+    ])
+    expect(findCatalogOriginMs(quake, [y], covered)).toBe(CATALOG_MS)
+  })
+
+  test('気象庁以外の機関の震源しか合わなければ採らない', () => {
+    const y = catalog([{ t: CATALOG_MS, lat: 32.5, lng: 130.5, m: 3.5, ext: true }])
     expect(findCatalogOriginMs(quake, [y], covered)).toBeNull()
   })
 
