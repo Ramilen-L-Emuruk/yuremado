@@ -8,7 +8,7 @@ import { FitToCandidateGL, FitToDetectionGL, FitToEEWGL, TsunamiFitGL, FocusObsG
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import type { LatLng } from '../../utils/stationCoords'
 import type { EEWAlert } from '../../types/earthquake'
-import type { ShakeFocus } from './mapTypes'
+import type { MapFocusTarget, ShakeFocus } from './mapTypes'
 import type { PsWaveCircle } from '../../services/kyoshin'
 import { openPopupAt, openPopupHtmlAt, closeMapPopup } from './gl/popupRegistry'
 import { openTsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
@@ -1249,7 +1249,7 @@ interface TsunamiProps {
   arrivals?: typeof ARRIVALS
   missing?: typeof ARRIVALS
   focus?: { name: string; ts: number } | null
-  focusTarget?: { positions: LatLng[]; ts: number } | null
+  focusTarget?: { positions: LatLng[]; stationName: string | null; ts: number } | null
 }
 
 function tsunamiHarness(map: maplibregl.Map, props: TsunamiProps = {}) {
@@ -1697,7 +1697,7 @@ describe('津波モードの帰還（観測点 → 俯瞰）', () => {
     act(() => { vi.advanceTimersByTime(20_000) })
     view.rerender(tsunamiHarness(map, {
       arrivals: ARRIVALS,
-      focusTarget: { positions: [[38.0, 141.0], [39.0, 142.0]], ts: 1 },
+      focusTarget: { positions: [[38.0, 141.0], [39.0, 142.0]], stationName: null, ts: 1 },
     }))
     act(() => { vi.advanceTimersByTime(20_000) })
 
@@ -1708,7 +1708,7 @@ describe('津波モードの帰還（観測点 → 俯瞰）', () => {
   // 消費を記録しないと猶予が延び続けて俯瞰へ二度と帰らなくなる。
   it('同じ寄せ要求で再レンダーされても猶予は延びない', () => {
     const map = createFakeMap()
-    const target = { positions: [[38.0, 141.0], [39.0, 142.0]] as LatLng[], ts: 1 }
+    const target = { positions: [[38.0, 141.0], [39.0, 142.0]] as LatLng[], stationName: null, ts: 1 }
     const view = renderWithObsUpdate(map, { arrivals: ARRIVALS, focusTarget: target })
     const before = fitTargets(map).length
 
@@ -2426,7 +2426,7 @@ describe('揺れフォーカス（EEW 発報中）', () => {
 
 // ── EEW の件数が減ったときの寄せ直し（見送った分を持ち越す） ──────────────────────────
 // 抑制中・操作中に件数が減った回を見送ったまま失うと、取り消された速報の場所を含んだ画が残る。
-// 見送った分を覚え、抑制が明けたら残っている速報へ寄せ直す（2026-10-22 選択「抑制が明けたら寄せ直す
+// 見送った分を覚え、抑制が明けたら残っている速報へ寄せ直す（2026-10-22 ユーザー選択「抑制が明けたら寄せ直す
 // (Recommended)」）。
 describe('EEW の件数が減ったときの寄せ直し', () => {
   beforeEach(() => {
@@ -2693,14 +2693,28 @@ describe('揺れフォーカスの担当の受け渡し', () => {
 
 function pointFocusHarness(
   map: maplibregl.Map,
-  focus: { positions: LatLng[]; ts: number } | null,
-  hiddenPointPopupHtml: (position: LatLng) => string | null = () => null,
+  focus: { positions: LatLng[]; ts: number; stationName?: string | null } | null,
+  hiddenPointPopupHtml: (position: LatLng, stationName: string | null) => string | null = () => null,
 ) {
   return h(
     MapGLContext.Provider,
     { value: map },
-    h(FocusTargetGL, { focusTarget: focus, hiddenPointPopupHtml }),
+    h(FocusTargetGL, { focusTarget: withStationName(focus), hiddenPointPopupHtml }),
   )
+}
+
+/**
+ * 観測点名を省いた要求に `null` を補う。**同じ要求には同じオブジェクトを返す** ——
+ * 寄せの effect は要求の参照で張り直すので、描き直しのたびに作り直すと着地を待つ購読が外れる。
+ */
+const focusWithName = new WeakMap<object, MapFocusTarget>()
+function withStationName(focus: { positions: LatLng[]; ts: number; stationName?: string | null } | null): MapFocusTarget | null {
+  if (!focus) return null
+  const cached = focusWithName.get(focus)
+  if (cached) return cached
+  const target: MapFocusTarget = { positions: focus.positions, ts: focus.ts, stationName: focus.stationName ?? null }
+  focusWithName.set(focus, target)
+  return target
 }
 
 describe('一覧の行クリックによる地点フォーカス', () => {
@@ -2830,6 +2844,22 @@ describe('一覧の行クリックによる地点フォーカス', () => {
 
     expect(openPopupHtmlAt).toHaveBeenCalledWith(map, [131.0, 34.0], '<div>観測点</div>')
     expect(openPopupAt).not.toHaveBeenCalled()
+  })
+
+  // 座標が同じ観測点が別にあるとき、押した行の観測点名で選べるよう、名前を中身の判定まで渡す
+  // （2026-10-25 ユーザー選択「名前で引く (Recommended)」）。範囲の行は名前を持たない（`null`）。
+  it('[正] 押した行の観測点名を、吹き出しの中身を決める判定へ渡す', () => {
+    const map = createFakeMap()
+    const seen: (string | null)[] = []
+    render(pointFocusHarness(map, { positions: [[34.0, 131.0]], stationName: '甲', ts: 1 }, (_p, name) => {
+      seen.push(name)
+      return `<div>${name}</div>`
+    }))
+
+    act(() => { map.fire('moveend') })
+
+    expect(seen).toEqual(['甲'])
+    expect(openPopupHtmlAt).toHaveBeenCalledWith(map, [131.0, 34.0], '<div>甲</div>')
   })
 
   it('[対照] 寄り先の点が描かれていれば、地図の当たり判定で開く', () => {

@@ -354,9 +354,12 @@ export function JapanMapGL({
   // 震度分布モードのあいだは観測点ドットを描かないので、一覧の行から寄せた観測点は地図の上で
   // 当たらない。押した行の吹き出しだけは出す（2026-10-22 ユーザー選択「押した行の吹き出しだけ出す (Recommended)」）。
   // ドットは出さない・続報で分布モードを閉じる、は従来どおり（2026-09-12・09-13 承認）。
-  const hiddenPointPopupHtml = useCallback((position: LatLng): string | null => {
+  // **座標が同じ観測点は名前で選ぶ**（全国で 56 組。2026-10-25 ユーザー選択「名前で引く (Recommended)」）。
+  // 名前が合うものが無いとき（範囲の行・表記の揺れ）だけ、座標の合う最初の点へ倒す。
+  const hiddenPointPopupHtml = useCallback((position: LatLng, stationName: string | null): string | null => {
     if (mode !== 'quake' || !distributionMode) return null
-    const m = stationMarkers.find((p) => p.position[0] === position[0] && p.position[1] === position[1])
+    const atPosition = stationMarkers.filter((p) => p.position[0] === position[0] && p.position[1] === position[1])
+    const m = (stationName !== null ? atPosition.find((p) => p.addr === stationName) : undefined) ?? atPosition[0]
     return m ? quakePointClickHtml(m, epicenter) : null
   }, [mode, distributionMode, stationMarkers, epicenter])
   const overlapSignature = useMemo(() => {
@@ -617,7 +620,8 @@ export function JapanMapGL({
     eewLpgm: mode === 'kyoshin' && eewLpgmRegionAggregates.length > 0,
     // **予報円はリアルタイム震度モードのときだけ凡例へ出す。** 描画自体は全モードで走るが、
     // それ以外のモードでは半透明で添えるだけ（`PsWaveGL` の `fullOpacity`）。同じ扱いの
-    // EEW 震源の×印を凡例に入れていないので、こちらだけ枠を取ると釣り合わない。
+    // EEW 震源の×印を凡例に入れていないので、こちらだけ枠を取ると釣り合わない
+    // （2026-10-22 ユーザー選択「今のまま記録する」。map-rendering-spec §7 の M4）。
     psWave: mode === 'kyoshin' && kyoshinPsWave.length > 0,
     tsunamiGrade: tsunamiLines.length > 0,
     tsunamiObsHeight: mode === 'tsunami' && observationBars.length > 0,
@@ -632,6 +636,8 @@ export function JapanMapGL({
     catalogColorBy: mode === 'catalog' && catalogCloud && catalogCloud.columns.count > 0 ? catalogColorBy : null,
     catalogYearRange: catalogCloud?.timeRange ?? null,
     catalogUnknownMagnitude: mode === 'catalog' && (catalogCloud?.unknownMagnitudeCount ?? 0) > 0,
+    catalogUnknownDepth: mode === 'catalog' && (catalogCloud?.unknownDepthCount ?? 0) > 0,
+    catalogExternal: mode === 'catalog' && (catalogCloud?.externalCount ?? 0) > 0,
   }
   // **中身が変わったときだけ知らせる。** この関数は強震モニタの毎秒更新で呼び直されるので、
   // 素直に依存へ置くと毎秒通知が飛ぶ。小さなオブジェクトなので文字列にして比べる。

@@ -457,8 +457,11 @@ interface Props {
   /** この地震の未入電の一覧を開いているか。 */
   unreceivedActive?: boolean
   onToggleUnreceived?: (eventKey: string) => void
-  /** 一覧の行をクリックしたときに、その場所へ地図を寄せる（1 点でも範囲でも）。 */
-  onFocusMap?: (positions: LatLng[]) => void
+  /**
+   * 一覧の行をクリックしたときに、その場所へ地図を寄せる（1 点でも範囲でも）。観測点の行は観測点名も渡す
+   * （座標が同じ観測点の吹き出しを取り違えないため。範囲の行は `null`）。
+   */
+  onFocusMap?: (positions: LatLng[], stationName: string | null) => void
   /**
    * いま気象庁が書いた文を読み上げている主題（読んでいなければ null）。
    * このカードの長周期の補足が対象なら、読み上げのあいだ開く（→ `useAutoOpenWhileSpeakingIn`）。
@@ -860,7 +863,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const focusHandlerFor = (pref: string, name: string, isArea = false): (() => void) | undefined => {
     if (!onFocusMap) return undefined
     const position = coordsOf(pref, name, isArea)
-    return position ? () => onFocusMap([position]) : undefined
+    return position ? () => onFocusMap([position], isArea ? null : name) : undefined
   }
 
   /**
@@ -872,7 +875,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const focusBoundsHandler = (bounds: RingsBounds | null): (() => void) | undefined => {
     if (!onFocusMap || !bounds) return undefined
     const corners: LatLng[] = [[bounds.minLat, bounds.minLng], [bounds.maxLat, bounds.maxLng]]
-    return () => onFocusMap(corners)
+    return () => onFocusMap(corners, null)
   }
 
   /**
@@ -886,7 +889,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     const positions = stations
       .map((st) => coordsOf(pref, st.name))
       .filter((p): p is LatLng => p !== null)
-    return positions.length > 0 ? () => onFocusMap(positions) : undefined
+    return positions.length > 0 ? () => onFocusMap(positions, null) : undefined
   }
 
   const intensityRows = useMemo((): IntensityRows => {

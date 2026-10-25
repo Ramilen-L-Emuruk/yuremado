@@ -233,8 +233,8 @@ const SHAKE_FOCUS_SUPPRESS_MS = 3000
 // （優先度）で realtime へ移れないことがある（EEW・津波が出ている間）。その場合に要求だけが残り、
 // 後から手動で入室したときに「もう収まった揺れの点」へ寄ってしまうのを防ぐ。
 // EEW の `NEW_EEW_FOCUS_WINDOW_MS`（10 秒）より短いのは、揺れの強まりが数秒で移り変わるため。
-// 5 秒を過ぎた要求は捨てる（2026-10-14 選択「5 秒で捨ててよい（推奨）」）。利用者が地図を操作して
-// いる間に来た要求も見送って取り戻さない（2026-08-23 選択「見送る（推奨）」、2026-10-14 に維持）。
+// 5 秒を過ぎた要求は捨てる（2026-10-14 ユーザー選択「5 秒で捨ててよい（推奨）」）。利用者が地図を操作して
+// いる間に来た要求も見送って取り戻さない（2026-08-23 ユーザー選択「見送る（推奨）」、2026-10-14 に維持）。
 const SHAKE_FOCUS_WINDOW_MS = 5000
 
 // ── 揺れ検知点にフィットし、検知終了時は日本全体に戻す（EEW 中は戻さない） ──────────
@@ -966,6 +966,7 @@ export function FitToEEWGL({
   }, [shakeFocus, eews.length, map, isUserInteracting])
 
   // EEW 数 or 波円数が減少かつ残りがある場合: 残りへ強制再フィット。
+  // 予報円が減ったときも寄せ直す（2026-10-25 ユーザー選択「予報円が減っても (Recommended)」）。
   useEffect(() => {
     if (!map) return
     const prevCount = prevEewsCountRef.current
@@ -1629,7 +1630,7 @@ export function FocusTargetGL({ focusTarget, hiddenPointPopupHtml }: {
    * 震度分布モードのあいだは観測点ドットを描かないが、押した行の観測点の吹き出しだけは出す
    * （2026-10-22 ユーザー選択「押した行の吹き出しだけ出す (Recommended)」）。
    */
-  hiddenPointPopupHtml: (position: LatLng) => string | null
+  hiddenPointPopupHtml: (position: LatLng, stationName: string | null) => string | null
 }) {
   // 判定の関数は描き直しのたびに作り直されるので、寄せの effect の依存へ入れず ref で読む。
   const hiddenPopupRef = useRef(hiddenPointPopupHtml)
@@ -1659,7 +1660,7 @@ export function FocusTargetGL({ focusTarget, hiddenPointPopupHtml }: {
     fitToPositions(map, positions, { durationSec: 1.0, maxZoom: focusMaxZoom(map) })
     const openPopup = () => {
       // 着地した時点の表示で決める（飛んでいる間にモードが切り替わることがある）。
-      const html = hiddenPopupRef.current(positions[0])
+      const html = hiddenPopupRef.current(positions[0], focusTarget.stationName)
       if (html !== null) openPopupHtmlAt(map, [lng, lat], html)
       else openPopupAt(map, [lng, lat])
     }
