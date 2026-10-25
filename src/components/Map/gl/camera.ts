@@ -460,9 +460,143 @@ function deferUntilPaneHasSize(map: maplibregl.Map, caller: string, requestedPad
   pendingFits.set(map, () => map.off('resize', onResize))
 }
 
+/**
+ * 追従が最後に寄せた目標。共有カードの撮影が、カードの寸法で同じ目標へ寄せ直すのに使う（`beginCaptureFraming`）。
+ *
+ * **カメラを動かす関数はすべて、動かす前にここへ書く**（`beginFit`。寸法待ちで保留した寄せも、目標としては最新）。
+ * 範囲への寄せの寄り上限は、呼び出し側が明示したものだけを覚える。省略された寄り上限（`fitMaxZoom`）は
+ * ペインの寸法で決まるので、撮影の寸法で決め直す。1 点への寄せはそのズームのまま覚える。
+ */
+type FitTarget =
+  | { kind: 'bounds'; bounds: maplibregl.LngLatBoundsLike; padding: number; maxZoom: number | undefined }
+  | { kind: 'point'; center: [number, number]; zoom: number }
+
+const lastFitTargets = new WeakMap<maplibregl.Map, FitTarget>()
+
+/** 最後の寄せを、いまの寸法で同じ形のままやり直す関数（撮影の後で流す）。 */
+const lastFitReplays = new WeakMap<maplibregl.Map, () => void>()
+
+/** 一度も寄せていない地図（起動直後）の目標。`fitJapan` と同じ。 */
+const JAPAN_FIT_TARGET: FitTarget = { kind: 'bounds', bounds: JAPAN_BOUNDS, padding: 20, maxZoom: undefined }
+
+/**
+ * 撮影している地図と、撮影の間に来た寄せ（最後の 1 つ）。
+ *
+ * **撮影の間は、追従の寄せでカメラを動かさない。** 撮影は寸法を広げてから寄せ直し、タイルが揃うまで
+ * 最大 8 秒待つ。その間に追従（揺れ検知・EEW の成長フォローなど）が寄せると、撮影の寸法のまま飛び始め、
+ * 寄せ直した構図が崩れる。寄せは目標として覚えたうえで預かり、撮影の後で元のカメラへ戻してから流す。
+ * 寸法待ちで保留していた寄せが撮影の寸法変更で走る場合も、同じく預かる。
+ */
+const captureSessions = new WeakMap<maplibregl.Map, { deferred: (() => void) | null }>()
+
+/**
+ * 寄せる関数の冒頭の共通処理。保留を捨て、目標を覚え、撮影中なら寄せを預かる。
+ * 預かったら true を返す（呼び出し側はカメラを動かさずに戻る）。
+ */
+function beginFit(map: maplibregl.Map, target: FitTarget, replay: () => void): boolean {
+  cancelPendingFit(map)
+  lastFitTargets.set(map, target)
+  lastFitReplays.set(map, replay)
+  const session = captureSessions.get(map)
+  if (!session) return false
+  session.deferred = replay
+  return true
+}
+
+/** 共有カードの撮影の間の構図。`beginCaptureFraming` が返す。 */
+export interface CaptureFraming {
+  /** 最後に寄せた目標へ、いまの寸法で寄せ直す。投げない（算出もカメラ操作も、失敗は記録して撮影を続ける）。 */
+  refit(): void
+  /** 撮影の印を外し、撮影を始める前のカメラへ戻す。そのうえで預かった寄せを流す。 */
+  restore(): void
+}
+
+/**
+ * 共有カードの撮影を始める。カメラを控え、撮影の印（`captureSessions`）を張る。
+ *
+ * **撮影の寸法へ広げる前に呼ぶこと。** 広げたときに寸法待ちで保留していた寄せが走っても、印が先に
+ * 張ってあれば預かれる。寄せ直し（`refit`）は広げた後に呼ぶ —— 余白と寄り上限をその寸法で決めるため。
+ * 戻り値の `restore` は撮影の後始末で必ず呼ぶ（呼ばないと印が残り、以後の寄せがすべて預かられる）。
+ *
+ * 利用者が地図を手で動かした後でも、追従の目標へ寄せ直す（2026-10-25 ユーザー選択「追従の目標へ」）。
+ *
+ * 着地のズームは段階へ切り下げない。切り下げは成長フォローの判定との往復を避けるためのもので
+ * （`flyToBoundsSnapped`）、1 枚撮るだけの寄せには要らない —— 切り下げると最大で半段ぶん引いた画になる。
+ * 撮影の間は追従の寄せを預かるので、厳密な着地を追従が引き直すこともない。
+ *
+ * 戻すときは、撮影の間に預かった寄せがあればそれを流す。無くても、撮る前に追従が飛んでいる途中だったなら、
+ * 最後の寄せをやり直す（戻す先が飛行の途中の位置のまま止まらないように）。カメラを戻すのに失敗しても、
+ * 寄せは流す（預かった寄せの写しはここにしか無い）。
+ *
+ * どのカメラ操作にも `beginProgrammaticFlight` の印を付ける。付けないと手動の操作として扱われ、
+ * 追従が `INTERACTION_HOLD_SEC` 秒止まる。
+ *
+ * **撮影が重ならないことは呼び出し側が保証する**（`useShareCard` の `busyRef`）。重なると、
+ * 2 本目が 1 本目の寄せ直した構図を「戻す先」として控えてしまう。
+ */
+export function beginCaptureFraming(map: maplibregl.Map): CaptureFraming {
+  const saved = { center: map.getCenter(), zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch() }
+  const wasFlying = isProgrammaticFlight(map)
+  const session: { deferred: (() => void) | null } = { deferred: null }
+  let restored = false
+  // 印を張るのは最後（ここより後に投げうる処理を置かない。投げると印だけ残り、戻す関数が呼び出し側へ渡らない）
+  captureSessions.set(map, session)
+  return {
+    refit: () => {
+      const target = lastFitTargets.get(map) ?? JAPAN_FIT_TARGET
+      try {
+        const camera = cameraForTarget(map, target)
+        if (camera) {
+          map.jumpTo(camera, beginProgrammaticFlight(map, 0))
+          return
+        }
+        log.warn('[camera] 共有カードの撮影で寄せ直す先を算出できず、中心とズームを変えずに撮る', paneOf(map, target))
+      } catch (e) {
+        log.warn('[camera] 共有カードの撮影で寄せ直しに失敗し、中心とズームを変えずに撮る', { ...paneOf(map, target), cause: e })
+      }
+    },
+    restore: () => {
+      // 2 回目は何もしない（その間に動いたカメラを撮影前へ巻き戻し、同じ寄せをもう一度流してしまう）
+      if (restored) return
+      restored = true
+      if (captureSessions.get(map) === session) captureSessions.delete(map)
+      try {
+        map.jumpTo(saved, beginProgrammaticFlight(map, 0))
+      } finally {
+        const resume = session.deferred ?? (wasFlying ? lastFitReplays.get(map) : undefined)
+        resume?.()
+      }
+    },
+  }
+}
+
+/** 寄せ直しの記録に添える目標と地図の寸法。 */
+function paneOf(map: maplibregl.Map, target: FitTarget): Record<string, unknown> {
+  try {
+    const container = map.getContainer()
+    return { target, paneWidth: container.clientWidth, paneHeight: container.clientHeight }
+  } catch {
+    // 寸法が読めなくても記録は残す（ここで投げると `refit` が投げないと約束した形が崩れる）
+    return { target }
+  }
+}
+
+function cameraForTarget(map: maplibregl.Map, target: FitTarget): { center: maplibregl.LngLatLike; zoom: number } | null {
+  if (target.kind === 'point') return { center: target.center, zoom: target.zoom }
+  const padding = panePadding(map, target.padding)
+  if (padding === null) return null
+  const cam = map.cameraForBounds(target.bounds, {
+    padding,
+    maxZoom: target.maxZoom ?? fitMaxZoom(map),
+    bearing: map.getBearing(),
+  })
+  if (!cam || cam.center == null || cam.zoom == null) return null
+  return { center: cam.center, zoom: cam.zoom }
+}
+
 /** 日本全体にフィットする（本アプリの既定フレーミング・padding 20）。 */
 export function fitJapan(map: maplibregl.Map, durationSec = 1.0): void {
-  cancelPendingFit(map)
+  if (beginFit(map, JAPAN_FIT_TARGET, () => fitJapan(map, durationSec))) return
   const padding = panePadding(map, 20)
   if (padding === null) { deferUntilPaneHasSize(map, 'fitJapan', 20, () => fitJapan(map, durationSec)); return }
   const duration = durationSec * 1000
@@ -471,7 +605,7 @@ export function fitJapan(map: maplibregl.Map, durationSec = 1.0): void {
 
 /** 1 点へ flyTo する（[lat,lng] で受ける）。 */
 export function flyToPoint(map: maplibregl.Map, [lat, lng]: LatLng, zoom = fitMaxZoom(map), durationSec = 1.0): void {
-  cancelPendingFit(map)
+  if (beginFit(map, { kind: 'point', center: [lng, lat], zoom }, () => flyToPoint(map, [lat, lng], zoom, durationSec))) return
   const duration = durationSec * 1000
   map.flyTo({ center: [lng, lat], zoom, duration }, beginProgrammaticFlight(map, duration))
 }
@@ -496,15 +630,18 @@ export function fitToPositions(
   opts: { padding?: number; maxZoom?: number; durationSec?: number } = {},
 ): void {
   if (positions.length === 0) return
-  const { padding = 48, maxZoom = fitMaxZoom(map), durationSec = 1.0 } = opts
+  const { padding = 48, maxZoom, durationSec = 1.0 } = opts
   if (positions.length === 1) {
     // 1 点は退化した矩形（幅・高さ 0）で、着地は maxZoom へのクランプになる。段階へ切り下げる
     // 意味が無く、`cameraForBounds` に退化矩形を渡す必要も無いので flyTo で直接寄せる。
-    flyToPoint(map, positions[0], maxZoom, durationSec)
+    flyToPoint(map, positions[0], maxZoom ?? fitMaxZoom(map), durationSec)
     return
   }
   const bounds = new maplibregl.LngLatBounds()
   for (const [lat, lng] of positions) bounds.extend([lng, lat])
+  // 寄り上限が省かれていたら省いたまま渡す（寄せる側が寸法で決める）。ここで既定値を埋めると、撮影の
+  // 寄せ直しが画面の寸法で決めた上限を「明示された値」として使ってしまう（`lastFitTargets`）。
+  // 呼び出し側が明示した上限は、画面の寸法で決めた値でもそのまま覚える
   flyToBoundsSnapped(map, bounds, { padding, maxZoom, durationSec })
 }
 
@@ -514,8 +651,8 @@ export function flyToBounds(
   bounds: maplibregl.LngLatBounds,
   opts: { padding?: number; maxZoom?: number; durationSec?: number } = {},
 ): void {
-  cancelPendingFit(map)
   const { padding: requestedPadding = 48, maxZoom = fitMaxZoom(map), durationSec = 1.0 } = opts
+  if (beginFit(map, { kind: 'bounds', bounds, padding: requestedPadding, maxZoom: opts.maxZoom }, () => flyToBounds(map, bounds, opts))) return
   const padding = panePadding(map, requestedPadding)
   if (padding === null) {
     deferUntilPaneHasSize(map, 'flyToBounds', requestedPadding, () => flyToBounds(map, bounds, opts))
@@ -562,8 +699,8 @@ export function flyToBoundsSnapped(
   bounds: maplibregl.LngLatBounds,
   opts: { padding?: number; maxZoom?: number; durationSec?: number; zoomStep?: number } = {},
 ): void {
-  cancelPendingFit(map)
   const { padding: requestedPadding = 48, durationSec = 1.0, zoomStep = EEW_ZOOM_SNAP } = opts
+  if (beginFit(map, { kind: 'bounds', bounds, padding: requestedPadding, maxZoom: opts.maxZoom }, () => flyToBoundsSnapped(map, bounds, opts))) return
   // **余白はペインの寸法に収めてから渡す**（→ `MAX_PADDING_SHARE`。収めないと MapLibre が例外を投げる）。
   const padding = panePadding(map, requestedPadding)
   if (padding === null) {

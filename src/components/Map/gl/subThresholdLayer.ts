@@ -371,7 +371,7 @@ ${POINT_VS_BODY}`,
         dirtyIdx = false
       }
 
-      const dpr = window.devicePixelRatio || 1
+      const dpr = mapRef.getPixelRatio()
       const size = BASE_RADIUS * 2 * dpr * iconScale
 
       // scissor 最適化は敷かない（平常時 index1 は全国分散で BBox がほぼ全画面になり効かない・PoC LOW2）。

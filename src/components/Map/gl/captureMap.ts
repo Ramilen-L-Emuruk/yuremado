@@ -1,5 +1,6 @@
 import * as maplibregl from 'maplibre-gl'
 import { log } from '../../../utils/logger'
+import { beginCaptureFraming, type CaptureFraming } from './camera'
 
 // 地図キャンバスを画像として取り出す（共有カードの撮影段）。
 //
@@ -34,13 +35,16 @@ const CAPTURE_FRAME_TIMEOUT_MS = 5000
 const FREEZE_OVERLAY_Z_INDEX = 5
 
 export interface MapCaptureOptions {
-  /** 出力の論理サイズ（CSS px）。実ピクセルはこれに devicePixelRatio が掛かる。 */
+  /**
+   * 出力の寸法（カード上の px）。地図はこの寸法の CSS px では描かない —— 画面の地図領域に合わせた
+   * 寸法で描き、画素数だけをここまで上げる（`renderSizeFor`）。
+   */
   width: number
   height: number
   /**
    * 撮影した 2D キャンバスへの追加描画。**`map.project()` が撮影寸法のまま使える唯一の場所**で、
    * 地図キャンバスに写らない DOM マーカー（津波の観測棒）をここで描き足す。
-   * `scale` は論理 px に対する実ピクセルの比で、寸法にはこれを掛けること。
+   * `scale` は `map.project()` が返す px に対する実ピクセルの比で、寸法にはこれを掛けること。
    */
   drawOverlay?: (ctx: CanvasRenderingContext2D, map: maplibregl.Map, scale: number) => void
   /** 撮影中の寸法変更を静止画で隠す（既定 true）。 */
@@ -50,7 +54,7 @@ export interface MapCaptureOptions {
 
 export interface MapCaptureResult {
   canvas: HTMLCanvasElement
-  /** 論理 px に対する実ピクセルの比（devicePixelRatio 由来）。合成側は寸法にこれを掛ける。 */
+  /** 出力の寸法（`width`）に対する実ピクセルの比。合成側は寸法にこれを掛ける。 */
   scale: number
   /** タイルを待ちきれずに撮ったか。true なら地形が一部欠けている可能性がある。 */
   timedOut: boolean
@@ -99,6 +103,34 @@ function setCaptureHold(map: maplibregl.Map, held: boolean): void {
   }
 }
 
+/** 撮影で重ねる精細さの上限（出力に対する倍率）。端末の解像度がこれより高くても、ここで止める。 */
+const MAX_SUPERSAMPLE = 2
+
+/**
+ * 地図を描く寸法（CSS px）と画素の比率を決める。
+ *
+ * 写す範囲は寄せ直し（`beginCaptureFraming`）が決めるので、この寸法が決めるのは**記号の大きさの比**。
+ * 震度の点・地名・線の太さは CSS px で描かれるので、出力寸法（16:9 なら幅 1600）の CSS px で描くと、
+ * 画面の地図領域が小さい端末ほど記号が画像に対して小さくなる。そこで、出力と同じ縦横比のまま
+ * **面積を画面の地図領域に揃えた**寸法で描き、出力に足りない画素は画素の比率で補う。
+ *
+ * 画面の寸法が取れない（0）ときは出力寸法のまま描く。
+ */
+export function renderSizeFor(
+  out: { width: number; height: number },
+  screen: { width: number; height: number },
+  devicePixelRatio: number,
+): { width: number; height: number; pixelRatio: number } {
+  const supersample = Math.min(Math.max(1, devicePixelRatio || 1), MAX_SUPERSAMPLE)
+  if (!(screen.width > 0) || !(screen.height > 0) || !(out.width > 0) || !(out.height > 0)) {
+    return { width: out.width, height: out.height, pixelRatio: supersample }
+  }
+  const s = Math.sqrt((screen.width * screen.height) / (out.width * out.height))
+  const width = Math.max(1, Math.round(out.width * s))
+  const height = Math.max(1, Math.round(out.height * s))
+  return { width, height, pixelRatio: (out.width / width) * supersample }
+}
+
 export async function captureMapImage(map: maplibregl.Map, opts: MapCaptureOptions): Promise<MapCaptureResult> {
   const { width, height, drawOverlay, freeze = true, idleTimeoutMs = CAPTURE_IDLE_TIMEOUT_MS } = opts
   const container = map.getContainer()
@@ -106,26 +138,39 @@ export async function captureMapImage(map: maplibregl.Map, opts: MapCaptureOptio
   const savedWidth = container.style.width
   const savedHeight = container.style.height
   const savedParentOverflow = parent?.style.overflow ?? ''
+  const render = renderSizeFor(
+    { width, height },
+    { width: container.clientWidth, height: container.clientHeight },
+    window.devicePixelRatio,
+  )
   // 点滅などは画面を覆う静止画を撮る前に止める（静止画が消灯の瞬間になると、覆っている間だけ海岸線が消えて見える）。
   // 戻すのは finally の最後なので、静止画の作成が投げても止まったままにはならない。
   setCaptureHold(map, true)
   let freezeEl: HTMLElement | null = null
+  let framing: CaptureFraming | null = null
   try {
     freezeEl = freeze ? await createFreezeOverlay(map) : null
+    // 撮影の印は寸法を広げる前に張る（広げたときに寸法待ちの寄せが走っても預かれるように）。戻すのは finally
+    framing = beginCaptureFraming(map)
     // **出力寸法は画面の地図領域より大きいことが多い。** 親（position:absolute の枠）は overflow を
     // 持たないため、広げた分がそのまま隣のパネルへはみ出して見える。実測では 929×454 の地図領域に
     // 対し 1200×630 で撮ると、下のパネルへ 176px かぶさっていた。被せる静止画も親と同じ大きさ
     // なので、ここで切り抜いておかないと覆いきれない。
     if (parent) parent.style.overflow = 'hidden'
-    container.style.width = `${width}px`
-    container.style.height = `${height}px`
+    container.style.width = `${render.width}px`
+    container.style.height = `${render.height}px`
+    // 自前の描画レイヤーは線の太さ・点の大きさに `map.getPixelRatio()` を掛けるので、ここで変えた比率に追随する
+    map.setPixelRatio(render.pixelRatio)
     map.resize()
+    // 寸法を広げてから寄せ直す（余白と寄り上限をこの寸法で決めるため）
+    framing.refit()
     const idled = await waitForIdle(map, idleTimeoutMs)
     if (!idled) {
-      log.warn('[shareCard] タイルの読み込みを待ちきれずに撮影しました', { width, height, idleTimeoutMs })
+      log.warn('[shareCard] タイルの読み込みを待ちきれずに撮影しました', { width, height, render, idleTimeoutMs })
     }
-    const { canvas, scale } = await grabFrame(map, width, drawOverlay)
-    return { canvas, scale, timedOut: !idled }
+    const { canvas } = await grabFrame(map, render.width, drawOverlay)
+    // 合成へは「出力の寸法に対する比」を返す（描いた寸法に対する比は drawOverlay の中でだけ使う）
+    return { canvas, scale: width > 0 ? canvas.width / width : 1, timedOut: !idled }
   } finally {
     // **1 つが失敗しても残りを必ず実行する。** 素直に並べると、途中の 1 行が投げた時点で以降が
     // 飛ぶ——とくに静止画の除去に届かないと、地図が撮影直前の画で覆われたままになる。静止画は
@@ -142,7 +187,11 @@ export async function captureMapImage(map: maplibregl.Map, opts: MapCaptureOptio
     restoreQuietly('親要素の切り抜き解除', () => {
       if (parent) parent.style.overflow = savedParentOverflow
     })
+    // null で上書きを外し、端末の解像度への追従に戻す（MapLibre の型は number だが、null を受けると定めている）。
+    // 地図は初期化で比率を指定していない（JapanMapGL）ので、戻す先は常にこれでよい。
+    restoreQuietly('画素の比率の復元', () => map.setPixelRatio(null as unknown as number))
     restoreQuietly('地図の再計測', () => map.resize())
+    restoreQuietly('カメラの復元', () => framing?.restore())
     restoreQuietly('静止画の除去', () => freezeEl?.remove())
     restoreQuietly('見た目の固定の解除', () => setCaptureHold(map, false))
   }
