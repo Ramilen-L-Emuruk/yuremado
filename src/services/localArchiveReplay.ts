@@ -17,6 +17,9 @@ import { validateHistoricalArchiveIndex, validateHistoricalArchiveFile } from '.
 import { selectQuakeHistory } from '../utils/quakeHistorySelection'
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import { historyExtraKey } from './dmdataTelegramPayload'
+import { extractQuakeEventIdFromId } from '../utils/quakeMerge'
+import { tsunamiEventIds } from '../utils/tsunami'
+import { matchEstimatedIntensity } from '../utils/estimatedIntensity'
 import { fetchJsonWithTimeout } from '../utils/fetchJson'
 import { log } from '../utils/logger'
 
@@ -247,7 +250,8 @@ function historyWindowStartMs(before: Date, maxDays: number): number {
  *
  * **同じ窓から津波と、帯・長周期・推計震度分布図（`extras`）も返す。** 初期状態（24 時間）で
  * 足りない分を補う材料で、DMDSS 版の履歴と同じ形にする（帯は電文ごと、長周期は地震ごとに最新 1 通。
- * 鍵は `historyExtraKey`）。
+ * 鍵は `historyExtraKey`）。津波・長周期・推計震度分布図は、窓の中の地震・津波の続きなら窓より前の
+ * 報も返す（帯は窓の中だけ。判定と理由は本文）。
  *
  * 何も無ければ空配列で成功として返す（＝「その期間、地震は無かった」という正当な結果。
  * DMDATA/P2PQuakeへフォールバックしない）。
@@ -295,10 +299,46 @@ export async function fetchLocalArchiveQuakeHistory(
     getAreaPrefIndexCache(),
   ).map(quakeOf)
 
-  const inWindow = timed.filter(({ ms }) => ms >= windowStartMs)
+  // **窓より前の津波・長周期・推計震度分布図も、窓の中の地震・津波の続きなら入れる**（DMDSS 版の
+  // 履歴が窓の端で切れた地震を補うのと同じ判定。→ `dmdataReplay.ts` の `straddlingDayPlans`）。
+  // 地震だけは `selectQuakeHistory` が窓より前の報も返すので、ここでそろえないと、窓の端で切れた
+  // 地震のカードは前半の報まであるのに、その津波・長周期・分布図だけ前半が欠ける。
+  // - 長周期: 選んだ地震と `EventID` が同じもの
+  // - 津波: 選んだ地震の番号か、窓の中の津波の番号（`tsunamiEventIds`）を 1 つでも持つもの
+  // - 推計震度分布図: 識別子を持たないので、選んだ地震に発現時刻と震源で結び付くもの
+  //   （カードとの引き当てと同じ物差し → `matchEstimatedIntensity`）
+  // **帯（南海トラフ・解説情報・後発地震・お知らせ・地震回数）は窓の中だけにする。** どれも
+  // 地震に結び付かない電文で「窓の端で切れた地震の続き」という判定が当たらず、DMDSS 版の履歴も
+  // 窓の日だけから拾う。
+  const quakeEventIds = new Set(
+    quakes.map(q => extractQuakeEventIdFromId(q.id)).filter((id): id is string => id !== null),
+  )
+  const tsunamiIdsInWindow = new Set(quakeEventIds)
+  for (const { entry, ms } of timed) {
+    if (ms < windowStartMs || entry.payload.kind !== 'event' || entry.payload.event.kind !== 'tsunami') continue
+    for (const id of tsunamiEventIds(entry.payload.event)) tsunamiIdsInWindow.add(id)
+  }
+  const continuesWindow = (payload: HistoricalArchiveFile['entries'][number]['payload']): boolean => {
+    if (payload.kind === 'event') {
+      return payload.event.kind === 'tsunami'
+        && tsunamiEventIds(payload.event).some(id => tsunamiIdsInWindow.has(id))
+    }
+    if (payload.kind === 'lpgm') return quakeEventIds.has(payload.data.eventId)
+    if (payload.kind === 'estimatedIntensity') {
+      const ei = payload.data
+      // 読み込み時の検証は `data` が値の集まりであることまでしか見ないので、震源の欄が無い分布図で投げない
+      if (typeof ei.arrivalTime !== 'string' || typeof ei.hypocenter !== 'object' || ei.hypocenter === null) {
+        log.warn(`[localArchive] ${meta.id}.json の推計震度分布図に発現時刻か震源の欄が無いため、窓より前の分は地震に結び付けません: time=${String(ei.time)}`)
+        return false
+      }
+      return quakes.some(q => matchEstimatedIntensity(q, ei))
+    }
+    return false
+  }
+  const included = timed.filter(({ entry, ms }) => ms >= windowStartMs || continuesWindow(entry.payload))
   const tsunamis: JMATsunami[] = []
   const extraLatest = new Map<string, ReplayEntry>()
-  for (const { entry, ms } of inWindow) {
+  for (const { entry, ms } of included) {
     if (entry.payload.kind === 'event') {
       if (entry.payload.event.kind === 'tsunami') tsunamis.push(entry.payload.event)
       continue

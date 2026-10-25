@@ -957,21 +957,27 @@ describe('useReplayController: 24 時間より前の津波を初期状態に載�
     expect(loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(0)
   })
 
-  // 安全弁: 期限を一度も伝えていない津波は、最後の報から 24 時間までしか生かさない
-  // （材料が 24 時間だった頃と同じ範囲。→ `dmdataReplay.ts` の `TSUNAMI_WITHOUT_VALIDITY_MAX_AGE_MS`）。
-  it('安全弁: 期限を持たない津波は、最後の報から 24 時間を過ぎていれば載らない', async () => {
+  // 期限を一度も伝えていない津波は、ライブと同じ扱いにする（2026-10-23 ユーザー選択「ライブと同じく残す」。
+  // → `dmdataReplay.ts` の `isStaleWithoutValidity`）。
+  // **覆した: 識別子を持つ津波は 24 時間を過ぎても落とさない**（以前は識別子によらず 24 時間で落としていた）。
+  // ライブの DMDSS 版は期限の無い津波に失効の予約を積まず、解除か続報まで残す。
+  it('正（覆した）: 識別子を持ち期限を持たない津波は、最後の報から 24 時間を過ぎても載る', async () => {
     const target = quietTarget()
-    const stale = await startWith(target, [forecastTsunami('t1', hoursBefore(target, 30))])
+    const kept = await startWith(target, [forecastTsunami('t1', hoursBefore(target, 30))])
+    expect(kept.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(1)
+  })
+
+  // 安全弁: 識別子を持たない津波（P2PQuake）は、ライブの標準版の安全弁と同じ 24 時間で落とす。
+  it('安全弁: 識別子を持たず期限も持たない津波は、最後の報から 24 時間を過ぎていれば載らない', async () => {
+    const target = quietTarget()
+    const stale = await startWith(target, [{ ...forecastTsunami('t1', hoursBefore(target, 30)), eventId: undefined }])
     expect(stale.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(0)
   })
 
-  it('対照: 期限を持たない津波でも、最後の報が 24 時間以内なら従来どおり載る', async () => {
+  it('対照: 識別子を持たない津波でも、最後の報が 24 時間以内なら載る', async () => {
     const target = quietTarget()
-    const fresh = await startWith(target, [
-      forecastTsunami('t1', hoursBefore(target, 30)),
-      forecastTsunami('t2', hoursBefore(target, 20)),
-    ])
-    expect(fresh.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(2)
+    const fresh = await startWith(target, [{ ...forecastTsunami('t2', hoursBefore(target, 20)), eventId: undefined }])
+    expect(fresh.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(1)
   })
 
   it('正: 帯も同じ 1 回の積み込みに入り、初期状態と同じ時刻・無音で流す', async () => {

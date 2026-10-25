@@ -419,6 +419,105 @@ describe('fetchLocalArchiveQuakeHistory', () => {
       .toEqual(['lpgm-2', 'c1', 'c2'])
   })
 
+  // ── 窓より前の津波・長周期・推計震度分布図も、窓の中の地震・津波の続きなら返す ──
+  //
+  // 地震 STRADDLING は前半の報が窓（04-09 JST 0 時〜）より前、続報が窓の中にある
+  describe('窓の端で切れた地震・津波の続き', () => {
+    const STRADDLING = '20160407230000'
+    const OTHER = '20160402100000'
+    const straddlingQuake = [
+      quakeEntry(STRADDLING, 1, '2016-04-07T14:00:00Z'),
+      quakeEntry(STRADDLING, 2, '2016-04-09T00:00:00Z'),
+    ]
+    const tsunamiEntry = (id: string, eventId: string, time: string) =>
+      ({ time, payload: { kind: 'event', event: validTsunami({ id, eventId, time }) } })
+    const lpgmEntry = (id: string, eventId: string, time: string) =>
+      ({ time, payload: { kind: 'lpgm', data: { id, eventId, time, originTime: time, maxClass: 1, cancelled: false } } })
+    /** 推計震度分布図。地震（`quakeOf`）の発現時刻は 2016-04-14T12:26Z・震源は熊本県熊本地方。 */
+    const estimatedEntry = (time: string, arrivalTime: string, hypocenter: unknown = { lat: 32.7, lon: 130.8, depthKm: 10 }) =>
+      ({ time, payload: { kind: 'estimatedIntensity', data: { arrivalTime, time, count: 1, hypocenter } } })
+
+    // 正: 窓の中の地震の津波・窓の中の津波と番号が重なる津波は、窓より前の報も返す
+    // 対照: 窓の中の何にも結び付かない津波は返さない
+    it('津波: 窓の中の地震・津波と番号が重なれば、窓より前の報も返す', async () => {
+      const MULTI_DAY = '20160405100000'
+      mockFetchJson.mockResolvedValueOnce({
+        ...wide,
+        entries: [
+          ...straddlingQuake,
+          tsunamiEntry('t-straddle', STRADDLING, '2016-04-07T14:05:00Z'),
+          tsunamiEntry('t-multi-1', MULTI_DAY, '2016-04-05T01:05:00Z'),
+          tsunamiEntry('t-multi-2', MULTI_DAY, '2016-04-06T01:00:00Z'),
+          // 窓の中の報は番号を 2 つ持つ（別の地震の寄与で番号が足された形）
+          tsunamiEntry('t-multi-3', `${MULTI_DAY} 20160409090000`, '2016-04-09T01:00:00Z'),
+          tsunamiEntry('t-other', OTHER, '2016-04-02T01:05:00Z'),
+        ],
+      })
+
+      const result = await fetchLocalArchiveQuakeHistory(wide, BEFORE, 7)
+
+      expect(result.tsunamis.map(t => t.id)).toEqual(['t-multi-1', 't-multi-2', 't-straddle', 't-multi-3'])
+    })
+
+    // 正: 窓の中の地震と同じ EventID の長周期は、窓より前の報も返す
+    // 対照: ほかの地震の長周期は返さない
+    it('長周期: 窓の中の地震と EventID が同じものだけ、窓より前の報も返す', async () => {
+      mockFetchJson.mockResolvedValueOnce({
+        ...wide,
+        entries: [
+          ...straddlingQuake,
+          lpgmEntry('lpgm-straddle', STRADDLING, '2016-04-07T14:10:00Z'),
+          lpgmEntry('lpgm-other', OTHER, '2016-04-02T01:10:00Z'),
+        ],
+      })
+
+      const result = await fetchLocalArchiveQuakeHistory(wide, BEFORE, 7)
+
+      expect(result.extras.map(e => (e.payload.kind === 'lpgm' ? e.payload.data.id : '?'))).toEqual(['lpgm-straddle'])
+    })
+
+    // 正: 窓の中の地震に発現時刻と震源で結び付く分布図は、窓より前のものも返す
+    // 対照: 発現時刻が違う分布図は返さない
+    // 安全弁: 震源の欄が無い分布図で投げない（読み込み時の検証は `data` の中を見ない）
+    it('推計震度分布図: 窓の中の地震に結び付くものだけ、窓より前の報も返す', async () => {
+      mockFetchJson.mockResolvedValueOnce({
+        ...wide,
+        entries: [
+          ...straddlingQuake,
+          estimatedEntry('2016-04-07T14:15:00Z', '2016-04-14T12:26:00Z'),
+          estimatedEntry('2016-04-07T14:16:00Z', '2016-04-07T13:00:00Z'),
+          estimatedEntry('2016-04-07T14:17:00Z', '2016-04-14T12:26:00Z', null),
+        ],
+      })
+
+      const result = await fetchLocalArchiveQuakeHistory(wide, BEFORE, 7)
+
+      expect(result.extras.map(e => (e.payload.kind === 'estimatedIntensity' ? e.payload.data.time : '?')))
+        .toEqual(['2016-04-07T14:15:00Z'])
+    })
+
+    // 安全弁: 帯は地震に結び付かないので、窓より前のものは入れない（DMDSS 版の履歴と同じ）
+    it('帯: 窓の中の地震があっても、窓より前の帯は返さない', async () => {
+      mockFetchJson.mockResolvedValueOnce({
+        ...wide,
+        entries: [
+          ...straddlingQuake,
+          {
+            time: '2016-04-07T15:00:00Z',
+            payload: {
+              kind: 'earthquakeCount',
+              data: { id: 'c-old', time: '2016-04-07T15:00:00Z', eventId: STRADDLING, headline: '', items: [], cancelled: false, reportDateTime: '2016-04-07T15:00:00Z', expireAt: '2016-04-14T15:00:00Z' },
+            },
+          },
+        ],
+      })
+
+      const result = await fetchLocalArchiveQuakeHistory(wide, BEFORE, 7)
+
+      expect(result.extras).toEqual([])
+    })
+  })
+
   it('本体が読めなければ失敗アーカイブとして扱う', async () => {
     mockFetchJson.mockRejectedValueOnce(new Error('network error'))
 
