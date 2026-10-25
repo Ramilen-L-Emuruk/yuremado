@@ -20,7 +20,7 @@ import {
   REPLAY_EARLIEST_MS, REPLAY_FUTURE_MARGIN_MS, replayTargetProblem,
   createEmptyLoss, lateEntriesSilenced, removeFailedPrefetch,
 } from './useReplayController'
-import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
+import type { ReplayEntry, ReplayFetchResult, ReplayQuakeHistoryResult } from '../types/replay'
 import type { JMAQuake } from '../types/earthquake'
 import { log } from '../utils/logger'
 
@@ -111,10 +111,11 @@ function prefetchTarget(): Date {
 }
 
 /** 空の履歴。履歴の中身を見ないテストは、取得をすぐ返すこれで済ませる。 */
-function emptyHistory(): QuakeHistoryResult {
+function emptyHistory(): ReplayQuakeHistoryResult {
   return {
     quakes: [], tsunamis: [], extras: [], skippedByDay: skips(0),
     failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, hasMore: false, oldestLoadedDay: null,
+    loadMore: null,
   }
 }
 
@@ -130,7 +131,7 @@ function setup({ holdHistory = false }: { holdHistory?: boolean } = {}) {
   const ranges: { from: Date; to: Date }[] = []
   // 履歴の取得。本編・初期状態とは別に完了させられるよう独立に持つ
   // （履歴が失敗しても再生が続くこと・揃うまで再生を待つことを確かめるため）。
-  const histories: Deferred<QuakeHistoryResult>[] = []
+  const histories: Deferred<ReplayQuakeHistoryResult>[] = []
   const historyArgs: { before: Date }[] = []
   // App が持つ state の代役。Hook は setTimeOffset で書き、次のレンダーで読む。
   let timeOffset: number | null = null
@@ -146,12 +147,12 @@ function setup({ holdHistory = false }: { holdHistory?: boolean } = {}) {
     fetchQuakeHistory: vi.fn((before: Date) => {
       order.push('fetchQuakeHistory')
       historyArgs.push({ before })
-      const d = createDeferred<QuakeHistoryResult>()
+      const d = createDeferred<ReplayQuakeHistoryResult>()
       histories.push(d)
       if (!holdHistory) d.resolve(emptyHistory())
       return d.promise
     }),
-    restoreQuakeHistory: vi.fn((_quakes: JMAQuake[]) => { order.push('restoreQuakeHistory') }),
+    restoreQuakeHistory: vi.fn((_history: ReplayQuakeHistoryResult) => { order.push('restoreQuakeHistory') }),
     clearCache: vi.fn(() => { order.push('clearReplayCache') }),
     setTimeOffset: vi.fn((value: number | null) => { order.push('setTimeOffset'); timeOffset = value }),
     resetState: vi.fn(() => { order.push('resetState') }),
@@ -705,7 +706,7 @@ describe('useReplayController の先読み', () => {
 // **失敗しても再生を止めず、成功したら揃うまで待つ**こと。
 describe('useReplayController の履歴', () => {
   /** 履歴の結果。中身の統合は mergeQuakeHistory の担当なので、ここでは件数だけ数える。 */
-  function history(count: number, skipped = 0, failedArchiveUrls: string[] = []): QuakeHistoryResult {
+  function history(count: number, skipped = 0, failedArchiveUrls: string[] = []): ReplayQuakeHistoryResult {
     const quakes = Array.from({ length: count }, (_, i) => ({ id: `q${i}` } as unknown as JMAQuake))
     return { ...emptyHistory(), quakes, skippedByDay: skips(skipped), failedArchiveUrls }
   }
@@ -732,7 +733,7 @@ describe('useReplayController の履歴', () => {
     await h.flush(started)
 
     expect(h.deps.restoreQuakeHistory).toHaveBeenCalledTimes(1)
-    expect(h.deps.restoreQuakeHistory.mock.calls[0][0]).toHaveLength(3)
+    expect(h.deps.restoreQuakeHistory.mock.calls[0][0].quakes).toHaveLength(3)
     expect(h.current.error).toBeNull()
   })
 

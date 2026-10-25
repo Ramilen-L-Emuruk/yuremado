@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLazyRef } from './useLazyRef'
 import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, EEWAlert, IntensityScale, EarthquakePoint, AppEvent, LiveEvent, LiveEventMeta, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
-import { fetchHistory, fetchHistorySince, fetchJmaQuakePage, P2PQuakeWebSocket } from '../services/p2pquake'
+import { fetchHistory, fetchHistorySince, fetchJmaQuakePage, P2PQuakeWebSocket, P2P_LOAD_MORE_BATCH } from '../services/p2pquake'
+import { historyCursorFromOldestDay, type HistoryCursor } from '../utils/historyCursor'
+import type { QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
 // 種別ごとの取得関数（`fetchDmdataEarthquakes` ほか 8 本）は撤去済み。履歴はアーカイブ経由の
 // 1 本へ寄せてある（→ `data-sources-spec.md` §2「大量に取るならアーカイブを使う」）。
 // **発表中の緊急地震速報だけは別**で、`/v2/telegram` にも当日のアーカイブにも無いため
@@ -129,47 +131,7 @@ export const MAX_HISTORY_RETAINED = 50
 // ライブの初回履歴で 1 回に引く電文数（`/jma` の上限）。**リクエストは 1 回のまま。**
 // 地震 50 件を選ぶ母数で、ここから `selectQuakeHistory` が地震の単位で絞る。
 const INITIAL_HISTORY_PAGE_SIZE = 100
-const LOAD_MORE_BATCH = 50        // 「もっと見る」1回あたりの取得件数
 // 電文ログの保持件数は経路ごとに分ける（→ `utils/telegramLogBuffer.ts` の `TELEGRAM_LOG_LIMITS`）
-
-/**
- * 起動後、地震カードの履歴をどこから先へ遡るか（次の窓の上端）。
- *
- * **DMDSS 版の「もっと見る」はこのカーソルを進めて呼び直す。** 窓どうしが重ならないので、
- * 押しても既に読んだ日を読み直さない。区切りは日数（`HISTORY_WINDOW_DAYS`）で、1 回押すたびに
- * 窓 1 つぶんを丸ごと読む。
- *
- * **遡れる範囲に上限は置かない。** 在庫はアーカイブの保存開始（地震津波関連は 2020-11-18）まで
- * あり、目録が空になった時点で `hasMore` が偽になって自然に止まる。
- *
- * かつてはここが「要求する日数」で、押すたびに 7 日ずつ伸ばして**毎回いちばん新しい日から
- * 読み直して**いた。しかも上限（当日経路の暴走防止から導いた 59 日）に達すると押せなくなり、
- * **件数で打ち切って読み残した日があってもボタンが死んでいた**。
- *
- * `null` は「まだ初回の履歴を読んでいない」。P2PQuake 版は `offset` で遡るので使わない。
- */
-type HistoryCursor = Date | null
-
-/**
- * 読み終えた最古の JST 日から、次の窓の上端を作る。
- *
- * その日は丸ごと読み切っているので、**上端はその日の直前**（前日の 23:59:59.999 JST）。
- * 取得側は `entryTime > before` で捨てるため、同じ日を二度読まずに続きへ進める。
- *
- * **日付として読めなければ `null` を返す。** カーソルが `null` なら次は初回と同じ範囲を
- * 読み直すので、進まないだけで壊れない（`Date.parse` の `NaN` をそのまま渡すと、窓の両端が
- * `NaN` になって目録を 1 件も引けなくなる）。値は目録の `date` 由来なので通常は起きないが、
- * 起きたら記録を残す —— 画面には「押しても増えない」としか出ない。
- */
-function historyCursorFromOldestDay(day: string | null): HistoryCursor {
-  if (!day) return null
-  const ms = Date.parse(`${day}T00:00:00+09:00`)
-  if (!Number.isFinite(ms)) {
-    log.warn(`[data] 履歴のカーソルを日付として読めませんでした（次は初回と同じ範囲を読み直します）: ${day}`)
-    return null
-  }
-  return new Date(ms - 1)
-}
 
 const MAX_QUAKE_RETRACTIONS = 20  // 取消を見た事実の台帳の最大保持件数（`rememberQuakeRetraction`）
 
@@ -1078,6 +1040,26 @@ export function useEarthquakes(
    * その状態で押されたら現在時刻から読み直す（＝初回と同じ範囲をもう一度試す）。
    */
   const historyCursorRef = useRef<HistoryCursor>(null)
+  /**
+   * 再生中の「もっと見る」で続きを読む口（→ `ReplayQuakeHistoryResult.loadMore`）。**再生中はこちらだけを使う。**
+   *
+   * リプレイの開始時の履歴（`restoreQuakeHistory`）が置き、押すたびに次の口へ差し替わる。`null` なら再生中は
+   * 遡らない（ローカル履歴アーカイブ・在庫の端・履歴の取得に失敗した）。ライブの経路（`historyCursorRef`・
+   * `p2pRawOffsetRef`）は読む先が `serverDate()`（いま）なので、再生中に使うと再生時刻より未来の地震が並ぶ。
+   */
+  const replayLoadMoreRef = useRef<ReplayQuakeHistoryResult['loadMore']>(null)
+  /**
+   * 再生の履歴の世代。`resetState` と `restoreQuakeHistory` で進める。押した時点の値と違えば、
+   * 届いた続きは別の再生（または差し替わった履歴）のものなので捨てる。
+   */
+  const replayHistoryGenerationRef = useRef(0)
+  /** 再生中の「もっと見る」の取得を打ち切る合図。`restoreQuakeHistory` が作り、`resetState` で立てる。 */
+  const replayLoadMoreAbortRef = useRef<AbortController | null>(null)
+  /**
+   * いま再生中か（`replayTimeOffset` が決める。接続 effect が書く）。**「もっと見る」がライブの経路へ
+   * 落ちないための判定に使う** —— 再生中に続きの口が無ければ、ライブの最新履歴を読まずに止める。
+   */
+  const replayActiveRef = useRef(replayTimeOffset !== null)
   // 通常版「もっと見る」用の生 API 取得件数（重複除去後の earthquakes.length とは別管理）
   // offset = earthquakes.length だと重複除去ズレで古いデータが抜け落ちるため、API 呼び出し回数ベースで管理する
   const p2pRawOffsetRef = useRef(0)
@@ -2636,6 +2618,8 @@ export function useEarthquakes(
 
   useEffect(() => {
     let cancelled = false
+    // 「もっと見る」がどちらの経路を使うか（→ `replayActiveRef`）
+    replayActiveRef.current = replayTimeOffset !== null
     // 時間軸が変わった印。ここより前に始まった取得は、以後の結果を捨てる
     liveGenerationRef.current++
     // この時間軸の履歴の取得（初回・もっと見る）を打ち切る合図。クリーンアップで立てる。
@@ -3703,8 +3687,171 @@ export function useEarthquakes(
     }
   }, [handleEvent, enqueueEvent, appendTelegramLog, dmdataApiKey, dmdataTestDelivery, replayTimeOffset, carryEverSpecialWarning])
 
+  /**
+   * 「もっと見る」で読んだ履歴を画面へ当てる。**ライブの DMDSS 版と再生中（両バリアント）が通る。**
+   *
+   * 地震カードは既存のカードを base に統合し、長周期・推計震度分布図は反映し、帯（南海トラフ臨時情報・
+   * 解説情報・後発地震注意情報・地震回数・お知らせ）は当てずに記録だけ残す。経路ごとに書き分けると、
+   * 片方だけ帯を当てる・長周期を落とす形でずれる。
+   *
+   * @param hasMore 続きを出すか。**決め方は経路が持つ**（ライブは取得側の在庫の判定、再生中は続きの口の有無）
+   */
+  const applyLoadedHistory = useCallback((history: QuakeHistoryResult, hasMore: boolean) => {
+    const events = history.quakes
+    // 既存カード群を base に、新バッチの生電文を eventId ごとに統合する。
+    // これによりバッチ跨ぎ（先に届いた VXSE61 単独カードへ後続の VXSE53 の震度を合流など）も
+    // リアルタイムと同一結果になる。
+    // 台帳への記録は setState の外で行う（更新関数は再実行されうるため副作用を持たせない）。
+    rememberQuakeRetractionsFromBatch(events)
+    // 長周期は同じアーカイブに入っているので、拾うだけで追加の通信は要らない
+    const lpgmEvents = history.extras
+      .map(e => e.payload)
+      .filter((p): p is { kind: 'lpgm'; data: JMALpgm } => p.kind === 'lpgm')
+      .map(p => p.data)
+    // **記録は setState の外で行う**（台帳と同じ理由——更新関数は再実行されうるため
+    // 副作用を持たせない）。
+    //
+    // **「もっと見る」は nankai 等を画面へ反映しない**（ライブ・再生中とも。2026-09-25 ユーザー承認。
+    // 選択「記録だけ追加（推奨）」・2026-10-14 維持）。起動時の履歴復元と違い、ここは既存カードの
+    // 厚みを増やすためにさらに古い日を遡る経路——古い日にあった南海トラフ等の電文を `applyNankai` 等へ
+    // 通すと、無条件に上書きする実装のため、**現在表示中の最新の帯情報を古い内容で置き換えてしまう**。
+    // lpgm だけは地震カードに紐づく情報で「もっと見る」が増やすカードの一部なので反映する。
+    //
+    // 反映しない種別でも、録画ログの原則（onLiveEvent を呼ぶかどうかに関わらず全件記録する）
+    // に従い、届いた事実は記録する（お知らせも他の帯と同じく記録する）。
+    for (const lpgm of lpgmEvents) {
+      // 取消の扱いは起動時と同じ（「伝えた」に数える。→ `decideDispatch`）
+      recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, silentLpgmSkip(lpgm))
+    }
+    for (const e of history.extras) {
+      const p = e.payload
+      // **起動時側と違い try/catch は置いていない。** この 2 行の switch は
+      // `recordSkippedTelegram`（自己保護済み）と `break`/`log.warn` しか呼ばず、
+      // 起動時側のような `applyXxx` の呼び出しを持たないため、例外源が無い。
+      switch (p.kind) {
+        case 'lpgm': break // 上で記録・下の setState で `lpgmByEventId` へ入れる
+        // **常に `notDispatched`。** 電文の中身（取消・階級等）を見て決めているのではなく、
+        // 「もっと見る」という**この取得経路自体**が nankai 等を反映しないと決めている
+        // ——`notDispatched` の型定義（`replayEventLog.ts`）が想定する「電文の内容で
+        // 除外する」ケースとは理由が異なるが、他に当てはまる値が無いため転用する
+        // （型定義側の docstring にもこの経路単位の用法を追記済み。敵対的レビューで指摘）。
+        case 'nankai':
+          recordSkippedTelegram({ kind: 'nankai', data: p.data }, 'notDispatched')
+          break
+        case 'nankaiCommentary':
+          recordSkippedTelegram({ kind: 'nankaiCommentary', data: p.data }, 'notDispatched')
+          break
+        case 'kohatsu':
+          recordSkippedTelegram({ kind: 'kohatsu', data: p.data }, 'notDispatched')
+          break
+        case 'earthquakeCount':
+          recordSkippedTelegram({ kind: 'earthquakeCount', data: p.data }, 'notDispatched')
+          break
+        case 'quakeNotice':
+          recordSkippedTelegram({ kind: 'quakeNotice', data: p.data }, 'notDispatched')
+          break
+        // **推計震度分布図は反映する**（帯と違い、長周期と同じく「もっと見る」が増やす
+        // カードの一部）。地震ごとに持つので、古い日の分布が今の地震の分布を上書きすることは
+        // ない（同じ地震の古い報でも退行しない → `upsertEstimatedIntensity`）。音・読み上げは
+        // 起こさない。**例外源があるので個別に囲う**（上の注記の例外）。
+        case 'estimatedIntensity': {
+          const applied = tryApplyExtra('推計震度分布図', p.data, data => applyEstimatedIntensity(data, false) !== null)
+          recordSkippedTelegram({ kind: 'estimatedIntensity', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
+          break
+        }
+        case 'event':
+          // `HISTORY_EXTRA_TYPES` に入らないので届かない（起動時側の同一分岐と同じ注記。
+          // 片方だけ直さないこと）。
+          break
+        default: {
+          const exhaustive: never = p
+          log.warn('[data] 履歴の補助情報に未知の種別（もっと見る）', exhaustive)
+        }
+      }
+    }
+    // **津波も画面へは当てず、届いた事実だけを記録する**（帯と同じ理由。古い日の津波の報で、いま
+    // 表示中の津波を上書き・復活させない）。記録しないと、録画ログからは届いたこと自体が消える
+    for (const tsunami of history.tsunamis) {
+      recordSkippedTelegram(tsunami, 'notDispatched')
+    }
+    // 台帳へ積むのは状態更新の関数の外（あちらは 2 度呼ばれうる）
+    recordLpgmRetractions(lpgmEvents, lpgmRetractionsRef.current)
+    setState(prev => {
+      // 画面の値へ積み増す。**台帳に当たる報は採らない** —— ライブで取り消して消した長周期が、
+      // 古い日を読み足したときに戻らないように（→ `utils/lpgmRetraction.ts`）。
+      const lpgmByEventId = foldLpgmHistory(prev.lpgmByEventId, lpgmEvents, lpgmRetractionsRef.current)
+      // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
+      const { cards, markMemory } = mergeQuakeHistory(
+        events, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
+      )
+      const merged = borrowFromTsunamiIntoCards(cards, prev.tsunamis)
+      return {
+        ...prev,
+        // **長周期の鍵はこの更新で積み増した `lpgmByEventId` から数える** ——
+        // このバッチで増えた長周期もこの更新で入るので、`prev` を見るとその記憶を落とす。
+        ...marksFromHistory(markMemory, cards, lpgmByEventId, prev.quakeUpdateMarks),
+        earthquakes: merged,
+        lpgmByEventId,
+        // **残し方の判断は `mergeHistoryLoss` が持つ**（中身によって違う。理由はそちら）。
+        //
+        // **「積むか置き換えるか」をここで決めないこと。** そう見えるときは、中身が
+        // 「同じものを二度数えうる」形になっている —— 直す先は持ち方のほう。
+        historyLoss: mergeHistoryLoss(prev.historyLoss, history),
+        // 押し直せば回復しうる側の表示は、成功したので消す
+        loadMoreFailed: false,
+        hasMore,
+      }
+    })
+  }, [rememberQuakeRetractionsFromBatch, applyEstimatedIntensity])
+
+  /**
+   * 再生中の「もっと見る」。リプレイの開始時の履歴が置いた続きの口（`replayLoadMoreRef`）で読む。
+   *
+   * **口が無ければ読まずにボタンを畳む。** ライブの経路へは落とさない —— あちらは `serverDate()`（いま）から
+   * 遡るので、再生時刻より未来の地震が一覧に並ぶ。
+   */
+  const loadMoreReplayHistory = useCallback(async () => {
+    const loadMore = replayLoadMoreRef.current
+    if (loadMore === null) {
+      // **通常は届かない。** 口が無いときは `hasMore` も偽で、ボタンが出ていない ——
+      // `restoreQuakeHistory` が口の有無で決め、開始時の履歴の取得に失敗したときは呼ばれないので
+      // `resetState` が落とした偽のまま残る。ここへ来たら、ライブで立った `hasMore` が残ったまま
+      // 再生へ切り替わったなど前提が崩れているので、記録してボタンを畳む
+      log.warn('[data] 再生中の「もっと見る」に続きを読む先がありません（ボタンを畳みます）')
+      setState(prev => (prev.hasMore ? { ...prev, hasMore: false } : prev))
+      return
+    }
+    const generation = replayHistoryGenerationRef.current
+    const stale = () => replayHistoryGenerationRef.current !== generation
+    const signal = replayLoadMoreAbortRef.current?.signal ?? null
+    setState(prev => ({ ...prev, isLoadingMore: true }))
+    try {
+      const history = await loadMore(signal)
+      // 再生を止めた・始め直した・履歴が差し替わった後に届いた分は捨てる（「取得中」の解除は finally が担う）
+      if (stale()) return
+      // **次の口へ進めるのは成功したときだけ。** 失敗したら同じ口のまま、押し直せば同じ範囲を読み直す
+      replayLoadMoreRef.current = history.loadMore
+      applyLoadedHistory(history, history.loadMore !== null)
+    } catch (err) {
+      // 時間軸が変わった後の失敗は誰も困っていない（ライブの「もっと見る」と同じ扱い）
+      if (stale()) {
+        log.debug('[data] 古い再生の追加読み込みが失敗（結果は破棄）', err)
+        return
+      }
+      log.error('[data] 再生中の地震履歴の追加読み込みに失敗', err)
+      setState(prev => ({ ...prev, loadMoreFailed: true }))
+    } finally {
+      setState(prev => (prev.isLoadingMore ? { ...prev, isLoadingMore: false } : prev))
+    }
+  }, [applyLoadedHistory])
+
   const loadMoreEarthquakes = useCallback(async () => {
     if (stateRef.current.isLoadingMore || !stateRef.current.hasMore) return
+    // **再生中は再生の続きだけを読む**（→ `loadMoreReplayHistory`）。下のライブの経路はいまから遡る
+    if (replayActiveRef.current) {
+      await loadMoreReplayHistory()
+      return
+    }
     // **この取得が「まだ有効か」を測る物差し。**
     // 電文本体の取得は最長で数分かかる（→ `services/telegramBody.ts` の取得間隔）。そのあいだに
     // リプレイが始まる・接続が張り直されると、届いた電文は**別の時間軸の一覧**へ流し込まれる。
@@ -3783,116 +3930,14 @@ export function useEarthquakes(
             log.warn('[data] 履歴のカーソルが進みませんでした（押しても増えない状態になります）')
           }
         }
-        const events = history.quakes
-        // 既存カード群を base に、新バッチの生電文を eventId ごとに統合する。
-        // これによりバッチ跨ぎ（先に届いた VXSE61 単独カードへ後続の VXSE53 の震度を合流など）も
-        // リアルタイムと同一結果になる。
-        // 台帳への記録は setState の外で行う（更新関数は再実行されうるため副作用を持たせない）。
-        rememberQuakeRetractionsFromBatch(events)
-        // 長周期は同じアーカイブに入っているので、拾うだけで追加の通信は要らない
-        const lpgmEvents = history.extras
-          .map(e => e.payload)
-          .filter((p): p is { kind: 'lpgm'; data: JMALpgm } => p.kind === 'lpgm')
-          .map(p => p.data)
-        // **記録は setState の外で行う**（台帳と同じ理由——更新関数は再実行されうるため
-        // 副作用を持たせない）。
-        //
-        // **「もっと見る」は nankai 等を画面へ反映しない。** 起動時の履歴復元と違い、ここは
-        // 既存カードの厚みを増やすためにさらに古い日を遡る経路——古い日にあった南海トラフ等の
-        // 電文を `applyNankai` 等へ通すと、無条件に上書きする実装のため、**現在表示中の
-        // 最新の帯情報を古い内容で置き換えてしまう**（ユーザー確認済み）。lpgm だけは
-        // 地震カードに紐づく情報で「もっと見る」が増やすカードの一部なので、従来どおり反映する。
-        //
-        // 反映しない種別でも、録画ログの原則（onLiveEvent を呼ぶかどうかに関わらず全件記録する）
-        // に従い、届いた事実は記録する（お知らせも他の帯と同じく記録する）。
-        for (const lpgm of lpgmEvents) {
-          // 取消の扱いは起動時と同じ（「伝えた」に数える。→ `decideDispatch`）
-          recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, silentLpgmSkip(lpgm))
-        }
-        for (const e of history.extras) {
-          const p = e.payload
-          // **起動時側と違い try/catch は置いていない。** この 2 行の switch は
-          // `recordSkippedTelegram`（自己保護済み）と `break`/`log.warn` しか呼ばず、
-          // 起動時側のような `applyXxx` の呼び出しを持たないため、例外源が無い。
-          switch (p.kind) {
-            case 'lpgm': break // 上で記録・下の setState で `lpgmByEventId` へ入れる
-            // **常に `notDispatched`。** 電文の中身（取消・階級等）を見て決めているのではなく、
-            // 「もっと見る」という**この取得経路自体**が nankai 等を反映しないと決めている
-            // ——`notDispatched` の型定義（`replayEventLog.ts`）が想定する「電文の内容で
-            // 除外する」ケースとは理由が異なるが、他に当てはまる値が無いため転用する
-            // （型定義側の docstring にもこの経路単位の用法を追記済み。敵対的レビューで指摘）。
-            case 'nankai':
-              recordSkippedTelegram({ kind: 'nankai', data: p.data }, 'notDispatched')
-              break
-            case 'nankaiCommentary':
-              recordSkippedTelegram({ kind: 'nankaiCommentary', data: p.data }, 'notDispatched')
-              break
-            case 'kohatsu':
-              recordSkippedTelegram({ kind: 'kohatsu', data: p.data }, 'notDispatched')
-              break
-            case 'earthquakeCount':
-              recordSkippedTelegram({ kind: 'earthquakeCount', data: p.data }, 'notDispatched')
-              break
-            case 'quakeNotice':
-              recordSkippedTelegram({ kind: 'quakeNotice', data: p.data }, 'notDispatched')
-              break
-            // **推計震度分布図は反映する**（帯と違い、長周期と同じく「もっと見る」が増やす
-            // カードの一部）。地震ごとに持つので、古い日の分布が今の地震の分布を上書きすることは
-            // ない（同じ地震の古い報でも退行しない → `upsertEstimatedIntensity`）。音・読み上げは
-            // 起こさない。**例外源があるので個別に囲う**（上の注記の例外）。
-            case 'estimatedIntensity': {
-              const applied = tryApplyExtra('推計震度分布図', p.data, data => applyEstimatedIntensity(data, false) !== null)
-              recordSkippedTelegram({ kind: 'estimatedIntensity', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
-              break
-            }
-            case 'event':
-              // `HISTORY_EXTRA_TYPES` に入らないので届かない（起動時側の同一分岐と同じ注記。
-              // 片方だけ直さないこと）。
-              break
-            default: {
-              const exhaustive: never = p
-              log.warn('[data] 履歴の補助情報に未知の種別（もっと見る）', exhaustive)
-            }
-          }
-        }
-        // 台帳へ積むのは状態更新の関数の外（あちらは 2 度呼ばれうる）
-        recordLpgmRetractions(lpgmEvents, lpgmRetractionsRef.current)
-        setState(prev => {
-          // 画面の値へ積み増す。**台帳に当たる報は採らない** —— ライブで取り消して消した長周期が、
-          // 古い日を読み足したときに戻らないように（→ `utils/lpgmRetraction.ts`）。
-          const lpgmByEventId = foldLpgmHistory(prev.lpgmByEventId, lpgmEvents, lpgmRetractionsRef.current)
-          // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
-          const { cards, markMemory } = mergeQuakeHistory(
-            events, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
-          )
-          const merged = borrowFromTsunamiIntoCards(cards, prev.tsunamis)
-          return {
-            ...prev,
-            // **長周期の鍵はこの更新で積み増した `lpgmByEventId` から数える** ——
-            // このバッチで増えた長周期もこの更新で入るので、`prev` を見るとその記憶を落とす。
-            ...marksFromHistory(markMemory, cards, lpgmByEventId, prev.quakeUpdateMarks),
-            earthquakes: merged,
-            lpgmByEventId,
-            // **残し方の判断は `mergeHistoryLoss` が持つ**（中身によって違う。理由はそちら）。
-            //
-            // **「積むか置き換えるか」をここで決めないこと。** そう見えるときは、中身が
-            // 「同じものを二度数えうる」形になっている —— 直す先は持ち方のほう。
-            historyLoss: mergeHistoryLoss(prev.historyLoss, history),
-            // 押し直せば回復しうる側の表示は、成功したので消す
-            loadMoreFailed: false,
-            // **判定は取得側に任せる**（在庫＝アーカイブの目録が空になったか。→ `hasMore`）。
-            //
-            // 増えたかどうかでは判定しない —— 30 日まるごと震度1以上の地震が無いことは
-            // 起きうるが、それは「もっと古い在庫が無い」ことを何も意味しない。
-            //
-            // **遡り幅の上限も見ない。** かつてここで「要求した日数が上限に達したか」を
-            // 重ねており、件数で打ち切って読み残した日があってもボタンが死んでいた。
-            hasMore: history.hasMore,
-          }
-        })
+        // **続きを出すかは取得側に任せる**（在庫＝アーカイブの目録が空になったか。→ `hasMore`）。
+        // 増えたかどうかでは判定しない —— 30 日まるごと震度1以上の地震が無いことは起きうるが、
+        // それは「もっと古い在庫が無い」ことを何も意味しない。遡り幅の上限も見ない（件数で打ち切って
+        // 読み残した日があってもボタンが死ぬ）。
+        applyLoadedHistory(history, history.hasMore)
       } else {
         const offset = p2pRawOffsetRef.current
-        const page = await fetchJmaQuakePage({ limit: LOAD_MORE_BATCH, offset }, signal, 'foreground')
+        const page = await fetchJmaQuakePage({ limit: P2P_LOAD_MORE_BATCH, offset }, signal, 'foreground')
         // **配信元が返した数だけ進める**（読めた数ではない。理由は初回履歴の側と同じ）。
         p2pRawOffsetRef.current += page.rawCount
         // **初回に選から漏れた電文をここで合流させる**（→ `p2pCarryOverRef`）。取り込んだら空にする ——
@@ -3915,7 +3960,7 @@ export function useEarthquakes(
             earthquakes: borrowFromTsunamiIntoCards(cards, prev.tsunamis),
             // **配信元が返した数で見る**（持ち越し分を足した `events.length` では見ない ——
             // 足したぶん上限を超えて、先が無いのにボタンが残る）。
-            hasMore: page.rawCount === LOAD_MORE_BATCH,
+            hasMore: page.rawCount === P2P_LOAD_MORE_BATCH,
             // 成功したので、押し直せば回復しうる側の表示は消す（DMDSS 版と揃える）
             loadMoreFailed: false,
           }
@@ -3946,7 +3991,7 @@ export function useEarthquakes(
       // 画面には「取得中…」のまま押せないボタンが残るだけで、例外もログも出ない。
       setState(prev => (prev.isLoadingMore ? { ...prev, isLoadingMore: false } : prev))
     }
-  }, [])
+  }, [applyLoadedHistory, loadMoreReplayHistory])
 
   /**
    * テストボタンの台本（電文 XML の並び）を読み、**受信と同じイベントキューへ積む**
@@ -4398,6 +4443,11 @@ export function useEarthquakes(
     shownEstimatedIntensityArrivalsRef.current = []
     // ライブで当てた津波の報の鍵も落とす。前の時間軸の報より古い履歴が、新しい軸で当たらなくなる。
     liveTsunamiSeenKeyRef.current = Number.NEGATIVE_INFINITY
+    // 再生中の「もっと見る」の続きの口も前の時間軸のもの。進行中の取得は打ち切り、届いても世代で捨てる
+    replayHistoryGenerationRef.current++
+    replayLoadMoreAbortRef.current?.abort()
+    replayLoadMoreAbortRef.current = null
+    replayLoadMoreRef.current = null
     clearTestSimulationTimers()
     setState(prev => ({
       ...prev,
@@ -4418,13 +4468,14 @@ export function useEarthquakes(
       // 「最終更新」も落とす。残すと、リプレイ開始直後（まだ 1 件も処理していない間）に
       // 地図の更新時刻へ**リプレイ前のライブ受信時刻**が出たままになる。
       lastUpdate: null,
-      // 「もっと見る」を畳む。カードを空にしても hasMore を残すと、リプレイ中にボタンが出たまま
-      // になり、押すと `loadMoreEarthquakes` が**ライブの最新履歴**を取りに行って、再生時刻より
-      // 未来の地震がカードに並ぶ。ライブへ戻る側は履歴の取得完了時に立て直すので落としてよい。
+      // 「もっと見る」を畳む。カードを空にしても hasMore を残すと、前の時間軸の続きを読むボタンが
+      // 残る。立て直すのは、再生中は `restoreQuakeHistory`（続きの口の有無）、ライブへ戻る側は
+      // 履歴の取得完了時。
       hasMore: false,
-      // 履歴の損失も落とす。**再生中はリプレイ側が自分の損失を出す**ので、ライブで欠けた分を
-      // 残すと同じ画面に 2 つの損失が並び、どちらの話か読めない。ライブへ戻る側は履歴の取得
-      // 完了時に立て直すので落としてよい（`hasMore` と同じ理由）。
+      // 履歴の損失も落とす。前の時間軸で欠けた分を残すと、新しい時間軸の話と混ざって読めない。
+      // 再生を始めたときの履歴の取りこぼしはリプレイ側（設定タブのリプレイの欄）が出し、ここへは
+      // 再生中の「もっと見る」の取りこぼしだけが積まれる（2026-10-25 ユーザー選択「地震タブの帯のまま
+      // (Recommended)」）。ライブへ戻る側は履歴の取得完了時に立て直すので落としてよい（`hasMore` と同じ理由）。
       historyLoss: createEmptyTelegramLoss(),
       loadMoreFailed: false,
       reconnectGapLoss: false,
@@ -4465,8 +4516,20 @@ export function useEarthquakes(
    * 経路ごとに畳み込み方が分かれると同じ電文から違うカードができる。既存のカードを base に
    * 置くのは、この復元が pre-window の注入や本編の再生より後に完了しうるため
    *（先に出来ていたカードを消さず、同じイベントなら統合する）。
+   *
+   * **続きを読む口（`loadMore`）も覚え、再生中の「もっと見る」をその有無で出す**（→ `loadMoreReplayHistory`）。
+   * 地震が 0 件でも口は覚える —— 静かな期間から始めた再生でも、その手前へ遡れる。帯・長周期などの
+   * `extras` はここでは当てない（初期状態の材料へ回る。→ `useReplayController` の `assemblePreWindowMaterial`）。
    */
-  const restoreQuakeHistory = useCallback((quakes: JMAQuake[]) => {
+  const restoreQuakeHistory = useCallback((history: ReplayQuakeHistoryResult) => {
+    // 前に覚えた口の取得が進んでいれば打ち切る（同じ再生の中で履歴が差し替わった場合）
+    replayHistoryGenerationRef.current++
+    replayLoadMoreAbortRef.current?.abort()
+    replayLoadMoreAbortRef.current = history.loadMore === null ? null : new AbortController()
+    replayLoadMoreRef.current = history.loadMore
+    const hasMore = history.loadMore !== null
+    setState(prev => (prev.hasMore === hasMore ? prev : { ...prev, hasMore }))
+    const quakes = history.quakes
     if (quakes.length === 0) return
     rememberQuakeRetractionsFromBatch(quakes)
     // **ここで作った記憶が、再生が始まってから届く報の「比べる相手」になる。**

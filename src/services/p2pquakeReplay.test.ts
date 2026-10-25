@@ -406,3 +406,79 @@ describe('fetchP2PQuakeHistory は応答の並び順に依存しない', () => {
     expect(result.quakes.map(q => q.id)).toEqual(['newest', 'middle'])
   })
 })
+
+// 再生中の「もっと見る」の続き（`loadMore`）。ライブの標準版と同じく、同じ until_date のまま offset を
+// 進めて 50 件ずつ引き、初回の打ち切りで選から漏れた電文を次の 1 回へ持ち越す。
+describe('fetchP2PQuakeHistory の続き', () => {
+  /** 新しい順に並べた n 件の地震（それぞれ別の地震。時刻は 1 分ずつ古くなる）。 */
+  function quakes(prefix: string, n: number, newest: Date): RawP2PEvent[] {
+    return Array.from({ length: n }, (_, i) => quake(`${prefix}${i}`, new Date(newest.getTime() - i * 60_000)))
+  }
+
+  /** offset ごとに返す電文を割り当てる（limit は見ない。呼ばれた引数は別に確かめる）。 */
+  function respondByOffset(pages: Record<number, RawP2PEvent[]>): void {
+    mockFetch.mockImplementation(async (_resource, query = {}) => pages[query.offset ?? 0] ?? [])
+  }
+
+  it('正: 初回が満杯なら、同じ日のまま offset を進めて 50 件を 1 回で引く', async () => {
+    respondByOffset({
+      0: quakes('a', 100, new Date(2024, 0, 1, 15, 0, 0)),
+      100: quakes('b', 50, new Date(2023, 11, 31, 10, 0, 0)),
+    })
+
+    const first = await fetchP2PQuakeHistory(T, 50, null)
+    expect(first.loadMore).not.toBeNull()
+    mockFetch.mockClear()
+    const second = await first.loadMore!(null)
+
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    const [resource, query] = mockFetch.mock.calls[0]
+    expect(resource).toBe('quake')
+    expect(query).toEqual({ untilDate: '20240101', order: -1, limit: 50, offset: 100 })
+    // 初回の選から漏れた 50 地震（a50〜a99）が先頭に付き、続きの 50 件が後ろに付く
+    expect(second.quakes.map(q => q.id)).toEqual([
+      ...Array.from({ length: 50 }, (_, i) => `a${i + 50}`),
+      ...Array.from({ length: 50 }, (_, i) => `b${i}`),
+    ])
+    // 満杯（50 件）なら、さらに続きがある。次は offset 150
+    expect(second.hasMore).toBe(true)
+    mockFetch.mockClear()
+    await second.loadMore!(null)
+    expect(mockFetch.mock.calls[0][1]).toMatchObject({ offset: 150, limit: 50 })
+  })
+
+  it('正: 満杯でなくても、選から漏れた地震があれば続きで返す（持ち越しは 1 度だけ）', async () => {
+    respondByOffset({ 0: quakes('a', 3, new Date(2024, 0, 1, 15, 0, 0)) })
+
+    const first = await fetchP2PQuakeHistory(T, 2, null)
+    expect(first.quakes.map(q => q.id)).toEqual(['a0', 'a1'])
+    const second = await first.loadMore!(null)
+
+    expect(second.quakes.map(q => q.id)).toEqual(['a2'])
+    // 続きの応答が満杯でないので、そこで止まる
+    expect(second.loadMore).toBeNull()
+    expect(second.hasMore).toBe(false)
+  })
+
+  it('対照: 満杯でなく、漏れも無ければ続きの口を付けない', async () => {
+    respondByOffset({ 0: quakes('a', 3, new Date(2024, 0, 1, 15, 0, 0)) })
+
+    const first = await fetchP2PQuakeHistory(T, 50, null)
+
+    expect(first.loadMore).toBeNull()
+    expect(first.hasMore).toBe(false)
+  })
+
+  // 続きも同じ until_date（再生開始の日）を引くので、まだ発表されていない電文が混ざりうる
+  it('安全弁: 続きでも、再生開始より後に発表された電文は採らない', async () => {
+    respondByOffset({
+      0: quakes('a', 100, new Date(2024, 0, 1, 15, 0, 0)),
+      100: [quake('future', new Date(2024, 0, 1, 17, 0, 0)), quake('past', new Date(2023, 11, 31, 10, 0, 0))],
+    })
+
+    const first = await fetchP2PQuakeHistory(T, 100, null)
+    const second = await first.loadMore!(null)
+
+    expect(second.quakes.map(q => q.id)).toEqual(['past'])
+  })
+})

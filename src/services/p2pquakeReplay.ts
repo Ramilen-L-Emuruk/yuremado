@@ -15,10 +15,10 @@
 // 日付の境界はローカル時刻で判定する。P2PQuake は日本のサービスで、電文の time も JST 表記の
 // ローカル時刻として解釈している（p2pquake.ts の readTime 参照）ため、アプリ全体の前提に揃える。
 
-import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
+import type { ReplayEntry, ReplayFetchResult, ReplayQuakeHistoryResult } from '../types/replay'
 import type { RawP2PEvent } from './p2pquake'
 import type { JMAQuake } from '../types/earthquake'
-import { convertEvent, fetchJmaArchiveRaw } from './p2pquake'
+import { convertEvent, fetchJmaArchiveRaw, P2P_LOAD_MORE_BATCH } from './p2pquake'
 import { selectQuakeHistory } from '../utils/quakeHistorySelection'
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import { log } from '../utils/logger'
@@ -281,25 +281,117 @@ function toEntry(raw: RawP2PEvent): ReplayEntry | null {
  * 地震の多い期間ほど一覧が厚くなり、同じ設定でもバリアントで枚数が食い違う（実測では
  * standard 版だけ 84 枚、DMDSS 版は 50 枚台）。地震の数え方と選び方は `selectQuakeHistory`
  * （ローカル履歴アーカイブの履歴と共有）。
+ *
+ * **再生中の「もっと見る」の口（`loadMore`）を付けて返す。** 続きはライブの標準版の「もっと見る」と
+ * 同じ形で引く —— 同じ `until_date` のまま `offset` を進めて {@link P2P_LOAD_MORE_BATCH} 件ずつ、
+ * 打ち切りで選から漏れた電文は次の 1 回へ持ち越す（捨てると、`offset` は先へ進むのでその地震は
+ * 一覧に二度と出ない）。
  */
 export async function fetchP2PQuakeHistory(
   before: Date,
   targetEvents: number,
   /** 止める合図（再生の停止・始め直し）。 */
   signal: AbortSignal | null,
-): Promise<QuakeHistoryResult> {
+): Promise<ReplayQuakeHistoryResult> {
+  const untilDate = toDateParam(before)
   const raws = await fetchJmaArchiveRaw('quake', {
-    untilDate: toDateParam(before),
+    untilDate,
     order: -1,
     limit: HISTORY_PAGE_SIZE,
   }, signal, 'foreground')
+  const { candidates, skippedByDay } = collectHistoryCandidates(raws, before, untilDate)
+  // 打ち切りの前に、発表時刻の新しい順に整える。`order: -1` を渡しているので応答は既に
+  // 新しい順のはずだが、**どこで切るかを外部 API の並び順に委ねない**（並びが崩れると、
+  // 古い地震で目標に達して新しい地震を落としうる）。
+  candidates.sort((a, b) => b.time - a.time)
 
-  // 打ち切りの前に、読める電文だけを集めて発表時刻の新しい順に整える。
-  // `order: -1` を渡しているので応答は既に新しい順のはずだが、**どこで切るかを外部 API の
-  // 並び順に委ねない**（並びが崩れると、古い地震で目標に達して新しい地震を落としうる）。
+  // **地震で選ぶ。** 新しい地震から `targetEvents` 件を選び、選んだ地震の報は全部採る
+  // （→ `selectQuakeHistory`）。並びの途中で抜けると、選んだ地震の古い報が落ちる。
+  const selected = selectQuakeHistory(
+    candidates, c => c.event, c => c.time,
+    { maxEvents: targetEvents, windowStartMs: null },
+    getAreaPrefIndexCache(),
+  )
+  const selectedSet = new Set(selected)
+  // 選に掛けた電文のうち漏れたものだけを持ち越す（ライブの初回履歴の `p2pCarryOverRef` と同じ）
+  const carryOver = candidates.filter(c => !selectedSet.has(c)).map(c => c.event)
+
+  return p2pHistoryResult({
+    quakes: selected.map(c => c.event),
+    skippedByDay,
+    // **配信元が返した電文の数で見る**（ライブの初回履歴と同じ）。上限まで返ってきたなら、その先に
+    // まだ電文がある。持ち越しがあるときも、それを出すために続きを持つ
+    hasMore: raws.length === HISTORY_PAGE_SIZE || carryOver.length > 0,
+    next: { before, untilDate, offset: raws.length, carryOver },
+  })
+}
+
+/** 標準版の履歴の続きをどこから読むか。 */
+interface P2PHistoryNext {
+  /** 窓の上端（これより後に発表された電文は採らない）。続きでも動かさない。 */
+  before: Date
+  /** 引く日（`before` の日付）。続きでも動かさない。 */
+  untilDate: string
+  /** 次に読み飛ばす電文の数（配信元が返した数の累計。読めなかった分も数える）。 */
+  offset: number
+  /** 前の回の選から漏れた電文。次の 1 回で一緒に返す。 */
+  carryOver: JMAQuake[]
+}
+
+/** 標準版の履歴の結果を組み立てる（P2PQuake は帯・長周期・津波を返さないので常に空）。 */
+function p2pHistoryResult(args: {
+  quakes: JMAQuake[]
+  skippedByDay: ReadonlyMap<string, number>
+  hasMore: boolean
+  next: P2PHistoryNext
+}): ReplayQuakeHistoryResult {
+  const { next } = args
+  return {
+    quakes: args.quakes, tsunamis: [], extras: [], skippedByDay: args.skippedByDay,
+    failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, hasMore: args.hasMore,
+    // **カーソルは持たない**（`oldestLoadedDay`）。標準版の「もっと見る」は日ではなく `offset` で遡る
+    oldestLoadedDay: null,
+    loadMore: args.hasMore ? (signal) => fetchP2PQuakeHistoryMore(next, signal) : null,
+  }
+}
+
+/**
+ * 標準版の履歴の続きを 1 回ぶん読む（再生中の「もっと見る」）。**1 回押して 1 リクエスト。**
+ *
+ * 引いた分は件数で打ち切らない（ライブの標準版の「もっと見る」と同じ）。前の回の持ち越しを先頭に付けて返す。
+ */
+async function fetchP2PQuakeHistoryMore(next: P2PHistoryNext, signal: AbortSignal | null): Promise<ReplayQuakeHistoryResult> {
+  const raws = await fetchJmaArchiveRaw('quake', {
+    untilDate: next.untilDate,
+    order: -1,
+    limit: P2P_LOAD_MORE_BATCH,
+    offset: next.offset,
+  }, signal, 'foreground')
+  const { candidates, skippedByDay } = collectHistoryCandidates(raws, next.before, next.untilDate)
+  candidates.sort((a, b) => b.time - a.time)
+  // **配信元が返した数で見る**（持ち越し分を足した件数では見ない —— 足したぶん上限を超えて、
+  // 先が無いのにボタンが残る）。持ち越しはここで返し切るので、次へは渡さない
+  const hasMore = raws.length === P2P_LOAD_MORE_BATCH
+  return p2pHistoryResult({
+    quakes: [...next.carryOver, ...candidates.map(c => c.event)],
+    skippedByDay,
+    hasMore,
+    next: { before: next.before, untilDate: next.untilDate, offset: next.offset + raws.length, carryOver: [] },
+  })
+}
+
+/**
+ * 履歴用に引いた電文から、読める地震情報だけを集める。`before` より後に発表された電文は採らない。
+ *
+ * 取りこぼしは **日ごとに数える**（理由は `utils/telegramLoss.ts` の `skippedByDay`）。この経路は
+ * `offset` で遡るので日で区切られておらず、鍵には「その電文が属する日」を使う。
+ */
+function collectHistoryCandidates(
+  raws: readonly RawP2PEvent[],
+  before: Date,
+  untilDate: string,
+): { candidates: { event: JMAQuake; time: number }[]; skippedByDay: ReadonlyMap<string, number> } {
   const candidates: { event: JMAQuake; time: number }[] = []
-  // **日ごとに数える**（理由は `utils/telegramLoss.ts` の `skippedByDay`）。この経路は
-  // `offset` で遡るので日で区切られておらず、鍵には「その電文が属する日」を使う。
   const skipCounter = createSkipCounter()
   const dayOf = (raw: RawP2PEvent | undefined): string => {
     // 生の電文の時刻（`2026/10/24 01:09:42.83`）は `Date.parse` では Safari が読めない（小数の秒つき）ので、
@@ -310,7 +402,7 @@ export async function fetchP2PQuakeHistory(
   for (const raw of raws) {
     // 種別そのものが読めない電文は「正常なフィルタ」ではなく破損（fetchAllPages と同じ扱い）。
     if (typeof raw?.code !== 'number') {
-      log.warn(`[replay] 履歴用電文の code を読めずスキップ until=${toDateParam(before)}`)
+      log.warn(`[replay] 履歴用電文の code を読めずスキップ until=${untilDate}`)
       skipCounter.add(dayOf(raw))
       continue
     }
@@ -331,25 +423,5 @@ export async function fetchP2PQuakeHistory(
     if (time > before.getTime()) continue
     candidates.push({ event, time })
   }
-  candidates.sort((a, b) => b.time - a.time)
-
-  // **地震で選ぶ。** 新しい地震から `targetEvents` 件を選び、選んだ地震の報は全部採る
-  // （→ `selectQuakeHistory`）。以前は目標に達した後の最初の新しい地震で並びを抜けていたため、
-  // その後ろに並ぶ「選んだ地震の古い報」が落ち、一覧の最も古いカードが途中で切れていた。
-  const quakes = selectQuakeHistory(
-    candidates, c => c.event, c => c.time,
-    { maxEvents: targetEvents, windowStartMs: null },
-    getAreaPrefIndexCache(),
-  ).map(c => c.event)
-
-  // P2PQuake は帯（地震回数・お知らせ・南海トラフ解説情報）も長周期も配信しないので常に空。
-  // 津波もここでは返さない（standard 版の津波は初期状態の担当で、遡り幅も目的が違う）。
-  //
-  // **カーソルは持たない**（`oldestLoadedDay`）。standard 版の「もっと見る」は日ではなく
-  // `offset` で遡るので、日付で続きを指す必要がない（→ `useEarthquakes` の P2PQuake 側）。
-  return {
-    quakes, tsunamis: [], extras: [], skippedByDay: skipCounter.toMap(),
-    failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, hasMore: false,
-    oldestLoadedDay: null,
-  }
+  return { candidates, skippedByDay: skipCounter.toMap() }
 }
