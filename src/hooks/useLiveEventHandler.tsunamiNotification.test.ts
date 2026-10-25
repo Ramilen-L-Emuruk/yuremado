@@ -164,6 +164,72 @@ describe('津波のブラウザ通知（受け手）', () => {
     expect(notify).toHaveBeenCalledWith('津波観測に関する情報', '輪島港 1.2m、珠洲市長橋 到達確認', 'tsunami-obs', false)
   })
 
+  // 等級を発表するのは VTSE41 だけ（2026-10-25 ユーザー選択「A 発表は VTSE41 だけ (Recommended)」）。
+  // 実配信の VTSE51 は観測の報も区域を載せ、その区域は直前の VTSE41 の写し（全期間の控えで 295 通すべて）
+  describe('区域を載せた津波情報（VTSE51）', () => {
+    const issued = () => report([area('石川県能登', '360', 'Warning')], { headType: 'VTSE41' })
+    const copied = (extra: Partial<JMATsunami> = {}) =>
+      report([area('石川県能登', '360', 'Warning', 'Warning')], { headType: 'VTSE51', ...extra })
+
+    it('正: 区域を写しただけの満潮時刻の報は、発表の通知を出し直さない', () => {
+      const { handle } = setup()
+      handle(issued())
+      notify.mockClear()
+      handle(copied({ infoName: '各地の満潮時刻・津波到達予想時刻に関する情報' }))
+      expect(notify).not.toHaveBeenCalled()
+    })
+
+    it('正: 区域を載せた観測の報は、印の付いた観測点を観測の札で送る', () => {
+      const { handle } = setup()
+      handle(issued())
+      notify.mockClear()
+      handle(copied({ infoName: '津波観測に関する情報', observations: [{ name: '輪島港', height: { value: 1.2, description: '1.2m' } }] }))
+      expect(notify).toHaveBeenCalledTimes(1)
+      expect(notify).toHaveBeenCalledWith('津波観測に関する情報', '輪島港 1.2m', 'tsunami-obs', false)
+    })
+
+    it('対照: 等級が同じでも VTSE41 の続報は発表の通知を出す', () => {
+      const { handle } = setup()
+      handle(issued())
+      notify.mockClear()
+      handle(report([area('石川県能登', '360', 'Warning', 'Warning'), area('富山県', '370', 'Watch')], { headType: 'VTSE41' }))
+      expect(notify).toHaveBeenCalledWith('津波警報', '石川県能登、富山県', 'tsunami', true)
+    })
+
+    it('対照: 観測値が同じ VTSE51 の再送では、観測の通知も出さない', () => {
+      const { handle } = setup()
+      handle(issued())
+      const obs = { infoName: '津波観測に関する情報', observations: [{ name: '輪島港', height: { value: 1.2, description: '1.2m' } }] } as Partial<JMATsunami>
+      handle(copied(obs))
+      notify.mockClear()
+      handle(copied(obs))
+      expect(notify).not.toHaveBeenCalled()
+    })
+
+    // VTSE51 の区域は写しなので、区域の等級が動いた形で届いても発表の通知は VTSE41 に任せる（実配信では起きていない形）
+    it('安全弁: 区域の等級が上がった形の VTSE51 でも発表の通知は出さない', () => {
+      const { handle } = setup()
+      handle(issued())
+      notify.mockClear()
+      handle(report([area('石川県能登', '360', 'MajorWarning', 'Warning')], { headType: 'VTSE51', infoName: '各地の満潮時刻・津波到達予想時刻に関する情報' }))
+      expect(notify).not.toHaveBeenCalled()
+    })
+
+    it('正: 沖合の観測（VTSE52）は、印の付いた観測点を観測の札で送る', () => {
+      const { handle } = setup()
+      handle(issued())
+      notify.mockClear()
+      handle(report([], { headType: 'VTSE52', infoName: '沖合の津波観測に関する情報', observations: [{ name: '岩手釜石沖' }] } as Partial<JMATsunami>))
+      expect(notify).toHaveBeenCalledWith('沖合の津波観測に関する情報', '岩手釜石沖 到達確認', 'tsunami-obs', false)
+    })
+
+    it('安全弁: 種別を持たない報（P2PQuake）は発表の通知を出す', () => {
+      const { handle } = setup()
+      handle(report([area('石川県能登', '360', 'Warning')], { eventId: undefined }))
+      expect(notify).toHaveBeenCalledWith('津波警報', '石川県能登', 'tsunami', true)
+    })
+  })
+
   it('対照: 何も変わらない再送では観測情報の通知を出さない', () => {
     const { handle } = setup()
     handle(report([area('石川県能登', '360', 'Warning')]))

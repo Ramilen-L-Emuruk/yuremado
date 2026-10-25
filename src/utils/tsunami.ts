@@ -41,7 +41,22 @@ export function tsunamiMaxGrade(tsunami: JMATsunami): TsunamiGrade {
 }
 
 /**
- * 等級を伝えていない電文か（区域が空 = 観測情報のみの続報。DMDATA の VTSE51②・VTSE52）。
+ * 等級を発表する報か。津波警報・注意報・予報（VTSE41）と、種別を持たない報（P2PQuake の津波予報）が当たる。
+ *
+ * **津波情報（VTSE51）・沖合の観測（VTSE52）は等級を発表しない。** VTSE51 も区域（`Forecast`）を載せるが、
+ * 中身は直前の VTSE41 の写し。VTSE52 は区域を持たない（実電文での件数は tsunami-spec.md §10「等級を伝えていない電文」）。
+ * 「発表」のブラウザ通知はこの報にだけ出し、VTSE51・VTSE52 は観測の通知の側で扱う
+ * （2026-10-25 ユーザー選択「A 発表は VTSE41 だけ (Recommended)」）。
+ */
+export function isTsunamiGradeReport(tsunami: Pick<JMATsunami, 'headType'>): boolean {
+  return tsunami.headType === undefined || tsunami.headType === 'VTSE41'
+}
+
+/**
+ * 等級を伝えていない電文か（区域が空 = 観測情報だけの報。DMDATA の VTSE52）。
+ *
+ * **津波情報（VTSE51）はここに当たらない。** VTSE51 は「津波観測に関する情報」も含めて区域を載せる
+ * （実電文での件数は tsunami-spec.md §10「等級を伝えていない電文」）。
  *
  * **この形の電文を等級の比較に混ぜないこと。** 区域が無いので `tsunamiMaxGrade` は
  * `Unknown`（最下位）を返し、発表中の警報と比べると必ず「降格」と判定される。降格の
@@ -1477,7 +1492,7 @@ export function observationHeightText(obs: TsunamiObservation): string {
 }
 
 /**
- * 前回・今回の観測情報をマージする。VTSE51②/VTSE52（観測のみ電文）が届くたびに
+ * 前回・今回の観測情報をマージする。観測を載せた報（VTSE51・VTSE52）が届くたびに
  * 全観測点が再送されるとは限らないため、区域コード+観測点名をキーに upsert し、
  * 今回の電文に含まれない観測点は前回の値を保持する。
  */

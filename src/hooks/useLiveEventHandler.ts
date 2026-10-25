@@ -23,7 +23,7 @@ import {
 } from '../utils/specialInfoNotification'
 import { earthquakeCountHeadline } from '../components/SpecialInfoBanner/EarthquakeCountDetail'
 import { tsunamiIssueNotification, tsunamiLiftNotification, tsunamiEndNotification, tsunamiObservationNotification, TSUNAMI_OBS_NOTIFICATION_TAG } from '../utils/tsunamiNotification'
-import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, isTsunamiExpired, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry, tsunamiValueMarks, rememberTsunamiValues, createTsunamiValueMemory, clearTsunamiValueMemory, NO_TSUNAMI_VALUE_MARKS, type TsunamiValueMarks, type TsunamiValueMemory } from '../utils/tsunami'
+import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiGradeReport, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, isTsunamiExpired, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry, tsunamiValueMarks, rememberTsunamiValues, createTsunamiValueMemory, clearTsunamiValueMemory, NO_TSUNAMI_VALUE_MARKS, type TsunamiValueMarks, type TsunamiValueMemory } from '../utils/tsunami'
 import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
 import { playAlertSound, ttsDelayFor, maxTtsDelay, type AlertSoundType } from '../utils/alertSound'
 import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
@@ -5132,10 +5132,12 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     }
 
     // ブラウザ通知（津波）— 音が無効でも送る。
-    // 等級を伝えていない電文（区域が空）はここでは通知しない。見出しは等級から決め、本文は区域名を並べる
-    // ため、この形の電文では「本文が空の津波注意報」という実態と違う通知になる（`isTsunamiObservationOnly`）。
-    // その報は観測点の印を決めたあとで、観測情報の通知として出す（`tsunamiObservationNotification`）。
-    if (event.kind === 'tsunami' && !event.cancelled && !isTsunamiObservationOnly(event)
+    // **出すのは等級を発表する報（VTSE41・P2PQuake）だけ**（`isTsunamiGradeReport`）。津波情報（VTSE51）も区域を
+    // 載せるが、中身は直前の VTSE41 の写しなので、ここで出すと発表のたびに同じ「発表」の通知が重なる（閉じた
+    // 通知も出し直す）。VTSE51・VTSE52 は観測点の印を決めたあとで、観測情報の通知として出す
+    // （`tsunamiObservationNotification`）。区域が空の報を弾くのは、見出しを等級から・本文を区域名から作るため
+    // （`isTsunamiObservationOnly`。発表する報で区域が空なのは解除だけで、そちらは `cancelled` で先に外れる）。
+    if (event.kind === 'tsunami' && !event.cancelled && isTsunamiGradeReport(event) && !isTsunamiObservationOnly(event)
       && notificationAllowed(settings, 'tsunami')) {
       // 中身（見出し・区域の並び・「ほか N 区域」・解除の行・閉じるまで残すか）は `tsunamiIssueNotification`。
       // **区域はカードの材料（`tsunamiCardBasis`）から取る**——電文順で切ると、カードの先頭に並ぶ
@@ -6002,9 +6004,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 津波情報を受信するたびに obsUpdateStatus を今回分だけの Map に置き換える（前回分は破棄）。
       // TSUNAMI_BADGE_TTL_MS 以内に次の情報が来なければ obsStatusClearTimerRef が空 Map にする。
       setObsUpdateStatus(new Map(newStatusEntries))
-      // **等級を伝えていない報（観測情報だけ）の通知**（→ `tsunamiObservationNotification`）。発表中の通知と違い、
-      // 中身はこの報でカードに印が付いた観測点なので、印を決めたここで出す。印が 1 つも無い報（同じ値の再送）は出さない。
-      if (isTsunamiObservationOnly(event) && newStatusEntries.length > 0
+      // **等級を発表しない報（津波情報 VTSE51・沖合の観測 VTSE52）の通知**（→ `tsunamiObservationNotification`）。
+      // 区域を載せていても対象（VTSE51 の区域は VTSE41 の写し。理由は `isTsunamiGradeReport`）。発表中の通知と違い、
+      // 中身はこの報でカードに印が付いた観測点なので、印を決めたここで出す。印が 1 つも無い報（同じ値の再送・
+      // 満潮時刻だけの報）は出さない。
+      if (!isTsunamiGradeReport(event) && newStatusEntries.length > 0
         && notificationAllowed(settings, 'tsunami')) {
         const markedNames = new Set(newStatusEntries.map(([name]) => name))
         const marked = sortObservationsForCardDisplay(tsunamiCardBasis.observations, tsunamiCardBasis.areas, tsunamiCardBasis.liftedAreas)
