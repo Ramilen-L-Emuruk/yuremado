@@ -124,6 +124,7 @@ export function JapanMapGL({
   focusObsName = null,
   focusTarget = null,
   heatPoints,
+  heatIntensityScale,
   showBathymetry = true,
   kyoshinSites = [],
   kyoshinIndices = [],
@@ -665,6 +666,7 @@ export function JapanMapGL({
           <QuakeHeatmapGL
             points={heatPoints ?? null}
             iconScale={iconScale}
+            intensityScale={heatIntensityScale}
             visible={(mode === 'quake' || mode === 'kyoshin') && !!heatPoints && heatPoints.length > 0}
           />
           {/* 夜の側の重ね塗り。地図の照明条件にあたるので、モードを問わず出す

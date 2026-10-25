@@ -24,6 +24,7 @@ import { UNRECEIVED_COLOR } from '../Map/gl/intensityIcons'
 import { ARRIVAL_COLOR } from '../Map/gl/tsunamiArrivalMarker'
 import { S_WAVE_COLOR, P_WAVE_COLOR } from '../Map/gl/psWaveStyle'
 import { HEATMAP_DENSITY_STOPS } from '../Map/gl/heatmapRamp'
+import type { HeatmapPeriod } from '../../utils/quakeHeatmap'
 import { FAULT_COLOR, SUBDUCTION_COLOR, PLATE_OTHER_COLOR } from '../Map/gl/overlayLineStyle'
 import {
   DEPTH_RAMP,
@@ -94,6 +95,20 @@ export type LegendSwatch =
       chips?: LegendChip[]
     }
 
+/**
+ * ヒートマップ欄に添える期間（スライダーと「期間 ○ 〜 いま」の行）。地図の描き方ではなく利用者の
+ * 選択なので、`MapLegendSources` ではなく `withHeatmapPeriod` で後から載せる。
+ */
+export interface LegendHeatmapPeriod {
+  period: HeatmapPeriod
+  /** 期間の始まり（`2026/09/25`）。 */
+  startLabel: string
+  /** 再生中か（終わりを「いま」ではなく「再生時刻」と書く）。 */
+  replay: boolean
+  /** 観測網の疎な時代に掛かるときの注記。掛からなければ `null`。 */
+  note: string | null
+}
+
 export interface LegendBlock {
   key: LegendKey
   /** 展開時の見出し。 */
@@ -101,6 +116,8 @@ export interface LegendBlock {
   /** 畳んだときに色見本へ添える短い名前。 */
   shortTitle: string
   swatch: LegendSwatch
+  /** ヒートマップ欄だけが持つ。 */
+  heatmapPeriod?: LegendHeatmapPeriod
 }
 
 /**
@@ -303,6 +320,18 @@ function lpgmTitle(sources: MapLegendSources): string {
   return names.join('・')
 }
 
+/** ヒートマップ欄に期間を載せる。ヒートマップ欄が無ければそのまま返す。 */
+export function withHeatmapPeriod(blocks: LegendBlock[], period: LegendHeatmapPeriod | null): LegendBlock[] {
+  if (!period || !blocks.some((b) => b.key === 'heatmap')) return blocks
+  return blocks.map((b) => (b.key === 'heatmap' ? { ...b, heatmapPeriod: period } : b))
+}
+
+/** 観測網の疎な時代に掛かるときの注記。文はカタログタブの注記と同じ。 */
+export function heatmapCompletenessNote(completeness: { fromYear: number; minMagnitude: number } | null): string | null {
+  if (!completeness) return null
+  return `${completeness.fromYear} 年まで遡ると、記録が揃うのは M ${completeness.minMagnitude.toFixed(1)} 以上です。それより小さい地震は少なく見えます。`
+}
+
 /**
  * いま出ているものから凡例のブロックを組む。並びは固定で、出ていないものは現れない。
  *
@@ -405,7 +434,8 @@ export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
   if (sources.heatmap) {
     blocks.push({
       key: 'heatmap',
-      title: '地震活動の密度（30日）',
+      // 期間は下の行とスライダーで示すので、見出しには書かない（2026-10-25 選択「E の案でよい (Recommended)」）。
+      title: '地震活動の密度',
       shortTitle: '地震活動の密度',
       swatch: {
         kind: 'ramp',

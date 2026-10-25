@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { readableTextColor } from '../../utils/contrast'
-import { representativeBlock, type LegendBlock, type LegendChip, type LegendSwatch, type LegendTick } from './legendBlocks'
+import { representativeBlock, type LegendBlock, type LegendChip, type LegendHeatmapPeriod, type LegendSwatch, type LegendTick } from './legendBlocks'
+import { HEATMAP_PERIODS, type HeatmapPeriod } from '../../utils/quakeHeatmap'
 
 // 地図へ重ねる凡例。中身を決めるのは legendBlocks.ts で、ここは描くだけ。
 //
@@ -201,6 +202,47 @@ function Swatch({
   )
 }
 
+/**
+ * ヒートマップの期間（2026-10-25 選択「E の案でよい (Recommended)」）。目盛りは `HEATMAP_PERIODS` の 10 段で、
+ * 左ほど短い。期間の始まりを日付で添え、終わりは「いま」（再生中は「再生時刻」）。
+ */
+function HeatmapPeriodControl({
+  value,
+  width,
+  m,
+  onChange,
+}: {
+  value: LegendHeatmapPeriod
+  width: string
+  m: Metrics
+  onChange: (period: HeatmapPeriod) => void
+}) {
+  const index = Math.max(0, HEATMAP_PERIODS.findIndex((p) => p.key === value.period))
+  return (
+    <div style={{ width }} className="mt-[0.2rem]">
+      <div className={`text-white/70 ${m.title}`}>
+        期間 {value.startLabel} 〜 {value.replay ? '再生時刻' : 'いま'}
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={HEATMAP_PERIODS.length - 1}
+        step={1}
+        value={index}
+        aria-label="期間"
+        aria-valuetext={HEATMAP_PERIODS[index].label}
+        title={HEATMAP_PERIODS[index].label}
+        onChange={(e) => {
+          const next = HEATMAP_PERIODS[Number(e.target.value)]
+          if (next) onChange(next.key)
+        }}
+        className="block w-full h-3 accent-sky-400"
+      />
+      {value.note && <div className={`text-yellow-400 ${m.title}`}>{value.note}</div>}
+    </div>
+  )
+}
+
 /** 開閉の向きを示す三角。**状態は `aria-expanded` が伝えるので読み上げからは外す。** */
 function Caret({ open }: { open: boolean }) {
   return <span aria-hidden className="text-[0.5rem] leading-none opacity-70">{open ? '▾' : '▸'}</span>
@@ -212,9 +254,11 @@ interface Props {
   onToggle: () => void
   /** 地図が低い画面（`isMapAreaShort`）。文字と余白をひと段詰める。 */
   compact?: boolean
+  /** ヒートマップの期間を変えたとき（ヒートマップ欄のスライダー）。 */
+  onHeatmapPeriodChange: (period: HeatmapPeriod) => void
 }
 
-export const MapLegend = memo(function MapLegend({ blocks, collapsed, onToggle, compact = false }: Props) {
+export const MapLegend = memo(function MapLegend({ blocks, collapsed, onToggle, compact = false, onHeatmapPeriodChange }: Props) {
   // 描くものが無ければ枠ごと出さない（空の箱は地図を隠すだけ）。
   if (blocks.length === 0) return null
 
@@ -262,6 +306,9 @@ export const MapLegend = memo(function MapLegend({ blocks, collapsed, onToggle, 
             )}
             <div className="mt-[0.1rem]">
               <Swatch swatch={block.swatch} rampWidth={rampWidth} m={m} />
+              {block.heatmapPeriod && (
+                <HeatmapPeriodControl value={block.heatmapPeriod} width={rampWidth} m={m} onChange={onHeatmapPeriodChange} />
+              )}
             </div>
           </div>
         ))

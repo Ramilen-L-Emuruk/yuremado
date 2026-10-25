@@ -50,7 +50,8 @@ import { SpecialInfoBanner, shareButtonBottomClass } from './components/SpecialI
 import { useSpecialInfoBanners } from './components/SpecialInfoBanner/useSpecialInfoBanners'
 import { MapLegend } from './components/MapLegend'
 import { isMapAreaShort } from './components/MapLegend/autoCollapse'
-import { buildLegendBlocks, EMPTY_LEGEND_SOURCES, type MapLegendSources, type LegendBlock } from './components/MapLegend/legendBlocks'
+import { buildLegendBlocks, EMPTY_LEGEND_SOURCES, withHeatmapPeriod, heatmapCompletenessNote, type MapLegendSources, type LegendBlock, type LegendHeatmapPeriod } from './components/MapLegend/legendBlocks'
+import { formatHeatmapDate, type HeatmapPeriod } from './utils/quakeHeatmap'
 
 import { ActionChecklist } from './components/ActionChecklist'
 import { useActionChecklist } from './hooks/useActionChecklist'
@@ -1068,7 +1069,12 @@ export function App() {
 
   const scenarioTest = useTestScenarios(loadReplayEvents)
 
-  const { points: quakeHeatPoints } = useQuakeHeatmap(settings.showQuakeHeatmap, debouncedApiKey, earthquakes, replayTimeOffset)
+  const {
+    points: quakeHeatPoints,
+    windowStartMs: heatWindowStartMs,
+    completeness: heatCompleteness,
+    intensityScale: heatIntensityScale,
+  } = useQuakeHeatmap(settings.showQuakeHeatmap, debouncedApiKey, earthquakes, replayTimeOffset, settings.heatmapPeriod)
 
   // 最新の非解除津波電文から観測データを収集（地図バー描画用）
   const latestTsunamiObservations = useMemo(() => {
@@ -1813,7 +1819,25 @@ export function App() {
   // 地図に重ねる凡例。**中身は地図が決める** —— 各レイヤーの表示条件から組んだものを受け取り、
   // ここでは並べ方（`buildLegendBlocks`）だけを担う。
   const [legendSources, setLegendSources] = useState<MapLegendSources>(EMPTY_LEGEND_SOURCES)
-  const legendBlocks = useMemo(() => buildLegendBlocks(legendSources), [legendSources])
+  const heatLegendPeriod = useMemo<LegendHeatmapPeriod | null>(
+    () =>
+      heatWindowStartMs === null
+        ? null
+        : {
+            period: settings.heatmapPeriod,
+            startLabel: formatHeatmapDate(heatWindowStartMs),
+            replay: replayTimeOffset !== null,
+            note: heatmapCompletenessNote(heatCompleteness),
+          },
+    [heatWindowStartMs, settings.heatmapPeriod, replayTimeOffset, heatCompleteness],
+  )
+  const legendBlocks = useMemo(
+    () => withHeatmapPeriod(buildLegendBlocks(legendSources), heatLegendPeriod),
+    [legendSources, heatLegendPeriod],
+  )
+  const changeHeatmapPeriod = useCallback((period: HeatmapPeriod) => {
+    updateSetting('heatmapPeriod', period)
+  }, [updateSetting])
   // 地図が低い画面では畳んだ状態から始める。**測るのは地図領域の実寸**で、画面の幅や
   // ブレークポイントでは決まらない（上下分割の比率つまみと折りたたみで変わる）。
   const mapAreaRef = useRef<HTMLDivElement | null>(null)
@@ -2662,6 +2686,7 @@ export function App() {
                 showActiveFaults={settings.showActiveFaults}
                 activeFaultOpacity={settings.activeFaultOpacity}
                 heatPoints={quakeHeatPoints}
+                heatIntensityScale={heatIntensityScale}
                 showPlateBoundaries={settings.showPlateBoundaries}
                 showDayNight={settings.showDayNight}
                 dayNightOpacity={settings.dayNightOpacity}
@@ -2754,7 +2779,7 @@ export function App() {
                 // 切られ、指で押せる範囲が縮む —— 余白で逃がす（`pointer-events-none` なので地図の操作は妨げない）。
                 // 包みは凡例が描くものを持つときだけ出す（`MapLegend` は空なら何も描かないが、包みの余白は残る）。
                 <div className="min-h-0 pt-[0.6rem] shrink-8 overflow-y-auto overflow-x-hidden overscroll-x-none flex flex-col items-start">
-                  <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} />
+                  <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} onHeatmapPeriodChange={changeHeatmapPeriod} />
                 </div>
               )}
               {/* 地図右下の共有ボタン（表示中の地図を画像にする）。**特別情報の帯のすぐ上に置く** —— 縦並びの外に

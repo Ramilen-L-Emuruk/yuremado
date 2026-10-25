@@ -75,3 +75,24 @@ describe('吹き出しの規模の札', () => {
     expect(clickHtml(feature({ name: 'A', magnitude: 6, depth: 700, depthAtLeast: false }))).toContain('深さ 700km<')
   })
 })
+
+// 長い期間で格子にまとめた点の吹き出し（2026-10-25 ユーザー選択「A 件数・最大・最新 (Recommended)」）。
+describe('格子にまとめた点の吹き出し', () => {
+  const feature = (properties: Record<string, unknown>) => ({ properties }) as unknown as MapGeoJSONFeature
+  const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+
+  it('[正] 2 件以上なら「この付近 N 件」と最大の規模・最新の時刻を出す', () => {
+    const f = feature({ name: '', magnitude: 6.1, count: 1234, depth: -1, time: '2026-10-17T03:34:00.000Z' })
+    expect(text(hoverHtml(f))).toBe('M6.1 この付近 1,234 件')
+    const click = text(clickHtml(f))
+    expect(click).toContain('この付近の地震 1,234 件')
+    expect(click).toContain('最大 M6.1')
+    expect(click).toMatch(/最新 \S+/)
+    expect(click).not.toContain('深さ')
+  })
+
+  it('[対照] 1 件の点（count 1・欄なし）は従来の 1 つの地震の吹き出し', () => {
+    expect(text(hoverHtml(feature({ name: 'A', magnitude: 3.2, count: 1 })))).toBe('M3.2 A')
+    expect(text(hoverHtml(feature({ name: 'A', magnitude: 3.2 })))).toBe('M3.2 A')
+  })
+})

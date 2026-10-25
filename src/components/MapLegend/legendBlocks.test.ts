@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   buildLegendBlocks,
   representativeBlock,
+  withHeatmapPeriod,
+  heatmapCompletenessNote,
   EMPTY_LEGEND_SOURCES,
   type MapLegendSources,
 } from './legendBlocks'
@@ -301,5 +303,34 @@ describe('representativeBlock', () => {
 
   it('1 つも無ければ null', () => {
     expect(representativeBlock([])).toBeNull()
+  })
+})
+
+describe('ヒートマップの期間の欄', () => {
+  const period = { period: '1y' as const, startLabel: '2026/01/01', replay: false, note: null }
+
+  it('[正] 見出しは期間を含めず、密度の欄にだけ期間を載せる', () => {
+    const blocks = withHeatmapPeriod(buildLegendBlocks(sources({ quakeIntensity: true, heatmap: true })), period)
+    const heat = blocks.find((b) => b.key === 'heatmap')
+    expect(heat?.title).toBe('地震活動の密度')
+    expect(heat?.heatmapPeriod).toEqual(period)
+    expect(blocks.find((b) => b.key === 'intensity')?.heatmapPeriod).toBeUndefined()
+  })
+
+  it('[対照] 密度を描いていなければ何も足さず、同じ配列を返す', () => {
+    const blocks = buildLegendBlocks(sources({ quakeIntensity: true }))
+    expect(withHeatmapPeriod(blocks, period)).toBe(blocks)
+  })
+
+  it('[安全弁] 期間が無ければ密度の欄にも載せない', () => {
+    const blocks = buildLegendBlocks(sources({ heatmap: true }))
+    expect(withHeatmapPeriod(blocks, null)[0].heatmapPeriod).toBeUndefined()
+  })
+
+  it('完全性の注記はカタログタブと同じ文で、掛からなければ出さない', () => {
+    expect(heatmapCompletenessNote({ fromYear: 1960, minMagnitude: 3 })).toBe(
+      '1960 年まで遡ると、記録が揃うのは M 3.0 以上です。それより小さい地震は少なく見えます。',
+    )
+    expect(heatmapCompletenessNote(null)).toBeNull()
   })
 })

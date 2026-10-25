@@ -13,7 +13,7 @@ import { badgeHtml, escapeHtml } from './gl/popupHtml'
 // 直近1ヶ月の地震活動ヒートマップを描画する MapLibre 版（Leaflet 版 QuakeHeatmapLayer 相当）。
 // Leaflet は leaflet.heat（Canvas）だったが、MapLibre はネイティブの heatmap レイヤーで描く。
 // 区域塗り（quake-region-fill）より背面（MAP_LAYER_ORDER の quake-heat スロット）に置き、
-// 震度色塗り・震源マーカーの視認性と競合させない。weight は各点の重み（0〜1 前提）。
+// 震度色塗り・震源マーカーの視認性と競合させない。weight は各点の重み（1 つの地震は 0〜1。格子にまとめた点は和）。
 //
 // クリック／ホバーで個々の地震（震源名・M・深さ・地震の時刻）を出す。ただし **heatmap レイヤーは
 // queryRenderedFeatures にヒットしない**（密度を描くだけで個別 feature を返さない仕様）ため、
@@ -78,11 +78,21 @@ function heatRadiusExpr(iconScale: number): ExpressionSpecification {
   ]
 }
 
+/**
+ * 密度強度のズーム補間式。期間の長さに合わせた係数（`heatIntensityScale`）を両端に掛ける。
+ * 値そのものを低く抑えている理由は下の色ランプのコメント参照。
+ */
+function heatIntensityExpr(intensityScale: number): ExpressionSpecification {
+  return ['interpolate', ['linear'], ['zoom'], 0, 0.04 * intensityScale, HEAT_MAX_ZOOM, 0.09 * intensityScale]
+}
+
 interface Props {
   /** 描く点。**`null` は「出す点が無い」**（ヒートマップを出さない設定・まだ取れていない）。 */
   points: readonly HeatPoint[] | null
   /** 地図アイコンの倍率（設定値）。震度マーカー等と揃えて拡散半径を拡縮する。 */
   iconScale: number
+  /** 密度強度の係数。30 日を超える期間では期間の比の平方根で下げる（`utils/quakeHeatmap.ts` の `heatIntensityScale`）。 */
+  intensityScale: number
   visible: boolean
 }
 
@@ -117,6 +127,7 @@ function buildFC(points: readonly HeatPoint[]): FeatureCollection<Point> {
       depthAtLeast: p.depthAtLeast,
       magnitude: p.magnitude,
       magnitudeCondition: p.magnitudeCondition,
+      count: p.count,
       // 吹き出しで重なった点を選ぶ順位。巨大地震は数値の M を持たないので別に持つ。
       rank: heatMagnitudeRank(p.magnitude, p.magnitudeCondition),
     },
@@ -144,7 +155,37 @@ function magnitudeBadge(f: MapGeoJSONFeature): string {
   return badgeHtml(heatMagnitudeLabel(m, c), getMagnitudeColor(heatMagnitudeColorValue(m, c)))
 }
 
+/** 格子にまとめた点（`gridHeatPoints`）なら、まとめた地震の数。1 つの地震の点なら `null`。 */
+function groupCountOf(f: MapGeoJSONFeature): number | null {
+  const n = Number(f.properties?.count ?? 1)
+  return Number.isFinite(n) && n >= 2 ? n : null
+}
+
+// 格子にまとめた点の吹き出し（2026-10-25 ユーザー選択「A 件数・最大・最新 (Recommended)」）。
+function groupHoverHtml(f: MapGeoJSONFeature, count: number): string {
+  return (
+    `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
+    `${magnitudeBadge(f)}` +
+    `<span style="font-weight:600">この付近 ${count.toLocaleString('ja-JP')} 件</span></div>`
+  )
+}
+
+function groupClickHtml(f: MapGeoJSONFeature, count: number): string {
+  const time = String(f.properties?.time ?? '')
+  const timeText = time ? formatDateTimeMin(time) : null
+  return (
+    `<div style="min-width:160px">` +
+    `<div style="font-weight:700;font-size:13px">この付近の地震 ${count.toLocaleString('ja-JP')} 件</div>` +
+    `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
+    `<span style="color:#cbd5e1">最大</span>${magnitudeBadge(f)}</div>` +
+    (timeText ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">最新 ${escapeHtml(timeText)}</div>` : '') +
+    `</div>`
+  )
+}
+
 export function hoverHtml(f: MapGeoJSONFeature): string {
+  const count = groupCountOf(f)
+  if (count !== null) return groupHoverHtml(f, count)
   return (
     `<div style="display:flex;align-items:center;gap:8px;font-size:12px;white-space:nowrap">` +
     `${magnitudeBadge(f)}` +
@@ -153,6 +194,8 @@ export function hoverHtml(f: MapGeoJSONFeature): string {
 }
 
 export function clickHtml(f: MapGeoJSONFeature): string {
+  const count = groupCountOf(f)
+  if (count !== null) return groupClickHtml(f, count)
   const depth = Number(f.properties?.depth ?? -1)
   const time = String(f.properties?.time ?? '')
   // 日時として読めなければ行ごと落とす（時刻が無い点と同じ扱い）。
@@ -168,7 +211,7 @@ export function clickHtml(f: MapGeoJSONFeature): string {
   )
 }
 
-export function QuakeHeatmapGL({ points, iconScale, visible }: Props) {
+export function QuakeHeatmapGL({ points, iconScale, intensityScale, visible }: Props) {
   const map = useMapGL()
   const addedRef = useRef(false)
   const popupRef = useRef<PopupHandle | null>(null)
@@ -176,6 +219,8 @@ export function QuakeHeatmapGL({ points, iconScale, visible }: Props) {
   // （クロージャが握った初期値のままだと、構築前に倍率を変えた場合に旧値で組まれる）。
   const iconScaleRef = useRef(iconScale)
   iconScaleRef.current = iconScale
+  const intensityScaleRef = useRef(intensityScale)
+  intensityScaleRef.current = intensityScale
   // 最後に流し込んだ点。`undefined` は「まだ何も流し込んでいない」（ソースを作り直した直後も含む）。
   const lastPointsRef = useRef<readonly HeatPoint[] | null | undefined>(undefined)
 
@@ -188,10 +233,10 @@ export function QuakeHeatmapGL({ points, iconScale, visible }: Props) {
       source: SRC,
       layout: { visibility: visible ? 'visible' : 'none' },
       paint: {
-        // 各点の重み（quakeHeatmap 側で 0〜1 に正規化済み）。
+        // 各点の重み（1 つの地震は quakeHeatmap 側で 0〜1 に正規化済み。格子にまとめた点はその和で 1 を超える）。
         'heatmap-weight': ['coalesce', ['get', 'weight'], 0.5],
-        // 密度強度。ズームで上げるが、値そのものは低く抑える。理由は下の色ランプのコメント参照。
-        'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 0.04, HEAT_MAX_ZOOM, 0.09],
+        // 密度強度。ズームで上げるが、値そのものは低く抑える（heatIntensityExpr 参照）。
+        'heatmap-intensity': heatIntensityExpr(intensityScaleRef.current),
         // 密度→色。段は gl/heatmapRamp.ts が単一情報源（凡例と共有する）。折れ点を対数的に
         // 配置している理由もそちらに書いてある。
         'heatmap-color': heatmapColorExpression() as never,
@@ -252,6 +297,11 @@ export function QuakeHeatmapGL({ points, iconScale, visible }: Props) {
     if (!map || !addedRef.current) return
     if (map.getLayer(LYR)) map.setPaintProperty(LYR, 'heatmap-radius', heatRadiusExpr(iconScale))
   }, [map, iconScale])
+
+  useEffect(() => {
+    if (!map) return
+    if (map.getLayer(LYR)) map.setPaintProperty(LYR, 'heatmap-intensity', heatIntensityExpr(intensityScale))
+  }, [map, intensityScale])
 
   useEffect(() => {
     if (!map || !addedRef.current) return

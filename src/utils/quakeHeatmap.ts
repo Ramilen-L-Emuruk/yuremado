@@ -3,16 +3,74 @@ import { extractQuakeEventIdFromId } from './quakeMerge'
 import { hasKnownEpicenter } from './geo'
 import { formatMagnitude, formatMagnitudeWithCondition } from './formatters'
 
-/** ヒートマップに出す期間（日）。 */
-export const HEATMAP_DAYS = 30
+/**
+ * ヒートマップの期間の目盛り。凡例のヒートマップ欄のスライダーで選ぶ（2026-10-25 選択「E の案でよい
+ * (Recommended)」。10 段・既定 30 日・1919 年まで）。`days` と `years` はどちらか一方だけを持つ。
+ * 年は暦で遡る（1 年 = 365 日にすると閏年を跨ぐたびに 1 日ずれる）。
+ */
+export const HEATMAP_PERIODS = [
+  { key: '7d', label: '7日', days: 7 },
+  { key: '30d', label: '30日', days: 30 },
+  { key: '90d', label: '90日', days: 90 },
+  { key: '1y', label: '1年', years: 1 },
+  { key: '2y', label: '2年', years: 2 },
+  { key: '5y', label: '5年', years: 5 },
+  { key: '10y', label: '10年', years: 10 },
+  { key: '20y', label: '20年', years: 20 },
+  { key: '50y', label: '50年', years: 50 },
+  { key: 'all', label: '1919年から' },
+] as const satisfies readonly { key: string; label: string; days?: number; years?: number }[]
+
+export type HeatmapPeriod = (typeof HEATMAP_PERIODS)[number]['key']
+
+export const DEFAULT_HEATMAP_PERIOD: HeatmapPeriod = '30d'
+
+export function isHeatmapPeriod(value: unknown): value is HeatmapPeriod {
+  return typeof value === 'string' && HEATMAP_PERIODS.some((p) => p.key === value)
+}
+
+/** 長期震源カタログの最初の年。「1919年から」の始まり。 */
+export const HEATMAP_FIRST_YEAR = 1919
+
+const DAY_MS = 24 * 60 * 60 * 1000
+/** 日本時間の時差。年の境目・「1919年から」の始まりは日本時間の暦で決める。 */
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 /**
- * 地震の時刻が「いま」から遡って `HEATMAP_DAYS` 日の中か。**「いま」より後は外す** —— リプレイ中、
+ * 期間の始まり（UTC epoch ミリ秒）。`nowMs` は「いま」（再生中は再生時刻）。
+ * 年で遡る目盛りは日本時間の暦で年だけを引く（2026/10/25 の 1 年前は 2025/10/25）。
+ */
+export function heatmapPeriodStartMs(period: HeatmapPeriod, nowMs: number): number {
+  const def = HEATMAP_PERIODS.find((p) => p.key === period) ?? HEATMAP_PERIODS[1]
+  if ('days' in def) return nowMs - def.days * DAY_MS
+  if ('years' in def) {
+    const jst = new Date(nowMs + JST_OFFSET_MS)
+    jst.setUTCFullYear(jst.getUTCFullYear() - def.years)
+    return jst.getTime() - JST_OFFSET_MS
+  }
+  return Date.UTC(HEATMAP_FIRST_YEAR, 0, 1) - JST_OFFSET_MS
+}
+
+/** 期間の始まりが日本時間で何年か（完全性の注記と、読む年ファイルを決めるのに使う）。 */
+export function jstYearOf(ms: number): number {
+  return new Date(ms + JST_OFFSET_MS).getUTCFullYear()
+}
+
+/** 凡例に出す日付（日本時間・`2026/09/25`）。 */
+export function formatHeatmapDate(ms: number): string {
+  const d = new Date(ms + JST_OFFSET_MS)
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const dd = String(d.getUTCDate()).padStart(2, '0')
+  return `${d.getUTCFullYear()}/${mm}/${dd}`
+}
+
+/**
+ * 地震の時刻が期間（`startMs` から「いま」まで）の中か。**「いま」より後は外す** —— リプレイ中、
  * 再生時刻より後に起きた地震を地図に出さないため。時刻が読めないものも外す。
  */
-export function isWithinHeatWindow(timeIso: string, nowMs: number): boolean {
+export function isWithinHeatWindow(timeIso: string, nowMs: number, startMs: number): boolean {
   const t = new Date(timeIso).getTime()
-  return Number.isFinite(t) && t <= nowMs && t >= nowMs - HEATMAP_DAYS * 24 * 60 * 60 * 1000
+  return Number.isFinite(t) && t <= nowMs && t >= startMs
 }
 
 export interface HeatPoint {
@@ -45,6 +103,11 @@ export interface HeatPoint {
    * 土台の取得元（P2PQuake・DMDATA の GD Earthquake List）は説明を返さないので、常に `null`。
    */
   magnitudeCondition: string | null
+  /**
+   * この点にまとめた地震の数。1 つの地震なら 1。長い期間で格子にまとめた点（`gridHeatPoints`）は 2 以上になりうる。
+   * 2 以上の点では `name`・`depth` は持たず、`magnitude` は格子の中の最大、`time` は最も新しい地震の時刻。
+   */
+  count: number
 }
 
 /**
@@ -130,4 +193,133 @@ export function heatMagnitudeLabel(magnitude: number, condition: string | null):
 /** 吹き出しの札の色。巨大地震は M8 と同じ色（最上位の段）にする。 */
 export function heatMagnitudeColorValue(magnitude: number, condition: string | null): number {
   return isHugeMagnitudeCondition(condition) ? 8 : magnitude
+}
+
+/** カタログの年ファイルのうち、ヒートマップが読むのに要る列だけ。 */
+export interface HeatCatalogYear {
+  year: number
+  timeMs: ArrayLike<number>
+  lat: ArrayLike<number>
+  lng: ArrayLike<number>
+  depth: ArrayLike<number>
+  magnitude: ArrayLike<number>
+}
+
+/**
+ * 期間のうちカタログで描く年。`startMs` から `endMs`（カタログの終端と「いま」の早いほう）までに
+ * 掛かる日本時間の年で、索引に載っているものだけ。`endMs <= startMs` なら空。
+ */
+export function catalogYearsFor(startMs: number, endMs: number, availableYears: readonly number[]): number[] {
+  if (!(endMs > startMs)) return []
+  const from = jstYearOf(startMs)
+  const to = jstYearOf(endMs - 1)
+  return availableYears.filter((y) => y >= from && y <= to)
+}
+
+/**
+ * カタログの年ファイルから、期間 `[startMs, endMs)` の点を作る。
+ *
+ * **カタログの点は API の点と突き合わせない。** 両者は時刻で分けてある（カタログの終端より前は
+ * カタログ、後は API）ので、同じ地震が 2 点になることはない。震央地名はカタログが持たないので空。
+ */
+export function catalogHeatPoints(years: readonly HeatCatalogYear[], startMs: number, endMs: number): HeatPoint[] {
+  const out: HeatPoint[] = []
+  for (const y of years) {
+    const n = y.timeMs.length
+    for (let i = 0; i < n; i++) {
+      const t = y.timeMs[i]
+      if (!(t >= startMs && t < endMs)) continue
+      const lat = y.lat[i]
+      const lng = y.lng[i]
+      if (!hasValidHypocenter(lat, lng)) continue
+      const magnitude = heatMagnitude(y.magnitude[i])
+      const depth = y.depth[i]
+      out.push({
+        lat,
+        lng,
+        weight: magnitudeToWeight(magnitude, null),
+        name: '',
+        time: new Date(t).toISOString(),
+        depth: Number.isFinite(depth) ? depth : -1,
+        depthAtLeast: false,
+        magnitude,
+        magnitudeCondition: null,
+        count: 1,
+      })
+    }
+  }
+  return out
+}
+
+/** 濃さの基準にする期間（日）。描画の濃さの係数はこの長さの点に合わせてある。 */
+const HEAT_INTENSITY_BASE_DAYS = 30
+
+/**
+ * 期間の長さに合わせた濃さの係数。`√(30 日 ÷ 期間の日数)` で、30 日以下は 1（今までどおり）。
+ * 長い期間は点が積み上がって日本列島が一面赤く飽和するので、平方根で下げる
+ * （2026-10-25 ユーザー選択「A 期間の比の平方根で下げる (Recommended)」。比そのもので下げると東北沖の斑点しか残らなかった）。
+ */
+export function heatIntensityScale(startMs: number, endMs: number): number {
+  const days = (endMs - startMs) / 86_400_000
+  if (!(days > HEAT_INTENSITY_BASE_DAYS)) return 1
+  return Math.sqrt(HEAT_INTENSITY_BASE_DAYS / days)
+}
+
+/** 格子にまとめる升目の大きさ（度）。約 5km。 */
+export const HEAT_GRID_DEG = 0.05
+
+/**
+ * 格子にまとめる期間か。**1 年より長い期間だけ**まとめる（2026-10-25 ユーザー選択「A 1年超だけ格子にまとめる (Recommended)」）。
+ * 1919 年からを点のまま流すと約 129 万点になり、地図を動かしただけでタブが応答しなくなった（同日に測った）。
+ * まとめれば 1919 年からでも約 9 万点（0.05 度の格子）。
+ */
+export function shouldGridHeatPeriod(period: HeatmapPeriod): boolean {
+  return HEATMAP_PERIODS.findIndex((p) => p.key === period) > HEATMAP_PERIODS.findIndex((p) => p.key === '1y')
+}
+
+/**
+ * 点を `HEAT_GRID_DEG` の升目ごとに 1 点へまとめる。
+ *
+ * - 重みは**足し合わせる**。ヒートマップの密度は点の重みの和なので、まとめても同じ升目の中の濃さは保たれる
+ * - 位置は重みで平均する（升目の中心へ寄せると、格子の目が絵に出る）
+ * - 規模は升目の中の最大（`heatMagnitudeRank` で比べる。巨大地震を最上位に置く）、時刻は最も新しい地震
+ * - 1 点しか無い升目はその地震のまま（`count` 1）
+ */
+export function gridHeatPoints(points: readonly HeatPoint[], gridDeg: number = HEAT_GRID_DEG): HeatPoint[] {
+  interface Cell { w: number; latW: number; lngW: number; first: HeatPoint; top: HeatPoint; latest: string; count: number }
+  const cells = new Map<string, Cell>()
+  for (const p of points) {
+    const key = `${Math.floor(p.lat / gridDeg)},${Math.floor(p.lng / gridDeg)}`
+    const c = cells.get(key)
+    if (!c) {
+      cells.set(key, { w: p.weight, latW: p.lat * p.weight, lngW: p.lng * p.weight, first: p, top: p, latest: p.time, count: 1 })
+      continue
+    }
+    c.w += p.weight
+    c.latW += p.lat * p.weight
+    c.lngW += p.lng * p.weight
+    c.count += p.count
+    if (heatMagnitudeRank(p.magnitude, p.magnitudeCondition) > heatMagnitudeRank(c.top.magnitude, c.top.magnitudeCondition)) c.top = p
+    if (p.time > c.latest) c.latest = p.time
+  }
+  const out: HeatPoint[] = []
+  for (const c of cells.values()) {
+    if (c.count === 1) {
+      out.push(c.first)
+      continue
+    }
+    out.push({
+      lat: c.latW / c.w,
+      lng: c.lngW / c.w,
+      weight: c.w,
+      name: '',
+      time: c.latest,
+      depth: -1,
+      depthAtLeast: false,
+      magnitude: c.top.magnitude,
+      magnitudeCondition: c.top.magnitudeCondition,
+      count: c.count,
+    })
+  }
+  return out
 }

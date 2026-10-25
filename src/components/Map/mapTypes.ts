@@ -129,6 +129,8 @@ export interface JapanMapProps {
   showActiveFaults?: boolean
   activeFaultOpacity?: number
   heatPoints?: HeatPoint[] | null
+  /** ヒートマップの濃さの係数（期間の長さに合わせて下げる。`utils/quakeHeatmap.ts` の `heatIntensityScale`）。 */
+  heatIntensityScale: number
   showPlateBoundaries?: boolean
   /** 夜の側を重ねて描くか（DayNightGL）。 */
   showDayNight?: boolean
