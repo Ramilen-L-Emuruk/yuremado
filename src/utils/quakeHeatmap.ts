@@ -4,7 +4,7 @@ import { hasKnownEpicenter } from './geo'
 import { formatMagnitude, formatMagnitudeWithCondition } from './formatters'
 
 /**
- * ヒートマップの期間の目盛り。凡例のヒートマップ欄のスライダーで選ぶ（2026-10-25 選択「E の案でよい
+ * ヒートマップの期間の目盛り。凡例のヒートマップ欄のスライダーで選ぶ（2026-10-25 ユーザー選択「E の案でよい
  * (Recommended)」。10 段・既定 30 日・1919 年まで）。`days` と `years` はどちらか一方だけを持つ。
  * 年は暦で遡る（1 年 = 365 日にすると閏年を跨ぐたびに 1 日ずれる）。
  */
@@ -203,6 +203,11 @@ export interface HeatCatalogYear {
   lng: ArrayLike<number>
   depth: ArrayLike<number>
   magnitude: ArrayLike<number>
+  /** 震央地名の表と、地震ごとの添字（`-1` は名前なし）。 */
+  names: readonly string[]
+  nameIdx: ArrayLike<number>
+  /** 気象庁以外の機関が決めた震源なら 1。 */
+  external: ArrayLike<number>
 }
 
 /**
@@ -220,33 +225,117 @@ export function catalogYearsFor(startMs: number, endMs: number, availableYears: 
  * カタログの年ファイルから、期間 `[startMs, endMs)` の点を作る。
  *
  * **カタログの点は API の点と突き合わせない。** 両者は時刻で分けてある（カタログの終端より前は
- * カタログ、後は API）ので、同じ地震が 2 点になることはない。震央地名はカタログが持たないので空。
+ * カタログ、後は API）ので、同じ地震が 2 点になることはない。
+ *
+ * **気象庁以外の機関の震源は入れない。** 同じ地震を気象庁と重ねて数えることになる（大きい地震ほど
+ * 両方に載る）。震央地名はカタログの名前を入れる（2026-10-25 ユーザー承認「C の案でよい (Recommended)」）。
  */
 export function catalogHeatPoints(years: readonly HeatCatalogYear[], startMs: number, endMs: number): HeatPoint[] {
   const out: HeatPoint[] = []
   for (const y of years) {
     const n = y.timeMs.length
     for (let i = 0; i < n; i++) {
-      const t = y.timeMs[i]
-      if (!(t >= startMs && t < endMs)) continue
+      if (isCatalogHeatTarget(y, i, startMs, endMs)) out.push(catalogHeatPointAt(y, i))
+    }
+  }
+  return out
+}
+
+/** カタログの `i` 番目の地震を、期間 `[startMs, endMs)` のヒートマップに入れるか。 */
+function isCatalogHeatTarget(y: HeatCatalogYear, i: number, startMs: number, endMs: number): boolean {
+  const t = y.timeMs[i]
+  if (!(t >= startMs && t < endMs)) return false
+  if (y.external[i] === 1) return false
+  return hasValidHypocenter(y.lat[i], y.lng[i])
+}
+
+function catalogHeatPointAt(y: HeatCatalogYear, i: number): HeatPoint {
+  const magnitude = heatMagnitude(y.magnitude[i])
+  const depth = y.depth[i]
+  return {
+    lat: y.lat[i],
+    lng: y.lng[i],
+    weight: magnitudeToWeight(magnitude, null),
+    name: y.nameIdx[i] >= 0 ? y.names[y.nameIdx[i]] : '',
+    time: new Date(y.timeMs[i]).toISOString(),
+    depth: Number.isFinite(depth) ? depth : -1,
+    depthAtLeast: false,
+    magnitude,
+    magnitudeCondition: null,
+    count: 1,
+  }
+}
+
+/**
+ * `gridHeatPoints(catalogHeatPoints(years, startMs, endMs))` と同じ結果を、**点のオブジェクトを作らずに**列から直接畳んで作る。
+ *
+ * 1919 年からの段では対象が約 129 万件あり、先に点を作ると時刻の文字列ごと約 350MB を一時に抱え、
+ * 開発機でも約 1 秒止まった（2026-10-25 に同じ形のオブジェクトで試算）。升目には数値だけを持ち、
+ * 外へ出す点（1 件だけの升目はその地震、2 件以上はまとめた点）だけを作る。
+ */
+export function catalogGridHeatPoints(
+  years: readonly HeatCatalogYear[],
+  startMs: number,
+  endMs: number,
+  gridDeg: number = HEAT_GRID_DEG,
+): HeatPoint[] {
+  interface Cell {
+    w: number
+    latW: number
+    lngW: number
+    count: number
+    /** 最初に入った地震（1 件だけの升目はこれをそのまま出す）。 */
+    firstYear: HeatCatalogYear
+    firstIndex: number
+    /** 規模がいちばん大きい地震の規模（同じ規模なら先に入ったもの。`gridHeatPoints` と同じ）。 */
+    topMagnitude: number
+    latestMs: number
+  }
+  const cells = new Map<string, Cell>()
+  for (const y of years) {
+    const n = y.timeMs.length
+    for (let i = 0; i < n; i++) {
+      if (!isCatalogHeatTarget(y, i, startMs, endMs)) continue
       const lat = y.lat[i]
       const lng = y.lng[i]
-      if (!hasValidHypocenter(lat, lng)) continue
       const magnitude = heatMagnitude(y.magnitude[i])
-      const depth = y.depth[i]
-      out.push({
-        lat,
-        lng,
-        weight: magnitudeToWeight(magnitude, null),
-        name: '',
-        time: new Date(t).toISOString(),
-        depth: Number.isFinite(depth) ? depth : -1,
-        depthAtLeast: false,
-        magnitude,
-        magnitudeCondition: null,
-        count: 1,
-      })
+      const weight = magnitudeToWeight(magnitude, null)
+      const t = y.timeMs[i]
+      const key = `${Math.floor(lat / gridDeg)},${Math.floor(lng / gridDeg)}`
+      const c = cells.get(key)
+      if (!c) {
+        cells.set(key, {
+          w: weight, latW: lat * weight, lngW: lng * weight, count: 1,
+          firstYear: y, firstIndex: i, topMagnitude: magnitude, latestMs: t,
+        })
+        continue
+      }
+      c.w += weight
+      c.latW += lat * weight
+      c.lngW += lng * weight
+      c.count += 1
+      if (heatMagnitudeRank(magnitude, null) > heatMagnitudeRank(c.topMagnitude, null)) c.topMagnitude = magnitude
+      if (t > c.latestMs) c.latestMs = t
     }
+  }
+  const out: HeatPoint[] = []
+  for (const c of cells.values()) {
+    if (c.count === 1) {
+      out.push(catalogHeatPointAt(c.firstYear, c.firstIndex))
+      continue
+    }
+    out.push({
+      lat: c.latW / c.w,
+      lng: c.lngW / c.w,
+      weight: c.w,
+      name: '',
+      time: new Date(c.latestMs).toISOString(),
+      depth: -1,
+      depthAtLeast: false,
+      magnitude: c.topMagnitude,
+      magnitudeCondition: null,
+      count: c.count,
+    })
   }
   return out
 }

@@ -17,6 +17,7 @@ import {
   isHeatmapPeriod,
   catalogYearsFor,
   catalogHeatPoints,
+  catalogGridHeatPoints,
   gridHeatPoints,
   heatIntensityScale,
   shouldGridHeatPeriod,
@@ -41,7 +42,7 @@ describe('isWithinHeatWindow', () => {
   })
 })
 
-// 期間の目盛り（2026-10-25 選択「E の案でよい (Recommended)」）
+// 期間の目盛り（2026-10-25 ユーザー選択「E の案でよい (Recommended)」）
 describe('heatmapPeriodStartMs', () => {
   // 2026-10-25 12:00 JST
   const now = Date.parse('2026-10-25T03:00:00Z')
@@ -91,16 +92,89 @@ describe('catalogYearsFor / catalogHeatPoints', () => {
       lng: [137.2, 139, 140],
       depth: [10, 20, 30],
       magnitude: [7.6, NaN, 3],
+      names: ['石川県能登地方'],
+      nameIdx: [0, -1, -1],
+      external: [0, 0, 0],
     }
     const points = catalogHeatPoints([year], ms('2024-01-01T00:00:00Z'), ms('2024-01-03T00:00:00Z'))
     expect(points).toHaveLength(2)
-    expect(points[0]).toMatchObject({ lat: 37.5, lng: 137.2, magnitude: 7.6, depth: 10, name: '', time: '2024-01-01T00:00:00.000Z' })
+    expect(points[0]).toMatchObject({ lat: 37.5, lng: 137.2, magnitude: 7.6, depth: 10, name: '石川県能登地方', time: '2024-01-01T00:00:00.000Z' })
+    expect(points[1].name).toBe('')
     expect(points[1].magnitude).toBe(-1)
     expect(points[1].weight).toBe(magnitudeToWeight(NaN, null))
   })
+  it('対照: 気象庁以外の機関の震源は数えない（同じ地震を重ねて数えない）', () => {
+    const year = {
+      year: 2024,
+      timeMs: [ms('2024-01-01T00:00:00Z'), ms('2024-01-01T00:00:00Z')],
+      lat: [37.5, 37.5],
+      lng: [137.2, 137.2],
+      depth: [10, 10],
+      magnitude: [7.6, 7.5],
+      names: [],
+      nameIdx: [-1, -1],
+      external: [0, 1],
+    }
+    const points = catalogHeatPoints([year], 0, Infinity)
+    expect(points).toHaveLength(1)
+    expect(points[0].magnitude).toBe(7.6)
+  })
   it('安全弁: 震源が未確定の座標は描かない', () => {
-    const year = { year: 2024, timeMs: [ms('2024-01-01T00:00:00Z')], lat: [-200], lng: [-200], depth: [0], magnitude: [3] }
+    const year = {
+      year: 2024,
+      timeMs: [ms('2024-01-01T00:00:00Z')],
+      lat: [-200],
+      lng: [-200],
+      depth: [0],
+      magnitude: [3],
+      names: [],
+      nameIdx: [-1],
+      external: [0],
+    }
     expect(catalogHeatPoints([year], 0, Infinity)).toEqual([])
+  })
+})
+
+// 1 年より長い段は、点を作らずに列から直接格子へ畳む。結果は「点を作ってから畳む」と同じでなければならない
+describe('catalogGridHeatPoints（列から直接畳む）', () => {
+  // 決まった種から作る疑似乱数（テストの再現性のため）
+  function rng(seed: number) {
+    let s = seed >>> 0
+    return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32 }
+  }
+  function makeYear(year: number, n: number, seed: number) {
+    const r = rng(seed)
+    const base = Date.UTC(year, 0, 1)
+    const timeMs: number[] = []; const lat: number[] = []; const lng: number[] = []
+    const depth: number[] = []; const magnitude: number[] = []; const nameIdx: number[] = []; const external: number[] = []
+    for (let i = 0; i < n; i++) {
+      timeMs.push(base + Math.floor(r() * 300 * 86_400_000))
+      // 狭い範囲に集めて升目の衝突を起こす。少しだけ未確定の座標と深さ不明・M 不明を混ぜる
+      // 50 件に 1 件は離れた場所へ 1 件ずつ置き、1 件だけの升目も作る
+      const lone = i % 50 === 1
+      lat.push(i % 97 === 0 ? -200 : lone ? 20 + (i / 50) * 0.3 : 35 + Math.floor(r() * 40) * 0.013)
+      lng.push(i % 97 === 0 ? -200 : lone ? 125 + (year - 2020) * 3 : 139 + Math.floor(r() * 40) * 0.013)
+      depth.push(i % 13 === 0 ? NaN : r() * 100)
+      magnitude.push(i % 11 === 0 ? NaN : Math.round(r() * 60) / 10 + 2)
+      nameIdx.push(i % 5 === 0 ? -1 : i % 3)
+      external.push(i % 7 === 0 ? 1 : 0)
+    }
+    return { year, timeMs, lat, lng, depth, magnitude, names: ['甲', '乙', '丙'], nameIdx, external }
+  }
+  it('正: 点を作ってから畳んだ結果と、件数・中身とも同じ', () => {
+    const years = [makeYear(2020, 3000, 1), makeYear(2021, 3000, 2)]
+    const start = Date.UTC(2020, 2, 1)
+    const end = Date.UTC(2021, 8, 1)
+    const expected = gridHeatPoints(catalogHeatPoints(years, start, end))
+    const actual = catalogGridHeatPoints(years, start, end)
+    expect(actual).toHaveLength(expected.length)
+    expect(actual).toEqual(expected)
+    // 対照: 1 件だけの升目と、まとめた升目の両方が出ている（どちらかしか無いと比べた意味が無い）
+    expect(actual.some((p) => p.count === 1)).toBe(true)
+    expect(actual.some((p) => p.count > 1)).toBe(true)
+  })
+  it('安全弁: 期間に 1 件も無ければ空', () => {
+    expect(catalogGridHeatPoints([makeYear(2020, 100, 3)], Date.UTC(2030, 0, 1), Date.UTC(2031, 0, 1))).toEqual([])
   })
 })
 

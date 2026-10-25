@@ -85,7 +85,7 @@ export interface AppSettings {
   idleRevertSec: number            // 操作なしでデフォルトタブへ戻るまでの秒数 (0 = 無効)
   periodicReloadHours: number      // 定期自動リロード（0 = 無効、1以上 = 毎日午前5時に実行）
   // 画面録画のあいだ、表示に要らない再計算を控える。表示される内容そのものは変わらない
-  // （地名ラベルの退避が数秒遅れる・揺れ検知の診断ログを保存しない）。
+  // （止めるのは通知音・読み上げのキープアライブだけ。詳細は settings-pwa-spec §2）。
   recordingMode: boolean
   notifyEEW: boolean               // 緊急地震速報の発報・昇格時にブラウザ通知を送る
   notifyTsunami: boolean           // 津波のブラウザ通知（予報以上の発表・続報と全区域解除。→ audio-tts-spec §7）
@@ -265,7 +265,7 @@ export const DEFAULTS: AppSettings = {
   activeFaultOpacity: 0.4,
   // 既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」）。
   showQuakeHeatmap: false,
-  // 既定は 30 日（2026-10-25 選択「E の案でよい (Recommended)」）。
+  // 既定は 30 日（2026-10-25 ユーザー選択「E の案でよい (Recommended)」）。
   heatmapPeriod: DEFAULT_HEATMAP_PERIOD,
   showPlateBoundaries: true,
   showMapLegend: true,

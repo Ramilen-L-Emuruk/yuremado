@@ -145,6 +145,40 @@ describe('buildLegendBlocks', () => {
       if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
       expect(block.swatch.chips).toBeUndefined()
     })
+
+    // 正: 深さの色帯の下に、点を塗る灰色と同じ色で「深さ不明」を添える。
+    it('深さ不明の点を描いているときは深さの色帯に「深さ不明」を添える', () => {
+      const [block] = buildLegendBlocks(sources({ catalogColorBy: 'depth', catalogUnknownDepth: true }))
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips).toEqual([{ label: '深さ不明', color: UNKNOWN_MAGNITUDE_HEX, shape: 'dot' }])
+    })
+
+    // 対照: 灰色で塗るのは深さの色分けのときだけ。M・発生年の色分けでは深さ不明の点も色帯の色で塗る。
+    it.each(['magnitude', 'time'] as const)('%s の色分けでは「深さ不明」を添えない', (colorBy) => {
+      const [block] = buildLegendBlocks(
+        sources({ catalogColorBy: colorBy, catalogUnknownDepth: true, catalogYearRange: { lo: 0, hi: 1 } }),
+      )
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips).toBeUndefined()
+    })
+
+    // 正: 気象庁以外の機関の震源は、どの色分けでも輪の見本を添える（輪は色分けに関わらず描く）。
+    it.each(['depth', 'magnitude', 'time'] as const)('%s の色分けでも気象庁以外の機関の震源に輪の見本を添える', (colorBy) => {
+      const [block] = buildLegendBlocks(
+        sources({ catalogColorBy: colorBy, catalogExternal: true, catalogYearRange: { lo: 0, hi: 1 } }),
+      )
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips?.map((c) => [c.label, c.shape])).toEqual([['気象庁以外の機関の震源', 'ring']])
+    })
+
+    // 安全弁: 不明の見本と輪の見本は両方並ぶ（片方が他方を押し出さない）。
+    it('M 不明と気象庁以外の機関の震源を両方描いていれば両方添える', () => {
+      const [block] = buildLegendBlocks(
+        sources({ catalogColorBy: 'magnitude', catalogUnknownMagnitude: true, catalogExternal: true }),
+      )
+      if (block.swatch.kind !== 'ramp') throw new Error('ramp ではない')
+      expect(block.swatch.chips?.map((c) => c.label)).toEqual(['M 不明', '気象庁以外の機関の震源'])
+    })
   })
 
   describe('観測した津波の高さ', () => {
@@ -216,6 +250,10 @@ const SOLO_SOURCES: { [K in keyof MapLegendSources]: Partial<MapLegendSources> |
   catalogYearRange: null,
   // マグニチュードの色帯に添える見本の有無だけを決める。色帯が無ければ何も出ない。
   catalogUnknownMagnitude: null,
+  // 深さの色帯に添える見本の有無だけを決める。色帯が無ければ何も出ない。
+  catalogUnknownDepth: null,
+  // 震源カタログの色帯に添える輪の見本の有無だけを決める。色帯が無ければ何も出ない。
+  catalogExternal: null,
 }
 
 describe('描いているものを凡例に出し忘れていないか', () => {

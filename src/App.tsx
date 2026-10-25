@@ -396,9 +396,11 @@ export function App() {
   // カードの一覧の行をクリックしたときに、その場所を地図の寄り先として通知する。
   // 座標の解決はカード側が行う（押せるかどうかの判定と同じ引き当てを使うため）。
   // 1 点なら flyTo、複数点ならその外接矩形へ寄る（→ `FocusTargetGL`）。
-  const focusMapTarget = useCallback((positions: LatLng[]) => {
-    setFocusedMapTarget({ positions, ts: Date.now() })
+  const focusMapTarget = useCallback((positions: LatLng[], stationName: string | null) => {
+    setFocusedMapTarget({ positions, stationName, ts: Date.now() })
   }, [])
+  // 観測点名を持たない一覧（津波の区域・公開観測点の段）から寄せる口。
+  const focusMapPositions = useCallback((positions: LatLng[]) => focusMapTarget(positions, null), [focusMapTarget])
   // EEW 発報中（cancelledAt 除外済み）・揺れ検知フラグ・地震情報リスト・デフォルトタブを
   // タイマーコールバック内やフック間で参照するための ref。
   // 値の確定はレンダー後半（useEarthquakes / useKyoshinDetectorV2 の後）で毎レンダー代入する。
@@ -1454,9 +1456,8 @@ export function App() {
     // **年は日本時間で数える。** 端末の時計が別のタイムゾーンだと、年明け前後に収録の無い年を選ぶ。
     const thisYear = jstYearOf(Date.now())
     return {
-      // 初期表示は直近 10 年。マグニチュードの下限は索引が届いた時点でその期間の
-      // 完全性へ合わせ直す（下の効果）。ここでの 2 は索引が来るまでの仮の値。
-      // 終わりも仮の値で、索引が届いたらデータの最終日へ収める（下の効果）。
+      // 初期表示は直近 10 年。マグニチュードの下限は期間に合わせて引き上げない（下の効果の注記）。
+      // 終わりは仮の値で、索引が届いたらデータの最終日へ収める（下の効果）。
       fromMs: jstYearStartMs(thisYear - 9),
       toMs: jstYearEndMs(thisYear),
       minMagnitude: MAGNITUDE_FILTER_RANGE.min,
@@ -1467,6 +1468,7 @@ export function App() {
       maxLat: LATITUDE_FILTER_RANGE.max,
       minLng: LONGITUDE_FILTER_RANGE.min,
       maxLng: LONGITUDE_FILTER_RANGE.max,
+      includeExternal: false,
     }
   })
   const [catalogView, setCatalogView] = useState<CatalogViewOptions>({ colorBy: 'depth', sizeBy: 'fixed', sizePx: 3 })
@@ -2820,7 +2822,7 @@ export function App() {
               onToggleExpanded={toggleSeismoWaveExpanded}
               arrivalEews={seismoArrivalEews}
               spanSec={settings.waveSpanSec}
-              onFocusStation={focusMapTarget}
+              onFocusStation={focusMapPositions}
               onLeadRowHeightChange={setWaveLeadRowHeight}
               paused={squareLayout.waveHidden}
             />
@@ -2911,7 +2913,7 @@ export function App() {
                 earthquakes={filteredEarthquakes}
                 onEarthquakeLink={linkTsunamiToEarthquake}
                 onObservationClick={focusTsunamiObs}
-                onFocusMap={focusMapTarget}
+                onFocusMap={focusMapPositions}
                 focusedDistrict={focusedDistrict}
                 obsUpdateStatus={obsUpdateStatus}
               areaGradeChangedKeys={areaGradeChangedKeys}

@@ -1,9 +1,10 @@
 // 取れなかった取得を、間隔を広げつつ回数に上限を置いて取り直す規則。
 //
-// **5 か所で同じ値を使う**（2026-10-24 ユーザー選択「30秒から倍々・5回 (Recommended)」）——
+// **6 か所で同じ値を使う**（2026-10-24 ユーザー選択「30秒から倍々・5回 (Recommended)」）——
 // 自作地震計の下端の波形の穴埋め（`services/seismoWaveRefill.ts`）・自作地震計の地震カード
 // （`hooks/useSeismoQuakeWaves.ts`）・自作地震計の再生中の読み返し（`hooks/useSeismoReplay.ts`）・
-// リプレイの先読み（`hooks/useReplayController.ts`）・公開観測点の地震カード（`hooks/usePublicQuakeWaves.ts`）。
+// リプレイの先読み（`hooks/useReplayController.ts`）・公開観測点の地震カード（`hooks/usePublicQuakeWaves.ts`）・
+// 地震活動ヒートマップの震源カタログの索引と年ファイル（`hooks/useQuakeHeatmap.ts`）。
 // 別々に書くと、同じ「取れなかった」に諦めるまでの時間が場所ごとに違ってくる。
 //
 // **リプレイの強震モニタの全滅した区間（`services/kyoshinSource.ts`）だけは別の規則**で、1 秒ずつ先読みと同じ回数で取る

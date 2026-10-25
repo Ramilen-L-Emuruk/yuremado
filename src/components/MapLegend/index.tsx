@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { readableTextColor } from '../../utils/contrast'
-import { representativeBlock, type LegendBlock, type LegendChip, type LegendHeatmapPeriod, type LegendSwatch, type LegendTick } from './legendBlocks'
+import { heatmapPeriodText, representativeBlock, type LegendBlock, type LegendChip, type LegendHeatmapPeriod, type LegendSwatch, type LegendTick } from './legendBlocks'
 import { HEATMAP_PERIODS, type HeatmapPeriod } from '../../utils/quakeHeatmap'
 
 // 地図へ重ねる凡例。中身を決めるのは legendBlocks.ts で、ここは描くだけ。
@@ -97,6 +97,10 @@ function ChipMark({ chip, m }: { chip: LegendChip; m: Metrics }) {
   if (chip.shape === 'bar') {
     // 観測棒は縦に立てるので、凡例でも縦長にする（丸印と混ざらないため）。
     return <i className={`inline-block rounded-[1px] ${m.mark.bar}`} style={{ backgroundColor: chip.color }} />
+  }
+  if (chip.shape === 'ring') {
+    // 中を抜いた丸（震源カタログで気象庁以外の機関の震源を描く形）。
+    return <i className={`inline-block rounded-full border-2 ${m.mark.dot}`} style={{ borderColor: chip.color }} />
   }
   return (
     <i
@@ -203,7 +207,7 @@ function Swatch({
 }
 
 /**
- * ヒートマップの期間（2026-10-25 選択「E の案でよい (Recommended)」）。目盛りは `HEATMAP_PERIODS` の 10 段で、
+ * ヒートマップの期間（2026-10-25 ユーザー選択「E の案でよい (Recommended)」）。目盛りは `HEATMAP_PERIODS` の 10 段で、
  * 左ほど短い。期間の始まりを日付で添え、終わりは「いま」（再生中は「再生時刻」）。
  */
 function HeatmapPeriodControl({
@@ -221,7 +225,7 @@ function HeatmapPeriodControl({
   return (
     <div style={{ width }} className="mt-[0.2rem]">
       <div className={`text-white/70 ${m.title}`}>
-        期間 {value.startLabel} 〜 {value.replay ? '再生時刻' : 'いま'}
+        {heatmapPeriodText(value)}
       </div>
       <input
         type="range"

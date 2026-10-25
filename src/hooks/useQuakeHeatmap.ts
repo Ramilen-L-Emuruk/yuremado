@@ -11,7 +11,7 @@ import {
   heatmapPeriodStartMs,
   catalogYearsFor,
   catalogHeatPoints,
-  gridHeatPoints,
+  catalogGridHeatPoints,
   shouldGridHeatPeriod,
   heatIntensityScale,
   jstYearOf,
@@ -20,6 +20,7 @@ import {
 } from '../utils/quakeHeatmap'
 import { loadHypocenterIndex, loadHypocenterYear, completeMinMagnitude, type HypocenterIndex } from '../utils/hypocenterCatalog'
 import { log } from '../utils/logger'
+import { retryDelayAfter } from '../utils/retrySchedule'
 import { serverNow, liveServerNow } from '../utils/clock'
 
 import { isDmdss } from '../utils/env'
@@ -28,13 +29,13 @@ import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dm
 // 地震活動ヒートマップの点を集める。
 //
 // **長期震源カタログがある日はカタログから、カタログの終端より後だけを API から取る**
-// （2026-10-22 選択「カタログ＋末尾の空きだけ API (Recommended)」。2026-10-25 に境目で濃さが約 15 倍
+// （2026-10-22 ユーザー選択「カタログ＋末尾の空きだけ API (Recommended)」。2026-10-25 に境目で濃さが約 15 倍
 // 落ちることを示したうえで「決定どおりで」）。カタログは M2.0 以上の全地震、API（DMDATA の
 // GD Earthquake List・P2PQuake）は震度を観測した地震だけなので、**境目より後は薄く見える**。
-// 期間は凡例のスライダーで選ぶ（`HeatmapPeriod`。2026-10-25 選択「E の案でよい (Recommended)」）。
+// 期間は凡例のスライダーで選ぶ（`HeatmapPeriod`。2026-10-25 ユーザー選択「E の案でよい (Recommended)」）。
 //
 // DMDSS 版で API キーが無い・使えないときは**カタログの分だけ描き、末尾が入らないことを記録に残す**
-// （2026-10-22 選択「カタログの分だけ出す (Recommended)」）。
+// （2026-10-22 ユーザー選択「カタログの分だけ出す (Recommended)」）。
 
 // 末尾の API の取得は一定時間 localStorage の控えを使う。控えた後にライブで届いた地震は
 // earthquakes とのマージで別に足すので、控えがやや古くても実害は小さい。
@@ -53,6 +54,13 @@ const LEGACY_CACHE_KEYS = [
 const DAY_MS = 24 * 60 * 60 * 1000
 /** カタログの索引が読めなかったときに API で遡る上限（日）。API は 1 回の取得で 2000 件までしか返さない。 */
 const API_FALLBACK_MAX_DAYS = 30
+/**
+ * カタログの終端より後を API で遡る上限（日）。カタログは週 1 回更新で、ふだん終端は 2〜9 日前。
+ * 更新が止まって終端が遠くなっても、取る日数を際限なく伸ばさない（DMDSS 版のリプレイは 1 日 1 件ずつ取る）。
+ */
+const API_TAIL_MAX_DAYS = 30
+/** 期間のつまみを動かしてから、年ファイルの取得と格子化を始めるまでの待ち（ms）。通り過ぎた段では取らない。 */
+const PERIOD_SETTLE_MS = 300
 
 // quakeIdentityKey で重複排除できるよう、API 側の点にもキーを持たせる。
 interface KeyedHeatPoint extends HeatPoint {
@@ -142,7 +150,7 @@ export interface QuakeHeatmapResult {
   windowStartMs: number | null
   /**
    * 期間が観測網の疎な時代に掛かるとき、記録が揃う M の下限（凡例の注記に出す）。掛からなければ `null`。
-   * 文はカタログタブの注記と同じ（2026-10-25 選択「E の案でよい (Recommended)」）。
+   * 文はカタログタブの注記と同じ（2026-10-25 ユーザー選択「E の案でよい (Recommended)」）。
    */
   completeness: { fromYear: number; minMagnitude: number } | null
   /** 濃さの係数（`heatIntensityScale`）。30 日以下と出していない間は 1。 */
@@ -156,6 +164,13 @@ export function useQuakeHeatmap(
   replayOffsetMs: number | null,
   period: HeatmapPeriod,
 ): QuakeHeatmapResult {
+  // つまみをドラッグして通り過ぎた段で、年ファイルの取得と格子化を始めない。止まってから 300ms で確定する
+  const [settledPeriod, setSettledPeriod] = useState(period)
+  useEffect(() => {
+    if (settledPeriod === period) return
+    const id = setTimeout(() => setSettledPeriod(period), PERIOD_SETTLE_MS)
+    return () => clearTimeout(id)
+  }, [period, settledPeriod])
   // 再生を始めた時刻（ms）。オフセットが変わるのは再生の開始・停止のときだけなので、変わった時点の再生時刻を採る。
   // **分で切り捨てる。** オフセットは「開始時刻 − 押した瞬間の Date.now()」なので、ここで足し戻すと
   // 押してから描くまでの数ミリ秒ぶんだけ毎回ずれ、同じ開始時刻でも控えの鍵が一致しない。
@@ -165,12 +180,10 @@ export function useQuakeHeatmap(
   )
   // 期間の始まり。**期間・再生の開始を変えたときだけ決め直す**（毎回計算すると、毎秒の描き直しのたびに
   // カタログの点を作り直すことになる）。ライブで開きっぱなしにすると、始まりは開いた時点のまま留まる。
-  const { windowStartMs, intensityScale } = useMemo(() => {
-    if (!enabled) return { windowStartMs: null, intensityScale: 1 }
-    const endMs = replayAnchorMs ?? liveServerNow()
-    const startMs = heatmapPeriodStartMs(period, endMs)
-    return { windowStartMs: startMs, intensityScale: heatIntensityScale(startMs, endMs) }
-  }, [enabled, period, replayAnchorMs])
+  const windowStartMs = useMemo(() => {
+    if (!enabled) return null
+    return heatmapPeriodStartMs(settledPeriod, replayAnchorMs ?? liveServerNow())
+  }, [enabled, settledPeriod, replayAnchorMs])
 
   // 再生中は 1 分ごとに描き直す（点の出し入れを再生時刻に合わせる）
   const [refilterTick, setRefilterTick] = useState(0)
@@ -183,19 +196,34 @@ export function useQuakeHeatmap(
   // ── 索引（カタログの終端・収録年・完全性） ────────────────────────────
   const [index, setIndex] = useState<HypocenterIndex | null>(null)
   const [indexFailed, setIndexFailed] = useState(false)
+  // 続けて失敗した回数。取り直しは他の取得と同じ規則（`utils/retrySchedule.ts`）で間隔を広げ、上限で諦める。
+  // 一度の失敗で固定すると、起動直後の一時的な失敗だけでそのセッションの間ずっと直近 30 日しか描かれない
+  const [indexFailures, setIndexFailures] = useState(0)
+  const [indexRetryTick, setIndexRetryTick] = useState(0)
   useEffect(() => {
     if (!enabled || index) return
     let cancelled = false
     loadHypocenterIndex()
-      .then(idx => { if (!cancelled) { setIndex(idx); setIndexFailed(false) } })
+      .then(idx => { if (!cancelled) { setIndex(idx); setIndexFailed(false); setIndexFailures(0) } })
       .catch(err => {
         if (cancelled) return
         // 索引が読めなければカタログは使えない。末尾の API だけで直近を描く（下の `tailFromMs`）
         log.warn('[data] 地震活動ヒートマップ: 震源カタログの索引を読めず、直近の分だけ API から描きます', err)
         setIndexFailed(true)
+        setIndexFailures(n => n + 1)
       })
     return () => { cancelled = true }
-  }, [enabled, index])
+  }, [enabled, index, indexRetryTick])
+  useEffect(() => {
+    if (!enabled || index || indexFailures === 0) return
+    const delay = retryDelayAfter(indexFailures)
+    if (delay === null) {
+      log.warn(`[data] 地震活動ヒートマップ: 震源カタログの索引を ${indexFailures} 回続けて読めず、取り直しを諦めます`)
+      return
+    }
+    const id = setTimeout(() => setIndexRetryTick(t => t + 1), delay)
+    return () => clearTimeout(id)
+  }, [enabled, index, indexFailures])
 
   // カタログで描く範囲の終わり。カタログの終端と、再生中なら再生を始めた時刻の早いほう。
   const catalogEndMs = index === null ? null : Math.min(index.coveredThroughMs, replayAnchorMs ?? Infinity)
@@ -205,27 +233,56 @@ export function useQuakeHeatmap(
   // 「いま」を読むので、毎回の描き直しで値が動かないよう決め直す契機を絞る。
   const tailFromMs = useMemo(() => {
     if (windowStartMs === null) return null
-    if (index !== null) return Math.max(Math.min(index.coveredThroughMs, replayAnchorMs ?? Infinity), windowStartMs)
+    const untilMs = replayAnchorMs ?? liveServerNow()
+    if (index !== null) {
+      const from = Math.max(Math.min(index.coveredThroughMs, replayAnchorMs ?? Infinity), windowStartMs)
+      const capped = Math.max(from, untilMs - API_TAIL_MAX_DAYS * DAY_MS)
+      if (capped > from) {
+        log.warn(`[data] 地震活動ヒートマップ: 震源カタログの終端が ${API_TAIL_MAX_DAYS} 日より前のため、その間（${new Date(from).toISOString()} 〜 ${new Date(capped).toISOString()}）は描きません`)
+      }
+      return capped
+    }
     if (!indexFailed) return null
-    return Math.max(windowStartMs, (replayAnchorMs ?? liveServerNow()) - API_FALLBACK_MAX_DAYS * DAY_MS)
+    return Math.max(windowStartMs, untilMs - API_FALLBACK_MAX_DAYS * DAY_MS)
   }, [index, indexFailed, windowStartMs, replayAnchorMs])
 
   // ── カタログの点 ───────────────────────────────────────────────
-  const [catalogPoints, setCatalogPoints] = useState<HeatPoint[] | null>(null)
+  // 点と一緒に、その点がどの期間の始まりから作ったものかを持つ。期間を変えた直後は新しい年ファイルが
+  // 揃うまで前の点が残るので、濃さと凡例の始まりは点の側の期間から出す（新しい濃さで古い点を描くと、
+  // 30 日 → 1919 年では一瞬空に、逆では一面が赤く見える）
+  const [catalog, setCatalog] = useState<{ points: HeatPoint[]; startMs: number } | null>(null)
+  const catalogPoints = catalog?.points ?? null
   const [catalogLoading, setCatalogLoading] = useState(false)
+  // 読めなかった年の取り直し。索引と同じ規則（`utils/retrySchedule.ts`）で、期間を変えたら数え直す
+  // （2026-10-25 ユーザー選択「D1 取り直す (Recommended)」）。
+  const [yearRetry, setYearRetry] = useState({ failures: 0, tick: 0 })
+  // 数え直すのは回数だけ。tick を戻すとカタログの効果がもう一度走り、新しい期間の格子化が二重になる
+  useEffect(() => {
+    setYearRetry(r => (r.failures === 0 ? r : { ...r, failures: 0 }))
+  }, [settledPeriod])
+  useEffect(() => {
+    if (!enabled || yearRetry.failures === 0) return
+    const delay = retryDelayAfter(yearRetry.failures)
+    if (delay === null) {
+      log.warn(`[data] 地震活動ヒートマップ: 震源カタログの年を ${yearRetry.failures} 回続けて読めず、取り直しを諦めます`)
+      return
+    }
+    const id = setTimeout(() => setYearRetry(r => ({ ...r, tick: r.tick + 1 })), delay)
+    return () => clearTimeout(id)
+  }, [enabled, yearRetry.failures])
   useEffect(() => {
     if (!enabled || windowStartMs === null) {
-      setCatalogPoints(null)
+      setCatalog(null)
       return
     }
     if (indexFailed) {
-      setCatalogPoints([])
+      setCatalog({ points: [], startMs: windowStartMs })
       return
     }
     if (!index || catalogEndMs === null) return
     const years = catalogYearsFor(windowStartMs, catalogEndMs, index.years)
     if (years.length === 0) {
-      setCatalogPoints([])
+      setCatalog({ points: [], startMs: windowStartMs })
       return
     }
     let cancelled = false
@@ -238,18 +295,26 @@ export function useQuakeHeatmap(
         const failed = years.filter((_, i) => results[i].status === 'rejected')
         if (failed.length > 0) {
           log.warn(`[data] 地震活動ヒートマップ: 震源カタログの ${failed.join('・')} 年を取得できず、その年は描きません`)
+          setYearRetry(r => ({ ...r, failures: r.failures + 1 }))
+        } else {
+          setYearRetry(r => (r.failures === 0 ? r : { ...r, failures: 0 }))
         }
-        const raw = catalogHeatPoints(loaded, windowStartMs, catalogEndMs)
-        // 1 年より長い期間は格子にまとめる（`shouldGridHeatPeriod` の注記）。末尾の API の点はまとめない
+        // 1 年より長い期間は格子にまとめる（`shouldGridHeatPeriod` の注記）。点を作ってから畳まず、列から
+        // 直接畳む（`catalogGridHeatPoints` の注記）。末尾の API の点はまとめない
         // （数日ぶんで数十点。まとめると、受けたばかりの地震を吹き出しで個別に見られなくなる）。
-        setCatalogPoints(shouldGridHeatPeriod(period) ? gridHeatPoints(raw) : raw)
+        setCatalog({
+          points: shouldGridHeatPeriod(settledPeriod)
+            ? catalogGridHeatPoints(loaded, windowStartMs, catalogEndMs)
+            : catalogHeatPoints(loaded, windowStartMs, catalogEndMs),
+          startMs: windowStartMs,
+        })
       })
       .finally(() => { if (!cancelled) setCatalogLoading(false) })
     return () => {
       cancelled = true
       setCatalogLoading(false)
     }
-  }, [enabled, index, indexFailed, windowStartMs, catalogEndMs, period])
+  }, [enabled, index, indexFailed, windowStartMs, catalogEndMs, settledPeriod, yearRetry.tick])
 
   // ── 末尾の API ─────────────────────────────────────────────────
   const [tailPoints, setTailPoints] = useState<KeyedHeatPoint[] | null>(null)
@@ -278,7 +343,7 @@ export function useQuakeHeatmap(
       // 取れないだけで、既に持っているものが無効になったわけではない。キー入力中はデバウンス（800ms）で
       // ここを一時的に通るため、捨てると「直している最中に、見えていた点が消える」ことになる。
       const cached = loadTailCache()
-      setTailPoints(cached && cached.fromMs === tailFromMs ? cached.points : [])
+      setTailPoints(cached && cached.fromMs <= tailFromMs ? cached.points : [])
       return
     }
     const days = (untilMs - tailFromMs) / DAY_MS
@@ -332,7 +397,9 @@ export function useQuakeHeatmap(
     }
 
     const cached = loadTailCache()
-    if (cached && cached.fromMs === tailFromMs && liveServerNow() - cached.fetchedAt < CACHE_TTL_MS) {
+    // 控えの範囲が今回の範囲を覆っていれば使う（はみ出た分は `isWithinHeatWindow` で落ちる）。ライブで
+    // カタログの終端が期間の始まりより古いと、始まりは開いた時刻で毎回変わり、一致では控えが効かない
+    if (cached && cached.fromMs <= tailFromMs && liveServerNow() - cached.fetchedAt < CACHE_TTL_MS) {
       setTailPoints(cached.points)
       return
     }
@@ -357,7 +424,7 @@ export function useQuakeHeatmap(
           return
         }
         log.warn('[data] 地震活動ヒートマップ取得失敗（震源カタログの終端より後は控えがあれば控えで描きます）', err)
-        setTailPoints(cached && cached.fromMs === tailFromMs ? cached.points : [])
+        setTailPoints(cached && cached.fromMs <= tailFromMs ? cached.points : [])
       })
       .finally(() => {
         if (!cancelled) setTailLoading(false)
@@ -434,10 +501,19 @@ export function useQuakeHeatmap(
     return minMagnitude > index.minMagnitude ? { fromYear, minMagnitude } : null
   }, [index, windowStartMs])
 
+  // 凡例に出す期間の始まりと濃さは、**実際に描いている範囲**から出す。索引が読めないときに描くのは
+  // 末尾の API の分（最長 30 日）だけで、選んだ期間の始まりを名乗ると凡例が事実と違う期間を示し、
+  // 濃さも長い期間のぶん薄まってほとんど見えなくなる
+  const drawnStartMs = indexFailed && tailFromMs !== null ? tailFromMs : (catalog?.startMs ?? windowStartMs)
+  const intensityScale = useMemo(
+    () => (drawnStartMs === null ? 1 : heatIntensityScale(drawnStartMs, replayAnchorMs ?? liveServerNow())),
+    [drawnStartMs, replayAnchorMs],
+  )
+
   return {
     points,
     isLoading: catalogLoading || tailLoading,
-    windowStartMs: enabled ? windowStartMs : null,
+    windowStartMs: enabled ? drawnStartMs : null,
     completeness,
     intensityScale,
   }

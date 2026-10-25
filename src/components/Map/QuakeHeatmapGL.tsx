@@ -10,7 +10,7 @@ import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml } from './gl/popupHtml'
 
-// 直近1ヶ月の地震活動ヒートマップを描画する MapLibre 版（Leaflet 版 QuakeHeatmapLayer 相当）。
+// 地震活動ヒートマップを描画する MapLibre 版（Leaflet 版 QuakeHeatmapLayer 相当）。期間は凡例で選ぶ（`useQuakeHeatmap`）。
 // Leaflet は leaflet.heat（Canvas）だったが、MapLibre はネイティブの heatmap レイヤーで描く。
 // 区域塗り（quake-region-fill）より背面（MAP_LAYER_ORDER の quake-heat スロット）に置き、
 // 震度色塗り・震源マーカーの視認性と競合させない。weight は各点の重み（1 つの地震は 0〜1。格子にまとめた点は和）。
