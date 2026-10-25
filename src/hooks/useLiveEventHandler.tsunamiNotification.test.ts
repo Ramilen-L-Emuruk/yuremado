@@ -60,7 +60,8 @@ function setup(notifyTsunami = true) {
     act(() => { result.current.handleLiveEvent(t as never) })
     if (!t.cancelled) displayed[0] = t
   }
-  return { handle }
+  // 設定は受け手が呼ばれた時点の値を読むので、テストの途中で書き換えれば「途中で止めた」形になる
+  return { handle, settings }
 }
 
 beforeEach(() => {
@@ -219,6 +220,54 @@ describe('津波のブラウザ通知（受け手）', () => {
     const { handle } = setup(false)
     handle(report([area('石川県能登', '360', 'Watch')]))
     handle(report([], { cancelled: true, cancelReason: 'lifted' } as Partial<JMATsunami>))
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  // 閉じるまで残る通知を出した後に通知を止めても、解除・取消はその通知を置き換える
+  // （2026-10-25 ユーザー選択「解除・取消だけ出す (Recommended)」）。終わった警報が通知センターに残らないように
+  it('正: 警報の通知を出した後にまとめて止めても、解除で置き換える', () => {
+    const { handle, settings } = setup()
+    handle(report([area('石川県能登', '360', 'Warning')]))
+    settings.notifyEnabled = false
+    notify.mockClear()
+    handle(report([], { cancelled: true, cancelReason: 'lifted' } as Partial<JMATsunami>))
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(notify.mock.calls[0][0]).toBe('津波警報等の解除')
+  })
+
+  it('正: 津波の通知だけを途中で切っても、取消で置き換える', () => {
+    const { handle, settings } = setup()
+    handle(report([area('石川県能登', '360', 'Watch')]))
+    settings.notifyTsunami = false
+    notify.mockClear()
+    handle(report([], { cancelled: true, cancelReason: 'retracted', headType: 'VTSE41' } as Partial<JMATsunami>))
+    expect(notify.mock.calls[0]?.[0]).toBe('津波警報等の取消')
+  })
+
+  it('対照: 止めている間に始まった津波は、解除も送らない（置き換える通知が無い）', () => {
+    const { handle, settings } = setup()
+    settings.notifyEnabled = false
+    handle(report([area('石川県能登', '360', 'Warning')]))
+    handle(report([], { cancelled: true, cancelReason: 'lifted' } as Partial<JMATsunami>))
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('安全弁: 閉じるまで残さない通知（津波予報）だけを出していたなら、止めた後の失効は送らない', () => {
+    const { handle, settings } = setup()
+    handle(report([area('石川県能登', '360', 'Forecast')]))
+    settings.notifyEnabled = false
+    notify.mockClear()
+    handle(report([], { cancelled: true, cancelReason: 'expired' } as Partial<JMATsunami>))
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('安全弁: 解除で置き換えた後に届いた別の解除は、止めていれば送らない', () => {
+    const { handle, settings } = setup()
+    handle(report([area('石川県能登', '360', 'Warning')]))
+    settings.notifyEnabled = false
+    handle(report([], { cancelled: true, cancelReason: 'lifted' } as Partial<JMATsunami>))
+    notify.mockClear()
+    handle(report([], { cancelled: true, cancelReason: 'retracted', headType: 'VTSE41' } as Partial<JMATsunami>))
     expect(notify).not.toHaveBeenCalled()
   })
 })

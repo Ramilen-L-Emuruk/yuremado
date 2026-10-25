@@ -2462,7 +2462,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 
 | 項目 | 単一情報源となる仕様書 |
 |---|---|
-| 設定タブのセクション構成・並び順の方針（`<Section>` の出現順そのもの・重大度は軽い順・カテゴリ順は両テストセクションと通知設定の種別トグルで共通）を崩すと、想定と違う並びで表示される | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「並び順の方針」 |
+| 設定タブのセクション構成・並び順の方針（`<Section>` の出現順そのもの・重大度は軽い順・カテゴリ順は両テストセクションとブラウザ通知の種別トグルで共通）を崩すと、想定と違う並びで表示される | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「並び順の方針」 |
 | 特別情報バナー 5 枚の並び順（同じ事象を隣り合わせる）・消え方（7 日失効・電文 id の正規化）を崩すと、閉じた帯が復活する、または並びが分かりづらくなる | [`architecture-spec.md`](docs/spec/architecture-spec.md) §4 |
 | 自動復帰までの時間（`idleRevertSec`）を計り直す契機のうち自動タブ切替・電文受信の両方を崩す（＝ユーザー操作の起点だけで測る形に変える）と、据え置きの端末で津波警報が一瞬映って消える | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 自動復帰までの時間を計り直す契機のうちユーザー操作を崩すと、操作中でも既定タブへ戻ってしまう | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |

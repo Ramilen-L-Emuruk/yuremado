@@ -46,7 +46,7 @@ function cancelOf(t: JMATsunami, cancelReason: JMATsunami['cancelReason']): JMAT
 
 function setup() {
   const settings = { ...DEFAULTS,
-    voicevoxEnabled: false, soundEnabled: false, notifyMinScale: -1,
+    voicevoxEnabled: false, soundEnabled: false, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
   } as unknown as AppSettings
   // タイトルの関数だけを見張る（他のメソッドは何を呼ばれても無害に受ける）

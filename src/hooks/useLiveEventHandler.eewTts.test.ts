@@ -238,7 +238,7 @@ function setup(
     voicevoxSpeakerId: 1,
     soundEnabled: false,
     soundVolume: 1,
-    notifyMinScale: -1,
+    notifyQuake: false,
     notifyEEW: false,
     ...over,
   } as unknown as AppSettings

@@ -126,6 +126,7 @@ import { isDmdss } from './utils/env'
 import { isLiveFeedHalted } from './utils/connectionStatus'
 import { ROOT_FRAME_CLASS } from './rootFrame'
 import { SHARE_CARD_FORMATS } from './utils/shareCard'
+import { effectiveNotifyMinScale } from './utils/notificationGate'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
@@ -1003,6 +1004,11 @@ export function App() {
     tsunamiInfoRetraction: isDmdss ? simulateTsunamiInfoRetraction : undefined,
     estimatedIntensity: simulateEstimatedIntensity,
     notification:      () => {
+      // まとめて止めている間はテストも出さない（設定タブでは行ごと隠れるが、呼び出し口でも止める）
+      if (!settings.notifyEnabled) {
+        log.info('[notify] ブラウザ通知をまとめて止めているので、テスト通知を出さない')
+        return
+      }
       if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
         alert('先に「通知を許可する」を押してください。')
         return
@@ -1018,6 +1024,7 @@ export function App() {
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
+    settings.notifyEnabled,
   ])
   // IconNav の onTabChange。手動選択は必ず即時反映し、以後 TAB_HOLD_MS の間は自動切替に
   // 奪わせない（EEW の新規発報・レベルアップ・誤報取消だけはこれより強い）。
@@ -1300,8 +1307,9 @@ export function App() {
   const notifiedQuakesRef = useRef(new Map<string, QuakeNotifiedState>())
   // 地震ごとの通知の列（同じ地震の通知を、前が済んでから出す。→ `scheduleQuakeNotification`）
   const quakeNotifyChainsRef = useRef(new Map<string, Promise<void>>())
-  const notifyMinScaleRef = useRef(settings.notifyMinScale)
-  notifyMinScaleRef.current = settings.notifyMinScale
+  // 通知しないとき（まとめて止めている・地震情報の通知を切っている）は -1（`effectiveNotifyMinScale`）
+  const notifyMinScaleRef = useRef(effectiveNotifyMinScale(settings))
+  notifyMinScaleRef.current = effectiveNotifyMinScale(settings)
   useEffect(() => {
     const pending = pendingQuakeNotifyRef.current
     if (pending.length === 0) return
@@ -2250,7 +2258,8 @@ export function App() {
     kyoshinSites: kyoshinSitesGated,
   })
   const actionChecklist = useActionChecklist({
-    minScale: settings.actionChecklistMinScale,
+    // 切ってあるときは -1（`useActionChecklist` の取り決め）。最低震度そのものは切っても残す
+    minScale: settings.actionChecklistEnabled ? settings.actionChecklistMinScale : -1,
     scope: nearbyScope,
     // 検知エンジンが確定した揺れのメンバー観測点を渡す（音・地図の検知点と同じ集合）。
     // 生の観測値を渡すと 1 点の跳ね上がりがそのまま表示される震度になる（理由は

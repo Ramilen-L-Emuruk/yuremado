@@ -124,7 +124,7 @@ function setup(overSettings: Partial<AppSettings> = {}) {
   const settings: AppSettings = {
     ...DEFAULTS,
     voicevoxEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
-    soundEnabled: false, notifyMinScale: -1,
+    soundEnabled: false, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     minDisplayScale: -1,
     ttsReadTelegramText: true,

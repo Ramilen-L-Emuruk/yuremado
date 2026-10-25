@@ -5309,7 +5309,7 @@ A の未入電を読みながら B の一覧を開く。
   - `settings.notifyTsunami` — 津波のブラウザ通知 ON/OFF。対象は津波予報以上の発表・続報と、全区域解除の報（→ §7「津波の通知」）
   - `settings.notifyDetection` — 強震モニタ揺れ検知時のブラウザ通知 ON/OFF
   - `settings.notifyNankai` — 臨時情報・後発地震注意情報・臨時の解説情報のブラウザ通知 ON/OFF（DMDSS 版。既定オン）
-- `settings.notifyMinScale` — 地震情報の通知のオンオフ（0 以上でオン）と最低震度。長周期地震動・推計震度分布図・地震回数に関する情報の通知もこのオンオフに従う
+- `settings.notifyQuake` と `settings.notifyMinScale` — 地震情報の通知のオンオフと最低震度。長周期地震動・推計震度分布図・地震回数に関する情報の通知もこのオンオフに従う。どの通知も、まとめて止める `settings.notifyEnabled` がオフなら出さない（判定は `utils/notificationGate.ts`）
 - **読み上げの詳しさは 5 項目**（既定はすべて「この設定を入れる前の挙動」。§4「読み上げの詳しさ」と
   上記「気象庁が書いた文は最下位の層で読む」）:
   - `settings.ttsReadHypocenterDetail` — 震源の深さ・規模を読む
@@ -6722,3 +6722,4 @@ return
   覚える形にした。通知を押したらアプリを前に出す処理を足した（2026-10-25 ユーザー選択「足す (Recommended)」）。ページを閉じた後も通知が
   残ることは許容した（同日「残ってよい (Recommended)」）。「`Notification` API のラッパー」「初回発火時に権限リクエスト」の記述は
   実装と食い違っていたので直した
+- 2026-10-25: §7 の通知の設定に、まとめて止める `notifyEnabled` と地震情報の通知の入り切り `notifyQuake` を足した（2026-10-25 ユーザー承認。設定の画面は [`settings-pwa-spec.md`](settings-pwa-spec.md) §2）

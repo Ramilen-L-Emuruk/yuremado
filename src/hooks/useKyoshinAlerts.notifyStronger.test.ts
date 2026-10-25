@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import { useKyoshinAlerts, type KyoshinAlertsDeps } from './useKyoshinAlerts'
 import { showBrowserNotification } from '../utils/notifications'
-import type { AppSettings } from './useSettings'
+import { DEFAULTS, type AppSettings } from './useSettings'
 import type { AlertTitleApi } from './useAlertTitle'
 import type { EEWAlert } from '../types/earthquake'
 import type { TabId } from '../components/IconNav'
@@ -33,7 +33,7 @@ function makeDeps(over: Partial<KyoshinAlertsDeps> = {}, settings: Partial<AppSe
     dataTime: '',
     stalled: false,
     // 地震情報の通知は切ってある（-1）。揺れ検知の通知はそれに従わない
-    settings: { soundEnabled: false, notifyMinScale: -1, notifyDetection: true, ...settings } as unknown as AppSettings,
+    settings: { ...DEFAULTS, soundEnabled: false, notifyDetection: true, ...settings },
     title: { setTitle: vi.fn(), setOngoingTitle: vi.fn(), applyPriority: vi.fn() } as unknown as AlertTitleApi,
     activeEEWsRef: { current: new Map<string, EEWAlert>() },
     defaultTabRef: { current: 'earthquake' as TabId },

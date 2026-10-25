@@ -87,7 +87,7 @@ function makeTsunami(over: {
 function setup(displayed: JMATsunami[] = [], over: Partial<AppSettings> = {}) {
   const settings = { ...DEFAULTS,
     voicevoxEnabled: true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
-    soundEnabled: false, soundVolume: 1, notifyMinScale: -1,
+    soundEnabled: false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: [], ttsMaxRegions: 0, ttsAlwaysReadScale: 0, ttsRegionTolerance: 0,
     minDisplayScale: -1,

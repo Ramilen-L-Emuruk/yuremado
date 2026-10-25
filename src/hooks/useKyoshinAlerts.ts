@@ -13,6 +13,7 @@ import { reachRadiusKm } from '../utils/travelTime'
 import { eewFeltRadiusKm, isProvisionalHypocenter } from '../utils/eew'
 import type { ConfirmedShock } from '../utils/kyoshinDetectionView'
 import { PARAMS } from '../utils/kyoshinDetector'
+import { notificationAllowed } from '../utils/notificationGate'
 
 // 強震モニタの揺れ検知（V3 エンジン）に応じたタブ切替・ウィンドウタイトル・通知音・ブラウザ通知を担うフック。
 //
@@ -696,7 +697,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
         if (settings.soundEnabled) {
           playAlertSound('kyoshin')
         }
-        if (settings.notifyDetection) {
+        if (notificationAllowed(settings, 'detection')) {
           const label = kyoshinIndexToLabel(effectiveKyoshinMaxIndex) ?? '?'
           showBrowserNotification('揺れを検知中', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection')
           notifiedLevelRef.current = kyoshinLevel(effectiveKyoshinMaxIndex)
@@ -765,7 +766,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
    * 新しい値になる。**揺れの可能性（likely）では出さない**（likely での通知は今のまま行わない。同じ選択）。
    */
   const renotifyStronger = (confirmedNow: boolean) => {
-    if (!confirmedNow || !settings.notifyDetection) return
+    if (!confirmedNow || !notificationAllowed(settings, 'detection')) return
     // 通知を出していない揺れ（この揺れで出していない・前の段と同じ）には出さない（→ `notifiedLevelRef`）
     const level = kyoshinLevel(effectiveKyoshinMaxIndex)
     if (notifiedLevelRef.current < 0 || level <= notifiedLevelRef.current) return
@@ -843,7 +844,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     // （現状の実装には無い）。寄らずに黙って終わるより、旧来どおり重心へ落とす方が害が小さい。
     requestShakeFocus(alert.peak ?? { lat: alert.lat, lng: alert.lng })
     if (settings.soundEnabled) playAlertSound('kyoshin')
-    if (settings.notifyDetection) {
+    if (notificationAllowed(settings, 'detection')) {
       // 全体の最大震度ではなく、発報した地域自身の推定震度を出す（「別の地点」の報せなので）
       const label = kyoshinIndexToLabel(alert.index) ?? '?'
       showBrowserNotification('別の地点で揺れを検知', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection-new')

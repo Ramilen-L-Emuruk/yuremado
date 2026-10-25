@@ -164,7 +164,7 @@ export function foreignQuakeNotificationBody(quake: JMAQuake): string {
 /**
  * その地震について通知を出すかを決める。
  *
- * - 通知を切っている（`notifyMinScale` が負）なら出さない
+ * - 渡された閾値が負なら出さない（通知しないとき `effectiveNotifyMinScale` が -1 を返す）
  * - 遠地地震（国内の震度を持たない）は閾値に関係なく、地震ごとに 1 回だけ出す
  * - それ以外は最大震度が閾値（`notifyMinScale`）以上のときだけ見る
  * - 前回通知した地震と同じ鍵なら、次のどちらかのときだけもう 1 度出す
