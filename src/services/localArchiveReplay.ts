@@ -119,7 +119,7 @@ export function listHistoricalArchives(): Promise<HistoricalArchiveIndex> {
  * **この前提は、実際に電文を集めた範囲（`coveredRanges`）の中でだけ成り立つ。**
  * 2018年北海道胆振東部地震（`build-historical-archive-2018-iburi.ts`）のように、警報級の
  * 余震が数ヶ月おきに散発する地震活動では、from/toは最初と最後のイベントを広く跨ぐ一方、
- * 実際に電文一覧を取得しているのは`DATES`に列挙した数日だけで、間の期間（例えば余震と
+ * 実際に電文一覧を取得しているのは取得日（`scripts/historicalArchiveTargets.ts` の `dates`）に列挙した数日だけで、間の期間（例えば余震と
  * 余震の間の1ヶ月）は「取得していない」だけであり「確認して何も無かった」わけではない。
  * 問い合わせが集めた範囲に 1 秒も掛からないときは、呼び出し側が `findUncollectedArchiveSync`
  * で見分けて止める（空の成功にしない）。詳細は`docs/spec/settings-pwa-spec.md`の胆振東部アーカイブの節を参照。

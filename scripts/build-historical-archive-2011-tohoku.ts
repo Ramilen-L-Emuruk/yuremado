@@ -104,7 +104,9 @@ async function buildEewSection(): Promise<HistoricalArchiveEntry[]> {
     const url = `${EEW_BASE}/${dir}/content/content_out.html`
     const html = await fetchText(url)
     const parsed = parseEewContentHtml(html)
-    const entries = buildEewEntries(parsed, { idPrefix })
+    // 警報の発表状況（pub_hist）は発生時刻を秒まで書くので、ページの値をそのまま使う
+    if (!parsed.hypocenter.originTimeHasSeconds) throw new Error(`${idPrefix}: 発生時刻が秒まで書かれていません（${url}）`)
+    const entries = buildEewEntries(parsed, { idPrefix, eventId: dir, originTimeIso: parsed.hypocenter.originTimeIso })
     if (entries.length === 0) throw new Error(`${idPrefix}: 報が1件も生成されませんでした（${url}）`)
     all.push(...entries)
     console.log(`  ${idPrefix}: ${entries.length}報 (${parsed.hypocenter.name} M${parsed.hypocenter.magnitude})`)

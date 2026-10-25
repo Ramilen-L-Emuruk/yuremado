@@ -1,26 +1,42 @@
-// NIIアーカイブ（気象庁防災情報XMLデータベース）+ 気象庁発表状況ページ（pub_hist）から
+// NIIアーカイブ（気象庁防災情報XMLデータベース）+ 気象庁の緊急地震速報の発表状況ページから
 // 特定の地震活動のローカル履歴アーカイブを組み立てる共通処理。
 // 2016年熊本地震向けに書いた build-historical-archive-2016-kumamoto.ts のロジックのうち、
-// 地震活動ごとに変わらない部分（NII時刻のパース・種別ラベルの解釈・取消電文の扱い・
-// 集計の整合性チェック）を切り出したもの。地震活動ごとに変わる部分（EEW一覧・震央地名・
-// 収録期間）は呼び出し側が渡す。
+// 地震活動ごとに変わらない部分（NII時刻のパース・種別ラベルの解釈・EEW の出どころの選び方・
+// 集計の整合性チェック）を切り出したもの。地震活動ごとに変わる部分（EEW一覧・収録期間）は
+// historicalArchiveTargets.ts が持つ。
+//
+// EEW の出どころは 2 つある（優先順）。
+//
+// 1. 予報の発表状況（fc_hist）の Wayback Machine の控え。予報・警報とも全報が載り、予報だけで
+//    終わった地震も載る（2026-10-23 ユーザー承認。選んだ選択肢は「Wayback から作り直す (Recommended)」）。
+//    控えが残っているのは 2016 年の一部の日だけ（waybackFcHist.ts）
+// 2. 警報の発表状況（pub_hist）。警報が出た地震の全報だけ。fc_hist から報を作れなかった地震に使う
+//
+// **生成は控えだけを読み、配信元へは取りに行かない。** 控えは取得スクリプト（fetch-wayback-fc-hist.ts・
+// fetch-pub-hist.ts）が作る。
 //
 // dmdataParser.ts の parseEarthquakeFromXml/parseTsunamiFromXml はこのモジュールでは
 // importしない。呼び出し側で jsdom の DOMParser ポリフィルを入れてから動的importした
 // 関数を引数で渡すこと（このモジュールを静的importする時点でdmdataParser.tsが先に
 // 読み込まれてしまうと、ポリフィル未設定のまま失敗する）。
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { fetchDayListing, fetchRawXml, fetchText, flushSuppressedCacheWarnings } from './niiJmaXmlArchive'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { fetchDayListing, fetchRawXml, flushSuppressedCacheWarnings } from './niiJmaXmlArchive'
 import { buildEewEntries } from './historicalEewArchiveBuilder'
 import { parseEewContentHtml } from './historicalEewParser'
+import { eventIdTime, loadFcHistPages, mainCheckoutCacheDir, pageMatchesEventId } from './waybackFcHist'
+import { loadCatalogYear, matchCatalogOrigin, type CatalogYear } from './catalogOriginTime'
+import type { EewGapKind, KnownGap } from './historicalArchiveTargets'
 import type { HistoricalArchiveEntry, HistoricalArchiveFile } from '../src/types/historicalArchive'
-import type { AppEvent, JMAQuake, JMATsunami } from '../src/types/earthquake'
+import type { AppEvent, EEWAlert, JMAQuake, JMATsunami } from '../src/types/earthquake'
 
 export interface EewEventSpec {
-  /** entry.id / issue.eventId の元になる接頭辞（例: "2018osaka-mainshock"） */
+  /** entry.id の元になる接頭辞（例: "2018osaka-mainshock"） */
   idPrefix: string
-  /** pub_hist の発表状況ディレクトリ名（例: "20180618075838"） */
+  /**
+   * pub_hist の発表状況ディレクトリ名（例: "20180618075838"・"2018/09/20180906030805"）。
+   * 末尾の 14 桁が気象庁の EventID。
+   */
   dir: string
 }
 
@@ -28,20 +44,297 @@ async function sleep(ms: number) {
   await new Promise((r) => setTimeout(r, ms))
 }
 
-/** 気象庁発表状況ページ（pub_hist）から警報級EEWの全報を取得する。 */
-export async function buildEewSection(eewBase: string, events: EewEventSpec[]): Promise<HistoricalArchiveEntry[]> {
-  const all: HistoricalArchiveEntry[] = []
-  for (const { idPrefix, dir } of events) {
-    const url = `${eewBase}/${dir}/content/content_out.html`
-    const html = await fetchText(url)
-    if (!html || html.includes('404')) throw new Error(`${idPrefix}: EEWページを取得できません（${url}）`)
-    const parsed = parseEewContentHtml(html)
-    const entries = buildEewEntries(parsed, { idPrefix })
-    if (entries.length === 0) throw new Error(`${idPrefix}: 報が1件も生成されませんでした（${url}）`)
-    all.push(...entries)
-    console.log(`  ${idPrefix}: ${entries.length}報 (${parsed.hypocenter.name} M${parsed.hypocenter.magnitude})`)
+/** pub_hist のディレクトリ名から EventID（末尾の 14 桁）を取り出す。 */
+export function eventIdOfPubHistDir(dir: string): string {
+  const m = dir.match(/(?:^|\/)(\d{14})$/)
+  if (!m) throw new Error(`pub_hist のディレクトリ名から EventID を取り出せません: "${dir}"`)
+  return m[1]
+}
+
+/** pub_hist の個別ページの URL。 */
+export function pubHistUrl(base: string, dir: string): string {
+  return `${base}/${dir}/content/content_out.html`
+}
+
+/**
+ * pub_hist のページの控え。**一度取ったページは二度取らない**（過去の発表状況は書き換わらない）。
+ * 置き場所はメインの checkout の `.claude/jma-pub-hist-cache/`（ワークツリーごとに取り直さない）。
+ */
+export function pubHistCachePath(dir: string): string {
+  return join(mainCheckoutCacheDir('jma-pub-hist-cache'), `${dir.replace(/[^0-9A-Za-z]/g, '_')}.html`)
+}
+
+export function looksLikeEewPage(html: string): boolean {
+  return html.includes('id="hypocentral_element_list"') && html.includes('id="information_list"')
+}
+
+export async function readPubHistCache(dir: string): Promise<string | null> {
+  let text: string
+  try {
+    text = await readFile(pubHistCachePath(dir), 'utf-8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+    throw err
   }
-  return all
+  if (!looksLikeEewPage(text)) throw new Error(`pub_hist の控えが個別ページの形をしていません（${pubHistCachePath(dir)}）`)
+  // 控える前と同じ検査を、読むときにも通す
+  if (!pageMatchesEventId(text, eventIdOfPubHistDir(dir))) {
+    throw new Error(`pub_hist の控えの地震発生時刻が EventID と合いません（${pubHistCachePath(dir)}）`)
+  }
+  return text
+}
+
+/**
+ * pub_hist のページを控える。**失敗したら投げる** —— 控えを残せないと、生成が控えを見つけられずに止まる。
+ * 取得スクリプトがそれを「取れた」と数えると、取り直しが要ることに気づけない。
+ */
+export async function savePubHistCache(dir: string, html: string): Promise<void> {
+  const dest = pubHistCachePath(dir)
+  const tmp = `${dest}.${process.pid}.tmp`
+  try {
+    await mkdir(dirname(dest), { recursive: true })
+    await writeFile(tmp, html, 'utf-8')
+    await rename(tmp, dest)
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined)
+    throw new Error(`pub_hist の控えを残せませんでした（${dir}）: ${(err as Error).message}`, { cause: err })
+  }
+}
+
+export interface EewSectionOptions {
+  /** fc_hist だけにある地震の entry.id の接頭辞（例: "2016kumamoto"）。後ろに EventID が付く */
+  idBase: string
+  /** pub_hist の個別ページの親 URL */
+  pubHistBase: string
+  /** 気象庁の発表状況ページで確認済みの、警報が出た地震 */
+  pubHistEvents: EewEventSpec[]
+  /** fc_hist の目録を引く日（`YYYYMMDD`） */
+  dates: string[]
+  windowStart: Date
+  windowEnd: Date
+  /** リポジトリのトップ（震源カタログ public/data/hypocenter/ を読む） */
+  repoRoot: string
+}
+
+/**
+ * 発生時刻の決まり方。fc_hist は分までなので、震源カタログで秒を補う。補えなければ EventID の時刻
+ * （地震波を検知した時刻。たいてい発生時刻の数秒後）で代える —— 分で切り捨てた時刻より近い。
+ */
+type OriginSource = 'page' | 'catalog' | 'event-id'
+
+/** 生成で見つかった欠け。既知の一覧（`KnownGap`）と突き合わせる。 */
+export interface EewGap {
+  kind: EewGapKind
+  eventId?: string
+  date: string
+}
+
+export interface EewSectionPlan {
+  /** fc_hist から報を作れた地震（EventID と組み立てた報） */
+  fcHistBuilt: { eventId: string; entries: HistoricalArchiveEntry[]; originSource: OriginSource }[]
+  /** pub_hist から作る地震（fc_hist から報を作れなかったもの） */
+  pubHistEvents: EewEventSpec[]
+  /** そのうち pub_hist の控えが無いページの URL（生成の前に fetch-pub-hist.ts で取る） */
+  pubHistToFetch: string[]
+  /** fc_hist から報を作れず、pub_hist で補う地震の EventID（fc_hist のページは読めた・読めなかったを問わない） */
+  supplementedByPubHist: string[]
+  /** 欠け（pub_hist でも補えなかったもの） */
+  gaps: EewGap[]
+  /** 震源カタログで発生時刻を補えず、EventID の時刻で代えた地震の EventID */
+  eventIdTimeOrigins: string[]
+  /** 震源カタログの照合で候補が 2 つ以上あった地震（EventID の時刻にいちばん近いものを採った） */
+  ambiguousOrigins: { eventId: string; candidates: number }[]
+}
+
+/**
+ * どの地震をどの出どころで作るかを決め、fc_hist の報を組み立てる。**通信はしない**（控えを読むだけ）。
+ *
+ * **pub_hist の補いから外すのは「fc_hist から報を作れた地震」だけ。** ページが読めても予報が 1 報も
+ * 組めなかった地震（予測震度が全報「---」・通常の報が無い）は、警報が出た地震なら pub_hist で補う。
+ */
+export async function planEewSection(opts: EewSectionOptions): Promise<EewSectionPlan> {
+  const fc = await loadFcHistPages(opts.dates, opts.windowStart, opts.windowEnd)
+  const idPrefixByEventId = new Map(opts.pubHistEvents.map((e) => [eventIdOfPubHistDir(e.dir), e.idPrefix]))
+  const catalogs = new Map<number, CatalogYear>()
+  const catalogOf = async (year: number) => {
+    let c = catalogs.get(year)
+    if (!c) {
+      c = await loadCatalogYear(opts.repoRoot, year)
+      catalogs.set(year, c)
+    }
+    return c
+  }
+
+  const fcHistBuilt: EewSectionPlan['fcHistBuilt'] = []
+  const notBuilt: { eventId: string; kind: EewGapKind }[] = []
+  const eventIdTimeOrigins: string[] = []
+  const ambiguousOrigins: EewSectionPlan['ambiguousOrigins'] = []
+
+  for (const { capture, html } of fc.pages) {
+    const eventId = capture.eventId
+    const parsed = parseEewContentHtml(html)
+    // 検知の行と取消の行しか無いページ（通常の報が 0 件）は入れずに記録する
+    if (!parsed.reports.some((r) => r.reportNum > 0 && !r.isCancellation)) {
+      notBuilt.push({ eventId, kind: 'no-normal-report' })
+      continue
+    }
+    const idPrefix = idPrefixByEventId.get(eventId) ?? `${opts.idBase}-${eventId}`
+    let originTimeIso = parsed.hypocenter.originTimeIso
+    let originSource: OriginSource = 'page'
+    if (!parsed.hypocenter.originTimeHasSeconds) {
+      const match = matchCatalogOrigin(
+        {
+          eventIdIso: eventIdTime(eventId).toISOString(),
+          minuteIso: parsed.hypocenter.originTimeIso,
+          latitude: parsed.hypocenter.latitude,
+          longitude: parsed.hypocenter.longitude,
+          magnitude: parsed.hypocenter.magnitude,
+        },
+        await catalogOf(Number(eventId.slice(0, 4))),
+      )
+      if (match.kind === 'matched') {
+        originTimeIso = match.originTimeIso
+        originSource = 'catalog'
+        if (match.candidates > 1) ambiguousOrigins.push({ eventId, candidates: match.candidates })
+      } else {
+        originSource = 'event-id'
+        originTimeIso = eventIdTime(eventId).toISOString()
+        eventIdTimeOrigins.push(eventId)
+      }
+    }
+    const entries = buildEewEntries(parsed, { idPrefix, eventId, originTimeIso })
+    // 予想の無い報は入れない決まり（`buildEewEntries`）なので、予測震度の欄が全報「---」の地震
+    // （深発地震で確認済み）は取消の報しか残らないか、1 報も残らない。地震ごと入れずに記録する
+    if (!entries.some((e) => !(e.payload as { event: EEWAlert }).event.cancelled)) {
+      notBuilt.push({ eventId, kind: 'no-forecast' })
+      continue
+    }
+    fcHistBuilt.push({ eventId, entries, originSource })
+  }
+
+  const builtIds = new Set(fcHistBuilt.map((b) => b.eventId))
+  const pubHistEvents = opts.pubHistEvents.filter((e) => !builtIds.has(eventIdOfPubHistDir(e.dir)))
+  const pubHistIds = new Set(pubHistEvents.map((e) => eventIdOfPubHistDir(e.dir)))
+  const pubHistToFetch: string[] = []
+  for (const e of pubHistEvents) {
+    if ((await readPubHistCache(e.dir)) === null) pubHistToFetch.push(pubHistUrl(opts.pubHistBase, e.dir))
+  }
+
+  const candidatesForPubHist = [
+    ...notBuilt.map((n) => n.eventId),
+    ...fc.unavailable.map((f) => f.eventId),
+  ]
+  const supplementedByPubHist = candidatesForPubHist.filter((id) => pubHistIds.has(id))
+  const gaps: EewGap[] = [
+    ...fc.datesWithoutCdx.map((date): EewGap => ({ kind: 'no-cdx-date', date })),
+    ...fc.unavailable
+      .filter((f) => !pubHistIds.has(f.eventId))
+      .map((f): EewGap => ({ kind: 'fc-hist-unavailable', eventId: f.eventId, date: f.eventId.slice(0, 8) })),
+    ...notBuilt
+      .filter((n) => !pubHistIds.has(n.eventId))
+      .map((n): EewGap => ({ kind: n.kind, eventId: n.eventId, date: n.eventId.slice(0, 8) })),
+  ]
+
+  return { fcHistBuilt, pubHistEvents, pubHistToFetch, supplementedByPubHist, gaps, eventIdTimeOrigins, ambiguousOrigins }
+}
+
+function gapKey(g: { kind: EewGapKind; eventId?: string; date: string }): string {
+  return `${g.kind}:${g.eventId ?? g.date}`
+}
+
+/**
+ * 生成で見つかった欠けを既知の一覧と突き合わせる。**一覧に無い欠けも、一覧にあるのに出なかった欠けも止める**
+ * （2026-10-25 ユーザー選択「一覧＋5 件を取り直す」）。後者は、取り直して埋まった欠けを一覧に残したままに
+ * しないため —— 残すと、仕様書の「収録の限界」が実態より多い欠けを書き続ける。
+ */
+export function checkKnownGaps(found: EewGap[], known: KnownGap[]): void {
+  const knownKeys = new Set(known.map(gapKey))
+  const foundKeys = new Set(found.map(gapKey))
+  const unexpected = found.filter((g) => !knownKeys.has(gapKey(g))).map(gapKey)
+  const stale = known.filter((g) => !foundKeys.has(gapKey(g))).map(gapKey)
+  if (unexpected.length > 0 || stale.length > 0) {
+    throw new Error(
+      `EEW の欠けが既知の一覧（historicalArchiveTargets.ts の knownGaps）と合いません。` +
+        `一覧に無い欠け: ${unexpected.length > 0 ? unexpected.join(', ') : 'なし'}／` +
+        `一覧にあるのに出なかった欠け: ${stale.length > 0 ? stale.join(', ') : 'なし'}`,
+    )
+  }
+}
+
+export interface EewSectionResult {
+  entries: HistoricalArchiveEntry[]
+  /** fc_hist から作った地震の EventID */
+  fcHistEventIds: string[]
+  /** pub_hist から作った地震の EventID */
+  pubHistEventIds: string[]
+  /** fc_hist から報を作れず、pub_hist で補った地震の EventID */
+  supplementedByPubHist: string[]
+  gaps: EewGap[]
+  eventIdTimeOrigins: string[]
+  ambiguousOrigins: { eventId: string; candidates: number }[]
+}
+
+/**
+ * EEW の全報を組み立てる。fc_hist から報を作れた地震は fc_hist から（予報も含む全報）、作れなかった
+ * 地震は pub_hist から（警報が出た地震の全報）作る。**控えだけを読む**（pub_hist の控えが無ければ止まる）。
+ * 欠けが既知の一覧と合わなければ止まる（`checkKnownGaps`）。
+ */
+export async function buildEewSection(opts: EewSectionOptions & { knownGaps: KnownGap[] }): Promise<EewSectionResult> {
+  const plan = await planEewSection(opts)
+  if (plan.pubHistToFetch.length > 0) {
+    throw new Error(
+      `pub_hist の控えが ${plan.pubHistToFetch.length} 件ありません。生成は配信元へ取りに行かないので、` +
+        `先に npx tsx scripts/fetch-pub-hist.ts を走らせてください: ${plan.pubHistToFetch.join(', ')}`,
+    )
+  }
+
+  const entries: HistoricalArchiveEntry[] = []
+  const originCounts: Record<OriginSource, number> = { page: 0, catalog: 0, 'event-id': 0 }
+  for (const built of plan.fcHistBuilt) {
+    originCounts[built.originSource]++
+    entries.push(...built.entries)
+  }
+  for (const { idPrefix, dir } of plan.pubHistEvents) {
+    const html = await readPubHistCache(dir)
+    if (html === null) throw new Error(`${idPrefix}: pub_hist の控えがありません（${dir}）`)
+    const parsed = parseEewContentHtml(html)
+    if (!parsed.hypocenter.originTimeHasSeconds) throw new Error(`${idPrefix}: pub_hist の発生時刻が秒まで書かれていません（${dir}）`)
+    const built = buildEewEntries(parsed, { idPrefix, eventId: eventIdOfPubHistDir(dir), originTimeIso: parsed.hypocenter.originTimeIso })
+    if (built.length === 0) throw new Error(`${idPrefix}: 報が1件も生成されませんでした（pub_hist ${dir}）`)
+    originCounts.page++
+    entries.push(...built)
+  }
+
+  const fcHistEventIds = plan.fcHistBuilt.map((b) => b.eventId)
+  const pubHistEventIds = plan.pubHistEvents.map((e) => eventIdOfPubHistDir(e.dir))
+  console.log(
+    `  EEW: ${entries.length}報（fc_hist ${fcHistEventIds.length}地震・pub_hist ${pubHistEventIds.length}地震。` +
+      `発生時刻はページ${originCounts.page}・震源カタログ${originCounts.catalog}・EventID の時刻${originCounts['event-id']}）`,
+  )
+  console.log(
+    `  fc_hist から報を作れず pub_hist で補った地震: ${plan.supplementedByPubHist.length > 0 ? plan.supplementedByPubHist.join(', ') : 'なし'}`,
+  )
+  if (plan.eventIdTimeOrigins.length > 0) {
+    console.log(`  震源カタログで発生時刻を補えず EventID の時刻で代えた地震: ${plan.eventIdTimeOrigins.join(', ')}`)
+  }
+  if (plan.ambiguousOrigins.length > 0) {
+    console.log(
+      `  震源カタログの照合で候補が複数あった地震（EventID の時刻にいちばん近いものを採った）: ` +
+        plan.ambiguousOrigins.map((a) => `${a.eventId}（${a.candidates}件）`).join(', '),
+    )
+  }
+  if (plan.gaps.length > 0) console.log(`  欠け: ${plan.gaps.map(gapKey).join(', ')}`)
+  checkKnownGaps(plan.gaps, opts.knownGaps)
+
+  return {
+    entries,
+    fcHistEventIds,
+    pubHistEventIds,
+    supplementedByPubHist: plan.supplementedByPubHist,
+    gaps: plan.gaps,
+    eventIdTimeOrigins: plan.eventIdTimeOrigins,
+    ambiguousOrigins: plan.ambiguousOrigins,
+  }
 }
 
 // 地震情報・津波として取り込む対象の電文の見分け方。
@@ -86,37 +379,6 @@ export function resolveTsunamiHeadType(typeLabel: string): string {
 }
 
 /**
- * 震央地名（完全一致）または観測地域名（前方一致）でこの地震活動に関連するかを判定する。
- * 震度速報（VXSE51）は震源が未確定の段階で発表されるため震央地名を持たず
- * （parseEarthquakeFromXmlの仕様どおり、hypocenter.nameは常に空文字になる）、
- * 観測震度の対象地域名で代わりに判定する。地域名は前方一致で意図的に粗くしている
- * （一次細分区域名を返すため、県名・地方名レベルでしか震央と対応が取れない）。
- * この粒度の非対称は時刻ウィンドウとの併用で補う設計。
- */
-export function isRelated(
-  quake: { earthquake: { hypocenter: { name: string } }; points: { addr: string }[] },
-  hypocenterNames: Set<string>,
-  areaPrefixes: string[],
-): boolean {
-  if (quake.earthquake.hypocenter.name) return hypocenterNames.has(quake.earthquake.hypocenter.name)
-  return quake.points.some((p) => areaPrefixes.some((prefix) => p.addr.startsWith(prefix)))
-}
-
-/**
- * 取消電文（InfoType==='取消'）は parseEarthquakeFromXml が points・hypocenter.name を
- * 両方とも空にして返す仕様のため、isRelated() のどちらの経路にも一致しない
- * （必ず false になる）。震央地名・観測地域名のどちらでも判定できない構造上の穴であり、
- * 誤って「無関係」に丸め込まず専用の判定・専用カウンタで扱う。
- */
-export function isUnverifiableCancellation(quake: {
-  cancelled?: boolean
-  earthquake: { hypocenter: { name: string } }
-  points: { addr: string }[]
-}): boolean {
-  return quake.cancelled === true && !quake.earthquake.hypocenter.name && quake.points.length === 0
-}
-
-/**
  * NIIサイトの一覧表示時刻（例: "2016-04-14 21:28:06+09"）はISO 8601ではない
  * （タイムゾーンオフセットが分無しの2桁）。`new Date()` にそのまま渡すと Invalid Date に
  * なり、Invalid Date 同士の比較は常に false を返すため、時刻ウィンドウによる絞り込みが
@@ -138,8 +400,6 @@ export interface QuakeTsunamiOptions {
   dates: string[]
   windowStart: Date
   windowEnd: Date
-  hypocenterNames: Set<string>
-  areaPrefixes: string[]
   /** jsdomポリフィル設定後に動的importした dmdataParser.ts の関数をそのまま渡す。 */
   parseEarthquakeFromXml: (headType: string, xml: string) => JMAQuake | null
   parseTsunamiFromXml: (headType: string, xml: string) => JMATsunami | null
@@ -161,15 +421,18 @@ export async function buildQuakeAndTsunamiSection(opts: QuakeTsunamiOptions): Pr
 }
 
 async function collectQuakeAndTsunamiEntries(opts: QuakeTsunamiOptions): Promise<HistoricalArchiveEntry[]> {
-  const { dates, windowStart, windowEnd, hypocenterNames, areaPrefixes, parseEarthquakeFromXml, parseTsunamiFromXml } = opts
+  const { dates, windowStart, windowEnd, parseEarthquakeFromXml, parseTsunamiFromXml } = opts
   const entries: HistoricalArchiveEntry[] = []
   let totalCandidates = 0
   let fetched = 0
   let kept = 0
+  /** 採用したうちの取消電文（内訳。`kept` に含む） */
+  let keptCancelled = 0
   let skippedOutOfWindow = 0
-  let skippedUnrelated = 0
-  let skippedParseFailed = 0
-  let skippedCancelledUnverifiable = 0
+  /** 収録範囲の終わりちょうどの電文（半開区間なので外す）。範囲の外とは別に数える */
+  let skippedAtWindowEnd = 0
+  /** 読めなかった電文（件数だけでなく、どの電文かを出す） */
+  const parseFailures: { id: string; typeLabel: string }[] = []
 
   for (const date of dates) {
     console.log(`  ${date} の電文一覧を取得中...`)
@@ -185,8 +448,18 @@ async function collectQuakeAndTsunamiEntries(opts: QuakeTsunamiOptions): Promise
     console.log(`    候補 ${candidates.length}件`)
     totalCandidates += candidates.length
 
+    // **収録範囲に入る電文は、どの地震のものでも全部入れる**（2026-10-23 ユーザー承認。選んだ選択肢は
+    // 「窓の全地震を入れる (Recommended)」）。ライブで同じ時間を見ていれば届いていた電文なので、
+    // 震央地名で絞ると、その地震活動の最中に起きた別の地震だけが再生から消える。
+    // 取消電文も同じ扱いにする（2026-10-23 ユーザー承認。選んだ選択肢は「取消も収録する (Recommended)」）。
+    // 取消はアプリ側がライブ・履歴とも `applyQuakeCancelToCard` で取り下げる。
     for (const item of candidates) {
       const itemTime = parseNiiTime(item.time)
+      // 収録範囲は半開区間（終わりは含まない）。EEW の範囲の判定（`isInWindow`）と `coveredRanges` にそろえる
+      if (itemTime.getTime() === windowEnd.getTime()) {
+        skippedAtWindowEnd++
+        continue
+      }
       if (itemTime < windowStart || itemTime > windowEnd) {
         skippedOutOfWindow++
         continue
@@ -199,18 +472,7 @@ async function collectQuakeAndTsunamiEntries(opts: QuakeTsunamiOptions): Promise
       if (item.typeLabel.includes(TSUNAMI_CANDIDATE_KEYWORD)) {
         const tsunami = parseTsunamiFromXml(resolveTsunamiHeadType(item.typeLabel), xml)
         if (!tsunami) {
-          skippedParseFailed++
-          continue
-        }
-        // 津波電文には震源要素（sourceEarthquake）が無い場合がある（観測情報のみの続報等）。
-        // 持っている場合だけ震央地名で関連性を確認する。持たない場合はキーワード＋時刻
-        // ウィンドウのみが頼りになる（isRelated と非対称だが、津波電文の構造上これ以上の
-        // 判定材料が無い）。
-        // 原因地震が複数ある電文では、**1 つでも対象の震源に当たれば残す**。
-        // 先頭だけを見ると、2 件目に対象が入っている電文を落とす。
-        const sourceNames = tsunami.sourceEarthquakes?.map(eq => eq.hypocenterName).filter(Boolean) ?? []
-        if (sourceNames.length > 0 && !sourceNames.some(n => hypocenterNames.has(n))) {
-          skippedUnrelated++
+          parseFailures.push({ id: item.id, typeLabel: item.typeLabel })
           continue
         }
         // dmdataParser.ts の id 生成は eventId+serial を使うが、Serial が空の電文（震度速報等）
@@ -218,37 +480,30 @@ async function collectQuakeAndTsunamiEntries(opts: QuakeTsunamiOptions): Promise
         // （電文ごとに一意）を足して確実に一意にする。
         entries.push({ time: tsunami.time, payload: { kind: 'event', event: { ...tsunami, id: `${tsunami.id}-${item.id}` } as AppEvent } })
         kept++
+        // 津波の `cancelled` は正式解除（`lifted`）も含む。取消として数えるのは取り下げだけ
+        if (tsunami.cancelled && tsunami.cancelReason === 'retracted') keptCancelled++
         continue
       }
 
       const headType = resolveQuakeHeadType(item.typeLabel)
       const quake = parseEarthquakeFromXml(headType, xml)
       if (!quake) {
-        skippedParseFailed++
-        continue
-      }
-      if (isUnverifiableCancellation(quake)) {
-        // 取消電文は震央地名・観測地域名のどちらも持たないため isRelated() で判定できない
-        // （構造上の制約）。無関係と決めつけて捨てず、専用カウンタで可視化した上で見送る。
-        skippedCancelledUnverifiable++
-        continue
-      }
-      if (!isRelated(quake, hypocenterNames, areaPrefixes)) {
-        skippedUnrelated++
+        parseFailures.push({ id: item.id, typeLabel: item.typeLabel })
         continue
       }
       entries.push({ time: quake.time, payload: { kind: 'event', event: { ...quake, id: `${quake.id}-${item.id}` } as AppEvent } })
       kept++
+      if (quake.cancelled) keptCancelled++
     }
   }
 
   console.log(
-    `  地震情報・津波: 取得${fetched}件 → 採用${kept}件` +
-      `（期間外${skippedOutOfWindow}件・無関係${skippedUnrelated}件・パース失敗${skippedParseFailed}件・` +
-      `取消電文（判定不能）${skippedCancelledUnverifiable}件を除外）`,
+    `  地震情報・津波: 取得${fetched}件 → 採用${kept}件（うち取消${keptCancelled}件）` +
+      `（期間外${skippedOutOfWindow}件・収録範囲の終わりちょうど${skippedAtWindowEnd}件・パース失敗${parseFailures.length}件を除外）`,
   )
+  for (const f of parseFailures) console.warn(`  読めなかった電文: ${f.id}（${f.typeLabel}）`)
   if (kept === 0) throw new Error('地震情報・津波が1件も採用されませんでした')
-  const accountedFor = kept + skippedOutOfWindow + skippedUnrelated + skippedParseFailed + skippedCancelledUnverifiable
+  const accountedFor = kept + skippedOutOfWindow + skippedAtWindowEnd + parseFailures.length
   if (accountedFor !== totalCandidates) {
     throw new Error(`集計の不整合: 候補${totalCandidates}件に対し内訳の合計が${accountedFor}件です`)
   }
@@ -313,21 +568,25 @@ export interface FinalizeArchiveOptions {
   entries: HistoricalArchiveEntry[]
   outPath: string
   indexPath: string
-  /** isRelated() が正しく機能していれば、採用済みentriesの震央地名はこの集合か空文字の
-   *  どちらかのはず。それ以外が混入していたら isRelated() 側の不具合を疑う防御チェックに使う。 */
-  hypocenterNames: Set<string>
+  /**
+   * 設定タブの「再生」ボタンの起点（`firstEventTime` として書く。ボタンはこの 1 分前から再生する）。
+   * **窓の最初の報ではなく、その地震活動の最初の報を呼び出し側が明示する。** 窓の全地震を収録するようにしてから
+   * （2026-10-23 ユーザー承認）、窓の最初の報は別の地震になり、本命の地震の何時間も前から再生が始まるため
+   * （2026-10-25 ユーザー選択「前の起点に戻す (Recommended)」）。収録した報のどれかの時刻と一致しなければ例外
+   */
+  replayStartTime: string
 }
 
 /**
- * id重複チェック・震央地名の事後検証・ファイル書き出し・index.json更新をまとめて行う。
+ * id重複チェック・ファイル書き出し・index.json更新をまとめて行う。
  * 4本のビルドスクリプト（熊本・鳥取・大阪・胆振東部）がこのブロックを個別にコピペして
  * いたことで、将来ここに検証を足したときに1本だけ直し忘れるリスクがあった
  * （レビューで指摘）。地震活動に依らない処理なのでここに集約する。
  */
 export async function finalizeArchive(opts: FinalizeArchiveOptions): Promise<void> {
-  const { id, label, description, windowStart, windowEnd, dates, entries, outPath, indexPath, hypocenterNames } = opts
+  const { id, label, description, windowStart, windowEnd, dates, entries, outPath, indexPath, replayStartTime } = opts
 
-  if (entries.length === 0) throw new Error('entriesが1件もありません（firstEventTimeを決定できません）')
+  if (entries.length === 0) throw new Error('entriesが1件もありません')
 
   const allEntries = [...entries].sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
 
@@ -342,18 +601,13 @@ export async function finalizeArchive(opts: FinalizeArchiveOptions): Promise<voi
     throw new Error(`id が重複しています: ${duplicateIds.map(([eid, count]) => `${eid}(${count}件)`).join(', ')}`)
   }
 
-  // isRelated() を通過したはずのquakeエントリの震央地名が、渡されたhypocenterNames
-  // （または震度速報の空文字）のどちらでもなければ、isRelated()自体の不具合か、
-  // 呼び出し側が渡すhypocenterNamesの取り違えを疑う。
-  const unexpectedHypocenters = new Set<string>()
-  for (const e of allEntries) {
-    const event = (e.payload as { event?: { kind?: string; earthquake?: { hypocenter?: { name?: string } } } }).event
-    if (event?.kind !== 'quake') continue
-    const name = event.earthquake?.hypocenter?.name ?? ''
-    if (name && !hypocenterNames.has(name)) unexpectedHypocenters.add(name)
+  const startMs = new Date(replayStartTime).getTime()
+  if (Number.isNaN(startMs)) throw new Error(`再生の起点を日時として読めません: "${replayStartTime}"`)
+  if (startMs < windowStart.getTime() || startMs > windowEnd.getTime()) {
+    throw new Error(`再生の起点が収録範囲の外です: ${replayStartTime}`)
   }
-  if (unexpectedHypocenters.size > 0) {
-    throw new Error(`震央地名が想定外の地震情報が混入しています: ${[...unexpectedHypocenters].join(', ')}`)
+  if (!allEntries.some((e) => new Date(e.time).getTime() === startMs)) {
+    throw new Error(`再生の起点と同じ時刻の報がありません（地震の取り違えか、報の時刻の変化を疑う）: ${replayStartTime}`)
   }
 
   const out: HistoricalArchiveFile = {
@@ -363,7 +617,7 @@ export async function finalizeArchive(opts: FinalizeArchiveOptions): Promise<voi
     from: windowStart.toISOString(),
     to: windowEnd.toISOString(),
     coveredRanges: coveredRangesFromDates(dates, windowStart, windowEnd),
-    firstEventTime: allEntries[0].time,
+    firstEventTime: replayStartTime,
     entries: allEntries,
   }
 

@@ -30,6 +30,16 @@ const NII_BASE = 'https://agora.ex.nii.ac.jp'
  */
 const CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '.claude', 'nii-cache')
 
+/**
+ * NII への 1 回の取得を打ち切るまでの時間。**30 秒にはしない** —— 配信元は混雑すると 1 応答に 60〜90 秒
+ * かかる（実測。`CACHE_DIR` の説明）ので、30 秒で切ると正常な応答まで落として取り直しが増える。
+ * 時間切れは通信の失敗として数え、取り直しへ回す。
+ */
+const NII_TIMEOUT_MS = 180_000
+
+/** 気象庁など NII 以外への 1 回の取得を打ち切るまでの時間（`fetchText`）。 */
+const FETCH_TEXT_TIMEOUT_MS = 30_000
+
 /** 1回の取得で何度まで試すか。指数バックオフと組で使う。 */
 const FETCH_ATTEMPTS = 6
 
@@ -60,7 +70,7 @@ function sleep(ms: number): Promise<void> {
 export async function fetchText(url: string, retries = 3): Promise<string> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(url)
+      const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TEXT_TIMEOUT_MS) })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       return await res.text()
     } catch (err) {
@@ -236,7 +246,7 @@ async function fetchNiiText(url: string, cacheKey: string, canCache: (html: stri
   let lastError: unknown
   for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
     try {
-      const res = await fetch(url, { headers: { 'user-agent': USER_AGENT } })
+      const res = await fetch(url, { headers: { 'user-agent': USER_AGENT }, signal: AbortSignal.timeout(NII_TIMEOUT_MS) })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const html = await res.text()
       // 保存は取得の成否と切り離す（`saveCache` は失敗しても投げない）
