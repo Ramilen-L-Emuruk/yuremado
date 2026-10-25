@@ -33,26 +33,57 @@ export const SETTINGS_FILE_APP = 'yuremado'
  */
 export const LEGACY_SETTINGS_FILE_APP = 'realtime-earthquake-viewer'
 
+/** 書き出しの選び方。 */
+export interface SettingsExportOptions {
+  /**
+   * 鍵（DMDATA の API キーと到達予想トークン）も含めるか。**既定は含めない**——画面のチェック欄を
+   * 入れたときだけ真になる（2026-10-23 ユーザー選択「含めるかを書き出すときに選べる」）。
+   */
+  includeKeys: boolean
+  /**
+   * dev サーバーが `.env.local` から注入した鍵（→ `useSettings.ts` の `devInjectedKeys`）。
+   * **含めると選ばれても、注入値と同じものは外す**。利用者が入れた鍵ではないため。
+   * 省略可にしない —— 渡し忘れると注入値がファイルへ出る（`settingsToStore` と同じ理由）。
+   */
+  injected: { apiKey: string | undefined; arrivalToken: string | undefined }
+}
+
 /**
  * 書き出す中身を組み立てる。
  *
- * **API キーと到達予想トークンは含めない。** 書き出したファイルはディスクに残り、人に渡ることも、
- * うっかりリポジトリへ入ることもある。`stripDevApiKey`（`useSettings.ts`）が dev の注入値を
- * localStorage へ保存しないのと同じ考え方で、ここでも外に出さない。
+ * **既定では API キーと到達予想トークンを含めない。** 書き出したファイルはディスクに残り、人に渡ることも、
+ * うっかりリポジトリへ入ることもある。含めるのは、書き出すときに利用者が「鍵も含める」を選んだときだけ。
  *
  * **トークンを外に出さない理由は API キーと同じではない。** あちらは他人に使われると配信元の
  * 契約枠を消費する。こちらは「渡した相手だけが使える」ことが仕組みの前提なので、
- * 設定ファイルに同梱すると、そのファイルを受け取った人へ意図せず渡ることになる。
+ * 設定ファイルに同梱すると、そのファイルを受け取った人へ意図せず渡ることになる。どちらも既定では外し、
+ * 含めるのは利用者が明示的に選んだときだけにしている。
  */
-export function buildSettingsFile(settings: AppSettings, variant: SettingsVariant, now = new Date()): SettingsFile {
+export function buildSettingsFile(
+  settings: AppSettings,
+  variant: SettingsVariant,
+  options: SettingsExportOptions,
+  now = new Date(),
+): SettingsFile {
+  const keep = (value: string, injected: string | undefined) =>
+    options.includeKeys && value !== '' && value !== injected ? value : ''
   return {
     app: SETTINGS_FILE_APP,
     kind: 'settings',
     version: SETTINGS_FILE_VERSION,
     variant,
     exportedAt: now.toISOString(),
-    settings: { ...settings, dmdataApiKey: '', arrivalToken: '' },
+    settings: {
+      ...settings,
+      dmdataApiKey: keep(settings.dmdataApiKey, options.injected.apiKey),
+      arrivalToken: keep(settings.arrivalToken, options.injected.arrivalToken),
+    },
   }
+}
+
+/** 書き出したファイルに鍵が入ったか（画面の知らせを選ぶため）。 */
+export function settingsFileHasKeys(file: SettingsFile): boolean {
+  return file.settings.dmdataApiKey !== '' || file.settings.arrivalToken !== ''
 }
 
 /**
@@ -114,14 +145,14 @@ export function parseSettingsFile(raw: unknown, current: AppSettings): ParseResu
   // （通知の切り離しは 2026-10-24 ユーザー選択「ファイルにも掛ける (Recommended)」。→ `migrateStoredSettings`）
   const settings = migrateStoredSettings(incoming, sanitized)
 
-  // API キーは書き出しに含めないので、通常はファイル側が空になる。**空のときは今の値を残す**
+  // API キーは、書き出すときに「鍵も含める」を選ばなければファイルに入らない。**空のときは今の値を残す**
   // ——空で塗ると、入力済みのキーが読み込みのたびに消える。
-  // 手で書き足された場合だけ、その値を使う（意図して入れたものを無視しない）。
+  // ファイルに入っているとき（鍵も含めて書き出した・手で書き足した）だけ、その値を使う。
   const fileKey = typeof incoming.dmdataApiKey === 'string' ? incoming.dmdataApiKey : ''
   const usedFileApiKey = fileKey !== ''
   settings.dmdataApiKey = usedFileApiKey ? fileKey : current.dmdataApiKey
 
-  // 到達予想トークンも同じ扱い（書き出しに含めないので、空なら今の値を残す）。
+  // 到達予想トークンも同じ扱い（「鍵も含める」を選ばなければ入らないので、空なら今の値を残す）。
   const fileToken = typeof incoming.arrivalToken === 'string' ? incoming.arrivalToken : ''
   settings.arrivalToken = fileToken !== '' ? fileToken : current.arrivalToken
 
