@@ -588,10 +588,15 @@ function classifyTelegram(
  * **試験・訓練報の別は `classifyTelegram` で付く** —— ここで積む要素は詳細 API が返した `head` を
  * そのまま持つので `head.test` は本物の値で、設定の分岐はそちらで掛かる。
  *
- * **「イベント一覧が訓練 EEW を含むか」は確かめられていない。** 訓練の EEW（VXSE45・VXSE43）を
- * 1 通も観測できていないため。**毎正時の配信テスト（VXSE42）は毎日大量にあるが、代わりの標本には
- * ならない** —— `isHandledType` が通さないので再生には乗らない。訓練 EEW を観測できたら、この経路で
- * 拾えるかを確かめること。
+ * **訓練の EEW（VXSE45・VXSE43）は、この口にも `/v2/telegram` にも載らない**（実 API で確かめた範囲）。
+ * - `/v2/gd/eew`: 2025-11-04〜06（アーカイブには訓練 8 地震・VXSE45 7 通・VXSE43 1 通がある）を引いて、
+ *   載ったのは本物の 2 地震だけ（2026-10-23）。2026-10-24 の 1 日は 0 件（毎正時の配信テスト VXSE42 も載らない）
+ * - `/v2/telegram`: `type=VXSE42`（`test=including`）で 2026-10-24 の 1 日を引いて 0 件（2026-10-25）。
+ *   緊急地震速報の電文は一覧に入らない
+ *
+ * したがって**当日ぶん（アーカイブがまだ無い日）の訓練の速報は再生できない。** 訓練の速報が出るのは、
+ * 翌日 0:07 前後にできるアーカイブ（`eew.forecast`・`eew.warning`）からになる。設定を入れているのに
+ * この口が試験報を 1 通も返さなかったことは、`fetchLiveReplayEntries` が記録する。
  *
  * > **アーカイブで EEW を探すときの分類は `eew.forecast`（VXSE42・VXSE45）と
  * > `eew.warning`（VXSE43）。** `telegram.earthquake` には入っていない ——
@@ -620,10 +625,9 @@ async function listEewTelegrams(
   }
   // 打ち切りは失敗として扱う（理由は `listTelegrams` と同じ）。
   //
-  // **EEW の一覧は他より先に上限へ届きやすい。** 毎正時の配信テスト（VXSE42）が XML と JSON の
-  // 2 版で載るため実測で 1 日あたり約 48 件あり、初期状態の 24 時間復元や履歴の遡りでは
-  // 地震情報より件数が伸びる。しかも 1 件でも欠けると**そのイベントの全報が丸ごと消える**
-  // （詳細の取得は `eventId` 単位）ので、黙って切ると欠落が取りこぼしにも現れない。
+  // EEW のイベント一覧は 1 件でも欠けると**そのイベントの全報が丸ごと消える**（詳細の取得は
+  // `eventId` 単位）ので、黙って切ると欠落が取りこぼしにも現れない。配信テスト（VXSE42）は
+  // この一覧に載らない（上の注記）ので、件数は本物の地震の数だけ伸びる。
   if (page >= LIST_MAX_PAGES) {
     throw new Error(
       `緊急地震速報の一覧のページ上限（${LIST_MAX_PAGES}）に達した 範囲=${utcFrom}~${utcTo}`
@@ -864,6 +868,13 @@ export async function fetchLiveReplayEntries(
   }
   const telegramList = take(settled[0], 'live-telegram', [] as TelegramListItem[])
   const eew = take(settled[1], 'live-eew', noEew)
+  // 設定を入れているのに EEW の一覧が試験報を 1 通も返さないことを記録する（`listTelegrams` と同じ形）。
+  // この口は訓練・試験の EEW を返さない（→ `listEewTelegrams` の注記）ので、0 通は普通の結果。
+  // 0 通でなくなったら、配信元の口が変わったので注記を見直すこと。
+  if (includeTest && wantsEew && settled[1].status === 'fulfilled') {
+    const testCount = eew.items.filter(i => i.head?.test).length
+    log.info(`[replay] 当日経路の緊急地震速報の一覧 件数=${eew.items.length} うち試験報=${testCount}（この口は訓練・試験報を返さない）`)
+  }
   // 2 本とも引けなければ、その日ぶんは 1 通も取れていない。呼び出し元が「その日の取得元が
   // 読めなかった」として扱えるよう投げる（部分的に取れた場合と区別が付かなくなるため）。
   if (attemptedLists > 0 && failedListCount === attemptedLists) {

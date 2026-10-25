@@ -14,7 +14,7 @@ import {
 } from './historicalEewParser'
 
 function hypo(name: string, latitude: number, longitude: number): ParsedEewHypocenter {
-  return { originTimeIso: '2011-03-12T00:00:00.000Z', name, latitude, longitude, depthKm: 10, magnitude: 5, maxIntensityText: '4' }
+  return { originTimeIso: '2011-03-12T00:00:00.000Z', originTimeHasSeconds: true, name, latitude, longitude, depthKm: 10, magnitude: 5, maxIntensityText: '4' }
 }
 
 describe('toHalfWidthDigits', () => {

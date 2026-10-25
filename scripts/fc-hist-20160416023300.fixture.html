@@ -1,0 +1,133 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ja" lang="ja">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<title>気象庁｜緊急地震速報（予報）発表状況</title>
+<meta name="Author" content="気象庁 Japan Meteorological Agency" />
+<meta name="keywords" content="気象庁 Japan Meteorological Agency" />
+<meta name="description" content="緊急地震速報（予報）の発表状況です" />
+<meta http-equiv="Content-Style-Type" content="text/css" />
+<meta http-equiv="Content-Script-Type" content="text/javascript" />
+<style type="text/css" media="all"><!-- @import url(/com/css/define.css); --></style>
+<script type="text/javascript" src="/com/js/jquery.js"></script>
+<style type="text/css" media="all"><!-- @import url(/com/default.css); --></style>
+<style type="text/css" media="all"><!-- @import url(../../../common/css/eew.css); --></style>
+</head>
+
+<body>
+<noscript><div>すべての機能をご利用いただくにはJavascriptを有効にしてください。</div></noscript>
+<!--header start -->
+<div id="header_area">
+	<div id="nheader">
+		<div id="logo"><a href="http://www.jma.go.jp"><img src="/com/images/logo.gif" alt="気象庁" width="120" height="67" /></a></div>
+
+		<div id="header_right">
+			<div id="header_link">
+				<ul>
+					<li id="toMain"><a href="#main">本文へ</a></li>
+					<li xml:lang="en" lang="en"><a href="http://www.jma.go.jp/jma/indexe.html">ENGLISH</a></li>
+					<li><a href="http://www.jma.go.jp/jma/kishou/info/goiken.html">ご意見・ご感想</a></li>
+					<li id="siteMap"><a href="http://www.jma.go.jp/jma/kishou/sitemap.html">サイトマップ</a></li>
+				</ul>
+			</div>
+			<!-- search -->
+			<div id="yjsearch" class="watermark">
+				<p>キーワードを入力し検索ボタンを押下ください。</p>
+				<form action="http://www.jma.go.jp/jma/menu/search.html" method="get" id="srch">
+					<input type="search" results="5" name="p" id="srchInput" />
+					<input type="image" src="/com/images/btn_search.gif" alt="検索" id="srchBtn" onclick="document.getElementById('srchInput').focus();" />
+					<input type="hidden" id="fr" name="fr" value="cse" />
+					<input type="hidden" id="ei" name="ei" value="utf-8" />
+					<input type="hidden" id="csid" name="csid" value="pD.LqPJKNL6pX5S8V0Zj684fKOuX.849vg9h" />
+					<input type="hidden" name="vs" value="www.jma.go.jp" id="yjInsite" />
+				</form>
+				<img src="http://custom.search.yahoo.co.jp/images/window/pD.LqPJKNL6pX5S8V0Zj684fKOuX.849vg9h.gif" alt="" /> </div>
+			<script type="text/javascript">
+					(function() {
+					var sb = document.getElementById('yjsearch');
+					if (sb && sb.className == 'watermark') {
+						var si = document.getElementById('srchInput');
+						var f = function() { si.className = 'nomark'; };
+						var b = function() {
+							if (si.value == '') {
+								si.className = '';
+							}
+						};
+						si.onfocus = f;
+						si.onblur = b;
+						if (!/[&?]p=[^&]/.test(location.search)) {
+							b();
+						} else {
+							f();
+						}
+					}
+					})();
+				</script> 
+			<!-- search --> 
+		</div>
+		<ul id="gnavi">
+			<li><a href="http://www.jma.go.jp/">ホーム</a></li>
+			<li><a href="http://www.jma.go.jp/jma/menu/menuflash.html">防災情報</a></li>
+			<li><a href="http://www.jma.go.jp/jma/menu/menureport.html" class="on">各種データ・資料</a></li>
+			<li><a href="http://www.jma.go.jp/jma/menu/menuknowledge.html">知識・解説</a></li>
+			<li><a href="http://www.jma.go.jp/jma/menu/menuabout.html">気象庁について</a></li>
+			<li><a href="http://www.jma.go.jp/jma/menu/menulinks.html">案内・申請</a></li>
+		</ul>
+	</div>
+</div>
+<!--header end -->
+
+<div id="contents_area2">
+	<div id="ncontents2">
+<!-- pankuzu menu -->
+		<ul class="breadcrumb2">
+			<li><a href="http://www.jma.go.jp/">ホーム</a>&nbsp;&gt;&nbsp;</li>
+			<li><a href="http://www.jma.go.jp/jma/menu/menureport.html">各種データ・資料</a>&nbsp;&gt;&nbsp;</li>
+			<li><a href="../../../index.html">緊急地震速報（予報）発表状況</a>&nbsp;&gt;&nbsp;</li>
+			<li>緊急地震速報（予報）の内容</li>
+		</ul>
+<!-- //pankuzu menu -->
+		<div id="main">
+			<h1>緊急地震速報（予報）の内容</h1>
+			<div class="eew_explanation_area" id="event_outline">
+				<h2>発生した地震の概要（キャンセル報）</h2>
+				<table class="eew_explanation_list" id="hypocentral_element_list">
+					<tr><td>地震発生日時</td><td>震央地名</td><td>北緯</td><td>東経</td><td>深さ</td><td>マグニチュード</td><td>最大震度</td></tr>
+					<tr><td>平成28年04月16日02時33分</td><td>(キャンセル報)</td><td>---</td><td>---</td><td>---</td><td>---</td><td>---</td></tr>
+				</table>
+			</div>
+			<div class="eew_explanation_area" id="lapse_time_and_suikei_div">
+				<h2>緊急地震速報第1報提供から主要動到達までの時間及び推計震度分布図</h2>
+				<div class="eew_image_area"><img alt="緊急地震速報第1報提供から主要動到達までの時間及び推計震度分布図" id="lapse_time_and_suikei_img" onerror="this.src='../../../common/img/image_none.png'; this.border='1';" src="img/reachtime.png" /></div>
+				<div class="eew_image_area"><img alt="カラースケール" src="../../../common/img/seis_scale3.png" /> <img alt="凡例" src="../../../common/img/hypocenter.png" /></div>
+			</div>
+			<div class="eew_explanation_area" id="eew_detail">
+				<h2>緊急地震速報の詳細</h2>
+				
+				<table class="eew_explanation_list" id="information_list">
+					<tr><td colspan="2" rowspan="3">提供時刻等</td><td colspan="6" rowspan="1">震源要素等</td></tr>
+					<tr><td colspan="1" nowrap rowspan="2">地震波検知から<br />の経過時間（秒）</td><td colspan="4" rowspan="1">震源要素</td><td colspan="1" nowrap rowspan="2">予測震度</td></tr>
+					<tr><td>北緯</td><td>東経</td><td>深さ</td><td nowrap>マグニチュード</td></tr>
+					<tr><td nowrap>地震波<br />検知時刻</td><td nowrap>02時33分0.3秒</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+					<tr><td>1</td><td nowrap>02時33分05.0秒</td><td>4.7</td><td>33.3</td><td>131.3</td><td>10km</td><td>3.6</td><td nowrap>最大震度３程度以上</td></tr>
+					<tr><td>2</td><td nowrap>02時33分10.4秒</td><td>10.1</td><td>33.3</td><td>131.3</td><td>10km</td><td>3.6</td><td nowrap>最大震度３程度以上</td></tr>
+					<tr><td>キャンセル</td><td nowrap>02時33分16.0秒</td><td>15.7</td><td>---</td><td>---</td><td>---km</td><td>---</td><td nowrap>キャンセル報</td></tr>
+				</table>
+				<table class="eew_estimate_intensity_list">
+				</table>
+			</div>
+			<p class="totop"><a href="#nheader">このページのトップへ</a></p>
+		</div>
+	</div><!-- ncontents2 -->
+</div><!-- contents_area2 -->
+
+<div id="footer_area">
+	<div id="nfooter">
+		<p>気象庁：〒100-8122東京都千代田区大手町1-3-4(<a href="http://www.jma.go.jp/jma/kishou/intro/map.html">案内図</a>)  代表電話：03-3212-8341</p>
+		<ul>
+			<li><a href="http://www.jma.go.jp/jma/kishou/info/coment.html">気象庁ホームページについて</a></li>
+		</ul>
+	</div>
+</div>
+</body>
+</html>

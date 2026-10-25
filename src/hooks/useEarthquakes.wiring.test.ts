@@ -18,7 +18,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, cleanup, act } from '@testing-library/react'
 import type { AppEvent, LiveEvent, LiveEventMeta, EEWAlert, JMALpgm, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, IntensityScale } from '../types/earthquake'
-import type { ReplayEntry, ReplayPayload } from '../types/replay'
+import type { ReplayEntry, ReplayPayload, ReplayQuakeHistoryResult } from '../types/replay'
 import type { JMAKohatsu } from '../types/earthquake'
 import { serverDate, setReplayOffset } from '../utils/clock'
 import {
@@ -183,6 +183,8 @@ vi.mock('../services/p2pquake', () => ({
   fetchHistorySince: vi.fn(),
   fetchJmaQuake: vi.fn(),
   fetchJmaQuakePage: vi.fn(),
+  // フックが「もっと見る」の件数と満杯の判定に使う定数（実物と同じ値。丸ごと差し替えているので書く）
+  P2P_LOAD_MORE_BATCH: 50,
 }))
 
 // 1 回の窓の幅は実装側の定数を正とする（テストへ数値を書き写すと、窓を動かしたときに
@@ -1996,8 +1998,7 @@ describe('リプレイ開始時の地震カード', () => {
     }
   }
 
-  // 押すと `loadMoreEarthquakes` がライブの最新履歴を取りに行き、再生時刻より未来の地震が
-  // カードに並ぶ。カードを空にするだけでボタンを残すと、再生中もこれが押せてしまう。
+  // カードを空にするだけでボタンを残すと、前の時間軸の続きを読むボタンが残る
   it('表示をリセットすると「もっと見る」を畳む', async () => {
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ hasMore: true }))
     const h = setup({ offset: null })
@@ -2014,10 +2015,15 @@ describe('リプレイ開始時の地震カード', () => {
     await h.flush()
 
     act(() => {
-      h.current.restoreQuakeHistory([
-        quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00'),
-        quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00'),
-      ])
+      h.current.restoreQuakeHistory({
+        ...history({
+          quakes: [
+            quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00'),
+            quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00'),
+          ],
+        }),
+        loadMore: null,
+      })
     })
 
     expect(h.current.earthquakes).toHaveLength(2)
@@ -2029,10 +2035,245 @@ describe('リプレイ開始時の地震カード', () => {
     const h = setup({ offset: null })
     await h.flush()
 
-    act(() => { h.current.restoreQuakeHistory([quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00')]) })
-    act(() => { h.current.restoreQuakeHistory([quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')]) })
+    act(() => { h.current.restoreQuakeHistory({ ...history({ quakes: [quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00')] }), loadMore: null }) })
+    act(() => { h.current.restoreQuakeHistory({ ...history({ quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')] }), loadMore: null }) })
 
     expect(h.current.earthquakes).toHaveLength(2)
+  })
+})
+
+// 再生中の「もっと見る」は、リプレイの開始時の履歴が渡す続きの口（`ReplayQuakeHistoryResult.loadMore`）で読む。
+// ライブの経路は `serverDate()`（いま）から遡るので、再生中に通ると再生時刻より未来の地震が一覧に並ぶ。
+describe('再生中の「もっと見る」', () => {
+  function quakeTelegram(eventId: string, time: string): JMAQuake {
+    return {
+      kind: 'quake' as const,
+      id: `dmdata-quake-${eventId}-1`,
+      time,
+      issue: { source: '気象庁', time, type: '各地の震度情報' as const, correct: 'なし' as const },
+      earthquake: {
+        time,
+        hypocenter: { name: '岩手県沖', latitude: 39.9, longitude: 142.2, depth: 50, magnitude: 5.1 },
+        maxScale: 40,
+        domesticTsunami: 'なし' as const,
+      },
+      points: [{ pref: '岩手県', addr: '宮古市', isArea: false, scale: 40 }],
+    }
+  }
+
+  function nankaiData(id: string) {
+    const now = serverDate()
+    return {
+      id, time: now.toISOString(), eventId: `${id}-event`,
+      kindCode: '0202', kindName: '巨大地震注意',
+      headline: '南海トラフ地震臨時情報（巨大地震注意）', body: '',
+      cancelled: false, reportDateTime: now.toISOString(),
+    }
+  }
+
+  /** リプレイの履歴（続きの口つき）。 */
+  function replayHistory(
+    opts: Parameters<typeof history>[0],
+    loadMore: ReplayQuakeHistoryResult['loadMore'],
+  ): ReplayQuakeHistoryResult {
+    return { ...history(opts), loadMore }
+  }
+
+  const loggedTelegrams = () =>
+    drainReplayEvents().events.filter((e): e is ReplayTelegramEvent => e.type === 'telegram')
+
+  beforeEach(() => {
+    __resetReplayEventLogForTest()
+    vi.mocked(fetchDmdataQuakeHistory).mockClear()
+    vi.mocked(fetchJmaQuakePage).mockClear()
+  })
+  afterEach(() => { __resetReplayEventLogForTest() })
+
+  it('正: 押すと続きの口で読み、カードを足し、帯は当てずに記録だけ残す', async () => {
+    const h = setup({ offset: 0 })
+    await h.flush()
+    const second = vi.fn(async () => replayHistory({}, null))
+    const first = vi.fn(async (_signal: AbortSignal | null) => replayHistory({
+      quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')],
+      extras: [extra({ kind: 'nankai', data: nankaiData('n-replay-more') })],
+    }, second))
+    act(() => {
+      h.current.restoreQuakeHistory(replayHistory({
+        quakes: [quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00')],
+      }, first))
+    })
+    expect(h.current.hasMore).toBe(true)
+
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(h.current.earthquakes).toHaveLength(2)
+    // 帯は当てない（古い日の帯で今の帯を上書きしない）。届いた事実は記録する
+    expect(h.current.nankai).toBeNull()
+    const notDispatched = loggedTelegrams().filter(t => t.kind === 'nankai' && t.skipped === 'notDispatched')
+    expect(notDispatched).toHaveLength(1)
+    // 続きの口が残っているので、まだ押せる。押すと次の口を読む
+    expect(h.current.hasMore).toBe(true)
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+    expect(second).toHaveBeenCalledTimes(1)
+    expect(first).toHaveBeenCalledTimes(1)
+    // 次の口が無ければ畳む
+    expect(h.current.hasMore).toBe(false)
+    // ライブの経路（いまから遡る）は通らない
+    expect(fetchDmdataQuakeHistory).not.toHaveBeenCalled()
+  })
+
+  // 履歴の取得は同じ窓の津波電文も返す。画面へ当てると古い日の津波で今の表示を上書き・復活させるので
+  // 当てないが、届いた事実は録画ログに残す（帯と同じ扱い）
+  it('正: 続きに入っていた津波は画面へ当てず、notDispatched として記録する', async () => {
+    const h = setup({ offset: 0 })
+    await h.flush()
+    const time = '2026-08-10T01:05:00+09:00'
+    const tsunami: JMATsunami = {
+      kind: 'tsunami', id: 'tsunami-replay-more', time, cancelled: false,
+      issue: { source: '気象庁', time, type: 'Focus' },
+      areas: [{ grade: 'Watch', immediate: false, name: 'テスト沿岸' }],
+    }
+    act(() => {
+      h.current.restoreQuakeHistory(replayHistory({}, async () => replayHistory({ tsunamis: [tsunami] }, null)))
+    })
+
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+
+    expect(h.current.tsunamis).toHaveLength(0)
+    const records = loggedTelegrams().filter(t => t.kind === 'tsunami')
+    expect(records).toHaveLength(1)
+    expect(records[0].skipped).toBe('notDispatched')
+  })
+
+  // 対照: ライブの「もっと見る」も同じ関数を通るので、同じく記録だけ残す
+  it('対照: ライブの「もっと見る」でも、津波は画面へ当てず記録だけ残す', async () => {
+    vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ hasMore: true }))
+    const h = setup({ offset: null })
+    await h.flush()
+    __resetReplayEventLogForTest()
+    const time = '2026-08-10T01:05:00+09:00'
+    vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({
+      hasMore: true,
+      tsunamis: [{
+        kind: 'tsunami', id: 'tsunami-live-more', time, cancelled: false,
+        issue: { source: '気象庁', time, type: 'Focus' },
+        areas: [{ grade: 'Watch', immediate: false, name: 'テスト沿岸' }],
+      }],
+    }))
+
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+
+    expect(h.current.tsunamis).toHaveLength(0)
+    const records = loggedTelegrams().filter(t => t.kind === 'tsunami')
+    expect(records).toHaveLength(1)
+    expect(records[0].skipped).toBe('notDispatched')
+  })
+
+  it('正: 標準版でも続きの口で読み、ライブの P2PQuake の経路を通らない', async () => {
+    mockIsDmdss = false
+    const h = setup({ offset: 0 })
+    await h.flush()
+    const more = vi.fn(async () => replayHistory({
+      quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')],
+    }, null))
+    act(() => { h.current.restoreQuakeHistory(replayHistory({}, more)) })
+
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+
+    expect(more).toHaveBeenCalledTimes(1)
+    expect(h.current.earthquakes).toHaveLength(1)
+    expect(fetchJmaQuakePage).not.toHaveBeenCalled()
+  })
+
+  // 静かな期間から始めた再生でも、その手前へ遡れる
+  it('正: 地震が 0 件の履歴でも、続きの口があれば「もっと見る」を出す', async () => {
+    const h = setup({ offset: 0 })
+    await h.flush()
+
+    act(() => { h.current.restoreQuakeHistory(replayHistory({}, async () => replayHistory({}, null))) })
+
+    expect(h.current.earthquakes).toHaveLength(0)
+    expect(h.current.hasMore).toBe(true)
+  })
+
+  // ローカル履歴アーカイブは収録範囲の外を持たない
+  it('対照: 続きの口が無ければ「もっと見る」を出さず、押しても何も読まない', async () => {
+    const h = setup({ offset: 0 })
+    await h.flush()
+    act(() => {
+      h.current.restoreQuakeHistory(replayHistory({
+        quakes: [quakeTelegram('20260810020000', '2026-08-10T02:05:00+09:00')],
+      }, null))
+    })
+
+    expect(h.current.hasMore).toBe(false)
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+    expect(fetchDmdataQuakeHistory).not.toHaveBeenCalled()
+    expect(h.current.earthquakes).toHaveLength(1)
+  })
+
+  it('対照: 読めなかったら失敗を出し、同じ口のまま押し直せる', async () => {
+    const h = setup({ offset: 0 })
+    await h.flush()
+    const more = vi.fn<(signal: AbortSignal | null) => Promise<ReplayQuakeHistoryResult>>()
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(replayHistory({ quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')] }, null))
+    act(() => { h.current.restoreQuakeHistory(replayHistory({}, more)) })
+
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+    expect(h.current.loadMoreFailed).toBe(true)
+    expect(h.current.hasMore).toBe(true)
+    expect(h.current.isLoadingMore).toBe(false)
+
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+    expect(more).toHaveBeenCalledTimes(2)
+    expect(h.current.loadMoreFailed).toBe(false)
+    expect(h.current.earthquakes).toHaveLength(1)
+  })
+
+  it('安全弁: 読んでいる間にリセットしたら、届いた続きを入れず、取得を打ち切る', async () => {
+    const h = setup({ offset: 0 })
+    await h.flush()
+    let resolveMore: (r: ReplayQuakeHistoryResult) => void = () => {}
+    let passedSignal: AbortSignal | null = null
+    const more = vi.fn((signal: AbortSignal | null) => {
+      passedSignal = signal
+      return new Promise<ReplayQuakeHistoryResult>(resolve => { resolveMore = resolve })
+    })
+    act(() => { h.current.restoreQuakeHistory(replayHistory({}, more)) })
+
+    let pressed: Promise<void> = Promise.resolve()
+    act(() => { pressed = h.current.loadMoreEarthquakes() })
+    act(() => { h.current.resetState() })
+    expect((passedSignal as AbortSignal | null)?.aborted).toBe(true)
+    await act(async () => {
+      resolveMore(replayHistory({
+        quakes: [quakeTelegram('20260810010000', '2026-08-10T01:05:00+09:00')],
+      }, async () => replayHistory({}, null)))
+      await pressed
+    })
+
+    expect(h.current.earthquakes).toHaveLength(0)
+    expect(h.current.hasMore).toBe(false)
+    expect(h.current.isLoadingMore).toBe(false)
+  })
+
+  // 再生中に続きの口が無い状態で押されても、ライブの経路（いまから遡る）へ落とさない。
+  // ライブで立った「もっと見る」が残ったまま再生へ切り替わった形で作る（App はリセットを挟むが、フックは頼らない）
+  it('安全弁: 再生中に続きの口が無ければ、ライブの「もっと見る」があっても、いまから遡らない', async () => {
+    vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ hasMore: true }))
+    const h = setup({ offset: null })
+    await h.flush()
+    expect(h.current.hasMore).toBe(true)
+    h.setOffset(0)
+    await h.flush()
+    vi.mocked(fetchDmdataQuakeHistory).mockClear()
+
+    await act(async () => { await h.current.loadMoreEarthquakes() })
+
+    expect(fetchDmdataQuakeHistory).not.toHaveBeenCalled()
+    expect(h.current.hasMore).toBe(false)
   })
 })
 

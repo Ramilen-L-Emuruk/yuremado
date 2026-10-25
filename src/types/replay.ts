@@ -199,3 +199,27 @@ export interface QuakeHistoryResult {
   /** 429 の窓で見送った**電文**の数（単位が違うので取得元とは別に持つ）。 */
   rateLimitedTelegrams: number
 }
+
+/**
+ * リプレイの開始時に復元する地震カードの履歴。{@link QuakeHistoryResult} に、再生中の
+ * 「もっと見る」で続きを読む口を足したもの。
+ *
+ * **続きの読み方は取得元が決める**ので、取得元ごとの口をここで包んで渡す（DMDSS 版はカーソル、
+ * 標準版は `offset`）。受け手（`useEarthquakes`）は取得元を知らずに、押されたらこれを呼ぶだけでよい。
+ * 受け手がライブの「もっと見る」の経路を使うと、ライブの最新履歴を読んで再生時刻より未来の地震が
+ * 一覧へ混ざる。
+ *
+ * ライブの起動時の履歴はこの形を通らない（続きはフックが自分で読む）ので、続きの口は
+ * `QuakeHistoryResult` には持たせていない。
+ */
+export interface ReplayQuakeHistoryResult extends QuakeHistoryResult {
+  /**
+   * さらに古い方を読む。**読む先が無ければ `null`**（「もっと見る」を出さない）。
+   *
+   * 返す結果にも同じ口が付く（押すたびに 1 つ先へ進む）。ローカル履歴アーカイブは収録範囲の外を
+   * 持たないので常に `null`。
+   *
+   * @param signal 止める合図（再生の停止・始め直しで立つ）
+   */
+  loadMore: ((signal: AbortSignal | null) => Promise<ReplayQuakeHistoryResult>) | null
+}

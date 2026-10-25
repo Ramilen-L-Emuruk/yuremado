@@ -230,11 +230,11 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
         <LoadMoreButton onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} watchThrottle={watchLoadMoreThrottle} />
       )}
       {!hasMore && earthquakes.length > 0 && (
-        // 「すべての履歴」とは書かない。**止まる理由はバリアントで違う**（`useEarthquakes` の
-        // `hasMore` の決め方 2 箇所）。DMDSS 版は遡れる日数の上限に達したときで、それより古い
-        // 地震が無いことを意味しない（アーカイブは実測で 135 日以上残る）。標準版は配信元の
-        // 応答が要求件数を下回ったとき＝その窓を使い切ったとき。
-        // どちらも「これ以上は遡れない」ことは共通なので、文言は 1 つで足りる。
+        // 「すべての履歴」とは書かない。**止まる理由は経路で違う**（`useEarthquakes` の `hasMore`）。
+        // DMDSS 版はアーカイブの目録が空になったとき（在庫の端。地震津波関連は 2020-11-18 から）。
+        // 標準版は配信元の応答が要求件数を下回ったとき＝その窓を使い切ったとき。再生中は続きを読む口が
+        // 無いとき（ローカル履歴アーカイブは収録範囲の外を持たない・在庫の端・開始時の履歴の取得に失敗した）。
+        // どれも「これ以上は遡れない」ことは共通なので、文言は 1 つで足りる。
         <p className="text-center text-xs text-secondary py-2">これ以上は遡れません</p>
       )}
     </div>

@@ -13,11 +13,1014 @@
   "firstEventTime": "2018-06-17T22:58:41.900Z",
   "entries": [
     {
+      "time": "2018-06-18T00:46:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180618004352-1-3de6cd8d-35bc-3ce8-9f16-37e6542110b8",
+          "eventId": "20180618004352",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T15:46:28Z",
+          "createdAtMs": 1529250388000,
+          "reportsRevise": true,
+          "reportSerial": 1,
+          "time": "2018-06-18T00:46:00+09:00",
+          "issue": {
+            "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
+            "time": "2018-06-18T00:46:00+09:00",
+            "type": "震源・震度情報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-18T00:43:00+09:00",
+            "hypocenter": {
+              "name": "宮城県沖",
+              "latitude": 38.8,
+              "longitude": 142.1,
+              "depth": 50,
+              "magnitude": 4,
+              "magnitudeType": "Mj",
+              "code": "287"
+            },
+            "maxScale": 20,
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
+          },
+          "headline": "１８日００時４３分ころ、地震がありました。",
+          "points": [
+            {
+              "pref": "岩手県",
+              "addr": "岩手県",
+              "isArea": true,
+              "scale": 20,
+              "code": "03"
+            },
+            {
+              "pref": "",
+              "addr": "岩手県沿岸南部",
+              "isArea": true,
+              "scale": 20,
+              "code": "211"
+            },
+            {
+              "pref": "",
+              "addr": "大船渡市猪川町",
+              "isArea": false,
+              "scale": 20,
+              "code": "0320301",
+              "city": "大船渡市",
+              "area": "岩手県沿岸南部"
+            },
+            {
+              "pref": "",
+              "addr": "大船渡市大船渡町",
+              "isArea": false,
+              "scale": 10,
+              "code": "0320300",
+              "city": "大船渡市",
+              "area": "岩手県沿岸南部"
+            },
+            {
+              "pref": "",
+              "addr": "大船渡市盛町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0320320",
+              "city": "大船渡市",
+              "area": "岩手県沿岸南部"
+            },
+            {
+              "pref": "",
+              "addr": "陸前高田市高田町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0321033",
+              "city": "陸前高田市",
+              "area": "岩手県沿岸南部"
+            },
+            {
+              "pref": "",
+              "addr": "釜石市只越町",
+              "isArea": false,
+              "scale": 10,
+              "code": "0321100",
+              "city": "釜石市",
+              "area": "岩手県沿岸南部"
+            },
+            {
+              "pref": "",
+              "addr": "釜石市中妻町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0321120",
+              "city": "釜石市",
+              "area": "岩手県沿岸南部"
+            },
+            {
+              "pref": "",
+              "addr": "住田町世田米",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0344131",
+              "city": "住田町",
+              "area": "岩手県沿岸南部"
+            },
+            {
+              "pref": "",
+              "addr": "岩手県内陸南部",
+              "isArea": true,
+              "scale": 10,
+              "code": "213"
+            },
+            {
+              "pref": "",
+              "addr": "遠野市青笹町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0320821",
+              "city": "遠野市",
+              "area": "岩手県内陸南部"
+            },
+            {
+              "pref": "",
+              "addr": "一関市大東町",
+              "isArea": false,
+              "scale": 10,
+              "code": "0320902",
+              "city": "一関市",
+              "area": "岩手県内陸南部"
+            },
+            {
+              "pref": "",
+              "addr": "一関市千厩町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0320936",
+              "city": "一関市",
+              "area": "岩手県内陸南部"
+            },
+            {
+              "pref": "",
+              "addr": "一関市室根町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0320938",
+              "city": "一関市",
+              "area": "岩手県内陸南部"
+            },
+            {
+              "pref": "",
+              "addr": "一関市藤沢町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0320939",
+              "city": "一関市",
+              "area": "岩手県内陸南部"
+            },
+            {
+              "pref": "宮城県",
+              "addr": "宮城県",
+              "isArea": true,
+              "scale": 20,
+              "code": "04"
+            },
+            {
+              "pref": "",
+              "addr": "宮城県北部",
+              "isArea": true,
+              "scale": 20,
+              "code": "220"
+            },
+            {
+              "pref": "",
+              "addr": "気仙沼市笹が陣",
+              "isArea": false,
+              "scale": 20,
+              "nonJma": true,
+              "code": "0420520",
+              "city": "気仙沼市",
+              "area": "宮城県北部"
+            },
+            {
+              "pref": "",
+              "addr": "気仙沼市赤岩",
+              "isArea": false,
+              "scale": 10,
+              "code": "0420500",
+              "city": "気仙沼市",
+              "area": "宮城県北部"
+            },
+            {
+              "pref": "",
+              "addr": "気仙沼市唐桑町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0420530",
+              "city": "気仙沼市",
+              "area": "宮城県北部"
+            },
+            {
+              "pref": "",
+              "addr": "登米市東和町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0421220",
+              "city": "登米市",
+              "area": "宮城県北部"
+            },
+            {
+              "pref": "",
+              "addr": "南三陸町志津川",
+              "isArea": false,
+              "scale": 10,
+              "code": "0460601",
+              "city": "南三陸町",
+              "area": "宮城県北部"
+            },
+            {
+              "pref": "",
+              "addr": "南三陸町歌津",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0460621",
+              "city": "南三陸町",
+              "area": "宮城県北部"
+            },
+            {
+              "pref": "",
+              "addr": "宮城県中部",
+              "isArea": true,
+              "scale": 10,
+              "code": "222"
+            },
+            {
+              "pref": "",
+              "addr": "石巻市北上町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0420227",
+              "city": "石巻市",
+              "area": "宮城県中部"
+            },
+            {
+              "pref": "",
+              "addr": "石巻市桃生町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0420239",
+              "city": "石巻市",
+              "area": "宮城県中部"
+            }
+          ],
+          "cities": [
+            {
+              "name": "大船渡市",
+              "area": "岩手県沿岸南部",
+              "pref": "岩手県",
+              "scale": 20,
+              "code": "0320300"
+            },
+            {
+              "name": "陸前高田市",
+              "area": "岩手県沿岸南部",
+              "pref": "岩手県",
+              "scale": 10,
+              "code": "0321000"
+            },
+            {
+              "name": "釜石市",
+              "area": "岩手県沿岸南部",
+              "pref": "岩手県",
+              "scale": 10,
+              "code": "0321100"
+            },
+            {
+              "name": "住田町",
+              "area": "岩手県沿岸南部",
+              "pref": "岩手県",
+              "scale": 10,
+              "code": "0344100"
+            },
+            {
+              "name": "遠野市",
+              "area": "岩手県内陸南部",
+              "pref": "岩手県",
+              "scale": 10,
+              "code": "0320800"
+            },
+            {
+              "name": "一関市",
+              "area": "岩手県内陸南部",
+              "pref": "岩手県",
+              "scale": 10,
+              "code": "0320900"
+            },
+            {
+              "name": "気仙沼市",
+              "area": "宮城県北部",
+              "pref": "宮城県",
+              "scale": 20,
+              "code": "0420500"
+            },
+            {
+              "name": "登米市",
+              "area": "宮城県北部",
+              "pref": "宮城県",
+              "scale": 10,
+              "code": "0421200"
+            },
+            {
+              "name": "南三陸町",
+              "area": "宮城県北部",
+              "pref": "宮城県",
+              "scale": 10,
+              "code": "0460600"
+            },
+            {
+              "name": "石巻市",
+              "area": "宮城県中部",
+              "pref": "宮城県",
+              "scale": 10,
+              "code": "0420200"
+            }
+          ],
+          "forecastText": "この地震による津波の心配はありません。",
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
+        }
+      }
+    },
+    {
+      "time": "2018-06-18T03:55:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180618035105-1-db70c5ca-79c0-3b5d-b9bf-9cfffbb918f8",
+          "eventId": "20180618035105",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T18:55:01Z",
+          "createdAtMs": 1529261701000,
+          "reportsRevise": true,
+          "reportSerial": 1,
+          "time": "2018-06-18T03:55:00+09:00",
+          "issue": {
+            "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
+            "time": "2018-06-18T03:55:00+09:00",
+            "type": "震源・震度情報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-18T03:51:00+09:00",
+            "hypocenter": {
+              "name": "西表島付近",
+              "latitude": 24.2,
+              "longitude": 123.8,
+              "depth": 20,
+              "magnitude": 3.8,
+              "magnitudeType": "Mj",
+              "code": "856"
+            },
+            "maxScale": 10,
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
+          },
+          "headline": "１８日０３時５１分ころ、地震がありました。",
+          "points": [
+            {
+              "pref": "沖縄県",
+              "addr": "沖縄県",
+              "isArea": true,
+              "scale": 10,
+              "code": "47"
+            },
+            {
+              "pref": "",
+              "addr": "沖縄県西表島",
+              "isArea": true,
+              "scale": 10,
+              "code": "807"
+            },
+            {
+              "pref": "",
+              "addr": "竹富町大原",
+              "isArea": false,
+              "scale": 10,
+              "code": "4738104",
+              "city": "竹富町",
+              "area": "沖縄県西表島"
+            }
+          ],
+          "cities": [
+            {
+              "name": "竹富町",
+              "area": "沖縄県西表島",
+              "pref": "沖縄県",
+              "scale": 10,
+              "code": "4738100"
+            }
+          ],
+          "forecastText": "この地震による津波の心配はありません。"
+        }
+      }
+    },
+    {
+      "time": "2018-06-18T04:48:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180618044549-1-b1dc1f05-fe89-3fd2-a8de-00d1aeecd43a",
+          "eventId": "20180618044549",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T19:48:44Z",
+          "createdAtMs": 1529264924000,
+          "reportsRevise": true,
+          "reportSerial": 1,
+          "time": "2018-06-18T04:48:00+09:00",
+          "issue": {
+            "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
+            "time": "2018-06-18T04:48:00+09:00",
+            "type": "震源・震度情報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-18T04:45:00+09:00",
+            "hypocenter": {
+              "name": "西表島付近",
+              "latitude": 24.2,
+              "longitude": 123.8,
+              "depth": 20,
+              "magnitude": 3.3,
+              "magnitudeType": "Mj",
+              "code": "856"
+            },
+            "maxScale": 10,
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
+          },
+          "headline": "１８日０４時４５分ころ、地震がありました。",
+          "points": [
+            {
+              "pref": "沖縄県",
+              "addr": "沖縄県",
+              "isArea": true,
+              "scale": 10,
+              "code": "47"
+            },
+            {
+              "pref": "",
+              "addr": "沖縄県西表島",
+              "isArea": true,
+              "scale": 10,
+              "code": "807"
+            },
+            {
+              "pref": "",
+              "addr": "竹富町大原",
+              "isArea": false,
+              "scale": 10,
+              "code": "4738104",
+              "city": "竹富町",
+              "area": "沖縄県西表島"
+            }
+          ],
+          "cities": [
+            {
+              "name": "竹富町",
+              "area": "沖縄県西表島",
+              "pref": "沖縄県",
+              "scale": 10,
+              "code": "4738100"
+            }
+          ],
+          "forecastText": "この地震による津波の心配はありません。"
+        }
+      }
+    },
+    {
+      "time": "2018-06-18T06:40:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180618063617-1-46ca4e70-7299-3976-9518-292a6a497376",
+          "eventId": "20180618063617",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T21:40:05Z",
+          "createdAtMs": 1529271605000,
+          "reportsRevise": true,
+          "reportSerial": 1,
+          "time": "2018-06-18T06:40:00+09:00",
+          "issue": {
+            "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
+            "time": "2018-06-18T06:40:00+09:00",
+            "type": "震源・震度情報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-18T06:36:00+09:00",
+            "hypocenter": {
+              "name": "釧路沖",
+              "latitude": 42.8,
+              "longitude": 145.2,
+              "depth": 50,
+              "magnitude": 4.3,
+              "magnitudeType": "Mj",
+              "code": "190"
+            },
+            "maxScale": 20,
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
+          },
+          "headline": "１８日０６時３６分ころ、地震がありました。",
+          "points": [
+            {
+              "pref": "北海道",
+              "addr": "北海道",
+              "isArea": true,
+              "scale": 20,
+              "code": "01"
+            },
+            {
+              "pref": "",
+              "addr": "釧路地方中南部",
+              "isArea": true,
+              "scale": 20,
+              "code": "161"
+            },
+            {
+              "pref": "",
+              "addr": "厚岸町尾幌",
+              "isArea": false,
+              "scale": 20,
+              "code": "0166200",
+              "city": "厚岸町",
+              "area": "釧路地方中南部"
+            },
+            {
+              "pref": "",
+              "addr": "厚岸町真栄",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0166220",
+              "city": "厚岸町",
+              "area": "釧路地方中南部"
+            },
+            {
+              "pref": "",
+              "addr": "釧路市幸町",
+              "isArea": false,
+              "scale": 10,
+              "code": "0120601",
+              "city": "釧路市",
+              "area": "釧路地方中南部"
+            },
+            {
+              "pref": "",
+              "addr": "浜中町湯沸",
+              "isArea": false,
+              "scale": 10,
+              "code": "0166300",
+              "city": "浜中町",
+              "area": "釧路地方中南部"
+            },
+            {
+              "pref": "",
+              "addr": "浜中町霧多布",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0166320",
+              "city": "浜中町",
+              "area": "釧路地方中南部"
+            },
+            {
+              "pref": "",
+              "addr": "標茶町川上",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0166420",
+              "city": "標茶町",
+              "area": "釧路地方中南部"
+            },
+            {
+              "pref": "",
+              "addr": "標茶町塘路",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0166421",
+              "city": "標茶町",
+              "area": "釧路地方中南部"
+            },
+            {
+              "pref": "",
+              "addr": "鶴居村鶴居東",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0166720",
+              "city": "鶴居村",
+              "area": "釧路地方中南部"
+            },
+            {
+              "pref": "",
+              "addr": "白糠町西１条",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0166820",
+              "city": "白糠町",
+              "area": "釧路地方中南部"
+            },
+            {
+              "pref": "",
+              "addr": "根室地方北部",
+              "isArea": true,
+              "scale": 20,
+              "code": "165"
+            },
+            {
+              "pref": "",
+              "addr": "標津町北２条",
+              "isArea": false,
+              "scale": 20,
+              "nonJma": true,
+              "code": "0169320",
+              "city": "標津町",
+              "area": "根室地方北部"
+            },
+            {
+              "pref": "",
+              "addr": "標津町薫別",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0169321",
+              "city": "標津町",
+              "area": "根室地方北部"
+            },
+            {
+              "pref": "",
+              "addr": "中標津町養老牛",
+              "isArea": false,
+              "scale": 10,
+              "code": "0169200",
+              "city": "中標津町",
+              "area": "根室地方北部"
+            },
+            {
+              "pref": "",
+              "addr": "羅臼町岬町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0169421",
+              "city": "羅臼町",
+              "area": "根室地方北部"
+            },
+            {
+              "pref": "",
+              "addr": "根室地方中部",
+              "isArea": true,
+              "scale": 20,
+              "code": "166"
+            },
+            {
+              "pref": "",
+              "addr": "別海町常盤",
+              "isArea": false,
+              "scale": 20,
+              "code": "0169100",
+              "city": "別海町",
+              "area": "根室地方中部"
+            },
+            {
+              "pref": "",
+              "addr": "別海町本別海",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0169122",
+              "city": "別海町",
+              "area": "根室地方中部"
+            },
+            {
+              "pref": "",
+              "addr": "根室地方南部",
+              "isArea": true,
+              "scale": 20,
+              "code": "167"
+            },
+            {
+              "pref": "",
+              "addr": "根室市厚床",
+              "isArea": false,
+              "scale": 20,
+              "nonJma": true,
+              "code": "0122321",
+              "city": "根室市",
+              "area": "根室地方南部"
+            },
+            {
+              "pref": "",
+              "addr": "根室市落石東",
+              "isArea": false,
+              "scale": 20,
+              "nonJma": true,
+              "code": "0122322",
+              "city": "根室市",
+              "area": "根室地方南部"
+            },
+            {
+              "pref": "",
+              "addr": "根室市珸瑶瑁",
+              "isArea": false,
+              "scale": 20,
+              "nonJma": true,
+              "code": "0122323",
+              "city": "根室市",
+              "area": "根室地方南部"
+            },
+            {
+              "pref": "",
+              "addr": "根室市弥栄",
+              "isArea": false,
+              "scale": 10,
+              "code": "0122300",
+              "city": "根室市",
+              "area": "根室地方南部"
+            },
+            {
+              "pref": "",
+              "addr": "根室市牧の内",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0122320",
+              "city": "根室市",
+              "area": "根室地方南部"
+            },
+            {
+              "pref": "",
+              "addr": "十勝地方南部",
+              "isArea": true,
+              "scale": 10,
+              "code": "157"
+            },
+            {
+              "pref": "",
+              "addr": "十勝大樹町生花",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0164121",
+              "city": "十勝大樹町",
+              "area": "十勝地方南部"
+            },
+            {
+              "pref": "",
+              "addr": "釧路地方北部",
+              "isArea": true,
+              "scale": 10,
+              "code": "160"
+            },
+            {
+              "pref": "",
+              "addr": "弟子屈町美里",
+              "isArea": false,
+              "scale": 10,
+              "code": "0166501",
+              "city": "弟子屈町",
+              "area": "釧路地方北部"
+            },
+            {
+              "pref": "",
+              "addr": "弟子屈町弟子屈",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0166520",
+              "city": "弟子屈町",
+              "area": "釧路地方北部"
+            }
+          ],
+          "cities": [
+            {
+              "name": "厚岸町",
+              "area": "釧路地方中南部",
+              "pref": "北海道",
+              "scale": 20,
+              "code": "0166200"
+            },
+            {
+              "name": "釧路市",
+              "area": "釧路地方中南部",
+              "pref": "北海道",
+              "scale": 10,
+              "code": "0120600"
+            },
+            {
+              "name": "浜中町",
+              "area": "釧路地方中南部",
+              "pref": "北海道",
+              "scale": 10,
+              "code": "0166300"
+            },
+            {
+              "name": "標茶町",
+              "area": "釧路地方中南部",
+              "pref": "北海道",
+              "scale": 10,
+              "code": "0166400"
+            },
+            {
+              "name": "鶴居村",
+              "area": "釧路地方中南部",
+              "pref": "北海道",
+              "scale": 10,
+              "code": "0166700"
+            },
+            {
+              "name": "白糠町",
+              "area": "釧路地方中南部",
+              "pref": "北海道",
+              "scale": 10,
+              "code": "0166800"
+            },
+            {
+              "name": "標津町",
+              "area": "根室地方北部",
+              "pref": "北海道",
+              "scale": 20,
+              "code": "0169300"
+            },
+            {
+              "name": "中標津町",
+              "area": "根室地方北部",
+              "pref": "北海道",
+              "scale": 10,
+              "code": "0169200"
+            },
+            {
+              "name": "羅臼町",
+              "area": "根室地方北部",
+              "pref": "北海道",
+              "scale": 10,
+              "code": "0169400"
+            },
+            {
+              "name": "別海町",
+              "area": "根室地方中部",
+              "pref": "北海道",
+              "scale": 20,
+              "code": "0169100"
+            },
+            {
+              "name": "根室市",
+              "area": "根室地方南部",
+              "pref": "北海道",
+              "scale": 20,
+              "code": "0122300"
+            },
+            {
+              "name": "十勝大樹町",
+              "area": "十勝地方南部",
+              "pref": "北海道",
+              "scale": 10,
+              "code": "0164100"
+            },
+            {
+              "name": "弟子屈町",
+              "area": "釧路地方北部",
+              "pref": "北海道",
+              "scale": 10,
+              "code": "0166500"
+            }
+          ],
+          "forecastText": "この地震による津波の心配はありません。",
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
+        }
+      }
+    },
+    {
+      "time": "2018-06-18T07:19:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180618071536-1-44c28db0-257e-3034-8af7-bbab0be9991d",
+          "eventId": "20180618071536",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T22:19:43Z",
+          "createdAtMs": 1529273983000,
+          "reportsRevise": true,
+          "reportSerial": 1,
+          "time": "2018-06-18T07:19:00+09:00",
+          "issue": {
+            "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
+            "time": "2018-06-18T07:19:00+09:00",
+            "type": "震源・震度情報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-18T07:15:00+09:00",
+            "hypocenter": {
+              "name": "奄美大島近海",
+              "latitude": 28.9,
+              "longitude": 129.6,
+              "depth": 10,
+              "magnitude": 3.8,
+              "magnitudeType": "Mj",
+              "code": "793"
+            },
+            "maxScale": 10,
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
+          },
+          "headline": "１８日０７時１５分ころ、地震がありました。",
+          "points": [
+            {
+              "pref": "鹿児島県",
+              "addr": "鹿児島県",
+              "isArea": true,
+              "scale": 10,
+              "code": "46"
+            },
+            {
+              "pref": "",
+              "addr": "鹿児島県十島村",
+              "isArea": true,
+              "scale": 10,
+              "code": "774"
+            },
+            {
+              "pref": "",
+              "addr": "鹿児島十島村諏訪之瀬島",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "4630446",
+              "city": "鹿児島十島村",
+              "area": "鹿児島県十島村"
+            },
+            {
+              "pref": "",
+              "addr": "鹿児島十島村悪石島",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "4630447",
+              "city": "鹿児島十島村",
+              "area": "鹿児島県十島村"
+            }
+          ],
+          "cities": [
+            {
+              "name": "鹿児島十島村",
+              "area": "鹿児島県十島村",
+              "pref": "鹿児島県",
+              "scale": 10,
+              "code": "4630400"
+            }
+          ],
+          "forecastText": "この地震による津波の心配はありません。",
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
+        }
+      }
+    },
+    {
       "time": "2018-06-17T22:58:41.900Z",
       "payload": {
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-1",
           "time": "2018-06-17T22:58:41.900Z",
           "test": false,
@@ -37,7 +1040,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "1",
             "time": "2018-06-17T22:58:41.900Z"
           },
@@ -172,6 +1175,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-2",
           "time": "2018-06-17T22:58:42.000Z",
           "test": false,
@@ -191,7 +1195,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "2",
             "time": "2018-06-17T22:58:42.000Z"
           },
@@ -342,6 +1346,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-3",
           "time": "2018-06-17T22:58:42.500Z",
           "test": false,
@@ -361,7 +1366,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "3",
             "time": "2018-06-17T22:58:42.500Z"
           },
@@ -512,6 +1517,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-4",
           "time": "2018-06-17T22:58:43.100Z",
           "test": false,
@@ -531,7 +1537,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "4",
             "time": "2018-06-17T22:58:43.100Z"
           },
@@ -682,6 +1688,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-5",
           "time": "2018-06-17T22:58:44.000Z",
           "test": false,
@@ -701,7 +1708,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "5",
             "time": "2018-06-17T22:58:44.000Z"
           },
@@ -852,6 +1859,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-6",
           "time": "2018-06-17T22:58:44.600Z",
           "test": false,
@@ -871,7 +1879,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "6",
             "time": "2018-06-17T22:58:44.600Z"
           },
@@ -1022,6 +2030,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-7",
           "time": "2018-06-17T22:58:46.600Z",
           "test": false,
@@ -1041,7 +2050,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "7",
             "time": "2018-06-17T22:58:46.600Z"
           },
@@ -1192,6 +2201,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-8",
           "time": "2018-06-17T22:58:47.000Z",
           "test": false,
@@ -1211,7 +2221,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "8",
             "time": "2018-06-17T22:58:47.000Z"
           },
@@ -1386,6 +2396,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-9",
           "time": "2018-06-17T22:58:47.700Z",
           "test": false,
@@ -1405,7 +2416,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "9",
             "time": "2018-06-17T22:58:47.700Z"
           },
@@ -1588,6 +2599,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-10",
           "time": "2018-06-17T22:58:48.800Z",
           "test": false,
@@ -1607,7 +2619,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "10",
             "time": "2018-06-17T22:58:48.800Z"
           },
@@ -1790,6 +2802,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-11",
           "time": "2018-06-17T22:58:49.900Z",
           "test": false,
@@ -1809,7 +2822,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "11",
             "time": "2018-06-17T22:58:49.900Z"
           },
@@ -2000,6 +3013,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-12",
           "time": "2018-06-17T22:58:52.200Z",
           "test": false,
@@ -2019,7 +3033,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "12",
             "time": "2018-06-17T22:58:52.200Z"
           },
@@ -2170,6 +3184,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-13",
           "time": "2018-06-17T22:59:01.400Z",
           "test": false,
@@ -2189,7 +3204,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "13",
             "time": "2018-06-17T22:59:01.400Z"
           },
@@ -2348,6 +3363,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-14",
           "time": "2018-06-17T22:59:03.800Z",
           "test": false,
@@ -2367,7 +3383,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "14",
             "time": "2018-06-17T22:59:03.800Z"
           },
@@ -2534,6 +3550,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-15",
           "time": "2018-06-17T22:59:09.200Z",
           "test": false,
@@ -2553,7 +3570,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "15",
             "time": "2018-06-17T22:59:09.200Z"
           },
@@ -2720,6 +3737,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-16",
           "time": "2018-06-17T22:59:11.300Z",
           "test": false,
@@ -2739,7 +3757,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "16",
             "time": "2018-06-17T22:59:11.300Z"
           },
@@ -2914,6 +3932,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-17",
           "time": "2018-06-17T22:59:25.800Z",
           "test": false,
@@ -2933,7 +3952,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "17",
             "time": "2018-06-17T22:59:25.800Z"
           },
@@ -3108,6 +4127,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-18",
           "time": "2018-06-17T22:59:45.400Z",
           "test": false,
@@ -3127,7 +4147,7 @@
           "cancelled": false,
           "isFinal": false,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "18",
             "time": "2018-06-17T22:59:45.400Z"
           },
@@ -3304,9 +4324,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618075838-1-99f64395-b8fb-398c-baf6-c981a5582e6b",
           "eventId": "20180618075838",
+          "telegramKey": "震度速報|2018-06-17T23:00:12Z",
+          "createdAtMs": 1529276412000,
           "time": "2018-06-18T08:00:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-18T08:00:00+09:00",
             "type": "震度速報",
             "correct": "なし"
@@ -3321,7 +4344,8 @@
               "magnitude": null
             },
             "maxScale": 55,
-            "domesticTsunami": "調査中"
+            "domesticTsunami": "調査中",
+            "domesticTsunamiCode": "0217"
           },
           "headline": "１８日０７時５８分ころ、地震による強い揺れを感じました。震度３以上が観測された地域をお知らせします。",
           "points": [
@@ -3499,9 +4523,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618075838-1-277a32ed-05f3-30b2-adab-b1c7327726a8",
           "eventId": "20180618075838",
+          "telegramKey": "震度速報|2018-06-17T23:00:26Z",
+          "createdAtMs": 1529276426000,
           "time": "2018-06-18T08:00:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-18T08:00:00+09:00",
             "type": "震度速報",
             "correct": "なし"
@@ -3516,7 +4543,8 @@
               "magnitude": null
             },
             "maxScale": 55,
-            "domesticTsunami": "調査中"
+            "domesticTsunami": "調査中",
+            "domesticTsunamiCode": "0217"
           },
           "headline": "１８日０７時５８分ころ、地震による強い揺れを感じました。震度３以上が観測された地域をお知らせします。",
           "points": [
@@ -3867,6 +4895,7 @@
         "kind": "event",
         "event": {
           "kind": "eew",
+          "origin": "archive",
           "id": "2018osaka-mainshock-eew-19",
           "time": "2018-06-17T23:00:03.200Z",
           "test": false,
@@ -3886,7 +4915,7 @@
           "cancelled": false,
           "isFinal": true,
           "issue": {
-            "eventId": "20180618075834",
+            "eventId": "20180618075838",
             "serial": "19",
             "time": "2018-06-17T23:00:03.200Z"
           },
@@ -4063,9 +5092,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618075838-1-c877daad-e9fe-37fa-931a-72398e5197c4",
           "eventId": "20180618075838",
+          "telegramKey": "震源に関する情報|2018-06-17T23:01:20Z",
+          "createdAtMs": 1529276480000,
           "time": "2018-06-18T08:01:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-18T08:01:00+09:00",
             "type": "震源情報",
             "correct": "なし"
@@ -4082,7 +5114,8 @@
               "code": "520"
             },
             "maxScale": -1,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "きょう１８日０７時５８分ころ、地震がありました。",
           "points": [],
@@ -4098,9 +5131,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618075838-1-10bb5714-d952-3117-b61a-8ab7e5b1ae7e",
           "eventId": "20180618075838",
+          "telegramKey": "震度速報|2018-06-17T23:01:26Z",
+          "createdAtMs": 1529276486000,
           "time": "2018-06-18T08:01:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-18T08:01:00+09:00",
             "type": "震度速報",
             "correct": "なし"
@@ -4115,7 +5151,8 @@
               "magnitude": null
             },
             "maxScale": 55,
-            "domesticTsunami": "調査中"
+            "domesticTsunami": "調査中",
+            "domesticTsunamiCode": "0217"
           },
           "headline": "１８日０７時５８分ころ、地震による強い揺れを感じました。震度３以上が観測された地域をお知らせします。",
           "points": [
@@ -4517,9 +5554,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618075838-1-98c5ee2a-afdc-360c-98d9-427c1e59b02f",
           "eventId": "20180618075838",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T23:02:26Z",
+          "createdAtMs": 1529276546000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T08:02:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-18T08:02:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -4536,7 +5578,8 @@
               "code": "520"
             },
             "maxScale": 55,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日０７時５８分ころ、地震がありました。",
           "points": [
@@ -24517,7 +25560,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。この地震について、緊急地震速報を発表しています。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -24529,9 +25575,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618075838-2-2618014d-0aa1-35c1-a864-f4a68c2d6459",
           "eventId": "20180618075838",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T23:07:35Z",
+          "createdAtMs": 1529276855000,
+          "reportsRevise": true,
+          "reportSerial": 2,
           "time": "2018-06-18T08:07:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-18T08:07:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -24548,7 +25599,8 @@
               "code": "520"
             },
             "maxScale": 55,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日０７時５８分ころ、地震がありました。",
           "points": [
@@ -24681,6 +25733,7 @@
               "scale": 50,
               "nonJma": true,
               "code": "2711730",
+              "revise": "追加",
               "city": "大阪旭区",
               "area": "大阪府北部"
             },
@@ -24800,6 +25853,7 @@
               "scale": 45,
               "nonJma": true,
               "code": "2710730",
+              "revise": "追加",
               "city": "大阪港区",
               "area": "大阪府北部"
             },
@@ -24810,6 +25864,7 @@
               "scale": 45,
               "nonJma": true,
               "code": "2711331",
+              "revise": "追加",
               "city": "大阪西淀川区",
               "area": "大阪府北部"
             },
@@ -24860,6 +25915,7 @@
               "scale": 45,
               "nonJma": true,
               "code": "2722930",
+              "revise": "追加",
               "city": "四條畷市",
               "area": "大阪府北部"
             },
@@ -24900,6 +25956,7 @@
               "scale": 40,
               "nonJma": true,
               "code": "2710630",
+              "revise": "追加",
               "city": "大阪西区",
               "area": "大阪府北部"
             },
@@ -25273,6 +26330,7 @@
               "scale": 30,
               "nonJma": true,
               "code": "2714530",
+              "revise": "追加",
               "city": "大阪堺市南区",
               "area": "大阪府南部"
             },
@@ -25446,6 +26504,7 @@
               "scale": 50,
               "nonJma": true,
               "code": "2610440",
+              "revise": "追加",
               "city": "京都中京区",
               "area": "京都府南部"
             },
@@ -25465,6 +26524,7 @@
               "scale": 50,
               "nonJma": true,
               "code": "2610942",
+              "revise": "追加",
               "city": "京都伏見区",
               "area": "京都府南部"
             },
@@ -25475,6 +26535,7 @@
               "scale": 50,
               "nonJma": true,
               "code": "2610944",
+              "revise": "追加",
               "city": "京都伏見区",
               "area": "京都府南部"
             },
@@ -25485,6 +26546,7 @@
               "scale": 45,
               "nonJma": true,
               "code": "2610940",
+              "revise": "追加",
               "city": "京都伏見区",
               "area": "京都府南部"
             },
@@ -25495,6 +26557,7 @@
               "scale": 45,
               "nonJma": true,
               "code": "2610941",
+              "revise": "追加",
               "city": "京都伏見区",
               "area": "京都府南部"
             },
@@ -25505,6 +26568,7 @@
               "scale": 45,
               "nonJma": true,
               "code": "2610943",
+              "revise": "追加",
               "city": "京都伏見区",
               "area": "京都府南部"
             },
@@ -25515,6 +26579,7 @@
               "scale": 50,
               "nonJma": true,
               "code": "2611141",
+              "revise": "追加",
               "city": "京都西京区",
               "area": "京都府南部"
             },
@@ -25753,6 +26818,7 @@
               "scale": 30,
               "nonJma": true,
               "code": "2610341",
+              "revise": "追加",
               "city": "京都左京区",
               "area": "京都府南部"
             },
@@ -25763,6 +26829,7 @@
               "scale": 30,
               "nonJma": true,
               "code": "2610342",
+              "revise": "追加",
               "city": "京都左京区",
               "area": "京都府南部"
             },
@@ -25783,6 +26850,7 @@
               "scale": 30,
               "nonJma": true,
               "code": "2610344",
+              "revise": "追加",
               "city": "京都左京区",
               "area": "京都府南部"
             },
@@ -28140,6 +29208,7 @@
               "scale": 30,
               "nonJma": true,
               "code": "2920134",
+              "revise": "追加",
               "city": "奈良市",
               "area": "奈良県"
             },
@@ -28279,6 +29348,7 @@
               "scale": 30,
               "nonJma": true,
               "code": "2921233",
+              "revise": "追加",
               "city": "宇陀市",
               "area": "奈良県"
             },
@@ -28427,6 +29497,7 @@
               "scale": 20,
               "nonJma": true,
               "code": "2920732",
+              "revise": "追加",
               "city": "五條市",
               "area": "奈良県"
             },
@@ -28437,6 +29508,7 @@
               "scale": 20,
               "nonJma": true,
               "code": "2920733",
+              "revise": "追加",
               "city": "五條市",
               "area": "奈良県"
             },
@@ -39071,6 +40143,7 @@
               "scale": 20,
               "nonJma": true,
               "code": "1942432",
+              "revise": "追加",
               "city": "忍野村",
               "area": "山梨県東部・富士五湖"
             },
@@ -39658,6 +40731,7 @@
               "scale": 10,
               "nonJma": true,
               "code": "1110530",
+              "revise": "追加",
               "city": "さいたま中央区",
               "area": "埼玉県南部"
             },
@@ -39924,6 +40998,7 @@
               "scale": 10,
               "nonJma": true,
               "code": "4121034",
+              "revise": "追加",
               "city": "神埼市",
               "area": "佐賀県南部"
             },
@@ -39934,6 +41009,7 @@
               "scale": 10,
               "nonJma": true,
               "code": "4142535",
+              "revise": "追加",
               "city": "白石町",
               "area": "佐賀県南部"
             }
@@ -44875,7 +45951,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。この地震について、緊急地震速報を発表しています。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -44887,9 +45966,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618080730-1-2f3a5820-b239-3103-9f78-9381327a8548",
           "eventId": "20180618080730",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T23:11:13Z",
+          "createdAtMs": 1529277073000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T08:11:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T08:11:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -44906,7 +45990,8 @@
               "code": "520"
             },
             "maxScale": 20,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日０８時０８分ころ、地震がありました。",
           "points": [
@@ -45661,7 +46746,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -45673,9 +46761,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618081823-1-9e49e904-19a7-35ea-b022-68fb2f4fc7ae",
           "eventId": "20180618081823",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T23:20:58Z",
+          "createdAtMs": 1529277658000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T08:20:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T08:20:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -45692,7 +46785,8 @@
               "code": "520"
             },
             "maxScale": 20,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日０８時１８分ころ、地震がありました。",
           "points": [
@@ -46024,7 +47118,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -46036,9 +47133,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618083143-1-76415198-8103-365e-b94e-8ce97053f49d",
           "eventId": "20180618083143",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T23:34:13Z",
+          "createdAtMs": 1529278453000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T08:34:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T08:34:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -46055,7 +47157,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日０８時３１分ころ、地震がありました。",
           "points": [
@@ -46094,7 +47197,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -46106,9 +47212,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618083349-1-05364d6b-afe1-3bd4-b988-362d2f0acd25",
           "eventId": "20180618083349",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T23:36:39Z",
+          "createdAtMs": 1529278599000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T08:36:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T08:36:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -46125,7 +47236,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日０８時３３分ころ、地震がありました。",
           "points": [
@@ -46164,7 +47276,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -46176,9 +47291,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618083845-1-77562e26-b013-366b-be70-b08bfeba285d",
           "eventId": "20180618083845",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T23:41:12Z",
+          "createdAtMs": 1529278872000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T08:41:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T08:41:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -46195,7 +47315,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日０８時３８分ころ、地震がありました。",
           "points": [
@@ -46265,7 +47386,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -46277,9 +47401,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618084210-1-64c85430-7cb5-30ed-a123-a432e7d2727e",
           "eventId": "20180618084210",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T23:45:13Z",
+          "createdAtMs": 1529279113000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T08:45:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T08:45:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -46296,7 +47425,8 @@
               "code": "520"
             },
             "maxScale": 20,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日０８時４２分ころ、地震がありました。",
           "points": [
@@ -47295,7 +48425,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -47307,9 +48440,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618085101-1-6cbbc10d-bc5a-31db-84dc-aebf8a86cc87",
           "eventId": "20180618085101",
+          "telegramKey": "震源・震度に関する情報|2018-06-17T23:53:27Z",
+          "createdAtMs": 1529279607000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T08:53:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T08:53:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -47326,7 +48464,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日０８時５１分ころ、地震がありました。",
           "points": [
@@ -47365,7 +48504,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -47377,9 +48519,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618091307-1-c66aefc5-ebad-35d0-ba41-8cde31283342",
           "eventId": "20180618091307",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T00:15:43Z",
+          "createdAtMs": 1529280943000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T09:15:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T09:15:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -47396,7 +48543,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日０９時１３分ころ、地震がありました。",
           "points": [
@@ -47435,7 +48583,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -47447,9 +48598,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618075838-1-3d26c874-5236-3e45-ae97-bc5ccce06a92",
           "eventId": "20180618075838",
+          "telegramKey": "顕著な地震の震源要素更新のお知らせ|2018-06-18T01:00:42Z",
+          "createdAtMs": 1529283642000,
           "time": "2018-06-18T10:00:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-18T10:00:00+09:00",
             "type": "顕著な地震の震源要素更新のお知らせ",
             "correct": "なし"
@@ -47482,9 +48636,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618100326-1-23ad5b33-f626-3467-bb65-0e8ece0f31da",
           "eventId": "20180618100326",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T01:05:55Z",
+          "createdAtMs": 1529283955000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T10:05:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T10:05:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -47501,7 +48660,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日１０時０３分ころ、地震がありました。",
           "points": [
@@ -47675,7 +48835,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -47687,9 +48850,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618110000-1-5cac30cf-0572-3013-9550-6573464189bd",
           "eventId": "20180618110000",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T02:02:26Z",
+          "createdAtMs": 1529287346000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T11:02:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T11:02:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -47706,7 +48874,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日１０時５９分ころ、地震がありました。",
           "points": [
@@ -47826,7 +48995,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -47838,9 +49010,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618123655-1-108e6ff9-502a-331d-839f-5fcf49bf8acd",
           "eventId": "20180618123655",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T03:40:02Z",
+          "createdAtMs": 1529293202000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T12:40:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T12:40:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -47857,7 +49034,8 @@
               "code": "520"
             },
             "maxScale": 20,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日１２時３６分ころ、地震がありました。",
           "points": [
@@ -48530,7 +49708,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -48542,9 +49723,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618124154-1-ed2013cc-7d45-3260-9228-396b834cb1da",
           "eventId": "20180618124154",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T03:44:15Z",
+          "createdAtMs": 1529293455000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T12:44:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T12:44:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -48561,7 +49747,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日１２時４１分ころ、地震がありました。",
           "points": [
@@ -48665,7 +49852,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -48677,9 +49867,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618125208-1-c17717e6-d0a5-33f9-b344-df4abe31aa80",
           "eventId": "20180618125208",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T03:55:23Z",
+          "createdAtMs": 1529294123000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T12:55:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T12:55:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -48696,7 +49891,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日１２時５２分ころ、地震がありました。",
           "points": [
@@ -48851,7 +50047,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -48863,9 +50062,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618131131-1-acd8e333-3016-3223-b299-f747e09e2747",
           "eventId": "20180618131131",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T04:14:05Z",
+          "createdAtMs": 1529295245000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T13:14:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T13:14:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -48882,7 +50086,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日１３時１１分ころ、地震がありました。",
           "points": [
@@ -49003,7 +50208,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -49015,9 +50223,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618135648-1-24e3b1b4-fdf4-3879-baea-711370fa7249",
           "eventId": "20180618135648",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T04:59:21Z",
+          "createdAtMs": 1529297961000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T13:59:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T13:59:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -49034,7 +50247,8 @@
               "code": "520"
             },
             "maxScale": 20,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日１３時５６分ころ、地震がありました。",
           "points": [
@@ -49318,7 +50532,276 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
+        }
+      }
+    },
+    {
+      "time": "2018-06-18T15:23:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180618152029-1-1d80a884-b8ec-3f0c-87ba-1ad9cb067396",
+          "eventId": "20180618152029",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T06:23:08Z",
+          "createdAtMs": 1529302988000,
+          "reportsRevise": true,
+          "reportSerial": 1,
+          "time": "2018-06-18T15:23:00+09:00",
+          "issue": {
+            "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
+            "time": "2018-06-18T15:23:00+09:00",
+            "type": "震源・震度情報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-18T15:20:00+09:00",
+            "hypocenter": {
+              "name": "熊本県熊本地方",
+              "latitude": 32.8,
+              "longitude": 130.8,
+              "depth": 0,
+              "magnitude": 3,
+              "magnitudeType": "Mj",
+              "code": "741"
+            },
+            "maxScale": 10,
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
+          },
+          "headline": "１８日１５時２０分ころ、地震がありました。",
+          "points": [
+            {
+              "pref": "熊本県",
+              "addr": "熊本県",
+              "isArea": true,
+              "scale": 10,
+              "code": "43"
+            },
+            {
+              "pref": "",
+              "addr": "熊本県熊本",
+              "isArea": true,
+              "scale": 10,
+              "code": "741"
+            },
+            {
+              "pref": "",
+              "addr": "熊本東区佐土原",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "4310221",
+              "city": "熊本東区",
+              "area": "熊本県熊本"
+            },
+            {
+              "pref": "",
+              "addr": "熊本西区春日",
+              "isArea": false,
+              "scale": 10,
+              "code": "4310300",
+              "city": "熊本西区",
+              "area": "熊本県熊本"
+            },
+            {
+              "pref": "",
+              "addr": "熊本北区植木町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "4310530",
+              "city": "熊本北区",
+              "area": "熊本県熊本"
+            },
+            {
+              "pref": "",
+              "addr": "菊池市旭志",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "4321036",
+              "city": "菊池市",
+              "area": "熊本県熊本"
+            },
+            {
+              "pref": "",
+              "addr": "合志市竹迫",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "4321630",
+              "city": "合志市",
+              "area": "熊本県熊本"
+            },
+            {
+              "pref": "",
+              "addr": "熊本美里町永富",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "4334820",
+              "city": "熊本美里町",
+              "area": "熊本県熊本"
+            },
+            {
+              "pref": "",
+              "addr": "大津町引水",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "4340320",
+              "city": "大津町",
+              "area": "熊本県熊本"
+            },
+            {
+              "pref": "",
+              "addr": "菊陽町久保田",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "4340430",
+              "city": "菊陽町",
+              "area": "熊本県熊本"
+            },
+            {
+              "pref": "",
+              "addr": "嘉島町上島",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "4344230",
+              "city": "嘉島町",
+              "area": "熊本県熊本"
+            }
+          ],
+          "cities": [
+            {
+              "name": "熊本東区",
+              "area": "熊本県熊本",
+              "pref": "熊本県",
+              "scale": 10,
+              "code": "4310200"
+            },
+            {
+              "name": "熊本西区",
+              "area": "熊本県熊本",
+              "pref": "熊本県",
+              "scale": 10,
+              "code": "4310300"
+            },
+            {
+              "name": "熊本北区",
+              "area": "熊本県熊本",
+              "pref": "熊本県",
+              "scale": 10,
+              "code": "4310500"
+            },
+            {
+              "name": "菊池市",
+              "area": "熊本県熊本",
+              "pref": "熊本県",
+              "scale": 10,
+              "code": "4321000"
+            },
+            {
+              "name": "合志市",
+              "area": "熊本県熊本",
+              "pref": "熊本県",
+              "scale": 10,
+              "code": "4321600"
+            },
+            {
+              "name": "熊本美里町",
+              "area": "熊本県熊本",
+              "pref": "熊本県",
+              "scale": 10,
+              "code": "4334800"
+            },
+            {
+              "name": "大津町",
+              "area": "熊本県熊本",
+              "pref": "熊本県",
+              "scale": 10,
+              "code": "4340300"
+            },
+            {
+              "name": "菊陽町",
+              "area": "熊本県熊本",
+              "pref": "熊本県",
+              "scale": 10,
+              "code": "4340400"
+            },
+            {
+              "name": "嘉島町",
+              "area": "熊本県熊本",
+              "pref": "熊本県",
+              "scale": 10,
+              "code": "4344200"
+            }
+          ],
+          "forecastText": "この地震による津波の心配はありません。",
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
+        }
+      }
+    },
+    {
+      "time": "2018-06-18T16:33:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180618163152-1-13c3f62b-e0a1-349f-a7de-026ff15c5a05",
+          "eventId": "20180618163152",
+          "telegramKey": "震度速報|2018-06-18T07:33:26Z",
+          "createdAtMs": 1529307206000,
+          "time": "2018-06-18T16:33:00+09:00",
+          "issue": {
+            "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
+            "time": "2018-06-18T16:33:00+09:00",
+            "type": "震度速報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-18T16:31:00+09:00",
+            "hypocenter": {
+              "name": "",
+              "latitude": -200,
+              "longitude": -200,
+              "depth": -1,
+              "magnitude": null
+            },
+            "maxScale": 30,
+            "domesticTsunami": "調査中",
+            "domesticTsunamiCode": "0217"
+          },
+          "headline": "１８日１６時３１分ころ、地震による強い揺れを感じました。震度３以上が観測された地域をお知らせします。",
+          "points": [
+            {
+              "pref": "京都府",
+              "addr": "京都府",
+              "isArea": true,
+              "scale": 30,
+              "code": "26"
+            },
+            {
+              "pref": "",
+              "addr": "京都府南部",
+              "isArea": true,
+              "scale": 30,
+              "code": "511"
+            }
+          ],
+          "forecastText": "今後の情報に注意してください。"
         }
       }
     },
@@ -49330,9 +50813,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618163152-1-aca427c2-c3b5-379c-a300-f5d24c5844e7",
           "eventId": "20180618163152",
+          "telegramKey": "震源に関する情報|2018-06-18T07:34:23Z",
+          "createdAtMs": 1529307263000,
           "time": "2018-06-18T16:34:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T16:34:00+09:00",
             "type": "震源情報",
             "correct": "なし"
@@ -49349,7 +50835,8 @@
               "code": "520"
             },
             "maxScale": -1,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "きょう１８日１６時３１分ころ、地震がありました。",
           "points": [],
@@ -49365,9 +50852,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618163152-1-f5fea8c0-4ff6-30e7-8418-a75a8728e8c2",
           "eventId": "20180618163152",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T07:35:39Z",
+          "createdAtMs": 1529307339000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T16:35:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T16:35:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -49384,7 +50876,8 @@
               "code": "520"
             },
             "maxScale": 30,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日１６時３１分ころ、地震がありました。",
           "points": [
@@ -50498,7 +51991,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -50510,9 +52006,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180618171811-1-132fa464-84c0-3e33-9ff8-f71ef400efa9",
           "eventId": "20180618171811",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T08:23:12Z",
+          "createdAtMs": 1529310192000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-18T17:23:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-18T17:23:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -50529,7 +52030,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１８日１７時１８分ころ、地震がありました。",
           "points": [
@@ -50568,7 +52070,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -50580,9 +52085,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619003129-1-9e98c961-1962-3a8b-a987-fbf2375468f4",
           "eventId": "20180619003129",
+          "telegramKey": "震度速報|2018-06-18T15:33:18Z",
+          "createdAtMs": 1529335998000,
           "time": "2018-06-19T00:33:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-19T00:33:00+09:00",
             "type": "震度速報",
             "correct": "なし"
@@ -50597,7 +52105,8 @@
               "magnitude": null
             },
             "maxScale": 40,
-            "domesticTsunami": "調査中"
+            "domesticTsunami": "調査中",
+            "domesticTsunamiCode": "0217"
           },
           "headline": "１９日００時３１分ころ、地震による強い揺れを感じました。震度３以上が観測された地域をお知らせします。",
           "points": [
@@ -50642,9 +52151,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619003129-1-867c78b0-95c5-314a-8fb4-42adce143005",
           "eventId": "20180619003129",
+          "telegramKey": "震源に関する情報|2018-06-18T15:34:40Z",
+          "createdAtMs": 1529336080000,
           "time": "2018-06-19T00:34:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T00:34:00+09:00",
             "type": "震源情報",
             "correct": "なし"
@@ -50661,7 +52173,8 @@
               "code": "520"
             },
             "maxScale": -1,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "きょう１９日００時３１分ころ、地震がありました。",
           "points": [],
@@ -50677,9 +52190,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619003129-1-a9674230-16ac-37c3-b27b-cf7679998c85",
           "eventId": "20180619003129",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T15:35:51Z",
+          "createdAtMs": 1529336151000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T00:35:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T00:35:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -50696,7 +52214,8 @@
               "code": "520"
             },
             "maxScale": 40,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日００時３１分ころ、地震がありました。",
           "points": [
@@ -54273,7 +55792,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -54285,9 +55807,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619003529-1-2dc26569-9528-3c34-b973-abde10a107e4",
           "eventId": "20180619003529",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T15:38:31Z",
+          "createdAtMs": 1529336311000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T00:38:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T00:38:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -54304,7 +55831,8 @@
               "code": "520"
             },
             "maxScale": 20,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日００時３５分ころ、地震がありました。",
           "points": [
@@ -54555,7 +56083,106 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
+        }
+      }
+    },
+    {
+      "time": "2018-06-19T01:07:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180619010425-1-c91b6306-6c81-348c-b2bd-c7394855fab4",
+          "eventId": "20180619010425",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T16:07:23Z",
+          "createdAtMs": 1529338043000,
+          "reportsRevise": true,
+          "reportSerial": 1,
+          "time": "2018-06-19T01:07:00+09:00",
+          "issue": {
+            "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
+            "time": "2018-06-19T01:07:00+09:00",
+            "type": "震源・震度情報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-19T01:04:00+09:00",
+            "hypocenter": {
+              "name": "千葉県東方沖",
+              "latitude": 35.3,
+              "longitude": 140.5,
+              "depth": 20,
+              "magnitude": 2.8,
+              "magnitudeType": "Mj",
+              "code": "473"
+            },
+            "maxScale": 10,
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
+          },
+          "headline": "１９日０１時０４分ころ、地震がありました。",
+          "points": [
+            {
+              "pref": "千葉県",
+              "addr": "千葉県",
+              "isArea": true,
+              "scale": 10,
+              "code": "12"
+            },
+            {
+              "pref": "",
+              "addr": "千葉県北東部",
+              "isArea": true,
+              "scale": 10,
+              "code": "340"
+            },
+            {
+              "pref": "",
+              "addr": "長生村本郷",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1242330",
+              "city": "長生村",
+              "area": "千葉県北東部"
+            },
+            {
+              "pref": "",
+              "addr": "長南町長南",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1242731",
+              "city": "長南町",
+              "area": "千葉県北東部"
+            }
+          ],
+          "cities": [
+            {
+              "name": "長生村",
+              "area": "千葉県北東部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1242300"
+            },
+            {
+              "name": "長南町",
+              "area": "千葉県北東部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1242700"
+            }
+          ],
+          "forecastText": "この地震による津波の心配はありません。",
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -54567,9 +56194,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619032115-1-c64347b6-63c9-3910-910d-fcb25b8b5e24",
           "eventId": "20180619032115",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T18:24:21Z",
+          "createdAtMs": 1529346261000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T03:24:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T03:24:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -54586,7 +56218,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日０３時２１分ころ、地震がありました。",
           "points": [
@@ -54625,7 +56258,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -54637,9 +56273,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619033444-1-fdb04768-a7a4-3803-ab1f-deb00fd3d70e",
           "eventId": "20180619033444",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T18:37:36Z",
+          "createdAtMs": 1529347056000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T03:37:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T03:37:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -54656,7 +56297,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日０３時３４分ころ、地震がありました。",
           "points": [
@@ -54794,7 +56436,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -54806,9 +56451,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619033822-1-71267f25-0ba6-3b0c-b8dc-caeb78c1978e",
           "eventId": "20180619033822",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T18:41:38Z",
+          "createdAtMs": 1529347298000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T03:41:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T03:41:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -54825,7 +56475,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日０３時３８分ころ、地震がありました。",
           "points": [
@@ -54864,7 +56515,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -54876,9 +56530,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619040608-1-eb8bec89-8c2b-3e84-a1e6-207b9c35f01d",
           "eventId": "20180619040608",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T19:09:36Z",
+          "createdAtMs": 1529348976000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T04:09:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-19T04:09:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -54895,7 +56554,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日０４時０６分ころ、地震がありました。",
           "points": [
@@ -55593,7 +57253,145 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
+        }
+      }
+    },
+    {
+      "time": "2018-06-19T04:49:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180619044700-1-7b1846a7-dfe2-3365-a8bc-1060412587ec",
+          "eventId": "20180619044700",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T19:49:54Z",
+          "createdAtMs": 1529351394000,
+          "reportsRevise": true,
+          "reportSerial": 1,
+          "time": "2018-06-19T04:49:00+09:00",
+          "issue": {
+            "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
+            "time": "2018-06-19T04:49:00+09:00",
+            "type": "震源・震度情報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-19T04:46:00+09:00",
+            "hypocenter": {
+              "name": "山梨県東部・富士五湖",
+              "latitude": 35.5,
+              "longitude": 139,
+              "depth": 20,
+              "magnitude": 2.4,
+              "magnitudeType": "Mj",
+              "code": "412"
+            },
+            "maxScale": 10,
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
+          },
+          "headline": "１９日０４時４６分ころ、地震がありました。",
+          "points": [
+            {
+              "pref": "神奈川県",
+              "addr": "神奈川県",
+              "isArea": true,
+              "scale": 10,
+              "code": "14"
+            },
+            {
+              "pref": "",
+              "addr": "神奈川県西部",
+              "isArea": true,
+              "scale": 10,
+              "code": "361"
+            },
+            {
+              "pref": "",
+              "addr": "山北町山北",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1436420",
+              "city": "山北町",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "山梨県",
+              "addr": "山梨県",
+              "isArea": true,
+              "scale": 10,
+              "code": "19"
+            },
+            {
+              "pref": "",
+              "addr": "山梨県東部・富士五湖",
+              "isArea": true,
+              "scale": 10,
+              "code": "412"
+            },
+            {
+              "pref": "",
+              "addr": "大月市大月",
+              "isArea": false,
+              "scale": 10,
+              "code": "1920601",
+              "city": "大月市",
+              "area": "山梨県東部・富士五湖"
+            },
+            {
+              "pref": "",
+              "addr": "大月市御太刀",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1920621",
+              "city": "大月市",
+              "area": "山梨県東部・富士五湖"
+            },
+            {
+              "pref": "",
+              "addr": "富士河口湖町船津",
+              "isArea": false,
+              "scale": 10,
+              "code": "1943002",
+              "city": "富士河口湖町",
+              "area": "山梨県東部・富士五湖"
+            }
+          ],
+          "cities": [
+            {
+              "name": "山北町",
+              "area": "神奈川県西部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1436400"
+            },
+            {
+              "name": "大月市",
+              "area": "山梨県東部・富士五湖",
+              "pref": "山梨県",
+              "scale": 10,
+              "code": "1920600"
+            },
+            {
+              "name": "富士河口湖町",
+              "area": "山梨県東部・富士五湖",
+              "pref": "山梨県",
+              "scale": 10,
+              "code": "1943000"
+            }
+          ],
+          "forecastText": "この地震による津波の心配はありません。",
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -55605,9 +57403,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619045314-1-c7a3caab-f51b-3e56-9268-26f3bedda947",
           "eventId": "20180619045314",
+          "telegramKey": "震度速報|2018-06-18T19:54:48Z",
+          "createdAtMs": 1529351688000,
           "time": "2018-06-19T04:54:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-19T04:54:00+09:00",
             "type": "震度速報",
             "correct": "なし"
@@ -55622,7 +57423,8 @@
               "magnitude": null
             },
             "maxScale": 30,
-            "domesticTsunami": "調査中"
+            "domesticTsunami": "調査中",
+            "domesticTsunamiCode": "0217"
           },
           "headline": "１９日０４時５３分ころ、地震による強い揺れを感じました。震度３以上が観測された地域をお知らせします。",
           "points": [
@@ -55667,9 +57469,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619045314-1-1a49890a-ba61-3003-95ac-dc44ef00ad42",
           "eventId": "20180619045314",
+          "telegramKey": "震源に関する情報|2018-06-18T19:55:36Z",
+          "createdAtMs": 1529351736000,
           "time": "2018-06-19T04:55:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T04:55:00+09:00",
             "type": "震源情報",
             "correct": "なし"
@@ -55686,7 +57491,8 @@
               "code": "520"
             },
             "maxScale": -1,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "きょう１９日０４時５３分ころ、地震がありました。",
           "points": [],
@@ -55702,9 +57508,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619045314-1-9b7ccb08-ced3-3e91-8f95-86d4a80ec807",
           "eventId": "20180619045314",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T19:57:28Z",
+          "createdAtMs": 1529351848000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T04:57:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T04:57:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -55721,7 +57532,8 @@
               "code": "520"
             },
             "maxScale": 30,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日０４時５３分ころ、地震がありました。",
           "points": [
@@ -58239,7 +60051,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -58251,9 +60066,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619065009-1-02baf529-33b9-36b0-aff0-2bad51a63de0",
           "eventId": "20180619065009",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T21:54:17Z",
+          "createdAtMs": 1529358857000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T06:54:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-19T06:54:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -58270,7 +60090,8 @@
               "code": "520"
             },
             "maxScale": 20,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日０６時５０分ころ、地震がありました。",
           "points": [
@@ -59488,7 +61309,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -59500,9 +61324,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619075205-1-767aa233-1b2b-3656-a573-5496a60a45c8",
           "eventId": "20180619075205",
+          "telegramKey": "震度速報|2018-06-18T22:53:38Z",
+          "createdAtMs": 1529362418000,
           "time": "2018-06-19T07:53:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-19T07:53:00+09:00",
             "type": "震度速報",
             "correct": "なし"
@@ -59517,7 +61344,8 @@
               "magnitude": null
             },
             "maxScale": 30,
-            "domesticTsunami": "調査中"
+            "domesticTsunami": "調査中",
+            "domesticTsunamiCode": "0217"
           },
           "headline": "１９日０７時５２分ころ、地震による強い揺れを感じました。震度３以上が観測された地域をお知らせします。",
           "points": [
@@ -59562,9 +61390,12 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619075205-1-a01853f3-b83a-34c0-a37e-0afa90c76870",
           "eventId": "20180619075205",
+          "telegramKey": "震源に関する情報|2018-06-18T22:54:17Z",
+          "createdAtMs": 1529362457000,
           "time": "2018-06-19T07:54:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-19T07:54:00+09:00",
             "type": "震源情報",
             "correct": "なし"
@@ -59581,7 +61412,8 @@
               "code": "520"
             },
             "maxScale": -1,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "きょう１９日０７時５２分ころ、地震がありました。",
           "points": [],
@@ -59597,9 +61429,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619075205-1-1dc8e7da-6173-345f-a152-88436aa2cef0",
           "eventId": "20180619075205",
+          "telegramKey": "震源・震度に関する情報|2018-06-18T22:55:40Z",
+          "createdAtMs": 1529362540000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T07:55:00+09:00",
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2018-06-19T07:55:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -59616,7 +61453,8 @@
               "code": "520"
             },
             "maxScale": 30,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日０７時５２分ころ、地震がありました。",
           "points": [
@@ -62217,7 +64055,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -62229,9 +64070,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619114954-1-11407e55-4f79-3653-9f69-3b7fe3b17037",
           "eventId": "20180619114954",
+          "telegramKey": "震源・震度に関する情報|2018-06-19T02:53:28Z",
+          "createdAtMs": 1529376808000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T11:53:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T11:53:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -62248,7 +64094,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日１１時４９分ころ、地震がありました。",
           "points": [
@@ -62403,7 +64250,10 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -62415,9 +64265,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619120833-1-ed9b95ea-8a6d-3ca7-ba98-4e989596c899",
           "eventId": "20180619120833",
+          "telegramKey": "震源・震度に関する情報|2018-06-19T03:11:43Z",
+          "createdAtMs": 1529377903000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T12:11:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T12:11:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -62434,7 +64289,8 @@
               "code": "520"
             },
             "maxScale": 10,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日１２時０８分ころ、地震がありました。",
           "points": [
@@ -62473,7 +64329,2183 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
+        }
+      }
+    },
+    {
+      "time": "2018-06-19T13:33:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180619132919-1-1afb0070-dd1c-3b6a-8f46-fe1e16969dcc",
+          "eventId": "20180619132919",
+          "telegramKey": "震源・震度に関する情報|2018-06-19T04:33:01Z",
+          "createdAtMs": 1529382781000,
+          "reportsRevise": true,
+          "reportSerial": 1,
+          "time": "2018-06-19T13:33:00+09:00",
+          "issue": {
+            "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
+            "time": "2018-06-19T13:33:00+09:00",
+            "type": "震源・震度情報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-19T13:29:00+09:00",
+            "hypocenter": {
+              "name": "千葉県北西部",
+              "latitude": 35.7,
+              "longitude": 140.2,
+              "depth": 70,
+              "magnitude": 4.1,
+              "magnitudeType": "Mj",
+              "code": "341"
+            },
+            "maxScale": 20,
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
+          },
+          "headline": "１９日１３時２９分ころ、地震がありました。",
+          "points": [
+            {
+              "pref": "千葉県",
+              "addr": "千葉県",
+              "isArea": true,
+              "scale": 20,
+              "code": "12"
+            },
+            {
+              "pref": "",
+              "addr": "千葉県北東部",
+              "isArea": true,
+              "scale": 20,
+              "code": "340"
+            },
+            {
+              "pref": "",
+              "addr": "長南町長南",
+              "isArea": false,
+              "scale": 20,
+              "nonJma": true,
+              "code": "1242731",
+              "city": "長南町",
+              "area": "千葉県北東部"
+            },
+            {
+              "pref": "",
+              "addr": "東金市日吉台",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1221320",
+              "city": "東金市",
+              "area": "千葉県北東部"
+            },
+            {
+              "pref": "",
+              "addr": "千葉県北西部",
+              "isArea": true,
+              "scale": 10,
+              "code": "341"
+            },
+            {
+              "pref": "",
+              "addr": "千葉中央区中央港",
+              "isArea": false,
+              "scale": 10,
+              "code": "1210101",
+              "city": "千葉中央区",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "千葉中央区都町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1210140",
+              "city": "千葉中央区",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "千葉花見川区花島町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1210240",
+              "city": "千葉花見川区",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "千葉稲毛区園生町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1210340",
+              "city": "千葉稲毛区",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "千葉緑区おゆみ野",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1210540",
+              "city": "千葉緑区",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "千葉美浜区ひび野",
+              "isArea": false,
+              "scale": 10,
+              "code": "1210600",
+              "city": "千葉美浜区",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "船橋市湊町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1220431",
+              "city": "船橋市",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "野田市鶴奉",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1220832",
+              "city": "野田市",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "柏市旭町",
+              "isArea": false,
+              "scale": 10,
+              "code": "1221701",
+              "city": "柏市",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "市原市姉崎",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1221920",
+              "city": "市原市",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "八千代市大和田新田",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1222131",
+              "city": "八千代市",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "鎌ケ谷市新鎌ケ谷",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1222431",
+              "city": "鎌ケ谷市",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "白井市復",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1223232",
+              "city": "白井市",
+              "area": "千葉県北西部"
+            },
+            {
+              "pref": "",
+              "addr": "千葉県南部",
+              "isArea": true,
+              "scale": 10,
+              "code": "342"
+            },
+            {
+              "pref": "",
+              "addr": "館山市長須賀",
+              "isArea": false,
+              "scale": 10,
+              "code": "1220501",
+              "city": "館山市",
+              "area": "千葉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "木更津市太田",
+              "isArea": false,
+              "scale": 10,
+              "code": "1220601",
+              "city": "木更津市",
+              "area": "千葉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "木更津市富士見",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1220631",
+              "city": "木更津市",
+              "area": "千葉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "鴨川市八色",
+              "isArea": false,
+              "scale": 10,
+              "code": "1222300",
+              "city": "鴨川市",
+              "area": "千葉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "鴨川市横渚",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1222320",
+              "city": "鴨川市",
+              "area": "千葉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "君津市久留里市場",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1222520",
+              "city": "君津市",
+              "area": "千葉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "富津市下飯野",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1222631",
+              "city": "富津市",
+              "area": "千葉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "大多喜町大多喜",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1244130",
+              "city": "大多喜町",
+              "area": "千葉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "鋸南町下佐久間",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1246330",
+              "city": "鋸南町",
+              "area": "千葉県南部"
+            },
+            {
+              "pref": "茨城県",
+              "addr": "茨城県",
+              "isArea": true,
+              "scale": 10,
+              "code": "08"
+            },
+            {
+              "pref": "",
+              "addr": "茨城県北部",
+              "isArea": true,
+              "scale": 10,
+              "code": "300"
+            },
+            {
+              "pref": "",
+              "addr": "水戸市内原町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0820132",
+              "city": "水戸市",
+              "area": "茨城県北部"
+            },
+            {
+              "pref": "",
+              "addr": "笠間市石井",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0821620",
+              "city": "笠間市",
+              "area": "茨城県北部"
+            },
+            {
+              "pref": "",
+              "addr": "茨城県南部",
+              "isArea": true,
+              "scale": 10,
+              "code": "301"
+            },
+            {
+              "pref": "",
+              "addr": "土浦市常名",
+              "isArea": false,
+              "scale": 10,
+              "code": "0820301",
+              "city": "土浦市",
+              "area": "茨城県南部"
+            },
+            {
+              "pref": "",
+              "addr": "石岡市柿岡",
+              "isArea": false,
+              "scale": 10,
+              "code": "0820500",
+              "city": "石岡市",
+              "area": "茨城県南部"
+            },
+            {
+              "pref": "",
+              "addr": "取手市寺田",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0821720",
+              "city": "取手市",
+              "area": "茨城県南部"
+            },
+            {
+              "pref": "",
+              "addr": "つくば市小茎",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0822033",
+              "city": "つくば市",
+              "area": "茨城県南部"
+            },
+            {
+              "pref": "",
+              "addr": "筑西市舟生",
+              "isArea": false,
+              "scale": 10,
+              "code": "0822700",
+              "city": "筑西市",
+              "area": "茨城県南部"
+            },
+            {
+              "pref": "",
+              "addr": "坂東市岩井",
+              "isArea": false,
+              "scale": 10,
+              "code": "0822800",
+              "city": "坂東市",
+              "area": "茨城県南部"
+            },
+            {
+              "pref": "",
+              "addr": "桜川市真壁",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0823131",
+              "city": "桜川市",
+              "area": "茨城県南部"
+            },
+            {
+              "pref": "栃木県",
+              "addr": "栃木県",
+              "isArea": true,
+              "scale": 10,
+              "code": "09"
+            },
+            {
+              "pref": "",
+              "addr": "栃木県南部",
+              "isArea": true,
+              "scale": 10,
+              "code": "311"
+            },
+            {
+              "pref": "",
+              "addr": "宇都宮市明保野町",
+              "isArea": false,
+              "scale": 10,
+              "code": "0920100",
+              "city": "宇都宮市",
+              "area": "栃木県南部"
+            },
+            {
+              "pref": "",
+              "addr": "栃木市岩舟町静",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0920336",
+              "city": "栃木市",
+              "area": "栃木県南部"
+            },
+            {
+              "pref": "",
+              "addr": "佐野市高砂町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0920435",
+              "city": "佐野市",
+              "area": "栃木県南部"
+            },
+            {
+              "pref": "",
+              "addr": "真岡市石島",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0920931",
+              "city": "真岡市",
+              "area": "栃木県南部"
+            },
+            {
+              "pref": "",
+              "addr": "下野市笹原",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0921634",
+              "city": "下野市",
+              "area": "栃木県南部"
+            },
+            {
+              "pref": "",
+              "addr": "市貝町市塙",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "0934430",
+              "city": "市貝町",
+              "area": "栃木県南部"
+            },
+            {
+              "pref": "群馬県",
+              "addr": "群馬県",
+              "isArea": true,
+              "scale": 10,
+              "code": "10"
+            },
+            {
+              "pref": "",
+              "addr": "群馬県北部",
+              "isArea": true,
+              "scale": 10,
+              "code": "320"
+            },
+            {
+              "pref": "",
+              "addr": "沼田市白沢町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1020631",
+              "city": "沼田市",
+              "area": "群馬県北部"
+            },
+            {
+              "pref": "",
+              "addr": "群馬県南部",
+              "isArea": true,
+              "scale": 10,
+              "code": "321"
+            },
+            {
+              "pref": "",
+              "addr": "伊勢崎市西久保町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1020432",
+              "city": "伊勢崎市",
+              "area": "群馬県南部"
+            },
+            {
+              "pref": "",
+              "addr": "渋川市吹屋",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1020833",
+              "city": "渋川市",
+              "area": "群馬県南部"
+            },
+            {
+              "pref": "",
+              "addr": "渋川市赤城町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1020836",
+              "city": "渋川市",
+              "area": "群馬県南部"
+            },
+            {
+              "pref": "埼玉県",
+              "addr": "埼玉県",
+              "isArea": true,
+              "scale": 10,
+              "code": "11"
+            },
+            {
+              "pref": "",
+              "addr": "埼玉県北部",
+              "isArea": true,
+              "scale": 10,
+              "code": "330"
+            },
+            {
+              "pref": "",
+              "addr": "熊谷市江南",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1120232",
+              "city": "熊谷市",
+              "area": "埼玉県北部"
+            },
+            {
+              "pref": "",
+              "addr": "加須市騎西",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1121031",
+              "city": "加須市",
+              "area": "埼玉県北部"
+            },
+            {
+              "pref": "",
+              "addr": "加須市大利根",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1121033",
+              "city": "加須市",
+              "area": "埼玉県北部"
+            },
+            {
+              "pref": "",
+              "addr": "東松山市松葉町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1121230",
+              "city": "東松山市",
+              "area": "埼玉県北部"
+            },
+            {
+              "pref": "",
+              "addr": "久喜市下早見",
+              "isArea": false,
+              "scale": 10,
+              "code": "1123200",
+              "city": "久喜市",
+              "area": "埼玉県北部"
+            },
+            {
+              "pref": "",
+              "addr": "久喜市青葉",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1123220",
+              "city": "久喜市",
+              "area": "埼玉県北部"
+            },
+            {
+              "pref": "",
+              "addr": "久喜市鷲宮",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1123232",
+              "city": "久喜市",
+              "area": "埼玉県北部"
+            },
+            {
+              "pref": "",
+              "addr": "埼玉県南部",
+              "isArea": true,
+              "scale": 10,
+              "code": "331"
+            },
+            {
+              "pref": "",
+              "addr": "さいたま北区宮原",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1110230",
+              "city": "さいたま北区",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "さいたま大宮区天沼町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1110320",
+              "city": "さいたま大宮区",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "さいたま見沼区堀崎",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1110430",
+              "city": "さいたま見沼区",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "さいたま浦和区高砂",
+              "isArea": false,
+              "scale": 10,
+              "code": "1110700",
+              "city": "さいたま浦和区",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "さいたま南区別所",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1110831",
+              "city": "さいたま南区",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "春日部市粕壁",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1121421",
+              "city": "春日部市",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "春日部市金崎",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1121430",
+              "city": "春日部市",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "春日部市谷原新田",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1121440",
+              "city": "春日部市",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "狭山市入間川",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1121530",
+              "city": "狭山市",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "草加市高砂",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1122130",
+              "city": "草加市",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "八潮市中央",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1123430",
+              "city": "八潮市",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "幸手市東",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1124030",
+              "city": "幸手市",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "吉川市吉川",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1124330",
+              "city": "吉川市",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "白岡市千駄野",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1124630",
+              "city": "白岡市",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "",
+              "addr": "宮代町笠原",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1144231",
+              "city": "宮代町",
+              "area": "埼玉県南部"
+            },
+            {
+              "pref": "東京都",
+              "addr": "東京都",
+              "isArea": true,
+              "scale": 10,
+              "code": "13"
+            },
+            {
+              "pref": "",
+              "addr": "東京都２３区",
+              "isArea": true,
+              "scale": 10,
+              "code": "350"
+            },
+            {
+              "pref": "",
+              "addr": "東京千代田区大手町",
+              "isArea": false,
+              "scale": 10,
+              "code": "1310100",
+              "city": "東京千代田区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京千代田区富士見",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1310134",
+              "city": "東京千代田区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京中央区勝どき",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1310251",
+              "city": "東京中央区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京港区海岸",
+              "isArea": false,
+              "scale": 10,
+              "code": "1310300",
+              "city": "東京港区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京新宿区上落合",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1310420",
+              "city": "東京新宿区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京目黒区中央町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1311030",
+              "city": "東京目黒区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京世田谷区成城",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1311253",
+              "city": "東京世田谷区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京渋谷区本町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1311350",
+              "city": "東京渋谷区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京中野区中野",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1311430",
+              "city": "東京中野区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京北区西ヶ原",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1311730",
+              "city": "東京北区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京江戸川区中央",
+              "isArea": false,
+              "scale": 10,
+              "code": "1312300",
+              "city": "東京江戸川区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京江戸川区船堀",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1312352",
+              "city": "東京江戸川区",
+              "area": "東京都２３区"
+            },
+            {
+              "pref": "",
+              "addr": "東京都多摩東部",
+              "isArea": true,
+              "scale": 10,
+              "code": "351"
+            },
+            {
+              "pref": "",
+              "addr": "八王子市堀之内",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1320120",
+              "city": "八王子市",
+              "area": "東京都多摩東部"
+            },
+            {
+              "pref": "",
+              "addr": "調布市西つつじヶ丘",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1320850",
+              "city": "調布市",
+              "area": "東京都多摩東部"
+            },
+            {
+              "pref": "",
+              "addr": "町田市忠生",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1320921",
+              "city": "町田市",
+              "area": "東京都多摩東部"
+            },
+            {
+              "pref": "",
+              "addr": "町田市森野",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1320932",
+              "city": "町田市",
+              "area": "東京都多摩東部"
+            },
+            {
+              "pref": "",
+              "addr": "小金井市本町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1321020",
+              "city": "小金井市",
+              "area": "東京都多摩東部"
+            },
+            {
+              "pref": "",
+              "addr": "小平市小川町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1321131",
+              "city": "小平市",
+              "area": "東京都多摩東部"
+            },
+            {
+              "pref": "",
+              "addr": "日野市神明",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1321230",
+              "city": "日野市",
+              "area": "東京都多摩東部"
+            },
+            {
+              "pref": "",
+              "addr": "国分寺市戸倉",
+              "isArea": false,
+              "scale": 10,
+              "code": "1321401",
+              "city": "国分寺市",
+              "area": "東京都多摩東部"
+            },
+            {
+              "pref": "",
+              "addr": "東大和市中央",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1322030",
+              "city": "東大和市",
+              "area": "東京都多摩東部"
+            },
+            {
+              "pref": "",
+              "addr": "西東京市中町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1322941",
+              "city": "西東京市",
+              "area": "東京都多摩東部"
+            },
+            {
+              "pref": "神奈川県",
+              "addr": "神奈川県",
+              "isArea": true,
+              "scale": 10,
+              "code": "14"
+            },
+            {
+              "pref": "",
+              "addr": "神奈川県東部",
+              "isArea": true,
+              "scale": 10,
+              "code": "360"
+            },
+            {
+              "pref": "",
+              "addr": "横浜鶴見区末広町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1410143",
+              "city": "横浜鶴見区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横浜神奈川区広台太田町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1410242",
+              "city": "横浜神奈川区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横浜中区山手町",
+              "isArea": false,
+              "scale": 10,
+              "code": "1410400",
+              "city": "横浜中区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横浜保土ケ谷区上菅田町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1410641",
+              "city": "横浜保土ケ谷区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横浜金沢区釜利谷南",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1410842",
+              "city": "横浜金沢区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横浜港北区日吉本町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1410941",
+              "city": "横浜港北区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横浜港南区丸山台東部",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1411140",
+              "city": "横浜港南区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横浜旭区今宿東町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1411240",
+              "city": "横浜旭区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横浜緑区十日市場町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1411341",
+              "city": "横浜緑区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横浜瀬谷区中屋敷",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1411440",
+              "city": "横浜瀬谷区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横浜青葉区市ケ尾町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1411741",
+              "city": "横浜青葉区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "川崎川崎区宮前町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1413120",
+              "city": "川崎川崎区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "川崎中原区小杉町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1413340",
+              "city": "川崎中原区",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "横須賀市光の丘",
+              "isArea": false,
+              "scale": 10,
+              "code": "1420100",
+              "city": "横須賀市",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "藤沢市長後",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1420542",
+              "city": "藤沢市",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "茅ヶ崎市茅ヶ崎",
+              "isArea": false,
+              "scale": 10,
+              "code": "1420700",
+              "city": "茅ヶ崎市",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "三浦市城山町",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1421020",
+              "city": "三浦市",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "大和市下鶴間",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1421331",
+              "city": "大和市",
+              "area": "神奈川県東部"
+            },
+            {
+              "pref": "",
+              "addr": "神奈川県西部",
+              "isArea": true,
+              "scale": 10,
+              "code": "361"
+            },
+            {
+              "pref": "",
+              "addr": "相模原緑区中野",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1415130",
+              "city": "相模原緑区",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "",
+              "addr": "相模原中央区上溝",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1415241",
+              "city": "相模原中央区",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "",
+              "addr": "相模原中央区水郷田名",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1415243",
+              "city": "相模原中央区",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "",
+              "addr": "相模原南区磯部",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1415341",
+              "city": "相模原南区",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "",
+              "addr": "南足柄市関本",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1421731",
+              "city": "南足柄市",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "",
+              "addr": "中井町比奈窪",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1436131",
+              "city": "中井町",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "",
+              "addr": "箱根町湯本",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1438230",
+              "city": "箱根町",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "",
+              "addr": "湯河原町中央",
+              "isArea": false,
+              "scale": 10,
+              "code": "1438401",
+              "city": "湯河原町",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "",
+              "addr": "愛川町角田",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1440131",
+              "city": "愛川町",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "",
+              "addr": "清川村煤ヶ谷",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "1440230",
+              "city": "清川村",
+              "area": "神奈川県西部"
+            },
+            {
+              "pref": "山梨県",
+              "addr": "山梨県",
+              "isArea": true,
+              "scale": 10,
+              "code": "19"
+            },
+            {
+              "pref": "",
+              "addr": "山梨県東部・富士五湖",
+              "isArea": true,
+              "scale": 10,
+              "code": "412"
+            },
+            {
+              "pref": "",
+              "addr": "富士河口湖町船津",
+              "isArea": false,
+              "scale": 10,
+              "code": "1943002",
+              "city": "富士河口湖町",
+              "area": "山梨県東部・富士五湖"
+            },
+            {
+              "pref": "静岡県",
+              "addr": "静岡県",
+              "isArea": true,
+              "scale": 10,
+              "code": "22"
+            },
+            {
+              "pref": "",
+              "addr": "静岡県伊豆",
+              "isArea": true,
+              "scale": 10,
+              "code": "440"
+            },
+            {
+              "pref": "",
+              "addr": "伊豆市中伊豆グラウンド",
+              "isArea": false,
+              "scale": 10,
+              "code": "2222200",
+              "city": "伊豆市",
+              "area": "静岡県伊豆"
+            },
+            {
+              "pref": "",
+              "addr": "伊豆の国市長岡",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "2222533",
+              "city": "伊豆の国市",
+              "area": "静岡県伊豆"
+            },
+            {
+              "pref": "",
+              "addr": "東伊豆町奈良本",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "2230120",
+              "city": "東伊豆町",
+              "area": "静岡県伊豆"
+            },
+            {
+              "pref": "",
+              "addr": "静岡県東部",
+              "isArea": true,
+              "scale": 10,
+              "code": "441"
+            },
+            {
+              "pref": "",
+              "addr": "富士宮市野中",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "2220721",
+              "city": "富士宮市",
+              "area": "静岡県東部"
+            },
+            {
+              "pref": "",
+              "addr": "富士市大淵",
+              "isArea": false,
+              "scale": 10,
+              "nonJma": true,
+              "code": "2221036",
+              "city": "富士市",
+              "area": "静岡県東部"
+            }
+          ],
+          "cities": [
+            {
+              "name": "長南町",
+              "area": "千葉県北東部",
+              "pref": "千葉県",
+              "scale": 20,
+              "code": "1242700"
+            },
+            {
+              "name": "東金市",
+              "area": "千葉県北東部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1221300"
+            },
+            {
+              "name": "千葉中央区",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1210100"
+            },
+            {
+              "name": "千葉花見川区",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1210200"
+            },
+            {
+              "name": "千葉稲毛区",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1210300"
+            },
+            {
+              "name": "千葉緑区",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1210500"
+            },
+            {
+              "name": "千葉美浜区",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1210600"
+            },
+            {
+              "name": "船橋市",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1220400"
+            },
+            {
+              "name": "野田市",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1220800"
+            },
+            {
+              "name": "柏市",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1221700"
+            },
+            {
+              "name": "市原市",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1221900"
+            },
+            {
+              "name": "八千代市",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1222100"
+            },
+            {
+              "name": "鎌ケ谷市",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1222400"
+            },
+            {
+              "name": "白井市",
+              "area": "千葉県北西部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1223200"
+            },
+            {
+              "name": "館山市",
+              "area": "千葉県南部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1220500"
+            },
+            {
+              "name": "木更津市",
+              "area": "千葉県南部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1220600"
+            },
+            {
+              "name": "鴨川市",
+              "area": "千葉県南部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1222300"
+            },
+            {
+              "name": "君津市",
+              "area": "千葉県南部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1222500"
+            },
+            {
+              "name": "富津市",
+              "area": "千葉県南部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1222600"
+            },
+            {
+              "name": "大多喜町",
+              "area": "千葉県南部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1244100"
+            },
+            {
+              "name": "鋸南町",
+              "area": "千葉県南部",
+              "pref": "千葉県",
+              "scale": 10,
+              "code": "1246300"
+            },
+            {
+              "name": "水戸市",
+              "area": "茨城県北部",
+              "pref": "茨城県",
+              "scale": 10,
+              "code": "0820100"
+            },
+            {
+              "name": "笠間市",
+              "area": "茨城県北部",
+              "pref": "茨城県",
+              "scale": 10,
+              "code": "0821600"
+            },
+            {
+              "name": "土浦市",
+              "area": "茨城県南部",
+              "pref": "茨城県",
+              "scale": 10,
+              "code": "0820300"
+            },
+            {
+              "name": "石岡市",
+              "area": "茨城県南部",
+              "pref": "茨城県",
+              "scale": 10,
+              "code": "0820500"
+            },
+            {
+              "name": "取手市",
+              "area": "茨城県南部",
+              "pref": "茨城県",
+              "scale": 10,
+              "code": "0821700"
+            },
+            {
+              "name": "つくば市",
+              "area": "茨城県南部",
+              "pref": "茨城県",
+              "scale": 10,
+              "code": "0822000"
+            },
+            {
+              "name": "筑西市",
+              "area": "茨城県南部",
+              "pref": "茨城県",
+              "scale": 10,
+              "code": "0822700"
+            },
+            {
+              "name": "坂東市",
+              "area": "茨城県南部",
+              "pref": "茨城県",
+              "scale": 10,
+              "code": "0822800"
+            },
+            {
+              "name": "桜川市",
+              "area": "茨城県南部",
+              "pref": "茨城県",
+              "scale": 10,
+              "code": "0823100"
+            },
+            {
+              "name": "宇都宮市",
+              "area": "栃木県南部",
+              "pref": "栃木県",
+              "scale": 10,
+              "code": "0920100"
+            },
+            {
+              "name": "栃木市",
+              "area": "栃木県南部",
+              "pref": "栃木県",
+              "scale": 10,
+              "code": "0920300"
+            },
+            {
+              "name": "佐野市",
+              "area": "栃木県南部",
+              "pref": "栃木県",
+              "scale": 10,
+              "code": "0920400"
+            },
+            {
+              "name": "真岡市",
+              "area": "栃木県南部",
+              "pref": "栃木県",
+              "scale": 10,
+              "code": "0920900"
+            },
+            {
+              "name": "下野市",
+              "area": "栃木県南部",
+              "pref": "栃木県",
+              "scale": 10,
+              "code": "0921600"
+            },
+            {
+              "name": "市貝町",
+              "area": "栃木県南部",
+              "pref": "栃木県",
+              "scale": 10,
+              "code": "0934400"
+            },
+            {
+              "name": "沼田市",
+              "area": "群馬県北部",
+              "pref": "群馬県",
+              "scale": 10,
+              "code": "1020600"
+            },
+            {
+              "name": "伊勢崎市",
+              "area": "群馬県南部",
+              "pref": "群馬県",
+              "scale": 10,
+              "code": "1020400"
+            },
+            {
+              "name": "渋川市",
+              "area": "群馬県南部",
+              "pref": "群馬県",
+              "scale": 10,
+              "code": "1020800"
+            },
+            {
+              "name": "熊谷市",
+              "area": "埼玉県北部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1120200"
+            },
+            {
+              "name": "加須市",
+              "area": "埼玉県北部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1121000"
+            },
+            {
+              "name": "東松山市",
+              "area": "埼玉県北部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1121200"
+            },
+            {
+              "name": "久喜市",
+              "area": "埼玉県北部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1123200"
+            },
+            {
+              "name": "さいたま北区",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1110200"
+            },
+            {
+              "name": "さいたま大宮区",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1110300"
+            },
+            {
+              "name": "さいたま見沼区",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1110400"
+            },
+            {
+              "name": "さいたま浦和区",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1110700"
+            },
+            {
+              "name": "さいたま南区",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1110800"
+            },
+            {
+              "name": "春日部市",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1121400"
+            },
+            {
+              "name": "狭山市",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1121500"
+            },
+            {
+              "name": "草加市",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1122100"
+            },
+            {
+              "name": "八潮市",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1123400"
+            },
+            {
+              "name": "幸手市",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1124000"
+            },
+            {
+              "name": "吉川市",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1124300"
+            },
+            {
+              "name": "白岡市",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1124600"
+            },
+            {
+              "name": "宮代町",
+              "area": "埼玉県南部",
+              "pref": "埼玉県",
+              "scale": 10,
+              "code": "1144200"
+            },
+            {
+              "name": "東京千代田区",
+              "area": "東京都２３区",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1310100"
+            },
+            {
+              "name": "東京中央区",
+              "area": "東京都２３区",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1310200"
+            },
+            {
+              "name": "東京港区",
+              "area": "東京都２３区",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1310300"
+            },
+            {
+              "name": "東京新宿区",
+              "area": "東京都２３区",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1310400"
+            },
+            {
+              "name": "東京目黒区",
+              "area": "東京都２３区",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1311000"
+            },
+            {
+              "name": "東京世田谷区",
+              "area": "東京都２３区",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1311200"
+            },
+            {
+              "name": "東京渋谷区",
+              "area": "東京都２３区",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1311300"
+            },
+            {
+              "name": "東京中野区",
+              "area": "東京都２３区",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1311400"
+            },
+            {
+              "name": "東京北区",
+              "area": "東京都２３区",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1311700"
+            },
+            {
+              "name": "東京江戸川区",
+              "area": "東京都２３区",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1312300"
+            },
+            {
+              "name": "八王子市",
+              "area": "東京都多摩東部",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1320100"
+            },
+            {
+              "name": "調布市",
+              "area": "東京都多摩東部",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1320800"
+            },
+            {
+              "name": "町田市",
+              "area": "東京都多摩東部",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1320900"
+            },
+            {
+              "name": "小金井市",
+              "area": "東京都多摩東部",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1321000"
+            },
+            {
+              "name": "小平市",
+              "area": "東京都多摩東部",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1321100"
+            },
+            {
+              "name": "日野市",
+              "area": "東京都多摩東部",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1321200"
+            },
+            {
+              "name": "国分寺市",
+              "area": "東京都多摩東部",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1321400"
+            },
+            {
+              "name": "東大和市",
+              "area": "東京都多摩東部",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1322000"
+            },
+            {
+              "name": "西東京市",
+              "area": "東京都多摩東部",
+              "pref": "東京都",
+              "scale": 10,
+              "code": "1322900"
+            },
+            {
+              "name": "横浜鶴見区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1410100"
+            },
+            {
+              "name": "横浜神奈川区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1410200"
+            },
+            {
+              "name": "横浜中区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1410400"
+            },
+            {
+              "name": "横浜保土ケ谷区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1410600"
+            },
+            {
+              "name": "横浜金沢区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1410800"
+            },
+            {
+              "name": "横浜港北区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1410900"
+            },
+            {
+              "name": "横浜港南区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1411100"
+            },
+            {
+              "name": "横浜旭区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1411200"
+            },
+            {
+              "name": "横浜緑区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1411300"
+            },
+            {
+              "name": "横浜瀬谷区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1411400"
+            },
+            {
+              "name": "横浜青葉区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1411700"
+            },
+            {
+              "name": "川崎川崎区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1413100"
+            },
+            {
+              "name": "川崎中原区",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1413300"
+            },
+            {
+              "name": "横須賀市",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1420100"
+            },
+            {
+              "name": "藤沢市",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1420500"
+            },
+            {
+              "name": "茅ヶ崎市",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1420700"
+            },
+            {
+              "name": "三浦市",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1421000"
+            },
+            {
+              "name": "大和市",
+              "area": "神奈川県東部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1421300"
+            },
+            {
+              "name": "相模原緑区",
+              "area": "神奈川県西部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1415100"
+            },
+            {
+              "name": "相模原中央区",
+              "area": "神奈川県西部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1415200"
+            },
+            {
+              "name": "相模原南区",
+              "area": "神奈川県西部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1415300"
+            },
+            {
+              "name": "南足柄市",
+              "area": "神奈川県西部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1421700"
+            },
+            {
+              "name": "中井町",
+              "area": "神奈川県西部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1436100"
+            },
+            {
+              "name": "箱根町",
+              "area": "神奈川県西部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1438200"
+            },
+            {
+              "name": "湯河原町",
+              "area": "神奈川県西部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1438400"
+            },
+            {
+              "name": "愛川町",
+              "area": "神奈川県西部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1440100"
+            },
+            {
+              "name": "清川村",
+              "area": "神奈川県西部",
+              "pref": "神奈川県",
+              "scale": 10,
+              "code": "1440200"
+            },
+            {
+              "name": "富士河口湖町",
+              "area": "山梨県東部・富士五湖",
+              "pref": "山梨県",
+              "scale": 10,
+              "code": "1943000"
+            },
+            {
+              "name": "伊豆市",
+              "area": "静岡県伊豆",
+              "pref": "静岡県",
+              "scale": 10,
+              "code": "2222200"
+            },
+            {
+              "name": "伊豆の国市",
+              "area": "静岡県伊豆",
+              "pref": "静岡県",
+              "scale": 10,
+              "code": "2222500"
+            },
+            {
+              "name": "東伊豆町",
+              "area": "静岡県伊豆",
+              "pref": "静岡県",
+              "scale": 10,
+              "code": "2230100"
+            },
+            {
+              "name": "富士宮市",
+              "area": "静岡県東部",
+              "pref": "静岡県",
+              "scale": 10,
+              "code": "2220700"
+            },
+            {
+              "name": "富士市",
+              "area": "静岡県東部",
+              "pref": "静岡県",
+              "scale": 10,
+              "code": "2221000"
+            }
+          ],
+          "forecastText": "この地震による津波の心配はありません。",
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
         }
       }
     },
@@ -62485,9 +66517,14 @@
           "kind": "quake",
           "id": "dmdata-quake-20180619141542-1-0b8900ec-d452-3d38-9185-e5b39d0ac0e1",
           "eventId": "20180619141542",
+          "telegramKey": "震源・震度に関する情報|2018-06-19T05:19:00Z",
+          "createdAtMs": 1529385540000,
+          "reportsRevise": true,
+          "reportSerial": 1,
           "time": "2018-06-19T14:19:00+09:00",
           "issue": {
             "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
             "time": "2018-06-19T14:19:00+09:00",
             "type": "震源・震度情報",
             "correct": "なし"
@@ -62504,7 +66541,8 @@
               "code": "520"
             },
             "maxScale": 20,
-            "domesticTsunami": "なし"
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
           },
           "headline": "１９日１４時１５分ころ、地震がありました。",
           "points": [
@@ -62886,7 +66924,84 @@
             }
           ],
           "forecastText": "この地震による津波の心配はありません。",
-          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。"
+          "varCommentText": "＊印は気象庁以外の震度観測点についての情報です。",
+          "varCommentCodes": [
+            "0262"
+          ]
+        }
+      }
+    },
+    {
+      "time": "2018-06-19T19:26:00+09:00",
+      "payload": {
+        "kind": "event",
+        "event": {
+          "kind": "quake",
+          "id": "dmdata-quake-20180619192350-1-de339af4-cb3f-38a5-81fa-891812bb9a9a",
+          "eventId": "20180619192350",
+          "telegramKey": "震源・震度に関する情報|2018-06-19T10:26:27Z",
+          "createdAtMs": 1529403987000,
+          "reportsRevise": true,
+          "reportSerial": 1,
+          "time": "2018-06-19T19:26:00+09:00",
+          "issue": {
+            "source": "大阪管区気象台",
+            "editorialOffice": "大阪管区気象台",
+            "time": "2018-06-19T19:26:00+09:00",
+            "type": "震源・震度情報",
+            "correct": "なし"
+          },
+          "earthquake": {
+            "time": "2018-06-19T19:23:00+09:00",
+            "hypocenter": {
+              "name": "西表島付近",
+              "latitude": 24.2,
+              "longitude": 123.8,
+              "depth": 20,
+              "magnitude": 3.4,
+              "magnitudeType": "Mj",
+              "code": "856"
+            },
+            "maxScale": 10,
+            "domesticTsunami": "なし",
+            "domesticTsunamiCode": "0215"
+          },
+          "headline": "１９日１９時２３分ころ、地震がありました。",
+          "points": [
+            {
+              "pref": "沖縄県",
+              "addr": "沖縄県",
+              "isArea": true,
+              "scale": 10,
+              "code": "47"
+            },
+            {
+              "pref": "",
+              "addr": "沖縄県西表島",
+              "isArea": true,
+              "scale": 10,
+              "code": "807"
+            },
+            {
+              "pref": "",
+              "addr": "竹富町大原",
+              "isArea": false,
+              "scale": 10,
+              "code": "4738104",
+              "city": "竹富町",
+              "area": "沖縄県西表島"
+            }
+          ],
+          "cities": [
+            {
+              "name": "竹富町",
+              "area": "沖縄県西表島",
+              "pref": "沖縄県",
+              "scale": 10,
+              "code": "4738100"
+            }
+          ],
+          "forecastText": "この地震による津波の心配はありません。"
         }
       }
     }

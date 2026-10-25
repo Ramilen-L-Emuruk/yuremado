@@ -42,7 +42,7 @@ async function clearAllCaches(): Promise<void> {
 }
 import { enumerateJstDates, MAX_ENUMERATED_DAYS } from './dmdataReplayLive'
 import type { JMAQuake, JMATsunami, EEWAlert } from '../types/earthquake'
-import type { ReplayEntry } from '../types/replay'
+import type { ReplayEntry, QuakeHistoryResult } from '../types/replay'
 import { DmdataApiKeyError } from '../utils/dmdataApiKey'
 import { log } from '../utils/logger'
 import { buildSampleTelegram, buildSample1kmTelegram, withWmoHeading } from '../test-utils/bufrBuild'
@@ -1732,6 +1732,303 @@ describe('fetchDmdataQuakeHistory', () => {
       expect(fetchMock.mock.calls.some(([url]) => url === 'https://x/d08')).toBe(false)
       expect(result.failedArchiveUrls).toEqual([])
     })
+
+    // ── 同じアーカイブにある津波・長周期地震動・推計震度分布図も補う ──
+    //
+    // 種別を混ぜた 1 日ぶん。`eventId` を渡したものだけ目録に `xmlReport.head.eventId` を載せる。
+    type DayTelegram = {
+      id: string; type: string; time: string; body: string | Uint8Array
+      eventId?: string; filename?: string
+    }
+    async function mixedDay(telegrams: DayTelegram[]) {
+      return makeTarGz([
+        {
+          name: 'telegrams.json',
+          content: JSON.stringify(telegrams.map(t => ({
+            ...manifestEntry(t.id, t.type, t.time, null, t.filename ?? defaultFileName(t.id, t.time)),
+            ...(t.eventId !== undefined && { xmlReport: { head: { eventId: t.eventId } } }),
+          }))),
+        },
+        ...telegrams.map(t => ({ name: t.filename ?? defaultFileName(t.id, t.time), content: t.body })),
+      ])
+    }
+
+    /**
+     * 一覧の `datetime=A~B` に合わせて、その範囲の日だけを返す（左端は排他 → `archiveListRange`）。
+     * 補う日を一覧から引き直す経路を通すため、範囲を問わず全部返す `mockHistoryArchives` と分けてある。
+     */
+    function rangedArchives(archives: Array<{ date: string; url: string; gz: Uint8Array | 'error' }>) {
+      return vi.fn(async (input: string) => {
+        if (input.includes('/v2/archive?')) {
+          const m = decodeURIComponent(input).match(/datetime=(\d{4}-\d{2}-\d{2})~(\d{4}-\d{2}-\d{2})/)
+          const items = archives
+            .filter(a => !m || (a.date > m[1] && a.date <= m[2]))
+            .map(a => ({ classification: 'telegram.earthquake', date: a.date, url: a.url }))
+          return { ok: true, json: async () => ({ status: 'ok', items }) } as unknown as Response
+        }
+        if (input.includes('/v2/telegram?')) {
+          return { ok: true, json: async () => ({ status: 'ok', items: [] }) } as unknown as Response
+        }
+        const hit = archives.find(a => input === a.url)
+        if (!hit || hit.gz === 'error') return { ok: false, status: 500 } as unknown as Response
+        return { ok: true, arrayBuffer: async () => hit.gz as unknown as ArrayBuffer } as unknown as Response
+      })
+    }
+
+    /** 津波注意報 1 区域だけの VTSE41（`parseTsunamiFromXml` が通る最小形）。 */
+    function tsunamiBody(eventId: string, reportTime: string): string {
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<Report xmlns="http://xml.kishou.go.jp/jmaxml1/">
+<Control><Title>津波警報・注意報・予報a</Title><Status>通常</Status><PublishingOffice>気象庁</PublishingOffice></Control>
+<Head xmlns="http://xml.kishou.go.jp/jmaxml1/informationBasis1/">
+<Title>津波注意報</Title>
+<ReportDateTime>${reportTime}</ReportDateTime>
+<EventID>${eventId}</EventID>
+<InfoType>発表</InfoType>
+</Head>
+<Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/seismology1/">
+<Tsunami><Forecast><Item>
+<Area><Name>石川県能登</Name><Code>360</Code></Area>
+<Category><Kind><Name>津波注意報</Name><Code>62</Code></Kind></Category>
+</Item></Forecast></Tsunami>
+</Body>
+</Report>`
+    }
+
+    /** 長周期地震動に関する観測情報（VXSE62）の最小形。 */
+    function lpgmBody(eventId: string, reportTime: string): string {
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<Report xmlns="http://xml.kishou.go.jp/jmaxml1/">
+<Control><Title>長周期地震動に関する観測情報</Title><Status>通常</Status><PublishingOffice>気象庁</PublishingOffice></Control>
+<Head xmlns="http://xml.kishou.go.jp/jmaxml1/informationBasis1/">
+<Title>長周期地震動に関する観測情報</Title>
+<ReportDateTime>${reportTime}</ReportDateTime>
+<TargetDateTime>${reportTime}</TargetDateTime>
+<EventID>${eventId}</EventID>
+<Serial>1</Serial>
+<InfoType>発表</InfoType>
+</Head>
+<Body xmlns="http://xml.kishou.go.jp/jmaxml1/body/seismology1/">
+<Earthquake><OriginTime>${reportTime}</OriginTime></Earthquake>
+<Intensity><Observation><MaxLgInt>2</MaxLgInt>
+<Pref><Name>岩手県</Name><Code>03</Code><MaxLgInt>2</MaxLgInt>
+<Area><Name>岩手県沿岸南部</Name><Code>211</Code><MaxLgInt>2</MaxLgInt></Area>
+</Pref></Observation></Intensity>
+</Body>
+</Report>`
+    }
+
+    const EARLY_QUAKE = { id: 'early001', type: 'VXSE53', time: '2026-08-08T22:35:00+09:00', eventId: STRADDLING, body: historyBody(STRADDLING, '2026-08-08T22:35:00+09:00', '1') }
+    const tsunamiOf = (result: QuakeHistoryResult, eventId: string) => result.tsunamis.filter(t => t.eventId === eventId)
+    const lpgmIds = (result: QuakeHistoryResult) =>
+      result.extras.flatMap(e => (e.payload.kind === 'lpgm' ? [e.payload.data.eventId] : []))
+    const estimatedOf = (result: QuakeHistoryResult) =>
+      result.extras.flatMap(e => (e.payload.kind === 'estimatedIntensity' ? [e.payload.data] : []))
+
+    // **正**: 窓の端で切れた地震の津波を、発生日のアーカイブから補う
+    // **対照**: 同じ日のほかの地震の津波は取り込まない
+    it('津波: 窓の端で切れた地震の津波を発生日から補い、ほかの地震の津波は入れない', async () => {
+      const d08 = await mixedDay([
+        EARLY_QUAKE,
+        { id: 'tsu00801', type: 'VTSE41', time: '2026-08-08T22:33:00+09:00', eventId: STRADDLING, body: tsunamiBody(STRADDLING, '2026-08-08T22:33:00+09:00') },
+        { id: 'tsu00802', type: 'VTSE41', time: '2026-08-08T10:05:00+09:00', eventId: OTHER_ON_DAY_BEFORE, body: tsunamiBody(OTHER_ON_DAY_BEFORE, '2026-08-08T10:05:00+09:00') },
+      ])
+      globalThis.fetch = mockHistoryArchives(await archives(d08)) as unknown as typeof fetch
+
+      const result = await fetchDmdataQuakeHistory('key', BEFORE, 1, false, null)
+
+      expect(tsunamiOf(result, STRADDLING)).toHaveLength(1)
+      expect(tsunamiOf(result, OTHER_ON_DAY_BEFORE)).toHaveLength(0)
+      expect(result.failedArchiveUrls).toEqual([])
+    })
+
+    // **正**: 何日も続く津波は、発生日から窓の最初の日の前日までの各日を読む。
+    // 窓の前日より前の日は、足りない日をまとめて一覧 1 本で引き直す
+    it('津波: 何日も続く津波は発生日から窓の前日まで読み、一覧の引き直しは 1 本にまとめる', async () => {
+      const TSU = '20260806100000'
+      const tsuDay = (date: string, id: string) => mixedDay([
+        { id, type: 'VTSE41', time: `${date}T09:00:00+09:00`, eventId: TSU, body: tsunamiBody(TSU, `${date}T09:00:00+09:00`) },
+      ])
+      const fetchMock = rangedArchives([
+        { date: '2026-08-06', url: 'https://x/d06', gz: await tsuDay('2026-08-06', 'tsu00601') },
+        { date: '2026-08-07', url: 'https://x/d07', gz: await tsuDay('2026-08-07', 'tsu00701') },
+        { date: '2026-08-08', url: 'https://x/d08', gz: await tsuDay('2026-08-08', 'tsu00801') },
+        { date: '2026-08-09', url: 'https://x/d09', gz: await tsuDay('2026-08-09', 'tsu00901') },
+        { date: '2026-08-10', url: 'https://x/d10', gz: await mixedDay([]) },
+      ])
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+      const onPartial = vi.fn()
+
+      const result = await fetchDmdataQuakeHistory('key', BEFORE, 1, false, null, onPartial)
+
+      // 窓の 2 日ぶん ＋ 補いのあとの 1 回。地震情報を補わず津波だけを補った日でも流す
+      expect(onPartial).toHaveBeenCalledTimes(3)
+      expect(tsunamiOf(result, TSU).map(t => new Date(t.time).toISOString()).sort()).toEqual([
+        '2026-08-06T00:00:00.000Z', '2026-08-07T00:00:00.000Z',
+        '2026-08-08T00:00:00.000Z', '2026-08-09T00:00:00.000Z',
+      ])
+      const listCalls = fetchMock.mock.calls.map(([url]) => String(url)).filter(url => url.includes('/v2/archive?'))
+      expect(listCalls).toHaveLength(2)
+      // 安全弁: 補った日でカーソルを進めない（窓の日だけで決める）
+      expect(result.oldestLoadedDay).toBe('2026-08-09')
+      expect(result.failedArchiveUrls).toEqual([])
+    })
+
+    // **安全弁**: 窓の最初の日から 7 日より前の日は読まない（記録だけ残す）
+    it('津波: 窓の 7 日より前に発生した津波は、7 日前の日までで止めて記録を残す', async () => {
+      const TSU = '20260801100000'
+      const warns: string[] = []
+      vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { warns.push(a.join(' ')) })
+      const days = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10']
+      const fetchMock = rangedArchives(await Promise.all(days.map(async dd => ({
+        date: `2026-08-${dd}`,
+        url: `https://x/d${dd}`,
+        gz: await mixedDay(dd === '10' ? [] : [
+          { id: `tsu0${dd}01`, type: 'VTSE41', time: `2026-08-${dd}T09:00:00+09:00`, eventId: TSU, body: tsunamiBody(TSU, `2026-08-${dd}T09:00:00+09:00`) },
+        ]),
+      }))))
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const result = await fetchDmdataQuakeHistory('key', BEFORE, 1, false, null)
+
+      expect(fetchMock.mock.calls.some(([url]) => url === 'https://x/d01')).toBe(false)
+      // 窓の 08-09 と、補った 08-02〜08-08 の 7 日
+      expect(tsunamiOf(result, TSU)).toHaveLength(8)
+      expect(warns.some(w => w.includes('日より前の報は補いません') && w.includes(TSU))).toBe(true)
+      // 読まなかった報があることは、画面の取得状況にも出す（記録だけにしない）
+      expect(result.failedArchiveUrls).toEqual(['straddle-limit:2026-08-01'])
+    })
+
+    // **対照**: 窓の中で発生した津波では、前日のアーカイブを落とさない
+    it('津波: 窓の中で発生した津波では、前日のアーカイブを落とさない', async () => {
+      const IN_WINDOW = '20260809090000'
+      const fetchMock = mockHistoryArchives([
+        { date: '2026-08-08', url: 'https://x/d08', gz: 'error' },
+        { date: '2026-08-09', url: 'https://x/d09', gz: await mixedDay([
+          { id: 'tsu00901', type: 'VTSE41', time: '2026-08-09T09:05:00+09:00', eventId: IN_WINDOW, body: tsunamiBody(IN_WINDOW, '2026-08-09T09:05:00+09:00') },
+        ]) },
+        { date: '2026-08-10', url: 'https://x/d10', gz: await mixedDay([]) },
+      ])
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const result = await fetchDmdataQuakeHistory('key', BEFORE, 1, false, null)
+
+      expect(fetchMock.mock.calls.some(([url]) => url === 'https://x/d08')).toBe(false)
+      expect(tsunamiOf(result, IN_WINDOW)).toHaveLength(1)
+      expect(result.failedArchiveUrls).toEqual([])
+    })
+
+    // **安全弁**: 補う日の取得に失敗したら、津波だけの補いでも読めなかった取得元として返す
+    it('津波: 補う日の取得に失敗したら、読めなかった取得元として返す', async () => {
+      const TSU = '20260808100000'
+      globalThis.fetch = mockHistoryArchives([
+        { date: '2026-08-08', url: 'https://x/d08', gz: 'error' },
+        { date: '2026-08-09', url: 'https://x/d09', gz: await mixedDay([
+          { id: 'tsu00901', type: 'VTSE41', time: '2026-08-09T09:05:00+09:00', eventId: TSU, body: tsunamiBody(TSU, '2026-08-09T09:05:00+09:00') },
+        ]) },
+        { date: '2026-08-10', url: 'https://x/d10', gz: await mixedDay([]) },
+      ]) as unknown as typeof fetch
+
+      const result = await fetchDmdataQuakeHistory('key', BEFORE, 1, false, null)
+
+      expect(tsunamiOf(result, TSU)).toHaveLength(1)
+      expect(result.failedArchiveUrls).toContain('straddle:2026-08-08')
+      expect(result.oldestLoadedDay).toBe('2026-08-09')
+    })
+
+    // **正**: 長周期地震動は地震と同じ EventID で選ぶ
+    // **対照**: 同じ日のほかの地震の長周期は入れない。目録に EventID が無いだけなら失敗にしない
+    it('長周期: 窓の端で切れた地震の長周期だけを補い、ほかの地震のものは入れない', async () => {
+      const d08 = await mixedDay([
+        EARLY_QUAKE,
+        { id: 'lpgm0801', type: 'VXSE62', time: '2026-08-08T22:50:00+09:00', eventId: STRADDLING, body: lpgmBody(STRADDLING, '2026-08-08T22:50:00+09:00') },
+        { id: 'lpgm0802', type: 'VXSE62', time: '2026-08-08T10:20:00+09:00', body: lpgmBody(OTHER_ON_DAY_BEFORE, '2026-08-08T10:20:00+09:00') },
+      ])
+      globalThis.fetch = mockHistoryArchives(await archives(d08)) as unknown as typeof fetch
+
+      const result = await fetchDmdataQuakeHistory('key', BEFORE, 1, false, null)
+
+      expect(lpgmIds(result)).toEqual([STRADDLING])
+      expect(result.failedArchiveUrls).toEqual([])
+    })
+
+    // **安全弁**: 地震を補う日でなければ（窓の中で閉じている地震だけなら）長周期も読みに行かない
+    it('長周期: 窓の端で切れた地震が無ければ、前日の長周期を入れない', async () => {
+      const fetchMock = mockHistoryArchives([
+        { date: '2026-08-08', url: 'https://x/d08', gz: await mixedDay([
+          { id: 'lpgm0803', type: 'VXSE62', time: '2026-08-08T22:50:00+09:00', eventId: STRADDLING, body: lpgmBody(STRADDLING, '2026-08-08T22:50:00+09:00') },
+        ]) },
+        { date: '2026-08-09', url: 'https://x/d09', gz: await mixedDay([]) },
+        { date: '2026-08-10', url: 'https://x/d10', gz: await mixedDay([]) },
+      ])
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const result = await fetchDmdataQuakeHistory('key', BEFORE, 1, false, null)
+
+      expect(lpgmIds(result)).toEqual([])
+      expect(fetchMock.mock.calls.some(([url]) => url === 'https://x/d08')).toBe(false)
+    })
+
+    // 推計震度分布図は識別子を持たないので、発現時刻（分）と震源で窓の端の地震に結び付ける。
+    // 地震（`historyBody`）の発現時刻は発表時刻と同じ値なので、前半の報 08-08 22:35 JST に合わせる
+    const BIN_MATCH_TIME = '2026-08-08T22:36:00+09:00'
+    const matchingBin = () => buildSampleTelegram({ y: 2026, mo: 8, d: 8, h: 13, mi: 35, latRaw: 12990, lonRaw: 32220 })
+
+    // **正**: 窓の端で切れた地震の分布図を補う
+    // **対照**: 同じ日のほかの地震（発現時刻が違う）の分布図は入れない
+    it('推計震度分布図: 窓の端で切れた地震の分布図を補い、ほかの地震のものは入れない', async () => {
+      const d08 = await mixedDay([
+        EARLY_QUAKE,
+        { id: 'ebin0801', type: 'IXAC41', time: BIN_MATCH_TIME, body: matchingBin(), filename: binFileName('ebin0801', '20260808133600000') },
+        {
+          id: 'ebin0802', type: 'IXAC41', time: '2026-08-08T10:06:00+09:00',
+          body: buildSampleTelegram({ y: 2026, mo: 8, d: 8, h: 1, mi: 5, latRaw: 12990, lonRaw: 32220 }),
+          filename: binFileName('ebin0802', '20260808010600000'),
+        },
+      ])
+      globalThis.fetch = mockHistoryArchives(await archives(d08)) as unknown as typeof fetch
+
+      const result = await fetchDmdataQuakeHistory('key', BEFORE, 1, false, null)
+
+      expect(estimatedOf(result).map(ei => ei.arrivalTime)).toEqual(['2026-08-08T13:35:00.000Z'])
+      expect(skippedTotal(result.skippedByDay)).toBe(0)
+      expect(result.failedArchiveUrls).toEqual([])
+    })
+
+    // **対照**: 発現時刻の分が同じでも、震源が離れていれば別の地震（カードとの引き当てと同じ物差し）
+    it('推計震度分布図: 発現時刻が同じでも震源が離れていれば入れない', async () => {
+      const d08 = await mixedDay([
+        EARLY_QUAKE,
+        // 既定の震源（大阪府北部）は岩手県沖から 300km を超える
+        { id: 'ebin0803', type: 'IXAC41', time: BIN_MATCH_TIME, body: buildSampleTelegram({ y: 2026, mo: 8, d: 8, h: 13, mi: 35 }), filename: binFileName('ebin0803', '20260808133600000') },
+      ])
+      globalThis.fetch = mockHistoryArchives(await archives(d08)) as unknown as typeof fetch
+
+      const result = await fetchDmdataQuakeHistory('key', BEFORE, 1, false, null)
+
+      expect(estimatedOf(result)).toEqual([])
+    })
+
+    // **安全弁**: 本体の無い分布図は取りこぼしとして補う日に数える（黙って消すと、その地震だけ分布が出ない）
+    it('推計震度分布図: 本体が無ければ取りこぼしとして補う日に数える', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const d08 = await makeTarGz([
+        {
+          name: 'telegrams.json',
+          content: JSON.stringify([
+            { ...manifestEntry(EARLY_QUAKE.id, 'VXSE53', EARLY_QUAKE.time), xmlReport: { head: { eventId: STRADDLING } } },
+            manifestEntry('ebin0804', 'IXAC41', BIN_MATCH_TIME, null, binFileName('ebin0804', '20260808133600000')),
+          ]),
+        },
+        { name: defaultFileName(EARLY_QUAKE.id, EARLY_QUAKE.time), content: EARLY_QUAKE.body },
+      ])
+      globalThis.fetch = mockHistoryArchives(await archives(d08)) as unknown as typeof fetch
+
+      const result = await fetchDmdataQuakeHistory('key', BEFORE, 1, false, null)
+
+      expect(estimatedOf(result)).toEqual([])
+      expect(result.skippedByDay.get('2026-08-08')).toBe(1)
+    })
   })
 
   // アーカイブは日単位なので、指定時刻と同じ日の「まだ発表されていない」電文が必ず混ざる。
@@ -2960,6 +3257,74 @@ describe('filterPreWindowEvents の津波', () => {
     expect(keptTsunamis([first, lift, again], '2024-01-02T12:00:00+09:00').length).toBeGreaterThan(0)
     const broken: ReplayEntry = { ...lift, payload: { kind: 'event', event: { ...(lift.payload.kind === 'event' ? lift.payload.event as JMATsunami : null)!, time: '壊れた時刻' } } }
     expect(keptTsunamis([first, broken], '2024-01-02T12:00:00+09:00')).toEqual([])
+  })
+
+  // ── 期限を一度も伝えていない津波と、材料の古い側の端 ──
+  //
+  // 識別子を持つ津波は、期限を伝えていなくてもライブと同じく解除か続報まで残す。ただし束の最も古い報が
+  // 材料の古い側の端の日にある束は、期限の報が材料の外へ出た疑いがあるので 24 時間で落とす。
+  // 開始時刻 01-20 12:00 の材料の端: 履歴の窓の最初の日（01-13）から 7 日前の 01-06 → 01-07 0 時より前が端の日
+  describe('期限を伝えていない津波と材料の端', () => {
+    // 記録の差し替えはテストごとに戻す（戻さないと、後のテストが同じ差し替えに積もった呼び出しを数える）
+    afterEach(() => { vi.restoreAllMocks() })
+    const TARGET = '2024-01-20T12:00:00+09:00'
+    const unkeyed = (time: string): ReplayEntry => {
+      const entry = tsunamiEntry(time)
+      const t = entry.payload.kind === 'event' ? (entry.payload.event as JMATsunami) : null
+      return { ...entry, payload: { kind: 'event', event: { ...t!, eventId: undefined } } }
+    }
+
+    // 安全弁: 端に接する束は、最後の報から 24 時間で落とす
+    it('材料の端の日に最も古い報がある束は、最後の報から 24 時間を過ぎたら落とす', () => {
+      vi.spyOn(log, 'warn').mockImplementation(() => {})
+      const entries = [
+        tsunamiEntry('2024-01-06T10:00:00+09:00', { eventId: 'EDGE' }),
+        tsunamiEntry('2024-01-06T12:00:00+09:00', { eventId: 'EDGE' }),
+      ]
+      expect(keptTsunamis(entries, TARGET)).toEqual([])
+    })
+
+    // 安全弁の裏側: 端に接していても、最後の報から 24 時間以内なら残す
+    it('材料の端に接する束でも、最後の報から 24 時間以内なら残す', () => {
+      const entries = [
+        tsunamiEntry('2024-01-06T10:00:00+09:00', { eventId: 'EDGE' }),
+        tsunamiEntry('2024-01-20T00:00:00+09:00', { eventId: 'EDGE' }),
+      ]
+      expect(keptTsunamis(entries, TARGET)).toHaveLength(2)
+    })
+
+    // 正: 端から離れた束は、24 時間を過ぎても残し、残したことを記録する
+    it('材料の端から離れた束は、最後の報から 24 時間を過ぎても残し、記録を 1 行残す', () => {
+      const info = vi.spyOn(log, 'info').mockImplementation(() => {})
+      const entries = [
+        tsunamiEntry('2024-01-10T10:00:00+09:00', { eventId: 'INNER' }),
+        tsunamiEntry('2024-01-10T12:00:00+09:00', { eventId: 'INNER' }),
+      ]
+      expect(keptTsunamis(entries, TARGET)).toHaveLength(2)
+      const lines = info.mock.calls.map(c => c.join(' ')).filter(l => l.includes('解除か続報まで残す'))
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain('eventId=INNER')
+      expect(lines[0]).toContain('報=2 通')
+      expect(lines[0]).toContain(new Date('2024-01-10T12:00:00+09:00').toISOString())
+    })
+
+    // 対照: 識別子の無い津波は、端から離れていても今どおり 24 時間で落とす
+    it('識別子の無い津波は、材料の端から離れていても 24 時間で落とす', () => {
+      vi.spyOn(log, 'warn').mockImplementation(() => {})
+      expect(keptTsunamis([unkeyed('2024-01-10T10:00:00+09:00')], TARGET)).toEqual([])
+    })
+
+    // 発表時刻が読めない束は古さを測れないので、識別子付きでその旨を記録して残す
+    it('発表時刻を読めない束は、識別子を添えて記録し残す', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      const entry = tsunamiEntry('2024-01-10T10:00:00+09:00', { eventId: 'BROKEN' })
+      const t = entry.payload.kind === 'event' ? (entry.payload.event as JMATsunami) : null
+      const broken: ReplayEntry = { ...entry, payload: { kind: 'event', event: { ...t!, time: '壊れた時刻' } } }
+      expect(keptTsunamis([broken], TARGET)).toHaveLength(1)
+      const lines = warn.mock.calls.map(c => c.join(' ')).filter(l => l.includes('発表時刻も読めない'))
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain('eventId=BROKEN')
+    })
   })
 
   // 状態は同じ `entries` から作るので、どの報にも状態が付く（`groupTsunamiReports` は全報を

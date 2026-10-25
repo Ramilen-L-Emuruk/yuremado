@@ -112,6 +112,10 @@ import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as RE
 import { fetchDmdataReplayEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
 import { PREFERRED_CLASSIFICATIONS } from './services/dmdataClassifications'
 import { fetchP2PReplayEvents, fetchP2PQuakeHistory, clearP2PReplayCache } from './services/p2pquakeReplay'
+import { withDmdataLoadMore, withoutLoadMore } from './services/replayQuakeHistory'
+import { beginLoadMoreGateTag } from './services/dmdataRequestGates'
+import type { ReplayQuakeHistoryResult } from './types/replay'
+import type { GateTag } from './utils/requestGate'
 import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerdict, emptyReplayFetchResult, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
 import { useHistoricalArchiveIndex } from './hooks/useHistoricalArchiveIndex'
 import { log } from './utils/logger'
@@ -1790,18 +1794,27 @@ export function App() {
   // REPLAY_PRE_WINDOW_MS（24時間）を使う。ここを独自の幅にすると、本編・初期状態はアーカイブに
   // 重ならないのに履歴だけ数日先の無関係なアーカイブに重なってしまい、再生は実データ側で
   // 止まっているのに地震カードだけローカルアーカイブ由来の古い1件を表示する、という不整合が起きる。
+  //
+  // **結果には再生中の「もっと見る」で続きを読む口（`loadMore`）を付ける**（→ `ReplayQuakeHistoryResult`）。
+  // 続きも同じ取得元から、再生開始より前の側へ読む。ローカル履歴アーカイブは収録範囲の外を持たないので付けない。
   const fetchReplayQuakeHistory = useCallback(
-    (before: Date, signal: AbortSignal) => {
+    (before: Date, signal: AbortSignal): Promise<ReplayQuakeHistoryResult> => {
       const covering = findCoveringArchiveSync(historicalArchives, new Date(before.getTime() - REPLAY_PRE_WINDOW_MS), before)
-      if (covering) return fetchLocalArchiveQuakeHistory(covering, before, HISTORY_WINDOW_DAYS)
-      return isDmdss
-        // 履歴（再生開始より前の地震カード）も本編と同じ扱いにする。片方だけ通すと
-        // 「再生には訓練報が出るのにカードの一覧には無い」形でずれる。
-        ? fetchDmdataQuakeHistoryFor(
-          dmdataClassifications ?? PREFERRED_CLASSIFICATIONS,
-          settings.dmdataApiKey, before, HISTORY_WINDOW_DAYS, settings.dmdataTestDelivery, signal,
+      if (covering) return fetchLocalArchiveQuakeHistory(covering, before, HISTORY_WINDOW_DAYS).then(withoutLoadMore)
+      if (!isDmdss) return fetchP2PQuakeHistory(before, MAX_HISTORY_RETAINED, signal)
+      // 履歴（再生開始より前の地震カード）も本編と同じ扱いにする。片方だけ通すと
+      // 「再生には訓練報が出るのにカードの一覧には無い」形でずれる。
+      const classifications = dmdataClassifications ?? PREFERRED_CLASSIFICATIONS
+      const { dmdataApiKey, dmdataTestDelivery } = settings
+      const fetchWindow = (windowBefore: Date, windowSignal: AbortSignal | null, gateTag: GateTag | undefined) =>
+        fetchDmdataQuakeHistoryFor(
+          classifications, dmdataApiKey, windowBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, windowSignal,
+          undefined, undefined, gateTag,
         )
-        : fetchP2PQuakeHistory(before, MAX_HISTORY_RETAINED, signal)
+      // 続きは押すたびに新しい印を付けて取る（ライブの「もっと見る」と同じ。ボタンが門の残り時間を数える）
+      return fetchWindow(before, signal, undefined).then(result => withDmdataLoadMore(
+        result, before, (windowBefore, windowSignal) => fetchWindow(windowBefore, windowSignal, beginLoadMoreGateTag()),
+      ))
     },
     [settings.dmdataApiKey, settings.dmdataTestDelivery, historicalArchives, dmdataClassifications],
   )
