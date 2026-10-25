@@ -10,7 +10,7 @@ import { hasDepth } from '../utils/formatters'
 import { hasKnownEpicenter, haversineKm } from '../utils/geo'
 import { log } from '../utils/logger'
 import { reachRadiusKm } from '../utils/travelTime'
-import { isProvisionalHypocenter } from '../utils/eew'
+import { eewFeltRadiusKm, isProvisionalHypocenter } from '../utils/eew'
 import type { ConfirmedShock } from '../utils/kyoshinDetectionView'
 import { PARAMS } from '../utils/kyoshinDetector'
 
@@ -34,8 +34,8 @@ import { PARAMS } from '../utils/kyoshinDetector'
 const CANDIDATE_SOUND_GAIN_SCALE = 0.25
 
 /**
- * 同一の揺れ（地域）とみなす代表点間の距離(km)の下限。実際の判定はこれと動的な S波伝播半径
- * （dynamicRegionThresholdKm）の大きい方を使う。地震発生直後は S波がまだ広がっていないため、
+ * 同一の揺れ（地域）とみなす代表点間の距離(km)の下限。実際の判定はこれと動的な波の到達半径
+ * （EEW があれば P 波、無ければ S 波。dynamicRegionThresholdKm）の大きい方を使う。地震発生直後は波がまだ広がっていないため、
  * この下限が実質的な閾値になる（能登半島地震のような広域地震で、揺れの伝播に伴い次々確定する
  * 周辺地域を「別地点」と誤発報しないための下限保証）。
  */
@@ -89,7 +89,7 @@ const REGION_PRUNE_MS = 3_000
  */
 export const DEFAULT_VIRTUAL_DEPTH_KM = 15
 /**
- * 動的距離閾値（S波伝播半径）に掛ける安全マージン係数。地域が新規登録された瞬間の判定は
+ * 動的距離閾値（EEW が無いときは S 波、あるときは P 波の伝播半径）に掛ける安全マージン係数。地域が新規登録された瞬間の判定は
  * 「今この瞬間の動的閾値」で行うが、実際に別地点として発報されるのは持続判定
  * （`REGION_PERSIST_MS`）を経た数秒後になる。2026-08-10 の能登半島地震リプレイ検証では、
  * 登録時点で動的閾値にわずかに届いていなかった地域（328km地点、閾値約324km）が、数秒後には
@@ -111,7 +111,10 @@ export const DYNAMIC_THRESHOLD_SAFETY_FACTOR = 1.2
  */
 export const OUTBREAK_PROPAGATION_WINDOW_MS = 5 * 60_000
 /**
- * 「同一地震の伝播」として吸収する距離の上限(km)。EEW 起点・地域起点のどちらの判定にも掛ける。
+ * 「同一地震の伝播」として吸収する距離の上限(km)。**EEW が無いときの判定（地域起点・地震全体の起点）だけに
+ * 掛ける。** EEW があるときは規模と深さが分かるので、その EEW の有感半径（`eewFeltRadiusKm`。自動解除と
+ * 同じ値）を上限にする（2026-10-25 ユーザー承認。原文「それでいいよ」。小笠原諸島西方沖 M7.5・深さ 530km
+ * では揺れた関東〜東北が 800km の外にあり、別地点として鳴った）。
  *
  * S波の到達半径は経過時間に比例して伸び続けるため、上限が無いと数分後には**国内のどこで起きた
  * 地震も同一地震の伝播に見えてしまう**（実測: 起点から 4 分で 1247km、5 分で 1571km に達する。
@@ -159,6 +162,8 @@ export interface NearestEewInfo {
   lng: number
   originTimeMs: number
   depth: number
+  /** この EEW の有感半径(km)。吸収する範囲の上限（`eewFeltRadiusKm`。自動解除と同じ値） */
+  feltRadiusKm: number
 }
 
 /**
@@ -172,48 +177,77 @@ function extractEewInfo(eew: EEWAlert): NearestEewInfo | null {
   // `Number.isFinite` をすり抜ける。すり抜けると `isSameEarthquake` が「有効な EEW がある」と
   // 数えたうえで距離判定に必ず外れ、**通常の距離フォールバックへ到達しないまま別地震と答える**。
   if (!hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)) return null
+  // **既定値は `??` では当たらない。** 深さが判らないことはセンチネル `-1` で表すので
+  // （`Hypocenter.depth`。`0` は「ごく浅い」という有効値）、素通りした -1 を `Math.max` が
+  // 0 へ丸め、用意した仮の深さが使われないまま最も浅い地震として閾値が広がる。
+  const depth = hasDepth(hypocenter.depth) ? hypocenter.depth : DEFAULT_VIRTUAL_DEPTH_KM
+  // **発生時刻が読めない報も捨てる。** 読めない時刻（`''`）は NaN になり、範囲の判定が必ず外れる。
+  // 残すと「有効な EEW がある」と数えたうえで範囲に入れられず、位置不明と同じ形で判定が縮む
+  const originTimeMs = new Date(eew.earthquake.originTime).getTime()
+  if (!Number.isFinite(originTimeMs)) return null
   return {
     lat: hypocenter.latitude,
     lng: hypocenter.longitude,
-    originTimeMs: new Date(eew.earthquake.originTime).getTime(),
-    // **既定値は `??` では当たらない。** 深さが判らないことはセンチネル `-1` で表すので
-    // （`Hypocenter.depth`。`0` は「ごく浅い」という有効値）、素通りした -1 を `Math.max` が
-    // 0 へ丸め、用意した仮の深さが使われないまま最も浅い地震として閾値が広がる。
-    depth: hasDepth(hypocenter.depth) ? hypocenter.depth : DEFAULT_VIRTUAL_DEPTH_KM,
+    originTimeMs,
+    depth,
+    // 規模・深さが判らない報の仮定は `eewFeltRadiusKm` が置く（自動解除と同じ値にするため、
+    // 電文の値をそのまま渡す。規模は 2026-10-25 ユーザー選択「自動解除と同じ M6.0 (Recommended)」）
+    feltRadiusKm: cachedFeltRadiusKm(hypocenter.magnitude, hypocenter.depth),
   }
+}
+
+/** 有感半径の控え。`extractEewInfo` は地域×確定点×EEW の数だけ毎フレーム呼ばれ、半径は二分探索で解くため */
+const feltRadiusCache = new Map<string, number>()
+const FELT_RADIUS_CACHE_MAX = 64
+
+function cachedFeltRadiusKm(mjma: number, depth: number): number {
+  const key = `${mjma}|${depth}`
+  const hit = feltRadiusCache.get(key)
+  if (hit !== undefined) return hit
+  const radius = eewFeltRadiusKm(mjma, depth)
+  if (feltRadiusCache.size >= FELT_RADIUS_CACHE_MAX) feltRadiusCache.clear()
+  feltRadiusCache.set(key, radius)
+  return radius
 }
 
 /**
  * 地域の「同一地震」とみなす動的な距離閾値(km)を計算する。
  *
- * nearestEew（震源要素確定済みの EEW 情報）があれば、その震源・発生時刻から S波の地表到達半径
- * （予報円と同じ JMA2001 走時表）を計算して使う。無ければ地域自身の初検知時刻を仮の発生
- * 時刻、DEFAULT_VIRTUAL_DEPTH_KM を仮の震源深さとして近似する。いずれも REGION_MATCH_KM を
+ * nearestEew（震源要素確定済みの EEW 情報）があれば、その震源・発生時刻から **P 波**の地表到達半径
+ * （予報円と同じ JMA2001 走時表）を求め、その EEW の有感半径で打ち止めにする（下記「P 波で測る理由」）。
+ * 無ければ地域自身の初検知時刻を仮の発生時刻、DEFAULT_VIRTUAL_DEPTH_KM を仮の震源深さとして
+ * **S 波**の到達半径で近似し、`PROPAGATION_MAX_KM` で打ち止めにする。いずれも REGION_MATCH_KM を
  * 下限に保証する（発生直後の判定を安定させるため）。
  *
  * 能登半島地震のような広域地震では、揺れが観測網へ伝播していく数十秒〜数分の間に周辺の地域が
- * 次々と確定条件を満たす。固定距離だとこれを「別地点」と誤発報するが、S波の伝播速度に応じて
+ * 次々と確定条件を満たす。固定距離だとこれを「別地点」と誤発報するが、波の伝播速度に応じて
  * 閾値を動的に広げることで、実際にまだ伝播中でありうる範囲を物理的に近い形で吸収する。
+ *
+ * **P 波で測る理由（EEW があるとき）。** 強震モニタは P 波の揺れで確定することがある。S 波で測ると、
+ * 深い地震では P 波で揺れ始めた遠方がまだ範囲の外に残る（2026-10-25 小笠原諸島西方沖 M7.5・深さ
+ * 530km: 関東が P 波で確定した発生 128 秒後、S 波 ×1.2 の範囲は 348km、P 波の到達は 996km）。
+ * P 波がまだ届いていない場所の揺れはこの地震のものではありえないので、境目として正しいのは P 波の
+ * 前面（2026-10-25 ユーザー承認。原文「それで。」）。EEW が無いときは震源も深さも仮なので、
+ * 従来どおり S 波で測る。
  */
 export function dynamicRegionThresholdKm(
   region: AlertRegion,
   nowMs: number,
   nearestEew: NearestEewInfo | null,
 ): number {
-  const originMs = nearestEew ? nearestEew.originTimeMs : region.firstSeenAtMs
-  const depth = nearestEew ? nearestEew.depth : DEFAULT_VIRTUAL_DEPTH_KM
-  return thresholdFromOrigin(originMs, depth, nowMs)
+  if (nearestEew) return thresholdFromOrigin(nearestEew.originTimeMs, nearestEew.depth, nowMs, 'P', nearestEew.feltRadiusKm)
+  return thresholdFromOrigin(region.firstSeenAtMs, DEFAULT_VIRTUAL_DEPTH_KM, nowMs, 'S', PROPAGATION_MAX_KM)
 }
 
 /**
- * 起点時刻と震源深さから S波の地表到達半径(km)を求める。
- * 下限 `REGION_MATCH_KM`・上限 `PROPAGATION_MAX_KM` に収める。
+ * 起点時刻と震源深さから、波 `phase` の地表到達半径(km)×安全マージンを求める。
+ * 下限 `REGION_MATCH_KM`・上限 `capKm` に収める（`capKm` が下限より小さくても下限を優先する）。
  */
-function thresholdFromOrigin(originMs: number, depth: number, nowMs: number): number {
+function thresholdFromOrigin(originMs: number, depth: number, nowMs: number, phase: 'P' | 'S', capKm: number): number {
   const elapsedSec = (nowMs - originMs) / 1000
   if (!Number.isFinite(elapsedSec) || elapsedSec <= 0) return REGION_MATCH_KM
-  const radius = reachRadiusKm('S', elapsedSec, depth) * DYNAMIC_THRESHOLD_SAFETY_FACTOR
-  return Math.min(Math.max(REGION_MATCH_KM, radius), PROPAGATION_MAX_KM)
+  const radius = reachRadiusKm(phase, elapsedSec, depth) * DYNAMIC_THRESHOLD_SAFETY_FACTOR
+  return Math.max(REGION_MATCH_KM, Math.min(radius, capKm))
 }
 
 /**
@@ -233,13 +267,13 @@ function pickOutbreakOrigin(region: AlertRegion, outbreakAtMs: number | null, no
 }
 
 /**
- * 座標が、指定した震源情報の動的閾値（S波伝播半径×安全マージン・`PROPAGATION_MAX_KM` で打ち止め）
+ * 座標が、指定した震源情報の動的閾値（P波伝播半径×安全マージン・その EEW の有感半径で打ち止め）
  * 以内にあるかを判定する。発生時刻より前（経過が 0 以下）なら常に false。
  */
 function isWithinEewRadius(lat: number, lng: number, nowMs: number, eewInfo: NearestEewInfo): boolean {
   const elapsedSec = (nowMs - eewInfo.originTimeMs) / 1000
   if (!Number.isFinite(elapsedSec) || elapsedSec <= 0) return false
-  const threshold = thresholdFromOrigin(eewInfo.originTimeMs, eewInfo.depth, nowMs)
+  const threshold = thresholdFromOrigin(eewInfo.originTimeMs, eewInfo.depth, nowMs, 'P', eewInfo.feltRadiusKm)
   return haversineKm(lat, lng, eewInfo.lat, eewInfo.lng) <= threshold
 }
 
@@ -255,8 +289,14 @@ function isWithinEewRadius(lat: number, lng: number, nowMs: number, eewInfo: Nea
  * 誤って基準にされ、動的閾値がまだ拡大しきっていないタイミングで「別地点」と誤判定された）。
  * 各 EEW を独立に評価することで、この種の「たまたま近い無関係な地震」への誤帰属を避けられる。
  *
- * どの EEW でも満たさなければ、`pickOutbreakOrigin` が選ぶ起点時刻を基準にした近似
- * （下限 REGION_MATCH_KM）で通常の距離判定にフォールバックする。
+ * どの EEW でも満たさないとき:
+ *  - **有効な EEW があれば、`REGION_MATCH_KM`(300km) 以内なら同じ地域とする**（時間では広げない）。
+ *    同じ場所の揺れを EEW の有無で別の地域にしないため。以前はここで常に「別」と答えており、EEW の
+ *    範囲の外で揺れた点がフレームごとに新しい地域として溜まり、どれも鳴らないまま EEW が消えた瞬間に
+ *    まとめて別地点として鳴った（2026-10-25 小笠原諸島西方沖で 5 秒おきに 4 回。2026-10-25 ユーザー選択
+ *    「①も直す (Recommended)」）。いまは範囲の外で本当に別の地震が起きれば、EEW の最中でもその場で鳴る
+ *  - EEW が無ければ、`pickOutbreakOrigin` が選ぶ起点時刻を基準にした近似（下限 REGION_MATCH_KM）で
+ *    通常の距離判定にフォールバックする
  *
  * @param outbreakAtMs 地震全体の起点（現存する最も古い地域の初検知時刻）。省略すると地域自身の
  *   起点を使う（伝播を吸収しきれないため、フックからは必ず渡す）
@@ -276,9 +316,10 @@ export function isSameEarthquake(
     anyEew = true
     if (isWithinEewRadius(region.lat, region.lng, nowMs, info) && isWithinEewRadius(sLat, sLng, nowMs, info)) return true
   }
-  if (anyEew) return false
+  const distKm = haversineKm(sLat, sLng, region.lat, region.lng)
+  if (anyEew) return distKm <= REGION_MATCH_KM
   const originMs = pickOutbreakOrigin(region, outbreakAtMs, nowMs)
-  return haversineKm(sLat, sLng, region.lat, region.lng) <= thresholdFromOrigin(originMs, DEFAULT_VIRTUAL_DEPTH_KM, nowMs)
+  return distKm <= thresholdFromOrigin(originMs, DEFAULT_VIRTUAL_DEPTH_KM, nowMs, 'S', PROPAGATION_MAX_KM)
 }
 
 /** region が、アクティブな EEW のいずれかの動的閾値内に単独で収まっているかを判定する。 */

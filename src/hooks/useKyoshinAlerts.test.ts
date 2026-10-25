@@ -7,6 +7,7 @@ import {
   PROPAGATION_MAX_KM, isSameShakeAsBefore, type AlertRegion,
 } from './useKyoshinAlerts'
 import { reachRadiusKm } from '../utils/travelTime'
+import { eewFeltRadiusKm } from '../utils/eew'
 import type { EEWAlert, Hypocenter } from '../types/earthquake'
 import type { ConfirmedShock } from '../utils/kyoshinDetectionView'
 import { haversineKm } from '../utils/geo'
@@ -187,10 +188,16 @@ describe('isRegionWithinAnyEew', () => {
   const AT_90S = new Date(ORIGIN).getTime() + 90_000
   const eewAtDepth = (depth: number) => fakeEEW('eew-d', ORIGIN,
     { name: '石川県能登地方', latitude: 37.5, longitude: 137.0, depth, magnitude: 7.6 })
-  /** 0km で解いた閾値と 15km で解いた閾値の中間に置いた地域。緯度 1 度 ≒ 111km。 */
+  /**
+   * 0km で解いた閾値と 15km で解いた閾値の中間に置いた地域。緯度 1 度 ≒ 111km。
+   * EEW があるときの範囲は P 波で測る（`dynamicRegionThresholdKm` の「P 波で測る理由」）。
+   */
   const regionBetweenThresholds = () => {
-    const r0 = reachRadiusKm('S', 90, 0) * DYNAMIC_THRESHOLD_SAFETY_FACTOR
-    const r15 = reachRadiusKm('S', 90, DEFAULT_VIRTUAL_DEPTH_KM) * DYNAMIC_THRESHOLD_SAFETY_FACTOR
+    const r0 = reachRadiusKm('P', 90, 0) * DYNAMIC_THRESHOLD_SAFETY_FACTOR
+    const r15 = reachRadiusKm('P', 90, DEFAULT_VIRTUAL_DEPTH_KM) * DYNAMIC_THRESHOLD_SAFETY_FACTOR
+    // **どちらも上限（M7.6 の有感半径）の内側であること。** 上限で打ち止めになると両方同じ値になり、
+    // 下の 2 件が何も守らなくなる。
+    expect(Math.max(r0, r15)).toBeLessThan(eewFeltRadiusKm(7.6, 0))
     // **2 つが十分離れていること自体を先に固定する。** 近いと判定が両方同じへ倒れ、
     // 下の 2 件がそろって無意味になる（走時表を差し替えたときに気づけるようにする）。
     expect(Math.abs(r0 - r15)).toBeGreaterThan(1)
@@ -547,5 +554,138 @@ describe('isSameShakeAsBefore', () => {
     expect(haversineKm(NOTO.lat, NOTO.lng, farInsideOldThreshold.lat, farInsideOldThreshold.lng))
       .toBeLessThan(REGION_MATCH_KM)
     expect(isSameShakeAsBefore([farInsideOldThreshold], [NOTO])).toBe(false)
+  })
+})
+
+// 2026-10-25 11:09 小笠原諸島西方沖（M7.5・深さ 530km・最大震度3）。揺れたのは震源から 900km 以上離れた
+// 関東〜東北（異常震域）で、EEW の自動解除（発生 446 秒後）の瞬間に「別地点」が 5 秒おきに 4 回鳴った。
+describe('EEW があるときの範囲（P 波で測り、有感半径で打ち止め）', () => {
+  const ORIGIN = '2026-10-25T02:09:21.000Z'
+  const O = new Date(ORIGIN).getTime()
+  const deepEew = (magnitude: number) => fakeEEW('ogasa', ORIGIN,
+    { name: '小笠原諸島西方沖', latitude: 27.6, longitude: 140.1, depth: 530, magnitude })
+  const TOKYO = { lat: 35.7, lng: 139.7, index: 15 }
+  const SENDAI = { lat: 38.3, lng: 140.9, index: 12 }
+
+  it('[正] 深い地震で P 波だけが届いた遠方（東京・発生 128 秒後）も同じ地震の範囲に入る', () => {
+    const eew = deepEew(7.5)
+    const atMs = O + 128_000
+    const distKm = haversineKm(27.6, 140.1, TOKYO.lat, TOKYO.lng)
+    // S 波で測っていたら外れる距離であることを先に固定する（ここが崩れると下の判定が何も守らない）
+    expect(reachRadiusKm('S', 128, 530) * DYNAMIC_THRESHOLD_SAFETY_FACTOR).toBeLessThan(distKm)
+    expect(isRegionWithinAnyEew(fakeRegion({ lat: TOKYO.lat, lng: TOKYO.lng }), atMs, new Map([[eew.id, eew]]))).toBe(true)
+  })
+
+  // 浅い地震で、震源から約 667km 北の点。旧来の上限 800km の内側で、M6.0 の有感半径（479km）の外側。
+  const SHALLOW = { lat: 31.5, lng: 130.5 }
+  const NORTH_667 = fakeRegion({ lat: 31.5 + 6.0, lng: 130.5 })
+  const shallowEew = (magnitude: number) => fakeEEW('shallow', ORIGIN,
+    { name: '九州地方', latitude: SHALLOW.lat, longitude: SHALLOW.lng, depth: 10, magnitude })
+  const LATE = O + 400_000 // P 波の半径が上限を十分に超えた時刻
+
+  it('[正] 上限はその EEW の有感半径。M7.5 なら 667km 先も範囲に入る', () => {
+    expect(eewFeltRadiusKm(7.5, 10)).toBeGreaterThan(667)
+    const eew = shallowEew(7.5)
+    expect(isRegionWithinAnyEew(NORTH_667, LATE, new Map([[eew.id, eew]]))).toBe(true)
+  })
+
+  it('[対照] M6.0 の有感半径は 667km に届かないので範囲に入らない（旧来の 800km より狭い）', () => {
+    expect(eewFeltRadiusKm(6.0, 10)).toBeLessThan(667)
+    const eew = shallowEew(6.0)
+    expect(isRegionWithinAnyEew(NORTH_667, LATE, new Map([[eew.id, eew]]))).toBe(false)
+  })
+
+  it('[安全弁] 規模が判らない EEW は自動解除と同じく M6.0 として測る', () => {
+    for (const unknown of [Number.NaN, -1]) {
+      const eew = shallowEew(unknown)
+      expect(isRegionWithinAnyEew(NORTH_667, LATE, new Map([[eew.id, eew]]))).toBe(false)
+    }
+    expect(eewFeltRadiusKm(Number.NaN, 10)).toBe(eewFeltRadiusKm(6.0, 10))
+  })
+
+  it('[安全弁] EEW が無いときの上限は従来どおり PROPAGATION_MAX_KM（本番の経路 isSameEarthquake で見る）', () => {
+    const region = fakeRegion({ lat: 43.0, lng: 143.0, firstSeenAtMs: O })
+    const at = O + 600_000 - 1 // 地震全体の起点から 5 分以内（S 波の半径は上限を超えている）
+    // 北へ約 778km は上限の内側、約 834km は外側
+    expect(isSameEarthquake(region, 43.0 - 7.0, 143.0, at, new Map(), O)).toBe(true)
+    expect(isSameEarthquake(region, 43.0 - 7.5, 143.0, at, new Map(), O)).toBe(false)
+    expect(dynamicRegionThresholdKm(fakeRegion({ firstSeenAtMs: 0 }), 600_000, null)).toBe(PROPAGATION_MAX_KM)
+  })
+
+  it('[安全弁] 深さが判らない EEW の有感半径は自動解除と同じく深さ 30km として求める', () => {
+    expect(eewFeltRadiusKm(7.0, -1)).toBe(eewFeltRadiusKm(7.0, 30))
+    expect(eewFeltRadiusKm(7.0, -1)).not.toBe(eewFeltRadiusKm(7.0, 15))
+  })
+
+  it('[安全弁] 有感半径が下限より小さくても下限 REGION_MATCH_KM は保つ', () => {
+    expect(eewFeltRadiusKm(4.0, 10)).toBeLessThan(REGION_MATCH_KM)
+    const info = { lat: SHALLOW.lat, lng: SHALLOW.lng, originTimeMs: O, depth: 10, feltRadiusKm: eewFeltRadiusKm(4.0, 10) }
+    expect(dynamicRegionThresholdKm(fakeRegion(), LATE, info)).toBe(REGION_MATCH_KM)
+  })
+
+  it('[正] 再現: 東京・仙台が揺れ続けても、EEW の最中にも解除の瞬間にも別地点は鳴らない', () => {
+    const eew = deepEew(7.5)
+    const st = createAlertRegionState()
+    const alerts: number[] = []
+    const eewEndMs = O + 446_000 // 実際の自動解除（calcEEWAutoCancelSec(7.5, 530)）
+    for (let t = O + 128_000; t <= O + 480_000; t += 1000) {
+      const eews = new Map(t < eewEndMs ? [[eew.id, eew]] : [])
+      if (stepAlertRegions(st, [TOKYO, SENDAI], t, eews)) alerts.push(t)
+    }
+    expect(alerts).toEqual([])
+  })
+})
+
+describe('EEW の範囲の外の揺れ（同じ場所は距離でまとめる）', () => {
+  const ORIGIN = '2026-10-25T00:00:00.000Z'
+  const O = new Date(ORIGIN).getTime()
+  // 九州の M5.0（有感半径は下限 300km 未満）。北海道の揺れは明らかにその外
+  const eew = fakeEEW('kyushu', ORIGIN, { name: '九州地方', latitude: 31.5, longitude: 130.5, depth: 10, magnitude: 5.0 })
+  const HOKKAIDO = { lat: 43.0, lng: 143.0, index: 15 }
+  const KYUSHU = { lat: 31.6, lng: 130.6, index: 15 }
+
+  it('[正] EEW があっても、範囲の外で同じ場所の揺れは 1 つの地域にまとまる', () => {
+    const region = fakeRegion({ lat: HOKKAIDO.lat, lng: HOKKAIDO.lng })
+    expect(isSameEarthquake(region, HOKKAIDO.lat + 0.1, HOKKAIDO.lng, O + 60_000, new Map([[eew.id, eew]]))).toBe(true)
+  })
+
+  it('[対照] EEW があるとき、範囲の外どうしでも REGION_MATCH_KM より離れていれば別の地域', () => {
+    const region = fakeRegion({ lat: HOKKAIDO.lat, lng: HOKKAIDO.lng })
+    // 北海道から約 400km 南。EEW が無ければ時間とともに広がる範囲で同じ地震と見なしうるが、EEW があるときは広げない
+    expect(isSameEarthquake(region, HOKKAIDO.lat - 3.6, HOKKAIDO.lng, O + 200_000, new Map([[eew.id, eew]]), O)).toBe(false)
+  })
+
+  it('[安全弁] 発生時刻が読めない EEW は数えず、EEW が無いときの距離判定へ落とす', () => {
+    const region = fakeRegion({ lat: HOKKAIDO.lat, lng: HOKKAIDO.lng, firstSeenAtMs: O })
+    const broken = { ...eew, earthquake: { ...eew.earthquake, originTime: '' } }
+    // 上の対照と同じ約 400km。範囲を測れない EEW を数えると 300km に縮んで別と答える
+    expect(isSameEarthquake(region, HOKKAIDO.lat - 3.6, HOKKAIDO.lng, O + 200_000, new Map([[broken.id, broken]]), O)).toBe(true)
+    expect(isRegionWithinAnyEew(region, O + 200_000, new Map([[broken.id, broken]]))).toBe(false)
+  })
+
+  it('[対照] 2 つの EEW の範囲に片方ずつ入る点どうしは、同じ地震にしない（EEW ごとに両方を見る）', () => {
+    const tohoku = fakeEEW('tohoku', ORIGIN, { name: '宮城県沖', latitude: 38.3, longitude: 142.0, depth: 40, magnitude: 7.0 })
+    const both = new Map([[eew.id, { ...eew, earthquake: { ...eew.earthquake, hypocenter: { ...eew.earthquake.hypocenter, magnitude: 7.0 } } }], [tohoku.id, tohoku]])
+    const at = O + 60_000
+    const region = fakeRegion({ lat: KYUSHU.lat, lng: KYUSHU.lng })
+    expect(isRegionWithinAnyEew(region, at, both)).toBe(true)
+    expect(isRegionWithinAnyEew(fakeRegion({ lat: 38.3, lng: 141.0 }), at, both)).toBe(true)
+    expect(isSameEarthquake(region, 38.3, 141.0, at, both)).toBe(false)
+  })
+
+  it('[正] EEW の最中に範囲の外で起きた別の揺れは、その場で 1 回だけ鳴り、解除の瞬間に鳴り直さない', () => {
+    const st = createAlertRegionState()
+    const alerts: number[] = []
+    const eewEndMs = O + 120_000
+    for (let t = O + 10_000; t <= O + 180_000; t += 1000) {
+      const eews = new Map(t < eewEndMs ? [[eew.id, eew]] : [])
+      // 九州の揺れで検知が始まり、30 秒後から北海道でも揺れ続ける
+      const shocks = t < O + 40_000 ? [KYUSHU] : [KYUSHU, HOKKAIDO]
+      if (stepAlertRegions(st, shocks, t, eews)) alerts.push(t)
+    }
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]).toBeLessThan(eewEndMs)
+    // 地域は九州と北海道の 2 つだけ（フレームごとに溜まらない）
+    expect(st.regions).toHaveLength(2)
   })
 })
