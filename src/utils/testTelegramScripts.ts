@@ -522,9 +522,19 @@ const TOHOKU = {
   warning: sample('32-39_11_02_250206_VTSE41'),
   /** 14:50 各地の満潮時刻・津波到達予想時刻に関する情報。 */
   tide: sample('32-39_11_03_250206_VTSE51'),
-  /** 14:53 沖合の津波観測に関する情報（沿岸への推定を含む）。 */
+  /** 沖合の津波観測に関する情報（沿岸への推定を含む）。発表時刻は 14:50、作成時刻（`Control/DateTime`）は 14:53:50。 */
   offshore: sample('61_11_01_250206_VTSE52'),
-  /** 15:01 津波観測に関する情報（観測中・重要・上昇中を含む）。 */
+  /** 14:53 津波警報の続報（青森県太平洋沿岸を大津波警報へ引き上げ）。 */
+  upgrade: sample('32-39_11_06_250206_VTSE41'),
+  /** 15:00 津波警報の続報（予想される津波の高さを数値へ更新。区域の等級は 14:53 と同じ）。 */
+  update: sample('32-39_11_09_250206_VTSE41'),
+  /**
+   * 15:01 津波観測に関する情報（観測中・重要・上昇中を含む）。
+   *
+   * **区域の等級と予想の高さは 15:00 の続報（`update`）の写し**で、14:49 の発表とは違う（青森県太平洋沿岸が
+   * 大津波警報・高さは数値）。津波情報は等級も予想も動かさないので、この報を流すなら 15:00 の津波警報を先に流すこと
+   * （→ docs/spec/settings-pwa-spec.md §7「実配信に無い形を作らない」）。
+   */
   observation: sample('32-39_11_10_250206_VTSE51'),
 }
 
@@ -605,19 +615,27 @@ function withAllObservationStates(xml: string): string {
  *
  *   1. 14:49 大津波警報（大津波警報 3・津波警報 5・注意報 15・予報 20 区域）
  *   2. 14:50 満潮時刻・到達予想の情報
- *   3. 14:53 沖合の津波観測（観測中・重要・沿岸への推定）
- *   4. 15:01 津波観測（**観測状態を一通り足したもの** → `withAllObservationStates`）
- *   5. 片付けの全区域解除
+ *   3. 14:53 津波警報の続報（青森県太平洋沿岸を大津波警報へ引き上げ。大津波警報 4・津波警報 4）
+ *   4. 沖合の津波観測（観測中・重要・沿岸への推定。作成は 14:53:50）
+ *   5. 15:00 津波警報の続報（予想される津波の高さを「巨大」「高い」から数値へ）
+ *   6. 15:01 津波観測（**観測状態を一通り足したもの** → `withAllObservationStates`）
+ *   7. 片付けの全区域解除
+ *
+ * **並びは作成時刻（`Control/DateTime`）の順。** 発表時刻で並べると沖合の報が 3 より先に来て、
+ * 受け手が作成時刻の順へ並べ直して重ね直す（→ `utils/tsunami.ts` の `arrivesOutOfOrder`）。
+ * 3・5 を抜かない理由は `TOHOKU.observation`。
  *
  * 最後の報（片付け）を「いま」に合わせる。第１波の到達予想（15:00 以降）はまだ先に残る。
  */
 export const TSUNAMI_MAJOR_WARNING: TestTelegramScript = {
-  anchor: 4,
+  anchor: 6,
   steps: [
     { file: TOHOKU.warning, headType: 'VTSE41', atMs: 0 },
     { file: TOHOKU.tide, headType: 'VTSE51', atMs: 3000 },
-    { file: TOHOKU.offshore, headType: 'VTSE52', atMs: 6000 },
-    { file: TOHOKU.observation, headType: 'VTSE51', atMs: 9000, rewrite: withAllObservationStates },
+    { file: TOHOKU.upgrade, headType: 'VTSE41', atMs: 6000 },
+    { file: TOHOKU.offshore, headType: 'VTSE52', atMs: 9000 },
+    { file: TOHOKU.update, headType: 'VTSE41', atMs: 12_000 },
+    { file: TOHOKU.observation, headType: 'VTSE51', atMs: 15_000, rewrite: withAllObservationStates },
     { file: TOHOKU.warning, headType: 'VTSE41', atMs: TSUNAMI_DISMISS_MS, rewrite: liftedAfter(780) },
   ],
 }
@@ -697,8 +715,75 @@ const quietTide = (
 ) => (xml: string) => editXml(xml, (doc) => {
   setSectionText(doc, 'Head', 'Serial', String(serial))
   setIssueTime(doc, quietIssueAt(atMs))
+  alignTideForecastToLatest(doc)
   edit(doc)
 })
+
+/**
+ * 15:00 の津波警報の続報（`TOHOKU.update`）で大津波警報だった区域と、予想される津波の高さ。
+ * 値はその電文の `Forecast/Item` から写した。
+ */
+const TOHOKU_UPDATE_MAJOR_HEIGHTS: Readonly<Record<string, number>> = { 201: 5, 210: 5, 220: 10, 250: 5 }
+/** 同じ報で、大津波警報以外の区域の予想される津波の高さ（等級の種別コードごと。どの区域も同じ値）。 */
+const TOHOKU_UPDATE_HEIGHTS: Readonly<Record<string, { value: number; description: string }>> = {
+  51: { value: 3, description: '３ｍ' },
+  62: { value: 1, description: '１ｍ' },
+  71: { value: 0.2, description: '０．２ｍ未満' },
+}
+const FULL_WIDTH_DIGITS = '０１２３４５６７８９'
+const toFullWidthMeters = (value: number) => `${String(value).replace(/\d/g, d => FULL_WIDTH_DIGITS[Number(d)])}ｍ`
+
+/** 15:01 の観測の報（`TOHOKU.observation`）で、第１波の到達を確認していた区域。 */
+const TOHOKU_OBSERVED_ARRIVAL_AREAS: ReadonlySet<string> = new Set(['201', '210', '220'])
+
+/** 区域の `FirstHeight` を「第１波の到達を確認」にする（到達予想時刻・推測の印は外す）。 */
+function markAreaArrived(doc: Document, item: Element): void {
+  const first = childOf(item, 'FirstHeight')
+  if (!first) throw new Error('テスト用の電文の区域に第１波（FirstHeight）がありません')
+  replaceChildren(first, [el(doc, first, 'Condition', '第１波の到達を確認')])
+}
+
+/**
+ * 満潮時刻の報（14:50 のサンプル）の区域を、**その時点でいちばん新しい報に揃える**。
+ * 等級と予想の高さは 15:00 の津波警報の続報、到達状況は 15:01 の観測の報（→ `TOHOKU.observation`）。
+ *
+ * 15:00 より後の満潮時刻の報はサンプルに無い。14:50 の報をそのまま流すと、等級・高さ・到達状況が
+ * 14:50 の値へ戻った形になる（実配信に無い。→ docs/spec/settings-pwa-spec.md §7「実配信に無い形を作らない」）。
+ */
+function alignTideForecastToLatest(doc: Document): void {
+  const forecast = descendants(doc, 'Forecast')[0]
+  if (!forecast) throw new Error('テスト用の電文に津波予報（Forecast）がありません')
+  let aligned = 0
+  for (const item of descendants(forecast, 'Item')) {
+    const area = childOf(item, 'Area')
+    const category = childOf(item, 'Category')
+    const kind = category && childOf(category, 'Kind')
+    const height = descendants(item, 'TsunamiHeight')[0]
+    if (!area || !kind || !height) continue
+    const code = childText(area, 'Code') ?? ''
+    const major = TOHOKU_UPDATE_MAJOR_HEIGHTS[code]
+    if (major !== undefined) {
+      childOf(kind, 'Name')!.textContent = '大津波警報'
+      childOf(kind, 'Code')!.textContent = '52'
+    }
+    const kindName = childText(kind, 'Name') ?? ''
+    const kindCode = childText(kind, 'Code') ?? ''
+    const next = major !== undefined ? { value: major, description: toFullWidthMeters(major) } : TOHOKU_UPDATE_HEIGHTS[kindCode]
+    if (!next) throw new Error(`テスト用の電文の区域（${code}）の等級（${kindCode}）に、揃える高さがありません`)
+    // 前回の等級は今回と同じにする（この報は等級を動かしていない）
+    const last = childOf(category, 'LastKind')
+    if (last) {
+      childOf(last, 'Name')!.textContent = kindName
+      childOf(last, 'Code')!.textContent = kindCode
+    }
+    height.removeAttribute('condition')
+    height.setAttribute('description', next.description)
+    height.textContent = String(next.value)
+    if (TOHOKU_OBSERVED_ARRIVAL_AREAS.has(code)) markAreaArrived(doc, item)
+    aligned++
+  }
+  if (aligned === 0) throw new Error('テスト用の電文に、揃える区域がありません')
+}
 
 /** 満潮時刻を次の満潮へ進める（実電文でも半日ほど先へ飛ぶ）。 */
 function advanceHighTide(doc: Document): void {
@@ -756,22 +841,41 @@ function markValuelessStation(doc: Document, name: string): void {
   }
 }
 
-/** 区域の到達予想時刻（満潮時刻の報の `FirstHeight/ArrivalTime`）を早める。 */
+/**
+ * 観測点の到達予想時刻（満潮時刻の報の `Station/FirstHeight/ArrivalTime`）を早める。
+ * **区域の到達予想時刻は動かさない** —— 区域の欄は津波警報等の写しで、津波情報だけでは動かない。
+ */
 function advanceArrivalForecast(doc: Document, minutes: number): void {
-  const times = descendants(doc, 'ArrivalTime')
-  if (times.length === 0) throw new Error('テスト用の電文に到達予想時刻（ArrivalTime）がありません')
-  for (const t of times) {
-    const ms = Date.parse(t.textContent ?? '')
-    if (!Number.isFinite(ms)) continue
-    t.textContent = new Date(ms - minutes * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z')
+  let moved = 0
+  for (const item of descendants(descendants(doc, 'Forecast')[0] ?? doc, 'Item')) {
+    // **区域の到達予想時刻より前へは早めない** —— 観測点に区域より早く届く予想は実配信に無い
+    const areaFirst = childOf(item, 'FirstHeight')
+    const areaMs = Date.parse(childText(areaFirst ?? item, 'ArrivalTime') ?? '')
+    for (const s of descendants(item, 'Station')) {
+      const first = childOf(s, 'FirstHeight')
+      const time = first && childOf(first, 'ArrivalTime')
+      const ms = Date.parse(time?.textContent ?? '')
+      if (!time || !Number.isFinite(ms)) continue
+      const next = Math.max(ms - minutes * 60_000, Number.isFinite(areaMs) ? areaMs : -Infinity)
+      if (next === ms) continue
+      time.textContent = new Date(next).toISOString().replace(/\.\d{3}Z$/, 'Z')
+      moved++
+    }
   }
+  if (moved === 0) throw new Error('テスト用の電文に、早められる観測点の到達予想時刻（ArrivalTime）がありません')
 }
 
-/** 到達状況だけを確定へ変える（「津波到達中と推測」→「第１波の到達を確認」）。 */
+/** 段 14 で第１波の到達を確認する区域（15:01 の観測の報では、まだ到達予想時刻だけを持つ）。 */
+const QUIET_ARRIVING_AREA = '250'
+
+/** 到達状況だけを進める（到達予想時刻だけだった区域が「第１波の到達を確認」になる）。 */
 function confirmArrival(doc: Document): void {
-  const targets = descendants(doc, 'Condition').filter(c => c.textContent === '津波到達中と推測')
-  if (targets.length === 0) throw new Error('テスト用の電文に「津波到達中と推測」の観測点がありません')
-  for (const c of targets) c.textContent = '第１波の到達を確認'
+  const item = descendants(descendants(doc, 'Forecast')[0] ?? doc, 'Item')
+    .find(i => childText(childOf(i, 'Area') ?? i, 'Code') === QUIET_ARRIVING_AREA)
+  if (!item || !childOf(childOf(item, 'FirstHeight') ?? item, 'ArrivalTime')) {
+    throw new Error(`テスト用の電文に、到達予想時刻だけを持つ区域（${QUIET_ARRIVING_AREA}）がありません`)
+  }
+  markAreaArrived(doc, item)
 }
 
 /**
@@ -784,8 +888,8 @@ function confirmArrival(doc: Document): void {
  *
  * | 段 | 報 | 動かすもの |
  * |---|---|---|
- * | 0 | 大津波警報 | 発表（次の段の前提） |
- * | 1 | 観測情報 | サンプルのまま。波高の文（**ここで波高が既読にならないと、続く段が波高の文に食われる**） |
+ * | 0 | 大津波警報 | 15:00 の続報（次の段の前提。段 1 以降の区域はこの報の写し） |
+ * | 1 | 観測情報 | サンプルのまま。波高の文（**ここで波高が既読にならないと、続く段が波高の文に食われる**）。区域の到達状況もサンプルの値で動く |
  * | 2 | 観測情報 | 釜石の波高を「３．２ｍ以上」へ（値は据え置き） |
  * | 3 | 観測情報 | 釜石の最大波の観測時刻だけ更新 |
  * | 4 | 観測情報 | 大船渡の第１波の到達時刻だけ更新 |
@@ -796,13 +900,14 @@ function confirmArrival(doc: Document): void {
  * | 9 | 観測情報 | 値を持たない観測点（石巻市鮎川）へ、電文の印だけが付く（カードの「観測中」に印の色が当たる） |
  * | 10 | 観測情報 | 釜石が欠測へ転じる（これまでの最大波の値は持ったまま。行に印が付き、欠測の文が読まれる） |
  * | 11 | 観測情報 | 釜石が欠測のまま、最大波の観測時刻だけが更新される（「欠測となっている観測点で、…」の文） |
- * | 12〜16 | 満潮時刻 | 名乗りだけ／満潮時刻の更新／到達状況の更新／到達予想時刻の更新／何も動かない |
+ * | 12〜16 | 満潮時刻 | 名乗りだけ／満潮時刻の更新／到達状況の更新／到達予想時刻の更新／何も動かない（区域は段 0・段 1 の値に揃える → `alignTideForecastToLatest`。段 14 は到達予想時刻だけだった区域の到達確認） |
  */
 export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
   const T = TOHOKU.observation
   const at = (i: number) => i * TSUNAMI_QUIET_STEP_MS
   const steps: TestTelegramStep[] = [
-    { file: TOHOKU.warning, headType: 'VTSE41', atMs: 0 },
+    // 段 0: 15:00 の津波警報の続報（14:49 の発表から始めない理由は `TOHOKU.observation`）
+    { file: TOHOKU.update, headType: 'VTSE41', atMs: 0 },
     // 段 1: サンプルのまま（発表時刻だけ、この時間軸へ置き直す）
     { file: T, headType: 'VTSE51', atMs: at(1), onlyIn: 'dmdss', rewrite: xml => editXml(xml, doc => setIssueTime(doc, quietIssueAt(at(1)))) },
     // 段 2: 釜石の波高が「３．２ｍ以上」になる（値は据え置き）。印は付けない（`Revise` は無い形）
