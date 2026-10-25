@@ -51,6 +51,42 @@ export function rememberQuakeNotified(
   }
 }
 
+/**
+ * 地震 1 件ぶんの通知を、同じ地震の前の通知が済んでから判定して出す。**出せたときだけ覚える。**
+ *
+ * 通知は Service Worker の返事を待つので、出せたかがすぐには分からない。同じ地震の報が続けて届いたとき、
+ * 前の結果を待たずに判定すると、前の通知が出せたかを知らないまま `previous` を読むことになる
+ * （先に覚えて失敗で戻す形にすると、2 通続けて出せなかったとき、出ていない通知が通知済みとして残る）。
+ * そこで地震ごとに 1 本の列へ並べ、前が済んでから `memory` を読んで判定する。別の地震は待たない。
+ * 同じ tag の通知が出す順に並ぶ（震度速報の通知が震源の報の通知を後から上書きしない）ことも、この列が保つ。
+ *
+ * `chains` と `memory` は呼び出した時点のものを使う（リセットで差し替えられた後に済んだ通知は、
+ * 古いほうへ覚えるだけで新しい記憶を汚さない）。出せなければ reject する（記録は呼び出し側）。
+ */
+export function scheduleQuakeNotification(args: {
+  chains: Map<string, Promise<void>>
+  memory: Map<string, QuakeNotifiedState>
+  quake: JMAQuake
+  notifyMinScale: number
+  areaPrefIndex: AreaPrefIndex
+  show: (notification: QuakeNotification) => Promise<void>
+}): Promise<void> {
+  const { chains, memory, quake, notifyMinScale, areaPrefIndex, show } = args
+  const key = quakeEventKey(quake)
+  const before = chains.get(key) ?? Promise.resolve()
+  const run = before.then(async () => {
+    const decided = decideQuakeNotification(quake, memory.get(key) ?? null, notifyMinScale, areaPrefIndex)
+    if (!decided) return
+    await show(decided.notification)
+    rememberQuakeNotified(memory, decided.next)
+  })
+  // 列の末尾は失敗しても次を止めない形で持つ。済んだら、後ろに誰も並んでいなければ列ごと消す
+  const tail = run.catch(() => undefined)
+  chains.set(key, tail)
+  void tail.then(() => { if (chains.get(key) === tail) chains.delete(key) })
+  return run
+}
+
 /** 出す通知。 */
 export interface QuakeNotification {
   readonly title: string
