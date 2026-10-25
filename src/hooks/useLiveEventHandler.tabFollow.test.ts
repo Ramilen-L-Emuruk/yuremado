@@ -255,7 +255,7 @@ function setup(over: { voicevoxEnabled?: boolean; soundEnabled?: boolean } = {})
   }
   const settings = { ...DEFAULTS,
     voicevoxEnabled: over.voicevoxEnabled ?? true, voicevoxUrl: 'http://x', voicevoxSpeakerId: 1,
-    soundEnabled: over.soundEnabled ?? false, soundVolume: 1, notifyMinScale: -1,
+    soundEnabled: over.soundEnabled ?? false, soundVolume: 1, notifyQuake: false,
     notifyEEW: false, notifyTsunami: false, notifyDetection: false,
     ttsIntensityLevels: [], ttsMaxRegions: 0, ttsAlwaysReadScale: 0, ttsRegionTolerance: 0,
     minDisplayScale: -1,

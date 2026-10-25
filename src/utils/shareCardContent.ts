@@ -179,7 +179,7 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   const { text } = formatTsunamiGrade(grade)
   const areaCount = new Set(live.flatMap((t) => t.areas.map((a) => a.name))).size
   // 原因地震が複数あれば（EventID に番号が足された津波）全件を「／」で並べる。長いと折り返す
-  // （2026-10-15 ユーザー承認「全件を並べる」）。同じ地震を複数の報が運ぶので、震源名・規模・地震発現時刻の組で重ねる。
+  // （2026-10-15 ユーザー承認「全件を並べる」。2026-10-19 ユーザー選択「全件を並べる（今の形） (推奨)」で維持）。同じ地震を複数の報が運ぶので、震源名・規模・地震発現時刻の組で重ねる。
   // **震源名と規模が同じ別の地震には地震発現時刻を添える**（2026-10-21 ユーザー選択「B は案1」。全期間の津波電文 651 通のうち
   // 1 通。2023-12-03 の VTSE41 がフィリピン付近の M7.0 を 2 つ載せた）。添えないと同じ文が 2 つ並ぶか、1 つに畳まれて地震が消える。
   const collected: { text: string; time: string | undefined; ms: number }[] = []

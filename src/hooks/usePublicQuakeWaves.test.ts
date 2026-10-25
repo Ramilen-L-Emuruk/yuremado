@@ -24,6 +24,21 @@ vi.mock('../utils/publicStations', async (importOriginal) => ({
   loadPublicStations: stations.load,
 }))
 
+// 復号を組ごとに投げさせる（`throwFor` に載せた観測点だけ。既定は本物をそのまま呼ぶ）。
+const decode = vi.hoisted(() => ({ throwFor: new Set<string>(), calls: new Map<string, number>() }))
+vi.mock('../utils/publicQuakeColumns', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/publicQuakeColumns')>()
+  return {
+    ...actual,
+    decodePublicQuakeWave: (params: Parameters<typeof actual.decodePublicQuakeWave>[0]) => {
+      const code = params.epoch.code
+      decode.calls.set(code, (decode.calls.get(code) ?? 0) + 1)
+      if (decode.throwFor.has(code)) throw new Error('見本の復号の失敗')
+      return actual.decodePublicQuakeWave(params)
+    },
+  }
+})
+
 // **トップレベルで一度読む**（テスト本体で初めて読むと、その待ちが 1 件目に乗る。CLAUDE.md「検証」）。
 const { pickPublicQuakeTargets, usePublicQuakeWaves } = await import('./usePublicQuakeWaves')
 
@@ -94,6 +109,9 @@ function render(quakes: readonly JMAQuake[], enabled = true, replayOffsetMs: num
 
 afterEach(() => {
   setReplayOffset(null)
+  vi.useRealTimers()
+  decode.throwFor.clear()
+  decode.calls.clear()
 })
 
 beforeEach(async () => {
@@ -312,5 +330,63 @@ describe('usePublicQuakeWaves', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(archive.fetch).not.toHaveBeenCalled()
     expect(h.result.current.size).toBe(0)
+  })
+})
+
+describe('組み立てで投げた組（#1042）', () => {
+  /**
+   * 条件が満たされるまで実時間で見回る。**`waitFor` は使わない** —— 見回りに `setInterval` を使うので、
+   * 偽の時計の下では 1 度しか見ない。
+   */
+  async function until(check: () => void): Promise<void> {
+    for (let i = 0; ; i += 1) {
+      try {
+        check()
+        return
+      } catch (error) {
+        if (i >= 100) throw error
+      }
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20))
+      })
+    }
+  }
+
+  /** 見直し（30 秒ごと）を 1 回ぶん進め、取り直しが終わるのを実時間で少し待つ。 */
+  async function advanceRecheck(): Promise<void> {
+    await act(async () => {
+      vi.advanceTimersByTime(30_000)
+    })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+  }
+
+  // 正: 結果が決まった後（復号）で投げた組も失敗に数え、待ちが明けたら組み立て直す。
+  // 対照: 同じ地震の他の組は、投げた組に巻き込まれずに出る。
+  it('投げた組だけを失敗に数えて取り直し、他の組は出す', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'Date'] })
+    archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB']) })
+    decode.throwFor.add('AAA')
+    const h = render([quake('q1', TIME, 30)])
+    await until(() => expect([...h.result.current.values()][0]?.map((w) => w.code)).toEqual(['BBB']))
+    decode.throwFor.clear()
+    await advanceRecheck()
+    await until(() => expect([...h.result.current.values()][0]?.map((w) => w.code).sort()).toEqual(['AAA', 'BBB']))
+    // 取り直しは控えから組み立てた（保存庫へは最初の 1 回だけ）
+    expect(archive.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  // 安全弁: 投げ続ける組は、取り直しの上限（5 回）で諦める（組み立ては最初の 1 回と取り直し 5 回）。
+  it('投げ続ける組は 5 回取り直して諦める', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'Date'] })
+    archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB']) })
+    decode.throwFor.add('AAA')
+    const h = render([quake('q1', TIME, 30)])
+    await until(() => expect([...h.result.current.values()][0]?.length).toBe(1))
+    // 待ちは 30・60・120・240・480 秒（合わせて 930 秒）。見直しの刻みの分を足して余らせる
+    for (let i = 0; i < 45; i += 1) await advanceRecheck()
+    expect(decode.calls.get('AAA')).toBe(6)
+    expect([...h.result.current.values()][0]?.map((w) => w.code)).toEqual(['BBB'])
   })
 })

@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-//
 // 合成用プログラムを用意できなかったときの振る舞いを固定する。
 //
 // **ここが守るのは「onAdd が投げない」こと。** 投げると MapLibre はレイヤーを登録したまま
@@ -7,8 +5,6 @@
 // 載せる側（`KyoshinSubThresholdGL.tsx`）の再追加は `if (map.getLayer(id))` で弾かれる ——
 // **作り直す機会が二度と来ない**。症状は「震度0以下の点だけが出ない」で、再読み込み以外に
 // 回復手段が無かった。
-//
-// jsdom なのは `render` が `window.devicePixelRatio` を読むため。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 import { muteConsoleError } from '../../../test-utils/muteConsoleError'
@@ -87,7 +83,7 @@ function fakeGl(options: GlOptions) {
   return { gl: gl as unknown as WebGL2RenderingContext, counts }
 }
 
-const MAP = { getCanvas: () => ({ width: 800, height: 600 }) } as unknown as maplibregl.Map
+const MAP = { getCanvas: () => ({ width: 800, height: 600 }), getPixelRatio: () => 1 } as unknown as maplibregl.Map
 
 /** MapLibre が `render` へ渡す引数の最小形（キャッシュを差し替えてあるので中身は見られない）。 */
 const ARGS = {} as unknown as maplibregl.CustomRenderMethodInput

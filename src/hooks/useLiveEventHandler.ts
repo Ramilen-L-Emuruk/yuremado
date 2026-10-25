@@ -45,6 +45,7 @@ import { applyQuakeCancelToCard, compareReportAge, createQuakeFoldKeys, extractQ
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import { serverDate } from '../utils/clock'
 import { estimatedIntensityTopicKey, type EstimatedIntensityTopicAnchor } from '../utils/estimatedIntensity'
+import { notificationAllowed } from '../utils/notificationGate'
 
 // ─── 録画ツール向けイベントログの記録（→ `docs/spec/recording-interface-spec.md`）────────
 //
@@ -1788,6 +1789,14 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    */
   const skipTelegramTextRef = useRef(false)
   const spokenTsunamiCancelEventIdsRef = useRef<Set<string>>(new Set())
+  /**
+   * 閉じるまで残す津波の通知（札 `tsunami`・`requireInteraction`）を出していて、まだ終わりの通知で置き換えていないか。
+   *
+   * **ブラウザ通知を止めていても（まとめて・津波だけ）、これが立っていれば解除・取消・失効の通知は出す**
+   * （2026-10-25 ユーザー選択「解除・取消だけ出す (Recommended)」）。止めた後に解除されると、閉じるまで残る
+   * 「津波警報」の通知が終わった後も通知センターに残るため。立っていないとき（前に出していない）は、止めていれば出さない。
+   */
+  const tsunamiPersistentNotificationShownRef = useRef(false)
   // 津波観測点の新規/更新バッジ表示状態と自動クリアタイマー
   const [obsUpdateStatus, setObsUpdateStatus] = useState<Map<string, ObsUpdateMark>>(() => new Map())
   const obsStatusClearTimerRef = useRef<number>(0)
@@ -2891,7 +2900,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         seenLpgmEventIdsRef.current.delete(lpgmEvent.eventId)
         if (settings.soundEnabled) playAlertSound('earthquakeCancel')
         // 発表の通知を同じ札で置き換える（2026-10-24 ユーザー選択「出す (Recommended)」）。地名は発表で覚えた値から引く
-        if (settings.notifyMinScale >= 0 && takeNotified(`lpgm:${lpgmEvent.eventId}`)) {
+        if (notificationAllowed(settings, 'quake') && takeNotified(`lpgm:${lpgmEvent.eventId}`)) {
           const n = lpgmNotification(lpgmEvent, lpgmNotifiedNameRef.current.get(lpgmEvent.eventId) ?? '')
           showBrowserNotification(n.title, n.body, n.tag)
         }
@@ -2938,7 +2947,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       const lpgmName = lpgmEvent.hypocenter?.name.trim() ?? ''
       title.setTitle(joinTitleParts('長周期地震動', lpgmName, `最大階級${lpgmEvent.maxClass}`))
       title.scheduleTitleRevert('lpgm', lpgmEvent.eventId)
-      if (settings.notifyMinScale >= 0) {
+      if (notificationAllowed(settings, 'quake')) {
         const n = lpgmNotification(lpgmEvent, '')
         showBrowserNotification(n.title, n.body, n.tag)
         rememberNotified(`lpgm:${lpgmEvent.eventId}`)
@@ -3014,7 +3023,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       // 受信したことをブラウザ通知に出す（推計の最大震度は出さない。2026-10-22 ユーザー選択「「受信した」を通知する」）。
       // 地震情報の通知の設定に従う（2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
-      if (settings.notifyMinScale >= 0) {
+      if (notificationAllowed(settings, 'quake')) {
         const n = estimatedIntensityNotification(ei, isNew !== false)
         showBrowserNotification(n.title, n.body, n.tag)
       }
@@ -3054,7 +3063,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 最中に取消が届いても取り下げられない（取り消された回数をそのあと読み上げる）。
         // 帯が消えるので、パネルの展開も要らない。
         if (settings.soundEnabled) playAlertSound('earthquakeCancel')
-        if (settings.notifyMinScale >= 0 && takeNotified(`earthquakeCount:${count.eventId}`)) {
+        if (notificationAllowed(settings, 'quake') && takeNotified(`earthquakeCount:${count.eventId}`)) {
           const n = earthquakeCountNotification(count, '')
           showBrowserNotification(n.title, n.body, n.tag)
         }
@@ -3078,7 +3087,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       const countHeadline = earthquakeCountHeadline(count)
       title.setTitle(countHeadline === '地震回数に関する情報' ? countHeadline : `地震回数に関する情報 ${countHeadline}`)
       title.scheduleTitleRevert('earthquakeCount', count.eventId)
-      if (settings.notifyMinScale >= 0) {
+      if (notificationAllowed(settings, 'quake')) {
         const n = earthquakeCountNotification(count, countHeadline)
         showBrowserNotification(n.title, n.body, n.tag)
         rememberNotified(`earthquakeCount:${count.eventId}`)
@@ -3152,7 +3161,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 「伝える (Recommended)」。→ `useEarthquakes` の `decideDispatch`）。帯は消えるのでパネルは開かない。
         // 主題は発表と共有する（理由は地震回数の取消と同じ）。
         if (settings.soundEnabled) playAlertSound('specialInfoCancel')
-        if (settings.notifyNankai && takeNotified(`nankaiCommentary:${commentary.id}`)) {
+        if (notificationAllowed(settings, 'nankai') && takeNotified(`nankaiCommentary:${commentary.id}`)) {
           const n = nankaiCommentaryNotification(commentary)
           showBrowserNotification(n.title, n.body, n.tag)
         }
@@ -3172,7 +3181,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         title.scheduleTitleRevert('nankaiCommentary', commentary.id)
       }
       // 臨時解説だけ通知する（定例解説は平常時にも毎月届く。2026-10-24 ユーザー選択「出す (Recommended)」）
-      if (settings.notifyNankai && commentary.serialName === '臨時解説') {
+      if (notificationAllowed(settings, 'nankai') && commentary.serialName === '臨時解説') {
         const n = nankaiCommentaryNotification(commentary)
         showBrowserNotification(n.title, n.body, n.tag)
         rememberNotified(`nankaiCommentary:${commentary.id}`)
@@ -3200,6 +3209,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側）。
         // 取消・終了では呼ばない（帯が消えるので、開いて見せるものが無い）。
         expandPanelForSpecialInfo()
+        // 臨時情報と後発地震注意情報で同じ音（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）
         if (settings.soundEnabled) {
           playAlertSound('specialInfo')
         }
@@ -3249,7 +3259,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // ブラウザ通知（発表・調査終了・取消。2026-10-22 ユーザー選択「通知を出す (Recommended)」、設定は 2026-10-24 ユーザー
       // 選択「南海は新設、他は地震情報に (Recommended)」）。本文は気象庁の要約（2026-10-23 ユーザー選択「通知の本文に使う
       // (Recommended)」）
-      if (settings.notifyNankai) {
+      if (notificationAllowed(settings, 'nankai')) {
         const n = event.kind === 'nankai' ? nankaiNotification(event.data) : kohatsuNotification(event.data)
         showBrowserNotification(n.title, n.body, n.tag)
       }
@@ -3900,12 +3910,17 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 同じなので、別の津波の遅れて届いた解除が、閉じるまで残していた「津波警報」の通知を
         // 「津波警報等の解除」へ置き換えてしまう。警報を終わったと伝える誤りは、解除の通知を 1 つ
         // 落とすより重い。
-        if (tsunamiStep?.kind === 'ended' && settings.notifyTsunami) {
+        // 止めていても、閉じるまで残る通知を出していたなら置き換える（`tsunamiPersistentNotificationShownRef`）
+        if (tsunamiStep?.kind === 'ended'
+          && (notificationAllowed(settings, 'tsunami') || tsunamiPersistentNotificationShownRef.current)) {
           // 取消・失効だけを終わりの通知へ回し、それ以外（読めない値を含む）は解除の通知へ倒す（音・読み上げの扱いと揃える）
           const n = event.cancelReason === 'retracted' || event.cancelReason === 'expired'
             ? tsunamiEndNotification(event)
             : tsunamiLiftNotification(event)
-          if (n) showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction)
+          if (n) {
+            showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction)
+            tsunamiPersistentNotificationShownRef.current = n.requireInteraction
+          }
         }
         if (settings.voicevoxEnabled) {
           speakNonEEWDelayed(
@@ -4037,7 +4052,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               ))
             }
           }
-          if (settings.notifyEEW) {
+          if (notificationAllowed(settings, 'eew')) {
             const cancelName = event.earthquake.hypocenter.name || eewLastHypocenterNameRef.current.get(key)
               || lateCancel?.hypocenterName
             // 画面に出ていた地震（hadKey・消えた後の取消）なのに名前を引けないのは、記憶の鍵がずれたか記憶が消えた印。
@@ -4141,10 +4156,15 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (!notifyBaseline || raisesNotifiedForecast(notifyForecast, notifyBaseline)) {
         eewNotifyBaselineRef.current.set(key, notifyForecast)
       }
-      if (settings.notifyEEW && (isNew || levelUpgraded || forecastRaised)) {
-        // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。通知の見出しも実態に合わせる
-        const eewNotifyTitle = currentLevel === 2 ? '緊急地震速報 特別警報'
-          : currentLevel === 1 ? '緊急地震速報 警報' : eewKindLabel(0)
+      if (notificationAllowed(settings, 'eew') && (isNew || levelUpgraded || forecastRaised)) {
+        // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。通知の見出しも実態に合わせる。
+        // **見出しは表示用の区分で決める**（特別警報の下げ止まり。→ eew-spec.md §4）。一度でも特別警報だった地震は、
+        // 続報で震度が下がってから長周期の予想が上がる・格上げが立つなどで出し直しても「特別警報」のまま。
+        // `event` は入口で統合した報で、印（`everSpecialWarning`）を運んでいる（`useEarthquakes` の `mergeEewReport`）。
+        // 出すかどうか（格上げ・予想の引き上げ）は生の区分のまま —— 下げ止まりは見出しの文言だけに効かせる
+        const notifyLevel = computeDisplayEEWLevel(event)
+        const eewNotifyTitle = notifyLevel === 2 ? '緊急地震速報 特別警報'
+          : notifyLevel === 1 ? '緊急地震速報 警報' : eewKindLabel(0)
         showBrowserNotification(
           eewNotifyTitle,
           eewNotificationBody(event.earthquake.hypocenter.name, notifyForecast),
@@ -5116,12 +5136,14 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // ため、この形の電文では「本文が空の津波注意報」という実態と違う通知になる（`isTsunamiObservationOnly`）。
     // その報は観測点の印を決めたあとで、観測情報の通知として出す（`tsunamiObservationNotification`）。
     if (event.kind === 'tsunami' && !event.cancelled && !isTsunamiObservationOnly(event)
-      && settings.notifyTsunami) {
+      && notificationAllowed(settings, 'tsunami')) {
       // 中身（見出し・区域の並び・「ほか N 区域」・解除の行・閉じるまで残すか）は `tsunamiIssueNotification`。
       // **区域はカードの材料（`tsunamiCardBasis`）から取る**——電文順で切ると、カードの先頭に並ぶ
       // 深刻な区域が通知から落ちる。
       const n = tsunamiIssueNotification(event, tsunamiCardBasis)
       showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction)
+      // 同じ札で置き換えるので、閉じるまで残すかは最後に出した通知で決まる（予報へ下がった報なら残さない）
+      tsunamiPersistentNotificationShownRef.current = n.requireInteraction
     }
     // 通知音（地震情報・津波情報）の種別判定。voicevox の delay 決定にも使うため
     // soundEnabled と独立に計算する（AUD-7: 読み上げは voicevoxEnabled 単独判定）。
@@ -5983,7 +6005,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // **等級を伝えていない報（観測情報だけ）の通知**（→ `tsunamiObservationNotification`）。発表中の通知と違い、
       // 中身はこの報でカードに印が付いた観測点なので、印を決めたここで出す。印が 1 つも無い報（同じ値の再送）は出さない。
       if (isTsunamiObservationOnly(event) && newStatusEntries.length > 0
-        && settings.notifyTsunami) {
+        && notificationAllowed(settings, 'tsunami')) {
         const markedNames = new Set(newStatusEntries.map(([name]) => name))
         const marked = sortObservationsForCardDisplay(tsunamiCardBasis.observations, tsunamiCardBasis.areas, tsunamiCardBasis.liftedAreas)
           .filter(o => markedNames.has(o.name))
@@ -6155,6 +6177,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // なる経路）。しかも 200 件溜まるまで自己クリアされないので、実質そのセッション中ずっと
     // 効き続ける。他の既読系と揃える。
     spokenTsunamiCancelEventIdsRef.current.clear()
+    // 閉じるまで残る津波の通知を出した印も下ろす。残すと、通知を止めた端末で、時間軸の違う津波の終わりの報が
+    // 前の通知を置き換えに行く（`tsunamiPersistentNotificationShownRef`）
+    tsunamiPersistentNotificationShownRef.current = false
     // 気象庁が書いた文の既読も落とす。残すと、同じシナリオを再生し直したときに本文が
     // 前回と一致して「読んだこと」になり、**新しいセッションで一度も声にならない**
     // （鍵はイベント単位なので、同じ地震を再生すれば必ず一致する）。

@@ -801,6 +801,7 @@ const PLAYERS: Record<AlertSoundType, SoundPlayer> = {
   },
 
   // 南海トラフ臨時情報・後発地震注意情報: 純音 A4×2連打 → D5（情報発表の穏やかな緊張感）
+  // **2 つの情報で同じ音を鳴らす**（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。
   specialInfo: (ctx, base) => {
     const g = BASE_GAIN.ding * SEVERITY.info
     ding(ctx, 440.0, base + 0.00, 0.15, g)

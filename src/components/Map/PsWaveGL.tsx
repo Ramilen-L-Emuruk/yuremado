@@ -312,7 +312,7 @@ ${VERT_BODY}`,
         // premultiplied alpha（フラグメントで rgb に a を掛けている）。
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
         applyProjectionUniforms(gl, u, args)
-        const dpr = window.devicePixelRatio || 1
+        const dpr = map.getPixelRatio()
         gl.uniform1f(u.u_strokePx, STROKE_PX * dpr)
         const opacity = fullOpacityRef.current ? 1 : 0.4
         gl.uniform1f(u.u_opacity, opacity)

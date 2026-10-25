@@ -14,19 +14,26 @@
 import type { HistoricalArchiveEntry } from '../src/types/historicalArchive'
 import type { EEWAlert, EEWRegion, IntensityScale } from '../src/types/earthquake'
 import { isValidIntensityScale } from '../src/utils/intensity'
-import { NO_VALUE_MARKERS, parseHeadlineScale, prefFromRegionName, resolveHypocenterName, type ParsedEewPage } from './historicalEewParser'
+import { NO_VALUE_MARKERS, parseHeadlineScale, prefFromRegionName, resolveHypocenterName, type ParsedEewHypocenter, type ParsedEewPage } from './historicalEewParser'
 
 export interface BuildEewEntriesOptions {
-  /** entry.id / issue.eventId の元になる接頭辞（例: "2011tohoku-mainshock"） */
+  /** entry.id の元になる接頭辞（例: "2011tohoku-mainshock"） */
   idPrefix: string
+  /**
+   * 気象庁の EventID（`issue.eventId`）。発表状況ページのディレクトリ名がそれにあたる
+   * （例: `.../pub_hist/2016/04/20160416012510/`）。地震情報の電文の `eventId` と同じ値になるので、
+   * 発生時刻から作らない —— 作ると秒がずれて、同じ地震の地震情報と結び付かない。
+   */
+  eventId: string
+  /**
+   * 発生時刻（UTC ISO）。ページの震源要素の表に秒まであればその値、分までしか無ければ
+   * 呼び出し側が別の出どころで補った値を渡す（{@link ParsedEewHypocenter.originTimeHasSeconds}）。
+   * 予報円の半径はこの時刻から決まる。
+   */
+  originTimeIso: string
 }
 
-/** JST の Date から気象庁 EventID 形式（YYYYMMDDHHMMSS）を作る。 */
-function toEventId(originTimeIso: string): string {
-  const jst = new Date(new Date(originTimeIso).getTime() + 9 * 3600_000)
-  const pad = (n: number, len = 2) => String(n).padStart(len, '0')
-  return `${jst.getUTCFullYear()}${pad(jst.getUTCMonth() + 1)}${pad(jst.getUTCDate())}${pad(jst.getUTCHours())}${pad(jst.getUTCMinutes())}${pad(jst.getUTCSeconds())}`
-}
+const EVENT_ID = /^\d{14}$/
 
 /** null/undefined のまま書き出すと「0(0,0)」のような偽データになる必須値を検証する。 */
 function required<T>(value: T | null | undefined, label: string, context: string): T {
@@ -53,7 +60,11 @@ export function buildEewEntries(parsed: ParsedEewPage, opts: BuildEewEntriesOpti
   // 東北の実データ（8/20件）で確実に停止してしまうため、ここでは対応を見送っている。
   // 将来、severity/isFinalの誤りが実際に見つかった場合は、hasReachedWarningOnce・
   // maxReportNumをresolveHypocenterNameの結果でグルーピングして地震ごとに独立させること。
-  const eventId = toEventId(parsed.hypocenter.originTimeIso)
+  if (!EVENT_ID.test(opts.eventId)) throw new Error(`${opts.idPrefix}: EventID が 14 桁の数字ではありません: "${opts.eventId}"`)
+  if (Number.isNaN(new Date(opts.originTimeIso).getTime())) {
+    throw new Error(`${opts.idPrefix}: 発生時刻を日時として読めません: "${opts.originTimeIso}"`)
+  }
+  const eventId = opts.eventId
   let hasReachedWarningOnce = false
   const entries: HistoricalArchiveEntry[] = []
   // 気象庁の発表状況ページは、そのEEWで実際に発表された全報を列挙し終えた結果を載せている
@@ -67,6 +78,32 @@ export function buildEewEntries(parsed: ParsedEewPage, opts: BuildEewEntriesOpti
     if (report.reportNum === 0) continue // 検知時刻の行（震源要素のみ）は電文ではない
     const cell = report.forecastCell
     const ctx = `${opts.idPrefix} report${report.reportNum}`
+
+    if (report.isCancellation) {
+      // 取消（キャンセル報）。ライブで届く取消電文（`dmdataParser.ts` の `parseEEWFromXml`）と同じ形にする ——
+      // 予想（震源・予想震度・区域）を残さない。震源はセンチネル、発生時刻は空、M は NaN（JSON では null）。
+      // 取消はそのイベントの打ち切りなので最終報
+      const cancel: EEWAlert = {
+        kind: 'eew',
+        origin: 'archive',
+        id: `${opts.idPrefix}-eew-${report.reportNum}`,
+        time: report.timeIso,
+        test: false,
+        earthquake: {
+          originTime: '',
+          arrivalTime: '',
+          condition: '',
+          hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: Number.NaN },
+        },
+        severity: hasReachedWarningOnce ? 'Warning' : 'Forecast',
+        cancelled: true,
+        isFinal: true,
+        issue: { eventId, serial: String(report.reportNum), time: report.timeIso },
+        areas: [],
+      }
+      entries.push({ time: report.timeIso, payload: { kind: 'event', event: cancel } })
+      continue
+    }
 
     let areas: EEWRegion[] | undefined
     let forecastMaxScale: IntensityScale | undefined
@@ -109,7 +146,7 @@ export function buildEewEntries(parsed: ParsedEewPage, opts: BuildEewEntriesOpti
       time: report.timeIso,
       test: false,
       earthquake: {
-        originTime: parsed.hypocenter.originTimeIso,
+        originTime: opts.originTimeIso,
         // 気象庁の公表資料には報ごとのS波到達予測時刻が無いため、報の発表時刻+5秒を仮の値とする
         // （per-area の arrivalTime は常に null で、アプリ側の描画はそちらを使わない）。
         arrivalTime: new Date(new Date(report.timeIso).getTime() + 5000).toISOString(),

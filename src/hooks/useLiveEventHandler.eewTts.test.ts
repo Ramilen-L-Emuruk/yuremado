@@ -238,7 +238,7 @@ function setup(
     voicevoxSpeakerId: 1,
     soundEnabled: false,
     soundVolume: 1,
-    notifyMinScale: -1,
+    notifyQuake: false,
     notifyEEW: false,
     ...over,
   } as unknown as AppSettings
@@ -2979,6 +2979,35 @@ describe('いま声が語っているカードの配線', () => {
       handle(makeEEW({ serial: 2, scaleTo: 45 }))
       handle(makeEEW({ serial: 3, scaleTo: 50 }))
       expect(notices()).toHaveLength(1)
+    })
+
+    // 特別警報の下げ止まり（eew-spec.md §4）を通知の見出しにも効かせる。受信処理へ届く報は入口で統合済みで、
+    // 特別警報だった地震なら印（`everSpecialWarning`）を運ぶ（`useEarthquakes` の `mergeEewReport`）。ここでは統合後の形で渡す。
+    // 入口が印を運ぶこと自体は `useEarthquakes.wiring.test.ts` の `onLiveEvent` へ渡る報を見るテストが固定している
+    const titles = () => notices().map(c => c[0])
+    it('正: 特別警報だった地震は、震度が下がった後に出し直しても見出しが「特別警報」のまま', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ serial: 1, scaleTo: 55 }))
+      handle({ ...makeEEW({ serial: 2, scaleTo: 50, lgIntTo: 2 }), everSpecialWarning: true })
+      expect(titles()).toEqual(['緊急地震速報 特別警報', '緊急地震速報 特別警報'])
+    })
+
+    it('対照: 特別警報だった印の無い報なら、出し直した見出しは「警報」', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ serial: 1, scaleTo: 50 }))
+      handle(makeEEW({ serial: 2, scaleTo: 50, lgIntTo: 2 }))
+      expect(titles()).toEqual(['緊急地震速報 警報', '緊急地震速報 警報'])
+    })
+
+    it('安全弁: 下げ止まりは見出しにだけ効く。予想が下がっただけの続報では出し直さず、予報級は「地震動予報」のまま', () => {
+      vi.mocked(showBrowserNotification).mockClear()
+      const handle = setup({ notifyMinScale: 0, notifyEEW: true })
+      handle(makeEEW({ serial: 1, scaleTo: 55 }))
+      handle({ ...makeEEW({ serial: 2, scaleTo: 50 }), everSpecialWarning: true })
+      handle(makeEEW({ eventId: 'evt-F', serial: 1, severity: 'Forecast', scaleTo: 45 }))
+      expect(titles()).toEqual(['緊急地震速報 特別警報', '地震動予報'])
     })
   })
 

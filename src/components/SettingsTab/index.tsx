@@ -148,15 +148,40 @@ const EMPTY_HISTORICAL_ARCHIVES: HistoricalArchiveIndex = []
 
 // ---- Reusable UI parts ----
 
+/**
+ * 設定の見出し。見出しを押すと中を開け閉めできる。
+ *
+ * **既定はすべて閉じる。開け閉めの状態は端末に保存しない**（2026-10-25 ユーザー承認。原文「規定はすべて閉じてほしい」
+ * 「端末に覚えておく必要は無い気がします。タブ移動では覚えておいてほしい」）。設定タブは別のタブへ移っても
+ * 外されずに隠れるだけ（App の `TAB_SCROLLER_CLASS` の領域）なので、ここの状態はタブを移る間は残り、
+ * 読み込み直すと消える。**条件つきで出す見出し**（読み上げ設定など）は、出し直すと閉じた状態から始まる。
+ */
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
   return (
     <section className="bg-card rounded-lg border border-border overflow-hidden mb-3">
-      <div className="px-4 py-2.5 bg-panel border-b border-border">
-        <h2 className="text-white text-sm font-bold">{title}</h2>
-      </div>
-      <div className="divide-y divide-border">{children}</div>
+      <h2>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen(v => !v)}
+          className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-panel text-left text-white text-sm font-bold hover:bg-white/5 transition-colors ${
+            open ? 'border-b border-border' : ''
+          }`}
+        >
+          <span>{title}</span>
+          <span aria-hidden="true" className="text-secondary font-normal">{open ? '▾' : '▸'}</span>
+        </button>
+      </h2>
+      {/* 閉じても外さずに隠す。中の行（設定の読み込みの結果・診断ログの件数など）が持つ状態を、閉じるたびに捨てないため */}
+      <div hidden={!open} className="divide-y divide-border">{children}</div>
     </section>
   )
+}
+
+/** 見出しのまとまりを区切る小見出し（「開発・検証」）。開け閉めは持たない。 */
+function SectionGroupLabel({ title }: { title: string }) {
+  return <h2 className="text-secondary text-xs font-bold px-1 pt-3 pb-2">{title}</h2>
 }
 
 /**
@@ -1223,6 +1248,332 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Section>
       )}
 
+      {/* 標準版の接続の設定。DMDSS 版は「DM-D.S.S 接続設定」に同じ設定の行がある（あちらは緊急地震速報以外の試験報にも効く）。
+          行の文面は 2026-10-21 ユーザー承認、置き場所は 2026-10-25 ユーザー承認 */}
+      {!isDmdss && (
+        <Section title="接続設定">
+          <Row label="試験報を受信（検証用）" description="緊急地震速報の訓練報・試験報も受信します。画面には「訓練報」「試験報」の印を付けて出します">
+            <Toggle
+              checked={settings.dmdataTestDelivery}
+              onChange={v => onUpdate('dmdataTestDelivery', v)}
+            />
+          </Row>
+        </Section>
+      )}
+
+      {/* ブラウザ通知。**まとめて止めると、種類ごとの行とテスト通知を隠す**（値は書き換えないので、戻せば元どおり効く。
+          文言とこの見せ方は 2026-10-25 ユーザー承認）。通知を出すかの判定は `utils/notificationGate.ts` の 1 箇所。
+          「通知許可」だけは止めていても出す（許可はブラウザ側の状態で、この設定とは別）。 */}
+      <Section title="ブラウザ通知">
+        <Row label="通知を表示" description="オフにすると、ブラウザ通知をすべて止めます">
+          <Toggle checked={settings.notifyEnabled} onChange={v => onUpdate('notifyEnabled', v)} />
+        </Row>
+        {settings.notifyEnabled && (
+          <>
+            {/* **種別のトグルは地震情報の通知から独立させる**（2026-10-22 ユーザー選択「3 種を切り離す (Recommended)」。
+                行の文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。入り切りは最低震度と別の値で持つ
+                （切って入れ直しても最低震度を忘れない。2026-10-25 ユーザー承認）。 */}
+            <Row label="地震情報の通知" description="地震情報・長周期地震動・推計震度分布図・地震回数に関する情報を受けたときに通知します">
+              <Toggle checked={settings.notifyQuake} onChange={v => onUpdate('notifyQuake', v)} />
+            </Row>
+            {settings.notifyQuake && (
+              <Row label="通知する最低震度" description="この震度以上で通知を送信します">
+                <div className="flex items-center gap-2">
+                  <IntensityBadge scale={settings.notifyMinScale} />
+                  <ScaleSelect
+                    value={settings.notifyMinScale}
+                    onChange={v => onUpdate('notifyMinScale', v === -1 ? 10 : v)}
+                    noneLabel="震度1以上"
+                  />
+                </div>
+              </Row>
+            )}
+            {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 → 南海トラフ の順 ── */}
+            <Row label="揺れ検知通知" description="強震モニタで揺れを検知したときに通知します。推定値のため、通知は多めになります">
+              <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
+            </Row>
+            <Row label="緊急地震速報の通知" description="緊急地震速報が出たときと、警報・特別警報へ上がったときに通知します">
+              <Toggle checked={settings.notifyEEW} onChange={v => onUpdate('notifyEEW', v)} />
+            </Row>
+            <Row label="津波通知" description="津波警報・注意報・予報が発表されたときと、全て解除されたときに通知します">
+              <Toggle checked={settings.notifyTsunami} onChange={v => onUpdate('notifyTsunami', v)} />
+            </Row>
+            {isDmdss && (
+              <Row label="南海トラフ・後発地震の通知" description="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報と、臨時の解説情報を受けたときに通知します">
+                <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
+              </Row>
+            )}
+          </>
+        )}
+        <Row label="通知許可" description="ブラウザの通知権限を確認・許可します">
+          <NotificationPermissionButton />
+        </Row>
+        {/* 試すボタンは設定の隣に置く（読み上げの「テスト読み上げ」と同じ）。まとめて止めている間は出さない */}
+        {settings.notifyEnabled && (
+          <Row label="テスト通知" description="テスト通知を即時送信（要通知許可）">
+            <TestButton color="green" onClick={onTest.notification}>通知テスト</TestButton>
+          </Row>
+        )}
+      </Section>
+
+      <Section title="音と読み上げ">
+        <Row label="通知音" description="地震・緊急地震速報・津波の受信時に音を鳴らします">
+          <Toggle
+            checked={settings.soundEnabled}
+            onChange={v => onUpdate('soundEnabled', v)}
+          />
+        </Row>
+        {(settings.soundEnabled || settings.voicevoxEnabled) && (
+          <Row label="音量" description="通知音と読み上げに共通の音量です">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-secondary w-8 text-right">
+                {Math.round(settings.soundVolume * 100)}%
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={settings.soundVolume}
+                onChange={e => onUpdate('soundVolume', Number(e.target.value))}
+                className="w-24 accent-blue-500"
+              />
+            </div>
+          </Row>
+        )}
+        {/* 「要：VOICEVOXアプリ起動」は hint に置いて常時見せる。説明文に混ぜて隠すと、
+            ON にしたとき「接続状態: 起動していません」だけが見えて原因に辿り着けない。 */}
+        <Row
+          label="VOICEVOX 読み上げ"
+          description="地震・緊急地震速報・津波情報をVOICEVOXで読み上げます"
+          hint="要：VOICEVOXアプリ起動"
+        >
+          <Toggle checked={settings.voicevoxEnabled} onChange={v => onUpdate('voicevoxEnabled', v)} />
+        </Row>
+        {settings.voicevoxEnabled && (
+          <>
+            <Row label="VOICEVOX URL" description="VOICEVOXのHTTP APIのURL">
+              {/* 赤枠と理由は入力が落ち着いてから出す（判定に使うのはデバウンス後の値）。
+                  打鍵ごとに判定すると、書き直している最中ずっと赤いままになる。 */}
+              <div className="flex flex-col items-end gap-1">
+                <input
+                  type="text"
+                  value={settings.voicevoxUrl}
+                  onChange={e => onUpdate('voicevoxUrl', e.target.value)}
+                  className={`bg-input border rounded px-2 py-1 text-xs text-white w-44 ${
+                    voicevoxStatus === 'invalid' ? 'border-red-500' : 'border-border'
+                  }`}
+                  spellCheck={false}
+                />
+                {voicevoxStatus === 'invalid' && (
+                  <p className="text-xs text-red-400 w-44 text-left leading-snug">
+                    URLの形式が正しくありません。http:// または https:// で始まる、ホスト名を含むURLを入力してください。
+                  </p>
+                )}
+              </div>
+            </Row>
+            <Row label="接続状態" description="">
+              <span className={`text-xs ${
+                isVoicevoxCheckPending ? 'text-secondary'
+                : voicevoxStatus === 'available' ? 'text-green-400'
+                : voicevoxStatus === 'unavailable' || voicevoxStatus === 'invalid' ? 'text-red-400'
+                : 'text-secondary'
+              }`}>
+                {isVoicevoxCheckPending || voicevoxStatus === 'checking' ? '確認中…'
+                  : voicevoxStatus === 'available' ? '起動中'
+                  : voicevoxStatus === 'unavailable' ? '起動していません'
+                  : voicevoxStatus === 'invalid' ? 'URLが無効'
+                  : '—'}
+              </span>
+            </Row>
+            {voicevoxStatus === 'available' && voicevoxSpeakers.length > 0 && (
+              <>
+                <Row label="話者" description="読み上げに使う声を選択します">
+                  <select
+                    value={settings.voicevoxSpeakerId}
+                    onChange={e => onUpdate('voicevoxSpeakerId', Number(e.target.value))}
+                    className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+                  >
+                    {voicevoxSpeakers.flatMap(spk =>
+                      spk.styles.map(st => (
+                        <option key={st.id} value={st.id}>{spk.name}（{st.name}）</option>
+                      ))
+                    )}
+                  </select>
+                </Row>
+                <Row label="テスト読み上げ" description="">
+                  {/* 通信先はデバウンス後の URL。ここに並ぶ話者は「確認が済んだ URL」から取ったもので、
+                      選べる話者と鳴らす相手が食い違わないよう揃える。生の値を使うと、URL を書き換えている
+                      最中（接続状態が「確認中…」の間）に押したとき、入力途中の未検証の宛先へ投げて
+                      黙って無音に終わる。 */}
+                  {/* 読ませる文は `voicevoxPreviewTexts` が実運用と同じ関数から組む。ここに
+                      文字列を書くと、緊急地震速報の文型を変えたとき試聴だけ古い形で残る。 */}
+                  <TestButton color="blue" onClick={() => {
+                    unlockAudio()
+                    speakVoicevoxPreview(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
+                      .catch(err => log.warn('[settings] 試聴の読み上げに失敗', err))
+                  }}>▶ 試聴</TestButton>
+                </Row>
+              </>
+            )}
+          </>
+        )}
+        {/* 解説情報は平常時でも毎月1回は必ず届くため、音と読み上げを個別に切れるようにしている。
+            臨時情報（段階の発表）はこの設定に関わらず鳴る。 */}
+        {isDmdss && (
+          <Row
+            label="解説情報の音・読み上げ"
+            description="南海トラフ地震関連解説情報の通知音と読み上げを行います。この情報は平常時も毎月届きます"
+          >
+            <Toggle
+              checked={settings.nankaiCommentaryAlerts}
+              onChange={v => onUpdate('nankaiCommentaryAlerts', v)}
+            />
+          </Row>
+        )}
+        {isDmdss && (
+          <Row
+            label="お知らせの音・読み上げ"
+            description="地震・津波に関するお知らせの通知音と読み上げを行います"
+          >
+            <Toggle
+              checked={settings.quakeNoticeAlerts}
+              onChange={v => onUpdate('quakeNoticeAlerts', v)}
+            />
+          </Row>
+        )}
+      </Section>
+
+      {/* 読み上げの詳しさ。VOICEVOX を有効にしたときだけ出す（無効な端末では何も効かないため）。
+          並びは「地域の列挙 → 1 件ごとの詳しさ → 気象庁の発表文」。中の順序は
+          通知設定・テスト機能と同じカテゴリ順（地震情報 → 津波情報 → 緊急地震速報）。 */}
+      {settings.voicevoxEnabled && (
+        <Section title="読み上げ設定">
+          <Row label="読み上げ震度階数" description="最大震度から何階級下まで、地域名を読み上げるかです">
+            <select
+              value={settings.ttsIntensityLevels}
+              onChange={e => onUpdate('ttsIntensityLevels', Number(e.target.value))}
+              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+            >
+              {/* 最後の選択肢は「すべての階級」。値は階級の段数から導く（数を直接書くと、
+                  階級が増減したときに選択肢だけが古い段数のまま残る）。 */}
+              {[0, 1, 2, 3, 4, INTENSITY_SCALE_COUNT - 1].map(n => (
+                <option key={n} value={n}>
+                  {n === 0 ? '最大震度のみ' : n === INTENSITY_SCALE_COUNT - 1 ? 'すべての階級' : `最大＋${n}階級`}
+                </option>
+              ))}
+            </select>
+          </Row>
+          <Row label="必ず読み上げる震度" description="階数の設定を超えても、この震度以上の階級は地域名を読み上げます。長周期地震動には効きません">
+            <div className="flex items-center gap-2">
+              <IntensityBadge scale={settings.ttsAlwaysReadScale} />
+              <ScaleSelect
+                value={settings.ttsAlwaysReadScale}
+                onChange={v => onUpdate('ttsAlwaysReadScale', v)}
+                noneLabel="階数の設定どおり"
+              />
+            </div>
+          </Row>
+          <Row label="必ず読み上げる長周期地震動階級" description="階数の設定を超えても、この階級以上の地域名を読み上げます">
+            {/* 震度の下限は長周期に効かないので別に持つ（2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」、
+                文言は 2026-10-24 選択「この形でよい (Recommended)」）。階級 0 は読まないので選択肢に無い。 */}
+            <select
+              value={settings.ttsAlwaysReadLpgmClass}
+              onChange={e => onUpdate('ttsAlwaysReadLpgmClass', Number(e.target.value))}
+              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+            >
+              <option value={-1}>階数の設定どおり</option>
+              {[1, 2, 3, 4].map(n => (
+                <option key={n} value={n}>{`階級${n}`}</option>
+              ))}
+            </select>
+          </Row>
+          <Row label="読み上げ最大地域数" description="1階級あたりに読み上げる地域名の上限です">
+            <select
+              value={settings.ttsMaxRegions}
+              onChange={e => onUpdate('ttsMaxRegions', Number(e.target.value))}
+              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+            >
+              {[0, 3, 5, 10, 15, 20].map(n => (
+                <option key={n} value={n}>{n === 0 ? '無制限' : `${n}地域`}</option>
+              ))}
+            </select>
+          </Row>
+          {settings.ttsMaxRegions > 0 && (
+            <Row label="地域数の許容超過" description="上限をこの数まで超えるだけなら「ほかN地域」とせず全地域を読み上げます">
+              <select
+                value={settings.ttsRegionTolerance}
+                onChange={e => onUpdate('ttsRegionTolerance', Number(e.target.value))}
+                className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              >
+                {[0, 1, 2, 3, 5].map(n => (
+                  <option key={n} value={n}>{n === 0 ? '許容しない' : `+${n}地域まで`}</option>
+                ))}
+              </select>
+            </Row>
+          )}
+          <Row label="震源の深さ・規模" description="「石川県能登地方、深さ10キロメートルを震源とするマグニチュード5.2の地震が発生しました」のように読み上げます。切ると震源の地名だけを読みます">
+            <Toggle
+              checked={settings.ttsReadHypocenterDetail}
+              onChange={v => onUpdate('ttsReadHypocenterDetail', v)}
+            />
+          </Row>
+          <Row label="震度を入手していない地点" description="震度5弱以上と推定されるのに観測値が届いていない地点の読み方。「区域名」は地点名の代わりに地域名でまとめます（例: 石川県能登では、一部の地点で…）。「地名を読まない」でも、件数と「震度5弱以上と推定されるが未入電」であることは読み上げます">
+            <select
+              value={settings.ttsUnreceivedDetail}
+              onChange={e => onUpdate('ttsUnreceivedDetail', e.target.value as TtsUnreceivedDetail)}
+              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+            >
+              <option value="stations">地点名</option>
+              <option value="areas">区域名</option>
+              <option value="none">地名を読まない</option>
+            </select>
+          </Row>
+          <Row label="津波観測点の読み上げ件数" description="津波の観測情報で読み上げる観測点の数。波高の更新・津波警報相当の観測・到達確認・欠測でそれぞれこの件数まで読み、残りは「ほかN地点」と件数で伝えます">
+            <select
+              value={settings.ttsMaxObservationPoints}
+              onChange={e => onUpdate('ttsMaxObservationPoints', Number(e.target.value))}
+              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+            >
+              {[0, 1, 3, 5, 10, 15, 20].map(n => (
+                <option key={n} value={n}>{n === 0 ? '無制限' : `${n}地点`}</option>
+              ))}
+            </select>
+          </Row>
+          <Row label="緊急地震速報の長周期地震動階級" description="予想震度に続けて「予想最大階級3」のように読み上げます。長周期地震動観測情報そのものには影響しません">
+            <Toggle
+              checked={settings.ttsReadEewLpgmClass}
+              onChange={v => onUpdate('ttsReadEewLpgmClass', v)}
+            />
+          </Row>
+          <Row label="緊急地震速報の警戒地域" description="警報が出ている地方を、震源に続けて「北陸、甲信、東海では強い揺れに警戒してください」のように読み上げます。予想震度はそのあとに読み上げます">
+            <Toggle
+              checked={settings.ttsReadEewWarningRegions}
+              onChange={v => onUpdate('ttsReadEewWarningRegions', v)}
+            />
+          </Row>
+          <Row label="気象庁の発表文" description="電文に添えられた本文・付加文（南海トラフ地震臨時情報の本文など）を読み上げます。震度や津波の読み上げが終わってから読むため、電文が続いている間は読み上げられないことがあります">
+            <Toggle
+              checked={settings.ttsReadTelegramText}
+              onChange={v => onUpdate('ttsReadTelegramText', v)}
+            />
+          </Row>
+          {/* 内訳はマスタートグルが入っているときだけ出す（切っていれば何を選んでも読まない）。 */}
+          {settings.ttsReadTelegramText && (
+            <TelegramTextBlockRows
+              blocks={settings.ttsTelegramTextBlocks}
+              onChange={next => onUpdate('ttsTelegramTextBlocks', next)}
+            />
+          )}
+          {settings.ttsReadTelegramText && (
+            <TelegramBoilerplateRows
+              reads={settings.ttsTelegramBoilerplate}
+              onChange={next => onUpdate('ttsTelegramBoilerplate', next)}
+            />
+          )}
+        </Section>
+      )}
+
       <Section title="表示設定">
         <Row label="最低表示震度" description="これ未満の地震はリストに表示しません">
           <div className="flex items-center gap-2">
@@ -1358,14 +1709,87 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           />
         </Row>
         {/* 2026-10-23 ユーザー選択「やることとして積む (Recommended)」・寸法と文面は 2026-10-24 ユーザー選択 */}
-        <Row label="共有カードの寸法" description="地図を画像にして共有するときの縦横の比率です。">
+        {/* 地震・津波に関するお知らせ（運用連絡）。帯と、音・読み上げを別々に切り替える
+            （文言は 2026-10-18 ユーザー承認）。 */}
+        {isDmdss && (
+          <Row
+            label="お知らせを表示"
+            description="地震・津波に関するお知らせを地図の下に表示します"
+          >
+            <Toggle
+              checked={settings.quakeNoticeBanner}
+              onChange={v => onUpdate('quakeNoticeBanner', v)}
+            />
+          </Row>
+        )}
+      </Section>
+
+      <Section title="動作設定">
+        <Row label="デフォルトタブ" description="操作や情報更新が一定時間ないとこのタブに戻ります">
           <select
-            value={settings.shareCardFormat}
-            onChange={e => onUpdate('shareCardFormat', e.target.value as AppSettings['shareCardFormat'])}
+            value={settings.defaultTab}
+            onChange={e => onUpdate('defaultTab', e.target.value as AppSettings['defaultTab'])}
             className="bg-panel border border-border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500"
           >
-            {Object.values(SHARE_CARD_FORMATS).map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
+            <option value="earthquake">地震情報</option>
+            <option value="realtime">リアルタイム</option>
           </select>
+        </Row>
+        <Row label="津波発表中は津波情報を優先" description="津波情報の発表中はデフォルトタブを津波情報にします">
+          <Toggle
+            checked={settings.tsunamiPriorityDefault}
+            onChange={v => onUpdate('tsunamiPriorityDefault', v)}
+          />
+        </Row>
+        <Row label="津波タイトル表示を一定時間に制限" description="ONで受信のたびに自動復帰までの時間だけ表示し、発表中でも自動的に戻ります">
+          <Toggle
+            checked={settings.tsunamiTitleTemporary}
+            onChange={v => onUpdate('tsunamiTitleTemporary', v)}
+          />
+        </Row>
+        <Row label="自動復帰までの時間" description="操作・情報更新がこの時間ないとデフォルトタブに戻ります">
+          <select
+            value={settings.idleRevertSec}
+            onChange={e => onUpdate('idleRevertSec', Number(e.target.value))}
+            className="bg-panel border border-border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500"
+          >
+            <option value={0}>無効</option>
+            <option value={15}>15秒</option>
+            <option value={30}>30秒</option>
+            <option value={60}>1分</option>
+            <option value={120}>2分</option>
+            <option value={180}>3分</option>
+            <option value={300}>5分</option>
+            <option value={600}>10分</option>
+            <option value={1800}>30分</option>
+          </select>
+        </Row>
+        <Row label="行動チェックリスト" description="強い揺れのときに、とるべき行動と持ち出すものを画面上部に出します。緊急地震速報・リアルタイム震度・地震情報のいずれかで判定します">
+          <Toggle
+            checked={settings.actionChecklistEnabled}
+            onChange={v => onUpdate('actionChecklistEnabled', v)}
+          />
+        </Row>
+        {settings.actionChecklistEnabled && (
+          <Row label="出す最低震度" description="地点を登録していればその周辺（半径30km）で、していなければ全国のどこかでこの震度に達したときに出します">
+            <div className="flex items-center gap-2">
+              <IntensityBadge scale={settings.actionChecklistMinScale} />
+              <ScaleSelect
+                value={settings.actionChecklistMinScale}
+                onChange={v => onUpdate('actionChecklistMinScale', v)}
+                includeNone={false}
+              />
+            </div>
+          </Row>
+        )}
+        <Row label="定期自動リロード" description="毎日午前5時に画面を再起動してメモリを解放します。地震・津波・緊急地震速報の発表中は延期します">
+          <Toggle
+            checked={settings.periodicReloadHours > 0}
+            onChange={v => onUpdate('periodicReloadHours', v ? 1 : 0)}
+          />
+        </Row>
+        <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりません">
+          <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
         </Row>
       </Section>
 
@@ -1515,397 +1939,169 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
       </Section>
 
-      <Section title="タブ自動切替設定">
-        <Row label="デフォルトタブ" description="操作や情報更新が一定時間ないとこのタブに戻ります">
+      <Section title="共有と保存">
+        <Row label="共有カードの寸法" description="地図を画像にして共有するときの縦横の比率です。">
           <select
-            value={settings.defaultTab}
-            onChange={e => onUpdate('defaultTab', e.target.value as AppSettings['defaultTab'])}
+            value={settings.shareCardFormat}
+            onChange={e => onUpdate('shareCardFormat', e.target.value as AppSettings['shareCardFormat'])}
             className="bg-panel border border-border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500"
           >
-            <option value="earthquake">地震情報</option>
-            <option value="realtime">リアルタイム</option>
+            {Object.values(SHARE_CARD_FORMATS).map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
           </select>
         </Row>
-        <Row label="津波発表中は津波情報を優先" description="津波情報の発表中はデフォルトタブを津波情報にします">
-          <Toggle
-            checked={settings.tsunamiPriorityDefault}
-            onChange={v => onUpdate('tsunamiPriorityDefault', v)}
-          />
-        </Row>
-        <Row label="津波タイトル表示を一定時間に制限" description="ONで受信のたびに自動復帰までの時間だけ表示し、発表中でも自動的に戻ります">
-          <Toggle
-            checked={settings.tsunamiTitleTemporary}
-            onChange={v => onUpdate('tsunamiTitleTemporary', v)}
-          />
-        </Row>
-        <Row label="自動復帰までの時間" description="操作・情報更新がこの時間ないとデフォルトタブに戻ります">
-          <select
-            value={settings.idleRevertSec}
-            onChange={e => onUpdate('idleRevertSec', Number(e.target.value))}
-            className="bg-panel border border-border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500"
-          >
-            <option value={0}>無効</option>
-            <option value={15}>15秒</option>
-            <option value={30}>30秒</option>
-            <option value={60}>1分</option>
-            <option value={120}>2分</option>
-            <option value={180}>3分</option>
-            <option value={300}>5分</option>
-            <option value={600}>10分</option>
-            <option value={1800}>30分</option>
-          </select>
-        </Row>
-      </Section>
-
-      <Section title="動作設定">
-        <Row label="定期自動リロード" description="毎日午前5時に画面を再起動してメモリを解放します。地震・津波・緊急地震速報の発表中は延期します">
-          <Toggle
-            checked={settings.periodicReloadHours > 0}
-            onChange={v => onUpdate('periodicReloadHours', v ? 1 : 0)}
-          />
-        </Row>
-        <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりません">
-          <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
-        </Row>
-        {/* 標準版の行。DMDSS 版は「DM-D.S.S 接続設定」に同じ設定の行がある（あちらは緊急地震速報以外の試験報にも効く）。
-            文面は 2026-10-21 ユーザー承認 */}
-        {!isDmdss && (
-          <Row label="試験報を受信（検証用）" description="緊急地震速報の訓練報・試験報も受信します。画面には「訓練報」「試験報」の印を付けて出します">
-            <Toggle
-              checked={settings.dmdataTestDelivery}
-              onChange={v => onUpdate('dmdataTestDelivery', v)}
-            />
-          </Row>
-        )}
-      </Section>
-
-      <Section title="通知設定">
-        <Row label="通知音" description="地震・緊急地震速報・津波の受信時に音を鳴らします">
-          <Toggle
-            checked={settings.soundEnabled}
-            onChange={v => onUpdate('soundEnabled', v)}
-          />
-        </Row>
-        {(settings.soundEnabled || settings.voicevoxEnabled) && (
-          <Row label="音量" description="通知音と読み上げに共通の音量です">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-secondary w-8 text-right">
-                {Math.round(settings.soundVolume * 100)}%
-              </span>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={settings.soundVolume}
-                onChange={e => onUpdate('soundVolume', Number(e.target.value))}
-                className="w-24 accent-blue-500"
-              />
-            </div>
-          </Row>
-        )}
-        {/* 「要：VOICEVOXアプリ起動」は hint に置いて常時見せる。説明文に混ぜて隠すと、
-            ON にしたとき「接続状態: 起動していません」だけが見えて原因に辿り着けない。 */}
         <Row
-          label="VOICEVOX 読み上げ"
-          description="地震・緊急地震速報・津波情報をVOICEVOXで読み上げます"
-          hint="要：VOICEVOXアプリ起動"
+          label="設定ファイル"
+          description={'いまの設定をファイルへ書き出し、別の端末やブラウザで読み込めます。' +
+            (isDmdss ? 'APIキーは書き出しに含まれません（読み込んでも、いま入力してある値は消えません）。' : '')}
         >
-          <Toggle checked={settings.voicevoxEnabled} onChange={v => onUpdate('voicevoxEnabled', v)} />
-        </Row>
-        {settings.voicevoxEnabled && (
-          <>
-            <Row label="VOICEVOX URL" description="VOICEVOXのHTTP APIのURL">
-              {/* 赤枠と理由は入力が落ち着いてから出す（判定に使うのはデバウンス後の値）。
-                  打鍵ごとに判定すると、書き直している最中ずっと赤いままになる。 */}
-              <div className="flex flex-col items-end gap-1">
-                <input
-                  type="text"
-                  value={settings.voicevoxUrl}
-                  onChange={e => onUpdate('voicevoxUrl', e.target.value)}
-                  className={`bg-input border rounded px-2 py-1 text-xs text-white w-44 ${
-                    voicevoxStatus === 'invalid' ? 'border-red-500' : 'border-border'
-                  }`}
-                  spellCheck={false}
-                />
-                {voicevoxStatus === 'invalid' && (
-                  <p className="text-xs text-red-400 w-44 text-left leading-snug">
-                    URLの形式が正しくありません。http:// または https:// で始まる、ホスト名を含むURLを入力してください。
-                  </p>
-                )}
-              </div>
-            </Row>
-            <Row label="接続状態" description="">
-              <span className={`text-xs ${
-                isVoicevoxCheckPending ? 'text-secondary'
-                : voicevoxStatus === 'available' ? 'text-green-400'
-                : voicevoxStatus === 'unavailable' || voicevoxStatus === 'invalid' ? 'text-red-400'
-                : 'text-secondary'
-              }`}>
-                {isVoicevoxCheckPending || voicevoxStatus === 'checking' ? '確認中…'
-                  : voicevoxStatus === 'available' ? '起動中'
-                  : voicevoxStatus === 'unavailable' ? '起動していません'
-                  : voicevoxStatus === 'invalid' ? 'URLが無効'
-                  : '—'}
-              </span>
-            </Row>
-            {voicevoxStatus === 'available' && voicevoxSpeakers.length > 0 && (
-              <>
-                <Row label="話者" description="読み上げに使う声を選択します">
-                  <select
-                    value={settings.voicevoxSpeakerId}
-                    onChange={e => onUpdate('voicevoxSpeakerId', Number(e.target.value))}
-                    className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
-                  >
-                    {voicevoxSpeakers.flatMap(spk =>
-                      spk.styles.map(st => (
-                        <option key={st.id} value={st.id}>{spk.name}（{st.name}）</option>
-                      ))
-                    )}
-                  </select>
-                </Row>
-                <Row label="テスト読み上げ" description="">
-                  {/* 通信先はデバウンス後の URL。ここに並ぶ話者は「確認が済んだ URL」から取ったもので、
-                      選べる話者と鳴らす相手が食い違わないよう揃える。生の値を使うと、URL を書き換えている
-                      最中（接続状態が「確認中…」の間）に押したとき、入力途中の未検証の宛先へ投げて
-                      黙って無音に終わる。 */}
-                  {/* 読ませる文は `voicevoxPreviewTexts` が実運用と同じ関数から組む。ここに
-                      文字列を書くと、緊急地震速報の文型を変えたとき試聴だけ古い形で残る。 */}
-                  <TestButton color="blue" onClick={() => {
-                    unlockAudio()
-                    speakVoicevoxPreview(debouncedVoicevoxUrl, settings.voicevoxSpeakerId, settings.soundVolume)
-                      .catch(err => log.warn('[settings] 試聴の読み上げに失敗', err))
-                  }}>▶ 試聴</TestButton>
-                </Row>
-              </>
-            )}
-          </>
-        )}
-        {/* 解説情報は平常時でも毎月1回は必ず届くため、音と読み上げを個別に切れるようにしている。
-            臨時情報（段階の発表）はこの設定に関わらず鳴る。 */}
-        {isDmdss && (
-          <Row
-            label="解説情報の音・読み上げ"
-            description="南海トラフ地震関連解説情報の通知音と読み上げを行います。この情報は平常時も毎月届きます"
-          >
-            <Toggle
-              checked={settings.nankaiCommentaryAlerts}
-              onChange={v => onUpdate('nankaiCommentaryAlerts', v)}
-            />
-          </Row>
-        )}
-        {/* 地震・津波に関するお知らせ（運用連絡）。帯と、音・読み上げを別々に切り替える
-            （文言は 2026-10-18 ユーザー承認）。 */}
-        {isDmdss && (
-          <Row
-            label="お知らせを表示"
-            description="地震・津波に関するお知らせを地図の下に表示します"
-          >
-            <Toggle
-              checked={settings.quakeNoticeBanner}
-              onChange={v => onUpdate('quakeNoticeBanner', v)}
-            />
-          </Row>
-        )}
-        {isDmdss && (
-          <Row
-            label="お知らせの音・読み上げ"
-            description="地震・津波に関するお知らせの通知音と読み上げを行います"
-          >
-            <Toggle
-              checked={settings.quakeNoticeAlerts}
-              onChange={v => onUpdate('quakeNoticeAlerts', v)}
-            />
-          </Row>
-        )}
-        <Row label="行動チェックリスト" description="強い揺れのときに、とるべき行動と持ち出すものを画面上部に出します。緊急地震速報・リアルタイム震度・地震情報のいずれかで判定します">
-          <Toggle
-            checked={settings.actionChecklistMinScale >= 0}
-            onChange={v => onUpdate('actionChecklistMinScale', v ? 45 : -1)}
-          />
-        </Row>
-        {settings.actionChecklistMinScale >= 0 && (
-          <Row label="出す最低震度" description="地点を登録していればその周辺（半径30km）で、していなければ全国のどこかでこの震度に達したときに出します">
-            <div className="flex items-center gap-2">
-              <IntensityBadge scale={settings.actionChecklistMinScale} />
-              <ScaleSelect
-                value={settings.actionChecklistMinScale}
-                onChange={v => onUpdate('actionChecklistMinScale', v)}
-                includeNone={false}
-              />
-            </div>
-          </Row>
-        )}
-        {/* **種別のトグルは地震情報の通知から独立させる**（2026-10-22 ユーザー選択「3 種を切り離す (Recommended)」。
-            行の文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。かつては地震情報の通知を切ると
-            揺れ検知・緊急地震速報・津波の通知もまとめて止まっていた。 */}
-        <Row label="地震情報の通知" description="地震情報・長周期地震動・推計震度分布図・地震回数に関する情報を受けたときに通知します">
-          <Toggle
-            checked={settings.notifyMinScale >= 0}
-            onChange={v => onUpdate('notifyMinScale', v ? 40 : -1)}
-          />
-        </Row>
-        {settings.notifyMinScale >= 0 && (
-          <Row label="通知する最低震度" description="この震度以上で通知を送信します">
-            <div className="flex items-center gap-2">
-              <IntensityBadge scale={settings.notifyMinScale} />
-              <ScaleSelect
-                value={settings.notifyMinScale}
-                onChange={v => onUpdate('notifyMinScale', v === -1 ? 10 : v)}
-                noneLabel="震度1以上"
-              />
-            </div>
-          </Row>
-        )}
-        {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 → 南海トラフ の順 ── */}
-        <Row label="揺れ検知通知" description="強震モニタで揺れを検知したときに通知します。推定値のため、通知は多めになります">
-          <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
-        </Row>
-        <Row label="緊急地震速報の通知" description="緊急地震速報が出たときと、警報・特別警報へ上がったときに通知します">
-          <Toggle checked={settings.notifyEEW} onChange={v => onUpdate('notifyEEW', v)} />
-        </Row>
-        <Row label="津波通知" description="津波警報・注意報・予報が発表されたときと、全て解除されたときに通知します">
-          <Toggle checked={settings.notifyTsunami} onChange={v => onUpdate('notifyTsunami', v)} />
-        </Row>
-        {isDmdss && (
-          <Row label="南海トラフ・後発地震の通知" description="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報と、臨時の解説情報を受けたときに通知します">
-            <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
-          </Row>
-        )}
-        <Row label="通知許可" description="ブラウザの通知権限を確認・許可します">
-          <NotificationPermissionButton />
+          <SettingsIoRow settings={settings} onReplace={onReplaceSettings} />
         </Row>
       </Section>
 
-      {/* 読み上げの詳しさ。VOICEVOX を有効にしたときだけ出す（無効な端末では何も効かないため）。
-          並びは「地域の列挙 → 1 件ごとの詳しさ → 気象庁の発表文」。中の順序は
-          通知設定・テスト機能と同じカテゴリ順（地震情報 → 津波情報 → 緊急地震速報）。 */}
-      {settings.voicevoxEnabled && (
-        <Section title="読み上げ設定">
-          <Row label="読み上げ震度階数" description="最大震度から何階級下まで、地域名を読み上げるかです">
-            <select
-              value={settings.ttsIntensityLevels}
-              onChange={e => onUpdate('ttsIntensityLevels', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
-            >
-              {/* 最後の選択肢は「すべての階級」。値は階級の段数から導く（数を直接書くと、
-                  階級が増減したときに選択肢だけが古い段数のまま残る）。 */}
-              {[0, 1, 2, 3, 4, INTENSITY_SCALE_COUNT - 1].map(n => (
-                <option key={n} value={n}>
-                  {n === 0 ? '最大震度のみ' : n === INTENSITY_SCALE_COUNT - 1 ? 'すべての階級' : `最大＋${n}階級`}
-                </option>
-              ))}
-            </select>
-          </Row>
-          <Row label="必ず読み上げる震度" description="階数の設定を超えても、この震度以上の階級は地域名を読み上げます。長周期地震動には効きません">
-            <div className="flex items-center gap-2">
-              <IntensityBadge scale={settings.ttsAlwaysReadScale} />
-              <ScaleSelect
-                value={settings.ttsAlwaysReadScale}
-                onChange={v => onUpdate('ttsAlwaysReadScale', v)}
-                noneLabel="階数の設定どおり"
-              />
-            </div>
-          </Row>
-          <Row label="必ず読み上げる長周期地震動階級" description="階数の設定を超えても、この階級以上の地域名を読み上げます">
-            {/* 震度の下限は長周期に効かないので別に持つ（2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」、
-                文言は 2026-10-24 選択「この形でよい (Recommended)」）。階級 0 は読まないので選択肢に無い。 */}
-            <select
-              value={settings.ttsAlwaysReadLpgmClass}
-              onChange={e => onUpdate('ttsAlwaysReadLpgmClass', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
-            >
-              <option value={-1}>階数の設定どおり</option>
-              {[1, 2, 3, 4].map(n => (
-                <option key={n} value={n}>{`階級${n}`}</option>
-              ))}
-            </select>
-          </Row>
-          <Row label="読み上げ最大地域数" description="1階級あたりに読み上げる地域名の上限です">
-            <select
-              value={settings.ttsMaxRegions}
-              onChange={e => onUpdate('ttsMaxRegions', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
-            >
-              {[0, 3, 5, 10, 15, 20].map(n => (
-                <option key={n} value={n}>{n === 0 ? '無制限' : `${n}地域`}</option>
-              ))}
-            </select>
-          </Row>
-          {settings.ttsMaxRegions > 0 && (
-            <Row label="地域数の許容超過" description="上限をこの数まで超えるだけなら「ほかN地域」とせず全地域を読み上げます">
-              <select
-                value={settings.ttsRegionTolerance}
-                onChange={e => onUpdate('ttsRegionTolerance', Number(e.target.value))}
-                className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
-              >
-                {[0, 1, 2, 3, 5].map(n => (
-                  <option key={n} value={n}>{n === 0 ? '許容しない' : `+${n}地域まで`}</option>
-                ))}
-              </select>
-            </Row>
+      <Section title="このアプリについて">
+        <Row label="バージョン"><span className="text-xs text-secondary">{__APP_VERSION__}</span></Row>
+        {/* 利用規約・プライバシーポリシーへの導線。
+            **同意を求める画面は出さない。** 無償・アカウント不要・利用者の情報を集めない
+            アプリなので、起動を 1 手止めてまで読ませる筋合いが無い（通例もこの形）。
+            読みたい人がここから辿れることを担保する。
+
+            **規約の本体はリポジトリの Markdown へ置き、ここからは GitHub を開く。**
+            同じサイト内で配信する形（HTML を用意する）も採れるが、更新のたびに
+            Markdown と HTML の 2 つを保たねばならず、片方だけ古くなる。
+            第三者ライセンスだけは配信物に含まれる（`public/`）ので同一サイト内で開く。 */}
+        <CreditRow label="規約">
+          <span className="text-xs text-secondary">
+            <a href="https://github.com/Ramilen-L-Emuruk/yuremado/blob/main/docs/terms-of-service.md"
+              target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">
+              利用規約
+            </a>
+            <span className="mx-1">/</span>
+            <a href="https://github.com/Ramilen-L-Emuruk/yuremado/blob/main/docs/privacy-policy.md"
+              target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">
+              プライバシーポリシー
+            </a>
+            <span className="mx-1">/</span>
+            <a href={`${import.meta.env.BASE_URL}third-party-licenses.txt`}
+              target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">
+              使用ソフトウェアのライセンス
+            </a>
+          </span>
+        </CreditRow>
+        <CreditRow label="地震・津波データ">
+          {isDmdss ? (
+            <a href="https://dmdata.jp/" target="_blank" rel="noopener noreferrer"
+              className="text-xs text-blue-400 hover:text-blue-300">
+              Project DM-D.S.S
+            </a>
+          ) : (
+            <a href="https://www.p2pquake.net/" target="_blank" rel="noopener noreferrer"
+              className="text-xs text-blue-400 hover:text-blue-300">
+              P2PQuake API v2
+            </a>
           )}
-          <Row label="震源の深さ・規模" description="「石川県能登地方、深さ10キロメートルを震源とするマグニチュード5.2の地震が発生しました」のように読み上げます。切ると震源の地名だけを読みます">
-            <Toggle
-              checked={settings.ttsReadHypocenterDetail}
-              onChange={v => onUpdate('ttsReadHypocenterDetail', v)}
-            />
-          </Row>
-          <Row label="震度を入手していない地点" description="震度5弱以上と推定されるのに観測値が届いていない地点の読み方。「区域名」は地点名の代わりに地域名でまとめます（例: 石川県能登では、一部の地点で…）。「地名を読まない」でも、件数と「震度5弱以上と推定されるが未入電」であることは読み上げます">
-            <select
-              value={settings.ttsUnreceivedDetail}
-              onChange={e => onUpdate('ttsUnreceivedDetail', e.target.value as TtsUnreceivedDetail)}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
-            >
-              <option value="stations">地点名</option>
-              <option value="areas">区域名</option>
-              <option value="none">地名を読まない</option>
-            </select>
-          </Row>
-          <Row label="津波観測点の読み上げ件数" description="津波の観測情報で読み上げる観測点の数。波高の更新・津波警報相当の観測・到達確認・欠測でそれぞれこの件数まで読み、残りは「ほかN地点」と件数で伝えます">
-            <select
-              value={settings.ttsMaxObservationPoints}
-              onChange={e => onUpdate('ttsMaxObservationPoints', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
-            >
-              {[0, 1, 3, 5, 10, 15, 20].map(n => (
-                <option key={n} value={n}>{n === 0 ? '無制限' : `${n}地点`}</option>
-              ))}
-            </select>
-          </Row>
-          <Row label="緊急地震速報の長周期地震動階級" description="予想震度に続けて「予想最大階級3」のように読み上げます。長周期地震動観測情報そのものには影響しません">
-            <Toggle
-              checked={settings.ttsReadEewLpgmClass}
-              onChange={v => onUpdate('ttsReadEewLpgmClass', v)}
-            />
-          </Row>
-          <Row label="緊急地震速報の警戒地域" description="警報が出ている地方を、震源に続けて「北陸、甲信、東海では強い揺れに警戒してください」のように読み上げます。予想震度はそのあとに読み上げます">
-            <Toggle
-              checked={settings.ttsReadEewWarningRegions}
-              onChange={v => onUpdate('ttsReadEewWarningRegions', v)}
-            />
-          </Row>
-          <Row label="気象庁の発表文" description="電文に添えられた本文・付加文（南海トラフ地震臨時情報の本文など）を読み上げます。震度や津波の読み上げが終わってから読むため、電文が続いている間は読み上げられないことがあります">
-            <Toggle
-              checked={settings.ttsReadTelegramText}
-              onChange={v => onUpdate('ttsReadTelegramText', v)}
-            />
-          </Row>
-          {/* 内訳はマスタートグルが入っているときだけ出す（切っていれば何を選んでも読まない）。 */}
-          {settings.ttsReadTelegramText && (
-            <TelegramTextBlockRows
-              blocks={settings.ttsTelegramTextBlocks}
-              onChange={next => onUpdate('ttsTelegramTextBlocks', next)}
-            />
-          )}
-          {settings.ttsReadTelegramText && (
-            <TelegramBoilerplateRows
-              reads={settings.ttsTelegramBoilerplate}
-              onChange={next => onUpdate('ttsTelegramBoilerplate', next)}
-            />
-          )}
-        </Section>
-      )}
+        </CreditRow>
+        {/* **一次出典と配信経路の両方を出す。** データを作っているのは防災科学技術研究所で、
+            アプリが実際に取得しているのは Yahoo!天気・災害 の配信（`services/kyoshin.ts`）。
+            片方だけだと、出典としては足りないか（配信元を伏せる）、事実と食い違う（作成者を伏せる）。
+            **同じ二段書きにしてあるのは README の出典節**（`docs/spec/data-sources-spec.md` §1 は
+            配信元の呼称を挙げるだけ・§4 は接続先とデータ形式の技術仕様で、この枠組みは持たない）。
+
+            **すぐ上の「地震・津波データ」行と粒度が揃っていないのは意図したもの。** あちらは
+            配信 API（P2PQuake / DM-D.S.S）だけを出す —— バリアントで配信元が替わることが
+            利用者にとっての要点で、一次出典（気象庁）は README 側で担保している。 */}
+        <CreditRow label="リアルタイム震度">
+          <span className="text-xs text-secondary">
+            <a href="https://www.kmoni.bosai.go.jp/" target="_blank" rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300">
+              防災科研 強震モニタ
+            </a>
+            <span className="mx-1">/</span>
+            <a href="https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/" target="_blank" rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300">
+              Yahoo!天気・災害
+            </a>
+          </span>
+        </CreditRow>
+        {/* 下部の波形に出す公開観測点（気象庁の広帯域地震計・JP 網）。文面は `docs/public-waveform-design.md` §0
+            （2026-10-15 ユーザー承認）。EarthScope は運用者がライセンスを宣言していない網を CC BY 4.0 で配るので、
+            運用者（気象庁）・配信した施設（EarthScope）・ライセンスの 3 つを挙げる（同 §2）。 */}
+        <CreditRow label="公開観測点の波形">
+          <span className="text-xs text-secondary">
+            <a href="https://www.jma.go.jp/" target="_blank" rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300">
+              気象庁
+            </a>
+            （JP 網）・配信{' '}
+            <a href="https://www.earthscope.org/" target="_blank" rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300">
+              EarthScope
+            </a>
+            （NSF NGF）・
+            <a href="https://creativecommons.org/licenses/by/4.0/deed.ja" target="_blank" rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300">
+              CC BY 4.0
+            </a>
+          </span>
+        </CreditRow>
+        {/* 地図に描いているデータの出典。実体は各生成スクリプト・ローダーの冒頭コメント
+            （scripts/build-prefectures.mjs・build-subregions.mjs・build-tsunami-zones.mjs・
+            build-active-faults.mjs・build-plate-boundaries.mjs・build-hypocenter-catalog.ts、
+            utils/gebcoPrefetch.ts）で、ライセンス名と配布元、加工した旨まで含む完全な帰属は
+            README.md「データ・地図・フォントの出典」に置く。ここはその要約。
+
+            活断層（政府標準利用規約 2.0）・プレート境界（Open Data Commons Attribution License）・
+            長期震源カタログ（気象庁 公共データ利用規約 第1.0版）は、出典の表示そのものが利用条件に
+            あたる。**地図へレイヤーを足したらここへも足すこと。** 常時描く下地とは限らない——
+            長期震源カタログは震源カタログタブでしか描かないが、描いている以上ここに挙げる。
+
+            義務が無いものも、地図が描いていれば挙げる。**この行の範囲は「地図そのものを形づくる
+            もの」**——地物の形（境界・海岸線・活断層線・プレート境界線）、下地の絵（海底地形）、
+            地図が主題として描く点群（長期震源カタログ）。
+            そこから外れるものは挙げていない。震度観測点の座標は、観測点や区域の名前から座標・
+            読み上げの並び順・都道府県を引く汎用の索引で（地図の震度点を置くのはその用途の一つ）、
+            供給するのは位置だけ。値そのものの出所は上の「地震・津波データ」が担う（座標の出典は
+            data-sources-spec.md §6。一次出典は build-station-coords.mjs の冒頭コメント）。
+            長期震源カタログを挙げるのは、あちらは位置も値もその出典自身のデータだから。
+            地名ラベルの書体（M PLUS Rounded 1c・SIL OFL 1.1）は画面での表示を求められない。
+
+            出典の名称は配信元が求める表記をそのまま使い、言い換えない（帰属としての要件を外すため）。
+            添えるものは 2 種類あり、記号で書き分ける。**（）は用途**——名称だけでは地図の何に
+            使われているか読めないものに付ける（「活断層データベース」は名称が用途を兼ねるので
+            付けない）。**「」は元の資料名**——通称で呼んでいるものに付ける。
+            PB2002 だけ用途が後ろへ回るのは、`PB2002 (Bird, 2003)` が割ってはならない引用の単位だから。 */}
+        <CreditRow label="地図">
+          <span className="text-xs text-secondary">
+            気象庁 予報区等 GIS データ（境界・海岸線） / 気象庁 震源カタログ「地震月報」「震源リスト」 / GEBCO・NOAA NCEI（海底地形） / 産総研 活断層データベース / PB2002 (Bird, 2003)（プレート境界）
+          </span>
+        </CreditRow>
+        <Row label="サーバー時刻オフセット" description="端末の時計と、サーバーから得た時刻の差です。診断用です。「未較正」は、まだサーバーの時刻を得られていない状態です">
+          <ServerClockOffsetDisplay />
+        </Row>
+      </Section>
+
+      <Section title="震度スケール">
+        <div className="px-4 py-3 flex flex-wrap gap-2">
+          {Object.entries(INTENSITY_LABELS)
+            .filter(([k]) => k !== '-1')
+            .map(([scale, label]) => {
+              const fill = getIntensityColor(Number(scale))
+              return (
+                <div key={scale} className="flex items-center gap-1.5">
+                  <span
+                    className="w-6 h-6 rounded-sm flex items-center justify-center text-xs font-bold"
+                    style={{ backgroundColor: fill, color: readableTextColor(fill) }}
+                  >
+                    {label}
+                  </span>
+                  <span className="text-xs text-secondary">震度{label}</span>
+                </div>
+              )
+            })}
+        </div>
+      </Section>
+
+      {/* ここから下は動作確認と記録の道具。見出しで区切るだけで、畳むのは各見出し（2026-10-25 ユーザー承認） */}
+      <SectionGroupLabel title="開発・検証" />
 
       <Section title="通知音テスト">
         <div className="px-4 py-2 bg-blue-900/30 border-b border-blue-700/40">
@@ -2239,10 +2435,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <TestButton color="blue" onClick={onTest.quakeNotice}>お知らせテスト</TestButton>
           </Row>
         )}
-        {/* ── その他 ── */}
-        <Row label="ブラウザ通知" description="テスト通知を即時送信（要通知許可）">
-          <TestButton color="green" onClick={onTest.notification}>通知テスト</TestButton>
-        </Row>
       </Section>
 
       <Section title="実地震テスト">
@@ -2362,16 +2554,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
       </Section>
 
-      <Section title="設定の書き出し・読み込み">
-        <Row
-          label="設定ファイル"
-          description={'いまの設定をファイルへ書き出し、別の端末やブラウザで読み込めます。' +
-            (isDmdss ? 'APIキーは書き出しに含まれません（読み込んでも、いま入力してある値は消えません）。' : '')}
-        >
-          <SettingsIoRow settings={settings} onReplace={onReplaceSettings} />
-        </Row>
-      </Section>
-
       <Section title="診断ログ">
         <Row
           label="揺れ検知の記録"
@@ -2379,148 +2561,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         >
           <DiagnosticLogRow />
         </Row>
-      </Section>
-
-      <Section title="このアプリについて">
-        <Row label="バージョン"><span className="text-xs text-secondary">{__APP_VERSION__}</span></Row>
-        {/* 利用規約・プライバシーポリシーへの導線。
-            **同意を求める画面は出さない。** 無償・アカウント不要・利用者の情報を集めない
-            アプリなので、起動を 1 手止めてまで読ませる筋合いが無い（通例もこの形）。
-            読みたい人がここから辿れることを担保する。
-
-            **規約の本体はリポジトリの Markdown へ置き、ここからは GitHub を開く。**
-            同じサイト内で配信する形（HTML を用意する）も採れるが、更新のたびに
-            Markdown と HTML の 2 つを保たねばならず、片方だけ古くなる。
-            第三者ライセンスだけは配信物に含まれる（`public/`）ので同一サイト内で開く。 */}
-        <CreditRow label="規約">
-          <span className="text-xs text-secondary">
-            <a href="https://github.com/Ramilen-L-Emuruk/yuremado/blob/main/docs/terms-of-service.md"
-              target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">
-              利用規約
-            </a>
-            <span className="mx-1">/</span>
-            <a href="https://github.com/Ramilen-L-Emuruk/yuremado/blob/main/docs/privacy-policy.md"
-              target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">
-              プライバシーポリシー
-            </a>
-            <span className="mx-1">/</span>
-            <a href={`${import.meta.env.BASE_URL}third-party-licenses.txt`}
-              target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">
-              使用ソフトウェアのライセンス
-            </a>
-          </span>
-        </CreditRow>
-        <CreditRow label="地震・津波データ">
-          {isDmdss ? (
-            <a href="https://dmdata.jp/" target="_blank" rel="noopener noreferrer"
-              className="text-xs text-blue-400 hover:text-blue-300">
-              Project DM-D.S.S
-            </a>
-          ) : (
-            <a href="https://www.p2pquake.net/" target="_blank" rel="noopener noreferrer"
-              className="text-xs text-blue-400 hover:text-blue-300">
-              P2PQuake API v2
-            </a>
-          )}
-        </CreditRow>
-        {/* **一次出典と配信経路の両方を出す。** データを作っているのは防災科学技術研究所で、
-            アプリが実際に取得しているのは Yahoo!天気・災害 の配信（`services/kyoshin.ts`）。
-            片方だけだと、出典としては足りないか（配信元を伏せる）、事実と食い違う（作成者を伏せる）。
-            **同じ二段書きにしてあるのは README の出典節**（`docs/spec/data-sources-spec.md` §1 は
-            配信元の呼称を挙げるだけ・§4 は接続先とデータ形式の技術仕様で、この枠組みは持たない）。
-
-            **すぐ上の「地震・津波データ」行と粒度が揃っていないのは意図したもの。** あちらは
-            配信 API（P2PQuake / DM-D.S.S）だけを出す —— バリアントで配信元が替わることが
-            利用者にとっての要点で、一次出典（気象庁）は README 側で担保している。 */}
-        <CreditRow label="リアルタイム震度">
-          <span className="text-xs text-secondary">
-            <a href="https://www.kmoni.bosai.go.jp/" target="_blank" rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300">
-              防災科研 強震モニタ
-            </a>
-            <span className="mx-1">/</span>
-            <a href="https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/" target="_blank" rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300">
-              Yahoo!天気・災害
-            </a>
-          </span>
-        </CreditRow>
-        {/* 下部の波形に出す公開観測点（気象庁の広帯域地震計・JP 網）。文面は `docs/public-waveform-design.md` §0
-            （2026-10-15 ユーザー承認）。EarthScope は運用者がライセンスを宣言していない網を CC BY 4.0 で配るので、
-            運用者（気象庁）・配信した施設（EarthScope）・ライセンスの 3 つを挙げる（同 §2）。 */}
-        <CreditRow label="公開観測点の波形">
-          <span className="text-xs text-secondary">
-            <a href="https://www.jma.go.jp/" target="_blank" rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300">
-              気象庁
-            </a>
-            （JP 網）・配信{' '}
-            <a href="https://www.earthscope.org/" target="_blank" rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300">
-              EarthScope
-            </a>
-            （NSF NGF）・
-            <a href="https://creativecommons.org/licenses/by/4.0/deed.ja" target="_blank" rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300">
-              CC BY 4.0
-            </a>
-          </span>
-        </CreditRow>
-        {/* 地図に描いているデータの出典。実体は各生成スクリプト・ローダーの冒頭コメント
-            （scripts/build-prefectures.mjs・build-subregions.mjs・build-tsunami-zones.mjs・
-            build-active-faults.mjs・build-plate-boundaries.mjs・build-hypocenter-catalog.ts、
-            utils/gebcoPrefetch.ts）で、ライセンス名と配布元、加工した旨まで含む完全な帰属は
-            README.md「データ・地図・フォントの出典」に置く。ここはその要約。
-
-            活断層（政府標準利用規約 2.0）・プレート境界（Open Data Commons Attribution License）・
-            長期震源カタログ（気象庁 公共データ利用規約 第1.0版）は、出典の表示そのものが利用条件に
-            あたる。**地図へレイヤーを足したらここへも足すこと。** 常時描く下地とは限らない——
-            長期震源カタログは震源カタログタブでしか描かないが、描いている以上ここに挙げる。
-
-            義務が無いものも、地図が描いていれば挙げる。**この行の範囲は「地図そのものを形づくる
-            もの」**——地物の形（境界・海岸線・活断層線・プレート境界線）、下地の絵（海底地形）、
-            地図が主題として描く点群（長期震源カタログ）。
-            そこから外れるものは挙げていない。震度観測点の座標は、観測点や区域の名前から座標・
-            読み上げの並び順・都道府県を引く汎用の索引で（地図の震度点を置くのはその用途の一つ）、
-            供給するのは位置だけ。値そのものの出所は上の「地震・津波データ」が担う（座標の出典は
-            data-sources-spec.md §6。一次出典は build-station-coords.mjs の冒頭コメント）。
-            長期震源カタログを挙げるのは、あちらは位置も値もその出典自身のデータだから。
-            地名ラベルの書体（M PLUS Rounded 1c・SIL OFL 1.1）は画面での表示を求められない。
-
-            出典の名称は配信元が求める表記をそのまま使い、言い換えない（帰属としての要件を外すため）。
-            添えるものは 2 種類あり、記号で書き分ける。**（）は用途**——名称だけでは地図の何に
-            使われているか読めないものに付ける（「活断層データベース」は名称が用途を兼ねるので
-            付けない）。**「」は元の資料名**——通称で呼んでいるものに付ける。
-            PB2002 だけ用途が後ろへ回るのは、`PB2002 (Bird, 2003)` が割ってはならない引用の単位だから。 */}
-        <CreditRow label="地図">
-          <span className="text-xs text-secondary">
-            気象庁 予報区等 GIS データ（境界・海岸線） / 気象庁 震源カタログ「地震月報」「震源リスト」 / GEBCO・NOAA NCEI（海底地形） / 産総研 活断層データベース / PB2002 (Bird, 2003)（プレート境界）
-          </span>
-        </CreditRow>
-        <Row label="サーバー時刻オフセット" description="端末の時計と、サーバーから得た時刻の差です。診断用です。「未較正」は、まだサーバーの時刻を得られていない状態です">
-          <ServerClockOffsetDisplay />
-        </Row>
-      </Section>
-
-      <Section title="震度スケール">
-        <div className="px-4 py-3 flex flex-wrap gap-2">
-          {Object.entries(INTENSITY_LABELS)
-            .filter(([k]) => k !== '-1')
-            .map(([scale, label]) => {
-              const fill = getIntensityColor(Number(scale))
-              return (
-                <div key={scale} className="flex items-center gap-1.5">
-                  <span
-                    className="w-6 h-6 rounded-sm flex items-center justify-center text-xs font-bold"
-                    style={{ backgroundColor: fill, color: readableTextColor(fill) }}
-                  >
-                    {label}
-                  </span>
-                  <span className="text-xs text-secondary">震度{label}</span>
-                </div>
-              )
-            })}
-        </div>
       </Section>
 
     </div>

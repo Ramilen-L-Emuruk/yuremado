@@ -13,9 +13,13 @@ vi.mock('./niiJmaXmlArchive', () => ({
   flushSuppressedCacheWarnings: vi.fn(),
 }))
 
-import { parseNiiTime, resolveQuakeHeadType, resolveTsunamiHeadType, isRelated, isUnverifiableCancellation, mergeIndexEntry, buildQuakeAndTsunamiSection, coveredRangesFromDates } from './localEarthquakeArchiveBuilder'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { parseNiiTime, resolveQuakeHeadType, resolveTsunamiHeadType, mergeIndexEntry, buildQuakeAndTsunamiSection, coveredRangesFromDates, eventIdOfPubHistDir, finalizeArchive } from './localEarthquakeArchiveBuilder'
 import { flushSuppressedCacheWarnings } from './niiJmaXmlArchive'
 import type { JMAQuake } from '../src/types/earthquake'
+import type { HistoricalArchiveEntry } from '../src/types/historicalArchive'
 
 function indexEntry(id: string, from: string) {
   return { id, label: id, description: id, from, to: from, coveredRanges: [{ from, to: from }], firstEventTime: from }
@@ -113,48 +117,6 @@ describe('resolveQuakeHeadType', () => {
   })
 })
 
-describe('isRelated', () => {
-  const hypocenterNames = new Set(['熊本県熊本地方', '熊本県阿蘇地方'])
-  const areaPrefixes = ['熊本', '阿蘇']
-
-  it('正: 震央地名が完全一致すれば関連ありと判定する', () => {
-    const quake = { earthquake: { hypocenter: { name: '熊本県熊本地方' } }, points: [] }
-    expect(isRelated(quake, hypocenterNames, areaPrefixes)).toBe(true)
-  })
-
-  it('対照: 震央地名が一致しなければ関連なしと判定する', () => {
-    const quake = { earthquake: { hypocenter: { name: '茨城県北部' } }, points: [] }
-    expect(isRelated(quake, hypocenterNames, areaPrefixes)).toBe(false)
-  })
-
-  it('正: 震央地名が空（震度速報）なら観測地域名の前方一致で判定する', () => {
-    const quake = { earthquake: { hypocenter: { name: '' } }, points: [{ addr: '熊本県熊本' }] }
-    expect(isRelated(quake, hypocenterNames, areaPrefixes)).toBe(true)
-  })
-
-  it('安全弁: 震央地名が空で観測地域名も一致しなければ関連なし', () => {
-    const quake = { earthquake: { hypocenter: { name: '' } }, points: [{ addr: '茨城県北部' }] }
-    expect(isRelated(quake, hypocenterNames, areaPrefixes)).toBe(false)
-  })
-})
-
-describe('isUnverifiableCancellation', () => {
-  it('正: 取消電文（震央地名・観測地域ともに空）を判定不能として検出する', () => {
-    const quake = { cancelled: true, earthquake: { hypocenter: { name: '' } }, points: [] }
-    expect(isUnverifiableCancellation(quake)).toBe(true)
-  })
-
-  it('対照: 取消電文でなければ false', () => {
-    const quake = { cancelled: false, earthquake: { hypocenter: { name: '' } }, points: [] }
-    expect(isUnverifiableCancellation(quake)).toBe(false)
-  })
-
-  it('安全弁: 取消電文でも震央地名を持つ場合は判定不能扱いにしない（構造上ありえないが念のため）', () => {
-    const quake = { cancelled: true, earthquake: { hypocenter: { name: '熊本県熊本地方' } }, points: [] }
-    expect(isUnverifiableCancellation(quake)).toBe(false)
-  })
-})
-
 // 津波の種別ラベル。**沖合（VTSE52）と沿岸（VTSE51）でパーサーの扱いが変わる**ため、
 // ここを誤ると「重要」の基準（大津波警報のみ／大津波警報・津波警報）が入れ替わる。
 describe('resolveTsunamiHeadType', () => {
@@ -195,8 +157,6 @@ describe('キャッシュの不調の要約は、取り込みを抜けるとき�
       dates: ['20160414'],
       windowStart: new Date('2016-04-14T00:00:00+09:00'),
       windowEnd: new Date('2016-04-16T00:00:00+09:00'),
-      hypocenterNames: new Set(['熊本県熊本地方']),
-      areaPrefixes: ['熊本'],
       parseEarthquakeFromXml: () => quake,
       parseTsunamiFromXml: () => null,
     }
@@ -223,5 +183,136 @@ describe('キャッシュの不調の要約は、取り込みを抜けるとき�
     nii.listing = []
     await expect(buildQuakeAndTsunamiSection(options())).rejects.toThrow()
     expect(flushSuppressedCacheWarnings).toHaveBeenCalled()
+  })
+})
+
+// 収録範囲に入る電文は、どの地震のものでも入れる（2026-10-23 ユーザー承認「窓の全地震を入れる (Recommended)」）。
+// 取消電文も入れる（同日「取消も収録する (Recommended)」）。
+describe('収録範囲の電文は地震を問わず全部入れる', () => {
+  function quakeOf(name: string, cancelled: boolean): JMAQuake {
+    return {
+      id: `dmdata-quake-20160415000000-1-${name}`,
+      time: '2016/04/15 00:00:00',
+      cancelled,
+      earthquake: { hypocenter: { name } },
+      points: [],
+    } as unknown as JMAQuake
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  async function run(quakes: JMAQuake[], times: string[]) {
+    nii.listing = times.map((time, i) => ({ id: `uuid-${i}`, time, typeLabel: '震源・震度に関する情報' }))
+    const queue = [...quakes]
+    return buildQuakeAndTsunamiSection({
+      dates: ['20160415'],
+      windowStart: new Date('2016-04-14T12:00:00+09:00'),
+      windowEnd: new Date('2016-04-20T00:00:00+09:00'),
+      parseEarthquakeFromXml: () => queue.shift() ?? null,
+      parseTsunamiFromXml: () => null,
+    })
+  }
+
+  it('正: 震央地名が地震活動と違う地震も入れる', async () => {
+    const entries = await run(
+      [quakeOf('熊本県熊本地方', false), quakeOf('茨城県北部', false)],
+      ['2016-04-15 00:05:00+09', '2016-04-15 00:06:00+09'],
+    )
+    const names = entries.map((e) => (e.payload as { event: JMAQuake }).event.earthquake.hypocenter.name)
+    expect(names).toEqual(['熊本県熊本地方', '茨城県北部'])
+  })
+
+  it('正: 取消電文も入れる（id には NII の電文 ID を足す）', async () => {
+    const entries = await run([quakeOf('', true)], ['2016-04-15 00:05:00+09'])
+    expect(entries).toHaveLength(1)
+    const event = (entries[0].payload as { event: JMAQuake }).event
+    expect(event.cancelled).toBe(true)
+    expect(event.id).toBe('dmdata-quake-20160415000000-1--uuid-0')
+  })
+
+  // 収録範囲は半開区間（終わりは含まない）。EEW（`isInWindow`）と `coveredRanges` にそろえてある
+  it('正: 収録範囲の終わりちょうど（4/20 0:00）の電文は入れない', async () => {
+    // 1 件も採らない取り込みは止まる決まりなので、範囲の中の 1 件と並べて流す
+    // 電文は 2 件ぶん用意する（終わりちょうどの電文が入ってしまえば 2 件になる）
+    const entries = await run([quakeOf('熊本県熊本地方', false), quakeOf('茨城県北部', false)], ['2016-04-15 00:05:00+09', '2016-04-20 00:00:00+09'])
+    expect(entries).toHaveLength(1)
+  })
+
+  it('対照: 終わりの 1 秒前の電文は入れる', async () => {
+    const entries = await run([quakeOf('熊本県熊本地方', false)], ['2016-04-19 23:59:59+09'])
+    expect(entries).toHaveLength(1)
+  })
+
+  it('安全弁: 始まりちょうど（4/14 12:00）の電文は入れる（始まりは含む）', async () => {
+    const entries = await run([quakeOf('熊本県熊本地方', false)], ['2016-04-14 12:00:00+09'])
+    expect(entries).toHaveLength(1)
+  })
+
+  it('安全弁: 収録範囲の外の電文は入れない（範囲で切ることは残っている）', async () => {
+    const entries = await run([quakeOf('熊本県熊本地方', false)], ['2016-04-15 00:05:00+09', '2016-04-20 00:00:01+09'])
+    expect(entries).toHaveLength(1)
+  })
+})
+
+describe('eventIdOfPubHistDir', () => {
+  it('正: ディレクトリ名の末尾 14 桁を EventID として取り出す（年月を含む形も）', () => {
+    expect(eventIdOfPubHistDir('20160416012510')).toBe('20160416012510')
+    expect(eventIdOfPubHistDir('2018/09/20180906030805')).toBe('20180906030805')
+  })
+
+  it('安全弁: 14 桁でなければ例外', () => {
+    expect(() => eventIdOfPubHistDir('2018/09/201809060308')).toThrow()
+  })
+})
+
+// 「再生」ボタンの起点（firstEventTime）は、窓の最初の報ではなく呼び出し側が明示した時刻
+// （2026-10-25 ユーザー選択「前の起点に戻す (Recommended)」）。
+describe('finalizeArchive の再生の起点', () => {
+  const entry = (id: string, time: string) => ({ time, payload: { kind: 'event', event: { id, kind: 'quake' } } }) as unknown as HistoricalArchiveEntry
+  const entries = [entry('a', '2016-04-14T12:30:00+09:00'), entry('b', '2016-04-14T21:26:42.5+09:00')]
+
+  async function run(replayStartTime: string) {
+    const dir = await mkdtemp(join(tmpdir(), 'archive-'))
+    const indexPath = join(dir, 'index.json')
+    await writeFile(indexPath, '[]\n', 'utf-8')
+    await finalizeArchive({
+      id: 'test',
+      label: 'テスト',
+      description: 'テスト',
+      windowStart: new Date('2016-04-14T12:00:00+09:00'),
+      windowEnd: new Date('2016-04-20T00:00:00+09:00'),
+      dates: ['20160414'],
+      entries,
+      outPath: join(dir, 'test.json'),
+      indexPath,
+      replayStartTime,
+    })
+    return JSON.parse(await readFile(indexPath, 'utf-8'))[0].firstEventTime as string
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('正: 窓の最初の報（12:30）ではなく、指定した起点（21:26 の報）を書く', async () => {
+    expect(await run('2016-04-14T12:26:42.500Z')).toBe('2016-04-14T12:26:42.500Z')
+  })
+
+  it('安全弁: 起点と同じ時刻の報が無ければ止まる（地震の取り違えを書き出さない）', async () => {
+    await expect(run('2016-04-14T12:26:43.000Z')).rejects.toThrow(/同じ時刻の報がありません/)
+  })
+
+  it('安全弁: 起点が収録範囲の外なら止まる', async () => {
+    await expect(run('2016-04-14T02:00:00.000Z')).rejects.toThrow(/収録範囲の外/)
   })
 })

@@ -11,6 +11,8 @@ import {
   mapContainsBounds,
   clampPaddingToPane,
   boundsFromPositions,
+  flyToPoint,
+  beginCaptureFraming,
   EEW_ZOOM_SNAP,
   INTERACTION_HOLD_SEC,
 } from './camera'
@@ -65,12 +67,18 @@ function createFakeMap(pane: { width: number; height: number } = { width: 800, h
     getCanvas: () => ({ clientWidth: pane.width, clientHeight: pane.height }),
     // フィット系は現在の回転を保つため bearing を読む（渡さないと MapLibre が 0 を当てて回転が消える）。
     getBearing: () => 0,
+    // 共有カードの撮影の寄せ直し（`beginCaptureFraming`）が、寄せ直す前のカメラを控えて戻すのに使う。
+    getCenter: () => ({ lng: 135, lat: 35 }),
+    getZoom: () => 5,
+    getPitch: () => 0,
+    jumpTo: vi.fn(),
   }
   return fake as unknown as maplibregl.Map & {
     fire: (event: string, eventData?: unknown) => void
     fitBounds: Mock
     flyTo: Mock
     cameraForBounds: Mock
+    jumpTo: Mock
   }
 }
 
@@ -720,5 +728,183 @@ describe('mapContainsBounds', () => {
       const map = mapWithPane(800, 600, 0, [[135, 35]])
       expect(mapContainsBounds(map, rect(130, 30, 146, 46))).toBe(false)
     })
+  })
+})
+
+describe('beginCaptureFraming', () => {
+  /** 撮影の流れのうち、寸法を広げる処理を挟まない形（印を張ってすぐ寄せ直す）。戻り値で戻す */
+  function refitForCapture(map: ReturnType<typeof createFakeMap>): () => void {
+    const framing = beginCaptureFraming(map)
+    framing.refit()
+    return () => framing.restore()
+  }
+
+  it('正: 最後に寄せた目標へ、段階へ切り下げずに寄せ直す（アプリ起点の印つき）', () => {
+    const map = createFakeMap()
+    fitToPositions(map, [[35, 135], [36, 140]], { padding: 60 })
+    map.cameraForBounds.mockClear()
+    refitForCapture(map)
+    expect(map.cameraForBounds).toHaveBeenCalledTimes(1)
+    expect(map.cameraForBounds.mock.calls[0][1]).toMatchObject({ padding: 60 })
+    expect(map.jumpTo).toHaveBeenCalledTimes(1)
+    // 追従は 6.7 を 6.5 へ切り下げて寄るが、撮影は切り下げない
+    expect(map.jumpTo.mock.calls[0][0]).toMatchObject({ zoom: 6.7 })
+    expect(map.jumpTo.mock.calls[0][1]).toMatchObject({ appAutoCamera: true })
+  })
+
+  it('正: 1 点へ寄せていたら、同じ点と同じズームへ寄せ直す', () => {
+    const map = createFakeMap()
+    flyToPoint(map, [36, 139], 8)
+    refitForCapture(map)
+    expect(map.jumpTo.mock.calls[0][0]).toEqual({ center: [139, 36], zoom: 8 })
+  })
+
+  it('対照: 一度も寄せていない地図は日本全体へ寄せ直す', () => {
+    const map = createFakeMap()
+    refitForCapture(map)
+    expect(map.cameraForBounds).toHaveBeenCalledTimes(1)
+    expect(map.cameraForBounds.mock.calls[0][1]).toMatchObject({ padding: 20 })
+    expect(map.jumpTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('対照: 最後に寄せた目標で上書きされる（日本全体へ戻ったら日本全体）', () => {
+    const map = createFakeMap()
+    flyToPoint(map, [36, 139], 8)
+    fitJapan(map)
+    map.cameraForBounds.mockClear()
+    refitForCapture(map)
+    expect(map.cameraForBounds).toHaveBeenCalledTimes(1)
+    expect(map.cameraForBounds.mock.calls[0][1]).toMatchObject({ padding: 20 })
+  })
+
+  it('安全弁: 戻す関数は、寄せ直す前のカメラへアプリ起点の印つきで戻す', () => {
+    const map = createFakeMap()
+    const restore = refitForCapture(map)
+    restore()
+    expect(map.jumpTo).toHaveBeenCalledTimes(2)
+    expect(map.jumpTo.mock.calls[1][0]).toEqual({ center: { lng: 135, lat: 35 }, zoom: 5, bearing: 0, pitch: 0 })
+    expect(map.jumpTo.mock.calls[1][1]).toMatchObject({ appAutoCamera: true })
+  })
+
+  it('正: 撮影の間に来た寄せはカメラを動かさず預かり、戻した後で流す', () => {
+    const map = createFakeMap()
+    const restore = refitForCapture(map)
+    fitToPositions(map, [[35, 135], [36, 140]], { padding: 60 })
+    expect(map.flyTo).not.toHaveBeenCalled()
+    restore()
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+    // 戻す jumpTo の後に流す
+    expect(map.jumpTo.mock.invocationCallOrder[1]).toBeLessThan(map.flyTo.mock.invocationCallOrder[0])
+  })
+
+  it('正: 飛行の途中で撮ったら、戻した後で最後の寄せをやり直す', () => {
+    const map = createFakeMap()
+    fitToPositions(map, [[35, 135], [36, 140]], { padding: 60 })
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+    const restore = refitForCapture(map)
+    restore()
+    expect(map.flyTo).toHaveBeenCalledTimes(2)
+  })
+
+  it('対照: 撮り終えた後の寄せはそのまま動かす', () => {
+    const map = createFakeMap()
+    refitForCapture(map)()
+    fitToPositions(map, [[35, 135], [36, 140]], { padding: 60 })
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('対照: 飛行していなければ、戻した後に寄せをやり直さない', () => {
+    const map = createFakeMap()
+    fitToPositions(map, [[35, 135], [36, 140]], { padding: 60 })
+    map.fire('moveend', map.flyTo.mock.calls[0][1])
+    const restore = refitForCapture(map)
+    restore()
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('正: 寄り上限を省いた座標群への寄せは、撮影の寸法で上限を決め直す', () => {
+    const pane = { width: 800, height: 600 }
+    const map = createFakeMap(pane)
+    fitToPositions(map, [[35, 135], [36, 140]], { padding: 60 })
+    pane.width = 1600
+    pane.height = 300
+    map.cameraForBounds.mockClear()
+    refitForCapture(map)
+    expect(map.cameraForBounds.mock.calls[0][1].maxZoom).toBe(fitMaxZoomForPane(300))
+  })
+
+  it('安全弁: 寄せ先の算出が例外を投げても撮影を止めず、記録を残す', () => {
+    const map = createFakeMap()
+    map.cameraForBounds.mockImplementationOnce(() => { throw new TypeError('余白が大きすぎる') })
+    vi.mocked(log.warn).mockClear()
+    const restore = refitForCapture(map)
+    expect(map.jumpTo).not.toHaveBeenCalled()
+    expect(log.warn).toHaveBeenCalledTimes(1)
+    restore()
+    expect(map.jumpTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('安全弁: 寄せ先を算出できなければカメラを動かさず、記録を残す', () => {
+    const map = createFakeMap()
+    map.cameraForBounds.mockReturnValueOnce(undefined)
+    vi.mocked(log.warn).mockClear()
+    const restore = refitForCapture(map)
+    expect(map.jumpTo).not.toHaveBeenCalled()
+    expect(log.warn).toHaveBeenCalledTimes(1)
+    restore()
+    expect(map.jumpTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('安全弁: 寄せ直しのカメラ操作が投げても投げ返さず、戻した後は寄せを預からない', () => {
+    // 投げ返すと呼び出し側が戻す関数を受け取れず、撮影の印が残って以後の寄せがすべて預かられる
+    const map = createFakeMap()
+    map.jumpTo.mockImplementationOnce(() => { throw new Error('壊れた値') })
+    vi.mocked(log.warn).mockClear()
+    const framing = beginCaptureFraming(map)
+    expect(() => framing.refit()).not.toThrow()
+    expect(log.warn).toHaveBeenCalledTimes(1)
+    framing.restore()
+    fitToPositions(map, [[35, 135], [36, 140]], { padding: 60 })
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('安全弁: カメラを戻すのに失敗しても、預かった寄せは流す', () => {
+    const map = createFakeMap()
+    const framing = beginCaptureFraming(map)
+    framing.refit()
+    fitToPositions(map, [[35, 135], [36, 140]], { padding: 60 })
+    expect(map.flyTo).not.toHaveBeenCalled()
+    map.jumpTo.mockImplementationOnce(() => { throw new Error('戻せない') })
+    expect(() => framing.restore()).toThrow('戻せない')
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('安全弁: 戻すのを 2 回呼んでも、2 回目はカメラを動かさず寄せも流さない', () => {
+    const map = createFakeMap()
+    const framing = beginCaptureFraming(map)
+    framing.refit()
+    fitToPositions(map, [[35, 135], [36, 140]], { padding: 60 })
+    framing.restore()
+    framing.restore()
+    expect(map.jumpTo).toHaveBeenCalledTimes(2)
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('正: 寸法を広げたときに走る保留中の寄せも預かり、戻した後で流す', () => {
+    // 地図の高さが 0 で保留していた寄せは、撮影の寸法へ広げた resize で走る。印はその前に張る
+    const pane = { width: 430, height: 0 }
+    const map = createFakeMap(pane)
+    fitToPositions(map, [[35, 139], [36, 140]], { padding: 60 })
+    expect(map.flyTo).not.toHaveBeenCalled()
+    const framing = beginCaptureFraming(map)
+    pane.width = 1200
+    pane.height = 675
+    map.fire('resize')
+    expect(map.flyTo).not.toHaveBeenCalled()
+    framing.refit()
+    pane.width = 430
+    pane.height = 300
+    framing.restore()
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
   })
 })

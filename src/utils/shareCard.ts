@@ -299,7 +299,12 @@ export async function composeShareCard(opts: ShareCardOptions): Promise<Blob> {
   // **実際に効くのは高さの検査。** 幅は `capture.scale` が「実ピクセル ÷ 要求した幅」として
   // 定義されるため、割り戻すと常に要求値に一致する。高さだけが `shareCardMapHeight` の計算を
   // 経ており、撮影側と合成側で食い違いうる。
-  if (Math.abs(capturedWidth - format.width) > 1 || Math.abs(capturedHeight - mapHeight) > 1) {
+  //
+  // 許容は 1px か地図の高さの 1% の大きいほう。撮影は面積を画面に揃えた寸法で描いて画素比率で補うので
+  // （`captureMap.ts` の `renderSizeFor`）、描く寸法の丸め誤差が出力では数 px に広がる（地図の小さい端末で
+  // 最大 3px 程度）。拾いたいのは `shareCardMapHeight` の食い違い（行の高さぶん＝数十 px）のほう。
+  const heightTolerance = Math.max(1, mapHeight * 0.01)
+  if (Math.abs(capturedWidth - format.width) > 1 || Math.abs(capturedHeight - mapHeight) > heightTolerance) {
     log.warn('[shareCard] 撮影した地図の寸法がカードの割り当てと違います（引き伸ばして貼ります）', {
       captured: [capturedWidth, capturedHeight],
       expected: [format.width, mapHeight],

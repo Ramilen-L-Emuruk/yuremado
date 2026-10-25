@@ -13,8 +13,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { filterPreWindowEvents } from '../services/dmdataReplay'
 import { historyExtraKey } from '../services/dmdataTelegramPayload'
-import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
-import type { JMAQuake, JMATsunami } from '../types/earthquake'
+import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
+import type { JMATsunami } from '../types/earthquake'
 import { serverNow, serverDate } from '../utils/clock'
 import { log } from '../utils/logger'
 import { recordReplayEvent } from '../utils/replayEventLog'
@@ -188,9 +188,12 @@ export interface ReplayControllerDeps {
    * **遡る範囲はバリアントが決める**（ライブ接続時の初回履歴と揃える。DMDSS 版は 7 日、
    * 標準版とローカル履歴アーカイブは件数）。取得元はバリアントで差し替える。
    */
-  fetchQuakeHistory: (before: Date, signal: AbortSignal) => Promise<QuakeHistoryResult>
-  /** 取得した履歴をカード一覧へ反映する。 */
-  restoreQuakeHistory: (quakes: JMAQuake[]) => void
+  fetchQuakeHistory: (before: Date, signal: AbortSignal) => Promise<ReplayQuakeHistoryResult>
+  /**
+   * 取得した履歴をカード一覧へ反映する。**結果ごと渡す** —— 受け手は続きを読む口（`loadMore`）も
+   * 覚えて、再生中の「もっと見る」に使う。
+   */
+  restoreQuakeHistory: (history: ReplayQuakeHistoryResult) => void
   /** 取得キャッシュを破棄する（開始・停止のたびに呼ぶ）。 */
   clearCache: () => void
   /** リプレイ時刻のオフセットを適用する（null で解除）。App 側で時計と state に反映する。 */
@@ -455,7 +458,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
       }
 
       if (history.ok) {
-        d.restoreQuakeHistory(history.result.quakes)
+        d.restoreQuakeHistory(history.result)
       } else {
         log.error('[replay] 履歴の取得に失敗（初期状態は 24 時間ぶんで作る）', history.error)
         setHistoryError(`地震カードの履歴を復元できませんでした（再生開始より前の地震が一覧に出ません。再生は継続中）: ${msgOf(history.error)}`)

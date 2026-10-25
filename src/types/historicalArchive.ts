@@ -22,7 +22,7 @@ export interface HistoricalArchiveMeta {
    * 外れた日は「何も無かった」ではなく「見ていない」ので、そこへ掛かる再生は止める（`findUncollectedArchiveSync`）。
    */
   coveredRanges: HistoricalArchiveRange[]
-  firstEventTime: string // 収録している最初の報の時刻（ISO）。「再生」ボタン（1分前から開始）の起点
+  firstEventTime: string // 「再生」ボタン（1分前から開始）の起点（ISO）。地震活動ごとに生成スクリプトが本命の地震の最初の報を指定する（収録した最初の報とは限らない）
 }
 
 export interface HistoricalArchiveEntry {

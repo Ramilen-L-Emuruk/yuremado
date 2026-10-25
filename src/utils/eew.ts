@@ -79,6 +79,24 @@ export function predictMeasuredIntensity(mjma: number, depth: number, epicentral
 /** 規模が判らない報の自動解除を求めるときに置く規模（固定の仮定値。§7） */
 const UNKNOWN_MAGNITUDE_ASSUMED = 6.0
 
+/** 深さが判らない報の自動解除を求めるときに置く深さ（km。固定の仮定値） */
+const UNKNOWN_DEPTH_ASSUMED_KM = 30
+
+/**
+ * EEW の有感半径（km）。{@link calcFeltRadiusKm} に、規模が判らない値（`NaN`・P2PQuake の `-1`）を
+ * M6.0、深さが判らない値（センチネル `-1`）を 30km と仮定して渡す。
+ *
+ * **自動解除（{@link calcEEWCancelTime}）と揺れ検知の「別地点」の判定（`useKyoshinAlerts.ts`）が
+ * 同じ値を使う。** 仮定もここで置くので、どちらも電文の値をそのまま渡す。片方だけ式や仮定を変えると、
+ * 「EEW はまだ揺れが届くと見て残っているのに、揺れた場所を別の地震と扱う」食い違いが起きる。
+ */
+export function eewFeltRadiusKm(mjma: number, depth: number): number {
+  return calcFeltRadiusKm(
+    hasMagnitude(mjma) ? mjma : UNKNOWN_MAGNITUDE_ASSUMED,
+    hasDepth(depth) ? depth : UNKNOWN_DEPTH_ASSUMED_KM,
+  )
+}
+
 /**
  * EEW最終報の発震時刻から何秒後に自動解除するかを返す。
  * 司・翠川(1999)の有感半径(×1.5バッファ)にS波が到達するまでの時間 + 30秒。
@@ -89,7 +107,7 @@ const UNKNOWN_MAGNITUDE_ASSUMED = 6.0
  * 「解除までに届くか」（`useSWaveCountdown`）が別々の既定で判定すると、画面の解除と食い違う。
  */
 export function calcEEWAutoCancelSec(mjma: number, depth: number): number {
-  const feltRadius = calcFeltRadiusKm(hasMagnitude(mjma) ? mjma : UNKNOWN_MAGNITUDE_ASSUMED, depth)
+  const feltRadius = eewFeltRadiusKm(mjma, depth)
   const sWaveSec = travelTimeSec('S', feltRadius, Math.max(depth, 1))
   return Math.round(sWaveSec) + FIXED_BUFFER_SEC
 }
@@ -117,7 +135,7 @@ export function calcEEWCancelTime(eew: EEWAlert, reportTime: Date): Date {
   // **既定値は `??` では当たらない。** 深さが判らないことはセンチネル `-1` で表すので
   // （`Hypocenter.depth`。`0` は「ごく浅い」という有効値）、`?? 30` は素通りして -1 が
   // そのまま有感半径の計算（`calcPGV600` の深さ項）へ流れ、解除が実際より早まる。
-  const depth = hasDepth(eew.earthquake.hypocenter.depth) ? eew.earthquake.hypocenter.depth : 30
+  const depth = hasDepth(eew.earthquake.hypocenter.depth) ? eew.earthquake.hypocenter.depth : UNKNOWN_DEPTH_ASSUMED_KM
   // **起点は発生時刻。無ければ発現時刻へ落とす**（並べ替えの {@link eewSortTimeMs} と同じ段）。
   // 規模が「不明」の報は発生時刻も持たないので、ここで落とさないと規模の既定値が効かないまま
   // 「最終報の 60 秒後」へ張り付く。発現時刻は発生時刻より後なので、解除は早まらない側へずれる。

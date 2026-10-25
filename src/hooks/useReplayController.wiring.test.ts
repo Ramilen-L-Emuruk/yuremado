@@ -20,7 +20,7 @@ import {
   REPLAY_EARLIEST_MS, REPLAY_FUTURE_MARGIN_MS, replayTargetProblem,
   createEmptyLoss, lateEntriesSilenced, removeFailedPrefetch,
 } from './useReplayController'
-import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
+import type { ReplayEntry, ReplayFetchResult, ReplayQuakeHistoryResult } from '../types/replay'
 import type { JMAQuake } from '../types/earthquake'
 import { log } from '../utils/logger'
 
@@ -111,10 +111,11 @@ function prefetchTarget(): Date {
 }
 
 /** 空の履歴。履歴の中身を見ないテストは、取得をすぐ返すこれで済ませる。 */
-function emptyHistory(): QuakeHistoryResult {
+function emptyHistory(): ReplayQuakeHistoryResult {
   return {
     quakes: [], tsunamis: [], extras: [], skippedByDay: skips(0),
     failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, hasMore: false, oldestLoadedDay: null,
+    loadMore: null,
   }
 }
 
@@ -130,7 +131,7 @@ function setup({ holdHistory = false }: { holdHistory?: boolean } = {}) {
   const ranges: { from: Date; to: Date }[] = []
   // 履歴の取得。本編・初期状態とは別に完了させられるよう独立に持つ
   // （履歴が失敗しても再生が続くこと・揃うまで再生を待つことを確かめるため）。
-  const histories: Deferred<QuakeHistoryResult>[] = []
+  const histories: Deferred<ReplayQuakeHistoryResult>[] = []
   const historyArgs: { before: Date }[] = []
   // App が持つ state の代役。Hook は setTimeOffset で書き、次のレンダーで読む。
   let timeOffset: number | null = null
@@ -146,12 +147,12 @@ function setup({ holdHistory = false }: { holdHistory?: boolean } = {}) {
     fetchQuakeHistory: vi.fn((before: Date) => {
       order.push('fetchQuakeHistory')
       historyArgs.push({ before })
-      const d = createDeferred<QuakeHistoryResult>()
+      const d = createDeferred<ReplayQuakeHistoryResult>()
       histories.push(d)
       if (!holdHistory) d.resolve(emptyHistory())
       return d.promise
     }),
-    restoreQuakeHistory: vi.fn((_quakes: JMAQuake[]) => { order.push('restoreQuakeHistory') }),
+    restoreQuakeHistory: vi.fn((_history: ReplayQuakeHistoryResult) => { order.push('restoreQuakeHistory') }),
     clearCache: vi.fn(() => { order.push('clearReplayCache') }),
     setTimeOffset: vi.fn((value: number | null) => { order.push('setTimeOffset'); timeOffset = value }),
     resetState: vi.fn(() => { order.push('resetState') }),
@@ -705,7 +706,7 @@ describe('useReplayController の先読み', () => {
 // **失敗しても再生を止めず、成功したら揃うまで待つ**こと。
 describe('useReplayController の履歴', () => {
   /** 履歴の結果。中身の統合は mergeQuakeHistory の担当なので、ここでは件数だけ数える。 */
-  function history(count: number, skipped = 0, failedArchiveUrls: string[] = []): QuakeHistoryResult {
+  function history(count: number, skipped = 0, failedArchiveUrls: string[] = []): ReplayQuakeHistoryResult {
     const quakes = Array.from({ length: count }, (_, i) => ({ id: `q${i}` } as unknown as JMAQuake))
     return { ...emptyHistory(), quakes, skippedByDay: skips(skipped), failedArchiveUrls }
   }
@@ -732,7 +733,7 @@ describe('useReplayController の履歴', () => {
     await h.flush(started)
 
     expect(h.deps.restoreQuakeHistory).toHaveBeenCalledTimes(1)
-    expect(h.deps.restoreQuakeHistory.mock.calls[0][0]).toHaveLength(3)
+    expect(h.deps.restoreQuakeHistory.mock.calls[0][0].quakes).toHaveLength(3)
     expect(h.current.error).toBeNull()
   })
 
@@ -957,21 +958,27 @@ describe('useReplayController: 24 時間より前の津波を初期状態に載�
     expect(loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(0)
   })
 
-  // 安全弁: 期限を一度も伝えていない津波は、最後の報から 24 時間までしか生かさない
-  // （材料が 24 時間だった頃と同じ範囲。→ `dmdataReplay.ts` の `TSUNAMI_WITHOUT_VALIDITY_MAX_AGE_MS`）。
-  it('安全弁: 期限を持たない津波は、最後の報から 24 時間を過ぎていれば載らない', async () => {
+  // 期限を一度も伝えていない津波は、ライブと同じ扱いにする（2026-10-23 ユーザー選択「ライブと同じく残す」。
+  // → `dmdataReplay.ts` の `isStaleWithoutValidity`）。
+  // **覆した: 識別子を持つ津波は 24 時間を過ぎても落とさない**（以前は識別子によらず 24 時間で落としていた）。
+  // ライブの DMDSS 版は期限の無い津波に失効の予約を積まず、解除か続報まで残す。
+  it('正（覆した）: 識別子を持ち期限を持たない津波は、最後の報から 24 時間を過ぎても載る', async () => {
     const target = quietTarget()
-    const stale = await startWith(target, [forecastTsunami('t1', hoursBefore(target, 30))])
+    const kept = await startWith(target, [forecastTsunami('t1', hoursBefore(target, 30))])
+    expect(kept.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(1)
+  })
+
+  // 安全弁: 識別子を持たない津波（P2PQuake）は、ライブの標準版の安全弁と同じ 24 時間で落とす。
+  it('安全弁: 識別子を持たず期限も持たない津波は、最後の報から 24 時間を過ぎていれば載らない', async () => {
+    const target = quietTarget()
+    const stale = await startWith(target, [{ ...forecastTsunami('t1', hoursBefore(target, 30)), eventId: undefined }])
     expect(stale.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(0)
   })
 
-  it('対照: 期限を持たない津波でも、最後の報が 24 時間以内なら従来どおり載る', async () => {
+  it('対照: 識別子を持たない津波でも、最後の報が 24 時間以内なら載る', async () => {
     const target = quietTarget()
-    const fresh = await startWith(target, [
-      forecastTsunami('t1', hoursBefore(target, 30)),
-      forecastTsunami('t2', hoursBefore(target, 20)),
-    ])
-    expect(fresh.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(2)
+    const fresh = await startWith(target, [{ ...forecastTsunami('t2', hoursBefore(target, 20)), eventId: undefined }])
+    expect(fresh.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(1)
   })
 
   it('正: 帯も同じ 1 回の積み込みに入り、初期状態と同じ時刻・無音で流す', async () => {

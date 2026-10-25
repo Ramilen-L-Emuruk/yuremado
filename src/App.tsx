@@ -86,7 +86,7 @@ import { useArrivalTokenCheck } from './hooks/useArrivalToken'
 import { usePsWaveCalc } from './hooks/usePsWaveCalc'
 import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
 import { useDebouncedValue } from './hooks/useDebouncedValue'
-import { collectQuakesToNotify, decideQuakeNotification, rememberQuakeNotified, type QuakeNotifiedState } from './utils/quakeNotification'
+import { collectQuakesToNotify, scheduleQuakeNotification, type QuakeNotifiedState } from './utils/quakeNotification'
 import { formatDateTimeLocal } from './utils/formatters'
 import { computeEEWLevel, eewEventKey, eewMaxLpgmClass, isProvisionalHypocenter } from './utils/eew'
 import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
@@ -113,15 +113,21 @@ import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as RE
 import { fetchDmdataReplayEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
 import { PREFERRED_CLASSIFICATIONS } from './services/dmdataClassifications'
 import { fetchP2PReplayEvents, fetchP2PQuakeHistory, clearP2PReplayCache } from './services/p2pquakeReplay'
+import { withDmdataLoadMore, withoutLoadMore } from './services/replayQuakeHistory'
+import { beginLoadMoreGateTag } from './services/dmdataRequestGates'
+import type { ReplayQuakeHistoryResult } from './types/replay'
+import type { GateTag } from './utils/requestGate'
 import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerdict, emptyReplayFetchResult, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
 import { useHistoricalArchiveIndex } from './hooks/useHistoricalArchiveIndex'
 import { log } from './utils/logger'
+import { deliverBrowserNotification, NOTIFICATION_ICON, showBrowserNotification } from './utils/notifications'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isDmdss } from './utils/env'
 import { isLiveFeedHalted } from './utils/connectionStatus'
 import { ROOT_FRAME_CLASS } from './rootFrame'
 import { SHARE_CARD_FORMATS } from './utils/shareCard'
+import { effectiveNotifyMinScale } from './utils/notificationGate'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
@@ -156,25 +162,11 @@ const TAB_SCROLLER_CLASS = 'absolute inset-0 overflow-y-auto overflow-x-hidden o
 
 
 /**
- * 地震情報のブラウザ通知を出す。投げたらそのまま投げ返す（呼び出し側が「出せなかった」と記録し、通知済みにしない）。
- *
- * `renotify` は型定義（lib.dom）に無いが、ブラウザは受け付ける。同じ tag の通知を置き換えるときに音を
- * 鳴らし直す（最大震度が上がった報だけ）。**受け付けないブラウザでは `renotify` を外して出し直す** ——
- * 音が鳴り直さないだけで、置き換え自体は伝わる。
+ * 地震情報のブラウザ通知を出す。出せなければ reject する（呼び出し側が「出せなかった」と記録し、通知済みを取り消す）。
+ * `renotify`（最大震度が上がった報だけ真）を受け付けないブラウザの扱いは {@link deliverBrowserNotification}。
  */
-function showQuakeNotification(n: { title: string; body: string; tag: string; renotify: boolean }): void {
-  const base: NotificationOptions = { body: n.body, icon: `${import.meta.env.BASE_URL}icons/icon.svg`, tag: n.tag }
-  if (!n.renotify) {
-    new Notification(n.title, base)
-    return
-  }
-  try {
-    const options: NotificationOptions & { renotify: boolean } = { ...base, renotify: true }
-    new Notification(n.title, options)
-  } catch (err) {
-    log.warn(`[notify] 音を鳴らし直す指定（renotify）を受け付けなかったので、外して出し直す（${n.tag}）`, err)
-    new Notification(n.title, base)
-  }
+function showQuakeNotification(n: { title: string; body: string; tag: string; renotify: boolean }): Promise<void> {
+  return deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: n.renotify })
 }
 
 export function App() {
@@ -1015,15 +1007,16 @@ export function App() {
     tsunamiInfoRetraction: isDmdss ? simulateTsunamiInfoRetraction : undefined,
     estimatedIntensity: simulateEstimatedIntensity,
     notification:      () => {
+      // まとめて止めている間はテストも出さない（設定タブでは行ごと隠れるが、呼び出し口でも止める）
+      if (!settings.notifyEnabled) {
+        log.info('[notify] ブラウザ通知をまとめて止めているので、テスト通知を出さない')
+        return
+      }
       if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
         alert('先に「通知を許可する」を押してください。')
         return
       }
-      new Notification('地震情報テスト', {
-        body: '東京都内陸部（テスト） 最大震度4 M5.5',
-        icon: `${import.meta.env.BASE_URL}icons/icon.svg`,
-        tag: 'test-notification',
-      })
+      showBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
     },
   }), [
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
@@ -1034,6 +1027,7 @@ export function App() {
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
+    settings.notifyEnabled,
   ])
   // IconNav の onTabChange。手動選択は必ず即時反映し、以後 TAB_HOLD_MS の間は自動切替に
   // 奪わせない（EEW の新規発報・レベルアップ・誤報取消だけはこれより強い）。
@@ -1319,8 +1313,11 @@ export function App() {
   // 覚えるのは地震ごと（`rememberQuakeNotified`）。1 件だけだと、2 つの地震の報が交互に届いたとき
   // 前の地震を忘れて同じ通知を出し直す。
   const notifiedQuakesRef = useRef(new Map<string, QuakeNotifiedState>())
-  const notifyMinScaleRef = useRef(settings.notifyMinScale)
-  notifyMinScaleRef.current = settings.notifyMinScale
+  // 地震ごとの通知の列（同じ地震の通知を、前が済んでから出す。→ `scheduleQuakeNotification`）
+  const quakeNotifyChainsRef = useRef(new Map<string, Promise<void>>())
+  // 通知しないとき（まとめて止めている・地震情報の通知を切っている）は -1（`effectiveNotifyMinScale`）
+  const notifyMinScaleRef = useRef(effectiveNotifyMinScale(settings))
+  notifyMinScaleRef.current = effectiveNotifyMinScale(settings)
   useEffect(() => {
     const pending = pendingQuakeNotifyRef.current
     if (pending.length === 0) return
@@ -1341,13 +1338,19 @@ export function App() {
       // **通知は補助の経路なので、ここで投げても画面を落とさない**（App のレンダー・effect の例外は
       // 根の受け皿でしか拾えず、画面全体が消える）。1 件が投げても残りの地震は見る。失敗は記録に残す。
       try {
-        const previous = notifiedQuakesRef.current.get(quakeEventKey(card)) ?? null
-        const decided = decideQuakeNotification(card, previous, notifyMinScaleRef.current, index)
-        if (!decided) continue
         // **出せてから覚える。** 先に覚えると、出せなかった地震が「通知済み」になり、震源が判った報や
-        // 最大震度が上がった報でも出し直さない（Android の Chrome 系は `new Notification()` を受け付けない）
-        showQuakeNotification(decided.notification)
-        rememberQuakeNotified(notifiedQuakesRef.current, decided.next)
+        // 最大震度が上がった報でも出し直さない。出せたかは Service Worker の返事を待たないと分からないので、
+        // 同じ地震の通知は前が済んでから判定する（`scheduleQuakeNotification`）
+        scheduleQuakeNotification({
+          chains: quakeNotifyChainsRef.current,
+          memory: notifiedQuakesRef.current,
+          quake: card,
+          notifyMinScale: notifyMinScaleRef.current,
+          areaPrefIndex: index,
+          show: showQuakeNotification,
+        }).catch((err: unknown) => {
+          log.error(`[notify] 地震の通知を出せず（${card.eventKey ?? card.id}・最大震度 ${card.earthquake.maxScale}）`, err)
+        })
       } catch (err) {
         log.error(`[notify] 地震の通知を出せず（${card.eventKey ?? card.id}・最大震度 ${card.earthquake.maxScale}）`, err)
       }
@@ -1798,18 +1801,27 @@ export function App() {
   // REPLAY_PRE_WINDOW_MS（24時間）を使う。ここを独自の幅にすると、本編・初期状態はアーカイブに
   // 重ならないのに履歴だけ数日先の無関係なアーカイブに重なってしまい、再生は実データ側で
   // 止まっているのに地震カードだけローカルアーカイブ由来の古い1件を表示する、という不整合が起きる。
+  //
+  // **結果には再生中の「もっと見る」で続きを読む口（`loadMore`）を付ける**（→ `ReplayQuakeHistoryResult`）。
+  // 続きも同じ取得元から、再生開始より前の側へ読む。ローカル履歴アーカイブは収録範囲の外を持たないので付けない。
   const fetchReplayQuakeHistory = useCallback(
-    (before: Date, signal: AbortSignal) => {
+    (before: Date, signal: AbortSignal): Promise<ReplayQuakeHistoryResult> => {
       const covering = findCoveringArchiveSync(historicalArchives, new Date(before.getTime() - REPLAY_PRE_WINDOW_MS), before)
-      if (covering) return fetchLocalArchiveQuakeHistory(covering, before, HISTORY_WINDOW_DAYS)
-      return isDmdss
-        // 履歴（再生開始より前の地震カード）も本編と同じ扱いにする。片方だけ通すと
-        // 「再生には訓練報が出るのにカードの一覧には無い」形でずれる。
-        ? fetchDmdataQuakeHistoryFor(
-          dmdataClassifications ?? PREFERRED_CLASSIFICATIONS,
-          settings.dmdataApiKey, before, HISTORY_WINDOW_DAYS, settings.dmdataTestDelivery, signal,
+      if (covering) return fetchLocalArchiveQuakeHistory(covering, before, HISTORY_WINDOW_DAYS).then(withoutLoadMore)
+      if (!isDmdss) return fetchP2PQuakeHistory(before, MAX_HISTORY_RETAINED, signal)
+      // 履歴（再生開始より前の地震カード）も本編と同じ扱いにする。片方だけ通すと
+      // 「再生には訓練報が出るのにカードの一覧には無い」形でずれる。
+      const classifications = dmdataClassifications ?? PREFERRED_CLASSIFICATIONS
+      const { dmdataApiKey, dmdataTestDelivery } = settings
+      const fetchWindow = (windowBefore: Date, windowSignal: AbortSignal | null, gateTag: GateTag | undefined) =>
+        fetchDmdataQuakeHistoryFor(
+          classifications, dmdataApiKey, windowBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, windowSignal,
+          undefined, undefined, gateTag,
         )
-        : fetchP2PQuakeHistory(before, MAX_HISTORY_RETAINED, signal)
+      // 続きは押すたびに新しい印を付けて取る（ライブの「もっと見る」と同じ。ボタンが門の残り時間を数える）
+      return fetchWindow(before, signal, undefined).then(result => withDmdataLoadMore(
+        result, before, (windowBefore, windowSignal) => fetchWindow(windowBefore, windowSignal, beginLoadMoreGateTag()),
+      ))
     },
     [settings.dmdataApiKey, settings.dmdataTestDelivery, historicalArchives, dmdataClassifications],
   )
@@ -1947,7 +1959,10 @@ export function App() {
     setSpecialInfoPanelHold(null)
     // ブラウザ通知の重複抑止。残すと、同じ地震を再生したときに 2 回目の通知が出ない。
     // 積んだままの報も捨てる（旧い時間軸の報で、新しい画面のカードを引き当てないように）。
-    notifiedQuakesRef.current.clear()
+    // **空にせず差し替える。** 通知は Service Worker の返事を待ってから覚えるので、リセットより前に出した
+    // 通知が後から済むと、同じ Map なら新しい時間軸の記憶へ覚えてしまう。差し替えれば古いほうへ覚えるだけ。
+    notifiedQuakesRef.current = new Map()
+    quakeNotifyChainsRef.current = new Map()
     pendingQuakeNotifyRef.current = []
     resetActionChecklistRef.current()
     // 別地点発報のエピソード状態。旧い時間軸の「発報済み」が残ると、新しい軸で鳴るべき
@@ -2260,7 +2275,8 @@ export function App() {
     kyoshinSites: kyoshinSitesGated,
   })
   const actionChecklist = useActionChecklist({
-    minScale: settings.actionChecklistMinScale,
+    // 切ってあるときは -1（`useActionChecklist` の取り決め）。最低震度そのものは切っても残す
+    minScale: settings.actionChecklistEnabled ? settings.actionChecklistMinScale : -1,
     scope: nearbyScope,
     // 検知エンジンが確定した揺れのメンバー観測点を渡す（音・地図の検知点と同じ集合）。
     // 生の観測値を渡すと 1 点の跳ね上がりがそのまま表示される震度になる（理由は

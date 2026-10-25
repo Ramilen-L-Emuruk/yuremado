@@ -15,10 +15,11 @@ import {
   quakeRetractionOf, QUAKE_ISSUE_PRIORITY, reportOrderKey, type QuakeRetraction,
 } from '../utils/quakeMerge'
 import type { AreaPrefIndex } from '../utils/quakePoints'
-import { latestValidDateTime, foldTsunamiReports, isSameTsunamiEvent, stepTsunamiState } from '../utils/tsunami'
+import { latestValidDateTime, foldTsunamiReports, isSameTsunamiEvent, stepTsunamiState, tsunamiEventIds } from '../utils/tsunami'
+import { matchEstimatedIntensity } from '../utils/estimatedIntensity'
 import type { ReplayEntry, ReplayPayload, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
 import {
-  isHandledType, QUAKE_TYPES, TSUNAMI_TYPES, HISTORY_EXTRA_TYPES, historyExtraKey,
+  isHandledType, QUAKE_TYPES, TSUNAMI_TYPES, HISTORY_EXTRA_TYPES, LPGM_TYPES, ESTIMATED_INTENSITY_TYPES, historyExtraKey,
   buildXmlPayload, isBinaryTelegramType, buildBinaryPayload, type EewHeadType,
   isFilteredBinaryTelegram,
 } from './dmdataTelegramPayload'
@@ -208,7 +209,7 @@ interface ManifestEntry {
   /**
    * 電文の見出しを配信元が抜き出したもの。使うのは `head.eventId`（その電文がどの地震の
    * ものか。本体を落とさずに分かる）と `head.serial`（報番号。文字列で入る）。前者は窓の端で切れた地震を
-   * 補うときに、その日の目録から当の地震の電文だけを選ぶのに使う（→ `readStraddlingQuakes`）。両方を
+   * 補うときに、その日の目録から当の地震・津波の電文だけを選ぶのに使う（→ `readStraddlingDay`）。両方を
    * 緊急地震速報の最終報を選ぶのに使う（→ `pickFinalEewEntries`）。
    *
    * 実アーカイブ（2026-06-26）では XML 版のエントリに `xmlReport.head.eventId` が入っていた
@@ -1368,6 +1369,7 @@ function resolveTsunamiPreWindowStates(
   }
 
   const states = new Map<number, TsunamiPreWindowState>()
+  const edgeEndMs = preWindowMaterialEdgeEndMs(targetTime)
   for (const [gi, reports] of groups) {
     const identified = !!reports[0].eventId
     if (identified && endedByCancel(reports)) {
@@ -1376,9 +1378,27 @@ function resolveTsunamiPreWindowStates(
     }
     const folded = foldTsunamiReports(reports)
     const validDateTime = folded ? latestValidDateTime([folded]) : latestValidDateTime(reports)
-    const expired = validDateTime
-      ? new Date(validDateTime).getTime() <= targetTime.getTime()
-      : isStaleWithoutValidity(reports, targetTime)
+    // 期限を一度も伝えていない津波の扱いは、ライブと同じにする（→ `isStaleWithoutValidity`）。
+    // ただし識別子を持つ束でも、材料の古い側の端に接するものは期限の報が材料の外へ出た疑いが
+    // あるので、識別子の無い束と同じ 24 時間で落とす（→ `preWindowMaterialEdgeEndMs`）。
+    let expired: boolean
+    if (validDateTime) {
+      expired = new Date(validDateTime).getTime() <= targetTime.getTime()
+    } else if (!identified || touchesMaterialEdge(reports, edgeEndMs)) {
+      expired = isStaleWithoutValidity(reports, targetTime)
+    } else if (latestReportMs(reports) === null) {
+      expired = false
+      warnUnreadableTsunamiTimes(reports)
+    } else {
+      expired = false
+      // **生かしたことを残す。** 期限も解除も無いまま居座る津波は、ライブと同じ扱いでも利用者には
+      // 「終わったはずの津波が出ている」ように見えうるので、理由を辿れるようにする。
+      log.info(
+        `[replay] 有効期限を伝えていない津波を、解除か続報まで残す扱いで初期状態に載せます: `
+        + `id=${reports[reports.length - 1].id} eventId=${reports[0].eventId}`
+        + ` 最後の報=${latestReportTimeText(reports)} 報=${reports.length} 通`,
+      )
+    }
     states.set(gi, { alive: !expired, validDateTime })
   }
   // `groupTsunamiReports` は渡した全報をどこかの束へ入れ、上のループは束ごとに状態を 1 つ作る。
@@ -1392,12 +1412,16 @@ function resolveTsunamiPreWindowStates(
 }
 
 /**
- * 期限を一度も伝えていない津波を、どこまで遡って生かすか。
+ * 期限を一度も伝えていない津波を、どこまで遡って生かすか。**識別子（`eventId`）を持たない
+ * 津波（P2PQuake）と、識別子を持っていても材料の古い側の端に接する束（→ `touchesMaterialEdge`）に使う。**
  *
- * 初期状態の材料は 7 日ぶんある（→ `useReplayController` の `assemblePreWindowMaterial`）が、
- * **期限を持たない津波は、最後の報から 24 時間を過ぎたら終わったものとして扱う** ——
- * 材料が 24 時間だけだった頃と同じ範囲に留める。7 日ぶん遡ると、期限を伝えないまま終わった
- * 津波が 6 日後の再生でも「発表中」として甦る。
+ * **ライブと同じ扱いにする**（2026-10-23 ユーザー選択「ライブと同じく残す」）。
+ * - 識別子を持つ津波（DMDATA・ローカル履歴アーカイブ）は、ライブの DMDSS 版が期限の無い津波に
+ *   失効の予約を積まず、解除か続報まで残す（→ `useEarthquakes` の `stepTsunamiState` の後）。
+ *   初期状態でも落とさない
+ * - 識別子を持たない津波は、ライブの標準版が期限の無い報に最後の報から 24 時間の安全弁を積む
+ *   （→ `tsunami-spec.md` TSU-5A）。初期状態でも同じ 24 時間で落とす。落とさずに流すと、
+ *   安全弁が過去の時刻に積まれて再生の開始直後に消えるだけになる
  *
  * 気象庁は予報のみになった津波に期限を付ける（→ `tsunami-spec.md` §3）ので、通常は期限か
  * 解除のどちらかで決着し、ここへは来ない。来るのは期限を載せていない電文が混ざった場合で、
@@ -1406,19 +1430,71 @@ function resolveTsunamiPreWindowStates(
 const TSUNAMI_WITHOUT_VALIDITY_MAX_AGE_MS = 24 * 3600_000
 
 function isStaleWithoutValidity(reports: JMATsunami[], targetTime: Date): boolean {
-  const latestMs = Math.max(...reports.map(r => Date.parse(r.time)).filter(Number.isFinite))
-  if (!Number.isFinite(latestMs)) {
-    // 古さを測れないので終わったとは決めない（材料が 24 時間だった頃と同じ扱い）。黙って
-    // 生かすと、その津波が居座る理由がどこにも残らないので記録する。
-    log.warn(`[replay] 有効期限も発表時刻も読めない津波を、失効の判定をせずに初期状態へ載せます: id=${reports[reports.length - 1]?.id}`)
+  const latestMs = latestReportMs(reports)
+  if (latestMs === null) {
+    warnUnreadableTsunamiTimes(reports)
     return false
   }
   if (targetTime.getTime() - latestMs <= TSUNAMI_WITHOUT_VALIDITY_MAX_AGE_MS) return false
   log.warn(
     `[replay] 有効期限を伝えていない津波を、最後の報から 24 時間を過ぎたため初期状態に載せません: `
-    + `id=${reports[reports.length - 1].id}`,
+    + `id=${reports[reports.length - 1].id} eventId=${reports[0].eventId ?? '(なし)'}`,
   )
   return true
+}
+
+/** 束の最後の報の発表時刻（ミリ秒）。どれも読めなければ null。 */
+function latestReportMs(reports: readonly JMATsunami[]): number | null {
+  const latestMs = Math.max(...reports.map(r => Date.parse(r.time)).filter(Number.isFinite))
+  return Number.isFinite(latestMs) ? latestMs : null
+}
+
+/** 束の最後の報の発表時刻（記録用）。読めなければ「(読めない)」。 */
+function latestReportTimeText(reports: readonly JMATsunami[]): string {
+  const latestMs = latestReportMs(reports)
+  return latestMs === null ? '(読めない)' : new Date(latestMs).toISOString()
+}
+
+/**
+ * 期限も発表時刻も読めない束を、失効の判定をせずに載せることを記録する。古さを測れないので
+ * 終わったとは決めない（材料が 24 時間だった頃と同じ扱い）。黙って生かすと、その津波が居座る理由が
+ * どこにも残らない。識別子の有無を問わず同じ文面で出す。
+ */
+function warnUnreadableTsunamiTimes(reports: readonly JMATsunami[]): void {
+  log.warn(
+    `[replay] 有効期限も発表時刻も読めない津波を、失効の判定をせずに初期状態へ載せます: `
+    + `id=${reports[reports.length - 1]?.id} eventId=${reports[0]?.eventId ?? '(なし)'} 報=${reports.length} 通`,
+  )
+}
+
+/**
+ * 初期状態の材料の、古い側の端の日が終わる時刻（ミリ秒）。この時刻より前に最も古い報を持つ束が
+ * 「端に接する」（→ `touchesMaterialEdge`。2026-10-25 ユーザー選択「端に接する束だけ 24h (Recommended)」）。
+ *
+ * **端は材料の作り方から決める。** 24 時間より前の津波は履歴の取得から足される
+ * （→ `useReplayController` の `assemblePreWindowMaterial`）。履歴が読むのは再生の開始時刻から
+ * `HISTORY_WINDOW_DAYS` の窓の日（`historyWindowDays`）で、窓の端で切れた津波はさらに
+ * `STRADDLE_TSUNAMI_MAX_DAYS` 日前まで遡って補う（→ `straddlingDayPlans`）。したがって材料に入りうる
+ * 最も古い津波の報は、窓の最初の日から `STRADDLE_TSUNAMI_MAX_DAYS` 日前の日にある。その日に最も古い報が
+ * ある束は、それより前の報（期限を伝えた報を含みうる）を読んでいない疑いがある。
+ *
+ * **履歴の取得が失敗して材料が 24 時間だけになった場合は、この端に当たらない**（材料の範囲が
+ * 呼び出しごとに違うことは、この関数からは見えない）。その場合は 24 時間より前から続く津波も残す側に倒れる。
+ */
+function preWindowMaterialEdgeEndMs(targetTime: Date): number {
+  const { firstWindowDay } = historyWindowDays(targetTime, HISTORY_WINDOW_DAYS)
+  if (firstWindowDay === null) return -Infinity
+  // 端の日は最古の補い日（窓の最初の日の 7 日前）そのもの。その日の終わり＝窓の最初の日の 6 日前の 0 時
+  return Date.parse(`${firstWindowDay}T00:00:00+09:00`) - (STRADDLE_TSUNAMI_MAX_DAYS - 1) * DAY_MS
+}
+
+/**
+ * 束の最も古い報が、材料の古い側の端の日にあるか（→ `preWindowMaterialEdgeEndMs`）。
+ * 発表時刻をどれも読めない束は「接しない」とする（古さを測れないので、`isStaleWithoutValidity` と同じく落とさない側）。
+ */
+function touchesMaterialEdge(reports: readonly JMATsunami[], edgeEndMs: number): boolean {
+  const oldestMs = Math.min(...reports.map(r => Date.parse(r.time)).filter(Number.isFinite))
+  return Number.isFinite(oldestMs) && oldestMs < edgeEndMs
 }
 
 /**
@@ -1793,6 +1869,80 @@ function parseHistoryTelegram(
   return parsed
 }
 
+/**
+ * 履歴の二進電文（推計震度分布図）を結合する入れ物。**履歴の取得 1 回きり**で、窓の日と
+ * 窓の端で切れた地震を補う日とで共有する（残った断片は取得の最後にまとめて取りこぼしへ数える）。
+ */
+interface HistoryBinaryAssembly {
+  readonly fragments: BufrFragmentStore
+  /** 結合待ちの断片の目録エントリ id（結合できたら、全部の id に解析結果を控える）。 */
+  readonly fragmentEntryIds: Map<string, string[]>
+  /** 本体が見つからず、既に取りこぼしとして数えた二進電文の識別名（電文ごとに 1 度だけ数える）。 */
+  readonly countedBinaryKeys: Set<string>
+}
+
+/**
+ * 履歴の二進電文（推計震度分布図）を 1 断片受け取り、揃ったら読む（本編の再生と同じ処理）。
+ *
+ * 結合できたら、**その電文の断片すべての id に**解析結果を控える —— 次に同じ日を読むとき、
+ * どの断片から見ても本体を要らなくするため（→ `planHistoryEntries`）。
+ *
+ * @param onSkip 取りこぼしを 1 件数える。本体が見つからない断片は電文ごとに 1 度だけ呼ぶ
+ *   （分割は最大 24 断片あり、部分破損では複数が同時に欠ける）
+ * @returns 読めた電文。まだ揃っていない断片・試験報・読めなかったものは null
+ */
+function takeHistoryBinary(
+  entry: ManifestEntry,
+  files: Map<string, Uint8Array> | undefined,
+  date: string,
+  includeTest: boolean,
+  asm: HistoryBinaryAssembly,
+  onSkip: () => void,
+): { key: string; payload: ReplayPayload } | null {
+  const cached = parsedTelegramCache.get(entry.id)
+  if (cached?.kind === 'extra') return { key: cached.key, payload: cached.payload }
+  const binFiles = requireArchiveBody(files, entry, date)
+  const fkey = fragmentKey(entry.head.type, 'RJTD', entry.head.time)
+  const binName = findBodyFileName(entry, binFiles)
+  const binBytes = binName ? binFiles.get(binName) : undefined
+  if (!binBytes) {
+    log.warn(`[replay] 履歴用の二進電文の本体が見つからずスキップ id=${entry.id} type=${entry.head.type}（${bodyMissReason(entry)}）`)
+    if (!asm.countedBinaryKeys.has(fkey)) {
+      asm.countedBinaryKeys.add(fkey)
+      onSkip()
+    }
+    return null
+  }
+  const ids = asm.fragmentEntryIds.get(fkey) ?? []
+  ids.push(entry.id)
+  asm.fragmentEntryIds.set(fkey, ids)
+  const joined = asm.fragments.add(fkey, entry.head.designation, binBytes, Date.now())
+  // まだ揃っていない断片。**取りこぼしには数えない**（残りは後続のエントリにある）。
+  if (!joined) return null
+  asm.fragmentEntryIds.delete(fkey)
+  const binPayload = buildBinaryPayload(entry.head.type, joined, entry.id, entry.head.time)
+  if (!binPayload) {
+    log.warn(`[replay] 履歴用の二進電文の読み取りに失敗しスキップ id=${entry.id} type=${entry.head.type}`)
+    onSkip()
+    return null
+  }
+  // **試験報は取りこぼしに数えない**（正常な配信。非 XML 電文は `head.test` で弾けない
+  // ため本文で判定する → `isFilteredBinaryTelegram`）。捨てたことは本編と同じく残す。
+  if (isFilteredBinaryTelegram(binPayload, includeTest)) {
+    log.info(`[replay] 履歴用の二進電文の試験報を取り込みません id=${entry.id} type=${entry.head.type}`)
+    return null
+  }
+  const key = historyExtraKey(binPayload)
+  if (key === null) {
+    // `historyExtraKey` へ種別を書き忘れた形。黙って捨てると分布だけ静かに消える。
+    log.error(`[replay] 履歴用の二進電文に鍵を作れません type=${entry.head.type}（historyExtraKey を確かめること）`)
+    onSkip()
+    return null
+  }
+  for (const id of ids) parsedTelegramCache.set(id, { kind: 'extra', key, payload: binPayload })
+  return { key, payload: binPayload }
+}
+
 /** `EventID`（14 桁・日本時間）が指す地震の発生日（JST の `YYYY-MM-DD`）。読めなければ null。 */
 function eventIdDay(eventId: string): string | null {
   const m = eventId.match(/^(\d{4})(\d{2})(\d{2})\d{6}$/)
@@ -1800,32 +1950,108 @@ function eventIdDay(eventId: string): string | null {
 }
 
 /**
- * 窓の中に電文があるのに、発生日が窓の最初の日より前の地震（＝窓の端で報の列が切れた地震）を、
- * 発生日ごとに集める。
+ * 窓の端で切れた津波を、窓の最初の日から何日前まで遡って補うか（2026-10-25 ユーザー承認）。
+ *
+ * 津波の報は何日も続く（警報・注意報の解除と、その後の津波予報）ので、発生日だけでなく
+ * 発生日から窓の最初の日の前日までの各日を読む。7 日で止めるのは、気象庁の津波警報等は
+ * いずれも数日で解除され（東北地方太平洋沖地震でも約 2 日）、窓 1 回ぶん（`HISTORY_WINDOW_DAYS`）
+ * より長く続く津波は起きていないため。窓の端をまたぐ津波は発生日から窓の前日まで読み、
+ * 発生日ぶんは地震の補いと共有する（1 日 1 本・控えあり）。
+ */
+const STRADDLE_TSUNAMI_MAX_DAYS = 7
+
+/** 窓の端で切れた地震・津波を補う 1 日ぶんで、何を探すか。 */
+interface StraddleDayPlan {
+  /**
+   * 地震情報・長周期地震動・推計震度分布図を補う地震。窓の中に地震情報があり、発生日が窓の
+   * 最初の日より前の地震で、**発生日にだけ入る**。
+   */
+  readonly quakeEventIds: Set<string>
+  /**
+   * 津波を補う地震の識別番号。上の地震の番号（発生日）と、窓の中の津波が持つ番号
+   * （発生日が窓より前の津波。発生日から窓の最初の日の前日まで）。
+   */
+  readonly tsunamiEventIds: Set<string>
+}
+
+/**
+ * 窓の中に電文があるのに、発生日が窓の最初の日より前の地震・津波（＝窓の端で報の列が切れた
+ * もの）を、補う日ごとに集める。
  *
  * **窓は電文の発表日で切っているので、日をまたいで報が出た地震は後ろ半分だけが窓に入る。**
  * 実例: 2026-06-26 22:29 の山梨県東部・富士五湖は、震源要素更新（VXSE61）だけが翌日 00:40 の
  * 発表で、その日から始まる窓では「震源と規模はあるが震度も津波区分も無い」カードになっていた。
+ * 同じ切れ方は、同じアーカイブにある津波・長周期地震動・推計震度分布図でも起きる。
+ *
+ * - 長周期地震動は `EventID` が地震と共通なので、地震と同じ番号で選ぶ
+ * - 津波は `EventID` に番号を複数並べることがある（→ `tsunamiEventIds`）。1 つでも窓より前に
+ *   発生していれば、その津波の番号すべてを探す
+ * - 推計震度分布図は識別子を持たないので、ここでは選ばず、読んだあと地震の発現時刻で
+ *   結び付ける（→ `readStraddlingDay`）
+ *
+ * @returns `plans` は日 → 探すもの。`truncated` は 7 日（`STRADDLE_TSUNAMI_MAX_DAYS`）より前に
+ *   発生した津波（その分は読まない）と、その発生日
  */
-function straddlingQuakeDays(quakes: readonly JMAQuake[], firstWindowDay: string): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>()
+function straddlingDayPlans(
+  quakes: readonly JMAQuake[],
+  tsunamis: readonly JMATsunami[],
+  firstWindowDay: string,
+): { plans: Map<string, StraddleDayPlan>; truncated: Array<{ label: string; occurrenceDay: string }> } {
+  const plans = new Map<string, StraddleDayPlan>()
+  const planOf = (day: string): StraddleDayPlan => {
+    let plan = plans.get(day)
+    if (!plan) {
+      plan = { quakeEventIds: new Set(), tsunamiEventIds: new Set() }
+      plans.set(day, plan)
+    }
+    return plan
+  }
   for (const quake of quakes) {
     const eventId = extractQuakeEventIdFromId(quake.id)
     const day = eventId ? eventIdDay(eventId) : null
     if (!eventId || !day || day >= firstWindowDay) continue
-    const ids = out.get(day) ?? new Set<string>()
-    ids.add(eventId)
-    out.set(day, ids)
+    const plan = planOf(day)
+    plan.quakeEventIds.add(eventId)
+    plan.tsunamiEventIds.add(eventId)
   }
-  return out
+  const firstWindowMs = Date.parse(`${firstWindowDay}T00:00:00+09:00`)
+  const earliestDay = toJstDateStr(new Date(firstWindowMs - STRADDLE_TSUNAMI_MAX_DAYS * DAY_MS))
+  const truncated = new Map<string, { label: string; occurrenceDay: string }>()
+  for (const tsunami of tsunamis) {
+    const ids = tsunamiEventIds(tsunami)
+    const days = ids
+      .map(eventIdDay)
+      .filter((d): d is string => d !== null && d < firstWindowDay)
+      .sort()
+    if (days.length === 0) continue
+    let fromDay = days[0]
+    if (fromDay < earliestDay) {
+      const label = `${ids.join(' ')}（発生日 ${fromDay}）`
+      truncated.set(label, { label, occurrenceDay: fromDay })
+      fromDay = earliestDay
+    }
+    for (let ms = Date.parse(`${fromDay}T00:00:00+09:00`); ms < firstWindowMs; ms += DAY_MS) {
+      const plan = planOf(toJstDateStr(new Date(ms)))
+      for (const id of ids) plan.tsunamiEventIds.add(id)
+    }
+  }
+  return { plans, truncated: [...truncated.values()] }
 }
 
 /**
- * 発生日のアーカイブから、指定した地震の電文だけを読む（窓の端で切れた地震を補う）。
+ * 補う日のアーカイブから、指定した地震・津波の電文だけを読む（窓の端で切れたものを補う）。
  *
- * **その日をまるごと取り込まない。** 補いの目的は「切れた地震を閉じる」ことだけで、その日の
+ * **その日をまるごと取り込まない。** 補いの目的は「切れたものを閉じる」ことだけで、その日の
  * ほかの地震は次の窓（「もっと見る」）が読む。まるごと入れると、カーソルの外の日のカードが
  * 一覧に混ざり、窓が重ならない設計と食い違う。
+ *
+ * **推計震度分布図は、その日の分布図を読んでから地震に結び付ける。** 識別子を持たないので
+ * 目録では選べない。結び付ける物差しはカードとの引き当てと同じ（`matchEstimatedIntensity`）。
+ * 読むのは地震を補う日（発生日）だけで、津波だけを補う日では読まない。**長周期地震動と推計震度分布図は
+ * 発生日しか読まない**（翌日以降に出た分は、窓の日に入っていれば窓の側で拾う）。
+ *
+ * **補う日の二進電文は、結び付けの前に全部組み立てる。** 本体が見つからない・読めない分布図は、
+ * 補う地震と無関係なものでもその日の取りこぼしとして数える（どの地震の分布図かは読むまで分からない）。
  *
  * **通信は増えない（定常状態では）。** 目録・本体・解析結果はどれも控えに残るので、次の窓が
  * この日を読むときは 0 件で済む（本体の控えは端末にも残る → `data-sources-spec.md` §2）。
@@ -1833,17 +2059,28 @@ function straddlingQuakeDays(quakes: readonly JMAQuake[], firstWindowDay: string
  *
  * 取得の失敗は投げる（呼び出し側が記録して画面へ出す）。個々の電文が読めないのは
  * 取りこぼしとして数えるので、件数を返す。
+ *
+ * @param knownQuakes 窓の中で読んだ地震情報。推計震度分布図を結び付ける相手に、
+ *   この日に補った地震情報と合わせて使う
  */
-async function readStraddlingQuakes(
+async function readStraddlingDay(
   item: ArchiveItem,
-  eventIds: ReadonlySet<string>,
+  plan: StraddleDayPlan,
+  knownQuakes: readonly JMAQuake[],
   apiKey: string,
   includeTest: boolean,
   before: Date,
   dec: TextDecoder,
   /** 門の待ちに付ける印（→ `downloadArchive`）。補いは「もっと見る」の 1 回の取得の一部なので、本編と同じ印を渡す。 */
   gateTag: GateTag | null,
-): Promise<{ quakes: JMAQuake[]; skipped: number; unattributable: number }> {
+  binaryAssembly: HistoryBinaryAssembly,
+): Promise<{
+  quakes: JMAQuake[]
+  tsunamis: JMATsunami[]
+  extras: Array<{ key: string; payload: ReplayPayload; timeMs: number }>
+  skipped: number
+  unattributable: number
+}> {
   let files: Map<string, Uint8Array> | undefined
   let manifest = manifestCache.get(item.url)
   if (!manifest) {
@@ -1853,50 +2090,110 @@ async function readStraddlingQuakes(
     manifest = JSON.parse(dec.decode(manifestBytes)) as ManifestEntry[]
     manifestCache.set(item.url, manifest)
   }
+  type Want = 'quake' | 'lpgm' | 'tsunami' | 'binary'
+  const readsQuakes = plan.quakeEventIds.size > 0
+  const wantOf = (type: string): Want | null => {
+    if (readsQuakes && QUAKE_TYPES.has(type)) return 'quake'
+    if (readsQuakes && LPGM_TYPES.has(type)) return 'lpgm'
+    if (readsQuakes && ESTIMATED_INTENSITY_TYPES.has(type)) return 'binary'
+    if (plan.tsunamiEventIds.size > 0 && TSUNAMI_TYPES.has(type)) return 'tsunami'
+    return null
+  }
+  const idsFor = (want: Want): ReadonlySet<string> => (want === 'tsunami' ? plan.tsunamiEventIds : plan.quakeEventIds)
+  /** 目録が伝える地震の識別番号（津波は空白区切りで複数）。 */
+  const labelIds = (entry: ManifestEntry): string[] =>
+    (entry.xmlReport?.head?.eventId ?? '').split(/\s+/).filter(Boolean)
   // 絞り込みは本編の計画（`planHistoryEntries`）と同じ順序 —— 種別 → 試験報 → XML 版だけ。そこへ地震で絞る。
-  const candidates = manifest.filter(entry =>
-    entry?.head
-    && QUAKE_TYPES.has(entry.head.type)
-    && (includeTest || !entry.head.test)
-    && !entry.originalId)
+  const candidates: Array<{ entry: ManifestEntry; want: Want }> = []
+  for (const entry of manifest) {
+    if (!entry?.head || (!includeTest && entry.head.test) || entry.originalId) continue
+    const want = wantOf(entry.head.type)
+    if (want) candidates.push({ entry, want })
+  }
   // **目録に EventID が無いエントリは、本体を読んでどの地震かを確かめる。** 目録だけで外すと
   // 目的の地震の報を取りこぼしうるし、一律に「補えなかった」とすると、無関係な地震の 1 通の
   // 欠落で日ごと失敗扱いになる。控え 7 日分の目録（日付と種別は `data-sources-spec.md` §2
   // 「窓の端で切れた地震は、発生日から補う」）では欠落 0 件だったが、全期間は数えていない
-  // （2026-10-06 実測）。
-  const wanted = candidates.filter(entry => eventIds.has(entry.xmlReport?.head?.eventId ?? ''))
-  const unlabeled = candidates.filter(entry => !entry.xmlReport?.head?.eventId)
-  const needsBody = [...wanted, ...unlabeled].some(entry => !parsedTelegramCache.has(entry.id))
-  if (files === undefined && needsBody) {
+  // （2026-10-06 実測）。推計震度分布図は識別子を持たないので、どれも本体を読む。
+  const targets = candidates.filter(({ entry, want }) => {
+    if (want === 'binary') return true
+    const ids = labelIds(entry)
+    return ids.length === 0 || ids.some(id => idsFor(want).has(id))
+  })
+  if (files === undefined && targets.some(({ entry }) => !parsedTelegramCache.has(entry.id))) {
     files = await downloadArchive(item.url, apiKey, item.date, gateTag)
   }
+  const times = manifestEntryTimes(manifest)
   const quakes: JMAQuake[] = []
+  const tsunamis: JMATsunami[] = []
+  const extras: Array<{ key: string; payload: ReplayPayload; timeMs: number }> = []
+  const binaries: Array<{ key: string; payload: ReplayPayload; timeMs: number }> = []
   let skipped = 0
   // 本体を読んでも地震を決められなかった数。この中に目的の地震の報が混ざっていたかは分からない。
   // 目録の見出し（`head`）ごと壊れたエントリは種別すら読めないので、ここへ含める
   let unattributable = manifest.filter(entry => !entry?.head).length
-  const take = (entry: ManifestEntry, labeled: boolean) => {
-    const time = manifestEntryTime(entry)
+  const countedTimeMiss = new Set<string>()
+  for (const { entry, want } of targets) {
+    const labeled = want !== 'binary' && labelIds(entry).length > 0
+    const miss = () => { if (labeled || want === 'binary') skipped++; else unattributable++ }
+    const time = times.get(entry) ?? null
     if (time === null) {
-      if (labeled) skipped++
-      else unattributable++
-      return
+      if (isFirstTimeMiss(entry, countedTimeMiss)) miss()
+      continue
     }
-    if (!isHistoryTarget(time, before)) return
-    const parsed = parseHistoryTelegram(entry, files, dec, 'quake', item.date)
-    if (parsed?.kind !== 'quake') {
-      if (labeled) skipped++
-      else unattributable++
-      return
+    if (!isHistoryTarget(time, before)) continue
+    if (want === 'binary') {
+      const taken = takeHistoryBinary(entry, files, item.date, includeTest, binaryAssembly, () => { skipped++ })
+      if (taken) binaries.push({ ...taken, timeMs: time.getTime() })
+      continue
     }
-    if (labeled) { quakes.push(parsed.quake); return }
-    const eventId = extractQuakeEventIdFromId(parsed.quake.id)
-    if (eventId === null) unattributable++
-    else if (eventIds.has(eventId)) quakes.push(parsed.quake)
+    const parsed = parseHistoryTelegram(entry, files, dec, want === 'lpgm' ? 'extra' : want, item.date)
+    if (!parsed) { miss(); continue }
+    const parsedIds = parsed.kind === 'quake'
+      ? [extractQuakeEventIdFromId(parsed.quake.id)].filter((id): id is string => id !== null)
+      : parsed.kind === 'tsunami'
+        ? tsunamiEventIds(parsed.tsunami)
+        : parsed.payload.kind === 'lpgm' ? [parsed.payload.data.eventId].filter(Boolean) : []
+    if (!labeled) {
+      if (parsedIds.length === 0) { unattributable++; continue }
+      if (!parsedIds.some(id => idsFor(want).has(id))) continue
+    }
+    if (parsed.kind === 'quake') quakes.push(parsed.quake)
+    else if (parsed.kind === 'tsunami') tsunamis.push(parsed.tsunami)
+    else extras.push({ key: parsed.key, payload: parsed.payload, timeMs: time.getTime() })
   }
-  for (const entry of wanted) take(entry, true)
-  for (const entry of unlabeled) take(entry, false)
-  return { quakes, skipped, unattributable }
+  // 推計震度分布図は、この日に補った地震情報が揃ってから結び付ける（目録の並びは種別を問わない）。
+  if (binaries.length > 0) {
+    const matchable = [
+      ...knownQuakes.filter(q => plan.quakeEventIds.has(extractQuakeEventIdFromId(q.id) ?? '')),
+      ...quakes,
+    ]
+    for (const bin of binaries) {
+      if (bin.payload.kind !== 'estimatedIntensity') continue
+      const ei = bin.payload.data
+      if (matchable.some(q => matchEstimatedIntensity(q, ei))) extras.push(bin)
+    }
+  }
+  return { quakes, tsunamis, extras, skipped, unattributable }
+}
+
+/**
+ * 履歴の窓が読む JST 日。**窓の日の決め方はここだけに置く** —— 履歴の取得
+ * （`fetchDmdataQuakeHistory`）と、初期状態の材料の古い側の端（`preWindowMaterialEdgeEndMs`）が同じものを使う。
+ *
+ * `before` ちょうどの電文は残す側（`entryTime > before` で捨てる）なので、終端を含まない
+ * `archiveDaysForWindow` へは 1ms 足して渡す。
+ */
+function historyWindowDays(before: Date, maxDays: number): {
+  startObj: Date
+  wantedDays: Set<string>
+  /** 窓の最初の日。これより前に発生した地震・津波は「窓の端で切れた」もの（→ `straddlingDayPlans`）。 */
+  firstWindowDay: string | null
+} {
+  const startObj = new Date(before)
+  startObj.setDate(startObj.getDate() - maxDays)
+  const wantedDays = archiveDaysForWindow(startObj, new Date(before.getTime() + 1))
+  return { startObj, wantedDays, firstWindowDay: [...wantedDays].sort()[0] ?? null }
 }
 
 /**
@@ -2039,11 +2336,7 @@ export async function fetchDmdataQuakeHistory(
   //
   // `before` ちょうどの電文は残す側（`entryTime > before` で捨てる）なので、終端を含まない
   // `archiveDaysForWindow` へは 1ms 足して渡す。
-  const startObj = new Date(before)
-  startObj.setDate(startObj.getDate() - maxDays)
-  const wantedDays = archiveDaysForWindow(startObj, new Date(before.getTime() + 1))
-  /** 窓の最初の日。これより前に発生した地震は「窓の端で切れた地震」（→ `straddlingQuakeDays`）。 */
-  const firstWindowDay = [...wantedDays].sort()[0] ?? null
+  const { startObj, wantedDays, firstWindowDay } = historyWindowDays(before, maxDays)
   /**
    * 窓の最初の日の前日。**目録はここまで広げて引く**（一覧のリクエストは 1 本のまま）。
    * 窓の端で切れた地震の発生日はほとんどがこの日なので（震源要素更新が翌日の未明に出る形）、
@@ -2201,11 +2494,12 @@ export async function fetchDmdataQuakeHistory(
    * 日本時間の 0 時をまたいで配信され、しかもその境目がアーカイブの在庫の端と重なったとき
    * だけなので、共有して数え方を組み直すことはしていない。
    */
-  const bufrFragments = new BufrFragmentStore()
-  /** 結合待ちの断片の目録エントリ id（結合できたら、全部の id に解析結果を控える）。 */
-  const fragmentEntryIds = new Map<string, string[]>()
-  /** 本体が見つからず、既に取りこぼしとして数えた二進電文の識別名（電文ごとに 1 度だけ数える）。 */
-  const countedBinaryKeys = new Set<string>()
+  const binaryAssembly: HistoryBinaryAssembly = {
+    fragments: new BufrFragmentStore(),
+    fragmentEntryIds: new Map(),
+    countedBinaryKeys: new Set(),
+  }
+  const { fragments: bufrFragments, countedBinaryKeys } = binaryAssembly
   /** 取りこぼしは**日ごとに**数える（理由は `utils/telegramLoss.ts` の `skippedByDay`）。 */
   const skipCounter = createSkipCounter()
   let usedDays = 0
@@ -2380,52 +2674,8 @@ export async function fetchDmdataQuakeHistory(
 
       try {
         if (plan.want === 'binary') {
-          // **二進電文（推計震度分布図）。** 断片を結合してから読む（本編の再生と同じ処理）。
-          // 結合できたら、**その電文の断片すべての id に**解析結果を控える —— 次に同じ日を
-          // 読むとき、どの断片から見ても本体を要らなくするため（→ `planHistoryEntries`）。
-          const cached = parsedTelegramCache.get(entry.id)
-          if (cached?.kind === 'extra') { keepExtra(cached.key, cached.payload, entryTime.getTime()); continue }
-          const binFiles = requireArchiveBody(files, entry, item.date)
-          const fkey = fragmentKey(entry.head.type, 'RJTD', entry.head.time)
-          const binName = findBodyFileName(entry, binFiles)
-          const binBytes = binName ? binFiles.get(binName) : undefined
-          if (!binBytes) {
-            log.warn(`[replay] 履歴用の二進電文の本体が見つからずスキップ id=${entry.id} type=${entry.head.type}（${bodyMissReason(entry)}）`)
-            // 電文ごとに 1 度だけ数える（分割は最大 24 断片あり、部分破損では複数が同時に欠ける）
-            if (!countedBinaryKeys.has(fkey)) {
-              countedBinaryKeys.add(fkey)
-              skipCounter.add(item.date)
-            }
-            continue
-          }
-          const ids = fragmentEntryIds.get(fkey) ?? []
-          ids.push(entry.id)
-          fragmentEntryIds.set(fkey, ids)
-          const joined = bufrFragments.add(fkey, entry.head.designation, binBytes, Date.now())
-          // まだ揃っていない断片。**取りこぼしには数えない**（残りは後続のエントリにある）。
-          if (!joined) continue
-          fragmentEntryIds.delete(fkey)
-          const binPayload = buildBinaryPayload(entry.head.type, joined, entry.id, entry.head.time)
-          if (!binPayload) {
-            log.warn(`[replay] 履歴用の二進電文の読み取りに失敗しスキップ id=${entry.id} type=${entry.head.type}`)
-            skipCounter.add(item.date)
-            continue
-          }
-          // **試験報は取りこぼしに数えない**（正常な配信。非 XML 電文は `head.test` で弾けない
-          // ため本文で判定する → `isFilteredBinaryTelegram`）。捨てたことは本編と同じく残す。
-          if (isFilteredBinaryTelegram(binPayload, includeTest)) {
-            log.info(`[replay] 履歴用の二進電文の試験報を取り込みません id=${entry.id} type=${entry.head.type}`)
-            continue
-          }
-          const key = historyExtraKey(binPayload)
-          if (key === null) {
-            // `historyExtraKey` へ種別を書き忘れた形。黙って捨てると分布だけ静かに消える。
-            log.error(`[replay] 履歴用の二進電文に鍵を作れません type=${entry.head.type}（historyExtraKey を確かめること）`)
-            skipCounter.add(item.date)
-            continue
-          }
-          for (const id of ids) parsedTelegramCache.set(id, { kind: 'extra', key, payload: binPayload })
-          keepExtra(key, binPayload, entryTime.getTime())
+          const taken = takeHistoryBinary(entry, files, item.date, includeTest, binaryAssembly, () => skipCounter.add(item.date))
+          if (taken) keepExtra(taken.key, taken.payload, entryTime.getTime())
           continue
         }
         // どの型として読むかは計画が種別から決めている（`planHistoryEntries`）。
@@ -2464,12 +2714,13 @@ export async function fetchDmdataQuakeHistory(
     }
   }
 
-  // **窓の端で切れた地震を、発生日のアーカイブから補う**（→ `readStraddlingQuakes`）。
+  // **窓の端で切れた地震・津波を、発生日からのアーカイブで補う**（→ `straddlingDayPlans`・`readStraddlingDay`）。
   //
   // 窓は電文の発表日で切っているので、日をまたいで報が出た地震は後ろ半分だけが窓に入る。
   // そのままにすると「震源と規模はあるが震度も津波区分も無い」カードが、次の窓を読むまで
   // （「もっと見る」を押さなければずっと）一覧に残る。カードの統合は回をまたいで古い報が
   // 当たっても正しく当て直すので（`refoldQuakeCard`）、ここで前半を補えば 1 回で閉じる。
+  // 同じアーカイブにある津波・長周期地震動・推計震度分布図も同じく補う（緊急地震速報は履歴に入れない）。
   //
   // **補いの失敗は日の失敗にしない。** カーソルも全滅判定も窓の日だけで決める —— 補う日は
   // 次の窓が改めて読むので、ここで失敗しても取り返せる。画面へは「読めなかった取得元」として出す。
@@ -2481,56 +2732,84 @@ export async function fetchDmdataQuakeHistory(
   const straddleFailures: string[] = []
   let straddleSupplemented = 0
   if (!stoppedEarly && firstWindowDay !== null) {
+    const { plans: straddlePlans, truncated } = straddlingDayPlans(quakes, tsunamis, firstWindowDay)
+    if (truncated.length > 0) {
+      log.warn(
+        `[replay] 窓の端で切れた津波のうち、窓の ${STRADDLE_TSUNAMI_MAX_DAYS} 日より前の報は補いません`
+        + `（その津波は窓に近い側の報だけで組み立てます）: ${truncated.map(t => t.label).join(', ')}`,
+      )
+      // **画面の取得状況にも出す。** 読まなかった報があるのに記録だけだと、その津波の期限や前半の
+      // 報が欠けている理由が画面から辿れない。補いの失敗と同じ入れ物へ、発生日を識別子にして積む
+      // （全滅判定の分子には混ぜない。→ 返す直前の `failedArchiveUrls`）
+      for (const t of truncated) {
+        const id = `straddle-limit:${t.occurrenceDay}`
+        if (!straddleFailures.includes(id)) straddleFailures.push(id)
+      }
+    }
+    const describePlan = (plan: StraddleDayPlan) =>
+      `地震=${[...plan.quakeEventIds].join(',') || 'なし'} 津波=${[...plan.tsunamiEventIds].join(',')}`
     const itemsByDay = new Map(items.map(item => [item.date, item]))
-    for (const [day, eventIdsOfDay] of straddlingQuakeDays(quakes, firstWindowDay)) {
+    // 窓の前日は目録を広げて引いてある。それより前の日は、足りない日をまとめて 1 本で引き直す
+    const unlisted = new Set([...straddlePlans.keys()].filter(d => d >= ARCHIVE_START_DAY && !itemsByDay.has(d)))
+    let relistFailure: unknown = null
+    if (unlisted.size > 0 && !isStopped()) {
+      try {
+        const range = archiveListRange(unlisted)
+        const listed = range === null
+          ? []
+          : await listArchives(apiKey, range.from, range.to, 'telegram.earthquake', signal, gateTag ?? null)
+        for (const i of listed) if (!itemsByDay.has(i.date)) itemsByDay.set(i.date, i)
+      } catch (e) {
+        relistFailure = e
+      }
+    }
+    for (const day of [...straddlePlans.keys()].sort()) {
+      const plan = straddlePlans.get(day)!
       if (isStopped()) { stoppedEarly = true; break }
       // 保存開始より前は取りようが無い（在庫の端）。カードは後ろ半分のまま残る
       if (day < ARCHIVE_START_DAY) {
-        log.info(`[replay] 窓の端で切れた地震の発生日が保存開始より前のため補えません date=${day} 地震=${[...eventIdsOfDay].join(',')}`)
+        log.info(`[replay] 窓の端で切れた地震・津波の報の日が保存開始より前のため補えません date=${day} ${describePlan(plan)}`)
         continue
       }
       try {
-        // ほとんどは前日（目録を広げて引いてある）。それより前に発生した地震だけ一覧を引き直す
-        let item = itemsByDay.get(day)
+        const item = itemsByDay.get(day)
         if (!item) {
-          const range = archiveListRange(new Set([day]))
-          const listed = range === null
-            ? []
-            : await listArchives(apiKey, range.from, range.to, 'telegram.earthquake', signal, gateTag ?? null)
-          item = listed.find(i => i.date === day)
-        }
-        if (!item) {
-          log.warn(`[replay] 窓の端で切れた地震の発生日のアーカイブが見つかりません date=${day} 地震=${[...eventIdsOfDay].join(',')}`)
+          if (relistFailure !== null) throw relistFailure
+          log.warn(`[replay] 窓の端で切れた地震・津波を補う日のアーカイブが見つかりません date=${day} ${describePlan(plan)}`)
           straddleFailures.push(`straddle:${day}`)
           continue
         }
-        const supplemented = await readStraddlingQuakes(item, eventIdsOfDay, apiKey, includeTest, before, dec, gateTag ?? null)
+        const supplemented = await readStraddlingDay(
+          item, plan, quakes, apiKey, includeTest, before, dec, gateTag ?? null, binaryAssembly,
+        )
         for (const quake of supplemented.quakes) quakes.push(quake)
-        straddleSupplemented += supplemented.quakes.length
+        for (const tsunami of supplemented.tsunamis) tsunamis.push(tsunami)
+        for (const extra of supplemented.extras) keepExtra(extra.key, extra.payload, extra.timeMs)
+        // 地震情報が無くても、津波・長周期・推計を補えば流す（受け手は一覧の津波や分布の付き方も描き直す）
+        straddleSupplemented += supplemented.quakes.length + supplemented.tsunamis.length + supplemented.extras.length
         for (let i = 0; i < supplemented.skipped; i++) skipCounter.add(day)
+        const counts = `地震情報=${supplemented.quakes.length} 津波=${supplemented.tsunamis.length}`
+          + ` 長周期と推計震度分布図=${supplemented.extras.length}`
         // **本体を読んでもどの地震の電文か決められないエントリがあったら、補えたとは言えない。**
         // その中に目的の地震の電文が混ざっていたかを確かめられないので、補えなかった日として画面へ出す。
         // 目録に EventID が無いだけなら本体で決まるので、ここへは来ない。
         if (supplemented.unattributable > 0) {
           log.warn(
-            `[replay] 窓の端で切れた地震を補う日に、どの地震の電文か決められないエントリが`
+            `[replay] 窓の端で切れた地震・津波を補う日に、どの地震の電文か決められないエントリが`
             + ` ${supplemented.unattributable} 件ありました（目録に EventID が無く、本体も読めない）date=${day}`
-            + ` 地震=${[...eventIdsOfDay].join(',')} 補えた電文=${supplemented.quakes.length}`,
+            + ` ${describePlan(plan)} 補えた電文: ${counts}`,
           )
           straddleFailures.push(`straddle:${day}`)
         } else {
           // 電文 0 件は異常ではない —— 発生の直後に日付が変わると、発生日には報が 1 通も無い
-          log.info(
-            `[replay] 窓の端で切れた地震を発生日のアーカイブから補った date=${day}`
-            + ` 地震=${eventIdsOfDay.size} 電文=${supplemented.quakes.length}`,
-          )
+          log.info(`[replay] 窓の端で切れた地震・津波をアーカイブから補った date=${day} ${describePlan(plan)} ${counts}`)
         }
       } catch (e) {
         // 429 の窓による見送りも同じ扱い（待てば次の窓で取れる）。記録の文言だけ分ける
         if (e instanceof RateLimitWindowError) {
-          log.info(`[replay] 窓の端で切れた地震の補いを 429 の窓が明けるまで見送りました date=${day}`)
+          log.info(`[replay] 窓の端で切れた地震・津波の補いを 429 の窓が明けるまで見送りました date=${day}`)
         } else {
-          log.error(`[replay] 窓の端で切れた地震を補えませんでした date=${day}`, e)
+          log.error(`[replay] 窓の端で切れた地震・津波を補えませんでした date=${day}`, e)
         }
         straddleFailures.push(`straddle:${day}`)
       }
@@ -2539,8 +2818,8 @@ export async function fetchDmdataQuakeHistory(
     // 全滅判定へ混ぜないため）、ここで別に 1 行残す。個々の失敗は上で 1 行ずつ出ている
     if (straddleFailures.length > 0) {
       log.warn(
-        `[replay] 窓の端で切れた地震を補えなかった日が ${straddleFailures.length} 日ありました`
-        + `（その地震のカードは後ろの報だけで出ます。次の窓を読めば揃います）: ${straddleFailures.join(', ')}`,
+        `[replay] 窓の端で切れた地震・津波を補えなかった日が ${straddleFailures.length} 日ありました`
+        + `（そのカードと津波は後ろの報だけで出ます。次の窓を読めば揃います）: ${straddleFailures.join(', ')}`,
       )
     }
     if (onPartial && straddleSupplemented > 0) {
@@ -2684,8 +2963,9 @@ export async function fetchDmdataQuakeHistory(
     // 日を識別子にするのは当日経路の `live-telegram:<日>` と同じ形。呼び出し側は集合へ積むので
     // 同じ日を何度返しても 1 件のまま。
     //
-    // **窓の端で切れた地震を補えなかった日も同じく載せる**（`straddle:<日>`）。全滅判定の分子に
-    // 混ぜない理由は `uncovered` と同じ（取りに行ったのは窓の外の日）。
+    // **窓の端で切れた地震・津波を補えなかった日も同じく載せる**（`straddle:<日>`。7 日の上限で
+    // 読まなかった津波は `straddle-limit:<発生日>`）。全滅判定の分子に混ぜない理由は `uncovered` と
+    // 同じ（取りに行ったのは窓の外の日）。
     failedArchiveUrls: [...failedArchiveUrls, ...uncovered.map(d => `uncovered:${d}`), ...straddleFailures],
     rateLimitedSources, rateLimitedTelegrams, hasMore, oldestLoadedDay,
   }

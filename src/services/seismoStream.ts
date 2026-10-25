@@ -1029,7 +1029,7 @@ export async function fetchSeismoStatus(
     })
   }
 
-  const assigned = readAssignedStationIds(root)
+  const assigned = readAssignedStationIds(root, apiBase(baseUrl))
   return {
     kind: 'ok',
     stations: [...stations.values()],
@@ -1051,15 +1051,18 @@ export async function fetchSeismoStatus(
 /** 割り当ての形が崩れたことの記録の間引き（状態の確かめは繰り返し走るので、毎回は出さない）。 */
 const throttledAssignedBoardsLog = createLogThrottle(FAILURE_LOG_INTERVAL_MS)
 
-/** 古いホスト（`assignedBoards` を返さない）だと 1 度だけ記録したか。 */
-let notedNoAssignedBoards = false
+/**
+ * 古いホスト（`assignedBoards` を返さない）だと記録した接続先。**接続先ごとに 1 度だけ**残す ——
+ * モジュール全体で 1 度きりにすると、接続先を別の古いホストへ替えたとき記録が出ない。
+ */
+const notedNoAssignedBoards = new Set<string>()
 
-function readAssignedStationIds(root: Record<string, unknown>): readonly string[] | null {
+function readAssignedStationIds(root: Record<string, unknown>, host: string): readonly string[] | null {
   if (root.assignedBoards === undefined) {
     // **数え方が黙って変わるので 1 度だけ残す**（割り当てた観測点ではなく、届いた観測点で数える。未着の行も出ない）。
-    if (!notedNoAssignedBoards) {
-      notedNoAssignedBoards = true
-      log.info('[seismo] /status に assignedBoards が無い（古いホスト）。割り当てではなく届いた観測点で数え、未着の行は出さない')
+    if (!notedNoAssignedBoards.has(host)) {
+      notedNoAssignedBoards.add(host)
+      log.info(`[seismo] /status に assignedBoards が無い（古いホスト・${host}）。割り当てではなく届いた観測点で数え、未着の行は出さない`)
     }
     return null
   }

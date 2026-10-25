@@ -1,13 +1,16 @@
-// 気象庁「緊急地震速報（警報）発表状況」の個別ページ（content_out.html）を機械的にパースし、
-// アプリの ReplayPayload EEW 形式（EEWAlert）へ変換する。
+// 気象庁「緊急地震速報（警報）発表状況」の個別ページ（content_out.html）と、
+// 「緊急地震速報（予報）発表状況」の個別ページ（index.html。Wayback Machine の控え）を機械的に
+// パースし、アプリの ReplayPayload EEW 形式（EEWAlert）へ変換する。
 //
 // 対象ページの例:
 //   https://www.data.jma.go.jp/eew/data/nc/pub_hist/2011/03/20110311144640/content/content_out.html
+//   http://www.data.jma.go.jp/svd/eew/data/nc/fc_hist/2016/04/20160416012510/index.html
 // 一覧（年月をまたいで辿れる）:
 //   https://www.data.jma.go.jp/eew/data/nc/pub_hist/index.html
 //
-// ページ構造は固定（#hypocentral_element_list / #information_list / .eew_estimate_intensity_list
-// の3テーブル）。過去の手作業書き起こしでは報番号のラベルがぶれる事故が起きたため、
+// ページ構造は 2 種類とも同じ（#hypocentral_element_list / #information_list /
+// .eew_estimate_intensity_list の3テーブル）。違うのは震源要素の表の書式だけ —— 予報の側は
+// 発生時刻が分まで・緯度経度が10進度（警報の側は秒まで・度分）。過去の手作業書き起こしでは報番号のラベルがぶれる事故が起きたため、
 // 生HTMLを直接パースしてこの手作業を排除する。
 import { JSDOM } from 'jsdom'
 
@@ -15,6 +18,13 @@ const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 export interface ParsedEewHypocenter {
   originTimeIso: string
+  /**
+   * 発生時刻が秒まで書かれていたか。警報の発表状況（pub_hist）は秒まで、予報の発表状況
+   * （fc_hist）は分までしか書かない。分までのときは `originTimeIso` の秒が 0 になっている
+   * だけで、実際の発生時刻ではない —— 予報円の半径がこの時刻から決まるので、使う側が
+   * 別の出どころで秒を補うかを判断できるよう、精度を落とさずに持ち運ぶ。
+   */
+  originTimeHasSeconds: boolean
   name: string
   latitude: number | null
   longitude: number | null
@@ -40,6 +50,14 @@ export interface ParsedEewReport {
    * ことがある（実データで確認済み）ため、severityの判定は必ずこのフラグを使う。
    */
   isPublicWarningRow: boolean
+  /**
+   * 取消（キャンセル報）の行か。予報の発表状況（fc_hist）では、取り消された地震の最後の行の
+   * 報番号の欄が「キャンセル」になる（震源要素は「---」、予測震度の欄は「キャンセル報」）。
+   * `reportNum` には、その前の報の番号に 1 を足した値を入れる（取消電文は次の報番号で届く、と見ている）。
+   * **この前提は実電文で確かめていない** —— ページの取消の行は報番号を書かず、2016 年の取消電文そのものは
+   * 手元に無い。違っていれば、取消の報の `issue.serial` がずれる。
+   */
+  isCancellation: boolean
 }
 
 export interface ParsedEewAreaTier {
@@ -87,16 +105,33 @@ export function resolveHypocenterName(
   return best.name
 }
 
-/** 「平成23年03月11日14時46分18.1秒」形式（和暦・JST）を UTC ISO へ変換する。 */
+const WAREKI_DATE_TIME = /^平成(\d+)年(\d+)月(\d+)日(\d+)時(\d+)分(?:([\d.]+)秒)?$/
+
+/**
+ * 和暦・日本時間の日時を UTC ISO へ変換する。書式は 2 つある。
+ *
+ * - 「平成23年03月11日14時46分18.1秒」—— 警報の発表状況（pub_hist）。秒まで
+ * - 「平成28年04月16日01時25分」—— 予報の発表状況（fc_hist）。分まで。秒は 0 として返す
+ *
+ * どちらだったかは {@link warekiDateTimeHasSeconds} で見分ける。
+ */
 export function parseWarekiDateTime(text: string): string {
-  const m = text.match(/平成(\d+)年(\d+)月(\d+)日(\d+)時(\d+)分([\d.]+)秒/)
+  const m = text.trim().match(WAREKI_DATE_TIME)
   if (!m) throw new Error(`和暦日時を解析できません: ${text}`)
   const [, heiseiYear, month, day, hour, minute, second] = m
   const year = 1988 + Number(heiseiYear)
-  const wholeSec = Math.floor(Number(second))
-  const ms = Math.round((Number(second) - wholeSec) * 1000)
+  const sec = second === undefined ? 0 : Number(second)
+  const wholeSec = Math.floor(sec)
+  const ms = Math.round((sec - wholeSec) * 1000)
   const jstMs = Date.UTC(year, Number(month) - 1, Number(day), Number(hour), Number(minute), wholeSec, ms)
   return new Date(jstMs - JST_OFFSET_MS).toISOString()
+}
+
+/** 和暦日時が秒まで書かれているか。書式そのものが読めなければ例外（{@link parseWarekiDateTime} と同じ）。 */
+export function warekiDateTimeHasSeconds(text: string): boolean {
+  const m = text.trim().match(WAREKI_DATE_TIME)
+  if (!m) throw new Error(`和暦日時を解析できません: ${text}`)
+  return m[6] !== undefined
 }
 
 /** 「14時46分45.6秒」形式（時刻のみ・JST）を、同じ日付を仮定して UTC ISO へ変換する。 */
@@ -128,22 +163,36 @@ export function parseTimeOnly(text: string, referenceIsoDate: string): string {
 // 「値なし」として扱うが、これを混ぜると数値セル側がこの文言を誤って受理してしまう
 // ため、意図的にこのSetには含めず消費側で別途チェックしている（一度「ここに集約する」
 // と書いていたが実態と異なっていたため訂正）。
-export const NO_VALUE_MARKERS = new Set(['—', '--', ''])
+// 予報の発表状況（fc_hist）では半角ハイフン3つ「---」も使う（取消の行・深発地震の予測震度の欄で確認済み）。
+export const NO_VALUE_MARKERS = new Set(['—', '--', '---', ''])
+
+/** 予報の発表状況（fc_hist）の震源要素の表で、取消（キャンセル報）の地震が震央地名の欄に書く文言。 */
+export const CANCELLED_HYPOCENTER_NAME = '(キャンセル報)'
 
 /**
- * 「38°06.2′」形式を10進度へ変換する。
+ * 震源要素の表の緯度・経度を10進度へ変換する。書式は 2 つある。
+ *
+ * - 「38°06.2′」—— 警報の発表状況（pub_hist）。度分
+ * - 「32.8」—— 予報の発表状況（fc_hist）。10進度（小数 1 桁）
  */
 export function parseDegMin(text: string): number | null {
   const t = text.trim()
   if (NO_VALUE_MARKERS.has(t)) return null
-  const m = t.match(/(\d+)°([\d.]+)′/)
+  if (/^\d+(\.\d+)?$/.test(t)) return Number(t)
+  const m = t.match(/^(\d+)°([\d.]+)′$/)
   if (!m) throw new Error(`度分表記を解析できません: "${text}"`)
   return Number(m[1]) + Number(m[2]) / 60
 }
 
+/**
+ * 深さ。「10km」のほか、予報の発表状況（fc_hist）には「ごく浅い」（0 km として扱う。アプリでも
+ * 深さ 0 は「ごく浅い」の意味）と、取消の行の「---km」（値なし）がある。
+ */
 function parseKm(text: string): number | null {
   const t = text.trim()
   if (NO_VALUE_MARKERS.has(t)) return null
+  if (t === 'ごく浅い') return 0
+  if (/^-+km$/.test(t)) return null
   const m = t.match(/^([\d.]+)\s*km$/)
   if (!m) throw new Error(`深さを解析できません: "${text}"`)
   return Number(m[1])
@@ -192,7 +241,10 @@ export function parseHeadlineScale(text: string): number {
 }
 
 export function parseEewContentHtml(html: string): ParsedEewPage {
-  const dom = new JSDOM(html)
+  // 予報の発表状況（fc_hist）の控えは BOM 付きの UTF-8 で届く。
+  // `<style>` は外す —— 中の `@import` を jsdom が解決しようとして、ページごとに警告を 3 行ずつ出し、
+  // 生成の記録が埋もれる（読むのは表だけなので要らない）
+  const dom = new JSDOM(html.replace(/^﻿/, '').replace(/<style\b[\s\S]*?<\/style>/gi, ''))
   const doc = dom.window.document
 
   const hypoTable = doc.getElementById('hypocentral_element_list')
@@ -204,7 +256,9 @@ export function parseEewContentHtml(html: string): ParsedEewPage {
     if (cells.length !== 7) throw new Error(`震源要素テーブルの行の列数が想定外です（7列のはずが${cells.length}列）: ${cells.join('|')}`)
     return {
       originTimeIso: parseWarekiDateTime(cells[0]),
-      name: cells[1],
+      originTimeHasSeconds: warekiDateTimeHasSeconds(cells[0]),
+      // 取消の地震は震央地名の欄に「(キャンセル報)」と書かれる。地名ではないので空（不明）にする
+      name: cells[1] === CANCELLED_HYPOCENTER_NAME ? '' : cells[1],
       latitude: parseDegMin(cells[2]),
       longitude: parseDegMin(cells[3]),
       depthKm: parseKm(cells[4]),
@@ -224,9 +278,16 @@ export function parseEewContentHtml(html: string): ParsedEewPage {
     // ページ構成が想定と変わっている証拠なので黙って読み飛ばさず例外にする。
     if (cells.length !== 8) throw new Error(`情報テーブルの行の列数が想定外です（8列のはずが${cells.length}列）: ${cells.join('|')}`)
     const isDetectionRow = cells[0].includes('検知')
+    const isCancellation = cells[0].trim() === 'キャンセル'
     let reportNum: number
     if (isDetectionRow) {
       reportNum = 0
+    } else if (isCancellation) {
+      if (reports.length === 0 || reports.some((r) => r.isCancellation)) {
+        throw new Error(`取消の行の位置が想定外です（先頭か、2 行目の取消）: ${cells.join('|')}`)
+      }
+      if (cells[7] !== 'キャンセル報') throw new Error(`取消の行の予測震度の欄が想定外です: "${cells[7]}"`)
+      reportNum = Math.max(...reports.map((r) => r.reportNum)) + 1
     } else {
       const n = Number(cells[0].trim())
       // Number('') は 0 になり、検知時刻行の番号(0)と区別が付かなくなるため、
@@ -244,6 +305,7 @@ export function parseEewContentHtml(html: string): ParsedEewPage {
       magnitude: parseNumericCell(cells[6]),
       forecastCell: cells[7],
       isPublicWarningRow: row.classList.contains('eew_public_warning_row'),
+      isCancellation,
     })
   }
 

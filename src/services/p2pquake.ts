@@ -745,6 +745,12 @@ export async function fetchJmaQuake(query: JmaArchiveQuery, signal: AbortSignal 
   return (await fetchJmaQuakePage(query, signal, lane)).events
 }
 
+/**
+ * 標準版の「もっと見る」が 1 回に引く電文の数。**ライブとリプレイで同じ値を使う**
+ * （片方だけ動かすと、1 回押して増える厚みがライブと再生で食い違う）。
+ */
+export const P2P_LOAD_MORE_BATCH = 50
+
 /** {@link fetchJmaQuakePage} の答え。 */
 export interface JmaQuakePage {
   /** 読めた地震情報。 */

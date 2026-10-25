@@ -3,7 +3,7 @@ import { buildEewEntries } from './historicalEewArchiveBuilder'
 import type { ParsedEewPage, ParsedEewReport } from './historicalEewParser'
 
 function hypo(name: string, latitude: number, longitude: number) {
-  return { originTimeIso: '2011-03-12T00:00:00.000Z', name, latitude, longitude, depthKm: 10, magnitude: 5, maxIntensityText: '4' }
+  return { originTimeIso: '2011-03-12T00:00:00.000Z', originTimeHasSeconds: true, name, latitude, longitude, depthKm: 10, magnitude: 5, maxIntensityText: '4' }
 }
 
 function report(overrides: Partial<ParsedEewReport>): ParsedEewReport {
@@ -16,9 +16,12 @@ function report(overrides: Partial<ParsedEewReport>): ParsedEewReport {
     magnitude: 6,
     forecastCell: '※1',
     isPublicWarningRow: false,
+    isCancellation: false,
     ...overrides,
   }
 }
+
+const OPTS = { idPrefix: 'test', eventId: '20110312000000', originTimeIso: '2011-03-12T00:00:00.000Z' }
 
 const footnotes = new Map([['※1', [{ scaleFrom: 30, scaleTo: 55, regionNames: ['長野県北部'] }]]])
 
@@ -33,7 +36,7 @@ describe('buildEewEntries の severity 判定', () => {
       reports: [report({ reportNum: 1, isPublicWarningRow: false })],
       footnotes,
     }
-    const [entry] = buildEewEntries(parsed, { idPrefix: 'test' })
+    const [entry] = buildEewEntries(parsed, OPTS)
     const event = (entry.payload as { event: { severity: string } }).event
     expect(event.severity).toBe('Forecast')
   })
@@ -45,7 +48,7 @@ describe('buildEewEntries の severity 判定', () => {
       reports: [report({ reportNum: 1, isPublicWarningRow: true })],
       footnotes,
     }
-    const [entry] = buildEewEntries(parsed, { idPrefix: 'test' })
+    const [entry] = buildEewEntries(parsed, OPTS)
     const event = (entry.payload as { event: { severity: string } }).event
     expect(event.severity).toBe('Warning')
   })
@@ -60,7 +63,7 @@ describe('buildEewEntries の severity 判定', () => {
       ],
       footnotes,
     }
-    const entries = buildEewEntries(parsed, { idPrefix: 'test' })
+    const entries = buildEewEntries(parsed, OPTS)
     const severities = entries.map((e) => (e.payload as { event: { severity: string } }).event.severity)
     expect(severities).toEqual(['Warning', 'Warning'])
   })
@@ -78,7 +81,7 @@ describe('buildEewEntries の isFinal 判定', () => {
       ],
       footnotes,
     }
-    const entries = buildEewEntries(parsed, { idPrefix: 'test' })
+    const entries = buildEewEntries(parsed, OPTS)
     const isFinals = entries.map((e) => (e.payload as { event: { isFinal?: boolean } }).event.isFinal)
     expect(isFinals).toEqual([false, false, true])
   })
@@ -90,7 +93,7 @@ describe('buildEewEntries の isFinal 判定', () => {
       reports: [report({ reportNum: 1 })],
       footnotes,
     }
-    const [entry] = buildEewEntries(parsed, { idPrefix: 'test' })
+    const [entry] = buildEewEntries(parsed, OPTS)
     expect((entry.payload as { event: { isFinal?: boolean } }).event.isFinal).toBe(true)
   })
 
@@ -104,7 +107,7 @@ describe('buildEewEntries の isFinal 判定', () => {
       ],
       footnotes,
     }
-    expect(() => buildEewEntries(parsed, { idPrefix: 'test' })).toThrow(/isFinal/)
+    expect(() => buildEewEntries(parsed, OPTS)).toThrow(/isFinal/)
   })
 })
 
@@ -116,7 +119,7 @@ describe('buildEewEntries の forecastCell「震度予想なし」表記ゆれ',
       reports: [report({ reportNum: 1, forecastCell: '—' }), report({ reportNum: 2, forecastCell: '※1' })],
       footnotes,
     }
-    const entries = buildEewEntries(parsed, { idPrefix: 'test' })
+    const entries = buildEewEntries(parsed, OPTS)
     expect(entries).toHaveLength(1)
     expect((entries[0].payload as { event: { issue: { serial: string } } }).event.issue.serial).toBe('2')
   })
@@ -128,7 +131,7 @@ describe('buildEewEntries の forecastCell「震度予想なし」表記ゆれ',
       reports: [report({ reportNum: 1, forecastCell: '予測震度なし' }), report({ reportNum: 2, forecastCell: '※1' })],
       footnotes,
     }
-    const entries = buildEewEntries(parsed, { idPrefix: 'test' })
+    const entries = buildEewEntries(parsed, OPTS)
     expect(entries).toHaveLength(1)
     expect((entries[0].payload as { event: { issue: { serial: string } } }).event.issue.serial).toBe('2')
   })
@@ -140,7 +143,7 @@ describe('buildEewEntries の forecastCell「震度予想なし」表記ゆれ',
       reports: [report({ reportNum: 1, forecastCell: '謎の表記' })],
       footnotes,
     }
-    expect(() => buildEewEntries(parsed, { idPrefix: 'test' })).toThrow(/未知の予測震度セル/)
+    expect(() => buildEewEntries(parsed, OPTS)).toThrow(/未知の予測震度セル/)
   })
 })
 
@@ -152,7 +155,7 @@ describe('buildEewEntries の震央地名解決', () => {
       reports: [report({ reportNum: 1, latitude: 37.0, longitude: 138.6 })],
       footnotes,
     }
-    const [entry] = buildEewEntries(parsed, { idPrefix: 'test' })
+    const [entry] = buildEewEntries(parsed, OPTS)
     const event = (entry.payload as { event: { earthquake: { hypocenter: { name: string } } } }).event
     expect(event.earthquake.hypocenter.name).toBe('長野県北部')
   })

@@ -103,7 +103,7 @@ describe('臨時情報・後発地震注意情報', () => {
     expect(notify).not.toHaveBeenCalled()
   })
   it('安全弁: 地震情報の通知を切っていても、臨時情報の通知は出す', () => {
-    const { handle } = setup({ notifyMinScale: -1 })
+    const { handle } = setup({ notifyQuake: false })
     handle({ kind: 'kohatsu', data: kohatsu() })
     expect(notify).toHaveBeenCalledWith('北海道・三陸沖後発地震注意情報', '要約。', 'kohatsu')
   })
@@ -182,7 +182,7 @@ describe('長周期地震動に関する観測情報', () => {
     expect(notify).toHaveBeenCalledWith('長周期地震動に関する観測情報', '石川県能登地方 最大長周期地震動階級3', 'lpgm-20260101161000')
   })
   it('対照: 地震情報の通知を切れば通知しない（タイトルは出す）', () => {
-    const { handle, titles } = setup({ notifyMinScale: -1 })
+    const { handle, titles } = setup({ notifyQuake: false })
     handle({ kind: 'lpgm', data: lpgm() })
     expect(notify).not.toHaveBeenCalled()
     expect(titles()).toHaveLength(1)
@@ -208,7 +208,7 @@ describe('推計震度分布図', () => {
     expect(notify).toHaveBeenCalledWith('推計震度分布図', '10時05分頃発生した地震の推計震度分布図を受信しました', 'estimated-intensity-2026-10-24T10:05:00+09:00')
   })
   it('対照: 地震情報の通知を切れば通知しない', () => {
-    const { handle } = setup({ notifyMinScale: -1 })
+    const { handle } = setup({ notifyQuake: false })
     handle({ kind: 'estimatedIntensity', data: ei, isNew: true })
     expect(notify).not.toHaveBeenCalled()
   })

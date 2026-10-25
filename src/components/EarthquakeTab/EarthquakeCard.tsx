@@ -1798,7 +1798,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
         <div className="flex-1 min-w-0">
           {/* 震源地名。1 行に固定し、収まらない分は末尾を省略する。
               「熊本県天草・芦北地方」級の名前が折り返すとカードだけが縦に伸びて一覧の行が
-              揃わなくなるため、ここは伸ばさない。発表種別は日時の行へ逃がし、地名に幅を明け渡している。 */}
+              揃わなくなるため、ここは伸ばさない。発表種別は日時の行へ逃がし、地名に幅を明け渡している。
+              津波から借りた震源でも印（※）と説明の行は出さない（2026-10-14 ユーザー選択「今のまま」。
+              開いたカードには出る。→ quake-spec §8「借りた値の出どころ」）。 */}
           <div className="text-white font-bold text-lg leading-tight truncate mb-1">
             {epicenterLabel}
           </div>

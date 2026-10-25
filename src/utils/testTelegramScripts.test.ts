@@ -407,6 +407,65 @@ function tsunamisOf(built: BuiltTestTelegram[]): JMATsunami[] {
   return payloads(built).flatMap(p => (p.kind === 'event' && p.event.kind === 'tsunami' ? [p.event] : []))
 }
 
+/** 区域ごとの等級と予想の高さ（津波情報が写すもの）。 */
+const forecastOf = (t: JMATsunami) => new Map(t.areas.map(a => [a.code || a.name, `${a.grade} ${a.maxHeight?.description ?? ''}`]))
+
+describe('津波情報は区域の等級と予想を動かさない', () => {
+  // **津波情報（VTSE51）・沖合の観測（VTSE52）が載せる区域は、その時点の津波警報等（VTSE41）の写し。**
+  // 等級や予想を動かすのは津波警報等だけなので、食い違う台本は実配信に無い形を流している
+  // （→ docs/spec/settings-pwa-spec.md §7「実配信に無い形を作らない」）。受け手はこの形を
+  // 「等級が動いた報に避難行動の付加文が無い」として記録する（`warnIfActionLineGoesStale`）。
+  //
+  // 同じ組み立てで、実配信の並びとして崩れていないことも見る —— **作成時刻の順に届く**（逆だと受け手が
+  // 重ね直しへ回る。→ `utils/tsunami.ts` の `arrivesOutOfOrder`）、**第１波の到達確認は後戻りしない**。
+  for (const [name, script] of Object.entries(scripts.ALL_TEST_TELEGRAM_SCRIPTS)) {
+    it.each([true, false])(`${name}（DMDSS 版 = %s）`, async (isDmdss) => {
+      let warning: Map<string, string> | undefined
+      let lastCreatedAt = -Infinity
+      const arrived = new Set<string>()
+      for (const t of tsunamisOf(await build(script, isDmdss))) {
+        if (!script.stepByPress && !script.pacedByApp && t.createdAtMs !== undefined) {
+          expect(`${t.id} ${t.createdAtMs}`).toBe(`${t.id} ${Math.max(t.createdAtMs, lastCreatedAt)}`)
+          lastCreatedAt = t.createdAtMs
+        }
+        // 津波警報等は区域を作り直す（予報へ下げた区域は第１波の欄ごと消える。能登の実電文がこの形）ので、
+        // 後戻りを見るのは津波情報・沖合の観測だけ
+        for (const a of t.areas) {
+          const key = `${t.eventId} ${a.code || a.name}`
+          if (a.firstHeight?.condition === '第１波の到達を確認') arrived.add(key)
+          else if (t.headType === 'VTSE41') arrived.delete(key)
+          else if (arrived.has(key)) expect(`${t.id} ${key} ${a.firstHeight?.condition ?? ''}`).toBe(`${t.id} ${key} 第１波の到達を確認`)
+        }
+        if (t.headType === 'VTSE41') {
+          if (t.areas.length > 0) warning = forecastOf(t)
+          continue
+        }
+        if (!warning) continue
+        for (const [key, value] of forecastOf(t)) {
+          if (!warning.has(key)) continue
+          expect(`${t.id} ${key} ${value}`).toBe(`${t.id} ${key} ${warning.get(key)}`)
+        }
+      }
+    })
+  }
+
+  // 正: 変化の小さい続報テストの満潮時刻の報（14:50 のサンプル）は、15:00 の続報の等級と高さへ揃えてある
+  it('変化の小さい続報テストの満潮時刻の報は、段 0 の続報と同じ区域の予想を持つ', async () => {
+    const tsunamis = tsunamisOf(await build(scripts.TSUNAMI_QUIET_REPORTS))
+    const tides = tsunamis.filter(t => t.infoName?.includes('満潮'))
+    expect(tides).toHaveLength(5)
+    for (const tide of tides) expect(forecastOf(tide)).toEqual(forecastOf(tsunamis[0]))
+  })
+
+  // 対照: 大津波警報テストの満潮時刻の報は書き換えず、14:49 の発表の写しのまま流す
+  it('大津波警報テストの満潮時刻の報は、14:49 の発表と同じ区域の予想のまま', async () => {
+    const tsunamis = tsunamisOf(await build(scripts.TSUNAMI_MAJOR_WARNING))
+    const tide = tsunamis.find(t => t.infoName?.includes('満潮'))!
+    expect(forecastOf(tide)).toEqual(forecastOf(tsunamis[0]))
+    expect(forecastOf(tide)).not.toEqual(forecastOf(tsunamis.find(t => t.infoName?.includes('観測') && t.headType === 'VTSE51')!))
+  })
+})
+
 describe('変化の小さい続報テスト', () => {
   // 正: 段の並び（発表 → 観測情報 → 沖合 → 観測情報 → 満潮時刻 → 全解除）と、津波が 1 つの事象で続く
   it('発表のあと 16 通の続報が同じ津波へ届き、最後に全解除で終わる', async () => {
