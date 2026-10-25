@@ -10,7 +10,7 @@ import type { LatLng } from '../../utils/stationCoords'
 import type { EEWAlert } from '../../types/earthquake'
 import type { ShakeFocus } from './mapTypes'
 import type { PsWaveCircle } from '../../services/kyoshin'
-import { openPopupAt, closeMapPopup } from './gl/popupRegistry'
+import { openPopupAt, openPopupHtmlAt, closeMapPopup } from './gl/popupRegistry'
 import { openTsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 import { distributionMaxZoom, fitMaxZoom, focusMaxZoom } from './gl/camera'
 
@@ -61,7 +61,7 @@ vi.mock('maplibre-gl', () => {
 
 // 吹き出しの調停役は本物の Popup（DOM）を作るため、呼ばれたことだけを見る。
 // ここで確かめたいのは「いつ・どこで開くよう頼んだか」であって、吹き出しの中身ではない。
-vi.mock('./gl/popupRegistry', () => ({ openPopupAt: vi.fn(), closeMapPopup: vi.fn() }))
+vi.mock('./gl/popupRegistry', () => ({ openPopupAt: vi.fn(), openPopupHtmlAt: vi.fn(), closeMapPopup: vi.fn() }))
 vi.mock('./gl/tsunamiMarkerPopup', () => ({ openTsunamiMarkerPopup: vi.fn(() => true), closeTsunamiMarkerPopups: vi.fn() }))
 
 // fitJapan は padding 20、点群へのフィット（fitToPositions / flyToBoundsSnapped）は padding 60 で
@@ -2691,17 +2691,22 @@ describe('揺れフォーカスの担当の受け渡し', () => {
 // 地震カードの観測点の行から座標で渡される経路。津波（FocusObsGL）との違いは、寄り先を
 // 名前ではなく座標で受け取ること。**鍵は座標ではなく `ts`** で、同じ行を続けて押しても効く。
 
-function pointFocusHarness(map: maplibregl.Map, focus: { positions: LatLng[]; ts: number } | null) {
+function pointFocusHarness(
+  map: maplibregl.Map,
+  focus: { positions: LatLng[]; ts: number } | null,
+  hiddenPointPopupHtml: (position: LatLng) => string | null = () => null,
+) {
   return h(
     MapGLContext.Provider,
     { value: map },
-    h(FocusTargetGL, { focusTarget: focus }),
+    h(FocusTargetGL, { focusTarget: focus, hiddenPointPopupHtml }),
   )
 }
 
 describe('一覧の行クリックによる地点フォーカス', () => {
   beforeEach(() => {
     vi.mocked(openPopupAt).mockClear()
+    vi.mocked(openPopupHtmlAt).mockClear()
     vi.mocked(closeMapPopup).mockClear()
   })
 
@@ -2813,6 +2818,43 @@ describe('一覧の行クリックによる地点フォーカス', () => {
     // 新しい飛行が着地して初めて開く。
     act(() => { map.fire('moveend') })
     expect(openPopupAt).toHaveBeenCalledWith(map, [131.0, 34.0])
+  })
+
+  // 震度分布モードのあいだは観測点ドットを描かないので、地図の当たり判定では開けない。
+  // 押した行の吹き出しだけは、渡された中身で開く（2026-10-22 ユーザー選択「押した行の吹き出しだけ出す (Recommended)」）。
+  it('[正] 寄り先の点が描かれていなければ、渡された中身で吹き出しを開く', () => {
+    const map = createFakeMap()
+    render(pointFocusHarness(map, { positions: [[34.0, 131.0]], ts: 1 }, () => '<div>観測点</div>'))
+
+    act(() => { map.fire('moveend') })
+
+    expect(openPopupHtmlAt).toHaveBeenCalledWith(map, [131.0, 34.0], '<div>観測点</div>')
+    expect(openPopupAt).not.toHaveBeenCalled()
+  })
+
+  it('[対照] 寄り先の点が描かれていれば、地図の当たり判定で開く', () => {
+    const map = createFakeMap()
+    render(pointFocusHarness(map, { positions: [[34.0, 131.0]], ts: 1 }, () => null))
+
+    act(() => { map.fire('moveend') })
+
+    expect(openPopupAt).toHaveBeenCalledWith(map, [131.0, 34.0])
+    expect(openPopupHtmlAt).not.toHaveBeenCalled()
+  })
+
+  // 安全弁: 描かれているかは着地した時点で決める。飛んでいる間に分布モードを閉じた（または開いた）
+  // ときに、押した瞬間の表示で決めると、描いている点に別の吹き出しを重ねるか、描いていない点で空振りする。
+  it('[安全弁] 描かれているかは押した時点ではなく着地した時点で決める', () => {
+    const map = createFakeMap()
+    // 地図の親は同じ寄せの要求（同じオブジェクト）を持ったまま、表示だけが変わって描き直される。
+    const focus = { positions: [[34.0, 131.0]] as LatLng[], ts: 1 }
+    const view = render(pointFocusHarness(map, focus, () => '<div>観測点</div>'))
+    view.rerender(pointFocusHarness(map, focus, () => null))
+
+    act(() => { map.fire('moveend') })
+
+    expect(openPopupAt).toHaveBeenCalledWith(map, [131.0, 34.0])
+    expect(openPopupHtmlAt).not.toHaveBeenCalled()
   })
 
   // 安全弁: 着地を待っている間に別の行が押されたら、前の予約は降ろす。

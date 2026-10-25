@@ -51,16 +51,7 @@ function buildFC(
       properties: {
         iconId: intensityIconId(m.scale),
         iconSizeRatio: radius / INTENSITY_ICON_BASE_RADIUS,
-        scale: m.scale,
-        addr: m.addr,
-        pref: m.pref,
-        region: m.region ?? '',
-        isArea: m.isArea,
-        nonJma: m.nonJma ?? false,
-        // 震源が無い電文では距離を出さない（-1 を「不明」の番兵として扱う）。
-        distanceKm: epicenter
-          ? Math.round(haversineKm(epicenter[0], epicenter[1], m.position[0], m.position[1]))
-          : -1,
+        ...popupProperties(m, epicenter),
         // 同じ階級のバッジを画面の手前から並べるために持たせる（gl/screenDepth.ts）。
         ...mercatorProps(m.position[1], m.position[0]),
       },
@@ -68,6 +59,31 @@ function buildFC(
     }
   })
   return { type: 'FeatureCollection', features }
+}
+
+/** 吹き出しが読む属性。地図の点と、描いていない点の吹き出し（{@link quakePointClickHtml}）で共有する。 */
+function popupProperties(m: IntensityMarker, epicenter: LatLng | null) {
+  return {
+    scale: m.scale,
+    addr: m.addr,
+    pref: m.pref,
+    region: m.region ?? '',
+    isArea: m.isArea,
+    nonJma: m.nonJma ?? false,
+    // 震源が無い電文では距離を出さない（-1 を「不明」の番兵として扱う）。
+    distanceKm: epicenter
+      ? Math.round(haversineKm(epicenter[0], epicenter[1], m.position[0], m.position[1]))
+      : -1,
+  }
+}
+
+/**
+ * 観測点を押したときと同じ吹き出しの中身を、地図の点を介さずに組む。
+ * 震度分布モードのあいだは点を描かないので、一覧の行から押した観測点の吹き出しはこれで出す
+ * （`JapanMapGL` → `FocusTargetGL`）。
+ */
+export function quakePointClickHtml(m: IntensityMarker, epicenter: LatLng | null): string {
+  return clickHtml({ properties: popupProperties(m, epicenter) } as unknown as MapGeoJSONFeature)
 }
 
 /**

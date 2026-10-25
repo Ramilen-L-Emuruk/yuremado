@@ -33,7 +33,7 @@ import { decideTsunamiFit } from './gl/tsunamiFit'
 import { eewFirstFocusTarget, type EewFirstFocusTarget } from './gl/bounds'
 import { hasObservedHeightChanged, hasMaxHeightTimeAdvanced, firstWaveSpokenKey, type ObservedHeightRank } from '../../utils/tsunami'
 import type { TsunamiObsBar } from '../../hooks/useTsunamiLayerData'
-import { openPopupAt, closeMapPopup } from './gl/popupRegistry'
+import { openPopupAt, openPopupHtmlAt, closeMapPopup } from './gl/popupRegistry'
 import { openTsunamiMarkerPopup, closeTsunamiMarkerPopups } from './gl/tsunamiMarkerPopup'
 import { log } from '../../utils/logger'
 
@@ -1622,7 +1622,18 @@ export function FocusObsGL({
  * 行の内容と関係がなく、無関係な吹き出しが出る。**どちらの場合も、動かす前に開いている吹き出しは
  * 閉じる** —— 残すと、寄せた範囲の外を指したまま画面の端に取り残される。
  */
-export function FocusTargetGL({ focusTarget }: { focusTarget: MapFocusTarget | null }) {
+export function FocusTargetGL({ focusTarget, hiddenPointPopupHtml }: {
+  focusTarget: MapFocusTarget | null
+  /**
+   * 寄り先の点が地図に描かれていないときの吹き出しの中身（描かれているなら `null` を返す）。
+   * 震度分布モードのあいだは観測点ドットを描かないが、押した行の観測点の吹き出しだけは出す
+   * （2026-10-22 ユーザー選択「押した行の吹き出しだけ出す (Recommended)」）。
+   */
+  hiddenPointPopupHtml: (position: LatLng) => string | null
+}) {
+  // 判定の関数は描き直しのたびに作り直されるので、寄せの effect の依存へ入れず ref で読む。
+  const hiddenPopupRef = useRef(hiddenPointPopupHtml)
+  hiddenPopupRef.current = hiddenPointPopupHtml
   const map = useMapGL()
   const handledTsRef = useRef(0)
   useEffect(() => {
@@ -1646,7 +1657,12 @@ export function FocusTargetGL({ focusTarget }: { focusTarget: MapFocusTarget | n
     }
     const [lat, lng] = positions[0]
     fitToPositions(map, positions, { durationSec: 1.0, maxZoom: focusMaxZoom(map) })
-    const openPopup = () => openPopupAt(map, [lng, lat])
+    const openPopup = () => {
+      // 着地した時点の表示で決める（飛んでいる間にモードが切り替わることがある）。
+      const html = hiddenPopupRef.current(positions[0])
+      if (html !== null) openPopupHtmlAt(map, [lng, lat], html)
+      else openPopupAt(map, [lng, lat])
+    }
     // **購読はカメラを動かした「あと」に張る。** `flyTo` は進行中の飛行を打ち切るとき、
     // その場で `moveend` を発火する。先に張ると「前の飛行が止まった瞬間」を着地と取り違え、
     // まだ目的地へ着いていない画面座標で判定してしまう（実機で、飛行中に別の行を押すと

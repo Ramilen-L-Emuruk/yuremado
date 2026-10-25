@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import type { JMAQuake, JMALpgm, IntensityScale, LpgmPeriodBand, JMAEstimatedIntensity } from '../types/earthquake'
+import type { JMAQuake, JMAQuakeCity, JMALpgm, IntensityScale, LpgmPeriodBand, JMAEstimatedIntensity } from '../types/earthquake'
 import { useStationCoords } from './useStationCoords'
 import { useSubRegions } from './useSubRegions'
 import {
@@ -82,6 +82,11 @@ export interface RegionAggregate {
   scale: number
   rings: LatLng[][]
   label: LatLng
+  /**
+   * この区域に属する市町村の震度（電文の `Pref/Area/City`。並びは電文のまま＝気象庁の標準順）。
+   * 区域塗りの吹き出しに出す。**市町村の震度を載せない報（震度速報・標準版）では空**。
+   */
+  cities: JMAQuakeCity[]
 }
 
 export interface LpgmMarker {
@@ -392,15 +397,24 @@ export function useQuakeLayerData(
   // 切り替わる瞬間に初めて実データで setData されるのを避けるため（GeoJSON source の
   // 非同期タイル化待ちで区域塗りが一瞬空になるフリッカーの原因だった）。regionMaxByName・
   // quakeFitPositions と同じ「zoomを待たない」設計に揃える。
+  const quakeCities = quake?.cities
   const regionAggregates = useMemo<RegionAggregate[]>(() => {
     if (subregionIndex.length === 0) return []
+    const citiesByArea = new Map<string, JMAQuakeCity[]>()
+    for (const c of quakeCities ?? []) {
+      const list = citiesByArea.get(c.area)
+      if (list) list.push(c)
+      else citiesByArea.set(c.area, [c])
+    }
     const list: RegionAggregate[] = []
     for (const e of subregionIndex) {
       const scale = regionMaxByName.get(e.sr.name)
-      if (scale != null) list.push({ name: e.sr.name, scale, rings: e.sr.rings, label: e.sr.label })
+      if (scale != null) {
+        list.push({ name: e.sr.name, scale, rings: e.sr.rings, label: e.sr.label, cities: citiesByArea.get(e.sr.name) ?? [] })
+      }
     }
     return list.sort((a, b) => a.scale - b.scale)
-  }, [subregionIndex, regionMaxByName])
+  }, [subregionIndex, regionMaxByName, quakeCities])
 
   /**
    * 区域塗りに現れない未入電の地点（引いた画でも出す分）。

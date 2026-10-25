@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { LatLng } from '../../utils/stationCoords'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import * as maplibregl from 'maplibre-gl'
 // maplibre-gl.css は main.tsx が index.css より前に読む（カスケード順を固定するため。詳細は main.tsx）。
@@ -17,7 +18,7 @@ import { KyoshinMaxEffectGL } from './KyoshinMaxEffectGL'
 import { ActiveFaultsGL } from './ActiveFaultsGL'
 import { PlateBoundariesGL } from './PlateBoundariesGL'
 import { DayNightGL } from './DayNightGL'
-import { QuakeIntensityPointsGL } from './QuakeIntensityPointsGL'
+import { QuakeIntensityPointsGL, quakePointClickHtml } from './QuakeIntensityPointsGL'
 import { QuakeUnreceivedPointsGL } from './QuakeUnreceivedPointsGL'
 import { QuakeIntensitySurfaceGL } from './QuakeIntensitySurfaceGL'
 import { QuakeEstimatedIntensityGL } from './QuakeEstimatedIntensityGL'
@@ -349,6 +350,15 @@ export function JapanMapGL({
   // 凡例・重なり判定の合図・描画の 3 か所で同じものを使う（片方だけ直すと食い違う）。
   const drawnUnreceivedMarkers = unreceivedMode || !aggregateByRegion ? unreceivedMarkers : orphanUnreceivedMarkers
   const unreceivedMarkersVisible = mode === 'quake' && !lpgmActive && !distributionMode
+
+  // 震度分布モードのあいだは観測点ドットを描かないので、一覧の行から寄せた観測点は地図の上で
+  // 当たらない。押した行の吹き出しだけは出す（2026-10-22 ユーザー選択「押した行の吹き出しだけ出す (Recommended)」）。
+  // ドットは出さない・続報で分布モードを閉じる、は従来どおり（2026-09-12・09-13 承認）。
+  const hiddenPointPopupHtml = useCallback((position: LatLng): string | null => {
+    if (mode !== 'quake' || !distributionMode) return null
+    const m = stationMarkers.find((p) => p.position[0] === position[0] && p.position[1] === position[1])
+    return m ? quakePointClickHtml(m, epicenter) : null
+  }, [mode, distributionMode, stationMarkers, epicenter])
   const overlapSignature = useMemo(() => {
     const parts = [
       aggregateByRegion ? regionAggregates.map((r) => r.name).join(',') : '',
@@ -891,7 +901,7 @@ export function JapanMapGL({
           <FocusObsGL focusObsName={focusObsName} observationBars={focusablePoints} />
           {/* 一覧の行クリックで渡された地点へ寄せる（いまの呼び出し元は地震カードの観測点の行）。
               モード切替をまたいで「処理済みの ts」を保つため常時マウントする。 */}
-          <FocusTargetGL focusTarget={focusTarget} />
+          <FocusTargetGL focusTarget={focusTarget} hiddenPointPopupHtml={hiddenPointPopupHtml} />
         </MapGLContext.Provider>
       </div>
     </div>
