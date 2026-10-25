@@ -269,6 +269,8 @@ export async function collectUnlistedStations(listed) {
   const empty = []
   const degraded = []
   const noPref = new Set()
+  /** 県が欠けていたのを、同じ版の同じ市町村の観測点から補ったもの（"補った県|観測点名"）。 */
+  const prefFilled = new Set()
   let noName = 0
   for (const revision of revisions) {
     const url = `https://gist.githubusercontent.com/${GIST_USER}/${GIST_ID}/raw/${revision}/${GIST_FILE}`
@@ -301,10 +303,23 @@ export async function collectUnlistedStations(listed) {
       empty.push(revision.slice(0, 8))
       continue
     }
-    let dropped = 0
+    // **県が欠けた観測点は、同じ版で同じ市町村コードを持つ観測点の県で補う。** 上流には県だけが
+    // 抜けた行が実在し（伊豆大島町岡田）、捨てるとその観測点が地図から落ちる。市町村は県をまたがない
+    // ので、同じ市町村の観測点の県はそのまま使える。補えないものだけを従来どおり捨てる。
+    const prefByCity = new Map()
     for (const s of stations) {
+      if (s?.city?.code && s?.pref?.name && !prefByCity.has(s.city.code)) prefByCity.set(s.city.code, s.pref)
+    }
+    let dropped = 0
+    for (const raw of stations) {
+      let s = raw
       if (!s?.name) { noName++; dropped++; continue }
-      if (!s?.pref?.name) { noPref.add(s.name); dropped++; continue }
+      if (!s?.pref?.name) {
+        const pref = s?.city?.code ? prefByCity.get(s.city.code) : undefined
+        if (!pref) { noPref.add(s.name); dropped++; continue }
+        s = { ...s, pref }
+        prefFilled.add(`${pref.name}|${s.name}`)
+      }
       const key = stationKeyOf(s)
       if (listed.has(key) || unlisted.has(key)) continue
       unlisted.set(key, s)
@@ -327,6 +342,9 @@ export async function collectUnlistedStations(listed) {
   }
   if (degraded.length > 0) {
     console.warn(`観測点の大半が落ちた版: ${degraded.join(' ')}`)
+  }
+  if (prefFilled.size > 0) {
+    console.warn(`都道府県の無い観測点 ${prefFilled.size} 点に、同じ市町村の観測点から県を補った: ${[...prefFilled].join(' ')}`)
   }
   if (noPref.size > 0) {
     console.warn(`都道府県の無い観測点 ${noPref.size} 点を飛ばした: ${[...noPref].slice(0, 5).join(' ')}`)

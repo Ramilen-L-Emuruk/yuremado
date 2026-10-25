@@ -19,6 +19,7 @@ import { writeFile, mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { collectUnlistedStations, fetchListedStations, LISTED_COUNT_RANGE } from './lib/stationSource.mjs'
+import { STATION_COORD_SUPPLEMENTS, UNRESOLVED_STATIONS } from './lib/stationCoordSupplements.mjs'
 
 /**
  * 現行の一覧に無い観測点として受け入れる件数の幅。2026-09 時点で 134 点。
@@ -125,17 +126,36 @@ async function main() {
   const listedKeys = new Set(Object.keys(stationCoords))
   const unlistedSource = await collectUnlistedStations(listedKeys)
   const unlistedCoords = {}
-  let unlistedNoCoords = 0
+  const unlistedNoCoords = []
   for (const [key, s] of unlistedSource) {
     const entry = entryOf(s)
-    // 座標を読めないものは載せられない。**数えて出す** —— 上流の書式が変わって全滅しても、
-    // 件数の検査を他のリビジョンぶんで通り抜けてしまうため。
+    // 座標を読めないものは載せられない。**名前ごと出す** —— 上流の書式が変わって全滅しても、
+    // 件数の検査を他のリビジョンぶんで通り抜けてしまうため。名前があれば、どの観測点が
+    // 地図に出ないかを生成のたびに追える。
     if (entry) unlistedCoords[key] = entry
-    else unlistedNoCoords++
+    else unlistedNoCoords.push(key)
   }
-  if (unlistedNoCoords > 0) {
-    console.warn(`座標を読めない未掲載の観測点 ${unlistedNoCoords} 点を飛ばした`)
+  if (unlistedNoCoords.length > 0) {
+    console.warn(`座標を読めない未掲載の観測点 ${unlistedNoCoords.length} 点を飛ばした: ${unlistedNoCoords.slice(0, 10).join(' / ')}`)
   }
+
+  // 上流のどの版にも無いが過去の電文に現れる観測点を、手で調べた座標で補う（`lib/stationCoordSupplements.mjs`）。
+  // **上流に後から現れたら上流を採る**（表の値は 0.01 度粒度の当時の値で、上流より新しいとは限らない）。
+  // 採らなかった件数は出す —— 表に残った行が死んでいることに気づけるように。
+  let supplementShadowed = 0
+  for (const s of STATION_COORD_SUPPLEMENTS) {
+    const key = `${s.pref}|${s.name}`
+    if (listedKeys.has(key) || key in unlistedCoords) { supplementShadowed++; continue }
+    unlistedCoords[key] = entryOf({ lat: s.lat, lon: s.lon, area: { name: s.area } })
+  }
+  console.log(
+    `手で補った観測点 ${STATION_COORD_SUPPLEMENTS.length - supplementShadowed} 点`
+    + (supplementShadowed > 0 ? `（上流に現れたので使わなかった ${supplementShadowed} 点）` : ''),
+  )
+  console.warn(
+    `座標を引けない観測点 ${UNRESOLVED_STATIONS.length} 点（地図に出ない）: `
+    + UNRESOLVED_STATIONS.map((s) => `${s.pref}|${s.name}`).join(' / '),
+  )
 
   const areaCoords = {}
   for (const [key, { latSum, lonSum, count }] of areaAccumulator) {
