@@ -39,7 +39,7 @@ vi.mock('../services/seismoWaveHistory', async (importOriginal) => ({
 
 // **トップレベルで一度読む。** テスト本体で初めて解決すると、その待ちが 1 件目の
 // 所要時間に乗って並列実行のときだけ時間切れになる（CLAUDE.md「検証」）。
-const { pickTargets, rememberPicks, useSeismoQuakeWaves, useSeismoQuakeWavesWithStatus, judgeWaveInterrupted } = await import(
+const { pickTargets, rememberPicks, useSeismoQuakeWaves, useSeismoQuakeWavesWithStatus, judgeWaveInterrupted, isIntensityWithheld } = await import(
   './useSeismoQuakeWaves'
 )
 
@@ -86,6 +86,19 @@ function history(overrides: Record<string, unknown> = {}) {
       ...overrides,
     },
   }
+}
+
+/**
+ * 訊かれた範囲を静かな列で埋めて返す（揺れが収まった地震の見本）。**列の刻みは訊かれた範囲と列数から決める** ——
+ * 続きの読み返しが前の列へ継げる形にしないと、「継げずに途中で止めた」経路を通り、震度を訊かない側へ落ちる。
+ */
+function quietHistory(p: { range: { fromMs: number; toMs: number }; columns: number }) {
+  const v = 0.01
+  return history({
+    fromMs: p.range.fromMs,
+    columnSpanMs: (p.range.toMs - p.range.fromMs) / p.columns,
+    columns: Array.from({ length: p.columns }, () => ({ min: [-v, -v, -v] as const, max: [v, v, v] as const, minMembers: 3 })),
+  })
 }
 
 function okStatus() {
@@ -1058,13 +1071,13 @@ describe('震度を訊く（#494 段3）', () => {
   const intensityOf = (waves: ReadonlyMap<string, readonly { intensity: unknown }[]>) =>
     [...waves.values()][0]?.[0]?.intensity
 
-  // 正: 伸ばし終えた地震（ここでは安全弁の 30 分を過ぎたもの）は震度を訊き、訊いた区間で持つ。
+  // 正: 伸ばし終えた地震（ここでは静かな列で、途中で止めずに伸ばし終えたもの）は震度を訊き、訊いた区間で持つ。
   it('伸ばし終えた地震は震度を訊き、訊いた区間の値として載せる', async () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(new Date('2026/09/29 23:00:00'))
       fetchSeismoStatus.mockResolvedValue(okStatus())
-      fetchSeismoWaveHistory.mockResolvedValue(history())
+      fetchSeismoWaveHistory.mockImplementation(quietHistory)
       fetchSeismoQuakeIntensity.mockResolvedValueOnce(intensityOk())
       const { result } = render()
       await settleStations()
@@ -1087,7 +1100,7 @@ describe('震度を訊く（#494 段3）', () => {
     try {
       vi.setSystemTime(new Date('2026/09/29 22:00:05'))
       fetchSeismoStatus.mockResolvedValue(okStatus())
-      fetchSeismoWaveHistory.mockResolvedValue(history())
+      fetchSeismoWaveHistory.mockImplementation(quietHistory)
       render()
       await act(async () => {
         await vi.advanceTimersByTimeAsync(5000)
@@ -1103,7 +1116,7 @@ describe('震度を訊く（#494 段3）', () => {
     try {
       vi.setSystemTime(new Date('2026/09/29 22:00:05'))
       fetchSeismoStatus.mockResolvedValue(okStatus())
-      fetchSeismoWaveHistory.mockResolvedValue(history())
+      fetchSeismoWaveHistory.mockImplementation(quietHistory)
       render(-3600_000)
       await settleStations()
       await act(async () => {
@@ -1121,7 +1134,7 @@ describe('震度を訊く（#494 段3）', () => {
     try {
       vi.setSystemTime(new Date('2026/09/29 23:00:00'))
       fetchSeismoStatus.mockResolvedValue(okStatus())
-      fetchSeismoWaveHistory.mockResolvedValue(history())
+      fetchSeismoWaveHistory.mockImplementation(quietHistory)
       const { rerender } = render()
       await settleStations()
       await act(async () => {
@@ -1146,7 +1159,7 @@ describe('震度を訊けなかったときの取り直し（#494 段3）', () =
   function renderReplay(now: string, replayOffsetMs: number | null) {
     vi.setSystemTime(new Date(now))
     fetchSeismoStatus.mockResolvedValue(okStatus())
-    fetchSeismoWaveHistory.mockResolvedValue(history())
+    fetchSeismoWaveHistory.mockImplementation(quietHistory)
     return renderHook(() =>
       useSeismoQuakeWaves({
         enabled: true,
@@ -1497,5 +1510,104 @@ describe('揺れが収まるまで読み返しを伸ばす（S16）', () => {
       vi.useRealTimers()
     }
   })
+
+  /** 震度の口の返事（中身は問わない。訊いたかどうかだけを見る）。 */
+  function intensityAnswer() {
+    return {
+      kind: 'ok' as const,
+      intensity: {
+        fromMs: 0,
+        toMs: 0,
+        maxRealtime: 2.3,
+        maxRealtimeAtMs: null,
+        realtimeSeries: [],
+        measured: 1.9,
+        measuredUnavailable: null,
+        usualMeasured: null,
+        gapCount: 0,
+        invalidChunkCount: 0,
+        unsolvedChunkCount: 0,
+        filesMissing: 0,
+        filesFailed: 0,
+        skippedBytes: 0,
+        truncated: false,
+      },
+    }
+  }
+
+  /** 最初の窓は最後まで揺れていて、続きの読み返しには `second` を返す。 */
+  async function runWithSecond(second: (range: { fromMs: number; toMs: number }) => unknown) {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026/09/29 23:00:05'))
+    try {
+      fetchSeismoStatus.mockResolvedValue(okStatus())
+      fetchSeismoQuakeIntensity.mockResolvedValue(intensityAnswer())
+      let call = 0
+      fetchSeismoWaveHistory.mockImplementation(async (p: { range: { fromMs: number; toMs: number } }) => {
+        call += 1
+        return call === 1 ? columnsFor(p.range.fromMs, p.range.toMs, true) : second(p.range)
+      })
+      const { result } = render()
+      await settleStations()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000)
+      })
+      return result.current.get(quakeEventKey(SECONDS_QUAKE))?.[0]
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+
+  // 覆した（2026-10-25 選択「震度を訊かない (Recommended)」）: 揺れの途中で続きの記録が無く止めた区間は、
+  // 伸ばし終えた扱い（詳細の窓が生のサンプルを取り直す）にはするが、震度は訊かない。以前は収まったときと同じく訊いていた。
+  it('覆した: 続きの記録が無くて途中で止めたら、震度を訊かない', async () => {
+    const wave = await runWithSecond((range) => history({ fromMs: range.fromMs, columnSpanMs: 250, columns: [], hasAnyValue: false }))
+    expect(fetchSeismoWaveHistory).toHaveBeenCalledTimes(2)
+    expect(wave?.complete).toBe(true)
+    expect(fetchSeismoQuakeIntensity).not.toHaveBeenCalled()
+  })
+
+  // 正: 範囲が通らずに止めたときも同じ（途中で止めた理由を問わない）。
+  it('正: 続きの範囲が通らずに途中で止めたら、震度を訊かない', async () => {
+    await runWithSecond(() => ({ kind: 'bad-request' as const, detail: '見本' }))
+    expect(fetchSeismoWaveHistory).toHaveBeenCalledTimes(2)
+    expect(fetchSeismoQuakeIntensity).not.toHaveBeenCalled()
+  })
+
+  // 対照: 揺れが収まって止めたら、今までどおり訊く。
+  it('対照: 続きで揺れが収まって止めたら、震度を訊く', async () => {
+    const wave = await runWithSecond((range) => columnsFor(range.fromMs, range.toMs, false))
+    expect(wave?.complete).toBe(true)
+    expect(fetchSeismoQuakeIntensity).toHaveBeenCalledTimes(1)
+  })
 })
 
+describe('isIntensityWithheld（#1042）', () => {
+  const ORIGIN = Date.parse('2026-09-29T22:00:00+09:00')
+  const SPAN = 250
+  const target = (cutoffMs: number) => ({ originMs: ORIGIN, cutoffMs })
+  const cut = (atMs: number) => ({ kind: 'cut-short' as const, atMs })
+
+  // 正: 窓の終わり（次の有感地震）より手前で止めた区間は訊かない。
+  it('正: 窓の終わりより手前で止めたら訊かない', () => {
+    expect(isIntensityWithheld(cut(ORIGIN + 120_000), SPAN, target(ORIGIN + 600_000))).toBe(true)
+  })
+
+  // 対照: 次の有感地震が来て窓が止めた時点まで切り戻されたら、窓の中は揃っているので訊く（境目は 1 列ぶんの手前）。
+  it('対照: 窓が止めた時点まで切り戻されたら訊く', () => {
+    expect(isIntensityWithheld(cut(ORIGIN + 120_000), SPAN, target(ORIGIN + 120_000 + SPAN))).toBe(false)
+    expect(isIntensityWithheld(cut(ORIGIN + 120_000), SPAN, target(ORIGIN + 120_000 + SPAN + 1))).toBe(true)
+  })
+
+  // 対照: 収まった・上限に届いた・伸ばしている最中は、この判定では止めない。
+  it('対照: 途中で止めたのでなければ訊く', () => {
+    for (const stop of [null, { kind: 'settled' as const }, { kind: 'limit' as const }]) {
+      expect(isIntensityWithheld(stop, SPAN, target(ORIGIN + 600_000))).toBe(false)
+    }
+  })
+
+  // 安全弁: 列の刻みが壊れて止めた時点が数でないときも、訊く側へ倒れない。
+  it('安全弁: 止めた時点が数でなければ訊かない', () => {
+    expect(isIntensityWithheld(cut(Number.NaN), Number.NaN, target(ORIGIN + 600_000))).toBe(true)
+  })
+})

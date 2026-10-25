@@ -317,6 +317,21 @@ describe('fetchSeismoStatus', () => {
     }
   })
 
+  // 正: 古いホストだという記録は接続先ごとに 1 度出す（別の古いホストへ替えたら、もう一度出す）。
+  // 対照: 同じ接続先では 1 度きり（状態の確かめは繰り返し走る）。
+  it('古いホストの記録は接続先ごとに 1 度だけ出す', async () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {})
+    const noted = (host: string) => info.mock.calls.filter((c) => String(c[0]).includes('assignedBoards が無い') && String(c[0]).includes(host)).length
+    const fetchImpl = vi.fn(async () => jsonResponse({ sensors: [] })) as unknown as typeof fetch
+    // 他のテストと重ならない接続先を使う（記録済みの集合はモジュールが持つ）
+    await fetchSeismoStatus('http://old-host-a:50506', fetchImpl)
+    await fetchSeismoStatus('http://old-host-a:50506/', fetchImpl)
+    expect(noted('http://old-host-a:50506')).toBe(1)
+    await fetchSeismoStatus('http://old-host-b:50506', fetchImpl)
+    expect(noted('http://old-host-b:50506')).toBe(1)
+    info.mockRestore()
+  })
+
   it('対照: 合成の最新震度（stationIntensities）は読まない', async () => {
     // **繋いだ直後の空白を埋められそうに見えるが、読まないと決めた**（理由は
     // `SeismoHostCheck` の説明。時刻がホストの時計なので古さを測れない）。

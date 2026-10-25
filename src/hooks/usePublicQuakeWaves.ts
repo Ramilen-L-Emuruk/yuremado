@@ -453,9 +453,6 @@ async function loadQuake(job: {
         if (!ok) log.debug(`[public-wave] ${p.j.epoch.code} の波形を控えに書けなかった（そのまま出す）`)
         p.j.slot.toMs = p.j.range.toMs
         p.j.slot.done = state !== 'provisional' || retries >= PUBLIC_WAVE_MAX_RETRIES
-        // **取れたら失敗の回数を数え直す**（上限は「続けて」失敗した回数。成功をはさんだ散発の失敗を積み上げて諦めない）。
-        p.j.slot.failures = 0
-        p.j.slot.retryAtMs = 0
         p.j.settled = true
         p.bytes = bytes
       }
@@ -474,37 +471,60 @@ async function loadQuake(job: {
       p.bytes = p.bytes ?? p.cached?.bytes ?? null
       if (p.bytes === null) continue
     }
-    const { epoch, range } = p.j
-    p.j.slot.epoch = epoch
-    p.j.slot.rawBytes = p.bytes
-    const decoded = p.bytes === null ? null : decodePublicQuakeWave({ bytes: p.bytes, epoch, range })
-    if (decoded !== null && (decoded.unreadable > 0 || decoded.rejected > 0)) {
-      log.debug(`[public-wave] ${epoch.code} の控えで読めない ${decoded.unreadable} 本・置かない ${decoded.rejected} 本`)
+    // **組み立ては組ごとに囲む。** 結果が決まった（`settled`）後に投げると、呼び出し側はこの組を失敗に数えず、
+    // 同じ地震の後ろの組も組み立てまで届かない（`done` が真の組は取り直しも無く、波形が出ないまま残る）。
+    try {
+      buildSlotWave(p.j, p.bytes, target)
+    } catch (error) {
+      log.warn(`[public-wave] ${p.j.epoch.code} の波形を組み立てられなかった（${target.eventKey}）`, error)
+      // 前に出していた絵は残す。取り直せるよう `done` を戻し、失敗に数える（取れなかった回は数えてあるので二重に数えない）
+      p.j.slot.done = false
+      if (!p.failed) noteSlotFailure(p.j.slot, p.j.epoch.code)
+      continue
     }
-    const window = decoded?.window ?? null
-    // 発生より後のサンプルが無い（保存庫に後ろがまだ入っていない）間は出さない。範囲が入りきったら取り直す
-    p.j.slot.wave =
-      window === null || !hasSamplesFrom(window, target.originMs)
-        ? null
-        : {
+    // **組み立てまで済んでから失敗の回数を数え直す**（上限は「続けて」失敗した回数。成功をはさんだ散発の失敗を
+    // 積み上げて諦めない）。取れた時点で戻すと、組み立てで投げ続ける組が毎回 1 回目に数え直され、上限に届かない。
+    if (!p.failed) {
+      p.j.slot.failures = 0
+      p.j.slot.retryAtMs = 0
+    }
+  }
+}
+
+/** 取った（控えから読んだ）分から、組 1 つぶんの絵を組んで置く。 */
+function buildSlotWave(j: StationJob, bytes: Uint8Array | null, target: QuakeTarget): void {
+  const { epoch, range } = j
+  const decoded = bytes === null ? null : decodePublicQuakeWave({ bytes, epoch, range })
+  if (decoded !== null && (decoded.unreadable > 0 || decoded.rejected > 0)) {
+    log.debug(`[public-wave] ${epoch.code} の控えで読めない ${decoded.unreadable} 本・置かない ${decoded.rejected} 本`)
+  }
+  const window = decoded?.window ?? null
+  // 発生より後のサンプルが無い（保存庫に後ろがまだ入っていない）間は出さない。範囲が入りきったら取り直す
+  const wave: PublicQuakeWave | null =
+    window === null || !hasSamplesFrom(window, target.originMs)
+      ? null
+      : {
+          code: epoch.code,
+          number: j.number,
+          nameJa: epoch.nameJa,
+          lat: epoch.lat,
+          lon: epoch.lon,
+          range,
+          window,
+          card: buildCardWave({
             code: epoch.code,
-            number: p.j.number,
-            nameJa: epoch.nameJa,
+            heading: publicStationHeading(j.number, epoch.nameJa),
             lat: epoch.lat,
             lon: epoch.lon,
-            range,
+            target,
+            columns: publicQuakeColumns(window, range),
             window,
-            card: buildCardWave({
-              code: epoch.code,
-              heading: publicStationHeading(p.j.number, epoch.nameJa),
-              lat: epoch.lat,
-              lon: epoch.lon,
-              target,
-              columns: publicQuakeColumns(window, range),
-              window,
-            }),
-          }
-  }
+          }),
+        }
+  // 組み立てられてから置く（途中で投げたら、前に出していた絵と、その元の観測点情報・控えを残す）
+  j.slot.wave = wave
+  j.slot.epoch = epoch
+  j.slot.rawBytes = bytes
 }
 
 /**

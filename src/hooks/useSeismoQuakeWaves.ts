@@ -519,8 +519,51 @@ interface Entry {
   grownOut: boolean
   /** 訊けた震度（→ {@link SeismoQuakeWave.intensity}）。 */
   intensity: QuakeIntensity | null
-  /** 揺れが収まるまでの読み返しを伸ばし終えたか（収まった・上限に届いた・続きが無い・諦めた）。 */
-  extended: boolean
+  /** 揺れが収まるまでの読み返しを伸ばし終えた理由。**伸ばしている間は `null`。** */
+  extended: ExtendStop | null
+}
+
+/**
+ * 読み返しを伸ばすのをやめた理由。**途中で止めた（`cut-short`）区間では震度を訊かない**
+ * （計測震度は揺れ全体に 1 回出す量で、揺れの途中で切れた区間の値は揺れ全体の値と見分けが付かない。
+ * 2026-10-25 選択「震度を訊かない (Recommended)」）。
+ */
+export type ExtendStop =
+  /** 揺れが収まった。 */
+  | { readonly kind: 'settled' }
+  /** 次の有感地震か安全弁に届いた（窓はそこで終わる決まり）。 */
+  | { readonly kind: 'limit' }
+  /**
+   * 途中で止めた（続きの記録が無い・列が継げない・範囲が通らない・取り直しを使い切った・列の刻みが壊れている）。
+   * `atMs` は止めた時点の列の終わり —— 後から次の有感地震が来てそこより手前で窓が切れれば、震度を訊いてよい。
+   */
+  | { readonly kind: 'cut-short'; readonly atMs: number }
+
+/** 列の終わり（最後の列の右端）。 */
+function columnsEndMs(columns: TimedColumns): number {
+  return columns.fromMs + columns.columns.length * columns.columnSpanMs
+}
+
+/** いまの列の終わりで、途中で止めた印を作る。 */
+function cutShortAt(columns: TimedColumns): ExtendStop {
+  return { kind: 'cut-short', atMs: columnsEndMs(columns) }
+}
+
+/**
+ * 震度を訊くのを控えるか。**途中で止めたうえで、止めた時点が窓の終わり（次の有感地震・安全弁）より手前のときだけ。**
+ * 後から次の有感地震が来て窓が止めた時点より手前で切れたなら、窓の中は揃っている。
+ */
+export function isIntensityWithheld(
+  stop: ExtendStop | null,
+  columnSpanMs: number,
+  target: Pick<SeismoWaveTarget, 'cutoffMs' | 'originMs'>,
+): boolean {
+  if (stop === null || stop.kind !== 'cut-short') return false
+  // **止めた時点が数でなければ訊かない**（列の刻みが壊れていると `NaN` になる。比べると偽になり、訊く側へ倒れる）
+  if (!Number.isFinite(stop.atMs)) return true
+  const hardLimitMs = Math.min(target.cutoffMs, target.originMs + GROW_SAFETY_MS)
+  const span = Number.isFinite(columnSpanMs) && columnSpanMs > 0 ? columnSpanMs : 0
+  return stop.atMs < hardLimitMs - span
 }
 
 /**
@@ -699,7 +742,7 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
           columns: e.columns,
           interrupted: e.interrupted,
           // **読み返しを伸ばし終えるまでは完結にしない**（震度は揺れ全体に 1 回出す量なので、伸びる前に訊かない）。
-          complete: (key !== headKey || e.grownOut) && e.extended,
+          complete: (key !== headKey || e.grownOut) && e.extended !== null,
           intensity: e.intensity,
           // **秒が取れていない地震は線を引かない**（→ `SeismoWaveTarget.arrivalOriginMs`）。
           arrival: axisZero.kind === 'origin' ? fromZero : null,
@@ -955,7 +998,7 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
               interrupted: false,
               // 伸ばすかどうかは継ぎ足しの巡回が決める（先頭でなければ出すときに伸ばし終えた扱い）。
               grownOut: false,
-              extended: false,
+              extended: null,
               intensity: null,
             },
           ])
@@ -1205,9 +1248,9 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
       const n = (failures.get(key)?.failures ?? 0) + 1
       const delay = retryDelayAfter(n)
       if (delay === null) {
-        log.warn(`[seismo] 地震カードの波形の続きを ${n} 回続けて読み返せず、伸ばすのを諦めた（${entry.stationId}・${why}）`)
+        log.warn(`[seismo] 地震カードの波形の続きを ${n} 回続けて読み返せず、伸ばすのを諦めた（${entry.stationId}・${why}）。この区間の震度は訊かない`)
         failures.delete(key)
-        entry.extended = true
+        entry.extended = cutShortAt(entry.columns)
         publishRef.current()
       } else {
         failures.set(key, { failures: n, retryAt: performance.now() + delay })
@@ -1243,7 +1286,7 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
         const entries = bookRef.current.get(target.eventKey)
         if (entries === undefined) continue
         for (const entry of entries) {
-          if (entry.extended) continue
+          if (entry.extended !== null) continue
           // **判定の段から組を覚える**（収まりの判定で投げた回も、その組の失敗に数える）。
           current = { key: `${target.eventKey}|${entry.stationId}`, entry }
           // **押し出しで伸ばしている間は触らない**（同じ区間を 2 か所から継ぐと重なる）。
@@ -1255,7 +1298,11 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
             endMs > target.originMs + MIN_GROW_MS &&
             isSettled(entry.columns, SETTLE_WINDOW_MS, quietGalFor(entry.stationId, entry.columns, target.originMs))
           if (settled || !(span > 0) || endMs >= hardLimitMs - span) {
-            entry.extended = true
+            if (!(span > 0)) {
+              // 列の刻みが壊れている（ふだんは起きない）。伸ばせないので止め、震度も訊かない —— 理由が残るよう記録する
+              log.warn(`[seismo] 地震カードの波形の列の刻みが ${span} で伸ばせない（${target.eventKey}・${entry.stationId}）。この区間の震度は訊かない`)
+            }
+            entry.extended = !(span > 0) ? cutShortAt(entry.columns) : settled ? { kind: 'settled' } : { kind: 'limit' }
             publishRef.current()
             continue
           }
@@ -1283,9 +1330,11 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
           if (ctrl.signal.aborted || resetKeyRef.current !== token) return
           if (result.kind === 'ok') {
             if (!result.history.hasAnyValue) {
-              // 続きに記録が無い（ホストが止まっていた・まだ書けていない）。この先は伸ばさない。
-              log.debug(`[seismo] 地震カードの波形の続きに記録が無いので、読み返しを伸ばすのをやめた（${entry.stationId}）`)
-              entry.extended = true
+              // 続きに記録が無い（ホストが止まっていた・まだ書けていない）。この先は伸ばさない。揺れの途中で切れた区間なので
+              // 震度も訊かない —— その理由が残るよう記録する（**間引かない**。止めるのは組ごとに 1 回きりで、間引くと
+              // 別の観測点・別の地震の記録が消え、どの組が震度を出さなかったか数えられなくなる）
+              log.warn(`[seismo] 地震カードの波形の続きに記録が無いので、読み返しを伸ばすのをやめた（${target.eventKey}・${entry.stationId}）。この区間の震度は訊かない`)
+              entry.extended = cutShortAt(entry.columns)
             } else {
               const next = appendHistoryColumns(entry.columns, {
                 fromMs: result.history.fromMs,
@@ -1294,8 +1343,8 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
               })
               if (next === null) {
                 // 刻みの整数倍で訊いているので、ふだんは起きない（起きたらホストの列の返し方が変わった印）。
-                log.warn(`[seismo] 地震カードの波形の続きを継げなかった（列の刻みか境目が合わない・${entry.stationId}）。伸ばすのをやめる`)
-                entry.extended = true
+                log.warn(`[seismo] 地震カードの波形の続きを継げなかった（列の刻みか境目が合わない・${entry.stationId}）。伸ばすのをやめ、この区間の震度は訊かない`)
+                entry.extended = cutShortAt(entry.columns)
               } else {
                 entry.columns = next
               }
@@ -1309,8 +1358,8 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
             return
           }
           if (result.kind === 'bad-request') {
-            log.warn(`[seismo] 地震カードの波形の続きの範囲が通らなかった（${entry.stationId}・${result.detail}）。伸ばすのをやめる`)
-            entry.extended = true
+            log.warn(`[seismo] 地震カードの波形の続きの範囲が通らなかった（${entry.stationId}・${result.detail}）。伸ばすのをやめ、この区間の震度は訊かない`)
+            entry.extended = cutShortAt(entry.columns)
             publishRef.current()
             return
           }
@@ -1372,6 +1421,9 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
       if (target === undefined) continue
       for (const wave of list) {
         if (!wave.complete) continue
+        // **途中で止めた区間は訊かない**（→ {@link isIntensityWithheld}）
+        const entry = bookRef.current.get(eventKey)?.find((e) => e.stationId === wave.stationId)
+        if (entry !== undefined && isIntensityWithheld(entry.extended, entry.columns.columnSpanMs, target)) continue
         const span = columnsSpan(selectQuakeWindow({ base: wave.columns, zero: wave.axisZero, reach: wave.reach, noiseFloor: wave.unit.onsetNoiseFloor }).columns)
         if (span === null) continue
         if (wave.intensity !== null && wave.intensity.fromMs === span.fromMs && wave.intensity.toMs === span.toMs) continue
