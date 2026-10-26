@@ -80,3 +80,26 @@ createRoot(rootEl).render(
     </ErrorBoundary>
   </StrictMode>,
 )
+
+// ここまで来たら、起動に要るファイルは全部読めている。起動の途中で読めずに読み直していたら、そのことを残す。
+// 起動した後に読めないファイルが出たら、読み直さずに新しい版を確かめに行く（発表の最中に画面を消さないため。
+// 新しい版が見つかれば、いつものとおり待つ条件を見てから適用する）。仕組みは public/boot-recovery.js。
+const bootRecovery = (window as Window & { __bootRecovery?: BootRecovery }).__bootRecovery
+if (bootRecovery === undefined) {
+  log.warn('[起動] 読み込みの受け皿（boot-recovery.js）が見つからない（読めないファイルがあっても読み直さない）')
+} else {
+  const recovered = bootRecovery.markBooted()
+  if (recovered !== null) {
+    if (recovered.failedShown) log.warn(`[起動] 読み直してもファイルを読めず「画面を読み込めませんでした」を出していた。再読み込みで起動できた（${recovered.reason}）`)
+    else log.warn(`[起動] ファイルを読めなかったので 1 回読み直した（${recovered.reason}）`)
+  }
+  bootRecovery.onLateFailure((reason) => {
+    log.warn(`[起動] 起動した後にファイルを読めなかった。新しい版を確かめに行く（${reason}）`)
+    currentAppUpdater().checkNow()
+  })
+}
+
+interface BootRecovery {
+  markBooted(): { reason: string; failedShown: boolean } | null
+  onLateFailure(listener: (reason: string) => void): void
+}

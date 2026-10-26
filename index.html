@@ -32,9 +32,21 @@
     -->
     <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-180.png" />
     <title>揺れ窓</title>
+    <!--
+      起動の途中で自分のファイルが読めなかったら 1 回だけ読み直す。アプリ本体より先に読むこと
+      （本体の読み込みの失敗を拾うため）。仕組みは public/boot-recovery.js の冒頭。
+    -->
+    <script src="./boot-recovery.js"></script>
   </head>
   <body>
     <div id="root"></div>
+    <!-- 読み直しても読めなかったときに #root へ出す（boot-recovery.js）。CSS が読めていない前提で直に書く -->
+    <template id="boot-failed">
+      <div style="min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: #12151a; color: #e5e7eb; font-family: system-ui, sans-serif;">
+        <p style="margin: 0; font-size: 16px;">画面を読み込めませんでした</p>
+        <button type="button" style="padding: 8px 20px; font-size: 15px; border-radius: 6px; border: 1px solid #4b5563; background: #1f2937; color: #e5e7eb; cursor: pointer;">再読み込み</button>
+      </div>
+    </template>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
