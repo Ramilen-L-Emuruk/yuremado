@@ -2706,32 +2706,34 @@ export function App() {
                 onMapReady={setMapHandle}
               />
             </ErrorBoundary>
-            {/* 地図左上。観測している値（自作地震計の観測点ごとの震度）を置く。
+            {/* 地図右上。観測している値（自作地震計の観測点ごとの震度）を置く。
                 **アプリの状態（更新時刻・取得状況・描画の不調）とは左右で分ける** ——
                 混ぜると、異常表示が伸びたときに観測値がそのぶん押し下がる。
+                状態を左・観測値を右にしているのは、日本列島が右上へ伸びていて左上のほうが
+                陸を隠しにくいから（2026-10-27 ユーザー指示「そもそも右上じゃなくて左上にしたい(地震計と入れ替える。日本列島が右上向きだから)」）。
                 z-99999: 区域集約震度バッジ（QuakeRegionFillGL）は el.style.zIndex = scale*1000 で、
                 scale は JMA 震度階級の数値コード（震度7 = 70）まであるため最大 70000 まで積む。
                 それより確実に高い値にして常に最前面に出す。 */}
-            <div
-              className="absolute z-99999 pointer-events-none flex flex-col items-start gap-1"
-              style={{
-                top: 'max(0.5rem, env(safe-area-inset-top, 0px))',
-                left: 'max(0.5rem, env(safe-area-inset-left, 0px))',
-              }}
-            >
-              <SeismoOverlay stations={seismoOverlayStations} />
-            </div>
-            {/* 地図右上。アプリの状態を上から更新時刻・生成データの取得状況・地図描画の不調・
-                自作地震計との繋がり具合・更新の札の順で。**自作地震計の観測値（左上）とは左右で分ける** ——
-                観測している値と、それが届いているかどうかは別のものなので、混ぜると
-                繋がらない間ずっと観測値の居場所が押し下がる。
-                **下端の帯（凡例・特別情報バナー）とは重ならない** —— あちらは全幅の絶対配置で、
-                下側へ置いたものは押し上げてもらえずに重なる。z は左上と同じ理由で高く取る。 */}
             <div
               className="absolute z-99999 pointer-events-none flex flex-col items-end gap-1"
               style={{
                 top: 'max(0.5rem, env(safe-area-inset-top, 0px))',
                 right: 'max(0.5rem, env(safe-area-inset-right, 0px))',
+              }}
+            >
+              <SeismoOverlay stations={seismoOverlayStations} />
+            </div>
+            {/* 地図左上。アプリの状態を上から更新時刻・生成データの取得状況・地図描画の不調・
+                自作地震計との繋がり具合・更新の札の順で。**自作地震計の観測値（右上）とは左右で分ける** ——
+                観測している値と、それが届いているかどうかは別のものなので、混ぜると
+                繋がらない間ずっと観測値の居場所が押し下がる。
+                **下端の帯（凡例・特別情報バナー）とは重ならない** —— あちらは全幅の絶対配置で、
+                下側へ置いたものは押し上げてもらえずに重なる。z は右上と同じ理由で高く取る。 */}
+            <div
+              className="absolute z-99999 pointer-events-none flex flex-col items-start gap-1"
+              style={{
+                top: 'max(0.5rem, env(safe-area-inset-top, 0px))',
+                left: 'max(0.5rem, env(safe-area-inset-left, 0px))',
               }}
             >
               <MapUpdateTime lastUpdate={overlayUpdateTime} error={overlayError} />
@@ -2747,7 +2749,7 @@ export function App() {
                 スクロールする）。上と下を別々に絶対配置して画面の高さ（`dvh`）で上限を掛けると、
                 地図が低いときに下端の束が地図の上へはみ出す。仕組み・下限・既知の限界は
                 docs/spec/architecture-spec.md §4「地図の上に重ねる帯は、地図の高さを 1 本の縦並びで分け合う」。
-                z は左上の情報ブロックと同じ理由で高く取る。
+                z は地図の隅の情報ブロック（右上のコメント）と同じ理由で高く取る。
 
                 **自作地震計の波形はここに入れない。** 地図の外（この器の下）へ置く ——
                 重ねると自動フィットで画に入れたものが隠れるため（2026-09-29 のユーザー指摘。

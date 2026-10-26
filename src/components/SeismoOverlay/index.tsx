@@ -1,11 +1,11 @@
-// 自作地震計（`seismo-host/`）の観測点の震度を、地図の左上へ重ねる。
+// 自作地震計（`seismo-host/`）の観測点の震度を、地図の右上へ重ねる。
 //
 // **観測点 1 つにつき 1 行の帯。** 周りに並ぶもの（更新時刻・取得状況）がどれも 1 行なので、
-// ここだけ段を積むと浮く。見出し（「自作地震計」）は置かず、**観測点名と出どころが
-// 気象庁の発表でないことを示す**（「自宅」「合成」は電文には現れない語）。
+// ここだけ段を積むと浮く。見出し（「自作地震計」）は置かず、**観測点名が
+// 気象庁の発表でないことを示す**（「自宅」のような名前は電文には現れない）。
 //
 // **押せない**（`pointer-events-none`）。地図のレイヤーは作らず、座標も使わない。
-// 重ね位置（absolute・z-index・セーフエリア）は App.tsx 側の地図左上ラッパーが持つ。
+// 重ね位置（absolute・z-index・セーフエリア）は App.tsx 側の地図右上ラッパーが持つ。
 
 import type { SeismoStationState } from '../../hooks/useSeismoStation'
 import { readableTextColor } from '../../utils/contrast'
@@ -31,7 +31,7 @@ export function SeismoOverlay({ stations }: Props) {
   // ここで別に接続を見ると、同じ事実に判定が 2 つできる。
   //
   // 空の帯を常駐させないのも同じ理由。「揺れていない」と「繋がっていない」が
-  // 見分けられなくなる —— **繋がっていないことは地図の右上が受け持つ**
+  // 見分けられなくなる —— **繋がっていないことは地図の左上が受け持つ**
   // （`components/SeismoLinkStatus.tsx`）。あちらの待ちもこの帯と同じ 5 秒だが、
   // **黙って切れた繋ぎでは最大 45 秒遅れる**（理由はあちらの `GRACE_MS`）。
   if (rows.length === 0) return null
@@ -62,14 +62,17 @@ export function SeismoOverlay({ stations }: Props) {
               </span>
             )}
             {/* **観測点名だけ幅を切る。** 名前は利用者が管理コンソールで自由に付けるので、
-                長いものを入れると右上（更新時刻）と横で当たる —— どちらも絶対配置で
+                長いものを入れると左上（更新時刻）と横で当たる —— どちらも絶対配置で
                 押し合わないため、重なると両方読めなくなる。 */}
             <span className={`${tone} truncate max-w-32 roomy:max-w-56`}>
               {row.displayName}
             </span>
             <span className={`font-mono ${tone} tabular-nums`}>{row.valueText ?? '—'}</span>
-            {/* 途絶は名乗りが空。未着だけ「未着」を行と同じ赤で出す。 */}
-            <span className={`text-xs roomy:text-base ${row.silent ? 'text-red-400' : 'text-secondary'}`}>{row.sourceText}</span>
+            {/* 合成と途絶は名乗りが空（→ seismoOverlayRows.ts）。空のときは要素ごと置かない ——
+                空の要素でも `gap` の幅だけ右に隙間が残る。未着だけ「未着」を行と同じ赤で出す。 */}
+            {row.sourceText !== '' && (
+              <span className={`text-xs roomy:text-base ${row.silent ? 'text-red-400' : 'text-secondary'}`}>{row.sourceText}</span>
+            )}
           </div>
         )
       })}
