@@ -33,7 +33,7 @@ yuremado（揺れ窓）で作業するときの手順とルール。
 
 | 対象 | 止める場所 |
 |---|---|
-| エラーの文面（`new Error(…)`・名前が `Error`／`Exception` で終わる型・それを継ぐクラスの `super(…)`・`err.message = …`・`throw '…'`）・ログ（`console.*`・`log.*`・`logger.*`）—— `src`・`scripts`・`seismo-host`・`firmware` の TS/JS と、トップの `*.config.ts` | `npm test`（[`scripts/japaneseOnly.test.ts`](scripts/japaneseOnly.test.ts)） |
+| エラーの文面（`new Error(…)`・名前が `Error`／`Exception` で終わる型・それを継ぐクラスの `super(…)`・`err.message = …`・`throw '…'`）・ログ（`console.*`・`log.*`・`logger.*`）—— `src`・`scripts`・`seismo-host`・`firmware`・`relay` の TS/JS と、トップの `*.config.ts` | `npm test`（[`scripts/japaneseOnly.test.ts`](scripts/japaneseOnly.test.ts)） |
 | ファームの出力（`Serial.print*`・`http.send`・`static_assert`） | 同上 |
 | Codex の設定（`.codex/**/*.toml`・`.agents/**/*.md`）・CI の名前とコメント（`.github/workflows/*.yml`） | 同上 |
 | コミットメッセージ（件名と本文の各行。ブランチでもタグでも、送るコミットすべて） | push の前のフック（[`scripts/check-commit-messages.ts`](scripts/check-commit-messages.ts)） |

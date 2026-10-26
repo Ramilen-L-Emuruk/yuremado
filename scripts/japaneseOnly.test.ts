@@ -61,7 +61,7 @@ function repoFiles(): string[] {
 }
 
 /** TS/JS の文面を見る場所。ファームの道具（`firmware/tools`）と、トップの設定ファイルも入れる。 */
-const SCRIPT_FILE = /^(?:src|scripts|seismo-host|firmware)\/.*\.(?:[cm]?[jt]sx?)$|^[^/]+\.config\.[cm]?[jt]s$/
+const SCRIPT_FILE = /^(?:src|scripts|seismo-host|firmware|relay)\/.*\.(?:[cm]?[jt]sx?)$|^[^/]+\.config\.[cm]?[jt]s$/
 /** テストとテスト用の素材・一時ファイルは外す（英語の文面を入力として与えるものがある）。 */
 const NOT_TARGET = /\.(?:test|spec|fixture)\.[cm]?[jt]sx?$|\.tmp\.[cm]?[jt]sx?$|\.d\.[cm]?ts$/
 
