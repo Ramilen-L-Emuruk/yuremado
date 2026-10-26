@@ -76,6 +76,27 @@ Android・Windows・macOS では測っていない。
 
 中継の設計書では、プッシュ通知は中継の段 3b の後と書いている（[`relay-server-design.md`](relay-server-design.md) §12）。
 
+### 1.5 組み込んで配るときの規約
+
+CORE は声の合成に、VOICEVOX 版の ONNX Runtime（モデルを動かす実行系）を使う。CORE 0.17.0 が既定で取るのは 1.17.3（2026-10-27 時点。1.23.2 もあるが先行版で、既定では選ばれない）。その配布物に入っている規約（`TERMS.txt`。表題は「VOICEVOX ONNX Runtime 利用規約」）を読んだ。
+
+| 項目 | 規約の文 |
+|---|---|
+| 使ってよい範囲 | 「商用・非商用問わず利用することができます」 |
+| アプリへの組み込み | 「アプリケーションに組み込んで再配布することができます」 |
+| 作った音声 | 「作成された音声を利用する際は、各音声ライブラリの規約に従ってください」 |
+| 作った音声の利用を他者に許すとき | 「作成された音声の利用を他者に許諾する際は、当該他者に対し本許諾内容の 3 及び 4 の遵守を義務付けてください」 |
+| 禁止事項 | 「逆コンパイル・リバースエンジニアリング及びこれらの方法の公開すること」「製作者または第三者に不利益をもたらす行為」「公序良俗に反する行為」 |
+| 表記 | 「ご利用の際は VOICEVOX を利用したことがわかるクレジット表記が必要です。」 |
+
+**ONNX Runtime については、アプリへ組み込んで配ってよい。** 条件は 2 つある。
+
+- 各アプリに、VOICEVOX を使ったことの表記を置く。声のモデル（VVM）の規約が求める「VOICEVOX:話者名」の表記とは別のもので、両方が要る（VVM の規約は [`browser-voicevox-survey.md`](browser-voicevox-survey.md) §3.1）
+- 作った音声の利用をアプリの利用者に許すなら、利用者にも上の表の「作った音声」と「作った音声の利用を他者に許すとき」の 2 行を守らせる
+
+読んだのは 1.17.3 と 1.23.2 の、Windows（`win-x86`）・Android（`android-arm64`）・iOS（`ios-arm64`）・macOS（`osx-arm64`）の CPU 版の 8 本で、改行の形を揃えると 8 本とも同じ文だった。GPU 版（CUDA・DirectML）は見ていない。
+ONNX Runtime 以外に組み込むものの規約は、ここでは扱っていない。CORE 本体はリポジトリのライセンスが MIT（GitHub の判定）、声のモデルは上記のとおり。Open JTalk の辞書は §2。
+
 ## 2. 決まっていないこと
 
 | 決まっていないこと | 状態 |
@@ -85,14 +106,18 @@ Android・Windows・macOS では測っていない。
 | ネイティブアプリを出した後も PWA を続けるか（選んだ選択肢の説明は「PWA と 2〜3 系統を並べて保守する」だったが、続けるかを名指しで訊いてはいない） | 未決（ユーザー判断待ち） |
 | PWA の読み上げをどうするか | [`relay-server-design.md`](relay-server-design.md) §12 の「読み上げの残り」の行のまま未決 |
 | 読み上げの組み立てを各言語へ移したとき、いまと同じ文・同じ句・同じ核になることをどう確かめるか | 未決（ユーザー判断待ち） |
-| VOICEVOX 版の ONNX Runtime の規約（配布物の `TERMS.txt`）で、アプリへ組み込んで配れるか | 未確認（読んでいない） |
 | どこから配るか（App Store・Google Play・Microsoft Store・直接配布）と、それぞれの審査に通るか | 未決（ユーザー判断待ち） |
 | 4 つの OS をどの順で作るか | 未決（ユーザー判断待ち） |
+| Open JTalk の辞書（`open_jtalk_dic_utf_8-1.11`）の規約で、アプリへ組み込んで配れるか | 未確認（読んでいない） |
+| VOICEVOX を使ったことの表記と「VOICEVOX:話者名」の表記を、アプリのどこにどの文言で置くか | 未決（ユーザー判断待ち） |
+| 作った音声の利用をアプリの利用者に許すか（許すなら、§1.5 の条件を利用規約に入れる） | 未決（ユーザー判断待ち） |
 | 背面での受信とプッシュ通知、中継が読み上げで受け持つものがあるか | [`relay-server-design.md`](relay-server-design.md) §12 の行のまま未決 |
 
 ## 3. 出典
 
 - [VOICEVOX/voicevox_core 0.17.0 のリリース](https://github.com/VOICEVOX/voicevox_core/releases/tag/0.17.0)（添付の一覧）
+- [VOICEVOX/onnxruntime-builder voicevox_onnxruntime-1.17.3 のリリース](https://github.com/VOICEVOX/onnxruntime-builder/releases/tag/voicevox_onnxruntime-1.17.3)と[同 1.23.2（先行版）](https://github.com/VOICEVOX/onnxruntime-builder/releases/tag/voicevox_onnxruntime-1.23.2)（`TERMS.txt` は各添付の中）
+- [voicevox_core `crates/downloader/src/main.rs`（0.17.0）](https://github.com/VOICEVOX/voicevox_core/blob/0.17.0/crates/downloader/src/main.rs)（69〜70 行の `SUPPORTED_ONNXRUNTIME_VERSIONS` が受け付ける版の範囲 `>=1.17.3,<1.24`。既定では、その範囲の先行版でない最新を取る）
 - [voicevox_core `voicevox_core.h`（0.17.0）](https://github.com/VOICEVOX/voicevox_core/blob/0.17.0/crates/voicevox_core_c_api/include/voicevox_core.h)
 - [Android: Foreground service timeouts](https://developer.android.com/develop/background-work/services/fg-service-timeout)
 - Apple の重大な通知の申請については二次資料だけを見た（[newly.app の解説](https://newly.app/articles/critical-alerts-entitlement)・[Apple Developer Forums の質問](https://developer.apple.com/forums/thread/794822)）
