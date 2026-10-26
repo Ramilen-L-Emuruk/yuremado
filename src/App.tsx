@@ -86,7 +86,7 @@ import { useArrivalTokenCheck } from './hooks/useArrivalToken'
 import { usePsWaveCalc } from './hooks/usePsWaveCalc'
 import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
 import { useDebouncedValue } from './hooks/useDebouncedValue'
-import { collectQuakesToNotify, scheduleQuakeNotification, type QuakeNotifiedState } from './utils/quakeNotification'
+import { collectQuakesToNotify, scheduleQuakeNotification, type QuakeNotification, type QuakeNotifiedState } from './utils/quakeNotification'
 import { formatDateTimeLocal } from './utils/formatters'
 import { computeEEWLevel, eewEventKey, eewMaxLpgmClass, isProvisionalHypocenter } from './utils/eew'
 import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
@@ -163,10 +163,12 @@ const TAB_SCROLLER_CLASS = 'absolute inset-0 overflow-y-auto overflow-x-hidden o
 
 /**
  * 地震情報のブラウザ通知を出す。出せなければ reject する（呼び出し側が「出せなかった」と記録し、通知済みを取り消す）。
- * `renotify`（最大震度が上がった報だけ真）を受け付けないブラウザの扱いは {@link deliverBrowserNotification}。
+ * **置き換えでも知らせ直す**（`renotify`）。同じ地震の前の通知が残っていると、付けなければ黙って差し替わる
+ * （2026-10-26 ユーザー選択「カードが採った続報すべて (Recommended)」）。受け付けないブラウザの扱いは
+ * {@link deliverBrowserNotification}。
  */
-function showQuakeNotification(n: { title: string; body: string; tag: string; renotify: boolean }): Promise<void> {
-  return deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: n.renotify })
+function showQuakeNotification(n: QuakeNotification): Promise<void> {
+  return deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: true })
 }
 
 export function App() {
@@ -1303,8 +1305,8 @@ export function App() {
     }
   }, [activeEEWs, activeLpgmEventId, activeLpgmSource])
 
-  // ブラウザ通知。中身と出すかどうかは `decideQuakeNotification`（震度速報・震源が判った報・最大震度が
-  // 上がった報・遠地地震。回数と文面の決まりはそちら）。
+  // ブラウザ通知。中身と出すかどうかは `decideQuakeNotification`（カードが採った報ごとに出す。
+  // 文面と、同じ報を 2 度出さない決まりはそちら）。
   // **見るのは、ライブで届いてカードが内容を採った報の地震すべて**（`pendingQuakeNotifyRef`）——
   // 一覧の先頭 1 件だけを見ると、続けて届いた別の地震の報や、先頭でない地震の続報を取りこぼす
   // （2026-10-21 選択「直す (Recommended)」）。報からカードは受信側と同じ当て方（`sameQuakeEntry`）で引く。
@@ -1334,17 +1336,18 @@ export function App() {
     for (const incoming of unmatched) {
       log.debug(`[notify] 地震情報の報からカードを引けず、通知を考えない（${incoming.id}・${incoming.issue.type}・最大震度 ${incoming.earthquake.maxScale}）`)
     }
-    for (const card of cards) {
+    for (const { card, reportKeys } of cards) {
       // **通知は補助の経路なので、ここで投げても画面を落とさない**（App のレンダー・effect の例外は
       // 根の受け皿でしか拾えず、画面全体が消える）。1 件が投げても残りの地震は見る。失敗は記録に残す。
       try {
-        // **出せてから覚える。** 先に覚えると、出せなかった地震が「通知済み」になり、震源が判った報や
-        // 最大震度が上がった報でも出し直さない。出せたかは Service Worker の返事を待たないと分からないので、
+        // **出せてから覚える。** 先に覚えると、出せなかった報が「通知済み」になり、同じ報が届き直しても
+        // 出さない。最大震度が上がったかの比べる相手もずれる。出せたかは Service Worker の返事を待たないと分からないので、
         // 同じ地震の通知は前が済んでから判定する（`scheduleQuakeNotification`）
         scheduleQuakeNotification({
           chains: quakeNotifyChainsRef.current,
           memory: notifiedQuakesRef.current,
           quake: card,
+          reportKeys,
           notifyMinScale: notifyMinScaleRef.current,
           areaPrefIndex: index,
           show: showQuakeNotification,

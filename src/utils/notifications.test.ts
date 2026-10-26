@@ -35,6 +35,25 @@ describe('showBrowserNotification', () => {
     expect(calls[0].opts).toMatchObject({ body: '岩手県', tag: 'tsunami', requireInteraction: true })
   })
 
+  // 同じ tag の通知が残っていると、renotify が無ければ黙って差し替わるだけでトーストが出ない
+  // （Windows で通知テストを続けて押して見つかった。2026-10-26 ユーザー選択「今出している報で知らせ直す (Recommended)」）
+  it('正: 置き換えでも知らせ直すよう renotify を付ける（Service Worker 経由）', async () => {
+    stubNotification(() => {})
+    const show = vi.fn((_title: string, _o?: NotificationOptions & { renotify?: boolean }) => Promise.resolve())
+    stubServiceWorker({ active: {} as ServiceWorker, showNotification: show })
+    showBrowserNotification('地震情報テスト', '本文', 'test-notification')
+    await flush()
+    expect(show).toHaveBeenCalledTimes(1)
+    expect(show.mock.calls[0][1]).toMatchObject({ tag: 'test-notification', renotify: true })
+  })
+
+  it('正: 置き換えでも知らせ直すよう renotify を付ける（ページから）', () => {
+    const calls: (NotificationOptions & { renotify?: boolean })[] = []
+    stubNotification((_title, opts) => calls.push(opts))
+    showBrowserNotification('地震情報テスト', '本文', 'test-notification')
+    expect(calls[0]).toMatchObject({ tag: 'test-notification', renotify: true })
+  })
+
   // Android の Chrome 系は Service Worker の無いときに `new Notification()` で TypeError を投げる。
   // 呼び出し側は後に読み上げと記憶の後始末を続けるので、ここで止めないとそれらが丸ごと飛ぶ
   it('安全弁: 通知を作れない環境でも例外を外へ出さず、記録を残す', async () => {
