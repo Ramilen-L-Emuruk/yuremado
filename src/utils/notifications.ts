@@ -21,8 +21,8 @@ export function canShowBrowserNotification(): boolean {
  *
  * Service Worker に非対応の環境では、最初の await より前に `new Notification()` を呼ぶ（同期のまま出す）。
  *
- * `renotify`（同じ tag の通知を置き換えるときに音を鳴らし直す）を受け付けなかったときは、外して出し直す ——
- * 音が鳴り直さないだけで、置き換え自体は伝わる。
+ * `renotify`（同じ tag の通知を置き換えるときも知らせ直す）を受け付けなかったときは、外して出し直す ——
+ * 前の通知が残っていれば知らせ直さずに差し替わるだけになるが、中身の置き換え自体は伝わる。
  */
 export async function deliverBrowserNotification(title: string, options: BrowserNotificationOptions): Promise<void> {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
@@ -165,7 +165,10 @@ export const NOTIFICATION_ICON = `${import.meta.env.BASE_URL}icons/icon.svg`
 /**
  * ブラウザ通知を表示する。Notification API 未対応・未許可の環境では何もしない。
  * tag が同じ通知は上書きされる（同一イベントの続報で通知が積み重ならないようにする）。
- * 出し方は {@link deliverBrowserNotification}。
+ * **置き換えでも知らせ直す**（`renotify`）。付けないと、前の通知が通知センターに残っている間は黙って差し替わり、
+ * トーストも音も出ない（Windows で通知テストを続けて押して見つかった。2026-10-26 ユーザー選択
+ * 「今の場面で知らせ直す (Recommended)」「今出している報で知らせ直す (Recommended)」）。
+ * 呼び出し側は出すと決めた報でだけ呼ぶので、ここで知らせ直しても鳴りすぎない。出し方は {@link deliverBrowserNotification}。
  *
  * **例外を外へ投げない。** 呼び出し側はこの後に音・読み上げ・記憶の後始末を続けるので、ここで投げると
  * 通知 1 つのためにそれらが丸ごと飛ぶ。出せなかったことは記録に残す。
@@ -177,6 +180,6 @@ export function showBrowserNotification(
   requireInteraction = false,
 ): void {
   if (!canShowBrowserNotification()) return
-  deliverBrowserNotification(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction })
+  deliverBrowserNotification(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction, renotify: true })
     .catch((e: unknown) => log.error(`[notify] ブラウザ通知を出せませんでした（${tag}）`, e))
 }
