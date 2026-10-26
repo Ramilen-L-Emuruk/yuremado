@@ -64,6 +64,8 @@ import { useTestScenarios } from './hooks/useTestScenarios'
 import { PANEL_RATIO_MIN, useSettings } from './hooks/useSettings'
 import { squareMapLayout } from './utils/squareMapLayout'
 import { useAlertTitle, resolveAlertTitle } from './hooks/useAlertTitle'
+import { useReloadSchedule } from './hooks/useReloadSchedule'
+import { AppUpdateBadge } from './components/AppUpdateBadge'
 import { useLiveEventHandler, ttsRegionOptions } from './hooks/useLiveEventHandler'
 import { useSpeechPrefetch } from './hooks/useSpeechPrefetch'
 import { useUnreceivedSpeechFollow } from './hooks/useUnreceivedSpeechFollow'
@@ -417,8 +419,6 @@ export function App() {
   activeTabRef.current = activeTab
   // ウィンドウタイトル（情報タイトル）管理
   const title = useAlertTitle({ activeEEWsRef, kyoshinDetectedRef })
-  // SW アップデート検知時のカウントダウン秒数（null = 待機なし、0以下でリロード）
-  const [updateCountdown, setUpdateCountdown] = useState<number | null>(null)
   // DMDSS版: WS接続中は現在時刻を毎秒更新して地図上の更新時刻をリアルタイム表示する
   const [nowTick, setNowTick] = useState<Date | null>(null)
 
@@ -1369,22 +1369,25 @@ export function App() {
   if (!onlyCancelledShown) tsunamiForecastOnlyRef.current = isTsunamiForecastOnly(tsunamis)
   const tsunamiForecastOnly = tsunamiForecastOnlyRef.current
   const alertTitleText = resolveAlertTitle(title.alertTitle, tsunamiForecastOnly)
+  // 読み直し（新しい版の適用・毎朝 5 時の定期の読み直し）の段取り。発表中・再生中・入力中は待つ
+  // （→ hooks/useReloadSchedule.ts）。
+  const reloadSchedule = useReloadSchedule({
+    alertActive: title.alertTitle !== null,
+    replaying: replayTimeOffset !== null,
+    periodicReloadEnabled: settings.periodicReloadHours > 0,
+  })
+  const reloadCountdown = reloadSchedule.countdown
+  const reloadCountdownReason = reloadSchedule.countdownReason
   useEffect(() => {
     if (alertTitleText) {
       document.title = alertTitleText
-    } else if (updateCountdown !== null) {
-      document.title = `${updateCountdown}秒後に再起動します — ${DEFAULT_TITLE}`
+    } else if (reloadCountdown !== null) {
+      const verb = reloadCountdownReason === 'periodic' ? '再読み込みします' : '更新します'
+      document.title = `${reloadCountdown}秒後に${verb} — ${DEFAULT_TITLE}`
     } else {
       document.title = DEFAULT_TITLE
     }
-  }, [alertTitleText, updateCountdown])
-
-  // SW アップデート検知: sw-updated イベントを受け取りカウントダウンを開始する
-  useEffect(() => {
-    const onSwUpdated = () => setUpdateCountdown(prev => prev ?? 10)
-    window.addEventListener('sw-updated', onSwUpdated)
-    return () => window.removeEventListener('sw-updated', onSwUpdated)
-  }, [])
+  }, [alertTitleText, reloadCountdown, reloadCountdownReason])
 
   // アプリ時計とログのタイムスタンプをリプレイ時刻に追従させる
   // （clock はライブ時サーバー同期、リプレイ時は setReplayOffset で絶対制御）
@@ -1408,34 +1411,6 @@ export function App() {
     const id = setInterval(() => setNowTick(serverDate()), 1000)
     return () => clearInterval(id)
   }, [connectionStatus, replayTimeOffset])
-
-  // 定期自動リロード（毎日午前5時にカウントダウン開始）
-  useEffect(() => {
-    if (settings.periodicReloadHours <= 0) return
-    const msUntilNext5AM = () => {
-      const now = new Date()
-      const next = new Date(now)
-      next.setHours(5, 0, 0, 0)
-      if (next <= now) next.setDate(next.getDate() + 1)
-      return next.getTime() - now.getTime()
-    }
-    const id = setTimeout(() => {
-      setUpdateCountdown(prev => prev ?? 10)
-    }, msUntilNext5AM())
-    return () => clearTimeout(id)
-  }, [settings.periodicReloadHours])
-
-  // カウントダウン進行: 警報なし（alertTitle === null）のときのみ毎秒デクリメントし、0でリロード
-  useEffect(() => {
-    if (updateCountdown === null) return
-    if (title.alertTitle !== null) return
-    if (updateCountdown <= 0) {
-      window.location.reload()
-      return
-    }
-    const id = setTimeout(() => setUpdateCountdown(n => (n !== null ? n - 1 : null)), 1000)
-    return () => clearTimeout(id)
-  }, [updateCountdown, title.alertTitle])
 
   // 設定・電文ログタブ表示中は、地図には直前に表示していたタブの内容をそのまま残す。
   const [lastContentTab, setLastContentTab] = useState<TabId>(settings.defaultTab)
@@ -2744,7 +2719,7 @@ export function App() {
               <SeismoOverlay stations={seismoOverlayStations} />
             </div>
             {/* 地図右上。アプリの状態を上から更新時刻・生成データの取得状況・地図描画の不調・
-                自作地震計との繋がり具合の順で。**自作地震計の観測値（左上）とは左右で分ける** ——
+                自作地震計との繋がり具合・更新の札の順で。**自作地震計の観測値（左上）とは左右で分ける** ——
                 観測している値と、それが届いているかどうかは別のものなので、混ぜると
                 繋がらない間ずっと観測値の居場所が押し下がる。
                 **下端の帯（凡例・特別情報バナー）とは重ならない** —— あちらは全幅の絶対配置で、
@@ -2760,6 +2735,9 @@ export function App() {
               <MapDataStatus />
               <MapRenderStatus />
               <SeismoLinkStatus stream={seismoView.stream} urlUnusable={seismoView.urlUnusable} />
+              {/* 新しい版の知らせ・秒読み・更新した直後の知らせ（→ components/AppUpdateBadge.tsx）。
+                  列は押せない（pointer-events-none）ので、札の側で押せるようにしている */}
+              <AppUpdateBadge schedule={reloadSchedule} />
             </div>
             {/* 地図に重ねる縦並び。上端に行動チェックリスト、下端に凡例・特別情報バナー。
                 **地図の高さを 1 本の縦並びで分け合う**（足りないときは中身が縮み、それぞれの中で

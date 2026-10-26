@@ -38,6 +38,8 @@ import { buildSettingsFile, parseSettingsFile, settingsFileHasKeys, settingsFile
 import { isValidHomeLocation, parseCoordinateNumber, splitPastedLatLng } from '../../utils/homeLocationInput'
 import { SHARE_CARD_FORMATS } from '../../utils/shareCard'
 import { HEATMAP_PERIODS, isHeatmapPeriod } from '../../utils/quakeHeatmap'
+import { ReleaseNotesDialog } from '../ReleaseNotesDialog'
+import { allNotes, type ReleaseNoteEntry } from '../../utils/releaseNotes'
 
 export interface TestFunctions {
   earthquake: () => void
@@ -710,6 +712,26 @@ function TelegramBoilerplateRows({ reads, onChange }: {
     </>
   )
 }
+
+/** 「変更履歴」の行。［表示］で全部の版の変更内容を窓に出す（2026-10-26 ユーザー承認「［表示］で窓を開く」）。 */
+function ReleaseHistoryRow() {
+  const [open, setOpen] = useState(false)
+  const close = useCallback(() => setOpen(false), [])
+  return (
+    <Row label="変更履歴">
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="rounded-sm border border-border px-3 py-1 text-xs text-secondary hover:bg-white/10 hover:text-white"
+      >
+        表示
+      </button>
+      {open && <ReleaseNotesDialog title="変更履歴" select={selectAllNotes} onClose={close} />}
+    </Row>
+  )
+}
+
+const selectAllNotes = (entries: readonly ReleaseNoteEntry[]) => allNotes(entries, isDmdss ? 'dmdss' : 'standard')
 
 function Row({ label, description, hint, children }: {
   label: string
@@ -2036,6 +2058,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
 
       <Section title="このアプリについて">
         <Row label="バージョン"><span className="text-xs text-secondary">{__APP_VERSION__}</span></Row>
+        <ReleaseHistoryRow />
         {/* 利用規約・プライバシーポリシーへの導線。
             **同意を求める画面は出さない。** 無償・アカウント不要・利用者の情報を集めない
             アプリなので、起動を 1 手止めてまで読ませる筋合いが無い（通例もこの形）。
