@@ -177,8 +177,23 @@ export default defineConfig(configEnv => ({
           )
       },
     },
+    // 配信している版の番号（`version.json`）。開いているページが、待っている新しい版の番号を知るために読む
+    // （`src/services/appUpdateRegister.ts`）。事前キャッシュにも実行時キャッシュにも載らない名前・場所に置く。
+    {
+      name: 'emit-version-json',
+      apply: 'build',
+      generateBundle() {
+        this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ version: pkg.version }) })
+      },
+    },
     VitePWA({
-      registerType: 'autoUpdate',
+      // **新しい版は見つけても自分からは有効にしない。** いつ適用するかはアプリが決める（発表中・再生中・
+      // 入力中は待つ。→ src/services/appUpdate.ts・src/utils/appUpdateGate.ts）。即座に有効にすると、
+      // 開いているページがまだ読んでいない古い版のファイルが片付けられ、後から読みに行って失敗する。
+      registerType: 'prompt',
+      // 登録は `src/services/appUpdateRegister.ts` がブラウザの口で自分で行う（`virtual:pwa-register` は使わない。
+      // 理由はそのファイルの冒頭）。
+      injectRegister: false,
       includeAssets: ['icons/*.svg', 'icons/*.png'],
       manifest: {
         name: strings.title,

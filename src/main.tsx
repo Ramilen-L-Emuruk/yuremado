@@ -11,6 +11,8 @@ import { log } from './utils/logger'
 import { installFrameProfiler } from './utils/frameProfiler'
 import { installGlobalErrorLog } from './utils/globalErrorLog'
 import { installSpeechCacheProbe } from './utils/speechAudioCache'
+import { startAppUpdate } from './services/appUpdateRegister'
+import { currentAppUpdater } from './services/appUpdate'
 
 // コマ落ちの診断（`window.__frameProfiler`）を使えるようにする。**呼び口を用意するだけで、
 // `start()` を呼ぶまで何も記録しない**（utils/frameProfiler.ts の `arm`）。このアプリは地震の
@@ -26,21 +28,19 @@ installGlobalErrorLog()
 // 呼び口を生やすだけで、何も記録し始めない（統計は控え側が常時数えている）。
 installSpeechCacheProbe()
 
-// autoUpdate モードで新 SW がコントローラーになったら sw-updated イベントを発火する。
-// 初回インストール時（controller が null → SW）は除外し、更新時のみ通知する。
-// 実際のリロードは App.tsx 側で「情報発表なし」を確認してから行う。
-if ('serviceWorker' in navigator) {
-  const wasControlled = Boolean(navigator.serviceWorker.controller)
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (wasControlled) {
-      log.info('[sw] 新バージョン検知 → sw-updated 発火')
-      window.dispatchEvent(new CustomEvent('sw-updated'))
-    }
-  })
+// サービスワーカーを登録し、新しい版の検出と適用を始める。新しい版は見つけても自分からは有効にならず、
+// いつ適用するかは App.tsx が決める（発表中・再生中・入力中は待つ。→ services/appUpdate.ts）。
+// ここで投げても画面は描く（更新に気づけなくなるだけで、地震の情報は出せる）
+try {
+  startAppUpdate()
+} catch (err) {
+  log.error('[sw] 新しい版の見張りを始められなかった（新しい版に気づけない）', err)
+}
 
-  // 新 SW のインストールが中断されると installing → redundant で終わり、activate も controllerchange も
-  // 起きない。つまり上の更新検知は沈黙し、ユーザーは古い版のまま更新に気づけず、開発側にも痕跡が残らない
-  // （DevTools を開かない限り不可視）。せめてログに残す。
+if ('serviceWorker' in navigator) {
+  // 新 SW のインストールが中断されると installing → redundant で終わり、waiting に入らない。つまり上の
+  // 更新検知は沈黙し、ユーザーは古い版のまま更新に気づけず、開発側にも痕跡が残らない（DevTools を開かない
+  // 限り不可視）。せめてログに残す。
   //
   // 検知できる範囲は限定的で、そこを取り違えないよう明示しておく:
   //   - redundant は「インストール失敗」だけでなく「より新しい SW に正当に置き換えられた」ときにも起きる。
@@ -80,3 +80,26 @@ createRoot(rootEl).render(
     </ErrorBoundary>
   </StrictMode>,
 )
+
+// ここまで来たら、起動に要るファイルは全部読めている。起動の途中で読めずに読み直していたら、そのことを残す。
+// 起動した後に読めないファイルが出たら、読み直さずに新しい版を確かめに行く（発表の最中に画面を消さないため。
+// 新しい版が見つかれば、いつものとおり待つ条件を見てから適用する）。仕組みは public/boot-recovery.js。
+const bootRecovery = (window as Window & { __bootRecovery?: BootRecovery }).__bootRecovery
+if (bootRecovery === undefined) {
+  log.warn('[起動] 読み込みの受け皿（boot-recovery.js）が見つからない（読めないファイルがあっても読み直さない）')
+} else {
+  const recovered = bootRecovery.markBooted()
+  if (recovered !== null) {
+    if (recovered.failedShown) log.warn(`[起動] 読み直してもファイルを読めず「画面を読み込めませんでした」を出していた。再読み込みで起動できた（${recovered.reason}）`)
+    else log.warn(`[起動] ファイルを読めなかったので 1 回読み直した（${recovered.reason}）`)
+  }
+  bootRecovery.onLateFailure((reason) => {
+    log.warn(`[起動] 起動した後にファイルを読めなかった。新しい版を確かめに行く（${reason}）`)
+    currentAppUpdater().checkNow()
+  })
+}
+
+interface BootRecovery {
+  markBooted(): { reason: string; failedShown: boolean } | null
+  onLateFailure(listener: (reason: string) => void): void
+}
