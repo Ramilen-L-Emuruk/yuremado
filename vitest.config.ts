@@ -17,7 +17,7 @@ export default defineConfig({
     // scripts 配下も対象にする（ビルド設定から切り出した純関数のテストが置かれる）。
     // **`.tsx` も拾う。** JSX を書くコンポーネントのテスト（`RangeSlider.test.tsx` 等）は
     // 拡張子を変えざるを得ず、`.ts` だけの列挙だと**エラーも出さずに実行されない**。
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.ts', 'seismo-host/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.ts', 'seismo-host/**/*.test.ts', 'relay/**/*.test.ts'],
     // **描いたものをテストごとに片付ける。** `globals` を立てていないので、React Testing Library の
     // 自動の片付けは効かない（理由と踏んだ例は src/vitestSetup.ts）。
     setupFiles: ['src/vitestSetup.ts'],
