@@ -109,7 +109,7 @@ function nankaiColors(kindName: string): { bg: string; border: string; badge: st
 const SAFE_BOTTOM = 'sideShort:[&>*:last-child]:pb-[env(safe-area-inset-bottom,0px)]'
 
 /**
- * 地図の右下の共有ボタンを包む要素の、下の位置のクラス。帯の下端の余白と同じ条件で下端の safe-area を避ける
+ * 地図の左下の共有ボタンを包む要素の、下の位置のクラス。帯の下端の余白と同じ条件で下端の safe-area を避ける
  * （→ docs/spec/architecture-spec.md §4）。帯が出ていればボタンは帯のすぐ上に載り、下端に届くのは帯の側なので避けない。
  * **クラス名は字面のまま書く**（Tailwind は文字列をそのまま拾う。組み立てると生成されない）。
  */

@@ -1800,7 +1800,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </select>
           </Row>
         )}
-        <Row label="凡例を表示" description="地図の左下に、いま地図で使っている色の意味（震度・津波の等級・震源の深さなど）を重ねます。見出しをタップすると畳めます">
+        <Row label="凡例を表示" description="地図の右下に、いま地図で使っている色の意味（震度・津波の等級・震源の深さなど）を重ねます。見出しをタップすると畳めます">
           <Toggle
             checked={settings.showMapLegend}
             onChange={v => onUpdate('showMapLegend', v)}

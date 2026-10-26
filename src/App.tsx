@@ -2779,11 +2779,13 @@ export function App() {
                 // `hit`。畳んだ狭い画面で上へ最大 0.55rem）。包みがスクロール領域なのでその縁で
                 // 切られ、指で押せる範囲が縮む —— 余白で逃がす（`pointer-events-none` なので地図の操作は妨げない）。
                 // 包みは凡例が描くものを持つときだけ出す（`MapLegend` は空なら何も描かないが、包みの余白は残る）。
-                <div className="min-h-0 pt-[0.6rem] shrink-8 overflow-y-auto overflow-x-hidden overscroll-x-none flex flex-col items-start">
+                // 右下に置くのは、日本列島が左下から右上へ伸びていて右下が海（太平洋）だから —— 常に出ていて
+                // 面積の大きい凡例を陸の無い側へ寄せる（承認の日付と原文は docs/spec/map-rendering-spec.md §20「置き場所」）。
+                <div className="min-h-0 pt-[0.6rem] shrink-8 overflow-y-auto overflow-x-hidden overscroll-x-none flex flex-col items-end">
                   <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} onHeatmapPeriodChange={changeHeatmapPeriod} />
                 </div>
               )}
-              {/* 地図右下の共有ボタン（表示中の地図を画像にする）。**特別情報の帯のすぐ上に置く** —— 縦並びの外に
+              {/* 地図左下の共有ボタン（表示中の地図を画像にする。右下は凡例）。**特別情報の帯のすぐ上に置く** —— 縦並びの外に
                   絶対配置すると、帯が出ても押し上げてもらえずに帯へ重なる。高さ 0 の行を足場にしてその上へ
                   はみ出させるので、凡例の縮み方（縦並びの高さの分け合い）には加わらない。
                   帯が無い（閉じた帯しか残っていない場合も含む）ときは地図の下端に付く。ホームインジケータ分を
@@ -2793,7 +2795,7 @@ export function App() {
                 <div className="relative h-0 shrink-0">
                   <div
                     className={`absolute pointer-events-auto ${shareButtonBottomClass(specialInfoBanners.shown, !waveChartShown)}`}
-                    style={{ right: 'max(0.5rem, env(safe-area-inset-right, 0px))' }}
+                    style={{ left: 'max(0.5rem, env(safe-area-inset-left, 0px))' }}
                   >
                     <ShareCardButton state={shareCard.state} onClick={() => shareCard.share()} />
                   </div>

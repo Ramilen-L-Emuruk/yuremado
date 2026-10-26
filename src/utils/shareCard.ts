@@ -330,11 +330,11 @@ export async function composeShareCard(opts: ShareCardOptions): Promise<Blob> {
   drawHeader(ctx, header, format.width, headerH)
   // 撮影の画素数が出力より大きければ、ここで縮小される（上記の注記）。
   ctx.drawImage(capture.canvas, 0, headerH, format.width, mapHeight)
-  // 凡例は地図の左下へ重ねる（画面と同じ位置）。撮り切れなかった注記は右下なので衝突しない。
+  // 凡例は地図の右下へ重ねる（画面と同じ位置）。撮り切れなかった注記は左下なので衝突しない。
   if (opts.legend && opts.legend.length > 0) {
-    drawLegend(ctx, opts.legend, headerH + mapHeight)
+    drawLegend(ctx, opts.legend, format.width, headerH + mapHeight)
   }
-  if (capture.timedOut) drawIncompleteNotice(ctx, format.width, headerH + mapHeight)
+  if (capture.timedOut) drawIncompleteNotice(ctx, headerH + mapHeight)
   if (noticeLines > 0) drawNotices(ctx, notices, format.width, headerH + mapHeight)
 
   return await canvasToPngBlob(out)
@@ -542,14 +542,14 @@ function drawLegendChipRows(ctx: CanvasRenderingContext2D, rows: LegendChip[][],
   })
 }
 
-function drawLegend(ctx: CanvasRenderingContext2D, blocks: LegendBlock[], mapBottom: number): void {
+function drawLegend(ctx: CanvasRenderingContext2D, blocks: LegendBlock[], width: number, mapBottom: number): void {
   const inner = LEGEND_MAX_W - LEGEND_PAD * 2
   const sizes = blocks.map((block) => legendBlockSize(ctx, block, inner))
   const contentW = Math.max(...sizes.map((size) => size.w))
   const contentH = sizes.reduce((sum, size, i) => sum + size.h + (i > 0 ? LEGEND_BLOCK_GAP : 0), 0)
   const boxW = Math.min(LEGEND_MAX_W, contentW + LEGEND_PAD * 2)
   const boxH = contentH + LEGEND_PAD * 2
-  const left = PADDING_X
+  const left = width - PADDING_X - boxW
   const top = mapBottom - 20 - boxH
 
   ctx.save()
@@ -642,22 +642,22 @@ function drawNotices(ctx: CanvasRenderingContext2D, notices: string[], width: nu
 }
 
 /**
- * 地図が揃いきる前に撮ったことを地図の右下へ重ねる。
+ * 地図が揃いきる前に撮ったことを地図の左下へ重ねる（右下は凡例）。
  *
  * 欠けた画像が「正常に撮れたもの」として共有されるのを防ぐための注記。共有した先からは
  * 取り消せないため、画像そのものに残す。
  */
-function drawIncompleteNotice(ctx: CanvasRenderingContext2D, width: number, mapBottom: number): void {
+function drawIncompleteNotice(ctx: CanvasRenderingContext2D, mapBottom: number): void {
   ctx.font = `400 15px ${FONT_STACK}`
-  ctx.textAlign = 'right'
+  ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
   const textWidth = ctx.measureText(INCOMPLETE_NOTICE).width
-  const boxRight = width - PADDING_X
+  const boxLeft = PADDING_X
   const boxBottom = mapBottom - 14
   ctx.fillStyle = 'rgba(10, 12, 16, 0.72)'
-  ctx.fillRect(boxRight - textWidth - 14, boxBottom - 26, textWidth + 20, 30)
+  ctx.fillRect(boxLeft - 6, boxBottom - 26, textWidth + 20, 30)
   ctx.fillStyle = TEXT_MUTED
-  ctx.fillText(INCOMPLETE_NOTICE, boxRight - 4, boxBottom - 6)
+  ctx.fillText(INCOMPLETE_NOTICE, boxLeft + 4, boxBottom - 6)
 }
 
 /**
