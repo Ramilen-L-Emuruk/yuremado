@@ -56,7 +56,22 @@ import {
   wavesUrl,
 } from './shakeWave'
 import type { EnvelopeView } from './shakeWave'
-import { apiFetch } from './api'
+import { apiFetch, ApiError } from './api'
+import { confirmDialog } from './confirmDialog'
+import {
+  parseRedetectState,
+  REDETECT_ALL_STATIONS_LABEL,
+  REDETECT_BUTTON_LABEL,
+  REDETECT_CONFIRM,
+  REDETECT_INTERRUPTED_LINE,
+  redetectLine,
+  redetectPollFailureLine,
+  redetectStartFailureLine,
+  redetectStationsFailureLine,
+  type OperationLine,
+  type RedetectStateView,
+} from './adminOperations'
+import type { StationInfo } from '../receiver/stationConfigTypes'
 import { P_BAND, P_COLOR, quakeFailureText, readQuakesData, S_BAND, S_COLOR, type QuakeMarkView } from './recordsMarks'
 import { recordsUrl } from './recordsPlot'
 import { openWaveStream } from './waveStream'
@@ -131,6 +146,16 @@ export async function initShakesView(container: HTMLElement, ctx: TabContext): P
         <button type="button" class="shake-more-button" style="margin-left: 0.6rem">さらに古い記録を読む</button>
         <div class="shake-more-error error"></div>
       </div>
+    </section>
+    <!-- **流し直しは、いま選んでいる期間をそのまま渡す**（#313・2026-10-27 ユーザー承認）。期間の欄を別に持つと、
+         一覧で見ている範囲と流す範囲を取り違える。 -->
+    <section class="panel">
+      <div class="row" style="align-items: center; flex-wrap: wrap; gap: 0.6rem">
+        <select class="redetect-station"><option value="">${REDETECT_ALL_STATIONS_LABEL}</option></select>
+        <button type="button" class="redetect-start">${REDETECT_BUTTON_LABEL}</button>
+      </div>
+      <div class="redetect-stations-error error"></div>
+      <div class="redetect-line"></div>
     </section>
   `
 
@@ -815,6 +840,118 @@ export async function initShakesView(container: HTMLElement, ctx: TabContext): P
       renderRows()
     },
   })
+
+  // ---- 流し直し（#313）----
+  const redetectStationEl = qs<HTMLSelectElement>(container, '.redetect-station')
+  const redetectStartEl = qs<HTMLButtonElement>(container, '.redetect-start')
+  const redetectLineEl = qs(container, '.redetect-line')
+  const redetectStationsErrorEl = qs(container, '.redetect-stations-error')
+  let redetectState: RedetectStateView | null = null
+  let redetectTimer: number | null = null
+  /**
+   * 状態を訊いた・頼んだ回の通し番号。**後から出した問いの答えだけを映す**（起動直後の問いの `idle` が
+   * 押した後の `running` より遅れて着くと、走っているのに押せる見た目へ戻るため）。
+   */
+  let redetectSeq = 0
+  const showRedetectLine = (line: OperationLine | null): void => {
+    redetectLineEl.textContent = line?.text ?? ''
+    redetectLineEl.classList.toggle('error', line?.error === true)
+  }
+  /**
+   * 進み具合を映す。**走っていたものが終わったら、一覧を読み直す**（書き足した揺れを出す。2026-10-27 ユーザー承認）。
+   * 走っている間は 5 秒ごとに訊き直し、終われば止める（走っていない間は訊かない）。
+   *
+   * **走っているのを見ていたのに `idle` が返ったら、途中で止まったと出す**（ホストが起動し直すと流し直しの
+   * 記憶ごと消えるので、これでしか分からない。2026-10-27 ユーザー承認「3 つとも足す」）。黙って行を消すと、
+   * 流し直しが終わったのか消えたのかが読めない。
+   */
+  const applyRedetectState = (next: RedetectStateView): void => {
+    const wasRunning = redetectState?.kind === 'running'
+    redetectState = next
+    showRedetectLine(wasRunning && next.kind === 'idle' ? REDETECT_INTERRUPTED_LINE : redetectLine(next, anchorMs))
+    redetectStartEl.disabled = next.kind === 'running'
+    if (next.kind === 'running') {
+      if (redetectTimer === null) redetectTimer = window.setInterval(() => void pollRedetect(), 5_000)
+    } else if (redetectTimer !== null) {
+      window.clearInterval(redetectTimer)
+      redetectTimer = null
+    }
+    if (wasRunning && next.kind === 'done') void loadEvents()
+  }
+  /**
+   * いまの進み具合を訊く。**訊けなかったら理由を出し、ボタンを押せるように戻す**（2026-10-27 ユーザー承認
+   * 「3 つとも足す」）。黙ると、押した後に断られた（409）ボタンが理由も無く押せないまま固まる。
+   * 走っていた最中なら 5 秒ごとの問いは続ける（ホストが戻れば、続きか「途中で止まった」が出る）。
+   */
+  const pollRedetect = async (): Promise<void> => {
+    const seq = ++redetectSeq
+    let state: RedetectStateView | null
+    try {
+      state = parseRedetectState(await apiFetch<unknown>('/api/redetect'))
+      if (state === null) throw new Error('応答の形が違う')
+    } catch (error) {
+      if (signal.aborted || seq !== redetectSeq) return
+      showRedetectLine(redetectPollFailureLine(error))
+      redetectStartEl.disabled = false
+      return
+    }
+    if (signal.aborted || seq !== redetectSeq) return
+    applyRedetectState(state)
+  }
+  signal.addEventListener(
+    'abort',
+    () => {
+      if (redetectTimer !== null) window.clearInterval(redetectTimer)
+    },
+    { once: true },
+  )
+  redetectStartEl.addEventListener('click', () => {
+    void (async () => {
+      const ok = await confirmDialog(document, REDETECT_CONFIRM)
+      if (!ok || signal.aborted) return
+      const q = periodQuery()
+      const stationId = redetectStationEl.value === '' ? null : redetectStationEl.value
+      redetectStartEl.disabled = true
+      const seq = ++redetectSeq
+      try {
+        const body = await apiFetch<unknown>('/api/redetect', {
+          method: 'POST',
+          body: JSON.stringify({ fromMs: Math.floor(q.fromMs), toMs: Math.ceil(q.toMs), stationId }),
+        })
+        if (signal.aborted || seq !== redetectSeq) return
+        const state = parseRedetectState(body)
+        if (state !== null) applyRedetectState(state)
+        else void pollRedetect()
+      } catch (error) {
+        if (signal.aborted || seq !== redetectSeq) return
+        // **もう走っていたら（別の画面から始めた）、その進み具合を出す**（失敗とは言わない）。
+        if (error instanceof ApiError && error.status === 409) {
+          void pollRedetect()
+          return
+        }
+        showRedetectLine(redetectStartFailureLine(error))
+        redetectStartEl.disabled = redetectState?.kind === 'running'
+      }
+    })()
+  })
+  // 観測点の選択肢と、いまの進み具合。**一覧が取れなければ「すべての観測点」だけになることと、その理由を出す**
+  // （2026-10-27 ユーザー承認「案のとおり出す」。黙ると、絞れない理由が分からないまま全観測点を流しうる）。
+  // **形が違う応答も、取れなかったのと同じ行へ回す**（成功側で投げた例外を `catch` で拾う。`.then(ok, ng)` の
+  // 形だと、成功側の例外は `ng` に回らず黙って消える）。
+  void apiFetch<{ readonly stations?: unknown }>('/api/stations')
+    .then((body) => {
+      if (signal.aborted) return
+      if (!Array.isArray(body.stations)) throw new Error('応答の形が違う')
+      const options = (body.stations as readonly StationInfo[])
+        .map((st) => `<option value="${escapeHtml(st.stationId)}">${escapeHtml(st.displayName)}</option>`)
+        .join('')
+      redetectStationEl.insertAdjacentHTML('beforeend', options)
+    })
+    .catch((error: unknown) => {
+      if (signal.aborted) return
+      redetectStationsErrorEl.textContent = redetectStationsFailureLine(error).text
+    })
+  void pollRedetect()
 
   // 覚えていた期間をボタンの見た目へ映す（日付で選んでいれば、どのボタンも押していない見た目）。
   pressPeriodButton(

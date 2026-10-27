@@ -35,6 +35,9 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { AdminConsoleAssets } from './adminConsoleAssets'
 import { checkAdminAuth } from './adminAuth'
 import type { AdminAuthConfig, AdminAuthFailure } from './adminAuth'
+import { isBoardAction } from './boardControl'
+import type { BoardAction, BoardActionResult, BoardControlState } from './boardControl'
+import type { RedetectRequest, RedetectRunState, RedetectStartResult } from './redetectRunner'
 import type { RestWindowsReport } from './gravityCheck'
 import { COLUMNS_MAX, decimalInt } from './httpQuery'
 import { computeQuakeIntensity, computeUsualMeasured, QUAKE_INTENSITY_LEAD_MS, USUAL_WAIT_MS, usualWindows } from './quakeIntensity'
@@ -44,6 +47,7 @@ import { describeFailure, normalizeBoardKey, parseStationConfig } from './statio
 import type { StationConfig } from './stationConfig'
 import type { StatusReport } from './statusReport'
 import type { StorageOps } from './storageControl'
+import type { DetectionOps } from './detectionControl'
 import { stationFileToken } from './waveArchive'
 import type { ArchivedWaveChunk, WaveRangeResult } from './waveArchive'
 import type { WaveChunk } from './intensityPipeline'
@@ -561,6 +565,106 @@ export interface StationConfigOps {
  */
 export type ShutdownRequestResult = 'accepted' | 'already-closing' | 'not-ready'
 
+/** 管理画面から頼む操作（#313・2026-10-27 ユーザー承認）。 */
+export interface AdminOperations {
+  /** 基板の操作を押せるか（`GET /api/board-control`）。 */
+  readonly boardControlState: () => BoardControlState
+  /** 基板へ再起動・Wi-Fi の繋ぎ直しを頼む（`POST /api/boards/:boardKey/restart`・`/wifi-reconnect`）。**投げない。** */
+  readonly sendBoardAction: (boardKey: string, action: BoardAction) => Promise<BoardActionResult>
+  /**
+   * ホストの再起動（`POST /api/restart`）。止める合図と同じ締めくくりを走らせ、0 以外の終了コードで終わって
+   * サービス（WinSW）に起こし直させる。**止める合図と同じ予約を使う**ので、どちらが先でも 2 度目は `already-closing`。
+   */
+  readonly requestRestart: () => ShutdownRequestResult
+  /** 流し直しの進み具合（`GET /api/redetect`）。 */
+  readonly redetectState: () => RedetectRunState
+  /** 流し直しを別のプロセスで始める（`POST /api/redetect`。`redetectRunner.ts`）。**待たない。** */
+  readonly startRedetect: (request: RedetectRequest) => RedetectStartResult
+}
+
+/**
+ * `POST /api/redetect` の本文を読む。**純関数。**
+ *
+ * - 範囲は unix ミリ秒の整数で、`toMs > fromMs`。**始めは 0 以上**（負の大きな値は日付にならず、
+ *   ログや道具の引数で `toISOString()` が投げる。末尾はいまへ詰めるので、始めだけ見れば日付に収まる）
+ * - **末尾が先のときは、いまへ詰める**（揺れの記録タブの期間は「いままで」を選べる。まだ届いていない分は流しようが無い）。
+ *   頭からいまより先なら断る
+ * - **長さに上限を置かない**（揺れの記録の期間に上限を設けない決定と揃える。全期間を流すのは道具の元の使い方）
+ * - `stationId` は空でない文字列か null（null ならすべての観測点）
+ */
+export function parseRedetectRequest(
+  body: unknown,
+  nowMs: number,
+): { readonly ok: true; readonly request: RedetectRequest } | { readonly ok: false; readonly error: string } {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return { ok: false, error: 'body-not-object' }
+  const b = body as Record<string, unknown>
+  const fromMs = b.fromMs
+  const toMs = b.toMs
+  if (
+    typeof fromMs !== 'number' ||
+    typeof toMs !== 'number' ||
+    !Number.isSafeInteger(fromMs) ||
+    !Number.isSafeInteger(toMs) ||
+    fromMs < 0 ||
+    toMs <= fromMs
+  ) {
+    return { ok: false, error: 'bad-range' }
+  }
+  if (fromMs >= nowMs) return { ok: false, error: 'range-in-future' }
+  if (b.stationId !== null && (typeof b.stationId !== 'string' || b.stationId.length === 0)) {
+    return { ok: false, error: 'bad-station' }
+  }
+  return { ok: true, request: { fromMs, toMs: Math.min(toMs, nowMs), stationId: b.stationId } }
+}
+
+/** 基板の操作の結果を、HTTP の番号と本文へ写す。**基板が断った番号はそのまま返さない**（ホストの口の 403 と紛れる）。 */
+export function boardActionReply(result: BoardActionResult): { readonly status: number; readonly body: Record<string, unknown> } {
+  switch (result.kind) {
+    case 'sent':
+      return { status: 200, body: { status: 'sent' } }
+    case 'busy':
+      return { status: 409, body: { error: 'board-busy' } }
+    case 'no-token':
+      return { status: 503, body: { error: 'no-board-token' } }
+    case 'no-address':
+      return { status: 409, body: { error: 'no-board-address' } }
+    case 'closed':
+      return { status: 502, body: { error: 'board-closed' } }
+    case 'bad-token':
+      return { status: 502, body: { error: 'board-bad-token' } }
+    case 'old-firmware':
+      return { status: 502, body: { error: 'board-old-firmware' } }
+    case 'unexpected':
+      return { status: 502, body: { error: 'board-unexpected', boardStatus: result.status } }
+    case 'no-reply':
+      return { status: 504, body: { error: 'board-no-reply', cause: result.cause, reason: result.reason } }
+  }
+}
+
+/** 記録に出す一言。 */
+function describeBoardActionResult(result: BoardActionResult): string {
+  switch (result.kind) {
+    case 'sent':
+      return '受けた'
+    case 'busy':
+      return '同じ基板へ頼んでいる最中なので送らなかった'
+    case 'no-token':
+      return 'ホストに基板のトークンが無い（SEISMO_BOARD_ADMIN_TOKEN）'
+    case 'no-address':
+      return '基板の住所が分からない'
+    case 'closed':
+      return '基板の口は閉じている（501）'
+    case 'bad-token':
+      return '基板のトークンが違う（403）'
+    case 'old-firmware':
+      return '基板のファームが古い（404）'
+    case 'unexpected':
+      return `基板が ${result.status} を返した`
+    case 'no-reply':
+      return `返事が無い（${result.reason}）`
+  }
+}
+
 /** 合成波形の作り直しの依頼（`POST /api/rewave`）。 */
 export interface RewaveRequest {
   readonly stationId: string
@@ -686,6 +790,13 @@ export interface StatusServerOptions {
    * **`/status` ではなく `/api/*` の側に置く** —— 保存先のパスは運用者だけが見ればよい。
    */
   readonly storage: StorageOps
+  /**
+   * 検出の値（`GET`/`PUT /api/detection`・#313・2026-10-27 ユーザー承認）。実体は `detectionControl.ts`。
+   * **受け付けても、効くのは次の起動から。**
+   */
+  readonly detection: DetectionOps
+  /** 管理画面から頼む操作（基板の再起動・繋ぎ直し、ホストの再起動。#313・2026-10-27 ユーザー承認）。 */
+  readonly operations: AdminOperations
   /**
    * 管理コンソール本体（#313 段 C）。`GET /admin`・`GET /admin/app.js` で配る。
    *
@@ -922,14 +1033,31 @@ type AdminRoute =
   | { readonly kind: 'station'; readonly stationId: string }
   | { readonly kind: 'boards' }
   | { readonly kind: 'board'; readonly boardKey: string }
+  | { readonly kind: 'board-action'; readonly boardKey: string; readonly action: BoardAction }
+  | { readonly kind: 'board-control' }
+  | { readonly kind: 'restart' }
+  | { readonly kind: 'redetect' }
   | { readonly kind: 'rest-windows' }
   | { readonly kind: 'shutdown' }
   | { readonly kind: 'rewave' }
   | { readonly kind: 'storage' }
+  | { readonly kind: 'detection' }
   | { readonly kind: 'storage-purge-old' }
   | { readonly kind: 'storage-abandon-migration' }
   /** `/api/records/` の後ろ（`channels`・`envelope` など。解くのは `waveRecordsApi.ts`）。 */
   | { readonly kind: 'records'; readonly route: string }
+
+/**
+ * パスの 1 区切りを戻す。**`%` の書き方が壊れていれば null**（`decodeURIComponent` は URIError を投げ、
+ * そのままだと入口の受け止め（500）まで抜ける。読めない宛先は「その口は無い」として 404 にする）。
+ */
+function decodePathSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return null
+  }
+}
 
 /**
  * `/api/*` の経路を解く。**マッチしなければ `null`**（呼び出し側が 404 にする）。
@@ -941,18 +1069,30 @@ type AdminRoute =
 function parseAdminRoute(pathname: string): AdminRoute | null {
   if (pathname === '/api/stations') return { kind: 'stations' }
   if (pathname.startsWith('/api/stations/')) {
-    const stationId = decodeURIComponent(pathname.slice('/api/stations/'.length))
-    return stationId.length > 0 ? { kind: 'station', stationId } : null
+    const stationId = decodePathSegment(pathname.slice('/api/stations/'.length))
+    return stationId !== null && stationId.length > 0 ? { kind: 'station', stationId } : null
   }
   if (pathname === '/api/boards') return { kind: 'boards' }
   if (pathname.startsWith('/api/boards/')) {
-    const boardKey = decodeURIComponent(pathname.slice('/api/boards/'.length))
-    return boardKey.length > 0 ? { kind: 'board', boardKey } : null
+    // **操作の口を先に見る。** 基板の鍵（`mac:…`）に `/` は入らないので、最後の `/` の後ろが操作の名前なら操作の口。
+    const rest = pathname.slice('/api/boards/'.length)
+    const slash = rest.lastIndexOf('/')
+    if (slash > 0) {
+      const action = rest.slice(slash + 1)
+      const key = decodePathSegment(rest.slice(0, slash))
+      return isBoardAction(action) && key !== null && key.length > 0 ? { kind: 'board-action', boardKey: key, action } : null
+    }
+    const boardKey = decodePathSegment(rest)
+    return boardKey !== null && boardKey.length > 0 ? { kind: 'board', boardKey } : null
   }
   if (pathname === '/api/rest-windows') return { kind: 'rest-windows' }
   if (pathname === '/api/shutdown') return { kind: 'shutdown' }
+  if (pathname === '/api/restart') return { kind: 'restart' }
+  if (pathname === '/api/redetect') return { kind: 'redetect' }
+  if (pathname === '/api/board-control') return { kind: 'board-control' }
   if (pathname === '/api/rewave') return { kind: 'rewave' }
   if (pathname === '/api/storage') return { kind: 'storage' }
+  if (pathname === '/api/detection') return { kind: 'detection' }
   if (pathname === '/api/storage/purge-old') return { kind: 'storage-purge-old' }
   if (pathname === '/api/storage/abandon-migration') return { kind: 'storage-abandon-migration' }
   if (pathname.startsWith('/api/records/')) {
@@ -1096,6 +1236,65 @@ async function handleStorage(
     root === null
       ? '[admin] 次の起動で使う保存先の変更を取り消した'
       : `[admin] 次の起動で使う保存先を ${root} にした（再起動するまでは今の場所へ書く）`,
+  )
+}
+
+/**
+ * `GET`/`PUT /api/detection`。PUT の本文は `{ "pendingDetection": <検出の値> | null }`（`null` は待っている
+ * 変更の取り消し）。**受け付けても、効くのは次の起動から**（`hostSettings.ts` の `resolveDetection`）。
+ */
+async function handleDetection(
+  req: IncomingMessage,
+  res: ServerResponse,
+  detection: DetectionOps,
+  log: (level: LogLevel, kind: string, detail: string, line: string) => void,
+): Promise<void> {
+  if (req.method === 'GET') {
+    sendAdminJson(res, 200, detection.get())
+    return
+  }
+  if (req.method !== 'PUT') {
+    sendAdminJson(res, 405, { error: 'method-not-allowed' })
+    return
+  }
+  const read = await readAdminBody(req)
+  if (!read.ok) {
+    sendAdminJson(res, 400, { error: read.reason })
+    return
+  }
+  const body = read.body
+  if (typeof body !== 'object' || body === null || !('pendingDetection' in body)) {
+    sendAdminJson(res, 400, { error: 'invalid-body' })
+    return
+  }
+  const result = detection.setPending((body as { pendingDetection: unknown }).pendingDetection)
+  if (!result.ok) {
+    // 断った理由もホストの記録に残す（画面を開いていない運用者にも、書けない状態が続いていると分かるように）。
+    if (result.problem === 'invalid-values') {
+      log(
+        'warn',
+        'admin',
+        'detection',
+        `[admin] 検出の値の変更を断った: ${result.problems.map((p) => `${p.field}=${p.problem}`).join('、')}`,
+      )
+      sendAdminJson(res, 400, { error: result.problem, problems: result.problems })
+    } else if (result.problem === 'not-writable') {
+      log('error', 'admin', 'detection', `[admin] 検出の値を設定ファイルへ書けなかった: ${result.detail}`)
+      sendAdminJson(res, 500, { error: result.problem, detail: result.detail })
+    } else {
+      sendAdminJson(res, 400, { error: result.problem })
+    }
+    return
+  }
+  const report = detection.get()
+  sendAdminJson(res, 200, report)
+  log(
+    'warn',
+    'admin',
+    'detection',
+    report.pending === null
+      ? '[admin] 次の起動で使う検出の値の変更を取り消した'
+      : '[admin] 次の起動で使う検出の値を変えた（再起動するまでは今の値で検出する）',
   )
 }
 
@@ -1286,6 +1485,8 @@ async function handleAdmin(
   requestRewave: StatusServerOptions['requestRewave'],
   records: StatusServerOptions['records'],
   storage: StorageOps,
+  detection: DetectionOps,
+  operations: AdminOperations,
   now: () => number,
 ): Promise<void> {
   applyAdminCors(req, res, adminAuth.allowedOrigins)
@@ -1371,6 +1572,78 @@ async function handleAdmin(
     if (result === 'accepted') log('warn', 'admin', 'shutdown', '[admin] 止める合図を受けた（POST /api/shutdown）。締めくくりを始める')
     return
   }
+  if (route.kind === 'restart') {
+    // **POST だけ**（止める合図と同じ理由）。答えも止める合図と揃える。
+    if (req.method !== 'POST') {
+      sendAdminJson(res, 405, { error: 'method-not-allowed' })
+      return
+    }
+    const result = operations.requestRestart()
+    if (result === 'not-ready') {
+      sendAdminJson(res, 503, { error: 'not-ready' })
+      return
+    }
+    sendAdminJson(res, 202, { status: result === 'accepted' ? 'restarting' : 'already-closing' })
+    if (result === 'accepted') log('warn', 'admin', 'restart', '[admin] 再起動の合図を受けた（POST /api/restart）。締めくくってからサービスに起こし直させる')
+    return
+  }
+  if (route.kind === 'redetect') {
+    if (req.method === 'GET') {
+      sendAdminJson(res, 200, operations.redetectState())
+      return
+    }
+    // **始めるのは POST だけ。** 開いただけ・先読みされただけで P2PQuake へ問い合わせが飛ばないように。
+    if (req.method !== 'POST') {
+      sendAdminJson(res, 405, { error: 'method-not-allowed' })
+      return
+    }
+    const read = await readAdminBody(req)
+    if (!read.ok) {
+      sendAdminJson(res, 400, { error: read.reason })
+      return
+    }
+    const parsed = parseRedetectRequest(read.body, now())
+    if (!parsed.ok) {
+      sendAdminJson(res, 400, { error: parsed.error })
+      return
+    }
+    const result = operations.startRedetect(parsed.request)
+    if (result === 'busy') {
+      sendAdminJson(res, 409, { error: 'redetect-busy' })
+      return
+    }
+    if (result === 'bad-range') {
+      sendAdminJson(res, 400, { error: 'bad-range' })
+      return
+    }
+    sendAdminJson(res, 202, operations.redetectState())
+    return
+  }
+  if (route.kind === 'board-control') {
+    if (req.method !== 'GET') {
+      sendAdminJson(res, 405, { error: 'method-not-allowed' })
+      return
+    }
+    sendAdminJson(res, 200, operations.boardControlState())
+    return
+  }
+  if (route.kind === 'board-action') {
+    // **POST だけ。** 開いただけ・先読みされただけで基板が落ちないように（基板の口と同じ理由）。
+    if (req.method !== 'POST') {
+      sendAdminJson(res, 405, { error: 'method-not-allowed' })
+      return
+    }
+    const result = await operations.sendBoardAction(route.boardKey, route.action)
+    const reply = boardActionReply(result)
+    sendAdminJson(res, reply.status, reply.body)
+    log(
+      result.kind === 'sent' ? 'log' : 'warn',
+      'admin',
+      `board-${route.action}|${route.boardKey}|${result.kind}`,
+      `[admin] 基板 ${route.boardKey} へ ${route.action === 'restart' ? '再起動' : 'Wi-Fi の繋ぎ直し'}を頼んだ: ${describeBoardActionResult(result)}`,
+    )
+    return
+  }
   if (route.kind === 'rewave') {
     if (req.method !== 'POST') {
       sendAdminJson(res, 405, { error: 'method-not-allowed' })
@@ -1412,6 +1685,10 @@ async function handleAdmin(
       'rewave',
       `[admin] 合成波形の作り直しを受けた（${r.stationId}・${new Date(r.fromMs).toISOString()}〜${new Date(r.toMs).toISOString()}・ノイズ密度 ${r.noiseDensity === 'current' ? 'いまの設定' : '当時の設定'}・${result.jobs} 件・作り直せない長さ ${Math.round(result.skippedMs / 1000)} 秒）`,
     )
+    return
+  }
+  if (route.kind === 'detection') {
+    await handleDetection(req, res, detection, log)
     return
   }
   if (route.kind === 'storage') {
@@ -1762,6 +2039,8 @@ export async function startStatusServer(options: StatusServerOptions): Promise<S
           options.requestRewave,
           options.records,
           options.storage,
+          options.detection,
+          options.operations,
           options.now,
         ).catch((error: unknown) => {
           const detail = error instanceof Error ? error.message : String(error)

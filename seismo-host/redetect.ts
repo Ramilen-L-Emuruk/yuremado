@@ -15,11 +15,14 @@
 // **終了コード:** 地震情報を取れなかった・書けなかった版がある・観測点の流し直しが途中で止まった・
 // 検出の途中で例外を受け止めた・その時刻の設定を引けなかった、のどれかがあれば 1（要約を読まなくても
 // 失敗に気づけるように）。
+//
+// **`--summary <ファイル>` を渡すと、終わりに結果を JSON で書く**（管理画面から流すときにホストが読む。
+// `src/receiver/redetectRunner.ts`）。形は `RedetectSummaryFile`。失敗の理由はログに出した文をそのまま入れる。
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-import { archiveChunks, archiveHourReader, emptyArchiveReadTally, Redetector } from './src/detection/redetect'
+import { archiveChunks, archiveHourReader, emptyArchiveReadTally, Redetector, redetectLeadMs } from './src/detection/redetect'
 import type { ArchiveReadTally, RedetectSummary } from './src/detection/redetect'
 import { fetchQuakeHistory } from './src/detection/quakeHistory'
 import type { QuakeHistoryResult } from './src/detection/quakeHistory'
@@ -35,9 +38,10 @@ import { STATION_CONFIG_FILE, loadStationHistory } from './src/receiver/stationS
 import { configAt, currentConfig } from './src/receiver/stationXml'
 import type { StationHistoryDoc } from './src/receiver/stationXml'
 import { stationFileToken } from './src/receiver/waveArchive'
+import type { RedetectSummaryFile } from './src/receiver/redetectRunner'
+import { DETECTION_SETTINGS_DEFAULT, parseDetectionSettings, type DetectionSettings } from './src/detection/detectionSettings'
+import { HOST_SETTINGS_FILE, readHostSettings } from './src/receiver/hostSettings'
 
-/** 範囲の頭より前から流す長さ（引き金の助走 60 秒・平常時の強さの時定数に余裕を見る。評価台と同じ）。 */
-const LEAD_MS = 5 * 60_000
 /** これより古い時の控えは、時計が合う前の残骸として流さない。 */
 const OLDEST_PLAUSIBLE_MS = Date.UTC(2020, 0, 1)
 const FETCH_TIMEOUT_MS = 30_000
@@ -50,7 +54,60 @@ interface Args {
   readonly eventDir: string
   readonly stationsPath: string
   readonly quakesFile: string | null
+  readonly summaryFile: string | null
   readonly dryRun: boolean
+  /** 起こした親の pid（管理画面からの流し直しだけが渡す）。 */
+  readonly parentPid: number | null
+  /**
+   * 検出の値（2026-10-27 ユーザー承認「同じ値＋記録に残す」）。ホストから起こされたときは、ホストが使っている値が
+   * `--detection` に JSON で来る。手で走らせたときは設定ファイル（`config/host-settings.json`）の「いま」の値、
+   * それも無ければ既定。**読めない値は既定へ倒さず止める**（違う値で流した記録が黙って増える）。
+   */
+  readonly detection: DetectionSettings
+  /** 値をどこから取ったか（ログに出す）。 */
+  readonly detectionSource: string
+}
+
+/** 失敗として扱う文。ログへ出し、結果のファイルにも同じ文を入れる。 */
+const problems: string[] = []
+function problem(line: string, level: 'warn' | 'error'): void {
+  if (level === 'warn') console.warn(line)
+  else console.error(line)
+  problems.push(line)
+}
+
+/**
+ * 失敗にはしないが、流せなかった所の知らせ。ログへ出し、結果のファイルにも同じ文を入れる
+ * （管理画面は「流し直した」の行に赤で添える。2026-10-27 ユーザー承認）。
+ */
+const warnings: string[] = []
+function warning(line: string): void {
+  console.warn(line)
+  warnings.push(line)
+}
+/** 既にログへ出した行を、結果のファイルの warnings にも載せる（ログを二重に出さない）。 */
+function alsoWarn(line: string): void {
+  warnings.push(line)
+}
+
+/**
+ * 起こした親（ホスト）が居なくなったら、自分も終わる（`--parent-pid`）。**Windows では親が落ちても子は
+ * 残る**ので、そのままだと起動し直したホストが知らない流し直しが走り続け、2 本目と並んで P2PQuake への
+ * 問い合わせが倍になる。
+ */
+const PARENT_CHECK_INTERVAL_MS = 5_000
+function watchParent(pid: number): void {
+  const timer = setInterval(() => {
+    try {
+      process.kill(pid, 0)
+    } catch (error) {
+      // EPERM は「居るが合図を送れない」なので、居ないのは ESRCH のときだけ。
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return
+      console.warn(`[redetect] 起こしたホスト（pid ${pid}）が居なくなったので止める`)
+      process.exit(1)
+    }
+  }, PARENT_CHECK_INTERVAL_MS)
+  timer.unref()
 }
 
 function here(rel: string): string {
@@ -59,6 +116,12 @@ function here(rel: string): string {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function summaryFileOf(argv: readonly string[]): string | null {
+  const i = argv.indexOf('--summary')
+  const v = i < 0 ? undefined : argv[i + 1]
+  return v === undefined || v.startsWith('--') ? null : v
 }
 
 function parseArgs(argv: readonly string[]): Args {
@@ -84,8 +147,38 @@ function parseArgs(argv: readonly string[]): Args {
     eventDir: value('--events') ?? here('./data/events/'),
     stationsPath: value('--stations') ?? here(`./config/${STATION_CONFIG_FILE}`),
     quakesFile: value('--quakes'),
+    summaryFile: value('--summary'),
     dryRun: argv.includes('--dry-run'),
+    parentPid: parentPidOf(value('--parent-pid')),
+    ...detectionOf(value('--detection')),
   }
+}
+
+function detectionOf(v: string | null): { detection: DetectionSettings; detectionSource: string } {
+  if (v !== null) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(v)
+    } catch {
+      throw new Error('--detection を JSON として読めない')
+    }
+    const detection = parseDetectionSettings(parsed)
+    if (detection === null) throw new Error('--detection の値が検出の値として読めない')
+    return { detection, detectionSource: 'ホストから渡された値' }
+  }
+  const settings = readHostSettings(here(`./config/${HOST_SETTINGS_FILE}`), (detail) =>
+    console.warn(`設定ファイルの次の起動で使う検出の値（pendingDetection）が読めないので無視する: ${detail}`),
+  )
+  return settings.detection === null
+    ? { detection: DETECTION_SETTINGS_DEFAULT, detectionSource: '既定の値' }
+    : { detection: settings.detection, detectionSource: '設定ファイルの値' }
+}
+
+function parentPidOf(v: string | null): number | null {
+  if (v === null) return null
+  const pid = Number(v)
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error(`--parent-pid が読めない: ${v}`)
+  return pid
 }
 
 /** その観測点の控えのうち、いちばん古い時の始まり（無ければ null）。 */
@@ -108,7 +201,7 @@ async function fetchJson(url: string): Promise<unknown> {
   return await res.json()
 }
 
-function quakesFromFile(path: string, fromMs: number, toMs: number): QuakeHistoryResult {
+function quakesFromFile(path: string, fromMs: number, toMs: number, leadMs: number): QuakeHistoryResult {
   const { quakes, unreadable } = parseP2pQuakeList(JSON.parse(readFileSync(path, 'utf8')))
   // **渡された一覧は、流す範囲を取りきっているものとして扱う**（取った人が範囲を選んでいる）。
   // 助走の頭から、範囲の末尾で閉じた揺れの照合の期限（15 分）に、揺れが閉じるまでの余裕を足した 30 分後までを含める。
@@ -119,7 +212,7 @@ function quakesFromFile(path: string, fromMs: number, toMs: number): QuakeHistor
     requests: 0,
     truncated: false,
     error: null,
-    covered: (a, b) => unreadable === 0 && a >= fromMs - LEAD_MS && b <= toMs + 2 * MATCH_DEADLINE_MS,
+    covered: (a, b) => unreadable === 0 && a >= fromMs - leadMs && b <= toMs + 2 * MATCH_DEADLINE_MS,
   }
 }
 
@@ -176,8 +269,11 @@ function formatSummary(stationId: string, s: RedetectSummary, t: ArchiveReadTall
   return lines
 }
 
-async function main(): Promise<boolean> {
-  const args = parseArgs(process.argv.slice(2))
+/** 全観測点の合計（`--summary` へ書く）。 */
+const totals = { written: 0, existing: 0 }
+
+async function main(args: Args): Promise<boolean> {
+  console.log(`[redetect] 検出の値は${args.detectionSource}を使う`)
   const doc = loadStationHistory(args.stationsPath)
   const config = currentConfig(doc)
   const stations = config.stations.filter((s) => args.station === null || s.stationId === args.station)
@@ -201,20 +297,22 @@ async function main(): Promise<boolean> {
 
   const history =
     args.quakesFile !== null
-      ? quakesFromFile(args.quakesFile, allFrom, allTo)
+      ? quakesFromFile(args.quakesFile, allFrom, allTo, redetectLeadMs(args.detection.trigger))
       : await fetchQuakeHistory({
-          fromMs: allFrom - LEAD_MS,
+          fromMs: allFrom - redetectLeadMs(args.detection.trigger),
           toMs: allTo,
           fetchJson,
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
           now: Date.now,
         })
-  console.log(
+  const historyLine =
     `[redetect] 地震情報 ${history.quakes.length} 件（リクエスト ${history.requests} 本・読めなかった報 ${history.unreadable}）` +
-      (history.truncated ? '・ページの上限で切った（それより後の合わない揺れは「照合できず」）' : ''),
-  )
+    (history.truncated ? '・ページの上限で切った（それより後の合わない揺れは「照合できず」）' : '')
+  console.log(historyLine)
+  // **上限で切ったことは、成功の行にも添える**（照合できなかった揺れが、画面から見えなくなるため）。
+  if (history.truncated) alsoWarn(historyLine)
   if (history.error !== null) {
-    console.error(`[redetect] 地震情報を取れなかった: ${history.error}（合わない揺れはすべて「照合できず」になる）`)
+    problem(`[redetect] 地震情報を取れなかった: ${history.error}（合わない揺れはすべて「照合できず」になる）`, 'error')
     ok = false
   }
 
@@ -234,6 +332,7 @@ async function main(): Promise<boolean> {
     try {
       const r = new Redetector({
         stationId: plan.stationId,
+        detection: args.detection,
         observerAt: (ms) => observerOf(configAtTime(ms), plan.stationId),
         sensorsAt: (ms) => {
           const c = configAtTime(ms)
@@ -248,7 +347,7 @@ async function main(): Promise<boolean> {
       })
       for await (const chunk of archiveChunks({
         readHour: archiveHourReader(args.waveDir, plan.stationId),
-        fromMs: plan.fromMs - LEAD_MS,
+        fromMs: plan.fromMs - redetectLeadMs(args.detection.trigger),
         toMs: plan.toMs,
         tally,
         openHourFromMs,
@@ -256,13 +355,30 @@ async function main(): Promise<boolean> {
         r.push(chunk)
       }
       const summary = r.finish()
-      for (const line of formatSummary(plan.stationId, summary, tally)) console.log(line)
-      if (summary.saveFailures > 0 || summary.failures > 0) ok = false
+      const summaryLines = formatSummary(plan.stationId, summary, tally)
+      for (const line of summaryLines) console.log(line)
+      totals.written += summary.written
+      totals.existing += summary.skippedExisting
+      if (summary.saveFailures > 0 || summary.failures > 0) {
+        ok = false
+        // 何で 1 になったかを結果のファイルでも分かるよう、件数の行（1・4 行目）と、直近の理由の行（5 行目以降）を入れる。
+        problems.push(summaryLines[0]!, ...summaryLines.slice(3))
+      } else if (summary.intensityFailures > 0 || summary.droppedChunks > 0) {
+        // 失敗にはしないが、震度を出せなかった区間・捨てたまとまりは起こせていない揺れがありうる。成功の行に添える。
+        alsoWarn(summaryLines[3]!)
+      }
       if (tally.hoursFailed > 0 || tally.hoursTruncated > 0) {
-        console.warn(`[redetect] ${plan.stationId}: 読めなかった控えがある（その時間の揺れは起こせていない）`)
+        warning(
+          `[redetect] ${plan.stationId}: 読めなかった控えがある（開けなかった時 ${tally.hoursFailed}・途中で打ち切った時 ${tally.hoursTruncated}。その時間の揺れは起こせていない）`,
+        )
+      }
+      // **範囲のどの時間にも控えが無かったら、成功の行に添える**（2026-10-27 ユーザー承認「足す」）。
+      // 黙ると「書いた 0 件」が「揺れが無かった」と同じ見え方になる。保存先を取り違えた・控えが消えた、を拾う。
+      if (tally.hours > 0 && tally.hoursMissing === tally.hours) {
+        warning(`[redetect] ${plan.stationId}: 範囲のどの時間にも控えが無い（${args.waveDir}）`)
       }
     } catch (error) {
-      console.error(`[redetect] ${plan.stationId}: 流し直しが途中で止まった: ${messageOf(error)}`)
+      problem(`[redetect] ${plan.stationId}: 流し直しが途中で止まった: ${messageOf(error)}`, 'error')
       ok = false
     }
     if (beforeHistory > 0) {
@@ -275,20 +391,45 @@ async function main(): Promise<boolean> {
     // 書けてはいるが、終了コードで気づけるようにする。
     if (configFailures.length > 0) {
       ok = false
-      console.warn(
+      problem(
         `[redetect] ${plan.stationId}: その時刻の設定を引けなかった ${configFailures.length} 回（位置・センサー無しで扱った）: ${configFailures[configFailures.length - 1]}`,
+        'warn',
       )
     }
   }
-  if (store.lastWriteError !== null) console.error(`[redetect] 直近の書けなかった理由: ${store.lastWriteError}`)
+  if (store.lastWriteError !== null) problem(`[redetect] 直近の書けなかった理由: ${store.lastWriteError}`, 'error')
   return ok
 }
 
-main()
+/**
+ * 結果のファイルを書く。**書けなければホストは「結果を読めなかった」として扱う**（終了コードが 0 でも）。
+ * なぜ書けなかったかはこの関数がログへ出す行にしか無いので、ホストのログで探す。
+ */
+function writeSummary(path: string, ok: boolean): void {
+  const body: RedetectSummaryFile = { ok, written: totals.written, existing: totals.existing, problems, warnings }
+  try {
+    writeFileSync(path, JSON.stringify(body), 'utf8')
+  } catch (error) {
+    console.error(`[redetect] 結果を書けなかった（${path}）: ${messageOf(error)}`)
+  }
+}
+
+let summaryFile: string | null = null
+Promise.resolve()
+  .then(() => {
+    // **結果ファイルの場所だけ先に読む** —— 引数の読み取り（`--detection` など）で止まっても、
+    // ホストへ止まった理由を返せるように。
+    summaryFile = summaryFileOf(process.argv.slice(2))
+    const args = parseArgs(process.argv.slice(2))
+    if (args.parentPid !== null) watchParent(args.parentPid)
+    return main(args)
+  })
   .then((ok) => {
     if (!ok) process.exitCode = 1
+    if (summaryFile !== null) writeSummary(summaryFile, ok)
   })
   .catch((error: unknown) => {
-    console.error(`[redetect] 止まった: ${messageOf(error)}`)
+    problem(`[redetect] 止まった: ${messageOf(error)}`, 'error')
     process.exitCode = 1
+    if (summaryFile !== null) writeSummary(summaryFile, false)
   })

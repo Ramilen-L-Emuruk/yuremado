@@ -2,7 +2,7 @@
 // `POST /api/storage/purge-old`）。文言は `storageText.ts`（2026-10-13 ユーザー承認）。
 //
 // **変更は次の起動から効く**（`receiver/hostSettings.ts`）。ここで保存しても、ホストはいまの場所へ書き続ける。
-// 再起動は人が行う（`Restart-Service seismo-host`）—— 画面から再起動させる口は持たない。
+// 再起動はこのタブには置かない（稼働状況タブの「ホストを再起動」か `Restart-Service seismo-host`）。
 
 import { apiFetch, ApiError, describeAdminAuthFailure } from './api'
 import { confirmDialog } from './confirmDialog'

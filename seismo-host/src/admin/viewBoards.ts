@@ -12,6 +12,17 @@ import { boardSixFaceProgress, fitBoardSixFace, type BoardFitSensor, type Curren
 import { boardGravityForTilt, rotateToHeading, suggestRotation } from './calibrationSuggest'
 import { fetchDetectedBoards, type DetectedBoard, type SensorRestWindow } from './detectedBoards'
 import { confirmDialog } from './confirmDialog'
+import {
+  BOARD_ACTION_LABEL,
+  boardActionAvailability,
+  boardActionConfirm,
+  boardActionFailureLine,
+  boardActionSentLine,
+  parseBoardControl,
+  type BoardAction,
+  type BoardControlView,
+  type OperationLine,
+} from './adminOperations'
 import { ago, boardLabelHtml, confirmDiscardUnsaved, escapeHtml, qs, receptionBadgeHtml } from './dom'
 import { lockableLabelHtml } from './tip'
 import {
@@ -112,12 +123,41 @@ export function mergeBoardRows(
   return rows
 }
 
+/** 基板の操作（再起動・Wi-Fi の繋ぎ直し）の欄を描く材料（#313・2026-10-27 ユーザー承認）。 */
+interface BoardOpsView {
+  /** 押せるかの材料（`GET /api/board-control`）。取れていなければ `null` で、理由は `controlFailure`。 */
+  readonly control: BoardControlView | null
+  readonly controlFailure: string | null
+  /** 基板ごとの直近の結果の行。**表を描き直しても消さない**（読み直しは 10 秒ごとに来る）。 */
+  readonly lines: ReadonlyMap<string, OperationLine>
+  /** 頼んでいる最中の基板（返事を待つ間は押させない）。 */
+  readonly inFlight: ReadonlySet<string>
+}
+
+const BOARD_ACTIONS: readonly BoardAction[] = ['restart', 'wifi-reconnect']
+
+/** 基板の行の操作ボタンと結果の行。**押せないときは理由を `title` に出す**（押しても何も起きない形にしない）。 */
+function boardOpsHtml(boardKey: string, ops: BoardOpsView): string {
+  const availability = boardActionAvailability(ops.control, ops.controlFailure, boardKey)
+  const busy = ops.inFlight.has(boardKey)
+  const buttons = BOARD_ACTIONS.map((action) => {
+    const disabled = !availability.enabled || busy
+    const title = availability.reason === null ? '' : ` title="${escapeHtml(availability.reason)}"`
+    return `<button type="button" class="board-op" data-op="${action}"${disabled ? ' disabled' : ''}${title}>${escapeHtml(BOARD_ACTION_LABEL[action])}</button>`
+  }).join(' ')
+  const line = ops.lines.get(boardKey)
+  const lineHtml =
+    line === undefined ? '' : `<div class="board-op-result${line.error ? ' error' : ''}">${escapeHtml(line.text)}</div>`
+  return `<div class="board-ops">${buttons}</div>${lineHtml}`
+}
+
 function renderBoardsTable(
   container: HTMLElement,
   rows: readonly BoardRow[],
   stations: readonly StationInfo[],
   /** 経過を測る基準。`/status` を取れていなければ `null`（経過は出さない）。 */
   nowMs: number | null,
+  ops: BoardOpsView,
 ): void {
   const tbody = qs(container, '.boards-table tbody')
   if (rows.length === 0) {
@@ -157,7 +197,7 @@ function renderBoardsTable(
           <td>${escapeHtml(sensors)}</td>
           <td>${reception}</td>
           <td>${station}</td>
-          <td>${actions}</td>
+          <td>${actions}${boardOpsHtml(row.boardKey, ops)}</td>
         </tr>`
     })
     .join('')
@@ -279,6 +319,13 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
   `
 
   let currentBoards: readonly BoardEntry[] = []
+  let currentControl: BoardControlView | null = null
+  let controlFailure: string | null = null
+  const opLines = new Map<string, OperationLine>()
+  const opInFlight = new Set<string>()
+  const opsView = (): BoardOpsView => ({ control: currentControl, controlFailure, lines: opLines, inFlight: opInFlight })
+  const redrawTable = (): void =>
+    renderBoardsTable(container, mergeBoardRows(currentDetected, currentBoards), currentStations, currentGeneratedAtMs, opsView())
   let currentStations: readonly StationInfo[] = []
   let currentDetected: readonly DetectedBoard[] = []
   /**
@@ -513,6 +560,28 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
     return { sensors, problem }
   }
 
+  /** 押せるかの材料（`GET /api/board-control`）を取る。投げずに、取れなかった理由を返す。 */
+  const fetchControl = (): Promise<{ readonly view: BoardControlView | null; readonly failure: string | null }> =>
+    apiFetch<unknown>('/api/board-control').then(
+      (body) => {
+        const view = parseBoardControl(body)
+        return { view, failure: view === null ? '応答の形が違う' : null }
+      },
+      (error: unknown) => ({ view: null, failure: describeFetchFailure(error) }),
+    )
+  /**
+   * **押せるかの材料は開いている間ずっと取り直す。** 基板の住所はホストのメモリにしか無いので、ホストが
+   * 起動し直すと消え、パケットが届くとまた覚える。最初の 1 回だけだと、住所が消えたのに押せる・覚えたのに
+   * 押せない、のまま画面を開き直すまで戻らない。変わったときだけ表を描き直す（入力欄には触らない）。
+   */
+  const refreshControl = async (): Promise<void> => {
+    const next = await fetchControl()
+    if (signal.aborted) return
+    if (JSON.stringify(next.view) === JSON.stringify(currentControl) && next.failure === controlFailure) return
+    currentControl = next.view
+    controlFailure = next.failure
+    redrawTable()
+  }
   const loadFitWindows = async (): Promise<void> => {
     if (getStoredToken() === null) return
     // **前の取得が終わるまで次を投げない。** 返事の遅いホストへ 10 秒ごとに重ねて投げない。
@@ -646,6 +715,8 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
         failure: error instanceof Error ? error.message : String(error),
       }),
     )
+    // **押せるかの材料が取れなくても、一覧は出す**（操作のボタンが押せないだけ。理由は `title` に出す）。
+    const controlling = fetchControl()
     try {
       // **どちらも `{ 単数形s: [...] }` の形で返る**（`GET /api/stations` と同じ理由）。
       const [boardsBody, stationsBody] = await Promise.all([
@@ -653,7 +724,10 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
         apiFetch<{ readonly stations: readonly StationInfo[] }>('/api/stations'),
       ])
       const detected = await detecting
+      const control = await controlling
       if (signal.aborted) return { ok: true }
+      currentControl = control.view
+      controlFailure = control.failure
       currentBoards = boardsBody.boards
       currentStations = stationsBody.stations
       currentDetected = detected.snapshot?.boards ?? []
@@ -661,12 +735,7 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
       currentRestWindows = detected.snapshot?.restWindows ?? []
       currentGeneratedAtMs = detected.snapshot?.generatedAtMs ?? null
       fillStationOptions(container, currentStations)
-      renderBoardsTable(
-        container,
-        mergeBoardRows(currentDetected, currentBoards),
-        currentStations,
-        currentGeneratedAtMs,
-      )
+      redrawTable()
       // **`/status` を取れなくても編集は続けられる。** 候補と受信の様子が出ないだけ。
       qs(container, '.boards-note').textContent =
         detected.failure === null
@@ -975,6 +1044,30 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
       })
       return
     }
+    if (target.classList.contains('board-op')) {
+      const action = target.dataset.op
+      if (action !== 'restart' && action !== 'wifi-reconnect') return
+      void (async () => {
+        const name = board?.displayName != null && board.displayName.length > 0 ? board.displayName : boardKey
+        const ok = await confirmDialog(document, boardActionConfirm(action, name))
+        if (!ok || signal.aborted || opInFlight.has(boardKey)) return
+        opInFlight.add(boardKey)
+        redrawTable()
+        let line: OperationLine
+        try {
+          await apiFetch(`/api/boards/${encodeURIComponent(boardKey)}/${action}`, { method: 'POST' })
+          line = boardActionSentLine(action)
+        } catch (error) {
+          line = boardActionFailureLine(error)
+        } finally {
+          opInFlight.delete(boardKey)
+        }
+        if (signal.aborted) return
+        opLines.set(boardKey, line)
+        redrawTable()
+      })()
+      return
+    }
     if (target.classList.contains('delete-board')) {
       void (async () => {
         // **「観測点は残る」を省かない。** 1 基板 1 観測点の構成では、基板の削除が
@@ -1043,7 +1136,10 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
   // **待っている間にタブを移っていたら張らない。** 張ってから abort を待つ形では、
   // 既に鳴り終わった abort を拾えず、見えない画面で取り直しが続く。
   if (signal.aborted) return
-  const poll = setInterval(() => void loadFitWindows(), 10_000)
+  const poll = setInterval(() => {
+    void loadFitWindows()
+    void refreshControl()
+  }, 10_000)
   // **秒読みは毎秒描き直す**（取り直しは 10 秒ごと。解き直しはせず、いまの置き方の行だけ）。
   // 描き直しが投げても次の秒は続ける（欄が見つからないのは画面の作り直しの途中など）。
   const tick = setInterval(() => {

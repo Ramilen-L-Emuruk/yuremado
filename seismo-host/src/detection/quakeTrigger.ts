@@ -64,6 +64,14 @@ export const TRIGGER_CONFIG_DEFAULT: TriggerConfig = {
   maxGapMs: 1000,
 }
 
+/**
+ * 引き金が平常時の強さを掴むまでに流しておく長さ（長い窓＋助走）。途中から流し始める係（起動時の流し込み・
+ * 流し直し）は、頭よりこれ以上前から流す —— 短いと、長い窓が埋まらないまま揺れを見始める。
+ */
+export function triggerSettleMs(cfg: TriggerConfig): number {
+  return (cfg.ltaSec + cfg.warmupSec) * 1000
+}
+
 /** 区間の終わり方。 */
 export type TriggerEnd =
   /** 比が戻った。 */
@@ -169,7 +177,7 @@ export interface TriggerHealth {
 }
 
 /** まだ 1 サンプルも受けていない引き金の状態（検出器を作る前の観測点に使う）。 */
-export function emptyTriggerHealth(cfg: TriggerConfig = TRIGGER_CONFIG_DEFAULT): TriggerHealth {
+export function emptyTriggerHealth(cfg: TriggerConfig): TriggerHealth {
   return {
     lastSampleMs: null,
     firstSampleMs: null,

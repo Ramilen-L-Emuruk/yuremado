@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { EMPTY_HOST_SETTINGS, dirsUnder, resolveStorage } from './hostSettings'
+import { EMPTY_HOST_SETTINGS, HostSettingsFile, dirsUnder, resolveStorage } from './hostSettings'
 import type { HostSettings } from './hostSettings'
 import { StorageControl, openStorageAtStartup, storageBrief } from './storageControl'
 import type { StorageMigration } from './storageMigration'
@@ -18,7 +18,7 @@ describe('openStorageAtStartup', () => {
     const order: string[] = []
     const r = await openStorageAtStartup({
       env: {},
-      settings: { dataRoot: null, pendingDataRoot: NEW_ROOT, pendingFrom: null },
+      settings: { dataRoot: null, pendingDataRoot: NEW_ROOT, pendingFrom: null, detection: null, pendingDetection: null },
       settingsPath: 'host-settings.json',
       defaultRoot: DEFAULT_ROOT,
       nowMs: 1,
@@ -33,13 +33,13 @@ describe('openStorageAtStartup', () => {
     })
     expect(order).toEqual([`begin ${NEW_ROOT} <- ${DEFAULT_ROOT}`, `write ${NEW_ROOT}`])
     expect(r.resolved.dirs).toEqual(dirsUnder(NEW_ROOT))
-    expect(r.settings).toEqual({ dataRoot: NEW_ROOT, pendingDataRoot: null, pendingFrom: null })
+    expect(r.settings).toEqual({ dataRoot: NEW_ROOT, pendingDataRoot: null, pendingFrom: null, detection: null, pendingDetection: null })
     expect(r.problem).toBeNull()
   })
 
   it('安全弁: 帳面を始められなければ移さず、前の場所のまま動き、待っている変更は残す', async () => {
     let wrote = false
-    const settings: HostSettings = { dataRoot: null, pendingDataRoot: NEW_ROOT, pendingFrom: null }
+    const settings: HostSettings = { dataRoot: null, pendingDataRoot: NEW_ROOT, pendingFrom: null, detection: null, pendingDetection: null }
     const r = await openStorageAtStartup({
       env: {},
       settings,
@@ -66,7 +66,7 @@ describe('openStorageAtStartup', () => {
     const alias = 'Z:\alias-of-default'
     let began = false
     let wrote = false
-    const settings: HostSettings = { dataRoot: null, pendingDataRoot: alias, pendingFrom: null }
+    const settings: HostSettings = { dataRoot: null, pendingDataRoot: alias, pendingFrom: null, detection: null, pendingDetection: null }
     const r = await openStorageAtStartup({
       env: {},
       settings,
@@ -94,7 +94,7 @@ describe('openStorageAtStartup', () => {
     const began: string[] = []
     const r = await openStorageAtStartup({
       env: {},
-      settings: { dataRoot: null, pendingDataRoot: NEW_ROOT, pendingFrom: chosenFrom },
+      settings: { dataRoot: null, pendingDataRoot: NEW_ROOT, pendingFrom: chosenFrom, detection: null, pendingDetection: null },
       settingsPath: 'host-settings.json',
       defaultRoot: DEFAULT_ROOT,
       nowMs: 1,
@@ -107,7 +107,7 @@ describe('openStorageAtStartup', () => {
     })
     expect(began).toEqual([`${NEW_ROOT} <- ${chosenFrom}`])
     expect(r.resolved.movedFrom).toBe(chosenFrom)
-    expect(r.settings).toEqual({ dataRoot: NEW_ROOT, pendingDataRoot: null, pendingFrom: null })
+    expect(r.settings).toEqual({ dataRoot: NEW_ROOT, pendingDataRoot: null, pendingFrom: null, detection: null, pendingDetection: null })
     expect(r.problem).toBeNull()
   })
 
@@ -115,7 +115,7 @@ describe('openStorageAtStartup', () => {
     const chosenFrom = join(tmpdir(), 'ctl-old-default')
     let began = false
     let wrote = false
-    const settings: HostSettings = { dataRoot: null, pendingDataRoot: NEW_ROOT, pendingFrom: chosenFrom }
+    const settings: HostSettings = { dataRoot: null, pendingDataRoot: NEW_ROOT, pendingFrom: chosenFrom, detection: null, pendingDetection: null }
     const r = await openStorageAtStartup({
       env: {},
       settings,
@@ -192,17 +192,15 @@ function control(opts: {
     journalProblem: null,
     log: (line) => logs.push(line),
     canonical: opts.canonical ?? (async (p) => p),
-    settings: EMPTY_HOST_SETTINGS,
-    settingsPath: 'host-settings.json',
+    settingsFile: new HostSettingsFile('host-settings.json', EMPTY_HOST_SETTINGS, (_p, s) => {
+      if (opts.writeFails === true) throw new Error('EACCES')
+      written.push(s)
+    }),
     currentRoot: DEFAULT_ROOT,
     usage: opts.usage ?? usageWith(null),
     migration: opts.migration ?? migration(null),
     probeWritable: async () => opts.writable ?? null,
     freeBytesOf: async () => opts.free ?? 100 * GB,
-    writeSettings: (_p, s) => {
-      if (opts.writeFails === true) throw new Error('EACCES')
-      written.push(s)
-    },
   })
   return { c, written, logs }
 }
@@ -211,7 +209,7 @@ describe('StorageControl.setPending', () => {
   it('正: 受け付けたら次の起動で使う保存先と、いまの保存先（複製元）を書く（今の保存先は変えない）', async () => {
     const { c, written } = control({})
     expect(await c.setPending(NEW_ROOT)).toEqual({ ok: true })
-    expect(written).toEqual([{ dataRoot: null, pendingDataRoot: NEW_ROOT, pendingFrom: DEFAULT_ROOT }])
+    expect(written).toEqual([{ dataRoot: null, pendingDataRoot: NEW_ROOT, pendingFrom: DEFAULT_ROOT, detection: null, pendingDetection: null }])
     expect(c.get().pendingRoot).toBe(NEW_ROOT)
     expect(c.get().dirs).toEqual(dirsUnder(DEFAULT_ROOT))
   })
@@ -270,7 +268,7 @@ describe('StorageControl.setPending', () => {
     const { c, written } = control({})
     await c.setPending(NEW_ROOT)
     expect(await c.setPending(null)).toEqual({ ok: true })
-    expect(written.at(-1)).toEqual({ dataRoot: null, pendingDataRoot: null, pendingFrom: null })
+    expect(written.at(-1)).toEqual({ dataRoot: null, pendingDataRoot: null, pendingFrom: null, detection: null, pendingDetection: null })
   })
 })
 

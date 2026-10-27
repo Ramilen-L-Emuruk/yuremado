@@ -1,4 +1,4 @@
-// ホスト全体の設定（いまは保存先だけ）を `config/host-settings.json` に持つ。
+// ホスト全体の設定（保存先と検出の値）を `config/host-settings.json` に持つ。
 //
 // **保存先は 1 つの親フォルダで決める**（2026-10-13 ユーザー決定）。その下に `raw/`・`wave/`・`summary/`・
 // `events/` を並べる。種類ごとに別々の場所を選べる形にしない —— 生データだけ移して要約を据え置くと、
@@ -16,6 +16,13 @@
 
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { dirname, isAbsolute, join, posix, win32 } from 'node:path'
+import {
+  detectionProblems,
+  detectionSettingsShape,
+  parseDetectionSettings,
+  sameDetectionSettings,
+  type DetectionSettings,
+} from '../detection/detectionSettings'
 import { lockTolerantRenameSync } from './lockTolerantRename'
 
 export const HOST_SETTINGS_FILE = 'host-settings.json'
@@ -43,9 +50,23 @@ export interface HostSettings {
    * ある場所から複製できる。v5.49.0 までの設定には無い（`null` なら起動した時の保存先から複製する）。
    */
   readonly pendingFrom: string | null
+  /**
+   * いま使っている検出の値（`detection/detectionSettings.ts`）。`null` は既定。**保存先と同じく次の起動で効く**
+   * （2026-10-27 ユーザー承認「次の起動で」）—— 画面で変えた値は `pendingDetection` に置き、起動時に昇格させる。
+   * 稼働中に検出器を作り直さないので、平常時の強さ（長い窓）と始めに見送る長さを途中で捨てない。
+   */
+  readonly detection: DetectionSettings | null
+  /** 次の起動で使う検出の値。`null` は変更なし。 */
+  readonly pendingDetection: DetectionSettings | null
 }
 
-export const EMPTY_HOST_SETTINGS: HostSettings = { dataRoot: null, pendingDataRoot: null, pendingFrom: null }
+export const EMPTY_HOST_SETTINGS: HostSettings = {
+  dataRoot: null,
+  pendingDataRoot: null,
+  pendingFrom: null,
+  detection: null,
+  pendingDetection: null,
+}
 
 export interface StorageDirs {
   readonly raw: string
@@ -123,7 +144,7 @@ export function resolveStorage(input: {
       root,
       dirs: dirsUnder(root),
       movedFrom: settings.pendingFrom ?? current,
-      nextSettings: { dataRoot: root, pendingDataRoot: null, pendingFrom: null },
+      nextSettings: { ...settings, dataRoot: root, pendingDataRoot: null, pendingFrom: null },
       pendingIgnored: null,
     }
   }
@@ -134,7 +155,7 @@ export function resolveStorage(input: {
       root: current,
       dirs: dirsUnder(current),
       movedFrom: null,
-      nextSettings: { dataRoot: settings.dataRoot, pendingDataRoot: null, pendingFrom: null },
+      nextSettings: { ...settings, pendingDataRoot: null, pendingFrom: null },
       pendingIgnored: null,
     }
   }
@@ -207,7 +228,13 @@ function isMissing(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 'ENOENT'
 }
 
-export function parseHostSettings(text: string): HostSettings | null {
+/**
+ * 設定の本文を読む。読めなければ `null`。
+ *
+ * **待っている検出の値（`pendingDetection`）だけが読めないときは、それを捨てて読む**（2026-10-27 ユーザー承認
+ * 「捨てて警告し起動」）。捨てたことと理由は `onDiscardedPending` へ渡す（呼び手が警告に出す）。
+ */
+export function parseHostSettings(text: string, onDiscardedPending: (detail: string) => void): HostSettings | null {
   let value: unknown
   try {
     value = JSON.parse(text)
@@ -222,7 +249,75 @@ export function parseHostSettings(text: string): HostSettings | null {
   const pendingDataRoot = pathOrNull(o.pendingDataRoot)
   const pendingFrom = pathOrNull(o.pendingFrom)
   if (dataRoot === undefined || pendingDataRoot === undefined || pendingFrom === undefined) return null
-  return { dataRoot, pendingDataRoot, pendingFrom }
+  // **検出の値は、欄が無ければ既定（v5.71.0 までの設定には無い）、あって読めなければ読まない**（ホストは起動しない）。
+  // 読めない値を黙って既定へ倒すと、画面で変えたはずの値と違う値で揺れを切り出し続ける。書くのは検査を通した
+  // ホスト自身だけなので、読めないのは手で書き換えたときに限る。
+  // **待っている変更は別**で、捨てても今の値で動き続けられる（捨てたことは呼び手が警告に出す）。
+  const detectionOrNull = (v: unknown): DetectionSettings | null | undefined =>
+    v === undefined || v === null ? null : (parseDetectionSettings(v) ?? undefined)
+  const detection = detectionOrNull(o.detection)
+  if (detection === undefined) return null
+  let pendingDetection = detectionOrNull(o.pendingDetection)
+  if (pendingDetection === undefined) {
+    onDiscardedPending(detectionFieldProblem(o.pendingDetection))
+    pendingDetection = null
+  }
+  return { dataRoot, pendingDataRoot, pendingFrom, detection, pendingDetection }
+}
+
+/** 検出の欄の 1 つが何で読めないか（`形が違う` か `field=problem、…`）。読めるなら空文字。 */
+function detectionFieldProblem(v: unknown): string {
+  const shaped = detectionSettingsShape(v)
+  if (shaped === null) return '形が違う'
+  return detectionProblems(shaped)
+    .map((p) => `${p.field}=${p.problem}`)
+    .join('、')
+}
+
+/** 起動時に検出の値を決めた結果（{@link resolveDetection}）。 */
+export interface ResolvedDetection {
+  /** この起動で使う値。`null` は既定。 */
+  readonly settings: DetectionSettings | null
+  /** 書き戻す設定。**昇格させたときだけ** `null` 以外。 */
+  readonly nextSettings: HostSettings | null
+}
+
+/**
+ * 起動時に検出の値を決める（純関数）。待っている変更があれば昇格させる。**既定と同じ値は `null` に戻す**
+ * （既定のまま動いている印を残す。コードの既定値を後で変えたとき、画面で触っていない人まで古い値に縛られない）。
+ */
+export function resolveDetection(settings: HostSettings, defaults: DetectionSettings): ResolvedDetection {
+  if (settings.pendingDetection === null) return { settings: settings.detection, nextSettings: null }
+  const next = sameDetectionSettings(settings.pendingDetection, defaults) ? null : settings.pendingDetection
+  return { settings: next, nextSettings: { ...settings, detection: next, pendingDetection: null } }
+}
+
+/**
+ * 設定ファイルの書き手。**書き手はこの 1 つだけ**（保存先の係と検出の係が別々に手元の写しを抱えて丸ごと
+ * 書き戻すと、後から書いた方が先の変更を消す）。
+ */
+export class HostSettingsFile {
+  private current: HostSettings
+
+  constructor(
+    readonly path: string,
+    initial: HostSettings,
+    private readonly writeFn: (path: string, settings: HostSettings) => void,
+  ) {
+    this.current = initial
+  }
+
+  get(): HostSettings {
+    return this.current
+  }
+
+  /** いまの設定から次を作って書く。**書けなければ投げ、手元の値も変えない。** */
+  update(next: (current: HostSettings) => HostSettings): HostSettings {
+    const value = next(this.current)
+    this.writeFn(this.path, value)
+    this.current = value
+    return value
+  }
 }
 
 /**
@@ -231,7 +326,7 @@ export function parseHostSettings(text: string): HostSettings | null {
  * **読めない・形が合わないときは投げる**（ホストは起動しない）。既定の場所へ黙って倒すと、前に選んだ
  * 保存先と違う場所へ書き始め、データが 2 か所に割れる。生データの置き場所を作れないときに落ちるのと同じ判断。
  */
-export function readHostSettings(path: string): HostSettings {
+export function readHostSettings(path: string, onDiscardedPending: (detail: string) => void): HostSettings {
   let text: string
   try {
     text = readFileSync(path, 'utf8')
@@ -239,9 +334,32 @@ export function readHostSettings(path: string): HostSettings {
     if (isMissing(error)) return EMPTY_HOST_SETTINGS
     throw new Error(`ホストの設定（${path}）を読めず: ${messageOf(error)}`)
   }
-  const parsed = parseHostSettings(text)
-  if (parsed === null) throw new Error(`ホストの設定（${path}）の形が合わない`)
+  const parsed = parseHostSettings(text, onDiscardedPending)
+  if (parsed === null) throw new Error(`ホストの設定（${path}）の形が合わない${hostSettingsProblemDetail(text)}`)
   return parsed
+}
+
+/**
+ * 読めなかった設定のうち、検出の欄の何が駄目かを添える（直す人が欄を探し回らずに済むように）。
+ * 検出の欄に誤りが無ければ空文字（保存先の欄か、JSON そのものが壊れている）。
+ */
+export function hostSettingsProblemDetail(text: string): string {
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return '（JSON として読めない）'
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return ''
+  const o = value as Record<string, unknown>
+  const parts: string[] = []
+  // 待っている変更（`pendingDetection`）は読めなくても捨てて読むので、起動を止める理由にならない。
+  const v = o.detection
+  if (v !== undefined && v !== null) {
+    const problem = detectionFieldProblem(v)
+    if (problem !== '') parts.push(`detection: ${problem}`)
+  }
+  return parts.length > 0 ? `（${parts.join('／')}）` : ''
 }
 
 /** 一時ファイルへ書いてから置き換える（`stationStore.ts` と同じ手順）。失敗は投げる。 */

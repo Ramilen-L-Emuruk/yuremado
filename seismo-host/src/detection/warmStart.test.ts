@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DETECTION_SETTINGS_DEFAULT } from './detectionSettings'
 
 import { jstHourStartMs } from '../receiver/jstTime'
 import type { FusedWaveChunk } from '../receiver/sensorFusion'
 import type { StationConfig } from '../receiver/stationConfig'
 import type { ArchivedWaveChunk } from '../receiver/waveArchive'
+import type { TriggerConfig } from './quakeTrigger'
 import type { HourRead, HourReader } from './redetect'
 import type { ShakeEventRecord } from './shakeEvent'
 import { StationDetection } from './stationDetection'
-import { WARM_JOB_TIMEOUT_MS, WARM_MAX_HOLD_MS, WARM_MIN_HOLD_MS, WarmStarter, findBoundary } from './warmStart'
+import { WARM_JOB_TIMEOUT_MS, WARM_MAX_HOLD_MS, WARM_MIN_HOLD_MS, WARM_TAIL_MS, WarmStarter, findBoundary, warmTailMs } from './warmStart'
 
 const FS = 100
 const DT = 1000 / FS
@@ -103,6 +105,7 @@ function harness(opts: {
   failHours?: ReadonlySet<number>
   settled?: () => boolean
   readHour?: HourReader
+  trigger?: TriggerConfig
 }) {
   let now = T0
   const saved: ShakeEventRecord[] = []
@@ -118,6 +121,7 @@ function harness(opts: {
     log: (level, key, line) => logs.push({ level, key, line }),
     exists: () => false,
     holdNewStations: true,
+    detection: DETECTION_SETTINGS_DEFAULT,
   })
   const read = reader(opts.archive, opts.failHours)
   let pauses = 0
@@ -130,6 +134,7 @@ function harness(opts: {
       pauses++
     },
     log: (level, key, line) => logs.push({ level, key, line }),
+    trigger: opts.trigger ?? DETECTION_SETTINGS_DEFAULT.trigger,
   })
   const pushLive = (chunks: readonly FusedWaveChunk[]): void => {
     for (const w of chunks) detection.pushStationWave(w)
@@ -147,6 +152,45 @@ function harness(opts: {
     pauses: () => pauses,
   }
 }
+
+describe('warmTailMs — 末尾から流す長さ（2026-10-27 ユーザー承認「値に合わせて伸ばす」）', () => {
+  const t = DETECTION_SETTINGS_DEFAULT.trigger
+  it('対照: 既定の値では 10 分のまま', () => {
+    expect(warmTailMs(t)).toBe(WARM_TAIL_MS)
+  })
+
+  it('正: 長い窓＋助走が 10 分を超えたら、その長さまで伸ばす', () => {
+    expect(warmTailMs({ ...t, ltaSec: 600, warmupSec: 120 })).toBe(720_000)
+  })
+
+  it('安全弁: 短くした値でも 10 分より縮めない', () => {
+    expect(warmTailMs({ ...t, ltaSec: 10, warmupSec: 0 })).toBe(WARM_TAIL_MS)
+  })
+})
+
+describe('WarmStarter — 流す末尾の長さを引き金の値から決める（2026-10-27 ユーザー承認「値に合わせて伸ばす」）', () => {
+  /** 前のプロセスは 1300 秒まで受けた。1300 秒からライブ。控えは 0 秒からある。 */
+  const LONG = waves(1400)
+  /** 起動前の波形を何秒ぶん流したか（引き継いだ行の「N 秒ぶん」）。 */
+  async function replayedSec(trigger?: TriggerConfig): Promise<number> {
+    const h = harness({ archive: archived(span(LONG, 0, 1300)), trigger })
+    h.setNow(at(1300))
+    h.pushLive(span(LONG, 1300, 1400))
+    h.setNow(at(1300) + WARM_MIN_HOLD_MS)
+    h.starter.tick()
+    await h.starter.idle()
+    const line = h.logs.find((l) => l.line.includes('引き継'))?.line ?? ''
+    return Number(/（(\d+) 秒ぶん/.exec(line)?.[1] ?? NaN)
+  }
+
+  it('対照: 既定の値なら末尾 10 分を流す', async () => {
+    expect(await replayedSec()).toBe(600)
+  })
+
+  it('正: 長い窓 600 秒＋助走 600 秒なら末尾 20 分まで流す', async () => {
+    expect(await replayedSec({ ...DETECTION_SETTINGS_DEFAULT.trigger, ltaSec: 600, warmupSec: 600 })).toBe(1200)
+  })
+})
 
 describe('findBoundary — 前のプロセスが最後にライブで受けたサンプルの時刻', () => {
   it('作り直した分（欠けを埋めた分）は数えず、ライブの分の末尾を返す', async () => {

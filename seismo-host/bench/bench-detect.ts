@@ -18,12 +18,16 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { cacheDir as sharedCacheDir } from '../../scripts/lib/cacheDir.mjs'
 
 import { travelTimeSec } from '../../src/utils/travelTime'
 import { SHAKE_CLASS_WORDS } from '../src/detection/detectionWording'
 import { parseP2pQuakeList } from '../src/detection/p2pQuake'
 import { QuakeDetector } from '../src/detection/quakeDetector'
+import { triggerSettleMs } from '../src/detection/quakeTrigger'
+import { DETECTION_SETTINGS_DEFAULT, parseDetectionSettings, type DetectionSettings } from '../src/detection/detectionSettings'
+import { HOST_SETTINGS_FILE, readHostSettings } from '../src/receiver/hostSettings'
 import type { DetectedShake } from '../src/detection/quakeDetector'
 import { arrivalWindow, matchesQuake } from '../src/detection/quakeMatch'
 import type { ArrivalWindow, ReferenceQuake } from '../src/detection/quakeMatch'
@@ -84,6 +88,28 @@ function describePhases(s: DetectedShake, w: ArrivalWindow, q: ReferenceQuake): 
   return `      S ${sText}  P ${pText}  S-P ${sp}（走時表 ${fmt(predictedSp, 1)}s）  S から逆算した発生 ${origin}`
 }
 
+/**
+ * 検出の値（2026-10-27 ユーザー承認「同じ値＋記録に残す」）。`--detection <JSON ファイル>` で別の値を試せる。
+ * 無ければ設定ファイル（`config/host-settings.json`）の「いま」の値、それも無ければ既定。
+ */
+function detectionSettingsOf(): { settings: DetectionSettings; source: string } {
+  const path = arg('detection')
+  if (path !== undefined) {
+    const settings = parseDetectionSettings(JSON.parse(readFileSync(path, 'utf8')))
+    if (settings === null) {
+      console.error(`${path} は検出の値として読めない`)
+      process.exit(2)
+    }
+    return { settings, source: path }
+  }
+  const host = readHostSettings(fileURLToPath(new URL(`../config/${HOST_SETTINGS_FILE}`, import.meta.url)), (detail) =>
+    console.warn(`設定ファイルの次の起動で使う検出の値（pendingDetection）が読めないので無視する: ${detail}`),
+  )
+  return host.detection === null
+    ? { settings: DETECTION_SETTINGS_DEFAULT, source: '既定の値' }
+    : { settings: host.detection, source: '設定ファイルの値' }
+}
+
 function main(): void {
   const days = (arg('days') ?? '').split(',').filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
   const labelsPath = arg('labels')
@@ -99,6 +125,13 @@ function main(): void {
     process.exit(2)
   }
   const radiusKm = Number(arg('radius') ?? 300)
+  const detection = detectionSettingsOf()
+  console.log(`検出の値: ${detection.source}`)
+  // 控えの前置きは作るときに 5 分で決まる（`build-station-cache.ts` の `LEAD_MS`）。長い窓＋助走がそれより長いと、
+  // 控えの頭では長い窓が埋まらないまま流れる。
+  if (triggerSettleMs(detection.settings.trigger) > 5 * 60_000) {
+    console.warn('長い窓＋始めに見送る長さが 5 分を超えるので、控えの頭では長い窓が埋まらないまま流れる（その間の揺れは不利な条件で測る）')
+  }
   const showEvents = process.argv.includes('--events')
 
   const parsed = parseP2pQuakeList(JSON.parse(readFileSync(labelsPath, 'utf8')))
@@ -116,7 +149,7 @@ function main(): void {
     }
     const fromMs = dayStartMs(day)
     const toMs = fromMs + DAY_MS
-    const detector = new QuakeDetector()
+    const detector = new QuakeDetector({ trigger: detection.settings.trigger, envelope: detection.settings.envelope })
     const shakes: DetectedShake[] = []
     let samples = 0
     for (const chunk of readStationWaveCache(cachePath)) {
@@ -127,7 +160,7 @@ function main(): void {
     const inDay = shakes.filter((s) => s.trigger.onMs >= fromMs && s.trigger.onMs < toMs)
     const dayLabels = labels.filter(({ w }) => w.latestSMs >= fromMs && w.earliestPMs < toMs)
     const matchOf = (s: DetectedShake): { q: ReferenceQuake; w: ArrivalWindow } | undefined =>
-      dayLabels.find(({ w }) => matchesQuake(s.trigger.onMs, w))
+      dayLabels.find(({ w }) => matchesQuake(s.trigger.onMs, w, detection.settings.match))
     const matched = inDay.filter((s) => matchOf(s) !== undefined)
     const unmatched = inDay.filter((s) => matchOf(s) === undefined)
     total.shakes += inDay.length
@@ -146,7 +179,7 @@ function main(): void {
         `作り直し ${detector.resets} 回・捨てたまとまり ${detector.droppedChunks}・P/S の窓が途切れて拾わず ${detector.phaseWindowsBroken}・P/S の失敗 ${detector.phaseFailures}`,
     )
     for (const { q, w } of dayLabels) {
-      const hit = inDay.find((s) => matchesQuake(s.trigger.onMs, w))
+      const hit = inDay.find((s) => matchesQuake(s.trigger.onMs, w, detection.settings.match))
       const mag = q.magnitude === null ? 'M?' : `M${q.magnitude}`
       console.log(
         `  ${hit ? '当たり  ' : '取りこぼし'} ${jst(q.originMs)} ${q.name} ${mag} ${fmt(w.distanceKm, 0)}km` +

@@ -12,7 +12,10 @@ import { confirmDiscardUnsaved, qs } from './dom'
 import { TabStates, formatHash, parseHash, type Selection, type TabContext, type TabKey } from './tabState'
 import { installTips, tipHtml } from './tip'
 import { dismissConfirmDialog } from './confirmDialog'
+import { startNotifyWatcher } from './notifyWatcher'
 import { initBoardsView } from './viewBoards'
+import { initDetectionView } from './viewDetection'
+import { initNotifyView } from './viewNotify'
 import { initRecordsView } from './viewRecords'
 import { initShakesView } from './viewShakes'
 import { initStationsView } from './viewStations'
@@ -26,10 +29,14 @@ const TABS: readonly { readonly key: TabKey; readonly label: string }[] = [
   { key: 'status', label: '稼働状況' },
   { key: 'waves', label: '波形' },
   { key: 'shakes', label: '揺れの記録' },
+  // 2026-10-27 ユーザー承認（揺れの記録の右）。
+  { key: 'detection', label: '検出' },
   // 2026-10-07 ユーザー承認（揺れの記録の右）。
   { key: 'records', label: '波形の記録' },
   // 2026-10-13 ユーザー承認（波形の記録の右）。
   { key: 'storage', label: '保存先' },
+  // 2026-10-27 ユーザー承認（新しい「通知」タブ）。
+  { key: 'notify', label: '通知' },
 ]
 
 /** 開いたまま何も指していないときのタブ。 */
@@ -171,8 +178,10 @@ async function mountTab(root: HTMLElement, key: TabKey): Promise<void> {
   else if (key === 'boards') await initBoardsView(content, ctx)
   else if (key === 'waves') await initWavesView(content, ctx)
   else if (key === 'shakes') await initShakesView(content, ctx)
+  else if (key === 'detection') await initDetectionView(content, ctx)
   else if (key === 'records') await initRecordsView(content, ctx)
   else if (key === 'storage') await initStorageView(content, ctx)
+  else if (key === 'notify') await initNotifyView(content, ctx)
   else await initStatusView(content, ctx)
 }
 
@@ -207,6 +216,8 @@ async function main(): Promise<void> {
   const root = qs<HTMLElement>(document, '#app')
   // 画面を閉じるまで外さない（管理コンソールは 1 ページなので、外す契機が無い）
   installTips(document)
+  // 通知の見張りはどのタブを開いていても動かす（タブの世代とは別。画面を閉じるまで止めない）
+  startNotifyWatcher(new AbortController().signal)
   renderShell(root)
   updateTokenStatus(root)
 

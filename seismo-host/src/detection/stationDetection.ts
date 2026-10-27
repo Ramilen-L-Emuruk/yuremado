@@ -25,6 +25,7 @@ import type { TriggerDetector, TriggerHealth, TriggerInput, TriggerPeak } from '
 import { shakeEventId } from './shakeEvent'
 import type { ShakeEventRecord, ShakeSensorRef } from './shakeEvent'
 import { ShakeEventBook } from './shakeEventBook'
+import type { DetectionSettings } from './detectionSettings'
 
 /** 状態の口（`/status`）へ出す検出の健全性。 */
 export interface DetectionStatus {
@@ -244,6 +245,11 @@ export interface StationDetectionOptions {
    * （`warmStart.ts`）で、{@link StationDetection.beginWarm} から {@link StationDetection.finishWarm} までで控えを流す。
    */
   readonly holdNewStations: boolean
+  /**
+   * 引き金・地震らしい揺れの枠・照合の余裕（`detectionSettings.ts`）。**起動時に 1 回だけ決めた値**で、
+   * 稼働中は変えない（画面で変えた値は次の起動で効く・2026-10-27 ユーザー承認）。
+   */
+  readonly detection: DetectionSettings
 }
 
 interface WarmEntry {
@@ -330,6 +336,7 @@ export class StationDetection {
       feedCovered: options.feedCovered,
       now: options.now,
       detectorVersion: DETECTOR_VERSION,
+      detection: options.detection,
     })
   }
 
@@ -460,7 +467,7 @@ export class StationDetection {
   private feed(stationId: string, chunk: TriggerInput): void {
     let detector = this.detectors.get(stationId)
     if (detector === undefined) {
-      detector = new QuakeDetector()
+      detector = new QuakeDetector({ trigger: this.opts.detection.trigger, envelope: this.opts.detection.envelope })
       this.detectors.set(stationId, detector)
     }
     const before = detector.lastSampleAtMs
@@ -582,7 +589,7 @@ export class StationDetection {
     const d = this.detectors.get(stationId)
     return {
       stationId,
-      ...(d?.health() ?? emptyTriggerHealth()),
+      ...(d?.health() ?? emptyTriggerHealth(this.opts.detection.trigger)),
       lastFedAtMs: this.fedAt.get(stationId) ?? null,
       droppedChunks: d?.droppedChunks ?? 0,
       warmStart: this.warmStatus(stationId),

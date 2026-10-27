@@ -18,6 +18,7 @@ import {
   parseResidualParams,
   parseEventQuery,
   parseQuakeIntensityQuery,
+  parseRedetectRequest,
   parseRewaveRequest,
   REWAVE_REQUEST_MAX_MS,
   parseWaveParam,
@@ -28,6 +29,8 @@ import {
 import type { ShakeEventRecord } from '../detection/shakeEvent'
 import type { EventRangeResult } from '../detection/shakeEventStore'
 import type { StatusServer, StatusServerOptions } from './statusServer'
+import type { RedetectRequest, RedetectRunState } from './redetectRunner'
+import { DETECTION_SETTINGS_DEFAULT, type DetectionSettings } from '../detection/detectionSettings'
 import { stationFileToken } from './waveArchive'
 import type { ArchivedWaveChunk, WaveRangeResult } from './waveArchive'
 
@@ -39,6 +42,27 @@ const NO_STORAGE: StatusServerOptions['storage'] = {
   setPending: async () => ({ ok: false, problem: 'locked' }),
   purgeOld: async () => ({ ok: false, reason: 'not-copied' }),
   abandonMigration: async () => ({ ok: false, reason: 'not-missing' }),
+}
+
+/** 検出の値の口を試さないテストの既定。**変える操作は呼ばれたら落とす。** */
+const NO_DETECTION: StatusServerOptions['detection'] = {
+  get: () => ({ active: DETECTION_SETTINGS_DEFAULT, pending: null, defaults: DETECTION_SETTINGS_DEFAULT, discardedPending: null }),
+  setPending: () => {
+    throw new Error('呼ばれない')
+  },
+}
+
+/** 操作を試さないテストの既定。**呼ばれたら落とす**（呼ばれない前提を黙って崩さない）。 */
+const NO_OPERATIONS: StatusServerOptions['operations'] = {
+  boardControlState: () => ({ tokenConfigured: false, reachable: [] }),
+  sendBoardAction: async () => {
+    throw new Error('呼ばれない')
+  },
+  requestRestart: () => 'not-ready',
+  redetectState: () => ({ kind: 'idle' }),
+  startRedetect: () => {
+    throw new Error('呼ばれない')
+  },
 }
 
 const WAVE_ARCHIVE: WaveArchiveStatus = {
@@ -279,6 +303,8 @@ async function start(
     // 保存した波形の読み返しは `/api/*`（認証つき）なので、試すテストは `startAuthed` を使う。
     records: null,
     storage: NO_STORAGE,
+    operations: NO_OPERATIONS,
+    detection: NO_DETECTION,
   })
   running.server = server
   return `http://127.0.0.1:${server.port}`
@@ -1131,6 +1157,8 @@ describe('/api/*', () => {
     records: StatusServerOptions['records'] = null,
     requestRewave: StatusServerOptions['requestRewave'] = () => ({ kind: 'busy' }),
     storage: StatusServerOptions['storage'] = NO_STORAGE,
+    operations: StatusServerOptions['operations'] = NO_OPERATIONS,
+    detection: StatusServerOptions['detection'] = NO_DETECTION,
   ): Promise<string> {
     const port = await getFreePort()
     const adminAuth: AdminAuthConfig = {
@@ -1156,6 +1184,8 @@ describe('/api/*', () => {
       readEvents: null,
       records,
       storage,
+      operations,
+      detection,
     })
     running.server = server
     return `http://127.0.0.1:${server.port}`
@@ -1363,6 +1393,317 @@ describe('/api/*', () => {
       const res = await fetch(`${base}/api/storage/abandon-migration`, { method: 'POST', headers: authed })
       expect(res.status).toBe(409)
       expect(await res.json()).toMatchObject({ error: 'not-missing' })
+    })
+  })
+
+  describe('検出の値（/api/detection）', () => {
+    const authed = { Authorization: `Bearer ${TOKEN}`, Origin: ORIGIN, 'Content-Type': 'application/json' }
+    const TUNED: DetectionSettings = {
+      ...DETECTION_SETTINGS_DEFAULT,
+      trigger: { ...DETECTION_SETTINGS_DEFAULT.trigger, onRatio: 3 },
+    }
+    function fakeDetection(result: ReturnType<StatusServerOptions['detection']['setPending']> = { ok: true }) {
+      const calls: unknown[] = []
+      let pending: DetectionSettings | null = null
+      const ops: StatusServerOptions['detection'] = {
+        get: () => ({ active: DETECTION_SETTINGS_DEFAULT, pending, defaults: DETECTION_SETTINGS_DEFAULT, discardedPending: null }),
+        setPending: (value) => {
+          calls.push(value)
+          if (result.ok) pending = value as DetectionSettings | null
+          return result
+        },
+      }
+      return { ops, calls }
+    }
+    const start = (ops: StatusServerOptions['detection'], log?: StatusServerOptions['log']) =>
+      startAuthed(new ReadingHub(), {}, log, undefined, undefined, undefined, null, undefined, NO_STORAGE, NO_OPERATIONS, ops)
+
+    it('正: GET はいまの値・待っている値・既定を返す', async () => {
+      const base = await start(fakeDetection().ops)
+      const res = await fetch(`${base}/api/detection`, { headers: authed })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ active: DETECTION_SETTINGS_DEFAULT, pending: null, defaults: DETECTION_SETTINGS_DEFAULT, discardedPending: null })
+    })
+
+    it('正: PUT は本文の pendingDetection を渡し、受け付けたら今の様子を返して記録に残す', async () => {
+      const { ops, calls } = fakeDetection()
+      const lines: string[] = []
+      const base = await start(ops, (_level, _kind, _detail, line) => lines.push(line))
+      const res = await fetch(`${base}/api/detection`, {
+        method: 'PUT',
+        headers: authed,
+        body: JSON.stringify({ pendingDetection: TUNED }),
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({ pending: TUNED })
+      expect(calls).toEqual([TUNED])
+      expect(lines.some((l) => l.includes('次の起動で使う検出の値を変えた'))).toBe(true)
+    })
+
+    it('正: null は取り消しとして渡し、取り消した旨を記録に残す', async () => {
+      const { ops, calls } = fakeDetection()
+      const lines: string[] = []
+      const base = await start(ops, (_level, _kind, _detail, line) => lines.push(line))
+      const res = await fetch(`${base}/api/detection`, {
+        method: 'PUT',
+        headers: authed,
+        body: JSON.stringify({ pendingDetection: null }),
+      })
+      expect(res.status).toBe(200)
+      expect(calls).toEqual([null])
+      expect(lines.some((l) => l.includes('変更を取り消した'))).toBe(true)
+    })
+
+    it('対照: 値が受け付けられなければ 400 で項目ごとの断りを返す', async () => {
+      const problems = [{ field: 'staSec', problem: 'sta-not-below-lta' }] as const
+      const base = await start(fakeDetection({ ok: false, problem: 'invalid-values', problems }).ops)
+      const res = await fetch(`${base}/api/detection`, {
+        method: 'PUT',
+        headers: authed,
+        body: JSON.stringify({ pendingDetection: TUNED }),
+      })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid-values', problems })
+    })
+
+    it('対照: pendingDetection の欄が無い本文は渡さずに 400', async () => {
+      const { ops, calls } = fakeDetection()
+      const base = await start(ops)
+      const res = await fetch(`${base}/api/detection`, { method: 'PUT', headers: authed, body: JSON.stringify({}) })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid-body' })
+      expect(calls).toEqual([])
+    })
+
+    it('安全弁: 設定ファイルを書けなければ 500', async () => {
+      const base = await start(fakeDetection({ ok: false, problem: 'not-writable', detail: 'EACCES' }).ops)
+      const res = await fetch(`${base}/api/detection`, {
+        method: 'PUT',
+        headers: authed,
+        body: JSON.stringify({ pendingDetection: TUNED }),
+      })
+      expect(res.status).toBe(500)
+      expect(await res.json()).toEqual({ error: 'not-writable', detail: 'EACCES' })
+    })
+
+    it('安全弁: GET・PUT 以外は 405', async () => {
+      const { ops, calls } = fakeDetection()
+      const base = await start(ops)
+      const res = await fetch(`${base}/api/detection`, { method: 'POST', headers: authed, body: '{}' })
+      expect(res.status).toBe(405)
+      expect(calls).toEqual([])
+    })
+  })
+
+  describe('管理画面から頼む操作（基板の再起動・繋ぎ直し・ホストの再起動）', () => {
+    const authed = { Authorization: `Bearer ${TOKEN}`, Origin: ORIGIN }
+    function ops(over: Partial<StatusServerOptions['operations']> = {}): StatusServerOptions['operations'] {
+      return { ...NO_OPERATIONS, ...over }
+    }
+    const startOps = (operations: StatusServerOptions['operations'], log?: StatusServerOptions['log']) =>
+      startAuthed(new ReadingHub(), {}, log, undefined, undefined, undefined, null, undefined, NO_STORAGE, operations)
+
+    it('正: 基板の鍵と操作の名前を読み、頼めたら 200 を返す（鍵のコロンは URL のまま通る）', async () => {
+      const calls: [string, string][] = []
+      const base = await startOps(
+        ops({
+          sendBoardAction: async (boardKey, action) => {
+            calls.push([boardKey, action])
+            return { kind: 'sent' }
+          },
+        }),
+      )
+      const res = await fetch(`${base}/api/boards/mac:020000000001/restart`, { method: 'POST', headers: authed })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ status: 'sent' })
+      const res2 = await fetch(`${base}/api/boards/${encodeURIComponent('mac:020000000001')}/wifi-reconnect`, {
+        method: 'POST',
+        headers: authed,
+      })
+      expect(res2.status).toBe(200)
+      expect(calls).toEqual([
+        ['mac:020000000001', 'restart'],
+        ['mac:020000000001', 'wifi-reconnect'],
+      ])
+    })
+
+    it('対照: 基板の断り方は番号ごとに分けて返し、ホストの 403 と紛れないよう 502 にする', async () => {
+      const base = await startOps(ops({ sendBoardAction: async () => ({ kind: 'bad-token' }) }))
+      const res = await fetch(`${base}/api/boards/mac:1/restart`, { method: 'POST', headers: authed })
+      expect(res.status).toBe(502)
+      expect(await res.json()).toEqual({ error: 'board-bad-token' })
+    })
+
+    it('安全弁: GET では基板へ頼まない・知らない操作の名前は 404', async () => {
+      let calls = 0
+      const base = await startOps(
+        ops({
+          sendBoardAction: async () => {
+            calls += 1
+            return { kind: 'sent' }
+          },
+        }),
+      )
+      expect((await fetch(`${base}/api/boards/mac:1/restart`, { headers: authed })).status).toBe(405)
+      expect((await fetch(`${base}/api/boards/mac:1/wifi-drop`, { method: 'POST', headers: authed })).status).toBe(404)
+      expect(calls).toBe(0)
+    })
+
+    it('正: 返事が無ければ 504 で、画面が言い分ける種類を本文に載せる', async () => {
+      const base = await startOps(
+        ops({ sendBoardAction: async () => ({ kind: 'no-reply', cause: 'timeout', reason: 'TimeoutError' }) }),
+      )
+      const res = await fetch(`${base}/api/boards/mac:1/restart`, { method: 'POST', headers: authed })
+      expect(res.status).toBe(504)
+      expect(await res.json()).toEqual({ error: 'board-no-reply', cause: 'timeout', reason: 'TimeoutError' })
+    })
+
+    it('安全弁: 同じ基板へ頼んでいる最中なら 409 board-busy で返す', async () => {
+      const base = await startOps(ops({ sendBoardAction: async () => ({ kind: 'busy' }) }))
+      const res = await fetch(`${base}/api/boards/mac:1/restart`, { method: 'POST', headers: authed })
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'board-busy' })
+    })
+
+    it('安全弁: `%` の書き方が壊れた宛先は 500 ではなく 404', async () => {
+      let calls = 0
+      const base = await startOps(
+        ops({
+          sendBoardAction: async () => {
+            calls += 1
+            return { kind: 'sent' }
+          },
+        }),
+      )
+      expect((await fetch(`${base}/api/boards/%E0%A4%A/restart`, { method: 'POST', headers: authed })).status).toBe(404)
+      expect((await fetch(`${base}/api/boards/%zz`, { headers: authed })).status).toBe(404)
+      expect((await fetch(`${base}/api/stations/%E0%A4%A`, { headers: authed })).status).toBe(404)
+      expect(calls).toBe(0)
+    })
+
+    it('正: GET /api/board-control で押せるかの材料を返す', async () => {
+      const base = await startOps(ops({ boardControlState: () => ({ tokenConfigured: true, reachable: ['mac:1'] }) }))
+      const res = await fetch(`${base}/api/board-control`, { headers: authed })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ tokenConfigured: true, reachable: ['mac:1'] })
+    })
+
+    it('正: POST /api/restart で再起動を頼み、202 で restarting を返して 1 行残す', async () => {
+      let calls = 0
+      const lines: string[] = []
+      const base = await startOps(
+        ops({
+          requestRestart: () => {
+            calls += 1
+            return 'accepted'
+          },
+        }),
+        (_l, _k, _d, line) => lines.push(line),
+      )
+      const res = await fetch(`${base}/api/restart`, { method: 'POST', headers: authed })
+      expect(res.status).toBe(202)
+      expect(await res.json()).toEqual({ status: 'restarting' })
+      expect(calls).toBe(1)
+      expect(lines.some((l) => l.includes('再起動の合図を受けた'))).toBe(true)
+    })
+
+    it('安全弁: 再起動も GET では頼まず、トークンが無ければ 401', async () => {
+      let calls = 0
+      const base = await startOps(
+        ops({
+          requestRestart: () => {
+            calls += 1
+            return 'accepted'
+          },
+        }),
+      )
+      expect((await fetch(`${base}/api/restart`, { headers: authed })).status).toBe(405)
+      expect((await fetch(`${base}/api/restart`, { method: 'POST', headers: { Origin: ORIGIN } })).status).toBe(401)
+      expect(calls).toBe(0)
+    })
+
+    it('正: POST /api/redetect で範囲を渡して始め、202 で進み具合を返す。GET で進み具合を読む', async () => {
+      const requests: RedetectRequest[] = []
+      let state: RedetectRunState = { kind: 'idle' }
+      const base = await startOps(
+        ops({
+          redetectState: () => state,
+          startRedetect: (r) => {
+            requests.push(r)
+            state = { kind: 'running', startedAtMs: 5, request: r }
+            return 'started'
+          },
+        }),
+      )
+      const res = await fetch(`${base}/api/redetect`, {
+        method: 'POST',
+        headers: { ...authed, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromMs: 1000, toMs: 2000, stationId: 'sta1' }),
+      })
+      expect(res.status).toBe(202)
+      expect(requests).toEqual([{ fromMs: 1000, toMs: 2000, stationId: 'sta1' }])
+      expect(((await res.json()) as RedetectRunState).kind).toBe('running')
+      const got = await fetch(`${base}/api/redetect`, { headers: authed })
+      expect(got.status).toBe(200)
+      expect(((await got.json()) as RedetectRunState).kind).toBe('running')
+    })
+
+    it('対照: 走っている間の 2 本目は 409', async () => {
+      const base = await startOps(ops({ startRedetect: () => 'busy' }))
+      const res = await fetch(`${base}/api/redetect`, {
+        method: 'POST',
+        headers: { ...authed, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromMs: 1000, toMs: 2000, stationId: null }),
+      })
+      expect(res.status).toBe(409)
+      expect(await res.json()).toEqual({ error: 'redetect-busy' })
+    })
+
+    it('安全弁: 範囲が読めない本文では始めず 400、トークンが無ければ 401', async () => {
+      let calls = 0
+      const base = await startOps(
+        ops({
+          startRedetect: () => {
+            calls += 1
+            return 'started'
+          },
+        }),
+      )
+      const bad = await fetch(`${base}/api/redetect`, {
+        method: 'POST',
+        headers: { ...authed, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromMs: 2000, toMs: 1000, stationId: null }),
+      })
+      expect(bad.status).toBe(400)
+      const noToken = await fetch(`${base}/api/redetect`, { method: 'POST', headers: { Origin: ORIGIN } })
+      expect(noToken.status).toBe(401)
+      expect(calls).toBe(0)
+    })
+  })
+
+  describe('parseRedetectRequest', () => {
+    const NOW = 1_790_001_000_000
+    it('正: 範囲と観測点を読む（null はすべての観測点）', () => {
+      expect(parseRedetectRequest({ fromMs: 1, toMs: 2, stationId: null }, NOW)).toEqual({
+        ok: true,
+        request: { fromMs: 1, toMs: 2, stationId: null },
+      })
+    })
+    it('正: 末尾が先ならいまへ詰める（揺れの記録タブの「いままで」）', () => {
+      const r = parseRedetectRequest({ fromMs: NOW - 10, toMs: NOW + 99_999, stationId: 'a' }, NOW)
+      expect(r.ok && r.request.toMs).toBe(NOW)
+    })
+    it('安全弁: 頭からいまより先・逆の範囲・空の観測点名は断る', () => {
+      expect(parseRedetectRequest({ fromMs: NOW, toMs: NOW + 1, stationId: null }, NOW)).toEqual({ ok: false, error: 'range-in-future' })
+      expect(parseRedetectRequest({ fromMs: 2, toMs: 1, stationId: null }, NOW)).toEqual({ ok: false, error: 'bad-range' })
+      expect(parseRedetectRequest({ fromMs: 1, toMs: 2, stationId: '' }, NOW)).toEqual({ ok: false, error: 'bad-station' })
+      expect(parseRedetectRequest({ fromMs: 1, toMs: 2 }, NOW)).toEqual({ ok: false, error: 'bad-station' })
+    })
+    it('安全弁: 負の始め・整数でない・日付にならない大きさは bad-range（道具へ渡す前に断る）', () => {
+      expect(parseRedetectRequest({ fromMs: -1, toMs: 2, stationId: null }, NOW)).toEqual({ ok: false, error: 'bad-range' })
+      expect(parseRedetectRequest({ fromMs: 1.5, toMs: 2, stationId: null }, NOW)).toEqual({ ok: false, error: 'bad-range' })
+      expect(parseRedetectRequest({ fromMs: -1e300, toMs: 2, stationId: null }, NOW)).toEqual({ ok: false, error: 'bad-range' })
+      expect(parseRedetectRequest({ fromMs: 1, toMs: Number.MAX_VALUE, stationId: null }, NOW)).toEqual({ ok: false, error: 'bad-range' })
     })
   })
 

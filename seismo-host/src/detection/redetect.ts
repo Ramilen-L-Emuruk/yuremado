@@ -32,6 +32,19 @@ import type { DetectedShake } from './quakeDetector'
 import type { ObserverPoint } from './quakeMatch'
 import type { ShakeEventRecord, ShakeSensorRef, ShakeVerdict } from './shakeEvent'
 import { MATCH_DEADLINE_MS, ShakeEventBook } from './shakeEventBook'
+import type { DetectionSettings } from './detectionSettings'
+import { triggerSettleMs, type TriggerConfig } from './quakeTrigger'
+
+/** 範囲の頭より前から流す長さの下限（既定の引き金なら助走 60 秒・平常時の強さの時定数に余裕を見る。評価台と同じ）。 */
+export const REDETECT_LEAD_MIN_MS = 5 * 60_000
+
+/**
+ * 範囲の頭より前から流す長さ。**長い窓＋助走より短くしない**（2026-10-27 ユーザー承認「値に合わせて伸ばす」）——
+ * 短いと、長い窓が埋まらないまま範囲の頭の揺れを見始める。
+ */
+export function redetectLeadMs(trigger: TriggerConfig): number {
+  return Math.max(REDETECT_LEAD_MIN_MS, triggerSettleMs(trigger))
+}
 
 /** 流し直す 1 まとまり（`ArchivedWaveChunk` の一部。gal は直流を引いた変動分）。 */
 export interface RedetectChunk {
@@ -42,6 +55,11 @@ export interface RedetectChunk {
 
 export interface RedetectorOptions {
   readonly stationId: string
+  /**
+   * 検出の値（`detectionSettings.ts`）。**実機のホストが使っている値を渡す**（2026-10-27 ユーザー承認
+   * 「同じ値＋記録に残す」）—— 既定値で流し直すと、画面で値を変えた後の流し直しだけ違う区間を切り出す。
+   */
+  readonly detection: DetectionSettings
   /** その時刻の観測点の位置。無ければ照合できない（揺れは揺れ方で決めるか `unchecked`）。 */
   readonly observerAt: (atMs: number) => ObserverPoint | null
   /** その時刻に観測点へ割り当てられていた、有効なセンサー（記録へ残す）。 */
@@ -217,7 +235,7 @@ export async function* archiveChunks(params: {
 
 export class Redetector {
   private readonly opts: RedetectorOptions
-  private readonly detector = new QuakeDetector()
+  private readonly detector: QuakeDetector
   private readonly book: ShakeEventBook
   /** 流している波形の時刻（帳面の時計）。 */
   private clockMs = Number.NEGATIVE_INFINITY
@@ -234,6 +252,7 @@ export class Redetector {
 
   constructor(options: RedetectorOptions) {
     this.opts = options
+    this.detector = new QuakeDetector({ trigger: options.detection.trigger, envelope: options.detection.envelope })
     this.book = new ShakeEventBook({
       save: (rec) => this.emit(rec),
       publish: () => {},
@@ -242,6 +261,7 @@ export class Redetector {
       feedCovered: options.quakesCovered,
       now: () => this.clockMs,
       detectorVersion: DETECTOR_VERSION,
+      detection: options.detection,
     })
     this.intensity = new ChunkIntensity({
       stepSec: options.stepSec ?? STEP_SEC_DEFAULT,

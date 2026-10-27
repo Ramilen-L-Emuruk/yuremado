@@ -4,7 +4,7 @@
 //                                              │
 //        取り戻し・作り直しが片付く（最長 60 秒）─┘
 //                                              ↓
-//   控え ──→ 前のプロセスの最後の 10 分 → 作り直した欠け ──→ 本物の検出器 ──→ 溜めたライブ ──→ ライブを直に
+//   控え ──→ 前のプロセスの最後の 10 分以上 → 作り直した欠け ──→ 本物の検出器 ──→ 溜めたライブ ──→ ライブを直に
 //   控え ──→ 24 時間ぶん ──→ 別の引き金（裏で） ──→ 1 分ごとの比の最大を重ねる
 //
 // **なぜ待つのか。** 検出はライブの合成波形しか受けないので、ホストを起動し直すと引き金は空から作られ、
@@ -15,7 +15,8 @@
 //
 // **引き金の続きと 24 時間の最大を分ける。** 24 時間ぶんを流すと 1 観測点あたり 5〜7 秒かかる
 // （手元の機械で 1 時間 200〜280 ms を実測）。その前に全部を流すと検出の始まりがそのぶん遅れるので、
-// 見張りの続きに要る最後の 10 分（平常時の強さの時定数は 60 秒）だけを先に流し、24 時間の最大は裏で戻す。
+// 見張りの続きに要る最後の 10 分（長い窓＋助走がそれより長ければその長さ・`warmTailMs`）だけを先に流し、
+// 24 時間の最大は裏で戻す。
 //
 // **前のプロセスの最後のサンプルを境にする**（2026-10-13 ユーザー承認）。境より前に始まった揺れは記録しない ——
 // 前のプロセスが見ていた区間で、取りこぼしは `redetect.ts` が起こす。境より後（止まっていた間）に始まった揺れは
@@ -27,17 +28,26 @@
 import { STEP_SEC_DEFAULT } from '../../../src/utils/knet/intensityCommon'
 import { jstHourStartMs } from '../receiver/jstTime'
 import { ChunkIntensity } from './chunkIntensity'
-import { TriggerDetector } from './quakeTrigger'
+import { TriggerDetector, triggerSettleMs, type TriggerConfig } from './quakeTrigger'
 import { archiveChunks, emptyArchiveReadTally } from './redetect'
 import type { ArchiveReadTally, HourReader } from './redetect'
 import type { StationDetection } from './stationDetection'
 
 /** 観測点の最初の波形から、片付いていても待つ長さ。欠けは最初のパケットで帳面へ載るが、合成波形はその後に出る。 */
 export const WARM_MIN_HOLD_MS = 5_000
-/** 片付かなくても待ちを解く長さ（引き金の助走 `warmupSec` と同じ）。 */
+/** 片付かなくても待ちを解く長さ（既定の助走 `warmupSec` と同じ 60 秒。「検出」タブで助走を変えても動かない）。 */
 export const WARM_MAX_HOLD_MS = 60_000
-/** 引き金の続きのために流す、前のプロセスの末尾の長さ（平常時の強さの時定数 60 秒に余裕を見る）。 */
+/** 引き金の続きのために流す、前のプロセスの末尾の長さの下限（既定の長い窓 60 秒に余裕を見る）。 */
 export const WARM_TAIL_MS = 10 * 60_000
+
+/**
+ * 実際に流す末尾の長さ。**長い窓と助走を足した長さより短くしない**（2026-10-27 ユーザー承認「値に合わせて伸ばす」）
+ * —— 「検出」タブで長い窓を伸ばすと（上限 600 秒・`detectionSettings.ts`）、10 分では平常時の強さが埋まりきらない
+ * まま本物の検出器へ繋ぐことになる。
+ */
+export function warmTailMs(cfg: TriggerConfig): number {
+  return Math.max(WARM_TAIL_MS, triggerSettleMs(cfg))
+}
 /** 比の最大を戻す範囲（`quakeTrigger.ts` が覚える 24 時間）。 */
 export const WARM_PEAK_LOOKBACK_MS = 24 * 3_600_000
 /** これだけ流すごとにイベントループへ譲る（受信を止めないため）。 */
@@ -95,6 +105,11 @@ export interface WarmStarterOptions {
   /** イベントループへ譲る。 */
   readonly pause: () => Promise<void>
   readonly log: (level: 'log' | 'warn' | 'error', key: string, line: string) => void
+  /**
+   * 本物の検出器と同じ引き金の値（`detectionSettings.ts`）。24 時間の比の最大を作り直す引き金も、継ぎ目の途切れの
+   * 判定（`maxGapMs`）もこれで測る —— 値が違うと、重ねた比の最大が本物の検出器の比と別の物差しになる。
+   */
+  readonly trigger: TriggerConfig
 }
 
 interface PeakJob {
@@ -115,9 +130,6 @@ interface JobToken {
  * 24 時間の最大も回らなくなるので、これを超えたら打ち切って次へ進む。
  */
 export const WARM_JOB_TIMEOUT_MS = 120_000
-
-/** 流した控えの中・溜めたライブとの継ぎ目にこれを超える途切れがあれば、見張りはそこで助走からやり直している（`maxGapMs`）。 */
-const LIVE_SEAM_GAP_MS = 1_000
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -311,11 +323,11 @@ export class WarmStarter {
       const boundary = await findBoundary(readHour, firstSampleMs, WARM_PEAK_LOOKBACK_MS)
       if (aborted()) return
       if (boundary.kind === 'failed') {
-        this.finishCold(stationId, 'read-failed', boundary.error, 'warn', `${head} 起動時に控えを読めず、空から見張りを始める（助走 60 秒）: ${boundary.error}`)
+        this.finishCold(stationId, 'read-failed', boundary.error, 'warn', `${head} 起動時に控えを読めず、空から見張りを始める（助走 ${this.opts.trigger.warmupSec} 秒）: ${boundary.error}`)
         return
       }
       if (boundary.kind === 'none') {
-        this.finishCold(stationId, 'no-archive', null, 'log', `${head} 控えの 24 時間に前の波形が無いので、空から見張りを始める（助走 60 秒）`)
+        this.finishCold(stationId, 'no-archive', null, 'log', `${head} 控えの 24 時間に前の波形が無いので、空から見張りを始める（助走 ${this.opts.trigger.warmupSec} 秒）`)
         return
       }
       const boundaryMs = boundary.boundaryMs
@@ -333,7 +345,7 @@ export class WarmStarter {
       let firstReplayedMs: number | null = null
       let lastEndMs: number | null = null
       let longestGapMs = 0
-      for await (const c of archiveChunks({ readHour, fromMs: boundaryMs - WARM_TAIL_MS, toMs: firstSampleMs, tally, openHourFromMs })) {
+      for await (const c of archiveChunks({ readHour, fromMs: boundaryMs - warmTailMs(this.opts.trigger), toMs: firstSampleMs, tally, openHourFromMs })) {
         if (aborted()) return
         const endMs = c.firstSampleMs + c.gal[0].length * c.msPerSample
         // **溜めたライブと重ねない。** 作り直しの余白（`rewaveScheduler.ts` の `padMs`）は最初のライブの後ろへ
@@ -354,9 +366,9 @@ export class WarmStarter {
         this.finishCold(
           stationId,
           'no-archive',
-          '末尾の 10 分に流せるまとまりが無い',
+          `末尾の ${Math.round(warmTailMs(this.opts.trigger) / 60_000)} 分に流せるまとまりが無い`,
           'warn',
-          `${head} 控えの末尾に流せる波形が無く、空から見張りを始める（助走 60 秒）${tallyNote(tally)}`,
+          `${head} 控えの末尾に流せる波形が無く、空から見張りを始める（助走 ${this.opts.trigger.warmupSec} 秒）${tallyNote(tally)}`,
         )
         return
       }
@@ -367,7 +379,9 @@ export class WarmStarter {
         return
       }
       // **穴や読めなかった時が残ったら、引き継いだと言い切らない**（警告で出し、結末にも内訳を残す）。
-      const seamBroken = longestGapMs > LIVE_SEAM_GAP_MS
+      // 流した控えの中・溜めたライブとの継ぎ目にこれを超える途切れがあれば、見張りはそこで助走からやり直している。
+      // 物差しは引き金の「作り直す途切れ」（`maxGapMs`）—— 見張りがやり直す条件と同じにする。
+      const seamBroken = longestGapMs > this.opts.trigger.maxGapMs
       const incomplete = tally.hoursFailed > 0 || tally.hoursTruncated > 0 || seamBroken
       const tailSec = Math.round((firstSampleMs - firstReplayedMs) / 1000)
       this.safeLog(
@@ -391,7 +405,7 @@ export class WarmStarter {
     const d = this.opts.detection
     const key = `warm-peaks:${job.stationId}`
     const head = `[detect] ${job.stationId}`
-    const trigger = new TriggerDetector()
+    const trigger = new TriggerDetector(this.opts.trigger)
     const tally = emptyArchiveReadTally()
     try {
       let n = 0

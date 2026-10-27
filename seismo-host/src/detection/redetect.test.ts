@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { DETECTION_SETTINGS_DEFAULT } from './detectionSettings'
 
 import type { ArchivedWaveChunk } from '../receiver/waveArchive'
 import type { P2pReferenceQuake } from './p2pQuake'
 import type { ObserverPoint } from './quakeMatch'
-import { Redetector, archiveChunks, emptyArchiveReadTally } from './redetect'
+import { REDETECT_LEAD_MIN_MS, Redetector, archiveChunks, emptyArchiveReadTally, redetectLeadMs } from './redetect'
 import type { HourRead, RedetectChunk } from './redetect'
 import type { ShakeSensorRef } from './shakeEvent'
 import type { ShakeEventRecord } from './shakeEvent'
@@ -82,6 +83,7 @@ function run(options: {
       return true
     },
     wallNow: () => WALL_NOW,
+    detection: DETECTION_SETTINGS_DEFAULT,
   })
   for (const c of waves(options.totalSec ?? 200)) r.push(c)
   const summary = r.finish()
@@ -89,6 +91,16 @@ function run(options: {
   for (const rec of saved) latest.set(rec.id, rec)
   return { saved, latest: [...latest.values()], summary }
 }
+
+describe('redetectLeadMs — 範囲の頭より前から流す長さ', () => {
+  const t = DETECTION_SETTINGS_DEFAULT.trigger
+  it('対照: 既定の値では 5 分', () => {
+    expect(redetectLeadMs(t)).toBe(REDETECT_LEAD_MIN_MS)
+  })
+  it('正: 長い窓＋助走が 5 分を超えたら、その長さ', () => {
+    expect(redetectLeadMs({ ...t, ltaSec: 600, warmupSec: 120 })).toBe(720_000)
+  })
+})
 
 describe('Redetector — 控えの波形を流し直して揺れの記録を起こす', () => {
   it('正: 揺れが切れ、時刻の合う地震があれば「地震」の版まで書く', () => {

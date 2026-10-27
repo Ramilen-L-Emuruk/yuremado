@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DETECTION_SETTINGS_DEFAULT, type DetectionSettings } from './detectionSettings'
 
 import type { FusedWaveChunk } from '../receiver/sensorFusion'
 import type { StationConfig } from '../receiver/stationConfig'
@@ -78,7 +79,10 @@ function waves(totalSec: number, stationId = 'station-1'): FusedWaveChunk[] {
   return out
 }
 
-function setup(config: StationConfig = CONFIG, opts: { hold?: boolean; existing?: ReadonlySet<string> } = {}) {
+function setup(
+  config: StationConfig = CONFIG,
+  opts: { hold?: boolean; existing?: ReadonlySet<string>; detection?: DetectionSettings } = {},
+) {
   let now = T0
   let current = config
   const saved: ShakeEventRecord[] = []
@@ -96,6 +100,7 @@ function setup(config: StationConfig = CONFIG, opts: { hold?: boolean; existing?
     log: (level, key, line) => logs.push({ level, key, line }),
     exists: (rec) => existing.has(rec.id),
     holdNewStations: opts.hold ?? false,
+    detection: opts.detection ?? DETECTION_SETTINGS_DEFAULT,
   })
   return {
     detection,
@@ -134,6 +139,27 @@ describe('StationDetection', () => {
     t.detection.addQuake(QUAKE)
     expect(t.saved.map((r) => r.verdict)).toEqual(['pending', 'quake'])
     expect(t.detection.snapshot().shakes).toBe(1)
+  })
+
+  it('正: 渡した引き金の値で区間を切る（始める比を上げると同じ波形でも揺れを記録しない）', () => {
+    const strict = setup(CONFIG, {
+      detection: { ...DETECTION_SETTINGS_DEFAULT, trigger: { ...DETECTION_SETTINGS_DEFAULT.trigger, onRatio: 1_000 } },
+    })
+    for (const w of waves(170)) {
+      strict.setNow(w.firstSampleMs)
+      strict.detection.pushStationWave(w)
+    }
+    expect(strict.saved).toHaveLength(0)
+  })
+
+  it('対照: 既定の値なら同じ波形で揺れを 1 件記録し、記録に使った値を残す', () => {
+    const t = setup()
+    for (const w of waves(170)) {
+      t.setNow(w.firstSampleMs)
+      t.detection.pushStationWave(w)
+    }
+    expect(t.saved).toHaveLength(1)
+    expect(t.saved[0].detectionSettings).toEqual(DETECTION_SETTINGS_DEFAULT)
   })
 
   it('揺れの行は揺れごとに鍵を分けて記録する（呼び出し側の間引きに 2 件目を食わせない）', () => {
@@ -201,6 +227,7 @@ describe('StationDetection', () => {
       log: (_l, _k, line) => logs.push(line),
       exists: () => false,
       holdNewStations: false,
+      detection: DETECTION_SETTINGS_DEFAULT,
     })
     expect(() => {
       for (const w of waves(170)) detection.pushStationWave(w)

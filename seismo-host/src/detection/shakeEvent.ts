@@ -14,6 +14,7 @@
 // （数分遅れる）。照合の結果が出たら、同じ `id` で `rev` を 1 つ進めた版を作り、
 // 保存側（`shakeEventStore.ts`）がその揺れの記録を新しい版へ置き換える。
 
+import type { DetectionSettings } from './detectionSettings'
 import type { ShakeClass } from './eventClassifier'
 import type { DetectedShake, PhaseWindowState } from './quakeDetector'
 import type { ArrivalWindow } from './quakeMatch'
@@ -119,6 +120,11 @@ export interface ShakeEventRecord {
 
   readonly verdict: ShakeVerdict
   readonly matchedQuake: MatchedQuake | null
+  /**
+   * 切り出したときの検出の値（`detectionSettings.ts`・2026-10-27 ユーザー承認「同じ値＋記録に残す」）。
+   * 後から管理画面で値を変えても、どの値で切り出した記録かが分かる。調整の口を足す前の記録には無い。
+   */
+  readonly detectionSettings?: DetectionSettings
 }
 
 /**
@@ -137,6 +143,7 @@ export function initialRecord(params: {
   readonly maxIntensity: number | null
   readonly sensors: readonly ShakeSensorRef[]
   readonly nowMs: number
+  readonly detectionSettings: DetectionSettings
 }): ShakeEventRecord {
   const { shake } = params
   const t = shake.trigger
@@ -172,6 +179,7 @@ export function initialRecord(params: {
     spatialConsistency: 'not-evaluated',
     verdict: 'pending',
     matchedQuake: null,
+    detectionSettings: params.detectionSettings,
   }
 }
 
