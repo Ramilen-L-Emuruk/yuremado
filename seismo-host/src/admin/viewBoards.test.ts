@@ -1235,6 +1235,192 @@ describe('6 面で測る（基板の欄）', () => {
 })
 
 /**
+ * 2 軸のセンサーだけの基板の「印字面が上として記録」（#1084）。**計算は `boardSixFace.test.ts` が見る。**
+ * ここは配線だけ —— 行が出るか、押せるか、押した時刻が 6 面法へ届くか、開き直しても残るか。
+ */
+describe('印字面が上として記録（2 軸のセンサーだけの基板）', () => {
+  const g = 980.665
+  /** 水平 1 個・立てて 90° 回した 2 個。基板の座標は 1 個目の軸 1 を X、軸 2 を XY 面に置いた形。 */
+  const TRUE_AXES: readonly (readonly { vector: [number, number, number]; offset: number }[])[] = [
+    [
+      { vector: [1.01, 0, 0], offset: 12 },
+      { vector: [0.012, 0.99, 0], offset: -8 },
+    ],
+    [
+      { vector: [0.98, 0.02, 0.05], offset: -20 },
+      { vector: [0.04, -0.03, 1.02], offset: 35 },
+    ],
+    [
+      { vector: [0.03, 1.0, -0.02], offset: 5 },
+      { vector: [-0.05, 0.02, 0.99], offset: -15 },
+    ],
+  ]
+  const CARD_AXES: readonly (readonly [number, number, number][])[] = [
+    [
+      [1, 0, 0],
+      [0, 1, 0],
+    ],
+    [
+      [1, 0, 0],
+      [0, 0, 1],
+    ],
+    [
+      [0, 1, 0],
+      [0, 0, 1],
+    ],
+  ]
+  /** 6 面（4 番目が ＋Z ＝ 1 個目のセンサーの印字面が真上）と斜め 4 回。 */
+  const DIRS: readonly [number, number, number][] = [
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
+    [1, 1, 0.02],
+    [0.03, 1, 1],
+    [1, -0.02, -1],
+    [-1, 1, 1],
+  ]
+  const UP_POSE = 4
+  const poseFrom = (k: number) => k * 60_000
+
+  const BOARD: BoardEntry = {
+    boardKey: 'mac:dddddddddddd',
+    stationId: 'st1',
+    orientation: IDENTITY_MATRIX,
+    sensors: CARD_AXES.map((axes, i) => ({
+      sensorId: `s${i}`,
+      enabled: true,
+      axes: axes.map((vector) => ({ vector, offset: 0 })),
+      noiseDensity: null,
+    })),
+  }
+
+  /** `stillSinceMs` の置き方で、いま全部のセンサーが静止している形の応答。 */
+  function restWindows(stillSinceMs: number, trueAxes = TRUE_AXES, boardKey = BOARD.boardKey) {
+    return {
+      ok: true,
+      body: {
+        sensors: trueAxes.map((axes, i) => ({
+          boardKey,
+          sensorId: `s${i}`,
+          stillSinceMs,
+          windows: DIRS.map((d, k) => {
+            const n = Math.hypot(...d)
+            return {
+              meanGal: axes.map((a) => ((a.vector[0] * d[0] + a.vector[1] * d[1] + a.vector[2] * d[2]) / n) * g + a.offset),
+              sampleCount: 3000,
+              fromMs: poseFrom(k),
+              atMs: poseFrom(k) + 30_000,
+            }
+          }),
+        })),
+      },
+    }
+  }
+
+  let mounted: AbortController | null = null
+  afterEach(() => {
+    mounted?.abort()
+    mounted = null
+    sessionStorage.clear()
+    clearStoredToken()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  async function open(stillSinceMs: number): Promise<HTMLElement> {
+    setStoredToken('test-token')
+    stubApiFetch({ restWindows: restWindows(stillSinceMs), boards: [BOARD], statusSensors: [] })
+    const container = document.createElement('div')
+    mounted = new AbortController()
+    await initBoardsView(container, memoryTabContext(mounted.signal, 'boards'))
+    container.querySelector<HTMLButtonElement>('.edit-board')?.click()
+    return container
+  }
+  const panelOf = (c: HTMLElement) => c.querySelector<HTMLElement>('.board-orientation .b-sixface')!
+  const markButton = (c: HTMLElement) => panelOf(c).querySelector<HTMLButtonElement>('.mark-faceup')!
+
+  it('正: ⑤ の行と記録のボタンが出て、指すまでは 6 面法を押せず理由が出る', async () => {
+    const container = await open(poseFrom(UP_POSE))
+    const panel = panelOf(container)
+    expect(panel.querySelector('.b-sixface-faces')?.textContent).toContain('⑤ 印字面が上　—')
+    expect(panel.querySelector<HTMLElement>('.b-faceup-row')?.hidden).toBe(false)
+    expect(markButton(container).disabled).toBe(false)
+    expect(panel.querySelector<HTMLButtonElement>('.apply-sixface')?.disabled).toBe(true)
+    expect(panel.querySelector('.b-sixface-why')?.textContent).toBe(
+      'センサー s0 の印字面を真上に向けて置き、［印字面が上として記録］を押してください',
+    )
+  })
+
+  it('正: 押すと ⑤ が ✓ になって 6 面法が押せ、軸の欄が真の値へ入る（鏡像でない）', async () => {
+    const container = await open(poseFrom(UP_POSE))
+    markButton(container).click()
+    const panel = panelOf(container)
+    expect(panel.querySelector('.b-sixface-faces')?.textContent).toContain('⑤ 印字面が上　✓')
+    const apply = panel.querySelector<HTMLButtonElement>('.apply-sixface')
+    expect(apply?.disabled).toBe(false)
+    apply?.click()
+    // 2 個目のセンサーの軸 2 は上を向く（＋Z）。鏡像を採ると Z の符号が裏返る。
+    const z = container.querySelectorAll<HTMLElement>('.sensor-card')[1]!.querySelector<HTMLInputElement>(
+      '.s-axis-vector[data-axis="1"][data-comp="2"]',
+    )?.value
+    expect(Number(z)).toBeCloseTo(1.02, 3)
+  })
+
+  it('対照: 真上でない置き方で押すと、真上を向いていないと断る', async () => {
+    const container = await open(poseFrom(0))
+    markButton(container).click()
+    expect(panelOf(container).querySelector('.b-sixface-why')?.textContent).toBe(
+      '印字面が上として指した置き方が、真上を向いていない。置き直して押してください',
+    )
+  })
+
+  it('安全弁: センサーが 1 個でも静止していなければ押せない（押しても記録できない）', async () => {
+    setStoredToken('test-token')
+    const windows = restWindows(poseFrom(UP_POSE))
+    windows.body.sensors[1] = { ...windows.body.sensors[1]!, stillSinceMs: null as unknown as number }
+    stubApiFetch({ restWindows: windows, boards: [BOARD], statusSensors: [] })
+    const container = document.createElement('div')
+    mounted = new AbortController()
+    await initBoardsView(container, memoryTabContext(mounted.signal, 'boards'))
+    container.querySelector<HTMLButtonElement>('.edit-board')?.click()
+    expect(panelOf(container).querySelector<HTMLElement>('.b-faceup-row')?.hidden).toBe(false)
+    expect(markButton(container).disabled).toBe(true)
+  })
+
+  it('安全弁: 押した印はタブを開き直しても残る（sessionStorage）', async () => {
+    const first = await open(poseFrom(UP_POSE))
+    markButton(first).click()
+    mounted?.abort()
+    const again = await open(poseFrom(UP_POSE + 1))
+    expect(panelOf(again).querySelector('.b-sixface-faces')?.textContent).toContain('⑤ 印字面が上　✓')
+  })
+
+  it('対照: 3 軸のセンサーがある基板では行を隠し、⑤ も出さない（指さなくても 6 面法が押せる）', async () => {
+    // 1 個目を 3 軸にした基板（軸 3 は上を向く）。
+    const mixedTrue = [[...TRUE_AXES[0]!, { vector: [0.01, -0.02, 1.0] as [number, number, number], offset: 3 }], ...TRUE_AXES.slice(1)]
+    const mixed: BoardEntry = {
+      ...BOARD,
+      sensors: BOARD.sensors.map((s, i) =>
+        i === 0 ? { ...s, axes: [...s.axes, { vector: [0, 0, 1] as [number, number, number], offset: 0 }] } : s,
+      ),
+    }
+    setStoredToken('test-token')
+    stubApiFetch({ restWindows: restWindows(poseFrom(UP_POSE), mixedTrue), boards: [mixed], statusSensors: [] })
+    const container = document.createElement('div')
+    mounted = new AbortController()
+    await initBoardsView(container, memoryTabContext(mounted.signal, 'boards'))
+    container.querySelector<HTMLButtonElement>('.edit-board')?.click()
+    const panel = panelOf(container)
+    expect(panel.querySelector('.b-sixface-faces')?.textContent).not.toContain('⑤')
+    expect(panel.querySelector<HTMLElement>('.b-faceup-row')?.hidden).toBe(true)
+    expect(panel.querySelector<HTMLButtonElement>('.apply-sixface')?.disabled).toBe(false)
+  })
+})
+
+/**
  * 方角の欄（#713）。**以前は保存すると空に戻り、方角だけ入れて保存しても黙って捨てていた。**
  * いまの方角を欄に入れておき、手で変えたときだけ保存で当てる（2026-10-10 ユーザー承認）。
  */

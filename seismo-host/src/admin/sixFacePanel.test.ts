@@ -172,7 +172,18 @@ describe('文言（2026-10-10・2026-10-12 ユーザー承認）', () => {
     spreadOk: false,
     remainingPoses: 3,
     current: 'not-counted',
+    faceUp: 'not-needed',
     ...over,
+  })
+
+  it('正: 2 軸のセンサーだけの基板では ⑤ の行を足し、指したら ✓', () => {
+    expect(describeProgress(progress({ faceUp: 'unmarked' }))[4]).toBe('⑤ 印字面が上　—')
+    expect(describeProgress(progress({ faceUp: 'not-found' }))[4]).toBe('⑤ 印字面が上　—')
+    expect(describeProgress(progress({ faceUp: 'marked' }))[4]).toBe('⑤ 印字面が上　✓')
+  })
+
+  it('対照: 3 軸のセンサーがある基板（not-needed）では ⑤ を出さない', () => {
+    expect(describeProgress(progress())).toHaveLength(4)
   })
 
   it('進み具合の 4 行（解く条件の順）', () => {
@@ -360,6 +371,16 @@ describe('文言（2026-10-10・2026-10-12 ユーザー承認）', () => {
     )
     expect(sixFaceProblem(refused({ reason: 'residual-too-large', maxResidualGal: 23.44 }))).toBe(
       '姿勢の間で辻褄が合わない: 残差 23.4 gal',
+    )
+    // 印字面が上の 3 つ（2026-10-27 ユーザー承認）。
+    expect(sixFaceProblem(refused({ reason: 'face-up-unmarked', sensorId: 's0' }))).toBe(
+      'センサー s0 の印字面を真上に向けて置き、［印字面が上として記録］を押してください',
+    )
+    expect(sixFaceProblem(refused({ reason: 'face-up-not-found', sensorId: 's0' }))).toBe(
+      '印字面が上として指した置き方が、直近 30 分の記録に無い。もう一度置いて押してください',
+    )
+    expect(sixFaceProblem(refused({ reason: 'face-up-not-level', sensorId: 's0' }))).toBe(
+      '印字面が上として指した置き方が、真上を向いていない。置き直して押してください',
     )
   })
 

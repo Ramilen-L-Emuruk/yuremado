@@ -8,7 +8,7 @@
 // 保存時は表示中の全カードと基板の向きを読み直して丸ごと送る。
 
 import { apiFetch, ApiError, describeAdminAuthFailure, getStoredToken } from './api'
-import { boardSixFaceProgress, fitBoardSixFace, type BoardFitSensor, type CurrentPlacement } from './boardSixFace'
+import { boardSixFaceProgress, faceUpMarkFrom, fitBoardSixFace, type BoardFitSensor, type CurrentPlacement } from './boardSixFace'
 import { boardGravityForTilt, rotateToHeading, suggestRotation } from './calibrationSuggest'
 import { fetchDetectedBoards, type DetectedBoard, type SensorRestWindow } from './detectedBoards'
 import { confirmDialog } from './confirmDialog'
@@ -60,6 +60,39 @@ const REGISTERING_BOARD_KEY = 'register'
  * 返事を毎回切って、揃い具合が一度も出なくなる）。
  */
 const REST_WINDOWS_TIMEOUT_MS = 15_000
+
+/** 「印字面が上として記録」の印を残す `sessionStorage` のキー。中身は `[基板 Key, ホストの時刻]` の組の配列。 */
+const FACE_UP_MARKS_STORAGE_KEY = 'seismo-admin.faceUpMarks'
+
+/**
+ * 残しておいた印を読む。**読めなければ空から始める**（印が無いだけなので、押し直せば済む）。
+ * 形の合わない組は捨てる。
+ */
+function loadFaceUpMarks(): Map<string, number> {
+  const marks = new Map<string, number>()
+  try {
+    const raw = sessionStorage.getItem(FACE_UP_MARKS_STORAGE_KEY)
+    if (raw === null) return marks
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return marks
+    for (const entry of parsed) {
+      if (Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1] === 'number' && Number.isFinite(entry[1])) {
+        marks.set(entry[0], entry[1])
+      }
+    }
+  } catch (error) {
+    console.warn('[admin] 印字面が上の記録を読めない', error)
+  }
+  return marks
+}
+
+function saveFaceUpMarks(marks: ReadonlyMap<string, number>): void {
+  try {
+    sessionStorage.setItem(FACE_UP_MARKS_STORAGE_KEY, JSON.stringify([...marks]))
+  } catch (error) {
+    console.warn('[admin] 印字面が上の記録を残せない（このタブを閉じるまでは効く）', error)
+  }
+}
 
 function optionsHtml(values: readonly string[]): string {
   return values.map((v) => `<option value="${escapeHtml(v)}"></option>`).join('')
@@ -299,6 +332,16 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
   let currentFitClock: { readonly hostNowMs: number; readonly windowMs: number; readonly receivedAtMs: number } | null = null
   /** いまの置き方の行を毎秒描き直すための、最後に解いた進み具合（`refreshBoardSixFace`）。 */
   let lastPlacement: CurrentPlacement = 'not-counted'
+  /**
+   * 基板ごとに「印字面が上として記録」を押したときの、その置き方の静止の始まり（ホストの時計・
+   * `faceUpMarkFrom`）。2 軸のセンサーだけの基板の鏡像の決め手（`fitBoardSixFace`）。
+   * **同じタブで開き直しても残す**（`sessionStorage`）—— 窓はホストに 30 分残るので、読み込み直した
+   * だけで置き直させない。
+   */
+  const faceUpMarks = loadFaceUpMarks()
+  /** いまフォームに入っている基板の、指した置き方。指していなければ `null`。 */
+  const currentFaceUpMark = (): number | null =>
+    faceUpMarks.get(qs<HTMLInputElement>(container, '[name=boardKey]').value.trim()) ?? null
   /** 最後に `GET /api/rest-windows` を投げた時刻（こちらの時計）。秒読みが 0 になったときの取り直しの間引きに使う。 */
   let lastFitWindowsRequestMs = 0
   /** 「鉛直を合わせる」を押して、ホストの返事を待っているか（ボタンは基板に 1 つ）。 */
@@ -403,16 +446,23 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
     const input = boardFitInput()
     let problem: string | null
     const progressEl = qs(panel, '.b-sixface-faces')
+    const faceUpRow = qs(panel, '.b-faceup-row')
     if ('error' in input) {
       progressEl.replaceChildren()
       lastPlacement = 'not-counted'
+      faceUpRow.hidden = true
       problem = input.error
     } else {
-      const result = fitBoardSixFace(input.sensors)
-      const progress = boardSixFaceProgress(
-        input.sensors,
-        input.sensors.map((s) => findFitSource(currentFitWindows, s.sensorId)?.stillSinceMs ?? null),
-      )
+      const mark = currentFaceUpMark()
+      const result = fitBoardSixFace(input.sensors, mark)
+      const stillSince = input.sensors.map((s) => findFitSource(currentFitWindows, s.sensorId)?.stillSinceMs ?? null)
+      const progress = boardSixFaceProgress(input.sensors, stillSince, mark)
+      // **2 軸のセンサーだけの基板でだけ出し、いまの置き方を数え終えたときだけ押せる**（数える前に押すと、
+      // まだ姿勢の区間になっていない静止を指してしまう）。**数え終えた置き方は、全部のセンサーがいま静止している**
+      // （`currentPlacement`）ので、押しても記録できない（`faceUpMarkFrom` が `null`）ときは押せない
+      // —— 2026-10-27 ユーザー承認「押せなくする」。押す処理は、この描き直しと同じ材料を読む。
+      faceUpRow.hidden = progress === null || progress.faceUp === 'not-needed'
+      qs<HTMLButtonElement>(faceUpRow, '.mark-faceup').disabled = progress === null || progress.current === 'not-counted'
       // **1 行ずつ要素にする**（`textContent` で入れるので、ホストから来た文字が HTML として読まれない）。
       progressEl.replaceChildren(
         ...(progress === null ? [] : describeProgress(progress)).map((line) => {
@@ -820,7 +870,7 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
         note(input.error)
         return
       }
-      const result = fitBoardSixFace(input.sensors)
+      const result = fitBoardSixFace(input.sensors, currentFaceUpMark())
       const problem = fitWindowsProblem ?? sixFaceProblem(result)
       if (problem !== null || !result.ok) {
         note(problem ?? SIX_FACE_DEGENERATE)
@@ -838,12 +888,35 @@ export async function initBoardsView(container: HTMLElement, ctx: TabContext): P
     if (!signal.aborted) refreshTiltPanels()
   }
 
+  /**
+   * 「印字面が上として記録」。**押した時点の材料で、いまの置き方の静止の始まりを覚える**（全部のセンサーが
+   * いま静止していなければ覚えない —— ボタンは数え終えたときだけ押せるが、10 秒ごとの取り直しの間に
+   * 動かされうる）。同じ基板で押し直したら上書きする。
+   */
+  const markFaceUp = (): void => {
+    try {
+      const input = boardFitInput()
+      if ('error' in input) return
+      const mark = faceUpMarkFrom(input.sensors.map((s) => findFitSource(currentFitWindows, s.sensorId)?.stillSinceMs ?? null))
+      if (mark === null) return
+      faceUpMarks.set(qs<HTMLInputElement>(container, '[name=boardKey]').value.trim(), mark)
+      saveFaceUpMarks(faceUpMarks)
+    } catch (error) {
+      console.warn('[admin] 印字面が上の置き方を記録できない', error)
+    }
+    if (!signal.aborted) refreshTiltPanels()
+  }
+
   // **「鉛直を合わせる」は基板の欄に 1 つ。** 欄そのものは `fillForm` が基板ごとに作り直すので、
   // 作り直されない外側（`.board-orientation-slot`）で受ける。
   qs(container, '.board-orientation-slot').addEventListener('click', (e) => {
     const target = e.target as HTMLElement
     if (target.classList.contains('apply-sixface')) {
       applyBoardSixFace(target)
+      return
+    }
+    if (target.classList.contains('mark-faceup')) {
+      markFaceUp()
       return
     }
     if (!target.classList.contains('suggest-tilt')) return

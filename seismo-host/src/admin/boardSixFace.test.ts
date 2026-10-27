@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import { GAL_PER_G } from '../intensity/units'
-import { boardSixFaceProgress, directionsSpread, fitBoardSixFace, fitBoardSixFaceWith, minPosesFor } from './boardSixFace'
+import {
+  boardSixFaceProgress,
+  directionsSpread,
+  faceUpMarkFrom,
+  fitBoardSixFace,
+  fitBoardSixFaceWith,
+  minPosesFor,
+} from './boardSixFace'
 import type { BoardFitSensor, BoardFitWindow } from './boardSixFace'
 import type { AxisCalibration, Vec3 } from '../receiver/stationConfigTypes'
 
@@ -110,6 +117,21 @@ function iisBoard(dirs: readonly Vec3[], priors: readonly (readonly Vec3[])[] = 
   }))
 }
 
+/**
+ * IIS の基板で、`dirs` の `k` 番目の置き方を「1 個目のセンサーの印字面が真上」として指した時刻。全部のセンサーが
+ * 静止し始めたいちばん遅い時刻（3 個目のセンサーの窓は 20 秒ずれる。`iisBoard`）。
+ */
+function markAt(k: number): number {
+  return T0 + k * 150_000 + 20_000
+}
+
+/** `dirs` のうち最初に ＋Z（1 個目のセンサーの印字面が真上）へ置いた置き方を指した時刻。 */
+function upMark(dirs: readonly Vec3[]): number {
+  const k = dirs.findIndex((d) => unit(d)[2] >= 0.9)
+  if (k < 0) throw new Error('＋Z の置き方が無い')
+  return markAt(k)
+}
+
 // 3 軸のセンサー 1 個（MPU6050 の基板）。軸どうしは 1 度ほど直角からずれ、Z のゼロ点が大きくずれている。
 const MPU: readonly TrueAxis[] = [
   { vector: [0.98, 0, 0], offset: -82 },
@@ -161,7 +183,7 @@ describe('directionsSpread（置いた向きの散り具合）', () => {
 
 describe('fitBoardSixFace', () => {
   it('正: IIS2ICLX 3 個の基板で、全部の軸の向き・倍率・ゼロ点を一緒に戻す（直角からのずれも）', () => {
-    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE]))
+    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE]), upMark([...SIX, ...OBLIQUE]))
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     r.sensors.forEach((s, i) => {
       expect(s.sensorId).toBe(`s${i}`)
@@ -176,7 +198,7 @@ describe('fitBoardSixFace', () => {
 
   // 対照: 軸が多くても、6 面だけでは向きを歪める変換が残る（式の数は足りていても定まらない）。
   it('対照: IIS2ICLX 3 個でも 6 面だけなら、姿勢が足りないとして断る（6／9）', () => {
-    const r = fitBoardSixFace(iisBoard(SIX))
+    const r = fitBoardSixFace(iisBoard(SIX), upMark(SIX))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('too-few-poses')
@@ -187,7 +209,7 @@ describe('fitBoardSixFace', () => {
   // 2026-10-10 に覆した（前は `degenerate`）: 向きの偏りは「違う向きに斜めに置けば直る」ので、解けなかった
   // のと分けて言う（ユーザー承認）。
   it('安全弁: 9 姿勢あっても、斜めの置き方が同じ面の中に偏っていれば、向きが偏っているとして断る', () => {
-    const r = fitBoardSixFace(iisBoard([...SIX, [1, 1, 0.02], [1, -1, 0.01], [-1, 1, 0.02]]))
+    const r = fitBoardSixFace(iisBoard([...SIX, [1, 1, 0.02], [1, -1, 0.01], [-1, 1, 0.02]]), upMark([...SIX, [1, 1, 0.02], [1, -1, 0.01], [-1, 1, 0.02]]))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('directions-biased')
@@ -197,7 +219,7 @@ describe('fitBoardSixFace', () => {
   // 正（2026-10-10 ユーザー承認: 軸を 1 本ずつ自由に解く）: 3 軸のセンサーの軸どうしの直角のずれも戻す。
   // 前の 6 面法（センサーごと）は直交と見なしていたので、ここは戻せなかった。
   it('正: 3 軸のセンサー 1 個でも、9 姿勢あれば直角のずれごと戻す', () => {
-    const r = fitBoardSixFace(mpuBoard([...SIX, ...OBLIQUE.slice(0, 3)]))
+    const r = fitBoardSixFace(mpuBoard([...SIX, ...OBLIQUE.slice(0, 3)]), null)
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     expectAxes(r.sensors[0]!.axes, MPU)
     // 9 姿勢ちょうどでは未知数と式の数が同じなので、必ずぴったり解けて検算にならない。
@@ -205,7 +227,7 @@ describe('fitBoardSixFace', () => {
   })
 
   it('正: 3 軸のセンサー 1 個で 10 姿勢あれば残差が出る', () => {
-    const r = fitBoardSixFace(mpuBoard([...SIX, ...OBLIQUE]))
+    const r = fitBoardSixFace(mpuBoard([...SIX, ...OBLIQUE]), null)
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     expect(r.maxResidualGal).not.toBeNull()
     expect(r.maxResidualGal!).toBeLessThan(1e-3)
@@ -213,7 +235,7 @@ describe('fitBoardSixFace', () => {
 
   // 対照: 6 面だけでは 3 軸のセンサー 1 個の未知数（9）に式が足りない。
   it('対照: 3 軸のセンサー 1 個で 6 面だけなら、姿勢が足りないとして断る（6／9）', () => {
-    const r = fitBoardSixFace(mpuBoard(SIX))
+    const r = fitBoardSixFace(mpuBoard(SIX), null)
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('too-few-poses')
@@ -223,7 +245,7 @@ describe('fitBoardSixFace', () => {
   })
 
   it('正: 同じ面へ置き直した姿勢は 1 つにまとめて数える', () => {
-    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE.slice(0, 3), SIX[0]!, SIX[4]!]))
+    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE.slice(0, 3), SIX[0]!, SIX[4]!]), upMark([...SIX, ...OBLIQUE.slice(0, 3), SIX[0]!, SIX[4]!]))
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     expect(r.poseCount).toBe(9)
     // 数えるのは 9 でも、置き直した 2 回も式を足すので検算が付く（解くのは区間ごと）。
@@ -233,7 +255,7 @@ describe('fitBoardSixFace', () => {
 
   // 安全弁: 同じ向きに何度置き直しても（区間が増えても）、解いた値は変わらない。
   it('安全弁: 同じ面へ何度置き直しても、真値を戻す', () => {
-    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE, SIX[0]!, SIX[0]!, SIX[4]!, SIX[4]!]))
+    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE, SIX[0]!, SIX[0]!, SIX[4]!, SIX[4]!]), upMark([...SIX, ...OBLIQUE, SIX[0]!, SIX[0]!, SIX[4]!, SIX[4]!]))
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     expect(r.poseCount).toBe(10)
     r.sensors.forEach((s, i) => expectAxes(s.axes, IIS[i]!))
@@ -245,8 +267,8 @@ describe('fitBoardSixFace', () => {
     const t = (24 * Math.PI) / 180
     const east: Vec3 = [Math.sin(t), 0, Math.cos(t)]
     const west: Vec3 = [-Math.sin(t), 0, Math.cos(t)]
-    const zFirst = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE, east, west]))
-    const tiltFirst = fitBoardSixFace(iisBoard([east, ...SIX, ...OBLIQUE, west]))
+    const zFirst = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE, east, west]), upMark([...SIX, ...OBLIQUE, east, west]))
+    const tiltFirst = fitBoardSixFace(iisBoard([east, ...SIX, ...OBLIQUE, west]), upMark([east, ...SIX, ...OBLIQUE, west]))
     if (!zFirst.ok || !tiltFirst.ok) throw new Error('拒まれた')
     expect(zFirst.poseCount).toBe(10)
     expect(tiltFirst.poseCount).toBe(10)
@@ -258,7 +280,7 @@ describe('fitBoardSixFace', () => {
   // ＋Z の面と混ざった実在しない姿勢ができ、ゼロ点が 0.5 gal ずれた（残差には 0.03 gal しか出ない）。
   it('正: 数えるときは 1 つにまとめる近い置き方も、解くときは別の姿勢として扱い、真値を戻す', () => {
     const settled: Vec3 = [Math.sin((5.4 * Math.PI) / 180), 0, Math.cos((5.4 * Math.PI) / 180)]
-    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE, settled]))
+    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE, settled]), upMark([...SIX, ...OBLIQUE, settled]))
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     expect(r.poseCount).toBe(10)
     r.sensors.forEach((s, i) => expectAxes(s.axes, IIS[i]!))
@@ -267,7 +289,7 @@ describe('fitBoardSixFace', () => {
 
   it('対照: 6 面のどれかが無ければ、揃っていない面を挙げて断る', () => {
     // 斜めの置き方も −Z の側へ傾けない（傾ければ −Z の面として数わる）。
-    const r = fitBoardSixFace(iisBoard([...SIX.slice(0, 5), ...OBLIQUE.filter((d) => d[2] >= 0)]))
+    const r = fitBoardSixFace(iisBoard([...SIX.slice(0, 5), ...OBLIQUE.filter((d) => d[2] >= 0)]), upMark([...SIX.slice(0, 5), ...OBLIQUE.filter((d) => d[2] >= 0)]))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('missing-faces')
@@ -280,7 +302,7 @@ describe('fitBoardSixFace', () => {
   it('安全弁: ほかのセンサーと時間が重ならないセンサーがあれば、その名前を挙げて断る', () => {
     const board = iisBoard([...SIX, ...OBLIQUE])
     const late = { ...board[2]!, windows: board[2]!.windows.map((w) => ({ ...w, fromMs: w.fromMs! + 3_600_000, atMs: w.atMs + 3_600_000 })) }
-    const r = fitBoardSixFace([board[0]!, board[1]!, late])
+    const r = fitBoardSixFace([board[0]!, board[1]!, late], markAt(4))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('no-common-pose')
@@ -291,7 +313,7 @@ describe('fitBoardSixFace', () => {
     // 1 個目のセンサーだけ各姿勢の 2 窓目を落とす（そこで揺れていた）。残りの窓どうしは重なるので解ける。
     const board = iisBoard([...SIX, ...OBLIQUE.slice(0, 3)])
     const holed = { ...board[0]!, windows: board[0]!.windows.filter((_, i) => i % 3 !== 1) }
-    const r = fitBoardSixFace([holed, board[1]!, board[2]!])
+    const r = fitBoardSixFace([holed, board[1]!, board[2]!], markAt(4))
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     expect(r.poseCount).toBe(9)
   })
@@ -299,7 +321,7 @@ describe('fitBoardSixFace', () => {
   it('安全弁: 始まりの時刻が無い窓（前の版のホスト）があれば断る', () => {
     const board = iisBoard([...SIX, ...OBLIQUE])
     const old = { ...board[1]!, windows: board[1]!.windows.map((w) => ({ ...w, fromMs: null })) }
-    const r = fitBoardSixFace([board[0]!, old, board[2]!])
+    const r = fitBoardSixFace([board[0]!, old, board[2]!], markAt(4))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('no-window-start')
@@ -322,30 +344,83 @@ describe('fitBoardSixFace', () => {
         [0, 1, 0],
       ],
     ]
-    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE], flat))
+    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE], flat), upMark([...SIX, ...OBLIQUE]))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('prior-degenerate')
   })
 
-  it('正: 2 軸のセンサーだけの基板では、面に垂直な向きの符号をカードの向きに合わせる', () => {
-    // 立てた 2 個の Z を逆向きに入れると、全体を鏡に映した解（データには同じだけ合う）を採る。
-    const flipped: Vec3[][] = [
-      IIS_PRIOR[0]!.map((v) => [...v] as unknown as Vec3),
-      [
-        [1, 0, 0],
-        [0, 0, -1],
-      ],
-      [
-        [0, 1, 0],
-        [0, 0, -1],
-      ],
-    ]
-    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE], flipped))
+  // 立てた 2 個の Z を逆向きに入れたカード（2026-10-10 に実機で起きた入れ違い。#712）。
+  const FLIPPED_PRIOR: Vec3[][] = [
+    IIS_PRIOR[0]!.map((v) => [...v] as unknown as Vec3),
+    [
+      [1, 0, 0],
+      [0, 0, -1],
+    ],
+    [
+      [0, 1, 0],
+      [0, 0, -1],
+    ],
+  ]
+
+  // 2026-10-27 に覆した（前は 2 軸だけの基板の鏡像をカードの向きに合わせていた）: 指した「印字面が真上」の
+  // 置き方で決める（ユーザー承認）。カードの Z を逆に入れても、真値（鏡に映していない側）を戻す。
+  it('正: 2 軸のセンサーだけの基板では、印字面が真上の置き方を指せば、カードの Z が逆でも真値を戻す', () => {
+    const dirs = [...SIX, ...OBLIQUE]
+    const r = fitBoardSixFace(iisBoard(dirs, FLIPPED_PRIOR), upMark(dirs))
+    if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
+    r.sensors.forEach((s, i) => expectAxes(s.axes, IIS[i]!))
+  })
+
+  // 正: 指した置き方が鏡像を決める（データには同じだけ合う）。真下（−Z）の置き方を指すと、全体を鏡に映した解を採る。
+  it('正: 印字面が真下の置き方を指すと、面に垂直な向きの符号が逆の解を採る', () => {
+    const dirs = [...SIX, ...OBLIQUE]
+    const r = fitBoardSixFace(iisBoard(dirs), markAt(5))
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     expect(r.sensors[1]!.axes[1]!.vector[2]).toBeCloseTo(-IIS[1]![1]!.vector[2], 6)
     expect(r.sensors[2]!.axes[1]!.vector[2]).toBeCloseTo(-IIS[2]![1]!.vector[2], 6)
+    expect(r.sensors[0]!.axes[0]!.vector[0]).toBeCloseTo(IIS[0]![0]!.vector[0], 6)
     expect(r.sensors[1]!.axes[0]!.offset).toBeCloseTo(IIS[1]![0]!.offset, 4)
+  })
+
+  // 対照: 指していなければ、ほかが全部揃っていても解かない（カードの向きで黙って選ばない）。
+  it('対照: 2 軸のセンサーだけの基板で指していなければ、1 個目のセンサーを挙げて断る', () => {
+    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE]), null)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.reason).toBe('face-up-unmarked')
+    expect(r.sensorId).toBe('s0')
+    expect(r.poseCount).toBe(10)
+  })
+
+  it('安全弁: 指した置き方が真上・真下でなければ（＋X の面）、解かない', () => {
+    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE]), markAt(0))
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.reason).toBe('face-up-not-level')
+    expect(r.sensorId).toBe('s0')
+  })
+
+  it('安全弁: 指した置き方の静止が残っている窓に無ければ、解かない', () => {
+    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE]), T0 - 3_600_000)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.reason).toBe('face-up-not-found')
+  })
+
+  // 安全弁: 指すのは 2 軸だけの基板のため。順に置いた結果の断りの順（面・数・散らばり）より先には出さない。
+  it('安全弁: 面が揃っていなければ、指していなくても面の話で断る', () => {
+    const r = fitBoardSixFace(iisBoard([...SIX.slice(0, 5), ...OBLIQUE.filter((d) => d[2] >= 0)]), null)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.reason).toBe('missing-faces')
+  })
+
+  // 安全弁: 3 軸のセンサーがあれば右手系で決まるので、指した置き方は使わない（真下を指しても鏡像を採らない）。
+  it('安全弁: 3 軸のセンサーの基板では、真下の置き方を指しても右手系の解を採る', () => {
+    const r = fitBoardSixFace(mpuBoard([...SIX, ...OBLIQUE]), T0 + 5 * 150_000)
+    if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
+    expectAxes(r.sensors[0]!.axes, MPU)
   })
 
   // 安全弁: 3 軸のセンサーはチップの軸が右手系なので、カードの向きを逆に入れても鏡像を採らない。
@@ -359,6 +434,7 @@ describe('fitBoardSixFace', () => {
           [0, 0, -1],
         ],
       ),
+      null,
     )
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     expectAxes(r.sensors[0]!.axes, MPU)
@@ -368,12 +444,12 @@ describe('fitBoardSixFace', () => {
   // 解を成功として返すと、誤った値がそのままカードへ入る。
   it('安全弁: 収束する前に回数の上限で打ち切ったら、解けなかったとして断る', () => {
     const board = mpuBoard([...SIX, ...OBLIQUE.slice(0, 3)])
-    const r = fitBoardSixFaceWith(board, { warmupRounds: 0, lmMaxRounds: 1 })
+    const r = fitBoardSixFaceWith(board, null, { warmupRounds: 0, lmMaxRounds: 1 })
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('degenerate')
     // 対照: 同じ材料で上限を戻せば解ける。
-    expect(fitBoardSixFaceWith(board, { warmupRounds: 30, lmMaxRounds: 200 }).ok).toBe(true)
+    expect(fitBoardSixFaceWith(board, null, { warmupRounds: 30, lmMaxRounds: 200 }).ok).toBe(true)
   })
 
   // 安全弁: 静止の続きは 1 秒までの隙間を繋いで作る。その隙間にだけ重なる区間で投げない。
@@ -386,7 +462,7 @@ describe('fitBoardSixFace', () => {
     )
     const s2 = [{ ...windowsFor(IIS[2]!, dirs, 20_000)[0]!, fromMs: T0 - 100, atMs: T0 + 29_900 }, ...windowsFor(IIS[2]!, dirs, 20_000).slice(3)]
     const board = [s0, s1, s2].map((windows, i) => ({ sensorId: `s${i}`, prior: prior(IIS_PRIOR[i]!), windows }))
-    const r = fitBoardSixFace(board)
+    const r = fitBoardSixFace(board, markAt(4))
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     expect(r.poseCount).toBe(10)
     r.sensors.forEach((s, i) => expectAxes(s.axes, IIS[i]!))
@@ -401,7 +477,7 @@ describe('fitBoardSixFace', () => {
       IIS_PRIOR[1]!.map((v) => [...v] as unknown as Vec3),
       IIS_PRIOR[2]!.map((v) => [...v] as unknown as Vec3),
     ]
-    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE], nearlyParallel))
+    const r = fitBoardSixFace(iisBoard([...SIX, ...OBLIQUE], nearlyParallel), upMark([...SIX, ...OBLIQUE]))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('prior-degenerate')
@@ -413,7 +489,7 @@ describe('fitBoardSixFace', () => {
       ...board[1]!,
       windows: board[1]!.windows.map((w, i) => (i < 3 ? { ...w, meanGal: [w.meanGal[0]! + 150, w.meanGal[1]!] } : w)),
     }
-    const r = fitBoardSixFace([board[0]!, bumped, board[2]!])
+    const r = fitBoardSixFace([board[0]!, bumped, board[2]!], markAt(4))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('residual-too-large')
@@ -427,7 +503,7 @@ describe('fitBoardSixFace', () => {
       prior: prior(IIS_PRIOR[i]!),
       windows: windowsFor(axes, [...SIX, ...OBLIQUE], i * 10_000),
     }))
-    const r = fitBoardSixFace(board)
+    const r = fitBoardSixFace(board, markAt(4))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('out-of-range')
@@ -438,7 +514,7 @@ describe('fitBoardSixFace', () => {
   it('安全弁: カードの軸の本数と窓の本数が合わないセンサーがあれば、本数が合わないとして断る', () => {
     const board = iisBoard([...SIX, ...OBLIQUE])
     const wrong = { ...board[2]!, windows: board[2]!.windows.map((w) => ({ ...w, meanGal: [...w.meanGal, 0] })) }
-    const r = fitBoardSixFace([board[0]!, board[1]!, wrong])
+    const r = fitBoardSixFace([board[0]!, board[1]!, wrong], markAt(4))
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.reason).toBe('axis-count-mismatch')
@@ -451,7 +527,7 @@ describe('fitBoardSixFace', () => {
     const board = iisBoard([...SIX, ...OBLIQUE])
     const first = board[2]!.windows[0]!
     const mixed = { ...board[2]!, windows: [{ ...first, meanGal: [...first.meanGal, 0] }, ...board[2]!.windows] }
-    const r = fitBoardSixFace([board[0]!, board[1]!, mixed])
+    const r = fitBoardSixFace([board[0]!, board[1]!, mixed], markAt(4))
     if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
     r.sensors.forEach((s, i) => expectAxes(s.axes, IIS[i]!))
   })
@@ -465,7 +541,7 @@ describe('boardSixFaceProgress（6 面法の進み具合）', () => {
 
   it('正: 6 面と斜め 3 回が揃えば、あと 0 姿勢・散らばりも足りる', () => {
     const board = iisBoard(NINE)
-    expect(boardSixFaceProgress(board, stillAt(board, 8))).toEqual({
+    expect(boardSixFaceProgress(board, stillAt(board, 8), null)).toEqual({
       commonPose: true,
       faces: { '+x': true, '-x': true, '+y': true, '-y': true, '+z': true, '-z': true },
       poseCount: 9,
@@ -473,29 +549,30 @@ describe('boardSixFaceProgress（6 面法の進み具合）', () => {
       spreadOk: true,
       remainingPoses: 0,
       current: 'counted-new',
+      faceUp: 'unmarked',
     })
   })
 
   it('対照: 6 面だけなら、あと 3 姿勢で散らばりは足りない', () => {
-    const p = boardSixFaceProgress(iisBoard(SIX), [null, null, null])
+    const p = boardSixFaceProgress(iisBoard(SIX), [null, null, null], null)
     expect(p).toMatchObject({ commonPose: true, poseCount: 6, spreadOk: false, remainingPoses: 3 })
   })
 
   it('対照: 数が足りていても、欠けた面の数だけは要る', () => {
     // ＋X〜＋Z の 5 面と、−Z に掛からない斜め 4 回（9 姿勢）。
-    const p = boardSixFaceProgress(mpuBoard([...SIX.slice(0, 5), [1, 1, 0.02], [0.03, 1, 1], [-1, 1, 1], [1, -1, 0.02]]), [null])
+    const p = boardSixFaceProgress(mpuBoard([...SIX.slice(0, 5), [1, 1, 0.02], [0.03, 1, 1], [-1, 1, 1], [1, -1, 0.02]]), [null], null)
     expect(p).toMatchObject({ poseCount: 9, remainingPoses: 1 })
     expect(p?.faces['-z']).toBe(false)
   })
 
   it('安全弁: 数も面も足りていて散らばりだけ足りなければ、あと 1 姿勢', () => {
-    const p = boardSixFaceProgress(iisBoard([...SIX, [1, 1, 0.02], [1, -1, 0.01], [-1, 1, 0.02]]), [null, null, null])
+    const p = boardSixFaceProgress(iisBoard([...SIX, [1, 1, 0.02], [1, -1, 0.01], [-1, 1, 0.02]]), [null, null, null], null)
     expect(p).toMatchObject({ poseCount: 9, spreadOk: false, remainingPoses: 1 })
   })
 
   it('安全弁: 同時に静止した置き方が無ければ ① を外し、要る姿勢の数をそのまま残す', () => {
     const board = iisBoard(NINE).map((s, i) => (i === 2 ? { ...s, windows: [] } : s))
-    expect(boardSixFaceProgress(board, [null, null, null])).toMatchObject({
+    expect(boardSixFaceProgress(board, [null, null, null], null)).toMatchObject({
       commonPose: false,
       poseCount: 0,
       minPoses: 9,
@@ -506,23 +583,69 @@ describe('boardSixFaceProgress（6 面法の進み具合）', () => {
 
   it('正: いまの置き方を、測った向きと同じ面へ置き直したなら counted-same（姿勢は増えない）', () => {
     const board = iisBoard([...NINE, SIX[0]!])
-    const p = boardSixFaceProgress(board, stillAt(board, 9))
+    const p = boardSixFaceProgress(board, stillAt(board, 9), null)
     expect(p).toMatchObject({ poseCount: 9, current: 'counted-same' })
   })
 
   it('対照: どれかのセンサーがいま静止していなければ not-counted', () => {
     const board = iisBoard(NINE)
     const still = stillAt(board, 8)
-    expect(boardSixFaceProgress(board, [still[0]!, null, still[2]!])?.current).toBe('not-counted')
+    expect(boardSixFaceProgress(board, [still[0]!, null, still[2]!], null)?.current).toBe('not-counted')
   })
 
   it('対照: 静止し始めてから窓がまだ閉じていなければ not-counted', () => {
     const board = iisBoard(NINE)
-    expect(boardSixFaceProgress(board, stillAt(board, 9))?.current).toBe('not-counted')
+    expect(boardSixFaceProgress(board, stillAt(board, 9), null)?.current).toBe('not-counted')
   })
 
   it('安全弁: 姿勢を組み立てる前に断る理由（窓の始まりが無い）があれば null', () => {
     const board = mpuBoard(NINE).map((s) => ({ ...s, windows: s.windows.map((w) => ({ ...w, fromMs: null })) }))
-    expect(boardSixFaceProgress(board, [null])).toBeNull()
+    expect(boardSixFaceProgress(board, [null], null)).toBeNull()
+  })
+
+  // ⑤ 印字面が真上の置き方（2026-10-27 ユーザー承認）。2 軸だけの基板にしか出ない。
+  it('正: 2 軸だけの基板で真上の置き方を指せば ⑤ は marked', () => {
+    expect(boardSixFaceProgress(iisBoard(NINE), [null, null, null], markAt(4))?.faceUp).toBe('marked')
+  })
+
+  it('対照: 指していなければ unmarked、真上でない置き方なら not-level、残っていなければ not-found', () => {
+    const board = iisBoard(NINE)
+    expect(boardSixFaceProgress(board, [null, null, null], null)?.faceUp).toBe('unmarked')
+    expect(boardSixFaceProgress(board, [null, null, null], markAt(0))?.faceUp).toBe('not-level')
+    expect(boardSixFaceProgress(board, [null, null, null], T0 - 3_600_000)?.faceUp).toBe('not-found')
+  })
+
+  it('安全弁: 3 軸のセンサーがあれば、指したかどうかに依らず not-needed', () => {
+    expect(boardSixFaceProgress(mpuBoard(NINE), [null], null)?.faceUp).toBe('not-needed')
+    expect(boardSixFaceProgress(mpuBoard(NINE), [null], T0 + 4 * 150_000)?.faceUp).toBe('not-needed')
+  })
+
+  it('安全弁: 同時に静止した置き方が無くても、指した時刻があれば not-found（見つけようがない）', () => {
+    const board = iisBoard(NINE).map((s, i) => (i === 2 ? { ...s, windows: [] } : s))
+    expect(boardSixFaceProgress(board, [null, null, null], markAt(4))?.faceUp).toBe('not-found')
+    expect(boardSixFaceProgress(board, [null, null, null], null)?.faceUp).toBe('unmarked')
+  })
+})
+
+describe('faceUpMarkFrom（指したときに覚える時刻）', () => {
+  it('正: 全部のセンサーが静止していれば、静止し始めたいちばん遅い時刻', () => {
+    expect(faceUpMarkFrom([T0, T0 + 10_000, T0 + 20_000])).toBe(T0 + 20_000)
+  })
+
+  it('対照: どれかがいま静止していなければ null（指せない）', () => {
+    expect(faceUpMarkFrom([T0, null, T0 + 20_000])).toBeNull()
+  })
+
+  it('安全弁: センサーが 1 つも無ければ null', () => {
+    expect(faceUpMarkFrom([])).toBeNull()
+  })
+
+  // 安全弁: 覚えた時刻で、その置き方の姿勢を引き当てられる（指す側と解く側の物差しが同じ）。
+  it('安全弁: 覚えた時刻で 6 面法がその置き方を見つける', () => {
+    const board = iisBoard([...SIX, ...OBLIQUE])
+    const mark = faceUpMarkFrom(board.map((_, i) => T0 + 4 * 150_000 + i * 10_000))
+    const r = fitBoardSixFace(board, mark)
+    if (!r.ok) throw new Error(`拒まれた: ${r.reason}`)
+    r.sensors.forEach((s, i) => expectAxes(s.axes, IIS[i]!))
   })
 })

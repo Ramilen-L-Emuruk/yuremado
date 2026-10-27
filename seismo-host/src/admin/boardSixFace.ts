@@ -29,7 +29,13 @@
 //
 // **鏡に映した解も同じだけ合う**（基板の面に垂直な向きの符号が決まらない）。3 軸のセンサーがあれば、
 // チップの軸は右手系なので行列式が正になる側を採る。2 軸のセンサーだけの基板では決め手がデータに無い
-// ので、**カードに入っている大まかな向きと合う側を採る**。カードの向きは解き始める値にも使う。
+// ので、**利用者が指した「1 個目のセンサーのチップの印字面を真上に向けた置き方」で決める**
+// （2026-10-27 ユーザー承認。選んだ選択肢「表が上の置き方を指す」）。基板の Z は 1 個目のセンサーの
+// 1 本目 × 2 本目で、チップの軸は右手系で Z が印字面から外へ出る（ファームは X・Y をそのまま送る）ので、
+// その置き方では重力の向き（静止で読む向き）が基板の +Z 側になる解を採る。指していなければ解かない。
+// **カードの向きでは選ばない** —— 立てて付けたセンサーの Z の符号を手で入れ違えると、6 面法が
+// それを強く引き継ぎ、データの上では何も合わなくならない（2026-10-10 に実機で起き、2026-10-27 に
+// 床の揺れで 3 軸の基板と突き合わせて見つかった）。カードの向きは解き始める値にだけ使う。
 //
 // ## 姿勢の決め方
 //
@@ -59,7 +65,7 @@ export interface BoardFitWindow {
 /** 基板に載ったセンサー 1 個。**並びはカードの並び**（1 個目が基板の座標の基準）。 */
 export interface BoardFitSensor {
   readonly sensorId: string
-  /** カードにいま入っている軸（解き始める値と、鏡像のどちらを採るかに使う）。 */
+  /** カードにいま入っている軸（解き始める値に使う。鏡像のどちらを採るかには使わない）。 */
   readonly prior: readonly AxisCalibration[]
   readonly windows: readonly BoardFitWindow[]
 }
@@ -118,6 +124,12 @@ export type BoardSixFaceRefusalReason =
    * —— こちらは違う向きに斜めに置けば直る（2026-10-10 ユーザー承認）。
    */
   | 'directions-biased'
+  /** 2 軸のセンサーだけの基板で、印字面を真上に向けた置き方をまだ指していない（`sensorId` は 1 個目）。 */
+  | 'face-up-unmarked'
+  /** 指した置き方の静止が、残っている窓に無い（窓は 30 分で消える。`sensorId` は 1 個目）。 */
+  | 'face-up-not-found'
+  /** 指した置き方が、1 個目のセンサーの印字面を真上か真下へ向けた置き方ではない（`sensorId` は 1 個目）。 */
+  | 'face-up-not-level'
   /** 解が定まらない（解けない・収束しない・右手系の向きが食い違う）。 */
   | 'degenerate'
   /** 出た値が個体差として説明できない幅にある。 */
@@ -537,9 +549,55 @@ function refusal(
 
 /**
  * 基板の静止窓から、全部の軸の測る向きとゼロ点を出す。**投げない。** 出せなければ理由を返す。
+ *
+ * `faceUpSinceMs` は、利用者が「1 個目のセンサーのチップの印字面を真上に向けた置き方」として指したときの、
+ * その置き方で静止し始めた時刻（ホストの時計・全部のセンサーの `stillSinceMs` のいちばん遅いもの）。
+ * 指していなければ `null`。**2 軸のセンサーだけの基板でしか使わない**（3 軸のセンサーがあれば右手系で決まる）。
  */
-export function fitBoardSixFace(sensors: readonly BoardFitSensor[]): BoardSixFaceFit | BoardSixFaceRefusal {
-  return fitBoardSixFaceWith(sensors, DEFAULT_LIMITS)
+export function fitBoardSixFace(
+  sensors: readonly BoardFitSensor[],
+  faceUpSinceMs: number | null,
+): BoardSixFaceFit | BoardSixFaceRefusal {
+  return fitBoardSixFaceWith(sensors, faceUpSinceMs, DEFAULT_LIMITS)
+}
+
+/**
+ * 印字面を真上に向けた置き方の指し方の様子（`faceUpOf`）。
+ *
+ * - `not-needed`: 3 軸のセンサーが載っている（鏡像は右手系で決まる）
+ * - `unmarked`: 2 軸だけの基板で、まだ指していない
+ * - `not-found`: 指した置き方の静止が、残っている窓に無い
+ * - `not-level`: 指した置き方が、1 個目のセンサーの面を真上か真下へ向けた置き方ではない
+ * - `marked`: 指した置き方が見つかった（`pose` はその姿勢の並び番号）
+ */
+export type FaceUpState =
+  | { readonly kind: 'not-needed' }
+  | { readonly kind: 'unmarked' }
+  | { readonly kind: 'not-found' }
+  | { readonly kind: 'not-level' }
+  | { readonly kind: 'marked'; readonly pose: number }
+
+/** 3 軸のセンサーが載っていない（鏡像をデータで決められない）基板か。 */
+function needsFaceUp(sensors: readonly BoardFitSensor[]): boolean {
+  return !sensors.some((s) => s.prior.length === 3)
+}
+
+/**
+ * 指した置き方を姿勢の並びから探す。**区間の始まりで突き合わせる** —— 押した時の `stillSinceMs` は
+ * センサーごとの静止の続きの始まり（`gravityCheck.ts`）で、姿勢の区間の始まりはその中のいちばん遅いもの
+ * なので、同じ値になる。窓の区切りの丸めの分だけ `JOIN_TOLERANCE_MS` を許す。
+ *
+ * **真上か真下かはカードの向きで見た重力の向きの大きさで判る**（鏡に映しても大きさは変わらない）。
+ * 符号は解いた後で決める（`fitBoardSixFaceWith`）。**真上と真下はデータで区別できないので、真下へ向けて
+ * 指すと鏡像のほうを採る** —— その取り違えはホストの鏡像の見張り（`boardMirrorWatch.ts`）が後から拾う。
+ */
+function faceUpOf(sensors: readonly BoardFitSensor[], poses: BoardPoses, faceUpSinceMs: number | null): FaceUpState {
+  if (!needsFaceUp(sensors)) return { kind: 'not-needed' }
+  if (faceUpSinceMs === null) return { kind: 'unmarked' }
+  const pose = poses.intervals.findIndex((iv) => Math.abs(iv.fromMs - faceUpSinceMs) <= JOIN_TOLERANCE_MS)
+  if (pose < 0) return { kind: 'not-found' }
+  if (Math.abs(poses.startG[pose]![2]) < FACE_MIN_RATIO) return { kind: 'not-level' }
+  return { kind: 'marked', pose }
 }
 
 /** 窓から組み立てた姿勢（当てはめと進み具合が同じものを見る）。 */
@@ -673,6 +731,7 @@ function buildPoses(sensors: readonly BoardFitSensor[]): BoardPoses | BoardSixFa
 /** {@link fitBoardSixFace} の手間の上限を渡せる形（テスト用）。 */
 export function fitBoardSixFaceWith(
   sensors: readonly BoardFitSensor[],
+  faceUpSinceMs: number | null,
   limits: BoardFitLimits,
 ): BoardSixFaceFit | BoardSixFaceRefusal {
   const poses = buildPoses(sensors)
@@ -682,6 +741,11 @@ export function fitBoardSixFaceWith(
   if (!FACE_ORDER.every((f) => faces[f])) return refusal('missing-faces', { minPoses, faces, poseCount })
   if (poseCount < minPoses) return refusal('too-few-poses', { minPoses, faces, poseCount })
   if (!poses.spreadOk) return refusal('directions-biased', { minPoses, faces, poseCount })
+  const faceUp = faceUpOf(sensors, poses, faceUpSinceMs)
+  const baseSensorId = sensors[0]?.sensorId ?? null
+  if (faceUp.kind === 'unmarked') return refusal('face-up-unmarked', { minPoses, faces, poseCount, sensorId: baseSensorId })
+  if (faceUp.kind === 'not-found') return refusal('face-up-not-found', { minPoses, faces, poseCount, sensorId: baseSensorId })
+  if (faceUp.kind === 'not-level') return refusal('face-up-not-level', { minPoses, faces, poseCount, sensorId: baseSensorId })
 
   const start: Solution = {
     h: priorH.map((v, j) => {
@@ -695,20 +759,20 @@ export function fitBoardSixFaceWith(
   let solved = refine(start, m, limits.lmMaxRounds)
   if (solved === null) return refusal('degenerate', { minPoses, faces, poseCount })
 
-  // **鏡像のどちらを採るか。** 3 軸のセンサーがあれば右手系（行列式が正）の側、無ければカードの向きと合う側。
-  const threeAxis: V3[][] = []
-  let at = 0
-  for (const s of sensors) {
-    if (s.prior.length === 3) threeAxis.push(solved.h.slice(at, at + 3))
-    at += s.prior.length
-  }
-  if (threeAxis.length > 0) {
+  // **鏡像のどちらを採るか。** 3 軸のセンサーがあれば右手系（行列式が正）の側、無ければ利用者が指した
+  // 「印字面が真上」の置き方で、重力の向きが基板の +Z 側になる側。
+  if (faceUp.kind === 'not-needed') {
+    const threeAxis: V3[][] = []
+    let at = 0
+    for (const s of sensors) {
+      if (s.prior.length === 3) threeAxis.push(solved.h.slice(at, at + 3))
+      at += s.prior.length
+    }
     const signs = threeAxis.map(det)
     if (signs.every((d) => d < 0)) solved = reflect(solved)
     else if (!signs.every((d) => d > 0)) return refusal('degenerate', { minPoses, faces, poseCount })
-  } else {
-    const agreement = solved.h.reduce((acc, v, j) => acc + v[2] * priorH[j]![2], 0)
-    if (agreement < 0) solved = reflect(solved)
+  } else if (solved.g[faceUp.pose]![2] < 0) {
+    solved = reflect(solved)
   }
 
   if (
@@ -774,6 +838,8 @@ export interface BoardSixFaceProgress {
    */
   readonly remainingPoses: number
   readonly current: CurrentPlacement
+  /** ⑤ 印字面を真上に向けた置き方を指したか（2 軸のセンサーだけの基板だけ。3 軸があれば `not-needed`）。 */
+  readonly faceUp: FaceUpState['kind']
 }
 
 /**
@@ -786,6 +852,7 @@ export interface BoardSixFaceProgress {
 export function boardSixFaceProgress(
   sensors: readonly BoardFitSensor[],
   stillSinceMs: readonly (number | null)[],
+  faceUpSinceMs: number | null,
 ): BoardSixFaceProgress | null {
   const poses = buildPoses(sensors)
   if ('ok' in poses) {
@@ -798,6 +865,8 @@ export function boardSixFaceProgress(
       spreadOk: false,
       remainingPoses: poses.minPoses,
       current: 'not-counted',
+      // 姿勢が 1 つも無いので、指していても見つからない。
+      faceUp: !needsFaceUp(sensors) ? 'not-needed' : faceUpSinceMs === null ? 'unmarked' : 'not-found',
     }
   }
   const missingFaces = FACE_ORDER.filter((f) => !poses.faces[f]).length
@@ -810,7 +879,22 @@ export function boardSixFaceProgress(
     spreadOk: poses.spreadOk,
     remainingPoses: Math.max(poses.minPoses - poses.poseCount, missingFaces, lacksSpread),
     current: currentPlacement(poses, stillSinceMs, sensors.length),
+    faceUp: faceUpOf(sensors, poses, faceUpSinceMs).kind,
   }
+}
+
+/**
+ * いまの置き方を「印字面が真上」として指すときに覚える時刻。**全部のセンサーがいま静止していなければ
+ * `null`**（指せない）—— 静止の始まりのいちばん遅いものが、その置き方の姿勢の区間の始まりになる。
+ */
+export function faceUpMarkFrom(stillSinceMs: readonly (number | null)[]): number | null {
+  if (stillSinceMs.length === 0) return null
+  let since = Number.NEGATIVE_INFINITY
+  for (const s of stillSinceMs) {
+    if (s === null) return null
+    since = Math.max(since, s)
+  }
+  return since
 }
 
 /**

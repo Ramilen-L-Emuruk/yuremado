@@ -132,24 +132,32 @@ function mark(ok: boolean): string {
 
 /**
  * 進み具合の 4 行（2026-10-10 ユーザー承認）。**解く条件と同じ順**（`boardSixFaceProgress`）。
+ * 2 軸のセンサーだけの基板では 5 行目に「印字面が上」の置き方を指したかを足す（2026-10-27 ユーザー承認。
+ * 選んだ形「⑤ 印字面が上　✓／—」）。見つからない・真上でないも「—」で、どれかは押せない理由で言う。
  *
  * ```
  * ① 同時に静止　✓
  * ② 6 面　＋X ✓　−X ✓　＋Y ✓　−Y ✓　＋Z ✓　−Z —
  * ③ 向き　7／9（あと 2 姿勢）
  * ④ 斜めの散らばり　—
+ * ⑤ 印字面が上　—
  * ```
  */
 export function describeProgress(p: BoardSixFaceProgress): readonly string[] {
   const faces = FACE_ORDER.map((f) => `${FACE_LABEL[f]} ${mark(p.faces[f])}`).join('　')
   const rest = p.remainingPoses > 0 ? `（あと ${formatMinPoses(p.remainingPoses)} 姿勢）` : ''
-  return [
+  const lines = [
     `① 同時に静止　${mark(p.commonPose)}`,
     `② 6 面　${faces}`,
     `③ 向き　${p.poseCount}／${formatMinPoses(p.minPoses)}${rest}`,
     `④ 斜めの散らばり　${mark(p.spreadOk)}`,
   ]
+  if (p.faceUp !== 'not-needed') lines.push(`⑤ 印字面が上　${mark(p.faceUp === 'marked')}`)
+  return lines
 }
+
+/** 「印字面が上」の置き方を指すボタンの文字（2026-10-27 ユーザー承認。選んだ選択肢「印字面が上として記録」）。 */
+export const FACE_UP_BUTTON_LABEL = '印字面が上として記録'
 
 /** 秒読みに使うホストの時計（`GET /api/rest-windows` の `nowMs`・`windowMs`）。 */
 export interface HostClock {
@@ -274,6 +282,13 @@ export function sixFaceProblem(result: BoardSixFaceFit | BoardSixFaceRefusal): s
       return `姿勢が足りない: ${result.poseCount}／${formatMinPoses(result.minPoses)}。6 面に加えて、斜めにも置いてください`
     case 'directions-biased':
       return '斜めの置き方が同じ向きに偏っている。違う向きに斜めに置いてください'
+    // 3 つの文は 2026-10-27 ユーザー承認（選んだ選択肢「この案でよい」）。
+    case 'face-up-unmarked':
+      return `センサー ${result.sensorId ?? '—'} の印字面を真上に向けて置き、［${FACE_UP_BUTTON_LABEL}］を押してください`
+    case 'face-up-not-found':
+      return '印字面が上として指した置き方が、直近 30 分の記録に無い。もう一度置いて押してください'
+    case 'face-up-not-level':
+      return '印字面が上として指した置き方が、真上を向いていない。置き直して押してください'
     case 'degenerate':
       return SIX_FACE_DEGENERATE
     case 'out-of-range':
