@@ -216,7 +216,7 @@ export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, on
           地図を無駄に覆う。展開すれば中身が増えて自然に広がり、max-w-2xl で頭打ちにする。 */}
       <div className="pointer-events-auto w-fit max-w-2xl min-h-0 max-h-[70dvh] overflow-y-auto overflow-x-hidden overscroll-x-none rounded-lg bg-red-950/95 border-2 border-red-400 shadow-lg">
         <div className="px-3 py-2 flex items-start gap-2">
-          {/* 判定の根拠は見出しの下に 1 行だけ。仕組みの説明は設定タブの「出す最低震度」の項目に置いてある。 */}
+          {/* 判定の根拠は見出しの下に 1 行だけ。仕組みの説明は設定の窓の「出す最低震度」の項目に置いてある。 */}
           <div className="min-w-0 flex-1 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
             <span className={`text-xs font-bold text-white px-1.5 py-0.5 rounded-sm bg-red-500 shrink-0 ${SCALE_WIDTH_BADGE}`}>
               <ScaleText reason={reason} label={label} />

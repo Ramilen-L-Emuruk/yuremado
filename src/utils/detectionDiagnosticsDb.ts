@@ -17,12 +17,12 @@ const DB_VERSION = 1
 const STORE = 'records'
 
 /**
- * 保存に失敗したか。**利用者へ見せるために持つ。** 設定タブは件数しか出さないので、
+ * 保存に失敗したか。**利用者へ見せるために持つ。** 設定の窓は件数しか出さないので、
  * 記録できていない端末（プライベートモード・容量超過・IndexedDB 無効）でも「0 件」と表示され、
  * 「まだ検知が起きていないだけ」と区別が付かない。
  */
 let failed = false
-/** 保存に失敗したことがあるか（設定タブが注記を出すのに使う）。 */
+/** 保存に失敗したことがあるか（設定の窓が注記を出すのに使う）。 */
 export function hasStorageError(): boolean {
   return failed
 }
@@ -36,7 +36,7 @@ function warnOnce(message: string, e: unknown): void {
   log.warn(`[diagnostics] ${message}`, e)
 }
 
-/** 記録が増減したときに呼ぶ購読者（設定タブの件数表示）。 */
+/** 記録が増減したときに呼ぶ購読者（設定の窓の件数表示）。 */
 const listeners = new Set<() => void>()
 /** 記録の増減を購読する。戻り値を呼ぶと解除。 */
 export function onRecordsChanged(cb: () => void): () => void {

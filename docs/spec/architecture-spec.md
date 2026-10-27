@@ -551,7 +551,7 @@ memo を効かせるには props が参照安定である必要があるため�
 | `origin` | 積む場所 | 行の印 |
 |---|---|---|
 | `live` | ライブの WebSocket（`dmdata.ts`・`p2pquake.ts`） | 出さない（既定の経路。付けると全行が賑やかになる） |
-| `test` | 設定タブのテストボタン（`utils/testTelegrams.ts`） | `テスト` |
+| `test` | 設定の窓のテストボタン（`utils/testTelegrams.ts`） | `テスト` |
 | `replay` | リプレイ（`dmdataReplay.ts`・`dmdataReplayLive.ts`・`p2pquakeReplay.ts`） | `再生` |
 
 標準版の電文ログには取得元の絞り込みが無い（取得元が P2PQuake の 1 つだけのため。標準版と DMDSS 版を中継で 1 つにまとめると無くなる差（[relay-server-design.md](../relay-server-design.md)）。2026-10-23 選択「今のまま記録する (Recommended)」）。
@@ -632,7 +632,7 @@ yuremado/
 │   │   ├── RealtimeTab/       # リアルタイム震度タブ（kyoshin モード）
 │   │   ├── TsunamiTab/        # 津波情報タブ → tsunami-spec.md
 │   │   ├── TelegramTab/       # 電文ログタブ
-│   │   ├── SettingsTab/       # 設定タブ → settings-pwa-spec.md
+│   │   ├── SettingsTab/       # 設定の窓 → settings-pwa-spec.md
 │   │   ├── SpecialInfoBanner/ # 南海トラフ地震臨時情報・同 関連解説情報・後発地震のバナー
 │   │   ├── IconNav.tsx        # タブナビ（右端 or 最下部）
 │   │   └── PanelResizeHandle.tsx # 縦積み時の地図／パネル境界（高さ調整・折りたたみ）

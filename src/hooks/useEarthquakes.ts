@@ -610,7 +610,7 @@ export interface EarthquakeState {
   connectionStatus: ConnectionStatus
   /**
    * DMDSS 版で、配信元が受け付けた購読区分（最後に繋がった接続のもの）。まだ繋がっていなければ null。
-   * 設定タブの「受信している区分」と、リプレイが引く区分に使う（→ `services/dmdataClassifications.ts`）。
+   * 設定の窓の「受信している区分」と、リプレイが引く区分に使う（→ `services/dmdataClassifications.ts`）。
    * 標準版では常に null。
    */
   dmdataClassifications: readonly DmdataClassification[] | null
@@ -4488,7 +4488,7 @@ export function useEarthquakes(
       // 履歴の取得完了時。
       hasMore: false,
       // 履歴の損失も落とす。前の時間軸で欠けた分を残すと、新しい時間軸の話と混ざって読めない。
-      // 再生を始めたときの履歴の取りこぼしはリプレイ側（設定タブのリプレイの欄）が出し、ここへは
+      // 再生を始めたときの履歴の取りこぼしはリプレイ側（設定の窓のリプレイの欄）が出し、ここへは
       // 再生中の「もっと見る」の取りこぼしだけが積まれる（2026-10-25 ユーザー選択「地震タブの帯のまま
       // (Recommended)」）。ライブへ戻る側は履歴の取得完了時に立て直すので落としてよい（`hasMore` と同じ理由）。
       historyLoss: createEmptyTelegramLoss(),

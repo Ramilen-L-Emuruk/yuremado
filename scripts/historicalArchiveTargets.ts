@@ -39,7 +39,7 @@ export interface ArchiveTarget {
   windowStart: Date
   windowEnd: Date
   /**
-   * 設定タブの「再生」ボタンの起点（index.json の firstEventTime。ボタンはこの 1 分前から再生する）。
+   * 設定の窓の「再生」ボタンの起点（index.json の firstEventTime。ボタンはこの 1 分前から再生する）。
    * 窓の他の地震は収録だけして、起点にはしない。値は窓の全地震を入れる前の index.json の firstEventTime
    * そのまま（2026-10-25 ユーザー選択「前の起点に戻す (Recommended)」）
    */

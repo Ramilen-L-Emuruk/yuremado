@@ -30,7 +30,7 @@ import { measuredIntensityToGrade } from './measuredIntensity'
 import { judgeQuakeReach, type ReachStation } from './seismoQuakeReach'
 
 /**
- * 波形グラフの出し方（設定タブ）。
+ * 波形グラフの出し方（設定の窓）。
  *
  * **`'auto'` でも購読は張りっぱなしにする。** 揺れを検知してから購読を上げたのでは
  * 間に合わない（繋ぎ直しに数百 ms〜数秒かかり、しかもその時点から 0 秒ぶんしか

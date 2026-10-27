@@ -41,7 +41,7 @@ export function useTestScenarios(
 
   useEffect(() => {
     let cancelled = false
-    // 実地震テストは設定タブの機能で、失敗しても地図は変わらない（一覧側に専用の表示がある）。
+    // 実地震テストは設定の窓の機能で、失敗しても地図は変わらない（一覧側に専用の表示がある）。
     // 地図に重ねる取得状況表示には数えない。
     fetchJsonWithTimeout<unknown>(INDEX_URL, 'test-scenarios index', { trackStatus: false })
       .then(raw => {

@@ -1,4 +1,4 @@
-// 設定タブ「K-NETデータの取り込み」用フック。NIEDから利用者が手動でダウンロードした
+// 設定の窓「K-NETデータの取り込み」用フック。NIEDから利用者が手動でダウンロードした
 // K-NET/KiK-netの生ZIPを受け取り、震度時系列を算出してIndexedDBへ保存する。
 // 対応する収録済みアーカイブ（HistoricalArchiveMeta）は、ZIPヘッダーのOrigin Timeから自動検出する。
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -65,7 +65,7 @@ export function useKyoshinImport(historicalArchives: HistoricalArchiveIndex): Us
       })
   }, [historicalArchives])
 
-  // 設定タブは常時マウントされたまま非表示になるだけなので、一定間隔で問い合わせる作りにすると
+  // 設定の窓は常時マウントされたまま非表示になるだけなので、一定間隔で問い合わせる作りにすると
   // 開いていない間もIndexedDBを叩き続ける（DiagnosticLogRowと同じ理由でpub/subにする）。
   useEffect(() => {
     refresh()

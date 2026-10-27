@@ -190,7 +190,7 @@ async function main() {
   const indexRaw = await readFile(INDEX_PATH, 'utf-8')
   const index = JSON.parse(indexRaw) as { description: string }[]
   if (index[0]?.description !== out.description) {
-    // description の食い違いは設定タブの一覧に出る利用者向け表示のズレなので、
+    // description の食い違いは設定の窓の一覧に出る利用者向け表示のズレなので、
     // 警告止まりにせず失敗させる（書き出し前に気づけるようにする）。
     throw new Error('index.json の description が 2011-tohoku.json と一致していません。手動で同期してください。')
   }

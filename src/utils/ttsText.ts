@@ -191,7 +191,7 @@ function coordForName(name: string): [number, number] | null {
 export type TtsUnreceivedDetail = 'stations' | 'areas' | 'none'
 
 /**
- * 読み上げ文の作り方を決める設定。設定タブの「読み上げ設定」から来る
+ * 読み上げ文の作り方を決める設定。設定の窓の「読み上げ設定」から来る
  * （組み立ては `useLiveEventHandler` の `ttsSpeechOptions`）。
  *
  * 前半 4 つは地域をどこまで挙げるか、後半 2 つは 1 件ごとの詳しさ。
@@ -204,7 +204,7 @@ export type TtsUnreceivedDetail = 'stations' | 'areas' | 'none'
  * いつ来ていつまで続くかの説明、南海トラフは評価の本文）。種類でまとめて切る形にすると、
  * 片方を聞くためにもう片方も付いてくる。
  *
- * **一覧はここが単一情報源。** 設定の既定値（`useSettings.ts`）・設定タブのラベル・
+ * **一覧はここが単一情報源。** 設定の既定値（`useSettings.ts`）・設定の窓のラベル・
  * `telegramTextToSpeak` の判定がこの型から導かれるので、足したものを書き忘れると型検査で止まる。
  */
 export const TELEGRAM_TEXT_BLOCK_KEYS = [
@@ -254,7 +254,7 @@ export type TelegramTextBlocks = Readonly<Record<TelegramTextBlockKey, boolean>>
  * 文面が種別で違う（0262 は「震度観測点」・0263 は「長周期地震動観測点」）ことを見落とし、
  * 長周期の報だけ落ちない状態が残っていた。自由付加文はコードを持たないので検出できない。
  *
- * **一覧はここが単一情報源。** 設定の既定値・設定タブのラベルと説明・落とす判定がこの型から
+ * **一覧はここが単一情報源。** 設定の既定値・設定の窓のラベルと説明・落とす判定がこの型から
  * 導かれるので、足したものを書き忘れると型検査で止まる。
  */
 export const TELEGRAM_BOILERPLATE_KEYS = [
@@ -1604,7 +1604,7 @@ const PREVIEW_EEW: EEWAlert = {
 const PREVIEW_EEW_SCALE: EewMaxScaleInfo = { scale: 60, orAbove: false }
 
 /**
- * 設定タブの「試聴」で読ませる文。緊急地震速報（警報）を想定して
+ * 設定の窓の「試聴」で読ませる文。緊急地震速報（警報）を想定して
  * 「緊急地震速報、三陸沖で地震。」「予想最大震度6強。」を返す。
  *
  * **文字列を直接書かず、実運用と同じ関数から組む。** 直接書くと緊急地震速報の文型を変えたときに
@@ -1990,7 +1990,7 @@ function noRegionChangeSegments(change: ObservationChange): SpeechSegment[] {
  * （`quakeSpeechTopic`）、**空で上書きすると前に伝えた観測点が記録から消える**。次の報は
  * 「比べる相手がいない」ではなく「全部が初出」と読み、何も増えていないのに
  * 「観測地点が追加されました」と**嘘を言う**。気象庁は種別の違う電文を前後して発表するので、
- * これは実運用で起きる順序（→ 設定タブ「種別遷移テスト」がその順序そのもの）。
+ * これは実運用で起きる順序（→ 設定の窓「種別遷移テスト」がその順序そのもの）。
  *
  * **数えるのは観測点（`isArea` が偽）と市町村だけ。`points` の件数で見ない。** 震度速報は
  * `points` に**区域と都道府県の集約点だけ**を積むので、件数で見ると「運んでいる」と誤判定し、
@@ -4679,7 +4679,7 @@ function quakeForecastRemainder(event: JMAQuake): string | undefined {
  * {@link TELEGRAM_TEXT_BLOCK_KEYS}）。全部切れば本文が空になり、この関数は `null` を返す ——
  * 前置きだけが鳴る形にはならない。
  *
- * **前置きで名乗る語は「気象庁の発表文」。設定タブのトグルのラベルと同じ語にする** ——
+ * **前置きで名乗る語は「気象庁の発表文」。設定の窓のトグルのラベルと同じ語にする** ——
  * 音声だけを聞いている利用者が、いま流れているものがどの設定で切れるのかを辿れるようにするため。
  * 片方だけ変えないこと。
  *

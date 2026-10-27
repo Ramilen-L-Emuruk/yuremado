@@ -6,7 +6,7 @@
 // 使う端末では期限を過ぎても自前計算が有効なまま残り、**渡した相手の分を失効させる手段が
 // 実質的に消える**（`scripts/sign-arrival-token.ts` は失効を仕組みの中核に据えている）。
 //
-// あわせて、**設定タブへ出す材料（検証中か・通らなかった理由）が門を緩めないこと**も見る。
+// あわせて、**設定の窓へ出す材料（検証中か・通らなかった理由）が門を緩めないこと**も見る。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 

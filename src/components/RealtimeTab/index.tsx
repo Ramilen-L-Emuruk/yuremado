@@ -1089,7 +1089,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
         {hasAccuracyText && (
           <div className="flex flex-col gap-0.5 text-xs text-secondary">
             {/* **語は資料のまま出すが、説明は添える。** 「言い換えない」と「説明しない」は別。
-                IPF 法・P 相・EPOS は電文解説資料を読んだ人にしか通じないので、設定タブと同じ
+                IPF 法・P 相・EPOS は電文解説資料を読んだ人にしか通じないので、設定の窓と同じ
                 `DescriptionTip` で事実の解説をホバーに逃がす（評価は足さない）。 */}
             {/* **見出しも資料の語をそのまま使う。** 電文解説資料 Ⅱ.21 1-4-2 はこの要素群を
                 「精度情報」と呼んでいる（下位も「震央位置の精度値」「深さの精度値」

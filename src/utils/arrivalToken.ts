@@ -47,7 +47,7 @@ export type ArrivalTokenProblem = 'empty' | 'malformed' | 'signature' | 'no-expi
  * **失効時刻まで返すのは、呼び出し側が再検証を張れるようにするため。** 真偽だけを返す形だと
  * 「いつ閉じればよいか」が判らず、トークン文字列が変わるまで開いたままになる（→ `hooks/useArrivalToken.ts`）。
  *
- * **理由まで返すのは、画面に出すため。** 返していなかった頃は、成功も 5 通りの失敗も設定タブでは
+ * **理由まで返すのは、画面に出すため。** 返していなかった頃は、成功も 5 通りの失敗も設定の窓では
  * 同じ見た目（何も出ない）で、確かめる手段が開発者コンソールか実際の緊急地震速報しか無かった。
  * とくに「鍵の組を作り直したのに `PUBLIC_KEY_SPKI_BASE64` を貼り忘れた」事故は、症状が
  * 「署名が合わない」だけなので、気づく契機がここにしか無い。
@@ -106,7 +106,7 @@ const isDateRepresentableMs = (ms: number): boolean =>
 /**
  * 画面に出す文言。**理由ごとに次の行動が変わる**ので、1 つの「無効です」へ畳まない。
  *
- * 語は設定タブの見出し（「到達予想キー」）に合わせて「キー」で書く。「トークン」「署名」は
+ * 語は設定の窓の見出し（「到達予想キー」）に合わせて「キー」で書く。「トークン」「署名」は
  * 実装の語で、受け取って貼るだけの利用者には通じない。未入力は出す文が無いので null を返す。
  */
 export function arrivalTokenProblemMessage(problem: ArrivalTokenProblem): string | null {
@@ -134,14 +134,14 @@ export function arrivalTokenProblemMessage(problem: ArrivalTokenProblem): string
 /** 状態を表す 3 つの調子。**色の名前ではなく意味で持つ** —— 色は描く側が決める。 */
 export type ArrivalTokenStatusTone = 'checking' | 'valid' | 'problem'
 
-/** 設定タブへ出す 1 行。出すものが無ければ `null`（→ `arrivalTokenStatusLine`）。 */
+/** 設定の窓へ出す 1 行。出すものが無ければ `null`（→ `arrivalTokenStatusLine`）。 */
 export interface ArrivalTokenStatusLine {
   tone: ArrivalTokenStatusTone
   text: string
 }
 
 /**
- * 到達予想キーの状態を、設定タブへ出す 1 行へ畳む。
+ * 到達予想キーの状態を、設定の窓へ出す 1 行へ畳む。
  *
  * **描画から判断を出してある。** 分岐が 5 通り（未入力・検証中・有効・失効・その他の理由）
  * あり、JSX の中に書くとテストで押さえられない。**入力欄の枠を赤くするかも同じ答えから
@@ -157,7 +157,7 @@ export function arrivalTokenStatusLine(status: ArrivalTokenStatus): ArrivalToken
   // 期限は `expMs` から組む。日時の整形は `formatters.ts` を通し、読めなければ期限を省く。
   //
   // **`Date` へ渡す前に範囲を見る**（`isDateRepresentableMs`）—— 範囲外の値の `toISOString()` は
-  // 例外を投げ、**それがレンダー中に起きるので設定タブが丸ごと差し替わる**（`ErrorBoundary` は
+  // 例外を投げ、**それがレンダー中に起きるので設定の窓が丸ごと差し替わる**（`ErrorBoundary` は
   // タブ単位）。しかも直すための入力欄がその中にあるので、画面からは復旧できない。
   // 検証の側が範囲外の期限を通さないので実際には来ないが、状態は外から渡されるので二重に見る。
   const at =

@@ -1257,7 +1257,7 @@ export interface EEWForecastChange {
  * - `p2pquake`: P2PQuake の 556（standard 版。警報だけ。区域・仮定震源は運ぶが、予想の最大震度・最終報の印は運ばない）
  * - `yahoo`: Yahoo 強震モニタの hypoInfo（standard 版。予報も含む。区域・仮定震源は運ばない）
  * - `archive`: 保存しておいた電文から組み立てた報（ローカル履歴アーカイブ・テストシナリオ）
- * - `test`: 設定タブのテストボタンが組み立てた報
+ * - `test`: 設定の窓のテストボタンが組み立てた報
  *
  * **報番号の数え方も経路で違う。** P2PQuake の `serial` は警報だけの番号、Yahoo の `reportNum` は
  * 予報からの通し番号（2026-10-16 千島列島の報で、発表時刻 12:40:02 が Yahoo 17・P2PQuake 1）。

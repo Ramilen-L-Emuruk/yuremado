@@ -12,7 +12,7 @@ export interface HistoricalArchiveRange {
 
 export interface HistoricalArchiveMeta {
   id: string          // ファイル名（拡張子なし）と一致させる
-  label: string        // 設定タブの一覧に出す短い名前
+  label: string        // 設定の窓の一覧に出す短い名前
   description: string  // 概要（震源要素・被害規模・出典等）
   from: string          // 収録範囲の開始（ISO、この時刻以降を対象時刻にできる）
   to: string            // 収録範囲の終了（ISO）

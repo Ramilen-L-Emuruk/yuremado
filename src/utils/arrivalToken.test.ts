@@ -13,7 +13,7 @@ import { formatDateTimeMin } from './formatters'
 // （ECDSA P-256 / SHA-256・署名は r‖s の生の 64 バイト）で署名しているのは
 // `scripts/sign-arrival-token.ts` のコメントが単一情報源。
 //
-// **通らなかった理由も固定する。** 理由は設定タブに出す唯一の手掛かりで、取り違えると
+// **通らなかった理由も固定する。** 理由は設定の窓に出す唯一の手掛かりで、取り違えると
 // 「期限切れなのに鍵違いと案内する」形で利用者を別の行動へ誘導する。
 
 const ALG = { name: 'ECDSA', namedCurve: 'P-256' } as const
@@ -56,7 +56,7 @@ describe('verifyArrivalTokenWithKeyForTest', () => {
     const token = await issue({ sub: 'tester', iat: 0, exp })
     // **失効時刻も返す。** 呼び出し側がそこで再検証を張れないと、開いたままのセッションで
     // 期限を過ぎても閉じない（→ `hooks/useArrivalToken.ts`）。
-    // **通ったときの理由は null。** 設定タブはこれを見て「有効」と出す。
+    // **通ったときの理由は null。** 設定の窓はこれを見て「有効」と出す。
     expect(await verifyArrivalTokenWithKeyForTest(token, publicKeyBase64)).toEqual({
       valid: true,
       expMs: exp * 1000,
@@ -173,7 +173,7 @@ describe('arrivalTokenProblemMessage', () => {
   })
 })
 
-// **設定タブの表示の判断をここで固定する。** 分岐が 5 通り（未入力・検証中・有効・失効・
+// **設定の窓の表示の判断をここで固定する。** 分岐が 5 通り（未入力・検証中・有効・失効・
 // その他の理由）あり、描画の中に置くと押さえられない。日時の書式そのものは `formatters.ts`
 // 側のテストが持つので、ここでは同じ述語を通した値が文へ入っていることだけを見る。
 describe('arrivalTokenStatusLine', () => {
@@ -211,7 +211,7 @@ describe('arrivalTokenStatusLine', () => {
 
   it('`Date` の範囲を超える期限でも例外にしない（安全弁）', () => {
     // **`Number.isFinite` では足りない。** 有限でもここを超えると `toISOString()` が投げ、
-    // それがレンダー中なので設定タブが丸ごと `ErrorBoundary` へ差し替わる（直すための
+    // それがレンダー中なので設定の窓が丸ごと `ErrorBoundary` へ差し替わる（直すための
     // 入力欄もその中にあるので画面から復旧できない）。
     const OVER = 8_640_000_000_000_001
     expect(() => new Date(OVER).toISOString()).toThrow(RangeError)
@@ -245,7 +245,7 @@ describe('arrivalTokenStatusLine', () => {
     '理由の文は `arrivalTokenProblemMessage` から採る: %s',
     (problem) => {
       const line = arrivalTokenStatusLine(status({ problem }))
-      // 枠を赤くするかはこの `tone` が決める（設定タブは同じ答えを 2 度使う）。
+      // 枠を赤くするかはこの `tone` が決める（設定の窓は同じ答えを 2 度使う）。
       expect(line?.tone).toBe('problem')
       const message = arrivalTokenProblemMessage(problem)
       if (message === null) throw new Error(`${problem} には文があるはず`)

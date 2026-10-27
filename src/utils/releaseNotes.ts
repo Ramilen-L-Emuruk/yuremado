@@ -106,7 +106,7 @@ export function notesForUpdate(
   return [{ version: toInclusive, date: '', added: [], fixed: [], minorOnly: true }, ...views]
 }
 
-/** 全部の版を新しい順に（設定タブの「変更履歴」）。 */
+/** 全部の版を新しい順に（設定の窓の「変更履歴」）。 */
 export function allNotes(entries: readonly ReleaseNoteEntry[], variant: 'standard' | 'dmdss'): ReleaseNoteView[] {
   return sortNewestFirst(entries).map((e) => toView(e, variant))
 }

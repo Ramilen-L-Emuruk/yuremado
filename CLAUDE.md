@@ -669,7 +669,7 @@ try {
     `DEV-SERVER-DOWN` が出たら本当に落ちている。**期限切れの通知は落ちた合図ではない**ので、落ちたことを知る手段はこの見張りだけになる。次の検証で繋がらなくて初めて気づく形にしない。Windows 以外では `netstat` の出力が違うので、`lsof -iTCP:<ポート> -sTCP:LISTEN` などのポート確認へ読み替える
   - 停止するときは**ポートから PID を引いて PID 指定で止める**（`netstat -ano` で PID を取り、PowerShell の `Stop-Process -Id <PID>`）。`TaskStop` では node の子プロセスが残り、ワークツリーの削除が `Permission denied` になる
   - **どのワークツリーのものかは起動コマンドから引ける。** `Get-CimInstance Win32_Process -Filter "ProcessId = <PID>"` の `CommandLine` に `vite.js` の絶対パスが出るので、そこにワークツリー名が入っている。**ただし同じディレクトリで standard 版と DMDSS 版を立てた場合は区別が付かない**（バリアントは環境変数で決まり、コマンドラインに出ない）——そのときは中身を読んで見分ける
-  - **DMDSS 版の dev サーバーでは DMDATA の APIキーが自動で入る**。リポジトリ直下の `.env.local` に `DMDATA_API_KEY` があれば、設定タブへ貼り直さずに接続できる（条件・例外・`.env.local` の引き継ぎは [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「dev サーバーでの API キー自動投入」）。`--host` を付けた起動では意図的に投入しない（dev サーバーは認証を持たないため）。
+  - **DMDSS 版の dev サーバーでは DMDATA の APIキーが自動で入る**。リポジトリ直下の `.env.local` に `DMDATA_API_KEY` があれば、設定の窓へ貼り直さずに接続できる（条件・例外・`.env.local` の引き継ぎは [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「dev サーバーでの API キー自動投入」）。`--host` を付けた起動では意図的に投入しない（dev サーバーは認証を持たないため）。
     - **メインリポジトリ直下の `.env.local` は消さない・上書きしない・動かさない。中身を表示しない**（2026-08-20 ユーザー指示）。掃除の対象にも含めない —— Git の管理外なので、`git clean` 系は黙って消す。あるかどうかは `ls` か、引数なしの `npm run capture-scenario` の出し分けで確かめる（下記「補助コマンド」の `capture-scenario` の行）。`cat` や `echo` で開かない
     - ワークツリーで使うときは、メインリポジトリ直下からコピーする（コピーは中身を読まずに済む）
   - **`.claude/` 配下は dev サーバーの監視対象から外してある**（`scripts/dev-watch-ignore.ts` の `isInsideClaudeDir`）。効くのは**メインリポジトリ直下で起動したとき**で、並行して動く別セッションがワークツリー（`.claude/worktrees/`）のファイルを触ってもこちらのページがリロードされない。**この除外を glob（`**/.claude/**`）で書き直さないこと** —— 今度はワークツリー内で起動したときに HMR が丸ごと死ぬ（理由はそのファイルのコメント）。
@@ -709,8 +709,8 @@ try {
 **指示の本体は「リリース前にこの PC でサーバーを立て、端末で表示して性能を確かめる」**まで。下の手順 0〜4（修正前との比べ方・ブラウザの再起動・測る指標）は、それを正しく測るために 2026-10-10 の作業で組んだもの。結果をコミットメッセージに残すので、**実装セッションでコミットの前に**行う。
 
 0. **端末のブラウザを丸ごと再起動する。** Edge は起動ブーストで裏に常駐し、アプリのウィンドウを閉じても本体が残る（更新も当たらない）。再起動を挟まないと、修正の前後ではなくブラウザの状態を比べることになる
-1. **公開版（端末で普段表示しているもの）の設定タブで「設定の書き出し」をしておく**（API キーは含まれない）。終わったら公開版は閉じる（負荷が混ざるため）
-2. **修正前と修正後を同じ経路で立てる。** 修正前は `main` から計測用のワークツリーを切る（`worktree/chore/<name>`。測り終えたら、上記「ワークツリーを消す前に、ジャンクションを外す」のコマンドでワークツリーを消してから `git branch -d` で片付ける）。新しく切ったワークツリーには `node_modules` が無いので `npm ci` してから、両方のワークツリーでそれぞれ `npm run build:dmdss` → `npm run preview:dmdss -- --host` を `run_in_background: true` で起動する（ポートが重なるので順に立てるか、片方に `--port` を付ける。実際の URL は起動ログの `Network:` 行で確かめる。起動したサーバーを控え、終わったら止めるのは上記の規約どおり）。**preview には API キーが自動では入らない**（自動投入は dev サーバーだけの機能）ので、端末側で設定タブから入れる
+1. **公開版（端末で普段表示しているもの）の設定の窓で「設定の書き出し」をしておく**（API キーは含まれない）。終わったら公開版は閉じる（負荷が混ざるため）
+2. **修正前と修正後を同じ経路で立てる。** 修正前は `main` から計測用のワークツリーを切る（`worktree/chore/<name>`。測り終えたら、上記「ワークツリーを消す前に、ジャンクションを外す」のコマンドでワークツリーを消してから `git branch -d` で片付ける）。新しく切ったワークツリーには `node_modules` が無いので `npm ci` してから、両方のワークツリーでそれぞれ `npm run build:dmdss` → `npm run preview:dmdss -- --host` を `run_in_background: true` で起動する（ポートが重なるので順に立てるか、片方に `--port` を付ける。実際の URL は起動ログの `Network:` 行で確かめる。起動したサーバーを控え、終わったら止めるのは上記の規約どおり）。**preview には API キーが自動では入らない**（自動投入は dev サーバーだけの機能）ので、端末側で設定の窓から入れる
 3. 端末で `http://<ビルドしている PC の LAN の IP>:<ポート>/yuremado/dmdss/` を開き、1 のファイルを「設定の読み込み」で入れ、API キーを入れる（オリジンごとに設定は別に保存される）。修正前と修正後で、開き方（ウィンドウの大きさ・タブ）も揃える
 4. **測る指標**: Windows の性能カウンタで、ブラウザのプロセスの `\GPU Engine(*engtype_3D)\Utilization Percentage` をプロセスごとに合計したものと、`\Processor Information(_Total)\% Processor Utility`（端末全体の CPU）。開いて 30 秒ほど落ち着かせてから、5 秒間隔で 60〜120 秒の平均を取る。修正前と修正後で測る長さを揃え、結果（値・平均した長さ・測定を繰り返した回数）はコミットメッセージに残す。1 回きりの値は、ぶれの大きさが分からないことも書き添える
 
@@ -765,7 +765,7 @@ window.fetch = async (input, init) => {
   - 自動解除や時間経過で発火する挙動（自動タブ切替・アイドル復帰など）は、`localStorage` の書き換え＋リロードや DOM 検査で確認する。
   - **確認後も開発サーバーは停止しない**（セッション中は起動したまま残す）。`Stop-Process -Name node` のような一括停止は MCP サーバーまで巻き込むため使わない。
   - 検証用スクリーンショットはリポジトリ直下に出力されるが**一時ファイル。コミット前に必ず削除する**（コミットしない）。`.playwright-mcp/` の出力も同様に Git 管理対象外（`.gitignore` 済み）。
-- **テスト機能の活用**: 設定タブのテストボタンで動作確認できる。各ボタンの詳細（対象電文・音・自動タブ切替・自動解除タイミング等）と DOM 検証手法は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7、実データから P2PQuake 経由でシナリオを作る手順は同 §6 を参照する。
+- **テスト機能の活用**: 設定の窓のテストボタンで動作確認できる。各ボタンの詳細（対象電文・音・自動タブ切替・自動解除タイミング等）と DOM 検証手法は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7、実データから P2PQuake 経由でシナリオを作る手順は同 §6 を参照する。
 
 ### テストボタンは実機確認の唯一の入口
 
@@ -784,7 +784,7 @@ window.fetch = async (input, init) => {
 
 ### 収録していない形の読み取りはリプレイで確かめる
 
-**電文の読み取り（パーサー）を変えたときは、その形を持つ電文がテストボタンに収録されているかをまず見る。** 無ければリプレイ（設定タブ「テスト時刻設定」）で確かめる。
+**電文の読み取り（パーサー）を変えたときは、その形を持つ電文がテストボタンに収録されているかをまず見る。** 無ければリプレイ（設定の窓「テスト時刻設定」）で確かめる。
 
 ```
 テストボタン:  置いた電文 → パーサー → 内部型 → 画面（収録した形だけ・押した時刻へずらして流す）
@@ -805,7 +805,7 @@ window.fetch = async (input, init) => {
 
 - **API キーが無くても動く**（両バリアント）。DMDSS 版では電文の取得に失敗した旨が赤字で出るが、強震モニタの再生は続く（→ [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「アーカイブの取得に失敗しても強震モニタの再生は続ける」）。検知エンジン・地図・カードはバリアントによらない共通の経路
 - **開始時刻の入力（`datetime-local`）は Playwright の `fill` で入れる。** React が管理しているので、`el.value = x` と `dispatchEvent` では `onChange` が発火しないことがある
-- **設定タブは操作が無いと既定のタブへ戻る**（`idleRevertSec`。既定値は [`src/hooks/useSettings.ts`](src/hooks/useSettings.ts) の `DEFAULTS`）。EEW を含む場面では自動タブ切替でリアルタイムタブからも離れるので、カードの DOM を読むたびに戻す
+- **設定の窓は操作が無いと既定のタブへ戻る**（`idleRevertSec`。既定値は [`src/hooks/useSettings.ts`](src/hooks/useSettings.ts) の `DEFAULTS`）。EEW を含む場面では自動タブ切替でリアルタイムタブからも離れるので、カードの DOM を読むたびに戻す
 - **検知の中身は `window.__kyoshinV2.detections`** で読める。`memberKeys`（参加した点。値が下がりきった点は外れる）と `lastSize`（直近のフレームで動いている点の数）を比べる。地図に描いた点を数えるときは `querySourceFeatures` を使わない —— タイルの境目で重複する（ソースの中身の取り出し方は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「DOM 検証テクニック（動作確認用）」）
 - **実データでは出ない稀な分岐**（例: 全メンバーが震度0未満へ落ちたときの文言）は、条件を一時的に反転させて表示だけ確かめる。確かめたら戻し、`git diff` に痕跡が残っていないことを見る
 
@@ -825,14 +825,14 @@ window.fetch = async (input, init) => {
 
   | 口 | 返すもの |
   |---|---|
-  | `GET /version` | 200 なら何でもよい（設定タブの接続確認は `res.ok` だけを見る） |
+  | `GET /version` | 200 なら何でもよい（設定の窓の接続確認は `res.ok` だけを見る） |
   | `GET /speakers` | `[{ name, speaker_uuid, styles: [{ name, id }] }]` の配列 |
   | `POST /audio_query?text&speaker` | `{ accent_phrases: [...] }`。句は `{ moras: [{ vowel: 'a', vowel_length: 0.1 }], pause_mora: null }` の形でよい |
   | `POST /accent_phrases?text&speaker&is_kana=true` | 句の配列（上と同じ形） |
   | `POST /mora_data?speaker` | 受け取った句の配列をそのまま返す |
   | `POST /synthesis?speaker` | 正弦波の WAV（`audio/wav`） |
 
-- **合成の応答の遅れと音の長さを、偽サーバーの環境変数で決められるようにしておく**（名前は自分で決める。アプリ側に対応する設定は無い）。「合成を待っている間」「鳴っている間」を人為的に長くすれば、実地震を待たずに競合を再現できる。たとえば設定タブの緊急地震速報の行の「誤報取消テスト」（津波の行にも同じ名前のボタンがある）は、最後に押してから 10 秒後に取消を届ける（台本の `EEW_FINAL_SILENCE_MS`。[`src/utils/testTelegramScripts.ts`](src/utils/testTelegramScripts.ts)）ので、偽サーバーの音を 4 秒にすれば発話の途中に取消を差し込める。予報から警報への格上げは「地震動予報（単独点処理）」テストで作れる（10 秒以内に押し直す。押さなくても最終報で格上げが起きる）
+- **合成の応答の遅れと音の長さを、偽サーバーの環境変数で決められるようにしておく**（名前は自分で決める。アプリ側に対応する設定は無い）。「合成を待っている間」「鳴っている間」を人為的に長くすれば、実地震を待たずに競合を再現できる。たとえば設定の窓の緊急地震速報の行の「誤報取消テスト」（津波の行にも同じ名前のボタンがある）は、最後に押してから 10 秒後に取消を届ける（台本の `EEW_FINAL_SILENCE_MS`。[`src/utils/testTelegramScripts.ts`](src/utils/testTelegramScripts.ts)）ので、偽サーバーの音を 4 秒にすれば発話の途中に取消を差し込める。予報から警報への格上げは「地震動予報（単独点処理）」テストで作れる（10 秒以内に押し直す。押さなくても最終報で格上げが起きる）
 - **50021 番が埋まっていたら、別のポートで立てる。** 設定の `voicevoxUrl` をそちらへ向ける（DMDSS 版なら `localStorage` の `quake-viewer-settings-dmdss` を書き換えてリロード）。終わったらポートを空け、本物の VOICEVOX に戻せるようにしておく
 - **`soundVolume` は 0 にせず、0.02 程度にする。** 0 でも再生の長さは同じだが、無音と失敗の見分けが付かなくなる
 - **偽サーバーには最初からアクセスログを入れる。** `/audio_query` と `/synthesis` に経過秒とテキストを出しておけば、どの読み上げが何秒待たされたかを後から突き合わせられる。ただし待ちの実測は、アプリ側のログ（`[VoiceVox] 読み上げ:` と `[VoiceVox] 先行合成:`）のほうが確か —— 先に合成した分と本番の再生を区別できる
@@ -1988,7 +1988,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | `npx tsx scripts/measure-kyoshin-warmup.ts` | 強震モニタ検知エンジンの**助走**の効きを実データで測る。「その時刻から再生を始めた場合」が「ずっと再生し続けた場合」とどれだけ一致するかを、大地震 7 本・地震発生の 1〜12.5 分後の 164 点で見る。**API キー不要**。初回は `--fetch` で窓を取得する（7 本・約 6300 フレーム）。キャッシュは `bench-kyoshin` と共有する。`--warmups=0,180,300,600` で固定長を比べ、`--adaptive` で実装と同じ「遡って静穏で打ち切る」方式を測る。**助走の長さを決める定数（`utils/kyoshinWarmup.ts`）を変えたら実行する** —— `bench-kyoshin` は窓の先頭から流すので、途中から入る形は測れない |
 | `npm run bench-kyoshin` | 強震モニタ検知エンジンの実データ回帰ベンチ（`scripts/bench-kyoshin.ts`）。Yahoo の過去フレームを窓ごとに再生し、**気象庁発表の地震を捉えられたか**と**地震が無いのに鳴っていないか**を分類ごとに集計してベースラインと突き合わせる。**API キー不要**。窓は `scripts/kyoshin-bench/windows.json`（単一情報源）。初回は `-- --fetch` で取得する（全 795 窓・500MB 超・数十分）。検知エンジンを変更したら実行する（上記「特殊ケース: 強震モニタ検知エンジンを変更したとき」） |
 | `npx tsx scripts/build-historical-archive-<地震>.ts` | ローカル履歴アーカイブ（`public/data/historical-archives/*.json`）の再生成。対象は 4 本（`2016-kumamoto` / `2016-tottori` / `2018-iburi` / `2018-osaka`）。**API キー不要**。地震情報・津波は NII「気象庁防災情報 XML データベース」の実電文を本番と同じパーサーへ通し、EEW は気象庁の発表状況ページから取る。**電文から読む項目を足したら実行する** —— テストボタンのデータと同じ理由で、作り直さないとその項目は履歴再生で一度も画面に出ない。**`index.json` を 4 本とも書き換えるので順次実行する**。**NII からの取得だけ**は一度取ったページが `.claude/nii-cache/` に残るため、途中で落ちても続きから進む（EEW 側の取得はキャッシュを持たない）。詳細は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「国立情報学研究所（NII）の実電文アーカイブ由来のデータ（地震情報・津波）」 |
-| `npm run capture-kyoshin-waveform` | ローカル履歴アーカイブ用に、NIED K-NET/KiK-net の実波形から強震モニタ風のリアルタイム震度リプレイデータを生成（`scripts/capture-kyoshin-waveform.ts`）。**要 NIED 登録**（`NIED_KNET_USER`/`NIED_KNET_PASSWORD` を `.env.local` に。取得は `--origin=<地震発生時刻JST、YYYYMMDDHHMMSS> --id=<出力id>`）。`--origin` は複数回指定でき、本震＋離れた余震を1つのアーカイブへ統合する（1件の取得失敗ではバッチ全体を止めず、残りで統合する）。出力（`public/data/historical-archives-kyoshin/*.json`）は**再配布禁止のためリポジトリに含めない**（`.gitignore` 対象。生成した本人のローカル環境でのみ再生できる）。**devサーバー無しでも使いたい場合は、設定タブ「K-NETデータの取り込み」から同じZIPを直接ブラウザへ取り込める**（NIEDのダウンロードページで自分で取得したZIPを選ぶだけで、対応する地震へ自動で追加される。データは端末内にのみ保存）。詳細は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「NIED K-NET/KiK-netの実波形由来のデータ（ローカル限定・リアルタイム震度）」 |
+| `npm run capture-kyoshin-waveform` | ローカル履歴アーカイブ用に、NIED K-NET/KiK-net の実波形から強震モニタ風のリアルタイム震度リプレイデータを生成（`scripts/capture-kyoshin-waveform.ts`）。**要 NIED 登録**（`NIED_KNET_USER`/`NIED_KNET_PASSWORD` を `.env.local` に。取得は `--origin=<地震発生時刻JST、YYYYMMDDHHMMSS> --id=<出力id>`）。`--origin` は複数回指定でき、本震＋離れた余震を1つのアーカイブへ統合する（1件の取得失敗ではバッチ全体を止めず、残りで統合する）。出力（`public/data/historical-archives-kyoshin/*.json`）は**再配布禁止のためリポジトリに含めない**（`.gitignore` 対象。生成した本人のローカル環境でのみ再生できる）。**devサーバー無しでも使いたい場合は、設定の窓「K-NETデータの取り込み」から同じZIPを直接ブラウザへ取り込める**（NIEDのダウンロードページで自分で取得したZIPを選ぶだけで、対応する地震へ自動で追加される。データは端末内にのみ保存）。詳細は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「NIED K-NET/KiK-netの実波形由来のデータ（ローカル限定・リアルタイム震度）」 |
 | `npm version patch\|minor\|major` | バージョン更新・コミット・git tag 作成（リリース時に 1 回だけ実行。詳細は「リリース」参照） |
 
 > 2026-09-13: ローカル履歴アーカイブ 4 本が 2026-08-28 の生成のまま取り残され、それ以降にパーサーへ入った項目（市町村の段・`＊` の注記・都道府県ロールアップ点）が丸ごと欠けていた。**テストボタンのデータと同じ穴が、生成コマンドを表に載せていなかったぶんだけ気づきにくい形で開いていた。** 電文から読む項目を足したときに作り直す対象は、テストボタンのデータだけではない。
@@ -2066,7 +2066,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 辞書キー直後の助詞をアクセント句へ取り込む処理が例外で失敗したときにチャンクを落とすと、そのチャンクが無音で消える | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §3「助詞は辞書の読みへ取り込む」 |
 | EEW 読み上げの継続判定（shouldStillPlay）を誤報取消以外（自動解除・値の引き下げ）でも止めると、正当な発話が途中で切れる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §3「鳴らす直前の見直し」・§6「第 2 フェーズ（予想値） — 安定待ち」 |
 | VOICEVOXへの通信が通す前置き（デバウンス・URL検分・末尾スラッシュ正規化）のいずれかを欠くと、誤接続・誤診断・音声合成の無音化のいずれかが起きる（適用範囲は機構ごとに異なる） | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §3「接続先の確認」 |
-| 設定タブの試聴文を実運用と別に書くと、文型変更時に試聴だけ古い形で残る | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §3「試聴で読ませる文」 |
+| 設定の窓の試聴文を実運用と別に書くと、文型変更時に試聴だけ古い形で残る | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §3「試聴で読ませる文」 |
 | 先行合成（prewarmVoicevox）が進行中の読み上げを止める、または使用予定のものを打ち切ると、鳴っている音が途切れるか、後から始まった読み上げが先行合成を横取りする | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「間を合成の時間に充てる（先行合成）」 |
 | 切り出し語（warmFixedPhrases）の作り置きが応答を待つ・まとめて投げる・辞書を待たずに焼くのいずれかになると、EEW が軒並み無音になる、合成が渋滞する、または辞書を当てていない音が居座る | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「間が無い経路には作り置きを用意する（切り出し語）」・§3「接続先の確認」 |
 | リプレイの投機合成（speechPrefetch）は1件ごとに上限を張らないと無応答の1件で投機が丸ごと停止し、上限の持ち手をバッチ単位にすると無関係なチャンクまで打ち切られ、続けて焼けなくてもバッチを降りなければ全件が順に上限まで待たされる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「これから来る電文は先に焼いておく（リプレイの投機）」 |
@@ -2117,7 +2117,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 
 | 項目 | 単一情報源となる仕様書 |
 |---|---|
-| `PLAYERS` の周波数・音数を仕様書「音の種類」表や設定タブの説明文と食い違わせると、試聴した音と説明文の内容が一致しなくなる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「音の種類」 |
+| `PLAYERS` の周波数・音数を仕様書「音の種類」表や設定の窓の説明文と食い違わせると、試聴した音と説明文の内容が一致しなくなる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「音の種類」 |
 | `COUNTDOWN_PULSES`（S波カウントダウンのパルス数）を説明文と食い違わせると、「秒が減るほど速く・多く鳴る」という説明と実際のパルス数がずれる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「発火 API」 |
 | `kyoshinLevel` を気象庁の階級と1対1（10段。震度0未満だけ震度0の段へ含める）で対応させる規則を崩すと、ある震度で鳴るべき音が鳴らない、または `useKyoshinAlerts` が段の上昇で起動する更新音・タブ移動・揺れフォーカスの3つが畳んだ範囲内の悪化に対して起動しなくなる。震度0（1音）の音量の係数だけ震度1より大きいのは重なりの無い1音の音圧を実測で合わせたためで、係数の大小で段の重さを読むと崩す | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「震度更新音の段は気象庁の階級と対応させる」 |
 | 上位3段（6弱・6強・7）を音数・音量ではなく音程で分ける規則、震度7だけ880Hzの外（C6/1047Hz）へ出す規則、1047Hzより上へ音域を上げない規則のいずれかを崩すと、1音の差が聞き取れず隣接段と判別できなくなる、または2度にわたって下げてきた音域を戻す意味が失われる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §2「震度更新音の段は気象庁の階級と対応させる」 |
@@ -2472,7 +2472,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 
 | 項目 | 単一情報源となる仕様書 |
 |---|---|
-| 設定タブのセクション構成・並び順の方針（`<Section>` の出現順そのもの・重大度は軽い順・カテゴリ順は両テストセクションとブラウザ通知の種別トグルで共通）を崩すと、想定と違う並びで表示される | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「並び順の方針」 |
+| 設定の窓のセクション構成・並び順の方針（`<Section>` の出現順そのもの・重大度は軽い順・カテゴリ順は両テストセクションとブラウザ通知の種別トグルで共通）を崩すと、想定と違う並びで表示される | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「並び順の方針」 |
 | 特別情報バナー 5 枚の並び順（同じ事象を隣り合わせる）・消え方（7 日失効・電文 id の正規化）を崩すと、閉じた帯が復活する、または並びが分かりづらくなる | [`architecture-spec.md`](docs/spec/architecture-spec.md) §4 |
 | 自動復帰までの時間（`idleRevertSec`）を計り直す契機のうち自動タブ切替・電文受信の両方を崩す（＝ユーザー操作の起点だけで測る形に変える）と、据え置きの端末で津波警報が一瞬映って消える | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 自動復帰までの時間を計り直す契機のうちユーザー操作を崩すと、操作中でも既定タブへ戻ってしまう | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
@@ -2485,7 +2485,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | リプレイ復元で地震の主題を `mergeQuakeInto` で組み立てる規則を崩すと、震源名が空の報が別の地震を吸い込む、または訂正報の名前変更に追随できない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 復元の既読にマージ後のカードを使う規則（生の入電を使わない）を崩すと、据え置かれた内容が既読として記録され、後で届く正規の報が省かれる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | dev サーバーでの API キー自動投入の条件（dev・DMDSS 版・`--host` なし・未入力）と受け取る側の二重チェック（本番ビルド・テスト）を崩すと、本番へ値が漏れる、または未入力の判定が壊れる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「dev サーバーでの API キー自動投入」 |
-| 自前計算を開く門と設定タブの表示を同じ 1 つの検証結果から出す規則（`useArrivalTokenCheck`）を崩すと、期限の境目で画面表示と機能の開閉が食い違う | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §4.7「検証結果を画面へ出す」 |
+| 自前計算を開く門と設定の窓の表示を同じ 1 つの検証結果から出す規則（`useArrivalTokenCheck`）を崩すと、期限の境目で画面表示と機能の開閉が食い違う | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §4.7「検証結果を画面へ出す」 |
 | 設定の書き出しと読み込み（API キーは含めない・`sanitize()` 任せ・`rejectedKeys`・バリアント違いは拒否しない・全項目まとめて置換）を崩すと、書いたはずのキーが消える、または新しい項目が既定値に戻らない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §4.5 |
 | `window.__replay` によるリプレイの外部操作を崩すと、録画自動化が UI の文言・レイアウト変更のたびに壊れる | [`recording-interface-spec.md`](docs/spec/recording-interface-spec.md) |
 | 録画ツール向けのイベントログ（読み上げは 1 本ごとに記録・記録失敗は `seq` の飛びとして外から見える）を崩すと、連続した読み上げが融合して 1 本に見える、または記録の欠番から失敗を追えなくなる | [`recording-interface-spec.md`](docs/spec/recording-interface-spec.md) §4「読み上げ」・§2 |
@@ -2555,7 +2555,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 
 | 項目 | 単一情報源となる仕様書 |
 |---|---|
-| 台本の素材（どの地震のどの報か）を差し替えたとき設定タブの説明文（震源名・規模・震度・件数・秒数が焼き込んである）を追随させないと、押したときに流れるものと説明文が食い違う | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「ボタン一覧」 |
+| 台本の素材（どの地震のどの報か）を差し替えたとき設定の窓の説明文（震源名・規模・震度・件数・秒数が焼き込んである）を追随させないと、押したときに流れるものと説明文が食い違う | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「ボタン一覧」 |
 | 書き換えで報を作るとき、報番号を進めず直前の電文に印を立てて最終報にする・取消を新規発表の形で作るなど実配信に無い形にすると、続報固有の挙動（差分読み上げ・見出しの続報表記等）や取消・解除特有の経路を実機で確認できなくなる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実配信に無い形を作らない」 |
 | 取消・解除電文に予想（震源座標・予想震度・区域）を残すと、実配信にない形になる | [`eew-spec.md`](docs/spec/eew-spec.md) §8「誤報取消（明示的な取消電文）」・[`tsunami-spec.md`](docs/spec/tsunami-spec.md) §3「3 経路の解除フロー」 |
 | 台本の基準（`anchor`）を取り違えると、地震情報・津波では未来の発表時刻を持つ報が届き、緊急地震速報では到達までの秒読みが過ぎた形で出る | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「時刻は「いま」へ寄せる」 |

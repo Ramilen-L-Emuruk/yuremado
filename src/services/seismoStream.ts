@@ -1,6 +1,6 @@
 // 自作地震計ホスト（`seismo-host/`）の押し出しの口へ繋ぐ受け口。
 //
-// **繋ぐ先は利用者が指定する LAN 内の機器で、配信元の API ではない。** 設定タブに URL を
+// **繋ぐ先は利用者が指定する LAN 内の機器で、配信元の API ではない。** 設定の窓に URL を
 // 入れて読み上げと同じように有効にしたときだけ繋ぐ（既定は無効）。繋がらないことは
 // 平常の状態のひとつで、アプリの他の機能は何ひとつ止まらない。
 //
@@ -215,7 +215,7 @@ export type SeismoStreamState =
   | { readonly kind: 'reconnecting'; readonly detail: string; readonly nextAttemptInMs: number }
 
 export interface SeismoStreamOptions {
-  /** ホストの基点 URL（設定タブに入力された値）。 */
+  /** ホストの基点 URL（設定の窓に入力された値）。 */
   readonly baseUrl: string
   /**
    * 波形も要るか。**要らないなら送らせない**（合成 1 本で毎秒 15 KB）。
@@ -305,7 +305,7 @@ export interface SeismoSensorInfo {
  */
 export type SeismoUnreachableReason = 'timeout' | 'mixed-content' | 'offline' | 'unknown'
 
-/** 接続確認の待ちの上限（ms）。設定タブの文言（「5秒待って打ち切った」）もこの値から作る。 */
+/** 接続確認の待ちの上限（ms）。設定の窓の文言（「5秒待って打ち切った」）もこの値から作る。 */
 export const SEISMO_STATUS_TIMEOUT_MS = STATUS_TIMEOUT_MS
 
 /**
@@ -354,7 +354,7 @@ export type SeismoHostCheck =
        * **`stations` とは別物。** `stations` は**実際に届いた**センサーから組むので、ホストを起動した
        * 直後や基板が黙っている間は空になる —— それを「観測点は未設定」と出すと、設定が済んでいるのに
        * 未設定に見える。`assignedBoards` は未受信の基板も載せる。
-       * 設定タブの状態の 1 行だけが読む（2026-10-19 ユーザー承認「割り当てから数える (推奨)」）。
+       * 設定の窓の状態の 1 行だけが読む（2026-10-19 ユーザー承認「割り当てから数える (推奨)」）。
        * `stations` の意味（観測点の座標・地震カードの対象）は変えない。
        */
       readonly assignedStationCount: number | null
@@ -375,7 +375,7 @@ export type SeismoHostCheck =
   /**
    * 応答が返らなかった（落ちている・経路が無い・混在コンテンツで止められた）。
    *
-   * @param reason **ブラウザから分かる範囲の理由**（設定タブの行に出す。2026-10-22 選択「分かる理由を出す (Recommended)」）。
+   * @param reason **ブラウザから分かる範囲の理由**（設定の窓の行に出す。2026-10-22 選択「分かる理由を出す (Recommended)」）。
    *   `fetch` は理由を例外の文面でしか言わず、文面はブラウザごとに違うので、文面では見分けない ——
    *   こちらが知っている事実（自分で打ち切った・ページが https で宛先が http・端末がオフライン）だけで分ける
    */
@@ -939,12 +939,12 @@ export async function fetchSeismoStatus(
   // 繋がらないので載せない。**そのぶん記録が唯一の手掛かりになる** ——
   // ここが無いと、DNS か TLS か CORS か JSON の破損かを誰も切り分けられない。
   //
-  // **間引かない。** 呼ばれるのは設定タブの確認（デバウンス後に 1 回）と台帳の
+  // **間引かない。** 呼ばれるのは設定の窓の確認（デバウンス後に 1 回）と台帳の
   // 取り直し（引けていれば 60 秒・**引けない間は 5 秒**に 1 回。
   // {@link STATIONS_RETRY_MIN_MS}）だけ。
   //
   // **5 秒に 1 回の側でも間引かない。** その頻度で出るのは台帳が引けない間だけで、
-  // そのとき機能は止まっている（設定タブには「応答がない」が出る）——
+  // そのとき機能は止まっている（設定の窓には「応答がない」が出る）——
   // **止まっていることと、止まり続けていることを区別できる記録が要る。**
   // 間引くと「回復したのか、間引かれているのか」が読めなくなる。
   const fail = <T extends SeismoHostCheck>(result: T, why: string): T => {
