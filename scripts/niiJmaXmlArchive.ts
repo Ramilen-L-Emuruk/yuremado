@@ -13,8 +13,8 @@
 // "eventId_serial_headType_officeCode"）。どちらの形式でも report_xml.pl?id=<id> で
 // 生XMLを取得できる。
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+import { cacheDir } from './lib/cacheDir.mjs'
 
 const NII_BASE = 'https://agora.ex.nii.ac.jp'
 
@@ -27,8 +27,9 @@ const NII_BASE = 'https://agora.ex.nii.ac.jp'
  * 相手への配慮でもある。**
  *
  * 過去の電文とその一覧は書き換わらないため、キャッシュは無期限でよい。
+ * 置き場所はメインの checkout の `.cache/nii-cache`（決め方は `lib/cacheDir.mjs`）。
  */
-const CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '.claude', 'nii-cache')
+const CACHE_DIR = cacheDir('nii-cache')
 
 /**
  * NII への 1 回の取得を打ち切るまでの時間。**30 秒にはしない** —— 配信元は混雑すると 1 応答に 60〜90 秒

@@ -51,10 +51,11 @@ jobs:
       # key に run_id を入れて毎回新しく保存し、restore-keys で直前のものを引き継ぐ。
       # **世代は積み上がらない。** GitHub は 7 日間アクセスの無いキャッシュを失効させる。
       # 毎週触るのは直前の 1 つだけなので、常時 2〜3 世代（1 世代 100MB 足らず）に収まる。
+      # キャッシュは `path` ごとに別物として扱われる。`path` を変えた後の最初の 1 回は前のキャッシュを引き継がず、取り直す。
       - name: 日別ページの控えを戻す
         uses: actions/cache@v6
         with:
-          path: .claude/hypocenter-cache
+          path: .cache/hypocenter-cache
           key: hypocenter-daily-${{ github.run_id }}
           restore-keys: |
             hypocenter-daily-

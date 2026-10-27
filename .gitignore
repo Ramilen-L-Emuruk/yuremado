@@ -45,6 +45,9 @@ verify-*.jpg
 !.vscode/extensions.json
 .idea/
 
+# 生成・調査スクリプトの控え（scripts/lib/cacheDir.mjs。メインの checkout に 1 つだけ置き、ワークツリーからも同じ場所を読む）
+/.cache/
+
 # Claude directories
 .claude/*
 # どの checkout でも揃えたい Claude Code の設定（いまは共有のタスクリストを選ぶ指定だけ。

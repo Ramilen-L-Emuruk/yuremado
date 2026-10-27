@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { unzipSync } from 'fflate'
+import { cacheDir } from './lib/cacheDir.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(HERE, '..')
@@ -24,7 +25,7 @@ export const SOURCE_URL =
   'https://www.data.jma.go.jp/svd/eqev/data/bulletin/catalog/appendix/trtime/tjma2001.zip'
 /** zip の中の唯一のエントリ名。増えていたら上流の形が変わったということ。 */
 const ENTRY_NAME = 'tjma2001'
-const CACHE_PATH = resolve(REPO_ROOT, '.claude/jma2001-cache/tjma2001.zip')
+const CACHE_PATH = resolve(cacheDir('jma2001-cache'), 'tjma2001.zip')
 const OUT_PATH = resolve(REPO_ROOT, 'src/data/jma2001TravelTime.ts')
 
 /** 走時は 0.01 秒単位の整数へ丸めて持つ。丸め誤差 0.005 秒は表の刻み幅より 2 桁細かい。 */

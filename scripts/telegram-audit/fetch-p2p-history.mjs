@@ -22,7 +22,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { WORK } from './coverage-core.mjs'
-import { REPO } from '../lib/repo-root.mjs'
+import { cacheDir } from '../lib/cacheDir.mjs'
 import { gate } from '../lib/rateGate.mjs'
 import { noteIncomplete, markResult, reportIncompleteness, writeArtifact } from '../lib/incompleteness.mjs'
 
@@ -45,8 +45,8 @@ const MAX_PAGES = 20
 const MIN_INTERVAL_MS = 1_200
 /** 控えの有効期間。過ぎたら取り直す（上のコメントのとおり `/history` は可変の一覧）。 */
 const CACHE_TTL_MS = Number(process.env.P2P_CACHE_TTL_MS) || 6 * 60 * 60 * 1000
-/** 控えの置き場所。`.claude/*` は `.gitignore` 済み（`dmdata-archive-cache` と同じ扱い）。 */
-const CACHE_DIR = process.env.P2P_HISTORY_CACHE || path.join(REPO, '.claude', 'p2p-history-cache')
+/** 控えの置き場所（メインの checkout の `.cache/p2p-history-cache`。決め方は `lib/cacheDir.mjs`）。 */
+const CACHE_DIR = process.env.P2P_HISTORY_CACHE || cacheDir('p2p-history-cache')
 
 /**
  * `P2P_LIMIT` を読む。**範囲外は投げる** —— 下流へ流すと配信元へ余計なリクエストが出る

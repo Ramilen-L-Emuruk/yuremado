@@ -1,5 +1,5 @@
 // ローカル履歴アーカイブ用に、気象庁「緊急地震速報（警報）発表状況」（pub_hist）の個別ページを取って
-// メインの checkout の `.claude/jma-pub-hist-cache/` に控える。生成（build-historical-archive-*.ts）は
+// メインの checkout の `.cache/jma-pub-hist-cache/` に控える。生成（build-historical-archive-*.ts）は
 // 控えを読むだけで、控えが無ければ止まる。取得はここに分ける。
 //
 //   npx tsx scripts/fetch-pub-hist.ts --dry-run   # 送る予定の URL と件数だけ出す

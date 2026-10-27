@@ -58,6 +58,11 @@ const strings = isDmdss ? APP_STRINGS.dmdss : APP_STRINGS.standard
 // `isInsideClaudeDir` 側のコメントにある。
 const CLAUDE_DIR = fileURLToPath(new URL('./.claude/', import.meta.url))
 
+// 同じく監視から外す `.cache/`（生成・調査スクリプトの控え。→ `scripts/lib/cacheDir.mjs`）。
+// dev サーバーが読み込むものは無く、メインの checkout では数 GB になるので、張る監視ハンドルが無駄に増える。
+// 判定は `.claude/` と同じ関数を使う（名前は `.claude/` 用だが、中身は「渡した 1 つのディレクトリの中か」を見るだけ）。
+const CACHE_DIR = fileURLToPath(new URL('./.cache/', import.meta.url))
+
 /**
  * この設定ファイルが置かれているディレクトリ。dev サーバーの記録（`.dev-server.json`）の置き場所。
  * **`process.cwd()` ではなくここから取る** —— 呼び出し元のディレクトリに左右されず、
@@ -100,10 +105,12 @@ function devArrivalTokenDefine(configEnv: ConfigEnv): Record<string, string> {
 export default defineConfig(configEnv => ({
   base,
   server: {
-    // 監視から .claude/ 配下を外す（理由は CLAUDE_DIR の説明）。
+    // 監視から .claude/ と .cache/ の配下を外す（理由は CLAUDE_DIR・CACHE_DIR の説明）。
     // ここで渡した値は vite の既定（node_modules・.git・test-results・cacheDir・outDir）を
     // 置き換えるのではなく加算される（vite 6 の resolveChokidarOptions）ため、既定値は書かない。
-    watch: { ignored: [(p: string) => isInsideClaudeDir(CLAUDE_DIR, p)] },
+    watch: {
+      ignored: [(p: string) => isInsideClaudeDir(CLAUDE_DIR, p) || isInsideClaudeDir(CACHE_DIR, p)],
+    },
   },
   build: {
     outDir: outDirForVariant(variant),

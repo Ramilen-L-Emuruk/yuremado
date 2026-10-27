@@ -1080,8 +1080,8 @@ K-NET・KiK-net（地表）の実波形を、同じ記録から「3 成分で計
   （`NIED_KNET_USER` / `NIED_KNET_PASSWORD`）を環境変数かリポジトリ直下の `.env.local` に置く。
   **`.env.local` はワークツリーへ引き継がれない**ので、ワークツリーで走らせるときは環境変数で
   渡すか、メインの checkout からコピーする。取得は地震 1 つにつき 2 件（月ごとの一覧と ZIP）で、
-  ZIP は `.claude/knet-cache/` へ控えるので 2 回目からは取得しない（ワークツリーからは
-  `KNET_CACHE` でメイン側の控えを指せば取り直さずに済む）。**先に `DRY=1` を付けて回すと、
+  ZIP はメインの checkout の `.cache/knet-cache/` へ控えるので 2 回目からは取得しない（ワークツリーから
+  走らせても同じ控えを読む。置き場所は `KNET_CACHE` で変えられる）。**先に `DRY=1` を付けて回すと、
   取得せずに投げる予定の URL と件数だけを出す**
 - **`iis2iclx-noise.mjs` の宛先は既定で `iis2iclx-probe.local`**（probe が名乗る mDNS の名前）。
   引けなければ `--host=` で IP を渡す。測り終えると測定範囲を ±500 mg へ戻す。**測る間は基板に触れない**

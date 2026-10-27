@@ -24,6 +24,7 @@ import zlib from 'node:zlib'
 // 要求して throw するため、このモジュール（根のパスしか要らない）まで環境変数に縛られ、
 // レート制御を単体テストへ掛けられなくなる。
 import { REPO } from '../lib/repo-root.mjs'
+import { cacheDir } from '../lib/cacheDir.mjs'
 // レート制御は `scripts/lib/rateGate.mjs` に集約している。**DMDATA 専用ではない** ——
 // `kind` で取得元を分ける汎用の門で、P2PQuake の履歴走査・観測点索引の走査も同じものを通す。
 import { gate, resetRateGateForTest, sleep } from '../lib/rateGate.mjs'
@@ -31,9 +32,9 @@ import { gate, resetRateGateForTest, sleep } from '../lib/rateGate.mjs'
 // 時点で自動的に引き継がれる**（`scripts/lib/incompleteness.mjs`）。
 import { noteIncomplete, reportIncompleteness, resetIncompletenessForTest } from '../lib/incompleteness.mjs'
 
-/** 控えの置き場所。`.claude/*` は `.gitignore` 済み（`nii-cache` / `hypocenter-cache` と同じ扱い）。 */
+/** 控えの置き場所（メインの checkout の `.cache/dmdata-archive-cache`。決め方は `lib/cacheDir.mjs`）。 */
 export const ARCHIVE_CACHE_DIR = process.env.DMDATA_ARCHIVE_CACHE
-  || path.join(REPO, '.claude', 'dmdata-archive-cache')
+  || cacheDir('dmdata-archive-cache')
 
 /**
  * 本体の取得間隔。`data.api.dmdata.jp/v1/archive/:id` の 50req/5min に合わせる。

@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { cacheDir as sharedCacheDir } from '../../scripts/lib/cacheDir.mjs'
 import { mseedFilePath } from '../src/receiver/mseedStore'
 import { loadStationHistory, STATION_CONFIG_FILE } from '../src/receiver/stationStore'
 import { historyEntries } from './rawReplay'
@@ -53,8 +54,8 @@ async function main(): Promise<void> {
     process.exit(2)
   }
   const stationId = arg('station') ?? 'station-1'
-  const rawDir = arg('raw') ?? '.claude/seismo-bench-cache/raw'
-  const outDir = arg('out') ?? '.claude/seismo-bench-cache/station'
+  const rawDir = arg('raw') ?? join(sharedCacheDir('seismo-bench-cache'), 'raw')
+  const outDir = arg('out') ?? join(sharedCacheDir('seismo-bench-cache'), 'station')
   const toMs = fromMs + DAY_MS
 
   const files = hourFiles(rawDir, fromMs - LEAD_MS, toMs)

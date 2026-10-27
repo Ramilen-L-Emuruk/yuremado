@@ -58,7 +58,7 @@ export function pubHistUrl(base: string, dir: string): string {
 
 /**
  * pub_hist のページの控え。**一度取ったページは二度取らない**（過去の発表状況は書き換わらない）。
- * 置き場所はメインの checkout の `.claude/jma-pub-hist-cache/`（ワークツリーごとに取り直さない）。
+ * 置き場所はメインの checkout の `.cache/jma-pub-hist-cache/`（ワークツリーごとに取り直さない）。
  */
 export function pubHistCachePath(dir: string): string {
   return join(mainCheckoutCacheDir('jma-pub-hist-cache'), `${dir.replace(/[^0-9A-Za-z]/g, '_')}.html`)
