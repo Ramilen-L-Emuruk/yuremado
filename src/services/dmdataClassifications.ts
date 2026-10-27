@@ -185,7 +185,7 @@ export function hasQuakeTelegrams(classifications: readonly DmdataClassification
   return classifications.includes('telegram.earthquake')
 }
 
-/** DMDATA の購入区分名。設定タブの「受信している区分」に出す。 */
+/** DMDATA の購入区分名。設定の窓の「受信している区分」に出す。 */
 const CLASSIFICATION_LABELS: Record<DmdataClassification, string> = {
   'eew.forecast': '緊急地震（予報）',
   'eew.warning': '緊急地震（警報）',

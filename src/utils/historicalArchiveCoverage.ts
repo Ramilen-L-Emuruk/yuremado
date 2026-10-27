@@ -1,6 +1,6 @@
 import type { HistoricalArchiveMeta } from '../types/historicalArchive'
 
-// 設定タブ「収録済みの地震」のホバーに出す、収録した期間の書き方。
+// 設定の窓「収録済みの地震」のホバーに出す、収録した期間の書き方。
 
 /** 日本時間の年・月・日（集めた範囲は日本時間の日で区切ってあるため、端末のタイムゾーンで読まない）。 */
 function jstYmd(ms: number): { y: number; m: number; d: number } {

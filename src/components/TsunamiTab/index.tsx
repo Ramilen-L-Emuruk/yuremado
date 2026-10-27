@@ -294,7 +294,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
 
           **この結線は自動テストが無い。** jsdom はレイアウトを持たないため追従の effect
           （`planFollowScroll` を呼ぶ側）を発火させられなかった。確かめるときは実機で測る ――
-          DMDSS 版の dev サーバーで設定タブの「変化の小さい続報テスト」を流し、
+          DMDSS 版の dev サーバーで設定の窓の「変化の小さい続報テスト」を流し、
           `Element.prototype.scrollTo` を差し替えて送り先を記録する。**送り先は「区域見出しの
           上端 − 余白 24px − バナーの高さ」**になる（バナーは sticky で、追従は
           `viewTop = containerRect.top + stickyBannerHeight` を見る。実測で約 190px あった。

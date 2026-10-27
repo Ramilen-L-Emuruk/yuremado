@@ -759,7 +759,7 @@ describe('useSeismoStation', () => {
     expect(h.result.current.stream).toEqual({ kind: 'open' })
   })
 
-  // **読めない押し出しは設定タブへ出す**（2026-10-22 選択「設定タブに出す (Recommended)」）。ただし **1 件ごとには
+  // **読めない押し出しは設定の窓へ出す**（2026-10-22 選択「設定タブに出す (Recommended)」）。ただし **1 件ごとには
   // 描き直さない** —— 版が食い違っている間は毎秒 10 件とも読めないので、作り直しの巡回でまとめて写す。
   it('読めない押し出しの累計は、作り直しの巡回でまとめて出す', async () => {
     const h = renderHook(() => useSeismoStation(options))

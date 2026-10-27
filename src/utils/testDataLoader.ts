@@ -45,7 +45,7 @@ export function loadTestTelegramScripts(importer: TestTelegramScriptsImporter = 
 }
 
 /**
- * 先に読んでおく（設定タブを開いた時点で呼ぶ）。
+ * 先に読んでおく（設定の窓を開いた時点で呼ぶ）。
  *
  * テストボタンを押してから読むと、**chunk の取得を待つあいだに初回履歴取得（REST）の応答が
  * 割り込み、テスト電文を上書きしうる**（履歴の取り込みは表示中のイベントを置き換える作りの
@@ -53,7 +53,7 @@ export function loadTestTelegramScripts(importer: TestTelegramScriptsImporter = 
  * 静的に取り込んでいた頃と同じ「無し」に戻る。
  *
  * **失敗は握りつぶす。** これは前倒しにすぎず、本当に要るのは押されたときで、そのときに
- * `loadTestTelegramScripts()` が取り直す。ここで例外を投げると、設定タブを開いただけで画面が壊れる。
+ * `loadTestTelegramScripts()` が取り直す。ここで例外を投げると、設定の窓を開いただけで画面が壊れる。
  */
 export function prefetchTestData(importer: TestTelegramScriptsImporter = defaultImporter): void {
   void loadTestTelegramScripts(importer).catch(() => {})

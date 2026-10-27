@@ -72,7 +72,7 @@ export function useSpeechPrefetch({
 
     const tick = () => {
       const { peekUpcoming, baseUrl, speakerId, opts } = latest.current
-      // 通信前の検分。**黙って戻らない**（設定タブは同じ条件を画面に出すが、ここは画面を
+      // 通信前の検分。**黙って戻らない**（設定の窓は同じ条件を画面に出すが、ここは画面を
       // 持たないので、記録が無いと「投機が一度も効かない」原因を追えない）。値が変わらない
       // 限り毎周期この判定を通るため、記録は `debug` に留める。
       if (!isValidVoicevoxUrl(baseUrl)) {

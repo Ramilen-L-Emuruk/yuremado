@@ -99,7 +99,7 @@ function loadFile(id: string): Promise<HistoricalArchiveFile | null> {
   return promise
 }
 
-/** 設定タブに出す、収録済みアーカイブの一覧（表示専用）。 */
+/** 設定の窓に出す、収録済みアーカイブの一覧（表示専用）。 */
 export function listHistoricalArchives(): Promise<HistoricalArchiveIndex> {
   return loadIndex()
 }
@@ -125,7 +125,7 @@ export function listHistoricalArchives(): Promise<HistoricalArchiveIndex> {
  * で見分けて止める（空の成功にしない）。詳細は`docs/spec/settings-pwa-spec.md`の胆振東部アーカイブの節を参照。
  *
  * index の取得自体は非同期だが、App.tsx の fetchReplayEvents はリプレイ中に何度も（本編・
- * 初期状態・先読みのたびに）呼ばれるため、都度 await すると呼び出し順序が崩れうる。設定タブ表示用の
+ * 初期状態・先読みのたびに）呼ばれるため、都度 await すると呼び出し順序が崩れうる。設定の窓表示用の
  * useHistoricalArchiveIndex 経由で事前に読み込み済みの index を引数で受け取り、ここでは
  * 純粋な同期検索だけを行う。
  */

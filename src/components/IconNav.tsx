@@ -1,6 +1,12 @@
-import { memo, type ReactNode } from 'react'
+import { memo, type ReactNode, type RefObject } from 'react'
 
-export type TabId = 'earthquake' | 'realtime' | 'tsunami' | 'catalog' | 'settings' | 'telegrams'
+export type TabId = 'earthquake' | 'realtime' | 'tsunami' | 'catalog' | 'telegrams'
+
+/**
+ * ナビに並ぶボタン。**設定だけはタブではなく、押すと設定の窓を開く**（2026-10-27 ユーザー承認。
+ * 原文「設定について、タブじゃなくてモーダルに移したいです」）。ボタンはタブと同じ列に並ぶ（震源カタログと電文ログの間）。
+ */
+type NavItemId = TabId | 'settings'
 
 const ICON_PROPS = {
   viewBox: '0 0 24 24',
@@ -14,7 +20,7 @@ const ICON_PROPS = {
   strokeLinejoin: 'round' as const,
 }
 
-const ICONS: Record<TabId, ReactNode> = {
+const ICONS: Record<NavItemId, ReactNode> = {
   // 地震情報: インフォメーション
   earthquake: (
     <svg {...ICON_PROPS}>
@@ -61,7 +67,7 @@ const ICONS: Record<TabId, ReactNode> = {
   ),
 }
 
-const ITEMS: { id: TabId; label: string }[] = [
+const ITEMS: { id: NavItemId; label: string }[] = [
   { id: 'earthquake', label: '地震情報' },
   { id: 'realtime', label: 'リアルタイム' },
   { id: 'tsunami', label: '津波情報' },
@@ -71,12 +77,12 @@ const ITEMS: { id: TabId; label: string }[] = [
 ]
 
 /**
- * タブの表示名。ナビのボタン名と、**そのタブが落ちたときの表示**（`ErrorBoundary` の `label`）で
- * 共有する。2 箇所に書くと、タブの名前を変えたとき片方だけ古くなる。
+ * ナビのボタンの表示名。ナビのボタン名と、**その画面が落ちたときの表示**（`ErrorBoundary` の `label`）で
+ * 共有する。2 箇所に書くと、名前を変えたとき片方だけ古くなる。
  */
-export const TAB_LABELS: Record<TabId, string> = Object.fromEntries(
+export const TAB_LABELS: Record<NavItemId, string> = Object.fromEntries(
   ITEMS.map((i) => [i.id, i.label]),
-) as Record<TabId, string>
+) as Record<NavItemId, string>
 
 const TSUNAMI_BADGE_COLOR: Record<NonNullable<Props['tsunamiGrade']>, string> = {
   MajorWarning: 'bg-purple-500',
@@ -98,6 +104,12 @@ interface Props {
   onTabChange: (tab: TabId) => void
   /** パネルが折りたたまれているか（表示中タブのボタンの状態表示に使う）。 */
   panelCollapsed: boolean
+  /** 設定の窓が開いているか（歯車のボタンの状態表示に使う） */
+  settingsOpen: boolean
+  /** 歯車のボタン。設定の窓を開け閉めする */
+  onToggleSettings: () => void
+  /** 歯車のボタンの要素。設定の窓を閉じたとき、フォーカスをここへ戻す */
+  settingsButtonRef: RefObject<HTMLButtonElement>
   /** ナビの津波アイコンに付ける印の等級。津波予報だけのときは `Forecast`。発表中の津波が無ければ null。 */
   tsunamiGrade: 'MajorWarning' | 'Warning' | 'Watch' | 'Forecast' | null
   eewLevel: 0 | 1 | 2 | null
@@ -106,8 +118,9 @@ interface Props {
 // アイコンボタンによるナビゲーション。左右分割時（side 以上）は右端で縦並び、
 // 縦積み時（スマホ縦など）は最下部で横並びになる。
 // 表示中のタブをもう一度押すとパネルの折りたたみをトグルする（挙動は App 側）。
+// 歯車だけはタブを切り替えず、設定の窓を開け閉めする。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const IconNav = memo(function IconNav({ activeTab, onTabChange, panelCollapsed, tsunamiGrade, eewLevel }: Props) {
+export const IconNav = memo(function IconNav({ activeTab, onTabChange, panelCollapsed, settingsOpen, onToggleSettings, settingsButtonRef, tsunamiGrade, eewLevel }: Props) {
   return (
     <nav
       className="flex flex-row side:flex-col items-center justify-center side:justify-start gap-1 p-1.5 bg-panel border-t side:border-t-0 side:border-l border-border shrink-0"
@@ -122,11 +135,30 @@ export const IconNav = memo(function IconNav({ activeTab, onTabChange, panelColl
       }}
     >
       {ITEMS.map((item) => {
-        const isActive = activeTab === item.id
+        if (item.id === 'settings') {
+          return (
+            <button
+              key={item.id}
+              ref={settingsButtonRef}
+              onClick={onToggleSettings}
+              aria-label={item.label}
+              aria-haspopup="dialog"
+              aria-expanded={settingsOpen}
+              title={item.label}
+              className={`relative w-11 h-11 flex items-center justify-center rounded-lg transition-colors ${
+                settingsOpen ? 'bg-white/15 text-white' : 'text-secondary hover:text-white hover:bg-white/5'
+              }`}
+            >
+              {ICONS[item.id]}
+            </button>
+          )
+        }
+        const tab = item.id
+        const isActive = activeTab === tab
         return (
           <button
             key={item.id}
-            onClick={() => onTabChange(item.id)}
+            onClick={() => onTabChange(tab)}
             // ボタン名（aria-label）は状態で変えない。折りたたみの状態は aria-expanded が伝える
             // 役割を持つため、名前まで変えると読み上げも DOM 検索も不安定になる。
             aria-label={item.label}

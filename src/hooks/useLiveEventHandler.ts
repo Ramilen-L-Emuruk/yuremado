@@ -600,7 +600,7 @@ export function capSpeechWait<T>(
  * 設定から読み上げのオプションを組み立てる。
  *
  * **設定を足したらここへも足すこと。** 読み上げ文を作る関数はこのオブジェクトしか見ないので、
- * ここで拾い漏らすと設定タブの項目が何も効かない（型検査には掛からない ―― `TtsSpeechOptions`
+ * ここで拾い漏らすと設定の窓の項目が何も効かない（型検査には掛からない ―― `TtsSpeechOptions`
  * の詳細度の項目はすべて省略可で、省略時は従来の挙動になるため）。
  */
 export function ttsRegionOptions(settings: AppSettings): TtsSpeechOptions {
@@ -3298,7 +3298,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    */
   const speakTelegramText = (event: LiveEvent) => {
     // 読み上げは soundEnabled と独立に voicevoxEnabled のみで判定する（AUD-7）。
-    // **このガードを省かない。** 設定タブの「読み上げ設定」は voicevoxEnabled が真のときしか
+    // **このガードを省かない。** 設定の窓の「読み上げ設定」は voicevoxEnabled が真のときしか
     // 出ないが、`ttsReadTelegramText` はそれとは独立に永続化される。読み上げを切った端末で
     // 有効な値が残っていると、マスタートグルを切ったのに声が出る。
     if (!settings.voicevoxEnabled) return

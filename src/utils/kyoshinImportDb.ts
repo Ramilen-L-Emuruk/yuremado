@@ -23,12 +23,12 @@ interface StoredKyoshinEvent {
   importId: string
   archiveId: string
   originTimeJst: string
-  /** 設定タブでの表示用（インポート日時順の並び替え等には使わない）。 */
+  /** 設定の窓での表示用（インポート日時順の並び替え等には使わない）。 */
   importedAtMs: number
   event: EventResult
 }
 
-/** 保存に失敗したか。設定タブが「0件」と「記録できていない」を見分けるために使う。 */
+/** 保存に失敗したか。設定の窓が「0件」と「記録できていない」を見分けるために使う。 */
 let failed = false
 export function hasImportStorageError(): boolean {
   return failed
@@ -165,7 +165,7 @@ export async function listImportedEvents(archiveId: string): Promise<EventResult
     .map((r) => r.event)
 }
 
-/** 指定アーカイブに紐づく件数。設定タブの表示用のため、読み取りに失敗した場合は0件扱いにする
+/** 指定アーカイブに紐づく件数。設定の窓の表示用のため、読み取りに失敗した場合は0件扱いにする
  * （失敗自体は`hasImportStorageError()`で別途可視化する）。 */
 export async function countImportedEvents(archiveId: string): Promise<number> {
   try {

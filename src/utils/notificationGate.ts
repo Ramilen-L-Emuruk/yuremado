@@ -1,6 +1,6 @@
 import type { AppSettings } from '../hooks/useSettings'
 
-/** ブラウザ通知の種類。設定タブの種類ごとのトグルと 1 対 1 で対応する。 */
+/** ブラウザ通知の種類。設定の窓の種類ごとのトグルと 1 対 1 で対応する。 */
 export type NotificationKind = 'quake' | 'detection' | 'eew' | 'tsunami' | 'nankai'
 
 type NotificationSettings = Pick<

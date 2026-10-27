@@ -18,7 +18,7 @@
 
 ### 表の読み方
 
-- **場所**は、`src/` からの相対パスと行番号。括弧の中は届き方（画面・地図の吹き出し・ホバー・凡例・通知・ウィンドウタイトル・共有カード・読み上げ・設定タブ）
+- **場所**は、`src/` からの相対パスと行番号。括弧の中は届き方（画面・地図の吹き出し・ホバー・凡例・通知・ウィンドウタイトル・共有カード・読み上げ・設定の窓）
 - **文言**と**場所**は直す前の姿（直した行の場所は、直す前のコードの行を指す）。直した行は「候補」の欄に「直した（日付）」と直した後の文言を書く
 - **種類**は次の 4 つ
   - **言い換え**: 公式の語があるのに、別の語を使っている
@@ -46,9 +46,9 @@
 
 | # | 文言 | 場所 | 指している値 | 公式の語（出典） | 種類 | 確かさ | 候補 |
 |---|---|---|---|---|---|---|---|
-| B1 | `予想最大震度`・`最大予想震度`・`予想震度 {震度}`・`予想震度なし`・`単独点処理のため、予想震度なし。` | `components/RealtimeTab/index.tsx:91・535・806`（画面・ホバー）、`components/Map/EewEpicentersGL.tsx:176`・`components/Map/EewRegionFillGL.tsx:123`（地図の吹き出し）、`utils/shareCardContent.ts:202`・`utils/shareCard.ts:115`（共有カード）、`components/SettingsTab/index.tsx:1924・1927・1932・1938`（設定タブ）、`utils/ttsText.ts:1437-1441・1462`（読み上げ） | `Body/Intensity/Forecast/ForecastInt`（`services/dmdataParser.ts:1227`）、区域は `Pref/Area/ForecastInt`（同 `:1284`） | 【最大予測震度】eq:1983・2049 | 言い換え（語順も画面の中で揺れている） | 高 | `最大予測震度`・区域は `予測震度`・`予測震度なし` |
+| B1 | `予想最大震度`・`最大予想震度`・`予想震度 {震度}`・`予想震度なし`・`単独点処理のため、予想震度なし。` | `components/RealtimeTab/index.tsx:91・535・806`（画面・ホバー）、`components/Map/EewEpicentersGL.tsx:176`・`components/Map/EewRegionFillGL.tsx:123`（地図の吹き出し）、`utils/shareCardContent.ts:202`・`utils/shareCard.ts:115`（共有カード）、`components/SettingsTab/index.tsx:1924・1927・1932・1938`（設定の窓）、`utils/ttsText.ts:1437-1441・1462`（読み上げ） | `Body/Intensity/Forecast/ForecastInt`（`services/dmdataParser.ts:1227`）、区域は `Pref/Area/ForecastInt`（同 `:1284`） | 【最大予測震度】eq:1983・2049 | 言い換え（語順も画面の中で揺れている） | 高 | `最大予測震度`・区域は `予測震度`・`予測震度なし` |
 | B2 | `最大震度{震度}予想` | `hooks/useAlertTitle.ts:53`・`hooks/useLiveEventHandler.ts:1268`（ウィンドウタイトル）、`hooks/useLiveEventHandler.ts:3876`（通知） | B1 と同じ | 【最大予測震度】eq:1983 | 言い換え | 高 | `最大予測震度{震度}`（ウィンドウタイトルは外部の監視が文字の一致で読むので、変えると影響がある。→ `spec/eew-spec.md` §3） |
-| B3 | `予想長周期地震動 階級{n}`・`予想 長周期地震動{n}`・`予想最大階級{n}`・凡例の `緊急地震速報の予想` | `components/RealtimeTab/index.tsx:576`（画面）、`components/Map/EewLpgmRegionFillGL.tsx:60`（地図の吹き出し）、`components/MapLegend/legendBlocks.ts:294・301`（凡例）、`components/SettingsTab/index.tsx:1778`（設定タブ）、`utils/ttsText.ts:1474`（読み上げ。「長周期地震動」も落としている） | `ForecastLgInt`（`services/dmdataParser.ts:1242`、区域は `:1286`） | 【最大予測長周期地震動階級】eq:1996・2063 | 言い換え | 高 | `最大予測長周期地震動階級{n}`・凡例は `緊急地震速報の予測` |
+| B3 | `予想長周期地震動 階級{n}`・`予想 長周期地震動{n}`・`予想最大階級{n}`・凡例の `緊急地震速報の予想` | `components/RealtimeTab/index.tsx:576`（画面）、`components/Map/EewLpgmRegionFillGL.tsx:60`（地図の吹き出し）、`components/MapLegend/legendBlocks.ts:294・301`（凡例）、`components/SettingsTab/index.tsx:1778`（設定の窓）、`utils/ttsText.ts:1474`（読み上げ。「長周期地震動」も落としている） | `ForecastLgInt`（`services/dmdataParser.ts:1242`、区域は `:1286`） | 【最大予測長周期地震動階級】eq:1996・2063 | 言い換え | 高 | `最大予測長周期地震動階級{n}`・凡例は `緊急地震速報の予測` |
 | B4 | `予想が大きくなりました（マグニチュードが変わったため）` ほか（大きくなりました／小さくなりました／変わりました × 5 つの理由） | `utils/eew.ts:1293-1320`（画面の帯） | `Appendix/MaxIntChange`・`MaxLgIntChange`・`MaxIntChangeReason`（`services/dmdataParser.ts:1122-1124`） | 【最大予測震度変化】eq:2012・【最大予測値変化の理由】eq:2020（「主としてＭが変化したため(1.0 以上)」など） | 言い換え（「主として」が落ち、理由が 1 つだけのように読める） | 高 | `最大予測震度が大きくなりました（主としてＭが変化したため）` |
 | B5 | `秒後に到達予想` | `components/RealtimeTab/index.tsx:1049`（画面） | 主要動の到達予測時刻 | 【主要動の到達予測時刻】eq:2078（同じ画面の見出しは「予測」） | 言い換え | 低 | `秒後に到達予測` |
 
@@ -60,12 +60,12 @@
 | C2 | `時刻不明`（PLUM 法の区域） | `components/RealtimeTab/index.tsx:881・810`（画面・ホバー） | PLUM 法の区域。電文の ArrivalTime は「PLUM 法でその震度を初めて予測した時刻」（eq:2082） | コード表（警報コード 09・19 の備考）「主要動の到達予想なし（PLUM 法による予想）」 | 別の値に公式名（時刻は電文にあり、不明ではない） | 高 | `到達予想なし（PLUM法）` |
 | C3 | `（震源未確定）` | `components/RealtimeTab/index.tsx:660・1020`（画面） | `Earthquake/Condition`＝「仮定震源要素」（`services/dmdataParser.ts:1422`） | 「仮定震源要素」eq:1893・【震源要素の補足情報】eq:1899（地図の吹き出しは公式の語を併記している） | 言い換え | 高 | `（仮定震源要素）` |
 | C4 | `震源調査中` | `components/RealtimeTab/index.tsx:657・1019`（画面）、`components/Map/EewEpicentersGL.tsx:169`（地図の吹き出し。仮定震源要素の報で M・深さの代わりに出す） | 震央地名が空の報・仮定震源要素の報 | 確かめていない（座標がすべて不明なときの表現は「震源要素不明」eq:1921） | 公式の名なし | 低 | 吹き出しは行を出さない |
-| C5 | `深発地震のため` | `components/RealtimeTab/index.tsx:78`（画面）、`components/SettingsTab/index.tsx:1927`（設定タブ）、`utils/ttsText.ts:1438`（読み上げ） | 震源が深く予測震度が載らない報 | 「震源の深さが 150ｋm より深く推定された場合」eq:1966（資料に「深発」は 0 件） | 公式の名なし | 低 | `震源が深いため` |
-| C6 | `緊急地震速報（特別警報）` | `components/RealtimeTab/index.tsx:344`（画面）、`hooks/useLiveEventHandler.ts:3872`（通知）、`components/SettingsTab/index.tsx:1842・1945`（設定タブ） | アプリが「警報で、最大予測震度 6弱以上か長周期地震動階級 4」から判定した区分 | web の区分表: 区分は「地震動特別警報」、発表する情報の名称は「緊急地震速報（警報）」又は「緊急地震速報」 | 公式の名なし（その名前の情報は無い） | 高 | 見出し `緊急地震速報（警報）` ＋ 札 `地震動特別警報` |
+| C5 | `深発地震のため` | `components/RealtimeTab/index.tsx:78`（画面）、`components/SettingsTab/index.tsx:1927`（設定の窓）、`utils/ttsText.ts:1438`（読み上げ） | 震源が深く予測震度が載らない報 | 「震源の深さが 150ｋm より深く推定された場合」eq:1966（資料に「深発」は 0 件） | 公式の名なし | 低 | `震源が深いため` |
+| C6 | `緊急地震速報（特別警報）` | `components/RealtimeTab/index.tsx:344`（画面）、`hooks/useLiveEventHandler.ts:3872`（通知）、`components/SettingsTab/index.tsx:1842・1945`（設定の窓） | アプリが「警報で、最大予測震度 6弱以上か長周期地震動階級 4」から判定した区分 | web の区分表: 区分は「地震動特別警報」、発表する情報の名称は「緊急地震速報（警報）」又は「緊急地震速報」 | 公式の名なし（その名前の情報は無い） | 高 | 見出し `緊急地震速報（警報）` ＋ 札 `地震動特別警報` |
 | C7 | `緊急地震速報の発報時は予報円も表示します` | `components/RealtimeTab/index.tsx:1387`（画面） | — | web は「発表」 | 言い換え | 高 | `緊急地震速報が発表されたときは…` |
 | C8 | `予報円`・`緊急地震速報の予報円` | `components/RealtimeTab/index.tsx:1387`（画面）、`components/MapLegend/legendBlocks.ts:351`（凡例） | アプリが走時表から描く P 波・S 波の波面 | 確かめていない（気象庁の「予報円」は台風の語） | 公式の名なし | 低 | — |
-| C9 | `地震動予報（単独点処理）`・`単独点処理テスト` | `components/SettingsTab/index.tsx:1924-1925`（設定タブ） | 仮定震源要素の報そのもの | 「仮定震源要素」eq:1893（「単独点処理」は、予測震度が載らない理由の語として承認されている。→ F） | 別の値に公式名 | 高 | `地震動予報（仮定震源要素）`・`仮定震源要素テスト` |
-| C10 | `震度4程度（予報域）` | `components/SettingsTab/index.tsx:1916`（設定タブ） | テストデータの予報の報 | 資料に「予報域」は無い | 公式の名なし | 低 | `震度4程度（予報）` |
+| C9 | `地震動予報（単独点処理）`・`単独点処理テスト` | `components/SettingsTab/index.tsx:1924-1925`（設定の窓） | 仮定震源要素の報そのもの | 「仮定震源要素」eq:1893（「単独点処理」は、予測震度が載らない理由の語として承認されている。→ F） | 別の値に公式名 | 高 | `地震動予報（仮定震源要素）`・`仮定震源要素テスト` |
+| C10 | `震度4程度（予報域）` | `components/SettingsTab/index.tsx:1916`（設定の窓） | テストデータの予報の報 | 資料に「予報域」は無い | 公式の名なし | 低 | `震度4程度（予報）` |
 
 ## D. 津波
 
@@ -84,16 +84,16 @@
 | D11 | `観測 {hh:mm} 時点` | `components/TsunamiTab/index.tsx:1468`（画面） | `Head/TargetDateTime` | 【基点時刻】。津波の観測値では「津波の観測状況を確定した時刻」eq:71-72 | 言い換え | 低 | — |
 | D12 | `震源: {震央地名}` | `components/TsunamiTab/index.tsx:1555`（画面） | `Hypocenter/Area/DetailedName`、無ければ `Name` | 【震央地名】eq:1193・【詳細震央地名】eq:1228 | 言い換え | 低 | `震央地名: ` |
 | D13 | `津波情報 解除`・`この津波情報は解除されました`・`津波情報 取消`・`この津波情報は誤って発表されたため取り消されました` | `utils/tsunamiCancelLabel.ts:14-15`（画面） | 津波警報・注意報・予報の全解除・取消 | 「津波情報」は津波警報・注意報・予報とは別の情報の名前（eq:25）。総称は「津波警報等」。全解除の通知は「津波警報等の解除」と書いている | 別の値に公式名 | 高 | `津波警報等 解除`・`津波警報等 取消` |
-| D14 | `津波情報より`（地震カードが津波の電文から借りた震源の出どころ） | `utils/borrowFromTsunami.ts:32` → `components/EarthquakeTab/EarthquakeCard.tsx:516`（画面）、`components/SettingsTab/index.tsx:1993`（設定タブ） | 原因地震を借りた津波の電文（津波警報・注意報・予報を含む） | eq:25 | 別の値に公式名 | 高 | `津波警報等より` |
-| D15 | `津波情報の発表中はデフォルトタブを津波情報にします` | `components/SettingsTab/index.tsx:1461`（設定タブ） | 津波警報・注意報・予報が出ているか | eq:25 | 別の値に公式名 | 低 | — |
+| D14 | `津波情報より`（地震カードが津波の電文から借りた震源の出どころ） | `utils/borrowFromTsunami.ts:32` → `components/EarthquakeTab/EarthquakeCard.tsx:516`（画面）、`components/SettingsTab/index.tsx:1993`（設定の窓） | 原因地震を借りた津波の電文（津波警報・注意報・予報を含む） | eq:25 | 別の値に公式名 | 高 | `津波警報等より` |
+| D15 | `津波情報の発表中はデフォルトタブを津波情報にします` | `components/SettingsTab/index.tsx:1461`（設定の窓） | 津波警報・注意報・予報が出ているか | eq:25 | 別の値に公式名 | 低 | — |
 | D16 | タブ名 `津波情報`・`津波情報はありません` | `components/IconNav.tsx:67`・`components/TsunamiTab/index.tsx:1370`（画面） | タブ全体 | eq:25 | 別の値に公式名（総称に、ある情報の名前を当てている） | 低 | — |
 | D17 | 凡例・ホバーの `津波予報` | `utils/tsunamiStyle.ts:11-12` → `components/Map/TsunamiLinesGL.tsx:77`・`components/MapLegend/legendBlocks.ts:368`（凡例・地図のホバー） | `Category/Kind/Code`＝津波予報 | 「津波予報（若干の海面変動）」eq:59（カードの見出しと通知は正式名） | 短縮 | 高 | `津波予報（若干の海面変動）` |
 | D18 | `予想の高さを数値で発表・引き上げ` | `utils/tsunami.ts:1328`（画面） | 予報の `MaxHeight/Condition`＝重要 | 「予想される津波の高さが最初に数値で発表された場合や…上方修正された場合」eq:1051-1053 | 言い換え（等級の「引き上げ」と同じ語になる） | 高 | `予想される津波の高さを数値で発表・上方修正` |
 | D19 | `大津波警報・津波警報の基準超`（沖合の行にも出る） | `utils/tsunami.ts:1314`（画面） | `MaxHeight/Condition`＝重要 | 沿岸は「…の基準を超え」eq:1322。**沖合の観測は「新たに大津波警報・津波警報に相当する高い津波が観測された」**eq:1687 | 言い換え（沖合の行だけ） | 高 | 沖合の行は `大津波警報・津波警報相当` |
 | D20 | `現在、津波警報・注意報は発表されていません。` | `components/TsunamiTab/index.tsx:1370-1371`（画面） | 発表なし | 固定付加文 0107「現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。」（コード表） | 短縮（大津波警報が抜ける） | 高 | 0107 の文 |
 | D21 | `{n} 区域` | `utils/shareCardContent.ts:173`（共有カード） | 津波予報区の数 | 【津波予報区】 | 短縮 | 低 | `{n} 津波予報区` |
-| D22 | `津波観測点の読み上げ件数` | `components/SettingsTab/index.tsx:1767`（設定タブ） | 潮位観測点 | 【潮位観測点】（凡例は公式の語を使っている） | 言い換え | 低 | `潮位観測点の読み上げ件数` |
-| D23 | `等級` | `components/SettingsTab/index.tsx:1887・2021・2031・2039` ほか津波タブ（設定タブ・画面） | `Category/Kind` | 【津波警報等の種類】 | 言い換え | 低 | — |
+| D22 | `津波観測点の読み上げ件数` | `components/SettingsTab/index.tsx:1767`（設定の窓） | 潮位観測点 | 【潮位観測点】（凡例は公式の語を使っている） | 言い換え | 低 | `潮位観測点の読み上げ件数` |
+| D23 | `等級` | `components/SettingsTab/index.tsx:1887・2021・2031・2039` ほか津波タブ（設定の窓・画面） | `Category/Kind` | 【津波警報等の種類】 | 言い換え | 低 | — |
 
 ## E. 地震情報・長周期地震動・南海トラフ・電文タブ・地図
 
@@ -106,9 +106,9 @@
 | E5 | 画面 `津波の心配なし` | `utils/formatters.ts:309`（画面） | 固定付加文 0215 | 「この地震による津波の心配はありません。」 | 短縮 | 低 | — |
 | E6 | 南海トラフ地震臨時情報の段階ごとの文。調査終了 `…発生可能性は通常の範囲内でした。`・巨大地震警戒 `…直ちに防災対応をとってください。`・巨大地震注意 `…防災対応の確認をしてください。`・後発地震注意情報 `…発生可能性が平常時より高まっています。` | `utils/ttsText.ts:3608・3611・3614・3617・3745`（読み上げ） | 情報番号の段階だけ（文はアプリが書いている） | 気象庁の文例は「…平常時に比べて相対的に高まっていると考えられます」「今後の政府や自治体などからの呼びかけ等に応じた防災対応をとってください」eq:3150-3158。資料に「通常の範囲」「直ちに」は無い | 言い換え（気象庁が言っていない判断・行動の指示） | 高 | 段階名だけを読み、説明は電文の本文に任せる |
 | E7 | `気象庁からの補足` | `components/EarthquakeTab/EarthquakeCard.tsx:1129`（画面） | 長周期地震動の付加文一式 | 【付加文】eq:2605 | 言い換え | 高 | `付加文` |
-| E8 | `次の情報` | `components/SpecialInfoBanner/index.tsx:196`（画面） | `Body/NextAdvisory` | 【次回発表予定】eq:2635（設定タブはこの語を使っている） | 言い換え | 高 | `次回発表予定` |
+| E8 | `次の情報` | `components/SpecialInfoBanner/index.tsx:196`（画面） | `Body/NextAdvisory` | 【次回発表予定】eq:2635（設定の窓はこの語を使っている） | 言い換え | 高 | `次回発表予定` |
 | E9 | `この種類の情報について（開く）` | `components/SpecialInfoBanner/index.tsx:206`（画面） | `Body/EarthquakeInfo/Appendix` | 【参考情報】eq:2634 | 言い換え | 高 | `参考情報（開く）` |
-| E10 | `要約` | `components/SettingsTab/index.tsx:466・469・472`（設定タブ） | `Head/Headline/Text` | 【見出し文】eq:96 | 言い換え | 高 | `見出し文` |
+| E10 | `要約` | `components/SettingsTab/index.tsx:466・469・472`（設定の窓） | `Head/Headline/Text` | 【見出し文】eq:96 | 言い換え | 高 | `見出し文` |
 | E11 | 帯の札 `お知らせ`・`地震回数`・`解説情報`（電文に名前が無いときの代わりの名） | `components/SpecialInfoBanner/index.tsx:340・392・448`（画面）、`services/dmdataParser.ts:3025` | 地震・津波に関するお知らせ・地震回数に関する情報・南海トラフ地震関連解説情報 | eq:27-29 の情報名 | 短縮 | 低 | — |
 | E12 | `揺れの大きさ 最大 {n} cm/s`・`揺れの周期ごと（階級・揺れの大きさ）` | `components/Map/LpgmPointsGL.tsx`（揺れの大きさ 最大）・`utils/lpgm.ts` の `LPGM_PERIODS_HEADING`（地図の吹き出しと地震カードの観測点の行） | 観測点の `Sva`・`SvaPerPeriod` | 「絶対速度応答スペクトルの…最大値」・「周期別階級」eq:2587 | 言い換え | 高 | — |
 | E13 | `震度が小さくても高層階が大きく揺れた地域があります` | `utils/lpgm.ts:87`（画面） | `LgCategory` の 2・4 | 2 は「長周期地震動階級１以上が観測された地域のうち最大震度が４以下となる地域が存在」eq:2552-2556 | 言い換え（2 のときは強すぎる） | 低 | 電文の条件どおりの文 |
@@ -122,7 +122,7 @@
 | E21 | 電文タブの `訓練`（試験の報にも出る） | `components/TelegramTab/index.tsx:316`（画面） | DMDATA の `head.test`（真偽値で、訓練と試験を分けられない。`services/dmdata.ts:941`） | `Control/Status`【運用種別】の値は「通常」「訓練」「試験」eq:47 | 別の値に公式名 | 高 | 運用種別の値をそのまま（電文を読んだ結果を行に持たせる必要がある）。それまでは `訓練・試験` |
 | E22 | 長周期地震動の周期帯の単位 `秒`（`2秒` ほか） | `utils/lpgm.ts:99-100` → `components/Map/LpgmPointsGL.tsx:104`（地図の吹き出し） | `LgIntPerPeriod@PeriodUnit` | 単位は「秒台」eq:2589 | 短縮 | 低 | `2秒台` |
 | E23 | 電文タブの `震源情報` | `components/TelegramTab/labels.ts:33`（画面） | 震源に関する情報 | 「地震情報（震源に関する情報）」eq:27 | 短縮 | 低 | `震源に関する情報` |
-| E24 | 履歴アーカイブ 4 本の `description`（「…頃…を震源とするM6.5の地震（前震）が発生。」など） | `public/data/historical-archives/index.json`（設定タブ） | 利用者向けの説明 | 「前震」「本震」は電文の語ではない。時刻の値は確かめていない | 言い換え | 低 | — |
+| E24 | 履歴アーカイブ 4 本の `description`（「…頃…を震源とするM6.5の地震（前震）が発生。」など） | `public/data/historical-archives/index.json`（設定の窓） | 利用者向けの説明 | 「前震」「本震」は電文の語ではない。時刻の値は確かめていない | 言い換え | 低 | — |
 
 ## F. わざと外している語の承認の記録
 

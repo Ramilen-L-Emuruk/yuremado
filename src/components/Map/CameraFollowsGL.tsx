@@ -69,7 +69,7 @@ function eewHypocenters(eews: EEWAlert[]): LatLng[] {
 // zoomstart/dragstart を起点に「ユーザーが手動操作した」とみなし、一定時間
 // 操作が無ければ自動的に解除する。実体（リスナー登録・タイマー・アプリ起点イベントの除外）は
 // gl/camera.ts の subscribeUserInteraction が map 単位で一元管理し、複数の Fit* コンポーネントが
-// 同じ map を購読しても zoomstart/dragstart の登録は 1 組だけになる。保持時間は設定タブの
+// 同じ map を購読しても zoomstart/dragstart の登録は 1 組だけになる。保持時間は設定の窓の
 // 「自動復帰までの時間」とは切り離した固定値（理由は gl/camera.ts の INTERACTION_HOLD_SEC）。
 // 戻り値は boolean の state（ref ではない）にしているのが要点: 保持時間の経過で
 // interacting が false に戻った瞬間、これを deps に含む呼び出し側の useEffect が再実行される。

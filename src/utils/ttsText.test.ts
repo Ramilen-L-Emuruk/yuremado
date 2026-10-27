@@ -3264,7 +3264,7 @@ describe('estimatedIntensityToText', () => {
   })
 })
 
-// 設定タブの VOICEVOX 試聴（`voicevoxPreviewText`）。
+// 設定の窓の VOICEVOX 試聴（`voicevoxPreviewText`）。
 //
 // **実運用の緊急地震速報と同じ関数から組み続けていること**を固定する。文字列を直接書く形へ
 // 戻すと、緊急地震速報の文型を変えたときに試聴だけ古い形で残り、試聴で聞いた鳴り方と実際の
@@ -3275,7 +3275,7 @@ describe('estimatedIntensityToText', () => {
 //   正   … 1 つ目が第 1 フェーズ（`eewAlertToText`）と同じ文
 //   対照 … 地震情報の文型は含まない
 //   安全弁… 発話を 2 つに分けたまま保つ（繋ぐと実運用に無い間が入る）
-describe('設定タブの試聴文', () => {
+describe('設定の窓の試聴文', () => {
   // 試聴文が想定している緊急地震速報。震源名と予想震度は実装側と対で決めているので、
   // 変えるときは両方を直す（片方だけ変えればここが落ちる）。
   const EXPECTED_PREVIEW_EEW = { earthquake: { hypocenter: { name: '三陸沖' } } } as unknown as EEWAlert

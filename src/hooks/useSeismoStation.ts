@@ -283,7 +283,7 @@ export interface SeismoStations {
    */
   readonly urlUnusable: boolean
   /**
-   * この接続先で届いた、読めない押し出しの累計（設定タブの自作地震計の行に出す。2026-10-22 選択「設定タブに出す
+   * この接続先で届いた、読めない押し出しの累計（設定の窓の自作地震計の行に出す。2026-10-22 選択「設定タブに出す
    * (Recommended)」。地図は 09-30 の決定どおり出さない）。**接続先が変わったら 0 へ戻す。**
    *
    * **1 件ごとには差し替えない。** 版が食い違っている間は毎秒 10 件とも読めないので、受けるたびに描き直すと
@@ -317,9 +317,9 @@ export interface SeismoStations {
 }
 
 export interface UseSeismoStationOptions {
-  /** 設定タブのトグル。**切れていれば繋がない。** */
+  /** 設定の窓のトグル。**切れていれば繋がない。** */
   readonly enabled: boolean
-  /** ホストの基点 URL（設定タブの入力）。 */
+  /** ホストの基点 URL（設定の窓の入力）。 */
   readonly baseUrl: string
   /**
    * 波形も要るか。**変えると繋ぎ直す。**

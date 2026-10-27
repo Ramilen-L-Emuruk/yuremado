@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
 import { useReloadSchedule, type ReloadScheduleInput } from './useReloadSchedule'
 import { installAppUpdater, type AppUpdateSnapshot, type AppUpdater } from '../services/appUpdate'
-import { RELOAD_COUNTDOWN_SEC, RELOAD_POSTPONE_MS } from '../utils/appUpdateGate'
+import { RELOAD_COUNTDOWN_SEC, RELOAD_POSTPONE_MS, SETTINGS_DIALOG_ATTR, SETTINGS_IDLE_HOLD_LIMIT_MS } from '../utils/appUpdateGate'
 import { markReleaseNotesOpen } from '../utils/releaseNotesOpen'
 
 function fakeUpdater(snapshot: AppUpdateSnapshot) {
@@ -33,7 +33,7 @@ function fakeUpdater(snapshot: AppUpdateSnapshot) {
 }
 
 const WAITING: AppUpdateSnapshot = { waiting: true, newVersion: '5.70.0', autoApply: true }
-const QUIET: ReloadScheduleInput = { alertActive: false, replaying: false, periodicReloadEnabled: false }
+const QUIET: ReloadScheduleInput = { alertActive: false, replaying: false, periodicReloadEnabled: false, settingsOpen: false }
 
 function render(snapshot: AppUpdateSnapshot, input: ReloadScheduleInput = QUIET) {
   const f = fakeUpdater(snapshot)
@@ -118,5 +118,100 @@ describe('useReloadSchedule', () => {
     act(() => { t.set({ waiting: false, newVersion: null, autoApply: true }) })
     expect(t.hook.result.current.countdown).toBeNull()
     expect(t.hook.result.current.gate).toEqual({ kind: 'none' })
+  })
+
+  it('設定の窓を開いたまま操作が無く 30 分経ったら、窓の後ろで秒読みする（正）', () => {
+    const t = render(WAITING, { ...QUIET, settingsOpen: true })
+    expect(t.hook.result.current.gate).toEqual({ kind: 'held', reason: 'update', cause: 'settings' })
+    act(() => { vi.advanceTimersByTime(SETTINGS_IDLE_HOLD_LIMIT_MS - 60_000) })
+    expect(t.hook.result.current.countdown).toBeNull()
+    act(() => { vi.advanceTimersByTime(60_000 + 30_000) })
+    expect(t.hook.result.current.countdown).toBe(RELOAD_COUNTDOWN_SEC)
+  })
+
+  it('期限の手前で窓の中を触ったら、そこから 30 分数え直す（対照）', () => {
+    const t = render(WAITING, { ...QUIET, settingsOpen: true })
+    act(() => { vi.advanceTimersByTime(10_000) })
+    act(() => { window.dispatchEvent(new Event('keydown')) })
+    // 開いてから 30 分 5 秒。最後の操作からはまだ 30 分経っていない
+    act(() => { vi.advanceTimersByTime(SETTINGS_IDLE_HOLD_LIMIT_MS - 5_000) })
+    expect(t.hook.result.current.countdown).toBeNull()
+    expect(t.hook.result.current.gate).toEqual({ kind: 'held', reason: 'update', cause: 'settings' })
+    // 最後の操作から 30 分を過ぎ、次の見直しが来たら秒読みへ
+    act(() => { vi.advanceTimersByTime(40_000) })
+    expect(t.hook.result.current.countdown).toBe(RELOAD_COUNTDOWN_SEC)
+  })
+
+  it('窓の後ろで秒読みしている間に窓の中を触ったら、秒読みを捨ててまた待つ', () => {
+    const t = render(WAITING, { ...QUIET, settingsOpen: true })
+    act(() => { vi.advanceTimersByTime(SETTINGS_IDLE_HOLD_LIMIT_MS + 30_000) })
+    expect(t.hook.result.current.countdown).toBe(RELOAD_COUNTDOWN_SEC)
+    act(() => { window.dispatchEvent(new Event('pointerdown')) })
+    expect(t.hook.result.current.countdown).toBeNull()
+    expect(t.hook.result.current.gate).toEqual({ kind: 'held', reason: 'update', cause: 'settings' })
+    tick(RELOAD_COUNTDOWN_SEC)
+    expect(t.updater.apply).not.toHaveBeenCalled()
+  })
+
+  it('一度開いて閉じ、開き直したら、待つ時間を初めから数える（境界）', () => {
+    const t = render(WAITING, { ...QUIET, settingsOpen: true })
+    act(() => { vi.advanceTimersByTime(SETTINGS_IDLE_HOLD_LIMIT_MS + 1_000) })
+    t.hook.rerender(QUIET)
+    t.hook.rerender({ ...QUIET, settingsOpen: true })
+    expect(t.hook.result.current.gate).toEqual({ kind: 'held', reason: 'update', cause: 'settings' })
+  })
+
+  it('見直しの合図より先に別の描き直しで待ちが明けても、窓の中を触れば秒読みを捨てる（安全弁）', () => {
+    const t = render(WAITING, { ...QUIET, settingsOpen: true })
+    // 最後の操作を開いて 10 秒後にずらし、期限（1810 秒）を見直し（30 秒ごと: 1800・1830 秒）の間に置く
+    act(() => { vi.advanceTimersByTime(10_000) })
+    act(() => { window.dispatchEvent(new Event('keydown')) })
+    act(() => { vi.advanceTimersByTime(SETTINGS_IDLE_HOLD_LIMIT_MS - 5_000) })
+    expect(t.hook.result.current.countdown).toBeNull()
+    act(() => { vi.advanceTimersByTime(10_000) })
+    // 期限は過ぎたが見直しはまだ。別の理由で描き直されて秒読みが始まる
+    t.hook.rerender({ ...QUIET, settingsOpen: true, periodicReloadEnabled: true })
+    expect(t.hook.result.current.countdown).toBe(RELOAD_COUNTDOWN_SEC)
+    act(() => { window.dispatchEvent(new Event('keydown')) })
+    expect(t.hook.result.current.countdown).toBeNull()
+  })
+
+  it('窓の外のスクロールは操作に数えない（追従のスクロールで待ちが延びない）', () => {
+    const t = render(WAITING, { ...QUIET, settingsOpen: true })
+    const outside = document.createElement('div')
+    document.body.appendChild(outside)
+    act(() => { vi.advanceTimersByTime(SETTINGS_IDLE_HOLD_LIMIT_MS - 60_000) })
+    act(() => { outside.dispatchEvent(new Event('scroll')) })
+    act(() => { vi.advanceTimersByTime(90_000) })
+    expect(t.hook.result.current.countdown).toBe(RELOAD_COUNTDOWN_SEC)
+    outside.remove()
+  })
+
+  it('窓の中のスクロールは操作に数える', () => {
+    const t = render(WAITING, { ...QUIET, settingsOpen: true })
+    const dialog = document.createElement('div')
+    dialog.setAttribute(SETTINGS_DIALOG_ATTR, '')
+    const pane = document.createElement('div')
+    dialog.appendChild(pane)
+    document.body.appendChild(dialog)
+    act(() => { vi.advanceTimersByTime(SETTINGS_IDLE_HOLD_LIMIT_MS - 60_000) })
+    act(() => { pane.dispatchEvent(new Event('scroll')) })
+    act(() => { vi.advanceTimersByTime(90_000) })
+    expect(t.hook.result.current.countdown).toBeNull()
+    dialog.remove()
+  })
+
+  it('窓の中の入力欄にフォーカスがあっても「入力中」で待たず、30 分で明ける（安全弁が窓の待ちを越えない）', () => {
+    const dialog = document.createElement('div')
+    dialog.setAttribute(SETTINGS_DIALOG_ATTR, '')
+    const input = document.createElement('input')
+    dialog.appendChild(input)
+    document.body.appendChild(dialog)
+    input.focus()
+    const t = render(WAITING, { ...QUIET, settingsOpen: true })
+    expect(t.hook.result.current.gate).toEqual({ kind: 'held', reason: 'update', cause: 'settings' })
+    act(() => { vi.advanceTimersByTime(SETTINGS_IDLE_HOLD_LIMIT_MS + 30_000) })
+    expect(t.hook.result.current.countdown).toBe(RELOAD_COUNTDOWN_SEC)
+    dialog.remove()
   })
 })

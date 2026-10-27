@@ -376,7 +376,7 @@ export const QUAKE_REPORT_SEQUENCE: TestTelegramScript = {
   anchor: 6,
   steps: [
     // 1 通目は**区域の最大震度を 1 段下げる**（5強 → 5弱）。3 通目で 5強が出そろうので、
-    // **ブラウザ通知の「最大震度更新」を実機で確かめられる**のはここだけ（→ 設定タブの説明文）。
+    // **ブラウザ通知の「最大震度更新」を実機で確かめられる**のはここだけ（→ 設定の窓の説明文）。
     // 実配信でも、速報の続報で区域の震度が上がる（観測が増えるため）。
     { file: NOTO_FORESHOCK.prompt1, headType: 'VXSE51', atMs: 0, rewrite: lowerAreaInts },
     { file: NOTO_FORESHOCK.destination, headType: 'VXSE52', atMs: REPORT_SEQUENCE_DELAY_MS },

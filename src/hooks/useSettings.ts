@@ -173,7 +173,7 @@ export interface AppSettings {
    * **URL とは別にトグルを持つ。** 入れた URL を覚えたまま一時的に切れるようにするため
    * （モバイル回線に切り替えたとき・ホストを再起動している間）。**そのぶん繋がらない
    * 理由が「切っている」「URL が空」「URL の形が違う」「ホストが応えない」の 4 通りに
-   * なる**ので、設定タブの接続状態はこの 4 つを言い分けて出す（1 つの
+   * なる**ので、設定の窓の接続状態はこの 4 つを言い分けて出す（1 つの
    * 「繋がりません」へ潰さない。→ `components/SettingsTab/seismoStatusLine.ts`）。
    */
   seismoEnabled: boolean
@@ -343,7 +343,7 @@ export const DEFAULTS: AppSettings = {
   seismoEnabled: false,
   seismoHostUrl: '',
   // **波形は既定で「揺れたときだけ」**（2026-10-23 選択「既定を「揺れたときだけ」にする」）。合成波形は毎秒 15 KB
-  // （1 日約 1.3 GB）を受け取り続けるので、設定タブの注記にその量を出す。自作地震計そのものが既定で無効なので、
+  // （1 日約 1.3 GB）を受け取り続けるので、設定の窓の注記にその量を出す。自作地震計そのものが既定で無効なので、
   // 繋いでいない端末では何も受け取らない。保存済みの「表示しない」は変えない。
   seismoWave: 'auto',
   seismoWaveCollapsedView: 'composite',
@@ -536,7 +536,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
 }
 
 /**
- * dev サーバーで自動投入する API キーを決める（検証のたびに設定タブへ貼り直す手間を省く経路）。
+ * dev サーバーで自動投入する API キーを決める（検証のたびに設定の窓へ貼り直す手間を省く経路）。
  *
  * 値を渡しているのは vite.config.ts の devApiKeyDefine で、dev サーバー・DMDSS 版・`--host` なし
  * のときだけ define する。ここで重ねて見るのは本番ビルドとテストの 2 つ。
@@ -561,7 +561,7 @@ function devApiKey(): string | undefined {
 }
 
 /**
- * 未設定のときだけ dev の API キーを差し込む。設定タブで手入力した値は踏み潰さない。
+ * 未設定のときだけ dev の API キーを差し込む。設定の窓で手入力した値は踏み潰さない。
  * 差し込むのは state の初期値だけで、localStorage には保存しない（保存側は stripDevApiKey）。
  *
  * export はテスト向け（ランタイムからは load 内でのみ使う）。

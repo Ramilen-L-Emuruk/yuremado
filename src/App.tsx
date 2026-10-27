@@ -35,6 +35,7 @@ import { RealtimeTab } from './components/RealtimeTab'
 import { useEewSpeakingCard } from './hooks/useEewSpeakingCard'
 import { TsunamiTab } from './components/TsunamiTab'
 import { SettingsTab } from './components/SettingsTab'
+import { SettingsDialog } from './components/SettingsTab/SettingsDialog'
 import { prefetchTestData } from './utils/testDataLoader'
 import { TelegramTab } from './components/TelegramTab'
 import { CatalogTab } from './components/CatalogTab'
@@ -215,8 +216,40 @@ export function App() {
    * あちらを要求のたび進めると、それを読んでいる 3 箇所の意味が変わる。
    */
   const recordedTabRef = useRef<TabId>(activeTab)
+  /**
+   * 設定の窓が開いているか（→ `components/SettingsTab/SettingsDialog.tsx`）。設定はタブではなく窓で、
+   * 開いている間も下のタブ（`activeTab`）と地図はそのまま残る。
+   *
+   * **画面を移すときは必ず閉じる**（下の `setActiveTab`）。自動のタブ移動（警報・揺れ検知・既定タブへの
+   * 復帰）とテストボタンは、設定を見ている人からも画面を移す（2026-10-27 ユーザー承認。選んだ選択肢
+   * 「窓を閉じて移る (Recommended)」）。
+   */
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  // 写しは `changeSettingsOpen` が先回りで書き、確定した値はここで追いかける。描画のたびに書き戻すと、
+  // 窓の開け閉めがまだ載っていない別の更新の描画が、先回りで書いた値を古い値へ戻しうる。
+  const settingsOpenRef = useRef(settingsOpen)
+  useLayoutEffect(() => {
+    settingsOpenRef.current = settingsOpen
+  }, [settingsOpen])
+  // ナビの歯車。窓を閉じたらフォーカスをここへ戻す（→ `SettingsDialog` の `returnFocusRef`）
+  const settingsButtonRef = useRef<HTMLButtonElement>(null)
+  /**
+   * 設定の窓の開け閉めはここだけを通す。録画ツール向けの記録（`overlay: 'settings'`）を、
+   * **実際に変わったときだけ** 1 回残すため。写しの ref をその場で書き換えるのは、同じティックで
+   * 2 度呼ばれたとき（自動のタブ移動が続けて来る等）に、描き直しを待たずに 2 度目を「変化なし」と見るため。
+   */
+  const changeSettingsOpen = useCallback((open: boolean, reason: string) => {
+    if (settingsOpenRef.current === open) return
+    settingsOpenRef.current = open
+    setSettingsOpen(open)
+    recordReplayEvent({ type: 'overlay', overlay: 'settings', open, reason, subject: null })
+  }, [])
   const setActiveTab = useCallback((tab: TabId) => {
     setPanelCollapsed(false)
+    // 移動先が今のタブと同じでも閉じる。画面を移す要求は「その画面を見せたい」という要求で、
+    // 窓が覆ったままでは見せられない。閉じた理由は後から追えるように残す（開くときの記録と対にする）。
+    if (settingsOpenRef.current) log.info(`[tab] 画面を移すので設定の窓を閉じる (移動先=${tab})`)
+    changeSettingsOpen(false, '画面の移動')
     // 録画ツール向けの記録（→ `docs/spec/recording-interface-spec.md`）。**実際に変わった
     // ときだけ残す** —— 同じタブへの要求も届くので（保持を張り直す・畳んだパネルを開き直す
     // ために呼ばれる）、そのまま記録すると変化していないものが変化として並ぶ。
@@ -229,7 +262,7 @@ export function App() {
       recordedTabRef.current = tab
     }
     setActiveTabState(tab)
-  }, [])
+  }, [changeSettingsOpen])
   const [selectedQuakeId, setSelectedQuakeId] = useState<string | null>(null)
   /**
    * 直前に選択していた地震（`selectedQuakeId` と同じ鍵）。**`selectQuake` が「別の地震へ移ったか」を
@@ -625,6 +658,25 @@ export function App() {
     forceTab(tab, TAB_PRIORITY.manual, 'hold')
   }, [forceTab])
 
+  /**
+   * ナビの歯車。設定の窓を開け閉めする。
+   *
+   * **開くときは手動のタブ選択と同じ保持（`TAB_PRIORITY.manual`）を張る**（タブを移さずに）。開いた直後に
+   * 届いた地震情報などが、窓を閉じて画面を奪わないため。保持より強い要求（EEW の新規発報など）は
+   * 窓を閉じて画面を移す。
+   */
+  const toggleSettings = useCallback(() => {
+    if (settingsOpenRef.current) {
+      changeSettingsOpen(false, '歯車')
+      return
+    }
+    log.info('[tab] 設定の窓を開く (手動選択)')
+    tabHoldRef.current = { until: Date.now() + TAB_HOLD_MS, priority: TAB_PRIORITY.manual, source: 'hold' }
+    changeSettingsOpen(true, '歯車')
+  }, [changeSettingsOpen])
+  // ×・Esc・窓の外（→ `SettingsDialog`）
+  const closeSettings = useCallback(() => changeSettingsOpen(false, '閉じる操作'), [changeSettingsOpen])
+
   // 地震情報・長周期地震動情報・津波の受信によるタブ移動（`useLiveEventHandler` から呼ぶ）。
   // 優先度は移動先から決める（earthquake=地震情報・長周期／tsunami=津波）。
   //
@@ -876,7 +928,7 @@ export function App() {
    *
    * **緊急地震速報は `eewUrgent`(6) ではなく `eewUpdate`(4) で出す。** 復元するのは新規発報では
    * なく**既に出ている報**で、手動選択（5）を奪う理由が無い——履歴の取得は非同期なので、
-   * 完了までに利用者が設定タブなどを開いていることがある。何も触っていなければ保持が空なので
+   * 完了までに利用者が設定の窓などを開いていることがある。何も触っていなければ保持が空なので
    * そのまま通る（`tabHoldRef` の初期値は `until: 0`）。
    *
    * **津波は `tsunamiPriorityDefault` に従う。** 「津波発表中はどのタブを既定にするか」を利用者が
@@ -943,17 +995,17 @@ export function App() {
     selectQuake(quakeKey, { explicit: true })
     setActiveTabByUser('earthquake')
   }, [selectQuake, setActiveTabByUser])
-  // テストボタンのデータ（`utils/testData.ts`）を、設定タブを開いた時点で読み始める。
+  // テストボタンのデータ（`utils/testData.ts`）を、設定の窓を開いた時点で読み始める。
   //
   // **押されてから読むと待ちが入る。** その待ちのあいだに初回履歴取得の応答が割り込むと、
   // いま流したテスト電文が上書きされうる（履歴の取り込みは表示中のイベントを置き換える）。
   //
-  // **設定タブ側の mount では駄目。** このアプリはタブを全部マウントしたまま表示だけ
-  // 切り替えるので、`SettingsTab` の `useEffect` は起動時に走ってしまい、分割した意味が
-  // 無くなる（実際にそうなっていて、初回表示で 864 KB の chunk を取りに行っていた）。
+  // **`SettingsTab` 側の mount では駄目。** 設定の窓は閉じている間も中身を外さずに隠すだけなので、
+  // `SettingsTab` の `useEffect` は起動時に走ってしまい、分割した意味が無くなる
+  // （実際にそうなっていて、初回表示で 864 KB の chunk を取りに行っていた）。
   useEffect(() => {
-    if (activeTab === 'settings') prefetchTestData()
-  }, [activeTab])
+    if (settingsOpen) prefetchTestData()
+  }, [settingsOpen])
 
   // SettingsTab の onTest オブジェクトはメモ化して同一参照を保つ（毎レンダー再生成すると
   // React.memo 化された SettingsTab が無駄に再レンダーされる）。
@@ -1011,7 +1063,7 @@ export function App() {
     tsunamiInfoRetraction: isDmdss ? simulateTsunamiInfoRetraction : undefined,
     estimatedIntensity: simulateEstimatedIntensity,
     notification:      () => {
-      // まとめて止めている間はテストも出さない（設定タブでは行ごと隠れるが、呼び出し口でも止める）
+      // まとめて止めている間はテストも出さない（設定の窓では行ごと隠れるが、呼び出し口でも止める）
       if (!settings.notifyEnabled) {
         log.info('[notify] ブラウザ通知をまとめて止めているので、テスト通知を出さない')
         return
@@ -1133,13 +1185,13 @@ export function App() {
   //
   // **接続先は入力が落ち着くのを待ってから使う。** ここは設定の変化で通信する数少ない経路で、
   // 生の値を依存に渡すと URL を手で打つあいだ 1 文字ごとに合成要求が飛ぶ（3 句ぶん × 打鍵数）。
-  // 通信前の検分も設定タブの接続確認と揃える——スキームの書き忘れのような直らない誤りで
+  // 通信前の検分も設定の窓の接続確認と揃える——スキームの書き忘れのような直らない誤りで
   // 叩き続けないため。
   const debouncedVoicevoxUrl = useDebouncedValue(settings.voicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS)
   useEffect(() => {
     if (!settings.voicevoxEnabled) return
     if (!isValidVoicevoxUrl(debouncedVoicevoxUrl)) {
-      // **黙って戻らない。** 設定タブは同じ条件を「接続先の URL が正しくありません」として
+      // **黙って戻らない。** 設定の窓は同じ条件を「接続先の URL が正しくありません」として
       // 画面に出すが、こちらは画面を持たないため、記録が無いと「作り置きが一度も効かない」
       // 原因を追えない（`warmFixedPhrases` 側の早期 return と同じ流儀）。
       // 値が変わるまで effect は走り直さないので、間引きは要らない。
@@ -1380,6 +1432,7 @@ export function App() {
     alertActive: title.alertTitle !== null,
     replaying: replayTimeOffset !== null,
     periodicReloadEnabled: settings.periodicReloadHours > 0,
+    settingsOpen,
   })
   const reloadCountdown = reloadSchedule.countdown
   const reloadCountdownReason = reloadSchedule.countdownReason
@@ -1417,13 +1470,14 @@ export function App() {
     return () => clearInterval(id)
   }, [connectionStatus, replayTimeOffset])
 
-  // 設定・電文ログタブ表示中は、地図には直前に表示していたタブの内容をそのまま残す。
+  // 電文ログタブ表示中は、地図には直前に表示していたタブの内容をそのまま残す。
+  // （設定は窓なので、開いている間も `activeTab` は下のタブのまま変わらない。）
   const [lastContentTab, setLastContentTab] = useState<TabId>(settings.defaultTab)
   useEffect(() => {
-    if (activeTab !== 'settings' && activeTab !== 'telegrams') setLastContentTab(activeTab)
+    if (activeTab !== 'telegrams') setLastContentTab(activeTab)
   }, [activeTab])
-  const mapTab = (activeTab === 'settings' || activeTab === 'telegrams') ? lastContentTab : activeTab
-  // 常時表示する地図の内容は mapTab（設定タブ中は直前のタブ）に応じて切り替える。
+  const mapTab = activeTab === 'telegrams' ? lastContentTab : activeTab
+  // 常時表示する地図の内容は mapTab（電文ログタブ中は直前のタブ）に応じて切り替える。
   // mapTab から MapMode への写像は kyoshinSubIndices の分岐（PERF-1）でも使うため
   // ここ 1 箇所で導出し、下流はこれを参照する（マッピング重複を避ける）。
   const mapMode: MapMode =
@@ -1628,7 +1682,9 @@ export function App() {
         // 重みは張る理由に合わせる（揺れ検知だけのときに EEW 相当を張らない。理由は idleRevertPriority）。
         // 駆動源は `'idleRevert'`。読み上げ追従には譲る保持になる（理由は shouldAcceptAutoTab）。
         forceTab('realtime', idleRevertPriority(hasActiveEew), 'idleRevert')
-      } else if (activeTabRef.current === 'catalog') {
+      } else if (activeTabRef.current === 'catalog' && !settingsOpenRef.current) {
+        // 設定の窓を開いたまま離れた場合は、下がカタログでも既定タブへ戻す（窓も閉じる。下の else）。
+        // 眺めているのは設定で、カタログではない。
         log.info(`[tab] 震源カタログのためアイドル復帰を見送り (idleRevertSec=${settings.idleRevertSec})`)
         // **タイトルだけは他のタブと同じ時刻に平常へ戻す**（2026-10-23 ユーザー選択「復帰しないまま、タイトルだけ戻す
         // (Recommended)」）。カタログを眺めている間に古い地震情報のタイトルが出続けると、いま起きているように見える。
@@ -1685,7 +1741,8 @@ export function App() {
       window.removeEventListener('touchmove', reset, true)
       window.removeEventListener('scroll', reset, true)
     }
-  }, [activeTab, lastUpdate, settings.idleRevertSec])
+  // `settingsOpen` も計り直しの契機に入れる。窓の開け閉めは `activeTab` を変えないが、操作には違いない。
+  }, [activeTab, settingsOpen, lastUpdate, settings.idleRevertSec])
 
   // 特別情報のために開いたパネルを、ユーザーが何か操作した時点で元へ戻す。
   // 「気づかせる」ための一時的な展開なので、気づいた合図（操作）があれば役目は終わり。
@@ -1723,7 +1780,7 @@ export function App() {
   // API キーはここだけ生の値を渡す。リプレイはユーザーがボタンを押した時点でしか通信せず、
   // キー入力に連動して自動で走ることがないため、遅らせる必要がない
   //（むしろ押した瞬間の最新値を使いたい）。
-  // 設定タブの「テスト時刻設定」に出す、収録済みローカル履歴アーカイブの一覧。
+  // 設定の窓の「テスト時刻設定」に出す、収録済みローカル履歴アーカイブの一覧。
   // DMDATA/P2PQuakeのアーカイブが存在しない期間（DMDATAアーカイブの最古=2020-11-18より前等）を
   // 再現するための同梱データで、対象時刻がこの中の期間に該当すれば下記 fetchReplayEvents が
   // 通常のアーカイブ取得の代わりにこちらを使う（localArchiveReplay.ts 参照）。
@@ -2004,7 +2061,7 @@ export function App() {
 
   // 外からリプレイを操るための診断アクセサ（`__frameProfiler`・`__cameraUpdateSkip` 等と同じ流儀）。
   //
-  // **設定タブの UI を叩かせないために置いている** —— UI 経由にすると、文言やレイアウトを
+  // **設定の窓の UI を叩かせないために置いている** —— UI 経由にすると、文言やレイアウトを
   // 変えるたびに外部からの操作が壊れ、「画面の見た目」と「外から操る口」が結びついてしまう。
   //
   // `speaking()` は「読み上げが終わったか」を待つために使う。固定の秒数で待つと、読み上げの
@@ -2119,7 +2176,7 @@ export function App() {
   // ことになるが、これは意図した設計（欠測を素通しすると最大震度を担う点の 1 秒欠測が「揺れが弱まった」
   // と解釈され、復帰時に更新音が誤って鳴る）。範囲の詳細は utils/kyoshinMissingHold.ts 冒頭。
   const kyoshinHeld = useKyoshinMissingHold(kyoshinIndicesGated, kyoshin.dataTime, kyoshin.sitesSiteConfigId)
-  // 検知が走ったとき、その前後の生の観測値を記録する（設定タブから書き出せる）。
+  // 検知が走ったとき、その前後の生の観測値を記録する（設定の窓から書き出せる）。
   // 渡すのは表示用の保持値ではなく**検知エンジンと同じ生値**——記録の目的は
   // 「エンジンが何を見て検知したか」を後から再生することなので、加工前の値でなければ意味がない。
   useDetectionDiagnostics(
@@ -2235,7 +2292,7 @@ export function App() {
   // 地点ごとの到達予想を自前の走時計算で出してよいか。**トークンが有効なときだけ true。**
   // 自前で出すのは気象業務法第 17 条の許可を要する地震動の予報業務に当たりうるため、既定では
   // 気象庁が区域ごとに出した到達予測時刻を伝えるだけにする（→ `utils/arrivalToken.ts`）。
-  // **門と設定タブの表示は同じ 1 つの検証結果から出す。** 別々に検証すると、期限の境目で
+  // **門と設定の窓の表示は同じ 1 つの検証結果から出す。** 別々に検証すると、期限の境目で
   // 「画面は有効と言っているのに自前計算は動かない」が起きる（→ `hooks/useArrivalToken.ts`）。
   const arrivalTokenStatus = useArrivalTokenCheck(settings.arrivalToken)
   const allowOwnArrivalCalc = arrivalTokenStatus.valid
@@ -2650,7 +2707,7 @@ export function App() {
   // 更新がエラーで停止しているか（リアルタイム=取得連続失敗 / それ以外=WS切断）。
   // **`crowded`（同時接続枠が埋まっている）や、配信元が閉じて止めた状態も更新は止まっている**ので
   // 同じく警告を出す（どれが当たるかは `isLiveFeedHalted`）。
-  // 理由まで伝えるのは設定タブの接続状態の側（→ types/earthquake.ts の `ConnectionStatus`）。
+  // 理由まで伝えるのは設定の窓の接続状態の側（→ types/earthquake.ts の `ConnectionStatus`）。
   const overlayError =
     mapTab === 'realtime'
       ? kyoshin.error
@@ -3002,7 +3059,10 @@ export function App() {
               <TelegramTab telegramLog={telegramLog} onClear={clearTelegramLog} active={activeTab === 'telegrams'} />
             </ErrorBoundary>
           </div>
-          <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'settings' ? ' invisible pointer-events-none' : ''}`}>
+        </div>
+
+        {/* 設定は窓（2026-10-27 ユーザー承認）。閉じている間も中身を外さずに隠す（→ `SettingsDialog`） */}
+        <SettingsDialog open={settingsOpen} onClose={closeSettings} returnFocusRef={settingsButtonRef}>
             <ErrorBoundary variant="region" label={TAB_LABELS.settings}>
               <SettingsTab
                 settings={settings}
@@ -3025,14 +3085,16 @@ export function App() {
                 seismoUnreadableCount={seismo.unreadableCount}
               />
             </ErrorBoundary>
-          </div>
-        </div>
+        </SettingsDialog>
 
         {/* アイコンナビ（一番外側＝右端 / 縦積み時は最下部） */}
         <IconNav
           activeTab={activeTab}
           onTabChange={handleTabChange}
           panelCollapsed={panelCollapsed}
+          settingsOpen={settingsOpen}
+          onToggleSettings={toggleSettings}
+          settingsButtonRef={settingsButtonRef}
           tsunamiGrade={tsunamiGrade ?? (isTsunamiForecastOnly(tsunamis) ? 'Forecast' : null)}
           eewLevel={computeEEWLevel(activeEEWsNoCancelled)}
         />
