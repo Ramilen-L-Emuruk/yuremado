@@ -9,7 +9,10 @@ import {
   applyStationConfigCore,
   closeHostCore,
   fusionCountsOf,
+  exitCodeAfterClose,
   makeShutdownRequester,
+  RESTART_EXIT_CODE,
+  type AfterClose,
   deliverFusionClosing,
   buildAssignedSilenceReport,
   buildBacklogBookWarning,
@@ -2095,14 +2098,14 @@ describe('deliverFusionClosing', () => {
   })
 })
 
-describe('makeShutdownRequester（止める合図への答え）', () => {
+describe('makeShutdownRequester（止める・再起動の合図への答え）', () => {
   function setup(closing = false) {
     const deferred: (() => void)[] = []
-    let started = 0
+    const started: AfterClose[] = []
     const request = makeShutdownRequester({
       isClosing: () => closing,
-      start: () => {
-        started += 1
+      start: (afterClose) => {
+        started.push(afterClose)
       },
       defer: (fn) => deferred.push(fn),
     })
@@ -2111,23 +2114,48 @@ describe('makeShutdownRequester（止める合図への答え）', () => {
 
   it('正: 最初の合図は accepted で、締めくくりはその場で始めず後回しにする（答えを書いてから始めるため）', () => {
     const s = setup()
-    expect(s.request()).toBe('accepted')
-    expect(s.started()).toBe(0)
+    expect(s.request('exit')).toBe('accepted')
+    expect(s.started()).toEqual([])
     expect(s.deferred).toHaveLength(1)
     s.deferred[0]!()
-    expect(s.started()).toBe(1)
+    expect(s.started()).toEqual(['exit'])
+  })
+
+  it('正: 再起動の合図は、締めた後の終わり方を restart として渡す', () => {
+    const s = setup()
+    expect(s.request('restart')).toBe('accepted')
+    s.deferred[0]!()
+    expect(s.started()).toEqual(['restart'])
   })
 
   it('安全弁: 2 度目の合図は、締めくくりが実際に始まる前でも already-closing で、予約を積み増さない', () => {
     const s = setup()
-    s.request()
-    expect(s.request()).toBe('already-closing')
+    s.request('exit')
+    expect(s.request('exit')).toBe('already-closing')
     expect(s.deferred).toHaveLength(1)
+  })
+
+  it('安全弁: 止める合図の後の再起動の合図も already-closing（終わり方を後から書き換えない）', () => {
+    const s = setup()
+    s.request('exit')
+    expect(s.request('restart')).toBe('already-closing')
+    s.deferred[0]!()
+    expect(s.started()).toEqual(['exit'])
   })
 
   it('対照: SIGINT などで締めくくりが既に始まっていれば、最初の合図でも already-closing で何も予約しない', () => {
     const s = setup(true)
-    expect(s.request()).toBe('already-closing')
+    expect(s.request('restart')).toBe('already-closing')
     expect(s.deferred).toHaveLength(0)
+  })
+
+  it('安全弁: 再起動の終了コードは 0（起こし直さない）でも 1（締めくくりの失敗）でもない', () => {
+    expect(RESTART_EXIT_CODE).not.toBe(0)
+    expect(RESTART_EXIT_CODE).not.toBe(1)
+  })
+
+  it('正: 再起動を頼まれて締めたら再起動の終了コード、止める合図なら 0 で終わる', () => {
+    expect(exitCodeAfterClose('restart')).toBe(RESTART_EXIT_CODE)
+    expect(exitCodeAfterClose('exit')).toBe(0)
   })
 })

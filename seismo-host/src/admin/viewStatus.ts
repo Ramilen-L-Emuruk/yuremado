@@ -27,6 +27,15 @@ import {
   type WarningItem,
 } from './statusWarnings'
 import type { TabContext } from './tabState'
+import { apiFetch } from './api'
+import { confirmDialog } from './confirmDialog'
+import {
+  HOST_RESTART_BUTTON_LABEL,
+  HOST_RESTART_CONFIRM,
+  hostRestartAcceptedLine,
+  hostRestartFailureLine,
+  type OperationLine,
+} from './adminOperations'
 
 /**
  * `GET /status` の形。**`statusReport.ts` の `StatusReport` を丸ごと再定義しない。**
@@ -37,6 +46,12 @@ import type { TabContext } from './tabState'
  * **欄が増減したら手で追随させる必要がある。** 自動では検知できない
  * （型検査は「この型が JSON と一致するか」までは見ない）。
  */
+/**
+ * 同じ起動のあいだに「ホストが起動した時刻」（`generatedAtMs − uptimeSec`）が揺れる幅の上限。
+ * `uptimeSec` は秒へ切り捨てるので揺れは 1 秒未満。余裕を見て 2 秒。
+ */
+const HOST_START_JITTER_MS = 2000
+
 export interface StatusReportView {
   readonly generatedAtMs: number
   readonly uptimeSec: number
@@ -596,6 +611,12 @@ export async function initStatusView(container: HTMLElement, ctx: TabContext): P
   container.innerHTML = `
     <div class="status-error"></div>
     <div class="status-body muted">読み込み中…</div>
+    <!-- **ホストの再起動は、5 秒ごとに描き直す欄の外に置く**（#313・2026-10-27 ユーザー承認）。
+         中に置くと、押した後の結果の行が次の描き直しで消える。 -->
+    <section class="panel">
+      <button type="button" class="host-restart danger">${HOST_RESTART_BUTTON_LABEL}</button>
+      <div class="host-restart-result"></div>
+    </section>
   `
 
   const errorEl = qs(container, '.status-error')
@@ -695,27 +716,93 @@ export async function initStatusView(container: HTMLElement, ctx: TabContext): P
   // 止まらないポーリングを始めてしまう事故を防ぐ（`app.ts` の `mountTab` 参照。
   // 旧 `teardown` イベント方式は、初回 fetch 完了前の切替でリスナー登録前に
   // イベントが飛んでしまい、タイマーを止められなかった）。
+  // ホストの再起動を頼めた後、起動し直したのを見たら結果の行を消してボタンを戻す（同じタブのまま次を押せるように）。
+  // **起動し直したかは、応答から求めた「ホストが起動した時刻」が前より進んだかで見る**（`hostStartedAtMs`）。
+  // `uptimeSec` の大小だと、5 秒ごとの読み直しが重なって古い応答が後から届いたときに「戻った」と取り違え、
+  // 起動してすぐの再起動（前の uptime が小さい）では永久に戻らない。落ちている間の印（`sawHostDown`）は
+  // **通信そのものが失敗したときだけ**立てる —— HTTP のエラーや表示の例外はホストが生きている印。
+  let restartRequested = false
+  let sawHostDown = false
+  let lastHostStartedAtMs: number | null = null
   const reload = async (): Promise<void> => {
+    let res: Response
     try {
-      const res = await fetch('/status')
+      res = await fetch('/status')
+    } catch (error) {
+      if (signal.aborted) return
+      if (restartRequested) sawHostDown = true
+      showReloadFailure(error)
+      return
+    }
+    try {
       if (signal.aborted) return
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const status = (await res.json()) as StatusReportView
       if (signal.aborted) return
+      noteHostStart(status)
       render(status)
       errorEl.textContent = ''
     } catch (error) {
       if (signal.aborted) return
-      errorEl.textContent = error instanceof Error ? error.message : String(error)
-      // **取得できていない間、古い「受信中」バッジを凍結させない。** バッジは
-      // 直前に成功した応答の時刻を基準に「途絶」を判定するため、`/status`
-      // 自体への到達性が失われている間は実際の経過時間を反映せず、失敗が
-      // 始まった瞬間の見た目のまま残り続ける——運用者がエラー文言（小さく
-      // 添えているだけ）を見落とすと「センサーは生きている」と誤認しうる
-      // （#313 段 C 敵対的レビューで検出）。表示ごと「不明」へ倒す。
-      bodyEl.innerHTML = '<p class="muted">状態を取得できていない</p>'
+      showReloadFailure(error)
     }
   }
+  /** 応答からホストの起動時刻を求め、頼んだ再起動が済んだならボタンを戻す。 */
+  const noteHostStart = (status: StatusReportView): void => {
+    if (!Number.isFinite(status.generatedAtMs) || !Number.isFinite(status.uptimeSec)) return
+    const startedAtMs = status.generatedAtMs - status.uptimeSec * 1000
+    // `uptimeSec` は秒へ切り捨てるので、同じ起動でも 1 秒ほど揺れる。それより大きく進んだら別の起動。
+    const restarted =
+      sawHostDown || (lastHostStartedAtMs !== null && startedAtMs > lastHostStartedAtMs + HOST_START_JITTER_MS)
+    if (lastHostStartedAtMs === null || startedAtMs > lastHostStartedAtMs) lastHostStartedAtMs = startedAtMs
+    if (restartRequested && restarted) {
+      restartRequested = false
+      sawHostDown = false
+      restartResult.textContent = ''
+      restartResult.classList.remove('error')
+      restartButton.disabled = false
+    }
+  }
+  const showReloadFailure = (error: unknown): void => {
+    errorEl.textContent = error instanceof Error ? error.message : String(error)
+    // **取得できていない間、古い「受信中」バッジを凍結させない。** バッジは
+    // 直前に成功した応答の時刻を基準に「途絶」を判定するため、`/status`
+    // 自体への到達性が失われている間は実際の経過時間を反映せず、失敗が
+    // 始まった瞬間の見た目のまま残り続ける——運用者がエラー文言（小さく
+    // 添えているだけ）を見落とすと「センサーは生きている」と誤認しうる
+    // （#313 段 C 敵対的レビューで検出）。表示ごと「不明」へ倒す。
+    bodyEl.innerHTML = '<p class="muted">状態を取得できていない</p>'
+  }
+
+  const restartButton = qs<HTMLButtonElement>(container, '.host-restart')
+  const restartResult = qs(container, '.host-restart-result')
+  const showRestartLine = (line: OperationLine): void => {
+    restartResult.textContent = line.text
+    restartResult.classList.toggle('error', line.error)
+  }
+  restartButton.addEventListener('click', () => {
+    void (async () => {
+      const ok = await confirmDialog(document, HOST_RESTART_CONFIRM)
+      if (!ok || signal.aborted) return
+      restartButton.disabled = true
+      let line: OperationLine
+      try {
+        const body = await apiFetch<{ readonly status?: unknown }>('/api/restart', { method: 'POST' })
+        line = hostRestartAcceptedLine(body?.status)
+      } catch (error) {
+        line = hostRestartFailureLine(error)
+      }
+      if (signal.aborted) return
+      showRestartLine(line)
+      // **頼めたら、起動し直すのを見るまで押せないままにする**（2 度目は締めくくりの途中で断られるだけ）。
+      // 断られたら押し直せるように戻す。
+      restartButton.disabled = !line.error
+      if (!line.error) {
+        restartRequested = true
+        sawHostDown = false
+      }
+    })()
+  })
 
   await reload()
   if (signal.aborted) return

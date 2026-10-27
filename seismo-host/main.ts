@@ -24,8 +24,10 @@
 // 起動:
 //   npm run seismo-host
 //   SEISMO_UDP_PORT=50505 SEISMO_UDP_ADDRESS=0.0.0.0 npm run seismo-host
-import { statSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { readFileSync, statSync, unlinkSync } from 'node:fs'
 import { readFile, statfs } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -85,6 +87,8 @@ import { buildStatusReport } from './src/receiver/statusReport'
 import { buildAdminConsoleAssets } from './src/receiver/adminConsoleAssets'
 import type { AdminConsoleAssets } from './src/receiver/adminConsoleAssets'
 import { startStatusServer } from './src/receiver/statusServer'
+import { BoardActionGuard, BoardAddressBook, boardControlState, boardFetch, sendBoardAction } from './src/receiver/boardControl'
+import { RedetectRunner, adaptRedetectChild, readRedetectSummaryFile } from './src/receiver/redetectRunner'
 import type { ShutdownRequestResult } from './src/receiver/statusServer'
 import { SourceRateLimit } from './src/receiver/sourceRateLimit'
 import { startUdpReceiver } from './src/receiver/udpReceiver'
@@ -197,6 +201,12 @@ const BACKLOG_SAVE_INTERVAL_MS = 5_000
 const BACKLOG_TIMEOUT_MS = 3_000
 const BACKLOG_SPACING_MS = 250
 const BACKLOG_IDLE_MS = 1_000
+
+/**
+ * 基板へ再起動・繋ぎ直しを頼むときの時間切れ。基板は応答を返してから 200 ms 待って動く
+ * （`seismo-node.ino` の `handleRestart`）ので、取り戻しの時間切れ（{@link BACKLOG_TIMEOUT_MS}）と同じ桁で足りる。
+ */
+const BOARD_ACTION_TIMEOUT_MS = 5_000
 
 const UNRECOVERABLE_TEXT: Record<UnrecoverableReason, string> = {
   rebooted: '基板が再起動していた',
@@ -1476,8 +1486,8 @@ export async function closeHostCore(deps: CloseHostDeps): Promise<void> {
 export interface ShutdownRequesterDeps {
   /** 締めくくりがもう始まっているか（SIGINT・SIGTERM で始まった場合も含む）。 */
   readonly isClosing: () => boolean
-  /** 締めくくりを始める。 */
-  readonly start: () => void
+  /** 締めくくりを始める。**締めた後にどう終わるか**（止める・サービスに起こし直させる）を受け取る。 */
+  readonly start: (afterClose: AfterClose) => void
   /**
    * `start` を後回しにする。**本番は `setImmediate`。** 止める口は答えを返してから応答を書くので、
    * その場で始めると締めくくりが状態の口を閉じ始めてしまう（`StatusServerOptions.requestShutdown`）。
@@ -1491,14 +1501,31 @@ export interface ShutdownRequesterDeps {
  * **予約したら、締めくくりが実際に始まる前でも `already-closing` を返す。** 2 度目の合図で
  * 予約を積み増さないため。
  */
-export function makeShutdownRequester(deps: ShutdownRequesterDeps): () => ShutdownRequestResult {
+export function makeShutdownRequester(deps: ShutdownRequesterDeps): (afterClose: AfterClose) => ShutdownRequestResult {
   let requested = false
-  return () => {
+  return (afterClose) => {
     if (deps.isClosing() || requested) return 'already-closing'
     requested = true
-    deps.defer(deps.start)
+    deps.defer(() => deps.start(afterClose))
     return 'accepted'
   }
+}
+
+/**
+ * 締めた後の終わり方。**`exit` は終了コード 0**（サービスは起こし直さない）、**`restart` は
+ * {@link RESTART_EXIT_CODE}** で終わり、WinSW の `onfailure` に起こし直させる（2026-10-27 ユーザー承認）。
+ */
+export type AfterClose = 'exit' | 'restart'
+
+/**
+ * 再起動を頼まれて締めたときの終了コード。**1 と分ける** —— 1 は「締めくくりの途中で失敗した」で、
+ * サービスのログでも見分けたい。WinSW の `onfailure` は 0 以外なら何でも起こし直す。
+ */
+export const RESTART_EXIT_CODE = 3
+
+/** 締めた後に終わる終了コード（{@link AfterClose}）。 */
+export function exitCodeAfterClose(afterClose: AfterClose): number {
+  return afterClose === 'restart' ? RESTART_EXIT_CODE : 0
 }
 
 /**
@@ -1749,6 +1776,9 @@ async function main(): Promise<void> {
   if (adminToken === null) {
     console.warn('[admin] SEISMO_ADMIN_TOKEN が未設定のため /api/* は無効です')
   }
+  // **基板のトークンは管理画面のトークンと分ける**（2026-10-27 ユーザー承認）。基板へは LAN の素の HTTP で送るので、
+  // 通り道で読まれても漏れるのは基板を再起動できる鍵だけにする（`boardControl.ts`）。無ければ基板の操作だけ使えない。
+  const boardAdminToken = readAdminToken(process.env.SEISMO_BOARD_ADMIN_TOKEN)
   const adminAllowedOrigins = readAllowList(process.env.SEISMO_ADMIN_ALLOWED_ORIGINS)
   // **トークンは設定したのに Origin を 1 つも許可していない構成を、黙って見過ごさない。**
   // `allowedOrigins` の既定は意図的に空（README「運用者が明示するまで誰も通さない」）だが、
@@ -1919,6 +1949,33 @@ async function main(): Promise<void> {
   // 配線そのものは `StationDetection` が持つ（自動テストの届く場所に置くため）。
   const eventDir = storageDirs.events
   const eventStore = new ShakeEventStore({ dir: eventDir })
+  // **管理画面から頼まれた流し直しは、別のプロセスで 1 本ずつ走らせる**（2026-10-27 ユーザー承認・`redetectRunner.ts`）。
+  // 子は**いまのホストと同じ起こし方**（node 本体と `--import tsx` などの引数）で `redetect.ts` を起こし、
+  // 出力はホストのログへそのまま流す（サービスでは seismo-host.log に入る）。
+  const redetectRunner = new RedetectRunner({
+    spawn: (args) => {
+      // **親の pid を渡す。** Windows では親が落ちても子は残るので、子が親の生死を見て自分で終わる（`redetect.ts` の `watchParent`）。
+      const child = spawn(
+        process.execPath,
+        [...process.execArgv, fileURLToPath(new URL('./redetect.ts', import.meta.url)), ...args, '--parent-pid', String(process.pid)],
+        {
+          cwd: process.cwd(),
+          stdio: ['ignore', 'inherit', 'inherit'],
+          windowsHide: true,
+        },
+      )
+      return adaptRedetectChild(child, (line) => console.warn(line))
+    },
+    summaryPath: () => join(tmpdir(), `seismo-redetect-${process.pid}-${Date.now()}.json`),
+    readSummary: (path) =>
+      readRedetectSummaryFile(path, { readFile: (p) => readFileSync(p, 'utf8'), unlink: (p) => unlinkSync(p) }, (line) => console.warn(line)),
+    dirs: () => ({ wave: waveDir, events: eventDir, stations: stationConfigPath }),
+    now: Date.now,
+    log: (line) => console.log(line),
+  })
+  // **締めくくりを通らずに抜けるとき（締めくくりの途中で失敗して `process.exit(1)` した等）も子を止める。**
+  // 止めないと、起動し直したホストが知らない流し直しが残り、2 本目と並ぶ。締めくくりで止めた後なら何もしない。
+  process.on('exit', () => redetectRunner.stop())
   const quakeFeedEnabled = readQuakeFeedEnabled(process.env.SEISMO_QUAKE_FEED)
   // **`detection` より先に作るが、受け取った地震情報は `detection` へ渡す。** 循環するので
   // 受け取り口は後から差す（`start()` は `detection` を作った後に呼ぶ）。
@@ -1977,6 +2034,10 @@ async function main(): Promise<void> {
   // **届かなかった分を基板へ取りに行く**（`backlogBook.ts`・`backlogFetcher.ts`）。帳面は
   // 受け始める前に読み戻す —— 受けてからだと、止まっていた間の欠けを最初のパケットで作り損ねる。
   const backlogBook = new BacklogBook(BACKLOG_BOOK_OPTIONS)
+  // 基板ごとの最後の送り元（管理画面から基板の再起動・繋ぎ直しを頼む先。`boardControl.ts`）。
+  const boardAddresses = new BoardAddressBook()
+  // 頼めた後は、その基板から届き直すまで適用中に保つ（上限つき）。経過は単調な時計で測る。
+  const boardActionGuard = new BoardActionGuard(() => performance.now())
   const backlogBookPath = defaultBacklogBookPath()
   const backlogBookLoad = await readBacklogBookFile(backlogBookPath)
   if (backlogBookLoad.state !== null) backlogBook.restore(backlogBookLoad.state, Date.now())
@@ -2360,6 +2421,10 @@ async function main(): Promise<void> {
 
       const board = read.packet.boardKey
       tally.record({ kind: 'accepted', board })
+      // **基板の操作（再起動・繋ぎ直し）を頼む先として、送り元を覚える**（`boardControl.ts`）。
+      boardAddresses.note(board, from.address)
+      // 頼めた後の「適用中」を、途切れた後に届き直したここで解く（`BoardActionGuard.notePacket`）。
+      boardActionGuard.notePacket(board)
       // **欠けの帳面へ、届いた番号を記録する**（`backlogBook.ts`）。取りに行けるのは
       // 起動 ID と MAC を名乗る基板（版 2）だけ —— 版 1 は番号が起動ごとに一意にならない。
       // `notePacket` は投げない（数と範囲を覚えるだけ）。**返事より先に置く** ——
@@ -2656,7 +2721,8 @@ async function main(): Promise<void> {
 
   // 止める合図（`POST /api/shutdown`）の受け先。**締めくくり（`shutdown`）は状態の口を
   // 開けた後で作る**（締めくくりが状態の口を閉じるため）ので、それまでは `not-ready` で断る。
-  let requestShutdownFromApi: (() => ShutdownRequestResult) | null = null
+  // 再起動の合図（`POST /api/restart`）も同じ予約を使う（止める・再起動のどちらが先でも 2 度目は `already-closing`）。
+  let requestShutdownFromApi: ((afterClose: AfterClose) => ShutdownRequestResult) | null = null
 
   // 保存先と容量の口（`GET`/`PUT /api/storage`）。保存先の変更は設定ファイルへ書くだけで、効くのは次の起動から。
   const storageControl = new StorageControl({
@@ -2681,7 +2747,28 @@ async function main(): Promise<void> {
     },
     // 6 面法の材料（センサーごとの静止窓・校正前の値）。
     readRestWindows: () => gravity.restWindows(),
-    requestShutdown: () => requestShutdownFromApi?.() ?? 'not-ready',
+    requestShutdown: () => requestShutdownFromApi?.('exit') ?? 'not-ready',
+    // 管理画面から頼む操作（#313・2026-10-27 ユーザー承認）。
+    operations: {
+      boardControlState: () => boardControlState(boardAdminToken, boardAddresses),
+      sendBoardAction: (boardKey, action) =>
+        boardActionGuard.run(boardKey, () =>
+          sendBoardAction(
+            {
+              token: boardAdminToken,
+              addressOf: (key) => boardAddresses.addressOf(key),
+              timeoutMs: BOARD_ACTION_TIMEOUT_MS,
+              // リダイレクトに付いていかず、本文は捨てる（`boardFetch`）。
+              fetch: boardFetch((url, init) => fetch(url, init)),
+            },
+            boardKey,
+            action,
+          ),
+        ),
+      requestRestart: () => requestShutdownFromApi?.('restart') ?? 'not-ready',
+      redetectState: () => redetectRunner.current(),
+      startRedetect: (request) => redetectRunner.start(request),
+    },
     // 範囲を指定した合成波形の作り直し（`POST /api/rewave`）。**設定変更の位置で割ってから**作り直しの係へ積む
     // （`rewaveScheduler.ts` の `planRequestedRewave`）。区切りの幅は取り戻しの作り直しと同じ。
     requestRewave: (request) => {
@@ -3013,7 +3100,7 @@ async function main(): Promise<void> {
   const timer = setInterval(summarize, SUMMARY_INTERVAL_MS)
 
   let closing = false
-  const shutdown = async (signal: string): Promise<void> => {
+  const shutdown = async (signal: string, afterClose: AfterClose): Promise<void> => {
     // **合図は繰り返し来る。** 2 度目で締めくくりをもう 1 度走らせない。
     if (closing) return
     closing = true
@@ -3068,6 +3155,8 @@ async function main(): Promise<void> {
     // 次の起動で同じファイルから書き直す（帳面は止まる直前に書く）。
     storageUsage.stop()
     storageMigration.stop()
+    // 流し直しの子も止める。揺れの記録は一時ファイル経由で置き換えるので、途中で止めても書きかけは残らない。
+    redetectRunner.stop()
 
     // **順序は `closeHostCore` が持つ**（理由もあちらに書いてある）。ここは
     // `main()` のローカル変数を `deps` へ束ねる配線だけ。
@@ -3109,7 +3198,13 @@ async function main(): Promise<void> {
       console.warn(`[host] 稼働の印を消せなかった（${markError}）。次の起動は、今回を正常に終わらなかったと読む`)
     }
     console.log(`[host] 正常に終了した（${jstDateTime(Date.now()) ?? '時刻不明'}）`)
-    process.exit(0)
+    const exitCode = exitCodeAfterClose(afterClose)
+    if (exitCode !== 0) {
+      // **0 以外で終わる。** WinSW の `onfailure` が 1 分後に起こし直す（README「Windows で常駐させる」）。
+      // サービスで動かしていなければ、ここで止まったままになる（管理画面の確認の窓にそう書いてある）。
+      console.log(`[host] 再起動を頼まれたので、終了コード ${exitCode} で終わる（サービスが起こし直す）`)
+    }
+    process.exit(exitCode)
   }
 
   /** 起動してからの累計を出す。終了の締めくくり（`closeHostCore`）が最後に呼ぶ。 */
@@ -3144,22 +3239,22 @@ async function main(): Promise<void> {
    * 締めくくりの途中で止まったまま（`closing` が立ったまま）プロセスが居残りうる ——
    * そうなると止める口は `already-closing` を返し続け、外からは「止まりつつある」としか見えない。
    */
-  const runShutdown = async (signal: string): Promise<void> => {
+  const runShutdown = async (signal: string, afterClose: AfterClose): Promise<void> => {
     try {
-      await shutdown(signal)
+      await shutdown(signal, afterClose)
     } catch (error) {
       console.error(`[host] 締めくくりの途中で失敗した（${error instanceof Error ? error.message : String(error)}）。正常に終わらずに止める`)
       process.exit(1)
     }
   }
-  process.on('SIGINT', () => void runShutdown('SIGINT'))
-  process.on('SIGTERM', () => void runShutdown('SIGTERM'))
+  process.on('SIGINT', () => void runShutdown('SIGINT', 'exit'))
+  process.on('SIGTERM', () => void runShutdown('SIGTERM', 'exit'))
   // **Windows で手で止めるときはこの口を使う**（`Stop-Process` は SIGINT のハンドラを呼ばずに落とす）。
   // もう 1 つの経路はコンソールへの Ctrl+C で、上の SIGINT に届く（サービスとして動かしたとき WinSW が送る。
   // README「Windows で常駐させる」）。
   requestShutdownFromApi = makeShutdownRequester({
     isClosing: () => closing,
-    start: () => void runShutdown('POST /api/shutdown'),
+    start: (afterClose) => void runShutdown(afterClose === 'restart' ? 'POST /api/restart' : 'POST /api/shutdown', afterClose),
     defer: (fn) => setImmediate(fn),
   })
 }
