@@ -38,6 +38,7 @@
 | 最初に作るのは iOS（2026-10-27） | 問い「4 つの OS のうち、どれから作る？」に選択肢「iOS から (Recommended)」。ほかの選択肢は「Android から」「後で決める」 |
 | 作った音声の利用をアプリの利用者に許す。利用規約に入れる 2 点は §1.5（2026-10-27） | 問い「作った音声の利用を、アプリの利用者に許す？」に選択肢「許す」（説明は「利用者が音声を使えるようにする（録画した動画の公開など）。その場合、利用規約に『音声ライブラリ（話者）の規約に従う』『さらに他者へ許すなら同じ義務を課す』の 2 点を入れる必要がある。」）。ほかの選択肢は「許さない（聞くだけ）」「後で決める」 |
 | VOICEVOX を使ったことの表記と「VOICEVOX:話者名」の置き場所と文言は、画面を作るときに文面を用意して諮る（2026-10-27） | 問い「VOICEVOX を使ったことの表記を、いつ決める？」に選択肢「画面を作るときに諸る (Recommended)」（選択肢名の表記どおり。「諮る」の誤記）。もう 1 つは「今決める」 |
+| 中核（電文の読み取りと読み上げ文の組み立て）は Rust で書く。画面と通知は上の行のとおり各 OS の部品で書く（2026-10-27。言語ごとの事実は §1.6） | 1 つ目の答えは問い返しで、決めたのは 2 つ目の答え。最初の問い「4 つのアプリで共有する中核（電文の読み取り・読み上げ文の組み立て）を、何で書く？」（選択肢は「いまの TypeScript を埋め込む (Recommended)」「Kotlin Multiplatform で書き直す」「Rust で書き直す」）への答えは「新規で作るとして一番正しいのは？」。続く問い「新しく作るなら一番正しいのは Rust だと考える。中核を何で書く？」に選択肢「Rust で作る (Recommended)」。ほかの選択肢は「Kotlin Multiplatform で作る」「いまの TypeScript を埋め込む」 |
 
 ## 1. 前提になる事実
 
@@ -69,7 +70,7 @@ CORE 0.17.0 のリリースには、次の添付がある（2026-10-27 に GitHu
 
 **関数がヘッダーにあることは確かめた。同じ入力で同じ結果が返るかは、動かして確かめていない。**
 辞書の句割り・アクセントの核・間の当て方は、エンジンの口の外側で PWA が組み立てている（[`audio-tts-spec.md`](spec/audio-tts-spec.md) §3）。
-ネイティブで作り直すので、この組み立て（`ttsText.ts` 4,830 行・`voicevox.ts` 2,135 行。2026-10-27 の行数）は各アプリへ移すことになる。
+ネイティブで作り直すので、この組み立て（`ttsText.ts` 4,830 行・`voicevox.ts` 2,135 行。2026-10-27 の行数）は、4 つのアプリで共有する中核として Rust で書き直す（§0・§1.6）。
 
 ### 1.3 大きさと速さ
 
@@ -115,6 +116,22 @@ ONNX Runtime の条件は 2 つ。
 | 声のモデル（VVM） | 商用・非商用に使え、アプリへ組み込んで再配布できる | 「VOICEVOX:話者名」の表記 | 0.17.0 の README.txt を読んだ（[`browser-voicevox-survey.md`](browser-voicevox-survey.md) §3.1） |
 | Open JTalk の辞書 | 3 条項 BSD が 3 本（著作権者は奈良先端科学技術大学院大学・UniDic コンソーシアム・名古屋工業大学） | バイナリで配るときは、3 本の著作権表示・条件・免責の文を同梱の文書に載せる。奈良先端科学技術大学院大学・UniDic コンソーシアム・HTS working group（と貢献者）の名前を、許可なく宣伝に使わない | `r9y9/open_jtalk` の `src/mecab-naist-jdic/COPYING` を読んだ。配布物の `open_jtalk_dic_utf_8-1.11.tar.gz` の中身とは突き合わせていない |
 
+### 1.6 中核の言語ごとの事実
+
+2026-10-27 に、CORE 0.17.0 の配布物・資料と、各言語の公式の対応表で確かめた。表の語は次のとおり。
+
+- **Tier**: 各言語の公式が OS ごとに付ける対応の等級。1 が最も手厚く、数字が大きいほど保証が薄い。等級の定義は Rust と Kotlin で別
+- **`load-onnxruntime` / `link-onnxruntime`**: CORE のビルドの選び方。前者は ONNX Runtime を実行時に読み込み（`dlopen`）、後者はビルド時につなぐ
+- **MSVC / MinGW**: Windows の 2 種類のビルド環境。片方で作ったライブラリをもう片方から呼べるとは限らない
+
+| 言語 | CORE の呼び方 | 4 つの OS への対応 |
+|---|---|---|
+| Rust | CORE の Rust の口（`voicevox_core` クレート）を直接使う。crates.io には無く、git から取る（CORE の資料 `languages.md` の表で「パッケージレジストリ」が無い）。CORE の C API のリリースは、`dlopen` の利用が厳しい iOS でだけ `link-onnxruntime` でビルドしている（`feature-options.md`）。Rust の口を iOS で使うときに何が要るかは確かめていない | Rust の対応表で macOS（`aarch64-apple-darwin`）・Windows（`x86_64-pc-windows-msvc`）は Tier 1、iOS（`aarch64-apple-ios`）・Android（`aarch64-linux-android`）は Tier 2（「ビルドは保証される」）。WASM（`wasm32-unknown-unknown`）も Tier 2 |
+| Kotlin Multiplatform | Android は Java 版（リリースの `java_packages.zip` の中の `voicevoxcore-android-0.17.0.aar`。arm64・x86_64）。iOS・macOS は Kotlin/Native から C API。同じ zip に PC 向けの Java 版（Windows・macOS・Linux のライブラリ入りの jar）もある。ただし CORE の API 資料の原稿では、Java の項が「Java APIが正式版になったら」という注記つきでコメントアウトされていて、資料の目次に出ていない | Kotlin の対応表で iOS（`iosArm64`）・macOS（`macosArm64`）は Tier 1、Windows（`mingwX64`）は Tier 3（CI での試験が保証されない）。CORE の Windows 版は MSVC の dll なので、MinGW から呼べるかは試していない |
+| いまの TypeScript を埋め込む | 各 OS の側で CORE を呼ぶ。`ttsText.ts`・`dmdataParser.ts` は `window`・`document`・`localStorage`・`AudioContext` を使わない。ブラウザの API に頼るのは `dmdataParser.ts` が XML を読む `DOMParser` だけで、代わりの部品が要る |
+
+Rust を選んだので、いまの TypeScript の中核（`dmdataParser.ts` 3,425 行・`ttsText.ts` 4,830 行・`voicevox.ts` 2,135 行。2026-10-27 の行数）は Rust で書き直す。PWA が TypeScript のままの間は、2 本を並べて保守する（§2 の WASM の行）。 各アプリに JS の実行環境が要る。iOS・macOS は OS に JavaScriptCore がある。Android・Windows で何を使うかは調べていない |
+
 ## 2. 決まっていないこと
 
 「未決」は判断がまだのもの、「未確認」は事実をまだ調べていないもの。
@@ -123,7 +140,9 @@ ONNX Runtime の条件は 2 つ。
 |---|---|
 | ネイティブアプリが出そろった後に PWA を続けるか | 未決（出そろうまで決めない。§0） |
 | §0 の「最初の版から全機能」の「最初の版」が、最初に出す iOS 版を指すか、4 つの OS がそろった版を指すか（問いは「ネイティブアプリの最初の版」とだけ訊いた） | 未決（ユーザー判断待ち） |
-| 中核を何の言語で書くか。候補は Kotlin Multiplatform と Rust（問いの選択肢の説明に挙げた 2 つ）で、どちらも 4 つの OS から CORE を呼べるかは調べていない | 未決（調べてから諮る） |
+| Rust の中核を、各 OS の画面（Swift・Kotlin・Windows の画面部品）から呼べる形にする仕組みを何にするか。候補の 1 つは UniFFI（Rust 側の定義から Swift・Kotlin 向けの呼び出し口を作る道具）で、ほかの候補はまだ挙げていない | 未決（候補を調べてから諮る。画面を何で書くかの行と合わせて決める） |
+| Rust の中核を WASM にして PWA にも入れるか（入れれば PWA とアプリが 1 本のソースになる） | 未決（ユーザー判断待ち） |
+| Rust の中核と CORE の Rust の口を、1 つの iOS アプリにまとめてビルドできるか（ONNX Runtime をどうつなぐか） | 未確認（試していない） |
 | 画面を何で書くか（Windows の画面部品、iOS と macOS で画面を分けるか） | 未決（ユーザー判断待ち） |
 | iOS の次にどの順で作るか | 未決（ユーザー判断待ち） |
 | 各社のストアの審査に通るか。日本で使える代替アプリストアを iOS の直接配布の経路として使うか | 未確認（調べていない） |
@@ -136,6 +155,11 @@ ONNX Runtime の条件は 2 つ。
 - [VOICEVOX/voicevox_core 0.17.0 のリリース](https://github.com/VOICEVOX/voicevox_core/releases/tag/0.17.0)（添付の一覧）
 - [VOICEVOX/onnxruntime-builder voicevox_onnxruntime-1.17.3 のリリース](https://github.com/VOICEVOX/onnxruntime-builder/releases/tag/voicevox_onnxruntime-1.17.3)と[同 1.23.2（先行版）](https://github.com/VOICEVOX/onnxruntime-builder/releases/tag/voicevox_onnxruntime-1.23.2)（`TERMS.txt` は各添付の中）
 - [voicevox_core `crates/downloader/src/main.rs`（0.17.0）](https://github.com/VOICEVOX/voicevox_core/blob/0.17.0/crates/downloader/src/main.rs)（69〜70 行の `SUPPORTED_ONNXRUNTIME_VERSIONS` が受け付ける版の範囲 `>=1.17.3,<1.24`。既定では、その範囲の先行版でない最新を取る）
+- [voicevox_core `docs/guide/user/languages.md`（0.17.0）](https://github.com/VOICEVOX/voicevox_core/blob/0.17.0/docs/guide/user/languages.md)
+- [voicevox_core `docs/guide/user/feature-options.md`（0.17.0）](https://github.com/VOICEVOX/voicevox_core/blob/0.17.0/docs/guide/user/feature-options.md)
+- [VOICEVOX CORE の API 資料](https://voicevox.github.io/voicevox_core/apis/)（Java の項がコメントアウトされているのはページのソース）
+- [Rust: Platform Support](https://doc.rust-lang.org/nightly/rustc/platform-support.html)
+- [Kotlin/Native target support](https://kotlinlang.org/docs/native-target-support.html)
 - [voicevox_core `LICENSE`（0.17.0）](https://github.com/VOICEVOX/voicevox_core/blob/0.17.0/LICENSE)
 - [r9y9/open_jtalk `src/mecab-naist-jdic/COPYING`](https://github.com/r9y9/open_jtalk/blob/master/src/mecab-naist-jdic/COPYING)（Open JTalk の辞書の規約）
 - [voicevox_core `voicevox_core.h`（0.17.0）](https://github.com/VOICEVOX/voicevox_core/blob/0.17.0/crates/voicevox_core_c_api/include/voicevox_core.h)
