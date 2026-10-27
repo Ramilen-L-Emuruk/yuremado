@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   APPLY_RELOAD_FALLBACK_MS,
+  MANUAL_CHECK_INSTALL_WAIT_MS,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_RECHECK_ON_WAKE_MS,
   createAppUpdater,
@@ -474,5 +475,146 @@ describe('createAppUpdater: 適用', () => {
     t.updater.apply()
     t.updater.apply()
     expect(w.postMessage).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('createAppUpdater: 押して確かめる', () => {
+  it('取り込みを促して新しい版が待つ版になれば「見つかった」と答え、合図を送れる版として持つ（正）', async () => {
+    const t = setup()
+    await flush()
+    let w: FakeWorker | null = null
+    t.reg.update.mockImplementationOnce(async () => { w = t.reg.install() })
+    await expect(t.updater.checkManually()).resolves.toBe('found')
+    expect(t.reg.update).toHaveBeenCalledTimes(1)
+    expect(t.updater.getSnapshot()).toEqual({ waiting: true, newVersion: '5.70.0', autoApply: true })
+    t.updater.apply()
+    expect(w!.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' })
+  })
+
+  it('配下にあるページで、番号は新しいのに待っている版が無ければ「確認できなかった」と答え、待っている状態にしない（安全弁: 読み直しても古い版のまま）', async () => {
+    const t = setup()
+    await flush()
+    await expect(t.updater.checkManually()).resolves.toBe('failed')
+    expect(t.updater.getSnapshot().waiting).toBe(false)
+  })
+
+  it('配下に無いページは、番号の比較で「見つかった」と答える（対照）', async () => {
+    const t = setup({ controlled: false })
+    await flush()
+    await expect(t.updater.checkManually()).resolves.toBe('found')
+    expect(t.updater.getSnapshot()).toEqual({ waiting: true, newVersion: '5.70.0', autoApply: true })
+  })
+
+  it('配信されている版が同じなら「最新」と答え、何も出さない（対照）', async () => {
+    const t = setup({ fetchVersion: async () => '5.69.0' })
+    await flush()
+    await expect(t.updater.checkManually()).resolves.toBe('latest')
+    expect(t.updater.getSnapshot().waiting).toBe(false)
+  })
+
+  it('既に待っている版があれば、取りに行かずに「見つかった」と答える', async () => {
+    const t = setup()
+    await flush()
+    t.reg.install()
+    t.reg.update.mockClear()
+    await expect(t.updater.checkManually()).resolves.toBe('found')
+    expect(t.reg.update).not.toHaveBeenCalled()
+  })
+
+  it('回線が切れていれば取りに行かずに「回線が切れている」と答える', async () => {
+    const t = setup()
+    await flush()
+    t.setOnline(false)
+    await expect(t.updater.checkManually()).resolves.toBe('offline')
+    expect(t.reg.update).not.toHaveBeenCalled()
+  })
+
+  it('番号を取れない・読めないときは「最新」と名乗らない（安全弁）', async () => {
+    const none = setup({ fetchVersion: async () => null })
+    await flush()
+    await expect(none.updater.checkManually()).resolves.toBe('failed')
+    const thrown = setup({ fetchVersion: async () => { throw new Error('取得の失敗') } })
+    await flush()
+    await expect(thrown.updater.checkManually()).resolves.toBe('failed')
+    const garbled = setup({ fetchVersion: async () => 'abc' })
+    await flush()
+    await expect(garbled.updater.checkManually()).resolves.toBe('failed')
+  })
+
+  it('取り込みを促せなくても、番号の比較で答える', async () => {
+    const t = setup({ controlled: false })
+    await flush()
+    t.reg.update.mockRejectedValueOnce(new Error('促せない'))
+    await expect(t.updater.checkManually()).resolves.toBe('found')
+  })
+
+  it('取り込み中の版は、待つ版になってから答え、合図を送れる版として持つ', async () => {
+    const t = setup()
+    await flush()
+    const w = new FakeWorker('installing')
+    t.reg.update.mockImplementationOnce(async () => {
+      t.reg.installing = w
+    })
+    let settled = false
+    const result = t.updater.checkManually().then((r) => { settled = true; return r })
+    await flush()
+    expect(settled).toBe(false)
+    t.reg.installing = null
+    t.reg.waiting = w
+    w.to('installed')
+    await expect(result).resolves.toBe('found')
+    t.updater.apply()
+    expect(w.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' })
+  })
+
+  it('取り込みが上限の時間で終わらなければ、待たずに答える（まだ取り込めていないので「確認できなかった」）', async () => {
+    const t = setup()
+    await flush()
+    t.reg.update.mockImplementationOnce(async () => {
+      t.reg.installing = new FakeWorker('installing')
+    })
+    const result = t.updater.checkManually()
+    await flush()
+    // 1 本目は取り込みを促す確認の上限（確認が返ったので外れている）。2 本目が取り込み待ちの上限
+    const waits = t.timeouts.filter((x) => x.ms === MANUAL_CHECK_INSTALL_WAIT_MS)
+    expect(waits).toHaveLength(2)
+    const wait = waits[1]
+    expect(wait).toBeDefined()
+    wait?.fn()
+    await expect(result).resolves.toBe('failed')
+  })
+
+  it('配下にあるページで取り込みを促せなかったら、番号が同じでも「最新」とは答えない（安全弁）', async () => {
+    const t = setup({ fetchVersion: async () => '5.69.0' })
+    await flush()
+    t.reg.update.mockRejectedValueOnce(new Error('促せない'))
+    await expect(t.updater.checkManually()).resolves.toBe('failed')
+  })
+
+  it('配下にあるページで取り込みを促す確認が上限の時間で返らなければ、「最新」とは答えない', async () => {
+    const t = setup({ fetchVersion: async () => '5.69.0' })
+    await flush()
+    t.reg.update.mockImplementationOnce(() => new Promise<void>(() => {}))
+    let settled = false
+    const result = t.updater.checkManually().then((r) => { settled = true; return r })
+    await flush()
+    expect(settled).toBe(false)
+    const limit = t.timeouts.find((x) => x.ms === MANUAL_CHECK_INSTALL_WAIT_MS)
+    expect(limit).toBeDefined()
+    limit?.fn()
+    await expect(result).resolves.toBe('failed')
+  })
+
+  it('取り込みを促す確認が済み、番号が同じなら「最新」（対照）', async () => {
+    const t = setup({ fetchVersion: async () => '5.69.0' })
+    await flush()
+    await expect(t.updater.checkManually()).resolves.toBe('latest')
+    expect(t.cleared.length).toBeGreaterThan(0)
+  })
+
+  it('サービスワーカーを使えないブラウザでも、番号の比較で答える', async () => {
+    const t = setup({ noServiceWorker: true, fetchVersion: async () => '5.69.0' })
+    await flush()
+    await expect(t.updater.checkManually()).resolves.toBe('latest')
   })
 })

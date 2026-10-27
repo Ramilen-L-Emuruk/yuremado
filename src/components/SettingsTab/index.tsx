@@ -1,6 +1,7 @@
 import { ensureWaveSpanSec, WAVE_SPAN_CHOICES } from '../../utils/waveSpan'
 import { formatArchiveCoverage } from '../../utils/historicalArchiveCoverage'
-import { memo, useState, useCallback, useEffect, useRef } from 'react'
+import { memo, useState, useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
+import { currentAppUpdater, type ManualCheckResult } from '../../services/appUpdate'
 import type { AppSettings, TtsUnreceivedDetail } from '../../hooks/useSettings'
 import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX, devInjectedKeys } from '../../hooks/useSettings'
 import { Toggle } from '../Toggle'
@@ -703,6 +704,64 @@ function TelegramBoilerplateRows({ reads, onChange }: {
   )
 }
 
+/**
+ * 「バージョン」の行。番号の横の［更新を確認］で、定期の確認を待たずに新しい版を確かめる
+ * （2026-10-27 ユーザー承認。選んだ選択肢「バージョンの行」「行に［今すぐ更新］」「案 A：短く」）。
+ *
+ * **見つかったら、この行から適用できるようにする。** 設定の窓を開いている間は自動の適用を待ち、
+ * 地図左上の札も窓に隠れて押せない（→ `utils/appUpdateGate.ts`）。
+ */
+function AppVersionRow() {
+  const updater = currentAppUpdater()
+  const update = useSyncExternalStore(updater.subscribe, updater.getSnapshot)
+  const [result, setResult] = useState<ManualCheckResult | 'checking' | null>(null)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+  const check = () => {
+    setResult('checking')
+    updater.checkManually()
+      .then((r) => { if (mountedRef.current) setResult(r) })
+      .catch((err: unknown) => {
+        log.warn('[更新] 押して確かめるのに失敗した', err)
+        if (mountedRef.current) setResult('failed')
+      })
+  }
+  // 押した後に待っている版が現れたら（いつもの確認や取り込みの遅れで）、どの結果でも見つかった表示へ替える。
+  // 見つかった後に待っている版が取り下げられたら、もう適用するものが無い
+  const shown = result !== null && result !== 'checking' && update.waiting ? 'found'
+    : result === 'found' && !update.waiting ? null
+      : result
+  let status: React.ReactNode = null
+  if (shown === 'checking') status = <span>確認しています…</span>
+  else if (shown === 'latest') status = <span>最新です</span>
+  else if (shown === 'offline') status = <span>確認できませんでした（回線が切れています）</span>
+  else if (shown === 'failed') status = <span>確認できませんでした</span>
+  else if (shown === 'found') {
+    status = (
+      <>
+        <span>新しいバージョン{update.newVersion !== null ? ` ${update.newVersion}` : ''}</span>
+        <button type="button" onClick={() => updater.apply()} className={SMALL_BUTTON_CLASS}>今すぐ更新</button>
+      </>
+    )
+  }
+  return (
+    <Row label="バージョン">
+      <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs text-secondary">
+        <span>{__APP_VERSION__}</span>
+        <button type="button" onClick={check} disabled={shown === 'checking'} className={`${SMALL_BUTTON_CLASS} disabled:opacity-50`}>
+          更新を確認
+        </button>
+        {status}
+      </div>
+    </Row>
+  )
+}
+
+const SMALL_BUTTON_CLASS = 'rounded-sm border border-border px-3 py-1 text-xs text-secondary hover:bg-white/10 hover:text-white whitespace-nowrap'
+
 /** 「変更履歴」の行。［表示］で全部の版の変更内容を窓に出す（2026-10-26 ユーザー承認「［表示］で窓を開く」）。 */
 function ReleaseHistoryRow() {
   const [open, setOpen] = useState(false)
@@ -712,7 +771,7 @@ function ReleaseHistoryRow() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-sm border border-border px-3 py-1 text-xs text-secondary hover:bg-white/10 hover:text-white"
+        className={SMALL_BUTTON_CLASS}
       >
         表示
       </button>
@@ -2067,7 +2126,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
       </Section>
 
       <Section category="about" title="このアプリについて">
-        <Row label="バージョン"><span className="text-xs text-secondary">{__APP_VERSION__}</span></Row>
+        <AppVersionRow />
         <ReleaseHistoryRow />
         {/* 利用規約・プライバシーポリシーへの導線。
             **同意を求める画面は出さない。** 無償・アカウント不要・利用者の情報を集めない

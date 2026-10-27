@@ -91,6 +91,19 @@ export const UPDATE_RECHECK_ON_WAKE_MS = 5 * 60 * 1000
  */
 export const APPLY_RELOAD_FALLBACK_MS = 10_000
 
+/**
+ * 押して確かめた結果（設定の窓の［更新を確認］）。`found` なら {@link AppUpdateSnapshot.waiting} も立っている。
+ * `offline` は回線が切れていて確かめに行かなかった、`failed` は配信されている版の番号を取れなかった・読めなかった、
+ * またはサービスワーカーの配下にあるページで、番号は新しいのに新しい版をまだ取り込めていない。
+ */
+export type ManualCheckResult = 'latest' | 'found' | 'offline' | 'failed'
+
+/**
+ * 押して確かめたとき、取り込み中の版が待つ版になるまで待つ上限。過ぎたら待っている版が無いまま答える
+ * （取り込み終えれば、いつもの見張りが待っている版として拾う）。
+ */
+export const MANUAL_CHECK_INSTALL_WAIT_MS = 30_000
+
 export interface AppUpdater {
   start(): void
   getSnapshot(): AppUpdateSnapshot
@@ -99,6 +112,11 @@ export interface AppUpdater {
   apply(): void
   /** 定期の確認を待たずに、いま新しい版を確かめに行く（自分のファイルが読めなかったとき。main.tsx）。 */
   checkNow(): void
+  /**
+   * 利用者が押して確かめる。新しい版の取り込みを促し、配信されている版の番号を自分の番号と比べて答える。
+   * 新しい版があれば待っている状態にする（適用はしない）。
+   */
+  checkManually(): Promise<ManualCheckResult>
 }
 
 /**
@@ -112,6 +130,11 @@ let current: AppUpdater = {
   subscribe: () => () => {},
   apply() {},
   checkNow() {},
+  // 据えていない（開発サーバー・テスト）なら確かめる手段が無い。「最新です」と名乗らない
+  checkManually: () => {
+    log.warn('[sw] 押して確かめようとしたが、更新の係が据わっていない（開発サーバーなど。確認できなかったと答える）')
+    return Promise.resolve('failed')
+  },
 }
 
 export function installAppUpdater(updater: AppUpdater): void {
@@ -271,6 +294,36 @@ export function createAppUpdater(deps: AppUpdaterDeps): AppUpdater {
     return null
   }
 
+  /** 取り込み中の版が待つ版になる（または取り下げられる）まで待つ。上限を過ぎたら待たずに返る。 */
+  const settleInstalling = (worker: ServiceWorker) => new Promise<void>((resolve) => {
+    let done = false
+    const timer = deps.setTimeout(() => {
+      if (done) return
+      log.warn(`[sw] 押して確かめたとき、新しい版の取り込みが ${MANUAL_CHECK_INSTALL_WAIT_MS / 1000} 秒で終わらなかった（番号だけで答える）`)
+      finish()
+    }, MANUAL_CHECK_INSTALL_WAIT_MS)
+    const finish = () => {
+      if (done) return
+      done = true
+      worker.removeEventListener('statechange', onState)
+      deps.clearTimeout(timer)
+      resolve()
+    }
+    const onState = () => {
+      if (worker.state !== 'installing') finish()
+    }
+    worker.addEventListener('statechange', onState)
+  })
+
+  /** `promise` が `ms` 以内に片付けばその値、片付かなければ `false`。失敗はそのまま投げ直す。 */
+  const withinLimit = (promise: Promise<boolean>, ms: number) => new Promise<boolean>((resolve, reject) => {
+    const timer = deps.setTimeout(() => resolve(false), ms)
+    promise.then(
+      (v) => { deps.clearTimeout(timer); resolve(v) },
+      (err: unknown) => { deps.clearTimeout(timer); reject(err) },
+    )
+  })
+
   const onControllerChange = () => {
     if (applying) {
       reloadOnce()
@@ -329,6 +382,60 @@ export function createAppUpdater(deps: AppUpdaterDeps): AppUpdater {
       log.info(needsVersionCompare()
         ? `[sw] サービスワーカーへの確認は見送り、配信されている版の番号だけ確かめに行った（${skipped}）`
         : `[sw] いま確かめるのを見送った（${skipped}）`)
+    },
+    async checkManually() {
+      if (snapshot.waiting) return 'found'
+      if (!deps.isOnline()) return 'offline'
+      const reg = registration
+      /** サービスワーカーの確認が済んだか（失敗・時間切れなら偽）。配下のページはこちらを正とする */
+      let swChecked = reg === null
+      if (reg !== null) {
+        lastCheckMs = deps.now()
+        try {
+          // 回線が半ば死んでいると返らないことがある。返らないままだと行が「確認しています…」で固まる
+          const settled = await withinLimit(reg.update().then(() => true), MANUAL_CHECK_INSTALL_WAIT_MS)
+          if (settled) swChecked = true
+          else log.warn(`[sw] 押して確かめたとき、新しい版の確認が ${MANUAL_CHECK_INSTALL_WAIT_MS / 1000} 秒で返らなかった（番号だけ比べる）`)
+        } catch (err) {
+          // 取り込みを促せなくても、番号の比較では答えられる
+          log.warn('[sw] 押して確かめたとき、新しい版の取り込みを促せなかった（番号だけ比べる）', err)
+        }
+        // 取り込み中なら待つ版になるのを待つ。読み直すだけの適用だと、古い版の配下へ戻ることがあるため
+        if (reg.installing !== null) await settleInstalling(reg.installing)
+        if (reg.waiting !== null && reg.active !== null && !takenOver) markWaiting(reg.waiting)
+      }
+      let version: string | null
+      try {
+        version = await deps.fetchVersion()
+      } catch (err) {
+        log.warn('[sw] 押して確かめたとき、配信されている版の番号を取れなかった', err)
+        version = null
+      }
+      if (snapshot.waiting) return 'found'
+      if (version === null) return 'failed'
+      const cmp = compareVersions(version, deps.currentVersion)
+      if (cmp === null) {
+        log.warn(`[sw] 押して確かめたとき、配信されている版の番号「${version}」を読めなかった`)
+        return 'failed'
+      }
+      if (cmp <= 0) {
+        // 配下のページはサービスワーカーの確認を正とする。それが済んでいないなら「最新」とは言い切れない
+        if (!needsVersionCompare() && !swChecked) {
+          log.warn('[sw] 押して確かめたとき、サービスワーカーの確認が済まなかったので最新とは答えない（確認できなかったと答える）')
+          return 'failed'
+        }
+        if (cmp < 0) log.warn(`[sw] 押して確かめたら、配信されている版（${version}）がこのページ（${deps.currentVersion}）より古かった（最新と答える）`)
+        return 'latest'
+      }
+      // サービスワーカーの配下にあるページで待っている版が無いなら、新しい版はまだ取り込めていない（配信の伝わり途中・
+      // 取り込みが終わらない）。ここで待っている状態にすると、［今すぐ更新］で読み直しても古い版のまま起動する
+      if (!needsVersionCompare()) {
+        log.warn(`[sw] 押して確かめたら配信されている版（${version}）は新しいが、まだ取り込めていない（確認できなかったと答える）`)
+        return 'failed'
+      }
+      log.info(`[sw] 押して確かめたら、配信されている版（${version}）がこのページ（${deps.currentVersion}）より新しかった`)
+      announce(version)
+      return 'found'
     },
     subscribe(listener) {
       listeners.add(listener)
