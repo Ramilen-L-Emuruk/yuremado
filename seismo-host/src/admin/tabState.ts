@@ -15,9 +15,9 @@
 // sessionStorage にも置く。** これが無いと、タブを移って戻ったとき・リロードの後に
 // 別のタブへ移ったときに、そのタブの選択が消える。
 
-export type TabKey = 'stations' | 'boards' | 'status' | 'waves' | 'shakes' | 'records' | 'storage'
+export type TabKey = 'stations' | 'boards' | 'status' | 'waves' | 'shakes' | 'records' | 'storage' | 'notify'
 
-export const TAB_KEYS: readonly TabKey[] = ['stations', 'boards', 'status', 'waves', 'shakes', 'records', 'storage']
+export const TAB_KEYS: readonly TabKey[] = ['stations', 'boards', 'status', 'waves', 'shakes', 'records', 'storage', 'notify']
 
 export function isTabKey(value: string): value is TabKey {
   return (TAB_KEYS as readonly string[]).includes(value)
