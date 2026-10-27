@@ -7,7 +7,7 @@ import { markReleaseNotesOpen } from '../utils/releaseNotesOpen'
 import type { ReleaseNoteEntry, ReleaseNoteView } from '../utils/releaseNotes'
 
 /**
- * 版ごとの変更内容を出す窓。更新後の知らせの［変更内容］と、設定タブの「変更履歴」の［表示］から開く。
+ * 版ごとの変更内容を出す窓。更新後の知らせの［変更内容］と、設定の窓の「変更履歴」の［表示］から開く。
  * 作りは波形の詳細の窓（`SeismoWaveDetail`）に揃える —— 画面全体を暗くして真ん中に出し、
  * ［閉じる］・Esc・窓の外で閉じる（2026-10-26 ユーザー承認「［表示］で窓を開く」）。
  *

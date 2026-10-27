@@ -171,6 +171,21 @@ describe('collectStatusWarnings', () => {
     expect(ws[1]?.html).toBe('基板を複数割り当てたが、合成できていない観測点: st1、st2')
   })
 
+  it('正: ホストの時計を合わせられていなければ、基板の時計の警告より先に並べる', () => {
+    const ws = collectStatusWarnings(
+      status({
+        hostClock: { source: 'os', consecutiveFailures: 1 },
+        boardClocks: { boards: [clock('mac:bb', 1301)] },
+      }),
+    )
+    expect(ws.map((w) => w.key)).toEqual(['host-clock', 'board-clock'])
+  })
+
+  it('対照: ホストの時計が合っていれば、ホストの時計の警告は出さない', () => {
+    const ws = collectStatusWarnings(status({ hostClock: { source: 'ntp', consecutiveFailures: 3 } }))
+    expect(ws.map((w) => w.key)).toEqual([])
+  })
+
   it('対照: 何も起きていなければ空', () => {
     expect(collectStatusWarnings(status())).toEqual([])
   })

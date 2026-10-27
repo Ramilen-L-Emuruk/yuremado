@@ -272,9 +272,12 @@ export const MapLegend = memo(function MapLegend({ blocks, collapsed, onToggle, 
 
   return (
     <div
-      className={`pointer-events-auto max-w-[min(20rem,calc(100%-1rem))] rounded-md border border-white/15 bg-[rgba(10,12,16,0.84)] shadow-lg ${m.pad}`}
+      className={`pointer-events-auto rounded-md border border-white/15 bg-[rgba(10,12,16,0.84)] shadow-lg ${m.pad}`}
       style={{
-        marginLeft: 'max(0.5rem, env(safe-area-inset-left, 0px))',
+        // 幅の上限は、反対の隅（左下）に立つ共有ボタン（幅 2.25rem・左端から `max(0.5rem, 左のセーフエリア)`）と
+        // その右の隙間 0.5rem を差し引いた幅。差し引かないと、凡例を開いた 360px 幅の画面でボタンに 12px 重なる。
+        maxWidth: 'min(20rem, calc(100% - max(0.5rem, env(safe-area-inset-left, 0px)) - 2.75rem - max(0.5rem, env(safe-area-inset-right, 0px))))',
+        marginRight: 'max(0.5rem, env(safe-area-inset-right, 0px))',
         marginBottom: '0.5rem',
       }}
     >

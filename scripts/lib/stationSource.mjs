@@ -10,7 +10,7 @@
 // TypeScript から呼ぶための宣言は `stationSource.d.mts` にある。
 import fs from 'node:fs'
 import path from 'node:path'
-import { REPO } from './repo-root.mjs'
+import { cacheDir } from './cacheDir.mjs'
 import { gate } from './rateGate.mjs'
 
 /**
@@ -88,8 +88,7 @@ async function fetchJson(url, what) {
 }
 
 /**
- * リビジョンの中身の控えの置き場所。`.claude/*` は `.gitignore` 済み
- * （`dmdata-archive-cache` / `nii-cache` / `hypocenter-cache` と同じ扱い）。
+ * リビジョンの中身の控えの置き場所（メインの checkout の `.cache/station-revision-cache`。決め方は `cacheDir.mjs`）。
  *
  * **期限を持たない。** gist のリビジョンはコミットハッシュで固定されているので、一度取った
  * 中身は変わらない（DMDATA アーカイブの控えが「日ごとの不変ファイル」に効くのと同じ理屈）。
@@ -104,7 +103,7 @@ async function fetchJson(url, what) {
  */
 function revisionCacheDir() {
   return process.env.STATION_REVISION_CACHE
-    || path.join(REPO, '.claude', 'station-revision-cache')
+    || cacheDir('station-revision-cache')
 }
 
 /**

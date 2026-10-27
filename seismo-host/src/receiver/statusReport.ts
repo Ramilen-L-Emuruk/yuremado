@@ -20,6 +20,7 @@ import type { BoardClockSnapshot } from './boardClock'
 import type { BoardIntensity } from './boardIntensity'
 import type { GravityCheckSnapshot, GravityVerdict } from './gravityCheck'
 import type { LoopStallSnapshot } from './loopStall'
+import type { HostClockSnapshot } from './hostClock'
 import type { RecvBufferOutcome } from './udpReceiver'
 import type { TallySnapshot } from './packetTally'
 import type { WaveSummaryKeeperStatus } from './waveSummaryKeeper'
@@ -85,6 +86,8 @@ export interface StatusReportInput {
   readonly udpRecvBuffer: RecvBufferOutcome
   /** ホストの処理が止まった区間（`loopStall.ts`）。 */
   readonly loopStalls: LoopStallSnapshot
+  /** ホストが自分で合わせた時計の様子（`hostClock.ts`）。 */
+  readonly hostClock: HostClockSnapshot
   /** 届かなかった分を基板へ取りに行った結果（`backlogFetcher.ts`）。 */
   readonly backlog: BacklogFetcherSnapshot
   /** 取り戻した区間の合成波形を作り直した結果（`rewaveRunner.ts`）。 */
@@ -283,6 +286,12 @@ export interface StatusReport {
    * 立て直しの段を上げる。
    */
   readonly loopStalls: LoopStallSnapshot
+  /**
+   * ホストが自分で合わせた時計（NTP）。**`source` が `os` の間は、一度も合わせられていない** ——
+   * そのとき基板の時計のずれ（`boardClocks`）は OS の時計に対する値で、OS の時計がずれていれば
+   * 全基板が同じだけずれて見える。`offsetFromOsMs` はこの時計と OS の時計の差。
+   */
+  readonly hostClock: HostClockSnapshot
   /**
    * 届かなかった分を基板へ取りに行った結果。**取り戻した分は生データにだけ入る** —— 震度・合成・
    * 押し出しには混ざらない。`pendingSamples` が減らずに `unrecoverableSamples` が増えるなら、
@@ -568,6 +577,7 @@ export function buildStatusReport(input: StatusReportInput): StatusReport {
     udp: input.udp,
     udpRecvBuffer: input.udpRecvBuffer,
     loopStalls: input.loopStalls,
+    hostClock: input.hostClock,
     backlog: input.backlog,
     rewave: input.rewave,
     http: input.http,

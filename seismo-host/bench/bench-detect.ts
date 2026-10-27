@@ -18,6 +18,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { cacheDir as sharedCacheDir } from '../../scripts/lib/cacheDir.mjs'
 
 import { travelTimeSec } from '../../src/utils/travelTime'
 import { SHAKE_CLASS_WORDS } from '../src/detection/detectionWording'
@@ -90,7 +91,7 @@ function main(): void {
     console.error('--days YYYY-MM-DD[,...] と --labels <p2pquake.json> が要る')
     process.exit(2)
   }
-  const cacheDir = arg('cache') ?? '.claude/seismo-bench-cache/station'
+  const cacheDir = arg('cache') ?? join(sharedCacheDir('seismo-bench-cache'), 'station')
   const stationId = arg('station') ?? 'station-1'
   const at = { lat: Number(arg('lat')), lon: Number(arg('lon')) }
   if (!Number.isFinite(at.lat) || !Number.isFinite(at.lon)) {

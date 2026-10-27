@@ -114,7 +114,7 @@ function importsCachedFetchers(src: string): boolean {
   return found
 }
 
-// キャッシュの実体をメモリ上の Map で置き換える。テストが実際の `.claude/nii-cache/` を
+// キャッシュの実体をメモリ上の Map で置き換える。テストが実際の `.cache/nii-cache/` を
 // 汚さないようにするため（vi.mock のファクトリは巻き上げられるので vi.hoisted で用意する）。
 const { files } = vi.hoisted(() => ({ files: new Map<string, string>() }))
 

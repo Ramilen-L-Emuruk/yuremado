@@ -1,15 +1,42 @@
 {
   "versions": [
     {
+      "version": "5.71.0",
+      "date": "2026-10-27",
+      "added": [
+        {
+          "text": "設定画面を変更",
+          "variant": "both"
+        },
+        {
+          "text": "地図の表示配置を変更",
+          "variant": "both"
+        }
+      ],
+      "fixed": []
+    },
+    {
       "version": "5.70.0",
       "date": "2026-10-26",
       "added": [
-        { "text": "新しいバージョンのお知らせと自動更新を追加", "variant": "both" },
-        { "text": "変更内容を確認できる画面を追加", "variant": "both" }
+        {
+          "text": "新しいバージョンのお知らせと自動更新を追加",
+          "variant": "both"
+        },
+        {
+          "text": "変更内容を確認できる画面を追加",
+          "variant": "both"
+        }
       ],
       "fixed": [
-        { "text": "起動時に画面が真っ白のままになる場合がある不具合を修正", "variant": "both" },
-        { "text": "ブラウザ通知が表示されない場合がある不具合を修正", "variant": "both" }
+        {
+          "text": "起動時に画面が真っ白のままになる場合がある不具合を修正",
+          "variant": "both"
+        },
+        {
+          "text": "ブラウザ通知が表示されない場合がある不具合を修正",
+          "variant": "both"
+        }
       ]
     }
   ]

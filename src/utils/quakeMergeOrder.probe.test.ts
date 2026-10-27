@@ -5,7 +5,7 @@
 // 確かめる計測台。**環境変数 `QUAKE_ORDER_ARCHIVE_DIR`（DMDATA の日次アーカイブ `*.tar.gz` を置いた
 // ディレクトリ）を渡したときだけ動く**（通常の `npm test` では飛ばす）。
 //
-//   QUAKE_ORDER_ARCHIVE_DIR=.claude/dmdata-archive-cache/telegram-earthquake npx vitest run src/utils/quakeMergeOrder.probe.test.ts
+//   QUAKE_ORDER_ARCHIVE_DIR=.cache/dmdata-archive-cache/telegram-earthquake npx vitest run src/utils/quakeMergeOrder.probe.test.ts
 //
 // アーカイブの控えは電文の棚卸しと共通（→ `docs/spec/telegram-coverage-audit.md` §2）。取得は
 // この計測台ではしない —— 置いてある分だけを読む。

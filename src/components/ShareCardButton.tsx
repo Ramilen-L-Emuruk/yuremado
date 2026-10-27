@@ -1,6 +1,6 @@
 import type { ShareCardState } from '../hooks/useShareCard'
 
-// 地図を画像にするボタン（地図の右下に重ねる）。処理の中身は useShareCard が持つ。
+// 地図を画像にするボタン（地図の左下に重ねる）。処理の中身は useShareCard が持つ。
 
 interface ShareCardButtonProps {
   state: ShareCardState

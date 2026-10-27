@@ -12,7 +12,8 @@ const VARIANT = isDmdss ? 'dmdss' : 'standard'
 export const UPDATED_NOTICE_MS = 30_000
 
 /**
- * 地図右上の列に出す、更新の札（2026-10-26 ユーザー承認「地図の右上の列」「体言止めの形」）。
+ * 地図左上の列（アプリの状態の列）に出す、更新の札（2026-10-26 ユーザー承認「地図の右上の列」「体言止めの形」。
+ * 列ごと左上へ移したのは 2026-10-27 ユーザー指示「そもそも右上じゃなくて左上にしたい(地震計と入れ替える。日本列島が右上向きだから)」）。
  *
  * - 秒読み中: 「10 秒後に更新します」（毎朝の読み直しなら「再読み込みします」）と［後で］
  * - 新しい版が待っている（発表中・再生中・入力中・「後で」で待たせている間も）: 「新しいバージョン 5.70.0」と
@@ -104,8 +105,9 @@ export function AppUpdateBadge({ schedule }: { schedule: ReloadSchedule }) {
 
   return (
     <>
+      {/* 狭いとき（右上の行と横に並んで幅が足りないとき）は、ボタンを文字の途中で割らずに次の行へ送る */}
       {body !== null && (
-        <div className="pointer-events-auto flex items-center gap-2 bg-black/80 rounded-sm text-xs px-2 py-1 roomy:text-lg roomy:px-2.5 text-white">
+        <div className="pointer-events-auto flex flex-wrap items-center gap-x-2 gap-y-1 bg-black/80 rounded-sm text-xs px-2 py-1 roomy:text-lg roomy:px-2.5 text-white">
           {body}
         </div>
       )}
@@ -119,7 +121,7 @@ function BadgeButton({ onClick, children }: { onClick: () => void; children: Rea
     <button
       type="button"
       onClick={onClick}
-      className="rounded-sm border border-white/30 px-2 py-0.5 hover:bg-white/15"
+      className="rounded-sm border border-white/30 px-2 py-0.5 hover:bg-white/15 whitespace-nowrap"
     >
       {children}
     </button>

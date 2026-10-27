@@ -14,6 +14,7 @@ import type { StatusReportInput, WaveArchiveStatus } from './statusReport'
 import type { MseedHealth } from './mseedRecorder'
 import type { WaveSummaryKeeperStatus } from './waveSummaryKeeper'
 import type { DetectionStatus } from '../detection/stationDetection'
+import type { HostClockSnapshot } from './hostClock'
 
 const DETECTION_OK: DetectionStatus = {
   detectorVersion: 1,
@@ -174,6 +175,21 @@ function station(overrides: Partial<StationHealth> = {}): StationHealth {
   }
 }
 
+/** 一度も合わせていない時計（OS の時計のまま）。 */
+const NO_HOST_CLOCK: HostClockSnapshot = {
+  source: 'os',
+  server: null,
+  syncedAtMs: null,
+  lastRttMs: null,
+  offsetFromOsMs: 0,
+  lastStepMs: null,
+  syncs: 0,
+  failures: 0,
+  consecutiveFailures: 0,
+  osFallbacks: 0,
+  lastError: null,
+}
+
 function input(overrides: Partial<StatusReportInput> = {}): StatusReportInput {
   const tally = new PacketTally()
   tally.record({ kind: 'received', source: '192.0.2.83' })
@@ -187,6 +203,7 @@ function input(overrides: Partial<StatusReportInput> = {}): StatusReportInput {
     udp: { address: '0.0.0.0', port: 50505 },
     udpRecvBuffer: { requestedBytes: 8_388_608, actualBytes: 8_388_608, error: null },
     loopStalls: { thresholdMs: 1000, count: 0, totalMs: 0, longestMs: null, last: null },
+    hostClock: NO_HOST_CLOCK,
     backlog: {
       pendingGaps: 1, pendingSamples: 30, recoveredSamples: 60, unrecoverableSamples: { 'not-held': 30 },
       requests: 3, recoveredPackets: 2, failures: { network: 1 }, badPackets: 0, foreignPackets: 0, unsavedPackets: 0, skippedPackets: 0,
@@ -675,5 +692,20 @@ describe('buildStatusReport の要約の欄', () => {
   it('要約の係が返すものをそのまま載せる（作れなかった数・最後の誤りまで）', () => {
     const waveSummary: WaveSummaryKeeperStatus = { ...SUMMARY_OK, failed: 3, pending: 7, lastError: '読めず' }
     expect(buildStatusReport(input({ waveSummary })).waveSummary).toEqual(waveSummary)
+  })
+})
+
+describe('buildStatusReport の時計', () => {
+  it('ホストが合わせた時計の様子をそのまま載せる（相手・最後に合わせた時刻・OS の時計との差）', () => {
+    const hostClock: HostClockSnapshot = {
+      ...NO_HOST_CLOCK,
+      source: 'ntp',
+      server: 'ntp.nict.jp',
+      syncedAtMs: 1_793_000_000_000,
+      lastRttMs: 36,
+      offsetFromOsMs: -274,
+      syncs: 3,
+    }
+    expect(buildStatusReport(input({ hostClock })).hostClock).toEqual(hostClock)
   })
 })

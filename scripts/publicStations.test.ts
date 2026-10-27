@@ -1,6 +1,6 @@
 /**
  * 公開観測点の表（`public/data/public-stations.json`）と、それを作る `buildPublicStations` の検査。
- * 上流の応答（`.claude/public-stations-cache/`）はリポジトリに無いので、組み立ては小さな見本で確かめる。
+ * 上流の応答（`.cache/public-stations-cache/`）はリポジトリに無いので、組み立ては小さな見本で確かめる。
  */
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'

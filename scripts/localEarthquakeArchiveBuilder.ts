@@ -58,7 +58,7 @@ export function pubHistUrl(base: string, dir: string): string {
 
 /**
  * pub_hist のページの控え。**一度取ったページは二度取らない**（過去の発表状況は書き換わらない）。
- * 置き場所はメインの checkout の `.claude/jma-pub-hist-cache/`（ワークツリーごとに取り直さない）。
+ * 置き場所はメインの checkout の `.cache/jma-pub-hist-cache/`（ワークツリーごとに取り直さない）。
  */
 export function pubHistCachePath(dir: string): string {
   return join(mainCheckoutCacheDir('jma-pub-hist-cache'), `${dir.replace(/[^0-9A-Za-z]/g, '_')}.html`)
@@ -549,7 +549,7 @@ export function coveredRangesFromDates(dates: string[], windowStart: Date, windo
 
 /**
  * 既存のindex.json一覧へ新規/更新エントリを追加し、収録範囲の開始時刻(from)順に並べ替える。
- * 単純追記だと実行順（開発時にどのアーカイブを先に作ったか）でしか並ばず、設定タブの一覧が
+ * 単純追記だと実行順（開発時にどのアーカイブを先に作ったか）でしか並ばず、設定の窓の一覧が
  * 地震の起きた順にならない（実際に発生していた不具合）。同じidが既にあれば置き換える。
  */
 export function mergeIndexEntry(index: IndexEntry[], newEntry: IndexEntry): IndexEntry[] {
@@ -569,7 +569,7 @@ export interface FinalizeArchiveOptions {
   outPath: string
   indexPath: string
   /**
-   * 設定タブの「再生」ボタンの起点（`firstEventTime` として書く。ボタンはこの 1 分前から再生する）。
+   * 設定の窓の「再生」ボタンの起点（`firstEventTime` として書く。ボタンはこの 1 分前から再生する）。
    * **窓の最初の報ではなく、その地震活動の最初の報を呼び出し側が明示する。** 窓の全地震を収録するようにしてから
    * （2026-10-23 ユーザー承認）、窓の最初の報は別の地震になり、本命の地震の何時間も前から再生が始まるため
    * （2026-10-25 ユーザー選択「前の起点に戻す (Recommended)」）。収録した報のどれかの時刻と一致しなければ例外

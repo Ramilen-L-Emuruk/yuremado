@@ -17,7 +17,7 @@ import { fetchWithTimeout } from './fetchWithTimeout'
  * `0.0.0.192` として接続され、全部失敗した）。DMDATA の APIキー（`App.tsx` の
  * `API_KEY_DEBOUNCE_MS`）と同じ 800ms に揃えてある。
  *
- * **設定の変化で通信する側は全部これを通すこと。** 該当するのは接続確認・話者一覧（設定タブ）と
+ * **設定の変化で通信する側は全部これを通すこと。** 該当するのは接続確認・話者一覧（設定の窓）と
  * 切り出し語の作り置き（`warmFixedPhrases`）。試聴と実際の読み上げはユーザー操作・電文の受信の
  * 時点でしか通信しないので対象外。
  */
@@ -407,7 +407,7 @@ function apiBase(baseUrl: string): string {
  * デバウンスの役目。ここが担うのは、スキームの書き忘れのような直らない誤りを
  * 「起動していません」と誤診しないこと。
  *
- * @param baseUrl 設定タブに入力された値
+ * @param baseUrl 設定の窓に入力された値
  * @returns http/https の URL として解析できるなら true
  */
 export function isValidVoicevoxUrl(baseUrl: string): boolean {
@@ -434,7 +434,7 @@ export async function checkVoicevoxAvailable(baseUrl: string): Promise<boolean> 
 }
 
 /**
- * 話者一覧の取得の上限。**黙ると設定タブの話者の欄が読み込み中のまま戻らない**ので上限を置く。
+ * 話者一覧の取得の上限。**黙ると設定の窓の話者の欄が読み込み中のまま戻らない**ので上限を置く。
  * 一覧は数十 KB で、同じ接続先への合成の上限（作り置き・投機の 10 秒）に揃える。
  */
 const SPEAKERS_FETCH_TIMEOUT_MS = 10_000

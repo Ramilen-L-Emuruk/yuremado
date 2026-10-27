@@ -22,8 +22,8 @@
 // - **要 NIED の登録。** `NIED_KNET_USER` / `NIED_KNET_PASSWORD` を環境変数か、
 //   リポジトリ直下の `.env.local` に置く（ワークツリーには引き継がれない）
 // - **取得は地震 1 つにつき 2 件**（月ごとの一覧と ZIP）。上限 8 件・3 秒おき。ZIP は
-//   `.claude/knet-cache/`（`KNET_CACHE` で変更可）へ控え、2 回目からは取得しない。
-//   ワークツリーで走らせるなら `KNET_CACHE` でメインの checkout 側を指すと取り直さずに済む
+//   メインの checkout の `.cache/knet-cache/`（`KNET_CACHE` で変更可）へ控え、2 回目からは取得しない。
+//   ワークツリーで走らせても同じ控えを使う
 // - 観測点ごとの値は `OUT_DIR`（既定はカレント）の `horizontal-only-rows.json` へ書く
 //
 // 結果と読み方は firmware/README.md「上下動が無いと、震度はどれだけ下がるか」。
@@ -36,9 +36,10 @@ import { groupIntoStations } from '../../src/utils/knet/knetAscii'
 import { calcSeismicIntensity } from '../../src/utils/knet/seismicIntensity'
 import { computeRealtimeIntensityTimeSeries } from '../../src/utils/knet/realtimeIntensity'
 import { measuredIntensityToGrade } from '../../src/utils/measuredIntensity'
+import { cacheDir } from '../../scripts/lib/cacheDir.mjs'
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const CACHE_DIR = process.env.KNET_CACHE ?? join(REPO_ROOT, '.claude', 'knet-cache')
+const CACHE_DIR = process.env.KNET_CACHE ?? cacheDir('knet-cache')
 const OUT_DIR = process.env.OUT_DIR ?? '.'
 const DRY = process.env.DRY === '1'
 

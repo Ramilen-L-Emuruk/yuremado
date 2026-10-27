@@ -187,7 +187,7 @@
 
 ### 基盤C. アプリ内検知履歴 — **実装済み**
 
-検知したイベントを端末内に永続化する。**別セッションが実装を終えて main に入った**（`src/utils/detectionDiagnostics.ts`・`src/utils/detectionDiagnosticsDb.ts`、設定タブの「診断ログ」節）。
+検知したイベントを端末内に永続化する。**別セッションが実装を終えて main に入った**（`src/utils/detectionDiagnostics.ts`・`src/utils/detectionDiagnosticsDb.ts`、設定の窓の「診断ログ」節）。
 
 **目的は開発者が検知精度を後から確認すること。** 一般利用者に見せるための土台ではない。この位置づけが上に乗る項目の設計を左右する。
 
@@ -198,7 +198,7 @@
 | 保存先 | **IndexedDB**（`kyoshin-diagnostics`）。1 件 150KB 前後になるため localStorage（5MB・同期・設定と同居）には置けない |
 | 保持件数 | `MAX_RECORDS = 50`。超えたら古いものから捨てる |
 | 記録の中身 | 検知の前後 61 秒ぶんの生の観測値（1725 観測点 × 61 文字）と**観測点の座標そのもの**。版だけを記録して後から引く形は採らなかった（旧版の観測点リストが配信され続けることに賭けられないため） |
-| UI | 設定タブに件数表示・書き出し・消去。**失敗しても本体を止めない**（IndexedDB が使えない環境では警告だけ出して諦める） |
+| UI | 設定の窓に件数表示・書き出し・消去。**失敗しても本体を止めない**（IndexedDB が使えない環境では警告だけ出して諦める） |
 
 **59（根拠開示）の土台にもなった。** 検知の前後 61 秒を丸ごと持っているので、判定の再現ができる。
 59 の実装では、この記録に「確信度をそう決めた根拠」を同梱する形で乗せた。
@@ -661,7 +661,7 @@ MapLibre の globe 投影へ切り替えた（[map-rendering-spec.md](spec/map-r
 
 `関心 ◎` `実装 済` `実現性 可` `規模 S` `依存 なし` — **要否: 必要**
 
-**実装済み。** 設定タブから 4 件（2016 熊本・2016 鳥取県中部・2018 大阪府北部・2018 北海道胆振東部）を
+**実装済み。** 設定の窓から 4 件（2016 熊本・2016 鳥取県中部・2018 大阪府北部・2018 北海道胆振東部）を
 ワンクリックで再生できる（`public/data/historical-archives/`）。仕様は
 [`settings-pwa-spec.md`](spec/settings-pwa-spec.md) §6。
 
@@ -735,7 +735,7 @@ MapLibre の globe 投影へ切り替えた（[map-rendering-spec.md](spec/map-r
 
 `関心 ◎` `実現性 可` `規模 M` `依存 なし` — **要否: 必要**
 
-- **見え方**: 設定タブで種別ごとに音源を選ぶ。プリセット数種＋ユーザーのローカルファイル
+- **見え方**: 設定の窓で種別ごとに音源を選ぶ。プリセット数種＋ユーザーのローカルファイル
 - **実装**: File API で読んで IndexedDB に ArrayBuffer で保存（localStorage には入らない）。再生は `decodeAudioData` → `BufferSource`。`alertSound.ts` の `PLAYERS` テーブルに「外部バッファ再生」の枝を足す
 - **難所**:
   - **既存の制約に触る**。音の長さと `TTS_DELAY_MS` の連動（[audio-tts-spec.md](spec/audio-tts-spec.md) §6）が壊れる。外部音源は長さが不定なので、decode 後の duration から遅延を動的に決める必要がある
@@ -779,7 +779,7 @@ MapLibre の globe 投影へ切り替えた（[map-rendering-spec.md](spec/map-r
 
 `関心 ◎` `実装 済` — **要否: 必要**
 
-- 設定タブの現在地取得（[SettingsTab/index.tsx:366](../src/components/SettingsTab/index.tsx:366)）、`useSWaveCountdown` による S 波到達カウントダウン、リアルタイムタブの到達表示として既に存在する
+- 設定の窓の現在地取得（[SettingsTab/index.tsx:366](../src/components/SettingsTab/index.tsx:366)）、`useSWaveCountdown` による S 波到達カウントダウン、リアルタイムタブの到達表示として既に存在する
 - 未実装なのは 30（複数地点）の方
 
 ## 30. 複数地点の登録
@@ -1450,8 +1450,8 @@ MapLibre の globe 投影へ切り替えた（[map-rendering-spec.md](spec/map-r
 `関心 ◎` `実装 一部` `実現性 条件付き` `規模 L` `依存 なし` — **要否: 必要**
 
 **計画と違う形で実装済み。** 計画では「再配布できないので開発者のローカル専用」を落としどころにして
-いたが、**利用者が自分で防災科研から取得した ZIP を設定タブから取り込む**形にしたので、再配布そのものが
-発生せず一般の機能になった（`src/utils/knet/`・設定タブ「K-NET データの取り込み」）。仕様は
+いたが、**利用者が自分で防災科研から取得した ZIP を設定の窓から取り込む**形にしたので、再配布そのものが
+発生せず一般の機能になった（`src/utils/knet/`・設定の窓「K-NET データの取り込み」）。仕様は
 [`settings-pwa-spec.md`](spec/settings-pwa-spec.md) §6。**残っているのは事前に用意したデータの同梱**で、
 これは再配布の制約が解けない限り不可。
 

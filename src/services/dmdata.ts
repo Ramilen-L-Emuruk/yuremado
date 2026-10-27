@@ -542,7 +542,7 @@ export class DmdataWebSocket {
   onEvent: ((ev: DmdataEvent) => void) | null = null
   onStatusChange: ((s: ConnectionStatus) => void) | null = null
   onRawMessage: ((entry: TelegramLogEntry) => void) | null = null
-  /** 配信元が区分を受け付けたとき（繋がるたび）。設定タブの「受信している区分」に使う */
+  /** 配信元が区分を受け付けたとき（繋がるたび）。設定の窓の「受信している区分」に使う */
   onClassifications: ((c: readonly DmdataClassification[]) => void) | null = null
   /**
    * 受け付けられた区分を一度も得ないまま、取り決めが行き詰まったとき。`auth` は認証エラー・

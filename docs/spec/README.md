@@ -24,7 +24,7 @@
 | [map-rendering-spec.md](map-rendering-spec.md) | MapLibre GL・レイヤー順・描画パフォーマンス | `src/components/Map/`, `src/components/Map/gl/` |
 | [audio-tts-spec.md](audio-tts-spec.md) | 通知音・VOICEVOX・ウィンドウタイトル | `src/utils/alertSound.ts`, `src/utils/voicevox.ts`, `src/hooks/useAlertTitle.ts` |
 | [data-sources-spec.md](data-sources-spec.md) | DMDATA / P2PQuake / Yahoo 統合仕様・クロック同期・生成データ | `src/services/`, `src/utils/clock.ts`, `src/utils/fetchJson.ts` |
-| [settings-pwa-spec.md](settings-pwa-spec.md) | 設定タブ・localStorage・PWA・実地震テスト | `src/components/SettingsTab/`, `src/hooks/useSettings.ts`, `vite.config.ts` |
+| [settings-pwa-spec.md](settings-pwa-spec.md) | 設定の窓・localStorage・PWA・実地震テスト | `src/components/SettingsTab/`, `src/hooks/useSettings.ts`, `vite.config.ts` |
 | [action-checklist-spec.md](action-checklist-spec.md) | 行動チェックリスト（出す条件・登録地点の周り・畳む挙動） | `src/hooks/useActionChecklist.ts`, `src/utils/actionChecklistTrigger.ts` |
 | [share-card-spec.md](share-card-spec.md) | 共有カード（撮影の制約・見出しの組み立て・出典の焼き込み） | `src/components/Map/gl/captureMap.ts`, `src/utils/shareCard.ts` |
 | [recording-interface-spec.md](recording-interface-spec.md) | 録画ツール向けの外部インターフェース（`window.__replay`・イベントログ） | `src/utils/replayEventLog.ts`, `src/App.tsx` |

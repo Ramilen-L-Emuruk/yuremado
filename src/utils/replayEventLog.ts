@@ -254,6 +254,8 @@ export interface ReplayOverlayEvent extends ReplayEventCommon {
     | 'specialInfoPanel'
     /** 行動チェックリストの帯。 */
     | 'actionChecklist'
+    /** 設定の窓（開くのは利用者の操作だけ。閉じるのは操作か、自動のタブ移動）。 */
+    | 'settings'
   open: boolean
   /** 何がそれを開いた・閉じたか（呼び出し側が渡す短い語）。 */
   reason: string

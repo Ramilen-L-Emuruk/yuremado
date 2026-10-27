@@ -10,7 +10,7 @@
 //    次は 11 件を返した例がある（2016-04-18）。空を残すと「控えが無い日」と決めつけてしまう
 // 2. **本体**: 目録に載ったページを 1 件ずつ取り、`fc_hist-<EventID>.html` として残す
 //
-// 控えはメインの checkout の `.claude/wayback-cache/` に置く（ワークツリーごとに取り直さないため）。
+// 控えはメインの checkout の `.cache/wayback-cache/` に置く（ワークツリーごとに取り直さないため）。
 // 過去の控えは書き換わらないので、期限は持たない。2 回目以降は読むだけ。
 //
 // 取得の決まり（配信元への配慮。→ CLAUDE.md「調査で外部 API を叩くとき」）:
@@ -21,11 +21,10 @@
 // - 本体の取得は 30 秒、目録（CDX）の問い合わせは 120 秒で打ち切る（時間切れは失敗として数える）
 // - 取り直しを含む総リクエスト数に上限を持たせ、超えそうになったら送らずに止める
 // - 本体は、ページの地震発生時刻が EventID と合うときだけ控える
-import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { parseEewContentHtml } from './historicalEewParser'
+import { cacheDir } from './lib/cacheDir.mjs'
 
 export const USER_AGENT = 'yuremado-archive-build (personal research)'
 export const REQUEST_INTERVAL_MS = 10_000
@@ -47,22 +46,11 @@ export const CDX_LIMIT = 500
 const FC_HIST_PATH = 'www.data.jma.go.jp/svd/eew/data/nc/fc_hist'
 
 /**
- * メインの checkout のトップ。ワークツリーから走らせても同じ場所を指す
- * （`git rev-parse --git-common-dir` はワークツリーでもメインの `.git` を返す）。
+ * 控えの置き場所（メインの checkout の `.cache/<name>`）。決め方は `lib/cacheDir.mjs` が持つ。
+ * 名前を残してあるのは、テストがこの関数を差し替えて一時ディレクトリへ向けるため。
  */
-function mainCheckoutRoot(): string {
-  const here = dirname(fileURLToPath(import.meta.url))
-  const commonDir = execFileSync('git', ['-C', here, 'rev-parse', '--path-format=absolute', '--git-common-dir'], {
-    encoding: 'utf-8',
-  }).trim()
-  return dirname(commonDir)
-}
-
-let rootMemo: string | null = null
-/** メインの checkout の `.claude/<name>`（控えの置き場所）。 */
 export function mainCheckoutCacheDir(name: string): string {
-  rootMemo ??= mainCheckoutRoot()
-  return join(rootMemo, '.claude', name)
+  return cacheDir(name)
 }
 
 export function waybackCacheDir(): string {

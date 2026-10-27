@@ -51,12 +51,17 @@ const strings = isDmdss ? APP_STRINGS.dmdss : APP_STRINGS.standard
 // `src/` はあるが、それはそのワークツリーで起動した別の dev サーバーが扱う）。外さないと、並行して動く
 // 別セッションがワークツリー内のファイルを触るたびに、こちらのブラウザがページ全体をリロードする
 // （index.html の変更で page reload、tsconfig.json の変更ではキャッシュ破棄を伴う full-reload）。
-// 設定タブ「テスト時刻設定」のリプレイは実時間で進むため、途中でリロードされると窓の最初から
+// 設定の窓「テスト時刻設定」のリプレイは実時間で進むため、途中でリロードされると窓の最初から
 // やり直しになる。
 //
 // 判定の中身（glob で書けない理由・パス区切りの吸収・ディレクトリ自身を含める理由）は
 // `isInsideClaudeDir` 側のコメントにある。
 const CLAUDE_DIR = fileURLToPath(new URL('./.claude/', import.meta.url))
+
+// 同じく監視から外す `.cache/`（生成・調査スクリプトの控え。→ `scripts/lib/cacheDir.mjs`）。
+// dev サーバーが読み込むものは無く、メインの checkout では数 GB になるので、張る監視ハンドルが無駄に増える。
+// 判定は `.claude/` と同じ関数を使う（名前は `.claude/` 用だが、中身は「渡した 1 つのディレクトリの中か」を見るだけ）。
+const CACHE_DIR = fileURLToPath(new URL('./.cache/', import.meta.url))
 
 /**
  * この設定ファイルが置かれているディレクトリ。dev サーバーの記録（`.dev-server.json`）の置き場所。
@@ -67,7 +72,7 @@ const PROJECT_ROOT = fileURLToPath(new URL('.', import.meta.url))
 
 /**
  * dev サーバー限定で `.env.local` の DMDATA_API_KEY を import.meta.env へ注入する。
- * DMDSS 版の検証のたびに設定タブへ API キーを貼り直す手間を省くための措置。
+ * DMDSS 版の検証のたびに設定の窓へ API キーを貼り直す手間を省くための措置。
  *
  * 露出を最小にするため、envPrefix は既定（VITE_ のみ）から広げず、このキー 1 本だけを
  * define で渡す。接頭辞を開放すると、将来 `.env.local` に置かれた別の DMDATA_ 系の秘密が
@@ -100,10 +105,12 @@ function devArrivalTokenDefine(configEnv: ConfigEnv): Record<string, string> {
 export default defineConfig(configEnv => ({
   base,
   server: {
-    // 監視から .claude/ 配下を外す（理由は CLAUDE_DIR の説明）。
+    // 監視から .claude/ と .cache/ の配下を外す（理由は CLAUDE_DIR・CACHE_DIR の説明）。
     // ここで渡した値は vite の既定（node_modules・.git・test-results・cacheDir・outDir）を
     // 置き換えるのではなく加算される（vite 6 の resolveChokidarOptions）ため、既定値は書かない。
-    watch: { ignored: [(p: string) => isInsideClaudeDir(CLAUDE_DIR, p)] },
+    watch: {
+      ignored: [(p: string) => isInsideClaudeDir(CLAUDE_DIR, p) || isInsideClaudeDir(CACHE_DIR, p)],
+    },
   },
   build: {
     outDir: outDirForVariant(variant),

@@ -17,7 +17,7 @@
 const PRINTABLE_ASCII_ONLY = /^[\x21-\x7E]+$/
 
 /**
- * APIキーが不正なときにユーザーへ見せる文言。設定タブの入力欄と履歴取得のエラー表示で
+ * APIキーが不正なときにユーザーへ見せる文言。設定の窓の入力欄と履歴取得のエラー表示で
  * 同じ文を使う（片方だけ直して食い違うのを防ぐ）。
  */
 export const DMDATA_API_KEY_INVALID_MESSAGE =
@@ -31,8 +31,8 @@ export const DMDATA_API_KEY_INVALID_MESSAGE =
  * 同じ文で通知すると、一度も入力していない人に「使用できない文字が含まれています」と告げることに
  * なり、入れた覚えのない文字を探させる（2026-08-24 にリプレイの経路で実際に起きた）。
  */
-// 文言は場所に依らない形にする。この文は設定タブ（リプレイの失敗表示）にも出るため、
-// 「設定タブで」と案内すると、その設定タブの中で自分を指すことになる。
+// 文言は場所に依らない形にする。この文は設定の窓（リプレイの失敗表示）にも出るため、
+// 「設定の窓で」と案内すると、その設定の窓の中で自分を指すことになる。
 export const DMDATA_API_KEY_MISSING_MESSAGE =
   'APIキーが未設定です。DM-D.S.S の APIキーを設定してください。'
 
@@ -42,7 +42,7 @@ export type DmdataApiKeyProblem = 'missing' | 'invalid'
 /**
  * APIキーが通信に使えるかを判定し、使えない場合はその理由を返す。
  *
- * @param apiKey 設定タブに入力された値
+ * @param apiKey 設定の窓に入力された値
  * @returns 使えるなら null、未設定なら `'missing'`、印字可能 ASCII 以外を含むなら `'invalid'`
  */
 export function dmdataApiKeyProblem(apiKey: string): DmdataApiKeyProblem | null {
@@ -79,7 +79,7 @@ export class DmdataApiKeyError extends Error {
  * APIキーが通信に使える形かを判定する。理由を問わない呼び出し側のための薄い包み
  * （理由で分岐する場合は `dmdataApiKeyProblem` を使う）。
  *
- * @param apiKey 設定タブに入力された値
+ * @param apiKey 設定の窓に入力された値
  * @returns 空でなく、全文字が印字可能 ASCII なら true
  */
 export function isValidDmdataApiKey(apiKey: string): boolean {
@@ -89,7 +89,7 @@ export function isValidDmdataApiKey(apiKey: string): boolean {
 /**
  * Basic 認証ヘッダ（`Basic base64(apiKey:)`）を組む。
  *
- * @param apiKey 設定タブに入力された値
+ * @param apiKey 設定の窓に入力された値
  * @returns `Authorization` ヘッダの値
  * @throws {DmdataApiKeyError} キーが空、または印字可能 ASCII 以外を含む場合。
  *   `btoa` の DOMException をそのまま投げると呼び出し元が理由を判別できないため、

@@ -1,4 +1,4 @@
-// 気象庁が書いた文の内訳が、設定タブに全部出ること。
+// 気象庁が書いた文の内訳が、設定の窓に全部出ること。
 //
 // ラベルの対応表（`TELEGRAM_TEXT_BLOCK_LABELS`）は `Record<TelegramTextBlockKey, string>` なので
 // 書き忘れると型検査が止める。**しかしグループ分け（`TELEGRAM_TEXT_BLOCK_GROUPS`）は配列なので
@@ -22,7 +22,7 @@ function blockOf(name: string): string {
   return source.slice(start, end)
 }
 
-describe('設定タブに出す「気象庁が書いた文」の内訳', () => {
+describe('設定の窓に出す「気象庁が書いた文」の内訳', () => {
   // 正: 全キーがどこかのグループに入っている
   it('全ブロックがいずれかの電文種別のグループに入っている', () => {
     const groups = blockOf('TELEGRAM_TEXT_BLOCK_GROUPS')

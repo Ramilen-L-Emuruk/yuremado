@@ -53,7 +53,7 @@
 [`data-sources-spec.md`](data-sources-spec.md) §2「リクエスト数を抑える」が単一情報源**で、
 ここに書くのは監査スクリプトを走らせる人が知る必要のあることだけ。
 
-- **控えの場所は `.claude/dmdata-archive-cache/`**（`.gitignore` 済み。`DMDATA_ARCHIVE_CACHE` で
+- **控えの場所は `.cache/dmdata-archive-cache/`**（`.gitignore` 済み。`DMDATA_ARCHIVE_CACHE` で
   変更できる）。アーカイブは 1 日分を締めたあとに生成される不変のファイルなので、**2 回目以降の
   走査はリクエストを 1 件も出さない**（実測: 同じ範囲の 2 回目が「控えから 2 件 / 取得 0 件」）
 - **ワークツリーで走らせると控えもそのワークツリー内に作られる。** 使い捨てのワークツリーで
@@ -607,7 +607,7 @@ P2PQuake の JSON も持つフィールドで、型から消すと両経路を�
 
 実装やコメントが「電文はこういう形で来る（来ない）」と置いている前提を、手元に集めた全期間のアーカイブで数えた結果。**数えたのは 2026-10-19。** 結果を「起きない」の根拠にはしない —— その標本では起きなかった、というだけ。各所のコメント・仕様書はこの節を指す。
 
-**標本は 3 つ。** どれも Git 管理外の保存先（`.claude/dmdata-archive-cache/`・`.claude/hypocenter-cache/zip/`）に集めたもの。
+**標本は 3 つ。** どれも Git 管理外の保存先（`.cache/dmdata-archive-cache/`・`.cache/hypocenter-cache/zip/`）に集めたもの。
 
 | 名前 | 中身 | 範囲 |
 |---|---|---|

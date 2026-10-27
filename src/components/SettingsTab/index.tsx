@@ -40,6 +40,7 @@ import { SHARE_CARD_FORMATS } from '../../utils/shareCard'
 import { HEATMAP_PERIODS, isHeatmapPeriod } from '../../utils/quakeHeatmap'
 import { ReleaseNotesDialog } from '../ReleaseNotesDialog'
 import { allNotes, type ReleaseNoteEntry } from '../../utils/releaseNotes'
+import { SETTINGS_CATEGORIES, useIsSettingsCategoryActive, type SettingsCategoryId } from './SettingsDialog'
 
 export interface TestFunctions {
   earthquake: () => void
@@ -152,39 +153,28 @@ const EMPTY_HISTORICAL_ARCHIVES: HistoricalArchiveIndex = []
 // ---- Reusable UI parts ----
 
 /**
- * 設定の見出し。見出しを押すと中を開け閉めできる。
+ * 設定の見出し。`category` の分類が選ばれているときだけ出す（→ `SettingsDialog.tsx`）。
  *
- * **既定はすべて閉じる。開け閉めの状態は端末に保存しない**（2026-10-25 ユーザー承認。原文「規定はすべて閉じてほしい」
- * 「端末に覚えておく必要は無い気がします。タブ移動では覚えておいてほしい」）。設定タブは別のタブへ移っても
- * 外されずに隠れるだけ（App の `TAB_SCROLLER_CLASS` の領域）なので、ここの状態はタブを移る間は残り、
- * 読み込み直すと消える。**条件つきで出す見出し**（読み上げ設定など）は、出し直すと閉じた状態から始まる。
+ * **開け閉めは持たない。中身は常に開いて出す**（2026-10-27 ユーザー承認。選んだ選択肢「窓では常に開く (Recommended)」）。
+ * 窓では分類を選んだ時点で 1〜6 個の見出ししか出ないので、閉じたままだと「分類を押す→見出しを押す」の 2 手になる。
+ * 選ばれていない分類の見出しは**外さずに隠す**。中の行（設定の読み込みの結果・診断ログの件数など）が持つ状態を、
+ * 分類を移るたびに捨てないため。
+ *
+ * 見た目は「小さな灰色の見出し＋細い線で区切った行」（2026-10-27 ユーザー承認。選んだ選択肢「これで進める」）。
+ * 窓そのものが枠を持つので、見出しを帯にして箱で囲むと枠の中に枠が入る。
+ * 見出しが分類名と同じ（「音と読み上げ」など）なら、分類の一覧（幅の狭い画面では窓の上端）と同じ名前の
+ * 繰り返しになるので画面には出さない（読み上げ用には残す）。
+ * 見出しどうしの間は外枠（`SettingsTab` の根の `gap`）が空ける。隠した見出しは間を取らない。
  */
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false)
+function Section({ category, title, children }: { category: SettingsCategoryId; title: string; children: React.ReactNode }) {
+  const active = useIsSettingsCategoryActive(category)
+  const sameAsCategory = SETTINGS_CATEGORIES.some((c) => c.id === category && c.label === title)
   return (
-    <section className="bg-card rounded-lg border border-border overflow-hidden mb-3">
-      <h2>
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen(v => !v)}
-          className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 bg-panel text-left text-white text-sm font-bold hover:bg-white/5 transition-colors ${
-            open ? 'border-b border-border' : ''
-          }`}
-        >
-          <span>{title}</span>
-          <span aria-hidden="true" className="text-secondary font-normal">{open ? '▾' : '▸'}</span>
-        </button>
-      </h2>
-      {/* 閉じても外さずに隠す。中の行（設定の読み込みの結果・診断ログの件数など）が持つ状態を、閉じるたびに捨てないため */}
-      <div hidden={!open} className="divide-y divide-border">{children}</div>
+    <section hidden={!active}>
+      <h3 className={sameAsCategory ? 'sr-only' : 'mb-1.5 px-4 text-xs font-bold text-secondary'}>{title}</h3>
+      <div className="divide-y divide-border border-y border-border">{children}</div>
     </section>
   )
-}
-
-/** 見出しのまとまりを区切る小見出し（「開発・検証」）。開け閉めは持たない。 */
-function SectionGroupLabel({ title }: { title: string }) {
-  return <h2 className="text-secondary text-xs font-bold px-1 pt-3 pb-2">{title}</h2>
 }
 
 /**
@@ -322,7 +312,7 @@ function DiagnosticLogRow() {
     void countRecords().then(setCount)
     if (hasStorageError()) setError('この端末では記録を保存できません。プライベートモードでは保存できないことがあります')
   }, [])
-  // 記録が増減したら読み直す。設定タブは常時マウントされたまま CSS で隠れるだけなので、
+  // 記録が増減したら読み直す。設定の窓は常時マウントされたまま CSS で隠れるだけなので、
   // 一定間隔で問い合わせる作りにすると、開いていない間も IndexedDB を叩き続けることになる
   useEffect(() => {
     refresh()
@@ -474,7 +464,7 @@ function KyoshinImportRow({ historicalArchives }: { historicalArchives: Historic
 }
 
 /**
- * 気象庁が書いた文のブロック名（設定タブに出す）。
+ * 気象庁が書いた文のブロック名（設定の窓に出す）。
  *
  * **`Record<TelegramTextBlockKey, string>` で持つ。** キーを足してここへ書き忘れると
  * 型検査が止める（対応表を配列で持つと、抜けても気付けない）。
@@ -553,7 +543,7 @@ const TELEGRAM_TEXT_BLOCK_LABELS: Record<TelegramTextBlockKey, string> = {
  * （地震情報 → 津波情報 → 長周期 → 南海トラフ系 → 地震回数）。
  *
  * **全キーがどこかのグループに入っていること**は `telegramTextBlockGroups.test.ts` が検査する
- * （ここから漏れたキーは設定タブに出ず、既定のまま触れなくなる）。
+ * （ここから漏れたキーは設定の窓に出ず、既定のまま触れなくなる）。
  */
 const TELEGRAM_TEXT_BLOCK_GROUPS: readonly {
   readonly title: string
@@ -579,7 +569,7 @@ const TELEGRAM_TEXT_BLOCK_GROUPS: readonly {
 /**
  * 気象庁が書いた文の内訳（電文種別 × ブロック）。
  *
- * **既定は畳んでおく。** 19 行＋グループの見出し 8 行を常に開くと、設定タブの中でこの
+ * **既定は畳んでおく。** 19 行＋グループの見出し 8 行を常に開くと、設定の窓の中でこの
  * セクションだけが突出して伸びる。見出しには「何個を読む設定か」を出す —— 畳んだままでも、
  * 全部読むのか一部だけかが分かる。
  */
@@ -766,7 +756,7 @@ function Row({ label, description, hint, children }: {
     <div data-settings-row className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
       <div className="min-w-0 grow basis-32">
         {/* 説明文は常時表示せず、ラベルをホバー・タップしたときだけ吹き出しで出す。
-            設定タブは行数が多く、全行に説明文を敷くと縦が 3 割伸びる（4804px→6310px）。 */}
+            設定の窓は行数が多く、全行に説明文を敷くと縦が 3 割伸びる（4804px→6310px）。 */}
         {description
           ? <DescriptionTip label={label} description={description} />
           : <p className="text-white text-sm">{label}</p>}
@@ -1266,7 +1256,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
     fetchSeismoStatus(debouncedSeismoUrl)
       .then(result => { if (!cancelled) setSeismoStatus(result) })
       // **投げさせない。** `fetchSeismoStatus` は理由を戻り値で返す契約だが、
-      // ここで漏れると設定タブが「確認中…」のまま固まる。
+      // ここで漏れると設定の窓が「確認中…」のまま固まる。
       .catch((error: unknown) => {
         log.warn('[seismo] 接続確認が失敗した', error)
         if (!cancelled) setSeismoStatus({ kind: 'unreachable', detail: 'check-threw', reason: 'unknown' })
@@ -1289,14 +1279,13 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
   // ここには含めない（入力途中に赤字が出続けるのを避ける）。
   const isApiKeyInvalid = settings.dmdataApiKey !== '' && !isValidDmdataApiKey(settings.dmdataApiKey)
 
-  // 現状は親が flex コンテナでないため flex-1 が効かず、実スクロールは App.tsx 側のタブ領域が担う。
-  // ただし親に flex が付けばこの要素自身がスクロール領域に変わるため、横スクロールの抑止は
-  // 先に付けておく（overflow-y だけだと overflow-x も auto に格上げされる）。
+  // スクロールと余白は窓の中身の領域（`SettingsDialog`）が受け持つ。見出しどうしの間を `gap` で空けるのは、
+  // 隠した見出し（`hidden`）が間を取らないため（余白を見出し側に持たせると、隠れた見出しの分だけ末尾がずれる）。
   return (
-    <div className="flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none p-3">
+    <div className="flex flex-col gap-6">
 
       {isDmdss && (
-        <Section title="DM-D.S.S 接続設定">
+        <Section category="connection" title="DM-D.S.S 接続設定">
           <div className="px-4 py-2 bg-yellow-900/30 border-b border-yellow-700/40">
             <p className="text-yellow-400 text-xs">APIキーはこのブラウザにのみ保存されます。第三者と共有しないでください。</p>
           </div>
@@ -1349,7 +1338,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
       {/* 標準版の接続の設定。DMDSS 版は「DM-D.S.S 接続設定」に同じ設定の行がある（あちらは緊急地震速報以外の試験報にも効く）。
           行の文面は 2026-10-21 ユーザー承認、置き場所は 2026-10-25 ユーザー承認 */}
       {!isDmdss && (
-        <Section title="接続設定">
+        <Section category="connection" title="接続設定">
           <Row label="試験報を受信（検証用）" description="緊急地震速報の訓練報・試験報も受信します。画面には「訓練報」「試験報」の印を付けて出します">
             <Toggle
               checked={settings.dmdataTestDelivery}
@@ -1362,7 +1351,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
       {/* ブラウザ通知。**まとめて止めると、種類ごとの行とテスト通知を隠す**（値は書き換えないので、戻せば元どおり効く。
           文言とこの見せ方は 2026-10-25 ユーザー承認）。通知を出すかの判定は `utils/notificationGate.ts` の 1 箇所。
           「通知許可」だけは止めていても出す（許可はブラウザ側の状態で、この設定とは別）。 */}
-      <Section title="ブラウザ通知">
+      <Section category="notification" title="ブラウザ通知">
         <Row label="通知を表示" description="オフにすると、ブラウザ通知をすべて止めます">
           <Toggle checked={settings.notifyEnabled} onChange={v => onUpdate('notifyEnabled', v)} />
         </Row>
@@ -1414,7 +1403,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
       </Section>
 
-      <Section title="音と読み上げ">
+      <Section category="sound" title="音と読み上げ">
         <Row label="通知音" description="地震・緊急地震速報・津波の受信時に音を鳴らします">
           <Toggle
             checked={settings.soundEnabled}
@@ -1546,7 +1535,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           並びは「地域の列挙 → 1 件ごとの詳しさ → 気象庁の発表文」。中の順序は
           通知設定・テスト機能と同じカテゴリ順（地震情報 → 津波情報 → 緊急地震速報）。 */}
       {settings.voicevoxEnabled && (
-        <Section title="読み上げ設定">
+        <Section category="sound" title="読み上げ設定">
           <Row label="読み上げ震度階数" description="最大震度から何階級下まで、地域名を読み上げるかです">
             <select
               value={settings.ttsIntensityLevels}
@@ -1672,7 +1661,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Section>
       )}
 
-      <Section title="表示設定">
+      <Section category="display" title="表示設定">
         <Row label="最低表示震度" description="これ未満の地震はリストに表示しません">
           <div className="flex items-center gap-2">
             <IntensityBadge scale={settings.minDisplayScale} />
@@ -1800,7 +1789,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </select>
           </Row>
         )}
-        <Row label="凡例を表示" description="地図の左下に、いま地図で使っている色の意味（震度・津波の等級・震源の深さなど）を重ねます。見出しをタップすると畳めます">
+        <Row label="凡例を表示" description="地図の右下に、いま地図で使っている色の意味（震度・津波の等級・震源の深さなど）を重ねます。見出しをタップすると畳めます">
           <Toggle
             checked={settings.showMapLegend}
             onChange={v => onUpdate('showMapLegend', v)}
@@ -1822,7 +1811,28 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
       </Section>
 
-      <Section title="動作設定">
+      <Section category="display" title="震度スケール">
+        <div className="px-4 py-3 flex flex-wrap gap-2">
+          {Object.entries(INTENSITY_LABELS)
+            .filter(([k]) => k !== '-1')
+            .map(([scale, label]) => {
+              const fill = getIntensityColor(Number(scale))
+              return (
+                <div key={scale} className="flex items-center gap-1.5">
+                  <span
+                    className="w-6 h-6 rounded-sm flex items-center justify-center text-xs font-bold"
+                    style={{ backgroundColor: fill, color: readableTextColor(fill) }}
+                  >
+                    {label}
+                  </span>
+                  <span className="text-xs text-secondary">震度{label}</span>
+                </div>
+              )
+            })}
+        </div>
+      </Section>
+
+      <Section category="behavior" title="動作設定">
         <Row label="デフォルトタブ" description="操作や情報更新が一定時間ないとこのタブに戻ります">
           <select
             value={settings.defaultTab}
@@ -1891,7 +1901,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
       </Section>
 
-      <Section title="ホーム地点">
+      <Section category="location" title="ホーム地点">
         <HomeLocationSection
           homeLat={settings.homeLat}
           homeLng={settings.homeLng}
@@ -1914,9 +1924,9 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           何を直せばよいか分からなくなる（iOS 実機では通常の Safari タブから繋がらない。
           seismo-host/REQUIREMENTS.md §13）。
           **「PWA」と書かない。** 利用者向けの文言でこの語を使っているのはここだけで、
-          設定タブを開く人が意味を知っている前提は置けない。VOICEVOX 側が
+          設定の窓を開く人が意味を知っている前提は置けない。VOICEVOX 側が
           「アプリを起動する」と行動で書いているのと揃える。 */}
-      <Section title="自作地震計">
+      <Section category="location" title="自作地震計">
         <Row
           label="自作地震計と接続"
           description="ご自宅に設置した地震計ホストへ接続します"
@@ -2007,7 +2017,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
       {/* **自作地震計の節の外に置く。** 時間幅は自作地震計と公開観測点の両方に効く（物差しを揃える）。
           文言は 2026-10-15 ユーザー承認（`docs/public-waveform-design.md` §0「案A」）。通信量は注記で常に見せる
           ——ホバーに隠すと、繋ぎっぱなしにしてから増えたことに気づけない。 */}
-      <Section title="波形グラフ">
+      <Section category="location" title="波形グラフ">
         {/* 文言は 2026-10-15 ユーザー承認（`docs/public-waveform-design.md` §0「案A」）。オフなら下の常時接続は押せない */}
         <Row
           label="公開観測点の波形を表示"
@@ -2037,7 +2047,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
       </Section>
 
-      <Section title="共有と保存">
+      <Section category="share" title="共有と保存">
         <Row label="共有カードの寸法" description="地図を画像にして共有するときの縦横の比率です。">
           <select
             value={settings.shareCardFormat}
@@ -2056,7 +2066,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
       </Section>
 
-      <Section title="このアプリについて">
+      <Section category="about" title="このアプリについて">
         <Row label="バージョン"><span className="text-xs text-secondary">{__APP_VERSION__}</span></Row>
         <ReleaseHistoryRow />
         {/* 利用規約・プライバシーポリシーへの導線。
@@ -2178,31 +2188,8 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
       </Section>
 
-      <Section title="震度スケール">
-        <div className="px-4 py-3 flex flex-wrap gap-2">
-          {Object.entries(INTENSITY_LABELS)
-            .filter(([k]) => k !== '-1')
-            .map(([scale, label]) => {
-              const fill = getIntensityColor(Number(scale))
-              return (
-                <div key={scale} className="flex items-center gap-1.5">
-                  <span
-                    className="w-6 h-6 rounded-sm flex items-center justify-center text-xs font-bold"
-                    style={{ backgroundColor: fill, color: readableTextColor(fill) }}
-                  >
-                    {label}
-                  </span>
-                  <span className="text-xs text-secondary">震度{label}</span>
-                </div>
-              )
-            })}
-        </div>
-      </Section>
-
-      {/* ここから下は動作確認と記録の道具。見出しで区切るだけで、畳むのは各見出し（2026-10-25 ユーザー承認） */}
-      <SectionGroupLabel title="開発・検証" />
-
-      <Section title="通知音テスト">
+      {/* ここから下は動作確認と記録の道具。分類の一覧では区切り線の下に置く（→ `SETTINGS_CATEGORIES` の `separated`） */}
+      <Section category="dev" title="通知音テスト">
         <div className="px-4 py-2 bg-blue-900/30 border-b border-blue-700/40">
           <p className="text-blue-300 text-xs">押すと各通知音を試聴できます。通知音を切っていても鳴ります</p>
         </div>
@@ -2311,7 +2298,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
       </Section>
 
-      <Section title="テスト機能">
+      <Section category="dev" title="テスト機能">
         <div className="px-4 py-2 bg-yellow-900/30 border-b border-yellow-700/40">
           <p className="text-yellow-400 text-xs">動作確認用です。実際のデータは変更されません。</p>
           <p className="text-yellow-400/80 text-xs mt-1">
@@ -2536,7 +2523,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
       </Section>
 
-      <Section title="実地震テスト">
+      <Section category="dev" title="実地震テスト">
         <div className="px-4 py-2 bg-yellow-900/30 border-b border-yellow-700/40">
           <p className="text-yellow-400 text-xs">実際に発生した地震の電文データを、発生時と同じ間隔で再生します。動作確認用です。</p>
         </div>
@@ -2567,7 +2554,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         })}
       </Section>
 
-      <Section title="テスト時刻設定">
+      <Section category="dev" title="テスト時刻設定">
         <div className="px-4 py-2 bg-blue-900/30 border-b border-blue-700/40">
           <p className="text-blue-300 text-xs">
             {isDmdss
@@ -2643,7 +2630,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
       </Section>
 
-      <Section title="K-NETデータの取り込み">
+      <Section category="dev" title="K-NETデータの取り込み">
         <Row
           label="地震波形データを読み込む"
           description="防災科研（NIED）のサイトからダウンロードしたK-NET/KiK-netの地震波形ファイル（ZIP）を選ぶと、その地震の揺れを「リアルタイム震度」タブで再生できるようになります。複数のファイルをまとめて選ぶと、1つの地震としてまとめて読み込まれます。データはこの端末だけに保存され、外部には送信されません。"
@@ -2653,7 +2640,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
       </Section>
 
-      <Section title="診断ログ">
+      <Section category="dev" title="診断ログ">
         <Row
           label="揺れ検知の記録"
           description="揺れ検知が走ったとき、その前後 30 秒の観測値・検知の内訳・学習状態を端末内に残します。地震でないのに検知した場合、この記録があれば原因を追えます。書き出すまで端末の外へは出ません。"

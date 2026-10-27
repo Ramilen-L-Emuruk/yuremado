@@ -32,6 +32,7 @@ import { unzipSync } from 'fflate'
 import { parseDepthField, parseHypocenterRecord, parseMagnitudeField } from './hypocenterRecord'
 import { SOURCE_REVISION as EPICENTER_REGION_REVISION, SOURCE_URL as EPICENTER_REGION_URL } from './build-epicenter-accents'
 import { buildEpicenterRegionIndex, type EpicenterRegionIndex } from './lib/epicenterRegion'
+import { cacheDir } from './lib/cacheDir.mjs'
 import { isYearMagColumnValid, isZipCacheStale } from './hypocenterCacheRules'
 import { extractDailyHypocenterRows, parseDailyHypocenterLine } from './hypocenterDailyRecord'
 // 格納単位と「その単位で元データを表せるか」の検査はここが単一情報源。
@@ -43,8 +44,8 @@ const SOURCE_PAGE = 'https://www.data.jma.go.jp/eqev/data/bulletin/hypo.html'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const OUT_DIR = join(__dirname, '..', 'public', 'data', 'hypocenter')
-/** 日別ページの置き場。Git 管理外（.claude/* は .gitignore 済み）。 */
-const CACHE_DIR = join(__dirname, '..', '.claude', 'hypocenter-cache')
+/** 日別ページの置き場（メインの checkout の `.cache/hypocenter-cache`）。Git 管理外。 */
+const CACHE_DIR = cacheDir('hypocenter-cache')
 
 /** カタログの時刻は日本時間。年・日の頭を UTC epoch へ直すのに使う。 */
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000

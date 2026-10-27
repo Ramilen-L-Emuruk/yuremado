@@ -137,6 +137,36 @@ export interface StatusReportView {
    * **古いホストは返さない**ので、読む側で配列であることを確かめる（`boardClocksOf`）。
    */
   readonly boardClocks?: { readonly boards: readonly BoardClockOffset[] }
+  /**
+   * ホスト自身の時計（`receiver/hostClock.ts`）。読むのは警告に要る 2 つだけ。
+   * **古いホストは返さない**ので、読む側で形を確かめる（`hostClockWarningList`）。
+   */
+  readonly hostClock?: { readonly source?: unknown; readonly consecutiveFailures?: unknown }
+}
+
+/**
+ * ホストの時計を合わせられていないことを伝える警告（2026-10-27 ユーザー承認「足す」）。
+ *
+ * **出すのは、合わせられていない（`source` が `os`）うえに直近の問い合わせが失敗しているとき。**
+ * 起動直後のまだ訊いていない間は出さない。基板の時計の警告（`boardClockWarnings`）は
+ * ホストの時計を物差しにするので、この行が出ている間は全基板が同じだけずれて見えうる。
+ */
+export function hostClockWarnings(hostClock: StatusReportView['hostClock']): readonly string[] {
+  return hostClockWarningList(hostClock).map((w) => w.html)
+}
+
+/** {@link hostClockWarnings} の組の形（通知の見張りが出入りを見るのに使う）。 */
+export function hostClockWarningList(hostClock: StatusReportView['hostClock']): readonly StatusWarning[] {
+  if (hostClock === undefined || hostClock === null) return []
+  const failures = readFinite(hostClock.consecutiveFailures)
+  if (hostClock.source !== 'os' || failures === null || failures < 1) return []
+  return [
+    singleWarning(
+      'host-clock',
+      'ホストの時計を時刻の相手（ntp.nict.jp・pool.ntp.org）に合わせられていない。' +
+        'OS の時計のまま動いているので、基板の時計のずれにはホストのずれも混ざって見える',
+    ),
+  ]
 }
 
 /** 基板 1 枚ぶんの行（`receiver/boardIntensity.ts` の `BoardIntensity` のうち画面に出す欄）。 */
@@ -591,6 +621,8 @@ export function collectStatusWarnings(status: StatusReportView): readonly Status
   // 保存先の容量（文面は保存先タブと共有。`storageText.ts`）。
   if (status.storage !== undefined) out.push(...storageWarningList(status.storage))
   out.push(...assignedSilenceWarningList(now, assignedBoardsOf(status)))
+  // 時計の警告はホストの時計を先に出す（基板の時計のずれの読み方が変わるため）。
+  out.push(...hostClockWarningList(status.hostClock))
   out.push(...boardClockWarningList(now, boardClocksOf(status)))
   return out
 }
