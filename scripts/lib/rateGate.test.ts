@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-// @ts-expect-error -- 型定義を持たない .mjs（`scripts/lib/stationSource.mjs` と同じ扱い）
 import { gate, resetRateGateForTest } from './rateGate.mjs'
 
 // 取得の間隔を守る唯一の仕組み。**ここが緩むと、控え（同じものを取り直さない）を入れても

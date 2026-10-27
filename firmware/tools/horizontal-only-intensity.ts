@@ -186,9 +186,9 @@ async function main(): Promise<void> {
       const zip = await loadZip(ev.origin, auth)
       if (zip === null) continue
       const { files, failures } = parseAllStationFiles(zip)
-      const grouped = groupIntoStations(files)
+      const grouped = groupIntoStations(files.map((f) => f.file))
       stations = grouped.stations
-      console.log(`  観測点 ${stations.length}（3 成分が揃わず除外 ${grouped.skippedIncomplete}・読めないファイル ${failures.length}）`)
+      console.log(`  観測点 ${stations.length}（3 成分が揃わず除外 ${grouped.skippedIncomplete}（読めないファイルを持つ観測点を含む）・読めないファイル ${failures.length}）`)
     } catch (err) {
       failedEvents.push(`${ev.id}: ${err instanceof Error ? err.message : String(err)}`)
       continue

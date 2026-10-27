@@ -3,7 +3,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { collectUnlistedStations, MIN_READABLE_REVISIONS, STATION_SOURCE_URL, stationKeyOf } from './stationSource.mjs'
-// @ts-expect-error -- 型定義を持たない .mjs
 import { setRateGateDisabledForTest } from './rateGate.mjs'
 
 // 上流のリビジョン履歴を辿る処理（`collectUnlistedStations`）を、合成したリビジョン列で検証する。

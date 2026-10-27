@@ -90,7 +90,7 @@ export function checkpoint() {
 /**
  * 積まれている印の行。自分の分（畳み済み）→ 引き継いだ分の順。
  *
- * @param since `checkpoint()` の戻り値。渡すと**それより後に積まれた分だけ**を返す
+ * @param {ReturnType<typeof checkpoint> | null} [since] `checkpoint()` の戻り値。渡すと**それより後に積まれた分だけ**を返す
  */
 export function incompleteNotes(since = null) {
   const mine = []

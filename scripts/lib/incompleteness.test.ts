@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-// @ts-expect-error -- 型定義を持たない .mjs（`scripts/lib/rateGate.mjs` と同じ扱い）
 import {
   noteIncomplete, readArtifact, writeArtifact, markResult, incompletenessBanner,
   incompleteNotes, reportIncompleteness, resetIncompletenessForTest, checkpoint,

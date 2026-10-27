@@ -36,7 +36,7 @@
  * 揺れが完全に収まった後は「ずっと再生」でも検知が消えるので、そこは測っても差が出ない。
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
-import { initState, buildStationMeta, step, indexToValue } from '../src/utils/kyoshinDetector'
+import { initState, buildStationMeta, step } from '../src/utils/kyoshinDetector'
 import type { DetectionEvent, DetectorState, StationMeta } from '../src/utils/kyoshinDetector'
 import {
   WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, isQuietFrame,
