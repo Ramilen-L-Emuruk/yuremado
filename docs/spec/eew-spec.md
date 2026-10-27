@@ -1340,7 +1340,7 @@ Yahoo hypoInfo が区域と仮定震源要素の区別を持たないことは�
 
 > **気象庁の電文には、地名が空の報が見当たらない。** この規則は、地名だけが欠けた報が届いたときの扱いを決めておくもの。
 > 2026-10-22 に、DMDATA の日ごとのアーカイブの控え（`eew.forecast` 1,552 本・`eew.warning` 69 本。日付は 2022-07-20〜2026-10-18。
-> 置き場所は `.claude/dmdata-archive-cache/`、→ [`telegram-coverage-audit.md`](telegram-coverage-audit.md) §2）から、
+> 置き場所は `.cache/dmdata-archive-cache/`、→ [`telegram-coverage-audit.md`](telegram-coverage-audit.md) §2）から、
 > VXSE43・44・45 の XML のうち `Control/Status` が「通常」で震源を持つ 45,079 通を数えた。`Body/Earthquake/Hypocenter/Area/Name` が
 > 無い・空の報は 0 通、仮定震源要素の報 457 通もすべて地名を持っていた（すぐ上の注記の「26 通」は `condition` の値を見た別の数え方）。
 > Yahoo hypoInfo の `regionName` も、2024-01-01 能登の 3 フレームでは気象庁と同じ地名を持っていた。Yahoo の報は仮定震源要素かどうかを

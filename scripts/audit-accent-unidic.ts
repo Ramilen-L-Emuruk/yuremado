@@ -12,7 +12,7 @@
 // 【出典】UniDic（国立国語研究所）現代書き言葉フルパッケージの `lex_3_1.csv`。33 列のうち
 // 28 列目がアクセント型（`aType`。0 が平板、揺れがある語は `,` 区切りの複数値）。**zip 全体は
 // 1.75GB あるが、この 1 ファイルは圧縮 25MB** なので、zip 末尾の目録（Central Directory）を
-// HTTP Range で読んで該当エントリだけを抜き、`.claude/unidic-cache/` に残す。
+// HTTP Range で読んで該当エントリだけを抜き、メインの checkout の `.cache/unidic-cache/` に残す。
 //
 // 【比べられる範囲】**名前まるごとが 1 語として UniDic に載っているものだけ。** アクセント句
 // ごとに比べる形は採らない —— 複合語のアクセントは構成要素の単語アクセントとは別物で、当てると
@@ -40,10 +40,11 @@ import { splitEpicenterDetailed } from './epicenterAccent'
 import { buildCityIndex, splitStationName } from './stationPhrase'
 import { fetchCodeTableBook, readCityFurigana } from './build-station-readings'
 import { fetchListedStations } from './lib/stationSource.mjs'
+import { cacheDir } from './lib/cacheDir.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(scriptDir, '..')
-const CACHE_DIR = resolve(ROOT, '.claude/unidic-cache')
+const CACHE_DIR = cacheDir('unidic-cache')
 
 /** 現代書き言葉 UniDic のフルパッケージ。**版を上げたら aType の列位置を確かめ直すこと。** */
 const UNIDIC_ZIP_URL = 'https://clrd.ninjal.ac.jp/unidic_archive/cwj/3.1.0/unidic-cwj-3.1.0-full.zip'

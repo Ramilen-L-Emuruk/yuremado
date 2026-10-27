@@ -1290,18 +1290,18 @@ EEW の発表状況ページは 2 種類あり、優先順に使う（2026-10-23
   地震活動ごとの取得日・収録範囲・警報が出た地震の一覧・再生の起点・既知の欠けは
   [`historicalArchiveTargets.ts`](../../scripts/historicalArchiveTargets.ts) が持ち、生成スクリプトと取得スクリプトの両方がそこを読む
 - **取得と生成を分ける。生成は控えだけを読み、配信元へ取りに行かない**（控えが無ければ止まる）。控えはメインの checkout の
-  `.claude/` に置き、2 回目以降は取らない。アーカイブを作り直す手順は次のとおり。
-  1. `npx tsx scripts/fetch-wayback-fc-hist.ts` —— fc_hist の目録と本体を `.claude/wayback-cache/` へ控える
+  `.cache/` に置き、2 回目以降は取らない。アーカイブを作り直す手順は次のとおり。
+  1. `npx tsx scripts/fetch-wayback-fc-hist.ts` —— fc_hist の目録と本体を `.cache/wayback-cache/` へ控える
      （日ごとの目録 `cdx-fc_hist-YYYYMMDD.json`・ページごとの本体 `fc_hist-<EventID>.html`・取れなかった本体の記録
      `failed-fc_hist.json`）。先に `--dry-run` で送る URL と件数を見る。目録の控えが無い日も引くなら `--cdx`、
      前に取れなかった本体も取り直すなら `--retry-failed`、1 件あたりの取り直しの回数は `--max-retries=N`（0〜2・既定 2）。
      取り直しを含めて 200 件を超える計画なら取らない
   2. `npx tsx scripts/fetch-pub-hist.ts` —— 警報の発表状況のうち、fc_hist から報を作れなかった地震のページを
-     `.claude/jma-pub-hist-cache/` へ控える（取れなかったページの記録 `failed-pub-hist.json`）。**どの地震が要るかは
+     `.cache/jma-pub-hist-cache/` へ控える（取れなかったページの記録 `failed-pub-hist.json`）。**どの地震が要るかは
      ① の控えを読んで決めるので、① の後に走らせる。** 先に `--dry-run`。取り直しは 1 件につき 1 回まで・取り直しを
      含めて 16 件を超える計画なら取らない
   3. `npx tsx scripts/build-historical-archive-<地震>.ts`（`2016-kumamoto`・`2016-tottori`・`2018-osaka`・`2018-iburi` の 4 本）
-     —— 控えと NII の控え（`.claude/nii-cache/`）・長期震源カタログ（`public/data/hypocenter/`）を読んでアーカイブを書く。
+     —— 控えと NII の控え（`.cache/nii-cache/`）・長期震源カタログ（`public/data/hypocenter/`）を読んでアーカイブを書く。
      **4 本とも index.json を書き換えるので、並べずに 1 本ずつ走らせる**
   - 取得の決まり（① ② 共通）: 名乗る（`yuremado-archive-build (personal research)`）・1 件ごとに 10 秒あける・
     本体は 30 秒、目録は 120 秒で打ち切る（時間切れは失敗に数える）・失敗したら 30 秒あけて取り直す。
@@ -1427,7 +1427,7 @@ EEW の発表状況ページは 2 種類あり、優先順に使う（2026-10-23
 - NIIサイトの一覧表示時刻はISO 8601ではない（タイムゾーンオフセットが分無しの2桁、
   例: `2016-04-14 21:28:06+09`）ため、分を補ってからDateへ変換する
   （[`niiJmaXmlArchive.ts`](../../scripts/niiJmaXmlArchive.ts)参照）
-- **一度取ったページは`.claude/nii-cache/`に残して二度取らない。** 1件の地震活動で
+- **一度取ったページは`.cache/nii-cache/`に残して二度取らない。** 1件の地震活動で
   数百通を1通ずつ取るため（熊本は653通）、途中で落ちるたびに最初からやり直すと相手にも
   負荷をかける。過去の電文とその一覧は書き換わらないのでキャッシュは無期限でよい
   - **残す前に中身を検分する。** HTTP 200で返ってきたエラーページをそのまま残すと、

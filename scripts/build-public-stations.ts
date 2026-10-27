@@ -11,7 +11,7 @@
  * - 観測点: `…/fdsnws/station/1/query?net=JP&format=text&nodata=404&level=station`
  * - 成分:   `…/fdsnws/station/1/query?net=JP&format=text&nodata=404&level=channel&cha=BH?`
  *
- * 取った応答は `.claude/public-stations-cache/` に残し、2 回目以降は読むだけにする。
+ * 取った応答はメインの checkout の `.cache/public-stations-cache/` に残し、2 回目以降は読むだけにする。
  * 取り直すときは `--refresh`、投げる先だけ見たいときは `--dry-run`。
  *
  * **日本語の名前は上流に無いので、この中に手で持つ**（`NAMES_JA`）。名前は気象庁の観測点一覧
@@ -24,6 +24,7 @@ import type { PublicChannel, PublicStationEpoch, PublicStationsFile } from '../s
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { cacheDir } from './lib/cacheDir.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(HERE, '..')
@@ -33,7 +34,7 @@ export const SOURCE_URLS = {
   station: `${BASE_URL}&level=station`,
   channel: `${BASE_URL}&level=channel&cha=BH?`,
 } as const
-const CACHE_DIR = resolve(REPO_ROOT, '.claude/public-stations-cache')
+const CACHE_DIR = cacheDir('public-stations-cache')
 const OUT_PATH = resolve(REPO_ROOT, 'public/data/public-stations.json')
 const FETCH_TIMEOUT_MS = 30_000
 /** 2 本を続けて投げるときの間隔。上限の明記は無いので、既存の生成スクリプトに倣って空ける。 */
