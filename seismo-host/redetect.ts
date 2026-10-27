@@ -22,7 +22,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-import { archiveChunks, archiveHourReader, emptyArchiveReadTally, Redetector } from './src/detection/redetect'
+import { archiveChunks, archiveHourReader, emptyArchiveReadTally, Redetector, redetectLeadMs } from './src/detection/redetect'
 import type { ArchiveReadTally, RedetectSummary } from './src/detection/redetect'
 import { fetchQuakeHistory } from './src/detection/quakeHistory'
 import type { QuakeHistoryResult } from './src/detection/quakeHistory'
@@ -39,9 +39,9 @@ import { configAt, currentConfig } from './src/receiver/stationXml'
 import type { StationHistoryDoc } from './src/receiver/stationXml'
 import { stationFileToken } from './src/receiver/waveArchive'
 import type { RedetectSummaryFile } from './src/receiver/redetectRunner'
+import { DETECTION_SETTINGS_DEFAULT, parseDetectionSettings, type DetectionSettings } from './src/detection/detectionSettings'
+import { HOST_SETTINGS_FILE, readHostSettings } from './src/receiver/hostSettings'
 
-/** 範囲の頭より前から流す長さ（引き金の助走 60 秒・平常時の強さの時定数に余裕を見る。評価台と同じ）。 */
-const LEAD_MS = 5 * 60_000
 /** これより古い時の控えは、時計が合う前の残骸として流さない。 */
 const OLDEST_PLAUSIBLE_MS = Date.UTC(2020, 0, 1)
 const FETCH_TIMEOUT_MS = 30_000
@@ -58,6 +58,14 @@ interface Args {
   readonly dryRun: boolean
   /** 起こした親の pid（管理画面からの流し直しだけが渡す）。 */
   readonly parentPid: number | null
+  /**
+   * 検出の値（2026-10-27 ユーザー承認「同じ値＋記録に残す」）。ホストから起こされたときは、ホストが使っている値が
+   * `--detection` に JSON で来る。手で走らせたときは設定ファイル（`config/host-settings.json`）の「いま」の値、
+   * それも無ければ既定。**読めない値は既定へ倒さず止める**（違う値で流した記録が黙って増える）。
+   */
+  readonly detection: DetectionSettings
+  /** 値をどこから取ったか（ログに出す）。 */
+  readonly detectionSource: string
 }
 
 /** 失敗として扱う文。ログへ出し、結果のファイルにも同じ文を入れる。 */
@@ -110,6 +118,12 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function summaryFileOf(argv: readonly string[]): string | null {
+  const i = argv.indexOf('--summary')
+  const v = i < 0 ? undefined : argv[i + 1]
+  return v === undefined || v.startsWith('--') ? null : v
+}
+
 function parseArgs(argv: readonly string[]): Args {
   const value = (name: string): string | null => {
     const i = argv.indexOf(name)
@@ -136,7 +150,28 @@ function parseArgs(argv: readonly string[]): Args {
     summaryFile: value('--summary'),
     dryRun: argv.includes('--dry-run'),
     parentPid: parentPidOf(value('--parent-pid')),
+    ...detectionOf(value('--detection')),
   }
+}
+
+function detectionOf(v: string | null): { detection: DetectionSettings; detectionSource: string } {
+  if (v !== null) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(v)
+    } catch {
+      throw new Error('--detection を JSON として読めない')
+    }
+    const detection = parseDetectionSettings(parsed)
+    if (detection === null) throw new Error('--detection の値が検出の値として読めない')
+    return { detection, detectionSource: 'ホストから渡された値' }
+  }
+  const settings = readHostSettings(here(`./config/${HOST_SETTINGS_FILE}`), (detail) =>
+    console.warn(`設定ファイルの次の起動で使う検出の値（pendingDetection）が読めないので無視する: ${detail}`),
+  )
+  return settings.detection === null
+    ? { detection: DETECTION_SETTINGS_DEFAULT, detectionSource: '既定の値' }
+    : { detection: settings.detection, detectionSource: '設定ファイルの値' }
 }
 
 function parentPidOf(v: string | null): number | null {
@@ -166,7 +201,7 @@ async function fetchJson(url: string): Promise<unknown> {
   return await res.json()
 }
 
-function quakesFromFile(path: string, fromMs: number, toMs: number): QuakeHistoryResult {
+function quakesFromFile(path: string, fromMs: number, toMs: number, leadMs: number): QuakeHistoryResult {
   const { quakes, unreadable } = parseP2pQuakeList(JSON.parse(readFileSync(path, 'utf8')))
   // **渡された一覧は、流す範囲を取りきっているものとして扱う**（取った人が範囲を選んでいる）。
   // 助走の頭から、範囲の末尾で閉じた揺れの照合の期限（15 分）に、揺れが閉じるまでの余裕を足した 30 分後までを含める。
@@ -177,7 +212,7 @@ function quakesFromFile(path: string, fromMs: number, toMs: number): QuakeHistor
     requests: 0,
     truncated: false,
     error: null,
-    covered: (a, b) => unreadable === 0 && a >= fromMs - LEAD_MS && b <= toMs + 2 * MATCH_DEADLINE_MS,
+    covered: (a, b) => unreadable === 0 && a >= fromMs - leadMs && b <= toMs + 2 * MATCH_DEADLINE_MS,
   }
 }
 
@@ -238,6 +273,7 @@ function formatSummary(stationId: string, s: RedetectSummary, t: ArchiveReadTall
 const totals = { written: 0, existing: 0 }
 
 async function main(args: Args): Promise<boolean> {
+  console.log(`[redetect] 検出の値は${args.detectionSource}を使う`)
   const doc = loadStationHistory(args.stationsPath)
   const config = currentConfig(doc)
   const stations = config.stations.filter((s) => args.station === null || s.stationId === args.station)
@@ -261,9 +297,9 @@ async function main(args: Args): Promise<boolean> {
 
   const history =
     args.quakesFile !== null
-      ? quakesFromFile(args.quakesFile, allFrom, allTo)
+      ? quakesFromFile(args.quakesFile, allFrom, allTo, redetectLeadMs(args.detection.trigger))
       : await fetchQuakeHistory({
-          fromMs: allFrom - LEAD_MS,
+          fromMs: allFrom - redetectLeadMs(args.detection.trigger),
           toMs: allTo,
           fetchJson,
           sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -296,6 +332,7 @@ async function main(args: Args): Promise<boolean> {
     try {
       const r = new Redetector({
         stationId: plan.stationId,
+        detection: args.detection,
         observerAt: (ms) => observerOf(configAtTime(ms), plan.stationId),
         sensorsAt: (ms) => {
           const c = configAtTime(ms)
@@ -310,7 +347,7 @@ async function main(args: Args): Promise<boolean> {
       })
       for await (const chunk of archiveChunks({
         readHour: archiveHourReader(args.waveDir, plan.stationId),
-        fromMs: plan.fromMs - LEAD_MS,
+        fromMs: plan.fromMs - redetectLeadMs(args.detection.trigger),
         toMs: plan.toMs,
         tally,
         openHourFromMs,
@@ -380,8 +417,10 @@ function writeSummary(path: string, ok: boolean): void {
 let summaryFile: string | null = null
 Promise.resolve()
   .then(() => {
+    // **結果ファイルの場所だけ先に読む** —— 引数の読み取り（`--detection` など）で止まっても、
+    // ホストへ止まった理由を返せるように。
+    summaryFile = summaryFileOf(process.argv.slice(2))
     const args = parseArgs(process.argv.slice(2))
-    summaryFile = args.summaryFile
     if (args.parentPid !== null) watchParent(args.parentPid)
     return main(args)
   })

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DETECTION_SETTINGS_DEFAULT, parseDetectionSettings, sameDetectionSettings } from '../detection/detectionSettings'
 
 import {
   RedetectRunner,
@@ -51,6 +52,7 @@ function setup(summary: string | null = null) {
     summaryPath: () => `/tmp/summary-${++n}.json`,
     readSummary: () => summary,
     dirs: () => DIRS,
+    detection: DETECTION_SETTINGS_DEFAULT,
     now: () => clock,
     log: (l) => lines.push(l),
   })
@@ -81,7 +83,7 @@ describe('parseRedetectSummary', () => {
 
 describe('redetectArgs', () => {
   it('正: 範囲を ISO で渡し、ホストと同じ置き場所と結果のファイルを指す', () => {
-    expect(redetectArgs(REQ, DIRS, '/tmp/s.json')).toEqual([
+    expect(redetectArgs(REQ, DIRS, '/tmp/s.json', DETECTION_SETTINGS_DEFAULT)).toEqual([
       '--from',
       '2026-10-03T00:00:00.000Z',
       '--to',
@@ -94,11 +96,26 @@ describe('redetectArgs', () => {
       '/c/stations.xml',
       '--summary',
       '/tmp/s.json',
+      '--detection',
+      JSON.stringify(DETECTION_SETTINGS_DEFAULT),
     ])
   })
 
+  it('正: 渡した検出の値は、子が読み戻すと同じ値になる（既定と違う値でも）', () => {
+    const tuned = {
+      ...DETECTION_SETTINGS_DEFAULT,
+      trigger: { ...DETECTION_SETTINGS_DEFAULT.trigger, onRatio: 3.25, triggerBandHz: [4, 12] as const },
+      match: { beforeMs: 2_500, afterMs: 20_000 },
+    }
+    const args = redetectArgs(REQ, DIRS, '/tmp/s.json', tuned)
+    const json = args[args.indexOf('--detection') + 1]
+    const back = parseDetectionSettings(JSON.parse(json))
+    expect(back).not.toBeNull()
+    expect(sameDetectionSettings(back!, tuned)).toBe(true)
+  })
+
   it('正: 観測点を選んだときだけ --station を足す', () => {
-    expect(redetectArgs({ ...REQ, stationId: 'sta1' }, DIRS, '/tmp/s.json').slice(-2)).toEqual(['--station', 'sta1'])
+    expect(redetectArgs({ ...REQ, stationId: 'sta1' }, DIRS, '/tmp/s.json', DETECTION_SETTINGS_DEFAULT).slice(-2)).toEqual(['--station', 'sta1'])
   })
 })
 
@@ -196,6 +213,7 @@ describe('RedetectRunner', () => {
       summaryPath: () => '/tmp/s.json',
       readSummary: () => null,
       dirs: () => DIRS,
+      detection: DETECTION_SETTINGS_DEFAULT,
       now: () => 0,
       log: (l) => lines.push(l),
     })
@@ -214,6 +232,7 @@ describe('RedetectRunner', () => {
       summaryPath: () => '/tmp/s.json',
       readSummary: () => null,
       dirs: () => DIRS,
+      detection: DETECTION_SETTINGS_DEFAULT,
       now: () => 0,
       log: () => {
         calls += 1

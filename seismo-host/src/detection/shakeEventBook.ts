@@ -11,6 +11,7 @@
 //
 // **投げない。** 書けなかった版は `ShakeEventStore` が数える。
 
+import type { DetectionSettings } from './detectionSettings'
 import type { P2pReferenceQuake } from './p2pQuake'
 import type { DetectedShake } from './quakeDetector'
 import { arrivalWindow, matchesQuake } from './quakeMatch'
@@ -36,6 +37,8 @@ export interface ShakeEventBookOptions {
   readonly feedCovered: (fromMs: number, toMs: number) => boolean
   readonly now: () => number
   readonly detectorVersion: number
+  /** 照合の余裕と、記録へ残す検出の値（`detectionSettings.ts`）。検出器へ渡した値と同じものを渡す。 */
+  readonly detection: DetectionSettings
 }
 
 interface Tracked {
@@ -75,6 +78,7 @@ export class ShakeEventBook {
       maxIntensity: this.maxIntensity(stationId, t.onMs, t.offMs),
       sensors,
       nowMs,
+      detectionSettings: this.opts.detection,
     })
     this.emit(rec)
     const tracked: Tracked = { rec, openedAtMs: nowMs }
@@ -151,7 +155,7 @@ export class ShakeEventBook {
     let best: { quake: P2pReferenceQuake; window: ArrivalWindow } | null = null
     for (const quake of quakes) {
       const window = this.windowOf(rec.stationId, quake)
-      if (window === null || !matchesQuake(rec.startMs, window)) continue
+      if (window === null || !matchesQuake(rec.startMs, window, this.opts.detection.match)) continue
       if (best === null || closeness(rec, window) < closeness(rec, best.window)) best = { quake, window }
     }
     return best

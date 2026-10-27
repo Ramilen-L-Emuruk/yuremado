@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { DETECTION_SETTINGS_DEFAULT, type DetectionSettings } from './detectionSettings'
 
 import type { P2pReferenceQuake } from './p2pQuake'
 import type { DetectedShake } from './quakeDetector'
 import { MATCH_DEADLINE_MS, MEMORY_MS, ShakeEventBook } from './shakeEventBook'
+import { arrivalWindow } from './quakeMatch'
 import type { ShakeEventRecord } from './shakeEvent'
 
 const HOME = { lat: 35.0, lon: 135.0 }
@@ -45,7 +47,7 @@ function shake(onMs: number, shakeClass: 'quake-like' | 'local-like' = 'quake-li
   }
 }
 
-function setup(opts: { covered?: boolean; startNow?: number } = {}) {
+function setup(opts: { covered?: boolean; startNow?: number; detection?: DetectionSettings } = {}) {
   let now = opts.startNow ?? ON + 15_000
   const saved: ShakeEventRecord[] = []
   const published: ShakeEventRecord[] = []
@@ -56,6 +58,7 @@ function setup(opts: { covered?: boolean; startNow?: number } = {}) {
     feedCovered: () => opts.covered ?? true,
     now: () => now,
     detectorVersion: 1,
+    detection: opts.detection ?? DETECTION_SETTINGS_DEFAULT,
   })
   return { book, saved, published, advance: (ms: number) => (now += ms) }
 }
@@ -63,6 +66,25 @@ function setup(opts: { covered?: boolean; startNow?: number } = {}) {
 const SENSORS = [{ boardKey: 'mac:020000000001', sensorId: 'i2c0-68' }]
 
 describe('ShakeEventBook', () => {
+  it('正: 記録に切り出したときの検出の値を残す', () => {
+    const tuned: DetectionSettings = { ...DETECTION_SETTINGS_DEFAULT, match: { beforeMs: 1_000, afterMs: 2_000 } }
+    const { book } = setup({ detection: tuned })
+    expect(book.addShake('station-1', shake(ON), SENSORS).detectionSettings).toEqual(tuned)
+  })
+
+  it('正: 照合の余裕は渡した値で効く（P 波より前に始まった揺れ）', () => {
+    const early = arrivalWindow(QUAKE, HOME).earliestPMs - 3_000
+    const wide = setup()
+    wide.book.addShake('station-1', shake(early), SENSORS)
+    wide.book.addQuake(QUAKE)
+    expect(wide.saved.map((r) => r.verdict)).toEqual(['pending', 'quake'])
+
+    const narrow = setup({ detection: { ...DETECTION_SETTINGS_DEFAULT, match: { beforeMs: 1_000, afterMs: 15_000 } } })
+    narrow.book.addShake('station-1', shake(early), SENSORS)
+    narrow.book.addQuake(QUAKE)
+    expect(narrow.saved.map((r) => r.verdict)).toEqual(['pending'])
+  })
+
   it('揺れが閉じたら版 1（照合待ち）を残して押し出す。区間の最大の計測震度相当を添える', () => {
     const { book, saved, published } = setup()
     book.noteStationReading('station-1', ON - 10_000, 0.4)

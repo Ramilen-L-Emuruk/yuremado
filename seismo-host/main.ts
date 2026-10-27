@@ -56,7 +56,8 @@ import { MseedRecorder } from './src/receiver/mseedRecorder'
 import { mseedFilePath } from './src/receiver/mseedStore'
 import type { MseedHealth } from './src/receiver/mseedRecorder'
 import { STATION_CONFIG_FILE, StationStore } from './src/receiver/stationStore'
-import { HOST_SETTINGS_FILE, readHostSettings, writeHostSettings } from './src/receiver/hostSettings'
+import { HOST_SETTINGS_FILE, HostSettingsFile, readHostSettings, resolveDetection, writeHostSettings } from './src/receiver/hostSettings'
+import { DETECTION_SETTINGS_DEFAULT } from './src/detection/detectionSettings'
 import { StorageControl, openStorageAtStartup, storageBrief } from './src/receiver/storageControl'
 import { StorageMigration, beginMigration, canonicalPath, exists as pathExists } from './src/receiver/storageMigration'
 import { StorageUsage } from './src/receiver/storageUsage'
@@ -1869,9 +1870,13 @@ async function main(): Promise<void> {
   // 管理コンソールで変えた保存先は、ここで初めて効く（待っている変更の昇格と、複製の帳面の作成）。
   // **ホストの設定が読めなければ起動しない** —— 前に選んだ保存先と違う場所へ書き始めると、データが 2 か所に割れる。
   const hostSettingsPath = defaultHostSettingsPath()
+  // **待っている検出の値だけが読めないときは、捨てて起動を続ける**（2026-10-27 ユーザー承認「捨てて警告し起動」）。
+  let discardedPendingDetection: string | null = null
   const storageStartup = await openStorageAtStartup({
     env: process.env,
-    settings: readHostSettings(hostSettingsPath),
+    settings: readHostSettings(hostSettingsPath, (detail) => {
+      discardedPendingDetection = detail
+    }),
     settingsPath: hostSettingsPath,
     defaultRoot: defaultDataRoot(),
     nowMs: hostNow(),
@@ -1891,6 +1896,36 @@ async function main(): Promise<void> {
     console.warn(`[storage] 環境変数で保存先を決めているので、管理コンソールで選んだ ${storageStartup.resolved.pendingIgnored} は使わない`)
   }
   const storageDirs = storageStartup.resolved.dirs
+  // **検出の値も起動時に 1 回だけ決める**（画面で変えた値は次の起動で効く・2026-10-27 ユーザー承認）。
+  // 昇格を書き戻せなくても、この起動では待っていた値を使う（次の起動でまた昇格する）。
+  // **書けなくても、書き手の手元は昇格した後の形にする** —— 待っている変更が残った写しのままだと、画面は
+  // 使っている値を「次の再起動で変わる値」と出し、取り消すと古い `detection` だけが書き戻って次の起動で巻き戻る。
+  // 手元を昇格後にしておけば、次に誰かが書いたときに昇格もファイルへ載る。
+  const detectionStartup = resolveDetection(storageStartup.settings, DETECTION_SETTINGS_DEFAULT)
+  const settingsAfterStartup = detectionStartup.nextSettings ?? storageStartup.settings
+  if (discardedPendingDetection !== null) {
+    console.warn(
+      `[detection] 設定ファイルの次の起動で使う検出の値（pendingDetection）が読めないので捨て、いまの値で起動する: ${discardedPendingDetection}`,
+    )
+    // ファイルからも外す（残すと起動のたびに同じ警告が出る）。書けなくても、この起動は手元の捨てた後の形で動く。
+    try {
+      writeHostSettings(hostSettingsPath, settingsAfterStartup)
+    } catch (error) {
+      console.error(`[detection] 捨てた検出の値を設定ファイルから外せず: ${shorten(messageOf(error))}`)
+    }
+  }
+  if (detectionStartup.nextSettings !== null) {
+    try {
+      writeHostSettings(hostSettingsPath, detectionStartup.nextSettings)
+      console.warn('[detection] 管理コンソールで変えた検出の値を、この起動から使う')
+    } catch (error) {
+      console.error(`[detection] 検出の値の昇格を設定ファイルへ書けず（この起動では使う）: ${shorten(messageOf(error))}`)
+    }
+  }
+  /** この起動で使う検出の値。流し直し・起動時の流し込みにも同じ値を渡す。 */
+  const detectionSettings = detectionStartup.settings ?? DETECTION_SETTINGS_DEFAULT
+  // **設定ファイルの書き手は 1 つ**（保存先の係と検出の係が同じものを使う。`HostSettingsFile`）。
+  const hostSettingsFile = new HostSettingsFile(hostSettingsPath, settingsAfterStartup, writeHostSettings)
   // 複製の係。帳面が無ければ何もしない（`isCopying()` は偽のまま）。**要約の見回りより先に読み込む** ——
   // 読み込む前の見回りは「複製中ではない」と見て、元の届いていない要約を捨てる。
   const storageRoot = storageStartup.resolved.root
@@ -2021,6 +2056,7 @@ async function main(): Promise<void> {
     readSummary: (path) =>
       readRedetectSummaryFile(path, { readFile: (p) => readFileSync(p, 'utf8'), unlink: (p) => unlinkSync(p) }, (line) => console.warn(line)),
     dirs: () => ({ wave: waveDir, events: eventDir, stations: stationConfigPath }),
+    detection: detectionSettings,
     now: () => hostNow(),
     log: (line) => console.log(line),
   })
@@ -2077,6 +2113,7 @@ async function main(): Promise<void> {
     // 「揺れを記録できず」として数えて残す —— `existsSync` は失敗も「無い」に化けさせ、照合済みの記録を上書きする。
     exists: (rec) => statSync(eventFilePath(eventDir, rec), { throwIfNoEntry: false }) !== undefined,
     holdNewStations: true,
+    detection: detectionSettings,
   })
   onQuake = (q) => detection.addQuake(q)
   // **受信の開始は `emit` を作った後**（下の `startStatusServer` の手前）。ここで始めると、
@@ -2748,6 +2785,7 @@ async function main(): Promise<void> {
     now: hostNow,
     pause: () => new Promise((resolve) => setImmediate(resolve)),
     log: (level, key, line) => emit(level, 'detect', key, line),
+    trigger: detectionSettings.trigger,
   })
   const warmTimer = setInterval(() => warmStarter.tick(), 1_000)
   // 引き金が生きているかを 1 時間に 1 行残す（`StationDetection.hourlyLines`）。揺れの記録が
@@ -2790,8 +2828,7 @@ async function main(): Promise<void> {
     resolved: storageStartup.resolved,
     startupProblem: storageStartup.problem,
     journalProblem: migrationJournalProblem,
-    settings: storageStartup.settings,
-    settingsPath: hostSettingsPath,
+    settingsFile: hostSettingsFile,
     currentRoot: storageRoot ?? defaultDataRoot(),
     usage: storageUsage,
     migration: storageMigration,

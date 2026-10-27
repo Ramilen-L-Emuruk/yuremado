@@ -14,6 +14,8 @@
 // （P2PQuake）は道具の中で 1 件ずつ時間切れを持つ（`redetect.ts` の `FETCH_TIMEOUT_MS`）。
 
 /** `redetect.ts --summary` が書く結果。 */
+import type { DetectionSettings } from '../detection/detectionSettings'
+
 export interface RedetectSummaryFile {
   readonly ok: boolean
   /** 書いた揺れの数（全観測点の合計）。 */
@@ -143,6 +145,8 @@ export interface RedetectRunnerDeps {
   readonly readSummary: (path: string) => string | null
   /** 道具へ渡す置き場所。ホストと同じ場所を見させる（保存先は管理画面で変えられるため）。 */
   readonly dirs: () => { readonly wave: string; readonly events: string; readonly stations: string }
+  /** いまのホストが使っている検出の値。子へそのまま渡す（`redetect.ts` の `--detection`）。 */
+  readonly detection: DetectionSettings
   readonly now: () => number
   readonly log: (line: string) => void
 }
@@ -171,6 +175,7 @@ export function redetectArgs(
   request: RedetectRequest,
   dirs: { readonly wave: string; readonly events: string; readonly stations: string },
   summaryPath: string,
+  detection: DetectionSettings,
 ): string[] {
   const args = [
     '--from',
@@ -185,6 +190,8 @@ export function redetectArgs(
     dirs.stations,
     '--summary',
     summaryPath,
+    '--detection',
+    JSON.stringify(detection),
   ]
   if (request.stationId !== null) args.push('--station', request.stationId)
   return args
@@ -232,7 +239,7 @@ export class RedetectRunner {
       this.deps.log(
         `[redetect] 管理画面から流し直しを始めた（${new Date(request.fromMs).toISOString()} 〜 ${new Date(request.toMs).toISOString()}・${station}）`,
       )
-      child = this.deps.spawn(redetectArgs(request, this.deps.dirs(), summaryPath))
+      child = this.deps.spawn(redetectArgs(request, this.deps.dirs(), summaryPath, this.deps.detection))
     } catch (e) {
       this.finish(request, startedAtMs, { code: null, signal: null, error: e instanceof Error ? e.message : String(e) }, summaryPath)
       return 'started'

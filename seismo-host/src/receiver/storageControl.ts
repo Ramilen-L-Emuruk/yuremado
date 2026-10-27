@@ -11,11 +11,11 @@ import { join } from 'node:path'
 
 import {
   type HostSettings,
+  type HostSettingsFile,
   type ResolvedStorage,
   type StorageRootProblem,
   resolveStorage,
   storageRootProblem,
-  writeHostSettings,
 } from './hostSettings'
 import { SPACE_MARGIN_BYTES, canonicalPath, type MigrationStatus, type StorageMigration } from './storageMigration'
 import type { StorageUsage, StorageUsageStatus } from './storageUsage'
@@ -189,9 +189,11 @@ export interface StorageControlOptions {
   readonly resolved: ResolvedStorage
   readonly startupProblem: string | null
   readonly journalProblem: string | null
-  /** 起動後の設定（昇格を書き戻した後のもの）。 */
-  readonly settings: HostSettings
-  readonly settingsPath: string
+  /**
+   * 設定ファイルの書き手（起動後の設定を持つ）。**検出の係と同じものを渡す** —— 別々に写しを抱えると、
+   * 保存先を変えたときに画面で変えた検出の値を書き消す。
+   */
+  readonly settingsFile: HostSettingsFile
   /** いまの保存先の親フォルダ（環境変数のときは既定の親フォルダ。比較にだけ使う）。 */
   readonly currentRoot: string
   readonly usage: StorageUsage
@@ -199,7 +201,6 @@ export interface StorageControlOptions {
   /** 差し替えられるのはテストのため。 */
   readonly probeWritable?: (root: string) => Promise<string | null>
   readonly freeBytesOf?: (root: string) => Promise<number>
-  readonly writeSettings?: (path: string, settings: HostSettings) => void
   readonly canonical?: (path: string) => Promise<string>
   readonly platform?: NodeJS.Platform
   /** 失敗をログへ出す口（画面だけに置くと、管理画面を開かない運用で誰にも届かない）。 */
@@ -230,13 +231,11 @@ async function defaultFreeBytesOf(root: string): Promise<number> {
 
 export class StorageControl implements StorageOps {
   private readonly opts: StorageControlOptions
-  private settings: HostSettings
   private purging = false
   private purgeTask: Promise<void> = Promise.resolve()
 
   constructor(options: StorageControlOptions) {
     this.opts = options
-    this.settings = options.settings
   }
 
   get(): StorageReport {
@@ -245,8 +244,8 @@ export class StorageControl implements StorageOps {
       source: r.source,
       root: r.root,
       dirs: r.dirs,
-      pendingRoot: this.settings.pendingDataRoot,
-      pendingIgnored: r.source === 'env' ? this.settings.pendingDataRoot : null,
+      pendingRoot: this.opts.settingsFile.get().pendingDataRoot,
+      pendingIgnored: r.source === 'env' ? this.opts.settingsFile.get().pendingDataRoot : null,
       startupProblem: this.opts.startupProblem,
       journalProblem: this.opts.journalProblem,
       usage: this.opts.usage.snapshot(),
@@ -258,7 +257,7 @@ export class StorageControl implements StorageOps {
     if (this.opts.resolved.source === 'env') return { ok: false, problem: 'locked' }
     if (root === null) {
       try {
-        this.write({ ...this.settings, pendingDataRoot: null, pendingFrom: null })
+        this.opts.settingsFile.update((s) => ({ ...s, pendingDataRoot: null, pendingFrom: null }))
       } catch (error) {
         return { ok: false, problem: 'not-writable', detail: `設定ファイルを書けず: ${messageOf(error)}` }
       }
@@ -296,7 +295,7 @@ export class StorageControl implements StorageOps {
     }
     try {
       // **いまの保存先も一緒に書く**（`HostSettings.pendingFrom`）。次の起動はここから複製する。
-      this.write({ ...this.settings, pendingDataRoot: root, pendingFrom: this.opts.currentRoot })
+      this.opts.settingsFile.update((s) => ({ ...s, pendingDataRoot: root, pendingFrom: this.opts.currentRoot }))
     } catch (error) {
       return { ok: false, problem: 'not-writable', detail: `設定ファイルを書けず: ${messageOf(error)}` }
     }
@@ -344,8 +343,4 @@ export class StorageControl implements StorageOps {
     await this.purgeTask
   }
 
-  private write(next: HostSettings): void {
-    ;(this.opts.writeSettings ?? writeHostSettings)(this.opts.settingsPath, next)
-    this.settings = next
-  }
 }
