@@ -211,7 +211,7 @@ static const int64_t  SELF_RESTART_WINDOW_S = 6 * 3600;
 // 固まった時刻で記録が止まり、Wi-Fi に戻れないだけの基板は電源を抜く直前まで書き続ける。
 // 変わったときだけ書く形だと、この 2 つが同じ「古い記録」に化ける。
 //
-// 1 回の記録（`PrevState`・84 バイト）は NVS の項目 5 つ（1 項目 32 バイト。blob のデータの
+// 1 回の記録（`PrevState`・96 バイト）は NVS の項目 5 つ（1 項目 32 バイト。blob のデータの
 // 見出し 1 ＋ 中身 3 ＋ blob の索引 1。中身は 96 バイトまで 3 項目に収まる）。既定の区画（20 KB・使い回すのは 4 ページ・1 ページ
 // 126 項目）だと 1 ページに約 25 回ぶん入り、各ページの消去は 60 秒ごとの書き込みで約 100 分に
 // 1 回 —— 消去の寿命（約 10 万回）まで約 19 年。Wi-Fi の設定も同じ区画に置かれ、ページを
@@ -792,13 +792,18 @@ struct PrevState {
   uint8_t  wifiOutageReason;     // 書いた時点で切れていたなら、その途絶を始めた理由
   uint8_t  wifiPrevOutageReason; // ひとつ前の途絶を始めた理由
   uint8_t  wifiLastReason;       // 直近の切断の理由
-  uint8_t  reserved0;
+  uint8_t  spillFlags;           // 版 3。書いた時点で書き出していたら bit0、`SPILL_MAX_MS` で止めていたら bit1（版 2 では予備の 0）
   uint32_t wifiDisconnects;      // この起動で切断のイベントを受けた回数
   uint32_t wifiRescues;          // この起動で、切れたままなので自分で繋ぎ直した回数
+  // ここから版 3。前の起動の末尾を取り戻せなかったとき、基板のどこで落としたかを見分ける。
+  uint32_t spillLost;            // 写す前にメモリの輪が上書きしてしまったまとまりの数（`g_spillLost`）
+  uint32_t flashFails;           // 区画の消去・書き込みに失敗した回数（`g_flashFails`）
+  int32_t  restartFlushLeft;     // 再起動の前の書き切りで取り残したまとまりの数（`g_restartFlushLeft`）
 };
-static const uint32_t PREV_STATE_VERSION = 2;
+static const uint32_t PREV_STATE_VERSION = 3;
 // 大きさは `PREV_HEARTBEAT_MS` のすり減りの見積もりの前提。**欄を足したらあちらも見直す。**
-static_assert(sizeof(PrevState) == 84, "PrevState の大きさが変わった。PREV_HEARTBEAT_MS で見積もった書き込み回数を見直すこと");
+// 96 バイトで中身の 3 項目がちょうど埋まる。**これより足すと 1 回の書き込みが 1 項目増える。**
+static_assert(sizeof(PrevState) == 96, "PrevState の大きさが変わった。PREV_HEARTBEAT_MS で見積もった書き込み回数を見直すこと");
 // 書いた理由。**状態ページへは名前で出す**（`prevWhyName`）。
 enum PrevWhy : uint8_t { PREV_WHY_HEARTBEAT = 0, PREV_WHY_CHANGE = 1, PREV_WHY_RESTART = 2, PREV_WHY_OTA = 3 };
 
@@ -903,6 +908,10 @@ static uint32_t   g_spillStarts = 0;        // 書き出しを始めた回数
 static uint32_t   g_spillGapStarts = 0;     // そのうち、返事は届いていて `gap=` で始めた回数
 static uint32_t   g_spillLost = 0;          // 写す前にメモリの輪が上書きしてしまったまとまりの数
 static uint32_t   g_spillBackCopies = 0;    // 書き出しの位置より手前から追って写したまとまりの数（→ `spillBackCopy`）
+// 再起動の前の書き切り（`spillBeforeRestart`）で取り残したまとまりの数。**前の起動の記録へ残す**
+// （`PrevState::restartFlushLeft`）。-1 は書き出しが動いていなかった（またはフラッシュが無い）、
+// -2 は書き切りを通らずに書いた記録（ふだんの 60 秒ごと・`/restart`・OTA）。
+static int32_t    g_restartFlushLeft = -2;
 // `g_spillCursor` が前の書き出しの位置を指しているか。**始め直すときはそこより前へ戻らない**
 // （→ `spillPump`）—— もう写した分を写し直すと、返事が途切れるたびに同じ分で区画を食う。
 static bool       g_spillCursorValid = false;
@@ -912,6 +921,19 @@ static bool       g_spillCapped = false;
 static uint32_t   g_spillCaps = 0;          // `SPILL_MAX_MS` で止めた回数
 static uint32_t   g_flashWrites = 0;        // 区画を書いた回数
 static uint32_t   g_flashFails = 0;         // 消去・書き込みに失敗した回数
+// 消して書いた区画が、それまで中身を持っていた回数。**消そうとした時点で数える**（消去・書き込みに
+// 失敗しても、その区画の中身はもう無い）。消した区画の持ち主で 3 つに分ける。
+//
+// **「別の起動」をひとまとめにしない。** 輪が一度でも埋まっていれば、書くのはいつもいちばん古い区画
+// （→ `flashInit`）なので、新しい起動は最初の書き込みからずっと、さらに前の起動の区画を消し続ける。
+// 知りたいのは「直前の起動（起動時にいちばん新しい区画を書いた起動）の分を消したか」で、それだけを
+// `prev` に数える。直前の起動のいちばん新しい区画（その起動の末尾）まで消したら `g_flashPrevTailGone`。
+static uint32_t   g_flashOverwrotePrevBoot = 0;
+static uint32_t   g_flashOverwroteOlderBoot = 0;
+static uint32_t   g_flashOverwroteSameBoot = 0;
+static uint32_t   g_flashPrevBid = 0;         // 起動時にいちばん新しかった区画の起動 ID（無ければ 0）
+static uint32_t   g_flashPrevTailSeq = 0;     // その区画の `seq`
+static bool       g_flashPrevTailGone = false;
 // 読み出しの失敗。**書き込みの失敗と分ける** —— 書けないのは区画の寿命や電源の疑い、
 // 読めないのは訊かれた分を返せなかったことで、手当てが違う。
 static uint32_t   g_flashReadFails = 0;     // `/backlog` が区画を読めなかった回数
@@ -1497,6 +1519,16 @@ static void flashFlushPage(){
   const uint32_t t0 = millis();
   const size_t off = g_flashNext * FLASH_SECTOR;
   FlashSectorIndex &ix = g_flashIndex[g_flashNext];
+  if (ix.valid) {
+    if (ix.bid == h.bid) {
+      g_flashOverwroteSameBoot++;
+    } else if (g_flashPrevBid != 0 && ix.bid == g_flashPrevBid) {
+      g_flashOverwrotePrevBoot++;
+      if (ix.seq == g_flashPrevTailSeq) g_flashPrevTailGone = true;
+    } else {
+      g_flashOverwroteOlderBoot++;
+    }
+  }
   ix.valid = 0;
   const bool ok = esp_partition_erase_range(g_flashPart, off, FLASH_SECTOR) == ESP_OK
                && esp_partition_write(g_flashPart, off, g_flashPage, FLASH_SECTOR) == ESP_OK;
@@ -1570,6 +1602,10 @@ static void flashInit(){
   g_flashInitMs = millis() - t0;
   g_flashSeq = maxSeq;
   g_flashNext = any ? (maxAt + 1) % g_flashSectors : 0;
+  if (any && g_flashIndex[maxAt].bid != g_bootIdNum) {
+    g_flashPrevBid = g_flashIndex[maxAt].bid;
+    g_flashPrevTailSeq = g_flashIndex[maxAt].seq;
+  }
   pageReset();
 }
 
@@ -2102,6 +2138,7 @@ static void handleStatus(){
     "\"flash_ok\":%s,\"flash_sectors\":%u,\"flash_valid\":%u,\"spilling\":%s,\"spill_starts\":%lu,"
     "\"spill_gap_starts\":%lu,\"gap_acks\":%lu,\"gap_bad\":%lu,"
     "\"spill_lost\":%lu,\"spill_back_copies\":%lu,\"spill_caps\":%lu,\"spill_capped\":%s,\"flash_writes\":%lu,\"flash_fails\":%lu,"
+    "\"flash_prev_boot_id\":\"%08lx\",\"flash_overwrote_prev_boot\":%lu,\"flash_prev_tail_gone\":%s,\"flash_overwrote_older_boot\":%lu,\"flash_overwrote_same_boot\":%lu,"
     "\"flash_read_fails\":%lu,\"flash_crc_bad\":%lu,\"flash_max_ms\":%lu,\"flash_init_ms\":%lu,",
     g_flashPart != nullptr ? "true":"false", (unsigned)g_flashSectors, (unsigned)flashValid,
     g_spilling ? "true":"false", (unsigned long)g_spillStarts,
@@ -2109,6 +2146,8 @@ static void handleStatus(){
     (unsigned long)g_spillLost, (unsigned long)g_spillBackCopies,
     (unsigned long)g_spillCaps, g_spillCapped ? "true":"false",
     (unsigned long)g_flashWrites, (unsigned long)g_flashFails,
+    (unsigned long)g_flashPrevBid, (unsigned long)g_flashOverwrotePrevBoot, g_flashPrevTailGone ? "true":"false",
+    (unsigned long)g_flashOverwroteOlderBoot, (unsigned long)g_flashOverwroteSameBoot,
     (unsigned long)g_flashReadFails, (unsigned long)g_flashCrcBad, (unsigned long)g_flashMaxMs,
     (unsigned long)g_flashInitMs);
   // 直前の状態（→ `PrevState`）。**この起動の書き込みの健全性と、前の起動の最後の記録を並べる。**
@@ -2129,7 +2168,8 @@ static void handleStatus(){
       "\"host_probe_fail\":%lu,\"self_restarts\":%lu,\"restart_skipped\":%lu,"
       "\"sntp_syncs\":%lu,\"free_heap\":%lu,\"sensors_ok\":%u,"
       "\"self_restart_cause\":\"%s\",\"wifi_down_reason\":\"%s\",\"wifi_prev_down_reason\":\"%s\","
-      "\"wifi_last_reason\":\"%s\",\"wifi_disconnects\":%lu,\"wifi_rescues\":%lu},",
+      "\"wifi_last_reason\":\"%s\",\"wifi_disconnects\":%lu,\"wifi_rescues\":%lu,"
+      "\"spill_lost\":%lu,\"flash_fails\":%lu,\"restart_flush_left\":%ld,\"spilling\":%s,\"spill_capped\":%s},",
       (unsigned long)p.bootId, resetReasonName((esp_reset_reason_t)p.resetReason),
       p.bootedBySelfRestart != 0 ? "true":"false", prevWhyName(p.why),
       (unsigned long)p.savedUnix, savedAge, (unsigned long)p.uptimeS, (unsigned long)p.saves,
@@ -2140,7 +2180,9 @@ static void handleStatus(){
       (unsigned)p.sensorsOk,
       selfRestartCauseName(p.bootedBySelfRestart), wifiReasonName(p.wifiOutageReason),
       wifiReasonName(p.wifiPrevOutageReason), wifiReasonName(p.wifiLastReason),
-      (unsigned long)p.wifiDisconnects, (unsigned long)p.wifiRescues);
+      (unsigned long)p.wifiDisconnects, (unsigned long)p.wifiRescues,
+      (unsigned long)p.spillLost, (unsigned long)p.flashFails, (long)p.restartFlushLeft,
+      (p.spillFlags & 1) ? "true":"false", (p.spillFlags & 2) ? "true":"false");
   } else {
     appendf(buf, sizeof(buf), u, "\"prev\":null,");
   }
@@ -2559,13 +2601,14 @@ void setup(){
     const PrevState &p = g_prev;
     Serial.printf("# 前の起動 bid=%08lx reset=%s 最後の記録=%s uptime=%lus unix=%lu "
                   "wifi_up=%u down=%lus downs=%lu rssi=%d ack_level=%u ack_age=%lds "
-                  "down_reason=%s last_reason=%s rescues=%lu\n",
+                  "down_reason=%s last_reason=%s rescues=%lu spill_lost=%lu flash_fails=%lu flush_left=%ld\n",
                   (unsigned long)p.bootId, resetReasonName((esp_reset_reason_t)p.resetReason),
                   prevWhyName(p.why), (unsigned long)p.uptimeS, (unsigned long)p.savedUnix,
                   (unsigned)p.wifiUp, (unsigned long)p.wifiDownS, (unsigned long)p.wifiDowns,
                   (int)p.rssi, (unsigned)p.ackLevel, (long)p.ackAgeS,
                   wifiReasonName(p.wifiOutageReason), wifiReasonName(p.wifiLastReason),
-                  (unsigned long)p.wifiRescues);
+                  (unsigned long)p.wifiRescues, (unsigned long)p.spillLost,
+                  (unsigned long)p.flashFails, (long)p.restartFlushLeft);
   } else {
     Serial.println("# 前の起動の記録は無い");
   }
@@ -2972,9 +3015,12 @@ static void prevSave(uint32_t nowMs, uint8_t why){
   c.wifiOutageReason = g_wifiUp ? 0 : g_wifiOutageReason;
   c.wifiPrevOutageReason = g_wifiPrevOutageReason;
   c.wifiLastReason = g_wifiLastReason;
-  c.reserved0 = 0;
+  c.spillFlags = (g_spilling ? 1 : 0) | (g_spillCapped ? 2 : 0);
   c.wifiDisconnects = g_wifiDisconnects;
   c.wifiRescues = g_wifiRescues;
+  c.spillLost = g_spillLost;
+  c.flashFails = g_flashFails;
+  c.restartFlushLeft = g_restartFlushLeft;
 
   // **かかった時間を測る。** NVS がページを詰め直す回は消去が入り、その間は吸い出しが止まる
   // （待てるのは 1.4 秒まで。→ `HOST_PROBE_TIMEOUT_MS`）。
@@ -3125,7 +3171,7 @@ static void selfRestart(uint8_t cause, time_t now){
 static void spillBeforeRestart(){
   // 時計が合った直後なら差を採って NVS へ残す（落とすと、この起動の時計が合う前の分を返せない）。
   noteMonoOffset();
-  if (g_flashPart == nullptr || g_backlog == nullptr) return;
+  if (g_flashPart == nullptr || g_backlog == nullptr) { g_restartFlushLeft = -1; return; }
   const uint32_t t0 = millis();
   const uint32_t writes0 = g_flashWrites;
   const uint32_t fails0 = g_flashFails;
@@ -3136,6 +3182,7 @@ static void spillBeforeRestart(){
   }
   flashFlushPage();
   const int32_t left = g_spilling ? (int32_t)(g_backlogTotal - g_spillCursor) : -1;
+  g_restartFlushLeft = left;   // 直後の `prevSave` が前の起動の記録へ残す
   const uint32_t fails = g_flashFails - fails0;
   if (left == 0 && fails == 0) {
     Serial.printf("# 再起動の前に、送った分をフラッシュへ書き切った（%lu 区画・%lu ms）\n",
