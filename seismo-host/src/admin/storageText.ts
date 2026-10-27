@@ -4,7 +4,10 @@
 // 返す HTML はすべて組み立て済み（理由やパスは `escapeHtml` を通す。パスは運用者の入力で、理由には
 // OS の例外の文面が混ざる）。
 
-import { escapeHtml } from './dom'
+import { namedWarning, singleWarning, type StatusWarning } from './statusWarnings'
+
+/** 空き容量の警告が解消したときの呼び名（2026-10-27 ユーザー承認）。 */
+const STORAGE_LOW_LABEL = '保存先の空き容量が少ない'
 
 /** `GET /api/storage` の形（`receiver/storageControl.ts` の `StorageReport`）。**画面が読む分だけ。** */
 export interface StorageReportView {
@@ -140,30 +143,54 @@ export function spaceShortText(neededBytes: number, freeBytes: number): string {
 
 /** 警告の行（組み立て済みの HTML）。稼働状況タブの警告の欄と、保存先タブの上に出す。 */
 export function storageWarnings(brief: StorageBriefView): readonly string[] {
-  const out: string[] = []
+  return storageWarningList(brief).map((w) => w.html)
+}
+
+/**
+ * {@link storageWarnings} の組の形（通知の見張りが出入りを見るのに使う）。**ドライブの警告の鍵は、
+ * そのドライブに置いている種類の並び**（`DriveView` はドライブの名前を持たない。種類の割り当ては
+ * 保存先を変えない限り動かない）。
+ *
+ * **「10% を切った」と「あと約 N 日」は同じ 1 つの警告として扱う**（鍵は同じ・解消の呼び名は
+ * 「保存先の空き容量が少ない」。2026-10-27 ユーザー承認「1 つにまとめる」）。分けると、あと N 日から
+ * 10% を切ったへ悪くなったときに「解消した」が出る。
+ */
+export function storageWarningList(brief: StorageBriefView): readonly StatusWarning[] {
+  const out: StatusWarning[] = []
   for (const d of brief.drives) {
+    const key = `storage-low:${[...d.kinds].sort().join(',')}`
     if (d.warning === 'low-free') {
       out.push(
-        `保存先の空き容量が ${LOW_FREE_PERCENT}% を切った（空き ${formatBytes(d.freeBytes)} / ${formatBytes(d.totalBytes)}）`,
+        namedWarning(
+          key,
+          STORAGE_LOW_LABEL,
+          `保存先の空き容量が ${LOW_FREE_PERCENT}% を切った（空き ${formatBytes(d.freeBytes)} / ${formatBytes(d.totalBytes)}）`,
+        ),
       )
     } else if (d.warning === 'low-days' && d.daysLeft !== null) {
-      out.push(`保存先の空き容量があと約 ${Math.max(0, Math.round(d.daysLeft))} 日でなくなる`)
+      out.push(
+        namedWarning(key, STORAGE_LOW_LABEL, `保存先の空き容量があと約 ${Math.max(0, Math.round(d.daysLeft))} 日でなくなる`),
+      )
     }
   }
   if (brief.migration?.blockedBySpace === true) {
-    out.push('前の保存先からの複製が止まっている: 空き容量が不足している')
+    out.push(singleWarning('storage-copy-blocked', '前の保存先からの複製が止まっている: 空き容量が不足している'))
   }
   // 複製している間の失敗だけ。削除のときの「残したもの」は複製の欄の件数で伝える（`migrationHtml`）。
   if (brief.migration?.state === 'copying' && brief.migration.lastError !== null) {
-    out.push(`前の保存先からの複製に失敗した: ${escapeHtml(brief.migration.lastError)}`)
+    out.push(singleWarning('storage-copy-failed', '前の保存先からの複製に失敗した', brief.migration.lastError))
   }
   // 削除は裏で走るので、消せなかった理由はここでしか画面に届かない（2026-10-13 ユーザー承認）。
   if (brief.migration?.state === 'purging' && brief.migration.lastError !== null) {
-    out.push(`前の保存先から削除できなかった: ${escapeHtml(brief.migration.lastError)}`)
+    out.push(singleWarning('storage-purge-failed', '前の保存先から削除できなかった', brief.migration.lastError))
   }
-  if (brief.journalProblem !== null) out.push(`複製の記録を読めない: ${escapeHtml(brief.journalProblem)}`)
-  if (brief.startupProblem !== null) out.push(`保存先を移せなかった: ${escapeHtml(brief.startupProblem)}`)
-  if (brief.lastError !== null) out.push(`容量を測れない: ${escapeHtml(brief.lastError)}`)
+  if (brief.journalProblem !== null) {
+    out.push(singleWarning('storage-journal', '複製の記録を読めない', brief.journalProblem))
+  }
+  if (brief.startupProblem !== null) {
+    out.push(singleWarning('storage-startup', '保存先を移せなかった', brief.startupProblem))
+  }
+  if (brief.lastError !== null) out.push(singleWarning('storage-measure', '容量を測れない', brief.lastError))
   return out
 }
 

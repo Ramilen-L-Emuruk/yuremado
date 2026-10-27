@@ -17,7 +17,15 @@ import { describeSilence } from '../receiver/assignedReception'
 import { warnableClockOffset } from '../receiver/boardClockVerdict'
 import type { BoardClockOffset } from '../receiver/boardClockVerdict'
 import { readFinite, readNonEmptyString } from './readJson'
-import { storageWarnings, type StorageBriefView } from './storageText'
+import { storageWarningList, type StorageBriefView } from './storageText'
+import {
+  listWarning,
+  plainDetail,
+  singleWarning,
+  warningItem,
+  type StatusWarning,
+  type WarningItem,
+} from './statusWarnings'
 import type { TabContext } from './tabState'
 
 /**
@@ -29,7 +37,7 @@ import type { TabContext } from './tabState'
  * **欄が増減したら手で追随させる必要がある。** 自動では検知できない
  * （型検査は「この型が JSON と一致するか」までは見ない）。
  */
-interface StatusReportView {
+export interface StatusReportView {
   readonly generatedAtMs: number
   readonly uptimeSec: number
   readonly sensors: readonly {
@@ -155,7 +163,12 @@ export function boardClocksOf(status: Pick<StatusReportView, 'boardClocks'>): re
  * 読んでいるので、欄の無い版から `undefined` が来うる）。
  */
 export function boardClockWarnings(nowMs: number, boards: readonly BoardClockOffset[]): readonly string[] {
-  const names: string[] = []
+  return boardClockWarningList(nowMs, boards).map((w) => w.html)
+}
+
+/** {@link boardClockWarnings} の組の形（通知の見張りが対象ごとの出入りを見るのに使う）。 */
+export function boardClockWarningList(nowMs: number, boards: readonly BoardClockOffset[]): readonly StatusWarning[] {
+  const items: WarningItem[] = []
   for (const b of boards) {
     const offset = warnableClockOffset(
       { offsetMs: readFinite(b.offsetMs), lastPacketMs: readFinite(b.lastPacketMs) },
@@ -163,12 +176,10 @@ export function boardClockWarnings(nowMs: number, boards: readonly BoardClockOff
     )
     if (offset === null) continue
     const way = offset > 0 ? '遅れ' : '進み'
-    names.push(`${escapeHtml(b.boardKey)}（${Math.round(Math.abs(offset))} ms ${way}）`)
+    items.push(warningItem(b.boardKey, b.boardKey, plainDetail(`${Math.round(Math.abs(offset))} ms ${way}`)))
   }
-  if (names.length === 0) return []
-  return [
-    `時計がホストとずれている基板: ${names.join('、')}`,
-  ]
+  const w = listWarning('board-clock', '時計がホストとずれている基板', items)
+  return w === null ? [] : [w]
 }
 
 interface AssignedBoardView {
@@ -207,31 +218,41 @@ export function assignedBoardsOf(status: Pick<StatusReportView, 'assignedBoards'
  * 時刻は `readFinite` を通す（欄の無い版から `undefined` が来ても「一度も」に倒れる）。
  */
 export function assignedSilenceWarnings(nowMs: number, boards: readonly AssignedBoardView[]): readonly string[] {
-  const out: string[] = []
-  const silentBoards = boards.filter((b) => b.state === 'silent')
-  if (silentBoards.length > 0) {
-    const names = silentBoards.map(
-      (b) =>
-        `${escapeHtml(b.boardKey)}（観測点 ${escapeHtml(b.stationId)}・${describeSilence(nowMs, readFinite(b.lastPacketMs))}）`,
-    )
-    out.push(`観測点に割り当てた基板が届いていない: ${names.join('、')}`)
-  }
-  const silentSensors = boards
+  return assignedSilenceWarningList(nowMs, boards).map((w) => w.html)
+}
+
+/** {@link assignedSilenceWarnings} の組の形（通知の見張りが対象ごとの出入りを見るのに使う）。 */
+export function assignedSilenceWarningList(
+  nowMs: number,
+  boards: readonly AssignedBoardView[],
+): readonly StatusWarning[] {
+  const boardItems = boards
+    .filter((b) => b.state === 'silent')
+    .map((b) => {
+      const silence = describeSilence(nowMs, readFinite(b.lastPacketMs))
+      return warningItem(b.boardKey, b.boardKey, {
+        html: `観測点 ${escapeHtml(b.stationId)}・${silence}`,
+        text: `観測点 ${b.stationId}・${silence}`,
+      })
+    })
+  const sensorItems = boards
     .filter((b) => b.state === 'live')
     .flatMap((b) =>
       (Array.isArray(b.sensors) ? b.sensors : [])
         .filter((s) => s.state === 'silent')
-        .map(
-          (s) =>
-            `${escapeHtml(b.boardKey)} / ${escapeHtml(s.sensorId)}（${describeSilence(nowMs, readFinite(s.lastPacketMs))}）`,
+        .map((s) =>
+          warningItem(
+            // boardKey も sensorId も無認証の UDP 由来でどの文字も入りうるので、区切り文字で繋がず JSON で包む。
+            JSON.stringify([b.boardKey, s.sensorId]),
+            `${b.boardKey} / ${s.sensorId}`,
+            plainDetail(describeSilence(nowMs, readFinite(s.lastPacketMs))),
+          ),
         ),
     )
-  if (silentSensors.length > 0) {
-    out.push(
-      `基板は届いているが、登録したセンサーが届いていない: ${silentSensors.join('、')}`,
-    )
-  }
-  return out
+  return [
+    listWarning('assigned-board-silent', '観測点に割り当てた基板が届いていない', boardItems),
+    listWarning('assigned-sensor-silent', '基板は届いているが、登録したセンサーが届いていない', sensorItems),
+  ].filter((w): w is StatusWarning => w !== null)
 }
 
 type PairDiffView = StatusReportView['stationIntensities'][number]['pairDiffs'][number]
@@ -252,10 +273,17 @@ type PairDiffView = StatusReportView['stationIntensities'][number]['pairDiffs'][
  * 一度出たら消えない（いつかは起きたことを見落とさないため）。
  */
 export function mseedWarnings(m: StatusReportView['mseed']): readonly string[] {
-  const out: string[] = []
-  if (m.lastWriteError !== null) out.push(`生データの書き込みエラー: ${escapeHtml(m.lastWriteError)}`)
+  return mseedWarningList(m).map((w) => w.html)
+}
+
+/** {@link mseedWarnings} の組の形。 */
+export function mseedWarningList(m: StatusReportView['mseed']): readonly StatusWarning[] {
+  const out: StatusWarning[] = []
+  if (m.lastWriteError !== null) out.push(singleWarning('mseed-write', '生データの書き込みエラー', m.lastWriteError))
   // **こちらの不具合の印。** 受け止めたパケットは中身ごと残してあるが、出たら直す対象。
-  if (m.lastInternalError !== null) out.push(`生データの組み立てで想定外の例外: ${escapeHtml(m.lastInternalError)}`)
+  if (m.lastInternalError !== null) {
+    out.push(singleWarning('mseed-internal', '生データの組み立てで想定外の例外', m.lastInternalError))
+  }
   return out
 }
 
@@ -526,6 +554,33 @@ function boardMemberCellHtml(nowMs: number, b: BoardIntensityView, lastPacketMs:
 }
 
 /**
+ * 稼働状況の警告をすべて並べる（稼働状況タブの「⚠」の行と、通知の見張りが同じものを読む）。
+ *
+ * **警告文は `describeFailure`（サーバー側）が組み立てる際、運用者が入力した生の値
+ * （`JSON.stringify(f.value)`）を埋め込むことがある。** `stationId`（`ungroupedMultiBoardStations`）も
+ * 同様に運用者由来。どちらも HTML ではエスケープする —— `boardKey`/`sensorId` と同じ理由（冒頭のコメント）。
+ */
+export function collectStatusWarnings(status: StatusReportView): readonly StatusWarning[] {
+  const now = status.generatedAtMs
+  const out: StatusWarning[] = []
+  if (status.stationConfigWarning !== null) {
+    out.push(singleWarning('station-config', '観測点設定', status.stationConfigWarning))
+  }
+  const ungrouped = listWarning(
+    'ungrouped-stations',
+    '基板を複数割り当てたが、合成できていない観測点',
+    status.ungroupedMultiBoardStations.map((id) => warningItem(id, id)),
+  )
+  if (ungrouped !== null) out.push(ungrouped)
+  out.push(...mseedWarningList(status.mseed))
+  // 保存先の容量（文面は保存先タブと共有。`storageText.ts`）。
+  if (status.storage !== undefined) out.push(...storageWarningList(status.storage))
+  out.push(...assignedSilenceWarningList(now, assignedBoardsOf(status)))
+  out.push(...boardClockWarningList(now, boardClocksOf(status)))
+  return out
+}
+
+/**
  * まだ声が届いている行の数。**要約カードの「N / 全体」の左側。**
  *
  * **センサーと観測点の両方が通る。** 同じ物差し（`isStale`）で数えないと、片方の
@@ -557,26 +612,8 @@ export async function initStatusView(container: HTMLElement, ctx: TabContext): P
       .map((b) => boardIntensityRowHtml(now, b))
       .join('')
 
-    // **警告文は `describeFailure`（サーバー側）が組み立てる際、運用者が入力した
-    // 生の値（`JSON.stringify(f.value)`）を埋め込むことがある。** `stationId`
-    // （`ungroupedMultiBoardStations`）も同様に運用者由来。どちらもエスケープが
-    // 要る——`boardKey`/`sensorId` と同じ理由（下記コメント参照）。
-    const warnings: string[] = []
-    if (status.stationConfigWarning !== null) {
-      warnings.push(`観測点設定: ${escapeHtml(status.stationConfigWarning)}`)
-    }
-    if (status.ungroupedMultiBoardStations.length > 0) {
-      warnings.push(
-        `基板を複数割り当てたが、合成できていない観測点: ${escapeHtml(status.ungroupedMultiBoardStations.join('、'))}`,
-      )
-    }
-    warnings.push(...mseedWarnings(status.mseed))
-    // 保存先の容量（文面は保存先タブと共有。`storageText.ts`）。
-    if (status.storage !== undefined) warnings.push(...storageWarnings(status.storage))
-    // **組み立て済みの HTML**（中で `escapeHtml` を通している）なので、ここで重ねて通さない。
+    const warnings = collectStatusWarnings(status).map((w) => w.html)
     const assignedBoards = assignedBoardsOf(status)
-    warnings.push(...assignedSilenceWarnings(now, assignedBoards))
-    warnings.push(...boardClockWarnings(now, boardClocksOf(status)))
 
     const liveSensorCount = countLive(now, status.sensors)
     const liveAssignedCount = assignedBoards.filter((b) => b.state === 'live').length
