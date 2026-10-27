@@ -22,6 +22,7 @@ function fakeUpdater(snapshot: AppUpdateSnapshot) {
     },
     apply: vi.fn(),
     checkNow() {},
+    checkManually: () => Promise.resolve('latest'),
   }
   return {
     updater,
