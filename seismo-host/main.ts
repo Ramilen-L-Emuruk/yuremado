@@ -91,6 +91,15 @@ import { startUdpReceiver } from './src/receiver/udpReceiver'
 import type { DatagramSource, RecvBufferOutcome } from './src/receiver/udpReceiver'
 import { HostLifeMark, buildPreviousRunLines } from './src/receiver/hostLifeMark'
 import { jstDateTime } from './src/receiver/jstTime'
+import {
+  HOST_CLOCK_MAX_RTT_MS_DEFAULT,
+  HOST_CLOCK_QUERY_TIMEOUT_MS_DEFAULT,
+  HOST_CLOCK_SERVERS_DEFAULT,
+  HostClock,
+  type HostClockLogKind,
+  dnsResolveIpv4,
+  udpSntpExchange,
+} from './src/receiver/hostClock'
 import { LOOP_STALL_THRESHOLD_MS_DEFAULT, LOOP_TICK_MS_DEFAULT, LoopStallBook } from './src/receiver/loopStall'
 import type { LoopStallEvent } from './src/receiver/loopStall'
 import { BacklogBook } from './src/receiver/backlogBook'
@@ -1722,7 +1731,49 @@ export function buildWindowSummary(input: WindowSummaryInput): WindowSummary {
 }
 
 async function main(): Promise<void> {
-  const startedAtMs = Date.now()
+  // **時刻はホストが自分で合わせた時計から読む**（`hostClock.ts`・2026-10-27 ユーザー決定「基板と同じ NTP」）。
+  // OS の時計は起動・休止からの復帰のたびに 1 秒未満ずれたまま何時間も残り、基板の時計の判定を狂わせる。
+  // **受け始める前に 1 回合わせる** —— 動き出してから時刻を大きく動かさないため。届かなければ
+  // 相手ごとに打ち切りを待ってから OS の時計のまま始める（相手 2 つで最長約 6 秒）。
+  //
+  // **警告は間引きを通す**（下の `emit`）。ただし `emit` ができるのは起動の後半なので、それまでは
+  // 素の出力へ流し、できたところで差し替える（`hostClockWarn`）。間引きの鍵は行の種類ごと
+  // （合わせられなかった・時刻が動いた・OS の時計へ倒した）—— 1 つにすると、失敗の行が続く間に
+  // 段差や倒しの行まで黙って落ちる。
+  let hostClockWarn = (_kind: HostClockLogKind, line: string): void => console.warn(line)
+  const hostClock = new HostClock({
+    servers: HOST_CLOCK_SERVERS_DEFAULT,
+    resolve: dnsResolveIpv4,
+    exchange: udpSntpExchange(HOST_CLOCK_QUERY_TIMEOUT_MS_DEFAULT),
+    mono: () => performance.now(),
+    wall: Date.now,
+    maxRttMs: HOST_CLOCK_MAX_RTT_MS_DEFAULT,
+    log: (level, kind, line) => (level === 'warn' ? hostClockWarn(kind, line) : console.log(line)),
+  })
+  const hostNow = (): number => hostClock.now()
+  await hostClock.syncNow('起動')
+  // **次に合わせに行くまでの待ちは、その都度決める** —— 合わせられなかった後は 10 秒から倍々で
+  // 取り直す（`hostClockSyncDelayMs`）。15 分ごとの固定にすると、起動直後にネットワークが
+  // 繋がっていなかったとき、受信の最中に初めて合わさって時刻が大きく動く。
+  //
+  // **どのきっかけで合わせ直しても、終わったら予約を張り直す**（`syncHostClock`）。定期の予約だけが
+  // 張り直すと、止まり明け・食い違いで走った合わせ直しが失敗しても、既に入っている 15 分の予約が
+  // 残る —— 休止から戻った直後（ネットワークがまだ繋がっていない）がまさにこの形になる。
+  let hostClockTimer: NodeJS.Timeout | null = null
+  let hostClockStopped = false
+  const scheduleHostClockSync = (): void => {
+    if (hostClockTimer !== null) clearTimeout(hostClockTimer)
+    hostClockTimer = null
+    if (hostClockStopped) return
+    hostClockTimer = setTimeout(() => syncHostClock('定期'), hostClock.nextSyncDelayMs())
+  }
+  const afterHostClockSync = (run: Promise<void>): void => {
+    void run.finally(scheduleHostClockSync)
+  }
+  const syncHostClock = (reason: string): void => afterHostClockSync(hostClock.syncNow(reason))
+  scheduleHostClockSync()
+
+  const startedAtMs = hostNow()
 
   // **最初に、前回が正常に終わったかを確かめる。** 落とされたホストは自分では何も書けない
   // ので、ここが「前回はいつまで動いていたか」を知る唯一の場所になる（`hostLifeMark.ts`）。
@@ -1793,7 +1844,7 @@ async function main(): Promise<void> {
     settings: readHostSettings(hostSettingsPath),
     settingsPath: hostSettingsPath,
     defaultRoot: defaultDataRoot(),
-    nowMs: Date.now(),
+    nowMs: hostNow(),
     begin: (to, from, nowMs) =>
       beginMigration(to, from, nowMs, { platform: process.platform, log: (line) => console.warn(line) }),
     write: writeHostSettings,
@@ -1926,7 +1977,7 @@ async function main(): Promise<void> {
   const quakeFeed = quakeFeedEnabled
     ? new QuakeFeed({
         onQuake: (q) => onQuake?.(q),
-        now: () => Date.now(),
+        now: () => hostNow(),
         // 繋ぎ直しは倍々に間隔が延びるので、間引きの鍵は 1 つで足りる。
         log: (level, line) => emit(level, 'quake-feed', 'feed', line),
       })
@@ -1939,7 +1990,7 @@ async function main(): Promise<void> {
         dir: join(summaryDir, 'quakes'),
         get: fetchGet,
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-        now: () => Date.now(),
+        now: () => hostNow(),
         dmdataApiKey: readDmdataApiKey(process.env.SEISMO_DMDATA_API_KEY),
       })
     : null
@@ -1959,7 +2010,7 @@ async function main(): Promise<void> {
     feedCovered: (fromMs, toMs) => quakeFeed?.covered(fromMs, toMs) ?? false,
     feedStatus: () => quakeFeed?.status() ?? null,
     config: () => currentStationConfig,
-    now: () => Date.now(),
+    now: () => hostNow(),
     // **鍵は揺れごとに分ける**（`key`）。間引きは鍵ごとなので、1 つにすると 2 件目からの
     // 揺れの行が黙って抑えられる。
     log: (level, key, line) => emit(level, 'detect', key, line),
@@ -1979,7 +2030,7 @@ async function main(): Promise<void> {
   const backlogBook = new BacklogBook(BACKLOG_BOOK_OPTIONS)
   const backlogBookPath = defaultBacklogBookPath()
   const backlogBookLoad = await readBacklogBookFile(backlogBookPath)
-  if (backlogBookLoad.state !== null) backlogBook.restore(backlogBookLoad.state, Date.now())
+  if (backlogBookLoad.state !== null) backlogBook.restore(backlogBookLoad.state, hostNow())
   for (const w of buildBacklogBookWarning(backlogBookLoad.problem)) console.warn(w.line)
   const backlogWriter = new BacklogBookWriter(backlogBookPath)
 
@@ -2002,6 +2053,8 @@ async function main(): Promise<void> {
     else if (level === 'warn') console.warn(text)
     else console.log(text)
   }
+  // 時計の警告もここから間引く（上の `hostClockWarn`）。
+  hostClockWarn = (kind, line) => emit('warn', 'host-clock', kind, line)
 
   // **基板ごとの震度**（管理コンソールの稼働状況。`src/receiver/boardIntensity.ts`）。観測点の合成とは
   // 別の系統で、値は `/status` へ出すだけ —— 押し出し・保存・地震検出には渡さない。
@@ -2030,8 +2083,8 @@ async function main(): Promise<void> {
     get: fetchBacklog,
     // **取り戻した分は波形の時刻の時の本へ入る**（`mseedStore.ts`）。溜めずに書き、書き終わりを待って、
     // 書けなかった分は欠けに残して訊き直させる（`acceptRecovered`）。投げない。
-    keepRecovered: (source, payload) => mseedRecorder.acceptRecovered(source, payload, Date.now()),
-    now: Date.now,
+    keepRecovered: (source, payload) => mseedRecorder.acceptRecovered(source, payload, hostNow()),
+    now: hostNow,
     timeoutMs: BACKLOG_TIMEOUT_MS,
     spacingMs: BACKLOG_SPACING_MS,
     idleMs: BACKLOG_IDLE_MS,
@@ -2041,7 +2094,7 @@ async function main(): Promise<void> {
       if (event.kind === 'recovered') {
         // 流れの鍵は「基板|起動 ID|センサー」（`backlogBook.ts` の `streamKey`）。
         const stationId = stationIdOfBoard(event.key.split('|')[0] ?? '')
-        if (stationId !== null) rewaveScheduler.note(stationId, event.fromMs, event.toMs, Date.now())
+        if (stationId !== null) rewaveScheduler.note(stationId, event.fromMs, event.toMs, hostNow())
       }
     },
   })
@@ -2064,7 +2117,7 @@ async function main(): Promise<void> {
       }
     },
     writeRevised: (stationId, chunks) => waveArchive.writeRevised(stationId, chunks),
-    now: Date.now,
+    now: hostNow,
     pause: () => new Promise((resolve) => setImmediate(resolve)),
     onEvent: (event) => {
       const out = buildRewaveEventLine(event)
@@ -2270,7 +2323,7 @@ async function main(): Promise<void> {
         setCurrentConfig: (config) => {
           currentStationConfig = config
         },
-        trackAssignments: (config) => assignmentClock.update(config.boards, Date.now()),
+        trackAssignments: (config) => assignmentClock.update(config.boards, hostNow()),
         rebuildStations: (config) => {
           stations = new StationDirectory(config)
           pipeline.updateStations(stations)
@@ -2325,7 +2378,7 @@ async function main(): Promise<void> {
       // 読み取りの後で読むと、その処理時間が「届くまでの時間」に乗り、ずれが大きく見える。
       // **読むのはここの 1 回だけ。** 生データの受信の記録・欠けの帳面・時計のずれへ同じ値を
       // 渡す —— それぞれが読み直すと、ミリ秒の繰り上がりで同じパケットの時刻が食い違う。
-      const receivedAtMs = Date.now()
+      const receivedAtMs = hostNow()
       // **届いた件数は上限を掛ける前に数える。** あとだと分母が上限そのものになり、
       // 「どれだけ撃たれているか」が表から読めなくなる。
       tally.record({ kind: 'received', source: from.address })
@@ -2414,7 +2467,7 @@ async function main(): Promise<void> {
           board.slice('mac:'.length),
           () => (bootId === '' ? [] : backlogBook.pendingGapStarts(board, bootId, receivedAtMs)),
           reply,
-          Date.now(),
+          hostNow(),
         )
       }
       // **誰の声かが判るのはここから。** 読み取りに失敗した回は基板が判らないので覚えない。
@@ -2550,10 +2603,18 @@ async function main(): Promise<void> {
     thresholdMs: LOOP_STALL_THRESHOLD_MS_DEFAULT,
   })
   const loopStallTimer = setInterval(() => {
-    const event = loopStalls.tick(performance.now(), Date.now())
+    // **単調時計が OS の時計と食い違ったら、合わせ直し、できなければ OS の時計へ倒す**（`hostClock.ts`
+    // の `checkAgainstOs`）。休止の間に単調時計が止まる環境では、止まり明けの検出（下）にも掛からない。
+    const recovering = hostClock.checkAgainstOs()
+    if (recovering !== null) afterHostClockSync(recovering)
+    const event = loopStalls.tick(performance.now(), hostNow())
     if (event === null) return
     const w = buildLoopStallWarning(event)
     emit(w.level, w.kind, w.detail, w.line)
+    // **止まり明けは時計を合わせ直す。** 休止状態から戻ったときもここを通る（止まっていた長さが
+    // 電源を切っていた長さとして出る）。単調時計が休止の間も進むとは限らない（止まった分は
+    // `checkAgainstOs` が別に見る）が、進んでいてもその間の進みの狂いをここで拭う。
+    syncHostClock('処理の止まり明け')
   }, LOOP_TICK_MS_DEFAULT)
 
   // **取りに行き始めるのは受け始めてから**（受けていない間は欠けを見つけようがない）。
@@ -2562,7 +2623,7 @@ async function main(): Promise<void> {
   backlogFetcher.start()
   // **miniSEED の溜め置きを毎秒見る。** 基板が黙ると、溜まった分は次のパケットが来るまで
   // 出ていかない（5 秒の上限は、届いたときにしか測れない）。投げない。
-  const mseedTimer = setInterval(() => mseedRecorder.tick(Date.now()), 1_000)
+  const mseedTimer = setInterval(() => mseedRecorder.tick(hostNow()), 1_000)
   const rewaveTimer = setInterval(() => rewaveRunner.tick(), REWAVE_TICK_MS)
   const backlogSaveTimer = setInterval(() => {
     void backlogWriter.save(backlogBook.toJSON()).then((error) => {
@@ -2619,7 +2680,7 @@ async function main(): Promise<void> {
       const rewave = rewaveRunner.snapshot()
       return backlog.pendingGaps === 0 && rewave.waiting === 0 && !rewave.running
     },
-    now: Date.now,
+    now: hostNow,
     pause: () => new Promise((resolve) => setImmediate(resolve)),
     log: (level, key, line) => emit(level, 'detect', key, line),
   })
@@ -2629,9 +2690,9 @@ async function main(): Promise<void> {
   // **投げない** —— タイマーの中の例外は受信ごとホストを落とす。
   // **間引きの枠は揺れの行（'detect'）と分ける** —— 群発で揺れの鍵が枠を埋めると、1 時間に
   // 1 度しか出ないこの行が共有の枠へ落ちて黙る。
-  let detectionHourlySinceMs = Date.now()
+  let detectionHourlySinceMs = hostNow()
   const detectionHourlyTimer = setInterval(() => {
-    const now = Date.now()
+    const now = hostNow()
     const ok = emitDetectionHourly(
       () => detection.hourlyLines(detectionHourlySinceMs, now),
       (l) => emit(l.level, 'detect-hourly', l.key, l.line),
@@ -2651,8 +2712,8 @@ async function main(): Promise<void> {
     onWindow: () => new Promise((resolve) => setImmediate(resolve)),
     log: emit,
   })
-  void usualIntensity.refresh(Date.now())
-  const usualIntensityTimer = setInterval(() => void usualIntensity.refresh(Date.now()), USUAL_STATUS_REFRESH_MS)
+  void usualIntensity.refresh(hostNow())
+  const usualIntensityTimer = setInterval(() => void usualIntensity.refresh(hostNow()), USUAL_STATUS_REFRESH_MS)
 
   // 止める合図（`POST /api/shutdown`）の受け先。**締めくくり（`shutdown`）は状態の口を
   // 開けた後で作る**（締めくくりが状態の口を閉じるため）ので、それまでは `not-ready` で断る。
@@ -2674,6 +2735,7 @@ async function main(): Promise<void> {
     port: httpPort,
     address: httpAddress,
     hub,
+    now: hostNow,
     adminAuth,
     stationConfig: {
       get: () => currentStationConfig,
@@ -2724,13 +2786,14 @@ async function main(): Promise<void> {
     status: () => {
       // **判定と答えに同じ「いま」を使う。** 別々に時計を読むと、境目で
       // `generatedAtMs` から引いた経過と `state` が食い違いうる。
-      const nowMs = Date.now()
+      const nowMs = hostNow()
       return buildStatusReport({
         nowMs,
         startedAtMs,
         udp: { address: address ?? '0.0.0.0', port: receiver.port },
         udpRecvBuffer: receiver.recvBuffer,
         loopStalls: loopStalls.snapshot(),
+        hostClock: hostClock.snapshot(),
         backlog: backlogFetcher.snapshot(),
         rewave: rewaveRunner.snapshot(),
         http: { address: httpAddress ?? '0.0.0.0', port: statusServer.port },
@@ -2798,7 +2861,7 @@ async function main(): Promise<void> {
   let quietReported = false
   /** 前の窓で黙っていた割り当て（`buildAssignedSilenceReport`）。戻ったことを言うために持ち越す。 */
   let silentAssigned: ReadonlySet<string> = new Set()
-  let lastSummaryMs = Date.now()
+  let lastSummaryMs = hostNow()
   /**
    * 累計しか持たない数え上げから、この窓ぶんの増分を取る。
    *
@@ -2947,7 +3010,7 @@ async function main(): Promise<void> {
         ),
       ),
     ]
-    const now = Date.now()
+    const now = hostNow()
     // **まだ動いていることを印へ残す**（`hostLifeMark.ts`）。待たない —— 書き込みが詰まっても
     // 要約を遅らせない。失敗は間引きを通して出す（毎分失敗し続けうる）。
     void lifeMark.heartbeat(now).then((error) => {
@@ -3018,6 +3081,8 @@ async function main(): Promise<void> {
     if (closing) return
     closing = true
     clearInterval(timer)
+    hostClockStopped = true
+    if (hostClockTimer !== null) clearTimeout(hostClockTimer)
     clearInterval(loopStallTimer)
     clearInterval(backlogSaveTimer)
     clearInterval(mseedTimer)
@@ -3108,7 +3173,7 @@ async function main(): Promise<void> {
     if (markError !== null) {
       console.warn(`[host] 稼働の印を消せなかった（${markError}）。次の起動は、今回を正常に終わらなかったと読む`)
     }
-    console.log(`[host] 正常に終了した（${jstDateTime(Date.now()) ?? '時刻不明'}）`)
+    console.log(`[host] 正常に終了した（${jstDateTime(hostNow()) ?? '時刻不明'}）`)
     process.exit(0)
   }
 

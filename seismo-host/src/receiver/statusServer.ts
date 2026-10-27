@@ -624,6 +624,11 @@ export interface StatusServerOptions {
    */
   readonly status: () => StatusReport
   /**
+   * いまの時刻。**ホストが自分で合わせた時計（`hostClock.ts`）を渡す。** OS の時計は起動・復帰の
+   * たびに 1 秒未満ずれたまま残るので、ここで `Date.now()` を読まない。
+   */
+  readonly now: () => number
+  /**
    * 記録を 1 行出す。**間引きは呼び出し側が持つ**（`main.ts` の `emit`）。
    *
    * ここで数を抑えないのは、抑え方の規約が 1 箇所（`logThrottle.ts`）にある約束を
@@ -1281,6 +1286,7 @@ async function handleAdmin(
   requestRewave: StatusServerOptions['requestRewave'],
   records: StatusServerOptions['records'],
   storage: StorageOps,
+  now: () => number,
 ): Promise<void> {
   applyAdminCors(req, res, adminAuth.allowedOrigins)
 
@@ -1375,7 +1381,7 @@ async function handleAdmin(
       sendAdminJson(res, 400, { error: read.reason })
       return
     }
-    const parsed = parseRewaveRequest(read.body, Date.now())
+    const parsed = parseRewaveRequest(read.body, now())
     if (!parsed.ok) {
       sendAdminJson(res, 400, { error: parsed.error })
       return
@@ -1756,6 +1762,7 @@ export async function startStatusServer(options: StatusServerOptions): Promise<S
           options.requestRewave,
           options.records,
           options.storage,
+          options.now,
         ).catch((error: unknown) => {
           const detail = error instanceof Error ? error.message : String(error)
           log('error', 'admin', 'handler', `[admin] /api/* の処理に失敗: ${detail}`)
