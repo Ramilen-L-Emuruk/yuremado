@@ -17,6 +17,7 @@ import { describeSilence } from '../receiver/assignedReception'
 import { warnableClockOffset } from '../receiver/boardClockVerdict'
 import type { BoardClockOffset } from '../receiver/boardClockVerdict'
 import { readFinite, readNonEmptyString } from './readJson'
+import { formatShakeStart } from './shakeHistory'
 import { storageWarningList, type StorageBriefView } from './storageText'
 import {
   listWarning,
@@ -142,6 +143,93 @@ export interface StatusReportView {
    * **古いホストは返さない**ので、読む側で形を確かめる（`hostClockWarningList`）。
    */
   readonly hostClock?: { readonly source?: unknown; readonly consecutiveFailures?: unknown }
+  /**
+   * 2 軸のセンサーだけの基板のうち、向きが鏡像で入っている疑いのあるもの（`receiver/boardMirrorRunner.ts`）。
+   * **古いホストは返さない**ので、読む側で配列であることを確かめる（`mirrorSuspectWarnings`）。
+   */
+  readonly mirrorSuspects?: readonly MirrorSuspectView[]
+  /**
+   * 鏡像の見張りが見ている基板ごとの票（`receiver/boardMirrorRunner.ts` の `mirrorWatchRows`）。
+   * **古いホストは返さない**ので、読む側で配列であることを確かめる（`mirrorWatchLines`）。
+   */
+  readonly mirrorWatch?: readonly MirrorWatchView[]
+}
+
+interface MirrorWatchView {
+  readonly boardKey: string
+  readonly boardName: string | null
+  readonly mirrored: number
+  readonly ok: number
+  readonly lastVoteMs: number | null
+}
+
+/**
+ * 鏡像の見張りの様子を、見張っている基板ごとに 1 行（2026-10-27 ユーザー承認「稼働状況に出す」）。
+ * **HTML として組み立て済み**（基板の名前・Key は `escapeHtml` を通す）。票が無い基板も 1 行出す ——
+ * 見張りが止まっているのと疑いが無いのを見分けるため。時刻は日本時間（ホストのログと揃える）。
+ */
+export function mirrorWatchLines(rows: StatusReportView['mirrorWatch']): readonly string[] {
+  if (!Array.isArray(rows)) return []
+  const out: string[] = []
+  for (const r of rows) {
+    if (typeof r !== 'object' || r === null || typeof r.boardKey !== 'string') continue
+    const name = escapeHtml(typeof r.boardName === 'string' && r.boardName !== '' ? r.boardName : r.boardKey)
+    const mirrored = readFinite(r.mirrored) ?? 0
+    const ok = readFinite(r.ok) ?? 0
+    const last = readFinite(r.lastVoteMs)
+    if (mirrored + ok === 0 || last === null) {
+      out.push(`鏡像の見張り（基板 ${name}）: まだ比べた揺れが無い`)
+      continue
+    }
+    out.push(
+      `鏡像の見張り（基板 ${name}）: 揺れ ${mirrored + ok} 回を比べて、いまの向き ${ok} 票・鏡像 ${mirrored} 票。` +
+        `最後に比べたのは ${formatShakeStart(last)}`,
+    )
+  }
+  return out
+}
+
+interface MirrorSuspectView {
+  readonly boardKey: string
+  readonly boardName: string | null
+  readonly mirrored: number
+  readonly ok: number
+}
+
+/**
+ * 向きが鏡像で入っている疑いのある基板を伝える警告（2026-10-27 ユーザー承認「この文でよい」）。
+ * **HTML として組み立て済み**（基板の名前・Key は `escapeHtml` を通す）。基板ごとに 1 行。
+ */
+export function mirrorSuspectWarnings(suspects: StatusReportView['mirrorSuspects']): readonly string[] {
+  return mirrorSuspectWarningList(suspects).map((w) => w.html)
+}
+
+/**
+ * {@link mirrorSuspectWarnings} の組の形（通知の見張りが基板ごとの出入りを見るのに使う）。鍵は基板ごと。
+ * 解消したときの呼び名は文の頭（揺れの回数は毎回変わるので含めない）。
+ */
+export function mirrorSuspectWarningList(suspects: StatusReportView['mirrorSuspects']): readonly StatusWarning[] {
+  if (!Array.isArray(suspects)) return []
+  const out: StatusWarning[] = []
+  for (const s of suspects) {
+    if (typeof s !== 'object' || s === null || typeof s.boardKey !== 'string') continue
+    const mirrored = readFinite(s.mirrored)
+    if (mirrored === null) continue
+    const name = typeof s.boardName === 'string' && s.boardName !== '' ? s.boardName : s.boardKey
+    const tail =
+      `（同じ観測点の 3 軸のセンサーと、揺れ ${mirrored} 回で向きが合わない）。` +
+      '印字面が上の置き方を指して、6 面法をやり直してください'
+    const label = `基板 ${name} の向きが、鏡に映した形で入っている疑いがある`
+    out.push({
+      key: `mirror-suspect:${s.boardKey}`,
+      head: label,
+      label,
+      items: [],
+      html: `基板 ${escapeHtml(name)} の向きが、鏡に映した形で入っている疑いがある${tail}`,
+      text: `${label}${tail}`,
+    })
+  }
+  return out
 }
 
 /**
@@ -624,6 +712,7 @@ export function collectStatusWarnings(status: StatusReportView): readonly Status
   // 時計の警告はホストの時計を先に出す（基板の時計のずれの読み方が変わるため）。
   out.push(...hostClockWarningList(status.hostClock))
   out.push(...boardClockWarningList(now, boardClocksOf(status)))
+  out.push(...mirrorSuspectWarningList(status.mirrorSuspects))
   return out
 }
 
@@ -705,6 +794,10 @@ export async function initStatusView(container: HTMLElement, ctx: TabContext): P
           ? `<p class="error">${warnings.map((w) => `⚠ ${w}`).join('<br>')}</p>`
           : '<p class="muted">警告なし</p>'
       }
+      ${(() => {
+        const lines = mirrorWatchLines(status.mirrorWatch)
+        return lines.length > 0 ? `<p class="muted">${lines.join('<br>')}</p>` : ''
+      })()}
       <section class="panel">
         <h2>センサー</h2>
         <table>

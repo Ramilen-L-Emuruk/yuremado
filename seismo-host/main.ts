@@ -111,6 +111,15 @@ import type { LoopStallEvent } from './src/receiver/loopStall'
 import { BacklogBook } from './src/receiver/backlogBook'
 import type { BacklogBookOptions, UnrecoverableReason } from './src/receiver/backlogBook'
 import { BacklogBookWriter, readBacklogBookFile } from './src/receiver/backlogBookFile'
+import {
+  BoardMirrorRunner,
+  type MirrorSkipReason,
+  mirrorSuspects,
+  mirrorWatchRows,
+  readMirrorVoteBookFile,
+  readRawPacketsBetween,
+  writeMirrorVoteBookFile,
+} from './src/receiver/boardMirrorRunner'
 import { BacklogFetcher, fetchBacklog } from './src/receiver/backlogFetcher'
 import type { BacklogEvent } from './src/receiver/backlogFetcher'
 import { RewaveRunner } from './src/receiver/rewaveRunner'
@@ -170,6 +179,14 @@ function defaultLifeMarkPath(): string {
  */
 function defaultBacklogBookPath(): string {
   return fileURLToPath(new URL('./data/backlog-book.json', import.meta.url))
+}
+
+/**
+ * 鏡像の見張りの票（`boardMirrorRunner.ts`）の置き場所。欠けの帳面と同じく `data/` の直下 ——
+ * 観測の記録ではなく、ホストが自分の設定を疑うための覚え。
+ */
+function defaultMirrorVotesPath(): string {
+  return fileURLToPath(new URL('./data/mirror-votes.json', import.meta.url))
 }
 
 /**
@@ -2088,11 +2105,15 @@ async function main(): Promise<void> {
         dmdataApiKey: readDmdataApiKey(process.env.SEISMO_DMDATA_API_KEY),
       })
     : null
+  // **鏡像の見張り**（#1084）は下で作る（生データの読み口が後で揃う）。揺れの記録の保存から渡す。
+  // 検出へ波形を流し始めるのは見張りを作った後（`pushStationWave`・起動時の流し込み）なので、この間に揺れは閉じない。
+  let boardMirror: BoardMirrorRunner | null = null
   const detection = new StationDetection({
     save: (rec) => {
       if (!eventStore.save(rec)) {
         emit('error', 'event-store', 'write', `[detect] 揺れの記録を書けず: ${shorten(eventStore.lastWriteError ?? '')}`)
       }
+      boardMirror?.onShake(rec)
     },
     publish: (rec) => hub.publish({ kind: 'shake-event', event: rec }),
     storeStatus: () => ({
@@ -2198,6 +2219,18 @@ async function main(): Promise<void> {
     },
   })
 
+  /** `atMs` を含む時の生データの本を読む。無ければ null（作り直しの係と鏡像の見張りが読む）。 */
+  const readRawHour = async (atMs: number): Promise<Uint8Array | null> => {
+    const path = mseedFilePath(rawDir, atMs)
+    if (path === null) return null
+    try {
+      return new Uint8Array(await readFile(path))
+    } catch (error) {
+      if ((error as { code?: string }).code === 'ENOENT') return null
+      throw error
+    }
+  }
+
   const rewaveRunner = new RewaveRunner({
     scheduler: rewaveScheduler,
     // **区間の当時の設定を履歴から引く**（`stationStore.ts`）。いまの設定で過去の区間を作らない。
@@ -2205,16 +2238,7 @@ async function main(): Promise<void> {
     // **依頼された作り直し（`noiseDensity: 'current'`）だけが読む**（ノイズ密度だけを重ねる。`rewaveRunner.ts`）。
     currentConfig: () => currentStationConfig,
     flush: () => mseedRecorder.flushForRead(),
-    readHour: async (atMs) => {
-      const path = mseedFilePath(rawDir, atMs)
-      if (path === null) return null
-      try {
-        return new Uint8Array(await readFile(path))
-      } catch (error) {
-        if ((error as { code?: string }).code === 'ENOENT') return null
-        throw error
-      }
-    },
+    readHour: readRawHour,
     writeRevised: (stationId, chunks) => waveArchive.writeRevised(stationId, chunks),
     now: hostNow,
     pause: () => new Promise((resolve) => setImmediate(resolve)),
@@ -2233,6 +2257,62 @@ async function main(): Promise<void> {
           kind: 'station-wave-revised',
           revised: { stationId: event.job.stationId, fromMs: event.job.fromMs, toMs: event.job.toMs },
         })
+      }
+    },
+  })
+
+  // **2 軸のセンサーだけの基板の鏡像の見張り**（#1084・`boardMirrorRunner.ts`）。揺れの記録が閉じるたびに 1 票。
+  const mirrorVotesPath = defaultMirrorVotesPath()
+  const mirrorVotesLoad = await readMirrorVoteBookFile(mirrorVotesPath)
+  if (mirrorVotesLoad.problem !== null) {
+    emit('warn', 'mirror', 'votes-unreadable', `[mirror] 鏡像の見張りの票を一部またはすべて読めなかった: ${shorten(mirrorVotesLoad.problem)}`)
+  }
+  {
+    const books = Object.values(mirrorVotesLoad.book.boards)
+    const votes = books.reduce((n, b) => n + b.votes.length, 0)
+    emit('log', 'mirror', 'loaded', `[mirror] 鏡像の見張りの票を読んだ（基板 ${books.length} 枚・票 ${votes} 件）`)
+  }
+  /** 票にしなかった理由（ログの文）。 */
+  const mirrorSkipText: Record<MirrorSkipReason, string> = {
+    'config-unread': '設定の履歴を読めていない',
+    'config-changed': '区間の中で設定が変わった',
+    'stale-calibration': '校正値を変えた後の揺れの票が先に入っている（古い区間の票で上書きしない）',
+    'no-history': '生データの書き手が溜めていた分を書き終えられなかった',
+    'no-packets': '区間に生データが無い',
+    'no-reference': '同じ観測点の 3 軸のセンサーの揺れが区間に無い',
+    'no-board-packets': 'この基板の生データが区間に無い',
+    'not-decisive': '揃った目盛りが足りないか、相関が弱いか、軸が 3 方向へ散っていない',
+  }
+  boardMirror = new BoardMirrorRunner({
+    configThrough: (fromMs, toMs) => stationStore.configThrough(fromMs, toMs),
+    readPackets: (fromMs, toMs) => readRawPacketsBetween(() => mseedRecorder.flushForRead(), readRawHour, fromMs, toMs),
+    initial: mirrorVotesLoad.book,
+    save: (book) => writeMirrorVoteBookFile(mirrorVotesPath, book),
+    onEvent: (event) => {
+      switch (event.kind) {
+        case 'failed':
+          emit('warn', 'mirror', `failed|${event.stage}`, `[mirror] 鏡像の見張りで 1 件を数えられず: ${shorten(event.detail)}`)
+          return
+        case 'skipped': {
+          const who = event.boardKey ?? `観測点 ${event.stationId}`
+          const c = event.comparison
+          const numbers =
+            c === undefined ? '' : `（相関 いま ${c.current.toFixed(2)}・鏡像 ${c.mirrored.toFixed(2)}・揃った目盛り ${c.aligned}）`
+          emit('log', 'mirror', `skipped|${event.reason}|${who}`, `[mirror] ${who}: 票にしない — ${mirrorSkipText[event.reason]}${numbers}`)
+          return
+        }
+        case 'reset':
+          emit('log', 'mirror', `reset|${event.boardKey}`, `[mirror] ${event.boardKey}: 校正値が変わったので、前の票 ${event.dropped} 件を捨てた`)
+          return
+        case 'voted': {
+          const side = event.vote === 'mirrored' ? '鏡像の側' : 'いまの向き'
+          emit(
+            'log',
+            'mirror',
+            `vote|${event.boardKey}`,
+            `[mirror] ${event.boardKey}: ${side}が合う（相関 いま ${event.current.toFixed(2)}・鏡像 ${event.mirrored.toFixed(2)}）`,
+          )
+        }
       }
     },
   })
@@ -2924,6 +3004,18 @@ async function main(): Promise<void> {
         hostClock: hostClock.snapshot(),
         backlog: backlogFetcher.snapshot(),
         rewave: rewaveRunner.snapshot(),
+        mirrorSuspects: boardMirror === null
+          ? []
+          : mirrorSuspects(boardMirror.votes, currentStationConfig).map((s) => ({
+              ...s,
+              boardName: stations.boardNameOf(s.boardKey),
+            })),
+        mirrorWatch: boardMirror === null
+          ? []
+          : mirrorWatchRows(boardMirror.votes, currentStationConfig).map((w) => ({
+              ...w,
+              boardName: stations.boardNameOf(w.boardKey),
+            })),
         http: { address: httpAddress ?? '0.0.0.0', port: statusServer.port },
         tally: tally.snapshotTotal(),
         sensors: health.snapshot(),

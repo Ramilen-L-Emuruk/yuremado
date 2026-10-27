@@ -28,6 +28,7 @@ import type { HubSnapshot } from './readingHub'
 import type { MseedHealth } from './mseedRecorder'
 import type { StorageBrief } from './storageControl'
 import type { RewaveSnapshot } from './rewaveRunner'
+import type { MirrorSuspect, MirrorWatchRow } from './boardMirrorRunner'
 import type { DetectionStatus } from '../detection/stationDetection'
 import type { SensorHealth } from './sensorHealth'
 import type { StationDirectory, StationInfo } from './stationConfig'
@@ -77,6 +78,16 @@ export interface Endpoint {
   readonly port: number
 }
 
+/** 鏡像の疑い（`MirrorSuspect` に基板の表示名を添えた形。名前を付けていなければ null）。 */
+export interface MirrorSuspectReport extends MirrorSuspect {
+  readonly boardName: string | null
+}
+
+/** 見張っている基板ごとの票（`MirrorWatchRow` に基板の表示名を添えた形）。 */
+export interface MirrorWatchReport extends MirrorWatchRow {
+  readonly boardName: string | null
+}
+
 export interface StatusReportInput {
   readonly nowMs: number
   /** 待ち受けを開けた時刻。 */
@@ -92,6 +103,13 @@ export interface StatusReportInput {
   readonly backlog: BacklogFetcherSnapshot
   /** 取り戻した区間の合成波形を作り直した結果（`rewaveRunner.ts`）。 */
   readonly rewave: RewaveSnapshot
+  /**
+   * 2 軸のセンサーだけの基板のうち、向きが鏡像で入っている疑いのあるもの（`boardMirrorRunner.ts`）。
+   * 疑いが無ければ空。
+   */
+  readonly mirrorSuspects: readonly MirrorSuspectReport[]
+  /** 鏡像の見張りが見ている基板ごとの票（票が無い基板も載る）。見張る基板が無ければ空。 */
+  readonly mirrorWatch: readonly MirrorWatchReport[]
   readonly http: Endpoint
   readonly tally: TallySnapshot
   readonly sensors: readonly SensorHealth[]
@@ -303,6 +321,10 @@ export interface StatusReport {
    * 欠けが片付いていない（作り直しは片付くか待ちの上限を過ぎるまで始めない）。
    */
   readonly rewave: RewaveSnapshot
+  /** 向きが鏡像で入っている疑いのある基板（`StatusReportInput.mirrorSuspects`）。 */
+  readonly mirrorSuspects: readonly MirrorSuspectReport[]
+  /** 鏡像の見張りが見ている基板ごとの票（`StatusReportInput.mirrorWatch`）。 */
+  readonly mirrorWatch: readonly MirrorWatchReport[]
   readonly http: Endpoint
   readonly sensors: readonly SensorStatus[]
   readonly sensorEvictions: number
@@ -580,6 +602,8 @@ export function buildStatusReport(input: StatusReportInput): StatusReport {
     hostClock: input.hostClock,
     backlog: input.backlog,
     rewave: input.rewave,
+    mirrorSuspects: input.mirrorSuspects,
+    mirrorWatch: input.mirrorWatch,
     http: input.http,
     sensors,
     sensorEvictions: input.sensorEvictions,

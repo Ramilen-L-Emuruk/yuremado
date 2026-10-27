@@ -210,6 +210,8 @@ function input(overrides: Partial<StatusReportInput> = {}): StatusReportInput {
       unsettledWriteSinceMs: null, rebootsSeen: 3, rebootsHostTimed: 0, rebootsUnmeasured: 0,
     },
     rewave: { waiting: 0, requestedWaiting: 0, requested: { jobs: 0, skipped: {} }, running: false, jobs: 0, chunks: 0, rawIssues: 0, skipped: {} },
+    mirrorSuspects: [],
+    mirrorWatch: [],
     http: { address: '0.0.0.0', port: 50506 },
     tally: tally.snapshotTotal(),
     sensors: [sensor()],

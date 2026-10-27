@@ -8,6 +8,7 @@
 import { headingOfRotation, restWindowProblem, tiltDegFromUp } from './calibrationSuggest'
 import type { SensorRestWindow } from './detectedBoards'
 import { ago, escapeHtml, qs } from './dom'
+import { FACE_UP_BUTTON_LABEL } from './sixFacePanel'
 import { tipHtml } from './tip'
 import { axesAreIndependent } from '../receiver/calibration'
 import { isProperRotation } from '../receiver/matrix3'
@@ -136,7 +137,9 @@ const SIX_FACE_TIP =
   '基板を X・Y・Z の上向き・下向きの 6 方向へ置き、それぞれ 1 分以上動かさないでください。' +
   '姿勢が足りなければ、斜めにも置いてください。' +
   'X・Y は 1 個目のセンサーの 1 本目・2 本目の軸です。' +
-  '直近 30 分の静止した時間から計算します。'
+  '直近 30 分の静止した時間から計算します。' +
+  // 2026-10-27 ユーザー承認（選んだ選択肢「この文でよい」）。
+  `2 軸のセンサーだけの基板では、1 個目のセンサーのチップの印字面を真上に向けて置いたときに、［${FACE_UP_BUTTON_LABEL}］を押してください。`
 
 /** 軸ごとの欄。**行の数が軸の本数**（読み取りもこの行を数える）。 */
 function axesGridHtml(axes: readonly AxisFormValues[]): string {
@@ -384,6 +387,10 @@ export function renderOrientationHtml(values: OrientationFormValues): string {
         <!-- 進み具合は解く条件の順に 4 行、その下に「いまの置き方:」の秒読み（2026-10-10 ユーザー承認）。 -->
         <div class="b-sixface-faces" style="margin-top: 0.2rem;"></div>
         <div class="b-sixface-placement" style="margin-top: 0.2rem;"></div>
+        <!-- 2 軸のセンサーだけの基板でだけ出す（鏡像の決め手。2026-10-27 ユーザー承認）。出すか・押せるかは viewBoards が決める。 -->
+        <div class="row b-faceup-row" style="align-items: center; margin-top: 0.2rem;" hidden>
+          <button type="button" class="mark-faceup" style="flex: 0 0 auto;" disabled>${escapeHtml(FACE_UP_BUTTON_LABEL)}</button>
+        </div>
         <div class="row" style="align-items: center; margin-top: 0.2rem;">
           <button type="button" class="apply-sixface" style="flex: 0 0 auto;" disabled>6 面の結果を入れる</button>
           <span class="muted b-sixface-why"></span>
