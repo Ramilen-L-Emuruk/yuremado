@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "5.72.0",
+      "date": "2026-10-28",
+      "added": [
+        {
+          "text": "設定画面に更新の確認ボタンを追加",
+          "variant": "both"
+        }
+      ],
+      "fixed": []
+    },
+    {
       "version": "5.71.0",
       "date": "2026-10-27",
       "added": [
