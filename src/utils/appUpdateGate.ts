@@ -14,7 +14,7 @@
 export type ReloadReason = 'update' | 'periodic'
 
 /** 秒読みを待たせている理由。 */
-export type ReloadHoldCause = 'alert' | 'replay' | 'typing' | 'reading' | 'postponed'
+export type ReloadHoldCause = 'alert' | 'replay' | 'typing' | 'settings' | 'reading' | 'postponed'
 
 export interface ReloadGateInput {
   /** 新しい版が待っているか（サービスワーカーが waiting にいる）。 */
@@ -27,6 +27,14 @@ export interface ReloadGateInput {
   replaying: boolean
   /** 文字を入力する欄にフォーカスがあるか。 */
   typing: boolean
+  /**
+   * 設定の窓を開いている間に最後に操作した時刻（`Date.now()` の値）。窓を閉じていれば `null`。
+   * 窓は画面全体を覆い、後ろのページを `inert` にするので、秒読みの札も［後で］も見えず押せない。
+   * トグルやボタンを触っているだけでは `typing` に当たらないので、別に待つ。
+   * **ただし操作が無いまま `SETTINGS_IDLE_HOLD_LIMIT_MS` 経ったら待たない**（開けたまま離れた端末で、
+   * 自動復帰を切っていると窓が閉じないため、待ちが終わらない）。
+   */
+  settingsLastActivityMs: number | null
   /** 変更内容の窓を開いているか（窓は画面全体を覆うので、秒読みの札も［後で］も見えなくなる）。 */
   reading: boolean
   /** 「後で」で延ばした期限（端末の時計 `Date.now()` の値）。延ばしていなければ `null`。 */
@@ -50,6 +58,9 @@ export function decideReloadGate(input: ReloadGateInput): ReloadGate {
   if (input.alertActive) return { kind: 'held', reason, cause: 'alert' }
   if (input.replaying) return { kind: 'held', reason, cause: 'replay' }
   if (input.typing) return { kind: 'held', reason, cause: 'typing' }
+  if (input.settingsLastActivityMs !== null && input.nowMs - input.settingsLastActivityMs < SETTINGS_IDLE_HOLD_LIMIT_MS) {
+    return { kind: 'held', reason, cause: 'settings' }
+  }
   if (input.reading) return { kind: 'held', reason, cause: 'reading' }
   if (input.postponedUntilMs !== null && input.nowMs < input.postponedUntilMs) {
     return { kind: 'held', reason, cause: 'postponed' }
@@ -57,11 +68,37 @@ export function decideReloadGate(input: ReloadGateInput): ReloadGate {
   return { kind: 'countdown', reason }
 }
 
+/**
+ * 設定の窓を開いたまま操作が無いとき、読み直しを待つ長さ。過ぎたら窓の後ろで秒読みする（札と［後で］は窓に
+ * 隠れて見えないので、窓の中で入力途中の値は読み直しで消える）（2026-10-27 ユーザー承認。選んだ選択肢
+ * 「一定時間で待つのをやめる」「窓の後ろで秒読みする」「30 分 (Recommended)」）。
+ */
+export const SETTINGS_IDLE_HOLD_LIMIT_MS = 30 * 60 * 1000
+
 /** 秒読みの長さ（秒）。 */
 export const RELOAD_COUNTDOWN_SEC = 10
 
 /** 「後で」を押したときに延ばす長さ（2026-10-26 ユーザー承認「1 時間待ち、その後また静かなときに秒読み」）。 */
 export const RELOAD_POSTPONE_MS = 60 * 60 * 1000
+
+/**
+ * 設定の窓に付ける印（`SettingsDialog`）。窓の中の操作・入力欄を見分けるのに使う。
+ */
+export const SETTINGS_DIALOG_ATTR = 'data-settings-dialog'
+
+/** 要素が設定の窓の中にあるか。 */
+export function isInsideSettingsDialog(el: Element | null): boolean {
+  return el !== null && el.closest(`[${SETTINGS_DIALOG_ATTR}]`) !== null
+}
+
+/**
+ * 秒読みを待たせる「入力中」か。**設定の窓の中の入力欄は数えない** —— 窓の中は窓の待ち（`settingsLastActivityMs`）が
+ * 受け持ち、操作が無いまま 30 分で明ける。入力中に数えると、欄にフォーカスを置いたまま離れた端末で待ちが終わらない
+ * （2026-10-27 ユーザー承認の「一定時間で待つのをやめる」。入力途中の値が読み直しで消えるのも承知のうえ）。
+ */
+export function isTypingOutsideSettings(el: Element | null): boolean {
+  return isTextEntryElement(el) && !isInsideSettingsDialog(el)
+}
 
 /**
  * 文字を入力する欄か。チェックボックスやボタンにフォーカスがあるだけでは入力中と見なさない

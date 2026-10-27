@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from 'react'
 import { currentAppUpdater, type AppUpdateSnapshot } from '../services/appUpdate'
 import {
   RELOAD_COUNTDOWN_SEC,
   RELOAD_POSTPONE_MS,
+  SETTINGS_IDLE_HOLD_LIMIT_MS,
   decideReloadGate,
-  isTextEntryElement,
+  isInsideSettingsDialog,
+  isTypingOutsideSettings,
   type ReloadGate,
   type ReloadHoldCause,
   type ReloadReason,
@@ -19,6 +21,8 @@ export interface ReloadScheduleInput {
   replaying: boolean
   /** 毎朝 5 時の定期の読み直しを行うか（設定）。 */
   periodicReloadEnabled: boolean
+  /** 設定の窓を開いているか（→ `utils/appUpdateGate.ts` の `settingsOpen`）。 */
+  settingsOpen: boolean
 }
 
 export interface ReloadSchedule {
@@ -50,6 +54,7 @@ export function useReloadSchedule(input: ReloadScheduleInput): ReloadSchedule {
   const [postponedUntilMs, setPostponedUntilMs] = useState<number | null>(null)
   // 変更内容の窓を開いている間は秒読みしない（窓に札が隠れて［後で］を押せないため）
   const reading = useSyncExternalStore(subscribeReleaseNotesOpen, isReleaseNotesOpen)
+  const settingsLastActivityMs = useSettingsLastActivity(input.settingsOpen)
 
   const gate = decideReloadGate({
     // 前の起動で適用が効かなかったら、静かなときにも自分では適用しない（札の［今すぐ更新］だけにする）
@@ -58,6 +63,7 @@ export function useReloadSchedule(input: ReloadScheduleInput): ReloadSchedule {
     alertActive: input.alertActive,
     replaying: input.replaying,
     typing,
+    settingsLastActivityMs,
     reading,
     postponedUntilMs,
     nowMs: Date.now(),
@@ -122,19 +128,67 @@ const HOLD_CAUSE_LABEL: Record<ReloadHoldCause, string> = {
   alert: '発表中',
   replay: '再生中',
   typing: '入力中',
+  settings: '設定の窓を開いている',
   reading: '変更内容を開いている',
   postponed: '［後で］を押した',
+}
+
+/** 設定の窓の待ちが明けたかを見直す間隔。明けるのが最大この分だけ遅れる。 */
+const SETTINGS_IDLE_RECHECK_MS = 30_000
+
+/**
+ * 設定の窓を開いている間に最後に操作した時刻。閉じていれば `null`（→ `utils/appUpdateGate.ts` の
+ * `settingsLastActivityMs`）。開くたびに数え直し、窓の中の操作（押す・キー・ホイール・スクロール）で更新する。
+ *
+ * 操作のたびに描き直さないよう、時刻そのものは ref に持つ。描き直すのは、待ちが明けたとき（一定間隔で見る）と、
+ * **明けていた状態で触ったとき**（窓の後ろで進んでいた秒読みを捨てるため）。明けていたかは合図の有無ではなく
+ * 触る直前の時刻で見る —— 別の理由の描き直しで先に明けた判定になっていても、触れば必ず描き直す。
+ */
+function useSettingsLastActivity(open: boolean): number | null {
+  const lastRef = useRef<number | null>(null)
+  const [, redraw] = useReducer((n: number) => n + 1, 0)
+  if (!open) lastRef.current = null
+  else if (lastRef.current === null) lastRef.current = Date.now()
+  useEffect(() => {
+    if (!open) return
+    const expired = (): boolean =>
+      lastRef.current !== null && Date.now() - lastRef.current >= SETTINGS_IDLE_HOLD_LIMIT_MS
+    let expiryDrawn = false
+    const touch = (e: Event) => {
+      // スクロールは窓の中のものだけ数える。窓の後ろのページも読み上げの追従などで自分からスクロールするので、
+      // それまで数えると開けたまま離れた端末でも待ちが明けない。押す・キー・ホイールは窓の外が `inert` なので窓に届く
+      if (e.type === 'scroll' && !(e.target instanceof Element && isInsideSettingsDialog(e.target))) return
+      const wasExpired = expired()
+      lastRef.current = Date.now()
+      expiryDrawn = false
+      if (wasExpired) redraw()
+    }
+    // 端末が眠っている間はタイマーも止まるので、残りを 1 本で待たず、一定間隔で過ぎたかを見る
+    const id = setInterval(() => {
+      if (expiryDrawn || !expired()) return
+      expiryDrawn = true
+      redraw()
+    }, SETTINGS_IDLE_RECHECK_MS)
+    const opts = { passive: true, capture: true } as const
+    const events = ['pointerdown', 'keydown', 'wheel', 'touchmove', 'scroll'] as const
+    for (const e of events) window.addEventListener(e, touch, opts)
+    return () => {
+      clearInterval(id)
+      for (const e of events) window.removeEventListener(e, touch, true)
+    }
+  }, [open])
+  return lastRef.current
 }
 
 /** 入力中のまま、フォーカスの知らせが来なくても読み直す間隔。 */
 const TEXT_ENTRY_RECHECK_MS = 5_000
 
-/** 文字を入力する欄にフォーカスがあるか。 */
+/** 設定の窓の外で、文字を入力する欄にフォーカスがあるか（窓の中は窓の待ちが受け持つ → `isTypingOutsideSettings`）。 */
 function useTextEntryFocus(): boolean {
-  const [typing, setTyping] = useState(() => isTextEntryElement(document.activeElement))
+  const [typing, setTyping] = useState(() => isTypingOutsideSettings(document.activeElement))
   useEffect(() => {
     // focusout の時点ではまだ次の要素へ移っていないので、移り終えてから読む
-    const sync = () => { queueMicrotask(() => setTyping(isTextEntryElement(document.activeElement))) }
+    const sync = () => { queueMicrotask(() => setTyping(isTypingOutsideSettings(document.activeElement))) }
     document.addEventListener('focusin', sync)
     document.addEventListener('focusout', sync)
     return () => {
@@ -145,7 +199,7 @@ function useTextEntryFocus(): boolean {
   useEffect(() => {
     if (!typing) return
     // フォーカスのある欄が消されると focusout が届かず、入力中のまま秒読みが止まり続ける。入力中の間だけ読み直す
-    const id = setInterval(() => setTyping(isTextEntryElement(document.activeElement)), TEXT_ENTRY_RECHECK_MS)
+    const id = setInterval(() => setTyping(isTypingOutsideSettings(document.activeElement)), TEXT_ENTRY_RECHECK_MS)
     return () => clearInterval(id)
   }, [typing])
   return typing
