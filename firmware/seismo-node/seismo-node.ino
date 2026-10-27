@@ -473,6 +473,10 @@ struct Packet {
   // 形だと、104 Hz では 1 サンプルの間隔（9.615… ms）がミリ秒で割り切れず、切り捨てが積もる。
   int64_t  tBaseMs;
   size_t   done;
+  // 時計が合う前に吸い出した 1 回ぶんか（→ `firstSampleMs`）。**真なら時刻は単調時計のミリ秒**で、
+  // 送らずに輪へだけ残す（→ `sendChunk`）。吸い出した時点で決める —— 送る時点で決めると、
+  // 吸い出しの最中に時計が合った 1 回ぶんが、単調時計の値を実時刻として名乗る。
+  bool     presync;
   int16_t  v[MAX_PER_PACKET * MAX_AXES];   // 1 サンプル `s->kind->axes` 個ずつ詰める
 };
 
@@ -491,7 +495,20 @@ struct BacklogSlot {
   // 書き出すと輪の途中から写し始め、手前を後から追って写すので、写した分は輪の中で飛び飛びになる。
   // 輪へ積むたびに 0 へ戻す（`backlogPut`）。
   uint8_t  flashed;
+  // 時計が合う前のまとまりか（→ `Packet::presync`）。**真なら `tFirstMs` は単調時計のミリ秒**で、
+  // 返すときにその起動の差（→ `MonoOffset`）を足して実時刻へ直す。差が分からない起動の分は返さない。
+  uint8_t  presync;
   int16_t  v[MAX_PER_PACKET * MAX_AXES];   // 1 サンプル `g_sensors[sensor].kind->axes` 個ずつ詰める
+};
+
+// 起動ごとの「実時刻 − 単調時計」のミリ秒（→ `noteMonoOffset`）。時計が合う前に残したまとまりを
+// 実時刻へ直すのに使う。**前の起動の分も NVS に残す** —— 前の起動の末尾をホストが取りに来るのは
+// 再起動した後で、そのときメモリにはこの起動の差しか無い。
+// 宣言をここに置く理由は `Packet` と同じ。
+struct MonoOffset {
+  int64_t  offsetMs;
+  uint32_t bid;
+  uint32_t valid;
 };
 
 // `/backlog` が返すまとまりの在りか（→ `collectBacklog`）。中身は持たず、返すときに取り出す。
@@ -848,6 +865,20 @@ static uint32_t   g_backlogServed = 0;      // 返したまとまりの数
 static uint32_t   g_backlogBad = 0;         // 引数が読めずに断った回数
 static uint32_t   g_backlogOtherBoot = 0;   // 訊かれた起動 ID の分がメモリにもフラッシュにも無かった回数
 static uint32_t   g_backlogLoadFails = 0;   // 返す分を取り出せず 500 で答えた回数（→ `handleBacklog`）
+static uint32_t   g_presyncKept = 0;        // 時計が合う前に輪へ残したまとまりの数（→ `sendChunk`）
+static uint32_t   g_presyncDropped = 0;     // 時計が合う前のまとまりのうち、輪へ残せなかった数（→ `backlogPut`）
+// 時計が合う前の分を、その起動の差が分からず返さなかった問い合わせの数（1 回の `/backlog` で 1 つ）
+static uint32_t   g_presyncSkips = 0;
+// この起動の「実時刻 − 単調時計」（→ `noteMonoOffset`）。偽のうちは、時計が合う前の分を返せない。
+static bool       g_monoOffsetOk = false;
+// その差を NVS へ書けたか。**偽なら、再起動した後はこの起動の時計が合う前の分を返せない。**
+static bool       g_monoOffsetSaved = false;
+static uint32_t   g_monoLoadFails = 0;      // 起動時に NVS の差の記録を読めなかった・形が違った回数
+static int64_t    g_monoOffsetMs = 0;
+// NVS に残した起動ごとの差（→ `MonoOffset`）。新しい順。**数は前の起動を何本さかのぼるか** ——
+// フラッシュの輪は約 11 分ぶんなので、その間に何度再起動しても足りる数にしてある。
+static const size_t MONO_OFFSET_SLOTS = 8;
+static MonoOffset g_monoOffsets[MONO_OFFSET_SLOTS] = {};
 static uint32_t   g_bootIdNum = 0;          // `g_bootId` を数にしたもの（フラッシュの区画が名乗る）
 
 // --- フラッシュの輪（→ `FlashSectorHead`・`spillPump`） ---
@@ -1291,8 +1322,12 @@ static int formatLine(char *line, size_t size, const int16_t *v, uint8_t axes){
 // 送ったまとまりを輪へ残す。**いちばん古い区画から上書きする。**
 //
 // 呼ぶのは `sendChunk` だけ。**送れたかどうかを問わない**理由は `BACKLOG_SLOTS` の項。
-static void backlogPut(const Sensor &s, const int16_t *v, size_t n, uint32_t seq0, int64_t tFirstMs){
-  if (g_backlog == nullptr || n == 0 || n > MAX_PER_PACKET) return;
+// **残せたら真。** 時計が合う前の分の勘定（`g_presyncKept`・`g_presyncDropped`）を、実際に残せたかで分ける。
+static bool backlogPut(const Sensor &s, const int16_t *v, size_t n, uint32_t seq0, int64_t tFirstMs, bool presync){
+  if (g_backlog == nullptr || n == 0 || n > MAX_PER_PACKET) return false;
+  // 単調時計で負の時刻は、フラッシュの印（`FLASH_REC_HEAD` の項）と区別が付かない。起動から
+  // センサーを立てるまでに 0.3 秒以上あるので起きないはずの形で、起きたら残さない。
+  if (presync && tFirstMs < 0) return false;
   BacklogSlot &b = g_backlog[g_backlogTotal % BACKLOG_SLOTS];
   b.tFirstMs = tFirstMs;
   b.seq0 = seq0;
@@ -1300,9 +1335,11 @@ static void backlogPut(const Sensor &s, const int16_t *v, size_t n, uint32_t seq
   b.sensor = (uint8_t)(&s - g_sensors);
   b.n = (uint8_t)n;
   b.flashed = 0;
+  b.presync = presync ? 1 : 0;
   memcpy(b.v, v, n * s.kind->axes * sizeof(int16_t));
   g_backlogTotal++;
   if (g_backlogUsed < BACKLOG_SLOTS) g_backlogUsed++;
+  return true;
 }
 
 // 輪の k 番目に古い区画（0 がいちばん古い）。**添字は累計から引く**（`g_backlogTotal` の項）。
@@ -1357,6 +1394,10 @@ static bool parseBid(const String &text, uint32_t &out){
 // **軸数と種類は、元は予備（0）だった 2 バイトに置く。** 前の版が書いた記録は 0 のままなので、
 // 0 は「MPU6050・3 軸」と読む —— 区画の目印（`FLASH_MAGIC`）を変えずに済み、焼き直す前に
 // 書き出した分もそのまま取り戻せる。
+//
+// **時計が合う前のまとまり（`BacklogSlot::presync`）は、`t` を `-(単調時計 + 1)` で書く。** 頭に
+// 空きのバイトが残っていないので、印は時刻の符号に持たせる。実時刻（unix のミリ秒）は正で、
+// 前の版は時計が合ってからの分しか書かないので、負の値はこの印にしか現れない。
 static const size_t FLASH_REC_HEAD = 20;
 
 static size_t flashRecordSize(uint8_t n, uint8_t axes){ return FLASH_REC_HEAD + (size_t)n * axes * 2; }
@@ -1366,7 +1407,8 @@ static void flashEncode(uint8_t *p, const BacklogSlot &b){
   p[0] = b.sensor; p[1] = b.n; p[2] = k.axes; p[3] = k.id;
   memcpy(p + 4, &b.seq0, 4);
   memcpy(p + 8, &b.overflow, 4);
-  memcpy(p + 12, &b.tFirstMs, 8);
+  const int64_t t = b.presync ? -(b.tFirstMs + 1) : b.tFirstMs;
+  memcpy(p + 12, &t, 8);
   memcpy(p + FLASH_REC_HEAD, b.v, (size_t)b.n * k.axes * 2);
 }
 
@@ -1393,7 +1435,11 @@ static bool flashDecode(const uint8_t *p, size_t avail, BacklogSlot &b, size_t &
   if (avail < size) return false;
   memcpy(&b.seq0, p + 4, 4);
   memcpy(&b.overflow, p + 8, 4);
-  memcpy(&b.tFirstMs, p + 12, 8);
+  int64_t t = 0;
+  memcpy(&t, p + 12, 8);
+  b.presync = t < 0 ? 1 : 0;
+  b.tFirstMs = t < 0 ? -t - 1 : t;
+  b.flashed = 1;
   memcpy(b.v, p + FLASH_REC_HEAD, (size_t)b.n * axes * 2);
   return true;
 }
@@ -1628,7 +1674,13 @@ static void spillPump(uint32_t nowMs){
       const int64_t since = g_lastAckUnixMs - SPILL_BACKFILL_MS;
       for (size_t k = 0; k < g_backlogUsed; k++) {
         const BacklogSlot &b = backlogAt(k);
-        if (b.tFirstMs + samplesToMs(b.n, g_sensors[b.sensor].kind->hz) >= since) break;
+        // **時計が合う前の分はここから写す。** 一度も送っていないので、返事が来ていても届いてはいない。
+        // 起動から `SPILL_AFTER_MS` より早く時計が合うと書き出しは一度も始まらず、その分はメモリの輪に
+        // しか無い（ホストはふつう数秒で取りに来るが、その前に返事が途絶えたらここで写す）。
+        // 時計が合う前の分は輪の先頭に並ぶので、残っている間はその後ろの届いた分まで写すことになる
+        // （多くて輪 1 周・約 20 区画。データは失わず、書く量が増えるだけなので許している）。
+        // 単調時計の値を実時刻と比べない。
+        if (b.presync || b.tFirstMs + samplesToMs(b.n, g_sensors[b.sensor].kind->hz) >= since) break;
         cursor++;
       }
     }
@@ -1708,12 +1760,21 @@ static void spillPump(uint32_t nowMs){
 //
 // **同じまとまりは 1 つにまとめる**（同じ `seq0`。書き出し中の分は両方にあり、書き出しを始め直すと
 // 同じ分をもう一度写すこともある）。両方にあればメモリの輪のほうを採る（返すときに読み直さずに済む）。
-static size_t collectBacklog(uint32_t bid, uint8_t si, uint32_t from, uint32_t to,
+//
+// **時計が合う前のまとまりは、その起動の差（`presyncOk`）が分かるときだけ並べる。** 差が分からなければ
+// 実時刻を名乗れないので、持っていないものとして扱う（ホストは答え切った後の残りを「基板がもう
+// 抱えていない」と読む）。
+static size_t collectBacklog(uint32_t bid, uint8_t si, uint32_t from, uint32_t to, bool presyncOk,
                              BacklogRef *refs, size_t cap, bool &more){
   size_t count = 0;
   more = false;
+  bool skipped = false;
   auto consider = [&](const BacklogSlot &b, uint16_t sector, uint16_t at){
     if (b.sensor != si || !backlogOverlaps(b, from, to)) return;
+    if (b.presync && !presyncOk) {
+      skipped = true;
+      return;
+    }
     // **並べる鍵は `from` からの差。** 通し番号は約 497 日で一周するので、そのまま比べない。
     const int32_t key = (int32_t)(b.seq0 - from);
     size_t pos = count;
@@ -1776,6 +1837,7 @@ static size_t collectBacklog(uint32_t bid, uint8_t si, uint32_t from, uint32_t t
   if (bid == g_bootIdNum) {
     for (size_t k = 0; k < g_backlogUsed; k++) consider(backlogAt(k), BACKLOG_REF_MEMORY, (uint16_t)k);
   }
+  if (skipped) g_presyncSkips++;
   return count;
 }
 
@@ -1877,7 +1939,12 @@ static void handleBacklog(){
   // 応答を作っている間に輪は書き換わらない（書くのも読むのも `loop()` だけ）。
   static BacklogRef refs[BACKLOG_MAX_PER_REPLY];
   bool more = false;
-  const size_t found = collectBacklog(bid, sensor, from, to, refs, BACKLOG_MAX_PER_REPLY, more);
+  // 時計が合った直後で差をまだ採っていなければ、ここで採る（差が無いまま答えると、ホストはその
+  // 起動の頭を「もう抱えていない」で諦める）。
+  noteMonoOffset();
+  int64_t monoOffset = 0;
+  const bool presyncOk = monoOffsetFor(bid, monoOffset);
+  const size_t found = collectBacklog(bid, sensor, from, to, presyncOk, refs, BACKLOG_MAX_PER_REPLY, more);
   // **見出しを出す前に、返す分を作業場へ取り出し切る。** 見出しで「ここまで答えた」と名乗った後で
   // 取り出しに失敗して飛ばすと、ホストは答え切ったのに残った分を「基板がもう抱えていない」と諦める。
   // **1 つでも取り出せなければ応答ごと 500 にする** —— ホストは「取りに行けず」として間を空けて訊き直す
@@ -1908,7 +1975,9 @@ static void handleBacklog(){
   const Sensor &s = g_sensors[sensor];
   for (size_t k = 0; k < picked; k++) {
     const BacklogSlot &b = slots[k];
-    const int hl = formatHead(buf, sizeof(buf), bidText, s, b.n, b.seq0, b.tFirstMs, b.overflow);
+    // 時計が合う前の分は、その起動の差を足して実時刻で名乗る（並べた時点で差が分かっている）。
+    const int64_t t = b.presync ? b.tFirstMs + monoOffset : b.tFirstMs;
+    const int hl = formatHead(buf, sizeof(buf), bidText, s, b.n, b.seq0, t, b.overflow);
     if (hl <= 0 || (size_t)hl >= sizeof(buf)) { g_headTrunc++; continue; }
     size_t u = (size_t)hl;
     const uint8_t axes = s.kind->axes;
@@ -2006,14 +2075,25 @@ static void handleStatus(){
   if (g_backlog != nullptr && g_backlogUsed > 0) {
     struct timeval tv; gettimeofday(&tv, nullptr);
     const int64_t nowMs = (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
-    backlogAge = (long)((nowMs - backlogAt(0).tFirstMs) / 1000);
+    // 時計が合う前の分は単調時計で測る（実時刻へ直せなくても、歳は同じ時計の差で出せる）。
+    const BacklogSlot &oldest = backlogAt(0);
+    const int64_t refMs = oldest.presync ? esp_timer_get_time() / 1000 : nowMs;
+    backlogAge = (long)((refMs - oldest.tFirstMs) / 1000);
   }
+  // **`presync_kept` は時計が合う前に輪へ残したまとまりの数**（`presync_dropped` は残せなかった数）、
+  // `presync_skips` はその起動の差が分からず時計が合う前の分を返さなかった問い合わせの数。
+  // `mono_offset_ok` が偽のうちはこの起動の時計が合う前の分を返せず、`mono_offset_saved` が偽なら
+  // 再起動した後に返せない。`mono_load_fails` は起動時に NVS の差の記録を読めなかった回数。
   appendf(buf, sizeof(buf), u,
     "\"backlog_ok\":%s,\"backlog_slots\":%u,\"backlog_used\":%u,\"backlog_oldest_age_s\":%ld,"
-    "\"backlog_requests\":%lu,\"backlog_served\":%lu,\"backlog_bad\":%lu,\"backlog_other_boot\":%lu,\"backlog_load_fails\":%lu,",
+    "\"backlog_requests\":%lu,\"backlog_served\":%lu,\"backlog_bad\":%lu,\"backlog_other_boot\":%lu,\"backlog_load_fails\":%lu,"
+    "\"presync_kept\":%lu,\"presync_dropped\":%lu,\"presync_skips\":%lu,\"mono_offset_ok\":%s,"
+    "\"mono_offset_saved\":%s,\"mono_load_fails\":%lu,",
     g_backlog != nullptr ? "true":"false", (unsigned)BACKLOG_SLOTS, (unsigned)g_backlogUsed, backlogAge,
     (unsigned long)g_backlogRequests, (unsigned long)g_backlogServed,
-    (unsigned long)g_backlogBad, (unsigned long)g_backlogOtherBoot, (unsigned long)g_backlogLoadFails);
+    (unsigned long)g_backlogBad, (unsigned long)g_backlogOtherBoot, (unsigned long)g_backlogLoadFails,
+    (unsigned long)g_presyncKept, (unsigned long)g_presyncDropped, (unsigned long)g_presyncSkips,
+    g_monoOffsetOk ? "true":"false", g_monoOffsetSaved ? "true":"false", (unsigned long)g_monoLoadFails);
   // フラッシュの輪（→ `spillPump`）。**`flash_max_ms` は 1 区画の消去と書き込みの最長** ——
   // 吸い出しが待てるのは 1.4 秒まで（`HOST_PROBE_TIMEOUT_MS` の項）なので、ここが近づいたら危ない。
   size_t flashValid = 0;
@@ -2398,6 +2478,7 @@ void setup(){
   resolveNodeName();
   // 前の起動の記録を読む（→ `PrevState`）。書くのは `PREV_MIN_GAP_MS` 経ってから。
   prevLoad();
+  monoOffsetLoad();
   g_lastPrevSaveMs = g_bootMs;
   g_wifiDownSinceMs = g_bootMs;
 
@@ -2522,13 +2603,26 @@ void setup(){
 // 判定をここへ置くのは、**送る口がここ 1 つだけ**だから——`drainSensor` の側で
 // 弾くと、時刻を組み立てる場所と送る場所に判定が 2 つできる。
 //
-// **時計が合っていれば、送れるかどうかより先に輪へ残す**（→ `backlogPut`）。Wi-Fi が
-// 切れている間の分こそ、あとでホストが取りに来る。時計が合う前の分は残さない ——
-// 名乗る時刻が信用できないので、取り戻しても受け手を惑わせるだけ。
-static void sendChunk(Sensor &s, const int16_t *v, size_t n, uint32_t seq0, int64_t tFirstMs){
+// **送れるかどうかより先に輪へ残す**（→ `backlogPut`）。Wi-Fi が切れている間の分こそ、
+// あとでホストが取りに来る。
+//
+// **時計が合う前の分（`presync`）も輪へ残す。** 時刻は単調時計のミリ秒で持ち、送らない。
+// 返事はまだ一度も来ていないので書き出し（`spillPump`）がフラッシュへ写し、ホストが新しい
+// 起動の頭を取りに来たとき、その起動の差（→ `noteMonoOffset`）を足して実時刻で返す
+// （→ `handleBacklog`）。残さなかった頃は、再起動のたびに時計が合うまでの数十秒〜数分が
+// 丸ごと抜けていた（2026-10-27 の試験で 1 枚あたり約 212 秒）。
+static void sendChunk(Sensor &s, const int16_t *v, size_t n, uint32_t seq0, int64_t tFirstMs, bool presync){
   const time_t nowSec = time(nullptr);
-  const bool trusted = clockTrusted(nowSec);
-  if (trusted) backlogPut(s, v, n, seq0, tFirstMs);
+  // 時計が合っていない吸い出しは `presync` で来る（→ `firstSampleMs`）。合ったかどうかは
+  // 一度真になれば戻らないので、`presync` でない分はここでも合っている。
+  const bool trusted = !presync && clockTrusted(nowSec);
+  // **実時刻で最初に送る前に差を採る。** ホストが新しい起動を知るのはこの送信からなので、
+  // 頭を取りに来られた時点で差が無い、という窓が開かない。
+  if (trusted) noteMonoOffset();
+  if (presync || trusted) {
+    const bool kept = backlogPut(s, v, n, seq0, tFirstMs, presync);
+    if (presync) { if (kept) g_presyncKept++; else g_presyncDropped++; }
+  }
   if (WiFi.status() != WL_CONNECTED) { s.unsent += n; return; }
   if (!trusted) { s.pretime += n; return; }
   if (!g_timeReady) {
@@ -2741,6 +2835,69 @@ static const char* prevWhyName(uint8_t why){
   }
 }
 
+// NVS に残した起動ごとの差（→ `MonoOffset`）を読む。**`prevLoad` の後で 1 度だけ呼ぶ**（NVS を開くのはあちら）。
+// 形が違えば読まない（前の版は書いていない。無いのは正常）。
+static void monoOffsetLoad(){
+  if (!g_prefsOk || !g_prefs.isKey("mono")) return;
+  if (g_prefs.getBytesLength("mono") != sizeof(g_monoOffsets)) {
+    g_monoLoadFails++;
+    Serial.println("# 起動ごとの時計の差の記録は形が違うので読まない");
+    return;
+  }
+  if (g_prefs.getBytes("mono", g_monoOffsets, sizeof(g_monoOffsets)) != sizeof(g_monoOffsets)) {
+    g_monoLoadFails++;
+    memset(g_monoOffsets, 0, sizeof(g_monoOffsets));
+    Serial.println("# WARN 起動ごとの時計の差の記録を読めなかった。前の起動の時計が合う前の分は返せない");
+  }
+}
+
+// この起動の「実時刻 − 単調時計」を、時計が初めて合った周に 1 度だけ採って NVS へ残す。**毎周呼ぶ**（`loop()`）。
+//
+// **2 つの時計を続けて読む。** 合ってから採るまでに時間が空いても、差は同じ 2 つの時計の
+// 読みの差なので変わらない（SNTP が後で少しずつ寄せる分は、取り戻した頭の数十 ms に効くだけ）。
+// NVS の書き込みは時間がかかることがあるが（→ `prevSave`）、起動ごとに 1 度だけ。
+static void noteMonoOffset(){
+  if (g_monoOffsetOk || !clockTrusted(time(nullptr))) return;
+  struct timeval tv; gettimeofday(&tv, nullptr);
+  const int64_t monoMs = esp_timer_get_time() / 1000;
+  const int64_t unixMs = (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+  g_monoOffsetMs = unixMs - monoMs;
+  g_monoOffsetOk = true;
+  // 新しい順に並べ、同じ起動 ID の古い行は落とす（起動 ID が衝突しても、新しいほうを採る）。
+  MonoOffset next[MONO_OFFSET_SLOTS] = {};
+  next[0].offsetMs = g_monoOffsetMs;
+  next[0].bid = g_bootIdNum;
+  next[0].valid = 1;
+  size_t n = 1;
+  for (size_t i = 0; i < MONO_OFFSET_SLOTS && n < MONO_OFFSET_SLOTS; i++) {
+    const MonoOffset &e = g_monoOffsets[i];
+    if (!e.valid || e.bid == g_bootIdNum) continue;
+    next[n++] = e;
+  }
+  memcpy(g_monoOffsets, next, sizeof(g_monoOffsets));
+  Serial.printf("# 時計が合った。時計が合う前に残した分は、差 %lld ms で実時刻へ直して返す\n",
+                (long long)g_monoOffsetMs);
+  g_monoOffsetSaved = g_prefsOk
+      && g_prefs.putBytes("mono", g_monoOffsets, sizeof(g_monoOffsets)) == sizeof(g_monoOffsets);
+  if (!g_monoOffsetSaved) {
+    Serial.println("# WARN 時計の差を NVS へ書けなかった。再起動すると、この起動の時計が合う前の分は返せない");
+  }
+}
+
+// 起動 ID の「実時刻 − 単調時計」を引く。**分からなければ偽**（その起動は時計が合う前に落ちた・
+// 記録が古くて押し出された・NVS へ書けなかった）。
+static bool monoOffsetFor(uint32_t bid, int64_t &out){
+  if (bid == g_bootIdNum) {
+    out = g_monoOffsetMs;
+    return g_monoOffsetOk;
+  }
+  for (size_t i = 0; i < MONO_OFFSET_SLOTS; i++) {
+    const MonoOffset &e = g_monoOffsets[i];
+    if (e.valid && e.bid == bid) { out = e.offsetMs; return true; }
+  }
+  return false;
+}
+
 // 前の起動の記録を読む（→ `PrevState`）。**`setup()` の最初の方で 1 度だけ呼ぶ。**
 //
 // **キーがあるかを先に訊く。** 無いキーの長さを訊くと、コアが初回の起動でエラーの行を
@@ -2940,6 +3097,8 @@ static void checkAck(uint32_t nowMs){
 // **`cause` を `SelfRestartCause` で受けない。** 理由は `prevSave` の `why` と同じ（arduino-cli が
 // 足す関数の宣言の位置からは型がまだ見えない）。
 static void selfRestart(uint8_t cause, time_t now){
+  // **落とす前に、まだフラッシュへ書いていない分を書き切る**（→ `spillBeforeRestart`）。
+  spillBeforeRestart();
   RestartLedger &l = g_restartLedger;
   if (l.count == 0) l.firstUnix = (int64_t)now;
   l.count++;
@@ -2950,6 +3109,43 @@ static void selfRestart(uint8_t cause, time_t now){
   prevSave(millis(), PREV_WHY_RESTART);
   delay(100);   // シリアルへ出し切る
   ESP.restart();
+}
+
+// 自分で再起動する前に、送った分を書き切る。**呼ぶのは `selfRestart` だけ。**
+//
+// 自分で再起動するのは返事か Wi-Fi が途絶えたときなので、ふつうは書き出し（`spillPump`）が
+// 動いている。ただし 1 周に 1 区画しか書かず、書きかけの区画（`g_flashPage`）はメモリにあるので、
+// そのまま落とすと最後の 1〜3 秒ほどが消える（2026-10-27 の試験で、前の起動の末尾が 4 枚とも
+// その長さだけ取り戻せなかった）。センサーに溜まっている分も吸い出してから、書き出しの位置が
+// 輪の末尾へ届くまで回し、書きかけの区画を書く。**書き出しを止めていれば（`SPILL_MAX_MS`）
+// 書きかけの区画だけ書く** —— 止めた理由（古い分を上書きしない）をここで崩さない。
+//
+// **書き切れなかったら、取り残した数をシリアルへ出す。** 書き出しが動いていない・止めている・
+// 区画を書けなかった、のどれかで、前の起動の末尾が欠けうる。
+static void spillBeforeRestart(){
+  // 時計が合った直後なら差を採って NVS へ残す（落とすと、この起動の時計が合う前の分を返せない）。
+  noteMonoOffset();
+  if (g_flashPart == nullptr || g_backlog == nullptr) return;
+  const uint32_t t0 = millis();
+  const uint32_t writes0 = g_flashWrites;
+  const uint32_t fails0 = g_flashFails;
+  for (size_t i = 0; i < SENSOR_N; i++) drainSensor(g_sensors[i]);
+  for (size_t i = 0; i < BACKLOG_SLOTS && g_spilling && !g_spillCapped
+                     && (int32_t)(g_backlogTotal - g_spillCursor) > 0; i++) {
+    spillPump(millis());
+  }
+  flashFlushPage();
+  const int32_t left = g_spilling ? (int32_t)(g_backlogTotal - g_spillCursor) : -1;
+  const uint32_t fails = g_flashFails - fails0;
+  if (left == 0 && fails == 0) {
+    Serial.printf("# 再起動の前に、送った分をフラッシュへ書き切った（%lu 区画・%lu ms）\n",
+                  (unsigned long)(g_flashWrites - writes0), (unsigned long)(millis() - t0));
+  } else {
+    Serial.printf("# WARN 再起動の前に書き切れなかった（書いた %lu 区画・書けなかった %lu 区画・"
+                  "取り残したまとまり %ld（-1 は書き出しが動いていない）・止めている=%d・%lu ms）\n",
+                  (unsigned long)(g_flashWrites - writes0), (unsigned long)fails, (long)left,
+                  (int)g_spillCapped, (unsigned long)(millis() - t0));
+  }
 }
 
 // Wi-Fi が切れたまま続いたら、自分で立て直す（時間は `WIFI_RESCUE_FIRST_MS` の項）。**毎周呼ぶ**（`loop()`）。
@@ -3002,15 +3198,15 @@ static void wifiRescue(uint32_t nowMs){
   reconnectWifi();
 }
 
-static void packetBegin(Packet &p, Sensor &s, int64_t tFirstMs){
+static void packetBegin(Packet &p, Sensor &s, int64_t tFirstMs, bool presync){
   p.s = &s; p.n = 0; p.seq0 = s.seq; p.tFirstMs = tFirstMs;
-  p.tBaseMs = tFirstMs; p.done = 0;
+  p.tBaseMs = tFirstMs; p.done = 0; p.presync = presync;
 }
 
 // 溜まっている分を送って空にする。**0 件なら何もしない**ので、何度呼んでも構わない。
 static void packetFlush(Packet &p){
   if (p.n == 0) return;
-  sendChunk(*p.s, p.v, p.n, p.seq0, p.tFirstMs);
+  sendChunk(*p.s, p.v, p.n, p.seq0, p.tFirstMs, p.presync);
   // 次のパケットの先頭は、吸い出した 1 回ぶんの先頭から数え直す（`Packet::tBaseMs` の項）。
   p.done += p.n;
   p.tFirstMs = p.tBaseMs + samplesToMs((int64_t)p.done, p.s->kind->hz);
@@ -3059,9 +3255,19 @@ static bool readFifoInto(Packet &p, size_t want){
 static int64_t samplesToMs(int64_t n, int hz){ return (n * 1000 + hz / 2) / hz; }
 
 // 吸い出した時点を基準に、先頭サンプルの時刻を逆算する（半サンプル引く理由は `mpuDrain` の項）。
-static int64_t firstSampleMs(uint16_t total, int hz){
-  struct timeval tv; gettimeofday(&tv, nullptr);
-  const int64_t nowMs = (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+//
+// **時計が合う前（`clockTrusted` が偽）は、単調時計（`esp_timer`。起動からのミリ秒）で測って
+// `presync` を立てる。** 実時刻へは、合った後にその起動の差を足して直す（→ `noteMonoOffset`）。
+// 持ち越した時計（ソフトウェアの再起動）で名乗らない理由は `clockTrusted` の項。
+static int64_t firstSampleMs(uint16_t total, int hz, bool &presync){
+  presync = !clockTrusted(time(nullptr));
+  int64_t nowMs;
+  if (presync) {
+    nowMs = esp_timer_get_time() / 1000;
+  } else {
+    struct timeval tv; gettimeofday(&tv, nullptr);
+    nowMs = (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+  }
   return nowMs - samplesToMs(total - 1, hz) - (500 + hz / 2) / hz;
 }
 
@@ -3091,7 +3297,9 @@ static void iisDrain(Sensor &s){
   if (words > s.fifoPeak) s.fifoPeak = words;
 
   static Packet p;   // センサーをまたいで共有する理由は `mpuDrain` の項
-  packetBegin(p, s, firstSampleMs(words, s.kind->hz));
+  bool presync = false;
+  const int64_t tFirstMs = firstSampleMs(words, s.kind->hz, presync);
+  packetBegin(p, s, tFirstMs, presync);
 
   bool aborted = false;
   bool foreign = false;
@@ -3182,13 +3390,14 @@ static void mpuDrain(Sensor &s){
   // 周期は上で抜けており、「いま書かれている最中のサンプル」を抱えたまま読むことは無い。
   const uint16_t total = cnt / BPS;
   if (total > s.fifoPeak) s.fifoPeak = total;
-  const int64_t tFirstMs = firstSampleMs(total, s.kind->hz);
+  bool presync = false;
+  const int64_t tFirstMs = firstSampleMs(total, s.kind->hz, presync);
 
   // **センサーをまたいで共有される。** `loop()` が 3 個を順に、しかも `sendChunk` が
   // 送り終えてから戻る形で回しているので競合しない（`packetBegin` が毎回すべての
   // 欄を入れ直すので、前のセンサーの状態も残らない）。**非同期にするならここを見直す。**
   static Packet p;
-  packetBegin(p, s, tFirstMs);
+  packetBegin(p, s, tFirstMs, presync);
 
   bool aborted = false;
   uint16_t remain = cnt;
@@ -3367,6 +3576,7 @@ void loop(){
   // 1 つまでなので、吸い出しの周期に合わせると書き出しが追いつかない。
   spillPump(nowMs);
   prevPump(nowMs);
+  noteMonoOffset();
 
   static uint32_t lastRetry = 0;
   if (nowMs - lastRetry >= RETRY_MS) { lastRetry = nowMs; retryStuck(); }
