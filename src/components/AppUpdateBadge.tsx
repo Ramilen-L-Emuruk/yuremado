@@ -105,8 +105,9 @@ export function AppUpdateBadge({ schedule }: { schedule: ReloadSchedule }) {
 
   return (
     <>
+      {/* 狭いとき（右上の行と横に並んで幅が足りないとき）は、ボタンを文字の途中で割らずに次の行へ送る */}
       {body !== null && (
-        <div className="pointer-events-auto flex items-center gap-2 bg-black/80 rounded-sm text-xs px-2 py-1 roomy:text-lg roomy:px-2.5 text-white">
+        <div className="pointer-events-auto flex flex-wrap items-center gap-x-2 gap-y-1 bg-black/80 rounded-sm text-xs px-2 py-1 roomy:text-lg roomy:px-2.5 text-white">
           {body}
         </div>
       )}
@@ -120,7 +121,7 @@ function BadgeButton({ onClick, children }: { onClick: () => void; children: Rea
     <button
       type="button"
       onClick={onClick}
-      className="rounded-sm border border-white/30 px-2 py-0.5 hover:bg-white/15"
+      className="rounded-sm border border-white/30 px-2 py-0.5 hover:bg-white/15 whitespace-nowrap"
     >
       {children}
     </button>

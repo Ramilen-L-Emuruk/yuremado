@@ -119,6 +119,20 @@ export function shareButtonBottomClass(bannerShown: boolean, atScreenBottom: boo
     : 'bottom-2'
 }
 
+/**
+ * 共有ボタンを載せる行の高さのクラス。**行動チェックリストの帯が出ている間だけ高さを持たせる。**
+ * 普段は高さ 0 の行からボタンを上へはみ出させるので、縦並びの分け合いに加わらない。ところが帯は地図の下端まで
+ * 伸びうるので、そのままだとボタンが帯の左下に重なる（2026-10-27 実測・390×844 で横 30・縦 29px。
+ * 2026-10-27 ユーザー選択「共有ボタンの高さを帯の下限に入れる (Recommended)」）。
+ * 高さはボタン（2.25rem）＋ `shareButtonBottomClass` と同じ下の余白で、両者を同じ条件で切り替える。
+ */
+export function shareButtonRowHeightClass(checklistShown: boolean, bannerShown: boolean, atScreenBottom: boolean): string {
+  if (!checklistShown) return 'h-0'
+  return !bannerShown && atScreenBottom
+    ? 'h-11 sideShort:h-[calc(2.25rem+max(0.5rem,env(safe-area-inset-bottom,0px)))]'
+    : 'h-11'
+}
+
 export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, readsAppendix, atScreenBottom }: Props) {
   /**
    * この帯の文をいま読み上げているか。**主題は `telegramText:<電文の kind>`**

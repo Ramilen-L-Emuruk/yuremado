@@ -5,7 +5,7 @@
 // 気象庁の発表でないことを示す**（「自宅」のような名前は電文には現れない）。
 //
 // **押せない**（`pointer-events-none`）。地図のレイヤーは作らず、座標も使わない。
-// 重ね位置（absolute・z-index・セーフエリア）は App.tsx 側の地図右上ラッパーが持つ。
+// 重ね位置（absolute・z-index・セーフエリア）と左上の列との並べ方は App.tsx 側の地図の上の隅が持つ。
 
 import type { SeismoStationState } from '../../hooks/useSeismoStation'
 import { readableTextColor } from '../../utils/contrast'
@@ -19,10 +19,10 @@ interface Props {
 /** 帯 1 本ぶんの見た目。**周りの帯（`MapUpdateTime` ほか）と揃える。** */
 const ROW_CLASS =
   'bg-black/80 rounded-sm text-sm px-2 py-0.5 roomy:text-xl roomy:px-2.5 roomy:py-1' +
-  ' pointer-events-none flex items-center gap-1.5 roomy:gap-2'
+  ' pointer-events-none flex items-center gap-1.5 roomy:gap-2 max-w-full'
 
 /** 震度バッジ。**行の高さを変えない**よう `leading-none` で詰める。 */
-const BADGE_CLASS = 'font-bold leading-none rounded-sm px-1.5 py-1 min-w-5 text-center'
+const BADGE_CLASS = 'font-bold leading-none rounded-sm px-1.5 py-1 min-w-5 text-center shrink-0'
 
 export function SeismoOverlay({ stations }: Props) {
   const rows = seismoOverlayRows(stations)
@@ -61,17 +61,17 @@ export function SeismoOverlay({ stations }: Props) {
                 —
               </span>
             )}
-            {/* **観測点名だけ幅を切る。** 名前は利用者が管理コンソールで自由に付けるので、
-                長いものを入れると左上（更新時刻）と横で当たる —— どちらも絶対配置で
-                押し合わないため、重なると両方読めなくなる。 */}
-            <span className={`${tone} truncate max-w-32 roomy:max-w-56`}>
+            {/* **観測点名だけ幅を切る。** 名前は利用者が管理コンソールで自由に付けるので長くなりうる。
+                上限で切るうえ、左上の列と横に並べたとき幅が足りなければさらに縮む（`min-w-0`。
+                並べ方は App.tsx の地図の上の隅）。震度・値・名乗りは縮めない。 */}
+            <span className={`${tone} truncate min-w-0 max-w-32 roomy:max-w-56`}>
               {row.displayName}
             </span>
-            <span className={`font-mono ${tone} tabular-nums`}>{row.valueText ?? '—'}</span>
+            <span className={`font-mono ${tone} tabular-nums shrink-0`}>{row.valueText ?? '—'}</span>
             {/* 合成と途絶は名乗りが空（→ seismoOverlayRows.ts）。空のときは要素ごと置かない ——
                 空の要素でも `gap` の幅だけ右に隙間が残る。未着だけ「未着」を行と同じ赤で出す。 */}
             {row.sourceText !== '' && (
-              <span className={`text-xs roomy:text-base ${row.silent ? 'text-red-400' : 'text-secondary'}`}>{row.sourceText}</span>
+              <span className={`text-xs roomy:text-base shrink-0 ${row.silent ? 'text-red-400' : 'text-secondary'}`}>{row.sourceText}</span>
             )}
           </div>
         )

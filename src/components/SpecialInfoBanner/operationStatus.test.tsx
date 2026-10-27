@@ -9,7 +9,7 @@
 // 同じ顔で出る。描いて確かめるしかない。
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
-import { SpecialInfoBanner, shareButtonBottomClass } from './index'
+import { SpecialInfoBanner, shareButtonBottomClass, shareButtonRowHeightClass } from './index'
 import { useSpecialInfoBanners, type SpecialInfoItems } from './useSpecialInfoBanners'
 import type { JMAKohatsu, JMANankai, JMANankaiCommentary, JMAQuakeNotice, JMAEarthquakeCount, TelegramOperationStatus } from '../../types/earthquake'
 
@@ -144,6 +144,20 @@ describe('特別情報の帯の下端の余白', () => {
     for (const [s, b] of [[false, true], [true, true], [false, false], [true, false]] as const) {
       expect(shareButtonBottomClass(s, b).split(' ')).toContain('bottom-2')
     }
+  })
+
+  // 共有ボタンの行は、行動チェックリストの帯が出ている間だけボタンぶんの高さを持つ（帯が下端まで伸びても当たらない）
+  it('共有ボタンの行は、チェックリストが出ている間だけ高さを持つ', () => {
+    // 正: 帯が出ていればボタン（2.25rem）＋下の余白（0.5rem）
+    expect(shareButtonRowHeightClass(true, true, false).split(' ')).toContain('h-11')
+    // 対照: 帯が無ければ高さ 0 のまま（凡例・特別情報の帯の分け合いに加わらない）
+    for (const [s, b] of [[false, true], [true, true], [false, false], [true, false]] as const) {
+      expect(shareButtonRowHeightClass(false, s, b)).toBe('h-0')
+    }
+    // 安全弁: ボタンが safe-area を避けるときは、行の高さも同じだけ伸ばす（ボタンの下の余白と条件を揃える）
+    expect(shareButtonRowHeightClass(true, false, true)).toContain('safe-area-inset-bottom')
+    expect(shareButtonRowHeightClass(true, true, true)).not.toContain('safe-area')
+    expect(shareButtonRowHeightClass(true, false, false)).not.toContain('safe-area')
   })
 
   // 安全弁: 帯の 1 枚 1 枚は余白を持たない（最後の 1 枚へは包みから効かせる）。帯の側に戻すと、
