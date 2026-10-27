@@ -2,12 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-// @ts-expect-error -- 型定義を持たない .mjs（`scripts/lib/stationSource.mjs` と同じ扱い）
 import {
   sampleCollectionMarkPath, rareSampleCollectionMarkPath,
   clearCollectionMark, absorbSampleCollectionMarks,
 } from './collection-mark.mjs'
-// @ts-expect-error -- 同上
 import {
   incompleteNotes, noteIncomplete, writeArtifact, resetIncompletenessForTest,
 } from '../lib/incompleteness.mjs'

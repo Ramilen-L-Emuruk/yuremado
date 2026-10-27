@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { resetArchiveCacheForTest, listArchive, archiveCacheStats, runArchiveScript } from './archive-cache.mjs'
-// @ts-expect-error -- 型定義を持たない .mjs（`scripts/lib/stationSource.mjs` と同じ扱い）
 import { markResult, incompleteNotes, noteIncomplete } from '../lib/incompleteness.mjs'
 
 // **中身は使わない。** どのテストも `fetch` をスタブするのでネットワークへは出ない。

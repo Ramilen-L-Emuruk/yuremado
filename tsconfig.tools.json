@@ -1,0 +1,16 @@
+{
+  // scripts/ と firmware/tools/ の .ts（生成・調査・評価の道具とそのテスト）を、まとめて型チェックする。
+  // 道具は tsx で走らせるので、ここに入っていないと本体の形が変わっても黙って壊れる
+  // （firmware/tools/horizontal-only-intensity.ts が、読み取りの戻り値の形の変更に追随しないまま
+  // 地表の観測点を 0 件に数えていた）。ファイルを 1 本ずつ列挙すると足し忘れるので、場所で拾う。
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tools.tsbuildinfo",
+    // 道具の部品の多くは .mjs で書いてある。型の宣言を手で書き足すと実装とずれるので、
+    // .mjs の実装から型を引かせる（.mjs そのものは検査しない。checkJs は立てない）
+    "allowJs": true,
+    // 道具が読む src/ の部品のうち、import.meta.env を参照するものがある
+    "types": ["node", "vite/client"]
+  },
+  "include": ["scripts/**/*.ts", "scripts/**/*.d.mts", "firmware/tools/**/*.ts"]
+}

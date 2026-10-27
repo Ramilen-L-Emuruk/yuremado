@@ -55,7 +55,7 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { initState, buildStationMeta, step, indexToValue } from '../src/utils/kyoshinDetector'
+import { initState, buildStationMeta, step } from '../src/utils/kyoshinDetector'
 import type { DetectionEvent, StationMeta } from '../src/utils/kyoshinDetector'
 import { haversineKm } from '../src/utils/geo'
 
