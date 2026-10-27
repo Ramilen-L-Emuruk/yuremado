@@ -14,12 +14,13 @@ function formatDatetime(date: Date): string {
 }
 
 // 地図左上に重ねて表示する更新時刻（黒背景）。通常は白文字、エラー停止時は赤文字。
-// 重ね位置（absolute・z-index・セーフエリア）は App.tsx 側の地図左上ラッパーが持つ。
+// 重ね位置（absolute・z-index・セーフエリア）は App.tsx 側の地図の上の隅が持つ。
+// **折り返さない**（`whitespace-nowrap`）—— 日時が 2 行に割れると読みにくい。狭い画面では右上の観測点名が先に縮む。
 export function MapUpdateTime({ lastUpdate, error = false }: Props) {
   const valid = lastUpdate && !Number.isNaN(lastUpdate.getTime())
   return (
     <div
-      className={`bg-black/80 font-mono rounded text-sm px-2 py-0.5 roomy:text-xl roomy:px-2.5 roomy:py-1 ${
+      className={`bg-black/80 font-mono rounded text-sm px-2 py-0.5 roomy:text-xl roomy:px-2.5 roomy:py-1 whitespace-nowrap ${
         error ? 'text-red-400' : 'text-white'
       }`}
     >

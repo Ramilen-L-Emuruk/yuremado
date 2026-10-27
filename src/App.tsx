@@ -46,7 +46,7 @@ import {
   jstYearOf, jstYearStartMs, jstYearEndMs, clampPeriodToRange, catalogPeriodBounds,
   type CatalogFilter, type CatalogViewOptions, type CatalogPointCloud,
 } from './utils/hypocenterCatalogView'
-import { SpecialInfoBanner, shareButtonBottomClass } from './components/SpecialInfoBanner'
+import { SpecialInfoBanner, shareButtonBottomClass, shareButtonRowHeightClass } from './components/SpecialInfoBanner'
 import { useSpecialInfoBanners } from './components/SpecialInfoBanner/useSpecialInfoBanners'
 import { MapLegend } from './components/MapLegend'
 import { isMapAreaShort } from './components/MapLegend/autoCollapse'
@@ -151,6 +151,8 @@ const EMPTY_INDICES: number[] = []
 const NO_DEMOTED_EVENTS: DetectionEvent[] = []
 // 公開観測点の波形を出していないときに地図へ渡す空の印（毎回の新しい配列で地図の印を作り直させない）。
 const NO_PUBLIC_STATIONS: readonly PublicStationMarker[] = []
+// 地図の上の隅の列と、その下から始める行動チェックリストの帯の隙間（px）。
+const TOP_CORNERS_GAP_PX = 12
 
 // APIキーの入力が落ち着いたと見なすまでの待ち時間(ms)。手入力の打鍵間隔より長く、
 // 貼り付け後の接続開始が待たされたと感じない程度に短く。
@@ -1861,6 +1863,39 @@ export function App() {
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+  // 地図の上の隅の列（左上の状態・右上の自作地震計）の下端と、地図の高さ。行動チェックリストの帯は隅の下端から始め、
+  // 地図の高さで上限を掛ける（→ `checklistTopPadding`）。隅の列は異常の行や観測点の数で縦に伸びるので、
+  // 帯の上の余白を固定にすると重なる。
+  // **初回は描画の前に測る**（凡例の `mapAreaShort` と同じ理由。帯が一度重なってから下がるのを見せない）。
+  // **見張るのは隅の列と地図の両方。** 隅の列だけだと、回転などで位置（`offsetTop`）だけが動いたときに気づけない。
+  const topCornersRef = useRef<HTMLDivElement | null>(null)
+  const [topCornersBottom, setTopCornersBottom] = useState(0)
+  const [mapAreaHeight, setMapAreaHeight] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const el = topCornersRef.current
+    const area = mapAreaRef.current
+    // **測れないときは記録を残す。** 帯は下限の 3rem から始まり、隅の列が伸びると重なるが、画面には異常として現れない。
+    if (!el || !area) {
+      log.warn('[layout] 地図の上の隅の列か地図を測れないため、行動チェックリストの帯は上の余白 3rem で出します', {
+        hasCorners: !!el,
+        hasMapArea: !!area,
+      })
+      return
+    }
+    const measure = () => {
+      setTopCornersBottom(el.offsetTop + el.offsetHeight)
+      setMapAreaHeight(area.clientHeight)
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') {
+      log.warn('[layout] 地図の上の隅の列の高さを見張れないため、行動チェックリストの帯の始まりが初回の値のままになります')
+      return
+    }
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    ro.observe(area)
+    return () => ro.disconnect()
+  }, [])
   // 縦積みで下部の波形が出ている間、地図を正方形に保つための寸法（→ utils/squareMapLayout.ts）。
   // 測るのは器（地図の列・つまみ・パネル・下のナビを積む）と地図の列とパネル、それに波形の先頭の段。
   // **つまみとナビの高さは「器 − 地図の列 − パネル」で出す** —— 1 つずつ測ると、器に何かを足したときに引き忘れる
@@ -2706,48 +2741,49 @@ export function App() {
                 onMapReady={setMapHandle}
               />
             </ErrorBoundary>
-            {/* 地図左上。観測している値（自作地震計の観測点ごとの震度）を置く。
-                **アプリの状態（更新時刻・取得状況・描画の不調）とは左右で分ける** ——
-                混ぜると、異常表示が伸びたときに観測値がそのぶん押し下がる。
+            {/* 地図の上の隅。左にアプリの状態、右に観測している値（自作地震計の観測点ごとの震度）。
+                **左右を 1 本の横並びにする** —— 別々に絶対配置すると互いの幅を知らないので、狭い画面や
+                行が伸びたときに横で重なって両方読めなくなる（実測は docs/spec/architecture-spec.md の改訂履歴）。
+                幅が足りないときは、左の異常の行が折り返し、右の観測点名が短く切れる。更新時刻は折り返さない
+                （2026-10-27 ユーザー選択「左右を1本の横並びにする (Recommended)」）。
+                **状態と観測値は左右で分ける** —— 混ぜると、異常表示が伸びたときに観測値がそのぶん押し下がる。
+                状態を左・観測値を右にしているのは、日本列島が右上へ伸びていて左上のほうが
+                陸を隠しにくいから（2026-10-27 ユーザー指示「そもそも右上じゃなくて左上にしたい(地震計と入れ替える。日本列島が右上向きだから)」）。
+                **下端の帯（凡例・特別情報バナー）とは重ならない** —— あちらは全幅の絶対配置で、
+                下側へ置いたものは押し上げてもらえずに重なる。行動チェックリストの帯は、この列の下端から始める（`topCornersBottom`）。
                 z-99999: 区域集約震度バッジ（QuakeRegionFillGL）は el.style.zIndex = scale*1000 で、
                 scale は JMA 震度階級の数値コード（震度7 = 70）まであるため最大 70000 まで積む。
                 それより確実に高い値にして常に最前面に出す。 */}
             <div
-              className="absolute z-99999 pointer-events-none flex flex-col items-start gap-1"
+              ref={topCornersRef}
+              className="absolute z-99999 pointer-events-none flex items-start justify-between gap-2"
               style={{
                 top: 'max(0.5rem, env(safe-area-inset-top, 0px))',
                 left: 'max(0.5rem, env(safe-area-inset-left, 0px))',
-              }}
-            >
-              <SeismoOverlay stations={seismoOverlayStations} />
-            </div>
-            {/* 地図右上。アプリの状態を上から更新時刻・生成データの取得状況・地図描画の不調・
-                自作地震計との繋がり具合・更新の札の順で。**自作地震計の観測値（左上）とは左右で分ける** ——
-                観測している値と、それが届いているかどうかは別のものなので、混ぜると
-                繋がらない間ずっと観測値の居場所が押し下がる。
-                **下端の帯（凡例・特別情報バナー）とは重ならない** —— あちらは全幅の絶対配置で、
-                下側へ置いたものは押し上げてもらえずに重なる。z は左上と同じ理由で高く取る。 */}
-            <div
-              className="absolute z-99999 pointer-events-none flex flex-col items-end gap-1"
-              style={{
-                top: 'max(0.5rem, env(safe-area-inset-top, 0px))',
                 right: 'max(0.5rem, env(safe-area-inset-right, 0px))',
               }}
             >
-              <MapUpdateTime lastUpdate={overlayUpdateTime} error={overlayError} />
-              <MapDataStatus />
-              <MapRenderStatus />
-              <SeismoLinkStatus stream={seismoView.stream} urlUnusable={seismoView.urlUnusable} />
-              {/* 新しい版の知らせ・秒読み・更新した直後の知らせ（→ components/AppUpdateBadge.tsx）。
-                  列は押せない（pointer-events-none）ので、札の側で押せるようにしている */}
-              <AppUpdateBadge schedule={reloadSchedule} />
+              {/* 左は空いた幅いっぱいまで広がり、それより狭くは更新時刻の幅で止まる（`basis-0 grow`）。
+                  右は自分の幅を取り、足りなければ観測点名から縮む（`min-w-0`）。 */}
+              <div className="flex flex-col items-start gap-1 basis-0 grow">
+                <MapUpdateTime lastUpdate={overlayUpdateTime} error={overlayError} />
+                <MapDataStatus />
+                <MapRenderStatus />
+                <SeismoLinkStatus stream={seismoView.stream} urlUnusable={seismoView.urlUnusable} />
+                {/* 新しい版の知らせ・秒読み・更新した直後の知らせ（→ components/AppUpdateBadge.tsx）。
+                    列は押せない（pointer-events-none）ので、札の側で押せるようにしている */}
+                <AppUpdateBadge schedule={reloadSchedule} />
+              </div>
+              <div className="flex flex-col items-end gap-1 min-w-0">
+                <SeismoOverlay stations={seismoOverlayStations} />
+              </div>
             </div>
             {/* 地図に重ねる縦並び。上端に行動チェックリスト、下端に凡例・特別情報バナー。
                 **地図の高さを 1 本の縦並びで分け合う**（足りないときは中身が縮み、それぞれの中で
                 スクロールする）。上と下を別々に絶対配置して画面の高さ（`dvh`）で上限を掛けると、
                 地図が低いときに下端の束が地図の上へはみ出す。仕組み・下限・既知の限界は
                 docs/spec/architecture-spec.md §4「地図の上に重ねる帯は、地図の高さを 1 本の縦並びで分け合う」。
-                z は左上の情報ブロックと同じ理由で高く取る。
+                z は地図の上の隅（そのコメント）と同じ理由で高く取る。
 
                 **自作地震計の波形はここに入れない。** 地図の外（この器の下）へ置く ——
                 重ねると自動フィットで画に入れたものが隠れるため（2026-09-29 のユーザー指摘。
@@ -2765,6 +2801,14 @@ export function App() {
                   collapsed={actionChecklist.collapsed}
                   onDismiss={actionChecklist.dismiss}
                   onRestore={actionChecklist.restore}
+                  topInset={topCornersBottom + TOP_CORNERS_GAP_PX}
+                  areaHeight={mapAreaHeight}
+                  below={{
+                    legend: settings.showMapLegend && legendBlocks.length > 0,
+                    shareRow: shareCard.ready,
+                    shareRowAtScreenBottom: !waveChartShown,
+                    banner: specialInfoBanners.shown,
+                  }}
                 />
               )}
               {/* 伸びる空白。上端のチェックリストと下端の凡例・帯を両端へ分ける（`mt-auto` を
@@ -2777,21 +2821,25 @@ export function App() {
                 // `hit`。畳んだ狭い画面で上へ最大 0.55rem）。包みがスクロール領域なのでその縁で
                 // 切られ、指で押せる範囲が縮む —— 余白で逃がす（`pointer-events-none` なので地図の操作は妨げない）。
                 // 包みは凡例が描くものを持つときだけ出す（`MapLegend` は空なら何も描かないが、包みの余白は残る）。
-                <div className="min-h-0 pt-[0.6rem] shrink-8 overflow-y-auto overflow-x-hidden overscroll-x-none flex flex-col items-start">
+                // 右下に置くのは、日本列島が左下から右上へ伸びていて右下が海（太平洋）だから —— 常に出ていて
+                // 面積の大きい凡例を陸の無い側へ寄せる（承認の日付と原文は docs/spec/map-rendering-spec.md §20「置き場所」）。
+                <div className="min-h-0 pt-[0.6rem] shrink-8 overflow-y-auto overflow-x-hidden overscroll-x-none flex flex-col items-end">
                   <MapLegend blocks={legendBlocks} collapsed={legendCollapsed} onToggle={toggleLegend} compact={mapAreaShort} onHeatmapPeriodChange={changeHeatmapPeriod} />
                 </div>
               )}
-              {/* 地図右下の共有ボタン（表示中の地図を画像にする）。**特別情報の帯のすぐ上に置く** —— 縦並びの外に
+              {/* 地図左下の共有ボタン（表示中の地図を画像にする。右下は凡例）。**特別情報の帯のすぐ上に置く** —— 縦並びの外に
                   絶対配置すると、帯が出ても押し上げてもらえずに帯へ重なる。高さ 0 の行を足場にしてその上へ
                   はみ出させるので、凡例の縮み方（縦並びの高さの分け合い）には加わらない。
+                  **行動チェックリストの帯が出ている間だけは、ボタンぶんの高さを持つ**（`shareButtonRowHeightClass`）——
+                  帯は地図の下端まで伸びうるので、高さ 0 のままだとボタンが帯の左下に重なる。
                   帯が無い（閉じた帯しか残っていない場合も含む）ときは地図の下端に付く。ホームインジケータ分を
                   避けるのは帯と同じ条件 —— スマホの横画面で、地図の下に波形が出ていないときだけ（`shareButtonBottomClass`。
                   帯の SAFE_BOTTOM の隣に置いてある）。 */}
               {shareCard.ready && (
-                <div className="relative h-0 shrink-0">
+                <div className={`relative shrink-0 ${shareButtonRowHeightClass(actionChecklist.state !== null, specialInfoBanners.shown, !waveChartShown)}`}>
                   <div
                     className={`absolute pointer-events-auto ${shareButtonBottomClass(specialInfoBanners.shown, !waveChartShown)}`}
-                    style={{ right: 'max(0.5rem, env(safe-area-inset-right, 0px))' }}
+                    style={{ left: 'max(0.5rem, env(safe-area-inset-left, 0px))' }}
                   >
                     <ShareCardButton state={shareCard.state} onClick={() => shareCard.share()} />
                   </div>

@@ -673,7 +673,7 @@ describe('useSeismoStation', () => {
 
   // **App は再生（テスト時刻設定）のあいだ `enabled` を落とす。** ホストが押し出すのは
   // 「いまの震度」だけなので、繋いだままにすると画面の他が過去なのにここだけ現在になる
-  // （→ `docs/spec/data-sources-spec.md` §4.5「地図の左上へ重ねる」）。
+  // （→ `docs/spec/data-sources-spec.md` §4.5「地図の右上へ重ねる」）。
   // **繋いだ後で落ちる経路**は上の「切れているなら繋がない」（最初から false）では通らない。
   it('正: 繋いだ後で enabled が落ちたら、購読を閉じて震度も落とす', async () => {
     const h = renderHook(

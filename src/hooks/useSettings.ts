@@ -167,7 +167,7 @@ export interface AppSettings {
   /**
    * 自作地震計ホスト（`seismo-host/`）へ繋ぐ。
    *
-   * 繋ぐと観測点ごとの計測震度が地図の左上へ出る（`components/SeismoOverlay/`）。
+   * 繋ぐと観測点ごとの計測震度が地図の右上へ出る（`components/SeismoOverlay/`）。
    * 波形の絵は別の設定（{@link seismoWave}）。
    *
    * **URL とは別にトグルを持つ。** 入れた URL を覚えたまま一時的に切れるようにするため

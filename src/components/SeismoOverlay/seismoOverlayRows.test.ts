@@ -85,8 +85,9 @@ describe('seismoOverlayRows', () => {
   })
 
   describe('出どころ', () => {
-    it('合成（本数は添えない——ホストが持っていない）', () => {
-      expect(seismoOverlayRows([station(0.2, { kind: 'station' })])[0].sourceText).toBe('合成')
+    // 2026-10-27 ユーザー選択「「合成」だけ消す (Recommended)」。普段の形は名乗らない。
+    it('合成は名乗らない（普段の形）', () => {
+      expect(seismoOverlayRows([station(0.2, { kind: 'station' })])[0].sourceText).toBe('')
     })
 
     it('センサー単独は何本から採ったかを出す', () => {
@@ -108,8 +109,10 @@ describe('seismoOverlayRows', () => {
       expect(row.sourceText).toBe('単独 3本')
     })
 
-    it('合成は震度を出せていなくても文言が変わらない（本数を持たないため）', () => {
-      expect(seismoOverlayRows([station(null, { kind: 'station' })])[0].sourceText).toBe('合成')
+    it('合成は震度を出せていなくても名乗らず、赤くもしない', () => {
+      const row = seismoOverlayRows([station(null, { kind: 'station' })])[0]
+      expect(row.sourceText).toBe('')
+      expect(row.silent).toBe(false)
     })
 
     // #708（2026-10-12 ユーザー承認）: 震度を出さず波形だけ届く観測点。灰色のまま何が届いているかを名乗る。

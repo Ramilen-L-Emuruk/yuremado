@@ -2,19 +2,17 @@
 //
 // 【なぜ画面の上に出すか】下端は特別情報バナー（`SpecialInfoBanner`）が使っており、あちらは
 // `:last-child` で下端の余白を付けているため子を足せない。加えてこれは「いま動くための情報」で、
-// 揺れの最中に届くこともある。目に入る位置を優先して上端へ置く。左上に重ねたものと重ならない
-// よう、その下（外枠の上の余白 3rem。`WRAPPER_CLASS`）から始める。地図が低いときは下端の帯と
+// 揺れの最中に届くこともある。目に入る位置を優先して上端へ置く。左上・右上に重ねたものと重ならない
+// よう、その下（外枠の上の余白。`WRAPPER_CLASS`）から始める（地図が低いときを除く。→ `checklistTopPadding`）。地図が低いときは下端の帯と
 // 地図の高さを分け合い、中でスクロールする（置き場所は `App` の地図に重ねる縦並び）。
 //
-// **上端の余白 3rem は「左上が 1 行で収まる」ことを当てにしている。** 元は更新バッジ（常に 1 行）
-// だけだったが、いまは自作地震計の帯（`SeismoOverlay`）が入る —— **あちらは観測点 1 つに
-// つき 1 行なので、2 つ以上になると越える**（2026-09-29 の実測・390px 幅で、観測点 1 つなら
-// 下端 34px・2 つで 64px・3 つで 94px に対して起点は 48px）。観測点を増やすとき（#311）は
-// ここも見ること。**いまは観測点が 1 つなので起きない。**
+// **上の余白は固定にしない。** 左上の列は異常の行（取得状況・描画の不調・地震計の繋がり・更新の札）で、
+// 右上は観測点 1 つにつき 1 行で縦に伸びる。
 //
 // 【畳んだ状態で 3 つだけ見せる】揺れた直後に読めるのはせいぜいそのくらい。残りは開いてもらう。
 
 import { useState } from 'react'
+import { log } from '../../utils/logger'
 import {
   IMMEDIATE_ACTIONS,
   EMERGENCY_KIT,
@@ -41,6 +39,14 @@ interface Props {
   collapsed: boolean
   onDismiss: () => void
   onRestore: () => void
+  /**
+   * 地図の上端から、上の隅の列の下端＋隙間までの高さ（px）。帯はここから始める（→ `WRAPPER_CLASS` の注記）。
+   */
+  topInset: number
+  /** 地図の高さ（px）。上の余白の上限に使う。測れていなければ `null`（上限を掛けない）。 */
+  areaHeight: number | null
+  /** 地図の下端側にいま出ているもの（上限で残す高さを決める）。 */
+  below: ChecklistBelow
 }
 
 /**
@@ -95,23 +101,79 @@ export function checklistBasisText(reason: ChecklistReason, scope: ChecklistScop
  * 特別情報バナーと地図の高さを分け合う。ここで `absolute` や画面基準の上限（`dvh`）を持つと、
  * 地図が低いときに下端の帯とぶつかる。
  *
- * `pt-12`: 左上・右上の情報ブロックの下から始める（冒頭の注記）。**余白はこの外枠に持たせ、
- * `App` の縦並びの器には持たせない** —— 器に置くと、チェックリストが無いときも下端の帯から 3rem を奪う。
+ * 上の余白（`topInset`）: 地図の上の隅の列（更新時刻・自作地震計の帯ほか）の下から始める。
+ * 隅の列は異常の行や観測点の数で縦に伸びるので、固定の値では足りない —— `App` が列の下端を測って渡す。
+ * 3rem を下限にするのは、隅の列が 1 行のときの見え方を変えないため。**余白はこの外枠に持たせ、
+ * `App` の縦並びの器には持たせない** —— 器に置くと、チェックリストが無いときも下端の帯から余白を奪う。
  *
  * 入れ子の `flex-col`: 縦並びで縮められたとき、中の帯が縮んでスクロールできるようにする
  * （`max-h-full` では親の高さが確定しないことがあり、効かない）。
  */
-const WRAPPER_CLASS = 'pt-12 px-2 flex flex-col items-center'
+const WRAPPER_CLASS = 'px-2 flex flex-col items-center'
 
 /**
- * 開いた帯の外枠だけに置く下限。余白 3rem ＋ 見出し 1 行ぶん（2.5rem）。
+ * 開いた帯の外枠だけに置く下限。上の余白（`topInset`）＋ 見出し 1 行ぶん（2.5rem）。
  *
  * **下限は値で書く。** 縦並びの子は何も書かない（`auto`）と中身の高さで止まって縮まず、
  * `min-h-0` にすると見出しまで潰れて、地図がごく低いときに帯が黙って見えなくなる。
  * 畳んだボタンは縮ませない（`shrink-0`）ので要らない —— 付けるとボタンの下に透明な空白が残り、
  * 下端の帯の縮みしろを奪う。
  */
-const OPEN_MIN_HEIGHT_CLASS = 'min-h-22'
+const HEADLINE_MIN_HEIGHT = '2.5rem'
+
+/** 地図の下端側にいま出ているもの。上の余白の上限を、出ているものの分だけ残して決める。 */
+export interface ChecklistBelow {
+  /** 凡例。`min-h-0` でも上の余白（0.6rem）までしか縮まない。 */
+  legend: boolean
+  /** 共有ボタンの行（チェックリストが出ている間は 2.75rem）。 */
+  shareRow: boolean
+  /** 共有ボタンの行が画面の下端に付く（スマホの横画面ではホームインジケータ分だけ高くなる）。 */
+  shareRowAtScreenBottom: boolean
+  /** 特別情報バナー。見出し 1 行（2.5rem）より縮まない。 */
+  banner: boolean
+}
+
+/** 下側へ残す高さ（rem）。帯自身の見出し 1 行（2.5rem）に、出ているものの縮まない分を足す。 */
+export function checklistBottomReserveRem(below: ChecklistBelow): number {
+  return 2.5 + (below.legend ? 0.6 : 0) + (below.shareRow ? 2.75 : 0) + (below.banner ? 2.5 : 0)
+}
+
+/**
+ * 下側へ残す高さ（CSS の長さ）。共有ボタンの行が画面の下端に付くときは、行が高くなる分
+ * （`shareButtonRowHeightClass` と同じ「ホームインジケータ − 0.5rem」）も残す。この分は横画面以外でも足すので、
+ * ホームインジケータのある縦画面ではその分だけ多めに残る（重なりを許す側には倒れない）。
+ */
+function bottomReserve(below: ChecklistBelow): string {
+  const rem = `${Number(checklistBottomReserveRem(below).toFixed(2))}rem`
+  return below.shareRow && below.shareRowAtScreenBottom && !below.banner
+    ? `${rem} + max(0px, env(safe-area-inset-bottom, 0px) - 0.5rem)`
+    : rem
+}
+
+let warnedNonFinite = false
+
+/**
+ * 上の余白。隅の列が 1 行のとき（下端は上から約 34px）と同じ 3rem を下限にする。
+ *
+ * **上限は「地図の高さ − 下側へ残す高さ」。** 隅の列が高く地図が低いと、隅の下から始めるだけで帯の下限が地図を
+ * 使い切り、下端の特別情報バナーが地図の外へ押し出される。そのときは帯が隅の列の下のほうに重なるのを受け入れ、
+ * バナーの見出しを残す（2026-10-27 ユーザー選択「バナーを優先 (Recommended)」）。
+ *
+ * 非有限の値をそのまま `px` にすると宣言ごと捨てられ、余白が 0 になって黙って隅の列に重なる。0 として扱い、記録する。
+ */
+export function checklistTopPadding(topInset: number, areaHeight: number | null, below: ChecklistBelow): string {
+  let inset = topInset
+  if (!Number.isFinite(inset)) {
+    if (!warnedNonFinite) {
+      warnedNonFinite = true
+      log.warn('[layout] 行動チェックリストの上の余白に数でない値が渡された（下限の 3rem で出す）', { topInset })
+    }
+    inset = 0
+  }
+  if (areaHeight === null || !Number.isFinite(areaHeight)) return `max(3rem, ${inset}px)`
+  // 残す高さは足し算になりうるので、括弧で包んでから引く（包まないと足した分の符号が逆になる）
+  return `max(3rem, min(${inset}px, ${areaHeight}px - (${bottomReserve(below)})))`
+}
 
 /**
  * 震度の見せ方。**強震モニタ経路だけ指標名を添える。**
@@ -184,7 +246,7 @@ function ChecklistIcon() {
   )
 }
 
-export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, onRestore }: Props) {
+export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, onRestore, topInset, areaHeight, below }: Props) {
   const [open, setOpen] = useState(false)
   const [kitOpen, setKitOpen] = useState(false)
 
@@ -195,7 +257,7 @@ export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, on
   // なることはある。震度を添えるのは、畳んでいる間に届いた揺れの大きさが分かるようにするため。
   if (collapsed) {
     return (
-      <div className={`${WRAPPER_CLASS} shrink-0`}>
+      <div className={`${WRAPPER_CLASS} shrink-0`} style={{ paddingTop: checklistTopPadding(topInset, areaHeight, below) }}>
         <button
           className="pointer-events-auto flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-950/90 border border-red-400/80 shadow-lg text-white/90 hover:text-white hover:bg-red-900/90"
           onClick={onRestore}
@@ -211,7 +273,10 @@ export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, on
   }
 
   return (
-    <div className={`${WRAPPER_CLASS} ${OPEN_MIN_HEIGHT_CLASS}`}>
+    <div
+      className={WRAPPER_CLASS}
+      style={{ paddingTop: checklistTopPadding(topInset, areaHeight, below), minHeight: `calc(${checklistTopPadding(topInset, areaHeight, below)} + ${HEADLINE_MIN_HEIGHT})` }}
+    >
       {/* w-fit で中身の幅に合わせる。畳んだ状態は 3 行しかないので、固定幅にすると横に間延びして
           地図を無駄に覆う。展開すれば中身が増えて自然に広がり、max-w-2xl で頭打ちにする。 */}
       <div className="pointer-events-auto w-fit max-w-2xl min-h-0 max-h-[70dvh] overflow-y-auto overflow-x-hidden overscroll-x-none rounded-lg bg-red-950/95 border-2 border-red-400 shadow-lg">
