@@ -47,6 +47,7 @@ import { describeFailure, normalizeBoardKey, parseStationConfig } from './statio
 import type { StationConfig } from './stationConfig'
 import type { StatusReport } from './statusReport'
 import type { StorageOps } from './storageControl'
+import type { DetectionOps } from './detectionControl'
 import { stationFileToken } from './waveArchive'
 import type { ArchivedWaveChunk, WaveRangeResult } from './waveArchive'
 import type { WaveChunk } from './intensityPipeline'
@@ -789,6 +790,11 @@ export interface StatusServerOptions {
    * **`/status` ではなく `/api/*` の側に置く** —— 保存先のパスは運用者だけが見ればよい。
    */
   readonly storage: StorageOps
+  /**
+   * 検出の値（`GET`/`PUT /api/detection`・#313・2026-10-27 ユーザー承認）。実体は `detectionControl.ts`。
+   * **受け付けても、効くのは次の起動から。**
+   */
+  readonly detection: DetectionOps
   /** 管理画面から頼む操作（基板の再起動・繋ぎ直し、ホストの再起動。#313・2026-10-27 ユーザー承認）。 */
   readonly operations: AdminOperations
   /**
@@ -1035,6 +1041,7 @@ type AdminRoute =
   | { readonly kind: 'shutdown' }
   | { readonly kind: 'rewave' }
   | { readonly kind: 'storage' }
+  | { readonly kind: 'detection' }
   | { readonly kind: 'storage-purge-old' }
   | { readonly kind: 'storage-abandon-migration' }
   /** `/api/records/` の後ろ（`channels`・`envelope` など。解くのは `waveRecordsApi.ts`）。 */
@@ -1085,6 +1092,7 @@ function parseAdminRoute(pathname: string): AdminRoute | null {
   if (pathname === '/api/board-control') return { kind: 'board-control' }
   if (pathname === '/api/rewave') return { kind: 'rewave' }
   if (pathname === '/api/storage') return { kind: 'storage' }
+  if (pathname === '/api/detection') return { kind: 'detection' }
   if (pathname === '/api/storage/purge-old') return { kind: 'storage-purge-old' }
   if (pathname === '/api/storage/abandon-migration') return { kind: 'storage-abandon-migration' }
   if (pathname.startsWith('/api/records/')) {
@@ -1228,6 +1236,65 @@ async function handleStorage(
     root === null
       ? '[admin] 次の起動で使う保存先の変更を取り消した'
       : `[admin] 次の起動で使う保存先を ${root} にした（再起動するまでは今の場所へ書く）`,
+  )
+}
+
+/**
+ * `GET`/`PUT /api/detection`。PUT の本文は `{ "pendingDetection": <検出の値> | null }`（`null` は待っている
+ * 変更の取り消し）。**受け付けても、効くのは次の起動から**（`hostSettings.ts` の `resolveDetection`）。
+ */
+async function handleDetection(
+  req: IncomingMessage,
+  res: ServerResponse,
+  detection: DetectionOps,
+  log: (level: LogLevel, kind: string, detail: string, line: string) => void,
+): Promise<void> {
+  if (req.method === 'GET') {
+    sendAdminJson(res, 200, detection.get())
+    return
+  }
+  if (req.method !== 'PUT') {
+    sendAdminJson(res, 405, { error: 'method-not-allowed' })
+    return
+  }
+  const read = await readAdminBody(req)
+  if (!read.ok) {
+    sendAdminJson(res, 400, { error: read.reason })
+    return
+  }
+  const body = read.body
+  if (typeof body !== 'object' || body === null || !('pendingDetection' in body)) {
+    sendAdminJson(res, 400, { error: 'invalid-body' })
+    return
+  }
+  const result = detection.setPending((body as { pendingDetection: unknown }).pendingDetection)
+  if (!result.ok) {
+    // 断った理由もホストの記録に残す（画面を開いていない運用者にも、書けない状態が続いていると分かるように）。
+    if (result.problem === 'invalid-values') {
+      log(
+        'warn',
+        'admin',
+        'detection',
+        `[admin] 検出の値の変更を断った: ${result.problems.map((p) => `${p.field}=${p.problem}`).join('、')}`,
+      )
+      sendAdminJson(res, 400, { error: result.problem, problems: result.problems })
+    } else if (result.problem === 'not-writable') {
+      log('error', 'admin', 'detection', `[admin] 検出の値を設定ファイルへ書けなかった: ${result.detail}`)
+      sendAdminJson(res, 500, { error: result.problem, detail: result.detail })
+    } else {
+      sendAdminJson(res, 400, { error: result.problem })
+    }
+    return
+  }
+  const report = detection.get()
+  sendAdminJson(res, 200, report)
+  log(
+    'warn',
+    'admin',
+    'detection',
+    report.pending === null
+      ? '[admin] 次の起動で使う検出の値の変更を取り消した'
+      : '[admin] 次の起動で使う検出の値を変えた（再起動するまでは今の値で検出する）',
   )
 }
 
@@ -1418,6 +1485,7 @@ async function handleAdmin(
   requestRewave: StatusServerOptions['requestRewave'],
   records: StatusServerOptions['records'],
   storage: StorageOps,
+  detection: DetectionOps,
   operations: AdminOperations,
   now: () => number,
 ): Promise<void> {
@@ -1617,6 +1685,10 @@ async function handleAdmin(
       'rewave',
       `[admin] 合成波形の作り直しを受けた（${r.stationId}・${new Date(r.fromMs).toISOString()}〜${new Date(r.toMs).toISOString()}・ノイズ密度 ${r.noiseDensity === 'current' ? 'いまの設定' : '当時の設定'}・${result.jobs} 件・作り直せない長さ ${Math.round(result.skippedMs / 1000)} 秒）`,
     )
+    return
+  }
+  if (route.kind === 'detection') {
+    await handleDetection(req, res, detection, log)
     return
   }
   if (route.kind === 'storage') {
@@ -1967,6 +2039,7 @@ export async function startStatusServer(options: StatusServerOptions): Promise<S
           options.requestRewave,
           options.records,
           options.storage,
+          options.detection,
           options.operations,
           options.now,
         ).catch((error: unknown) => {

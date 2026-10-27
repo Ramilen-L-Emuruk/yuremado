@@ -59,6 +59,7 @@ import { STATION_CONFIG_FILE, StationStore } from './src/receiver/stationStore'
 import { HOST_SETTINGS_FILE, HostSettingsFile, readHostSettings, resolveDetection, writeHostSettings } from './src/receiver/hostSettings'
 import { DETECTION_SETTINGS_DEFAULT } from './src/detection/detectionSettings'
 import { StorageControl, openStorageAtStartup, storageBrief } from './src/receiver/storageControl'
+import { DetectionControl } from './src/receiver/detectionControl'
 import { StorageMigration, beginMigration, canonicalPath, exists as pathExists } from './src/receiver/storageMigration'
 import { StorageUsage } from './src/receiver/storageUsage'
 import { ReadingHub } from './src/receiver/readingHub'
@@ -2834,6 +2835,8 @@ async function main(): Promise<void> {
     migration: storageMigration,
     log: (line) => console.error(line),
   })
+  // 検出の値の口（`GET`/`PUT /api/detection`）。変えた値は設定ファイルへ書くだけで、効くのは次の起動から。
+  const detectionControl = new DetectionControl({ active: detectionSettings, settingsFile: hostSettingsFile, discardedPending: discardedPendingDetection })
   const statusServer = await startStatusServer({
     port: httpPort,
     address: httpAddress,
@@ -2892,6 +2895,7 @@ async function main(): Promise<void> {
     // 検出した揺れの読み返し（#312）。置き場所は記録と同じ `eventDir`。
     readEvents: (params) => readEventRange({ dir: eventDir, ...params }),
     storage: storageControl,
+    detection: detectionControl,
     // 保存した波形の読み返し（#621）。置き場所は要約を作る係と同じ。
     records: (route, params, signal) =>
       handleRecordsRequest(

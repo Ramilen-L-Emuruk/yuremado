@@ -30,6 +30,7 @@ import type { ShakeEventRecord } from '../detection/shakeEvent'
 import type { EventRangeResult } from '../detection/shakeEventStore'
 import type { StatusServer, StatusServerOptions } from './statusServer'
 import type { RedetectRequest, RedetectRunState } from './redetectRunner'
+import { DETECTION_SETTINGS_DEFAULT, type DetectionSettings } from '../detection/detectionSettings'
 import { stationFileToken } from './waveArchive'
 import type { ArchivedWaveChunk, WaveRangeResult } from './waveArchive'
 
@@ -41,6 +42,14 @@ const NO_STORAGE: StatusServerOptions['storage'] = {
   setPending: async () => ({ ok: false, problem: 'locked' }),
   purgeOld: async () => ({ ok: false, reason: 'not-copied' }),
   abandonMigration: async () => ({ ok: false, reason: 'not-missing' }),
+}
+
+/** 検出の値の口を試さないテストの既定。**変える操作は呼ばれたら落とす。** */
+const NO_DETECTION: StatusServerOptions['detection'] = {
+  get: () => ({ active: DETECTION_SETTINGS_DEFAULT, pending: null, defaults: DETECTION_SETTINGS_DEFAULT, discardedPending: null }),
+  setPending: () => {
+    throw new Error('呼ばれない')
+  },
 }
 
 /** 操作を試さないテストの既定。**呼ばれたら落とす**（呼ばれない前提を黙って崩さない）。 */
@@ -295,6 +304,7 @@ async function start(
     records: null,
     storage: NO_STORAGE,
     operations: NO_OPERATIONS,
+    detection: NO_DETECTION,
   })
   running.server = server
   return `http://127.0.0.1:${server.port}`
@@ -1148,6 +1158,7 @@ describe('/api/*', () => {
     requestRewave: StatusServerOptions['requestRewave'] = () => ({ kind: 'busy' }),
     storage: StatusServerOptions['storage'] = NO_STORAGE,
     operations: StatusServerOptions['operations'] = NO_OPERATIONS,
+    detection: StatusServerOptions['detection'] = NO_DETECTION,
   ): Promise<string> {
     const port = await getFreePort()
     const adminAuth: AdminAuthConfig = {
@@ -1174,6 +1185,7 @@ describe('/api/*', () => {
       records,
       storage,
       operations,
+      detection,
     })
     running.server = server
     return `http://127.0.0.1:${server.port}`
@@ -1381,6 +1393,105 @@ describe('/api/*', () => {
       const res = await fetch(`${base}/api/storage/abandon-migration`, { method: 'POST', headers: authed })
       expect(res.status).toBe(409)
       expect(await res.json()).toMatchObject({ error: 'not-missing' })
+    })
+  })
+
+  describe('検出の値（/api/detection）', () => {
+    const authed = { Authorization: `Bearer ${TOKEN}`, Origin: ORIGIN, 'Content-Type': 'application/json' }
+    const TUNED: DetectionSettings = {
+      ...DETECTION_SETTINGS_DEFAULT,
+      trigger: { ...DETECTION_SETTINGS_DEFAULT.trigger, onRatio: 3 },
+    }
+    function fakeDetection(result: ReturnType<StatusServerOptions['detection']['setPending']> = { ok: true }) {
+      const calls: unknown[] = []
+      let pending: DetectionSettings | null = null
+      const ops: StatusServerOptions['detection'] = {
+        get: () => ({ active: DETECTION_SETTINGS_DEFAULT, pending, defaults: DETECTION_SETTINGS_DEFAULT, discardedPending: null }),
+        setPending: (value) => {
+          calls.push(value)
+          if (result.ok) pending = value as DetectionSettings | null
+          return result
+        },
+      }
+      return { ops, calls }
+    }
+    const start = (ops: StatusServerOptions['detection'], log?: StatusServerOptions['log']) =>
+      startAuthed(new ReadingHub(), {}, log, undefined, undefined, undefined, null, undefined, NO_STORAGE, NO_OPERATIONS, ops)
+
+    it('正: GET はいまの値・待っている値・既定を返す', async () => {
+      const base = await start(fakeDetection().ops)
+      const res = await fetch(`${base}/api/detection`, { headers: authed })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ active: DETECTION_SETTINGS_DEFAULT, pending: null, defaults: DETECTION_SETTINGS_DEFAULT, discardedPending: null })
+    })
+
+    it('正: PUT は本文の pendingDetection を渡し、受け付けたら今の様子を返して記録に残す', async () => {
+      const { ops, calls } = fakeDetection()
+      const lines: string[] = []
+      const base = await start(ops, (_level, _kind, _detail, line) => lines.push(line))
+      const res = await fetch(`${base}/api/detection`, {
+        method: 'PUT',
+        headers: authed,
+        body: JSON.stringify({ pendingDetection: TUNED }),
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toMatchObject({ pending: TUNED })
+      expect(calls).toEqual([TUNED])
+      expect(lines.some((l) => l.includes('次の起動で使う検出の値を変えた'))).toBe(true)
+    })
+
+    it('正: null は取り消しとして渡し、取り消した旨を記録に残す', async () => {
+      const { ops, calls } = fakeDetection()
+      const lines: string[] = []
+      const base = await start(ops, (_level, _kind, _detail, line) => lines.push(line))
+      const res = await fetch(`${base}/api/detection`, {
+        method: 'PUT',
+        headers: authed,
+        body: JSON.stringify({ pendingDetection: null }),
+      })
+      expect(res.status).toBe(200)
+      expect(calls).toEqual([null])
+      expect(lines.some((l) => l.includes('変更を取り消した'))).toBe(true)
+    })
+
+    it('対照: 値が受け付けられなければ 400 で項目ごとの断りを返す', async () => {
+      const problems = [{ field: 'staSec', problem: 'sta-not-below-lta' }] as const
+      const base = await start(fakeDetection({ ok: false, problem: 'invalid-values', problems }).ops)
+      const res = await fetch(`${base}/api/detection`, {
+        method: 'PUT',
+        headers: authed,
+        body: JSON.stringify({ pendingDetection: TUNED }),
+      })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid-values', problems })
+    })
+
+    it('対照: pendingDetection の欄が無い本文は渡さずに 400', async () => {
+      const { ops, calls } = fakeDetection()
+      const base = await start(ops)
+      const res = await fetch(`${base}/api/detection`, { method: 'PUT', headers: authed, body: JSON.stringify({}) })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid-body' })
+      expect(calls).toEqual([])
+    })
+
+    it('安全弁: 設定ファイルを書けなければ 500', async () => {
+      const base = await start(fakeDetection({ ok: false, problem: 'not-writable', detail: 'EACCES' }).ops)
+      const res = await fetch(`${base}/api/detection`, {
+        method: 'PUT',
+        headers: authed,
+        body: JSON.stringify({ pendingDetection: TUNED }),
+      })
+      expect(res.status).toBe(500)
+      expect(await res.json()).toEqual({ error: 'not-writable', detail: 'EACCES' })
+    })
+
+    it('安全弁: GET・PUT 以外は 405', async () => {
+      const { ops, calls } = fakeDetection()
+      const base = await start(ops)
+      const res = await fetch(`${base}/api/detection`, { method: 'POST', headers: authed, body: '{}' })
+      expect(res.status).toBe(405)
+      expect(calls).toEqual([])
     })
   })
 

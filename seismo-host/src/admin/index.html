@@ -540,6 +540,21 @@
       .records-hatch-pending {
         background: repeating-linear-gradient(-45deg, rgba(128, 128, 128, 0.5) 0 1px, transparent 1px 6px);
       }
+      /* 検出タブ: 数の欄は狭く右寄せにし、断りの付いた欄は赤い枠にする。 */
+      .detection-table input {
+        width: 5.5rem;
+        text-align: right;
+      }
+      .detection-table input.invalid {
+        border-color: var(--danger);
+      }
+      .detection-next > * + * {
+        margin-left: 0.35rem;
+      }
+      .detection-discarded:empty,
+      .detection-pending:empty {
+        display: none;
+      }
     </style>
   </head>
   <body>
