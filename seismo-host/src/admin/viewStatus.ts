@@ -114,6 +114,28 @@ interface StatusReportView {
    * **古いホストは返さない**ので、読む側で配列であることを確かめる（`boardClocksOf`）。
    */
   readonly boardClocks?: { readonly boards: readonly BoardClockOffset[] }
+  /**
+   * ホスト自身の時計（`receiver/hostClock.ts`）。読むのは警告に要る 2 つだけ。
+   * **古いホストは返さない**ので、読む側で形を確かめる（`hostClockWarnings`）。
+   */
+  readonly hostClock?: { readonly source?: unknown; readonly consecutiveFailures?: unknown }
+}
+
+/**
+ * ホストの時計を合わせられていないことを伝える警告（2026-10-27 ユーザー承認「足す」）。
+ *
+ * **出すのは、合わせられていない（`source` が `os`）うえに直近の問い合わせが失敗しているとき。**
+ * 起動直後のまだ訊いていない間は出さない。基板の時計の警告（`boardClockWarnings`）は
+ * ホストの時計を物差しにするので、この行が出ている間は全基板が同じだけずれて見えうる。
+ */
+export function hostClockWarnings(hostClock: StatusReportView['hostClock']): readonly string[] {
+  if (hostClock === undefined || hostClock === null) return []
+  const failures = readFinite(hostClock.consecutiveFailures)
+  if (hostClock.source !== 'os' || failures === null || failures < 1) return []
+  return [
+    'ホストの時計を時刻の相手（ntp.nict.jp・pool.ntp.org）に合わせられていない。' +
+      'OS の時計のまま動いているので、基板の時計のずれにはホストのずれも混ざって見える',
+  ]
 }
 
 /** 基板 1 枚ぶんの行（`receiver/boardIntensity.ts` の `BoardIntensity` のうち画面に出す欄）。 */
@@ -576,6 +598,8 @@ export async function initStatusView(container: HTMLElement, ctx: TabContext): P
     // **組み立て済みの HTML**（中で `escapeHtml` を通している）なので、ここで重ねて通さない。
     const assignedBoards = assignedBoardsOf(status)
     warnings.push(...assignedSilenceWarnings(now, assignedBoards))
+    // 時計の警告はホストの時計を先に出す（基板の時計のずれの読み方が変わるため）。
+    warnings.push(...hostClockWarnings(status.hostClock))
     warnings.push(...boardClockWarnings(now, boardClocksOf(status)))
 
     const liveSensorCount = countLive(now, status.sensors)

@@ -9,6 +9,7 @@ import {
   boardIntensityRowHtml,
   boardClocksOf,
   countLive,
+  hostClockWarnings,
   memberCell,
   mseedSummary,
   mseedWarnings,
@@ -378,6 +379,26 @@ describe('boardClocksOf', () => {
   it('安全弁: この欄を持たない古いホストからは空として読む（画面ごと倒さない）', () => {
     expect(boardClocksOf({})).toEqual([])
     expect(boardClocksOf({ boardClocks: { boards: 'x' } as unknown as never })).toEqual([])
+  })
+})
+
+describe('hostClockWarnings', () => {
+  it('正: 合わせられていない（os）うえに直近の問い合わせが失敗しているとき 1 行出す', () => {
+    expect(hostClockWarnings({ source: 'os', consecutiveFailures: 2 })).toEqual([
+      'ホストの時計を時刻の相手（ntp.nict.jp・pool.ntp.org）に合わせられていない。' +
+        'OS の時計のまま動いているので、基板の時計のずれにはホストのずれも混ざって見える',
+    ])
+  })
+
+  it('対照: 合わせられている間・まだ訊いていない間は出さない', () => {
+    expect(hostClockWarnings({ source: 'ntp', consecutiveFailures: 3 })).toEqual([])
+    expect(hostClockWarnings({ source: 'os', consecutiveFailures: 0 })).toEqual([])
+  })
+
+  it('安全弁: 欄の無い古いホスト・形の崩れた値では出さない', () => {
+    expect(hostClockWarnings(undefined)).toEqual([])
+    expect(hostClockWarnings({ source: 'os', consecutiveFailures: 'x' })).toEqual([])
+    expect(hostClockWarnings({ source: 'os' })).toEqual([])
   })
 })
 
