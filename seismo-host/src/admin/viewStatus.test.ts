@@ -11,6 +11,8 @@ import {
   countLive,
   hostClockWarnings,
   memberCell,
+  mirrorSuspectWarnings,
+  mirrorWatchLines,
   mseedSummary,
   mseedWarnings,
   sensorRowHtml,
@@ -399,6 +401,57 @@ describe('hostClockWarnings', () => {
     expect(hostClockWarnings(undefined)).toEqual([])
     expect(hostClockWarnings({ source: 'os', consecutiveFailures: 'x' })).toEqual([])
     expect(hostClockWarnings({ source: 'os' })).toEqual([])
+  })
+})
+
+describe('mirrorSuspectWarnings', () => {
+  it('正: 疑いのある基板ごとに 1 行、表示名と鏡像の票の数で出す', () => {
+    expect(mirrorSuspectWarnings([{ boardKey: 'mac:a0b7', boardName: '北東の隅', mirrored: 3, ok: 0 }])).toEqual([
+      '基板 北東の隅 の向きが、鏡に映した形で入っている疑いがある' +
+        '（同じ観測点の 3 軸のセンサーと、揺れ 3 回で向きが合わない）。' +
+        '印字面が上の置き方を指して、6 面法をやり直してください',
+    ])
+  })
+
+  it('対照: 表示名が無ければ基板 Key で名乗る・疑いが無ければ出さない', () => {
+    const [line] = mirrorSuspectWarnings([{ boardKey: 'mac:a0b7', boardName: null, mirrored: 4, ok: 1 }])
+    expect(line).toContain('基板 mac:a0b7 の向き')
+    expect(line).toContain('揺れ 4 回')
+    expect(mirrorSuspectWarnings([])).toEqual([])
+  })
+
+  it('安全弁: 欄の無い古いホスト・形の崩れた行では出さず、名前はエスケープする', () => {
+    expect(mirrorSuspectWarnings(undefined)).toEqual([])
+    expect(mirrorSuspectWarnings([null, { boardKey: 'x', boardName: null, mirrored: 'x', ok: 0 }] as never)).toEqual([])
+    const [line] = mirrorSuspectWarnings([{ boardKey: 'k', boardName: '<img>', mirrored: 3, ok: 0 }])
+    expect(line).not.toContain('<img>')
+    expect(line).toContain('&lt;img&gt;')
+  })
+})
+
+describe('mirrorWatchLines', () => {
+  // 2026-10-27 12:34:56 JST
+  const AT = Date.UTC(2026, 9, 27, 3, 34, 56)
+
+  it('正: 票のある基板は、比べた回数・票の内訳・最後に比べた時刻（日本時間）を出す', () => {
+    expect(mirrorWatchLines([{ boardKey: 'mac:a0b7', boardName: '北東の隅', mirrored: 1, ok: 4, lastVoteMs: AT }])).toEqual([
+      '鏡像の見張り（基板 北東の隅）: 揺れ 5 回を比べて、いまの向き 4 票・鏡像 1 票。最後に比べたのは 10/27 12:34:56',
+    ])
+  })
+
+  it('対照: 票が無い基板も 1 行出す（見張りが止まっているのと見分ける）。名前が無ければ Key で呼ぶ', () => {
+    expect(mirrorWatchLines([{ boardKey: 'mac:a0b7', boardName: null, mirrored: 0, ok: 0, lastVoteMs: null }])).toEqual([
+      '鏡像の見張り（基板 mac:a0b7）: まだ比べた揺れが無い',
+    ])
+    expect(mirrorWatchLines([])).toEqual([])
+  })
+
+  it('安全弁: 欄の無い古いホスト・形の崩れた行では出さず、名前はエスケープする', () => {
+    expect(mirrorWatchLines(undefined)).toEqual([])
+    expect(mirrorWatchLines([null, { boardName: 'x' }] as never)).toEqual([])
+    const [line] = mirrorWatchLines([{ boardKey: 'k', boardName: '<img>', mirrored: 0, ok: 1, lastVoteMs: AT }])
+    expect(line).not.toContain('<img>')
+    expect(line).toContain('&lt;img&gt;')
   })
 })
 
