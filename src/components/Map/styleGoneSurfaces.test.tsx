@@ -48,7 +48,7 @@ interface Surface {
 const SURFACES: Surface[] = [
   {
     name: '震度の面',
-    view: () => <QuakeIntensitySurfaceGL markers={[]} visible={false} />,
+    view: () => <QuakeIntensitySurfaceGL markers={[]} visible={false} recording={false} />,
     logPhrase: '震度の面を描けなかった',
   },
 ]
