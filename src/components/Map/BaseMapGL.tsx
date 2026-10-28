@@ -16,8 +16,12 @@ import {
   GEBCO_OVERVIEW_MAX_ZOOM,
   GEBCO_SOURCE_MAX_ZOOM,
   GEBCO_TILE_SIZE,
+  buildCameraTargetTiles,
+  prefetchTileList,
+  shouldSkipPrefetch,
   startBathymetryPrefetch,
 } from '../../utils/gebcoPrefetch'
+import { subscribeFlightTarget } from './gl/camera'
 
 // 行政区域ベースマップ（MapLibre 版・Leaflet の BaseMap 相当）。ダーク背景の上に
 // 海底地形ラスタ（暗色化）＋陸地塗り＋一次細分区域の細線＋県境を描画する。
@@ -236,7 +240,7 @@ export function BaseMapGL({ showBathymetry, recording }: Props) {
 
   // 海底地形の先読みは**録画モードのときだけ**走らせる。
   //
-  // 温めるのは 1 巡 1,911 枚（日本枠 569 ＋ 全球 1,342。実測値は `gebcoPrefetch.ts`）で、
+  // 温めるのは 1 巡 4,244 枚（日本の枠 2,090 ＋ 日本の外 2,154。内訳は `gebcoPrefetch.ts`）で、
   // タイルの有効期限（1 時間）に合わせて巡回するため、据え置きで動かし続ける端末では
   // **毎時その数のリクエストが配信元へ届く**。2 巡目以降は `If-None-Match` の再検証で
   // 本体 0 バイトだが、リクエスト自体は到達する（＝アクセスログ・接続数としては数えられる）。
@@ -252,12 +256,42 @@ export function BaseMapGL({ showBathymetry, recording }: Props) {
   // 切り替えるたびにレイヤーの追加までやり直すことになる。
   useEffect(() => {
     if (!map || !recording) return
-    // 初期表示（fitJapan）の通信と競合しないよう遅延なく開始してよい（requestIdleCallback
-    // 経由でメインスレッドの空きを待つため即座には走らない）。以後はタイルの有効期限に
-    // 合わせて温め直すので、abort するまで動き続ける。
+    // 暇を待たずに始める（理由は gebcoPrefetch.ts の fillSlots）。巡回が同時に投げる数は 3 本までなので、
+    // 初期表示（fitJapan）のタイル取得を押しのけることはない（寄せ先の先読みは下のとおり地図と同じ 16 本）。以後はタイルの有効期限に合わせて
+    // 温め直すので、abort するまで動き続ける。
     const abort = new AbortController()
     startBathymetryPrefetch(abort.signal)
-    return () => abort.abort()
+
+    // 寄せ始めに着地先のタイルを取りに行く。巡回の先読みは日本の枠・帯・全球の低ズームを覆うが、
+    // 帯の外の深い z（遠い震源への寄せ）と、まだ巡回が届いていない範囲はここで拾う。
+    // 寄せは 1 秒かけて飛ぶので、着地した時点で揃っている（着地してから取ると 2K・4K の画面では
+    // 海底地形が 0.4〜2.2 秒抜けていた）。次の寄せが来たら前のぶんは打ち切る。
+    // ただし着地先のタイルが前の寄せと同じなら打ち切らず、取り直しもしない（EEW の追従のように
+    // 同じ画へ短い間隔で何度も寄せる場面で、同じ枚数を毎回投げ直さないため）。
+    let targetAbort: AbortController | null = null
+    let targetKey = ''
+    const unsubscribe = subscribeFlightTarget(map, (target) => {
+      if (shouldSkipPrefetch()) {
+        targetAbort?.abort()
+        targetKey = ''
+        return
+      }
+      const container = map.getContainer()
+      const tiles = buildCameraTargetTiles(target, container.clientWidth, container.clientHeight)
+      const key = tiles.map((t) => `${t.z}/${t.y}/${t.x}`).join(',')
+      if (key !== '' && key === targetKey) return
+      targetAbort?.abort()
+      targetKey = key
+      if (tiles.length === 0) return
+      const next = new AbortController()
+      targetAbort = next
+      prefetchTileList(tiles, next.signal)
+    })
+    return () => {
+      unsubscribe()
+      targetAbort?.abort()
+      abort.abort()
+    }
   }, [map, recording])
 
   return null

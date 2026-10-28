@@ -13,6 +13,8 @@ import {
   boundsFromPositions,
   flyToPoint,
   beginCaptureFraming,
+  subscribeFlightTarget,
+  type FlightTarget,
   EEW_ZOOM_SNAP,
   INTERACTION_HOLD_SEC,
 } from './camera'
@@ -906,5 +908,58 @@ describe('beginCaptureFraming', () => {
     pane.height = 300
     framing.restore()
     expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('subscribeFlightTarget', () => {
+  it('寄せ始めに着地先のカメラを知らせる（flyToPoint・fitJapan・fitToPositions）', () => {
+    const map = createFakeMap()
+    const seen: FlightTarget[] = []
+    const unsubscribe = subscribeFlightTarget(map, (t) => seen.push(t))
+    flyToPoint(map, [35, 139], 7.5)
+    fitJapan(map)
+    fitToPositions(map, [[30, 130], [40, 145]])
+    unsubscribe()
+    expect(seen).toEqual([
+      { center: [139, 35], zoom: 7.5, bearing: 0, pitch: 0 },
+      // fitBounds は着地先を返さないので、同じ条件で cameraForBounds から解いた値
+      { center: [138, 38], zoom: 6.7, bearing: 0, pitch: 0 },
+      // 段階へ切り下げた後の、実際に着地するズーム
+      { center: [138, 38], zoom: snapZoomDown(6.7), bearing: 0, pitch: 0 },
+    ])
+  })
+
+  it('購読をやめた後は知らせない（対照）', () => {
+    const map = createFakeMap()
+    const listener = vi.fn()
+    subscribeFlightTarget(map, listener)()
+    flyToPoint(map, [35, 139], 7.5)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('受け手がいなければ fitBounds の着地先を解かない', () => {
+    const map = createFakeMap()
+    fitJapan(map)
+    expect(map.cameraForBounds).not.toHaveBeenCalled()
+  })
+
+  it('受け手が投げてもカメラ操作は続く（安全弁）', () => {
+    const map = createFakeMap()
+    const unsubscribe = subscribeFlightTarget(map, () => { throw new Error('受け手の失敗') })
+    flyToPoint(map, [35, 139], 7.5)
+    unsubscribe()
+    expect(map.flyTo).toHaveBeenCalledTimes(1)
+  })
+
+  it('共有カードの撮影の寄せ直しでは知らせない', () => {
+    const map = createFakeMap()
+    const listener = vi.fn()
+    const unsubscribe = subscribeFlightTarget(map, listener)
+    const framing = beginCaptureFraming(map)
+    framing.refit()
+    framing.restore()
+    unsubscribe()
+    expect(map.jumpTo).toHaveBeenCalled()
+    expect(listener).not.toHaveBeenCalled()
   })
 })
