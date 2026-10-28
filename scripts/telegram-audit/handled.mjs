@@ -5,16 +5,19 @@ export const HANDLED = {
   VTSE41: ['parseTsunamiFromXml'],
   VTSE51: ['parseTsunamiFromXml'],
   VTSE52: ['parseTsunamiFromXml'],
+  VXSE43: ['parseEEWFromXml'],
   VXSE45: ['parseEEWFromXml'],
   VXSE51: ['parseEarthquakeFromXml'],
   VXSE52: ['parseEarthquakeFromXml'],
   VXSE53: ['parseEarthquakeFromXml'],
+  VXSE60: ['parseEarthquakeCountFromXml'],
   VXSE61: ['parseEarthquakeFromXml'],
   VXSE62: ['parseLpgmFromXml'],
   VYSE50: ['parseNankaiFromXml'],
   VYSE51: ['parseNankaiCommentaryFromXml'],
   VYSE52: ['parseNankaiCommentaryFromXml'],
   VYSE60: ['parseVyse60FromXml'],
+  VZSE40: ['parseQuakeNoticeFromXml'],
 }
 
 export function assertRoots(fnBodies) {
