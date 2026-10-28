@@ -77,6 +77,7 @@ function parseIntensityStr(s: string | undefined | null): IntensityScale {
  * - **`City/Condition` は読む**（下記 `City` の分岐）。同じ市町村の観測点にも未入電が並ぶが、
  *   市町村の行の意味は `MaxInt` の有無で 2 通りに分かれ、観測点からは復元できない
  * - **見出し部は読まない** —— 未入電の市町村を列挙するだけで、`City/Condition` と同じ事実になる
+ *   （2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）
  */
 const UNRECEIVED_INTENSITY = '震度５弱以上未入電'
 
@@ -191,7 +192,8 @@ export function parseForecastLgInt(
   // **"0" は「予測なし」と分けて持つ**（`belowClass1`）。解説資料 Ⅱ.21 2-1-2 の値域は "0"〜"4" で、
   // 0 は階級1未満の予測。手元の控え（緊急地震速報 3 日分・62 地震・660 通）のうち最大の階級が 0 の報が 256 通あった。1〜4 の欄には
   // 入れない —— その欄を読む側はどこも「1〜4 か、無いか」で書かれている（2026-10-19 ユーザー承認
-  // 「0 を持ち、表示は今のまま (推奨)」「別の欄で持つ (推奨)」）
+  // 「別の欄で持つ (推奨)」）。いまの画面と読み上げはこの印を読まない
+  // （出すと決まっている。→ `docs/spec/telegram-coverage-audit.md` §6「決定済み・実装は未着手」）
   const chosen = toStr || fromStr
   return { cls: pick(chosen), over: false, belowClass1: chosen === '0' }
 }
@@ -1235,8 +1237,9 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
 
   const eqEl = xmlQ(doc, 'Earthquake')
   const eewMagnitudeEl = eqEl ? xmlQ(eqEl, 'Magnitude') : null
-  // マグニチュードの種別（`Mj` / `M`）。地震情報・津波・長周期と同じく持つだけで画面には
-  // 出さない。**緊急地震速報だけ別のパーサーを通るため落ちていた。**
+  // マグニチュードの種別（`Mj` / `M`）。地震情報と同じく規模の前置きとして画面に出す
+  // （2026-10-22 ユーザー承認「1-A 電文のまま」「電文の値がある全部」。→ `docs/spec/eew-spec.md` §3
+  // 「内陸判定・短縮用震央地名」）。**緊急地震速報だけ別のパーサーを通るので、ここでも読む。**
   const eewMagnitudeType = eewMagnitudeEl?.getAttribute('type')?.trim() || undefined
   const eewMagnitude = eewMagnitudeEl ? parseFloat(xmlText(eewMagnitudeEl)) : NaN
   // 規模が数値にならないときに気象庁が添える説明（`Magnitude@description`）。地震情報・津波と同じ規則で読む
@@ -1247,7 +1250,8 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     : undefined
   // 見出し文。**予報級では空だが、警報級の報には必ず入る**（「石川県で地震　北陸　甲信　東海
   // 関東で強い揺れ」の形。実電文で確認）。地震情報・長周期と同じく持つだけで画面には出さない
-  // ——後半の地方名は下の `warningRegions` が構造化された形で持っており、そちらを使う。
+  // （2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）。
+  // 後半の地方名は下の `warningRegions` が構造化された形で持っており、そちらを使う。
   const eewHeadline = readHeadlineText(doc)
   // 警報の対象地方。予報級では空（→ `readEewWarningRegions`）。
   const { regions: eewWarningRegions, added: eewAddedWarningRegions, unreadable: unreadableWarningRegions, unreadableLastKind: unreadableWarningLastKind } = readEewWarningRegions(doc)
@@ -2850,11 +2854,8 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     log.warn(`${DMDATA_LOG_PREFIX} VXSE62 の全国の最大震度を読めません（無視します）: "${obsRawInt}"`)
   }
 
-  // 震源の要素。**読んで持つが、画面には出していない**（→ `LpgmHypocenter`）。
-  // 同じ地震の震源・規模は地震カードが出すため重複する。電文が持っているものを落とさない
-  // ために保持している。長周期の報の震源・規模・最大震度を出さず地震カードに任せることは
-  // 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」（全期間の 68 通はすべて最初の地震情報の
-  // 309〜773 秒後に届き、長周期が先に届いた例は 0 件）。
+  // 震源の要素（→ `LpgmHypocenter`）。いまは読んで持つだけで画面には出していない
+  // （長周期の欄にも出すと決まっている。→ `docs/spec/telegram-coverage-audit.md` §6「決定済み・実装は未着手」）。
   const lpgmHypoEl = earthquakeEl ? xmlQ(earthquakeEl, 'Hypocenter') : null
   const lpgmHypoAreaEl = lpgmHypoEl ? xmlQ(lpgmHypoEl, 'Area') : null
   let lpgmHypocenter: import('../types/earthquake').LpgmHypocenter | undefined
@@ -2919,7 +2920,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     ...(lpgmVarCodes.length > 0 && { varCommentCodes: lpgmVarCodes }),
     ...(lpgmFreeText && { freeFormText: lpgmFreeText }),
     ...(lpgmUri && { uri: lpgmUri }),
-    // 見出し文。地震情報と同じ扱い（持つだけで画面には出さない）。
+    // 見出し文。地震情報と同じ扱い（持つだけで画面には出さない）（2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）。
     ...(lpgmHeadline && { headline: lpgmHeadline }),
     ...(categoryValue && { category: categoryValue }),
   }
