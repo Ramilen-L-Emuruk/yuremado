@@ -7,6 +7,9 @@ Cloudflare に置く。鍵を持たない利用者も、地震・津波などの
 
 **読者は、中継サーバー（`relay/`）か、アプリがそこへ繋ぐ経路を触る開発者。**
 
+一本化の前に、いまの PWA の制約・使っている外部サービス・機能・サーバーで新たにできることを洗い出した表は
+[`relay-migration-inventory.md`](relay-migration-inventory.md) にある。
+
 ## 用語
 
 | 語 | 意味 |
