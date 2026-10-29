@@ -1575,8 +1575,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
                 ? `${belowZeroCount}観測点で震度0以下の反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
                 : `観測点の反応は収まりました${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''}`}
           </span>
-          {/* 段のチップが「どの段か」を示すのに対し、この行は確かな段になった瞬間の点数と震度を示す。
-              早い段のあいだは言うことが無いので行ごと出さない（`ensembleSummary` が null を返す） */}
+          {/* 段のチップが「どの段か」を示すのに対し、この行は何がその検知を支えたかを示す。確かな段は確定した瞬間の
+              点数と震度、早い段は加わった点の数と支えた部分（文面は `ensembleSummary`）。言えることが無ければ null で行ごと出さない */}
           {summary && <span className="text-xs text-secondary">{summary}</span>}
           <KyoshinGateDetail events={events} points={points} subregions={subregions} />
         </div>

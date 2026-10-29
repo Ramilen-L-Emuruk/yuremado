@@ -21,8 +21,25 @@ describe('組み合わせの検知器の判定の根拠', () => {
     expect(ensembleSummary(det({ memberKeys: ['a'], maxIntensity: -1 }))).toBe('6点・震度2で確定')
   })
 
-  it('安全弁: 早い段は行を出さない（要求値を持たないので言えることが無い）', () => {
-    expect(ensembleSummary(det({ confidence: 'likely', firstConfirmedAtMs: null, confirmedSnapshot: null }))).toBeNull()
+  // 2026-10-29 ユーザー選択「早い段にも一行を出す」・点数はユーザー選択「点数を外す (Recommended)」
+  const likely = (over: Partial<EnsembleDetection>) =>
+    det({ confidence: 'likely', firstConfirmedAtMs: null, confirmedSnapshot: null, ...over })
+
+  it('正: 早い段は、支えた部分を決まった順で並べて「…で反応」と言う', () => {
+    expect(ensembleSummary(likely({ sources: ['cluster', 'stat'] }))).toBe('平常時のゆらぎ・揺れの広がりで反応')
+  })
+
+  it('対照: 早い段は点数も震度も言わない（本文の「N観測点で反応」と数を並べない）', () => {
+    expect(ensembleSummary(likely({ memberKeys: ['a', 'b', 'c', 'd', 'e'], maxIntensity: 3.2, sources: ['fast'] })))
+      .toBe('強い揺れの急な上昇で反応')
+  })
+
+  it('安全弁: 早い段で支えた部分が無ければ行を出さない', () => {
+    expect(ensembleSummary(likely({ sources: [] }))).toBeNull()
+  })
+
+  it('安全弁: 確かな段で確定した瞬間の控えが無ければ、早い段の形へ倒さず行を出さない', () => {
+    expect(ensembleSummary(det({ confirmedSnapshot: null }))).toBeNull()
   })
 
   it('正: 内訳は 4 行で、仕組みは決まった順・決まった呼び名で並べる', () => {
