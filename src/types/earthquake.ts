@@ -470,10 +470,10 @@ export interface JMAQuake {
    *
    * DMDATA 経路は付加文の原文（{@link forecastText}）にこの文が入っているので要らない。P2PQuake は
    * 付加文を配信せず、区分の値だけを運ぶ。読み上げの遠地地震の文で、国内の津波の区分の文に続けて読む
-   * （2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。**いまの画面には出していない** ——
-   * DMDSS 版は同じ内容の固定付加文を地震カードの付加文の枠に出すので、標準版だけ画面に出ない
-   * （→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。標準版も枠に出すと決まっている
-   * （→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）。値と文面の対応は `services/p2pquake.ts` の `FOREIGN_TSUNAMI_TEXT`。
+   * （2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。地震カードの付加文の枠では、DMDSS 版の
+   * 固定付加文と同じ先頭の段落に出す（2026-10-29 ユーザー承認。→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。
+   * 読み上げも枠も、{@link forecastText} があればそちらを使う。
+   * 値と文面の対応は `services/p2pquake.ts` の `FOREIGN_TSUNAMI_TEXT`。
    */
   foreignTsunamiText?: string
   /**

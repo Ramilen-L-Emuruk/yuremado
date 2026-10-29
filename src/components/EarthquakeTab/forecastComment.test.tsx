@@ -180,6 +180,54 @@ describe('地震カードの付加文の枠', () => {
     expect(screen.getByText(changed)).toBeTruthy()
   })
 
+  // 標準版（P2PQuake）は固定付加文を持たず、海外への津波の見通しを値から起こした文（`foreignTsunamiText`）で持つ。
+  // DMDSS 版の固定付加文と同じ先頭の段落に出す（2026-10-29 ユーザー承認「原文のまま (Recommended)」「先頭 (Recommended)」）。
+  describe('標準版の海外への津波の見通し', () => {
+    const FOREIGN = '太平洋の広域に津波発生の可能性があります。'
+    const FREE = '震源の近傍で、やや強い揺れを観測しました。'
+    // P2PQuake 経路の形: 固定付加文・その他は無く、区分のコードも持たない。
+    const p2pQuake = (over: Partial<JMAQuake> = {}) => {
+      const base = makeQuake()
+      return makeQuake({
+        forecastText: undefined, varCommentText: undefined,
+        earthquake: { ...base.earthquake, domesticTsunami: 'なし', domesticTsunamiCode: undefined },
+        foreignTsunamiText: FOREIGN,
+        ...over,
+      })
+    }
+
+    // 正: 固定付加文が無ければ、見通しの文を先頭の段落に出す。
+    it('固定付加文の位置に出す', async () => {
+      await renderTab(p2pQuake({ freeText: FREE }))
+      expect(paragraphsInBox(FOREIGN)).toEqual([FOREIGN, FREE])
+    })
+
+    // 対照: 見通しが無ければ（None・Unknown・Checking）枠を出さない。
+    it('見通しが無ければ枠を出さない', async () => {
+      await renderTab(p2pQuake({ foreignTsunamiText: undefined }))
+      expect(document.querySelector('.whitespace-pre-wrap.bg-panel')).toBeNull()
+    })
+
+    // 安全弁: 固定付加文の原文があれば原文を使い、見通しを重ねない（同じ文が二度出る）。
+    // 原文から津波の区分の文を除いて空になっても、見通しへは倒さない。
+    it('原文があれば見通しを重ねない', async () => {
+      await renderTab(makeQuake({ foreignTsunamiText: FOREIGN }))
+      expect(screen.queryByText(FOREIGN, { exact: false })).toBeNull()
+      expect(paragraphsInBox(EEW_SENTENCE)).toEqual([EEW_SENTENCE, VAR_COMMENT_TEXT])
+    })
+    it('原文が津波の区分の文だけでも見通しへ倒さない', async () => {
+      await renderTab(makeQuake({ forecastText: TSUNAMI_SENTENCE, varCommentText: undefined, foreignTsunamiText: FOREIGN }))
+      expect(screen.queryByText(FOREIGN, { exact: false })).toBeNull()
+      expect(document.querySelector('.whitespace-pre-wrap.bg-panel')).toBeNull()
+    })
+
+    // 安全弁: 空白だけの原文・空の原文は無いものとして見通しを出す（読み上げと同じ扱い）。
+    it.each([['空白だけ', '  '], ['空', '']])('%sの原文なら見通しを出す', async (_label, forecastText) => {
+      await renderTab(p2pQuake({ forecastText, varCommentText: VAR_COMMENT_TEXT }))
+      expect(paragraphsInBox(FOREIGN)).toEqual([FOREIGN, VAR_COMMENT_TEXT])
+    })
+  })
+
   // 安全弁: 一覧の畳んだカードには出さない（選択中のカードだけ）。
   it('選んでいないカードには出さない', async () => {
     await renderTab(makeQuake(), false)
