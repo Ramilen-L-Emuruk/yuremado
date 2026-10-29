@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAutoOpenWhileSpeaking } from '../../hooks/useAutoOpenWhileSpeaking'
 import type { JMAQuake, JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiObservation, TsunamiWarningComment } from '../../types/earthquake'
-import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTimeMin, formatDepth, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
+import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
 import { quakeEventKey, extractQuakeEventId } from '../../utils/quakeMerge'
 import { linkTsunamiSources } from '../../utils/tsunamiSourceLinks'
 import { groupAreasForCardDisplay, tsunamiLiftedAreas, matchesArea, observationBadges, observationHeightText, observationArrivalFallbackText, observationMaxHeightTimeText, estimationBadges, estimationHeightText, forecastHeightImportantBadge, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, isTsunamiGradeRaised, sourceEarthquakeTime, tsunamiAreaKey, tsunamiEventIds, evacuationActionLine, fallbackEvacuationAction, tideStationKey, arrivalConditionBadge, ARRIVAL_CONDITION_BADGE, type ObsUpdateMark, type ObsUpdateField, type TsunamiValueMarks, type EstimationUpdateField } from '../../utils/tsunami'
@@ -202,10 +202,12 @@ function SourceEarthquakeLine({ eq, prefix, link }: {
   return (
     <div>
       {prefix}{eq.hypocenterName}
-      {/* 規模が数値で無いときは気象庁が添えた説明を出す（「Ｍ８を超える巨大地震」）。
+      {/* 規模の記号は電文の種別（`Mj7.6`）。地震カードと同じ `formatMagnitude` を通す（2026-10-29 ユーザー承認
+          「地震カードと同じく出す (Recommended)」「Mj7.6 の形 (Recommended)」）。直書きすると種別を渡し忘れても型が落ちない。
+          規模が数値で無いときは気象庁が添えた説明を出す（「Ｍ８を超える巨大地震」）。
           ここを空にすると、最大級の地震ほど震源名だけの薄い表示になる。 */}
       {eq.magnitude !== undefined
-        ? `　M${eq.magnitude}`
+        ? `　${formatMagnitude(eq.magnitude, eq.magnitudeType)}`
         : eq.magnitudeCondition && `　${formatMagnitudeCondition(eq.magnitudeCondition)}`}
       {/* 深さ。**遠地地震による津波では、震源の深さがこの電文にしか無い**（対応する地震情報が
           発表されないことがある）。`0` は「ごく浅い」という有効値なので `hasDepth` で弾く。
@@ -1538,9 +1540,15 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 同じ VTSE51 が「津波観測に関する情報」と「各地の満潮時刻・津波到達予想時刻に
                 関する情報」を名乗り分けるので、**種別コードだけでは今どちらを見ているか分からない。**
                 行動指示より下に、目立たせずに置く。 */}
-            {active[0]?.infoName && (
+            {/* 電文を編集した官署（`Control/EditorialOffice`）を情報名の後ろへ「編集官署 …」の形で添える
+                （2026-10-29 ユーザー承認「地震カードと同じく出す (Recommended)」、置き場所は
+                「A 情報名の行の後ろ (Recommended)」）。行を足さないのでバナーの高さも右上の幅も変わらない。
+                **`issue.source` は見ない** —— 発表官署へ落ちるので「編集官署」と名乗ると事実を誤らせる。
+                最新の報の官署を出す（統合は新報の `issue` を採る）。取消・解除の表示中も出す。 */}
+            {(active[0]?.infoName || active[0]?.issue.editorialOffice) && (
               <div className="mt-0.5" style={{ fontSize: '0.625rem', color: isCancelledDisplay ? '#6b7280' : topStyle.headerColor, opacity: 0.6 }}>
                 {active[0].infoName}
+                {active[0].issue.editorialOffice && `${active[0].infoName ? '　' : ''}編集官署 ${active[0].issue.editorialOffice}`}
               </div>
             )}
             {/* 気象庁が書いた取消しの概要（電文の `Body/Text`）。アプリの定型文（上の `cancelInfo.desc`）

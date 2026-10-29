@@ -3070,6 +3070,35 @@ describe('XML 経路が落としてはいけない項目（津波）', () => {
     expect(parseTsunamiFromXml('VTSE51', serial2)!.id).toBe('dmdata-tsunami-20260101120000-VTSE51-2')
   })
 
+  // ---- 電文を編集した官署（Control/EditorialOffice）----
+  //
+  // 津波カードが「編集官署 …」と名乗って出すので、地震情報と同じく発表官署へは落とさない。
+
+  // 正: 電文の編集官署をそのまま返す。
+  it('issue.editorialOffice を電文の編集官署から読む', () => {
+    expect(fromXml().issue.editorialOffice).toBe('気象庁本庁')
+  })
+
+  // 対照: 編集官署が無ければ undefined。`issue.source` は従来どおり発表官署へ落ちる（2 本立てが効いていること）。
+  it('編集官署が無ければ undefined（発表官署へ落とさない）', () => {
+    const xml = PARITY_TSUNAMI_XML
+      .replace('<EditorialOffice>気象庁本庁</EditorialOffice>', '')
+      .replace('<PublishingOffice>気象庁</PublishingOffice>', '<PublishingOffice>大阪管区気象台</PublishingOffice>')
+    expect(xml).not.toBe(PARITY_TSUNAMI_XML)
+    const t = parseTsunamiFromXml('VTSE51', xml)!
+    expect(t.issue.editorialOffice).toBeUndefined()
+    expect(t.issue.source).toBe('大阪管区気象台')
+  })
+
+  // 安全弁: 取消の報（区域を持たない形）でも同じ欄を持つ。報の形ごとに `issue` を組んでいた頃は、ここだけ落ちうる。
+  it('取消の報でも編集官署を読む', () => {
+    const cancelled = PARITY_TSUNAMI_XML.replace('<InfoType>発表</InfoType>', '<InfoType>取消</InfoType>')
+    expect(cancelled).not.toBe(PARITY_TSUNAMI_XML)
+    const t = parseTsunamiFromXml('VTSE51', cancelled)!
+    expect(t.cancelled).toBe(true)
+    expect(t.issue.editorialOffice).toBe('気象庁本庁')
+  })
+
   // ---- 電文が名乗る情報名（Head/Title）----
   //
   // 雛形は Control/Title が「津波情報a」、Head/Title が「津波情報」で**値が違う**ので、

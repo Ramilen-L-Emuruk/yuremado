@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { MapGeoJSONFeature } from 'maplibre-gl'
 import { useMapGL } from './mapGLContext'
 import type { TsunamiSourceEarthquake } from '../../types/earthquake'
-import { QUAKE_ARRIVAL_TIME_LABEL, formatDepth, formatMagnitudeCondition, formatTimeMin, hasDepth } from '../../utils/formatters'
+import { QUAKE_ARRIVAL_TIME_LABEL, formatDepth, formatMagnitude, formatMagnitudeCondition, formatTimeMin, hasDepth } from '../../utils/formatters'
 import { hasKnownEpicenter, normalizeEpicenterLng } from '../../utils/geo'
 import { sourceEarthquakeTime } from '../../utils/tsunami'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
@@ -60,12 +60,13 @@ export function buildSourcePoints(
 }
 
 /**
- * 吹き出し。震源名／「M7.6　深さ 10km」／「地震発現時刻 16:10」（2026-10-24 ユーザー選択「この形で (Recommended)」。
- * 津波カードの原因地震の行と同じ語）。規模が数値で無ければ気象庁の説明（「Ｍ８を超える巨大地震」）を出し、
+ * 吹き出し。震源名／「Mj7.6　深さ 10km」／「地震発現時刻 16:10」（2026-10-24 ユーザー選択「この形で (Recommended)」。
+ * 津波カードの原因地震の行と同じ語）。規模の記号は電文の種別（2026-10-29 ユーザー承認「吹き出しと共有カードも (Recommended)」。
+ * 整形はカードの行と同じ `formatMagnitude`）。規模が数値で無ければ気象庁の説明（「Ｍ８を超える巨大地震」）を出し、
  * どちらも無ければ・深さが判らなければ・時刻が読めなければ、その項目を落とす（カードの行と同じ）。
  */
 export function sourcePopupHtml(s: TsunamiSourceEarthquake): string {
-  const mag = s.magnitude !== undefined ? `M${s.magnitude}` : s.magnitudeCondition ? formatMagnitudeCondition(s.magnitudeCondition) : ''
+  const mag = s.magnitude !== undefined ? formatMagnitude(s.magnitude, s.magnitudeType) : s.magnitudeCondition ? formatMagnitudeCondition(s.magnitudeCondition) : ''
   const depth = s.depth !== undefined && hasDepth(s.depth) ? `深さ ${formatDepth(s.depth, s.depthAtLeast === true)}` : ''
   const quakeTime = sourceEarthquakeTime(s)
   const hm = quakeTime ? formatTimeMin(quakeTime) : null

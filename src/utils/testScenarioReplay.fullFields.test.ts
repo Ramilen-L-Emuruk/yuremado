@@ -140,7 +140,7 @@ function tsunamiSample(): TsunamiSample {
       originTime: iso(), arrivalTime: iso(), source: '気象庁',
     }],
     validDateTime: iso(),
-    issue: { source: '気象庁', time: iso(), type: 'Focus' },
+    issue: { source: '気象庁', editorialOffice: '気象庁本庁', time: iso(), type: 'Focus' },
     infoName: '津波警報・注意報・予報',
     areas: [tsunamiArea()],
     cancelledAreas: [tsunamiArea()],

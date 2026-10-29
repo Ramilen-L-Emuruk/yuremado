@@ -733,8 +733,9 @@ export interface TsunamiSourceEarthquake extends HypocenterAreaDetail {
    * マグニチュードの種別（`jmx_eb:Magnitude@type`）。`Mj` は気象庁マグニチュード、
    * `M` は気象庁以外の機関が決めた値（`source` と対で現れる）。
    *
-   * **いまの津波カードには出していない。** 地震カードと同じく出すと決まっている
-   * （→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」。地震カード側は {@link Hypocenter.magnitudeType}）。
+   * 地震カードと同じく、規模の前置きの記号として出す（`Mj7.6`。津波カードの原因地震の行・地図の震源の吹き出し・
+   * 津波の共有カード。2026-10-29 ユーザー承認「地震カードと同じく出す (Recommended)」「Mj7.6 の形 (Recommended)」
+   * 「吹き出しと共有カードも (Recommended)」）。整形は `formatMagnitude` を通す（地震カード側は {@link Hypocenter.magnitudeType}）。
    */
   magnitudeType?: string
   /**
@@ -1086,10 +1087,15 @@ export interface JMATsunami {
      * 電文を出したところ（DMDATA は編集官署、無ければ発表官署）。画面には出さない。
      *
      * **この欄を「編集官署」として出さないこと** —— 発表官署へ落ちるので、ラベルが事実を誤らせる。
-     * 津波カードに編集官署を出すと決まっている（→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）。出すときは
-     * `JMAQuake.issue.editorialOffice` と同じく `Control/EditorialOffice` だけを読む欄を分けて持つ
+     * 画面に出すのは下の `editorialOffice`。
      */
     source: string
+    /**
+     * 電文を編集した官署（`Control/EditorialOffice`）。**発表官署へは落とさない**（`JMAQuake.issue.editorialOffice` と同じ）。
+     * 津波カードに地震カードと同じ「編集官署 …」の形で出す（2026-10-29 ユーザー承認「地震カードと同じく出す (Recommended)」）。
+     * 標準版（P2PQuake）と、編集官署を持たない電文では無い。
+     */
+    editorialOffice?: string
     time: string
     type: 'Focus'
   }
