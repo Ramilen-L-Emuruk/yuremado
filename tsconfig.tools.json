@@ -12,5 +12,9 @@
     // 道具が読む src/ の部品のうち、import.meta.env を参照するものがある
     "types": ["node", "vite/client"]
   },
-  "include": ["scripts/**/*.ts", "scripts/**/*.d.mts", "firmware/tools/**/*.ts"]
+  "include": ["scripts/**/*.ts", "scripts/**/*.d.mts", "firmware/tools/**/*.ts"],
+  // 使い捨ての調査スクリプト（.gitignore で外している scripts/probe-*.ts・scripts/_*.ts）は拾わない。
+  // 端末にだけ残った古い 1 本が、消えた部品を import したままビルドを落とすため
+  // （2026-10-29 ユーザー選択「型チェックから外す (Recommended)」）
+  "exclude": ["scripts/probe-*.ts", "scripts/_*.ts"]
 }
