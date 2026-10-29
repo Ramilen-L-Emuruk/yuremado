@@ -157,19 +157,11 @@ export interface JapanMapProps {
   kyoshinPsWave?: PsWaveCircle[]
   eews?: EEWAlert[]
   /**
-   * confirmed 全イベントのメンバー観測点。**「検知が続いているか」の判定専用**
-   * （空になったことを検知終了の合図として扱う。検知に加わった観測点は検知が消えるまで減らないので、
-   * 検知が続いている間ここが空になることはない）。この集合は現在の震度で絞られていないため、
-   * **カメラフィットの目標には使わない**
-   * （`JapanMapGL` が detectedMarkerPoints から寄り先を作る。理由は同ファイルの detectedFitPoints）。
-   * 地図に描く分は detectedMarkerPoints を使う。
+   * confirmed 全イベントの描く点（`drawnKeys`）。**検知点マーカー・カメラの寄り先・検知の継続判定**に使う
+   * （空になったことを検知終了の合図として扱う。`drawnKeys` は検知が生きている間は空にならない）。
+   * 寄り先は欠測の点を除いて作る（`JapanMapGL` の detectedFitPoints）。
    */
   detectedPoints?: DetectedPoint[]
-  /**
-   * confirmed のメンバーのうち実際に描くもの（孤立した震度0点を除いた集合）。
-   * **検知点マーカーと、そこから作るカメラの寄り先**に使う。
-   */
-  detectedMarkerPoints?: DetectedPoint[]
   /** 主 likely イベント 1 件のメンバー観測点。**候補カメラフィット専用**（検知点マーカーは unconfirmedPoints を使う）。 */
   candidatePoints?: DetectedPoint[]
   /** likely（早い段）の全イベントのメンバー観測点。**検知点マーカー専用**（フィットには使わない）。 */

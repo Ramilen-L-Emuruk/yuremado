@@ -1,7 +1,8 @@
 // 組み合わせの揺れ検知器（kyoshinEnsembleTracker）の検知を、検知カードの「判定の根拠」の言葉へ変える
 // 純粋ユーティリティ。検知器の出力を読むだけで、判定には関与しない。
 //
-// 文面はすべて 2026-10-29 ユーザー選択（「今と同じ形」「4 行」「働きで呼ぶ」「補足は消し脚注は言い換え」）。
+// 文面はすべて 2026-10-29 ユーザー選択（「今と同じ形」「4 行」「働きで呼ぶ」「補足は消し脚注は言い換え」、
+// 早い段の一行は「早い段にも一行を出す」「点数を外す (Recommended)」）。
 //
 // **要求値は出さない。** 組み合わせの検知器は「あと何点で確定」のような要求値を持たないので、出せるのは
 // 「何が支えたか・何点が加わったか・最大震度・確定までの秒」という事実だけ。要求値らしいものを
@@ -36,23 +37,37 @@ function scaleLabel(value: number | null): string {
   return detectionScaleLabelFromValue(value) ?? '—'
 }
 
+/** 支えた部分の呼び名を `ENSEMBLE_SOURCE_LABELS` の順に並べる */
+function sourceLabels(d: EnsembleDetection): string[] {
+  return (Object.keys(ENSEMBLE_SOURCE_LABELS) as EnsembleSource[])
+    .filter(s => d.sources.includes(s))
+    .map(s => ENSEMBLE_SOURCE_LABELS[s])
+}
+
 /**
  * カードの 1 行の要約。確かな段なら確定した瞬間の内訳で「6点・震度2で確定」。
- * 早い段は言えることが無いので null（呼び出し側は行ごと出さない）。
+ * 早い段は、支えた部分だけで「揺れの広がりで反応」（2026-10-29 ユーザー選択「早い段にも一行を出す」・
+ * 点数はユーザー選択「点数を外す (Recommended)」で外した —— 本文の「N観測点で反応」と同じ数が並ぶか、数え方の違いで
+ * 食い違って見えるため）。支えた部分が無ければ null（呼び出し側は行ごと出さない）。
  */
 export function ensembleSummary(d: EnsembleDetection): string | null {
-  if (d.confidence !== 'confirmed' || d.confirmedSnapshot === null) return null
-  return `${d.confirmedSnapshot.size}点・震度${scaleLabel(d.confirmedSnapshot.maxIntensity)}で確定`
+  if (d.confidence === 'confirmed') {
+    if (d.confirmedSnapshot === null) return null
+    return `${d.confirmedSnapshot.size}点・震度${scaleLabel(d.confirmedSnapshot.maxIntensity)}で確定`
+  }
+  const labels = sourceLabels(d)
+  if (labels.length === 0) return null
+  return `${labels.join('・')}で反応`
 }
 
 /** 「判定の内訳」の表。値はいまのもの（確定までの秒だけは確定した時点で決まる） */
 export function ensembleRows(d: EnsembleDetection): EvidenceRow[] {
-  const sources = (Object.keys(ENSEMBLE_SOURCE_LABELS) as EnsembleSource[]).filter(s => d.sources.includes(s))
+  const sources = sourceLabels(d)
   const untilConfirmed = d.firstConfirmedAtMs === null
     ? '—'
     : `検知から${Math.max(0, Math.round((d.firstConfirmedAtMs - d.originTimeMs) / 1000))}秒`
   return [
-    { label: '判定した仕組み', value: sources.length > 0 ? sources.map(s => ENSEMBLE_SOURCE_LABELS[s]).join('・') : '—' },
+    { label: '判定した仕組み', value: sources.length > 0 ? sources.join('・') : '—' },
     { label: '加わった観測点', value: `${d.memberKeys.length}点` },
     { label: '最大震度', value: d.maxIntensity === null ? '—' : `震度${scaleLabel(d.maxIntensity)}` },
     { label: '確定まで', value: untilConfirmed },

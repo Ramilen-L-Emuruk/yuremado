@@ -4,7 +4,7 @@ import type { DetectedPoint } from '../../../utils/kyoshinDetectionView'
 import { kyoshinIndexToJma } from '../../../utils/kyoshinIntensity'
 import type { IntensityGrade } from '../../../utils/measuredIntensity'
 import { getScaleRadius } from '../../../utils/intensity'
-import { kyoshinDetectedIconId, KYOSHIN_DETECTED_ICON_BASE_RADIUS } from './kyoshinDetectedIcons'
+import { kyoshinDetectedIconId, kyoshinDetectedSubZeroIconId, KYOSHIN_DETECTED_ICON_BASE_RADIUS } from './kyoshinDetectedIcons'
 
 // 揺れ検知点マーカー（KyoshinDetectedPointsGL）の GeoJSON を組み立てる純粋関数。
 // 描画そのものはコンポーネント側、「どの点をどのバッジで描くか」の判断はこちらに置く。
@@ -22,28 +22,32 @@ function detectedRadius(jma: IntensityGrade, iconScale: number, bonus: number): 
   return jma.label !== '0' ? (getScaleRadius(jma.scale) + bonus) * iconScale : ((bonus + 3) / 2) * iconScale
 }
 
+/** 震度0 未満の印の半径。震度0 のバッジ（`(bonus + 3) / 2`）より一回り小さくする */
+function subZeroRadius(iconScale: number, bonus: number): number {
+  return ((bonus + 3) / 2) * 0.7 * iconScale
+}
+
 /**
- * 点列 → バッジ feature 列。**震度0未満・欠測（`kyoshinIndexToJma` が null）の点は描かない。**
+ * 点列 → バッジ feature 列。**欠測（インデックスが負）の点は描かない。**
  *
- * 検知に加わった観測点は、値が下がりきっても検知が消えるまで残る（`kyoshinEnsembleTracker` は点を減らさない）。
- * これらを震度0のバッジで描くと、揺れが収まるほど「もう揺れていない点」で地図が埋まり、
- * 震度0以上だけを数えるリアルタイムタブの検知カードの震度別点数と桁違いにずれる
- * （2026-08-18 の実測: カードが震度0を24点と出している時点で地図には361個のバッジがあり、
- * うち337個が震度0未満・欠測だった）。
+ * 震度0 未満（計測震度が 0.0 未満）の点は、文字なしの小さな淡い灰色の印で描く
+ * （2026-10-29 ユーザー「すみません、地図に書かない決まりを撤回したいです。検知しているなら描画するべきだと思います」、
+ * 同日ユーザー選択「文字なしの小さな印 (Recommended)」）。値が下がりきった点で地図が埋まらないよう、
+ * 震度0 未満が続いた点は束の側で描く点から外してある（`kyoshinEnsembleTracker` の `drawnKeys`）。
  */
 function buildFeatures(points: DetectedPoint[], iconScale: number, confirmed: boolean) {
   // アイコン ID 側は confirmed 以外を歴史的に `candidate` と呼ぶ（likely だけを想定していた頃の語。
   // kyoshinDetectedIcons.ts）。ここでの unconfirmed（likely）と同じものを指す。
   const bonus = confirmed ? CONFIRMED_RADIUS_BONUS : UNCONFIRMED_RADIUS_BONUS
   return points.flatMap((p) => {
+    if (!(p.index >= 0)) return []
     const jma = kyoshinIndexToJma(p.index)
-    if (!jma) return []
-    const radius = detectedRadius(jma, iconScale, bonus)
+    const radius = jma ? detectedRadius(jma, iconScale, bonus) : subZeroRadius(iconScale, bonus)
     return [{
       type: 'Feature' as const,
       properties: {
         index: p.index,
-        iconId: kyoshinDetectedIconId(jma.rank, confirmed),
+        iconId: jma ? kyoshinDetectedIconId(jma.rank, confirmed) : kyoshinDetectedSubZeroIconId(confirmed),
         iconSizeRatio: radius / KYOSHIN_DETECTED_ICON_BASE_RADIUS,
         // 欠測ホールドで直前値を描いている点。レイヤー側が icon-opacity を落として
         // 「そこに点はあるが今は値が無い」と示す（utils/kyoshinMissingHold.ts）。
@@ -63,9 +67,8 @@ function buildFeatures(points: DetectedPoint[], iconScale: number, confirmed: bo
  * ここで座標を見て重複を弾くことはしない——同一座標に複数の実体がある観測点が実在するため
  * （`buildSiteIndex` 参照）、座標で弾くと別の観測点を取り違えて落としてしまう。
  *
- * @param confirmedPoints confirmed のメンバーのうち実際に描く分（`deriveKyoshinView` の
- *   `detectedMarkerPoints`。孤立した震度0点は事前に除かれている）
- * @param unconfirmedPoints likely の全イベントのメンバー観測点（confirmed に属する点は除かれている）
+ * @param confirmedPoints confirmed の描く点（`deriveKyoshinView` の `detectedPoints`）
+ * @param unconfirmedPoints likely の全イベントの描く点（confirmed に属する点は除かれている）
  * @param iconScale 地図アイコン倍率
  */
 export function buildDetectedFC(

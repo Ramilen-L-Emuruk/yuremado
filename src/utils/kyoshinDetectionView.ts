@@ -5,8 +5,6 @@
 
 import { computeSiteKeys } from './kyoshinSiteKeys'
 import type { EnsembleDetection } from './kyoshinEnsembleTracker'
-import { kyoshinIndexToJma } from './kyoshinIntensity'
-import { haversineKm } from './geo'
 import type { SiteCoords } from '../services/kyoshin'
 
 /** 地図フィット・検知点マーカー・ヒストグラムが扱う観測点（座標＋現在インデックス）。 */
@@ -27,16 +25,6 @@ export interface DetectedPoint {
   stale?: boolean
 }
 
-/**
- * 「孤立した震度0の検知点」を判定する近傍半径(km)。この距離内に震度1以上の検知点が無ければ孤立とみなす。
- *
- * 30km の根拠（2024-08-08 日向灘 M7.1 の実データ80分で計測。詳細は設計書 §22）: 20km に下げると
- * 間引き量は増える（延べ描画の 7.8%→16.3%）が、揺れが広がっていく最初の数分で「これから震度1以上へ
- * 育つ点」＝到達先端を誤って消す数が 54→244 点に膨らむ。40km 以上では収束期の残りがほとんど落ちない。
- * 検知器の束ね方の距離とは別概念のため独立に持つ（こちらは「描いた点が揺れの面の一部か」）。
- */
-export const ISOLATED_ZERO_RADIUS_KM = 30
-
 /** 検知の表示状態（音・自動タブ切替・自動フィットの駆動元）。 */
 export interface KyoshinView {
   /** confirmed イベントが1件以上あるか */
@@ -44,28 +32,19 @@ export interface KyoshinView {
   /** likely イベントが1件以上あるか（早期反応の駆動元） */
   candidate: boolean
   /**
-   * confirmed 全イベントのメンバー観測点（**自動フィット・検知の継続判定用**）。
-   * 孤立した震度0点の間引き（`dropIsolatedZeroPoints`）は**通していない**。
+   * confirmed 全イベントの描く点（`drawnKeys`）。**検知点マーカー・カメラの寄せ先・検知の継続判定**に使う。
    * カメラ追従（`CameraFollowsGL`）と `JapanMapGL` はこの配列が空になったことを「検知が終わった」
-   * 合図として扱い、日本全体へ戻す。表示を整えるフィルタでここを空にすると、検知が続いている最中に
-   * カメラが勝手に引く（実測: 2024-08-08 日向灘のリプレイで 20 秒間・往復2回）。
-   * 地図に描くのは下の `detectedMarkerPoints` の方。
+   * 合図として扱い、日本全体へ戻す。`drawnKeys` は検知が生きている間は空にならないので、
+   * 検知が続いている最中にカメラが勝手に引くことは無い。
    */
   detectedPoints: DetectedPoint[]
-  /** confirmed 全イベントのメンバー観測点のうち**実際に描く**もの（`dropIsolatedZeroPoints` 適用後） */
-  detectedMarkerPoints: DetectedPoint[]
-  /**
-   * 主 likely イベント（最大震度が最大のもの）のメンバー観測点（候補フィット用）。
-   * `detectedPoints` と同じ理由で間引きを通していない（候補カメラフィットの対象）。
-   */
+  /** 主 likely イベント（最大震度が最大のもの）の描く点（候補フィット用）。 */
   candidatePoints: DetectedPoint[]
   /**
-   * confirmed 以外（likely）の全イベントのメンバー観測点（検知点マーカー用）。
+   * confirmed 以外（likely）の全イベントの描く点（検知点マーカー用）。
    * リアルタイムタブの検知カードが集計する集合（全イベント）と一致させるため、
-   * detectedMarkerPoints とこの 2 本で全体を覆う。**カメラフィットには使わない**
+   * detectedPoints とこの 2 本で全体を覆う。**カメラフィットには使わない**
    * （候補フィットは主 likely 1 件の candidatePoints を使う。理由は deriveKyoshinView 参照）。
-   * 間引きの対象は confirmed のメンバーだけなので、こちらは素通し（理由は
-   * `dropIsolatedZeroPoints` の「なぜ対象を confirmed に限るか」）。
    */
   unconfirmedPoints: DetectedPoint[]
   /** 主 likely イベントの ID（FitToCandidate の再フィット判定用）。無ければ null。 */
@@ -131,56 +110,6 @@ export function buildSiteIndex(
   return byKey
 }
 
-/**
- * 揺れが去った後に confirmed イベントへ残る「孤立した震度0の検知点」を落とす
- * （検知点マーカー・検知カードが共有する表示の前段フィルタ）。
- *
- * `targetKeys` に含まれる点のうち、次の 3 条件をすべて満たすものだけを落とす:
- *  1. 現在の震度が 0（震度1以上・震度0未満/欠測は対象外）
- *  2. ISOLATED_ZERO_RADIUS_KM 以内に震度1以上の検知点が無い
- *  3. 直近に立ち上がっていない（`recentOnsetKeys` に含まれない）
- *
- * 【なぜ必要か】イベントのメンバー（`memberKeys`）は、束が生きている間に加わった点をすべて合わせたもので
- * 減らない（`kyoshinEnsembleTracker`）。表面波が抜けた後も値が震度0付近をうろつく点はメンバーに残り続け、
- * 大地震のあと各地に震度0のバッジが点々と居座る。
- *
- * 【なぜ条件3が要るか】空間条件だけで落とすと、揺れが広がっていく最初の数分で「まだ震度0だが直後に
- * 震度1以上へ育つ点」＝到達先端まで消える。直近の立ち上がりを除外すればそれを避けられる。
- *
- * 【なぜ対象を confirmed に限るか】残骸を溜めるのは長寿命の confirmed イベントで、旧エンジンでの実測では
- * 孤立した震度0点の 96.6% がそれ（設計書 §22）。早い段の束は、確かな段へ上がらないまま報告が
- * `ENSEMBLE_KEEP_MS`（30 秒）途絶えれば消えるので短命（組み合わせの検知器ではこの割合を測り直していない）。
- *
- * @param points 判定に使う全点（confirmed ＋ unconfirmed をまとめて渡すこと。条件2の「近くに震度1以上が
- *   あるか」は対象外の点も材料にする——confirmed の震度0点の隣にある likely の震度1点を見落とさないため）
- * @param targetKeys 間引きの対象にする観測点キー（confirmed イベントのメンバー）
- * @param recentOnsetKeys 直近に立ち上がった観測点キー（床の係の `recentOnsetKeys`）
- */
-export function dropIsolatedZeroPoints(
-  points: DetectedPoint[],
-  targetKeys: ReadonlySet<string>,
-  recentOnsetKeys: ReadonlySet<string>,
-): DetectedPoint[] {
-  const isZero = (p: DetectedPoint): boolean => kyoshinIndexToJma(p.index)?.label === '0'
-  const strong = points.filter((p) => {
-    const jma = kyoshinIndexToJma(p.index)
-    return jma != null && jma.label !== '0'
-  })
-  // 緯度差での足切りを先に行い、haversine の呼び出しを間引く（震度0点×震度1以上点の総当たりは
-  // 大地震で数万回/秒に達する）。経度差は緯度に依存するため、ここでは緯度だけで粗く落とす。
-  const degLat = ISOLATED_ZERO_RADIUS_KM / 111.194
-  return points.filter((p) => {
-    if (!targetKeys.has(p.key)) return true
-    if (!isZero(p)) return true
-    if (recentOnsetKeys.has(p.key)) return true
-    return strong.some(
-      (s) =>
-        Math.abs(s.lat - p.lat) <= degLat &&
-        haversineKm(p.lat, p.lng, s.lat, s.lng) <= ISOLATED_ZERO_RADIUS_KM,
-    )
-  })
-}
-
 /** メンバー観測点キー列を DetectedPoint 列へ解決する（索引に無いキーは捨てる）。 */
 export function resolveMembers(keys: string[], byKey: Map<string, DetectedPoint>): DetectedPoint[] {
   const pts: DetectedPoint[] = []
@@ -194,29 +123,24 @@ export function resolveMembers(keys: string[], byKey: Map<string, DetectedPoint>
 /**
  * 検知イベント列から表示状態を導出する。
  *
- * - detectedPoints: confirmed 全イベントのメンバー観測点の和集合（フットプリント全体にフィット）。
- * - detectedMarkerPoints: 上記から孤立した震度0点を落としたもの（検知点マーカーに描く分）。
- * - candidatePoints: 主 likely イベント（最大震度が最大）1件のメンバー観測点（主候補フィットに対応）。
+ * - detectedPoints: confirmed 全イベントの描く点（`drawnKeys`）の和集合（検知点マーカー・フットプリント全体へのフィット）。
+ * - candidatePoints: 主 likely イベント（最大震度が最大）1件の描く点（主候補フィットに対応）。
  *   複数 likely の和集合にすると境界が飛び跳ねるため、常に1件へ絞る。
- * - unconfirmedPoints: likely 全イベントのメンバー観測点の和集合（検知点マーカー用）。
- *   カードの集計対象と揃えるため絞り込まない。フィットに使うと境界が飛び跳ねるため用途を分ける。
+ * - unconfirmedPoints: likely 全イベントの描く点の和集合（検知点マーカー用）。
+ *   フィットに使うと境界が飛び跳ねるため用途を分ける。
  * - 震央には**フィットしない**（メンバー観測点にフィットする）。不確実な震央へ
  *   地図が飛ぶ事故を構造的に避けるため。
  *
- * **孤立した震度0点の間引き（`dropIsolatedZeroPoints`）を通すのは `detectedMarkerPoints` だけ。**
  * `stale`（欠測ホールドで直前値を保持している点のフラグ）を渡すと、各 `DetectedPoint` に引き継がれる。
  * 描画側はそれを見て半透明で描く（`utils/kyoshinMissingHold.ts`）。
  *
- * カメラフィットに使う `detectedPoints` / `candidatePoints`、および確信度・音の駆動に使う値
- * （confirmed / candidate / candidateMaxIndex / confirmedShocks）はフィルタの影響を受けない——表示を
- * 整えるためのフィルタが「検知したかどうか」を書き換えると、地図から点が消えるのに合わせてカメラが
- * 引いたり音が鳴らなくなったりする結合が生まれるため。
+ * 確信度・音の駆動に使う値（confirmed / candidate / candidateMaxIndex / confirmedShocks）は
+ * 加わった点すべて（`memberKeys`）で見る。描く点を外しても「検知したかどうか」や音の段は変わらない。
  */
 export function deriveKyoshinView(
   detections: readonly EnsembleDetection[],
   sites: SiteCoords,
   indices: number[],
-  recentOnsetKeys: ReadonlySet<string>,
   stale?: readonly boolean[],
 ): KyoshinView {
   const byKey = buildSiteIndex(sites, indices, stale)
@@ -225,7 +149,9 @@ export function deriveKyoshinView(
   const likelyEvents = detections.filter((d) => d.confidence === 'likely')
 
   const detectedKeys = new Set<string>()
-  for (const e of confirmedEvents) for (const k of e.memberKeys) detectedKeys.add(k)
+  // 地図に描く点・カメラの寄せ先は `drawnKeys`（震度0 未満が続いた点を外したもの・空にはならない）から取る。
+  // 地域の代表点（`confirmedShocks`）と主 likely の最大インデックスは、加わった点すべて（`memberKeys`）で見る
+  for (const e of confirmedEvents) for (const k of e.drawnKeys) detectedKeys.add(k)
 
   // confirmed 以外（likely）の全イベント。
   // confirmed にも属する観測点はここから除き、detectedPoints との差集合にする（同じ観測点が
@@ -235,7 +161,7 @@ export function deriveKyoshinView(
   const unconfirmedKeys = new Set<string>()
   for (const e of detections) {
     if (e.confidence === 'confirmed') continue
-    for (const k of e.memberKeys) if (!detectedKeys.has(k)) unconfirmedKeys.add(k)
+    for (const k of e.drawnKeys) if (!detectedKeys.has(k)) unconfirmedKeys.add(k)
   }
 
   // 最大震度が無い（加わった点がいま全員欠測の）検知は、ある検知より後ろに置く
@@ -291,25 +217,11 @@ export function deriveKyoshinView(
     }]
   })
 
-  // 間引きの対象は confirmed のメンバーだが、「近くに震度1以上があるか」の判定材料には unconfirmed も
-  // 含めて渡す（confirmed の震度0点の隣にある likely の震度1点を見落とさないため）。
-  const visibleKeys = new Set(
-    dropIsolatedZeroPoints(
-      resolveMembers([...detectedKeys, ...unconfirmedKeys], byKey),
-      detectedKeys,
-      recentOnsetKeys,
-    ).map((p) => p.key),
-  )
-
   return {
     confirmed: confirmedEvents.length > 0,
     candidate: likelyEvents.length > 0,
     detectedPoints: resolveMembers([...detectedKeys], byKey),
-    detectedMarkerPoints: resolveMembers(
-      [...detectedKeys].filter((k) => visibleKeys.has(k)),
-      byKey,
-    ),
-    candidatePoints: primaryLikely ? resolveMembers(primaryLikely.memberKeys, byKey) : [],
+    candidatePoints: primaryLikely ? resolveMembers(primaryLikely.drawnKeys, byKey) : [],
     unconfirmedPoints: resolveMembers([...unconfirmedKeys], byKey),
     candidateId: primaryLikely ? primaryLikely.id : null,
     candidateMaxIndex,

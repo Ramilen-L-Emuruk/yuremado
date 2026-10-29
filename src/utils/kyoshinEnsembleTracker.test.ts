@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ENSEMBLE_KEEP_MS, type DetectorFrame, type EnsembleReport } from './kyoshinEnsembleDetector'
-import { createEnsembleTracker, type EnsembleReporter } from './kyoshinEnsembleTracker'
+import { createEnsembleTracker, DRAWN_FADE_MS, type EnsembleReporter } from './kyoshinEnsembleTracker'
 
 const SITES: [number, number][] = [[35, 135], [35.1, 135], [35, 135], [36, 136]]
 const T0 = Date.UTC(2026, 0, 1)
@@ -68,6 +68,59 @@ describe('組み合わせの検知のまとめ', () => {
       0: [row('early', [3], { id: 'e2', startMs: T0 + 500, lat: 36, lng: 136 }), row('early', [0])],
     }))
     expect(t.push(frame(0)).map(d => d.id)).toEqual(['e1', 'e2'])
+  })
+
+  describe('地図に描く点（drawnKeys）', () => {
+    const fadeSec = DRAWN_FADE_MS / 1000
+    /** 毎秒、点 0 と 1 の束を報告し続ける（寿命で消えないように） */
+    const everySecond: EnsembleReporter = { push: () => [row('confirmed', [0, 1])], setTables: () => {} }
+    /** 0 秒から lastSec 秒まで valuesAt の値を流し、最後の秒の検知を返す（段 3 は震度0 未満・段 6 は計測震度 0.0） */
+    function run(lastSec: number, valuesAt: (sec: number) => number[]) {
+      const t = createEnsembleTracker(SITES, everySecond)
+      let d = t.push(frame(0, valuesAt(0)))[0]
+      for (let s = 1; s <= lastSec; s++) d = t.push(frame(s, valuesAt(s)))[0]
+      return d
+    }
+    const low = () => [3, 8, 8, 8]
+
+    it('正: 震度0 未満が DRAWN_FADE_MS を超えて続いた点は描く点から外す', () => {
+      const d = run(fadeSec + 1, low)
+      expect(d.drawnKeys).toEqual(['35.100,135.000'])
+    })
+
+    it('対照: DRAWN_FADE_MS ちょうどまでは描く点に残す', () => {
+      const d = run(fadeSec, low)
+      expect(d.drawnKeys).toEqual(['35.000,135.000', '35.100,135.000'])
+    })
+
+    it('安全弁: 外した点も加わった点（memberKeys）からは外さない', () => {
+      const d = run(fadeSec + 1, low)
+      expect(d.memberKeys).toEqual(['35.000,135.000', '35.100,135.000'])
+    })
+
+    it('正: 外した点が震度0 以上へ戻ったら描き直す', () => {
+      const d = run(fadeSec + 2, s => (s === fadeSec + 2 ? [6, 8, 8, 8] : low()))
+      expect(d.drawnKeys).toEqual(['35.000,135.000', '35.100,135.000'])
+    })
+
+    it('対照: 欠測の秒は震度0 以上に数えない（描き直す理由にならない）', () => {
+      // 揺れ始め（震度0 以上）の後は欠測が続き、最後の 1 秒だけ震度0 未満
+      const d = run(fadeSec + 5, s => (s === 0 ? [8, 8, 8, 8] : s === fadeSec + 5 ? low() : [-1, 8, 8, 8]))
+      expect(d.drawnKeys).toEqual(['35.100,135.000'])
+    })
+
+    it('安全弁: 外すと描く点が 1 つも残らないなら、最後に震度0 以上だった時刻が同じ点はすべて残す', () => {
+      const d = run(fadeSec + 1, () => [3, 3, 8, 8])
+      expect(d.drawnKeys).toEqual(['35.000,135.000', '35.100,135.000'])
+    })
+
+    // 2026-10-29 ユーザー選択「最後まで残っていた点だけ (Recommended)」
+    it('正: 最後の描く点が外れるときは、その点だけを残す（先に外れた点を描き戻さない）', () => {
+      // 点 0 は初めから震度0 未満・点 1 は 10 秒まで震度0 以上
+      const d = run(10 + fadeSec + 1, s => [3, s <= 10 ? 8 : 3, 8, 8])
+      expect(d.drawnKeys).toEqual(['35.100,135.000'])
+      expect(d.memberKeys).toEqual(['35.000,135.000', '35.100,135.000'])
+    })
   })
 
   it('観測点の数と値の数が食い違えば投げる', () => {

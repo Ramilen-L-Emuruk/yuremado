@@ -2176,16 +2176,15 @@ export function App() {
         kyoshinV2.detections,
         kyoshinSitesGated,
         kyoshinHeld.indices,
-        kyoshinV2.recentOnsetKeys,
         kyoshinHeld.stale,
       ),
-    [kyoshinV2.detections, kyoshinSitesGated, kyoshinHeld, kyoshinV2.recentOnsetKeys],
+    [kyoshinV2.detections, kyoshinSitesGated, kyoshinHeld],
   )
   // 検知点マーカーが描く点列そのものを検知カードにも渡す（地図とカードで数える集合を構造的に揃える。
   // 以前はカード側でも同じ計算を組み立てていたが、同一の結果になることに頼ると片方の変更で黙って
   // 食い違う。詳細は docs/spec/kyoshin-detection-spec.md §8）。
   const kyoshinDetectedPoints = useMemo(
-    () => [...kyoshinView.detectedMarkerPoints, ...kyoshinView.unconfirmedPoints],
+    () => [...kyoshinView.detectedPoints, ...kyoshinView.unconfirmedPoints],
     [kyoshinView],
   )
   // 同じ場所の 2 つ目の地震の合図（`utils/kyoshinReonset.ts`）。寄せる先は、まとまって立ち上がった
@@ -2760,7 +2759,6 @@ export function App() {
                 kyoshinPsWave={psWave}
                 eews={eewsForMap}
                 detectedPoints={kyoshinView.detectedPoints}
-                detectedMarkerPoints={kyoshinView.detectedMarkerPoints}
                 candidatePoints={kyoshinView.candidatePoints}
                 unconfirmedPoints={kyoshinView.unconfirmedPoints}
                 candidateId={kyoshinView.candidateId}
