@@ -89,7 +89,7 @@
      "maxScale": 30
     }
    ],
-   "note": "疎な島・密度正規化で救済される"
+   "note": "疎な島（古い判定では密度正規化で救済していた）"
   },
   {
    "label": "pc-osumi",
@@ -215,7 +215,7 @@
      "maxScale": 10
     }
    ],
-   "note": "密網の連結の穴（K を 7→12 にした事例）。likely 止まりが正しい"
+   "note": "密網の連結の穴（古い判定で K を 7→12 にした事例。古い判定では likely 止まりを正としていた）。M2.4・震度1 の本物の地震なので、組み合わせの検知器では確かな段を正とする"
   },
   {
    "label": "pc-ibaraki",
@@ -437,7 +437,7 @@
    "label": "ng-saitama",
    "start": "20260722080030",
    "seconds": 120,
-   "category": "negative",
+   "category": "catalog",
    "quakes": [
     {
      "time": "2026/07/22 07:58:00",
@@ -458,13 +458,13 @@
      "maxScale": 10
     }
    ],
-   "note": "立ち上がるのが単点"
+   "note": "微小地震。旧エンジンは立ち上がるのが単点で検知しなかった。組み合わせの検知器は確かな段で拾う"
   },
   {
    "label": "ng-ishikawa",
    "start": "20260716012230",
    "seconds": 120,
-   "category": "negative",
+   "category": "catalog",
    "quakes": [
     {
      "time": "2026/07/16 01:23:00",
@@ -476,13 +476,13 @@
      "maxScale": 20
     }
    ],
-   "note": "立ち上がるのが単点"
+   "note": "微小地震。旧エンジンは立ち上がるのが単点で検知しなかった。組み合わせの検知器は早い段まで"
   },
   {
    "label": "ng-kyoto",
    "start": "20260720042030",
    "seconds": 120,
-   "category": "negative",
+   "category": "catalog",
    "quakes": [
     {
      "time": "2026/07/20 04:21:00",
@@ -494,13 +494,13 @@
      "maxScale": 10
     }
    ],
-   "note": "立ち上がる点が少なすぎる"
+   "note": "微小地震。旧エンジンは立ち上がる点が少なすぎて検知しなかった。組み合わせの検知器は確かな段で拾う"
   },
   {
    "label": "ng-hidaka",
    "start": "20260720030330",
    "seconds": 120,
-   "category": "negative",
+   "category": "catalog",
    "quakes": [
     {
      "time": "2026/07/20 03:04:00",
@@ -512,13 +512,13 @@
      "maxScale": 10
     }
    ],
-   "note": "立ち上がる点が少なすぎる"
+   "note": "微小地震。旧エンジンは立ち上がる点が少なすぎて検知しなかった。組み合わせの検知器は確かな段で拾う"
   },
   {
    "label": "ng-shiga",
    "start": "20260715003730",
    "seconds": 120,
-   "category": "negative",
+   "category": "catalog",
    "quakes": [
     {
      "time": "2026/07/15 00:38:00",
@@ -530,13 +530,13 @@
      "maxScale": 10
     }
    ],
-   "note": "点数律速。K を上げても救えない"
+   "note": "微小地震。旧エンジンは点数が足りず検知しなかった。組み合わせの検知器は確かな段で拾う"
   },
   {
    "label": "ng-aizu",
    "start": "20260714054530",
    "seconds": 120,
-   "category": "negative",
+   "category": "catalog",
    "quakes": [
     {
      "time": "2026/07/14 05:46:00",
@@ -548,7 +548,7 @@
      "maxScale": 20
     }
    ],
-   "note": "立ち上がる点が少なすぎる"
+   "note": "微小地震。旧エンジンは立ち上がる点が少なすぎて検知しなかった。組み合わせの検知器は確かな段で拾う"
   },
   {
    "label": "calm22-03",
@@ -596,7 +596,7 @@
    "seconds": 300,
    "category": "quiet",
    "quakes": [],
-   "note": "夕方。漏れ境界を掃くと最初に無音 faint が出る窓"
+   "note": "夕方。古い判定で漏れ境界を掃くと、最初に無音の faint（古い判定の最も弱い段）が出た窓"
   },
   {
    "label": "calm22-21",
