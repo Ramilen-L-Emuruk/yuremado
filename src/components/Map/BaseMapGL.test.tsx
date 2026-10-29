@@ -2,8 +2,9 @@
 //
 // 海底地形の先読みが**録画モードのときだけ**走ることを固定する。
 //
-// 止めたいのは据え置きの端末が配信元へ毎時 1,911 リクエストを出し続ける状態で、ブラウザ実測では
-// 効いていることを確かめてある（録画 OFF で視野内のタイルだけ、録画 ON で 15 秒時点 1,753 件）。
+// 止めたいのは据え置きの端末が配信元へ毎時 1 巡ぶん（いまは 4,244 枚）のリクエストを出し続ける状態で、ブラウザ実測では
+// 効いていることを確かめてある（2026-09-16 の実測: 録画 OFF で視野内のタイルだけ、録画 ON で 15 秒時点 1,753 件。
+// 当時の 1 巡は 1,911 枚）。
 // **その実測は、依存配列や早期 return を書き換えたときに再現されない。** 実測で分かるのは
 // 「そのときのコードがそうだった」ことだけなので、条件そのものをここで押さえる。
 //
@@ -17,8 +18,10 @@ import { render, cleanup } from '@testing-library/react'
 import type { Map as MapLibreMap } from 'maplibre-gl'
 
 // `vi.mock` の factory は巻き上げられるので、スパイもそこから見える形で作る。
-const { prefetchSpy } = vi.hoisted(() => ({
+const { prefetchSpy, tileListSpy, flightListeners } = vi.hoisted(() => ({
   prefetchSpy: vi.fn<(signal: AbortSignal) => void>(),
+  tileListSpy: vi.fn<(tiles: unknown[], signal: AbortSignal) => void>(),
+  flightListeners: new Set<(t: { center: [number, number]; zoom: number; bearing: number; pitch: number }) => void>(),
 }))
 
 // **全置換にしない。** このモジュールは `BATHYMETRY_URL` と `GEBCO_*` の定数も export しており、
@@ -26,6 +29,16 @@ const { prefetchSpy } = vi.hoisted(() => ({
 vi.mock('../../utils/gebcoPrefetch', async importOriginal => ({
   ...(await importOriginal<typeof import('../../utils/gebcoPrefetch')>()),
   startBathymetryPrefetch: prefetchSpy,
+  prefetchTileList: tileListSpy,
+}))
+
+// 寄せ始めの知らせは、受け手を手元に控えて直接呼ぶ（偽 map は fly/fit を持たない）。
+vi.mock('./gl/camera', async importOriginal => ({
+  ...(await importOriginal<typeof import('./gl/camera')>()),
+  subscribeFlightTarget: (_map: unknown, listener: Parameters<typeof flightListeners.add>[0]) => {
+    flightListeners.add(listener)
+    return () => { flightListeners.delete(listener) }
+  },
 }))
 
 // 陸地塗り・境界線は生成データ（遅延読込）の到着後に追加される。解決しない Promise で止めて、
@@ -160,5 +173,67 @@ describe('海底地形の先読みは録画モードのときだけ走る', () =
     cleanup()
 
     expect(signal.aborted).toBe(true)
+  })
+})
+
+describe('録画モードでは寄せ始めに着地先のタイルを取りに行く', () => {
+  const target = { center: [139.77, 35.68] as [number, number], zoom: 8, bearing: 0, pitch: 0 }
+  const withPane = (map: MapLibreMap) =>
+    Object.assign(map, { getContainer: () => ({ clientWidth: 1920, clientHeight: 1080 }) })
+
+  beforeEach(() => {
+    prefetchSpy.mockClear()
+    tileListSpy.mockClear()
+    flightListeners.clear()
+  })
+  afterEach(cleanup)
+
+  it('録画モードなら、知らせを受けて着地先のタイルを渡す（正）', () => {
+    const fake = createFakeMapGL()
+    renderMap(withPane(fake.map), { showBathymetry: true, recording: true })
+    expect(flightListeners.size).toBe(1)
+
+    for (const l of flightListeners) l(target)
+
+    expect(tileListSpy).toHaveBeenCalledTimes(1)
+    expect(tileListSpy.mock.calls[0][0].length).toBeGreaterThan(0)
+    expect(tileListSpy.mock.calls[0][1].aborted).toBe(false)
+  })
+
+  it('録画モードでなければ購読しない（対照）', () => {
+    const fake = createFakeMapGL()
+    renderMap(withPane(fake.map), { showBathymetry: true, recording: false })
+    expect(flightListeners.size).toBe(0)
+  })
+
+  it('次の寄せが来たら前のぶんを打ち切り、録画モードを解くと購読をやめて打ち切る（安全弁）', () => {
+    const fake = createFakeMapGL()
+    const { update } = renderMap(withPane(fake.map), { showBathymetry: true, recording: true })
+    for (const l of flightListeners) l(target)
+    for (const l of flightListeners) l({ ...target, center: [130, 33] })
+    const first = tileListSpy.mock.calls[0][1]
+    const second = tileListSpy.mock.calls[1][1]
+    expect(first.aborted).toBe(true)
+    expect(second.aborted).toBe(false)
+
+    update({ showBathymetry: true, recording: false })
+
+    expect(second.aborted).toBe(true)
+    expect(flightListeners.size).toBe(0)
+  })
+
+  it('着地先のタイルが前の寄せと同じなら、打ち切らず投げ直しもしない', () => {
+    const fake = createFakeMapGL()
+    renderMap(withPane(fake.map), { showBathymetry: true, recording: true })
+    for (const l of flightListeners) l(target)
+    for (const l of flightListeners) l({ ...target })
+
+    expect(tileListSpy).toHaveBeenCalledTimes(1)
+    expect(tileListSpy.mock.calls[0][1].aborted).toBe(false)
+
+    // 別の画へ寄せたあと元の画へ戻れば、また取りに行く
+    for (const l of flightListeners) l({ ...target, center: [130, 33] })
+    for (const l of flightListeners) l(target)
+    expect(tileListSpy).toHaveBeenCalledTimes(3)
   })
 })

@@ -263,7 +263,7 @@ export default defineConfig(configEnv => ({
           // 対象のファイル名・規則・キャッシュ名は `scripts/offlineData.ts`（事前キャッシュに
           // 載せられない理由もそちら）。
           offlineDataRuntimeCaching(base, variant),
-          // 海底地形のタイルを、日本周辺の枠の z8 までだけ控える（範囲と理由は `scripts/offlineBathymetry.ts`）。
+          // 海底地形のタイルを、録画モードの先読みと同じ範囲だけ控え、控えを先に返す（範囲と理由は `scripts/offlineBathymetry.ts`）。
           offlineBathymetryRuntimeCaching(variant),
           {
             // **`cache: 'no-store'` の要求は控えに通さない。** 標準版の接続を張り直したときの取り戻し

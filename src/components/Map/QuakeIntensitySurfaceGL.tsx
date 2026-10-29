@@ -15,6 +15,8 @@ import {
   type IsoseismalPoint,
 } from '../../utils/isoseismal'
 import { log, createLogThrottle } from '../../utils/logger'
+import { subscribeFlightTarget } from './gl/camera'
+import { lngLatBoundsForCamera } from './gl/cameraViewBounds'
 
 // 観測点ごとの震度を面として敷く（地震モードで観測点表示になっているズーム帯）。
 // 点の集合では読み取りにくい「揺れの広がりの形」を背景として見せ、観測点のバッジは
@@ -35,6 +37,9 @@ import { log, createLogThrottle } from '../../utils/logger'
 //
 // 更新は地図の移動が終わったときと電文が変わったとき。移動中は貼ったままにする（拡大縮小は
 // テクスチャの引き伸ばしで追随するので、指を離すまで作り直さなくても破綻しない）。
+// **録画モードでは、アプリが寄せ始めたときにも「今の範囲と着地先を合わせた範囲」で描いておく**
+// （2026-10-28 ユーザー選択「寄せ先で前もって描く (Recommended)」）。着地したら今までどおり描き直す。
+// 前もって描かないと、寄せている間は着地先に面が無く、着地した瞬間に面がぱっと現れる絵が録れる。
 //
 // **仕様書は docs/spec/map-rendering-spec.md §17（描き方）と quake-spec.md §9（出す条件）。**
 // ここの方針を変えるときは両方を追従させること。
@@ -68,6 +73,15 @@ const MIN_CELL_KM = 0.3
 
 /** 視野の外へ少しはみ出させる割合。移動のたびに縁が見えるのを防ぐ。 */
 const VIEW_PADDING = 0.08
+
+/**
+ * 前もって描く範囲（今の範囲と着地先を合わせたもの）の広さの上限（経度・緯度の度）。
+ *
+ * 面の canvas は長辺 `MAX_LONG_PX` までなので、範囲が広いほど 1 セルが粗くなる。日本の端から端
+ * （先島諸島〜択捉島で経度 30° 弱）へ寄せる範囲は収まり、それを大きく超える寄せ（遠地地震の震源を含む画）では
+ * 着地先の面を粗く描くより、今の面を残して着地を待つ。
+ */
+const PREDRAW_MAX_SPAN_DEG = 45
 
 const KM_PER_DEG = 111.19
 
@@ -111,6 +125,8 @@ interface Props {
   /** 観測点の震度点（区域の代表点を含まないもの＝useQuakeLayerData の stationMarkers）。 */
   markers: IntensityMarker[]
   visible: boolean
+  /** 録画モード。寄せ始めに着地先まで前もって描くのはこのときだけ（理由は冒頭）。 */
+  recording: boolean
 }
 
 /** 面を貼る初期座標。データが無い間は使われないが、source の生成には座標が要る。 */
@@ -189,7 +205,7 @@ function buildRingBoxes(prefectures: Prefectures): { boxes: RingBox[]; dropped: 
   return { boxes, dropped }
 }
 
-export function QuakeIntensitySurfaceGL({ markers, visible }: Props) {
+export function QuakeIntensitySurfaceGL({ markers, visible, recording }: Props) {
   const map = useMapGL()
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   // 補間結果を一旦置く canvas。陸クリップは ImageData に効かないため、ここへ置いてから
@@ -198,6 +214,10 @@ export function QuakeIntensitySurfaceGL({ markers, visible }: Props) {
   const addedRef = useRef(false)
   const [prefectures, setPrefectures] = useState<Prefectures | null>(null)
   const ringBoxesRef = useRef<RingBox[] | null>(null)
+  // 陸の輪郭をメルカトル平面（x＝経度、y＝`mercatorY`）で 1 度だけ組んだもの。描くたびに画素の座標で
+  // 組み直すと、全県の頂点で `mercatorY` を解くぶん 1 回 70〜170 ms かかっていた（4K の画で実測。格子の計算は
+  // 4〜6 ms）。県境データは変わらないので、描くときは canvas の変換で画素へ写すだけにする。
+  const landPathRef = useRef<Path2D | null>(null)
   const anomalyLogRef = useRef(createAnomalyLog())
 
   // 県境は陸クリップに使う。BaseMapGL が既に読んでいればキャッシュが返る（二重取得にならない）。
@@ -221,6 +241,20 @@ export function QuakeIntensitySurfaceGL({ markers, visible }: Props) {
     if (!prefectures) return
     const { boxes, dropped } = buildRingBoxes(prefectures)
     ringBoxesRef.current = boxes
+    // 組めなければ面は出さない（読み込み待ちと同じく描かずに帰る）。effect の中で投げると地図ごと落ちるので
+    // ここで受け、異常として記録する。
+    try {
+      const path = new Path2D()
+      for (const { ring } of boxes) {
+        path.moveTo(ring[0][1], mercatorY(ring[0][0]))
+        for (let i = 1; i < ring.length; i++) path.lineTo(ring[i][1], mercatorY(ring[i][0]))
+        path.closePath()
+      }
+      landPathRef.current = path
+    } catch (e) {
+      landPathRef.current = null
+      log.error('[map] 震度の面: 陸の輪郭を組めず、面を表示しない', e)
+    }
     if (dropped > 0) {
       log.warn(`[map] 震度の面: 県境ポリゴンのうち ${dropped} リングを座標の破損で除外した`)
     }
@@ -283,7 +317,11 @@ export function QuakeIntensitySurfaceGL({ markers, visible }: Props) {
       anomalyLogRef.current(kind, () => log.warn(`[map] 震度の面を描けなかった: ${reason}`))
     }
 
-    const draw = () => {
+    /**
+     * 面を描く。`extra` を渡すと、今の範囲にそれを合わせた範囲で描く（寄せ始めに着地先まで前もって描く）。
+     * 合わせた範囲が広すぎるときは何もしない（今の面を残し、着地したときの描き直しに任せる）。
+     */
+    const draw = (extra: IsoseismalBounds | null) => {
       const canvas = canvasRef.current
       const offscreen = offscreenRef.current
       const src = map.getSource(SRC) as CanvasSource | undefined
@@ -299,8 +337,10 @@ export function QuakeIntensitySurfaceGL({ markers, visible }: Props) {
       }
 
       // 出さない条件のうち、これらは正常な状態（区域集約中・電文が無い・県境の読み込み待ち）。
+      // 外接矩形と陸の輪郭は同じ effect で組むので、読み込み待ちの間はどちらも空。
       const boxes = ringBoxesRef.current
-      if (!visible || markers.length === 0 || !boxes || boxes.length === 0) {
+      const landPath = landPathRef.current
+      if (!visible || markers.length === 0 || !boxes || boxes.length === 0 || !landPath) {
         hide()
         return
       }
@@ -338,6 +378,19 @@ export function QuakeIntensitySurfaceGL({ markers, visible }: Props) {
         east: rawEast + padLng,
         north: Math.min(85, rawNorth + padLat),
         south: Math.max(-85, rawSouth - padLat),
+      }
+      if (extra) {
+        bounds.west = Math.min(bounds.west, extra.west)
+        bounds.east = Math.max(bounds.east, extra.east)
+        bounds.north = Math.min(85, Math.max(bounds.north, extra.north))
+        bounds.south = Math.max(-85, Math.min(bounds.south, extra.south))
+        if (bounds.east - bounds.west > PREDRAW_MAX_SPAN_DEG || bounds.north - bounds.south > PREDRAW_MAX_SPAN_DEG) {
+          // 見送りは異常ではない（今の面を残して着地を待つ）。効いたかを後から確かめられるよう記録だけ残す。
+          log.debug(
+            `[map] 震度の面: 寄せ先と合わせた範囲が広すぎるので前もって描かない（経度 ${(bounds.east - bounds.west).toFixed(0)}° × 緯度 ${(bounds.north - bounds.south).toFixed(0)}°）`,
+          )
+          return
+        }
       }
       // 比較は NaN に対しても偽になるので、値が壊れている場合もここで捕まる。
       if (!(bounds.east > bounds.west) || !(bounds.north > bounds.south)) {
@@ -420,18 +473,10 @@ export function QuakeIntensitySurfaceGL({ markers, visible }: Props) {
       octx.clearRect(0, 0, width, height)
       octx.putImageData(new ImageData(rgba, width, height), 0, 0)
 
-      const xOf = (lng: number) => ((lng - bounds.west) / (bounds.east - bounds.west)) * width
-      const yOf = (lat: number) => ((mercatorY(lat) - yTop) / mercHeight) * height
-
-      const landPath = new Path2D()
       let drawnRings = 0
       for (const box of boxes) {
         if (box.south > bounds.north || box.north < bounds.south) continue
         if (box.west > bounds.east || box.east < bounds.west) continue
-        const ring = box.ring
-        landPath.moveTo(xOf(ring[0][1]), yOf(ring[0][0]))
-        for (let i = 1; i < ring.length; i++) landPath.lineTo(xOf(ring[i][1]), yOf(ring[i][0]))
-        landPath.closePath()
         drawnRings++
       }
       if (drawnRings === 0) {
@@ -444,8 +489,15 @@ export function QuakeIntensitySurfaceGL({ markers, visible }: Props) {
       // 区別せず 1 つの配列へ並べており、巻き順が正しい保証がない。既定の nonzero だと巻き順が
       // 揃った瞬間に穴を抜けなくなる。同じデータを判定する `pointInRings`（utils/geo.ts）も
       // 巻き順に依存しない実装を選んでいるので、そちらへ合わせる。
+      //
+      // 輪郭はメルカトル平面で組んであるので、canvas の変換で画素へ写してから切り抜く（切り抜きの範囲は
+      // 画素の空間で残るので、転写の前に変換を戻す）。
+      const sx = width / (bounds.east - bounds.west)
+      const sy = height / mercHeight
       ctx.save()
+      ctx.setTransform(sx, 0, 0, sy, -bounds.west * sx, -yTop * sy)
       ctx.clip(landPath, 'evenodd')
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
       ctx.drawImage(offscreen, 0, 0)
       ctx.restore()
 
@@ -463,9 +515,8 @@ export function QuakeIntensitySurfaceGL({ markers, visible }: Props) {
       }
       map.setLayoutProperty(LYR, 'visibility', 'visible')
 
-      // 実測（能登本震・観測点 2782 件・1027x1000 のペイン）で最も重かったのは寄り上限のすぐ内側で
-      // 530x512・89ms。そこから寄るほど canvas が小さくなり 2ms まで下がる。移動が終わるたびに
-      // 走るので、これを大きく超えるようなら原因を見ること。
+      // 実測（3840x2160 の画・ズーム 5.5〜8）で 6〜16ms。移動が終わるたびに走るので、これを大きく
+      // 超えるようなら原因を見ること。
       const elapsed = performance.now() - startedAt
       if (elapsed > 150) {
         log.debug(`[map] 震度の面: ${width}x${height} / 観測点 ${points.length} / ${elapsed.toFixed(0)}ms`)
@@ -474,21 +525,38 @@ export function QuakeIntensitySurfaceGL({ markers, visible }: Props) {
 
     // 例外はここで受ける。`moveend` のハンドラから投げると MapLibre の `error` イベントには
     // 乗らず（あれは source のエラー専用）、このアプリのログ基盤を素通りして消える。
-    const redraw = () => {
+    const redraw = (extra: IsoseismalBounds | null = null) => {
       try {
-        draw()
+        draw(extra)
       } catch (e) {
         hide()
         anomalyLogRef.current('exception', () => log.error('[map] 震度の面の描画に失敗', e))
       }
     }
 
+    const onMoveEnd = () => redraw(null)
     redraw()
-    map.on('moveend', redraw)
+    map.on('moveend', onMoveEnd)
+    // 寄せ始めに、着地先を合わせた範囲で前もって描く。見積もりは海底地形の先読みと同じもの
+    // （gl/cameraViewBounds.ts）。外へ少しはみ出させるのは視野と同じ割合。
+    const unsubscribe = recording
+      ? subscribeFlightTarget(map, (target) => {
+          const container = map.getContainer()
+          const b = lngLatBoundsForCamera(target, container.clientWidth, container.clientHeight)
+          if (!b) {
+            log.debug('[map] 震度の面: 寄せ先の見える範囲を求められず、前もって描かない')
+            return
+          }
+          const padLng = (b.east - b.west) * VIEW_PADDING
+          const padLat = (b.north - b.south) * VIEW_PADDING
+          redraw({ west: b.west - padLng, east: b.east + padLng, north: b.north + padLat, south: b.south - padLat })
+        })
+      : () => {}
     return () => {
-      map.off('moveend', redraw)
+      map.off('moveend', onMoveEnd)
+      unsubscribe()
     }
-  }, [map, markers, visible, prefectures])
+  }, [map, markers, visible, prefectures, recording])
 
   return null
 }
