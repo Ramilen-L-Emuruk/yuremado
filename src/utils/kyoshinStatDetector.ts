@@ -10,7 +10,8 @@
  *    (b) s ≥ 1 の点の s の和の裾（切り詰めた積の検定）の最小の裾を、組の数で割り引いて S = −log10(裾) − log10(組の数)
  * 4. 段階: S ≥ T_EARLY で早い段。S ≥ T_CONF で確かな段。確かな段は、点が長い基準より上にいる間は下ろさない
  * 5. 1 つの揺れ = 1 つの id: S の大きい候補から順に、すでに別の候補が取った点を半分以上借りている候補はその候補の支えにする。
- *    新しい候補は、生きている事象の点から MERGE_KM 以内ならその事象へ（ただし古い事象へ強い候補が来たら別の揺れとして出し直す）
+ *    新しい候補は、生きている事象の点から MERGE_KM 以内ならその事象へ（ただし古い事象へ強い候補が来たら別の揺れとして出し直す）。
+ *    候補の点のうち、顔ぶれの点から広がった波で説明できる点（REACH_V・REACH_SLACK）だけを顔ぶれへ入れる。説明できない点も事象が引き取り、合流の判定と平常の数えから外す点に使う
  * 6. 位置 = 候補の中で 25 km 以内の珍しさの和が最大の点、始まり = その点の今回の立ち上がり（START_BACK 秒より前へは遡らない）
  *
  * 値はすべて、組み合わせの検知器を評価したときのもの。変えると評価で測った検知率と誤報の率が成り立たなくなる。
@@ -63,6 +64,14 @@ const LEVELS = [1, 1.5, 2, 3, 4]
 const MERGE_KM = 80
 const TPM_MIN = 5
 const START_BACK = 3
+/**
+ * 顔ぶれ（報告する点と確かな段の保持に使う点）に入れるのは、すでに顔ぶれにいるどれかの点 m から
+ * 「見かけの波の速さ REACH_V km/s × (その点の今回の立ち上がり − m の立ち上がり) ＋ REACH_SLACK km」以内の点だけ
+ * （波は近い点から近い点へ伝わるので、震源から広がる揺れは顔ぶれを少しずつ広げ、離れた所でぽつんと上がった点は入らない）。
+ * 届かない点も事象が引き取る（claimed）ので、別の束を立てない。合流の判定と、平常の数えから外す点は引き取った点で決める
+ */
+const REACH_V = 8
+const REACH_SLACK = 40
 const K1 = KMAX + 1
 
 const RAD = Math.PI / 180
@@ -169,12 +178,28 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
   const featOf = (name: ChanDef['name']) => (name === 'y' ? F.y : F.y3)
   const inEvent = new Uint8Array(n)
   type Ev = {
-    id: string; seed: number; startMs: number; members: Set<number>; lastSupport: number; confStreak: number
+    id: string; seed: number; startMs: number; members: Map<number, number>; claimed: Set<number>; firstOnset: number; lastSupport: number; confStreak: number
     confirmed: boolean; lastConf: number; lastStrong: number; best: number; born: number; run: number; ripe: number
   }
   const events: Ev[] = [], ghosts: (Ev & { goneMs: number })[] = []
   let seq = 0, tick = 0
-  const near = (c: number, e: Ev) => { for (const m of e.members) if (hav(sites[c][0], sites[c][1], sites[m][0], sites[m][1]) <= MERGE_KM) return true; return false }
+  /** 点 j の今回の立ち上がりの時刻（まだ上がっていなければいま）。フレームは 1 秒に 1 枚の前提 */
+  const onsetOf = (j: number, nowMs: number) => (F.up1[j] >= 0 ? nowMs - (F.t - 1 - F.up1[j]) * 1000 : nowMs)
+  /** 点 j の今回の立ち上がりが、事象 e の顔ぶれのどれかの点から広がった波で説明できるか */
+  const reaches = (e: Ev, j: number, onsetMs: number) => {
+    // 近い順に見て、いちばん早く上がった顔ぶれからでも届かない距離まで来たら打ち切る
+    const limit = REACH_V * Math.max(0, (onsetMs - e.firstOnset) / 1000) + REACH_SLACK
+    const nb = nbr[j]
+    for (let t = 0; t < nb.length; t++) {
+      const m = nb[t]
+      const d = hav(sites[j][0], sites[j][1], sites[m][0], sites[m][1])
+      if (d > limit) return false
+      const om = e.members.get(m)
+      if (om !== undefined && d <= REACH_V * Math.max(0, (onsetMs - om) / 1000) + REACH_SLACK) return true
+    }
+    return false
+  }
+  const near = (c: number, e: Ev) => { for (const m of e.claimed) if (hav(sites[c][0], sites[c][1], sites[m][0], sites[m][1]) <= MERGE_KM) return true; return false }
   return {
     /** 平常のゆらぎの表を差し替える。点ごとの確率の基準（P0）だけを作り直し、直近に数えた分と追っている検知は残す */
     setTables(next: QuietTables): void {
@@ -272,12 +297,31 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
           const t0 = F.up1[seed] >= 0 ? F.up1[seed] : F.t - 1
           const startMs = f.ms - Math.min(START_BACK, F.t - 1 - t0) * 1000
           ev = {
-            id: `s${seq++}`, seed, startMs, members: new Set([seed]), lastSupport: f.ms, confStreak: 0, confirmed: false,
+            id: `s${seq++}`, seed, startMs, members: new Map([[seed, onsetOf(seed, f.ms)]]), claimed: new Set([seed]),
+            firstOnset: onsetOf(seed, f.ms), lastSupport: f.ms, confStreak: 0, confirmed: false,
             lastConf: -Infinity, lastStrong: -Infinity, best: 0, born: f.ms, run: 0, ripe: Infinity,
           }
           events.push(ev)
         }
-        for (const j of g.mem) { ev.members.add(j); if (!owner.has(j)) owner.set(j, ev) }
+        let pending: number[] = []
+        for (const j of g.mem) {
+          ev.claimed.add(j)
+          if (!owner.has(j)) owner.set(j, ev)
+          if (!ev.members.has(j)) pending.push(j)
+        }
+        // 同じ秒に入った点からも届くので、入る点が無くなるまで繰り返す（候補の点を見る順に結果を左右させない）
+        for (let added = true; added && pending.length > 0;) {
+          added = false
+          const rest: number[] = []
+          for (const j of pending) {
+            const oj = onsetOf(j, f.ms)
+            if (!reaches(ev, j, oj)) { rest.push(j); continue }
+            ev.members.set(j, oj)
+            if (oj < ev.firstOnset) ev.firstOnset = oj
+            added = true
+          }
+          pending = rest
+        }
         if (!touched.has(ev)) { touched.add(ev); ev.best = 0 }
         ev.best = Math.max(ev.best, g.S)
         ev.lastSupport = f.ms
@@ -296,7 +340,7 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
         // 確かな段の事象は、点がまだ長い基準より上にいる間（揺れの続き）は下ろさない
         if (e.confirmed && f.ms - e.lastStrong < SUSTAIN_MAX * 1000) {
           let c = 0
-          for (const m of e.members) if (F.r[m] !== NONE && F.r[m] >= SUSTAIN_R && ++c >= SUSTAIN_N) break
+          for (const m of e.members.keys()) if (F.r[m] !== NONE && F.r[m] >= SUSTAIN_R && ++c >= SUSTAIN_N) break
           if (c >= SUSTAIN_N) e.lastConf = f.ms
         }
         const confAlive = e.confirmed && f.ms - e.lastConf < CONF_KEEP * 1000
@@ -305,8 +349,8 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
           if (e.confirmed) ghosts.push({ ...e, goneMs: f.ms })
           continue
         }
-        for (const m of e.members) inEvent[m] = 1
-        const lat = sites[e.seed][0], lng = sites[e.seed][1], members = [...e.members]
+        for (const m of e.claimed) inEvent[m] = 1
+        const lat = sites[e.seed][0], lng = sites[e.seed][1], members = [...e.members.keys()]
         if (confAlive || (e.ripe !== Infinity && f.ms - e.ripe < EARLY_MAX * 1000)) out.push({ id: e.id, tier: 'early', lat, lng, startMs: e.startMs, sites: members })
         if (confAlive) out.push({ id: e.id, tier: 'confirmed', lat, lng, startMs: e.startMs, sites: members })
       }
