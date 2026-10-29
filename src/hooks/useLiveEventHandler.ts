@@ -10,7 +10,7 @@ import { formatMagnitudeWithCondition, formatMagnitudeCondition } from '../utils
 import {
   eewMaxScaleInfo, isForecastScaleHigher, isForecastLpgmHigher, eewNoForecastReason, computeSingleEEWLevel, computeDisplayEEWLevel, canPresentLpgmClass,
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
-  EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo,
+  EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo, isEewLpgmClassZeroForecast, statesEewLpgmClassZero,
   isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewFirstIssueTime, eewCancelNotificationBody,
   eewSerial, eewIssueTimeMs, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, type EewNotifiedForecast,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
@@ -34,7 +34,7 @@ import {
 } from '../utils/replayEventLog'
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
-import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_UPGRADE_PHRASE, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiExpiryChangeSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
+import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_LPGM_CLASS_ZERO_TEXT, EEW_UPGRADE_PHRASE, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiExpiryChangeSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
 import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
@@ -4297,6 +4297,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 「程度以上」は語を添えるためだけに持つ。
             const confirmedLpgmInfo = eewConfirmedLpgmRef.current.get(key)
             const confirmedLpgm = confirmedLpgmInfo?.cls ?? 0
+            // 電文が階級を 0 と言い切った報か（「予想最大階級0。」を言う報）。条件は `eewIntensityText` が
+            // 句を足す条件と同値に保つこと —— ずれると、言っていない 0 が既読に入るか、言った 0 が既読に入らない。
+            // 階級 0 は上がりようが無いので「高い値」の比較に乗らず、言ったかどうかを既読の印
+            // （`zeroStated`）で別に持つ。**一度は必ず読む**（2026-10-29 ユーザー選択「一度は必ず読む (Recommended)」）。
+            const lpgmZeroStated = statesEewLpgmClassZero(latest, confirmedScale.scale, confirmedLpgm, settings.ttsReadEewLpgmClass)
+            const lpgmZeroUnspoken = lpgmZeroStated
+              && spokenEEWLpgmClassesRef.current.get(key)?.zeroStated !== true
             // 区分は引き下げない。一度「警報」と伝えた EEW は、以後 severity が落ちても
             // 「伝え済み」として扱う（前置きを言い直さない。activeEEWLevelsRef の Math.max と同じ方針）。
             const { level, spoken: spokenLevel, upgraded: levelUpgraded } = levelUpgradeOf(latest)
@@ -4309,6 +4316,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                 { cls: confirmedLpgm, over: confirmedLpgmInfo?.over === true },
                 spokenEEWLpgmClassesRef.current.get(key),
               )
+              && !lpgmZeroUnspoken
               && level <= spokenLevel) return null
             // 「緊急地震速報に切り替わりました。」は、予報として発報されたものが警報へ
             // 上がったときだけ。初報から警報なら第 1 フェーズが「緊急地震速報、〇〇で地震。」と
@@ -4336,7 +4344,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 呼ぶと「想定外」警告が誤って出たうえ、既読（spokenEEWLevelsRef 等）も更新されない
             // まま終わってしまう（1567行目以降に到達しないため）。階級が正式に確定すれば
             // `confirmLpgm` 経由で改めてここへ呼ばれるので、ここで黙っても取りこぼしにはならない。
-            if (scaleUnchanged && confirmedLpgm === 0) return null
+            if (scaleUnchanged && confirmedLpgm === 0 && !lpgmZeroUnspoken) return null
             // **震度を伝えられない報で階級だけ確定するのは電文の異常**（最大予測震度は必須要素・
             // 長周期地震動階級は任意なので、この組み合わせは作れない。判定は `canPresentLpgmClass`）。
             // 黙って落とさず記録に残す。この後の扱いは経路で分かれる——`eewLpgmOnlyText` 単体の
@@ -4358,7 +4366,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // `scalePhrase` と同じ値を使うため、ここで 1 回だけ読む。
             const noForecastWaited = eewNoForecastSettledRef.current.has(key)
             const text = scaleUnchanged
-              ? eewLpgmOnlyText(confirmedLpgm, confirmedLpgmInfo?.over === true)
+              ? (confirmedLpgm === 0 ? EEW_LPGM_CLASS_ZERO_TEXT : eewLpgmOnlyText(confirmedLpgm, confirmedLpgmInfo?.over === true))
               : eewIntensityText(confirmedScale, confirmedLpgm, latest, noForecastWaited, announceUpgrade, confirmedLpgmInfo?.over === true, ttsRegionOptions(settings))
             if (!text) {
               // 想定外。eewIntensityText 経由なら eewScaleOnlyText が常に非空を返す
@@ -4387,12 +4395,12 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             const spokenLpgm: EewMaxLpgmClassInfo = settings.ttsReadEewLpgmClass
               && canPresentLpgmClass(confirmedScale.scale, confirmedLpgm)
               ? { cls: confirmedLpgm, over: confirmedLpgmInfo?.over === true }
-              : { cls: 0, over: false }
+              : lpgmZeroStated ? { cls: 0, over: false, zeroStated: true } : { cls: 0, over: false }
             // **この発話のどの句がどの値を運ぶか**（下の `onSettled` が既読を戻す単位）。
             // **`text` と同じ材料から作ること** —— 別に組み立てると、文面を変えたときに
             // 判定だけが古い形のまま残る。`eewIntensityText` は内部でこの 2 つを繋いでいる。
             const scalePhrase = scaleUnchanged ? '' : eewScaleOnlyText(confirmedScale, latest, noForecastWaited)
-            const lpgmPhrase = eewLpgmOnlyText(spokenLpgm.cls, spokenLpgm.over)
+            const lpgmPhrase = spokenLpgm.zeroStated ? EEW_LPGM_CLASS_ZERO_TEXT : eewLpgmOnlyText(spokenLpgm.cls, spokenLpgm.over)
             const upgradePhrase = announceUpgrade ? EEW_UPGRADE_PHRASE : ''
             // 組み立てとずれていないかの検算。ずれても「声になっていない」側へ倒れて同じ値を
             // 読み直すだけだが、黙ってずれると気づけないので記録に残す。
@@ -5125,6 +5133,25 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             }, EEW_PHASE2_MAX_WAIT_MS)
             eewTtsMaxTimersRef.current.set(key, maxTimer)
           }
+        }
+        // **電文が階級を 0 と言い切ったことは、値の変化として上の安定待ちに乗らない**（階級 0 は
+        // 「階級を載せていない報」と同じ `cls: 0` なので、`updateLpgmStability` から見ると変わっていない）。
+        // 震度も据え置きの続報で初めて言い切られると、第 2 フェーズが一度も呼ばれずカードの「階級0」と
+        // 声が食い違うので、まだ言っていなければここで呼ぶ。読むか・何を読むかは `enqueuePhase2` が
+        // 決める（2026-10-29 ユーザー選択「一度は必ず読む (Recommended)」）。
+        //
+        // 震度か階級が安定待ちの途中なら呼ばない —— 確定した時点で `enqueuePhase2` が呼ばれ、
+        // そこで同じ判定が拾う。
+        // 判定は第 2 フェーズが言うかどうかと同じ述語（`statesEewLpgmClassZero`）。緩めると、言わない報
+        // （予想震度なし・階級を読まない設定）でも毎報予約が積まれ、その間 `speechBlocker` が非 EEW の
+        // 読み上げを止める（下の理由不明の待ちと同じ穴）。
+        const confirmedScaleNow = eewConfirmedScaleRef.current.get(key)
+        if (confirmedScaleNow
+          && statesEewLpgmClassZero(event, confirmedScaleNow.scale, eewConfirmedLpgmRef.current.get(key)?.cls ?? 0, settings.ttsReadEewLpgmClass)
+          && spokenEEWLpgmClassesRef.current.get(key)?.zeroStated !== true
+          && !eewScaleStabilityRef.current.has(key)
+          && !eewLpgmStabilityRef.current.has(key)) {
+          enqueuePhase2()
         }
       }
 
@@ -6360,8 +6387,15 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           const restoredLpgm = eewMaxLpgmClassInfo(eew)
           const spokenScale = prevSpokenScale && !isForecastScaleHigher(restoredScale, prevSpokenScale)
             ? prevSpokenScale : restoredScale
-          const spokenLpgm = prevSpokenLpgm && !isForecastLpgmHigher(restoredLpgm, prevSpokenLpgm)
+          const spokenLpgmBase = prevSpokenLpgm && !isForecastLpgmHigher(restoredLpgm, prevSpokenLpgm)
             ? prevSpokenLpgm : restoredLpgm
+          // 「予想最大階級0。」も T 時点までに言ったものとして扱う（他の値と同じく、窓の手前の報は発表済み）。
+          // 落とすと、注入後の最初の続報で震度が据え置きのまま「予想最大階級0。」だけが鳴る。
+          // 震度・設定を見ずに付けるのは意図どおり —— 窓の手前は値によらず発表済みとして扱い、注入後に
+          // 震度が付いた・設定を入れたことを理由に、窓の手前の 0 を言い直さない
+          const spokenLpgm: EewMaxLpgmClassInfo = isEewLpgmClassZeroForecast(eew) && spokenLpgmBase.cls === 0
+            ? { ...spokenLpgmBase, zeroStated: true }
+            : spokenLpgmBase
           // 通知の基準の予想も進める（→ `eewNotifyBaselineRef`）。起動時の復元（基準が無い）では戻した報の値を基準にし、
           // その後のライブ報で上がったら通知を出す。ライブで見ていた地震（張り直し）では上げるだけにする —— 切れていた間の
           // 報で通知は出さないが、進めないと次のライブ報で、切れていた間に上がった分の出し直しが遅れて出る。

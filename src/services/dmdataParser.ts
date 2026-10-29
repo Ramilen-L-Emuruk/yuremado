@@ -192,8 +192,8 @@ export function parseForecastLgInt(
   // **"0" は「予測なし」と分けて持つ**（`belowClass1`）。解説資料 Ⅱ.21 2-1-2 の値域は "0"〜"4" で、
   // 0 は階級1未満の予測。手元の控え（緊急地震速報 3 日分・62 地震・660 通）のうち最大の階級が 0 の報が 256 通あった。1〜4 の欄には
   // 入れない —— その欄を読む側はどこも「1〜4 か、無いか」で書かれている（2026-10-19 ユーザー承認
-  // 「別の欄で持つ (推奨)」）。いまの画面と読み上げはこの印を読まない
-  // （出すと決まっている。→ `docs/spec/telegram-coverage-audit.md` §6「決定済み・実装は未着手」）
+  // 「別の欄で持つ (推奨)」）。電文全体の印が立った報は、カードと読み上げに「階級0」と出す
+  // （→ `isEewLpgmClassZeroForecast`・`docs/spec/eew-spec.md` §4「上限を定めない予想の扱い」）
   const chosen = toStr || fromStr
   return { cls: pick(chosen), over: false, belowClass1: chosen === '0' }
 }

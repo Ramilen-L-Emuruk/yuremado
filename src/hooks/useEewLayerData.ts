@@ -23,6 +23,11 @@ export interface EewAreaFill {
    * 塗り色は 1 色しか選べないので色には効かせず、ポップアップの文言で語を補う。
    */
   scaleOrAbove: boolean
+  /**
+   * `scale` を与えた区域の予想震度の下限（`EEWRegion.scaleFrom`）。吹き出しで「3〜4」と幅を出すのに使う
+   * （→ `getEewAreaIntensityLabel`）。塗り色には効かせない。
+   */
+  scaleFrom: number
   isWarning: boolean
   rings: LatLng[][]
   /**
@@ -114,6 +119,8 @@ export function useEewLayerData(
     const maxByName = new Map<string, number>()
     // 最大値を与えた区域が「〜以上」表現だったか（同じ階級で片方だけ「以上」なら「以上」を採る）。
     const orAboveByName = new Map<string, boolean>()
+    // 最大値を与えた区域の下限（吹き出しの幅の表示に使う）。
+    const fromByName = new Map<string, number>()
     // 同じ報が電文で名乗っている到達（こちらが公開版の表示に使う値）。
     const arrivalByName = new Map<string, EewAreaArrival>()
     const warningNames = new Set<string>()
@@ -130,8 +137,13 @@ export function useEewLayerData(
         if (curMax == null || a.scaleTo > curMax) {
           maxByName.set(a.name, a.scaleTo)
           orAboveByName.set(a.name, a.scaleToOrAbove === true)
+          fromByName.set(a.name, a.scaleFrom)
         } else if (a.scaleTo === curMax) {
           if (a.scaleToOrAbove) orAboveByName.set(a.name, true)
+          // 上限が同じなら、下限の高いほう（幅の狭い予想）を採る。複数の地震が同じ区域へ同じ上限を
+          // 出したとき、幅の広い方を見せると、もう一方の地震の予想より弱く見えるため。
+          const curFrom = fromByName.get(a.name) ?? -1
+          if (a.scaleFrom > curFrom) fromByName.set(a.name, a.scaleFrom)
         }
         if (isEewWarningKindCode(a.kindCode)) warningNames.add(a.name)
       }
@@ -144,6 +156,7 @@ export function useEewLayerData(
           name,
           scale,
           scaleOrAbove: orAboveByName.get(name) === true,
+          scaleFrom: fromByName.get(name) ?? -1,
           isWarning: warningNames.has(name),
           rings: sr.rings,
           arrival: arrivalByName.get(name) ?? NO_EEW_AREA_ARRIVAL,

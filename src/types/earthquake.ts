@@ -1173,7 +1173,8 @@ export interface EEWRegion {
   name: string
   /**
    * 予想震度の下限。震度未確定は -1（`EarthquakePoint.scale` と同じセンチネル）。
-   * いまの画面と読み上げには出していない（画面へ出すと決まっている。読み上げは未決。→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）
+   * 上限と違う区域は、カードの区域の行と地図の吹き出しに「3〜4」と幅で出す（→ `getEewAreaIntensityLabel`・docs/spec/eew-spec.md §4）。
+   * 読み上げは区域ごとの震度を読まないので、下限も読まない
    */
   scaleFrom: IntensityScale
   /** 予想震度の上限。地域別の最大予想震度として `eewMaxScale()` が参照する */
@@ -1212,7 +1213,8 @@ export interface EEWRegion {
   /**
    * 電文が階級 0（階級1未満）を予測したか（`ForecastLgInt` が "0"）。`lgIntTo` は 1〜4 だけを持つので、
    * 0 の報ではそちらは `undefined` のまま、これが立つ（2026-10-19 ユーザー承認「別の欄で持つ (推奨)」）。
-   * **いまの画面・読み上げはこの印を読まない**（出すと決まっている。→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）
+   * **画面・読み上げはこの区域ごとの印を読まない**（区域の行に階級を出していないため）。電文全体の印
+   * （`EEWAlert.forecastMaxLpgmBelowClass1`）の側を、カードと読み上げに「階級0」と出す（→ `isEewLpgmClassZeroForecast`）
    */
   lgIntBelowClass1?: true
 }
@@ -1439,7 +1441,10 @@ export interface EEWAlert {
   forecastMaxLpgmClass?: LpgmClass
   /** 上限を定めない予測（電文の `To="over"`）だったか。→ `EEWRegion.lgIntToOver` */
   forecastMaxLpgmClassOver?: boolean
-  /** 電文全体の最大の予測が階級 0（階級1未満）だったか。→ `EEWRegion.lgIntBelowClass1` */
+  /**
+   * 電文全体の最大の予測が階級 0（階級1未満）だったか。→ `EEWRegion.lgIntBelowClass1`。
+   * 立っていて区域にも階級 1 以上が無い報は、カードと読み上げに「階級0」と出す（→ `isEewLpgmClassZeroForecast`）
+   */
   forecastMaxLpgmBelowClass1?: true
   /**
    * 気象庁の固定付加文（`Comments/WarningComment/Text`）。避難行動の呼びかけなどの定型文。
@@ -1456,7 +1461,10 @@ export interface EEWAlert {
   operationStatus?: TelegramOperationStatus
   /** 震源要素の精度（`Hypocenter/Accuracy`）。DMDATA の XML 経路でのみ入る。 */
   accuracy?: EEWAccuracy
-  /** 震央が内陸か海域か（`Hypocenter/Area/LandOrSea`）。値は電文どおり。 */
+  /**
+   * 震央が内陸か海域か（`Hypocenter/Area/LandOrSea`）。値は電文どおり。震源名の横に添える。
+   * 震源が決まっていない報（仮定震源要素・「非常に強い揺れを検知」）でも「（震源未確定）」の後ろへ添える（→ docs/spec/eew-spec.md §3）
+   */
   landOrSea?: '内陸' | '海域'
   /**
    * 短縮用震央地名（`Hypocenter/Area/ReduceName`）。例: 「青森県東方沖」に対して「青森東方沖」。
