@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import {
   parseEEWFromXml, parseEarthquakeFromXml, parseTsunamiFromXml,
   parseLpgmFromXml, parseNankaiFromXml, parseNankaiCommentaryFromXml, parseVyse60FromXml,
+  parseEarthquakeCountFromXml, parseQuakeNoticeFromXml,
 } from './dmdataParser'
 // @ts-expect-error -- 型定義を持たない .mjs（`scripts/lib/rateGate.mjs` と同じ扱い）
 import { writeArtifact, noteIncomplete } from '../../scripts/lib/incompleteness.mjs'
@@ -31,6 +32,28 @@ import { absorbSampleCollectionMarks } from '../../scripts/telegram-audit/collec
 
 const CACHE = process.env.TELEGRAM_CACHE ?? ''
 const OUT = process.env.COVERAGE_OUT ?? ''
+// パース結果の欄（値が入った葉の経路）の書き出し先。**渡したときだけ書く。**
+// 「読んだ値を画面・声が使っているか」を数える母集団になる（→ 手引き §2）。
+const FIELDS_OUT = process.env.FIELDS_OUT ?? ''
+
+/**
+ * パース結果を辿り、値が入った葉の経路を集める。配列の添字は `[]` に畳む。
+ * 空文字・null・undefined・空配列は「値が無い」として数えない（欄があるだけでは何も伝えていない）。
+ */
+function collectFieldPaths(value: unknown, prefix: string, out: Map<string, string>): void {
+  if (value === null || value === undefined || value === '') return
+  if (Array.isArray(value)) {
+    for (const v of value) collectFieldPaths(v, `${prefix}[]`, out)
+    return
+  }
+  if (typeof value === 'object') {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      collectFieldPaths(v, prefix ? `${prefix}.${k}` : k, out)
+    }
+    return
+  }
+  if (!out.has(prefix)) out.set(prefix, String(value).slice(0, 60))
+}
 
 /**
  * 計測した相手（パーサー）の内容。**生データに来歴を焼き込む。**
@@ -57,16 +80,19 @@ const RUN: Record<string, (headType: string, xml: string) => unknown> = {
   VTSE41: (h, x) => parseTsunamiFromXml(h, x),
   VTSE51: (h, x) => parseTsunamiFromXml(h, x),
   VTSE52: (h, x) => parseTsunamiFromXml(h, x),
+  VXSE43: (h, x) => parseEEWFromXml(h, x),
   VXSE45: (h, x) => parseEEWFromXml(h, x),
   VXSE51: (h, x) => parseEarthquakeFromXml(h, x),
   VXSE52: (h, x) => parseEarthquakeFromXml(h, x),
   VXSE53: (h, x) => parseEarthquakeFromXml(h, x),
+  VXSE60: (_h, x) => parseEarthquakeCountFromXml(x),
   VXSE61: (h, x) => parseEarthquakeFromXml(h, x),
   VXSE62: (_h, x) => parseLpgmFromXml(x),
   VYSE50: (_h, x) => parseNankaiFromXml(x),
   VYSE51: (_h, x) => parseNankaiCommentaryFromXml(x),
   VYSE52: (_h, x) => parseNankaiCommentaryFromXml(x),
   VYSE60: (_h, x) => parseVyse60FromXml(x),
+  VZSE40: (_h, x) => parseQuakeNoticeFromXml(x),
 }
 
 /** 要素の根からの経路（名前空間の接頭辞は落とす。静的側の表記と揃える） */
@@ -119,6 +145,7 @@ describe('電文と実装の突き合わせ（動的計測）', () => {
     const allAttrs = new Set<string>()
     const perType: Record<string, { read: string[]; all: string[]; readAttrs: string[]; allAttrs: string[] }> = {}
     let files = 0   // 実際に流した電文の通数（来歴に添える）
+    const fieldsPerType = new Map<string, Map<string, string>>()
 
     for (const f of fs.readdirSync(CACHE)) {
       if (!f.endsWith('.xml')) continue
@@ -156,7 +183,12 @@ describe('電文と実装の突き合わせ（動的計測）', () => {
       // **ここで読めなかった経路は「読んでいない」に数えられる**（`fileRead` が空のまま）。
       // その電文の分だけ「未読」が増えて見えるので、印が無いと誤った棚卸しの根拠になる。
       try {
-        run(type, xml)
+        const parsed = run(type, xml)
+        if (FIELDS_OUT) {
+          const m = fieldsPerType.get(type) ?? new Map<string, string>()
+          collectFieldPaths(parsed, '', m)
+          fieldsPerType.set(type, m)
+        }
       } catch (e) {
         noteIncomplete('電文の計測', `${f}: ${(e as Error)?.message ?? e}`)
       } finally {
@@ -191,6 +223,12 @@ describe('電文と実装の突き合わせ（動的計測）', () => {
     // そのまま渡る（→ `scripts/telegram-audit/collection-mark.mjs`）。
     absorbSampleCollectionMarks(CACHE)
     writeArtifact(OUT, { __meta: meta, ...result })
+    if (FIELDS_OUT) {
+      writeArtifact(FIELDS_OUT, {
+        __meta: meta,
+        ...Object.fromEntries([...fieldsPerType].map(([t, m]) => [t, Object.fromEntries([...m].sort())])),
+      })
+    }
     expect(Object.keys(result).length).toBeGreaterThan(0)
     // **1 件も読み取れていない状態で緑にしない。** パース失敗を印にして先へ進むようにしたので、
     // **全滅しても上の行は通る** —— 電文の全要素（`rec.all`）は計装の外で作るため、

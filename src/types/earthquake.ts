@@ -82,7 +82,8 @@ export interface Hypocenter {
    * 震源決定機関（`Hypocenter/Source`）。気象庁以外が決めた震源に入る（遠地地震など）。
    * 津波側の {@link TsunamiSourceEarthquake.source} と同じもの。
    *
-   * **読んで持つだけで、いまはどこからも使っていない。**
+   * **地震カードに「震源決定: …（気象庁以外）」の 1 行として出す**（2026-10-22 ユーザー承認「6-A 津波タブと同じ」。
+   * 文面は津波カードの原因地震の行と同じ。→ docs/spec/quake-spec.md §8「気象庁以外が決めた震源は、機関名を添えて出す」）。
    */
   source?: string
 }
@@ -469,9 +470,10 @@ export interface JMAQuake {
    *
    * DMDATA 経路は付加文の原文（{@link forecastText}）にこの文が入っているので要らない。P2PQuake は
    * 付加文を配信せず、区分の値だけを運ぶ。読み上げの遠地地震の文で、国内の津波の区分の文に続けて読む
-   * （2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。**画面には出さない** —— DMDSS 版も
-   * 付加文を地震カードに出していないのに揃えた。値と文面の対応は `services/p2pquake.ts` の
-   * `FOREIGN_TSUNAMI_TEXT`。
+   * （2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。地震カードの付加文の枠では、DMDSS 版の
+   * 固定付加文と同じ先頭の段落に出す（2026-10-29 ユーザー承認。→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。
+   * 読み上げも枠も、{@link forecastText} があればそちらを使う。
+   * 値と文面の対応は `services/p2pquake.ts` の `FOREIGN_TSUNAMI_TEXT`。
    */
   foreignTsunamiText?: string
   /**
@@ -731,8 +733,8 @@ export interface TsunamiSourceEarthquake extends HypocenterAreaDetail {
    * マグニチュードの種別（`jmx_eb:Magnitude@type`）。`Mj` は気象庁マグニチュード、
    * `M` は気象庁以外の機関が決めた値（`source` と対で現れる）。
    *
-   * **津波カードには出さない。** 地震カード側は 2026-10-22 に出すと決めたが（→
-   * {@link Hypocenter.magnitudeType}）、津波カードの原因地震の行はまだ諮っていない。
+   * **いまの津波カードには出していない。** 地震カードと同じく出すと決まっている
+   * （→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」。地震カード側は {@link Hypocenter.magnitudeType}）。
    */
   magnitudeType?: string
   /**
@@ -1080,6 +1082,13 @@ export interface JMATsunami {
   // ValidDateTime の経過でのみ有効期限が示される。
   validDateTime?: string
   issue: {
+    /**
+     * 電文を出したところ（DMDATA は編集官署、無ければ発表官署）。画面には出さない。
+     *
+     * **この欄を「編集官署」として出さないこと** —— 発表官署へ落ちるので、ラベルが事実を誤らせる。
+     * 津波カードに編集官署を出すと決まっている（→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）。出すときは
+     * `JMAQuake.issue.editorialOffice` と同じく `Control/EditorialOffice` だけを読む欄を分けて持つ
+     */
     source: string
     time: string
     type: 'Focus'
@@ -1162,7 +1171,10 @@ export interface EEWRegion {
    */
   pref: string
   name: string
-  /** 予想震度の下限。震度未確定は -1（`EarthquakePoint.scale` と同じセンチネル） */
+  /**
+   * 予想震度の下限。震度未確定は -1（`EarthquakePoint.scale` と同じセンチネル）。
+   * いまの画面と読み上げには出していない（画面へ出すと決まっている。読み上げは未決。→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）
+   */
   scaleFrom: IntensityScale
   /** 予想震度の上限。地域別の最大予想震度として `eewMaxScale()` が参照する */
   scaleTo: IntensityScale
@@ -1199,8 +1211,8 @@ export interface EEWRegion {
   lgIntToOver?: boolean
   /**
    * 電文が階級 0（階級1未満）を予測したか（`ForecastLgInt` が "0"）。`lgIntTo` は 1〜4 だけを持つので、
-   * 0 の報ではそちらは `undefined` のまま、これが立つ。**画面・読み上げは今は読まない**（電文に無い
-   * のと同じに見せる。2026-10-19 ユーザー承認「0 を持ち、表示は今のまま (推奨)」）
+   * 0 の報ではそちらは `undefined` のまま、これが立つ（2026-10-19 ユーザー承認「別の欄で持つ (推奨)」）。
+   * **いまの画面・読み上げはこの印を読まない**（出すと決まっている。→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）
    */
   lgIntBelowClass1?: true
 }
@@ -1520,10 +1532,8 @@ export interface LpgmPoint {
 /**
  * 長周期地震動観測情報が持つ震源の要素（`Body/Earthquake/Hypocenter`）。
  *
- * **読んで持つが、画面には出していない。** 長周期の情報は地震カードに紐づけて出しており、
- * 震源・規模はそちらが同じ地震の値を出すため重複する。**電文が持っているものを落とさない**
- * ために保持する（地震情報と突き合わせて訂正に気づく、長周期が先に届いた場合に出す、
- * といった使い道はここでは実装していない）。
+ * **いまは読んで持つだけで、画面には出していない。** 長周期の欄にも出すと決まっている
+ * （→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）。
  */
 export interface LpgmHypocenter extends HypocenterAreaDetail {
   /**
@@ -1533,7 +1543,7 @@ export interface LpgmHypocenter extends HypocenterAreaDetail {
   name: string
   /**
    * 震源決定機関（`Hypocenter/Source`）。→ {@link TsunamiSourceEarthquake.source}
-   * （意味も扱いも同じ。**読んで持つだけで、いまはどこからも使っていない**）
+   * （意味は同じ）。いまは読んで持つだけ（震源と一緒に出すと決まっている。→ {@link LpgmHypocenter}）
    */
   source?: string
 }
@@ -1649,12 +1659,16 @@ export interface JMALpgm {
   /**
    * 全国の最大震度（`Intensity/Observation/MaxInt`）。
    *
-   * **読んで持つが、画面には出していない。** 同じ地震の最大震度は地震カードが出すため。
+   * **いまは読んで持つだけで、画面には出していない**（長周期の欄にも出すと決まっている。
+   * → docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）。
    * 区域・観測点ごとの震度（{@link LpgmRegion.maxInt} / {@link LpgmPoint.int}）は
    * 階級と並べる意味があるので出している。
    */
   maxInt?: IntensityScale
-  /** 地震の規模（`jmx_eb:Magnitude`）。数値で求まらないときは持たせない。画面には出していない */
+  /**
+   * 地震の規模（`jmx_eb:Magnitude`）。数値で求まらないときは持たせない。
+   * いまは画面に出していない（→ {@link maxInt}）
+   */
   magnitude?: number
   /**
    * 規模が数値で求まらないときに気象庁が添える説明（`jmx_eb:Magnitude@description`）。
@@ -1668,7 +1682,7 @@ export interface JMALpgm {
    *
    * **読み上げの「◯時◯分頃発生した地震で」はこちらを先に採る**（`lpgmToText`）。
    * 地震情報・津波カードと同じ規則で、揃えないと同じ地震の時刻が経路によって 1 分ずれる。
-   * 画面（長周期のカード・一覧）には時刻そのものを出していない。
+   * 画面（長周期のカード・一覧）には時刻そのものをいまは出していない（→ {@link maxInt}）。
    */
   arrivalTime?: string
   /** 震源の要素。→ {@link LpgmHypocenter} */
@@ -1860,8 +1874,9 @@ export interface EarthquakeInfoMeta {
   /**
    * 情報の種別（`Body/EarthquakeInfo/InfoKind`）と、その上位分類（同要素の `@type`）。
    *
-   * **読んで持つが、画面には出していない。** アプリは電文種別で既に見分けており、
-   * 「南海トラフ地震臨時情報」のような名称は `headline`（`Head/Title`）が伝えている。
+   * **読んで持つが、画面には出していない**（2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）。
+   * アプリは電文種別で既に見分けており、「南海トラフ地震臨時情報」のような名称は
+   * `headline`（`Head/Title`）が伝えている。
    */
   earthquakeInfoKind?: string
   earthquakeInfoType?: string
