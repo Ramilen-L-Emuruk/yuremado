@@ -1,6 +1,17 @@
 {
   "versions": [
     {
+      "version": "5.74.0",
+      "date": "2026-10-29",
+      "added": [
+        {
+          "text": "強震モニタの揺れ検知を新しい方式に変更",
+          "variant": "both"
+        }
+      ],
+      "fixed": []
+    },
+    {
       "version": "5.73.0",
       "date": "2026-10-29",
       "added": [
