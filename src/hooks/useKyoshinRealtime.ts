@@ -113,6 +113,12 @@ interface UseKyoshinRealtimeOptions {
   localArchiveId?: string | null
 }
 
+/** 供給を一意に表す文字列（{@link KyoshinRealtime.supplyKey}）。時刻のずらしもローカルアーカイブも無いときがライブ */
+export const kyoshinSupplyKey = (localArchiveId: string | null, timeOffset: number | null): string =>
+  `${localArchiveId ?? ''}|${timeOffset ?? ''}`
+/** ライブ（いまの時刻の Yahoo）を流しているときの {@link KyoshinRealtime.supplyKey} */
+export const LIVE_KYOSHIN_SUPPLY_KEY = kyoshinSupplyKey(null, null)
+
 /**
  * 強震モニタのリアルタイム震度を画面へ供給するフック。
  *
@@ -151,7 +157,7 @@ export function useKyoshinRealtime(
   const localArchiveId = options?.localArchiveId ?? null
   // 供給を一意に表す文字列。下のエフェクトの deps と同じ値から作るので、供給が作り直される
   // ときだけ変わる（`enabled` は供給元の選択に関わらないので含めない）。
-  const supplyKey = `${localArchiveId ?? ''}|${timeOffset ?? ''}`
+  const supplyKey = kyoshinSupplyKey(localArchiveId, timeOffset)
 
   // 時間軸が変わったら、いま持っている値は新しい軸に属さない。落としてから次のフレームを待つ。
   //

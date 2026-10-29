@@ -26,7 +26,7 @@ import { serverNow } from '../utils/clock'
 import {
   WARMUP_BLOCK_SEC,
   WARMUP_MAX_BLOCKS,
-  isQuietFrame,
+  mayStopWarmup,
   firstContinuousIndex,
 } from '../utils/kyoshinWarmup'
 import { createLogThrottle, log } from '../utils/logger'
@@ -411,7 +411,7 @@ async function fetchWarmupFrames(
     // それまでに取れた分を助走にする（遡り続けても確かめられないまま伸びるだけ）。
     if (block.length === 0) { stoppedBy = '取得できない秒に当たった'; break }
     blocks.unshift(block)
-    if (isQuietFrame(block[0].indices)) { stoppedBy = '静穏まで遡った'; break }
+    if (mayStopWarmup(b * WARMUP_BLOCK_SEC, block[0].indices)) { stoppedBy = '静穏まで遡った'; break }
   }
   const frames = blocks.flat()
   const usable = frames.slice(firstContinuousIndex(frames.map((f) => f.time.getTime())))

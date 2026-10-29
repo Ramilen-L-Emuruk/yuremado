@@ -860,30 +860,29 @@ CRITICAL / HIGH の指摘は **`code-reviewer` エージェント**で実装か�
 
 ### 特殊ケース: 強震モニタ検知エンジンを変更したとき
 
-`src/utils/kyoshinDetector.ts`（強震モニタ揺れ検知エンジン）のパラメータ・判定ロジックを変更した場合は、上記の一般則に加えて**以下 2 つのドキュメントと回帰テスト（後述）を同一コミットで**更新する:
+強震モニタの揺れ検知エンジン（組み合わせの検知器。束ね役 `src/utils/kyoshinEnsembleDetector.ts`・統計 `kyoshinStatDetector.ts`・波面 `kyoshinClusterDetector.ts`・点ごとの上がり `kyoshinOnsetFeatures.ts`・検知の組み立て `kyoshinEnsembleTracker.ts`、および平常のゆらぎの表 `kyoshinQuietTables.ts`）の定数・判定ロジックを変更した場合は、上記の一般則に加えて**以下 2 つのドキュメントと回帰テスト（後述）を同一コミットで**更新する:
 
-- [`docs/spec/kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md)（仕様書）: **現在の実装が何をどう処理するか**を書く文書。パラメータ一覧表（§5）と判定ロジックの記述（§4）は実装と 1 対 1 で対応させる。
+- [`docs/spec/kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md)（仕様書）: **現在の実装が何をどう処理するか**を書く文書。定数一覧（§5）と検知の仕組みの記述（§4）は実装と 1 対 1 で対応させる。
 - [`docs/spec/kyoshin-detection-v3-design.md`](docs/spec/kyoshin-detection-v3-design.md)（設計書）: **なぜそうしたか**の経緯・調査・検証履歴を節番号付きで追記する（§13 以降が改訂履歴。新しい変更は末尾に §N を足す）。仕様書側からは「設計書§N」の形で参照する（仕様書自身の節番号と紛らわしいので「§N」単独で書かない）。
 
-パラメータ表と実装の一致は機械的に確認できる（`PARAMS` のキー・値を §5 の表と突き合わせる）。
-2026-08-09 の高震度 fast path 追加時にこの照合を行い、37件全件一致を確認した。
+定数表と実装の一致は機械的に確認できる（§5 の表ごとに、見出しに書いたファイルの定数の名前と値を突き合わせる）。
 
 > 2026-08-09: 検知ロジック修正時にこれらのドキュメントを更新すべき旨がどこにも明文化されておらず、更新するかどうかが作業者の判断に委ねられていた。次に触る人が同じ判断に至る保証が無いため、ルールとして明文化した。
 > 2026-08-10: 「関連ドキュメントの更新」の一般則に格上げし、検知仕様書はその特殊ケースとして位置づけを変更した。
 
-**回帰テストの追加**（ドキュメントと同じく同一コミットで）: 変更が意図した挙動を固定するテストを [`src/utils/kyoshinDetector.test.ts`](src/utils/kyoshinDetector.test.ts) に追加する。追加するのは**正・対照・安全弁の 3 種を対にしたもの**（分類の定義は上記「検証」節）。設計書§29 での例:
+**回帰テストの追加**（ドキュメントと同じく同一コミットで）: 変更が意図した挙動を固定するテストを [`src/utils/kyoshinEnsembleDetector.test.ts`](src/utils/kyoshinEnsembleDetector.test.ts) か [`src/utils/kyoshinEnsembleTracker.test.ts`](src/utils/kyoshinEnsembleTracker.test.ts) に追加する。追加するのは**正・対照・安全弁の 3 種を対にしたもの**（分類の定義は上記「検証」節）。平常のゆらぎの表の差し替えでの例:
 
 | 種類 | 例 |
 |---|---|
-| **正** | 震度4の単点が成分1点でも confirmed になる |
-| **対照** | 震度3の単点では confirmed にならない |
-| **安全弁** | 単点でも `CONFIRM_FRAMES` は免除しない |
+| **正** | 揺れの前に騒がしい表へ差し替えると、確かな段に上がらない |
+| **対照** | 同じ表へ差し替えても、毎秒の出力は差し替えないときと変わらない |
+| **安全弁** | 騒がしい表から静かな表へ戻すと、初めから静かな表で作ったときと同じ秒に確かな段へ上がる |
 
 閾値の大小関係に依存する分岐（`if` の順序で意味が決まるもの）を足したら、**その不変条件もテストで固定する**。値を 1 つ動かすだけで分岐の意味が静かに反転しうるが、型チェックでは捕まらない。
 
 既存テストが落ちたときは、**まず「意図的に覆したもの」と「壊したもの」を分ける**。前者は反転させて更新し（何を覆したかをテスト名に書く）、後者は実装を直す。設計書§29 では 3 件落ち、うち 2 件は §18 が置いた防御テスト（離れた点が同時に高震度）で、これを壊さない形に設計を変えた。
 
-**実データでの回帰確認も併せて行う。** ユニットテストは合成フレームなので、実地震の立ち上がり方の変化は捕まえられない。`npm run bench-kyoshin` が 795 窓を再生して分類ごとに集計し、**ベースライン（`scripts/kyoshin-bench/baseline.json`）との差分だけを出す**（比べるのは段階・初 likely・初 confirmed・**確定の継続フレーム数**・無関係な検知の件数）（下記「補助コマンド」参照）。窓の定義は `scripts/kyoshin-bench/windows.json` が単一情報源で、分類の意味と「その地震を検知したか」の判定規則は `scripts/bench-kyoshin.ts` の冒頭にある。
+**実データでの回帰確認も併せて行う。** ユニットテストは合成フレームなので、実地震の立ち上がり方の変化は捕まえられない。`npm run bench-kyoshin` が 795 窓を再生して分類ごとに集計し、**ベースライン（`scripts/kyoshin-bench/baseline.json`）との差分だけを出す**（比べるのは段階・初 likely・初 confirmed・**確定の継続フレーム数**・無関係な検知の件数・震源カタログに当てはまらない確かな段の件数）（下記「補助コマンド」参照）。窓の定義は `scripts/kyoshin-bench/windows.json` が単一情報源で、分類の意味と「その地震を検知したか」の判定規則は `scripts/bench-kyoshin.ts` の冒頭にある。
 
 変更を入れる前に一度素の状態で回し、差分が 0 であることを確かめてから実装に入ること（キャッシュや窓カタログの取り違えをここで弾ける）。**差分が出たら 1 件ずつ中身を見る。** 検知の位置が震源から離れていれば、それはその地震の検知ではなく無関係なノイズで、「取りこぼしが増えた」ように見えて実は「誤検知が減った」ことがある（実例: トカラ列島近海の窓で東京の観測点が鳴っていた）。意図した変更なら `-- --update-baseline` で受け入れる。
 
@@ -1096,8 +1095,9 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | `npm run build-hypocenter-catalog` | 長期震源カタログ（`public/data/hypocenter/`）の再生成。既定で **1919 年〜今年・M2.0 以上**を年ごとの JSON にする（`--from` / `--to` / `--min-magnitude` で変更可）。**API キー不要**。取得元は確定値（年・まとめ ZIP／1919〜2023 年）と速報値（日別「震源リスト」／2024 年〜2 日前）の 2 つで、**年 ZIP を先に試し 404 なら日別へ落ちる**。日別ページは `.cache/hypocenter-cache/` に残すので、2 回目以降は新しい日だけ取る（初回は 966 日・約 70MB）。**取得経路ごとに既知の地震と照合し、合わなければ exit 1 で止まる**（7 経路・7 地震）。ほかに「読めない行が想定より多い」「J レコードがあるのに 1 件も採れない」等でも失敗する（一覧は仕様書）。週 1 回は GitHub Actions が `--from 2024` で自動実行する。詳細は [`docs/spec/data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「長期震源カタログ」 |
 | （計測台）`src/services/dmdataCoverage.probe.test.ts` | **電文と実装の突き合わせ**（どの要素から値を取り出しているか）を実測する。実電文を本物のパーサーへ流し、`textContent` と `getAttribute` の呼び出しを記録する。**環境変数を渡さないと飛ばす**ので通常の `npm test` は汚さない。**静的解析（ソースの文字列から推し量る方法）は使わない**。**実行手順は書かない** —— この計測台と `scripts/telegram-audit/` の突き合わせは出力先を揃えて動かす必要があり、片方だけ書くと食い違う。手順とその理由、測り方・読まないと決めたもの・決まっていない判断・読み落としの型・残っている段は [`docs/spec/telegram-coverage-audit.md`](docs/spec/telegram-coverage-audit.md) |
 | （計測台）`src/services/dmdataDisplay.probe.test.tsx` | 読んだ値が画面と読み上げに出ているかを、欄を 1 つ消して出力が変わるかで測る。環境変数を渡さないと飛ぶ。測り方・結果の枠・見ない出口・誤検出の型は [`docs/spec/telegram-coverage-audit.md`](docs/spec/telegram-coverage-audit.md) §2「画面と読み上げに出しているかを測る」 |
-| `npx tsx scripts/measure-kyoshin-warmup.ts` | 強震モニタ検知エンジンの**助走**の効きを実データで測る。「その時刻から再生を始めた場合」が「ずっと再生し続けた場合」とどれだけ一致するかを、大地震 7 本・地震発生の 1〜12.5 分後の 164 点で見る。**API キー不要**。初回は `--fetch` で窓を取得する（7 本・約 6300 フレーム）。キャッシュは `bench-kyoshin` と共有する。`--warmups=0,180,300,600` で固定長を比べ、`--adaptive` で実装と同じ「遡って静穏で打ち切る」方式を測る。**助走の長さを決める定数（`utils/kyoshinWarmup.ts`）を変えたら実行する** —— `bench-kyoshin` は窓の先頭から流すので、途中から入る形は測れない |
+| `npx tsx scripts/measure-kyoshin-warmup.ts` | 強震モニタ検知エンジンの**助走**の効きを実データで測る。「その時刻から再生を始めた場合」が「ずっと再生し続けた場合」とどれだけ一致するかを、大地震 7 本・地震発生の 1〜12.5 分後の 164 点で見る。**API キー不要**。初回は `--fetch` で窓とその手前 15 分を取得する（7 本・約 12600 フレーム。手前を足さないと遡った先が窓の始まりで頭打ちになり、一致が水増しされる）。キャッシュは `bench-kyoshin` と共有する。`--adaptive` で実装と同じ「遡って静穏で打ち切る」方式を測り、`--min-blocks=1,3,5,7,10` で静穏でも遡る最低の長さを比べる（`--warmups=` で固定長も測れる。手前の 15 分の内なら頭打ちにならない）。**助走の長さを決める定数（`utils/kyoshinWarmup.ts`）を変えたら実行する** —— `bench-kyoshin` は窓の先頭から流すので、途中から入る形は測れない |
 | `npm run bench-kyoshin` | 強震モニタ検知エンジンの実データ回帰ベンチ（`scripts/bench-kyoshin.ts`）。Yahoo の過去フレームを窓ごとに再生し、**気象庁発表の地震を捉えられたか**と**地震が無いのに鳴っていないか**を分類ごとに集計してベースラインと突き合わせる。**API キー不要**。窓は `scripts/kyoshin-bench/windows.json`（単一情報源）。初回は `-- --fetch` で取得する（全 795 窓・500MB 超・数十分）。検知エンジンを変更したら実行する（上記「特殊ケース: 強震モニタ検知エンジンを変更したとき」） |
+| `npx tsx scripts/build-kyoshin-quiet-tables.ts` | 強震モニタ検知エンジン（組み合わせの検知器）が使う**平常のゆらぎの表**（`public/data/kyoshin-quiet-tables.json`）の再生成。**API キー不要**。地震の無い平常の日の秒フレームを丸ごと流し、観測点ごとに「どれくらいの上がりが普段から起きるか」を数える。秒フレームは `.cache/kyoshin-quiet-days/` に控え、**控えに無い時間があれば取る件数を出して止まる**（`--fetch` を付けたときだけ取る。1 日 86,400 件）。焼く日は `--days=` で変えられ、既定はスクリプトの `DEFAULT_DAYS`。**焼く日を変えたら、検知率と平常の日の誤報を `bench-kyoshin` で測り直す**（表の数え方と形は `src/utils/kyoshinQuietTables.ts`） |
 | `npx tsx scripts/build-historical-archive-<地震>.ts` | ローカル履歴アーカイブ（`public/data/historical-archives/*.json`）の再生成。対象は 4 本（`2016-kumamoto` / `2016-tottori` / `2018-iburi` / `2018-osaka`）。**API キー不要**。地震情報・津波は NII「気象庁防災情報 XML データベース」の実電文を本番と同じパーサーへ通し、EEW は気象庁の発表状況ページから取る。**電文から読む項目を足したら実行する** —— テストボタンのデータと同じ理由で、作り直さないとその項目は履歴再生で一度も画面に出ない。**`index.json` を 4 本とも書き換えるので順次実行する**。**NII からの取得だけ**は一度取ったページが `.cache/nii-cache/` に残るため、途中で落ちても続きから進む（EEW 側の取得はキャッシュを持たない）。詳細は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「国立情報学研究所（NII）の実電文アーカイブ由来のデータ（地震情報・津波）」 |
 | `npm run capture-kyoshin-waveform` | ローカル履歴アーカイブ用に、NIED K-NET/KiK-net の実波形から強震モニタ風のリアルタイム震度リプレイデータを生成（`scripts/capture-kyoshin-waveform.ts`）。**要 NIED 登録**（`NIED_KNET_USER`/`NIED_KNET_PASSWORD` を `.env.local` に。取得は `--origin=<地震発生時刻JST、YYYYMMDDHHMMSS> --id=<出力id>`）。`--origin` は複数回指定でき、本震＋離れた余震を1つのアーカイブへ統合する（1件の取得失敗ではバッチ全体を止めず、残りで統合する）。出力（`public/data/historical-archives-kyoshin/*.json`）は**再配布禁止のためリポジトリに含めない**（`.gitignore` 対象。生成した本人のローカル環境でのみ再生できる）。**devサーバー無しでも使いたい場合は、設定の窓「K-NETデータの取り込み」から同じZIPを直接ブラウザへ取り込める**（NIEDのダウンロードページで自分で取得したZIPを選ぶだけで、対応する地震へ自動で追加される。データは端末内にのみ保存）。詳細は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「NIED K-NET/KiK-netの実波形由来のデータ（ローカル限定・リアルタイム震度）」 |
 | `npm version patch\|minor\|major` | バージョン更新・コミット・git tag 作成（リリース時に 1 回だけ実行。詳細は「リリース」参照） |
@@ -1407,18 +1407,17 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 **地図上の見え方のうち揺れフォーカス・カメラ追従は下記「地図: カメラ・投影・表示閾値」節にある。検知点マーカーとカードの点集合の一致は下記の表にある。** この節にあるのは検知エンジンの判定ロジックと UI 連携。
 | 項目 | 単一情報源となる仕様書 |
 |---|---|
-| 割合や点数のような数値の確信度を作ると、決定的なゲート判定しか持たないエンジンに実装が持っていない精度を装わせることになる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
-| 見出しに検知エンジンの内部用語（フレーム・spread・近傍一致）を出すと、表を開いた利用者にはその語の手がかりが無い | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
-| `gates` を判定の入力にしない・イベント自身が既に持つ値（`lastSize`・`maxIntensity`・`confirmStreak`・`everNeighborRise`）を複製しない規則を崩すと、表示専用の構造体が判定の一部になる、または `mergeAdjacentEvents` が本体だけ書き換えたときに二重管理が黙って食い違う | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
-| 確定の根拠は `confirmedBy`（凍結）から採る・「秒読み中か」を確信度より先に見る順序を崩すと、減衰後に「確定しているのに条件をどれも満たしていない」表になる、または確定には要らない条件を残り条件として示す | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
-| 併合時に `confirmedBy` を確定時刻の早いほうから・`intenseCount` をバーが揃うときだけ合算する規則を崩すと、1 本化後の内訳表示が実態と矛盾する | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
-| 診断ログ（`detectionDiagnostics.ts` の `noteConfirmedBy`）も併合と同じ基準（確定時刻の早いほう）で選ばないと、到着順で固定した根拠が画面と黙って食い違う | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §12「判定の根拠も残す」 |
+| 割合や点数のような数値の確信度、または「あと何点で確定」のような要求値を作ると、要求値を持たない検知器に実装が持っていない判定を装わせることになる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
+| 見出しに検知器の内部用語（統計・波面・近道のような部分の名前）を出すと、表を開いた利用者にはその語の手がかりが無い（部分は働きで呼ぶ） | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
+| 表示用の組み立て（`kyoshinEnsembleEvidence.ts`）を判定の入力にすると、表示専用の値が判定の一部になる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
+| 確かな段の一行を `confirmedSnapshot`（確定した瞬間の凍結）以外から作ると、収まりかけた後に点数も震度も確定した時と違って見える | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
+| 表の「加わった観測点」（束が生きている間に加わった点・減らない）とカード本文の観測点数（いま震度0以上の点）の違いを脚注で示さない、または地域番号を検知の id の順以外で振ると、同じ画面の 2 つの点数が食い違って見える、または並びが変わったときラベルだけ別の地域へ移る | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
+| 診断ログ（`detectionDiagnostics.ts`）の確定の内訳を、確かな段になった瞬間の `confirmedSnapshot` 以外から採ると、記録が画面の一行と黙って食い違う | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §12「判定の根拠も残す」 |
 | 震度0ドット表示フィルタの慢性ノイズ床（`chronicNoiseFloor`）を震度1以上のドット表示・最大効果表示にも適用すると、実測値をそのまま見せるべき表示が慢性ノイズ床で歪む | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「震度0ドット表示フィルタ」 |
 | 床を観測点と同じ並びの配列で渡す規則、またはその床が対象の観測点配列に対して計算されたものかを位置で使う前に照合する規則を崩すと、座標が重複する観測点の2つ目以降が別センサーの床で判定される、または観測点が差し替わった直後の1レンダーで新旧の対応がずれる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「震度0ドット表示フィルタ」・[`data-sources-spec.md`](docs/spec/data-sources-spec.md) §4「取得と再生の分離」 |
-| 単点のまま居座る確定の降ろし方（数えるのは隣り合う対があるかで点数ではない・高震度では対の相手にも値を要求し低い震度では要求しない・状態は書き換えず述語で覆う）を崩すと、離れた2点が合算されて「対がある」と誤認され降ろす契機が永久に消える、本物の初動を巻き込んで降ろす、または猶予の周期で明滅して検知音が鳴り直す | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §4「単点のまま居座る確定は降ろす」 |
 | 欠測の瞬断を直前値で保持する範囲（表示・カードは保持値で強い揺れのバッジの明滅を防ぐ・音も保持値・検知エンジンは生値）を崩すと、強い揺れのバッジが1秒消えて次の秒で戻る明滅になる、復帰時に更新音が誤って鳴る、または検知の学習・慢性ノイズ床の判定が保持値で汚れる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「欠測の瞬断は直前値を保持して描く」 |
 | 検知結果を出せないフレームのカウンタを理由（例外／観測点数と震度の件数の食い違い）で分けると、片方だけ交互に起きたとき凍結が解けない | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §7「検知結果を出せないフレームが続いたとき」 |
-| 復帰時の同一地震判定を経過時間で測る、場所照合を省く、または物差しに `MERGE_EVENT_KM` 以外を使うと、復帰時に別地震を「同じ揺れの続き」と誤認して無音になる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「発報ロジック」・[`kyoshin-detection-v3-design.md`](docs/spec/kyoshin-detection-v3-design.md) §35 |
+| 復帰時の同一地震判定を経過時間で測る、場所照合を省く、または物差しに `SAME_SHAKE_KM` 以外を使うと、復帰時に別地震を「同じ揺れの続き」と誤認して無音になる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「発報ロジック」・[`kyoshin-detection-v3-design.md`](docs/spec/kyoshin-detection-v3-design.md) §35 |
 | 供給開始前のフレームを検知エンジンへ先読みで渡す「助走」を用意しない、または供給元が `prefill` を呼ばないと、履歴内の上昇量で判定する立ち上がり判定が既に揺れている状態を初動と区別できず検知が漏れる（実測で確認済み） | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §7「助走」・[`data-sources-spec.md`](docs/spec/data-sources-spec.md) §4「助走」 |
 | 助走が届くまで通常フレームを食わせない・待つのは時間軸が変わったとき（供給元識別子の変化では待たない）という規則を崩すと、後から届いた助走が「時刻の巻き戻り」として落とされて丸ごと効かなくなる、またはローカル履歴アーカイブの収録範囲を跨いだだけで検知が古い値のまま凍結する | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §7「助走」 |
 | 待たせたフレームに観測点集合の識別子を持たせて食わせる直前に照合する規則を崩すと、観測点リストの版が替わった直後のフレームが点数の偶然一致で誤って通ってしまう | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §7「助走」 |
@@ -1428,7 +1427,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | リプレイの時間軸切替時に強震モニタの値（震度・データ時刻・観測点識別子・更新停止表示）をレンダー中に専用経路で落とす規則を崩すと、旧い時間軸の値が新しい画面に流れ込み、消えた地震・EEW で動く判定がそれを誤読する。`localArchiveId` 切替も巻き込むと揺れの最中に検知が鳴り直し、`stalled` を立てると通知が誤って抑制される | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「強震モニタは自分で落とす」・[`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §7「供給が作り直されたとき」 |
 | 別地点発報のエピソード状態をリプレイの開始・停止で落とさないと、時刻を前へ飛ばす切替では自動的に解けず、新しい時間軸で鳴らすべき別地点発報の検知音・通知が黙って抑え込まれる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「リプレイの開始・停止で落とすもの」 |
 | 欠測の保持値を捨てる条件（位置の対応が壊れた・時間軸が変わった）の順序を崩し、位置対応の判定を時刻のガードより後へ置くと、供給の作り直し直後に旧い時間軸の保持値が新しい軸の最初のフレームで蘇る | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「欠測の瞬断は直前値を保持して描く」 |
-| 検知点マーカー（地図）と検知カード（リアルタイムタブ）が共有する点集合・下限（`weak` 以外の全件・震度0以上・App が用意した1本の点列）を崩すと、地図の表示と数値表示の点数が食い違う | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「検知点マーカーとカードの点数の一致」 |
+| 検知点マーカー（地図）と検知カード（リアルタイムタブ）が共有する点集合・下限（全検知・震度0以上・App が用意した1本の点列）を崩すと、地図の表示と数値表示の点数が食い違う | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「検知点マーカーとカードの点数の一致」 |
 | 検知カードの震度分布バーの分母（`scalePeakRef`）を可視中も下げると、揺れが収まっていく最中にバーが伸びて「増えた」と誤読させる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「検知カードの震度分布バーの幅スケール」 |
 | 非可視中だけ現在値へ張り直す規則を崩すと、前の揺れの減衰を見続けている最中に分母がピークのままでバーが実際より細く見え続ける（検知イベントが一度でも0件になればカードごとアンマウントされて分母は独立にリセットされるため、影響が及ぶのは同じ検知が続いている間だけ） | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「検知カードの震度分布バーの幅スケール」 |
 | 「別地点」の動的距離閾値（EEW ごとの個別判定を優先し、無ければエピソード起点でフォールバック・上下限で打ち止め）を崩すと、広域地震の伝播中に周辺地域を誤って「別地点」と連発する | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「別地点」判定の動的距離閾値 |

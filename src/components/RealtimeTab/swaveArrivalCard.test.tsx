@@ -34,7 +34,7 @@ const noForecastRow = (key: string, name: string, km: number) =>
 function renderCard(rows: SWaveArrivalRow[], source: SWaveArrival['source'] = 'telegram') {
   const arrival: SWaveArrival = { source, areaName: source === 'own' ? null : '石川県能登', rows }
   return render(
-    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[]} swaveArrival={arrival} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} kyoshinDemoted={[]} visible />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[]} swaveArrival={arrival} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
 }
 

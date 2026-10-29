@@ -9,7 +9,7 @@ import { ensureKyoshinDetectedIcons } from './gl/kyoshinDetectedIcons'
 import { buildDetectedFC } from './gl/kyoshinDetectedFeatures'
 import { MISSING_HOLD_OPACITY } from '../../utils/kyoshinMissingHold'
 
-// 揺れ検知点（confirmed＝確定／likely・faint＝未確定）を描画する MapLibre 版（Leaflet の KyoshinDetectedPoints 相当）。
+// 揺れ検知点（confirmed＝確かな段／likely＝早い段）を描画する MapLibre 版（Leaflet の KyoshinDetectedPoints 相当）。
 // 丸背景・色・フチ・震度ラベルを Canvas2D で事前ラスタライズした1枚の画像（gl/kyoshinDetectedIcons.ts）を
 // icon-image として表示する（地震情報タブの観測点 QuakeIntensityPointsGL と同方式）。
 //
@@ -33,8 +33,8 @@ const EMPTY_FC: FeatureCollection<Point> = { type: 'FeatureCollection', features
 interface Props {
   confirmedPoints: DetectedPoint[]
   /**
-   * confirmed 以外（likely / faint）の全イベントのメンバー観測点。リアルタイムタブの検知カードが
-   * 集計する集合（weak 以外の全イベント）と一致させるため、confirmed とこの 2 本で全体を覆う。
+   * confirmed 以外（likely）の全検知のメンバー観測点。リアルタイムタブの検知カードが
+   * 集計する集合（全検知）と一致させるため、confirmed とこの 2 本で全体を覆う。
    */
   unconfirmedPoints: DetectedPoint[]
   iconScale: number

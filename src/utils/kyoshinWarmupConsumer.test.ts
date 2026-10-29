@@ -1,43 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-
-// `step()` を差し替えて「どのフレームを、どの順で食わせたか」だけを見る。
-//
-// **この純関数の関心事は検知の中身ではなく、食わせる順序と落とす条件。** 本物の `step()` を
-// 通すと、落としたのか検知が立たなかっただけなのかが結果から区別できない
-// （検知そのものの回帰は `kyoshinDetector.test.ts` の担当）。
-interface StepCall {
-  dataTimeMs: number
-  values: number[]
-  eewActive: boolean
-}
-const stepCalls: StepCall[] = []
-/** その時刻の `step()` を投げさせる（例外の扱いを見るテスト用）。 */
-let throwAt: Set<number> = new Set()
-
-vi.mock('./kyoshinDetector', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./kyoshinDetector')>()
-  return {
-    ...actual,
-    step: (state: unknown, frame: { dataTimeMs: number; values: number[]; eewActive: boolean }) => {
-      stepCalls.push({
-        dataTimeMs: frame.dataTimeMs,
-        values: [...frame.values],
-        eewActive: frame.eewActive,
-      })
-      if (throwAt.has(frame.dataTimeMs)) throw new Error(`boom@${frame.dataTimeMs}`)
-      // 呼ばれるたびに別の状態を返す（前の結果を次のフレームへ渡せているかを確かめるため）。
-      return {
-        state: { ...(state as object), fedAt: frame.dataTimeMs } as never,
-        detections: [],
-        triggers: [],
-        recentOnsetKeys: [],
-        prunedMembers: 0,
-      }
-    },
-  }
-})
-
-import { buildStationMeta, initState, type StationMeta } from './kyoshinDetector'
+import { describe, it, expect, beforeEach } from 'vitest'
 import {
   consumeWarmup,
   pushPendingFrame,
@@ -45,6 +6,25 @@ import {
   type PendingFrame,
   type WarmupFrame,
 } from './kyoshinWarmupConsumer'
+
+// 食わせる先を差し替えて「どのフレームを、どの順で食わせたか」だけを見る。
+//
+// **この純関数の関心事は検知の中身ではなく、食わせる順序と落とす条件。** 本物の床の係・検知器を
+// 通すと、落としたのか何も起きなかっただけなのかが結果から区別できない。
+interface FeedCall {
+  dataTimeMs: number
+  values: number[]
+}
+const feedCalls: FeedCall[] = []
+/** その時刻で食わせる先を投げさせる（例外の扱いを見るテスト用）。 */
+let throwAt: Set<number> = new Set()
+
+/** 呼ばれるたびに別の状態を返す（前の結果を次のフレームへ渡せているかを確かめるため）。 */
+function feedFrame(state: { fedAt?: number }, dataTimeMs: number, values: number[]): { fedAt?: number } {
+  feedCalls.push({ dataTimeMs, values: [...values] })
+  if (throwAt.has(dataTimeMs)) throw new Error(`boom@${dataTimeMs}`)
+  return { ...state, fedAt: dataTimeMs }
+}
 
 // ============================================================
 // テスト用ヘルパー
@@ -55,7 +35,6 @@ const SITES: [number, number][] = [
   [35.1, 135.0],
   [35.0, 135.1],
 ]
-const META: StationMeta = buildStationMeta(SITES)
 const SITE_CONFIG = '20260101'
 
 /** 全点を同じインデックスにしたフレームの値。 */
@@ -71,23 +50,22 @@ function pendingFrame(dataTimeMs: number, opts: Partial<PendingFrame> = {}): Pen
   return { dataTimeMs, indices: values(), sitesKey: SITE_CONFIG, ...opts }
 }
 
-function input(over: Partial<ConsumeWarmupInput> = {}): ConsumeWarmupInput {
+function input(over: Partial<ConsumeWarmupInput<{ fedAt?: number }>> = {}): ConsumeWarmupInput<{ fedAt?: number }> {
   return {
-    state: initState(0),
+    state: {},
     lastSteppedMs: -Infinity,
     pending: [],
     warmupFrames: [],
-    sites: SITES,
+    siteCount: SITES.length,
     sitesSiteConfigId: SITE_CONFIG,
-    meta: META,
-    eewActive: false,
+    feedFrame,
     ...over,
   }
 }
 
 /** 食わせた順のデータ時刻。 */
 function fedTimes(): number[] {
-  return stepCalls.map((c) => c.dataTimeMs)
+  return feedCalls.map((c) => c.dataTimeMs)
 }
 
 const T0 = Date.UTC(2026, 0, 1, 0, 0, 0)
@@ -101,7 +79,7 @@ function iso(sec: number): string {
 }
 
 beforeEach(() => {
-  stepCalls.length = 0
+  feedCalls.length = 0
   throwAt = new Set()
 })
 
@@ -151,23 +129,14 @@ describe('consumeWarmup の食わせる順序', () => {
     expect(r.notices).toEqual([])
   })
 
-  it('EEW の発表中かどうかをそのまま `step()` へ渡す', () => {
-    consumeWarmup(input({
-      warmupFrames: [warmupFrame(iso(-2))],
-      eewActive: true,
-    }))
-
-    expect(stepCalls[0].eewActive).toBe(true)
-  })
-
   it('返ってきた状態を次のフレームへ渡す（フレームごとに作り直さない）', () => {
     const r = consumeWarmup(input({
       warmupFrames: [warmupFrame(iso(-3)), warmupFrame(iso(-2))],
     }))
 
-    // 差し替えた `step()` は `fedAt` を書き足して返す。最後に食わせた時刻が残っていれば、
+    // 差し替えた食わせる先は `fedAt` を書き足して返す。最後に食わせた時刻が残っていれば、
     // 前の結果を次のフレームへ渡せている。
-    expect((r.state as unknown as { fedAt: number }).fedAt).toBe(ms(-2))
+    expect(r.state.fedAt).toBe(ms(-2))
   })
 })
 
@@ -277,7 +246,7 @@ describe('consumeWarmup が返す記録', () => {
     expect(r.notices).toEqual([])
   })
 
-  it('`step()` が投げても残りを食わせ、件数と最初に落ちた時刻を `feed-failed` で返す', () => {
+  it('食わせる先が投げても残りを食わせ、件数と最初に落ちた時刻を `feed-failed` で返す', () => {
     throwAt = new Set([ms(-3), ms(-2)])
     const r = consumeWarmup(input({
       warmupFrames: [warmupFrame(iso(-3)), warmupFrame(iso(-2)), warmupFrame(iso(-1))],
@@ -293,7 +262,7 @@ describe('consumeWarmup が返す記録', () => {
     expect((notice.error as Error).message).toBe(`boom@${ms(-3)}`)
   })
 
-  it('`step()` が投げたフレームでは `lastSteppedMs` を進めない', () => {
+  it('食わせる先が投げたフレームでは `lastSteppedMs` を進めない', () => {
     throwAt = new Set([ms(-1)])
     const r = consumeWarmup(input({
       warmupFrames: [warmupFrame(iso(-2)), warmupFrame(iso(-1))],
@@ -327,7 +296,7 @@ describe('consumeWarmup が返す記録', () => {
 // ============================================================
 //
 // **呼び出し元はフックのエフェクト。** 投げるとエフェクトごと未捕捉例外で抜け、根のエラー
-// 境界まで飛んで画面全体が落ちる。`step()` 以外の例外もここで止まることを確かめる。
+// 境界まで飛んで画面全体が落ちる。食わせる先以外の例外もここで止まることを確かめる。
 
 describe('consumeWarmup は例外を外へ出さない', () => {
   it('震度の配列が壊れたフレームでも投げず、残りを食わせて `feed-failed` を返す', () => {

@@ -4,7 +4,7 @@ import type { TabId } from '../components/IconNav'
 import type { AppSettings } from './useSettings'
 import type { AlertTitleApi } from './useAlertTitle'
 import { playAlertSound, playKyoshinUpdateSound, kyoshinLevel } from '../utils/alertSound'
-import { kyoshinIndexToLabel } from '../utils/kyoshinIntensity'
+import { kyoshinDetectionScaleLabel } from '../utils/kyoshinIntensity'
 import { showBrowserNotification } from '../utils/notifications'
 import { hasDepth } from '../utils/formatters'
 import { hasKnownEpicenter, haversineKm } from '../utils/geo'
@@ -12,7 +12,6 @@ import { log } from '../utils/logger'
 import { reachRadiusKm } from '../utils/travelTime'
 import { eewFeltRadiusKm, isProvisionalHypocenter } from '../utils/eew'
 import type { ConfirmedShock } from '../utils/kyoshinDetectionView'
-import { PARAMS } from '../utils/kyoshinDetector'
 import { notificationAllowed } from '../utils/notificationGate'
 
 // 強震モニタの揺れ検知（V3 エンジン）に応じたタブ切替・ウィンドウタイトル・通知音・ブラウザ通知を担うフック。
@@ -493,13 +492,19 @@ export function stepAlertRegions(
 }
 
 /**
+ * 途絶をまたいで「同じ揺れの続き」とみなす、重心どうしの距離（km）。旧エンジンが同じ地震の分裂した検知を
+ * 1 本にまとめていた距離（100 km・設計書§35）をそのまま引き継いだ。
+ */
+export const SAME_SHAKE_KM = 100
+
+/**
  * 復帰後の検知が、途絶前と同じ揺れか。**復帰後のすべての地点が途絶前のいずれかの近くにある**ときだけ真。
  *
  * 1 つでも離れた地点が混じっていれば偽——別の地震が始まっている可能性があり、そこで音を抑えると
  * **無関係な地震を無音で握り潰す**。「余分に鳴る」より悪い失敗なので、判定は鳴らす側へ倒す。
  *
- * 物差しは `MERGE_EVENT_KM`（イベント重心がこの距離以内なら 1 地震として併合する）。照合しているのが
- * まさに**イベント重心どうし**（`ConfirmedShock` の `lat`/`lng`）なので目的が一致する。同一地震の照合に
+ * 物差しは `SAME_SHAKE_KM`（重心どうしがこの距離以内なら同じ揺れ）。照合しているのは**検知の
+ * 重心どうし**（`ConfirmedShock` の `lat`/`lng`）。同一地震の照合に
  * 使う `REGION_MATCH_KM`(300km) は借りない——あちらは「1 つの地震の揺れが継続監視の中でどこまで
  * 広がりうるか」の物差しで、途絶をまたいだ同一性の判定には広すぎる（途絶の間に重心が動くのは、その間に
  * S 波が進むぶん）。`isSameEarthquake` そのものも使わない。あちらは経過時間と EEW から
@@ -512,7 +517,7 @@ export function isSameShakeAsBefore(
   before: readonly ConfirmedShock[],
 ): boolean {
   if (now.length === 0 || before.length === 0) return false
-  return now.every((s) => before.some((b) => haversineKm(s.lat, s.lng, b.lat, b.lng) <= PARAMS.MERGE_EVENT_KM))
+  return now.every((s) => before.some((b) => haversineKm(s.lat, s.lng, b.lat, b.lng) <= SAME_SHAKE_KM))
 }
 
 /** 同じ場所の 2 つ目の地震の合図（`KyoshinAlertsDeps.reonset`）。 */
@@ -646,9 +651,10 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
   }, [])
 
   // confirmed 中はイベント自身のメンバー最大インデックス、likely 中は主候補イベントの最大インデックス。
-  // 非検知時は音を鳴らさないため 0 でよい。
+  // 非検知時は音を鳴らさないため 0 でよい。confirmed の初期値は -1（欠測）——全地域のメンバーが欠測なら
+  // 通知の呼び名を付けない（0 から始めると計測震度 -3.0 の値があるように「0以下」と名乗る）
   const effectiveKyoshinMaxIndex = useMemo(() => {
-    if (confirmed) return confirmedShocks.reduce((max, s) => Math.max(max, s.index), 0)
+    if (confirmed) return confirmedShocks.reduce((max, s) => Math.max(max, s.index), -1)
     if (candidate) return candidateMaxIndex
     return 0
   }, [confirmed, confirmedShocks, candidate, candidateMaxIndex])
@@ -698,7 +704,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
           playAlertSound('kyoshin')
         }
         if (notificationAllowed(settings, 'detection')) {
-          const label = kyoshinIndexToLabel(effectiveKyoshinMaxIndex) ?? '?'
+          const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
           showBrowserNotification('揺れを検知中', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection')
           notifiedLevelRef.current = kyoshinLevel(effectiveKyoshinMaxIndex)
         }
@@ -770,7 +776,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     // 通知を出していない揺れ（この揺れで出していない・前の段と同じ）には出さない（→ `notifiedLevelRef`）
     const level = kyoshinLevel(effectiveKyoshinMaxIndex)
     if (notifiedLevelRef.current < 0 || level <= notifiedLevelRef.current) return
-    const label = kyoshinIndexToLabel(effectiveKyoshinMaxIndex) ?? '?'
+    const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
     showBrowserNotification('揺れを検知中', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection')
     notifiedLevelRef.current = level
   }
@@ -846,7 +852,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     if (settings.soundEnabled) playAlertSound('kyoshin')
     if (notificationAllowed(settings, 'detection')) {
       // 全体の最大震度ではなく、発報した地域自身の推定震度を出す（「別の地点」の報せなので）
-      const label = kyoshinIndexToLabel(alert.index) ?? '?'
+      const label = kyoshinDetectionScaleLabel(alert.index) ?? '?'
       showBrowserNotification('別の地点で揺れを検知', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection-new')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dataTime を毎フレーム駆動キーにし他は最新クロージャを参照

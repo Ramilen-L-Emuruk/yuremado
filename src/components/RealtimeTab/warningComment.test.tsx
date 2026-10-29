@@ -42,7 +42,7 @@ function makeEEW(over: Partial<EEWAlert> = {}): EEWAlert {
 
 const renderTab = (eew: EEWAlert) =>
   render(
-    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} kyoshinDemoted={[]} visible />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
 
 /** a が b より前に出ているか。 */
@@ -86,7 +86,7 @@ describe('EEW カードの固定付加文', () => {
 describe('EEW カードの新たに加わった警報の地方', () => {
   const rerenderTab = (r: ReturnType<typeof renderTab>, eew: EEWAlert) =>
     r.rerender(
-      <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} kyoshinDemoted={[]} visible />,
+      <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
     )
   const regionSpan = (name: string) => {
     return screen.getByText((_, node) => node?.tagName === 'SPAN' && node.textContent === name) as HTMLElement

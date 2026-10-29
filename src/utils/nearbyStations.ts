@@ -31,7 +31,7 @@
 // （`quakeScaleForScope`）。
 
 import { haversineKm } from './geo'
-import { computeSiteKeys } from './kyoshinDetector'
+import { computeSiteKeys } from './kyoshinSiteKeys'
 import type { SiteCoords } from '../services/kyoshin'
 import { stationEntries, type StationCoordsData } from './stationCoords'
 
@@ -55,13 +55,13 @@ export interface HomePoint {
  * 強震モニタの観測点のうち、半径内にあるものの**観測点キー**を返す。
  *
  * 添字ではなくキーを返すのは、突き合わせる相手が検知エンジンの出力だから。エンジンはメンバー
- * 観測点をキーで持ち（`DetectionEvent.memberKeys`）、それを解決した `DetectedPoint` もキーを
+ * 観測点をキーで持ち（`EnsembleDetection.memberKeys`）、それを解決した `DetectedPoint` もキーを
  * 持つ。**同一座標に複数の実体がある観測点が実在する**ため（`computeSiteKeys` の説明）、点の
  * 同一性は座標ではなくキーで判断する。
  *
  * **`sites` に穴（欠けた要素）があってはならない。** キーの生成を検知エンジンと共有した結果、
  * この関数も `computeSiteKeys` と同じ前提（密な配列）に従う。穴があれば例外になるが、同じ配列は
- * 検知エンジンの `step()` も同じ関数へ渡しているので、そこが先に壊れる。
+ * 検知エンジン（`kyoshinEnsembleTracker.ts`）も同じ関数へ渡しているので、そこが先に壊れる。
  */
 export function nearbyKyoshinKeys(
   sites: SiteCoords,

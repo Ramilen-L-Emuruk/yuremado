@@ -15,8 +15,24 @@
 // 最中に来た M3.5 以上 162 件のうち、今の音が鳴らない 81 件の 6 件を拾い、発火 6 回のうち二度鳴りは 3 回。
 // 普段の 795 窓では発火 2 回（地震に結び付く 1・二度鳴り 1）。静けさを 30 秒にすると拾う数は 9 件へ
 // 増えるが、普段の窓で二度鳴りが 8 回へ増える（2026-10-24 計測・ユーザー選択「60 秒静か・3 点 (Recommended)」）。
+//
+// 【新しい束】組み合わせの検知器は、同じ場所の 2 つ目の揺れを別の束として出すことがある。その束は
+// 現れたばかりなので上の見分け方（現れてから 60 秒は鳴らさない）では鳴らず、別地点の発報も一度鳴った
+// 地域の内側では鳴らない。そこで、近く（`REONSET_NEARBY_KM` の内）の確かな束が `REONSET_QUIET_MS` 以上
+// 続いている最中に、別の束が確かな段になったら、それも「2 つ目」とみなす。余震の多い 3 窓で、最中に新しい
+// 束が確かな段になった 11 回のうち 7 回は音が無く、能登の 5 回は M3.9〜M5.0 の余震だった
+// （2026-10-29 計測・ユーザー選択「新しい束でも鳴らす (Recommended)」）。
+//
+// 【同じ地震の波は外す】先の束の揺れ始めから新しい束の揺れ始めまでの間に、地震の波が先の束の位置から
+// 届く距離（見かけの速さが `REONSET_WAVE_KMPS_MIN`〜`REONSET_WAVE_KMPS_MAX`）なら、それは同じ地震の揺れが
+// 遠くへ届いただけとみなして鳴らさない（2026-10-29 ユーザー選択「同じ地震の波を速さで外す」）。
+// 評価台の窓すべてと余震の多い 3 窓で、2 つ目の合図は 31 回から 18 回に減った（2026-10-29 計測）。外れた 13 回は
+// 見かけの速さが 2.5〜4.7 km/s で、うち 12 回は新しい束の揺れ始めの前後（30 秒前〜10 秒後）に 150 km 以内の
+// 気象庁の震源が無かった。1 回（2026-08-14 17:31・M3.1）は本物の別の地震だった見込みがあるが、3.0 km/s で外れた。
+// 残った本物（福島県沖 2022 の本震・能登 2024 の余震）は 0.2〜1.5 km/s だった。
 
-import type { DetectionEvent } from './kyoshinDetector'
+import type { EnsembleDetection } from './kyoshinEnsembleTracker'
+import { haversineKm } from './geo'
 
 /** 新しい立ち上がりが無かった時間がこれ以上続いてから、まとまった立ち上がりを「2 つ目」とみなす（ms） */
 export const REONSET_QUIET_MS = 60_000
@@ -24,10 +40,21 @@ export const REONSET_QUIET_MS = 60_000
 export const REONSET_BURST_MS = 3_000
 /** 「2 つ目」とみなす、まとまった新しい立ち上がりの点数 */
 export const REONSET_MIN_POINTS = 3
+/**
+ * 新しい束を「同じ場所の 2 つ目」とみなす、続いている確かな束との距離（km。束の位置どうし）。
+ * 別地点の発報が同じ地震とみなす距離（`useKyoshinAlerts` の `REGION_MATCH_KM`）と同じ値にした。これより
+ * 離れた束は別地点の発報が受け持つ
+ */
+export const REONSET_NEARBY_KM = 300
+/** 先の束から新しい束までの見かけの速さ（km/s）がこの範囲なら、同じ地震の波が届いただけとみなす */
+export const REONSET_WAVE_KMPS_MIN = 2.5
+export const REONSET_WAVE_KMPS_MAX = 5
 
 interface PerEvent {
   /** イベントを初めて見たデータ時刻 */
   firstSeenMs: number
+  /** 確かな段で初めて見たデータ時刻（まだなら null） */
+  confirmedSinceMs: number | null
   /** メンバーが最後に新しく立ち上がったデータ時刻（無ければ firstSeenMs） */
   lastOnsetMs: number
   /** 静けさを挟んだあとの立ち上がり（データ時刻と観測点キー） */
@@ -67,12 +94,12 @@ export interface ReonsetAlert {
  * データ時刻が巻き戻ったら（リプレイの開始・やり直し）状態を捨てる。
  *
  * @param state 呼び出し側が持ち越す状態（**この関数が破壊的に更新する**）
- * @param recentOnsetKeys 直近に立ち上がった観測点（`step()` の `recentOnsetKeys`）
+ * @param recentOnsetKeys 直近に立ち上がった観測点（床の係の `recentOnsetKeys`）
  * @param nowMs フレームのデータ時刻。読めないときは状態を変えずに null
  */
 export function stepReonset(
   state: ReonsetState,
-  detections: readonly DetectionEvent[],
+  detections: readonly Pick<EnsembleDetection, 'id' | 'confidence' | 'memberKeys' | 'epicenter' | 'originTimeMs'>[],
   recentOnsetKeys: Iterable<string>,
   nowMs: number,
 ): ReonsetAlert | null {
@@ -91,14 +118,38 @@ export function stepReonset(
 
   let result: ReonsetAlert | null = null
   const alive = new Set<string>()
+  // このフレームで確かな段になった束は、前のフレームまでの記録だけと比べる（同じフレームで確かな段に
+  // なった束どうしを「続いている束」と取り違えないよう、先に記録を読んでから書き足す）
+  const settledConfirmed = detections.filter((e) => {
+    const since = state.byId.get(e.id)?.confirmedSinceMs
+    return e.confidence === 'confirmed' && since != null && nowMs - since >= REONSET_QUIET_MS
+  })
   for (const e of detections) {
     alive.add(e.id)
     let t = state.byId.get(e.id)
     if (!t) {
-      t = { firstSeenMs: nowMs, lastOnsetMs: nowMs, burst: [], lastFireMs: -Infinity }
+      t = { firstSeenMs: nowMs, confirmedSinceMs: null, lastOnsetMs: nowMs, burst: [], lastFireMs: -Infinity }
       state.byId.set(e.id, t)
     }
     if (e.confidence !== 'confirmed') continue
+    if (t.confirmedSinceMs === null) {
+      t.confirmedSinceMs = nowMs
+      const others = settledConfirmed.filter((o) => o.id !== e.id)
+      const km = (o: (typeof others)[number]) => haversineKm(o.epicenter[0], o.epicenter[1], e.epicenter[0], e.epicenter[1])
+      const nearby = others.some((o) => km(o) <= REONSET_NEARBY_KM)
+      const sameQuakeWave = others.some((o) => {
+        const dtSec = (e.originTimeMs - o.originTimeMs) / 1000
+        if (!(dtSec > 0)) return false
+        const v = km(o) / dtSec
+        return v >= REONSET_WAVE_KMPS_MIN && v <= REONSET_WAVE_KMPS_MAX
+      })
+      if (result === null && nearby && !sameQuakeWave) {
+        result = { eventId: e.id, atMs: nowMs, keys: [...e.memberKeys] }
+        t.lastFireMs = nowMs
+        t.burst = []
+        continue
+      }
+    }
     const members = new Set(e.memberKeys)
     const fresh = newOnsets.filter((k) => members.has(k))
     t.burst = t.burst.filter((b) => nowMs - b.ms <= REONSET_BURST_MS)

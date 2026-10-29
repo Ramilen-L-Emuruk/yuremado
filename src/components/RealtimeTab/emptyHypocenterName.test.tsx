@@ -39,7 +39,7 @@ function makeEEW(over: { name?: string; latitude?: number; longitude?: number; c
 
 const renderTab = (eew: EEWAlert) =>
   render(
-    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} kyoshinDemoted={[]} visible />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
 
 describe('EEW カード: 震央地名が空の報', () => {

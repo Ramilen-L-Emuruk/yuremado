@@ -1,10 +1,10 @@
 /**
- * 強震モニタ検知エンジン（`src/utils/kyoshinDetector.ts`）の実データ回帰ベンチ。
+ * 強震モニタの揺れ検知（組み合わせの検知器・`src/utils/kyoshinEnsembleTracker.ts`）の実データ回帰ベンチ。
  *
  * Yahoo 強震モニタの過去フレームを窓ごとに再生して検知エンジンへ流し、
  *  - 気象庁が発表した地震を捉えられたか（検知率・確定までの時刻）
  *  - 地震が無いのに鳴っていないか（無関係な検知の件数）
- * を分類ごとに集計する。ユニットテスト（`src/utils/kyoshinDetector.test.ts`）は合成フレームで
+ * を分類ごとに集計する。ユニットテスト（`src/utils/kyoshinEnsemble*.test.ts`）は合成フレームで
  * 判定ロジックを固定するが、実地震の立ち上がり方は捕まえられないため、検知エンジンを変更したら
  * こちらも回す（CLAUDE.md「特殊ケース: 強震モニタ検知エンジンを変更したとき」）。
  *
@@ -18,11 +18,34 @@
  * npm run bench-kyoshin
  *
  * # 分類を絞る（付録A 相当だけを手早く見る）
- * npm run bench-kyoshin -- --only positive,major,negative,quiet
+ * npm run bench-kyoshin -- --only positive,major,quiet
  *
  * # 変更を受け入れてベースラインを更新する
  * npm run bench-kyoshin -- --update-baseline
+ *
+ * # 平常のゆらぎの表を差し替えて測る・無関係な検知を書き出す
+ * npm run bench-kyoshin -- [--tables=<平常のゆらぎの表>] [--dump-unrelated=<書き出し先>]
  * ```
+ *
+ * 検知器は組み合わせの検知器（`src/utils/kyoshinEnsembleTracker.ts`）。表の既定は
+ * `public/data/kyoshin-quiet-tables.json`。
+ *
+ * ```bash
+ * # 窓の前へアプリと同じ規則で遡った助走を食わせてから測る（控えに無い窓だけ取る）
+ * npm run bench-kyoshin -- --fetch-warmup
+ * # 取らずに、投げる URL と件数だけを数える（静穏で最短に止まった場合の件数）
+ * npm run bench-kyoshin -- --warmup-dry-run
+ * # 控えた助走だけで測る
+ * npm run bench-kyoshin -- --warmup
+ * ```
+ *
+ * 窓は地震の 20〜30 秒前から始まるので、助走が無いと検知器は「既に揺れている」状態や、点ごとの直前のゆらぎを
+ * 知らない状態から始まる。アプリは必ず助走を付けて始める（`src/utils/kyoshinWarmup.ts`）ので、検知器を比べるときは
+ * こちらで測る。助走の控えは `<キャッシュ>/warmup/<窓>.json`（件数は `--warmup-dry-run` で数える。静穏でも最低 10 分ぶん遡るので、全 795 窓で最短 47.7 万件）。
+ * 助走を付けた測定ではベースラインを更新しない（入れ替えるときに決める）。
+ *
+ * 無関係な検知は、長期震源カタログ（`public/data/hypocenter/`。無感の地震も入る）とも突き合わせ、
+ * どの地震にも当てはまらないもの（ノイズの疑い）の件数を別に出す。
  *
  * ## 窓カタログ
  *
@@ -34,15 +57,15 @@
  * |---|---|---|
  * | `positive` | 確定検知に達してほしい実地震 | 初 confirmed の時刻 |
  * | `major` | 大地震 | 初 confirmed の時刻 |
- * | `negative` | 立ち上がる点が少なすぎて検知しないのが正しい微小地震 | confirmed に達しないこと |
- * | `quiet` | 平常時 | 無関係な検知が 0 であること |
- * | `reported-false-positive` | 利用者が誤検知として報告した時刻・診断ログで見つかった誤検知 | 無関係な検知が 0 であること |
+ * | `quiet` | 平常時 | 震源カタログのどの地震にも当てはまらない検知が、確かな段で 0 であること |
+ * | `reported-false-positive` | 利用者が誤検知として報告した時刻・診断ログで見つかった誤検知 | 同上 |
  * | `catalog` | 気象庁発表の地震（検知率の母集団） | 分類ごとの検知率 |
  *
  * ## 「その地震を検知したか」の判定
  *
- * 検知イベントの重心が、窓に紐づくどれかの地震の震央から一定距離以内（M6 以上 2000km / M5 台 800km /
- * それ未満 300km。窓ごとに `relatedKm` で上書き可）で、かつ発生時刻より後なら「その地震の検知」とする。それ以外は「無関係な検知」として別に数える。
+ * 検知イベントの重心が、窓に紐づくどれかの地震の震央から一定距離以内（`relatedKmFor`。深さ 100km 以上は 800km、
+ * それより浅ければ M6 以上 2000km / M5 台 500km / M4 台 250km / M3 台 150km / それ未満 100km / M 不明 250km。
+ * 窓ごとに `relatedKm` で上書き可）で、かつ発生時刻より後なら「その地震の検知」とする。それ以外は「無関係な検知」として別に数える。
  * **この区別が無いと、遠方の地震の窓でたまたま鳴った別地域のノイズを「検知できた」と数えてしまう**
  * （調査中に実際に起きた取り違え。トカラ列島近海の窓で東京の観測点が鳴っていた）。
  *
@@ -55,9 +78,11 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { initState, buildStationMeta, step } from '../src/utils/kyoshinDetector'
-import type { DetectionEvent, StationMeta } from '../src/utils/kyoshinDetector'
+import { createEnsembleDetector } from '../src/utils/kyoshinEnsembleDetector'
+import { createEnsembleTracker } from '../src/utils/kyoshinEnsembleTracker'
+import { validateQuietTables, type QuietTables } from '../src/utils/kyoshinQuietTables'
 import { haversineKm } from '../src/utils/geo'
+import { WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, firstContinuousIndex, mayStopWarmup } from '../src/utils/kyoshinWarmup'
 
 const CACHE_DIR = process.env.KYOSHIN_BENCH_CACHE ?? '.probe-cache'
 const WINDOWS_PATH = 'scripts/kyoshin-bench/windows.json'
@@ -128,7 +153,7 @@ interface Quake {
   maxScale: number
 }
 
-type Category = 'positive' | 'major' | 'negative' | 'quiet' | 'reported-false-positive' | 'catalog'
+type Category = 'positive' | 'major' | 'quiet' | 'reported-false-positive' | 'catalog'
 
 interface WindowSpec {
   label: string
@@ -183,6 +208,18 @@ interface Result {
   confirmedFrames: number
   /** どの地震にも結びつかなかった検知イベントの数 */
   unrelated: number
+  /**
+   * そのうち confirmed まで上がった数。利用者に確かな揺れとして出た誤報はこちら（likely だけなら確定の手前で消えている）。
+   * 旧ベースライン（この項目が無い頃のもの）には無い
+   */
+  unrelatedConfirmed?: number
+  /**
+   * 無関係な検知のうち、長期震源カタログ（無感も入る）のどの地震にも当てはまらなかった数と、そのうち confirmed まで
+   * 上がった数（{@link inCatalog}）。照合できなかった検知（位置が無い・その年のカタログが無い）は当てはまらない側に数える。
+   * 旧ベースラインには無い
+   */
+  unrelatedNoCatalog?: number
+  unrelatedNoCatalogConfirmed?: number
   /** 無関係な検知の代表地点（最大 3 件・診断用） */
   unrelatedAt: string[]
 }
@@ -255,6 +292,50 @@ async function fetchWindow(w: WindowSpec): Promise<Frame[]> {
   return frames
 }
 
+/** 窓の前に遡った助走（`--warmup`）。止まった理由も持つ（全滅と静穏の打ち切りを見分けるため） */
+interface WarmupCache {
+  frames: Frame[]
+  stoppedBy: 'quiet' | 'max' | 'unfetchable'
+}
+
+const warmupPath = (label: string): string => `${CACHE_DIR}/warmup/${label}.json`
+
+/**
+ * 窓の始まりより前を、アプリの助走と同じ規則で遡って取る。
+ *
+ * **規則は `src/utils/kyoshinWarmup.ts` の `mayStopWarmup` を使い、書き写さない**（取得元 `services/kyoshinSource.ts` の
+ * 遡り方と同じ形: 60 秒のブロックを古い方へ足し、ブロックの先頭の秒が静穏で最低の長さに届いたら止める）。
+ * `fetchOne` を差し替えれば、投げる先の URL と件数だけを数えられる（`--warmup-dry-run`）。
+ */
+async function fetchWarmup(w: WindowSpec, fetchOne: (dateStr: string, ts: string, ms: number) => Promise<Frame | null>): Promise<WarmupCache> {
+  const blocks: Frame[][] = []
+  let stoppedBy: WarmupCache['stoppedBy'] = 'max'
+  for (let b = 1; b <= WARMUP_MAX_BLOCKS; b++) {
+    const targets = Array.from({ length: WARMUP_BLOCK_SEC }, (_, i) => pathAt(w.start, -b * WARMUP_BLOCK_SEC + i))
+    const got: (Frame | null)[] = []
+    for (let i = 0; i < targets.length; i += FETCH_CONCURRENCY) {
+      const chunk = targets.slice(i, i + FETCH_CONCURRENCY)
+      got.push(...(await Promise.all(chunk.map((t) => fetchOne(t.dateStr, t.ts, t.ms)))))
+    }
+    const block = got.filter((f): f is Frame => f != null)
+    if (block.length === 0) { stoppedBy = 'unfetchable'; break }
+    blocks.unshift(block)
+    if (mayStopWarmup(b * WARMUP_BLOCK_SEC, block[0].indices)) { stoppedBy = 'quiet'; break }
+  }
+  return { frames: blocks.flat(), stoppedBy }
+}
+
+function loadWarmup(label: string): WarmupCache | null {
+  const path = warmupPath(label)
+  if (!existsSync(path)) return null
+  try {
+    const c = JSON.parse(readFileSync(path, 'utf8')) as WarmupCache
+    return Array.isArray(c.frames) ? c : null
+  } catch {
+    return null
+  }
+}
+
 /** キャッシュの読み出し結果。「無い」「壊れている」「空」を呼び出し側で区別できるようにする。 */
 type LoadResult =
   | { kind: 'ok'; frames: Frame[] }
@@ -297,19 +378,6 @@ async function loadSites(cfg: string, allowFetch: boolean): Promise<[number, num
   return sites
 }
 
-/**
- * 観測点メタ（K 近傍グラフ・格子割当）は版ごとに 1 度だけ構築して使い回す。
- * 1725 点の総当たり距離計算で 1 回 3 秒前後かかるため、窓ごとに作り直すと全走が 45 分になる。
- */
-const metaCache = new Map<string, StationMeta>()
-function metaFor(cfg: string, sites: [number, number][]): StationMeta {
-  const hit = metaCache.get(cfg)
-  if (hit) return hit
-  const meta = buildStationMeta(sites)
-  metaCache.set(cfg, meta)
-  return meta
-}
-
 // ============================================================
 // 測定
 // ============================================================
@@ -329,7 +397,7 @@ function jstToMs(s: string): number {
 }
 
 /** 検知イベントが窓のどれかの地震に結びつくか。 */
-function relatedQuake(e: DetectionEvent, w: WindowSpec, nowMs: number, relatedKm: number | undefined): Quake | null {
+function relatedQuake(e: Pick<Detection, 'epicenter'>, w: WindowSpec, nowMs: number, relatedKm: number | undefined): Quake | null {
   if (!e.epicenter) return null
   for (const q of w.quakes) {
     const originMs = jstToMs(q.time)
@@ -339,6 +407,52 @@ function relatedQuake(e: DetectionEvent, w: WindowSpec, nowMs: number, relatedKm
     if (haversineKm(e.epicenter[0], e.epicenter[1], q.lat, q.lng) <= km) return q
   }
   return null
+}
+
+/**
+ * 無関係な検知を、長期震源カタログ（`public/data/hypocenter/<年>.json`。M2.0 以上と M が決まっていない地震・無感も入る）と
+ * 突き合わせる。窓の `quakes` は気象庁が震度を発表した地震だけなので、無感の小さな地震による本物の揺れも「無関係」に数えられる。
+ * それを分けて数え、どの地震にも当てはまらない検知（ノイズの疑い）を見えるようにする。
+ *
+ * 当てはまりの条件は、検知が見え始める {@link CATALOG_MATCH_BEFORE_MS} 前〜{@link CATALOG_MATCH_AFTER_MS} 後に発生し、
+ * 震央が検知の位置から M に応じた距離（{@link catalogReachKm}）以内にある地震。
+ */
+const CATALOG_MATCH_BEFORE_MS = 120_000
+const CATALOG_MATCH_AFTER_MS = 10_000
+const JST_OFFSET_MS = 9 * 3_600_000
+function catalogReachKm(mag: number): number {
+  if (!Number.isFinite(mag) || mag < 3) return 100
+  if (mag < 4) return 200
+  if (mag < 5) return 400
+  return 1000
+}
+interface CatalogQuake { t: number; lat: number; lng: number; mag: number }
+const catalogYears = new Map<number, CatalogQuake[] | null>()
+function catalogYear(y: number): CatalogQuake[] | null {
+  if (catalogYears.has(y)) return catalogYears.get(y) ?? null
+  const path = `public/data/hypocenter/${y}.json`
+  let list: CatalogQuake[] | null = null
+  if (existsSync(path)) {
+    const r = JSON.parse(readFileSync(path, 'utf8')) as {
+      count: number; startMs: number; timeScale: number; coordScale: number; magScale: number
+      t: number[]; lat: number[]; lng: number[]; mag: (number | null)[]
+    }
+    list = []
+    for (let i = 0; i < r.count; i++) {
+      const m = r.mag[i]
+      list.push({ t: r.startMs + (r.t[i] * 1000) / r.timeScale, lat: r.lat[i] / r.coordScale, lng: r.lng[i] / r.coordScale, mag: m === null ? NaN : m / r.magScale })
+    }
+  }
+  catalogYears.set(y, list)
+  return list
+}
+/** 当てはまる地震があれば true、無ければ false、その年のカタログが無ければ null（照合できない） */
+function inCatalog(benchMs: number, pos: [number, number] | null): boolean | null {
+  if (pos === null) return null
+  const real = benchMs - JST_OFFSET_MS
+  const list = catalogYear(new Date(real).getUTCFullYear())
+  if (list === null) return null
+  return list.some((q) => q.t >= real - CATALOG_MATCH_BEFORE_MS && q.t <= real + CATALOG_MATCH_AFTER_MS && haversineKm(pos[0], pos[1], q.lat, q.lng) <= catalogReachKm(q.mag))
 }
 
 const stationCoords = JSON.parse(readFileSync('public/data/station-coords.json', 'utf8')) as {
@@ -369,12 +483,41 @@ interface EventTrack {
   firstConfirmedMs: number | null
   /** 最初に見えた場所（診断表示用） */
   at: string | null
+  /** 最初に見えた位置（`--dump-unrelated` の書き出し用） */
+  pos: [number, number] | null
+}
+
+/** `--dump-unrelated` で書き出す 1 件。時刻は評価台の時刻（日本時間をそのまま UTC として数えたミリ秒） */
+interface UnrelatedDump {
+  label: string
+  category: string
+  windowStartMs: number
+  firstLikelyMs: number
+  firstConfirmedMs: number | null
+  pos: [number, number] | null
+  at: string | null
 }
 
 function hhmmssOf(frames: Frame[], ms: number): string | null {
   const f = frames.find((x) => x.ms === ms)
   if (!f) return null
   return `${f.ts.slice(8, 10)}:${f.ts.slice(10, 12)}:${f.ts.slice(12, 14)}`
+}
+
+/** 評価台が読む検知の欄 */
+interface Detection {
+  id: string
+  confidence: string
+  epicenter: [number, number] | null
+}
+
+/** 窓 1 本ぶんの検知器。1 秒ごとにフレームを入れ、その秒の検知を返す */
+type Runner = (f: Frame) => Detection[]
+
+/** 組み合わせの検知器（`kyoshinEnsembleTracker.ts`） */
+function ensembleRunner(sites: [number, number][], tables: QuietTables): Runner {
+  const tracker = createEnsembleTracker(sites, createEnsembleDetector(sites, tables))
+  return (f) => tracker.push({ ms: f.ms, values: Int8Array.from(f.indices) })
 }
 
 /**
@@ -384,9 +527,8 @@ function hhmmssOf(frames: Frame[], ms: number): string | null {
  * 立ち上がり直後は震央から離れていて後から寄ってくることがある。フレームごとにその場で数えると、
  * 同じ揺れを「無関係な検知」と「その地震の検知」の両方に計上してしまう。
  */
-function measure(w: WindowSpec, frames: Frame[], sites: [number, number][], meta: StationMeta): Result {
+function measure(w: WindowSpec, frames: Frame[], run: Runner, onUnrelated: (d: UnrelatedDump) => void): Result {
   const relatedKm = w.relatedKm
-  let state = initState(frames[0].ms - 1000)
   const tracks = new Map<string, EventTrack>()
 
   // イベント ID ごとに「confirmed だったフレーム」を溜める。地震への帰属は後から立つことがあるため、
@@ -394,11 +536,9 @@ function measure(w: WindowSpec, frames: Frame[], sites: [number, number][], meta
   const confirmedAt = new Map<string, number[]>()
 
   for (const f of frames) {
-    const missing = f.indices.map((v) => v < 0)
-    const r = step(state, { dataTimeMs: f.ms, sites, values: f.indices, missing, eewActive: false }, meta)
-    state = r.state
+    const detections = run(f)
 
-    for (const e of r.detections as DetectionEvent[]) {
+    for (const e of detections) {
       if (e.confidence === 'confirmed') {
         const list = confirmedAt.get(e.id)
         if (list) list.push(f.ms)
@@ -406,7 +546,7 @@ function measure(w: WindowSpec, frames: Frame[], sites: [number, number][], meta
       }
     }
 
-    for (const e of r.detections as DetectionEvent[]) {
+    for (const e of detections) {
       if (e.confidence !== 'likely' && e.confidence !== 'confirmed') continue
       let t = tracks.get(e.id)
       if (!t) {
@@ -415,6 +555,7 @@ function measure(w: WindowSpec, frames: Frame[], sites: [number, number][], meta
           firstLikelyMs: f.ms,
           firstConfirmedMs: null,
           at: e.epicenter ? nearestName(e.epicenter[0], e.epicenter[1]) : null,
+          pos: e.epicenter ? [e.epicenter[0], e.epicenter[1]] : null,
         }
         tracks.set(e.id, t)
       }
@@ -423,7 +564,10 @@ function measure(w: WindowSpec, frames: Frame[], sites: [number, number][], meta
     }
   }
 
-  const out: Result = { tier: 'none', firstLikely: null, firstConfirmed: null, confirmedFrames: 0, unrelated: 0, unrelatedAt: [] }
+  const out: Result = {
+    tier: 'none', firstLikely: null, firstConfirmed: null, confirmedFrames: 0,
+    unrelated: 0, unrelatedConfirmed: 0, unrelatedNoCatalog: 0, unrelatedNoCatalogConfirmed: 0, unrelatedAt: [],
+  }
   let likelyMs = Infinity
   let confirmedMs = Infinity
   // 同じフレームに複数のイベントが confirmed でも「検知が出ていた 1 秒」として数える
@@ -435,6 +579,12 @@ function measure(w: WindowSpec, frames: Frame[], sites: [number, number][], meta
       for (const ms of confirmedAt.get(id) ?? []) shownFrames.add(ms)
     } else {
       out.unrelated++
+      if (t.firstConfirmedMs != null) out.unrelatedConfirmed = (out.unrelatedConfirmed ?? 0) + 1
+      if (inCatalog(t.firstLikelyMs, t.pos) !== true) {
+        out.unrelatedNoCatalog = (out.unrelatedNoCatalog ?? 0) + 1
+        if (t.firstConfirmedMs != null) out.unrelatedNoCatalogConfirmed = (out.unrelatedNoCatalogConfirmed ?? 0) + 1
+      }
+      onUnrelated({ label: w.label, category: w.category, windowStartMs: frames[0].ms, firstLikelyMs: t.firstLikelyMs, firstConfirmedMs: t.firstConfirmedMs, pos: t.pos, at: t.at })
       if (out.unrelatedAt.length < 3) {
         const at = hhmmssOf(frames, t.firstLikelyMs)
         out.unrelatedAt.push(`${at ?? '??:??:??'} ${t.at ?? '重心なし'}`)
@@ -481,21 +631,18 @@ function pct(a: number, b: number): string {
 const PASS: Record<Category, { name: string; want: string; ok: (w: WindowSpec, r: Result) => boolean }> = {
   positive: {
     name: '正のコントロール',
-    want: '確定検知に達する（福岡型のみ likely 可）',
-    ok: (_w, r) => r.tier !== 'none',
+    want: '確定検知に達する',
+    ok: (_w, r) => r.tier === 'confirmed',
   },
   major: { name: '大地震', want: '確定検知に達する', ok: (_w, r) => r.tier === 'confirmed' },
-  negative: {
-    name: '非検知（微小すぎる地震）',
-    want: '確定検知に達しない',
-    ok: (_w, r) => r.tier !== 'confirmed',
-  },
   catalog: { name: '気象庁発表の地震', want: '検知率を集計する母集団', ok: () => true },
-  quiet: { name: '平常時', want: '無関係な検知が 0', ok: (_w, r) => r.unrelated === 0 },
+  // 無感の小さな本物の地震を拾うのは当たりと数え、早い段だけで消えた検知も数えない
+  // （2026-10-29 ユーザー選択「当てはまらない確かな段 0 (Recommended)」。根拠の決定は 2026-10-28「どちらの段も当たり」）
+  quiet: { name: '平常時', want: 'カタログに当てはまらない確かな段が 0', ok: (_w, r) => (r.unrelatedNoCatalogConfirmed ?? 0) === 0 },
   'reported-false-positive': {
     name: '報告された誤検知',
-    want: '無関係な検知が 0',
-    ok: (_w, r) => r.unrelated === 0,
+    want: 'カタログに当てはまらない確かな段が 0',
+    ok: (_w, r) => (r.unrelatedNoCatalogConfirmed ?? 0) === 0,
   },
 }
 
@@ -503,7 +650,7 @@ function report(rows: { w: WindowSpec; r: Result }[]): void {
   console.log('')
   console.log('=== 分類ごとの集計 ===')
   console.log('分類                      窓数  地震あり   捉えた(確定/可能性)  無関係な検知   期待どおり')
-  const cats: Category[] = ['positive', 'major', 'negative', 'catalog', 'quiet', 'reported-false-positive']
+  const cats: Category[] = ['positive', 'major', 'catalog', 'quiet', 'reported-false-positive']
   for (const c of cats) {
     const sub = rows.filter((x) => x.w.category === c)
     if (sub.length === 0) continue
@@ -572,7 +719,11 @@ function report(rows: { w: WindowSpec; r: Result }[]): void {
   const noisy = rows.filter((x) => x.r.unrelated > 0)
   const total = noisy.reduce((s, x) => s + x.r.unrelated, 0)
   console.log('')
-  console.log(`=== 無関係な検知: 全 ${total} 件 / ${noisy.length} 窓 ===`)
+  const totalConfirmed = noisy.reduce((s, x) => s + (x.r.unrelatedConfirmed ?? 0), 0)
+  console.log(`=== 無関係な検知: 全 ${total} 件 / ${noisy.length} 窓（うち confirmed まで上がったもの ${totalConfirmed} 件） ===`)
+  const noCat = noisy.reduce((s, x) => s + (x.r.unrelatedNoCatalog ?? 0), 0)
+  const noCatConfirmed = noisy.reduce((s, x) => s + (x.r.unrelatedNoCatalogConfirmed ?? 0), 0)
+  console.log(`  震源カタログ（無感も入る）のどの地震にも当てはまらないもの: ${noCat} 件（うち confirmed ${noCatConfirmed} 件）`)
   for (const x of noisy.slice(0, 30)) {
     console.log(`  ${x.w.label.padEnd(18)} ${String(x.r.unrelated).padStart(2)}件  ${x.r.unrelatedAt.join(' | ')}`)
   }
@@ -608,6 +759,10 @@ function diffBaseline(rows: { w: WindowSpec; r: Result }[]): boolean {
       parts.push(`確定の継続 ${b.confirmedFrames} → ${r.confirmedFrames} フレーム`)
     }
     if (b.unrelated !== r.unrelated) parts.push(`無関係な検知 ${b.unrelated} → ${r.unrelated}`)
+    // 平常時・誤検知の窓の合否はこの数で決まる（`PASS`）。比べないと、合否が変わっても差分に出ない
+    if ((b.unrelatedNoCatalogConfirmed ?? 0) !== (r.unrelatedNoCatalogConfirmed ?? 0)) {
+      parts.push(`当てはまらない確かな段 ${b.unrelatedNoCatalogConfirmed ?? 0} → ${r.unrelatedNoCatalogConfirmed ?? 0}`)
+    }
     if (parts.length > 0) {
       const q = primaryQuake(w)
       const meta = q ? ` [${q.name} M${q.mag} ${SCALE_LABEL[q.maxScale] ?? q.maxScale}]` : ''
@@ -632,6 +787,24 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2)
   const allowFetch = argv.includes('--fetch')
   const updateBaseline = argv.includes('--update-baseline')
+  // 助走: --warmup で控えた分を窓の前に食わせる。--fetch-warmup で控えに無い窓だけ取る。
+  // --warmup-dry-run は取らずに、最低の長さ（WARMUP_MIN_BLOCKS）ぶん投げる URL と件数だけを数える
+  const warmupDryRun = argv.includes('--warmup-dry-run')
+  const fetchWarmupArg = argv.includes('--fetch-warmup')
+  const useWarmup = argv.includes('--warmup') || fetchWarmupArg || warmupDryRun
+  if (useWarmup && updateBaseline) {
+    console.error('--warmup ではベースラインを更新しません（入れ替えるときに決める）')
+    process.exit(1)
+  }
+  const tablesPath = argv.find((a) => a.startsWith('--tables='))?.slice('--tables='.length) ?? 'public/data/kyoshin-quiet-tables.json'
+  if (!existsSync(tablesPath)) {
+    console.error(`平常のゆらぎの表 ${tablesPath} がありません（scripts/build-kyoshin-quiet-tables.ts で焼くか、--tables= で指す）`)
+    process.exit(1)
+  }
+  const rawTables: unknown = JSON.parse(readFileSync(tablesPath, 'utf8'))
+  validateQuietTables(rawTables)
+  const tables: QuietTables = rawTables
+  console.log(`平常のゆらぎの表 ${tablesPath}（焼いた日 ${tables.days.join(',') || '不明'}）`)
   const onlyArg = argv.find((a) => a.startsWith('--only'))
   let only: string[] | null = null
   if (onlyArg) {
@@ -651,7 +824,33 @@ async function main(): Promise<void> {
   const windows = only ? catalog.windows.filter((w) => only.includes(w.category)) : catalog.windows
   console.log(`窓 ${windows.length} / ${catalog.windows.length}（キャッシュ ${CACHE_DIR}）`)
 
+  if (warmupDryRun) {
+    // 空振り: どの秒も「静穏」の偽フレームを返し、最低の長さで止まる遡りが投げる URL を数える
+    const urls: string[] = []
+    const fake = async (dateStr: string, ts: string, ms: number): Promise<Frame> => {
+      urls.push(`${REALTIME_BASE('west')}/${dateStr}/${ts}.json`)
+      return { ms, ts, indices: [0], cfg: '' }
+    }
+    let need = 0
+    for (const w of windows) {
+      if (loadWarmup(w.label)) continue
+      need++
+      await fetchWarmup(w, fake)
+    }
+    console.log(`助走を取る窓 ${need} / ${windows.length}・投げる URL ${urls.length} 件（静穏で最短に止まった場合。揺れが続けば窓ごとに最大 ${WARMUP_MAX_BLOCKS * WARMUP_BLOCK_SEC} 件）`)
+    console.log(`  先頭: ${urls[0] ?? '-'}`)
+    console.log(`  末尾: ${urls[urls.length - 1] ?? '-'}`)
+    console.log(`  重複: ${urls.length - new Set(urls).size} 件`)
+    return
+  }
+
   const rows: { w: WindowSpec; r: Result }[] = []
+  /** 助走の様子（窓数）。止まった理由ごと・使えなかった理由ごとに数える */
+  const warmupTally: Record<string, number> = {}
+  const warmupLengths: number[] = []
+  /** 無関係な検知の一覧。`--dump-unrelated=<ファイル>` のときだけ書き出す（震源カタログとの突き合わせ用） */
+  const unrelatedDump: UnrelatedDump[] = []
+  const dumpPath = argv.find((a) => a.startsWith('--dump-unrelated='))?.slice('--dump-unrelated='.length)
   /** 測定できなかった窓（ラベルと理由）。分類ごとの取りこぼしを見るため窓ごと保持する。 */
   const skipped: { w: WindowSpec; reason: string }[] = []
   /** 取得率が 100% に満たないまま測定に使った窓（欠測はあるが判断はできる範囲）。 */
@@ -686,8 +885,30 @@ async function main(): Promise<void> {
       skipped.push({ w, reason: '観測点リストと震度列の長さが違う' })
       continue
     }
+    // 助走: アプリと同じく、最後の大きな穴より後ろ（firstContinuousIndex）だけを使う。版が違う分は食わせない
+    let lead: Frame[] = []
+    if (useWarmup) {
+      let cache = loadWarmup(w.label)
+      if (!cache && fetchWarmupArg) {
+        cache = await fetchWarmup(w, fetchFrame)
+        mkdirSync(dirname(warmupPath(w.label)), { recursive: true })
+        writeFileSync(warmupPath(w.label), JSON.stringify(cache))
+      }
+      if (!cache) {
+        warmupTally['未取得'] = (warmupTally['未取得'] ?? 0) + 1
+      } else {
+        const all = cache.frames.filter((f) => f.ms < frames[0].ms)
+        const usable = all.slice(firstContinuousIndex([...all.map((f) => f.ms), frames[0].ms]))
+        lead = usable.filter((f) => f.cfg === cfg && f.indices.length === sites.length)
+        const why = lead.length < usable.length ? '版が違う分を除いた' : cache.stoppedBy
+        warmupTally[why] = (warmupTally[why] ?? 0) + 1
+        warmupLengths.push(lead.length)
+      }
+    }
     try {
-      rows.push({ w, r: measure(w, frames, sites, metaFor(cfg, sites)) })
+      const run = ensembleRunner(sites, tables)
+      for (const f of lead) run(f)
+      rows.push({ w, r: measure(w, frames, run, (d) => unrelatedDump.push(d)) })
     } catch (e) {
       // 1 窓の異常で全窓の結果を捨てない。原因の窓が分かる形で残して次へ進む
       skipped.push({ w, reason: `測定中に例外（${e instanceof Error ? e.message : String(e)}）` })
@@ -715,6 +936,13 @@ async function main(): Promise<void> {
     if (partial.length > 10) console.log(`  …ほか ${partial.length - 10} 件`)
   }
 
+  if (useWarmup) {
+    const sorted = [...warmupLengths].sort((a, b) => a - b)
+    const mean = sorted.length ? Math.round(sorted.reduce((s, x) => s + x, 0) / sorted.length) : 0
+    console.log('')
+    console.log(`助走: ${Object.entries(warmupTally).map(([k, n]) => `${k} ${n}`).join('・')}（平均 ${mean} 秒・最短 ${sorted[0] ?? '-'}・最長 ${sorted[sorted.length - 1] ?? '-'}）`)
+  }
+
   if (rows.length === 0) {
     console.log('')
     console.log('測定できた窓がありません。`npm run bench-kyoshin -- --fetch` で過去フレームを取得してください')
@@ -722,6 +950,10 @@ async function main(): Promise<void> {
   }
 
   report(rows)
+  if (dumpPath) {
+    writeFileSync(dumpPath, JSON.stringify(unrelatedDump))
+    console.log(`無関係な検知 ${unrelatedDump.length} 件を ${dumpPath} へ書き出した`)
+  }
 
   if (updateBaseline) {
     const base = existsSync(BASELINE_PATH)

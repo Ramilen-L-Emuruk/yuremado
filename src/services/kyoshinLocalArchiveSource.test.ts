@@ -18,8 +18,8 @@ import { log } from '../utils/logger'
 import { getMergedKyoshinArchive } from '../utils/kyoshinImportDb'
 import { createLocalKyoshinArchiveSource, clearLocalKyoshinArchiveCache, selectWarmupFrames } from './kyoshinLocalArchiveSource'
 import type { KyoshinFrame } from './kyoshinSource'
-import { WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, WARMUP_QUIET_MAX_POINTS } from '../utils/kyoshinWarmup'
-import { PARAMS } from '../utils/kyoshinDetector'
+import { WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, WARMUP_MIN_BLOCKS, WARMUP_QUIET_MAX_POINTS } from '../utils/kyoshinWarmup'
+import { MAX_DT_GAP_MS, MAX_RESUME_GAP_MS } from '../utils/kyoshinNoiseFloor'
 import type { LocalKyoshinArchive } from '../types/localKyoshinArchive'
 
 const validArchive: LocalKyoshinArchive = {
@@ -262,11 +262,25 @@ describe('selectWarmupFrames: 助走に使う区間の切り出し', () => {
     indices: shaking ? new Array<number>(WARMUP_QUIET_MAX_POINTS).fill(7) : [0, 0, 0],
   })
 
-  it('正: 静穏なフレームまで遡り、そこから開始時刻の手前までを返す', () => {
-    const frames = [frame(5, false), frame(4, true), frame(3, true), frame(2, true), frame(1, true)]
-    const picked = selectWarmupFrames(frames, START)
-    expect(picked).toHaveLength(5)
-    expect(picked[0].time.getTime()).toBe(START - 5000)
+  /** `fromSec` 秒前から 1 秒前までの連続したフレーム。`quietAt(ago)` が真の秒だけ静穏にする。 */
+  const run = (fromSec: number, quietAt: (ago: number) => boolean): KyoshinFrame[] => {
+    const out: KyoshinFrame[] = []
+    for (let ago = fromSec; ago >= 1; ago--) out.push(frame(ago, !quietAt(ago)))
+    return out
+  }
+  const minSec = WARMUP_MIN_BLOCKS * WARMUP_BLOCK_SEC
+
+  it('正: 最低の長さを過ぎてから最初の静穏なフレームまで遡り、そこから開始時刻の手前までを返す', () => {
+    const stopAt = minSec + 20
+    const picked = selectWarmupFrames(run(minSec + 60, (ago) => ago >= stopAt), START)
+    expect(picked).toHaveLength(stopAt)
+    expect(picked[0].time.getTime()).toBe(START - stopAt * 1000)
+  })
+
+  it('対照: 最低の長さの内側で静穏でも止まらない（ずっと静穏ならちょうど最低の長さで止まる）', () => {
+    const picked = selectWarmupFrames(run(minSec + 60, () => true), START)
+    expect(picked).toHaveLength(minSec)
+    expect(picked[0].time.getTime()).toBe(START - minSec * 1000)
   })
 
   it('対照: 開始時刻より後のフレームは助走に入れない（そちらは通常の再生が流す）', () => {
@@ -291,7 +305,7 @@ describe('selectWarmupFrames: 助走に使う区間の切り出し', () => {
 
   it('安全弁: 検知エンジンが状態を作り直す穴（MAX_RESUME_GAP_MS 超）があれば、その後ろだけを使う', () => {
     // 穴より前を食わせても、検知エンジンが状態を作り直して捨てるだけ。
-    const gapSec = PARAMS.MAX_RESUME_GAP_MS / 1000 + 5
+    const gapSec = MAX_RESUME_GAP_MS / 1000 + 5
     const frames = [frame(gapSec + 3, true), frame(gapSec + 2, true), frame(2, true), frame(1, true)]
     const picked = selectWarmupFrames(frames, START)
     expect(picked).toHaveLength(2)
@@ -299,7 +313,7 @@ describe('selectWarmupFrames: 助走に使う区間の切り出し', () => {
   })
 
   it('対照: 途絶明けで済む穴（MAX_RESUME_GAP_MS 以内）では切らない（検知と床が残るので効く）', () => {
-    const gapSec = PARAMS.MAX_DT_GAP_MS / 1000 + 5
+    const gapSec = MAX_DT_GAP_MS / 1000 + 5
     const frames = [frame(gapSec + 3, true), frame(gapSec + 2, true), frame(2, true), frame(1, true)]
     expect(selectWarmupFrames(frames, START)).toHaveLength(4)
   })

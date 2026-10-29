@@ -28,9 +28,9 @@
 | [action-checklist-spec.md](action-checklist-spec.md) | 行動チェックリスト（出す条件・登録地点の周り・畳む挙動） | `src/hooks/useActionChecklist.ts`, `src/utils/actionChecklistTrigger.ts` |
 | [share-card-spec.md](share-card-spec.md) | 共有カード（撮影の制約・見出しの組み立て・出典の焼き込み） | `src/components/Map/gl/captureMap.ts`, `src/utils/shareCard.ts` |
 | [recording-interface-spec.md](recording-interface-spec.md) | 録画ツール向けの外部インターフェース（`window.__replay`・イベントログ） | `src/utils/replayEventLog.ts`, `src/App.tsx` |
-| [kyoshin-detection-spec.md](kyoshin-detection-spec.md) | 強震モニタ揺れ検知エンジン（詳細仕様） | `src/utils/kyoshinDetector.ts` |
-| [kyoshin-detection-v3-design.md](kyoshin-detection-v3-design.md) | 強震モニタ検知の設計判断・調査・改訂履歴 | 同上（経緯資料） |
-| [kyoshin-detection-design.md](kyoshin-detection-design.md) | 強震モニタ検知の旧設計書（歴史資料・V3 に置換済み） | 同上 |
+| [kyoshin-detection-spec.md](kyoshin-detection-spec.md) | 強震モニタ揺れ検知エンジン（詳細仕様） | `src/utils/kyoshinEnsembleDetector.ts`・`kyoshinEnsembleTracker.ts` |
+| [kyoshin-detection-v3-design.md](kyoshin-detection-v3-design.md) | 強震モニタ検知の設計判断・調査・改訂履歴（いまの検知器は §43。§1〜§42 の検知コアは入れ替える前のエンジンの経緯） | 同上（経緯資料） |
+| [kyoshin-detection-design.md](kyoshin-detection-design.md) | 強震モニタ検知の旧設計書（歴史資料・V3 設計書に置換済み。その V3 の検知コアも §43 の組み合わせの検知器に入れ替わっている） | 同上 |
 | [telegram-coverage-audit.md](telegram-coverage-audit.md) | 電文の網羅性の点検（測り方・読まないと決めたもの・読み落としの型・残っている段） | `src/services/dmdataParser.ts`, `src/services/dmdataCoverage.probe.test.ts`, `scripts/telegram-audit/` |
 
 ## 推奨読了順（初めて触る開発者向け）

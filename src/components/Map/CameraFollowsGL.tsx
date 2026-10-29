@@ -264,10 +264,9 @@ export function FitToDetectionGL({
    * 一時的に描ける点が無くなることは検知中にも起きる。ここを `points.length` で兼ねると、
    * そのたびに日本全体へ戻して寄り直す明滅になる。
    *
-   * メンバー自体も値が下がりきれば外れる（`kyoshinDetector` の `pruneFadedMembers`）が、
-   * **イベントが生存している間に空になることはない**——猶予 `MEMBER_DROP_MS` が
-   * `TRIG_ACTIVE_MS + HOLD_MS` 以上であることがそれを保証している。この下限を崩すと、
-   * 確定検知が続いている最中にここが false へ落ちて、同じ明滅が戻る。
+   * 加わった観測点は、検知が生きている間は減らない（`kyoshinEnsembleTracker` が束の点を足していくだけで、
+   * 検知ごと消すまで外さない）。だから**検知が続いている間にここが空になることはない**。点を途中で外す形に
+   * 変えると、確定検知が続いている最中にここが false へ落ちて、同じ明滅が戻る。
    */
   hasDetection: boolean
   hasEew: boolean
@@ -530,12 +529,12 @@ export function FitToCandidateGL({
   hasDetection,
 }: {
   points: DetectedPoint[]
-  candidateId: number | null
+  candidateId: string | null
   hasEew: boolean
   hasDetection: boolean
 }) {
   const map = useMapGL()
-  const fittedIdRef = useRef<number | null>(null)
+  const fittedIdRef = useRef<string | null>(null)
   const prevHasDetectionRef = useRef(hasDetection)
   const [isUserInteracting] = useUserInteractionGuard(map)
   useEffect(() => {

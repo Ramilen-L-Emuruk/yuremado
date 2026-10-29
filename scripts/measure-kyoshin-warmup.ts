@@ -17,7 +17,7 @@
  * ## 使い方
  *
  * ```bash
- * # 窓を取得する（初回のみ。7 本 × 15 分 ≒ 6300 フレーム・数分）
+ * # 窓と、その手前 15 分を取得する（初回のみ。7 本 × 30 分 ≒ 12600 フレーム・数分）
  * npx tsx scripts/measure-kyoshin-warmup.ts --fetch
  *
  * # 助走の長さを変えて一致率を見る
@@ -25,21 +25,32 @@
  *
  * # 実装と同じ「60 秒ブロックで遡り、静穏で打ち切る」方式で測る
  * npx tsx scripts/measure-kyoshin-warmup.ts --adaptive
+ *
+ * # 同じ方式で、静穏でも遡る最低の長さ（ブロック数）だけを変えて比べる
+ * npx tsx scripts/measure-kyoshin-warmup.ts --min-blocks=1,3,5,7,10
  * ```
  *
  * キャッシュの置き場は `npm run bench-kyoshin` と同じ（環境変数 `KYOSHIN_BENCH_CACHE`・
- * 既定 `.probe-cache`）。観測点リストもそちらと共有する。
+ * 既定 `.probe-cache`）。観測点リストもそちらと共有する。平常のゆらぎの表は
+ * `public/data/kyoshin-quiet-tables.json`（`--tables=` で差し替えられる）。
  *
  * ## 測定に使う窓
  *
  * 大地震 7 本。**地震発生の 1 分後から 12.5 分後まで**を 30 秒刻みで走査する（164 点）。
  * 揺れが完全に収まった後は「ずっと再生」でも検知が消えるので、そこは測っても差が出ない。
+ *
+ * **窓の手前に、遡りの上限と同じ長さ（15 分）を足してから流す。** 足さないと、遡った先が窓の始まりで
+ * 頭打ちになり、そこから流した結果と「ずっと再生し続けた場合」（これも窓の始まりから流す）が同じものになって、
+ * 一致が水増しされる（足さずに測ると、最低 10 分で 164/164 に見えた。足すと 157/164）。
+ * 手前の窓は `--fetch` が `warmup-pre-<label>.json` へ取る。観測点リストの版が本体と違うフレームは外す。
+ * 手前の窓が無い窓・窓か手前の取れた秒が 9 割を切る窓は測らずに飛ばす（秒の位置は添字ではなく時刻で引く）。
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
-import { initState, buildStationMeta, step } from '../src/utils/kyoshinDetector'
-import type { DetectionEvent, DetectorState, StationMeta } from '../src/utils/kyoshinDetector'
+import { createEnsembleDetector } from '../src/utils/kyoshinEnsembleDetector'
+import { createEnsembleTracker, type EnsembleDetection } from '../src/utils/kyoshinEnsembleTracker'
+import { validateQuietTables, type QuietTables } from '../src/utils/kyoshinQuietTables'
 import {
-  WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, isQuietFrame,
+  WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, mayStopWarmup, isQuietFrame,
 } from '../src/utils/kyoshinWarmup'
 
 const CACHE_DIR = process.env.KYOSHIN_BENCH_CACHE ?? '.probe-cache'
@@ -70,6 +81,13 @@ const WINDOWS: { label: string; start: string; seconds: number; quakeAt: number;
 const SWEEP_STEP_SEC = 30
 /** 走査を始める「地震発生からの経過」（秒）。 */
 const SWEEP_FROM_SEC = 60
+/** 窓の手前に足す長さ（秒）。遡りの上限と同じにして、どの開始時刻でも窓の始まりで頭打ちにならないようにする。 */
+const PRE_SEC = WARMUP_MAX_BLOCKS * WARMUP_BLOCK_SEC
+/**
+ * 窓・手前の窓それぞれで、取れていなければならない秒の割合（`bench-kyoshin` の `MIN_COVERAGE` と同じ）。
+ * 手前が足りないまま測ると、遡った先が手前の始まりで頭打ちになり、一致が水増しされる
+ */
+const MIN_COVERAGE = 0.9
 
 // ============================================================
 // 取得
@@ -105,24 +123,38 @@ async function fetchFrame(dateStr: string, ts: string, ms: number): Promise<Fram
   return null
 }
 
-async function fetchWindow(w: typeof WINDOWS[number]): Promise<void> {
-  const path = `${CACHE_DIR}/${w.label}.json`
-  if (existsSync(path)) { console.log(`  ${w.label}: 既にある`); return }
-  const targets = Array.from({ length: w.seconds }, (_, i) => pathAt(w.start, i))
+/** 窓の先頭から `fromSec` 秒の位置を起点に `seconds` 秒ぶんを取り、`path` へ書く（既にあれば取らない）。 */
+async function fetchRange(path: string, name: string, start: string, fromSec: number, seconds: number): Promise<string | undefined> {
+  if (existsSync(path)) { console.log(`  ${name}: 既にある`); return undefined }
+  const targets = Array.from({ length: seconds }, (_, i) => pathAt(start, fromSec + i))
   const out: Frame[] = []
   for (let i = 0; i < targets.length; i += FETCH_CONCURRENCY) {
     const chunk = targets.slice(i, i + FETCH_CONCURRENCY)
     const got = await Promise.all(chunk.map(t => fetchFrame(t.dateStr, t.ts, t.ms)))
     for (const f of got) if (f) out.push(f)
   }
+  // 足りないまま控えると、次から「既にある」として取り直さない。控えずに、次の --fetch で取り直す
+  if (out.length < seconds * MIN_COVERAGE) {
+    console.log(`  ${name}: ${out.length}/${seconds} しか取れなかったので控えない（--fetch で取り直す）`)
+    return undefined
+  }
   mkdirSync(CACHE_DIR, { recursive: true })
   writeFileSync(path, JSON.stringify(out))
-  console.log(`  ${w.label}: ${out.length}/${w.seconds} 取得 cfg=${out[0]?.cfg}`)
-  const cfg = out[0]?.cfg
+  console.log(`  ${name}: ${out.length}/${seconds} 取得 cfg=${out[0]?.cfg}`)
+  return out[0]?.cfg
+}
+
+async function fetchWindow(w: typeof WINDOWS[number]): Promise<void> {
+  const cfg = await fetchRange(`${CACHE_DIR}/${w.label}.json`, w.label, w.start, 0, w.seconds)
+  await fetchRange(`${CACHE_DIR}/warmup-pre-${w.label}.json`, `${w.label} の手前`, w.start, -PRE_SEC, PRE_SEC)
   if (cfg && !existsSync(`${CACHE_DIR}/sites_${cfg}.json`)) {
     const res = await fetch(`${SITELIST_BASE}/sitelist_${cfg}.json`)
+    // 中身を確かめてから控える（空・壊れたリストを一度控えると、以後は「既にある」で取り直さない）
+    if (!res.ok) throw new Error(`観測点リスト ${cfg} を取れませんでした（HTTP ${res.status}）`)
     const raw = await res.json() as { items?: [number, number][] } | [number, number][]
-    writeFileSync(`${CACHE_DIR}/sites_${cfg}.json`, JSON.stringify(Array.isArray(raw) ? raw : (raw.items ?? [])))
+    const sites = Array.isArray(raw) ? raw : (raw.items ?? [])
+    if (sites.length === 0) throw new Error(`観測点リスト ${cfg} が空でした`)
+    writeFileSync(`${CACHE_DIR}/sites_${cfg}.json`, JSON.stringify(sites))
     console.log(`  sites_${cfg}: 取得`)
   }
 }
@@ -133,12 +165,13 @@ async function fetchWindow(w: typeof WINDOWS[number]): Promise<void> {
 
 interface Snap { tier: string; maxInt: number }
 
-function snap(dets: DetectionEvent[]): Snap {
-  const shown = dets.filter(d => d.confidence === 'confirmed' || d.confidence === 'likely')
-  const conf = shown.filter(d => d.confidence === 'confirmed')
+function snap(dets: readonly EnsembleDetection[]): Snap {
+  const conf = dets.filter(d => d.confidence === 'confirmed')
+  // 加わった点がいま全員欠測の検知（最大震度が null）は、最大震度の比べ合いから外す
+  const intens = dets.flatMap(d => (d.maxIntensity === null ? [] : [d.maxIntensity]))
   return {
-    tier: conf.length > 0 ? 'confirmed' : shown.length > 0 ? 'likely' : 'なし',
-    maxInt: shown.length > 0 ? Math.max(...shown.map(d => d.maxIntensity)) : NaN,
+    tier: conf.length > 0 ? 'confirmed' : dets.length > 0 ? 'likely' : 'なし',
+    maxInt: intens.length > 0 ? Math.max(...intens) : NaN,
   }
 }
 
@@ -148,57 +181,119 @@ function same(a: Snap, b: Snap): boolean {
   return Math.abs(a.maxInt - b.maxInt) < 0.1
 }
 
-/** 実装と同じ規則で、どこまで遡るかを決める（`kyoshinWarmup.ts` の判定を共有する）。 */
-function adaptiveStart(frames: Frame[], at: number): number {
+/**
+ * 実装と同じ規則で、どこまで遡るかを決める（`kyoshinWarmup.ts` の判定を共有する）。
+ * `minBlocks` を渡したときだけ、静穏でも遡る最低の長さをそれに差し替える（静穏の判定は実装と同じ）。
+ */
+function adaptiveStart(frames: Frame[], at: number, minBlocks?: number): number {
   for (let b = 1; b <= WARMUP_MAX_BLOCKS; b++) {
-    const head = Math.max(0, at - b * WARMUP_BLOCK_SEC)
+    const head = indexAtOrAfter(frames, frames[at].ms - b * WARMUP_BLOCK_SEC * 1000)
     if (head === 0) return 0
-    if (isQuietFrame(frames[head].indices)) return head
+    const stop = minBlocks === undefined
+      ? mayStopWarmup(b * WARMUP_BLOCK_SEC, frames[head].indices)
+      : b >= minBlocks && isQuietFrame(frames[head].indices)
+    if (stop) return head
   }
-  return Math.max(0, at - WARMUP_MAX_BLOCKS * WARMUP_BLOCK_SEC)
+  return indexAtOrAfter(frames, frames[at].ms - WARMUP_MAX_BLOCKS * WARMUP_BLOCK_SEC * 1000)
+}
+
+/**
+ * `ms` 以降で最初のフレームの添字（取れなかった秒があるので、添字を秒として数えない）。
+ * 全フレームより前なら 0。
+ */
+function indexAtOrAfter(frames: Frame[], ms: number): number {
+  let lo = 0
+  let hi = frames.length - 1
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (frames[mid].ms < ms) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+/** カンマ区切りの数を読む。`ok` を満たさない値があれば止める（NaN のまま測らない） */
+function parseList(arg: string, name: string, ok: (n: number) => boolean): number[] {
+  const values = arg.split(',').map(Number)
+  const bad = values.filter(n => !ok(n))
+  // 同じ値を 2 度渡すと、列の名前を鍵にした数えが二重に足されて一致の数が水増しされる
+  if (values.length === 0 || bad.length > 0 || new Set(values).size !== values.length) {
+    console.error(`${name} の値が読めないか、同じ値が重なっています: ${arg}`)
+    process.exit(1)
+  }
+  return values
 }
 
 function main(): void {
   const args = process.argv.slice(2)
   const adaptive = args.includes('--adaptive')
+  const minArg = args.find(a => a.startsWith('--min-blocks='))
+  const minBlocks = minArg
+    ? parseList(minArg.slice('--min-blocks='.length), '--min-blocks', n => Number.isInteger(n) && n >= 1 && n <= WARMUP_MAX_BLOCKS)
+    : null
   const warmupArg = args.find(a => a.startsWith('--warmups='))
-  const warmups = warmupArg ? warmupArg.slice('--warmups='.length).split(',').map(Number) : [0, 180, 300, 600]
+  const warmups = warmupArg
+    ? parseList(warmupArg.slice('--warmups='.length), '--warmups', n => Number.isInteger(n) && n >= 0 && n <= PRE_SEC)
+    : [0, 180, 300, 600]
+  const tablesPath = args.find(a => a.startsWith('--tables='))?.slice('--tables='.length) ?? 'public/data/kyoshin-quiet-tables.json'
+  if (!existsSync(tablesPath)) { console.error(`平常のゆらぎの表 ${tablesPath} がありません`); process.exit(1) }
+  const tables = JSON.parse(readFileSync(tablesPath, 'utf8')) as QuietTables
+  validateQuietTables(tables)
 
-  const columns = adaptive ? ['遡って打ち切る'] : warmups.map(w => `${w}s`)
+  const columns = minBlocks ? minBlocks.map(m => `最低${m}分`) : adaptive ? ['遡って打ち切る'] : warmups.map(w => `${w}s`)
   const agree = new Map<string, number>(columns.map(c => [c, 0]))
   const fetched = new Map<string, number[]>(columns.map(c => [c, []]))
   let total = 0
+  // 測らなかった窓（結論に載せる。残りの一致率を 7 窓の結果と取り違えないように）
+  const skipped: string[] = []
+  const skip = (w: typeof WINDOWS[number], reason: string) => { console.log(`${w.name}: ${reason}`); skipped.push(w.name) }
 
   for (const w of WINDOWS) {
     const path = `${CACHE_DIR}/${w.label}.json`
-    if (!existsSync(path)) { console.log(`${w.name}: 窓が無い（--fetch で取得する）`); continue }
-    const frames = JSON.parse(readFileSync(path, 'utf8')) as Frame[]
+    const prePath = `${CACHE_DIR}/warmup-pre-${w.label}.json`
+    if (!existsSync(path) || !existsSync(prePath)) { skip(w, '窓か手前の窓が無い（--fetch で取得する）'); continue }
+    const body = JSON.parse(readFileSync(path, 'utf8')) as Frame[]
+    const pre0 = JSON.parse(readFileSync(prePath, 'utf8')) as Frame[]
+    if (body.length < w.seconds * MIN_COVERAGE) { skip(w, `窓が ${body.length}/${w.seconds} 秒しか無いので測らない（控えを消してから --fetch で取り直す）`); continue }
+    // 本体の途中で観測点リストの版が替わると並びが違うフレームが混ざる（手前と違い、外すと地震の最中が欠けるので測らない）
+    if (body.some(f => f.cfg !== body[0].cfg)) { skip(w, '窓の途中で観測点リストの版が替わっているので測らない'); continue }
+    // 観測点リストの版が違うフレームは並びが違うので混ぜない
+    const pre = pre0.filter(f => f.cfg === body[0].cfg)
+    if (pre.length < pre0.length) console.log(`  ${w.label}: 手前のうち観測点リストの版が違う ${pre0.length - pre.length} フレームを外した`)
+    if (pre.length < PRE_SEC * MIN_COVERAGE) { skip(w, `手前の窓が ${pre.length}/${PRE_SEC} 秒しか無いので測らない（控えを消してから --fetch で取り直す）`); continue }
+    const frames = [...pre, ...body]
+    const quakeIdx = indexAtOrAfter(frames, pathAt(w.start, w.quakeAt).ms)
     const sitesPath = `${CACHE_DIR}/sites_${frames[0].cfg}.json`
-    if (!existsSync(sitesPath)) { console.log(`${w.name}: 観測点リスト（${frames[0].cfg}）が無い`); continue }
+    if (!existsSync(sitesPath)) { skip(w, `観測点リスト（${frames[0].cfg}）が無い`); continue }
     const sites = JSON.parse(readFileSync(sitesPath, 'utf8')) as [number, number][]
-    const meta: StationMeta = buildStationMeta(sites)
-    const advance = (state: DetectorState, f: Frame): { state: DetectorState; dets: DetectionEvent[] } => {
-      const r = step(state, { dataTimeMs: f.ms, sites, values: f.indices, missing: f.indices.map(v => v < 0), eewActive: false }, meta)
-      return { state: r.state, dets: r.detections as DetectionEvent[] }
+    if (sites.length !== frames[0].indices.length) { skip(w, `観測点リスト（${frames[0].cfg}）の ${sites.length} 点とフレームの ${frames[0].indices.length} 点が合わない`); continue }
+    // 検知器は状態を中に持つので、流し始めるたびに作り直す
+    const fresh = () => {
+      const tracker = createEnsembleTracker(sites, createEnsembleDetector(sites, tables))
+      return (f: Frame): readonly EnsembleDetection[] => tracker.push({ ms: f.ms, values: Int8Array.from(f.indices) })
     }
 
-    // ずっと再生し続けた場合（窓の先頭から流す）
+    // ずっと再生し続けた場合（手前の窓の先頭から流す）
     const base: Snap[] = []
-    { let s = initState(frames[0].ms - 1000); for (const f of frames) { const r = advance(s, f); s = r.state; base.push(snap(r.dets)) } }
+    { const advance = fresh(); for (const f of frames) base.push(snap(advance(f))) }
 
     const local = new Map<string, number>(columns.map(c => [c, 0]))
     let localTotal = 0
-    for (let i = w.quakeAt + SWEEP_FROM_SEC; i < frames.length; i += SWEEP_STEP_SEC) {
+    const lastMs = frames[frames.length - 1].ms
+    for (let t = frames[quakeIdx].ms + SWEEP_FROM_SEC * 1000; t <= lastMs; t += SWEEP_STEP_SEC * 1000) {
+      const i = indexAtOrAfter(frames, t)
       localTotal++
-      for (const col of columns) {
-        const from = adaptive
-          ? adaptiveStart(frames, i)
-          : Math.max(0, i - Number(col.replace('s', '')))
-        let s = initState(frames[from].ms - 1000)
+      for (const [j, col] of columns.entries()) {
+        const from = minBlocks
+          ? adaptiveStart(frames, i, minBlocks[j])
+          : adaptive
+            ? adaptiveStart(frames, i)
+            : indexAtOrAfter(frames, frames[i].ms - Number(col.replace('s', '')) * 1000)
+        const advance = fresh()
         let got: Snap = { tier: 'なし', maxInt: NaN }
-        for (let k = from; k <= i; k++) { const r = advance(s, frames[k]); s = r.state; got = snap(r.dets) }
+        for (let k = from; k <= i; k++) got = snap(advance(frames[k]))
         if (same(got, base[i])) local.set(col, local.get(col)! + 1)
-        fetched.get(col)!.push(i - from)
+        fetched.get(col)!.push(Math.round((frames[i].ms - frames[from].ms) / 1000))
       }
     }
     total += localTotal
@@ -206,7 +301,10 @@ function main(): void {
     console.log(`${w.name}: ${columns.map(c => `${c} ${local.get(c)}/${localTotal}`).join(' ／ ')}`)
   }
 
-  console.log(`\n===== 合計（${total} 点）=====`)
+  console.log(`\n===== 合計（${total} 点・測った窓 ${WINDOWS.length - skipped.length}/${WINDOWS.length}）=====`)
+  if (skipped.length > 0) console.log(`  測らなかった窓: ${skipped.join('・')}（この合計は全窓の結果ではない）`)
+  // 欠けたまま測った結果を、正常に測った結果と見分けられるように止める
+  if (skipped.length > 0 || total === 0) process.exitCode = 1
   for (const col of columns) {
     const lens = fetched.get(col)!
     const avg = lens.length > 0 ? Math.round(lens.reduce((a, b) => a + b, 0) / lens.length) : 0

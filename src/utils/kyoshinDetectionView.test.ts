@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { buildSiteIndex, dropIsolatedZeroPoints, resolveMembers, deriveKyoshinView, type DetectedPoint } from './kyoshinDetectionView'
-import { initGates, siteKey, type DetectionEvent } from './kyoshinDetector'
+import { siteKey } from './kyoshinSiteKeys'
+import { kyoshinDetectionScaleLabel } from './kyoshinIntensity'
+import type { EnsembleDetection } from './kyoshinEnsembleTracker'
+import { fakeEnsembleDetection } from '../test-utils/ensembleDetection'
 import type { SiteCoords } from '../services/kyoshin'
 
 /**
@@ -8,7 +11,7 @@ import type { SiteCoords } from '../services/kyoshin'
  * 作らないため）が、多くのテストは「直近の立ち上がりなし」で足りるのでここで空集合を補う。
  */
 function derive(
-  detections: DetectionEvent[],
+  detections: EnsembleDetection[],
   sites: SiteCoords,
   indices: number[],
   recentOnsetKeys: ReadonlySet<string> = new Set(),
@@ -16,31 +19,15 @@ function derive(
   return deriveKyoshinView(detections, sites, indices, recentOnsetKeys)
 }
 
-/** テスト用の最小 DetectionEvent。指定しないフィールドは無関係な既定値で埋める。 */
-function fakeEvent(overrides: Partial<DetectionEvent> & Pick<DetectionEvent, 'id' | 'confidence' | 'memberKeys' | 'maxIntensity'>): DetectionEvent {
-  return {
-    cells: [],
-    originTimeMs: 0,
-    lastOnsetAtMs: 0,
-    lastSize: overrides.memberKeys.length,
-    epicenter: null,
-    confirmStreak: 0,
-    firstConfirmedAtMs: 0,
-    everMultiPoint: false,
-    isolated: false,
-    isolatedStuckKeys: [],
-    isolatedSilentKeys: [],
-    everConfirmed: overrides.confidence === 'confirmed',
-    lastSpreadAtMs: 0,
-    everNeighborRise: overrides.confidence === 'likely' || overrides.confidence === 'confirmed',
-    gates: initGates(),
-    confirmedBy: null,
-    ...overrides,
-  }
+/** テスト用の検知。テストが見る欄（id・段・メンバー・最大震度）だけを必ず渡させる */
+function fakeEvent(
+  overrides: Partial<EnsembleDetection> & Pick<EnsembleDetection, 'id' | 'confidence' | 'memberKeys' | 'maxIntensity'>,
+): EnsembleDetection {
+  return fakeEnsembleDetection(overrides)
 }
 
 describe('buildSiteIndex: 座標衝突時も両方の観測点を索引に残す', () => {
-  it('同一座標2点は kyoshinDetector.computeSiteKeys と同じ #2 サフィックスで両方引ける', () => {
+  it('同一座標2点は computeSiteKeys と同じ #2 サフィックスで両方引ける', () => {
     // 2026-08-08 天草・芦北地方の誤報調査で発覚: Yahoo 強震モニタの公開座標は同一値が複数回
     // 現れることがある（実例: site#561/#1358 がともに [32.2, 130.4]）。以前は Map のキーが
     // 座標だけだったため後発の点が先発を上書きし、カード表示・confirmedShocks から先発点の
@@ -69,6 +56,33 @@ describe('buildSiteIndex: 座標衝突時も両方の観測点を索引に残す
     const base = siteKey(32.2, 130.4)
     const pts = resolveMembers([base, `${base}#2`], byKey)
     expect(pts.map((p) => p.index).sort((a, b) => a - b)).toEqual([6, 11])
+  })
+})
+
+describe('deriveKyoshinView: candidatePeakIndex（共有カードの副見出しに震度の呼び名を付ける値）', () => {
+  const sites: SiteCoords = [
+    [35.0, 139.0],
+    [35.1, 139.1],
+  ]
+  const keyA = siteKey(35.0, 139.0)
+  const keyB = siteKey(35.1, 139.1)
+  const likely = [fakeEvent({ id: 'evt-1', confidence: 'likely', memberKeys: [keyA, keyB], maxIntensity: null })]
+
+  it('正: 主候補のメンバーが全員欠測なら -1（呼び名を付けない。音の基準の candidateMaxIndex は 0 のまま）', () => {
+    const view = derive(likely, sites, [-1, -1])
+    expect(view.candidatePeakIndex).toBe(-1)
+    expect(kyoshinDetectionScaleLabel(view.candidatePeakIndex)).toBeNull()
+    expect(view.candidateMaxIndex).toBe(0)
+  })
+
+  it('対照: 値を持つメンバーが震度0未満でも、その値を返す（「0以下」と名乗る）', () => {
+    const view = derive(likely, sites, [-1, 3])
+    expect(view.candidatePeakIndex).toBe(3)
+    expect(kyoshinDetectionScaleLabel(view.candidatePeakIndex)).toBe('0以下')
+  })
+
+  it('安全弁: likely が無ければ -1', () => {
+    expect(derive([], sites, [9, 7]).candidatePeakIndex).toBe(-1)
   })
 })
 
@@ -117,7 +131,7 @@ describe('deriveKyoshinView: candidateMaxIndex（likely 中の音レベル追跡
 })
 
 // 検知点マーカー（KyoshinDetectedPointsGL）の描画対象は detectedPoints ＋ unconfirmedPoints の 2 本で、
-// リアルタイムタブの検知カードが集計する集合（weak 以外の全イベント）と一致していなければならない。
+// リアルタイムタブの検知カードが集計する集合（全イベント）と一致していなければならない。
 // candidatePoints は候補カメラフィット専用（主 likely 1 件へ絞る）なので、こちらとは用途が別。
 describe('deriveKyoshinView: unconfirmedPoints（検知点マーカーの描画対象）', () => {
   const sites: SiteCoords = [
@@ -132,11 +146,11 @@ describe('deriveKyoshinView: unconfirmedPoints（検知点マーカーの描画�
   const keyD = siteKey(35.3, 139.3)
   const indices = [9, 10, 11, 12]
 
-  it('likely と faint のメンバーを全件含む（複数 likely を主 1 件へ絞らない）', () => {
+  it('likely のメンバーを全件含む（複数 likely を主 1 件へ絞らない）', () => {
     const detections = [
       fakeEvent({ id: 'evt-1', confidence: 'likely', memberKeys: [keyA], maxIntensity: 1.5 }),
       fakeEvent({ id: 'evt-2', confidence: 'likely', memberKeys: [keyB], maxIntensity: 4.0 }),
-      fakeEvent({ id: 'evt-3', confidence: 'faint', memberKeys: [keyC], maxIntensity: 0.2 }),
+      fakeEvent({ id: 'evt-3', confidence: 'likely', memberKeys: [keyC], maxIntensity: 0.2 }),
     ]
     const view = derive(detections, sites, indices)
     expect(view.unconfirmedPoints.map((p) => p.index).sort((a, b) => a - b)).toEqual([9, 10, 11])
@@ -144,10 +158,9 @@ describe('deriveKyoshinView: unconfirmedPoints（検知点マーカーの描画�
     expect(view.candidatePoints.map((p) => p.index)).toEqual([10])
   })
 
-  it('weak と confirmed のメンバーは含まない（confirmed は detectedPoints 側）', () => {
+  it('confirmed のメンバーは含まない（confirmed は detectedPoints 側）', () => {
     const detections = [
       fakeEvent({ id: 'evt-1', confidence: 'confirmed', memberKeys: [keyA], maxIntensity: 5.0 }),
-      fakeEvent({ id: 'evt-2', confidence: 'weak', memberKeys: [keyB], maxIntensity: 0.1 }),
       fakeEvent({ id: 'evt-3', confidence: 'likely', memberKeys: [keyC], maxIntensity: 2.0 }),
     ]
     const view = derive(detections, sites, indices)
@@ -163,7 +176,7 @@ describe('deriveKyoshinView: unconfirmedPoints（検知点マーカーの描画�
   it('同一観測点が複数の likely に属していても重複しない', () => {
     const detections = [
       fakeEvent({ id: 'evt-1', confidence: 'likely', memberKeys: [keyA, keyD], maxIntensity: 1.5 }),
-      fakeEvent({ id: 'evt-2', confidence: 'faint', memberKeys: [keyD], maxIntensity: 0.2 }),
+      fakeEvent({ id: 'evt-2', confidence: 'likely', memberKeys: [keyD], maxIntensity: 0.2 }),
     ]
     const view = derive(detections, sites, indices)
     expect(view.unconfirmedPoints.map((p) => p.index).sort((a, b) => a - b)).toEqual([9, 12])
@@ -225,9 +238,9 @@ describe('dropIsolatedZeroPoints: 揺れが去った後に残る孤立した震�
     expect(dropIsolatedZeroPoints(pts, ALL(pts), NONE).map((p) => p.key)).toEqual(['a'])
   })
 
-  it('対象キーに含まれない点は孤立していても落とさない（likely / faint のメンバー）', () => {
-    const pts = [P('conf', 35.0, 139.0, 6), P('faint', 40.0, 139.0, 6)]
-    expect(dropIsolatedZeroPoints(pts, new Set(['conf']), NONE).map((p) => p.key)).toEqual(['faint'])
+  it('対象キーに含まれない点は孤立していても落とさない（likely のメンバー）', () => {
+    const pts = [P('conf', 35.0, 139.0, 6), P('early', 40.0, 139.0, 6)]
+    expect(dropIsolatedZeroPoints(pts, new Set(['conf']), NONE).map((p) => p.key)).toEqual(['early'])
   })
 
   it('対象外の点が持つ震度1以上も近傍判定の材料に使う', () => {
@@ -267,11 +280,10 @@ describe('deriveKyoshinView: 孤立した震度0点の除外', () => {
     expect(view.detectedMarkerPoints.map((p) => p.key).sort()).toEqual([keyFar, keyNear, keyStrong].sort())
   })
 
-  // faint はメンバー全員が定義上震度0。間引きの対象にすると、イベントが生きている間に点だけが消えて
-  // 「微弱な揺れの兆候」カードと地図が食い違う。
-  it('faint / likely のメンバーは間引かない（unconfirmedPoints は素通し）', () => {
+  // 早い段のメンバーを間引くと、検知が生きている間に点だけが消えて検知カードと地図が食い違う。
+  it('likely のメンバーは間引かない（unconfirmedPoints は素通し）', () => {
     const view = derive(
-      [fakeEvent({ id: 'evt-2', confidence: 'faint', memberKeys: [keyNear, keyFar], maxIntensity: 0.0 })],
+      [fakeEvent({ id: 'evt-2', confidence: 'likely', memberKeys: [keyNear, keyFar], maxIntensity: 0.0 })],
       farSites,
       [6, 6, 6], // 震度1以上が1点も無い
     )
@@ -364,8 +376,7 @@ describe('deriveKyoshinView: confirmedShocks の寄り先（peak）', () => {
         confidence: 'confirmed',
         memberKeys: wideKeys,
         maxIntensity: 4.0,
-        // 重心は 3 点の平均（実装が使う値そのもの。ここでは意図的にピークから離れた位置）
-        epicenter: [36.55, 138.55],
+        epicenter: [37.45, 137.15],
       })],
       wideSites,
       [13, 8, 7], // 能登が震度4相当・他は震度1〜2
@@ -374,8 +385,9 @@ describe('deriveKyoshinView: confirmedShocks の寄り先（peak）', () => {
     const shock = view.confirmedShocks[0]
     expect(shock.index).toBe(13)
     expect(shock.peak).toEqual({ lat: 37.45, lng: 137.15 })
-    // 照合に使う重心は従来どおり（別地点判定の距離閾値がこれを前提にしている）
-    expect({ lat: shock.lat, lng: shock.lng }).toEqual({ lat: 36.55, lng: 138.55 })
+    // 照合に使う位置はメンバーの重心（別地点判定の距離閾値がこれを前提にしている）
+    expect(shock.lat).toBeCloseTo(36.55, 9)
+    expect(shock.lng).toBeCloseTo(138.55, 9)
   })
 
   it('[対照] 最大が動けば寄り先も動く', () => {
@@ -408,7 +420,7 @@ describe('deriveKyoshinView: confirmedShocks の寄り先（peak）', () => {
     expect(view.confirmedShocks[0].peak).toEqual({ lat: 37.45, lng: 137.15 })
   })
 
-  it('[安全弁] メンバーが索引に無くてもイベントは落とさない（重心へ落として残す）', () => {
+  it('[安全弁] メンバーが索引に無くてもイベントは落とさない（検知の位置へ落として残す）', () => {
     // 観測点リストの入れ替え中は sites が空へゲートされ、メンバーが 1 つも引けなくなる。
     // ここでイベントごと消すと、地域単位の発報（stepAlertRegions）が「確定が消えた」と読んで
     // 発報済み・EEW 吸収済みの記録を捨て、入れ替えの直後に同じ地域が鳴り直す。
@@ -418,13 +430,113 @@ describe('deriveKyoshinView: confirmedShocks の寄り先（peak）', () => {
         confidence: 'confirmed',
         memberKeys: wideKeys,
         maxIntensity: 4.0,
-        epicenter: [36.55, 138.55],
+        epicenter: [37.0, 137.5], // 束を作った 1 点の位置
       })],
       [], // sites が空（＝索引が空）
       [],
     )
     expect(view.confirmedShocks).toEqual([
-      { lat: 36.55, lng: 138.55, index: 0, peak: { lat: 36.55, lng: 138.55 } },
+      // 値を持つメンバーが無いので index は欠測（-1）。0 は計測震度 -3.0 という値になってしまう
+      { lat: 37.0, lng: 137.5, index: -1, peak: { lat: 37.0, lng: 137.5 } },
     ])
+  })
+})
+
+// 地域単位の発報の位置は、束を作った 1 点（`epicenter`）ではなく解決できたメンバーの重心にする。
+// 広がった揺れでは束の起点がメンバー全体の真ん中から外れ、距離のしきい値の前提が崩れる。
+describe('deriveKyoshinView: confirmedShocks の位置はメンバーの重心', () => {
+  const sites: SiteCoords = [
+    [35.0, 139.0],
+    [36.0, 140.0],
+  ]
+  const keys = sites.map(([lat, lng]) => siteKey(lat, lng))
+
+  it('[正] epicenter ではなく、解決できたメンバーの重心を返す', () => {
+    const view = derive(
+      [fakeEvent({ id: 'evt-1', confidence: 'confirmed', memberKeys: keys, maxIntensity: 2.0, epicenter: [35.0, 139.0] })],
+      sites,
+      [9, 9],
+    )
+    expect(view.confirmedShocks[0].lat).toBeCloseTo(35.5, 9)
+    expect(view.confirmedShocks[0].lng).toBeCloseTo(139.5, 9)
+  })
+
+  it('[正] 索引に無いメンバーは重心の計算から外す', () => {
+    const view = derive(
+      [fakeEvent({ id: 'evt-1', confidence: 'confirmed', memberKeys: [...keys, 'unknown-key'], maxIntensity: 2.0, epicenter: [0, 0] })],
+      sites,
+      [9, 9],
+    )
+    expect(view.confirmedShocks[0].lat).toBeCloseTo(35.5, 9)
+    expect(view.confirmedShocks[0].lng).toBeCloseTo(139.5, 9)
+  })
+
+  it('[安全弁] 1 点も解決できなければ epicenter を使う', () => {
+    const view = derive(
+      [fakeEvent({ id: 'evt-1', confidence: 'confirmed', memberKeys: ['unknown-key'], maxIntensity: 2.0, epicenter: [34.0, 133.0] })],
+      sites,
+      [9, 9],
+    )
+    expect(view.confirmedShocks).toEqual([{ lat: 34.0, lng: 133.0, index: -1, peak: { lat: 34.0, lng: 133.0 } }])
+  })
+})
+
+// 確かな段の要約の index は、通知の「推定最大震度」の呼び名（`kyoshinDetectionScaleLabel`）へ渡る。
+// 欠測を 0 に丸めると、計測震度 -3.0 の値があるように「0以下」と名乗る
+describe('deriveKyoshinView: confirmedShocks の index と欠測', () => {
+  const sites: SiteCoords = [
+    [35.0, 139.0],
+    [36.0, 140.0],
+  ]
+  const keys = sites.map(([lat, lng]) => siteKey(lat, lng))
+  const confirmed = () => [fakeEvent({ id: 'evt-1', confidence: 'confirmed', memberKeys: keys, maxIntensity: null, epicenter: [35.0, 139.0] })]
+
+  it('[正] メンバーが全員欠測なら -1 にし、通知の呼び名を付けない', () => {
+    const view = derive(confirmed(), sites, [-1, -1])
+    expect(view.confirmedShocks[0].index).toBe(-1)
+    expect(kyoshinDetectionScaleLabel(view.confirmedShocks[0].index)).toBeNull()
+  })
+
+  it('[対照] 震度0 未満の値（index 0 = 計測震度 -3.0）は欠測ではないので「0以下」と呼ぶ', () => {
+    const view = derive(confirmed(), sites, [0, -1])
+    expect(view.confirmedShocks[0].index).toBe(0)
+    expect(kyoshinDetectionScaleLabel(view.confirmedShocks[0].index)).toBe('0以下')
+  })
+
+  it('[安全弁] 1 点でも震度の値があれば、その値を採る（欠測の点は最大に効かない）', () => {
+    const view = derive(confirmed(), sites, [9, -1])
+    expect(view.confirmedShocks[0].index).toBe(9)
+  })
+})
+
+describe('deriveKyoshinView: 最大震度が無い likely の扱い', () => {
+  const sites: SiteCoords = [
+    [35.0, 139.0],
+    [36.0, 140.0],
+  ]
+  const keyA = siteKey(35.0, 139.0)
+  const keyB = siteKey(36.0, 140.0)
+
+  it('[対照] 最大震度が null の likely は、値のある likely より前にあっても主候補にならない', () => {
+    const view = derive(
+      [
+        fakeEvent({ id: 'evt-null', confidence: 'likely', memberKeys: [keyA], maxIntensity: null }),
+        fakeEvent({ id: 'evt-low', confidence: 'likely', memberKeys: [keyB], maxIntensity: 0.1 }),
+      ],
+      sites,
+      [9, 7],
+    )
+    expect(view.candidateId).toBe('evt-low')
+    expect(view.candidatePoints.map((p) => p.key)).toEqual([keyB])
+  })
+
+  it('[安全弁] likely が最大震度 null の 1 件だけなら、それを主候補にする（候補を消さない）', () => {
+    const view = derive(
+      [fakeEvent({ id: 'evt-null', confidence: 'likely', memberKeys: [keyA], maxIntensity: null })],
+      sites,
+      [9, 7],
+    )
+    expect(view.candidate).toBe(true)
+    expect(view.candidateId).toBe('evt-null')
   })
 })

@@ -223,7 +223,7 @@ async function outputOf(type: string, ev: unknown, orig: unknown = ev): Promise<
     const e = ev as EEWAlert
     const dom = await renderText(
       <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[e]} swaveArrival={null} kyoshinV2Detections={[]}
-        kyoshinDetectedPoints={[]} kyoshinDemoted={[]} visible />,
+        kyoshinDetectedPoints={[]} visible />,
     )
     return [dom, safe(() => eewAlertToText(e, 'warning')), safe(() => eewAlertToText(e, 'forecast')),
       safe(() => eewAlertToText(e, 'hypocenterUpdate')),

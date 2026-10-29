@@ -1,93 +1,131 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLazyRef } from './useLazyRef'
-import { MISSING_INDEX_THRESHOLD, type SiteCoords } from '../services/kyoshin'
+import type { SiteCoords } from '../services/kyoshin'
+import { siteKey } from '../utils/kyoshinSiteKeys'
 import {
-  step,
-  initState,
-  resetTransientState,
-  buildStationMeta,
-  extractLearned,
-  hydrateLearned,
-  siteKey,
-  chronicNoiseFloor,
-  type DetectorState,
-  type StationMeta,
-  type LearnedState,
-  type DetectionEvent,
-  type TriggerResult,
-} from '../utils/kyoshinDetector'
+  extractNoiseFloors,
+  hydrateNoiseFloors,
+  initNoiseFloorState,
+  MAX_RESUME_GAP_MS,
+  noiseFloorKeys,
+  noiseFloorsFor,
+  recentOnsetKeys as noiseFloorRecentOnsetKeys,
+  stepNoiseFloor,
+  type NoiseFloorSnapshot,
+  type NoiseFloorState,
+} from '../utils/kyoshinNoiseFloor'
 import {
   consumeWarmup,
   pushPendingFrame,
   type PendingFrame,
   type WarmupNotice,
 } from '../utils/kyoshinWarmupConsumer'
-import type { KyoshinBackfill, KyoshinWarmup } from './useKyoshinRealtime'
+import { LIVE_KYOSHIN_SUPPLY_KEY, type KyoshinBackfill, type KyoshinWarmup } from './useKyoshinRealtime'
+import { createQuietLearner, QUIET_LEARNER_DEFAULTS, type QuietLearner } from '../utils/kyoshinQuietLearner'
+import { loadQuietLearnerState, saveQuietLearnerState } from '../utils/kyoshinQuietLearnerDb'
+import type { KyoshinFrame } from '../services/kyoshinSource'
 import { createLogThrottle, log } from '../utils/logger'
 import { profileSpan } from '../utils/frameProfiler'
+import { createEnsembleDetector } from '../utils/kyoshinEnsembleDetector'
+import { createEnsembleWorkerClient, type EnsembleWorkerLike } from '../utils/kyoshinEnsembleWorkerClient'
+import type { EnsembleShadow, ShadowDropReason, ShadowFrame } from '../utils/kyoshinEnsembleShadow'
+import type { EnsembleDetection } from '../utils/kyoshinEnsembleTracker'
+import { getKyoshinQuietTables, loadKyoshinQuietTables, onKyoshinQuietTablesLoaded } from '../utils/kyoshinQuietTablesLoader'
+import type { QuietTables } from '../utils/kyoshinQuietTables'
 
-/** 学習資産（点別床・セル慢性活性）の localStorage キー。座標/セル基準なので siteConfigId 版差に非依存。 */
+/**
+ * 慢性ノイズ床（`utils/kyoshinNoiseFloor`）の localStorage キー。座標から作る観測点キーなので、
+ * `siteConfigId` の版差に依らない。中身は `{ floors: { 観測点キー: [平均, ばらつき] } }`
+ */
 const LEARNED_KEY = 'kyoshin-v3-learned'
-/** 学習資産の保存間隔(ms)。毎フレーム書くと無駄なのでスロットルする。 */
+/** 床の保存間隔(ms)。毎フレーム書くと無駄なので間を置く。 */
 const SAVE_INTERVAL_MS = 60_000
 /** 観測点数と震度の件数の食い違いを記録する最小間隔(ms)。毎フレーム出すと埋まる。 */
 const PAIR_MISMATCH_LOG_MS = 300_000
 
+/**
+ * 主スレッドで組み合わせの検知器を回すとき（Worker が立たなかったとき）、1 回の区切りで使ってよい時間（ms）。
+ * 1 フレーム 3〜12 ms かかるので、1 区切りで 1〜2 フレーム
+ */
+const ENSEMBLE_MAIN_SLICE_MS = 8
+/**
+ * Worker の中で 1 回の区切りで使ってよい時間（ms）。画面は止めないので主スレッドより長くてよいが、
+ * 作り直しの伝言（時間軸の切替）を受け取るまでの遅れになるので長くしすぎない
+ */
+const ENSEMBLE_WORKER_SLICE_MS = 50
+/**
+ * 床の係の「今揺れ始めた点」をデータ時刻ごとに覚えておく長さ（ms）。組み合わせの検知器は区切って処理するぶん
+ * 遅れて結果を返すので、その結果と同じ時刻の値を組にして渡す
+ */
+const ONSET_KEEP_MS = 120_000
+/** 組み合わせの検知器の例外を記録する最小間隔（ms） */
+const ENSEMBLE_ERROR_LOG_MS = 300_000
+/**
+ * Worker が黙ったとみなす時間（ms・実時間）。返事を待っているのにこれだけ何も届かなければ主スレッドへ切り替える。
+ * 助走の最大 900 フレームでも Worker の中の処理は約 3 秒なので、正当な処理を取り違えない長さにしてある
+ */
+const ENSEMBLE_WORKER_SILENCE_MS = 30_000
+/** 平常のゆらぎの表の取得を、共有の規則が諦めた後に取り直すまでの間（ms） */
+const QUIET_TABLES_RETRY_MS = 600_000
+
+/** 助走・取り直しの秒。検知器の状態を進めるためだけに食わせ、結果は画面へ出さない */
+const toShadowFrame = (f: KyoshinFrame): ShadowFrame => ({ ms: f.time.getTime(), indices: f.indices, sitesKey: f.sitesKey, silent: true })
+/**
+ * 待たせていた秒。最後の 1 件は今届いたフレームなので結果を画面へ出し、それより前は出さない。
+ * 出すと、待っていた間の検知が 1 秒ずつ画面・音・通知へ流れる
+ */
+const pendingToShadowFrames = (pending: readonly PendingFrame[]): ShadowFrame[] =>
+  pending.map((f, i) => ({ ms: f.dataTimeMs, indices: f.indices, sitesKey: f.sitesKey, silent: i < pending.length - 1 }))
+
 // localStorage が壊れた/無効な環境（プライベートモード・dom.storage.enabled=false・
 // 一部の iframe サンドボックス等）では、getItem/setItem が呼ばれるたびに例外を投げる。
-// `useKyoshinDetectorV2` は ≈1Hz で再レンダーされ、`useRef` の引数式は毎レンダー評価される
-// ため、単純に catch で log すると同じ warn が毎秒（保存側は 60 秒ごと）に無限に積み上がる。
-// モジュールスコープの一度限りフラグでスパムを抑制する。
+// 同じ warn を毎回積まないよう、モジュールスコープの一度限りフラグで抑える。
 let loadWarned = false
 let saveWarned = false
 
-/** localStorage から学習資産を復元した初期状態を作る（無ければ空状態）。 */
-function loadInitialState(): DetectorState {
-  const base = initState(0)
+/** localStorage から床を復元した初期状態を作る（無ければ空状態）。 */
+function loadInitialFloor(): NoiseFloorState {
   try {
     const raw = localStorage.getItem(LEARNED_KEY)
-    if (!raw) return base
-    const learned = JSON.parse(raw) as LearnedState
-    if (!learned || typeof learned !== 'object' || !learned.floors) return base
-    return hydrateLearned(base, learned)
+    if (!raw) return initNoiseFloorState()
+    const saved = JSON.parse(raw) as NoiseFloorSnapshot
+    if (!saved || typeof saved !== 'object' || !saved.floors || typeof saved.floors !== 'object') return initNoiseFloorState()
+    return hydrateNoiseFloors(saved)
   } catch (e) {
-    // localStorage アクセス不可・JSON 破損等。復元できないだけで検知エンジンは動くため
-    // warn で通知する（error にすると初回起動や localStorage 無効環境で常時エラー化する）。
-    // 毎レンダー評価に対する再ログを避けるため、セッション中一度きりに絞る。
+    // 復元できないだけで床は学び直せるので warn にとどめる（error にすると初回起動や localStorage 無効環境で常時エラー化する）
     if (!loadWarned) {
       loadWarned = true
-      log.warn('[detector] 学習資産の復元失敗（新規セッションとして初期化）', e)
+      log.warn('[detector] 慢性ノイズ床の復元失敗（新規セッションとして初期化）', e)
     }
-    return base
+    return initNoiseFloorState()
   }
 }
 
-/** 学習資産を localStorage に保存する（容量超過・無効環境は握りつぶす）。 */
-function saveLearned(state: DetectorState): void {
+/** 床を localStorage に保存する（容量超過・無効環境は握りつぶす）。 */
+function saveFloor(state: NoiseFloorState): void {
   try {
-    localStorage.setItem(LEARNED_KEY, JSON.stringify(extractLearned(state)))
+    localStorage.setItem(LEARNED_KEY, JSON.stringify(extractNoiseFloors(state)))
   } catch (e) {
-    // 容量超過・プライベートモード等は学習を諦めるだけ。検知は継続。保存失敗を可視化する
-    // ことで「なぜ次回起動時に学習資産が復元されないか」を追跡できるようにする。
-    // 60 秒ごとの保存失敗が延々続くのを避けるため、セッション中一度きりに絞る。
+    // 保存できないと次回起動時に床が学び直しになるだけ。なぜ復元されないかを追えるよう一度だけ残す
     if (!saveWarned) {
       saveWarned = true
-      log.warn('[detector] 学習資産の保存失敗（localStorage 容量超過・プライベートモード等）', e)
+      log.warn('[detector] 慢性ノイズ床の保存失敗（localStorage 容量超過・プライベートモード等）', e)
     }
   }
 }
 
 export interface KyoshinDetectorV2Result {
-  /** アクティブな検知イベント（最大震度降順） */
-  detections: DetectionEvent[]
-  /** 今フレームのトリガー点 */
-  triggers: TriggerResult[]
   /**
-   * 直近に立ち上がった観測点キー（`step()` の `recentOnsetKeys`）。検知点マーカー・検知カードが
-   * 「揺れが去った後に残る孤立した震度0点」を落とす判定に使う（kyoshinDetectionView.dropIsolatedZeroPoints）。
+   * 組み合わせの検知器（`utils/kyoshinEnsembleTracker`）の検知。段は早い段（`likely`）と確かな段（`confirmed`）だけで、
+   * 震度では分けない（震度1 に届かない揺れも段のまま音・自動タブ切替・地図の寄せへつなぐ。2026-10-29 ユーザー選択「段のまま鳴らす」）
+   */
+  detections: EnsembleDetection[]
+  /**
+   * `detections` と同じデータ時刻に、直近に立ち上がった観測点キー（床の係の `recentOnsetKeys`）。検知点マーカー・
+   * 検知カードが「揺れが去った後に残る孤立した震度0点」を落とす判定と、同じ場所の 2 つ目の地震の合図に使う
    */
   recentOnsetKeys: ReadonlySet<string>
-  /** 対象データ時刻 */
+  /** `detections` のデータ時刻（ISO 文字列）。強震モニタの取得の時刻とは、組み合わせの検知器が処理する遅れだけずれうる */
   dataTime: string
   /**
    * 観測点ごとの表示用慢性ノイズ床（value）。**`sites` と同じ並びの配列**で、震度0ドット表示
@@ -96,40 +134,31 @@ export interface KyoshinDetectorV2Result {
    *
    * 座標キーの辞書にしないのは、同一座標に複数の実観測点が載る点があるため（`computeSiteKeys` が
    * `#2`, `#3` と別実体に分ける）。受け取る側が座標からキーを作り直すと、その規則が 2 箇所に増えて
-   * 静かに食い違う（実際にそうなっていた。`kyoshinSubThresholdFilter.ts` 参照）。並びで対応づければ
-   * 規則そのものが要らない。
+   * 静かに食い違う。並びで対応づければ規則そのものが要らない。
    *
-   * まだ床を持たない点は 0 を入れる。0 に `SUSTAIN_MARGIN` を足した実効しきい値（0.4）が震度0ドットの
-   * 上限（index 6 ＝ value 0.0）を上回るため、実質「表示しない」側へ倒れる。床を持たないのは、一度も
-   * 観測できていない欠測点だけ（大きな時刻の飛びや時間軸の切替の直後に欠測している点も、学習済みの
-   * 床は残る。設計書§37）。
+   * まだ床を持たない点は 0 を入れる（一度も観測できていない欠測点だけ）。
    */
   floors: number[]
   /**
    * `floors` を計算した観測点配列の参照。**`floors` を位置で使う側は、自分が持っている観測点配列と
    * これが同一参照であることを確かめてから使うこと。**
    *
-   * `floors` を作り直すのは**次にデータ時刻が進んだとき**（この effect の deps）なのに対し、呼び出し側の
-   * 観測点配列はそのレンダーで即座に切り替わる。観測点リストが差し替わってからデータ時刻が進むまでの間
-   * （途中に別のレンダーを挟むこともある）は「新しい観測点 × 古い床」が並び、点数がたまたま一致すると
-   * 長さの検査をすり抜けて別地点の床で判定してしまう。
-   * リストの差し替えは年数回の `siteConfigId` 更新に限らず、過去日のリプレイを始めるたびに起こる
-   * （`services/kyoshinSource.ts` が再生対象日の `siteConfigId` を使うため）。
+   * 観測点リストが差し替わってから次の結果が届くまでの間は「新しい観測点 × 古い床」が並び、点数がたまたま
+   * 一致すると長さの検査をすり抜けて別地点の床で判定してしまう。リストの差し替えは過去日のリプレイを
+   * 始めるたびに起こる（`services/kyoshinSource.ts` が再生対象日の `siteConfigId` を使うため）。
    */
   floorsSites: SiteCoords
   /**
    * この結果が「**結果を出せなくなったので空にした**」ものか（`RESULT_STALL_RESET_FRAMES` 参照）。
    *
    * 受け取る側が「揺れが収まって検知が消えた」のと区別するために持つ。後者からの復帰は同じ地震が
-   * 続いていることが多く（`stateRef` は保持され、`MAX_RESUME_GAP_MS` 以内なら同じイベントが返る）、
-   * 警報音や通知を鳴らし直すと「収まって、また始まった」という誤った印象を与える。
+   * 続いていることが多く、警報音や通知を鳴らし直すと「収まって、また始まった」という誤った印象を与える。
    */
   stalled: boolean
 }
 
 const EMPTY: KyoshinDetectorV2Result = {
   detections: [],
-  triggers: [],
   recentOnsetKeys: new Set<string>(),
   dataTime: '',
   floors: [],
@@ -138,23 +167,13 @@ const EMPTY: KyoshinDetectorV2Result = {
 }
 
 /**
- * 観測点集合のシグネチャ。これが変わったら近傍メタ（`buildStationMeta`）を組み直す。
+ * 観測点集合のシグネチャ。これが変わったら床の係の観測点キー（`noiseFloorKeys`）を作り直す。
  *
- * **全点を見る**。以前は「点数＋先頭・末尾座標」だけで判定していたが、それでは配列の中間だけが
- * 差し替わった更新を検知できず、古い近傍メタ（＝`StationMeta.keys`）を使い続ける。`keys` は
- * `computeSiteKeys` が座標の重複点に出現順で `#2`, `#3` を割り当てた結果で、Yahoo の観測点リストでは
- * 全1725点中431点が座標重複に該当する。一方で表示側の `buildSiteIndex` は毎回キーを作り直すため、
- * 両者のキーがずれ、`recentOnsetKeys` を使う判定（孤立した震度0点の間引きの救済）が静かに効かなくなる。
+ * **全点を見る。** 点数と先頭・末尾の座標だけで比べると、配列の中間だけが差し替わった更新を見逃し、古いキーを
+ * 使い続ける。キーは座標が重なる点に出現順で `#2`, `#3` を割り当てる（Yahoo の観測点リストでは全 1725 点中
+ * 431 点が該当）ので、表示側の `buildSiteIndex` が作り直すキーとずれ、`recentOnsetKeys` を使う判定が静かに効かなくなる。
  *
- * 並べるのは**座標キーで足りる**（`computeSiteKeys` の `#2` 付きキーにしなくてよい）。`computeSiteKeys`
- * は座標列だけを入力とする決定的な関数なので、座標列が同じなら割り当ても必ず同じ・座標列が違えば
- * ここも必ず違う——両者の検出能力は等価で、`#2` を含めても余分に捕まるものは無い。裏返しとして、
- * 同一座標のグループ内で 2 点の実体が入れ替わった更新は**どちらの作り方でも検出できない**（座標しか
- * 持たない配列では区別がつかない）。
- *
- * 全点の走査は O(点数) だが、呼ぶのは `sites` の**参照が変わったとき**だけに絞っている（呼び出し側参照）。
- * 同一 `siteConfigId` の観測点リストは `fetchSiteList` がキャッシュした同じ配列を返すため、
- * 通常運用では毎秒走らない。
+ * 呼ぶのは `sites` の**参照が変わったとき**だけ（同じ `siteConfigId` の観測点リストは `fetchSiteList` が同じ配列を返す）。
  *
  * export しているのはテストから直接呼ぶため（フック外から使う想定はない）。
  */
@@ -168,15 +187,11 @@ export function siteSignature(sites: SiteCoords): string {
 /**
  * **結果を出せないフレーム**がこの回数だけ続いたら、検知結果を空にする。
  *
- * 出せない理由は 2 つある——`step()` が例外を投げる場合と、観測点数と震度の件数が食い違って step() へ
- * 入れない場合。**どちらも `setResult` を呼ばずに抜けるため帰結は同じ**で、結果（`detections` と
- * `recentOnsetKeys`）は前フレームの値で凍結する。一方で表示側が使う現在震度は生きたまま更新され続ける
- * ので、放置すると「古いメンバーを現在の震度で描き続ける」状態になり、孤立した震度0点の間引きも古い
- * `recentOnsetKeys` で判定される。数フレームの一過性なら保持した方が明滅しないが、恒常的に壊れて
- * いるなら表示を止める方が安全。
- *
- * 理由ごとにカウンタを分けないのは、**表示から見れば区別が無い**ため。分けると片方だけ閾値に届かない
- * まま交互に起きたときに、いつまでも凍結が解けない。
+ * 出せない理由は 3 つある——観測点数と震度の件数が食い違って入れない場合、組み合わせの検知器が例外を投げて
+ * そのフレームを捨てた場合、観測点集合が合わない・無いのでそのフレームを捨てた場合（同じ時刻の積み直しは数えない。
+ * 助走の消化で毎回起きる）。どれも結果が前フレームの値で凍結する。一方で表示側が使う現在震度は生きたまま
+ * 更新され続けるので、放置すると「古いメンバーを現在の震度で描き続ける」状態になる。数フレームの一過性なら
+ * 保持した方が明滅しないが、恒常的に壊れているなら表示を止める方が安全。
  *
  * export しているのはテストが閾値を参照するため（フック外から使う想定はない）。
  */
@@ -263,14 +278,25 @@ function logWarmupNotice(notice: WarmupNotice, supplyKey: string, sitesSiteConfi
   }
 }
 
+/** 時間軸が変わったとき、床だけ残して点ごとの履歴と立ち上がりを捨てる（設計書§37: フレームの間隔から推し量らせない） */
+function dropTransientFloor(state: NoiseFloorState): NoiseFloorState {
+  const sites: NoiseFloorState['sites'] = {}
+  for (const [k, s] of Object.entries(state.sites)) sites[k] = { floorMean: s.floorMean, floorDev: s.floorDev, hist: [], triggeredAtMs: null }
+  // 0 にしておけば、次のフレームは間隔が `MAX_RESUME_GAP_MS` を超えるので作り直しとして扱われる
+  return { sites, lastDataTimeMs: 0 }
+}
+
+const EMPTY_KEYS: ReadonlySet<string> = new Set<string>()
+
 /**
- * 強震モニタ検知エンジン（純粋コア step・V3 近傍一致型）の React ラッパー。
+ * 強震モニタの揺れ検知の React ラッパー。
  *
- * 強震モニタ検知の唯一のエンジン。検知結果は音・自動タブ切替・自動フィット・地図オーバーレイ・
- * リアルタイムタブのカード表示を駆動する。デバッグ用に最新結果を window.__kyoshinV2 へ公開する。
+ * 検知そのものは組み合わせの検知器（`utils/kyoshinEnsembleDetector`）が受け持ち、Web Worker の中で動かす
+ * （立たなければ主スレッドで区切って動かす。`utils/kyoshinEnsembleWorkerClient`）。結果は音・自動タブ切替・
+ * 自動フィット・地図・検知カード・行動チェックリストを駆動する。
  *
- * 近傍グラフ・格子割当（StationMeta）は観測点集合が変わったときだけ再計算してキャッシュする
- * （実行時座標から純粋な幾何計算・追加リクエスト 0）。
+ * 主スレッドでは慢性ノイズ床（`utils/kyoshinNoiseFloor`）だけを毎フレーム学ぶ。震度0 未満の点を地図に出すかの
+ * 絞り込みと、「今揺れ始めた点」の判定に使う。デバッグ用に最新結果を window.__kyoshinV2 へ公開する。
  *
  * @param sites 観測点座標（useKyoshinRealtime.sites）
  * @param indices 計測震度インデックス（useKyoshinRealtime.indices）
@@ -278,9 +304,6 @@ function logWarmupNotice(notice: WarmupNotice, supplyKey: string, sitesSiteConfi
  * @param sitesSiteConfigId sites がどの `siteConfigId` で fetch されたか
  * @param indicesSiteConfigId indices が属する `siteConfigId`（毎フレーム RealTimeData 由来）
  * @param enabled 有効フラグ（false の間は何もしない）
- * @param hasActiveNonAssumedEEW 震源要素が確定した（＝仮定震源要素でない）EEW が発表中か
- *   （cancelled 除く）。true の間は confirmed の確定条件を緩和する（§19）。仮定震源要素由来の速報は
- *   震源・推定震度の誤差が大きいため緩和しない。
  * @param supplyKey いま動いている供給を表す文字列（`useKyoshinRealtime.supplyKey`）
  * @param warmup その供給の助走フレーム（`useKyoshinRealtime.warmup`）。届くまでは通常フレームを
  *   待たせる。詳細は `utils/kyoshinWarmup`
@@ -294,42 +317,33 @@ export function useKyoshinDetectorV2(
   sitesSiteConfigId: string | null,
   indicesSiteConfigId: string | null,
   enabled: boolean,
-  hasActiveNonAssumedEEW: boolean,
   supplyKey: string,
   warmup: KyoshinWarmup | null,
   backfill: KyoshinBackfill | null,
 ): KyoshinDetectorV2Result {
-  // `useRef(loadInitialState())` と書いてはいけない——**引数式は毎レンダー評価される**ため、
-  // 1Hz の再レンダーのたびに localStorage の読み取りと学習資産の復元が走り、結果は捨てられる
-  // （理由と実測値は `useLazyRef`）。
-  const stateRef = useLazyRef(loadInitialState)
-  // sites の参照も保持する。参照が同じなら中身は同じ（fetchSiteList が同一 siteConfigId に対して
-  // 同じ配列を返す）ため、全点シグネチャの計算まで省ける。
-  const metaRef = useRef<{ sites: SiteCoords; sig: string; meta: StationMeta } | null>(null)
+  // `useRef(loadInitialFloor())` と書いてはいけない——**引数式は毎レンダー評価される**ため、
+  // 1Hz の再レンダーのたびに localStorage の読み取りが走り、結果は捨てられる（理由と実測値は `useLazyRef`）。
+  const floorRef = useLazyRef(loadInitialFloor)
+  // 床の係の観測点キー。sites の参照が同じなら中身も同じ（fetchSiteList が同一 siteConfigId に対して同じ配列を返す）
+  const keysRef = useRef<{ sites: SiteCoords; sig: string; keys: readonly string[] } | null>(null)
+  /** いちばん新しい床（`sites` と同じ並び）と、それを計算した観測点配列 */
+  const floorsRef = useRef<{ floors: number[]; sites: SiteCoords }>({ floors: [], sites: [] })
+  /** 床の係がデータ時刻ごとに出した「今揺れ始めた点」。組み合わせの検知器の結果と同じ時刻で組にする */
+  const onsetByMsRef = useRef(new Map<number, ReadonlySet<string>>())
   const lastSaveRef = useRef(0)
+  /** 結果を出せなかったフレームの連続数（件数の食い違い・検知器の例外・観測点集合が合わない捨て。`RESULT_STALL_RESET_FRAMES`） */
   const stalledFramesRef = useRef(0)
   // 観測点数と震度の件数が食い違ったことの記録（間引き）。遅延初期化する
   // （`useRef(createLogThrottle(...))` と書くと毎レンダーで捨てるだけのクロージャを作る）。
   const pairMismatchLogRef = useRef<((emit: () => void) => void) | null>(null)
-  // dataTime 更新時のみ step() を進める設計（下記 useEffect の deps 参照）に合わせ、EEW 状態は
-  // ref で最新値を持ち回す（deps に含めると EEW 変化のたびに同一フレームへ再度 step() してしまう）。
-  const hasActiveNonAssumedEEWRef = useRef(hasActiveNonAssumedEEW)
-  hasActiveNonAssumedEEWRef.current = hasActiveNonAssumedEEW
   const [result, setResult] = useState<KyoshinDetectorV2Result>(EMPTY)
   /**
    * 助走を待っているか。
    *
-   * **立つのは「検知エンジンの状態が新しい時間軸で空になった」ときだけ**——初回マウントと、
-   * リプレイの開始・停止でデータ時刻が空に転じたとき。
-   *
-   * **`supplyKey` の変化で立ててはいけない。** ローカル履歴アーカイブの収録範囲を再生中に
-   * 跨ぐと供給元だけが替わるが、**再生時刻はそのまま続く**（`useKyoshinRealtime` の注記）。
-   * そこで待ちに入ると、検知エンジンの状態は有効なのに結果が古い値で凍結し、しかも待たせた
-   * フレームが**別の供給のもの**として溜まる。時間軸が同じなら助走は要らない。
-   *
-   * **`enabled` を可変にするなら、ここも見直すこと。** いまの呼び出し元（`App.tsx`）は常に
-   * `true` を渡すが、`false` の間にデータ時刻が空へ転じると下のエフェクトが手前で抜けるため、
-   * 時間軸が変わったことを観測できないまま `true` へ戻りうる。
+   * **立つのは「新しい時間軸で状態が空になった」ときだけ**——初回マウントと、リプレイの開始・停止でデータ時刻が
+   * 空に転じたとき。**`supplyKey` の変化で立ててはいけない。** ローカル履歴アーカイブの収録範囲を再生中に
+   * 跨ぐと供給元だけが替わるが、再生時刻はそのまま続く（`useKyoshinRealtime` の注記）。そこで待ちに入ると
+   * 結果が古い値で凍結し、待たせたフレームが別の供給のものとして溜まる。
    */
   const waitingWarmupRef = useRef(true)
   /**
@@ -340,39 +354,221 @@ export function useKyoshinDetectorV2(
   const waitingBackfillRef = useRef<number | null>(null)
   /** 消化を済ませた取り直しの番号（同じ番号の `begin` で待ち直さないため）。 */
   const doneBackfillRef = useRef<number | null>(null)
-  /**
-   * 助走が届くまで待たせている通常フレーム（時刻の昇順）。
-   *
-   * **観測点集合の識別子を一緒に持つ。** 待たせている間に観測点リストの版が替わりうるので、
-   * 食わせる直前に今の座標と同じ版かを確かめる（長さの検証だけでは、版が違っても点数が
-   * たまたま一致すれば通ってしまう）。照合そのものは `consumeWarmup` が行う。
-   */
+  /** 助走が届くまで待たせている通常フレーム（時刻の昇順・観測点集合の識別子つき）。 */
   const pendingRef = useRef<PendingFrame[]>([])
   /**
-   * 最後に `step()` へ渡したデータ時刻。
-   *
-   * 助走と通常フレームは別の経路で届くので、重なった時刻・巻き戻った時刻がありうる。
-   * **同じ時刻を 2 度渡すと `dtMs` が 0 になり、検知エンジンは不連続として状態を作り直す**
-   * （＝助走が丸ごと無駄になる）。ここで落とす。
+   * 最後に床の係へ渡したデータ時刻。助走と通常フレームは別の経路で届くので、重なった時刻・巻き戻った時刻がありうる。
+   * 同じ時刻を 2 度渡すと間隔が 0 になり、床の係は作り直しとして履歴を捨てる。ここで落とす。
    */
   const lastSteppedMsRef = useRef(-Infinity)
+
+  /** 組み合わせの検知器。マウントの間だけ生きる */
+  const ensembleRef = useRef<EnsembleShadow | null>(null)
+  /** 捨てたフレームの数（理由ごと）。`window.__kyoshinV2` で見る */
+  const dropsRef = useRef<Record<ShadowDropReason, number>>({ 'sites-mismatch': 0, 'not-newer': 0, 'no-sites': 0 })
+  /** 平常のゆらぎを端末で学び直す係。配る表が届き、端末に残した状態を読み終えてから作る */
+  const learnerRef = useRef<QuietLearner | null>(null)
+  // 学び直した状態を端末へ残せているか（診断欄に出す。読めなかった起動は残さないので、記録 1 行のほかに見える場所が要る）
+  const learnerSaveRef = useRef<{ enabled: boolean | null; lastOk: boolean | null; lastAtMs: number | null }>({ enabled: null, lastOk: null, lastAtMs: null })
+  /**
+   * いまライブを受けているか。学び直すのはライブのフレームだけ（リプレイ・ローカル履歴アーカイブの過去の日を
+   * 「いまの平常」として覚えない）。検知器は区切って遅れて処理するので、処理する時点の値を ref で見る
+   */
+  const isLiveRef = useRef(supplyKey === LIVE_KYOSHIN_SUPPLY_KEY)
+  isLiveRef.current = supplyKey === LIVE_KYOSHIN_SUPPLY_KEY
+  /** 配る表と、端末で学び直した表（まだ無ければ null）。ライブとリプレイを行き来したときに選び直す */
+  const tablesRef = useRef<{ prior: QuietTables | null; learned: QuietTables | null }>({ prior: null, learned: null })
+
+  useEffect(() => {
+    const errorLog = createLogThrottle(ENSEMBLE_ERROR_LOG_MS)
+    const learnerErrorLog = createLogThrottle(ENSEMBLE_ERROR_LOG_MS)
+    const dropLog = createLogThrottle(ENSEMBLE_ERROR_LOG_MS)
+    let inWorker = true
+    // 検証用に公開する診断欄（Playwright から window.__kyoshinV2 を参照する）。検知結果の欄は画面へ出した結果でしか
+    // 書き換えないが、こちらは捨て・例外・切り替えのたびにも書き換える——結果が出なくなったときほど見たい値なので
+    const publishDiag = () => {
+      const g = window as unknown as Record<string, unknown>
+      g.__kyoshinV2 = {
+        ...(g.__kyoshinV2 as Record<string, unknown> | undefined),
+        backlog: ensembleRef.current?.backlog() ?? 0,
+        drops: { ...dropsRef.current },
+        tablesDays: getKyoshinQuietTables().days.length,
+        // 学び直しの係へこの秒を渡したか（ライブで、係が立ち上がっている）
+        learning: isLiveRef.current && learnerRef.current !== null,
+        // 端末へ残すか（null＝まだ読み込み中、偽＝読めなかった起動なので残さない）と、最後に残そうとした結果
+        learnerSave: { ...learnerSaveRef.current },
+        // Web Worker で動いているか（偽なら主スレッドで区切って動いている）
+        inWorker,
+      }
+    }
+    // 検知結果を出せないフレーム（例外・観測点集合が合わない・観測点集合が無い）を数え、続くなら結果を空にする。
+    // 保持し続けると、凍結したメンバーを現在の震度に当てて描き続ける。理由で数えを分けないこと —— 片方だけが
+    // 交互に起きると、どちらの数えも閾値に届かず凍結が解けない
+    const noteUnusableFrame = () => {
+      stalledFramesRef.current++
+      if (stalledFramesRef.current === RESULT_STALL_RESET_FRAMES) {
+        log.error('[kyoshinV2] 組み合わせの検知器が結果を出せないフレームが続くため検知結果を空にします')
+        setResult({ ...EMPTY, floors: floorsRef.current.floors, floorsSites: floorsRef.current.sites, stalled: true })
+      }
+    }
+    const ensemble = createEnsembleWorkerClient(getKyoshinQuietTables(), {
+      createWorker: () => {
+        if (typeof Worker === 'undefined') throw new Error('この環境では Web Worker を使えません')
+        return new Worker(new URL('../workers/kyoshinEnsemble.worker.ts', import.meta.url), { type: 'module' }) as unknown as EnsembleWorkerLike
+      },
+      workerSliceMs: ENSEMBLE_WORKER_SLICE_MS,
+      silenceMs: ENSEMBLE_WORKER_SILENCE_MS,
+      onFallback: (reason, lost) => {
+        inWorker = false
+        // 積んでいたフレームを失ったときは重く記録する（助走を失うと、既に揺れている状態を初動と見分けられないまま始まる）。
+        // Worker を作れなかっただけ（初めから主スレッドで動く）なら何も失っていない
+        const message = `[kyoshinEnsemble] Web Worker で組み合わせの検知器を動かせないので、主スレッドで区切って動かします（Worker に積んだまま失ったフレーム ${lost.frames} 件・うち画面へ出さないフレーム ${lost.silentFrames} 件）:`
+        if (lost.frames > 0) log.error(message, reason)
+        else log.warn(message, reason)
+        publishDiag()
+      },
+      fallback: {
+        createReporter: createEnsembleDetector,
+        schedule: (fn) => {
+          const id = setTimeout(fn, 0)
+          return () => clearTimeout(id)
+        },
+        now: () => performance.now(),
+        sliceMs: ENSEMBLE_MAIN_SLICE_MS,
+        resumeGapMs: MAX_RESUME_GAP_MS,
+        onResult: ({ ms, detections, values, sites: resultSites, sitesKey, silent }) => {
+          stalledFramesRef.current = 0
+          // 検知器が揺れを出している秒は、学び直しの係が前後ごと数えない。
+          // 学び直しの係が投げても、この秒の検知は画面へ出す（検知器の例外とは分けて記録する）
+          try {
+            if (isLiveRef.current) learnerRef.current?.push(ms, sitesKey, resultSites, values, detections.length > 0)
+          } catch (err) {
+            learnerErrorLog(() => log.error('[kyoshinQuietLearner] 平常のゆらぎの学び直しが例外を投げました（この秒は数えない）:', err))
+          }
+          const byMs = onsetByMsRef.current
+          const recent = byMs.get(ms) ?? EMPTY_KEYS
+          // 古いものから捨てる（Map は入れた順に並ぶ）
+          for (const k of byMs.keys()) {
+            if (k >= ms - ONSET_KEEP_MS) break
+            byMs.delete(k)
+          }
+          // 助走・取り直し・待たせていた秒の結果は画面へ出さない（`ShadowFrame.silent`）
+          if (silent) { publishDiag(); return }
+          const floors = floorsRef.current
+          setResult({
+            detections,
+            recentOnsetKeys: recent,
+            dataTime: new Date(ms).toISOString(),
+            floors: floors.floors,
+            floorsSites: floors.sites,
+            stalled: false,
+          })
+          // 検証用にグローバル公開（Playwright から window.__kyoshinV2 を参照する）。診断欄は publishDiag が持つ
+          ;(window as unknown as Record<string, unknown>).__kyoshinV2 = {
+            detections,
+            dataTimeMs: ms,
+            // 孤立した震度0点の間引き（kyoshinDetectionView.dropIsolatedZeroPoints）が効いているかを追う
+            recentOnsetKeys: recent.size,
+          }
+          publishDiag()
+          const confirmed = detections.filter((d) => d.confidence === 'confirmed')
+          if (confirmed.length > 0) {
+            log.debug(
+              `[kyoshinV2] confirmed=${confirmed.length} @${new Date(ms).toISOString()}`,
+              confirmed.map((d) => ({ id: d.id, maxIntensity: d.maxIntensity?.toFixed(1) ?? null, members: d.memberKeys.length, epi: d.epicenter, sources: d.sources })),
+            )
+          }
+        },
+        onDrop: (reason, frame) => {
+          dropsRef.current[reason]++
+          // 同じ時刻の積み直し（`not-newer`）は毎回の助走の消化で起きる。観測点集合が合わずに捨てるのは、続けば検知が止まる
+          if (reason !== 'not-newer') {
+            dropLog(() => log.warn(`[kyoshinEnsemble] 観測点集合が合わないのでフレームを捨てました（${reason}・${new Date(frame.ms).toISOString()}・累計 ${dropsRef.current[reason]} 件）`))
+            noteUnusableFrame()
+          }
+          publishDiag()
+        },
+        onError: (err, frame) => {
+          errorLog(() => log.error(`[kyoshinEnsemble] 組み合わせの検知器が例外を投げたのでフレームを捨てました（${new Date(frame.ms).toISOString()}）:`, err))
+          noteUnusableFrame()
+          publishDiag()
+        },
+      },
+    })
+    ensembleRef.current = ensemble
+    // 表は取れたら差し替える（取れるまでは全体の裾だけで動く）。届いた表を配る表として、学び直しの係も作る
+    let disposed = false
+    const off = onKyoshinQuietTablesLoaded((tables) => {
+      log.info(`[kyoshinEnsemble] 平常のゆらぎの表を読み込みました（${tables.days.length} 日分・観測点 ${Object.keys(tables.tails).length} 点）`)
+      tablesRef.current = { prior: tables, learned: tablesRef.current.learned }
+      ensemble.setTables(tables)
+      if (learnerRef.current !== null) return
+      loadQuietLearnerState()
+        .then(({ readable, state: initial }) => {
+          if (disposed || learnerRef.current !== null) return
+          learnerSaveRef.current = { enabled: readable, lastOk: null, lastAtMs: null }
+          if (!readable) log.warn('[kyoshinQuietLearner] 端末に残した学び直しの状態を読めなかったので、初めから学び直し、この起動では保存しません（残した数を上書きしないため）')
+          else log.info(`[kyoshinQuietLearner] 平常のゆらぎの学び直しを始めます（${initial ? '端末に残した数から' : '初めから'}）`)
+          learnerRef.current = createQuietLearner({
+            prior: tables,
+            initial,
+            ...QUIET_LEARNER_DEFAULTS,
+            // 学び直した表はライブで受けている間だけ効かせる（リプレイは配る表で検知する。評価台と同じ条件にするため）
+            onTables: (t) => {
+              tablesRef.current = { prior: tablesRef.current.prior, learned: t }
+              if (isLiveRef.current) ensemble.setTables(t)
+            },
+            onSave: (s) => {
+              if (!readable) return
+              void saveQuietLearnerState(s).then((ok) => {
+                learnerSaveRef.current = { enabled: true, lastOk: ok, lastAtMs: Date.now() }
+              })
+            },
+          })
+        })
+        .catch((err) => {
+          log.error('[kyoshinQuietLearner] 平常のゆらぎの学び直しを始められませんでした（配る表だけで検知します）:', err)
+        })
+    })
+    // 取得の規則が諦めても、間を置いて取り直す（オフラインで起動して戻った常時表示の端末が、全体の裾だけで動き続けないように）
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const loadTables = () => {
+      loadKyoshinQuietTables().catch((err) => {
+        if (disposed) return
+        log.warn(`[kyoshinEnsemble] 平常のゆらぎの表を取得できなかったので、全体の裾だけで動かします（${QUIET_TABLES_RETRY_MS / 60_000} 分後に取り直します）:`, err)
+        retryTimer = setTimeout(loadTables, QUIET_TABLES_RETRY_MS)
+      })
+    }
+    loadTables()
+    return () => {
+      disposed = true
+      if (retryTimer !== null) clearTimeout(retryTimer)
+      off()
+      learnerRef.current = null
+      ensemble.dispose()
+      if (ensembleRef.current === ensemble) ensembleRef.current = null
+    }
+  }, [])
+
+  // ライブとリプレイを行き来したら、検知に使う表を切り替える（学び直した表はライブの間だけ）
+  const isLive = supplyKey === LIVE_KYOSHIN_SUPPLY_KEY
+  useEffect(() => {
+    const { prior, learned } = tablesRef.current
+    if (prior === null) return
+    ensembleRef.current?.setTables(isLive && learned !== null ? learned : prior)
+  }, [isLive])
 
   // 供給が作り直されたら結果を空にする。データ時刻が空になるのは `useKyoshinRealtime` が供給を
   // 作り直したとき（リプレイの時間軸の切替・ローカルアーカイブの出入り）だけで、そのとき旧い
   // 時間軸の検知は新しい軸に属さない。
   //
   // **下の effect に任せられない。** あちらは `!dataTime` で抜けるので `setResult` が呼ばれず、
-  // 結果は前のフレームの値で凍結する。凍結した検知は音・自動タブ切替・地図・検知カード・行動
-  // チェックリストへそのまま流れ続ける。
+  // 結果は前のフレームの値で凍結する。
   //
-  // **`stalled` は立てない。** あれは「上流の異常で結果を出せなくなった」ことを伝える語で、
-  // 受け取る側の振る舞いが変わる —— 行動チェックリストは表示中の帯を地震情報へ差し替えるのを
-  // やめ、発報側は次の検知を「同じ揺れの再開」と見なして検知音とブラウザ通知を省く。
-  // こちらから作り直した場合にそれをやると、直したい症状がそのまま残る。
+  // **`stalled` は立てない。** あれは「上流の異常で結果を出せなくなった」ことを伝える語で、受け取る側の
+  // 振る舞いが変わる（行動チェックリストは帯の差し替えをやめ、発報側は次の検知を「同じ揺れの再開」と見なす）。
   //
-  // 見るのは「供給されているか」の真偽で、データ時刻そのものではない。値で比べると毎秒
-  // 変わるため、再レンダーが毎フレーム 1 回増える。前回値を state で持つのは、React が捨てた
-  // レンダーの書き換えを一緒に捨てさせるため（ref だと捨てられたレンダーの分だけが残る）。
+  // 前回値を state で持つのは、React が捨てたレンダーの書き換えを一緒に捨てさせるため。
   const supplied = dataTime !== ''
   const [wasSupplied, setWasSupplied] = useState(supplied)
   if (wasSupplied !== supplied) {
@@ -383,50 +579,41 @@ export function useKyoshinDetectorV2(
   useEffect(() => {
     if (!enabled) return
     if (!dataTime || indices.length === 0 || sites.length === 0) {
-      // 供給が作り直されたなら、連続失敗の数え直しも兼ねる（この後に届くのは別の時間軸の
-      // フレームで、それまでの失敗の続きではない）。
       if (!dataTime) {
+        // 時間軸が変わった。前の軸で進めた時刻・待たせていたフレーム・点ごとの履歴は新しい軸に属さない。
+        // 残すと、過去へ飛ぶ切替で新しい軸のフレームが軒並み「巻き戻り」として捨てられる。床は残す
         stalledFramesRef.current = 0
-        // 時間軸が変わった。前の軸で進めた時刻と、待たせていたフレームは新しい軸に属さない。
-        // 残すと、過去へ飛ぶ切替で新しい軸のフレームが軒並み「巻き戻り」として捨てられる。
         lastSteppedMsRef.current = -Infinity
         pendingRef.current = []
-        // 検知エンジンの一過性の状態（検知イベント・点ごとの履歴）も落とす。学習資産（点別床・セル
-        // 慢性活性）は残す。**フレームの間隔から推し量らせない**——数十秒先へ飛ぶ切替は「途絶明け」
-        // として旧い軸の検知を残し、数秒先へ飛ぶ切替は普通の続きとして引き継いでしまう（設計書§37）
-        stateRef.current = resetTransientState(stateRef.current)
-        // 新しい軸では検知エンジンの状態が空なので、また助走から始める。
+        floorRef.current = dropTransientFloor(floorRef.current)
+        onsetByMsRef.current.clear()
         waitingWarmupRef.current = true
-        // 前の軸の取り直しも待たない（新しい軸の穴ではない）。
         waitingBackfillRef.current = null
         doneBackfillRef.current = null
+        ensembleRef.current?.reset()
+        // 学び直しの係が遅らせて持っていた秒も捨てる（数えた分は残す）
+        learnerRef.current?.reset()
       }
       return
     }
     const dataTimeMs = new Date(dataTime).getTime()
     if (!Number.isFinite(dataTimeMs)) return
 
-    // sites と indices の siteConfigId が一致するフレームだけを処理する。
-    // siteConfigId 切替直後は「新しい indices・旧い sites」の状態が発生し、単なる長さ
-    // 判定では見逃す（旧新で観測点数がたまたま一致した年切替）と、位置ベースの対応付け
-    // （kyoshinDetector.step 内 `frame.sites[i]`）で座標と震度が誤ペアリングされ、TypeError も
-    // 出ずに検知点マーカー・震度0ドットが誤った位置に表示される。両者の siteConfigId が
-    // 揃うまで step() をスキップする（長さ不整合の TypeError 対策も兼ねる）。
+    // sites と indices の siteConfigId が一致するフレームだけを処理する。切替直後は「新しい indices・旧い sites」が
+    // 起こり、点数がたまたま一致すると座標と震度が誤って組になる。揃うまで待つ。
     if (sitesSiteConfigId == null || indicesSiteConfigId == null) return
     if (sitesSiteConfigId !== indicesSiteConfigId) return
     if (sites.length !== indices.length) {
-      // 同じ `siteConfigId` なのに件数が違う＝上流データの異常。ここで抜けると step() へ入らず
-      // **揺れ検知が丸ごと止まる**が、例外ではないので下の catch も通らない。記録しないと
-      // 平常時と見分けがつかない（検知が出ないのが正常な状態なので、止まっていることに気づけない）。
-      // 毎フレーム出さないよう間引く。
+      // 同じ `siteConfigId` なのに件数が違う＝上流データの異常。検知が丸ごと止まるが例外ではないので、
+      // 記録しないと平常時と見分けがつかない（検知が出ないのが正常な状態なので）。毎フレーム出さないよう間引く。
       pairMismatchLogRef.current ??= createLogThrottle(PAIR_MISMATCH_LOG_MS)
       pairMismatchLogRef.current(() => log.error(
         `[kyoshinV2] 観測点数(${sites.length})と震度の件数(${indices.length})が食い違うため検知を停止しています`
         + `（siteConfigId=${sitesSiteConfigId}）`,
       ))
-      // 例外のときと同じく、続くなら結果を空にする。ここで抜けるだけだと、異常が始まった瞬間に
-      // 出ていた検知イベントが**異常が続く限り凍結**し、音・自動タブ切替・自動フィット・地図・
-      // 検知カードへ流れ続ける（詳細は RESULT_STALL_RESET_FRAMES）。
+      // 続くなら結果を空にする（詳細は RESULT_STALL_RESET_FRAMES）。**床も空にする**——検知器の例外の経路と違い、
+      // ここでは観測点と震度の並びそのものが食い違っているので、観測点の並びで対応づける床を位置で当てると
+      // 別の点の床で絞ることになる（空の床は「絞り込みを掛けない」の合図）
       stalledFramesRef.current++
       if (stalledFramesRef.current === RESULT_STALL_RESET_FRAMES) {
         log.error('[kyoshinV2] 件数の食い違いが続くため検知結果を空にします')
@@ -435,19 +622,21 @@ export function useKyoshinDetectorV2(
       return
     }
 
-    // 観測点集合が変わったときだけ近傍メタを構築（フレーム毎の O(点数²) を避ける）。
-    // 二段構え: まず参照で弾き（毎秒はここで終わる）、参照が変わったときだけ全点シグネチャを比べる。
-    // 内容が同じなら近傍メタを再利用し、参照だけ差し替える（同内容の別配列で O(点数²) を走らせない）。
-    if (!metaRef.current || metaRef.current.sites !== sites) {
+    // 観測点集合が変わったときだけキーを作り直す。まず参照で弾き（毎秒はここで終わる）、参照が変わったときだけ全点を比べる
+    if (!keysRef.current || keysRef.current.sites !== sites) {
       const sig = siteSignature(sites)
-      if (!metaRef.current || metaRef.current.sig !== sig) {
-        metaRef.current = { sites, sig, meta: buildStationMeta(sites as [number, number][]) }
-      } else {
-        metaRef.current.sites = sites
-      }
+      if (!keysRef.current || keysRef.current.sig !== sig) keysRef.current = { sites, sig, keys: noiseFloorKeys(sites) }
+      else keysRef.current.sites = sites
     }
-    // 以降は step() へ渡す分と床を並べ直す分で同じメタを使う（`meta.keys` が sites と同じ並び）。
-    const stationMeta = metaRef.current.meta
+    const keys = keysRef.current.keys
+    ensembleRef.current?.setSites(sites, sitesSiteConfigId)
+
+    /** 床の係へ 1 フレーム食わせ、その時刻の「今揺れ始めた点」を控える */
+    const feedFloor = (state: NoiseFloorState, ms: number, values: number[]): NoiseFloorState => {
+      const next = stepNoiseFloor(state, ms, values, keys)
+      onsetByMsRef.current.set(ms, new Set(noiseFloorRecentOnsetKeys(next, values, keys)))
+      return next
+    }
 
     // ---- 全滅区間の取り直しを待つか（#986。消化は助走の後）----
     //
@@ -457,7 +646,6 @@ export function useKyoshinDetectorV2(
       if (waitingWarmupRef.current) {
         // **助走を待っている間の取り直しは使わない。** 助走の消化が最後に食わせた時刻を今のフレームの手前まで進めるので、
         // 後から届く穴のフレームは巻き戻りとして全部捨てられる（助走が穴の手前の履歴を作る）。
-        // 始まりと届いたフレームが 1 回の描画にまとまると、ここには `frames` しか見えない。どちらでも残す。
         log.warn(
           `[kyoshinV2] 助走を待っている間に全滅区間の取り直しが始まったので使わない（supplyKey=${supplyKey}`
             + (backfill.frames === null ? '）' : `・捨てたフレーム ${backfill.frames.length} 件）`),
@@ -470,35 +658,27 @@ export function useKyoshinDetectorV2(
 
     // ---- 助走（`utils/kyoshinWarmup`）----
     //
-    // 供給が始まった時点で既に揺れていると、検知エンジンには「ずっと高いまま静止している点」に
-    // しか見えず立ち上がらない。開始より前のフレームを先に食わせて履歴を作る。
-    //
-    // **助走が届くまで通常フレームを食わせない。** 先に食わせると、後から届いた助走が
-    // 「時刻の巻き戻り」になって落とされ、助走が丸ごと効かなくなる。
-    //
-    // 消化そのものは `utils/kyoshinWarmupConsumer` の純関数が持つ。ここに残すのは「待つか・
-    // 諦めるか」の判断と、返ってきた事実を文面にすることだけ。
+    // 供給が始まった時点で既に揺れていると、検知器には「ずっと高いまま静止している点」にしか見えず立ち上がらない。
+    // 開始より前のフレームを先に食わせて履歴を作る。**助走が届くまで通常フレームを食わせない**（先に食わせると、
+    // 後から届いた助走が「時刻の巻き戻り」になって落とされる）。
     if (waitingWarmupRef.current) {
-      pendingRef.current = pushPendingFrame(pendingRef.current, {
-        dataTimeMs,
-        indices,
-        sitesKey: indicesSiteConfigId,
-      })
+      pendingRef.current = pushPendingFrame(pendingRef.current, { dataTimeMs, indices, sitesKey: indicesSiteConfigId })
       const ready = warmup !== null && warmup.supplyKey === supplyKey
       if (!ready && pendingRef.current.length < WARMUP_WAIT_MAX_FRAMES) return
       const consumed = consumeWarmup({
-        state: stateRef.current,
+        state: floorRef.current,
         lastSteppedMs: lastSteppedMsRef.current,
         // 助走が届いていない（＝上限まで待って諦めた）ことは `null` で伝える。
         warmupFrames: ready ? warmup.frames : null,
         pending: pendingRef.current,
-        sites,
+        siteCount: sites.length,
         sitesSiteConfigId,
-        meta: stationMeta,
-        eewActive: hasActiveNonAssumedEEWRef.current,
+        feedFrame: feedFloor,
       })
-      stateRef.current = consumed.state
+      floorRef.current = consumed.state
       lastSteppedMsRef.current = consumed.lastSteppedMs
+      // 床の係へ食わせたのと同じ順で検知器へも積む（観測点集合の照合と重なりの除去は検知器の係が行う）
+      ensembleRef.current?.enqueue([...(ready ? warmup.frames.map(toShadowFrame) : []), ...pendingToShadowFrames(pendingRef.current)])
       pendingRef.current = []
       waitingWarmupRef.current = false
       for (const notice of consumed.notices) logWarmupNotice(notice, supplyKey, sitesSiteConfigId)
@@ -507,145 +687,60 @@ export function useKyoshinDetectorV2(
     // ---- 全滅区間の取り直し（#986）----
     //
     // 供給元は取得が戻った秒を渡す**前に** `begin` を出すので、ここで待ちに入れば穴のフレームを先に食わせられる。
-    // 消化は助走と同じ純関数（`consumeWarmup`）。**検知エンジンの状態は作り直さない**（同じ時間軸の続き）。
     if (waitingBackfillRef.current !== null && !waitingWarmupRef.current) {
-      pendingRef.current = pushPendingFrame(pendingRef.current, {
-        dataTimeMs,
-        indices,
-        sitesKey: indicesSiteConfigId,
-      })
+      pendingRef.current = pushPendingFrame(pendingRef.current, { dataTimeMs, indices, sitesKey: indicesSiteConfigId })
       const ready =
         backfill !== null && backfill.supplyKey === supplyKey && backfill.id === waitingBackfillRef.current && backfill.frames !== null
       if (!ready && pendingRef.current.length < WARMUP_WAIT_MAX_FRAMES) return
       const consumed = consumeWarmup({
-        state: stateRef.current,
+        state: floorRef.current,
         lastSteppedMs: lastSteppedMsRef.current,
         warmupFrames: ready ? backfill.frames : null,
         pending: pendingRef.current,
-        sites,
+        siteCount: sites.length,
         sitesSiteConfigId,
-        meta: stationMeta,
-        eewActive: hasActiveNonAssumedEEWRef.current,
+        feedFrame: feedFloor,
       })
-      stateRef.current = consumed.state
+      floorRef.current = consumed.state
       lastSteppedMsRef.current = consumed.lastSteppedMs
+      ensembleRef.current?.enqueue([...(ready ? (backfill.frames ?? []).map(toShadowFrame) : []), ...pendingToShadowFrames(pendingRef.current)])
       pendingRef.current = []
       doneBackfillRef.current = waitingBackfillRef.current
       waitingBackfillRef.current = null
       for (const notice of consumed.notices) logWarmupNotice(notice, supplyKey, sitesSiteConfigId, '全滅区間の取り直し')
     }
 
-    // 助走と重なる時刻・巻き戻った時刻は、ここでも落とす（助走の消化と同じ理由 ―― 同じ時刻を
-    // 2 度渡すと `dtMs` が 0 になり、検知エンジンが不連続として状態を作り直す）。
-    if (dataTimeMs <= lastSteppedMsRef.current) return
+    // 検知器へも積む。助走の消化と同じ回なら、このフレームは待たせた分として積み済みで、係が重なりとして捨てる。
+    ensembleRef.current?.enqueue([{ ms: dataTimeMs, indices, sitesKey: indicesSiteConfigId, silent: false }])
+    // Worker が黙っていないか（毎秒）
+    ensembleRef.current?.checkResponsive()
 
-    let stepResult: ReturnType<typeof step>
+    // 助走と重なる時刻・巻き戻った時刻は、ここでも落とす（助走の消化と同じ理由）
+    if (dataTimeMs <= lastSteppedMsRef.current) return
     try {
-      // 全国約 1725 点を毎秒 1 回まとめて判定する。カメラの移動と同じフレームに落ちればコマ落ちの
-      // 原因になりうるため、区間として名前を付けて記録する（utils/frameProfiler.ts）。
-      stepResult = profileSpan('kyoshin:detector-step', () =>
-        step(
-          stateRef.current,
-          {
-            dataTimeMs,
-            sites: sites as [number, number][],
-            values: indices,
-            // 欠測点（Yahoo が index<0 で返す観測点データなし）を除外する。渡さないと欠測復旧時の
-            // 急上昇がオンセットと誤認識されうる（missing の実際の判定根拠は services/kyoshin.ts 参照）。
-            missing: indices.map((idx) => idx < MISSING_INDEX_THRESHOLD),
-            eewActive: hasActiveNonAssumedEEWRef.current,
-          },
-          stationMeta,
-        ),
-      )
+      // 全国約 1725 点を毎秒 1 回まとめて学ぶ。カメラの移動と同じフレームに落ちればコマ落ちの原因になりうるため、
+      // 区間として名前を付けて記録する（utils/frameProfiler.ts）。
+      floorRef.current = profileSpan('kyoshin:noise-floor-step', () => feedFloor(floorRef.current, dataTimeMs, indices))
     } catch (err) {
-      // step 内部で予期せぬ例外（sites/indices の長さ不整合を潜り抜けたケース等）が
-      // 発生した場合、stateRef を破損させずログして次フレームで再試行する。
-      // 例外を握り潰さないと useEffect のクリーンアップが走らず検知エンジンが恒久停止する。
-      stalledFramesRef.current++
-      log.error(`[kyoshinV2] step() threw (${stalledFramesRef.current}フレーム連続):`, err)
-      // 連続で壊れているなら結果を空にする。保持し続けると、凍結した memberKeys /
-      // recentOnsetKeys を現在の震度に当てて描き続ける（詳細は RESULT_STALL_RESET_FRAMES）。
-      // 学習資産（点別床・セル慢性活性）は stateRef に残すので、復帰時に学び直しにならない。
-      if (stalledFramesRef.current === RESULT_STALL_RESET_FRAMES) {
-        log.error('[kyoshinV2] step() の連続失敗が続くため検知結果を空にします')
-        setResult({ ...EMPTY, stalled: true })
-      }
+      // 床の係が投げても検知器には積んであるので、検知は止まらない。床は前のフレームのまま
+      log.error('[kyoshinV2] 慢性ノイズ床の学習が例外を投げました（このフレームは学ばない）:', err)
       return
     }
-    stalledFramesRef.current = 0
-    const { state, detections, triggers, recentOnsetKeys, prunedMembers } = stepResult
-    stateRef.current = state
     lastSteppedMsRef.current = dataTimeMs
+    floorsRef.current = { floors: noiseFloorsFor(floorRef.current, keys), sites }
 
-    // 床は `sites` と同じ並びの配列で渡す（詳細は KyoshinDetectorV2Result.floors）。
-    // `state.sites` を走査せず `meta.keys` を走査するのは、キーの網羅性をこちらが握るため。
-    // `step()` / `ingest()` は返す `state.sites` を毎回ゼロから作り直し、その回の `meta.keys` の
-    // 範囲だけを埋めるので、`state.sites` のキーは常に `meta.keys` の部分集合になる（欠ける点は
-    // `floors` の説明を参照）。学習資産の更新を差分方式へ最適化するような変更が入るとこの前提が
-    // 崩れるため、そのときはここも見直すこと。
-    const floors = new Array<number>(stationMeta.keys.length)
-    for (let i = 0; i < stationMeta.keys.length; i++) {
-      const s = state.sites[stationMeta.keys[i]]
-      floors[i] = s ? chronicNoiseFloor(s) : 0
-    }
-
-    setResult({
-      detections,
-      triggers,
-      recentOnsetKeys: new Set(recentOnsetKeys),
-      dataTime,
-      floors,
-      floorsSites: sites,
-      stalled: false,
-    })
-
-    // 学習資産（点別床・セル慢性活性）を定期的に永続化する（再読込・5時リロード後も学習を保つ）
+    // 床を定期的に永続化する（再読込・5 時のリロード後も学習を保つ）
     if (dataTimeMs - lastSaveRef.current >= SAVE_INTERVAL_MS) {
       lastSaveRef.current = dataTimeMs
-      saveLearned(state)
-    }
-
-    // 検証用にグローバル公開（Playwright から window.__kyoshinV2 を参照する）
-    ;(window as unknown as Record<string, unknown>).__kyoshinV2 = {
-      detections,
-      triggers: triggers.length,
-      // 孤立した震度0点の間引き（kyoshinDetectionView.dropIsolatedZeroPoints）が効いているかを
-      // 実運用で追えるようにする。間引きは静かに点を消す処理で、失敗しても例外が出ない。
-      recentOnsetKeys: recentOnsetKeys.length,
-      // 値が下がりきったメンバーの刈り取り（kyoshinDetector.pruneFadedMembers）も同じく静かに
-      // 点を消す処理。今フレームで外した延べ点数を出す。
-      prunedMembers,
-      dataTime,
-      eewActive: hasActiveNonAssumedEEWRef.current,
-    }
-    const confirmed = detections.filter((d) => d.confidence === 'confirmed')
-    if (confirmed.length > 0) {
-      log.debug(
-        `[kyoshinV2] confirmed=${confirmed.length} triggers=${triggers.length} @${dataTime}`,
-        confirmed.map((d) => ({
-          id: d.id,
-          maxIntensity: d.maxIntensity.toFixed(1),
-          size: d.lastSize,
-          epi: d.epicenter,
-        })),
-      )
+      saveFloor(floorRef.current)
     }
     // indices/sites は dataTime と同時に更新されるため deps は dataTime/enabled のみでよい。
-    // 例外として siteConfigId 切替時は sites が非同期に遅れて更新されるが、その期間は上の
-    // sitesSiteConfigId/indicesSiteConfigId ガードで step() をスキップするため deps に加える
-    // 必要はない（次の dataTime tick で両者が揃った時点で再評価される）。
-    // この最適化は React 18 の自動バッチングによって useKyoshinRealtime の applyFrame 内で
-    // setIndices/setDataTime/setIndicesSiteConfigId が単一レンダーにまとまることを前提にしている。
-    // applyFrame の呼び出し元は 2 つ（フレーム投入時の同期ドレインと、時刻到来を待つ巡回
-    // ドレイン）あり、**どちらも applyFrame を同期で呼ぶ**ことがこの前提を支えている。
-    // 呼び出し経路に await や queueMicrotask を挟む・applyFrame 内で setState を分割する等で
-    // 前提が崩れると、dataTime だけ先に更新されて古い siteConfigId でガードを誤って通過し、
-    // 座標と震度が誤ペアリングされる。リファクタ時はここも要見直し
-    // （この前提は useKyoshinRealtime.wiring.test.ts が回帰テストで固定している）。
+    // siteConfigId 切替時は sites が遅れて更新されるが、その間は上の siteConfigId の照合で抜ける。
+    // この前提は React 18 の自動バッチングで useKyoshinRealtime の applyFrame 内の setIndices/setDataTime/
+    // setIndicesSiteConfigId が単一レンダーにまとまることに依る（applyFrame を同期で呼ぶ 2 経路が支えている。
+    // useKyoshinRealtime.wiring.test.ts が回帰テストで固定している）。
     //
-    // `warmup` を deps に含めるのは、助走は**データ時刻とは別のタイミングで届く**ため。
-    // 含めないと、助走が届いた時点では何も起きず、次のフレームが来るまで待たされる。
+    // `warmup`・`backfill` を deps に含めるのは、データ時刻とは別のタイミングで届くため。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataTime, enabled, warmup, backfill])
 

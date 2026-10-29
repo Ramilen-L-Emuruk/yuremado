@@ -54,7 +54,7 @@
 | `earthquakePrompt` | 地震情報（震度速報） | ピアノ上昇 3 音 G#4→B4→E5 |
 | `earthquakeInfo` | 地震情報（震源情報・遠地地震・その他） | ピアノ 2 音 G4→B4 |
 | `kyoshin` | 揺れ検知（confirmed） | マリンバ 2 音 C#6→A5（下行長 3 度） |
-| `kyoshinCandidate` | 揺れの候補（faint / likely） | マリンバ単発 F#5（控えめ） |
+| `kyoshinCandidate` | 揺れの候補（likely＝早い段） | マリンバ単発 F#5（控えめ） |
 | `specialInfo` | 南海トラフ地震臨時情報・後発地震注意情報（2 つで同じ音。2026-10-22 ユーザー選択「今のまま記録する (Recommended)」） | 純音 A4×2 連打 → D5（上昇） |
 | `specialInfoCommentary` | 南海トラフ地震関連解説情報・地震・津波に関するお知らせ（「お知らせの音・読み上げ」を有効にしたときだけ。専用の音は作らず借りる。2026-10-18 ユーザー承認） | 純音 2 音 D5→A4（下降・控えめ） |
 | `earthquakeCount` | 地震回数に関する情報 | 純音の同音 3 連 C5（音程を動かさない） |

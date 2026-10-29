@@ -7,7 +7,7 @@ import {
   nearbyStationNames,
   nearbyRegionNames,
 } from './nearbyStations'
-import { computeSiteKeys } from './kyoshinDetector'
+import { computeSiteKeys } from './kyoshinSiteKeys'
 import type { StationCoordsData } from './stationCoords'
 
 // 東京駅を自宅とする。半径 30km の内外を作りやすい。

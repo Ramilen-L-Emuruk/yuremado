@@ -158,8 +158,8 @@ export interface JapanMapProps {
   eews?: EEWAlert[]
   /**
    * confirmed 全イベントのメンバー観測点。**「検知が続いているか」の判定専用**
-   * （空になったことを検知終了の合図として扱う。イベントが生存している間ここが空にならないことは
-   * `MEMBER_DROP_MS` の下限が保証している）。この集合は現在の震度で絞られていないため、
+   * （空になったことを検知終了の合図として扱う。検知に加わった観測点は検知が消えるまで減らないので、
+   * 検知が続いている間ここが空になることはない）。この集合は現在の震度で絞られていないため、
    * **カメラフィットの目標には使わない**
    * （`JapanMapGL` が detectedMarkerPoints から寄り先を作る。理由は同ファイルの detectedFitPoints）。
    * 地図に描く分は detectedMarkerPoints を使う。
@@ -172,9 +172,9 @@ export interface JapanMapProps {
   detectedMarkerPoints?: DetectedPoint[]
   /** 主 likely イベント 1 件のメンバー観測点。**候補カメラフィット専用**（検知点マーカーは unconfirmedPoints を使う）。 */
   candidatePoints?: DetectedPoint[]
-  /** likely / faint 全イベントのメンバー観測点。**検知点マーカー専用**（フィットには使わない）。 */
+  /** likely（早い段）の全イベントのメンバー観測点。**検知点マーカー専用**（フィットには使わない）。 */
   unconfirmedPoints?: DetectedPoint[]
-  candidateId?: number | null
+  candidateId?: string | null
   /**
    * 揺れの強まり・別地点発報で立った「1 点へ寄せる」要求（`ShakeFocus`）。null は要求なし。
    * 消費済みの連番は `JapanMapGL` が保有する ref で覚える（理由は同ファイルの
