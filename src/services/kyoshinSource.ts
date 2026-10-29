@@ -30,6 +30,7 @@ import {
   firstContinuousIndex,
 } from '../utils/kyoshinWarmup'
 import { createLogThrottle, log } from '../utils/logger'
+import { MAX_DT_GAP_MS, MAX_RESUME_GAP_MS } from '../utils/kyoshinNoiseFloor'
 
 /** 1 時点ぶんの観測データ。 */
 export interface KyoshinFrame {
@@ -70,8 +71,9 @@ export interface KyoshinSourceSink {
    */
   prefill(frames: KyoshinFrame[]): void
   /**
-   * リプレイで取得が全滅した区間を、**取得が戻ったあとに検知エンジンだけへ流す**（#986。2026-10-22 選択「戻ったら取りに行く
-   * (Recommended)」・2026-10-24 選択「検知へ流し、画面は今のまま (Recommended)」「今の取得の規則で取る (Recommended)」）。
+   * 抜けた区間を、**取得が戻ったあとに検知エンジンだけへ流す**。抜け方は 2 つ —— リプレイで取得が全滅した区間（#986。
+   * 2026-10-22 選択「戻ったら取りに行く (Recommended)」・2026-10-24 選択「検知へ流し、画面は今のまま (Recommended)」「今の取得の規則で
+   * 取る (Recommended)」）と、ライブで秒が飛んだ区間（#1183。2026-10-29 選択「抜けた秒を取り直す (Recommended)」。→ `LIVE_GAP_BACKFILL_AFTER_MS`）。
    *
    * 先に `begin` を渡し（受け取る側は助走と同じく通常フレームを待たせる）、穴のフレームが揃ったら同じ `id` で `frames` を渡す。
    * **`begin` を渡したら、取れなくても必ず `frames` を渡すこと**（空配列でよい）—— 受け取る側は上限まで検知を待たせる。
@@ -269,6 +271,29 @@ export const WARMUP_CONCURRENCY = 24
 const LOG_THROTTLE_MS = 60_000
 
 /**
+ * ライブ: 前に渡した秒からこれを**超えて**跳んだら、間の秒を取り直して検知エンジンへ流す（#1183。2026-10-29 ユーザー選択
+ * 「抜けた秒を取り直す (Recommended)」）。
+ *
+ * ライブの取得は「前回 + 1 秒」と「いまの最新」の時刻の新しいほうへ進むので、タイマーの発火が遅れた（タブが隠れた・端末が重い）回や、
+ * 同じ秒を取り損ね続けた回は、間の秒を飛ばして最新へ跳ぶ。検知エンジンは `MAX_RESUME_GAP_MS`（60 秒）以内の途切れを続きとして
+ * 繋ぐので、途切れの前後の値の差が全国一斉の「上がり」に見え、統計の部分だけで確かな段まで上がる（2026-10-29 に端末で 14:35:29・
+ * 14:49:20 の 2 回。アーカイブで同じ秒の手前に 19〜49 秒の穴を開けると同じ束が出た）。
+ *
+ * 閾値は慢性ノイズ床が「途絶明け」と扱う境（`MAX_DT_GAP_MS`）に揃える。それ以下の短い飛びは今までどおり詰めて渡す
+ * （取り直すと、そのあいだ検知が待たされる）。**`MAX_DT_GAP_MS` を変えたら、この閾値が今も意味を持つか見直す。**
+ */
+export const LIVE_GAP_BACKFILL_AFTER_MS = MAX_DT_GAP_MS
+
+/**
+ * ライブ: 1 回に取り直す長さの目安（ms）。**60 秒**（検知エンジンが途切れを続きとして繋ぐ上限 `MAX_RESUME_GAP_MS` と同じ）。
+ * 取り直しが終わるまで受け取る側は検知を待たせ、待てるのは助走と同じ 90 フレーム（ライブでは約 90 秒）まで —— 長く取るほど検知が
+ * 止まり、待ちきれずに捨てられる。それより長い穴は跳んだ先に近い側の 60 秒だけを取り、手前に 60 秒を超える途切れを残して検知
+ * エンジンに作り直させる。**残る途切れが 60 秒以内になる穴（120 秒まで）は切らずに全体を取る**（{@link holeTakeFromMs}）——
+ * 切ると、残った途切れが続きとして繋がれて一斉の上がりに見える。
+ */
+export const LIVE_BACKFILL_MAX_MS = MAX_RESUME_GAP_MS
+
+/**
  * Yahoo リアルタイム震度から現在のフレームを 1 秒ごとに取得するソース（ライブ）。
  *
  * 取得するデータ時刻は「サーバー同期した現在時刻 - FETCH_OFFSET_MS」から始め、成功のたびに
@@ -330,18 +355,32 @@ async function fetchFramesConcurrently(
  */
 export const REPLAY_BACKFILL_MAX_MS = 15 * 60_000
 
-/** 全滅した区間を取り直した結果。 */
+/** 抜けた区間を取り直した結果。 */
 interface HoleFrames {
   /** 取れたフレーム（時刻の昇順）。 */
   readonly frames: KyoshinFrame[]
   /** 取り終えた理由。**記録に出す**（取れた秒が足りないとき、恒久的な欠落か一時的な失敗かを追うため）。 */
-  readonly stoppedBy: '取り終えた' | '続けて取れなかった' | '供給が止まった'
+  readonly stoppedBy: '取り終えた' | '続けて取れなかった' | '供給が止まった' | '例外で中断'
   /** 最後に受けた失敗（1 件も失敗していなければ `null`）。 */
   readonly lastError: unknown
 }
 
 /**
- * 全滅した区間 `[fromMs, toMs)` のフレームを取る。**1 秒ずつ、先読みと同じ規則で試し直す**
+ * 抜けた区間 `[fromMs, toMs)` のうち、取り始める時刻（含む）。`fromMs` の 1 秒前が前に渡した秒。
+ *
+ * 穴が `maxMs` より長ければ `toMs` に近い側の `maxMs` だけを取る。**ただし古い側を切るのは、切った後に残る途切れ
+ * （前に渡した秒〜取った最初の秒）が `MAX_RESUME_GAP_MS` を超えて、検知エンジンがそこで作り直すときだけ。** それ以内に
+ * 収まるなら、残った途切れが続きとして繋がれて一斉の上がりに見える（取り直しで直したい誤検知そのもの）ので、上限を超えても
+ * 穴全体を取る（取る長さは最大 `maxMs + MAX_RESUME_GAP_MS`）。
+ */
+export function holeTakeFromMs(fromMs: number, toMs: number, maxMs: number): number {
+  const cut = toMs - maxMs
+  if (cut <= fromMs) return fromMs
+  return cut - (fromMs - POLL_MS) > MAX_RESUME_GAP_MS ? cut : fromMs
+}
+
+/**
+ * 抜けた区間 `[fromMs, toMs)` のフレームを取る（取り始めは {@link holeTakeFromMs}）。**1 秒ずつ、先読みと同じ規則で試し直す**
  * （`REPLAY_MAX_ATTEMPTS_PER_TARGET` 回・`replayRetryDelayMs` の間隔。2026-10-24 ユーザー選択「今の取得の規則で取る」）。
  * 取れなかった秒は抜けたまま返す（検知エンジンは途切れとして扱う）。返すのは時刻の昇順。
  *
@@ -349,9 +388,11 @@ interface HoleFrames {
  * 配信元にその時間帯のファイルが無いと、ほぼ全秒が失敗して 1 回の復帰で最大 3600 件を投げる。近い側から取るのは、検知が見るのは
  * 直前の履歴なので、途中でやめても役に立つ側が残るため。並列で取るので、やめるまでに 1 まとまり（`WARMUP_CONCURRENCY` 秒）は余分に投げる。
  */
-async function fetchHoleFrames(fromMs: number, toMs: number, isActive: () => boolean): Promise<HoleFrames> {
+async function fetchHoleFrames(
+  fromMs: number, toMs: number, maxMs: number, isActive: () => boolean, cache: boolean,
+): Promise<HoleFrames> {
   const targets: Date[] = []
-  for (let t = toMs - POLL_MS; t >= Math.max(fromMs, toMs - REPLAY_BACKFILL_MAX_MS); t -= POLL_MS) targets.push(new Date(t))
+  for (let t = toMs - POLL_MS; t >= holeTakeFromMs(fromMs, toMs, maxMs); t -= POLL_MS) targets.push(new Date(t))
   const out: KyoshinFrame[] = []
   let lastError: unknown = null
   let consecutiveMisses = 0
@@ -362,7 +403,7 @@ async function fetchHoleFrames(fromMs: number, toMs: number, isActive: () => boo
       for (let attempts = 1; attempts <= REPLAY_MAX_ATTEMPTS_PER_TARGET; attempts += 1) {
         if (!isActive()) return null
         try {
-          const rt = await fetchRealtimeIntensity(t, { cache: true })
+          const rt = await fetchRealtimeIntensity(t, { cache })
           // **hypoInfo は載せない**（助走と同じ。過ぎた速報を新規発報として鳴らさない）。
           return { time: t, dataTime: rt.dataTime, sitesKey: rt.siteConfigId, indices: rt.indices }
         } catch (err) {
@@ -385,6 +426,102 @@ async function fetchHoleFrames(fromMs: number, toMs: number, isActive: () => boo
     if (consecutiveMisses >= REPLAY_MAX_CONSECUTIVE_GIVEUPS) return { frames: out.reverse(), stoppedBy: '続けて取れなかった', lastError }
   }
   return { frames: out.reverse(), stoppedBy: '取り終えた', lastError }
+}
+
+/**
+ * 取り直しの通し番号（受け取る側が `begin` と `frames` を突き合わせる）。**供給を作り直してもかぶらないよう、係の外で数える**
+ * —— 係ごとに 1 から数え直すと、作り直した後の最初の番号が前の供給で済ませた番号と同じになり、受け取る側が「済んだ」と見て黙って使わない。
+ */
+let holeBackfillSeq = 0
+
+/**
+ * 穴の区間 `[fromMs, toMs)` を取り直して、検知エンジンだけへ渡す係を作る（→ `KyoshinSourceSink.backfill`）。
+ * リプレイの全滅区間（#986）とライブの途切れ（#1183）が同じ係を使う。
+ *
+ * **呼ぶのは、穴の後ろの秒を `enqueue` する前。** `begin` を後に出すと、受け取る側がその秒を先に食わせて、
+ * 穴のフレームが「時刻の巻き戻り」として捨てられる。
+ *
+ * **取り直しの最中にまた穴が空いたら、走っている取り直しの範囲をその穴の端まで伸ばす。** 別の `begin` を出すと、受け取る側は
+ * 先の穴を食わせた後に溜めたフレームを食わせるので、後の穴のフレームは巻き戻りとして捨てられ、後の穴は検知に繋がれたまま残る
+ * （直したい誤検知そのもの）。伸ばした分は先の穴の端から続けて取るので、間に渡し済みの秒も取り直す（受け取る側は重複として捨てる）。
+ * `frames` は 1 回だけ、時刻の昇順で渡す。
+ */
+function createHoleBackfiller(opts: {
+  sink: KyoshinSourceSink
+  isActive: () => boolean
+  /** 秒フレームの控えを使うか。ライブは使わない（→ `utils/kyoshinFrameCache`） */
+  cache: boolean
+  /** 1 回に取る長さの上限（ms）。それより長い区間は新しい側だけを取る */
+  maxMs: number
+  /** 記録の文に入れる穴の呼び名（「全滅区間」「途切れた区間」） */
+  what: string
+  reportHandoffError: HandoffErrorReporter
+}): (fromMs: number, toMs: number) => void {
+  const { sink, isActive, cache, maxMs, what, reportHandoffError } = opts
+  /** 走っている取り直しが取り終える端（伸ばされうる）。走っていなければ `null`。 */
+  let running: { extendTo: number } | null = null
+  return (fromMs, toMs) => {
+    if (running !== null) {
+      running.extendTo = Math.max(running.extendTo, toMs)
+      return
+    }
+    holeBackfillSeq += 1
+    const id = holeBackfillSeq
+    try {
+      sink.backfill({ kind: 'begin', id })
+    } catch (err) {
+      reportHandoffError(`[kyoshinSource] ${what}の取り直しの開始を渡す途中の例外（取得の失敗とは別）`, err)
+      return
+    }
+    const run = { extendTo: toMs }
+    running = run
+    void (async () => {
+      const frames: KyoshinFrame[] = []
+      let wanted = 0
+      let skipped = 0
+      let stoppedBy: HoleFrames['stoppedBy'] = '取り終えた'
+      let lastError: unknown = null
+      let segFrom = fromMs
+      let segTo = toMs
+      // 伸ばされた分を続けて取る。伸ばされるのは取得を待っている間だけで、`running` を外すまでの間に await は無い
+      for (;;) {
+        const takeFrom = holeTakeFromMs(segFrom, segTo, maxMs)
+        wanted += Math.round((segTo - takeFrom) / POLL_MS)
+        skipped += Math.round((takeFrom - segFrom) / POLL_MS)
+        let result: HoleFrames
+        try {
+          result = await fetchHoleFrames(segFrom, segTo, maxMs, isActive, cache)
+        } catch (err) {
+          result = { frames: [], stoppedBy: '例外で中断', lastError: err }
+        }
+        frames.push(...result.frames)
+        if (result.lastError !== null) lastError = result.lastError
+        // やめた理由は、取り終えなかった区間のものを残す
+        if (result.stoppedBy !== '取り終えた') stoppedBy = result.stoppedBy
+        if (run.extendTo <= segTo || !isActive()) break
+        segFrom = segTo
+        segTo = run.extendTo
+      }
+      running = null
+      if (!isActive()) return
+      // **足りなければ warn**（取れなかった秒は検知に穴のまま残る）。やめた理由・上限で切った秒数・最後の失敗も添える。
+      // 「取り直した」までが供給側の事実で、検知へ使われたかは受け取る側が記録する（待ちきれずに捨てることがある）。
+      const line = `[kyoshinSource] ${what}を取り直した: ${frames.length} / ${wanted} 秒（${stoppedBy}）`
+        + (run.extendTo > toMs ? `（取り直しの最中に次の穴が空いたので ${new Date(run.extendTo).toISOString()} まで伸ばした）` : '')
+        + (skipped > 0 ? `（古い側の ${skipped} 秒は上限 ${maxMs / 1000} 秒を超え、手前の途切れで検知エンジンが作り直すので取らない）` : '')
+      if (frames.length < wanted || skipped > 0 || stoppedBy !== '取り終えた') {
+        if (lastError === null) log.warn(line)
+        else log.warn(`${line}。最後の失敗:`, lastError)
+      } else {
+        log.info(line)
+      }
+      try {
+        sink.backfill({ kind: 'frames', id, frames })
+      } catch (err) {
+        reportHandoffError(`[kyoshinSource] ${what}のフレームを渡す途中の例外（取得の失敗とは別）`, err)
+      }
+    })()
+  }
 }
 
 /**
@@ -553,6 +690,13 @@ function createYahooPollingSource(): KyoshinSource {
       // 助走は控えない（ライブは毎秒「新しい時刻」を取るので一度も当たらない）。
       startWarmupHandoff(initialTarget, sink, () => active, false, reportHandoffError)
 
+      // 途切れた区間の取り直し（→ `LIVE_GAP_BACKFILL_AFTER_MS`）。控えは使わない（助走と同じ）。
+      const startBackfill = createHoleBackfiller({
+        sink, isActive: () => active, cache: false, maxMs: LIVE_BACKFILL_MAX_MS, what: '途切れた区間', reportHandoffError,
+      })
+      /** 最後に渡したフレームのデータ時刻。最初のフレームの前は助走が埋めるので null から始める */
+      let lastHandedMs: number | null = null
+
       // target: 今回取得するデータ時刻。retryCount: 同一データ時刻への再試行回数。
       const tick = (target: Date, retryCount = 0) => {
         const fetchStart = Date.now()
@@ -569,6 +713,13 @@ function createYahooPollingSource(): KyoshinSource {
             // **2 つを別々に囲う。** 1 つの try に入れていた頃は、更新停止の解除が投げた回に
             // **取れていたフレームが丸ごと落ちた**（取り直す手段は無い）。
             if (notifyStalled(false)) stalledNotified = false
+            // **途切れていたら、この秒を渡す前に取り直しを始める**（`begin` を後に出すと、受け取る側がこの秒を先に
+            // 食わせて、穴のフレームが「時刻の巻き戻り」として捨てられる）。画面はこの秒から進める（過ぎた秒は描き直さない）。
+            const targetMs = target.getTime()
+            if (lastHandedMs !== null && targetMs - lastHandedMs > LIVE_GAP_BACKFILL_AFTER_MS) {
+              startBackfill(lastHandedMs + POLL_MS, targetMs)
+            }
+            lastHandedMs = targetMs
             try {
               sink.enqueue({
                 time: target,
@@ -816,6 +967,10 @@ function createYahooPipelineSource(timeOffsetMs: number): KyoshinSource {
         }
       }
 
+      const startBackfill = createHoleBackfiller({
+        sink, isActive: () => active, cache: true, maxMs: REPLAY_BACKFILL_MAX_MS, what: '全滅区間', reportHandoffError,
+      })
+
       /**
        * 取れたフレームを渡す。
        *
@@ -823,57 +978,6 @@ function createYahooPipelineSource(timeOffsetMs: number): KyoshinSource {
        * 復帰の通知が投げた回に**取れていたフレームが丸ごと落ちた**（記録は残るが、
        * そのフレームを取り直す手段は無い）。
        */
-      /** 取り直しの番号（受け取る側が `begin` と `frames` を突き合わせる）。 */
-      let backfillId = 0
-      /** 取り直しの最中か。**1 本ずつにする**（重ねると、受け取る側が先の穴を食わせた後に次の穴が巻き戻りとして捨てられる）。 */
-      let backfillRunning = false
-      const startBackfill = (fromMs: number, toMs: number): void => {
-        if (backfillRunning) {
-          log.warn(
-            `[kyoshinSource] 全滅区間の取り直しの最中にまた全滅から戻ったので、この区間（${new Date(fromMs).toISOString()}〜`
-            + `${new Date(toMs).toISOString()}）は取り直さない`,
-          )
-          return
-        }
-        backfillRunning = true
-        backfillId += 1
-        const id = backfillId
-        try {
-          sink.backfill({ kind: 'begin', id })
-        } catch (err) {
-          backfillRunning = false
-          reportHandoffError('[kyoshinSource] 全滅区間の取り直しの開始を渡す途中の例外（取得の失敗とは別）', err)
-          return
-        }
-        void (async () => {
-          let result: HoleFrames = { frames: [], stoppedBy: '取り終えた', lastError: null }
-          try {
-            result = await fetchHoleFrames(fromMs, toMs, () => active)
-          } catch (err) {
-            log.warn('[kyoshinSource] 全滅区間の取り直しに失敗（穴のまま検知を続ける）', err)
-          }
-          backfillRunning = false
-          if (!active) return
-          const { frames } = result
-          const wanted = Math.round((toMs - Math.max(fromMs, toMs - REPLAY_BACKFILL_MAX_MS)) / POLL_MS)
-          const skipped = Math.max(0, Math.round((toMs - fromMs - REPLAY_BACKFILL_MAX_MS) / POLL_MS))
-          // **足りなければ warn**（取れなかった秒は検知に穴のまま残る）。やめた理由・上限で切った秒数・最後の失敗も添える。
-          const line = `[kyoshinSource] 全滅区間を取り直して検知へ流す: ${frames.length} / ${wanted} 秒（${result.stoppedBy}）`
-            + (skipped > 0 ? `（古い側の ${skipped} 秒は上限 ${REPLAY_BACKFILL_MAX_MS / 60_000} 分を超えるので取らない）` : '')
-          if (frames.length < wanted || skipped > 0) {
-            if (result.lastError === null) log.warn(line)
-            else log.warn(`${line}。最後の失敗:`, result.lastError)
-          } else {
-            log.info(line)
-          }
-          try {
-            sink.backfill({ kind: 'frames', id, frames })
-          } catch (err) {
-            reportHandoffError('[kyoshinSource] 全滅区間のフレームを渡す途中の例外（取得の失敗とは別）', err)
-          }
-        })()
-      }
-
       const handoff = (targetMs: number, rt: RealtimeIntensity) => {
         if (stalledNotified && notifyStalled(false)) stalledNotified = false
         try {
