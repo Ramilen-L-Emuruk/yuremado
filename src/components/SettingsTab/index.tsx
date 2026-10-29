@@ -81,6 +81,7 @@ export interface TestFunctions {
   lpgmRetraction?: () => void
   lpgmClassZero?: () => void
   lpgmCategories?: () => void
+  lpgmClassZeroRegion?: () => void
   areaUnreceivedQuake?: () => void
   trainingQuake?: () => void
   quakeAmendment: () => void
@@ -2563,6 +2564,12 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {isDmdss && onTest.lpgmCategories && (
           <Row label="長周期地震動に関する観測情報（種類1・3）" description="観測情報の種類1・3の実電文（2024年1月1日 石川県能登地方・2024年8月8日 日向灘）を流します。長周期地震動の欄の下に、階級を観測した地域がいずれも震度5弱以上だったことを伝える一文が出ます">
             <TestButton color="teal" onClick={onTest.lpgmCategories}>長周期地震動（種類1・3）テスト</TestButton>
+          </Row>
+        )}
+        {/* ボタン名と説明は 2026-10-29 ユーザー承認「新しいボタンを足す (Recommended)」「続報も流す (Recommended)」で決めた文面 */}
+        {isDmdss && onTest.lpgmClassZeroRegion && (
+          <Row label="長周期地震動に関する観測情報（階級0の地域を含む）" description="階級1以上の地域に階級0の地域が混ざった長周期地震動の観測情報を流します。階級0の地域も、他の階級と同じ設定で読み上げます。3秒後に規模を書き換えた続報が届き、長周期地震動の欄の値に更新の印が付きます">
+            <TestButton color="teal" onClick={onTest.lpgmClassZeroRegion}>長周期地震動（階級0の地域）テスト</TestButton>
           </Row>
         )}
         {isDmdss && onTest.earthquakeCount && (

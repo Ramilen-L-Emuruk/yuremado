@@ -38,6 +38,7 @@ import { rowMarkKey, rowMarkOf, type QuakeCardMarks, type QuakeUpdateField } fro
 import { intensityRowsToExpand, lpgmRowsToExpand, mergeAutoExpanded } from '../../utils/autoExpandMarkedRows'
 import { UPDATE_MARK_COLOR, type UpdateStatus } from '../../utils/updateMark'
 import { UpdateDot } from '../UpdateDot'
+import { LpgmQuakeFacts } from './LpgmQuakeFacts'
 
 import { useStationCoords } from '../../hooks/useStationCoords'
 import { useSubRegions } from '../../hooks/useSubRegions'
@@ -1216,6 +1217,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               </span>
             </div>
           )}
+          {/* 長周期の電文自身が持つ震源・規模・全国の最大震度・地震発現時刻（→ `LpgmQuakeFacts`） */}
+          {lpgm && !lpgm.cancelled && <LpgmQuakeFacts lpgm={lpgm} marks={lpgmMarks} />}
           {/* 電文の「観測情報の種類」（`LgCategory`）が伝えているのは、階級を観測した地域の中に
               震度が小さい地域があるかどうか。**分類番号は出さず意味だけ書く**（→ `lpgmCategoryNote`）。
               **この一文だけは畳まない。** 1 行しかないうえ、その地震でしか言えない事実で、

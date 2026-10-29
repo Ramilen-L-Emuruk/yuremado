@@ -1532,8 +1532,8 @@ export interface LpgmPoint {
 /**
  * 長周期地震動観測情報が持つ震源の要素（`Body/Earthquake/Hypocenter`）。
  *
- * **いまは読んで持つだけで、画面には出していない。** 長周期の欄にも出すと決まっている
- * （→ docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）。
+ * **地震カードの長周期の欄に出す**（震央地名と深さ。→ `LpgmQuakeFacts`。2026-10-29 ユーザー承認「長周期の欄にも出す」、
+ * 形は同日「1行・名前と深さ (Recommended)」）。座標と震央補助表現は読んで持つだけで、欄には出さない。
  */
 export interface LpgmHypocenter extends HypocenterAreaDetail {
   /**
@@ -1543,7 +1543,8 @@ export interface LpgmHypocenter extends HypocenterAreaDetail {
   name: string
   /**
    * 震源決定機関（`Hypocenter/Source`）。→ {@link TsunamiSourceEarthquake.source}
-   * （意味は同じ）。いまは読んで持つだけ（震源と一緒に出すと決まっている。→ {@link LpgmHypocenter}）
+   * （意味は同じ）。長周期の欄に、地震カードと同じ文「震源決定: …（気象庁以外）」で出す
+   * （2026-10-29 ユーザー承認「含める (Recommended)」。→ `LpgmQuakeFacts`）
    */
   source?: string
 }
@@ -1659,15 +1660,14 @@ export interface JMALpgm {
   /**
    * 全国の最大震度（`Intensity/Observation/MaxInt`）。
    *
-   * **いまは読んで持つだけで、画面には出していない**（長周期の欄にも出すと決まっている。
-   * → docs/spec/telegram-coverage-audit.md §6「決定済み・実装は未着手」）。
+   * **地震カードの長周期の欄に「最大震度N」で出す**（→ `LpgmQuakeFacts`。2026-10-29 ユーザー承認「長周期の欄にも出す」）。
    * 区域・観測点ごとの震度（{@link LpgmRegion.maxInt} / {@link LpgmPoint.int}）は
    * 階級と並べる意味があるので出している。
    */
   maxInt?: IntensityScale
   /**
    * 地震の規模（`jmx_eb:Magnitude`）。数値で求まらないときは持たせない。
-   * いまは画面に出していない（→ {@link maxInt}）
+   * 長周期の欄に地震カードと同じ書き方（`Mj7.6`）で出す（→ {@link maxInt}）
    */
   magnitude?: number
   /**
@@ -1682,7 +1682,8 @@ export interface JMALpgm {
    *
    * **読み上げの「◯時◯分頃発生した地震で」はこちらを先に採る**（`lpgmToText`）。
    * 地震情報・津波カードと同じ規則で、揃えないと同じ地震の時刻が経路によって 1 分ずれる。
-   * 画面（長周期のカード・一覧）には時刻そのものをいまは出していない（→ {@link maxInt}）。
+   * 長周期の欄には「地震発現時刻 1月1日 16:10」の形で出す（→ {@link maxInt}）。**無いときは発生時刻で代えない** ——
+   * 「地震発現時刻」と名乗る欄に別の時刻を出すことになる。
    */
   arrivalTime?: string
   /** 震源の要素。→ {@link LpgmHypocenter} */
