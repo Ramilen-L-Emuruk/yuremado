@@ -170,7 +170,7 @@ USGS の震源と発生時刻で、走時表（`travelTimeSec`）の P 波到達
 
 ## データの置き場所
 
-すべて Git の管理外。強震モニタのフレームの形は `scripts/bench-kyoshin.ts` の控えと同じ（`{ ms, ts, indices, cfg }` の配列。`indices` は観測点ごとの震度の段・欠測は −1）。観測点の座標は `.probe-cache/sites_<版>.json`。
+すべて Git の管理外。強震モニタのフレームの形は `scripts/bench-kyoshin.ts` の控えと同じ（`{ ms, ts, indices, cfg }` の配列。`indices` は観測点ごとの震度の段・欠測は −1）。観測点の座標はメインの checkout の `.cache/kyoshin-bench/sites_<版>.json`（`bench-kyoshin` と共有）。
 
 | 置き場所 | 中身 | 件数・大きさ |
 |---|---|---|
@@ -185,7 +185,7 @@ USGS の震源と発生時刻で、走時表（`travelTimeSec`）の P 波到達
 
 ## 動かしたコマンド
 
-リポジトリのトップで走らせる。出力は `.cache/kyoshin-research/` へ向ける（`S=.cache/kyoshin-research`）。Yahoo の取得は 4 本ずつ並べる（実測で 1 秒あたり約 22 件）。
+メインの checkout のトップで走らせる（`$S` を相対で渡すので、ワークツリーから走らせると出力がワークツリーの中へ出る）。出力は `.cache/kyoshin-research/` へ向ける（`S=.cache/kyoshin-research`）。Yahoo の取得は 4 本ずつ並べる（実測で 1 秒あたり約 22 件）。
 
 ```bash
 S=.cache/kyoshin-research
@@ -217,11 +217,11 @@ git show 0b395805:scripts/kyoshin-bench/baseline.json > $S/baseline-0b395805.jso
 RISE=2 THR=20 npx tsx scripts/kyoshin-research/far-analyze.mts $S > $S/far-analyze-ensemble.txt
 FAR=far-analyze-ensemble.txt python -X utf8 scripts/kyoshin-research/compare-far-deep.py $S > $S/compare-far-deep-ensemble.txt
 npx tsx scripts/kyoshin-research/far-ensemble-hits.mts > $S/far-ensemble-hits.txt
-python -I -X utf8 scripts/kyoshin-research/far-filter.py $S .probe-cache > $S/far-filter.txt
+python -I -X utf8 scripts/kyoshin-research/far-filter.py $S .cache/kyoshin-bench > $S/far-filter.txt
 npx tsx scripts/kyoshin-research/local-analyze.mts > $S/local-analyze-ensemble.txt
 ```
 
 - `compare-far-deep.py` は `$S` の `pwave_100_6_0.3.txt`・`far-analyze2.txt`（環境変数 `FAR` で差し替えられる）・`eew_fardeep.txt`・`fardeep.txt` を読む。古いエンジンでの `pwave_100_6_0.3.txt`・`far-analyze2.txt` は `$S/raw-scratch/` にある
-- 観測点の座標は既定でリポジトリのトップの `.probe-cache/` から読む。別の場所なら環境変数 `KYOSHIN_BENCH_CACHE` で指す
+- 観測点の座標は既定でメインの checkout の `.cache/kyoshin-bench/` から読む（`bench-kyoshin` と共有。ワークツリーから走らせても同じ場所）。別の場所なら環境変数 `KYOSHIN_BENCH_CACHE` で指す（相対なら作業ディレクトリから）
 - `far-analyze.mts`・`pwave-run.mts` は `.cache/kyoshin-far-windows/` の全窓と `$S/kamchatka.json` を流す
 - `pwave.mts` の近さの表は「観測点リストの版と半径」で控える。半径を 1 回の実行の中で変える集計（`local-analyze.mts`）で、版だけで控えていたため半径 40km の列が 100km と同じ数字になった誤りがあった（直してから測り直した）

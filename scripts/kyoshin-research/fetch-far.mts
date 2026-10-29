@@ -1,11 +1,13 @@
 // 遠い地震・深発地震の窓を Yahoo 強震モニタから取る（調査用）。DRY=1 で URL を数えるだけ
 // 窓 = 最寄りの観測点への P 波到達の見込み（直線距離 / 7.5 km/s）の 120 秒前から 300 秒
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
 const repo = process.cwd().replace(/\\/g, '/')
+const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
 const OUT = `${repo}/.cache/kyoshin-far-windows`
 const SECONDS = 300
 const DRY = process.env.DRY === '1'
-const sites = JSON.parse(readFileSync(`${repo}/.probe-cache/sites_20260123000000.json`, 'utf8')) as [number, number][]
+const sites = JSON.parse(readFileSync(`${probeCache}/sites_20260123000000.json`, 'utf8')) as [number, number][]
 const lines = readFileSync(process.argv[2], 'utf8').trim().split('\n')
 const hav = (a: number, b: number, c: number, d: number) => {
   const r = Math.PI / 180, x = Math.sin((c - a) * r / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2

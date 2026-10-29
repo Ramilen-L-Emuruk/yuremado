@@ -2,9 +2,10 @@
 // カムチャツカの日と、ベンチの平常時の窓（quiet / negative）で比べる。
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs'
 import { runEnsemble } from './ensemble-engine.mts'
+import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
 type Frame = { ms: number; ts: string; indices: number[]; cfg: string }
 const repo = process.cwd().replace(/\\/g, '/')
-const probeCache = (process.env.KYOSHIN_BENCH_CACHE ?? `${repo}/.probe-cache`).replace(/\\/g, '/')
+const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
 const BASE_SEC = 120, HOLD = 5, RISE = +(process.env.RISE ?? 1), R_KM = 150
 const sitesCache = new Map<string, [number, number][]>()
 const sitesOf = (cfg: string) => {

@@ -1,12 +1,14 @@
 // 「平常値から +1.0 以上を 5 秒続けた点」が、半径 150km の円の中に何点あるか（最大の円）を秒ごとに数える。
 // カムチャツカの日と、ベンチの平常時の窓（quiet / negative）で比べる。
 import { readFileSync, readdirSync } from 'node:fs'
+import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
 type Frame = { ms: number; ts: string; indices: number[]; cfg: string }
 const repo = process.cwd().replace(/\\/g, '/')
+const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
 const BASE_SEC = 120, HOLD = 5, RISE = +(process.env.RISE ?? 1), R_KM = 150
 const sitesCache = new Map<string, [number, number][]>()
 const sitesOf = (cfg: string) => {
-  if (!sitesCache.has(cfg)) sitesCache.set(cfg, JSON.parse(readFileSync(`${repo}/.probe-cache/sites_${cfg}.json`, 'utf8')))
+  if (!sitesCache.has(cfg)) sitesCache.set(cfg, JSON.parse(readFileSync(`${probeCache}/sites_${cfg}.json`, 'utf8')))
   return sitesCache.get(cfg)!
 }
 const nbCache = new Map<string, number[][]>()
@@ -62,7 +64,7 @@ const out: Record<string, string | null> = {}
 const byCat = new Map<string, { n: number; secs: number; fired: number; firedNear: number; firedFar: string[] }>()
 for (const w of win) {
   let fr: Frame[]
-  try { fr = JSON.parse(readFileSync(`${repo}/.probe-cache/${w.label}.json`, 'utf8')) } catch { continue }
+  try { fr = JSON.parse(readFileSync(`${probeCache}/${w.label}.json`, 'utf8')) } catch { continue }
   if (fr.length < 60) continue
   let rr
   try { rr = run(fr) } catch { continue }

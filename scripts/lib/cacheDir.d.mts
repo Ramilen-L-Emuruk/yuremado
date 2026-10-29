@@ -14,5 +14,8 @@ export function mainCheckoutRoot(): string
 /** 前の置き場所（`.claude/<name>`）に控えが残り、新しい置き場所がまだ無いか。 */
 export function shouldWarnLegacy(input: { newExists: boolean; legacyExists: boolean }): boolean
 
-/** 控えの置き場所。メインの checkout の `.cache/<name>`。 */
-export function cacheDir(name: string): string
+/** 前の置き場所の候補（`.claude/<name>` と、渡した場所）。 */
+export function legacyCacheDirs(input: { root: string; name: string; legacy: readonly string[] }): string[]
+
+/** 控えの置き場所。メインの checkout の `.cache/<name>`。`legacy` は前の置き場所（トップからの相対）。 */
+export function cacheDir(name: string, options?: { legacy?: readonly string[] }): string

@@ -30,8 +30,8 @@
  * npx tsx scripts/measure-kyoshin-warmup.ts --min-blocks=1,3,5,7,10
  * ```
  *
- * キャッシュの置き場は `npm run bench-kyoshin` と同じ（環境変数 `KYOSHIN_BENCH_CACHE`・
- * 既定 `.probe-cache`）。観測点リストもそちらと共有する。平常のゆらぎの表は
+ * キャッシュの置き場は `npm run bench-kyoshin` と同じ（既定はメインの checkout の `.cache/kyoshin-bench`・
+ * 環境変数 `KYOSHIN_BENCH_CACHE` で変えられる。決め方は `scripts/lib/kyoshinBenchCache.ts`）。観測点リストもそちらと共有する。平常のゆらぎの表は
  * `public/data/kyoshin-quiet-tables.json`（`--tables=` で差し替えられる）。
  *
  * ## 測定に使う窓
@@ -46,6 +46,7 @@
  * 手前の窓が無い窓・窓か手前の取れた秒が 9 割を切る窓は測らずに飛ばす（秒の位置は添字ではなく時刻で引く）。
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { kyoshinBenchCacheDir } from './lib/kyoshinBenchCache'
 import { createEnsembleDetector } from '../src/utils/kyoshinEnsembleDetector'
 import { createEnsembleTracker, type EnsembleDetection } from '../src/utils/kyoshinEnsembleTracker'
 import { validateQuietTables, type QuietTables } from '../src/utils/kyoshinQuietTables'
@@ -53,7 +54,7 @@ import {
   WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, mayStopWarmup, isQuietFrame,
 } from '../src/utils/kyoshinWarmup'
 
-const CACHE_DIR = process.env.KYOSHIN_BENCH_CACHE ?? '.probe-cache'
+const CACHE_DIR = kyoshinBenchCacheDir()
 const REALTIME_BASE = (edge: 'west' | 'east'): string =>
   `https://weather-kyoshin.${edge}.edge.storage-yahoo.jp/RealTimeData`
 const SITELIST_BASE = 'https://weather-kyoshin.west.edge.storage-yahoo.jp/SiteList'

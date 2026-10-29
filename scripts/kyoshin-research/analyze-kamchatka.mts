@@ -1,12 +1,13 @@
 // 当日のフレームで、北海道の観測点がいつ・どれだけ平常から上がったかと、検知エンジンの反応を見る
 import { readFileSync, existsSync } from 'node:fs'
 import { initState, buildStationMeta, step, indexToValue } from '../../src/utils/kyoshinDetector.ts'
+import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
 
 type Frame = { ms: number; ts: string; indices: number[]; cfg: string }
 const frames = JSON.parse(readFileSync(process.argv[2], 'utf8')) as Frame[]
-const repo = process.cwd().replace(/\\/g, '/')
+const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
 const cfg = frames[0].cfg
-const sitesPath = `${repo}/.probe-cache/sites_${cfg}.json`
+const sitesPath = `${probeCache}/sites_${cfg}.json`
 if (!existsSync(sitesPath)) { console.log('観測点リストの控え無し', cfg); process.exit(1) }
 const sites = JSON.parse(readFileSync(sitesPath, 'utf8')) as [number, number][]
 console.log('版', cfg, '観測点', sites.length, 'フレーム', frames.length, 'cfg混在', new Set(frames.map(f => f.cfg)).size)

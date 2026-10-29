@@ -3,12 +3,14 @@
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs'
 import { runPwave } from './pwave.mts'
 import { initState, buildStationMeta, step } from '../../src/utils/kyoshinDetector.ts'
+import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
 type Frame = { ms: number; ts: string; indices: number[]; cfg: string }
 const repo = process.cwd().replace(/\\/g, '/')
+const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
 const BASE_SEC = 120, HOLD = 5, RISE = +(process.env.RISE ?? 1), R_KM = 150
 const sitesCache = new Map<string, [number, number][]>()
 const sitesOf = (cfg: string) => {
-  if (!sitesCache.has(cfg)) sitesCache.set(cfg, JSON.parse(readFileSync(`${repo}/.probe-cache/sites_${cfg}.json`, 'utf8')))
+  if (!sitesCache.has(cfg)) sitesCache.set(cfg, JSON.parse(readFileSync(`${probeCache}/sites_${cfg}.json`, 'utf8')))
   return sitesCache.get(cfg)!
 }
 const nbCache = new Map<string, number[][]>()

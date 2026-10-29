@@ -3,8 +3,9 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { runEnsemble } from './ensemble-engine.mts'
 import { runPwave, P, type Frame } from './pwave.mts'
+import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
 const repo = process.cwd().replace(/\\/g, '/')
-const probeCache = (process.env.KYOSHIN_BENCH_CACHE ?? `${repo}/.probe-cache`).replace(/\\/g, '/')
+const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
 const sitesCache = new Map<string, [number, number][]>()
 const sitesOf = (cfg: string) => { if (!sitesCache.has(cfg)) sitesCache.set(cfg, JSON.parse(readFileSync(`${probeCache}/sites_${cfg}.json`, 'utf8'))); return sitesCache.get(cfg)! }
 const hav = (a: number, b: number, c: number, d: number) => { const r = Math.PI / 180, x = Math.sin((c - a) * r / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2; return 2 * 6371 * Math.asin(Math.sqrt(x)) }

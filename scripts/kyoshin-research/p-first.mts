@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { travelTimeSec } from '../../src/utils/travelTime.ts'
-const repo = process.cwd().replace(/\\/g, '/')
+import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
+const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
 const frames = JSON.parse(readFileSync(process.argv[2], 'utf8')) as { ms: number; indices: number[]; cfg: string }[]
-const sites = JSON.parse(readFileSync(`${repo}/.probe-cache/sites_${frames[0].cfg}.json`, 'utf8')) as [number, number][]
+const sites = JSON.parse(readFileSync(`${probeCache}/sites_${frames[0].cfg}.json`, 'utf8')) as [number, number][]
 const hav = (a: number, b: number, c: number, d: number) => { const r = Math.PI / 180, x = Math.sin((c - a) * r / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2; return 2 * 6371 * Math.asin(Math.sqrt(x)) }
 const origin = Date.UTC(2026, 9, 16, 12, 35, 31)
 const tp = sites.map(([a, b]) => { const km = hav(51.985, 157.27, a, b); return { km, t: origin + travelTimeSec('P', km, 135) * 1000 } })
