@@ -63,3 +63,35 @@ describe('長周期地震動（種類1・3）テストの電文', () => {
     for (const l of ls) expect(qs.some(q => q.eventId === l.eventId)).toBe(true)
   })
 })
+
+// 「長周期地震動（階級0の地域）テスト」（`LPGM_CLASS_ZERO_REGION`）。階級 1 以上の報に階級 0 の区域が混ざる形と、
+// その続報（規模を書き換えたもの）を流す（2026-10-29 ユーザー承認「新しいボタンを足す (Recommended)」「続報も流す (Recommended)」）。
+//   正  : 1 通目は最大階級 2 のまま、階級 0 の区域「富山県東部」を持つ。2 通目は同じ事象・報番号 2・規模 5.8
+//   対照: 書き換える前の 16:56 の報（種類 1・3 テスト）は階級 0 の区域を持たない
+//   安全弁: 足した区域の震度は同じ地震の地震情報の値（3）を超えない
+describe('長周期地震動（階級0の地域）テストの電文', async () => {
+  const [first0, second] = await telegramLpgms('LPGM_CLASS_ZERO_REGION')
+  const regionQuakes = await telegramQuakes('LPGM_CLASS_ZERO_REGION')
+
+  it('1 通目は最大階級 2 で、階級 0 の区域「富山県東部」を持つ', () => {
+    expect(first0.maxClass).toBe(2)
+    const toyama = first0.regions?.find(r => r.name === '富山県東部')
+    expect(toyama?.maxLgInt).toBe(0)
+    expect(toyama?.maxInt).toBe(30)
+    expect(first0.prefs?.find(p => p.name === '富山県')?.maxLgInt).toBe(0)
+  })
+
+  it('2 通目は同じ事象の続報で、規模だけが 5.8 に変わる', () => {
+    expect(second.eventId).toBe(first0.eventId)
+    expect(first0.magnitude).toBe(5.7)
+    expect(second.magnitude).toBe(5.8)
+    expect(second.regions?.find(r => r.name === '富山県東部')?.maxLgInt).toBe(0)
+    expect(regionQuakes.some(q => q.eventId === first0.eventId)).toBe(true)
+  })
+
+  it('書き換える前の 16:56 の報は階級 0 の区域を持たない', () => {
+    const original = categoryLpgms.find(l => l.eventId === first0.eventId)
+    expect(original).toBeDefined()
+    expect(original!.regions?.some(r => r.maxLgInt === 0)).toBe(false)
+  })
+})

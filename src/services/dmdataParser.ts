@@ -77,6 +77,7 @@ function parseIntensityStr(s: string | undefined | null): IntensityScale {
  * - **`City/Condition` は読む**（下記 `City` の分岐）。同じ市町村の観測点にも未入電が並ぶが、
  *   市町村の行の意味は `MaxInt` の有無で 2 通りに分かれ、観測点からは復元できない
  * - **見出し部は読まない** —— 未入電の市町村を列挙するだけで、`City/Condition` と同じ事実になる
+ *   （2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）
  */
 const UNRECEIVED_INTENSITY = '震度５弱以上未入電'
 
@@ -191,7 +192,8 @@ export function parseForecastLgInt(
   // **"0" は「予測なし」と分けて持つ**（`belowClass1`）。解説資料 Ⅱ.21 2-1-2 の値域は "0"〜"4" で、
   // 0 は階級1未満の予測。手元の控え（緊急地震速報 3 日分・62 地震・660 通）のうち最大の階級が 0 の報が 256 通あった。1〜4 の欄には
   // 入れない —— その欄を読む側はどこも「1〜4 か、無いか」で書かれている（2026-10-19 ユーザー承認
-  // 「0 を持ち、表示は今のまま (推奨)」「別の欄で持つ (推奨)」）
+  // 「別の欄で持つ (推奨)」）。電文全体の印が立った報は、カードと読み上げに「階級0」と出す
+  // （→ `isEewLpgmClassZeroForecast`・`docs/spec/eew-spec.md` §4「上限を定めない予想の扱い」）
   const chosen = toStr || fromStr
   return { cls: pick(chosen), over: false, belowClass1: chosen === '0' }
 }
@@ -1235,8 +1237,9 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
 
   const eqEl = xmlQ(doc, 'Earthquake')
   const eewMagnitudeEl = eqEl ? xmlQ(eqEl, 'Magnitude') : null
-  // マグニチュードの種別（`Mj` / `M`）。地震情報・津波・長周期と同じく持つだけで画面には
-  // 出さない。**緊急地震速報だけ別のパーサーを通るため落ちていた。**
+  // マグニチュードの種別（`Mj` / `M`）。地震情報と同じく規模の前置きとして画面に出す
+  // （2026-10-22 ユーザー承認「1-A 電文のまま」「電文の値がある全部」。→ `docs/spec/eew-spec.md` §3
+  // 「内陸判定・短縮用震央地名」）。**緊急地震速報だけ別のパーサーを通るので、ここでも読む。**
   const eewMagnitudeType = eewMagnitudeEl?.getAttribute('type')?.trim() || undefined
   const eewMagnitude = eewMagnitudeEl ? parseFloat(xmlText(eewMagnitudeEl)) : NaN
   // 規模が数値にならないときに気象庁が添える説明（`Magnitude@description`）。地震情報・津波と同じ規則で読む
@@ -1247,7 +1250,8 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
     : undefined
   // 見出し文。**予報級では空だが、警報級の報には必ず入る**（「石川県で地震　北陸　甲信　東海
   // 関東で強い揺れ」の形。実電文で確認）。地震情報・長周期と同じく持つだけで画面には出さない
-  // ——後半の地方名は下の `warningRegions` が構造化された形で持っており、そちらを使う。
+  // （2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）。
+  // 後半の地方名は下の `warningRegions` が構造化された形で持っており、そちらを使う。
   const eewHeadline = readHeadlineText(doc)
   // 警報の対象地方。予報級では空（→ `readEewWarningRegions`）。
   const { regions: eewWarningRegions, added: eewAddedWarningRegions, unreadable: unreadableWarningRegions, unreadableLastKind: unreadableWarningLastKind } = readEewWarningRegions(doc)
@@ -1682,7 +1686,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     ? (magnitudeEl?.getAttribute('description')?.trim() || undefined)
     : undefined
   // マグニチュードの種別（`Mj` = 気象庁マグニチュード / `M` = 気象庁以外の機関が決めた値）。
-  // 画面には出さない（→ `TsunamiSourceEarthquake.magnitudeType`）。
+  // 規模の前置きの記号として出す（→ `Hypocenter.magnitudeType`）。
   const magnitudeType = magnitudeEl?.getAttribute('type')?.trim() || undefined
 
   // MaxInt は Intensity > Observation 直下。
@@ -2056,6 +2060,9 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   const serial = xmlText(xmlQ(doc, 'Serial')) || '1'
   const infoType = xmlText(xmlQ(doc, 'InfoType'))
   const source = parseIssueSourceFromXml(doc)
+  // 画面へ「編集官署 …」と名乗って出すのはこちら（発表官署へ落とさない。地震情報と同じ読み手）。
+  const editorialOffice = parseEditorialOfficeFromXml(doc)
+  const issue = { source, ...(editorialOffice && { editorialOffice }), time: reportDateTime, type: 'Focus' as const }
   // 有効期限。**読めない値は採らない** —— 残すと以後の比較（`new Date(...) <= now`）がすべて
   // 偽へ倒れ、表示は続くのに失効の予約も積まれない津波ができる。消費側（`useEarthquakes.ts`）も
   // 予約を積む直前に同じ検査をしているが、そこを通らない比較が他に 4 箇所ある。
@@ -2122,7 +2129,8 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
     // 後者は同じ電文で予想波高が「巨大」「高い」になる場面で、最も伝えるべき事実にあたる。
     const magnitudeCondition = magnitudeEl?.getAttribute('description')?.trim() || undefined
     // マグニチュードの種別。`Mj` は気象庁マグニチュード、`M` は気象庁以外の機関が決めた値で、
-    // 実電文では遠地地震による津波（`Source` を伴う電文）に `M` が現れる。画面には出さない。
+    // 実電文では遠地地震による津波（`Source` を伴う電文）に `M` が現れる。規模の前置きの記号として出す
+    // （→ `TsunamiSourceEarthquake.magnitudeType`）。
     const magnitudeType = magnitudeEl?.getAttribute('type')?.trim() || undefined
     // 震央補助表現・座標・震央地名コードは `Hypocenter/Area` 直下、震源決定機関は
     // `Hypocenter` 直下（`Source`）。**位置要素は長周期側と同じ読み手を通す** ——
@@ -2162,7 +2170,7 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   if (cancelled) {
     // 取消しの概要は上で読んだ本文と同じ要素（`Body/Text`）。
     const cancelText = tsunamiBodyText ?? ''
-    return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'retracted', ...(cancelText && { cancelText }), issue: { source, time: reportDateTime, type: 'Focus' }, areas: [] }
+    return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'retracted', ...(cancelText && { cancelText }), issue, areas: [] }
   }
 
   const forecastEl = xmlQ(doc, 'Forecast')
@@ -2192,7 +2200,7 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
     // 観測）が通る主経路で、まさに観測時点が最も効く形。載せ忘れると
     // 「観測 ◯◯ 時点」が肝心の電文で一度も出ない（続報のマージは `?? current` で前報へ倒れる
     // ため、画面には古い時点が残るか、前報が無ければ何も出ない）。
-    return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: false, headline, infoName, warningComments, carriesForecastStations, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas: [], observations, observationDateTime, estimations }
+    return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: false, headline, infoName, warningComments, carriesForecastStations, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue, areas: [], observations, observationDateTime, estimations }
   }
 
   const allEls = forecastEl!.getElementsByTagName('*')
@@ -2371,13 +2379,13 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   //
   // 前回の等級を読めなかった解除区域の記録は、全解除の報でも残す（区域名を画面に出さないぶん、記録にしか残らない）。
   warnUndescribableCancel(undescribableCancel, TSUNAMI_LOG_PREFIX)
-  if (areas.length === 0) return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'lifted', headline, infoName, warningComments, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas: [] }
+  if (areas.length === 0) return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: true, cancelReason: 'lifted', headline, infoName, warningComments, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue, areas: [] }
   forecastStationTally.warnIfNoneReadable(TSUNAMI_LOG_PREFIX)
 
   // Observation も含む場合（VTSE51: 津波観測に関する情報は Forecast と Observation の両方を載せる）
   const observations = observationEl ? parseTsunamiObservationsFromXml(observationEl, offshore) : undefined
 
-  return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: false, validDateTime, headline, infoName, warningComments, carriesForecastStations, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue: { source, time: reportDateTime, type: 'Focus' }, areas, cancelledAreas: cancelledAreas.length > 0 ? cancelledAreas : undefined, observations: observations && observations.length > 0 ? observations : undefined, observationDateTime, estimations }
+  return { kind: 'tsunami', id, eventId, ...(tsunamiHeadType && { headType: tsunamiHeadType }), time: reportDateTime, ...(createdAtMs !== undefined && { createdAtMs }), ...(tsunamiOperationStatus && { operationStatus: tsunamiOperationStatus }), cancelled: false, validDateTime, headline, infoName, warningComments, carriesForecastStations, freeText, bodyText: tsunamiBodyText, sourceEarthquakes, issue, areas, cancelledAreas: cancelledAreas.length > 0 ? cancelledAreas : undefined, observations: observations && observations.length > 0 ? observations : undefined, observationDateTime, estimations }
 }
 
 /**
@@ -2850,11 +2858,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     log.warn(`${DMDATA_LOG_PREFIX} VXSE62 の全国の最大震度を読めません（無視します）: "${obsRawInt}"`)
   }
 
-  // 震源の要素。**読んで持つが、画面には出していない**（→ `LpgmHypocenter`）。
-  // 同じ地震の震源・規模は地震カードが出すため重複する。電文が持っているものを落とさない
-  // ために保持している。長周期の報の震源・規模・最大震度を出さず地震カードに任せることは
-  // 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」（全期間の 68 通はすべて最初の地震情報の
-  // 309〜773 秒後に届き、長周期が先に届いた例は 0 件）。
+  // 震源の要素（→ `LpgmHypocenter`）。地震カードの長周期の欄に出す（→ `LpgmQuakeFacts`）。
   const lpgmHypoEl = earthquakeEl ? xmlQ(earthquakeEl, 'Hypocenter') : null
   const lpgmHypoAreaEl = lpgmHypoEl ? xmlQ(lpgmHypoEl, 'Area') : null
   let lpgmHypocenter: import('../types/earthquake').LpgmHypocenter | undefined
@@ -2873,6 +2877,9 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
         ...readHypocenterAreaDetail(lpgmHypoAreaEl, DMDATA_LOG_PREFIX),
         ...(lpgmSource && { source: lpgmSource }),
       }
+    } else {
+      // 欄は値の無い項目を黙って省くので、ここで記録しないと「電文に無い」と見分けが付かない
+      log.warn(`${DMDATA_LOG_PREFIX} VXSE62 の震源要素に震央地名がありません（震源・震源決定機関を出しません）`)
     }
   }
   const lpgmMagnitudeEl = earthquakeEl ? xmlQ(earthquakeEl, 'Magnitude') : null
@@ -2883,6 +2890,9 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   const lpgmMagnitudeCondition = Number.isFinite(lpgmMagnitude)
     ? undefined
     : (lpgmMagnitudeEl?.getAttribute('description')?.trim() || undefined)
+  if (lpgmMagnitudeEl && !Number.isFinite(lpgmMagnitude) && !lpgmMagnitudeCondition) {
+    log.warn(`${DMDATA_LOG_PREFIX} VXSE62 の規模を読めません（無視します）: "${xmlText(lpgmMagnitudeEl)}"`)
+  }
   const lpgmMagnitudeType = lpgmMagnitudeEl?.getAttribute('type')?.trim() || undefined
   const lpgmArrivalTime = readTelegramDateTime(DMDATA_LOG_PREFIX, '長周期地震動観測情報の地震発現時刻', earthquakeEl ? xmlText(xmlChild(earthquakeEl, 'ArrivalTime')) : '')
 
@@ -2919,7 +2929,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     ...(lpgmVarCodes.length > 0 && { varCommentCodes: lpgmVarCodes }),
     ...(lpgmFreeText && { freeFormText: lpgmFreeText }),
     ...(lpgmUri && { uri: lpgmUri }),
-    // 見出し文。地震情報と同じ扱い（持つだけで画面には出さない）。
+    // 見出し文。地震情報と同じ扱い（持つだけで画面には出さない）（2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）。
     ...(lpgmHeadline && { headline: lpgmHeadline }),
     ...(categoryValue && { category: categoryValue }),
   }

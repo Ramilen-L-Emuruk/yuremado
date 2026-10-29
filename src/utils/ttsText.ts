@@ -1,5 +1,5 @@
 import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
-import { eewNoForecastReason, canPresentLpgmClass, type EewMaxScaleInfo } from './eew'
+import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type EewMaxScaleInfo } from './eew'
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from './intensity'
 import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, TSUNAMI_GRADE_LIFTED, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
@@ -14,6 +14,7 @@ import { createLogThrottle, createPerLabelLogGate, log } from './logger'
 import { hasKnownEpicenter } from './geo'
 import { pickEarthquakeCountSummaryItem } from './earthquakeCountSummary'
 import { DOMESTIC_TSUNAMI_CODE_TEXT, warnIfDomesticTsunamiSentenceMissing, withoutDomesticTsunamiSentences } from './domesticTsunamiComment'
+import { isObservedLpgmClass } from './lpgm'
 
 /**
  * 等級を読む順（重い等級が先）。**カードが等級カードを積む順と同じ並びを使う**
@@ -1502,6 +1503,9 @@ export function eewScaleOnlyText(scaleInfo: EewMaxScaleInfo, event: EEWAlert, no
   return noForecastText(event, noForecastWaited)
 }
 
+/** 電文が最大予想長周期地震動階級を 0 と言い切った報で読む句（→ `eewIntensityText`）。 */
+export const EEW_LPGM_CLASS_ZERO_TEXT = '予想最大階級0。'
+
 /**
  * 長周期地震動階級部分だけの読み上げ文（「予想最大階級〇。」）。0 なら空文字列
  * （句ごと省く。音声には地図の色フォールバックのような逃げ場が無く、不正値がそのまま
@@ -1569,8 +1573,15 @@ export function eewIntensityText(
   // **震度を伝えられないときは階級も読まない**（判定は `canPresentLpgmClass`。カード表示・
   // 第 2 フェーズの言い直しと同じ述語を共有する。理由はそちらのコメント）。
   const scaleText = eewScaleOnlyText(scaleInfo, event, noForecastWaited)
-  const lpgmText = (opts?.readEewLpgmClass ?? true) && canPresentLpgmClass(scaleInfo.scale, lpgmClass)
-    ? eewLpgmOnlyText(lpgmClass, lpgmOver)
+  //
+  // **電文が階級 0 と言い切った報は「予想最大階級0。」と読む**（→ `isEewLpgmClassZeroForecast`）。
+  // 確定した階級（`lpgmClass`）が 0 のときだけ `event` から見る —— 0 は「階級を載せていない」とも
+  // 同じ値なので、言い切ったかどうかは電文の印にしか無い。後の報で階級 1 以上へ上がれば、
+  // 既読（階級 0 として記録される）より高いので言い直しの経路に乗る。
+  const readLpgm = opts?.readEewLpgmClass ?? true
+  const lpgmText = !readLpgm ? ''
+    : canPresentLpgmClass(scaleInfo.scale, lpgmClass) ? eewLpgmOnlyText(lpgmClass, lpgmOver)
+    : statesEewLpgmClassZero(event, scaleInfo.scale, lpgmClass, readLpgm) ? EEW_LPGM_CLASS_ZERO_TEXT
     : ''
   return prefix + scaleText + lpgmText
 }
@@ -3987,10 +3998,13 @@ function aggregateLpgmNamesByPref(
 function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
   if (!lpgm.regions || lpgm.regions.length === 0) return ''
 
-  // 階級ごとに地域名をまとめる（降順）
+  // 階級ごとに地域名をまとめる（降順）。**階級 0 の地域も他の階級と同じ設定で数える**
+  // （2026-10-29 ユーザー承認「他の階級と同じく読む」、語は同日「「階級0を〜で」 (Recommended)」で画面の「階級0」に揃える）。
+  // 最大階級が 0 の報そのものはここへ来ない（受信側が読み上げない。→ `useEarthquakes` の `lpgmNotifiable`）。
+  // 「必ず読み上げる長周期地震動階級」は 1 以上しか選べないので、階級 0 は階数の範囲に入ったときだけ読む。
   const byClass = new Map<number, string[]>()
   for (const r of lpgm.regions) {
-    if (r.maxLgInt < 1) continue
+    if (!isObservedLpgmClass(r.maxLgInt)) continue
     const names = byClass.get(r.maxLgInt) ?? []
     names.push(r.name)
     byClass.set(r.maxLgInt, names)

@@ -703,6 +703,7 @@ export function JapanMapGL({
           <QuakeIntensitySurfaceGL
             markers={stationMarkers}
             visible={showDistribution && !estimatedIntensityActive}
+            recording={recording}
           />
           {/* 気象庁の推計震度分布図（IXAC41）。自前の面の置き換えとして出す。 */}
           <QuakeEstimatedIntensityGL

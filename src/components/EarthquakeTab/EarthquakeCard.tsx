@@ -38,6 +38,7 @@ import { rowMarkKey, rowMarkOf, type QuakeCardMarks, type QuakeUpdateField } fro
 import { intensityRowsToExpand, lpgmRowsToExpand, mergeAutoExpanded } from '../../utils/autoExpandMarkedRows'
 import { UPDATE_MARK_COLOR, type UpdateStatus } from '../../utils/updateMark'
 import { UpdateDot } from '../UpdateDot'
+import { LpgmQuakeFacts } from './LpgmQuakeFacts'
 
 import { useStationCoords } from '../../hooks/useStationCoords'
 import { useSubRegions } from '../../hooks/useSubRegions'
@@ -732,8 +733,14 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const borrowedNote = borrowedSourceNote(borrowedHypocenter, borrowedDomesticTsunami)
   // 気象庁が添えた文の段落（電文の並び順。空の段落は持たない）。何も残らなければ枠ごと出さない。
   const forecastRest = quake.forecastText ? domesticTsunamiCardForecastText(quake.forecastText, earthquake.domesticTsunamiCode) : ''
+  // 標準版（P2PQuake）は固定付加文を持たず、海外への津波の見通しだけを値で運ぶ（→ `foreignTsunamiText`。
+  // 文面は気象庁の固定付加文 0221〜0228 の原文）。DMDSS 版ならこの文は固定付加文の原文に入っているので、
+  // 原文があればそちらを使う（有無の判定は読み上げと同じで、空白だけの原文は「無い」側へ倒す。二重に出さない）。
+  // 原文から津波の文を除いて空になっても、見通しへは倒さない。置き場所は固定付加文と同じ先頭の段落
+  // （2026-10-29 ユーザー承認。→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。
+  const forecastParagraph = quake.forecastText?.trim() ? forecastRest : (quake.foreignTsunamiText ?? '')
   const commentParagraphs = [
-    { key: 'forecast', text: forecastRest },
+    { key: 'forecast', text: forecastParagraph },
     // 末尾だけ詰める（`pre-wrap` なので末尾の改行が段落の間隔に上乗せされる）。自由付加文は全角スペースで
     // 桁を揃えた表が入るので、先頭は触らない。
     { key: 'var', text: (quake.varCommentText ?? '').trimEnd() },
@@ -1216,6 +1223,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               </span>
             </div>
           )}
+          {/* 長周期の電文自身が持つ震源・規模・全国の最大震度・地震発現時刻（→ `LpgmQuakeFacts`） */}
+          {lpgm && !lpgm.cancelled && <LpgmQuakeFacts lpgm={lpgm} marks={lpgmMarks} />}
           {/* 電文の「観測情報の種類」（`LgCategory`）が伝えているのは、階級を観測した地域の中に
               震度が小さい地域があるかどうか。**分類番号は出さず意味だけ書く**（→ `lpgmCategoryNote`）。
               **この一文だけは畳まない。** 1 行しかないうえ、その地震でしか言えない事実で、

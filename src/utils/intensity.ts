@@ -113,6 +113,22 @@ export function getIntensityLabelWithApproxAbove(scale: number, over: boolean): 
   return over && isValidIntensityScale(scale) && scale > 0 ? `${label}程度以上` : label
 }
 
+/**
+ * 緊急地震速報の区域ごとの予想震度の語。**下限と上限が違う区域は「3〜4」と幅で出す**
+ * （2026-10-29 ユーザー承認「出す（文面は後で諮る）」、書き方は同日「「3〜4」と波線で (Recommended)」）。
+ *
+ * 幅にしないのは 3 つ —— 下限が上限と同じ区域、下限が読めない・未確定（`-1`）の区域、
+ * 上限が定まらない区域（`orAbove`。下限側の値を上限の欄へ入れているので、幅にすると同じ値が 2 つ並ぶ）。
+ * どれも上限だけを {@link getIntensityLabelWithApproxAbove} で出す。色は呼び出し側が上限で塗る。
+ */
+export function getEewAreaIntensityLabel(scaleFrom: number, scaleTo: number, orAbove: boolean): string {
+  if (!orAbove && isValidIntensityScale(scaleFrom) && isValidIntensityScale(scaleTo)
+    && scaleFrom > 0 && scaleFrom < scaleTo) {
+    return `${getIntensityLabel(scaleFrom)}〜${getIntensityLabel(scaleTo)}`
+  }
+  return getIntensityLabelWithApproxAbove(scaleTo, orAbove)
+}
+
 export function getIntensityColor(scale: number): string {
   return INTENSITY_COLORS[scale] ?? '#666666'
 }

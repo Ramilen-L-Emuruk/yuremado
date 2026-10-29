@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isValidLpgmClass, isObservedLpgmClass, getLpgmClassLabel, getLpgmClassColor, getLpgmClassRadius, lpgmCategoryNote, lpgmPeriodLabel, buildLpgmRows, canOpenLpgmNotes, type LpgmRowDeps } from './lpgm'
+import { isValidLpgmClass, isObservedLpgmClass, getLpgmClassLabel, getLpgmClassColor, getLpgmClassRadius, lpgmCategoryNote, lpgmPeriodLabel, buildLpgmRows, canOpenLpgmNotes, lpgmQuakeFactParts, type LpgmRowDeps } from './lpgm'
 import type { JMALpgm, LpgmPoint, LpgmRegion } from '../types/earthquake'
 import { LPGM_ICON_BASE_RADIUS } from '../components/Map/gl/lpgmIcons'
 
@@ -345,5 +345,42 @@ describe('canOpenLpgmNotes', () => {
   // 安全弁: 取消の報は開けない（取消は一覧ごと消える）
   it('取消の報は中身があっても開けない', () => {
     expect(canOpenLpgmNotes(make({ maxClass: 0, cancelled: true, freeFormText: 'あ' }))).toBe(false)
+  })
+})
+
+// 地震カードの長周期の欄に並べる値（2026-10-29 ユーザー承認「1行・名前と深さ (Recommended)」）
+describe('lpgmQuakeFactParts', () => {
+  const base: JMALpgm = {
+    id: 'x', eventId: '20240101161000', time: '2024-01-01T16:23:00+09:00', originTime: '2024-01-01T16:10:00+09:00',
+    maxClass: 4, cancelled: false,
+    hypocenter: { name: '石川県能登地方', depth: 10 },
+    magnitude: 7.6, magnitudeType: 'Mj', maxInt: 70, arrivalTime: '2024-01-01T16:10:00+09:00',
+  }
+
+  // 正: 震央地名・深さ・規模・最大震度・地震発現時刻を、地震カードと同じ書き方で並べる
+  it('震央地名・深さ・規模・最大震度・地震発現時刻を並べる', () => {
+    expect(lpgmQuakeFactParts(base).map(p => p.text)).toEqual([
+      '石川県能登地方', '深さ10km', 'Mj7.6', '最大震度7', '地震発現時刻 1月1日 16:10',
+    ])
+  })
+
+  // 対照: 値が無い項目は語ごと省く（「不明」を並べない）
+  it('値が無い項目は語ごと省く', () => {
+    const parts = lpgmQuakeFactParts({ ...base, hypocenter: undefined, magnitude: undefined, maxInt: undefined, arrivalTime: undefined })
+    expect(parts).toEqual([])
+  })
+
+  // 安全弁: 深さ 0 は「ごく浅い」、数値の無い規模は気象庁の説明を出す、読めない時刻は「不明」を出す
+  it('深さ 0・説明だけの規模・読めない時刻も地震カードと同じ語になる', () => {
+    const texts = lpgmQuakeFactParts({
+      ...base, hypocenter: { name: '石川県能登地方', depth: 0 }, magnitude: Number.NaN, magnitudeCondition: 'Ｍ８を超える巨大地震', arrivalTime: '壊れた値',
+    }).map(p => p.text)
+    expect(texts).toContain('ごく浅い')
+    expect(texts.some(t => t.includes('巨大地震'))).toBe(true)
+    expect(texts).toContain('地震発現時刻不明')
+  })
+
+  it('印を引く欄は地震カードと同じ名前', () => {
+    expect(lpgmQuakeFactParts(base).map(p => p.field)).toEqual(['hypocenterName', 'depth', 'magnitude', 'maxScale', undefined])
   })
 })

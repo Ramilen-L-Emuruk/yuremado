@@ -1,5 +1,21 @@
 import { describe, it, expect } from 'vitest'
-import { isValidIntensityScale, INTENSITY_LABELS, getIntensityLabel, getIntensityLabelWithOrAbove, getIntensityColor } from './intensity'
+import { isValidIntensityScale, INTENSITY_LABELS, getIntensityLabel, getIntensityLabelWithOrAbove, getIntensityColor, getEewAreaIntensityLabel } from './intensity'
+
+describe('getEewAreaIntensityLabel: 緊急地震速報の区域の予想震度', () => {
+  it('【正】下限と上限が違う区域は「3〜4」と幅で出す', () => {
+    expect(getEewAreaIntensityLabel(30, 40, false)).toBe('3〜4')
+    expect(getEewAreaIntensityLabel(40, 45, false)).toBe('4〜5弱')
+  })
+  it('【対照】下限と上限が同じ区域は上限だけ', () => {
+    expect(getEewAreaIntensityLabel(40, 40, false)).toBe('4')
+  })
+  it('【安全弁】下限が未確定（-1）・上限が定まらない区域は幅にしない', () => {
+    expect(getEewAreaIntensityLabel(-1, 40, false)).toBe('4')
+    expect(getEewAreaIntensityLabel(50, 50, true)).toBe('5強程度以上')
+    // 上限が定まらない区域で下限の値が別に入っていても、幅にしない
+    expect(getEewAreaIntensityLabel(40, 50, true)).toBe('5強程度以上')
+  })
+})
 
 describe('isValidIntensityScale', () => {
   it('震度階級に対応する値をすべて受け入れる', () => {

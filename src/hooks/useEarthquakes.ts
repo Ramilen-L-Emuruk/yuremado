@@ -24,7 +24,7 @@ import {
 } from '../utils/telegramLoss'
 import { appendToTelegramLog, dropTelegramLogOrigins, pruneTelegramLog } from '../utils/telegramLogBuffer'
 import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, findRetractionTie, logRetractionTie, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
-import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmRowSnapshot, lpgmMarkKey, lpgmTelegramRevise, quakeTelegramRevise, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
+import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmFactSnapshot, vanishedFacts, lpgmRowSnapshot, lpgmMarkKey, lpgmTelegramRevise, quakeTelegramRevise, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
 import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, MAX_LPGM_RETRACTIONS, recordLpgmRetractions, type LpgmRetraction } from '../utils/lpgmRetraction'
@@ -504,12 +504,18 @@ function markedLpgmState(
   next: Map<string, JMALpgm>,
   now: number,
 ): Pick<EarthquakeState, 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
+  const key = lpgmMarkKey(lpgm.eventId)
+  // 長周期の欄が出す震源名・規模・深さ・全国の最大震度（→ `lpgmFactSnapshot`。地震カードと同じ写し方）
+  const facts = lpgmFactSnapshot(lpgm)
+  const vanished = vanishedFacts(prev.quakeMarkMemory.get(key)?.facts, facts)
+  if (vanished.length > 0) {
+    log.info('[lpgm] 続報で長周期の欄の値が消えた（画面には出さない）', { eventId: lpgm.eventId, fields: vanished })
+  }
   const markState = advanceQuakeMarks({
     prev: { memory: prev.quakeMarkMemory, marks: prev.quakeUpdateMarks },
-    key: lpgmMarkKey(lpgm.eventId),
+    key,
     snapshot: {
-      // 長周期は震源要素の欄を持たない（震源はカードの地震情報側が出す）。
-      facts: new Map(),
+      facts,
       rows: lpgmRowSnapshot(lpgm.regions ?? [], lpgm.points ?? [], lpgm.prefs ?? []),
       issuedAt: markIssuedAt(lpgm.time),
       // 長周期地震動観測情報は 1 種類しか無いので、種別が変わることがない。
@@ -4427,6 +4433,8 @@ export function useEarthquakes(
   const simulateLpgmClassZero = useCallback(() => runTestTelegramScript(s => s.LPGM_CLASS_ZERO), [runTestTelegramScript])
   /** 長周期地震動の観測情報の種類 1・3 のテスト（→ `LPGM_CATEGORIES`。DMDSS 版のみ）。 */
   const simulateLpgmCategories = useCallback(() => runTestTelegramScript(s => s.LPGM_CATEGORIES), [runTestTelegramScript])
+  /** 階級 0 の地域が混ざった長周期地震動と、その続報のテスト（→ `LPGM_CLASS_ZERO_REGION`。DMDSS 版のみ）。 */
+  const simulateLpgmClassZeroRegion = useCallback(() => runTestTelegramScript(s => s.LPGM_CLASS_ZERO_REGION), [runTestTelegramScript])
 
   const resetState = useCallback(() => {
     // 台帳もここで空にする。掃除の `useEffect` に任せると、リセットから次のコミットまでの間に
@@ -4626,7 +4634,7 @@ export function useEarthquakes(
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
-    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateEstimatedIntensity,
+    simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence,
     simulateQuakeCancel,

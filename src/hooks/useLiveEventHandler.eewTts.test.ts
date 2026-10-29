@@ -936,6 +936,56 @@ describe('EEW 読み上げの文言と発話順序', () => {
     expect(spokenTexts()).toEqual(['予想最大階級3。'])
   })
 
+  // 電文が階級を 0 と言い切ったことは値の変化として安定待ちに乗らない（階級を載せない報と同じ cls 0）。
+  // 震度も据え置きの続報で初めて言い切られると、第 2 フェーズが一度も呼ばれずカードの「階級0」と
+  // 声が食い違っていた（2026-10-29 ユーザー選択「一度は必ず読む (Recommended)」）。
+  describe('予想長周期階級 0 を言い切った報', () => {
+    const zero = (e: EEWAlert): EEWAlert => ({ ...e, forecastMaxLpgmBelowClass1: true })
+
+    it('【正】震度据え置きの続報で初めて言い切られたら「予想最大階級0。」だけを読む', async () => {
+      const handle = setup()
+      handle(makeEEW({ scaleTo: 40 }))
+      await vi.advanceTimersByTimeAsync(300)
+      await flushMicrotasks()
+      speakMock.mockClear()
+
+      handle(zero(makeEEW({ serial: 2, scaleTo: 40 })))
+      await vi.advanceTimersByTimeAsync(300)
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['予想最大階級0。'])
+    })
+
+    it('【対照】一度言った後の続報では繰り返さない', async () => {
+      const handle = setup()
+      handle(makeEEW({ scaleTo: 40 }))
+      await vi.advanceTimersByTimeAsync(300)
+      await flushMicrotasks()
+      handle(zero(makeEEW({ serial: 2, scaleTo: 40 })))
+      await vi.advanceTimersByTimeAsync(300)
+      await flushMicrotasks()
+      speakMock.mockClear()
+
+      handle(zero(makeEEW({ serial: 3, scaleTo: 40 })))
+      await vi.advanceTimersByTimeAsync(300)
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual([])
+    })
+
+    it('【安全弁】初報から言い切っていれば全文の中で 1 回だけ読み、据え置きの続報では足さない', async () => {
+      const handle = setup()
+      handle(zero(makeEEW({ scaleTo: 40 })))
+      await vi.advanceTimersByTimeAsync(300)
+      await flushMicrotasks()
+      expect(spokenTexts()).toContain('予想最大震度4。予想最大階級0。')
+      speakMock.mockClear()
+
+      handle(zero(makeEEW({ serial: 2, scaleTo: 40 })))
+      await vi.advanceTimersByTimeAsync(300)
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual([])
+    })
+  })
+
   // 安全弁: 震度の scale 値が同じでも orAbove（「〜以上」）が変わっていれば「据え置き」とは
   // 見なさず、震度も含めて読み直す。scale だけを見て判定すると、上限が定まらなくなった
   // 変化（「震度4」→「震度4程度以上」）を据え置きと誤認し、階級部分だけの短句に落としてしまう。

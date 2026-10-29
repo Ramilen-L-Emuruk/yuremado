@@ -1,19 +1,29 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import {
-  OFFLINE_BATHYMETRY_NETWORK_TIMEOUT_SECONDS,
+  offlineBathymetryCachedResponseWillBeUsed,
   offlineBathymetryCacheName,
   offlineBathymetryCacheWillUpdate,
   offlineBathymetryRuntimeCaching,
   offlineBathymetryUrlPattern,
 } from './offlineBathymetry'
 import { offlineDataCacheName } from './offlineData'
-import { BATHYMETRY_URL, buildPrefetchTiles } from '../src/utils/gebcoPrefetch'
+import {
+  BATHYMETRY_URL,
+  BAND_MAX_TILE_ZOOM,
+  GLOBAL_MAX_TILE_ZOOM,
+  MAX_TILE_ZOOM,
+  buildBandPrefetchTiles,
+  buildGlobalPrefetchTiles,
+  buildPrefetchQueue,
+  buildPrefetchTiles,
+  PREFETCH_REQUEST_INIT,
+} from '../src/utils/gebcoPrefetch'
 
 const VITE_CONFIG = readFileSync('vite.config.ts', 'utf-8')
 
-/** 控える最大ズーム（2026-10-25 選択「z8 まで・約 8 MB」）。 */
-const MAX_Z = 8
+/** 日本の枠を控える最大ズーム（2026-10-28 選択「段9まで保存し、保存分を先に返す (Recommended)」）。 */
+const MAX_Z = 9
 
 const tileUrl = (z: number, x: number, y: number) =>
   new URL(BATHYMETRY_URL.replace('{z}', String(z)).replace('{y}', String(y)).replace('{x}', String(x)))
@@ -23,18 +33,22 @@ const isolatedPattern = new Function(`return (${offlineBathymetryUrlPattern.toSt
 const match = (url: URL) => isolatedPattern({ url })
 
 describe('offlineBathymetryUrlPattern', () => {
-  it('日本周辺の枠の z0〜z8 のタイルにすべて当たる（正 — 先読みの範囲の計算と同じ枠）', () => {
-    const tiles = buildPrefetchTiles(MAX_Z)
-    expect(tiles).toHaveLength(569)
+  it('先読みのキューと同じ範囲を控える（日本の枠の z9 まで・帯の z6〜z7・全球の z5 まで）', () => {
+    // 控える範囲と先読みの範囲がずれると、先読みしたのに次に開いたとき控えから出ないタイルができる。
+    expect(MAX_TILE_ZOOM).toBe(MAX_Z)
+    const tiles = buildPrefetchQueue().tiles
     expect(tiles.every(t => match(tileUrl(t.z, t.x, t.y)))).toBe(true)
+    expect(buildPrefetchTiles(MAX_Z)).toHaveLength(2090)
+    expect(buildBandPrefetchTiles()).toHaveLength(958)
+    expect(buildGlobalPrefetchTiles()).toHaveLength(1365)
   })
 
-  it('枠のすぐ外と z9 には当たらない（対照）', () => {
-    const tiles = buildPrefetchTiles(MAX_Z)
-    const inside = new Set(tiles.map(t => `${t.z}/${t.x}/${t.y}`))
-    // 枠の外周 1 枚ぶんだけ見る（z8 の全球 65,536 枚は回さない）
+  it('日本の枠と帯のすぐ外の深い z、z10 には当たらない（対照）', () => {
+    // 全球を控える z（GLOBAL_MAX_TILE_ZOOM 以下）は外周が無いので見ない。
+    const deep = [...buildPrefetchTiles(MAX_Z), ...buildBandPrefetchTiles()].filter(t => t.z > GLOBAL_MAX_TILE_ZOOM)
+    const inside = new Set(deep.map(t => `${t.z}/${t.x}/${t.y}`))
     let outsideChecked = 0
-    for (const t of tiles) {
+    for (const t of deep) {
       const n = 2 ** t.z
       for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
         const x = t.x + dx
@@ -45,8 +59,14 @@ describe('offlineBathymetryUrlPattern', () => {
       }
     }
     expect(outsideChecked).toBeGreaterThan(0)
-    const [first9] = buildPrefetchTiles(9).filter(t => t.z === 9)
-    expect(match(tileUrl(9, first9.x, first9.y))).toBe(false)
+    // 帯は BAND_MAX_TILE_ZOOM より深くは控えない。日本の枠から外れた帯の東端（x=127 は東経 177° 付近）の
+    // 子タイルで確かめる。
+    const bandEdge = buildBandPrefetchTiles().find(t => t.z === BAND_MAX_TILE_ZOOM && t.x === 127)
+    expect(bandEdge).toBeDefined()
+    expect(match(tileUrl(BAND_MAX_TILE_ZOOM, bandEdge!.x, bandEdge!.y))).toBe(true)
+    expect(match(tileUrl(BAND_MAX_TILE_ZOOM + 1, bandEdge!.x * 2, bandEdge!.y * 2))).toBe(false)
+    const [first10] = buildPrefetchTiles(10).filter(t => t.z === 10)
+    expect(match(tileUrl(10, first10.x, first10.y))).toBe(false)
   })
 
   it('配信元の別のサービス・別のオリジンには当たらない（安全弁）', () => {
@@ -58,13 +78,14 @@ describe('offlineBathymetryUrlPattern', () => {
 })
 
 describe('offlineBathymetryRuntimeCaching', () => {
-  it('NetworkFirst で、バリアントのキャッシュ名・時間切れ・検分を持つ', () => {
+  it('控えを先に返す StaleWhileRevalidate で、バリアントのキャッシュ名・検分を持つ', () => {
+    // NetworkFirst へ戻すと、繋がっている間は控えがあっても毎回配信元を待ち、寄せた先の海底地形が遅れて出る。
     const rule = offlineBathymetryRuntimeCaching('dmdss')
-    expect(rule.handler).toBe('NetworkFirst')
+    expect(rule.handler).toBe('StaleWhileRevalidate')
     expect(rule.urlPattern).toBe(offlineBathymetryUrlPattern)
     expect(rule.options?.cacheName).toBe('bathymetry-tiles-dmdss')
-    expect(rule.options?.networkTimeoutSeconds).toBe(OFFLINE_BATHYMETRY_NETWORK_TIMEOUT_SECONDS)
     expect(rule.options?.plugins?.[0]?.cacheWillUpdate).toBe(offlineBathymetryCacheWillUpdate)
+    expect(rule.options?.plugins?.[0]?.cachedResponseWillBeUsed).toBe(offlineBathymetryCachedResponseWillBeUsed)
   })
 
   it('キャッシュ名はバリアントで分かれ、生成データの控えとも重ならない', () => {
@@ -74,6 +95,33 @@ describe('offlineBathymetryRuntimeCaching', () => {
 
   it('vite.config.ts が規則をそのまま runtimeCaching へ渡している', () => {
     expect(VITE_CONFIG).toMatch(/^\s*offlineBathymetryRuntimeCaching\(variant\),\s*$/m)
+  })
+})
+
+describe('offlineBathymetryCachedResponseWillBeUsed', () => {
+  const url = BATHYMETRY_URL.replace('{z}', '5').replace('{y}', '12').replace('{x}', '28')
+  const cached = new Response('x', { status: 200, headers: { 'content-type': 'image/jpeg' } })
+  /** Service Worker へ書き出されたときと同じく、関数の文字列だけから作り直す。 */
+  const isolated = new Function(`return (${offlineBathymetryCachedResponseWillBeUsed.toString()})`)() as typeof offlineBathymetryCachedResponseWillBeUsed
+
+  it('先読みの要求には控えを渡さない（正）', async () => {
+    // 控えを渡すと先読みの 1 本が即座に終わり、裏の取り直しだけが上限なく配信元へ出る。
+    const request = new Request(url, PREFETCH_REQUEST_INIT)
+    expect(await isolated({ request, cachedResponse: cached })).toBeNull()
+  })
+
+  it('地図の表示の要求には控えを先に返す（対照）', async () => {
+    expect(await isolated({ request: new Request(url), cachedResponse: cached })).toBe(cached)
+  })
+
+  it('控えが無ければ何も返さない（安全弁）', async () => {
+    expect(await isolated({ request: new Request(url) })).toBeNull()
+  })
+
+  it('先読みの印は Service Worker 側の照合と同じ値（片方だけ変えると先読みがまた控えから返る）', () => {
+    expect(PREFETCH_REQUEST_INIT.referrerPolicy).toBe('no-referrer')
+    // 変換で引用符の種類が変わりうるので、どちらの引用符でも当たる形で見る。
+    expect(offlineBathymetryCachedResponseWillBeUsed.toString()).toMatch(new RegExp(`['"]${PREFETCH_REQUEST_INIT.referrerPolicy}['"]`))
   })
 })
 

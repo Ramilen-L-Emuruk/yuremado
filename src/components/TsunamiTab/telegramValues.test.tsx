@@ -127,6 +127,46 @@ describe('前の津波の原因地震', () => {
   })
 })
 
+describe('規模の種別と編集官署', () => {
+  // 正（2026-10-29 ユーザー承認「Mj7.6 の形 (Recommended)」）: 原因地震の規模に電文の種別を前置きし、小数 1 桁へ揃える
+  it('正: 原因地震の規模を「Mj7.0」の形で出す（前の地震の行も同じ）', () => {
+    const { container } = renderTab(makeTsunami({
+      sourceEarthquakes: [{ hypocenterName: '福島県沖', magnitude: 7, magnitudeType: 'Mj' }],
+      previousSourceEarthquakes: [{ hypocenterName: 'チリ中部沿岸', magnitude: 8.8, magnitudeType: 'M' }],
+    }))
+    const text = container.textContent ?? ''
+    expect(text).toContain('福島県沖　Mj7.0')
+    expect(text).toContain('チリ中部沿岸　M8.8')
+  })
+
+  it('対照: 種別を持たない原因地震（標準版）は従来どおり「M7.3」', () => {
+    const { container } = renderTab(makeTsunami())
+    expect(container.textContent).toContain('福島県沖　M7.3')
+  })
+
+  // 正（2026-10-29 ユーザー承認「A 情報名の行の後ろ (Recommended)」）: 情報名の行の後ろに「編集官署 …」を添える
+  it('正: 情報名の後ろに編集官署を添える', () => {
+    const { container } = renderTab(makeTsunami({
+      infoName: '津波観測に関する情報',
+      issue: { source: '大阪管区気象台', editorialOffice: '大阪管区気象台', time: '2026-04-20T05:30:00', type: 'Focus' },
+    }))
+    // 情報名と編集官署は別のテキストノードになるので、要素の文字列全体で見る
+    expect(container.textContent).toContain('津波観測に関する情報　編集官署 大阪管区気象台')
+  })
+
+  it('正: 情報名が無い報でも編集官署だけを出す', () => {
+    renderTab(makeTsunami({ issue: { source: '気象庁本庁', editorialOffice: '気象庁本庁', time: '2026-04-20T05:30:00', type: 'Focus' } }))
+    expect(screen.getByText('編集官署 気象庁本庁')).toBeTruthy()
+  })
+
+  // 安全弁: 発表官署へ落ちる `issue.source` を「編集官署」と名乗って出さない（標準版の全カードに誤った官署が出る形を作らない）
+  it('安全弁: 編集官署の欄が無ければ、issue.source があっても「編集官署」を出さない', () => {
+    const { container } = renderTab(makeTsunami({ infoName: '津波警報・注意報・予報' }))
+    expect(container.textContent).not.toContain('編集官署')
+    expect(screen.getByText('津波警報・注意報・予報')).toBeTruthy()
+  })
+})
+
 describe('観測点以外の値の印', () => {
   it('正: 予想波高に印があれば、その高さの見出しに色を当て、区域の行に縦線を引く', () => {
     const marks: TsunamiValueMarks = { ...NO_TSUNAMI_VALUE_MARKS, forecastHeight: new Map([['250', { status: 'changed', fields: new Set() }]]) }

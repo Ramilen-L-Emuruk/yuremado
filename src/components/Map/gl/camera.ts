@@ -212,12 +212,101 @@ interface ProgrammaticFlightState {
 // 待つ」判定に使う（同時に複数のカメラアニメーションが競合するのを避けるため）。
 const programmaticFlights = new WeakMap<maplibregl.Map, ProgrammaticFlightState>()
 
+/** 寄せる先のカメラ（着地したときの中心・ズーム・向き・傾き）。`subscribeFlightTarget` の受け手へ渡す。 */
+export interface FlightTarget {
+  /** [経度, 緯度] */
+  center: [number, number]
+  zoom: number
+  bearing: number
+  pitch: number
+}
+
+type FlightTargetListener = (target: FlightTarget) => void
+
+const flightTargetListeners = new WeakMap<maplibregl.Map, Set<FlightTargetListener>>()
+
+/**
+ * このファイルの fit 系関数が寄せ始めるたびに、着地先のカメラを知らせてもらう。戻り値で購読をやめる。
+ *
+ * 録画モードの先読み（`BaseMapGL`）が、着地を待たずに着地先の海底地形タイルを取りに行くためのもの。
+ * 寄せは 1 秒かけて飛ぶので、その間に取り始めれば着地した時点で揃っている
+ * （着地してから取ると、2K・4K の画面では海底地形が 0.4〜2.2 秒抜けていた）。
+ */
+export function subscribeFlightTarget(map: maplibregl.Map, listener: FlightTargetListener): () => void {
+  let set = flightTargetListeners.get(map)
+  if (!set) {
+    set = new Set()
+    flightTargetListeners.set(map, set)
+  }
+  set.add(listener)
+  return () => { set.delete(listener) }
+}
+
+/**
+ * 着地先を受け手へ配る。**受け手の失敗でカメラ操作を止めない**（先読みは副次的なもので、寄せそのものが本体）。
+ */
+function announceFlightTarget(map: maplibregl.Map, target: { center: maplibregl.LngLatLike; zoom: number }): void {
+  const set = flightTargetListeners.get(map)
+  if (!set || set.size === 0) return
+  let payload: FlightTarget
+  try {
+    const { lng, lat } = maplibregl.LngLat.convert(target.center)
+    payload = { center: [lng, lat], zoom: target.zoom, bearing: map.getBearing(), pitch: map.getPitch() }
+  } catch (e) {
+    log.warn('[camera] 寄せる先のカメラを読めず、着地先の先読みを見送る', e)
+    return
+  }
+  if (!Number.isFinite(payload.zoom) || !payload.center.every(Number.isFinite)) {
+    log.warn('[camera] 寄せる先のカメラが数値でなく、着地先の先読みを見送る', payload)
+    return
+  }
+  for (const listener of set) {
+    try {
+      listener(payload)
+    } catch (e) {
+      log.warn('[camera] 着地先の受け手が失敗した（カメラ操作は続ける）', e)
+    }
+  }
+}
+
+/**
+ * `fitBounds` に渡すのと同じ条件で着地先を解く（`fitBounds` は着地先を返さないため）。
+ * 解けなければ null（そのときは着地先の先読みだけが走らない）。
+ */
+function fitBoundsTarget(
+  map: maplibregl.Map,
+  bounds: maplibregl.LngLatBoundsLike,
+  opts: { padding: maplibregl.PaddingOptions | number; maxZoom?: number },
+): { center: maplibregl.LngLatLike; zoom: number } | null {
+  // 受け手がいなければ解かない（録画モードでない間は、寄せるたびに 1 回ぶんの計算が無駄になる）
+  if ((flightTargetListeners.get(map)?.size ?? 0) === 0) return null
+  try {
+    const cam = map.cameraForBounds(bounds, { ...opts, bearing: map.getBearing() })
+    if (!cam || cam.center == null || cam.zoom == null) {
+      log.debug('[camera] 着地先を解けず、着地先の先読みを見送る')
+      return null
+    }
+    return { center: cam.center, zoom: cam.zoom }
+  } catch (e) {
+    log.warn('[camera] 着地先を解けず、着地先の先読みを見送る', e)
+    return null
+  }
+}
+
 /**
  * アプリ起点のカメラ操作を開始したことを記録し、fly/fit へ渡す eventData を返す。
  * 呼び出し側は必ずこの戻り値を MapLibre の fly/fit の eventData 引数に渡すこと
  * （渡し忘れると、その操作が起こす zoomstart がユーザー操作として扱われる）。
+ *
+ * `target` は着地先のカメラで、`subscribeFlightTarget` の受け手へ配る。配らない操作（共有カードの撮影の
+ * 瞬間移動）は null を明示する。
  */
-function beginProgrammaticFlight(map: maplibregl.Map, durationMs: number): AutoCameraEventData {
+function beginProgrammaticFlight(
+  map: maplibregl.Map,
+  durationMs: number,
+  target: { center: maplibregl.LngLatLike; zoom: number } | null,
+): AutoCameraEventData {
+  if (target) announceFlightTarget(map, target)
   const state = programmaticFlights.get(map) ?? { currentFlightId: 0, activeUntil: 0, listening: false }
   programmaticFlights.set(map, state)
   const flightId = ++state.currentFlightId
@@ -547,7 +636,8 @@ export function beginCaptureFraming(map: maplibregl.Map): CaptureFraming {
       try {
         const camera = cameraForTarget(map, target)
         if (camera) {
-          map.jumpTo(camera, beginProgrammaticFlight(map, 0))
+          // 撮影の寄せ直しは瞬間移動で、撮る前にタイルを待つ（`useShareCard`）ので着地先を配らない
+          map.jumpTo(camera, beginProgrammaticFlight(map, 0, null))
           return
         }
         log.warn('[camera] 共有カードの撮影で寄せ直す先を算出できず、中心とズームを変えずに撮る', paneOf(map, target))
@@ -561,7 +651,7 @@ export function beginCaptureFraming(map: maplibregl.Map): CaptureFraming {
       restored = true
       if (captureSessions.get(map) === session) captureSessions.delete(map)
       try {
-        map.jumpTo(saved, beginProgrammaticFlight(map, 0))
+        map.jumpTo(saved, beginProgrammaticFlight(map, 0, null))
       } finally {
         const resume = session.deferred ?? (wasFlying ? lastFitReplays.get(map) : undefined)
         resume?.()
@@ -600,14 +690,18 @@ export function fitJapan(map: maplibregl.Map, durationSec = 1.0): void {
   const padding = panePadding(map, 20)
   if (padding === null) { deferUntilPaneHasSize(map, 'fitJapan', 20, () => fitJapan(map, durationSec)); return }
   const duration = durationSec * 1000
-  map.fitBounds(JAPAN_BOUNDS, { padding, duration, bearing: map.getBearing() }, beginProgrammaticFlight(map, duration))
+  map.fitBounds(
+    JAPAN_BOUNDS,
+    { padding, duration, bearing: map.getBearing() },
+    beginProgrammaticFlight(map, duration, fitBoundsTarget(map, JAPAN_BOUNDS, { padding })),
+  )
 }
 
 /** 1 点へ flyTo する（[lat,lng] で受ける）。 */
 export function flyToPoint(map: maplibregl.Map, [lat, lng]: LatLng, zoom = fitMaxZoom(map), durationSec = 1.0): void {
   if (beginFit(map, { kind: 'point', center: [lng, lat], zoom }, () => flyToPoint(map, [lat, lng], zoom, durationSec))) return
   const duration = durationSec * 1000
-  map.flyTo({ center: [lng, lat], zoom, duration }, beginProgrammaticFlight(map, duration))
+  map.flyTo({ center: [lng, lat], zoom, duration }, beginProgrammaticFlight(map, duration, { center: [lng, lat], zoom }))
 }
 
 /**
@@ -659,7 +753,11 @@ export function flyToBounds(
     return
   }
   const duration = durationSec * 1000
-  map.fitBounds(bounds, { padding, maxZoom, duration, bearing: map.getBearing() }, beginProgrammaticFlight(map, duration))
+  map.fitBounds(
+    bounds,
+    { padding, maxZoom, duration, bearing: map.getBearing() },
+    beginProgrammaticFlight(map, duration, fitBoundsTarget(map, bounds, { padding, maxZoom })),
+  )
 }
 
 /**
@@ -727,10 +825,13 @@ export function flyToBoundsSnapped(
         { padding, maxZoom, paneWidth: container.clientWidth, paneHeight: container.clientHeight },
       )
     })
-    map.fitBounds(bounds, { padding, maxZoom, duration, bearing: map.getBearing() }, beginProgrammaticFlight(map, duration))
+    // 着地先は解けていないので配らない（解き直しても同じ理由で解けない）
+    map.fitBounds(bounds, { padding, maxZoom, duration, bearing: map.getBearing() }, beginProgrammaticFlight(map, duration, null))
     return
   }
-  map.flyTo({ center: cam.center, zoom: snapZoomDown(cam.zoom, zoomStep), duration }, beginProgrammaticFlight(map, duration))
+  const zoom = snapZoomDown(cam.zoom, zoomStep)
+  const target = cam.center != null ? { center: cam.center, zoom } : null
+  map.flyTo({ center: cam.center, zoom, duration }, beginProgrammaticFlight(map, duration, target))
 }
 
 /** いま bounds へ寄り直したら画がどれだけ変わるか（`refitDeltaForBounds` の戻り値）。 */

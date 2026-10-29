@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { calcShakingDurationSec, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast } from './eew'
+import { calcShakingDurationSec, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, isEewLpgmClassZeroForecast, statesEewLpgmClassZero } from './eew'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
 
@@ -1811,5 +1811,39 @@ describe('緊急地震速報の通知の本文と出し直し', () => {
 
   it('安全弁: まだ通知を出していない地震では出し直さない', () => {
     expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(70, 4)), undefined)).toBe(false)
+  })
+})
+
+describe('isEewLpgmClassZeroForecast: 電文が予想長周期階級を 0 と言い切った報', () => {
+  it('【正】電文全体の印が立ち、区域にも階級1以上が無い報は真', () => {
+    expect(isEewLpgmClassZeroForecast(makeEEW({ forecastMaxLpgmBelowClass1: true }))).toBe(true)
+    expect(isEewLpgmClassZeroForecast(makeEEW({
+      forecastMaxLpgmBelowClass1: true,
+      areas: [{ pref: 'A県', name: 'A地域', scaleFrom: 30, scaleTo: 40, kindCode: '10', arrivalTime: null }],
+    }))).toBe(true)
+  })
+  it('【対照】印の無い報（階級を載せていない報）は偽', () => {
+    expect(isEewLpgmClassZeroForecast(makeEEW())).toBe(false)
+  })
+  it('【安全弁】印が立っていても区域に階級1以上があれば偽（階級1以上の表示と重ねない）', () => {
+    expect(isEewLpgmClassZeroForecast(makeEEW({
+      forecastMaxLpgmBelowClass1: true,
+      areas: [{ pref: 'A県', name: 'A地域', scaleFrom: 30, scaleTo: 40, kindCode: '10', arrivalTime: null, lgIntTo: 2 }],
+    }))).toBe(false)
+  })
+})
+
+describe('statesEewLpgmClassZero: 「予想最大階級0。」を言う報か', () => {
+  const zero = makeEEW({ forecastMaxLpgmBelowClass1: true })
+  it('【正】予想震度があり、確定した階級が 0 で、階級を読む設定なら真', () => {
+    expect(statesEewLpgmClassZero(zero, 40, 0, true)).toBe(true)
+  })
+  it('【対照】電文が言い切っていない報は偽', () => {
+    expect(statesEewLpgmClassZero(makeEEW(), 40, 0, true)).toBe(false)
+  })
+  it('【安全弁】予想震度なし・階級を読まない設定・確定した階級が 1 以上のどれでも偽', () => {
+    expect(statesEewLpgmClassZero(zero, 0, 0, true)).toBe(false)
+    expect(statesEewLpgmClassZero(zero, 40, 0, false)).toBe(false)
+    expect(statesEewLpgmClassZero(zero, 40, 1, true)).toBe(false)
   })
 })

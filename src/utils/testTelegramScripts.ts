@@ -1456,6 +1456,60 @@ export const LPGM_CATEGORIES: TestTelegramScript = {
   ],
 }
 
+/** 2024-01-01 16:56 石川県能登地方 M5.7 の長周期地震動に関する観測情報（最大階級 2・種類 1。→ `LPGM_CATEGORIES`）。 */
+const NOTO_1656_LPGM = nii('20240101080522_0_VXSE62_010000')
+
+/**
+ * 階級 0 の区域「富山県東部」を、16:56 の報（最大階級 2）に書き足す。
+ *
+ * **階級 1 以上の報に階級 0 の区域が混ざる形の標本は無い**（全期間の 68 通で、階級 0 の県・区域・観測点は 0 件）。
+ * 読み上げは他の階級と同じ設定で数える（2026-10-29 ユーザー承認「他の階級と同じく読む」）ので、その形をここで作る。
+ * 震度 3 は同じ地震の地震情報（`20240101080010_0_VXSE53_270000`）の富山県東部の値。観測点は足さない。
+ */
+function withClassZeroRegion(doc: Document): void {
+  const observation = only(only(doc, 'Intensity'), 'Observation')
+  const pref = el(doc, observation, 'Pref', '')
+  for (const [name, value] of [['Name', '富山県'], ['Code', '16'], ['MaxInt', '3'], ['MaxLgInt', '0']] as const) {
+    pref.appendChild(el(doc, observation, name, value))
+  }
+  const area = el(doc, observation, 'Area', '')
+  for (const [name, value] of [['Name', '富山県東部'], ['Code', '380'], ['MaxInt', '3'], ['MaxLgInt', '0']] as const) {
+    area.appendChild(el(doc, observation, name, value))
+  }
+  pref.appendChild(area)
+  observation.appendChild(pref)
+}
+
+/**
+ * 階級 0 の地域が混ざった長周期地震動の観測情報と、その続報を流す。DMDSS 版のみ。
+ *
+ * - 1 通目: 16:56 の報に階級 0 の区域を書き足したもの（→ {@link withClassZeroRegion}）。読み上げで階級 0 の地域も声になる
+ * - 2 通目（3 秒後）: 1 通目の規模を Mj5.7 → Mj5.8 に書き換え、報番号を進めた続報。長周期の欄の規模に更新の印が付く
+ *   （2026-10-29 ユーザー承認「続報も流す (Recommended)」）
+ *
+ * **長周期の続報の標本は無い**（全期間の控えに 1 通も無い。→ `JMALpgm.reportsRevise`）ので、続報は書き換えで作る。
+ * 規模を変えたのは、長周期の欄の値のうち続報で動きうるものを 1 つ動かして印を見せるため（実配信で規模がこう動くと言っているのではない）。
+ */
+export const LPGM_CLASS_ZERO_REGION: TestTelegramScript = {
+  anchor: 1,
+  steps: [
+    { file: nii('20240101080010_0_VXSE53_270000'), headType: 'VXSE53', atMs: 0 },
+    { file: NOTO_1656_LPGM, headType: 'VXSE62', atMs: 0, rewrite: xml => editXml(xml, withClassZeroRegion) },
+    {
+      file: NOTO_1656_LPGM, headType: 'VXSE62', atMs: 3000,
+      rewrite: xml => editXml(xml, (doc) => {
+        withClassZeroRegion(doc)
+        setSectionText(doc, 'Head', 'Serial', '2')
+        // 届く間隔（3 秒）と同じだけ進める。それより進めると、届く前に発表された報になる
+        shiftIssueTime(doc, 3)
+        const magnitude = only(only(doc, 'Earthquake'), 'Magnitude')
+        magnitude.textContent = '5.8'
+        magnitude.setAttribute('description', 'Ｍ５．８')
+      }),
+    },
+  ],
+}
+
 // ───────────────────────── 緊急地震速報 ─────────────────────────
 
 /**
@@ -1886,7 +1940,7 @@ export const ALL_TEST_TELEGRAM_SCRIPTS: Readonly<Record<string, TestTelegramScri
   TSUNAMI_SOURCE_ADDED, TSUNAMI_RETRACTION, TSUNAMI_INFO_RETRACTION,
   NANKAI_CHECKING, NANKAI_WATCH, NANKAI_WARNING, NANKAI_RETRACTION,
   NANKAI_COMMENTARY_AD_HOC, NANKAI_COMMENTARY_RETRACTION, NANKAI_COMMENTARY_ROUTINE, KOHATSU, KOHATSU_RETRACTION,
-  QUAKE_NOTICE, EARTHQUAKE_COUNT, EARTHQUAKE_COUNT_RETRACTION, LPGM_RETRACTION, LPGM_CLASS_ZERO, LPGM_CATEGORIES,
+  QUAKE_NOTICE, EARTHQUAKE_COUNT, EARTHQUAKE_COUNT_RETRACTION, LPGM_RETRACTION, LPGM_CLASS_ZERO, LPGM_CATEGORIES, LPGM_CLASS_ZERO_REGION,
   EEW_FORECAST, EEW_WARNING, EEW_SPECIAL_WARNING, EEW_RETRACTION, EEW_LATE_RETRACTION, EEW_ASSUMED, EEW_DEEP,
   EEW_STRONG_SHAKING, EEW_NO_FORECAST, EEW_FORECAST_ZERO, ESTIMATED_INTENSITY,
 }

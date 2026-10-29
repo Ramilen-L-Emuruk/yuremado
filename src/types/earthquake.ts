@@ -82,7 +82,8 @@ export interface Hypocenter {
    * 震源決定機関（`Hypocenter/Source`）。気象庁以外が決めた震源に入る（遠地地震など）。
    * 津波側の {@link TsunamiSourceEarthquake.source} と同じもの。
    *
-   * **読んで持つだけで、いまはどこからも使っていない。**
+   * **地震カードに「震源決定: …（気象庁以外）」の 1 行として出す**（2026-10-22 ユーザー承認「6-A 津波タブと同じ」。
+   * 文面は津波カードの原因地震の行と同じ。→ docs/spec/quake-spec.md §8「気象庁以外が決めた震源は、機関名を添えて出す」）。
    */
   source?: string
 }
@@ -469,9 +470,10 @@ export interface JMAQuake {
    *
    * DMDATA 経路は付加文の原文（{@link forecastText}）にこの文が入っているので要らない。P2PQuake は
    * 付加文を配信せず、区分の値だけを運ぶ。読み上げの遠地地震の文で、国内の津波の区分の文に続けて読む
-   * （2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。**画面には出さない** —— DMDSS 版も
-   * 付加文を地震カードに出していないのに揃えた。値と文面の対応は `services/p2pquake.ts` の
-   * `FOREIGN_TSUNAMI_TEXT`。
+   * （2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。地震カードの付加文の枠では、DMDSS 版の
+   * 固定付加文と同じ先頭の段落に出す（2026-10-29 ユーザー承認。→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。
+   * 読み上げも枠も、{@link forecastText} があればそちらを使う。
+   * 値と文面の対応は `services/p2pquake.ts` の `FOREIGN_TSUNAMI_TEXT`。
    */
   foreignTsunamiText?: string
   /**
@@ -731,8 +733,9 @@ export interface TsunamiSourceEarthquake extends HypocenterAreaDetail {
    * マグニチュードの種別（`jmx_eb:Magnitude@type`）。`Mj` は気象庁マグニチュード、
    * `M` は気象庁以外の機関が決めた値（`source` と対で現れる）。
    *
-   * **津波カードには出さない。** 地震カード側は 2026-10-22 に出すと決めたが（→
-   * {@link Hypocenter.magnitudeType}）、津波カードの原因地震の行はまだ諮っていない。
+   * 地震カードと同じく、規模の前置きの記号として出す（`Mj7.6`。津波カードの原因地震の行・地図の震源の吹き出し・
+   * 津波の共有カード。2026-10-29 ユーザー承認「地震カードと同じく出す (Recommended)」「Mj7.6 の形 (Recommended)」
+   * 「吹き出しと共有カードも (Recommended)」）。整形は `formatMagnitude` を通す（地震カード側は {@link Hypocenter.magnitudeType}）。
    */
   magnitudeType?: string
   /**
@@ -1080,7 +1083,19 @@ export interface JMATsunami {
   // ValidDateTime の経過でのみ有効期限が示される。
   validDateTime?: string
   issue: {
+    /**
+     * 電文を出したところ（DMDATA は編集官署、無ければ発表官署）。画面には出さない。
+     *
+     * **この欄を「編集官署」として出さないこと** —— 発表官署へ落ちるので、ラベルが事実を誤らせる。
+     * 画面に出すのは下の `editorialOffice`。
+     */
     source: string
+    /**
+     * 電文を編集した官署（`Control/EditorialOffice`）。**発表官署へは落とさない**（`JMAQuake.issue.editorialOffice` と同じ）。
+     * 津波カードに地震カードと同じ「編集官署 …」の形で出す（2026-10-29 ユーザー承認「地震カードと同じく出す (Recommended)」）。
+     * 標準版（P2PQuake）と、編集官署を持たない電文では無い。
+     */
+    editorialOffice?: string
     time: string
     type: 'Focus'
   }
@@ -1162,7 +1177,11 @@ export interface EEWRegion {
    */
   pref: string
   name: string
-  /** 予想震度の下限。震度未確定は -1（`EarthquakePoint.scale` と同じセンチネル） */
+  /**
+   * 予想震度の下限。震度未確定は -1（`EarthquakePoint.scale` と同じセンチネル）。
+   * 上限と違う区域は、カードの区域の行と地図の吹き出しに「3〜4」と幅で出す（→ `getEewAreaIntensityLabel`・docs/spec/eew-spec.md §4）。
+   * 読み上げは区域ごとの震度を読まないので、下限も読まない
+   */
   scaleFrom: IntensityScale
   /** 予想震度の上限。地域別の最大予想震度として `eewMaxScale()` が参照する */
   scaleTo: IntensityScale
@@ -1199,8 +1218,9 @@ export interface EEWRegion {
   lgIntToOver?: boolean
   /**
    * 電文が階級 0（階級1未満）を予測したか（`ForecastLgInt` が "0"）。`lgIntTo` は 1〜4 だけを持つので、
-   * 0 の報ではそちらは `undefined` のまま、これが立つ。**画面・読み上げは今は読まない**（電文に無い
-   * のと同じに見せる。2026-10-19 ユーザー承認「0 を持ち、表示は今のまま (推奨)」）
+   * 0 の報ではそちらは `undefined` のまま、これが立つ（2026-10-19 ユーザー承認「別の欄で持つ (推奨)」）。
+   * **画面・読み上げはこの区域ごとの印を読まない**（区域の行に階級を出していないため）。電文全体の印
+   * （`EEWAlert.forecastMaxLpgmBelowClass1`）の側を、カードと読み上げに「階級0」と出す（→ `isEewLpgmClassZeroForecast`）
    */
   lgIntBelowClass1?: true
 }
@@ -1427,7 +1447,10 @@ export interface EEWAlert {
   forecastMaxLpgmClass?: LpgmClass
   /** 上限を定めない予測（電文の `To="over"`）だったか。→ `EEWRegion.lgIntToOver` */
   forecastMaxLpgmClassOver?: boolean
-  /** 電文全体の最大の予測が階級 0（階級1未満）だったか。→ `EEWRegion.lgIntBelowClass1` */
+  /**
+   * 電文全体の最大の予測が階級 0（階級1未満）だったか。→ `EEWRegion.lgIntBelowClass1`。
+   * 立っていて区域にも階級 1 以上が無い報は、カードと読み上げに「階級0」と出す（→ `isEewLpgmClassZeroForecast`）
+   */
   forecastMaxLpgmBelowClass1?: true
   /**
    * 気象庁の固定付加文（`Comments/WarningComment/Text`）。避難行動の呼びかけなどの定型文。
@@ -1444,7 +1467,10 @@ export interface EEWAlert {
   operationStatus?: TelegramOperationStatus
   /** 震源要素の精度（`Hypocenter/Accuracy`）。DMDATA の XML 経路でのみ入る。 */
   accuracy?: EEWAccuracy
-  /** 震央が内陸か海域か（`Hypocenter/Area/LandOrSea`）。値は電文どおり。 */
+  /**
+   * 震央が内陸か海域か（`Hypocenter/Area/LandOrSea`）。値は電文どおり。震源名の横に添える。
+   * 震源が決まっていない報（仮定震源要素・「非常に強い揺れを検知」）でも「（震源未確定）」の後ろへ添える（→ docs/spec/eew-spec.md §3）
+   */
   landOrSea?: '内陸' | '海域'
   /**
    * 短縮用震央地名（`Hypocenter/Area/ReduceName`）。例: 「青森県東方沖」に対して「青森東方沖」。
@@ -1520,10 +1546,8 @@ export interface LpgmPoint {
 /**
  * 長周期地震動観測情報が持つ震源の要素（`Body/Earthquake/Hypocenter`）。
  *
- * **読んで持つが、画面には出していない。** 長周期の情報は地震カードに紐づけて出しており、
- * 震源・規模はそちらが同じ地震の値を出すため重複する。**電文が持っているものを落とさない**
- * ために保持する（地震情報と突き合わせて訂正に気づく、長周期が先に届いた場合に出す、
- * といった使い道はここでは実装していない）。
+ * **地震カードの長周期の欄に出す**（震央地名と深さ。→ `LpgmQuakeFacts`。2026-10-29 ユーザー承認「長周期の欄にも出す」、
+ * 形は同日「1行・名前と深さ (Recommended)」）。座標と震央補助表現は読んで持つだけで、欄には出さない。
  */
 export interface LpgmHypocenter extends HypocenterAreaDetail {
   /**
@@ -1533,7 +1557,8 @@ export interface LpgmHypocenter extends HypocenterAreaDetail {
   name: string
   /**
    * 震源決定機関（`Hypocenter/Source`）。→ {@link TsunamiSourceEarthquake.source}
-   * （意味も扱いも同じ。**読んで持つだけで、いまはどこからも使っていない**）
+   * （意味は同じ）。長周期の欄に、地震カードと同じ文「震源決定: …（気象庁以外）」で出す
+   * （2026-10-29 ユーザー承認「含める (Recommended)」。→ `LpgmQuakeFacts`）
    */
   source?: string
 }
@@ -1649,12 +1674,15 @@ export interface JMALpgm {
   /**
    * 全国の最大震度（`Intensity/Observation/MaxInt`）。
    *
-   * **読んで持つが、画面には出していない。** 同じ地震の最大震度は地震カードが出すため。
+   * **地震カードの長周期の欄に「最大震度N」で出す**（→ `LpgmQuakeFacts`。2026-10-29 ユーザー承認「長周期の欄にも出す」）。
    * 区域・観測点ごとの震度（{@link LpgmRegion.maxInt} / {@link LpgmPoint.int}）は
    * 階級と並べる意味があるので出している。
    */
   maxInt?: IntensityScale
-  /** 地震の規模（`jmx_eb:Magnitude`）。数値で求まらないときは持たせない。画面には出していない */
+  /**
+   * 地震の規模（`jmx_eb:Magnitude`）。数値で求まらないときは持たせない。
+   * 長周期の欄に地震カードと同じ書き方（`Mj7.6`）で出す（→ {@link maxInt}）
+   */
   magnitude?: number
   /**
    * 規模が数値で求まらないときに気象庁が添える説明（`jmx_eb:Magnitude@description`）。
@@ -1668,7 +1696,8 @@ export interface JMALpgm {
    *
    * **読み上げの「◯時◯分頃発生した地震で」はこちらを先に採る**（`lpgmToText`）。
    * 地震情報・津波カードと同じ規則で、揃えないと同じ地震の時刻が経路によって 1 分ずれる。
-   * 画面（長周期のカード・一覧）には時刻そのものを出していない。
+   * 長周期の欄には「地震発現時刻 1月1日 16:10」の形で出す（→ {@link maxInt}）。**無いときは発生時刻で代えない** ——
+   * 「地震発現時刻」と名乗る欄に別の時刻を出すことになる。
    */
   arrivalTime?: string
   /** 震源の要素。→ {@link LpgmHypocenter} */
@@ -1860,8 +1889,9 @@ export interface EarthquakeInfoMeta {
   /**
    * 情報の種別（`Body/EarthquakeInfo/InfoKind`）と、その上位分類（同要素の `@type`）。
    *
-   * **読んで持つが、画面には出していない。** アプリは電文種別で既に見分けており、
-   * 「南海トラフ地震臨時情報」のような名称は `headline`（`Head/Title`）が伝えている。
+   * **読んで持つが、画面には出していない**（2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）。
+   * アプリは電文種別で既に見分けており、「南海トラフ地震臨時情報」のような名称は
+   * `headline`（`Head/Title`）が伝えている。
    */
   earthquakeInfoKind?: string
   earthquakeInfoType?: string

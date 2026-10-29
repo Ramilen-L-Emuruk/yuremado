@@ -610,6 +610,12 @@ export interface EewMaxLpgmClassInfo {
   /** 最大予想長周期地震動階級（1〜4）。取れないときは 0 */
   cls: number
   /**
+   * **読み上げの既読にだけ使う印。** 「予想最大階級0。」を言ったか（→ {@link isEewLpgmClassZeroForecast}）。
+   * 階級 0 は上がりようが無いので `isForecastLpgmHigher` の比較に乗らず、言ったかどうかを別に持つ。
+   * 予想値そのもの（{@link eewMaxLpgmClassInfo} の戻り値）には付けない。
+   */
+  zeroStated?: boolean
+  /**
    * その値が上限を定めない予測（電文の `To="over"`）だったか。
    * **表示・読み上げで「程度以上」を補うのに要る**（→ `getLpgmClassLabelWithApproxAbove`）。
    * 震度側の `EewMaxScaleInfo.orAbove` と同じ扱いで、語だけが違う。
@@ -641,6 +647,32 @@ export function eewMaxLpgmClassInfo(eew: EEWAlert): EewMaxLpgmClassInfo {
     return { cls: forecast, over: eew.forecastMaxLpgmClassOver === true || (areasMax === forecast && areasOver) }
   }
   return { cls: areasMax, over: areasMax > 0 && areasOver }
+}
+
+/**
+ * 電文が「最大予想長周期地震動階級は 0」と言い切った報か（`ForecastLgInt` の値が `0`）。
+ *
+ * **階級を載せていない報と分ける。** {@link eewMaxLpgmClassInfo} はどちらも `cls: 0` を返すので、
+ * 電文全体の印（`forecastMaxLpgmBelowClass1`）を見て、区域にも階級 1 以上が 1 つも無いときだけ真にする。
+ * 真の報は画面と読み上げに「階級0」を出す（2026-10-29 ユーザー承認「画面と読み上げに出す」、
+ * 語は同日「「階級0」と出し、「階級0」と読む (Recommended)」）。震度を伝えられない報で出さないのは
+ * 階級 1 以上と同じ（→ {@link canPresentLpgmClass}。呼び出し側で併せて見る）。
+ */
+/**
+ * この報で「予想最大階級0。」を言うか。**言う側（`eewIntensityText`）・既読を付ける側・続報の受信で
+ * 第 2 フェーズを呼ぶ側の 3 か所が、この 1 つの判定を使う**（ずれると、言っていない 0 が既読に入る・
+ * 喋る予定の無い予約が毎報積まれて非 EEW の読み上げを止める）。
+ *
+ * - `scale` … 確定した予想震度。0（予想震度なし）では言わない（階級 1 以上と同じく、震度を伝えられない報で階級を出さない）
+ * - `confirmedLpgmCls` … 確定した階級。1 以上なら階級 1 以上の句を言うので、こちらは偽
+ * - `readLpgm` … 階級を読む設定
+ */
+export function statesEewLpgmClassZero(eew: EEWAlert, scale: number, confirmedLpgmCls: number, readLpgm: boolean): boolean {
+  return readLpgm && scale > 0 && confirmedLpgmCls === 0 && isEewLpgmClassZeroForecast(eew)
+}
+
+export function isEewLpgmClassZeroForecast(eew: EEWAlert): boolean {
+  return eew.forecastMaxLpgmBelowClass1 === true && eewMaxLpgmClassInfo(eew).cls === 0
 }
 
 /**

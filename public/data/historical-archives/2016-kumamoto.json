@@ -103160,6 +103160,7 @@
           ],
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2016-04-15T00:10:00+09:00",
             "type": "Focus"
           },
@@ -173452,6 +173453,7 @@
           ],
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2016-04-16T01:27:00+09:00",
             "type": "Focus"
           },
@@ -174591,6 +174593,7 @@
           ],
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2016-04-16T01:29:00+09:00",
             "type": "Focus"
           },
@@ -274341,6 +274344,7 @@
           ],
           "issue": {
             "source": "気象庁本庁",
+            "editorialOffice": "気象庁本庁",
             "time": "2016-04-16T02:14:00+09:00",
             "type": "Focus"
           },

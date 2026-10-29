@@ -115,7 +115,7 @@ describe('useEewLayerData: eewAreaFills', () => {
   it('区域の塗りに震源を持たせない（自前計算へ戻さない歯止め）', () => {
     const [fill] = fillsOf([makeEEW({ id: 'a', depth: 20, areas: [area()] })])
     expect(Object.keys(fill).sort()).toEqual(
-      ['arrival', 'isWarning', 'name', 'rings', 'scale', 'scaleOrAbove'],
+      ['arrival', 'isWarning', 'name', 'rings', 'scale', 'scaleFrom', 'scaleOrAbove'],
     )
   })
 

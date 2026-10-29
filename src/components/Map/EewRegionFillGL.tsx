@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { GeoJSONSource, MapGeoJSONFeature } from 'maplibre-gl'
 import type { Feature, FeatureCollection, Polygon } from 'geojson'
 import { useMapGL } from './mapGLContext'
-import { getIntensityColor, getIntensityLabelWithApproxAbove } from '../../utils/intensity'
+import { getIntensityColor, getEewAreaIntensityLabel } from '../../utils/intensity'
 import type { EewAreaFill } from '../../hooks/useEewLayerData'
 import { serverNow } from '../../utils/clock'
 import { eewArrivalEtaSecFromMs } from '../../utils/eew'
@@ -54,6 +54,7 @@ function buildFC(areaFills: EewAreaFill[]): FeatureCollection<Polygon> {
           name: a.name,
           scale: a.scale,
           scaleOrAbove: a.scaleOrAbove,
+          scaleFrom: a.scaleFrom,
           isWarning: a.isWarning,
           // GeoJSON の属性は原始値しか持てないので、組を解いて 2 つの属性へ入れる。
           arrivalKind,
@@ -66,10 +67,12 @@ function buildFC(areaFills: EewAreaFill[]): FeatureCollection<Polygon> {
   return { type: 'FeatureCollection', features }
 }
 
-// 上限が定まらない区域（「震度4以上」）はバッジにも語を出す。塗り色は下限の階級色のままで、
-// 色を変える手立ては無いため、断定に見えないよう文字側で補う。
+// 上限が定まらない区域（「震度4程度以上」）はバッジにも語を出す。塗り色は下限の階級色のままで、
+// 色を変える手立ては無いため、断定に見えないよう文字側で補う。下限と上限が違う区域は「3〜4」と
+// 幅で出す（色は上限のまま。→ `getEewAreaIntensityLabel`）。
 function scaleLabelOf(f: MapGeoJSONFeature): string {
-  return getIntensityLabelWithApproxAbove(
+  return getEewAreaIntensityLabel(
+    Number(f.properties?.scaleFrom ?? -1),
     Number(f.properties?.scale ?? 0),
     Boolean(f.properties?.scaleOrAbove),
   )
