@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createQuietLearner, parseQuietLearnerState, type QuietLearnerOptions, type QuietLearnerState } from './kyoshinQuietLearner'
-import { EMPTY_QUIET_COUNTS, quietSiteKey, type QuietTables, type TailCounts } from './kyoshinQuietTables'
+import { EMPTY_QUIET_COUNTS, QUIET_COUNTS_VERSION, quietSiteKey, type QuietTables, type TailCounts } from './kyoshinQuietTables'
 
 const SITES: [number, number][] = [[35.3, 136.8], [38.4, 140]]
 const K0 = quietSiteKey(SITES[0])
@@ -143,7 +143,7 @@ describe('1 日のどの時間帯も数え終えるまでは、配る表のま�
 
 describe('端末に残した状態を読み戻す', () => {
   const good = (): QuietLearnerState => ({
-    counts: { version: 1, glob: tail(10), tails: { [K0]: tail(10) }, fire: { [K0]: { sec: 3_600, hits: [1, 0, 0, 0, 0] } } },
+    counts: { version: QUIET_COUNTS_VERSION, glob: tail(10), tails: { [K0]: tail(10) }, fire: { [K0]: { sec: 3_600, hits: [1, 0, 0, 0, 0] } } },
     hourSec: new Array(24).fill(100),
   })
 
@@ -158,11 +158,17 @@ describe('端末に残した状態を読み戻す', () => {
     expect(parseQuietLearnerState({ ...good(), hourSec: ['a', ...new Array(23).fill(0)] })).toBeNull()
   })
 
+  it('安全弁: 数え方を変える前の版（1・雑音の表の窓が 4〜60 秒前）で数えた分は使わず、数え直す', () => {
+    const old = { ...good(), counts: { ...good().counts, version: 1 } }
+    expect(QUIET_COUNTS_VERSION).toBe(2)
+    expect(parseQuietLearnerState(JSON.parse(JSON.stringify(old)))).toBeNull()
+  })
+
   it('安全弁: 点ごとの数の並びの長さが違う・版が違う・形が違うものは使わない', () => {
     const s = good()
     s.counts.tails[K0] = { n: 10, y: [1], y3: new Array(12).fill(0) }
     expect(parseQuietLearnerState(s)).toBeNull()
-    expect(parseQuietLearnerState({ ...good(), counts: { ...good().counts, version: 2 } })).toBeNull()
+    expect(parseQuietLearnerState({ ...good(), counts: { ...good().counts, version: 99 as typeof QUIET_COUNTS_VERSION } })).toBeNull()
     expect(parseQuietLearnerState(null)).toBeNull()
     expect(parseQuietLearnerState({ counts: good().counts })).toBeNull()
   })

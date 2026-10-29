@@ -11,6 +11,7 @@
  * 1 時間後の保存が残してあった数を、ほぼ空の数で上書きする。読めなかった起動では保存しない（呼び出し側が決める）。
  */
 import { parseQuietLearnerState, type QuietLearnerState } from './kyoshinQuietLearner'
+import { QUIET_COUNTS_VERSION } from './kyoshinQuietTables'
 import { log } from './logger'
 
 const DB_NAME = 'kyoshin-quiet-learner'
@@ -143,7 +144,15 @@ export async function loadQuietLearnerState(): Promise<LoadedQuietLearnerState> 
   if (!r.ok) return { readable: false, state: null }
   if (r.value === null || r.value === undefined) return { readable: true, state: null }
   const state = parseQuietLearnerState(r.value)
-  if (state === null) log.warn('[kyoshinQuietLearner] 端末に残した学び直しの状態の形が崩れていたので、配る表から学び直します')
+  if (state === null) {
+    // 数え方を変えて版を上げた後の古い分は崩れではない（版が違えば捨てて数え直す。QUIET_COUNTS_VERSION）
+    const version = (r.value as { counts?: { version?: unknown } }).counts?.version
+    if (typeof version === 'number' && version !== QUIET_COUNTS_VERSION) {
+      log.info(`[kyoshinQuietLearner] 端末に残した学び直しの状態は数え方が古い版（${version}）なので、配る表から学び直します`)
+    } else {
+      log.warn('[kyoshinQuietLearner] 端末に残した学び直しの状態の形が崩れていたので、配る表から学び直します')
+    }
+  }
   return { readable: true, state }
 }
 

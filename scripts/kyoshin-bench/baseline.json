@@ -94,9 +94,9 @@
   },
   "pc-kii": {
    "tier": "confirmed",
-   "firstLikely": "07:46:52",
-   "firstConfirmed": "07:46:52",
-   "confirmedFrames": 98,
+   "firstLikely": "07:46:49",
+   "firstConfirmed": "07:46:49",
+   "confirmedFrames": 101,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -217,9 +217,9 @@
   },
   "big-fukushima2022": {
    "tier": "confirmed",
-   "firstLikely": "23:35:52",
-   "firstConfirmed": "23:35:52",
-   "confirmedFrames": 157,
+   "firstLikely": "23:35:51",
+   "firstConfirmed": "23:35:51",
+   "confirmedFrames": 158,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -295,8 +295,8 @@
   "ng-kyoto": {
    "tier": "confirmed",
    "firstLikely": "04:21:41",
-   "firstConfirmed": "04:21:43",
-   "confirmedFrames": 47,
+   "firstConfirmed": "04:21:42",
+   "confirmedFrames": 48,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -306,8 +306,8 @@
   "ng-hidaka": {
    "tier": "confirmed",
    "firstLikely": "03:05:00",
-   "firstConfirmed": "03:05:03",
-   "confirmedFrames": 27,
+   "firstConfirmed": "03:05:02",
+   "confirmedFrames": 28,
    "unrelated": 1,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 1,
@@ -511,13 +511,13 @@
    "tier": "confirmed",
    "firstLikely": "19:30:30",
    "firstConfirmed": "19:30:30",
-   "confirmedFrames": 120,
+   "confirmedFrames": 129,
    "unrelated": 3,
-   "unrelatedConfirmed": 1,
+   "unrelatedConfirmed": 2,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "19:03:28 北海道|標津町古多糠",
+    "19:03:26 北海道|羅臼町岬町",
     "19:33:24 青森県|東通村白糠",
     "19:57:13 石川県|珠洲市正院町"
    ]
@@ -649,13 +649,12 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 2,
-   "unrelatedConfirmed": 2,
+   "unrelated": 1,
+   "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "13:02:28 石川県|珠洲市正院町",
-    "13:03:03 富山県|富山市上二杉"
+    "13:02:28 石川県|珠洲市正院町"
    ]
   },
   "fp0817-163840": {
@@ -1058,7 +1057,7 @@
    "tier": "confirmed",
    "firstLikely": "13:32:58",
    "firstConfirmed": "13:33:04",
-   "confirmedFrames": 77,
+   "confirmedFrames": 107,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1070,11 +1069,13 @@
    "firstLikely": "13:37:45",
    "firstConfirmed": "13:37:45",
    "confirmedFrames": 135,
-   "unrelated": 0,
-   "unrelatedConfirmed": 0,
+   "unrelated": 1,
+   "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "13:38:53 高知県|室戸市浮津"
+   ]
   },
   "jq10-0816-1403": {
    "tier": "confirmed",
@@ -1090,8 +1091,8 @@
   "jq11-0816-1419": {
    "tier": "confirmed",
    "firstLikely": "14:19:13",
-   "firstConfirmed": "14:19:14",
-   "confirmedFrames": 118,
+   "firstConfirmed": "14:19:13",
+   "confirmedFrames": 119,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1123,8 +1124,8 @@
   "jq14-0816-2142": {
    "tier": "confirmed",
    "firstLikely": "21:42:10",
-   "firstConfirmed": "21:42:11",
-   "confirmedFrames": 112,
+   "firstConfirmed": "21:42:10",
+   "confirmedFrames": 113,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1145,8 +1146,8 @@
   "jq16-0816-2319": {
    "tier": "confirmed",
    "firstLikely": "23:19:06",
-   "firstConfirmed": "23:19:07",
-   "confirmedFrames": 122,
+   "firstConfirmed": "23:19:06",
+   "confirmedFrames": 123,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1156,8 +1157,8 @@
   "jq17-0817-0022": {
    "tier": "confirmed",
    "firstLikely": "00:22:14",
-   "firstConfirmed": "00:22:15",
-   "confirmedFrames": 113,
+   "firstConfirmed": "00:22:14",
+   "confirmedFrames": 131,
    "unrelated": 1,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 1,
@@ -1226,8 +1227,8 @@
   "jq23-0817-1936": {
    "tier": "confirmed",
    "firstLikely": "19:36:55",
-   "firstConfirmed": "19:36:56",
-   "confirmedFrames": 124,
+   "firstConfirmed": "19:36:55",
+   "confirmedFrames": 125,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1293,7 +1294,7 @@
    "tier": "confirmed",
    "firstLikely": "05:45:54",
    "firstConfirmed": "05:45:54",
-   "confirmedFrames": 141,
+   "confirmedFrames": 145,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1315,7 +1316,7 @@
    "tier": "confirmed",
    "firstLikely": "09:54:32",
    "firstConfirmed": "09:54:33",
-   "confirmedFrames": 114,
+   "confirmedFrames": 120,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1347,8 +1348,8 @@
   "jq34-0818-1709": {
    "tier": "confirmed",
    "firstLikely": "17:09:27",
-   "firstConfirmed": "17:09:28",
-   "confirmedFrames": 131,
+   "firstConfirmed": "17:09:27",
+   "confirmedFrames": 142,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1369,8 +1370,8 @@
   "jq36-0818-1836": {
    "tier": "confirmed",
    "firstLikely": "18:36:11",
-   "firstConfirmed": "18:36:12",
-   "confirmedFrames": 120,
+   "firstConfirmed": "18:36:11",
+   "confirmedFrames": 121,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1424,8 +1425,8 @@
   "jq41-0820-0000": {
    "tier": "confirmed",
    "firstLikely": "00:00:38",
-   "firstConfirmed": "00:00:52",
-   "confirmedFrames": 118,
+   "firstConfirmed": "00:00:49",
+   "confirmedFrames": 121,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1438,11 +1439,11 @@
    "firstConfirmed": "00:50:30",
    "confirmedFrames": 150,
    "unrelated": 1,
-   "unrelatedConfirmed": 0,
+   "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 1,
-   "unrelatedNoCatalogConfirmed": 0,
+   "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
-    "00:51:03 鹿児島県|長島町獅子島"
+    "00:51:01 熊本県|芦北町田浦町"
    ]
   },
   "jq43-0820-0055": {
@@ -1481,8 +1482,8 @@
   "jq46-0820-0848": {
    "tier": "confirmed",
    "firstLikely": "08:48:16",
-   "firstConfirmed": "08:48:19",
-   "confirmedFrames": 94,
+   "firstConfirmed": "08:48:16",
+   "confirmedFrames": 97,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1492,8 +1493,8 @@
   "jq47-0820-0906": {
    "tier": "confirmed",
    "firstLikely": "09:06:29",
-   "firstConfirmed": "09:06:32",
-   "confirmedFrames": 140,
+   "firstConfirmed": "09:06:31",
+   "confirmedFrames": 141,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1515,7 +1516,7 @@
    "tier": "confirmed",
    "firstLikely": "11:40:16",
    "firstConfirmed": "11:40:17",
-   "confirmedFrames": 112,
+   "confirmedFrames": 113,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1602,8 +1603,8 @@
   "jq57-0821-0734": {
    "tier": "confirmed",
    "firstLikely": "07:34:06",
-   "firstConfirmed": "07:34:11",
-   "confirmedFrames": 98,
+   "firstConfirmed": "07:34:07",
+   "confirmedFrames": 103,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1637,12 +1638,13 @@
    "firstLikely": "21:02:25",
    "firstConfirmed": "21:02:25",
    "confirmedFrames": 155,
-   "unrelated": 1,
-   "unrelatedConfirmed": 1,
+   "unrelated": 2,
+   "unrelatedConfirmed": 2,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "21:03:31 徳島県|阿波市市場町"
+    "21:03:30 徳島県|阿波市市場町",
+    "21:03:53 山口県|周防大島町東和総合支所"
    ]
   },
   "jq61-0821-2327": {
@@ -1708,7 +1710,7 @@
    "tier": "confirmed",
    "firstLikely": "05:20:09",
    "firstConfirmed": "05:20:09",
-   "confirmedFrames": 105,
+   "confirmedFrames": 111,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1850,8 +1852,8 @@
   "wq16-0801-1254": {
    "tier": "confirmed",
    "firstLikely": "12:54:24",
-   "firstConfirmed": "12:54:25",
-   "confirmedFrames": 105,
+   "firstConfirmed": "12:54:24",
+   "confirmedFrames": 106,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1873,7 +1875,7 @@
    "tier": "confirmed",
    "firstLikely": "14:58:03",
    "firstConfirmed": "14:58:03",
-   "confirmedFrames": 126,
+   "confirmedFrames": 127,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1908,7 +1910,7 @@
    "tier": "confirmed",
    "firstLikely": "18:22:04",
    "firstConfirmed": "18:22:04",
-   "confirmedFrames": 116,
+   "confirmedFrames": 119,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1950,9 +1952,9 @@
   },
   "wq25-0801-2213": {
    "tier": "confirmed",
-   "firstLikely": "22:13:09",
-   "firstConfirmed": "22:13:09",
-   "confirmedFrames": 121,
+   "firstLikely": "22:13:02",
+   "firstConfirmed": "22:13:02",
+   "confirmedFrames": 128,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1974,7 +1976,7 @@
    "tier": "confirmed",
    "firstLikely": "22:56:08",
    "firstConfirmed": "22:56:09",
-   "confirmedFrames": 108,
+   "confirmedFrames": 112,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2050,8 +2052,8 @@
   "wq34-0802-0139": {
    "tier": "confirmed",
    "firstLikely": "01:39:06",
-   "firstConfirmed": "01:39:07",
-   "confirmedFrames": 117,
+   "firstConfirmed": "01:39:06",
+   "confirmedFrames": 118,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2094,8 +2096,8 @@
   "wq38-0802-0618": {
    "tier": "confirmed",
    "firstLikely": "06:18:06",
-   "firstConfirmed": "06:18:09",
-   "confirmedFrames": 117,
+   "firstConfirmed": "06:18:08",
+   "confirmedFrames": 122,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2105,8 +2107,8 @@
   "wq39-0802-0636": {
    "tier": "confirmed",
    "firstLikely": "06:36:43",
-   "firstConfirmed": "06:36:44",
-   "confirmedFrames": 86,
+   "firstConfirmed": "06:36:43",
+   "confirmedFrames": 87,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2379,9 +2381,9 @@
   },
   "wq63-0803-0417": {
    "tier": "confirmed",
-   "firstLikely": "04:17:51",
-   "firstConfirmed": "04:17:51",
-   "confirmedFrames": 79,
+   "firstLikely": "04:17:49",
+   "firstConfirmed": "04:17:49",
+   "confirmedFrames": 81,
    "unrelated": 1,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 1,
@@ -2393,8 +2395,8 @@
   "wq64-0803-0502": {
    "tier": "confirmed",
    "firstLikely": "05:02:31",
-   "firstConfirmed": "05:02:37",
-   "confirmedFrames": 93,
+   "firstConfirmed": "05:02:33",
+   "confirmedFrames": 97,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2558,7 +2560,7 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
-    "23:41:26 北海道|十勝大樹町東本通",
+    "23:41:17 北海道|十勝大樹町東本通",
     "23:41:47 青森県|東通村白糠"
    ]
   },
@@ -2612,8 +2614,8 @@
   "wq83-0804-0811": {
    "tier": "confirmed",
    "firstLikely": "08:11:14",
-   "firstConfirmed": "08:11:15",
-   "confirmedFrames": 115,
+   "firstConfirmed": "08:11:14",
+   "confirmedFrames": 116,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2623,8 +2625,8 @@
   "wq84-0804-1047": {
    "tier": "confirmed",
    "firstLikely": "10:47:19",
-   "firstConfirmed": "10:47:21",
-   "confirmedFrames": 109,
+   "firstConfirmed": "10:47:20",
+   "confirmedFrames": 110,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2725,8 +2727,8 @@
   "wq93-0804-1718": {
    "tier": "confirmed",
    "firstLikely": "17:18:46",
-   "firstConfirmed": "17:18:51",
-   "confirmedFrames": 79,
+   "firstConfirmed": "17:18:50",
+   "confirmedFrames": 80,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2747,8 +2749,8 @@
   "wq95-0804-1923": {
    "tier": "confirmed",
    "firstLikely": "19:23:44",
-   "firstConfirmed": "19:23:47",
-   "confirmedFrames": 83,
+   "firstConfirmed": "19:23:46",
+   "confirmedFrames": 84,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3092,10 +3094,10 @@
    "unrelatedAt": []
   },
   "wq126-0806-1150": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "11:51:02",
+   "firstConfirmed": "11:51:02",
+   "confirmedFrames": 68,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3105,8 +3107,8 @@
   "wq127-0806-1217": {
    "tier": "confirmed",
    "firstLikely": "12:17:43",
-   "firstConfirmed": "12:17:49",
-   "confirmedFrames": 81,
+   "firstConfirmed": "12:17:45",
+   "confirmedFrames": 85,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3147,10 +3149,10 @@
    "unrelatedAt": []
   },
   "wq131-0806-1821": {
-   "tier": "likely",
+   "tier": "confirmed",
    "firstLikely": "18:21:52",
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "firstConfirmed": "18:21:59",
+   "confirmedFrames": 71,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3214,9 +3216,9 @@
   },
   "wq137-0807-0054": {
    "tier": "confirmed",
-   "firstLikely": "00:54:07",
-   "firstConfirmed": "00:54:07",
-   "confirmedFrames": 123,
+   "firstLikely": "00:54:06",
+   "firstConfirmed": "00:54:06",
+   "confirmedFrames": 124,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3274,8 +3276,8 @@
   "wq142-0807-1318": {
    "tier": "confirmed",
    "firstLikely": "13:18:38",
-   "firstConfirmed": "13:18:43",
-   "confirmedFrames": 87,
+   "firstConfirmed": "13:18:41",
+   "confirmedFrames": 89,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3329,8 +3331,8 @@
   "wq147-0807-2208": {
    "tier": "confirmed",
    "firstLikely": "22:08:24",
-   "firstConfirmed": "22:08:25",
-   "confirmedFrames": 105,
+   "firstConfirmed": "22:08:24",
+   "confirmedFrames": 106,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3340,8 +3342,8 @@
   "wq148-0807-2217": {
    "tier": "confirmed",
    "firstLikely": "22:17:19",
-   "firstConfirmed": "22:17:20",
-   "confirmedFrames": 110,
+   "firstConfirmed": "22:17:19",
+   "confirmedFrames": 111,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3362,8 +3364,8 @@
   "wq150-0808-0322": {
    "tier": "confirmed",
    "firstLikely": "03:22:12",
-   "firstConfirmed": "03:22:13",
-   "confirmedFrames": 114,
+   "firstConfirmed": "03:22:12",
+   "confirmedFrames": 115,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3384,8 +3386,8 @@
   "wq152-0808-0917": {
    "tier": "confirmed",
    "firstLikely": "09:17:30",
-   "firstConfirmed": "09:17:37",
-   "confirmedFrames": 93,
+   "firstConfirmed": "09:17:30",
+   "confirmedFrames": 100,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3395,8 +3397,8 @@
   "wq153-0808-0928": {
    "tier": "confirmed",
    "firstLikely": "09:28:53",
-   "firstConfirmed": "09:28:54",
-   "confirmedFrames": 76,
+   "firstConfirmed": "09:28:53",
+   "confirmedFrames": 77,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3560,8 +3562,8 @@
   "wq168-0809-0605": {
    "tier": "confirmed",
    "firstLikely": "06:05:39",
-   "firstConfirmed": "06:05:42",
-   "confirmedFrames": 88,
+   "firstConfirmed": "06:05:40",
+   "confirmedFrames": 90,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3582,8 +3584,8 @@
   "wq170-0809-1250": {
    "tier": "confirmed",
    "firstLikely": "12:50:39",
-   "firstConfirmed": "12:50:41",
-   "confirmedFrames": 89,
+   "firstConfirmed": "12:50:40",
+   "confirmedFrames": 90,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3692,8 +3694,8 @@
   "wq180-0810-1357": {
    "tier": "confirmed",
    "firstLikely": "13:57:27",
-   "firstConfirmed": "13:57:29",
-   "confirmedFrames": 101,
+   "firstConfirmed": "13:57:28",
+   "confirmedFrames": 102,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3703,8 +3705,8 @@
   "wq181-0810-1432": {
    "tier": "confirmed",
    "firstLikely": "14:32:33",
-   "firstConfirmed": "14:32:41",
-   "confirmedFrames": 89,
+   "firstConfirmed": "14:32:37",
+   "confirmedFrames": 93,
    "unrelated": 1,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 1,
@@ -3715,9 +3717,9 @@
   },
   "wq182-0810-1702": {
    "tier": "confirmed",
-   "firstLikely": "17:02:11",
-   "firstConfirmed": "17:02:12",
-   "confirmedFrames": 118,
+   "firstLikely": "17:02:10",
+   "firstConfirmed": "17:02:10",
+   "confirmedFrames": 120,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3738,8 +3740,8 @@
   "wq184-0810-1819": {
    "tier": "confirmed",
    "firstLikely": "18:19:14",
-   "firstConfirmed": "18:19:15",
-   "confirmedFrames": 102,
+   "firstConfirmed": "18:19:14",
+   "confirmedFrames": 103,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3760,8 +3762,8 @@
   "wq186-0810-2025": {
    "tier": "confirmed",
    "firstLikely": "20:25:38",
-   "firstConfirmed": "20:25:39",
-   "confirmedFrames": 91,
+   "firstConfirmed": "20:25:38",
+   "confirmedFrames": 92,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3838,9 +3840,9 @@
   },
   "wq193-0811-0712": {
    "tier": "confirmed",
-   "firstLikely": "07:12:17",
-   "firstConfirmed": "07:12:17",
-   "confirmedFrames": 113,
+   "firstLikely": "07:12:16",
+   "firstConfirmed": "07:12:16",
+   "confirmedFrames": 114,
    "unrelated": 1,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 1,
@@ -3852,8 +3854,8 @@
   "wq194-0811-0844": {
    "tier": "confirmed",
    "firstLikely": "08:44:59",
-   "firstConfirmed": "08:45:00",
-   "confirmedFrames": 70,
+   "firstConfirmed": "08:44:59",
+   "confirmedFrames": 71,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4008,8 +4010,8 @@
   "wq208-0812-0429": {
    "tier": "confirmed",
    "firstLikely": "04:29:16",
-   "firstConfirmed": "04:29:17",
-   "confirmedFrames": 113,
+   "firstConfirmed": "04:29:16",
+   "confirmedFrames": 114,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4030,8 +4032,8 @@
   "wq210-0812-0610": {
    "tier": "confirmed",
    "firstLikely": "06:10:07",
-   "firstConfirmed": "06:10:14",
-   "confirmedFrames": 91,
+   "firstConfirmed": "06:10:08",
+   "confirmedFrames": 98,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4043,11 +4045,13 @@
    "firstLikely": "06:46:10",
    "firstConfirmed": "06:46:10",
    "confirmedFrames": 120,
-   "unrelated": 0,
-   "unrelatedConfirmed": 0,
+   "unrelated": 1,
+   "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "06:46:42 北海道|浜中町茶内"
+   ]
   },
   "wq212-0812-0653": {
    "tier": "confirmed",
@@ -4064,7 +4068,7 @@
    "tier": "confirmed",
    "firstLikely": "09:19:16",
    "firstConfirmed": "09:19:17",
-   "confirmedFrames": 109,
+   "confirmedFrames": 113,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4405,9 +4409,9 @@
   },
   "wq244-0814-2220": {
    "tier": "confirmed",
-   "firstLikely": "22:20:09",
-   "firstConfirmed": "22:20:09",
-   "confirmedFrames": 103,
+   "firstLikely": "22:20:06",
+   "firstConfirmed": "22:20:06",
+   "confirmedFrames": 106,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4460,9 +4464,9 @@
   },
   "wq249-0815-0638": {
    "tier": "confirmed",
-   "firstLikely": "06:38:56",
-   "firstConfirmed": "06:38:56",
-   "confirmedFrames": 74,
+   "firstLikely": "06:38:57",
+   "firstConfirmed": "06:38:57",
+   "confirmedFrames": 73,
    "unrelated": 1,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
@@ -4550,9 +4554,9 @@
   },
   "wq257-0815-1847": {
    "tier": "confirmed",
-   "firstLikely": "18:47:07",
-   "firstConfirmed": "18:47:07",
-   "confirmedFrames": 118,
+   "firstLikely": "18:47:06",
+   "firstConfirmed": "18:47:06",
+   "confirmedFrames": 119,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4683,8 +4687,8 @@
   "oq7-0502-0435": {
    "tier": "confirmed",
    "firstLikely": "04:35:52",
-   "firstConfirmed": "04:35:54",
-   "confirmedFrames": 46,
+   "firstConfirmed": "04:35:52",
+   "confirmedFrames": 48,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4705,8 +4709,8 @@
   "oq9-0502-1529": {
    "tier": "confirmed",
    "firstLikely": "15:29:06",
-   "firstConfirmed": "15:29:07",
-   "confirmedFrames": 93,
+   "firstConfirmed": "15:29:06",
+   "confirmedFrames": 94,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4782,8 +4786,8 @@
   "oq16-0503-2342": {
    "tier": "confirmed",
    "firstLikely": "23:42:17",
-   "firstConfirmed": "23:42:19",
-   "confirmedFrames": 81,
+   "firstConfirmed": "23:42:18",
+   "confirmedFrames": 82,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4872,8 +4876,8 @@
   "oq24-0505-0914": {
    "tier": "confirmed",
    "firstLikely": "09:14:07",
-   "firstConfirmed": "09:14:08",
-   "confirmedFrames": 92,
+   "firstConfirmed": "09:14:07",
+   "confirmedFrames": 93,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4894,8 +4898,8 @@
   "oq26-0505-1448": {
    "tier": "confirmed",
    "firstLikely": "14:48:41",
-   "firstConfirmed": "14:48:44",
-   "confirmedFrames": 56,
+   "firstConfirmed": "14:48:43",
+   "confirmedFrames": 57,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5259,8 +5263,8 @@
   "oq59-0511-2050": {
    "tier": "confirmed",
    "firstLikely": "20:50:14",
-   "firstConfirmed": "20:50:14",
-   "confirmedFrames": 86,
+   "firstConfirmed": "20:50:15",
+   "confirmedFrames": 85,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5347,8 +5351,8 @@
   "oq67-0513-1124": {
    "tier": "confirmed",
    "firstLikely": "11:25:08",
-   "firstConfirmed": "11:25:11",
-   "confirmedFrames": 29,
+   "firstConfirmed": "11:25:08",
+   "confirmedFrames": 32,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5358,8 +5362,8 @@
   "oq68-0513-1424": {
    "tier": "confirmed",
    "firstLikely": "14:25:05",
-   "firstConfirmed": "14:25:08",
-   "confirmedFrames": 32,
+   "firstConfirmed": "14:25:07",
+   "confirmedFrames": 33,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5600,8 +5604,8 @@
   "oq90-0516-0355": {
    "tier": "confirmed",
    "firstLikely": "03:55:44",
-   "firstConfirmed": "03:55:48",
-   "confirmedFrames": 52,
+   "firstConfirmed": "03:55:45",
+   "confirmedFrames": 55,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5710,8 +5714,8 @@
   "oq100-0518-0227": {
    "tier": "confirmed",
    "firstLikely": "02:27:22",
-   "firstConfirmed": "02:27:24",
-   "confirmedFrames": 76,
+   "firstConfirmed": "02:27:23",
+   "confirmedFrames": 77,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5875,8 +5879,8 @@
   "oq115-0521-0108": {
    "tier": "confirmed",
    "firstLikely": "01:08:22",
-   "firstConfirmed": "01:08:23",
-   "confirmedFrames": 77,
+   "firstConfirmed": "01:08:22",
+   "confirmedFrames": 78,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6007,8 +6011,8 @@
   "oq127-0523-2319": {
    "tier": "confirmed",
    "firstLikely": "23:20:05",
-   "firstConfirmed": "23:20:06",
-   "confirmedFrames": 34,
+   "firstConfirmed": "23:20:05",
+   "confirmedFrames": 35,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6062,8 +6066,8 @@
   "oq132-0524-1508": {
    "tier": "confirmed",
    "firstLikely": "15:08:33",
-   "firstConfirmed": "15:08:34",
-   "confirmedFrames": 66,
+   "firstConfirmed": "15:08:33",
+   "confirmedFrames": 67,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6072,9 +6076,9 @@
   },
   "oq133-0524-1551": {
    "tier": "confirmed",
-   "firstLikely": "15:51:56",
-   "firstConfirmed": "15:51:56",
-   "confirmedFrames": 44,
+   "firstLikely": "15:51:54",
+   "firstConfirmed": "15:51:54",
+   "confirmedFrames": 46,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6141,11 +6145,13 @@
    "firstLikely": "13:56:18",
    "firstConfirmed": "13:56:18",
    "confirmedFrames": 82,
-   "unrelated": 0,
-   "unrelatedConfirmed": 0,
+   "unrelated": 1,
+   "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "13:57:05 北海道|白老町緑丘"
+   ]
   },
   "oq140-0526-1408": {
    "tier": "confirmed",
@@ -6227,8 +6233,8 @@
   "oq147-0527-1639": {
    "tier": "confirmed",
    "firstLikely": "16:39:08",
-   "firstConfirmed": "16:39:11",
-   "confirmedFrames": 89,
+   "firstConfirmed": "16:39:10",
+   "confirmedFrames": 90,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6271,8 +6277,8 @@
   "oq151-0528-1255": {
    "tier": "confirmed",
    "firstLikely": "12:55:19",
-   "firstConfirmed": "12:55:21",
-   "confirmedFrames": 79,
+   "firstConfirmed": "12:55:20",
+   "confirmedFrames": 80,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6304,8 +6310,8 @@
   "oq154-0530-0115": {
    "tier": "confirmed",
    "firstLikely": "01:15:09",
-   "firstConfirmed": "01:15:10",
-   "confirmedFrames": 90,
+   "firstConfirmed": "01:15:09",
+   "confirmedFrames": 91,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6381,8 +6387,8 @@
   "oq161-0531-1822": {
    "tier": "confirmed",
    "firstLikely": "18:22:24",
-   "firstConfirmed": "18:22:25",
-   "confirmedFrames": 75,
+   "firstConfirmed": "18:22:24",
+   "confirmedFrames": 76,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6447,8 +6453,8 @@
   "oq167-0601-1240": {
    "tier": "confirmed",
    "firstLikely": "12:40:38",
-   "firstConfirmed": "12:40:39",
-   "confirmedFrames": 61,
+   "firstConfirmed": "12:40:38",
+   "confirmedFrames": 62,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6482,8 +6488,8 @@
   "oq170-0602-0202": {
    "tier": "confirmed",
    "firstLikely": "02:02:10",
-   "firstConfirmed": "02:02:11",
-   "confirmedFrames": 89,
+   "firstConfirmed": "02:02:10",
+   "confirmedFrames": 90,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6657,7 +6663,7 @@
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "23:31:25 北海道|浦河町築地",
-    "23:31:39 青森県|東通村尻屋"
+    "23:31:35 青森県|東通村尻屋"
    ]
   },
   "oq186-0606-0548": {
@@ -6703,7 +6709,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "20:30:19 茨城県|北茨城市中郷町"
+    "20:30:13 茨城県|常陸太田市町屋町"
    ]
   },
   "oq190-0607-0352": {
@@ -6832,8 +6838,8 @@
   "oq201-0610-0929": {
    "tier": "confirmed",
    "firstLikely": "09:29:27",
-   "firstConfirmed": "09:29:30",
-   "confirmedFrames": 70,
+   "firstConfirmed": "09:29:27",
+   "confirmedFrames": 73,
    "unrelated": 1,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
@@ -6856,8 +6862,8 @@
   "oq203-0610-1614": {
    "tier": "confirmed",
    "firstLikely": "16:14:51",
-   "firstConfirmed": "16:14:52",
-   "confirmedFrames": 48,
+   "firstConfirmed": "16:14:51",
+   "confirmedFrames": 49,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6896,7 +6902,7 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
-    "19:36:26 群馬県|神流町生利"
+    "19:36:25 群馬県|神流町生利"
    ]
   },
   "oq207-0610-2248": {
@@ -7082,8 +7088,8 @@
   "oq223-0615-1542": {
    "tier": "confirmed",
    "firstLikely": "15:42:30",
-   "firstConfirmed": "15:42:32",
-   "confirmedFrames": 68,
+   "firstConfirmed": "15:42:31",
+   "confirmedFrames": 69,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7104,8 +7110,8 @@
   "oq225-0615-1938": {
    "tier": "confirmed",
    "firstLikely": "19:38:06",
-   "firstConfirmed": "19:38:07",
-   "confirmedFrames": 93,
+   "firstConfirmed": "19:38:06",
+   "confirmedFrames": 94,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7148,8 +7154,8 @@
   "oq229-0616-1656": {
    "tier": "confirmed",
    "firstLikely": "16:56:34",
-   "firstConfirmed": "16:56:35",
-   "confirmedFrames": 65,
+   "firstConfirmed": "16:56:34",
+   "confirmedFrames": 66,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7269,8 +7275,8 @@
   "oq240-0618-1115": {
    "tier": "confirmed",
    "firstLikely": "11:15:23",
-   "firstConfirmed": "11:15:34",
-   "confirmedFrames": 66,
+   "firstConfirmed": "11:15:28",
+   "confirmedFrames": 72,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7337,19 +7343,20 @@
    "firstLikely": "05:39:16",
    "firstConfirmed": "05:39:17",
    "confirmedFrames": 83,
-   "unrelated": 1,
-   "unrelatedConfirmed": 1,
+   "unrelated": 2,
+   "unrelatedConfirmed": 2,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "05:40:36 北海道|胆振伊達市大滝区本町"
+    "05:40:36 北海道|胆振伊達市大滝区本町",
+    "05:40:36 青森県|東通村白糠"
    ]
   },
   "oq247-0621-0457": {
    "tier": "confirmed",
    "firstLikely": "04:57:41",
-   "firstConfirmed": "04:57:42",
-   "confirmedFrames": 58,
+   "firstConfirmed": "04:57:41",
+   "confirmedFrames": 59,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7562,13 +7569,15 @@
   "oq266-0624-1646": {
    "tier": "confirmed",
    "firstLikely": "16:46:37",
-   "firstConfirmed": "16:46:41",
-   "confirmedFrames": 59,
-   "unrelated": 0,
-   "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
-   "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "firstConfirmed": "16:46:39",
+   "confirmedFrames": 61,
+   "unrelated": 1,
+   "unrelatedConfirmed": 1,
+   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedAt": [
+    "16:47:21 北海道|十勝大樹町東本通"
+   ]
   },
   "oq267-0625-0730": {
    "tier": "confirmed",
@@ -7661,8 +7670,8 @@
   "oq275-0625-1048": {
    "tier": "confirmed",
    "firstLikely": "10:48:38",
-   "firstConfirmed": "10:48:40",
-   "confirmedFrames": 60,
+   "firstConfirmed": "10:48:39",
+   "confirmedFrames": 61,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7782,8 +7791,8 @@
   "oq286-0626-1300": {
    "tier": "confirmed",
    "firstLikely": "13:00:17",
-   "firstConfirmed": "13:00:18",
-   "confirmedFrames": 82,
+   "firstConfirmed": "13:00:17",
+   "confirmedFrames": 83,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7793,8 +7802,8 @@
   "oq287-0626-1322": {
    "tier": "confirmed",
    "firstLikely": "13:22:38",
-   "firstConfirmed": "13:22:39",
-   "confirmedFrames": 61,
+   "firstConfirmed": "13:22:38",
+   "confirmedFrames": 62,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7815,8 +7824,8 @@
   "oq289-0626-1541": {
    "tier": "confirmed",
    "firstLikely": "15:41:17",
-   "firstConfirmed": "15:41:18",
-   "confirmedFrames": 82,
+   "firstConfirmed": "15:41:17",
+   "confirmedFrames": 83,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8259,8 +8268,8 @@
   "oq329-0701-2223": {
    "tier": "confirmed",
    "firstLikely": "22:23:52",
-   "firstConfirmed": "22:23:53",
-   "confirmedFrames": 47,
+   "firstConfirmed": "22:23:52",
+   "confirmedFrames": 48,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8391,8 +8400,8 @@
   "oq341-0703-0530": {
    "tier": "confirmed",
    "firstLikely": "05:30:24",
-   "firstConfirmed": "05:30:35",
-   "confirmedFrames": 65,
+   "firstConfirmed": "05:30:31",
+   "confirmedFrames": 69,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8578,8 +8587,8 @@
   "oq358-0706-0006": {
    "tier": "confirmed",
    "firstLikely": "00:06:46",
-   "firstConfirmed": "00:06:49",
-   "confirmedFrames": 51,
+   "firstConfirmed": "00:06:47",
+   "confirmedFrames": 53,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8601,9 +8610,9 @@
   },
   "oq360-0706-0255": {
    "tier": "confirmed",
-   "firstLikely": "02:55:06",
-   "firstConfirmed": "02:55:06",
-   "confirmedFrames": 94,
+   "firstLikely": "02:55:05",
+   "firstConfirmed": "02:55:05",
+   "confirmedFrames": 95,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8690,8 +8699,8 @@
   "oq368-0708-1325": {
    "tier": "confirmed",
    "firstLikely": "13:25:42",
-   "firstConfirmed": "13:25:44",
-   "confirmedFrames": 56,
+   "firstConfirmed": "13:25:43",
+   "confirmedFrames": 57,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
