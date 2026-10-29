@@ -58,7 +58,6 @@ import type { JapanMapProps, MapHandle, MapMode } from './mapTypes'
 import { drawTsunamiObsBars } from './gl/tsunamiObsBar'
 import { drawTsunamiArrivalMarkers } from './gl/tsunamiArrivalMarker'
 import { drawTsunamiMissingMarkers } from './gl/tsunamiMissingMarker'
-import { kyoshinIndexToJma } from '../../utils/kyoshinIntensity'
 import { log } from '../../utils/logger'
 import { beginSpan, noteEvent } from '../../utils/frameProfiler'
 import { serverNow } from '../../utils/clock'
@@ -131,8 +130,7 @@ export function JapanMapGL({
   kyoshinIndices = [],
   kyoshinStale,
   kyoshinSubIndices,
-  detectedPoints = [],
-  detectedMarkerPoints = NO_DETECTED_POINTS,
+  detectedPoints = NO_DETECTED_POINTS,
   candidatePoints = [],
   unconfirmedPoints = NO_DETECTED_POINTS,
   candidateId = null,
@@ -317,22 +315,21 @@ export function JapanMapGL({
   useEffect(() => {
     extrasRef.current = { bars: observationBars, arrivals: arrivalMarkers, missing: missingMarkers, iconScale, showBars: mode === 'tsunami' }
   }, [observationBars, arrivalMarkers, missingMarkers, iconScale, mode])
-  // カメラが追う検知点。**実際に地図へ描かれているものだけ**に揃える。
-  // detectedPoints（confirmed イベントのメンバーの和集合）は現在の震度で絞られていない
-  // （検知の memberKeys。値が下がりきった点も、検知が消えるまで残る）。一方マーカー側は現在の震度で二段に絞られる
-  // （震度0未満・欠測を描かない `gl/kyoshinDetectedFeatures.ts` ＋ 孤立した震度0を落とす
-  // `dropIsolatedZeroPoints`）。この差をカメラが引き継ぐと、大地震のあと画が全国に張り付いたまま
-  // 戻らない（2024-01-01 能登の再生で実測: 描かれている 70 点に対しフィット目標が 887 点）。
-  // 「検知が続いているか」の判定にはこのフィルタを通さない生の detectedPoints を使う
-  // （表示を整えるフィルタで検知の有無を書き換えないため。FitToDetectionGL の hasDetection 参照）。
+  // カメラが追う検知点。**実際に地図へ描かれているものだけ**に揃える（欠測の点は描かないので外す）。
+  // 震度0 未満の点も描くので寄せる先に入れる（2026-10-29 ユーザー選択「常に寄せる・下がった点は外す」）。
+  // 値が下がりきった点で画が全国に張り付かないよう、震度0 未満が続いた点は束の側で描く点から外してある
+  // （`kyoshinEnsembleTracker` の `drawnKeys`。2024-01-01 能登の再生では、旧エンジンで描かれている 70 点に対し
+  // 加わった点すべてが 887 点だった）。
+  // 「検知が続いているか」の判定には欠測を外す前の detectedPoints を使う
+  // （全員が欠測の瞬間に検知の有無を書き換えないため。FitToDetectionGL の hasDetection 参照）。
   const detectedFitPoints = useMemo(
-    () => detectedMarkerPoints.filter((p) => kyoshinIndexToJma(p.index) !== null),
-    [detectedMarkerPoints],
+    () => detectedPoints.filter((p) => p.index >= 0),
+    [detectedPoints],
   )
   // 波紋（`KyoshinMaxEffectGL`）の対象。検知点バッジ（`KyoshinDetectedPointsGL`）と同じ 2 本を合わせる。
   const rippleCandidatePoints = useMemo(
-    () => [...detectedMarkerPoints, ...unconfirmedPoints],
-    [detectedMarkerPoints, unconfirmedPoints],
+    () => [...detectedPoints, ...unconfirmedPoints],
+    [detectedPoints, unconfirmedPoints],
   )
   // EEW の派生データ（予想震度塗り／予想長周期塗り／震源／カメラ追従に含める区域の範囲）。
   const { eewAreaFills, eewLpgmRegionAggregates, eewEpicenters, eewFitPositions } = useEewLayerData(
@@ -368,9 +365,9 @@ export function JapanMapGL({
       !aggregateByRegion ? stationMarkers.map((m) => `${m.position[0]},${m.position[1]}`).join(';') : '',
       !aggregateByRegion && lpgmActive ? lpgmMarkers.map((m) => `${m.position[0]},${m.position[1]}`).join(';') : '',
       mode === 'kyoshin' ? kyoshinSites.length : 0,
-      mode === 'kyoshin' ? detectedMarkerPoints.map((p) => `${p.lat},${p.lng}`).join(';') : '',
-      // 検知点マーカーとして実際に描かれるのは detectedMarkerPoints と unconfirmedPoints の 2 本。
-      // detectedPoints（間引き前）と candidatePoints はカメラフィット専用のため含めない。
+      mode === 'kyoshin' ? detectedPoints.map((p) => `${p.lat},${p.lng}`).join(';') : '',
+      // 検知点マーカーとして描かれるのは detectedPoints と unconfirmedPoints の 2 本。
+      // candidatePoints はカメラフィット専用のため含めない。
       mode === 'kyoshin' ? unconfirmedPoints.map((p) => `${p.lat},${p.lng}`).join(';') : '',
       // 未入電の印（`quake-unreceived-points`）。出入りでラベルの退避をやり直す
       unreceivedMarkersVisible ? drawnUnreceivedMarkers.map((m) => `${m.position[0]},${m.position[1]}`).join(';') : '',
@@ -388,7 +385,7 @@ export function JapanMapGL({
     lpgmMarkers,
     mode,
     kyoshinSites,
-    detectedMarkerPoints,
+    detectedPoints,
     unconfirmedPoints,
     publicStationMarkers,
   ])
@@ -767,7 +764,7 @@ export function JapanMapGL({
           />
           <KyoshinPointsGL sites={kyoshinSites} indices={kyoshinIndices} stale={kyoshinStale} iconScale={iconScale} visible={mode === 'kyoshin'} />
           <KyoshinDetectedPointsGL
-            confirmedPoints={detectedMarkerPoints}
+            confirmedPoints={detectedPoints}
             unconfirmedPoints={unconfirmedPoints}
             iconScale={iconScale}
             visible={mode === 'kyoshin'}

@@ -121,8 +121,8 @@ export interface KyoshinDetectorV2Result {
    */
   detections: EnsembleDetection[]
   /**
-   * `detections` と同じデータ時刻に、直近に立ち上がった観測点キー（床の係の `recentOnsetKeys`）。検知点マーカー・
-   * 検知カードが「揺れが去った後に残る孤立した震度0点」を落とす判定と、同じ場所の 2 つ目の地震の合図に使う
+   * `detections` と同じデータ時刻に、直近に立ち上がった観測点キー（床の係の `recentOnsetKeys`）。
+   * 同じ場所の 2 つ目の地震の合図（`utils/kyoshinReonset.ts`）に使う
    */
   recentOnsetKeys: ReadonlySet<string>
   /** `detections` のデータ時刻（ISO 文字列）。強震モニタの取得の時刻とは、組み合わせの検知器が処理する遅れだけずれうる */
@@ -467,7 +467,7 @@ export function useKyoshinDetectorV2(
           ;(window as unknown as Record<string, unknown>).__kyoshinV2 = {
             detections,
             dataTimeMs: ms,
-            // 孤立した震度0点の間引き（kyoshinDetectionView.dropIsolatedZeroPoints）が効いているかを追う
+            // 同じ場所の 2 つ目の地震の合図（kyoshinReonset）が拾う立ち上がりの数を追う
             recentOnsetKeys: recent.size,
           }
           publishDiag()

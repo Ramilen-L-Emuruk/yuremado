@@ -7,7 +7,7 @@ const T0 = Date.UTC(2026, 0, 1)
 /** value = -3.0 + index * 0.5。震度2 は value 1.5〜2.5（index 9〜10）、震度3 は index 11 */
 const det = (over: Partial<EnsembleDetection>): EnsembleDetection => ({
   id: 'e1', confidence: 'confirmed', epicenter: [35, 135], originTimeMs: T0,
-  memberKeys: ['a', 'b', 'c'], maxIntensity: 2.0, firstConfirmedAtMs: T0 + 4000,
+  memberKeys: ['a', 'b', 'c'], drawnKeys: ['a', 'b', 'c'], maxIntensity: 2.0, firstConfirmedAtMs: T0 + 4000,
   confirmedSnapshot: { size: 6, maxIntensity: 2.0 }, sources: ['stat', 'cluster'], lastReportMs: T0 + 5000,
   ...over,
 })

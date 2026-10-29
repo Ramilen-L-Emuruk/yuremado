@@ -12,9 +12,10 @@ import { intensityGradeColor, measuredIntensityToGrade, type IntensityGrade } fr
 export function kyoshinIndexToJma(index: number | undefined): IntensityGrade | null {
   if (index == null) return null
   const value = -3.0 + index * 0.5
-  // **震度0 未満は描かない。** これは強震モニタ側の決め事（地図に点を出す下限）で、
-  // 気象庁の階級表の話ではない —— あちらの震度0 に下限は無い。描かないことは承認済み
-  // （2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。
+  // **震度0 未満は階級を返さない。** これは強震モニタ側の決め事（階級の付いたバッジを出す下限）で、
+  // 気象庁の階級表の話ではない —— あちらの震度0 に下限は無い（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。
+  // 検知に入った点だけは、階級の付かない印で地図に描く（`gl/kyoshinDetectedFeatures.ts`。
+  // 2026-10-29 ユーザー「検知しているなら描画するべきだと思います」）。
   if (!(value >= 0.0)) return null
   return measuredIntensityToGrade(value)
 }
@@ -43,6 +44,12 @@ export function detectionScaleLabelFromValue(value: number | null): string | nul
 
 /** 震度0 未満の揺れ検知の呼び名 */
 const DETECTION_BELOW_ZERO_LABEL = '0以下'
+
+/**
+ * 検知に入った震度0 未満の点の色（地図の文字なしの印と、検知カードの「0以下」の行で同じ色を使う）。
+ * 震度0 の配色（`SHINDO0_COLOR`）より淡い灰色で、階級の付いた点と見分ける
+ */
+export const KYOSHIN_SUB_ZERO_COLOR = '#c8ccd2'
 
 /**
  * 計測震度からリアルタイム震度インデックス(0〜20)を求める（kyoshinIndexToJmaの逆変換）。
