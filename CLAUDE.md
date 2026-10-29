@@ -2317,7 +2317,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 見出しに検知器の内部用語（統計・波面・近道のような部分の名前）を出すと、表を開いた利用者にはその語の手がかりが無い（部分は働きで呼ぶ） | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
 | 表示用の組み立て（`kyoshinEnsembleEvidence.ts`）を判定の入力にすると、表示専用の値が判定の一部になる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
 | 確かな段の一行を `confirmedSnapshot`（確定した瞬間の凍結）以外から作ると、収まりかけた後に点数も震度も確定した時と違って見える | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
-| 表の「加わった観測点」（束が生きている間に加わった点・減らない）とカード本文の観測点数（いま震度0以上の点）の違いを脚注で示さない、または地域番号を検知の id の順以外で振ると、同じ画面の 2 つの点数が食い違って見える、または並びが変わったときラベルだけ別の地域へ移る | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
+| 表の「加わった観測点」（束が生きている間に加わった点・減らない）とカード本文の観測点数（いま地図に描いている点）の違いを脚注で示さない、または地域番号を検知の id の順以外で振ると、同じ画面の 2 つの点数が食い違って見える、または並びが変わったときラベルだけ別の地域へ移る | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「判定の根拠を見せる」 |
 | 診断ログ（`detectionDiagnostics.ts`）の確定の内訳を、確かな段になった瞬間の `confirmedSnapshot` 以外から採ると、記録が画面の一行と黙って食い違う | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §12「判定の根拠も残す」 |
 | 震度0ドット表示フィルタの慢性ノイズ床（`chronicNoiseFloor`）を震度1以上のドット表示・最大効果表示にも適用すると、実測値をそのまま見せるべき表示が慢性ノイズ床で歪む | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「震度0ドット表示フィルタ」 |
 | 床を観測点と同じ並びの配列で渡す規則、またはその床が対象の観測点配列に対して計算されたものかを位置で使う前に照合する規則を崩すと、座標が重複する観測点の2つ目以降が別センサーの床で判定される、または観測点が差し替わった直後の1レンダーで新旧の対応がずれる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「震度0ドット表示フィルタ」・[`data-sources-spec.md`](docs/spec/data-sources-spec.md) §4「取得と再生の分離」 |
@@ -2334,7 +2334,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | リプレイの時間軸切替時に強震モニタの値（震度・データ時刻・観測点識別子・更新停止表示）をレンダー中に専用経路で落とす規則を崩すと、旧い時間軸の値が新しい画面に流れ込み、消えた地震・EEW で動く判定がそれを誤読する。`localArchiveId` 切替も巻き込むと揺れの最中に検知が鳴り直し、`stalled` を立てると通知が誤って抑制される | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「強震モニタは自分で落とす」・[`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §7「供給が作り直されたとき」 |
 | 別地点発報のエピソード状態をリプレイの開始・停止で落とさないと、時刻を前へ飛ばす切替では自動的に解けず、新しい時間軸で鳴らすべき別地点発報の検知音・通知が黙って抑え込まれる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「リプレイの開始・停止で落とすもの」 |
 | 欠測の保持値を捨てる条件（位置の対応が壊れた・時間軸が変わった）の順序を崩し、位置対応の判定を時刻のガードより後へ置くと、供給の作り直し直後に旧い時間軸の保持値が新しい軸の最初のフレームで蘇る | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「欠測の瞬断は直前値を保持して描く」 |
-| 検知点マーカー（地図）と検知カード（リアルタイムタブ）が共有する点集合・下限（全検知・震度0以上・App が用意した1本の点列）を崩すと、地図の表示と数値表示の点数が食い違う | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「検知点マーカーとカードの点数の一致」 |
+| 検知点マーカー（地図）と検知カード（リアルタイムタブ）が共有する点集合・下限（全検知・値のある点・App が用意した1本の点列）を崩すと、地図の表示と数値表示の点数が食い違う | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「検知点マーカーとカードの点数の一致」 |
 | 検知カードの震度分布バーの分母（`scalePeakRef`）を可視中も下げると、揺れが収まっていく最中にバーが伸びて「増えた」と誤読させる | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「検知カードの震度分布バーの幅スケール」 |
 | 非可視中だけ現在値へ張り直す規則を崩すと、前の揺れの減衰を見続けている最中に分母がピークのままでバーが実際より細く見え続ける（検知イベントが一度でも0件になればカードごとアンマウントされて分母は独立にリセットされるため、影響が及ぶのは同じ検知が続いている間だけ） | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「検知カードの震度分布バーの幅スケール」 |
 | 「別地点」の動的距離閾値（EEW ごとの個別判定を優先し、無ければエピソード起点でフォールバック・上下限で打ち止め）を崩すと、広域地震の伝播中に周辺地域を誤って「別地点」と連発する | [`kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) §8「別地点」判定の動的距離閾値 |
