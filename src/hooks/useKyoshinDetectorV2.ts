@@ -217,9 +217,9 @@ export const WARMUP_WAIT_MAX_FRAMES = 90
  * **文面はここが持ち、`consumeWarmup` は事実だけを返す。** 同じ出来事を 2 通りの言葉で書くと、
  * 片方だけ直したときに記録と実装が食い違う。
  */
-function logWarmupNotice(notice: WarmupNotice, supplyKey: string, sitesSiteConfigId: string, what: '助走' | '全滅区間の取り直し' = '助走'): void {
+function logWarmupNotice(notice: WarmupNotice, supplyKey: string, sitesSiteConfigId: string, what: '助走' | '抜けた区間の取り直し' = '助走'): void {
   if (what !== '助走') {
-    // **全滅区間の取り直し**（#986）は同じ消化を通るが、語を分ける（助走と取り違えると原因を追えない）。
+    // **抜けた区間の取り直し**（リプレイの全滅区間 #986・ライブの途切れ #1183）は同じ消化を通るが、語を分ける（助走と取り違えると原因を追えない）。
     const detail =
       notice.kind === 'gave-up'
         ? `${notice.waitedFrames} フレーム待っても届かないため、穴のまま検知を続けます`
@@ -347,13 +347,18 @@ export function useKyoshinDetectorV2(
    */
   const waitingWarmupRef = useRef(true)
   /**
-   * 全滅区間の取り直しを待っているなら、その番号（#986）。**待っていなければ `null`。**
+   * 抜けた区間の取り直し（リプレイの全滅区間 #986・ライブの途切れ #1183）を待っているなら、その番号。**待っていなければ `null`。**
    * 待つ間は助走と同じく通常フレームを {@link pendingRef} へ溜める（先に食わせると、後から届いた穴のフレームが
    * 「時刻の巻き戻り」として捨てられる）。上限（{@link WARMUP_WAIT_MAX_FRAMES}）まで待って届かなければ穴のまま進む。
    */
   const waitingBackfillRef = useRef<number | null>(null)
   /** 消化を済ませた取り直しの番号（同じ番号の `begin` で待ち直さないため）。 */
   const doneBackfillRef = useRef<number | null>(null)
+  /**
+   * 待ちきれずに穴のまま進めた取り直しの番号。その `frames` が後から届いたら 1 行残す（供給元は「取り直した」としか書けず、
+   * 使われなかったことはここでしか分からない）。
+   */
+  const gaveUpBackfillRef = useRef<number | null>(null)
   /** 助走が届くまで待たせている通常フレーム（時刻の昇順・観測点集合の識別子つき）。 */
   const pendingRef = useRef<PendingFrame[]>([])
   /**
@@ -590,6 +595,7 @@ export function useKyoshinDetectorV2(
         waitingWarmupRef.current = true
         waitingBackfillRef.current = null
         doneBackfillRef.current = null
+        gaveUpBackfillRef.current = null
         ensembleRef.current?.reset()
         // 学び直しの係が遅らせて持っていた秒も捨てる（数えた分は残す）
         learnerRef.current?.reset()
@@ -638,16 +644,26 @@ export function useKyoshinDetectorV2(
       return next
     }
 
-    // ---- 全滅区間の取り直しを待つか（#986。消化は助走の後）----
+    // ---- 抜けた区間の取り直しを待つか（#986・#1183。消化は助走の後）----
     //
     // **助走の待ちより先に見る。** 助走を待っている間は下で早く戻るので、後に置くと、待ちの間に届いた `begin` を
     // 見ないまま助走が明け、明けた後で古い `begin` に従って通常フレームを待たせてしまう。
+    if (
+      backfill !== null && backfill.supplyKey === supplyKey && backfill.frames !== null
+      && backfill.id === gaveUpBackfillRef.current
+    ) {
+      log.warn(
+        `[kyoshinV2] 待ちきれずに穴のまま進めた取り直しが後から届いたので使わない（supplyKey=${supplyKey}`
+          + `・捨てたフレーム ${backfill.frames.length} 件）`,
+      )
+      gaveUpBackfillRef.current = null
+    }
     if (backfill !== null && backfill.supplyKey === supplyKey && backfill.id !== doneBackfillRef.current) {
       if (waitingWarmupRef.current) {
         // **助走を待っている間の取り直しは使わない。** 助走の消化が最後に食わせた時刻を今のフレームの手前まで進めるので、
         // 後から届く穴のフレームは巻き戻りとして全部捨てられる（助走が穴の手前の履歴を作る）。
         log.warn(
-          `[kyoshinV2] 助走を待っている間に全滅区間の取り直しが始まったので使わない（supplyKey=${supplyKey}`
+          `[kyoshinV2] 助走を待っている間に抜けた区間の取り直しが始まったので使わない（supplyKey=${supplyKey}`
             + (backfill.frames === null ? '）' : `・捨てたフレーム ${backfill.frames.length} 件）`),
         )
         doneBackfillRef.current = backfill.id
@@ -684,7 +700,7 @@ export function useKyoshinDetectorV2(
       for (const notice of consumed.notices) logWarmupNotice(notice, supplyKey, sitesSiteConfigId)
     }
 
-    // ---- 全滅区間の取り直し（#986）----
+    // ---- 抜けた区間の取り直し（#986・#1183）----
     //
     // 供給元は取得が戻った秒を渡す**前に** `begin` を出すので、ここで待ちに入れば穴のフレームを先に食わせられる。
     if (waitingBackfillRef.current !== null && !waitingWarmupRef.current) {
@@ -706,8 +722,9 @@ export function useKyoshinDetectorV2(
       ensembleRef.current?.enqueue([...(ready ? (backfill.frames ?? []).map(toShadowFrame) : []), ...pendingToShadowFrames(pendingRef.current)])
       pendingRef.current = []
       doneBackfillRef.current = waitingBackfillRef.current
+      gaveUpBackfillRef.current = ready ? null : waitingBackfillRef.current
       waitingBackfillRef.current = null
-      for (const notice of consumed.notices) logWarmupNotice(notice, supplyKey, sitesSiteConfigId, '全滅区間の取り直し')
+      for (const notice of consumed.notices) logWarmupNotice(notice, supplyKey, sitesSiteConfigId, '抜けた区間の取り直し')
     }
 
     // 検知器へも積む。助走の消化と同じ回なら、このフレームは待たせた分として積み済みで、係が重なりとして捨てる。

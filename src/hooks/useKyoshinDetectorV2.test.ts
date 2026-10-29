@@ -7,7 +7,7 @@
 //   2. 慢性ノイズ床を観測点の並びで返し、どの観測点配列で計算したかを添える
 //   3. 結果を出せないフレームが続いたら、凍結した結果を表示へ流し続けない
 //   4. 時間軸が変わったら旧い軸の検知を引き継がない
-//   5. 助走・全滅区間の取り直しが届くまで通常フレームを待たせ、上限で諦める
+//   5. 助走・抜けた区間の取り直しが届くまで通常フレームを待たせ、上限で諦める
 // どれも「静かに劣化する」タイプの問題で、検知器の単体テストでは捉えられない。
 //
 // 主スレッドの係は `setTimeout(0)` で区切って動くので、偽のタイマーを `act()` の中で進めて結果を受け取る。
@@ -636,7 +636,7 @@ describe('useKyoshinDetectorV2: 助走', () => {
     expect(fake.pushed).toEqual([START_MS])
   })
 
-  describe('全滅区間の取り直し（#986）', () => {
+  describe('抜けた区間の取り直し（#986・#1183）', () => {
     /** 開始の `fromSec`〜`toSec` 秒後（含まない）を 1 秒刻みで。 */
     function holeFrames(fromSec: number, toSec: number) {
       const frames = []
@@ -680,11 +680,11 @@ describe('useKyoshinDetectorV2: 助走', () => {
       // 後から穴のフレームが届いても食わせない
       view.rerender({ t: at(3), b: { supplyKey: SUPPLY_KEY, id: 1, frames: [] } })
       expect(floorTimes(spy)).toEqual([START_MS - 2000, START_MS - 1000, START_MS, START_MS + 1000, START_MS + 2000, START_MS + 3000])
-      expect(warn.mock.calls.some((c) => String(c[0]).includes('助走を待っている間に全滅区間の取り直しが始まった'))).toBe(true)
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('助走を待っている間に抜けた区間の取り直しが始まった'))).toBe(true)
     })
 
     it('安全弁: 穴のフレームが届かないまま上限に達したら、穴のまま進む（同じ番号で待ち直さない）', () => {
-      vi.spyOn(log, 'warn').mockImplementation(() => {})
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
       const spy = vi.spyOn(noiseFloor, 'stepNoiseFloor')
       const view = mount()
       const begin = { supplyKey: SUPPLY_KEY, id: 1, frames: null }
@@ -692,6 +692,11 @@ describe('useKyoshinDetectorV2: 助走', () => {
       expect(spy).toHaveBeenCalledTimes(1 + WARMUP_WAIT_MAX_FRAMES)
       view.rerender({ t: at(10 + WARMUP_WAIT_MAX_FRAMES) })
       expect(spy).toHaveBeenCalledTimes(2 + WARMUP_WAIT_MAX_FRAMES)
+      // 諦めた後に届いた穴のフレームは食わせず、使わなかったことを 1 行だけ残す
+      view.rerender({ t: at(11 + WARMUP_WAIT_MAX_FRAMES), b: { supplyKey: SUPPLY_KEY, id: 1, frames: holeFrames(1, 10) } })
+      view.rerender({ t: at(12 + WARMUP_WAIT_MAX_FRAMES) })
+      expect(spy).toHaveBeenCalledTimes(4 + WARMUP_WAIT_MAX_FRAMES)
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('待ちきれずに穴のまま進めた取り直しが後から届いた'))).toHaveLength(1)
     })
   })
 

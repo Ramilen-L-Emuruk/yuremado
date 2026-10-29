@@ -59,7 +59,7 @@ export interface KyoshinRealtime {
    * （`KyoshinSourceSink.prefill`）なので、待ちが解けないままにはならない。
    */
   warmup: KyoshinWarmup | null
-  /** 全滅区間の取り直し（→ {@link KyoshinBackfill}）。無ければ `null`。 */
+  /** 抜けた区間の取り直し（リプレイの全滅区間・ライブの途切れ。→ {@link KyoshinBackfill}）。無ければ `null`。 */
   backfill: KyoshinBackfill | null
 }
 

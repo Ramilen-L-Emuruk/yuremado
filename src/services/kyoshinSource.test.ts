@@ -3,6 +3,8 @@ import {
   createYahooLiveSource,
   createYahooArchiveSource,
   FETCH_OFFSET_MS,
+  LIVE_BACKFILL_MAX_MS,
+  LIVE_GAP_BACKFILL_AFTER_MS,
   POLL_MS,
   REALTIME_MAX_RETRY_COUNT,
   REPLAY_LEAD_MS,
@@ -25,6 +27,7 @@ import {
 import { fetchRealtimeIntensity, fetchSiteList, startClockSync } from './kyoshin'
 import type { RealtimeIntensity } from './kyoshin'
 import { setReplayOffset } from '../utils/clock'
+import { MAX_RESUME_GAP_MS } from '../utils/kyoshinNoiseFloor'
 import { log } from '../utils/logger'
 
 // 取得そのものではなくスケジューリング（いつ・どのデータ時刻を取りに行くか、何回で諦めるか）を
@@ -64,7 +67,7 @@ function createSink() {
   const stalled: boolean[] = []
   /** 助走として渡された回ぶんのフレーム列（1 度しか呼ばれない契約を確かめるため配列で持つ）。 */
   const prefilled: KyoshinFrame[][] = []
-  /** 全滅区間の取り直しとして渡されたもの（#986）。 */
+  /** 抜けた区間の取り直しとして渡されたもの（リプレイの全滅区間 #986・ライブの途切れ #1183）。 */
   const backfills: KyoshinBackfillEvent[] = []
   return {
     frames,
@@ -265,6 +268,146 @@ describe('Yahoo 強震モニタソース', () => {
       source.stop()
 
       expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterStalled)
+    })
+
+    // #1183: ライブで秒が飛んだら、飛んだ先の秒を渡す前に間の秒を取り直して検知エンジンへ流す。
+    // 途切れは「ある秒の取得が遅れて返り、次の秒が最新へ跳ぶ」形で作る（タブが隠れて発火が遅れたときと同じ跳び方）。
+    describe('途切れた区間の取り直し', () => {
+      const T0 = NOW - FETCH_OFFSET_MS
+      /** 2 つ目の秒（T0 + 1 秒）の取得を `delayMs` だけ遅らせ、それ以外はすぐ返す */
+      const delaySecondFetch = (delayMs: number) => {
+        fetchMock.mockImplementation((t: Date) => {
+          if (t.getTime() === T0 + POLL_MS) return new Promise((resolve) => setTimeout(() => resolve(response()), delayMs))
+          return Promise.resolve(response())
+        })
+      }
+      /** 受け取った順（取り直しの合図と通常のフレーム）を 1 本の列で控える */
+      const orderedSink = () => {
+        const sink = createSink()
+        const order: string[] = []
+        return {
+          ...sink,
+          order,
+          enqueue: (f: KyoshinFrame) => { order.push(`enqueue ${f.time.getTime() - T0}`); sink.enqueue(f) },
+          backfill: (e: KyoshinBackfillEvent) => { order.push(e.kind); sink.backfill(e) },
+        }
+      }
+
+      it('正: LIVE_GAP_BACKFILL_AFTER_MS を超えて跳んだら、跳んだ先の秒を渡す前に取り直しを始め、間の秒を検知へだけ流す', async () => {
+        delaySecondFetch(15_000)
+        const sink = orderedSink()
+        const source = createYahooLiveSource()
+        source.start(sink)
+        await vi.advanceTimersByTimeAsync(POLL_MS + 15_000)
+        // 遅れた応答の後の秒は 0 ミリ秒の予約で取りに行く。次の秒（さらに 1 秒後）の手前まで進めて止める
+        await vi.advanceTimersByTimeAsync(POLL_MS / 2)
+        source.stop()
+
+        // 2 つ目の秒（+1 秒）の次は、最新（+16 秒）へ跳んでいる
+        const jumpTo = 16_000
+        expect(LIVE_GAP_BACKFILL_AFTER_MS).toBeLessThan(jumpTo - POLL_MS)
+        // `begin` は跳んだ先の秒より前（後だと穴のフレームが巻き戻りとして捨てられる）
+        expect(sink.order.indexOf('begin')).toBeGreaterThanOrEqual(0)
+        expect(sink.order.indexOf('begin')).toBeLessThan(sink.order.indexOf(`enqueue ${jumpTo}`))
+        // 間の秒（+2〜+15 秒）を時刻の昇順で取り直して渡す
+        const frames = sink.backfills.find((e) => e.kind === 'frames')
+        expect(frames?.kind === 'frames' && frames.frames.map((f) => f.time.getTime() - T0))
+          .toEqual(Array.from({ length: (jumpTo - 2 * POLL_MS) / POLL_MS }, (_, i) => (i + 2) * POLL_MS))
+        // 画面へ出すフレーム（enqueue）には間の秒を混ぜない
+        expect(sink.frames.map((f) => f.time.getTime() - T0)).toEqual([0, POLL_MS, jumpTo])
+      })
+
+      it('対照: ちょうど LIVE_GAP_BACKFILL_AFTER_MS の飛びでは取り直さない', async () => {
+        // 2 つ目の秒（+1 秒）が 10 秒遅れて返ると、次は +11 秒＝ちょうど 10 秒の飛び
+        delaySecondFetch(LIVE_GAP_BACKFILL_AFTER_MS)
+        const sink = orderedSink()
+        const source = createYahooLiveSource()
+        source.start(sink)
+        await vi.advanceTimersByTimeAsync(POLL_MS + LIVE_GAP_BACKFILL_AFTER_MS)
+        // 遅れた応答の後の秒は 0 ミリ秒の予約で取りに行く。次の秒（さらに 1 秒後）の手前まで進めて止める
+        await vi.advanceTimersByTimeAsync(POLL_MS / 2)
+        source.stop()
+
+        expect(sink.frames.map((f) => f.time.getTime() - T0)).toEqual([0, POLL_MS, POLL_MS + LIVE_GAP_BACKFILL_AFTER_MS])
+        expect(sink.backfills).toEqual([])
+      })
+
+      it('正: 取り直しの最中にまた跳んだら、2 本目は始めず範囲を伸ばし、2 つの穴を 1 回の frames で時刻の昇順に渡す', async () => {
+        // +1 秒の取得を 15 秒遅らせて +16 秒へ跳ばす。1 つ目の穴（+2〜+15 秒）の取り直しは 20 秒かかる。
+        // その間に +17 秒の取得を 15 秒遅らせて +32 秒へ跳ばす（2 つ目の穴 +18〜+31 秒）
+        const delayed = new Map<number, number>([[POLL_MS, 15_000], [17_000, 15_000]])
+        fetchMock.mockImplementation((t: Date) => {
+          const d = t.getTime() - T0
+          const wait = delayed.get(d) ?? (d >= 2 * POLL_MS && d <= 15_000 ? 20_000 : 0)
+          delayed.delete(d)
+          if (wait === 0) return Promise.resolve(response())
+          return new Promise((resolve) => setTimeout(() => resolve(response()), wait))
+        })
+        const sink = orderedSink()
+        const source = createYahooLiveSource()
+        source.start(sink)
+        await vi.advanceTimersByTimeAsync(40_000)
+        source.stop()
+
+        expect(sink.backfills.filter((e) => e.kind === 'begin')).toHaveLength(1)
+        const frames = sink.backfills.filter((e) => e.kind === 'frames')
+        expect(frames).toHaveLength(1)
+        // 1 つ目の穴・間の渡し済みの秒（取り直す）・2 つ目の穴を、時刻の昇順で。2 つ目に跳んだ先は `serverNow` の端数を持つので
+        // 秒で比べる（取得は秒へ切り捨てて訊く）
+        expect(frames[0].kind === 'frames' && frames[0].frames.map((f) => Math.floor((f.time.getTime() - T0) / POLL_MS) * POLL_MS))
+          .toEqual(Array.from({ length: 30 }, (_, i) => (i + 2) * POLL_MS))
+      })
+
+      it('正: 60 秒（LIVE_BACKFILL_MAX_MS）を超えても、古い側を切ると残る途切れが 60 秒以内なら穴全体を取る', async () => {
+        // 前に渡した秒は +1 秒、跳んだ先は +91 秒。新しい側 60 秒だけ取ると +1〜+31 秒の 30 秒の途切れが残り、続きとして繋がれる
+        delaySecondFetch(90_000)
+        const sink = orderedSink()
+        const source = createYahooLiveSource()
+        source.start(sink)
+        await vi.advanceTimersByTimeAsync(POLL_MS + 90_000)
+        await vi.advanceTimersByTimeAsync(POLL_MS / 2)
+        source.stop()
+
+        const jumpTo = 91_000
+        const frames = sink.backfills.find((e) => e.kind === 'frames')
+        expect(frames?.kind === 'frames' && frames.frames.map((f) => f.time.getTime() - T0))
+          .toEqual(Array.from({ length: (jumpTo - 2 * POLL_MS) / POLL_MS }, (_, i) => (i + 2) * POLL_MS))
+      })
+
+      it('対照: 古い側を切ると残る途切れが 60 秒を超える穴は、跳んだ先に近い側の 60 秒だけを取る', async () => {
+        // 前に渡した秒は +1 秒、跳んだ先は +131 秒。新しい側 60 秒は +71〜+130 秒で、+1〜+71 秒の 70 秒の途切れは検知エンジンが作り直す
+        delaySecondFetch(130_000)
+        const sink = orderedSink()
+        const source = createYahooLiveSource()
+        source.start(sink)
+        await vi.advanceTimersByTimeAsync(POLL_MS + 130_000)
+        await vi.advanceTimersByTimeAsync(POLL_MS / 2)
+        source.stop()
+
+        const jumpTo = 131_000
+        const frames = sink.backfills.find((e) => e.kind === 'frames')
+        expect(frames?.kind === 'frames' && frames.frames.map((f) => f.time.getTime() - T0))
+          .toEqual(Array.from({ length: LIVE_BACKFILL_MAX_MS / POLL_MS }, (_, i) => jumpTo - LIVE_BACKFILL_MAX_MS + i * POLL_MS))
+        expect(jumpTo - LIVE_BACKFILL_MAX_MS - POLL_MS).toBeGreaterThan(MAX_RESUME_GAP_MS)
+      })
+
+      it('安全弁: ライブの取り直しは秒フレームの控えを使わない（ライブの取得と同じ）', async () => {
+        delaySecondFetch(15_000)
+        const sink = orderedSink()
+        const source = createYahooLiveSource()
+        source.start(sink)
+        await vi.advanceTimersByTimeAsync(POLL_MS + 15_000)
+        // 遅れた応答の後の秒は 0 ミリ秒の予約で取りに行く。次の秒（さらに 1 秒後）の手前まで進めて止める
+        await vi.advanceTimersByTimeAsync(POLL_MS / 2)
+        source.stop()
+
+        const holeCalls = fetchMock.mock.calls.filter(([t]) => {
+          const d = t.getTime() - T0
+          return d >= 2 * POLL_MS && d < 16_000
+        })
+        expect(holeCalls.length).toBeGreaterThan(0)
+        for (const [, opts] of holeCalls) expect(opts).toEqual({ cache: false })
+      })
     })
 
     it('クロック同期を起動し、停止時に解除する', () => {
@@ -769,8 +912,8 @@ describe('取得が失敗し続けたときの間隔と打ち切り', () => {
       expect(backfills).toEqual([])
     })
 
-    // 安全弁（#986）: 取り直しの最中にまた全滅から戻っても、2 本目は重ねない（重ねると、受け取る側が先の穴を
-    // 食わせた後に次の穴が巻き戻りとして捨てられる）。重ねなかったことは warn で残す。
+    // 安全弁（#986・#1183）: 取り直しの最中にまた全滅から戻っても、2 本目は始めない（別の `begin` を出すと、受け取る側が先の穴を
+    // 食わせた後に次の穴が巻き戻りとして捨てられる）。走っている取り直しを伸ばし、`frames` は 1 回だけ出す。
     it('安全弁: 取り直しの最中にまた全滅から戻っても、2 本目の取り直しは始めない', async () => {
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
       let phase: 'down' | 'up' = 'down'
@@ -802,7 +945,8 @@ describe('取得が失敗し続けたときの間隔と打ち切り', () => {
       source.stop()
 
       expect(backfills.filter((e) => e.kind === 'begin')).toHaveLength(1)
-      expect(warn.mock.calls.some((c) => String(c[0]).includes('取り直しの最中にまた全滅から戻った'))).toBe(true)
+      // 1 本目の穴の秒が返らないので、伸ばした取り直しもまだ渡していない
+      expect(backfills.filter((e) => e.kind === 'frames')).toHaveLength(0)
       warn.mockRestore()
     })
 
