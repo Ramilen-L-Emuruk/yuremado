@@ -70,10 +70,13 @@ describe('検知カードは渡された点列をそのまま集計する', () =
     expect(screen.getByText(/3観測点で反応/)).toBeTruthy()
   })
 
-  it('震度0未満・欠測は数えない（地図の描画判定と同じ下限）', () => {
-    // index 5 = value -0.5（震度0未満）・index -1 = 欠測。どちらも階級が取れない
+  // 2026-10-29 ユーザー選択「棒に「0以下」を足す (Recommended)」（地図が震度0 未満の印を描くので、同じ点を数える）
+  it('震度0未満は「0以下」の行に数えて反応点数へ足し、欠測は数えない（地図の描画判定と同じ）', () => {
+    // index 5 = value -0.5（震度0未満）・index -1 = 欠測
     renderTab(confirmed, [P('a', 7), P('sub', 5), P('missing', -1)])
-    expect(screen.getByText(/1観測点で反応/)).toBeTruthy()
+    expect(screen.getByText(/2観測点で反応/)).toBeTruthy()
+    const rowOfLabel = screen.getByText('0以下').parentElement?.textContent ?? ''
+    expect(rowOfLabel).toMatch(/1点$/)
   })
 
   it('点列が空なら「反応は収まりました」に切り替わる（イベントは生きている）', () => {
@@ -81,32 +84,35 @@ describe('検知カードは渡された点列をそのまま集計する', () =
     expect(screen.getByText(/観測点の反応は収まりました/)).toBeTruthy()
   })
 
-  // 2026-10-29 ユーザー選択「「震度0以下」で出す (Recommended)」
-  describe('確かな段で加わった点が全員震度0未満のとき', () => {
+  // 2026-10-29 ユーザー選択「「震度0以下」で出す (Recommended)」「地図と同じ点を数える (Recommended)」
+  // 「「0以下」の行を出す (Recommended)」
+  describe('震度0以上の点が無く、震度0未満の点だけがあるとき', () => {
     const members = (...keys: string[]) => [fakeEvent({ id: 'evt-c', confidence: 'confirmed', memberKeys: keys })]
 
     it('正: 「震度0以下の反応」と出し、推定最大震度は「0以下」', () => {
       // index 5・4 = 震度0未満・index -1 = 欠測（欠測は数えない）
       renderTab(members('sub1', 'sub2', 'missing'), [P('sub1', 5), P('sub2', 4), P('missing', -1)])
       expect(screen.getByText(/2観測点で震度0以下の反応/)).toBeTruthy()
-      expect(screen.getByText('0以下')).toBeTruthy()
+      // 推定最大震度と「0以下」の行の 2 箇所に出る
+      expect(screen.getAllByText('0以下')).toHaveLength(2)
       expect(screen.queryByText(/観測点の反応は収まりました/)).toBeNull()
     })
 
-    it('対照: 早い段なら震度0未満だけでも「反応は収まりました」のまま', () => {
+    it('対照: 早い段なら本文は「反応は収まりました」のまま、「0以下」の行だけを出す', () => {
       renderTab([fakeEvent({ id: 'evt-3', confidence: 'likely', memberKeys: ['sub1'] })], [P('sub1', 5)])
       expect(screen.getByText(/観測点の反応は収まりました/)).toBeTruthy()
-      expect(screen.queryByText('0以下')).toBeNull()
+      expect(screen.queryByText(/震度0以下の反応/)).toBeNull()
+      const rowOfLabel = screen.getByText('0以下').parentElement?.textContent ?? ''
+      expect(rowOfLabel).toMatch(/1点$/)
     })
 
-    it('対照: 震度0未満の点が早い段の検知の点だけなら数えない（確かな段の話として出さない）', () => {
+    it('正: 確かな段なら、早い段の検知の点も地図と同じく数える', () => {
       const events = [
         fakeEvent({ id: 'evt-c', confidence: 'confirmed', memberKeys: ['missing'] }),
         fakeEvent({ id: 'evt-l', confidence: 'likely', memberKeys: ['early'] }),
       ]
       renderTab(events, [P('missing', -1), P('early', 3)])
-      expect(screen.getByText(/観測点の反応は収まりました/)).toBeTruthy()
-      expect(screen.queryByText('0以下')).toBeNull()
+      expect(screen.getByText(/1観測点で震度0以下の反応/)).toBeTruthy()
     })
 
     it('安全弁: 全員欠測なら「反応は収まりました」（欠測を震度0以下と言わない）', () => {
@@ -115,9 +121,9 @@ describe('検知カードは渡された点列をそのまま集計する', () =
       expect(screen.queryByText('0以下')).toBeNull()
     })
 
-    it('安全弁: いまのフレームで欠測の点（直前の値を保持して描いている点）は数えない', () => {
+    it('正: 直前の値を保持して描いている点も、地図と同じく数える', () => {
       renderTab(members('held', 'sub'), [{ ...P('held', 5), stale: true }, P('sub', 4)])
-      expect(screen.getByText(/1観測点で震度0以下の反応/)).toBeTruthy()
+      expect(screen.getByText(/2観測点で震度0以下の反応/)).toBeTruthy()
     })
   })
 

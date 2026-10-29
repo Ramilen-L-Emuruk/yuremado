@@ -20,30 +20,48 @@ const IDX_MISSING = -1
 
 const BASE_RADIUS = 32 // KYOSHIN_DETECTED_ICON_BASE_RADIUS
 
-describe('buildDetectedFC: 震度0未満・欠測の点は描かない', () => {
-  it('震度0未満（index 5 以下）の点は feature にならない', () => {
+// 2026-10-29 に覆した: 震度0 未満の点も検知に加わっていれば描く（ユーザー「すみません、地図に書かない決まりを撤回したいです。
+// 検知しているなら描画するべきだと思います」）。値が下がりきった点で地図が埋まる 2026-08-18 の症状は、
+// 束の側で震度0 未満が続いた点を描く点から外して防ぐ（kyoshinEnsembleTracker の drawnKeys）。
+describe('buildDetectedFC: 震度0未満は文字なしの印で描き、欠測は描かない', () => {
+  it('正: 震度0未満（index 0〜5）の点は文字なしの印の feature になる', () => {
     const fc = buildDetectedFC([P(35, 139, IDX_BELOW_ZERO), P(35.1, 139.1, 0)], [], 1)
-    expect(fc.features).toHaveLength(0)
+    expect(fc.features.map((f) => f.properties?.iconId)).toEqual([
+      'kyoshin-detected-badge-subzero-confirmed',
+      'kyoshin-detected-badge-subzero-confirmed',
+    ])
   })
 
-  it('欠測（index -1）の点は feature にならない', () => {
+  it('安全弁: 欠測（index -1）の点は feature にならない', () => {
     const fc = buildDetectedFC([P(35, 139, IDX_MISSING)], [], 1)
     expect(fc.features).toHaveLength(0)
   })
 
-  it('震度0以上の点だけが残る（混在時）', () => {
+  it('対照: 震度0以上は震度のバッジのまま、混在しても欠測だけが落ちる', () => {
     const fc = buildDetectedFC(
       [P(35, 139, IDX_SHINDO0), P(35.1, 139.1, IDX_BELOW_ZERO), P(35.2, 139.2, IDX_SHINDO1), P(35.3, 139.3, IDX_MISSING)],
       [],
       1,
     )
-    expect(fc.features.map((f) => f.properties?.index)).toEqual([IDX_SHINDO0, IDX_SHINDO1])
+    expect(fc.features.map((f) => f.properties?.iconId)).toEqual([
+      'kyoshin-detected-badge-0-confirmed',
+      'kyoshin-detected-badge-subzero-confirmed',
+      'kyoshin-detected-badge-1-confirmed',
+    ])
   })
 
-  it('unconfirmed 側にも同じ除外が効く', () => {
+  it('unconfirmed 側の震度0未満は candidate の印になる', () => {
     const fc = buildDetectedFC([], [P(35, 139, IDX_BELOW_ZERO), P(35.1, 139.1, IDX_SHINDO0)], 1)
-    expect(fc.features).toHaveLength(1)
-    expect(fc.features[0]?.properties?.index).toBe(IDX_SHINDO0)
+    expect(fc.features.map((f) => f.properties?.iconId)).toEqual([
+      'kyoshin-detected-badge-subzero-candidate',
+      'kyoshin-detected-badge-0-candidate',
+    ])
+  })
+
+  it('震度0未満の印は震度0のバッジより小さい', () => {
+    const fc = buildDetectedFC([P(35, 139, IDX_BELOW_ZERO), P(35.1, 139.1, IDX_SHINDO0)], [], 1)
+    const [sub, zero] = fc.features.map((f) => f.properties?.iconSizeRatio as number)
+    expect(sub).toBeLessThan(zero)
   })
 })
 

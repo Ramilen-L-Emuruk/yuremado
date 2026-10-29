@@ -14,7 +14,7 @@ import { addOrderedLayer } from './gl/layerOrder'
 // 以前は全観測点の生値の最大を見ていて、控えの 795 窓では波紋 1,554 回のうち 1,126 回（72%）が
 // 検知の外の点だった（平常の 14.3 時間では 290 回中 289 回）。検知エンジンを通らない 1 点の跳ねで
 // 光るため、検知に入った点だけに絞った（2026-10-22 ユーザー選択「検知に入った点だけにする」）。
-// 対象は確定・可能性・兆候のメンバー（weak を除く。孤立した震度0 を落とした後）で、
+// 対象は確かな段・早い段の描く点（`drawnKeys`）で、
 // 検知点バッジ・検知カードと同じ集合（2026-10-24 ユーザー選択「検知点バッジと同じ点」）。
 // 円の stroke を DURATION ミリ秒かけて拡大＋フェードさせる。
 //
@@ -112,7 +112,7 @@ interface Ripple {
 }
 
 interface Props {
-  /** 検知に入った点（`detectedMarkerPoints` と `unconfirmedPoints` を合わせたもの）。 */
+  /** 検知に入った点（`detectedPoints` と `unconfirmedPoints` を合わせたもの）。 */
   points: readonly DetectedPoint[]
   iconScale: number
   visible: boolean

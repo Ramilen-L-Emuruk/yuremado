@@ -7,11 +7,33 @@
  *
  * - 段階は戻さない。一度確かな段の行が出た束は、その後に早い段の行しか出なくても確かな段のまま
  * - 加わった観測点は、束が生きている間に報告された点をすべて合わせる（減らさない）
+ * - 地図に描く点（とカメラの寄せ先）は別に持つ。加わった点のうち、震度0 未満が `DRAWN_FADE_MS` 続いた点を外す（`drawnKeys`）
  * - 検知を消すのは、束ね役が束を捨てるのと同じとき（どの部分からも `ENSEMBLE_KEEP_MS` 報告されなかった）
  */
 import { computeSiteKeys, indexToValue } from './kyoshinSiteKeys'
 import { ENSEMBLE_KEEP_MS, type DetectorFrame, type EnsembleReport, type EnsembleSource } from './kyoshinEnsembleDetector'
 import type { QuietTables } from './kyoshinQuietTables'
+
+/**
+ * 加わった点を地図に描く点から外すまでの、震度0 未満が続いた長さ（ミリ秒）。
+ * 測るのは最後に震度0 以上だった秒からの長さで、震度0 以上へ戻ったら描き直す。欠測の秒は震度0 以上に数えない
+ * （欠測の点はどのみち地図に描かれず、カメラの寄せ先からも外れる）。
+ * 外すと描く点が 1 つも残らない束では、最後に震度0 以上だった時刻がいちばん新しい点（同じ秒なら全部）だけを残す
+ * （カメラの寄せ先を空にしないため。加わった点すべてへ戻すと、収まる直前に印とカメラの範囲が一斉に跳ねる。
+ * 2026-10-29 ユーザー選択「最後まで残っていた点だけ (Recommended)」）。
+ * 2026-10-29 ユーザー選択「60秒＋空にしない守り (Recommended)」（評価台の値は設計書§45）
+ */
+export const DRAWN_FADE_MS = 60_000
+
+/** 加わった点のうち、最後に震度0 以上だった時刻がいちばん新しい点（同じ秒なら全部）。描く点が空になるときの残し先 */
+function lastToFade(members: number[], lastUpMs: Map<number, number>): number[] {
+  let latest = -Infinity
+  for (const i of members) latest = Math.max(latest, lastUpMs.get(i) ?? -Infinity)
+  return members.filter(i => lastUpMs.get(i) === latest)
+}
+
+/** 震度インデックスのうち計測震度 0.0（震度0 の下端）。これ未満が「震度0 未満」 */
+const ZERO_INDEX = 6
 
 /** 束ね役のうち、ここが使う口。テストで偽物を差し込めるよう、生の束ね役ではなくこれを受け取る */
 export interface EnsembleReporter {
@@ -31,6 +53,11 @@ export interface EnsembleDetection {
   originTimeMs: number
   /** 加わった観測点の鍵（`computeSiteKeys`）。加わった順 */
   memberKeys: string[]
+  /**
+   * 加わった観測点のうち、地図に描く点（とカメラの寄せ先）の鍵。加わった順。
+   * 震度0 未満が `DRAWN_FADE_MS` 続いた点を外す。`memberKeys` と違って減ることがあるが、空にはならない
+   */
+  drawnKeys: string[]
   /** 加わった観測点のいまの計測震度の最大。いま全員が欠測なら null */
   maxIntensity: number | null
   /** 初めて確かな段になったデータ時刻。まだなら null */
@@ -53,6 +80,8 @@ interface State {
   originTimeMs: number
   members: number[]
   memberSet: Set<number>
+  /** 点ごとの、最後に震度0 以上だった（まだなら加わった）データ時刻 */
+  lastUpMs: Map<number, number>
   firstConfirmedAtMs: number | null
   confirmedSnapshot: { size: number; maxIntensity: number | null } | null
   sources: Set<EnsembleSource>
@@ -86,7 +115,7 @@ export function createEnsembleTracker(sites: [number, number][], reporter: Ensem
       for (const r of reporter.push(f)) {
         let s = live.get(r.id)
         if (!s) {
-          s = { id: r.id, confirmed: false, epicenter: [r.lat, r.lng], originTimeMs: r.startMs, members: [], memberSet: new Set(), firstConfirmedAtMs: null, confirmedSnapshot: null, sources: new Set(), lastReportMs: f.ms }
+          s = { id: r.id, confirmed: false, epicenter: [r.lat, r.lng], originTimeMs: r.startMs, members: [], memberSet: new Set(), lastUpMs: new Map(), firstConfirmedAtMs: null, confirmedSnapshot: null, sources: new Set(), lastReportMs: f.ms }
           live.set(r.id, s)
         }
         s.lastReportMs = f.ms
@@ -94,12 +123,18 @@ export function createEnsembleTracker(sites: [number, number][], reporter: Ensem
           s.confirmed = true
           s.firstConfirmedAtMs = f.ms
         }
-        for (const i of r.sites) if (!s.memberSet.has(i)) { s.memberSet.add(i); s.members.push(i) }
+        for (const i of r.sites) if (!s.memberSet.has(i)) { s.memberSet.add(i); s.members.push(i); s.lastUpMs.set(i, f.ms) }
         for (const src of r.sources) s.sources.add(src)
       }
       for (const [id, s] of live) if (f.ms - s.lastReportMs > ENSEMBLE_KEEP_MS) live.delete(id)
       const out: EnsembleDetection[] = []
       for (const s of live.values()) {
+        const drawn: number[] = []
+        for (const i of s.members) {
+          if (f.values[i] >= ZERO_INDEX) s.lastUpMs.set(i, f.ms)
+          if (f.ms - (s.lastUpMs.get(i) ?? f.ms) <= DRAWN_FADE_MS) drawn.push(i)
+        }
+        const drawnMembers = drawn.length > 0 ? drawn : lastToFade(s.members, s.lastUpMs)
         const max = maxIntensityOf(s.members, f.values)
         // 確かな段になった秒の観測点をすべて足し終えてから控える（同じ秒の別の行が点を足すことがある）
         if (s.firstConfirmedAtMs === f.ms && s.confirmedSnapshot === null) s.confirmedSnapshot = { size: s.members.length, maxIntensity: max }
@@ -109,6 +144,7 @@ export function createEnsembleTracker(sites: [number, number][], reporter: Ensem
           epicenter: s.epicenter,
           originTimeMs: s.originTimeMs,
           memberKeys: s.members.map(i => keys[i]),
+          drawnKeys: drawnMembers.map(i => keys[i]),
           maxIntensity: max,
           firstConfirmedAtMs: s.firstConfirmedAtMs,
           confirmedSnapshot: s.confirmedSnapshot,

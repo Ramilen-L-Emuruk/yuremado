@@ -16,7 +16,7 @@ import { formatDateTime, formatDepth, formatMagnitudeWithCondition, hasDepth, ha
 import { getIntensityColor, getIntensityLabel, getEewAreaIntensityLabel, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabel, getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
 import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, isEewLpgmClassZeroForecast, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst, eewIssueTimeMs } from '../../utils/eew'
-import { kyoshinDetectionScaleLabel, kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
+import { KYOSHIN_SUB_ZERO_COLOR, kyoshinDetectionScaleLabel, kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 import { readableTextColor } from '../../utils/contrast'
 import { DescriptionTip } from '../DescriptionTip'
@@ -57,7 +57,7 @@ interface Props {
   kyoshinV2Detections: readonly EnsembleDetection[]
   /**
    * 検知カードが集計する観測点。**地図の検知点マーカーが描くのと同一の点列**を受け取る
-   * （`deriveKyoshinView` が孤立した震度0点を除いて用意する。両者で別々に計算すると黙って食い違う）。
+   * （`deriveKyoshinView` が描く点（`drawnKeys`）から用意する。両者で別々に計算すると黙って食い違う）。
    */
   kyoshinDetectedPoints: DetectedPoint[]
   /**
@@ -1414,18 +1414,22 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   const time = new Date(earliestMs).toLocaleTimeString('ja-JP', { hour12: false })
 
   // 点列は地図の検知点マーカーと**同一のもの**を props で受け取る（`deriveKyoshinView` が
-  // 孤立した震度0点を除いて用意する）。以前はここでも同じ計算を組み立てていたが、同じ入力から
+  // 描く点（`drawnKeys`）から用意する）。以前はここでも同じ計算を組み立てていたが、同じ入力から
   // 同じ結果になることに頼ると、片方の実装を変えたときに黙って食い違う。
-  // 数える対象は「現在震度0以上（計測震度 0.0 以上）の点」だけで、判定は kyoshinIndexToLabel が
-  // 震度階級を返すかどうかに委ねる（震度0未満・欠測は null）。地図の検知点マーカー
-  // （gl/kyoshinDetectedFeatures.ts の buildFeatures）も同じ判定で描くかどうかを決めており、
-  // ここと基準を分けると表示点数が食い違う。
+  // 数える対象は地図が描く点と同じ「値のある点」（欠測は数えない）。震度階級の付く点は階級ごとの行へ、
+  // 震度0 未満の点は一番下の「0以下」の行へ数える（地図の文字なしの印と同じ点。2026-10-29 ユーザー選択
+  // 「棒に「0以下」を足す (Recommended)」）。地図の検知点マーカー（gl/kyoshinDetectedFeatures.ts の
+  // buildFeatures）も同じ判定で描き分けており、ここと基準を分けると表示点数が食い違う。
   const counts = new Map<string, { color: string; count: number }>()
   let maxIndex = 0
   let activeCount = 0
+  let subZeroCount = 0
   for (const p of points) {
     const label = kyoshinIndexToLabel(p.index)
-    if (!label) continue
+    if (!label) {
+      if (p.index >= 0) subZeroCount++
+      continue
+    }
     if (!counts.has(label)) counts.set(label, { color: kyoshinIntensityColor(p.index) ?? '#9ca3af', count: 0 })
     counts.get(label)!.count++
     activeCount++
@@ -1434,6 +1438,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   const maxLabel = kyoshinIndexToLabel(maxIndex)
   const maxColor = kyoshinIntensityColor(maxIndex) ?? '#9ca3af'
   const groups = LABEL_ORDER.filter(l => counts.has(l)).map(l => ({ label: l, ...counts.get(l)! }))
+  const subZeroLabel = kyoshinDetectionScaleLabel(0)
+  if (subZeroCount > 0 && subZeroLabel) groups.push({ label: subZeroLabel, color: KYOSHIN_SUB_ZERO_COLOR, count: subZeroCount })
   const rawMaxCount = groups.reduce((m, g) => Math.max(m, g.count), 1)
   // バー幅のスケール（分母）は、カードが見えている間は**下げない**。瞬間値を分母にすると、
   // 最大だった震度の点数が減っただけで他のバーが伸び、揺れが収まっている最中に「増えた」と
@@ -1457,9 +1463,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   // （現時点でこのプロジェクトはどちらも使っていない）。
   if (!visible || rawMaxCount > scalePeakRef.current) scalePeakRef.current = rawMaxCount
   const maxCount = Math.max(scalePeakRef.current, 1)
-  // 反応点数は activeCount（現在震度0以上の点）をそのまま出す。検知は束の点が下がりきっても
-  // 束ね役が捨てるまで生き続けるので、別の点数へ倒すと「地図には検知点が 1 つも無いのにカードだけ
-  // N 観測点で反応と出る」局面が生まれる。揺れが収まったことは点数ではなく文言で伝える。
+  // 反応点数は地図に描いている点（震度0 以上の activeCount と震度0 未満の subZeroCount）の和をそのまま出す。
+  // 別の点数へ倒すと、地図とカードの点数が食い違う。揺れが収まったことは点数ではなく文言で伝える。
 
   // カードの枠・背景は最大震度の気象庁配色に合わせる（地図マーカー・EEW カードと一貫）。
   // 段（検知/可能性）は枠色ではなく左上のチップで示す。枠色に段を混ぜると、確かな段は戻らない
@@ -1494,12 +1499,11 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   // 震度1 に届かない揺れも確かな段にするので、揺れの最中でも震度0以上の点が 1 つも無いことがある。このときは
   // 推定最大震度を「0以下」、本文を「N観測点で震度0以下の反応」と出し、色も弱めない
   // （2026-10-29 ユーザー選択「「震度0以下」で出す (Recommended)」）。検知は最後の報告から `ENSEMBLE_KEEP_MS` 残るので、
-  // 本当に収まった後の余韻もこの形で出る。数えるのは確かな段の検知に加わった点だけ（点列には早い段の点も混ざる）で、
-  // いまのフレームで欠測の点（直前の値を保持して描いている点）は数えない
-  const confirmedMembers = new Set(events.filter(e => e.confidence === 'confirmed').flatMap(e => e.memberKeys))
-  const belowZeroCount = activeCount === 0 && topTier === 'confirmed'
-    ? points.filter(p => p.index >= 0 && !p.stale && confirmedMembers.has(p.key)).length
-    : 0
+  // 本当に収まった後の余韻もこの形で出る。数えるのは地図に描いている震度0 未満の印と同じ点（早い段の点・直前の値を
+  // 保持して描いている点も含む。2026-10-29 ユーザー選択「地図と同じ点を数える (Recommended)」）。
+  // 早い段だけのときは本文を「収まりました」のままにし、「0以下」の行だけを出す
+  // （2026-10-29 ユーザー選択「「0以下」の行を出す (Recommended)」）
+  const belowZeroCount = activeCount === 0 && topTier === 'confirmed' ? subZeroCount : 0
   const belowZero = belowZeroCount > 0
   const settled = activeCount === 0 && !belowZero
   const maxLabelShown = maxLabel ?? (belowZero ? kyoshinDetectionScaleLabel(0) : null)
@@ -1542,7 +1546,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
             <div className="flex flex-col gap-1">
               {groups.map(g => (
                 <div key={g.label} className="flex items-center gap-2">
-                  <span className="w-6 text-center text-xs font-bold rounded-sm shrink-0" style={{ backgroundColor: g.color, color: readableTextColor(g.color) }}>
+                  {/* 幅は「0以下」（3 文字）が収まる w-8 に揃える（行ごとに幅が違うと棒の左端がずれる） */}
+                  <span className="w-8 text-center text-xs font-bold rounded-sm shrink-0" style={{ backgroundColor: g.color, color: readableTextColor(g.color) }}>
                     {g.label}
                   </span>
                   <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
@@ -1565,7 +1570,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
           )}
           <span className="text-xs text-secondary">
             {activeCount > 0
-              ? `${activeCount}観測点で反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
+              ? `${activeCount + subZeroCount}観測点で反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
               : belowZero
                 ? `${belowZeroCount}観測点で震度0以下の反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
                 : `観測点の反応は収まりました${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''}`}
