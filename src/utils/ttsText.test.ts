@@ -475,10 +475,26 @@ describe('lpgmToText: 階級ごとの地域列挙', () => {
     expect(text).not.toContain('東京都23区')
   })
 
-  // 安全弁: 階級 0 の区域はどの設定でも読まない（階級 0 は画面にだけ出す）
-  it('階級 0 の区域は、必ず読む階級によらず読まない', () => {
-    const text = lpgmToText(fourClasses(), { ...TTS_OPTS, intensityLevels: 8, alwaysReadLpgmClass: 1 }, true)
+  // 階級 0 の区域も他の階級と同じ設定で読む（2026-10-29 ユーザー承認「他の階級と同じく読む」、語は「「階級0を〜で」 (Recommended)」）。
+  // 「どの設定でも読まない」だった安全弁を、この決定で覆した。
+  // 正: 階数の範囲に入れば、階級 0 の区域も読む
+  it('階級 0 の区域も、階数の範囲に入れば「階級0を〜で」と読む', () => {
+    const text = lpgmToText(fourClasses(), { ...TTS_OPTS, intensityLevels: 4, alwaysReadLpgmClass: 1 }, true)
+    expect(text).toContain('階級1を東京都23区、階級0を神奈川県東部で観測しました。')
+  })
+
+  // 対照: 階数の外なら、必ず読む階級（1 以上しか選べない）では拾わない
+  it('階級 0 の区域は、階数の外なら必ず読む階級 1 でも読まない', () => {
+    const text = lpgmToText(fourClasses(), { ...TTS_OPTS, intensityLevels: 3, alwaysReadLpgmClass: 1 }, true)
+    expect(text).toContain('階級1を東京都23区で観測しました。')
     expect(text).not.toContain('神奈川県東部')
+  })
+
+  // 安全弁: 階級表に無い値（5・負の値）の区域は読まない
+  it('階級表に無い値の区域は読まない', () => {
+    const lpgm = { ...makeLpgm(), regions: [...makeLpgm().regions!, { code: '999', name: '架空区域', maxLgInt: -1 }, { code: '998', name: '架空区域2', maxLgInt: 5 }] }
+    const text = lpgmToText(lpgm, { ...TTS_OPTS, intensityLevels: 8 }, true)
+    expect(text).not.toContain('架空区域')
   })
 
   // **この関数は空文字列を返さない。** 受信側（`useLiveEventHandler`）には「読み上げ文が

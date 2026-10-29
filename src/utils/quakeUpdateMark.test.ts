@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   advanceQuakeMarks, changedQuakeFacts, diffQuakeRows, lpgmMarkKey, lpgmRowSnapshot, lpgmTelegramRevise,
   pruneQuakeMarks, quakeFactSnapshot, quakeRowSnapshot, quakeTelegramRevise, rowMarkKey, rowMarkOf,
-  markIssuedAt, trimQuakeMarkMemory, MARK_MEMORY_MAX_ROWS,
+  markIssuedAt, trimQuakeMarkMemory, MARK_MEMORY_MAX_ROWS, lpgmFactSnapshot, vanishedFacts,
   type QuakeMarkMemory,
   type QuakeMarkSnapshot,
   type MarkReportType,
@@ -920,6 +920,20 @@ describe('地震カードの更新の印', () => {
       expect(memory.has('weak')).toBe(false)
     })
 
+    // 安全弁: 長周期の記憶は、全国の最大震度を写していても最後に落とす（鍵で見分ける）。
+    // 長周期の欄に最大震度を出すようにしたので、記憶の `facts` にも `maxScale` が入る。
+    // それで並べると、震度の低い長周期の記憶が地震の記憶より先に落ちてしまう。
+    it('長周期の記憶は、最大震度を持っていても震度を持つ地震の記憶より後に落ちる', () => {
+      const half = Math.floor(MARK_MEMORY_MAX_ROWS / 2) + 1
+      const memory = memoryOf([
+        ['lpgm:X', half, 1_000, 10],
+        ['weak', half, 9_000, 20],
+      ])
+      trimQuakeMarkMemory(memory, new Set(memory.keys()))
+      expect(memory.has('lpgm:X')).toBe(true)
+      expect(memory.has('weak')).toBe(false)
+    })
+
     // 安全弁: **震度の分からない記憶が 2 件以上並んでも、並べ方が壊れない。**
     //
     // 震度が分からない記憶は落とす順を `Infinity` へ倒すので、引き算で比べると
@@ -943,6 +957,33 @@ describe('地震カードの更新の印', () => {
       expect(memory.has('gone')).toBe(false)
       expect(memory.has('alive')).toBe(true)
     })
+  })
+})
+
+describe('vanishedFacts', () => {
+  const lpgm = (over: Partial<JMALpgm>): JMALpgm => ({
+    eventId: 'E', time: '2024-01-01T17:05:00+09:00', maxClass: 2,
+    hypocenter: { name: '石川県能登地方', depth: 20 }, magnitude: 5.7, maxInt: 50,
+    ...over,
+  } as JMALpgm)
+
+  // 正: 前の報にあった値が消えた欄を挙げる
+  it('前の報にあった震源名・規模が消えた欄を挙げる', () => {
+    const prev = lpgmFactSnapshot(lpgm({}))
+    const next = lpgmFactSnapshot(lpgm({ hypocenter: undefined, magnitude: undefined }))
+    expect(vanishedFacts(prev, next).sort()).toEqual(['depth', 'hypocenterName', 'magnitude'])
+  })
+
+  // 対照: 値が変わっただけ・初めから無い欄は挙げない
+  it('値が変わっただけの欄と、前から無かった欄は挙げない', () => {
+    const prev = lpgmFactSnapshot(lpgm({ maxInt: undefined }))
+    const next = lpgmFactSnapshot(lpgm({ magnitude: 5.8, maxInt: undefined }))
+    expect(vanishedFacts(prev, next)).toEqual([])
+  })
+
+  // 安全弁: 初報（前の写しが無い）は何も挙げない
+  it('前の写しが無ければ何も挙げない', () => {
+    expect(vanishedFacts(undefined, lpgmFactSnapshot(lpgm({ hypocenter: undefined })))).toEqual([])
   })
 })
 

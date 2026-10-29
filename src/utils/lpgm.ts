@@ -1,5 +1,8 @@
 // 長周期地震動階級のラベル・配色ユーティリティ（JMA公式色）と、カードの行の組み立て
 import type { IntensityScale, JMALpgm, LpgmClass, LpgmPeriodBand, LpgmPoint, LpgmPref, LpgmRegion } from '../types/earthquake'
+import type { QuakeUpdateField } from './quakeUpdateMark'
+import { formatDepth, formatMagnitude, formatMagnitudeCondition, formatQuakeTimeLabeled, hasDepth, hasMagnitude } from './formatters'
+import { getIntensityLabel, isValidIntensityScale } from './intensity'
 // 階級 0 は「階級1以上を観測していない」観測値。気象庁の配色に当たる色が無いので、
 // 階級 1〜4 の色の外の灰色にする（2026-10-24 ユーザー選択「この形でよい (Recommended)」）。
 const LPGM_COLORS: Record<number, string> = {
@@ -34,7 +37,8 @@ export function isValidLpgmClass(v: number): v is LpgmClass {
  * 観測された長周期地震動階級として妥当な値か（0〜4）。
  *
  * **観測情報（VXSE62）専用。** 0 は「階級1以上を観測していない」という正常な観測値で、
- * 画面には残す（2026-10-22 ユーザー選択「画面には残す (Recommended)」。音と読み上げは鳴らさない）。
+ * 画面には残す（2026-10-22 ユーザー選択「画面には残す (Recommended)」。最大階級が 0 の報は音と読み上げを鳴らさない）。
+ * 階級 1 以上の報に混ざる階級 0 の区域は、他の階級と同じ設定で読み上げる（2026-10-29 ユーザー承認「他の階級と同じく読む」）。
  * 緊急地震速報の予測階級は {@link isValidLpgmClass}（1〜4）で見る —— あちらの 0 は予測が無いことを表す。
  */
 export function isObservedLpgmClass(v: number): boolean {
@@ -394,4 +398,48 @@ export function canOpenLpgmNotes(lpgm: JMALpgm | null | undefined): boolean {
   // 階級 0 の報も補足を開ける（画面には残すため。読み上げは階級 0 では鳴らない）
   if (!lpgm || lpgm.cancelled || !isObservedLpgmClass(lpgm.maxClass)) return false
   return !!(lpgm.forecastText || lpgm.varCommentText || lpgm.freeFormText || lpgm.uri)
+}
+
+/** 長周期の欄に並べる値の 1 つ（→ {@link lpgmQuakeFactParts}）。 */
+export interface LpgmQuakeFactPart {
+  /** 画面に出す文字列 */
+  text: string
+  /** 更新の印を引く欄（→ `lpgmFactSnapshot`）。地震発現時刻は印を持たないので無い */
+  field?: QuakeUpdateField
+}
+
+/**
+ * 地震カードの長周期の欄に、電文が持つ震源・規模・全国の最大震度・地震発現時刻を並べる
+ * （2026-10-29 ユーザー承認「1行・名前と深さ (Recommended)」。並びは「震央地名 深さ 規模 最大震度 地震発現時刻」）。
+ *
+ * **値の書き方は地震カードの欄と同じ関数を通す**（`formatDepth`・`formatMagnitude`・`getIntensityLabel`・
+ * `formatQuakeTimeLabeled`）。同じ地震の同じ値を、1 枚のカードの中で 2 通りに書かない。
+ *
+ * **値が無い項目は語ごと省く。** 「深さ不明」「M不明」のような語を並べると、1 行の大半が
+ * 「無い」ことの説明になる。地震カード本体は欄の枠を持つので「不明」を出すが、この行は枠を持たない。
+ * 地震発現時刻だけは、電文に値があるのに日時として読めないとき「地震発現時刻不明」を出す
+ * （地震カードと同じ。値を読み落としたのか電文に無いのかを分ける）。
+ *
+ * 震源決定機関はこの行に入れない（地震カードと同じく別の行に出す。→ `LpgmQuakeFacts`）。
+ */
+export function lpgmQuakeFactParts(lpgm: JMALpgm): LpgmQuakeFactPart[] {
+  const parts: LpgmQuakeFactPart[] = []
+  const h = lpgm.hypocenter
+  const name = h?.name.trim()
+  if (name) parts.push({ text: name, field: 'hypocenterName' })
+  if (h?.depth !== undefined && hasDepth(h.depth)) {
+    const depth = formatDepth(h.depth, h.depthAtLeast === true)
+    // 「ごく浅い」は語そのものが深さを言っているので、見出しの語を前に付けない
+    parts.push({ text: h.depth === 0 ? depth : `深さ${depth}`, field: 'depth' })
+  }
+  if (lpgm.magnitude !== undefined && hasMagnitude(lpgm.magnitude)) {
+    parts.push({ text: formatMagnitude(lpgm.magnitude, lpgm.magnitudeType), field: 'magnitude' })
+  } else if (lpgm.magnitudeCondition) {
+    parts.push({ text: formatMagnitudeCondition(lpgm.magnitudeCondition), field: 'magnitude' })
+  }
+  if (lpgm.maxInt !== undefined && isValidIntensityScale(lpgm.maxInt)) {
+    parts.push({ text: `最大震度${getIntensityLabel(lpgm.maxInt)}`, field: 'maxScale' })
+  }
+  if (lpgm.arrivalTime) parts.push({ text: formatQuakeTimeLabeled(lpgm.arrivalTime) })
+  return parts
 }

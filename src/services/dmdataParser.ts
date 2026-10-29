@@ -2858,8 +2858,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     log.warn(`${DMDATA_LOG_PREFIX} VXSE62 の全国の最大震度を読めません（無視します）: "${obsRawInt}"`)
   }
 
-  // 震源の要素（→ `LpgmHypocenter`）。いまは読んで持つだけで画面には出していない
-  // （長周期の欄にも出すと決まっている。→ `docs/spec/telegram-coverage-audit.md` §6「決定済み・実装は未着手」）。
+  // 震源の要素（→ `LpgmHypocenter`）。地震カードの長周期の欄に出す（→ `LpgmQuakeFacts`）。
   const lpgmHypoEl = earthquakeEl ? xmlQ(earthquakeEl, 'Hypocenter') : null
   const lpgmHypoAreaEl = lpgmHypoEl ? xmlQ(lpgmHypoEl, 'Area') : null
   let lpgmHypocenter: import('../types/earthquake').LpgmHypocenter | undefined
@@ -2878,6 +2877,9 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
         ...readHypocenterAreaDetail(lpgmHypoAreaEl, DMDATA_LOG_PREFIX),
         ...(lpgmSource && { source: lpgmSource }),
       }
+    } else {
+      // 欄は値の無い項目を黙って省くので、ここで記録しないと「電文に無い」と見分けが付かない
+      log.warn(`${DMDATA_LOG_PREFIX} VXSE62 の震源要素に震央地名がありません（震源・震源決定機関を出しません）`)
     }
   }
   const lpgmMagnitudeEl = earthquakeEl ? xmlQ(earthquakeEl, 'Magnitude') : null
@@ -2888,6 +2890,9 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   const lpgmMagnitudeCondition = Number.isFinite(lpgmMagnitude)
     ? undefined
     : (lpgmMagnitudeEl?.getAttribute('description')?.trim() || undefined)
+  if (lpgmMagnitudeEl && !Number.isFinite(lpgmMagnitude) && !lpgmMagnitudeCondition) {
+    log.warn(`${DMDATA_LOG_PREFIX} VXSE62 の規模を読めません（無視します）: "${xmlText(lpgmMagnitudeEl)}"`)
+  }
   const lpgmMagnitudeType = lpgmMagnitudeEl?.getAttribute('type')?.trim() || undefined
   const lpgmArrivalTime = readTelegramDateTime(DMDATA_LOG_PREFIX, '長周期地震動観測情報の地震発現時刻', earthquakeEl ? xmlText(xmlChild(earthquakeEl, 'ArrivalTime')) : '')
 

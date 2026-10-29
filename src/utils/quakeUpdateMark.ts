@@ -86,8 +86,7 @@ const UNKNOWN = ''
 export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotValue> {
   const h = q.earthquake.hypocenter
   const snap = new Map<QuakeUpdateField, SnapshotValue>()
-  // 震央地名と座標には大小が無いので `rank` を付けない（動いたことしか言えない）。
-  snap.set('hypocenterName', { key: h.name || UNKNOWN })
+  setHypocenterFacts(snap, h)
   // 位置不明のセンチネルは -200（パーサーが埋める）。`Number.isFinite` だけでは素通りする。
   const hasPos = Number.isFinite(h.latitude) && Number.isFinite(h.longitude) && h.latitude !== -200 && h.longitude !== -200
   snap.set('coordinate', { key: hasPos ? `${h.latitude},${h.longitude}` : UNKNOWN })
@@ -97,6 +96,73 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
   // （2026-10-19 ユーザー承認「1 で」＝文が別の文へ変わったときだけ印を付ける）。文が無かった欄に文が現れたときは、
   // 同じ種別の続報に限って初出の印を付ける（2026-10-21 に改めた。→ `changedQuakeFacts`）。
   snap.set('nameFromMark', { key: h.nameFromMark || UNKNOWN })
+  // 「調査中」「不明」は値ではなく「まだ決まっていない」ので、値が無いのと同じに扱う
+  // （→ `DOMESTIC_TSUNAMI_RANK`）。**逆向き（確定していた区分が調査中へ戻る）は印を付ける** ——
+  // 気象庁が取り下げた事実なので、こちらは伝える。
+  const tsunami = q.earthquake.domesticTsunami
+  const tsunamiRank = tsunami ? DOMESTIC_TSUNAMI_RANK[tsunami] : undefined
+  // **鍵には区分を決めたコードも入れる。** 札はコードで語を選ぶ（→ `formatDomesticTsunami`）ので、
+  // 区分が同じでもコードが変われば表示は動く（0212「若干の海面変動」→ 0213「海面変動に注意」）。
+  const tsunamiCode = q.earthquake.domesticTsunamiCode
+  snap.set('domesticTsunami', tsunamiRank === undefined
+    ? { key: UNKNOWN }
+    : { key: tsunamiCode ? `${tsunami}:${tsunamiCode}` : tsunami, rank: tsunamiRank })
+  setMaxScaleFact(snap, q.earthquake.maxScale)
+  return snap
+}
+
+/**
+ * 長周期地震動の欄に出している値（震源名・規模・深さ・全国の最大震度）を写し取る。
+ *
+ * **写し方は地震カードと同じ関数を通す**（→ {@link setHypocenterFacts}）。同じ名前の欄を 2 つの
+ * カード部品が出すので、片方だけ鍵の作りが変わると、同じ変化に一方だけ印が付く。
+ *
+ * **地震発現時刻は写さない。** 地震カードも時刻の欄に印を持たない（→ {@link QuakeUpdateField}）。
+ *
+ * **取消の報では呼ばない**（一覧ごと消えるので、印を付ける先が無い。→ `applyLiveLpgmWithMarks`）。
+ */
+export function lpgmFactSnapshot(lpgm: JMALpgm): Map<QuakeUpdateField, SnapshotValue> {
+  const snap = new Map<QuakeUpdateField, SnapshotValue>()
+  const h = lpgm.hypocenter
+  setHypocenterFacts(snap, {
+    name: h?.name ?? '',
+    magnitude: lpgm.magnitude ?? Number.NaN,
+    magnitudeCondition: lpgm.magnitudeCondition,
+    magnitudeType: lpgm.magnitudeType,
+    // 長周期の型は深さを任意で持つ（読めなければ持たない）。地震カードの番兵 -1 へ揃える。
+    depth: h?.depth ?? -1,
+    depthAtLeast: h?.depthAtLeast,
+  })
+  setMaxScaleFact(snap, lpgm.maxInt ?? -1)
+  return snap
+}
+
+/**
+ * 前の写しで値があったのに、新しい写しで値が無くなった欄。
+ *
+ * 長周期の欄は値の無い項目を行から省くので、続報で値が消えても印を付ける先が無い。
+ * **画面には出さず、記録にだけ残す**（2026-10-29 ユーザー承認「記録にだけ残す (Recommended)」）ために使う。
+ */
+export function vanishedFacts(
+  prev: ReadonlyMap<QuakeUpdateField, SnapshotValue> | undefined,
+  next: ReadonlyMap<QuakeUpdateField, SnapshotValue>,
+): QuakeUpdateField[] {
+  if (!prev) return []
+  const out: QuakeUpdateField[] = []
+  for (const [field, value] of next) {
+    const before = prev.get(field)
+    if (before && before.key !== UNKNOWN && value.key === UNKNOWN) out.push(field)
+  }
+  return out
+}
+
+/** 震源名・規模・深さを写す。地震カード（{@link quakeFactSnapshot}）と長周期（{@link lpgmFactSnapshot}）で共有する。 */
+function setHypocenterFacts(
+  snap: Map<QuakeUpdateField, SnapshotValue>,
+  h: Pick<JMAQuake['earthquake']['hypocenter'], 'name' | 'magnitude' | 'magnitudeCondition' | 'magnitudeType' | 'depth' | 'depthAtLeast'>,
+): void {
+  // 震央地名には大小が無いので `rank` を付けない（動いたことしか言えない）。
+  snap.set('hypocenterName', { key: h.name || UNKNOWN })
   // 規模は**数値と説明の両方**を鍵に含める。「Ｍ８を超える巨大地震」は本文が NaN で
   // `description` だけが値を持つので、数値だけで比べるとその変化が消える
   // （→ `docs/spec/quake-spec.md` §8）。**大小を比べられるのは数値があるときだけ。**
@@ -117,21 +183,11 @@ export function quakeFactSnapshot(q: JMAQuake): Map<QuakeUpdateField, SnapshotVa
   // 「より深刻になった」を指す約束を、どの欄でも守る。
   // 「700km以上」（`depthAtLeast`）は同じ 700 でも別の値なので鍵に含める（印が付いた・外れたも更新）。
   snap.set('depth', h.depth >= 0 ? { key: `${h.depth}${h.depthAtLeast ? '+' : ''}`, rank: -h.depth } : { key: UNKNOWN })
-  // 「調査中」「不明」は値ではなく「まだ決まっていない」ので、値が無いのと同じに扱う
-  // （→ `DOMESTIC_TSUNAMI_RANK`）。**逆向き（確定していた区分が調査中へ戻る）は印を付ける** ——
-  // 気象庁が取り下げた事実なので、こちらは伝える。
-  const tsunami = q.earthquake.domesticTsunami
-  const tsunamiRank = tsunami ? DOMESTIC_TSUNAMI_RANK[tsunami] : undefined
-  // **鍵には区分を決めたコードも入れる。** 札はコードで語を選ぶ（→ `formatDomesticTsunami`）ので、
-  // 区分が同じでもコードが変われば表示は動く（0212「若干の海面変動」→ 0213「海面変動に注意」）。
-  const tsunamiCode = q.earthquake.domesticTsunamiCode
-  snap.set('domesticTsunami', tsunamiRank === undefined
-    ? { key: UNKNOWN }
-    : { key: tsunamiCode ? `${tsunami}:${tsunamiCode}` : tsunami, rank: tsunamiRank })
-  snap.set('maxScale', q.earthquake.maxScale >= 0
-    ? { key: String(q.earthquake.maxScale), rank: q.earthquake.maxScale }
-    : { key: UNKNOWN })
-  return snap
+}
+
+/** 最大震度を写す。地震カードの `maxScale` と長周期の全国の最大震度（`JMALpgm.maxInt`）で共有する。 */
+function setMaxScaleFact(snap: Map<QuakeUpdateField, SnapshotValue>, maxScale: number): void {
+  snap.set('maxScale', maxScale >= 0 ? { key: String(maxScale), rank: maxScale } : { key: UNKNOWN })
 }
 
 /**
@@ -740,12 +796,14 @@ function rowCountOf(memory: QuakeMarkMemory): number {
 /**
  * 落とす順を決めるための、その記憶が指す地震の最大震度（階級値）。
  *
- * **震度が分からない記憶は最後に落とす**（`Infinity` へ倒す）。長周期地震動の記憶が
- * それにあたる —— 別の鍵で持つので地震側の震度を引けない（→ {@link lpgmMarkKey}）。
- * **先に落とす側へ倒さないこと** —— あちらは観測点が少なく行も少ないので、落としても
+ * **震度が分からない記憶と、長周期地震動の記憶は最後に落とす**（`Infinity` へ倒す）。長周期の記憶は
+ * 全国の最大震度（`JMALpgm.maxInt`）を `maxScale` に写すが（→ {@link lpgmFactSnapshot}）、それで並べない ——
+ * 鍵（→ {@link lpgmMarkKey}）で見分ける。
+ * **先に落とす側へ倒さないこと** —— 長周期は観測点が少なく行も少ないので、落としても
  * 空く余地が小さい。効きの薄いものを先に落とすと、刈り込みが何度も走るだけになる。
  */
-function dropRankOf(memory: QuakeMarkMemory): number {
+function dropRankOf(key: string, memory: QuakeMarkMemory): number {
+  if (key.startsWith(lpgmMarkKey(''))) return Number.POSITIVE_INFINITY
   return memory.facts.get('maxScale')?.rank ?? Number.POSITIVE_INFINITY
 }
 
@@ -787,8 +845,8 @@ function capQuakeMarkMemory(memory: Map<string, QuakeMarkMemory>, keep?: string)
   // それが 2 つ並ぶと `Infinity - Infinity` が `NaN` になり、**並べ方そのものが未定義へ落ちる**
   // （長周期の記憶が 2 件以上あれば起きる。第 2 キーの発表時刻へも進まない）。
   const dropOrder = [...memory].sort((a, b) => {
-    const ra = dropRankOf(a[1])
-    const rb = dropRankOf(b[1])
+    const ra = dropRankOf(a[0], a[1])
+    const rb = dropRankOf(b[0], b[1])
     if (ra !== rb) return ra < rb ? -1 : 1
     return a[1].issuedAt - b[1].issuedAt
   })

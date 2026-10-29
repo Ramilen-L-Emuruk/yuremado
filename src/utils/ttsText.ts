@@ -14,6 +14,7 @@ import { createLogThrottle, createPerLabelLogGate, log } from './logger'
 import { hasKnownEpicenter } from './geo'
 import { pickEarthquakeCountSummaryItem } from './earthquakeCountSummary'
 import { DOMESTIC_TSUNAMI_CODE_TEXT, warnIfDomesticTsunamiSentenceMissing, withoutDomesticTsunamiSentences } from './domesticTsunamiComment'
+import { isObservedLpgmClass } from './lpgm'
 
 /**
  * 等級を読む順（重い等級が先）。**カードが等級カードを積む順と同じ並びを使う**
@@ -3987,10 +3988,13 @@ function aggregateLpgmNamesByPref(
 function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
   if (!lpgm.regions || lpgm.regions.length === 0) return ''
 
-  // 階級ごとに地域名をまとめる（降順）
+  // 階級ごとに地域名をまとめる（降順）。**階級 0 の地域も他の階級と同じ設定で数える**
+  // （2026-10-29 ユーザー承認「他の階級と同じく読む」、語は同日「「階級0を〜で」 (Recommended)」で画面の「階級0」に揃える）。
+  // 最大階級が 0 の報そのものはここへ来ない（受信側が読み上げない。→ `useEarthquakes` の `lpgmNotifiable`）。
+  // 「必ず読み上げる長周期地震動階級」は 1 以上しか選べないので、階級 0 は階数の範囲に入ったときだけ読む。
   const byClass = new Map<number, string[]>()
   for (const r of lpgm.regions) {
-    if (r.maxLgInt < 1) continue
+    if (!isObservedLpgmClass(r.maxLgInt)) continue
     const names = byClass.get(r.maxLgInt) ?? []
     names.push(r.name)
     byClass.set(r.maxLgInt, names)

@@ -88,3 +88,35 @@ describe('applyLiveLpgmWithMarks', () => {
     expect(next.quakeUpdateMarks.get(lpgmMarkKey(EVENT_ID))?.rows.get(rowMarkKey.area('石川県能登'))).toBeDefined()
   })
 })
+
+// 長周期の欄に出す震源・規模・深さ・全国の最大震度にも、地震カードと同じ印を付ける
+// （2026-10-29 ユーザー承認「地震カードと同じく付ける」。写しは `lpgmFactSnapshot`）。
+describe('applyLiveLpgmWithMarks: 長周期の欄の値の印', () => {
+  const withFacts = (time: string, magnitude: number, maxInt: JMALpgm['maxInt']) => lpgm({
+    maxLgInt: 2, time, magnitude, magnitudeType: 'Mj', maxInt,
+    hypocenter: { name: '石川県能登地方', depth: 20 },
+  })
+
+  // 正: 続報で規模が上がったら、規模の欄に「上がった」の印
+  it('正: 続報で規模が上がると、規模の欄に印を付ける', () => {
+    const first = applyLiveLpgmWithMarks(EMPTY, withFacts('2024-01-01T07:40:00Z', 5.7, 50), 1_000)
+    const second = applyLiveLpgmWithMarks({ ...EMPTY, ...first }, withFacts('2024-01-01T07:50:00Z', 5.8, 50), 2_000)
+    const facts = second.quakeUpdateMarks.get(lpgmMarkKey(EVENT_ID))?.facts
+    expect(facts?.get('magnitude')).toBe('raised')
+    expect(facts?.has('maxScale')).toBe(false)
+    expect(facts?.has('hypocenterName')).toBe(false)
+  })
+
+  // 対照: 値が動かない続報では欄の印を付けない
+  it('対照: 値が同じ続報では欄に印を付けない', () => {
+    const first = applyLiveLpgmWithMarks(EMPTY, withFacts('2024-01-01T07:40:00Z', 5.7, 50), 1_000)
+    const second = applyLiveLpgmWithMarks({ ...EMPTY, ...first }, withFacts('2024-01-01T07:50:00Z', 5.7, 50), 2_000)
+    expect(second.quakeUpdateMarks.get(lpgmMarkKey(EVENT_ID))?.facts.size ?? 0).toBe(0)
+  })
+
+  // 安全弁: 初報では欄にも印を付けない（比べる相手が無い）
+  it('安全弁: 初報では欄に印を付けない', () => {
+    const s = applyLiveLpgmWithMarks(EMPTY, withFacts('2024-01-01T07:40:00Z', 5.7, 50), 1_000)
+    expect(s.quakeUpdateMarks.get(lpgmMarkKey(EVENT_ID))).toBeUndefined()
+  })
+})
