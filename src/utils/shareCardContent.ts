@@ -186,11 +186,11 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   for (const source of live.flatMap((t) => t.sourceEarthquakes ?? [])) {
     // 規模が数値で無いときは説明を出す（「Ｍ８を超える巨大地震」）。落とすと、**最も重大な
     // 地震ほど震源名だけの薄い画像になる**。
-    // **種別は渡さない（`M` のまま）。** 津波カードの原因地震の行はまだ諮っていない
-    // （→ `types/earthquake.ts` の `TsunamiSourceEarthquake.magnitudeType`）。**直書きの `M` には
-    // しない** —— 必須引数の網から外れ、後で出すと決めたときに渡し忘れても型検査が落ちなくなる。
+    // 規模の記号は電文の種別（`Mj7.6`）。津波カードの原因地震の行・地図の吹き出しと揃える
+    // （2026-10-29 ユーザー承認「吹き出しと共有カードも (Recommended)」）。揃えないと、同じ地震が地震の共有カードでは
+    // `Mj`、津波の共有カードでは `M` と割れる。
     const magnitudeText = source.magnitude != null
-      ? `　${formatMagnitude(source.magnitude, undefined)}`
+      ? `　${formatMagnitude(source.magnitude, source.magnitudeType)}`
       // 地震側と同じ述語を通す。素通しにすると同じ電文由来の同じ事実が、地震の共有カードでは
       // 半角・津波の共有カードでは全角、と表記が割れる。どちらも無ければ「M不明」（地震・EEW と揃える）
       : `　${source.magnitudeCondition ? formatMagnitudeCondition(source.magnitudeCondition) : 'M不明'}`

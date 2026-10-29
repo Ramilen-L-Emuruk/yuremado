@@ -606,6 +606,14 @@ describe('buildShareCardContent — 複数の緊急地震速報・深さ・揺�
     expect(build(input({ mode: 'tsunami', tsunamis: [t] })).header.subtitle).toBe('日向灘　M8.1　深さ 20km　1 区域')
   })
 
+  // 正（2026-10-29 ユーザー承認「吹き出しと共有カードも (Recommended)」）: 原因地震の規模に電文の種別を前置きする。
+  // 地震の共有カードと揃えないと、同じ地震が地震では Mj・津波では M と割れる。
+  it('正: 津波の原因地震の規模に電文の種別を前置きする', () => {
+    const t = tsunami()
+    t.sourceEarthquakes = [{ hypocenterName: '日向灘', magnitude: 8.1, magnitudeType: 'Mj', depth: 20 }]
+    expect(build(input({ mode: 'tsunami', tsunamis: [t] })).header.subtitle).toBe('日向灘　Mj8.1　深さ 20km　1 区域')
+  })
+
   // 正（2026-10-23 ユーザー選択「揺れ検知中は推定最大震度を出す (Recommended)」・文面は 2026-10-24「この文面で (Recommended)」）
   it('正: 緊急地震速報が無く揺れを検知していれば、見出しは「揺れ検知」と推定最大震度', () => {
     const c = build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'confirmed', maxIndex: 30 } }))

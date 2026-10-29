@@ -87,6 +87,16 @@ describe('津波の原因地震の震源', () => {
     expect(html).toContain('M7.6　深さ 10km')
     expect(html).toContain('地震発現時刻 16:10')
   })
+  // 規模の記号は電文の種別（2026-10-29 ユーザー承認「吹き出しと共有カードも (Recommended)」）。
+  it('正: 種別 Mj の規模は「Mj7.6」、遠地の M は「M8.0」と電文のまま出す', () => {
+    expect(sourcePopupHtml({ hypocenterName: 'X', magnitude: 7.6, magnitudeType: 'Mj' })).toContain('Mj7.6')
+    expect(sourcePopupHtml({ hypocenterName: 'X', magnitude: 8, magnitudeType: 'M' })).toContain('M8.0')
+  })
+  it('安全弁: 規模が数値で無ければ種別があっても説明を出す（「Mj不明」にしない）', () => {
+    const html = sourcePopupHtml({ hypocenterName: 'X', magnitudeType: 'Mj', magnitudeCondition: 'Ｍ８を超える巨大地震' })
+    expect(html).toContain('M8を超える巨大地震')
+    expect(html).not.toContain('Mj')
+  })
 })
 
 describe('印の吹き出しの開き方', () => {
