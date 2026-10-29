@@ -1,5 +1,5 @@
 import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
-import { eewNoForecastReason, canPresentLpgmClass, type EewMaxScaleInfo } from './eew'
+import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type EewMaxScaleInfo } from './eew'
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from './intensity'
 import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, TSUNAMI_GRADE_LIFTED, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
@@ -1503,6 +1503,9 @@ export function eewScaleOnlyText(scaleInfo: EewMaxScaleInfo, event: EEWAlert, no
   return noForecastText(event, noForecastWaited)
 }
 
+/** 電文が最大予想長周期地震動階級を 0 と言い切った報で読む句（→ `eewIntensityText`）。 */
+export const EEW_LPGM_CLASS_ZERO_TEXT = '予想最大階級0。'
+
 /**
  * 長周期地震動階級部分だけの読み上げ文（「予想最大階級〇。」）。0 なら空文字列
  * （句ごと省く。音声には地図の色フォールバックのような逃げ場が無く、不正値がそのまま
@@ -1570,8 +1573,15 @@ export function eewIntensityText(
   // **震度を伝えられないときは階級も読まない**（判定は `canPresentLpgmClass`。カード表示・
   // 第 2 フェーズの言い直しと同じ述語を共有する。理由はそちらのコメント）。
   const scaleText = eewScaleOnlyText(scaleInfo, event, noForecastWaited)
-  const lpgmText = (opts?.readEewLpgmClass ?? true) && canPresentLpgmClass(scaleInfo.scale, lpgmClass)
-    ? eewLpgmOnlyText(lpgmClass, lpgmOver)
+  //
+  // **電文が階級 0 と言い切った報は「予想最大階級0。」と読む**（→ `isEewLpgmClassZeroForecast`）。
+  // 確定した階級（`lpgmClass`）が 0 のときだけ `event` から見る —— 0 は「階級を載せていない」とも
+  // 同じ値なので、言い切ったかどうかは電文の印にしか無い。後の報で階級 1 以上へ上がれば、
+  // 既読（階級 0 として記録される）より高いので言い直しの経路に乗る。
+  const readLpgm = opts?.readEewLpgmClass ?? true
+  const lpgmText = !readLpgm ? ''
+    : canPresentLpgmClass(scaleInfo.scale, lpgmClass) ? eewLpgmOnlyText(lpgmClass, lpgmOver)
+    : statesEewLpgmClassZero(event, scaleInfo.scale, lpgmClass, readLpgm) ? EEW_LPGM_CLASS_ZERO_TEXT
     : ''
   return prefix + scaleText + lpgmText
 }

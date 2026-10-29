@@ -12,9 +12,9 @@ import { usePageVisible } from '../../hooks/usePageVisible'
 import { useFollowScroll, scrollParentOf } from '../../hooks/useFollowScroll'
 import { cancelBlockOffset } from '../../utils/cancelBlockOffset'
 import { formatDateTime, formatDepth, formatMagnitudeWithCondition, hasDepth, hasMagnitude, magnitudeHeading } from '../../utils/formatters'
-import { getIntensityColor, getIntensityLabel, getIntensityLabelWithApproxAbove, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
-import { getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
-import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst, eewIssueTimeMs } from '../../utils/eew'
+import { getIntensityColor, getIntensityLabel, getEewAreaIntensityLabel, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
+import { getLpgmClassLabel, getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
+import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, isEewLpgmClassZeroForecast, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst, eewIssueTimeMs } from '../../utils/eew'
 import { kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 import { readableTextColor } from '../../utils/contrast'
@@ -732,6 +732,26 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             </span>
           </button>
         )}
+        {/* 電文が最大予想長周期地震動階級を 0 と言い切った報（→ `isEewLpgmClassZeroForecast`）。
+            階級を載せていない報と見分けられるよう、階級 1 以上と同じ並びで「階級0」と出す。
+            **押せる形にしない** —— 押すと開く長周期の区域塗りは階級 1 以上の区域しか塗らず、
+            開いても地図に何も出ない。色は観測情報の階級 0 と同じ灰色（`getLpgmClassColor(0)`）。 */}
+        {maxScale > 0 && lpgmClass === 0 && isEewLpgmClassZeroForecast(eew) && (
+          <div
+            className="w-full rounded-lg py-1 px-3 flex items-center justify-center gap-2 roomy:py-2 roomy:px-4 roomy:gap-4"
+            style={{
+              backgroundColor: getLpgmClassBgColor(0),
+              border: `2px solid ${getLpgmClassColor(0)}`,
+            }}
+          >
+            <span className="text-xs font-medium roomy:text-sm" style={{ color: getLpgmClassColor(0) }}>
+              予想長周期地震動
+            </span>
+            <span className="text-xl font-black roomy:text-2xl" style={{ color: '#ffffff' }}>
+              {getLpgmClassLabel(0)}
+            </span>
+          </div>
+        )}
 
         {/* 気象庁の固定付加文（避難行動の呼びかけ）。**予想値のバナー群の直後に置く** ——
             電文が言う唯一の行動指示なので、カードの末尾では区域一覧の下に埋もれる。
@@ -834,8 +854,11 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             </span>
           )}
           {/* 内陸か海域か（電文の `LandOrSea`）。海域なら津波を思い浮かべる手がかりになる。
-              仮定震源要素のときは地名自体が震源の推定位置ではないので添えない。 */}
-          {eew.landOrSea && !isAssumed && (
+              震源が決まっていない報（仮定震源要素・「非常に強い揺れを検知」）にも、電文が載せていれば
+              「（震源未確定）」の後ろへ同じ形で添える（2026-10-29 ユーザー承認「添える」、書き方は同日
+              「続けて「（震源未確定）（海域）」 (Recommended)」、「非常に強い揺れを検知」の報も同日
+              「添える（仮定震源と同じ） (Recommended)」）。 */}
+          {eew.landOrSea && (
             <span className="ml-1.5 font-medium text-[0.8125rem] roomy:text-[1rem]" style={{ color: '#9ca3af' }}>
               （{eew.landOrSea}）
             </span>
@@ -1024,8 +1047,9 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                   // 震度バッジと区域名が別の列へ離れる。
                   <div key={i} className="flex items-center gap-1.5 text-xs" style={{ breakInside: 'avoid' }}>
                     {/* 震度バッジ。色は地図・震度一覧と同じ気象庁配色（`getIntensityColor`）で、
-                        文字色は背景から選ぶ（`readableTextColor`）。上限が定まらない予想は
-                        「程度以上」の語を補う（→ `getIntensityLabelWithApproxAbove`）。 */}
+                        文字色は背景から選ぶ（`readableTextColor`）。色は上限で塗り、下限と上限が違う
+                        区域は「3〜4」と幅で出す。上限が定まらない予想は「程度以上」の語を補う
+                        （→ `getEewAreaIntensityLabel`）。 */}
                     <span
                       className="shrink-0 rounded-sm text-center leading-4 whitespace-nowrap"
                       style={{
@@ -1036,7 +1060,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                         color: readableTextColor(scaleColor),
                       }}
                     >
-                      {getIntensityLabelWithApproxAbove(a.scaleTo, a.scaleToOrAbove === true)}
+                      {getEewAreaIntensityLabel(a.scaleFrom, a.scaleTo, a.scaleToOrAbove === true)}
                     </span>
                     <span className={`flex-1 truncate ${kind === 'arrived' ? 'text-secondary' : 'text-white'}`}>
                       {a.name}

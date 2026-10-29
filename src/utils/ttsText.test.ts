@@ -235,6 +235,23 @@ describe('eewIntensityToText: 長周期地震動階級の読み上げ', () => {
     }
   }
 
+  it('【正】電文が階級 0 と言い切った報は「予想最大階級0。」と読む', () => {
+    const e = { ...makeEEW(undefined, { forecastMaxScale: 30 }), forecastMaxLpgmBelowClass1: true as const }
+    expect(eewIntensityToText(e)).toContain('予想最大階級0。')
+  })
+
+  it('【対照】階級を載せていない報は階級の句を読まない', () => {
+    expect(eewIntensityToText(makeEEW(undefined, { forecastMaxScale: 30 }))).not.toContain('階級')
+  })
+
+  it('【安全弁】階級 0 の報でも、震度を伝えられない報・階級を読まない設定では読まない', () => {
+    const noScale = { ...makeEEW(undefined), forecastMaxLpgmBelowClass1: true as const }
+    expect(eewIntensityToText(noScale)).not.toContain('階級0')
+    const e = { ...makeEEW(undefined, { forecastMaxScale: 30 }), forecastMaxLpgmBelowClass1: true as const }
+    const off = eewIntensityText(eewMaxScaleInfo(e), 0, e, false, false, false, { readEewLpgmClass: false } as TtsSpeechOptions)
+    expect(off).not.toContain('階級0')
+  })
+
   it('階級 1〜4 は読み上げる', () => {
     expect(eewIntensityToText(makeEEW(4, { forecastMaxScale: 40 }))).toContain('予想最大階級4。')
   })

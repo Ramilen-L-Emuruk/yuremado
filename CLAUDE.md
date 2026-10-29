@@ -2104,6 +2104,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 対象地方の既読（`spokenEEWRegionsRef`）をリプレイの復元列に含め忘れると、その EEW について他は何も声にしないのに地方だけが鳴る | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「警報の対象地方を、予想値の前に伝える」 |
 | `EEW_SPEECH_CHAIN_MAX_WAIT_MS` が無いと、応答の無い VOICEVOX への合成要求を待ち続け、後続の EEW が永久に読まれなくなる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「読み上げの優先順位」 |
 | 既読の震度を階級の数値だけで覚えると、「震度N」→「震度N以上」の変化を据え置きと誤認して黙る | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「読み上げの優先順位」 |
+| 予想長周期階級 0 を言うかの判定（`statesEewLpgmClassZero`）を、第 2 フェーズ・受信のときの呼び出し・初報の文のどこかで別に書くと、言わない報（予想震度なし・階級を読まない設定）でも予約が積まれ、その間ほかの読み上げが止まる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「安定待ちを経由しない特別扱い」 |
 | 上限に達して割り込んだときに記録を残さないと、優先度の高い読み上げを消した事実が事後に追えなくなる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「内容が重ならない同格は互いに待つ（相互譲り）」 |
 | 安定待ちサイクルを確定させずに捨てる場所を足すとき、確定経路（`clearScaleStability`）を張り直し忘れると、そのイベントの予想震度が無言のまま終わる | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「第 2 フェーズ（予想値） — 安定待ち」 |
 | 合成要求そのものにタイムアウトが無いと、応答が返らないまま宙に浮き、1 音も出ていないのに既読が進む | [`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「音が出ている間は、待ちを計時しない」 |
