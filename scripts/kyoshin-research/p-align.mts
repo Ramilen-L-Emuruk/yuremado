@@ -2,14 +2,15 @@
 // 引数: フレーム JSON・震源の緯度・経度・深さ・発生時刻（日本時間 YYYY-MM-DDTHH:MM:SS）
 import { readFileSync } from 'node:fs'
 import { travelTimeSec } from '../../src/utils/travelTime.ts'
+import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
 type Frame = { ms: number; ts: string; indices: number[]; cfg: string }
-const repo = process.cwd().replace(/\\/g, '/')
+const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
 const [path, latS, lngS, depS, originS] = process.argv.slice(2)
 const lat0 = +latS, lng0 = +lngS, dep = +depS
 const m = originS.match(/(\d+)-(\d+)-(\d+)T(\d+):(\d+):(\d+)/)!
 const origin = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6])
 const frames = JSON.parse(readFileSync(path, 'utf8')) as Frame[]
-const sites = JSON.parse(readFileSync(`${repo}/.probe-cache/sites_${frames[0].cfg}.json`, 'utf8')) as [number, number][]
+const sites = JSON.parse(readFileSync(`${probeCache}/sites_${frames[0].cfg}.json`, 'utf8')) as [number, number][]
 const hav = (a: number, b: number, c: number, d: number) => { const r = Math.PI / 180, x = Math.sin((c - a) * r / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2; return 2 * 6371 * Math.asin(Math.sqrt(x)) }
 const byMs = new Map(frames.map(f => [f.ms, f]))
 const t0 = frames[0].ms

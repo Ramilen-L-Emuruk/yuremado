@@ -1,8 +1,10 @@
 // 近くて小さな地震: P 波の判定を小さな円で流し、いまのエンジンが取りこぼした窓を拾えるか・平常時に出ないかを見る
 import { readFileSync, existsSync } from 'node:fs'
 import { runPwave, P, type Frame } from './pwave.mts'
+import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
 const repo = process.cwd().replace(/\\/g, '/')
-const sitesOf = (cfg: string) => JSON.parse(readFileSync(`${repo}/.probe-cache/sites_${cfg}.json`, 'utf8')) as [number, number][]
+const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
+const sitesOf = (cfg: string) => JSON.parse(readFileSync(`${probeCache}/sites_${cfg}.json`, 'utf8')) as [number, number][]
 const hav = (a: number, b: number, c: number, d: number) => { const r = Math.PI / 180, x = Math.sin((c - a) * r / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2; return 2 * 6371 * Math.asin(Math.sqrt(x)) }
 type Q = { time: string; lat: number; lng: number; mag: number; depth: number; maxScale?: number }
 const win = JSON.parse(readFileSync(`${repo}/scripts/kyoshin-bench/windows.json`, 'utf8')).windows as { label: string; category: string; quakes?: Q[] }[]
@@ -13,8 +15,8 @@ let quietFires = 0, quietSecs = 0
 const unrel: string[] = []
 for (const w of win) {
   let fr: Frame[]
-  try { fr = JSON.parse(readFileSync(`${repo}/.probe-cache/${w.label}.json`, 'utf8')) } catch { continue }
-  if (fr.length < 60 || !existsSync(`${repo}/.probe-cache/sites_${fr[0].cfg}.json`)) continue
+  try { fr = JSON.parse(readFileSync(`${probeCache}/${w.label}.json`, 'utf8')) } catch { continue }
+  if (fr.length < 60 || !existsSync(`${probeCache}/sites_${fr[0].cfg}.json`)) continue
   const fires = runPwave(fr, sitesOf(fr[0].cfg))
   if (w.category === 'quiet' || w.category === 'negative') { quietFires += fires.length; quietSecs += fr.length; continue }
   if (w.category !== 'catalog' || !w.quakes?.length) continue

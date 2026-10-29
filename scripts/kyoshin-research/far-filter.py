@@ -1,5 +1,5 @@
 # 遠い地震・深発地震の窓で、その地震の波とみなせる検知だけを残して数え直す
-# 使い方: python -X utf8 far-filter.py <$S> <.probe-cache のパス>
+# 使い方: python -X utf8 far-filter.py <$S> <評価台の控えのパス（.cache/kyoshin-bench）>
 #
 # 窓の頭は「分で切り捨てた発生時刻 + 最寄りの観測点への P 波の見込み − 120 秒」（fetch-far.mts）。
 # 発生時刻を切り捨てているので、本当の P 波は見込み（窓の頭 + 120 秒）と同じか、最大 60 秒遅い。

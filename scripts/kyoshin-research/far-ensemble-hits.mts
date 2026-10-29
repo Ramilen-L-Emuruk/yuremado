@@ -3,9 +3,10 @@
 // 書式: <窓>\t<早い段の秒>/<確かな段の秒>@<重心の緯度>,<経度> …（確かな段に上がらなければ —）
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { runEnsemble } from './ensemble-engine.mts'
+import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
 type Frame = { ms: number; ts: string; indices: number[]; cfg: string }
 const repo = process.cwd().replace(/\\/g, '/')
-const probeCache = (process.env.KYOSHIN_BENCH_CACHE ?? `${repo}/.probe-cache`).replace(/\\/g, '/')
+const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
 const dir = `${repo}/.cache/kyoshin-far-windows`
 for (const f of readdirSync(dir).filter(x => x.endsWith('.json')).sort()) {
   const fr = JSON.parse(readFileSync(`${dir}/${f}`, 'utf8')) as Frame[]

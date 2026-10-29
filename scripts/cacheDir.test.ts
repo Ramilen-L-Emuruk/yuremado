@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import path from 'node:path'
-import { decideMainRoot, shouldWarnLegacy } from './lib/cacheDir.mjs'
+import { decideMainRoot, legacyCacheDirs, shouldWarnLegacy } from './lib/cacheDir.mjs'
 
 const repo = path.join('C:', 'repo', '.claude', 'worktrees', 'wt')
 const main = path.join('C:', 'repo')
@@ -39,5 +39,17 @@ describe('shouldWarnLegacy', () => {
   })
   it('どちらも無ければ知らせない（初めて取る）', () => {
     expect(shouldWarnLegacy({ newExists: false, legacyExists: false })).toBe(false)
+  })
+})
+
+describe('legacyCacheDirs', () => {
+  it('.claude/<name> を先頭に、渡した場所をトップからの相対で並べる', () => {
+    expect(legacyCacheDirs({ root: main, name: 'kyoshin-bench', legacy: ['.probe-cache'] })).toEqual([
+      path.join(main, '.claude', 'kyoshin-bench'),
+      path.join(main, '.probe-cache'),
+    ])
+  })
+  it('渡さなければ .claude/<name> だけ', () => {
+    expect(legacyCacheDirs({ root: main, name: 'x', legacy: [] })).toEqual([path.join(main, '.claude', 'x')])
   })
 })

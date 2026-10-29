@@ -88,17 +88,37 @@ export function shouldWarnLegacy({ newExists, legacyExists }) {
   return legacyExists && !newExists
 }
 
-/** メインの checkout の `.cache/<name>`。前の置き場所に控えが残っていれば、1 回だけ移すよう知らせる。 */
-export function cacheDir(name) {
+/**
+ * 前の置き場所の候補。`.claude/<name>` と、呼び出し側が渡した場所（メインの checkout のトップからの相対）。純関数（テストで固定する）。
+ *
+ * @param {{ root: string, name: string, legacy: readonly string[] }} input
+ * @returns {string[]}
+ */
+export function legacyCacheDirs({ root, name, legacy }) {
+  return [path.join(root, '.claude', name), ...legacy.map((p) => path.join(root, p))]
+}
+
+/**
+ * メインの checkout の `.cache/<name>`。前の置き場所に控えが残っていれば、1 回だけ移すよう知らせる。
+ *
+ * `options.legacy` には、`.claude/<name>` のほかに前の置き場所だった場所を、メインの checkout のトップからの相対で渡す
+ * （強震モニタの評価台の控えは、リポジトリ直下の `.probe-cache` だった）。
+ *
+ * @param {string} name
+ * @param {{ legacy?: readonly string[] }} [options]
+ */
+export function cacheDir(name, options = {}) {
   const root = mainCheckoutRoot()
   const dir = path.join(root, '.cache', name)
   if (!warnedLegacy.has(name)) {
     warnedLegacy.add(name)
-    const legacy = path.join(root, '.claude', name)
-    if (shouldWarnLegacy({ newExists: fs.existsSync(dir), legacyExists: fs.existsSync(legacy) })) {
-      console.warn(
-        `[cacheDir] 前の置き場所 ${legacy} に控えが残っています。${dir} へ移してください（移さないと配信元から取り直します）`,
-      )
+    const newExists = fs.existsSync(dir)
+    for (const legacy of legacyCacheDirs({ root, name, legacy: options.legacy ?? [] })) {
+      if (shouldWarnLegacy({ newExists, legacyExists: fs.existsSync(legacy) })) {
+        console.warn(
+          `[cacheDir] 前の置き場所 ${legacy} に控えが残っています。${dir} へ移してください（移さないと配信元から取り直します）`,
+        )
+      }
     }
   }
   return dir

@@ -73,18 +73,19 @@
  *
  * - 観測点リストの版（`siteConfigId`）は年で変わる。窓ごとに先頭フレームの版を採る
  * - Yahoo が保持しているのは 2020 年以降
- * - キャッシュの置き場は環境変数 `KYOSHIN_BENCH_CACHE` で変えられる（既定 `.probe-cache`）。
- *   ワークツリーで作業するときはメインリポジトリのキャッシュを指すと再取得を避けられる
+ * - キャッシュの置き場は既定でメインの checkout の `.cache/kyoshin-bench`（ワークツリーから走らせても同じ場所。
+ *   決め方は `scripts/lib/kyoshinBenchCache.ts`）。環境変数 `KYOSHIN_BENCH_CACHE` で変えられる
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { kyoshinBenchCacheDir } from './lib/kyoshinBenchCache'
 import { createEnsembleDetector } from '../src/utils/kyoshinEnsembleDetector'
 import { createEnsembleTracker } from '../src/utils/kyoshinEnsembleTracker'
 import { validateQuietTables, type QuietTables } from '../src/utils/kyoshinQuietTables'
 import { haversineKm } from '../src/utils/geo'
 import { WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, firstContinuousIndex, mayStopWarmup } from '../src/utils/kyoshinWarmup'
 
-const CACHE_DIR = process.env.KYOSHIN_BENCH_CACHE ?? '.probe-cache'
+const CACHE_DIR = kyoshinBenchCacheDir()
 const WINDOWS_PATH = 'scripts/kyoshin-bench/windows.json'
 const BASELINE_PATH = 'scripts/kyoshin-bench/baseline.json'
 /** 同時に投げる取得リクエスト数。 */

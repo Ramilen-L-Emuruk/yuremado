@@ -9,14 +9,15 @@
  *
  * - 入力の秒フレームは控え `.cache/kyoshin-quiet-days/<日>-<時>.bin`（1 時間 1 ファイル）から読む。
  *   形は先頭に JSON 1 行 `{"cfgs":[…]}`、続けて 1 秒ごとに [秒(uint32 LE)][版の番号(uint8)][点数(uint16 LE)][震度の段+1 の uint8 × 点数]
- * - 観測点の座標は `.probe-cache/sites_<版>.json`（`bench-kyoshin` と共有。置き場は `KYOSHIN_BENCH_CACHE` で変えられる）
+ * - 観測点の座標はメインの checkout の `.cache/kyoshin-bench/sites_<版>.json`（`bench-kyoshin` と共有。決め方は `scripts/lib/kyoshinBenchCache.ts`）
  * - **控えに無い時間があれば、取ることになる件数を出して止まる。** `--fetch` を付けたときだけ Yahoo から取る
  *   （1 時間 3,600 件・1 日 86,400 件。西が駄目な秒は東も試すので、その分だけ増える）。取ったものは控えに残す
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { cacheDir, mainCheckoutRoot } from './lib/cacheDir.mjs'
+import { cacheDir } from './lib/cacheDir.mjs'
+import { kyoshinBenchCacheDir } from './lib/kyoshinBenchCache'
 import { QuietTableBaker, quietSiteKey, type QuietTables } from '../src/utils/kyoshinQuietTables'
 
 /**
@@ -33,7 +34,7 @@ export const DEFAULT_DAYS = ['20220918', '20240829', '20260911']
 const HERE = dirname(fileURLToPath(import.meta.url))
 const DEFAULT_OUT = resolve(HERE, '../public/data/kyoshin-quiet-tables.json')
 const QUIET_DIR = cacheDir('kyoshin-quiet-days')
-const SITES_DIR = join(mainCheckoutRoot(), process.env.KYOSHIN_BENCH_CACHE ?? '.probe-cache')
+const SITES_DIR = kyoshinBenchCacheDir()
 const REALTIME_BASE = (edge: 'west' | 'east') => `https://weather-kyoshin.${edge}.edge.storage-yahoo.jp/RealTimeData`
 const SITELIST_BASE = 'https://weather-kyoshin.west.edge.storage-yahoo.jp/SiteList'
 /** 取るときに同時に投げる件数。 */
