@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createYahooArchiveSource, createYahooLiveSource, type KyoshinBackfillEvent, type KyoshinFrame } from './kyoshinSource'
 import { fetchRealtimeIntensity, fetchSiteList, startClockSync } from './kyoshin'
 import type { RealtimeIntensity } from './kyoshin'
-import { WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, WARMUP_QUIET_MAX_POINTS } from '../utils/kyoshinWarmup'
+import { WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, WARMUP_MIN_BLOCKS, WARMUP_QUIET_MAX_POINTS } from '../utils/kyoshinWarmup'
 import { log } from '../utils/logger'
 
 vi.mock('./kyoshin', () => ({
@@ -75,9 +75,10 @@ describe('Yahoo 強震モニタソース: 助走', () => {
   }
 
   it('正: 開始時刻より前の秒を遡って取り、時刻の昇順で 1 度だけ渡す', async () => {
-    // 1 ブロック目は揺れていて、2 ブロック目は静穏。2 ブロック遡って打ち切る。
+    // 最低の長さぶんは揺れていて、その次のブロックは静穏。最低の長さ ＋ 1 ブロック遡って打ち切る。
+    const shakingSec = WARMUP_BLOCK_SEC * WARMUP_MIN_BLOCKS
     fetchMock.mockImplementation(async (t: Date) =>
-      reply(t, agoSec(t) <= WARMUP_BLOCK_SEC ? SHAKING_INDICES : QUIET_INDICES))
+      reply(t, agoSec(t) <= shakingSec ? SHAKING_INDICES : QUIET_INDICES))
     const source = createYahooArchiveSource(TARGET - NOW)
     const sink = createSink()
     source.start(sink)
@@ -85,9 +86,9 @@ describe('Yahoo 強震モニタソース: 助走', () => {
 
     expect(sink.prefilled).toHaveLength(1)
     const warmup = sink.prefilled[0]
-    expect(warmup).toHaveLength(WARMUP_BLOCK_SEC * 2)
+    expect(warmup).toHaveLength(shakingSec + WARMUP_BLOCK_SEC)
     // 昇順で、末尾は開始時刻の 1 秒前（開始時刻そのものは通常の取得が拾う）
-    expect(agoSec(warmup[0].time)).toBe(WARMUP_BLOCK_SEC * 2)
+    expect(agoSec(warmup[0].time)).toBe(shakingSec + WARMUP_BLOCK_SEC)
     expect(agoSec(warmup[warmup.length - 1].time)).toBe(1)
     for (let i = 1; i < warmup.length; i++) {
       expect(warmup[i].time.getTime()).toBeGreaterThan(warmup[i - 1].time.getTime())
@@ -95,14 +96,14 @@ describe('Yahoo 強震モニタソース: 助走', () => {
     source.stop()
   })
 
-  it('対照: 1 ブロック目が静穏ならそこで打ち切る（平常時に何分も遡らない）', async () => {
+  it('対照: ずっと静穏なら最低の長さで打ち切る（それより手前では止まらず、それ以上も遡らない）', async () => {
     fetchMock.mockImplementation(async (t: Date) => reply(t, QUIET_INDICES))
     const source = createYahooArchiveSource(TARGET - NOW)
     const sink = createSink()
     source.start(sink)
     await flush()
 
-    expect(sink.prefilled[0]).toHaveLength(WARMUP_BLOCK_SEC)
+    expect(sink.prefilled[0]).toHaveLength(WARMUP_BLOCK_SEC * WARMUP_MIN_BLOCKS)
     source.stop()
   })
 
@@ -213,7 +214,7 @@ describe('Yahoo 強震モニタソース: 助走の結果を記録する', () =>
     await flush()
 
     const line = vi.mocked(log.info).mock.calls.map((c) => String(c[0])).find((m) => m.includes('助走'))
-    expect(line).toContain(`助走 ${WARMUP_BLOCK_SEC} フレーム`)
+    expect(line).toContain(`助走 ${WARMUP_BLOCK_SEC * WARMUP_MIN_BLOCKS} フレーム`)
     expect(line).toContain('静穏まで遡った')
     source.stop()
   })

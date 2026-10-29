@@ -1,10 +1,16 @@
 // 震度0ドット（KyoshinSubThresholdGL）表示専用のフィルタ。
-// 検知エンジン（kyoshinDetector）が観測点ごとに学習した慢性ノイズ床（chronicNoiseFloor）を使い、
+// 床の係（kyoshinNoiseFloor）が観測点ごとに学習した慢性ノイズ床（chronicNoiseFloor）を使い、
 // 大阪・岡山のような常時ノイジーな観測点は平常時ほぼ非表示にし、実際に揺れが床を超えたときだけ
 // 表示する。震度1以上のドット・最大効果表示（実測値をそのまま見せる）には適用しない。
 
 import type { SiteCoords } from '../services/kyoshin'
-import { indexToValue, PARAMS } from './kyoshinDetector'
+import { indexToValue } from './kyoshinSiteKeys'
+
+/**
+ * 床への上乗せ（計測震度）。値が 床 + これ 以上の点だけを通す。震度1（0.5）は床≈0 なら通り、
+ * 平常の震度0（0.0）は通らない。
+ */
+export const SUSTAIN_MARGIN = 0.4
 
 /**
  * 観測点ごとの慢性ノイズ床を使い、床＋SUSTAIN_MARGIN を超えた点だけを通す（それ以外は index 0
@@ -21,7 +27,7 @@ import { indexToValue, PARAMS } from './kyoshinDetector'
  * 走らない（以前は観測点リストごとにキーをキャッシュして再生成を避けていた。キャッシュそのものが
  * 要らなくなった）。
  *
- * 長さが揃わないとき（検知エンジン未学習の起動直後・`step()` の連続失敗で床が前フレームに凍結した
+ * 長さが揃わないとき（床を学ぶ前の起動直後・検知器の例外が続いて床が前フレームに凍結した
  * 直後の観測点集合の入れ替わり）はフィルタをかけず生データをそのまま返す。位置で対応づける以上、
  * 長さのずれは添字のずれ＝別地点の床での判定になるため、消すより出す方へ倒す。
  */
@@ -34,6 +40,6 @@ export function filterSubThresholdIndices(
 ): number[] {
   if (floors.length !== sites.length || floors.length !== indices.length) return indices
   return indices.map((idx, i) =>
-    indexToValue(idx) >= floors[i] + PARAMS.SUSTAIN_MARGIN ? idx : 0,
+    indexToValue(idx) >= floors[i] + SUSTAIN_MARGIN ? idx : 0,
   )
 }

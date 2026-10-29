@@ -2,7 +2,7 @@
  * 揺れ検知の診断ログ（純粋コア）。
  *
  * 検知が走ったとき、**アプリが実際に何を見ていたか**を後から再生できる形で書き出す。記録するのは
- * 前後 30 秒ぶんの生の観測値・イベントの内訳・アプリのバージョン・その時点の学習資産。
+ * 前後 30 秒ぶんの生の観測値・イベントの内訳・アプリのバージョン・その時点の慢性ノイズ床。
  *
  * 【なぜ要るか】2026-08-23 の誤検知調査で、利用者が記録した 30 件のうち 12 件が Yahoo のアーカイブから
  * まったく再現できなかった。通常再生・コマ落ち再現・助走 45 分・当時のバージョンのどれでも弱いクラスタ
@@ -14,8 +14,10 @@
  * このファイルは副作用を持たない（保存は `detectionDiagnosticsDb.ts`、配線は
  * `hooks/useDetectionDiagnostics.ts`）。時刻はすべて呼び出し側が渡すデータ時刻を使う。
  */
-import type { ConfirmSnapshot, DetectionEvent, DetectionGates, LearnedState } from './kyoshinDetector'
-import { indexToValue } from './kyoshinDetector'
+import { indexToValue } from './kyoshinSiteKeys'
+import type { EnsembleSource } from './kyoshinEnsembleDetector'
+import type { EnsembleDetection } from './kyoshinEnsembleTracker'
+import type { NoiseFloorSnapshot } from './kyoshinNoiseFloor'
 
 /** 検知の前に遡って残すフレーム数(秒)。 */
 export const LEAD_FRAMES = 30
@@ -31,8 +33,8 @@ export const MAX_RECORDS = 50
  * ライブと過去の値が混ざる。もうひとつは記録が二度と開かれなくなること——`OPEN_COOLDOWN_MS` の判定が
  * 引き算なので、後退した時刻では常に負値になり、どんなに時間が経っても下限を満たさない。
  *
- * 検知エンジン自身も不連続を検出して一過性の状態を作り直す（`PARAMS.MAX_RESUME_GAP_MS`）。ただし
- * あちらは `MAX_DT_GAP_MS` を超えてそれ以内の飛びを「途絶明け」として検知を残す（設計書§37）。
+ * 検知器自身も不連続を検出して作り直す（`kyoshinNoiseFloor.ts` の `MAX_RESUME_GAP_MS`）。ただし
+ * あちらはそれ以内の飛びを続きとして扱い、検知を残す（仕様書§7「フレームの間隔が飛んだとき」）。
  * ここは記録の中身を混ぜないための区切りなので、10 秒のまま切る。
  */
 export const MAX_GAP_MS = 10_000
@@ -57,19 +59,26 @@ export interface DiagnosticFrame {
 /** 検知したイベントの内訳（記録用に平らにしたもの）。 */
 export interface DiagnosticEvent {
   id: string
+  /** 記録を開いた瞬間の段（`likely` / `confirmed`） */
   confidence: string
-  lastSize: number
-  maxIntensity: number
-  epicenter: [number, number] | null
+  /** 加わった観測点のいまの計測震度の最大。いま全員が欠測なら null */
+  maxIntensity: number | null
+  /** 束を作った検知の位置（震源の推定ではない） */
+  epicenter: [number, number]
   /** メンバー観測点の座標と、検知フレームでの値 */
   members: { lat: number; lng: number; value: number }[]
-  /**
-   * 確信度をこう決めた根拠（要求値と中間集計）。**記録を開いたフレームのもの。**
-   *
-   * 要求値は慢性活性・観測点の疎密・EEW の有無で毎フレーム動くため、後から
-   * `PARAMS` の既定値を当てても再現できない。だから記録の側に持たせる。
-   */
-  gates: DetectionGates
+  /** 記録を開いた瞬間までに束を支えた部分（統計・波面・高い震度の近道・まばらな所の規則） */
+  sources: EnsembleSource[]
+}
+
+/** 確かな段になった瞬間の控え。 */
+export interface DiagnosticConfirmed {
+  /** 初めて確かな段になったデータ時刻(ms) */
+  atMs: number
+  /** その秒の観測点を足し終えた後の点数 */
+  size: number
+  /** その秒の最大震度。全員が欠測なら null */
+  maxIntensity: number | null
 }
 
 /** 書き出す 1 件。 */
@@ -97,25 +106,25 @@ export interface DiagnosticRecord {
    * このイベントが**最終的に到達した**確信度。`event.confidence` は記録を開いた瞬間の値なので、
    * 後から育ったものは開いた時点の姿しか残らない。
    *
-   * これが無いと、記録の目的である「周囲の裏付けが取れずに抑えた分」と「画面に出た検知」の
-   * 区別が付かない。抑えた分は `faint` のまま終わり、育ったものは `likely`／`confirmed` になる。
+   * これが無いと、早い段のまま下ろされた検知と確かな段まで育った検知の区別が付かない。
    */
   reachedConfidence: string
   /**
-   * 確定に至った場合、その瞬間の判定材料。確定しなかった記録は null。
+   * 確かな段になった場合、その瞬間の点数と最大震度。確かな段にならなかった記録は null。
    *
-   * `event.gates` が記録を開いた瞬間の姿なのに対し、こちらは `reachedConfidence` と同じく
-   * **後から育った分まで追う**。検知が faint や likely で開き、数フレーム後に確定へ育つのが
-   * 普通なので、開いた瞬間の内訳だけでは「なぜ確定したか」が残らない。
+   * `reachedConfidence` と同じく**後から育った分まで追う**。早い段で開き、数秒後に確かな段へ育つのが
+   * 普通なので、開いた瞬間の内訳だけでは「どの時点で何点で確定したか」が残らない。
    */
-  confirmedBy: ConfirmSnapshot | null
+  confirmed: DiagnosticConfirmed | null
+  /** 記録を閉じるまでに束を支えた部分（開いた後に加わった部分も含む） */
+  sources: EnsembleSource[]
   /** 前後の生の観測値（データ時刻の昇順） */
   frames: DiagnosticFrame[]
   /**
-   * その時点の学習資産（点別床・セル慢性活性）。同じ値から再生を始めれば、
-   * アプリが置かれていた状態を再現できる。取得できなければ null
+   * その時点の慢性ノイズ床（`utils/kyoshinNoiseFloor` の永続化の形）。同じ値から再生を始めれば、
+   * 震度0 未満の点の絞り込みを当時と同じに再現できる。取得できなければ null
    */
-  learned: LearnedState | null
+  noiseFloors: NoiseFloorSnapshot | null
 }
 
 /** 検知フレームの情報（記録を開くときに呼び出し側から受け取る）。 */
@@ -124,9 +133,9 @@ export interface CaptureSeed {
   siteConfigId: string
   sites: [number, number][]
   event: DiagnosticEvent
-  /** 呼び出し時点で確定していれば、その瞬間の判定材料（`DetectionEvent.confirmedBy`） */
-  confirmedBy: ConfirmSnapshot | null
-  learned: LearnedState | null
+  /** 呼び出し時点で確かな段になっていれば、その瞬間の控え */
+  confirmed: DiagnosticConfirmed | null
+  noiseFloors: NoiseFloorSnapshot | null
 }
 
 /** 震度インデックス列 → Yahoo の生の形（1 文字 1 観測点）。`services/kyoshin.ts` の逆変換。 */
@@ -138,7 +147,7 @@ export function encodeIntensity(indices: readonly number[]): string {
 
 /** イベントのメンバーを座標と値の並びへ平らにする。 */
 export function describeEvent(
-  e: DetectionEvent,
+  e: EnsembleDetection,
   keyToIndex: ReadonlyMap<string, number>,
   sites: readonly [number, number][],
   indices: readonly number[],
@@ -152,12 +161,17 @@ export function describeEvent(
   return {
     id: e.id,
     confidence: e.confidence,
-    lastSize: e.lastSize,
     maxIntensity: e.maxIntensity,
     epicenter: e.epicenter,
     members,
-    gates: e.gates,
+    sources: [...e.sources],
   }
+}
+
+/** 検知から、確かな段になった瞬間の控えを取り出す。まだなら null */
+export function confirmedOf(e: EnsembleDetection): DiagnosticConfirmed | null {
+  if (e.firstConfirmedAtMs === null || e.confirmedSnapshot === null) return null
+  return { atMs: e.firstConfirmedAtMs, size: e.confirmedSnapshot.size, maxIntensity: e.confirmedSnapshot.maxIntensity }
 }
 
 /**
@@ -166,7 +180,7 @@ export function describeEvent(
  * フレームを流し込み（`pushFrame`）、検知が起きたら記録を開く（`open`）。開いた記録は後ろ側の
  * フレームが `TAIL_FRAMES` 分たまった時点で確定し、`takeFinished` から取り出せる。
  *
- * **同じイベントで二度開かない。** 確信度が上がったとき（faint→likely→confirmed）に毎回開くと、
+ * **同じイベントで二度開かない。** 段が上がったとき（早い段→確かな段）に毎回開くと、
  * ほぼ同じ内容の記録が並んで上限をすぐ食い潰す。イベント ID ごとに一度だけ開く。
  */
 export class DiagnosticCapture {
@@ -216,7 +230,7 @@ export class DiagnosticCapture {
     if (this.opened.has(seed.event.id)) {
       // 既に開いている記録でも、到達した確信度と確定の内訳は追い続ける（後から育つため）
       this.noteReached(seed.event.id, seed.event.confidence)
-      this.noteConfirmedBy(seed.event.id, seed.confirmedBy)
+      this.noteProgress(seed.event.id, seed.confirmed, seed.event.sources)
       return
     }
     if (this.lastOpenedMs != null && seed.dataTimeMs - this.lastOpenedMs < OPEN_COOLDOWN_MS) return
@@ -224,7 +238,7 @@ export class DiagnosticCapture {
     this.opened.add(seed.event.id)
     this.versionOf.set(seed.event.id, { version, variant })
     this.noteReached(seed.event.id, seed.event.confidence)
-    this.noteConfirmedBy(seed.event.id, seed.confirmedBy)
+    this.noteProgress(seed.event.id, seed.confirmed, seed.event.sources)
     // 開いた時点の直近フレーム（検知フレームを含む）を前側として取り込む
     this.pending.push({ seed, frames: [...this.ring], tail: 0 })
   }
@@ -250,7 +264,8 @@ export class DiagnosticCapture {
     this.pending.length = 0
     this.opened.clear()
     this.reached.clear()
-    this.confirmedByOf.clear()
+    this.confirmedOf.clear()
+    this.sourcesOf.clear()
     this.lastOpenedMs = null
     this.lastFrameMs = null
   }
@@ -259,28 +274,27 @@ export class DiagnosticCapture {
   /** イベント ID → 到達した最高の確信度 */
   private readonly reached = new Map<string, string>()
 
-  /** イベント ID → 確定した瞬間の判定材料（未確定は未登録） */
-  private readonly confirmedByOf = new Map<string, ConfirmSnapshot>()
+  /** イベント ID → 確かな段になった瞬間の控え（まだなら未登録） */
+  private readonly confirmedOf = new Map<string, DiagnosticConfirmed>()
+  /** イベント ID → 束を支えた部分（増える方向にだけ動かす） */
+  private readonly sourcesOf = new Map<string, Set<EnsembleSource>>()
 
   /**
-   * 確定の内訳を控える。採るのは**先に確定したほう**で、先に届いたほうではない。
-   *
-   * 到着順で先勝ちにしてはいけない。`mergeAdjacentEvents` は同じイベント ID へ別イベントの
-   * 内訳を持ち込み、**より早く確定したほうへ差し替える**（`DetectionEvent.confirmedBy` 参照）。
-   * 到着順で決めると、画面が出している根拠と記録に残る根拠が食い違ったまま固定される
-   * ——しかも例外は出ないので、書き出した記録を読むまで誰も気づかない。
-   *
-   * エンジン側と同じ基準（確定時刻の早いほう）で選ぶことで、両者は必ず一致する。
+   * 確かな段の控えと、支えた部分を足す。控えは束を作った係が一度だけ作って動かさないので、最初に届いたものを採る
    */
-  private noteConfirmedBy(id: string, snapshot: ConfirmSnapshot | null): void {
-    if (snapshot == null) return
-    const cur = this.confirmedByOf.get(id)
-    if (cur == null || snapshot.atMs < cur.atMs) this.confirmedByOf.set(id, snapshot)
+  private noteProgress(id: string, confirmed: DiagnosticConfirmed | null, sources: readonly EnsembleSource[]): void {
+    if (confirmed != null && !this.confirmedOf.has(id)) this.confirmedOf.set(id, confirmed)
+    let set = this.sourcesOf.get(id)
+    if (!set) {
+      set = new Set()
+      this.sourcesOf.set(id, set)
+    }
+    for (const src of sources) set.add(src)
   }
 
   /** 到達した確信度を更新する（上がる方向にだけ動かす）。 */
   private noteReached(id: string, confidence: string): void {
-    const rank = (c: string): number => ({ weak: 0, faint: 1, likely: 2, confirmed: 3 })[c] ?? 0
+    const rank = (c: string): number => ({ likely: 1, confirmed: 2 })[c] ?? 0
     const cur = this.reached.get(id)
     if (cur == null || rank(confidence) > rank(cur)) this.reached.set(id, confidence)
   }
@@ -296,9 +310,10 @@ export class DiagnosticCapture {
       sites: seed.sites,
       event: seed.event,
       reachedConfidence: this.reached.get(seed.event.id) ?? seed.event.confidence,
-      confirmedBy: this.confirmedByOf.get(seed.event.id) ?? null,
+      confirmed: this.confirmedOf.get(seed.event.id) ?? null,
+      sources: [...(this.sourcesOf.get(seed.event.id) ?? seed.event.sources)],
       frames,
-      learned: seed.learned,
+      noiseFloors: seed.noiseFloors,
     }
   }
 }

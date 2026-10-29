@@ -14,8 +14,9 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createElement } from 'react'
 import { render, cleanup, screen, act } from '@testing-library/react'
 import { RealtimeTab } from './index'
-import { initGates } from '../../utils/kyoshinDetector'
-import type { DetectionEvent } from '../../utils/kyoshinDetector'
+import type { EnsembleDetection } from '../../utils/kyoshinEnsembleTracker'
+import { ENSEMBLE_EVIDENCE_FOOTNOTE } from '../../utils/kyoshinEnsembleEvidence'
+import { fakeEnsembleDetection } from '../../test-utils/ensembleDetection'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import type { EEWAlert } from '../../types/earthquake'
 
@@ -24,43 +25,26 @@ afterEach(cleanup)
 // （個々のテストで後始末を書き忘れても後続へ漏れないようにする。`clock.test.ts` と同じ作法）。
 afterEach(() => vi.restoreAllMocks())
 
-/** テスト用の最小 DetectionEvent。カードはティアの判定と地域数にしかこれを使わない。 */
+/** テスト用の検知。カードは段の判定・地域数・判定の根拠にしかこれを使わない。 */
 function fakeEvent(
-  overrides: Partial<DetectionEvent> & Pick<DetectionEvent, 'id' | 'confidence'>,
-): DetectionEvent {
-  return {
-    memberKeys: [],
+  overrides: Partial<EnsembleDetection> & Pick<EnsembleDetection, 'id' | 'confidence'>,
+): EnsembleDetection {
+  return fakeEnsembleDetection({
     maxIntensity: 1.0,
-    cells: [],
     originTimeMs: Date.UTC(2026, 0, 1, 0, 0, 0),
-    lastOnsetAtMs: 0,
-    lastSize: 0,
-    epicenter: null,
-    confirmStreak: 0,
-    firstConfirmedAtMs: 0,
-    everMultiPoint: false,
-    isolated: false,
-    isolatedStuckKeys: [],
-    isolatedSilentKeys: [],
-    everConfirmed: overrides.confidence === 'confirmed',
-    lastSpreadAtMs: 0,
-    everNeighborRise: overrides.confidence === 'likely' || overrides.confidence === 'confirmed',
-    gates: initGates(),
-    confirmedBy: null,
     ...overrides,
-  }
+  })
 }
 
 const P = (key: string, index: number): DetectedPoint => ({ key, lat: 35, lng: 139, index })
 
-function tabElement(detections: DetectionEvent[], points: DetectedPoint[], visible: boolean) {
+function tabElement(detections: EnsembleDetection[], points: DetectedPoint[], visible: boolean) {
   return createElement(RealtimeTab, {
     eewNoForecastSettledKeys: new Set<string>(),
     eews: [],
     swaveArrival: null,
     kyoshinV2Detections: detections,
     kyoshinDetectedPoints: points,
-    kyoshinDemoted: [],
     visible,
   })
 }
@@ -69,7 +53,7 @@ function tabElement(detections: DetectionEvent[], points: DetectedPoint[], visib
  * 点列を差し替えて再描画できる形で描く。バー幅スケールはカードが持つ ref なので、
  * 同じツリー位置で rerender しないと（＝描き直すと）保持が検証できない。
  */
-function renderTab(detections: DetectionEvent[], points: DetectedPoint[], visible = true) {
+function renderTab(detections: EnsembleDetection[], points: DetectedPoint[], visible = true) {
   const r = render(tabElement(detections, points, visible))
   return {
     update: (nextPoints: DetectedPoint[], nextVisible = true) =>
@@ -97,6 +81,46 @@ describe('検知カードは渡された点列をそのまま集計する', () =
     expect(screen.getByText(/観測点の反応は収まりました/)).toBeTruthy()
   })
 
+  // 2026-10-29 ユーザー選択「「震度0以下」で出す (Recommended)」
+  describe('確かな段で加わった点が全員震度0未満のとき', () => {
+    const members = (...keys: string[]) => [fakeEvent({ id: 'evt-c', confidence: 'confirmed', memberKeys: keys })]
+
+    it('正: 「震度0以下の反応」と出し、推定最大震度は「0以下」', () => {
+      // index 5・4 = 震度0未満・index -1 = 欠測（欠測は数えない）
+      renderTab(members('sub1', 'sub2', 'missing'), [P('sub1', 5), P('sub2', 4), P('missing', -1)])
+      expect(screen.getByText(/2観測点で震度0以下の反応/)).toBeTruthy()
+      expect(screen.getByText('0以下')).toBeTruthy()
+      expect(screen.queryByText(/観測点の反応は収まりました/)).toBeNull()
+    })
+
+    it('対照: 早い段なら震度0未満だけでも「反応は収まりました」のまま', () => {
+      renderTab([fakeEvent({ id: 'evt-3', confidence: 'likely', memberKeys: ['sub1'] })], [P('sub1', 5)])
+      expect(screen.getByText(/観測点の反応は収まりました/)).toBeTruthy()
+      expect(screen.queryByText('0以下')).toBeNull()
+    })
+
+    it('対照: 震度0未満の点が早い段の検知の点だけなら数えない（確かな段の話として出さない）', () => {
+      const events = [
+        fakeEvent({ id: 'evt-c', confidence: 'confirmed', memberKeys: ['missing'] }),
+        fakeEvent({ id: 'evt-l', confidence: 'likely', memberKeys: ['early'] }),
+      ]
+      renderTab(events, [P('missing', -1), P('early', 3)])
+      expect(screen.getByText(/観測点の反応は収まりました/)).toBeTruthy()
+      expect(screen.queryByText('0以下')).toBeNull()
+    })
+
+    it('安全弁: 全員欠測なら「反応は収まりました」（欠測を震度0以下と言わない）', () => {
+      renderTab(members('missing'), [P('missing', -1)])
+      expect(screen.getByText(/観測点の反応は収まりました/)).toBeTruthy()
+      expect(screen.queryByText('0以下')).toBeNull()
+    })
+
+    it('安全弁: いまのフレームで欠測の点（直前の値を保持して描いている点）は数えない', () => {
+      renderTab(members('held', 'sub'), [{ ...P('held', 5), stale: true }, P('sub', 4)])
+      expect(screen.getByText(/1観測点で震度0以下の反応/)).toBeTruthy()
+    })
+  })
+
   it('震度別の内訳を点列から作る', () => {
     renderTab(confirmed, [P('a', 6), P('b', 6), P('c', 7)])
     // 震度0 が 2点・震度1 が 1点。件数だけを見ると「どの震度の件数か」が固定されないため、
@@ -107,14 +131,22 @@ describe('検知カードは渡された点列をそのまま集計する', () =
     expect(rowOfCount('1点')).toMatch(/^1/)
   })
 
-  it('ティアの判定は点列ではなくイベントの確信度で決まる', () => {
-    // faint だけのときは見出しが「微弱な揺れの兆候」になる。点列に震度1以上があっても変わらない
-    renderTab([fakeEvent({ id: 'evt-2', confidence: 'faint', maxIntensity: 0.0 })], [P('a', 7)])
-    expect(screen.getByText('微弱な揺れの兆候')).toBeTruthy()
+  // 段は震度では分けない（2026-10-29 ユーザー選択「段のまま鳴らす」）。震度0の早い段でも見出しは同じ
+  it('見出しは段・震度によらず「強震モニタ検知」（段はチップで示す）', () => {
+    renderTab([fakeEvent({ id: 'evt-2', confidence: 'likely', maxIntensity: 0.0 })], [P('a', 7)])
+    expect(screen.getByText('強震モニタ検知')).toBeTruthy()
+    expect(screen.getByText('可能性')).toBeTruthy()
+    expect(screen.queryByText(/兆候/)).toBeNull()
   })
 
-  it('weak だけのときはカードを出さない', () => {
-    renderTab([fakeEvent({ id: 'evt-3', confidence: 'weak' })], [P('a', 7)])
+  it('確かな段でも見出しは「強震モニタ検知」で、チップが「検知」になる', () => {
+    renderTab([fakeEvent({ id: 'evt-1', confidence: 'confirmed' })], [P('a', 7)])
+    expect(screen.getByText('強震モニタ検知')).toBeTruthy()
+    expect(screen.getByText('検知')).toBeTruthy()
+  })
+
+  it('検知が無いときはカードを出さない', () => {
+    renderTab([], [P('a', 7)])
     expect(screen.queryByText(/観測点で反応/)).toBeNull()
     expect(screen.queryByText('強震モニタ検知')).toBeNull()
   })
@@ -191,13 +223,13 @@ describe('検知カードの枠色は最大震度で決まる（確信度では�
   it('震度1未満（震度0級）は震度0の灰色へフォールバックする', () => {
     // 震度色が定まらないので震度0の灰色を使う。ティアの色は使わない（confirmed でも同じ色）。
     // ティア色を混ぜると、確信度のラッチで震度が下がった後も赤枠が残る不整合が起きる。
-    renderTab([fakeEvent({ id: 'evt-1', confidence: 'faint' })], [P('a', 6)])
-    const faintBorder = cardBorderColor()
-    expect(faintBorder).toBe(toRgb('#9ca3af'))
+    renderTab([fakeEvent({ id: 'evt-1', confidence: 'likely' })], [P('a', 6)])
+    const zeroBorder = cardBorderColor()
+    expect(zeroBorder).toBe(toRgb('#9ca3af'))
     cleanup()
 
     renderTab([fakeEvent({ id: 'evt-2', confidence: 'confirmed' })], [P('a', 6)])
-    expect(cardBorderColor()).toBe(faintBorder)
+    expect(cardBorderColor()).toBe(zeroBorder)
   })
 
   it('同じ点列なら確信度が変わっても枠色は同じ（枠=震度・チップ=確信度）', () => {
@@ -302,74 +334,70 @@ describe('震度分布バーの幅スケール', () => {
 })
 
 describe('検知カードは判定の根拠を出す', () => {
-  it('確定したものは確定時の内訳を一行で出す', () => {
+  const T = Date.UTC(2026, 0, 1, 0, 0, 0)
+
+  it('[正] 確かな段は確定した瞬間の内訳を一行で出す', () => {
     const e = fakeEvent({
       id: 'evt-1',
       confidence: 'confirmed',
-      confirmedBy: { atMs: 0, size: 6, intensity: 2.0, gates: initGates() },
+      firstConfirmedAtMs: T + 3000,
+      confirmedSnapshot: { size: 6, maxIntensity: 2.0 },
     })
     renderTab([e], [P('a', 8)])
     expect(screen.getByText('6点・震度2で確定')).toBeTruthy()
   })
 
-  it('まだのものは確定まで何が足りないかを出す', () => {
-    const e = fakeEvent({
-      id: 'evt-1',
-      confidence: 'likely',
-      lastSize: 3,
-      gates: { ...initGates(), sizeReq: 5, intenseCount: 2, intenseReq: 2 },
-    })
-    renderTab([e], [P('a', 8)])
-    expect(screen.getByText('確定まで あと2点')).toBeTruthy()
+  it('[対照] 早い段のあいだは一行の要約を出さない', () => {
+    renderTab([fakeEvent({ id: 'evt-1', confidence: 'likely' })], [P('a', 8)])
+    expect(screen.queryByText(/で確定/)).toBeNull()
+  })
+
+  it('[安全弁] 確かな段でも確定の控えが無ければ一行を出さない（数を作らない）', () => {
+    renderTab([fakeEvent({ id: 'evt-1', confidence: 'confirmed', confirmedSnapshot: null })], [P('a', 8)])
+    expect(screen.queryByText(/で確定/)).toBeNull()
   })
 
   // 対照: 内訳の表は既定で畳んでおく（カードの主情報を押しのけない）
   it('判定の内訳は既定では畳まれている', () => {
     renderTab([fakeEvent({ id: 'evt-1', confidence: 'confirmed' })], [P('a', 8)])
     expect(screen.getByText('判定の内訳')).toBeTruthy()
-    expect(screen.queryByText('揺れ継続中の点')).toBeNull()
+    expect(screen.queryByText('判定した仕組み')).toBeNull()
+    expect(screen.queryByText(ENSEMBLE_EVIDENCE_FOOTNOTE)).toBeNull()
   })
 
-  it('開くと判定の内訳が出る', () => {
+  it('開くと 4 行の表と脚注が出る', () => {
     const e = fakeEvent({
       id: 'evt-1',
-      confidence: 'likely',
-      lastSize: 3,
-      gates: { ...initGates(), sizeReq: 5 },
+      confidence: 'confirmed',
+      originTimeMs: T,
+      memberKeys: ['a', 'b', 'c'],
+      maxIntensity: 2.0,
+      sources: ['cluster', 'stat'],
+      firstConfirmedAtMs: T + 4000,
+      confirmedSnapshot: { size: 3, maxIntensity: 2.0 },
     })
     renderTab([e], [P('a', 8)])
     act(() => { screen.getByText('判定の内訳').click() })
-    expect(screen.getByText('揺れ継続中の点')).toBeTruthy()
-    expect(screen.getByText('/ 5')).toBeTruthy()
+    const rows = Array.from(document.querySelectorAll('table tr')).map((tr) =>
+      Array.from(tr.querySelectorAll('td')).map((td) => td.textContent),
+    )
+    expect(rows).toEqual([
+      ['判定した仕組み', '平常時のゆらぎ・揺れの広がり'],
+      ['加わった観測点', '3点'],
+      ['最大震度', '震度2'],
+      ['確定まで', '検知から4秒'],
+    ])
+    expect(screen.getByText(ENSEMBLE_EVIDENCE_FOOTNOTE)).toBeTruthy()
   })
 
-  // 安全弁: 検知エンジンの内部用語を利用者へ出さない（「フレーム」は 1 秒ごとの処理単位で、
-  // 画面のどこにも定義が無い）。回帰で戻さないよう文言の側で固定する
-  it('内訳に検知エンジンの内部用語を出さない', () => {
-    const e = fakeEvent({
-      id: 'evt-1',
-      confidence: 'likely',
-      lastSize: 5,
-      confirmStreak: 1,
-      gates: { ...initGates(), sizeReq: 5, streakReq: 3, intenseCount: 2, intenseReq: 2 },
-    })
+  // 安全弁: 検知器の内部用語（フレーム・部分の英名）を利用者へ出さない
+  it('内訳に検知器の内部用語を出さない', () => {
+    const e = fakeEvent({ id: 'evt-1', confidence: 'likely', sources: ['stat', 'cluster', 'fast', 'sparse'] })
     renderTab([e], [P('a', 8)])
     act(() => { screen.getByText('判定の内訳').click() })
-    expect(document.body.textContent).not.toMatch(/フレーム/)
-    expect(screen.getByText('確定まで あと約2秒')).toBeTruthy()
-  })
-
-  // 安全弁: 要求が動いた理由は内訳の中でだけ出す（一行の要約に混ぜない）
-  it('条件を緩めた理由は内訳を開いたときに出る', () => {
-    const e = fakeEvent({
-      id: 'evt-1',
-      confidence: 'likely',
-      gates: { ...initGates(), eewActive: true },
-    })
-    renderTab([e], [P('a', 8)])
-    expect(screen.queryByText(/緊急地震速報の発表中/)).toBeNull()
-    act(() => { screen.getByText('判定の内訳').click() })
-    expect(screen.getByText(/緊急地震速報の発表中/)).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/フレーム|stat|cluster|fast|sparse/)
+    // まだ確定していない段の「確定まで」は値を作らない
+    expect(screen.getByText('—')).toBeTruthy()
   })
 })
 
@@ -415,7 +443,6 @@ function renderEEW(eew: EEWAlert, settledKeys: ReadonlySet<string> = new Set<str
     swaveArrival: null,
     kyoshinV2Detections: [],
     kyoshinDetectedPoints: [],
-    kyoshinDemoted: [],
     visible: true,
   }))
 }

@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 //
-// 検知カードの区域名と、確定を降ろした検知のカード。
+// 検知カードの区域名。
 //
 // 区域名は最も強い観測点が入る一次細分区域から引く（2026-10-22 ユーザー選択「地域名を出す
 // (Recommended)」、出し方は 2026-10-24 ユーザー選択「本文と内訳の両方 (Recommended)」）。
-// 降ろした検知は理由を添えて残す（2026-10-22 ユーザー選択「理由をカードに残す (Recommended)」）。
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, cleanup, screen, fireEvent } from '@testing-library/react'
 import type { SubRegion } from '../../utils/subregions'
@@ -33,7 +32,8 @@ vi.mock('../../utils/subregions', async (orig) => {
 })
 
 import { RealtimeTab } from './index'
-import { initGates, type DetectionEvent } from '../../utils/kyoshinDetector'
+import type { EnsembleDetection } from '../../utils/kyoshinEnsembleTracker'
+import { fakeEnsembleDetection } from '../../test-utils/ensembleDetection'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 
 afterEach(() => {
@@ -41,21 +41,14 @@ afterEach(() => {
   loaded = SUBREGIONS
 })
 
-function ev(overrides: Partial<DetectionEvent> & Pick<DetectionEvent, 'id' | 'confidence'>): DetectionEvent {
-  return {
-    memberKeys: [], maxIntensity: 1.0, cells: [], originTimeMs: Date.UTC(2026, 0, 1, 0, 0, 0),
-    lastOnsetAtMs: 0, lastSize: 0, epicenter: null, confirmStreak: 0, firstConfirmedAtMs: 0,
-    everMultiPoint: false, isolated: false, isolatedStuckKeys: [], isolatedSilentKeys: [],
-    everConfirmed: overrides.confidence === 'confirmed', lastSpreadAtMs: 0,
-    everNeighborRise: overrides.confidence !== 'faint', gates: initGates(), confirmedBy: null,
-    ...overrides,
-  }
+function ev(overrides: Partial<EnsembleDetection> & Pick<EnsembleDetection, 'id' | 'confidence'>): EnsembleDetection {
+  return fakeEnsembleDetection({ maxIntensity: 1.0, originTimeMs: Date.UTC(2026, 0, 1, 0, 0, 0), ...overrides })
 }
 
 const inside = (key: string, index: number): DetectedPoint => ({ key, lat: 35.5, lng: 139.5, index })
 const farAway = (key: string, index: number): DetectedPoint => ({ key, lat: 43, lng: 145, index })
 
-function renderTab(detections: DetectionEvent[], points: DetectedPoint[], demoted: DetectionEvent[] = []) {
+function renderTab(detections: EnsembleDetection[], points: DetectedPoint[]) {
   return render(
     <RealtimeTab
       eewNoForecastSettledKeys={new Set()}
@@ -63,7 +56,6 @@ function renderTab(detections: DetectionEvent[], points: DetectedPoint[], demote
       swaveArrival={null}
       kyoshinV2Detections={detections}
       kyoshinDetectedPoints={points}
-      kyoshinDemoted={demoted}
       visible
     />,
   )
@@ -98,31 +90,5 @@ describe('検知カードの区域名', () => {
     expect(screen.getByText('地域 1・テスト区域（検知）')).toBeTruthy()
     // 区域へ寄せられない地域は番号だけ
     expect(screen.getByText('地域 2（可能性）')).toBeTruthy()
-  })
-})
-
-describe('確定を降ろした検知のカード', () => {
-  const demoted = ev({
-    id: 'evt-9',
-    confidence: 'weak',
-    gates: { ...initGates(), soloStale: true, soloStaleFlat: true },
-  })
-
-  it('正: 降ろした検知は「取り下げ」と理由を出す（ほかの検知が無くても）', () => {
-    renderTab([demoted], [], [demoted])
-    expect(screen.getByText('取り下げ')).toBeTruthy()
-    expect(screen.getByText('値が動かないまま続いたため取り下げ')).toBeTruthy()
-  })
-
-  it('対照: 降ろした検知が渡されなければ、weak だけではカードを出さない', () => {
-    renderTab([demoted], [])
-    expect(screen.queryByText('取り下げ')).toBeNull()
-    expect(screen.queryByText(/強震モニタ検知/)).toBeNull()
-  })
-
-  it('安全弁: ほかの検知が続いていれば、主のカードと並べて出す', () => {
-    renderTab([ev({ id: 'evt-1', confidence: 'confirmed' }), demoted], [inside('b', 11)], [demoted])
-    expect(screen.getByText('取り下げ')).toBeTruthy()
-    expect(screen.getByText('最も強い観測点：テスト区域')).toBeTruthy()
   })
 })

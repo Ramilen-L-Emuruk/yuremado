@@ -59,8 +59,8 @@ export function fetchSiteList(siteConfigId?: string): Promise<SiteCoords> {
       // 失敗した Promise をキャッシュに残さない。残すと同一 siteConfigId への
       // 再試行が全て過去の失敗 Promise を返してしまい、siteConfigId 切替直後の
       // 一時的な失敗で検知エンジンが恒久停止する（sites が旧 ID のまま更新されず、
-      // indices と長さ不整合になった時点で kyoshinDetector.step() が TypeError で
-      // 恒久停止しうる）。エラーは呼び出し元へ再スローする。
+      // indices と長さ不整合になり、揺れ検知が件数の食い違いで結果を出せないまま
+      // 止まりうる）。エラーは呼び出し元へ再スローする。
       siteListCache.delete(cacheKey)
       throw err
     })

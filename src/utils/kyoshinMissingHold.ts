@@ -26,7 +26,7 @@
 // 欠測を「揺れ 0」と扱わないのと同じ理由で、表示側の最大値も欠測で落とさない。
 // 詳細は `docs/spec/kyoshin-detection-spec.md` §8。
 //
-// 【検知エンジンには渡さない】`kyoshinDetector` には生のインデックスを渡し続ける（App 参照）。
+// 【検知エンジンには渡さない】揺れ検知（`useKyoshinDetectorV2`）には生のインデックスを渡し続ける（App 参照）。
 // 欠測判定・慢性ノイズ床の学習を保持値で汚さない。
 
 import { MISSING_INDEX_THRESHOLD } from '../services/kyoshin'

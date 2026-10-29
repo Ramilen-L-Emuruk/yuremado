@@ -36,7 +36,7 @@ function makeEEW(magnitude: number, magnitudeCondition?: string, magnitudeType?:
 
 const renderTab = (eew: EEWAlert) =>
   render(
-    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} kyoshinDemoted={[]} visible />,
+    <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={null} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
   )
 
 /** 規模の見出しの隣に出る値。 */

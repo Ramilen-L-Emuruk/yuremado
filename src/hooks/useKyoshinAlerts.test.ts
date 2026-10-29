@@ -4,14 +4,13 @@ import {
   createAlertRegionState, stepAlertRegions,
   REGION_MATCH_KM, DEFAULT_VIRTUAL_DEPTH_KM, DYNAMIC_THRESHOLD_SAFETY_FACTOR,
   OUTBREAK_PROPAGATION_WINDOW_MS, NEW_REGION_COOLDOWN_MS,
-  PROPAGATION_MAX_KM, isSameShakeAsBefore, type AlertRegion,
+  PROPAGATION_MAX_KM, isSameShakeAsBefore, SAME_SHAKE_KM, type AlertRegion,
 } from './useKyoshinAlerts'
 import { reachRadiusKm } from '../utils/travelTime'
 import { eewFeltRadiusKm } from '../utils/eew'
 import type { EEWAlert, Hypocenter } from '../types/earthquake'
 import type { ConfirmedShock } from '../utils/kyoshinDetectionView'
 import { haversineKm } from '../utils/geo'
-import { PARAMS } from '../utils/kyoshinDetector'
 
 function fakeRegion(overrides: Partial<AlertRegion> = {}): AlertRegion {
   return {
@@ -539,14 +538,14 @@ describe('isSameShakeAsBefore', () => {
     expect(isSameShakeAsBefore([NOTO], [])).toBe(false)
   })
 
-  it('境界は MERGE_EVENT_KM（イベント重心どうしを 1 地震とみなす物差し）', () => {
+  it('境界は SAME_SHAKE_KM（重心どうしを同じ揺れとみなす物差し）', () => {
     // 同一地震の照合に使う REGION_MATCH_KM(300km) は借りない。あちらは「継続監視の中で 1 つの地震の
     // 揺れがどこまで広がりうるか」の値で、途絶をまたいだ同一性の判定には広すぎる（能登から 289km＝
     // 東京〜仙台ほど離れた別の地震まで「同じ揺れ」になってしまう）。
     const inside = shockAt(37.5 + 0.85, 137.0) // 約 94km
     const outside = shockAt(37.5 + 0.95, 137.0) // 約 106km
-    expect(haversineKm(NOTO.lat, NOTO.lng, inside.lat, inside.lng)).toBeLessThan(PARAMS.MERGE_EVENT_KM)
-    expect(haversineKm(NOTO.lat, NOTO.lng, outside.lat, outside.lng)).toBeGreaterThan(PARAMS.MERGE_EVENT_KM)
+    expect(haversineKm(NOTO.lat, NOTO.lng, inside.lat, inside.lng)).toBeLessThan(SAME_SHAKE_KM)
+    expect(haversineKm(NOTO.lat, NOTO.lng, outside.lat, outside.lng)).toBeGreaterThan(SAME_SHAKE_KM)
     expect(isSameShakeAsBefore([inside], [NOTO])).toBe(true)
     expect(isSameShakeAsBefore([outside], [NOTO])).toBe(false)
     // REGION_MATCH_KM を借りていた頃は真だった距離が、いまは別の揺れとして鳴る側へ倒れる

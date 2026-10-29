@@ -1281,7 +1281,6 @@ M1.0** を仮の震源として電文に書く。震央地名もその観測点�
   「最初に揺れを捉えた観測点の所在地」なので、そこまでの距離を「震源から N km」と出すと嘘になる。
   区域の発表値はあるので行は出し、地名にカードの見出しと同じ「（震源未確定）」を添える。
   自前計算の経路では、震源が決まっていない報の行を作らない（予報円がそもそも作られない）
-- **検知エンジンの EEW 連動緩和判定** — `src/App.tsx` の `hasActiveNonAssumedEEW`
 - **地震カードの波形の P/S 線の起点に使わない** — `src/hooks/useQuakeOriginSeconds.ts` の
   `eewOriginsFromActive`（画面の報）と `src/services/quakeOriginSources.ts` の `pickEewOrigins`
   （P2PQuake の履歴）が仮定震源要素の印を付けて残し、`src/utils/quakeOriginSeconds.ts` の

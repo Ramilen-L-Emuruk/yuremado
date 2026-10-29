@@ -1,22 +1,25 @@
 import { describe, it, expect } from 'vitest'
 import {
   DiagnosticCapture,
+  confirmedOf,
   describeEvent,
   encodeIntensity,
   LEAD_FRAMES,
   OPEN_COOLDOWN_MS,
   TAIL_FRAMES,
   type CaptureSeed,
+  type DiagnosticConfirmed,
 } from './detectionDiagnostics'
-import { initGates } from './kyoshinDetector'
-import type { ConfirmSnapshot, DetectionEvent } from './kyoshinDetector'
+import type { EnsembleSource } from './kyoshinEnsembleDetector'
+import { fakeEnsembleDetection } from '../test-utils/ensembleDetection'
 
 /** 最小の記録種。イベント ID と確信度だけを変えて使う。 */
 function seed(
   id: string,
   dataTimeMs: number,
   confidence = 'likely',
-  confirmedBy: ConfirmSnapshot | null = null,
+  confirmed: DiagnosticConfirmed | null = null,
+  sources: EnsembleSource[] = ['stat'],
 ): CaptureSeed {
   return {
     dataTimeMs,
@@ -25,20 +28,19 @@ function seed(
     event: {
       id,
       confidence,
-      lastSize: 3,
       maxIntensity: 0.5,
       epicenter: [35, 139],
       members: [],
-      gates: initGates(),
+      sources,
     },
-    confirmedBy,
-    learned: null,
+    confirmed,
+    noiseFloors: null,
   }
 }
 
-/** 確定の内訳。`atMs`（確定した時刻）が「どちらを採るか」の比較に使われる。 */
-function snapshot(size: number, atMs = 0): ConfirmSnapshot {
-  return { atMs, size, intensity: 3.0, gates: initGates() }
+/** 確かな段になった瞬間の控え。 */
+function snapshot(size: number, atMs = 0): DiagnosticConfirmed {
+  return { atMs, size, maxIntensity: 3.0 }
 }
 
 /** フレームを n 本流す。時刻は 1 秒刻み。 */
@@ -80,7 +82,7 @@ describe('DiagnosticCapture', () => {
     expect([...ms].sort((a, b) => a - b)).toEqual(ms)
   })
 
-  it('同じイベントでは二度開かない（faint→likely→confirmed で同じ記録が並ばない）', () => {
+  it('同じイベントでは二度開かない（likely→confirmed で同じ記録が並ばない）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
     c.open(seed('evt-1', t), '1.0.0', 'standard')
@@ -113,13 +115,13 @@ describe('DiagnosticCapture', () => {
   it('後から育った確信度を記録に残す（抑えた分と画面に出た検知を見分けるため）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    // 開いた時点は faint（周囲の裏付けが取れていない）
-    c.open(seed('evt-1', t, 'faint'), '1.0.0', 'standard')
+    // 開いた時点は早い段
+    c.open(seed('evt-1', t, 'likely'), '1.0.0', 'standard')
     // その後 confirmed まで育つ
     c.open(seed('evt-1', t + 2000, 'confirmed'), '1.0.0', 'standard')
     feed(c, t, TAIL_FRAMES)
     const done = c.takeFinished()
-    expect(done[0].event.confidence).toBe('faint') // 開いた瞬間の姿はそのまま
+    expect(done[0].event.confidence).toBe('likely') // 開いた瞬間の姿はそのまま
     expect(done[0].reachedConfidence).toBe('confirmed') // 到達した先も分かる
   })
 
@@ -127,56 +129,67 @@ describe('DiagnosticCapture', () => {
   it('開いた後で確定した場合も、確定の内訳を記録に残す', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    // 開いた時点は faint で、まだ確定していない
-    c.open(seed('evt-1', t, 'faint'), '1.0.0', 'standard')
+    // 開いた時点は早い段で、まだ確定していない
+    c.open(seed('evt-1', t, 'likely'), '1.0.0', 'standard')
     // 2 フレーム後に確定へ育つ
-    c.open(seed('evt-1', t + 2000, 'confirmed', snapshot(6)), '1.0.0', 'standard')
+    c.open(seed('evt-1', t + 2000, 'confirmed', snapshot(6, t + 2000)), '1.0.0', 'standard')
     feed(c, t, TAIL_FRAMES)
     const done = c.takeFinished()
-    expect(done[0].confirmedBy?.size).toBe(6)
+    expect(done[0].confirmed).toEqual({ atMs: t + 2000, size: 6, maxIntensity: 3.0 })
     // 開いた瞬間のイベントの姿は据え置き（reachedConfidence と同じ切り分け）
-    expect(done[0].event.confidence).toBe('faint')
+    expect(done[0].event.confidence).toBe('likely')
   })
 
   // 対照: 確定しなかった記録は内訳を持たない
-  it('確定しなかった記録の confirmedBy は null', () => {
+  it('確定しなかった記録の confirmed は null', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
     c.open(seed('evt-1', t, 'likely'), '1.0.0', 'standard')
-    c.open(seed('evt-1', t + 2000, 'faint'), '1.0.0', 'standard')
+    c.open(seed('evt-1', t + 2000, 'likely'), '1.0.0', 'standard')
     feed(c, t, TAIL_FRAMES)
-    expect(c.takeFinished()[0].confirmedBy).toBeNull()
+    expect(c.takeFinished()[0].confirmed).toBeNull()
   })
 
-  // 安全弁: 選ぶ基準は到着順ではなく確定時刻。エンジン側の併合（より早く確定したほうへ
-  // 差し替える）と基準を揃えないと、画面が出している根拠と記録が食い違ったまま固定される
-  it('後から届いた内訳でも、確定が早ければそちらを採る（併合で差し替わる経路）', () => {
+  // 安全弁: 控えは束を作った係が一度だけ作って動かさない。後から別の値が届いても、最初の控えを保つ
+  it('最初に届いた確定の控えを保ち、後から届いた控えでは差し替えない', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
     c.open(seed('evt-1', t, 'confirmed', snapshot(4, t)), '1.0.0', 'standard')
-    // 併合で「もっと早く確定していた別イベントの内訳」が持ち込まれる
     c.open(seed('evt-1', t + 2000, 'confirmed', snapshot(9, t - 3000)), '1.0.0', 'standard')
     feed(c, t, TAIL_FRAMES)
-    expect(c.takeFinished()[0].confirmedBy?.size).toBe(9)
+    expect(c.takeFinished()[0].confirmed?.size).toBe(4)
   })
 
-  // 対照: 確定が遅いほうへは差し替えない（単に後から届いただけでは動かない）
-  it('後から届いた内訳の確定が遅ければ採らない', () => {
+  // 正: 開いた後に加わった支えも記録に残す
+  it('記録を閉じるまでに束を支えた部分を合わせて残す（開いた後に加わった分も含む）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t, 'confirmed', snapshot(4, t)), '1.0.0', 'standard')
-    c.open(seed('evt-1', t + 2000, 'confirmed', snapshot(9, t + 2000)), '1.0.0', 'standard')
+    c.open(seed('evt-1', t, 'likely', null, ['stat']), '1.0.0', 'standard')
+    c.open(seed('evt-1', t + 2000, 'confirmed', null, ['cluster', 'stat']), '1.0.0', 'standard')
     feed(c, t, TAIL_FRAMES)
-    expect(c.takeFinished()[0].confirmedBy?.size).toBe(4)
+    const done = c.takeFinished()
+    expect([...done[0].sources].sort()).toEqual(['cluster', 'stat'])
+    // 開いた瞬間の姿は据え置き
+    expect(done[0].event.sources).toEqual(['stat'])
+  })
+
+  // 安全弁: 開いた後の呼び出しで支えが減っても、記録からは消さない
+  it('支えた部分は増える方向にだけ動かす', () => {
+    const c = new DiagnosticCapture()
+    const t = feed(c, 0, 5)
+    c.open(seed('evt-1', t, 'likely', null, ['stat', 'fast']), '1.0.0', 'standard')
+    c.open(seed('evt-1', t + 2000, 'likely', null, ['stat']), '1.0.0', 'standard')
+    feed(c, t, TAIL_FRAMES)
+    expect([...c.takeFinished()[0].sources].sort()).toEqual(['fast', 'stat'])
   })
 
   it('確信度は上がる方向にだけ動かす（保持で下がっても到達点は残る）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t, 'likely'), '1.0.0', 'standard')
-    c.open(seed('evt-1', t + 2000, 'faint'), '1.0.0', 'standard')
+    c.open(seed('evt-1', t, 'confirmed'), '1.0.0', 'standard')
+    c.open(seed('evt-1', t + 2000, 'likely'), '1.0.0', 'standard')
     feed(c, t, TAIL_FRAMES)
-    expect(c.takeFinished()[0].reachedConfidence).toBe('likely')
+    expect(c.takeFinished()[0].reachedConfidence).toBe('confirmed')
   })
 
   it('flush は後ろ側が足りなくても確定する（画面を閉じるときフレームがもう来ない）', () => {
@@ -251,14 +264,14 @@ describe('describeEvent', () => {
       ['35.000,139.000', 0],
       ['35.100,139.100', 1],
     ])
-    const e = {
+    const e = fakeEnsembleDetection({
       id: 'evt-1',
       confidence: 'likely',
       memberKeys: ['35.000,139.000', '35.100,139.100', '欠番'],
-      lastSize: 2,
       maxIntensity: 0.5,
       epicenter: [35.05, 139.05],
-    } as unknown as DetectionEvent
+      sources: ['stat', 'cluster'],
+    })
     const d = describeEvent(e, keyToIndex, sites, [7, 6, 0])
 
     // 引けなかったキーは落ちる（座標が分からないので記録しても再生できない）
@@ -267,5 +280,29 @@ describe('describeEvent', () => {
       { lat: 35.1, lng: 139.1, value: 0.0 },
     ])
     expect(d.id).toBe('evt-1')
+    expect(d.epicenter).toEqual([35.05, 139.05])
+    expect(d.sources).toEqual(['stat', 'cluster'])
+    // 支えの並びは写しで、検知の配列そのものを共有しない（記録が後から書き換わらないため）
+    expect(d.sources).not.toBe(e.sources)
+  })
+})
+
+describe('confirmedOf', () => {
+  it('[正] 確かな段になった時刻と控えから、記録用の控えを作る', () => {
+    const e = fakeEnsembleDetection({
+      confidence: 'confirmed',
+      firstConfirmedAtMs: 5000,
+      confirmedSnapshot: { size: 6, maxIntensity: 2.4 },
+    })
+    expect(confirmedOf(e)).toEqual({ atMs: 5000, size: 6, maxIntensity: 2.4 })
+  })
+
+  it('[対照] まだ確かな段になっていなければ null', () => {
+    expect(confirmedOf(fakeEnsembleDetection({ confidence: 'likely' }))).toBeNull()
+  })
+
+  it('[安全弁] 時刻か控えの片方しか無ければ null（半端な控えを記録しない）', () => {
+    expect(confirmedOf(fakeEnsembleDetection({ firstConfirmedAtMs: 5000, confirmedSnapshot: null }))).toBeNull()
+    expect(confirmedOf(fakeEnsembleDetection({ firstConfirmedAtMs: null, confirmedSnapshot: { size: 3, maxIntensity: 1 } }))).toBeNull()
   })
 })

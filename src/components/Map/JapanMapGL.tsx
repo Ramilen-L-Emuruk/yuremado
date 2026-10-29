@@ -319,8 +319,7 @@ export function JapanMapGL({
   }, [observationBars, arrivalMarkers, missingMarkers, iconScale, mode])
   // カメラが追う検知点。**実際に地図へ描かれているものだけ**に揃える。
   // detectedPoints（confirmed イベントのメンバーの和集合）は現在の震度で絞られていない
-  // （`kyoshinDetector` の memberKeys。値が下がりきった点は `MEMBER_DROP_MS` の猶予を過ぎれば
-  // 外れるが、それまでは残る）。一方マーカー側は現在の震度で二段に絞られる
+  // （検知の memberKeys。値が下がりきった点も、検知が消えるまで残る）。一方マーカー側は現在の震度で二段に絞られる
   // （震度0未満・欠測を描かない `gl/kyoshinDetectedFeatures.ts` ＋ 孤立した震度0を落とす
   // `dropIsolatedZeroPoints`）。この差をカメラが引き継ぐと、大地震のあと画が全国に張り付いたまま
   // 戻らない（2024-01-01 能登の再生で実測: 描かれている 70 点に対しフィット目標が 887 点）。

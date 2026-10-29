@@ -79,9 +79,7 @@ import { useDetectionDiagnostics } from './hooks/useDetectionDiagnostics'
 import { createSpeechFollowController, telegramTextSubject, type SpeechFollowSession } from './utils/ttsFollow'
 import { useTelegramTextSpeechFollow } from './hooks/useTelegramTextSpeechFollow'
 import { deriveKyoshinView } from './utils/kyoshinDetectionView'
-import { createDemotedEventsState, stepDemotedEvents } from './utils/kyoshinDemotedEvents'
 import { createReonsetState, stepReonset } from './utils/kyoshinReonset'
-import type { DetectionEvent } from './utils/kyoshinDetector'
 import { filterSubThresholdIndices } from './utils/kyoshinSubThresholdFilter'
 import { countdownBeepTarget, useSWaveCountdown } from './hooks/useSWaveCountdown'
 import { pickArrivalEews, pickPublicWaveEews } from './utils/countdownEew'
@@ -91,7 +89,7 @@ import { useQuakeHeatmap } from './hooks/useQuakeHeatmap'
 import { useDebouncedValue } from './hooks/useDebouncedValue'
 import { collectQuakesToNotify, scheduleQuakeNotification, type QuakeNotification, type QuakeNotifiedState } from './utils/quakeNotification'
 import { formatDateTimeLocal } from './utils/formatters'
-import { computeEEWLevel, eewEventKey, eewMaxLpgmClass, isProvisionalHypocenter } from './utils/eew'
+import { computeEEWLevel, eewEventKey, eewMaxLpgmClass } from './utils/eew'
 import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
 import { canOpenLpgmNotes } from './utils/lpgm'
 import { estimatedIntensityFor, matchEstimatedIntensityArrival } from './utils/estimatedIntensity'
@@ -149,7 +147,6 @@ const DEFAULT_TITLE = isDmdss
 const EMPTY_SITES: [number, number][] = []
 const EMPTY_INDICES: number[] = []
 /** 降ろした検知が無いときに RealtimeTab へ渡す空の並び（参照を保って memo を効かせる）。 */
-const NO_DEMOTED_EVENTS: DetectionEvent[] = []
 // 公開観測点の波形を出していないときに地図へ渡す空の印（毎回の新しい配列で地図の印を作り直させない）。
 const NO_PUBLIC_STATIONS: readonly PublicStationMarker[] = []
 // 地図の上の隅の列と、その下から始める行動チェックリストの帯の隙間（px）。
@@ -1326,18 +1323,6 @@ export function App() {
   )
   // cancelledAt 除外済みのアクティブ EEW が1件以上あるか（S波カウントダウン等が参照する）
   const hasActiveEEW = activeEEWsNoCancelled.size > 0
-  // 強震モニタ検知エンジン（useKyoshinDetectorV2）の EEW 連動緩和専用。**震源要素が確定した EEW だけ**を
-  // 見る。severity（Warning/Forecast）は推定震度の大小を示す軸に過ぎず、予報級でも震度3〜4相当は
-  // 普通にありうるため使わない。`condition === '仮定震源要素'` は震源要素そのものを推定できず、
-  // 観測点直下・深さ 10km・M1.0 という固定の仮定値が入っている状態で、**その震源に基づく緩和は
-  // 根拠を持たない**（RealtimeTab・shareCardContent が M・深さを隠すのと同じ判断基準）。
-  // hasActiveEEW をそのまま使うと仮定震源要素の速報 1 件だけで全国規模の確定緩和が発動し、単点ノイズ
-  // 由来の誤 confirmed を EEW 経由で再導入しかねないため区別する。
-  // **観測点の数で分けているのではない**——仮定震源要素の定義に観測点数は含まれない（eew-spec.md §5）。
-  const hasActiveNonAssumedEEW = useMemo(
-    () => [...activeEEWsNoCancelled.values()].some((eew) => !isProvisionalHypocenter(eew)),
-    [activeEEWsNoCancelled],
-  )
 
   // 地図・パネルへ渡す EEW 配列は参照を安定させる。JSX 内で Array.from を直接呼ぶと毎レンダー
   // 新しい配列になり、psWave の 100ms tick 等で App が再レンダーするたびに useEewLayerData の
@@ -2003,11 +1988,9 @@ export function App() {
   const resetActionChecklistRef = useRef<() => void>(() => {})
   /** 別地点発報のエピソード状態のリセット。上と同じ理由で ref 経由に渡す。 */
   const resetKyoshinAlertsRef = useRef<() => void>(() => {})
-  // 同じ場所の 2 つ目の地震（`utils/kyoshinReonset.ts`）と、確定を降ろした検知のカード
-  // （`utils/kyoshinDemotedEvents.ts`）の記憶。使うのは下の `useMemo` だが、リプレイの開始・停止で
-  // 落とすために `resetLocalState` より前に置く
+  // 同じ場所の 2 つ目の地震（`utils/kyoshinReonset.ts`）の記憶。使うのは下の `useMemo` だが、
+  // リプレイの開始・停止で落とすために `resetLocalState` より前に置く
   const reonsetStateRef = useRef(createReonsetState())
-  const demotedStateRef = useRef(createDemotedEventsState())
   /**
    * リプレイの開始・停止で落とす画面側の一時状態。
    *
@@ -2042,7 +2025,6 @@ export function App() {
     // 2 つ目の地震と取り下げカードの記憶。時刻の巻き戻りでは自動で捨てるが、前へ飛ばした切替では
     // 旧い時間軸の「立ち上がった点」「降ろした検知」が残る
     reonsetStateRef.current = createReonsetState()
-    demotedStateRef.current = createDemotedEventsState()
   }, [selectQuake])
 
   const replay = useReplayController({
@@ -2154,9 +2136,9 @@ export function App() {
     timeOffset: replayTimeOffset,
     localArchiveId: localKyoshinArchiveId,
   })
-  // 強震モニタの揺れ検知は V2 エンジン（純粋コア step）で行う。
+  // 強震モニタの揺れ検知は組み合わせの検知器（`utils/kyoshinEnsembleDetector`）で行う。
   // 検知結果は音・自動タブ切替・自動フィット・地図オーバーレイ・リアルタイムタブのカードを駆動する。
-  const kyoshinV2 = useKyoshinDetectorV2(kyoshin.sites, kyoshin.indices, kyoshin.dataTime, kyoshin.sitesSiteConfigId, kyoshin.indicesSiteConfigId, true, hasActiveNonAssumedEEW, kyoshin.supplyKey, kyoshin.warmup, kyoshin.backfill)
+  const kyoshinV2 = useKyoshinDetectorV2(kyoshin.sites, kyoshin.indices, kyoshin.dataTime, kyoshin.sitesSiteConfigId, kyoshin.indicesSiteConfigId, true, kyoshin.supplyKey, kyoshin.warmup, kyoshin.backfill)
   // siteConfigId 切替直後の一時的な「新 indices・旧 sites」状態では sites[i] と indices[i] を
   // 位置対応で使う下流（描画・タブ表示・派生ビュー）でも誤ペアリングが起きるため、両者の
   // siteConfigId が揃うまで空配列にゲートする。sitelist の非同期取得が完了した次フレームで
@@ -2170,7 +2152,7 @@ export function App() {
   // 表示用インデックス: 1〜2 秒で復帰する欠測（瞬断）を直前値で埋め、保持中の点を stale で示す。
   // Yahoo の秒データは強く揺れている観測点でも単発で欠測を返すため、素通しすると震度6強級の
   // バッジが 1 秒だけ消えて次の秒で戻る明滅になる（実測は utils/kyoshinMissingHold.ts 冒頭）。
-  // **検知エンジン（上の useKyoshinDetectorV2）には生の kyoshin.indices を渡し続ける**——欠測判定・
+  // **検知（上の useKyoshinDetectorV2）には生の kyoshin.indices を渡し続ける**——欠測判定・
   // 慢性ノイズ床の学習を保持値で汚さない。一方で、下の deriveKyoshinView を通す表示状態には保持値を
   // 使う。そのため音・通知・地域単位発報の入力（candidateMaxIndex / confirmedShocks）も保持値を見る
   // ことになるが、これは意図した設計（欠測を素通しすると最大震度を担う点の 1 秒欠測が「揺れが弱まった」
@@ -2237,15 +2219,6 @@ export function App() {
     log.warn(`[kyoshin] 同じ場所の 2 つ目の揺れの寄せ先を引けなかった（${alert.eventId}）。寄せずに音だけ鳴らす`)
     return { ...stamp, focus: null }
   }, [kyoshinV2.detections, kyoshinV2.recentOnsetKeys, kyoshinV2.dataTime, kyoshinView])
-  // 確定を降ろした検知を、理由を添えて検知カードへしばらく残す（`utils/kyoshinDemotedEvents.ts`）。
-  // 同じフレームを二度渡しても結果は変わらない（StrictMode の二重実行で崩れない）。
-  // 時刻は 2 つ目の地震と同じく検知結果の `kyoshinV2.dataTime`（検知と同じ値から取る）
-  const kyoshinDemotedRaw = useMemo(
-    () => stepDemotedEvents(demotedStateRef.current, kyoshinV2.detections, new Date(kyoshinV2.dataTime).getTime()),
-    [kyoshinV2.detections, kyoshinV2.dataTime],
-  )
-  // 中身が空のときは同じ参照を渡す（RealtimeTab は memo 化されている）
-  const kyoshinDemoted = kyoshinDemotedRaw.length === 0 ? NO_DEMOTED_EVENTS : kyoshinDemotedRaw
   // 震度0ドット表示専用: 検知エンジンが学習した慢性ノイズ床でフィルタする（震度1+表示には手を入れない）
   // PERF-1: kyoshin モード以外では KyoshinSubThreshold レイヤーが表示されないため、
   // 他モードのとき filterSubThresholdIndices の毎秒 1725 点走査をスキップする
@@ -2258,7 +2231,7 @@ export function App() {
   // ここで「フィルタが効いていない」ことを別途記録しないのは、素通りが続く状況の**主な原因が別の形で
   // 記録される**ため。観測点リストの差し替え直後の不一致は次のデータ時刻で解消し、解消しない場合は
   // 原因側が記録を出し続ける——観測点リストの取得が失敗し続けるなら useKyoshinRealtime が、
-  // `step()` が壊れ続ける・観測点数と震度の件数が食い違うなら useKyoshinDetectorV2 が。
+  // 組み合わせの検知器が例外を投げ続ける・観測点数と震度の件数が食い違うなら useKyoshinDetectorV2 が。
   // 記録に現れない経路も 1 つ残っている（観測点リストを並行して取りに行ったときの応答順の入れ替わり。
   // 取得は成功しているので失敗の記録には出ない。docs/spec/data-sources-spec.md の「残る既知の課題」）。
   const kyoshinSubIndices = useMemo(
@@ -2635,10 +2608,11 @@ export function App() {
     showPublicStations: publicStationMarkers.length > 0,
     // 揺れ検知中の見出し（緊急地震速報が無いとき）。推定最大震度の段は、ブラウザ通知の本文が使う値と同じ式で決める
     // （確定中は確定した点の最大・可能性の段階は主候補の最大。`useKyoshinAlerts` の `effectiveKyoshinMaxIndex`）。
+    // どちらも値を持つ点が無ければ -1（欠測）——0 は「0以下」と焼かれるので、欠測を 0 から始めない
     kyoshinDetection: kyoshinView.confirmed
-      ? { state: 'confirmed', maxIndex: kyoshinView.confirmedShocks.reduce((max, s) => Math.max(max, s.index), 0) }
+      ? { state: 'confirmed', maxIndex: kyoshinView.confirmedShocks.reduce((max, s) => Math.max(max, s.index), -1) }
       : kyoshinView.candidate
-        ? { state: 'candidate', maxIndex: kyoshinView.candidateMaxIndex }
+        ? { state: 'candidate', maxIndex: kyoshinView.candidatePeakIndex }
         : null,
   }, settings.showMapLegend ? legendBlocks : EMPTY_LEGEND_BLOCKS, SHARE_CARD_FORMATS[settings.shareCardFormat])
   // 絵を出すかどうかは受け取るかどうかと別に決める（→ hooks/useSeismoWaveVisibility.ts）。
@@ -2997,7 +2971,6 @@ export function App() {
                 eews={eewsForPanel}
                 kyoshinV2Detections={kyoshinV2.detections}
                 kyoshinDetectedPoints={kyoshinDetectedPoints}
-                kyoshinDemoted={kyoshinDemoted}
                 swaveArrival={swaveArrival}
                 visible={activeTab === 'realtime' && !panelCollapsed}
                 speakingEewKey={speakingEewKey}

@@ -25,6 +25,26 @@ export function kyoshinIndexToLabel(index: number | undefined): string | null {
 }
 
 /**
+ * 揺れ検知の震度を通知・検知カードへ出すときの呼び名。震度0 未満（計測震度が 0 を下回る）は「0以下」と呼ぶ
+ * （2026-10-29 ユーザー選択「「震度0以下」と出す (Recommended)」）。組み合わせの検知器は震度1 に届かない揺れも
+ * 確かな段にするので、全員が震度0 未満のまま確かな段になりうる。欠測（負のインデックス）・読めない値は null
+ */
+export function kyoshinDetectionScaleLabel(index: number | undefined): string | null {
+  if (index == null || !Number.isFinite(index) || index < 0) return null
+  return kyoshinIndexToLabel(index) ?? DETECTION_BELOW_ZERO_LABEL
+}
+
+/** 計測震度から、揺れ検知の震度の呼び名（{@link kyoshinDetectionScaleLabel} と同じ決め事）。読めない値は null */
+export function detectionScaleLabelFromValue(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value)) return null
+  if (value < 0) return DETECTION_BELOW_ZERO_LABEL
+  return measuredIntensityToGrade(value)?.label ?? null
+}
+
+/** 震度0 未満の揺れ検知の呼び名 */
+const DETECTION_BELOW_ZERO_LABEL = '0以下'
+
+/**
  * 計測震度からリアルタイム震度インデックス(0〜20)を求める（kyoshinIndexToJmaの逆変換）。
  * ローカル生成の強震モニタ風アーカイブ（scripts/capture-kyoshin-waveform.ts）が、実波形から
  * 算出した計測震度をこのインデックス形式へ変換する際に使う。範囲外は0/20へクランプする

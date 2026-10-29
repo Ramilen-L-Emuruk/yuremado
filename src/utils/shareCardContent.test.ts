@@ -614,6 +614,15 @@ describe('buildShareCardContent — 複数の緊急地震速報・深さ・揺�
     expect(build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'candidate', maxIndex: 30 } })).header.title).toBe('揺れの可能性')
   })
 
+  // 正（2026-10-29 ユーザー選択「「0以下」を焼く (Recommended)」）・安全弁（欠測は焼かない）
+  it('正: 推定最大震度が震度0 未満なら「0以下」を焼き、欠測（-1）なら副見出しを出さない', () => {
+    expect(build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'confirmed', maxIndex: 0 } })).header.subtitle)
+      .toBe('推定最大震度 0以下（強震モニタ）')
+    const missing = build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'confirmed', maxIndex: -1 } }))
+    expect(missing.header.title).toBe('揺れ検知')
+    expect(missing.header.subtitle).toBeUndefined()
+  })
+
   it('対照: 揺れを検知していなければ従来どおり「リアルタイム震度」', () => {
     expect(build(input({ mode: 'kyoshin' })).header.title).toBe('リアルタイム震度')
   })

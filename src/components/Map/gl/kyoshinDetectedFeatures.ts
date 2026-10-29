@@ -10,7 +10,7 @@ import { kyoshinDetectedIconId, KYOSHIN_DETECTED_ICON_BASE_RADIUS } from './kyos
 // 描画そのものはコンポーネント側、「どの点をどのバッジで描くか」の判断はこちらに置く。
 
 // 確信度別の半径ボーナス（通常震度点の半径 getScaleRadius(scale) に加算）。
-// confirmed は unconfirmed（likely/faint）よりさらに大きく＋太めの白フチ
+// confirmed（確かな段）は unconfirmed（likely＝早い段）よりさらに大きく＋太めの白フチ
 // （kyoshinDetectedIcons.ts）で、一目で「確定」と分かるようにする。
 const CONFIRMED_RADIUS_BONUS = 6
 const UNCONFIRMED_RADIUS_BONUS = 2
@@ -25,8 +25,7 @@ function detectedRadius(jma: IntensityGrade, iconScale: number, bonus: number): 
 /**
  * 点列 → バッジ feature 列。**震度0未満・欠測（`kyoshinIndexToJma` が null）の点は描かない。**
  *
- * イベントのメンバー観測点は、値が下がりきってから `MEMBER_DROP_MS` を過ぎるまで残る
- * （kyoshinDetector の `pruneFadedMembers`。現在揺れている数は lastSize が別に持つ）。
+ * 検知に加わった観測点は、値が下がりきっても検知が消えるまで残る（`kyoshinEnsembleTracker` は点を減らさない）。
  * これらを震度0のバッジで描くと、揺れが収まるほど「もう揺れていない点」で地図が埋まり、
  * 震度0以上だけを数えるリアルタイムタブの検知カードの震度別点数と桁違いにずれる
  * （2026-08-18 の実測: カードが震度0を24点と出している時点で地図には361個のバッジがあり、
@@ -34,7 +33,7 @@ function detectedRadius(jma: IntensityGrade, iconScale: number, bonus: number): 
  */
 function buildFeatures(points: DetectedPoint[], iconScale: number, confirmed: boolean) {
   // アイコン ID 側は confirmed 以外を歴史的に `candidate` と呼ぶ（likely だけを想定していた頃の語。
-  // kyoshinDetectedIcons.ts）。ここでの unconfirmed（likely ＋ faint）と同じものを指す。
+  // kyoshinDetectedIcons.ts）。ここでの unconfirmed（likely）と同じものを指す。
   const bonus = confirmed ? CONFIRMED_RADIUS_BONUS : UNCONFIRMED_RADIUS_BONUS
   return points.flatMap((p) => {
     const jma = kyoshinIndexToJma(p.index)
@@ -66,7 +65,7 @@ function buildFeatures(points: DetectedPoint[], iconScale: number, confirmed: bo
  *
  * @param confirmedPoints confirmed のメンバーのうち実際に描く分（`deriveKyoshinView` の
  *   `detectedMarkerPoints`。孤立した震度0点は事前に除かれている）
- * @param unconfirmedPoints likely / faint 全イベントのメンバー観測点（confirmed に属する点は除かれている）
+ * @param unconfirmedPoints likely の全イベントのメンバー観測点（confirmed に属する点は除かれている）
  * @param iconScale 地図アイコン倍率
  */
 export function buildDetectedFC(

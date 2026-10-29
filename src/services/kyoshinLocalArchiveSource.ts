@@ -21,7 +21,7 @@ import { STEP_SEC_DEFAULT } from '../utils/knet/intensityCommon'
 import {
   WARMUP_BLOCK_SEC,
   WARMUP_MAX_BLOCKS,
-  isQuietFrame,
+  mayStopWarmup,
   firstContinuousIndex,
 } from '../utils/kyoshinWarmup'
 import { log } from '../utils/logger'
@@ -43,7 +43,7 @@ export function selectWarmupFrames(frames: readonly KyoshinFrame[], startMs: num
   })
   let from = 0
   for (let i = past.length - 1; i >= 0; i--) {
-    if (isQuietFrame(past[i].indices)) { from = i; break }
+    if (mayStopWarmup((startMs - past[i].time.getTime()) / 1000, past[i].indices)) { from = i; break }
   }
   const picked = past.slice(from)
   return picked.slice(firstContinuousIndex(picked.map((f) => f.time.getTime())))

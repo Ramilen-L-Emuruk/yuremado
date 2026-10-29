@@ -1,8 +1,11 @@
 import { useEffect, useRef } from 'react'
 import type { SiteCoords } from '../services/kyoshin'
-import { computeSiteKeys, PARAMS, type DetectionEvent, type LearnedState } from '../utils/kyoshinDetector'
+import { computeSiteKeys } from '../utils/kyoshinSiteKeys'
+import type { EnsembleDetection } from '../utils/kyoshinEnsembleTracker'
+import type { NoiseFloorSnapshot } from '../utils/kyoshinNoiseFloor'
 import {
   DiagnosticCapture,
+  confirmedOf,
   describeEvent,
   encodeIntensity,
   type DiagnosticRecord,
@@ -14,18 +17,22 @@ import { log } from '../utils/logger'
 // 揺れ検知が走ったときの「アプリが実際に見た値」を記録するフック。
 // 記録の中身と切り出しの規則は utils/detectionDiagnostics.ts、保存は detectionDiagnosticsDb.ts。
 //
-// 記録するのは 2 種類ある。画面に出た検知（likely・confirmed）と、**周囲の裏付けが取れずに
-// 抑えたもの**（faint だが震度1 以上に達している＝設計書§32 のゲートが止めた分）。後者を残すのは、
-// 抑えた判断が正しかったかを後から確かめる材料が他に無いため。
+// 記録するのは画面に出た検知（早い段・確かな段）。
+//
+// あわせて、**1 点のまま 30 秒続いた確かな段の束**をログへ残す（2026-10-28 ユーザー選択「カードと記憶を外す」）。
+// 旧エンジンは単点のまま居座る確定を降ろしていたが、組み合わせの検知器には降ろす仕組みを足していない。
+// 795 窓で数えた限り起きなかったので、起きたときに気づけるよう記録だけ置く。
 
-/** 学習資産の localStorage キー（`useKyoshinDetectorV2` と同じもの）。 */
+/** 慢性ノイズ床の localStorage キー（`useKyoshinDetectorV2` と同じもの）。 */
 const LEARNED_KEY = 'kyoshin-v3-learned'
+/** 確かな段の束が 1 点のままこれだけ続いたらログへ残す（ms） */
+export const SOLO_CONFIRMED_LOG_MS = 30_000
 
-/** 保存済みの学習資産を読む。読めなければ null（記録は残す。学習資産が無いだけ）。 */
-function readLearned(): LearnedState | null {
+/** 保存済みの慢性ノイズ床を読む。読めなければ null（記録は残す。床が無いだけ）。 */
+function readNoiseFloors(): NoiseFloorSnapshot | null {
   try {
     const raw = localStorage.getItem(LEARNED_KEY)
-    return raw ? (JSON.parse(raw) as LearnedState) : null
+    return raw ? (JSON.parse(raw) as NoiseFloorSnapshot) : null
   } catch {
     return null
   }
@@ -46,13 +53,15 @@ function readLearned(): LearnedState | null {
  * （2026-10-23・この PC の開発用ビルド）。保存は 1 つの揺れで多くて 1 分に 1 件。
  */
 export function useDetectionDiagnostics(
-  detections: DetectionEvent[],
+  detections: readonly EnsembleDetection[],
   sites: SiteCoords,
   indices: number[],
   dataTime: string,
   siteConfigId: string | null,
 ): void {
   const captureRef = useRef(new DiagnosticCapture())
+  /** 確かな段の束 → 1 点のまま続いている起点のデータ時刻（ログを出したら -1） */
+  const soloSinceRef = useRef(new Map<string, number>())
   // フレーム到来ごとの処理で最新値を参照する（deps は dataTime だけに絞りたいため ref で持ち回す）
   const latest = useRef({ detections, sites, indices, siteConfigId })
   latest.current = { detections, sites, indices, siteConfigId }
@@ -60,6 +69,7 @@ export function useDetectionDiagnostics(
   // 観測点集合が入れ替わったら、座標と値の対応が変わるので溜めた分を捨てる
   useEffect(() => {
     captureRef.current.reset()
+    soloSinceRef.current.clear()
   }, [siteConfigId])
 
   useEffect(() => {
@@ -71,27 +81,23 @@ export function useDetectionDiagnostics(
     const capture = captureRef.current
     capture.pushFrame(ms, encodeIntensity(idx))
 
-    // 画面に出た検知と、周囲の裏付けが取れずに抑えた分（震度1 以上の faint）を記録する
-    const surfaced = evs.filter(
-      (e) =>
-        e.confidence === 'likely' ||
-        e.confidence === 'confirmed' ||
-        (e.confidence === 'faint' && e.maxIntensity >= PARAMS.MIN_LIKELY_INTENSITY),
-    )
-    if (surfaced.length > 0) {
+    noteSoloConfirmed(soloSinceRef.current, evs, ms)
+
+    // 画面に出た検知（早い段・確かな段のすべて）を記録する
+    if (evs.length > 0) {
       const sites = st as [number, number][]
       const keyToIndex = new Map<string, number>()
       computeSiteKeys(sites).forEach((k, i) => keyToIndex.set(k, i))
-      const learned = readLearned()
-      for (const e of surfaced) {
+      const noiseFloors = readNoiseFloors()
+      for (const e of evs) {
         capture.open(
           {
             dataTimeMs: ms,
             siteConfigId: cfg ?? '',
             sites,
             event: describeEvent(e, keyToIndex, sites, idx),
-            confirmedBy: e.confirmedBy,
-            learned,
+            confirmed: confirmedOf(e),
+            noiseFloors,
           },
           __APP_VERSION__,
           isDmdss ? 'dmdss' : 'standard',
@@ -118,6 +124,35 @@ export function useDetectionDiagnostics(
       persist(capture.flush())
     }
   }, [])
+}
+
+/**
+ * 確かな段の束が 1 点のまま {@link SOLO_CONFIRMED_LOG_MS} 続いたら、束ごとに 1 度だけログへ残す。
+ *
+ * @param soloSince 束の id → 1 点のまま続いている起点のデータ時刻（ログを出した束は -1）。**この関数が書き換える**
+ */
+export function noteSoloConfirmed(soloSince: Map<string, number>, detections: readonly EnsembleDetection[], ms: number): void {
+  const alive = new Set<string>()
+  for (const e of detections) {
+    alive.add(e.id)
+    if (e.confidence !== 'confirmed' || e.memberKeys.length !== 1) {
+      // 点が増えたら数え直す。ログを出した束はそのまま（同じ束で二度出さない）
+      if (soloSince.get(e.id) !== -1) soloSince.delete(e.id)
+      continue
+    }
+    const since = soloSince.get(e.id)
+    if (since === undefined) {
+      soloSince.set(e.id, ms)
+    } else if (since !== -1 && ms - since >= SOLO_CONFIRMED_LOG_MS) {
+      soloSince.set(e.id, -1)
+      const at = `${e.epicenter[0].toFixed(2)},${e.epicenter[1].toFixed(2)}`
+      log.warn(
+        `[diagnostics] 確かな段の束が 1 点のまま ${Math.round((ms - since) / 1000)} 秒続いています`
+          + `（id=${e.id}・観測点 ${e.memberKeys[0]}・位置 ${at}・支えた部分 ${e.sources.join('/')}）`,
+      )
+    }
+  }
+  for (const id of soloSince.keys()) if (!alive.has(id)) soloSince.delete(id)
 }
 
 /**

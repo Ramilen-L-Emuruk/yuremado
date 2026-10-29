@@ -2,15 +2,13 @@
 //
 // **React から切り離してある。** この処理は可変の状態を 4 つ（検知エンジンの状態・最後に
 // 食わせた時刻・待たせているフレーム・待っているかどうか）同時に動かすため、フックの
-// エフェクトの中に置くと、境界の条件（時刻の巻き戻り・観測点集合の版違い・`step()` の例外）を
+// エフェクトの中に置くと、境界の条件（時刻の巻き戻り・観測点集合の版違い・食わせる先の例外）を
 // 目視でしか確認できない。純関数にすれば `renderHook` を介さずに確かめられる。
 //
 // ここが受け持つのは「どのフレームを、どの順で食わせるか」だけ。どこまで遡るかの規則は
 // `kyoshinWarmup.ts`、取得は供給元（`services/kyoshinSource`）、結果の記録と画面への
 // 反映は呼び出し側（`hooks/useKyoshinDetectorV2`）が持つ。
 
-import { MISSING_INDEX_THRESHOLD, type SiteCoords } from '../services/kyoshin'
-import { step, type DetectorState, type StationMeta } from './kyoshinDetector'
 
 /** 助走が届くまで待たせているフレーム。 */
 export interface PendingFrame {
@@ -52,9 +50,9 @@ export type WarmupNotice =
    */
   | { kind: 'aborted'; phase: 'warmup' | 'pending'; error: unknown }
 
-export interface ConsumeWarmupInput {
-  state: DetectorState
-  /** 最後に `step()` へ渡したデータ時刻。まだ無ければ `-Infinity`。 */
+export interface ConsumeWarmupInput<S> {
+  state: S
+  /** 最後に食わせたデータ時刻。まだ無ければ `-Infinity`。 */
   lastSteppedMs: number
   /**
    * 待たせているフレーム（時刻の昇順）。
@@ -65,15 +63,16 @@ export interface ConsumeWarmupInput {
   pending: readonly PendingFrame[]
   /** 届いた助走。`null` なら未達。 */
   warmupFrames: readonly WarmupFrame[] | null
-  sites: SiteCoords
+  /** いまの観測点の数。値の件数がこれと違うフレームは食わせない */
+  siteCount: number
   /** いまの座標が属する観測点集合の識別子。 */
   sitesSiteConfigId: string
-  meta: StationMeta
-  eewActive: boolean
+  /** 1 フレームを食わせて次の状態を返す。投げてよい（その 1 件だけ落として先へ進む） */
+  feedFrame: (state: S, dataTimeMs: number, values: number[]) => S
 }
 
-export interface ConsumeWarmupResult {
-  state: DetectorState
+export interface ConsumeWarmupResult<S> {
+  state: S
   lastSteppedMs: number
   notices: WarmupNotice[]
 }
@@ -87,8 +86,8 @@ export interface ConsumeWarmupResult {
  * @param input 消化に要るものすべて（可変の状態は呼び出し側が持つ）
  * @returns 進めた状態と、記録すべきこと
  */
-export function consumeWarmup(input: ConsumeWarmupInput): ConsumeWarmupResult {
-  const { sites, sitesSiteConfigId, meta, eewActive } = input
+export function consumeWarmup<S>(input: ConsumeWarmupInput<S>): ConsumeWarmupResult<S> {
+  const { siteCount, sitesSiteConfigId, feedFrame } = input
   let state = input.state
   let lastSteppedMs = input.lastSteppedMs
   const notices: WarmupNotice[] = []
@@ -97,9 +96,9 @@ export function consumeWarmup(input: ConsumeWarmupInput): ConsumeWarmupResult {
   /**
    * 1 フレームだけ進める。落とす条件は通常の経路と同じ。
    *
-   * **例外はここで握る。囲うのは本体の全体で、`step()` の呼び出しだけではない。**
+   * **例外はここで握る。囲うのは本体の全体で、`feedFrame` の呼び出しだけではない。**
    * 呼び出し元はフックのエフェクトで、投げるとエフェクトごと未捕捉例外で抜け、**根のエラー
-   * 境界まで飛んで画面全体が落ちる**（地図も地震カードも設定も消える）。`step()` 以外にも
+   * 境界まで飛んで画面全体が落ちる**（地図も地震カードも設定も消える）。`feedFrame` 以外にも
    * 投げうる箇所はある —— 型の上では `number[]` でも、供給元が渡すのは外部データ由来の
    * 値なので、`values` が配列でなければ長さの検証そのものが投げる。
    * 1 件の失敗で残りの消化を止めず、件数だけ数えて先へ進む。
@@ -107,18 +106,8 @@ export function consumeWarmup(input: ConsumeWarmupInput): ConsumeWarmupResult {
   const feed = (frameTimeMs: number, values: number[]): boolean => {
     try {
       if (!Number.isFinite(frameTimeMs) || frameTimeMs <= lastSteppedMs) return false
-      if (values.length !== sites.length) return false
-      state = step(
-        state,
-        {
-          dataTimeMs: frameTimeMs,
-          sites: sites as [number, number][],
-          values,
-          missing: values.map((idx) => idx < MISSING_INDEX_THRESHOLD),
-          eewActive,
-        },
-        meta,
-      ).state
+      if (values.length !== siteCount) return false
+      state = feedFrame(state, frameTimeMs, values)
     } catch (err) {
       failure.count++
       failure.first ??= { frameTimeMs, err }

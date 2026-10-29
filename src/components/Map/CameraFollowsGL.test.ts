@@ -292,7 +292,7 @@ function harness(
   map: maplibregl.Map,
   detected: DetectedPoint[],
   candidate: DetectedPoint[],
-  candidateId: number | null,
+  candidateId: string | null,
   opts: {
     hasDetection?: boolean
     hasEew?: boolean
@@ -332,17 +332,17 @@ describe('確定検知の終了と候補クラスタの協調', () => {
     const map = createFakeMap()
     const candidate = [dp(37.0, 140.0), dp(37.5, 140.5)]
     const detected = [dp(35.0, 139.0), dp(35.5, 139.5)]
-    const view = render(harness(map, [], candidate, 1))
+    const view = render(harness(map, [], candidate, 'e1'))
     map.fire('moveend')
     expect(fitPaddings(map)).toContain(POINTS_PADDING)
 
     // Act 1: 別クラスタが確定検知に育つ。候補側は hasDetection で無効化され、フィット済みの印が凍結される。
-    view.rerender(harness(map, detected, candidate, 1))
+    view.rerender(harness(map, detected, candidate, 'e1'))
     map.fire('moveend')
 
     // Act 2: 確定検知だけが終わる。候補 A はまだ生きている。
     const before = fitPaddings(map).length
-    view.rerender(harness(map, [], candidate, 1))
+    view.rerender(harness(map, [], candidate, 'e1'))
     map.fire('moveend')
 
     // Assert: 新しいフィットが起き、それは日本全体ではない（＝取り残されず、かつちらつかせない）。

@@ -5,7 +5,8 @@ import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from 're
 import { useFieldFlash, type FieldFlash } from '../../hooks/useFieldFlash'
 import { EEW_FLASH_COLOR, UPDATE_MARK_WASH, EEW_HIGHLIGHT_FADE_MS } from '../../utils/updateMark'
 import type { EEWAlert } from '../../types/earthquake'
-import type { DetectionEvent, Confidence } from '../../utils/kyoshinDetector'
+import type { EnsembleDetection } from '../../utils/kyoshinEnsembleTracker'
+import { ENSEMBLE_EVIDENCE_FOOTNOTE, ensembleRows, ensembleSummary } from '../../utils/kyoshinEnsembleEvidence'
 import type { DetectedPoint } from '../../utils/kyoshinDetectionView'
 import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdown'
 import { usePageVisible } from '../../hooks/usePageVisible'
@@ -15,10 +16,9 @@ import { formatDateTime, formatDepth, formatMagnitudeWithCondition, hasDepth, ha
 import { getIntensityColor, getIntensityLabel, getIntensityLabelWithApproxAbove, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
 import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst, eewIssueTimeMs } from '../../utils/eew'
-import { kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
+import { kyoshinDetectionScaleLabel, kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 import { readableTextColor } from '../../utils/contrast'
-import { gateNotes, gateRows, gateShortfall } from '../../utils/detectionGates'
 import { DescriptionTip } from '../DescriptionTip'
 import { SerialBadge } from '../SerialBadge'
 import { isEewWarningKindCode } from '../../utils/eewKind'
@@ -54,17 +54,12 @@ interface Props {
   eewNoForecastSettledKeys: ReadonlySet<string>
   swaveArrival: SWaveArrival | null
   /** V2 検知エンジンの検知イベント（音・自動タブ切替・自動フィット・カード表示を駆動）。 */
-  kyoshinV2Detections: DetectionEvent[]
+  kyoshinV2Detections: readonly EnsembleDetection[]
   /**
    * 検知カードが集計する観測点。**地図の検知点マーカーが描くのと同一の点列**を受け取る
    * （`deriveKyoshinView` が孤立した震度0点を除いて用意する。両者で別々に計算すると黙って食い違う）。
    */
   kyoshinDetectedPoints: DetectedPoint[]
-  /**
-   * 確定を降ろした検知（`utils/kyoshinDemotedEvents.ts`）。降ろしてから決まった時間だけ、
-   * 理由を添えたカードとして残す。
-   */
-  kyoshinDemoted: DetectionEvent[]
   /**
    * このタブがユーザーの目に入っているか（リアルタイムタブが選ばれていて、かつパネルが
    * 畳まれていない）。タブは選ばれていなくてもマウントされたまま描画が走るため、可視性は
@@ -1240,28 +1235,20 @@ function SWaveArrivalCountdown({ row }: { row: SWaveArrivalRow }) {
   return <p className="text-sm text-secondary">到達時間を推定中…</p>
 }
 
-// 検知エンジンの確信度別スタイル。confirmed=赤・likely=橙・faint=淡青(震度0級・無音)・weak=灰。
-// 反応が収まっている間の確信度チップの背景。主張を持たない灰で、白文字とのコントラストは約 7.6:1。
-// 確信度の色を消しつつラベルは読める濃さを保つ（経緯は KyoshinDetectionSummary 内のコメント）。
-// V2_TIER.weak.border と同値だが別概念のため独立に持つ（weak の配色を変えてもここは追従しない）。
+// 検知の段別スタイル。confirmed（確かな段）=赤・likely（早い段）=橙。
+// 反応が収まっている間の段のチップの背景。主張を持たない灰で、白文字とのコントラストは約 7.6:1。
+// 段の色を消しつつラベルは読める濃さを保つ（経緯は KyoshinDetectionSummary 内のコメント）。
 const SETTLED_CHIP_BG = '#4b5563'
 
 // `border` はチップの背景色として使う。白文字（12px 太字＝WCAG の Large Text 緩和に該当しない）を
 // 載せるため 4.5:1 が要る。confirmed の #ef4444 は 3.76:1・likely の #d97706 は 3.19:1 で足りず、
 // 一段暗い赤・橙へ落として白文字のまま 4.83:1 / 5.02:1 を確保している（気象庁配色ではないため
 // 色自体を変えてよい）。カード背景（#0a0c10 相当）に対しても 4.05:1 / 3.90:1 あり沈まない。
-const V2_TIER: Record<Confidence, { label: string; color: string; bg: string; border: string }> = {
+const V2_TIER: Record<EnsembleDetection['confidence'], { label: string; color: string; bg: string; border: string }> = {
   confirmed: { label: '検知', color: '#f87171', bg: '#450a0a', border: '#dc2626' },
   likely: { label: '可能性', color: '#fcd34d', bg: '#451a03', border: '#b45309' },
-  faint: { label: '微弱', color: '#93c5fd', bg: 'rgba(30,41,59,0.55)', border: '#3b5b80' },
-  weak: { label: '検出', color: '#9ca3af', bg: 'rgba(42,42,42,0.6)', border: '#4b5563' },
 }
 
-/**
- * faint の見出しを「微弱な揺れの兆候」から「揺れの兆候」へ切り替える計測震度。0.5 = 震度1。
- * 検知エンジンの `MIN_LIKELY_INTENSITY` と同じ境界（likely へ上げるかの震度の下限）。
- */
-const KYOSHIN_FAINT_HEADING_INTENSITY = 0.5
 
 
 /**
@@ -1308,14 +1295,14 @@ function strongestRegionName(
 /**
  * 検知の根拠（判定の内訳）。既定は畳んでおき、開いたときだけ表を出す。
  *
- * 一般利用者に読ませたいのは 1 行の要約（`gateShortfall`）までで、表のほうは検知エンジンの
+ * 一般利用者に読ませたいのは 1 行の要約（`ensembleSummary`）までで、表のほうは検知の
  * 挙動を追う人向け。カードの主情報（推定最大震度・震度分布）を押しのけないよう、既定は閉じる。
  *
  * **地域ごとに 1 ブロック出す。** カード自体は複数の連結成分を「1 つの揺れ」として集約するが、
  * 判定は地域ごとに独立して走っているため、まとめると「どの地域の話か」が消える。
  */
 function KyoshinGateDetail({ events, points, subregions }: {
-  events: DetectionEvent[]
+  events: readonly EnsembleDetection[]
   /** 検知カードと同じ点列（地域ごとの区域名を引くのに使う） */
   points: readonly DetectedPoint[]
   subregions: readonly SubRegion[] | null
@@ -1333,11 +1320,9 @@ function KyoshinGateDetail({ events, points, subregions }: {
       </button>
       {open && (
         <div className="flex flex-col gap-2 mt-1.5">
-          {/* 番号は**イベント ID の順**で振る。`step()` が返す並びは最大震度の降順で毎フレーム
-              並べ替わるため、渡された順に番号を振ると、震度が近い 2 地域が競り合っている間
+          {/* 番号は**イベント ID の順**で振る。渡された順に番号を振ると、並びが変わったときに
               「地域1」「地域2」のラベルだけが別の地域へ移る。ID は生成順の連番で動かない */}
           {[...events].sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true })).map((e, i) => {
-            const notes = gateNotes(e)
             return (
               <div key={e.id} className="rounded-sm p-2" style={{ background: 'rgba(255,255,255,0.05)' }}>
                 {events.length >= 2 && (() => {
@@ -1353,36 +1338,21 @@ function KyoshinGateDetail({ events, points, subregions }: {
                 {/* 幅は中身に合わせる（`w-full` にすると見出しと数値が横いっぱいに離れて対応が読めない） */}
                 <table className="text-xs">
                   <tbody>
-                    {gateRows(e).map(r => (
+                    {ensembleRows(e).map(r => (
                       <tr key={r.label}>
                         <td className="text-secondary py-0.5 pr-2">{r.label}</td>
-                        <td className="py-0.5 pr-1 text-right font-mono text-white whitespace-nowrap">{r.value}</td>
-                        <td className="py-0.5 text-secondary font-mono whitespace-nowrap">
-                          {r.req != null ? `/ ${r.req}` : ''}
-                        </td>
-                        <td className="py-0.5 pl-2 w-4 text-right" aria-hidden={r.met == null}>
-                          {r.met == null ? '' : r.met ? '✓' : ''}
-                        </td>
+                        <td className="py-0.5 text-white whitespace-nowrap">{r.value}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                {notes.length > 0 && (
-                  <ul className="mt-1 flex flex-col gap-0.5">
-                    {notes.map(n => (
-                      <li key={n} className="text-xs text-secondary">{n}</li>
-                    ))}
-                  </ul>
-                )}
               </div>
             )
           })}
           {/* カード本文の「N観測点で反応」と数え方が違う。あちらは現在震度0以上の点を数え、
-              こちらは判定が使う「床を明確に超えて継続中 or 直近に立ち上がった」点を数える。
+              こちらは束が生きている間に加わった点をすべて数える（減らない）。
               同じ画面に 2 つの点数が並ぶので、違うことは言っておく */}
-          <p className="text-xs text-secondary">
-            ※「揺れ継続中の点」は、上の観測点数と数え方が異なります
-          </p>
+          <p className="text-xs text-secondary">{ENSEMBLE_EVIDENCE_FOOTNOTE}</p>
         </div>
       )}
     </div>
@@ -1390,12 +1360,11 @@ function KyoshinGateDetail({ events, points, subregions }: {
 }
 
 // 強震モニタ検知の集約カード。
-// 近傍一致型の検知は震度5+ の大地震で有感域が複数の地域（連結成分）に分かれるため、コアは
-// 複数の confirmed/likely イベントを同時に返す。これを「1 つの揺れ」として 1 枚に集約表示する
+// 大地震では揺れが複数の束に分かれるため、検知器は複数の検知を同時に返す。これを「1 つの揺れ」として 1 枚に集約表示する
 // （震源を推定しないため、揺れている地域数と全体の震度分布・推定最大震度を主情報とする）。
 // 複数地域にまたがる場合は「広域」を示し、N 件の別地震のように見えるのを防ぐ。
 function KyoshinDetectionSummary({ events, points, visible, subregions }: {
-  events: DetectionEvent[]
+  events: readonly EnsembleDetection[]
   /** 地図の検知点マーカーが描くのと同一の点列（`deriveKyoshinView` が用意する）。 */
   points: DetectedPoint[]
   /** 一次細分区域の境界（最も強い観測点の区域名を引く）。未読み込みなら null */
@@ -1404,30 +1373,18 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   visible: boolean
 }) {
   const scalePeakRef = useRef(0)
-  // 最上位ティア（confirmed > likely > faint）。faint は無音・控えめ表示。
-  const topTier: Confidence = events.some(e => e.confidence === 'confirmed')
-    ? 'confirmed'
-    : events.some(e => e.confidence === 'likely')
-      ? 'likely'
-      : 'faint'
+  // 最上位の段（確かな段 > 早い段）。震度では分けない（2026-10-29 ユーザー選択「段のまま鳴らす」）
+  const topTier: EnsembleDetection['confidence'] = events.some(e => e.confidence === 'confirmed') ? 'confirmed' : 'likely'
   const tier = V2_TIER[topTier]
-  // 一行の根拠を出す代表イベント。最上位ティアのうち最大震度が最大のもの（`deriveKyoshinView` が
+  // 一行の根拠を出す代表の検知。最上位の段のうち最大震度が最大のもの（`deriveKyoshinView` が
   // 主 likely を選ぶのと同じ基準）。複数地域あるときは代表 1 件だけを 1 行に出し、地域ごとの
   // 内訳は折りたたみ（`KyoshinGateDetail`）へ回す
+  const intensityOf = (e: EnsembleDetection): number => e.maxIntensity ?? -Infinity
   const primary = events
     .filter(e => e.confidence === topTier)
-    .reduce<DetectionEvent | null>((best, e) => (!best || e.maxIntensity > best.maxIntensity ? e : best), null)
-  const shortfall = primary ? gateShortfall(primary) : null
-  const isFaint = topTier === 'faint'
-  // 見出しは**ティアではなく観測された震度**で選ぶ。faint には 2 種類あり、震度0 級のコヒーレント
-  // 揺れと、震度1 以上に達しているが周囲の裏付けが取れなかったもの（設計書§32）が混ざる。
-  // 後者に「微弱」と冠すると、実際に観測されている震度を過小に伝えることになる。
-  const faintMax = events.reduce((m, e) => Math.max(m, e.maxIntensity), -Infinity)
-  const heading = !isFaint
-    ? '強震モニタ検知'
-    : faintMax >= KYOSHIN_FAINT_HEADING_INTENSITY
-      ? '揺れの兆候'
-      : '微弱な揺れの兆候'
+    .reduce<EnsembleDetection | null>((best, e) => (!best || intensityOf(e) > intensityOf(best) ? e : best), null)
+  const summary = primary ? ensembleSummary(primary) : null
+  const heading = '強震モニタ検知'
   const regionCount = events.length
   const earliestMs = events.reduce((m, e) => Math.min(m, e.originTimeMs), Infinity)
   const time = new Date(earliestMs).toLocaleTimeString('ja-JP', { hour12: false })
@@ -1476,23 +1433,20 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   // （現時点でこのプロジェクトはどちらも使っていない）。
   if (!visible || rawMaxCount > scalePeakRef.current) scalePeakRef.current = rawMaxCount
   const maxCount = Math.max(scalePeakRef.current, 1)
-  // 反応点数は activeCount（現在震度0以上の点）をそのまま出す。以前は 0 のとき検知エンジンの
-  // lastSize（点ごとのノイズ床を超えて継続中の数。絶対震度の下限とは別基準）へフォールバック
-  // していたが、それだと「地図には検知点が 1 つも無いのにカードだけ N 観測点で反応と出る」
-  // 局面が生まれる（イベント自体は HOLD_MS / LIKELY_HOLD_MS の間ラッチで生き続けるため）。
-  // 揺れが収まったことは点数ではなく文言で伝える。
+  // 反応点数は activeCount（現在震度0以上の点）をそのまま出す。検知は束の点が下がりきっても
+  // 束ね役が捨てるまで生き続けるので、別の点数へ倒すと「地図には検知点が 1 つも無いのにカードだけ
+  // N 観測点で反応と出る」局面が生まれる。揺れが収まったことは点数ではなく文言で伝える。
 
   // カードの枠・背景は最大震度の気象庁配色に合わせる（地図マーカー・EEW カードと一貫）。
-  // 確信度（検知/可能性/微弱）は枠色ではなく左上のチップで示す。枠色にティア（確信度）を
-  // 混ぜると、everConfirmed のラッチ（明滅防止）で confirmed が震度1未満まで減衰した後も
-  // 保持され続ける間、震度0なのに赤枠のままになる不整合が起きるため、震度1未満は常に
-  // 震度0の色（SHINDO0_COLOR）へフォールバックする（ティアには依存しない）。
+  // 段（検知/可能性）は枠色ではなく左上のチップで示す。枠色に段を混ぜると、確かな段は戻らない
+  // ので震度1未満まで減衰した後も赤枠のままになる不整合が起きるため、震度1未満は常に
+  // 震度0の色（SHINDO0_COLOR）へフォールバックする（段には依存しない）。
   const maxJma = kyoshinIndexToJma(maxIndex)
   const hasIntensity = maxJma != null && maxJma.label !== '0'
   const frameBorder = hasIntensity ? getIntensityColor(maxJma.scale) : SHINDO0_COLOR
   const frameBg = hasIntensity ? getIntensityBgColor(maxJma.scale) : 'rgba(42,42,42,0.6)'
 
-  // 反応中の観測点が無くなった状態（イベントは HOLD_MS / LIKELY_HOLD_MS のラッチで生き残るが、
+  // 反応中の観測点が無くなった状態（検知は束ね役が捨てるまで生き残るが、
   // 現在震度0以上の点は 1 つも無い）。ここでヘッダーを通常の強さで出したままにすると、
   // 「検知」の赤チップと本文の「観測点の反応は収まりました」が同じカードに並んで矛盾して見える。
   // ティアのラベルは確信度の判定結果なので変えず、色だけ主張の弱いものへ差し替えて現在の
@@ -1511,7 +1465,20 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   // 『両者が同じ基準を見る』性質を壊す」「中間状態の文言を新設する」のいずれかになり、
   // 前 2 つは不整合、3 つ目は状態が 3 つに増える割に、往復自体が実地震のリプレイ検証
   // （2026-08-18・50 サンプル超）では観測されていないため見合わないと判断した。
-  const settled = activeCount === 0
+  //
+  // ただし**確かな段で、加わった点が全員震度0 未満**（欠測を除く）のときは収まったと言わない。組み合わせの検知器は
+  // 震度1 に届かない揺れも確かな段にするので、揺れの最中でも震度0以上の点が 1 つも無いことがある。このときは
+  // 推定最大震度を「0以下」、本文を「N観測点で震度0以下の反応」と出し、色も弱めない
+  // （2026-10-29 ユーザー選択「「震度0以下」で出す (Recommended)」）。検知は最後の報告から `ENSEMBLE_KEEP_MS` 残るので、
+  // 本当に収まった後の余韻もこの形で出る。数えるのは確かな段の検知に加わった点だけ（点列には早い段の点も混ざる）で、
+  // いまのフレームで欠測の点（直前の値を保持して描いている点）は数えない
+  const confirmedMembers = new Set(events.filter(e => e.confidence === 'confirmed').flatMap(e => e.memberKeys))
+  const belowZeroCount = activeCount === 0 && topTier === 'confirmed'
+    ? points.filter(p => p.index >= 0 && !p.stale && confirmedMembers.has(p.key)).length
+    : 0
+  const belowZero = belowZeroCount > 0
+  const settled = activeCount === 0 && !belowZero
+  const maxLabelShown = maxLabel ?? (belowZero ? kyoshinDetectionScaleLabel(0) : null)
   const strongestName = strongestRegionName(points, subregions)
 
   return (
@@ -1537,8 +1504,12 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
         {/* 推定最大震度 */}
         <div className="flex flex-col items-center justify-center shrink-0" style={{ minWidth: '4.25rem' }}>
           <span className="text-xs text-secondary">推定最大震度</span>
-          <span className="font-black leading-none text-white text-[2.25rem] roomy:text-[3rem]" style={{ textShadow: `0 0 12px ${maxColor}` }}>
-            {maxLabel ?? '—'}
+          {/* 「0以下」は 3 文字あるので一段小さくする（それでも 3 文字ぶん約 4.5rem で、枠の下限 4.25rem より少し広がる） */}
+          <span
+            className={`font-black leading-none text-white ${maxLabel === null && belowZero ? 'text-[1.5rem] roomy:text-[2rem]' : 'text-[2.25rem] roomy:text-[3rem]'}`}
+            style={{ textShadow: `0 0 12px ${maxColor}` }}
+          >
+            {maxLabelShown ?? '—'}
           </span>
         </div>
         <div className="flex flex-col gap-1.5 flex-1 min-w-0">
@@ -1571,11 +1542,13 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
           <span className="text-xs text-secondary">
             {activeCount > 0
               ? `${activeCount}観測点で反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
-              : `観測点の反応は収まりました${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''}`}
+              : belowZero
+                ? `${belowZeroCount}観測点で震度0以下の反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
+                : `観測点の反応は収まりました${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''}`}
           </span>
-          {/* 確信度チップが「どの段か」を示すのに対し、この行は「なぜその段なのか」を示す。
-              言うことが無ければ行ごと出さない（`gateShortfall` が null を返す） */}
-          {shortfall && <span className="text-xs text-secondary">{shortfall}</span>}
+          {/* 段のチップが「どの段か」を示すのに対し、この行は確かな段になった瞬間の点数と震度を示す。
+              早い段のあいだは言うことが無いので行ごと出さない（`ensembleSummary` が null を返す） */}
+          {summary && <span className="text-xs text-secondary">{summary}</span>}
           <KyoshinGateDetail events={events} points={points} subregions={subregions} />
         </div>
       </div>
@@ -1583,32 +1556,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   )
 }
 
-/**
- * 確定を降ろした検知のカード（`utils/kyoshinDemotedEvents.ts`）。降ろした理由を残す。
- *
- * チップの「取り下げ」と、理由の文（`gateShortfall`。2026-10-15 ユーザー承認の文面）だけを出す。
- * 降ろした検知は地図の検知点からも消えている（weak は描かない）ので、震度の分布は出さない。
- * 残す長さは `DEMOTED_CARD_MS`（2026-10-24 ユーザー選択「10 秒 (Recommended)」）。
- */
-function KyoshinDemotedCard({ event }: { event: DetectionEvent }) {
-  const reason = gateShortfall(event)
-  const time = new Date(event.originTimeMs).toLocaleTimeString('ja-JP', { hour12: false })
-  return (
-    <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${SHINDO0_COLOR}`, backgroundColor: 'rgba(42,42,42,0.6)' }}>
-      <div className="flex items-center gap-2 px-3 py-1.5">
-        <span className="text-xs font-bold px-1.5 py-0.5 rounded-sm shrink-0" style={{ backgroundColor: SETTLED_CHIP_BG, color: '#fff' }}>
-          取り下げ
-        </span>
-        <span className="text-xs text-secondary">強震モニタ検知</span>
-        <span className="text-xs text-secondary ml-auto font-mono">{time}</span>
-      </div>
-      {reason && <p className="text-xs text-secondary px-3 pb-2">{reason}</p>}
-    </div>
-  )
-}
-
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections, kyoshinDetectedPoints, kyoshinDemoted, swaveArrival, visible, speakingEewKey, eewNoForecastSettledKeys, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: Props) {
+export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections, kyoshinDetectedPoints, swaveArrival, visible, speakingEewKey, eewNoForecastSettledKeys, activeLpgmEventId, onToggleLpgm, onDeactivateLpgm }: Props) {
   // ブラウザのタブ・ウィンドウ側の可視性は App では判らないため、ここで合成する。
   const pageVisible = usePageVisible()
   const subregions = useLoadedSubRegions()
@@ -1640,19 +1589,15 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
       }
       {swaveArrival !== null && <SWaveArrivalCard arrival={swaveArrival} />}
 
-      {/* 強震モニタ検知: weak を除外した confirmed/likely を 1 つの揺れとして集約表示する。
-          大地震では有感域が複数の地域（連結成分）に分かれてコアが複数イベントを返すため、
+      {/* 強震モニタ検知: 早い段・確かな段を 1 つの揺れとして集約表示する。
+          大地震では揺れが複数の束に分かれて検知器が複数の検知を返すため、
           N 件の別地震に見せず「広域・N地域」として 1 枚にまとめる。 */}
       {(() => {
-        const events = [...kyoshinV2Detections].filter(d => d.confidence !== 'weak')
-        if (events.length === 0 && kyoshinDemoted.length === 0) return null
+        const events = kyoshinV2Detections
+        if (events.length === 0) return null
         return (
           <div className="flex flex-col gap-2">
-            {events.length > 0 && (
-              <KyoshinDetectionSummary events={events} points={kyoshinDetectedPoints} visible={visible && pageVisible} subregions={subregions} />
-            )}
-            {/* 確定を降ろした検知は、主のカードの下に理由を添えて並べる */}
-            {kyoshinDemoted.map(e => <KyoshinDemotedCard key={e.id} event={e} />)}
+            <KyoshinDetectionSummary events={events} points={kyoshinDetectedPoints} visible={visible && pageVisible} subregions={subregions} />
             <p className="text-xs text-secondary">※強震モニタによる推定値。気象庁発表とは異なる場合があります。</p>
           </div>
         )

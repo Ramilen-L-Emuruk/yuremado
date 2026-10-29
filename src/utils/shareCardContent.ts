@@ -7,7 +7,7 @@ import { isMaxScaleUnreceived } from './quakePoints'
 import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader } from './shareCard'
 import { isTsunamiForecastOnly, sourceEarthquakeTime, tsunamiOverallGrade } from './tsunami'
 import { hasKnownEpicenter } from './geo'
-import { kyoshinIndexToLabel } from './kyoshinIntensity'
+import { kyoshinDetectionScaleLabel } from './kyoshinIntensity'
 
 // 共有カードの見出しと出典行を、いま地図が見せているものから組み立てる。
 //
@@ -260,11 +260,12 @@ function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['
  * 緊急地震速報が無いときのリアルタイム震度の見出し。**揺れを検知していれば、検知と推定最大震度を出す**（2026-10-23 ユーザー選択
  * 「揺れ検知中は推定最大震度を出す (Recommended)」。文面は 2026-10-24 ユーザー選択「この文面で (Recommended)」）。見出しは
  * ウィンドウタイトルと同じ「揺れ検知」／「揺れの可能性」、副見出しはブラウザ通知の本文と同じ「推定最大震度 5弱（強震モニタ）」。
- * 推定最大震度が震度0 未満・欠測なら副見出しは出さない（通知は「?」を出すが、画像は訂正できないので焼かない）。
+ * 推定最大震度の呼び名は通知と同じ（`kyoshinDetectionScaleLabel`）。震度0 未満は「0以下」と焼く（2026-10-29 ユーザー選択
+ * 「「0以下」を焼く (Recommended)」。測った値で、不明ではない）。欠測なら副見出しは出さない（通知は「?」を出すが、画像は訂正できないので焼かない）。
  */
 function detectionContent(detection: ShareCardContentInput['kyoshinDetection']): ContentWithoutNotices {
   if (!detection) return { header: { title: 'リアルタイム震度' }, filenameLabel: 'realtime' }
-  const label = kyoshinIndexToLabel(detection.maxIndex)
+  const label = kyoshinDetectionScaleLabel(detection.maxIndex)
   return {
     header: {
       title: detection.state === 'confirmed' ? '揺れ検知' : '揺れの可能性',
