@@ -122,6 +122,19 @@ describe('kyoshinQuietLearnerDb', () => {
     expect(open).toHaveBeenCalledTimes(1)
   })
 
+  it('安全弁: 数え方が古い版の状態は崩れとして警告せず、読めたうえで捨てる（保存は続けられる）', async () => {
+    const db = await freshDb()
+    const old = { ...state(), counts: { ...state().counts, version: 1 } } as unknown as QuietLearnerState
+    expect(await db.saveQuietLearnerState(old)).toBe(true)
+    const warn = vi.spyOn(db.log, 'warn').mockImplementation(() => {})
+    const info = vi.spyOn(db.log, 'info').mockImplementation(() => {})
+    expect(await db.loadQuietLearnerState()).toEqual({ readable: true, state: null })
+    expect(warn).not.toHaveBeenCalled()
+    expect(String(info.mock.calls[0][0])).toContain('古い版（1）')
+    expect(await db.saveQuietLearnerState(state())).toBe(true)
+    expect((await db.loadQuietLearnerState()).state).not.toBeNull()
+  })
+
   it('安全弁: 開けないが続いても警告は 1 行（毎時の保存のたびに積み上げない）', async () => {
     const db = await freshDb()
     const warn = vi.spyOn(db.log, 'warn').mockImplementation(() => {})

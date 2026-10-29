@@ -3,6 +3,7 @@ import {
   blendQuietTables,
   EMPTY_QUIET_COUNTS,
   FIRE_MIN_SEC,
+  QUIET_COUNTS_VERSION,
   QuietTableBaker,
   quietSiteKey,
   validateQuietTables,
@@ -77,7 +78,26 @@ describe('平常のゆらぎの表を焼く数え方', () => {
     expect(skip.result([]).tails[k].y[1]).toBeLessThan(all.result([]).tails[k].y[1])
   })
 
-  it('雑音の表: 4〜60 秒前の最大からの上がりを、段差ごとに 1 時間あたりの回数へ直す', () => {
+  /** d 秒前に 4 へ跳ねた点が、いま 4 のとき、いまの 1 秒が 2 段以上の上がりに数えられるか（その秒だけ数える） */
+  const firesAfterSpikeAgo = (d: number): boolean => {
+    const len = 80, now = len - 1
+    const s0 = Array.from({ length: len }, (_, i) => (i === now || i === now - d ? 4 : 2))
+    const b = new QuietTableBaker()
+    for (let s = 0; s < len; s++) b.feed(T0 + s * 1000, 'c1', SITES, [s0[s], 2], s === now)
+    return (b.counts().fire[quietSiteKey(SITES[0])]?.hits[1] ?? 0) > 0
+  }
+
+  it('雑音の表の窓は 3〜59 秒前で、波面の検知器の発火の窓と同じ（正: 窓の内の跳ねは基準に入る）', () => {
+    expect(firesAfterSpikeAgo(3)).toBe(false)
+    expect(firesAfterSpikeAgo(59)).toBe(false)
+  })
+
+  it('雑音の表の窓（対照: 2 秒前と 60 秒前の跳ねは基準に入らないので、いまの値は上がりに数える）', () => {
+    expect(firesAfterSpikeAgo(2)).toBe(true)
+    expect(firesAfterSpikeAgo(60)).toBe(true)
+  })
+
+  it('雑音の表: 3〜59 秒前の最大からの上がりを、段差ごとに 1 時間あたりの回数へ直す', () => {
     const b = new QuietTableBaker()
     // 1 時間を超えて平ら（2）で、10 分おきに 1 秒だけ 4 へ跳ねる
     const len = FIRE_MIN_SEC + 600
@@ -158,7 +178,7 @@ describe('配る表と端末で数えた分を混ぜる', () => {
     fire: { [k0]: [fire2, fire2, 0, 0, 0] },
   })
   const learned = (n: number, y2: number, fireSec: number, fireHits2: number): QuietCounts => ({
-    version: 1,
+    version: QUIET_COUNTS_VERSION,
     glob: { n, y: [y2, y2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], y3: new Array(12).fill(0) },
     tails: { [k0]: { n, y: [y2, y2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], y3: new Array(12).fill(0) } },
     fire: { [k0]: { sec: fireSec, hits: [fireHits2, fireHits2, 0, 0, 0] } },

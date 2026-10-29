@@ -29,7 +29,7 @@ export interface QuietTables {
   glob: TailCounts
   /** 観測点ごとの数（キーは `quietSiteKey`） */
   tails: Record<string, TailCounts>
-  /** 観測点ごとの、4〜60 秒前の最大からの上がりが 1〜5 段以上になった 1 時間あたりの秒数 */
+  /** 観測点ごとの、3〜59 秒前の最大からの上がりが 1〜5 段以上になった 1 時間あたりの秒数 */
   fire: Record<string, number[]>
 }
 
@@ -41,11 +41,12 @@ const RESET_GAP_MS = 60_000
 /** 雑音の表に載せるのに要る、判定できた秒数。これより短い点は率が当てにならない。 */
 export const FIRE_MIN_SEC = 3600
 /**
- * 発火の基準の窓（秒）。直前 FIRE_LAG 秒は入れず、4〜60 秒前の最大を見る。波面の検知器の発火（3〜59 秒前）とは
- * 1 秒ずれている（揃えるかは決めていない）。
+ * 発火の基準の窓（秒）。FIRE_LAG〜FIRE_L−1 秒前（3〜59 秒前）の最大を見る。波面の検知器の発火
+ * （`kyoshinClusterDetector.ts` の `L`・`LAG`）と同じ窓にしておく —— しきい値はこの表から決まるので、
+ * 窓がずれると、検知器が比べる上がりと表が数えた上がりが別のものになる。
  */
-const FIRE_L = 60
-const FIRE_LAG = 3
+export const FIRE_L = 60
+export const FIRE_LAG = 3
 /** 雑音の表に持つ段差の数（1〜5 段以上）。 */
 const FIRE_STEPS = 5
 
@@ -77,16 +78,23 @@ export function validateQuietTables(raw: unknown): asserts raw is QuietTables {
   }
 }
 
+/**
+ * 端末で数えた分の版。**数え方を変えたら上げる** —— 端末に残った古い数え方の分は、版が違えば読み込みで捨てて
+ * 数え直す（{@link isQuietCounts}）。混ぜると、新しい数え方の表に古い数え方の回数が足し込まれる。
+ * 2: 雑音の表の窓を 4〜60 秒前から 3〜59 秒前（`FIRE_LAG`〜`FIRE_L`−1）へ揃えた
+ */
+export const QUIET_COUNTS_VERSION = 2
+
 /** 端末で数えた分。表（`QuietTables`）と違い、雑音の表を率ではなく秒と回数のまま持つ（あとから足し合わせるため）。 */
 export interface QuietCounts {
-  version: 1
+  version: typeof QUIET_COUNTS_VERSION
   glob: TailCounts
   tails: Record<string, TailCounts>
-  /** 観測点ごとの、判定できた秒と、4〜60 秒前の最大からの上がりが 1〜5 段以上になった回数 */
+  /** 観測点ごとの、判定できた秒と、3〜59 秒前の最大からの上がりが 1〜5 段以上になった回数 */
   fire: Record<string, { sec: number; hits: number[] }>
 }
 
-export const EMPTY_QUIET_COUNTS: QuietCounts = { version: 1, glob: emptyTail(), tails: {}, fire: {} }
+export const EMPTY_QUIET_COUNTS: QuietCounts = { version: QUIET_COUNTS_VERSION, glob: emptyTail(), tails: {}, fire: {} }
 
 const isCount = (x: unknown): boolean => typeof x === 'number' && Number.isFinite(x) && x >= 0
 const isCountTail = (v: unknown): boolean => {
@@ -103,7 +111,7 @@ const isCountTail = (v: unknown): boolean => {
  */
 export function isQuietCounts(raw: unknown): raw is QuietCounts {
   const c = raw as QuietCounts | null
-  if (!c || typeof c !== 'object' || c.version !== 1 || !isCountTail(c.glob)) return false
+  if (!c || typeof c !== 'object' || c.version !== QUIET_COUNTS_VERSION || !isCountTail(c.glob)) return false
   if (!c.tails || typeof c.tails !== 'object' || !Object.values(c.tails).every(isCountTail)) return false
   if (!c.fire || typeof c.fire !== 'object') return false
   return Object.values(c.fire).every(f => !!f && typeof f === 'object' && isCount(f.sec)
@@ -178,7 +186,7 @@ export class QuietTableBaker {
     for (const [k, c] of this.tails) tails[k] = copy(c)
     const fire: Record<string, { sec: number; hits: number[] }> = {}
     for (const [k, sec] of this.fireSec) fire[k] = { sec, hits: [...(this.fireHits.get(k) ?? new Array(FIRE_STEPS).fill(0))] }
-    return { version: 1, glob: copy(this.glob), tails, fire }
+    return { version: QUIET_COUNTS_VERSION, glob: copy(this.glob), tails, fire }
   }
 
   /** 書き出した数から作り直す。上がりを測る直前の値は持ち越さない（次の秒から測り直す）。 */
@@ -255,9 +263,10 @@ export class QuietTableBaker {
       for (let i = 0; i < n; i++) {
         const v = values[i]
         if (v < 0) continue
+        // 輪の pos はまだ書いていない枠（= FIRE_L 秒前の値）、pos − d が d 秒前の値
         let mx = -1
-        for (let k = FIRE_LAG; k < FIRE_L; k++) {
-          const x = ring[((pos - 1 - k + FIRE_L * 2) % FIRE_L) * n + i]
+        for (let d = FIRE_LAG; d < FIRE_L; d++) {
+          const x = ring[((pos - d + FIRE_L) % FIRE_L) * n + i]
           if (x > mx) mx = x
         }
         if (mx < 0) continue
