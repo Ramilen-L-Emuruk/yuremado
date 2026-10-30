@@ -20,7 +20,9 @@ import { MISSING_HOLD_OPACITY } from '../../../utils/kyoshinMissingHold'
 // feature-state は paint 式経由でカスタムレイヤーには効かないため、毎秒更新は setLevels（カウンティング
 // ソート）＋呼び出し側の triggerRepaint で反映する。
 
-// 対象は index 1〜6（震度0以下）。index 0 はデータ無し（subThresholdOpacity(0)=0）で非表示。
+// 対象は index 1〜6（震度0以下）。index 0 は描かない（subThresholdOpacity(0)=0）。
+// ここへ届く 0 は「描かない」の印で、絞り込み（`utils/kyoshinSubThresholdFilter.ts`）が落とした点と
+// 目盛りの底（計測震度 −3.0）の点が入る。値なしではない（docs/spec/kyoshin-detection-v3-design.md §47）。
 // 呼び出し側の KyoshinSubThresholdGL.tsx でも levels[] 値域の上限として使うため export する。
 export const MAX_SUB_IDX = 6
 /**
