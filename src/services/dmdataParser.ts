@@ -544,6 +544,18 @@ function parseEditorialOfficeFromXml(doc: Document): string | undefined {
   return xmlText(xmlChild(controlEl, 'EditorialOffice')) || undefined
 }
 
+/**
+ * 電文を発表した官署（`Control/PublishingOffice`）だけを読む。**編集官署へは落とさない。**
+ *
+ * 画面が「発表官署 …」と名乗って出すので、発表官署そのものが入っているときだけ値を返す
+ * （全期間の津波電文 651 通ではすべて「気象庁」）。
+ */
+function parsePublishingOfficeFromXml(doc: Document): string | undefined {
+  const controlEl = xmlQ(doc, 'Control')
+  if (!controlEl) return undefined
+  return xmlText(xmlChild(controlEl, 'PublishingOffice')) || undefined
+}
+
 function xmlText(el: Element | null): string {
   return el?.textContent?.trim() ?? ''
 }
@@ -2062,7 +2074,9 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   const source = parseIssueSourceFromXml(doc)
   // 画面へ「編集官署 …」と名乗って出すのはこちら（発表官署へ落とさない。地震情報と同じ読み手）。
   const editorialOffice = parseEditorialOfficeFromXml(doc)
-  const issue = { source, ...(editorialOffice && { editorialOffice }), time: reportDateTime, type: 'Focus' as const }
+  // 発表官署も編集官署の隣に出す（2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・津波カードも同じ形）。
+  const publishingOffice = parsePublishingOfficeFromXml(doc)
+  const issue = { source, ...(editorialOffice && { editorialOffice }), ...(publishingOffice && { publishingOffice }), time: reportDateTime, type: 'Focus' as const }
   // 有効期限。**読めない値は採らない** —— 残すと以後の比較（`new Date(...) <= now`）がすべて
   // 偽へ倒れ、表示は続くのに失効の予約も積まれない津波ができる。消費側（`useEarthquakes.ts`）も
   // 予約を積む直前に同じ検査をしているが、そこを通らない比較が他に 4 箇所ある。
@@ -2237,6 +2251,10 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
     // にしか現れないため、子孫全探索でも Station 配下と取り違えない。
     const lastKindEl = xmlQ(itemEl, 'LastKind')
     const lastGrade = parseLastKindGrade(lastKindEl ? xmlText(xmlQ(lastKindEl, 'Code')) : '', TSUNAMI_LOG_PREFIX)
+    // 電文が等級に付けた名前（`Kind/Name`）。**コードから組み立てた語では落ちる区別がある**
+    // （→ `TsunamiArea.kindName`）。
+    const kindName = (kindEl ? xmlText(xmlChild(kindEl, 'Name')) : '') || undefined
+    const lastKindName = (lastKindEl ? xmlText(xmlChild(lastKindEl, 'Name')) : '') || undefined
     if (!areaName) {
       if (isKnownCancelCode(kindCode)) unreadableCancelledCount++
       else unreadableActiveCount++
@@ -2246,7 +2264,7 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
       if (isKnownCancelCode(kindCode)) {
         // 解除された区域。実電文の `Item` は `Area` と `Category` しか持たないので、
         // 波高・到達時刻・潮位観測点は読まない（下の読み取りへ進ませない）。
-        cancelledAreas.push({ grade: 'Unknown', lastGrade, immediate: false, name: areaName, code: areaCode })
+        cancelledAreas.push({ grade: 'Unknown', lastGrade, ...(lastKindName && { lastKindName }), immediate: false, name: areaName, code: areaCode })
         if (lastGrade === undefined) undescribableCancel.push(areaName)
         continue
       }
@@ -2313,7 +2331,9 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
 
     areas.push({
       grade,
+      ...(kindName && { kindName }),
       lastGrade,
+      ...(lastKindName && { lastKindName }),
       immediate: condition === 'ただちに津波来襲と予測',
       name: areaName,
       code: areaCode,

@@ -11,6 +11,7 @@ import type { TsunamiObsBar } from '../../../hooks/useTsunamiLayerData'
 function makeBar(barPx: number): TsunamiObsBar {
   return {
     name: 'テスト観測点',
+    code: undefined,
     lat: 38.3,
     lng: 141.5,
     barPx,

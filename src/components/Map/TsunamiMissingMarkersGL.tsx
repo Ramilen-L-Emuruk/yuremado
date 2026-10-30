@@ -7,6 +7,7 @@ import { missingMarkMetrics } from './gl/tsunamiMissingMarker'
 import { BADGE_SHADOW_BLUR, BADGE_SHADOW_COLOR } from './gl/tsunamiObsBar'
 import { TSUNAMI_MISSING_COLOR } from '../../utils/tsunamiStyle'
 import { overSuffixedHeight, observationFirstWaveText } from '../../utils/tsunami'
+import { popupCodeLineHtml } from './gl/popupHtml'
 import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 
 // 観測データが欠測となっている観測点の印を描画する。
@@ -29,6 +30,7 @@ export function missingTooltipHtml(marker: TsunamiMissingMarker): string {
     lines.push(`<div class="text-xs" style="color:#e5e7eb">これまでの最大波 ${esc(overSuffixedHeight(marker.height))}</div>`)
   }
   lines.push(`<div class="text-xs" style="color:${TSUNAMI_MISSING_COLOR}">欠測（観測データが得られていません）</div>`)
+  lines.push(popupCodeLineHtml(marker.code))
   return `<div class="text-sm">${lines.join('')}</div>`
 }
 

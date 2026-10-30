@@ -14,8 +14,8 @@ import { buildMissingMarkerEl } from './TsunamiMissingMarkersGL'
 // テストでも捕まらない**ため、ここで押さえる。
 describe('津波マーカーの根の要素', () => {
   const cases = [
-    ['到達確認', () => buildArrivalMarkerEl({ name: 'x', lat: 40, lng: 141, blinking: false }, 1)],
-    ['欠測', () => buildMissingMarkerEl({ name: 'x', lat: 40, lng: 141, blinking: false }, 1)],
+    ['到達確認', () => buildArrivalMarkerEl({ name: 'x', code: undefined, lat: 40, lng: 141, blinking: false }, 1)],
+    ['欠測', () => buildMissingMarkerEl({ name: 'x', code: undefined, lat: 40, lng: 141, blinking: false }, 1)],
   ] as const
 
   for (const [label, build] of cases) {

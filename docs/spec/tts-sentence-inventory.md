@@ -81,7 +81,7 @@
   53 件。増える 2 件（`areaNameSegments`・`observationDetailSegments`）は、区域名・観測点名を
   読点だけで連結する関数で、**文の組み立てそのもの**を担っている
 - **日本語リテラルを持たないのに文を組む定義がある。** 他のモジュールの語（`tsunamiGradeLabel`
-  → `TSUNAMI_GRADE_SHORT_LABEL`・`intensityText` → `getIntensityLabel`）を引くもの、
+  → `TSUNAMI_GRADE_NAME`・`intensityText` → `getIntensityLabel`）を引くもの、
   断片列を作る関数をラップするもの（`maxScaleOnlySegments`・`domesticTsunamiSegment`）、
   断片列を連結するだけの文字列版（`earthquakeToText` ほか 8 件）がこれに当たる
 
@@ -187,7 +187,9 @@
 | `lowerGradeSentence` | アプリ | 「また、次の地域に津波注意報が発表されています。」＋波高の文 | 波高が無い等級だけ「〈区域〉に〈等級〉が発表されています。」へ落ち、区域名と等級の語順が入れ替わる（意図的。波高の文が無いと「次の地域に」の受け先が無くなるため） |
 | `areaHeightSentence` | アプリ | 「〈区域〉、〈区域〉で10メートル以上、〈区域〉で6メートルが予想されています。」 | |
 | `areasWithoutHeightSentence` | アプリ | 「〈区域〉にも津波警報が発表されています。」 | |
-| `tsunamiAreaGradeChangeToSegments` | アプリ | 「〈区域〉の津波注意報が津波予報に切り替えられました。」／前回が `Unknown` なら「〈区域〉に津波注意報が発表されました。」 | 同じ報の中で「切り替えられました」と「発表されました」が並びうる（意図的。前回が津波なしの区域は「〜の津波なしが」と言えないため） |
+| `tsunamiAreaGradeChangeToSegments` | アプリ | 「〈区域〉の津波注意報が津波予報（若干の海面変動）に切り替えられました。」（警報等が残れば呼びかけを 1 文足す）／前回が `Unknown` なら「〈区域〉に津波注意報が発表されました。」 | 同じ報の中で「切り替えられました」と「発表されました」が並びうる（意図的。前回が津波なしの区域は「〜の津波なしが」と言えないため） |
+| `tsunamiAreaGradeChangeActionSegments` | アプリ | 区域単位の等級変化の後に足す避難の呼びかけ（警報等が残る報だけ。発表文と同じ呼びかけの文） | 等級の文と予想波高の文の後、最後に置く |
+| `tsunamiForecastHeightChangeToSegments` | アプリ | 「予想される津波の高さが変わりました。〈区域〉で〈波高〉が予想されています。」（2 文目からは「また、」で継ぐ） | 等級は据え置きで予想波高だけ動いた区域を読む。区域と波高の文は発表文と同じ `areaHeightSentence` |
 | `tsunamiCancelToText` | **混在** | 解除「津波警報等は全て解除されました。」／取消「津波警報等は誤って発表されたため取り消されました。」／失効「津波予報は失効しました。」＋電文の理由 | 終わり方ごとに述語が違う（→ §4-6） |
 | `tsunamiObservationUpdateToSegments` | **混在** | 「津波観測に関する情報。〈電文の見出し文〉新たに〈区域〉、〈地点〉で0.1メートルを観測しました。また、〈…〉へ更新されました。」 | 電文の見出し文を名乗りの直後へ挟むが、区切りの語を足さない（→ §4-8） |
 | `tsunamiArrivalToSegments` | アプリ | 「〈地点〉で到達を確認しました。最大波高は観測中です。」／微弱は「最大波高は微弱です。」 | |
@@ -637,3 +639,5 @@ VOICEVOX 試聴ボタンが読ませていたのは次の一文で、文字列�
   2026-10-19 ユーザー承認）を足し、境目の定数の名前を `CANCEL_REASON_INLINE_MAX_CHARS` へ改めた
 - 2026-10-24: `eewAlertToText`（震源名が空の報）・`nankaiToText`（調査中のきっかけと取消の理由）・`nankaiCommentaryToText`（取消）・`kohatsuToText`（取消の理由）の行を実装に合わせた
 - 2026-10-29: `buildLpgmRegionText` の行に、階級 0 の地域も「階級0を〈区域〉」の同じ形で読むことを添えた
+- 2026-10-30: 区域単位で等級が動いた報の行を、津波予報の名乗り（「津波予報（若干の海面変動）」）と、警報等が残るときに足す避難の呼びかけに合わせた
+- 2026-10-30: 区域単位の等級変化に足す避難の呼びかけ（`tsunamiAreaGradeChangeActionSegments`）と、予想波高だけが動いた続報の文（`tsunamiForecastHeightChangeToSegments`）の行を足した。§2 の件数は数え直していない

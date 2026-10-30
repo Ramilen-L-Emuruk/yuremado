@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { escapeHtml, twoLinePopupHtml, badgeHtml } from './popupHtml'
+import { escapeHtml, twoLinePopupHtml, badgeHtml, popupCodeLineHtml } from './popupHtml'
 import { contrastRatio } from '../../../utils/contrast'
 import { INTENSITY_COLORS } from '../../../utils/intensity'
 
@@ -67,5 +67,22 @@ describe('badgeHtml', () => {
       const fg = badgeHtml('x', bg).match(/color:(#[0-9a-f]{6})/)![1]
       expect(contrastRatio(bg, fg)!).toBeGreaterThanOrEqual(4.5)
     }
+  })
+})
+
+describe('popupCodeLineHtml（津波の吹き出しの末尾に添えるコード）', () => {
+  it('コードを「コード 32002」の形で小さく添える', () => {
+    const html = popupCodeLineHtml('32002')
+    expect(html).toContain('コード 32002')
+    expect(html).toContain('font-size:10px')
+  })
+
+  it('コードを持たない地点では何も足さない', () => {
+    expect(popupCodeLineHtml(undefined)).toBe('')
+    expect(popupCodeLineHtml('')).toBe('')
+  })
+
+  it('コードの文字は逃がす', () => {
+    expect(popupCodeLineHtml('<b>')).toContain('&lt;b&gt;')
   })
 })

@@ -777,6 +777,19 @@ export interface TsunamiSourceEarthquake extends HypocenterAreaDetail {
 export interface TsunamiArea {
   grade: TsunamiGrade
   /**
+   * 電文が等級に付けた名前（`Category/Kind/Name`）。**`grade` へ丸めると落ちる区別がある** ——
+   * 大津波警報には「大津波警報」（コード 52）と「大津波警報：発表」（コード 53・その報で大津波警報になった区域）がある。
+   * 等級カードの帯はこの名前を出し、名前ごとにカードを分ける（2026-10-30 ユーザー選択「電文の名前を出す (Recommended)」・
+   * 「カードを分ける (Recommended)」）。読み上げは 53 も「大津波警報」と言う（2026-10-30 ユーザー選択「今のまま「大津波警報」
+   * (Recommended)」）。DMDATA 経路のみ（P2PQuake は配信しない）。
+   */
+  kindName?: string
+  /**
+   * 前回の等級に電文が付けた名前（`Category/LastKind/Name`）。意味は {@link kindName} と同じ。
+   * 解除された区域（{@link JMATsunami.cancelledAreas}）も持つ。
+   */
+  lastKindName?: string
+  /**
    * 前回この区域に発表されていた等級（気象庁電文の `LastKind`）。
    *
    * **区域単位の切替・引き上げはこれでしか分からない。** 気象庁は一部解除でも区域を電文から
@@ -998,6 +1011,11 @@ export interface JMATsunami {
    */
   liftText?: string
   cancelledAt?: Date
+  /**
+   * 見出し文（`Head/Headline/Text`）。**津波カードの見出しの下に原文のまま出す**（改行も保つ。2026-10-30 ユーザー選択
+   * 「カードに出す (Recommended)」。全期間で 15 種類の書き方・本文に無い事実は無し）。観測・満潮時刻の報の読み上げの名乗りにも使う。
+   * 続報の統合では最新の報のものを採る。
+   */
   headline?: string
   /**
    * 固定付加文（`Comments/WarningComment`）。避難行動の呼びかけなど気象庁の定型文で、
@@ -1096,6 +1114,11 @@ export interface JMATsunami {
      * 標準版（P2PQuake）と、編集官署を持たない電文では無い。
      */
     editorialOffice?: string
+    /**
+     * 電文を発表した官署（`Control/PublishingOffice`）。**編集官署へは落とさない。** 津波カードで編集官署の隣に
+     * 「編集官署 …　発表官署 …」の形で出す（2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・地震カードと同じ形）。
+     */
+    publishingOffice?: string
     time: string
     type: 'Focus'
   }

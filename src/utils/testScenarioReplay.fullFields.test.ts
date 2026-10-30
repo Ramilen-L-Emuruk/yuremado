@@ -105,7 +105,7 @@ function quakeSample(): QuakeSample {
 
 function tsunamiArea(): TsunamiSample['areas'][number] {
   return {
-    grade: 'MajorWarning', lastGrade: 'Warning', immediate: true, name: '能登', code: '191',
+    grade: 'MajorWarning', kindName: '大津波警報', lastKindName: '津波警報', lastGrade: 'Warning', immediate: true, name: '能登', code: '191',
     firstHeight: { arrivalTime: iso(), condition: 'ただちに津波来襲と予測', revise: '追加' },
     maxHeight: { description: '５ｍ', value: 5, revise: '更新' },
     forecastHeightImportant: true,
@@ -140,7 +140,7 @@ function tsunamiSample(): TsunamiSample {
       originTime: iso(), arrivalTime: iso(), source: '気象庁',
     }],
     validDateTime: iso(),
-    issue: { source: '気象庁', editorialOffice: '気象庁本庁', time: iso(), type: 'Focus' },
+    issue: { source: '気象庁', editorialOffice: '気象庁本庁', publishingOffice: '気象庁', time: iso(), type: 'Focus' },
     infoName: '津波警報・注意報・予報',
     areas: [tsunamiArea()],
     cancelledAreas: [tsunamiArea()],
