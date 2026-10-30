@@ -278,6 +278,18 @@ function OperationStatusBadge({ status }: { status?: TelegramOperationStatus }) 
 // 臨時情報と後発地震注意情報の帯にも閉じるボタンを付ける（2026-10-22 ユーザー選択「閉じられるようにする」。
 // ボタンの名前は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。閉じても段階が変われば出直す
 // （→ `useSpecialInfoBanners` の `DISMISSED_KEYS`）。
+/**
+ * 電文が名乗る情報の種別（`Body/EarthquakeInfo` の `@type` と `InfoKind`）を、帯の見出しの下に小さく添える
+ * （2026-10-30 ユーザー選択「帯に添える (Recommended)」。形は「南海トラフ地震に関連する情報／南海トラフ地震臨時情報」）。
+ * **読み上げには足さない**（同じ選択）。片方しか無ければ、ある方だけを出す。**2 つが同じ語なら 1 つにする** ——
+ * 後発地震注意情報（VYSE60）は `@type` も `InfoKind` も「北海道・三陸沖後発地震注意情報」で、並べると同じ語が 2 回続く。
+ */
+function InfoKindLine({ info }: { info: { earthquakeInfoType?: string; earthquakeInfoKind?: string } }) {
+  const text = [...new Set([info.earthquakeInfoType, info.earthquakeInfoKind].filter(Boolean))].join('／')
+  if (!text) return null
+  return <p className="text-white/60 text-[0.6875rem] leading-tight mt-0.5 truncate" data-testid="info-kind-line">{text}</p>
+}
+
 function NankaiBanner({ nankai, speaking, readsAppendix, onDismiss }: { nankai: JMANankai; speaking: boolean; readsAppendix: boolean; onDismiss: () => void }) {
   // 読み上げているあいだだけ開く（自分が開いた分だけ閉じる）
   const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'nankai')
@@ -292,12 +304,15 @@ function NankaiBanner({ nankai, speaking, readsAppendix, onDismiss }: { nankai: 
           onClick={() => setOpen(!open)}
         >
           <NankaiIcon />
-          <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
-            <span className={`text-xs font-bold text-white px-1.5 py-0.5 rounded-sm ${badge}`}>
-              {nankai.kindName}
-            </span>
-            <OperationStatusBadge status={nankai.operationStatus} />
-            <span className="text-white text-sm font-bold leading-tight truncate">{nankai.headline}</span>
+          <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex items-center gap-2 flex-wrap">
+              <span className={`text-xs font-bold text-white px-1.5 py-0.5 rounded-sm ${badge}`}>
+                {nankai.kindName}
+              </span>
+              <OperationStatusBadge status={nankai.operationStatus} />
+              <span className="text-white text-sm font-bold leading-tight truncate">{nankai.headline}</span>
+            </div>
+            <InfoKindLine info={nankai} />
           </div>
           <ChevronIcon open={open} />
         </button>
@@ -332,14 +347,17 @@ function KohatsuBanner({ kohatsu, speaking, readsAppendix, onDismiss }: { kohats
           onClick={() => setOpen(!open)}
         >
           <KohatsuIcon />
-          <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
-            {/* **情報名の札は置かない。** 南海トラフの帯は気象庁のキーワード（「巨大地震注意」等）を
-                札に出すが、後発地震注意情報にはそれに当たる語が無い。情報名を入れると、すぐ隣の
-                見出し（電文の `Head/Headline/Text`。実電文は「北海道・三陸沖後発地震注意情報」）と
-                同じ文字列が 2 つ並ぶ。**幅は足りる**（390px 幅でも札 186px・行 314px で収まり、
-                見出しが次行へ回るだけ）が、同じ言葉を二度読ませる意味が無い。 */}
-            <OperationStatusBadge status={kohatsu.operationStatus} />
-            <span className="text-white text-sm font-bold leading-tight truncate">{kohatsu.headline}</span>
+          <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex items-center gap-2 flex-wrap">
+              {/* **情報名の札は置かない。** 南海トラフの帯は気象庁のキーワード（「巨大地震注意」等）を
+                  札に出すが、後発地震注意情報にはそれに当たる語が無い。情報名を入れると、すぐ隣の
+                  見出し（電文の `Head/Headline/Text`。実電文は「北海道・三陸沖後発地震注意情報」）と
+                  同じ文字列が 2 つ並ぶ。**幅は足りる**（390px 幅でも札 186px・行 314px で収まり、
+                  見出しが次行へ回るだけ）が、同じ言葉を二度読ませる意味が無い。 */}
+              <OperationStatusBadge status={kohatsu.operationStatus} />
+              <span className="text-white text-sm font-bold leading-tight truncate">{kohatsu.headline}</span>
+            </div>
+            <InfoKindLine info={kohatsu} />
           </div>
           <ChevronIcon open={open} />
         </button>
@@ -385,12 +403,15 @@ function CommentaryBanner({ commentary, speaking, readsAppendix, onDismiss }: { 
           onClick={() => setOpen(!open)}
         >
           <CommentaryIcon />
-          <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-bold text-white px-1.5 py-0.5 rounded-sm bg-teal-500 shrink-0">
-              {commentary.serialName}
-            </span>
-            <OperationStatusBadge status={commentary.operationStatus} />
-            <span className="text-white text-sm font-bold leading-tight truncate">{commentary.headline}</span>
+          <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold text-white px-1.5 py-0.5 rounded-sm bg-teal-500 shrink-0">
+                {commentary.serialName}
+              </span>
+              <OperationStatusBadge status={commentary.operationStatus} />
+              <span className="text-white text-sm font-bold leading-tight truncate">{commentary.headline}</span>
+            </div>
+            <InfoKindLine info={commentary} />
           </div>
           <ChevronIcon open={open} />
         </button>

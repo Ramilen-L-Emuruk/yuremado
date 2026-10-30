@@ -1889,9 +1889,8 @@ export interface EarthquakeInfoMeta {
   /**
    * 情報の種別（`Body/EarthquakeInfo/InfoKind`）と、その上位分類（同要素の `@type`）。
    *
-   * **読んで持つが、画面には出していない**（2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）。
-   * アプリは電文種別で既に見分けており、「南海トラフ地震臨時情報」のような名称は
-   * `headline`（`Head/Title`）が伝えている。
+   * **帯の見出しの下に小さく添える**（2026-10-30 ユーザー選択「帯に添える (Recommended)」。2026-10-29 の
+   * 「まとめて今のまま」を覆した）。読み上げには足さない。出し方は `SpecialInfoBanner` の `InfoKindLine`。
    */
   earthquakeInfoKind?: string
   earthquakeInfoType?: string
