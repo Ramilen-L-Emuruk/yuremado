@@ -2187,7 +2187,7 @@ export interface JMAEstimatedIntensity {
   magnitudeCondition?: string
   /** 震央地名番号（気象庁コード表 6）。名前は持たない */
   areaCode: number
-  /** 電文の種類（0=通常）。0 以外は訓練等。実配信 13 か月では 0 しか観測できていない */
+  /** 電文の種類（0=通常）。0 以外は訓練等（実電文で訓練＝1 を確認済み。件数は `bufrEstimatedIntensity.ts`） */
   telegramKind: number
   /** 階級震度と計測震度の対応表。**電文が持っている凡例をそのまま使う**（自前の階級表を当てない） */
   grades: JMAEstimatedIntensityGrade[]

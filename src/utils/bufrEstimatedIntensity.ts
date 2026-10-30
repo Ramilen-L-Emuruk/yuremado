@@ -175,7 +175,7 @@ const FORMS: ReadonlyArray<TelegramForm & { key: string }> = [
 const TSUNAMI_BLOCK_BITS = 46
 
 /**
- * 電文の種類（0-01-242）が 0 以外なら訓練等。実配信 13 か月では 0 しか観測できていない。
+ * 電文の種類（0-01-242）が 0 以外なら訓練等。控え（`telegram.earthquake` の 2022-07-20〜2026-10-18）の 120 通のうち 10 通が訓練（1）で、残りは 0（2026-10-30 に数えた）。
  *
  * **この値は抑制の判定に使う。** 非 XML 電文（この BUFR がアプリで唯一のもの）では
  * 一覧・WebSocket の `test` フラグが**常に false** で、`test: "no"` を指定しても試験配信は
