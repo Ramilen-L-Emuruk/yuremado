@@ -8,6 +8,7 @@ import type {
 } from '../types/earthquake'
 import { haversineKm, hasKnownEpicenter } from './geo'
 import { log } from './logger'
+import { formatNameFromMark } from './formatters'
 
 /**
  * 震源が離れすぎていたら別の地震とみなす距離。
@@ -379,4 +380,39 @@ export function upsertEstimatedIntensity(
   const replaced = list.slice()
   replaced[index] = next
   return { list: replaced, update }
+}
+
+/** 16 方位。電文の `Direction` と同じ語（北から時計回り） */
+const DIRECTIONS_16 = ['北', '北北東', '北東', '東北東', '東', '東南東', '南東', '南南東', '南', '南南西', '南西', '西南西', '西', '西北西', '北西', '北北西'] as const
+
+/** 方位（度。北 0・時計回り）を 16 方位の語へ。1 方位の幅は 22.5 度 */
+export function toDirection16(deg: number): string {
+  const d = ((deg % 360) + 360) % 360
+  return DIRECTIONS_16[Math.round(d / 22.5) % 16]
+}
+
+/**
+ * 推計震度分布図の電文が持つ震央補助表現（→ `JMAEstimatedIntensity.mark`）を、地震カードの補助表現と
+ * **食い違うときだけ**文にする（2026-10-30 ユーザー承認「地震カードの形で出す (Recommended)」）。一致するなら `null`。
+ *
+ * 形は「推計の電文では 輪島の東北東30km付近」。目印の名前は推計の電文に無いので、地点番号が地震カードの
+ * `markCode` と同じときだけカードの文から目印の名前を借り、違えば「目印308」と番号で書く。
+ * 全期間の控え（2020-11〜）の 18 通では食い違いは 0 だったので、この文は普段は出ない。
+ */
+export function estimatedMarkMismatchNote(
+  ei: Pick<JMAEstimatedIntensity, 'mark'>,
+  hypocenter: { nameFromMark?: string; markCode?: string; direction?: string; distanceKm?: number },
+): string | null {
+  const m = ei.mark
+  if (!m) return null
+  const dir = toDirection16(m.directionDeg)
+  const sameMark = hypocenter.markCode !== undefined && Number(hypocenter.markCode) === m.pointCode
+  if (sameMark && hypocenter.direction === dir && hypocenter.distanceKm === m.distanceKm) return null
+  let markName = `目印${m.pointCode}`
+  if (sameMark && hypocenter.nameFromMark && hypocenter.direction) {
+    const text = formatNameFromMark(hypocenter.nameFromMark)
+    const at = text.indexOf(`の${hypocenter.direction}`)
+    if (at > 0) markName = text.slice(0, at)
+  }
+  return `推計の電文では ${markName}の${dir}${m.distanceKm}km付近`
 }

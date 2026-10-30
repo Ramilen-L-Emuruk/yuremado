@@ -168,11 +168,14 @@ const FORMS: ReadonlyArray<TelegramForm & { key: string }> = [
  * 実装の値と一致することと、合計が合うことから導いた。**個別の `read` へ分解するなら、まず
  * 実電文で 1 つずつ確かめること。**
  *
- * **いまは読まずに飛ばす。** 震央地名の補助的表現はアプリが XML 側
- * （`Hypocenter/Area/NameFromMark`）から既に得ており、この電文から採る必要が無い。
+ * **4 つを読んで推計の欄に出す**（2026-10-30 ユーザー承認「地震カードの形で出す (Recommended)」。
+ * 地震カードの補助表現と食い違うときだけ）。全期間の控え（2020-11〜）でこのブロックを持つ 18 通を
+ * 同じ地震の VXSE53 と突き合わせ、地点番号・16 方位・距離が 18 通とも一致した（修飾は常に 50）。
  * 4 つとも固定幅なので合計は動かない。
  */
 const TSUNAMI_BLOCK_BITS = 46
+/** 震央補助表現のブロックの内訳（合計は {@link TSUNAMI_BLOCK_BITS}） */
+const MARK_MODIFIER_BITS = 7, MARK_POINT_BITS = 10, MARK_DIRECTION_BITS = 16, MARK_DISTANCE_BITS = 13
 
 /**
  * 電文の種類（0-01-242）が 0 以外なら訓練等。控え（`telegram.earthquake` の 2022-07-20〜2026-10-18）の 120 通のうち 10 通が訓練（1）で、残りは 0（2026-10-30 に数えた）。
@@ -374,7 +377,23 @@ export function decodeEstimatedIntensity(
   const year = r.read(12), month = r.read(4), day = r.read(6)      // 3-01-011
   const hour = r.read(5), minute = r.read(6)                       // 3-01-012
   const areaCode = r.read(10)                                      // 0-01-240
-  if (hasTsunamiBlock) r.skip(TSUNAMI_BLOCK_BITS)
+  let mark: { pointCode: number; directionDeg: number; distanceKm: number } | undefined
+  if (hasTsunamiBlock) {
+    r.skip(MARK_MODIFIER_BITS)                                     // 0-08-194 現象の位置の修飾
+    const pointRaw = r.read(MARK_POINT_BITS)                       // 0-01-241 地点番号
+    const directionRaw = r.read(MARK_DIRECTION_BITS)               // 0-05-021 方位（尺度 2）
+    const distanceRaw = r.read(MARK_DISTANCE_BITS)                 // 0-06-021（尺度変更で km）
+    // BUFR の欠測は全ビット 1。欠測や範囲外（方位 360 度以上）をそのまま持つと、地震カードの
+    // 補助表現と「食い違う」と見なされ、「目印1023の…8191km付近」のような偽の文が画面に出る
+    const allOnes = (bits: number) => 2 ** bits - 1
+    const missing = pointRaw === allOnes(MARK_POINT_BITS) || directionRaw === allOnes(MARK_DIRECTION_BITS)
+      || distanceRaw === allOnes(MARK_DISTANCE_BITS)
+    if (missing || directionRaw >= 36000) {
+      log.warn(`${prefix} 震央補助表現が${missing ? '欠測' : '範囲外（方位が 360 度以上）'}です（この報の目印は使いません）: 地点番号の生値=${pointRaw} 方位の生値=${directionRaw} 距離の生値=${distanceRaw}`)
+    } else {
+      mark = { pointCode: pointRaw, directionDeg: directionRaw / 100, distanceKm: distanceRaw }
+    }
+  }
 
   const lat = (r.read(15) - 9000) / 100                            // 0-05-002
   const lon = (r.read(16) - 18000) / 100                           // 0-06-002
@@ -523,6 +542,7 @@ export function decodeEstimatedIntensity(
     magnitudeCondition: magRaw === MAG_UNKNOWN ? MAG_CONDITION_UNKNOWN
       : magRaw === MAG_HUGE ? MAG_CONDITION_HUGE : undefined,
     areaCode,
+    ...(mark && { mark }),
     telegramKind,
     grades,
     count: n,

@@ -955,11 +955,11 @@ export function App() {
     handleLiveEvent(event, meta)
   }, [handleLiveEvent])
   const {
-    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, connectionStatus, dmdataClassifications, lastUpdate, isLoading, isLoadingMore, hasMore, error,
+    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, internationalTsunamis, connectionStatus, dmdataClassifications, lastUpdate, isLoading, isLoadingMore, hasMore, error,
     historyLoss, loadMoreFailed, reconnectGapLoss,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
-    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
+    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
@@ -1015,6 +1015,8 @@ export function App() {
     earthquake:        simulateEarthquake,
     foreignQuake:      simulateForeignQuake,
     foreignQuakeHuge:  simulateForeignQuakeHuge,
+    foreignQuakeInternationalTsunami: simulateForeignQuakeInternationalTsunami,
+    headlineOnlyCity:  simulateHeadlineOnlyCity,
     eew:               simulateEEW,
     eewWarning:        simulateEEWWarning,
     eewForecast:       simulateEEWForecast,
@@ -1074,7 +1076,7 @@ export function App() {
       showBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
     },
   }), [
-    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
+    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
@@ -2955,6 +2957,7 @@ export function App() {
                 activeLpgmEventId={activeLpgmEventId}
                 onToggleLpgm={toggleLpgmFromEarthquake}
                 estimatedIntensities={estimatedIntensities}
+                internationalTsunamis={internationalTsunamis}
                 distributionQuakeKey={distributionQuakeKey}
                 onToggleDistribution={toggleDistribution}
                 unreceivedQuakeKey={unreceivedQuakeKey}

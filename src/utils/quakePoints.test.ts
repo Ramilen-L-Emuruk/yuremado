@@ -420,6 +420,34 @@ describe('buildIntensityRows', () => {
       expect(result.unplacedStations).toEqual([])
     })
 
+    // 正: 区域が決まらない市町村（見出しにだけある市町村）を、名前の無い区域の行にせず県の直下に置く。
+    it('区域が空の市町村は、名前の無い区域の行を作らず県の直下に置く', () => {
+      const result = buildIntensityRows(
+        [prefPoint('石川県', 40), area('石川県能登', 40)],
+        [{ name: '輪島市', area: '', pref: '石川県', scale: s(30) }],
+        deps(),
+      )
+      expect(result.rows.map(r => r.kind)).toEqual(['pref'])
+      const row = result.rows[0]
+      if (row.kind !== 'pref') throw new Error('県の行ではない')
+      expect(row.regions.map(r => r.name)).toEqual(['石川県能登'])
+      expect(row.cities.map(c => c.name)).toEqual(['輪島市'])
+      expect(row.regions.some(r => r.name === '')).toBe(false)
+    })
+
+    // 対照: 区域を持つ市町村は従来どおり区域の下に入り、県の直下には来ない。
+    it('対照: 区域を持つ市町村は区域の下に入る', () => {
+      const result = buildIntensityRows(
+        [prefPoint('石川県', 40), area('石川県能登', 40)],
+        [{ name: '輪島市', area: '石川県能登', pref: '石川県', scale: s(30) }],
+        deps(),
+      )
+      const row = result.rows[0]
+      if (row.kind !== 'pref') throw new Error('県の行ではない')
+      expect(row.cities).toEqual([])
+      expect(row.regions[0].cities.map(c => c.name)).toEqual(['輪島市'])
+    })
+
     // 安全弁: 県も区域も引けない観測点は、置けなかった名前として返す（呼び出し側が記録する）。
     it('県も区域も引けない観測点は、置けなかった名前として返す', () => {
       const result = buildIntensityRows(

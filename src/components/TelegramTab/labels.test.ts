@@ -68,7 +68,7 @@ describe('KIND_OPTIONS', () => {
   it('種別の短い名前を書いた順にすべて並べる', () => {
     expect(KIND_OPTIONS).toEqual([
       'eew', 'quake', 'tsunami', 'lpgm', 'nankai', 'nankaiCommentary', 'kohatsu',
-      'quakeNotice', 'earthquakeCount', 'estimatedIntensity',
+      'quakeNotice', 'earthquakeCount', 'estimatedIntensity', 'internationalTsunami',
     ])
     expect(KIND_OPTIONS.every(kind => KIND_LABEL[kind].length > 0)).toBe(true)
   })

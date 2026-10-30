@@ -104,6 +104,8 @@ export interface Build {
    */
   mesh?: 'quarter' | 'third'
   tsunami?: boolean
+  /** 震央補助表現の中身（`tsunami` のときだけ書く）。既定は地点 0・方位 90 度・距離 80 km */
+  mark?: { point: number; dirRaw: number; distKm: number }
   edition?: number
   descs?: string[]
   /** 宣言する全長を実際とわざと食い違わせる（結合漏れの再現） */
@@ -130,7 +132,10 @@ export function build(b: Build): Uint8Array {
   w.write(b.y ?? 2018, 12).write(b.mo ?? 6, 4).write(b.d ?? 17, 6)
   w.write(b.h ?? 22, 5).write(b.mi ?? 58, 6)
   w.write(b.areaCode ?? 520, 10)
-  if (b.tsunami) { w.write(0, 7).write(0, 10).write(9000, 16).write(80, 13) }   // 合計 46 ビット
+  if (b.tsunami) {   // 合計 46 ビット（修飾 7・地点 10・方位 16・距離 13）
+    const m = b.mark ?? { point: 0, dirRaw: 9000, distKm: 80 }
+    w.write(50, 7).write(m.point, 10).write(m.dirRaw, 16).write(m.distKm, 13)
+  }
   w.write(b.latRaw, 15).write(b.lonRaw, 16).write(b.depthKm, 14).write(b.magRaw, 7)
   w.write(b.declaredMesh2Count ?? b.mesh2.length, 16)
   for (const m2 of b.mesh2) {

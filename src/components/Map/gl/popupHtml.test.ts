@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { escapeHtml, twoLinePopupHtml, badgeHtml, popupCodeLineHtml } from './popupHtml'
+import { escapeHtml, twoLinePopupHtml, badgeHtml, popupCodeLineHtml, popupCodeHtml } from './popupHtml'
 import { contrastRatio } from '../../../utils/contrast'
 import { INTENSITY_COLORS } from '../../../utils/intensity'
 
@@ -84,5 +84,23 @@ describe('popupCodeLineHtml（津波の吹き出しの末尾に添えるコー�
 
   it('コードの文字は逃がす', () => {
     expect(popupCodeLineHtml('<b>')).toContain('&lt;b&gt;')
+  })
+})
+
+// 吹き出しの末尾のコード（2026-10-30 ユーザー選択「吹き出しに添える (Recommended)」）
+describe('popupCodeHtml', () => {
+  it('正: 「コード 番号」の小さな行を返す', () => {
+    const html = popupCodeHtml('1720400')
+    expect(html).toContain('コード 1720400')
+    expect(html).toContain('font-size:10px')
+  })
+
+  it('対照: コードが無ければ空文字（空の行を作らない）', () => {
+    expect(popupCodeHtml(undefined)).toBe('')
+    expect(popupCodeHtml('')).toBe('')
+  })
+
+  it('安全弁: コードの文字は逃がす', () => {
+    expect(popupCodeHtml('<b>')).toContain('&lt;b&gt;')
   })
 })

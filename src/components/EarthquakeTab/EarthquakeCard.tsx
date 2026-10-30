@@ -1,10 +1,10 @@
 import { Fragment, memo, useMemo, useRef, useEffect, useState } from 'react'
-import type { JMAQuake, JMALpgm, IssueType, EarthquakePoint, IntensityScale, JMAEstimatedIntensity, QuakeReportRecord, BorrowedFromTsunami, LpgmPeriodBand } from '../../types/earthquake'
+import type { JMAQuake, JMALpgm, IssueType, EarthquakePoint, IntensityScale, JMAEstimatedIntensity, JMAInternationalTsunami, QuakeReportRecord, BorrowedFromTsunami, LpgmPeriodBand } from '../../types/earthquake'
 import { quakeEventKey, isKnownCorrection } from '../../utils/quakeMerge'
 import { QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
-import { getLpgmClassLabel, getLpgmClassColor, getLpgmClassBgColor, lpgmCategoryNote, buildLpgmRows, canOpenLpgmNotes, lpgmPeriodRows, LPGM_PERIODS_HEADING, LPGM_PERIODS_NOTE, type LpgmStationRow } from '../../utils/lpgm'
+import { getLpgmClassLabel, getLpgmClassColor, getLpgmClassBgColor, lpgmCategoryNoteWithRegions, buildLpgmRows, canOpenLpgmNotes, lpgmPeriodRows, LPGM_PERIODS_HEADING, LPGM_PERIODS_NOTE, type LpgmStationRow } from '../../utils/lpgm'
 import { readableTextColor } from '../../utils/contrast'
-import { estimatedIntensityAvailability } from '../../utils/estimatedIntensity'
+import { estimatedIntensityAvailability, estimatedMarkMismatchNote } from '../../utils/estimatedIntensity'
 import { telegramTextSubject } from '../../utils/ttsFollow'
 import { domesticTsunamiCardForecastText, warnIfDomesticTsunamiSentenceMissing } from '../../utils/domesticTsunamiComment'
 import { useAutoOpenWhileSpeakingIn } from '../../hooks/useAutoOpenWhileSpeaking'
@@ -485,6 +485,11 @@ interface Props {
    * `memo` が素通りする。
    */
   estimatedIntensity?: JMAEstimatedIntensity | null
+  /**
+   * **この地震の**国際津波関連情報（WEPA60。引き当て済み・付かなければ空）。遠地地震のカードにだけ付く
+   * （→ `internationalTsunamisFor`）。**必須にしてある** —— 渡し忘れると英文の情報が黙って出なくなる。
+   */
+  internationalTsunamis: readonly JMAInternationalTsunami[]
   /** この地震の震度分布モードを開いているか。 */
   distributionActive?: boolean
   onToggleDistribution?: (eventKey: string) => void
@@ -672,7 +677,7 @@ function QuakeReportHeading({ reports, fallback, lpgmInfoName }: { reports?: Qua
  */
 export const EarthquakeCard = memo(function EarthquakeCard({
   quake, isLatest, isSelected, onSelect, lpgm, activeLpgmEventId, onToggleLpgm,
-  estimatedIntensity = null, distributionActive = false, onToggleDistribution,
+  estimatedIntensity = null, internationalTsunamis, distributionActive = false, onToggleDistribution,
   unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
   marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView,
 }: Props) {
@@ -754,14 +759,17 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   }, [quake.forecastText, domesticTsunamiCode])
   // 長周期の「観測情報の種類」から出す一文（→ `lpgmCategoryNote`）。
   // 条件と本文の両方で使うので一度だけ計算する。
-  // **最大階級 0 の報では出さない。** 種類の定義は階級 1 以上の地域を数えるもので、階級1以上を
-  // 観測していない報の上に「階級1以上を観測した地域は…」と出すと食い違う（種類が付くかは標本が無く未確認）。
-  const categoryNote = lpgm && lpgm.maxClass >= 1 ? lpgmCategoryNote(lpgm.category) : ''
+  // **最大階級 0 の報でも階級 1 以上と同じ型で出す**（2026-10-30 ユーザー選択「階級 1 以上と同じ型
+  // (Recommended)」・#1201）。種類が付いていれば一文を出し、付いていなければ空になる。
+  // 見出し文が地域名を並べていれば括弧で添える（→ `lpgmCategoryNoteWithRegions`）。
+  const categoryNote = lpgm ? lpgmCategoryNoteWithRegions(lpgm.category, lpgm.headline) : ''
   /** 補足の見出しを出すか（判定は読み上げ側の診断と共有する → `canOpenLpgmNotes`）。 */
   const hasLpgmNotes = canOpenLpgmNotes(lpgm)
   // 震度分布ボタン。引き当ては一覧の側で済んでいる（→ {@link Props.estimatedIntensity}）。
   const matchedEstimated = estimatedIntensity
   const distributionState = estimatedIntensityAvailability(quake, matchedEstimated)
+  // 推計の電文の震央補助表現が、このカードの補助表現と食い違うときだけ出す（→ `estimatedMarkMismatchNote`）
+  const estimatedMarkNote = matchedEstimated ? estimatedMarkMismatchNote(matchedEstimated, quake.earthquake.hypocenter) : null
   // **描けるものが何も無いならボタンを出さない。** 公式が無く、観測点も 1 つも無い電文
   //（震度速報など区域しか持たないもの）では、押しても空の画面になるだけ。
   const canDrawDistribution = !!matchedEstimated || quake.points.some(p => !p.isArea)
@@ -1322,6 +1330,11 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             {issue.editorialOffice && (
               <span className="text-xs text-secondary shrink-0">編集官署 {issue.editorialOffice}</span>
             )}
+            {/* 電文を発表した官署（`Control/PublishingOffice`）。編集官署の隣に同じ形で出す
+                （2026-10-30 ユーザー選択「編集官署の隣に同じ形で (Recommended)」）。 */}
+            {issue.publishingOffice && (
+              <span className="text-xs text-secondary shrink-0">発表官署 {issue.publishingOffice}</span>
+            )}
           </div>
 
           {/* 震源地。**緯度・経度はこの直下に置く** —— どちらも「どこで起きたか」を言う欄で、
@@ -1485,6 +1498,26 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                 {distributionState === 'official' ? '気象庁の推計' : 'このアプリの簡易推定'}
               </span>
             </div>
+          )}
+          {/* 国際津波関連情報（WEPA60・英文）。北西太平洋津波情報センターが各国の機関へ出す電文を、原文のまま
+              畳んで添える（2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」）。読み上げ・通知・音は無い。
+              続報（BULLETIN NUMBER 002…）は報ごとに 1 つずつ、発表の古い順に並べる。 */}
+          {internationalTsunamis.map(x => (
+            <details
+              key={x.id}
+              className="w-full rounded-lg border border-border bg-panel px-3 py-1 text-xs text-secondary roomy:text-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <summary className="cursor-pointer select-none py-1 text-white">
+                国際津波関連情報（英文）<span className="ml-2 text-secondary">{x.title}</span>
+              </summary>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words pb-2 font-mono leading-relaxed">{x.text}</pre>
+            </details>
+          ))}
+          {/* 推計の電文の震央補助表現。地震カードの補助表現と食い違うときだけ出す（2026-10-30 ユーザー承認
+              「地震カードの形で出す (Recommended)」）。読み上げには入れない。 */}
+          {estimatedMarkNote && (
+            <div className="text-xs text-secondary roomy:text-sm">{estimatedMarkNote}</div>
           )}
 
           {/* 震度を入手していない地点（クリックで一覧を差し替え、地図に印を出す）。
@@ -1742,10 +1775,11 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                           hasUnreceived={row.hasUnreceived}
                           mark={rowMark(rowMarkKey.pref(row.pref), [
                             ...row.regions.flatMap(r => [rowMarkKey.area(r.name), ...regionDescendantKeys(r)]),
+                            ...row.cities.map(c => rowMarkKey.city('', c.name)),
                             ...row.stations.map(st => rowMarkKey.station(st.name)),
                           ])}
                           depth={0}
-                          expandKey={row.regions.length > 0 || row.stations.length > 0 ? `pref:${row.pref}` : null}
+                          expandKey={row.regions.length > 0 || row.cities.length > 0 || row.stations.length > 0 ? `pref:${row.pref}` : null}
                           expanded={expanded}
                           onToggle={toggle}
                           onFocus={focusBoundsHandler(prefBounds.get(row.pref) ?? null)}
@@ -1753,6 +1787,23 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                         {expanded.has(`pref:${row.pref}`) && (
                           <>
                             {row.regions.map(region => regionTree(region, 1, row.pref))}
+                            {/* 区域が決まらない市町村（見出しにだけある市町村）。観測点と同じく県の直下へ置く */}
+                            {row.cities.map(city => (
+                              <IntensityRow
+                                key={`city:${city.name}`}
+                                label={city.name}
+                                scale={city.scale}
+                                unreceived={city.unreceived}
+                                unreceivedIsOwn={city.unreceived}
+                                hasUnreceived={city.hasUnreceived}
+                                mark={rowMark(rowMarkKey.city('', city.name))}
+                                depth={1}
+                                expandKey={null}
+                                expanded={expanded}
+                                onToggle={toggle}
+                                onFocus={focusCityHandler(row.pref, city.stations)}
+                              />
+                            ))}
                             {/* 区域を引けない観測点（県は分かっている）。長周期の一覧と同じく県の直下へ置く */}
                             {row.stations.map(st => stationRow(st, 1, row.pref))}
                           </>

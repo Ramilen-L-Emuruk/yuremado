@@ -377,6 +377,13 @@ export interface JMAQuake {
      * 実測と規約は `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」。
      */
     editorialOffice?: string
+    /**
+     * 電文を発表した官署（`Control/PublishingOffice`）。**編集官署へは落とさない。**
+     *
+     * 画面は編集官署の隣に「発表官署 …」と出す（2026-10-30 ユーザー選択「編集官署の隣に出す
+     * (Recommended)」・「編集官署の隣に同じ形で (Recommended)」）。標準版（P2PQuake）は常に undefined。
+     */
+    publishingOffice?: string
     time: string
     type: IssueType
     correct: CorrectType
@@ -2058,6 +2065,31 @@ export interface JMAQuakeNotice {
   expireAt: string
 }
 
+/**
+ * 国際津波関連情報（WEPA60）。北西太平洋津波情報センター（NWPTAC。気象庁が運営）が各国の機関へ
+ * 出す英文の電文で、**XML ではなく平文**で届く。遠地地震に関する情報（VXSE53）と同じ地震について
+ * 出るので、遠地地震のカードに原文のまま畳んで添える（2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」）。
+ * 読み上げ・通知・音は無い。
+ *
+ * 電文の形（実電文 3 通で確かめた）: 1 行目が `WEPA60 RJTD 250003`、2 行目が題名
+ * （`TSUNAMI BULLETIN NUMBER 001`・通信試験は `NWPTA COMMUNICATIONS TEST`）、続いて
+ * `ISSUED AT 0003Z 25 DEC 2020`、地震の報なら `ORIGIN TIME:2343Z 24 DEC 2020`、最後の行が `=`。
+ */
+export interface JMAInternationalTsunami {
+  /** `WEPA60:` ＋ 発表時刻 ＋ 題名 ＋ 本文の指紋（`wepa60Id`）。同じ報を経路が違って 2 度受けても 1 通に畳むための鍵 */
+  id: string
+  /** 2 行目の題名（例: `TSUNAMI BULLETIN NUMBER 001`） */
+  title: string
+  /** 発表時刻。`ISSUED AT` の時刻（UTC・分まで）を ISO 8601 にしたもの（他の種別の `time` と同じ役） */
+  time: string
+  /** `ORIGIN TIME:` の時刻（UTC・分まで）。通信試験の報には無い */
+  originTime?: string
+  /** 通信試験（`NWPTA COMMUNICATIONS TEST`）か。地震を伴わないのでどのカードにも付かない */
+  isCommunicationsTest: boolean
+  /** 電文の本文そのまま（行末の空白と最後の `=` だけ落とす） */
+  text: string
+}
+
 /** {@link JMAEarthquakeCount} の 1 区間。 */
 export interface JMAEarthquakeCountItem {
   /**
@@ -2209,6 +2241,14 @@ export interface JMAEstimatedIntensity {
   magnitudeCondition?: string
   /** 震央地名番号（気象庁コード表 6）。名前は持たない */
   areaCode: number
+  /**
+   * 震央補助表現の材料（津波の形の電文だけが持つ。IXAC41・IXAC40 とも）。
+   * 目印の地点番号（地震情報の `MarkCode` と同じ番号）・目印から見た震央の方位（度）・距離（km）。
+   * **文は持たない**（目印の名前は電文に無い）。地震カードの補助表現と食い違うときだけ
+   * 推計の欄に出す（2026-10-30 ユーザー承認「地震カードの形で出す (Recommended)」）。
+   * 全期間の控え（2020-11〜）でこのブロックを持つ 18 通は、すべて同じ地震の VXSE53 と一致した。
+   */
+  mark?: { pointCode: number; directionDeg: number; distanceKm: number }
   /** 電文の種類（0=通常）。0 以外は訓練等（実電文で訓練＝1 を確認済み。件数は `bufrEstimatedIntensity.ts`） */
   telegramKind: number
   /** 階級震度と計測震度の対応表。**電文が持っている凡例をそのまま使う**（自前の階級表を当てない） */
@@ -2272,7 +2312,7 @@ export type ConnectionStatus =
  */
 export type TelegramLogKind =
   | 'eew' | 'quake' | 'tsunami' | 'lpgm' | 'nankai' | 'nankaiCommentary' | 'kohatsu'
-  | 'quakeNotice' | 'earthquakeCount' | 'estimatedIntensity'
+  | 'quakeNotice' | 'earthquakeCount' | 'estimatedIntensity' | 'internationalTsunami'
 
 /**
  * 電文ログの行が、どの経路でアプリへ入ったか。

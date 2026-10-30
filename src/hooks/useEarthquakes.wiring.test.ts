@@ -5679,9 +5679,12 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     expect(onLiveEvent.mock.calls.filter(c => (c[0] as LiveEvent).kind === 'lpgm')).toHaveLength(1)
   })
 
-  it('階級 0 の長周期地震動にも notDispatched の記録が残る', async () => {
+  // 正（覆した）: 最大階級 0 の報も階級 1 以上と同じく受け手へ流す（2026-10-30 ユーザー選択
+  // 「階級 1 以上と同じ型 (Recommended)」。以前は流さず notDispatched として記録していた）。
+  it('最大階級 0 の長周期地震動も受け手へ流し、記録は残らない', async () => {
     vi.useFakeTimers()
-    const h = setup()
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
     await h.flush()
     act(() => {
       h.current.loadReplayEvents([{
@@ -5692,9 +5695,8 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     })
     act(() => { vi.advanceTimersByTime(50) })
 
-    const notDispatched = loggedTelegrams().filter(t => t.skipped === 'notDispatched')
-    expect(notDispatched).toHaveLength(1)
-    expect(notDispatched[0].kind).toBe('lpgm')
+    expect(loggedTelegrams().filter(t => t.kind === 'lpgm')).toHaveLength(0)
+    expect(onLiveEvent.mock.calls.filter(c => (c[0] as LiveEvent).kind === 'lpgm')).toHaveLength(1)
   })
 
   // 対照: 取消でも階級 0 でもない長周期地震動は、サイレントなら silentReplayInit として記録する
@@ -5736,15 +5738,17 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     expect(notDispatched[0].kind).toBe('lpgm')
   })
 
-  it('ライブ WebSocket 経由で階級 0 の長周期地震動にも notDispatched の記録が残る', async () => {
+  // 正（覆した）: ライブ WebSocket 経由でも、最大階級 0 の報を受け手へ流す（2026-10-30 ユーザー選択
+  // 「階級 1 以上と同じ型 (Recommended)」）。
+  it('ライブ WebSocket 経由で最大階級 0 の長周期地震動も受け手へ流す', async () => {
     vi.useFakeTimers()
-    const h = setup()
+    const onLiveEvent = vi.fn()
+    const h = setup({ onLiveEvent })
     await h.flush()
     act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: lpgmData({ maxClass: 0 }) }) })
 
-    const notDispatched = loggedTelegrams().filter(t => t.skipped === 'notDispatched')
-    expect(notDispatched).toHaveLength(1)
-    expect(notDispatched[0].kind).toBe('lpgm')
+    expect(loggedTelegrams().filter(t => t.kind === 'lpgm')).toHaveLength(0)
+    expect(onLiveEvent.mock.calls.filter(c => (c[0] as LiveEvent).kind === 'lpgm')).toHaveLength(1)
   })
 
   // 対照: ライブ WebSocket 経路は silent の概念を持たないので、取消でも階級 0 でもない
@@ -5813,7 +5817,8 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
     })
 
     // 正（覆した）: 階級 0 の長周期を消した取消も渡す。表示に出ていたかで決めなくなったので、階級 0 を
-    // 画面に残すようにしても（⑤ L1）取消が黙らない。
+    // 画面に残すようにしても（⑤ L1）取消が黙らない。発表の報（最大階級 0）も 2026-10-30 から渡すので、
+    // 受け手へ届くのは発表と取消の 2 通（ユーザー選択「階級 1 以上と同じ型 (Recommended)」）。
     it('階級 0 の長周期を消した取消も受け手へ渡す', async () => {
       vi.useFakeTimers()
       const onLiveEvent = vi.fn()
@@ -5823,8 +5828,9 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
       act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: shown }) })
       act(() => { sockets[0].onEvent?.({ kind: 'lpgm', data: cancelOf(shown) }) })
 
-      expect(lpgmCalls(onLiveEvent)).toHaveLength(1)
-      expect(lpgmCalls(onLiveEvent)[0].kind === 'lpgm' && lpgmCalls(onLiveEvent)[0].data.cancelled).toBe(true)
+      const calls = lpgmCalls(onLiveEvent)
+      expect(calls).toHaveLength(2)
+      expect(calls[1].kind === 'lpgm' && calls[1].data.cancelled).toBe(true)
     })
 
     // 安全弁: 同じ取消が 2 通届いても、2 通目は渡さない（二重に読まない。→ `decideDispatch`）。

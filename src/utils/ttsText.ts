@@ -305,8 +305,8 @@ export interface TtsSpeechOptions {
   maxRegions: number        // 読み上げる最大地域数（0 = 無制限）
   alwaysReadScale: number   // 階数を超えても読み上げる下限震度（-1 = 無効。長周期地震動には適用しない）
   /**
-   * 階数を超えても読み上げる長周期地震動階級の下限（-1 = 無効）。震度の下限とは別の軸
-   * （2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」）。
+   * 階数を超えても読み上げる長周期地震動階級の下限（0〜4。-1 = 無効）。震度の下限とは別の軸
+   * （2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」）。階級 0 も選べる（2026-10-30 ユーザー選択「足す (Recommended)」）。
    */
   alwaysReadLpgmClass: number
   regionTolerance: number   // maxRegions をこの数まで超える場合は省略せず全地域を読む（0 = 無効）
@@ -4045,8 +4045,8 @@ function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
 
   // 階級ごとに地域名をまとめる（降順）。**階級 0 の地域も他の階級と同じ設定で数える**
   // （2026-10-29 ユーザー承認「他の階級と同じく読む」、語は同日「「階級0を〜で」 (Recommended)」で画面の「階級0」に揃える）。
-  // 最大階級が 0 の報そのものはここへ来ない（受信側が読み上げない。→ `useEarthquakes` の `lpgmNotifiable`）。
-  // 「必ず読み上げる長周期地震動階級」は 1 以上しか選べないので、階級 0 は階数の範囲に入ったときだけ読む。
+  // 最大階級が 0 の報もここへ来る（2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」・#1201）。
+  // 「必ず読み上げる長周期地震動階級」は 0〜4 を選べる。階級 0 は、階数の範囲に入るか、必ず読む階級に 0 を選んだときに読む。
   const byClass = new Map<number, string[]>()
   for (const r of lpgm.regions) {
     if (!isObservedLpgmClass(r.maxLgInt)) continue
@@ -4073,7 +4073,7 @@ function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
   for (let i = 0; i < classes.length; i++) {
     const cls = classes[i]
     const withinLevels = i <= opts.intensityLevels
-    const withinAlwaysRead = opts.alwaysReadLpgmClass >= 1 && cls >= opts.alwaysReadLpgmClass
+    const withinAlwaysRead = opts.alwaysReadLpgmClass >= 0 && cls >= opts.alwaysReadLpgmClass
     if (!withinLevels && !withinAlwaysRead) break
     const aggregated = aggregateLpgmNamesByPref((byClass.get(cls) ?? []), areaPrefIndex, prefAreaNames, prefsWithAreaShown)
     // 区域名を出した県を次の階級へ持ち回る。`mentioned` で落とす前に数えるのは、あちらが

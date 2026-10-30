@@ -10,8 +10,9 @@ import { describe, it, expect } from 'vitest'
 import { instantiateScenario } from './testScenarioReplay'
 import type { TestScenarioFile } from '../types/testScenario'
 import type { ReplayPayload } from '../types/replay'
+import { wepa60Id } from '../services/wepa60Parser'
 import type {
-  AppEvent, EEWAlert, JMAEarthquakeCount, JMAEstimatedIntensity, JMAKohatsu, JMALpgm, JMANankai,
+  AppEvent, EEWAlert, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, JMAKohatsu, JMALpgm, JMANankai,
   JMANankaiCommentary, JMAQuake, JMAQuakeNotice, JMATsunami,
 } from '../types/earthquake'
 
@@ -70,7 +71,7 @@ function quakeSample(): QuakeSample {
     reportsRevise: true,
     cancelled: false,
     cancelText: '取消',
-    issue: { source: '気象庁', editorialOffice: '気象庁本庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
+    issue: { source: '気象庁', editorialOffice: '気象庁本庁', publishingOffice: '気象庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
     earthquake: {
       time: iso(),
       hypocenter: {
@@ -306,11 +307,20 @@ function estimatedSample(): DeepRequired<JMAEstimatedIntensity> {
     id: 'estimated-1', time: iso(), arrivalTime: iso(),
     hypocenter: { lat: 37.5, lon: 137.2, depthKm: 10 },
     magnitude: 7.6, magnitudeCondition: 'Ｍ不明', areaCode: 390, telegramKind: 1,
+    mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 30 },
     grades: [{ scale: 5, modifier: 'weak', lower: 4.5, upper: 5.0 }],
     count: 1,
     lat: new Float32Array([37.5]), lon: new Float32Array([137.2]), si: new Uint8Array([1]),
     cellLatDeg: 0.01, cellLonDeg: 0.01,
     bounds: { south: 37, north: 38, west: 137, east: 138 },
+  }
+}
+
+function internationalTsunamiSample(): DeepRequired<JMAInternationalTsunami> {
+  const time = iso()
+  return {
+    id: wepa60Id(time, 'TSUNAMI BULLETIN NUMBER 001', 'WEPA60 RJTD 250003'), title: 'TSUNAMI BULLETIN NUMBER 001',
+    time, originTime: iso(), isCommunicationsTest: false, text: 'WEPA60 RJTD 250003',
   }
 }
 
@@ -333,6 +343,7 @@ function allPayloads(): ReplayPayload[] {
     quakeNotice: [{ kind: 'quakeNotice', data: noticeSample() }],
     earthquakeCount: [{ kind: 'earthquakeCount', data: countSample() }],
     estimatedIntensity: [{ kind: 'estimatedIntensity', data: estimatedSample() }],
+    internationalTsunami: [{ kind: 'internationalTsunami', data: internationalTsunamiSample() }],
   } satisfies Record<ReplayPayload['kind'], ReplayPayload[]>
   return Object.values(payloads).flat()
 }

@@ -21,6 +21,8 @@ import { eewAreas, eewMaxScale, computeSingleEEWLevel, isProvisionalHypocenter }
 import { earthquakeToSegments, createQuakeSpokenState, applySpokenRefs } from './ttsText'
 import { joinSegments } from './ttsFollow'
 import { reportsText } from '../test-utils/quakeReports'
+import { internationalTsunamisFor } from './internationalTsunami'
+import { editXml, descendants, only } from './testTelegramRewrite'
 
 const NOW = new Date('2026-10-22T03:00:00.000Z')
 
@@ -375,6 +377,101 @@ describe('遠地地震テスト・巨大地震テスト', () => {
     expect(quake.earthquake.hypocenter.depth).toBe(-1)
     expect(quake.forecastText).toBe('震源の近傍で津波発生の可能性があります。この地震による日本への津波の影響はありません。')
     expect(quake.freeText).toContain('ＰＴＷＣ')
+  })
+
+  it('見出しにだけある市町村は、本文の市町村と同じ形で区域の下へ足される（観測点は持たない）', async () => {
+    const [quake] = quakesOf(await build(scripts.HEADLINE_ONLY_CITY))
+    const wajima = (quake.cities ?? []).filter(c => c.name === '輪島市')
+    expect(wajima).toHaveLength(1)
+    expect(wajima[0]).toMatchObject({ pref: '石川県', area: '石川県能登', scale: 30 })
+    expect(quake.points.filter(p => p.addr.startsWith('輪島'))).toEqual([])
+    // 発表官署は編集官署へ落とさずに読む（この報は両方とも気象庁本庁）
+    expect(quake.issue.publishingOffice).toBe('気象庁')
+  })
+
+  // 見出しの細分区域を書き換える。区域は自分の最大震度の階級に並ぶので、能登を「震度４」へ移すと
+  // 「震度３の輪島市が、最大震度４の区域に属する」形になる（最大震度4の地震で起きる並び）。
+  function withHeadlineAreas(edit: (areaInfo: Element, doc: Document) => void): TestTelegramScript {
+    const step = scripts.HEADLINE_ONLY_CITY.steps[0]
+    return {
+      ...scripts.HEADLINE_ONLY_CITY,
+      steps: [{
+        ...step,
+        rewrite: (xml, ctx) => editXml(step.rewrite!(xml, ctx), doc => {
+          const areaInfo = descendants(only(doc, 'Head'), 'Information')
+            .find(el => el.getAttribute('type') === '震源・震度に関する情報（細分区域）')
+          if (!areaInfo) throw new Error('見出しの細分区域のブロックがありません')
+          edit(areaInfo, doc)
+        }),
+      }],
+    }
+  }
+  const kindNameOf = (item: Element): Element => descendants(only(item, 'Kind'), 'Name')[0]
+
+  it('見出しの市町村は、最大震度が市町村より高い区域でも、同じ県で 1 つに決まればその区域へ置く', async () => {
+    const script = withHeadlineAreas(areaInfo => {
+      const [item] = descendants(areaInfo, 'Item')
+      kindNameOf(item).textContent = '震度４'
+    })
+    const [quake] = quakesOf(await build(script))
+    expect((quake.cities ?? []).filter(c => c.name === '輪島市')).toEqual([
+      expect.objectContaining({ pref: '石川県', area: '石川県能登', scale: 30 }),
+    ])
+  })
+
+  it('安全弁: 市町村の震度以上の区域が同じ県に 2 つあれば、どちらとも決めずに県の直下へ置く', async () => {
+    // 能登（最大震度４）と、同じ県の加賀（最大震度３）。市町村と同じ階級だけを見ると加賀を選んでしまう
+    const script = withHeadlineAreas((areaInfo, doc) => {
+      const [item] = descendants(areaInfo, 'Item')
+      kindNameOf(item).textContent = '震度４'
+      const kaga = item.cloneNode(true) as Element
+      kindNameOf(kaga).textContent = '震度３'
+      const area = descendants(kaga, 'Area')[0]
+      descendants(area, 'Name')[0].textContent = '石川県加賀'
+      descendants(area, 'Code')[0].textContent = '391'
+      areaInfo.appendChild(doc.createTextNode('\n'))
+      areaInfo.appendChild(kaga)
+    })
+    const [quake] = quakesOf(await build(script))
+    expect((quake.cities ?? []).filter(c => c.name === '輪島市')).toEqual([
+      expect.objectContaining({ pref: '石川県', area: '', scale: 30 }),
+    ])
+  })
+
+  it('安全弁: 見出しに震度を読めない区域が混じれば、残りが 1 つでも区域に置かず県の直下へ置く', async () => {
+    // 能登（最大震度４）に、読めない名前の区域を足す。読めない方が本来の区域かもしれない
+    const script = withHeadlineAreas((areaInfo, doc) => {
+      const [item] = descendants(areaInfo, 'Item')
+      kindNameOf(item).textContent = '震度４'
+      const broken = item.cloneNode(true) as Element
+      kindNameOf(broken).textContent = '震度？'
+      const area = descendants(broken, 'Area')[0]
+      descendants(area, 'Name')[0].textContent = '石川県加賀'
+      descendants(area, 'Code')[0].textContent = '391'
+      areaInfo.appendChild(doc.createTextNode('\n'))
+      areaInfo.appendChild(broken)
+    })
+    const [quake] = quakesOf(await build(script))
+    expect((quake.cities ?? []).filter(c => c.name === '輪島市')).toEqual([
+      expect.objectContaining({ pref: '石川県', area: '', scale: 30 }),
+    ])
+  })
+
+  it('対照: 書き換えない佐渡の報では、輪島市は本文の市町村として 1 件だけ出る', async () => {
+    const base = { ...scripts.HEADLINE_ONLY_CITY, steps: scripts.HEADLINE_ONLY_CITY.steps.map(s => ({ ...s, rewrite: undefined })) }
+    const [quake] = quakesOf(await build(base))
+    expect((quake.cities ?? []).filter(c => c.name === '輪島市')).toHaveLength(1)
+    expect(quake.points.some(p => p.addr.startsWith('輪島'))).toBe(true)
+  })
+
+  it('国際津波関連情報テストは遠地地震と、発生時刻が揃って結び付く WEPA60 を流す', async () => {
+    const built = await build(scripts.FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI)
+    const [quake] = quakesOf(built)
+    const bulletins = payloads(built).flatMap(p => (p.kind === 'internationalTsunami' ? [p.data] : []))
+    expect(quake.issue.type).toBe('遠地地震')
+    expect(bulletins).toHaveLength(1)
+    expect(bulletins[0].title).toBe('TSUNAMI BULLETIN NUMBER 001')
+    expect(internationalTsunamisFor(quake, bulletins)).toEqual(bulletins)
   })
 
   it('巨大地震は規模が数値にならず、「Ｍ８を超える巨大地震」と区別される', async () => {

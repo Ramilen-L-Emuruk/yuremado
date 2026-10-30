@@ -12,6 +12,7 @@ import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from 
 import type { JMAQuake } from '../../types/earthquake'
 import type { PrefIntensity } from '../../hooks/useQuakeLayerData'
 import { UNRECEIVED_COLOR } from './gl/intensityIcons'
+import { popupCodeHtml } from './gl/popupHtml'
 import type { LatLng } from '../../utils/stationCoords'
 
 // 地震モードの震源（× 印）を、**深さを持つ点**として地下へ描く。
@@ -92,6 +93,8 @@ export function buildPopupHtml(quake: JMAQuake, prefIntensities: PrefIntensity[]
     `<div class="font-bold" style="margin-bottom:4px">${esc(hc.name)}</div>` +
     `<div class="text-xs" style="color:#94a3b8">${esc(formatMagnitudeWithCondition(hc.magnitude, hc.magnitudeCondition, hc.magnitudeType))} / 深さ ${esc(formatDepth(hc.depth, hc.depthAtLeast === true))}</div>` +
     (rows ? `<div style="margin-top:8px;display:flex;flex-direction:column;gap:2px">${rows}</div>` : '') +
+    // 震央地名コード（`Area/Code`）。詳細震央地名を持つ国外の地震では詳細のコードを添える
+    popupCodeHtml(hc.detailedCode || hc.code) +
     `</div>`
   )
 }

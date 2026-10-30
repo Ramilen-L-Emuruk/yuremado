@@ -2,6 +2,7 @@ import type { AppEvent, EEWRegion, TsunamiArea } from '../types/earthquake'
 import type { ReplayEntry, ReplayPayload } from '../types/replay'
 import type { TestScenarioFile } from '../types/testScenario'
 import { log } from './logger'
+import { wepa60Id } from '../services/wepa60Parser'
 
 function shiftIso(iso: string, deltaMs: number): string {
   const t = new Date(iso).getTime()
@@ -231,6 +232,20 @@ function remapPayload(payload: ReplayPayload, deltaMs: number, remapId: IdRemapp
           time: shiftIso(payload.data.time, deltaMs),
           reportDateTime: shiftIso(payload.data.reportDateTime, deltaMs),
           expireAt: shiftIso(payload.data.expireAt, deltaMs),
+        },
+      }
+    }
+    case 'internationalTsunami': {
+      // `eventId` を持たず、遠地地震のカードとは発生時刻で結ぶ（→ `matchInternationalTsunamis`）。
+      // 発表時刻・発生時刻をずらし、発表時刻を含む `id` も組み直す
+      const time = shiftIso(payload.data.time, deltaMs)
+      return {
+        kind: 'internationalTsunami',
+        data: {
+          ...payload.data,
+          id: wepa60Id(time, payload.data.title, payload.data.text),
+          time,
+          ...(payload.data.originTime !== undefined && { originTime: shiftIso(payload.data.originTime, deltaMs) }),
         },
       }
     }

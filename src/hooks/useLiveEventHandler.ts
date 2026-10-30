@@ -811,7 +811,7 @@ function rememberTelegramTextAsSpoken(payload: ReplayPayload, spoken: Set<string
   // **お知らせ（`quakeNotice`）は対象に入れる。** 読み上げを有効にした端末では本文を
   // 気象庁が書いた文として読むので、窓の手前で届いた本文を既読にしておかないと、録画の区間の
   // 境目で読み直す。読み上げを切っている端末で既読にしても、読む機会が無いので害は無い。
-  if (payload.kind === 'estimatedIntensity') return
+  if (payload.kind === 'estimatedIntensity' || payload.kind === 'internationalTsunami') return
   const event: LiveEvent = payload.kind === 'event' ? payload.event : payload
   const speech = telegramTextToSpeak(event, opts)
   if (!speech) return
@@ -2946,9 +2946,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         playAlertSound('earthquake')
       }
       // ウィンドウタイトルとブラウザ通知に最大長周期地震動階級を出す（2026-10-22 ユーザー選択「タイトルと通知を出す
-      // (Recommended)」、文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。ここへ来るのは階級 1 以上の報だけ
-      // （→ `useEarthquakes` の `lpgmNotifiable`）なので、通知の階級の下限（2026-10-24 ユーザー選択「階級1以上
-      // (Recommended)」）はここでは見ない。通知は地震情報の通知の設定に従う。
+      // (Recommended)」、文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。**最大階級 0 の報も同じ形で出す**
+      // （2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」・#1201。2026-10-24 の通知の下限「階級1以上
+      // (Recommended)」を覆した）。通知は地震情報の通知の設定に従う。
       const lpgmName = lpgmEvent.hypocenter?.name.trim() ?? ''
       title.setTitle(joinTitleParts('長周期地震動', lpgmName, `最大階級${lpgmEvent.maxClass}`))
       title.scheduleTitleRevert('lpgm', lpgmEvent.eventId)
@@ -6694,9 +6694,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             rememberAreaGrades(tsunamiAreaGradeChanges(tsunami), spokenAreaGradeRef.current)
           }
         }
-      } else if (payload.kind === 'lpgm' && !payload.data.cancelled && payload.data.maxClass >= 1) {
-        // **階級 0 の報は読まない**（→ `useEarthquakes.ts` の `lpgmNotifiable`）ので、既読にもしない。
-        // 入れると、そのあと階級 1 以上へ上がった報を「更新されました」と読む（前の報は一度も声にしていない）。
+      } else if (payload.kind === 'lpgm' && !payload.data.cancelled) {
+        // 最大階級 0 の報も読むので（→ `useEarthquakes.ts` の `lpgmNotifiable`）、既読に入れる。
+        // 入れないと、窓の手前で読んだ階級 0 の報の続報を「初報」として読み直す。
         seenLpgmEventIdsRef.current.add(payload.data.eventId)
       }
     }

@@ -16,7 +16,7 @@ import {
   TELEGRAM_KIND_OF_HEAD_TYPE, telegramKindOfHeadType, telegramKindOfPayload,
   NON_EEW_HANDLED_TYPES, EEW_HEAD_TYPES, DISPATCHED_WITHOUT_PARSER, resetUnreadableNankaiWarnForTest,
   QUAKE_TYPES, TSUNAMI_TYPES, LPGM_TYPES, NANKAI_TYPES, COMMENTARY_TYPES, KOHATSU_TYPES,
-  NOTICE_TYPES, QUAKE_COUNT_TYPES, ESTIMATED_INTENSITY_TYPES,
+  NOTICE_TYPES, QUAKE_COUNT_TYPES, ESTIMATED_INTENSITY_TYPES, INTERNATIONAL_TSUNAMI_TYPES,
 } from './dmdataTelegramPayload'
 import { KIND_OPTIONS } from '../components/TelegramTab/labels'
 import { log } from '../utils/logger'
@@ -268,7 +268,7 @@ describe('TELEGRAM_KIND_OF_HEAD_TYPE', () => {
       [QUAKE_TYPES, 'quake'], [TSUNAMI_TYPES, 'tsunami'], [LPGM_TYPES, 'lpgm'],
       [NANKAI_TYPES, 'nankai'], [COMMENTARY_TYPES, 'nankaiCommentary'], [KOHATSU_TYPES, 'kohatsu'],
       [NOTICE_TYPES, 'quakeNotice'], [QUAKE_COUNT_TYPES, 'earthquakeCount'],
-      [ESTIMATED_INTENSITY_TYPES, 'estimatedIntensity'],
+      [ESTIMATED_INTENSITY_TYPES, 'estimatedIntensity'], [INTERNATIONAL_TSUNAMI_TYPES, 'internationalTsunami'],
     ]
     const seen = new Map<string, string>()
     const clashes: string[] = []

@@ -149,6 +149,11 @@ export interface IntensityPrefRow {
    * （長周期の一覧の `LpgmPrefRow.stations` と同じ置き方）。
    */
   stations: IntensityStationRow[]
+  /**
+   * 区域が決まらない市町村（県は分かっている）。見出しにだけある市町村で、区域を 1 つに
+   * 絞れなかったもの（→ `appendHeadlineOnlyCities`）。観測点と同じく県の直下へ並べる。
+   */
+  cities: IntensityCityRow[]
 }
 
 /**
@@ -380,6 +385,8 @@ export function buildIntensityRows(
 
   // 市町村を区域ごとに振り分ける。電文が `City/Area` の所属を持っている（`JMAQuakeCity.area`）。
   const citiesByRegion = new Map<string, IntensityCityRow[]>()
+  // 区域が決まらない市町村（`area` が空）の置き場。名前の無い区域の行を作らず、県の直下へ置く
+  const looseCitiesByPref = new Map<string, IntensityCityRow[]>()
   const claimedCityKeys = new Set<string>()
   for (const c of cities) {
     const key = cityKey(c.area, c.name)
@@ -393,6 +400,16 @@ export function buildIntensityRows(
       // いる場合を埋める。
       hasUnreceived: !!c.hasUnreceived || deps.unreceivedCities.has(key),
       stations: (stationsByCity.get(key) ?? []).sort(byScale(x => x.scale, x => x.name)),
+    }
+    if (!c.area) {
+      if (c.pref) {
+        const loose = looseCitiesByPref.get(c.pref)
+        if (loose) loose.push(row); else looseCitiesByPref.set(c.pref, [row])
+      } else {
+        // 県も区域も無い市町村は置き場所が無い。観測点と同じく名前を返して記録させる
+        unplacedStations.push(c.name)
+      }
+      continue
     }
     const list = citiesByRegion.get(c.area)
     if (list) list.push(row); else citiesByRegion.set(c.area, [row])
@@ -450,7 +467,7 @@ export function buildIntensityRows(
   // 保証しているわけではない（配下がすべて未入電の県は `MaxInt` を持たない。パーサーは
   // その県を未入電の点として積む）。区域だけが届いた県を落とすと、その県が画面から消える。
   // 区域を引けない観測点だけを持つ県も同じ。
-  const prefNames = new Set<string>([...prefMax.keys(), ...regionNames.keys(), ...looseByPref.keys()])
+  const prefNames = new Set<string>([...prefMax.keys(), ...regionNames.keys(), ...looseByPref.keys(), ...looseCitiesByPref.keys()])
   const prefRows: IntensityTopRow[] = Array.from(prefNames)
     .map((pref): IntensityPrefRow => {
       // **震度が「不明」（-1）の行は出さない**（2026-10-21 ユーザー承認）。
@@ -464,9 +481,10 @@ export function buildIntensityRows(
         .filter(r => r.scale >= 0)
         .sort(byScale(r => r.scale, r => r.name))
       const loose = (looseByPref.get(pref) ?? []).sort(byScale(x => x.scale, x => x.name))
-      // 県の点が無ければ配下（区域・県の直下の観測点）の最大を県の値にする。
+      const looseCities = (looseCitiesByPref.get(pref) ?? []).sort(byScale(c => c.scale, c => c.name))
+      // 県の点が無ければ配下（区域・県の直下の市町村と観測点）の最大を県の値にする。
       const own = prefMax.get(pref)
-        ?? [...regions, ...loose].reduce<Entry | undefined>((a, r) => higher(a, { scale: r.scale, unreceived: r.unreceived }), undefined)
+        ?? [...regions, ...looseCities, ...loose].reduce<Entry | undefined>((a, r) => higher(a, { scale: r.scale, unreceived: r.unreceived }), undefined)
       return {
         kind: 'pref',
         pref,
@@ -475,6 +493,7 @@ export function buildIntensityRows(
         hasUnreceived: deps.unreceivedPrefs.has(pref) || deps.unreceivedAreas.has(pref),
         regions,
         stations: loose,
+        cities: looseCities,
       }
     })
     .filter(row => row.scale >= 0)
