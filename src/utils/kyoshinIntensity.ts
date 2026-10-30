@@ -46,10 +46,40 @@ export function detectionScaleLabelFromValue(value: number | null): string | nul
 const DETECTION_BELOW_ZERO_LABEL = '0以下'
 
 /**
- * 検知に入った震度0 未満の点の色（地図の文字なしの印と、検知カードの「0以下」の行で同じ色を使う）。
- * 震度0 の配色（`SHINDO0_COLOR`）より淡い灰色で、階級の付いた点と見分ける
+ * 検知に入った震度0 未満の点の色。インデックス 0〜5（計測震度 −3.0〜−0.5）の 6 段で、
+ * 弱いほど地図の背景（#0a0c10）に近い暗い灰、強いほど震度0 の配色（`SHINDO0_COLOR` = #9ca3af）の手前の灰へ上がる。
+ * 弱い→強いが「暗い灰 → 明るい灰 → 震度0 の灰 → 震度1 の水色」と一続きになるので、震源側ほど明るい点が集まって
+ * 広がりが読める（2026-10-30 ユーザー選択「明るさと大きさで段を付ける (Recommended)」。それまでは 6 段とも
+ * 1 色で、しかも震度0 より明るい #c8ccd2 だったため、強さの順と明るさの順が逆になっていた）
  */
-export const KYOSHIN_SUB_ZERO_COLOR = '#c8ccd2'
+export const KYOSHIN_SUB_ZERO_STEP_COLORS = ['#363b44', '#444a54', '#535a65', '#626a76', '#727a86', '#828a96'] as const
+
+/** 震度0 未満の段の数（インデックス 0〜{@link KYOSHIN_SUB_ZERO_STEPS} − 1） */
+export const KYOSHIN_SUB_ZERO_STEPS = KYOSHIN_SUB_ZERO_STEP_COLORS.length
+
+/**
+ * 震度0 未満のインデックスを段（0〜5）へ収める。範囲の外は端へ寄せる
+ * （呼ぶ側は震度0 未満と分かった点だけを渡す。欠測は渡さない）
+ */
+export function kyoshinSubZeroStep(index: number): number {
+  if (!Number.isFinite(index)) return 0
+  return Math.max(0, Math.min(KYOSHIN_SUB_ZERO_STEPS - 1, Math.floor(index)))
+}
+
+/**
+ * 段を 0（いちばん弱い）〜1（いちばん強い）の比へ直す。印の半径・白フチの濃さはこの比で段を付ける
+ * （補間の式を描く側ごとに持つと、片方だけ変えたときに段の付き方がずれるため 1 箇所に置く）
+ */
+export function kyoshinSubZeroStepRatio(step: number): number {
+  return KYOSHIN_SUB_ZERO_STEPS > 1 ? kyoshinSubZeroStep(step) / (KYOSHIN_SUB_ZERO_STEPS - 1) : 1
+}
+
+/**
+ * 検知カードの「0以下」の行の色。行は段をまとめて数えるので、いちばん強い段の色を使う
+ * （2026-10-30 ユーザー選択「明るさと大きさで段を付ける (Recommended)」の説明文「カードの「0以下」の行の色は、
+ * いちばん強い段の色に合わせる」）
+ */
+export const KYOSHIN_SUB_ZERO_COLOR = KYOSHIN_SUB_ZERO_STEP_COLORS[KYOSHIN_SUB_ZERO_STEPS - 1]
 
 /**
  * 計測震度からリアルタイム震度インデックス(0〜20)を求める（kyoshinIndexToJmaの逆変換）。
