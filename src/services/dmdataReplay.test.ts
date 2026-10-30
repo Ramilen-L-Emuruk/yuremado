@@ -4225,6 +4225,33 @@ describe('fetchDmdataEewOrigins', () => {
     expect(urls.filter(u => u.includes('/v1/archive/'))).toHaveLength(1)
   })
 
+  // VXSE45 の配信が始まる前（2023-02-01 まで）の日は控えに VXSE44 しか無い。その日だけ VXSE44 から最終報を選ぶ
+  it('VXSE45 の無い日は VXSE44 から最終報を選び、本文を読めない地震を地震ごとに取りに行かない', async () => {
+    const gz = await makeTarGz([
+      { name: 'telegrams.json', content: JSON.stringify([
+        eewEntry('a1', '20261014120000', 1, { type: 'VXSE44' }),
+        eewEntry('a2', '20261014120000', 2, { type: 'VXSE44' }),
+        eewEntry('b1', '20261014130000', 1, { type: 'VXSE44' }),
+      ]) },
+      { name: 'a1.xml', content: eewBody('20261014120000', 1, '2026-10-14T12:00:01+09:00') },
+      { name: 'a2.xml', content: eewBody('20261014120000', 2, '2026-10-14T12:00:07+09:00') },
+      // b1 の本文はアーカイブに無い
+    ])
+    const urls = mockEew({
+      list: [{ eventId: '20261014120000', serial: '2' }, { eventId: '20261014130000', serial: '1' }],
+      archives: [{ date: '2026-10-14', url: 'https://data.api.dmdata.jp/v1/archive/eew-1014', gz }],
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'info').mockImplementation(() => {})
+    const { finals, complete } = await fetchDmdataEewOrigins('key', EEW_FROM, EEW_TO, PREFERRED_CLASSIFICATIONS, null)
+    // 正: VXSE44 の最終報（報番号 2）の秒を読む
+    expect(finals.find(e => e.issue?.eventId === '20261014120000')?.earthquake.originTime).toBe('2026-10-14T12:00:07+09:00')
+    // 安全弁: 本文を読めなかった VXSE44 の地震は、VXSE45 を探す地震ごとの取得へ回さず、取りこぼしとして残す
+    expect(urls.filter(u => u.includes('/gd/eew/'))).toEqual([])
+    expect(complete).toBe(false)
+    expect(warn.mock.calls.some(c => c.map(String).join(' ').includes('VXSE44 の日に最終報を読めなかった地震が 1 件'))).toBe(true)
+  })
+
   it('目録に最終報まで載っている地震は、受けている種別の報が無くても地震ごとに取りに行かない', async () => {
     // 警報だけを受けている人（VXSE43）。この日の目録には予報（VXSE45）しか無い ＝ 予報で終わった地震
     const gz = await makeTarGz([

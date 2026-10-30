@@ -10,6 +10,7 @@
 // 共有する。かつて二重定義でライブ側だけ VXSE43 を含み、ライブでのみ塗りが削られていた。
 import { describe, it, expect, vi } from 'vitest'
 import {
+  eewHeadTypeForDay,
   isHandledType, buildXmlPayload,
   buildBinaryPayload, isFilteredBinaryTelegram, historyExtraKey,
   TELEGRAM_KIND_OF_HEAD_TYPE, telegramKindOfHeadType, telegramKindOfPayload,
@@ -95,6 +96,14 @@ describe('EEW として扱う電文種別', () => {
     expect(isHandledType('VXSE44', 'VXSE45')).toBe(false)
     expect(isHandledType('VXSE44', 'VXSE43')).toBe(false)
     expect(buildXmlPayload('VXSE44', EEW_XML, 'VXSE45')).toBeNull()
+  })
+
+  // 控えを読む経路だけ、VXSE45 が 1 通も無い日（2023-01-31 まで）は VXSE44 を読む（→ eewHeadTypeForDay）。
+  it('日ごとの種別に VXSE44 を渡したときだけ VXSE44 を取り込み、VXSE45 は取り込まない', () => {
+    expect(isHandledType('VXSE44', 'VXSE44')).toBe(true)
+    expect(isHandledType('VXSE45', 'VXSE44')).toBe(false)
+    const payload = buildXmlPayload('VXSE44', EEW_XML, 'VXSE44')
+    expect(payload?.kind === 'event' ? payload.event.kind : null).toBe('eew')
   })
 
   it('VXSE45 はペイロードを作る（区域も落とさない）', () => {
@@ -298,5 +307,38 @@ describe('TELEGRAM_KIND_OF_HEAD_TYPE', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+describe('その日の控えで読む緊急地震速報の種別', () => {
+  const day = (...types: string[]) => types.map(type => ({ head: { type, test: false } }))
+
+  // 正: 予報を受けていて、その日に VXSE45 が無く VXSE44 があれば VXSE44
+  it('VXSE45 が無く VXSE44 がある日は VXSE44', () => {
+    expect(eewHeadTypeForDay('VXSE45', day('VXSE44', 'VXSE53', 'VXSE44'))).toBe('VXSE44')
+  })
+
+  // 正: 試験報・JSON 版の VXSE45 は再生で読まないので、日の判定にも数えない
+  it('試験報か JSON 版の VXSE45 しか無い日は VXSE44', () => {
+    expect(eewHeadTypeForDay('VXSE45', [...day('VXSE44'), { head: { type: 'VXSE45', test: true } }])).toBe('VXSE44')
+    expect(eewHeadTypeForDay('VXSE45', [...day('VXSE44'), { originalId: 'x', head: { type: 'VXSE45', test: false } }])).toBe('VXSE44')
+  })
+
+  // 対照: 本物の VXSE45 が 1 通でもあれば VXSE45 だけ（VXSE44 は対の複製なので読むと 2 通届く）
+  it('VXSE45 が 1 通でもある日は VXSE45', () => {
+    expect(eewHeadTypeForDay('VXSE45', day('VXSE44', 'VXSE45', 'VXSE44'))).toBe('VXSE45')
+    expect(eewHeadTypeForDay('VXSE45', day('VXSE53'))).toBe('VXSE45')
+    expect(eewHeadTypeForDay('VXSE45', [])).toBe('VXSE45')
+  })
+
+  // 安全弁: 試験報の VXSE44 だけでは VXSE44 に切り替えない・見出しの無い項目で落ちない
+  it('試験報の VXSE44 や見出しの無い項目では切り替えない', () => {
+    expect(eewHeadTypeForDay('VXSE45', [{ head: { type: 'VXSE44', test: true } }, null, {}])).toBe('VXSE45')
+  })
+
+  // 安全弁: 警報だけを受けている人・緊急地震速報を受けていない人は、日によらず変わらない
+  it('予報を受けていなければ日によらず元のまま', () => {
+    expect(eewHeadTypeForDay('VXSE43', day('VXSE44'))).toBe('VXSE43')
+    expect(eewHeadTypeForDay(null, day('VXSE44'))).toBeNull()
   })
 })

@@ -27,7 +27,7 @@ import type { ReplayEntry } from '../types/replay'
 import {
   isHandledType, QUAKE_TYPES, TSUNAMI_TYPES, HISTORY_EXTRA_TYPES, historyExtraKey,
   buildXmlPayload, isBinaryTelegramType, buildBinaryPayload, TELEGRAM_DATA_BASE,
-  isFilteredBinaryTelegram, type BinaryReplayPayload, type EewHeadType,
+  isFilteredBinaryTelegram, type BinaryReplayPayload, type DayEewHeadType, eewHeadTypeForDay,
 } from './dmdataTelegramPayload'
 import { eewHeadTypeFor, hasQuakeTelegrams, type DmdataClassification } from './dmdataClassifications'
 import { waitForApiSlot } from './dmdataRequestGates'
@@ -546,7 +546,7 @@ function classifyTelegram(
   toTime: Date,
   days: ReadonlySet<string>,
   includeTest: boolean,
-  eewHeadType: EewHeadType | null,
+  eewHeadType: DayEewHeadType | null,
 ): TelegramVerdict {
   // 試験・訓練報は既定で捨てる。設定「試験報を受信（検証用）」を入れたときだけ通す。
   //
@@ -892,9 +892,23 @@ export async function fetchLiveReplayEntries(
   const targets: TelegramListItem[] = []
   const listed = [...telegramList, ...eew.items]
   const times = liveEntryTimes(listed)
+  // 緊急地震速報として読む種別は、受信時刻の JST 日ごとに決める（アーカイブ経路と同じ規則
+  // → `eewHeadTypeForDay`。VXSE45 が無い日だけ VXSE44）。**窓の判定と本体の読み取りで同じ値を渡す。**
+  // 数えるのは窓に掛かった地震の報だけだが、詳細は地震ごとに全報を返し、VXSE45 のある期間の地震は VXSE44 と
+  // VXSE45 を 1 通ずつ対で持つので、どの地震が窓に入っても結果は変わらない（当日経路が埋めるのは控えの無い
+  // 直近の日だけで、VXSE44 だけの日は来ない）。
+  const eewItemsByDay = new Map<string, TelegramListItem[]>()
+  for (const item of eew.items) {
+    const day = skipDayOf(item.receivedTime)
+    const items = eewItemsByDay.get(day) ?? []
+    items.push(item)
+    eewItemsByDay.set(day, items)
+  }
+  const dayEewHeadTypeOf = (item: TelegramListItem): DayEewHeadType | null =>
+    eewHeadTypeForDay(eewHeadType, eewItemsByDay.get(skipDayOf(item.receivedTime)) ?? [])
   const malformedSeen = new Set<string>()
   for (const item of listed) {
-    const verdict = classifyTelegram(item, times.get(item) ?? null, fromTime, toTime, daySet, includeTest, eewHeadType)
+    const verdict = classifyTelegram(item, times.get(item) ?? null, fromTime, toTime, daySet, includeTest, dayEewHeadTypeOf(item))
     if (verdict === 'malformed') {
       if (isFirstMalformed(item, malformedSeen)) scanSkipCounter.add(skipDayOf(item.receivedTime))
     }
@@ -939,7 +953,7 @@ export async function fetchLiveReplayEntries(
         return
       }
       const xml = await fetchBody(item.url, apiKey)
-      const payload = buildXmlPayload(headType, xml, eewHeadType)
+      const payload = buildXmlPayload(headType, xml, dayEewHeadTypeOf(item))
       if (!payload) {
         log.warn(`[replay] 電文のパースに失敗しスキップ id=${item.id} type=${headType}`)
         skipCounter.add(skipDayOf(item.receivedTime))

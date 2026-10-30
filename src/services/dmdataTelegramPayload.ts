@@ -33,10 +33,57 @@ export const TSUNAMI_TYPES = new Set(['VTSE41', 'VTSE51', 'VTSE52'])
 //   - 予報が無く警報（`eew.warning`）だけ → VXSE43。上書きする相手の VXSE45 が届かないので、上の理由が当たらない
 // **どちらを取るかは必ず呼び出し側から渡す**（`buildXmlPayload` / `isHandledType` の引数）。既定値を持たせると、
 // 区分を配線し忘れた経路が黙って VXSE45 に倒れ、警報だけの人に緊急地震速報が出なくなる。
-// VXSE44（予報）は廃止予定で VXSE45 の下位互換。VXSE42（配信テスト）は震源データを持たず EEW として
+// VXSE44（予報）は廃止予定で VXSE45 の下位互換。**ライブでは読まないが、控え（アーカイブ）を読む経路では
+// VXSE45 が 1 通も無い日だけ読む**（→ `eewHeadTypeForDay`）。VXSE42（配信テスト）は震源データを持たず EEW として
 // 表示できないため、ライブ側で別途処理する。
 export type EewHeadType = 'VXSE45' | 'VXSE43'
 export const EEW_HEAD_TYPES: ReadonlySet<string> = new Set<EewHeadType>(['VXSE45', 'VXSE43'])
+/**
+ * 控えを読む経路（リプレイ・履歴・当日経路）で、緊急地震速報として取り込む種別。
+ * ライブの `EewHeadType` に、VXSE45 が無い日だけの VXSE44 を足したもの。
+ */
+export type DayEewHeadType = EewHeadType | 'VXSE44'
+
+/**
+ * その日の控えで、緊急地震速報としてどの種別を読むか。
+ *
+ * **予報（`eew.forecast`）を受けていて、その日の控えに VXSE45 が 1 通も無く VXSE44 があるときだけ VXSE44 を読む。**
+ * VXSE45 は 2023-02-02 に配信が始まり、それより前（DMDATA の控えでは 2022-07-21〜2023-01-31 の 170 日・
+ * VXSE44 2,179 通）は VXSE44 しか無い。VXSE45 だけを読むと、この期間を再生しても緊急地震速報が 1 通も出ない
+ * （2026-10-30 ユーザー承認「VXSE45 が無いとき VXSE44 を読む (Recommended)」）。
+ *
+ * **VXSE45 がある日は VXSE45 だけを読む。** VXSE45 のある日の VXSE44 は VXSE45 と 1 通ずつ対になっていて
+ * 値がすべて VXSE45 にあり、両方を読むと同じ報が 2 通届く。日で決めるのは、控えが日ごとに分かれていて、境目の日
+ * （2023-02-02）は最初の報から両方が揃うため（件数は data-sources-spec.md §2「VXSE45 が無い日の VXSE44」）。
+ * **ライブは変えない**（いま VXSE45 が届かない日は無い）。
+ *
+ * **試験報と JSON 版は数えない**（`isRealEewDayEntry`）。再生で読まないものに日の判定を左右させると、試験の
+ * VXSE45 が 1 通載っただけでその日の VXSE44 が丸ごと消える（控えではそういう日は 0 日だった）。
+ *
+ * @param eewHeadType 受けている区分から決めた種別（`eewHeadTypeFor`）
+ * @param dayHeads その日の控えに載る電文の見出し（`head` の無いものは数えない）
+ */
+export function eewHeadTypeForDay(
+  eewHeadType: EewHeadType | null,
+  dayHeads: Iterable<{ readonly originalId?: string; readonly head?: { readonly type?: string; readonly test?: boolean } } | null | undefined>,
+): DayEewHeadType | null {
+  if (eewHeadType !== 'VXSE45') return eewHeadType
+  let has44 = false
+  for (const entry of dayHeads) {
+    if (!isRealEewDayEntry(entry)) continue
+    const type = entry.head.type
+    if (type === 'VXSE45') return 'VXSE45'
+    if (type === 'VXSE44') has44 = true
+  }
+  return has44 ? 'VXSE44' : 'VXSE45'
+}
+
+/** 日の判定に数える電文か（試験報でも JSON 版でもなく、種別が読める）。 */
+function isRealEewDayEntry(
+  entry: { readonly originalId?: string; readonly head?: { readonly type?: string; readonly test?: boolean } } | null | undefined,
+): entry is { readonly head: { readonly type: string } } {
+  return entry != null && !entry.originalId && entry.head?.test !== true && typeof entry.head?.type === 'string'
+}
 export const LPGM_TYPES = new Set(['VXSE62'])
 // VYSE50=臨時情報（段階あり）、VYSE51/52=関連解説情報（段階なし）。別の型に読むため分ける。
 export const NANKAI_TYPES = new Set(['VYSE50'])
@@ -68,7 +115,8 @@ export function isBinaryTelegramType(headType: string): boolean {
 //   VXSE42 … 配信テスト。本文は見ない（debug のときにログへ出すだけで、電文ログには残さない）
 //   VXSE43 … 予報を受けている人には購読外。届いたら配信分類の変わり目を疑う警告を上げ、本文を電文ログへ残す
 //             （予報が無く警報を受けている人には EEW そのもの。→ `EEW_HEAD_TYPES`）
-//   VXSE44 … 廃止予定の旧 EEW。想定内なので警告は上げず、本文を電文ログへ残す
+//   VXSE44 … 廃止予定の旧 EEW。想定内なので警告は上げず、本文を電文ログへ残す（控えを読む経路では
+//             VXSE45 が無い日だけ読む → `eewHeadTypeForDay`）
 export const DISPATCHED_WITHOUT_PARSER: ReadonlySet<string> = new Set(['VXSE42', 'VXSE43', 'VXSE44'])
 
 /**
@@ -117,9 +165,9 @@ export const NON_EEW_HANDLED_TYPES: ReadonlySet<string> = new Set([
 /**
  * その電文種別を取り込むか。
  *
- * @param eewHeadType 緊急地震速報として取り込む種別（`eewHeadTypeFor` の結果）。緊急地震速報を受けていなければ null
+ * @param eewHeadType 緊急地震速報として取り込む種別（`eewHeadTypeFor` の結果。控えを読む経路は日ごとに `eewHeadTypeForDay` を通した値）。緊急地震速報を受けていなければ null
  */
-export function isHandledType(headType: string, eewHeadType: EewHeadType | null): boolean {
+export function isHandledType(headType: string, eewHeadType: DayEewHeadType | null): boolean {
   return NON_EEW_HANDLED_TYPES.has(headType) || (eewHeadType !== null && headType === eewHeadType)
 }
 
@@ -214,16 +262,16 @@ function warnUnreadableNankaiOnce(headType: string, message: string): void {
  *
  * @param headType 電文種別
  * @param xml 電文本体の XML
- * @param eewHeadType 緊急地震速報として取り込む種別（`eewHeadTypeFor` の結果）。緊急地震速報を受けていなければ null
+ * @param eewHeadType 緊急地震速報として取り込む種別（`eewHeadTypeFor` の結果。控えを読む経路は日ごとに `eewHeadTypeForDay` を通した値）。緊急地震速報を受けていなければ null
  * @returns 組み立てたペイロード。対象外の種別・パース失敗なら null
  */
-export function buildXmlPayload(headType: string, xml: string, eewHeadType: EewHeadType | null): ReplayPayload | null {
+export function buildXmlPayload(headType: string, xml: string, eewHeadType: DayEewHeadType | null): ReplayPayload | null {
   const kind = telegramKindOfHeadType(headType)
   if (kind === undefined) return null
   switch (kind) {
     case 'eew': {
       // 受けている区分で取らないと決めた側（予報があるときの VXSE43 など）と、パーサーを通さない
-      // 種別（VXSE42・VXSE44）は読まない
+      // 種別（VXSE42。VXSE44 は VXSE45 が無い日の控えだけ → `eewHeadTypeForDay`）は読まない
       if (headType !== eewHeadType) return null
       const event = parseEEWFromXml(headType, xml)
       return event ? { kind: 'event', event } : null
