@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { fetchDmdataReplayEvents } from '../src/services/dmdataReplay'
+import { dmdataKeyEndpoint } from '../src/services/dmdataEndpoint'
 // 収録は全区分を契約した開発者の鍵で行う前提なので、既定の区分で引く
 import { PREFERRED_CLASSIFICATIONS } from '../src/services/dmdataClassifications'
 import type { TestScenarioFile, TestScenarioMeta, TestScenarioEntry } from '../src/types/testScenario'
@@ -122,7 +123,7 @@ async function main(): Promise<void> {
   const args = parseCliArgs()
 
   console.log(`DMDATA archiveから ${args.from.toISOString()} 〜 ${args.to.toISOString()} を取得中...`)
-  const { entries, skippedByDay, failedArchiveUrls } = await fetchDmdataReplayEvents(args.apiKey, args.from, args.to, false, PREFERRED_CLASSIFICATIONS, null)
+  const { entries, skippedByDay, failedArchiveUrls } = await fetchDmdataReplayEvents(dmdataKeyEndpoint(args.apiKey), args.from, args.to, false, PREFERRED_CLASSIFICATIONS, null)
   const skipped = [...skippedByDay.values()].reduce((a, b) => a + b, 0)
   // 収録したシナリオが「実際より静かな」ものになっていないか判断できるよう、
   // 取りこぼしがあれば件数を出す（詳細は取得時の警告ログを参照）。

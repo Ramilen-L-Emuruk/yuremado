@@ -26,6 +26,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DmdataClassification } from '../services/dmdataClassifications'
 import { fetchDmdataEewOrigins } from '../services/dmdataReplay'
+import { dmdataKeyEndpoint } from '../services/dmdataEndpoint'
 import { YAHOO_EEW_ID_PREFIX } from '../services/kyoshin'
 import { fetchJmaQuakeList, fetchP2PEewOriginTimes } from '../services/quakeOriginSources'
 import { serverNow } from '../utils/clock'
@@ -286,7 +287,7 @@ export function useQuakeOriginSeconds(params: {
         // 「緊急地震速報が無かった」と区別が付かず、取り直さないとリロードまで線が引けない。アーカイブと電文本体は
         // 控えに残るので、取り直しで飛ぶのは一覧と、読めなかった分だけ。
         const fetchOnce = (attempt: number) => {
-          void fetchDmdataEewOrigins(apiKey, new Date(anchor - EEW_LOOKBACK_MS), new Date(anchor), cls, abort.signal)
+          void fetchDmdataEewOrigins(dmdataKeyEndpoint(apiKey), new Date(anchor - EEW_LOOKBACK_MS), new Date(anchor), cls, abort.signal)
             .then((found) => {
               if (cancelled) return
               const { updates, removals } = eewOriginsFromActive(found.finals)

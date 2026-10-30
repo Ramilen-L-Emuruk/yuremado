@@ -6,7 +6,7 @@ import { gunzip } from '../utils/gzip'
 import { createArchiveBodyCache } from '../utils/archiveBodyCache'
 import { readArchiveBody, writeArchiveBody } from '../utils/archiveBodyDb'
 import { log, createLogThrottle } from '../utils/logger'
-import { authHeader } from '../utils/dmdataApiKey'
+import type { DmdataEndpoint } from './dmdataEndpoint'
 import {
   fetchWithTimeout, isAbortedByCaller, ARCHIVE_BODY_FETCH_TIMEOUT_MS, API_FETCH_TIMEOUT_MS,
 } from '../utils/fetchWithTimeout'
@@ -337,7 +337,7 @@ const warnSameDayArchive = createLogThrottle(60_000)
  * 相乗りするので印は付かない**（同時要求を 1 本にまとめる控えの性質。`archiveBodyCache.ts`）。
  */
 function downloadArchive(
-  url: string, apiKey: string, date: string, gateTag: GateTag | null,
+  url: string, endpoint: DmdataEndpoint, date: string, gateTag: GateTag | null,
 ): Promise<Map<string, Uint8Array>> {
   const nowMs = Date.now()
   const cacheable = isArchiveCacheable(date, nowMs)
@@ -366,7 +366,7 @@ function downloadArchive(
     // 控えに残して次に使う。
     const { status, gz } = await fetchWithTimeout(
       url,
-      { timeoutMs: ARCHIVE_BODY_FETCH_TIMEOUT_MS, signal: null, init: { headers: { Authorization: authHeader(apiKey) } } },
+      { timeoutMs: ARCHIVE_BODY_FETCH_TIMEOUT_MS, signal: null, init: { headers: endpoint.dataHeaders() } },
       async res => ({ status: res.status, gz: res.ok ? new Uint8Array(await res.arrayBuffer()) : null }),
     )
     if (gz === null) {
@@ -674,7 +674,7 @@ const ARCHIVE_LIST_LIMIT = 100
  * （`LIST_MAX_PAGES` の由来を参照）。
  */
 async function listArchives(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   startDate: string,
   endDate: string,
   classification: string,
@@ -697,8 +697,8 @@ async function listArchives(
     // 待ちなしで連投される**（→ `services/dmdataRequestGates.ts`）。
     await waitForApiSlot(gateTag ? { tag: gateTag } : undefined)
     const listJson = await fetchWithTimeout(
-      `https://api.dmdata.jp/v2/archive?${params.toString()}`,
-      { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: { Authorization: authHeader(apiKey) } } },
+      `${endpoint.apiBase}/archive?${params.toString()}`,
+      { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: endpoint.apiHeaders() } },
       async (res) => {
         if (!res.ok) throw new Error(`アーカイブの一覧を取得できなかった: ${res.status}`)
         return (await res.json()) as { status: string; items: ArchiveItem[]; nextToken?: string }
@@ -841,7 +841,7 @@ function requireArchiveBody(
 }
 
 export async function fetchDmdataReplayEvents(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   fromTime: Date,
   toTime: Date,
   includeTest: boolean,
@@ -883,7 +883,7 @@ export async function fetchDmdataReplayEvents(
   }
   const items = listRange === null
     ? []
-    : await listArchives(apiKey, listRange.from, listRange.to, classifications.join(','), signal, null)
+    : await listArchives(endpoint, listRange.from, listRange.to, classifications.join(','), signal, null)
   // **絞るのはダウンロードだけ。`resolveLiveDates` には絞る前の `items` を渡す**（下の
   // `liveDates`）—— 絞った後を渡すと、窓の外の日を「アーカイブが無い」と誤認して
   // 当日経路が余計に走る。目録の範囲は `wantedDays` を覆うだけなので通常は差が出ないが、
@@ -952,7 +952,7 @@ export async function fetchDmdataReplayEvents(
        */
       const loadBody = async (): Promise<Map<string, Uint8Array> | undefined> => {
         try {
-          return await downloadArchive(item.url, apiKey, item.date, null)
+          return await downloadArchive(item.url, endpoint, item.date, null)
         } catch (e) {
           if (e instanceof RateLimitWindowError) {
             // **正常な待ちなので `error` では記録しない。** 待てば取れる
@@ -1151,7 +1151,7 @@ export async function fetchDmdataReplayEvents(
   const liveDates = resolveLiveDates(fromTime, toTime, items.map(i => i.date))
   if (liveDates.length > 0) {
     try {
-      const live = await fetchLiveReplayEntries(apiKey, fromTime, toTime, liveDates, includeTest, classifications, signal)
+      const live = await fetchLiveReplayEntries(endpoint, fromTime, toTime, liveDates, includeTest, classifications, signal)
       entries.push(...live.entries)
       windowSkips.addAll(live.skippedByDay)
       scanSkips.addAll(live.scanSkippedByDay)
@@ -1740,9 +1740,9 @@ type PrefetchedBody =
 
 /** 本体の取得を投げて、結果に畳む（失敗も値として持つ。理由は `PrefetchedBody`）。 */
 function prefetchArchiveBody(
-  item: ArchiveItem, apiKey: string, gateTag: GateTag | null,
+  item: ArchiveItem, endpoint: DmdataEndpoint, gateTag: GateTag | null,
 ): Promise<PrefetchedBody> {
-  return downloadArchive(item.url, apiKey, item.date, gateTag).then(
+  return downloadArchive(item.url, endpoint, item.date, gateTag).then(
     files => ({ files }),
     (error: unknown) => ({ error }),
   )
@@ -2067,7 +2067,7 @@ async function readStraddlingDay(
   item: ArchiveItem,
   plan: StraddleDayPlan,
   knownQuakes: readonly JMAQuake[],
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   includeTest: boolean,
   before: Date,
   dec: TextDecoder,
@@ -2084,7 +2084,7 @@ async function readStraddlingDay(
   let files: Map<string, Uint8Array> | undefined
   let manifest = manifestCache.get(item.url)
   if (!manifest) {
-    files = await downloadArchive(item.url, apiKey, item.date, gateTag)
+    files = await downloadArchive(item.url, endpoint, item.date, gateTag)
     const manifestBytes = files.get('telegrams.json')
     if (!manifestBytes) throw new Error(`アーカイブに telegrams.json がありません date=${item.date}`)
     manifest = JSON.parse(dec.decode(manifestBytes)) as ManifestEntry[]
@@ -2121,7 +2121,7 @@ async function readStraddlingDay(
     return ids.length === 0 || ids.some(id => idsFor(want).has(id))
   })
   if (files === undefined && targets.some(({ entry }) => !parsedTelegramCache.has(entry.id))) {
-    files = await downloadArchive(item.url, apiKey, item.date, gateTag)
+    files = await downloadArchive(item.url, endpoint, item.date, gateTag)
   }
   const times = manifestEntryTimes(manifest)
   const quakes: JMAQuake[] = []
@@ -2281,7 +2281,7 @@ export function compareExtraTieBreak(a: ReplayPayload, b: ReplayPayload): number
  * @param maxDays この窓で読む日数（→ `HISTORY_WINDOW_DAYS`）。**遡れる範囲の上限ではない**
  */
 export async function fetchDmdataQuakeHistory(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   before: Date,
   maxDays: number,
   includeTest: boolean,
@@ -2350,7 +2350,7 @@ export async function fetchDmdataQuakeHistory(
   )
   const items = listRange === null
     ? []
-    : await listArchives(apiKey, listRange.from, listRange.to, 'telegram.earthquake', signal, gateTag ?? null)
+    : await listArchives(endpoint, listRange.from, listRange.to, 'telegram.earthquake', signal, gateTag ?? null)
   // **絞るのはダウンロードだけ。`resolveLiveDates` には絞る前の `items` を渡す**（下の
   // `liveDays`）—— 絞った後を渡すと、窓の外の日を「アーカイブが無い」と誤認して
   // 当日経路が余計に走る。
@@ -2445,7 +2445,7 @@ export async function fetchDmdataQuakeHistory(
     if (isStopped()) break
     if (!source.item) continue
     if (manifestCache.has(source.item.url)) continue
-    prefetchedBodies.set(source.item.url, prefetchArchiveBody(source.item, apiKey, gateTag ?? null))
+    prefetchedBodies.set(source.item.url, prefetchArchiveBody(source.item, endpoint, gateTag ?? null))
   }
 
   const dec = new TextDecoder()
@@ -2543,7 +2543,7 @@ export async function fetchDmdataQuakeHistory(
       // 同じ扱い）。ここで例外にすると、当日の一覧 API が一度こけただけで過去数日ぶんの
       // カードごと消える。
       try {
-        const live = await fetchLiveQuakeTelegrams(apiKey, source.date, before, includeTest, signal)
+        const live = await fetchLiveQuakeTelegrams(endpoint, source.date, before, includeTest, signal)
         for (const quake of live.quakes) {
           quakes.push(quake)
           eventIds.add(extractQuakeEventIdFromId(quake.id) ?? quake.id)
@@ -2603,7 +2603,7 @@ export async function fetchDmdataQuakeHistory(
           if ('error' in got) throw got.error
           return got.files
         }
-        return await downloadArchive(item.url, apiKey, item.date, gateTag ?? null)
+        return await downloadArchive(item.url, endpoint, item.date, gateTag ?? null)
       } catch (e) {
         if (e instanceof RateLimitWindowError) {
           // **取得の失敗と別の枠で数える。** 打てる手が違い（こちらは窓が明けるまで待つ）、
@@ -2757,7 +2757,7 @@ export async function fetchDmdataQuakeHistory(
         const range = archiveListRange(unlisted)
         const listed = range === null
           ? []
-          : await listArchives(apiKey, range.from, range.to, 'telegram.earthquake', signal, gateTag ?? null)
+          : await listArchives(endpoint, range.from, range.to, 'telegram.earthquake', signal, gateTag ?? null)
         for (const i of listed) if (!itemsByDay.has(i.date)) itemsByDay.set(i.date, i)
       } catch (e) {
         relistFailure = e
@@ -2780,7 +2780,7 @@ export async function fetchDmdataQuakeHistory(
           continue
         }
         const supplemented = await readStraddlingDay(
-          item, plan, quakes, apiKey, includeTest, before, dec, gateTag ?? null, binaryAssembly,
+          item, plan, quakes, endpoint, includeTest, before, dec, gateTag ?? null, binaryAssembly,
         )
         for (const quake of supplemented.quakes) quakes.push(quake)
         for (const tsunami of supplemented.tsunamis) tsunamis.push(tsunami)
@@ -3100,7 +3100,7 @@ export function needsPerEventFetch(
  * @param signal 止める合図（呼び出し側が結果を要らなくなったとき）。日・地震の区切りで見る
  */
 export async function fetchDmdataEewOrigins(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   fromTime: Date,
   toTime: Date,
   classifications: readonly DmdataClassification[],
@@ -3119,7 +3119,7 @@ export async function fetchDmdataEewOrigins(
   const stopped = () => signal?.aborted === true
 
   // 一覧は 2 の材料と取消の両方に使う（1〜数件）。
-  const list = await fetchDmdataEewEventList(apiKey, fromTime.getTime(), toTime.getTime())
+  const list = await fetchDmdataEewEventList(endpoint, fromTime.getTime(), toTime.getTime())
   const canceledIds = list.events.filter(e => e.canceled).map(e => e.eventId)
   let complete = list.complete
 
@@ -3129,7 +3129,7 @@ export async function fetchDmdataEewOrigins(
   let items: ArchiveItem[] = []
   if (listRange !== null && !stopped()) {
     try {
-      items = await listArchives(apiKey, listRange.from, listRange.to, eewArchiveClassification(eewHeadType), null, null)
+      items = await listArchives(endpoint, listRange.from, listRange.to, eewArchiveClassification(eewHeadType), null, null)
     } catch (e) {
       complete = false
       log.warn('[eew-origin] アーカイブの目録を引けませんでした（一覧の地震を地震ごとに取ります）', e)
@@ -3153,7 +3153,7 @@ export async function fetchDmdataEewOrigins(
     try {
       let manifest = manifestCache.get(item.url)
       if (!manifest) {
-        files = await downloadArchive(item.url, apiKey, item.date, null)
+        files = await downloadArchive(item.url, endpoint, item.date, null)
         const manifestBytes = files.get('telegrams.json')
         if (!manifestBytes) throw new Error('telegrams.json がありません')
         manifest = JSON.parse(dec.decode(manifestBytes)) as ManifestEntry[]
@@ -3167,7 +3167,7 @@ export async function fetchDmdataEewOrigins(
         log.warn(`[eew-origin] 目録に地震 ID か報番号を読めない報が ${choice.unidentified} 通ありました date=${item.date}`
           + `（最初の id=${choice.firstUnidentifiedId ?? '不明'}。その報は選びません）`)
       }
-      if (picked.length > 0 && files === undefined) files = await downloadArchive(item.url, apiKey, item.date, null)
+      if (picked.length > 0 && files === undefined) files = await downloadArchive(item.url, endpoint, item.date, null)
     } catch (e) {
       failedDays += 1
       complete = false
@@ -3211,7 +3211,6 @@ export async function fetchDmdataEewOrigins(
   const perEvent = list.events.filter(ev => needsPerEventFetch(ev, {
     eewHeadType, seenSerial, ownTypeChosen, readEventIds: byEvent, fromMs: fromTime.getTime(), toMs: toTime.getTime(),
   }))
-  const headers = { Authorization: authHeader(apiKey) }
   let fromLive = 0
   let tried = 0
   let consecutiveErrors = 0
@@ -3225,7 +3224,7 @@ export async function fetchDmdataEewOrigins(
     tried += 1
     let found: LatestEewReport
     try {
-      found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, false, false)
+      found = await fetchLatestEewReport(endpoint, ev.eventId, eewHeadType, false, false)
     } catch (e) {
       log.warn(`[eew-origin] 最終報を取れませんでした eventId=${ev.eventId}`, e)
       found = { kind: 'failed' }
