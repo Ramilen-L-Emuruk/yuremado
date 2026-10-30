@@ -1,7 +1,7 @@
 import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
 import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type EewMaxScaleInfo } from './eew'
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from './intensity'
-import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, TSUNAMI_GRADE_LIFTED, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
+import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME, TSUNAMI_GRADE_LIFTED, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
 import { joinSegments, plain, type SpeechSegment, type SpeechRef, type QuakeFact, type SpokenObservation } from './ttsFollow'
 import { getSubRegionsCache } from './subregions'
@@ -20,7 +20,7 @@ import { isObservedLpgmClass } from './lpgm'
  * 等級を読む順（重い等級が先）。**カードが等級カードを積む順と同じ並びを使う**
  * （`GRADES_IN_CARD_ORDER`）。手書きで写すと、等級を増やしたときに片方だけ漏れる。
  *
- * **`'Unknown'` だけは外す。** 等級の呼び名（`TSUNAMI_GRADE_SHORT_LABEL`）が `'Unknown'` では
+ * **`'Unknown'` だけは外す。** 等級の呼び名（`TSUNAMI_GRADE_NAME`）が `'Unknown'` では
  * 空文字なので、含めると「〇〇に切り替えられました。」「また、次の地域に〇〇が発表されています。」の
  * 〇〇が消え、主語を欠いた文になる。区域はあるのに等級が 1 つも取れない電文は実際に届き
  * （`useLiveEventHandler` の引き下げ経路）、そこでは**この並びから `topGrade` が見つからないこと**を
@@ -29,8 +29,8 @@ import { isObservedLpgmClass } from './lpgm'
 const GRADE_ORDER: TsunamiGrade[] = GRADES_IN_CARD_ORDER.filter(g => g !== 'Unknown')
 
 function tsunamiGradeLabel(grade: TsunamiGrade): string {
-  // 呼び名はカードの「等級が移り変わった」行と共有する（`TSUNAMI_GRADE_SHORT_LABEL`）
-  return TSUNAMI_GRADE_SHORT_LABEL[grade]
+  // 呼び名はカードの「等級が移り変わった」行と共有する（`TSUNAMI_GRADE_NAME`）
+  return TSUNAMI_GRADE_NAME[grade]
 }
 
 // 震度スケールの降順リスト
@@ -2967,6 +2967,50 @@ export function tsunamiAreaGradeChangeToSegments(changes: readonly TsunamiAreaGr
     segments.push(plain(`の${tsunamiGradeLabel(change.from)}が${tsunamiGradeLabel(change.to)}に${verb}。`))
   })
   return segments
+}
+
+/**
+ * 区域単位で等級が動いた報（`tsunamiAreaGradeChangeToSegments`）のあとに添える避難の呼びかけ。
+ *
+ * **警報等（大津波警報・津波警報・津波注意報）がその報に残っていれば、発表文と同じ呼びかけを 1 文足す**
+ * （2026-10-30 ユーザー選択「残っていれば呼びかけを足す (Recommended)」）。文は発表文（`tsunamiToSegments`）と同じく
+ * 気象庁の付加文（`evacuationActionLine`）を先に採り、採れなければ残っている最上位の等級の文
+ * （`fallbackEvacuationAction`）へ落ちる。**警報等が残らない報（予報だけ・全解除）には足さない** —— 予報の文は
+ * 「被害の心配はありません」で、避難の呼びかけではない。
+ *
+ * 呼びかけの付加文が付いた区域単位の等級変化の報は全期間で 2 通（2022-01-15 17:54・2026-04-20 08:08）。
+ */
+export function tsunamiAreaGradeChangeActionSegments(event: JMATsunami): SpeechSegment[] {
+  const topWarningGrade = GRADE_ORDER.find(g => g !== 'Forecast' && event.areas.some(a => a.grade === g))
+  if (!topWarningGrade) return []
+  const action = evacuationActionLine(event.warningComments) ?? fallbackEvacuationAction(topWarningGrade)
+  return action ? [plain(action)] : []
+}
+
+/**
+ * 等級は据え置きのまま予想波高だけが動いた続報で、動いた区域だけを読む
+ * （2026-10-30 ユーザー選択。例「予想される津波の高さが変わりました。岩手県で10メートル超が予想されています。」）。
+ *
+ * 区域と波高の文は発表文と同じ `areaHeightSentence` で組み、等級ごとに 1 文にして 2 文目以降を「また、」で継ぐ
+ * （等級をまたいで 1 文にしない理由は `areaHeightSentence`）。動いた区域が無ければ空を返す。
+ *
+ * @param changed 動いた区域（`forecastHeightChangedAreas` の結果）。並べ替える前のものを渡す
+ */
+export function tsunamiForecastHeightChangeToSegments(
+  changed: readonly TsunamiArea[],
+  observations: readonly TsunamiObservation[],
+): SpeechSegment[] {
+  const sentences: SpeechSegment[] = []
+  for (const g of GRADE_ORDER) {
+    const inGrade = changed.filter(a => a.grade === g)
+    if (inGrade.length === 0) continue
+    const sentence = areaHeightSentence(inGrade, observations)
+    if (sentence.length === 0) continue
+    if (sentences.length > 0) sentences.push(plain('また、'))
+    sentences.push(...sentence)
+  }
+  if (sentences.length === 0) return []
+  return [plain('予想される津波の高さが変わりました。'), ...sentences]
 }
 
 /** 区域単位で等級が動いた報の読み上げテキストを生成する。 */

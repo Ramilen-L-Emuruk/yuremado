@@ -7,6 +7,7 @@ import {
 } from './gl/tsunamiArrivalMarker'
 import { BADGE_SHADOW_BLUR, BADGE_SHADOW_COLOR } from './gl/tsunamiObsBar'
 import { observationFirstWaveText } from '../../utils/tsunami'
+import { popupCodeLineHtml } from './gl/popupHtml'
 import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 
 // 津波の到達確認マーカー（波高が「観測中」の観測点）を描画する。
@@ -29,7 +30,9 @@ export function arrivalTooltipHtml(marker: TsunamiArrivalMarker): string {
   return (
     `<div class="text-sm"><div class="font-bold">${esc(marker.name)}</div>` +
     `<div class="text-xs" style="color:#e5e7eb">${arrival}</div>` +
-    `<div class="text-xs" style="color:${ARRIVAL_COLOR}">最大波高は観測中</div></div>`
+    `<div class="text-xs" style="color:${ARRIVAL_COLOR}">最大波高は観測中</div>` +
+    popupCodeLineHtml(marker.code) +
+    `</div>`
   )
 }
 

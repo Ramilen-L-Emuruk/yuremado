@@ -159,7 +159,7 @@ describe('区域単位で等級が動いた報の読み上げ', () => {
     await settle()
     handle(makeReport(PARTIAL_LIFT))
     await settle()
-    expect(spokenTexts()[1]).toBe('福岡県日本海沿岸、佐賀県北部の津波注意報が津波予報に切り替えられました。')
+    expect(spokenTexts()[1]).toBe('福岡県日本海沿岸、佐賀県北部の津波注意報が津波予報（若干の海面変動）に切り替えられました。海の中にいる人はただちに海から上がって、海岸から離れてください。')
   })
 
   it('対照: 同じ変化を載せ続ける続報では読み直さない', async () => {
@@ -197,7 +197,7 @@ describe('区域単位で等級が動いた報の読み上げ', () => {
     // 全区域が予報へ落ちる（10:00 の「津波注意報を解除しました」に相当。最上位が Watch → Forecast）
     handle(makeReport(WATCH_ALL.map(a => ({ ...a, grade: 'Forecast' as TsunamiGrade, lastGrade: 'Watch' as TsunamiGrade }))))
     await settle()
-    expect(spokenTexts()[1]).toContain('津波予報に切り替えられました')
+    expect(spokenTexts()[1]).toContain('津波予報（若干の海面変動）に切り替えられました')
     // 区域ごとの言い方（「〜の津波注意報が」）ではなく、従来の全体降格の文になる
     expect(spokenTexts()[1]).not.toContain('の津波注意報が津波予報に')
   })
@@ -214,7 +214,7 @@ describe('区域単位で等級が動いた報の読み上げ', () => {
       [{ name: '青森県日本海沿岸', code: '200', grade: 'Unknown', lastGrade: 'Watch' }],
     ))
     await settle()
-    expect(spokenTexts()[1]).toBe('青森県日本海沿岸の津波注意報が解除されました。')
+    expect(spokenTexts()[1]).toBe('青森県日本海沿岸の津波注意報が解除されました。海の中にいる人はただちに海から上がって、海岸から離れてください。')
   })
 
   // 実電文の 2025-12-09T06:20（見出し「津波注意報を解除しました。」）がこの形。
@@ -230,7 +230,7 @@ describe('区域単位で等級が動いた報の読み上げ', () => {
       [{ name: '青森県日本海沿岸', code: '200', grade: 'Unknown', lastGrade: 'Watch' }],
     ))
     await settle()
-    expect(spokenTexts()[1]).toContain('津波予報に切り替えられました')
+    expect(spokenTexts()[1]).toContain('津波予報（若干の海面変動）に切り替えられました')
     expect(spokenTexts()[1]).toContain('青森県日本海沿岸の津波注意報が解除されました。')
   })
 
@@ -272,7 +272,7 @@ describe('区域単位で等級が動いた報の読み上げ', () => {
       lifted,
     ))
     await settle()
-    expect(spokenTexts()[2]).toBe('青森県日本海沿岸の津波注意報が解除されました。')
+    expect(spokenTexts()[2]).toBe('青森県日本海沿岸の津波注意報が解除されました。海の中にいる人はただちに海から上がって、海岸から離れてください。')
   })
 
   // 実電文の第一報は全区域が `LastKind=00`（津波なし）で届く。**この報を区域ごとの専用文へ

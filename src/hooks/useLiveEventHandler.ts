@@ -23,7 +23,7 @@ import {
 } from '../utils/specialInfoNotification'
 import { earthquakeCountHeadline } from '../components/SpecialInfoBanner/EarthquakeCountDetail'
 import { tsunamiIssueNotification, tsunamiLiftNotification, tsunamiEndNotification, tsunamiObservationNotification, TSUNAMI_OBS_NOTIFICATION_TAG } from '../utils/tsunamiNotification'
-import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiGradeReport, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, isTsunamiExpired, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, type SpokenTideEntry, tsunamiValueMarks, rememberTsunamiValues, createTsunamiValueMemory, clearTsunamiValueMemory, NO_TSUNAMI_VALUE_MARKS, type TsunamiValueMarks, type TsunamiValueMemory } from '../utils/tsunami'
+import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiGradeReport, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, isTsunamiExpired, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, forecastHeightChangedAreas, rememberForecastHeights, type SpokenTideEntry, tsunamiValueMarks, rememberTsunamiValues, createTsunamiValueMemory, clearTsunamiValueMemory, NO_TSUNAMI_VALUE_MARKS, type TsunamiValueMarks, type TsunamiValueMemory } from '../utils/tsunami'
 import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
 import { playAlertSound, ttsDelayFor, maxTtsDelay, type AlertSoundType } from '../utils/alertSound'
 import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
@@ -34,7 +34,7 @@ import {
 } from '../utils/replayEventLog'
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
-import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_LPGM_CLASS_ZERO_TEXT, EEW_UPGRADE_PHRASE, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiExpiryChangeSegments, tsunamiAreaGradeChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
+import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_LPGM_CLASS_ZERO_TEXT, EEW_UPGRADE_PHRASE, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiExpiryChangeSegments, tsunamiAreaGradeChangeToSegments, tsunamiAreaGradeChangeActionSegments, tsunamiForecastHeightChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
 import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
@@ -1566,6 +1566,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   // 観測点の記憶と同じく**発話を始める瞬間**に進める。読み上げが無効な端末だけは声が出ないため、
   // タブを見せた時点で進める（進めないと続報ごとに画面を奪う）。
   const spokenAreaGradeRef = useRef<Map<string, TsunamiGrade>>(new Map())
+  // 区域ごとに、**最後に声にした予想波高**（区域キー → `maxHeight.description`）。等級は据え置きのまま予想波高だけが
+  // 動いた続報（→ `forecastHeightChangedAreas`）を見分けるのに使う。発表文・降格文・その続報の文を鳴らし始める瞬間に進める。
+  const spokenForecastHeightRef = useRef<Map<string, string>>(new Map())
   // VOICEVOX EEW 読み上げの進行管理。
   //
   //   eewSpeechChainRef   … EEW の読み上げを直列化するチェーン（**全 EEW で 1 本**）。
@@ -3417,6 +3420,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     spokenObsFirstWaveRef.current.clear()
     spokenTideRef.current.clear()
     spokenAreaGradeRef.current.clear()
+    spokenForecastHeightRef.current.clear()
   }
 
   /**
@@ -5264,6 +5268,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       let spokenFirstWaveObs: import('../types/earthquake').TsunamiObservation[] | null = null
       // 満潮時刻・到達状況を声にする報か。立っていれば、発話を始める瞬間にその報の全地点を既読へ移す。
       let spokenTideAreas: readonly import('../types/earthquake').TsunamiArea[] | null = null
+      // 予想波高を声にした区域（発表文・降格文の全区域、または予想波高だけが動いた区域）。発話を始める瞬間に既読へ移す。
+      let spokenForecastHeightAreas: readonly import('../types/earthquake').TsunamiArea[] | null = null
+      // 等級は据え置きのまま予想波高だけが動いた報か（→ `forecastHeightChangedAreas`）。立っていれば等級の発表と同じ層・主題で読む。
+      let tsunamiIsForecastHeightChange = false
       /**
        * その読み上げが「**何も切らない**」ものか（伝える変化が無い、または軽い報）。
        *
@@ -5577,6 +5585,17 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               ...selectFirstWaveUpdatesToSpeak(firstWaveUpdatedObs, maxObsPoints),
             ]
           }
+          // **等級は据え置きのまま予想波高だけが動いた区域を、観測の話より先に読む**（2026-10-30 ユーザー選択。
+          // 等級の発表と同じ層。全期間で 0 通の形なので、従来はここで黙っていた）。予想波高を載せるのは津波警報等（VTSE41）だけ。
+          const forecastHeightChanged = event.headType === 'VTSE41'
+            ? forecastHeightChangedAreas(event.areas, spokenForecastHeightRef.current)
+            : []
+          const forecastHeightSegments = tsunamiForecastHeightChangeToSegments(forecastHeightChanged, tsunamiCardBasis.observations)
+          if (forecastHeightSegments.length > 0) {
+            ttsSegments = ttsSegments ? joinWithAlso(forecastHeightSegments, ttsSegments) : forecastHeightSegments
+            spokenForecastHeightAreas = forecastHeightChanged
+            tsunamiIsForecastHeightChange = true
+          }
           if (!ttsSegments) {
             // ここまでで読む文が 1 つも無かった報。**従来はここで黙り、通知音だけが鳴っていた。**
             // 2024 年能登半島地震の 26 時間では、取消を除く津波電文 56 通のうち 7 通がこれ
@@ -5634,6 +5653,20 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 全区域を挙げる発表文（`tsunamiToSegments`）へ流すと、2 区域が解除されただけの報で
           // 発表中の全区域を読み直すことになる。
           ttsSegments = tsunamiAreaGradeChangeToSegments(tsunamiAreaChanges)
+          const areaChangeSpoken = ttsSegments.length > 0
+          // 等級の変化の文は予想波高を読まないので、同じ報で予想波高だけが動いた区域があれば続けて読む（観測点更新の経路と同じ判定）。
+          const forecastHeightChangedOnAreaChange = event.headType === 'VTSE41'
+            ? forecastHeightChangedAreas(event.areas, spokenForecastHeightRef.current)
+            : []
+          const forecastHeightSegmentsOnAreaChange = tsunamiForecastHeightChangeToSegments(forecastHeightChangedOnAreaChange, tsunamiCardBasis.observations)
+          if (forecastHeightSegmentsOnAreaChange.length > 0) {
+            ttsSegments = joinWithAlso(ttsSegments, forecastHeightSegmentsOnAreaChange)
+            spokenForecastHeightAreas = forecastHeightChangedOnAreaChange
+          }
+          // 警報等が残っていれば、動いた区域の文（と予想波高の文）のあとに発表文と同じ避難の呼びかけを添える
+          // （→ `tsunamiAreaGradeChangeActionSegments`。予報だけが残る報・何も読まない報には足さない）。
+          // 呼びかけを末尾に置くのは、区域と高さを言い終えてから行動を促すため（途中に挟むと高さの話が後付けに聞こえる）。
+          if (areaChangeSpoken) ttsSegments = [...ttsSegments, ...tsunamiAreaGradeChangeActionSegments(event)]
           // 等級が動いた報と同じく、観測中（波高未確定）で新規に到達が確認された観測点も併せて読む
           const obsOnAreaChange = observationsInCardOrder(event)
           const newlyArrivedObsOnAreaChange = obsOnAreaChange
@@ -5670,6 +5703,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           ttsSegments = isDowngrade
             ? tsunamiDowngradeToSegments(event, tsunamiCardBasis.observations, tsunamiSpoken ?? undefined)
             : tsunamiToSegments(event, tsunamiCardBasis.observations, tsunamiSpoken ?? undefined, ttsRegionOptions(settings))
+          // 発表文・降格文は等級の分かる全区域の予想波高を読む（`areaHeightSentence`）ので、それらを既読にしてよい。
+          spokenForecastHeightAreas = event.areas.filter(a => a.grade !== 'Unknown')
           // グレード変化と同時に観測中（波高未確定）で新規到達した観測点も読み上げに含める
           // （こちらもカードの並びに揃える。理由は観測点更新側と同じ）
           const obsOnGradeChange = observationsInCardOrder(event)
@@ -5736,7 +5771,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 割り込んで切る（→ 宣言箇所）。
         const speechPriority = tsunamiSpeechIsQuiet
           ? SPEECH_PRIORITY.commentary
-          : event.kind === 'tsunami' && !tsunamiIsObservationUpdate
+          : event.kind === 'tsunami' && (!tsunamiIsObservationUpdate || tsunamiIsForecastHeightChange)
             ? SPEECH_PRIORITY.high
             : SPEECH_PRIORITY.normal
         // **変化を伝えない報は主題も分ける。** 層が違うものを同じ主題へ入れると、到来順の裁きが
@@ -5745,7 +5780,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           ? quakeSpeechTopic
           : tsunamiSpeechIsQuiet
             ? (isTideReport(event) ? 'tsunamiTide' : 'tsunamiObsQuiet')
-            : tsunamiIsObservationUpdate ? 'tsunamiObs' : 'tsunami'
+            : tsunamiIsObservationUpdate && !tsunamiIsForecastHeightChange ? 'tsunamiObs' : 'tsunami'
         // クロージャで掴むため const に写す（`let` のままでは絞り込みが効かない）
         const obsToMark = spokenObs
         const missingToMark = spokenMissingObs
@@ -5753,6 +5788,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         const maxHeightTimeToMark = spokenMaxHeightTimeObs
         const firstWaveToMark = spokenFirstWaveObs
         const tideAreasToMark = spokenTideAreas
+        const forecastHeightAreasToMark = spokenForecastHeightAreas
         // 区域の等級変化も**発話を始める瞬間**に既読へ移す（観測点と同じ理由。待たされた末に
         // 見送られた変化は既読にならず、次の報でもう一度読み上げ対象に入る）。
         //
@@ -5779,7 +5815,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             : spokenState ? refs => applySpokenRefs(spokenState, refs) : undefined,
           // 読み上げた観測点を既読へ移すのは**声に出す瞬間**（宣言は `spokenObsHeightRef`）。
           // 待たされた末に見送られた分は既読にならず、次の電文でもう一度読み上げ対象に入る。
-          obsToMark || missingToMark || warningLevelToMark || areasToMark || maxHeightTimeToMark || firstWaveToMark || tideAreasToMark
+          obsToMark || missingToMark || warningLevelToMark || areasToMark || maxHeightTimeToMark || firstWaveToMark || tideAreasToMark || forecastHeightAreasToMark
             ? () => {
               if (memoryGen !== tsunamiMemoryGenRef.current) {
                 log.debug('[tsunami] 予約のあとに津波の記憶を落としたので、この読み上げの既読は書かない')
@@ -5814,6 +5850,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               // 満潮時刻はその報の全地点を既読にしてよい（地点名を読まないので、件数上限で
               // 落ちた分を既読にする心配が無い。→ `rememberTideEntries`）。
               if (tideAreasToMark) rememberTideEntries(tideAreasToMark, spokenTideRef.current)
+              // 予想波高も声にした分だけ（→ `spokenForecastHeightRef`）。
+              if (forecastHeightAreasToMark) rememberForecastHeights(forecastHeightAreasToMark, spokenForecastHeightRef.current)
               // 欠測は名前だけを覚える（波高の記憶＝`spokenObsHeightRef` は触らない。欠測と
               // 同時に来た「これまでの最大波」を既読にすると、復帰後にその値が読まれなくなる）。
               if (missingToMark) {
@@ -6200,6 +6238,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     spokenObsFirstWaveRef.current.clear()
     spokenTideRef.current.clear()
     spokenAreaGradeRef.current.clear()
+    spokenForecastHeightRef.current.clear()
     seenLpgmEventIdsRef.current.clear()
     lpgmNotifiedNameRef.current.clear()
     notifiedSpecialInfoRef.current.clear()
@@ -6602,6 +6641,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // **満潮時刻も埋めること。** `tideReportChange` は記録が空なら無条件に `first` を
             // 返すので、埋め忘れると窓の手前で既に伝えた満潮時刻が「初報」として読み直される。
             rememberTideEntries(tsunami.areas, spokenTideRef.current)
+            // **予想波高も埋めること。** 埋め忘れると、窓の手前で発表文が読んだ予想波高を、注入後の最初の続報が
+            // 「変わりました」と読む（記憶が無い区域は電文の `MaxHeight/Revise`「更新」で変わったとみなすため）。
+            rememberForecastHeights(tsunami.areas, spokenForecastHeightRef.current)
             // **区域の等級変化も同じく埋めること。** `LastKind` は変化した後の続報にも載り続けるため、
             // 埋め忘れると、注入後の最初の続報が T より前に起きた解除を「いま起きた」ものとして
             // 読み上げ・タブ移動する（観測点で防いでいるのと同型の穴）。
