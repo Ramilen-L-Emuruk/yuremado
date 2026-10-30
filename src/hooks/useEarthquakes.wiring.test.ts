@@ -28,6 +28,7 @@ import { DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
 import { log } from '../utils/logger'
 import { CELL_LAT_DEG, CELL_LON_DEG } from '../utils/bufrEstimatedIntensity'
 import { ACTIVE_EEW_WINDOW_MS, calcEEWCancelTime } from '../utils/eew'
+import { createDetectionSpreadLog, type DetectionSpreadLog } from '../utils/eewSpreadHold'
 // **テストボタンのデータをここで先に読む。** 値は使わないが、これが無いと
 // `simulate*` を最初に呼ぶテストが「このファイルで初回のモジュール解決・変換」を
 // テスト本体の中で行うことになる —— 実データ 3 つで 824 KB あり、全ファイル並列実行では
@@ -267,10 +268,12 @@ function setup(opts: {
   onStartupRestore?: Parameters<typeof useEarthquakes>[4]
   /** 設定「試験報を受信（検証用）」（`dmdataTestDelivery`）。既定は偽（設定の既定と同じ） */
   testDelivery?: boolean
+  /** 揺れ検知の束の広がり（`App.tsx` では検知結果を流し込んだもの）。EEW の自動解除を待たせる */
+  eewSpreadLog?: DetectionSpreadLog
 } = {}) {
   const view = renderHook(
     ({ offset }: { offset: number | null }) =>
-      useEarthquakes(opts.onLiveEvent, opts.apiKey ?? 'test-key', opts.testDelivery ?? false, offset, opts.onStartupRestore, opts.onStartupRestoreEews),
+      useEarthquakes(opts.onLiveEvent, opts.apiKey ?? 'test-key', opts.testDelivery ?? false, offset, opts.onStartupRestore, opts.onStartupRestoreEews, opts.eewSpreadLog ?? createDetectionSpreadLog()),
     { initialProps: { offset: opts.offset ?? null } },
   )
   return {
@@ -627,6 +630,66 @@ describe('再生中もキューの予約は発火時刻を待つ', () => {
     expect(h.current.activeEEWs.size).toBe(1)
 
     act(() => { vi.advanceTimersByTime(31_000) })
+    expect(h.current.activeEEWs.size).toBe(0)
+  })
+
+  /** 震央のそばで発生 2 秒後に始まり、`growUntilSec` 秒後まで 1 秒に 1 点ずつ加わる揺れ検知の束を流す */
+  function spreadingLog(at: Date, growUntilSec: number): DetectionSpreadLog {
+    const log = createDetectionSpreadLog()
+    for (let s = 2; s <= growUntilSec; s++) {
+      log.push(at.getTime() + s * 1000, [{ id: 'e0', epicenter: [35, 140.1], memberKeys: Array.from({ length: s - 1 }, (_, i) => `k${i}`) }])
+    }
+    return log
+  }
+
+  // 正: 揺れ検知の束にまだ点が加わっていれば、式の時刻（最終報から 60 秒）を過ぎても待ち、最後の追加から 30 秒で解除する
+  it('揺れ検知の束が広がっている間は自動解除を待ち、点が加わらなくなって 30 秒で解除する', () => {
+    setReplayOffset(OFFSET_MS)
+    const at = serverDate()
+    const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreadingLog(at, 80) })
+
+    act(() => { h.current.injectEvent(finalEEW(at)) })
+    act(() => { vi.advanceTimersByTime(61_000) })
+    expect(h.current.activeEEWs.size).toBe(1)
+
+    act(() => { vi.advanceTimersByTime(48_000) })
+    expect(h.current.activeEEWs.size).toBe(1)
+
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(h.current.activeEEWs.size).toBe(0)
+  })
+
+  // 対照: 待っている間に誤報取消が届いたら、積み直した自動解除が取消の 10 秒表示を途中で消さない
+  it('揺れ検知で自動解除を待っている間に誤報取消が届いても、取消の表示は 10 秒残る', () => {
+    setReplayOffset(OFFSET_MS)
+    const at = serverDate()
+    // 点は 40 秒まで加わる → 式の時刻（60 秒）で 70 秒まで待つ。取消の 10 秒表示（65〜75 秒）の中で発火する
+    const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreadingLog(at, 40) })
+
+    act(() => { h.current.injectEvent(finalEEW(at)) })
+    act(() => { vi.advanceTimersByTime(65_000) })
+    expect(h.current.activeEEWs.size).toBe(1)
+
+    act(() => { h.current.injectEvent({ ...finalEEW(at), cancelled: true }) })
+    expect(h.current.activeEEWs.get('replay-final-event')?.cancelledAt).toBeTruthy()
+    // 積み直した解除の発火（最後の追加＋30 秒）を越えても、取消の表示は残る
+    act(() => { vi.advanceTimersByTime(8_000) })
+    expect(h.current.activeEEWs.get('replay-final-event')?.cancelledAt).toBeTruthy()
+    act(() => { vi.advanceTimersByTime(3_000) })
+    expect(h.current.activeEEWs.size).toBe(0)
+  })
+
+  // 安全弁: 点が加わり続けても、式の時刻から 5 分を超えては残さない
+  it('揺れ検知の束が広がり続けても、式の時刻から 5 分で解除する', () => {
+    setReplayOffset(OFFSET_MS)
+    const at = serverDate()
+    const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreadingLog(at, 2_000) })
+
+    act(() => { h.current.injectEvent(finalEEW(at)) })
+    act(() => { vi.advanceTimersByTime(60_000 + 299_000) })
+    expect(h.current.activeEEWs.size).toBe(1)
+
+    act(() => { vi.advanceTimersByTime(2_000) })
     expect(h.current.activeEEWs.size).toBe(0)
   })
 
@@ -1959,7 +2022,7 @@ describe('DMDSS 版: APIキーが不正なら通信しない', () => {
   // 安全弁: キーを直したら error が残らずに接続へ復帰すること。
   it('キーを直すと error が消えて接続へ復帰する', async () => {
     const view = renderHook(
-      ({ apiKey }: { apiKey: string }) => useEarthquakes(undefined, apiKey, false, null),
+      ({ apiKey }: { apiKey: string }) => useEarthquakes(undefined, apiKey, false, null, undefined, undefined, createDetectionSpreadLog()),
       { initialProps: { apiKey: 'abc123あ' } },
     )
     await act(async () => { await Promise.resolve() })
@@ -3149,6 +3212,41 @@ describe('標準版: P2PQuake と Yahoo の緊急地震速報をまとめる', (
       // Yahoo の取得が止まったまま 90 秒を過ぎたら消す（捨てると居座る）
       act(() => { vi.advanceTimersByTime(25_000) })
       expect(h.current.activeEEWs.size, 'Yahoo の続報のあと見張りが残っていない').toBe(0)
+    })
+
+    /** 震央のそばで発生 2 秒後に始まり、`growUntilSec` 秒後まで 1 秒に 1 点ずつ加わる揺れ検知の束 */
+    const spreading = (atMs: number, growUntilSec: number): DetectionSpreadLog => {
+      const log = createDetectionSpreadLog()
+      for (let s = 2; s <= growUntilSec; s++) {
+        log.push(atMs + s * 1000, [{ id: 'e0', epicenter: [35, 140.1], memberKeys: Array.from({ length: s - 1 }, (_, i) => `k${i}`) }])
+      }
+      return log
+    }
+
+    // 正: 見張りの解除も、揺れ検知の束が広がっている間は待つ（最終報から積んだ解除と同じ判断）
+    it('揺れ検知の束が広がっている間は、見張りの解除も待つ', () => {
+      setReplayOffset(OFFSET_MS)
+      const issue = nowIso()
+      const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreading(Date.parse(issue), 80) })
+      act(() => { h.current.injectEvent(small('1', issue)) })
+      // 見張り（発表から 60 秒）は過ぎたが、最後の追加（80 秒）から 30 秒はまだ
+      act(() => { vi.advanceTimersByTime(105_000) })
+      expect(h.current.activeEEWs.size).toBe(1)
+      act(() => { vi.advanceTimersByTime(10_000) })
+      expect(h.current.activeEEWs.size).toBe(0)
+    })
+
+    // 安全弁: 束を確かめる処理が投げても、解除は飛ばさず式の時刻で行う
+    it('揺れ検知の広がりを確かめられなくても、式の時刻で解除する', () => {
+      setReplayOffset(OFFSET_MS)
+      const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {})
+      const broken: DetectionSpreadLog = { push() {}, reset() {}, lastSpreadMs() { throw new Error('試しに投げる') } }
+      const h = setup({ offset: OFFSET_MS, eewSpreadLog: broken })
+      act(() => { h.current.injectEvent(small('1', nowIso())) })
+      act(() => { vi.advanceTimersByTime(65_000) })
+      expect(h.current.activeEEWs.size).toBe(0)
+      expect(errorSpy).toHaveBeenCalled()
+      errorSpy.mockRestore()
     })
 
     // 取消を受けた速報には見張りを効かせない（取消の表示を見張りの解除で上書きしない）
