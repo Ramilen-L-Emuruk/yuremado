@@ -112,6 +112,7 @@ import { EEW_LEAD_PHRASES } from './utils/ttsText'
 import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
 import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS, type ReplayFetchPurpose } from './hooks/useReplayController'
 import { fetchDmdataReplayEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
+import { dmdataKeyEndpoint } from './services/dmdataEndpoint'
 import { PREFERRED_CLASSIFICATIONS } from './services/dmdataClassifications'
 import { fetchP2PReplayEvents, fetchP2PQuakeHistory, clearP2PReplayCache } from './services/p2pquakeReplay'
 import { withDmdataLoadMore, withoutLoadMore } from './services/replayQuakeHistory'
@@ -1802,7 +1803,7 @@ export function App() {
         // 再生で拾えないと実電文で確かめる手段が事実上テストボタンだけになる。
         // 区分はライブの接続が取り決めたものを使う（再生中はライブを止めているが、値は残っている）。
         // 一度も繋がっていなければ既定の区分で引く（→ `services/dmdataClassifications.ts`）
-        ? fetchDmdataReplayEvents(settings.dmdataApiKey, from, to, settings.dmdataTestDelivery, dmdataClassifications ?? PREFERRED_CLASSIFICATIONS, signal)
+        ? fetchDmdataReplayEvents(dmdataKeyEndpoint(settings.dmdataApiKey), from, to, settings.dmdataTestDelivery, dmdataClassifications ?? PREFERRED_CLASSIFICATIONS, signal)
         // standard 版は合図を受け取らない —— 日ごとの取得を本編と初期状態が相乗りするため
         // （→ `p2pquakeReplay.ts` の `fetchAllPages`）
         : fetchP2PReplayEvents(from, to)
@@ -1838,7 +1839,7 @@ export function App() {
       const { dmdataApiKey, dmdataTestDelivery } = settings
       const fetchWindow = (windowBefore: Date, windowSignal: AbortSignal | null, gateTag: GateTag | undefined) =>
         fetchDmdataQuakeHistoryFor(
-          classifications, dmdataApiKey, windowBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, windowSignal,
+          classifications, dmdataKeyEndpoint(dmdataApiKey), windowBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, windowSignal,
           undefined, undefined, gateTag,
         )
       // 続きは押すたびに新しい印を付けて取る（ライブの「もっと見る」と同じ。ボタンが門の残り時間を数える）

@@ -21,6 +21,7 @@ const archiveBodyDbStats = () => idbMetaStats(ARCHIVE_CACHE_DB)
 
 // 電文の読み取りに DOMParser が要る（環境は node のまま。理由は `dmdataReplay.test.ts` と同じ）
 import { JSDOM } from 'jsdom'
+import { dmdataKeyEndpoint } from './dmdataEndpoint'
 globalThis.DOMParser = new JSDOM().window.DOMParser
 afterAll(() => { delete (globalThis as { DOMParser?: unknown }).DOMParser })
 
@@ -131,7 +132,7 @@ describe('アーカイブ本体の控えの結線（実 gzip × 実 IndexedDB）
     const calls = mockArchive(gz)
     const before = new Date('2026-08-10T23:00:00+09:00')
 
-    const first = await fetchDmdataQuakeHistory('key', before, 1, false, null)
+    const first = await fetchDmdataQuakeHistory(dmdataKeyEndpoint('key'), before, 1, false, null)
     expect(first.quakes).toHaveLength(1)
     expect(calls.body).toBe(1)
 
@@ -144,7 +145,7 @@ describe('アーカイブ本体の控えの結線（実 gzip × 実 IndexedDB）
     clearArchiveCacheForTest()
     clearParseCachesForTest()
 
-    const second = await fetchDmdataQuakeHistory('key', before, 1, false, null)
+    const second = await fetchDmdataQuakeHistory(dmdataKeyEndpoint('key'), before, 1, false, null)
 
     // 本体は取りに行かない（端末の控えから読み、gunzip と tar 展開を通っている）
     expect(calls.body).toBe(1)
@@ -164,14 +165,14 @@ describe('アーカイブ本体の控えの結線（実 gzip × 実 IndexedDB）
     const calls = mockArchive(gz)
     const before = new Date('2026-08-10T23:00:00+09:00')
 
-    await fetchDmdataQuakeHistory('key', before, 1, false, null)
+    await fetchDmdataQuakeHistory(dmdataKeyEndpoint('key'), before, 1, false, null)
     expect(calls.body).toBe(1)
 
     clearArchiveCacheForTest()
     clearParseCachesForTest()
     await clearArchiveBodyDb()
 
-    await fetchDmdataQuakeHistory('key', before, 1, false, null)
+    await fetchDmdataQuakeHistory(dmdataKeyEndpoint('key'), before, 1, false, null)
 
     expect(calls.body).toBe(2)
   })
@@ -186,7 +187,7 @@ describe('アーカイブ本体の控えの結線（実 gzip × 実 IndexedDB）
     const calls = mockArchive(gz)
     const before = new Date('2026-08-10T23:00:00+09:00')
 
-    await fetchDmdataQuakeHistory('key', before, 1, false, null)
+    await fetchDmdataQuakeHistory(dmdataKeyEndpoint('key'), before, 1, false, null)
     clearArchiveCacheForTest()
     clearParseCachesForTest()
 
@@ -194,7 +195,7 @@ describe('アーカイブ本体の控えの結線（実 gzip × 実 IndexedDB）
     const { writeArchiveBody } = await import('../utils/archiveBodyDb')
     await writeArchiveBody('https://x/body1', new Uint8Array([1, 2, 3, 4]))
 
-    const result = await fetchDmdataQuakeHistory('key', before, 1, false, null)
+    const result = await fetchDmdataQuakeHistory(dmdataKeyEndpoint('key'), before, 1, false, null)
 
     // 展開に失敗したので落とし直し、カードは作れている
     expect(calls.body).toBe(2)

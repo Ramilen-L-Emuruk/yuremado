@@ -12,6 +12,7 @@ import { DmdataWebSocket, fetchDmdataActiveEews, fetchDmdataActiveEewsOutcome } 
 // 履歴の取得はリプレイ開始時の復元と実装を共有する（→ `data-sources-spec.md` §2
 // 「大量に取るならアーカイブを使う」）。同じ目的の実装を 2 本持たない。
 import { fetchDmdataQuakeHistoryFor, HISTORY_WINDOW_DAYS } from '../services/dmdataReplay'
+import { dmdataKeyEndpoint } from '../services/dmdataEndpoint'
 import { fetchLiveTelegramsBetween } from '../services/dmdataReplayLive'
 import { PREFERRED_CLASSIFICATIONS, type DmdataClassification } from '../services/dmdataClassifications'
 import {
@@ -2801,7 +2802,7 @@ export function useEarthquakes(
         dmdataHistorySettledRef.current = Promise.resolve()
           .then(() => (stale() ? Promise.reject(new Error('cancelled')) : fetchDmdataQuakeHistoryFor(
             classifications,
-            dmdataApiKey, historyBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, abort.signal,
+            dmdataKeyEndpoint(dmdataApiKey), historyBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, abort.signal,
             applyPartialQuakesFor(stale), stale,
           )))
           .then((history) => {
@@ -3050,7 +3051,7 @@ export function useEarthquakes(
         // 版が古くなっても通信は最後まで走り、結果だけ `stale` で捨てる。余分になるのは取り直しが起きた起動の
         // 一覧 1 回ぶんだけなので、打ち切りの配線は足していない
         void Promise.resolve()
-          .then(() => (stale() ? [] : fetchDmdataActiveEews(dmdataApiKey, classifications, dmdataTestDeliveryRef.current)))
+          .then(() => (stale() ? [] : fetchDmdataActiveEews(dmdataKeyEndpoint(dmdataApiKey), classifications, dmdataTestDeliveryRef.current)))
           .then(eews => {
             if (stale() || eews.length === 0) return
             // 前の版が積み終えた電文は積まない（→ `restoredQueueKeys`）。取り直しの最中に終えた地震も戻さない（→ `eewEndedRef`）
@@ -3325,7 +3326,7 @@ export function useEarthquakes(
         let got: Awaited<ReturnType<typeof fetchLiveTelegramsBetween>>
         try {
           got = await fetchLiveTelegramsBetween(
-            dmdataApiKey, from, to, dmdataTestDelivery, id => ws.hasReceivedTelegram(id), historyAbort.signal,
+            dmdataKeyEndpoint(dmdataApiKey), from, to, dmdataTestDelivery, id => ws.hasReceivedTelegram(id), historyAbort.signal,
           )
         } catch (err) {
           if (cancelled) return
@@ -3404,7 +3405,7 @@ export function useEarthquakes(
           publishGapLoss()
           return
         }
-        const { eews, complete } = await fetchDmdataActiveEewsOutcome(dmdataApiKey, classifications, dmdataTestDeliveryRef.current)
+        const { eews, complete } = await fetchDmdataActiveEewsOutcome(dmdataKeyEndpoint(dmdataApiKey), classifications, dmdataTestDeliveryRef.current)
         if (cancelled) return
         eewGap = !complete
         publishGapLoss()
@@ -3927,7 +3928,7 @@ export function useEarthquakes(
         // 使い回さないのは、中断された前回の待ちを今回の分として数えないため（理由はその関数）。
         const history = await fetchDmdataQuakeHistoryFor(
           dmdataRestClassificationsRef.current,
-          apiKey, before, HISTORY_WINDOW_DAYS, dmdataTestDeliveryRef.current, signal,
+          dmdataKeyEndpoint(apiKey), before, HISTORY_WINDOW_DAYS, dmdataTestDeliveryRef.current, signal,
           applyPartialMore, stale, beginLoadMoreGateTag(),
         )
         // 時間軸が変わっていたら、取れた分ごと捨てる（「取得中」の解除は finally が担う）

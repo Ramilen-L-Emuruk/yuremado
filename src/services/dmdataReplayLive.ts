@@ -18,7 +18,7 @@
 //
 // アーカイブとの同等性は実データで確認済み。詳細は docs/spec/settings-pwa-spec.md §6。
 import { log } from '../utils/logger'
-import { authHeader } from '../utils/dmdataApiKey'
+import type { DmdataEndpoint } from './dmdataEndpoint'
 import { fetchWithTimeout, isAbortedByCaller, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { fetchTelegramText, fetchTelegramBytes, telegramIdFromUrl } from './telegramBody'
 import { RateLimitWindowError } from './dmdataRequestGates'
@@ -26,7 +26,7 @@ import type { JMAQuake, JMATsunami } from '../types/earthquake'
 import type { ReplayEntry } from '../types/replay'
 import {
   isHandledType, QUAKE_TYPES, TSUNAMI_TYPES, HISTORY_EXTRA_TYPES, historyExtraKey,
-  buildXmlPayload, isBinaryTelegramType, buildBinaryPayload, TELEGRAM_DATA_BASE,
+  buildXmlPayload, isBinaryTelegramType, buildBinaryPayload,
   isFilteredBinaryTelegram, type BinaryReplayPayload, type EewHeadType,
 } from './dmdataTelegramPayload'
 import { eewHeadTypeFor, hasQuakeTelegrams, type DmdataClassification } from './dmdataClassifications'
@@ -35,8 +35,6 @@ import { BufrFragmentStore, fragmentKey } from './bufrTelegramAssembly'
 import { createSkipCounter, UNKNOWN_SKIP_DAY } from '../utils/telegramLoss'
 import { makeReplayLogEntry } from './telegramLogEntry'
 
-const API_BASE = 'https://api.dmdata.jp/v2'
-/** 電文本体の配信元。一覧が返す `url` と同じ形を id から組むのに使う。 */
 /** 一覧 API の 1 ページあたりの取得件数（API の上限）。 */
 const LIST_LIMIT = 100
 /**
@@ -294,7 +292,7 @@ async function mapWithLimit<T>(items: T[], limit: number, fn: (item: T) => Promi
   }
 }
 
-async function getJson<T>(url: string, apiKey: string, what: string, signal: AbortSignal | null): Promise<T> {
+async function getJson<T>(url: string, endpoint: DmdataEndpoint, what: string, signal: AbortSignal | null): Promise<T> {
   // **枠を待ってから投げる。** ここを通るのは `api.dmdata.jp` の一覧・目録・EEW の詳細で、
   // **どれもページを辿るループの中にいる** —— 応答が速ければ待ちなしで次のページへ進むので、
   // 門が無いと瞬間のレートが上限へ寄る。配信元は「定常的に 2req/s 以上のアクセスはお控え
@@ -305,7 +303,7 @@ async function getJson<T>(url: string, apiKey: string, what: string, signal: Abo
   await waitForApiSlot()
   const json = await fetchWithTimeout(
     url,
-    { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: { Authorization: authHeader(apiKey) } } },
+    { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: endpoint.apiHeaders() } },
     async (res) => {
       if (!res.ok) throw new Error(`${what}を取得できなかった: ${res.status}`)
       return (await res.json()) as { status?: string } & T
@@ -323,11 +321,11 @@ async function getJson<T>(url: string, apiKey: string, what: string, signal: Abo
  * IndexedDB の控え（→ `telegramBody.ts`）。**同じ窓を再生し直すたびに取り直さない**ため、
  * 奥の段が要る（リプレイは検証で何度も同じ範囲を流す）。
  */
-function fetchBody(url: string, apiKey: string): Promise<string> {
+function fetchBody(url: string, endpoint: DmdataEndpoint): Promise<string> {
   const cached = bodyCache.get(url)
   if (cached) return cached
   const promise = (async () => {
-    const body = await fetchTelegramText(apiKey, url)
+    const body = await fetchTelegramText(endpoint, url)
     // **429 の窓で見送った分は専用の型で投げる。** アーカイブ本体と同じ扱いにする
     // （→ `services/dmdataRequestGates.ts` の `RateLimitWindowError`）。通常の失敗と
     // 混ぜると、待てば取れるものが恒久的な喪失として記録・画面に出る
@@ -361,11 +359,11 @@ function fetchBody(url: string, apiKey: string): Promise<string> {
  * 両方で引くことが無いため。
  */
 const binaryBodyCache = new Map<string, Promise<Uint8Array>>()
-function fetchBinaryBody(url: string, apiKey: string): Promise<Uint8Array> {
+function fetchBinaryBody(url: string, endpoint: DmdataEndpoint): Promise<Uint8Array> {
   const cached = binaryBodyCache.get(url)
   if (cached) return cached
   const promise = (async () => {
-    const { bytes, status, rateLimitedUntil } = await fetchTelegramBytes(apiKey, url)
+    const { bytes, status, rateLimitedUntil } = await fetchTelegramBytes(endpoint, url)
     if (rateLimitedUntil !== null) {
       throw new RateLimitWindowError(telegramIdFromUrl(url) ?? url, rateLimitedUntil)
     }
@@ -398,7 +396,7 @@ export class TelegramListPageLimitError extends Error {
 }
 
 async function listTelegrams(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   utcFrom: string,
   utcTo: string,
   includeTest: boolean,
@@ -423,7 +421,7 @@ async function listTelegrams(
     if (includeTest) params.set('test', 'including')
     if (cursorToken) params.set('cursorToken', cursorToken)
     const json = await getJson<{ items?: TelegramListItem[]; nextToken?: string }>(
-      `${API_BASE}/telegram?${params.toString()}`, apiKey, '電文の一覧', signal,
+      `${endpoint.apiBase}/telegram?${params.toString()}`, endpoint, '電文の一覧', signal,
     )
     const pageItems = json.items ?? []
     items.push(...pageItems)
@@ -603,7 +601,7 @@ function classifyTelegram(
  * > そちらだけを見て「無い」と結論しないこと（実測値と経緯は CLAUDE.md「調査レビュー」2026-09-11）。
  */
 async function listEewTelegrams(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   utcFrom: string,
   utcTo: string,
   fromTime: Date,
@@ -617,7 +615,7 @@ async function listEewTelegrams(
     const params = new URLSearchParams({ datetime: `${utcFrom}~${utcTo}`, limit: String(LIST_LIMIT) })
     if (cursorToken) params.set('cursorToken', cursorToken)
     const json = await getJson<{ items?: EewListItem[]; nextToken?: string }>(
-      `${API_BASE}/gd/eew?${params.toString()}`, apiKey, '緊急地震速報の一覧', signal,
+      `${endpoint.apiBase}/gd/eew?${params.toString()}`, endpoint, '緊急地震速報の一覧', signal,
     )
     events.push(...(json.items ?? []))
     if (!json.nextToken) break
@@ -658,7 +656,7 @@ async function listEewTelegrams(
       // 直列化する**ので瞬間 8req/s にはならない（同じ定数を使う電文本体の取得は
       // 6 秒の門で直列化されている）。
       const json = await getJson<{ items?: Array<{ telegrams?: TelegramListItem[] }> }>(
-        `${API_BASE}/gd/eew/${encodeURIComponent(ev.eventId)}`, apiKey, '緊急地震速報の詳細', signal,
+        `${endpoint.apiBase}/gd/eew/${encodeURIComponent(ev.eventId)}`, endpoint, '緊急地震速報の詳細', signal,
       )
       for (const rep of json.items ?? []) {
         for (const tg of rep.telegrams ?? []) {
@@ -673,7 +671,7 @@ async function listEewTelegrams(
             skipCounter.add(skipDayOf(tg.receivedTime))
             continue
           }
-          items.push({ ...tg, id: xmlId, originalId: undefined, url: `${TELEGRAM_DATA_BASE}${xmlId}` })
+          items.push({ ...tg, id: xmlId, originalId: undefined, url: `${endpoint.dataBase}${xmlId}` })
         }
       }
     } catch (e) {
@@ -806,7 +804,7 @@ class LiveBinaryTelegrams {
 /**
  * アーカイブが無い日の電文を集めて再生用エントリにする。
  *
- * @param apiKey DMDATA の APIキー
+ * @param endpoint 繋ぐ先と認証（→ `dmdataEndpoint.ts`）
  * @param fromTime 取得したい期間の始まり
  * @param toTime 取得したい期間の終わり（この時刻は含まない）
  * @param days 当日経路が担当する JST 日付（`resolveLiveDates` の結果）
@@ -815,7 +813,7 @@ class LiveBinaryTelegrams {
  *   一部だけ引けなかったときは投げず、引けた分を返して失敗を `failedSources` に記録する
  */
 export async function fetchLiveReplayEntries(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   fromTime: Date,
   toTime: Date,
   days: string[],
@@ -843,8 +841,8 @@ export async function fetchLiveReplayEntries(
   const wantsEew = eewHeadType !== null
   const noEew = { items: [] as TelegramListItem[], failedSources: [] as string[], skippedByDay: new Map<string, number>() as ReadonlyMap<string, number> }
   const settled = await Promise.allSettled([
-    wantsTelegrams ? listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal, null) : Promise.resolve([] as TelegramListItem[]),
-    wantsEew ? listEewTelegrams(apiKey, utcFrom, utcTo, fromTime, toTime, signal) : Promise.resolve(noEew),
+    wantsTelegrams ? listTelegrams(endpoint, utcFrom, utcTo, includeTest, signal, null) : Promise.resolve([] as TelegramListItem[]),
+    wantsEew ? listEewTelegrams(endpoint, utcFrom, utcTo, fromTime, toTime, signal) : Promise.resolve(noEew),
   ])
   /** 実際に引いた一覧の本数。全滅の判定の分母（引いていない一覧を「読めた」に数えない）。 */
   const attemptedLists = (wantsTelegrams ? 1 : 0) + (wantsEew ? 1 : 0)
@@ -909,7 +907,7 @@ export async function fetchLiveReplayEntries(
     try {
       // 二進電文（IXAC41）はテキストへ落とさず、分割の結合を経てから読む。
       if (isBinaryTelegramType(headType)) {
-        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, apiKey))
+        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, endpoint))
         if (binPayload === 'pending') return
         if (binPayload === 'unreadable') {
           log.warn(`[replay] 二進電文の読み取りに失敗しスキップ id=${item.id} type=${headType}`)
@@ -938,7 +936,7 @@ export async function fetchLiveReplayEntries(
         })
         return
       }
-      const xml = await fetchBody(item.url, apiKey)
+      const xml = await fetchBody(item.url, endpoint)
       const payload = buildXmlPayload(headType, xml, eewHeadType)
       if (!payload) {
         log.warn(`[replay] 電文のパースに失敗しスキップ id=${item.id} type=${headType}`)
@@ -1009,7 +1007,7 @@ async function collectHistoryTelegrams(
   targets: TelegramListItem[],
   times: ReadonlyMap<TelegramListItem, Date | null>,
   includeTest: boolean,
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   noteSkip: () => void,
 ): Promise<{
   quakes: JMAQuake[]; tsunamis: JMATsunami[]; extras: ReplayEntry[]
@@ -1034,7 +1032,7 @@ async function collectHistoryTelegrams(
     try {
       // 二進電文はテキストへ落とさず、分割の結合を経てから読む（`fetchLiveReplayEntries` と同じ）。
       if (isBinaryTelegramType(item.head.type)) {
-        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, apiKey))
+        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, endpoint))
         if (binPayload === 'pending') return
         if (binPayload === 'unreadable') {
           log.warn(`[replay] 履歴用の二進電文の読み取りに失敗しスキップ id=${item.id} type=${item.head.type}`)
@@ -1055,7 +1053,7 @@ async function collectHistoryTelegrams(
         return
       }
       // 履歴は緊急地震速報を扱わない（`HISTORY_EXTRA_TYPES` に入っていない）ので、取り込む EEW 種別は無し
-      const payload = buildXmlPayload(item.head.type, await fetchBody(item.url, apiKey), null)
+      const payload = buildXmlPayload(item.head.type, await fetchBody(item.url, endpoint), null)
       if (HISTORY_EXTRA_TYPES.has(item.head.type)) {
         if (payload === null || historyExtraKey(payload) === null) {
           log.warn(`[replay] 履歴用電文のパースに失敗しスキップ id=${item.id} type=${item.head.type}`)
@@ -1125,14 +1123,14 @@ async function collectHistoryTelegrams(
  * 日単位で呼ぶ。履歴の打ち切りが日単位のため（日の途中で切ると同一イベントの続報が分断され、
  * 震度速報だけのカードが残りうる）、複数日をまとめて取ると打ち切りの判断ができない。
  *
- * @param apiKey DMDATA の APIキー
+ * @param endpoint 繋ぐ先と認証（→ `dmdataEndpoint.ts`）
  * @param day 対象の JST 日付（YYYY-MM-DD）
  * @param before この時刻より後に受信した電文は採らない（＝再生開始時刻）
  * @returns 統合前の生の地震電文と取りこぼし件数
  * @throws 一覧 API が失敗した場合
  */
 export async function fetchLiveQuakeTelegrams(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   day: string,
   before: Date,
   includeTest: boolean,
@@ -1155,7 +1153,7 @@ export async function fetchLiveQuakeTelegrams(
   // 窓判定は上限を含まないため、1ms 足して同じ範囲にする。
   const until = new Date(before.getTime() + 1)
 
-  const list = await listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal, null)
+  const list = await listTelegrams(endpoint, utcFrom, utcTo, includeTest, signal, null)
   // **この関数は 1 日ぶんを担当する**（引数 `day`）ので、取りこぼしはすべてその日に付く。
   const skipCounter = createSkipCounter()
   /** 429 の窓で見送った電文の数。**取りこぼしとは別に数える**（待てば取れる）。 */
@@ -1181,7 +1179,7 @@ export async function fetchLiveQuakeTelegrams(
   }
 
   const { quakes, tsunamis, extras, rateLimitedTelegrams: bodyRateLimited } = await collectHistoryTelegrams(
-    targets, times, includeTest, apiKey, () => skipCounter.add(day),
+    targets, times, includeTest, endpoint, () => skipCounter.add(day),
   )
   rateLimitedTelegrams += bodyRateLimited
   return { quakes, tsunamis, extras, skippedByDay: skipCounter.toMap(), rateLimitedTelegrams }
@@ -1199,7 +1197,7 @@ export async function fetchLiveQuakeTelegrams(
  * @throws 一覧が失敗したとき。ページの上限に達したときは投げず、読めた分（窓の新しい側）を返して `reachedOnlyBack` に届いた端を入れる
  */
 export async function fetchLiveTelegramsBetween(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   from: Date,
   to: Date,
   includeTest: boolean,
@@ -1234,7 +1232,7 @@ export async function fetchLiveTelegramsBetween(
   let list: TelegramListItem[]
   let reachedOnlyBack: Date | null = null
   try {
-    list = await listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal, from)
+    list = await listTelegrams(endpoint, utcFrom, utcTo, includeTest, signal, from)
   } catch (err) {
     if (!(err instanceof TelegramListPageLimitError)) throw err
     list = [...err.items]
@@ -1260,6 +1258,6 @@ export async function fetchLiveTelegramsBetween(
       else targets.push(item)
     }
   }
-  const read = await collectHistoryTelegrams(targets, times, includeTest, apiKey, () => { skipped++ })
+  const read = await collectHistoryTelegrams(targets, times, includeTest, endpoint, () => { skipped++ })
   return { ...read, alreadyReceivedCount, skipped, reachedOnlyBack }
 }

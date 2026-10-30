@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { JMAQuake } from '../types/earthquake'
 import { fetchJmaQuakeHistory } from '../services/p2pquake'
 import { fetchDmdataGdEarthquakes, fetchDmdataGdEarthquakesBefore, type GdEarthquakeItem } from '../services/dmdata'
+import { dmdataKeyEndpoint } from '../services/dmdataEndpoint'
 import {
   heatMagnitude,
   magnitudeToWeight,
@@ -361,7 +362,7 @@ export function useQuakeHeatmap(
       // complete が偽（取れなかった日がある）なら控えない。控えると、同じ開始時刻で再生し直しても
       // 欠けた日が戻らないまま表示され続ける
       const loadReplay: Promise<{ points: KeyedHeatPoint[]; complete: boolean }> = isDmdss
-        ? fetchDmdataGdEarthquakesBefore(dmdataApiKey, replayAnchorMs, days, controller.signal)
+        ? fetchDmdataGdEarthquakesBefore(dmdataKeyEndpoint(dmdataApiKey), replayAnchorMs, days, controller.signal)
           .then(r => ({ points: fromGdItems(r.items), complete: r.failedDays.length === 0 }))
         : fetchJmaQuakeHistory(days, replayAnchorMs, controller.signal)
           .then(quakes => ({ points: fromJmaQuakes(quakes), complete: true }))
@@ -407,7 +408,7 @@ export function useQuakeHeatmap(
     let cancelled = false
     setTailLoading(true)
     const load = isDmdss
-      ? fetchDmdataGdEarthquakes(dmdataApiKey, days).then(fromGdItems)
+      ? fetchDmdataGdEarthquakes(dmdataKeyEndpoint(dmdataApiKey), days).then(fromGdItems)
       : fetchJmaQuakeHistory(days, null, null).then(fromJmaQuakes)
     load
       .then(result => {

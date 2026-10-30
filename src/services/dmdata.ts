@@ -15,12 +15,12 @@ import {
   EEW_HEAD_TYPES, type EewHeadType, DISPATCHED_WITHOUT_PARSER,
   NON_EEW_HANDLED_TYPES, isBinaryTelegramType, buildBinaryPayload, buildXmlPayload,
   isFilteredBinaryTelegram, telegramKindOfHeadType, telegramKindOfPayload,
-  TELEGRAM_DATA_BASE,
 } from './dmdataTelegramPayload'
 import type { ReplayPayload } from '../types/replay'
 import { BufrFragmentStore, fragmentKey } from './bufrTelegramAssembly'
 import { log, createLogThrottle } from '../utils/logger'
-import { authHeader, DmdataApiKeyError, dmdataApiKeyProblem, dmdataApiKeyMessage } from '../utils/dmdataApiKey'
+import { DmdataApiKeyError, dmdataApiKeyMessage } from '../utils/dmdataApiKey'
+import { dmdataKeyEndpoint, type DmdataEndpoint } from './dmdataEndpoint'
 import { fetchJsonOutcome, outcomeJson, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { fetchTelegramText } from './telegramBody'
 import { readTelegramOperationStatus } from '../utils/telegramOperationStatus'
@@ -30,7 +30,6 @@ import {
   type DmdataClassification,
 } from './dmdataClassifications'
 
-const API_BASE = 'https://api.dmdata.jp/v2'
 // 種別の集合は `dmdataTelegramPayload.ts` が単一情報源。ここで定義し直すと、種別を足したとき
 // ライブ側とリプレイ側が食い違う（同じ電文が経路によって出たり出なかったりする）。
 // 取り込まないと決めた側の EEW（予報を受けている人の VXSE43）の受信は本来起きない。起きるとすれば
@@ -143,11 +142,11 @@ function logRestFailure(what: string, status: number): void {
  * 「失敗時は空配列を返す」と約束している。約束を例外で破ると `Promise.all` の外まで飛んで
  * 起動時の復元全体を落とすため、保険として門を置く。
  *
- * この門を通ったあとの `authHeader` は同じ判定を再度行うが、そちらの throw へは到達しない。
- * 二重に見えるのは意図で、`authHeader` 側の判定は門を持たない経路（主系の取得・リプレイ）を守る。
+ * この門を通ったあとの `apiHeaders()` は同じ判定を再度行うが、そちらの throw へは到達しない。
+ * 二重に見えるのは意図で、`apiHeaders()` 側の判定は門を持たない経路（主系の取得・リプレイ）を守る。
  */
-function isApiKeyUsable(apiKey: string, what: string): boolean {
-  const problem = dmdataApiKeyProblem(apiKey)
+function isEndpointUsable(endpoint: DmdataEndpoint, what: string): boolean {
+  const problem = endpoint.problem()
   if (!problem) return true
   // 未設定か不正かを言い分ける。どちらもここへ来るのは呼び出し側が弾き忘れた場合だが、
   // 記録が理由を取り違えていると、入れた覚えのない文字を探させることになる。
@@ -262,7 +261,7 @@ export async function decodeTelegramBytes(msg: Record<string, unknown>): Promise
 }
 
 async function tryFetchTicket(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   classifications: readonly string[],
   includeTest: boolean,
   debug: boolean,
@@ -280,13 +279,13 @@ async function tryFetchTicket(
   // **上限を掛ける。** ここが黙ると再接続のバックオフも 409 の判定も走らず、ライブの受信が
   // 始まらないまま止まる（接続後の見張り `PING_WATCHDOG_MS` は繋がってからしか効かない）。
   // 上限に当たれば通信の失敗と同じく例外になり、呼び出し側の再接続へ乗る。
-  const res = await fetchJsonOutcome(`${API_BASE}/socket`, {
+  const res = await fetchJsonOutcome(`${endpoint.apiBase}/socket`, {
     timeoutMs: API_FETCH_TIMEOUT_MS,
     signal: null,
     init: {
       method: 'POST',
       headers: {
-        Authorization: authHeader(apiKey),
+        ...endpoint.apiHeaders(),
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -331,11 +330,11 @@ interface TicketResult {
  * @returns 途中で止められたら null
  */
 async function fetchTicketUrl(
-  apiKey: string, includeTest: boolean, debug: boolean, initial: readonly DmdataClassification[],
+  endpoint: DmdataEndpoint, includeTest: boolean, debug: boolean, initial: readonly DmdataClassification[],
   isStopped: () => boolean,
 ): Promise<TicketResult | null> {
   const result = await negotiateClassifications(
-    (classifications) => tryFetchTicket(apiKey, classifications, includeTest, debug),
+    (classifications) => tryFetchTicket(endpoint, classifications, includeTest, debug),
     initial,
     isStopped,
   )
@@ -400,15 +399,15 @@ export type ReleaseSocketOutcome = 'closed' | 'permanent' | 'transient'
  * @returns 閉じられたか、駄目だったならもう一度試す価値があるか
  */
 export async function releaseSocket(
-  apiKey: string, socketId: number, debug: boolean,
+  endpoint: DmdataEndpoint, socketId: number, debug: boolean,
 ): Promise<ReleaseSocketOutcome> {
   try {
     // 枠の解放も先に通す（塞がっている枠を返すのが早いほど、次の接続が早く繋がる）
     await waitForApiSlot({ urgent: true })
-    const res = await fetchJsonOutcome(`${API_BASE}/socket/${socketId}`, {
+    const res = await fetchJsonOutcome(`${endpoint.apiBase}/socket/${socketId}`, {
       timeoutMs: API_FETCH_TIMEOUT_MS,
       signal: null,
-      init: { method: 'DELETE', headers: { Authorization: authHeader(apiKey) } },
+      init: { method: 'DELETE', headers: endpoint.apiHeaders() },
     }, () => false)
     if (debug) dlog('socket の枠を返した', { socketId, status: res.status })
     if (!res.ok) {
@@ -561,6 +560,8 @@ export class DmdataWebSocket {
   onStarted: ((info: { previousAliveAtMs: number | null }) => void) | null = null
 
   private readonly debug: boolean
+  /** チケットの払い出しと枠の返却は自分の鍵の経路そのものなので、鍵から作る */
+  private readonly endpoint: DmdataEndpoint
 
   /** 受け取り済みの電文か（取り戻しで本体を取り直さないために使う） */
   hasReceivedTelegram(id: string): boolean {
@@ -568,7 +569,8 @@ export class DmdataWebSocket {
   }
 
   // includeTest: 試験報・訓練報（EEW 配信テスト VXSE42 等）も受信する（検証用）。
-  constructor(private apiKey: string, private includeTest = false) {
+  constructor(apiKey: string, private includeTest = false) {
+    this.endpoint = dmdataKeyEndpoint(apiKey)
     this.debug = isDebugEnabled(includeTest)
   }
 
@@ -596,7 +598,7 @@ export class DmdataWebSocket {
     this.onStatusChange?.('connecting')
     try {
       const ticket = await fetchTicketUrl(
-        this.apiKey, this.includeTest, this.debug, this.classifications ?? PREFERRED_CLASSIFICATIONS, () => this.stopped,
+        this.endpoint, this.includeTest, this.debug, this.classifications ?? PREFERRED_CLASSIFICATIONS, () => this.stopped,
       )
       if (ticket === null || this.stopped) return
       this.settleClassifications(ticket.classifications)
@@ -670,7 +672,7 @@ export class DmdataWebSocket {
       const id = this.lastSocketId
       // **待つ前に忘れる。** 同じ id へ二度 DELETE を投げないため
       this.lastSocketId = null
-      const outcome = await releaseSocket(this.apiKey, id, this.debug)
+      const outcome = await releaseSocket(this.endpoint, id, this.debug)
       // **一時的な失敗なら覚え直す。** ネットワーク断や配信元の 5xx で失敗しただけなら
       // 枠はまだ残っており、次に 409 を受けたときに試す価値がある。**忘れてしまうと、
       // 枠を返し損ねたセッションが PingTimeout まで自分を塞いだままになる**
@@ -1263,12 +1265,12 @@ class GdDayAbortError extends Error {}
  * 残りの日を投げずに失敗した日へ数える（配信が止まっている間に 31 件を投げ切らない）。
  */
 export async function fetchDmdataGdEarthquakesBefore(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   untilMs: number,
   days: number,
   signal: AbortSignal | null,
 ): Promise<{ items: GdEarthquakeItem[]; failedDays: string[] }> {
-  const headers = { Authorization: authHeader(apiKey) }
+  const headers = endpoint.apiHeaders()
   const fromMs = untilMs - days * DAY_MS
   const collected: GdEarthquakeItem[] = []
   let skippedNoTime = 0
@@ -1294,7 +1296,7 @@ export async function fetchDmdataGdEarthquakesBefore(
         const qs = cursorToken ? `&cursorToken=${cursorToken}` : ''
         // ページを辿るループなので枠を待つ（→ `services/dmdataRequestGates.ts`）
         await waitForApiSlot()
-        const res = await fetchJsonOutcome(`${API_BASE}/gd/earthquake?date=${date}&limit=100${qs}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers } }, (r) => r.ok)
+        const res = await fetchJsonOutcome(`${endpoint.apiBase}/gd/earthquake?date=${date}&limit=100${qs}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers } }, (r) => r.ok)
         if (!res.ok) {
           logRestFailure('震源カタログ (gd/earthquake・日付指定)', res.status)
           // キー・権限・頻度の失敗は日付に依らない。次の日を投げても同じ答えが返るだけなので、ここで投げる
@@ -1360,8 +1362,8 @@ export async function fetchDmdataGdEarthquakesBefore(
 // 新しい順（降順）で返る前提で、cutoff に達した時点で全ページの探索を打ち切る。
 // ただし走査できる範囲を読み切っても 1 件も残らなかった場合は例外を投げる（理由は関数末尾のコメント）。
 // gd.earthquake スコープが契約に含まれない場合は 403 で例外を投げる。
-export async function fetchDmdataGdEarthquakes(apiKey: string, days: number): Promise<GdEarthquakeItem[]> {
-  const headers = { Authorization: authHeader(apiKey) }
+export async function fetchDmdataGdEarthquakes(endpoint: DmdataEndpoint, days: number): Promise<GdEarthquakeItem[]> {
+  const headers = endpoint.apiHeaders()
   // 「いま」は実時間（`liveServerNow`）。`serverNow` はリプレイ中に再生時刻を返すので、再生を止めた直後
   // （時計が戻る前）に走る取り直しが過去を基準にして、ページ上限まで遡ってしまう。
   const cutoffMs = liveServerNow() - days * 24 * 60 * 60 * 1000
@@ -1381,7 +1383,7 @@ export async function fetchDmdataGdEarthquakes(apiKey: string, days: number): Pr
     // **ページを辿るループの中なので枠を待つ。** 応答が速ければ待ちなしで次のページへ
     // 進むため、門が無いと瞬間のレートが上限へ寄る（→ `services/dmdataRequestGates.ts`）。
     await waitForApiSlot()
-    const res = await fetchJsonOutcome(`${API_BASE}/gd/earthquake?limit=100${qs}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers } }, (r) => r.ok)
+    const res = await fetchJsonOutcome(`${endpoint.apiBase}/gd/earthquake?limit=100${qs}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers } }, (r) => r.ok)
     if (!res.ok) {
       // 呼び出し側は失敗の中身で挙動を変えないため、恒久（スコープ不足）と一時（500 等）の
       // 区別はここでログに残す。例外自体は従来どおり投げて取得を止める。
@@ -1631,7 +1633,7 @@ export function gdReportsEverSpecialWarning(items: readonly GdEewReportItem[]): 
  * 1 地震あたり数十リクエストになり、起動が目に見えて遅れる。
  */
 export async function fetchLatestEewReport(
-  apiKey: string, headers: Record<string, string>, eventId: string, eewHeadType: EewHeadType,
+  endpoint: DmdataEndpoint, eventId: string, eewHeadType: EewHeadType,
   /**
    * 履歴の待ち行列を追い越すか（→ `fetchTelegramText`）。**起動時に発表中の緊急地震速報を戻す経路だけが真**
    * —— 過去分の発生時刻を確かめる経路（`dmdataReplay.ts` の `fetchDmdataEewOrigins`）は急がないので偽。
@@ -1646,7 +1648,7 @@ export async function fetchLatestEewReport(
 ): Promise<LatestEewReport> {
   // **発表中の件数だけ繰り返し呼ばれる**ので枠を待つ（→ `services/dmdataRequestGates.ts`）。
   await waitForApiSlot()
-  const res = await fetchJsonOutcome(`${API_BASE}/gd/eew/${encodeURIComponent(eventId)}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers } }, (r) => r.ok)
+  const res = await fetchJsonOutcome(`${endpoint.apiBase}/gd/eew/${encodeURIComponent(eventId)}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers: endpoint.apiHeaders() } }, (r) => r.ok)
   if (!res.ok) { logRestFailure(`緊急地震速報の詳細 (${eventId})`, res.status); return { kind: 'failed' } }
   const json = outcomeJson<{ items?: GdEewReportItem[] }>(res)
   const items = json.items ?? []
@@ -1679,7 +1681,7 @@ export async function fetchLatestEewReport(
     // **`urgent` を渡して、履歴の待ち行列を追い越す。** 起動時は当日ぶんの履歴が同じ門に並ぶため、
     // 後ろへ回すと発表中の緊急地震速報が最悪 24 秒遅れて画面に出る —— いちばん見たいものが
     // 遅れるのは本末転倒。**間隔そのものは変えていない**（→ `utils/requestGate.ts`）。
-    const body = await fetchTelegramText(apiKey, `${TELEGRAM_DATA_BASE}${xmlId}`, { urgent })
+    const body = await fetchTelegramText(endpoint, `${endpoint.dataBase}${xmlId}`, { urgent })
     if (body.xml === null) {
       logRestFailure(`緊急地震速報の電文本体 (${xmlId})`, body.status ?? 0)
       continue
@@ -1730,11 +1732,11 @@ export async function fetchLatestEewReport(
  *   受けていなければ一覧も引かない。予報か警報かで、取り込む電文種別（VXSE45 / VXSE43）が変わる
  */
 export async function fetchDmdataActiveEews(
-  apiKey: string, classifications: readonly DmdataClassification[],
+  endpoint: DmdataEndpoint, classifications: readonly DmdataClassification[],
   /** 訓練・試験の報も戻すか（設定「試験報を受信（検証用）」。→ `fetchLatestEewReport`） */
   includeTest: boolean,
 ): Promise<EEWAlert[]> {
-  return (await fetchDmdataActiveEewsOutcome(apiKey, classifications, includeTest)).eews
+  return (await fetchDmdataActiveEewsOutcome(endpoint, classifications, includeTest)).eews
 }
 
 /** `fetchDmdataActiveEewsOutcome` の戻り値。 */
@@ -1757,7 +1759,7 @@ export interface ActiveEewsOutcome {
  * 配列だけを返す `fetchDmdataActiveEews` を使う。
  */
 export async function fetchDmdataActiveEewsOutcome(
-  apiKey: string, classifications: readonly DmdataClassification[],
+  endpoint: DmdataEndpoint, classifications: readonly DmdataClassification[],
   /** 訓練・試験の報も戻すか（設定「試験報を受信（検証用）」。→ `fetchLatestEewReport`） */
   includeTest: boolean,
 ): Promise<ActiveEewsOutcome> {
@@ -1766,9 +1768,9 @@ export async function fetchDmdataActiveEewsOutcome(
     log.info('[DMDSS] 緊急地震速報の区分を受けていないため、発表中の緊急地震速報を復元しません')
     return { eews: [], complete: true }
   }
-  if (!isApiKeyUsable(apiKey, `発表中の緊急地震速報 (${eewHeadType})`)) return { eews: [], complete: false }
+  if (!isEndpointUsable(endpoint, `発表中の緊急地震速報 (${eewHeadType})`)) return { eews: [], complete: false }
   let complete = true
-  const headers = { Authorization: authHeader(apiKey) }
+  const headers = endpoint.apiHeaders()
   const now = serverDate()
   const since = now.getTime() - ACTIVE_EEW_WINDOW_MS
   try {
@@ -1784,7 +1786,7 @@ export async function fetchDmdataActiveEewsOutcome(
       if (cursorToken) params.set('cursorToken', cursorToken)
       // **ページを辿るループの中なので枠を待つ**（→ `services/dmdataRequestGates.ts`）。
       await waitForApiSlot()
-      const res = await fetchJsonOutcome(`${API_BASE}/gd/eew?${params.toString()}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers } }, (r) => r.ok)
+      const res = await fetchJsonOutcome(`${endpoint.apiBase}/gd/eew?${params.toString()}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers } }, (r) => r.ok)
       // **集めた分は捨てない。** 2 ページ目以降で落ちたときに諦めると、1 ページ目で確認できて
       // いた発表中の緊急地震速報まで消える。ページが分かれるほど発表が集中している状況
       // （＝いちばん復元したい場面）でだけ起きるので、そこで全部を失うのは割に合わない。
@@ -1837,7 +1839,7 @@ export async function fetchDmdataActiveEewsOutcome(
       // ——JSON の破損・ネットワーク断——がそれを起こす）。複数が同時に発表中の場面こそ
       // この復元が効くところなので、そこで全滅させるのは割に合わない。
       try {
-        const found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, true, includeTest)
+        const found = await fetchLatestEewReport(endpoint, ev.eventId, eewHeadType, true, includeTest)
         if (found.kind === 'report') {
           // **第 1 報の時刻を載せる**（誤報取消の読み上げが言う時刻。→ `EEWAlert.firstIssueTime`）。拾えなければ
           // null を載せ、取消は時刻を言わずに読む —— 復元した最新報の時刻で代えると、第 1 報ではない時刻を言う
@@ -1925,15 +1927,15 @@ export interface DmdataEewListEvent {
  * @param toMs 期間の終わり（エポックミリ秒）
  */
 export async function fetchDmdataEewEventList(
-  apiKey: string, fromMs: number, toMs: number,
+  endpoint: DmdataEndpoint, fromMs: number, toMs: number,
 ): Promise<{ readonly events: DmdataEewListEvent[]; readonly complete: boolean }> {
   const events: DmdataEewListEvent[] = []
-  if (!isApiKeyUsable(apiKey, '緊急地震速報の一覧')) return { events, complete: false }
+  if (!isEndpointUsable(endpoint, '緊急地震速報の一覧')) return { events, complete: false }
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) {
     log.warn('[DMDSS] 緊急地震速報の一覧: 期間が不正なため取得しません', { fromMs, toMs })
     return { events, complete: false }
   }
-  const headers = { Authorization: authHeader(apiKey) }
+  const headers = endpoint.apiHeaders()
   // 一覧の `datetime` は **UTC の半開区間 [A, B)** で日付単位（`fetchDmdataActiveEews` と同じ）。
   // 終わりの日を含めるよう、終わりの翌日までを指定する。
   const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10)
@@ -1947,7 +1949,7 @@ export async function fetchDmdataEewEventList(
       if (cursorToken) params.set('cursorToken', cursorToken)
       // **ページを辿るループの中なので枠を待つ**（→ `services/dmdataRequestGates.ts`）。
       await waitForApiSlot()
-      const res = await fetchJsonOutcome(`${API_BASE}/gd/eew?${params.toString()}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers } }, (r) => r.ok)
+      const res = await fetchJsonOutcome(`${endpoint.apiBase}/gd/eew?${params.toString()}`, { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers } }, (r) => r.ok)
       if (!res.ok) {
         logRestFailure(`緊急地震速報の一覧（${pages + 1} ページ目・ここまで ${events.length} 件）`, res.status)
         return { events, complete: false }
