@@ -2147,8 +2147,8 @@ DMDSS 版は DMDATA の WebSocket、standard 版は P2PQuake の WebSocket が�
 
 ## 7. テストボタンが流す電文（`src/utils/testTelegramScripts.ts`）
 
-各テストボタンは、**置いてある実電文を本物の受信経路へ流す**。本節が単一情報源（CLAUDE.md
-「コード整合性チェックポイント」表からこの節がリンクされる側）。
+各テストボタンは、**置いてある実電文を本物の受信経路へ流す**。本節が単一情報源（[`docs/dev/code-consistency-checkpoints.md`](../dev/code-consistency-checkpoints.md)
+の表からこの節がリンクされる側）。
 
 ```
 ボタン → 台本（何を・いつ・どう書き換えて）→ 電文を読む → パーサー → 「いま」へ寄せる → 受信と同じキュー

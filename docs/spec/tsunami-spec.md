@@ -57,7 +57,7 @@
 その語で書く。**画面と声で述語を割らないこと** —— 同じ出来事を指していることが
 伝わらなくなる。読み上げ側の棚卸しは
 [`tts-sentence-inventory.md`](tts-sentence-inventory.md) §4-6 にあるが、**語をどう決めるかはここが
-単一情報源**（CLAUDE.md のコード整合性チェックポイントが `cancelReason` をこの節へ割り当てている）。
+単一情報源**（[`docs/dev/code-consistency-checkpoints.md`](../dev/code-consistency-checkpoints.md) の表が `cancelReason` をこの節へ割り当てている）。
 
 下記 §3「有効期限は報ではなく津波に付く」の節名は実装の概念名で、画面文言ではない。
 
