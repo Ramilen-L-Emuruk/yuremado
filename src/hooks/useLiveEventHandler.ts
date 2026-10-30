@@ -10,7 +10,7 @@ import { formatMagnitudeWithCondition, formatMagnitudeCondition } from '../utils
 import {
   eewMaxScaleInfo, isForecastScaleHigher, isForecastLpgmHigher, eewNoForecastReason, computeSingleEEWLevel, computeDisplayEEWLevel, canPresentLpgmClass,
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
-  EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo, isEewLpgmClassZeroForecast, statesEewLpgmClassZero,
+  EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast,
   isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewFirstIssueTime, eewCancelNotificationBody,
   eewSerial, eewIssueTimeMs, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, type EewNotifiedForecast,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
@@ -1329,7 +1329,9 @@ function eewOngoingTitleText(levels: ReadonlyMap<string, 0 | 1 | 2>, event: EEWA
   // 震央地名が空でも空白を残さない（→ `joinTitleParts`）
   return joinTitleParts(
     eewKindLabel(titleLevel), event.earthquake.hypocenter.name,
-    scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}予想` : '',
+    scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}予想`
+      // 最大予想震度 0 の報は通知と同じ「最大震度0予想」（→ `computeEEWTitle`）
+      : isEewScaleZeroForecast(event) ? '最大震度0予想' : '',
     levels.size > 1 ? `他${levels.size - 1}件` : '',
   )
 }
@@ -4301,9 +4303,25 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             // 句を足す条件と同値に保つこと —— ずれると、言っていない 0 が既読に入るか、言った 0 が既読に入らない。
             // 階級 0 は上がりようが無いので「高い値」の比較に乗らず、言ったかどうかを既読の印
             // （`zeroStated`）で別に持つ。**一度は必ず読む**（2026-10-29 ユーザー選択「一度は必ず読む (Recommended)」）。
+            const spokenScaleNow = spokenEEWScalesRef.current.get(key)
             const lpgmZeroStated = statesEewLpgmClassZero(latest, confirmedScale.scale, confirmedLpgm, settings.ttsReadEewLpgmClass)
+            // 震度 1 以上を言った地震が震度 0 へ下がった報では、階級 0 も言わない —— 読むと震度の句ごと全文になり、
+            // 下の「引き下げは黙る」が破れる（震度 0 の句と階級 0 の句は同じ発話に載る）。
             const lpgmZeroUnspoken = lpgmZeroStated
               && spokenEEWLpgmClassesRef.current.get(key)?.zeroStated !== true
+              && (confirmedScale.scale > 0 || (spokenScaleNow?.scale ?? 0) === 0)
+            // 電文が最大予想震度 0 と言い切った報か（「予想最大震度0。」を言う報）。予想震度なしも 0 も
+            // `scale: 0` なので値の比較に乗らず、言ったかどうかを既読の印（`zeroStated`）で別に持つ。
+            // 落とすと、予想震度なしで始まった地震が続報で 0 になっても黙る（2026-10-30 ユーザー選択
+            // 「予想最大震度 0 (Recommended)」）。
+            //
+            // **前に震度 1 以上を言った地震では言わない。** 3 → 0 は引き下げで、引き下げは黙る（下の
+            // 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。言うのは予想震度なしで始まった地震が
+            // 0 と言い切られたときと、初めから 0 の報だけ。
+            const scaleZeroStated = confirmedScale.scale === 0 && isEewScaleZeroForecast(latest)
+            const scaleZeroUnspoken = scaleZeroStated
+              && spokenScaleNow?.zeroStated !== true
+              && (spokenScaleNow?.scale ?? 0) === 0
             // 区分は引き下げない。一度「警報」と伝えた EEW は、以後 severity が落ちても
             // 「伝え済み」として扱う（前置きを言い直さない。activeEEWLevelsRef の Math.max と同じ方針）。
             const { level, spoken: spokenLevel, upgraded: levelUpgraded } = levelUpgradeOf(latest)
@@ -4317,6 +4335,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                 spokenEEWLpgmClassesRef.current.get(key),
               )
               && !lpgmZeroUnspoken
+              && !scaleZeroUnspoken
               && level <= spokenLevel) return null
             // 「緊急地震速報に切り替わりました。」は、予報として発報されたものが警報へ
             // 上がったときだけ。初報から警報なら第 1 フェーズが「緊急地震速報、〇〇で地震。」と
@@ -4337,6 +4356,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               && spokenScale !== undefined
               && spokenScale.scale === confirmedScale.scale
               && spokenScale.orAbove === confirmedScale.orAbove
+              && !scaleZeroUnspoken
             // 震度据え置きで、階級もまだ何も確定していなければ（confirmedLpgm=0）、実際に
             // 読むべき差分が無い。`level` は安定待ちを経ない生イベントから即座に計算されるため
             // （1536行目）、階級の安定待ちが完了する前に一時的に level だけが上がって上の
@@ -4427,7 +4447,10 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
              * 決める（下の `onSettled`）。
              */
             let yieldedToPendingScale = false
-            spokenEEWScalesRef.current.set(key, confirmedScale)
+            // 震度の句を省いた報（`scaleUnchanged`）でも、前に言った 0 の印は保つ（落とすと次の報で言い直す）
+            spokenEEWScalesRef.current.set(key, scaleZeroStated
+              && (!scaleUnchanged || prevSpokenScale?.zeroStated === true)
+              ? { ...confirmedScale, zeroStated: true } : confirmedScale)
             spokenEEWLpgmClassesRef.current.set(key, spokenLpgm)
             spokenEEWLevelsRef.current.set(key, level)
             eewPhase2DoneRef.current.add(key)
@@ -4651,7 +4674,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           eewLpgmStabilityRef.current.set(key, { info, since, timer })
         }
 
-        // 続報で震源が「まだ一度も声にしていない場所」へ動いたか（判定は `isUnannouncedHypocenter`。
+        // 続報で震源が「まだ一度も声にしていない地名」へ動いたか（判定は `isUnannouncedHypocenter`。
         // 比較の相手は**その EEW で声にした震源の全部**で、直前の 1 つではない）。
         const hypoFarMoved = !isNew && isUnannouncedHypocenter(
           activeEEWAnnouncedHypocentersRef.current.get(key) ?? [],
@@ -5149,6 +5172,17 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         if (confirmedScaleNow
           && statesEewLpgmClassZero(event, confirmedScaleNow.scale, eewConfirmedLpgmRef.current.get(key)?.cls ?? 0, settings.ttsReadEewLpgmClass)
           && spokenEEWLpgmClassesRef.current.get(key)?.zeroStated !== true
+          && !eewScaleStabilityRef.current.has(key)
+          && !eewLpgmStabilityRef.current.has(key)) {
+          enqueuePhase2()
+        } else if (confirmedScaleNow
+          // **最大予想震度 0 も同じ形で拾う**（予想震度なしも 0 も `scale: 0` なので、予想なしで始まった地震が
+          // 続報で 0 になっても値の変化として安定待ちに乗らない）。言った印は `EewMaxScaleInfo.zeroStated`。
+          // 判定は第 2 フェーズの `scaleZeroStated` と同じ（2026-10-30 ユーザー選択「予想最大震度 0 (Recommended)」）
+          && confirmedScaleNow.scale === 0 && isEewScaleZeroForecast(event)
+          && spokenEEWScalesRef.current.get(key)?.zeroStated !== true
+          && (spokenEEWScalesRef.current.get(key)?.scale ?? 0) === 0
+          && eewPhase2DoneRef.current.has(key)
           && !eewScaleStabilityRef.current.has(key)
           && !eewLpgmStabilityRef.current.has(key)) {
           enqueuePhase2()
@@ -6385,15 +6419,20 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           const restoredDisplayLevel = Math.max(prevActiveLevel, computeDisplayEEWLevel(eew)) as 0 | 1 | 2
           const restoredScale = eewMaxScaleInfo(eew)
           const restoredLpgm = eewMaxLpgmClassInfo(eew)
-          const spokenScale = prevSpokenScale && !isForecastScaleHigher(restoredScale, prevSpokenScale)
+          const spokenScaleBase = prevSpokenScale && !isForecastScaleHigher(restoredScale, prevSpokenScale)
             ? prevSpokenScale : restoredScale
+          // 「予想最大震度0。」も「予想最大階級0。」と同じく、T 時点までに言ったものとして扱う
+          // 前に言った震度が 1 以上でも印を付ける —— 付けないと、張り直しの後の最初の続報で窓の手前の 0 を言い直す
+          const spokenScale: EewMaxScaleInfo = isEewScaleZeroForecast(eew)
+            ? { ...spokenScaleBase, zeroStated: true }
+            : spokenScaleBase
           const spokenLpgmBase = prevSpokenLpgm && !isForecastLpgmHigher(restoredLpgm, prevSpokenLpgm)
             ? prevSpokenLpgm : restoredLpgm
           // 「予想最大階級0。」も T 時点までに言ったものとして扱う（他の値と同じく、窓の手前の報は発表済み）。
           // 落とすと、注入後の最初の続報で震度が据え置きのまま「予想最大階級0。」だけが鳴る。
           // 震度・設定を見ずに付けるのは意図どおり —— 窓の手前は値によらず発表済みとして扱い、注入後に
           // 震度が付いた・設定を入れたことを理由に、窓の手前の 0 を言い直さない
-          const spokenLpgm: EewMaxLpgmClassInfo = isEewLpgmClassZeroForecast(eew) && spokenLpgmBase.cls === 0
+          const spokenLpgm: EewMaxLpgmClassInfo = isEewLpgmClassZeroForecast(eew)
             ? { ...spokenLpgmBase, zeroStated: true }
             : spokenLpgmBase
           // 通知の基準の予想も進める（→ `eewNotifyBaselineRef`）。起動時の復元（基準が無い）では戻した報の値を基準にし、

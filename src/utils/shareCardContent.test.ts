@@ -29,12 +29,13 @@ function quake(over: { maxScale?: number; magnitude?: number; depth?: number; ti
 }
 
 function eew(
-  over: { severity?: string; scaleTo?: number; cancelled?: boolean; name?: string; condition?: string; originTime?: string; serial?: string; magnitude?: number; magnitudeCondition?: string } = {},
+  over: { severity?: string; scaleTo?: number; cancelled?: boolean; name?: string; condition?: string; originTime?: string; arrivalTime?: string; serial?: string; magnitude?: number; magnitudeCondition?: string } = {},
 ): EEWAlert {
   return {
     id: 'e1',
     earthquake: {
       originTime: over.originTime ?? '2026/08/24 12:34:00',
+      arrivalTime: over.arrivalTime ?? '',
       condition: over.condition ?? '',
       hypocenter: {
         name: over.name ?? '日向灘', latitude: 32, longitude: 131.6, depth: 30, magnitude: over.magnitude ?? 6.5,
@@ -151,9 +152,15 @@ describe('buildShareCardContent — 読めない時刻', () => {
   // 区切り（全角スペース）と並びが従来どおりであることを固定する。
   // 安全弁: **緊急地震速報はこのままにする。** あちらが出すのは `originTime`（地震発生時刻）で、
   // 電文が秒まで持つ。地震情報の側の時刻（発現時刻・秒なし）とは別物なので、一緒に変えない。
-  it('報番号と発生時刻が両方あれば従来どおり並べる（緊急地震速報）', () => {
+  // 2026-10-30 に変えた: 以前は「第3報　2026/08/24 12:34:00 発生」（ユーザー選択「2 つとも名前を付ける (Recommended)」）
+  it('報番号と発生時刻は、発生時刻に気象庁の名前を付けて並べる（緊急地震速報・発現時刻が無い報）', () => {
     const c = build(input({ mode: 'kyoshin', eews: [eew({ serial: '3' })] }))
-    expect(c.header.meta).toBe('第3報　2026/08/24 12:34:00 発生')
+    expect(c.header.meta).toBe('第3報　地震発生時刻 2026/08/24 12:34:00')
+  })
+
+  it('発現時刻があれば「地震発現時刻」の名前を付けて後ろに並べる（緊急地震速報）', () => {
+    const c = build(input({ mode: 'kyoshin', eews: [eew({ serial: '3', arrivalTime: '2026/08/24 12:34:20' })] }))
+    expect(c.header.meta).toBe('第3報　地震発生時刻 2026/08/24 12:34:00　地震発現時刻 2026/08/24 12:34:20')
   })
 
   it('緊急地震速報は発生時刻が読めなくても報番号を残す', () => {
@@ -333,6 +340,40 @@ describe('buildShareCardContent — 緊急地震速報', () => {
     expect(c.header.subtitle?.startsWith('震源調査中')).toBe(true)
     expect(c.header.subtitle).toContain('M6.5')
     expect(c.header.subtitle).toContain('予想最大震度')
+  })
+
+  // 2026-10-30 に足した（ユーザー選択「0 も階級も焼く (Recommended)」）。
+  // 正: 電文が最大予想震度 0 と言い切った報は「予想最大震度 0」を焼く。
+  it('最大予想震度 0 の報は「予想最大震度 0」と焼く', () => {
+    const zero = { ...eew(), areas: [], forecastMaxScaleBelow1: true } as EEWAlert
+    const c = build(input({ mode: 'kyoshin', eews: [zero] }))
+    expect(c.header.subtitle).toContain('予想最大震度 0')
+  })
+
+  // 対照: 予想を持たない報（0 と言い切っていない）は震度を焼かない。
+  it('予想を持たない報は予想最大震度を焼かない', () => {
+    const none = { ...eew(), areas: [] } as EEWAlert
+    const c = build(input({ mode: 'kyoshin', eews: [none] }))
+    expect(c.header.subtitle).not.toContain('予想最大震度')
+  })
+
+  // 正: 予想長周期地震動階級もカードと同じ語で焼く（程度以上も）。
+  it('予想長周期地震動階級を焼く', () => {
+    const lg = { ...eew(), forecastMaxLpgmClass: 2 } as EEWAlert
+    expect(build(input({ mode: 'kyoshin', eews: [lg] })).header.subtitle).toContain('予想長周期地震動 階級2')
+    const over = { ...eew(), forecastMaxLpgmClass: 4, forecastMaxLpgmClassOver: true } as EEWAlert
+    expect(build(input({ mode: 'kyoshin', eews: [over] })).header.subtitle).toContain('予想長周期地震動 階級4程度以上')
+  })
+
+  // 正: 電文が階級 0 と言い切った報は「階級0」を焼く。
+  it('予想長周期地震動階級 0 と言い切った報は「階級0」と焼く', () => {
+    const lg0 = { ...eew(), forecastMaxLpgmBelowClass1: true } as EEWAlert
+    expect(build(input({ mode: 'kyoshin', eews: [lg0] })).header.subtitle).toContain('予想長周期地震動 階級0')
+  })
+
+  // 安全弁: 階級を持たない報（0 と言い切っていない）には長周期の語を焼かない。
+  it('予想長周期地震動を持たない報は長周期の語を焼かない', () => {
+    expect(build(input({ mode: 'kyoshin', eews: [eew()] })).header.subtitle).not.toContain('長周期')
   })
 
   it('発報が無ければリアルタイム震度の見出しにする', () => {

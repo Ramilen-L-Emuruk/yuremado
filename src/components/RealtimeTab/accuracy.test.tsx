@@ -94,6 +94,21 @@ describe('EEW カードの「精度情報」', () => {
     expect(screen.getByText('震源とＭはこれ以降変わりません')).toBeTruthy()
   })
 
+  // 2026-10-30 に足した（ユーザー選択「rank と違うときだけ出す (Recommended)」）。
+  // 正: rank と違う rank2 は、震央の行の下に 1 行足して資料の語で出す。
+  it('rank2 が rank と違えば 1 行足す', () => {
+    renderTab(makeEEW({ epicenterRank: 7, epicenterRank2: 3, depthRank: 7 }))
+    const block = within(accuracyBlock()!)
+    expect(block.getByText('EPOS（海域〔観測網外〕）')).toBeTruthy()
+    expect(block.getByText('IPF法（3点／4点）')).toBeTruthy()
+  })
+
+  // 対照: rank と同じ rank2 は行を足さない。
+  it('rank2 が rank と同じなら行を足さない', () => {
+    renderTab(makeEEW({ epicenterRank: 4, epicenterRank2: 4, depthRank: 4 }))
+    expect(within(accuracyBlock()!).getAllByText('IPF法（5点以上）')).toHaveLength(1)
+  })
+
   it('rank2 が 9 でなければ出さない', () => {
     renderTab(makeEEW({ epicenterRank: 6, epicenterRank2: 4 }))
     expect(screen.queryByText('震源とＭはこれ以降変わりません')).toBeNull()

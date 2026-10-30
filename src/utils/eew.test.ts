@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { calcShakingDurationSec, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, EEW_HYPOCENTER_RESTATE_KM, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, isEewLpgmClassZeroForecast, statesEewLpgmClassZero } from './eew'
+import { calcShakingDurationSec, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast } from './eew'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
 
@@ -553,17 +553,14 @@ describe('isUnannouncedHypocenter（震源の言い直しを判定する）', ()
     expect(isUnannouncedHypocenter([NOTO_LAND], hypo('石川県能登地方', 30.0, 131.0))).toBe(false)
   })
 
-  it('対照: 地名が新しくても、名乗ったどれかの近くなら黙る（区域の境目をまたいだだけ）', () => {
-    expect(isUnannouncedHypocenter([NOTO_LAND], hypo('能登半島沖', 37.5, 136.7))).toBe(false)
+  // 2026-10-30 に覆した: 以前は名乗ったどれかから 50km 以内なら新しい地名でも黙っていた
+  // （ユーザー選択「新しい地名なら読む (Recommended)」）
+  it('正: 地名が新しければ、名乗った震源のすぐ近くでも言い直す（距離では黙らせない）', () => {
+    expect(isUnannouncedHypocenter([NOTO_LAND], hypo('能登半島沖', 37.5, 136.7))).toBe(true)
   })
 
-  it('境界: ちょうど下限の距離では黙る（超えたぶんだけ言い直す）', () => {
-    // 経度を固定して真北へ、ちょうど下限だけ離れた点を作る
-    const deltaDeg = EEW_HYPOCENTER_RESTATE_KM / 111.19492664455873
-    expect(isUnannouncedHypocenter([NOTO_LAND], hypo('別の場所', NOTO_LAND.lat + deltaDeg, NOTO_LAND.lng)))
-      .toBe(false)
-    expect(isUnannouncedHypocenter([NOTO_LAND], hypo('別の場所', NOTO_LAND.lat + deltaDeg * 1.01, NOTO_LAND.lng)))
-      .toBe(true)
+  it('安全弁: 地名が空の続報では言い直さない（「震源を更新、で地震。」を作らない）', () => {
+    expect(isUnannouncedHypocenter([NOTO_LAND], hypo('', 38.1, 135.9))).toBe(false)
   })
 
   it('安全弁: まだ何も名乗っていなければ偽（初報を読むかは別の判定が決める）', () => {
@@ -574,7 +571,7 @@ describe('isUnannouncedHypocenter（震源の言い直しを判定する）', ()
     expect(isUnannouncedHypocenter([NOTO_LAND], hypo('遠地地震', -200, -200))).toBe(false)
   })
 
-  it('安全弁: 位置を持たない記録は距離の比較に参加しないが、地名の一致では黙らせる', () => {
+  it('安全弁: 位置を持たない記録も地名の一致では黙らせる', () => {
     const unknownPos: AnnouncedHypocenter = { name: '震源不明', lat: null, lng: null }
     // 地名が違えば、位置を持たない記録は言い直しを止めない
     expect(isUnannouncedHypocenter([unknownPos], hypo('石川県能登地方', 37.4, 136.9))).toBe(true)
@@ -1118,6 +1115,21 @@ describe('震源要素の精度の表示', () => {
     expect(isEewHypocenterSettled(makeEEW({ accuracy: { epicenterRank2: 4 } }))).toBe(false)
     expect(isEewHypocenterSettled(makeEEW({ accuracy: { epicenterRank: 9 } }))).toBe(false)
     expect(isEewHypocenterSettled(makeEEW())).toBe(false)
+  })
+
+  // 2026-10-30 に足した（ユーザー選択「rank と違うときだけ出す (Recommended)」）
+  it('【正】rank2 が rank と違えば、rank2 を資料の語で返す', () => {
+    expect(eewEpicenterRank2Label({ epicenterRank: 7, epicenterRank2: 3 })).toBe('IPF法（3点／4点）')
+    expect(eewEpicenterRank2Label({ epicenterRank: 6, epicenterRank2: 1 })).toBe('P波／S波レベル超え、IPF法（1点）、または仮定震源要素')
+  })
+  it('【対照】rank と同じ値なら出さない', () => {
+    expect(eewEpicenterRank2Label({ epicenterRank: 4, epicenterRank2: 4 })).toBe('')
+  })
+  it('【安全弁】0（不明）・9（これ以降変化しない）・持たない報は出さない', () => {
+    expect(eewEpicenterRank2Label({ epicenterRank: 7, epicenterRank2: 0 })).toBe('')
+    expect(eewEpicenterRank2Label({ epicenterRank: 7, epicenterRank2: 9 })).toBe('')
+    expect(eewEpicenterRank2Label({ epicenterRank: 7 })).toBe('')
+    expect(eewEpicenterRank2Label(undefined)).toBe('')
   })
 })
 
@@ -1796,6 +1808,21 @@ describe('緊急地震速報の通知の本文と出し直し', () => {
     expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(0, 2)))).toBe('日向灘')
   })
 
+  // 2026-10-30 に足した（ユーザー選択「最大震度0予想 (Recommended)」「震度と並べて出す (Recommended)」）
+  it('本文: 最大予想震度 0 の報は「最大震度0予想」、電文が階級 0 と言い切れば「長周期地震動階級0予想」も添える', () => {
+    expect(eewNotificationBody('八丈島東方沖', eewNotifiedForecast(makeEEW({ forecastMaxScaleBelow1: true }))))
+      .toBe('八丈島東方沖 最大震度0予想')
+    expect(eewNotificationBody('八丈島東方沖', eewNotifiedForecast(makeEEW({
+      forecastMaxScaleBelow1: true, forecastMaxLpgmBelowClass1: true,
+    })))).toBe('八丈島東方沖 最大震度0予想 長周期地震動階級0予想')
+    expect(eewNotificationBody('日向灘', eewNotifiedForecast(withForecast(45, undefined, { forecastMaxLpgmBelowClass1: true }))))
+      .toBe('日向灘 最大震度5弱予想 長周期地震動階級0予想')
+  })
+
+  it('対照: 予想震度なしの報（印の無い 0）は今までどおり震度も階級も添えない', () => {
+    expect(eewNotificationBody('日向灘', eewNotifiedForecast(makeEEW({ forecastMaxLpgmBelowClass1: true })))).toBe('日向灘')
+  })
+
   it('正: 震度か階級が上がれば出し直す（「程度以上」が付いたのも上がった扱い）', () => {
     const before = eewNotifiedForecast(withForecast(45, 1))
     expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(50, 1)), before)).toBe(true)
@@ -1811,6 +1838,20 @@ describe('緊急地震速報の通知の本文と出し直し', () => {
 
   it('安全弁: まだ通知を出していない地震では出し直さない', () => {
     expect(raisesNotifiedForecast(eewNotifiedForecast(withForecast(70, 4)), undefined)).toBe(false)
+  })
+
+  it('正: 予想震度なしで通知した地震が、続報で震度 0・階級 0 と言い切ったら出し直す', () => {
+    const none = eewNotifiedForecast(makeEEW({}))
+    expect(raisesNotifiedForecast(eewNotifiedForecast(makeEEW({ forecastMaxScaleBelow1: true })), none)).toBe(true)
+    const zero = eewNotifiedForecast(makeEEW({ forecastMaxScaleBelow1: true }))
+    expect(raisesNotifiedForecast(eewNotifiedForecast(makeEEW({ forecastMaxScaleBelow1: true, forecastMaxLpgmBelowClass1: true })), zero)).toBe(true)
+  })
+
+  it('対照: 0 と通知済みの地震の同じ 0、震度 1 以上を通知した後の 0（引き下げ）では出し直さない', () => {
+    const zero = eewNotifiedForecast(makeEEW({ forecastMaxScaleBelow1: true }))
+    expect(raisesNotifiedForecast(eewNotifiedForecast(makeEEW({ forecastMaxScaleBelow1: true })), zero)).toBe(false)
+    const three = eewNotifiedForecast(withForecast(30))
+    expect(raisesNotifiedForecast(eewNotifiedForecast(makeEEW({ forecastMaxScaleBelow1: true })), three)).toBe(false)
   })
 })
 
@@ -1845,5 +1886,24 @@ describe('statesEewLpgmClassZero: 「予想最大階級0。」を言う報か', 
     expect(statesEewLpgmClassZero(zero, 0, 0, true)).toBe(false)
     expect(statesEewLpgmClassZero(zero, 40, 0, false)).toBe(false)
     expect(statesEewLpgmClassZero(zero, 40, 1, true)).toBe(false)
+  })
+  // 2026-10-30 に足した（ユーザー選択「震度と並べて出す (Recommended)」）
+  it('【正】最大予想震度 0 の報（震度を伝えている報）では、確定した震度が 0 でも真', () => {
+    expect(statesEewLpgmClassZero(makeEEW({ forecastMaxLpgmBelowClass1: true, forecastMaxScaleBelow1: true }), 0, 0, true)).toBe(true)
+  })
+})
+
+describe('isEewScaleZeroForecast: 電文が最大予想震度を 0 と言い切った報', () => {
+  it('【正】電文全体の印が立ち、区域に震度1以上が無い報は真', () => {
+    expect(isEewScaleZeroForecast(makeEEW({ forecastMaxScaleBelow1: true }))).toBe(true)
+  })
+  it('【対照】印の無い報（予想震度なし）は偽', () => {
+    expect(isEewScaleZeroForecast(makeEEW())).toBe(false)
+  })
+  it('【安全弁】印が立っていても区域に震度1以上があれば偽', () => {
+    expect(isEewScaleZeroForecast(makeEEW({
+      forecastMaxScaleBelow1: true,
+      areas: [{ pref: 'A県', name: 'A地域', scaleFrom: 10, scaleTo: 10, kindCode: '10', arrivalTime: null }],
+    }))).toBe(false)
   })
 })

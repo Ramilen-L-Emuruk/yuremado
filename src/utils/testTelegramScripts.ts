@@ -1637,14 +1637,15 @@ export const EEW_LATE_RETRACTION: TestTelegramScript = {
 const ASSUMED_HYPOCENTER = {
   lat: '+33.1', lon: '+132.4', depth: '-10000', magnitude: '1.0', description: 'Ｍ１．０',
   // 震央・深さはランク 1（1 点で決めた）、規模はランク 8（仮定震源要素）。→ `setEewAccuracy`
-  accuracy: { epicenter: 1, depth: 1, magnitude: 8, points: 0 },
+  // `rank2` も 1 に揃える（全期間の控えで、`rank` が 1〜4 の報の `rank2` は必ず同じ値か 9）。
+  accuracy: { epicenter: 1, epicenterRank2: 1, depth: 1, magnitude: 8, points: 0 },
 }
 
 /**
  * 緊急地震速報の震源要素を書き換える。**仮定震源要素・深発地震の形を作るのに使う** ——
  * サンプルにこの 2 つの形が無いため（2026-10-22 ユーザー選択「実電文を書き換えて足す」）。
  */
-function setEewHypocenter(doc: Document, v: { lat: string; lon: string; depth: string; magnitude: string; description: string; condition?: string; name?: string; code?: string; accuracy?: { epicenter: number; depth: number; magnitude: number; points: number } }): void {
+function setEewHypocenter(doc: Document, v: { lat: string; lon: string; depth: string; magnitude: string; description: string; condition?: string; name?: string; code?: string; accuracy?: EewAccuracyRewrite }): void {
   const coordinate = descendants(doc, 'Coordinate')[0]
   if (!coordinate) throw new Error('テスト用の電文に震源の座標がありません')
   const depthKm = Math.round(Math.abs(Number(v.depth)) / 1000)
@@ -1678,6 +1679,9 @@ function setEewHypocenter(doc: Document, v: { lat: string; lon: string; depth: s
   if (v.accuracy) setEewAccuracy(doc, v.accuracy)
 }
 
+/** `setEewAccuracy` へ渡す精度の値。 */
+interface EewAccuracyRewrite { epicenter: number; epicenterRank2: number; depth: number; magnitude: number; points: number }
+
 /**
  * 震源要素の精度（`Accuracy`）を書き換える。
  *
@@ -1686,7 +1690,7 @@ function setEewHypocenter(doc: Document, v: { lat: string; lon: string; depth: s
  * 「震源要素の精度」）。元にしたサンプルの値（IPF 法 5 点以上）のまま震源だけ差し替えると、
  * **実配信に無い組み合わせ**になり、精度欄にも「単独点処理」の理由づけにも出ない。
  */
-function setEewAccuracy(doc: Document, v: { epicenter: number; depth: number; magnitude: number; points: number }): void {
+function setEewAccuracy(doc: Document, v: EewAccuracyRewrite): void {
   const accuracy = descendants(doc, 'Accuracy')[0]
   if (!accuracy) throw new Error('テスト用の電文に震源要素の精度がありません')
   const set = (tag: string, attr: string, value: number): void => {
@@ -1695,6 +1699,7 @@ function setEewAccuracy(doc: Document, v: { epicenter: number; depth: number; ma
     el.setAttribute(attr, String(value))
   }
   set('Epicenter', 'rank', v.epicenter)
+  set('Epicenter', 'rank2', v.epicenterRank2)
   set('Depth', 'rank', v.depth)
   set('MagnitudeCalculation', 'rank', v.magnitude)
   const points = descendants(accuracy, 'NumberOfMagnitudeCalculation')[0]
@@ -1864,20 +1869,27 @@ export const EEW_NO_FORECAST: TestTelegramScript = {
 }
 
 /**
- * 予想震度0テスト（**予想震度が 0 の報**）。震度1 未満の予想で、カードは「震度1未満」と出す。
+ * 予想震度0テスト（**予想震度が 0 の報**）。震度1 未満の予想で、カードは「予想最大震度 0」と出す。
  * **サンプルに無い**ので、第 1 報の予想震度を 0 にして作る。
  */
+/**
+ * 予想震度0テストの最初の 2 報の精度。**`rank` と `rank2` が違う形**（震央が EPOS〔海域〕で、`rank2` が IPF法〔3点／4点〕）を、
+ * 実配信でいちばん多い組のまま入れる（全期間の控えで `rank`=7・`rank2`=3 の報 135 通のうち 101 通がこの組。
+ * 見本は 2022-07-31 の VXSE44 八丈島東方沖）。カードの精度の欄に `rank2` の行が出ることを確かめる入口。
+ */
+const FORECAST_ZERO_ACCURACY: EewAccuracyRewrite = { epicenter: 7, epicenterRank2: 3, depth: 7, magnitude: 6, points: 0 }
+
 export const EEW_FORECAST_ZERO: TestTelegramScript = {
   anchor: 0,
   stepByPress: { silenceMs: EEW_FINAL_SILENCE_MS },
   steps: [
     {
       file: BUNGO(1), headType: 'VXSE45', atMs: 0,
-      rewrite: xml => editXml(xml, doc => setForecastInt(doc, '0', '0')),
+      rewrite: xml => editXml(xml, doc => { setForecastInt(doc, '0', '0'); setEewAccuracy(doc, FORECAST_ZERO_ACCURACY) }),
     },
     {
       file: BUNGO(2), headType: 'VXSE45', atMs: 0,
-      rewrite: xml => editXml(xml, doc => setForecastInt(doc, '0', '0')),
+      rewrite: xml => editXml(xml, doc => { setForecastInt(doc, '0', '0'); setEewAccuracy(doc, FORECAST_ZERO_ACCURACY) }),
     },
     { file: BUNGO(3), headType: 'VXSE45', atMs: 0 },
     { file: BUNGO(3), headType: 'VXSE45', atMs: 0, rewrite: asFinal(4, 2) },

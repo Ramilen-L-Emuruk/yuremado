@@ -42,6 +42,16 @@ function makeEEW(over: {
 }
 
 describe('computeEEWTitle', () => {
+  it('最大予想震度 0 の報は通知と同じ「最大震度0予想」と名乗る（2026-10-30 ユーザー決定「全部出す」）', () => {
+    const eew = { ...makeEEW({ id: 'a', name: '八丈島東方沖', severity: 'Forecast' }), forecastMaxScaleBelow1: true } as EEWAlert
+    expect(computeEEWTitle(new Map([['a', eew]]))).toBe('地震動予報 八丈島東方沖 最大震度0予想')
+  })
+
+  it('対照: 予想震度なしの報は震度を名乗らない', () => {
+    const eews = new Map([['a', makeEEW({ id: 'a', name: '八丈島東方沖', severity: 'Forecast' })]])
+    expect(computeEEWTitle(eews)).toBe('地震動予報 八丈島東方沖')
+  })
+
   it('予報級だけなら「地震動予報」と名乗る', () => {
     const eews = new Map([['a', makeEEW({ id: 'a', name: '宮城県沖', severity: 'Forecast', scaleTo: 20 })]])
     expect(computeEEWTitle(eews)).toBe('地震動予報 宮城県沖 最大震度2予想')

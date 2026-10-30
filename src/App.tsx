@@ -32,6 +32,7 @@ import { usePublicWaves } from './hooks/usePublicWaves'
 import type { PublicStationMarker } from './components/Map/PublicStationMarkersGL'
 import { EarthquakeTab } from './components/EarthquakeTab'
 import { RealtimeTab } from './components/RealtimeTab'
+import { resetEewForecastChangeSeen } from './utils/eewForecastChangeSeen'
 import { useEewSpeakingCard } from './hooks/useEewSpeakingCard'
 import { TsunamiTab } from './components/TsunamiTab'
 import { SettingsTab } from './components/SettingsTab'
@@ -2023,6 +2024,8 @@ export function App() {
     // 別地点発報が黙って抑え込まれる（時刻の巻き戻りでは自動で切り替わるが、前へ飛ばした
     // 切替では発火しない）。
     resetKyoshinAlertsRef.current()
+    // 緊急地震速報の「予想が変わった」の帯を初めて見た時刻。残すと、同じ窓を再生し直したとき帯が一度も出ない。
+    resetEewForecastChangeSeen()
     // 2 つ目の地震と取り下げカードの記憶。時刻の巻き戻りでは自動で捨てるが、前へ飛ばした切替では
     // 旧い時間軸の「立ち上がった点」「降ろした検知」が残る
     reonsetStateRef.current = createReonsetState()
