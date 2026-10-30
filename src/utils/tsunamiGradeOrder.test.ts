@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL } from './tsunami'
+import { GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME } from './tsunami'
 import { tsunamiToText, tsunamiDowngradeToText } from './ttsText'
 import type { JMATsunami, TsunamiArea, TsunamiGrade } from '../types/earthquake'
 
@@ -79,8 +79,60 @@ describe('津波の等級を読む順', () => {
   // 上の「呼び名を欠いた文を作らない」が守れなくなる
   it('呼び名を持たない等級は Unknown だけ', () => {
     for (const grade of speakableGrades) {
-      expect(TSUNAMI_GRADE_SHORT_LABEL[grade]).not.toBe('')
+      expect(TSUNAMI_GRADE_NAME[grade]).not.toBe('')
     }
-    expect(TSUNAMI_GRADE_SHORT_LABEL.Unknown).toBe('')
+    expect(TSUNAMI_GRADE_NAME.Unknown).toBe('')
   })
+})
+
+/**
+ * 電文の名前で帯を分けた区域（「大津波警報：発表」と「大津波警報」）の並びを、カード・並べ替え・読み上げで共有すること
+ * （→ `splitAreasByKindName`）。カードだけで分けると、52 と 53 が混ざる報で読み上げの順がカードの上下を往復する。
+ */
+describe('電文の名前で分けた区域の並び', () => {
+  const issued = (name: string, code: string, h: number): TsunamiArea => ({
+    name, code, grade: 'MajorWarning', kindName: '大津波警報：発表', immediate: false,
+    maxHeight: { value: h, description: `${h}m` },
+  })
+  const kept = (name: string, code: string, h: number): TsunamiArea => ({
+    name, code, grade: 'MajorWarning', kindName: '大津波警報', immediate: false,
+    maxHeight: { value: h, description: `${h}m` },
+  })
+  // 電文順は「大津波警報」→「大津波警報：発表」→「大津波警報」と混ざる
+  const areas = [kept('岩手県', '210', 10), issued('青森県太平洋沿岸', '201', 10), kept('宮城県', '220', 10)]
+
+  it('正: 帯は電文の名前ごとに分かれ、「大津波警報：発表」が先に来る', async () => {
+    const { splitAreasByKindName } = await import('./tsunami')
+    expect(splitAreasByKindName(areas).map(p => [p.label, p.areas.map(a => a.name)])).toEqual([
+      ['大津波警報：発表', ['青森県太平洋沿岸']],
+      ['大津波警報', ['岩手県', '宮城県']],
+    ])
+  })
+
+  it('正: カードの並べ替えも同じ順になる（波高が同じでも名前の違う区域を 1 つの見出しへ混ぜない）', async () => {
+    const { groupAreasForCardDisplay, sortAreasAcrossGradesForCardDisplay } = await import('./tsunami')
+    expect(groupAreasForCardDisplay(areas, []).map(g => g.areas.map(a => a.name)))
+      .toEqual([['青森県太平洋沿岸'], ['岩手県', '宮城県']])
+    expect(sortAreasAcrossGradesForCardDisplay(areas, []).map(a => a.name))
+      .toEqual(['青森県太平洋沿岸', '岩手県', '宮城県'])
+  })
+
+  it('正: 読み上げも同じ順で区域を挙げる', () => {
+    const text = tsunamiToText({ ...makeTsunamiForOrder(areas) })
+    expect(text.indexOf('青森県太平洋沿岸')).toBeLessThan(text.indexOf('岩手県'))
+    expect(text.indexOf('岩手県')).toBeLessThan(text.indexOf('宮城県'))
+  })
+
+  it('対照: 名前を持たない区域（標準版）はアプリの呼び名に 1 つでまとまり、電文順を保つ', async () => {
+    const { splitAreasByKindName } = await import('./tsunami')
+    const plain = areas.map(({ kindName: _k, ...a }) => a)
+    expect(splitAreasByKindName(plain).map(p => [p.label, p.areas.map(a => a.name)])).toEqual([
+      ['大津波警報', ['岩手県', '青森県太平洋沿岸', '宮城県']],
+    ])
+  })
+
+  function makeTsunamiForOrder(list: TsunamiArea[]): JMATsunami {
+    const now = '2026-01-01T00:00:00Z'
+    return { kind: 'tsunami', id: 't', time: now, issue: { source: 'test', time: now, type: '' }, cancelled: false, areas: list } as unknown as JMATsunami
+  }
 })

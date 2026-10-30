@@ -8,7 +8,7 @@ import { getIntensityLabel } from '../../utils/intensity'
 import type { LpgmMarker } from '../../hooks/useQuakeLayerData'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { badgeHtml, escapeHtml } from './gl/popupHtml'
+import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
 import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
 import { ensureLpgmIcons, lpgmIconId, LPGM_ICON_BASE_RADIUS } from './gl/lpgmIcons'
 
@@ -45,6 +45,7 @@ function buildFC(markers: LpgmMarker[], iconScale: number): FeatureCollection<Po
       name: m.name,
       pref: m.pref,
       nonJma: m.nonJma ?? false,
+      code: m.code ?? '',
       // **周期帯の内訳は文字列にして渡す。** GeoJSON の properties は MapLibre を
       // 通ると配列やオブジェクトが素の形では戻らないため、読み出す側で復元する。
       int: m.int ?? -1,
@@ -143,6 +144,7 @@ function clickHtml(f: MapGeoJSONFeature): string {
       ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">揺れの大きさ 最大 ${escapeHtml(sva.toFixed(1))} cm/s</div>`
       : '') +
     lpgmPeriodsHtml(String(f.properties?.periodsJson ?? '')) +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
     `</div>`
   )
 }

@@ -4,7 +4,7 @@ import type { JMAQuake, JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiObser
 import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
 import { quakeEventKey, extractQuakeEventId } from '../../utils/quakeMerge'
 import { linkTsunamiSources } from '../../utils/tsunamiSourceLinks'
-import { groupAreasForCardDisplay, tsunamiLiftedAreas, matchesArea, observationBadges, observationHeightText, observationArrivalFallbackText, observationMaxHeightTimeText, estimationBadges, estimationHeightText, forecastHeightImportantBadge, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, isTsunamiGradeRaised, sourceEarthquakeTime, tsunamiAreaKey, tsunamiEventIds, evacuationActionLine, fallbackEvacuationAction, tideStationKey, arrivalConditionBadge, ARRIVAL_CONDITION_BADGE, type ObsUpdateMark, type ObsUpdateField, type TsunamiValueMarks, type EstimationUpdateField } from '../../utils/tsunami'
+import { groupAreasForCardDisplay, splitAreasByKindName, tsunamiLiftedAreas, matchesArea, observationBadges, observationHeightText, observationArrivalFallbackText, observationMaxHeightTimeText, estimationBadges, estimationHeightText, forecastHeightImportantBadge, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME, isTsunamiGradeRaised, sourceEarthquakeTime, tsunamiAreaKey, tsunamiEventIds, evacuationActionLine, fallbackEvacuationAction, tideStationKey, arrivalConditionBadge, ARRIVAL_CONDITION_BADGE, type ObsUpdateMark, type ObsUpdateField, type TsunamiValueMarks, type EstimationUpdateField } from '../../utils/tsunami'
 import { TSUNAMI_MISSING_COLOR as MISSING_COLOR } from '../../utils/tsunamiStyle'
 import { CANCEL_REASON_LABEL } from '../../utils/tsunamiCancelLabel'
 import { UPDATE_MARK_COLOR, type UpdateMark } from '../../utils/updateMark'
@@ -161,6 +161,14 @@ const GRADE_LABEL: Record<TsunamiGrade, string> = {
   Unknown:      '不明',
 }
 
+/** 官署の行（「編集官署 気象庁本庁　発表官署 気象庁」。地震カードと同じく区切り記号を置かず間隔で分ける）。片方しか無ければその片方だけ。どちらも無ければ空文字。 */
+function officeLine(issue: JMATsunami['issue']): string {
+  return [
+    issue.editorialOffice && `編集官署 ${issue.editorialOffice}`,
+    issue.publishingOffice && `発表官署 ${issue.publishingOffice}`,
+  ].filter(Boolean).join('　')
+}
+
 // 等級カードを積む順は読み上げと共有する（`GRADES_IN_CARD_ORDER`）。ここに独自の配列を置くと、
 // 読み上げの並びとカードの並びが片方だけ変わって追従スクロールが往復する。
 const GRADE_ORDER = GRADES_IN_CARD_ORDER
@@ -262,7 +270,8 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
     && area.lastGrade && area.lastGrade !== 'Unknown' && area.lastGrade !== area.grade
     ? {
       raised: isTsunamiGradeRaised(area.lastGrade, area.grade),
-      label: TSUNAMI_GRADE_SHORT_LABEL[area.lastGrade],
+      // 電文の名前（`LastKind/Name`。「大津波警報：発表」など）を優先する（2026-10-30 ユーザー選択「電文の名前を出す (Recommended)」）
+      label: area.lastKindName || TSUNAMI_GRADE_NAME[area.lastGrade],
     }
     : null
 
@@ -616,7 +625,7 @@ function TsunamiObservationRow({ obs, onObservationClick, canFocusObs, registerS
   )
 }
 
-function TsunamiGradeCard({ grade, areas, observations, onObservationClick, canFocusObs, onAreaFocus, focusedDistrict, registerRow, registerSpeechRow, registerSpeechAnchor, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks }: { grade: TsunamiGrade; areas: TsunamiArea[]; observations: TsunamiObservation[]; onObservationClick?: (name: string) => void; canFocusObs: (name: string) => boolean; onAreaFocus?: (name: string) => (() => void) | undefined; focusedDistrict?: FocusedDistrict | null; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void; registerSpeechAnchor: (keys: string[], el: HTMLElement | null) => void; obsUpdateStatus?: Map<string, ObsUpdateMark>; areaGradeChangedKeys?: ReadonlySet<string>; tsunamiValueMarks: TsunamiValueMarks }) {
+function TsunamiGradeCard({ grade, label, isFirstOfGrade, areas, observations, onObservationClick, canFocusObs, onAreaFocus, focusedDistrict, registerRow, registerSpeechRow, registerSpeechAnchor, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks }: { grade: TsunamiGrade; label: string; isFirstOfGrade: boolean; areas: TsunamiArea[]; observations: TsunamiObservation[]; onObservationClick?: (name: string) => void; canFocusObs: (name: string) => boolean; onAreaFocus?: (name: string) => (() => void) | undefined; focusedDistrict?: FocusedDistrict | null; registerRow?: (area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => void; registerSpeechRow?: (keys: string[], el: HTMLElement | null) => void; registerSpeechAnchor: (keys: string[], el: HTMLElement | null) => void; obsUpdateStatus?: Map<string, ObsUpdateMark>; areaGradeChangedKeys?: ReadonlySet<string>; tsunamiValueMarks: TsunamiValueMarks }) {
   if (areas.length === 0) return null
   const style = getGradeStyle(grade)
   const groups = groupAreasForCardDisplay(areas, observations)
@@ -624,7 +633,9 @@ function TsunamiGradeCard({ grade, areas, observations, onObservationClick, canF
     /* 等級を告げたときの合わせ先は**カード全体**。帯だけを見ると、帯が視野の下端に映って
        いるだけで「収まっている」と判定して動かない ―― それでは等級を言った時点でカードの頭に
        来ない。全体を範囲にすれば視野に収まらない限り送られ、上端（＝帯）に揃う。 */
-    <div ref={el => registerSpeechRow?.(speechRowKeys({ kind: 'grade', grade }), el)}
+    // 同じ等級が電文の名前で 2 枚に分かれたときは、等級を告げたときの合わせ先を先頭の 1 枚にだけ登録する
+    // （2 枚目で上書きすると、読み上げが等級を言った時点で後ろのカードへ飛ぶ）。
+    <div ref={isFirstOfGrade ? (el => registerSpeechRow?.(speechRowKeys({ kind: 'grade', grade }), el)) : undefined}
       className="bg-card rounded-lg overflow-hidden"
       style={{ border: `2px solid ${style.cardBorder}`, boxShadow: `0 0 0 1px ${style.cardBorder}40` }}>
       {/* 区域を読むときの合わせ先はこの帯（どの等級の話かが視野から消えないように） */}
@@ -635,7 +646,7 @@ function TsunamiGradeCard({ grade, areas, observations, onObservationClick, canF
       }}
         className="w-full py-1.5 px-4 text-center text-xs font-bold tracking-widest"
         style={{ backgroundColor: style.headerBg, color: style.headerColor, borderBottom: `1px solid ${style.headerBorder}` }}>
-        {GRADE_LABEL[grade]}
+        {label}
       </div>
       {groups.map((group, gi) => (
         <div key={gi}>
@@ -752,10 +763,10 @@ function TsunamiCancelledRow({ area, style, onAreaFocus, isChanged, isTop, regis
           >
             {area.name}
           </span>
-          {/* 等級の呼び名は読み上げと共有する（`TSUNAMI_GRADE_SHORT_LABEL`）。**前回の等級を読めない区域は「解除」とだけ
+          {/* 等級の呼び名は読み上げと共有する（`TSUNAMI_GRADE_NAME`）。**前回の等級を読めない区域は「解除」とだけ
               出す**（2026-10-21 ユーザー選択「「解除」とだけ出す」。全期間 19,906 区域で 0 件）。 */}
           <span className="block mt-1" style={{ fontSize: '0.8125rem', color: style.arrivalColor }}>
-            {area.lastGrade && area.lastGrade !== 'Unknown' ? `${TSUNAMI_GRADE_SHORT_LABEL[area.lastGrade]}を解除` : '解除'}
+            {area.lastGrade && area.lastGrade !== 'Unknown' ? `${TSUNAMI_GRADE_NAME[area.lastGrade]}を解除` : '解除'}
           </span>
         </div>
       </div>
@@ -1503,6 +1514,14 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 </div>
               )}
             </div>
+            {/* 見出し文（電文の `Head/Headline/Text`）。**見出しの下に原文のまま出す**（改行も保つ。2026-10-30 ユーザー選択
+                「カードに出す (Recommended)」。書き方の内訳は tsunami-spec.md §4）。最新の報のものを出す
+                （統合は新報の見出し文を採る）。取消・解除の表示中も出す（その報の見出し文なので）。 */}
+            {active[0]?.headline && (
+              <div className="mt-0.5" style={{ fontSize: '0.6875rem', color: isCancelledDisplay ? '#9ca3af' : topStyle.headerColor, lineHeight: 1.5, whiteSpace: 'pre-line' }}>
+                {active[0].headline}
+              </div>
+            )}
             {/* 行動指示の行。**気象庁の避難行動の付加文があればそれを出す**（無ければアプリの文）。
                 ここはこれまでアプリが書いた文だけを出していたが、公式の文があるならそちらが正しい
                 （→ CLAUDE.md「利用者へ出す語を気象庁の表現と揃える」）。採れる条件は
@@ -1545,10 +1564,12 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 「A 情報名の行の後ろ (Recommended)」）。行を足さないのでバナーの高さも右上の幅も変わらない。
                 **`issue.source` は見ない** —— 発表官署へ落ちるので「編集官署」と名乗ると事実を誤らせる。
                 最新の報の官署を出す（統合は新報の `issue` を採る）。取消・解除の表示中も出す。 */}
-            {(active[0]?.infoName || active[0]?.issue.editorialOffice) && (
+            {/* 発表官署（`Control/PublishingOffice`）を編集官署の隣に「編集官署 …　発表官署 …」の形で添える
+                （2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・地震カードと同じ形）。 */}
+            {(active[0]?.infoName || active[0]?.issue.editorialOffice || active[0]?.issue.publishingOffice) && (
               <div className="mt-0.5" style={{ fontSize: '0.625rem', color: isCancelledDisplay ? '#6b7280' : topStyle.headerColor, opacity: 0.6 }}>
                 {active[0].infoName}
-                {active[0].issue.editorialOffice && `${active[0].infoName ? '　' : ''}編集官署 ${active[0].issue.editorialOffice}`}
+                {officeLine(active[0].issue) && `${active[0].infoName ? '　' : ''}${officeLine(active[0].issue)}`}
               </div>
             )}
             {/* 気象庁が書いた取消しの概要（電文の `Body/Text`）。アプリの定型文（上の `cancelInfo.desc`）
@@ -1661,13 +1682,15 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 <span className="text-sm font-bold text-white/90 mt-1">{cancelInfo.desc}</span>
               </div>
             )}
-            {GRADE_ORDER.map(grade => (
+            {GRADE_ORDER.flatMap(grade => splitAreasByKindName(t.areas.filter(a => a.grade === grade)).map((part, partIndex) => (
               <TsunamiGradeCard
                 canFocusObs={canFocusObs}
                 onAreaFocus={onAreaFocus}
-                key={grade}
+                key={`${grade}-${part.label}`}
                 grade={grade}
-                areas={t.areas.filter(a => a.grade === grade)}
+                label={part.label || GRADE_LABEL[grade]}
+                isFirstOfGrade={partIndex === 0}
+                areas={part.areas}
                 observations={observations}
                 onObservationClick={onObservationClick}
                 focusedDistrict={focusedDistrict}
@@ -1678,7 +1701,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 areaGradeChangedKeys={areaGradeChangedKeys}
                 tsunamiValueMarks={tsunamiValueMarks}
               />
-            ))}
+            )))}
             {/* この報で解除された区域。等級カードの後ろ＝いちばん軽い遷移先として置く
                 （読み上げも引き下げの組の最後に読む）。
 

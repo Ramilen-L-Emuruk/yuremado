@@ -1,7 +1,7 @@
 import type { FeatureCollection, Point } from 'geojson'
 import { mercatorProps } from './screenDepth'
 import type { DetectedPoint } from '../../../utils/kyoshinDetectionView'
-import { kyoshinIndexToJma } from '../../../utils/kyoshinIntensity'
+import { kyoshinIndexToJma, kyoshinSubZeroStep, kyoshinSubZeroStepRatio } from '../../../utils/kyoshinIntensity'
 import type { IntensityGrade } from '../../../utils/measuredIntensity'
 import { getScaleRadius } from '../../../utils/intensity'
 import { kyoshinDetectedIconId, kyoshinDetectedSubZeroIconId, KYOSHIN_DETECTED_ICON_BASE_RADIUS } from './kyoshinDetectedIcons'
@@ -22,17 +22,26 @@ function detectedRadius(jma: IntensityGrade, iconScale: number, bonus: number): 
   return jma.label !== '0' ? (getScaleRadius(jma.scale) + bonus) * iconScale : ((bonus + 3) / 2) * iconScale
 }
 
-/** 震度0 未満の印の半径。震度0 のバッジ（`(bonus + 3) / 2`）より一回り小さくする */
-function subZeroRadius(iconScale: number, bonus: number): number {
-  return ((bonus + 3) / 2) * 0.7 * iconScale
+// 震度0 未満の印の半径を、震度0 のバッジ（`(bonus + 3) / 2`）に対する比で段ごとに決める。
+// 弱い段 0.6 → 強い段 1.0（2026-10-30 ユーザー選択「明るさと大きさで段を付ける (Recommended)」の説明文
+// 「半径も震度0 のバッジ（4.5px）の 6〜10 割へ段ごとに大きくする」）。いちばん強い段は震度0 と同じ大きさになるが、
+// 震度0 は「0」の文字と灰の濃さで見分けられる
+const SUB_ZERO_RADIUS_RATIO_MIN = 0.6
+const SUB_ZERO_RADIUS_RATIO_MAX = 1.0
+
+/** 震度0 未満の印の半径（段 = `kyoshinSubZeroStep` の戻り値） */
+function subZeroRadius(step: number, iconScale: number, bonus: number): number {
+  const ratio = SUB_ZERO_RADIUS_RATIO_MIN + (SUB_ZERO_RADIUS_RATIO_MAX - SUB_ZERO_RADIUS_RATIO_MIN) * kyoshinSubZeroStepRatio(step)
+  return ((bonus + 3) / 2) * ratio * iconScale
 }
 
 /**
  * 点列 → バッジ feature 列。**欠測（インデックスが負）の点は描かない。**
  *
- * 震度0 未満（計測震度が 0.0 未満）の点は、文字なしの小さな淡い灰色の印で描く
+ * 震度0 未満（計測震度が 0.0 未満）の点は、文字なしの小さな印で描く
  * （2026-10-29 ユーザー「すみません、地図に書かない決まりを撤回したいです。検知しているなら描画するべきだと思います」、
- * 同日ユーザー選択「文字なしの小さな印 (Recommended)」）。値が下がりきった点で地図が埋まらないよう、
+ * 同日ユーザー選択「文字なしの小さな印 (Recommended)」）。印は計測震度 −3.0〜−0.5 の 6 段ごとに明るさと大きさを変え、
+ * 広がりが読めるようにする（2026-10-30 ユーザー選択「明るさと大きさで段を付ける (Recommended)」）。値が下がりきった点で地図が埋まらないよう、
  * 震度0 未満が続いた点は束の側で描く点から外してある（`kyoshinEnsembleTracker` の `drawnKeys`）。
  */
 function buildFeatures(points: DetectedPoint[], iconScale: number, confirmed: boolean) {
@@ -42,12 +51,13 @@ function buildFeatures(points: DetectedPoint[], iconScale: number, confirmed: bo
   return points.flatMap((p) => {
     if (!(p.index >= 0)) return []
     const jma = kyoshinIndexToJma(p.index)
-    const radius = jma ? detectedRadius(jma, iconScale, bonus) : subZeroRadius(iconScale, bonus)
+    const step = kyoshinSubZeroStep(p.index)
+    const radius = jma ? detectedRadius(jma, iconScale, bonus) : subZeroRadius(step, iconScale, bonus)
     return [{
       type: 'Feature' as const,
       properties: {
         index: p.index,
-        iconId: jma ? kyoshinDetectedIconId(jma.rank, confirmed) : kyoshinDetectedSubZeroIconId(confirmed),
+        iconId: jma ? kyoshinDetectedIconId(jma.rank, confirmed) : kyoshinDetectedSubZeroIconId(step, confirmed),
         iconSizeRatio: radius / KYOSHIN_DETECTED_ICON_BASE_RADIUS,
         // 欠測ホールドで直前値を描いている点。レイヤー側が icon-opacity を落として
         // 「そこに点はあるが今は値が無い」と示す（utils/kyoshinMissingHold.ts）。

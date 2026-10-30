@@ -9,7 +9,7 @@ import type { LatLng } from '../../utils/stationCoords'
 import { haversineKm } from '../../utils/geo'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { badgeHtml, escapeHtml } from './gl/popupHtml'
+import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
 import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
 import { ensureIntensityIcons, intensityIconId, INTENSITY_ICON_BASE_RADIUS } from './gl/intensityIcons'
 
@@ -70,6 +70,7 @@ function popupProperties(m: IntensityMarker, epicenter: LatLng | null) {
     region: m.region ?? '',
     isArea: m.isArea,
     nonJma: m.nonJma ?? false,
+    code: m.code ?? '',
     // 震源が無い電文では距離を出さない（-1 を「不明」の番兵として扱う）。
     distanceKm: epicenter
       ? Math.round(haversineKm(epicenter[0], epicenter[1], m.position[0], m.position[1]))
@@ -140,6 +141,7 @@ function clickHtml(f: MapGeoJSONFeature): string {
       `>${escapeHtml(quakePointPopupTitle(f))}</div>` +
     (sub ? `<div style="margin-top:2px;font-size:11px;color:#94a3b8">${escapeHtml(sub)}</div>` : '') +
     rows +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
     `</div>`
   )
 }

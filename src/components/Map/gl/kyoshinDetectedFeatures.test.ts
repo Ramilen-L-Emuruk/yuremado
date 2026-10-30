@@ -27,8 +27,8 @@ describe('buildDetectedFC: 震度0未満は文字なしの印で描き、欠測�
   it('正: 震度0未満（index 0〜5）の点は文字なしの印の feature になる', () => {
     const fc = buildDetectedFC([P(35, 139, IDX_BELOW_ZERO), P(35.1, 139.1, 0)], [], 1)
     expect(fc.features.map((f) => f.properties?.iconId)).toEqual([
-      'kyoshin-detected-badge-subzero-confirmed',
-      'kyoshin-detected-badge-subzero-confirmed',
+      'kyoshin-detected-badge-subzero-5-confirmed',
+      'kyoshin-detected-badge-subzero-0-confirmed',
     ])
   })
 
@@ -45,7 +45,7 @@ describe('buildDetectedFC: 震度0未満は文字なしの印で描き、欠測�
     )
     expect(fc.features.map((f) => f.properties?.iconId)).toEqual([
       'kyoshin-detected-badge-0-confirmed',
-      'kyoshin-detected-badge-subzero-confirmed',
+      'kyoshin-detected-badge-subzero-5-confirmed',
       'kyoshin-detected-badge-1-confirmed',
     ])
   })
@@ -53,15 +53,44 @@ describe('buildDetectedFC: 震度0未満は文字なしの印で描き、欠測�
   it('unconfirmed 側の震度0未満は candidate の印になる', () => {
     const fc = buildDetectedFC([], [P(35, 139, IDX_BELOW_ZERO), P(35.1, 139.1, IDX_SHINDO0)], 1)
     expect(fc.features.map((f) => f.properties?.iconId)).toEqual([
-      'kyoshin-detected-badge-subzero-candidate',
+      'kyoshin-detected-badge-subzero-5-candidate',
       'kyoshin-detected-badge-0-candidate',
     ])
   })
 
-  it('震度0未満の印は震度0のバッジより小さい', () => {
+  it('対照: いちばん強い段（index 5）の印は震度0のバッジを超えない（選んだ案の「6〜10 割」の上端）', () => {
     const fc = buildDetectedFC([P(35, 139, IDX_BELOW_ZERO), P(35.1, 139.1, IDX_SHINDO0)], [], 1)
     const [sub, zero] = fc.features.map((f) => f.properties?.iconSizeRatio as number)
-    expect(sub).toBeLessThan(zero)
+    expect(sub).toBeCloseTo(zero!)
+  })
+
+  it('いちばん弱い段（index 0）の印は震度0のバッジの 6 割', () => {
+    const fc = buildDetectedFC([P(35, 139, 0), P(35.1, 139.1, IDX_SHINDO0)], [], 1)
+    const [sub, zero] = fc.features.map((f) => f.properties?.iconSizeRatio as number)
+    expect(sub).toBeCloseTo(zero! * 0.6)
+  })
+})
+
+// 2026-10-30 ユーザー選択「明るさと大きさで段を付ける (Recommended)」。6 段とも同じ印だったため、
+// 検知の広がり（震源側ほど強い）が地図から読めなかった。
+describe('buildDetectedFC: 震度0未満は 6 段で描き分ける', () => {
+  it('正: 段が上がるほど印が大きくなり、段ごとに別の印になる', () => {
+    const fc = buildDetectedFC([0, 1, 2, 3, 4, 5].map((i) => P(35 + i * 0.1, 139, i)), [], 1)
+    const sizes = fc.features.map((f) => f.properties?.iconSizeRatio as number)
+    for (let i = 1; i < sizes.length; i++) expect(sizes[i]).toBeGreaterThan(sizes[i - 1]!)
+    expect(new Set(fc.features.map((f) => f.properties?.iconId)).size).toBe(6)
+  })
+
+  it('対照: 段の大きさは確信度の差（確定＞早い段）を保つ', () => {
+    const fc = buildDetectedFC([P(35, 139, 3)], [P(36, 140, 3)], 1)
+    const [confirmed, candidate] = fc.features.map((f) => f.properties?.iconSizeRatio as number)
+    expect(confirmed).toBeGreaterThan(candidate!)
+  })
+
+  it('安全弁: 段の大きさにも iconScale が掛かる', () => {
+    const one = buildDetectedFC([P(35, 139, 2)], [], 1).features[0]?.properties?.iconSizeRatio as number
+    const two = buildDetectedFC([P(35, 139, 2)], [], 2).features[0]?.properties?.iconSizeRatio as number
+    expect(two).toBeCloseTo(one * 2)
   })
 })
 

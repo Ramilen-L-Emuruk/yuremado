@@ -57,6 +57,8 @@ export interface IntensityMarker {
    * とき観測値にまで印が付く（カード側に同じ規律がある → docs/spec/quake-spec.md §4）。
    */
   unreceived?: boolean
+  /** 電文の観測点コード・区域コード（吹き出しの末尾に添える → `popupCodeHtml`） */
+  code?: string
 }
 
 /** 震源ポップアップに出す都道府県別の最大震度。 */
@@ -90,6 +92,8 @@ export interface RegionAggregate {
    * 区域塗りの吹き出しに出す。**市町村の震度を載せない報（震度速報・標準版）では空**。
    */
   cities: JMAQuakeCity[]
+  /** 区域コード（電文の `Area/Code`。吹き出しの末尾に添える） */
+  code?: string
 }
 
 export interface LpgmMarker {
@@ -113,6 +117,8 @@ export interface LpgmMarker {
   nonJma?: boolean
   sva?: number
   periods?: LpgmPeriodBand[]
+  /** 観測点コード（吹き出しの末尾に添える） */
+  code?: string
 }
 
 export interface LpgmRegionAggregate {
@@ -134,6 +140,8 @@ export interface LpgmRegionAggregate {
    * 観測点の顔ぶれと階級・震度まで（内訳は観測点の吹き出しとカードの観測点の行が持つ）
    */
   stations: LpgmStationRow[]
+  /** 区域コード（電文の `Area/Code`。吹き出しの末尾に添える） */
+  code?: string
 }
 
 /**
@@ -254,6 +262,7 @@ export function useQuakeLayerData(
         region: p.isArea ? p.addr : lookupStationRegion(stationCoords, pref, p.addr),
         ...(p.nonJma && { nonJma: true }),
         ...(p.unreceived && { unreceived: true }),
+        ...(p.code && { code: p.code }),
       })
     })
     return markers.sort((a, b) => a.scale - b.scale)
@@ -415,15 +424,18 @@ export function useQuakeLayerData(
       if (list) list.push(c)
       else citiesByArea.set(c.area, [c])
     }
+    const codeByArea = new Map<string, string>()
+    for (const p of quake?.points ?? []) if (p.isArea && p.code) codeByArea.set(p.addr, p.code)
     const list: RegionAggregate[] = []
     for (const e of subregionIndex) {
       const scale = regionMaxByName.get(e.sr.name)
       if (scale != null) {
-        list.push({ name: e.sr.name, scale, rings: e.sr.rings, label: e.sr.label, cities: citiesByArea.get(e.sr.name) ?? [] })
+        const code = codeByArea.get(e.sr.name)
+        list.push({ name: e.sr.name, scale, rings: e.sr.rings, label: e.sr.label, cities: citiesByArea.get(e.sr.name) ?? [], ...(code && { code }) })
       }
     }
     return list.sort((a, b) => a.scale - b.scale)
-  }, [subregionIndex, regionMaxByName, quakeCities])
+  }, [subregionIndex, regionMaxByName, quakeCities, quake])
 
   /**
    * 区域塗りに現れない未入電の地点（引いた画でも出す分）。
@@ -512,6 +524,7 @@ export function useQuakeLayerData(
         ...(p.int !== undefined && { int: p.int }),
         ...(p.sva !== undefined && { sva: p.sva }),
         ...(p.periods && { periods: p.periods }),
+        ...(p.code && { code: p.code }),
       })
     }
     return markers.sort((a, b) => a.lgInt - b.lgInt)
@@ -522,6 +535,7 @@ export function useQuakeLayerData(
     if (!lpgmActive || !lpgm?.regions?.length || !subregions) return []
     const maxByName = new Map(lpgm.regions.map((r) => [r.name, r.maxLgInt]))
     const maxIntByName = new Map(lpgm.regions.map((r) => [r.name, r.maxInt]))
+    const codeByName = new Map(lpgm.regions.map((r) => [r.name, r.code]))
     // 並べ方はカードの一覧と同じ順位表で決める（→ `sortLpgmStations`。カードは `EarthquakeCard` の `lpgmGroups`）
     const order = stationCoords ? regionOrderIndexOf(stationCoords) : null
     const stationsByArea = lpgmStationsByArea(lpgm.points ?? [], name => regionOrderRank(name, order))
@@ -533,6 +547,7 @@ export function useQuakeLayerData(
         name: sr.name, maxLgInt: maxByName.get(sr.name)!, rings: sr.rings, label: sr.label,
         ...(maxIntByName.get(sr.name) !== undefined && { maxInt: maxIntByName.get(sr.name) }),
         stations: stationsByArea.get(sr.name) ?? [],
+        ...(codeByName.get(sr.name) && { code: codeByName.get(sr.name) }),
       }))
       .sort((a, b) => a.maxLgInt - b.maxLgInt)
   }, [lpgmActive, lpgm, subregions, stationCoords])

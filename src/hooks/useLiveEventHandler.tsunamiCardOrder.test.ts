@@ -240,14 +240,14 @@ describe('区域単位で等級が動いた報: 組の中の区域もカード�
       obs('石巻港', '宮城県', '220', 1.0),
       obs('いわき市小名浜', '福島県', '250', 5.0),
     ]))
-    expect(speeches[1]?.text).toBe('福島県、宮城県の津波注意報が津波予報に切り替えられました。')
+    expect(speeches[1]?.text).toBe('福島県、宮城県の津波注意報が津波予報（若干の海面変動）に切り替えられました。海の中にいる人はただちに海から上がって、海岸から離れてください。')
     expect(result.current.focusedDistrict?.top?.name).toBe('福島県')
   })
 
   // 対照: 引き継ぐ観測点が無ければ並べ替える材料が無く、電文順のまま
   it('引き継ぐ観測点が無ければ電文順で読む', async () => {
     const result = await feedPartialLift(watchAnnounce())
-    expect(speeches[1]?.text).toBe('宮城県、福島県の津波注意報が津波予報に切り替えられました。')
+    expect(speeches[1]?.text).toBe('宮城県、福島県の津波注意報が津波予報（若干の海面変動）に切り替えられました。海の中にいる人はただちに海から上がって、海岸から離れてください。')
     expect(result.current.focusedDistrict?.top?.name).toBe('宮城県')
   })
 
@@ -261,6 +261,6 @@ describe('区域単位で等級が動いた報: 組の中の区域もカード�
       observations: [obs('石巻港', '宮城県', '220', 1.0), obs('いわき市小名浜', '福島県', '250', 5.0)],
     })
     await feedPartialLift(watchAnnounce(), otherEvent)
-    expect(speeches[1]?.text).toBe('宮城県、福島県の津波注意報が津波予報に切り替えられました。')
+    expect(speeches[1]?.text).toBe('宮城県、福島県の津波注意報が津波予報（若干の海面変動）に切り替えられました。海の中にいる人はただちに海から上がって、海岸から離れてください。')
   })
 })

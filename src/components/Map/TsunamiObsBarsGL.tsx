@@ -6,6 +6,7 @@ import {
   barMetrics, popupOffset, BAR_RADIUS, BAR_RING_COLOR, BADGE_SHADOW_BLUR, BADGE_SHADOW_COLOR,
 } from './gl/tsunamiObsBar'
 import { overSuffixedHeight, observationFirstWaveText, observationMaxHeightTimeText } from '../../utils/tsunami'
+import { popupCodeLineHtml } from './gl/popupHtml'
 import { attachTsunamiMarkerPopup, type TsunamiMarkerPopup } from './gl/tsunamiMarkerPopup'
 
 // 津波観測棒（波高バー）を描画する MapLibre 版（Leaflet の tsunami-obs-bars 相当）。
@@ -31,6 +32,7 @@ export function obsBarTooltipHtml(bar: TsunamiObsBar): string {
     `<div class="text-xs" style="color:${bar.color}">${esc(desc)}</div>` +
     (maxTime ? `<div class="text-xs" style="color:#e5e7eb">${esc(maxTime)}</div>` : '') +
     (firstWave ? `<div class="text-xs" style="color:#e5e7eb">${esc(firstWave)}</div>` : '') +
+    popupCodeLineHtml(bar.code) +
     `</div>`
   )
 }

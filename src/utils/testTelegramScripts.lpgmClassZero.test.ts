@@ -95,3 +95,27 @@ describe('長周期地震動（階級0の地域）テストの電文', async () 
     expect(original!.regions?.some(r => r.maxLgInt === 0)).toBe(false)
   })
 })
+
+// 「必ず読み上げる長周期地震動階級」で階級 0 を選べる（2026-10-30 ユーザー選択「足す (Recommended)」）。
+//   正  : 階数 0（最上位の階級だけ）でも、必ず読む階級を 0 にすると階級 0 の「富山県東部」まで読む
+//   対照: 必ず読む階級が 1 なら、階数の外の階級 0 は読まない
+//   安全弁: 無効（-1）でも階級 0 を読まない
+describe('必ず読み上げる長周期地震動階級に階級 0 を選んだとき', async () => {
+  const { lpgmToText } = await import('./ttsText')
+  const [first0] = await telegramLpgms('LPGM_CLASS_ZERO_REGION')
+  const opts = (alwaysReadLpgmClass: number) => ({
+    intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass, regionTolerance: 0,
+  })
+
+  it('階級 0 を選ぶと、階数の外の階級 0 の地域も読む', () => {
+    expect(lpgmToText(first0, opts(0), true)).toContain('階級0を富山県東部で')
+  })
+
+  it('階級 1 なら階級 0 は読まない', () => {
+    expect(lpgmToText(first0, opts(1), true)).not.toContain('階級0')
+  })
+
+  it('無効（-1）でも階級 0 は読まない', () => {
+    expect(lpgmToText(first0, opts(-1), true)).not.toContain('階級0')
+  })
+})

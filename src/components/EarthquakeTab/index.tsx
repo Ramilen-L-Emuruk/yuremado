@@ -1,5 +1,5 @@
 import { memo, useRef } from 'react'
-import type { JMAQuake, JMALpgm, JMAEstimatedIntensity } from '../../types/earthquake'
+import type { JMAQuake, JMALpgm, JMAEstimatedIntensity, JMAInternationalTsunami } from '../../types/earthquake'
 import { EarthquakeCard } from './EarthquakeCard'
 import { LoadMoreButton } from './LoadMoreButton'
 import { extractQuakeEventId, quakeEventKey } from '../../utils/quakeMerge'
@@ -7,6 +7,7 @@ import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import type { SeismoWaveCollapsedView } from '../../hooks/useSettings'
 import { lpgmMarkKey, type QuakeCardMarks } from '../../utils/quakeUpdateMark'
 import { estimatedIntensityFor } from '../../utils/estimatedIntensity'
+import { internationalTsunamisFor } from '../../utils/internationalTsunami'
 import type { LatLng } from '../../utils/stationCoords'
 import { quakeCardScrollTarget, QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
 import { useFollowScroll } from '../../hooks/useFollowScroll'
@@ -64,6 +65,8 @@ interface Props {
    * ここで引き当て、カードへはその地震の 1 通だけを渡す（→ `EarthquakeCard` の同名の props）。
    */
   estimatedIntensities: readonly JMAEstimatedIntensity[]
+  /** 国際津波関連情報（WEPA60）の全件。遠地地震のカードが発生時刻で引く（→ `internationalTsunamisFor`） */
+  internationalTsunamis: readonly JMAInternationalTsunami[]
   /** 震度分布モードを開いている地震の `eventKey`。 */
   distributionQuakeKey: string | null
   onToggleDistribution: (eventKey: string) => void
@@ -125,7 +128,7 @@ function HistoryNotice({ tone, children }: { tone: 'loss' | 'info'; children: Re
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, internationalTsunamis, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 寄せる相手と寄せ直す合図は `quakeCardScrollTarget`、寄せ方は共有のフック（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。
@@ -218,6 +221,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
           activeLpgmEventId={activeLpgmEventId}
           onToggleLpgm={onToggleLpgm}
           estimatedIntensity={estimatedIntensityFor(quake, estimatedIntensities)}
+          internationalTsunamis={internationalTsunamisFor(quake, internationalTsunamis)}
           distributionActive={quakeEventKey(quake) === distributionQuakeKey}
           onToggleDistribution={onToggleDistribution}
           unreceivedActive={quakeEventKey(quake) === unreceivedQuakeKey}

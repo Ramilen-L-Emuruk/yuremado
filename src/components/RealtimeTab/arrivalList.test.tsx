@@ -192,6 +192,47 @@ describe('EEW カードの到達予測一覧', () => {
     expect(screen.queryByText('まもなく')).toBeNull()
   })
 
+  // 2026-10-30 に足した（ユーザー選択「区域名の下に小さく出す (Recommended)」）。
+  // 正: PLUM 法の区域の時刻は「初めて予測した時刻」として区域名の下へ添え、右端は「時刻不明」のまま。
+  it('PLUM 法の区域は、初めて予測した時刻を区域名の下へ添える', () => {
+    // after(-120) = 2026-01-01T11:58:30Z = 20:58:30 JST（テストは Asia/Tokyo で走る）
+    renderTab(makeEEW([area({ name: '秋田県沿岸北部', kindCode: '19', arrivalTime: after(-120) })]))
+    expect(screen.getByText('20:58:30 に予測開始')).toBeTruthy()
+    expect(screen.getByText('時刻不明')).toBeTruthy()
+  })
+
+  // 対照: 予測時刻を持つ区域・到達済みの区域には添えない。
+  it('PLUM 法でない区域には予測開始の時刻を添えない', () => {
+    renderTab(makeEEW([
+      area({ name: '宮城県北部', arrivalTime: after(42) }),
+      area({ name: '青森県三八上北', kindCode: '11', arrived: true }),
+    ]))
+    expect(screen.queryByText(/に予測開始$/)).toBeNull()
+  })
+
+  // 安全弁: 読めない時刻は添えない（「NaN:NaN」のような壊れた行を出さない）。
+  it('PLUM 法の区域の時刻が読めなければ添えない', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      renderTab(makeEEW([area({ name: '壊れたPLUM区域', kindCode: '19', arrivalTime: 'これは日時ではない' })]))
+      expect(screen.queryByText(/に予測開始$/)).toBeNull()
+      expect(screen.getByText('時刻不明')).toBeTruthy()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // 2026-10-30 に足した（ユーザー選択「右下に小さく出す (Recommended)」）。
+  it('電文が名乗る情報名をカードに出す', () => {
+    renderTab({ ...makeEEW([]), infoName: '緊急地震速報（地震動予報）' })
+    expect(screen.getByText('緊急地震速報（地震動予報）')).toBeTruthy()
+  })
+
+  it('情報名を持たない報では出さない', () => {
+    renderTab(makeEEW([]))
+    expect(screen.queryByText('緊急地震速報（地震動予報）')).toBeNull()
+  })
+
   // 安全弁: 並びは時間の順 —— 到達済み → 未到達（早い順）→ 到達時刻が判らないもの。
   // 電文の並び順に依存していないこと、PLUM が途中へ挟まらないことの両方を見る。
   it('到達済み → 未到達（早い順）→ PLUM の順に並べる', () => {
@@ -221,5 +262,23 @@ describe('EEW カードの到達予測一覧', () => {
     renderTab(makeEEW([area({ name: '時刻なし区域', kindCode: '00' })]))
     expect(screen.queryByText('時刻なし区域')).toBeNull()
     expect(screen.queryByText('主要動の到達（予測）')).toBeNull()
+  })
+})
+
+// 電文が最大予想長周期地震動階級を 0 と言い切った報のバッジ。押すと開く区域塗りは階級 0 を予想した
+// 区域を灰色で塗るので、塗れる区域が 1 つも無い報では押せない形のまま出す（押しても地図が空になるため）。
+describe('予想長周期地震動 階級0 のバッジ', () => {
+  const lpgmZero = (areas: EEWRegion[]): EEWAlert => ({ ...makeEEW(areas), forecastMaxLpgmBelowClass1: true })
+  const badge = () => screen.getByText('予想長周期地震動').closest('button, div')
+
+  it('正: 階級 0 を予想した区域があれば押せる形（ボタン）で出す', () => {
+    renderTab(lpgmZero([area({ name: '宮城県北部', arrivalTime: after(10), lgIntBelowClass1: true })]))
+    expect(badge()?.tagName).toBe('BUTTON')
+  })
+
+  it('対照: 塗れる区域が無ければ押せない形で出す（「階級0」の語は出す）', () => {
+    renderTab(lpgmZero([area({ name: '宮城県北部', arrivalTime: after(10) })]))
+    expect(badge()?.tagName).toBe('DIV')
+    expect(screen.getByText('階級0')).toBeTruthy()
   })
 })

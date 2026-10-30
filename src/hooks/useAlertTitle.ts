@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { EEWAlert, JMATsunami } from '../types/earthquake'
-import { eewMaxScale, eewMaxScaleInfo, eewKindLabel, computeDisplayEEWLevel } from '../utils/eew'
+import { eewMaxScale, eewMaxScaleInfo, eewKindLabel, computeDisplayEEWLevel, isEewScaleZeroForecast } from '../utils/eew'
 import { getIntensityLabelWithApproxAbove } from '../utils/intensity'
 import { CANCEL_REASON_LABEL } from '../utils/tsunamiCancelLabel'
 import { log } from '../utils/logger'
@@ -51,7 +51,9 @@ export function computeEEWTitle(eews: ReadonlyMap<string, EEWAlert>): string {
     .reduce<0 | 1 | 2>((m, e) => Math.max(m, computeDisplayEEWLevel(e)) as 0 | 1 | 2, 0)
   return joinTitleParts(
     eewKindLabel(maxLevel), primary.earthquake.hypocenter.name,
-    scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}予想` : '',
+    scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale, orAbove)}予想`
+      // 最大予想震度 0 の報は通知と同じ「最大震度0予想」（2026-10-30 ユーザー決定「全部出す」）
+      : isEewScaleZeroForecast(primary) ? '最大震度0予想' : '',
     eews.size > 1 ? `他${eews.size - 1}件` : '',
   )
 }

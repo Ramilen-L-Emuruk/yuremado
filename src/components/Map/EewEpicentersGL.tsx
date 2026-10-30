@@ -3,6 +3,7 @@ import type { MapGeoJSONFeature } from 'maplibre-gl'
 import { useMapGL } from './mapGLContext'
 import type { EewEpicenter } from '../../hooks/useEewLayerData'
 import { getIntensityColor, getIntensityLabelWithApproxAbove } from '../../utils/intensity'
+import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 import { formatMagnitudeWithCondition, formatDepth, hasDepth } from '../../utils/formatters'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { addOrderedLayer } from './gl/layerOrder'
@@ -156,7 +157,9 @@ export function buildPopupHtml(ep: EewEpicenter): string {
   // 仮定震源要素の報は震源が確定していない。数値を鵜呑みにしないよう明示する
   // （×印の形を輪つきにする判定と同じ isAssumed を使い、判定を二重に持たない）。
   const provisional = ep.isAssumed
-  const scaleLabel = getIntensityLabelWithApproxAbove(ep.maxScale, ep.maxScaleOrAbove)
+  // 最大予想震度 0 の報は「0」を震度0 の灰色で出す（カードと同じ。2026-10-30 ユーザー決定「全部出す」）
+  const scaleLabel = ep.maxScaleZero ? '0' : getIntensityLabelWithApproxAbove(ep.maxScale, ep.maxScaleOrAbove)
+  const scaleColor = ep.maxScaleZero ? SHINDO0_COLOR : getIntensityColor(ep.maxScale)
   return (
     `<div style="min-width:170px">` +
     `<div style="display:flex;align-items:baseline;gap:8px">` +
@@ -177,7 +180,7 @@ export function buildPopupHtml(ep: EewEpicenter): string {
     `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px">` +
     // 上限が定まらない報は「4以上」と出す。値だけにすると下限を断定した表示になる
     // （語を出す箇所の一覧は docs/spec/eew-spec.md §4）。
-    `${badgeHtml(scaleLabel, getIntensityColor(ep.maxScale))}` +
+    `${badgeHtml(scaleLabel, scaleColor)}` +
     `<span style="color:#cbd5e1;white-space:nowrap">予想最大震度 ${escapeHtml(scaleLabel)}</span>` +
     `<span style="color:${kindColor};font-weight:700;white-space:nowrap">${kind}</span></div>` +
     // 地名まで含めて仮の値であることを言い切る。カードの「（震源未確定）」だけでは

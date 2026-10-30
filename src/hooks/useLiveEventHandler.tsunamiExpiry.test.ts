@@ -148,8 +148,8 @@ describe('津波の失効時刻の読み上げ（フックの結線）', () => {
     await settle()
     handle(makeReport(allAt('Forecast', 'Warning'), EXPIRY))
     await settle()
-    expect(spokenTexts()[1]).toContain('津波予報に切り替えられました')
-    expect(spokenTexts()[1]).toContain('この津波予報の失効時刻は、17時0分です。')
+    expect(spokenTexts()[1]).toContain('津波予報（若干の海面変動）に切り替えられました')
+    expect(spokenTexts()[1]).toContain('この津波予報（若干の海面変動）の失効時刻は、17時0分です。')
   })
 
   // 対照: 期限を持たない引き下げ報では言わない。**実電文では期限が付くのは 1 通だけ**で、
@@ -170,8 +170,8 @@ describe('津波の失効時刻の読み上げ（フックの結線）', () => {
     const { handle } = setup()
     handle(makeReport(allAt('Forecast'), EXPIRY))
     await settle()
-    expect(spokenTexts()[0]).toContain('津波予報が発表されました')
-    expect(spokenTexts()[0]).toContain('この津波予報の失効時刻は、17時0分です。')
+    expect(spokenTexts()[0]).toContain('津波予報（若干の海面変動）が発表されました')
+    expect(spokenTexts()[0]).toContain('この津波予報（若干の海面変動）の失効時刻は、17時0分です。')
   })
 
   // **「一度言ったら黙る」はここでは見ていない。** この経路の既読は
@@ -191,7 +191,7 @@ describe('津波の失効時刻の読み上げ（フックの結線）', () => {
     handle(makeReport(allAt('Forecast', 'Forecast'), '2024-01-03T17:00:00+09:00'))
     await settle()
     expect(spokenTexts()).toHaveLength(2)
-    expect(spokenTexts()[1]).toContain('津波予報の失効時刻が、')
+    expect(spokenTexts()[1]).toContain('津波予報（若干の海面変動）の失効時刻が、')
     expect(spokenTexts()[1]).toContain('17時0分に延長されました。')
   })
 
@@ -248,7 +248,7 @@ describe('津波の失効時刻の読み上げ（フックの結線）', () => {
     handle({ ...makeReport(allAt('Forecast')), eventId: '20240102000000' })
     await settle()
     expect(spokenTexts()).toHaveLength(2)
-    expect(spokenTexts()[1]).toContain('津波予報が発表されました')
+    expect(spokenTexts()[1]).toContain('津波予報（若干の海面変動）が発表されました')
   })
 
   // 対照: 同じ津波の同じ等級の続報は、従来どおり発表として読み直さない
@@ -258,6 +258,6 @@ describe('津波の失効時刻の読み上げ（フックの結線）', () => {
     await settle()
     handle(makeReport(allAt('Forecast')))
     await settle()
-    expect(spokenTexts().slice(1).some(t => t.includes('津波予報が発表されました'))).toBe(false)
+    expect(spokenTexts().slice(1).some(t => t.includes('津波予報（若干の海面変動）が発表されました'))).toBe(false)
   })
 })

@@ -6,7 +6,7 @@
 //   - 実地震テストシナリオ: 収録済み JSON（utils/testScenarioReplay.ts）
 import type {
   AppEvent, JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu,
-  JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, TelegramLogEntry,
+  JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, TelegramLogEntry,
 } from './earthquake'
 
 export type ReplayPayload =
@@ -19,6 +19,8 @@ export type ReplayPayload =
   | { kind: 'earthquakeCount'; data: JMAEarthquakeCount }
   /** 推計震度分布図（IXAC41）。**唯一の二進電文**で、分割配信されるため結合してから読む */
   | { kind: 'estimatedIntensity'; data: JMAEstimatedIntensity }
+  /** 国際津波関連情報（WEPA60）。**唯一の平文の電文** */
+  | { kind: 'internationalTsunami'; data: JMAInternationalTsunami }
 
 export interface ReplayEntry {
   payload: ReplayPayload

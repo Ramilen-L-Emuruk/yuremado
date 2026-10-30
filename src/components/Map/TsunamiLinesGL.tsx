@@ -7,7 +7,7 @@ import { TSUNAMI_STYLE } from '../../utils/tsunamiStyle'
 import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { escapeHtml } from './gl/popupHtml'
+import { escapeHtml, popupCodeLineHtml } from './gl/popupHtml'
 import { tsunamiAreaPopupLines } from '../../utils/tsunami'
 import { createTsunamiBlink, TSUNAMI_LINE_OPACITY_ON, type TsunamiBlink } from './gl/tsunamiBlink'
 import { registerCaptureHold } from './gl/captureMap'
@@ -31,7 +31,7 @@ interface Props {
   visible: boolean
 }
 
-function buildFC(lines: TsunamiLine[], iconScale: number): FeatureCollection<MultiLineString> {
+export function buildTsunamiLinesFC(lines: TsunamiLine[], iconScale: number): FeatureCollection<MultiLineString> {
   const features: Feature<MultiLineString>[] = lines.map((line) => {
     const style = TSUNAMI_STYLE[line.grade]
     return {
@@ -41,6 +41,7 @@ function buildFC(lines: TsunamiLine[], iconScale: number): FeatureCollection<Mul
       properties: {
         color: style.color, width: style.weight * iconScale, label: style.label, name: line.name,
         details: tsunamiAreaPopupLines(line.area).join('\n'),
+        code: line.area.code,
       },
       geometry: { type: 'MultiLineString', coordinates: line.segments.map(ringToLngLat) },
     }
@@ -52,11 +53,12 @@ function buildFC(lines: TsunamiLine[], iconScale: number): FeatureCollection<Mul
  * 海岸線の吹き出し。区域名・等級に、予想波高と到達予想の行を足す（2026-10-21 ユーザー選択「波高と到達予想も出す
  * (Recommended)」）。海岸線は全タブで描くので、地震・リアルタイムタブの吹き出しも同じ中身になる。
  */
-export function tsunamiLinePopupHtml(name: string, label: string, details: readonly string[]): string {
+export function tsunamiLinePopupHtml(name: string, label: string, details: readonly string[], code: string | undefined): string {
   return (
     `<div class="text-sm"><div class="font-bold">${escapeHtml(name)}</div>` +
     `<div class="text-xs" style="color:#94a3b8">${escapeHtml(label)}</div>` +
     details.map(d => `<div class="text-xs" style="color:#e5e7eb">${escapeHtml(d)}</div>`).join('') +
+    popupCodeLineHtml(code) +
     `</div>`
   )
 }
@@ -97,6 +99,7 @@ export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
         String(f.properties?.name ?? ''),
         String(f.properties?.label ?? '津波予報'),
         String(f.properties?.details ?? '').split('\n').filter(Boolean),
+        f.properties?.code === undefined ? undefined : String(f.properties.code),
       ),
     })
     // 点滅（Leaflet の tsunami-blink CSS を再現）: 2.5s 周期で前 8 割は不透明・残り 2 割は消灯の
@@ -134,7 +137,7 @@ export function TsunamiLinesGL({ lines, iconScale, visible }: Props) {
   useEffect(() => {
     if (!map || !addedRef.current) return
     const src = map.getSource(SRC) as GeoJSONSource | undefined
-    src?.setData(buildFC(lines, iconScale))
+    src?.setData(buildTsunamiLinesFC(lines, iconScale))
   }, [map, lines, iconScale])
 
   // 表示切替（津波警報の発表/全解除用）。

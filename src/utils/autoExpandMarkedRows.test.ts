@@ -11,7 +11,7 @@ const city = (name: string, stations: string[] = []) =>
 const region = (name: string, cities: ReturnType<typeof city>[] = [], stations: string[] = []) =>
   ({ name, scale: 40, unreceived: false, hasUnreceived: false, cities, stations: stations.map(station) })
 const pref = (name: string, regions: ReturnType<typeof region>[]): IntensityPrefRow =>
-  ({ kind: 'pref', pref: name, scale: 40, unreceived: false, hasUnreceived: false, regions, stations: [] }) as IntensityPrefRow
+  ({ kind: 'pref', pref: name, scale: 40, unreceived: false, hasUnreceived: false, regions, stations: [], cities: [] }) as IntensityPrefRow
 
 const marksOf = (...keys: string[]): ReadonlyMap<string, UpdateStatus> =>
   new Map(keys.map(k => [k, 'changed' as const]))

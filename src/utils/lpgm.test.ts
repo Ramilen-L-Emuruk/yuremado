@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isValidLpgmClass, isObservedLpgmClass, getLpgmClassLabel, getLpgmClassColor, getLpgmClassRadius, lpgmCategoryNote, lpgmPeriodLabel, buildLpgmRows, canOpenLpgmNotes, lpgmQuakeFactParts, type LpgmRowDeps } from './lpgm'
+import { isValidLpgmClass, isObservedLpgmClass, getLpgmClassLabel, getLpgmClassColor, getLpgmClassRadius, lpgmCategoryNote, lpgmCategoryNoteWithRegions, lpgmHeadlineRegions, lpgmPeriodLabel, buildLpgmRows, canOpenLpgmNotes, lpgmQuakeFactParts, type LpgmRowDeps } from './lpgm'
 import type { JMALpgm, LpgmPoint, LpgmRegion } from '../types/earthquake'
 import { LPGM_ICON_BASE_RADIUS } from '../components/Map/gl/lpgmIcons'
 
@@ -113,6 +113,44 @@ describe('長周期の観測情報の種類', () => {
     expect(lpgmCategoryNote(undefined)).toBe('')
     expect(lpgmCategoryNote(0)).toBe('')
     expect(lpgmCategoryNote(9)).toBe('')
+  })
+})
+
+// 見出し文の地域名を一文に添える（2026-10-30 ユーザー選択「一文に地域名を添える (Recommended)」）。
+// 見出し文は 2024-01-01 能登の長周期地震動に関する観測情報（NII 収録・nii/20240101072337_0_VXSE62_010000.xml）
+const NOTO_LPGM_HEADLINE = '０１日１６時１０分ころの地震により、長周期地震動階級４を観測した地域があります。\n'
+  + '以下の地域では、最大震度は４以下でしたが、大きな長周期地震動階級（階級３以上）を観測しています。\n'
+  + '高層ビル高層階では非常に大きな揺れとなっていた可能性があります。\n長野県中部\n'
+
+describe('見出し文の地域名', () => {
+  it('正: 「以下の地域」の後ろに並ぶ地域名だけを取り出す（句点で終わる文は地域名にしない）', () => {
+    expect(lpgmHeadlineRegions(NOTO_LPGM_HEADLINE)).toEqual(['長野県中部'])
+  })
+
+  it('安全弁: 地域名の後ろの段落（空行の後の文・行）は地域名に混ぜない', () => {
+    const withTail = NOTO_LPGM_HEADLINE + '\n＊＊別の段落の行＊＊\n'
+    expect(lpgmHeadlineRegions(withTail)).toEqual(['長野県中部'])
+    expect(lpgmHeadlineRegions(NOTO_LPGM_HEADLINE + '詳しくは本文を参照してください。\n他の行\n')).toEqual(['長野県中部'])
+  })
+
+  it('安全弁: 「以下の地域」の後ろに地域名が無ければ空（記録を残す）', () => {
+    expect(lpgmHeadlineRegions('以下の地域では、最大震度は４以下でした。\n')).toEqual([])
+  })
+
+  it('正: 種類 2・4 の一文に括弧で添える', () => {
+    expect(lpgmCategoryNoteWithRegions(4, NOTO_LPGM_HEADLINE)).toBe('震度が小さくても高層階が大きく揺れた地域があります（長野県中部）')
+  })
+
+  it('対照: 地域を並べない見出し文・種類 1・3 には添えない', () => {
+    const plain = '０１日１６時５６分ころの地震により、長周期地震動階級２を観測した地域があります。'
+    expect(lpgmHeadlineRegions(plain)).toEqual([])
+    expect(lpgmCategoryNoteWithRegions(2, plain)).toBe('震度が小さくても高層階が大きく揺れた地域があります')
+    expect(lpgmCategoryNoteWithRegions(3, NOTO_LPGM_HEADLINE)).toBe(lpgmCategoryNote(3))
+  })
+
+  it('安全弁: 見出し文が無い・種類が無いときは何も足さない', () => {
+    expect(lpgmHeadlineRegions(undefined)).toEqual([])
+    expect(lpgmCategoryNoteWithRegions(undefined, NOTO_LPGM_HEADLINE)).toBe('')
   })
 })
 

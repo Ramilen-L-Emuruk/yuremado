@@ -124,7 +124,7 @@ describe('sanitize', () => {
   it('震度項目は範囲内でも階級値でない中間値(35)を既定値に落とす', () => {
     expect(sanitize({ ttsAlwaysReadScale: 35 }).ttsAlwaysReadScale).toBe(30)
     expect(sanitize({ minDisplayScale: 35 }).minDisplayScale).toBe(-1)
-    expect(sanitize({ notifyMinScale: 35 }).notifyMinScale).toBe(40)
+    expect(sanitize({ notifyMinScale: 35 }).notifyMinScale).toBe(30)
   })
 
   // 必ず読み上げる長周期地震動階級（2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」）
@@ -132,13 +132,13 @@ describe('sanitize', () => {
     expect(sanitize({}).ttsAlwaysReadLpgmClass).toBe(1)
   })
 
-  it('必ず読む長周期地震動階級は、1〜4 と無効値(-1)を通す', () => {
-    for (const v of [-1, 1, 2, 3, 4]) expect(sanitize({ ttsAlwaysReadLpgmClass: v }).ttsAlwaysReadLpgmClass).toBe(v)
+  it('必ず読む長周期地震動階級は、0〜4 と無効値(-1)を通す', () => {
+    for (const v of [-1, 0, 1, 2, 3, 4]) expect(sanitize({ ttsAlwaysReadLpgmClass: v }).ttsAlwaysReadLpgmClass).toBe(v)
   })
 
-  // 安全弁: 階級 0 は読まないので選べない。値域の外・整数でない値・数値以外は既定値に落とす
-  it('必ず読む長周期地震動階級は、0・値域の外・数値以外を既定値に落とす', () => {
-    for (const v of [0, 5, 1.5, '2']) {
+  // 安全弁: 値域の外（負の -2 も）・整数でない値・数値以外は既定値に落とす
+  it('必ず読む長周期地震動階級は、値域の外・数値以外を既定値に落とす', () => {
+    for (const v of [-2, 5, 1.5, '2']) {
       expect(sanitize({ ttsAlwaysReadLpgmClass: v as number }).ttsAlwaysReadLpgmClass).toBe(1)
     }
   })
@@ -149,13 +149,13 @@ describe('sanitize', () => {
   })
 
   it('震度項目は数値以外を既定値に落とす', () => {
-    expect(sanitize({ notifyMinScale: '30' as unknown as number }).notifyMinScale).toBe(40)
+    expect(sanitize({ notifyMinScale: '30' as unknown as number }).notifyMinScale).toBe(30)
   })
 
   // typeof が number でも階級値でない特殊値（isValidIntensityScale の実装が変わったときの回帰検知）
   it('震度項目は NaN・Infinity を既定値に落とす', () => {
     expect(sanitize({ minDisplayScale: NaN }).minDisplayScale).toBe(-1)
-    expect(sanitize({ notifyMinScale: Infinity }).notifyMinScale).toBe(40)
+    expect(sanitize({ notifyMinScale: Infinity }).notifyMinScale).toBe(30)
     expect(sanitize({ ttsAlwaysReadScale: -Infinity }).ttsAlwaysReadScale).toBe(30)
   })
 
@@ -307,7 +307,7 @@ describe('load', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ notifyMinScale: -1, notifyNankai: true }))
     const result = load()
     expect(result.notifyQuake).toBe(false)
-    expect(result.notifyMinScale).toBe(40)
+    expect(result.notifyMinScale).toBe(30)
   })
 
   it('正: 行動チェックリストを -1 で切っていた設定は、切ったまま最低震度を既定へ戻して読む', () => {
@@ -330,7 +330,7 @@ describe('load', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ notifyQuake: true, notifyMinScale: -1 }))
     const result = load()
     expect(result.notifyQuake).toBe(true)
-    expect(result.notifyMinScale).toBe(40)
+    expect(result.notifyMinScale).toBe(30)
   })
 
   it('安全弁: 切り離す前の移し替えは、-1 を消す読み替えより先に効く', () => {

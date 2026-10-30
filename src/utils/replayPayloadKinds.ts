@@ -19,6 +19,7 @@ const REPLAY_PAYLOAD_KIND_TABLE = {
   quakeNotice: true,
   earthquakeCount: true,
   estimatedIntensity: true,
+  internationalTsunami: true,
 } as const satisfies Record<ReplayPayload['kind'], true>
 
 export const REPLAY_PAYLOAD_KINDS: ReadonlySet<string> = new Set(Object.keys(REPLAY_PAYLOAD_KIND_TABLE))

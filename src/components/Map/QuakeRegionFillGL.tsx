@@ -10,7 +10,7 @@ import type { RegionAggregate } from '../../hooks/useQuakeLayerData'
 import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { escapeHtml } from './gl/popupHtml'
+import { escapeHtml, popupCodeHtml } from './gl/popupHtml'
 import { ensureIntensityIcons, intensityIconId, INTENSITY_ICON_BASE_RADIUS, UNRECEIVED_COLOR } from './gl/intensityIcons'
 
 // 地震モードのズームアウト時、一次細分区域ごとの最大震度を塗る MapLibre 版
@@ -63,6 +63,7 @@ function buildLabelFC(regions: RegionAggregate[], iconScale: number): FeatureCol
       iconSizeRatio: ((getScaleRadius(r.scale) + 4) * iconScale) / INTENSITY_ICON_BASE_RADIUS,
       scale: r.scale,
       name: r.name,
+      code: r.code ?? '',
       // 同じ階級のバッジを画面の手前から並べるために持たせる（gl/screenDepth.ts）。
       ...mercatorProps(r.label[1], r.label[0]),
     },
@@ -105,7 +106,9 @@ export function regionCityRowsHtml(cities: readonly JMAQuakeCity[]): string {
         `<div style="display:flex;align-items:center;gap:8px;font-size:12px">` +
         `<span style="display:inline-block;min-width:20px;padding:0 3px;text-align:center;font-weight:700;border-radius:3px;` +
         `color:${readableTextColor(color)};font-size:10px;background:${color}">${escapeHtml(label)}</span>` +
-        `<span style="color:#cbd5e1">${escapeHtml(c.name)}</span>${mark}</div>`
+        `<span style="color:#cbd5e1">${escapeHtml(c.name)}</span>${mark}` +
+        (c.code ? `<span style="margin-left:auto;font-size:10px;color:#64748b">コード ${escapeHtml(c.code)}</span>` : '') +
+        `</div>`
       )
     })
     .join('')
@@ -120,6 +123,7 @@ function clickHtml(f: MapGeoJSONFeature, citiesByRegion: ReadonlyMap<string, rea
     `<div class="text-sm" style="min-width:160px"><div class="font-bold">${escapeHtml(name)}</div>` +
     `<div class="text-xs" style="color:#94a3b8">最大震度 ${escapeHtml(getIntensityLabel(scale))}</div>` +
     regionCityRowsHtml(citiesByRegion.get(name) ?? []) +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
     `</div>`
   )
 }

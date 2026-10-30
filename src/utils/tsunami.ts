@@ -967,17 +967,21 @@ export function announcedCancelledAreas(tsunami: JMATsunami): TsunamiArea[] {
 }
 
 /**
- * 等級の短い呼び名。読み上げの文と、カードで等級の移り変わりを示す行が共有する。
- *
- * カードの等級カードが掲げる見出し（`TsunamiTab` の `GRADE_LABEL`）は「津波予報（若干の
- * 海面変動）」のように正式名を出すが、文の中へ差し込むには長い。**両方を別々に持たないこと**
+ * 等級の呼び名。読み上げの文と、カードで等級の移り変わりを示す行が共有する。**両方を別々に持たないこと**
  * ―― 読み上げと表示で等級の呼び名が食い違う。
+ *
+ * **電文が等級に付けた名前（`Kind/Name`）に合わせる**（2026-10-30 ユーザー選択「電文の名前を出す (Recommended)」）。
+ * 全期間の控えで、予報のコード 71・72・73 はどれも「津波予報（若干の海面変動）」を名乗る（延べ 8,736 区域）。かつては
+ * 文へ差し込むには長いとして「津波予報」と縮めていた。大津波警報のコード 53（「大津波警報：発表」）だけは
+ * 「大津波警報」のまま言う（2026-10-30 ユーザー選択「今のまま「大津波警報」 (Recommended)」。電文の名前のまま読むと
+ * 「大津波警報：発表が発表されました」になる）。カードの等級カードの帯は区域が持つ電文の名前を出す
+ * （→ `TsunamiArea.kindName`）。
  */
-export const TSUNAMI_GRADE_SHORT_LABEL: Record<TsunamiGrade, string> = {
+export const TSUNAMI_GRADE_NAME: Record<TsunamiGrade, string> = {
   MajorWarning: '大津波警報',
   Warning: '津波警報',
   Watch: '津波注意報',
-  Forecast: '津波予報',
+  Forecast: '津波予報（若干の海面変動）',
   Unknown: '',
 }
 
@@ -1173,6 +1177,41 @@ export function rememberTideEntries(
   spoken: Map<string, SpokenTideEntry>,
 ): void {
   for (const [key, entry] of collectTideEntries(areas)) spoken.set(key, entry)
+}
+
+/**
+ * 声にした予想波高から変わった区域を返す（等級は据え置きで予想波高だけが動いた続報を読むため）。
+ *
+ * 比べるのは**声にした予想波高**（鍵は {@link tsunamiAreaKey}・値は `maxHeight.description`）で、前の報の値ではない ——
+ * 待たされた末に鳴らなかった報があっても、次の報で変わった分として読める。
+ *
+ * 声にした記憶が無い区域は、電文が「更新」（`MaxHeight/Revise`）と書いたときだけ変わったとみなす。
+ * 記憶が無いまま「追加」や印なしの区域まで拾うと、等級の発表を聞き逃した後の続報で、変わっていない区域まで
+ * 「変わりました」と読む。予想波高を持たない区域は対象にしない（読む値が無い）。
+ */
+export function forecastHeightChangedAreas(
+  areas: readonly TsunamiArea[],
+  spoken: ReadonlyMap<string, string>,
+): TsunamiArea[] {
+  return areas.filter(a => {
+    if (a.grade === 'Unknown' || !hasForecastHeight(a)) return false
+    const prev = spoken.get(tsunamiAreaKey(a))
+    if (prev === undefined) return a.maxHeight!.revise === '更新'
+    return prev !== a.maxHeight!.description
+  })
+}
+
+/**
+ * 声にした予想波高を既読へ移す。**呼ぶのは発話を始める瞬間だけ**（`rememberAreaGrades` と同じ規約）。
+ * 予想波高を持たない区域は記憶を消さない（次に値が付いたとき、前に声にした値と比べられるように）。
+ */
+export function rememberForecastHeights(
+  areas: readonly TsunamiArea[],
+  spoken: Map<string, string>,
+): void {
+  for (const a of areas) {
+    if (hasForecastHeight(a)) spoken.set(tsunamiAreaKey(a), a.maxHeight!.description)
+  }
 }
 
 // ============================================================
@@ -2008,17 +2047,43 @@ function sortAreasByObservation(areas: TsunamiArea[], observations: TsunamiObser
 }
 
 /**
+ * 1 つの等級の区域を、電文が付けた等級の名前（`TsunamiArea.kindName`）ごとに分ける。カードはこの単位で帯を立てる
+ * （2026-10-30 ユーザー選択「電文の名前を出す (Recommended)」「カードを分ける (Recommended)」）。
+ *
+ * 分かれるのは大津波警報の「大津波警報：発表」（コード 53・その報で大津波警報になった区域）と「大津波警報」（52）だけ
+ * （全期間の控えで、71・72・73 はどれも「津波予報（若干の海面変動）」）。**電文の名前とアプリの呼び名が違う方を先に積む**
+ * ので「大津波警報：発表」が上に来る。名前を持たない区域（標準版・テストの合成）はアプリの呼び名にまとめる。
+ *
+ * **カード・読み上げ・観測点の並びは `groupAreasForCardDisplay` を通してこの分け方を共有する。** カードだけで分けると、
+ * 52 と 53 が混ざる報で読み上げの順がカードの上下を往復する。
+ */
+export function splitAreasByKindName(areas: readonly TsunamiArea[]): { label: string; areas: TsunamiArea[] }[] {
+  const byLabel = new Map<string, TsunamiArea[]>()
+  const appLabelOf = new Map<string, string>()
+  for (const a of areas) {
+    const label = a.kindName || TSUNAMI_GRADE_NAME[a.grade]
+    const list = byLabel.get(label)
+    if (list) list.push(a)
+    else { byLabel.set(label, [a]); appLabelOf.set(label, TSUNAMI_GRADE_NAME[a.grade]) }
+  }
+  return [...byLabel.entries()]
+    .map(([label, list]) => ({ label, areas: list }))
+    .sort((x, y) => Number(x.label === appLabelOf.get(x.label)) - Number(y.label === appLabelOf.get(y.label)))
+}
+
+/**
  * カードが描画する区域の並び順を、波高グループの構造を保ったまま返す。
  * カードは波高ごとに見出しを挟むため、平坦化していない形が必要。
+ * 電文の名前で分かれる区域（→ `splitAreasByKindName`）は、名前ごとにまとめてから波高で束ねる。
  */
 export function groupAreasForCardDisplay(
   areas: TsunamiArea[],
   observations: TsunamiObservation[],
 ): TsunamiHeightGroup[] {
-  return groupAreasByHeight(areas).map(group => ({
+  return splitAreasByKindName(areas).flatMap(part => groupAreasByHeight(part.areas).map(group => ({
     ...group,
     areas: sortAreasByObservation(group.areas, observations),
-  }))
+  })))
 }
 
 /**

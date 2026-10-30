@@ -14,7 +14,7 @@ import { render, screen, cleanup, act } from '@testing-library/react'
 import { RealtimeTab, EEW_FORECAST_CHANGE_HOLD_MS } from './index'
 import type { EEWAlert, EEWForecastChange } from '../../types/earthquake'
 
-/** フィクスチャの報の発表時刻（`time`）。帯は発表から保持時間を過ぎた報では出さないので、時計をここへ合わせる。 */
+/** フィクスチャの報の発表時刻（`time`）。時計もここへ合わせる（発表から時間が経った報の扱いは下の describe）。 */
 const ISSUED_AT = '2026-01-01T12:00:00Z'
 beforeEach(() => {
   vi.useFakeTimers()
@@ -117,52 +117,45 @@ describe('「予想が変わった」の帯の寿命', () => {
     expect(screen.queryByText(TEXT_INCREASED)).toBeNull()
   })
 
-  // 安全弁: 取消の報では出さない。取り下げた予想について「大きくなりました」と並べても意味がない。
+  // 取消の報でも出す（2026-10-30 に覆した。以前は出さなかった。ユーザー選択「今と同じ文面で出す」）。
   //
   // **フィクスチャは `forecastChange` を持たせたまま渡す。** 本番の取消は
   // `{ ...表示中の EEW, cancelledAt }` の形で当たるため、取消電文自身が `Appendix` を
   // 持たなくても**直前の報の値が残る**。持たせない形で書くと、この経路を一度も通らない。
-  it('取消の報では出さない', () => {
+  it('取消の報でも、直前の報が立てた帯をその計時のまま出す', () => {
     const { rerender } = render(tab([makeEEW('2', INCREASED)]))
     advance(1000)
     rerender(tab([makeEEW('3', INCREASED, {
       cancelled: true,
       cancelledAt: new Date('2026-01-01T12:00:30Z'),
     })]))
-    expect(screen.queryByText(TEXT_INCREASED)).toBeNull()
+    expect(screen.getByText(TEXT_INCREASED)).toBeTruthy()
   })
 })
 
-// 発表から保持時間を過ぎた報の変化は出さない（2026-10-21 ユーザー承認「おすすめで」）。起動時・張り直しの復元と
-// リプレイの初期状態は数分前の報を「いま初めて見た報」として描くが、ライブで見ていればその帯はもう消えている。
+// 発表から保持時間を過ぎた報（起動時・張り直しの復元とリプレイの初期状態）でも、手元で初めて見た時刻から保持時間ぶん出す
+// （2026-10-30 に覆した。以前は出さなかった（2026-10-21 ユーザー承認「おすすめで」）。ユーザー選択「今と同じ文面で出す」）。
 describe('「予想が変わった」の帯: 発表から時間が経った報', () => {
   const issuedAgo = (ms: number) => new Date(Date.now() - ms).toISOString()
 
-  // 正: 発表から保持時間を過ぎた報（復元した数分前の報）では出さない
-  it('発表から保持時間を過ぎた報の変化は出さない', () => {
+  // 正: 発表から保持時間を過ぎた報（復元した数分前の報）でも出す
+  it('発表から保持時間を過ぎた報の変化も出す', () => {
     render(tab([makeEEW('5', INCREASED, { time: issuedAgo(3 * 60_000) })]))
+    expect(screen.getByText(TEXT_INCREASED)).toBeTruthy()
+  })
+
+  // 安全弁: 手元で見た時刻から保持時間が過ぎれば消える（復元した報でも出しっぱなしにしない）
+  it('復元した報の帯も、手元で見てから保持時間が過ぎれば消える', () => {
+    render(tab([makeEEW('5', INCREASED, { time: issuedAgo(3 * 60_000) })]))
+    advance(EEW_FORECAST_CHANGE_HOLD_MS + 100)
     expect(screen.queryByText(TEXT_INCREASED)).toBeNull()
   })
 
-  // 対照: 保持時間の手前なら出す（ライブの報は発表からすぐ届く）
-  it('発表から保持時間の手前の報なら出す', () => {
-    render(tab([makeEEW('5', INCREASED, { time: issuedAgo(EEW_FORECAST_CHANGE_HOLD_MS - 1000) })]))
-    expect(screen.getByText(TEXT_INCREASED)).toBeTruthy()
-  })
-
-  // 安全弁: 発表時刻が読めない報は止めない（比べられないものを黙らせない）
-  it('発表時刻が読めない報では、これまでどおり出す', () => {
-    render(tab([makeEEW('5', INCREASED, { time: '' })]))
-    expect(screen.getByText(TEXT_INCREASED)).toBeTruthy()
-  })
-
-  // 安全弁: 古い報が届いても、前の報が立てた帯をその計時のまま残す（古い報で消しも延ばしもしない）
-  it('古い報が届いても、前の報の帯はその計時のまま残る', () => {
+  // 対照: 古い報が新しい変化を伝えてきたら、その変化へ差し替える
+  it('時間が経った報が新しい変化を伝えたら差し替える', () => {
     const { rerender } = render(tab([makeEEW('2', INCREASED)]))
     advance(3000)
     rerender(tab([makeEEW('3', DECREASED, { time: issuedAgo(60_000) })]))
-    expect(screen.getByText(TEXT_INCREASED)).toBeTruthy()
-    advance(EEW_FORECAST_CHANGE_HOLD_MS - 3000 + 100)
-    expect(screen.queryByText(TEXT_INCREASED)).toBeNull()
+    expect(screen.getByText(TEXT_DECREASED)).toBeTruthy()
   })
 })

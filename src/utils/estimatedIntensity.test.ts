@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   matchEstimatedIntensity, matchEstimatedIntensityArrival, estimatedIntensityFor,
   estimatedIntensityAvailability, decideEstimatedIntensityUpdate, isNewEstimatedIntensity,
+  estimatedMarkMismatchNote, toDirection16,
   isSameEstimatedIntensityQuake, upsertEstimatedIntensity, sameEstimatedIntensityQuakeBy,
   estimatedIntensityTopicKey, type EstimatedIntensityTopicAnchor,
   rememberShownEstimatedIntensity, MAX_SHOWN_ESTIMATED_INTENSITY_ARRIVALS,
@@ -420,5 +421,41 @@ describe('estimatedIntensityTopicKey', () => {
       estimatedIntensityTopicKey(anchors, ei(new Date(Date.parse(T) + i * 60_000).toISOString()))
     }
     expect(anchors).toHaveLength(MAX_SHOWN_ESTIMATED_INTENSITY_ARRIVALS)
+  })
+})
+
+describe('estimatedMarkMismatchNote（推計の電文の震央補助表現）', () => {
+  const card = { nameFromMark: '輪島の東北東３０ｋｍ付近', markCode: '201', direction: '東北東', distanceKm: 30 }
+
+  // 対照: 地震カードと同じなら出さない（全期間の控えでは 18 通すべてこの形）
+  it('地震カードの補助表現と同じなら出さない', () => {
+    expect(estimatedMarkMismatchNote({ mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 30 } }, card)).toBeNull()
+  })
+
+  // 正: 目印が同じで距離だけ違えば、カードの文から目印の名前を借りる
+  it('目印が同じなら名前を借りて食い違いを文にする', () => {
+    expect(estimatedMarkMismatchNote({ mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 40 } }, card))
+      .toBe('推計の電文では 輪島の東北東40km付近')
+  })
+
+  // 正: 目印が違えば名前を借りず番号で書く
+  it('目印が違えば番号で書く', () => {
+    expect(estimatedMarkMismatchNote({ mark: { pointCode: 308, directionDeg: 0, distanceKm: 20 } }, card))
+      .toBe('推計の電文では 目印308の北20km付近')
+  })
+
+  // 安全弁: 推計の電文が補助表現を持たなければ何も出さない。カードが持たなければ番号で出す
+  it('推計の電文が持たなければ出さず、カードが持たなければ番号で出す', () => {
+    expect(estimatedMarkMismatchNote({}, card)).toBeNull()
+    expect(estimatedMarkMismatchNote({ mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 30 } }, {}))
+      .toBe('推計の電文では 目印201の東北東30km付近')
+  })
+
+  it('方位は 22.5 度ごとの 16 方位へ丸める', () => {
+    expect(toDirection16(0)).toBe('北')
+    expect(toDirection16(11.24)).toBe('北')
+    expect(toDirection16(11.26)).toBe('北北東')
+    expect(toDirection16(359)).toBe('北')
+    expect(toDirection16(247.5)).toBe('西南西')
   })
 })

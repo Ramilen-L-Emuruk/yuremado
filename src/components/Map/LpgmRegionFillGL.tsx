@@ -10,7 +10,7 @@ import type { LpgmRegionAggregate } from '../../hooks/useQuakeLayerData'
 import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { badgeHtml, escapeHtml } from './gl/popupHtml'
+import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
 import { ensureLpgmIcons, lpgmIconId, LPGM_ICON_BASE_RADIUS } from './gl/lpgmIcons'
 
 // 長周期地震動のズームアウト時、一次細分区域ごとの最大階級を塗る MapLibre 版
@@ -65,6 +65,7 @@ function buildLabelFC(regions: LpgmRegionAggregate[], iconScale: number): Featur
       iconSizeRatio: ((getLpgmClassRadius(r.maxLgInt) + REGION_RADIUS_BONUS) * iconScale) / LPGM_ICON_BASE_RADIUS,
       lgInt: r.maxLgInt,
       name: r.name,
+      code: r.code ?? '',
       // 区域の最大震度。**階級だけだと「揺れは小さいのに高層階が大きく揺れた」形が読めない**
       int: r.maxInt ?? -1,
       // 同じ階級のバッジを画面の手前から並べるために持たせる（gl/screenDepth.ts）。
@@ -115,6 +116,7 @@ function clickHtml(f: MapGeoJSONFeature, stationsByRegion: ReadonlyMap<string, r
     (int >= 0 ? `　震度 ${escapeHtml(getIntensityLabel(int))}` : '') +
     `</div>` +
     regionStationRowsHtml(stationsByRegion.get(name) ?? []) +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
     `</div>`
   )
 }

@@ -31,7 +31,7 @@ describe('第1波の語（3 つの吹き出しで共有）', () => {
 })
 
 describe('観測点の印の吹き出しの中身', () => {
-  const base = { name: '輪島港', lat: 37.4, lng: 136.9, barPx: 40, color: '#ff0000', blinking: false }
+  const base = { name: '輪島港', code: undefined, lat: 37.4, lng: 136.9, barPx: 40, color: '#ff0000', blinking: false }
   // 正（2026-10-21 ユーザー選択「時刻と第1波も出す (Recommended)」・形は 2026-10-24 ユーザー選択「この形で揃える」）
   it('正: 観測棒の吹き出しに最大波の観測時刻と第1波を出す', () => {
     const html = obsBarTooltipHtml({ ...base, height: { value: 1.2, description: '1.2m' }, maxHeightDateTime: '2026-04-20T05:40:00', arrivalTime: '2026-04-20T05:12:00', initial: '押し' })
@@ -40,11 +40,11 @@ describe('観測点の印の吹き出しの中身', () => {
     expect(html).toContain('第1波 05:12 押し波')
   })
   it('正: 到達確認・欠測の吹き出しも同じ形の第1波を出す', () => {
-    expect(arrivalTooltipHtml({ name: '珠洲', lat: 0, lng: 0, arrivalTime: '2026-04-20T05:12:00', initial: '引き', blinking: false })).toContain('第1波 05:12 引き波')
-    expect(missingTooltipHtml({ name: '富山', lat: 0, lng: 0, arrivalTime: '2026-04-20T05:12:00', initial: '押し', blinking: false })).toContain('第1波 05:12 押し波')
+    expect(arrivalTooltipHtml({ name: '珠洲', code: undefined, lat: 0, lng: 0, arrivalTime: '2026-04-20T05:12:00', initial: '引き', blinking: false })).toContain('第1波 05:12 引き波')
+    expect(missingTooltipHtml({ name: '富山', code: undefined, lat: 0, lng: 0, arrivalTime: '2026-04-20T05:12:00', initial: '押し', blinking: false })).toContain('第1波 05:12 押し波')
   })
   it('安全弁: 時刻が無い到達確認は「到達を確認」と言う（到達そのものは確定している）', () => {
-    expect(arrivalTooltipHtml({ name: '珠洲', lat: 0, lng: 0, blinking: false })).toContain('到達を確認')
+    expect(arrivalTooltipHtml({ name: '珠洲', code: undefined, lat: 0, lng: 0, blinking: false })).toContain('到達を確認')
   })
 })
 
@@ -60,7 +60,7 @@ describe('海岸線の吹き出し（予想波高と到達予想）', () => {
       .toEqual(['予想 巨大', '到達中'])
   })
   it('正: 区域名・等級の下に行を並べる', () => {
-    const html = tsunamiLinePopupHtml('石川県能登', '大津波警報', ['予想 5m', 'まもなく到達'])
+    const html = tsunamiLinePopupHtml('石川県能登', '大津波警報', ['予想 5m', 'まもなく到達'], undefined)
     expect(html.indexOf('大津波警報')).toBeLessThan(html.indexOf('予想 5m'))
     expect(html).toContain('まもなく到達')
   })

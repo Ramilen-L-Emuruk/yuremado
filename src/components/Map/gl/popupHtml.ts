@@ -19,12 +19,30 @@ export function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
+/**
+ * 吹き出しの末尾に添える、電文のコード（潮位観測点・津波予報区などの番号）の行。「コード 32002」の形で小さく出す
+ * （2026-10-30 ユーザー選択「吹き出しに添える (Recommended)」。読み上げには足さない）。コードが無ければ空文字。
+ */
+export function popupCodeLineHtml(code: string | undefined): string {
+  if (!code) return ''
+  return `<div style="color:#6b7280;font-size:10px;margin-top:2px">コード ${escapeHtml(code)}</div>`
+}
+
 /** 見出し＋補足の2段組み本文（活断層・プレート境界・津波海岸線などの共通形）。 */
 export function twoLinePopupHtml(title: string, subtitle: string): string {
   return (
     `<div class="text-sm"><div class="font-bold">${escapeHtml(title)}</div>` +
     `<div class="text-xs" style="color:#94a3b8">${escapeHtml(subtitle)}</div></div>`
   )
+}
+
+/**
+ * 吹き出しの末尾に添える電文のコード（区域・市町村・観測点・震央地名）。値が無ければ空文字。
+ * 小さく末尾に置き、読み上げには入れない（2026-10-30 ユーザー選択「吹き出しに添える (Recommended)」、
+ * 長周期地震動の吹き出しは同日「長周期にも添える (Recommended)」。2026-10-21 の「画面に出さない」を覆した）。
+ */
+export function popupCodeHtml(code: string | undefined): string {
+  return code ? `<div style="margin-top:4px;font-size:10px;color:#64748b">コード ${escapeHtml(code)}</div>` : ''
 }
 
 /**

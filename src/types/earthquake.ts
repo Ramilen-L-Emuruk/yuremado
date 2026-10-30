@@ -377,6 +377,13 @@ export interface JMAQuake {
      * 実測と規約は `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」。
      */
     editorialOffice?: string
+    /**
+     * 電文を発表した官署（`Control/PublishingOffice`）。**編集官署へは落とさない。**
+     *
+     * 画面は編集官署の隣に「発表官署 …」と出す（2026-10-30 ユーザー選択「編集官署の隣に出す
+     * (Recommended)」・「編集官署の隣に同じ形で (Recommended)」）。標準版（P2PQuake）は常に undefined。
+     */
+    publishingOffice?: string
     time: string
     type: IssueType
     correct: CorrectType
@@ -777,6 +784,19 @@ export interface TsunamiSourceEarthquake extends HypocenterAreaDetail {
 export interface TsunamiArea {
   grade: TsunamiGrade
   /**
+   * 電文が等級に付けた名前（`Category/Kind/Name`）。**`grade` へ丸めると落ちる区別がある** ——
+   * 大津波警報には「大津波警報」（コード 52）と「大津波警報：発表」（コード 53・その報で大津波警報になった区域）がある。
+   * 等級カードの帯はこの名前を出し、名前ごとにカードを分ける（2026-10-30 ユーザー選択「電文の名前を出す (Recommended)」・
+   * 「カードを分ける (Recommended)」）。読み上げは 53 も「大津波警報」と言う（2026-10-30 ユーザー選択「今のまま「大津波警報」
+   * (Recommended)」）。DMDATA 経路のみ（P2PQuake は配信しない）。
+   */
+  kindName?: string
+  /**
+   * 前回の等級に電文が付けた名前（`Category/LastKind/Name`）。意味は {@link kindName} と同じ。
+   * 解除された区域（{@link JMATsunami.cancelledAreas}）も持つ。
+   */
+  lastKindName?: string
+  /**
    * 前回この区域に発表されていた等級（気象庁電文の `LastKind`）。
    *
    * **区域単位の切替・引き上げはこれでしか分からない。** 気象庁は一部解除でも区域を電文から
@@ -998,6 +1018,11 @@ export interface JMATsunami {
    */
   liftText?: string
   cancelledAt?: Date
+  /**
+   * 見出し文（`Head/Headline/Text`）。**津波カードの見出しの下に原文のまま出す**（改行も保つ。2026-10-30 ユーザー選択
+   * 「カードに出す (Recommended)」。全期間で 15 種類の書き方・本文に無い事実は無し）。観測・満潮時刻の報の読み上げの名乗りにも使う。
+   * 続報の統合では最新の報のものを採る。
+   */
   headline?: string
   /**
    * 固定付加文（`Comments/WarningComment`）。避難行動の呼びかけなど気象庁の定型文で、
@@ -1096,6 +1121,11 @@ export interface JMATsunami {
      * 標準版（P2PQuake）と、編集官署を持たない電文では無い。
      */
     editorialOffice?: string
+    /**
+     * 電文を発表した官署（`Control/PublishingOffice`）。**編集官署へは落とさない。** 津波カードで編集官署の隣に
+     * 「編集官署 …　発表官署 …」の形で出す（2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・地震カードと同じ形）。
+     */
+    publishingOffice?: string
     time: string
     type: 'Focus'
   }
@@ -1316,11 +1346,10 @@ export interface EEWAlert {
   /**
    * 電文が名乗る情報名（`Head/Title`）。→ {@link JMATsunami.infoName}（読み取りも扱いも同じ）
    *
-   * **読んで持つだけで画面には出さない**（2026-10-22 ユーザー承認「出さない (Recommended)」。
-   * → `docs/spec/eew-spec.md` §3「電文の名称と表示・読み上げ」）。アプリが受信する VXSE45 では実電文 8 通すべてが
-   * 「緊急地震速報（地震動予報）」の 1 種類で、報ごとに変わらない。しかも画面の見出しは
-   * 電文の区分（`severity`）から「地震動予報」「緊急地震速報（警報）」を組み立てており
-   * （`docs/spec/eew-spec.md` §3）、並べると同じ語が二重に出る。
+   * **カードの右下に小さく出す**（2026-10-30 ユーザー選択「右下に小さく出す (Recommended)」。
+   * 2026-10-22 の「出さない (Recommended)」を覆した。→ `docs/spec/eew-spec.md` §3「電文の名称と表示・読み上げ」）。
+   * 画面の見出しは電文の区分（`severity`）から「地震動予報」「緊急地震速報（警報）」を組み立てているので、
+   * 見出しの位置には並べない（同じ語が二重に出る）。読み上げには使わない。
    *
    * **区分の判定にも使わない** —— そちらは電文のコードで読む。
    */
@@ -1432,7 +1461,7 @@ export interface EEWAlert {
   /**
    * 電文全体の最大予想震度が "0"（震度0）だったか。**`forecastMaxScale` には入れない**（階級の欄は
    * 1〜7 だけを持ち、空のままにする）。気象庁は値を出し終えているので、予想震度が遅れて付くのを
-   * 待たない（→ `eewNoForecastReason` の `belowScale1`）。出す文言は従来と同じ理由なしの「予想震度なし」。
+   * 待たない（→ `eewNoForecastReason` の `belowScale1`）。画面・読み上げ・通知は電文どおり 0 と出す（「予想最大震度 0」）。
    * 決めた日付と原文は eew-spec.md §4。DMDATA の電文だけが立てる
    */
   forecastMaxScaleBelow1?: true
@@ -1889,9 +1918,8 @@ export interface EarthquakeInfoMeta {
   /**
    * 情報の種別（`Body/EarthquakeInfo/InfoKind`）と、その上位分類（同要素の `@type`）。
    *
-   * **読んで持つが、画面には出していない**（2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）。
-   * アプリは電文種別で既に見分けており、「南海トラフ地震臨時情報」のような名称は
-   * `headline`（`Head/Title`）が伝えている。
+   * **帯の見出しの下に小さく添える**（2026-10-30 ユーザー選択「帯に添える (Recommended)」。2026-10-29 の
+   * 「まとめて今のまま」を覆した）。読み上げには足さない。出し方は `SpecialInfoBanner` の `InfoKindLine`。
    */
   earthquakeInfoKind?: string
   earthquakeInfoType?: string
@@ -2035,6 +2063,31 @@ export interface JMAQuakeNotice {
   reportDateTime: string
   /** reportDateTime + 7 日。帯を常駐させないための表示上の都合（気象庁が定めた期限ではない） */
   expireAt: string
+}
+
+/**
+ * 国際津波関連情報（WEPA60）。北西太平洋津波情報センター（NWPTAC。気象庁が運営）が各国の機関へ
+ * 出す英文の電文で、**XML ではなく平文**で届く。遠地地震に関する情報（VXSE53）と同じ地震について
+ * 出るので、遠地地震のカードに原文のまま畳んで添える（2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」）。
+ * 読み上げ・通知・音は無い。
+ *
+ * 電文の形（実電文 3 通で確かめた）: 1 行目が `WEPA60 RJTD 250003`、2 行目が題名
+ * （`TSUNAMI BULLETIN NUMBER 001`・通信試験は `NWPTA COMMUNICATIONS TEST`）、続いて
+ * `ISSUED AT 0003Z 25 DEC 2020`、地震の報なら `ORIGIN TIME:2343Z 24 DEC 2020`、最後の行が `=`。
+ */
+export interface JMAInternationalTsunami {
+  /** `WEPA60:` ＋ 発表時刻 ＋ 題名 ＋ 本文の指紋（`wepa60Id`）。同じ報を経路が違って 2 度受けても 1 通に畳むための鍵 */
+  id: string
+  /** 2 行目の題名（例: `TSUNAMI BULLETIN NUMBER 001`） */
+  title: string
+  /** 発表時刻。`ISSUED AT` の時刻（UTC・分まで）を ISO 8601 にしたもの（他の種別の `time` と同じ役） */
+  time: string
+  /** `ORIGIN TIME:` の時刻（UTC・分まで）。通信試験の報には無い */
+  originTime?: string
+  /** 通信試験（`NWPTA COMMUNICATIONS TEST`）か。地震を伴わないのでどのカードにも付かない */
+  isCommunicationsTest: boolean
+  /** 電文の本文そのまま（行末の空白と最後の `=` だけ落とす） */
+  text: string
 }
 
 /** {@link JMAEarthquakeCount} の 1 区間。 */
@@ -2188,7 +2241,15 @@ export interface JMAEstimatedIntensity {
   magnitudeCondition?: string
   /** 震央地名番号（気象庁コード表 6）。名前は持たない */
   areaCode: number
-  /** 電文の種類（0=通常）。0 以外は訓練等。実配信 13 か月では 0 しか観測できていない */
+  /**
+   * 震央補助表現の材料（津波の形の電文だけが持つ。IXAC41・IXAC40 とも）。
+   * 目印の地点番号（地震情報の `MarkCode` と同じ番号）・目印から見た震央の方位（度）・距離（km）。
+   * **文は持たない**（目印の名前は電文に無い）。地震カードの補助表現と食い違うときだけ
+   * 推計の欄に出す（2026-10-30 ユーザー承認「地震カードの形で出す (Recommended)」）。
+   * 全期間の控え（2020-11〜）でこのブロックを持つ 18 通は、すべて同じ地震の VXSE53 と一致した。
+   */
+  mark?: { pointCode: number; directionDeg: number; distanceKm: number }
+  /** 電文の種類（0=通常）。0 以外は訓練等（実電文で訓練＝1 を確認済み。件数は `bufrEstimatedIntensity.ts`） */
   telegramKind: number
   /** 階級震度と計測震度の対応表。**電文が持っている凡例をそのまま使う**（自前の階級表を当てない） */
   grades: JMAEstimatedIntensityGrade[]
@@ -2251,7 +2312,7 @@ export type ConnectionStatus =
  */
 export type TelegramLogKind =
   | 'eew' | 'quake' | 'tsunami' | 'lpgm' | 'nankai' | 'nankaiCommentary' | 'kohatsu'
-  | 'quakeNotice' | 'earthquakeCount' | 'estimatedIntensity'
+  | 'quakeNotice' | 'earthquakeCount' | 'estimatedIntensity' | 'internationalTsunami'
 
 /**
  * 電文ログの行が、どの経路でアプリへ入ったか。

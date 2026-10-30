@@ -488,7 +488,7 @@ TELEGRAM_CACHE=<作業ディレクトリ>/telegram-cache \
 |---|---|---|
 | `Head/Headline/Information`（見出しの構造化） | 内容部（`Body`）の部分集合で、同じ事実を二重に読むことになる | [`quake-spec.md`](quake-spec.md) §8 |
 | `CodeDefine/Type`・`Type@xpath` | 電文が自分のコード体系を説明する欄。値そのものは情報を持たない | [`tsunami-spec.md`](tsunami-spec.md) §4 |
-| 津波の `Kind/Name`・`LastKind/Name` | 同じ事実をコードで読んでおり、名前は表示にも判定にも使わない（2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」） | [`tsunami-spec.md`](tsunami-spec.md) §4 |
+| 津波の `Kind/Name`・`LastKind/Name` | 等級の帯と「前回」の表示、津波予報の読み上げに電文の名前を使う。判定はコードで行う（2026-10-30 ユーザー承認「電文の名前を出す (Recommended)」。2026-10-29 の「まとめて今のまま (Recommended)」を覆した） | [`tsunami-spec.md`](tsunami-spec.md) §4 |
 | `Hypocenter/Area/Coordinate@description` | 座標を読めなかったときの記録にだけ使う。正常な電文では通らない | `readHypocenterAreaDetail`（`src/services/dmdataParser.ts`）の説明 |
 | `jmx_eb:Magnitude@condition` | 固定値「不明」で、出現は本文 `NaN` と同時。資料が両方を同時に定めているので同じ事実の別表現にすぎない。「Ｍ不明」と「Ｍ８を超える巨大地震」の別は `@description` でしか付かない | [`quake-spec.md`](quake-spec.md) §8（規模が数値にならない電文の説明） |
 | 予想波高・沿岸への推定の `jmx_eb:TsunamiHeight@condition` | 固定値「不明」。定性的表現がない津波注意報・予報では `@description` が空属性になるため、表示文字列のフォールバックに使うと波高として「不明」と出る（読まないことは 2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）。**観測側の同名属性は「上昇中」が入るので読む** | [`tsunami-spec.md`](tsunami-spec.md) §9「数値にならない予想波高」 |
@@ -638,11 +638,11 @@ TELEGRAM_CACHE=<作業ディレクトリ>/telegram-cache \
 |---|---|---|
 | 報の新旧の比較に何の時刻を使うか | **作成時刻（`Control/DateTime`・秒）で比べる。** 画面に出す発表時刻は分のまま。受け皿の表記混在も塞いだ（2026-09-09 の段では分のまま比べると決めていたのを、2026-10-15 に改めた） | [`quake-spec.md`](quake-spec.md) §6.3 |
 | `Head/TargetDateTime` を観測情報で読むか | **読む。** VTSE51・VTSE52 のみ。カードに「観測 ◯◯ 時点」 | [`tsunami-spec.md`](tsunami-spec.md) §4 |
-| 発表官署を画面に出すか | **出さない。** 実電文 135 通すべてで「気象庁」の 1 種類 | 下記 |
+| 発表官署を画面に出すか | **編集官署の隣に出す。** 全期間「気象庁」の 1 種類だが、電文の情報として出す（2026-10-30 ユーザー承認「編集官署の隣に出す (Recommended)」。それまでの「出さない」を覆した） | 下記 |
 | 読み取り経路を全種別へ埋めるか消すか | **どちらもしない。** 出さないなら埋める理由が無く、消すと P2PQuake 経路（`issue.source`）へ波及する | 下記 |
 | （追加）`Head/Title` を出すか | **津波だけ出す。** 緊急地震速報は語が二重になり、長周期は 1 種類で情報が増えない（長周期はいまは地震カードの種別ヘッダーに出す。2026-10-22 ユーザー承認「4-B 種別ヘッダー」。→ [`quake-spec.md`](quake-spec.md) §8「長周期地震動の名乗りは、種別ヘッダーへ並べる」） | [`tsunami-spec.md`](tsunami-spec.md) §4 |
 
-**発表官署は情報を持たない。** 実電文 135 通で `Control/PublishingOffice` はすべて「気象庁」。
+**発表官署の値は 1 種類だけ。** 実電文 135 通で `Control/PublishingOffice` はすべて「気象庁」。
 `Control/EditorialOffice` は「気象庁本庁」と「大阪管区気象台」の 2 値だが、これは障害時に
 切り替わる内部の運用体制で、利用者にとって意味が無い。**読む経路は残す**（`issue.source` は
 P2PQuake の JSON も持つフィールドで、型から消すと両経路を触ることになる）。
@@ -727,7 +727,7 @@ P2PQuake の JSON も持つフィールドで、型から消すと両経路を�
 
 | 値 | 承認 | 仕様書の節 |
 |---|---|---|
-| 津波の見出し文（`Head/Headline/Text`） | 2026-10-29 ユーザー承認「地震情報と同じく出さない (Recommended)」 | [`tsunami-spec.md`](tsunami-spec.md) §4「見出し文（`Head/Headline/Text`）は画面に出さない」 |
+| 津波の見出し文（`Head/Headline/Text`） | **カードの見出しの下に出す**（2026-10-30 ユーザー承認「カードに出す (Recommended)」。2026-10-29 の「地震情報と同じく出さない (Recommended)」を覆した） | [`tsunami-spec.md`](tsunami-spec.md) §4「見出し文（`Head/Headline/Text`）はカードの見出しの下に出す」 |
 
 ### 決定済み・実装は未着手
 

@@ -1,7 +1,7 @@
 import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
 import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type EewMaxScaleInfo } from './eew'
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from './intensity'
-import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_SHORT_LABEL, TSUNAMI_GRADE_LIFTED, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
+import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME, TSUNAMI_GRADE_LIFTED, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
 import { joinSegments, plain, type SpeechSegment, type SpeechRef, type QuakeFact, type SpokenObservation } from './ttsFollow'
 import { getSubRegionsCache } from './subregions'
@@ -20,7 +20,7 @@ import { isObservedLpgmClass } from './lpgm'
  * 等級を読む順（重い等級が先）。**カードが等級カードを積む順と同じ並びを使う**
  * （`GRADES_IN_CARD_ORDER`）。手書きで写すと、等級を増やしたときに片方だけ漏れる。
  *
- * **`'Unknown'` だけは外す。** 等級の呼び名（`TSUNAMI_GRADE_SHORT_LABEL`）が `'Unknown'` では
+ * **`'Unknown'` だけは外す。** 等級の呼び名（`TSUNAMI_GRADE_NAME`）が `'Unknown'` では
  * 空文字なので、含めると「〇〇に切り替えられました。」「また、次の地域に〇〇が発表されています。」の
  * 〇〇が消え、主語を欠いた文になる。区域はあるのに等級が 1 つも取れない電文は実際に届き
  * （`useLiveEventHandler` の引き下げ経路）、そこでは**この並びから `topGrade` が見つからないこと**を
@@ -29,8 +29,8 @@ import { isObservedLpgmClass } from './lpgm'
 const GRADE_ORDER: TsunamiGrade[] = GRADES_IN_CARD_ORDER.filter(g => g !== 'Unknown')
 
 function tsunamiGradeLabel(grade: TsunamiGrade): string {
-  // 呼び名はカードの「等級が移り変わった」行と共有する（`TSUNAMI_GRADE_SHORT_LABEL`）
-  return TSUNAMI_GRADE_SHORT_LABEL[grade]
+  // 呼び名はカードの「等級が移り変わった」行と共有する（`TSUNAMI_GRADE_NAME`）
+  return TSUNAMI_GRADE_NAME[grade]
 }
 
 // 震度スケールの降順リスト
@@ -305,8 +305,8 @@ export interface TtsSpeechOptions {
   maxRegions: number        // 読み上げる最大地域数（0 = 無制限）
   alwaysReadScale: number   // 階数を超えても読み上げる下限震度（-1 = 無効。長周期地震動には適用しない）
   /**
-   * 階数を超えても読み上げる長周期地震動階級の下限（-1 = 無効）。震度の下限とは別の軸
-   * （2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」）。
+   * 階数を超えても読み上げる長周期地震動階級の下限（0〜4。-1 = 無効）。震度の下限とは別の軸
+   * （2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」）。階級 0 も選べる（2026-10-30 ユーザー選択「足す (Recommended)」）。
    */
   alwaysReadLpgmClass: number
   regionTolerance: number   // maxRegions をこの数まで超える場合は省略せず全地域を読む（0 = 無効）
@@ -1475,14 +1475,15 @@ function noForecastText(event: EEWAlert, noForecastWaited: boolean): string {
     case 'assumed':
     case 'singleStation': return '単独点処理のため、予想震度なし。'
     case 'deep':    return '深発地震のため、予想震度なし。'
-    // 最大予想震度 0 の報。理由は添えない（読む文は理由の判らないときと同じ）。
-    case 'belowScale1':
+    // 最大予想震度 0 の報。電文が言い切った値なので「予想最大震度0。」と読む
+    // （2026-10-30 ユーザー選択「予想最大震度 0 (Recommended)」。読み上げは「予想最大震度0。」）
+    case 'belowScale1': return '予想最大震度0。'
     case 'unknown': return '予想震度なし。'
   }
 }
 
 /**
- * 震度部分だけの読み上げ文（「予想最大震度〇〇。」または理由付きの「予想震度なし。」）。
+ * 震度部分だけの読み上げ文（「予想最大震度〇〇。」・最大予想震度 0 の報の「予想最大震度0。」、または理由付きの「予想震度なし。」）。
  * `eewIntensityText` が内部で使う（`lpgmClass` が未確定・0 のときは階級部分が空文字になる
  * ことで、結果的にこちらだけが声になる）。
  *
@@ -2969,6 +2970,50 @@ export function tsunamiAreaGradeChangeToSegments(changes: readonly TsunamiAreaGr
   return segments
 }
 
+/**
+ * 区域単位で等級が動いた報（`tsunamiAreaGradeChangeToSegments`）のあとに添える避難の呼びかけ。
+ *
+ * **警報等（大津波警報・津波警報・津波注意報）がその報に残っていれば、発表文と同じ呼びかけを 1 文足す**
+ * （2026-10-30 ユーザー選択「残っていれば呼びかけを足す (Recommended)」）。文は発表文（`tsunamiToSegments`）と同じく
+ * 気象庁の付加文（`evacuationActionLine`）を先に採り、採れなければ残っている最上位の等級の文
+ * （`fallbackEvacuationAction`）へ落ちる。**警報等が残らない報（予報だけ・全解除）には足さない** —— 予報の文は
+ * 「被害の心配はありません」で、避難の呼びかけではない。
+ *
+ * 呼びかけの付加文が付いた区域単位の等級変化の報は全期間で 2 通（2022-01-15 17:54・2026-04-20 08:08）。
+ */
+export function tsunamiAreaGradeChangeActionSegments(event: JMATsunami): SpeechSegment[] {
+  const topWarningGrade = GRADE_ORDER.find(g => g !== 'Forecast' && event.areas.some(a => a.grade === g))
+  if (!topWarningGrade) return []
+  const action = evacuationActionLine(event.warningComments) ?? fallbackEvacuationAction(topWarningGrade)
+  return action ? [plain(action)] : []
+}
+
+/**
+ * 等級は据え置きのまま予想波高だけが動いた続報で、動いた区域だけを読む
+ * （2026-10-30 ユーザー選択。例「予想される津波の高さが変わりました。岩手県で10メートル超が予想されています。」）。
+ *
+ * 区域と波高の文は発表文と同じ `areaHeightSentence` で組み、等級ごとに 1 文にして 2 文目以降を「また、」で継ぐ
+ * （等級をまたいで 1 文にしない理由は `areaHeightSentence`）。動いた区域が無ければ空を返す。
+ *
+ * @param changed 動いた区域（`forecastHeightChangedAreas` の結果）。並べ替える前のものを渡す
+ */
+export function tsunamiForecastHeightChangeToSegments(
+  changed: readonly TsunamiArea[],
+  observations: readonly TsunamiObservation[],
+): SpeechSegment[] {
+  const sentences: SpeechSegment[] = []
+  for (const g of GRADE_ORDER) {
+    const inGrade = changed.filter(a => a.grade === g)
+    if (inGrade.length === 0) continue
+    const sentence = areaHeightSentence(inGrade, observations)
+    if (sentence.length === 0) continue
+    if (sentences.length > 0) sentences.push(plain('また、'))
+    sentences.push(...sentence)
+  }
+  if (sentences.length === 0) return []
+  return [plain('予想される津波の高さが変わりました。'), ...sentences]
+}
+
 /** 区域単位で等級が動いた報の読み上げテキストを生成する。 */
 export function tsunamiAreaGradeChangeToText(changes: readonly TsunamiAreaGradeChange[]): string {
   return joinSegments(tsunamiAreaGradeChangeToSegments(changes))
@@ -4000,8 +4045,8 @@ function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
 
   // 階級ごとに地域名をまとめる（降順）。**階級 0 の地域も他の階級と同じ設定で数える**
   // （2026-10-29 ユーザー承認「他の階級と同じく読む」、語は同日「「階級0を〜で」 (Recommended)」で画面の「階級0」に揃える）。
-  // 最大階級が 0 の報そのものはここへ来ない（受信側が読み上げない。→ `useEarthquakes` の `lpgmNotifiable`）。
-  // 「必ず読み上げる長周期地震動階級」は 1 以上しか選べないので、階級 0 は階数の範囲に入ったときだけ読む。
+  // 最大階級が 0 の報もここへ来る（2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」・#1201）。
+  // 「必ず読み上げる長周期地震動階級」は 0〜4 を選べる。階級 0 は、階数の範囲に入るか、必ず読む階級に 0 を選んだときに読む。
   const byClass = new Map<number, string[]>()
   for (const r of lpgm.regions) {
     if (!isObservedLpgmClass(r.maxLgInt)) continue
@@ -4028,7 +4073,7 @@ function buildLpgmRegionText(lpgm: JMALpgm, opts: TtsSpeechOptions): string {
   for (let i = 0; i < classes.length; i++) {
     const cls = classes[i]
     const withinLevels = i <= opts.intensityLevels
-    const withinAlwaysRead = opts.alwaysReadLpgmClass >= 1 && cls >= opts.alwaysReadLpgmClass
+    const withinAlwaysRead = opts.alwaysReadLpgmClass >= 0 && cls >= opts.alwaysReadLpgmClass
     if (!withinLevels && !withinAlwaysRead) break
     const aggregated = aggregateLpgmNamesByPref((byClass.get(cls) ?? []), areaPrefIndex, prefAreaNames, prefsWithAreaShown)
     // 区域名を出した県を次の階級へ持ち回る。`mentioned` で落とす前に数えるのは、あちらが

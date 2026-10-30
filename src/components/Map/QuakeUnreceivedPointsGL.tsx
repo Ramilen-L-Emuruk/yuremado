@@ -9,7 +9,7 @@ import type { LatLng } from '../../utils/stationCoords'
 import { haversineKm } from '../../utils/geo'
 import { addOrderedLayer } from './gl/layerOrder'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
-import { badgeHtml, escapeHtml } from './gl/popupHtml'
+import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
 import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
 import { ensureIntensityIcons, UNRECEIVED_ICON_ID, UNRECEIVED_COLOR, INTENSITY_ICON_BASE_RADIUS } from './gl/intensityIcons'
 
@@ -78,6 +78,7 @@ function buildFC(
       pref: m.pref,
       region: m.region ?? '',
       nonJma: m.nonJma ?? false,
+      code: m.code ?? '',
       // 震源が無い電文では距離を出さない（-1 を「不明」の番兵として扱う）。
       distanceKm: epicenter
         ? Math.round(haversineKm(epicenter[0], epicenter[1], m.position[0], m.position[1]))
@@ -131,6 +132,7 @@ function clickHtml(f: MapGeoJSONFeature): string {
     (distanceKm >= 0
       ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8">震源から約 ${distanceKm}km</div>`
       : '') +
+    popupCodeHtml(String(f.properties?.code ?? '') || undefined) +
     `</div>`
   )
 }

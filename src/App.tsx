@@ -32,6 +32,7 @@ import { usePublicWaves } from './hooks/usePublicWaves'
 import type { PublicStationMarker } from './components/Map/PublicStationMarkersGL'
 import { EarthquakeTab } from './components/EarthquakeTab'
 import { RealtimeTab } from './components/RealtimeTab'
+import { resetEewForecastChangeSeen } from './utils/eewForecastChangeSeen'
 import { useEewSpeakingCard } from './hooks/useEewSpeakingCard'
 import { TsunamiTab } from './components/TsunamiTab'
 import { SettingsTab } from './components/SettingsTab'
@@ -955,11 +956,11 @@ export function App() {
     handleLiveEvent(event, meta)
   }, [handleLiveEvent])
   const {
-    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, connectionStatus, dmdataClassifications, lastUpdate, isLoading, isLoadingMore, hasMore, error,
+    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, internationalTsunamis, connectionStatus, dmdataClassifications, lastUpdate, isLoading, isLoadingMore, hasMore, error,
     historyLoss, loadMoreFailed, reconnectGapLoss,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
-    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
+    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
@@ -1015,6 +1016,8 @@ export function App() {
     earthquake:        simulateEarthquake,
     foreignQuake:      simulateForeignQuake,
     foreignQuakeHuge:  simulateForeignQuakeHuge,
+    foreignQuakeInternationalTsunami: simulateForeignQuakeInternationalTsunami,
+    headlineOnlyCity:  simulateHeadlineOnlyCity,
     eew:               simulateEEW,
     eewWarning:        simulateEEWWarning,
     eewForecast:       simulateEEWForecast,
@@ -1074,7 +1077,7 @@ export function App() {
       showBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
     },
   }), [
-    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
+    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
@@ -2024,6 +2027,8 @@ export function App() {
     // 別地点発報が黙って抑え込まれる（時刻の巻き戻りでは自動で切り替わるが、前へ飛ばした
     // 切替では発火しない）。
     resetKyoshinAlertsRef.current()
+    // 緊急地震速報の「予想が変わった」の帯を初めて見た時刻。残すと、同じ窓を再生し直したとき帯が一度も出ない。
+    resetEewForecastChangeSeen()
     // 2 つ目の地震と取り下げカードの記憶。時刻の巻き戻りでは自動で捨てるが、前へ飛ばした切替では
     // 旧い時間軸の「立ち上がった点」「降ろした検知」が残る
     reonsetStateRef.current = createReonsetState()
@@ -2953,6 +2958,7 @@ export function App() {
                 activeLpgmEventId={activeLpgmEventId}
                 onToggleLpgm={toggleLpgmFromEarthquake}
                 estimatedIntensities={estimatedIntensities}
+                internationalTsunamis={internationalTsunamis}
                 distributionQuakeKey={distributionQuakeKey}
                 onToggleDistribution={toggleDistribution}
                 unreceivedQuakeKey={unreceivedQuakeKey}

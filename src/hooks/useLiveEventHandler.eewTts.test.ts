@@ -573,12 +573,12 @@ describe('EEW 読み上げの文言と発話順序', () => {
   describe('最大予想震度 0（震度0）', () => {
     const below1 = (o: Parameters<typeof makeEEW>[0]) => ({ ...makeEEW(o), forecastMaxScaleBelow1: true as const })
 
-    // 正: 時間を進めずに理由なしの「予想震度なし」まで出る
-    it('待たずに理由を添えず「予想震度なし」と読む', async () => {
+    // 正: 時間を進めずに理由なしの「予想最大震度0。」まで出る（2026-10-30 に覆した。以前は「予想震度なし。」）
+    it('待たずに理由を添えず「予想最大震度0。」と読む', async () => {
       const handle = setup()
       handle(below1({ noAreas: true }))
       await flushMicrotasks()
-      expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。', '予想震度なし。'])
+      expect(spokenTexts()).toEqual(['緊急地震速報、日向灘で地震。', '予想最大震度0。'])
     })
 
     // 対照: 印が無ければ従来どおり待つ（時間を進めないうちは第 2 フェーズを読まない）
@@ -597,10 +597,37 @@ describe('EEW 読み上げの文言と発話順序', () => {
       await vi.advanceTimersByTimeAsync(1000)
       handle(below1({ serial: 2, noAreas: true }))
       await flushMicrotasks()
-      expect(spokenTexts()).toContain('予想震度なし。')
+      expect(spokenTexts()).toContain('予想最大震度0。')
       await vi.advanceTimersByTimeAsync(10000)
       await flushMicrotasks()
-      expect(spokenTexts().filter(t => t.includes('予想震度なし'))).toHaveLength(1)
+      expect(spokenTexts().filter(t => t.includes('予想最大震度0') || t.includes('予想震度なし'))).toHaveLength(1)
+    })
+
+    // 正: 予想震度なしを読んだ後に震度0 の続報が来たら、0 を読む（値はどちらも 0 なので、言った印で見分ける）
+    it('「予想震度なし」を読んだ後に震度0 の続報が来たら「予想最大震度0。」を読む', async () => {
+      const handle = setup()
+      handle(makeEEW({ noAreas: true }))
+      // 待ちが切れると画面用の印（state）が動くので act() で包む
+      await act(() => vi.advanceTimersByTimeAsync(10000))
+      await flushMicrotasks()
+      expect(spokenTexts()).toContain('予想震度なし。')
+      speakMock.mockClear()
+      handle(below1({ serial: 2, noAreas: true }))
+      await act(() => vi.advanceTimersByTimeAsync(2000))
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual(['予想最大震度0。'])
+    })
+
+    // 安全弁: 震度0 を読んだ後に震度0 の続報が続いても、言い直さない
+    it('震度0 の続報が続いても「予想最大震度0。」は 1 回だけ', async () => {
+      const handle = setup()
+      handle(below1({ noAreas: true }))
+      await flushMicrotasks()
+      handle(below1({ serial: 2, noAreas: true }))
+      handle(below1({ serial: 3, noAreas: true }))
+      await vi.advanceTimersByTimeAsync(5000)
+      await flushMicrotasks()
+      expect(spokenTexts().filter(t => t === '予想最大震度0。')).toHaveLength(1)
     })
 
     // 0 → 1 の続報は引き上げとして言い直す（実電文 13 地震のうち 7 地震がこの形）
@@ -613,6 +640,29 @@ describe('EEW 読み上げの文言と発話順序', () => {
       await vi.advanceTimersByTimeAsync(2000)
       await flushMicrotasks()
       expect(spokenTexts()).toEqual(['予想最大震度1。'])
+    })
+
+    // 正: 震度 3 を言った後の 0 は引き下げなので、同じ報が階級 0 を初めて言い切っていても黙る
+    // （階級の句は震度の句と同じ発話に載るので、読むと「予想最大震度0。」まで声になる）
+    it('震度3 の後に震度0・階級0 の続報が来ても黙る', async () => {
+      const handle = setup()
+      handle(makeEEW({ scaleTo: 30 }))
+      await vi.advanceTimersByTimeAsync(2000)
+      await flushMicrotasks()
+      expect(spokenTexts()).toContain('予想最大震度3。')
+      speakMock.mockClear()
+      handle({ ...below1({ serial: 2, noAreas: true }), forecastMaxLpgmBelowClass1: true })
+      await act(() => vi.advanceTimersByTimeAsync(5000))
+      await flushMicrotasks()
+      expect(spokenTexts()).toEqual([])
+    })
+
+    // 対照: 初めから震度0・階級0 の報なら、階級 0 まで読む
+    it('初めから震度0・階級0 の報は「予想最大階級0。」まで読む', async () => {
+      const handle = setup()
+      handle({ ...below1({ noAreas: true }), forecastMaxLpgmBelowClass1: true })
+      await flushMicrotasks()
+      expect(spokenTexts().join('')).toContain('予想最大階級0。')
     })
   })
 
@@ -2753,19 +2803,11 @@ describe('2024-01-03 18:48 の実電文（震源が区域の境目を往復す�
     await advance(60_000)
   }
 
-  // **実機（DMDSS 版 dev ＋ 実 VOICEVOX）で同じ再生をしたときと同じ並びになる。** 言い直しが
-  // 1 度も要らないのは、警報級では第 1.5 フェーズ（対象地方）が挟まるぶん第 1 フェーズの予約に
-  // 順番が回るのが遅く、そのころには震源が初報の近くへ戻っているため。
-  //
-  // **「0 回」は実装の必然ではなく、この電文のこの並びでの結果。** 予約に順番が回るのは
-  // 初報（2 チャンク）＋対象地方（1 チャンク）＝ `SPEAK_SYNTH_MS * 2 + SPEAK_CHUNK_MS * 3`
-  // ＝ 4400ms 後で、そのとき最新なのは 4045ms の報（初報の震源から 28.7km ＝ 下限以内）。
-  // ひとつ前の 2457ms の報は 62.5km あり、**余裕は 355ms しかない**。`SPEAK_SYNTH_MS` /
-  // `SPEAK_CHUNK_MS` を触るか、初報・対象地方の文言でチャンク数が変わると 1 回へ転ぶ ——
-  // そのときは実装の劣化ではなく「発話の直前に決め直す」設計が働いた結果なので、期待値の側を
-  // 実機で測り直すこと。**回帰として本当に守りたいのは「積み上がらない」ことで**、そちらは
-  // 次のテスト（差し替わった推定・出戻りを読まない）が担う。
-  it('正: 実機と同じ 3 文に収まり、震源の言い直しは 1 度も要らない', async () => {
+  // **新しい地名（能登半島沖）は 1 度だけ言い直す**（2026-10-30 ユーザー選択「新しい地名なら読む (Recommended)」。
+  // それまでは初報の震源から 50km 以内なら黙っていたので、この電文では言い直しが 1 度も無かった）。
+  // 予約に順番が回るのは初報（2 チャンク）＋対象地方（1 チャンク）の後で、そのとき最新なのは 4045ms の
+  // 「能登半島沖」の報。0.3 秒で差し替わった「日本海中部」は、発話の直前に最新の報から決め直すので声にならない。
+  it('正: 名乗り・対象地方・新しい地名の言い直し・予想値の 4 文になる', async () => {
     installChunkedSpeak([])
     const handle = setup()
     await replayReports(handle)
@@ -2773,11 +2815,12 @@ describe('2024-01-03 18:48 の実電文（震源が区域の境目を往復す�
     expect(spokenTexts()).toEqual([
       '緊急地震速報、石川県能登地方で地震。',
       '北陸では強い揺れに警戒してください。',
+      '震源を更新、能登半島沖で地震。',
       '予想最大震度5弱。',
     ])
   })
 
-  it('正: 差し替わった推定も、初報と同じ地名への出戻りも声にならない', async () => {
+  it('対照: 差し替わった推定も、名乗った地名への出戻りも声にならない（言い直しは新しい地名の 1 回だけ）', async () => {
     installChunkedSpeak([])
     const handle = setup()
     await replayReports(handle)
@@ -2786,7 +2829,8 @@ describe('2024-01-03 18:48 の実電文（震源が区域の境目を往復す�
     expect(spokenTexts().some(t => t.includes('日本海中部'))).toBe(false)
     // 初報と同じ地名へ戻った第 7 報も言い直さない（名乗りの 1 回だけ）
     expect(spokenTexts().filter(t => t.includes('石川県能登地方'))).toHaveLength(1)
-    expect(spokenTexts().some(t => t.startsWith('震源を更新'))).toBe(false)
+    // 能登半島沖は 5 報続くが、言い直しは 1 回
+    expect(spokenTexts().filter(t => t.startsWith('震源を更新'))).toEqual(['震源を更新、能登半島沖で地震。'])
   })
 
   it('安全弁: 名乗り・対象地方・予想値はどれも声になる', async () => {

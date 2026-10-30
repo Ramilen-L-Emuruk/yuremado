@@ -181,6 +181,19 @@ describe('長周期地震動に関する観測情報', () => {
     expect(titles()).toEqual(['長周期地震動 石川県能登地方 最大階級3'])
     expect(notify).toHaveBeenCalledWith('長周期地震動に関する観測情報', '石川県能登地方 最大長周期地震動階級3', 'lpgm-20260101161000')
   })
+  // 最大階級 0 の報も階級 1 以上と同じく扱う（2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」）
+  it('正: 最大階級 0 の報も音を鳴らし、タイトルと通知を出す', () => {
+    const { handle, titles } = setup()
+    handle({ kind: 'lpgm', data: lpgm({ maxClass: 0 }) })
+    expect(sound).toHaveBeenCalled()
+    expect(titles()).toEqual(['長周期地震動 石川県能登地方 最大階級0'])
+    expect(notify).toHaveBeenCalledWith('長周期地震動に関する観測情報', '石川県能登地方 最大長周期地震動階級0', 'lpgm-20260101161000')
+  })
+  it('安全弁: 最大階級 0 の報でも、地震情報の通知を切れば通知しない', () => {
+    const { handle } = setup({ notifyQuake: false })
+    handle({ kind: 'lpgm', data: lpgm({ maxClass: 0 }) })
+    expect(notify).not.toHaveBeenCalled()
+  })
   it('対照: 地震情報の通知を切れば通知しない（タイトルは出す）', () => {
     const { handle, titles } = setup({ notifyQuake: false })
     handle({ kind: 'lpgm', data: lpgm() })

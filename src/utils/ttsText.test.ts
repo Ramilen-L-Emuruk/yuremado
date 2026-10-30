@@ -305,13 +305,22 @@ describe('eewIntensityToText: 長周期地震動階級の読み上げ', () => {
       .toContain('深発地震のため、予想震度なし。')
   })
 
-  // 最大予想震度 0 の報は値が出ているので、仮定震源要素・深発でも理由を添えない
-  // （→ eew-spec.md §4）。読む文は理由の判らないときと同じ。
-  it('最大予想震度 0 の報は理由を添えずに「予想震度なし」と読む', () => {
+  // 最大予想震度 0 の報は値が出ているので、仮定震源要素・深発でも理由を添えず「予想最大震度0。」と読む
+  // （2026-10-30 に覆した。以前は「予想震度なし。」。ユーザー選択「予想最大震度 0 (Recommended)」）
+  it('最大予想震度 0 の報は理由を添えずに「予想最大震度0。」と読む', () => {
     const below1 = (o: Parameters<typeof makeEEW>[1]) => ({ ...makeEEW(undefined, o), forecastMaxScaleBelow1: true as const })
-    expect(eewIntensityToText(below1({}))).toBe('予想震度なし。')
-    expect(eewIntensityToText(below1({ depth: 400 }))).toBe('予想震度なし。')
-    expect(eewIntensityToText(below1({ condition: '仮定震源要素' }))).toBe('予想震度なし。')
+    expect(eewIntensityToText(below1({}))).toBe('予想最大震度0。')
+    expect(eewIntensityToText(below1({ depth: 400 }))).toBe('予想最大震度0。')
+    expect(eewIntensityToText(below1({ condition: '仮定震源要素' }))).toBe('予想最大震度0。')
+  })
+
+  it('対照: 印の無い「予想なし」の報は今までどおり「予想震度なし。」と読む', () => {
+    expect(eewIntensityToText(makeEEW(undefined, {}))).toBe('予想震度なし。')
+  })
+
+  it('最大予想震度 0 の報で電文が長周期階級 0 と言い切っていれば、震度と並べて「予想最大階級0。」も読む', () => {
+    const eew = { ...makeEEW(undefined, {}), forecastMaxScaleBelow1: true as const, forecastMaxLpgmBelowClass1: true as const }
+    expect(eewIntensityToText(eew)).toBe('予想最大震度0。予想最大階級0。')
   })
 
   // 上限が定まらない報（DMDATA の to='over' / P2PQuake の scaleTo=99）は下限側の階級を持つ。
@@ -2300,7 +2309,7 @@ describe('tsunamiAreaGradeChangeToText（区域単位で等級が動いた報）
   ]
 
   it('正: 区域名を読点で連ね、遷移元と遷移先を述語で言い切る', () => {
-    expect(textOf(partialLift)).toBe('福岡県日本海沿岸、佐賀県北部の津波注意報が津波予報に切り替えられました。')
+    expect(textOf(partialLift)).toBe('福岡県日本海沿岸、佐賀県北部の津波注意報が津波予報（若干の海面変動）に切り替えられました。')
   })
 
   // 前の等級を読めない解除区域（2026-10-21 ユーザー選択「「解除」とだけ出す」・文面は 2026-10-24 ユーザー選択
@@ -2320,7 +2329,7 @@ describe('tsunamiAreaGradeChangeToText（区域単位で等級が動いた報）
     expect(textOf([
       { grade: 'Forecast', lastGrade: 'Watch', immediate: false, code: '711', name: '福岡県日本海沿岸' },
       { grade: 'Warning', lastGrade: 'Watch', immediate: false, code: '500', name: '京都府' },
-    ])).toBe('京都府の津波注意報が津波警報に引き上げられました。また、福岡県日本海沿岸の津波注意報が津波予報に切り替えられました。')
+    ])).toBe('京都府の津波注意報が津波警報に引き上げられました。また、福岡県日本海沿岸の津波注意報が津波予報（若干の海面変動）に切り替えられました。')
   })
 
   it('前回が津波なしの区域は「〜に発表されました」の形に落とす（「津波なしが」とは言えない）', () => {
@@ -2367,7 +2376,7 @@ describe('tsunamiAreaGradeChangeToText（区域単位で等級が動いた報）
 
   it('正: 切り替えの組と並ぶときは解除を後に置き「また、」で継ぐ', () => {
     expect(tsunamiAreaGradeChangeToText(tsunamiAreaGradeChanges(liftedTsunami())))
-      .toBe('福岡県日本海沿岸の津波注意報が津波予報に切り替えられました。また、青森県日本海沿岸の津波注意報が解除されました。')
+      .toBe('福岡県日本海沿岸の津波注意報が津波予報（若干の海面変動）に切り替えられました。また、青森県日本海沿岸の津波注意報が解除されました。')
   })
 
   it('安全弁: 解除の文にも行動指示や残っている区域の話を足さない', () => {
@@ -3788,13 +3797,13 @@ describe('津波の失効時刻の読み上げ', () => {
   // 正: 同じ日の期限は時刻だけで読む。2024 年能登半島地震の実電文の形。
   it('失効時刻を伝える', () => {
     expect(joined(expiryTsunami({ validDateTime: '2024-01-02T17:00:00+09:00' })))
-      .toContain('この津波予報の失効時刻は、17時0分です。')
+      .toContain('この津波予報（若干の海面変動）の失効時刻は、17時0分です。')
   })
 
   // 正: 日をまたぐ期限は日付から読む。2024 年日向灘地震の実電文の形。
   it('日をまたぐ期限は日付から読む', () => {
     const t = expiryTsunami({ time: '2024-08-08T13:00:00+09:00', validDateTime: '2024-08-09T10:00:00+09:00' })
-    expect(joined(t)).toContain('この津波予報の失効時刻は、9日10時0分です。')
+    expect(joined(t)).toContain('この津波予報（若干の海面変動）の失効時刻は、9日10時0分です。')
   })
 
   // 対照: 期限を持たない報では何も言わない。**実電文では期限を伝えるのは 1 通だけ**で、
@@ -3864,7 +3873,7 @@ describe('津波の失効時刻の読み上げ', () => {
   // 発表文だけに足しても実運用では一度も声にならない。
   it('降格文も失効時刻を語る', () => {
     expect(joinedDowngrade(expiryTsunami({ validDateTime: '2024-01-02T17:00:00+09:00' })))
-      .toContain('この津波予報の失効時刻は、17時0分です。')
+      .toContain('この津波予報（若干の海面変動）の失効時刻は、17時0分です。')
   })
 
   // 対照: 降格文でも既読なら黙る（既読の鍵は発表文と共有する）。

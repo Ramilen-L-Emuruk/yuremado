@@ -412,9 +412,10 @@ export function buildLegendBlocks(sources: MapLegendSources): LegendBlock[] {
       shortTitle: '長周期階級',
       swatch: {
         kind: 'scale',
-        // 観測の長周期を描いているときだけ 0 の枠を足す。0 は観測情報にだけ現れる値で、
-        // 緊急地震速報の予想は 1〜4 しか描かない（2026-10-24 ユーザー選択「この形でよい (Recommended)」）。
-        cells: (sources.lpgm ? [0, 1, 2, 3, 4] : [1, 2, 3, 4])
+        // 観測でも緊急地震速報の予想でも 0 から並べる。予想も電文が階級 0 と言い切った区域を灰色で塗る
+        // （2026-10-30 ユーザー決定「全部出す」。それまでの「予想は 1〜4 だけ」（2026-10-24 ユーザー選択
+        // 「この形でよい (Recommended)」）を覆した）
+        cells: [0, 1, 2, 3, 4]
           .map((cls) => ({ label: getLpgmClassLabel(cls).replace('階級', ''), color: getLpgmClassColor(cls) })),
       },
     })

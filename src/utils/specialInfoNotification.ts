@@ -60,7 +60,8 @@ export function nankaiCommentaryNotification(event: JMANankaiCommentary): Specia
 
 /**
  * 長周期地震動に関する観測情報の通知。本文は震央地名と最大長周期地震動階級（地名が無ければ階級だけ）。
- * **呼び出し側が階級 1 以上の報だけに絞る**（2026-10-24 ユーザー選択「階級1以上 (Recommended)」）。
+ * 最大階級 0 の報も同じ形で出す（2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」・#1201。
+ * それまでは 2026-10-24 ユーザー選択「階級1以上 (Recommended)」で呼び出し側が 1 以上に絞っていた）。
  * 取消は表示中の報から地名を引けないこともあるので、`name` を呼び出し側が渡す（空なら地名なし）。
  */
 export function lpgmNotification(event: JMALpgm, cancelSubjectName: string): SpecialInfoNotification {

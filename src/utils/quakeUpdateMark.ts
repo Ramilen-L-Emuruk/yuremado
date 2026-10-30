@@ -134,6 +134,12 @@ export function lpgmFactSnapshot(lpgm: JMALpgm): Map<QuakeUpdateField, SnapshotV
     depthAtLeast: h?.depthAtLeast,
   })
   setMaxScaleFact(snap, lpgm.maxInt ?? -1)
+  // 座標と震央補助表現も長周期の欄に出す（2026-10-30 ユーザー承認・L5）。写し方は地震カードと同じ
+  // （座標は値の組・補助表現は電文の原文で比べる。→ `quakeFactSnapshot`）。長周期の型は座標を任意で持つ。
+  const hasPos = h?.latitude !== undefined && h.longitude !== undefined
+    && Number.isFinite(h.latitude) && Number.isFinite(h.longitude)
+  snap.set('coordinate', { key: hasPos ? `${h.latitude},${h.longitude}` : UNKNOWN })
+  snap.set('nameFromMark', { key: h?.nameFromMark || UNKNOWN })
   return snap
 }
 

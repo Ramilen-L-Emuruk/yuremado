@@ -96,6 +96,7 @@ const renderTab = async (lpgm: JMALpgm) => {
     activeLpgmEventId={null}
     onToggleLpgm={() => {}}
     estimatedIntensities={[]}
+    internationalTsunamis={[]}
     distributionQuakeKey={null}
     onToggleDistribution={() => {}}
     unreceivedQuakeKey={null}
@@ -134,6 +135,7 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     activeLpgmEventId={null}
     onToggleLpgm={() => {}}
     estimatedIntensities={[]}
+    internationalTsunamis={[]}
     distributionQuakeKey={null}
     onToggleDistribution={() => {}}
     unreceivedQuakeKey={null}

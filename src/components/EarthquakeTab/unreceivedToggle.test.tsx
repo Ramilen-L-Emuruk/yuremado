@@ -75,6 +75,7 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     activeLpgmEventId={null}
     onToggleLpgm={() => {}}
     estimatedIntensities={[]}
+    internationalTsunamis={[]}
     distributionQuakeKey={null}
     onToggleDistribution={() => {}}
     unreceivedQuakeKey={opts.unreceivedOpen ? quakeEventKey(quake) : null}
@@ -144,6 +145,7 @@ describe('未入電トグル', () => {
         activeLpgmEventId={null}
         onToggleLpgm={() => {}}
         estimatedIntensities={[]}
+        internationalTsunamis={[]}
         distributionQuakeKey={null}
         onToggleDistribution={() => {}}
         unreceivedQuakeKey={quakeEventKey(makeQuake(MIXED))}

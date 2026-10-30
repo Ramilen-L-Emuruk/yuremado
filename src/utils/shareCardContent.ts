@@ -1,6 +1,6 @@
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { MapMode } from '../components/Map/mapTypes'
-import { computeDisplayEEWLevel, eewKindLabel, eewMaxScale, eewMaxScaleInfo, isProvisionalHypocenter } from './eew'
+import { canPresentLpgmClass, computeDisplayEEWLevel, eewKindLabel, eewMaxLpgmClassInfo, eewMaxScale, eewMaxScaleInfo, isEewScaleZeroForecast, isProvisionalHypocenter, statesEewLpgmClassZero } from './eew'
 import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTime, formatQuakeDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth, hasHypocenterFacts } from './formatters'
 import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove, isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
@@ -8,6 +8,7 @@ import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader 
 import { isTsunamiForecastOnly, sourceEarthquakeTime, tsunamiOverallGrade } from './tsunami'
 import { hasKnownEpicenter } from './geo'
 import { kyoshinDetectionScaleLabel } from './kyoshinIntensity'
+import { getLpgmClassLabelWithApproxAbove } from './lpgm'
 
 // 共有カードの見出しと出典行を、いま地図が見せているものから組み立てる。
 //
@@ -244,7 +245,16 @@ function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['
   // **値が無いときは整形を呼ばない**（「非常に強い揺れを検知」の報は発生時刻を持たない）。呼ぶと
   // 「読めない値が来た」として記録され、電文が時刻を持たないことと区別が付かなくなる（`RealtimeTab` と同じ）。
   const originText = eew.earthquake.originTime ? formatDateTime(eew.earthquake.originTime) : null
-  const metaParts = [serial ? `第${serial}報` : '', originText ? `${originText} 発生` : ''].filter(Boolean)
+  // 地震発現時刻（`Earthquake/ArrivalTime`）も焼く。2 つとも気象庁の名前を前に付ける
+  // （2026-10-30 ユーザー選択「共有カードだけ (Recommended)」「2 つとも名前を付ける (Recommended)」。
+  // 「第3報　地震発生時刻 2026/10/30 12:00:00　地震発現時刻 2026/10/30 12:00:20」）。
+  // 発現時刻が空なら欄を落とす（Yahoo hypoInfo の報は配信しない。整形も呼ばない＝上と同じ理由）
+  const arrivalText = eew.earthquake.arrivalTime ? formatDateTime(eew.earthquake.arrivalTime) : null
+  const metaParts = [
+    serial ? `第${serial}報` : '',
+    originText ? `地震発生時刻 ${originText}` : '',
+    arrivalText ? `地震発現時刻 ${arrivalText}` : '',
+  ].filter(Boolean)
   return {
     header: {
       title: eewKindLabel(computeDisplayEEWLevel(eew)),
@@ -276,7 +286,7 @@ function detectionContent(detection: ShareCardContentInput['kyoshinDetection']):
 }
 
 /**
- * 緊急地震速報 1 件ぶんの副見出し（震源名・規模・深さ・予想最大震度）。
+ * 緊急地震速報 1 件ぶんの副見出し（震源名・規模・深さ・予想最大震度・予想長周期地震動階級）。
  *
  * **仮定震源要素（震源未確定）・「非常に強い揺れを検知」の報では規模も深さも出さない**（`isProvisionalHypocenter`）。
  * 電文には数値が入っているが、地震学的に意味を持たない仮の値。画面でも隠している（`RealtimeTab`）ので、
@@ -299,6 +309,15 @@ function eewSubtitle(eew: EEWAlert): string {
     parts.push(shareDepthText(hypocenter.depth, hypocenter.depthAtLeast))
   }
   if (knownScale) parts.push(`予想最大震度 ${getIntensityLabelWithApproxAbove(info.scale, info.orAbove)}`)
+  // 最大予想震度 0 の報は、カードと同じ「予想最大震度 0」を焼く。予想長周期階級も、カードに出す報ではカードと同じ語で焼く
+  // （1〜4・「程度以上」と、電文が階級 0 と言い切った報の「階級0」。2026-10-30 ユーザー選択「0 も階級も焼く (Recommended)」）
+  else if (isEewScaleZeroForecast(eew)) parts.push('予想最大震度 0')
+  const lpgm = eewMaxLpgmClassInfo(eew)
+  if (canPresentLpgmClass(info.scale, lpgm.cls)) {
+    parts.push(`予想長周期地震動 ${getLpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over)}`)
+  } else if (statesEewLpgmClassZero(eew, info.scale, lpgm.cls, true)) {
+    parts.push(`予想長周期地震動 ${getLpgmClassLabelWithApproxAbove(0, false)}`)
+  }
   return parts.join(SUBTITLE_SEPARATOR)
 }
 

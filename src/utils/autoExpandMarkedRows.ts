@@ -61,8 +61,12 @@ export function intensityRowsToExpand(
     // 県を引けない区域（最上段）。→ `IntensityOrphanRegionRow`
     if (row.kind === 'area') { visitRegion(row, []); continue }
     const prefKey = `pref:${row.pref}`
-    childCount.set(prefKey, row.regions.length + row.stations.length)
+    childCount.set(prefKey, row.regions.length + row.cities.length + row.stations.length)
     for (const region of row.regions) visitRegion(region, [prefKey])
+    // 区域が決まらない市町村（県の直下）
+    for (const city of row.cities) {
+      if (marks.has(rowMarkKey.city('', city.name))) open.add(prefKey)
+    }
     // 区域を引けない観測点（県の直下）
     for (const st of row.stations) {
       if (marks.has(rowMarkKey.station(st.name))) open.add(prefKey)

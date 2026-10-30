@@ -24,6 +24,8 @@ export interface TsunamiLine {
 
 export interface TsunamiObsBar {
   name: string
+  /** 潮位観測点コード（`Station/Code`）。吹き出しの末尾に「コード 32002」の形で添える（2026-10-30 ユーザー選択「吹き出しに添える (Recommended)」）。 */
+  code: string | undefined
   lat: number
   lng: number
   barPx: number
@@ -61,6 +63,8 @@ export interface TsunamiObsBar {
  */
 export interface TsunamiArrivalMarker {
   name: string
+  /** 潮位観測点コード（`Station/Code`）。吹き出しの末尾に「コード 32002」の形で添える（2026-10-30 ユーザー選択「吹き出しに添える (Recommended)」）。 */
+  code: string | undefined
   lat: number
   lng: number
   /** 第 1 波の到達時刻。ツールチップに出す。 */
@@ -85,6 +89,8 @@ export interface TsunamiArrivalMarker {
  */
 export interface TsunamiMissingMarker {
   name: string
+  /** 潮位観測点コード（`Station/Code`）。吹き出しの末尾に「コード 32002」の形で添える（2026-10-30 ユーザー選択「吹き出しに添える (Recommended)」）。 */
+  code: string | undefined
   lat: number
   lng: number
   /** 第 1 波の到達時刻。欠測より前に到達を確認できていれば入る。 */
@@ -165,7 +171,7 @@ export function useTsunamiLayerData(
       const color = tsunamiObsBarColor(v)
       const blinking = obsUpdateStatus?.has(o.name) ?? false
       bars.push({
-        name: o.name, lat: latLng[0], lng: latLng[1], barPx, color, height: o.height,
+        name: o.name, code: o.code, lat: latLng[0], lng: latLng[1], barPx, color, height: o.height,
         maxHeightDateTime: o.maxHeightDateTime, maxHeightRevise: o.maxHeightRevise,
         arrivalTime: o.arrivalTime, initial: o.initial, condition: o.condition, blinking,
       })
@@ -193,6 +199,7 @@ export function useTsunamiLayerData(
       if (!latLng) continue
       markers.push({
         name: o.name,
+        code: o.code,
         lat: latLng[0],
         lng: latLng[1],
         arrivalTime: o.arrivalTime,
@@ -217,6 +224,7 @@ export function useTsunamiLayerData(
       if (!latLng) continue
       markers.push({
         name: o.name,
+        code: o.code,
         lat: latLng[0],
         lng: latLng[1],
         arrivalTime: o.arrivalTime,

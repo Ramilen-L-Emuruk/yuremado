@@ -15,7 +15,8 @@ import { log } from '../../utils/logger'
 import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
 
 // 強震モニタの震度0以下（index 1〜6）を描画する MapLibre 版（Leaflet の KyoshinSubThreshold 相当）。
-// index 0（データ無し）と index 7+（震度1以上・KyoshinPoints が描画）は対象外。
+// index 0（慢性ノイズ床＋0.4 を超えなかった点と目盛りの底。utils/kyoshinSubThresholdFilter.ts）と
+// index 7+（震度1以上・KyoshinPoints が描画）は対象外。
 //
 // Leaflet 版は「同レベルのドット同士が重なっても濃くならない」非加算合成（SVG の <g opacity> 単位合成）を
 // 行う。これを WebGL で厳密に再現するため、レベルごとにオフスクリーン FBO へ不透明描画してから opacity で

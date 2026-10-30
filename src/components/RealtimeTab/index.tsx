@@ -1,7 +1,7 @@
 // リアルタイムタブの右パネル。地図エリアは JapanMap が強震モニタ（観測点）と
 // 予報円を描画し、ここでは EEW 情報カード・強震モニタ検知(V2)カード・注記を表示する。
 // 震度スケールの凡例は地図へ重ねる `MapLegend` が持つ（同じものを 2 箇所に出さない）。
-import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
 import { useFieldFlash, type FieldFlash } from '../../hooks/useFieldFlash'
 import { EEW_FLASH_COLOR, UPDATE_MARK_WASH, EEW_HIGHLIGHT_FADE_MS } from '../../utils/updateMark'
 import type { EEWAlert } from '../../types/earthquake'
@@ -12,10 +12,11 @@ import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdow
 import { usePageVisible } from '../../hooks/usePageVisible'
 import { useFollowScroll, scrollParentOf } from '../../hooks/useFollowScroll'
 import { cancelBlockOffset } from '../../utils/cancelBlockOffset'
-import { formatDateTime, formatDepth, formatMagnitudeWithCondition, hasDepth, hasMagnitude, magnitudeHeading } from '../../utils/formatters'
+import { formatDateTime, formatDepth, formatMagnitudeWithCondition, formatTime, hasDepth, hasMagnitude, magnitudeHeading } from '../../utils/formatters'
 import { getIntensityColor, getIntensityLabel, getEewAreaIntensityLabel, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabel, getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
-import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, isEewLpgmClassZeroForecast, eewEpicenterRankLabel, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst, eewIssueTimeMs } from '../../utils/eew'
+import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, isEewScaleZeroForecast, statesEewLpgmClassZero, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst } from '../../utils/eew'
+import { eewForecastChangeFirstSeenAt } from '../../utils/eewForecastChangeSeen'
 import { KYOSHIN_SUB_ZERO_COLOR, kyoshinDetectionScaleLabel, kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
 import { readableTextColor } from '../../utils/contrast'
@@ -158,19 +159,14 @@ const ARRIVAL_COLUMN_MAX_COUNT = 3
 const ARRIVAL_BADGE_MIN_WIDTH = '1.75rem'
 
 /**
- * 報が発表されてから {@link EEW_FORECAST_CHANGE_HOLD_MS} を過ぎているか。過ぎた報の変化は帯に出さない
- * （2026-10-21 ユーザー承認「おすすめで」）。
- *
- * **ライブで見ていた人には、もう消えている帯だから。** 起動時・張り直しの復元とリプレイの初期状態は、
- * 数分前の報を「いま初めて見た報」として描く。手元で初めて見た時刻から数えると、ライブなら発表の
- * 10 秒後に消えていた帯が、開いた瞬間から 10 秒出る。ライブの報は発表からすぐ届くので、ここでは止まらない。
- * 時刻は `serverNow()`（端末の時計のずれとリプレイの再生時計を吸収する。ただし較正が済むまでは端末の時計のままで、
- * 端末の時計が 10 秒以上進んでいると、その間はライブの報でも帯が出ない）。発表時刻が読めない報は止めない
- * —— 比べられないものを黙らせると、ライブの報の帯まで消える側に倒れる。
+ * 精度の欄で `rank2` の行に付ける見出し。`rank2` の 1〜4 はどれも IPF 法の点数の語なので、上の行（震央をどの仕組みで
+ * 決めたか）と並べて「IPF 法の側の値」と読めるようにする（2026-10-30 ユーザー選択「震央（IPF法） (Recommended)」）。
  */
-function isForecastChangeStale(eew: EEWAlert): boolean {
-  const issuedMs = eewIssueTimeMs(eew)
-  return issuedMs !== null && serverNow() - issuedMs >= EEW_FORECAST_CHANGE_HOLD_MS
+const EPICENTER_RANK2_HEADING = '震央（IPF法）'
+
+/** その報の帯を、あと何ミリ秒出すか。手元で初めて見た時刻（→ `eewForecastChangeFirstSeenAt`）から数える。 */
+function eewForecastChangeRemainingMs(key: string, nowMs: number): number {
+  return eewForecastChangeFirstSeenAt(key, nowMs) + EEW_FORECAST_CHANGE_HOLD_MS - nowMs
 }
 
 /**
@@ -198,26 +194,30 @@ function isForecastChangeStale(eew: EEWAlert): boolean {
 function useHeldForecastChange(eew: EEWAlert): string {
   const text = eewForecastChangeText(eew)
   const serial = eewSerial(eew)
-  const stale = isForecastChangeStale(eew)
-  const [held, setHeld] = useState(stale ? '' : text)
+  const seenKey = `${eewEventKey(eew)}#${serial}#${text}`
+  const [held, setHeld] = useState(() => (text && eewForecastChangeRemainingMs(seenKey, Date.now()) > 0 ? text : ''))
   const timerRef = useRef(0)
   useEffect(() => {
     // 変化を伝えていない報では何もしない ―― 消さずに据え置くのがこのフックの本体。
-    // 発表から保持時間を過ぎた報も同じ扱い（→ `isForecastChangeStale`）。前の報が立てた帯はその計時のまま残す
-    if (!text || stale) return
-    setHeld(text)
+    //
+    // **起動時・張り直しの復元とリプレイの初期状態でも出す**（発表から保持時間を過ぎた報でも、手元で初めて見た
+    // 時刻から保持時間ぶん出す。2026-10-30 ユーザー選択「今と同じ文面で出す」）。電文が言っている変化なので、
+    // ライブで見ていなかったことを理由に落とさない。
+    //
+    // **計時は報ごとに 1 回だけ。** 手元で初めて見た時刻を覚えておき、カードを作り直した（タブを移って戻った・
+    // 一覧が組み替わった）ときは残りの時間だけ出す。覚えずに張り直すと、同じ報の帯が作り直すたびに出直す。
+    if (!text) return
+    const remaining = eewForecastChangeRemainingMs(seenKey, Date.now())
     window.clearTimeout(timerRef.current)
-    timerRef.current = window.setTimeout(() => setHeld(''), EEW_FORECAST_CHANGE_HOLD_MS)
-  }, [text, serial, stale])
+    if (remaining <= 0) { setHeld(''); return }
+    setHeld(text)
+    timerRef.current = window.setTimeout(() => setHeld(''), remaining)
+  }, [text, serial, seenKey])
   useEffect(() => () => window.clearTimeout(timerRef.current), [])
-  // 取消の報では出さない。取り下げた予想について「大きくなりました」と並べても意味がない。
-  //
-  // **隠しているのはこの判定そのもの。** 取消電文は `Appendix` を持たないが、状態更新は
-  // 取消を `{ ...表示中の EEW, cancelledAt }` の形で当てるため（`useEarthquakes` の eew ケース）、
-  // **直前の報の `forecastChange` がそのまま残る**。`text` が空になることを当てにして
-  // この判定を外すと、取り下げた予想の帯が復活する。
-  // 取消の報で帯を出さないことは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」。
-  return eew.cancelledAt ? '' : held
+  // **取消の報でも出す**（2026-10-30 ユーザー選択「今と同じ文面で出す」）。取消電文は `Appendix` を持たないが、
+  // 状態更新は取消を `{ ...表示中の EEW, cancelledAt }` の形で当てるため（`useEarthquakes` の eew ケース）、
+  // 直前の報が立てた帯はその計時のまま残る。取消の幕の下で、取り消される前の報が何を言っていたかを読める。
+  return held
 }
 
 /**
@@ -343,6 +343,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   onDeactivateLpgm?: () => void
 }) {
   const { scale: maxScale, orAbove: maxScaleOrAbove } = eewMaxScaleInfo(eew)
+  const scaleZero = isEewScaleZeroForecast(eew)
   const { cls: lpgmClass, over: lpgmClassOver } = eewMaxLpgmClassInfo(eew)
   const level = computeDisplayEEWLevel(eew)
   const isWarning = level >= 1
@@ -477,8 +478,10 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   const depthRankDiffers = eew.accuracy?.depthRank !== eew.accuracy?.epicenterRank
   const magnitudeRankText = eewMagnitudeRankLabel(eew.accuracy?.magnitudeRank)
   const magnitudePointsText = eewMagnitudePointsLabel(eew.accuracy?.magnitudePoints)
+  // 震央位置の精度のもう一つの値（`rank2`）。`rank` と違うときだけ 1 行足す（→ `eewEpicenterRank2Label`）。
+  const epicenterRank2Text = eewEpicenterRank2Label(eew.accuracy)
   const hypocenterSettled = isEewHypocenterSettled(eew)
-  const hasAccuracyText = !!(epicenterRankText || depthRankText || magnitudeRankText || magnitudePointsText || hypocenterSettled)
+  const hasAccuracyText = !!(epicenterRankText || epicenterRank2Text || depthRankText || magnitudeRankText || magnitudePointsText || hypocenterSettled)
 
   // 主要動の到達について何か言える地域。**同じ要素に 3 通りの意味が入る**ので、並べる前に
   // 見分ける（電文解説資料 Ⅱ.21 2-1-5-3-6・2-1-5-3-7、気象庁コード表 12）。
@@ -670,7 +673,29 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
           対象地域や到達予想時刻がスクロールせずに見えるようにする。roomy 以上は従来の寸法。 */}
       <div className="flex flex-col gap-1.5 p-2 roomy:gap-2 roomy:p-3">
         {/* 最大震度バナー */}
-        {maxScale > 0 ? (
+        {scaleZero ? (
+          // 電文が最大予想震度 0 と言い切った報（→ `isEewScaleZeroForecast`）。「予想震度なし」と分け、
+          // 震度 1 以上と同じ枠に「予想最大震度 0」を震度0 の灰色で出す（2026-10-30 ユーザー選択
+          // 「予想最大震度 0 (Recommended)」）。区域はどの報にも無い（全期間 59 通）。
+          <div
+            className="w-full rounded-lg py-1.5 px-3 flex items-center justify-center gap-2 roomy:py-3 roomy:px-4 roomy:gap-4"
+            style={{
+              backgroundColor: getIntensityBgColor(-1),
+              border: `2px solid ${SHINDO0_COLOR}`,
+            }}
+          >
+            <span className="text-sm font-medium" style={{ color: SHINDO0_COLOR }}>
+              予想最大震度
+            </span>
+            <span
+              key={fade(flash.maxScale).key}
+              className={`font-black leading-none text-[3rem] roomy:text-[4.5rem] rounded${fade(flash.maxScale).className}`}
+              style={{ color: '#ffffff', ...fade(flash.maxScale).style }}
+            >
+              0
+            </span>
+          </div>
+        ) : maxScale > 0 ? (
           <div
             className="w-full rounded-lg py-1.5 px-3 flex items-center justify-center gap-2 roomy:py-3 roomy:px-4 roomy:gap-4"
             style={{
@@ -729,14 +754,28 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
         )}
         {/* 電文が最大予想長周期地震動階級を 0 と言い切った報（→ `isEewLpgmClassZeroForecast`）。
             階級を載せていない報と見分けられるよう、階級 1 以上と同じ並びで「階級0」と出す。
-            **押せる形にしない** —— 押すと開く長周期の区域塗りは階級 1 以上の区域しか塗らず、
-            開いても地図に何も出ない。色は観測情報の階級 0 と同じ灰色（`getLpgmClassColor(0)`）。 */}
-        {maxScale > 0 && lpgmClass === 0 && isEewLpgmClassZeroForecast(eew) && (
-          <div
-            className="w-full rounded-lg py-1 px-3 flex items-center justify-center gap-2 roomy:py-2 roomy:px-4 roomy:gap-4"
+            出す条件は読み上げ・通知と同じ述語（`statesEewLpgmClassZero`。最大予想震度 0 の報でも出す ——
+            2026-10-30 ユーザー選択「震度と並べて出す (Recommended)」）。
+            **階級 1 以上と同じく押せる形にする**（2026-10-30 ユーザー決定「全部出す」）。押すと開く区域塗りは、区域ごとに
+            階級 0 を予想した区域を灰色で塗る（→ `useEewLayerData` の `eewLpgmRegionAggregates`）。
+            色は観測情報の階級 0 と同じ灰色（`getLpgmClassColor(0)`）。
+            **塗れる区域が 1 つも無い報では押せない形のまま出す** —— 区域は電文全体の予想が震度4 以上の報にしか
+            載らないので、最大予想震度 0 の報は塗る区域を持たない。押せる形にすると、押しても地図が空のまま
+            開いた印だけが付く。 */}
+        {lpgmClass === 0 && statesEewLpgmClassZero(eew, maxScale, lpgmClass, true) && (() => {
+          const paintable = eewAreas(eew).some((a) => a.lgIntBelowClass1)
+          const Tag = paintable ? 'button' : 'div'
+          return (
+          <Tag
+            {...(paintable ? { type: 'button' as const, onClick: (e: MouseEvent) => { e.stopPropagation(); onToggleLpgm?.(eew.issue?.eventId ?? eew.id) } } : {})}
+            className={`w-full rounded-lg py-1 px-3 flex items-center justify-center gap-2 roomy:py-2 roomy:px-4 roomy:gap-4${paintable ? ' hover:opacity-80 transition-opacity' : ''}`}
             style={{
               backgroundColor: getLpgmClassBgColor(0),
               border: `2px solid ${getLpgmClassColor(0)}`,
+              outline: activeLpgmEventId === (eew.issue?.eventId ?? eew.id)
+                ? `2px solid ${getLpgmClassColor(0)}`
+                : undefined,
+              outlineOffset: '2px',
             }}
           >
             <span className="text-xs font-medium roomy:text-sm" style={{ color: getLpgmClassColor(0) }}>
@@ -745,8 +784,9 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             <span className="text-xl font-black roomy:text-2xl" style={{ color: '#ffffff' }}>
               {getLpgmClassLabel(0)}
             </span>
-          </div>
-        )}
+          </Tag>
+          )
+        })()}
 
         {/* 気象庁の固定付加文（避難行動の呼びかけ）。**予想値のバナー群の直後に置く** ——
             電文が言う唯一の行動指示なので、カードの末尾では区域一覧の下に埋もれる。
@@ -766,7 +806,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             `{ ...表示中の EEW, cancelledAt }` の形で当てるため（`useEarthquakes` の eew ケース）、
             `cancelled` は取消前の値（`false`）のまま残る。`!eew.cancelled` と書いていた版が
             あったが、あれは常に真で、実際に隠していたのは取消オーバーレイだった
-            （`useHeldForecastChange` が同じ理由で `cancelledAt` を見ている）。 */}
+            （`useEarthquakes` が取消を当てる形は `useHeldForecastChange` のコメントにもある）。 */}
         {/* 対象地方と行動指示を同じ枠に入れ、対象を先に・一段大きく置く（理由と実測は
             → `docs/spec/eew-spec.md` §3「固定付加文」）。
             **どちらか片方しか無くても枠は出す** —— 片方を条件にすると、欠けたときにもう片方ごと消える。
@@ -1031,6 +1071,9 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                 const etaSec = kind === 'forecast' && a.arrivalTime
                   ? eewArrivalEtaSec(a.arrivalTime, nowMs)
                   : null
+                // PLUM 法の区域の時刻（その区域を初めて予測した時刻）。読めなければ添えない。
+                const plumStart = kind === 'plum' && a.arrivalTime ? formatTime(a.arrivalTime) : null
+                const plumStartText = plumStart ? `${plumStart} に予測開始` : null
                 // **震度スケール外の値でも区域を落とさない。** `eewMaxScaleInfo` は最大値を
                 // 求める関数なので `isValidIntensityScale` で弾くが、この欄は「電文が載せた区域を
                 // 全部出す」のが役目で、弾くと区域そのものが画面から消える（到達の情報まで失う）。
@@ -1057,16 +1100,31 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                     >
                       {getEewAreaIntensityLabel(a.scaleFrom, a.scaleTo, a.scaleToOrAbove === true)}
                     </span>
-                    <span className={`flex-1 truncate ${kind === 'arrived' ? 'text-secondary' : 'text-white'}`}>
-                      {a.name}
-                    </span>
+                    {kind === 'plum' && plumStartText ? (
+                      // PLUM 法の区域の時刻は到達の予測ではなく「その区域を初めて予測した時刻」なので、
+                      // 右端の「時刻不明」は残したまま、区域名の下へ小さく添える
+                      // （2026-10-30 ユーザー選択「区域名の下に小さく出す (Recommended)」）。
+                      <span className="flex-1 min-w-0 flex flex-col">
+                        <span className="truncate text-white">{a.name}</span>
+                        {/* 切らずに折り返す。2 列では「HH:MM:SS に予測開始」が列幅（実測 約 110px）に収まらず、
+                            truncate だと肝心の「予測開始」が「…」に隠れる。 */}
+                        <span className="text-secondary font-mono tabular-nums wrap-break-word" style={{ fontSize: '0.625rem' }}>
+                          {plumStartText}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className={`flex-1 truncate ${kind === 'arrived' ? 'text-secondary' : 'text-white'}`}>
+                        {a.name}
+                      </span>
+                    )}
                     {kind === 'arrived' ? (
                       // 気象庁の語は「既に主要動到達と推測」。**断定しない** —— 到達したかどうかは
                       // 気象庁の推測であって、観測した事実ではない。
                       <span className="text-secondary shrink-0">到達済み</span>
                     ) : kind === 'plum' ? (
                       // PLUM 法は周辺の観測点で実際に観測された揺れから震度を出す手法で、走時を
-                      // 計算しない。**電文の時刻は到達の予測ではない**ので出さない。
+                      // 計算しない。**電文の時刻は到達の予測ではない**ので右端には出さない
+                      // （初めて予測した時刻として区域名の下へ添える。上の `plumStartText`）。
                       // **語は状態そのものを書く。** ここへ手法の名前を置くと、他の 2 通りが
                       // 時間軸上の位置を伝えているのにここだけ伝えないことになる。
                       // 手法（PLUM 法）の説明は見出しのホバーへ逃がしてある。
@@ -1133,6 +1191,12 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
                 <span className="text-white wrap-break-word">{epicenterRankText}</span>
               </div>
             )}
+            {epicenterRank2Text && (
+              <div className="flex items-start gap-2">
+                <span className="shrink-0">{EPICENTER_RANK2_HEADING}</span>
+                <span className="text-white wrap-break-word">{epicenterRank2Text}</span>
+              </div>
+            )}
             {depthRankText && depthRankDiffers && (
               <div className="flex items-start gap-2">
                 <span className="shrink-0">深さ</span>
@@ -1152,6 +1216,14 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             {hypocenterSettled && (
               <span className="text-white">震源とＭはこれ以降変わりません</span>
             )}
+          </div>
+        )}
+
+        {/* 電文が名乗る情報名（`Head/Title`）。見出しは区分から組み立てた語なので、電文の名乗りは
+            カードの右下へ小さく添える（2026-10-30 ユーザー選択「右下に小さく出す (Recommended)」）。 */}
+        {eew.infoName && (
+          <div className="text-right text-secondary" style={{ fontSize: '0.6875rem' }}>
+            {eew.infoName}
           </div>
         )}
       </div>
