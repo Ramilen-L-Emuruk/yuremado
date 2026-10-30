@@ -70,6 +70,6 @@ describe('見出し文と官署', () => {
 
   it('編集官署の隣に発表官署を出す', () => {
     renderTab(makeTsunami())
-    expect(screen.getByText(/編集官署 気象庁本庁 ／ 発表官署 気象庁/)).toBeTruthy()
+    expect(screen.getByText(/編集官署 気象庁本庁\s発表官署 気象庁/)).toBeTruthy()
   })
 })

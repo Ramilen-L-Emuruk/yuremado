@@ -1116,7 +1116,7 @@ export interface JMATsunami {
     editorialOffice?: string
     /**
      * 電文を発表した官署（`Control/PublishingOffice`）。**編集官署へは落とさない。** 津波カードで編集官署の隣に
-     * 「編集官署 … ／ 発表官署 …」の形で出す（2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・地震カードと同じ形）。
+     * 「編集官署 …　発表官署 …」の形で出す（2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・地震カードと同じ形）。
      */
     publishingOffice?: string
     time: string
