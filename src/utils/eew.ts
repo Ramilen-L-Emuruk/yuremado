@@ -1,11 +1,11 @@
 import type { EEWAlert, EEWRegion, EewOrigin } from '../types/earthquake'
 import { parseJstTimeMs } from './quakeOriginSeconds'
 import { hasDepth, hasMagnitude } from './formatters'
-import { hasKnownEpicenter, haversineKm, hypocentralDistanceKm } from './geo'
+import { hasKnownEpicenter, hypocentralDistanceKm } from './geo'
 import type { AlertSoundType } from './alertSound'
 import { travelTimeSec } from './travelTime'
 import { isValidIntensityScale, getIntensityLabelWithApproxAbove } from './intensity'
-import { isValidLpgmClass, getLpgmClassLabelWithApproxAbove } from './lpgm'
+import { isValidLpgmClass, getLpgmClassLabel, getLpgmClassLabelWithApproxAbove } from './lpgm'
 import { hypoInfoItemToEEW, type YahooHypoInfoItem } from '../services/kyoshin'
 import { isEewArrivedKindCode, isEewPlumKindCode } from './eewKind'
 import { EEW_WARNING_REGION_ORDER } from './eewWarningRegions'
@@ -400,6 +400,12 @@ export interface EewMaxScaleInfo {
    * `scaleTo: 99` 由来（`EEWRegion.scaleToOrAbove`）。表示・読み上げで語を補うために使う。
    */
   orAbove: boolean
+  /**
+   * **読み上げの既読にだけ使う印。** 「予想最大震度0。」を言ったか（→ {@link isEewScaleZeroForecast}）。
+   * 予想震度なしも 0 も `scale: 0` なので、予想なしから 0 へ変わった続報を黙らせないよう別に持つ
+   * （階級 0 の `EewMaxLpgmClassInfo.zeroStated` と同じ形）。予想値そのもの（{@link eewMaxScaleInfo}）には付けない。
+   */
+  zeroStated?: boolean
 }
 
 /** 対象地域の最大予想震度と「以上」表現の有無。震度が取れないときは scale=0 を返す。
@@ -525,22 +531,17 @@ export interface AnnouncedHypocenter {
 }
 
 /**
- * 「震源を更新、〇〇で地震。」と言い直す距離の下限。これ以下しか動いていなければ、
- * 地名が変わっていても同じ場所を指しているとみなす（2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
- */
-export const EEW_HYPOCENTER_RESTATE_KM = 50
-
-/**
- * 続報の震源が「まだ一度も声にしていない場所」か。
+ * 続報の震源が「まだ一度も声にしていない地名」か。
  *
  * **比較の相手は、その EEW で声にした震源の全部**（直前の 1 つではない）。速報の初期は
  * 震源推定が定まらず、地名が区域の境目を何度も往復する —— 直前とだけ比べると、既に名乗った
  * 場所へ戻っただけの続報でも「震源を更新」と言い直してしまう（2024-01-03 18:48 の実電文では
- * 5.4 秒のあいだに 石川県能登地方 → 日本海中部 → 能登半島沖 → 石川県能登地方 と動き、
- * そのうち 3 回が言い直しの条件を満たしていた）。
+ * 5.4 秒のあいだに 石川県能登地方 → 日本海中部 → 能登半島沖 → 石川県能登地方 と動いた）。
  *
- * **地名と距離の両方で黙らせる。** 地名が既出ならその時点で黙り、地名が新しくても既出の
- * どれかから {@link EEW_HYPOCENTER_RESTATE_KM} 以内なら黙る（区域の境目をまたいだだけ）。
+ * **見るのは地名だけ。** 新しい地名なら、既出の震源との距離によらず言い直す（2026-10-30 ユーザー選択
+ * 「新しい地名なら読む (Recommended)」。それまでの 50km 以内なら黙る条件を外した）。全期間の実電文で、
+ * 既に名乗った地名へ戻る往復は 546 回あり、これは今も黙る。新しい地名への言い直しは 1 地震あたり
+ * 1 回が 720・2 回が 78・3 回が 12・4 回が 1 だった。
  *
  * @param announced その EEW で声にした震源（空＝まだ一度も声にしていない）。**空なら常に偽** ——
  *   比較の相手が無い状態を「大きく動いた」と読むと、位置不明で始まった EEW が位置を得ただけで
@@ -551,13 +552,10 @@ export function isUnannouncedHypocenter(
   hypo: { name: string; latitude: number; longitude: number },
 ): boolean {
   if (announced.length === 0) return false
-  // 位置不明のセンチネル（-200）は有限なので `Number.isFinite` をすり抜け、距離が無意味に
-  // 大きく出て「大きく動いた」と誤判定する。
-  if (!hasKnownEpicenter(hypo.latitude, hypo.longitude)) return false
-  return !announced.some(a =>
-    a.name === hypo.name
-    || (a.lat !== null && a.lng !== null
-      && haversineKm(hypo.latitude, hypo.longitude, a.lat, a.lng) <= EEW_HYPOCENTER_RESTATE_KM))
+  // 位置不明の報（センチネル -200）は震源を推定した報ではないので、地名が違っても言い直さない。
+  // 空の地名も同じ（「震源を更新、で地震。」と壊れた文になる）。
+  if (!hasKnownEpicenter(hypo.latitude, hypo.longitude) || !hypo.name) return false
+  return !announced.some(a => a.name === hypo.name)
 }
 
 /**
@@ -656,19 +654,36 @@ export function eewMaxLpgmClassInfo(eew: EEWAlert): EewMaxLpgmClassInfo {
  * 電文全体の印（`forecastMaxLpgmBelowClass1`）を見て、区域にも階級 1 以上が 1 つも無いときだけ真にする。
  * 真の報は画面と読み上げに「階級0」を出す（2026-10-29 ユーザー承認「画面と読み上げに出す」、
  * 語は同日「「階級0」と出し、「階級0」と読む (Recommended)」）。震度を伝えられない報で出さないのは
- * 階級 1 以上と同じ（→ {@link canPresentLpgmClass}。呼び出し側で併せて見る）。
+ * 階級 1 以上と同じ（→ {@link canPresentLpgmClass}。呼び出し側で併せて見る）。**ただし最大予想震度 0 の報
+ * （→ {@link isEewScaleZeroForecast}）は震度を伝えている報なので、階級 0 も並べて出す**
+ * （2026-10-30 ユーザー選択「震度と並べて出す (Recommended)」。カード・読み上げ・通知とも）。
  */
 /**
  * この報で「予想最大階級0。」を言うか。**言う側（`eewIntensityText`）・既読を付ける側・続報の受信で
  * 第 2 フェーズを呼ぶ側の 3 か所が、この 1 つの判定を使う**（ずれると、言っていない 0 が既読に入る・
  * 喋る予定の無い予約が毎報積まれて非 EEW の読み上げを止める）。
  *
- * - `scale` … 確定した予想震度。0（予想震度なし）では言わない（階級 1 以上と同じく、震度を伝えられない報で階級を出さない）
+ * - `scale` … 確定した予想震度。0 では言わない（階級 1 以上と同じく、震度を伝えられない報で階級を出さない）。
+ *   **最大予想震度 0 の報（{@link isEewScaleZeroForecast}）は例外で言う** —— 「予想最大震度0。」を言う報なので、
+ *   震度を伝えられない報ではない（2026-10-30 ユーザー選択「震度と並べて出す (Recommended)」）
  * - `confirmedLpgmCls` … 確定した階級。1 以上なら階級 1 以上の句を言うので、こちらは偽
  * - `readLpgm` … 階級を読む設定
  */
 export function statesEewLpgmClassZero(eew: EEWAlert, scale: number, confirmedLpgmCls: number, readLpgm: boolean): boolean {
-  return readLpgm && scale > 0 && confirmedLpgmCls === 0 && isEewLpgmClassZeroForecast(eew)
+  return readLpgm && (scale > 0 || isEewScaleZeroForecast(eew)) && confirmedLpgmCls === 0 && isEewLpgmClassZeroForecast(eew)
+}
+
+/**
+ * 電文が「最大予想震度は 0」と言い切った報か（`ForecastInt` の値が `0`。→ `EEWAlert.forecastMaxScaleBelow1`）。
+ *
+ * **予想が無い報と分ける。** {@link eewMaxScaleInfo} はどちらも `scale: 0` を返すので、電文全体の印を見る。
+ * 区域に震度 1 以上が 1 つでもあれば偽（その報は震度 1 以上を予想している）。
+ * 真の報は、カードと読み上げに「予想最大震度 0」、通知に「最大震度0予想」と出す
+ * （2026-10-30 ユーザー選択「予想最大震度 0 (Recommended)」「最大震度0予想 (Recommended)」。
+ * 全期間で 59 通・19 地震、区域はどの報にも無い）。
+ */
+export function isEewScaleZeroForecast(eew: EEWAlert): boolean {
+  return eew.forecastMaxScaleBelow1 === true && eewMaxScaleInfo(eew).scale === 0
 }
 
 export function isEewLpgmClassZeroForecast(eew: EEWAlert): boolean {
@@ -697,7 +712,12 @@ export function canPresentLpgmClass(scale: number, lpgmClass: number): boolean {
 /** ブラウザ通知に出した最大予想震度と最大予想長周期地震動階級（→ {@link eewNotifiedForecast}）。 */
 export interface EewNotifiedForecast {
   readonly scale: EewMaxScaleInfo
-  /** 出せない階級（{@link canPresentLpgmClass} が偽）は 0 にしてある */
+  /** 最大予想震度 0 の報か（→ {@link isEewScaleZeroForecast}）。真なら本文に「最大震度0予想」と出す */
+  readonly scaleZero: boolean
+  /**
+   * 出せない階級（{@link canPresentLpgmClass} が偽）は 0 にしてある。電文が階級 0 と言い切った報
+   * （{@link statesEewLpgmClassZero} と同じ条件）では `zeroStated` を立て、本文に「長周期地震動階級0予想」と出す
+   */
   readonly lpgm: EewMaxLpgmClassInfo
 }
 
@@ -705,20 +725,34 @@ export interface EewNotifiedForecast {
 export function eewNotifiedForecast(eew: EEWAlert): EewNotifiedForecast {
   const scale = eewMaxScaleInfo(eew)
   const lpgm = eewMaxLpgmClassInfo(eew)
-  return { scale, lpgm: canPresentLpgmClass(scale.scale, lpgm.cls) ? lpgm : { cls: 0, over: false } }
+  const scaleZero = isEewScaleZeroForecast(eew)
+  // 階級 0 は画面・読み上げと同じ述語で見る（設定に依らず通知には出すので `readLpgm` は真で渡す）
+  const lpgmZero = statesEewLpgmClassZero(eew, scale.scale, lpgm.cls, true)
+  return {
+    scale,
+    scaleZero,
+    lpgm: canPresentLpgmClass(scale.scale, lpgm.cls) ? lpgm
+      : lpgmZero ? { cls: 0, over: false, zeroStated: true }
+      : { cls: 0, over: false },
+  }
 }
 
 /**
  * 緊急地震速報のブラウザ通知の本文。「石川県能登地方 最大震度5弱予想 長周期地震動階級2予想」の形で、
  * 震度・階級は予想があるときだけ添える（2026-10-21 ユーザー承認「それで進めて。」）。
+ * **最大予想震度 0 の報は「最大震度0予想」と出す**（2026-10-30 ユーザー選択「最大震度0予想 (Recommended)」。
+ * 例「八丈島東方沖 最大震度0予想」）。電文が長周期地震動階級 0 と言い切った報は「長周期地震動階級0予想」を添える
+ * （2026-10-30 ユーザー決定「全部出す」・同日ユーザー選択「震度と並べて出す (Recommended)」）。
  */
 export function eewNotificationBody(name: string, forecast: EewNotifiedForecast): string {
-  const { scale, lpgm } = forecast
+  const { scale, scaleZero, lpgm } = forecast
   // 震央地名が空の報（起こりうるのは標準版の取得元。実配信では未観測）でも先頭に空白を残さない（2026-10-24 ユーザー選択「備えとして直す (Recommended)」）
   return [
     name.trim(),
-    scale.scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale.scale, scale.orAbove)}予想` : '',
-    lpgm.cls > 0 ? `長周期地震動${getLpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over)}予想` : '',
+    scale.scale > 0 ? `最大震度${getIntensityLabelWithApproxAbove(scale.scale, scale.orAbove)}予想`
+      : scaleZero ? '最大震度0予想' : '',
+    lpgm.cls > 0 ? `長周期地震動${getLpgmClassLabelWithApproxAbove(lpgm.cls, lpgm.over)}予想`
+      : lpgm.zeroStated ? `長周期地震動${getLpgmClassLabel(0)}予想` : '',
   ].filter(p => p !== '').join(' ')
 }
 
@@ -727,11 +761,17 @@ export function eewNotificationBody(name: string, forecast: EewNotifiedForecast)
  * 「直す (Recommended)」）。上がったかは読み上げと同じ物差し（{@link isForecastScaleHigher}・
  * {@link isForecastLpgmHigher}）で見る —— 数値が同じでも「程度以上」が付けば上がった扱い。
  * **まだ通知を出していない地震では偽**（出し直す相手が無い。新規の通知は呼び出し側が出す）。
+ *
+ * 予想を載せていなかった通知のあとで、電文が最大予想震度 0・長周期地震動階級 0 と言い切った報も上がった扱いにする
+ * （本文に「最大震度0予想」「長周期地震動階級0予想」が新しく加わる。読み上げが 0 への変化を言うのと揃える）。
+ * 1 以上を通知した後の 0 は引き下げなので含めない。
  */
 export function raisesNotifiedForecast(latest: EewNotifiedForecast, notified: EewNotifiedForecast | undefined): boolean {
   if (!notified) return false
   return isForecastScaleHigher(latest.scale, notified.scale)
     || (latest.lpgm.cls > 0 && isForecastLpgmHigher(latest.lpgm, notified.lpgm))
+    || (latest.scaleZero && !notified.scaleZero && notified.scale.scale === 0)
+    || (latest.lpgm.zeroStated === true && notified.lpgm.zeroStated !== true && notified.lpgm.cls === 0)
 }
 
 /**
@@ -759,7 +799,7 @@ export const DEEP_QUAKE_DEPTH_KM = 150
  * - `singleStation` … 待ち（`EEW_PHASE2_MAX_WAIT_MS`）を終えても値が付かず、震央の精度ランク
  *   （`accuracy.epicenterRank`）が 1 の報。**`waited` が真のときしか返さない**（下記）
  * - `belowScale1` … 最大予想震度が "0"（震度0。→ `EEWAlert.forecastMaxScaleBelow1`）。気象庁は値を
- *   出し終えているので待たない。画面と読み上げは理由を添えずに「予想震度なし」と出す（→ eew-spec.md §4）。
+ *   出し終えているので待たない。画面と読み上げは理由を添えずに「予想最大震度 0」と出す（→ eew-spec.md §4）。
  *   **他の理由より先に見る** —— 値が出ている報に「単独点処理のため」
  *   「深発地震のため」を添えると、発表された内容と食い違う
  * - `unknown` … 上記以外。**この理由だけは値が遅れて付く可能性が残る**ため、待つ意味があるのはここだけ
@@ -1422,6 +1462,20 @@ export function diffHypoInfoEvents(
  */
 export function eewEpicenterRankLabel(rank: number | undefined): string {
   return rank === undefined ? '' : (EPICENTER_RANK_LABEL[rank] ?? '')
+}
+
+/**
+ * 震央位置の精度のもう一つの値（`Epicenter@rank2`）を、**`rank` と違うときだけ**資料の語で返す。
+ *
+ * 資料（解説資料 Ⅱ.21 1-4-2-1）は 0＝不明、1〜4＝`rank` の 1〜4 と同じ語、9＝これ以降変化しない、と定める。
+ * 全期間の控えでは、`rank` が 1〜4 の報の `rank2` は必ず同じ値か 9 で、**別の中身を持つのは `rank` が 6・7 の報だけ**
+ * （2026-10-30 に数えた）。同じ値なら行を足しても情報は増えないので出さない。0（不明）と 9（別の行で出す）も出さない
+ * （2026-10-30 ユーザー選択「rank と違うときだけ出す (Recommended)」）。
+ */
+export function eewEpicenterRank2Label(accuracy: EEWAlert['accuracy']): string {
+  const rank2 = accuracy?.epicenterRank2
+  if (rank2 === undefined || rank2 < 1 || rank2 > 4 || rank2 === accuracy?.epicenterRank) return ''
+  return EPICENTER_RANK_LABEL[rank2] ?? ''
 }
 
 export function eewMagnitudeRankLabel(rank: number | undefined): string {

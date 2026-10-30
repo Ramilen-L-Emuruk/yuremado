@@ -1475,14 +1475,15 @@ function noForecastText(event: EEWAlert, noForecastWaited: boolean): string {
     case 'assumed':
     case 'singleStation': return '単独点処理のため、予想震度なし。'
     case 'deep':    return '深発地震のため、予想震度なし。'
-    // 最大予想震度 0 の報。理由は添えない（読む文は理由の判らないときと同じ）。
-    case 'belowScale1':
+    // 最大予想震度 0 の報。電文が言い切った値なので「予想最大震度0。」と読む
+    // （2026-10-30 ユーザー選択「予想最大震度 0 (Recommended)」。読み上げは「予想最大震度0。」）
+    case 'belowScale1': return '予想最大震度0。'
     case 'unknown': return '予想震度なし。'
   }
 }
 
 /**
- * 震度部分だけの読み上げ文（「予想最大震度〇〇。」または理由付きの「予想震度なし。」）。
+ * 震度部分だけの読み上げ文（「予想最大震度〇〇。」・最大予想震度 0 の報の「予想最大震度0。」、または理由付きの「予想震度なし。」）。
  * `eewIntensityText` が内部で使う（`lpgmClass` が未確定・0 のときは階級部分が空文字になる
  * ことで、結果的にこちらだけが声になる）。
  *

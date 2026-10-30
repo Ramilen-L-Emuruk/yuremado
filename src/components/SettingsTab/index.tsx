@@ -2388,7 +2388,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
         {/* 文面は 2026-10-20 ユーザー承認「1 で、足してコミットして」 */}
         {isDmdss && (
-          <Row label="地震動予報（予想震度0）" description="最大予想震度が0の初報。値は出ているので待たずに「予想震度なし。」と読み、押すと予想震度4へ言い直す – eewForecast 音">
+          <Row label="地震動予報（予想震度0）" description="最大予想震度が0の初報。値は出ているので待たずに「予想最大震度0。」と読み、押すと予想震度4へ言い直す – eewForecast 音">
             <TestButton color="yellow" onClick={onTest.eewForecastZero}>予想震度0テスト</TestButton>
           </Row>
         )}

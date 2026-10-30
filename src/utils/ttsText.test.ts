@@ -305,13 +305,22 @@ describe('eewIntensityToText: 長周期地震動階級の読み上げ', () => {
       .toContain('深発地震のため、予想震度なし。')
   })
 
-  // 最大予想震度 0 の報は値が出ているので、仮定震源要素・深発でも理由を添えない
-  // （→ eew-spec.md §4）。読む文は理由の判らないときと同じ。
-  it('最大予想震度 0 の報は理由を添えずに「予想震度なし」と読む', () => {
+  // 最大予想震度 0 の報は値が出ているので、仮定震源要素・深発でも理由を添えず「予想最大震度0。」と読む
+  // （2026-10-30 に覆した。以前は「予想震度なし。」。ユーザー選択「予想最大震度 0 (Recommended)」）
+  it('最大予想震度 0 の報は理由を添えずに「予想最大震度0。」と読む', () => {
     const below1 = (o: Parameters<typeof makeEEW>[1]) => ({ ...makeEEW(undefined, o), forecastMaxScaleBelow1: true as const })
-    expect(eewIntensityToText(below1({}))).toBe('予想震度なし。')
-    expect(eewIntensityToText(below1({ depth: 400 }))).toBe('予想震度なし。')
-    expect(eewIntensityToText(below1({ condition: '仮定震源要素' }))).toBe('予想震度なし。')
+    expect(eewIntensityToText(below1({}))).toBe('予想最大震度0。')
+    expect(eewIntensityToText(below1({ depth: 400 }))).toBe('予想最大震度0。')
+    expect(eewIntensityToText(below1({ condition: '仮定震源要素' }))).toBe('予想最大震度0。')
+  })
+
+  it('対照: 印の無い「予想なし」の報は今までどおり「予想震度なし。」と読む', () => {
+    expect(eewIntensityToText(makeEEW(undefined, {}))).toBe('予想震度なし。')
+  })
+
+  it('最大予想震度 0 の報で電文が長周期階級 0 と言い切っていれば、震度と並べて「予想最大階級0。」も読む', () => {
+    const eew = { ...makeEEW(undefined, {}), forecastMaxScaleBelow1: true as const, forecastMaxLpgmBelowClass1: true as const }
+    expect(eewIntensityToText(eew)).toBe('予想最大震度0。予想最大階級0。')
   })
 
   // 上限が定まらない報（DMDATA の to='over' / P2PQuake の scaleTo=99）は下限側の階級を持つ。

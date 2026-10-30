@@ -3,7 +3,7 @@ import type { EEWAlert } from '../types/earthquake'
 import type { LatLng } from '../utils/stationCoords'
 import { useSubRegions } from './useSubRegions'
 import { ringsBounds, type SubRegion } from '../utils/subregions'
-import { NO_EEW_AREA_ARRIVAL, eewAreas, eewMaxScaleInfo, isProvisionalHypocenter, mergeEewAreaArrival, type EewAreaArrival } from '../utils/eew'
+import { NO_EEW_AREA_ARRIVAL, eewAreas, eewMaxScaleInfo, isEewScaleZeroForecast, isProvisionalHypocenter, mergeEewAreaArrival, type EewAreaArrival } from '../utils/eew'
 import { isValidIntensityScale } from '../utils/intensity'
 import { isValidLpgmClass } from '../utils/lpgm'
 import { hasKnownEpicenter, normalizeEpicenterLng } from '../utils/geo'
@@ -86,6 +86,8 @@ export interface EewEpicenter {
   maxScale: number
   /** `maxScale` が「〜以上」の下限か。ポップアップで語を補うために持つ（→ docs/spec/eew-spec.md §4）。 */
   maxScaleOrAbove: boolean
+  /** 電文が最大予想震度 0 と言い切った報か（→ `isEewScaleZeroForecast`）。吹き出しに「予想最大震度 0」と出す */
+  maxScaleZero?: true
   isFinal: boolean
 }
 
@@ -180,13 +182,17 @@ export function useEewLayerData(
     if (!eewLpgmEventId || !subregions) return []
     const eew = eews.find((e) => (e.issue?.eventId ?? e.id) === eewLpgmEventId)
     if (!eew) return []
-    // 階級 1〜4 以外は塗りに使わない。getLpgmClassLabel() はフォールバックを持たないため、
-    // 弾かないと「階級99」のような値がそのまま地図ラベルに出る。
-    const areas = eewAreas(eew).filter((a) => a.lgIntTo != null && isValidLpgmClass(a.lgIntTo))
-    if (areas.length === 0) return []
-    const maxByName = new Map(areas.map((a) => [a.name, a.lgIntTo!]))
+    // 階級 1〜4 と、電文が階級 0 と言い切った区域（`lgIntBelowClass1`）を塗る。0 は灰色で塗る
+    // （2026-10-30 ユーザー決定「全部出す」）。それ以外の値は塗りに使わない —— 弾かないと「階級99」のような値がそのまま地図ラベルに出る。
+    const maxByName = new Map<string, number>()
+    for (const a of eewAreas(eew)) {
+      const cls = a.lgIntTo != null && isValidLpgmClass(a.lgIntTo) ? a.lgIntTo : a.lgIntBelowClass1 ? 0 : null
+      if (cls === null) continue
+      if (cls > (maxByName.get(a.name) ?? -1)) maxByName.set(a.name, cls)
+    }
+    if (maxByName.size === 0) return []
     return subregions
-      .filter((sr) => (maxByName.get(sr.name) ?? 0) >= 1)
+      .filter((sr) => maxByName.has(sr.name))
       .map((sr) => ({ name: sr.name, maxLgInt: maxByName.get(sr.name)!, rings: sr.rings, label: sr.label }))
       .sort((a, b) => a.maxLgInt - b.maxLgInt)
   }, [eewLpgmEventId, eews, subregions])
@@ -216,6 +222,8 @@ export function useEewLayerData(
           severity: eew.severity,
           maxScale: scale,
           maxScaleOrAbove: orAbove,
+          // 最大予想震度 0 の報は、カード・通知と同じく 0 と出す（2026-10-30 ユーザー決定「全部出す」）
+          ...(isEewScaleZeroForecast(eew) && { maxScaleZero: true as const }),
           isFinal: eew.isFinal ?? false,
         })
       }
