@@ -199,6 +199,22 @@ export const HEADLINE_ONLY_CITY: TestTelegramScript = {
 }
 
 /**
+ * 国際津波関連情報テスト（2021-01-21 21:23 インドネシア付近 M7.0 の遠地地震と、同じ地震の WEPA60）。
+ *
+ * 遠地地震に関する情報は NII の実電文。**WEPA60 は自作の英文**（`synthetic/wepa60-talaud.txt`）——
+ * WEPA60 は NII に無く、DMDATA の実電文はリポジトリへ置けない。行の並び（題名・`ISSUED AT`・
+ * `ORIGIN TIME:`・末尾の `=`）だけを実電文に倣い、中身は自作だと本文に書いてある。
+ * 発生時刻は遠地地震の報と同じ 12:23Z にしてあるので、カードへ結び付く。
+ */
+export const FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI: TestTelegramScript = {
+  anchor: 0,
+  steps: [
+    { file: nii('20210121125105_0_VXSE53_010000'), headType: 'VXSE53', atMs: 0 },
+    { file: 'synthetic/wepa60-talaud.txt', headType: 'WEPA60', atMs: 3_000 },
+  ],
+}
+
+/**
  * 巨大地震テスト（遠地地震で規模が「Ｍ８を超える巨大地震」の報）。
  *
  * 元は気象庁のサンプル電文（2010-02-27 チリ中部沿岸・遠地地震に関する情報・付加文 0221 0228 0229）。
@@ -1956,7 +1972,7 @@ function isoZ(ms: number): string {
 /** 台本の一覧（テストで全件を流して読めることを確かめる）。 */
 export const ALL_TEST_TELEGRAM_SCRIPTS: Readonly<Record<string, TestTelegramScript>> = {
   EARTHQUAKE, TRAINING_QUAKE, UNRECEIVED_QUAKE, MAX_SCALE_OR_ABOVE_QUAKE, AREA_UNRECEIVED_QUAKE,
-  FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, HEADLINE_ONLY_CITY, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
+  FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI, HEADLINE_ONLY_CITY, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
   QUAKE_PARTIAL_CANCEL, HYPOCENTER_FROM_TSUNAMI,
   TSUNAMI_MAJOR_WARNING, TSUNAMI_QUIET_REPORTS, TSUNAMI_WARNING, TSUNAMI_WATCH, TSUNAMI_FORECAST, TSUNAMI_EXPIRY, TSUNAMI_GRADE_CHANGE,
   TSUNAMI_SOURCE_ADDED, TSUNAMI_RETRACTION, TSUNAMI_INFO_RETRACTION,

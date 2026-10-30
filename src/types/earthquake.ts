@@ -2044,6 +2044,31 @@ export interface JMAQuakeNotice {
   expireAt: string
 }
 
+/**
+ * 国際津波関連情報（WEPA60）。北西太平洋津波情報センター（NWPTAC。気象庁が運営）が各国の機関へ
+ * 出す英文の電文で、**XML ではなく平文**で届く。遠地地震に関する情報（VXSE53）と同じ地震について
+ * 出るので、遠地地震のカードに原文のまま畳んで添える（2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」）。
+ * 読み上げ・通知・音は無い。
+ *
+ * 電文の形（実電文 3 通で確かめた）: 1 行目が `WEPA60 RJTD 250003`、2 行目が題名
+ * （`TSUNAMI BULLETIN NUMBER 001`・通信試験は `NWPTA COMMUNICATIONS TEST`）、続いて
+ * `ISSUED AT 0003Z 25 DEC 2020`、地震の報なら `ORIGIN TIME:2343Z 24 DEC 2020`、最後の行が `=`。
+ */
+export interface JMAInternationalTsunami {
+  /** `WEPA60:` ＋ 発表時刻 ＋ 題名 ＋ 本文の指紋（`wepa60Id`）。同じ報を経路が違って 2 度受けても 1 通に畳むための鍵 */
+  id: string
+  /** 2 行目の題名（例: `TSUNAMI BULLETIN NUMBER 001`） */
+  title: string
+  /** 発表時刻。`ISSUED AT` の時刻（UTC・分まで）を ISO 8601 にしたもの（他の種別の `time` と同じ役） */
+  time: string
+  /** `ORIGIN TIME:` の時刻（UTC・分まで）。通信試験の報には無い */
+  originTime?: string
+  /** 通信試験（`NWPTA COMMUNICATIONS TEST`）か。地震を伴わないのでどのカードにも付かない */
+  isCommunicationsTest: boolean
+  /** 電文の本文そのまま（行末の空白と最後の `=` だけ落とす） */
+  text: string
+}
+
 /** {@link JMAEarthquakeCount} の 1 区間。 */
 export interface JMAEarthquakeCountItem {
   /**
@@ -2266,7 +2291,7 @@ export type ConnectionStatus =
  */
 export type TelegramLogKind =
   | 'eew' | 'quake' | 'tsunami' | 'lpgm' | 'nankai' | 'nankaiCommentary' | 'kohatsu'
-  | 'quakeNotice' | 'earthquakeCount' | 'estimatedIntensity'
+  | 'quakeNotice' | 'earthquakeCount' | 'estimatedIntensity' | 'internationalTsunami'
 
 /**
  * 電文ログの行が、どの経路でアプリへ入ったか。

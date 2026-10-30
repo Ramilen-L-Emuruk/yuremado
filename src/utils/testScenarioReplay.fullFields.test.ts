@@ -10,8 +10,9 @@ import { describe, it, expect } from 'vitest'
 import { instantiateScenario } from './testScenarioReplay'
 import type { TestScenarioFile } from '../types/testScenario'
 import type { ReplayPayload } from '../types/replay'
+import { wepa60Id } from '../services/wepa60Parser'
 import type {
-  AppEvent, EEWAlert, JMAEarthquakeCount, JMAEstimatedIntensity, JMAKohatsu, JMALpgm, JMANankai,
+  AppEvent, EEWAlert, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, JMAKohatsu, JMALpgm, JMANankai,
   JMANankaiCommentary, JMAQuake, JMAQuakeNotice, JMATsunami,
 } from '../types/earthquake'
 
@@ -315,6 +316,14 @@ function estimatedSample(): DeepRequired<JMAEstimatedIntensity> {
   }
 }
 
+function internationalTsunamiSample(): DeepRequired<JMAInternationalTsunami> {
+  const time = iso()
+  return {
+    id: wepa60Id(time, 'TSUNAMI BULLETIN NUMBER 001', 'WEPA60 RJTD 250003'), title: 'TSUNAMI BULLETIN NUMBER 001',
+    time, originTime: iso(), isCommunicationsTest: false, text: 'WEPA60 RJTD 250003',
+  }
+}
+
 /**
  * 見本の一覧。**種別ごとの表にしておき、種別が増えたら型エラーで見本を足させる**
  * （`satisfies` が `ReplayPayload['kind']` と `AppEvent['kind']` の全種別を要求する）。
@@ -334,6 +343,7 @@ function allPayloads(): ReplayPayload[] {
     quakeNotice: [{ kind: 'quakeNotice', data: noticeSample() }],
     earthquakeCount: [{ kind: 'earthquakeCount', data: countSample() }],
     estimatedIntensity: [{ kind: 'estimatedIntensity', data: estimatedSample() }],
+    internationalTsunami: [{ kind: 'internationalTsunami', data: internationalTsunamiSample() }],
   } satisfies Record<ReplayPayload['kind'], ReplayPayload[]>
   return Object.values(payloads).flat()
 }

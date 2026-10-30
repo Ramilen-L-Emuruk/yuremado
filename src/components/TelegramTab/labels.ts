@@ -45,6 +45,7 @@ export const HEAD_TYPE_LABEL: Readonly<Record<string, string>> = {
   VZSE40: '地震・津波に関するお知らせ',
   IXAC41: '推計震度分布図作図用データ',
   IXAC40: '推計震度分布図作図用データ（旧形式）',
+  WEPA60: '国際津波関連情報（英文）',
   '551': '地震情報',
   '552': '津波情報',
   '556': 'EEW',
@@ -71,6 +72,7 @@ export const KIND_LABEL: Readonly<Record<TelegramLogKind, string>> = {
   quakeNotice: 'お知らせ',
   earthquakeCount: '地震回数',
   estimatedIntensity: '推計震度分布図',
+  internationalTsunami: '国際津波関連情報',
 }
 
 /**

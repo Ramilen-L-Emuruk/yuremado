@@ -10,6 +10,7 @@ import {
   parseNankaiFromXml, parseNankaiCommentaryFromXml, parseVyse60FromXml,
   parseQuakeNoticeFromXml, parseEarthquakeCountFromXml,
 } from './dmdataParser'
+import { parseWepa60Text, wepa60FailureReason } from './wepa60Parser'
 import { decodeEstimatedIntensity, TELEGRAM_KIND_NORMAL } from '../utils/bufrEstimatedIntensity'
 import { log, createLogThrottle } from '../utils/logger'
 import type { ReplayPayload } from '../types/replay'
@@ -45,9 +46,17 @@ export const KOHATSU_TYPES = new Set(['VYSE60'])
 // VZSE40=地震・津波に関するお知らせ（観測点の入電停止・配信試験・訓練の予告などの運用連絡）。
 // VXSE60=地震回数に関する情報（群発時の回数経過）。どちらも `telegram.earthquake` に含まれ、
 // 追加の契約は要らない。**扱っていない種別を洗い出した経緯と、扱わないと決めたもの
-// （WEPA60・VXSE56）の理由は docs/spec/data-sources-spec.md §2「扱う電文種別」。**
+// （VXSE56）の理由は docs/spec/data-sources-spec.md §2「扱う電文種別」。**
 export const NOTICE_TYPES = new Set(['VZSE40'])
 export const QUAKE_COUNT_TYPES = new Set(['VXSE60'])
+// WEPA60=国際津波関連情報（英文）。`telegram.earthquake` に含まれる。**XML ではなく平文で届く**ので、
+// `buildXmlPayload` の中で平文の読み手へ渡す（本文の受け取り方は XML と同じテキストで済む）。
+export const INTERNATIONAL_TSUNAMI_TYPES = new Set(['WEPA60'])
+
+/** その種別の本文が XML でない平文か。ライブの `format` の確かめで、XML を期待しない種別を見分けるのに使う。 */
+export function isPlainTextTelegramType(headType: string): boolean {
+  return INTERNATIONAL_TSUNAMI_TYPES.has(headType)
+}
 // 推計震度分布図作図用データ。**このアプリで唯一の二進電文（BUFR）**で、XML でも JSON でも
 // 届かない。大きい電文は分割配信されるため、読む前に結合が要る（→ `bufrTelegramAssembly.ts`）。
 // 経路ごとに本文の取り方が違うので、**`buildXmlPayload` ではなく `buildBinaryPayload` を通す。**
@@ -90,6 +99,7 @@ export const TELEGRAM_KIND_OF_HEAD_TYPE: ReadonlyMap<string, TelegramLogKind> = 
   ...[...NOTICE_TYPES].map(code => [code, 'quakeNotice'] as const),
   ...[...QUAKE_COUNT_TYPES].map(code => [code, 'earthquakeCount'] as const),
   ...[...ESTIMATED_INTENSITY_TYPES].map(code => [code, 'estimatedIntensity'] as const),
+  ...[...INTERNATIONAL_TSUNAMI_TYPES].map(code => [code, 'internationalTsunami'] as const),
 ])
 
 /** 電文種別が何の電文か。扱わない種別なら `undefined`。表は {@link TELEGRAM_KIND_OF_HEAD_TYPE}。 */
@@ -112,6 +122,7 @@ export const NON_EEW_HANDLED_TYPES: ReadonlySet<string> = new Set([
   ...QUAKE_TYPES, ...TSUNAMI_TYPES, ...LPGM_TYPES,
   ...NANKAI_TYPES, ...COMMENTARY_TYPES, ...KOHATSU_TYPES,
   ...NOTICE_TYPES, ...QUAKE_COUNT_TYPES, ...ESTIMATED_INTENSITY_TYPES,
+  ...INTERNATIONAL_TSUNAMI_TYPES,
 ])
 
 /**
@@ -138,10 +149,14 @@ export function isHandledType(headType: string, eewHeadType: EewHeadType | null)
  * **推計震度分布図（IXAC41・IXAC40）も入れる**（2026-10-05 ユーザー承認）。地震ごとに持つので
  * （→ `EarthquakeState.estimatedIntensities`）、遡った地震のカードにも分布が付く。
  * **二進で届くので、本文の取り方だけは他と違う**（→ `isBinaryTelegramType`）。
+ *
+ * **国際津波関連情報（WEPA60）も入れる。** 遠地地震のカードに添えるものなので、カードと同じ 7 日を遡る
+ * （2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」で、カードに付けると決めた）。
  */
 export const HISTORY_EXTRA_TYPES = new Set([
   ...LPGM_TYPES, ...NANKAI_TYPES, ...COMMENTARY_TYPES, ...KOHATSU_TYPES,
   ...NOTICE_TYPES, ...QUAKE_COUNT_TYPES, ...ESTIMATED_INTENSITY_TYPES,
+  ...INTERNATIONAL_TSUNAMI_TYPES,
 ])
 
 /**
@@ -181,6 +196,9 @@ export function historyExtraKey(payload: ReplayPayload): string | null {
       return `${payload.kind}:${payload.data.id}|${payload.data.reportDateTime}|${payload.data.cancelled ? 'cancel' : 'issue'}`
     case 'estimatedIntensity':
       return `estimatedIntensity:${payload.data.arrivalTime}|${payload.data.time}|${payload.data.count}`
+    case 'internationalTsunami':
+      // 報ごとに別の鍵（発表時刻と題名で決まる `id`）。同じ地震の続報（BULLETIN NUMBER 002）も全部残す
+      return payload.data.id
     default:
       return null
   }
@@ -265,6 +283,12 @@ export function buildXmlPayload(headType: string, xml: string, eewHeadType: EewH
     case 'earthquakeCount': {
       const count = parseEarthquakeCountFromXml(xml)
       return count ? { kind: 'earthquakeCount', data: count } : null
+    }
+    case 'internationalTsunami': {
+      // 平文の電文。`xml` には本文のテキストがそのまま入っている
+      const data = parseWepa60Text(xml)
+      if (!data) log.warn(`[dmdata] 国際津波関連情報 (${headType}) を読めませんでした（この報は出ません）: ${wepa60FailureReason(xml)}`)
+      return data ? { kind: 'internationalTsunami', data } : null
     }
     case 'estimatedIntensity':
       // **二進電文がここへ来たら、その経路がバイナリの受け口を持っていない。** `NON_EEW_HANDLED_TYPES`

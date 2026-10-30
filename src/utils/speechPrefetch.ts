@@ -105,6 +105,9 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
       // 読まれない 1 通ぶんを焼くことの損失は小さい。
       add(quakeNoticeToText(payload.data))
       break
+    case 'internationalTsunami':
+      // 読み上げない（2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」。声・通知・音は無し）
+      return texts
   }
 
   // 気象庁が書いた文は最下位の層で別の発話として読まれる（→ audio-tts-spec.md §6）。
@@ -121,7 +124,7 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
  * **そのまま渡せない。** キューの型（`ReplayPayload`）と読み上げの型（`LiveEvent`）は
  * よく似ているが 1 か所違う —— 推計震度分布図は `isNew` を必須で持つ。
  */
-function toLiveEvent(payload: ReplayPayload): LiveEvent {
+function toLiveEvent(payload: Exclude<ReplayPayload, { kind: 'internationalTsunami' }>): LiveEvent {
   switch (payload.kind) {
     case 'event': return payload.event
     case 'lpgm':

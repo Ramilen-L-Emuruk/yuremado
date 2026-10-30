@@ -6,14 +6,14 @@
 // data.compression="gzip"）。クライアント側で「base64 デコード → gunzip」を行う必要がある。
 // `formatMode: 'raw'` で購読しているため、復号して得られるのは気象庁の XML そのもの。
 
-import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, EEWAlert, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
+import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, EEWAlert, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
 import { parseForecastInt, parseForecastLgInt } from './dmdataParser'
 import { serverNow, serverDate, liveServerNow } from '../utils/clock'
 import { selectActiveEews, computeEverSpecialWarningEventIds, eewEventKey, ACTIVE_EEW_WINDOW_MS, isSpecialWarningForecast, computeSingleEEWLevel } from '../utils/eew'
 import { gunzip } from '../utils/gzip'
 import {
   EEW_HEAD_TYPES, type EewHeadType, DISPATCHED_WITHOUT_PARSER,
-  NON_EEW_HANDLED_TYPES, isBinaryTelegramType, buildBinaryPayload, buildXmlPayload,
+  NON_EEW_HANDLED_TYPES, isBinaryTelegramType, isPlainTextTelegramType, buildBinaryPayload, buildXmlPayload,
   isFilteredBinaryTelegram, telegramKindOfHeadType, telegramKindOfPayload,
   TELEGRAM_DATA_BASE,
 } from './dmdataTelegramPayload'
@@ -232,13 +232,15 @@ export async function decodeTelegramText(msg: Record<string, unknown>): Promise<
   const bytes = await decodeBody(msg)
   if (bytes === null) return null
 
-  // `formatMode: 'raw'` で購読しているので `format` は xml のはず。違えば配信形態が変わった印なので
-  // 記録する。**ただし本文は返す** —— ここまで来た時点で復号は成功しており、値が変わった
-  // （大文字になった等）だけで全電文を捨てると被害が記録より遥かに大きい。中身が XML でなければ
-  // パーサー側が弾き、そこでも記録が残る。
+  // `formatMode: 'raw'` で購読しているので `format` は xml のはず（平文で配られる国際津波関連情報
+  // WEPA60 だけは `a/n`）。違えば配信形態が変わった印なので記録する。**ただし本文は返す** —— ここまで
+  // 来た時点で復号は成功しており、値が変わった（大文字になった等）だけで全電文を捨てると被害が記録より
+  // 遥かに大きい。中身が想定の形でなければパーサー側が弾き、そこでも記録が残る。
+  const head = msg.head as { type?: unknown } | undefined
+  const expected = typeof head?.type === 'string' && isPlainTextTelegramType(head.type) ? 'a/n' : 'xml'
   const format = typeof msg.format === 'string' ? msg.format : null
-  if (format !== 'xml') {
-    warnUndecodableBody('format', `XML 以外の format: ${format ?? '(無し)'}`, msg, '電文の format が想定と違います')
+  if (format !== expected) {
+    warnUndecodableBody('format', `${expected} 以外の format: ${format ?? '(無し)'}`, msg, '電文の format が想定と違います')
   }
   return new TextDecoder().decode(bytes)
 }
@@ -438,6 +440,7 @@ export type DmdataEvent =
   | { kind: 'quakeNotice'; data: JMAQuakeNotice }
   | { kind: 'earthquakeCount'; data: JMAEarthquakeCount }
   | { kind: 'estimatedIntensity'; data: JMAEstimatedIntensity }
+  | { kind: 'internationalTsunami'; data: JMAInternationalTsunami }
 
 /**
  * 読み取り結果（{@link ReplayPayload}）を、ライブの通知の形へ直す。

@@ -1,5 +1,5 @@
 import { Fragment, memo, useMemo, useRef, useEffect, useState } from 'react'
-import type { JMAQuake, JMALpgm, IssueType, EarthquakePoint, IntensityScale, JMAEstimatedIntensity, QuakeReportRecord, BorrowedFromTsunami, LpgmPeriodBand } from '../../types/earthquake'
+import type { JMAQuake, JMALpgm, IssueType, EarthquakePoint, IntensityScale, JMAEstimatedIntensity, JMAInternationalTsunami, QuakeReportRecord, BorrowedFromTsunami, LpgmPeriodBand } from '../../types/earthquake'
 import { quakeEventKey, isKnownCorrection } from '../../utils/quakeMerge'
 import { QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
 import { getLpgmClassLabel, getLpgmClassColor, getLpgmClassBgColor, lpgmCategoryNoteWithRegions, buildLpgmRows, canOpenLpgmNotes, lpgmPeriodRows, LPGM_PERIODS_HEADING, LPGM_PERIODS_NOTE, type LpgmStationRow } from '../../utils/lpgm'
@@ -485,6 +485,11 @@ interface Props {
    * `memo` が素通りする。
    */
   estimatedIntensity?: JMAEstimatedIntensity | null
+  /**
+   * **この地震の**国際津波関連情報（WEPA60。引き当て済み・付かなければ空）。遠地地震のカードにだけ付く
+   * （→ `internationalTsunamisFor`）。**必須にしてある** —— 渡し忘れると英文の情報が黙って出なくなる。
+   */
+  internationalTsunamis: readonly JMAInternationalTsunami[]
   /** この地震の震度分布モードを開いているか。 */
   distributionActive?: boolean
   onToggleDistribution?: (eventKey: string) => void
@@ -672,7 +677,7 @@ function QuakeReportHeading({ reports, fallback, lpgmInfoName }: { reports?: Qua
  */
 export const EarthquakeCard = memo(function EarthquakeCard({
   quake, isLatest, isSelected, onSelect, lpgm, activeLpgmEventId, onToggleLpgm,
-  estimatedIntensity = null, distributionActive = false, onToggleDistribution,
+  estimatedIntensity = null, internationalTsunamis, distributionActive = false, onToggleDistribution,
   unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
   marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView,
 }: Props) {
@@ -1494,6 +1499,21 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               </span>
             </div>
           )}
+          {/* 国際津波関連情報（WEPA60・英文）。北西太平洋津波情報センターが各国の機関へ出す電文を、原文のまま
+              畳んで添える（2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」）。読み上げ・通知・音は無い。
+              続報（BULLETIN NUMBER 002…）は報ごとに 1 つずつ、発表の古い順に並べる。 */}
+          {internationalTsunamis.map(x => (
+            <details
+              key={x.id}
+              className="w-full rounded-lg border border-border bg-panel px-3 py-1 text-xs text-secondary roomy:text-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <summary className="cursor-pointer select-none py-1 text-white">
+                国際津波関連情報（英文）<span className="ml-2 text-secondary">{x.title}</span>
+              </summary>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words pb-2 font-mono leading-relaxed">{x.text}</pre>
+            </details>
+          ))}
           {/* 推計の電文の震央補助表現。地震カードの補助表現と食い違うときだけ出す（2026-10-30 ユーザー承認
               「地震カードの形で出す (Recommended)」）。読み上げには入れない。 */}
           {estimatedMarkNote && (

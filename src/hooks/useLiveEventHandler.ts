@@ -811,7 +811,7 @@ function rememberTelegramTextAsSpoken(payload: ReplayPayload, spoken: Set<string
   // **お知らせ（`quakeNotice`）は対象に入れる。** 読み上げを有効にした端末では本文を
   // 気象庁が書いた文として読むので、窓の手前で届いた本文を既読にしておかないと、録画の区間の
   // 境目で読み直す。読み上げを切っている端末で既読にしても、読む機会が無いので害は無い。
-  if (payload.kind === 'estimatedIntensity') return
+  if (payload.kind === 'estimatedIntensity' || payload.kind === 'internationalTsunami') return
   const event: LiveEvent = payload.kind === 'event' ? payload.event : payload
   const speech = telegramTextToSpeak(event, opts)
   if (!speech) return

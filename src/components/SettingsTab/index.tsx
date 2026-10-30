@@ -47,6 +47,7 @@ export interface TestFunctions {
   earthquake: () => void
   foreignQuake: () => void
   foreignQuakeHuge: () => void
+  foreignQuakeInternationalTsunami: () => void
   headlineOnlyCity: () => void
   eew: () => void
   eewWarning: () => void
@@ -2430,6 +2431,9 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
         <Row label="遠地地震（規模を速報できない報）" description="チリ中部沿岸 M8を超える巨大地震 – earthquakeInfo 音 / 規模が数値で出ない第一報。日本への津波の有無は調査中">
           <TestButton color="purple" onClick={onTest.foreignQuakeHuge}>巨大地震テスト</TestButton>
+        </Row>
+        <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに畳んだ原文が付く。英文そのものには音・読み上げ・通知が無い">
+          <TestButton color="purple" onClick={onTest.foreignQuakeInternationalTsunami}>国際津波関連情報テスト</TestButton>
         </Row>
         <Row label="見出しにだけある市町村" description="2024-01-01 佐渡付近の震源・震度に関する情報（実データ）で、輪島市が見出しにだけ載っている形 – earthquakeInfo 音 / 震度一覧の石川県能登の下に輪島市（震度3）が並ぶ。この市町村には観測点の行が無い">
           <TestButton color="purple" onClick={onTest.headlineOnlyCity}>見出しの市町村テスト</TestButton>

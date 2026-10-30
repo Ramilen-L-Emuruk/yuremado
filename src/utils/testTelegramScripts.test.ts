@@ -21,6 +21,7 @@ import { eewAreas, eewMaxScale, computeSingleEEWLevel, isProvisionalHypocenter }
 import { earthquakeToSegments, createQuakeSpokenState, applySpokenRefs } from './ttsText'
 import { joinSegments } from './ttsFollow'
 import { reportsText } from '../test-utils/quakeReports'
+import { internationalTsunamisFor } from './internationalTsunami'
 import { editXml, descendants, only } from './testTelegramRewrite'
 
 const NOW = new Date('2026-10-22T03:00:00.000Z')
@@ -461,6 +462,16 @@ describe('遠地地震テスト・巨大地震テスト', () => {
     const [quake] = quakesOf(await build(base))
     expect((quake.cities ?? []).filter(c => c.name === '輪島市')).toHaveLength(1)
     expect(quake.points.some(p => p.addr.startsWith('輪島'))).toBe(true)
+  })
+
+  it('国際津波関連情報テストは遠地地震と、発生時刻が揃って結び付く WEPA60 を流す', async () => {
+    const built = await build(scripts.FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI)
+    const [quake] = quakesOf(built)
+    const bulletins = payloads(built).flatMap(p => (p.kind === 'internationalTsunami' ? [p.data] : []))
+    expect(quake.issue.type).toBe('遠地地震')
+    expect(bulletins).toHaveLength(1)
+    expect(bulletins[0].title).toBe('TSUNAMI BULLETIN NUMBER 001')
+    expect(internationalTsunamisFor(quake, bulletins)).toEqual(bulletins)
   })
 
   it('巨大地震は規模が数値にならず、「Ｍ８を超える巨大地震」と区別される', async () => {

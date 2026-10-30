@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLazyRef } from './useLazyRef'
-import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, EEWAlert, IntensityScale, EarthquakePoint, AppEvent, LiveEvent, LiveEventMeta, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
+import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, EEWAlert, IntensityScale, EarthquakePoint, AppEvent, LiveEvent, LiveEventMeta, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
 import { fetchHistory, fetchHistorySince, fetchJmaQuakePage, P2PQuakeWebSocket, P2P_LOAD_MORE_BATCH } from '../services/p2pquake'
 import { historyCursorFromOldestDay, type HistoryCursor } from '../utils/historyCursor'
 import type { QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
@@ -42,6 +42,7 @@ import {
 import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEventLog'
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
+import { unattachedInternationalTsunamis, upsertInternationalTsunami } from '../utils/internationalTsunami'
 import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState, tsunamiLiftText } from '../utils/tsunami'
 import { log } from '../utils/logger'
 import { serverNow, serverDate, isServerClockTrusted } from '../utils/clock'
@@ -172,6 +173,7 @@ type QueuePayload =
   | { kind: 'quakeNotice'; data: JMAQuakeNotice }
   | { kind: 'earthquakeCount'; data: JMAEarthquakeCount }
   | { kind: 'estimatedIntensity'; data: JMAEstimatedIntensity }
+  | { kind: 'internationalTsunami'; data: JMAInternationalTsunami }
   | { kind: 'purge-cancelled-quake'; id: string }
   | { kind: 'purge-cancelled-eew'; key: string }
   /**
@@ -604,6 +606,13 @@ export interface EarthquakeState {
    */
   estimatedIntensities: readonly JMAEstimatedIntensity[]
   /**
+   * 国際津波関連情報（WEPA60）。届いた報をすべて持ち、遠地地震のカードが発生時刻で引く
+   * （→ `internationalTsunamisFor`）。**音・読み上げ・通知は無い**（2026-10-30 ユーザー選択
+   * 「受けて英文のまま出す (Recommended)」）。入れるのは `upsertInternationalTsunami` だけ。
+   * 発表は年に数通（通信試験を含む）なので件数に上限は置かない。
+   */
+  internationalTsunamis: readonly JMAInternationalTsunami[]
+  /**
    * 地震カードの更新の印（鍵は `quakeEventKey`）。**ライブで受けた続報にだけ付く。**
    *
    * 履歴の取り込み（起動時・「もっと見る」）では付けない —— あちらは何通もまとめて
@@ -717,6 +726,7 @@ export function useEarthquakes(
     quakeNotice: null,
     earthquakeCount: null,
     estimatedIntensities: [],
+    internationalTsunamis: [],
     quakeUpdateMarks: new Map(),
     quakeMarkMemory: new Map(),
     connectionStatus: (isDmdss && !isValidDmdataApiKey(dmdataApiKey)) ? 'disconnected' : 'connecting',
@@ -748,6 +758,21 @@ export function useEarthquakes(
     }, TELEGRAM_LOG_PRUNE_INTERVAL_MS)
     return () => clearInterval(timer)
   }, [])
+
+  // 国際津波関連情報は遠地地震のカードにだけ畳んで出すので、付く先が無い報は画面のどこにも出ない。
+  // 黙って消えないよう、1 報につき 1 回だけ記録する（遠地地震の情報が後から届けば、そのとき付く）
+  const reportedUnattachedRef = useRef(new Set<string>())
+  useEffect(() => {
+    for (const x of unattachedInternationalTsunamis(state.earthquakes, state.internationalTsunamis)) {
+      if (reportedUnattachedRef.current.has(x.id)) continue
+      reportedUnattachedRef.current.add(x.id)
+      if (x.originTime === undefined) {
+        log.warn(`[quake] 国際津波関連情報の発生時刻を読めず、どの地震カードにも付きません（画面に出ません）: ${x.title} ${x.time}`)
+      } else {
+        log.info(`[quake] 国際津波関連情報に付く遠地地震のカードがまだありません（届けば付きます）: ${x.title} 発生 ${x.originTime}`)
+      }
+    }
+  }, [state.earthquakes, state.internationalTsunamis])
 
   const clearTelegramLog = useCallback(() => {
     setState(prev => ({ ...prev, telegramLog: [] }))
@@ -1012,6 +1037,8 @@ export function useEarthquakes(
   // **反映の判定を同期に行うために ref でも持つ**（理由は `applyEstimatedIntensity`）。
   // 要素は state と同じ参照なので、本体を二重に抱えることはない。
   const estimatedIntensitiesRef = useRef<readonly JMAEstimatedIntensity[]>([])
+  // 持っている国際津波関連情報（`EarthquakeState.internationalTsunamis` と同じもの）。重複の判定を同期に行うため
+  const internationalTsunamisRef = useRef<readonly JMAInternationalTsunami[]>([])
   // 分布を伝えた地震（発現時刻）の台帳。読み上げが「受信しました」と「更新されました」を
   // 言い分けるのに使う（→ `isNewEstimatedIntensity`）。**持っている一覧では代われない** ——
   // 履歴から黙って取り込んだ分布は持っているが、まだ伝えていない。
@@ -1455,6 +1482,15 @@ export function useEarthquakes(
     const isNew = isNewEstimatedIntensity(shownEstimatedIntensityArrivalsRef.current, data.arrivalTime)
     if (announce) rememberShownEstimatedIntensity(shownEstimatedIntensityArrivalsRef.current, data.arrivalTime)
     return { isNew }
+  }, [])
+
+  /** 国際津波関連情報を一覧へ足す。同じ報（`id`）は 2 度足さない。足したら真。 */
+  const applyInternationalTsunami = useCallback((data: JMAInternationalTsunami): boolean => {
+    const list = upsertInternationalTsunami(internationalTsunamisRef.current, data)
+    if (list === null) return false
+    internationalTsunamisRef.current = list
+    setState(prev => ({ ...prev, internationalTsunamis: list }))
+    return true
   }, [])
 
   /**
@@ -2609,6 +2645,9 @@ export function useEarthquakes(
           } else {
             recordSkippedTelegram({ kind: 'estimatedIntensity', data: ei }, applied ? 'silentReplayInit' : 'notApplied')
           }
+        } else if (payload.kind === 'internationalTsunami') {
+          // 画面（遠地地震のカード）へ足すだけ。`onLiveEvent` へは流さない（音・読み上げ・通知が無い）
+          applyInternationalTsunami(payload.data)
         }
         isSilentRef.current = false
       }
@@ -2984,6 +3023,10 @@ export function useEarthquakes(
                   recordSkippedTelegram({ kind: 'estimatedIntensity', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
                   break
                 }
+                // 国際津波関連情報は遠地地震のカードに添えるもの。カードと同じく履歴から足す（音などは元から無い）
+                case 'internationalTsunami':
+                  tryApplyExtra('国際津波関連情報', p.data, applyInternationalTsunami)
+                  break
                 case 'event':
                   // `HISTORY_EXTRA_TYPES` に入らないので届かない。**種別を足したときに
                   // ここで止まるよう、既定へ落とさず名指しで書く。**
@@ -3182,6 +3225,9 @@ export function useEarthquakes(
           } else {
             recordSkippedTelegram({ kind: 'estimatedIntensity', data: ei }, 'notApplied')
           }
+        } else if (ev.kind === 'internationalTsunami') {
+          // 画面へ足すだけ（`onLiveEvent` へは流さない。音・読み上げ・通知が無い）
+          applyInternationalTsunami(ev.data)
         } else {
           const data = ev.data
           const enriched = data.kind === 'eew' ? enrichEEWPref(data as EEWAlert, areaPrefIndex) : data
@@ -3784,6 +3830,10 @@ export function useEarthquakes(
           recordSkippedTelegram({ kind: 'estimatedIntensity', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
           break
         }
+        // 国際津波関連情報も「もっと見る」が増やすカードに添えるもの（推計震度分布図と同じく反映する）
+        case 'internationalTsunami':
+          tryApplyExtra('国際津波関連情報', p.data, applyInternationalTsunami)
+          break
         case 'event':
           // `HISTORY_EXTRA_TYPES` に入らないので届かない（起動時側の同一分岐と同じ注記。
           // 片方だけ直さないこと）。
@@ -4206,6 +4256,9 @@ export function useEarthquakes(
 
   /** 規模が「Ｍ８を超える巨大地震」の遠地地震テスト（→ `testTelegramScripts.ts` の `FOREIGN_QUAKE_HUGE`）。 */
   const simulateForeignQuakeHuge = useCallback(() => runTestTelegramScript(s => s.FOREIGN_QUAKE_HUGE), [runTestTelegramScript])
+  /** 遠地地震と国際津波関連情報（WEPA60）のテスト（→ `testTelegramScripts.ts` の `FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI`）。 */
+  const simulateForeignQuakeInternationalTsunami = useCallback(
+    () => runTestTelegramScript(s => s.FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI), [runTestTelegramScript])
   /** 見出しにだけある市町村のテスト（→ `testTelegramScripts.ts` の `HEADLINE_ONLY_CITY`）。 */
   const simulateHeadlineOnlyCity = useCallback(() => runTestTelegramScript(s => s.HEADLINE_ONLY_CITY), [runTestTelegramScript])
 
@@ -4467,6 +4520,9 @@ export function useEarthquakes(
     // 伝えた取消の記憶も前の時間軸のもの（→ `conveyedCancelsRef`）
     conveyedCancelsRef.current.clear()
     estimatedIntensitiesRef.current = []
+    internationalTsunamisRef.current = []
+    // 付く先の無い国際津波関連情報を記録した印も前の時間軸のもの。同じ窓を再生し直したとき黙らない
+    reportedUnattachedRef.current.clear()
     // 分布を伝えた地震の台帳も空にする。リプレイの開始・リセットで時間軸が変わるため、前の軸で
     // 伝えた分布を「もう伝えた」と数えると、新しい軸の初報が「更新されました」と読まれる。
     shownEstimatedIntensityArrivalsRef.current = []
@@ -4490,6 +4546,7 @@ export function useEarthquakes(
       quakeNotice: null,
       earthquakeCount: null,
       estimatedIntensities: [],
+      internationalTsunamis: [],
       // 時間軸が変わるので、印とその記憶も落とす（残すと再生開始直後の報が
       // 旧い軸のカードとの差分で光る）。
       quakeUpdateMarks: new Map(),
@@ -4637,6 +4694,7 @@ export function useEarthquakes(
     simulateEarthquake,
     simulateForeignQuake,
     simulateForeignQuakeHuge,
+    simulateForeignQuakeInternationalTsunami,
     simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,

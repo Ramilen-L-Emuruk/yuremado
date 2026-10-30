@@ -518,11 +518,24 @@ describe('電文の body を復号できなかったときの記録', () => {
   it('XML 以外の format は記録するが本文は返す', async () => {
     const got = await decodeTelegramText({ body: '{"a":1}', encoding: 'utf-8', format: 'json' })
     expect(got).toBe('{"a":1}')
-    const hit = warnings().filter(w => w.includes('XML 以外の format: json'))
+    const hit = warnings().filter(w => w.includes('xml 以外の format: json'))
     expect(hit).toHaveLength(1)
     // 安全弁: 本文は返せているので「復号できませんでした」と書かない。
     // 同じ文言にすると、ログを読んだ人が電文を落としたと取り違える。
     expect(hit[0]).not.toContain('復号できませんでした')
+  })
+
+  // 正: 平文で配られる国際津波関連情報（WEPA60）は `a/n` が正しいので記録しない
+  it('WEPA60 の a/n は記録しない', async () => {
+    const got = await decodeTelegramText({ head: { type: 'WEPA60' }, body: 'WEPA60 RJTD 250003', encoding: 'utf-8', format: 'a/n' })
+    expect(got).toBe('WEPA60 RJTD 250003')
+    expect(warnings()).toHaveLength(0)
+  })
+
+  // 対照: XML の種別に a/n が来たら、配信形態が変わった印として記録する
+  it('XML の種別に a/n が来たら記録する', async () => {
+    await decodeTelegramText({ head: { type: 'VXSE53' }, body: '<Report/>', encoding: 'utf-8', format: 'a/n' })
+    expect(warnings().filter(w => w.includes('xml 以外の format: a/n'))).toHaveLength(1)
   })
 
   // 安全弁: `typeof null` は 'object' を返すので、そのまま流すと読み手が形を取り違える
@@ -1367,8 +1380,13 @@ describe('needsBodyDecode', () => {
   // gunzip → 文字列化してから捨てていた。
   it('扱わない種別の本文は復号しない', () => {
     expect(needsBodyDecode('VXSE56')).toBe(false)
-    expect(needsBodyDecode('WEPA60')).toBe(false)
     expect(needsBodyDecode('VZSE50')).toBe(false)
+  })
+
+  // 覆した: 国際津波関連情報（WEPA60）は扱うようになったので本文が要る（平文。二進ではない）
+  it('WEPA60 は本文が要り、文字列の経路を通る', () => {
+    expect(needsBodyDecode('WEPA60')).toBe(true)
+    expect(isBinaryTelegramType('WEPA60')).toBe(false)
   })
 
   // 対照: IXAC41（推計震度分布図）は**扱うようになったので本文が要る**。ただし通るのは

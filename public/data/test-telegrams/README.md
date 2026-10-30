@@ -11,9 +11,9 @@
 
 | 置き場所 | 本数 | 出どころ | ライセンス |
 |---|---|---|---|
-| `nii/` | 41 | 国立情報学研究所「気象庁防災情報XMLデータベース」（CPS-IIP, Asanobu KITAMOTO）が収集した実電文 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja) |
+| `nii/` | 42 | 国立情報学研究所「気象庁防災情報XMLデータベース」（CPS-IIP, Asanobu KITAMOTO）が収集した実電文 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja) |
 | `jma-sample/` | 26 | 気象庁「[防災情報XMLフォーマット 技術資料](https://xml.kishou.go.jp/tec_material.html)」のサンプル電文（`jmaxml_20260917_Samples.zip`） | 公共データ利用規約 第1.0版 |
-| `synthetic/` | 4 | 推計震度分布図の二進電文（BUFR）。配布されているものが無いので自前で組んだ（2 通を 2 断片ずつ） | — |
+| `synthetic/` | 5 | 推計震度分布図の二進電文（BUFR）4 本と、国際津波関連情報（WEPA60）の英文 1 本。どちらも配布されているものが無いので自前で作った（BUFR は 2 通を 2 断片ずつ。WEPA60 は行の並びだけ実電文に倣った自作の文で、本文にもそう書いてある） | — |
 
 **DMDATA.JP から取った電文は置かない。** 規約第15条で二次配信が制限されており、このリポジトリは
 GitHub Pages で公開している（とくに緊急地震速報）。ここにある緊急地震速報は、どれも気象庁の
@@ -25,7 +25,9 @@ GitHub Pages で公開している（とくに緊急地震速報）。ここに�
   データベースの収録分だけ UUID 形式のものがある
 - `jma-sample/` は技術資料の章番号・例番号・版（`<章>_<例>_<枝番>_<版 YYMMDD>_<電文種別>.xml`）
 - `synthetic/` は `estimated-intensity-<段>.bufr`（1 が初報、2 が続報。続報のほうが分布が広い）。
-  続きの断片は分割報符号を挟んで `estimated-intensity-<段>.rra.bufr`
+  続きの断片は分割報符号を挟んで `estimated-intensity-<段>.rra.bufr`。
+  `wepa60-<地域>.txt` は国際津波関連情報（英文）で、同じ地震の遠地地震に関する情報が `nii/` にある。
+  テストボタンは発表時刻・発生時刻を押した時刻へ寄せるが、英文の本文に書かれた日付（`ISSUED AT`・`ORIGIN TIME:`）は収録時のまま出る
 
 ## 実電文に無い形は、実電文を書き換えて作る
 

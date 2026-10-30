@@ -1313,7 +1313,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 推計震度分布図（BUFR二進電文）の読み取り・地震カードとの結び付け（発現時刻・300km判定）・初報続報の言い分け（`isNewEstimatedIntensity`）・古い報の排除規則のいずれかを崩すと、分布が別地震のものへ混ざる、または初報続報を正しく言い分けられない | [`quake-spec.md`](docs/spec/quake-spec.md) §8「推計震度分布図」・§9「震度分布モード」・[`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「推計震度分布図は地震情報の音を借りる」・[`map-rendering-spec.md`](docs/spec/map-rendering-spec.md) §19 |
 | 地震回数に関する情報（VXSE60）で空欄と0回を混同すると、群発の最中に地震は起きていないと伝わる | [`quake-spec.md`](docs/spec/quake-spec.md) §8「地震回数に関する情報」 |
 | 地震・津波に関するお知らせ（VZSE40）を音・読み上げ・`onLiveEvent` へ流すと、運用連絡が本物の情報のように扱われる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「扱う電文種別」・[`architecture-spec.md`](docs/spec/architecture-spec.md) §2「副作用への入口（`onLiveEvent`）」 |
-| 扱わない電文種別（VXSE56・WEPA60）の判断理由・配信終了種別の棚卸し範囲を書き残さないと、次の棚卸しで同じ調査をやり直すか配信終了種別を存在しないと誤認する | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「扱う電文種別」 |
+| 扱わない電文種別（VXSE56）の判断理由・配信終了種別の棚卸し範囲を書き残さないと、次の棚卸しで同じ調査をやり直すか配信終了種別を存在しないと誤認する | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「扱う電文種別」 |
 | 利用者へ出す語を気象庁の公式表現から理由なく外すと、短縮が意味を狭めて誤読を招く（「警報等」を「津波警報」と書くと大津波警報の地震が一段軽く見える） | [`quake-spec.md`](docs/spec/quake-spec.md) §3「「警報等」を「津波警報」と書かない」・§8「気象庁の表現からわざと外している語」 |
 | 地震の同一性判定（`eventKey`）を経路ごとに再実装すると、同じ地震が別カードへ割れるか取消済みの報が復活する | [`quake-spec.md`](docs/spec/quake-spec.md) §6.1「同一イベントの判定」・§6.2「取消のマッチング」 |
 | 続報マージで震源・震度・付加文の引き継ぎ規則を取り違えると、確定した震源が消える／取り下げた値を出し続ける／確定した安全判断が定型文で巻き戻る | [`quake-spec.md`](docs/spec/quake-spec.md) §6.4「置換時の項目の引き継ぎ」 |

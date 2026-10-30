@@ -131,6 +131,7 @@ function renderCard(
       activeLpgmEventId={opts.lpgm ? EVENT_ID : null}
       onToggleLpgm={() => {}}
       estimatedIntensities={[]}
+      internationalTsunamis={[]}
       distributionQuakeKey={null}
       onToggleDistribution={() => {}}
       unreceivedQuakeKey={opts.unreceived ? quakeEventKey(quake) : null}
