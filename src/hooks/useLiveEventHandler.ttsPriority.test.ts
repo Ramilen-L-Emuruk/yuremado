@@ -264,6 +264,9 @@ function setup(over: Partial<AppSettings> = {}) {
     minDisplayScale: -1,
     // 解説情報の読み上げはこの設定で切れるため、優先度を見るテストでは明示的に有効にする
     nankaiCommentaryAlerts: true,
+    // 気象庁の発表文は既定で読む（ttsReadTelegramText）が、それは本体とは別の最下位の層の発話。
+    // ここで見るのは本体どうしの優先度なので切っておく（入れたままだと発表文の層が「解説情報」を語る）
+    ttsReadTelegramText: false,
     ...over,
   } as unknown as AppSettings
   // title API は多数のメソッドを持つため、未知のプロパティも関数として返す Proxy で代替する

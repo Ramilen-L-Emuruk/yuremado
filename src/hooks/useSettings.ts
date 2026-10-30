@@ -255,11 +255,11 @@ const STORAGE_KEY = isDmdss
  */
 export const DEFAULTS: AppSettings = {
   minDisplayScale: -1,
-  // **地震情報の通知は既定で震度4以上**（2026-10-23 選択「既定で震度4以上を通知 (Recommended)」）。実際に出るのは
-  // 利用者が通知を許可してから。保存済みの設定は変えない（読み込んだ値がそのまま勝つ）。
+  // **地震情報の通知は既定で震度3以上**（2026-10-30 ユーザー選択「震度3以上 (Recommended)」。震度速報 VXSE51 の
+  // 発表基準に揃える）。実際に出るのは利用者が通知を許可してから。保存した値はそのまま勝つ（最低震度 -1 を読み替えた端末の戻り先はこの既定）。
   notifyEnabled: true,
   notifyQuake: true,
-  notifyMinScale: 40,
+  notifyMinScale: 30,
   actionChecklistEnabled: true,
   actionChecklistMinScale: 45,
   soundEnabled: true,
@@ -316,26 +316,27 @@ export const DEFAULTS: AppSettings = {
   // 前の挙動は上位 3 階級で切れ、4 階級そろった報で階級 1 の地域が声に出なかった（それを直す設定）。
   ttsAlwaysReadLpgmClass: 1,
   ttsRegionTolerance: 2,
-  // 以下 5 項目の既定は「この設定を入れる前の挙動」に揃えてある。既存の利用者の耳に
-  // 届く内容を、設定を足しただけで変えないため。
-  // 南海トラフ地震関連解説情報の本文も、これが偽なので既定では読まない（設定で読める）。
-  // 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」。
-  // 気象庁の発表文の読み上げは既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」）。
-  ttsReadTelegramText: false,
-  // **全ブロックを読む。** マスタートグル（`ttsReadTelegramText`）を入れた利用者は
-  // 「気象庁の発表文を読む」ことを選んだのだから、内訳の既定は全部読む側へ倒す。
+  // **気象庁の発表文は既定で読む**（2026-10-30 ユーザー選択「発表文を既定で読む (Recommended)」。それまでは
+  // 「この設定を入れる前の挙動」に揃えて既定でオフだった）。南海トラフ地震関連解説情報の本文も既定で読む。
+  // 定型文 5 種（参考情報を含む）は下の `ttsTelegramBoilerplate` が既定で落とすので、読まないまま。
+  // 保存した値はそのまま勝つ（この項目を持たない古い保存だけが新しい既定になる）。
+  ttsReadTelegramText: true,
+  // **全ブロックを読む。** マスタートグル（`ttsReadTelegramText`）が入っていれば
+  // 「気象庁の発表文を読む」のだから、内訳の既定は全部読む側へ倒す。
   ttsTelegramTextBlocks: Object.fromEntries(
     TELEGRAM_TEXT_BLOCK_KEYS.map(key => [key, true]),
   ) as TelegramTextBlocks,
-  // **既定は落とす側。** 上の 5 項目と違って「設定を入れる前の挙動」に揃えていない理由は
-  // 定義側（`TELEGRAM_BOILERPLATE_DEFAULT_READS`）に書いた。
+  // **既定は落とす側。** 理由は定義側（`TELEGRAM_BOILERPLATE_DEFAULT_READS`）に書いた。
   ttsTelegramBoilerplate: TELEGRAM_BOILERPLATE_DEFAULT_READS,
+  // 以下 4 項目（`ttsUnreceivedDetail`・`ttsMaxObservationPoints`・`ttsReadHypocenterDetail`・
+  // `ttsReadEewLpgmClass`）の既定は「この設定を入れる前の挙動」に揃えてある。既存の利用者の耳に
+  // 届く内容を、設定を足しただけで変えないため。
   ttsUnreceivedDetail: 'stations',
   // 既定 5 件（設定で 0〜20）は 2026-10-21 ユーザー選択「今のまま記録する (Recommended)」
   ttsMaxObservationPoints: 5,
   ttsReadHypocenterDetail: true,
   ttsReadEewLpgmClass: true,
-  // **この 1 つだけ「入れる前の挙動」に揃えていない。** 上の 5 つは既にある読み上げの詳しさを
+  // **この 1 つだけ「入れる前の挙動」に揃えていない。** 上の 4 つは既にある読み上げの詳しさを
   // 選ぶ項目なので既定を変えないが、これは新しく足す発話で、しかも「予想値の読み上げを
   // 遅らせる」ことが目的。既定で切っておくと、目的そのものが誰にも届かない。
   ttsReadEewWarningRegions: true,
