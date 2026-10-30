@@ -39,6 +39,7 @@ import {
   noteEewNotified, isSameReportFromOtherOrigin, isOlderEewReport, type EewAcceptance,
   endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, rememberEewFirstIssueTime,
 } from '../utils/eew'
+import { decideEewExpiry, decideFinalReportExpiry, type DetectionSpreadLog, type EewExpiryDecision } from '../utils/eewSpreadHold'
 import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEventLog'
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
@@ -680,8 +681,39 @@ export interface EarthquakeState {
   telegramLog: TelegramLogEntry[]
 }
 
+/**
+ * 自動解除を待たせるかの判断を、例外で解除そのものを落とさない形で行う（eew-spec §7「検知が広がっている間は待つ」）。
+ * キューの項目は取り出した時点で消えているので、判断が投げると解除が飛び、取消が来るまで画面に残る。
+ * 投げたら記録して式の時刻で解除する。
+ */
+function decideExpirySafely(key: string, decide: () => EewExpiryDecision): EewExpiryDecision {
+  try {
+    return decide()
+  } catch (e) {
+    log.error(`[eew] 揺れ検知の広がりを確かめられないので、式の時刻で自動解除する: key=${key}`, e)
+    return { kind: 'expire', reason: 'formula-unknown' }
+  }
+}
+
+/**
+ * 自動解除した理由を残す。残さないと「広がっていたのに消えた」を、結び付く束が無かったのか・点が止まっていたのか・
+ * 上限に当たったのかで切り分けられない。上限に当たったのは束の取り違えも疑う場面なので警告にする。
+ */
+function logEewExpiry(key: string, decision: EewExpiryDecision): void {
+  if (decision.kind !== 'expire') return
+  const reason = {
+    'no-bundle': '結び付く揺れ検知の束が無い',
+    'grace-elapsed': '束に点が加わらなくなって 30 秒が過ぎた',
+    'cap': '式の時刻から 5 分の上限に当たった',
+    'formula-unknown': '式の時刻を決められない',
+  }[decision.reason]
+  const line = `[eew] 自動解除: key=${key} 理由=${reason}`
+  if (decision.reason === 'cap') log.warn(line)
+  else log.info(line)
+}
+
 export function useEarthquakes(
-  onLiveEvent?: (event: LiveEvent, meta?: LiveEventMeta) => void,
+  onLiveEvent: ((event: LiveEvent, meta?: LiveEventMeta) => void) | undefined,
   dmdataApiKey = '',
   dmdataTestDelivery = false,
   replayTimeOffset: number | null = null,
@@ -702,18 +734,24 @@ export function useEarthquakes(
    * 優先度と駆動源は受け取る側（`App`）が決める。ここで決めると、タブ切替の規則が
    * `utils/tabPriority.ts` と 2 箇所へ分かれる。
    */
-  onStartupRestore?: (tab: 'realtime' | 'tsunami') => void,
+  onStartupRestore: ((tab: 'realtime' | 'tsunami') => void) | undefined,
   /**
    * 起動時に復元した「発表中の緊急地震速報」を、読み上げ側（`useLiveEventHandler` の `restoreStartupEews`）へ渡す。
    *
    * **`onLiveEvent` を通らない分を、ここで別に伝える。** 復元は `silent` で積むので読み上げ側には届かず、
    * 渡さないとその後の取消が「表示中の速報ではない」と判定されて鳴らず読まれない（→ eew-spec.md §2
-   * 「起動時に、発表中のものを復元する」）。**この引数だけ任意なのは、前の引数がすべて任意だから**
-   * （必須の引数は任意の後ろに置けない。必須にするなら前の引数ごと必須へ直し、テストの呼び出しもすべて直すことになる）。
-   * `useEarthquakes.wiring.test.ts` が固定するのは「渡せば呼ばれる」ところまでで、
-   * **`App.tsx` が渡しているかは型でもテストでも捕まらない**（渡し忘れると取消が声にならないだけで、例外もログも出ない）。
+   * 「起動時に、発表中のものを復元する」）。**必須にしてある**（渡さないなら `undefined` を明示する）——
+   * 渡し忘れると取消が声にならないだけで、例外もログも出ないため。
    */
-  onStartupRestoreEews?: (eews: readonly EEWAlert[]) => void,
+  onStartupRestoreEews: ((eews: readonly EEWAlert[]) => void) | undefined,
+  /**
+   * 揺れ検知の束の広がり（`utils/eewSpreadHold.ts`）。自動解除の時刻が来たとき、その EEW の束にまだ点が
+   * 加わっていれば解除を待たせる（eew-spec §7「検知が広がっている間は待つ」）。
+   *
+   * **必須にしてある。** 渡し忘れると、広がっている最中に消える元の症状へ戻るだけで例外もログも出ないため。
+   * 検知を流さない呼び出し側は、空の係（`createDetectionSpreadLog()`）を渡す（束が無ければ式の時刻で消える）。
+   */
+  eewSpreadLog: DetectionSpreadLog,
 ) {
   const [state, setState] = useState<EarthquakeState>({
     earthquakes: [],
@@ -786,6 +824,8 @@ export function useEarthquakes(
   onStartupRestoreRef.current = onStartupRestore
   const onStartupRestoreEewsRef = useRef(onStartupRestoreEews)
   onStartupRestoreEewsRef.current = onStartupRestoreEews
+  const eewSpreadLogRef = useRef(eewSpreadLog)
+  eewSpreadLogRef.current = eewSpreadLog
   // キューディスパッチャーがサイレントエントリを処理中は true にして通知音を抑制する
   const isSilentRef = useRef(false)
   // 緊急地震速報のテストの進み具合を種別ごとに独立管理（複数の EEW を同時に流せる）
@@ -2486,7 +2526,34 @@ export function useEarthquakes(
         // リプレイで 1 時間ぶんが同じ秒を名乗る（→ `makeReplayLogEntry`）。
         if (entry.logEntry) appendTelegramLog({ ...entry.logEntry, receivedAt: now })
         if (payload.kind === 'event') {
-          handleEvent(payload.event)
+          // 自動解除（最終報から積んだ `expired` の取消）は、その地震の揺れ検知の束にまだ点が加わっていれば待たせる
+          // （eew-spec §7「検知が広がっている間は待つ」）。待つ先は最後の追加から 30 秒・式の時刻から 5 分まで
+          const ev = payload.event
+          if (ev.kind === 'eew' && ev.expired) {
+            const key = eewEventKey(ev)
+            const shown = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
+            // 保留の間に誤報取消を受けていたら、この自動解除は捨てる（取消の 10 秒表示は取消の側の掃除が消す。
+            // ここで消すと取消の表示が途中で消える）
+            if (shown && (shown.cancelled || shown.cancelledAt) && !shown.expired) {
+              log.debug(`[eew] 誤報取消を受けた後の自動解除は捨てる: key=${key}`)
+              isSilentRef.current = false
+              continue
+            }
+            // 画面に無い（別の経路が先に消した）なら待たない
+            if (shown) {
+              const decision = decideExpirySafely(key, () => decideFinalReportExpiry(ev, now.getTime(), eewSpreadLogRef.current))
+              if (decision.kind === 'hold') {
+                eventQueueRef.current.push({ ...entry, eventTime: new Date(decision.untilMs), logEntry: null })
+                log.debug(`[eew] 揺れ検知が広がっているので自動解除を待つ: key=${key} 解除=${new Date(decision.untilMs).toISOString()}`)
+                isSilentRef.current = false
+                continue
+              }
+              logEewExpiry(key, decision)
+            } else {
+              log.debug(`[eew] 自動解除: 表示に無いので揺れ検知は見ない key=${key}`)
+            }
+          }
+          handleEvent(ev)
         } else if (payload.kind === 'lpgm') {
           const lpgm = payload.data
           // 取消は台帳へ積む（起動時の履歴・もっと見るで、取り消された報が戻らないように。
@@ -2586,8 +2653,23 @@ export function useEarthquakes(
                 handleEvent({ ...shown, cancelled: true, expired: true })
               }
             } else {
-              eewWatchReceiptsRef.current.delete(key)
-              handleEvent({ ...shown, cancelled: true, expired: true })
+              // 揺れ検知の束がまだ広がっていれば待つ（最終報から積んだ自動解除と同じ判断。式の時刻は見張りを積んだときと同じ起点で求める）
+              const decision = decideExpirySafely(key, () => {
+                const formulaMs = calcEEWCancelTime(shown, new Date(acceptance?.latestIssueMs ?? eewIssueTimeMs(shown) ?? Number.NaN)).getTime()
+                return decideEewExpiry(formulaMs, now.getTime(), eewSpreadLogRef.current.lastSpreadMs(shown))
+              })
+              if (decision.kind === 'hold') {
+                eventQueueRef.current.push({
+                  eventTime: new Date(decision.untilMs),
+                  payload: { kind: 'eew-watch-expiry', key, receipts: payload.receipts },
+                  logEntry: null,
+                })
+                log.debug(`[eew] 揺れ検知が広がっているので見張りの解除を待つ: key=${key} 解除=${new Date(decision.untilMs).toISOString()}`)
+              } else {
+                logEewExpiry(key, decision)
+                eewWatchReceiptsRef.current.delete(key)
+                handleEvent({ ...shown, cancelled: true, expired: true })
+              }
             }
           }
         } else if (payload.kind === 'purge-cancelled-eew') {
@@ -4503,6 +4585,8 @@ export function useEarthquakes(
     eewWatchReceiptsRef.current.clear()
     eewFirstIssueTimeRef.current.clear()
     eewExpiringRef.current.clear()
+    // 揺れ検知の束も前の時間軸のもの。残すと、検知器が振り直した同じ名前の束を前の束の続きと取り違える
+    eewSpreadLogRef.current.reset()
     // 終えた地震の記憶も前の時間軸のもの。残すと、新しい軸で同じ地震の報を取り直したときに戻さなくなる
     eewEndedRef.current.clear()
     // 取消の台帳も空にする。リプレイの開始・リセットで時間軸が変わるため、前の軸で見た取消の
