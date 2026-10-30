@@ -47,6 +47,7 @@ export interface TestFunctions {
   earthquake: () => void
   foreignQuake: () => void
   foreignQuakeHuge: () => void
+  headlineOnlyCity: () => void
   eew: () => void
   eewWarning: () => void
   eewForecast: () => void
@@ -1623,14 +1624,14 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
           <Row label="必ず読み上げる長周期地震動階級" description="階数の設定を超えても、この階級以上の地域名を読み上げます">
             {/* 震度の下限は長周期に効かないので別に持つ（2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」、
-                文言は 2026-10-24 選択「この形でよい (Recommended)」）。階級 0 は読まないので選択肢に無い。 */}
+                文言は 2026-10-24 選択「この形でよい (Recommended)」）。階級 0 も選べる（2026-10-30 ユーザー選択「足す (Recommended)」）。 */}
             <select
               value={settings.ttsAlwaysReadLpgmClass}
               onChange={e => onUpdate('ttsAlwaysReadLpgmClass', Number(e.target.value))}
               className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               <option value={-1}>階数の設定どおり</option>
-              {[1, 2, 3, 4].map(n => (
+              {[0, 1, 2, 3, 4].map(n => (
                 <option key={n} value={n}>{`階級${n}`}</option>
               ))}
             </select>
@@ -2430,6 +2431,9 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="遠地地震（規模を速報できない報）" description="チリ中部沿岸 M8を超える巨大地震 – earthquakeInfo 音 / 規模が数値で出ない第一報。日本への津波の有無は調査中">
           <TestButton color="purple" onClick={onTest.foreignQuakeHuge}>巨大地震テスト</TestButton>
         </Row>
+        <Row label="見出しにだけある市町村" description="2024-01-01 佐渡付近の震源・震度に関する情報（実データ）で、輪島市が見出しにだけ載っている形 – earthquakeInfo 音 / 震度一覧の石川県能登の下に輪島市（震度3）が並ぶ。この市町村には観測点の行が無い">
+          <TestButton color="purple" onClick={onTest.headlineOnlyCity}>見出しの市町村テスト</TestButton>
+        </Row>
         <Row label="訂正報" description="地震情報 → 規模を訂正した報（M7.4 → M7.6）。同じカードが更新され「震源を訂正」の印が付き、気象庁の「震源要素を訂正します。」の一文も並ぶ">
           <TestButton color="yellow" onClick={onTest.quakeAmendment}>訂正報テスト</TestButton>
         </Row>
@@ -2556,7 +2560,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
         {/* ボタン名と説明は 2026-10-24 ユーザー選択「ボタンを足す (Recommended)」で決めた文面 */}
         {isDmdss && onTest.lpgmClassZero && (
-          <Row label="長周期地震動に関する観測情報（階級0）" description="階級1以上を観測しなかった長周期地震動の観測情報を流します。画面にだけ出て、音と読み上げはありません">
+          <Row label="長周期地震動に関する観測情報（階級0）" description="階級1以上を観測しなかった長周期地震動の観測情報を流します。階級1以上の報と同じく、音・読み上げ・通知があります">
             <TestButton color="teal" onClick={onTest.lpgmClassZero}>長周期地震動（階級0）テスト</TestButton>
           </Row>
         )}

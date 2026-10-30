@@ -28,6 +28,15 @@ export function twoLinePopupHtml(title: string, subtitle: string): string {
 }
 
 /**
+ * 吹き出しの末尾に添える電文のコード（区域・市町村・観測点・震央地名）。値が無ければ空文字。
+ * 小さく末尾に置き、読み上げには入れない（2026-10-30 ユーザー選択「吹き出しに添える (Recommended)」、
+ * 長周期地震動の吹き出しは同日「長周期にも添える (Recommended)」。2026-10-21 の「画面に出さない」を覆した）。
+ */
+export function popupCodeHtml(code: string | undefined): string {
+  return code ? `<div style="margin-top:4px;font-size:10px;color:#64748b">コード ${escapeHtml(code)}</div>` : ''
+}
+
+/**
  * 震度・長周期地震動階級を示す色付きバッジ（震源ポップアップの県別震度と同じ見た目）。
  * 文字色は塗り色から自動で決める（気象庁配色は明度の幅が広く、白固定だと黄・橙系で読めないため）。
  *

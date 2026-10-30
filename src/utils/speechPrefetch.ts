@@ -77,8 +77,7 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
       break
     }
     case 'lpgm':
-      // **階級 0 の発表は読まないので焼かない**（→ `useEarthquakes.ts` の `lpgmNotifiable`）。
-      if (!payload.data.cancelled && payload.data.maxClass < 1) break
+      // 最大階級 0 の発表も読むので焼く（→ `useEarthquakes.ts` の `lpgmNotifiable`）。
       // 初報・続報で文頭が変わるだけ。**2 通りとも焼く** —— 真偽 1 つの分岐に投機の精度を
       // 賭ける理由がなく、外した側の損は控えの 1 件ぶんに収まる。
       add(lpgmToText(payload.data, opts, true))

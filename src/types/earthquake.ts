@@ -377,6 +377,13 @@ export interface JMAQuake {
      * 実測と規約は `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」。
      */
     editorialOffice?: string
+    /**
+     * 電文を発表した官署（`Control/PublishingOffice`）。**編集官署へは落とさない。**
+     *
+     * 画面は編集官署の隣に「発表官署 …」と出す（2026-10-30 ユーザー選択「編集官署の隣に出す
+     * (Recommended)」・「編集官署の隣に同じ形で (Recommended)」）。標準版（P2PQuake）は常に undefined。
+     */
+    publishingOffice?: string
     time: string
     type: IssueType
     correct: CorrectType
@@ -2188,6 +2195,14 @@ export interface JMAEstimatedIntensity {
   magnitudeCondition?: string
   /** 震央地名番号（気象庁コード表 6）。名前は持たない */
   areaCode: number
+  /**
+   * 震央補助表現の材料（津波の形の電文だけが持つ。IXAC41・IXAC40 とも）。
+   * 目印の地点番号（地震情報の `MarkCode` と同じ番号）・目印から見た震央の方位（度）・距離（km）。
+   * **文は持たない**（目印の名前は電文に無い）。地震カードの補助表現と食い違うときだけ
+   * 推計の欄に出す（2026-10-30 ユーザー承認「地震カードの形で出す (Recommended)」）。
+   * 全期間の控え（2020-11〜）でこのブロックを持つ 18 通は、すべて同じ地震の VXSE53 と一致した。
+   */
+  mark?: { pointCode: number; directionDeg: number; distanceKm: number }
   /** 電文の種類（0=通常）。0 以外は訓練等。実配信 13 か月では 0 しか観測できていない */
   telegramKind: number
   /** 階級震度と計測震度の対応表。**電文が持っている凡例をそのまま使う**（自前の階級表を当てない） */

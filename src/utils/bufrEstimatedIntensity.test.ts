@@ -160,6 +160,39 @@ describe('decodeEstimatedIntensity（別紙4 の実バイナリ例）', () => {
     expect(tsu.lat[0]).toBeCloseTo(plain.lat[0], 6)
     expect(log.warn).not.toHaveBeenCalled()
   })
+
+  // 正: 震央補助表現の 4 記述子を読む（地点番号・方位〔度〕・距離〔km〕）。
+  // 対照: 津波の形でない電文は持たない。
+  it('震央補助表現の地点・方位・距離を読み、津波の形でない電文は持たない', () => {
+    const common = {
+      grades: SAMPLE_GRADES, latRaw: 12484, lonRaw: 31562, depthKm: 10, magRaw: 61,
+      mesh2: [{ p1: 52, u1: 35, q2: 0, v2: 6, mesh3: [{ r3: 0, w3: 0, cells: [{ half: 2, quarter: 3, si: 55 }] }] }],
+    }
+    const tsu = decodeEstimatedIntensity(build({ ...common, tsunami: true, mark: { point: 308, dirRaw: 6750, distKm: 30 } }), 'id', 't', 'IXAC41')!
+    expect(tsu.mark).toEqual({ pointCode: 308, directionDeg: 67.5, distanceKm: 30 })
+    const plain = decodeEstimatedIntensity(build(common), 'id', 't', 'IXAC41')!
+    expect(plain.mark).toBeUndefined()
+  })
+
+  // 安全弁: 欠測（全ビット 1）と範囲外の方位は目印として持たず、記録を残す。分布そのものは読む
+  it('震央補助表現が欠測か範囲外なら目印を持たず記録し、分布は読む', () => {
+    const common = {
+      grades: SAMPLE_GRADES, latRaw: 12484, lonRaw: 31562, depthKm: 10, magRaw: 61,
+      mesh2: [{ p1: 52, u1: 35, q2: 0, v2: 6, mesh3: [{ r3: 0, w3: 0, cells: [{ half: 2, quarter: 3, si: 55 }] }] }],
+    }
+    for (const [mark, why] of [
+      [{ point: 1023, dirRaw: 6750, distKm: 30 }, '震央補助表現が欠測です'],
+      [{ point: 308, dirRaw: 65535, distKm: 30 }, '震央補助表現が欠測です'],
+      [{ point: 308, dirRaw: 6750, distKm: 8191 }, '震央補助表現が欠測です'],
+      [{ point: 308, dirRaw: 36000, distKm: 30 }, '震央補助表現が範囲外（方位が 360 度以上）です'],
+    ] as const) {
+      vi.mocked(log.warn).mockClear()
+      const r = decodeEstimatedIntensity(build({ ...common, tsunami: true, mark }), 'id', 't', 'IXAC41')!
+      expect(r.mark).toBeUndefined()
+      expect(r.lat.length).toBeGreaterThan(0)
+      expect(log.warn).toHaveBeenCalledWith(expect.stringContaining(why))
+    }
+  })
 })
 
 describe('decodeEstimatedIntensity（読めないもの）', () => {

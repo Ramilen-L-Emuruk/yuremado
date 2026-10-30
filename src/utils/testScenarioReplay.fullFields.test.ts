@@ -70,7 +70,7 @@ function quakeSample(): QuakeSample {
     reportsRevise: true,
     cancelled: false,
     cancelText: '取消',
-    issue: { source: '気象庁', editorialOffice: '気象庁本庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
+    issue: { source: '気象庁', editorialOffice: '気象庁本庁', publishingOffice: '気象庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
     earthquake: {
       time: iso(),
       hypocenter: {
@@ -306,6 +306,7 @@ function estimatedSample(): DeepRequired<JMAEstimatedIntensity> {
     id: 'estimated-1', time: iso(), arrivalTime: iso(),
     hypocenter: { lat: 37.5, lon: 137.2, depthKm: 10 },
     magnitude: 7.6, magnitudeCondition: 'Ｍ不明', areaCode: 390, telegramKind: 1,
+    mark: { pointCode: 201, directionDeg: 67.5, distanceKm: 30 },
     grades: [{ scale: 5, modifier: 'weak', lower: 4.5, upper: 5.0 }],
     count: 1,
     lat: new Float32Array([37.5]), lon: new Float32Array([137.2]), si: new Uint8Array([1]),

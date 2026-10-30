@@ -28,6 +28,7 @@ import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, tr
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
 import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, MAX_LPGM_RETRACTIONS, recordLpgmRetractions, type LpgmRetraction } from '../utils/lpgmRetraction'
+import { isObservedLpgmClass } from '../utils/lpgm'
 import { withBorrowedFromTsunami, borrowFromTsunamiIntoCards } from '../utils/borrowFromTsunami'
 import { selectQuakeHistory } from '../utils/quakeHistorySelection'
 import { loadStationCoords, onStationCoordsLoaded, areaPrefIndexOf, getAreaPrefIndexCache } from '../utils/stationCoords'
@@ -101,7 +102,10 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
 /**
  * lpgm が `onLiveEvent`（音・読み上げ・タブ移動）の対象になるか。
  *
- * - **発表**は階級 1 以上だけ（階級 0 は音読み上げの対象外と決めている）
+ * - **発表**は最大階級 0 の報も含めてすべて（2026-10-30 ユーザー選択「階級 1 以上と同じ型
+ *   (Recommended)」・#1201。それまでは階級 1 以上だけで、最大階級 0 の報は音・読み上げ・通知・
+ *   タイトル・自動で開くのどれも出さなかった）。パーサーは 0〜4 以外を捨てるので、ここでの値域の確かめは
+ *   型の効かない経路（シナリオの手書き JSON など）から壊れた値が来たときのための保険
  * - **取消**は常に（画面に出していない地震への取消でも伝える。2026-10-22 ユーザー選択「地震情報に揃えて伝える
  *   (Recommended)」で 2026-10-15 の「表示中を消した時だけ（推奨）」を覆した）。同じ取消の 2 通目は
  *   呼び出し側（`shouldDispatch`）が止める
@@ -114,7 +118,7 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
  * `notDispatched`（＝音読み上げの対象外と決めている）にする（3 巡目レビューで指摘）。
  */
 function lpgmNotifiable(lpgm: JMALpgm): boolean {
-  return lpgm.cancelled || lpgm.maxClass >= 1
+  return lpgm.cancelled || isObservedLpgmClass(lpgm.maxClass)
 }
 
 // 初回に一覧へ並べる**地震の件数**（設定の最大選択値に合わせる。standard 版の経路だけが使う ——
@@ -2864,7 +2868,7 @@ export function useEarthquakes(
               .map(p => p.data)
             for (const lpgm of lpgmEvents) {
               // **キュー経路（`lpgmNotifiable`）と同じ判定で記録する。** ここも `onLiveEvent` を
-              // 呼ばないサイレント経路なので、通知しうる中身（階級1以上の発表）でも
+              // 呼ばないサイレント経路なので、通知しうる中身（最大階級 0 を含む発表）でも
               // `silentReplayInit`、それ以外は `notDispatched`（→ `lpgmNotifiable` のコメント）。
               // 取消は「伝えた」に数える（→ `decideDispatch`）—— 同じ取消が後からライブで届いても鳴らさない。
               recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, silentLpgmSkip(lpgm))
@@ -4202,6 +4206,8 @@ export function useEarthquakes(
 
   /** 規模が「Ｍ８を超える巨大地震」の遠地地震テスト（→ `testTelegramScripts.ts` の `FOREIGN_QUAKE_HUGE`）。 */
   const simulateForeignQuakeHuge = useCallback(() => runTestTelegramScript(s => s.FOREIGN_QUAKE_HUGE), [runTestTelegramScript])
+  /** 見出しにだけある市町村のテスト（→ `testTelegramScripts.ts` の `HEADLINE_ONLY_CITY`）。 */
+  const simulateHeadlineOnlyCity = useCallback(() => runTestTelegramScript(s => s.HEADLINE_ONLY_CITY), [runTestTelegramScript])
 
   /**
    * 押すたびに台本の次の 1 通を流す（緊急地震速報のテスト。→ `TestTelegramScript.stepByPress`）。
@@ -4631,6 +4637,7 @@ export function useEarthquakes(
     simulateEarthquake,
     simulateForeignQuake,
     simulateForeignQuakeHuge,
+    simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,

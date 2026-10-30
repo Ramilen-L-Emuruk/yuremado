@@ -3,6 +3,7 @@ import type { IntensityScale, JMALpgm, LpgmClass, LpgmPeriodBand, LpgmPoint, Lpg
 import type { QuakeUpdateField } from './quakeUpdateMark'
 import { formatDepth, formatMagnitude, formatMagnitudeCondition, formatQuakeTimeLabeled, hasDepth, hasMagnitude } from './formatters'
 import { getIntensityLabel, isValidIntensityScale } from './intensity'
+import { log } from './logger'
 // 階級 0 は「階級1以上を観測していない」観測値。気象庁の配色に当たる色が無いので、
 // 階級 1〜4 の色の外の灰色にする（2026-10-24 ユーザー選択「この形でよい (Recommended)」）。
 const LPGM_COLORS: Record<number, string> = {
@@ -37,7 +38,7 @@ export function isValidLpgmClass(v: number): v is LpgmClass {
  * 観測された長周期地震動階級として妥当な値か（0〜4）。
  *
  * **観測情報（VXSE62）専用。** 0 は「階級1以上を観測していない」という正常な観測値で、
- * 画面には残す（2026-10-22 ユーザー選択「画面には残す (Recommended)」。最大階級が 0 の報は音と読み上げを鳴らさない）。
+ * 画面には残す（2026-10-22 ユーザー選択「画面には残す (Recommended)」）。最大階級が 0 の報も、階級 1 以上の報と同じく音・読み上げ・通知を出す（2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」）。
  * 階級 1 以上の報に混ざる階級 0 の区域は、他の階級と同じ設定で読み上げる（2026-10-29 ユーザー承認「他の階級と同じく読む」）。
  * 緊急地震速報の予測階級は {@link isValidLpgmClass}（1〜4）で見る —— あちらの 0 は予測が無いことを表す。
  */
@@ -113,6 +114,52 @@ export function lpgmCategoryNote(category: number | undefined): string {
   return ''
 }
 
+/**
+ * 見出し文（`Head/Headline/Text`）が「以下の地域では、最大震度は４以下でしたが…」の段落の後ろに
+ * 並べる地域名を取り出す。並べていなければ空配列。
+ *
+ * **見出し文に書かれた名前だけを使う**（2026-10-30 ユーザー選択「一文に地域名を添える (Recommended)」。
+ * 本文の階級と震度から自前で数え直さない）。全期間 68 通のうち 2 通（2024-01-01 長野県中部・
+ * 2026-04-20 秋田県内陸南部）がこの形で、地域名は 1 行に 1 つ、文末の句点を持たない行として並ぶ。
+ */
+export function lpgmHeadlineRegions(headline: string | undefined): string[] {
+  if (!headline) return []
+  const lines = headline.split(/\r?\n/).map(l => l.trim())
+  const start = lines.findIndex(l => l.startsWith('以下の地域'))
+  if (start < 0) return []
+  // 実電文では「以下の地域…」の後に句点で終わる文が続き、その後に地域名の行が並ぶ。
+  // 句点を含む行は文として飛ばし、地域名を取り始めた後の空行・文の行でそこまでにする ——
+  // 後ろの段落の文や行を地域名として拾わないため
+  const regions: string[] = []
+  for (const line of lines.slice(start + 1)) {
+    const isSentence = line.includes('。')
+    if (regions.length > 0 && (!line || isSentence)) break
+    if (!line || isSentence) continue
+    regions.push(...line.split(/[\s　]+/).filter(Boolean))
+  }
+  if (regions.length === 0 && !warnedHeadlines.has(headline)) {
+    // 段落はあるのに地域名を 1 つも取れない＝書式が変わった印。一文は地域名なしで出す
+    warnedHeadlines.add(headline)
+    log.warn(`[lpgm] 見出し文の「以下の地域」の後ろに地域名を読めませんでした（一文は地域名なしで出します）: ${JSON.stringify(headline.slice(0, 120))}`)
+  }
+  return regions
+}
+
+/** 同じ見出し文で記録を繰り返さない（表示のたびに呼ばれるため） */
+const warnedHeadlines = new Set<string>()
+
+/**
+ * 「観測情報の種類」の一文に、見出し文の地域名を括弧で添える
+ * （例「震度が小さくても高層階が大きく揺れた地域があります（長野県中部）」。読み上げには足さない。
+ * 2026-10-30 ユーザー選択「一文に地域名を添える (Recommended)」）。
+ */
+export function lpgmCategoryNoteWithRegions(category: number | undefined, headline: string | undefined): string {
+  const note = lpgmCategoryNote(category)
+  if (!note) return ''
+  const regions = category === 2 || category === 4 ? lpgmHeadlineRegions(headline) : []
+  return regions.length > 0 ? `${note}（${regions.join('・')}）` : note
+}
+
 
 /**
  * 周期帯の番号（電文の `PeriodicBand`。1〜7）を中心周期の表示に直す。
@@ -136,11 +183,15 @@ export interface LpgmPeriodRow {
   /** 中心周期の表示（`2秒` … `8秒`。→ {@link lpgmPeriodLabel}） */
   label: string
   /**
-   * 階級（1〜4）。**階級 0（その周期帯では該当なし）と読めない値は null** で、画面では行を残して
-   * 階級の欄を「−」にする（観測点の吹き出しが元から採っていた見せ方）。値域の外はパーサーが記録して捨てる
+   * 階級（0〜4）。**階級 0 も「0」と出す**（2026-10-30 ユーザー選択「「0」と出す (Recommended)」。
+   * それまでは「−」にしていた）。読めない値だけ null で、画面では行を残して階級の欄を「−」にする。
+   * 値域の外はパーサーが記録して捨てる
    */
   lgInt: number | null
-  /** 絶対速度応答スペクトル（cm/s）を小数 1 桁にしたもの。読めなければ空文字 */
+  /**
+   * 絶対速度応答スペクトルを小数 1 桁にし、単位「cm/s」を添えたもの（2026-10-30 ユーザー選択
+   * 「行ごとに cm/s を付ける (Recommended)」）。読めなければ空文字
+   */
   sva: string
 }
 
@@ -154,8 +205,8 @@ export interface LpgmPeriodRow {
 export function lpgmPeriodRows(bands: readonly LpgmPeriodBand[]): LpgmPeriodRow[] {
   return bands.map(b => ({
     label: lpgmPeriodLabel(b.band),
-    lgInt: typeof b.lgInt === 'number' && b.lgInt >= 1 ? b.lgInt : null,
-    sva: typeof b.sva === 'number' && Number.isFinite(b.sva) ? b.sva.toFixed(1) : '',
+    lgInt: typeof b.lgInt === 'number' && isObservedLpgmClass(b.lgInt) ? b.lgInt : null,
+    sva: typeof b.sva === 'number' && Number.isFinite(b.sva) ? `${b.sva.toFixed(1)} cm/s` : '',
   }))
 }
 
@@ -395,7 +446,7 @@ export function buildLpgmRows(
  * どちらかになる（→ docs/spec/audio-tts-spec.md §6「読み上げに合わせて気象庁の文を開く」）。
  */
 export function canOpenLpgmNotes(lpgm: JMALpgm | null | undefined): boolean {
-  // 階級 0 の報も補足を開ける（画面には残すため。読み上げは階級 0 では鳴らない）
+  // 階級 0 の報も補足を開ける（画面には残すため）
   if (!lpgm || lpgm.cancelled || !isObservedLpgmClass(lpgm.maxClass)) return false
   return !!(lpgm.forecastText || lpgm.varCommentText || lpgm.freeFormText || lpgm.uri)
 }

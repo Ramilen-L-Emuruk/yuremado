@@ -132,13 +132,13 @@ describe('sanitize', () => {
     expect(sanitize({}).ttsAlwaysReadLpgmClass).toBe(1)
   })
 
-  it('必ず読む長周期地震動階級は、1〜4 と無効値(-1)を通す', () => {
-    for (const v of [-1, 1, 2, 3, 4]) expect(sanitize({ ttsAlwaysReadLpgmClass: v }).ttsAlwaysReadLpgmClass).toBe(v)
+  it('必ず読む長周期地震動階級は、0〜4 と無効値(-1)を通す', () => {
+    for (const v of [-1, 0, 1, 2, 3, 4]) expect(sanitize({ ttsAlwaysReadLpgmClass: v }).ttsAlwaysReadLpgmClass).toBe(v)
   })
 
-  // 安全弁: 階級 0 は読まないので選べない。値域の外・整数でない値・数値以外は既定値に落とす
-  it('必ず読む長周期地震動階級は、0・値域の外・数値以外を既定値に落とす', () => {
-    for (const v of [0, 5, 1.5, '2']) {
+  // 安全弁: 値域の外（負の -2 も）・整数でない値・数値以外は既定値に落とす
+  it('必ず読む長周期地震動階級は、値域の外・数値以外を既定値に落とす', () => {
+    for (const v of [-2, 5, 1.5, '2']) {
       expect(sanitize({ ttsAlwaysReadLpgmClass: v as number }).ttsAlwaysReadLpgmClass).toBe(1)
     }
   })

@@ -11,15 +11,22 @@ const noRank = () => 0
 const deps = { prefOfArea: () => null, rank: noRank, onUnplaceableStation: () => {} }
 
 describe('lpgmPeriodRows', () => {
-  it('正: 帯ごとに中心周期の見出し・階級・揺れの大きさ（小数 1 桁）を並べる', () => {
+  // 単位 cm/s を行ごとに付ける（2026-10-30 ユーザー選択「行ごとに cm/s を付ける (Recommended)」）
+  it('正: 帯ごとに中心周期の見出し・階級・揺れの大きさ（小数 1 桁＋cm/s）を並べる', () => {
     expect(lpgmPeriodRows([{ band: 1, lgInt: 4, sva: 268.54 }, { band: 7, lgInt: 2, sva: 30 }])).toEqual([
-      { label: '2秒', lgInt: 4, sva: '268.5' },
-      { label: '8秒', lgInt: 2, sva: '30.0' },
+      { label: '2秒', lgInt: 4, sva: '268.5 cm/s' },
+      { label: '8秒', lgInt: 2, sva: '30.0 cm/s' },
     ])
   })
 
-  it('安全弁: 階級 0 の帯も行として残す（階級は null＝画面では「−」）', () => {
-    expect(lpgmPeriodRows([{ band: 5, lgInt: 0, sva: 1.2 }])).toEqual([{ label: '6秒', lgInt: null, sva: '1.2' }])
+  // 階級 0 は「0」と出す（2026-10-30 ユーザー選択「「0」と出す (Recommended)」。以前は null＝「−」だった）
+  it('正: 階級 0 の帯は階級 0 のまま残す', () => {
+    expect(lpgmPeriodRows([{ band: 5, lgInt: 0, sva: 1.2 }])).toEqual([{ label: '6秒', lgInt: 0, sva: '1.2 cm/s' }])
+  })
+
+  it('安全弁: 階級の値域の外（5 以上・負）は null', () => {
+    expect(lpgmPeriodRows([{ band: 5, lgInt: 5, sva: 1.2 }])[0].lgInt).toBeNull()
+    expect(lpgmPeriodRows([{ band: 5, lgInt: -1, sva: 1.2 }])[0].lgInt).toBeNull()
   })
 
   it('対照: 読めない値は空にする（NaN・無限大を文字にしない）', () => {

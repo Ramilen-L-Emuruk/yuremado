@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import { log } from '../utils/logger'
 import { isDmdss } from '../utils/env'
 import { isValidIntensityScale } from '../utils/intensity'
-import { isValidLpgmClass } from '../utils/lpgm'
+import { isObservedLpgmClass } from '../utils/lpgm'
 // 読み上げ文の作り方を決める値なので、定義は読み上げ側（`utils/ttsText.ts`）に置く。
 // ここ（設定）から生やすと utils → hooks の向きで参照が要り、依存が逆流する。
 import type { TtsUnreceivedDetail, TelegramTextBlockKey, TelegramTextBlocks, TelegramBoilerplateKey, TelegramBoilerplateReads } from '../utils/ttsText'
@@ -118,10 +118,10 @@ export interface AppSettings {
   ttsMaxRegions: number            // 読み上げる最大地域数（0 = 無制限）
   ttsAlwaysReadScale: number       // 階数の設定を超えても読み上げる下限震度 (-1 = 無効)
   /**
-   * 階数の設定を超えても読み上げる長周期地震動階級の下限（1〜4。-1 = 無効）。
+   * 階数の設定を超えても読み上げる長周期地震動階級の下限（0〜4。-1 = 無効）。
    * 震度の下限（`ttsAlwaysReadScale`）は長周期には効かないので、別に持つ
    * （2026-10-22 ユーザー選択「必ず読む階級を設ける (Recommended)」。既定と文言は 2026-10-24 選択「この形でよい (Recommended)」）。
-   * 階級 0 はそもそも読まないので選べない。
+   * 階級 0 も選べる（2026-10-30 ユーザー選択「足す (Recommended)」）。
    */
   ttsAlwaysReadLpgmClass: number
   ttsRegionTolerance: number       // 最大地域数をこの数まで超える場合は省略せず全地域を読む (0 = 無効)
@@ -437,11 +437,11 @@ function ensureIntensityScale(value: unknown, fallback: number, key: string): nu
   return fallback
 }
 
-/** 必ず読む長周期地震動階級。1〜4 か -1（無効）だけを通す。 */
+/** 必ず読む長周期地震動階級。0〜4 か -1（無効）だけを通す。 */
 function ensureAlwaysReadLpgmClass(value: unknown, fallback: number): number {
-  if (value === -1 || (typeof value === 'number' && isValidLpgmClass(value))) return value
+  if (value === -1 || (typeof value === 'number' && isObservedLpgmClass(value))) return value
   if (value !== undefined) {
-    log.warn(`[settings] ttsAlwaysReadLpgmClass が長周期地震動階級（1〜4）でも無効（-1）でもないため既定値（${fallback}）に戻した`, value)
+    log.warn(`[settings] ttsAlwaysReadLpgmClass が長周期地震動階級（0〜4）でも無効（-1）でもないため既定値（${fallback}）に戻した`, value)
   }
   return fallback
 }

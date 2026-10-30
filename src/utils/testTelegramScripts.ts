@@ -177,6 +177,28 @@ export const FOREIGN_QUAKE: TestTelegramScript = {
 }
 
 /**
+ * 見出しにだけある市町村のテスト（2024-01-01 23:04 佐渡付近の震源・震度に関する情報）。
+ *
+ * 実配信では全期間 19,346 通で 1 通（2026-07-28 熊本県熊本地方・益城町 震度３）だけ、見出しの
+ * 構造化（`Head/Headline/Information` の市町村等）にある市町村が本文の市町村に無かった。その電文は
+ * DMDATA 由来でここへ置けないので、**同じ形**を収録済みの実電文から作る —— 見出しに震度３で
+ * 載る輪島市を、本文の市町村（配下の観測点ごと）からだけ外す。区域「石川県能登」の最大震度 3 は
+ * 本文に残るので、見出しの細分区域の並びから区域が 1 つに決まる。
+ */
+export const HEADLINE_ONLY_CITY: TestTelegramScript = {
+  anchor: 0,
+  steps: [{
+    file: SADO.detail, headType: 'VXSE53', atMs: 0,
+    rewrite: xml => editXml(xml, doc => {
+      const body = only(doc, 'Body')
+      const wajima = descendants(body, 'City').filter(city => childText(city, 'Name') === '輪島市')
+      if (wajima.length !== 1) throw new Error(`本文の輪島市が ${wajima.length} 件ありました（1 件であるべき）`)
+      wajima[0].remove()
+    }),
+  }],
+}
+
+/**
  * 巨大地震テスト（遠地地震で規模が「Ｍ８を超える巨大地震」の報）。
  *
  * 元は気象庁のサンプル電文（2010-02-27 チリ中部沿岸・遠地地震に関する情報・付加文 0221 0228 0229）。
@@ -1934,7 +1956,7 @@ function isoZ(ms: number): string {
 /** 台本の一覧（テストで全件を流して読めることを確かめる）。 */
 export const ALL_TEST_TELEGRAM_SCRIPTS: Readonly<Record<string, TestTelegramScript>> = {
   EARTHQUAKE, TRAINING_QUAKE, UNRECEIVED_QUAKE, MAX_SCALE_OR_ABOVE_QUAKE, AREA_UNRECEIVED_QUAKE,
-  FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
+  FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, HEADLINE_ONLY_CITY, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
   QUAKE_PARTIAL_CANCEL, HYPOCENTER_FROM_TSUNAMI,
   TSUNAMI_MAJOR_WARNING, TSUNAMI_QUIET_REPORTS, TSUNAMI_WARNING, TSUNAMI_WATCH, TSUNAMI_FORECAST, TSUNAMI_EXPIRY, TSUNAMI_GRADE_CHANGE,
   TSUNAMI_SOURCE_ADDED, TSUNAMI_RETRACTION, TSUNAMI_INFO_RETRACTION,

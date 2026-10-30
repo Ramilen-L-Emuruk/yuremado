@@ -361,8 +361,9 @@ describe('長周期地震動の観測点の行に出す周期ごとの内訳', (
     expect(row.getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByText('揺れの周期ごと（階級・揺れの大きさ）')).toBeTruthy()
     expect(screen.getByText('2秒')).toBeTruthy()
-    expect(screen.getByText('52.3')).toBeTruthy()
-    // 階級 0 の帯も「−」で残る
+    // 揺れの大きさには行ごとに cm/s を付ける（2026-10-30 ユーザー選択「行ごとに cm/s を付ける (Recommended)」）
+    expect(screen.getByText('52.3 cm/s')).toBeTruthy()
+    // 階級 0 の帯も残る（「0」と出す。2026-10-30 ユーザー選択「「0」と出す (Recommended)」）
     expect(screen.getByText('3秒')).toBeTruthy()
     expect(screen.getByText('周期が長いほど、高い建物が大きく揺れます')).toBeTruthy()
     expect(onFocusMap).not.toHaveBeenCalled()

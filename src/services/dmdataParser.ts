@@ -544,6 +544,19 @@ function parseEditorialOfficeFromXml(doc: Document): string | undefined {
   return xmlText(xmlChild(controlEl, 'EditorialOffice')) || undefined
 }
 
+/**
+ * 電文を発表した官署（`Control/PublishingOffice`）だけを読む。**編集官署へは落とさない。**
+ *
+ * 画面は編集官署の隣に「発表官署 …」と名乗って出す（2026-10-30 ユーザー選択「編集官署の隣に出す
+ * (Recommended)」、形は同日「編集官署の隣に同じ形で (Recommended)」）。全期間の地震情報 19,346 通で
+ * 値は「気象庁」だけだった（→ `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」）。
+ */
+function parsePublishingOfficeFromXml(doc: Document): string | undefined {
+  const controlEl = xmlQ(doc, 'Control')
+  if (!controlEl) return undefined
+  return xmlText(xmlChild(controlEl, 'PublishingOffice')) || undefined
+}
+
 function xmlText(el: Element | null): string {
   return el?.textContent?.trim() ?? ''
 }
@@ -978,6 +991,114 @@ function readHeadlineText(doc: Document): string {
   const headEl = xmlQ(doc, 'Head')
   const headlineEl = headEl ? xmlChild(headEl, 'Headline') : null
   return headlineEl ? xmlText(xmlChild(headlineEl, 'Text')) : ''
+}
+
+/** 見出しの構造化（`Head/Headline/Information`）のうち、震度 3〜4 の市町村を並べるブロックの `type`。 */
+const QUAKE_HEADLINE_CITY_INFORMATION_TYPE = '震源・震度に関する情報（市町村等）'
+/** 同じく、細分区域を並べるブロックの `type`。市町村を区域の下へ置く手がかりに使う。 */
+const QUAKE_HEADLINE_AREA_INFORMATION_TYPE = '震源・震度に関する情報（細分区域）'
+
+/**
+ * 見出しの階級の名前（`Item/Kind/Name`。「震度３」「震度５弱」）を、本文の `MaxInt` と同じ表記
+ * （`3`・`5-`）へ直す。読めない名前は空文字。
+ */
+function headlineIntensityRaw(kindName: string): string {
+  const half = kindName.replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0) - 0xFEE0))
+  const m = half.match(/^震度([1-7])(弱|強)?$/)
+  if (!m) return ''
+  return m[1] + (m[2] === '弱' ? '-' : m[2] === '強' ? '+' : '')
+}
+
+/**
+ * 見出しの構造化（`Head/Headline/Information`）の「市町村等」にだけある市町村を、本文の市町村と
+ * 同じ形で `cities` へ足す（2026-10-30 ユーザー選択「市町村の行として足す (Recommended)」。
+ * 観測点の行は作らない・地図の塗りと読み上げも本文の市町村と同じ扱い・両方にあれば本文を使う）。
+ *
+ * **見出しは本文の部分集合とは限らない。** 解説資料 Ⅰ.11-2(3) は、最大震度 3〜4 の地震で見出しへ
+ * 震度 3 以上の市町村を並べると定めている。全期間 19,346 通で 1 通だけ、見出しにある市町村
+ * （2026-07-28 18:06 熊本県熊本地方・益城町 震度３）が本文の市町村に無かった。
+ *
+ * 見出しは市町村の県も区域も持たない。県は市町村コードの頭 2 桁（全国地方公共団体コードの都道府県）を
+ * 本文の `Pref/Code` と突き合わせて引く（引けなければ置き場所が無いので記録して落とす）。区域は
+ * 「その県に属し、見出しでの最大震度がその市町村の震度以上の細分区域」が 1 つに決まるときだけ置く
+ * （区域は自分の最大震度の階級に並ぶので、市町村と同じ階級だけを見ると、市町村より強く揺れた
+ * 本来の区域を外して別の区域を選びうる）。決まらなければ県の直下に置く。
+ */
+function appendHeadlineOnlyCities(doc: Document, cities: JMAQuakeCity[], logPrefix: string): void {
+  const headEl = xmlQ(doc, 'Head')
+  const headlineEl = headEl ? xmlChild(headEl, 'Headline') : null
+  if (!headlineEl) return
+  const infos = xmlAll(headlineEl, 'Information')
+  const cityInfo = infos.find(el => el.getAttribute('type') === QUAKE_HEADLINE_CITY_INFORMATION_TYPE)
+  if (!cityInfo) return
+  const areaInfo = infos.find(el => el.getAttribute('type') === QUAKE_HEADLINE_AREA_INFORMATION_TYPE)
+
+  // 本文の県（コード → 名前）と、区域がどの県に属するか（区域名 → 県名）
+  const bodyEl = xmlQ(doc, 'Body')
+  const prefByCode = new Map<string, string>()
+  const prefOfArea = new Map<string, string>()
+  for (const prefEl of bodyEl ? xmlAll(bodyEl, 'Pref') : []) {
+    const name = xmlText(xmlChild(prefEl, 'Name'))
+    const code = xmlText(xmlChild(prefEl, 'Code'))
+    if (code && name) prefByCode.set(code, name)
+    for (const areaEl of xmlAll(prefEl, 'Area')) {
+      const areaName = xmlText(xmlChild(areaEl, 'Name'))
+      if (areaName && name) prefOfArea.set(areaName, name)
+    }
+  }
+  // 見出しの細分区域（区域名 → その区域の最大震度）。区域は自分の最大震度の階級に並ぶ
+  const headlineAreaScale = new Map<string, number>()
+  // 読めなかった区域が 1 つでもあれば、残りの区域だけで「候補は 1 つ」と決めると、本来の区域を
+  // 外して別の区域を選びうる。そのときは区域を置かない（県の直下へ置く）
+  let headlineAreasIncomplete = false
+  for (const item of areaInfo ? xmlAll(areaInfo, 'Item') : []) {
+    const areaKindName = xmlText(xmlQ(item, 'Name'))
+    const { scale: areaScale } = readIntensity(headlineIntensityRaw(areaKindName) || null)
+    if (areaScale < 0) {
+      headlineAreasIncomplete = true
+      log.warn(`${logPrefix} 見出しの細分区域の震度を読めません（見出しにだけある市町村は区域に置きません）: "${areaKindName}"`)
+      continue
+    }
+    for (const a of xmlAll(item, 'Area')) {
+      const areaName = xmlText(xmlChild(a, 'Name'))
+      if (areaName) headlineAreaScale.set(areaName, areaScale)
+      else headlineAreasIncomplete = true
+    }
+  }
+
+  const known = new Set(cities.flatMap(c => [c.code ? `code:${c.code}` : '', `name:${c.pref}|${c.name}`].filter(Boolean)))
+  for (const item of xmlAll(cityInfo, 'Item')) {
+    const kindName = xmlText(xmlQ(item, 'Name'))
+    const raw = headlineIntensityRaw(kindName)
+    const { scale } = readIntensity(raw || null)
+    for (const areaEl of xmlAll(item, 'Area')) {
+      const name = xmlText(xmlChild(areaEl, 'Name'))
+      const code = xmlText(xmlChild(areaEl, 'Code'))
+      if (!name) continue
+      // 本文に既にある市町村は本文の値を使うので、見出しの震度が読めなくても困らない（先に除く）
+      if (code && known.has(`code:${code}`)) continue
+      if (scale < 0) {
+        log.warn(`${logPrefix} 見出しの市町村の震度を読めません（この市町村は出ません）: ${name} "${kindName}"`)
+        continue
+      }
+      const pref = (code && prefByCode.get(code.slice(0, 2))) || ''
+      if (!pref) {
+        // 県が引けない市町村は置き場所が決まらない。県名なしの行として混ぜず、記録して落とす
+        log.warn(`${logPrefix} 見出しの市町村の県を本文から引けません（この市町村は出ません）: ${name} code=${code || '(なし)'}`)
+        continue
+      }
+      if (known.has(`name:${pref}|${name}`)) continue
+      // 市町村の区域は、その市町村の震度以上を最大震度に持つ同じ県の区域のどれか（区域の最大は
+      // 配下の市町村の震度を下回らない）。候補が 1 つに絞れたときだけ置き、絞れなければ県の直下に置く
+      const candidateAreas = [...headlineAreaScale]
+        .filter(([a, areaScale]) => prefOfArea.get(a) === pref && areaScale >= scale)
+        .map(([a]) => a)
+      const area = candidateAreas.length === 1 && !headlineAreasIncomplete ? candidateAreas[0] : ''
+      cities.push({ name, area, pref, scale: scale as IntensityScale, ...(code && { code }) })
+      if (code) known.add(`code:${code}`)
+      known.add(`name:${pref}|${name}`)
+    }
+  }
 }
 
 /** 見出しの構造化（`Head/Headline/Information`）のうち、地方予報区を並べるブロックの `type`。 */
@@ -1588,6 +1709,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   const issueType = resolveIssueType(headType, quakeInfoName)
   const source = parseIssueSourceFromXml(doc)
   const editorialOffice = parseEditorialOfficeFromXml(doc)
+  const publishingOffice = parsePublishingOfficeFromXml(doc)
 
   // 取消電文（InfoType === '取消'）: Earthquake 要素が存在しないため早期リターン
   if (infoType === '取消') {
@@ -1612,7 +1734,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       // 取消しの概要（`Body/Text`）。**`Comments` ではなく `Body` 直下**——取消電文は付加文を
       // 持たない（電文解説資料が「情報形態が"取消"の場合、本要素は出現しない」と定めている）。
       ...(cancelBodyText && { cancelText: cancelBodyText }),
-      issue: { source, ...(editorialOffice && { editorialOffice }), time: reportDateTime, type: issueType, correct: 'なし' as CorrectType },
+      issue: { source, ...(editorialOffice && { editorialOffice }), ...(publishingOffice && { publishingOffice }), time: reportDateTime, type: issueType, correct: 'なし' as CorrectType },
       earthquake: { time: '', hypocenter: { name: '', latitude: -200, longitude: -200, depth: -1, magnitude: 0 }, maxScale: -1, domesticTsunami: '不明' },
       points: [],
     }
@@ -1895,6 +2017,10 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     }
   }
 
+  // 見出しにだけある市町村（→ `appendHeadlineOnlyCities`）。本文を読み終えてから足す ——
+  // 両方にある市町村は本文を使うため、本文の顔ぶれが揃っていないと重複を見分けられない。
+  appendHeadlineOnlyCities(doc, cities, DMDATA_LOG_PREFIX)
+
   prefTally.warnIfNoneReadable(DMDATA_LOG_PREFIX)
   areaTally.warnIfNoneReadable(DMDATA_LOG_PREFIX)
   cityTally.warnIfNoneReadable(DMDATA_LOG_PREFIX)
@@ -1944,6 +2070,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     issue: {
       source,
       ...(editorialOffice && { editorialOffice }),
+      ...(publishingOffice && { publishingOffice }),
       time: reportDateTime,
       type: issueType,
       correct,
@@ -2695,8 +2822,9 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   const maxClass    = parseInt(maxClassStr, 10)
 
   // **階級 0 の報も捨てない。** 0 は「階級1以上を観測していない」という正常な観測値で、
-  // 画面には残す（2026-10-22 ユーザー選択「画面には残す (Recommended)」）。音と読み上げは
-  // 鳴らさない（→ `useEarthquakes.ts` の `lpgmNotifiable`）。資料の値域は 0〜4 で 0 は来うるが、
+  // 画面には残す（2026-10-22 ユーザー選択「画面には残す (Recommended)」）。音・読み上げ・通知も
+  // 階級 1 以上と同じ型で出す（2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」・
+  // → `useEarthquakes.ts` の `lpgmNotifiable`）。資料の値域は 0〜4 で 0 は来うるが、
   // 標本 A（地震情報の区分の 2020-11〜2026-10 のアーカイブ）では見つかっていない（→ docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）。
   // 読めない値（欠損・想定外の表記）は電文を捨てた理由として残す。
   if (!isObservedLpgmClass(maxClass)) {

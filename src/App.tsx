@@ -958,7 +958,7 @@ export function App() {
     historyLoss, loadMoreFailed, reconnectGapLoss,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
-    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
+    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
@@ -1014,6 +1014,7 @@ export function App() {
     earthquake:        simulateEarthquake,
     foreignQuake:      simulateForeignQuake,
     foreignQuakeHuge:  simulateForeignQuakeHuge,
+    headlineOnlyCity:  simulateHeadlineOnlyCity,
     eew:               simulateEEW,
     eewWarning:        simulateEEWWarning,
     eewForecast:       simulateEEWForecast,
@@ -1073,7 +1074,7 @@ export function App() {
       showBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
     },
   }), [
-    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge,
+    simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,

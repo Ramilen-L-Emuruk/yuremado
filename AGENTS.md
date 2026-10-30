@@ -1289,7 +1289,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | `points` のバリアント差・`pref` 空の識別規則を取り違えると、経路によって観測点や区域が欠落する | [`quake-spec.md`](docs/spec/quake-spec.md) §4「points 構造（バリアント・経路差）」 |
 | 観測点名の `＊` を外し忘れる・戻し忘れると、地図から点が消える、または電文と違う表記になる | [`quake-spec.md`](docs/spec/quake-spec.md) §8「気象庁以外が運用する観測点（`＊`）」 |
 | 固定付加文（その他）を省くと、`＊` 印の説明が画面から消え何と対比しているか分からなくなる | [`quake-spec.md`](docs/spec/quake-spec.md) §8「固定付加文（その他）（`VarComment/Text`）はそのまま出す」 |
-| 電文のコード値（都道府県・区域・市町村・観測点コード等）を画面に出すと、利用者に意味の無い気象庁内部識別子が露出する | [`quake-spec.md`](docs/spec/quake-spec.md) §8「電文のコード値は読むが、画面には出さない」 |
+| 電文のコード値（都道府県・区域・市町村・観測点コード等）を名前の代わりに出す、またはカードや読み上げへ混ぜると、意味の読めない識別子が前に出る（出すのは地図の吹き出しの末尾だけ） | [`quake-spec.md`](docs/spec/quake-spec.md) §8「電文のコード値は読み、地図の吹き出しの末尾に添える」 |
 | 震源の補助要素・`Revise` の読み取りを 1 か所（`readHypocenterAreaLabels`）に集約しないと、経路ごとに震央補助表現や続報の変化が抜け落ちる | [`quake-spec.md`](docs/spec/quake-spec.md) §8「震源の補助要素と続報での変化は、値を文字では出さない」 |
 | 震度5弱以上未入電を階級・地図・カードのどこかで一般の震度と同列に扱うと、最も強い地点や区域が画面・地図・音声のいずれかから消える | [`quake-spec.md`](docs/spec/quake-spec.md) §4「震度5弱以上未入電」 |
 | 震度点が積めなかったことの記録条件（全滅時のみ）を誤ると、大多数が脱落し数件だけ残る形の障害に気付けない | [`quake-spec.md`](docs/spec/quake-spec.md) §4「地図には観測値と混ぜずに出す」内「読めなかった点は記録する」 |
@@ -1507,7 +1507,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | APIキー文字検証を通信前に弾く経路と弾かない経路で揃えないと、無効な鍵のまま401/403を連発するか原因の違う「未設定」「不正」を同じ文言で伝える | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「認証」 |
 | 南海トラフ 3 種別・後発地震に共通する見出し文/次回発表予定/参考情報の読み取り窓口を 1 箇所に保たないと、経路ごとに要約の有無が食い違う | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「3 種別に共通する要素は 1 箇所で読む」 |
 | 見出し文（`Head/Headline/Text`）をそのまま画面へ出すと、本文と重複する事実が二重に表示される | [`quake-spec.md`](docs/spec/quake-spec.md) §8「見出し文（`Head/Headline/Text`）は読むが、地震情報では出さない」 |
-| 見出しの構造化（`Head/Headline/Information`）を新しい事実の入口として読むと、`Body` の部分集合を二重に読み込む（緊急地震速報の警報報だけは地方予報区ブロックが例外） | [`quake-spec.md`](docs/spec/quake-spec.md) §8「見出しの構造化（`Head/Headline/Information`）は読まない」 |
+| 見出しの構造化（`Head/Headline/Information`）を新しい事実の入口として読むと、`Body` の部分集合を二重に読み込む（例外は 2 つ。緊急地震速報の警報報の地方予報区ブロックと、震源・震度に関する情報で本文に無い市町村） | [`quake-spec.md`](docs/spec/quake-spec.md) §8「見出しの構造化（`Head/Headline/Information`）は読まない」 |
 | 南海トラフ 3 電文の段階判定を `Head/InfoKind` で行うと、臨時情報/解説情報でコード体系が重複し段階が上書きされる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「南海トラフ関連の 3 種別（VYSE50 / VYSE51 / VYSE52）」 |
 | 長期震源カタログの数値欄を桁数固定で読むと、緯度が最大 78km ずれる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「読み取りで踏んだ罠」「異常を検知する仕組み」 |
 | DMDATA震源カタログの欠測地震を個別除外せず一括で捨てると、表示できる地震まで消える | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「震源カタログ」 |
