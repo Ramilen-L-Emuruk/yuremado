@@ -20,7 +20,7 @@ import { matchEstimatedIntensity } from '../utils/estimatedIntensity'
 import type { ReplayEntry, ReplayPayload, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
 import {
   isHandledType, QUAKE_TYPES, TSUNAMI_TYPES, HISTORY_EXTRA_TYPES, LPGM_TYPES, ESTIMATED_INTENSITY_TYPES, historyExtraKey,
-  buildXmlPayload, isBinaryTelegramType, buildBinaryPayload, type EewHeadType,
+  buildXmlPayload, isBinaryTelegramType, buildBinaryPayload, type EewHeadType, type DayEewHeadType, eewHeadTypeForDay,
   isFilteredBinaryTelegram,
 } from './dmdataTelegramPayload'
 import { BufrFragmentStore, fragmentKey } from './bufrTelegramAssembly'
@@ -781,7 +781,7 @@ type ReplayPlan =
 
 function planReplayEntries(
   manifest: ManifestEntry[],
-  opts: { includeTest: boolean; fromTime: Date; toTime: Date; eewHeadType: EewHeadType | null },
+  opts: { includeTest: boolean; fromTime: Date; toTime: Date; eewHeadType: DayEewHeadType | null },
 ): ReplayPlan[] {
   const plans: ReplayPlan[] = []
   const times = manifestEntryTimes(manifest)
@@ -812,7 +812,7 @@ function planReplayEntries(
  * `time` は受信時刻（`manifestEntryTime`）。発表時刻を渡さないこと（理由はそちら）。
  */
 function isReplayTarget(
-  entry: ManifestEntry, time: Date, fromTime: Date, toTime: Date, eewHeadType: EewHeadType | null,
+  entry: ManifestEntry, time: Date, fromTime: Date, toTime: Date, eewHeadType: DayEewHeadType | null,
 ): boolean {
   return time >= fromTime && time < toTime && isHandledType(entry.head.type, eewHeadType)
 }
@@ -998,9 +998,13 @@ export async function fetchDmdataReplayEvents(
         manifestCache.set(item.url, manifest)
       }
 
+      // 緊急地震速報として読む種別は日ごとに決める（VXSE45 が無い日だけ VXSE44 → `eewHeadTypeForDay`）。
+      // **計画と本体の読み取りで同じ値を渡す** —— 片方だけ VXSE44 にすると、窓に入れたのに読めない電文が出る。
+      const dayEewHeadType = eewHeadTypeForDay(eewHeadType, manifest)
+      if (dayEewHeadType === 'VXSE44') log.info(`[replay] VXSE45 の無い日なので VXSE44 を緊急地震速報として読みます date=${item.date}`)
       // 絞り込み（試験報・重複排除・時刻・窓・種別）は計画へ集約してある。
       // **判定と消費で同じ配列を回すこと**が肝（→ `ManifestPlan`）。
-      const plans = planReplayEntries(manifest, { includeTest, fromTime, toTime, eewHeadType })
+      const plans = planReplayEntries(manifest, { includeTest, fromTime, toTime, eewHeadType: dayEewHeadType })
       // **窓に 1 件も入らない日は本体を落とさない。** 落としても中身を読まずに捨てるだけで、
       // 静かな 1 時間の窓では毎回それが起きる。
       if (files === undefined && planNeedsBody(plans)) {
@@ -1099,7 +1103,7 @@ export async function fetchDmdataReplayEvents(
           }
 
           const xml = dec.decode(bodyBytes)
-          const payload = buildXmlPayload(headType, xml, eewHeadType)
+          const payload = buildXmlPayload(headType, xml, dayEewHeadType)
           if (payload) {
             // 再生時刻は窓の判定と同じ値（ファイル名の 17 桁＝ミリ秒精度の受信時刻 →
             // `manifestEntryTime`）。報が連続する EEW で順序と間隔を保つのにもミリ秒が要る。
@@ -3015,7 +3019,7 @@ function eewArchiveClassification(eewHeadType: EewHeadType): string {
  * 全件がここへ落ちる。そのときは全地震が地震ごとの経路へ回るので黙って欠けはしないが、呼び出し側が記録する）。
  */
 function pickFinalEewEntries(
-  manifest: readonly ManifestEntry[], eewHeadType: EewHeadType,
+  manifest: readonly ManifestEntry[], eewHeadType: DayEewHeadType,
 ): { picked: ManifestEntry[]; maxSerial: Map<string, number>; unidentified: number; firstUnidentifiedId: string | null } {
   const finals = new Map<string, { serial: number; entry: ManifestEntry }>()
   const maxSerial = new Map<string, number>()
@@ -3146,10 +3150,13 @@ export async function fetchDmdataEewOrigins(
   const ownTypeChosen = new Set<string>()
   let readDayCount = 0
   let failedDays = 0
+  // VXSE44 の日に最終報を選んだ地震。地震ごとの取得は VXSE45 を探すので、本体を読めなくても回さない（下）。
+  const vxse44EventIds = new Set<string>()
   for (const item of targets) {
     if (stopped()) break
     let files: Map<string, Uint8Array> | undefined
     let picked: ManifestEntry[]
+    let dayEewHeadType: DayEewHeadType = eewHeadType
     try {
       let manifest = manifestCache.get(item.url)
       if (!manifest) {
@@ -3159,10 +3166,14 @@ export async function fetchDmdataEewOrigins(
         manifest = JSON.parse(dec.decode(manifestBytes)) as ManifestEntry[]
         manifestCache.set(item.url, manifest)
       }
-      const choice = pickFinalEewEntries(manifest, eewHeadType)
+      // 本編の再生と同じく、VXSE45 が無い日だけ VXSE44 を選ぶ（→ `eewHeadTypeForDay`）
+      dayEewHeadType = eewHeadTypeForDay(eewHeadType, manifest) ?? eewHeadType
+      if (dayEewHeadType === 'VXSE44') log.info(`[eew-origin] VXSE45 の無い日なので VXSE44 から最終報を選びます date=${item.date}`)
+      const choice = pickFinalEewEntries(manifest, dayEewHeadType)
       picked = choice.picked
       for (const [eventId, serial] of choice.maxSerial) seenSerial.set(eventId, Math.max(seenSerial.get(eventId) ?? -Infinity, serial))
       for (const entry of picked) { const id = entry.xmlReport?.head?.eventId; if (id) ownTypeChosen.add(id) }
+      if (dayEewHeadType === 'VXSE44') for (const entry of picked) { const id = entry.xmlReport?.head?.eventId; if (id) vxse44EventIds.add(id) }
       if (choice.unidentified > 0) {
         log.warn(`[eew-origin] 目録に地震 ID か報番号を読めない報が ${choice.unidentified} 通ありました date=${item.date}`
           + `（最初の id=${choice.firstUnidentifiedId ?? '不明'}。その報は選びません）`)
@@ -3185,7 +3196,7 @@ export async function fetchDmdataEewOrigins(
           log.warn(`[eew-origin] 最終報の本文がアーカイブにありません date=${item.date} id=${entry.id}（${bodyMissReason(entry)}）`)
           continue
         }
-        const payload = buildXmlPayload(entry.head.type, dec.decode(dayFiles.get(name)), eewHeadType)
+        const payload = buildXmlPayload(entry.head.type, dec.decode(dayFiles.get(name)), dayEewHeadType)
         const eew = payload?.kind === 'event' && payload.event.kind === 'eew' ? (payload.event as EEWAlert) : null
         const eventId = eew?.issue?.eventId
         if (eew === null || !eventId) {
@@ -3208,9 +3219,18 @@ export async function fetchDmdataEewOrigins(
   if (unknownSerial > 0) {
     log.warn(`[eew-origin] 一覧に報番号を読めない地震が ${unknownSerial} 件ありました（アーカイブで読めたかを比べられないので地震ごとに取ります）`)
   }
-  const perEvent = list.events.filter(ev => needsPerEventFetch(ev, {
+  const perEventCandidates = list.events.filter(ev => needsPerEventFetch(ev, {
     eewHeadType, seenSerial, ownTypeChosen, readEventIds: byEvent, fromMs: fromTime.getTime(), toMs: toTime.getTime(),
   }))
+  // **VXSE44 の日の地震は地震ごとに取りに行かない。** 地震ごとの取得（`fetchLatestEewReport`）は VXSE45 を探すので、
+  // VXSE44 しか無い地震では「読み取れない」が続いて打ち切りになり、障害と見分けが付かない。本体を読めなかった
+  // 地震として数えて残す（上で 1 件ずつ記録済み）。
+  const perEvent = perEventCandidates.filter(ev => !vxse44EventIds.has(ev.eventId))
+  const skipped44 = perEventCandidates.length - perEvent.length
+  if (skipped44 > 0) {
+    complete = false
+    log.warn(`[eew-origin] VXSE44 の日に最終報を読めなかった地震が ${skipped44} 件ありました（地震ごとの取得は VXSE45 を探すので回しません）`)
+  }
   const headers = { Authorization: authHeader(apiKey) }
   let fromLive = 0
   let tried = 0

@@ -1889,9 +1889,8 @@ export interface EarthquakeInfoMeta {
   /**
    * 情報の種別（`Body/EarthquakeInfo/InfoKind`）と、その上位分類（同要素の `@type`）。
    *
-   * **読んで持つが、画面には出していない**（2026-10-29 ユーザー承認「まとめて今のまま (Recommended)」）。
-   * アプリは電文種別で既に見分けており、「南海トラフ地震臨時情報」のような名称は
-   * `headline`（`Head/Title`）が伝えている。
+   * **帯の見出しの下に小さく添える**（2026-10-30 ユーザー選択「帯に添える (Recommended)」。2026-10-29 の
+   * 「まとめて今のまま」を覆した）。読み上げには足さない。出し方は `SpecialInfoBanner` の `InfoKindLine`。
    */
   earthquakeInfoKind?: string
   earthquakeInfoType?: string
@@ -2188,7 +2187,7 @@ export interface JMAEstimatedIntensity {
   magnitudeCondition?: string
   /** 震央地名番号（気象庁コード表 6）。名前は持たない */
   areaCode: number
-  /** 電文の種類（0=通常）。0 以外は訓練等。実配信 13 か月では 0 しか観測できていない */
+  /** 電文の種類（0=通常）。0 以外は訓練等（実電文で訓練＝1 を確認済み。件数は `bufrEstimatedIntensity.ts`） */
   telegramKind: number
   /** 階級震度と計測震度の対応表。**電文が持っている凡例をそのまま使う**（自前の階級表を当てない） */
   grades: JMAEstimatedIntensityGrade[]
