@@ -28,9 +28,9 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
 })
 vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
 
-const NOTO = { lat: 37.5, lng: 137.0, index: 20, peak: { lat: 37.45, lng: 137.15 } }
+const NOTO = { lat: 37.5, lng: 137.0, index: 20, peak: { lat: 37.45, lng: 137.15 }, points: [] }
 // 能登から約 700km。別地点として扱われる距離。
-const FUKUOKA = { lat: 33.6, lng: 130.4, index: 20, peak: { lat: 33.58, lng: 130.35 } }
+const FUKUOKA = { lat: 33.6, lng: 130.4, index: 20, peak: { lat: 33.58, lng: 130.35 }, points: [] }
 
 const T0 = Date.UTC(2024, 0, 1, 7, 10, 0)
 const iso = (ms: number) => new Date(ms).toISOString()

@@ -291,8 +291,13 @@ type SpeechTopic =
    */
   | `cancelReason:${string}`
   | 'tsunami' | 'tsunamiObs' | 'nankai' | 'kohatsu' | 'nankaiCommentary' | 'earthquakeCount'
-  /** 強震モニタの揺れ検知（電文ではない）。同じ主題の後発は先発を取り下げる（新しい検知だけ読めばよい）。 */
-  | 'kyoshinDetect'
+  /**
+   * 強震モニタの揺れ検知（電文ではない）。**1 回ごとに別の主題にする**（鍵は読み上げの通し番号）。
+   * 最初の検知（「〇〇で揺れを検知。」）と別地点（「〇〇でも揺れを検知。」）は別の場所の話なので、後発が先発を
+   * 取り下げず、相互譲り（`isMutualYieldTopic`）で言い終えるのを待って順に読む（2026-10-31 ユーザー選択
+   * 「両方を順に読む (Recommended)」）。
+   */
+  | `kyoshinDetect:${number}`
   /**
    * 推計震度分布図。**地震ごとに分ける**（鍵は `estimatedIntensityTopicKey`）。
    *
@@ -385,6 +390,8 @@ function isMutualYieldTopic(topic: SpeechTopic): boolean {
   // 理由は `MUTUAL_YIELD_TOPICS` のコメント（「各地の震度」の続報を切らない）。
   return MUTUAL_YIELD_TOPICS.has(topic) || topic.startsWith('telegramText:') || topic.startsWith('cancelReason:')
     || topic.startsWith('estimatedIntensity:')
+    // 揺れ検知（`kyoshinDetect:*`）は 1 回ごとに主題を分けたので接頭辞で見る。理由は `SpeechTopic` の注記
+    || topic.startsWith('kyoshinDetect:')
 }
 
 /**
@@ -7007,9 +7014,12 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     scheduleSpeech(TELEGRAM_TEXT_SPEECH_RESERVE_DELAY_MS, () => speakTelegramText(event))
   }
 
+  /** 揺れ検知の読み上げの通し番号（主題 `kyoshinDetect:<番号>` を 1 回ごとに分けるため）。 */
+  const kyoshinDetectSpeechSeqRef = useRef(0)
   /**
-   * 強震モニタの揺れ検知を読み上げる（「〇〇で揺れを検知。」）。電文ではないので受信処理を通らず、
+   * 強震モニタの揺れ検知を読み上げる（「〇〇で揺れを検知。」「〇〇でも揺れを検知。」）。電文ではないので受信処理を通らず、
    * 揺れ検知のフックから呼ばれる。待ち行列の層は `SPEECH_PRIORITY.kyoshinDetect`。
+   * 続けて呼ばれたら、先の読み上げを言い終えてから次を読む（主題を 1 回ごとに分けて相互譲りにしている。→ `SpeechTopic`）。
    *
    * **間は呼び出し側が決める**（検知音と、同じ瞬間に鳴った震度更新音の長い方。→ `useKyoshinAlerts`）。
    * 呼び出し側は音を鳴らしたのと同じ処理の中で呼ぶ（間は音が鳴り始める時刻から数える。→ `scheduleSpeech`）。
@@ -7023,7 +7033,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       log.debug(`[kyoshin] 読み上げ（VOICEVOX）が無効のため揺れ検知を読まない: ${text}`)
       return
     }
-    speakNonEEWDelayed(text, SPEECH_PRIORITY.kyoshinDetect, delayMs, 'kyoshinDetect')
+    speakNonEEWDelayed(text, SPEECH_PRIORITY.kyoshinDetect, delayMs, `kyoshinDetect:${++kyoshinDetectSpeechSeqRef.current}`)
   }
 
   return { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks: tsunamiValueMarksState, focusedDistrict, eewNoForecastSettledKeys, speakKyoshinDetection }

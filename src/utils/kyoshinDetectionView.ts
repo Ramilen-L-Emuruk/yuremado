@@ -84,6 +84,12 @@ export interface ConfirmedShock {
    * 重心と同じ値を入れる。**イベント自体は落とさない**（理由は `deriveKyoshinView` の該当箇所）。
    */
   peak: { lat: number; lng: number }
+  /**
+   * この揺れの描く点（`drawnKeys`。検知カード・地図と同じ点）。「別の地点で揺れを検知」の読み上げで、
+   * その揺れの区域名を決めるのに使う（`dominantRegionName`）。全体の `detectedPoints` から引くと、
+   * 先に揺れている地域の点に引っぱられて別地点の名前にならない。
+   */
+  points: readonly DetectedPoint[]
 }
 
 /**
@@ -214,6 +220,7 @@ export function deriveKyoshinView(
       lng: centroidLng,
       index: peak !== null && peak.index >= 0 ? peak.index : -1,
       peak: peak ? { lat: peak.lat, lng: peak.lng } : { lat: centroidLat, lng: centroidLng },
+      points: resolveMembers(e.drawnKeys, byKey),
     }]
   })
 

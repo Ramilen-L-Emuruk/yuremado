@@ -10,6 +10,11 @@
 //   対照   : 検知の予約が無ければ、地震情報は間が明けたらそのまま読まれる
 //   安全弁 : 待たせている間にリプレイを切り替えたら、待っていた地震情報も読まない（前の時間軸の声を出さない）
 //   安全弁 : 検知が間を置いていても、EEW は待たずに読む（重い方は待たせない）
+//
+// 別の地点の検知（「〇〇でも揺れを検知。」）が最初の検知と重なったら、**両方を順に読む**
+// （2026-10-31 ユーザー選択「両方を順に読む (Recommended)」）。
+//
+//   正     : 最初の検知を待っている間に別の地点の検知が来ても、最初の検知は取り下げられず、両方が順に読まれる
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useLiveEventHandler } from './useLiveEventHandler'
@@ -198,5 +203,19 @@ describe('揺れ検知の読み上げと他の読み上げの待ち合わせ', (
     // 検知の間（6 秒）が明けるより前に EEW が読まれている
     await advance(2000)
     expect(spokenTexts()[0]).toBe('緊急地震速報、日向灘で地震。')
+  })
+})
+
+describe('揺れ検知どうしの重なり', () => {
+  it('正: 最初の検知を待っている間に別の地点の検知が来ても、両方が順に読まれる', async () => {
+    const h = setup()
+    await speakDetection(h)
+    await advance(1000)
+    await act(async () => {
+      h.speakKyoshinDetection('茨城県南部でも揺れを検知。', DETECT_DELAY_MS)
+      await flushMicrotasks()
+    })
+    await advance(DETECT_DELAY_MS * 2 + 2000)
+    expect(spokenTexts()).toEqual([DETECT_TEXT, '茨城県南部でも揺れを検知。'])
   })
 })

@@ -280,13 +280,14 @@ describe('deriveKyoshinView: 欠測ホールドの保持値と stale フラグ',
     const held = deriveKyoshinView([confirmedEvent], holdSites, [17, 15], [true, false])
     // 保持値 17 を持つ hKeyA が最大＝寄り先（peak）もその観測点になる。
     expect(held.confirmedShocks).toEqual([
-      { lat: 35.05, lng: 139.05, index: 17, peak: { lat: 35.0, lng: 139.0 } },
+      // points は区域名（読み上げ）を決める点。束が 1 つなので描いた点と同じ
+      { lat: 35.05, lng: 139.05, index: 17, peak: { lat: 35.0, lng: 139.0 }, points: held.detectedPoints },
     ])
     // 保持しない場合（欠測を素通し）は次点の 15 まで落ちる＝揺れが弱まったように見える。
     // 寄り先も次点の観測点（hKeyB）へ移る。
     const raw = deriveKyoshinView([confirmedEvent], holdSites, [-1, 15])
     expect(raw.confirmedShocks).toEqual([
-      { lat: 35.05, lng: 139.05, index: 15, peak: { lat: 35.1, lng: 139.1 } },
+      { lat: 35.05, lng: 139.05, index: 15, peak: { lat: 35.1, lng: 139.1 }, points: raw.detectedPoints },
     ])
   })
 
@@ -384,7 +385,8 @@ describe('deriveKyoshinView: confirmedShocks の寄り先（peak）', () => {
     )
     expect(view.confirmedShocks).toEqual([
       // 値を持つメンバーが無いので index は欠測（-1）。0 は計測震度 -3.0 という値になってしまう
-      { lat: 37.0, lng: 137.5, index: -1, peak: { lat: 37.0, lng: 137.5 } },
+      // 区域名を決める点も無い（読み上げは地名を言わない）
+      { lat: 37.0, lng: 137.5, index: -1, peak: { lat: 37.0, lng: 137.5 }, points: [] },
     ])
   })
 })
@@ -424,7 +426,7 @@ describe('deriveKyoshinView: confirmedShocks の位置はメンバーの重心',
       sites,
       [9, 9],
     )
-    expect(view.confirmedShocks).toEqual([{ lat: 34.0, lng: 133.0, index: -1, peak: { lat: 34.0, lng: 133.0 } }])
+    expect(view.confirmedShocks).toEqual([{ lat: 34.0, lng: 133.0, index: -1, peak: { lat: 34.0, lng: 133.0 }, points: [] }])
   })
 })
 

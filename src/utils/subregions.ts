@@ -219,3 +219,42 @@ function lookupSubRegionName(lat: number, lng: number, subregions: readonly SubR
   }
   return best
 }
+
+/** 区域データ（参照）ごとの、座標 → 距離を問わない最寄りの区域名の控え。 */
+const nearestNameCache = new WeakMap<object, Map<string, string | null>>()
+
+/**
+ * 座標から**距離を問わず**最寄りの区域の名前を返す（境界の頂点までの距離で測る）。区域データが空なら null。
+ *
+ * `subRegionNameAt` の 5km の上限（`SUBREGION_NEAREST_KM`）を外したもの。地図の吹き出しのように「その場所の区域」を
+ * 答える用途ではなく、**陸の観測点が座標の丸めで海へ出た**ときに名前を付けるための口（強震モニタの揺れ検知。
+ * → `kyoshinRegionName.ts` の `kyoshinPointRegionName`）。全区域の頂点をなめるので、座標ごとに控える。
+ * 重さは 1 点あたり約 9 ms（2026-10-31 実測。`subregions.json` の頂点 142,471）。ここへ来る強震モニタの観測点は
+ * 種子島・久米島の 2 点だけ（観測点一覧 1725 点を引いた実測）で、初回の後は控えから返る。
+ */
+export function nearestSubRegionName(lat: number, lng: number, subregions: readonly SubRegion[]): string | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  let cache = nearestNameCache.get(subregions)
+  if (!cache) {
+    cache = new Map()
+    nearestNameCache.set(subregions, cache)
+  }
+  const key = `${lat},${lng}`
+  const hit = cache.get(key)
+  if (hit !== undefined) return hit
+  let best: string | null = null
+  let bestKm = Infinity
+  for (const sr of subregions) {
+    for (const ring of sr.rings) {
+      for (const [vLat, vLng] of ring) {
+        const d = haversineKm(lat, lng, vLat, vLng)
+        if (d < bestKm) {
+          bestKm = d
+          best = sr.name
+        }
+      }
+    }
+  }
+  cache.set(key, best)
+  return best
+}

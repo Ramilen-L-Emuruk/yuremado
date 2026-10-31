@@ -68,9 +68,11 @@ describe('検知カードの区域名', () => {
     expect(screen.getByText('最も強く揺れている地域：テスト区域')).toBeTruthy()
   })
 
-  it('対照: どの点も区域に寄せられなければ、行を出さない', () => {
+  // 意図的に覆した: 以前は区域から 5km より離れた点に名前を付けず、行を出さなかった。2026-10-31 に、離れた点も
+  // 最寄りの区域で呼ぶと決めた（ユーザー選択「海底は「相模湾」・島は最寄り (Recommended)」）
+  it('正: どの区域からも離れた点だけでも、最寄りの区域の名前を出す', () => {
     renderTab([ev({ id: 'evt-1', confidence: 'confirmed' })], [farAway('a', 11), farAway('c', 7)])
-    expect(screen.queryByText(/最も強く揺れている地域/)).toBeNull()
+    expect(screen.getByText('最も強く揺れている地域：テスト区域')).toBeTruthy()
   })
 
   it('対照: 区域データが未読み込みなら行を出さない', () => {
@@ -89,7 +91,20 @@ describe('検知カードの区域名', () => {
     )
     fireEvent.click(screen.getByText('判定の内訳'))
     expect(screen.getByText('地域 1・テスト区域（検知）')).toBeTruthy()
-    // 区域へ寄せられない地域は番号だけ
+    // 区域から離れた点の地域も、最寄りの区域の名前を添える
+    expect(screen.getByText('地域 2・テスト区域（可能性）')).toBeTruthy()
+  })
+
+  it('対照: 内訳で、描いた点が 1 つも無い地域は番号だけ', () => {
+    renderTab(
+      [
+        ev({ id: 'evt-1', confidence: 'confirmed', memberKeys: ['b'] }),
+        ev({ id: 'evt-2', confidence: 'likely', memberKeys: ['z'] }),
+      ],
+      [inside('b', 11)],
+    )
+    fireEvent.click(screen.getByText('判定の内訳'))
+    expect(screen.getByText('地域 1・テスト区域（検知）')).toBeTruthy()
     expect(screen.getByText('地域 2（可能性）')).toBeTruthy()
   })
 
