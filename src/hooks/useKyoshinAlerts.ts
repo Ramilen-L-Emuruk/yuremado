@@ -356,6 +356,19 @@ export function isRegionWithinAnyEew(
   return false
 }
 
+/**
+ * 地域を EEW の揺れに吸収した印を立て、立てた 1 回だけ記録する。
+ *
+ * **吸収すると「別の地点で揺れを検知」は鳴らない。** 吸収の範囲は EEW の揺れが届く半径（計測震度 0。
+ * 大きな地震では 1000km を超える）まで広いので、別の地震を取り込んで黙ったときに後から追えるよう、
+ * 地域の位置を残す。
+ */
+function markAbsorbedByEew(region: AlertRegion): void {
+  if (region.absorbedByEew) return
+  region.absorbedByEew = true
+  log.info(`[kyoshin] 揺れ検知の地域を緊急地震速報の揺れに含めた（別の地点としては知らせない）: ${region.lat.toFixed(2)},${region.lng.toFixed(2)}`)
+}
+
 /** 別地点発報の判定が持ち越す状態（フックの ref 群をまとめたもの）。 */
 export interface AlertRegionState {
   regions: AlertRegion[]
@@ -448,7 +461,7 @@ export function stepAlertRegions(
   // EEW の伝播範囲に入ったことを記憶する（EEW 解除後の一斉発報を防ぐ）。判定は毎フレーム行うが、
   // 一度立った印は下ろさない。
   for (const r of state.regions) {
-    if (!r.absorbedByEew && isRegionWithinAnyEew(r, nowMs, activeEEWs)) r.absorbedByEew = true
+    if (!r.absorbedByEew && isRegionWithinAnyEew(r, nowMs, activeEEWs)) markAbsorbedByEew(r)
   }
 
   // マッチングはフレーム開始時の座標で行う。地域の代表点はマッチのたびに書き換わるため、素直に
@@ -477,7 +490,7 @@ export function stepAlertRegions(
         firstSeenAtMs: nowMs,
         absorbedByEew: false,
       }
-      created.absorbedByEew = isRegionWithinAnyEew(created, nowMs, activeEEWs)
+      if (isRegionWithinAnyEew(created, nowMs, activeEEWs)) markAbsorbedByEew(created)
       state.regions.push(created)
       // 同じフレームの後続の確定点も、この地域を「フレーム開始時の位置」として扱えるようにする
       // （登録しないと、直前の点で動いた後の座標と比較され処理順に依存する）。
@@ -495,7 +508,7 @@ export function stepAlertRegions(
         // 座標を更新した後の位置で EEW の範囲をもう一度見る。地域の代表点は毎フレーム動くため、
         // フレーム冒頭の一括判定は 1 フレーム前の位置に対する結果になっている。
         if (isRegionWithinAnyEew(reg, nowMs, activeEEWs)) {
-          reg.absorbedByEew = true
+          markAbsorbedByEew(reg)
         } else {
           reg.fired = true
           state.lastNewRegionAtMs = nowMs
