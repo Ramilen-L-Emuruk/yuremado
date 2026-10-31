@@ -25,7 +25,9 @@ import { earthquakeCountHeadline } from '../components/SpecialInfoBanner/Earthqu
 import { tsunamiIssueNotification, tsunamiLiftNotification, tsunamiEndNotification, tsunamiObservationNotification, TSUNAMI_OBS_NOTIFICATION_TAG } from '../utils/tsunamiNotification'
 import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiGradeReport, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, isTsunamiExpired, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, forecastHeightChangedAreas, rememberForecastHeights, type SpokenTideEntry, tsunamiValueMarks, rememberTsunamiValues, createTsunamiValueMemory, clearTsunamiValueMemory, NO_TSUNAMI_VALUE_MARKS, type TsunamiValueMarks, type TsunamiValueMemory } from '../utils/tsunami'
 import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
-import { playAlertSound, ttsDelayFor, maxTtsDelay, type AlertSoundType } from '../utils/alertSound'
+import {
+  playAlertSound, ttsDelayFor, maxTtsDelay, speechNotBefore, msUntilAudioTime, type AlertSoundType,
+} from '../utils/alertSound'
 import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
 import {
   recordReplayEvent, nextSpeechId, truncateReplayText, withReplayTelegramContext,
@@ -422,6 +424,13 @@ export const MUTUAL_YIELD_SPEECH_MAX_WAIT_MS = 180000
  * 取り下げられるのを避ける。本体の間の最大（`maxTtsDelay()`）に余白を足してある。
  */
 const TELEGRAM_TEXT_SPEECH_RESERVE_DELAY_MS = maxTtsDelay() + 500
+
+/**
+ * 通知音の鳴り始めを待ち足す上限（ms。予約の間に足す分）。音声出力が止まったまま戻らないと
+ * AudioContext の時計が進まず、いつまでも待つことになるため。声も同じ出力なので、上限まで
+ * 待っても戻らなければ鳴らないが、声に添えた処理（既読・タブ追従）は進める。
+ */
+const SPEECH_AFTER_SOUND_EXTRA_CAP_MS = 3000
 
 /**
  * 気象庁が書いた文の既読（`spokenTelegramTextRef`）を保つ件数の上限。超えたらまとめて捨てる。
@@ -1587,6 +1596,14 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   // 発話対象が横取りされ、片方の続報が「読み上げ済み最大震度」を更新できずに無限リトリガーする
   // 不具合が起きるため。
   const eewSpeechChainRef = useRef<Promise<void>>(Promise.resolve())
+  // 最後に鳴らした EEW の音の後で、EEW の声を出してよい AudioContext の時刻（→ `speechNotBefore`）。
+  // チェーンの各段はこの時刻まで待ってから声に出す（2026-10-31 ユーザー選択「待つ (Recommended)」——
+  // 発報も音の鳴り終わりを待つ）。鳴らしていなければ null。
+  const eewSpeechNotBeforeRef = useRef<number | null>(null)
+  // 時間軸の世代（`resetTracking` とアンマウントで進める）。待っている間にリプレイを切り替えたら、
+  // 待ち明けに前の時間軸の声を出さない —— EEW は音の鳴り終わりの待ち（→ `waitForEewSound`）、
+  // 非 EEW は読み上げの順番待ち（→ `speakNonEEW`）。
+  const speechGenerationRef = useRef(0)
   // チェーンに積まれている EEW 発話の数（0 なら EEW は静か）。非 EEW の読み上げがこれを見て待つ。
   const eewSpeechPendingRef = useRef(0)
   // 読み上げ中の非 EEW の優先度・主題とその完了。優先度の低い読み上げがこれを見て待つ。
@@ -2021,6 +2038,35 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     cancelSpeech: eewCancelSpeechRef.current,
   })
 
+  /**
+   * EEW の声を、最後に鳴らした EEW の音の鳴り終わり（`eewSpeechNotBeforeRef`）まで待たせる。
+   * 待つ間に続報の音が鳴れば、その鳴り終わりまで延ばす。音声出力が戻らず AudioContext の時計が
+   * 進まないときは、最初の残り＋上限（`SPEECH_AFTER_SOUND_EXTRA_CAP_MS`）で諦めて進める。
+   */
+  const waitForEewSound = (initialWaitMs: number): Promise<boolean> => new Promise(resolve => {
+    const generation = speechGenerationRef.current
+    const giveUpAt = performance.now() + initialWaitMs + SPEECH_AFTER_SOUND_EXTRA_CAP_MS
+    const tick = () => {
+      // 待つ間に時間軸が切り替わった（リプレイの開始・停止・アンマウント）。前の時間軸の声は出さない
+      if (speechGenerationRef.current !== generation) {
+        log.info('[eew] 通知音の鳴り終わりを待つ間に時間軸が切り替わったため、読み上げを取りやめる')
+        resolve(false)
+        return
+      }
+      const remain = msUntilAudioTime(eewSpeechNotBeforeRef.current)
+      if (remain <= 0) { resolve(true); return }
+      const now = performance.now()
+      if (now >= giveUpAt) {
+        log.warn(`[eew] 通知音の鳴り終わりを待ち切れずに読み上げる（残り ${remain}ms）`)
+        resolve(true)
+        return
+      }
+      // 続報の音で延びても、上限を越えて待たない
+      window.setTimeout(tick, Math.min(remain, giveUpAt - now))
+    }
+    window.setTimeout(tick, initialWaitMs)
+  })
+
   const chainEEWSpeech = (
     /**
      * 語る対象の eventId（{@link eewEventKey}）。**画面側で「いま声が語っているカード」を
@@ -2075,7 +2121,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
      * （理由は `useEewSpeakingCard`）。
      */
     let speakingCardToken: number | null = null
-    eewSpeechChainRef.current = capSpeechWait(prev).then(() => {
+    const step = () => {
       const spoken = speak()
       if (spoken === null) return
       const { text, shouldStillPlay, onSettled } = typeof spoken === 'string'
@@ -2133,6 +2179,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 1 チャンクとして渡せば「どの句も鳴った」になり、上の倒し方と揃う。
         outcomeForSettled = outcome ?? { spoke: true, spokenChunks: [text] }
       })
+    }
+    eewSpeechChainRef.current = capSpeechWait(prev).then(() => {
+      // **最後に鳴らした EEW の音が鳴り終わってから声に出す**（→ `eewSpeechNotBeforeRef`）。
+      // 待つのは声を出す段の頭で、語る中身（`speak()`）は待ち明けに決める —— 待つ間に届いた続報・
+      // 取消を読み直せる。待ちが無いときは段を増やさない（約束の段が 1 つ増えるだけで順序が動く）。
+      const wait = msUntilAudioTime(eewSpeechNotBeforeRef.current)
+      return wait > 0 ? waitForEewSound(wait).then(go => (go ? step() : undefined)) : step()
     })
       .catch(err => log.warn('[eew] 読み上げに失敗', err))
       .finally(() => {
@@ -2440,6 +2493,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 録画ツール向けの記録。**持ち主はここ（同期の入口）で掴む** —— 下の `async` は `await` を
     // 跨ぐので、その先で読むと別の電文の処理に入れ替わっている。
     const replayOwner = currentReplayTelegram()
+    // 時間軸の世代も同期の入口で掴む。順番待ちの間にリセット・アンマウントが挟まったら、待ち明けに
+    // 前の時間軸の声を出さない（`cancelPendingSpeech` が落とすのは発火前の予約だけで、待ちに入った分は残る）
+    const generation = speechGenerationRef.current
     void (async () => {
       /**
        * 割り込まずに見送る。「何も切らない」ことを層で宣言している優先度だけがここへ来る
@@ -2468,6 +2524,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 相互譲りで同時に待つ相手が増えたぶん、この取り合いは起こりやすくなっている。
       if (priority === SPEECH_PRIORITY.commentary && speechBlocker(priority, topic) !== null) {
         giveUpSilently()
+        return
+      }
+      if (speechGenerationRef.current !== generation) {
+        log.info(`[tts] 順番を待つ間に時間軸が切り替わったため読み上げを取りやめる topic=${topic}`)
+        prewarmed?.abort()
         return
       }
       // **順番を待っているあいだに、より重い読み上げに追い越されていたら取り下げる。**
@@ -2649,10 +2710,29 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 処理を抜けていて、そのままでは読み上げの持ち主が引けない。**予約はすべてここを通る**
     // 決まりなので、ここで包めば経路ごとに書く必要がない。
     const restoreReplayTelegram = captureReplayTelegramContext()
-    entry.id = window.setTimeout(() => {
+    // **間は、音が実際に鳴り始める時刻から AudioContext の時計で数える**（→ `speechNotBefore`。
+    // 2026-10-31 ユーザー指示「効果音がなりおわってから読み上げるようにしてくださいね」）。
+    // 壁時計の `delay` が明けても、音の頭が遅れていた分（予約の先送り・止まっていた音声出力の
+    // 再開待ち）が残っていれば、その分だけ待ち足す。待ち足しても予約は追跡したままなので、
+    // 取り消しは効く。
+    const notBefore = speechNotBefore(delay)
+    const giveUpAt = performance.now() + delay + SPEECH_AFTER_SOUND_EXTRA_CAP_MS
+    const fire = () => {
+      const remain = msUntilAudioTime(notBefore)
+      if (remain > 0) {
+        const now = performance.now()
+        if (now < giveUpAt) {
+          entry.id = window.setTimeout(fire, Math.min(remain, giveUpAt - now))
+          return
+        }
+        // 音声出力が戻らないまま上限を越えた。声も同じ出力なので鳴らないが、既読やタブ追従
+        // （`run` の中）まで止めると取り戻せないので、待つのはやめて進める
+        log.warn(`[tts] 通知音の鳴り始めを待ち切れずに進める（残り ${remain}ms）`)
+      }
       pendingSpeechRef.current.delete(entry)
       restoreReplayTelegram(run)
-    }, delay)
+    }
+    entry.id = window.setTimeout(fire, delay)
     pendingSpeechRef.current.add(entry)
   }
 
@@ -4151,6 +4231,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (settings.soundEnabled && !eewSameReport) {
         const eewSoundType = selectEEWSoundType(isNew, levelUpgraded, currentLevel, event.isFinal ?? false)
         playAlertSound(eewSoundType)
+        // この報の声は音が鳴り終わってから（→ `eewSpeechNotBeforeRef`）。続報の音で延びても縮めない
+        const notBefore = speechNotBefore(ttsDelayFor(eewSoundType))
+        if (notBefore !== null) {
+          eewSpeechNotBeforeRef.current = Math.max(eewSpeechNotBeforeRef.current ?? notBefore, notBefore)
+        }
       }
       // 通知は新規発報・区分の格上げに加え、**通知に出した予想震度・長周期地震動階級が上がったとき**にも同じタグで
       // 出し直す（ブラウザが前の通知を置き換える。2026-10-21 ユーザー承認「直す (Recommended)」）。別の経路から受けた
@@ -6196,6 +6281,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 間を置いている最中の読み上げも捨てる（`resetTracking` と対称）
       cancelPendingSpeech()
       eewCancelSpeechRef.current.clear()
+      // 音の鳴り終わりを待っている EEW の段も、待ち明けに声を出さない（`resetTracking` と対称）
+      speechGenerationRef.current++
     }
   }, [cancelPendingSpeech])
 
@@ -6234,6 +6321,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     eewConfirmedScaleRef.current.clear()
     eewConfirmedLpgmRef.current.clear()
     eewSpeechChainRef.current = Promise.resolve()
+    // 音の鳴り終わりの待ちも前の時間軸のものを捨てる（待ち中の段は世代で取りやめる）
+    eewSpeechNotBeforeRef.current = null
+    speechGenerationRef.current++
     // カウンタも戻す。残したままだとリプレイを切り替えても非 EEW の読み上げが待たされ続ける
     eewSpeechPendingRef.current = 0
     activeNonEewSpeechRef.current = null

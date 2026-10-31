@@ -923,10 +923,12 @@ const ABRUPT_SOUNDS: readonly AlertSoundType[] =
  * **電文の種別ではなく音の種別で決まる。** 同じ音を使う経路（地震情報の取消と EEW 誤報取消、
  * 地震情報と長周期地震動）に別々の値が書かれる余地を消すため、呼び出し側はこの関数だけを使う。
  *
- * この関数を呼ばない音は 2 種類ある。**読み上げはあるが間を置かないもの**（EEW の発報。南海トラフの
- * 取消と終了も、取消音を鳴らすようにしたので間を置く）と、**読み上げそのものを持たないもの**（揺れ検知。音・通知・タブ移動だけ）。EEW は
- * 最も急を要するため間を置かず、代わりに切り出し語の作り置きで合成の往復を消している
- * （`voicevox.ts` の `warmFixedPhrases`）。
+ * EEW の発報もこの関数で間を決める。以前は最も急を要するとして間を置かずに読み始めていたが、音の鳴り終わりを
+ * 待つことにした（2026-10-31 ユーザー選択「待つ (Recommended)」）。呼ばない音は**読み上げそのものを
+ * 持たないもの**（揺れの可能性・震度更新音）だけ。
+ *
+ * 返す間は「音が鳴り始めてから」の長さ。壁時計で数えると音の頭の遅れの分だけ食い込むので、
+ * 待つ側は {@link speechNotBefore} で AudioContext の時刻へ直して使う。
  */
 export function ttsDelayFor(type: AlertSoundType): number {
   return SOUND_AUDIBLE_END_MS[type] + (ABRUPT_SOUNDS.includes(type) ? SPEECH_GAP_MS : 0)
@@ -942,6 +944,44 @@ export function ttsDelayFor(type: AlertSoundType): number {
  */
 export function maxTtsDelay(): number {
   return Math.max(...(Object.keys(SOUND_AUDIBLE_END_MS) as AlertSoundType[]).map(ttsDelayFor))
+}
+
+/**
+ * 音を予約するときの先送り（秒）。`ctx.currentTime` ちょうどに置くと、描画が追いつかず頭が欠けることがあるため。
+ * {@link speechNotBefore} も同じ値から数える。
+ */
+const SOUND_LEAD_SEC = 0.02
+
+/**
+ * **いま鳴らした音**の後で、声を出してよい AudioContext の時刻（秒）。AudioContext が無ければ null。
+ *
+ * 間（`delayMs`）は、音を頼んだ時刻ではなく**音が実際に鳴り始める時刻**から数える。音は頼んだ時刻の
+ * {@link SOUND_LEAD_SEC} 後に予約されるうえ、音声出力が止まっていれば再開まで鳴らない（`resume()` は
+ * 待たずに返る）。声の待ちを壁時計（`setTimeout`）だけで数えると、その分だけ声が音へ食い込む。
+ * AudioContext の時計は止まっている間進まないので、この時刻まで待てば再開を待った分もずれない。
+ *
+ * **音を鳴らしたのと同じ処理の中で呼ぶこと**（`currentTime` は描画の区切りでしか進まないので、
+ * 同じ処理の中なら音の予約と同じ値を読む）。
+ *
+ * 間が 0（音を鳴らしていない予約）と、AudioContext をまだ作っていない（一度も音を鳴らしていない）
+ * ときは null —— 待つ相手の音が無い。ここで AudioContext を作らない。
+ */
+export function speechNotBefore(delayMs: number): number | null {
+  if (delayMs <= 0 || !audioCtx) return null
+  return audioCtx.currentTime + SOUND_LEAD_SEC + delayMs / 1000
+}
+
+/**
+ * AudioContext の時計が `at` に届くまでの残り（ms。届いていれば 0）。
+ * `at` が null・AudioContext が無いときは 0（待つ相手の音が鳴っていない）。
+ *
+ * **`suspended` のときも 0。** 自動再生の制限で一度も再開できていない出力では、時計が進まず音も声も
+ * 鳴らないので、待っても明けない（待つと読み上げのたびに上限まで遅れるだけ）。`resume()` が効いた
+ * 出力は待つ時点で `running` に戻っているので、止まっていた出力の再開待ちはそのまま効く。
+ */
+export function msUntilAudioTime(at: number | null): number {
+  if (at === null || !audioCtx || audioCtx.state === 'suspended') return 0
+  return Math.max(0, Math.ceil((at - audioCtx.currentTime) * 1000))
 }
 
 // ─── 震度更新音（強震モニタ）─────────────────────────────────────
@@ -1085,7 +1125,7 @@ export function playAlertSound(type: AlertSoundType): void {
   // **持ち主はここで引く。** 電文の処理中に呼ばれれば付き、強震モニタの検知音のように
   // 電文と無関係な経路では空になる（それが正しい）。
   recordReplayEvent({ type: 'sound', sound: type, telegram: currentReplayTelegram() })
-  playGuarded(`playAlertSound(${type})`, () => PLAYERS[type](ctx, ctx.currentTime + 0.02))
+  playGuarded(`playAlertSound(${type})`, () => PLAYERS[type](ctx, ctx.currentTime + SOUND_LEAD_SEC))
 }
 
 // S波到着カウントダウンの段階ごとのパルス数。ゲート周波数（下記 gateHzMap）と揃えて
@@ -1116,7 +1156,7 @@ export function playCountdownBeep(second: number): void {
   }
   syncKeepAlive()
 
-  const t0 = ctx.currentTime + 0.02
+  const t0 = ctx.currentTime + SOUND_LEAD_SEC
   const gateHzMap: Record<number, number> = { 5: 8, 4: 10, 3: 13, 2: 16, 1: 20 }
   // 想定は残り 1〜5 秒の整数のみ（App.tsx の S 波カウントダウンがこの範囲でしか呼ばない）。
   // 範囲外は最も緩い段階へ丸めるが、黙って別の段階の音を鳴らすと耳で気づくまで誰も分からない。
@@ -1221,7 +1261,7 @@ export function playKyoshinUpdateSound(maxIndex: number, gainScale = 1): void {
       log.warn(`[sound] playKyoshinUpdateSound(${maxIndex}) 中の AudioContext 再開に失敗: ${String(err)}`))
   }
   syncKeepAlive()
-  const base = ctx.currentTime + 0.02
+  const base = ctx.currentTime + SOUND_LEAD_SEC
   // **再生に関わる計算はガードの内側に置くこと。** 外に出すと、そこで出た例外は
   // `[sound] ... の再生に失敗` に残らず、画面全体がエラー表示に置き換わる
   // （受け止めるのは根の境界だけ。理由は {@link playGuarded}）。
