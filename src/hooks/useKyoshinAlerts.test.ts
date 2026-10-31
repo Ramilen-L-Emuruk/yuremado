@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { log } from '../utils/logger'
 import {
   dynamicRegionThresholdKm, isSameEarthquake, isRegionWithinAnyEew,
   createAlertRegionState, stepAlertRegions,
@@ -7,7 +8,7 @@ import {
   PROPAGATION_MAX_KM, isSameShakeAsBefore, SAME_SHAKE_KM, type AlertRegion,
 } from './useKyoshinAlerts'
 import { reachRadiusKm } from '../utils/travelTime'
-import { eewFeltRadiusKm } from '../utils/eew'
+import { calcFeltRadiusKm, eewFeltRadiusKm } from '../utils/eew'
 import type { EEWAlert, Hypocenter } from '../types/earthquake'
 import type { ConfirmedShock } from '../utils/kyoshinDetectionView'
 import { haversineKm } from '../utils/geo'
@@ -378,6 +379,41 @@ describe('stepAlertRegions', () => {
     expect(state.regions.some((r) => r.absorbedByEew)).toBe(true)
   })
 
+  // 吸収すると鳴らないので、吸収したことを記録に残す。毎フレーム出すと記録が埋まるので、印が立った 1 回だけ
+  it('吸収した地域は、何フレーム続いても 1 回だけ記録に残す', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {})
+    try {
+      const origin = '2024-01-01T07:10:00.000Z'
+      const t0 = new Date(origin).getTime()
+      const hypocenter: Hypocenter = { name: '石川県能登地方', latitude: NOTO.lat, longitude: NOTO.lng, depth: 10, magnitude: 7.6 }
+      const eews = new Map([['eew-noto', fakeEEW('eew-noto', origin, hypocenter)]])
+      const state = createAlertRegionState()
+      const t = t0 + 170_000
+      stepAlertRegions(state, [NOTO], t, eews)
+      for (let i = 1; i <= COOLDOWN_FRAMES + 5; i++) stepAlertRegions(state, [NOTO, FUKUOKA], t + i * 1000, eews)
+      const absorbed = state.regions.filter((r) => r.absorbedByEew).length
+      const logged = info.mock.calls.filter((c) => String(c[0]).includes('緊急地震速報の揺れに含めた')).length
+      expect(absorbed).toBeGreaterThan(0)
+      expect(logged).toBe(absorbed)
+    } finally {
+      info.mockRestore()
+    }
+  })
+
+  // 対照: EEW が無ければ吸収しないので、記録も出ない
+  it('EEW が無ければ、吸収の記録は出ない', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {})
+    try {
+      const state = createAlertRegionState()
+      const t = 1_000_000
+      stepAlertRegions(state, [NOTO], t, new Map())
+      for (let i = 1; i <= COOLDOWN_FRAMES + 5; i++) stepAlertRegions(state, [NOTO, FUKUOKA], t + i * 1000, new Map())
+      expect(info.mock.calls.filter((c) => String(c[0]).includes('緊急地震速報の揺れに含めた'))).toHaveLength(0)
+    } finally {
+      info.mockRestore()
+    }
+  })
+
   it('同一フレーム内の確定点の並び順で、できる地域の数が変わらない', () => {
     const t = 1_000_000
     const run = (shocks: { lat: number; lng: number; index: number }[]) => {
@@ -575,29 +611,38 @@ describe('EEW があるときの範囲（P 波で測り、有感半径で打ち�
     expect(isRegionWithinAnyEew(fakeRegion({ lat: TOKYO.lat, lng: TOKYO.lng }), atMs, new Map([[eew.id, eew]]))).toBe(true)
   })
 
-  // 浅い地震で、震源から約 667km 北の点。旧来の上限 800km の内側で、M6.0 の有感半径（479km）の外側。
+  // 浅い地震で、震源から北へ約 667km と約 900km の点。M6.0 の揺れが届く半径は、震度1 の距離で測ると 479km、
+  // 計測震度 0 の距離で測ると 761km（揺れ検知は震度0 未満も拾うので、0 で測る。2026-10-31 ユーザー選択「0 (Recommended)」）
   const SHALLOW = { lat: 31.5, lng: 130.5 }
   const NORTH_667 = fakeRegion({ lat: 31.5 + 6.0, lng: 130.5 })
+  const NORTH_900 = fakeRegion({ lat: 31.5 + 8.1, lng: 130.5 })
   const shallowEew = (magnitude: number) => fakeEEW('shallow', ORIGIN,
     { name: '九州地方', latitude: SHALLOW.lat, longitude: SHALLOW.lng, depth: 10, magnitude })
   const LATE = O + 400_000 // P 波の半径が上限を十分に超えた時刻
 
-  it('[正] 上限はその EEW の有感半径。M7.5 なら 667km 先も範囲に入る', () => {
-    expect(eewFeltRadiusKm(7.5, 10)).toBeGreaterThan(667)
+  it('[正] 上限はその EEW の揺れが届く半径。M7.5 なら 900km 先も範囲に入る', () => {
+    expect(eewFeltRadiusKm(7.5, 10)).toBeGreaterThan(900)
     const eew = shallowEew(7.5)
+    expect(isRegionWithinAnyEew(NORTH_900, LATE, new Map([[eew.id, eew]]))).toBe(true)
+  })
+
+  it('[正] 半径は計測震度 0 で測る。M6.0 の 667km 先（震度1 の距離 479km の外）も範囲に入る', () => {
+    expect(calcFeltRadiusKm(6.0, 10, 1.0)).toBeLessThan(667)
+    expect(eewFeltRadiusKm(6.0, 10)).toBe(calcFeltRadiusKm(6.0, 10, 0))
+    const eew = shallowEew(6.0)
     expect(isRegionWithinAnyEew(NORTH_667, LATE, new Map([[eew.id, eew]]))).toBe(true)
   })
 
-  it('[対照] M6.0 の有感半径は 667km に届かないので範囲に入らない（旧来の 800km より狭い）', () => {
-    expect(eewFeltRadiusKm(6.0, 10)).toBeLessThan(667)
+  it('[対照] M6.0 の揺れが届く半径（761km）は 900km に届かないので範囲に入らない（旧来の 800km より狭い）', () => {
+    expect(eewFeltRadiusKm(6.0, 10)).toBeLessThan(800)
     const eew = shallowEew(6.0)
-    expect(isRegionWithinAnyEew(NORTH_667, LATE, new Map([[eew.id, eew]]))).toBe(false)
+    expect(isRegionWithinAnyEew(NORTH_900, LATE, new Map([[eew.id, eew]]))).toBe(false)
   })
 
   it('[安全弁] 規模が判らない EEW は自動解除と同じく M6.0 として測る', () => {
     for (const unknown of [Number.NaN, -1]) {
       const eew = shallowEew(unknown)
-      expect(isRegionWithinAnyEew(NORTH_667, LATE, new Map([[eew.id, eew]]))).toBe(false)
+      expect(isRegionWithinAnyEew(NORTH_900, LATE, new Map([[eew.id, eew]]))).toBe(false)
     }
     expect(eewFeltRadiusKm(Number.NaN, 10)).toBe(eewFeltRadiusKm(6.0, 10))
   })

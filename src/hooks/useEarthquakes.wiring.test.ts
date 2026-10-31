@@ -588,6 +588,12 @@ describe('再生中もキューの予約は発火時刻を待つ', () => {
     }
   }
 
+  /**
+   * `finalEEW(at)` の自動解除が、受けてから何ミリ秒後に来るか。
+   * 規模と深さから式で決まるので、秒数をテストへ直書きしない（境の震度を動かすと一斉にずれる）。
+   */
+  const cancelAfterMs = (at: Date) => calcEEWCancelTime(finalEEW(at), at).getTime() - at.getTime()
+
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => {
     vi.useRealTimers()
@@ -621,15 +627,17 @@ describe('再生中もキューの予約は発火時刻を待つ', () => {
     // 時計も再生側へ寄せる（実装は getTimeRef=serverDate 経由で再生時刻を読む）
     setReplayOffset(OFFSET_MS)
     const h = setup({ offset: OFFSET_MS })
+    const at = serverDate()
+    const wait = cancelAfterMs(at)
 
-    act(() => { h.current.injectEvent(finalEEW(serverDate())) })
+    act(() => { h.current.injectEvent(finalEEW(at)) })
     expect(h.current.activeEEWs.size).toBe(1)
 
     // キューのディスパッチャは 10ms 間隔。回しても猶予の内は消えない
-    act(() => { vi.advanceTimersByTime(30_000) })
+    act(() => { vi.advanceTimersByTime(wait - 1_000) })
     expect(h.current.activeEEWs.size).toBe(1)
 
-    act(() => { vi.advanceTimersByTime(31_000) })
+    act(() => { vi.advanceTimersByTime(2_000) })
     expect(h.current.activeEEWs.size).toBe(0)
   })
 
@@ -642,14 +650,17 @@ describe('再生中もキューの予約は発火時刻を待つ', () => {
     return log
   }
 
-  // 正: 揺れ検知の束にまだ点が加わっていれば、式の時刻（最終報から 60 秒）を過ぎても待ち、最後の追加から 30 秒で解除する
+  // 正: 揺れ検知の束にまだ点が加わっていれば、式の時刻を過ぎても待ち、最後の追加から 30 秒で解除する
   it('揺れ検知の束が広がっている間は自動解除を待ち、点が加わらなくなって 30 秒で解除する', () => {
     setReplayOffset(OFFSET_MS)
     const at = serverDate()
-    const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreadingLog(at, 80) })
+    const wait = cancelAfterMs(at)
+    // 点は式の時刻の 20 秒後まで加わる → そこから 30 秒（式の時刻＋50 秒）まで待つ
+    const growUntilSec = Math.round(wait / 1000) + 20
+    const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreadingLog(at, growUntilSec) })
 
     act(() => { h.current.injectEvent(finalEEW(at)) })
-    act(() => { vi.advanceTimersByTime(61_000) })
+    act(() => { vi.advanceTimersByTime(wait + 1_000) })
     expect(h.current.activeEEWs.size).toBe(1)
 
     act(() => { vi.advanceTimersByTime(48_000) })
@@ -663,11 +674,14 @@ describe('再生中もキューの予約は発火時刻を待つ', () => {
   it('揺れ検知で自動解除を待っている間に誤報取消が届いても、取消の表示は 10 秒残る', () => {
     setReplayOffset(OFFSET_MS)
     const at = serverDate()
-    // 点は 40 秒まで加わる → 式の時刻（60 秒）で 70 秒まで待つ。取消の 10 秒表示（65〜75 秒）の中で発火する
-    const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreadingLog(at, 40) })
+    const wait = cancelAfterMs(at)
+    // 点は式の時刻の 20 秒前まで加わる → 式の時刻で、その＋10 秒まで待つ。
+    // 取消を式の時刻＋5 秒に送るので、取消の 10 秒表示（＋5〜＋15 秒）の中で発火する
+    const growUntilSec = Math.round(wait / 1000) - 20
+    const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreadingLog(at, growUntilSec) })
 
     act(() => { h.current.injectEvent(finalEEW(at)) })
-    act(() => { vi.advanceTimersByTime(65_000) })
+    act(() => { vi.advanceTimersByTime(wait + 5_000) })
     expect(h.current.activeEEWs.size).toBe(1)
 
     act(() => { h.current.injectEvent({ ...finalEEW(at), cancelled: true }) })
@@ -686,7 +700,7 @@ describe('再生中もキューの予約は発火時刻を待つ', () => {
     const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreadingLog(at, 2_000) })
 
     act(() => { h.current.injectEvent(finalEEW(at)) })
-    act(() => { vi.advanceTimersByTime(60_000 + 299_000) })
+    act(() => { vi.advanceTimersByTime(cancelAfterMs(at) + 299_000) })
     expect(h.current.activeEEWs.size).toBe(1)
 
     act(() => { vi.advanceTimersByTime(2_000) })
@@ -736,14 +750,17 @@ describe('再生中もキューの予約は発火時刻を待つ', () => {
   it('発表時刻が読めなくても、震源時刻から自動解除を予約する', () => {
     setReplayOffset(OFFSET_MS)
     const h = setup({ offset: OFFSET_MS })
+    const at = serverDate()
+    // 震源時刻だけから決まる時刻。発表時刻も同じ瞬間なので、両方読めるときと同じ値になる
+    const wait = cancelAfterMs(at)
 
-    act(() => { h.current.injectEvent(finalEEW(serverDate(), { time: '' })) })
+    act(() => { h.current.injectEvent(finalEEW(at, { time: '' })) })
     expect(h.current.activeEEWs.size).toBe(1)
 
-    act(() => { vi.advanceTimersByTime(30_000) })
+    act(() => { vi.advanceTimersByTime(wait - 1_000) })
     expect(h.current.activeEEWs.size).toBe(1)
 
-    act(() => { vi.advanceTimersByTime(31_000) })
+    act(() => { vi.advanceTimersByTime(2_000) })
     expect(h.current.activeEEWs.size).toBe(0)
   })
 
@@ -3162,7 +3179,7 @@ describe('標準版: P2PQuake と Yahoo の緊急地震速報をまとめる', (
   describe('P2PQuake には最終報の印が無いので、見張りの解除を積む', () => {
     // 再生側の時計に寄せる（キューは getTimeRef=serverDate で発火を決める）
     const OFFSET_MS = -3600_000
-    /** 規模を小さく取り、解除までの時間を下限（発表から 60 秒）で決める。 */
+    /** 規模を小さく取った報（震源時刻＝発表時刻）。見張りの秒数は {@link watchMs} で式から引く。 */
     const small = (serial: string, issueTime: string, origin: 'p2pquake' | 'yahoo' = 'p2pquake') => p2p(serial, issueTime, ['石川県能登'], {
       origin,
       earthquake: {
@@ -3174,12 +3191,16 @@ describe('標準版: P2PQuake と Yahoo の緊急地震速報をまとめる', (
     })
     /** 秒単位で丸めた「いま」（発表時刻は秒までしか比べない）。 */
     const nowIso = () => new Date(Math.floor(serverDate().getTime() / 1000) * 1000).toISOString()
+    /** `small` の報 1 通が積む見張りの、発表からの秒数（ミリ秒）。規模と深さから式で決まる。 */
+    const watchMs = (iso: string) => calcEEWCancelTime(small('1', iso), new Date(iso)).getTime() - Date.parse(iso)
 
     it('続報が来なければ、猶予を過ぎたら消す', () => {
       setReplayOffset(OFFSET_MS)
       const h = setup({ offset: OFFSET_MS })
-      act(() => { h.current.injectEvent(small('1', nowIso())) })
-      act(() => { vi.advanceTimersByTime(55_000) })
+      const issue = nowIso()
+      const wait = watchMs(issue)
+      act(() => { h.current.injectEvent(small('1', issue)) })
+      act(() => { vi.advanceTimersByTime(wait - 5_000) })
       expect(h.current.activeEEWs.size).toBe(1)
       act(() => { vi.advanceTimersByTime(10_000) })
       expect(h.current.activeEEWs.size).toBe(0)
@@ -3189,11 +3210,13 @@ describe('標準版: P2PQuake と Yahoo の緊急地震速報をまとめる', (
     it('続報を受けていれば、前の報の見張りでは消さない', () => {
       setReplayOffset(OFFSET_MS)
       const h = setup({ offset: OFFSET_MS })
-      act(() => { h.current.injectEvent(small('1', nowIso())) })
+      const issue = nowIso()
+      const wait = watchMs(issue)
+      act(() => { h.current.injectEvent(small('1', issue)) })
       act(() => { vi.advanceTimersByTime(30_000) })
       act(() => { h.current.injectEvent(small('2', nowIso())) })
-      // 1 報目の見張り（60 秒）は過ぎたが、2 報目の見張り（90 秒）はまだ
-      act(() => { vi.advanceTimersByTime(35_000) })
+      // 1 報目の見張り（wait）は過ぎたが、2 報目の見張り（30 秒＋wait）はまだ
+      act(() => { vi.advanceTimersByTime(wait - 30_000 + 5_000) })
       expect(h.current.activeEEWs.size).toBe(1)
       act(() => { vi.advanceTimersByTime(30_000) })
       expect(h.current.activeEEWs.size).toBe(0)
@@ -3203,13 +3226,15 @@ describe('標準版: P2PQuake と Yahoo の緊急地震速報をまとめる', (
     it('別の経路（Yahoo）で新しい報を受けていれば、その報から張り直し、Yahoo が止まったら消す', () => {
       setReplayOffset(OFFSET_MS)
       const h = setup({ offset: OFFSET_MS })
-      act(() => { h.current.injectEvent(small('1', nowIso())) })
+      const issue = nowIso()
+      const wait = watchMs(issue)
+      act(() => { h.current.injectEvent(small('1', issue)) })
       act(() => { vi.advanceTimersByTime(30_000) })
       act(() => { h.current.injectEvent(small('20', nowIso(), 'yahoo')) })
-      // P2PQuake の見張り（60 秒）は過ぎたが、Yahoo の報（30 秒後）から 60 秒はまだ
-      act(() => { vi.advanceTimersByTime(40_000) })
+      // P2PQuake の見張り（wait）は過ぎたが、Yahoo の報（30 秒後）から wait はまだ
+      act(() => { vi.advanceTimersByTime(wait - 30_000 + 10_000) })
       expect(h.current.activeEEWs.size).toBe(1)
-      // Yahoo の取得が止まったまま 90 秒を過ぎたら消す（捨てると居座る）
+      // Yahoo の取得が止まったまま 30 秒＋wait を過ぎたら消す（捨てると居座る）
       act(() => { vi.advanceTimersByTime(25_000) })
       expect(h.current.activeEEWs.size, 'Yahoo の続報のあと見張りが残っていない').toBe(0)
     })
@@ -3227,10 +3252,13 @@ describe('標準版: P2PQuake と Yahoo の緊急地震速報をまとめる', (
     it('揺れ検知の束が広がっている間は、見張りの解除も待つ', () => {
       setReplayOffset(OFFSET_MS)
       const issue = nowIso()
-      const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreading(Date.parse(issue), 80) })
+      const wait = watchMs(issue)
+      // 点は見張りの 20 秒後まで加わる → そこから 30 秒（見張り＋50 秒）まで待つ
+      const growUntilSec = Math.round(wait / 1000) + 20
+      const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreading(Date.parse(issue), growUntilSec) })
       act(() => { h.current.injectEvent(small('1', issue)) })
-      // 見張り（発表から 60 秒）は過ぎたが、最後の追加（80 秒）から 30 秒はまだ
-      act(() => { vi.advanceTimersByTime(105_000) })
+      // 見張りは過ぎたが、最後の追加から 30 秒はまだ
+      act(() => { vi.advanceTimersByTime(wait + 45_000) })
       expect(h.current.activeEEWs.size).toBe(1)
       act(() => { vi.advanceTimersByTime(10_000) })
       expect(h.current.activeEEWs.size).toBe(0)
@@ -3242,8 +3270,9 @@ describe('標準版: P2PQuake と Yahoo の緊急地震速報をまとめる', (
       const errorSpy = vi.spyOn(log, 'error').mockImplementation(() => {})
       const broken: DetectionSpreadLog = { push() {}, reset() {}, lastSpreadMs() { throw new Error('試しに投げる') } }
       const h = setup({ offset: OFFSET_MS, eewSpreadLog: broken })
-      act(() => { h.current.injectEvent(small('1', nowIso())) })
-      act(() => { vi.advanceTimersByTime(65_000) })
+      const issue = nowIso()
+      act(() => { h.current.injectEvent(small('1', issue)) })
+      act(() => { vi.advanceTimersByTime(watchMs(issue) + 5_000) })
       expect(h.current.activeEEWs.size).toBe(0)
       expect(errorSpy).toHaveBeenCalled()
       errorSpy.mockRestore()
@@ -3254,10 +3283,12 @@ describe('標準版: P2PQuake と Yahoo の緊急地震速報をまとめる', (
       setReplayOffset(OFFSET_MS)
       const onLiveEvent = vi.fn()
       const h = setup({ offset: OFFSET_MS, onLiveEvent })
-      act(() => { h.current.injectEvent(small('1', nowIso())) })
+      const issue = nowIso()
+      act(() => { h.current.injectEvent(small('1', issue)) })
       act(() => { h.current.injectEvent({ ...small('2', nowIso()), cancelled: true }) })
       const before = onLiveEvent.mock.calls.length
-      act(() => { vi.advanceTimersByTime(65_000) })
+      // 見張りが発火する時刻を越えるまで進める（届かないと空振りで通る）
+      act(() => { vi.advanceTimersByTime(watchMs(issue) + 5_000) })
       const expiredAfter = onLiveEvent.mock.calls.slice(before)
         .filter(([e]) => (e as LiveEvent).kind === 'eew' && (e as EEWAlert).expired)
       expect(expiredAfter).toEqual([])

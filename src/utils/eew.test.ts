@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { calcShakingDurationSec, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast } from './eew'
+import { calcShakingDurationSec, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, eewFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast } from './eew'
+import { travelTimeSec } from './travelTime'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
 
@@ -720,7 +721,27 @@ describe('calcFeltRadiusKm: 司・翠川式による有感半径の逆算', () =
   })
 })
 
-describe('calcEEWAutoCancelSec: 自動解除までの秒数（有感半径のS波到達 + 30秒）', () => {
+// 自動解除と揺れ検知の「別の地点」の判定は、計測震度 0 の揺れが届く半径を共有する（2026-10-31 ユーザー選択
+// 「0 (Recommended)」「揃える」）
+describe('eewFeltRadiusKm: 計測震度 0 の揺れが届く半径', () => {
+  // 正: 計測震度 0 で引いた半径そのもの
+  it('calcFeltRadiusKm を計測震度 0 で引いた値', () => {
+    for (const [m, d] of [[4.0, 10], [5.0, 10], [6.0, 10], [7.0, 60], [6.0, 300]] as const) {
+      expect(eewFeltRadiusKm(m, d)).toBe(calcFeltRadiusKm(m, d, 0))
+    }
+  })
+  // 対照: 震度1 の距離（地図の寄せ方が使う既定）より広い
+  it('震度1 の距離より広い', () => {
+    expect(eewFeltRadiusKm(6.0, 10)).toBeGreaterThan(calcFeltRadiusKm(6.0, 10))
+  })
+  // 安全弁: 自動解除の秒数も同じ半径から求める（片方だけ広げると、EEW が消えた後に外縁の揺れが「別の地点」になる）
+  it('自動解除の秒数は同じ半径への S 波の到達 + 30 秒', () => {
+    expect(calcEEWAutoCancelSec(5.0, 10)).toBe(Math.round(travelTimeSec('S', eewFeltRadiusKm(5.0, 10), 10)) + 30)
+    expect(calcEEWAutoCancelSec(5.0, 10)).toBe(145)
+  })
+})
+
+describe('calcEEWAutoCancelSec: 自動解除までの秒数（揺れの届く半径のS波到達 + 30秒）', () => {
   it('マグニチュードが大きいほど自動解除秒数も長くなる', () => {
     expect(calcEEWAutoCancelSec(5.0, 10)).toBeLessThan(calcEEWAutoCancelSec(7.0, 10))
   })
@@ -1208,7 +1229,7 @@ describe('isEewAreaArrived', () => {
 })
 
 describe('selectActiveEews（その時刻に発表中だった緊急地震速報を選ぶ）', () => {
-  // 震源時刻 12:00:00・M6.0・深さ 10km なら自動解除は約 146 秒後（`calcEEWAutoCancelSec` の実測）。
+  // 震源時刻 12:00:00・M6.0・深さ 10km なら自動解除は約 211 秒後（`calcEEWAutoCancelSec` の実測）。
   // 最終報の発表から最低 60 秒という下限もあるので、ここでは震源時刻起点のほうが後になる。
   const ORIGIN = '2026-01-01T12:00:00Z'
   const REPORT = '2026-01-01T12:00:10Z'

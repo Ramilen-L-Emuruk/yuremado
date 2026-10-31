@@ -13,9 +13,20 @@ import { EPICENTER_RANK_LABEL, MAGNITUDE_RANK_LABEL } from './eewAccuracyRanks'
 import { log } from './logger'
 
 // 司・翠川(1999)の距離減衰式を使ってEEW最終報後の自動解除秒数を計算する。
-// 有感半径（震度1以上が届く距離）を逆算し、1.5倍のバッファを乗せてS波到達時刻を求める。
+// EEW の揺れが届く半径（計測震度 EEW_REACH_INTENSITY 以上が届く距離）を逆算し、1.5倍のバッファを乗せてS波到達時刻を求める。
 
 const FELT_RADIUS_BUFFER = 1.5   // 地盤増幅を無視した分の補正係数
+/**
+ * EEW の揺れが届く半径（{@link eewFeltRadiusKm}）を引くときの計測震度。
+ *
+ * **揺れ検知が拾う揺れまで含める。** 揺れ検知は震度0 未満の点も検知に入れるので、震度1 の距離で切ると、同じ地震の
+ * 外縁で揺れた点が EEW の範囲の外に出て「別の地点で揺れを検知」と鳴る（2026-10-31 ユーザー指摘「有感半径は震度何？
+ * このアプリの検知って震度0以下も拾うから割れかねない？」・選択「検知が拾う震度まで広げる (Recommended)」）。
+ * 値は評価台 267 窓で測って 0 にした —— 1.0 で同じ地震なのに鳴った 5 件が 0 で全部消え、本当に別の地震の 2 件は
+ * 残った。−0.5・−1.0 でも消える件数は増えなかった（2026-10-31 ユーザー選択「0 (Recommended)」）。
+ * 自動解除も同じ値を使う（同日ユーザー選択「揃える」）。
+ */
+const EEW_REACH_INTENSITY = 0
 const MAX_FELT_RADIUS_KM = 2500  // 上限（M9クラスでも日本全域をカバー）
 const MIN_CANCEL_SEC = 60        // 最終報受信から最低この秒数は解除しない
 const FIXED_BUFFER_SEC = 30      // S波到達後の余裕
@@ -83,8 +94,9 @@ const UNKNOWN_MAGNITUDE_ASSUMED = 6.0
 const UNKNOWN_DEPTH_ASSUMED_KM = 30
 
 /**
- * EEW の有感半径（km）。{@link calcFeltRadiusKm} に、規模が判らない値（`NaN`・P2PQuake の `-1`）を
- * M6.0、深さが判らない値（センチネル `-1`）を 30km と仮定して渡す。
+ * EEW の揺れが届く半径（km）。{@link calcFeltRadiusKm} を計測震度 {@link EEW_REACH_INTENSITY}（0）で引く。
+ * 規模が判らない値（`NaN`・P2PQuake の `-1`）は M6.0、深さが判らない値（センチネル `-1`）は 30km と仮定して渡す。
+ * 名前の「有感」は震度1 の意味ではない（震度0 の揺れまで含む）。
  *
  * **自動解除（{@link calcEEWCancelTime}）と揺れ検知の「別地点」の判定（`useKyoshinAlerts.ts`）が
  * 同じ値を使う。** 仮定もここで置くので、どちらも電文の値をそのまま渡す。片方だけ式や仮定を変えると、
@@ -94,12 +106,13 @@ export function eewFeltRadiusKm(mjma: number, depth: number): number {
   return calcFeltRadiusKm(
     hasMagnitude(mjma) ? mjma : UNKNOWN_MAGNITUDE_ASSUMED,
     hasDepth(depth) ? depth : UNKNOWN_DEPTH_ASSUMED_KM,
+    EEW_REACH_INTENSITY,
   )
 }
 
 /**
  * EEW最終報の発震時刻から何秒後に自動解除するかを返す。
- * 司・翠川(1999)の有感半径(×1.5バッファ)にS波が到達するまでの時間 + 30秒。
+ * 司・翠川(1999)で引いた揺れの届く半径（{@link eewFeltRadiusKm}・計測震度 0・×1.5バッファ）にS波が到達するまでの時間 + 30秒。
  *
  * **規模が判らない値（`NaN`・P2PQuake の `-1`）は M6.0 として求める**（`hasMagnitude` で見る）。
  * 素通りすると `NaN` は有感半径が 0 になり（二分探索の比較が毎回偽）、`-1` は M3 扱いになる。
@@ -960,7 +973,8 @@ export function admitTrainingEew(eew: EEWAlert, receiveTest: boolean): EEWAlert 
 
 /**
  * 起動時・張り直しで「いま発表中の緊急地震速報」を探すときの窓（`fetchDmdataActiveEews`）。自動解除は震源時刻から
- * 最長でも約 8 分（M9・深さ 30km で 476 秒。`calcEEWAutoCancelSec` の実測。規模と深さの両方で変わる）なので、それを
+ * 最長でも約 10 分（揺れが届く半径が上限の 2500km に張り付いた浅い震源で 581 秒、M9・深さ 30km で 549 秒。
+ * `calcEEWAutoCancelSec` の実測。規模と深さの両方で変わる）なので、それを
  * 覆う幅を取る。**詳細取得を絞り込むふるいでしかなく**、実際に有効かどうかは `selectActiveEews` が `calcEEWCancelTime`
  * で判定する。
  *
