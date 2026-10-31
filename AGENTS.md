@@ -21,22 +21,19 @@ yuremado（揺れ窓）で作業するときの手順とルール。
 ## プロジェクト概要
 
 - React 18 + TypeScript + Vite 6 製の PWA。MapLibre GL JS（WebGL）地図で地震情報・緊急地震速報・津波情報・リアルタイム震度を表示する。
-- データ: DMDATA.JP API（WebSocket + REST）／ Yahoo リアルタイム震度（強震モニタ・HTTPS JSON）（DMDSS 版）、P2PQuake API v2（標準版）。
-- GitHub Pages（サブパス配信 `/yuremado/`）へ GitHub Actions で自動デプロイ。
+- データ: 自前の中継（DMDATA.JP の電文をそのまま配る。誰でも受ける）／ DMDATA.JP API（自分の鍵を入れた人が予報だけを受ける）／ Yahoo リアルタイム震度（強震モニタ・HTTPS JSON）。中継の設計は [`docs/relay-server-design.md`](docs/relay-server-design.md)、ソースは非公開のリポジトリにある。
+- 独自ドメイン（`yuremado.com`・Cloudflare Pages）へ GitHub Actions で自動デプロイ。GitHub Pages の旧 URL（`/yuremado/`・`/yuremado/dmdss/`）には、設定を新しいドメインへ渡す橋渡しのページ（`bridge/`）だけを置く。
 
-## ビルドバリアントと URL（重要）
+## 起動と URL
 
-このプロジェクトには **2 つのビルドバリアント** があり、**配信パスが異なる**。
+**アプリは 1 つ**（まとめ方は設計書 §0・§7.2）。
 
-| バリアント | dev 起動コマンド | ビルド出力 | 配信パス（URL） |
-|---|---|---|---|
-| standard | `npm run dev` | `dist/` | `/yuremado/` |
-| DMDSS | `npm run dev:dmdss` | `dist-dmdss/` | `/yuremado/dmdss/` |
+| dev 起動コマンド | ビルド出力 | 配信パス（URL） |
+|---|---|---|
+| `npm run dev` | `dist/` | `/` |
 
-- **DMDSS 版の検証時は `npm run dev:dmdss` で起動し、必ず `/dmdss/` サブパスにアクセスすること**
-  - dev URL 例: `http://localhost:5173/yuremado/dmdss/`（ポートはフォールバックで変わる）
-- `npm run dev`（standard 版）では DMDSS 設定セクションが表示されず、P2PQuake 接続になる
-- Windows で `cross-env` が動かない場合は PowerShell から `$env:VITE_VARIANT="dmdss"; npx vite` で代替起動する
+- dev URL 例: `http://localhost:5173/`（ポートはフォールバックで変わる）
+- 鍵が無くても中継に繋がれば電文が届く。予報（緊急地震速報の予報）を見るには、設定の窓で自分の DMDATA の APIキーを入れる（dev サーバーでの自動投入は下記「検証」）
 
 ## 変更時の基本フロー（必ずこの順で行う）
 
@@ -410,7 +407,7 @@ try {
 ## 検証
 
 > **コードを修正した場合は、型チェックだけでなく必ずアプリを起動して実行確認（ブラウザ確認）まで行う。**
-> 型チェックのみで完了とせず、**特に指定がない場合は `npm run dev:dmdss`（DMDSS 版）で起動し**、Playwright MCP で実際の表示・挙動を確認してからコミットする。
+> 型チェックのみで完了とせず、**`npm run dev` で起動し**、Playwright MCP で実際の表示・挙動を確認してからコミットする。
 
 - **型チェック（必須）**: `npx tsc -b`。エラー0を確認する。
   - `npm run build` でも型チェックは走るが、その前段に**地名ラベル用グリフの検証**（`build-glyphs.mjs --check`）が入る。ここで落ちた場合は型エラーではなく「グリフの焼き直し忘れ」なので、メッセージを読んで切り分けること（下記「補助コマンド」参照）。
@@ -426,19 +423,17 @@ try {
       - **実装が遅延読込していて、テストがそれを待つ**（`utils/testDataLoader.ts` の `import()` で読む台本と、そこから `fetch` する電文を、`simulate*` を呼ぶテストが最初に待つ）。**テストの書き方だけを見ても気づけない。** 手当ては同じくトップレベルで一度読む（実例は [`src/hooks/useEarthquakes.wiring.test.ts`](src/hooks/useEarthquakes.wiring.test.ts) 冒頭の `await import('../utils/testTelegramScripts')`）
     - **症状は「1 件の時間切れ」ではなく「そのファイルのほぼ全件が落ちる」形で出る**（後続のテストが `h.current` を null で掴んで連鎖する）。実測で 117 件中 102 件が巻き添えになった。件数の多さに驚いて実装の不具合を疑う前に、落ちた 1 件目が時間切れかどうかを見ること。**並列実行のときだけ起きる**ので、そのファイルを単独で回すと通ってしまう（実測: 1 件目だけが単体実行 118ms・全体実行 907ms。同じファイルの他のテストは 3ms 前後）
   - **多数のファイルをテスト本体で直列に読まないこと。** `readFileSync` を 1 件ずつ回すと待ちが件数だけ積み上がる。**並列実行のときだけ既定の 5 秒を超え、単独で回すと通る**——ここは上の項と同じだが、原因も手当ても違う（上は 1 件目にモジュール解決が乗る話で、こちらはファイル I/O そのもの。`fs/promises` の `readFile` を `Promise.all` でまとめて投げる）。**症状の出方も違う**——テストが 1 件しか無いファイルでは上の項が言う「全件が落ちる」形にはならず、単発の時間切れとして出る。実例は 2 つ——[`scripts/noRawControlChars.test.ts`](scripts/noRawControlChars.test.ts)（`src` / `scripts` / `docs` 配下を走査。全バイトを `Set.has` で判定していた分も 256 要素の表引きへ変えた）と、[`scripts/specRequirementCount.test.ts`](scripts/specRequirementCount.test.ts)（`src` 配下だけで、走査量はあちらの半分以下）。**量が少ないほうも同じ形で落ちた**ので、件数の少なさを理由に自分を対象外と判断しないこと。**件数・バイト数・実測値は各テストのコメントが持つ**——走査対象は増え続けるので、ここへ写すと古くなる。**余裕を測るなら `npm test` 全件のなかでの所要を見る**（走査部分だけを単体で測った値は他ワーカーとの競合が乗らないぶん桁ひとつ小さく出ることがあり、根拠にならない）。
-- **アプリ起動（デフォルト: DMDSS 版）**: **特にバリアントの指定がない場合は `npm run dev:dmdss` を使用する**。
-  - DMDSS 版 URL: `http://localhost:5173/yuremado/dmdss/`
-  - standard 版が明示的に必要な場合のみ `npm run dev` → `http://localhost:5173/yuremado/`
+- **アプリ起動**: `npm run dev` → `http://localhost:5173/`
   - （5173 が使用中なら 5174 等にフォールバックするため、起動ログで実ポートを確認する）
   - **必ずバックグラウンドで起動し、ログはファイルへ書き出す**（ユーザー指示）。フォアグラウンドで起動するとプロセスが応答を返さずハングするため。起動のコマンドにパイプ（`| head` 等）を付けない（読み終えた時点でサーバーが落ちる）。
   - **検証用に起動した dev サーバーは Codex のセッション中は停止せず起動したままにする**（ユーザー指示）。次の検証では新規起動せず、稼働中のサーバー（既定 5173）へ Playwright で接続して再利用する。セッションをまたぐ必要は無い。
-  - **起動したサーバーは覚えておく。** 種別（dev / preview）・実ポート・**どのワークツリーで起動したか**を控える。再利用する規約が成り立つのはこれが分かっている間だけで、同じセッションで複数のワークツリーやバリアントを立てると、どれがどれか分からなくなる（実例: リリース時に dev をワークツリーの 5173・preview をメインの 4173 で同時に動かした）。段・フェーズに分かれる作業では、計画ファイルにも記録する（→ 下記「作業の記憶と切り出し」）。**会話や一時的なタスク一覧だけには依存しない**
+  - **起動したサーバーは覚えておく。** 種別（dev / preview）・実ポート・**どのワークツリーで起動したか**を控える。再利用する規約が成り立つのはこれが分かっている間だけで、同じセッションで複数のワークツリーで立てると、どれがどれか分からなくなる（実例: リリース時に dev をワークツリーの 5173・preview をメインの 4173 で同時に動かした）。段・フェーズに分かれる作業では、計画ファイルにも記録する（→ 下記「作業の記憶と切り出し」）。**会話や一時的なタスク一覧だけには依存しない**
   - 停止するときは**ポートから PID を引いて PID 指定で止める**（`netstat -ano` で PID を取り、PowerShell の `Stop-Process -Id <PID>`）。抽象的なタスク停止だけでは node の子プロセスが残り、ワークツリーの削除が `Permission denied` になる
-  - **DMDSS 版の dev サーバーでは DMDATA の APIキーが自動で入る**。リポジトリ直下の `.env.local` に `DMDATA_API_KEY` があれば、設定の窓へ貼り直さずに接続できる（条件・例外・`.env.local` の引き継ぎは [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「dev サーバーでの API キー自動投入」）。`--host` を付けた起動では意図的に投入しない（dev サーバーは認証を持たないため）。
+  - **dev サーバーでは DMDATA の APIキーが自動で入る**。リポジトリ直下の `.env.local` に `DMDATA_API_KEY` があれば、設定の窓へ貼り直さずに接続できる（条件・例外・`.env.local` の引き継ぎは [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「dev サーバーでの API キー自動投入」）。`--host` を付けた起動では意図的に投入しない（dev サーバーは認証を持たないため）。
   - **`.codex/` 配下は dev サーバーの監視対象から外してある**（`scripts/dev-watch-ignore.ts` の `isInsideClaudeDir`）。効くのは**メインリポジトリ直下で起動したとき**で、並行して動く別セッションがワークツリー（`.codex/worktrees/`）のファイルを触ってもこちらのページがリロードされない。**この除外を glob（`**/.codex/**`）で書き直さないこと** —— 今度はワークツリー内で起動したときに HMR が丸ごと死ぬ（理由はそのファイルのコメント）。
 - `__APP_VERSION__` はビルド時に `vite.config.ts` の `define` が `package.json` の `version` から注入する定数のため、dev サーバーは `package.json` の `version` を変更したあと**再起動しないと新しい値を反映しない**（HMR では拾えない）。
 - **本番ビルド確認（大きめの変更時は必須）**: `npm run build` でビルドが通ることを確認するだけでなく、**`npm run preview`（本番ビルドのサブパス配信）を起動し Playwright MCP でブラウザ確認まで行う**。
-  - preview URL: standard は `http://localhost:4173/yuremado/`／DMDSS は `npm run build:dmdss` → `npm run preview:dmdss`。
+  - preview URL: `http://localhost:4173/`
   - **preview は PWA の Service Worker が前回のビルドをキャッシュから配信する。** リビルドしてリロードしても古いバンドルが動き続けるため、**「確認したつもり」で通ってしまう**。確認の前に必ずキャッシュを捨てること（`registration.unregister()` ＋ `caches.delete()` を実行してからリロード）。読み込まれた実体が期待どおりかは、`dist/index.html` が参照するバンドル名と、ブラウザの `document.querySelectorAll('script[src]')` を突き合わせて確かめる。
     ```js
     // Playwright の browser_evaluate で実行する
@@ -450,22 +445,20 @@ try {
   - **理由（2026-07-28 v4.0.0→v4.0.1 の本番限定バグ）**: dev サーバー（`vite dev`）は未バンドルでモジュールを解決するため、**本番ビルド（rollup バンドル）でのみ壊れる不具合が dev では再現しない**。実例＝MapLibre GL v6 の `setWorkerUrl()` 欠落で geojson ワーカーのパスが本番だけ解決できず、地図のベクタ（県境・一次細分区域・震度点・活断層等）が全滅した（全ソース `isSourceLoaded=false`・ラスタ地形だけ描画）。dev のみで検証し preview を飛ばしたため見逃し、GitHub Pages で初めて発覚した。**worker/asset のパス解決・コード分割・minify 起因の壊れは dev では出ない**ため、大きな変更は必ず本番ビルドをブラウザで確認する。
 - **コマ落ち・引っかかりを疑ったとき**: 体感や見た目で当てにいかず `window.__frameProfiler` で測る（`__frameProfiler.reset(); __frameProfiler.start()` → 操作 → `__frameProfiler.dump()`）。落ちたフレームを詰まらせた処理が名前で出る。読み方・囲ってある区間の一覧・区間を足すときの決まりは [`docs/spec/map-rendering-spec.md`](docs/spec/map-rendering-spec.md) §11「フレーム時間の記録」。
 - **ブラウザ確認（修正時は必須）**: **Playwright MCP**（`mcp__playwright__*` ツール群）で上記 URL を開き、`browser_take_screenshot`・`browser_evaluate` で表示や DOM を確認する。**`preview_start` / `preview_*` ツール（Codex Preview MCP）は使用しない。**
-  - **起動確認時は必ず DMDSS 版（`npm run dev:dmdss`）を起動する**。ユーザーも実機確認を行うため、DMDSS 版が起動していることを必ず確認してからブラウザ検証を行う。
-  - **DMDSS 版のブラウザ確認は配信元へのリクエストを伴う。** 確認のためにタブを増やす前に見合うかを考えること。**種類ごとに控えの効き方が違う**（控えの詳細は [`docs/spec/data-sources-spec.md`](docs/spec/data-sources-spec.md) §2）。
-    - **電文本体**（`data.api/v1/:id`）: 初回は数十件（実測 85 件）。**2 回目以降は控えが効いて 0 件**（IndexedDB に永続）
-    - **アーカイブ本体**（`data.api/v1/archive/:id`）: 初回は 7 日ぶん（6〜7 件）。**控えは二層で、端末（IndexedDB）にも gzip のまま残る**ので、**再生を開始し直しても、ページを再読込しても 0 件**（同じ日を初めて触ったときだけ落とす。→ 同 §2「アーカイブ本体の控え」）
-    - **一覧・目録**（`api.dmdata.jp` の `/v2/archive`・`/v2/telegram`・`/v2/gd/eew`）: **控えが効かず、起動のたびに数件飛ぶ**。「もっと見る」を押すたびにも増える
-    - つまり**「2 回目以降は 0 件」は種類と操作によって意味が違う** —— 電文本体はリロードをまたいで 0 件、アーカイブ本体は再生の開始をまたいでだけ 0 件、一覧・目録は毎回飛ぶ
-  - **契約の同時接続枠は 3 本**（`/v2/contract` の `connectionCounts` の合計）で、dev サーバー・実機・検証用ブラウザが並行すると 4 本目が 409 になる。枠の空きは `GET /v2/socket?status=open` で確かめられる（1 リクエスト）。**409 を受けるとアプリは自分の古い枠を返そうとする**（要件 E4。→ 同 §2「WebSocket 接続」）
+  - **ブラウザ確認は中継（と、鍵を入れていれば DMDATA）へのリクエストを伴う。** 確認のためにタブを増やす前に見合うかを考えること。**種類ごとに控えの効き方が違う**（控えの詳細は [`docs/spec/data-sources-spec.md`](docs/spec/data-sources-spec.md) §2）。
+    - **電文本体**: **2 回目以降は控えが効いて 0 件**（IndexedDB に永続）
+    - **日ごとの束（アーカイブ本体）**: **控えは二層で、端末（IndexedDB）にも gzip のまま残る**ので、**再生を開始し直しても、ページを再読込しても 0 件**（同じ日を初めて触ったときだけ落とす。→ 同 §2「アーカイブ本体の控え」）
+    - **一覧・目録**（電文一覧・束の一覧）: **控えが効かず、起動のたびに数件飛ぶ**。「もっと見る」を押すたびにも増える
+    - つまり**「2 回目以降は 0 件」は種類と操作によって意味が違う** —— 電文本体はリロードをまたいで 0 件、束は再生の開始をまたいでだけ 0 件、一覧・目録は毎回飛ぶ
+  - **自分の鍵を入れて確かめるときは、DMDATA の契約の同時接続枠に気をつける。** 鍵の経路が張るのは予報の WebSocket 1 本だけだが、**枠は 3 本**（`/v2/contract` の `connectionCounts` の合計）で、dev サーバー・実機・検証用ブラウザが並行すると 4 本目が 409 になる。枠の空きは `GET /v2/socket?status=open` で確かめられる（1 リクエスト）。**409 を受けるとアプリは自分の古い枠を返そうとする**（要件 E4。→ 同 §2「WebSocket 接続」）
   - **リクエスト数を測るときは `StrictMode` の二重実行を差し引く。** dev では React が effect を 2 回走らせるため、起動時の取得が 2 セット飛ぶ（本番ビルドは 1 回）。`browser_network_requests` の件数をそのまま本番の値として読まないこと。**`performance.getEntriesByType('resource')` は既定のバッファ上限（250 件）で古い分が落ちる**ので、件数を数える用途には使わない
 - **修正後の確認は徹底する**。型チェック・ブラウザ動作など複数の手段で確実に修正されたことを確認する。「たぶん直っているだろう」でコミットしない。
   - コンソールエラーが0件であることを確認する（以下は良性で無視してよい）。
-    - リロード時の P2P WebSocket 再接続 warning。
     - 強震モニタのクロック同期のフォールバック経路が出す `RealTimeData/...?_=...` への 403（未登録秒を叩いて 403→200 境界を捉える較正の正常動作。ネットワーク層の 403 は JS から抑制不可）。**ただし通常は出ない。** 較正の主経路は外部の時刻サービス（`akamaiClock.ts`）で、そちらが取れている間は 1 周期 1 リクエストで済む。**この 403 が 30 秒ごとに出ていたら「主経路が失敗し続けている」印**なので、良性として流さず原因を見ること。主経路の失敗理由（`[time] サーバー時刻を取得できず: ...`）は**5 分間隔に間引かれる**ため 403 と同じ頻度では出ない。403 が続いている間、直近 5 分をさかのぼれば 1 回は見つかる。
   - 自動解除や時間経過で発火する挙動（自動タブ切替・アイドル復帰など）は、`localStorage` の書き換え＋リロードや DOM 検査で確認する。
   - **確認後も開発サーバーは停止しない**（セッション中は起動したまま残す）。`Stop-Process -Name node` のような一括停止は MCP サーバーまで巻き込むため使わない。
   - 検証用スクリーンショットはリポジトリ直下に出力されるが**一時ファイル。コミット前に必ず削除する**（コミットしない）。`.playwright-mcp/` の出力も同様に Git 管理対象外（`.gitignore` 済み）。
-- **テスト機能の活用**: 設定の窓のテストボタンで動作確認できる。各ボタンの詳細（対象電文・音・自動タブ切替・自動解除タイミング等）と DOM 検証手法は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7、実データから P2PQuake 経由でシナリオを作る手順は同 §6 を参照する。
+- **テスト機能の活用**: 設定の窓のテストボタンで動作確認できる。各ボタンの詳細（対象電文・音・自動タブ切替・自動解除タイミング等）と DOM 検証手法は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7、リプレイ（テスト時刻設定）の使い方は同 §6 を参照する。
 
 ### テストボタンは実機確認の唯一の入口
 
@@ -494,15 +487,15 @@ try {
 **どちらもパーサーを通る。** かつてテストボタンは内部型を直接組み立てていて、パーサーが実電文を 1 件も拾えなくても動いて見えた —— 2026-10-23 に電文を流す形へ変えたので、この穴は塞がっている。**残る違いは「収録した形しか出ない」こと。** 新しい形を読むようにしたなら、その形の電文を収録するか、リプレイで実配信の並びに当てる。
 
 - パーサーの確認は**実電文から起こした fixture のユニットテスト**か**テストボタン**か**リプレイ**で取る
-- リプレイの窓は DMDATA アーカイブから探せる（`/v2/archive`。要 API キー。`datetime` は両端より広く取らないと目的の日が返らない）
-- **標準版（P2PQuake）は EEW を再生できない**ので、EEW の読み取りは DMDSS 版で確かめる（[`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「テスト時刻設定」）
+- リプレイの窓は中継の日ごとの束の一覧から探せる（`/v2/archive` と同じ形。`datetime` は両端より広く取らないと目的の日が返らない）
+- 緊急地震速報は警報（VXSE43）なら誰でも再生できる。予報（VXSE45）を再生するには自分の鍵か予報キーが要る（[`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「テスト時刻設定」）
 
 > 2026-09-06: 「震度5弱以上未入電」の値を推測で `!5-` と書いており、**実電文を 1 件も拾えていなかった**。テストボタンでは表示されていたため気づけず、ユーザーが「リプレイで確認したいので、いつの電文に未入電があるか教えて」と言って実電文を調べたことで初めて判明した。同じ形の誤りが同時期に 3 件あった（未入電の値・予想波高の属性・EEW の固定付加文の要素名）。
 
 ### 環境による制約
 
 - 一部の外部ホストへ到達できない環境がある（例: 防災科研 kmoni の HTTPS）。Yahoo 強震モニタ（`weather-kyoshin.*.storage-yahoo.jp`）・DMDATA.JP API は到達可能。
-- 予報円は自前計算（`usePsWaveCalc`）に統一済みのためテストボタンでも確認できるが、気象庁の実電文が発表初期に載せる「仮定震源要素」（震源未確定）の判別は、情報源によって精度が異なる（DMDATA/P2PQuakeは`condition`フィールドで判別可能、Yahoo hypoInfoには相当フィールドが無い）。この非対称性そのものの実地震での挙動は、実発報時の確認をユーザーに委ねる。
+- 予報円は自前計算（`usePsWaveCalc`）に統一済みのためテストボタンでも確認できるが、気象庁の実電文が発表初期に載せる「仮定震源要素」（震源未確定）の判別は、情報源によって精度が異なる（DMDATA の電文は `condition` で判別できるが、Yahoo hypoInfo には相当する欄が無い）。この非対称性そのものの実地震での挙動は、実発報時の確認をユーザーに委ねる。
 
 ## コマンドの結果の読み方
 
@@ -532,7 +525,7 @@ try {
   桁が分からないなら、**まず一覧だけ取って単位の数を数える**（アーカイブなら日数）
 - **配信元が定める上限を読む。** 明記があるのは 2 つ —— DMDATA は
   [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「リクエスト数を抑える」、
-  **P2PQuake は同 §3**（`/history` が 60req/分・`/jma` が 10req/分。どちらも IP ごと）。
+  **P2PQuake は同 §3**（`/history` が 60req/分・`/jma` が 10req/分。どちらも IP ごと。アプリは使わなくなったが、自作地震計のホストの照合が使う）。
   それ以外（気象庁・NIED・NII・Yahoo）は明記された上限が無いので、**無いことを
   「いくらでもよい」と読まない** —— 既存の生成スクリプトが採っている間隔・直列実行に倣う
   （`build-hypocenter-catalog` の日別ページ取得・`build-station-coords` の履歴走査）
@@ -571,8 +564,8 @@ try {
 - 上限に達したら**記録を残す**。黙って切ると取りこぼしが「静かな時間帯」に化ける
 - 規約と実測値は [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2
   「ページを辿るループには上限を置く」が単一情報源
-- 現在の上限は 6 箇所（アプリ側）＋生成・調査スクリプト側の 2 つ。**ページ数が揃っていない**ので
-  値は上記の仕様書の表を見ること（`MAX_PAGES_PER_DAY` は 5 ページ・`ACTIVE_EEW_MAX_PAGES` は 10 ページ）
+- 現在の上限は 4 箇所（アプリ側）＋生成・調査スクリプト側の 2 つ。**ページ数が揃っていない**ので
+  値は上記の仕様書の表を見ること（`LIST_MAX_PAGES` は 20 ページ・`ACTIVE_EEW_MAX_PAGES` は 10 ページ）
 - **1 ページの件数（`limit`）は明示して渡す。** 既定に任せると少ない件数で返り、同じ範囲を読むのに
   余計なページを辿る（アーカイブの目録が実際にそうなっていた）。**`cursorToken` で 2 ページ目を
   辿るときも同じパラメータを渡し続ける**（配信元がそう定めている。落とすと途中から既定へ戻る）
@@ -828,7 +821,7 @@ README・仕様書（`docs/spec/`）・AGENTS.md などのドキュメントの�
   [レベル] [ファイル:行] 見出し
   - 事実（実装からの引用）
   - 問題
-  - 影響（どの機能・どのバリアント・どの経路）
+  - 影響（どの機能・どの経路）
   - 修正方針の候補（実施はしない）
   ```
 
@@ -850,7 +843,7 @@ CRITICAL / HIGH の指摘は **`code-reviewer` エージェント**で実装か�
 コードの変更に応じて、関連するドキュメントを**同一コミットで**更新する。対象は以下:
 
 - **`docs/spec/` 配下の該当機能仕様書**: 実装が仕様と 1 対 1 で対応する箇所（パラメータ・判定条件・データフロー等）を変更したら、必ず仕様書側も更新する。仕様書は冒頭で自ら「実コードを正とする」と宣言しているため、放置すると即座に嘘になる。
-- **`README.md`**: 機能・技術スタック・バリアント差分・データソース・注意事項・ライセンス関連の変更のみ更新（README は概要と導線のみを残す方針。詳細はすべて `docs/spec/` 配下に集約する）
+- **`README.md`**: 機能・技術スタック・データソース・注意事項・ライセンス関連の変更のみ更新（README は概要と導線のみを残す方針。詳細はすべて `docs/spec/` 配下に集約する）
 - **`AGENTS.md`**: 変更時のワークフロー・検証手順・コード整合性チェックポイント・リリース手続きなどに影響する変更のみ更新
 - **コード内コメント**: 変更した処理のコメントを実装と一致させる（`common/comment-integrity.md` 参照）
 
@@ -1090,7 +1083,6 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | `node scripts/build-prefectures.mjs` | 都道府県境界データ（`public/data/prefectures.json`）の再生成（ベースマップ用） |
 | `node scripts/build-subregions.mjs` | 一次細分区域境界データ（`public/data/subregions.json`）の再生成 |
 | `node scripts/build-glyphs.mjs` | 地名ラベル用 SDF グリフ（`public/fonts/`）の再生成。**地名（地方・県・区域）が増減したら実行する**（`npm run build` が前段で `--check` を走らせ、未生成の文字があればビルドを止める。詳細は [`docs/spec/map-rendering-spec.md`](docs/spec/map-rendering-spec.md) §5）。県名・区域名は `public/data/*.json` から読むため、**`build-prefectures.mjs`・`build-subregions.mjs` を先に実行すること** |
-| `npm run capture-scenario` | 実地震テストシナリオを DMDATA archive から取得（`scripts/capture-test-scenario.ts`）。**要 DMDATA.JP API キー**（置き場所・渡し方は [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6）。**ワークツリーでの注意**: キーを置く `.env.local` は Git 管理外のため**引き継がれない**。ワークツリー内で使うときはメインリポジトリ直下からコピーする。読めているかは引数なしで `npm run capture-scenario` を実行して確認する（`--from は必須です` なら読めている／`APIキーが必要です` なら読めていない。値をエコーせずに済む）。ただしシェルに `DMDATA_API_KEY` が残っていると `.env.local` が無くても通ってしまうため、事前に残っていないことを確かめる |
 | `npm run build-test-estimated-intensity-bufr` | テストボタン用の推計震度分布図の二進電文（`public/data/test-telegrams/synthetic/estimated-intensity-*.bufr`）を作り直す。**API キー不要・通信なし**（格子を自前で組む）。**推計震度分布図の電文は配布されていない** —— 実電文は DMDATA.JP 経由でしか手に入らず、規約でこのリポジトリへは置けないので、ここだけ合成する。**手では作れない**（BUFR は二進）。書き出したものを本番の復号器へ通し、組んだ格子が読み戻せることを確かめてから保存する。**大きさは能登本震の実電文に合わせ、実配信と同じく 2 断片で書き出す**（台本は本番の結合部品へ通してから読む）。セル数を変えたら [`docs/spec/quake-spec.md`](docs/spec/quake-spec.md) §8 の記述も合わせる |
 | `npm run build-hypocenter-catalog` | 長期震源カタログ（`public/data/hypocenter/`）の再生成。既定で **1919 年〜今年・M2.0 以上**を年ごとの JSON にする（`--from` / `--to` / `--min-magnitude` で変更可）。**API キー不要**。取得元は確定値（年・まとめ ZIP／1919〜2023 年）と速報値（日別「震源リスト」／2024 年〜2 日前）の 2 つで、**年 ZIP を先に試し 404 なら日別へ落ちる**。日別ページは `.cache/hypocenter-cache/` に残すので、2 回目以降は新しい日だけ取る（初回は 966 日・約 70MB）。**取得経路ごとに既知の地震と照合し、合わなければ exit 1 で止まる**（7 経路・7 地震）。ほかに「読めない行が想定より多い」「J レコードがあるのに 1 件も採れない」等でも失敗する（一覧は仕様書）。週 1 回は GitHub Actions が `--from 2024` で自動実行する。詳細は [`docs/spec/data-sources-spec.md`](docs/spec/data-sources-spec.md) §6「長期震源カタログ」 |
 | （計測台）`src/services/dmdataCoverage.probe.test.ts` | **電文と実装の突き合わせ**（どの要素から値を取り出しているか）を実測する。実電文を本物のパーサーへ流し、`textContent` と `getAttribute` の呼び出しを記録する。**環境変数を渡さないと飛ばす**ので通常の `npm test` は汚さない。**静的解析（ソースの文字列から推し量る方法）は使わない**。**実行手順は書かない** —— この計測台と `scripts/telegram-audit/` の突き合わせは出力先を揃えて動かす必要があり、片方だけ書くと食い違う。手順とその理由、測り方・読まないと決めたもの・決まっていない判断・読み落としの型・残っている段は [`docs/spec/telegram-coverage-audit.md`](docs/spec/telegram-coverage-audit.md) |
@@ -1111,7 +1103,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 - 地図は MapLibre GL JS（`JapanMapGL`）に一本化。`MapView` が App と地図実装の間の薄いラッパー。旧 Leaflet 版 JapanMap とエンジン切替フラグは F7 で撤去済み。
 - 地図のモード（`JapanMapGL` の `mode`）: `quake`（地震）／`tsunami`（津波海岸線）／`kyoshin`（リアルタイム震度・予報円）／`catalog`（長期震源カタログの点群）。
 - 生成データ（`public/data/*.json`）は座標が大きいため遅延読込（初回利用時に一度だけ fetch しキャッシュ）。
-  地図は常時表示のため、地図が使うもの（`prefectures.json` / `subregions.json` / `station-coords.json` / `tsunami-zones.json` / `active-faults.json` / `plate-boundaries.json` / `tsunami-obs-coords.json`）は表示モードに関わらず地図の初回表示時にまとめて要求する。実地震テストシナリオの本体だけは再生時に取得する。
+  地図は常時表示のため、地図が使うもの（`prefectures.json` / `subregions.json` / `station-coords.json` / `tsunami-zones.json` / `active-faults.json` / `plate-boundaries.json` / `tsunami-obs-coords.json`）は表示モードに関わらず地図の初回表示時にまとめて要求する。
 
 ## コード整合性チェックポイント
 
@@ -1286,7 +1278,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 
 | 項目 | 単一情報源となる仕様書 |
 |---|---|
-| `points` のバリアント差・`pref` 空の識別規則を取り違えると、経路によって観測点や区域が欠落する | [`quake-spec.md`](docs/spec/quake-spec.md) §4「points 構造（バリアント・経路差）」 |
+| `points` の `pref` 空の識別規則を取り違えると、経路によって観測点や区域が欠落する | [`quake-spec.md`](docs/spec/quake-spec.md) §4「points 構造」 |
 | 観測点名の `＊` を外し忘れる・戻し忘れると、地図から点が消える、または電文と違う表記になる | [`quake-spec.md`](docs/spec/quake-spec.md) §8「気象庁以外が運用する観測点（`＊`）」 |
 | 固定付加文（その他）を省くと、`＊` 印の説明が画面から消え何と対比しているか分からなくなる | [`quake-spec.md`](docs/spec/quake-spec.md) §8「固定付加文（その他）（`VarComment/Text`）はそのまま出す」 |
 | 電文のコード値（都道府県・区域・市町村・観測点コード等）を名前の代わりに出す、またはカードや読み上げへ混ぜると、意味の読めない識別子が前に出る（出すのは地図の吹き出しの末尾だけ） | [`quake-spec.md`](docs/spec/quake-spec.md) §8「電文のコード値は読み、地図の吹き出しの末尾に添える」 |
@@ -1356,7 +1348,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 区域を読めなかった結果を「正式解除」と取り違えない | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §4「DMDATA XML」 |
 | 津波電文の `Body/Text` は発表報でも読む | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §4「DMDATA XML」 |
 | 津波の等級は `Kind/Code` で読む | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §4「DMDATA XML」 |
-| 津波の解除経路（`cancelReason` 3 種・バリアント差） | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §3「3 経路の解除フロー」 |
+| 津波の解除経路（`cancelReason` 3 種） | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §3「3 経路の解除フロー」 |
 | 有効期限は報ではなく津波に付く事実として扱う（引き継ぎを 1 つ漏らすと失効しない津波ができる） | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §3「有効期限は報ではなく津波に付く」 |
 | 区域単位で等級が動いた報は、動いた区域だけを伝える | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §10「区域単位で等級が動いた報」・[`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §4「区域単位で等級が動いた報は、動いた区域だけを読む」 |
 | 解除された区域（`Kind/Code` が 00/50/60）を捨てずに分けて持つ | [`tsunami-spec.md`](docs/spec/tsunami-spec.md) §10「解除された区域」・[`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §4「区域単位で等級が動いた報は、動いた区域だけを読む」 |
@@ -1383,7 +1375,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 項目 | 単一情報源となる仕様書 |
 |---|---|
 | EEW だけは地震の時刻に発生時刻（`OriginTime`）を出す規則を崩すと、他の種別と時刻の基準が食い違う、または `originTime` を読む場所（予報円・S 波到達・自動解除等）の一部が古い値のまま残る | [`eew-spec.md`](docs/spec/eew-spec.md) §3「地震の時刻は発生時刻を出す」 |
-| 起動時に発表中の EEW を復元する仕組み（DMDSS 版限定・1 地震 1 通・`silent` で音を止める）を崩すと、起動直後に驚かせる音が鳴る、または開発モードでだけ画面要求が出なくなる | [`eew-spec.md`](docs/spec/eew-spec.md) §2「起動時に、発表中のものを復元する」・[`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「起動時の復元が出す要求」 |
+| 起動時に発表中の EEW を復元する仕組み（1 地震 1 通・`silent` で音を止める）を崩すと、起動直後に驚かせる音が鳴る、または開発モードでだけ画面要求が出なくなる | [`eew-spec.md`](docs/spec/eew-spec.md) §2「起動時に、発表中のものを復元する」・[`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6「起動時の復元が出す要求」 |
 | EEW 続報の古い報を採らない判定（入口で報番号台帳により棄却）を崩すと、画面と音声が食い違う、または処理順の入れ替わりで退行する | [`eew-spec.md`](docs/spec/eew-spec.md) §10「古い報で退行させない」 |
 | EEW の区分呼称（予報級／警報級）の対応表を崩すと、表示・ウィンドウタイトルの呼び方が食い違う（読み上げの呼称は別に持つ） | [`eew-spec.md`](docs/spec/eew-spec.md) §3「電文の名称と表示・読み上げ」・[`audio-tts-spec.md`](docs/spec/audio-tts-spec.md) §6 |
 | 種別ヘッダーの報番号表示を地震情報カードと共有する規則を崩すと、片方だけ見た目が変わる | [`eew-spec.md`](docs/spec/eew-spec.md) §3「報番号の見た目は地震情報カードと共有する」 |
@@ -1396,7 +1388,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 警報の対象地方（`Head/Headline/Information` の地方予報区ブロック）を読む規則を崩すと、続報の差分取りこぼしで地方が欠落する | [`eew-spec.md`](docs/spec/eew-spec.md) §3「警報の対象地方」 |
 | EEW の固定付加文を画面にだけ出し読み上げには載せない規約を崩すと、秒を争う震度・地域の告知が遅れる | [`eew-spec.md`](docs/spec/eew-spec.md) §3「固定付加文」 |
 | EEW の警報級判定を `isEewWarningKindCode` の 1 箇所に一本化する規則を崩すと、電文解釈・地図の塗り分け・県名の振り分けで判定がずれる | [`eew-spec.md`](docs/spec/eew-spec.md) §4「区域の種別コード」 |
-| 区域の主要動到達判定を `isEewAreaArrived` で行う規則を崩すと、standard 版で到達済みの区域が画面から黙って消える | [`eew-spec.md`](docs/spec/eew-spec.md) §4「主要動が届いたかどうか」 |
+| 区域の主要動到達判定を `isEewAreaArrived` で行う規則を崩すと、到達済みの区域が画面から黙って消える | [`eew-spec.md`](docs/spec/eew-spec.md) §4「主要動が届いたかどうか」 |
 | 「主要動の到達（予測）」欄の並び順・各行の表示規則（件数で打ち切らない・PLUM 法は末尾・残り秒数表示）を崩すと、到達情報が欠落する、または PLUM 法の過去時刻を「まもなく」と誤読する | [`eew-spec.md`](docs/spec/eew-spec.md) §4「到達予測時刻は種別によって意味が変わる」 |
 | 「警報:」「予報:」欄の出し方（重複排除・件数で打ち切らない）を崩すと、警報の地域が予報と重なって見える、または情報が「…」に隠れる | [`eew-spec.md`](docs/spec/eew-spec.md) §4「「警報:」「予報:」欄の出し方」 |
 | EEW レベル判定（特別警報の条件・長周期の DMDATA 限定）を崩すと、特別警報相当の判定を誤る | [`eew-spec.md`](docs/spec/eew-spec.md) §4 |
@@ -1496,14 +1488,12 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 配信元のレート制限（リクエスト数・429）を守る仕組みを崩すと 429 連発・利用制限に触れる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「リクエスト数を抑える」・§2「429 は「頻度」ではなく「同じ id の取り直し」に返る」 |
 | 取得失敗時の間隔調整・更新停止の通知条件を誤ると、更新停止の見逃しまたは無限リトライになる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §4「取得に失敗したら間隔を空ける」・[`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「再生する時刻は入口で弾く」 |
 | 目録・電文パース結果のキャッシュの鍵を誤ると、誤った電文を使い回す | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「大量に取るならアーカイブを使う」 |
-| 電文本体の紐付けを filename 以外（識別子推測・拡張子）で行うと、誤った本体を取得しうる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「DMDSS 版の取得（アーカイブの構造）」 |
+| 電文本体の紐付けを filename 以外（識別子推測・拡張子）で行うと、誤った本体を取得しうる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「アーカイブ（束）の取得と構造」 |
 | 目録の発表時刻欠落時にファイル名補完をしないと、窓の時刻判定を誤り取りこぼす | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「大量に取るならアーカイブを使う」 |
 | 履歴取得の部分失敗を表示しないと、欠落したカードを地震が無かったと誤認させる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「大量に取るならアーカイブを使う」 |
 | 読み取り失敗を 3 層で記録しないと、電文の欠損が検知されず気づけない | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「読めなかったものは記録する」 |
 | 同じ日を読み直したときに取りこぼしを二重カウントすると、件数が水増しまたは黙って消える | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「読めなかったものは記録する」 |
-| 標準版リプレイの日次控え（dayCache）に寿命を持たせないと、後から届いた電文が反映されなくなる | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §3「再生の取得は日ごとに控える（当日ぶんだけ寿命がある）」 |
 | 日時の壊れ方を検知する層（電文層・表示層）の境界を見誤ると、時間帯を明示しない壊れた値が無警告で `NaN:N` と表示される | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「日時は 2 つの層で確かめる」 |
-| P2PQuakeレスポンスの不正値破棄条件・震度正規化テーブルを外すと、階級外の値が特別警報の判定エンジンへ渡り地域を丸ごと無視する | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §3「convertEvent の検証と日本語化」 |
 | APIキー文字検証を通信前に弾く経路と弾かない経路で揃えないと、無効な鍵のまま401/403を連発するか原因の違う「未設定」「不正」を同じ文言で伝える | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「認証」 |
 | 南海トラフ 3 種別・後発地震に共通する見出し文/次回発表予定/参考情報の読み取り窓口を 1 箇所に保たないと、経路ごとに要約の有無が食い違う | [`data-sources-spec.md`](docs/spec/data-sources-spec.md) §2「3 種別に共通する要素は 1 箇所で読む」 |
 | 見出し文（`Head/Headline/Text`）をそのまま画面へ出すと、本文と重複する事実が二重に表示される | [`quake-spec.md`](docs/spec/quake-spec.md) §8「見出し文（`Head/Headline/Text`）は読むが、地震情報では出さない」 |
@@ -1542,9 +1532,9 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 録画モードで追加復元する 7 項目（気象庁の文・地震の地域と震源要素・確定情報の通し読み・EEW 誤報取消・EEW 最後の告知震源・津波取消・津波が語った原因地震の震源）を崩すと、区間の境目で同じ内容を読み直す（このうち EEW 最後の告知震源だけは例外的に増やす側で、崩すと震源が動いても言い直さない。津波が語った原因地震の震源は逆に値が変わっても言い直さない設計） | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | リプレイ復元で地震の主題を `mergeQuakeInto` で組み立てる規則を崩すと、震源名が空の報が別の地震を吸い込む、または訂正報の名前変更に追随できない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 復元の既読にマージ後のカードを使う規則（生の入電を使わない）を崩すと、据え置かれた内容が既読として記録され、後で届く正規の報が省かれる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
-| dev サーバーでの API キー自動投入の条件（dev・DMDSS 版・`--host` なし・未入力）と受け取る側の二重チェック（本番ビルド・テスト）を崩すと、本番へ値が漏れる、または未入力の判定が壊れる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「dev サーバーでの API キー自動投入」 |
+| dev サーバーでの API キー自動投入の条件（dev・`--host` なし・未入力）と受け取る側の二重チェック（本番ビルド・テスト）を崩すと、本番へ値が漏れる、または未入力の判定が壊れる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「dev サーバーでの API キー自動投入」 |
 | 自前計算を開く門と設定の窓の表示を同じ 1 つの検証結果から出す規則（`useArrivalTokenCheck`）を崩すと、期限の境目で画面表示と機能の開閉が食い違う | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §4.7「検証結果を画面へ出す」 |
-| 設定の書き出しと読み込み（API キーは含めない・`sanitize()` 任せ・`rejectedKeys`・バリアント違いは拒否しない・全項目まとめて置換）を崩すと、書いたはずのキーが消える、または新しい項目が既定値に戻らない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §4.5 |
+| 設定の書き出しと読み込み（API キーは含めない・`sanitize()` 任せ・`rejectedKeys`・全項目まとめて置換）を崩すと、書いたはずのキーが消える、または新しい項目が既定値に戻らない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §4.5 |
 | `window.__replay` によるリプレイの外部操作を崩すと、録画自動化が UI の文言・レイアウト変更のたびに壊れる | [`recording-interface-spec.md`](docs/spec/recording-interface-spec.md) |
 | 録画ツール向けのイベントログ（読み上げは 1 本ごとに記録・記録失敗は `seq` の飛びとして外から見える）を崩すと、連続した読み上げが融合して 1 本に見える、または記録の欠番から失敗を追えなくなる | [`recording-interface-spec.md`](docs/spec/recording-interface-spec.md) §4「読み上げ」・§2 |
 | 読み上げの持ち主を受信処理の文脈から掴む仕組み（`withReplayTelegramContext`・同期の入口でしか掴めない）を崩すと、持ち主が空のまま記録される | [`recording-interface-spec.md`](docs/spec/recording-interface-spec.md) §5 |
@@ -1572,10 +1562,10 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 半径内の確定メンバーが全欠測のときに全国基準へ倒さないと、近くの観測点がまとめて途絶した最も情報が要る場面で経路が黙って止まる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
 | リアルタイム震度が発表震度より高く振れることを表示側で指標名として明示しないと、同じ画面の地震カードの発表震度と食い違って見える | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「表示する震度は発表震度と一致しない」・[`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §5「強震モニタ経路だけ指標名を出す」 |
 | 震度0を閾値によらず対象外にする規則を崩すと、震度0と震度1の階級値が同じ（どちらも10）であるため震度1まで下げた設定で平常時のノイズが閾値を通り帯が鳴りっぱなしになる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
-| 観測点名の突き合わせに県名を含めると、DMDATAの電文は `pref` が常に空なのでDMDSS版では構造的に1件も一致せず、地点を登録した人ほど判定が死ぬ | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §3「3 つの照合対象」 |
+| 観測点名の突き合わせに県名を含めると、DMDATAの電文は `pref` が常に空なので構造的に1件も一致せず、地点を登録した人ほど判定が死ぬ | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §3「3 つの照合対象」 |
 | 地震情報の判定で観測点の点だけを見て区域の点を見ないと、区域別震度しか持たない震度速報（多くの地震で最初に届く報）で何も出せなくなる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
 | 区域を持たないEEW（区域が補われる前のhypoInfo由来の報）を全国基準へ落とさないと、その窓でEEW経路が死ぬ | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
-| 階級表に無い震度を判定・表示から弾かないと、型検査を通らない経路（実地震テストシナリオの手書きJSON等）から来た壊れた値がそのまま使われる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「階級表に無い震度は見なかったことにする」 |
+| 階級表に無い震度を判定・表示から弾かないと、型検査を通らない経路から来た壊れた値がそのまま使われる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §2「階級表に無い震度は見なかったことにする」 |
 | 畳んだままにする3条件（いま畳んでいる・期限内・震度が畳んだときを超えていない）を全部満たすことを崩すと、震度条件が欠けた場合は震度5弱で閉じたあとの震度6強のような引き上げが伝わらない | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §4「畳んだままにする 3 条件」 |
 | 畳んでいる間の揺れで基準の震度を上書きすると、余震で下がっていく値に追随してそのうち小さな揺れでも「上がった」と見なして開いてしまう | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §4「畳んだままにする 3 条件」 |
 | リロード時に記録があっても畳んだ状態から始めないと、閉じたあとにリロードした端末で次の余震が帯として開き直り閉じた意味が無くなる | [`action-checklist-spec.md`](docs/spec/action-checklist-spec.md) §4「永続化」 |
@@ -1601,7 +1591,6 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | 津波の観測棒・到達確認マーカー（`maplibregl.Marker` のDOM要素）を撮影後の2Dキャンバスへ描き直さないと画像から消える。描き直しを撮影の同期窓の外（復元後）で行うと `map.project()` が画面寸法で答え、棒が別の場所に立つ | [`share-card-spec.md`](docs/spec/share-card-spec.md) §5「地図キャンバスに写らないもの」 |
 | 共有先の本文を見出しと別の材料で組み立てると、画像と本文で違うことを述べる矛盾したカードになる | [`share-card-spec.md`](docs/spec/share-card-spec.md) §6「本文の中身」 |
 | 緊急地震速報の注意文・出典を本文にも重ねると、Xの全角140字にほぼ届き（震源名が長いと超える）利用者が削ることになり、削られた結果注意文そのものが落ちうる | [`share-card-spec.md`](docs/spec/share-card-spec.md) §6「本文の中身」 |
-| DMDSS版から共有した本文にDMDSS版のURLを載せると、DMDATA.JPのAPIキーが要るため受け取った人がそのまま開くと設定画面に突き当たる | [`share-card-spec.md`](docs/spec/share-card-spec.md) §6「本文の中身」 |
 | 共有シートを持たない環境で、本文をクリップボードへ置けたか確かめずにボタンの表示を変えると、置けていないのに「コピーしました」と見せてしまい利用者は貼り付け先で初めて気づく | [`share-card-spec.md`](docs/spec/share-card-spec.md) §6「共有シートを持たない環境」 |
 | 表示を分ける判定に `textCopied` だけを使うと、共有シートが応じた正常系（クリップボードは使っていない）も偽になり「置けなかった」と同じ扱いになる | [`share-card-spec.md`](docs/spec/share-card-spec.md) §6「共有シートを持たない環境」 |
 
@@ -1620,7 +1609,7 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | EEWの警報コードを予想震度5弱未満の区域に使う、または種別コード（未到達・到達済み・PLUM法）とarrivalTimeの整合を崩すと、警報コードと予想震度の対応が電文仕様と食い違う、または「主要動の到達（予測）」欄にその区域が出ない | [`eew-spec.md`](docs/spec/eew-spec.md) §4「区域の種別コード」「到達予測時刻は種別によって意味が変わる」 |
 | 区域を持たない報の条件を実際の発表条件と違う基準に置き換えると、PLUM法2点以上で区域を持つ実在報・深さの例外規定を反映しない誤った深発報を再現してしまう | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実配信に無い形を作らない」・[`eew-spec.md`](docs/spec/eew-spec.md) §4「上限を定めない予想の扱い」「仮定震源要素の扱い」 |
 | 深発地震テストの続報を予報級のまま固定する規則を崩し警報級へ格上げすると、実配信にない形になる（気象庁は深さ150km超の地震に、PLUM法による2点以上の震度予測がある場合を除いて警報を発表せず、このテストは区域を持たないのでその例外に当たらない） | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「実配信に無い形を作らない」 |
-| 同じ事実を両バリアントで違う形に作ると、落ちる欄の二重管理が戻る。台本が `onlyIn` で分けてよいのは、電文そのものが片方の受信元から届かないときだけ | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「バリアントで中身を変えない」 |
+| 台本を受け取る人で分けると、落ちる欄の二重管理が戻る。出し分けてよいのは予報（VXSE45）にしか無い形を流すボタンだけで、予報を受けられる端末にだけ出す | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §7「誰にでも同じ電文を流す」 |
 | 補完対象種別の列挙（`HISTORY_EXTRA_TYPES`）に新種別を足し忘れると、その種別だけ初期状態（24時間）で足りない分が復元されない | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
 | 初期状態・本編で既に流れた種別を補完対象から除かず、注入を初期状態より後に置かないと、履歴側の古い報が新しい値を上書きしてしまう | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
 | 種別ごとに最新1通へ畳んでから渡す規則を崩すと、帯（`nankai`/`kohatsu`/`quakeNotice`/`earthquakeCount`）は無条件上書きの実装のため配列の順序次第で古い報の内容が残る。長周期（`lpgmByEventId`）は時刻比較で最新を選ぶため実害は小さい | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
@@ -1630,8 +1619,6 @@ main を書き換える唯一の手続き。**具体的な手順は [`/release` 
 | ライブ接続時の初回履歴で同じ補完（`HISTORY_EXTRA_TYPES`）を行わないと、7日間表示されるはずの帯・長周期がリロードのたびに消える | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
 | 地震カードの一覧を件数基準で別途復元せず初期状態の24時間と同じ扱いにする、または再生中に「もっと見る」を出すと、地震の少ない日は一覧が数枚しか並ばずライブ接続時と見え方が食い違う、または押した際にライブの最新履歴が混ざり再生時刻より未来の地震が一覧に入る | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「地震カードの履歴は件数で遡る」 |
 | 履歴の取得が失敗したときに再生そのものを止めると、一覧が薄くなるだけで済むはずの失敗が電文の再生を止めてしまう | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「地震カードの履歴は件数で遡る」 |
-| 実地震テストシナリオで電文から新しく時刻を読むようにしたら時刻シフトの対象へ足すことを崩すと、フィールドを1つずつ書き並べる形なので足し忘れても型検査もテストも通り、その時刻だけが収録当時の絶対値のまま画面に出る | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6 |
-| テスト時刻設定のバリアント差（standardはP2PQuakeの日付クエリ、DMDSSはDMDATAアーカイブ＋当日ぶんの別経路。EEWはどちらも取得元が異なりstandardでは強震モニタ側の検知に頼る）を崩すと、バリアントごとの取得経路の違いを実機で確認できなくなる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「テスト時刻設定」 |
 | archiveリプレイの重複排除（目録に載るXML版／JSON版のどちらを採用するか）を崩す、またはアーカイブが全滅したときに強震モニタの再生まで止めると、失敗の封じ込め範囲が崩れる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「テスト時刻設定」配下 |
 | アーカイブが無い日を埋める当日経路の日付基準（アーカイブはJST日、`/v2/telegram`・`/v2/gd/eew` はUTCの半開区間）を取り違える、またはVXSE43をライブ・当日経路のどちらかで取り込むと、担当日の重複判定が壊れる、または対応するVXSE45の警報報と同一内容の複製が区域塗りを削る | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「当日ぶんの取得元」 |
 | リプレイの取りこぼしの分母を取得元の日数ではなくアーカイブの本数で取る、または当日経路の3本の一覧を隔離しないと、取得元が当日経路1本しか無い窓で電文0件のまま「再生中」になる、またはEEW一覧の一時障害で地震・津波も巻き込んで再生ごと止まる | [`settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) §6「取りこぼしの扱い」 |

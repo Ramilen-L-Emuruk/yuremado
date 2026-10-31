@@ -11,7 +11,7 @@ React 18 + TypeScript + Vite 6 で作られた PWA（Progressive Web App）。�
 **主要な設計原則**:
 - 地図は常時表示、情報パネルをタブで切り替える（画面サイズにより左右分割 / 上下分割）
 - 全ての時刻は「サーバー同期時刻（`serverNow`）」を基準にする（壁時計は信用しない）
-- データソースはバリアントごとに切り替える（standard vs DMDSS）
+- 版は 1 つ。電文は誰でも中継から受け、緊急地震速報の予報だけを鍵（利用者が自分で契約した DMDATA.JP の API キー）の有無で足す（→ §3）
 
 ## 2. データフロー（俯瞰）
 
@@ -19,9 +19,9 @@ React 18 + TypeScript + Vite 6 で作られた PWA（Progressive Web App）。�
 
 ```
 [外部データソース]
-  ├─ DMDATA.JP  (WebSocket + REST)       ← DMDSS 版
-  ├─ P2PQuake   (WebSocket + REST)       ← 標準版
-  └─ Yahoo 強震モニタ (HTTPS JSON 1Hz)   ← 両バリアント共通
+  ├─ 中継（yuremado-relay・WebSocket + REST）← 誰でも。DMDATA.JP の電文（地震・津波・警報など）を無加工で配る
+  ├─ DMDATA.JP  (WebSocket + REST)        ← 鍵を入れた人だけ。緊急地震速報の予報（VXSE45）だけを受ける
+  └─ Yahoo 強震モニタ (HTTPS JSON 1Hz)    ← 誰でも。リアルタイム震度と緊急地震速報（hypoInfo）
 
         ↓ services 層（`src/services/`）
         ↓ パーサー・接続管理・電文 → 内部型変換
@@ -85,46 +85,34 @@ React 18 + TypeScript + Vite 6 で作られた PWA（Progressive Web App）。�
 - 音・タブ切替 → [`audio-tts-spec.md`](audio-tts-spec.md)
 - 各情報の処理 → [`eew-spec.md`](eew-spec.md) / [`tsunami-spec.md`](tsunami-spec.md) / [`quake-spec.md`](quake-spec.md)
 
-## 3. ビルドバリアント（standard / DMDSS）
+## 3. ビルドと配信、情報の受け取り方
 
-**2 種類のビルドが同一リポジトリから生成される**。切り替えは環境変数 `VITE_VARIANT`。
+**ビルドは 1 つ。** `npm run dev`・`npm run build`（出力は `dist/`）・`npm run preview` で、配信パスは `/`
+（独自ドメイン `https://yuremado.com/`）。中継の設計と、2 つの版を 1 つにまとめた経緯は
+[`relay-server-design.md`](../relay-server-design.md)（§0・§7）。
 
-| バリアント | dev 起動 | ビルド出力 | 配信パス | 主データソース |
-|---|---|---|---|---|
-| standard | `npm run dev` | `dist/` | `/yuremado/` | P2PQuake + Yahoo |
-| DMDSS | `npm run dev:dmdss` | `dist-dmdss/` | `/yuremado/dmdss/` | DMDATA + Yahoo |
+**情報の受け取り方は、鍵（利用者が自分で契約した DMDATA.JP の API キー）と予報キーの有無で分かれる。**
+版では分かれない。
 
-`vite.config.ts` の `define`・`base`・`build.outDir`・`manifest.name` が `VITE_VARIANT` によって切り替わる。
-コード側は `src/utils/env.ts` に定義された `isDmdss`（単一情報源）を各ファイルから import して参照する。
-
-**バリアント別に有効な機能マトリクス**:
-
-| 機能 | standard | DMDSS |
+| 受け取るもの | 誰が | 経路 |
 |---|---|---|
-| 地震情報のリアルタイム受信 | ○（P2PQuake WS） | ○（DMDATA WS） |
-| 緊急地震速報（EEW） | ○（P2PQuake + Yahoo） | ○（DMDATA のみ） |
-| 津波情報 | ○（P2PQuake） | ○（DMDATA） |
-| リアルタイム震度 | ○（Yahoo 共通） | ○（Yahoo 共通） |
-| 揺れ検知エンジン | ○ | ○ |
-| 長周期地震動階級（実データ） | × | ○ |
-| 津波の cancelReason 出し分け | × | ○ |
-| 詳細報での区域＋観測点同時表示 | ×（観測点のみ） | ○ |
-| 南海トラフ・後発地震情報 | × | ○ |
-| 電文ログ（TelegramTab） | ○（P2PQuake の受信） | ○（DMDATA の電文） |
-| 震源カタログ（CatalogTab） | ○ | ○ |
-| 実地震テスト再生 | ○ | ○ |
-| VOICEVOX 読み上げ | ○ | ○ |
-| ヒートマップ | ○ | ○ |
+| 地震情報・津波情報・緊急地震速報（警報 VXSE43）・長周期地震動観測情報・南海トラフ地震臨時情報と関連解説情報・後発地震注意情報・地震回数・お知らせ・推計震度分布図 | 誰でも | 中継の WebSocket 1 本（区分 `telegram.earthquake`・`eew.warning`） |
+| 起動時の履歴・「もっと見る」・張り直しの取り戻し・リプレイ（テスト時刻設定） | 誰でも | 中継の電文一覧と日ごとの束 |
+| 緊急地震速報（予報 VXSE45） | 鍵を入れた人 | 自分の鍵で DMDATA.JP へもう 1 本の WebSocket（区分 `eew.forecast` だけ）。予報を受けている間は中継の VXSE43 を取り込まず、鍵の予報の接続が繋がっていない間だけ VXSE43 を採る |
+| 緊急地震速報（予報 VXSE45） | 予報キーを入れた端末（開発者本人の端末だけ） | 中継から（予報キーを示して受けた札で）。中継が予報を届けられない間だけ、鍵があれば自分の鍵へ倒す |
+| 緊急地震速報（予報の段階） | 誰でも | 強震モニタ（Yahoo）の hypoInfo。同じ地震に DMDATA の報（中継の警報・自分の鍵の予報）が届いたらそちらが置き換える（`mergeEewReport`） |
+| リアルタイム震度・揺れ検知 | 誰でも | 強震モニタ（Yahoo） |
+| ヒートマップ | 誰でも | 長期震源カタログ（`public/data/hypocenter/`）に、カタログの終端より後を中継の震源に関する情報の電文から足す |
 
-上の表で Yahoo が現れる 2 行は用途が違う。リアルタイム震度は両バリアントとも Yahoo を使うが、
-EEW に Yahoo を使うのは standard 版だけで、DMDSS 版の EEW は DMDATA だけを見る
-（詳細は [`eew-spec.md`](eew-spec.md) §3）。本節冒頭のバリアント表で DMDSS の主データソースを
-「DMDATA + Yahoo」と書いているのは、この強震モニタぶんを含めた総体を指す。
+読み取りは、中継から受けた電文も自分の鍵で受けた電文も同じパーサー（`buildXmlPayload`）を通る。
+繋ぎ先は `src/services/relayEndpoint.ts`（中継）と `src/services/dmdataEndpoint.ts` の `dmdataKeyEndpoint`（自分の鍵）。
+取得元ごとの詳細は [`data-sources-spec.md`](data-sources-spec.md)。
 
-**GitHub Pages デプロイ**: `.github/workflows/deploy.yml` が `main` へ push されるたびに、まずユニットテスト
-（`npm test`）を実行し、通ってから両バリアントをビルドして `dist-dmdss/` の内容を `dist/dmdss/` にマージし、
-公開する。テストが失敗した時点でジョブが止まるので、公開中の内容は差し替わらない。Service Worker の
-スコープは配信パスで自然に分離されるため、独立した PWA として動作する。
+**デプロイ**: `.github/workflows/deploy.yml` が `main` へ push されるたびに、まずユニットテスト
+（`npm test`）を実行し、通ってからビルドして `dist/` を Cloudflare Pages（`yuremado.com`）へ公開する。
+テストが失敗した時点でジョブが止まるので、公開中の内容は差し替わらない。アプリの公開の後、github.io の旧 URL
+（`/yuremado/`・`/yuremado/dmdss/`）へ `bridge/` の橋渡しのページを GitHub Pages で公開する。橋渡しのページは
+端末に残る旧い設定（鍵を除く）を新しいドメインへ渡し、新しい側は `src/utils/settingsHandoff.ts` で受け取る。
 
 ## 4. 主要コンポーネント
 
@@ -514,7 +502,7 @@ memo を効かせるには props が参照安定である必要があるため�
 - `filteredEarthquakes = earthquakes.filter(...)` は `useMemo` で包む（`Array.filter` は毎回新規配列を
   返すため、包まないと `EarthquakeTab` / `TsunamiTab` の memo が破られる）
 - `SettingsTab.onTest` は多数のテスト関数をまとめたオブジェクトなので `useMemo` で安定化
-- `useSettings.updateSetting` は `useCallback`、`useTestScenarios` の戻り値オブジェクトは `useMemo` で参照安定化
+- `useSettings.updateSetting` は `useCallback` で参照安定化
 
 **`TelegramTab` だけは、開いていない間は props が変わっても描き直さない**（`active` を見る memo の比較・`skipWhileHidden`）。
 電文ログは直近 24 時間ぶん（最大 2,022 行）を持ち、電文が届くたびに `telegramLog` が新しい配列になるので、
@@ -537,7 +525,7 @@ memo を効かせるには props が参照安定である必要があるため�
 ### IconNav（タブナビ）
 
 `ITEMS` 配列で 5 タブを定義（実装順: `earthquake` / `realtime` / `tsunami` / `settings` / `telegrams`）。
-どのタブも標準版・DMDSS 版で常時表示される（`telegrams` は standard 版では常に空だが、UI は表示）。
+どのタブも常時表示される。
 配置は左右分割時が右端の縦並び、縦積み時が最下部の横並び。
 
 **表示中のタブをもう一度押すとパネルの折りたたみをトグルする**（タブ切替は起きない）。畳んでいる間は
@@ -550,8 +538,8 @@ memo を効かせるには props が参照安定である必要があるため�
 | EarthquakeTab | `src/components/EarthquakeTab/` | 地震情報カード一覧・選択 |
 | RealtimeTab | `src/components/RealtimeTab/` | EEW カード・S 波カウントダウン・揺れ検知カード |
 | TsunamiTab | `src/components/TsunamiTab/` | 津波警報・注意報・予報・観測情報 |
-| TelegramTab | `src/components/TelegramTab/` | 受信電文ログ（DMDSS 版は DMDATA の電文、standard は P2PQuake の受信を記録） |
-| SettingsTab | `src/components/SettingsTab/` | 各種設定・テストボタン・実地震テスト再生・API キー入力 |
+| TelegramTab | `src/components/TelegramTab/` | 受信電文ログ（中継と自分の鍵で受けた DMDATA の電文を記録） |
+| SettingsTab | `src/components/SettingsTab/` | 各種設定・テストボタン・テスト時刻設定（リプレイ）・API キー入力 |
 
 ### 電文ログには「どの経路で入ったか」を添える
 
@@ -560,11 +548,11 @@ memo を効かせるには props が参照安定である必要があるため�
 
 | `origin` | 積む場所 | 行の印 |
 |---|---|---|
-| `live` | ライブの WebSocket（`dmdata.ts`・`p2pquake.ts`） | 出さない（既定の経路。付けると全行が賑やかになる） |
+| `live` | ライブの WebSocket（`dmdata.ts`。中継と自分の鍵の両方） | 出さない（既定の経路。付けると全行が賑やかになる） |
 | `test` | 設定の窓のテストボタン（`utils/testTelegrams.ts`） | `テスト` |
-| `replay` | リプレイ（`dmdataReplay.ts`・`dmdataReplayLive.ts`・`p2pquakeReplay.ts`） | `再生` |
+| `replay` | リプレイ（`dmdataReplay.ts`・`dmdataReplayLive.ts`） | `再生` |
 
-標準版の電文ログには取得元の絞り込みが無い（取得元が P2PQuake の 1 つだけのため。標準版と DMDSS 版を中継で 1 つにまとめると無くなる差（[relay-server-design.md](../relay-server-design.md)）。2026-10-23 選択「今のまま記録する (Recommended)」）。
+電文ログには取得元の絞り込みが無い（取得元が DMDATA の電文だけになったため）。かつて標準版にだけ絞り込みが無かった差は、2026-10-23 選択「今のまま記録する (Recommended)」で据え置き、2 つの版を 1 つにまとめたときに無くなった（[relay-server-design.md](../relay-server-design.md)）。
 
 **発信元（`source`）とも、訓練・試験の印（`isTest`）とも別の軸。** テストボタンとリプレイが
 流すのは実電文そのものなので、`source` だけではライブの受信と見分けが付かない。`isTest` は
@@ -618,7 +606,7 @@ memo を効かせるには props が参照安定である必要があるため�
 | 地震カードの履歴の遡り（7 日） | カードの一覧を厚くするためのもので、再生の窓で流れない。載せると枠を遡りぶんが食い潰す |
 | 初期状態（窓の手前 24 時間）の材料 | 同上。再生開始の 1 tick で一斉に積まれ、「いま再生している電文」と見分けが付かないまま並ぶ |
 | 張り直しの取り戻し・起動時の EEW の復元 | **ライブ由来なのに載らない既知の穴。** この経路は WebSocket を通らないので `onRawMessage` が呼ばれず、本文も `ReplayPayload` へ読んだ後しか手元に無い。載せるには取得側が本文を保つ必要がある |
-| ローカル履歴アーカイブ・実地震テストシナリオ | 電文を読んだ**結果**を収録したもので、本文そのものを持たない |
+| ローカル履歴アーカイブ | 電文を読んだ**結果**を収録したもので、本文そのものを持たない |
 
 **行を運ぶ 2 つの型は、どちらも任意（`?`）にしない** —— `types/replay.ts` の `ReplayEntry.logEntry`
 と、`useEarthquakes.ts` の `QueueEntry.logEntry`（どちらも `TelegramLogEntry | null`）。電文を組む
@@ -648,11 +636,12 @@ yuremado/
 │   │   └── PanelResizeHandle.tsx # 縦積み時の地図／パネル境界（高さ調整・折りたたみ）
 │   ├── hooks/                 # データ取得・状態管理・派生データ計算
 │   ├── services/              # 外部データソースクライアント → data-sources-spec.md
-│   │   ├── dmdata.ts          # DMDATA.JP WebSocket + REST
+│   │   ├── dmdata.ts          # DMDATA の形の WebSocket + REST（中継と自分の鍵の両方）
+│   │   ├── relayEndpoint.ts   # 中継の繋ぎ先・札・429 の待ち
+│   │   ├── dmdataEndpoint.ts  # 繋ぎ先の型と、自分の鍵の繋ぎ先
 │   │   ├── dmdataParser.ts    # DMDATA の電文（XML）のパース
-│   │   ├── dmdataReplay.ts    # 実地震シナリオリプレイ（archive 取得）
-│   │   ├── p2pquake.ts        # P2PQuake（標準版）＋レスポンス検証
-│   │   ├── parseHelpers.ts    # 外部レスポンスの値取り出しヘルパ（DMDATA・P2PQuake 共用）
+│   │   ├── dmdataReplay.ts    # 履歴・リプレイ（日ごとの束の取得）
+│   │   ├── parseHelpers.ts    # 外部レスポンスの値取り出しヘルパ
 │   │   └── kyoshin.ts         # Yahoo リアルタイム震度・クロック同期
 │   ├── utils/                 # 純粋関数群
 │   │   ├── eew.ts             # EEW レベル判定・自動解除 → eew-spec.md
@@ -663,19 +652,20 @@ yuremado/
 │   │   ├── testTelegrams.ts  # テストボタンの電文を読んで押した時刻へずらす → settings-pwa-spec.md §7
 │   │   ├── testTelegramScripts.ts # どのボタンが何をどの順で流すか（台本）
 │   │   ├── testTelegramRewrite.ts # 実電文を書き換えて、実配信に無い形を作る部品
-│   │   └── testScenarioReplay.ts # 実地震シナリオの時刻シフト・ID 再採番
+│   │   └── testScenarioReplay.ts # テストボタンの台本の時刻シフト・ID 再採番
 │   └── types/                 # 型定義
 ├── public/
 │   ├── data/                  # 事前生成データ（座標・境界・辞書）→ data-sources-spec.md §6
 │   ├── fonts/                 # SDF グリフ（地名ラベル用）
 │   └── icons/                 # PWA アイコン
-├── scripts/                   # 生成データ・グリフ生成スクリプト、実地震シナリオキャプチャ
+├── scripts/                   # 生成データ・グリフ生成スクリプト
 ├── docs/
 │   ├── spec/                  # 現在参照される仕様書（この文書を含む）
 │   └── archive/               # 完了済み PoC・移行記録
 ├── README.md                  # プロジェクトの概要と導線
 ├── CLAUDE.md                  # Claude Code 向けの開発ワークフロー
-├── vite.config.ts             # Vite + PWA 設定・バリアント切替
+├── bridge/                    # github.io の旧 URL に置く橋渡しのページ
+├── vite.config.ts             # Vite + PWA 設定
 ├── tsconfig.json              # TypeScript 設定
 ├── package.json
 └── LICENSE
@@ -764,7 +754,7 @@ Redux 等のグローバルストアは使わず、React のフック（`useStat
 - EEW 自動解除タイミング
 - 津波 `validDateTime` の期限判定
 - Yahoo 強震モニタの取得ラグ計算
-- 実地震テストシナリオの時刻シフト
+- テストボタンが流す電文の時刻シフト
 
 実装は `src/utils/clock.ts` の `serverNow()` に統一されている。較正は 30 秒ごとに外部の時刻サービスへ
 問い合わせて行う（取れなかった周期のみ Yahoo 強震モニタの応答から推定する）。手段と優先順位の詳細は
@@ -776,13 +766,9 @@ Redux 等のグローバルストアは使わず、React のフック（`useStat
 
 **単一情報源**: 全ファイル一覧・生成スクリプト・出典は [`data-sources-spec.md §6`](data-sources-spec.md) を参照。ここで重複記載していた表は削除した（`architecture-spec.md` と `data-sources-spec.md` の 2 箇所に置いていたところ内容がドリフトしていた反省）。
 
-`public/data/test-scenarios/*.json` は実地震テストのシナリオデータで、`.gitignore` されている
-（DMDATA.JP 利用規約第 15 条により EEW 二次配信が個人契約で制限されるため）。詳細は
-[`settings-pwa-spec.md`](settings-pwa-spec.md) の「実地震テスト」節。
-
 ## 8. PWA・Service Worker
 
-`vite-plugin-pwa` + Workbox。バリアントごとに独立した Service Worker がキャッシュを管理する。
+`vite-plugin-pwa` + Workbox。Service Worker がキャッシュを管理する（スコープは配信パス `/`）。
 オフラインでも地図・UI は表示できるが、リアルタイム受信はネットワーク接続時のみ動作。地図の生成データは、一度開いたときの控えから読む（初めて開いた端末では出ない）。
 
 詳細は [`settings-pwa-spec.md`](settings-pwa-spec.md) の PWA 節。
@@ -790,8 +776,8 @@ Redux 等のグローバルストアは使わず、React のフック（`useStat
 ## 9. 関連する既知の設計判断
 
 - 地図の Leaflet 版は v4.0.0 で完全撤去、MapLibre GL に一本化された（`docs/archive/webgl-migration/` 参照）
-- 予報円は震源要素（lat/lng/depth/magnitude）と `originTime` を入力とする自前計算（`usePsWaveCalc`）に統一（両バリアント共通）。**以前は Yahoo `psWave.items` を使っていたが、現在は入力として一切参照しない**（詳細は [`eew-spec.md`](eew-spec.md) §6 参照）
-- 「テスト時刻設定」の再生中はライブ接続を止める（両バリアント。理由は [`settings-pwa-spec.md`](settings-pwa-spec.md) §6）
+- 予報円は震源要素（lat/lng/depth/magnitude）と `originTime` を入力とする自前計算（`usePsWaveCalc`）に統一。**以前は Yahoo `psWave.items` を使っていたが、現在は入力として一切参照しない**（詳細は [`eew-spec.md`](eew-spec.md) §6 参照）
+- 「テスト時刻設定」の再生中はライブ接続を止める（理由は [`settings-pwa-spec.md`](settings-pwa-spec.md) §6）
 
 ## 10. 改訂履歴
 
@@ -871,3 +857,4 @@ Redux 等のグローバルストアは使わず、React のフック（`useStat
 - 2026-10-27: §4 の縦並びの表で、凡例を右端・共有ボタンを左端へ改めた（地図の下の隅を入れ替えたため）
 - 2026-10-27: 地図の上の隅を 1 本の横並びにした（左右を別々に絶対配置すると互いの幅を知らないので、320px で実データのまま 1px 接し、観測点名が長いと最大 101px、左に取得失敗の行・右に 2 行以上で最大 257px 重なっていた。2026-10-27 ユーザー選択「左右を1本の横並びにする (Recommended)」）。§4 の表で、行動チェックリストを隅の列の下端から始める形（下限 3rem）に、共有ボタンをチェックリストが出ている間だけ高さを持つ形に改めた（同日ユーザー選択「測ってから一緒に直す (Recommended)」「共有ボタンの高さを帯の下限に入れる (Recommended)」）。隅の列が高く地図が低いときは、チェックリストの上の余白を「地図の高さ − 下側へ残す高さ（いま出ているものの縮まない分）」で止め、バナーの見出しを残す形にした（同日ユーザー選択「バナーを優先 (Recommended)」）
 - 2026-10-29: ファイル構成の揺れ検知エンジンを `kyoshinEnsembleDetector.ts`（組み合わせの検知器）へ改めた
+- 2026-10-31: 標準版と DMDSS 版を 1 つにまとめた形へ直した。§2 のデータフローと §3 の 2 つの版の表を、中継・自分の鍵・強震モニタの受け取り方の表 1 つにまとめ、配信を Cloudflare Pages と旧 URL の橋渡しへ改めた。P2PQuake と実地震テストシナリオの記述を外した

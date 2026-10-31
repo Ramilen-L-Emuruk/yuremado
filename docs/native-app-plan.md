@@ -17,7 +17,7 @@
 | エンジン | 利用者が自分で立てる HTTP の合成サーバー。いまの PWA が叩いている相手 |
 | 中継 | DMDATA の電文を中継する自前のサーバー（[`relay-server-design.md`](relay-server-design.md)） |
 | 段 | 中継の設計書が作業を分けた単位（段 1a〜4。同 §11） |
-| 2 つの版 | いまの PWA の標準版（P2PQuake で受ける）と DMDSS 版（DMDATA で受ける）。中継の段 3b で 1 つにまとめる |
+| 2 つの版 | いまの PWA の標準版（P2PQuake で受ける）と DMDSS 版（DMDATA で受ける）。中継の段 3b で 1 つにまとめた |
 | 前面サービス | Android で、アプリが画面に出ていない間も動き続けるための仕組み（Foreground Service） |
 
 ## 0. 決まっていること
