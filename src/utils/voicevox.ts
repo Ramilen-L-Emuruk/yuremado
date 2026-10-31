@@ -1832,7 +1832,7 @@ async function speakOnce(
       log.debug('[VoiceVox] 先行合成が使えなかったため作り直す')
     }
     // 切り出し語（緊急地震速報の第 1 フェーズ）は起動時に作り置きしてある。
-    // 当たれば合成の往復を丸ごと省けるので、間を置かない経路でも待たずに鳴らせる。
+    // 当たれば合成の往復を丸ごと省けるので、先行合成が使えない経路（読む文を音の待ち明けに決める EEW）でも待たずに鳴らせる。
     // 間に合っていなければ待たずに普通の合成へ落ちる（`takeFixedPhrase` の注記を参照）。
     const fixed = takeFixedPhrase(baseUrl, speakerId, chunks[0])
     if (fixed) return fixed

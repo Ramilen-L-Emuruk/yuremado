@@ -89,11 +89,11 @@ describe('検知カードは渡された点列をそのまま集計する', () =
   describe('震度0以上の点が無く、震度0未満の点だけがあるとき', () => {
     const members = (...keys: string[]) => [fakeEvent({ id: 'evt-c', confidence: 'confirmed', memberKeys: keys })]
 
-    it('正: 「震度0以下の反応」と出し、推定最大震度は「0以下」', () => {
+    it('正: 「震度0以下の反応」と出し、最大リアルタイム震度は「0以下」', () => {
       // index 5・4 = 震度0未満・index -1 = 欠測（欠測は数えない）
       renderTab(members('sub1', 'sub2', 'missing'), [P('sub1', 5), P('sub2', 4), P('missing', -1)])
       expect(screen.getByText(/2観測点で震度0以下の反応/)).toBeTruthy()
-      // 推定最大震度と「0以下」の行の 2 箇所に出る
+      // 最大リアルタイム震度と「0以下」の行の 2 箇所に出る
       expect(screen.getAllByText('0以下')).toHaveLength(2)
       expect(screen.queryByText(/観測点の反応は収まりました/)).toBeNull()
     })
