@@ -428,7 +428,7 @@ describe('deriveKyoshinView: confirmedShocks の位置はメンバーの重心',
   })
 })
 
-// 確かな段の要約の index は、通知の「推定最大震度」の呼び名（`kyoshinDetectionScaleLabel`）へ渡る。
+// 確かな段の要約の index は、通知の「最大リアルタイム震度」の呼び名（`kyoshinDetectionScaleLabel`）へ渡る。
 // 欠測を 0 に丸めると、計測震度 -3.0 の値があるように「0以下」と名乗る
 describe('deriveKyoshinView: confirmedShocks の index と欠測', () => {
   const sites: SiteCoords = [

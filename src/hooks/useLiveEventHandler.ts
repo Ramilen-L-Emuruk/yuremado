@@ -233,12 +233,18 @@ const SPEECH_PRIORITY = {
    */
   normal: 1,
   /**
+   * 強震モニタの揺れ検知（「〇〇で揺れを検知。」）。**いま揺れているという話なので、前の地震の
+   * 地震情報（各地の震度は読み切りに 2 分近い）を切って先に言う**（2026-10-31 ユーザー選択
+   * 「地震情報を切って読む (Recommended)」）。津波の等級・EEW は切らずに待つ。
+   */
+  kyoshinDetect: 2,
+  /**
    * 津波の等級の発表（新規・格上げ・引き下げ・解除）と南海トラフ臨時情報・後発地震注意情報。
    * 後者を津波と同格にしているのは、発表頻度が極端に低く聞き逃したときの損失が大きいため。
    *
    * **観測情報はここに含めない**（`normal` の注記）。等級が動いたかどうかで格が変わる。
    */
-  high: 2,
+  high: 3,
 } as const
 type SpeechPriority = typeof SPEECH_PRIORITY[keyof typeof SPEECH_PRIORITY]
 
@@ -285,6 +291,8 @@ type SpeechTopic =
    */
   | `cancelReason:${string}`
   | 'tsunami' | 'tsunamiObs' | 'nankai' | 'kohatsu' | 'nankaiCommentary' | 'earthquakeCount'
+  /** 強震モニタの揺れ検知（電文ではない）。同じ主題の後発は先発を取り下げる（新しい検知だけ読めばよい）。 */
+  | 'kyoshinDetect'
   /**
    * 推計震度分布図。**地震ごとに分ける**（鍵は `estimatedIntensityTopicKey`）。
    *
@@ -386,7 +394,7 @@ function isMutualYieldTopic(topic: SpeechTopic): boolean {
  * （`mutualYield` は `MUTUAL_YIELD_SPEECH_MAX_WAIT_MS`、それ以外は
  * `HIGHER_PRIORITY_SPEECH_MAX_WAIT_MS`）。
  */
-type SpeechBlocker = 'eewChain' | 'eewPhase2' | 'higher' | 'mutualYield'
+type SpeechBlocker = 'eewChain' | 'eewPhase2' | 'higher' | 'mutualYield' | 'pendingDetection'
 
 /**
  * EEW 第 1 フェーズ（震源の読み上げ）の進み具合。詳細は `eewPhase1ProgressRef` の宣言箇所。
@@ -2251,6 +2259,12 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     if (eewTtsMaxTimersRef.current.size > 0
       || eewScaleStabilityRef.current.size > 0
       || eewLpgmStabilityRef.current.size > 0) return 'eewPhase2'
+    // 揺れ検知の読み上げが音との間を置いている間は、それより軽い読み上げは始めずに待つ。**取り下げは
+    // しない**（`overtakenByHeavierArrival` が揺れ検知を数えない）—— 間の最中の地震情報を消さず、検知を
+    // 言い終えてから読む（2026-10-31 ユーザー選択「取り下げず後で読む (Recommended)」）。検知が鳴り始めたら
+    // 枠から降りるので、その後は下の 'higher' で読み終わりを待つ。
+    if (priority < SPEECH_PRIORITY.kyoshinDetect
+      && latestScheduledSeqByPriorityRef.current.has(SPEECH_PRIORITY.kyoshinDetect)) return 'pendingDetection'
     const active = activeNonEewSpeechRef.current
     if (active === null) return null
     if (active.priority > priority) return 'higher'
@@ -2297,6 +2311,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // EEW は優先度の尺度の外にいて、常に最も重い。
     if (latestEewSpeechSeqRef.current > seq) return true
     for (const [p, s] of latestScheduledSeqByPriorityRef.current) {
+      // 揺れ検知は取り下げずに待たせる（→ `speechBlocker` の 'pendingDetection'）
+      if (p === SPEECH_PRIORITY.kyoshinDetect) continue
       if (p > priority && s > seq) return true
     }
     return false
@@ -2352,7 +2368,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     switch (blocker) {
       case 'eewChain': return eewSpeechChainRef.current
       // 待つ相手の Promise はまだ無いので、短く眠って見直す。
-      case 'eewPhase2': return sleep(EEW_PHASE2_PENDING_POLL_MS)
+      case 'eewPhase2': case 'pendingDetection': return sleep(EEW_PHASE2_PENDING_POLL_MS)
       case 'higher': case 'mutualYield': return activeNonEewSpeechRef.current?.done ?? null
     }
   }
@@ -6991,5 +7007,24 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     scheduleSpeech(TELEGRAM_TEXT_SPEECH_RESERVE_DELAY_MS, () => speakTelegramText(event))
   }
 
-  return { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks: tsunamiValueMarksState, focusedDistrict, eewNoForecastSettledKeys }
+  /**
+   * 強震モニタの揺れ検知を読み上げる（「〇〇で揺れを検知。」）。電文ではないので受信処理を通らず、
+   * 揺れ検知のフックから呼ばれる。待ち行列の層は `SPEECH_PRIORITY.kyoshinDetect`。
+   *
+   * **間は呼び出し側が決める**（検知音と、同じ瞬間に鳴った震度更新音の長い方。→ `useKyoshinAlerts`）。
+   * 呼び出し側は音を鳴らしたのと同じ処理の中で呼ぶ（間は音が鳴り始める時刻から数える。→ `scheduleSpeech`）。
+   * 待っている間に EEW が届けば、到来順の裁き（`overtakenByHeavierArrival`）が取り下げる。
+   * 逆に、待っている間に間が明けた軽い読み上げ（地震情報）は取り下げず、検知を言い終えるまで待たせる
+   * （`speechBlocker` の 'pendingDetection'。2026-10-31 ユーザー選択「取り下げず後で読む (Recommended)」）。
+   */
+  const speakKyoshinDetection = (text: string, delayMs: number): void => {
+    if (!settings.voicevoxEnabled) {
+      // 設定「揺れ検知の読み上げ」を入れていても、読み上げ自体が切れていれば鳴らない。黙った理由を残す
+      log.debug(`[kyoshin] 読み上げ（VOICEVOX）が無効のため揺れ検知を読まない: ${text}`)
+      return
+    }
+    speakNonEEWDelayed(text, SPEECH_PRIORITY.kyoshinDetect, delayMs, 'kyoshinDetect')
+  }
+
+  return { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks: tsunamiValueMarksState, focusedDistrict, eewNoForecastSettledKeys, speakKyoshinDetection }
 }

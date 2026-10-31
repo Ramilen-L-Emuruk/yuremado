@@ -41,7 +41,7 @@
 
 ### 範囲
 
-読み上げへ渡る文字列の出どころは 3 つ。
+読み上げへ渡る文字列の出どころは 4 つ。
 
 1. `src/utils/ttsText.ts`（定義 106 件。うち `function` / `const` が 100、`type` / `interface` が 6）
 2. `src/hooks/useLiveEventHandler.ts` の `plain('津波観測情報。')` **1 箇所** ——
@@ -49,6 +49,8 @@
 3. `src/components/SettingsTab/index.tsx` の VOICEVOX 試聴ボタン **1 箇所** ——
    設定を確かめるための固定文で、電文を受け取って読む文ではない。**一覧には載せるが、
    実運用の文型と食い違っている**（→ §4-9）
+4. `src/utils/kyoshinRegionName.ts` の `kyoshinDetectSpeechText` **1 箇所** ——
+   強震モニタの揺れ検知を読む文。電文から組む文ではない（下の手順で数えた件数には入っていない）
 
 ### 手順
 
@@ -232,6 +234,7 @@
 |---|---|---|---|
 | `useLiveEventHandler.ts` の `plain('津波観測情報。')` | アプリ | 名乗りだけ | 名乗りの出どころが 2 箇所に分かれる（意図的。波高の文がある報は `tsunamiObservationUpdateToSegments` が自前で名乗りを持つので、無い報だけここで足す） |
 | `SettingsTab/index.tsx` の VOICEVOX 試聴 | アプリ | 「緊急地震速報、三陸沖で地震。」「予想最大震度6強。」（実運用と同じ関数から組む。→ §4-9） | |
+| `kyoshinRegionName.ts` の `kyoshinDetectSpeechText` | アプリ（地名は検知カードと同じ決め方の区域名） | 「石川県能登で揺れを検知。」／区域が決まらなければ「揺れを検知。」 | 電文ではなく強震モニタの検知を読む唯一の文（文は 2026-10-31 ユーザー選択「地名だけ・1回 (Recommended)」） |
 
 ## 4. 揃っていない点
 
@@ -641,3 +644,4 @@ VOICEVOX 試聴ボタンが読ませていたのは次の一文で、文字列�
 - 2026-10-29: `buildLpgmRegionText` の行に、階級 0 の地域も「階級0を〈区域〉」の同じ形で読むことを添えた
 - 2026-10-30: 区域単位で等級が動いた報の行を、津波予報の名乗り（「津波予報（若干の海面変動）」）と、警報等が残るときに足す避難の呼びかけに合わせた
 - 2026-10-30: 区域単位の等級変化に足す避難の呼びかけ（`tsunamiAreaGradeChangeActionSegments`）と、予想波高だけが動いた続報の文（`tsunamiForecastHeightChangeToSegments`）の行を足した。§2 の件数は数え直していない
+- 2026-10-31: §3.8 に揺れ検知の読み上げの文（`kyoshinDetectSpeechText`）を足した

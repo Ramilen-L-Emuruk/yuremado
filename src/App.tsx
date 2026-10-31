@@ -904,7 +904,7 @@ export function App() {
   // 据え置いた報（`quakeHeldBack`）と取消は積まない —— 音・読み上げと同じく、カードが採らない報では動かさない。
   const pendingQuakeNotifyRef = useRef<JMAQuake[]>([])
   // ライブイベント受信処理（通知音・タイトル・タブ切替・読み上げ・ブラウザ通知）
-  const { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks, focusedDistrict, eewNoForecastSettledKeys } = useLiveEventHandler({
+  const { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks, focusedDistrict, eewNoForecastSettledKeys, speakKyoshinDetection } = useLiveEventHandler({
     settings, title, earthquakesRef, tsunamisRef, nankaiActiveRef,
     setActiveTabNonRealtime, setActiveTabRealtimeOnUpdate, setActiveTabRealtimeUrgent,
     followSpeechTab, preSpeechTab, speechFollow, unreceivedFollow, telegramTextFollow,
@@ -2403,6 +2403,8 @@ export function App() {
     revertToDefaultTab,
     onShakeFocus: handleShakeFocus,
     reonset: kyoshinReonset,
+    detectedPoints: kyoshinView.detectedPoints,
+    speakDetection: speakKyoshinDetection,
   })
   // 宣言が useReplayController より後になるため ref 経由で渡す（上記 resetLocalState 参照）。
   resetKyoshinAlertsRef.current = kyoshinAlerts.resetForReplay
@@ -2623,7 +2625,7 @@ export function App() {
     showPlateBoundaries: settings.showPlateBoundaries,
     // 公開観測点の三角は、下部に波形を出している間か、地震カードを開いている間だけ地図に描く（`PublicStationMarkersGL`）。
     showPublicStations: publicStationMarkers.length > 0,
-    // 揺れ検知中の見出し（緊急地震速報が無いとき）。推定最大震度の段は、ブラウザ通知の本文が使う値と同じ式で決める
+    // 揺れ検知中の見出し（緊急地震速報が無いとき）。最大リアルタイム震度の段は、ブラウザ通知の本文が使う値と同じ式で決める
     // （確定中は確定した点の最大・可能性の段階は主候補の最大。`useKyoshinAlerts` の `effectiveKyoshinMaxIndex`）。
     // どちらも値を持つ点が無ければ -1（欠測）——0 は「0以下」と焼かれるので、欠測を 0 から始めない
     kyoshinDetection: kyoshinView.confirmed

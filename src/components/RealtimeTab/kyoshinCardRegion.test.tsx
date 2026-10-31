@@ -2,8 +2,9 @@
 //
 // 検知カードの区域名。
 //
-// 区域名は最も強い観測点が入る一次細分区域から引く（2026-10-22 ユーザー選択「地域名を出す
-// (Recommended)」、出し方は 2026-10-24 ユーザー選択「本文と内訳の両方 (Recommended)」）。
+// 区域名は検知に入った点を一次細分区域ごとに「点の数×強さ」で足し、いちばん大きい区域から引く（2026-10-22
+// ユーザー選択「地域名を出す (Recommended)」、出し方は 2026-10-24 ユーザー選択「本文と内訳の両方 (Recommended)」、
+// 決め方は 2026-10-31 ユーザー選択「揃える (Recommended)」・文言は同日「「最も強く揺れている地域：〇〇」 (Recommended)」）。
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, cleanup, screen, fireEvent } from '@testing-library/react'
 import type { SubRegion } from '../../utils/subregions'
@@ -62,23 +63,23 @@ function renderTab(detections: EnsembleDetection[], points: DetectedPoint[]) {
 }
 
 describe('検知カードの区域名', () => {
-  it('正: 最も強い観測点の区域名を本文に出す', () => {
+  it('正: 区域に寄せられる点から区域名を本文に出す（区域外の点が最も強くても、区域内の点で決める）', () => {
     renderTab([ev({ id: 'evt-1', confidence: 'confirmed' })], [farAway('a', 7), inside('b', 11)])
-    expect(screen.getByText('最も強い観測点：テスト区域')).toBeTruthy()
+    expect(screen.getByText('最も強く揺れている地域：テスト区域')).toBeTruthy()
   })
 
-  it('対照: 最も強い観測点がどの区域にも寄せられなければ、行を出さない', () => {
-    renderTab([ev({ id: 'evt-1', confidence: 'confirmed' })], [farAway('a', 11), inside('b', 7)])
-    expect(screen.queryByText(/最も強い観測点/)).toBeNull()
+  it('対照: どの点も区域に寄せられなければ、行を出さない', () => {
+    renderTab([ev({ id: 'evt-1', confidence: 'confirmed' })], [farAway('a', 11), farAway('c', 7)])
+    expect(screen.queryByText(/最も強く揺れている地域/)).toBeNull()
   })
 
   it('対照: 区域データが未読み込みなら行を出さない', () => {
     loaded = null
     renderTab([ev({ id: 'evt-1', confidence: 'confirmed' })], [inside('b', 11)])
-    expect(screen.queryByText(/最も強い観測点/)).toBeNull()
+    expect(screen.queryByText(/最も強く揺れている地域/)).toBeNull()
   })
 
-  it('正: 内訳では地域ごとに、そのメンバーの最も強い観測点の区域名を添える', () => {
+  it('正: 内訳では地域ごとに、そのメンバーで最も強く揺れている区域名を添える', () => {
     renderTab(
       [
         ev({ id: 'evt-1', confidence: 'confirmed', memberKeys: ['b'] }),
@@ -90,5 +91,31 @@ describe('検知カードの区域名', () => {
     expect(screen.getByText('地域 1・テスト区域（検知）')).toBeTruthy()
     // 区域へ寄せられない地域は番号だけ
     expect(screen.getByText('地域 2（可能性）')).toBeTruthy()
+  })
+
+  // 震度0 未満の点だけの反応でも、反応が続いている間は名前を出し、収まったら消す
+  // （2026-10-31 ユーザー選択「両方出す (Recommended)」）。index 3 は計測震度 −1.5（震度0 未満）
+  it('正: 確かな段で震度0 未満の点だけが反応している間も、区域名を出す', () => {
+    renderTab([ev({ id: 'evt-1', confidence: 'confirmed', memberKeys: ['b'] })], [inside('b', 3)])
+    expect(screen.getByText('最も強く揺れている地域：テスト区域')).toBeTruthy()
+  })
+
+  it('対照: 早い段で震度0 未満の点だけなら反応は収まった扱いなので、本文にも内訳にも区域名を出さない', () => {
+    renderTab(
+      [
+        ev({ id: 'evt-1', confidence: 'likely', memberKeys: ['b'] }),
+        ev({ id: 'evt-2', confidence: 'likely', memberKeys: ['c'] }),
+      ],
+      [inside('b', 3), inside('c', 3)],
+    )
+    expect(screen.getByText(/観測点の反応は収まりました/)).toBeTruthy()
+    expect(screen.queryByText(/最も強く揺れている地域/)).toBeNull()
+    fireEvent.click(screen.getByText('判定の内訳'))
+    expect(screen.queryByText(/テスト区域/)).toBeNull()
+  })
+
+  it('安全弁: 欠測（負の値）の点しか無ければ、反応中でも区域名を出さない', () => {
+    renderTab([ev({ id: 'evt-1', confidence: 'confirmed', memberKeys: ['b'] })], [inside('b', -1)])
+    expect(screen.queryByText(/最も強く揺れている地域/)).toBeNull()
   })
 })

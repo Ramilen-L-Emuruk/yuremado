@@ -3,7 +3,7 @@ import type { EEWAlert } from '../types/earthquake'
 import type { TabId } from '../components/IconNav'
 import type { AppSettings } from './useSettings'
 import type { AlertTitleApi } from './useAlertTitle'
-import { playAlertSound, playKyoshinUpdateSound, kyoshinLevel } from '../utils/alertSound'
+import { playAlertSound, playKyoshinUpdateSound, kyoshinLevel, ttsDelayFor, kyoshinUpdateSoundLengthMs } from '../utils/alertSound'
 import { kyoshinDetectionScaleLabel } from '../utils/kyoshinIntensity'
 import { showBrowserNotification } from '../utils/notifications'
 import { hasDepth } from '../utils/formatters'
@@ -11,7 +11,9 @@ import { hasKnownEpicenter, haversineKm } from '../utils/geo'
 import { log } from '../utils/logger'
 import { reachRadiusKm } from '../utils/travelTime'
 import { eewFeltRadiusKm, isProvisionalHypocenter } from '../utils/eew'
-import type { ConfirmedShock } from '../utils/kyoshinDetectionView'
+import type { ConfirmedShock, DetectedPoint } from '../utils/kyoshinDetectionView'
+import { dominantRegionName, kyoshinDetectSpeechText } from '../utils/kyoshinRegionName'
+import { getSubRegionsCache } from '../utils/subregions'
 import { notificationAllowed } from '../utils/notificationGate'
 
 // 強震モニタの揺れ検知（V3 エンジン）に応じたタブ切替・ウィンドウタイトル・通知音・ブラウザ通知を担うフック。
@@ -25,7 +27,7 @@ import { notificationAllowed } from '../utils/notificationGate'
 //  - 検知中に離れた別地域が確定（動的距離閾値より遠い）→ 検知音（別地点の地震）
 //  - 各々の終了 → EEW が無ければデフォルトタブへ復帰
 // 音レベルは confirmed 中は confirmedShocks、likely 中は candidateMaxIndex（どちらもイベント自身の
-// メンバー観測点の最大インデックス。カードの推定最大震度と同じ導出元）で判定する。以前は全観測点の
+// メンバー観測点の最大インデックス。カードの最大リアルタイム震度と同じ導出元）で判定する。以前は全観測点の
 // 生インデックスを無条件スキャンしていたため、検知イベントと無関係な1点が閾値を跨ぐだけでカード表示と
 // 食い違う音が鳴ることがあった（2026-08-08 18:47 天草・芦北地方 M3.1 の誤報調査で発覚）。
 
@@ -278,6 +280,24 @@ function isWithinEewRadius(lat: number, lng: number, nowMs: number, eewInfo: Nea
 }
 
 /**
+ * 確定した揺れのどれかが、発表中の緊急地震速報の揺れの範囲に入っているか。揺れ検知の読み上げを
+ * 見送るのに使う（2026-10-31 ユーザー選択「EEWの範囲内なら読まない (Recommended)」——同じ揺れを
+ * 緊急地震速報が既に読んでいる）。範囲は別地点の発報と同じ判定（`isWithinEewRadius`）。
+ */
+export function anyShockWithinActiveEew(
+  shocks: readonly ConfirmedShock[],
+  nowMs: number,
+  activeEews: ReadonlyMap<string, EEWAlert>,
+): boolean {
+  const infos: NearestEewInfo[] = []
+  for (const eew of activeEews.values()) {
+    const info = extractEewInfo(eew)
+    if (info) infos.push(info)
+  }
+  return shocks.some(s => infos.some(info => isWithinEewRadius(s.lat, s.lng, nowMs, info)))
+}
+
+/**
  * 地域(region)と新しい確定点(sLat, sLng)が「同一地震の伝播範囲内」とみなせるかを判定する。
  *
  * アクティブな各 EEW について、region と新しい確定点の両方がその震源の動的閾値内に収まって
@@ -359,7 +379,7 @@ export function createAlertRegionState(): AlertRegionState {
   return { regions: [], lastNewRegionAtMs: null, anyConfirmedPrev: false, outbreakAtMs: null, lastNowMs: null }
 }
 
-/** 別地点として発報すべき地域。通知の「推定最大震度」はこの地域の値を使う（全体の最大ではない）。 */
+/** 別地点として発報すべき地域。通知の「最大リアルタイム震度」はこの地域の値を使う（全体の最大ではない）。 */
 export interface NewRegionAlert {
   lat: number
   lng: number
@@ -588,13 +608,36 @@ export interface KyoshinAlertsDeps {
    * null で、そのときは寄せずに音とタブ移動だけ出す。**必須にしている**（渡し忘れると黙って鳴らなくなるため）。
    */
   reonset: ReonsetSignal | null
+  /**
+   * 揺れ検知に入った観測点（検知カードと同じ点列）。読み上げる区域名を決めるのに使う
+   * （`dominantRegionName`。カードの区域名と同じ決め方）。
+   */
+  detectedPoints: readonly DetectedPoint[]
+  /**
+   * 揺れ検知を読み上げる（`useLiveEventHandler` の `speakKyoshinDetection`）。`delayMs` は音が鳴り始めてから
+   * 声を出すまでの間。**必須にしている**（渡し忘れると設定を入れても黙って読まないため）。
+   */
+  speakDetection: (text: string, delayMs: number) => void
 }
 
 export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () => void } {
   const {
     confirmed, candidate, candidateMaxIndex, confirmedShocks, dataTime, stalled, settings, title,
     activeEEWsRef, defaultTabRef, setActiveTab, revertToDefaultTab, onShakeFocus, reonset,
+    detectedPoints, speakDetection,
   } = deps
+  // 読み上げは確定の効果より後の効果で予約するので、点列と口は最新を ref で読む
+  const detectedPointsRef = useRef(detectedPoints)
+  detectedPointsRef.current = detectedPoints
+  const speakDetectionRef = useRef(speakDetection)
+  speakDetectionRef.current = speakDetection
+  /**
+   * 確定の効果が「この確定を読み上げる」と決めた印。読み上げそのものは、同じ瞬間に鳴る震度更新音の
+   * 長さが判ってから予約する（下の読み上げの効果）。
+   */
+  const pendingDetectionSpeechRef = useRef(false)
+  /** この描き直しで鳴らした震度更新音の長さ（ms。鳴らしていなければ 0）。読み上げの効果が読んで戻す */
+  const updateSoundLengthThisCommitRef = useRef(0)
 
   // 以下の発報エフェクトは、音の再鳴を安定させるため依存配列を絞ってある（各 effect の
   // eslint-disable を参照）。そのためコールバックと座標をクロージャで掴むと古い実体を呼び続ける。
@@ -675,7 +718,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
    */
   const lostWhileStalledRef = useRef(false)
   /**
-   * 揺れ検知の通知に出した推定最大震度の段（`kyoshinLevel`。-1 は、この揺れでまだ通知していない）。
+   * 揺れ検知の通知に出した最大リアルタイム震度の段（`kyoshinLevel`。-1 は、この揺れでまだ通知していない）。
    * 強まったときの書き換え（`renotifyStronger`）は、これより段が上がったときだけ出す —— 確定の瞬間に開始の通知と
    * 同じ値で二重に出さず、復帰で通知を省いた揺れにも出さない（省いた揺れは途絶の前に通知を出している）。
    */
@@ -705,8 +748,23 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
         }
         if (notificationAllowed(settings, 'detection')) {
           const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
-          showBrowserNotification('揺れを検知中', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection')
+          // 呼び名は「最大リアルタイム震度」（2026-10-31 ユーザー承認「折り返したりが起きないなら最大リアルタイム震度がいいですね」）。強まったとき・別地点の通知も同じ
+          showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}（強震モニタ）`, 'kyoshin-detection')
           notifiedLevelRef.current = kyoshinLevel(effectiveKyoshinMaxIndex)
+        }
+        // 読み上げは確定の立ち上がりで 1 回だけ（2026-10-31 ユーザー選択「地名だけ・1回 (Recommended)」。
+        // 強まったときは更新音だけ）。緊急地震速報の範囲に入る揺れは読まない（`anyShockWithinActiveEew`）
+        if (settings.kyoshinDetectSpeech) {
+          const nowMs = dataTime ? new Date(dataTime).getTime() : NaN
+          if (Number.isFinite(nowMs) && anyShockWithinActiveEew(confirmedShocksRef.current, nowMs, activeEEWsRef.current)) {
+            log.info(`[kyoshin] 緊急地震速報の範囲に入る揺れにつき読み上げを省略（揺れ ${confirmedShocksRef.current.length} 件・発表中の緊急地震速報 ${activeEEWsRef.current.size} 件）`)
+          } else {
+            // 範囲を判定できないとき（データ時刻が読めない）は読む側へ倒す。倒したことを残す
+            if (!Number.isFinite(nowMs) && activeEEWsRef.current.size > 0) {
+              log.info('[kyoshin] データ時刻が読めず緊急地震速報の範囲を判定できないため、揺れ検知を読む')
+            }
+            pendingDetectionSpeechRef.current = true
+          }
         }
       }
     } else if (!confirmed && prevConfirmedRef.current) {
@@ -768,7 +826,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
   const postPeakMinLevelRef = useRef(-1)
   /**
    * 確定（confirmed）中に揺れが強まったら、揺れ検知の通知を同じ札（`kyoshin-detection`）で書き換える
-   * （2026-10-22 ユーザー選択「強まったら通知し直す (Recommended)」）。文面は確定したときと同じで、推定最大震度だけが
+   * （2026-10-22 ユーザー選択「強まったら通知し直す (Recommended)」）。文面は確定したときと同じで、最大リアルタイム震度だけが
    * 新しい値になる。**揺れの可能性（likely）では出さない**（likely での通知は今のまま行わない。同じ選択）。
    */
   const renotifyStronger = (confirmedNow: boolean) => {
@@ -777,7 +835,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     const level = kyoshinLevel(effectiveKyoshinMaxIndex)
     if (notifiedLevelRef.current < 0 || level <= notifiedLevelRef.current) return
     const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
-    showBrowserNotification('揺れを検知中', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection')
+    showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}（強震モニタ）`, 'kyoshin-detection')
     notifiedLevelRef.current = level
   }
   useEffect(() => {
@@ -798,6 +856,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
         requestShakeFocus()
         if (settings.soundEnabled) {
           playKyoshinUpdateSound(effectiveKyoshinMaxIndex, gainScale)
+          updateSoundLengthThisCommitRef.current = kyoshinUpdateSoundLengthMs(effectiveKyoshinMaxIndex)
         }
         renotifyStronger(confirmed)
       }
@@ -812,11 +871,27 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
       requestShakeFocus()
       if (settings.soundEnabled) {
         playKyoshinUpdateSound(effectiveKyoshinMaxIndex, gainScale)
+        updateSoundLengthThisCommitRef.current = kyoshinUpdateSoundLengthMs(effectiveKyoshinMaxIndex)
       }
       renotifyStronger(confirmed)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 音の再鳴を安定させるため依存は限定する
   }, [effectiveKyoshinMaxIndex, confirmed, candidate, settings.soundEnabled])
+
+  // 揺れ検知の読み上げ（「〇〇で揺れを検知。」）。確定の効果が立てた印を、**上の 2 つの効果の後で**
+  // 予約する。確定と同じ瞬間に震度更新音も鳴ることがあり（確定と同時に段が上がった）、その長さが
+  // 判ってから間を決めるため（2026-10-31 ユーザー指示「効果音がなりおわってから読み上げるようにしてくださいね」）。
+  // 依存は上の 2 つの効果の和にして、どちらかが走った描き直しでは必ずこちらも走るようにする。
+  useEffect(() => {
+    const updateLength = updateSoundLengthThisCommitRef.current
+    updateSoundLengthThisCommitRef.current = 0
+    if (!pendingDetectionSpeechRef.current) return
+    pendingDetectionSpeechRef.current = false
+    // 区域名はカードと同じ決め方（点の数×強さ。→ `dominantRegionName`）
+    const name = dominantRegionName(detectedPointsRef.current, getSubRegionsCache())
+    speakDetectionRef.current(kyoshinDetectSpeechText(name), Math.max(ttsDelayFor('kyoshin'), updateLength))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 上の 2 つの効果と同じ描き直しで走らせるための依存
+  }, [confirmed, stalled, effectiveKyoshinMaxIndex, candidate, settings.soundEnabled, settings.notifyDetection])
 
   // 別地点の地震: 検知中に、既存の確定地域から `isSameEarthquake` の閾値より離れた新地域が
   // 確定したら発報する（Scratch 前身のグリッド単位発報に相当。グローバル真偽の
@@ -853,7 +928,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     if (notificationAllowed(settings, 'detection')) {
       // 全体の最大震度ではなく、発報した地域自身の推定震度を出す（「別の地点」の報せなので）
       const label = kyoshinDetectionScaleLabel(alert.index) ?? '?'
-      showBrowserNotification('別の地点で揺れを検知', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection-new')
+      showBrowserNotification('別の地点で揺れを検知', `最大リアルタイム震度 ${label}（強震モニタ）`, 'kyoshin-detection-new')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dataTime を毎フレーム駆動キーにし他は最新クロージャを参照
   }, [dataTime])

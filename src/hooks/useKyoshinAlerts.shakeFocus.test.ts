@@ -49,6 +49,8 @@ function makeDeps(over: Partial<KyoshinAlertsDeps> = {}): KyoshinAlertsDeps {
     setActiveTab: vi.fn(),
     revertToDefaultTab: vi.fn(),
     reonset: null,
+    detectedPoints: [],
+    speakDetection: () => {},
     onShakeFocus: vi.fn(),
     ...over,
   }

@@ -70,6 +70,12 @@ export interface AppSettings {
    * 無効ならそちらが優先される。有効なら受信時にパネルを一時的に開く（他の帯と同じ）。
    */
   quakeNoticeAlerts: boolean
+  /**
+   * 揺れ検知が確かな段に上がったとき、揺れている区域の名前を 1 回読み上げる（「〇〇で揺れを検知。」）。
+   * 緊急地震速報の範囲内の揺れは読まない。`voicevoxEnabled` が無効なら読まない。
+   * 既定は行わない（2026-10-31 ユーザー選択「設定を足し既定オフ」）。
+   */
+  kyoshinDetectSpeech: boolean
   uiScale: number           // UI 倍率 (1 = 100%)
   mapIconScale: number      // 地図アイコンの倍率 (1 = 100%、UI 倍率とは独立)
   // 地図を傾けたとき、震源をどれだけ深く見せるか (1 = 実際の深さ)。水平方向は常に実スケール。
@@ -268,6 +274,7 @@ export const DEFAULTS: AppSettings = {
   quakeNoticeBanner: true,
   // 既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」）。
   quakeNoticeAlerts: false,
+  kyoshinDetectSpeech: false,
   uiScale: 1,
   mapIconScale: 1,
   hypocenterDepthScale: 1,
@@ -469,6 +476,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     nankaiCommentaryAlerts: ensureBool(partial.nankaiCommentaryAlerts, DEFAULTS.nankaiCommentaryAlerts),
     quakeNoticeBanner: ensureBool(partial.quakeNoticeBanner, DEFAULTS.quakeNoticeBanner),
     quakeNoticeAlerts: ensureBool(partial.quakeNoticeAlerts, DEFAULTS.quakeNoticeAlerts),
+    kyoshinDetectSpeech: ensureBool(partial.kyoshinDetectSpeech, DEFAULTS.kyoshinDetectSpeech),
     uiScale: clampNumber(partial.uiScale, 0.5, 3, DEFAULTS.uiScale),
     mapIconScale: clampNumber(partial.mapIconScale, 0.5, 3, DEFAULTS.mapIconScale),
     hypocenterDepthScale: clampNumber(partial.hypocenterDepthScale, 1, 20, DEFAULTS.hypocenterDepthScale),

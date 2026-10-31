@@ -26,7 +26,8 @@ import { isEewWarningKindCode } from '../../utils/eewKind'
 import { serverNow } from '../../utils/clock'
 import { log } from '../../utils/logger'
 import { hasKnownEpicenter } from '../../utils/geo'
-import { getSubRegionsCache, onSubRegionsLoaded, subRegionNameAt, type SubRegion } from '../../utils/subregions'
+import { getSubRegionsCache, onSubRegionsLoaded, type SubRegion } from '../../utils/subregions'
+import { dominantRegionName } from '../../utils/kyoshinRegionName'
 
 /**
  * カードの「地震発現時刻」の見出しに添える吹き出しの文（ホバー・タップで出る）。発生時刻と数秒しか
@@ -1361,22 +1362,11 @@ function useLoadedSubRegions(): SubRegion[] | null {
 }
 
 /**
- * 点の集まりのうち最も強い点（現在震度0以上に限る）。同じ強さなら先に現れた点。
- * `keys` を渡すとその観測点だけから選ぶ（地域ごとの内訳用）。
- */
-function strongestPoint(points: readonly DetectedPoint[], keys?: ReadonlySet<string>): DetectedPoint | null {
-  let best: DetectedPoint | null = null
-  for (const p of points) {
-    if (keys && !keys.has(p.key)) continue
-    if (!kyoshinIndexToLabel(p.index)) continue
-    if (!best || p.index > best.index) best = p
-  }
-  return best
-}
-
-/**
- * 最も強い観測点が入る区域の名前（2026-10-22 ユーザー選択「地域名を出す (Recommended)」）。
- * 区域データが未読み込み・どの区域にも寄せられないときは null（呼び出し側は名前を出さない）。
+ * 最も強く揺れている区域の名前（2026-10-22 ユーザー選択「地域名を出す (Recommended)」）。決め方は揺れ検知の
+ * 読み上げと同じ「点の数×強さ」（`dominantRegionName`。2026-10-31 ユーザー選択「揃える (Recommended)」）。
+ * 震度0 未満の点も数える。出すかどうかはカードが決める —— 反応が続いている間（`settled` でない間）は
+ * 震度0 未満の点だけでも出し、収まったら消す（2026-10-31 ユーザー選択「両方出す (Recommended)」）。
+ * 区域データが未読み込み・値のある点がどの区域にも寄せられないときは null（呼び出し側は名前を出さない）。
  */
 function strongestRegionName(
   points: readonly DetectedPoint[],
@@ -1384,24 +1374,25 @@ function strongestRegionName(
   keys?: ReadonlySet<string>,
 ): string | null {
   if (!subregions) return null
-  const p = strongestPoint(points, keys)
-  return p ? subRegionNameAt(p.lat, p.lng, subregions) : null
+  return dominantRegionName(keys ? points.filter(p => keys.has(p.key)) : points, subregions)
 }
 
 /**
  * 検知の根拠（判定の内訳）。既定は畳んでおき、開いたときだけ表を出す。
  *
  * 一般利用者に読ませたいのは 1 行の要約（`ensembleSummary`）までで、表のほうは検知の
- * 挙動を追う人向け。カードの主情報（推定最大震度・震度分布）を押しのけないよう、既定は閉じる。
+ * 挙動を追う人向け。カードの主情報（最大リアルタイム震度・震度分布）を押しのけないよう、既定は閉じる。
  *
  * **地域ごとに 1 ブロック出す。** カード自体は複数の連結成分を「1 つの揺れ」として集約するが、
  * 判定は地域ごとに独立して走っているため、まとめると「どの地域の話か」が消える。
  */
-function KyoshinGateDetail({ events, points, subregions }: {
+function KyoshinGateDetail({ events, points, subregions, settled }: {
   events: readonly EnsembleDetection[]
   /** 検知カードと同じ点列（地域ごとの区域名を引くのに使う） */
   points: readonly DetectedPoint[]
   subregions: readonly SubRegion[] | null
+  /** 反応が収まったか（収まったら区域名を出さない。本文の「最も強く揺れている地域」と揃える） */
+  settled: boolean
 }) {
   const [open, setOpen] = useState(false)
   return (
@@ -1422,9 +1413,9 @@ function KyoshinGateDetail({ events, points, subregions }: {
             return (
               <div key={e.id} className="rounded-sm p-2" style={{ background: 'rgba(255,255,255,0.05)' }}>
                 {events.length >= 2 && (() => {
-                  // 区域名はその地域のメンバーのうち最も強い観測点から引く（2026-10-24 ユーザー選択
+                  // 区域名はその地域のメンバーから引く（2026-10-24 ユーザー選択
                   // 「本文と内訳の両方 (Recommended)」）。引けなければ番号だけ
-                  const name = strongestRegionName(points, subregions, new Set(e.memberKeys))
+                  const name = settled ? null : strongestRegionName(points, subregions, new Set(e.memberKeys))
                   return (
                     <div className="text-xs text-secondary mb-1">
                       {`地域 ${i + 1}${name ? `・${name}` : ''}（${V2_TIER[e.confidence].label}）`}
@@ -1457,13 +1448,13 @@ function KyoshinGateDetail({ events, points, subregions }: {
 
 // 強震モニタ検知の集約カード。
 // 大地震では揺れが複数の束に分かれるため、検知器は複数の検知を同時に返す。これを「1 つの揺れ」として 1 枚に集約表示する
-// （震源を推定しないため、揺れている地域数と全体の震度分布・推定最大震度を主情報とする）。
+// （震源を推定しないため、揺れている地域数と全体の震度分布・最大リアルタイム震度を主情報とする）。
 // 複数地域にまたがる場合は「広域」を示し、N 件の別地震のように見えるのを防ぐ。
 function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   events: readonly EnsembleDetection[]
   /** 地図の検知点マーカーが描くのと同一の点列（`deriveKyoshinView` が用意する）。 */
   points: DetectedPoint[]
-  /** 一次細分区域の境界（最も強い観測点の区域名を引く）。未読み込みなら null */
+  /** 一次細分区域の境界（最も強く揺れている区域名を引く）。未読み込みなら null */
   subregions: readonly SubRegion[] | null
   /** カードがユーザーの目に入っているか。バー幅スケールの張り直しの可否に使う。 */
   visible: boolean
@@ -1569,7 +1560,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   //
   // ただし**確かな段で、加わった点が全員震度0 未満**（欠測を除く）のときは収まったと言わない。組み合わせの検知器は
   // 震度1 に届かない揺れも確かな段にするので、揺れの最中でも震度0以上の点が 1 つも無いことがある。このときは
-  // 推定最大震度を「0以下」、本文を「N観測点で震度0以下の反応」と出し、色も弱めない
+  // 最大リアルタイム震度を「0以下」、本文を「N観測点で震度0以下の反応」と出し、色も弱めない
   // （2026-10-29 ユーザー選択「「震度0以下」で出す (Recommended)」）。検知は最後の報告から `ENSEMBLE_KEEP_MS` 残るので、
   // 本当に収まった後の余韻もこの形で出る。数えるのは地図に描いている震度0 未満の印と同じ点（早い段の点・直前の値を
   // 保持して描いている点も含む。2026-10-29 ユーザー選択「地図と同じ点を数える (Recommended)」）。
@@ -1579,7 +1570,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   const belowZero = belowZeroCount > 0
   const settled = activeCount === 0 && !belowZero
   const maxLabelShown = maxLabel ?? (belowZero ? kyoshinDetectionScaleLabel(0) : null)
-  const strongestName = strongestRegionName(points, subregions)
+  const strongestName = settled ? null : strongestRegionName(points, subregions)
 
   return (
     <div className="rounded-lg overflow-hidden" style={{ border: `1px solid ${frameBorder}`, backgroundColor: frameBg }}>
@@ -1601,9 +1592,9 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
         <span className="text-xs text-secondary ml-auto font-mono">{time}</span>
       </div>
       <div className="flex gap-2 p-2 roomy:gap-3 roomy:p-3">
-        {/* 推定最大震度 */}
+        {/* 最大リアルタイム震度（2026-10-31 ユーザー承認「折り返したりが起きないなら最大リアルタイム震度がいいですね」。1 行に収まり、列は 4.5rem から約 6.4rem へ広がる） */}
         <div className="flex flex-col items-center justify-center shrink-0" style={{ minWidth: '4.25rem' }}>
-          <span className="text-xs text-secondary">推定最大震度</span>
+          <span className="text-xs text-secondary">最大リアルタイム震度</span>
           {/* 「0以下」は 3 文字あるので一段小さくする（それでも 3 文字ぶん約 4.5rem で、枠の下限 4.25rem より少し広がる） */}
           <span
             className={`font-black leading-none text-white ${maxLabel === null && belowZero ? 'text-[1.5rem] roomy:text-[2rem]' : 'text-[2.25rem] roomy:text-[3rem]'}`}
@@ -1636,9 +1627,10 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
               ))}
             </div>
           )}
-          {/* 最も強い観測点の区域名。反応が収まって点が無いときは出さない */}
+          {/* 最も強く揺れている区域の名前（2026-10-31 ユーザー選択「「最も強く揺れている地域：〇〇」 (Recommended)」）。
+              震度0 未満の点だけの反応でも出し、反応が収まったら出さない（2026-10-31 ユーザー選択「両方出す (Recommended)」） */}
           {strongestName && (
-            <span className="text-xs text-secondary">{`最も強い観測点：${strongestName}`}</span>
+            <span className="text-xs text-secondary">{`最も強く揺れている地域：${strongestName}`}</span>
           )}
           <span className="text-xs text-secondary">
             {activeCount > 0
@@ -1650,7 +1642,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
           {/* 段のチップが「どの段か」を示すのに対し、この行は何がその検知を支えたかを示す。確かな段は確定した瞬間の
               点数と震度、早い段は加わった点の数と支えた部分（文面は `ensembleSummary`）。言えることが無ければ null で行ごと出さない */}
           {summary && <span className="text-xs text-secondary">{summary}</span>}
-          <KyoshinGateDetail events={events} points={points} subregions={subregions} />
+          <KyoshinGateDetail events={events} points={points} subregions={subregions} settled={settled} />
         </div>
       </div>
     </div>

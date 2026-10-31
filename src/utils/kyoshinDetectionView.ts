@@ -206,7 +206,7 @@ export function deriveKyoshinView(
     // （`stepAlertRegions`）は `confirmedShocks` が空になったことを「確定が消えた」と読み、
     // 発報済み・EEW 吸収済みの記録を捨てる。捨てると入れ替えの直後に同じ地域が鳴り直す。
     // メンバーが全員欠測・索引に無いときは -1（欠測）にする。0 は計測震度 -3.0 という値なので、0 へ丸めると
-    // 通知が「推定最大震度 0以下」と値があるように名乗る（`kyoshinDetectionScaleLabel` は欠測を null にする）。
+    // 通知が「最大リアルタイム震度 0以下」と値があるように名乗る（`kyoshinDetectionScaleLabel` は欠測を null にする）。
     // 音の段（`kyoshinLevel`）は 0 未満を震度0 の段として扱う
     const [centroidLat, centroidLng] = n > 0 ? [sumLat / n, sumLng / n] : e.epicenter
     return [{

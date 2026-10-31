@@ -1245,6 +1245,16 @@ function ding(ctx: AudioContext, freq: number, t: number, dur: number, gain: num
 }
 
 /**
+ * 震度更新音が鳴り始めてから止まるまでの長さ（ms）。最後の音の終わり（`warningBeep` は `t + dur` で
+ * 止める）なので、−33.8 dBFS の実測値（{@link SOUND_AUDIBLE_END_MS}）より長めの上限になる。
+ * 揺れ検知の読み上げが、確定と同じ瞬間に鳴った更新音の鳴り終わりを待つのに使う。
+ */
+export function kyoshinUpdateSoundLengthMs(maxIndex: number): number {
+  const p = BEEP_PATTERNS[kyoshinLevel(maxIndex)]
+  return Math.ceil(((p.freqs.length - 1) * p.interval + p.duration) * 1000)
+}
+
+/**
  * 強震モニタの最大インデックスに応じた震度更新音を鳴らす。
  * @param gainScale 音量倍率（既定1.0）。likely（未確定）中に鳴らす場合は控えめな値を渡し、
  *   confirmed 中の更新と聞き分けられるようにする（確信度に見合わない大きさで鳴らさないため）。
