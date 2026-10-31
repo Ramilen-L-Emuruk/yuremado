@@ -284,7 +284,7 @@ describe('stepAlertRegions', () => {
     expect(stepAlertRegions(state, [NOTO], t, new Map())).toBeNull()               // 初検知フレーム
     expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 1000, new Map())).toBeNull() // 遠方を登録
     expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 2000, new Map())).toBeNull() // 持続 2 フレーム
-    // 発報した地域自身の座標と震度を返す（通知の「推定最大震度」に使う）
+    // 発報した地域自身の座標と震度を返す（通知の「最大リアルタイム震度」に使う）
     expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 3000, new Map())).toEqual(FUKUOKA)
   })
 

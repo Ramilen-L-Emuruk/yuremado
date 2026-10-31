@@ -656,17 +656,17 @@ describe('buildShareCardContent — 複数の緊急地震速報・深さ・揺�
   })
 
   // 正（2026-10-23 ユーザー選択「揺れ検知中は推定最大震度を出す (Recommended)」・文面は 2026-10-24「この文面で (Recommended)」）
-  it('正: 緊急地震速報が無く揺れを検知していれば、見出しは「揺れ検知」と推定最大震度', () => {
+  it('正: 緊急地震速報が無く揺れを検知していれば、見出しは「揺れ検知」と最大リアルタイム震度', () => {
     const c = build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'confirmed', maxIndex: 30 } }))
     expect(c.header.title).toBe('揺れ検知')
-    expect(c.header.subtitle).toMatch(/^推定最大震度 .+（強震モニタ）$/)
+    expect(c.header.subtitle).toMatch(/^最大リアルタイム震度 .+（強震モニタ）$/)
     expect(build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'candidate', maxIndex: 30 } })).header.title).toBe('揺れの可能性')
   })
 
   // 正（2026-10-29 ユーザー選択「「0以下」を焼く (Recommended)」）・安全弁（欠測は焼かない）
-  it('正: 推定最大震度が震度0 未満なら「0以下」を焼き、欠測（-1）なら副見出しを出さない', () => {
+  it('正: 最大リアルタイム震度が震度0 未満なら「0以下」を焼き、欠測（-1）なら副見出しを出さない', () => {
     expect(build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'confirmed', maxIndex: 0 } })).header.subtitle)
-      .toBe('推定最大震度 0以下（強震モニタ）')
+      .toBe('最大リアルタイム震度 0以下（強震モニタ）')
     const missing = build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'confirmed', maxIndex: -1 } }))
     expect(missing.header.title).toBe('揺れ検知')
     expect(missing.header.subtitle).toBeUndefined()

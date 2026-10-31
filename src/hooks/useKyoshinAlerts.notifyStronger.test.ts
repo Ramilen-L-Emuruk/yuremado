@@ -41,6 +41,8 @@ function makeDeps(over: Partial<KyoshinAlertsDeps> = {}, settings: Partial<AppSe
     revertToDefaultTab: vi.fn(),
     onShakeFocus: vi.fn(),
     reonset: null,
+    detectedPoints: [],
+    speakDetection: () => {},
     ...over,
   }
 }
@@ -48,7 +50,7 @@ function makeDeps(over: Partial<KyoshinAlertsDeps> = {}, settings: Partial<AppSe
 describe('useKyoshinAlerts: 確定後に強まったら通知を書き換える', () => {
   beforeEach(() => { notify.mockClear() })
 
-  it('[正] 確定中に強まると、同じ札で新しい推定最大震度の通知を出す', () => {
+  it('[正] 確定中に強まると、同じ札で新しい最大リアルタイム震度の通知を出す', () => {
     const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
       initialProps: makeDeps({ confirmed: true, confirmedShocks: [shock(13)] }),
     })

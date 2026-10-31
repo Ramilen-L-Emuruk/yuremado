@@ -1591,6 +1591,16 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             />
           </Row>
         )}
+        {/* 文言は 2026-10-31 ユーザー選択「「揺れ検知の読み上げ」 (Recommended)」、説明文の最後の一文は同日「範囲内と書く (Recommended)」。既定はオフ */}
+        <Row
+          label="揺れ検知の読み上げ"
+          description="強震モニタで揺れを検知したとき、最も強く揺れている地域の名前を読み上げます。緊急地震速報の範囲内の揺れは読み上げません"
+        >
+          <Toggle
+            checked={settings.kyoshinDetectSpeech}
+            onChange={v => onUpdate('kyoshinDetectSpeech', v)}
+          />
+        </Row>
       </Section>
 
       {/* 読み上げの詳しさ。VOICEVOX を有効にしたときだけ出す（無効な端末では何も効かないため）。
