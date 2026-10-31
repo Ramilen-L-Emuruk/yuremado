@@ -514,10 +514,12 @@ git branch -d ready/<type>/<name>
   - **ブランチの削除は飛ばさない。** 改名時にワークツリーだけ消した場合は `ready/*` が残っているため、`git branch -d` は通常どおり実行する。ここを飛ばすとマージ済みの `ready/*` が残り、次回の「前回までの取りこぼし」に毎回現れる
 - **`--force` / `-D` は使わない。** 他セッションの作業ディレクトリを消す操作であり、取り返しがつかない
 - **素の `git worktree remove` は叩かない。** ワークツリーの `node_modules` がジャンクションだと、メインの `node_modules` まで消える。理由と、消し終えた後の確認は CLAUDE.md の同じ節にある
-- `git worktree remove` が失敗する典型は 3 つ。**いずれもユーザーに状況を提示して確認する**
+- `git worktree remove` が失敗する典型は次のとおり。**いずれもユーザーに状況を提示して確認する**
   - 別セッションの Bash がそのディレクトリを作業ディレクトリにしたまま残っている
   - Serena の `activate_project` がそこを指したまま
   - `contains modified or untracked files` と出る場合はロックではない。サブエージェントが検証用に作った使い捨てファイルが残っていることがある。`git -C <worktree> status --short --untracked-files=all` で中身を確認してから消す
+  - dev/preview のポートを止めた後も `esbuild.exe` が別のプロセスで残ることがある。`Get-Process | Where-Object { $_.Path -like "*\.claude\worktrees\<名前>\*" }` で候補を出し、PID と Path の一覧をユーザーへ提示してから PID で止める。`rollup` の `.node` はプロセスの Path に出ないので、この方法では見つからない。ワークツリーの `node_modules` がジャンクションなら、`esbuild.exe` の Path はメイン側になるので、この絞り込みでは拾えない
+  - 片付けるセッション自身の作業ディレクトリがワークツリーの中にあると（実装セッションが自分のワークツリーを片付けたときなど）、中身と登録だけ消えて空のディレクトリが残る（やり直すと `is not a working tree`）。消す直前に取り直した `git worktree list` に載っていないことと `ls -A` が空であることを確かめ、ユーザーへ提示してから `rmdir` で消す。Playwright MCP が掴んで消せないなら残してよい
 - `git branch -d` が失敗するブランチは未マージのコミットを持つ。削除せずユーザーに報告する
 - 手順 4 で起動した preview サーバー（既定 4173 番系ポート）を停止する
 - 片付けで消せなかったもの（掴まれたディレクトリなど）は、その場で待ちの別タスクとして立てる
