@@ -1366,7 +1366,7 @@ function useLoadedSubRegions(): SubRegion[] | null {
  * 読み上げと同じ「点の数×強さ」（`dominantRegionName`。2026-10-31 ユーザー選択「揃える (Recommended)」）。
  * 震度0 未満の点も数える。出すかどうかはカードが決める —— 反応が続いている間（`settled` でない間）は
  * 震度0 未満の点だけでも出し、収まったら消す（2026-10-31 ユーザー選択「両方出す (Recommended)」）。
- * 区域データが未読み込み・値のある点がどの区域にも寄せられないときは null（呼び出し側は名前を出さない）。
+ * 区域データが未読み込み・名前を決める点が 1 つも無いときは null（呼び出し側は名前を出さない）。
  */
 function strongestRegionName(
   points: readonly DetectedPoint[],

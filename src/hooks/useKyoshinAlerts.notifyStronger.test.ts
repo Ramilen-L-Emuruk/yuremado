@@ -22,7 +22,7 @@ vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
 const notify = vi.mocked(showBrowserNotification)
 
 // index は強震モニタの色の段（13≒震度3・16≒震度5弱・19≒震度6強）。音の段（kyoshinLevel）が上がる値を選ぶ
-const shock = (index: number) => ({ lat: 37.5, lng: 137.0, index, peak: { lat: 37.45, lng: 137.15 } })
+const shock = (index: number) => ({ lat: 37.5, lng: 137.0, index, peak: { lat: 37.45, lng: 137.15 }, points: [] })
 
 function makeDeps(over: Partial<KyoshinAlertsDeps> = {}, settings: Partial<AppSettings> = {}): KyoshinAlertsDeps {
   return {
