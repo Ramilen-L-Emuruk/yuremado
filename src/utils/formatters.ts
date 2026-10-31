@@ -108,8 +108,6 @@ export function formatDateTimeMin(isoString: string): string | null {
  * 地震の時刻（`earthquake.time`）に付ける名前。値は電文の `Earthquake/ArrivalTime`
  * 【地震発現時刻】で、震度速報は `Head/TargetDateTime`【基点時刻】だが、資料はその中身を
  * 「最初に地震波を自動検知した観測点における地震波の検知時刻」と書いており、同じものを指す。
- * P2PQuake の `earthquake.time` も、確かめた 2 件では発現時刻と一致した（発生時刻と分が違う地震。
- * 仕様としての保証は確かめていない。→ `docs/spec/quake-spec.md` §1「地震の時刻」）。
  *
  * **`OriginTime` へ落ちた値にもこの名前を付けてよい。** 資料は `ArrivalTime` を必ず 1 回出る要素とし
  * （国外で発現時刻が不明なときも、要素は出たまま中身に発生時刻の値を入れる）、
@@ -210,6 +208,11 @@ export function formatTimeMin(isoString: string): string | null {
   return `${h}:${m}`
 }
 
+/** 「3:12」「15:42」（時は詰め、分は 2 桁）。中継が見ていない区間の帯と、中継が切れた時刻に使う */
+export function formatHourMinute(d: Date): string {
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 /** datetime-local input 用のローカル時刻文字列（YYYY-MM-DDTHH:mm）を返す。 */
 export function formatDateTimeLocal(date: Date): string | null {
   const d = readDateTime('formatDateTimeLocal', date)
@@ -241,8 +244,8 @@ export function formatDepth(depth: number, atLeast: boolean): string {
 }
 
 /**
- * 規模が有効値か。パーサは規模不明の電文を NaN（DMDATA 経路）または -1（P2PQuake 経路）で
- * 渡してくるため、表示・読み上げ・タイトルはいずれもこの判定で「不明」を弾く。
+ * 規模が有効値か。パーサは規模不明の電文を NaN で渡してくる（強震モニタも同じ。ヒートマップの点は
+ * -1 に揃える。→ `heatMagnitude`）ため、表示・読み上げ・タイトルはいずれもこの判定で「不明」を弾く。
  *
  * **負の M も「不明」になる。** 気象庁は M0 未満の地震も決める。長期震源カタログの元データ（1919〜2024 年の
  * 確定値）では、震度の欄に値がある地震（有感）に負の M は見つかっていない（→ docs/spec/telegram-coverage-audit.md §7「前提を全期間で数えた結果」）。電文の M は数えていない。
@@ -259,7 +262,7 @@ export function hasMagnitude(magnitude: number): boolean {
  * 全期間の控え 2,135 日（2020-11-18〜2026-10-18）で現れたのはこの 2 つだけ（国内の地震は
  * ほぼ `Mj`、遠地地震は 184 通中 123 通が `M`）。緊急地震速報は `Mj` か、欄そのものが無い。
  *
- * **種別を持たない経路は従来どおり `M`。** P2PQuake・長期震源カタログは電文に相当する項目が無い。
+ * **種別を持たない経路は従来どおり `M`。** 長期震源カタログは電文に相当する項目が無い。
  * 知らない値が来ても**そのまま出す** —— 気象庁が種別を増やしたときに、こちらが黙って
  * `M` へ丸めると発表と違う記号になる。
  */
@@ -320,7 +323,7 @@ export function formatMagnitudeCondition(condition: string): string {
  * 詳細表示・共有カード・ウィンドウタイトル・読み上げだけを直し、**一覧の行・ブラウザ通知・
  * 地図の震源ポップアップが「不明」のまま残った**（一覧の行は表示時間の大半を占める）。
  *
- * 説明を持たない経路（P2PQuake・EEW・長期震源カタログ）では従来どおり「不明」を返す。
+ * 説明を持たない経路（EEW・長期震源カタログ）では従来どおり「不明」を返す。
  */
 export function formatMagnitudeWithCondition(magnitude: number, condition: string | undefined, magnitudeType: string | undefined): string {
   if (hasMagnitude(magnitude)) return formatMagnitude(magnitude, magnitudeType)
@@ -388,9 +391,9 @@ export const TSUNAMI_WARNING_GROUP_TITLE = '大津波警報・津波警報ある
 /**
  * 国内への津波の影響区分を、画面に出す語と色にする。
  *
- * **「警報等」を「津波警報」と書かないこと。** この区分は電文でも P2PQuake でも
- * **大津波警報・津波警報・津波注意報をひとまとめにした値**で（DMDATA は固定付加文 0211、
- * P2PQuake は `MajorWarning` と `Warning` の両方をここへ寄せる）、等級までは伝えていない。
+ * **「警報等」を「津波警報」と書かないこと。** この区分は
+ * **大津波警報・津波警報・津波注意報をひとまとめにした値**で（DMDATA は固定付加文 0211）、
+ * 等級までは伝えていない。
  * 「津波警報」と書くと、**大津波警報の地震で事実より一段軽く見える**。
  * 気象庁の語（「津波警報等」）に合わせ、読み上げ（`domesticTsunamiText`）とも揃える。
  *
@@ -474,7 +477,7 @@ export function quakeReportLabels(
 export function formatCorrectType(type: CorrectType): string {
   const map: Record<CorrectType, string> = {
     'なし': '',
-    // 訂正の有無が不明（P2PQuake の Unknown）。印は出さない（→ `CorrectType`）
+    // 訂正の有無が不明。印は出さない（→ `CorrectType`）
     '不明': '',
     '訂正': '訂正（内容不明）',
     '震度のみ訂正': '震度を訂正',

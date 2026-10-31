@@ -7,7 +7,9 @@ import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX, devInjectedKeys } from '.
 import { Toggle } from '../Toggle'
 import { TELEGRAM_TEXT_BLOCK_KEYS, TELEGRAM_BOILERPLATE_KEYS, type TelegramTextBlockKey, type TelegramTextBlocks, type TelegramBoilerplateKey, type TelegramBoilerplateReads } from '../../utils/ttsText'
 import type { ConnectionStatus } from '../../types/earthquake'
-import { dmdataConnectionLabel } from './connectionLabel'
+import { forecastConnectionLabel, telegramConnectionLabel } from './connectionLabel'
+import type { RelayUpstreamStatus } from '../../services/dmdata'
+import { KEY_REENTRY_NOTICE } from '../../utils/telegramLoss'
 import { classificationLabel, type DmdataClassification } from '../../services/dmdataClassifications'
 import { INTENSITY_SCALE_COUNT, getIntensityLabel, getIntensityColor, INTENSITY_LABELS } from '../../utils/intensity'
 import { kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
@@ -17,10 +19,7 @@ import { checkVoicevoxAvailable, fetchVoicevoxSpeakers, isValidVoicevoxUrl, spea
 import { voicevoxPreviewTexts } from '../../utils/ttsText'
 import { log } from '../../utils/logger'
 import { serverDate, getServerClockOffsetMs } from '../../utils/clock'
-import type { UseTestScenariosResult } from '../../hooks/useTestScenarios'
-import type { ScenarioCategory } from '../../types/testScenario'
 import type { HistoricalArchiveIndex } from '../../types/historicalArchive'
-import { isDmdss } from '../../utils/env'
 import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../../utils/dmdataApiKey'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { DescriptionTip } from '../DescriptionTip'
@@ -35,7 +34,7 @@ import {
   seismoStatusLine, seismoUnreadableLine, SEISMO_STATUS_TONE_CLASS, type SeismoUiStatus,
 } from './seismoStatusLine'
 import { useKyoshinImport } from '../../hooks/useKyoshinImport'
-import { buildSettingsFile, parseSettingsFile, settingsFileHasKeys, settingsFileName, type SettingsVariant } from '../../utils/settingsIo'
+import { buildSettingsFile, keysFileNotice, parseSettingsFile, settingsFileHasKeys, settingsFileName } from '../../utils/settingsIo'
 import { isValidHomeLocation, parseCoordinateNumber, splitPastedLatLng } from '../../utils/homeLocationInput'
 import { SHARE_CARD_FORMATS } from '../../utils/shareCard'
 import { HEATMAP_PERIODS, isHeatmapPeriod } from '../../utils/quakeHeatmap'
@@ -53,12 +52,12 @@ export interface TestFunctions {
   eewWarning: () => void
   eewForecast: () => void
   eewAssumed: () => void
-  /** 「非常に強い揺れを検知」の EEW。DMDSS 版でしか届かない形なので、ボタンも DMDSS 版にだけ出す。 */
+  /** 「非常に強い揺れを検知」の EEW。予報（VXSE45）でしか届かない形なので、ボタンは自分の鍵を入れた人にだけ出す（`hasForecastKey`）。 */
   eewStrongShaking?: () => void
   eewDeep: () => void
-  /** 精度ランク 1 で予想震度が付かないまま取り消される EEW。精度ランクは DMDATA 経路しか運ばないので、ボタンは DMDSS 版にだけ出す。 */
+  /** 精度ランク 1 で予想震度が付かないまま取り消される EEW。予報にしか無い形なので、ボタンは自分の鍵を入れた人にだけ出す（`hasForecastKey`）。 */
   eewNoForecast: () => void
-  /** 最大予想震度 0 の初報から震度1 へ上がる EEW。震度0 は DMDATA 経路しか運ばないので、ボタンは DMDSS 版にだけ出す。 */
+  /** 最大予想震度 0 の初報から震度1 へ上がる EEW。予報にしか無い形なので、ボタンは自分の鍵を入れた人にだけ出す（`hasForecastKey`）。 */
   eewForecastZero: () => void
   eewRetraction: () => void
   /** 自動解除で画面から消えた後に、同じ地震の誤報取消を届ける EEW（→ `isLateEewCancel`） */
@@ -88,9 +87,9 @@ export interface TestFunctions {
   trainingQuake?: () => void
   quakeAmendment: () => void
   quakeReportSequence: () => void
-  /** 地震情報の取消。DMDSS 版だけ渡す（P2PQuake は地震情報の取消を配信しない）。 */
+  /** 地震情報の取消。 */
   quakeCancel?: () => void
-  /** 地震情報の一部の取消（震度速報だけの取消）。DMDSS 版だけ渡す（理由は `quakeCancel` と同じ）。 */
+  /** 地震情報の一部の取消（震度速報だけの取消）。 */
   quakePartialCancel?: () => void
   borrowFromTsunami?: () => void
   unreceivedQuake?: () => void
@@ -98,9 +97,9 @@ export interface TestFunctions {
   tsunamiGradeChange?: () => void
   tsunamiQuietReports?: () => void
   tsunamiExpiry?: () => void
-  /** 津波の原因地震が後から加わる（`EventID` の番号が書き足される）。DMDSS 版だけ渡す。 */
+  /** 津波の原因地震が後から加わる（`EventID` の番号が書き足される）。 */
   tsunamiSourceAdded?: () => void
-  /** 津波情報（VTSE51）だけの取消。DMDSS 版だけ渡す。 */
+  /** 津波情報（VTSE51）だけの取消。 */
   tsunamiInfoRetraction?: () => void
   estimatedIntensity?: () => void
   notification: () => void
@@ -114,6 +113,12 @@ interface Props {
    * （ここで検証し直すと、期限の境目で画面と門が食い違う。→ `hooks/useArrivalToken.ts`）。
    */
   arrivalTokenStatus: ArrivalTokenStatus
+  /** 予報キーの検証結果（→ `hooks/useForecastKey.ts`）。中継へ送るかの判断と同じ 1 つの結果を受け取る */
+  forecastKeyStatus: ArrivalTokenStatus
+  /** 配信サーバー（中継）が予報キーを受け付けなかったか（札を取ったときの答え） */
+  forecastKeyRelayRejected: boolean
+  /** 中継から予報を受けているか（「予報」の行の経路） */
+  relayForecastLive: boolean
   /**
    * 設定の読み込みで全項目をまとめて差し替える。渡す値は `sanitize()` 済みであること。
    * 戻り値は「この端末へ保存できたか」。
@@ -124,9 +129,14 @@ interface Props {
   kyoshinTimeOffset: number | null
   kyoshinInputDateTime: string
   onSetKyoshinInputDateTime: (value: string) => void
-  dmdataConnectionStatus?: ConnectionStatus
+  /** 中継の接続（「電文」の行） */
+  dmdataConnectionStatus: ConnectionStatus
+  /** 中継が DMDATA.JP と繋がっているか（まだ知らせが無い・再生中は null）。「電文」の行 */
+  relayUpstream: RelayUpstreamStatus | null
+  /** 自分の鍵の予報の接続（「予報（APIキー）」の行）。鍵が無い・使えない・再生中は null */
+  keyForecastStatus: ConnectionStatus | null
   /**
-   * 配信元が受け付けた購読区分（DMDSS 版。まだ繋がっていなければ null）。「受信している区分」の行に出す。
+   * 配信元が受け付けた購読区分（まだ繋がっていなければ null）。「受信している区分」の行に出す。
    * **出すのは繋がっている間だけ**（2026-10-14 ユーザー承認）—— 切れている間に前回の値を出すと、
    * いま受けているように読める。
    */
@@ -136,11 +146,10 @@ interface Props {
   replayError?: string | null
   onStartReplay: (date: Date) => void
   onStopReplay: () => void
-  /** 収録済みローカル履歴アーカイブの一覧（DMDATA/P2PQuakeに無い期間を代替する）。表示専用。 */
+  /** 収録済みローカル履歴アーカイブの一覧（DMDATAに無い期間を代替する）。表示専用。 */
   historicalArchives?: HistoricalArchiveIndex
   /** 上記一覧の読み込みが完了していないか。読み込み中に「確定」を押すとローカルアーカイブが判定から漏れるため、完了まで「確定」を無効化する。 */
   historicalArchivesLoading?: boolean
-  scenarioTest: UseTestScenariosResult
   /**
    * 自作地震計の押し出しのうち、読めなかったものの累計（`useSeismoStation` の `unreadableCount`）。
    * 0 でなければ自作地震計の節に赤い行で出す（2026-10-22 選択「設定タブに出す (Recommended)」）。
@@ -199,19 +208,18 @@ function SettingsIoRow({ settings, onReplace }: {
   // 鍵も含めるか。**既定は含めない**（2026-10-23 ユーザー選択「含めるかを書き出すときに選べる」）。
   // 端末へは保存しない —— 開くたびに外れた状態から始め、うっかり鍵入りのファイルを作らないようにする。
   const [includeKeys, setIncludeKeys] = useState(false)
-  const variant: SettingsVariant = isDmdss ? 'dmdss' : 'standard'
 
   const download = useCallback(() => {
     setError(null)
     setNotice(null)
     try {
       const now = new Date()
-      const file = buildSettingsFile(settings, variant, { includeKeys, injected: devInjectedKeys() }, now)
+      const file = buildSettingsFile(settings, { includeKeys, injected: devInjectedKeys() }, now)
       const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = settingsFileName(variant, now)
+      a.download = settingsFileName(now)
       // 文書へ入れてから押す。入れずに click() を呼ぶと、環境によっては例外も出さずに
       // 何も起きない（押しても反応が無い理由がどこにも残らない）。
       document.body.appendChild(a)
@@ -224,7 +232,7 @@ function SettingsIoRow({ settings, onReplace }: {
       // 黙って飲み込むと、押しても何も起きない理由が利用者に分からない
       setError(`書き出しに失敗しました: ${e instanceof Error ? e.message : String(e)}`)
     }
-  }, [settings, variant, includeKeys])
+  }, [settings, includeKeys])
 
   const handleFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -250,6 +258,13 @@ function SettingsIoRow({ settings, onReplace }: {
     }
     const persisted = onReplace(result.settings, result.usedFileApiKey)
 
+    if (result.keysOnly) {
+      const keyNotes = [keysFileNotice(result.keysOnly)]
+      if (!persisted) keyNotes.push('※ この端末に保存できませんでした。次にアプリを開くと元の設定に戻ります')
+      setNotice(keyNotes.join('\n'))
+      return
+    }
+
     const notes: string[] = ['設定を読み込みました']
     const exportedAt = result.exportedAt == null ? null : new Date(result.exportedAt)
     if (exportedAt && Number.isFinite(exportedAt.getTime())) {
@@ -262,16 +277,10 @@ function SettingsIoRow({ settings, onReplace }: {
     if (result.rejectedKeys.length > 0) {
       notes.push(`※ 次の項目は読めなかったため、はじめの値にしました: ${result.rejectedKeys.join('、')}`)
     }
-    // バリアントが違っても拒否はしない（設定の型は同じ）。ただし片方にしか無い項目があるので黙らない。
-    if (result.variant !== variant) {
-      notes.push(result.variant === 'dmdss'
-        ? '※ DM-D.S.S 版で書き出したファイルです。この版に無い項目は効きません'
-        : '※ 通常版で書き出したファイルです。DM-D.S.S 固有の項目ははじめの値のままです')
-    }
-    // APIキーを使う経路があるのは DMDSS 版だけ。通常版では触れても意味が無いので言わない。
-    if (result.usedFileApiKey && isDmdss) notes.push('※ ファイルに APIキーが書かれていたため、それを使いました')
+    // 版を 1 つにまとめる前に書き出したファイル（印が dmdss・standard）も設定の型は同じなので、そのまま読む
+    if (result.usedFileApiKey) notes.push('※ ファイルに APIキーが書かれていたため、それを使いました')
     setNotice(notes.join('\n'))
-  }, [settings, onReplace, variant])
+  }, [settings, onReplace])
 
   return (
     <div className="flex flex-col items-end gap-1">
@@ -783,7 +792,7 @@ function ReleaseHistoryRow() {
   )
 }
 
-const selectAllNotes = (entries: readonly ReleaseNoteEntry[]) => allNotes(entries, isDmdss ? 'dmdss' : 'standard')
+const selectAllNotes = (entries: readonly ReleaseNoteEntry[]) => allNotes(entries)
 
 function Row({ label, description, hint, children }: {
   label: string
@@ -951,16 +960,6 @@ function TestButton({ color, onClick, children, disabled }: {
       {fired ? '送信済み' : children}
     </button>
   )
-}
-
-const SCENARIO_CATEGORY_COLOR: Record<ScenarioCategory, ButtonColor> = {
-  'eew-special': 'red',
-  'eew-warning': 'orange',
-  'eew-forecast': 'yellow',
-  quake: 'red',
-  tsunami: 'purple',
-  lpgm: 'blue',
-  foreign: 'green',
 }
 
 /**
@@ -1199,9 +1198,12 @@ function HomeLocationSection({
 
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
 /**
- * 到達予想キーの認証結果。
+ * 到達予想キー・予報キーの行（入っている端末にだけ出す）。
  *
- * **入力欄は伏せ字なので、貼った文字列を目で確かめられない。** 結果を添えていなかった頃は、
+ * **入れる欄は出さない**（設定の読み込みでだけ入れる。設計書 §0 の 2026-10-31「予報キーの欄」「到達予想キーの欄」の行）。
+ * 行には名前とボタン「消す」と今の状態の文だけを出し、キーの文字列は出さない。
+ *
+ * **キーの文字列は見えないので、貼った値を目で確かめられない。** 結果を添えていなかった頃は、
  * 成功も 5 通りの失敗も画面の見た目が同じ（何も出ない）で、確かめる手段が開発者コンソールか
  * 実際の緊急地震速報しか無かった。とくに「鍵の組を作り直したのに公開鍵を貼り忘れた」事故は、
  * 症状が「署名が合わない」だけなので気づく契機がここにしか無い。
@@ -1214,9 +1216,6 @@ function HomeLocationSection({
  *
  * **何を出すかは `arrivalTokenStatusLine` が決める。** ここは調子（`tone`）を色へ写すだけ
  * —— 分岐を JSX の中に置くとテストで押さえられない。
- *
- * **入力欄と行を 1 つのコンポーネントに収めて、答えを 1 回だけ出す。** 枠を赤くするかも
- * 同じ `tone` から決めるので、条件を別々に書けば食い違う（文は出ているのに枠は普通、等）。
  */
 const ARRIVAL_TOKEN_TONE_CLASS: Record<ArrivalTokenStatusTone, string> = {
   checking: 'text-gray-400',
@@ -1224,35 +1223,38 @@ const ARRIVAL_TOKEN_TONE_CLASS: Record<ArrivalTokenStatusTone, string> = {
   problem: 'text-red-400',
 }
 
-function ArrivalTokenField(
-  { value, status, onChange }: { value: string, status: ArrivalTokenStatus, onChange: (v: string) => void },
+/**
+ * 配信サーバーが予報キーを断ったときに足す文。
+ * 文面は 2026-10-31 ユーザー選択（予報キーが使えないときに欄の下へ出す文）。
+ */
+export const FORECAST_KEY_RELAY_REJECTED = '配信サーバーがこのキーを受け付けませんでした'
+
+function SignedKeyRowBody(
+  { status, onClear, relayRejected }: { status: ArrivalTokenStatus, onClear: () => void, relayRejected: boolean },
 ) {
   const line = arrivalTokenStatusLine(status)
   return (
     <div className="flex flex-col items-end gap-1">
-      <input
-        type="password"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder="未設定"
-        autoComplete="off"
-        spellCheck={false}
-        className={`bg-panel border text-white text-xs rounded px-2 py-1.5 w-56 font-mono focus:outline-hidden ${
-          line?.tone === 'problem'
-            ? 'border-red-500 focus:border-red-500'
-            : 'border-border focus:border-blue-500'
-        }`}
-      />
+      <button
+        type="button"
+        onClick={onClear}
+        className="text-xs px-2 py-1 rounded border border-border bg-panel text-gray-300 hover:text-white hover:border-gray-400"
+      >
+        消す
+      </button>
       {line && (
         <p className={`text-xs w-56 text-left leading-snug ${ARRIVAL_TOKEN_TONE_CLASS[line.tone]}`}>
           {line.text}
         </p>
       )}
+      {relayRejected && (
+        <p className="text-xs w-56 text-left leading-snug text-red-400">{FORECAST_KEY_RELAY_REJECTED}</p>
+      )}
     </div>
   )
 }
 
-export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arrivalTokenStatus, onReplaceSettings, onTest, kyoshinTimeOffset, kyoshinInputDateTime, onSetKyoshinInputDateTime, dmdataConnectionStatus, dmdataClassifications, replayIsFetching, replayError, onStartReplay, onStopReplay, historicalArchives, historicalArchivesLoading, scenarioTest, seismoUnreadableCount }: Props) {
+export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arrivalTokenStatus, forecastKeyStatus, forecastKeyRelayRejected, relayForecastLive, onReplaceSettings, onTest, kyoshinTimeOffset, kyoshinInputDateTime, onSetKyoshinInputDateTime, dmdataConnectionStatus, relayUpstream, keyForecastStatus, dmdataClassifications, replayIsFetching, replayError, onStartReplay, onStopReplay, historicalArchives, historicalArchivesLoading, seismoUnreadableCount }: Props) {
   const [voicevoxStatus, setVoicevoxStatus] = useState<'idle' | 'checking' | 'available' | 'unavailable' | 'invalid'>('idle')
   const [voicevoxSpeakers, setVoicevoxSpeakers] = useState<VoicevoxSpeaker[]>([])
 
@@ -1340,75 +1342,90 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
   // 入力済みのキーが通信に載せられない文字を含んでいるか。空欄は「未設定」として別に扱うため
   // ここには含めない（入力途中に赤字が出続けるのを避ける）。
   const isApiKeyInvalid = settings.dmdataApiKey !== '' && !isValidDmdataApiKey(settings.dmdataApiKey)
+  // 予報（VXSE45）にしか無い形の電文を流すテストボタンは、予報を受けられる人（鍵を入れた人・中継が予報キーを
+  // 受け付けた人）にだけ出す（docs/isdmdss-allocation.md の「DMDSS 版だけのテストボタン」の行。§0「予報だけ各自の鍵」・2026-10-31「予報キー」）
+  const hasForecastKey = (settings.dmdataApiKey !== '' && !isApiKeyInvalid) || (forecastKeyStatus.valid && !forecastKeyRelayRejected)
 
   // スクロールと余白は窓の中身の領域（`SettingsDialog`）が受け持つ。見出しどうしの間を `gap` で空けるのは、
   // 隠した見出し（`hidden`）が間を取らないため（余白を見出し側に持たせると、隠れた見出しの分だけ末尾がずれる）。
   return (
     <div className="flex flex-col gap-6">
 
-      {isDmdss && (
-        <Section category="connection" title="DM-D.S.S 接続設定">
-          <div className="px-4 py-2 bg-yellow-900/30 border-b border-yellow-700/40">
-            <p className="text-yellow-400 text-xs">APIキーはこのブラウザにのみ保存されます。第三者と共有しないでください。</p>
+      {/* 見出しと接続の 2 行は 2026-10-31 ユーザー選択「「電文」「予報（APIキー）」 (Recommended)」 */}
+      <Section category="connection" title="接続">
+        <div className="px-4 py-2 bg-yellow-900/30 border-b border-yellow-700/40">
+          <p className="text-yellow-400 text-xs">APIキーはこのブラウザにのみ保存されます。第三者と共有しないでください。</p>
+        </div>
+        {/* 文言と色の対応は `connectionLabel.ts` が単一情報源。**ここに分岐を戻さないこと**
+            —— 三項演算子の連鎖は最後の `:` が全部を受けるので、`ConnectionStatus` に値を
+            足したときの書き忘れが型検査に掛からない。 */}
+        <Row label="電文">
+          {(() => {
+            const label = telegramConnectionLabel(dmdataConnectionStatus, relayUpstream)
+            return <span className={`text-xs ${label.className}`}>{label.text}</span>
+          })()}
+        </Row>
+        {/* 行名と経路の添え方は 2026-10-31 ユーザー選択「「予報」1 行＋経路を括弧 (Recommended)」 */}
+        <Row label="予報">
+          {(() => {
+            const label = forecastConnectionLabel({
+              relayForecastLive,
+              keyStatus: keyForecastStatus,
+              relayStatus: dmdataConnectionStatus,
+              relayUpstream,
+              relayForecastAvailable: forecastKeyStatus.valid && !forecastKeyRelayRejected,
+            }, {
+              apiKeySet: Boolean(settings.dmdataApiKey),
+              apiKeyInvalid: isApiKeyInvalid,
+            })
+            return <span className={`text-xs ${label.className}`}>{label.text}</span>
+          })()}
+        </Row>
+        {/* 受けていない区分は出さない（ログにだけ残す。2026-10-14 ユーザー承認）。値は DMDATA の購入区分名 */}
+        {dmdataConnectionStatus === 'connected' && dmdataClassifications !== null && (
+          <Row label="受信している区分">
+            <span className="text-xs text-secondary">{classificationLabel(dmdataClassifications)}</span>
+          </Row>
+        )}
+        <Row label="APIキー" description="DMDATA.JP のAPIキーを入力してください">
+          {/* 不正な文字は入力時に弾かず、入ったことを見せて本人に直させる。入力欄から黙って
+              取り除くと、貼り付けたキーが勝手に変わって「合っているのに繋がらない」状態になる。 */}
+          <div className="flex flex-col items-end gap-1">
+            <input
+              type="password"
+              value={settings.dmdataApiKey}
+              onChange={e => onUpdate('dmdataApiKey', e.target.value)}
+              placeholder="APIキーを入力"
+              autoComplete="off"
+              className={`bg-panel border text-white text-xs rounded px-2 py-1.5 focus:outline-hidden w-48 ${
+                isApiKeyInvalid ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-blue-500'
+              }`}
+            />
+            {isApiKeyInvalid && (
+              <p className="text-xs text-red-400 w-48 text-left leading-snug">{DMDATA_API_KEY_INVALID_MESSAGE}</p>
+            )}
+            {settings.dmdataKeyReentryNotice && settings.dmdataApiKey === '' && (
+              <p className="text-xs text-sky-300 w-48 text-left leading-snug">{KEY_REENTRY_NOTICE}</p>
+            )}
           </div>
-          <Row label="接続状態">
-            {(() => {
-              // 文言と色の対応は `connectionLabel.ts` が単一情報源。**ここに分岐を戻さないこと**
-              // —— 三項演算子の連鎖は最後の `:` が全部を受けるので、`ConnectionStatus` に値を
-              // 足したときの書き忘れが型検査に掛からない。
-              const label = dmdataConnectionLabel(dmdataConnectionStatus, {
-                apiKeySet: Boolean(settings.dmdataApiKey),
-                apiKeyInvalid: isApiKeyInvalid,
-              })
-              return <span className={`text-xs ${label.className}`}>{label.text}</span>
-            })()}
-          </Row>
-          {/* 受けていない区分は出さない（ログにだけ残す。2026-10-14 ユーザー承認）。値は DMDATA の購入区分名 */}
-          {dmdataConnectionStatus === 'connected' && dmdataClassifications !== null && (
-            <Row label="受信している区分">
-              <span className="text-xs text-secondary">{classificationLabel(dmdataClassifications)}</span>
-            </Row>
-          )}
-          <Row label="APIキー" description="DMDATA.JP のAPIキーを入力してください">
-            {/* 不正な文字は入力時に弾かず、入ったことを見せて本人に直させる。入力欄から黙って
-                取り除くと、貼り付けたキーが勝手に変わって「合っているのに繋がらない」状態になる。 */}
-            <div className="flex flex-col items-end gap-1">
-              <input
-                type="password"
-                value={settings.dmdataApiKey}
-                onChange={e => onUpdate('dmdataApiKey', e.target.value)}
-                placeholder="APIキーを入力"
-                autoComplete="off"
-                className={`bg-panel border text-white text-xs rounded px-2 py-1.5 focus:outline-hidden w-48 ${
-                  isApiKeyInvalid ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-blue-500'
-                }`}
-              />
-              {isApiKeyInvalid && (
-                <p className="text-xs text-red-400 w-48 text-left leading-snug">{DMDATA_API_KEY_INVALID_MESSAGE}</p>
-              )}
-            </div>
-          </Row>
-          <Row label="試験報を受信（検証用）" description="試験報・訓練報も受信します。緊急地震速報の配信テストは接続の確認だけに使い、画面には出しません">
-            <Toggle
-              checked={settings.dmdataTestDelivery}
-              onChange={v => onUpdate('dmdataTestDelivery', v)}
+        </Row>
+        {/* 予報キーは入っている端末にだけ、APIキーの行のすぐ下に出す（2026-10-31 ユーザー選択「名前＋消すボタン (Recommended)」） */}
+        {settings.forecastKey !== '' && (
+          <Row label="予報キー">
+            <SignedKeyRowBody
+              status={forecastKeyStatus}
+              onClear={() => onUpdate('forecastKey', '')}
+              relayRejected={forecastKeyRelayRejected}
             />
           </Row>
-        </Section>
-      )}
-
-      {/* 標準版の接続の設定。DMDSS 版は「DM-D.S.S 接続設定」に同じ設定の行がある（あちらは緊急地震速報以外の試験報にも効く）。
-          行の文面は 2026-10-21 ユーザー承認、置き場所は 2026-10-25 ユーザー承認 */}
-      {!isDmdss && (
-        <Section category="connection" title="接続設定">
-          <Row label="試験報を受信（検証用）" description="緊急地震速報の訓練報・試験報も受信します。画面には「訓練報」「試験報」の印を付けて出します">
-            <Toggle
-              checked={settings.dmdataTestDelivery}
-              onChange={v => onUpdate('dmdataTestDelivery', v)}
-            />
-          </Row>
-        </Section>
-      )}
+        )}
+        <Row label="試験報を受信（検証用）" description="試験報・訓練報も受信します。緊急地震速報の配信テストは接続の確認だけに使い、画面には出しません">
+          <Toggle
+            checked={settings.dmdataTestDelivery}
+            onChange={v => onUpdate('dmdataTestDelivery', v)}
+          />
+        </Row>
+      </Section>
 
       {/* ブラウザ通知。**まとめて止めると、種類ごとの行とテスト通知を隠す**（値は書き換えないので、戻せば元どおり効く。
           文言とこの見せ方は 2026-10-25 ユーザー承認）。通知を出すかの判定は `utils/notificationGate.ts` の 1 箇所。
@@ -1447,11 +1464,9 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <Row label="津波通知" description="津波警報・注意報・予報が発表されたときと、全て解除されたときに通知します">
               <Toggle checked={settings.notifyTsunami} onChange={v => onUpdate('notifyTsunami', v)} />
             </Row>
-            {isDmdss && (
-              <Row label="南海トラフ・後発地震の通知" description="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報と、臨時の解説情報を受けたときに通知します">
-                <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
-              </Row>
-            )}
+            <Row label="南海トラフ・後発地震の通知" description="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報と、臨時の解説情報を受けたときに通知します">
+              <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
+            </Row>
           </>
         )}
         <Row label="通知許可" description="ブラウザの通知権限を確認・許可します">
@@ -1569,28 +1584,24 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         )}
         {/* 解説情報は平常時でも毎月1回は必ず届くため、音と読み上げを個別に切れるようにしている。
             臨時情報（段階の発表）はこの設定に関わらず鳴る。 */}
-        {isDmdss && (
-          <Row
-            label="解説情報の音・読み上げ"
-            description="南海トラフ地震関連解説情報の通知音と読み上げを行います。この情報は平常時も毎月届きます"
-          >
-            <Toggle
-              checked={settings.nankaiCommentaryAlerts}
-              onChange={v => onUpdate('nankaiCommentaryAlerts', v)}
-            />
-          </Row>
-        )}
-        {isDmdss && (
-          <Row
-            label="お知らせの音・読み上げ"
-            description="地震・津波に関するお知らせの通知音と読み上げを行います"
-          >
-            <Toggle
-              checked={settings.quakeNoticeAlerts}
-              onChange={v => onUpdate('quakeNoticeAlerts', v)}
-            />
-          </Row>
-        )}
+        <Row
+          label="解説情報の音・読み上げ"
+          description="南海トラフ地震関連解説情報の通知音と読み上げを行います。この情報は平常時も毎月届きます"
+        >
+          <Toggle
+            checked={settings.nankaiCommentaryAlerts}
+            onChange={v => onUpdate('nankaiCommentaryAlerts', v)}
+          />
+        </Row>
+        <Row
+          label="お知らせの音・読み上げ"
+          description="地震・津波に関するお知らせの通知音と読み上げを行います"
+        >
+          <Toggle
+            checked={settings.quakeNoticeAlerts}
+            onChange={v => onUpdate('quakeNoticeAlerts', v)}
+          />
+        </Row>
       </Section>
 
       {/* 読み上げの詳しさ。VOICEVOX を有効にしたときだけ出す（無効な端末では何も効かないため）。
@@ -1860,17 +1871,15 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {/* 2026-10-23 ユーザー選択「やることとして積む (Recommended)」・寸法と文面は 2026-10-24 ユーザー選択 */}
         {/* 地震・津波に関するお知らせ（運用連絡）。帯と、音・読み上げを別々に切り替える
             （文言は 2026-10-18 ユーザー承認）。 */}
-        {isDmdss && (
-          <Row
-            label="お知らせを表示"
-            description="地震・津波に関するお知らせを地図の下に表示します"
-          >
-            <Toggle
-              checked={settings.quakeNoticeBanner}
-              onChange={v => onUpdate('quakeNoticeBanner', v)}
-            />
-          </Row>
-        )}
+        <Row
+          label="お知らせを表示"
+          description="地震・津波に関するお知らせを地図の下に表示します"
+        >
+          <Toggle
+            checked={settings.quakeNoticeBanner}
+            onChange={v => onUpdate('quakeNoticeBanner', v)}
+          />
+        </Row>
       </Section>
 
       <Section category="display" title="震度スケール">
@@ -1969,16 +1978,16 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           homeLng={settings.homeLng}
           onUpdate={onUpdate}
         />
-        <Row
-          label="到達予想キー"
-          description="入力すると、地域ごとの発表値ではなく、ホーム地点そのものへの到達予想を表示します。キーは限られた方にだけ配布しています"
-        >
-          <ArrivalTokenField
-            value={settings.arrivalToken}
-            status={arrivalTokenStatus}
-            onChange={v => onUpdate('arrivalToken', v)}
-          />
-        </Row>
+        {/* 到達予想キーも入っている端末にだけ出す（2026-10-31 ユーザー選択「隠す（予報キーと同じ形）」） */}
+        {settings.arrivalToken !== '' && (
+          <Row label="到達予想キー">
+            <SignedKeyRowBody
+              status={arrivalTokenStatus}
+              onClear={() => onUpdate('arrivalToken', '')}
+              relayRejected={false}
+            />
+          </Row>
+        )}
       </Section>
 
       {/* 前提条件は hint に置いて常時見せる。VOICEVOX の「要：VOICEVOXアプリ起動」と
@@ -2122,7 +2131,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row
           label="設定ファイル"
           description={'いまの設定をファイルへ書き出し、別の端末やブラウザで読み込めます。' +
-            (isDmdss ? 'APIキーは書き出しに含まれません（読み込んでも、いま入力してある値は消えません）。' : '')}
+            'APIキーは書き出しに含まれません（読み込んでも、いま入力してある値は消えません）。'}
         >
           <SettingsIoRow settings={settings} onReplace={onReplaceSettings} />
         </Row>
@@ -2159,17 +2168,10 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </span>
         </CreditRow>
         <CreditRow label="地震・津波データ">
-          {isDmdss ? (
-            <a href="https://dmdata.jp/" target="_blank" rel="noopener noreferrer"
-              className="text-xs text-blue-400 hover:text-blue-300">
-              Project DM-D.S.S
-            </a>
-          ) : (
-            <a href="https://www.p2pquake.net/" target="_blank" rel="noopener noreferrer"
-              className="text-xs text-blue-400 hover:text-blue-300">
-              P2PQuake API v2
-            </a>
-          )}
+          <a href="https://dmdata.jp/" target="_blank" rel="noopener noreferrer"
+            className="text-xs text-blue-400 hover:text-blue-300">
+            Project DM-D.S.S
+          </a>
         </CreditRow>
         {/* **一次出典と配信経路の両方を出す。** データを作っているのは防災科学技術研究所で、
             アプリが実際に取得しているのは Yahoo!天気・災害 の配信（`services/kyoshin.ts`）。
@@ -2178,8 +2180,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             配信元の呼称を挙げるだけ・§4 は接続先とデータ形式の技術仕様で、この枠組みは持たない）。
 
             **すぐ上の「地震・津波データ」行と粒度が揃っていないのは意図したもの。** あちらは
-            配信 API（P2PQuake / DM-D.S.S）だけを出す —— バリアントで配信元が替わることが
-            利用者にとっての要点で、一次出典（気象庁）は README 側で担保している。 */}
+            配信 API（DM-D.S.S）だけを出し、一次出典（気象庁）は README 側で担保している。 */}
         <CreditRow label="リアルタイム震度">
           <span className="text-xs text-secondary">
             <a href="https://www.kmoni.bosai.go.jp/" target="_blank" rel="noopener noreferrer"
@@ -2319,7 +2320,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           <TestButton color="blue" onClick={() => { unlockAudio(); playAlertSound('earthquakeCancel') }}>▶ 試聴</TestButton>
         </Row>
         {/* ── 津波情報 ── */}
-        <Row label="津波予報（若干の海面変動）" description={`石川県能登・加賀ほか – tsunamiForecast 音 / ${isDmdss ? '90秒後に失効' : '90秒後に解除（standard 版は失効時刻を持たないため解除電文で消える）'}`}>
+        <Row label="津波予報（若干の海面変動）" description={`石川県能登・加賀ほか – tsunamiForecast 音 / 90秒後に失効`}>
           <TestButton color="blue" onClick={() => { unlockAudio(); playAlertSound('tsunamiForecast') }}>▶ 試聴</TestButton>
         </Row>
         <Row label="津波注意報" description="鹿児島県西部・種子島屋久島ほか – tsunamiWatch 音">
@@ -2338,26 +2339,18 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           <TestButton color="blue" onClick={() => { unlockAudio(); playAlertSound('tsunamiCancel') }}>▶ 試聴</TestButton>
         </Row>
         {/* ── 臨時情報・関連解説情報・後発地震 ── */}
-        {isDmdss && (
-          <Row label="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報" description="純音 A4×2連打 → D5">
-            <TestButton color="orange" onClick={() => { unlockAudio(); playAlertSound('specialInfo') }}>▶ 試聴</TestButton>
-          </Row>
-        )}
-        {isDmdss && (
-          <Row label="南海トラフ地震関連解説情報" description="純音の下降2音 D5→A4（臨時情報の上昇と向きで区別）">
-            <TestButton color="teal" onClick={() => { unlockAudio(); playAlertSound('specialInfoCommentary') }}>▶ 試聴</TestButton>
-          </Row>
-        )}
-        {isDmdss && (
-          <Row label="地震回数に関する情報" description="純音の同音3連 C5（上の2つと違い音程を動かさない）">
-            <TestButton color="teal" onClick={() => { unlockAudio(); playAlertSound('earthquakeCount') }}>▶ 試聴</TestButton>
-          </Row>
-        )}
-        {isDmdss && (
-          <Row label="南海トラフ・後発地震の取消" description="純音の降下3音 D5→A4→D4">
-            <TestButton color="teal" onClick={() => { unlockAudio(); playAlertSound('specialInfoCancel') }}>▶ 試聴</TestButton>
-          </Row>
-        )}
+        <Row label="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報" description="純音 A4×2連打 → D5">
+          <TestButton color="orange" onClick={() => { unlockAudio(); playAlertSound('specialInfo') }}>▶ 試聴</TestButton>
+        </Row>
+        <Row label="南海トラフ地震関連解説情報" description="純音の下降2音 D5→A4（臨時情報の上昇と向きで区別）">
+          <TestButton color="teal" onClick={() => { unlockAudio(); playAlertSound('specialInfoCommentary') }}>▶ 試聴</TestButton>
+        </Row>
+        <Row label="地震回数に関する情報" description="純音の同音3連 C5（上の2つと違い音程を動かさない）">
+          <TestButton color="teal" onClick={() => { unlockAudio(); playAlertSound('earthquakeCount') }}>▶ 試聴</TestButton>
+        </Row>
+        <Row label="南海トラフ・後発地震の取消" description="純音の降下3音 D5→A4→D4">
+          <TestButton color="teal" onClick={() => { unlockAudio(); playAlertSound('specialInfoCancel') }}>▶ 試聴</TestButton>
+        </Row>
       </Section>
 
       <Section category="dev" title="テスト機能">
@@ -2371,7 +2364,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="地震動予報" description="予報のまま進む報。押すと予想震度が 3 → 4 と上がる – eewForecast 音">
           <TestButton color="yellow" onClick={onTest.eewForecast}>予報テスト</TestButton>
         </Row>
-        {isDmdss && onTest.eewStrongShaking && (
+        {hasForecastKey && onTest.eewStrongShaking && (
           <Row label="地震動予報（非常に強い揺れを検知）" description="震源を決める前に、強い揺れを検知した観測点だけで出る第1報（最大震度5弱）。M・深さ・発生時刻を出さず、気象庁の本文を震源名の下に出す – eewForecast 音">
             <TestButton color="yellow" onClick={onTest.eewStrongShaking}>強い揺れ検知テスト</TestButton>
           </Row>
@@ -2383,13 +2376,13 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           <TestButton color="yellow" onClick={onTest.eewDeep}>深発地震テスト</TestButton>
         </Row>
         {/* 文面は 2026-10-15 ユーザー承認「足す(推奨)」 */}
-        {isDmdss && (
+        {hasForecastKey && (
           <Row label="地震動予報（予想震度なしのまま取消）" description="予想震度の欄そのものが無い報。3秒待っても値が付かないため「単独点処理のため、予想震度なし。」と読み、最後は取消で終わる – eewForecast 音 → eewCancel 音">
             <TestButton color="yellow" onClick={onTest.eewNoForecast}>予想震度なしテスト</TestButton>
           </Row>
         )}
         {/* 文面は 2026-10-20 ユーザー承認「1 で、足してコミットして」 */}
-        {isDmdss && (
+        {hasForecastKey && (
           <Row label="地震動予報（予想震度0）" description="最大予想震度が0の初報。値は出ているので待たずに「予想最大震度0。」と読み、押すと予想震度4へ言い直す – eewForecast 音">
             <TestButton color="yellow" onClick={onTest.eewForecastZero}>予想震度0テスト</TestButton>
           </Row>
@@ -2411,17 +2404,17 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="地震情報" description="令和6年能登半島地震・本震 M7.6 最大震度7（実データ）をリストと地図に追加">
           <TestButton color="red" onClick={onTest.earthquake}>地震テスト</TestButton>
         </Row>
-        {isDmdss && onTest.unreceivedQuake && (
+        {onTest.unreceivedQuake && (
           <Row label="地震情報（震度を入手していない地点が多い報）" description="日向灘 M6.4 最大震度5強（実電文）– 震度を入手していない地点が 60。市町村・区域・県の行に「未入電あり」の印が付き、値そのものが届いていない 18 市町村は「5弱以上」と出る">
             <TestButton color="orange" onClick={onTest.unreceivedQuake}>未入電テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.maxScaleOrAboveQuake && (
+        {onTest.maxScaleOrAboveQuake && (
           <Row label="地震情報（最大震度が「5弱以上」になる報）" description="石川県西方沖 M6.4 最大震度5弱（実電文）– 未入電の地点が 1。観測できた最大震度と同じ階級なので、カードの最大震度が「5弱以上」と出る（この形になるのは最大震度が5弱の地震だけ）">
             <TestButton color="orange" onClick={onTest.maxScaleOrAboveQuake}>5弱以上テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.areaUnreceivedQuake && (
+        {onTest.areaUnreceivedQuake && (
           <Row label="地震情報（区域まるごと「5弱以上・未入電」の報）" description="未入電テストの1区域を、配下の市町村がすべて未入電の形へ組み替えたもの（気象庁の資料が定める形で、実電文の標本は無い）。区域の最大震度が載らなくても一覧と読み上げに残る">
             <TestButton color="orange" onClick={onTest.areaUnreceivedQuake}>区域未入電テスト</TestButton>
           </Row>
@@ -2444,28 +2437,28 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="種別が前後する報" description="震度速報 → 震源情報 → 震度速報 → 震源・震度情報 → その続報 → 震度速報 → その続報、の7通（前半4通は2024年能登半島地震の前震と同じ順序）。見出しに受け取った種別が並び、震源・震度情報で速報段階が畳まれる。1通目は震度がまだ出そろっていない形（最大震度5弱）で、3通目で5強が出るため、ブラウザ通知を有効にしていれば「最大震度更新」の通知が出る。遅れて届く震度速報でカードが動かないこと、震度が上下した行に印が付くこともここで見られる">
           <TestButton color="yellow" onClick={onTest.quakeReportSequence}>種別遷移テスト</TestButton>
         </Row>
-        {isDmdss && onTest.quakeCancel && (
+        {onTest.quakeCancel && (
           <Row label="地震情報（取消）" description="震度速報を出し、10秒後に取り消す。カードに「取消」が重なり、10秒後に一覧から消える">
             <TestButton color="purple" onClick={onTest.quakeCancel}>取消テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.quakePartialCancel && (
+        {onTest.quakePartialCancel && (
           <Row label="地震情報（一部の取消）" description="震度速報と震源・震度情報を出し、震源・震度情報の10秒後に震度速報だけを取り消す。カードは残り、見出しの下に「震度速報は取り消されました」と気象庁の本文が出る">
             <TestButton color="purple" onClick={onTest.quakePartialCancel}>一部取消テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.borrowFromTsunami && (
+        {onTest.borrowFromTsunami && (
           <Row label="津波が先に伝える震源" description="震度速報 → 津波警報 → 震度速報の続報 → 津波の続報（2024年能登半島地震の本震と同じ順序）。震度速報は震源を持たないが、津波警報が載せている震源を借りてカードと読み上げに出し、行に「津波情報より」と出どころが付く">
             <TestButton color="yellow" onClick={onTest.borrowFromTsunami}>震源の借用テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.trainingQuake && (
+        {onTest.trainingQuake && (
           <Row label="訓練報" description="中身は地震テストと同じで、電文ヘッダの運用種別（訓練）だけが違う。本物と同じく画面・音・読み上げへ流し、カードに「訓練報」の印を出す">
             <TestButton color="yellow" onClick={onTest.trainingQuake}>訓練報テスト</TestButton>
           </Row>
         )}
         {/* ── 津波情報: 軽 → 重、取消は末尾 ── */}
-        <Row label="津波予報（若干の海面変動）" description={`北海道沿岸 – tsunamiForecast 音 / 90秒後に${isDmdss ? '失効' : '解除（standard 版は失効時刻を持たないため解除電文で消える）'}`}>
+        <Row label="津波予報（若干の海面変動）" description={`北海道沿岸 – tsunamiForecast 音 / 90秒後に失効`}>
           <TestButton color="blue" onClick={onTest.tsunamiForecast}>予報テスト</TestButton>
         </Row>
         <Row label="津波注意報" description="北海道沿岸 – tsunamiWatch 音 / 90秒後に解除">
@@ -2477,163 +2470,130 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="大津波警報" description="岩手・宮城・福島等 – tsunamiMajor 音 / 90秒後に解除">
           <TestButton color="purple" onClick={onTest.tsunami}>大津波警報テスト</TestButton>
         </Row>
-        {isDmdss && onTest.tsunamiExpiry && (
+        {onTest.tsunamiExpiry && (
           <Row label="津波警報 → 津波予報（失効時刻つき）" description="津波注意報 → 続報で17区域すべてが津波予報へ下がる → 等級は同じまま期限だけが延びる続報 → 失効時刻が来てカードが消える。予報だけになった津波に解除電文は出ないので、消えるのは失効時刻のときだけ。バナー右上の「失効」の行と、読み上げの末尾の失効時刻をここで確かめられる">
             <TestButton color="blue" onClick={onTest.tsunamiExpiry}>失効時刻テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.tsunamiGradeChange && (
+        {onTest.tsunamiGradeChange && (
           <Row label="津波警報・注意報（区域ごとに等級が動く続報）" description="津波警報 → 石川県能登が大津波警報へ上がり、やがて警報へ戻る続報（間に満潮時刻の報を挟む）。全体の等級が動かない報では、区域ごとの「〇〇から引き上げ」「〇〇から切り替え」の印でしか変化が分からない">
             <TestButton color="orange" onClick={onTest.tsunamiGradeChange}>区域の等級変化テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.tsunamiSourceAdded && (
+        {onTest.tsunamiSourceAdded && (
           <Row label="津波注意報（原因の地震が加わる）" description="津波注意報 → 原因の地震 → 2つ目の地震 → 2つの地震を原因とする続報。カードは別の津波に入れ替わらず、バナーに2つの地震が並ぶ（気象庁は同じ津波の続報として地震の番号を書き足す）">
             <TestButton color="orange" onClick={onTest.tsunamiSourceAdded}>原因地震の追加テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.tsunamiQuietReports && (
+        {onTest.tsunamiQuietReports && (
           <Row label="津波警報・注意報（変化の小さい続報）" description="大津波警報（2011年東北地方太平洋沖地震のサンプル電文）→ 10秒おきに続報を16通。等級も波高の数値も動かない報が、通知音だけ鳴って何も声にならないことを確かめる。1通ずつ釜石・大船渡・沖合の値が動き、値を持たない観測点に印だけが付く報もある、釜石が欠測へ転じ、欠測のまま最大波の観測時刻だけが進む報もある">
             <TestButton color="blue" onClick={onTest.tsunamiQuietReports}>変化の小さい続報テスト</TestButton>
           </Row>
         )}
-        <Row label="津波注意報（取消）" description={`鹿児島県西部・種子島屋久島ほか – tsunamiWatch 音 / ${isDmdss ? '90秒後に誤報として取消' : '90秒後に解除（standard 版は取消と解除を区別できないため「解除」表示）'}`}>
+        <Row label="津波注意報（取消）" description={`鹿児島県西部・種子島屋久島ほか – tsunamiWatch 音 / 90秒後に誤報として取消`}>
           <TestButton color="red" onClick={onTest.tsunamiRetraction}>誤報取消テスト</TestButton>
         </Row>
-        {isDmdss && onTest.tsunamiInfoRetraction && (
+        {onTest.tsunamiInfoRetraction && (
           <Row label="津波情報の取消（注意報は続く）" description="津波注意報 → 各地の満潮時刻・到達予想の情報 → その情報だけを取り消す。消えるのはその情報が運んだ観測点だけで、注意報の区域は残る。読み上げは取り消された事実だけを伝え、音は鳴らない">
             <TestButton color="red" onClick={onTest.tsunamiInfoRetraction}>津波情報の取消テスト</TestButton>
           </Row>
         )}
         {/* ── 臨時情報・関連解説情報・後発地震 ── */}
-        {isDmdss && onTest.nankaiChecking && (
+        {onTest.nankaiChecking && (
           <Row label="南海トラフ地震臨時情報（調査中）" description="バナー表示 + specialInfo 音（バナー消去ボタンなし・再テストで上書き）">
             <TestButton color="yellow" onClick={onTest.nankaiChecking}>調査中テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.nankaiWatch && (
+        {onTest.nankaiWatch && (
           <Row label="南海トラフ地震臨時情報（巨大地震注意）" description="バナー表示 + specialInfo 音">
             <TestButton color="orange" onClick={onTest.nankaiWatch}>注意テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.nankaiWarning && (
+        {onTest.nankaiWarning && (
           <Row label="南海トラフ地震臨時情報（巨大地震警戒）" description="バナー表示 + specialInfo 音">
             <TestButton color="red" onClick={onTest.nankaiWarning}>警戒テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.nankaiRetraction && (
+        {onTest.nankaiRetraction && (
           <Row label="南海トラフ地震臨時情報（取消）" description="調査中を発表し、同じ識別情報の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える（発生可能性については何も述べない）">
             <TestButton color="blue" onClick={onTest.nankaiRetraction}>取消テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.nankaiCommentaryAdHoc && (
+        {onTest.nankaiCommentaryAdHoc && (
           <Row label="南海トラフ地震関連解説情報（臨時解説）" description="バナー表示 + specialInfoCommentary 音（閉じるボタンあり・7日で自動消去）">
             <TestButton color="teal" onClick={onTest.nankaiCommentaryAdHoc}>臨時解説テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.nankaiCommentaryRetraction && (
+        {onTest.nankaiCommentaryRetraction && (
           <Row label="南海トラフ地震関連解説情報（取消）" description="臨時解説を発表し、同じ号の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
             <TestButton color="teal" onClick={onTest.nankaiCommentaryRetraction}>解説情報 取消テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.nankaiCommentaryRoutine && (
+        {onTest.nankaiCommentaryRoutine && (
           <Row label="南海トラフ地震関連解説情報（定例解説）" description="平常時に毎月届く電文。バナー表示 + specialInfoCommentary 音（閉じるボタンあり・7日で自動消去）">
             <TestButton color="teal" onClick={onTest.nankaiCommentaryRoutine}>定例解説テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.kohatsu && (
+        {onTest.kohatsu && (
           <Row label="北海道・三陸沖後発地震注意情報" description="バナー表示 + specialInfo 音">
             <TestButton color="blue" onClick={onTest.kohatsu}>後発地震テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.kohatsuRetraction && (
+        {onTest.kohatsuRetraction && (
           <Row label="北海道・三陸沖後発地震注意情報（取消）" description="後発地震注意情報を発表し、同じ識別情報の取消を流す。バナーが消え、取消の音が鳴り、読み上げは取り消された事実と理由を伝える">
             <TestButton color="blue" onClick={onTest.kohatsuRetraction}>取消テスト</TestButton>
           </Row>
         )}
         {/* ── その他の地震情報 ── */}
-        {isDmdss && onTest.estimatedIntensity && (
+        {onTest.estimatedIntensity && (
           <Row label="推計震度分布図" description="気象庁が推計した震度の広がり。地図とカードのボタンが公式の表示へ替わる。初報 → 続報 → 地震情報の続報と流れ、読み上げが「受信しました」から「更新されました」へ変わり、最後に地図が発表値へ戻る（実際の発表は地震から数分後）">
             <TestButton color="teal" onClick={onTest.estimatedIntensity}>推計震度分布図テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.lpgmRetraction && (
+        {onTest.lpgmRetraction && (
           <Row label="長周期地震動に関する観測情報（取消）" description="地震テストの長周期地震動 → その取消。取消は音を鳴らさず、取り消されたことと理由の文を読み上げる（長周期の表示は消える）">
             <TestButton color="teal" onClick={onTest.lpgmRetraction}>長周期 取消テスト</TestButton>
           </Row>
         )}
         {/* ボタン名と説明は 2026-10-24 ユーザー選択「ボタンを足す (Recommended)」で決めた文面 */}
-        {isDmdss && onTest.lpgmClassZero && (
+        {onTest.lpgmClassZero && (
           <Row label="長周期地震動に関する観測情報（階級0）" description="階級1以上を観測しなかった長周期地震動の観測情報を流します。階級1以上の報と同じく、音・読み上げ・通知があります">
             <TestButton color="teal" onClick={onTest.lpgmClassZero}>長周期地震動（階級0）テスト</TestButton>
           </Row>
         )}
         {/* 文面は 2026-10-24 ユーザー選択「この文面でよい (Recommended)」 */}
-        {isDmdss && onTest.lpgmCategories && (
+        {onTest.lpgmCategories && (
           <Row label="長周期地震動に関する観測情報（種類1・3）" description="観測情報の種類1・3の実電文（2024年1月1日 石川県能登地方・2024年8月8日 日向灘）を流します。長周期地震動の欄の下に、階級を観測した地域がいずれも震度5弱以上だったことを伝える一文が出ます">
             <TestButton color="teal" onClick={onTest.lpgmCategories}>長周期地震動（種類1・3）テスト</TestButton>
           </Row>
         )}
         {/* ボタン名と説明は 2026-10-29 ユーザー承認「新しいボタンを足す (Recommended)」「続報も流す (Recommended)」で決めた文面 */}
-        {isDmdss && onTest.lpgmClassZeroRegion && (
+        {onTest.lpgmClassZeroRegion && (
           <Row label="長周期地震動に関する観測情報（階級0の地域を含む）" description="階級1以上の地域に階級0の地域が混ざった長周期地震動の観測情報を流します。階級0の地域も、他の階級と同じ設定で読み上げます。3秒後に規模を書き換えた続報が届き、長周期地震動の欄の値に更新の印が付きます">
             <TestButton color="teal" onClick={onTest.lpgmClassZeroRegion}>長周期地震動（階級0の地域）テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.earthquakeCount && (
+        {onTest.earthquakeCount && (
           <Row label="地震回数に関する情報（バナー）" description="群発時の回数経過（21時間で有感1回）をバナー表示 + earthquakeCount 音・短い読み上げ。有感以外は「発表なし」で届くので、表には「—」が並ぶ（閉じるボタンあり・7日で自動消去）">
             <TestButton color="teal" onClick={onTest.earthquakeCount}>地震回数テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.earthquakeCountRetraction && (
+        {onTest.earthquakeCountRetraction && (
           <Row label="地震回数に関する情報（取消）" description="発表 → その取消。取消では帯ごと消えるため、理由の文が届く先は読み上げだけ（実電文どおり回数の表は持たない）">
             <TestButton color="teal" onClick={onTest.earthquakeCountRetraction}>地震回数 取消テスト</TestButton>
           </Row>
         )}
-        {isDmdss && onTest.quakeNotice && (
+        {onTest.quakeNotice && (
           <Row label="地震・津波に関するお知らせ" description="観測点の入電停止などの運用連絡。バナー表示（音と読み上げは「お知らせの音・読み上げ」が有効なときだけ・閉じるボタンあり・7日で自動消去）">
             <TestButton color="blue" onClick={onTest.quakeNotice}>お知らせテスト</TestButton>
           </Row>
         )}
       </Section>
 
-      <Section category="dev" title="実地震テスト">
-        <div className="px-4 py-2 bg-yellow-900/30 border-b border-yellow-700/40">
-          <p className="text-yellow-400 text-xs">実際に発生した地震の電文データを、発生時と同じ間隔で再生します。動作確認用です。</p>
-        </div>
-        {scenarioTest.loadState === 'error' && (
-          <Row label="シナリオ一覧の取得に失敗しました" />
-        )}
-        {scenarioTest.loadState === 'loaded' && scenarioTest.scenarios.length === 0 && (
-          <Row label="利用可能なシナリオがありません" />
-        )}
-        {scenarioTest.scenarios.map(s => {
-          const playing = scenarioTest.playingIds.has(s.id)
-          const failed = scenarioTest.errorIds.has(s.id)
-          return (
-            <Row
-              key={s.id}
-              label={s.label}
-              description={failed ? `${s.description} 取得に失敗しました。もう一度押すと取り直します` : s.description}
-            >
-              <TestButton
-                color={failed ? 'red' : SCENARIO_CATEGORY_COLOR[s.category]}
-                disabled={playing}
-                onClick={() => scenarioTest.play(s.id)}
-              >
-                {playing ? '再生中…' : failed ? '再試行' : '再生'}
-              </TestButton>
-            </Row>
-          )
-        })}
-      </Section>
-
       <Section category="dev" title="テスト時刻設定">
         <div className="px-4 py-2 bg-blue-900/30 border-b border-blue-700/40">
           <p className="text-blue-300 text-xs">
-            {isDmdss
-              ? '指定した日時の地震情報・津波・緊急地震速報を再生します（2020年11月18日以降。緊急地震速報だけは2022年7月20日以降）。'
-              : '指定した日時の地震情報・津波を再生します（地震情報は2015年1月10日以降、津波は2016年11月22日以降）。'}
+            指定した日時の地震情報・津波・緊急地震速報を再生します（2020年11月18日以降。緊急地震速報だけは2022年7月20日以降）。
             リアルタイム震度は直近の期間と、下記の地震でのみ再生できます。
           </p>
         </div>

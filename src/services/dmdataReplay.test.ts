@@ -754,6 +754,8 @@ describe('fetchDmdataReplayEvents の耐障害性', () => {
 
     expect(result.entries).toHaveLength(1)
     expect(result.failedArchiveUrls).toEqual(['https://x/nomanifest'])
+    // その日の分を丸ごと失ったので、日を添える（鍵を入れた人の再生がその日だけ中継の警報で埋める）
+    expect([...result.lostSourceDays]).toEqual([['https://x/nomanifest', '2026-08-10']])
   })
 
   it('目録が壊れているアーカイブを読めなかった数に含める', async () => {
@@ -771,6 +773,7 @@ describe('fetchDmdataReplayEvents の耐障害性', () => {
 
     expect(result.entries).toHaveLength(1)
     expect(result.failedArchiveUrls).toEqual(['https://x/brokenmanifest'])
+    expect([...result.lostSourceDays]).toEqual([['https://x/brokenmanifest', '2026-08-10']])
   })
 
   it('全アーカイブの目録が読めない場合は例外にする（無警告の成功にしない）', async () => {
@@ -829,6 +832,7 @@ describe('fetchDmdataReplayEvents の耐障害性', () => {
     expect(result.entries).toHaveLength(1)
     // 読めなかった日は取得元の識別子として数える（無言で消すと「静かな時間帯」と区別が付かない）
     expect(result.failedArchiveUrls).toContain('live:2026-08-10')
+    expect(result.lostSourceDays.get('live:2026-08-10')).toBe('2026-08-10')
   })
 
   // 目録の範囲も窓の JST 日から導く。**左端は排他**なので 1 日手前を指す（実測。
@@ -989,6 +993,7 @@ describe('fetchDmdataReplayEvents の耐障害性', () => {
 
     // 本編と初期状態が同じアーカイブを読んでも、呼び出し元は URL で重複を除ける
     expect(result.failedArchiveUrls).toEqual(['https://x/broken'])
+    expect([...result.lostSourceDays]).toEqual([['https://x/broken', '2026-08-10']])
   })
 
   it('すべて正常なら skipped も failedArchives も 0', async () => {
@@ -3182,7 +3187,7 @@ describe('filterPreWindowEvents の津波', () => {
     expect(kept[1].validDateTime).toBe('2024-01-02T17:00:00+09:00')
   })
 
-  it('期限を伝えた報が 1 通も無ければ残す（standard 版・期限がまだ決まっていない段階）', () => {
+  it('期限を伝えた報が 1 通も無ければ残す（期限がまだ決まっていない段階）', () => {
     const entries = [tsunamiEntry('2024-01-01T16:12:00+09:00'), tsunamiEntry('2024-01-01T16:22:00+09:00')]
     expect(keptTsunamis(entries, '2024-01-01T18:00:00+09:00')).toHaveLength(2)
   })
@@ -3195,8 +3200,8 @@ describe('filterPreWindowEvents の津波', () => {
     expect(keptTsunamis(entries, '2024-08-09T02:00:00+09:00')).toEqual([])
   })
 
-  // P2PQuake（standard 版）の 552 は eventId を持たず id も報ごとに変わるため、報 1 通ずつが
-  // 別グループになる。この経路で解除の足切りを時刻だけで行うと、同じ 24 時間に無関係な津波が
+  // eventId を持たない電文（`EventID` が空）は、報 1 通ずつが
+  // 別グループになる。そうした電文で解除の足切りを時刻だけで行うと、同じ 24 時間に無関係な津波が
   // 2 つあったとき、解除された側の時刻でまだ発表中の側まで消える。解除報ごと全部を流し、照合は
   // `isCancelForCurrentTsunami` に委ねる。
   it('eventId が無い経路では解除報も含めて全報を通す（無関係な津波を巻き込まない）', () => {
@@ -3269,12 +3274,6 @@ describe('filterPreWindowEvents の津波', () => {
     // 記録の差し替えはテストごとに戻す（戻さないと、後のテストが同じ差し替えに積もった呼び出しを数える）
     afterEach(() => { vi.restoreAllMocks() })
     const TARGET = '2024-01-20T12:00:00+09:00'
-    const unkeyed = (time: string): ReplayEntry => {
-      const entry = tsunamiEntry(time)
-      const t = entry.payload.kind === 'event' ? (entry.payload.event as JMATsunami) : null
-      return { ...entry, payload: { kind: 'event', event: { ...t!, eventId: undefined } } }
-    }
-
     // 安全弁: 端に接する束は、最後の報から 24 時間で落とす
     it('材料の端の日に最も古い報がある束は、最後の報から 24 時間を過ぎたら落とす', () => {
       vi.spyOn(log, 'warn').mockImplementation(() => {})
@@ -3309,10 +3308,13 @@ describe('filterPreWindowEvents の津波', () => {
       expect(lines[0]).toContain(new Date('2024-01-10T12:00:00+09:00').toISOString())
     })
 
-    // 対照: 識別子の無い津波は、端から離れていても今どおり 24 時間で落とす
-    it('識別子の無い津波は、材料の端から離れていても 24 時間で落とす', () => {
-      vi.spyOn(log, 'warn').mockImplementation(() => {})
-      expect(keptTsunamis([unkeyed('2024-01-10T10:00:00+09:00')], TARGET)).toEqual([])
+    // 対照: 識別子の無い津波は、端から離れていればライブと同じく残す
+    it('識別子の無い津波も、材料の端から離れていれば 24 時間を過ぎても残す', () => {
+      vi.spyOn(log, 'info').mockImplementation(() => {})
+      const entry = tsunamiEntry('2024-01-10T10:00:00+09:00')
+      const t = entry.payload.kind === 'event' ? (entry.payload.event as JMATsunami) : null
+      const unkeyed: ReplayEntry = { ...entry, payload: { kind: 'event', event: { ...t!, eventId: undefined } } }
+      expect(keptTsunamis([unkeyed], TARGET)).toHaveLength(1)
     })
 
     // 発表時刻が読めない束は古さを測れないので、識別子付きでその旨を記録して残す
@@ -3754,12 +3756,12 @@ describe('本体は目録の filename で引く', () => {
 /**
  * 初期状態（窓の手前）の畳み込み。
  *
- * **鍵の作り方がバリアントで分かれてはいけない。** 地震は「最新 1 報だけを流す」のが
+ * **鍵の作り方が取得元で分かれてはいけない。** 地震は「最新 1 報だけを流す」のが
  * 初期状態の設計で、畳めなかった報は 1 通ずつ流れてカードを更新する —— **更新の印は
  * `silent` を見ずに付く**ので、利用者が見ていない窓の手前の更新が再生開始直後の画面に残る。
  *
- * 電文 ID から `eventId` を取り出す方法は DMDATA の書式にしか当たらず、P2PQuake の id
- * （API が電文ごとに振る値）では畳めなかった。同一性の判定はライブ経路と同じ
+ * 電文 ID から `eventId` を取り出す方法は DMDATA の書式にしか当たらず、その書式に当たらない
+ * id では畳めない。同一性の判定はライブ経路と同じ
  * `sameQuakeEntry`（→ `utils/quakeMerge.ts` の `createQuakeFoldKeys`）へ寄せてある。
  */
 // 窓の手前の緊急地震速報は最新 1 報へ畳まれる。誤報取消の読み上げが第 1 報の時刻を言えるよう、
@@ -3814,7 +3816,7 @@ describe('filterPreWindowEvents の畳み込み（地震）', () => {
   const AREA = { pref: '茨城県', addr: '茨城県南部', isArea: true, scale: 40 }
   const TARGET = '2026-09-29T12:00:00+09:00'
 
-  /** P2PQuake の id は API が電文ごとに振る値で、DMDATA の書式（`dmdata-quake-…`）に当たらない。 */
+  /** 識別子を持たない報の形。id は DMDATA の書式（`dmdata-quake-…`）に当たらない値にする。 */
   function quakeEntry(o: {
     id: string
     type?: string
@@ -3868,7 +3870,7 @@ describe('filterPreWindowEvents の畳み込み（地震）', () => {
   }
 
   // 正: 識別子を持たない経路でも、同じ地震の続報は最新 1 報へ畳まれる
-  it('P2PQuake の id でも、同じ地震の 3 報が最新 1 報へ畳まれる', () => {
+  it('DMDATA の書式に当たらない id でも、同じ地震の 3 報が最新 1 報へ畳まれる', () => {
     const entries = [
       quakeEntry({ id: 'p2p-1', type: '震度速報', hypoName: '', magnitude: NaN, at: '2026-09-29T04:48:00+09:00' }),
       quakeEntry({ id: 'p2p-2', type: '震源に関する情報', at: '2026-09-29T04:50:00+09:00' }),

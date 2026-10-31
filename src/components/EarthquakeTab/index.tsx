@@ -13,7 +13,7 @@ import { quakeCardScrollTarget, QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCar
 import { useFollowScroll } from '../../hooks/useFollowScroll'
 import {
   type TelegramLoss, formatHistoryLossNotice, HISTORY_LOAD_MORE_FAILED_NOTICE, RECONNECT_GAP_LOSS_NOTICE,
-  formatRateLimitedNotice, FETCH_THROTTLED_NOTICE,
+  formatRateLimitedNotice, FETCH_THROTTLED_NOTICE, KEY_REENTRY_NOTICE,
 } from '../../utils/telegramLoss'
 
 interface Props {
@@ -33,7 +33,6 @@ interface Props {
   onLoadMore: () => void
   /**
    * 「もっと見る」が取得制限で待たされている間、ボタンに残り時間を出すか（→ `LoadMoreButton`）。
-   * **DMDSS 版だけ `true`**（標準版は門を通らない）。
    */
   watchLoadMoreThrottle: boolean
   error: string | null
@@ -52,6 +51,15 @@ interface Props {
    * **損失ではない。** 枠が空けばそのまま取りに行くので、欠けは出ない。
    */
   fetchThrottled: boolean
+  /**
+   * 中継が見ていない区間の帯の文（1 区間 1 行。→ `utils/relayGapNotice.ts`）。照合が済めば消える。
+   * **欠けているかもしれないので損失の色で出す**（2026-10-31 ユーザー選択の説明「取りこぼしの帯と同じ場所・同じ色」）
+   */
+  relayGapNotices: readonly string[]
+  /**
+   * 鍵の入れ直しの案内を閉じる。案内を出さないときは null（→ `utils/telegramLoss.ts` の `KEY_REENTRY_NOTICE`）
+   */
+  onDismissKeyReentry: (() => void) | null
   lpgmByEventId: ReadonlyMap<string, JMALpgm>
   /**
    * カードの更新の印。鍵は地震が `quakeEventKey`、長周期が {@link lpgmMarkKey}。
@@ -114,21 +122,26 @@ interface Props {
  *
  * **待ちを琥珀で出さないこと。** あれは損失の色で、並べると「取りこぼした」と読まれる。
  */
-function HistoryNotice({ tone, children }: { tone: 'loss' | 'info'; children: React.ReactNode }) {
+function HistoryNotice({ tone, children, onClose }: { tone: 'loss' | 'info'; children: React.ReactNode; onClose?: () => void }) {
   const color = tone === 'info'
     ? 'border-sky-500/40 bg-sky-500/10 text-sky-300'
     : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
   return (
-    <div className={`rounded-lg border px-2 py-1.5 text-xs roomy:text-sm roomy:px-3 roomy:py-2 ${color}`}>
-      {children}
+    <div className={`flex items-start gap-2 rounded-lg border px-2 py-1.5 text-xs roomy:text-sm roomy:px-3 roomy:py-2 ${color}`}>
+      <div className="flex-1">{children}</div>
+      {onClose && (
+        <button type="button" onClick={onClose} aria-label="閉じる" className="shrink-0 leading-none opacity-70 hover:opacity-100">×</button>
+      )}
     </div>
   )
 }
 
+interface Notice { text: string; tone: 'loss' | 'info'; onClose?: () => void }
+
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, internationalTsunamis, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, relayGapNotices, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, internationalTsunamis, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 寄せる相手と寄せ直す合図は `quakeCardScrollTarget`、寄せ方は共有のフック（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。
@@ -140,11 +153,12 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
   //
   // **待っているだけの告知は最後・青で出す。** 上の 4 つは「何かが欠けた・失敗した」だが、
   // これは欠けていない（枠が空けばそのまま取りに行く）。
-  const notices: Array<{ text: string; tone: 'loss' | 'info' }> = [
+  const notices: Notice[] = [
     formatHistoryLossNotice(historyLoss),
     formatRateLimitedNotice(historyLoss),
     loadMoreFailed ? HISTORY_LOAD_MORE_FAILED_NOTICE : null,
     reconnectGapLoss ? RECONNECT_GAP_LOSS_NOTICE : null,
+    ...relayGapNotices,
   ].filter((t): t is string => t !== null).map(text => ({ text, tone: 'loss' as const }))
   // **取得に失敗しても、カードがあれば一覧は残す**（2026-10-21 ユーザー承認「直す (Recommended)」。
   // カードがあれば一覧を残し、失敗は既存の帯で。文言は足さない）。起動時の履歴より先に、または失敗の後に
@@ -157,8 +171,13 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
     notices.unshift({ text: error.trim() === '' ? 'データの取得に失敗' : `データの取得に失敗（${error}）`, tone: 'loss' })
   }
   if (fetchThrottled) notices.push({ text: FETCH_THROTTLED_NOTICE, tone: 'info' })
+  // 鍵の入れ直しの案内は欠けではないので青。閉じられる（2026-10-31 ユーザー選択の説明「［×］で閉じる」）
+  const keyReentryNotice: Notice | null = onDismissKeyReentry === null
+    ? null
+    : { text: KEY_REENTRY_NOTICE, tone: 'info', onClose: onDismissKeyReentry }
+  if (keyReentryNotice !== null) notices.push(keyReentryNotice)
   // **1 件も無いときだけ読み込み中の画面にする。**
-  // DMDSS 版は日ごとにアーカイブを読むので、全件が揃うのは数秒後になる
+  // 履歴は日ごとにアーカイブを読むので、全件が揃うのは数秒後になる
   // （→ `docs/spec/data-sources-spec.md` §2「窓ごとの上限を守る」）。取得側は
   // 取れた分から順に流しているので、`isLoading` だけで覆うと**その間ずっとスピナーのままになり、
   // 逐次に出す仕組みが画面へ一度も現れない**。
@@ -173,12 +192,21 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
     )
   }
 
+  // 全画面の失敗表示には「欠けた」系の帯を重ねない（一部が欠けたのか、まるごと失敗したのか読めなくなる）。
+  // **鍵の入れ直しの案内だけは出す** —— 取得の成否と別の話で、中継に繋がらない初回こそ要る
   if (failed && earthquakes.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full p-4">
-        <div className="text-center">
-          <p className="text-red-400 text-sm mb-2">データの取得に失敗</p>
-          <p className="text-secondary text-xs">{error}</p>
+      <div className="flex flex-col h-full">
+        {keyReentryNotice !== null && (
+          <div className="p-2 roomy:p-3">
+            <HistoryNotice tone={keyReentryNotice.tone} onClose={keyReentryNotice.onClose}>{keyReentryNotice.text}</HistoryNotice>
+          </div>
+        )}
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center">
+            <p className="text-red-400 text-sm mb-2">データの取得に失敗</p>
+            <p className="text-secondary text-xs">{error}</p>
+          </div>
         </div>
       </div>
     )
@@ -189,7 +217,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
       <div className="flex flex-col h-full">
         {notices.length > 0 && (
           <div className="p-2 space-y-1.5 roomy:p-3 roomy:space-y-2">
-            {notices.map(n => <HistoryNotice key={n.text} tone={n.tone}>{n.text}</HistoryNotice>)}
+            {notices.map(n => <HistoryNotice key={n.text} tone={n.tone} onClose={n.onClose}>{n.text}</HistoryNotice>)}
           </div>
         )}
         <div className="flex-1 flex items-center justify-center">
@@ -201,7 +229,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
 
   return (
     <div ref={listRef} className="p-2 space-y-1.5 roomy:p-3 roomy:space-y-2">
-      {notices.map(n => <HistoryNotice key={n.text} tone={n.tone}>{n.text}</HistoryNotice>)}
+      {notices.map(n => <HistoryNotice key={n.text} tone={n.tone} onClose={n.onClose}>{n.text}</HistoryNotice>)}
       {earthquakes.map((quake, i) => (
         <EarthquakeCard
           // QUAKE-4: 続報で id 末尾の serial が変わるたびに EarthquakeCard がリマウントされ、
@@ -238,8 +266,8 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
       )}
       {!hasMore && earthquakes.length > 0 && (
         // 「すべての履歴」とは書かない。**止まる理由は経路で違う**（`useEarthquakes` の `hasMore`）。
-        // DMDSS 版はアーカイブの目録が空になったとき（在庫の端。地震津波関連は 2020-11-18 から）。
-        // 標準版は配信元の応答が要求件数を下回ったとき＝その窓を使い切ったとき。再生中は続きを読む口が
+        // ライブはアーカイブの目録が空になったとき（在庫の端。地震津波関連は 2020-11-18 から）。
+        // 再生中は続きを読む口が
         // 無いとき（ローカル履歴アーカイブは収録範囲の外を持たない・在庫の端・開始時の履歴の取得に失敗した）。
         // どれも「これ以上は遡れない」ことは共通なので、文言は 1 つで足りる。
         <p className="text-center text-xs text-secondary py-2">これ以上は遡れません</p>

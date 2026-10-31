@@ -46,7 +46,7 @@ describe('isValidIntensityScale', () => {
     }
   })
 
-  // 型検査が及ばない経路（実地震シナリオ JSON・P2PQuake の as キャスト）を守るための関数なので、
+  // 型検査が及ばない経路（実地震シナリオ JSON など）を守るための関数なので、
   // 実行時に型どおりでない値が来ても誤って通さないことを固定する。
   it('型を迂回した文字列を弾く（継承プロパティ経由で真にならない）', () => {
     for (const v of ['toString', 'constructor', 'hasOwnProperty', '10', '-1']) {

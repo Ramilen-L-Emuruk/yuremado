@@ -750,7 +750,7 @@ describe('EEW の初期フレーミング', () => {
   })
 
   it('震源の位置が判らない EEW を寄り先にしない', () => {
-    // Arrange: 標準版（Yahoo 強震モニタ）は座標の文字列が空だと NaN になる。NaN はどの比較でも
+    // Arrange: 強震モニタ（Yahoo）の緊急地震速報は座標の文字列が空だと NaN になる。NaN はどの比較でも
     // false になるため、否定形（`lat <= -200`）の判定では弾けず、そのまま寄り先として渡ると
     // MapLibre が例外を投げる（描画ループの中で起きるので ErrorBoundary は届かない）。
     const map = createFakeMap({ fitZoom: 5 })
@@ -1888,7 +1888,7 @@ describe('津波モードの帰還（観測点 → 俯瞰）', () => {
     expect(fitTargets(map)).toEqual([-1])
   })
 
-  it('識別子を取れない経路では差し替えを判定しない（標準版は「別物」と言えない）', () => {
+  it('識別子を取れない津波では差し替えを判定しない（「別物」と言えない）', () => {
     // Arrange: 識別子が空のまま津波が現れ、観測点も届いた状態。
     const map = createFakeMap()
     const view = render(tsunamiHarness(map, { mode: 'kyoshin', signature: '', eventId: '', coast: [] }))

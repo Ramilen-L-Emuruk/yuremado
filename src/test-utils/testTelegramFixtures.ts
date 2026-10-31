@@ -51,23 +51,21 @@ export const FIXTURE_NOW = new Date('2026-10-22T03:00:00.000Z')
  * 台本の電文をパーサーへ通して返す。
  *
  * @param name 台本の名前（`testTelegramScripts.ts` の export 名）
- * @param options.isDmdss DMDSS 版として組むか（既定は true）
  * @param options.now 「いま」。**押すたびに別の地震にしたいときだけ変える**（既定は固定値）
  */
 export async function telegramPayloads(
   name: string,
-  options: { isDmdss?: boolean; now?: Date } = {},
+  options: { now?: Date } = {},
 ): Promise<ReplayPayload[]> {
-  const isDmdss = options.isDmdss ?? true
   const now = options.now ?? FIXTURE_NOW
-  const key = `${name}|${isDmdss}|${now.getTime()}`
+  const key = `${name}|${now.getTime()}`
   let pending = cache.get(key)
   if (!pending) {
     pending = (async () => {
       const scripts = await import('../utils/testTelegramScripts') as unknown as Record<string, TestTelegramScript>
       const script = scripts[name]
       if (!script) throw new Error(`テスト用の台本がありません: ${name}`)
-      const built = await buildTestTelegramEntries(script, { isDmdss, now, fetcher, binaryFetcher })
+      const built = await buildTestTelegramEntries(script, { now, fetcher, binaryFetcher })
       return built.map(b => b.entry.payload)
     })()
     cache.set(key, pending)
@@ -76,13 +74,13 @@ export async function telegramPayloads(
 }
 
 /** 台本の電文のうち、画面へ流す出来事（地震・津波・緊急地震速報）だけ。 */
-export async function telegramEvents(name: string, options?: { isDmdss?: boolean; now?: Date }): Promise<AppEvent[]> {
+export async function telegramEvents(name: string, options?: { now?: Date }): Promise<AppEvent[]> {
   const payloads = await telegramPayloads(name, options)
   return payloads.flatMap(p => (p.kind === 'event' ? [p.event] : []))
 }
 
 /** 取り出しの引数。どれも同じなのでまとめる。 */
-type Options = { isDmdss?: boolean; now?: Date }
+type Options = { now?: Date }
 
 /**
  * 種別ごとの取り出し。**空で返ったらテスト側の台本の選び方が違う**（型では気づけないので、

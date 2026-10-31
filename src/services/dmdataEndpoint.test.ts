@@ -2,20 +2,37 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { dmdataKeyEndpoint, DMDATA_API_BASE, DMDATA_DATA_BASE, type DmdataEndpoint } from './dmdataEndpoint'
 import { DmdataApiKeyError } from '../utils/dmdataApiKey'
-import { fetchDmdataGdEarthquakes, fetchDmdataEewEventList, fetchLatestEewReport } from './dmdata'
+import { fetchDmdataEewEventList, fetchLatestEewReport } from './dmdata'
 import { fetchDmdataReplayEvents } from './dmdataReplay'
 import { fetchLiveReplayEntries } from './dmdataReplayLive'
 import { PREFERRED_CLASSIFICATIONS } from './dmdataClassifications'
 import { fetchTelegramText, setBodyGateIntervalForTest, resetTelegramBodyStatsForTest } from './telegramBody'
 import { resetDataApiGateForTest } from './dmdataRequestGates'
 
-/** 偽の繋ぎ先。宛先も見出しも DMDATA と違う値にして、呼び出し側がこの値だけを見ていることを確かめる */
+/**
+ * 偽の繋ぎ先。宛先も見出しも DMDATA と違う値にして、呼び出し側がこの値だけを見ていることを確かめる。
+ * 見出しは `prepare` を待った後でしか作れない（中継の札と同じ）ので、用意を飛ばした取得はここで投げる
+ */
+let fakePrepared = false
 const FAKE: DmdataEndpoint = {
   apiBase: 'https://relay.example.test/v2',
   dataBase: 'https://data.example.test/v1/',
+  // 警報を `/v2/gd/eew` から辿る経路（DMDATA と同じ）を通す
+  telegramListHasEew: false,
   problem: () => null,
-  apiHeaders: () => ({ 'X-Relay-Token': 'api-tag' }),
-  dataHeaders: () => ({ 'X-Relay-Token': 'data-tag' }),
+  prepare: async () => { fakePrepared = true },
+  waitApiSlot: async () => {},
+  waitDataSlot: async () => {},
+  observe: () => {},
+  noteListGaps: () => {},
+  apiHeaders: () => {
+    if (!fakePrepared) throw new Error('用意を待たずに見出しを作った')
+    return { 'X-Relay-Token': 'api-tag' }
+  },
+  dataHeaders: () => {
+    if (!fakePrepared) throw new Error('用意を待たずに見出しを作った')
+    return { 'X-Relay-Token': 'data-tag' }
+  },
 }
 
 describe('dmdataKeyEndpoint', () => {
@@ -25,14 +42,14 @@ describe('dmdataKeyEndpoint', () => {
     expect(ep.dataBase).toBe(DMDATA_DATA_BASE)
     expect(ep.problem()).toBeNull()
     expect(ep.apiHeaders()).toEqual({ Authorization: 'Basic ' + btoa('abc:') })
-    expect(ep.dataHeaders()).toEqual({ Authorization: 'Basic ' + btoa('abc:') })
+    expect(ep.dataHeaders(`${DMDATA_DATA_BASE}x`)).toEqual({ Authorization: 'Basic ' + btoa('abc:') })
   })
 
   it('鍵が空なら作る時点では投げず、見出しを求めた時点で投げる', () => {
     const ep = dmdataKeyEndpoint('')
     expect(ep.problem()).not.toBeNull()
     expect(() => ep.apiHeaders()).toThrow(DmdataApiKeyError)
-    expect(() => ep.dataHeaders()).toThrow(DmdataApiKeyError)
+    expect(() => ep.dataHeaders(`${DMDATA_DATA_BASE}x`)).toThrow(DmdataApiKeyError)
   })
 })
 
@@ -41,6 +58,7 @@ describe('呼び出し側は渡された繋ぎ先だけを使う', () => {
 
   beforeEach(() => {
     calls = []
+    fakePrepared = false
     setBodyGateIntervalForTest(0)
     resetDataApiGateForTest()
     resetTelegramBodyStatsForTest()
@@ -53,15 +71,6 @@ describe('呼び出し側は渡された繋ぎ先だけを使う', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
-  })
-
-  it('一覧（/gd/earthquake）は apiBase と apiHeaders で投げる', async () => {
-    await fetchDmdataGdEarthquakes(FAKE, 1)
-    expect(calls.length).toBeGreaterThan(0)
-    for (const c of calls) {
-      expect(c.url.startsWith(`${FAKE.apiBase}/gd/earthquake`)).toBe(true)
-      expect(c.headers).toEqual({ 'X-Relay-Token': 'api-tag' })
-    }
   })
 
   it('緊急地震速報の一覧（/gd/eew）も apiBase と apiHeaders で投げる', async () => {

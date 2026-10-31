@@ -114,7 +114,7 @@ function flushUnknownUnreceived(logPrefix: string): void {
   unknownUnreceivedValues.clear()
 }
 
-/** 上限を定めない予想震度を表す DMDATA の値。P2PQuake の `scaleTo: 99` と同じ意味。 */
+/** 上限を定めない予想震度を表す DMDATA の値。 */
 const DMDATA_INTENSITY_OVER = 'over'
 
 /**
@@ -139,7 +139,7 @@ const EEW_AREA_ARRIVED_CONDITION = '既に主要動到達と推測'
  * `to: "over"` は上限を定めない表現（例: `from: "4", to: "over"` = 「震度4以上」）。
  * これを震度7と読むと、仮定震源要素の初報のように下限しか決まっていない報が
  * 最大震度7として塗られ・読み上げられる。上限には下限側の値を採り、「以上」は
- * フラグで持ち越して表示・読み上げで語を補う（P2PQuake の `scaleTo: 99` と同じ扱い）。
+ * フラグで持ち越して表示・読み上げで語を補う。
  *
  * 電文全体の予想震度（`ForecastInt`）も幅（`From`〜`To`）の上限だけを持ち、下限は出さない
  * （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
@@ -411,7 +411,7 @@ const CORRECT_HYPOCENTER_CODE = '0256'
  * 気象庁は訂正の中身を `VarComment/Code` に載せる。**現行のコード表で訂正を表すのは
  * `0256`「震源要素を訂正します。」1 つだけ**で、震度だけの訂正に当たるコードは無い
  * （`AdditionalCommentEarthquake` コード表）。そのため区別できるのは「震源を訂正」と
- * 「（内容の判らない）訂正」の 2 つで、P2PQuake 経路が持つ 5 値とは揃わない。
+ * 「（内容の判らない）訂正」の 2 つで、`CorrectType` の他の値（「震度のみ訂正」など）は作らない。
  *
  * `VarComment` を持たない訂正報・コードを読めなかった訂正報は `'訂正'` のまま返す。
  * 訂正であること自体は `InfoType` が確定させているので、ここで落としてはならない。
@@ -2080,7 +2080,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       time: earthquakeTime,
       hypocenter: {
         name: hypName,
-        // 震度速報は震源情報なし。-200 は「位置不明」センチネル（P2PQuake 経路と揃えてある）。
+        // 震度速報は震源情報なし。-200 は「位置不明」センチネル（`utils/geo.ts` の判定と揃えてある）。
         latitude: Number.isFinite(lat) ? lat : -200,
         longitude: Number.isFinite(lng) ? lng : -200,
         depth,

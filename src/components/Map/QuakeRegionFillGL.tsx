@@ -81,7 +81,7 @@ export const POPUP_CITY_LIMIT = 8
  *
  * - 並びは震度の高い順。同じ震度なら観測できた市町村を先に、その中は電文の順（気象庁の標準順）
  * - 上限は {@link POPUP_CITY_LIMIT}。超えた分は「ほか N 市町村」にまとめる
- * - 市町村の震度が無い報（震度速報・標準版）は空文字を返し、吹き出しは区域名と最大震度の 2 行のまま
+ * - 市町村の震度が無い報（震度速報）は空文字を返し、吹き出しは区域名と最大震度の 2 行のまま
  */
 export function regionCityRowsHtml(cities: readonly JMAQuakeCity[]): string {
   if (cities.length === 0) return ''

@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { log } from '../utils/logger'
-import { isDmdss } from '../utils/env'
+import { consumeSettingsHandoff } from '../utils/settingsHandoff'
 import { isValidIntensityScale } from '../utils/intensity'
 import { isObservedLpgmClass } from '../utils/lpgm'
 // 読み上げ文の作り方を決める値なので、定義は読み上げ側（`utils/ttsText.ts`）に置く。
@@ -98,7 +98,7 @@ export interface AppSettings {
   notifyEEW: boolean               // 緊急地震速報の発報・昇格時にブラウザ通知を送る
   notifyTsunami: boolean           // 津波のブラウザ通知（予報以上の発表・続報と全区域解除。→ audio-tts-spec §7）
   notifyDetection: boolean         // 強震モニタの揺れ検知時にブラウザ通知を送る
-  notifyNankai: boolean            // 南海トラフ地震臨時情報・後発地震注意情報・臨時の解説情報のブラウザ通知（DMDSS 版。2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
+  notifyNankai: boolean            // 南海トラフ地震臨時情報・後発地震注意情報・臨時の解説情報のブラウザ通知（2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
   homeLat: number | null           // ホーム地点 緯度（null = 未設定）
   homeLng: number | null           // ホーム地点 経度（null = 未設定）
   /**
@@ -109,8 +109,18 @@ export interface AppSettings {
    * 第 17 条の許可を要する地震動の予報業務に当たりうるため（→ `utils/arrivalToken.ts`）。
    */
   arrivalToken: string
-  dmdataApiKey: string             // DMDATA.JP APIキー（DMDSS版のみ使用、空文字 = 未設定）
-  dmdataTestDelivery: boolean      // 試験報・訓練報を受信する（検証用）。DMDSS版は配信テスト VXSE42 等も、標準版は強震モニタ・P2PQuake の緊急地震速報の訓練報・試験報（→ admitTrainingEew）
+  /**
+   * 予報キー（空文字 = 未設定）。中継へ渡すと、緊急地震速報の予報（`eew.forecast`）も中継から届く
+   * （→ `utils/forecastKey.ts`）。到達予想キーと同じく、設定の窓では入れた後にしか行が出ない。
+   */
+  forecastKey: string
+  dmdataApiKey: string             // DMDATA.JP APIキー（空文字 = 未設定。未設定なら中継から受ける）
+  /**
+   * 鍵の入れ直しの案内を出すか（→ `utils/telegramLoss.ts` の `KEY_REENTRY_NOTICE`）。古い URL の橋渡しのページが、
+   * 前の設定に鍵があったときだけ立てて渡す。鍵を入れるか、地震タブの帯を［×］で閉じると下ろす
+   */
+  dmdataKeyReentryNotice: boolean
+  dmdataTestDelivery: boolean      // 試験報・訓練報を受信する（検証用）。DMDATA の配信テスト VXSE42 等と、強震モニタの緊急地震速報の訓練報（→ admitTrainingEew）
   voicevoxEnabled: boolean         // VOICEVOX 読み上げを有効にする
   voicevoxUrl: string              // VOICEVOX の HTTP API ベース URL
   voicevoxSpeakerId: number        // VOICEVOX 話者 ID
@@ -240,10 +250,11 @@ export const PANEL_RATIO_MAX = 0.8
 export const DAY_NIGHT_OPACITY_MIN = 0.2
 export const DAY_NIGHT_OPACITY_MAX = 0.95
 
-// 通常版とDMDSS版の設定を localStorage 上で分離する
-const STORAGE_KEY = isDmdss
-  ? 'quake-viewer-settings-dmdss'
-  : 'quake-viewer-settings'
+// 設定の保存先。版を 1 つにまとめた後は 1 つだけ（docs/relay-server-design.md §0 の 2026-10-31 の行）。
+// `quake-viewer-settings-dmdss` は読まない（新しいドメインで配るので、そこに前の設定は無い）。
+// 前の設定は、旧 URL の橋渡しのページが URL の # で渡す（→ `utils/settingsHandoff.ts`）か、書き出し・読み込みで持ってくる。
+// 読み込みは前の 2 つの版の印も受ける（→ `utils/settingsIo.ts`）。
+const STORAGE_KEY = 'quake-viewer-settings'
 
 /**
  * 設定の既定値。
@@ -304,7 +315,9 @@ export const DEFAULTS: AppSettings = {
   homeLat: null,
   homeLng: null,
   arrivalToken: '',
+  forecastKey: '',
   dmdataApiKey: '',
+  dmdataKeyReentryNotice: false,
   dmdataTestDelivery: false,
   voicevoxEnabled: false,
   voicevoxUrl: 'http://localhost:50021',
@@ -496,7 +509,9 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     homeLat: clampNumberOrNull(partial.homeLat, -90, 90),
     homeLng: clampNumberOrNull(partial.homeLng, -180, 180),
     arrivalToken: ensureString(partial.arrivalToken, DEFAULTS.arrivalToken),
+    forecastKey: ensureString(partial.forecastKey, DEFAULTS.forecastKey),
     dmdataApiKey: ensureString(partial.dmdataApiKey, DEFAULTS.dmdataApiKey),
+    dmdataKeyReentryNotice: ensureBool(partial.dmdataKeyReentryNotice, DEFAULTS.dmdataKeyReentryNotice),
     dmdataTestDelivery: ensureBool(partial.dmdataTestDelivery, DEFAULTS.dmdataTestDelivery),
     voicevoxEnabled: ensureBool(partial.voicevoxEnabled, DEFAULTS.voicevoxEnabled),
     voicevoxUrl: ensureString(partial.voicevoxUrl, DEFAULTS.voicevoxUrl),
@@ -539,7 +554,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
 /**
  * dev サーバーで自動投入する API キーを決める（検証のたびに設定の窓へ貼り直す手間を省く経路）。
  *
- * 値を渡しているのは vite.config.ts の devApiKeyDefine で、dev サーバー・DMDSS 版・`--host` なし
+ * 値を渡しているのは vite.config.ts の devApiKeyDefine で、dev サーバー・`--host` なし
  * のときだけ define する。ここで重ねて見るのは本番ビルドとテストの 2 つ。
  *   - 本番ビルドでは `DEV` が false に畳まれ、この分岐ごと消える。
  *   - テスト（`MODE === 'test'`）では、vitest が vite.config.ts を読まない独立設定
@@ -550,15 +565,13 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
  */
 export function resolveDevApiKey(
   env: { DEV: boolean; MODE: string; DMDATA_API_KEY?: string },
-  isDmdssVariant: boolean,
 ): string | undefined {
   if (!env.DEV || env.MODE === 'test') return undefined
-  if (!isDmdssVariant) return undefined
   return env.DMDATA_API_KEY
 }
 
 function devApiKey(): string | undefined {
-  return resolveDevApiKey(import.meta.env, isDmdss)
+  return resolveDevApiKey(import.meta.env)
 }
 
 /**
@@ -575,8 +588,7 @@ export function injectDevApiKey(settings: AppSettings, key: string | undefined):
 /**
  * dev サーバーが注入した到達予想トークンを読む。
  *
- * **バリアントを問わない**（API キーと違う点）。トークンが開くのはホーム地点への到達予想で、
- * standard 版・DMDSS 版のどちらにもある機能。注入の可否そのものは
+ * トークンが開くのはホーム地点への到達予想。注入の可否そのものは
  * `scripts/dev-api-key-gate.ts` の `shouldInjectDevArrivalToken` が判定しており、
  * build には渡らない。
  */
@@ -590,12 +602,44 @@ function devArrivalToken(): string | undefined {
 }
 
 /**
- * dev サーバーが注入した鍵（API キーと到達予想トークン）。設定の書き出し（`utils/settingsIo.ts`）が
+ * dev サーバーが注入した予報キーを読む。注入の可否は到達予想トークンと同じ門
+ * （`scripts/dev-api-key-gate.ts` の `shouldInjectDevArrivalToken`）が決め、build には渡らない。
+ */
+export function resolveDevForecastKey(env: { DEV: boolean; MODE: string; FORECAST_KEY?: string }): string | undefined {
+  if (!env.DEV || env.MODE === 'test') return undefined
+  return env.FORECAST_KEY
+}
+
+function devForecastKey(): string | undefined {
+  return resolveDevForecastKey(import.meta.env)
+}
+
+/** dev サーバーが注入した鍵の組（API キー・到達予想トークン・予報キー） */
+export interface DevInjectedKeys {
+  apiKey: string | undefined
+  arrivalToken: string | undefined
+  forecastKey: string | undefined
+}
+
+/**
+ * dev サーバーが注入した鍵。設定の書き出し（`utils/settingsIo.ts`）が
  * 「鍵も含める」を選ばれても、注入値だけは外すために使う —— 利用者が入れた鍵ではなく `.env.local` の値なので、
  * 端末へ保存しない（`settingsToStore`）のと同じ扱いにする。
  */
-export function devInjectedKeys(): { apiKey: string | undefined; arrivalToken: string | undefined } {
-  return { apiKey: devApiKey(), arrivalToken: devArrivalToken() }
+export function devInjectedKeys(): DevInjectedKeys {
+  return { apiKey: devApiKey(), arrivalToken: devArrivalToken(), forecastKey: devForecastKey() }
+}
+
+/** 未設定のときだけ dev の予報キーを差し込む。手入力した値は踏み潰さない（到達予想トークンと同じ）。 */
+export function injectDevForecastKey(settings: AppSettings, key: string | undefined): AppSettings {
+  if (!key || settings.forecastKey !== '') return settings
+  return { ...settings, forecastKey: key }
+}
+
+/** localStorage へ書き出す形から、dev で自動投入した予報キーを外す（理由は `stripDevArrivalToken`）。 */
+export function stripDevForecastKey(settings: AppSettings, injectedKey: string | undefined): AppSettings {
+  if (!injectedKey || settings.forecastKey !== injectedKey) return settings
+  return { ...settings, forecastKey: '' }
 }
 
 /** 未設定のときだけ dev のトークンを差し込む。手入力した値は踏み潰さない。 */
@@ -652,16 +696,42 @@ export function settingsToStore(
    * 永続化されるとその前提が崩れる。`useSWaveCountdown` の `allowOwnCalculation` と同じ扱い。
    */
   injectedArrivalToken: string | undefined,
+  /** dev サーバーが注入した予報キー（無ければ `undefined` を明示して渡す。省略可にしない理由はトークンと同じ） */
+  injectedForecastKey: string | undefined,
 ): AppSettings {
-  // **トークンは `keepApiKey` に関わらず外す。** あの指示は「ファイルに明示された API キーを
-  // 残す」ためのもので、トークンには対応する指示が無い。外しても次の読み込みで注入し直される。
-  const withoutToken = stripDevArrivalToken(settings, injectedArrivalToken)
+  // **トークンと予報キーは `keepApiKey` に関わらず外す。** あの指示は「ファイルに明示された API キーを
+  // 残す」ためのもので、この 2 つには対応する指示が無い。外しても次の読み込みで注入し直される。
+  const withoutToken = stripDevForecastKey(stripDevArrivalToken(settings, injectedArrivalToken), injectedForecastKey)
   return keepApiKey ? withoutToken : stripDevApiKey(withoutToken, injectedKey)
 }
 
 // export はテスト向け（ランタイムからは useSettings 内でのみ使う）。
 export function load(): AppSettings {
-  return injectDevArrivalToken(injectDevApiKey(loadStored(), devApiKey()), devArrivalToken())
+  receiveSettingsHandoff()
+  return injectDevForecastKey(injectDevArrivalToken(injectDevApiKey(loadStored(), devApiKey()), devArrivalToken()), devForecastKey())
+}
+
+/**
+ * 旧 URL の橋渡しのページが URL の # に載せて渡した設定を、読み込む前に保存へ移す（→ `utils/settingsHandoff.ts`）。
+ * 移した後は # を消すので、2 回目以降の `load()`（StrictMode の二重実行など）では何もしない。
+ */
+function receiveSettingsHandoff(): void {
+  if (typeof window === 'undefined') return
+  try {
+    const result = consumeSettingsHandoff({
+      hash: window.location.hash,
+      clearHash: () => window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search),
+      storage: localStorage,
+      storageKey: STORAGE_KEY,
+      referrer: document.referrer,
+    })
+    if (result === 'foreign') log.warn('[settings] 旧アドレスの案内のページ以外から渡された設定は受け取らずに開く', { referrer: document.referrer })
+    else if (result === 'invalid') log.warn('[settings] 旧アドレスから渡された設定を読めなかったため、受け取らずに開く')
+    else if (result === 'kept') log.info('[settings] この端末には設定が既にあるため、旧アドレスから渡された設定は受け取らない')
+    else if (result === 'applied') log.info('[settings] 旧アドレスから渡された設定を受け取った')
+  } catch (e) {
+    log.warn('[settings] 旧アドレスから渡された設定の受け取りに失敗', e)
+  }
 }
 
 function loadStored(): AppSettings {
@@ -747,6 +817,7 @@ export function useSettings() {
   // dev で自動投入した値を保存対象から外すために覚えておく（理由は stripDevApiKey）。
   const injectedApiKey = useRef(devApiKey())
   const injectedArrivalToken = useRef(devArrivalToken())
+  const injectedForecastKey = useRef(devForecastKey())
 
   // useCallback で参照を安定化する（React.memo 化された SettingsTab へ props として
   // 渡されるため、毎レンダー新関数だと memo が破られる）。
@@ -758,7 +829,7 @@ export function useSettings() {
       const next = { ...prev, [key]: value }
       try {
         // 保存する形を決める窓口は `settingsToStore` の 1 つに寄せる（`replaceSettings` と共有）。
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsToStore(next, injectedApiKey.current, false, injectedArrivalToken.current)))
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsToStore(next, injectedApiKey.current, false, injectedArrivalToken.current, injectedForecastKey.current)))
       } catch (e) {
         // 容量超過・プライベートブラウジング等で保存できないケース。state には反映するので
         // 操作自体は効くが、次回の起動時には既定値へ戻る。無言だと「設定が勝手に戻る」
@@ -791,7 +862,7 @@ export function useSettings() {
   const replaceSettings = useCallback((next: AppSettings, keepApiKey = false): boolean => {
     let persisted = true
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsToStore(next, injectedApiKey.current, keepApiKey, injectedArrivalToken.current)))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsToStore(next, injectedApiKey.current, keepApiKey, injectedArrivalToken.current, injectedForecastKey.current)))
     } catch (e) {
       log.warn('[settings] localStorage への保存に失敗（この読み込みは次回起動時に失われる）', e)
       persisted = false

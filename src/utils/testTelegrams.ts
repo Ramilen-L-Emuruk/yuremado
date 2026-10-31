@@ -8,8 +8,8 @@
 // - パーサーを一度も通らないので、電文を正しく読めているかの証拠にならない
 // - 何の電文を元にしたのかが、コメントにしか残らない
 //
-// ここでは XML を**ライブ・リプレイと同じ入口**（`buildXmlPayload`）へ通し、実地震テストシナリオと
-// 同じ時刻の寄せ方（`instantiateScenario`）で「いま」へ寄せてから、受信と同じイベントキューへ積む。
+// ここでは XML を**ライブ・リプレイと同じ入口**（`buildXmlPayload`）へ通し、
+// 時刻の寄せ方（`instantiateScenario`）で「いま」へ寄せてから、受信と同じイベントキューへ積む。
 // 待ちをキューに持たせるので、リセット（リプレイの開始・停止）とアンマウントで一緒に落ちる。
 //
 // 置く XML は 2 種類（→ `public/data/test-telegrams/README.md`）。
@@ -36,18 +36,6 @@ export interface TestTelegramStep {
   headType: string
   /** 押してから流すまで（ミリ秒）。 */
   atMs: number
-  /**
-   * 片方の版でだけ流す。
-   *
-   * - `'dmdss'` … **DMDATA 経路でしか届かない電文**（長周期地震動の観測情報など）
-   * - `'standard'` … 標準版でだけ要る報。予報だけの津波は DMDSS 版では失効時刻で消える（解除の報は
-   *   出ない）が、標準版は失効の予約を持たないので、テストの後片付けに解除の報を流す
-   *
-   * 標準版の受信元（P2PQuake）は廃止する予定で（2026-10-22 ユーザー原文「XMLにしましょう。近いうちに
-   * 2つは統合するので。」「統合すると言うかP2PQuakeは廃止する」）、両版とも同じ XML の読み取り結果を
-   * 流す。ここで分けるのは、統合までのあいだ**電文そのものの届き方・消え方が違う**ところだけ。
-   */
-  onlyIn?: 'dmdss' | 'standard'
   /**
    * 実電文の一部を書き換えて流すとき、その書き換え。**変える箇所だけを書く**こと。
    * 書き換えが効かなかった（置き換える文字列が見つからなかった）ら例外にする —— 黙って
@@ -218,8 +206,6 @@ export interface BuiltTestTelegram {
 }
 
 export interface BuildTestTelegramOptions {
-  /** DMDSS 版か。`onlyIn` の電文を選り分けるのに使う。 */
-  isDmdss: boolean
   /** 「いま」。`serverDate()` を渡す。 */
   now: Date
   /** 緊急地震速報として読む種別。テストボタンは予報（VXSE45）を受けている形で流す。 */
@@ -261,19 +247,11 @@ export async function buildTestTelegramEntries(
   script: TestTelegramScript,
   options: BuildTestTelegramOptions,
 ): Promise<BuiltTestTelegram[]> {
-  const { isDmdss, now, eewHeadType = 'VXSE45', fetcher = defaultFetcher, binaryFetcher = defaultBinaryFetcher } = options
+  const { now, eewHeadType = 'VXSE45', fetcher = defaultFetcher, binaryFetcher = defaultBinaryFetcher } = options
   const anchorStep = script.steps[script.anchor]
   if (!anchorStep) throw new Error(`テスト用の台本の基準（${script.anchor} 通目）がありません`)
-  // **絞り込みは読む前に。** 後ろでやると、流さない段の取得や書き換えが失敗しただけで
-  // 全体が失敗する（しかもそのバリアントでは一度も使わない電文のために取りに行く）。
-  const steps = script.steps.filter(step => step.onlyIn === undefined || step.onlyIn === (isDmdss ? 'dmdss' : 'standard'))
-  // **押すたびに進む台本では、バリアントで段を分けられない。** 押下の回数を段の添字に使うので
-  // （→ `useEarthquakes.ts` の `pressTestTelegramScript`）、片方の版で段が落ちると黙ってずれる。
-  if (script.stepByPress && steps.length !== script.steps.length) {
-    throw new Error('押すたびに進む台本では、バリアントで段を分けられません')
-  }
-  const anchorIndex = steps.indexOf(anchorStep)
-  if (anchorIndex < 0) throw new Error(`テスト用の台本の基準（${script.anchor} 通目）が、このバリアントでは流れません`)
+  const steps = script.steps
+  const anchorIndex = script.anchor
 
   const loaded = await Promise.all(steps.map(async (step) => {
     if (isBinaryTelegramType(step.headType)) {

@@ -425,7 +425,7 @@ describe('fetchLiveReplayEntries', () => {
     globalThis.fetch = fn as unknown as typeof fetch
     const result = await fetchLiveReplayEntries(dmdataKeyEndpoint('key'), FROM, TO, [], false, PREFERRED_CLASSIFICATIONS, null)
     expect(result).toEqual({
-      entries: [], skippedByDay: new Map(), scanSkippedByDay: new Map(), failedSources: [], rateLimitedTelegrams: 0,
+      entries: [], skippedByDay: new Map(), scanSkippedByDay: new Map(), failedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map(),
     })
     expect(fn).not.toHaveBeenCalled()
   })
@@ -900,6 +900,8 @@ describe('fetchLiveReplayEntries', () => {
 
     expect(skippedTotal(result.skippedByDay)).toBe(0)
     expect(result.failedSources).toEqual(['eew:20260823110000'])
+    // 地震 1 つ分の失敗は、日を丸ごと失った印には載せない
+    expect(result.lostSourceDays.size).toBe(0)
   })
 
   // アーカイブ経路は同じ状況を取りこぼしとして数える。ここだけ「対象外」に混ぜると
@@ -952,6 +954,7 @@ describe('fetchLiveReplayEntries', () => {
 
     expect(result.entries).toHaveLength(1)
     expect(result.failedSources).toEqual(['live-eew:2026-08-23'])
+    expect([...result.lostSourceDays]).toEqual([['live-eew:2026-08-23', '2026-08-23']])
   })
 
   it('地震電文の一覧が引けなくても、EEW は残す', async () => {
@@ -973,6 +976,7 @@ describe('fetchLiveReplayEntries', () => {
 
     expect(result.entries).toHaveLength(1)
     expect(result.failedSources).toEqual(['live-telegram:2026-08-23'])
+    expect([...result.lostSourceDays]).toEqual([['live-telegram:2026-08-23', '2026-08-23']])
   })
 
   // すべて引けなければその日は 1 通も取れていない。呼び出し元が日単位の失敗として

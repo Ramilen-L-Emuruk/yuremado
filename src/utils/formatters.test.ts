@@ -92,7 +92,7 @@ describe('規模の種別（Mj／M）', () => {
     expect(formatMagnitudeWithCondition(3.5, undefined, 'Mj')).toBe('Mj3.5')
   })
 
-  // 対照: 種別を持たない経路（P2PQuake・長期震源カタログ）は従来どおり `M`。
+  // 対照: 種別を持たない経路（長期震源カタログ）は従来どおり `M`。
   it('種別が無ければ M', () => {
     expect(formatMagnitude(3.5, undefined)).toBe('M3.5')
     expect(magnitudePrefix(undefined)).toBe('M')
@@ -234,7 +234,7 @@ describe('見出しに M を持たない欄の規模', () => {
     expect(formatMagnitudeWithCondition(NaN, 'Ｍ８を超える巨大地震', undefined)).toBe('M8を超える巨大地震')
   })
 
-  // 対照: 説明が無ければ従来どおり「不明」（説明を持たない P2PQuake・EEW・カタログの経路）。
+  // 対照: 説明が無ければ従来どおり「不明」（説明を持たない EEW・カタログの経路）。
   it('説明が無ければ不明', () => {
     expect(formatMagnitudeWithCondition(NaN, undefined, undefined)).toBe('不明')
     expect(formatMagnitudeWithCondition(-1, undefined, undefined)).toBe('不明')
@@ -289,8 +289,7 @@ describe('hasHypocenterFacts', () => {
 // 国内への津波の影響区分を出す語。
 //
 // **「警報等」は等級をひとまとめにした値**で、大津波警報・津波警報・津波注意報のどれかが
-// 出ていることしか言っていない（DMDATA は固定付加文 0211、P2PQuake は `MajorWarning` と
-// `Warning` の両方をここへ寄せる）。「津波警報」と書くと、**大津波警報の地震で事実より
+// 出ていることしか言っていない（DMDATA は固定付加文 0211）。「津波警報」と書くと、**大津波警報の地震で事実より
 // 一段軽く見える**。短くしたくなる欄だが、ここは縮めてはいけない。
 describe('国内津波情報の語', () => {
   // 正: 気象庁の語（固定付加文と同じ「津波警報等」）を使う。読み上げとも揃う。
@@ -323,7 +322,7 @@ describe('国内津波情報の語', () => {
     expect(formatDomesticTsunami('なし', '0230').text).toBe('日本への影響なし')
   })
 
-  // 対照: 区分の語が気象庁の文と合うコードと、コードを持たない経路（P2PQuake・借りた区分）は区分の語のまま。
+  // 対照: 区分の語が気象庁の文と合うコードと、コードを持たない経路（借りた区分）は区分の語のまま。
   it('区分の語で足りるコードとコードの無い経路は区分の語のまま', () => {
     expect(formatDomesticTsunami('調査中', '0229').text).toBe('調査中')
     expect(formatDomesticTsunami('なし', '0215').text).toBe('津波の心配なし')
@@ -353,7 +352,7 @@ describe('気象庁以外が運用する観測点の印', () => {
     expect(withNonJmaMark('輪島市門前町', false)).toBe('輪島市門前町')
   })
 
-  // 安全弁: 印の有無を持たない点（P2PQuake 経路は配信しない）でも名前を壊さない。
+  // 安全弁: 印の有無を持たない点でも名前を壊さない。
   it('印の有無が未定義なら名前をそのまま返す', () => {
     expect(withNonJmaMark('輪島市門前町', undefined)).toBe('輪島市門前町')
   })

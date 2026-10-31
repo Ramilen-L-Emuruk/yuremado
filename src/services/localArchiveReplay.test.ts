@@ -67,7 +67,7 @@ describe('findCoveringArchiveSync', () => {
     expect(findCoveringArchiveSync(index, ...at(meta.to))).toBeNull()
   })
 
-  it('範囲外の時刻は null（DMDATA/P2PQuakeへフォールバックする合図）', () => {
+  it('範囲外の時刻は null（DMDATA へフォールバックする合図）', () => {
     expect(findCoveringArchiveSync(index, ...at('2020-01-01T00:00:00Z'))).toBeNull()
   })
 
@@ -83,7 +83,7 @@ describe('findCoveringArchiveSync', () => {
   it('「初期状態」の問い合わせ範囲（対象時刻から遡る24時間）は、対象時刻自体が収録範囲内なら重なりとして拾う', () => {
     // 実際のバグ再現: 24時間前は収録範囲(from)より大幅に前だが、範囲としては target まで
     // 伸びているため重なる。ここを「fromTime が収録範囲内か」だけで判定すると見逃し、
-    // DMDATA/P2PQuake（データが存在しない時代）へ問い合わせて再生全体が止まっていた。
+    // DMDATA（データが存在しない時代）へ問い合わせて再生全体が止まる。
     const target = new Date('2011-03-11T05:47:00Z')
     const preFrom = new Date(target.getTime() - PRE_WINDOW_MS)
     expect(findCoveringArchiveSync(index, preFrom, target)?.id).toBe('2011-tohoku')
@@ -157,7 +157,7 @@ describe('findArchiveJustEndedSync', () => {
     expect(findArchiveJustEndedSync(index, new Date(to.getTime() + WINDOW_MS - 1), WINDOW_MS)?.id).toBe('2011-tohoku')
   })
 
-  it('windowMsを超えて過ぎていれば null（DMDATA/P2PQuakeへ黙ってフォールバックしてよい）', () => {
+  it('windowMsを超えて過ぎていれば null（DMDATA へ黙ってフォールバックしてよい）', () => {
     const to = new Date(meta.to)
     expect(findArchiveJustEndedSync(index, new Date(to.getTime() + WINDOW_MS), WINDOW_MS)).toBeNull()
   })
@@ -322,7 +322,7 @@ describe('fetchLocalArchiveQuakeHistory', () => {
     expect(result.failedArchiveUrls).toEqual([])
   })
 
-  // 並びは新しい順（P2PQuake の履歴と同じ）。統合は同じ順位の報どうしで入力の並びが効くので固定する
+  // 並びは新しい順。統合は同じ順位の報どうしで入力の並びが効くので固定する
   it('地震情報を収録の並びによらず新しい順に返す', async () => {
     mockFetchJson.mockResolvedValueOnce({
       ...wide,
@@ -496,7 +496,7 @@ describe('fetchLocalArchiveQuakeHistory', () => {
         .toEqual(['2016-04-07T14:15:00Z'])
     })
 
-    // 安全弁: 帯は地震に結び付かないので、窓より前のものは入れない（DMDSS 版の履歴と同じ）
+    // 安全弁: 帯は地震に結び付かないので、窓より前のものは入れない（DMDATA の履歴と同じ）
     it('帯: 窓の中の地震があっても、窓より前の帯は返さない', async () => {
       mockFetchJson.mockResolvedValueOnce({
         ...wide,

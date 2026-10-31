@@ -1,13 +1,22 @@
 import { memo, useState, useCallback } from 'react'
 import { zipSync } from 'fflate'
 import type { TelegramLogEntry } from '../../types/earthquake'
-import { isDmdss } from '../../utils/env'
 import { formatFileStamp, readDateTime } from '../../utils/formatters'
 import {
   KIND_LABEL, KIND_OPTIONS, ORIGIN_OPTIONS, headTypeLabel, matchesTelegramFilter, operationBadgeOf, originBadgeOf,
   readKindFilter, readOriginFilter, telegramLogKindOf,
-  type KindFilter, type OriginFilter, type SourceFilter,
+  type KindFilter, type OriginFilter,
 } from './labels'
+
+/** 発信元の印。発信元が増えたら型が落とすよう、`source` のすべての値を持つ表にする */
+const SOURCE_LABEL: Record<TelegramLogEntry['source'], string> = {
+  dmdss: 'DM',
+}
+
+/** ダウンロードするファイル名に入れる発信元。上の印と同じく、`source` のすべての値を持つ表にする */
+const SOURCE_FILE_NAME: Record<TelegramLogEntry['source'], string> = {
+  dmdss: 'DMDSS',
+}
 
 const STATUS_BADGE: Record<TelegramLogEntry['status'], { label: string; className: string }> = {
   parsed:   { label: '✓', className: 'text-green-400' },
@@ -64,7 +73,7 @@ export function formatEntryForView(entry: TelegramLogEntry): string {
  *
  * XML の電文はそのまま `.xml` で落とす（パーサや検証器へそのまま渡せる形にする）。
  * ヘッダは付けない —— 付けると XML 宣言が先頭でなくなり、XML として読めなくなる。
- * XML でない本文（復号に失敗した base64・P2PQuake の JSON）は、ヘッダごと `.json` で落とす。
+ * XML でない本文（復号に失敗した base64）は、ヘッダごと `.json` で落とす。
  */
 export function formatEntryForDownload(entry: TelegramLogEntry): { text: string; ext: 'xml' | 'json' } {
   if (isXmlBody(entry.rawBody)) return { text: entry.rawBody, ext: 'xml' }
@@ -103,13 +112,12 @@ function skipWhileHidden(prev: Props, next: Props): boolean {
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
 export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all')
   const [originFilter, setOriginFilter] = useState<OriginFilter>('all')
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
   const [copied, setCopied] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
-  const filtered = telegramLog.filter(entry => matchesTelegramFilter(entry, sourceFilter, kindFilter, originFilter))
+  const filtered = telegramLog.filter(entry => matchesTelegramFilter(entry, kindFilter, originFilter))
 
   const allFilteredSelected = filtered.length > 0 && filtered.every(e => selectedIds.has(e.id))
 
@@ -148,7 +156,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
   const handleDownload = useCallback((entry: TelegramLogEntry) => {
     const { text, ext } = formatEntryForDownload(entry)
     const ts = formatFileStamp(entry.receivedAt.getTime())
-    const source = entry.source === 'dmdss' ? 'DMDSS' : 'P2PQuake'
+    const source = SOURCE_FILE_NAME[entry.source]
     triggerDownload(text, `${ts}_${source}_${entry.headType}.${ext}`)
   }, [])
 
@@ -182,7 +190,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
     const usedNames = new Map<string, number>()
     for (const e of entries) {
       const { text: body, ext } = formatEntryForDownload(e)
-      const source = e.source === 'dmdss' ? 'DMDSS' : 'P2PQuake'
+      const source = SOURCE_FILE_NAME[e.source]
       const ts = formatFileStamp(e.receivedAt.getTime())
       const base = `${ts}_${source}_${e.headType}.${ext}`
       const count = usedNames.get(base) ?? 0
@@ -221,19 +229,6 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
       </div>
 
       <div className="flex gap-2 px-4 py-2 border-b border-border shrink-0">
-        {/* standard 版は P2PQuake のみを受信するためソースフィルタは意味を持たない（唯一の選択肢が P2PQuake になる）。
-            DMDSS 版のみ dmdss/p2pquake の共存があり、フィルタとして機能する。 */}
-        {isDmdss && (
-          <select
-            value={sourceFilter}
-            onChange={e => setSourceFilter(e.target.value as SourceFilter)}
-            className="flex-1 text-xs bg-card border border-border rounded-sm px-2 py-1 text-secondary focus:text-white focus:outline-hidden"
-          >
-            <option value="all">全ソース</option>
-            <option value="dmdss">DMDSS</option>
-            <option value="p2pquake">P2PQuake</option>
-          </select>
-        )}
         <select
           value={kindFilter}
           onChange={e => setKindFilter(readKindFilter(e.target.value))}
@@ -312,7 +307,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                 const typeLabel = headTypeLabel(entry.headType)
                 const kind = telegramLogKindOf(entry)
                 const kindLabel = kind ? KIND_LABEL[kind] : null
-                const sourceLabel = entry.source === 'dmdss' ? 'DM' : 'P2'
+                const sourceLabel = SOURCE_LABEL[entry.source]
                 const originBadge = originBadgeOf(entry.origin)
                 const operationBadge = operationBadgeOf(entry)
 
@@ -342,7 +337,7 @@ export const TelegramTab = memo(function TelegramTab({ telegramLog, onClear }: P
                             <span className="text-xs text-secondary font-mono shrink-0">{formatTime(entry.receivedAt) ?? '時刻不明'}</span>
                             <span className="text-xs font-mono bg-white/10 rounded-sm px-1 shrink-0 text-secondary">{sourceLabel}</span>
                             {/* 経路の印。ライブには出さない（既定の経路なので、付けると全行が賑やかになる）。
-                                発信元（DM/P2）とは別の軸なので、色を変えて並べる。 */}
+                                発信元（DM）とは別の軸なので、色を変えて並べる。 */}
                             {originBadge && (
                               <span className="text-xs font-mono bg-amber-400/20 text-amber-200 rounded-sm px-1 shrink-0">{originBadge}</span>
                             )}

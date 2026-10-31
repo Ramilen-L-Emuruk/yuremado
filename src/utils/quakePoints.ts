@@ -18,10 +18,9 @@ export type AreaPrefIndex = ReadonlyMap<string, string> | null
  * 「同じ県の別々の区域で起きた 2 つの地震」が重なって見える。
  *
  * **`addr !== pref` だけで見分けないこと。** ロールアップ点は確かに `addr === pref` だが、
- * **P2PQuake は区域の点にも `pref` を積む**（→ 同§4）。区域名が県名と同じ奈良県——県内の
+ * 区域の点に `pref` を積む電文があると、区域名が県名と同じ奈良県——県内の
  * 一次細分区域が 1 つだけで、その名前が県名と同じ唯一の県（`stationCoords.test.ts` が固定）
- * ——が巻き添えで落ち、標準版の震度速報から奈良県だけが静かに消える。名前が衝突したときは
- * 「その名前が一次細分区域として実在するか」を見て決める。
+ * ——が巻き添えで落ちる。名前が衝突したときは「その名前が一次細分区域として実在するか」を見て決める。
  *
  * 奈良県では DMDATA 経路の区域点とロールアップ点が両方とも真になるが、名前も震度も
  * 同じ（単一区域なので県の最大震度は配下区域の最大震度）なので、集合・Map で受ける
@@ -130,8 +129,8 @@ export interface IntensityRegionRow {
   /**
    * 市町村に紐付かない観測点。
    *
-   * **P2PQuake 経路ではこちらに全部入る** —— 観測点を市町村でまとめずに配信するため
-   * （→ {@link EarthquakePoint.city}）。市町村が読めなかった観測点もここへ落ちる。
+   * 市町村を持たない観測点（→ {@link EarthquakePoint.city}）と、市町村が読めなかった観測点が
+   * ここへ落ちる。
    */
   stations: IntensityStationRow[]
 }
@@ -219,8 +218,7 @@ export function cityKey(area: string, city: string): string {
 export interface IntensityRowDeps {
   /**
    * 一次細分区域名 → 都道府県名 の索引（{@link isAreaPoint} へ渡す）。区域の点と都道府県
-   * ロールアップ点を見分けるのに使う。**P2PQuake は区域の点にも `pref` を積む**ので、
-   * `pref` の有無では見分けられない。
+   * ロールアップ点を見分けるのに使う（見分け方は {@link isAreaPoint}）。
    */
   areaPrefIndex: AreaPrefIndex
   /** 一次細分区域名 → 都道府県名 */
@@ -279,8 +277,8 @@ export function makeAreaPrefResolver(
  * 元から区域が主（`ttsText.ts` の `regionNamesForScale`）なので、画面＝県／音声＝区域という
  * ずれになる。
  *
- * **区域の出どころは読み上げと同じ優先順位。** 電文が区域の点を持つならそれを使い、持たない
- * 電文（P2PQuake の詳細報は観測点しか持たない）では観測点の所属区域を逆引きする。切り替えは
+ * **区域の出どころは読み上げと同じ優先順位。** 電文が区域の点を持つならそれを使い、1 つも
+ * 持たない電文では観測点の所属区域を逆引きする。切り替えは
  * **電文全体で見る** —— 県ごとに切り替えると、区域を持つ県と持たない県で行の出どころが混ざり、
  * 同じ電文の中で粒度が揃わなくなる。
  *
@@ -319,8 +317,8 @@ export function buildIntensityRows(
   for (const p of points) {
     // 都道府県ロールアップ点（`addr === pref` で区域として実在しない）は県の最大にしか効かない。
     if (!isAreaPoint(p, deps.areaPrefIndex)) continue
-    // DMDATA は区域の点を `pref: ''` で積み、P2PQuake は県名を積む。どちらでも引けるように
-    // 電文の `City` と座標テーブルを先に訊き、引けなければ電文の県名を使う。
+    // パーサーは区域の点を `pref: ''` で積む。電文の `City` と座標テーブルを先に訊き、
+    // 引けなければ点の県名を使う。
     const pref = prefOfArea(p.addr) || p.pref
     const entry = { scale: p.scale, unreceived: !!p.unreceived }
     if (!pref) { orphanAreaOwn.set(p.addr, higher(orphanAreaOwn.get(p.addr), entry)); continue }
@@ -339,8 +337,8 @@ export function buildIntensityRows(
   const byScale = <T,>(scaleOf: (x: T) => number, nameOf: (x: T) => string) =>
     (a: T, b: T) => scaleOf(b) - scaleOf(a) || deps.rank(nameOf(a)) - deps.rank(nameOf(b))
 
-  // 観測点を市町村ごと・区域ごとに振り分ける。**市町村を持つのは DMDATA の経路だけ**
-  // （→ `EarthquakePoint.city`）。持たない観測点は区域へ直接ぶら下げる。
+  // 観測点を市町村ごと・区域ごとに振り分ける（→ `EarthquakePoint.city`）。
+  // 市町村を持たない観測点は区域へ直接ぶら下げる。
   // 市町村の束ね方は {@link cityKey}（区域＋市町村名）。
   const stationsByCity = new Map<string, IntensityStationRow[]>()
   const stationsByRegion = new Map<string, IntensityStationRow[]>()
@@ -359,7 +357,7 @@ export function buildIntensityRows(
       unreceived: !!p.unreceived,
       nonJma: !!p.nonJma,
     }
-    // 区域は電文が置いたものをそのまま使う（DMDATA）。持たない経路（P2PQuake）は座標表から
+    // 区域は電文が置いたもの（`area`）をそのまま使う。持たない観測点は座標表から
     // 逆引きする。**市町村へ入れるのは区域が分かったときだけ** —— 区域が無いと同名の市町村を
     // 見分けられないうえ、市町村の行を作れなかったときの落とし先も無くなる。
     const prefOfPoint = () => p.pref || deps.prefOfStation(p.addr) || ''

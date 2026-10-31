@@ -41,7 +41,7 @@ import type { LocalKyoshinArchive } from '../src/types/localKyoshinArchive'
 /** 期待値との差がこれを超えたら警告する（計測震度のスケール）。 */
 const SANITY_CHECK_TOLERANCE = 1.0
 
-// .env.local から認証情報を読む（capture-test-scenario.ts と同じ方式）。
+// .env.local から認証情報を読む。
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 if (typeof process.loadEnvFile !== 'function') {
   console.error('Node.js 20.12 以上が必要です（.env.local の読み込みに process.loadEnvFile を使用）')

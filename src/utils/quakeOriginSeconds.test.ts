@@ -3,14 +3,12 @@ import {
   CATALOG_MAX_DISTANCE_KM,
   catalogYearsFor,
   findCatalogOriginMs,
-  findJmaEventId,
   jstWallClockToIso,
   parseJstTimeMs,
   resolveOriginSeconds,
   usableEewOrigin,
   withinQuakeMinute,
   type CatalogColumns,
-  type JmaQuakeListEntry,
 } from './quakeOriginSeconds'
 
 /** 地震情報の発生時刻（分まで）。 */
@@ -188,59 +186,10 @@ describe('catalogYearsFor', () => {
   })
 })
 
-describe('findJmaEventId', () => {
-  // 実際の一覧（2026-10-04 取得）から取った 2 件。同じ震央地名で 73 秒違い。
-  const entries: JmaQuakeListEntry[] = [
-    { eid: '20261003132605', at: '2026-10-03T13:26:00+09:00', anm: '熊本県天草・芦北地方', mag: '3.5' },
-    { eid: '20261003132605', at: '2026-10-03T13:26:00+09:00', anm: '熊本県天草・芦北地方', mag: '3.5' },
-    { eid: '20261003132452', at: '2026-10-03T13:24:00+09:00', anm: '熊本県天草・芦北地方', mag: '3.0' },
-  ]
-  const quake = (time: string, epicenter: string, magnitude: number | null) => ({
-    timeMs: Date.parse(time), epicenter, magnitude,
-  })
-
-  test('分と震央地名が一致する地震 ID を返す（同じ地震の行が複数あっても 1 つに数える）', () => {
-    expect(findJmaEventId(quake('2026-10-03T13:26:00+09:00', '熊本県天草・芦北地方', 3.5), entries))
-      .toBe('20261003132605')
-  })
-
-  test('分が違えば別の地震として扱う', () => {
-    expect(findJmaEventId(quake('2026-10-03T13:24:00+09:00', '熊本県天草・芦北地方', 3.0), entries))
-      .toBe('20261003132452')
-  })
-
-  test('震央地名が違えば引かない', () => {
-    expect(findJmaEventId(quake('2026-10-03T13:26:00+09:00', '熊本県熊本地方', 3.5), entries)).toBeNull()
-  })
-
-  test('同じ分・同じ震央地名の別の地震は規模で絞る', () => {
-    const twin: JmaQuakeListEntry[] = [
-      { eid: 'A0000000000001', at: '2026-10-03T13:26:00+09:00', anm: '茨城県南部', mag: '3.1' },
-      { eid: 'A0000000000002', at: '2026-10-03T13:26:00+09:00', anm: '茨城県南部', mag: '4.2' },
-    ]
-    expect(findJmaEventId(quake('2026-10-03T13:26:00+09:00', '茨城県南部', 4.2), twin)).toBe('A0000000000002')
-  })
-
-  // 安全弁: 取り違えると別の地震の秒で線を引く。決められなければ引かない。
-  test('規模でも決まらなければ null', () => {
-    const twin: JmaQuakeListEntry[] = [
-      { eid: 'A0000000000001', at: '2026-10-03T13:26:00+09:00', anm: '茨城県南部', mag: '3.1' },
-      { eid: 'A0000000000002', at: '2026-10-03T13:26:00+09:00', anm: '茨城県南部', mag: '3.1' },
-    ]
-    expect(findJmaEventId(quake('2026-10-03T13:26:00+09:00', '茨城県南部', 3.1), twin)).toBeNull()
-    expect(findJmaEventId(quake('2026-10-03T13:26:00+09:00', '茨城県南部', null), twin)).toBeNull()
-  })
-
-  test('時刻が読めない地震カードは引かない', () => {
-    expect(findJmaEventId({ timeMs: Number.NaN, epicenter: '熊本県天草・芦北地方', magnitude: 3.5 }, entries))
-      .toBeNull()
-  })
-})
-
 describe('parseJstTimeMs', () => {
   // **端末の時間帯に依らないことを固定する。** テストは日本時間で走るので `new Date()` と比べても
   // 違いは出ない。時間帯つきの絶対時刻と突き合わせる。
-  test('P2PQuake の時計表記を日本時間として読む', () => {
+  test('時間帯を持たない時計表記を日本時間として読む', () => {
     expect(parseJstTimeMs('2026/10/03 13:26:00')).toBe(Date.parse('2026-10-03T13:26:00+09:00'))
   })
 
@@ -264,7 +213,7 @@ describe('parseJstTimeMs', () => {
 })
 
 describe('jstWallClockToIso', () => {
-  // 正: P2PQuake の受信時刻（小数の秒つき・桁数が揃っていない）を日本時間の ISO の形へ直す。
+  // 正: 小数の秒つき（桁数が揃っていない）の時計表記を日本時間の ISO の形へ直す。
   // **Safari はこの形のままだと読めない**（WebKit 26.5 で `NaN` を実測）
   test('小数の秒つきの時計表記を、ミリ秒 3 桁の ISO の形へ直す', () => {
     expect(jstWallClockToIso('2026/10/24 01:09:42.83')).toBe('2026-10-24T01:09:42.830+09:00')

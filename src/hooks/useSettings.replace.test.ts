@@ -71,7 +71,7 @@ describe('replaceSettings', () => {
   })
 
   // **`keepApiKey` の分岐そのものはここでは確かめられない。** テスト環境では
-  // `resolveDevApiKey` が常に `undefined` を返す（`MODE === 'test'`・`isDmdss` が false）ため、
+  // `resolveDevApiKey` が常に `undefined` を返す（`MODE === 'test'`）ため、
   // 注入値が無く、どちらの枝を通っても結果が同じになる。分岐の中身は純関数へ切り出してあり、
   // `useSettings.test.ts` の `settingsToStore` で正・対照・安全弁を固定している。
 })

@@ -3516,11 +3516,11 @@ describe('いま声が語っているカードの配線', () => {
   })
 })
 
-// 標準版は Yahoo と P2PQuake が同じ報を運ぶ。2 通目には受信側が「同じ報」の印
+// 強震モニタ（Yahoo）と DMDATA の電文が同じ報を運ぶ。2 通目には受信側が「同じ報」の印
 // （`LiveEventMeta.eewSameReport`）を付ける。印の付いた報では通知音を鳴らし直さないが、
 // 読み上げは止めない —— 後から来た経路が運んだ欄（区域など）で最新の値が変わりうる
 // （2026-10-18 ユーザー承認「最初の 1 通だけ」）。
-describe('別の経路から届いた同じ報（標準版）', () => {
+describe('別の経路から届いた同じ報', () => {
   const soundCalls = () => vi.mocked(playAlertSound).mock.calls.length
 
   beforeEach(() => { vi.mocked(playAlertSound).mockClear() })

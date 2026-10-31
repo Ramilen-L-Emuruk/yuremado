@@ -34,8 +34,7 @@ export function isEewWarningKindCode(code: string): boolean {
  * 到達と推測」。電文解説資料 Ⅱ.21 2-1-5-3-7）。DMDATA の電文では両方が同時に出る。
  *
  * **画面はこの関数を直接呼ばず、`isEewAreaArrived`（`utils/eew.ts`）を通すこと。**
- * 2 通りのどちらが来るかは経路で違う —— `Condition` を配信するのは DMDATA だけで、P2PQuake は
- * このコードでしか伝えてこない。**どちらか一方だけを見ると、その経路で到達済みの区域を取りこぼす。**
+ * **どちらか一方だけを見ると、片方しか持たない区域で到達済みを取りこぼす。**
  */
 export function isEewArrivedKindCode(code: string): boolean {
   return EEW_ARRIVED_KIND_CODES.has(code)

@@ -133,15 +133,6 @@ describe('津波のブラウザ通知（受け手）', () => {
     expect(notify).toHaveBeenCalledWith('津波予報の失効', '津波予報は失効しました。', 'tsunami', false)
   })
 
-  // 安全弁（2026-10-23 ユーザー選択「安全弁では「失効」と名乗らない (Recommended)」）: 標準版の 24 時間の安全弁は通知しない
-  it('安全弁: 標準版の安全弁で消える津波は「失効」の通知を出さない', () => {
-    const { handle } = setup()
-    handle(report([area('石川県能登', '360', 'Forecast')], { eventId: undefined }))
-    notify.mockClear()
-    handle(report([], { eventId: undefined, cancelled: true, cancelReason: 'expired', failsafeExpiry: true } as Partial<JMATsunami>))
-    expect(notify).not.toHaveBeenCalled()
-  })
-
   // 安全弁: 津波情報だけの取消（警報等は続いている）は通知しない。終わったと読める通知で警報の通知を置き換えないため
   it('安全弁: 津波情報だけの取消は通知しない', () => {
     const { handle } = setup()
@@ -223,7 +214,7 @@ describe('津波のブラウザ通知（受け手）', () => {
       expect(notify).toHaveBeenCalledWith('沖合の津波観測に関する情報', '岩手釜石沖 到達確認', 'tsunami-obs', false)
     })
 
-    it('安全弁: 種別を持たない報（P2PQuake）は発表の通知を出す', () => {
+    it('安全弁: 種別を持たない報は発表の通知を出す', () => {
       const { handle } = setup()
       handle(report([area('石川県能登', '360', 'Warning')], { eventId: undefined }))
       expect(notify).toHaveBeenCalledWith('津波警報', '石川県能登', 'tsunami', true)
@@ -259,7 +250,7 @@ describe('津波のブラウザ通知（受け手）', () => {
     expect(notify.mock.calls[0][0]).toBe('津波警報等の解除')
   })
 
-  // P2PQuake など理由を持たない解除は、画面と同じく解除へ倒す
+  // 理由を持たない解除は、画面と同じく解除へ倒す
   it('正: 理由を持たない解除は解除として送る', () => {
     const { handle } = setup()
     handle(report([area('石川県能登', '360', 'Watch')]))

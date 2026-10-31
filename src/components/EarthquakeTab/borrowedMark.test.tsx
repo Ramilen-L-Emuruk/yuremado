@@ -81,6 +81,8 @@ const renderTab = async (quake: JMAQuake) => {
     loadMoreFailed={false}
     reconnectGapLoss={false}
     fetchThrottled={false}
+    relayGapNotices={[]}
+    onDismissKeyReentry={null}
     lpgmByEventId={new Map()}
     updateMarks={new Map()}
     activeLpgmEventId={null}
@@ -223,7 +225,7 @@ describe('地震カードの震央補助表現', () => {
     expect(screen.queryAllByText('※')).toHaveLength(0)
   })
 
-  // 安全弁: 電文が持たないとき（標準版・震度速報など）は行ごと出さない。
+  // 安全弁: 電文が持たないとき（震度速報など）は行ごと出さない。
   it('持たないときは行を出さない', async () => {
     await renderTab(makeQuake())
     expect(screen.queryByText(/付近$/)).toBeNull()

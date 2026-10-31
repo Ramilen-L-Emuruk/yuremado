@@ -74,14 +74,13 @@ const SADO = {
 /**
  * 地震テスト（能登本震の震源・震度に関する情報 16:24・報番号 2）。
  *
- * 長周期地震動の観測情報（16:23）も一緒に流す。**DMDATA 経路でしか届かない**ので DMDSS 版だけ
- * （→ `TestTelegramStep.onlyIn`）。地震カードに長周期の欄を付けるため、地震情報より後に積む。
+ * 長周期地震動の観測情報（16:23）も一緒に流す。地震カードに長周期の欄を付けるため、地震情報より後に積む。
  */
 export const EARTHQUAKE: TestTelegramScript = {
   anchor: 0,
   steps: [
     { file: NOTO.detail2, headType: 'VXSE53', atMs: 0 },
-    { file: NOTO.lpgm, headType: 'VXSE62', atMs: 0, onlyIn: 'dmdss', rewrite: markFirstLgStation },
+    { file: NOTO.lpgm, headType: 'VXSE62', atMs: 0, rewrite: markFirstLgStation },
   ],
 }
 
@@ -548,9 +547,9 @@ const SATSUMA_EVENT_ID = '20151114055157'
 const SATSUMA_WATCH_CONTROL_MS = Date.parse('2015-11-13T20:56:28Z')
 
 /** 発表報を、その数分後の全区域解除の報へ書き換える（→ `toAllLifted`）。 */
-const liftedAfter = (seconds: number, options?: { includeForecast?: boolean }) =>
+const liftedAfter = (seconds: number) =>
   (xml: string) => editXml(xml, (doc) => {
-    toAllLifted(doc, options)
+    toAllLifted(doc)
     shiftIssueTime(doc, seconds)
   })
 
@@ -917,7 +916,7 @@ function confirmArrival(doc: Document): void {
 }
 
 /**
- * 変化の小さい続報テスト（DMDSS 版のみ）。**通知音だけが鳴って何も声にならなかった報を、実機で
+ * 変化の小さい続報テスト。**通知音だけが鳴って何も声にならなかった報を、実機で
  * 確かめる唯一の入口。** 2024 年能登半島地震の 26 時間では、取消を除く津波電文 56 通のうち 7 通が
  * この形だった（→ docs/spec/tsunami-spec.md §10「変化を伝えない続報」）。
  *
@@ -947,12 +946,12 @@ export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
     // 段 0: 15:00 の津波警報の続報（14:49 の発表から始めない理由は `TOHOKU.observation`）
     { file: TOHOKU.update, headType: 'VTSE41', atMs: 0 },
     // 段 1: サンプルのまま（発表時刻だけ、この時間軸へ置き直す）
-    { file: T, headType: 'VTSE51', atMs: at(1), onlyIn: 'dmdss', rewrite: xml => editXml(xml, doc => setIssueTime(doc, quietIssueAt(at(1)))) },
+    { file: T, headType: 'VTSE51', atMs: at(1), rewrite: xml => editXml(xml, doc => setIssueTime(doc, quietIssueAt(at(1)))) },
     // 段 2: 釜石の波高が「３．２ｍ以上」になる（値は据え置き）。印は付けない（`Revise` は無い形）
-    { file: T, headType: 'VTSE51', atMs: at(2), onlyIn: 'dmdss', rewrite: quietObservation(4, 2, at(2)) },
+    { file: T, headType: 'VTSE51', atMs: at(2), rewrite: quietObservation(4, 2, at(2)) },
     // 段 3: 釜石の最大波の観測時刻だけ更新
     {
-      file: T, headType: 'VTSE51', atMs: at(3), onlyIn: 'dmdss',
+      file: T, headType: 'VTSE51', atMs: at(3),
       rewrite: quietObservation(5, 3, at(3), (doc) => {
         const { max } = maxHeightOf(doc, QUIET_HEIGHT_STATION)
         max.appendChild(el(doc, max, 'Revise', '更新'))
@@ -960,7 +959,7 @@ export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
     },
     // 段 4: 大船渡の第１波の到達時刻だけ更新
     {
-      file: T, headType: 'VTSE51', atMs: at(4), onlyIn: 'dmdss',
+      file: T, headType: 'VTSE51', atMs: at(4),
       rewrite: quietObservation(6, 4, at(4), (doc) => {
         const first = childOf(stationNamed(doc, '大船渡'), 'FirstHeight')!
         first.appendChild(el(doc, first, 'Revise', '更新'))
@@ -969,19 +968,19 @@ export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
     // 段 5: 沖合の観測点が**初めて載る**報。**次の段の前提** —— 前の値が無いまま時刻の違う報が
     // 届いても、カードは「新しく載った行」として描き、更新の印は付かない
     {
-      file: sample('61_11_01_250206_VTSE52'), headType: 'VTSE52', atMs: at(5), onlyIn: 'dmdss',
+      file: sample('61_11_01_250206_VTSE52'), headType: 'VTSE52', atMs: at(5),
       rewrite: xml => editXml(xml, doc => setIssueTime(doc, quietIssueAt(at(5)))),
     },
     // 段 6: 沖合の観測点の最大波の観測時刻が動く（サンプルの沖合の第 2 報）
     {
-      file: sample('61_11_02_250206_VTSE52'), headType: 'VTSE52', atMs: at(6), onlyIn: 'dmdss',
+      file: sample('61_11_02_250206_VTSE52'), headType: 'VTSE52', atMs: at(6),
       rewrite: xml => editXml(xml, doc => setIssueTime(doc, quietIssueAt(at(6)))),
     },
     // 段 7: 何も動かない（同じ値の再送）
-    { file: T, headType: 'VTSE51', atMs: at(7), onlyIn: 'dmdss', rewrite: quietObservation(7, 4, at(7)) },
+    { file: T, headType: 'VTSE51', atMs: at(7), rewrite: quietObservation(7, 4, at(7)) },
     // 段 8: 釜石の波高が下がり、「以上」も外れる（下がる向きの 2 通りを 1 点で同時に通す）
     {
-      file: T, headType: 'VTSE51', atMs: at(8), onlyIn: 'dmdss',
+      file: T, headType: 'VTSE51', atMs: at(8),
       rewrite: quietObservation(8, 4, at(8), (doc) => {
         const { max, height } = maxHeightOf(doc, QUIET_HEIGHT_STATION)
         height.textContent = '2.8'
@@ -991,14 +990,14 @@ export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
     },
     // 段 9: 値を持たない観測点へ、電文の印だけが付く報（カードの「観測中」に印の色が当たる）
     {
-      file: T, headType: 'VTSE51', atMs: at(9), onlyIn: 'dmdss',
+      file: T, headType: 'VTSE51', atMs: at(9),
       rewrite: quietObservation(9, 4, at(9), doc => markValuelessStation(doc, QUIET_VALUELESS_STATION)),
     },
     // 段 10: 釜石が欠測へ転じる（これまでの最大波の値は持ったまま。電文解説資料 Ⅱ.12 事例 6 の形）
-    { file: T, headType: 'VTSE51', atMs: at(10), onlyIn: 'dmdss', rewrite: quietObservation(10, 4, at(10), doc => markMissing(doc, QUIET_HEIGHT_STATION)) },
+    { file: T, headType: 'VTSE51', atMs: at(10), rewrite: quietObservation(10, 4, at(10), doc => markMissing(doc, QUIET_HEIGHT_STATION)) },
     // 段 11: 釜石が欠測のまま、最大波の観測時刻だけが更新される（断続的な欠測。`Revise`＝更新）
     {
-      file: T, headType: 'VTSE51', atMs: at(11), onlyIn: 'dmdss',
+      file: T, headType: 'VTSE51', atMs: at(11),
       rewrite: quietObservation(11, 4, at(11), (doc) => {
         markMissing(doc, QUIET_HEIGHT_STATION)
         const { max } = maxHeightOf(doc, QUIET_HEIGHT_STATION)
@@ -1006,19 +1005,19 @@ export const TSUNAMI_QUIET_REPORTS: TestTelegramScript = (() => {
         max.appendChild(el(doc, max, 'Revise', '更新'))
       }),
     },
-    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(12), onlyIn: 'dmdss', rewrite: quietTide(12, at(12)) },
-    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(13), onlyIn: 'dmdss', rewrite: quietTide(13, at(13), advanceHighTide) },
+    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(12), rewrite: quietTide(12, at(12)) },
+    { file: TOHOKU.tide, headType: 'VTSE51', atMs: at(13), rewrite: quietTide(13, at(13), advanceHighTide) },
     {
-      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(14), onlyIn: 'dmdss',
+      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(14),
       rewrite: quietTide(14, at(14), (doc) => { advanceHighTide(doc); confirmArrival(doc) }),
     },
     // 段 15: 到達予想時刻だけを早める（満潮時刻・到達状況は前の段のまま）
     {
-      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(15), onlyIn: 'dmdss',
+      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(15),
       rewrite: quietTide(15, at(15), (doc) => { advanceHighTide(doc); confirmArrival(doc); advanceArrivalForecast(doc, 10) }),
     },
     {
-      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(16), onlyIn: 'dmdss',
+      file: TOHOKU.tide, headType: 'VTSE51', atMs: at(16),
       rewrite: quietTide(16, at(16), (doc) => { advanceHighTide(doc); confirmArrival(doc); advanceArrivalForecast(doc, 10) }),
     },
     // 片付けの全区域解除。**時刻もこの時間軸の最後へ置く**（基準＝台本の `anchor`）
@@ -1064,8 +1063,7 @@ export const TSUNAMI_WATCH: TestTelegramScript = {
 /**
  * 津波予報テスト（2024-11-26 石川県西方沖の津波予報・若干の海面変動。失効時刻つき）。
  *
- * **DMDSS 版は失効時刻で消える**（気象庁は予報の終わりに電文を出さない）。標準版は失効の予約を
- * 持たないので、片付けの報を流す（→ `TestTelegramStep.onlyIn`・`toAllLifted` の `includeForecast`）。
+ * **失効時刻で消える**（気象庁は予報の終わりに電文を出さない）。
  */
 export const TSUNAMI_FORECAST: TestTelegramScript = {
   anchor: 0,
@@ -1082,10 +1080,6 @@ export const TSUNAMI_FORECAST: TestTelegramScript = {
         valid.textContent = `${new Date(ms + TSUNAMI_DISMISS_MS).toISOString().slice(0, 19)}+00:00`
       }),
     },
-    {
-      file: nii('20241126135327_0_VTSE41_270000'), headType: 'VTSE41', atMs: TSUNAMI_DISMISS_MS, onlyIn: 'standard',
-      rewrite: liftedAfter(90, { includeForecast: true }),
-    },
   ],
 }
 
@@ -1100,7 +1094,7 @@ export const TSUNAMI_EXPIRY_EXTEND_AT_MS = 20_000
 export const TSUNAMI_EXPIRY_EXTEND_BY_MS = 120_000
 
 /**
- * 失効時刻テスト（能登 01/02 07:30 の津波注意報 → 10:00 に解除されて予報だけが残る報）。DMDSS 版のみ。
+ * 失効時刻テスト（能登 01/02 07:30 の津波注意報 → 10:00 に解除されて予報だけが残る報）。
  *
  * **気象庁が失効時刻を載せる 2 通りのうち、等級の引き下げとして届く形**（予報だけの発表は予報テストが
  * 通す）。1 通だけ流しても降格にならない —— 判定は前報の最上位等級との比較なので、注意報を先に通す。
@@ -1155,8 +1149,7 @@ export const TSUNAMI_EXPIRY: TestTelegramScript = {
 
 
 /**
- * 区域の等級変化テスト（能登本震の実電文の並び）。DMDSS 版のみ（前回の等級 `LastKind` は P2PQuake が
- * 配信しない）。
+ * 区域の等級変化テスト（能登本震の実電文の並び）。
  *
  *   1. 16:12 津波警報
  *   2. 16:22 石川県能登を大津波警報へ引き上げ（ほかの区域も注意報 → 警報へ）
@@ -1177,7 +1170,7 @@ export const TSUNAMI_GRADE_CHANGE: TestTelegramScript = {
 }
 
 /**
- * 原因地震の追加テスト（2015-11-14 薩摩半島西方沖の実電文の並び）。DMDSS 版のみ。
+ * 原因地震の追加テスト（2015-11-14 薩摩半島西方沖の実電文の並び）。
  *
  *   1. 05:56 津波注意報（`EventID` = A）
  *   2. 05:59 地震 A の震源・震度に関する情報
@@ -1218,7 +1211,7 @@ export const TSUNAMI_RETRACTION: TestTelegramScript = {
 }
 
 /**
- * 津波情報だけが取り消されるテスト（DMDSS 版のみ）。**取消は情報名称ごとに効く**ので、津波注意報は
+ * 津波情報だけが取り消されるテスト。**取消は情報名称ごとに効く**ので、津波注意報は
  * 残り、津波情報が運んだ内容だけが消える（→ docs/spec/tsunami-spec.md）。
  *
  *   1. 05:56 津波注意報  2. 05:58 満潮時刻の情報  3. その取消（サンプル 38-39_03_02 を付け替え）
@@ -1391,7 +1384,7 @@ export const EARTHQUAKE_COUNT_RETRACTION: TestTelegramScript = {
 }
 
 /**
- * 長周期地震動の取消テスト（地震テストと同じ地震情報・長周期地震動 → その長周期の取消）。DMDSS 版のみ。
+ * 長周期地震動の取消テスト（地震テストと同じ地震情報・長周期地震動 → その長周期の取消）。
  * **取消のサンプル電文が無い**ので、ほかの種別の取消と同じ形（→ `toCancelForm`）で作る。
  */
 export const LPGM_RETRACTION: TestTelegramScript = {
@@ -1410,7 +1403,7 @@ export const LPGM_RETRACTION: TestTelegramScript = {
 }
 
 /**
- * 階級 0 の長周期地震動の観測情報を、佐渡付近の地震（2024-01-01 23:04・M4.6・最大震度3。→ `SADO`）へ付けて流す。DMDSS 版のみ。
+ * 階級 0 の長周期地震動の観測情報を、佐渡付近の地震（2024-01-01 23:04・M4.6・最大震度3。→ `SADO`）へ付けて流す。
  *
  * **階級 0 の報の標本は無い。** 全期間のアーカイブ（2020-11〜2026-10 の 68 通・1,032 地点）に、最大階級 0 の報も
  * 階級 0 の観測点も 1 件も無い。資料の値域は 0〜4 で 0 は来うるので、画面に残すと決めた
@@ -1472,7 +1465,7 @@ export const LPGM_CLASS_ZERO: TestTelegramScript = {
 }
 
 /**
- * 長周期地震動の観測情報の種類（`LgCategory`）1・3 の実電文を流す。DMDSS 版のみ。
+ * 長周期地震動の観測情報の種類（`LgCategory`）1・3 の実電文を流す。
  *
  * 種類 1・3 にも一文を出すと決めたが（2026-10-22 ユーザー選択「1・3 にも一文を出す (Recommended)」）、収録していた
  * 長周期は能登本震の種類 4 だけで、画面で確かめる入口が無かった（ボタンは 2026-10-24 選択「ボタンを足す (Recommended)」）。
@@ -1519,7 +1512,7 @@ function withClassZeroRegion(doc: Document): void {
 }
 
 /**
- * 階級 0 の地域が混ざった長周期地震動の観測情報と、その続報を流す。DMDSS 版のみ。
+ * 階級 0 の地域が混ざった長周期地震動の観測情報と、その続報を流す。
  *
  * - 1 通目: 16:56 の報に階級 0 の区域を書き足したもの（→ {@link withClassZeroRegion}）。読み上げで階級 0 の地域も声になる
  * - 2 通目（3 秒後）: 1 通目の規模を Mj5.7 → Mj5.8 に書き換え、報番号を進めた続報。長周期の欄の規模に更新の印が付く

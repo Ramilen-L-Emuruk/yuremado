@@ -97,10 +97,9 @@ async function withTimeout(promise: Promise<void>, ms: number): Promise<boolean>
 }
 
 /**
- * このページのスコープの登録を引く。**別のスコープの登録は使わない。** 同じオリジンに standard 版
- * （`/yuremado/`）と DMDSS 版（`/yuremado/dmdss/`）が同居し、DMDSS 版の登録がまだ無いと、DMDSS 版の
- * ページでも standard 版の登録が返る（URL に一致するスコープのうち最も長いもの）。それで出すと、
- * 後で DMDSS 版の登録ができたとき、同じ tag の通知が登録をまたいで置き換わらない。
+ * このページのスコープの登録を引く。**別のスコープの登録は使わない。** 同じオリジンに別のスコープの
+ * 登録が同居していると、このページの登録がまだ無いうちは、URL に一致するスコープのうち最も長い別の登録が
+ * 返る。それで出すと、後でこのページの登録ができたとき、同じ tag の通知が登録をまたいで置き換わらない。
  */
 async function findOwnRegistration(tag: string): Promise<ServiceWorkerRegistration | undefined> {
   let timer: ReturnType<typeof setTimeout> | undefined

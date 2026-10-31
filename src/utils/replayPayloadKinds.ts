@@ -1,8 +1,8 @@
 import type { ReplayPayload } from '../types/replay'
 
 /**
- * 再生用ペイロード（`ReplayPayload`）の判別子の一覧。**実地震テストシナリオとローカル履歴アーカイブの
- * 検証（`testScenarioSchema.ts`・`historicalArchiveSchema.ts`）はどちらもここから導く。**
+ * 再生用ペイロード（`ReplayPayload`）の判別子の一覧。**ローカル履歴アーカイブの
+ * 検証（`historicalArchiveSchema.ts`）はここから導く。**
  *
  * **`ReplayPayload['kind']` の全種別を持つ表にしておく。** 文字列を手で並べていた頃は、種別を足しても
  * 一覧へ書き忘れて、`remapPayload` が扱える `quakeNotice`・`earthquakeCount`・`estimatedIntensity` の

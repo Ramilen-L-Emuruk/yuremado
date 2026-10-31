@@ -274,7 +274,7 @@ export function formatAlreadyRunning(variant: string, record: DevServerRecord): 
  */
 export function devServerLockPlugin(options: {
   variant: string
-  /** サブパス（`/yuremado/dmdss/` など）。案内の URL に使う。 */
+  /** 配信のパス（`/` など）。案内の URL に使う。 */
   base: string
   /** 記録の置き場所。Vite の `root`（= その作業ディレクトリ）。 */
   root: string

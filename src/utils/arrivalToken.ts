@@ -188,24 +188,26 @@ function base64urlToBytes(s: string): Uint8Array {
   return base64ToBytes(b64 + '='.repeat((4 - (b64.length % 4)) % 4))
 }
 
-let keyPromise: Promise<CryptoKey> | null = null
-function importPublicKey(spkiBase64: string): Promise<CryptoKey> {
-  // 既定の鍵だけ覚える（テストが渡す鍵は毎回作り直す）。
-  if (spkiBase64 !== PUBLIC_KEY_SPKI_BASE64) {
+/** 取り込んだ公開鍵の控え（公開鍵の文字列ごと。到達予想キーと予報キーで別の鍵を使う） */
+const keyPromises = new Map<string, Promise<CryptoKey>>()
+function importPublicKey(spkiBase64: string, remember: boolean): Promise<CryptoKey> {
+  // 本番の鍵だけ覚える（テストが渡す鍵は毎回作り直す）。
+  if (!remember) {
     return crypto.subtle.importKey('spki', base64ToBytes(spkiBase64) as unknown as ArrayBuffer, ALGORITHM, false, ['verify'])
   }
   // **失敗した Promise を覚えない。** 握ると、一時的な理由で失敗したときに再読み込みまで
   // 検証が通らなくなる（`utils/testDataLoader.ts` と同じ理由）。
-  if (!keyPromise) {
-    const bytes = base64ToBytes(PUBLIC_KEY_SPKI_BASE64)
-    keyPromise = crypto.subtle
-      .importKey('spki', bytes as unknown as ArrayBuffer, ALGORITHM, false, ['verify'])
+  let p = keyPromises.get(spkiBase64)
+  if (!p) {
+    p = crypto.subtle
+      .importKey('spki', base64ToBytes(spkiBase64) as unknown as ArrayBuffer, ALGORITHM, false, ['verify'])
       .catch((err) => {
-        keyPromise = null
+        keyPromises.delete(spkiBase64)
         throw err
       })
+    keyPromises.set(spkiBase64, p)
   }
-  return keyPromise
+  return p
 }
 
 /**
@@ -217,7 +219,7 @@ function importPublicKey(spkiBase64: string): Promise<CryptoKey> {
  * 空文字（未入力）は**記録せずに**通らない。設定を触っていない端末で警告が出ても意味が無い。
  */
 export async function verifyArrivalToken(token: string): Promise<ArrivalTokenCheck> {
-  return verifyArrivalTokenWithKeyForTest(token, PUBLIC_KEY_SPKI_BASE64)
+  return verifySignedKey(token, PUBLIC_KEY_SPKI_BASE64, true, '[arrival]')
 }
 
 /**
@@ -231,18 +233,37 @@ export async function verifyArrivalTokenWithKeyForTest(
   token: string,
   publicKeySpkiBase64: string,
 ): Promise<ArrivalTokenCheck> {
+  return verifySignedKey(token, publicKeySpkiBase64, false, '[arrival]')
+}
+
+/**
+ * 公開鍵で署名したキー（到達予想キー・予報キー）を検証する。形・署名・期限の見方は 2 つで同じにする
+ * （予報キーは中継も同じ形で確かめる。設計書 §0 の 2026-10-31「予報キー」の行）。
+ *
+ * **本番の経路から公開鍵を外から選ばせないこと。** 呼ぶのは鍵ごとの入口（`verifyArrivalToken`・
+ * `utils/forecastKey.ts` の `verifyForecastKey`）とテストだけ。
+ *
+ * @param remember 取り込んだ公開鍵を覚えるか（本番の鍵だけ真）
+ * @param logTag 記録の頭（どちらのキーの話か）
+ */
+export async function verifySignedKey(
+  token: string,
+  publicKeySpkiBase64: string,
+  remember: boolean,
+  logTag: string,
+): Promise<ArrivalTokenCheck> {
   const trimmed = token.trim()
   if (!trimmed) return fail('empty')
   const dot = trimmed.indexOf('.')
   if (dot <= 0 || dot === trimmed.length - 1 || trimmed.indexOf('.', dot + 1) !== -1) {
-    log.warn('[arrival] トークンの形式が違います（<payload>.<signature> の 2 部であること）')
+    log.warn(`${logTag} トークンの形式が違います（<payload>.<signature> の 2 部であること）`)
     return fail('malformed')
   }
   const payloadPart = trimmed.slice(0, dot)
   const signaturePart = trimmed.slice(dot + 1)
 
   try {
-    const key = await importPublicKey(publicKeySpkiBase64)
+    const key = await importPublicKey(publicKeySpkiBase64, remember)
     const ok = await crypto.subtle.verify(
       VERIFY_PARAMS,
       key,
@@ -250,7 +271,7 @@ export async function verifyArrivalTokenWithKeyForTest(
       new TextEncoder().encode(payloadPart) as unknown as ArrayBuffer,
     )
     if (!ok) {
-      log.warn('[arrival] トークンの署名が合いません')
+      log.warn(`${logTag} トークンの署名が合いません`)
       return fail('signature')
     }
     const payload: TokenPayload = JSON.parse(new TextDecoder().decode(base64urlToBytes(payloadPart)))
@@ -275,18 +296,18 @@ export async function verifyArrivalTokenWithKeyForTest(
       // 手違い、後者は `--days` の打ち間違いで、直す場所が違う。
       log.warn(
         typeof payload.exp === 'number'
-          ? '[arrival] トークンの失効日が日時として扱える範囲を超えています'
-          : '[arrival] トークンに失効日がありません',
+          ? `${logTag} トークンの失効日が日時として扱える範囲を超えています`
+          : `${logTag} トークンに失効日がありません`,
       )
       return fail('no-expiry')
     }
     if (serverNow() / 1000 > exp) {
-      log.warn('[arrival] トークンが失効しています')
+      log.warn(`${logTag} トークンが失効しています`)
       return fail('expired', exp * 1000)
     }
     return { valid: true, expMs: exp * 1000, problem: null }
   } catch (err) {
-    log.warn('[arrival] トークンを検証できません', err)
+    log.warn(`${logTag} トークンを検証できません`, err)
     return fail('error')
   }
 }

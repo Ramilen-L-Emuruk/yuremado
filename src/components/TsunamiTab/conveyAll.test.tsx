@@ -50,7 +50,7 @@ describe('等級の帯は電文の名前を出す', () => {
     expect(screen.getByText('大津波警報')).toBeTruthy()
   })
 
-  it('対照: 名前を持たない区域（標準版）は等級の名前で 1 枚にまとめる', () => {
+  it('対照: 名前を持たない区域は等級の名前で 1 枚にまとめる', () => {
     renderTab(makeTsunami({ areas: [area('岩手県', '210', 'MajorWarning'), area('宮城県', '220', 'MajorWarning')] }))
     expect(screen.getAllByText('大津波警報')).toHaveLength(1)
     expect(screen.queryByText('大津波警報：発表')).toBeNull()

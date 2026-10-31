@@ -7,6 +7,8 @@ import {
   stripDevApiKey,
   injectDevArrivalToken,
   resolveDevArrivalToken,
+  resolveDevForecastKey,
+  injectDevForecastKey,
   stripDevArrivalToken,
   settingsToStore,
   DAY_NIGHT_OPACITY_MIN,
@@ -364,8 +366,8 @@ describe('load', () => {
   })
 
   // dev サーバーでは `.env.local` の DMDATA_API_KEY が初期値に入る経路がある。テスト実行時に
-  // それが起きないことを固定する。守っているのは 3 つ（vitest が vite.config.ts を読まない・
-  // MODE === 'test'・VITE_VARIANT 未設定で isDmdss が false）で、どれが効いているかは問わない。
+  // それが起きないことを固定する。守っているのは 2 つ（vitest が vite.config.ts を読まない・
+  // MODE === 'test'）で、どれが効いているかは問わない。
   // 個々のガードは resolveDevApiKey のテストで直接押さえている。
   it('テスト実行時は dev の APIキーを注入しない', () => {
     expect(load().dmdataApiKey).toBe('')
@@ -374,27 +376,23 @@ describe('load', () => {
 
 describe('resolveDevApiKey', () => {
   // dev サーバーで API キーを自動投入してよい条件。実行環境に左右されないよう、判定材料は
-  // すべて引数で渡す（本番ビルド・テスト・standard 版のどれでも投入しないことを個別に固定する）。
+  // すべて引数で渡す（本番ビルド・テストのどちらでも投入しないことを個別に固定する）。
   const devEnv = { DEV: true, MODE: 'development', DMDATA_API_KEY: 'env-key' }
 
-  it('dev・DMDSS 版・キーありなら投入する', () => {
-    expect(resolveDevApiKey(devEnv, true)).toBe('env-key')
+  it('dev・キーありなら投入する', () => {
+    expect(resolveDevApiKey(devEnv)).toBe('env-key')
   })
 
   it('本番ビルド（DEV=false）では投入しない', () => {
-    expect(resolveDevApiKey({ ...devEnv, DEV: false }, true)).toBeUndefined()
+    expect(resolveDevApiKey({ ...devEnv, DEV: false })).toBeUndefined()
   })
 
   it("テスト実行時（MODE='test'）は投入しない", () => {
-    expect(resolveDevApiKey({ ...devEnv, MODE: 'test' }, true)).toBeUndefined()
-  })
-
-  it('standard 版では投入しない', () => {
-    expect(resolveDevApiKey(devEnv, false)).toBeUndefined()
+    expect(resolveDevApiKey({ ...devEnv, MODE: 'test' })).toBeUndefined()
   })
 
   it('キーが渡っていなければ undefined', () => {
-    expect(resolveDevApiKey({ DEV: true, MODE: 'development' }, true)).toBeUndefined()
+    expect(resolveDevApiKey({ DEV: true, MODE: 'development' })).toBeUndefined()
   })
 })
 
@@ -446,21 +444,21 @@ describe('settingsToStore', () => {
   const withKey = (key: string) => sanitize({ dmdataApiKey: key })
 
   it('正: 注入値と違うキーはそのまま保存する', () => {
-    expect(settingsToStore(withKey('typed-by-hand'), 'injected', false, undefined).dmdataApiKey).toBe('typed-by-hand')
+    expect(settingsToStore(withKey('typed-by-hand'), 'injected', false, undefined, undefined).dmdataApiKey).toBe('typed-by-hand')
   })
 
   it('安全弁: 注入値と同じキーは落とす（updateSetting と同じ扱い）', () => {
-    expect(settingsToStore(withKey('injected'), 'injected', false, undefined).dmdataApiKey).toBe('')
+    expect(settingsToStore(withKey('injected'), 'injected', false, undefined, undefined).dmdataApiKey).toBe('')
   })
 
   it('対照: keepApiKey なら、注入値と同じ文字列でも落とさない', () => {
     // 利用者がファイルへ書いた値がたまたま dev の注入値と一致しただけで消える、を防ぐ分岐。
     // この対照が無いと、keepApiKey を実装から消しても他のテストは通ってしまう。
-    expect(settingsToStore(withKey('injected'), 'injected', true, undefined).dmdataApiKey).toBe('injected')
+    expect(settingsToStore(withKey('injected'), 'injected', true, undefined, undefined).dmdataApiKey).toBe('injected')
   })
 
   it('安全弁: 注入値が無ければ何も落とさない', () => {
-    expect(settingsToStore(withKey('any'), undefined, false, undefined).dmdataApiKey).toBe('any')
+    expect(settingsToStore(withKey('any'), undefined, false, undefined, undefined).dmdataApiKey).toBe('any')
   })
 })
 
@@ -497,7 +495,7 @@ describe('到達予想トークンの dev 注入', () => {
     expect(resolveDevArrivalToken({ DEV: true, MODE: 'test', ARRIVAL_TOKEN: 'x' })).toBeUndefined()
   })
 
-  it('dev なら注入値を返す。**バリアントを問わない**（API キーと違う点）', () => {
+  it('dev なら注入値を返す', () => {
     expect(resolveDevArrivalToken({ DEV: true, MODE: 'development', ARRIVAL_TOKEN: 'x' })).toBe('x')
   })
 
@@ -505,7 +503,18 @@ describe('到達予想トークンの dev 注入', () => {
     // `keepApiKey` は「ファイルに明示された API キーを残す」ための指示で、トークンには
     // 対応する指示が無い。外しても次の読み込みで注入し直される。
     const s = sanitize({ arrivalToken: 'dev-token', dmdataApiKey: 'k' })
-    expect(settingsToStore(s, 'k', true, 'dev-token').arrivalToken).toBe('')
-    expect(settingsToStore(s, 'k', false, 'dev-token').arrivalToken).toBe('')
+    expect(settingsToStore(s, 'k', true, 'dev-token', undefined).arrivalToken).toBe('')
+    expect(settingsToStore(s, 'k', false, 'dev-token', undefined).arrivalToken).toBe('')
+  })
+
+  it('予報キーも同じ門で注入し、保存では外す（手入力の値は残す）', () => {
+    expect(resolveDevForecastKey({ DEV: true, MODE: 'development', FORECAST_KEY: 'f' })).toBe('f')
+    expect(resolveDevForecastKey({ DEV: true, MODE: 'test', FORECAST_KEY: 'f' })).toBeUndefined()
+    expect(resolveDevForecastKey({ DEV: false, MODE: 'production', FORECAST_KEY: 'f' })).toBeUndefined()
+    const s = sanitize({ forecastKey: 'dev-forecast' })
+    expect(settingsToStore(s, undefined, true, undefined, 'dev-forecast').forecastKey).toBe('')
+    expect(settingsToStore(sanitize({ forecastKey: 'typed' }), undefined, false, undefined, 'dev-forecast').forecastKey).toBe('typed')
+    expect(injectDevForecastKey(sanitize({ forecastKey: 'typed' }), 'dev-forecast').forecastKey).toBe('typed')
+    expect(injectDevForecastKey(sanitize({}), 'dev-forecast').forecastKey).toBe('dev-forecast')
   })
 })

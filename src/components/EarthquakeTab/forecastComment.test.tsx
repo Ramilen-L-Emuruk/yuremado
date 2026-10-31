@@ -67,6 +67,8 @@ const renderTab = async (quake: JMAQuake, selected = true) => {
       loadMoreFailed={false}
       reconnectGapLoss={false}
       fetchThrottled={false}
+      relayGapNotices={[]}
+      onDismissKeyReentry={null}
       lpgmByEventId={new Map()}
       updateMarks={new Map()}
       activeLpgmEventId={null}
@@ -115,7 +117,7 @@ describe('地震カードの付加文の枠', () => {
     expect(paragraphsInBox(VAR_COMMENT_TEXT)).toEqual([VAR_COMMENT_TEXT])
   })
 
-  // 対照: どれも残らなければ枠ごと出さない（P2PQuake 経路など付加文を持たない電文も同じ）。
+  // 対照: どれも残らなければ枠ごと出さない（付加文を持たない電文も同じ）。
   it('何も残らなければ枠を出さない', async () => {
     await renderTab(makeQuake({ forecastText: TSUNAMI_SENTENCE, varCommentText: undefined }))
     expect(screen.queryByText(TSUNAMI_SENTENCE, { exact: false })).toBeNull()
@@ -181,12 +183,12 @@ describe('地震カードの付加文の枠', () => {
     expect(screen.getByText(changed)).toBeTruthy()
   })
 
-  // 標準版（P2PQuake）は固定付加文を持たず、海外への津波の見通しを値から起こした文（`foreignTsunamiText`）で持つ。
-  // DMDSS 版の固定付加文と同じ先頭の段落に出す（2026-10-29 ユーザー承認「原文のまま (Recommended)」「先頭 (Recommended)」）。
-  describe('標準版の海外への津波の見通し', () => {
+  // 固定付加文を持たず、海外への津波の見通しを値から起こした文（`foreignTsunamiText`）で持つ報。
+  // 固定付加文と同じ先頭の段落に出す（2026-10-29 ユーザー承認「原文のまま (Recommended)」「先頭 (Recommended)」）。
+  describe('値から起こした海外への津波の見通し', () => {
     const FOREIGN = '太平洋の広域に津波発生の可能性があります。'
     const FREE = '震源の近傍で、やや強い揺れを観測しました。'
-    // P2PQuake 経路の形: 固定付加文・その他は無く、区分のコードも持たない。
+    // 固定付加文・その他は無く、区分のコードも持たない形。
     const p2pQuake = (over: Partial<JMAQuake> = {}) => {
       const base = makeQuake()
       return makeQuake({

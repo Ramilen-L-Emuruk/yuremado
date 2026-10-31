@@ -139,7 +139,7 @@ describe('規模の種別と編集官署', () => {
     expect(text).toContain('チリ中部沿岸　M8.8')
   })
 
-  it('対照: 種別を持たない原因地震（標準版）は従来どおり「M7.3」', () => {
+  it('対照: 種別を持たない原因地震は従来どおり「M7.3」', () => {
     const { container } = renderTab(makeTsunami())
     expect(container.textContent).toContain('福島県沖　M7.3')
   })
@@ -159,7 +159,7 @@ describe('規模の種別と編集官署', () => {
     expect(screen.getByText('編集官署 気象庁本庁')).toBeTruthy()
   })
 
-  // 安全弁: 発表官署へ落ちる `issue.source` を「編集官署」と名乗って出さない（標準版の全カードに誤った官署が出る形を作らない）
+  // 安全弁: 発表官署へ落ちる `issue.source` を「編集官署」と名乗って出さない（編集官署の欄が無い報で誤った官署が出る形を作らない）
   it('安全弁: 編集官署の欄が無ければ、issue.source があっても「編集官署」を出さない', () => {
     const { container } = renderTab(makeTsunami({ infoName: '津波警報・注意報・予報' }))
     expect(container.textContent).not.toContain('編集官署')

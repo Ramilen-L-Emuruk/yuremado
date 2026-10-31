@@ -19,7 +19,7 @@ import type { DmdataEndpoint } from './dmdataEndpoint'
 import { fetchWithTimeout, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { readTelegramBody, writeTelegramBody } from '../utils/telegramBodyCache'
 import {
-  waitForDataApiSlot, dataApiGateWaiting, setDataApiGateIntervalForTest, resetDataApiGateForTest,
+  dataApiGateWaiting, setDataApiGateIntervalForTest, resetDataApiGateForTest,
   rateLimitedUntil, noteRateLimited, noteRateLimitCleared,
 } from './dmdataRequestGates'
 
@@ -228,13 +228,18 @@ async function fetchThroughGate<T>(
     stats.rateLimited++
     return { kind: 'rateLimited', until }
   }
-  await waitForDataApiSlot({ urgent })
+  await endpoint.waitDataSlot(url, { urgent })
+  await endpoint.prepare()
   let out: { status: number; value: T | null }
   try {
     out = await fetchWithTimeout(
       url,
-      { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers: endpoint.dataHeaders() } },
-      async res => ({ status: res.status, value: res.ok ? await read(res) : null }),
+      { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers: endpoint.dataHeaders(url) } },
+      async res => {
+        // 中継の口から返す本体（予報）の 401・429 は、一覧と同じく札を捨てる・待ちを覚える
+        endpoint.observe(res.status, res.headers)
+        return { status: res.status, value: res.ok ? await read(res) : null }
+      },
     )
   } catch (e) {
     stats.failed++

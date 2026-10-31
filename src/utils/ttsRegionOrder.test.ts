@@ -83,7 +83,7 @@ function area(addr: string, scale: number): EarthquakePoint {
 }
 
 /**
- * 観測点の点。pref は経路によって入り方が違う（P2PQuake は非空・DMDATA は空）ため引数で受ける。
+ * 観測点の点。pref が空の形（パーサーの出力）と非空の形の両方を作れるよう引数で受ける。
  * → docs/spec/quake-spec.md §4
  */
 function station(pref: string, addr: string, scale: number): EarthquakePoint {
@@ -96,7 +96,7 @@ function prefRollup(pref: string, scale: number): EarthquakePoint {
 }
 
 /**
- * 標準版（P2PQuake）の区域の点。区域にも pref を積むのが DMDATA 経路との違い。
+ * 区域にも pref を積んだ区域の点（パーサーは区域の点を `pref: ''` で積む）。
  * → docs/spec/quake-spec.md §4
  */
 function p2pArea(pref: string, addr: string, scale: number): EarthquakePoint {
@@ -248,9 +248,8 @@ describe('長周期地震動の地域列挙', () => {
   })
 })
 
-// P2PQuake の詳細報は区域の点を持たず観測点だけで届く（→ docs/spec/quake-spec.md §4）。
-// 観測点の所属区域を座標テーブルから逆引きし、区域粒度で読む。
-describe('震度の地域列挙: 観測点しか持たない電文（P2PQuake の詳細報）', () => {
+// 区域の点を持たず観測点だけを持つ電文では、観測点の所属区域を座標テーブルから逆引きし、区域粒度で読む。
+describe('震度の地域列挙: 観測点しか持たない電文', () => {
   // 期待値は実データの観測点の帰属に依存する。観測点の改廃で帰属が変わると実装が正しくても
   // 期待値が外れるため、前提そのものを先に検証しておく（上の「実データの区域構成」と同じ趣旨）。
   it('前提: テストで使う観測点の所属区域', () => {
@@ -463,11 +462,11 @@ describe('震度の地域列挙: 観測点しか持たない電文（P2PQuake �
     expect(text).toContain('最大震度4を新潟県上越で観測しました。')
   })
 
-  // 正: 標準版は区域の点にも pref を積むため、区域名が県名と同じ奈良県は addr === pref になる。
+  // 正: 区域の点に pref を積むと、区域名が県名と同じ奈良県は addr === pref になる。
   // ロールアップ点かどうかを名前だけで決めると、この区域が読み上げから静かに落ちる。
   // 奈良県は県内の一次細分区域が 1 つだけで、その名前が県名と同じ唯一の県
   // （stationCoords.test.ts が固定）。
-  it('標準版の区域の点は、区域名が県名と同じ奈良県でも読み上げに残る', () => {
+  it('県名を持つ区域の点は、区域名が県名と同じ奈良県でも読み上げに残る', () => {
     const quake = makeQuake(
       [p2pArea('奈良県', '奈良県', 40), p2pArea('大阪府', '大阪府南部', 40)],
       SOUTH_HYPO,

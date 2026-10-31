@@ -10,7 +10,7 @@ import {
   formatPrecacheBudget,
   isServiceWorkerAsset,
 } from './precacheBudget'
-import { outDirForVariant } from './buildOutDir'
+import { BUILD_OUT_DIR } from './buildOutDir'
 
 // 結線の検査で読むファイル。テスト本体ではなくここで読む（読み込みの待ちを 1 件目の
 // 所要時間へ乗せないため。理由は CLAUDE.md「検証」節）。
@@ -114,13 +114,11 @@ describe('formatPrecacheBudget', () => {
   })
 })
 
-// 出力先を取り違えると、**存在するけれど中身が別バリアントのディレクトリ**を検査してしまう。
+// 出力先を取り違えると、**存在するけれど中身が別のビルドのディレクトリ**を検査してしまう。
 // その場合ファイルは見つかるので「0 件」のガードに掛からず、予算内として通ってしまう。
-describe('outDirForVariant', () => {
-  it('dmdss は dist-dmdss、それ以外は dist', () => {
-    expect(outDirForVariant('dmdss')).toBe('dist-dmdss')
-    expect(outDirForVariant('standard')).toBe('dist')
-    expect(outDirForVariant(undefined)).toBe('dist')
+describe('BUILD_OUT_DIR', () => {
+  it('dist', () => {
+    expect(BUILD_OUT_DIR).toBe('dist')
   })
 })
 
@@ -136,42 +134,18 @@ describe('検査の結線', () => {
 
   it('vite.config.ts は出力先を buildOutDir から取る', () => {
     expect(VITE_CONFIG).toContain("from './scripts/buildOutDir'")
-    expect(VITE_CONFIG).toContain('outDir: outDirForVariant(')
+    expect(VITE_CONFIG).toContain('outDir: BUILD_OUT_DIR')
   })
 
-  it('build・build:dmdss の両方が検査を呼ぶ', () => {
-    for (const name of ['build', 'build:dmdss']) {
-      expect(PACKAGE_JSON.scripts[name]).toContain('check-precache-budget')
-    }
-  })
-
-  // DMDSS 版のビルドから VITE_VARIANT が落ちると、検査だけが standard の `dist/`（前回の
-  // ビルドが残っていれば存在する）を見て通る。段ごとに分けて確かめる。
-  it('DMDSS 版は検査にも VITE_VARIANT=dmdss を渡す', () => {
-    const step = PACKAGE_JSON.scripts['build:dmdss']
-      .split('&&')
-      .map(s => s.trim())
-      .find(s => s.includes('check-precache-budget'))
-    expect(step).toBeDefined()
-    expect(step).toContain('VITE_VARIANT=dmdss')
-  })
-
-  it('standard 版は VITE_VARIANT を渡さない（既定の dist を見る）', () => {
-    const step = PACKAGE_JSON.scripts.build
-      .split('&&')
-      .map(s => s.trim())
-      .find(s => s.includes('check-precache-budget'))
-    expect(step).toBeDefined()
-    expect(step).not.toContain('VITE_VARIANT')
+  it('build が検査を呼ぶ', () => {
+    expect(PACKAGE_JSON.scripts.build).toContain('check-precache-budget')
   })
 
   it('検査はビルドより後に走る（成果物が無ければ意味が無い）', () => {
-    for (const name of ['build', 'build:dmdss']) {
-      const steps = PACKAGE_JSON.scripts[name].split('&&').map(s => s.trim())
-      const build = steps.findIndex(s => s.includes('vite build'))
-      const check = steps.findIndex(s => s.includes('check-precache-budget'))
-      expect(build).toBeGreaterThanOrEqual(0)
-      expect(check).toBeGreaterThan(build)
-    }
+    const steps = PACKAGE_JSON.scripts.build.split('&&').map(s => s.trim())
+    const build = steps.findIndex(s => s.includes('vite build'))
+    const check = steps.findIndex(s => s.includes('check-precache-budget'))
+    expect(build).toBeGreaterThanOrEqual(0)
+    expect(check).toBeGreaterThan(build)
   })
 })

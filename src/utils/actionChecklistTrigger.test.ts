@@ -87,15 +87,14 @@ describe('quakeScaleForScope', () => {
     expect(quakeScaleForScope(q, NEAR, MIN)).toBe(50)
   })
 
-  // DMDATA（DMDSS 版）の電文は観測点も区域も `pref` を空で積む（quake-spec.md §4）。
-  // 県名を含むキーで突き合わせていたため、DMDSS 版で地点を登録すると構造的に 1 件も一致せず、
-  // この経路が恒久的に死んでいた。
-  it('pref が空の電文（DMDSS 版）でも観測点名で引き当てる', () => {
+  // DMDATA の電文は観測点も区域も `pref` を空で積む（quake-spec.md §4）。
+  // 県名を含むキーで突き合わせると、地点を登録しても構造的に 1 件も一致しない。
+  it('pref が空の電文でも観測点名で引き当てる', () => {
     const q = quake(50, [{ pref: '', addr: '新宿区西新宿', isArea: false, scale: 45 }])
     expect(quakeScaleForScope(q, NEAR, MIN)).toBe(45)
   })
 
-  it('pref が非空の電文（標準版）でも同じく引き当てる', () => {
+  it('pref が非空の点でも同じく引き当てる', () => {
     const q = quake(50, [{ pref: '東京都', addr: '新宿区西新宿', isArea: false, scale: 45 }])
     expect(quakeScaleForScope(q, NEAR, MIN)).toBe(45)
   })
@@ -105,7 +104,7 @@ describe('quakeScaleForScope', () => {
   })
 })
 
-// 実地震テストシナリオの手書き JSON など、型検査を通らない経路から階級表に無い値が来る
+// ローカル履歴アーカイブの手書き JSON など、型検査を通らない経路から階級表に無い値が来る
 // （eew.ts の eewMaxScaleInfo も同じ理由で実行時に弾いている）。
 describe('壊れた震度の扱い', () => {
   it('階級表に無い震度の点は「観測できなかった」ものとして全国基準へ倒す', () => {
@@ -292,7 +291,7 @@ describe('eewScaleForScope', () => {
     expect(eewScaleForScope(e, emptyRegions, MIN)).toBe(50)
   })
 
-  // 区域を持たない報（予測震度の下限が震度 3 以下・standard 版で区域が補われる前）は、電文全体の最大で
+  // 区域を持たない報（予測震度の下限が震度 3 以下・強震モニタの報で区域が補われる前）は、電文全体の最大で
   // 判定すると遠くの地震でも自宅に帯が出る（2026-10-22 ユーザー承認「区域が無ければ使わない」）。
   // 以前は全国基準へ倒していた —— この 3 件はその判断を覆したもの。
   describe('区域を持たない報', () => {
@@ -471,8 +470,8 @@ describe('半径内が電文に載っていないとき', () => {
   })
 })
 
-describe('区域を持たない EEW（standard 版・Yahoo hypoInfo 由来の初期検知）', () => {
-  // standard 版は Yahoo hypoInfo で先に検知し、後着の P2PQuake が区域を補う（eew-spec.md §3）。
+describe('区域を持たない EEW（Yahoo hypoInfo 由来の初期検知）', () => {
+  // Yahoo hypoInfo で先に検知し、後着の電文の報が区域を補う（eew-spec.md §3）。
   // 補われる前の報は areas を持たず、予想震度は forecastMaxScale にしか入らない。
   // areas だけを見ていたため、この窓ではこの経路が丸ごと死んでいた。
   function eewNoAreas(forecastMaxScale: number): EEWAlert {

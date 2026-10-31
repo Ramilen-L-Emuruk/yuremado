@@ -265,7 +265,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
   // 条件は 2 つ。**直近の受信で動いた区域であること**（`areaGradeChangedKeys`。区域が持つ
   // `lastGrade` は変化後の続報にも残るため、これが無いと出続ける）と、**前回が「津波なし」
   // （`Unknown`）でないこと**（新規発表の報では全区域がそこから始まり、全部の行に付いて
-  // 意味を持たなくなる）。`lastGrade` は DMDATA 経路のみが持つ（P2PQuake は配信しない）。
+  // 意味を持たなくなる）。`lastGrade` は電文が `LastKind` を持つ区域だけが持つ。
   const gradeChange = areaGradeChangedKeys?.has(tsunamiAreaKey(area))
     && area.lastGrade && area.lastGrade !== 'Unknown' && area.lastGrade !== area.grade
     ? {
@@ -278,8 +278,8 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
   const stations = area.stations ?? []
   // 実測値がある観測点名のセット（予測だけの行から外す）
   const observedNames = new Set(observations.map(o => o.name))
-  // **`immediate` は文言が読めないときの補い。** P2PQuake も 3 値の文言をそのまま配信するが、
-  // `firstHeight` を持たない古いデータでは真偽値しか残らない。**「ただちに津波来襲と予測」と
+  // **`immediate` は文言が読めないときの補い。** `firstHeight` を持たない古いデータでは
+  // 真偽値しか残らない。**「ただちに津波来襲と予測」と
   // 1 対 1 ではなく**、実データでは「津波到達中と推測」の区域でも真になる（第１波の到達を
   // 確認では偽）ので、文言が読めるならそちらを優先する
   // （→ [`tsunami-spec.md`](../../../docs/spec/tsunami-spec.md) §9「区域の到達状況」）。
@@ -305,7 +305,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
 
           **この結線は自動テストが無い。** jsdom はレイアウトを持たないため追従の effect
           （`planFollowScroll` を呼ぶ側）を発火させられなかった。確かめるときは実機で測る ――
-          DMDSS 版の dev サーバーで設定の窓の「変化の小さい続報テスト」を流し、
+          dev サーバーで設定の窓の「変化の小さい続報テスト」を流し、
           `Element.prototype.scrollTo` を差し替えて送り先を記録する。**送り先は「区域見出しの
           上端 − 余白 24px − バナーの高さ」**になる（バナーは sticky で、追従は
           `viewTop = containerRect.top + stickyBannerHeight` を見る。実測で約 190px あった。
@@ -875,7 +875,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   //
   // **同じ津波かは番号の重なりで見る**（`isSameTsunamiEvent` と同じ物差し。運用種別も揃えて比べる）。番号の組を
   // 1 つの文字列の鍵へ縮める（最小の番号など）と、組み直しや、より小さい番号を持つ報の追加で鍵が動き、
-  // 等級が動いていないのに閉じる。番号を持たない電文（標準版）は `id` で比べる —— その電文は続報として束ねられない
+  // 等級が動いていないのに閉じる。番号を持たない電文（`EventID` が空）は `id` で比べる —— その電文は続報として束ねられない
   // （`isTsunamiContinuation`）ので前報の中身も引き継がず、報ごとに閉じても「等級が動いたときだけ閉じる」との食い違いにはならない。
   const commentsIdentity = active[0]
     ? `${active[0].operationStatus ?? ''}|${tsunamiEventIds(active[0]).join(' ') || `#${active[0].id}`}`
@@ -1420,8 +1420,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   // 並べても読み手の行動を変えない（2026-10-21 ユーザー選択「今のまま記録する (Recommended)」。全期間の解除の報 2 通は
   // どちらも失効時刻を持たない）。
   //
-  // **standard 版（P2PQuake）では出ない** —— あちらの API はこの値を持たない。アプリが積む
-  // 24 時間のフェイルセーフ（`useEarthquakes.ts`）は気象庁が言っていない時刻なので、
+  // **電文が期限を載せない報では出ない。** 気象庁が言っていない時刻は
   // **画面へ出してはいけない**（発表値の顔で推測が並ぶ）。ここが `validDateTime` だけを見て
   // いるので自然にそうなる。
   //
