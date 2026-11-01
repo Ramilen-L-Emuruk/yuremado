@@ -1322,19 +1322,21 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                 {formatCorrectType(issue.correct)}
               </span>
             )}
-            {/* 電文を編集した官署（`Control/EditorialOffice`）。**常に出す**（2026-10-22 ユーザー承認
-                「3-B 編集官署 …」）。**`issue.source` ではなく専用の欄を見る** —— あちらは編集官署が無いと
-                発表官署へ落ちるので、出すとラベルが事実を誤らせる。実測と規約は
-                `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」。 */}
-            {issue.editorialOffice && (
-              <span className="text-xs text-secondary shrink-0">編集官署 {issue.editorialOffice}</span>
-            )}
-            {/* 電文を発表した官署（`Control/PublishingOffice`）。編集官署の隣に同じ形で出す
-                （2026-10-30 ユーザー選択「編集官署の隣に同じ形で (Recommended)」）。 */}
-            {issue.publishingOffice && (
-              <span className="text-xs text-secondary shrink-0">発表官署 {issue.publishingOffice}</span>
-            )}
           </div>
+          {/* 官署は日時の行に並べず、その下の 1 行にまとめる（2026-11-01 ユーザー選択「官署を別の行へ
+              (Recommended)」）。日時と同じ行に置くと、狭い画面で編集官署と発表官署の間で行が割れる。
+              電文を編集した官署（`Control/EditorialOffice`）は**常に出す**（2026-10-22 ユーザー承認
+              「3-B 編集官署 …」）。**`issue.source` ではなく専用の欄を見る** —— あちらは編集官署が無いと
+              発表官署へ落ちるので、出すとラベルが事実を誤らせる。電文を発表した官署
+              （`Control/PublishingOffice`）は編集官署の隣に同じ形で出す（2026-10-30 ユーザー選択
+              「編集官署の隣に同じ形で (Recommended)」）。実測と規約は `docs/spec/quake-spec.md` §8
+              「電文を編集した官署は常に出す」。 */}
+          {(issue.editorialOffice || issue.publishingOffice) && (
+            <div className="flex items-center gap-x-2 flex-wrap text-xs text-secondary">
+              {issue.editorialOffice && <span className="whitespace-nowrap">編集官署 {issue.editorialOffice}</span>}
+              {issue.publishingOffice && <span className="whitespace-nowrap">発表官署 {issue.publishingOffice}</span>}
+            </div>
+          )}
 
           {/* 震源地。**緯度・経度はこの直下に置く** —— どちらも「どこで起きたか」を言う欄で、
               あいだに規模・津波・付加文を挟むと、震央地名を読んだあとに座標を探すことになる。 */}
