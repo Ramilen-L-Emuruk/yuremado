@@ -26,7 +26,7 @@ export interface HistoricalArchiveMeta {
 }
 
 export interface HistoricalArchiveEntry {
-  time: string  // 発表・発信時刻の絶対時刻（ISO）。テストシナリオの offsetMs と異なり相対シフトしない
+  time: string  // 発表・発信時刻の絶対時刻（ISO）。テストボタンの電文（offsetMs で「いま」へ寄せる）と異なり相対シフトしない
   payload: ReplayPayload
   silent?: boolean
 }
