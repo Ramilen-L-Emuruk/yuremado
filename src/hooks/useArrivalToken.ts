@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { verifyArrivalToken, type ArrivalTokenStatus } from '../utils/arrivalToken'
+import { verifyArrivalToken, type ArrivalTokenCheck, type ArrivalTokenStatus } from '../utils/arrivalToken'
 import { serverNow } from '../utils/clock'
 import { log } from '../utils/logger'
 
@@ -37,14 +37,34 @@ const initialStatus = (token: string): ArrivalTokenStatus =>
  * 署名検証はローカルの計算なので通信も鍵の再取り込みも起きない。
  */
 export function useArrivalTokenCheck(token: string | null | undefined): ArrivalTokenStatus {
+  return useSignedKeyCheck(token, verifyArrivalToken, '[arrival]')
+}
+
+/**
+ * 署名したキー（到達予想キー・予報キー）の検証結果。張り方は上の `useArrivalTokenCheck` の説明のとおり。
+ *
+ * @param verify 鍵ごとの検証の入口。**モジュールの関数をそのまま渡す**（毎描画で作り直すと検証を張り直す）
+ * @param logTag 記録の頭（どちらのキーの話か）
+ */
+export function useSignedKeyCheck(
+  token: string | null | undefined,
+  verify: (token: string) => Promise<ArrivalTokenCheck>,
+  logTag: string,
+): ArrivalTokenStatus {
   // **前後の空白を落としてから扱う。** 検証の側も同じことをするので結果は変わらないが、
   // 空白だけの入力がここでは真になり「確認中」が一瞬出る。空白を足しただけの打鍵で
   // 検証を張り直さないのも、揃えておく理由のひとつ。
   const trimmed = token?.trim() ?? ''
-  const [status, setStatus] = useState<ArrivalTokenStatus>(() => initialStatus(trimmed))
+  // **結果には「どの値を検証したか」を添えて持つ。** 値を差し替えた描画では、副作用が走って
+  // 状態を戻すより先に、呼び出し側がその描画の結果を読む（同じ描画の副作用で中継へキーを渡す等）。
+  // 状態だけを持つ形だと、そこで前の値の「有効」を新しい値の結果として返してしまう。
+  const [checked, setChecked] = useState<{ token: string; status: ArrivalTokenStatus }>(
+    () => ({ token: trimmed, status: initialStatus(trimmed) }),
+  )
 
   useEffect(() => {
     // 検証が済むまでは閉じておく（トークンが差し替わった直後に古い結果を残さない）。
+    const setStatus = (status: ArrivalTokenStatus) => setChecked({ token: trimmed, status })
     setStatus(initialStatus(trimmed))
     if (!trimmed) return
 
@@ -52,7 +72,7 @@ export function useArrivalTokenCheck(token: string | null | undefined): ArrivalT
     let timer: ReturnType<typeof setTimeout> | undefined
 
     const check = () => {
-      void verifyArrivalToken(trimmed)
+      void verify(trimmed)
         .then((result) => {
           // 検証中にトークンが変わったら、古い結果を捨てる（後から解決した順で上書きさせない）。
           if (!active) return
@@ -64,13 +84,13 @@ export function useArrivalTokenCheck(token: string | null | undefined): ArrivalT
           timer = setTimeout(check, Math.min(Math.max(remainingMs + 1000, 1000), MAX_TIMER_MS))
         })
         .catch((err) => {
-          // **いまの `verifyArrivalToken` は reject しない**（全経路を内部の try で囲い、
+          // **いまの検証の入口は reject しない**（全経路を内部の try で囲い、
           // 失敗しても `problem: 'error'` を返す）。それでも受けておくのは、**その約束が
           // 型でもテストでも強制されていない**から —— 将来 try の外に `await` が 1 つ増えれば
           // `.then` へ到達せず、`checking: true` のまま**永久に「確認中」で固まる**。
           // 門は閉じたままなので危険側には倒れないが、画面からは理由が消えて記録も出ない。
           if (!active) return
-          log.warn('[arrival] トークンの検証が例外で終わりました', err)
+          log.warn(`${logTag} トークンの検証が例外で終わりました`, err)
           setStatus({ valid: false, expMs: null, problem: 'error', checking: false })
         })
     }
@@ -82,7 +102,8 @@ export function useArrivalTokenCheck(token: string | null | undefined): ArrivalT
     }
     // **見るのは空白を落とした値。** 生の値を見ると、末尾に空白を足しただけの打鍵で
     // 検証を張り直し、そのあいだ門が閉じて自前計算が止まる。
-  }, [trimmed])
+  }, [trimmed, verify, logTag])
 
-  return status
+  // 検証した値がいまの値と違う間は、まだ検証していないものとして返す（閉じて「確認中」）。
+  return checked.token === trimmed ? checked.status : initialStatus(trimmed)
 }

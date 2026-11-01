@@ -1,4 +1,6 @@
 import type { ConnectionStatus } from '../../types/earthquake'
+import type { RelayUpstreamStatus } from '../../services/dmdata'
+import { formatHourMinute } from '../../utils/formatters'
 import { log } from '../../utils/logger'
 
 /** 接続状態の行に出す文言と色。 */
@@ -9,7 +11,8 @@ export interface ConnectionLabel {
 }
 
 /**
- * DM-D.S.S の接続状態を、利用者向けの文言と色へ写す。
+ * 設定の窓の接続の 2 行（「電文」「予報（APIキー）」。2026-10-31 ユーザー選択「「電文」「予報（APIキー）」 (Recommended)」）。
+ * 受けているもの 1 つに 1 行（docs/relay-server-design.md §0 の「接続状態は受けているものごとに出す」行）。
  *
  * **分岐を JSX の中に書かないこと。** `ConnectionStatus` に値を足したとき、書き忘れても
  * 型検査には掛からず「画面にだけ出ない」形で漏れる（三項演算子の連鎖は最後の `:` が
@@ -19,12 +22,71 @@ export interface ConnectionLabel {
  * - `crowded`（同時接続の上限）で「切断」と出すと、キーや回線を疑わせる。実際にすべきことは
  *   別のタブを閉じることだけで、しかも枠が空けば自動で繋がる（→ `dmdata.ts` の
  *   `RECONNECT_CROWDED_MAX_MS`）。
- * - キーが未設定・不正なときは接続を試みていないので、通信の失敗と区別する。
+ * - キーが未設定・不正なときは予報の接続を試みていないので、通信の失敗と区別する。
  */
-export function dmdataConnectionLabel(
-  status: ConnectionStatus | undefined,
+
+/**
+ * 「電文」の行（中継の接続）。中継とは繋がっているのに中継が DMDATA.JP と切れている間は、
+ * 届くはずの電文が届かないので「切断」と言い、切れた時刻を添える
+ * （2026-10-31 ユーザー選択「設定の行＋地図は今の赤い更新時刻 (Recommended)」の文面
+ * 「切断（配信サーバーが DMDATA.JP と切断中・15:42 から）」。中継が切れた時刻を知らないときは時刻を添えない）。
+ */
+export function telegramConnectionLabel(
+  status: ConnectionStatus,
+  upstream: RelayUpstreamStatus | null,
+): ConnectionLabel {
+  if (status === 'connected' && upstream !== null && !upstream.connected) {
+    const since = upstream.disconnectedAtMs === null ? '' : `・${formatHourMinute(new Date(upstream.disconnectedAtMs))} から`
+    return { text: `切断（配信サーバーが DMDATA.JP と切断中${since}）`, className: 'text-red-400' }
+  }
+  return status === 'disconnected' ? { text: '切断', className: 'text-secondary' } : liveLabel(status)
+}
+
+/**
+ * 「予報」の行。予報を受けている経路を括弧で添える（「接続中（配信サーバー経由）」「接続中（APIキー）」）。
+ * 予報キーも APIキーも無ければ「APIキー未設定」。ほかの状態の文は「予報（APIキー）」の行のときのまま
+ * （2026-10-31 ユーザー選択「「予報」1 行＋経路を括弧 (Recommended)」）。
+ *
+ * - `relayForecastLive`: 中継から予報を受けている（予報キーの札・中継が DMDATA と繋がっている）
+ * - `keyStatus`: 自分の鍵の予報の接続。鍵が無い・使えないときは null
+ * - `relayForecastAvailable`: 予報キーが中継に受け付けられている（受けられる見込みがある）。APIキーが無い端末で、
+ *   中継と切れている間の状態を中継の接続の文で出すのに使う
+ */
+export function forecastConnectionLabel(
+  state: {
+    relayForecastLive: boolean
+    keyStatus: ConnectionStatus | null
+    relayStatus: ConnectionStatus
+    relayUpstream: RelayUpstreamStatus | null
+    relayForecastAvailable: boolean
+  },
   opts: { apiKeySet: boolean; apiKeyInvalid: boolean },
 ): ConnectionLabel {
+  if (state.relayForecastLive) return { text: '接続中（配信サーバー経由）', className: 'text-green-400 font-medium' }
+  if (state.keyStatus === 'connected') return { text: '接続中（APIキー）', className: 'text-green-400 font-medium' }
+  // APIキーが無く予報キーだけの端末は、中継の接続の状態をそのまま出す（鍵で受ける道が無い）
+  if (!opts.apiKeySet && state.relayForecastAvailable) return telegramConnectionLabel(state.relayStatus, state.relayUpstream)
+  return keyForecastConnectionLabel(state.keyStatus, opts)
+}
+
+/**
+ * 自分の鍵の予報の接続の状態の文（「予報」の行のうち、鍵の経路の分）。鍵が無い・使えないときは接続を作らない（`status` が `null`）。
+ * 鍵が無いときは「APIキー未設定」（2026-10-31 ユーザー選択の説明「鍵が無ければ「APIキー未設定」」）。
+ */
+export function keyForecastConnectionLabel(
+  status: ConnectionStatus | null,
+  opts: { apiKeySet: boolean; apiKeyInvalid: boolean },
+): ConnectionLabel {
+  if (status === null || status === 'disconnected') {
+    if (!opts.apiKeySet) return { text: 'APIキー未設定', className: 'text-secondary' }
+    if (opts.apiKeyInvalid) return { text: 'APIキーが無効', className: 'text-red-400' }
+    return { text: '切断', className: 'text-secondary' }
+  }
+  return liveLabel(status)
+}
+
+/** 切断以外の状態の文言（2 行で同じ） */
+function liveLabel(status: Exclude<ConnectionStatus, 'disconnected'>): ConnectionLabel {
   switch (status) {
     case 'connected':
       return { text: '接続中', className: 'text-green-400 font-medium' }
@@ -53,11 +115,6 @@ export function dmdataConnectionLabel(
         text: '接続を停止（DMDATA.JP 側で接続が終了されました。再読み込みで繋ぎ直します）',
         className: 'text-amber-400',
       }
-    case 'disconnected':
-    case undefined:
-      if (!opts.apiKeySet) return { text: 'APIキー未設定', className: 'text-secondary' }
-      if (opts.apiKeyInvalid) return { text: 'APIキーが無効', className: 'text-red-400' }
-      return { text: '切断', className: 'text-secondary' }
     default: {
       // 網羅検査。`ConnectionStatus` に値を足したらここで型検査が止まる。
       // **「切断」へ落とさない** —— 落とすと新しい状態が既存の文言に混ざり、

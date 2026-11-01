@@ -116,9 +116,8 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
   /**
    * 「未入電」の印を出すか。**`unreceived` とは分ける。**
    *
-   * 県・区域の行の値は、電文が区域の `MaxInt` を持たないときに**配下から積み上げる**
-   * （標準版は区域のロールアップ点を持たないので常にこの経路）。積み上げは震度の大小で
-   * 決まるため、**観測できた震度3 と未入電（下限 45）が混在すると未入電が勝つ**。その行を
+   * 県・区域の行の値は、電文が区域の `MaxInt` を持たないときに**配下から積み上げる**。
+   * 積み上げは震度の大小で決まるため、**観測できた震度3 と未入電（下限 45）が混在すると未入電が勝つ**。その行を
    * 「未入電」と断定すると、届いている観測値を無かったことにする。**電文が直にその行について
    * 言っている場合だけ**に出す —— 観測点の行と、値を持たない市町村。範囲の行は下の
    * `hasUnreceived` が「未入電あり」を担う。
@@ -738,8 +737,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const borrowedNote = borrowedSourceNote(borrowedHypocenter, borrowedDomesticTsunami)
   // 気象庁が添えた文の段落（電文の並び順。空の段落は持たない）。何も残らなければ枠ごと出さない。
   const forecastRest = quake.forecastText ? domesticTsunamiCardForecastText(quake.forecastText, earthquake.domesticTsunamiCode) : ''
-  // 標準版（P2PQuake）は固定付加文を持たず、海外への津波の見通しだけを値で運ぶ（→ `foreignTsunamiText`。
-  // 文面は気象庁の固定付加文 0221〜0228 の原文）。DMDSS 版ならこの文は固定付加文の原文に入っているので、
+  // 固定付加文の原文が無い報では、海外への津波の見通しを値から起こした文（→ `foreignTsunamiText`。
+  // 文面は気象庁の固定付加文 0221〜0228 の原文）を出す。原文にはこの文が入っているので、
   // 原文があればそちらを使う（有無の判定は読み上げと同じで、空白だけの原文は「無い」側へ倒す。二重に出さない）。
   // 原文から津波の文を除いて空になっても、見通しへは倒さない。置き場所は固定付加文と同じ先頭の段落
   // （2026-10-29 ユーザー承認。→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。
@@ -843,7 +842,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
    * **行には出るのに印だけ付かない**という食い違いになる。
    *
    * **それでも所属を引けない場合、印を付ける行が決まらない。** DMDATA は観測点を `pref: ''` で
-   * 積むため、区域を持たない経路（P2PQuake）で座標テーブルが未読み込みのあいだ（起動直後の
+   * 積むため、電文が観測点の区域を持たず、座標テーブルが未読み込みのあいだ（起動直後の
    * 数百 ms）や、電文の観測点がテーブルに無い場合は県も区域も引けない。そのときは印が出ないが、
    * **ブロックには地点名が出る**ので情報自体は失われない（→ docs/spec/quake-spec.md §4）。
    */
@@ -957,7 +956,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       const pref = prefOf(p)
       if (pref) unreceivedPrefs.add(pref)
       // 区域点はそのまま。都道府県ロールアップ点（addr === pref）は県として既に数えている。
-      // `pref` の有無では見分けない —— P2PQuake は区域の点にも県名を積む。
+      // 区域の点かどうかは `isAreaPoint` で見分ける。
       if (p.isArea) { if (isAreaPoint(p, areaPrefIndex)) unreceivedAreas.add(p.addr) }
       else {
         const region = regionOfStation(p)
@@ -1324,8 +1323,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               </span>
             )}
             {/* 電文を編集した官署（`Control/EditorialOffice`）。**常に出す**（2026-10-22 ユーザー承認
-                「3-B 編集官署 …」）。**`issue.source` ではなく専用の欄を見る** —— あちらは発表官署や
-                標準版の発表元へ落ちるので、出すとラベルが事実を誤らせる。実測と規約は
+                「3-B 編集官署 …」）。**`issue.source` ではなく専用の欄を見る** —— あちらは編集官署が無いと
+                発表官署へ落ちるので、出すとラベルが事実を誤らせる。実測と規約は
                 `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」。 */}
             {issue.editorialOffice && (
               <span className="text-xs text-secondary shrink-0">編集官署 {issue.editorialOffice}</span>
@@ -1348,7 +1347,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             {hypocenter.name && markDot('hypocenterName', 'md', 'align-top ml-1')}
           </div>
           {/* 震央補助表現（「輪島の東北東30km付近」）。震央地名より具体的に場所が分かる。電文が
-              持っているときだけ出し、標準版（P2PQuake）は持たない。津波カードと同じくラベルを付けず、
+              持っているときだけ出す。津波カードと同じくラベルを付けず、
               座標と同じ大きさで震源名の直下に置く（2026-10-19 ユーザー承認「震源名の直下に 1 行 (推奨)」）。
               **文が別の文へ変わったときだけ更新の印を付ける**（座標の行と同じ大きさ。2026-10-19 ユーザー承認
               「1 で」）。文が現れただけの報では付けない（値が無い欄に値が付いたのと同じ扱い → `changedQuakeFacts`）。
@@ -1750,7 +1749,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                         {expanded.has(`city:${region.name}/${city.name}`) && city.stations.map(st => stationRow(st, (depth + 2) as 2 | 3, pref))}
                       </div>
                     ))}
-                    {/* 市町村に紐付かない観測点（P2PQuake 経路はすべてこちら）。
+                    {/* 市町村に紐付かない観測点（市町村を読めなかった観測点）。
                         → `IntensityRegionRow.stations` */}
                     {region.stations.map(st => stationRow(st, (depth + 1) as 1 | 2, pref))}
                   </>

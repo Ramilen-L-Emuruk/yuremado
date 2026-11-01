@@ -66,14 +66,17 @@ function setup(includeTest = false, eewHeadType: 'VXSE45' | 'VXSE43' | null = 'V
   // 受けている区分で決まる値（接続時に `eewHeadTypeFor` が決める）。ここでは直に置く
   ;(ws as unknown as { eewHeadType: 'VXSE45' | 'VXSE43' | null }).eewHeadType = eewHeadType
   const events: DmdataEvent[] = []
+  const telegramIds: string[] = []
   const logs: TelegramLogEntry[] = []
-  ws.onEvent = ev => { events.push(ev) }
+  ws.onEvent = (ev, telegramId) => { events.push(ev); telegramIds.push(telegramId) }
   ws.onRawMessage = entry => { logs.push(entry) }
   const send = (headType: string, body: string, test = false) =>
-    (ws as unknown as { handleMessage(m: Record<string, unknown>): Promise<void> }).handleMessage({
+    (ws as unknown as {
+      handleMessage(m: Record<string, unknown>, emit: (ev: DmdataEvent, telegramId: string) => void): Promise<void>
+    }).handleMessage({
       type: 'data', id: `id-${headType}`, head: { type: headType, test }, body, encoding: 'utf-8', format: 'xml',
-    })
-  return { events, logs, send }
+    }, (ev, telegramId) => ws.onEvent?.(ev, telegramId))
+  return { events, telegramIds, logs, send }
 }
 
 const warnings = () => vi.mocked(log.warn).mock.calls.map(c => String(c[0]))
@@ -116,6 +119,14 @@ describe('ライブ受信の振り分け', () => {
     expect(events[0].kind).toBe('eew')
     expect(events[0].kind === 'eew' && events[0].data.test).toBe(false)
     expect(logs.map(l => [l.status, l.kind, l.isTest])).toEqual([['parsed', 'eew', true]])
+  })
+
+  // 正: 通知に電文の id（DMDATA が付けた `id`）を添える。中継と鍵の接続で同じ電文を見分けるのに使う
+  it('通知に電文の id を添える', async () => {
+    const { events, telegramIds, send } = setup()
+    await send('VXSE45', EEW_XML)
+    expect(events).toHaveLength(1)
+    expect(telegramIds).toEqual(['id-VXSE45'])
   })
 
   // 対照: 読めなかった電文は通知せず、電文ログには読めなかった行として残す

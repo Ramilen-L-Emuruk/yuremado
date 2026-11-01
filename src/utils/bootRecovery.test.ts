@@ -71,15 +71,15 @@ describe('boot-recovery.js', () => {
 
   it('起動の途中で自分のファイルが読めなければ、1 回だけ読み直す（正）', () => {
     const t = load(memoryStorage())
-    t.failLoad(`${window.location.origin}/yuremado/dmdss/assets/index-old.js`)
+    t.failLoad(`${window.location.origin}/assets/index-old.js`)
     expect(t.reload).toHaveBeenCalledTimes(1)
   })
 
   it('読み直した後にもう一度読めなければ、読み直さずに文面を出す（安全弁: 読み直しを繰り返さない）', () => {
     const storage = memoryStorage()
-    load(storage).failLoad('/yuremado/assets/index-old.js')
+    load(storage).failLoad('/assets/index-old.js')
     const second = load(storage)
-    second.failLoad('/yuremado/assets/index-old.js')
+    second.failLoad('/assets/index-old.js')
     expect(second.reload).not.toHaveBeenCalled()
     expect(second.doc.getElementById('root')?.textContent).toContain('画面を読み込めませんでした')
     second.doc.querySelector('#root button')?.dispatchEvent(new Event('click'))
@@ -95,7 +95,7 @@ describe('boot-recovery.js', () => {
     expect(second.recovery().markBooted()).toEqual({ reason: expect.stringContaining('Failed to fetch'), failedShown: false })
     const third = load(storage)
     expect(third.recovery().markBooted()).toBeNull()
-    third.failLoad('/yuremado/assets/index-old.js')
+    third.failLoad('/assets/index-old.js')
     expect(third.reload).not.toHaveBeenCalled()
   })
 
@@ -111,14 +111,14 @@ describe('boot-recovery.js', () => {
 
   it('自分の配信元の /assets/ の下でなければ拾わない（対照）', () => {
     const t = load(memoryStorage())
-    t.failLoad('/yuremado/other.js')
+    t.failLoad('/other.js')
     t.failLoad('https://cdn.example.test/assets/vendor.js')
     expect(t.reload).not.toHaveBeenCalled()
   })
 
   it('印を書けない（sessionStorage が使えない）ときは読み直さずに文面を出す', () => {
     const t = load(null)
-    t.failLoad('/yuremado/assets/index-old.js')
+    t.failLoad('/assets/index-old.js')
     expect(t.reload).not.toHaveBeenCalled()
     expect(t.doc.getElementById('root')?.textContent).toContain('画面を読み込めませんでした')
   })

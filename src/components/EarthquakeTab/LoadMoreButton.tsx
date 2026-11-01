@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { loadMoreDrainsAt } from '../../services/dmdataRequestGates'
+import { relayThrottleRemainingMs } from '../../services/relayEndpoint'
 import { formatLoadMoreThrottleLabel } from '../../utils/telegramLoss'
 
 /**
@@ -14,8 +15,7 @@ interface Props {
   onLoadMore: () => void
   isLoadingMore: boolean
   /**
-   * 取得制限の待ちを見張るか。**標準版（P2PQuake）では `false`** —— あちらは門を通らないので
-   * 待ちは起きず、読み直しだけが無駄に走る（`useFetchThrottled` の `enabled` と同じ）。
+   * 取得制限の待ちを見張るか。`false` なら門を読まず「取得中…」のまま（`useFetchThrottled` の `enabled` と同じ）。
    */
   watchThrottle: boolean
 }
@@ -32,6 +32,9 @@ interface Props {
  *
  * 数えるのは「この『もっと見る』の取得（押すたびに作る印）が門を通り終えるまで」
  * （`loadMoreDrainsAt`）。同じ門に並ぶ他の待ちは、印の取得より前にいる分だけが効く。
+ * 中継へ繋いでいるときは、中継の門が明けるまで（`relayThrottleRemainingMs`）も数える。中継の門は
+ * 中継への要求を一律に待たせるので、押している間に待っていれば、それはこの取得の待ちでもある。
+ * 両方で待っていれば遅いほうを出す。
  * 待ちが解けたあとの読み込み・反映はまだ続くので、そこは従来どおり「取得中…」に戻る。
  */
 export function LoadMoreButton({ onLoadMore, isLoadingMore, watchThrottle }: Props) {
@@ -60,9 +63,16 @@ function useThrottleRemaining(enabled: boolean): number | null {
     }
     const read = () => {
       const at = loadMoreDrainsAt()
-      // 門は `Date.now()` で数えているので、残りも同じ時計で測る（`serverNow` と混ぜない）
       // 上限 0 件の窓（永久に待つ）は数えられないので「取得中…」のままにする
-      setRemainingMs(at === null || !Number.isFinite(at) ? null : at - Date.now())
+      if (at !== null && !Number.isFinite(at)) {
+        setRemainingMs(null)
+        return
+      }
+      // DMDATA の門は `Date.now()` で数えているので、残りも同じ時計で測る（`serverNow` と混ぜない）。
+      // 中継の門は自分で残りを返す（単調な時計で数えている）
+      const dmdata = at === null ? null : at - Date.now()
+      const relay = relayThrottleRemainingMs()
+      setRemainingMs(dmdata === null ? relay : relay === null ? dmdata : Math.max(dmdata, relay))
     }
     // **最初の 1 回はすぐ読む。** 押した直後から 1 秒「取得中…」と出るのを避ける
     read()

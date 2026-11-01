@@ -2,8 +2,7 @@
 //
 // 元は `scripts/telegram-audit/archive-cache.mjs` の中にあり、DMDATA アーカイブ専用に見えたため
 // 他のスクリプトから使われていなかった。実際には `kind` でホストを分けられる汎用の仕組みなので、
-// 共有できる場所へ出してある（`telegram-audit/archive-cache.mjs` と `lib/stationSource.mjs`、
-// `telegram-audit/fetch-p2p-history.mjs` が使う）。
+// 共有できる場所へ出してある（`telegram-audit/archive-cache.mjs` と `lib/stationSource.mjs` が使う）。
 //
 // **同じ実装を 2 本持たないこと。** 片方だけ直る日が来る。
 

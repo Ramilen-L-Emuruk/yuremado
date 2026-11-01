@@ -15,7 +15,7 @@ import { cancelBlockOffset } from '../../utils/cancelBlockOffset'
 import { formatDateTime, formatDepth, formatMagnitudeWithCondition, formatTime, hasDepth, hasMagnitude, magnitudeHeading } from '../../utils/formatters'
 import { getIntensityColor, getIntensityLabel, getEewAreaIntensityLabel, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabel, getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
-import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, isEewScaleZeroForecast, statesEewLpgmClassZero, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst } from '../../utils/eew'
+import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, eewSerialSeries, eewDisplaySerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, isEewScaleZeroForecast, statesEewLpgmClassZero, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst } from '../../utils/eew'
 import { eewForecastChangeFirstSeenAt } from '../../utils/eewForecastChangeSeen'
 import { KYOSHIN_SUB_ZERO_COLOR, kyoshinDetectionScaleLabel, kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
@@ -190,12 +190,13 @@ function eewForecastChangeRemainingMs(key: string, nowMs: number): number {
  * **計時を張り直す契機は報番号。文言の変化では足りず、`eew` の参照でも見てはいけない。**
  * 同じ文言が離れた報で再び立つ形が実在する（55 通中 5 通）ので文言だけでは 2 度目を拾えない。
  * 一方で `eew` の参照は「新しい報が届いた」ことの**代理値にすぎない** ―― `useEarthquakes` は
- * 報の到着以外でも EEW を作り直す（standard 版の区域・震源要素の注ぎ足し、取消の適用）。
+ * 報の到着以外でも EEW を作り直す（遅れて届いた電文の報からの区域・仮定震源の別の補い、取消の適用）。
  */
 function useHeldForecastChange(eew: EEWAlert): string {
   const text = eewForecastChangeText(eew)
   const serial = eewSerial(eew)
-  const seenKey = `${eewEventKey(eew)}#${serial}#${text}`
+  // 報番号は数え方（系列）ごとの番号なので、系列も鍵に入れる（警報の第 N 報と予報の第 N 報を取り違えない）
+  const seenKey = `${eewEventKey(eew)}#${eewSerialSeries(eew)}#${serial}#${text}`
   const [held, setHeld] = useState(() => (text && eewForecastChangeRemainingMs(seenKey, Date.now()) > 0 ? text : ''))
   const timerRef = useRef(0)
   useEffect(() => {
@@ -350,13 +351,13 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   const isWarning = level >= 1
   const isSpecial = level === 2
   const areas = eewAreas(eew)
-  const serial = eewSerial(eew)
+  const serial = eewDisplaySerial(eew)
   const { hypocenter } = eew.earthquake
   // **値が無いときは整形を呼ばない。** 呼ぶと「読めない値が来た」として記録され、
   // 「電文が時刻を持たない」ことと区別が付かなくなる（他の呼び出しと表記も揃う）。
   const originTimeText = eew.earthquake.originTime ? formatDateTime(eew.earthquake.originTime) : null
-  // 地震発現時刻（`Earthquake/ArrivalTime`）。Yahoo hypoInfo の報（standard 版）は配信せず空文字が入るので、
-  // 空なら整形を呼ばずに行ごと出さない（上と同じ理由）。P2PQuake の報は値を持つ。
+  // 地震発現時刻（`Earthquake/ArrivalTime`）。Yahoo hypoInfo の報は配信せず空文字が入るので、
+  // 空なら整形を呼ばずに行ごと出さない（上と同じ理由）。
   const arrivalTimeText = eew.earthquake.arrivalTime ? formatDateTime(eew.earthquake.arrivalTime) : null
   // 震源が決まっていない報（仮定震源要素と「非常に強い揺れを検知」の報。→ `isProvisionalHypocenter`）。
   // 震源・規模・深さは仮の値（観測点直下 10km）なので、数値は伏せ、地名には未確定である旨を添える。
@@ -465,7 +466,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   const depthColor = getDepthColor(hypocenter.depth)
 
   // 予想が変わったこと（電文の `Appendix`）と震源要素の精度（`Accuracy`）。
-  // どちらも DMDATA の XML 経路でだけ入る（standard 版では常に空）。
+  // どちらも DMDATA の XML 経路でだけ入る（強震モニタ由来の報では常に空）。
   // 前者は**その報にしか入らない**ので、表示の寿命はフックが持つ（理由はその宣言箇所）。
   const forecastChangeText = useHeldForecastChange(eew)
   const epicenterRankText = eewEpicenterRankLabel(eew.accuracy?.epicenterRank)
@@ -500,9 +501,8 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   //
   // **PLUM 法の時刻を「到達予想」として出さない。** 走時を計算しない手法なので、値は到達の予測
   // ではなく予測を行った時刻。並べると、既に過ぎた時刻をこれから来るものとして読ませる。
-  // **到達済みかどうかは `isEewAreaArrived` で判定する。** 電文の `Condition` は DMDATA でしか
-  // 配信されないので、`arrived` だけを見ると standard 版（P2PQuake）で到達済みの地域が消える。
-  // 種別コードは両経路が持つ（→ `utils/eew.ts`）。
+  // **到達済みかどうかは `isEewAreaArrived` で判定する。** 到達済みは電文の `Condition` と
+  // 種別コードの下 1 桁の 2 通りで伝わるので、`arrived` だけを見ず両方を見る（→ `utils/eew.ts`）。
   //
   // **このファイルには `arrived` が 2 つある。** ここで扱う区域の `arrived` は電文が伝える
   // 「既に主要動到達と推測」。下の S 波カウントダウンの行が持つ `SWaveArrivalRow.arrived` は別物で、
@@ -656,7 +656,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
         }}
       >
         {headerLabel}
-        {/* 運用種別（DMDATA は電文の `Control/Status`、標準版は強震モニタの `isTraining`・P2PQuake の `test` から
+        {/* 運用種別（DMDATA は電文の `Control/Status`、強震モニタは `isTraining` から
             `admitTrainingEew` が付ける）。**本物と見分けられるようにする** —— 設定「試験報を受信（検証用）」を
             有効にすると、検証用にこれらもカード・音・地図へ流しているので、印が無いと画面では区別がつかない。 */}
         {eew.operationStatus && (
@@ -997,7 +997,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
             .filter(pref => !warningPrefSet.has(pref))
           const hasKindCode = prefAreas.some(a => a.kindCode !== '')
           if (!hasKindCode) {
-            // 種別を持たない経路（P2PQuake）。同じ県の細分区域が複数並ぶので重複を畳む。
+            // 区域が種別コードを持たない報。同じ県の細分区域が複数並ぶので重複を畳む。
             return (
               <div className="text-xs text-secondary leading-relaxed">
                 対象: {[...new Set(prefAreas.map(a => a.pref))].join(' / ')}

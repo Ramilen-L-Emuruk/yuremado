@@ -37,7 +37,7 @@ describe('foldTsunamiReports（同じ分の報を作成時刻で並べる）', (
     expect(folded.foldedReports?.map(r => r.headType)).toEqual(['VTSE41', 'VTSE51'])
   })
 
-  // 対照: 作成時刻を持たない報どうし（P2PQuake・テストボタン）は従来どおり届いた順を保つ
+  // 対照: 作成時刻を持たない報どうしは届いた順を保つ
   it('どちらも作成時刻を持たなければ届いた順のまま', () => {
     const info = report({ headType: 'VTSE51' })
     const warning = report({ headType: 'VTSE41' })

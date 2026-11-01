@@ -34,6 +34,8 @@ import { log } from '../utils/logger'
 vi.mock('../services/kyoshinSource', () => ({
   createYahooLiveSource: vi.fn(),
   createYahooArchiveSource: vi.fn(),
+  // 再生中の放出の遅れ（`REPLAY_RELEASE_LAG_MS`）が本物と同じ値を見るように
+  FETCH_OFFSET_MS: 1800,
 }))
 vi.mock('../services/kyoshinLocalArchiveSource', () => ({
   createLocalKyoshinArchiveSource: vi.fn(),
@@ -497,7 +499,8 @@ describe('useKyoshinRealtime の結線', () => {
         ({ id }: { id: string | null }) => useKyoshinRealtime(true, { timeOffset: -3600_000, localArchiveId: id }),
         { initialProps: { id: '2018-iburi' as string | null } },
       )
-      const frame = frameAt(NOW - 1000, { indices: [7], sitesKey: 'cfg-a' })
+      // 再生中は放出がデータ時刻から `FETCH_OFFSET_MS`（1.8 秒）遅れるので、それより古い秒を流す
+      const frame = frameAt(NOW - 3000, { indices: [7], sitesKey: 'cfg-a' })
       await act(async () => { local.emit(frame) })
       expect(result.current.indices).toEqual([7])
 
@@ -524,6 +527,43 @@ describe('useKyoshinRealtime の結線', () => {
       seenError.length = 0
       rerender({ offset: -3600_000 })
       expect(seenError).toEqual([false])
+    })
+  })
+
+  describe('再生中はライブと同じ遅れで出す', () => {
+    // ライブは Yahoo の公開を待って `FETCH_OFFSET_MS`（1.8 秒）遅れで取る。再生だけデータ時刻
+    // ちょうどに出すと、hypoInfo の緊急地震速報が DMDATA の同じ報を追い越す（能登 2024-01-01
+    // 16:18:45 で、予報の発表から警報への格上げが再生では起きなかった）。
+    it('正: 再生中は、データ時刻から 1.8 秒たつまで出さない', async () => {
+      const archive = createFakeSource()
+      archiveMock.mockReturnValue(archive.source)
+      const { result } = renderHook(() => useKyoshinRealtime(true, { timeOffset: -3600_000 }))
+      const frame = frameAt(NOW - 1000, { indices: [5] })
+      await act(async () => { archive.emit(frame) })
+      expect(result.current.indices).toEqual([])
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(700) })
+      expect(result.current.indices).toEqual([])
+      await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+      expect(result.current.indices).toEqual([5])
+    })
+
+    it('安全弁: ローカル履歴アーカイブも再生の一種なので同じだけ遅らせる', async () => {
+      const local = createFakeSource()
+      localArchiveMock.mockReturnValue(local.source)
+      const { result } = renderHook(() => useKyoshinRealtime(true, { timeOffset: -3600_000, localArchiveId: '2018-iburi' }))
+      await act(async () => { local.emit(frameAt(NOW - 1000, { indices: [6] })) })
+      expect(result.current.indices).toEqual([])
+      await act(async () => { await vi.advanceTimersByTimeAsync(900) })
+      expect(result.current.indices).toEqual([6])
+    })
+
+    it('対照: ライブは届いた時点で出す（届いた時点で既に遅れを含んでいる）', async () => {
+      const live = createFakeSource()
+      liveMock.mockReturnValue(live.source)
+      const { result } = renderHook(() => useKyoshinRealtime(true, { timeOffset: null }))
+      await act(async () => { live.emit(frameAt(NOW - 1000, { indices: [5] })) })
+      expect(result.current.indices).toEqual([5])
     })
   })
 

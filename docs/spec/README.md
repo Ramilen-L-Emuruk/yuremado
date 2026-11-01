@@ -23,8 +23,8 @@
 | [quake-spec.md](quake-spec.md) | 地震情報（電文パース・区域集約・カード表示） | `src/utils/quakeMerge.ts`, `src/components/EarthquakeTab/`, `src/hooks/useQuakeLayerData.ts` |
 | [map-rendering-spec.md](map-rendering-spec.md) | MapLibre GL・レイヤー順・描画パフォーマンス | `src/components/Map/`, `src/components/Map/gl/` |
 | [audio-tts-spec.md](audio-tts-spec.md) | 通知音・VOICEVOX・ウィンドウタイトル | `src/utils/alertSound.ts`, `src/utils/voicevox.ts`, `src/hooks/useAlertTitle.ts` |
-| [data-sources-spec.md](data-sources-spec.md) | DMDATA / P2PQuake / Yahoo 統合仕様・クロック同期・生成データ | `src/services/`, `src/utils/clock.ts`, `src/utils/fetchJson.ts` |
-| [settings-pwa-spec.md](settings-pwa-spec.md) | 設定の窓・localStorage・PWA・実地震テスト | `src/components/SettingsTab/`, `src/hooks/useSettings.ts`, `vite.config.ts` |
+| [data-sources-spec.md](data-sources-spec.md) | 中継 / DMDATA / Yahoo 統合仕様・クロック同期・生成データ | `src/services/`, `src/utils/clock.ts`, `src/utils/fetchJson.ts` |
+| [settings-pwa-spec.md](settings-pwa-spec.md) | 設定の窓・localStorage・PWA・リプレイ・テストボタン | `src/components/SettingsTab/`, `src/hooks/useSettings.ts`, `vite.config.ts` |
 | [action-checklist-spec.md](action-checklist-spec.md) | 行動チェックリスト（出す条件・登録地点の周り・畳む挙動） | `src/hooks/useActionChecklist.ts`, `src/utils/actionChecklistTrigger.ts` |
 | [share-card-spec.md](share-card-spec.md) | 共有カード（撮影の制約・見出しの組み立て・出典の焼き込み） | `src/components/Map/gl/captureMap.ts`, `src/utils/shareCard.ts` |
 | [recording-interface-spec.md](recording-interface-spec.md) | 録画ツール向けの外部インターフェース（`window.__replay`・イベントログ） | `src/utils/replayEventLog.ts`, `src/App.tsx` |
@@ -38,7 +38,7 @@
 上の一覧はアルファベット順ではなく、以下の推奨順に並べている:
 
 1. **[architecture-spec.md](architecture-spec.md)** — 全体像・バリアント切替・データフローの俯瞰
-2. **[data-sources-spec.md](data-sources-spec.md)** — DMDATA / P2PQuake / Yahoo の電文コード・エンドポイント（後続の spec で参照される用語の予備知識）
+2. **[data-sources-spec.md](data-sources-spec.md)** — 中継 / DMDATA / Yahoo の電文コード・エンドポイント（後続の spec で参照される用語の予備知識）
 3. **[eew-spec.md](eew-spec.md) / [tsunami-spec.md](tsunami-spec.md) / [quake-spec.md](quake-spec.md)** — 主要 3 機能。触りたい機能から読む
 4. **[map-rendering-spec.md](map-rendering-spec.md)** — 地図描画のレイヤー構成・描画順（上記 3 機能の描画側を触るなら必読）
 5. **[audio-tts-spec.md](audio-tts-spec.md) / [settings-pwa-spec.md](settings-pwa-spec.md)** — 音・通知・設定 UI

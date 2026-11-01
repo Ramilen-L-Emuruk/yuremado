@@ -1,12 +1,14 @@
-name: GitHub Pages へ公開する
+name: アプリと旧 URL の橋渡しを公開する
 
-# main への push で本番ビルドを生成し、GitHub Pages へ公開する。
+# main への push で本番ビルドを作り、アプリを Cloudflare Pages（yuremado.com）へ、
+# 旧 URL（github.io の /yuremado/・/yuremado/dmdss/）の橋渡しのページを GitHub Pages へ出す
+# （docs/relay-server-design.md §0 の 2026-10-30「まとめたアプリは Cloudflare Pages から配る」）。
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-# Pages へのデプロイに必要な権限
+# GitHub Pages へのデプロイに必要な権限
 permissions:
   contents: read
   pages: write
@@ -18,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  app:
     runs-on: ubuntu-latest
     steps:
       - name: ソースを取り出す
@@ -33,36 +35,52 @@ jobs:
       - name: 依存を入れる
         run: npm ci
 
-      # ビルドより先に走らせる。失敗するとこのジョブが止まり、deploy まで到達しない。
+      # ビルドより先に走らせる。失敗するとこのジョブが止まり、どちらの公開にも到達しない。
       # `npm run build` に含まれる型チェック・グリフ検証では挙動の回帰は捕まらない。
       - name: テストを走らせる
         run: npm test
 
-      - name: 標準版をビルドする
+      - name: ビルドする
         run: npm run build
 
-      - name: DMDSS 版をビルドする
-        run: npm run build:dmdss
+      # 配置用の API トークンは Cloudflare Pages の編集だけに権限を絞ったものを置く。
+      # プロジェクト名 yuremado と yuremado.com の割り当ては Cloudflare 側で先に作っておく
+      - name: Cloudflare Pages へ公開する
+        uses: cloudflare/wrangler-action@v3
+        env:
+          WRANGLER_SEND_METRICS: 'false'
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=yuremado --branch=main
 
-      - name: DMDSS 版を dist へ合わせる
+  # 橋渡しはアプリが公開されてから出す。先に出すと、渡した先にまだ新しいアプリが無い
+  bridge:
+    needs: app
+    runs-on: ubuntu-latest
+    steps:
+      - name: ソースを取り出す
+        uses: actions/checkout@v7
+
+      # 旧アプリの 2 つの置き場所の両方に、同じページと Service Worker を外すための sw.js を置く。
+      # 存在しないパスで開かれたときも同じページを出す（404.html）。本体は /yuremado/handoff.js の 1 本
+      - name: 橋渡しのページを組む
         run: |
-          mkdir -p dist/dmdss
-          cp -r dist-dmdss/. dist/dmdss/
+          mkdir -p bridge-dist/dmdss
+          cp bridge/index.html bridge/handoff.js bridge/sw.js bridge-dist/
+          cp bridge/index.html bridge/sw.js bridge-dist/dmdss/
+          cp bridge/index.html bridge-dist/404.html
 
-      - name: Pages を用意する
+      - name: GitHub Pages を用意する
         uses: actions/configure-pages@v6
 
-      # **`public/` にドットファイルを置かないこと。** upload-pages-artifact は v4 以降、
-      # 隠しファイルを既定で成果物から除外する。置いても CI は成功したまま、配信からだけ
-      # 静かに落ちる。どうしても必要なら `include-hidden-files: true` を足す —— 既定のままに
-      # しているのは、`.env` の類が `public/` へ紛れ込んだときに公開しないため。
       - name: 成果物を上げる
         uses: actions/upload-pages-artifact@v5
         with:
-          path: dist
+          path: bridge-dist
 
-  deploy:
-    needs: build
+  deploy-bridge:
+    needs: bridge
     runs-on: ubuntu-latest
     environment:
       name: github-pages

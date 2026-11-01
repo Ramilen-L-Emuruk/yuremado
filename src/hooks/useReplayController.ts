@@ -82,7 +82,7 @@ export function replayTargetProblem(targetDate: Date, nowMs: number): string | n
  *
  * **津波警報等（VTSE41）の報どうしは `id` では見分けられない**（報番号が空で、同じ津波の全報が同じ `id`）。
  * 見分けるのは時刻で、**作成時刻（`createdAtMs`。秒まで）を使う**。発表時刻（分まで）だと、同じ分に出た 2 通が
- * 同じ鍵になって後のほうが足されない。作成時刻を持たない報（P2PQuake・テストデータ）は発表時刻で作る。
+ * 同じ鍵になって後のほうが足されない。作成時刻を持たない報（`Control/DateTime` を読めなかった電文・テスト用に組んだ報）は発表時刻で作る。
  * 情報名（`Head/Title`）も鍵に残す。
  */
 function tsunamiReportKey(tsunami: JMATsunami): string {
@@ -90,7 +90,7 @@ function tsunamiReportKey(tsunami: JMATsunami): string {
 }
 
 /**
- * 初期状態の材料を 1 本にまとめる。**24 時間の電文に、履歴（DMDSS 版は 7 日）の津波・帯・
+ * 初期状態の材料を 1 本にまとめる。**24 時間の電文に、履歴（7 日）の津波・帯・
  * 長周期のうち 24 時間に無いものを足す**（2026-10-05 ユーザー承認）。
  *
  * 足す理由は種別ごとに違う。
@@ -176,8 +176,8 @@ export type ReplayFetchPurpose = 'main' | 'initial' | 'prefetch'
 
 export interface ReplayControllerDeps {
   /**
-   * 指定範囲の電文を取得する。バリアントごとの取得元をここで差し替える
-   * （DMDSS 版は DMDATA アーカイブ、standard 版は P2PQuake の日付指定クエリ）。
+   * 指定範囲の電文を取得する。取得元は呼び出し側が渡す
+   * （中継経由の DMDATA アーカイブか、期間が重なればローカル履歴アーカイブ。→ `App.tsx` の `fetchReplayEvents`）。
    */
   fetchEvents: (fromTime: Date, toTime: Date, signal: AbortSignal, purpose: ReplayFetchPurpose) => Promise<ReplayFetchResult>
   /**
@@ -185,8 +185,8 @@ export interface ReplayControllerDeps {
    * - 地震カードの一覧を、ライブ接続時と同じ厚みにする（`restoreQuakeHistory`）
    * - 初期状態の材料に、24 時間より前の津波・帯・長周期を足す（`assemblePreWindowMaterial`）
    *
-   * **遡る範囲はバリアントが決める**（ライブ接続時の初回履歴と揃える。DMDSS 版は 7 日、
-   * 標準版とローカル履歴アーカイブは件数）。取得元はバリアントで差し替える。
+   * **遡る範囲と取得元は呼び出し側が決める**（ライブ接続時の初回履歴と揃えて 7 日。
+   * → `App.tsx` の `fetchReplayQuakeHistory`）。
    */
   fetchQuakeHistory: (before: Date, signal: AbortSignal) => Promise<ReplayQuakeHistoryResult>
   /**

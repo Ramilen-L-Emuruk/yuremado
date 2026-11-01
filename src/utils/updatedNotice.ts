@@ -1,13 +1,9 @@
 import { compareVersions } from './releaseNotes'
 
 /**
- * 前に開いた版を覚えておく場所。**バリアントごとに分ける** —— 標準版（`/yuremado/`）と DMDSS 版
- * （`/yuremado/dmdss/`）は同じオリジンで localStorage を共有するので、分けないと片方を開いただけで
- * もう片方の「更新しました」が消える。
+ * 前に開いた版を覚えておく場所。鍵は 1 つ。
  */
-export function lastOpenedVersionKey(variant: 'standard' | 'dmdss'): string {
-  return `yuremado-last-opened-version-${variant}`
-}
+export const LAST_OPENED_VERSION_KEY = 'yuremado-last-opened-version'
 
 /**
  * 「バージョン X に更新しました」を出すか。出すなら、前に開いていた版を返す（変更内容をそこから先だけ出すため）。

@@ -10,7 +10,9 @@
 // **値のある行が 2 つあるときは、黙って選ばずに落とす。** 署名鍵を取り違えても
 // トークンは出力されるので、「発行できたのに検証に通らない」という形でしか表に出ない。
 import { describe, it, expect } from 'vitest'
-import { readEnvVarFromText, parseDaysArg } from './sign-arrival-token'
+import { readEnvVarFromText, parseDaysArg, parseKindArg, buildKeysFile, KEY_KINDS } from './sign-arrival-token'
+import { parseSettingsFile } from '../src/utils/settingsIo'
+import { DEFAULTS } from '../src/hooks/useSettings'
 
 const KEY = 'TOKEN_SIGNING_PRIVATE_KEY'
 
@@ -112,5 +114,29 @@ describe('parseDaysArg', () => {
   it('`--days=` と書いて値を空にしたら既定へ倒さない（安全弁）', () => {
     // `Number('')` は 0 を返す。既定へ倒すと、打ち間違いに気づく機会が無い。
     expect(() => parseDaysArg('')).toThrow(/読めません/)
+  })
+})
+
+describe('予報キーの発行（--kind=forecast）', () => {
+  it('種類を読む。指定が無ければ到達予想トークン、知らない種類は落とす', () => {
+    expect(parseKindArg(undefined)).toBe('arrival')
+    expect(parseKindArg('forecast')).toBe('forecast')
+    expect(() => parseKindArg('other')).toThrow()
+  })
+
+  it('安全弁: 秘密鍵の変数は注入の頭文字（ARRIVAL_・FORECAST_）で始めない', () => {
+    for (const k of Object.values(KEY_KINDS)) {
+      expect(k.privateKeyVar.startsWith('ARRIVAL_')).toBe(false)
+      expect(k.privateKeyVar.startsWith('FORECAST_')).toBe(false)
+    }
+    expect(KEY_KINDS.forecast.privateKeyVar).not.toBe(KEY_KINDS.arrival.privateKeyVar)
+  })
+
+  it('正: 書き出したキーだけのファイルを、アプリの読み込みがそのまま読める', () => {
+    const r = parseSettingsFile(JSON.parse(buildKeysFile('forecast', 'p.s')), DEFAULTS)
+    expect(r.ok && r.settings.forecastKey).toBe('p.s')
+    expect(r.ok && r.keysOnly).toEqual({ forecastKey: true, arrivalToken: false })
+    const a = parseSettingsFile(JSON.parse(buildKeysFile('arrival', 'a.t')), DEFAULTS)
+    expect(a.ok && a.settings.arrivalToken).toBe('a.t')
   })
 })

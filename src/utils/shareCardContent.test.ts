@@ -49,8 +49,8 @@ function eew(
   } as unknown as EEWAlert
 }
 
-/** 本文の末尾に入るアプリの URL。実際の値は `standardAppUrl` の担当（shareCard.test.ts）。 */
-const APP_URL = 'https://example.test/yuremado/'
+/** 本文の末尾に入るアプリの URL。実際の値は `currentAppUrl` が開いているページから作る。 */
+const APP_URL = 'https://example.test/'
 
 /** 見出しと出典を見るテストは URL を気にしないので、既定の URL で包んで呼ぶ。 */
 function build(i: ShareCardContentInput): ShareCardContent {

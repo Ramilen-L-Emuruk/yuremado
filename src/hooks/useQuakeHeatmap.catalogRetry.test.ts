@@ -6,16 +6,11 @@ import { act, renderHook } from '@testing-library/react'
 const h = vi.hoisted(() => ({
   loadHypocenterIndex: vi.fn(),
   loadHypocenterYear: vi.fn(),
-  fetchJmaQuakeHistory: vi.fn(),
   warn: vi.fn(),
 }))
 vi.mock('../utils/hypocenterCatalog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/hypocenterCatalog')>()
   return { ...actual, loadHypocenterIndex: h.loadHypocenterIndex, loadHypocenterYear: h.loadHypocenterYear }
-})
-vi.mock('../services/p2pquake', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../services/p2pquake')>()
-  return { ...actual, fetchJmaQuakeHistory: h.fetchJmaQuakeHistory }
 })
 vi.mock('../utils/logger', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/logger')>()
@@ -30,7 +25,7 @@ const flush = () => act(async () => { await vi.advanceTimersByTimeAsync(0) })
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
 
 function render() {
-  return renderHook(() => useQuakeHeatmap(true, '', [], null, '30d'))
+  return renderHook(() => useQuakeHeatmap(true, [], null, '30d'))
 }
 
 describe('useQuakeHeatmap（震源カタログの索引の取り直し）', () => {
@@ -38,7 +33,6 @@ describe('useQuakeHeatmap（震源カタログの索引の取り直し）', () =
     vi.useFakeTimers()
     h.loadHypocenterIndex.mockReset()
     h.loadHypocenterYear.mockReset().mockRejectedValue(new Error('年ファイルは使わない'))
-    h.fetchJmaQuakeHistory.mockReset().mockResolvedValue([])
     h.warn.mockReset()
   })
   afterEach(() => {
@@ -88,7 +82,6 @@ describe('useQuakeHeatmap（震源カタログの年ファイルの取り直し�
       completeness: [{ from: 1919, minMagnitude: 2 }],
     })
     h.loadHypocenterYear.mockReset().mockRejectedValue(new Error('network'))
-    h.fetchJmaQuakeHistory.mockReset().mockResolvedValue([])
     h.warn.mockReset()
   })
   afterEach(() => {
@@ -129,7 +122,7 @@ describe('useQuakeHeatmap（震源カタログの年ファイルの取り直し�
 
   // 正: 諦めた後でも、期間を変えると取り直しが始まり直す。対照: 期間が同じなら諦めたまま。
   test('諦めた後に期間を変えると取り直しが始まり直す', async () => {
-    const { rerender } = renderHook(({ period }: { period: '30d' | '90d' }) => useQuakeHeatmap(true, '', [], null, period), {
+    const { rerender } = renderHook(({ period }: { period: '30d' | '90d' }) => useQuakeHeatmap(true, [], null, period), {
       initialProps: { period: '30d' as '30d' | '90d' },
     })
     await advance(400)

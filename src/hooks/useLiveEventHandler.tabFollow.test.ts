@@ -926,9 +926,9 @@ describe('リプレイの開始で、津波の取消を「もう伝えた」記�
   })
 })
 
-// 標準版（P2PQuake 552）の解除は EventID を持たず、`id` は受け取るたびに違う。`id` を鍵にすると
-// 同じ解除を 2 度受けたとき見分けられないので、発表日時（`issue.time`）を鍵にする。
-describe('標準版の津波の解除は、発表日時で重複を見分ける', () => {
+// EventID を持たない津波の解除は、`id` ではなく発表日時（`issue.time`）を鍵にして重複を見分ける。
+// `id` を鍵にすると、`id` の違う同じ解除を 2 度受けたとき見分けられない。
+describe('EventID を持たない津波の解除は、発表日時で重複を見分ける', () => {
   const cancelSounds = () =>
     vi.mocked(playAlertSound).mock.calls.filter(c => c[0] === 'tsunamiCancel').length
   const p2pCancel = (id: string, issueTime: string): JMATsunami => ({
@@ -956,7 +956,7 @@ describe('標準版の津波の解除は、発表日時で重複を見分ける'
     expect(cancelSounds()).toBe(2)
   })
 
-  // 安全弁: eventId を持つ電文（DMDSS 版）は今までどおり eventId で見る
+  // 安全弁: eventId を持つ電文は eventId で見る
   it('eventId を持つ解除は発表日時が違っても同じ eventId なら鳴らさない', () => {
     const { handle } = setup({ voicevoxEnabled: false, soundEnabled: true })
     handle(makeTsunamiCancelEvent())

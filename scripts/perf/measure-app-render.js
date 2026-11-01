@@ -35,7 +35,7 @@
  * 使い方 A（手動・開発機/実機）: 本ファイルを DevTools コンソールへ貼り付け →
  *   `await window.__measureAppRender({ label: 'surface-go2' })` の返り値 JSON を記録。
  * 使い方 B（実機・自動送信。vite-plugin-perf-report.ts とセット）: 開発機で
- *   `npm run dev:dmdss -- --host` を起動 → 実機ブラウザでアプリを開き、DevTools で1行:
+ *   `npm run dev -- --host` を起動 → 実機ブラウザでアプリを開き、DevTools で1行:
  *   document.head.appendChild(Object.assign(document.createElement('script'),
  *     { src: '/__perf-script?file=measure-app-render.js&auto=1&label=surface-go2-hires' }))
  *   → 全シナリオを自動計測し scripts/perf/results/ へ証跡が保存される。

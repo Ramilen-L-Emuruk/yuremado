@@ -1,9 +1,9 @@
 // リプレイ（過去の電文を時系列に流し直す機能）の共通型。
 //
-// 取得元はバリアントで異なるが、再生の仕組みは共通なのでここに型を置く。
-//   - DMDSS 版: DMDATA の日次アーカイブ（services/dmdataReplay.ts）
-//   - standard 版: P2PQuake の日付指定クエリ（services/p2pquakeReplay.ts）
-//   - 実地震テストシナリオ: 収録済み JSON（utils/testScenarioReplay.ts）
+// 取得元は複数あるが、再生の仕組みは共通なのでここに型を置く。
+//   - DMDATA の日次アーカイブ（services/dmdataReplay.ts）
+//   - ローカル履歴アーカイブ: 収録済み JSON（services/localArchiveReplay.ts）
+//   - テストボタン: 読んだ電文を「いま」へ寄せたもの（utils/testScenarioReplay.ts）
 import type {
   AppEvent, JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu,
   JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, TelegramLogEntry,
@@ -67,14 +67,11 @@ export interface ReplayFetchResult {
    * 日付範囲が重なるので同じアーカイブを両方が読む。取得自体は `archiveCache` により 1 回だが、
    * 件数で返すと呼び出し元が単純合算して実数の 2 倍を表示してしまう。
    *
-   * これは DMDSS 版の取得に固有の概念。P2PQuake 経路は 1 日ぶんの取得が失敗した
-   * 時点で例外にする（部分的に欠けたまま再生しない）ため、常に空配列を返す。
-   *
    * **429 の窓で見送った取得元はここへ入れない**（→ `rateLimitedSources`）。
    */
   failedArchiveUrls: string[]
   /**
-   * 429 の窓が明けるまで取りに行かなかった取得元の識別子（DMDSS 版のみ）。
+   * 429 の窓が明けるまで取りに行かなかった取得元の識別子（DMDATA の取得だけが入れる）。
    *
    * **`failedArchiveUrls` と分ける。** 混ぜると 3 つが壊れる:
    *
@@ -97,6 +94,17 @@ export interface ReplayFetchResult {
    * **`skipped` にも数えない。** あちらは恒久的に失ったもので、こちらは待てば取れる。
    */
   rateLimitedTelegrams: number
+  /**
+   * 読めなかった取得元（`failedArchiveUrls`・`rateLimitedSources` の識別子）のうち、**その日の分を丸ごと
+   * 失ったもの**と、その日（日本時間の `YYYY-MM-DD`）。DMDATA の取得だけが入れる。
+   *
+   * 載るのは、その日のアーカイブの束を読めなかった・429 で見送った、当日経路の一覧を引けなかった・
+   * その日の当日経路が丸ごと失敗した、のいずれか。地震 1 つ分だけ失った印（`eew:<eventId>`）は載せない。
+   *
+   * 鍵を入れた人の再生が、鍵で読めなかった日だけを中継の警報で埋めるのに使う（→ `services/replaySources.ts`）。
+   * 識別子は日を持たない（アーカイブの URL）ので、日は取得する側でしか分からない。
+   */
+  lostSourceDays: ReadonlyMap<string, string>
 }
 
 /**
@@ -104,8 +112,8 @@ export interface ReplayFetchResult {
  *
  * 「初期状態」（`ReplayFetchResult`）とは目的が違う。あちらは指定時刻の時点で発表中だった
  * 津波・EEW を再現するための遡り（24 時間）で、こちらは**カードの一覧をライブ接続時と
- * 同じ厚みにする**ための遡り（DMDSS 版は 7 日を読み切り、standard 版は 50 件で切る。24 時間のまま
- * カードを作ると静かな日ほど一覧が痩せる）。DMDSS 版では、初期状態に足す 24 時間より前の
+ * 同じ厚みにする**ための遡り（DMDATA は 7 日を読み切る。24 時間のまま
+ * カードを作ると静かな日ほど一覧が痩せる）。初期状態に足す 24 時間より前の
  * 津波・帯・長周期もここから取る（→ `useReplayController` の `assemblePreWindowMaterial`）。
  *
  * 電文は統合前の生の配列で返す。同一イベントの続報どうしの畳み込みは、ライブの履歴取得と
@@ -122,8 +130,6 @@ export interface QuakeHistoryResult {
    *
    * **地震の件数で打ち切らない。** 発表中の津波は数日前に出たものが続いていることがあり、
    * 地震のカードが揃った日で切ると拾えない。
-   *
-   * P2PQuake 経路は常に空配列。
    */
   tsunamis: JMATsunami[]
   /**
@@ -176,14 +182,12 @@ export interface QuakeHistoryResult {
    * 津波は入れない（報を跨いで生死を判定するので全報が要る。別の欄 `tsunamis` で渡す）。
    * 緊急地震速報も入れない（初期状態へは足さない。理由は `assemblePreWindowMaterial`）。
    * 推計震度分布図は入れる（地震ごとに持つので、遡った地震のカードにも分布が付く）。
-   *
-   * P2PQuake 経路は常に空配列（これらの種別を配信しない）。
    */
   extras: ReplayEntry[]
   /** 取り込めなかった電文の数を **JST 日ごとに**（理由は `ReplayFetchResult.skippedByDay`）。 */
   skippedByDay: ReadonlyMap<string, number>
   /**
-   * 読めなかった取得元の識別子（DMDSS 版のみ。P2PQuake 経路は常に空配列）。
+   * 読めなかった取得元の識別子。
    *
    * アーカイブはその URL、アーカイブがまだ無い日を埋める当日経路は `live:<JST 日付>`。
    * 両者を 1 本の集合で持つのは全滅判定（共通原因の検出）を成立させるため
@@ -193,7 +197,7 @@ export interface QuakeHistoryResult {
    */
   failedArchiveUrls: string[]
   /**
-   * 429 の窓が明けるまで取りに行かなかった取得元の識別子（DMDSS 版のみ）。
+   * 429 の窓が明けるまで取りに行かなかった取得元の識別子（DMDATA の取得だけが入れる）。
    *
    * 分ける理由は `ReplayFetchResult.rateLimitedSources` と同じ。
    */
@@ -206,8 +210,8 @@ export interface QuakeHistoryResult {
  * リプレイの開始時に復元する地震カードの履歴。{@link QuakeHistoryResult} に、再生中の
  * 「もっと見る」で続きを読む口を足したもの。
  *
- * **続きの読み方は取得元が決める**ので、取得元ごとの口をここで包んで渡す（DMDSS 版はカーソル、
- * 標準版は `offset`）。受け手（`useEarthquakes`）は取得元を知らずに、押されたらこれを呼ぶだけでよい。
+ * **続きの読み方は取得元が決める**ので、取得元ごとの口をここで包んで渡す（DMDATA はカーソル、
+ * ローカル履歴アーカイブは続きを持たない）。受け手（`useEarthquakes`）は取得元を知らずに、押されたらこれを呼ぶだけでよい。
  * 受け手がライブの「もっと見る」の経路を使うと、ライブの最新履歴を読んで再生時刻より未来の地震が
  * 一覧へ混ざる。
  *

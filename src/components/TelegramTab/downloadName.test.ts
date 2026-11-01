@@ -220,9 +220,9 @@ describe('電文ログの本文の見せ方・落とし方', () => {
     expect(JSON.parse(text)).toEqual({ head: { type: 'VXSE53' }, body: b64 })
   })
 
-  // 対照: P2PQuake の本文はオブジェクトなので従来どおり JSON。
+  // 対照: オブジェクトの本文は従来どおり JSON。
   it('オブジェクトの本文は従来どおり .json', () => {
-    const e = { ...xmlEntry(XML), source: 'p2pquake' as const, rawBody: { code: 551 } as unknown as string }
+    const e = { ...xmlEntry(XML), rawBody: { code: 551 } as unknown as string }
     expect(formatEntryForDownload(e).ext).toBe('json')
   })
 })

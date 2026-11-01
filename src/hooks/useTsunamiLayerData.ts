@@ -307,7 +307,7 @@ export function useTsunamiLayerData(
   // そのとき区域も観測点も丸ごと入れ替わるのに signature は非空のまま変わるため、空を経由したかどうかでは
   // 見分けられない。**比べる側は番号の重なりで見る**（`A` → `A B` の切替えは同じ津波）。
   //
-  // **識別子が無ければ空文字。** 標準版（P2PQuake）は `eventId` を持たないので常に空になり、
+  // **識別子が無ければ空文字。** `EventID` が空の電文では空になり、
   // 切り替わりを判定しない —— `isTsunamiNewFire` が識別子を取れないときに「保守的に続報扱い」
   // （`utils/tsunami.ts`）へ倒れるのと同じ構えで、あちらが判定できないものをここだけ断定しない。
   const liveTsunami = tsunamis.find((t) => !t.cancelled)

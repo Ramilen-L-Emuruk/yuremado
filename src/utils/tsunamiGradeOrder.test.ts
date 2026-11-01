@@ -123,7 +123,7 @@ describe('電文の名前で分けた区域の並び', () => {
     expect(text.indexOf('岩手県')).toBeLessThan(text.indexOf('宮城県'))
   })
 
-  it('対照: 名前を持たない区域（標準版）はアプリの呼び名に 1 つでまとまり、電文順を保つ', async () => {
+  it('対照: 名前を持たない区域はアプリの呼び名に 1 つでまとまり、電文順を保つ', async () => {
     const { splitAreasByKindName } = await import('./tsunami')
     const plain = areas.map(({ kindName: _k, ...a }) => a)
     expect(splitAreasByKindName(plain).map(p => [p.label, p.areas.map(a => a.name)])).toEqual([

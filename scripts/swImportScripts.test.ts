@@ -43,19 +43,3 @@ describe('Service Worker が読み込むファイル', () => {
   })
 })
 
-// 通知を押したときの処理は、standard 版のスコープ（/yuremado/）から DMDSS 版（/yuremado/dmdss/）の画面を外す。
-// 外す名前はあちらに直書きしてあるので、`vite.config.ts` の DMDSS 版の `base` と食い違ったら止める
-// （食い違うと、standard 版の通知を押して DMDSS 版の画面が前に出る。エラーは出ない）。
-describe('通知を押したときに外す内側のスコープ', () => {
-  it('DMDSS 版の base の末尾と一致する', () => {
-    const clickHandler = readFileSync(`${ROOT}public/sw-notification-click.js`, 'utf-8')
-    const nested = clickHandler.match(/NESTED_SCOPE_DIRS\s*=\s*\[([^\]]*)\]/)
-    expect(nested).not.toBeNull()
-    const dirs = [...nested![1].matchAll(/['"]([^'"]+)['"]/g)].map(x => x[1])
-    const bases = stripLineComments(CONFIG).match(/const base = isDmdss\s*\?\s*'([^']+)'\s*:\s*'([^']+)'/)
-    expect(bases).not.toBeNull()
-    const [, dmdssBase, standardBase] = bases!
-    expect(dmdssBase.startsWith(standardBase)).toBe(true)
-    expect(dirs).toEqual([dmdssBase.slice(standardBase.length)])
-  })
-})

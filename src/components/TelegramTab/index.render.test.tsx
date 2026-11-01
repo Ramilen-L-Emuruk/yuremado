@@ -25,8 +25,8 @@ const log: TelegramLogEntry[] = [
   entry('c', { headType: 'VXSE53', kind: 'quake' }),
   // 結合待ちの断片。種別を持たずに記録される
   entry('d', { headType: 'IXAC41', status: 'filtered' }),
-  // 扱わないコード（P2PQuake は filtered で記録する）
-  entry('e', { headType: '561', status: 'filtered', source: 'p2pquake', rawBody: {} }),
+  // 扱わないコード（試験報を捨てたときは種別を問わず filtered で記録する）
+  entry('e', { headType: 'VZSE41', status: 'filtered' }),
 ]
 
 const rowTexts = () => screen.getAllByRole('listitem').map(li => li.textContent ?? '')
@@ -40,7 +40,7 @@ describe('TelegramTab', () => {
     expect(rows[2]).toContain('地震 · 震源・震度')
     expect(rows[3]).toContain('推計震度分布図 · 推計震度分布図作図用データ')
     // 扱わないコードは名前を付けず、コードだけを出す
-    expect(rows[4]).toContain('561')
+    expect(rows[4]).toContain('VZSE41')
     expect(rows[4]).not.toContain('·')
   })
 

@@ -27,8 +27,8 @@ type DeepRequired<T> =
         : T
 
 /**
- * **電文には現れず、受信処理・カードの統合が後から付ける欄**は見本から外す。収録シナリオは
- * 電文をパーサーへ通した結果を記録したもので、これらは持たない（`capture-test-scenario.ts`）。
+ * **電文には現れず、受信処理・カードの統合が後から付ける欄**は見本から外す。シナリオは
+ * 電文をパーサーへ通した結果を記録したもので、これらは持たない（テストボタンの `testTelegrams.ts`）。
  * ここへ足すときは、電文から読む欄でないことを確かめてから足すこと。
  */
 type QuakeSample = DeepRequired<Omit<JMAQuake,
@@ -41,7 +41,6 @@ type TsunamiSample = DeepRequired<Omit<JMATsunami,
   | 'cancelledAt' // 解除を当てたときに受信処理が付ける（Date）
   | 'foldedReports' // 報を畳んだときに統合が積む
   | 'previousSourceEarthquakes' // 別の地震の津波で置き換えたときに統合が積む（時刻は積む前の報で既にずれている）
-  | 'failsafeExpiry' // 標準版の安全弁の予約にだけ付く印（電文には無い）
 >>
 type EewSample = DeepRequired<Omit<EEWAlert, 'cancelledAt'>>
 
@@ -180,6 +179,8 @@ function eewSample(): EewSample {
     strongShakingText: '強い揺れ',
     kind: 'eew',
     origin: 'dmdata',
+    serialSeries: 'warning',
+    forecastSerial: '30',
     id: `dmdata-eew-${EVENT_ID}-1`,
     time: iso(),
     test: false,

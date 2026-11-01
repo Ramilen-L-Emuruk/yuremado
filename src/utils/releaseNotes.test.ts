@@ -47,38 +47,41 @@ describe('compareVersions', () => {
 
 describe('notesBetween', () => {
   it('飛ばした版も、前に開いた版より新しいものを新しい順に全部出す', () => {
-    expect(notesBetween(entries, '5.68.0', '5.70.0', 'dmdss').map((v) => v.version)).toEqual(['5.70.0', '5.69.0'])
+    expect(notesBetween(entries, '5.68.0', '5.70.0').map((v) => v.version)).toEqual(['5.70.0', '5.69.0'])
   })
 
   it('前に開いた版を覚えていなければ、更新先の 1 版だけ', () => {
-    expect(notesBetween(entries, null, '5.70.0', 'dmdss').map((v) => v.version)).toEqual(['5.70.0'])
+    expect(notesBetween(entries, null, '5.70.0').map((v) => v.version)).toEqual(['5.70.0'])
   })
 
   it('更新先より新しい版は出さない（配信の途中で資料だけ先に新しくなった場合）', () => {
-    expect(notesBetween(entries, '5.68.0', '5.69.0', 'dmdss').map((v) => v.version)).toEqual(['5.69.0'])
+    expect(notesBetween(entries, '5.68.0', '5.69.0').map((v) => v.version)).toEqual(['5.69.0'])
   })
 
-  it('開いている版に関係する行だけを出し、何も残らない版は「軽微な修正」に倒す', () => {
-    const [v570, v569] = notesBetween(entries, '5.68.0', '5.70.0', 'standard')
-    expect(v570).toMatchObject({ version: '5.70.0', added: [], fixed: [], minorOnly: true })
+  // 版を 1 つにまとめたので、資料の `variant` では絞らない（まとめる前の版の行もすべて出す）
+  it('資料の版の印によらず全部の行を出し、行の無い版は「軽微な修正」に倒す', () => {
+    const [v570, v569] = notesBetween(entries, '5.68.0', '5.70.0')
+    expect(v570).toMatchObject({ version: '5.70.0', added: ['B'], fixed: [], minorOnly: false })
     expect(v569).toMatchObject({ added: ['C'], fixed: ['D'], minorOnly: false })
+    const empty = notesBetween([{ version: '5.71.0', date: '2026-10-28', added: [], fixed: [] }], '5.70.0', '5.71.0')
+    expect(empty[0]).toMatchObject({ minorOnly: true })
   })
 })
 
 describe('notesForUpdate', () => {
   it('更新先の版が資料に無ければ、更新先を「軽微な修正」として先頭に出す（空の窓にしない）', () => {
-    const views = notesForUpdate(entries, '5.69.0', '5.71.0', 'dmdss')
+    const views = notesForUpdate(entries, '5.69.0', '5.71.0')
     expect(views.map((v) => [v.version, v.minorOnly])).toEqual([['5.71.0', true], ['5.70.0', false]])
   })
 
   it('載っていればそのまま（対照）', () => {
-    expect(notesForUpdate(entries, '5.68.0', '5.70.0', 'dmdss').map((v) => v.version)).toEqual(['5.70.0', '5.69.0'])
+    expect(notesForUpdate(entries, '5.68.0', '5.70.0').map((v) => v.version)).toEqual(['5.70.0', '5.69.0'])
   })
 })
 
 describe('allNotes', () => {
   it('全部の版を新しい順に並べる', () => {
-    expect(allNotes(entries, 'dmdss').map((v) => v.version)).toEqual(['5.70.0', '5.69.0', '5.68.0', '5.10.0'])
+    expect(allNotes(entries).map((v) => v.version)).toEqual(['5.70.0', '5.69.0', '5.68.0', '5.10.0'])
   })
 })
 

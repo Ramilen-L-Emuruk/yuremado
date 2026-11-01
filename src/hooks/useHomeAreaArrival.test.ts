@@ -83,7 +83,7 @@ describe('homeAreaArrivalOf', () => {
   })
 
   it('到達済みの区域は時刻を持たなくても到達済みとして返す', () => {
-    // 到達済みは種別コードの下 1 桁（01/11）でも伝わる。standard 版はそちらしか持たない。
+    // 到達済みは種別コードの下 1 桁（01/11）でも伝わる。`Condition` が無くても到達済みと判る。
     expect(run(eew([area({ kindCode: '11', arrivalTime: null, arrived: true })]))).toEqual({ arrivalMs: null, arrived: true })
   })
 

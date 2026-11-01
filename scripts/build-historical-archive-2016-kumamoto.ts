@@ -31,7 +31,7 @@ import { buildEewSection, buildQuakeAndTsunamiSection, finalizeArchive } from '.
 import { ARCHIVE_TARGETS } from './historicalArchiveTargets'
 
 // dmdataParser.ts の XML パースが `new DOMParser()` をブラウザグローバルとして参照するため、
-// Node.js環境ではjsdomで代替する（capture-test-scenario.ts と同じ対処）。
+// Node.js環境ではjsdomで代替する。
 const { window: jsdomWindow } = new JSDOM('')
 globalThis.DOMParser = jsdomWindow.DOMParser as unknown as typeof DOMParser
 

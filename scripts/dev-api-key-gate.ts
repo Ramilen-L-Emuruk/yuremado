@@ -10,13 +10,10 @@
  */
 export function shouldInjectDevApiKey(
   config: { command: string; isPreview?: boolean },
-  isDmdssVariant: boolean,
   argv: readonly string[],
 ): boolean {
   // build には渡さない。`vite preview` も command が 'serve' になるため isPreview で別に弾く。
   if (config.command !== 'serve' || config.isPreview) return false
-  // このキーを使うのは DMDSS 版だけ。使わない側のバンドルに値を配らない。
-  if (!isDmdssVariant) return false
   // `--host` は LAN 公開。この dev サーバーは認証を持たない（実機計測フローが LAN 公開を使う。
   // scripts/perf/vite-plugin-perf-report.ts 参照）ため、公開時は自動投入をやめて手入力に委ねる。
   return !argv.some(a => a === '--host' || a.startsWith('--host='))
@@ -24,9 +21,6 @@ export function shouldInjectDevApiKey(
 
 /**
  * dev サーバーで到達予想トークンを自動投入してよいかを判定する。
- *
- * **API キーの条件とは 1 点だけ違う** —— バリアントを問わない。トークンが開くのは
- * ホーム地点への到達予想で、これは standard 版・DMDSS 版のどちらにもある機能。
  *
  * **build には渡さない。** 本番ビルドへ載せると、配信された JS にトークンが平文で載り、
  * 誰でも自前計算を開けるようになる（＝限定していることにならない）。

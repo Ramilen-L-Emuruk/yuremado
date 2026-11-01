@@ -10,7 +10,6 @@ import {
   SHARE_CARD_FORMATS,
   SUBTITLE_MAX_LINES,
   shareOrDownloadImage,
-  standardAppUrl,
 } from './shareCard'
 
 // 地図に割ける高さは「カード全体 − 見出し帯 − 出典帯」で決まり、撮影側（useShareCard）と
@@ -65,39 +64,6 @@ describe('attributionLine', () => {
     const line = attributionLine({ derived: [], asIs: ['GEBCO'] })
     expect(line).toBe('出典: GEBCO')
     expect(line).not.toContain('加工')
-  })
-})
-
-// 本文の末尾に載せる URL。DMDSS 版は DMDATA.JP の API キーが要るため、そのパスを渡すと
-// 受け取った人が設定画面に突き当たる。共有には誰でも開ける standard 版を載せる。
-describe('standardAppUrl', () => {
-  it('standard 版の配信パスはそのまま使う', () => {
-    expect(standardAppUrl('https://example.test', '/yuremado/')).toBe(
-      'https://example.test/yuremado/',
-    )
-  })
-
-  it('DMDSS 版から共有しても standard 版の URL にする', () => {
-    expect(standardAppUrl('https://example.test', '/yuremado/dmdss/')).toBe(
-      'https://example.test/yuremado/',
-    )
-  })
-
-  it('ルート配信でも成り立つ', () => {
-    expect(standardAppUrl('https://example.test', '/')).toBe('https://example.test/')
-  })
-
-  // 対照。パスの途中に dmdss を含むだけの配信先を削ってしまわないこと。落とすのは末尾だけ。
-  it('末尾以外の dmdss は落とさない', () => {
-    expect(standardAppUrl('https://example.test', '/dmdss-viewer/')).toBe('https://example.test/dmdss-viewer/')
-  })
-
-  // 安全弁。配信パスの書き方を決めているのは vite.config.ts の一存で、末尾スラッシュを落とす
-  // 変更が入りうる。そのとき本文の URL が黙って DMDSS 版へ戻らないこと。
-  it('末尾スラッシュが無い配信パスでも落とす', () => {
-    expect(standardAppUrl('https://example.test', '/yuremado/dmdss')).toBe(
-      'https://example.test/yuremado/',
-    )
   })
 })
 

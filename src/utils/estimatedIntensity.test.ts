@@ -90,7 +90,7 @@ describe('matchEstimatedIntensity', () => {
     )).toBe(true)
   })
 
-  // 安全弁: 日時として読めない値で真を返さない（P2PQuake 経路の表記など）。
+  // 安全弁: 日時として読めない値で真を返さない。
   it('日時として読めなければ結び付かない', () => {
     expect(matchEstimatedIntensity(quake('よくわからない時刻'), ei('2026-07-28T07:27:00.000Z'))).toBe(false)
   })
