@@ -18,9 +18,10 @@ import { log } from './logger'
  * 予報キーの署名を確かめる公開鍵（SPKI DER の base64）。中継の `FORECAST_PUBLIC_KEY` と同じ値にする。
  *
  * **公開してよい値。** 公開鍵からは署名を作れない。差し替えると発行済みの予報キーが全部無効になる。
- * **空のあいだは、どのキーも通らない**（鍵の組をまだ作っていない状態）。
+ * 空にすると、どのキーも通らない（鍵の組を取り下げたいときの形）。
  */
-const FORECAST_PUBLIC_KEY_SPKI_BASE64 = ''
+const FORECAST_PUBLIC_KEY_SPKI_BASE64 =
+  'MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEnRLM4MCkUtXZS0YaPKhVbRgd0ic2V0+9/gKlAC3vW/Gzu0GCMRGq6go5CRod9LQ0Ka50BeY620hlTRFl3VKr1g=='
 
 /** 予報キーが本物で、まだ失効していないか。判らないときは通らない側を返す（到達予想キーと同じ）。 */
 export async function verifyForecastKey(key: string): Promise<ArrivalTokenCheck> {
