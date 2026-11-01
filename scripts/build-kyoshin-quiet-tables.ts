@@ -46,7 +46,7 @@ const FETCH_CONCURRENCY = 4
 const MIN_COVERAGE = 0.9
 
 const pad = (n: number) => String(n).padStart(2, '0')
-const hourPath = (day: string, h: number) => join(QUIET_DIR, `${day}-${pad(h)}.bin`)
+export const hourPath = (day: string, h: number) => join(QUIET_DIR, `${day}-${pad(h)}.bin`)
 /** 控えの「秒」は日本時間の 0 時からの秒数。日本時間の時刻をそのまま UTC として数える（使うのは秒の間隔だけ）。 */
 const dayStartMs = (day: string) => Date.UTC(+day.slice(0, 4), +day.slice(4, 6) - 1, +day.slice(6, 8))
 
@@ -85,11 +85,13 @@ async function fetchJson<T>(url: string): Promise<T | null> {
 }
 
 /** 1 時間ぶんを Yahoo から取って控えに書く（取れた秒が `MIN_COVERAGE` を割ったら書かない）。取れた秒数を返す。 */
-async function fetchHour(day: string, h: number): Promise<number> {
+export async function fetchHour(day: string, h: number): Promise<number> {
   const cfgs: string[] = []
   const chunks: Buffer[] = []
   let got = 0
   for (let s = 0; s < 3600; s += FETCH_CONCURRENCY) {
+    // 取れなかった秒が 1 割を超えたら、この時間は残りを全部取っても控えの条件に届かない。空振りを続けずに打ち切る
+    if (s - got > 3600 * (1 - MIN_COVERAGE)) break
     const res = await Promise.all(Array.from({ length: FETCH_CONCURRENCY }, async (_, k) => {
       const sec = h * 3600 + s + k
       // 控えの秒は日本時間の日付と時刻。強震モニタの URL も日本時間で書く
@@ -119,7 +121,7 @@ async function fetchHour(day: string, h: number): Promise<number> {
 }
 
 const sitesCache = new Map<string, [number, number][]>()
-async function loadSites(cfg: string, allowFetch: boolean): Promise<[number, number][]> {
+export async function loadSites(cfg: string, allowFetch: boolean): Promise<[number, number][]> {
   const hit = sitesCache.get(cfg)
   if (hit) return hit
   const path = join(SITES_DIR, `sites_${cfg}.json`)
