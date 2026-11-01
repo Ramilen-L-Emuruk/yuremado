@@ -161,12 +161,12 @@ const GRADE_LABEL: Record<TsunamiGrade, string> = {
   Unknown:      '不明',
 }
 
-/** 官署の行（「編集官署 気象庁本庁　発表官署 気象庁」。地震カードと同じく区切り記号を置かず間隔で分ける）。片方しか無ければその片方だけ。どちらも無ければ空文字。 */
-function officeLine(issue: JMATsunami['issue']): string {
+/** 官署の塊（「編集官署 気象庁本庁」「発表官署 気象庁」）。地震カードと同じく区切り記号を置かず間隔で分ける。片方しか無ければその片方だけ。 */
+function officeLabels(issue: JMATsunami['issue']): string[] {
   return [
     issue.editorialOffice && `編集官署 ${issue.editorialOffice}`,
     issue.publishingOffice && `発表官署 ${issue.publishingOffice}`,
-  ].filter(Boolean).join('　')
+  ].filter((s): s is string => Boolean(s))
 }
 
 // 等級カードを積む順は読み上げと共有する（`GRADES_IN_CARD_ORDER`）。ここに独自の配列を置くと、
@@ -1565,11 +1565,18 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 **`issue.source` は見ない** —— 発表官署へ落ちるので「編集官署」と名乗ると事実を誤らせる。
                 最新の報の官署を出す（統合は新報の `issue` を採る）。取消・解除の表示中も出す。 */}
             {/* 発表官署（`Control/PublishingOffice`）を編集官署の隣に「編集官署 …　発表官署 …」の形で添える
-                （2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・地震カードと同じ形）。 */}
+                （2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・文面は地震カードと同じ。置き場所は違う）。
+                官署は名前の途中で割らず、収まらないときは官署ごと次の行へ送る（2026-11-01 ユーザー選択
+                「今回一緒に直す (Recommended)」）。情報名は長い（「大津波警報・津波警報・津波注意報・津波予報」など）ので、狭い幅では途中で折り返す。 */}
             {(active[0]?.infoName || active[0]?.issue.editorialOffice || active[0]?.issue.publishingOffice) && (
               <div className="mt-0.5" style={{ fontSize: '0.625rem', color: isCancelledDisplay ? '#6b7280' : topStyle.headerColor, opacity: 0.6 }}>
                 {active[0].infoName}
-                {officeLine(active[0].issue) && `${active[0].infoName ? '　' : ''}${officeLine(active[0].issue)}`}
+                {officeLabels(active[0].issue).map((label, i) => (
+                  <Fragment key={label}>
+                    {(i > 0 || active[0].infoName) && '　'}
+                    <span className="whitespace-nowrap">{label}</span>
+                  </Fragment>
+                ))}
               </div>
             )}
             {/* 気象庁が書いた取消しの概要（電文の `Body/Text`）。アプリの定型文（上の `cancelInfo.desc`）
