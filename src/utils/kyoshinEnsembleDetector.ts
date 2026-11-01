@@ -36,8 +36,12 @@ const SP_KM = 120, SP_MAXN = 6, SP_RISE = 5, SP_NB = 3, SP_SLACK = 3, SP_QUIET =
 const SP_ERISE = 4
 /** 跳ねた点より隣が後から上がっても、跳ねてからこの秒数までは組にする */
 const SP_PAIR_MAX = 45
-/** 直前 SP_NOISE_WIN 秒（直近 SP_QUIET 秒は数えない）に SP_NB 段以上上がった秒が SP_NOISE_MAX を超える点は、ゆらぎの多い点として使わない */
-const SP_NOISE_WIN = 1800, SP_NOISE_MAX = 3
+/**
+ * 直前 SP_NOISE_WIN 秒（直近 SP_QUIET 秒は数えない）に SP_NB 段以上上がった秒が SP_NOISE_MAX を超える点は、ゆらぎの多い点として使わない。
+ * 数えるのは、上がってから SP_SPIKE_SEC 秒以内に元の値（上がる前の最小 +1 段）へ戻った上がりだけ。上がったまま続いた秒は地震の揺れなので数えない
+ * —— 数えると、有感地震の後 30 分はその点の余震を拾えず、取りこぼした揺れがまた数えられて次の地震も落ちる
+ */
+const SP_NOISE_WIN = 1800, SP_NOISE_MAX = 3, SP_SPIKE_SEC = 5
 /** 1 点だけの跳ね（早い段だけ）: まばらな点がこの段数以上跳ねたら、隣の裏付けが無くても、ゆらぎの多い点でなければ早い段を出す */
 const SP_SOLO = 6
 /**
@@ -113,11 +117,20 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
     const lastNb = new Float64Array(n).fill(-Infinity), lastBig = new Float64Array(n).fill(-Infinity)
     const sparses: Fast[] = []
     const trigAt = new Float64Array(n).fill(-Infinity)
-    /** 点ごとの SP_NB 段以上の上がりがあった秒（ゆらぎの多さを数える） */
+    /** 点ごとの、すぐ戻った SP_NB 段以上の上がりの秒（ゆらぎの多さを数える） */
     const nbSecs: number[][] = Array.from({ length: n }, () => [])
+    /** 戻るのを待っている上がりの秒と、上がる前の最小 */
+    const pend: number[][] = Array.from({ length: n }, () => [])
+    const pendBase = new Int8Array(n)
+    /**
+     * SP_SPIKE_SEC 秒のうちに戻らなかった上がりが居座り始めた時刻（居座っていなければ NaN）。居座りの間は新しい上がりを待ち始めない
+     * —— 始めると、10 秒ほど続いてから急に静まる揺れの後半を、すぐ戻った跳ねとして数えてしまう。元の値へ戻るか、
+     * SP_NOISE_WIN 秒たつ（元の値そのものが上がったまま）まで続ける
+     */
+    const heldAt = new Float64Array(n).fill(NaN)
     const noisy = (i: number, now: number) => {
       let c = 0
-      for (const t of nbSecs[i]) if (now - t > SP_QUIET * 1000) c++
+      for (const t of nbSecs[i]) if (now - t > SP_QUIET * 1000 && now - t <= SP_NOISE_WIN * 1000) c++
       return c > SP_NOISE_MAX
     }
     let sseq = 0
@@ -134,11 +147,29 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
           const r = rise(i)
           /** 跳ね（広い窓を効かせる点は、長い窓の最小からの上がりと大きい方）。隣の上がりとゆらぎの数え方は r のまま */
           const jump = wideOk[i] && v[i] >= 0 && wideMn[i] !== 127 ? Math.max(r, v[i] - wideMn[i]) : r
+          const p = pend[i]
+          const held = !Number.isNaN(heldAt[i])
+          if (p.length || held) {
+            if (v[i] >= 0 && v[i] <= pendBase[i] + 1) {
+              // SP_SPIKE_SEC 秒以内に戻った上がりだけをゆらぎとして数える（居座った上がりは数えない）
+              if (p.length && f.ms - p[0] <= SP_SPIKE_SEC * 1000) {
+                const l = nbSecs[i]
+                l.push(...p)
+                while (l.length && f.ms - l[0] > SP_NOISE_WIN * 1000) l.shift()
+              }
+              p.length = 0
+              heldAt[i] = NaN
+            } else if (p.length && f.ms - p[0] > SP_SPIKE_SEC * 1000) {
+              p.length = 0
+              heldAt[i] = f.ms
+            } else if (held && f.ms - heldAt[i] > SP_NOISE_WIN * 1000) heldAt[i] = NaN
+          }
           if (r >= SP_NB) {
             lastNb[i] = f.ms
-            const l = nbSecs[i]
-            l.push(f.ms)
-            while (l.length && f.ms - l[0] > SP_NOISE_WIN * 1000) l.shift()
+            if (Number.isNaN(heldAt[i])) {
+              if (!p.length) pendBase[i] = mn[i]
+              p.push(f.ms)
+            }
           }
           if (jump < spRise || nbS[i].length > SP_MAXN || nbS[i].length === 0) { if (jump >= spRise) lastBig[i] = f.ms; continue }
           const quiet = f.ms - lastBig[i] > SP_QUIET * 1000 || f.ms - lastBig[i] <= 1000

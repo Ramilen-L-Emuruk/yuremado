@@ -4292,11 +4292,13 @@
    "firstLikely": "05:31:18",
    "firstConfirmed": "05:31:20",
    "confirmedFrames": 110,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "05:32:57 沖縄県|那覇市樋川"
+   ]
   },
   "wq234-0814-0539": {
    "tier": "confirmed",
