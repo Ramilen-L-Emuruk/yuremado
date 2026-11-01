@@ -695,7 +695,7 @@ describe('hypoInfoItemToEEW の規模', () => {
   })
 })
 
-// Yahoo の時刻も P2PQuake と同じく入口で ISO の形（`+09:00`）へ直す。標準版の緊急地震速報は 2 経路を
+// Yahoo の時刻は入口で ISO の形（`+09:00`）へ直す。緊急地震速報は DMDATA と Yahoo の 2 経路を
 // 時刻で並べるので、片方だけ時間帯なしのまま残すと、日本国外の端末でこの経路だけ端末の時間帯で読まれる
 describe('hypoInfoItemToEEW の時刻', () => {
   const item = (originTime: string, reportTime: string): YahooHypoInfoItem => ({

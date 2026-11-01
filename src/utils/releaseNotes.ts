@@ -12,7 +12,11 @@
  */
 export const FIRST_NOTED_VERSION = '5.70.0'
 
-/** どちらの版に関係する行か。 */
+/**
+ * どちらの版に関係する行か。**版を 1 つにまとめた後は画面の絞り込みに使わない**（docs/isdmdss-allocation.md の
+ * 「変更履歴を版で絞る」の行）。資料には残す —— まとめる前の版のアプリも同じ `release-notes.json` を読み、
+ * この欄が無い行を捨てるので、待っている新しい版の内容が出なくなる。新しく書く行は `both` にする。
+ */
 export type ReleaseNoteVariant = 'both' | 'standard' | 'dmdss'
 
 export interface ReleaseNoteItem {
@@ -58,14 +62,9 @@ function parseVersion(v: string): [number, number, number] | null {
   return [Number(m[1]), Number(m[2]), Number(m[3])]
 }
 
-/** その版の利用者に関係する行か。 */
-function concerns(item: ReleaseNoteItem, variant: 'standard' | 'dmdss'): boolean {
-  return item.variant === 'both' || item.variant === variant
-}
-
-function toView(entry: ReleaseNoteEntry, variant: 'standard' | 'dmdss'): ReleaseNoteView {
-  const added = entry.added.filter((i) => concerns(i, variant)).map((i) => i.text)
-  const fixed = entry.fixed.filter((i) => concerns(i, variant)).map((i) => i.text)
+function toView(entry: ReleaseNoteEntry): ReleaseNoteView {
+  const added = entry.added.map((i) => i.text)
+  const fixed = entry.fixed.map((i) => i.text)
   return { version: entry.version, date: entry.date, added, fixed, minorOnly: added.length === 0 && fixed.length === 0 }
 }
 
@@ -78,7 +77,6 @@ export function notesBetween(
   entries: readonly ReleaseNoteEntry[],
   fromExclusive: string | null,
   toInclusive: string,
-  variant: 'standard' | 'dmdss',
 ): ReleaseNoteView[] {
   return sortNewestFirst(entries)
     .filter((e) => {
@@ -88,7 +86,7 @@ export function notesBetween(
       const lower = compareVersions(e.version, fromExclusive)
       return lower !== null && lower > 0
     })
-    .map((e) => toView(e, variant))
+    .map(toView)
 }
 
 /**
@@ -99,16 +97,15 @@ export function notesForUpdate(
   entries: readonly ReleaseNoteEntry[],
   fromExclusive: string | null,
   toInclusive: string,
-  variant: 'standard' | 'dmdss',
 ): ReleaseNoteView[] {
-  const views = notesBetween(entries, fromExclusive, toInclusive, variant)
+  const views = notesBetween(entries, fromExclusive, toInclusive)
   if (views.some((v) => v.version === toInclusive)) return views
   return [{ version: toInclusive, date: '', added: [], fixed: [], minorOnly: true }, ...views]
 }
 
 /** 全部の版を新しい順に（設定の窓の「変更履歴」）。 */
-export function allNotes(entries: readonly ReleaseNoteEntry[], variant: 'standard' | 'dmdss'): ReleaseNoteView[] {
-  return sortNewestFirst(entries).map((e) => toView(e, variant))
+export function allNotes(entries: readonly ReleaseNoteEntry[]): ReleaseNoteView[] {
+  return sortNewestFirst(entries).map(toView)
 }
 
 function sortNewestFirst(entries: readonly ReleaseNoteEntry[]): ReleaseNoteEntry[] {

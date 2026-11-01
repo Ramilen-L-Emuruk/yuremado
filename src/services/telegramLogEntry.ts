@@ -1,7 +1,7 @@
 // 電文ログの行を組み立てる（リプレイ・テストボタン用）。
 //
-// **ライブの 2 経路はここを通らない。** あちらは受信処理の中で配信元の `head` ごと持っている
-// ので自前で組む（`dmdata.ts` の `makeLogEntry`・`p2pquake.ts` の `onRawMessage`）。こちらは
+// **ライブの経路はここを通らない。** あちらは受信処理の中で配信元の `head` ごと持っている
+// ので自前で組む（`dmdata.ts` の `makeLogEntry`）。こちらは
 // 電文の本文しか手元に無く、`origin` も固定なので別に置く。
 //
 // 行の `origin` で「ライブで届いたのか、こちらが流したのか」を分ける（→ `TelegramOrigin`）。
@@ -20,11 +20,11 @@ import { readTelegramOperationStatus } from '../utils/telegramOperationStatus'
 let seq = 0
 
 export interface ReplayLogEntryInput {
-  /** 電文種別（DMDSS は `VXSE53` 等、標準版は P2PQuake の `code`）。 */
+  /** 電文種別（`VXSE53` 等）。 */
   headType: string
   /** どの経路で入ったか。ライブはここを通らないので除く。 */
   origin: Exclude<TelegramOrigin, 'live'>
-  /** 画面と書き出しに出す本文。XML はそのまま、二進電文は要約の文字列、標準版は元の JSON。 */
+  /** 画面と書き出しに出す本文。XML はそのまま、二進電文は要約の文字列。 */
   rawBody: unknown
   /**
    * 組み立てた結果。`null`（対象外の種別・読めなかった）なら行は `filtered`。
@@ -36,15 +36,13 @@ export interface ReplayLogEntryInput {
    * `null` の分岐を残してあるのは、載せると決めたときにここを通せるようにするため。
    */
   payload: ReplayPayload | null
-  /** 気象庁が訓練・試験として流した電文か（`Control/Status` 由来。標準版は常に false）。 */
+  /** 気象庁が訓練・試験として流した電文か（`Control/Status` 由来）。 */
   isTest: boolean
-  /** 配信元。省略すると DMDSS。 */
-  source?: TelegramLogEntry['source']
 }
 
 /** 電文ログの行を 1 つ組む（リプレイ・テストボタン用）。 */
 export function makeReplayLogEntry(input: ReplayLogEntryInput): TelegramLogEntry {
-  const { headType, origin, rawBody, payload, isTest, source = 'dmdss' } = input
+  const { headType, origin, rawBody, payload, isTest } = input
   return {
     id: `${Date.now()}-${seq++}`,
     // **ここで入れるのは仮の値。** 積む側（`useEarthquakes.ts` のディスパッチャ）が発火の
@@ -53,7 +51,7 @@ export function makeReplayLogEntry(input: ReplayLogEntryInput): TelegramLogEntry
     // 電文が名乗る発表時刻も入れない —— ライブの行は受け取った時刻なので、混ぜると
     // 一覧の時刻が経路によって意味を変える。
     receivedAt: serverDate(),
-    source,
+    source: 'dmdss',
     origin,
     headType,
     isTest,

@@ -24,7 +24,7 @@ describe('地図の吹き出しの観測点名', () => {
     expect(lpgmPointPopupTitle(feature({ name: '輪島市門前町', nonJma: false }))).toBe('輪島市門前町')
   })
 
-  // 安全弁: 印の有無を持たない点（P2PQuake 経路はこの区別を配信しない）でも名前を壊さない。
+  // 安全弁: 印の有無を持たない点（`nonJma` が無い点）でも名前を壊さない。
   it('印の有無を持たない点は名前をそのまま出す', () => {
     expect(quakePointPopupTitle(feature({ addr: '輪島市門前町' }))).toBe('輪島市門前町')
     expect(lpgmPointPopupTitle(feature({ name: '輪島市門前町' }))).toBe('輪島市門前町')

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lastOpenedVersionKey, previousVersionToAnnounce } from './updatedNotice'
+import { previousVersionToAnnounce } from './updatedNotice'
 
 describe('previousVersionToAnnounce', () => {
   it('前に開いた版より新しければ、前の版を返す（正）', () => {
@@ -18,8 +18,3 @@ describe('previousVersionToAnnounce', () => {
   })
 })
 
-describe('lastOpenedVersionKey', () => {
-  it('バリアントごとに別の鍵（同じオリジンで共有するため）', () => {
-    expect(lastOpenedVersionKey('standard')).not.toBe(lastOpenedVersionKey('dmdss'))
-  })
-})

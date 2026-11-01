@@ -1,8 +1,6 @@
 // リプレイの開始時に復元する地震カードの履歴へ、再生中の「もっと見る」で続きを読む口を付ける。
 //
-// 続きの読み方は取得元で違う（DMDSS 版はカーソル、標準版は `offset`）。標準版の口は取得と
-// 持ち越しが絡むので `p2pquakeReplay.ts` が自分で付け、ここには DMDSS 版とローカル履歴アーカイブの
-// 分だけを置く。
+// 続きの読み方は取得元で違う（DMDATA はカーソル、ローカル履歴アーカイブは続きを持たない）。
 
 import type { QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
 import { historyCursorFromOldestDay } from '../utils/historyCursor'
@@ -16,7 +14,7 @@ export function withoutLoadMore(result: QuakeHistoryResult): ReplayQuakeHistoryR
 }
 
 /**
- * DMDSS 版の履歴に、続きを読む口を付ける。
+ * DMDATA の履歴に、続きを読む口を付ける。
  *
  * **続きの上端は、読み切った最古の日の手前**（`historyCursorFromOldestDay`。ライブの「もっと見る」と
  * 同じ計算）。窓どうしが重ならないので、押しても読んだ日を読み直さない。

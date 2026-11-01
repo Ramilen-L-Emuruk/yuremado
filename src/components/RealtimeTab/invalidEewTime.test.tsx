@@ -76,7 +76,7 @@ describe('緊急地震速報カードの時刻が読めないとき', () => {
     expect(screen.getByText('日向灘')).toBeTruthy()
   })
 
-  // 正: 発現時刻を配信しない経路（標準版の Yahoo hypoInfo は空文字を入れる）では行を出さない。
+  // 正: 発現時刻を配信しない経路（Yahoo hypoInfo は空文字を入れる）では行を出さない。
   it('発現時刻が空なら行を出さない', () => {
     const { container } = renderTab(makeEEW('2026-01-01T12:00:00Z', [forecastArea('宮崎県南部平野部', '2026-01-01T12:00:40Z')], ''))
     expect(container.textContent).not.toContain('地震発現時刻')

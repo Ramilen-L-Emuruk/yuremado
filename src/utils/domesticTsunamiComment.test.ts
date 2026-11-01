@@ -40,7 +40,7 @@ describe('domesticTsunamiCardForecastText（地震カード）', () => {
     expect(domesticTsunamiCardForecastText(DOMESTIC_TSUNAMI_CODE_TEXT['0212'] + EEW, '0215')).toBe(EEW)
   })
 
-  // 安全弁: コードを持たない（区分を借りた・標準版）なら全部除く。
+  // 安全弁: コードを持たない（区分を借りた）なら全部除く。
   it('コードが無ければ全部除く', () => {
     expect(domesticTsunamiCardForecastText(DOMESTIC_TSUNAMI_CODE_TEXT['0212'] + EEW, undefined)).toBe(EEW)
   })

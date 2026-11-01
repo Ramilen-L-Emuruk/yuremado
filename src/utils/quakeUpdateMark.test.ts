@@ -303,9 +303,9 @@ describe('地震カードの更新の印', () => {
       expect(snapRows([prefRollup('石川県', 70)]).get(rowMarkKey.pref('石川県'))?.key).toBe('70')
     })
 
-    // 正: 標準版（P2PQuake）は区域の点にも県名を積む。`pref` の有無で見分けると区域の記憶が
+    // 正: 区域の点が県名を持つ形。`pref` の有無で見分けると区域の記憶が
     // 1 つもできず、震度速報の区域の行に印が付かない。
-    it('県名を持つ区域の点（標準版）も区域の行として覚える', () => {
+    it('県名を持つ区域の点も区域の行として覚える', () => {
       const p2pArea: EarthquakePoint = { pref: '石川県', addr: '石川県能登', isArea: true, scale: 70 as IntensityScale }
       const snap = snapRows([p2pArea])
       expect(snap.get(rowMarkKey.area('石川県能登'))?.key).toBe('70')
@@ -1136,7 +1136,7 @@ describe('電文の Revise で行の印を付ける', () => {
     }
   })
 
-  // 安全弁: `reportsRevise` を持たない電文（P2PQuake・震度速報）は `Revise` を作らない。
+  // 安全弁: `reportsRevise` を持たない電文（震度速報）は `Revise` を作らない。
   it('Revise で変化を伝えない電文では作らない', () => {
     expect(quakeTelegramRevise(makeQuake())).toBeNull()
   })

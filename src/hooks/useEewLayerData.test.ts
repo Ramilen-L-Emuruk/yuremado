@@ -174,7 +174,7 @@ describe('useEewLayerData: eewEpicenters の差分更新キー', () => {
   })
 
   // 安全弁: eventId が欠けたときのフォールバック。**実データでは通らない**
-  // （DMDATA・P2PQuake・Yahoo のいずれの経路も eventId を持つ）。欠けても一意性を失わないことだけ固定する。
+  // （DMDATA・Yahoo のどちらの経路も eventId を持つ）。欠けても一意性を失わないことだけ固定する。
   it('eventId が無ければ eew.id を使う', () => {
     const base = makeEEW({ id: 'no-issue', areas: [area()] })
     const [ep] = epicentersOf([{ ...base, issue: undefined }])

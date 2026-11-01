@@ -16,11 +16,6 @@ import { log, createLogThrottle } from '../utils/logger'
 import type { ReplayPayload } from '../types/replay'
 import type { TelegramLogKind } from '../types/earthquake'
 
-// 電文本体を取りに行く URL の基底。一覧・目録が返す電文 id をこの後ろへ繋ぐ。
-// **取得元をまたいで共有する**——リプレイの当日経路とライブ起動時の復元が同じ形で組み立てるので、
-// 別々に持つと片方だけ直したときに一方の経路から電文本体が引けなくなる。
-export const TELEGRAM_DATA_BASE = 'https://data.api.dmdata.jp/v1/'
-
 // 購読する区分（`eew.forecast` など）は利用者の契約と鍵の権限で決まるので、ここには置かない
 // （→ `dmdataClassifications.ts`）。ここが持つのは「区分が決まったら、どの種別を読むか」だけ。
 

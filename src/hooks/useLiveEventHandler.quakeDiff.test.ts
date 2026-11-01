@@ -117,7 +117,7 @@ function area(pref: string, addr: string, scale: number): EarthquakePoint {
 
 // 同一イベントとして扱わせるため earthquake.time と震源名は固定する。
 // **id は DMDATA の形にする**（`dmdata-quake-<eventId>-<serial>`）。既読の記録は「その地震」に
-// 紐づけるため、キーは `quakeEventKey` ―― eventId を持たない P2PQuake の生電文では報ごとに
+// 紐づけるため、キーは `quakeEventKey` ―― eventId を持たない生電文では報ごとに
 // キーが変わりうる（統合済みカードを引けたときだけ安定する）。ここで測りたいのは種別を跨いだ
 // 共有なので、キーが安定する経路を使う。
 // 震源座標は 0 にして震源距離での並べ替えを通さず、列挙順を points の順に固定する。

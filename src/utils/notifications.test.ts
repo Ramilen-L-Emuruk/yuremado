@@ -142,8 +142,8 @@ describe('deliverBrowserNotification', () => {
     expect('renotify' in opts[1]).toBe(false)
   })
 
-  // 同じオリジンに standard 版（/yuremado/）と DMDSS 版（/yuremado/dmdss/）が同居する。DMDSS 版の登録が
-  // まだ無いと standard 版の登録が返るが、それで出すと同じ tag の通知が登録をまたいで置き換わらない
+  // 同じオリジンに別のスコープの登録が同居すると、このページの登録がまだ無いうちはそちらが返る。
+  // それで出すと同じ tag の通知が登録をまたいで置き換わらない
   it('対照: 別のスコープの登録は使わず、ページから出す', async () => {
     const pageCalls: string[] = []
     stubNotification(title => pageCalls.push(title))

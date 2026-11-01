@@ -44,7 +44,7 @@ export const INTENSITY_BG_COLORS: Record<number, string> = {
  * 気象庁の震度階級に対応する値かどうか（`-1` = 不明を含む）。
  *
  * `IntensityScale` 型はコンパイル時にしか効かないため、型検査を通らない経路
- * （実地震シナリオ JSON・`as` キャストで通す P2PQuake レスポンス）から来た値は
+ * （実地震シナリオ JSON など）から来た値は
  * これで弾く。中間値（`25` 等）や範囲外の値をそのまま比較に使うと、
  * 震度表示が「不明」になったり特別警報へ誤って昇格したりする。
  */
@@ -156,7 +156,7 @@ export function getDepthColor(depth: number): string {
  * 小さい(M2未満)=薄青(震度1相当) → 大きい(M7以上)=紫(震度7相当)
  */
 export function getMagnitudeColor(magnitude: number): string {
-  // 規模不明のセンチネルは経路によって -1（P2PQuake）と NaN（DMDATA）の二種類がある。
+  // 規模不明は NaN（電文・強震モニタ）と -1（ヒートマップの点。→ `heatMagnitude`）の二種類がある。
   // NaN は以降の比較がすべて false になり最終行の紫（M7 以上）に落ちてしまうため、
   // formatMagnitude と同じ判定（hasMagnitude）で先に灰色へ弾く。
   if (!hasMagnitude(magnitude)) return '#666666'

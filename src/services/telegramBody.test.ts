@@ -7,6 +7,7 @@ import {
 import { clearTelegramBodyCache, MAX_ENTRIES } from '../utils/telegramBodyCache'
 import { idbMetaStats, TELEGRAM_CACHE_DB } from '../test-utils/idbMetaStats'
 import { resetRateLimitsForTest } from './dmdataRequestGates'
+import { dmdataKeyEndpoint } from './dmdataEndpoint'
 
 const telegramCacheStats = () => idbMetaStats(TELEGRAM_CACHE_DB)
 
@@ -63,9 +64,9 @@ describe('fetchTelegramText（電文本体の控え）', () => {
   it('同じ id を 2 度取りに行かない', async () => {
     const requested = stubFetch({ abcdef0123: '<Report>1</Report>' })
 
-    const first = await fetchTelegramText(KEY, url('abcdef0123'))
+    const first = await fetchTelegramText(dmdataKeyEndpoint(KEY), url('abcdef0123'))
     await settle()
-    const second = await fetchTelegramText(KEY, url('abcdef0123'))
+    const second = await fetchTelegramText(dmdataKeyEndpoint(KEY), url('abcdef0123'))
 
     expect(first.xml).toBe('<Report>1</Report>')
     expect(second.xml).toBe('<Report>1</Report>')
@@ -78,8 +79,8 @@ describe('fetchTelegramText（電文本体の控え）', () => {
   it('別の id は取りに行く', async () => {
     const requested = stubFetch({ aaaaaaaa11: '<Report>A</Report>', bbbbbbbb22: '<Report>B</Report>' })
 
-    const a = await fetchTelegramText(KEY, url('aaaaaaaa11'))
-    const b = await fetchTelegramText(KEY, url('bbbbbbbb22'))
+    const a = await fetchTelegramText(dmdataKeyEndpoint(KEY), url('aaaaaaaa11'))
+    const b = await fetchTelegramText(dmdataKeyEndpoint(KEY), url('bbbbbbbb22'))
 
     expect(a.xml).toBe('<Report>A</Report>')
     expect(b.xml).toBe('<Report>B</Report>')
@@ -95,13 +96,13 @@ describe('fetchTelegramText（電文本体の控え）', () => {
       return { ok: true, status: 200, text: async () => '<Report>late</Report>' } as unknown as Response
     }))
 
-    const failed = await fetchTelegramText(KEY, url('cccccccc33'))
+    const failed = await fetchTelegramText(dmdataKeyEndpoint(KEY), url('cccccccc33'))
     expect(failed.xml).toBeNull()
     expect(failed.status).toBe(503)
 
     // 復旧後は取り直せる
     await settle()
-    const ok = await fetchTelegramText(KEY, url('cccccccc33'))
+    const ok = await fetchTelegramText(dmdataKeyEndpoint(KEY), url('cccccccc33'))
     expect(ok.xml).toBe('<Report>late</Report>')
   })
 
@@ -114,13 +115,13 @@ describe('fetchTelegramText（電文本体の控え）', () => {
     const spy = vi.fn(async () => ({ ok: false, status: 429 }) as unknown as Response)
     vi.stubGlobal('fetch', spy)
 
-    const first = await fetchTelegramText(KEY, url('dddddddd44'))
+    const first = await fetchTelegramText(dmdataKeyEndpoint(KEY), url('dddddddd44'))
     expect(first.status).toBe(429)
     expect(spy).toHaveBeenCalledTimes(1)
 
     // 2 回目は通信せず 429 を返す（**門の枠も使わない**）
     await settle()
-    const second = await fetchTelegramText(KEY, url('dddddddd44'))
+    const second = await fetchTelegramText(dmdataKeyEndpoint(KEY), url('dddddddd44'))
     expect(second.xml).toBeNull()
     expect(second.status).toBe(429)
     expect(spy).toHaveBeenCalledTimes(1)
@@ -136,10 +137,10 @@ describe('fetchTelegramText（電文本体の控え）', () => {
       return { ok: true, status: 200, text: async () => '<Report>retry</Report>' } as unknown as Response
     }))
 
-    expect((await fetchTelegramText(KEY, url('eeeeeeee55'))).status).toBe(500)
+    expect((await fetchTelegramText(dmdataKeyEndpoint(KEY), url('eeeeeeee55'))).status).toBe(500)
     await settle()
 
-    expect((await fetchTelegramText(KEY, url('eeeeeeee55'))).xml).toBe('<Report>retry</Report>')
+    expect((await fetchTelegramText(dmdataKeyEndpoint(KEY), url('eeeeeeee55'))).xml).toBe('<Report>retry</Report>')
   })
 
   // 安全弁: 通信そのものの例外は**潰さずに投げる**。
@@ -148,7 +149,7 @@ describe('fetchTelegramText（電文本体の控え）', () => {
   it('通信の例外は潰さずに投げる（呼び出し側が件数をまとめる）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
 
-    await expect(fetchTelegramText(KEY, url('dddddddd44'))).rejects.toThrow('network down')
+    await expect(fetchTelegramText(dmdataKeyEndpoint(KEY), url('dddddddd44'))).rejects.toThrow('network down')
     expect((await telegramCacheStats())?.entries).toBe(0)
   })
 
@@ -158,8 +159,8 @@ describe('fetchTelegramText（電文本体の控え）', () => {
     const requested = stubFetch({ '': '<Report>x</Report>' })
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, text: async () => '<Report>x</Report>' }) as unknown as Response))
 
-    await fetchTelegramText(KEY, 'not-a-url')
-    await fetchTelegramText(KEY, 'not-a-url')
+    await fetchTelegramText(dmdataKeyEndpoint(KEY), 'not-a-url')
+    await fetchTelegramText(dmdataKeyEndpoint(KEY), 'not-a-url')
 
     expect((await telegramCacheStats())?.entries).toBe(0)
     expect(telegramBodyStats().fetched).toBe(2)   // 控えないので 2 回
@@ -175,7 +176,7 @@ describe('fetchTelegramText（電文本体の控え）', () => {
 
     // 上限 +5 件を入れる（id は 8 文字以上でないと鍵にならない）
     for (let i = 0; i < MAX_ENTRIES + 5; i++) {
-      await fetchTelegramText(KEY, url(`telegram${String(i).padStart(6, '0')}`))
+      await fetchTelegramText(dmdataKeyEndpoint(KEY), url(`telegram${String(i).padStart(6, '0')}`))
     }
 
     // **控えへの書き込みは待たない設計**（電文はもう手元にあるので先へ進む）。
@@ -185,7 +186,7 @@ describe('fetchTelegramText（電文本体の控え）', () => {
     }, { timeout: 20_000 })
     // 最後に入れたものは残っている（古い順に捨てるので）
     await settle()
-    const last = await fetchTelegramText(KEY, url(`telegram${String(MAX_ENTRIES + 4).padStart(6, '0')}`))
+    const last = await fetchTelegramText(dmdataKeyEndpoint(KEY), url(`telegram${String(MAX_ENTRIES + 4).padStart(6, '0')}`))
     expect(last.fromCache).toBe(true)
   }, 60_000)
 })
@@ -226,8 +227,8 @@ describe('fetchTelegramText（同時要求のまとめ）', () => {
     }))
 
     const both = Promise.all([
-      fetchTelegramText(KEY, url('eeeeeeee55')),
-      fetchTelegramText(KEY, url('eeeeeeee55')),
+      fetchTelegramText(dmdataKeyEndpoint(KEY), url('eeeeeeee55')),
+      fetchTelegramText(dmdataKeyEndpoint(KEY), url('eeeeeeee55')),
     ])
     release()
     const [a, b] = await both
@@ -248,8 +249,8 @@ describe('fetchTelegramText（同時要求のまとめ）', () => {
     }))
 
     await Promise.all([
-      fetchTelegramText(KEY, url('ffffffff66')),
-      fetchTelegramText(KEY, url('gggggggg77')),
+      fetchTelegramText(dmdataKeyEndpoint(KEY), url('ffffffff66')),
+      fetchTelegramText(dmdataKeyEndpoint(KEY), url('gggggggg77')),
     ])
 
     expect(requested.sort()).toEqual(['ffffffff66', 'gggggggg77'])
@@ -264,18 +265,18 @@ describe('fetchTelegramText（同時要求のまとめ）', () => {
     ) as unknown as Response))
 
     // 1 件だけ取得して控えさせる
-    await fetchTelegramText(KEY, url('iiiiiiii99'))
+    await fetchTelegramText(dmdataKeyEndpoint(KEY), url('iiiiiiii99'))
     await new Promise((r) => setTimeout(r, 0))
 
     // **門に「使用済みの枠」を作ってから測る。** 間隔を張り直した直後は予約が空で、
     // 1 本目は誤った実装でも即座に通ってしまう（この手当てを入れる前のこのテストは、
     // 控えヒットを門に通す形へ壊しても通っていた）。
     setBodyGateIntervalForTest(10_000)
-    void fetchTelegramText(KEY, url('jjjjjjjj10'))   // 枠を 1 つ消費する（結果は待たない）
+    void fetchTelegramText(dmdataKeyEndpoint(KEY), url('jjjjjjjj10'))   // 枠を 1 つ消費する（結果は待たない）
     await new Promise((r) => setTimeout(r, 0))
 
     const start = Date.now()
-    const again = await fetchTelegramText(KEY, url('iiiiiiii99'))
+    const again = await fetchTelegramText(dmdataKeyEndpoint(KEY), url('iiiiiiii99'))
 
     expect(again.fromCache).toBe(true)
     expect(Date.now() - start).toBeLessThan(1_000)
@@ -291,13 +292,13 @@ describe('fetchTelegramText（同時要求のまとめ）', () => {
     }))
 
     const results = await Promise.allSettled([
-      fetchTelegramText(KEY, url('hhhhhhhh88')),
-      fetchTelegramText(KEY, url('hhhhhhhh88')),
+      fetchTelegramText(dmdataKeyEndpoint(KEY), url('hhhhhhhh88')),
+      fetchTelegramText(dmdataKeyEndpoint(KEY), url('hhhhhhhh88')),
     ])
     expect(results.every(r => r.status === 'rejected')).toBe(true)
 
     // まとめが残っていれば、この取得も失敗した Promise を返してしまう
-    const retry = await fetchTelegramText(KEY, url('hhhhhhhh88'))
+    const retry = await fetchTelegramText(dmdataKeyEndpoint(KEY), url('hhhhhhhh88'))
     expect(retry.xml).toBe('<Report>recovered</Report>')
   })
 })
@@ -334,14 +335,14 @@ describe('429 の窓による見送りを、配信元から受けた 429 と見�
     vi.stubGlobal('fetch', spy)
 
     // 1 回目: 配信元から 429 を受ける（投げている）
-    const first = await fetchTelegramText(KEY, rlUrl('rl000001'))
+    const first = await fetchTelegramText(dmdataKeyEndpoint(KEY), rlUrl('rl000001'))
     expect(first.status).toBe(429)
     expect(first.rateLimitedUntil).toBeNull()
     expect(spy).toHaveBeenCalledTimes(1)
 
     // 2 回目: 窓が明けていないので投げない
     await settle()
-    const second = await fetchTelegramText(KEY, rlUrl('rl000001'))
+    const second = await fetchTelegramText(dmdataKeyEndpoint(KEY), rlUrl('rl000001'))
     expect(second.status).toBe(429)
     expect(second.rateLimitedUntil).not.toBeNull()
     expect(second.rateLimitedUntil).toBeGreaterThan(Date.now())
@@ -354,9 +355,9 @@ describe('429 の窓による見送りを、配信元から受けた 429 と見�
     const spy = vi.fn(async () => ({ ok: false, status: 500 }) as unknown as Response)
     vi.stubGlobal('fetch', spy)
 
-    await fetchTelegramText(KEY, rlUrl('rl000002'))
+    await fetchTelegramText(dmdataKeyEndpoint(KEY), rlUrl('rl000002'))
     await settle()
-    const second = await fetchTelegramText(KEY, rlUrl('rl000002'))
+    const second = await fetchTelegramText(dmdataKeyEndpoint(KEY), rlUrl('rl000002'))
 
     expect(second.rateLimitedUntil).toBeNull()
     expect(spy).toHaveBeenCalledTimes(2)
@@ -368,13 +369,13 @@ describe('429 の窓による見送りを、配信元から受けた 429 と見�
   it('見送りは failed ではなく rateLimited に数える', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 429 }) as unknown as Response))
 
-    await fetchTelegramText(KEY, rlUrl('rl000003'))
+    await fetchTelegramText(dmdataKeyEndpoint(KEY), rlUrl('rl000003'))
     const afterFirst = telegramBodyStats()
     expect(afterFirst.failed).toBe(1)
     expect(afterFirst.rateLimited).toBe(0)
 
     await settle()
-    await fetchTelegramText(KEY, rlUrl('rl000003'))
+    await fetchTelegramText(dmdataKeyEndpoint(KEY), rlUrl('rl000003'))
     const afterSecond = telegramBodyStats()
     // 投げていないので `failed` は増えない
     expect(afterSecond.failed).toBe(1)
@@ -388,12 +389,12 @@ describe('429 の窓による見送りを、配信元から受けた 429 と見�
     vi.stubGlobal('fetch', spy)
 
     // テキスト版で 429 を受けて窓を立てる
-    await fetchTelegramText(KEY, rlUrl('rl000004'))
+    await fetchTelegramText(dmdataKeyEndpoint(KEY), rlUrl('rl000004'))
     expect(spy).toHaveBeenCalledTimes(1)
 
     await settle()
     // 同じ id をバイト列版で取ろうとしても、窓が明けていないので投げない
-    const bytes = await fetchTelegramBytes(KEY, rlUrl('rl000004'))
+    const bytes = await fetchTelegramBytes(dmdataKeyEndpoint(KEY), rlUrl('rl000004'))
     expect(bytes.bytes).toBeNull()
     expect(bytes.rateLimitedUntil).not.toBeNull()
     expect(spy).toHaveBeenCalledTimes(1)

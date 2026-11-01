@@ -41,7 +41,7 @@ export function tsunamiMaxGrade(tsunami: JMATsunami): TsunamiGrade {
 }
 
 /**
- * 等級を発表する報か。津波警報・注意報・予報（VTSE41）と、種別を持たない報（P2PQuake の津波予報）が当たる。
+ * 等級を発表する報か。津波警報・注意報・予報（VTSE41）と、種別を持たない報が当たる。
  *
  * **津波情報（VTSE51）・沖合の観測（VTSE52）は等級を発表しない。** VTSE51 も区域（`Forecast`）を載せるが、
  * 中身は直前の VTSE41 の写し。VTSE52 は区域を持たない（実電文での件数は tsunami-spec.md §10「等級を伝えていない電文」）。
@@ -149,8 +149,8 @@ export function tsunamiEventIds(t: Pick<JMATsunami, 'eventId' | 'foldedReports'>
  *   切替えの報を別の津波と取り違え、観測点・付加文・期限・本文を落として新しい発表として鳴らす
  * - 運用種別を見るのは、気象庁の言う「独立した情報単位」が情報名称・運用種別・地震識別番号の
  *   組で決まるため（同 Ⅰ.別01-1）。訓練の報を通常の津波へ混ぜない
- * - **どちらかが番号を持たなければ偽**（同じかどうかを決められない）。番号を持たない経路
- *   （P2PQuake の 552）の扱いは呼び出し側が決める
+ * - **どちらかが番号を持たなければ偽**（同じかどうかを決められない）。番号を持たない報
+ *   （`EventID` が空の電文）の扱いは呼び出し側が決める
  */
 export function isSameTsunamiEvent(
   a: Pick<JMATsunami, 'eventId' | 'foldedReports' | 'operationStatus'>,
@@ -207,7 +207,7 @@ export function tsunamiLiftText(report: Pick<JMATsunami, 'bodyText' | 'warningCo
  * という意味だが、津波情報の取消は**その種類の報が運んだ値**（観測点・推定など）が誤りだったという
  * 意味で、警報は生きている。→ 状態は {@link refoldTsunamiWithout} で組み直す
  *
- * 種類を持たない報（P2PQuake・種類の欄を読めなかった報）は津波全体の取消として扱う（従来どおり）。
+ * 種類を持たない報（種類の欄を読めなかった報）は津波全体の取消として扱う。
  */
 export function isPartialTsunamiRetraction(t: Pick<JMATsunami, 'cancelled' | 'cancelReason' | 'headType'>): boolean {
   return t.cancelled && t.cancelReason === 'retracted' && (t.headType === 'VTSE51' || t.headType === 'VTSE52')
@@ -357,10 +357,8 @@ function lastReportOfKind(current: JMATsunami, report: JMATsunami): JMATsunami {
  *    番号が無いので、同じ種類の最後の報より後・別の種類の最後の報より前に作られた解除は、同じ津波の解除か
  *    別の津波の遅れた解除かを見分けられない。この間は当てる側へ倒す（解除を落とすほうが害が大きい）
  *
- * **時刻も読めないときは受け入れる**（`true`）。かつて `id` の完全一致を求めていた頃は、
- * P2PQuake（standard 版）の 552 が `eventId` を持たず `id` は電文ごとの文書 ID なので、発表と
- * 解除で必ず異なり standard 版の解除が常に捨てられていた（音と読み上げだけが「解除」と伝え、
- * カードは 24 時間のフェイルセーフまで残る）。解除を落とす方が害が大きい。
+ * **時刻も読めないときは受け入れる**（`true`）。解除を落とすと、音と読み上げだけが「解除」と伝え、
+ * カードは残る。解除を落とす方が害が大きい。
  *
  * **カードの状態更新（`useEarthquakes`）と、読み上げ・画面の記憶を落とす判断
  * （`useLiveEventHandler`）の両方でこの関数を使うこと。** 片方だけが照合すると、カードは
@@ -389,8 +387,8 @@ export function isCancelForCurrentTsunami(cancel: JMATsunami, current: JMATsunam
  *
  * 引き継ぐのは**同じ津波（{@link isSameTsunamiEvent}）で、表示中が解除表示に入っていない**ときだけ。
  *
- * - `eventId` を持たない経路（P2PQuake の 552）は同一性を判定できないので引き継がない。
- *   standard 版で観測点が蓄積されないのはこのため（カードもそう振る舞う）
+ * - `eventId` を持たない報（`EventID` が空の電文）は同一性を判定できないので引き継がない
+ *   （カードもそう振る舞う）
  * - 解除表示中（`cancelledAt`）のカードは 10 秒で消える。その値を新しい津波へ持ち込まない
  */
 export function isTsunamiContinuation(current: JMATsunami | undefined, next: JMATsunami): boolean {
@@ -576,7 +574,7 @@ function jstDateKey(at: Date): string {
  * 何をどう引き継ぐかは {@link mergeTsunamiReports} を見ること。
  *
  * 同一イベントの判定は {@link isSameTsunamiEvent}（番号の重なりを辿る。→ {@link sameTsunamiEventReports}）、
- * `eventId` を持たない経路（P2PQuake）では `id` の一致で行う。
+ * `eventId` を持たない報では `id` の一致で行う。
  * 別の津波の値を引き継ぐと、発表中の津波を無関係な期限で消したり、別の津波の本文を出したりする。
  *
  * @param latest 画面へ載せる最新報
@@ -600,7 +598,7 @@ export function withInheritedTsunamiFacts(latest: JMATsunami, reports: JMATsunam
   // ここに残すのは最後の検分だけ。
   //
   // 読めない期限は落とす。残すと「期限を持つ津波」の顔をしたまま以後の比較がすべて偽へ倒れ、
-  // 表示は続くのに失効の予約も積まれない。落とせば standard 版の 24 時間フェイルセーフが働く。
+  // 表示は続くのに失効の予約も積まれない。落とせば期限を持たない津波として、解除か続報まで残る。
   if (latestValidDateTime([merged])) return merged
   return merged.validDateTime ? { ...merged, validDateTime: undefined } : merged
 }
@@ -768,21 +766,18 @@ export function mergeTsunamiReports(current: JMATsunami, next: JMATsunami): JMAT
  *   - `current` 無し
  *   - `current` が取消済み（`cancelled` or 10秒表示中の `cancelledAt`）
  *   - 地震の識別番号が 1 つも重ならない（{@link isSameTsunamiEvent}。別地震の津波）
- *   - `eventId` が両者で欠落する場合は原因地震（`sourceEarthquakes[0]`）の `originTime` で代替判定
- *     （DMDATA XML の Earthquake 要素経由でのみ機能する。P2PQuake API v2 の
- *     生 552 電文には `earthquake` 相当のフィールドが無く `sourceEarthquakes` は
- *     常に undefined になるため、標準版ではこのフォールバックは実質発火しない）
+ *   - `eventId` がどちらかで欠落する場合は原因地震（`sourceEarthquakes[0]`）の `originTime` で代替判定
+ *     （電文の `Earthquake` 要素から取る）。
  *     **比べるのは 1 件目だけ** —— 電文は原因地震を複数持ちうるが、2 件目以降は続報で
  *     増減するので同一性の鍵にならない
  *   - 上記いずれの識別子も取れない場合は false（保守的に続報扱い）。
- *     標準版はこの経路がデフォルトで、別地震の新規津波でもタブが奪われない
- *     （grade 格上げか手動タブ切替に依存する）
+ *     別地震の新規津波でもタブは奪われない（grade 格上げか手動タブ切替に依存する）
  */
 export function isTsunamiNewFire(next: JMATsunami, current: JMATsunami | undefined): boolean {
   if (!current) return true
   if (current.cancelled || current.cancelledAt) return true
   if (current.eventId && next.eventId) return !isSameTsunamiEvent(current, next)
-  // 識別子を持たない経路（P2PQuake）のフォールバック。**比べるのは 1 件目だけ。**
+  // 識別子を持たない報のフォールバック。**比べるのは 1 件目だけ。**
   // 複数の地震が原因のとき、2 件目以降は続報で増減しうるので同一性の鍵にならない。
   const currentOrigin = current.sourceEarthquakes?.[0]?.originTime
   const nextOrigin = next.sourceEarthquakes?.[0]?.originTime
@@ -836,7 +831,7 @@ export function isTsunamiGradeUpgrade(next: JMATsunami, current: JMATsunami | un
  * 遷移先が「解除」であることを表す値（`JMATsunami.cancelledAreas` の区域）。
  *
  * **`TsunamiGrade` の `'Unknown'` で表さないこと。** あちらは `areas` の中では「等級を読めな
- * かった」を意味しており（P2PQuake が知らない等級名を配信したとき）、解除とは別の事実。同じ値に
+ * かった」を意味しており（知らない等級のコードが届いたとき。`dmdataParser.ts` の `parseTsunamiGradeByCode`）、解除とは別の事実。同じ値に
  * 兼ねさせると、読めなかった区域が「解除されました」と読み上げられる。
  *
  * `TsunamiGrade` に無い値なので、`Record<TsunamiGrade, …>` の表を引いている箇所は
@@ -884,7 +879,7 @@ export interface TsunamiAreaGradeChange {
  * 2025-12-09T06:20 の VTSE41 では 7 区域が「注意報 → 予報」の降格、1 区域（青森県日本海沿岸）が
  * 解除だった。遷移先は {@link TSUNAMI_GRADE_LIFTED} になる。
  *
- * `lastGrade` を持たない区域（P2PQuake 経路・`LastKind` の無い電文）は判定できないので数えない。
+ * `lastGrade` を持たない区域（`LastKind` の無い電文）は判定できないので数えない。
  * `areas` の中の `Unknown`（等級を読めなかった区域）も返さない —— 解除とは別の事実で、
  * どちらの向きにも文を作れない。
  *
@@ -1568,7 +1563,7 @@ export function mergeTsunamiObservations(
  * 古い到達予想時刻が残る。判定材料は `JMATsunami.carriesForecastStations`。
  *
  * @param nextCarriesStations 新報が観測点を運ぶ種別か（`JMATsunami.carriesForecastStations`）。
- *   種別を判定できない経路（P2PQuake）は undefined で、安全側＝継ぐ。
+ *   種別を判定できない報は undefined で、安全側＝継ぐ。
  */
 export function mergeTsunamiAreas(
   prev: TsunamiArea[] | undefined,
@@ -2052,7 +2047,7 @@ function sortAreasByObservation(areas: TsunamiArea[], observations: TsunamiObser
  *
  * 分かれるのは大津波警報の「大津波警報：発表」（コード 53・その報で大津波警報になった区域）と「大津波警報」（52）だけ
  * （全期間の控えで、71・72・73 はどれも「津波予報（若干の海面変動）」）。**電文の名前とアプリの呼び名が違う方を先に積む**
- * ので「大津波警報：発表」が上に来る。名前を持たない区域（標準版・テストの合成）はアプリの呼び名にまとめる。
+ * ので「大津波警報：発表」が上に来る。名前を持たない区域（テストの合成など）はアプリの呼び名にまとめる。
  *
  * **カード・読み上げ・観測点の並びは `groupAreasForCardDisplay` を通してこの分け方を共有する。** カードだけで分けると、
  * 52 と 53 が混ざる報で読み上げの順がカードの上下を往復する。
@@ -2109,8 +2104,8 @@ export function sortAreasForCardDisplay(areas: TsunamiArea[], observations: Tsun
  * 「カードの先頭に無い区域を代表として挙げる」形で現れる。
  *
  * `GRADES_IN_CARD_ORDER` に無い等級の区域は落ちる。カード（`TsunamiTab`）も等級ごとに
- * 絞り込んで描くので**カードと同じ振る舞い**だが、電文の解析（`dmdataParser` / `p2pquake`）が
- * 既知の 5 値へ正規化することに依存している。正規化を緩めるなら両方を併せて見直すこと。
+ * 絞り込んで描くので**カードと同じ振る舞い**だが、電文の解析（`dmdataParser`）が
+ * 既知の 5 値へ正規化することに依存している。正規化を緩めるならこちらも併せて見直すこと。
  */
 export function sortAreasAcrossGradesForCardDisplay(
   areas: readonly TsunamiArea[],

@@ -5,8 +5,7 @@
 //
 // **確かめるのは「確かめたい形が実電文（と書き換え）から本当に出ているか」。** 手で内部型を
 // 組んでいた頃の検査（`testData.test.ts`）のうち、地震情報のボタンに当たるものをここへ移した。
-// 標準版を P2PQuake の形へ寄せる検査は移していない —— P2PQuake は廃止する予定で、テストボタンは
-// 両版とも同じ XML の読み取り結果を流す（2026-10-22 ユーザー原文「XMLにしましょう。近いうちに2つは
+// テストボタンは XML の読み取り結果を流す（2026-10-22 ユーザー原文「XMLにしましょう。近いうちに2つは
 // 統合するので。」「統合すると言うかP2PQuakeは廃止する」）。
 import { describe, it, expect, beforeEach } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -32,8 +31,8 @@ const TELEGRAM_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../public
 const fetcher = async (file: string): Promise<string> => readFileSync(join(TELEGRAM_DIR, file), 'utf8')
 const binaryFetcher = async (file: string): Promise<Uint8Array> => new Uint8Array(readFileSync(join(TELEGRAM_DIR, file)))
 
-async function build(script: TestTelegramScript, isDmdss = true): Promise<BuiltTestTelegram[]> {
-  return buildTestTelegramEntries(script, { isDmdss, now: NOW, fetcher, binaryFetcher })
+async function build(script: TestTelegramScript): Promise<BuiltTestTelegram[]> {
+  return buildTestTelegramEntries(script, { now: NOW, fetcher, binaryFetcher })
 }
 
 const payloads = (built: BuiltTestTelegram[]): ReplayPayload[] => built.map(b => b.entry.payload)
@@ -50,8 +49,8 @@ beforeEach(() => clearTestTelegramCacheForTest())
 
 describe('台本はどれも置いてある電文から組める', () => {
   for (const [name, script] of Object.entries(scripts.ALL_TEST_TELEGRAM_SCRIPTS)) {
-    it.each([true, false])(`${name}（DMDSS 版 = %s）`, async (isDmdss) => {
-      const built = await build(script, isDmdss)
+    it(name, async () => {
+      const built = await build(script)
       expect(built.length).toBeGreaterThan(0)
       // 流す時刻は押した時刻から、台本の順に並ぶ
       const times = built.map(b => b.entry.replayTime.getTime())
@@ -107,17 +106,6 @@ describe('台本はどれも置いてある電文から組める', () => {
       expect(issued).toBe(b.entry.replayTime.getTime())
     }
   })
-
-  // 安全弁: 押すたびに進む台本は、段の添字を押下の回数に使う。バリアントで段が落ちるとずれる
-  it('押すたびに進む台本は、バリアントで段を分けられない', async () => {
-    const broken: TestTelegramScript = {
-      ...scripts.EEW_FORECAST,
-      steps: scripts.EEW_FORECAST.steps.map((s, i) => (i === 1 ? { ...s, onlyIn: 'dmdss' as const } : s)),
-    }
-    await expect(build(broken, false)).rejects.toThrow('バリアントで段を分けられません')
-    // 対照: 分けていなければ通る
-    await expect(build(scripts.EEW_FORECAST, false)).resolves.toBeDefined()
-  })
 })
 
 describe('地震テスト', () => {
@@ -144,20 +132,18 @@ describe('地震テスト', () => {
     expect(quake.issue.correct).toBe('なし')
   })
 
-  // 正・対照: 長周期地震動は DMDSS 版だけ（電文そのものが標準版の受信元から届かない）
-  it('長周期地震動は DMDSS 版だけで流し、地震と同じ識別子に紐付く', async () => {
-    const dmdss = payloads(await build(scripts.EARTHQUAKE, true))
-    const lpgm = dmdss.find(p => p.kind === 'lpgm')
+  it('長周期地震動も流し、地震と同じ識別子に紐付く', async () => {
+    const built = payloads(await build(scripts.EARTHQUAKE))
+    const lpgm = built.find(p => p.kind === 'lpgm')
     expect(lpgm).toBeDefined()
-    const quake = quakesOf(await build(scripts.EARTHQUAKE, true))[0]
+    const quake = quakesOf(await build(scripts.EARTHQUAKE))[0]
     expect(lpgm!.kind === 'lpgm' && lpgm!.data.eventId).toBe(extractQuakeEventId(quake))
-    expect(payloads(await build(scripts.EARTHQUAKE, false)).some(p => p.kind === 'lpgm')).toBe(false)
   })
 
   // 正: 長周期地震動にも、気象庁以外が運用する観測点の印が 1 点だけ立つ。**元の電文には 1 件も無い**
   // ので、ここで立てないと表示の経路を実機で一度も通せない（→ `markFirstLgStation`）。
   it('長周期地震動の先頭 1 点に、気象庁以外の観測点の印が立つ', async () => {
-    const lpgm = lpgmsOf(await build(scripts.EARTHQUAKE, true))[0]!
+    const lpgm = lpgmsOf(await build(scripts.EARTHQUAKE))[0]!
     const marked = (lpgm.points ?? []).filter(pt => pt.nonJma)
     expect(marked.length).toBe(1)
     // 印は名前から外れている（引き当てのため。→ quake-spec.md §8）
@@ -167,7 +153,7 @@ describe('地震テスト', () => {
   // 安全弁: 押すたびに別の地震になる（同じ識別子のまま 2 回押すと、続報として 1 枚に畳まれる）
   it('押すたびに識別子が付け替わる', async () => {
     const first = quakesOf(await build(scripts.EARTHQUAKE))[0]
-    const second = quakesOf(await buildTestTelegramEntries(scripts.EARTHQUAKE, { isDmdss: true, now: new Date(NOW.getTime() + 1000), fetcher, binaryFetcher }))[0]
+    const second = quakesOf(await buildTestTelegramEntries(scripts.EARTHQUAKE, { now: new Date(NOW.getTime() + 1000), fetcher, binaryFetcher }))[0]
     expect(first.eventId).toMatch(/^\d{14}$/)
     expect(second.eventId).not.toBe(first.eventId)
   })
@@ -516,11 +502,11 @@ describe('津波情報は区域の等級と予想を動かさない', () => {
   // 同じ組み立てで、実配信の並びとして崩れていないことも見る —— **作成時刻の順に届く**（逆だと受け手が
   // 重ね直しへ回る。→ `utils/tsunami.ts` の `arrivesOutOfOrder`）、**第１波の到達確認は後戻りしない**。
   for (const [name, script] of Object.entries(scripts.ALL_TEST_TELEGRAM_SCRIPTS)) {
-    it.each([true, false])(`${name}（DMDSS 版 = %s）`, async (isDmdss) => {
+    it(name, async () => {
       let warning: Map<string, string> | undefined
       let lastCreatedAt = -Infinity
       const arrived = new Set<string>()
-      for (const t of tsunamisOf(await build(script, isDmdss))) {
+      for (const t of tsunamisOf(await build(script))) {
         if (!script.stepByPress && !script.pacedByApp && t.createdAtMs !== undefined) {
           expect(`${t.id} ${t.createdAtMs}`).toBe(`${t.id} ${Math.max(t.createdAtMs, lastCreatedAt)}`)
           lastCreatedAt = t.createdAtMs
@@ -719,17 +705,14 @@ describe('津波のテスト', () => {
     expect(lift.eventId).toBe(first.eventId)
   })
 
-  // 正・対照: 予報テストの片付けは標準版だけ（DMDSS 版は失効時刻で消える）
-  it('予報テストは失効時刻を持ち、片付けの報は標準版だけで流す', async () => {
-    const dmdss = tsunamisOf(await build(scripts.TSUNAMI_FORECAST, true))
-    expect(dmdss).toHaveLength(1)
-    expect(dmdss[0].areas.every(a => a.grade === 'Forecast')).toBe(true)
+  // 予報だけの津波は失効時刻で消える（気象庁は予報の終わりに電文を出さない）ので、片付けの報は流さない
+  it('予報テストは失効時刻を持ち、片付けの報を流さない', async () => {
+    const forecast = tsunamisOf(await build(scripts.TSUNAMI_FORECAST))
+    expect(forecast).toHaveLength(1)
+    expect(forecast[0].areas.every(a => a.grade === 'Forecast')).toBe(true)
     // **失効時刻は押した時刻から `TSUNAMI_DISMISS_MS` 後へ詰めてある。** 実電文は発表の
     // 約 3 時間後で、テストボタンでは待てない（ほかの津波テストの片付けと同じ長さに揃えた）。
-    expect(Date.parse(dmdss[0].validDateTime!) - NOW.getTime()).toBe(scripts.TSUNAMI_DISMISS_MS)
-    const standard = tsunamisOf(await build(scripts.TSUNAMI_FORECAST, false))
-    expect(standard).toHaveLength(2)
-    expect(standard[1].cancelled).toBe(true)
+    expect(Date.parse(forecast[0].validDateTime!) - NOW.getTime()).toBe(scripts.TSUNAMI_DISMISS_MS)
   })
 
   it('失効時刻テストは注意報のあと、予報だけ・失効時刻つきの報が届く', async () => {

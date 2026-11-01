@@ -5,21 +5,13 @@
 // Service Worker から出した通知は、ここで処理を書かないと押しても閉じるだけになる。
 // 押したら、このアプリの画面を前面に出し、無ければアプリを開く。
 //
-// **探すのは、このスコープのアプリの画面だけ。** standard 版のスコープ（/yuremado/）は DMDSS 版
-// （/yuremado/dmdss/。vite.config.ts の `base`）の URL も包むので、URL の前方一致だけで探すと、standard 版の
-// 通知を押して DMDSS 版の画面が前に出る。内側のスコープの画面は外す。
+// **探すのは、このスコープのアプリの画面だけ**（URL がスコープで始まる画面）。
 // Service Worker が扱っていない画面（強制再読み込みの直後など）も拾う（`includeUncontrolled`）——
 // 拾わないと、開いているのに 2 つ目のアプリを開き、DMDATA の同時接続枠を余計に食う。
 //
 // 失敗はここ（Service Worker のコンソール）にしか残せない。
-const NESTED_SCOPE_DIRS = ['dmdss/']
-
 function isOwnWindow(url, scopePath) {
-  const path = new URL(url).pathname
-  if (!path.startsWith(scopePath)) return false
-  // 末尾のスラッシュが無い形（/yuremado/dmdss）も内側として外す（vite.config.ts の navigateFallbackDenylist と揃える）
-  return !NESTED_SCOPE_DIRS.some(dir => !scopePath.endsWith(dir)
-    && (path.startsWith(scopePath + dir) || path === scopePath + dir.slice(0, -1)))
+  return new URL(url).pathname.startsWith(scopePath)
 }
 
 self.addEventListener('notificationclick', (event) => {

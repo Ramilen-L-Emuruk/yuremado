@@ -34,7 +34,7 @@ describe('regionCityRowsHtml（区域の吹き出しの市町村の行）', () =
     expect(html).not.toContain('ほか')
   })
 
-  // 対照: 市町村の震度を載せない報（震度速報・標準版）は何も足さない。
+  // 対照: 市町村の震度を載せない報（震度速報）は何も足さない。
   it('市町村が無ければ空文字を返す', () => {
     expect(regionCityRowsHtml([])).toBe('')
   })

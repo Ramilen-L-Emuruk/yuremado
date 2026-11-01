@@ -5,8 +5,6 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { PREFERRED_CLASSIFICATIONS } from './dmdataClassifications'
 import {
   closeCodeAction,
-  fetchDmdataGdEarthquakes,
-  fetchDmdataGdEarthquakesBefore,
   releaseSocket,
   fetchDmdataActiveEews,
   fetchDmdataActiveEewsOutcome,
@@ -17,11 +15,12 @@ import {
   needsBodyDecode,
 } from './dmdata'
 import { isBinaryTelegramType } from './dmdataTelegramPayload'
-import { DmdataApiKeyError, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
+import { DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
 import { log } from '../utils/logger'
 import { serverNow } from '../utils/clock'
 import { setBodyGateIntervalForTest, resetTelegramBodyStatsForTest } from './telegramBody'
 import { setApiGateIntervalForTest, resetApiGateForTest } from './dmdataRequestGates'
+import { dmdataKeyEndpoint } from './dmdataEndpoint'
 
 // スキップ時の警告を検証したいので、ロガーは差し替えて呼び出しを記録する。
 // 間引き（createLogThrottle）は素通しにする。ここで見たいのは「警告を出したか」であって
@@ -65,67 +64,6 @@ describe('closeCodeAction', () => {
   })
 })
 
-// GD Earthquake List（震源カタログ）のレスポンス 1 件分を組み立てる。
-// 実データの構造に合わせている（値はすべて文字列で返る）。
-function gdItem(overrides: {
-  eventId: string
-  daysAgo: number
-  lat?: string
-  lng?: string
-  magnitude?: string | null
-  name?: string
-  depth?: string
-}) {
-  // 実装側の cutoff は serverNow() 基準なので、テストデータも同じ時計から作る。
-  const originTime = new Date(serverNow() - overrides.daysAgo * 24 * 60 * 60 * 1000).toISOString()
-  return {
-    id: 1,
-    type: 'normal',
-    eventId: overrides.eventId,
-    originTime,
-    arrivalTime: originTime,
-    hypocenter: {
-      code: '710',
-      name: overrides.name ?? 'テスト地方',
-      coordinate: {
-        latitude: { text: '33.5˚N', value: overrides.lat ?? '33.5000' },
-        longitude: { text: '130.1˚E', value: overrides.lng ?? '130.1000' },
-      },
-      depth: { type: '深さ', unit: 'km', value: overrides.depth ?? '10' },
-    },
-    ...(overrides.magnitude === null ? {} : { magnitude: { type: 'マグニチュード', unit: 'Mj', value: overrides.magnitude ?? '3.1' } }),
-  }
-}
-
-// 震源が未決定の地震。震度速報だけが出た段階では originTime も hypocenter も返らない
-// （実データで確認済み。持っているのは eventId・arrivalTime・maxInt のみ）。
-function gdItemWithoutHypocenter(eventId: string) {
-  return { id: 2, type: 'normal', eventId, arrivalTime: new Date(serverNow()).toISOString(), maxInt: '3' }
-}
-
-// 発生時刻と hypocenter は持つが、座標の値だけが読めない項目。
-// API のフィールドが変わった場合を想定した、もう一方のスキップ経路。
-function gdItemWithBrokenCoordinate(eventId: string) {
-  const item = gdItem({ eventId, daysAgo: 1 }) as { hypocenter: { coordinate: unknown } }
-  item.hypocenter.coordinate = { latitude: {}, longitude: {} }
-  return item
-}
-
-/** ページごとのレスポンス本文を順に返す fetch。呼ばれた URL も記録する。 */
-function stubPagedFetch(pages: Array<{ items: unknown[]; nextToken?: string }>) {
-  const urls: string[] = []
-  let call = 0
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (url: string) => {
-      urls.push(url)
-      const body = pages[call++] ?? { items: [] }
-      return { ok: true, json: async () => body } as unknown as Response
-    }),
-  )
-  return urls
-}
-
 // 発表中の緊急地震速報の復元は、電文本体を `fetchTelegramText` 経由で取る（控えと門を通すため。
 // → `services/telegramBody.ts`）。**本番の門は 6 秒に 1 件**なので、そのままでは 1 件取るだけで
 // 既定のタイムアウト（5 秒）を超える。門が効いているかは `utils/requestGate.test.ts` が本物の
@@ -144,348 +82,6 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-// リプレイ中のヒートマップ用。一覧は新しい順にしか辿れないので、`date`（日本時間の 1 日）で日ごとに取る
-describe('fetchDmdataGdEarthquakesBefore', () => {
-  /** `date=` ごとに本文を返す fetch。呼ばれた URL も記録する。 */
-  function stubByDate(byDate: Record<string, Array<{ items: unknown[]; nextToken?: string }>>) {
-    const urls: string[] = []
-    const calls = new Map<string, number>()
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      urls.push(url)
-      const date = /[?&]date=([0-9-]+)/.exec(url)?.[1] ?? ''
-      const n = calls.get(date) ?? 0
-      calls.set(date, n + 1)
-      const body = byDate[date]?.[n] ?? { items: [] }
-      return { ok: true, json: async () => body } as unknown as Response
-    }))
-    return urls
-  }
-  const at = (eventId: string, iso: string) => ({ ...gdItem({ eventId, daysAgo: 0 }), originTime: iso })
-  const UNTIL = Date.parse('2024-01-02T12:00:00+09:00')
-
-  it('正: 期間の各日を YYYY-MM-DD で投げ、期間の中の地震を返す', async () => {
-    const urls = stubByDate({
-      '2024-01-01': [{ items: [at('a', '2024-01-01T16:10:00+09:00')] }],
-      '2024-01-02': [{ items: [at('b', '2024-01-02T08:00:00+09:00')] }],
-    })
-    const { items, failedDays } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
-    expect(urls.map(u => /date=([0-9-]+)/.exec(u)?.[1])).toEqual(['2024-01-01', '2024-01-02'])
-    expect(items.map(i => i.eventId)).toEqual(['a', 'b'])
-    expect(failedDays).toEqual([])
-  })
-
-  it('対照: 再生時刻より後・期間の手前の地震は落とす', async () => {
-    stubByDate({
-      '2024-01-01': [{ items: [at('early', '2024-01-01T11:00:00+09:00')] }],
-      '2024-01-02': [{ items: [at('late', '2024-01-02T13:00:00+09:00'), at('ok', '2024-01-02T11:00:00+09:00')] }],
-    })
-    const { items } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
-    expect(items.map(i => i.eventId)).toEqual(['ok'])
-  })
-
-  it('安全弁: 混んだ日はページ上限で打ち切って記録し、止める合図で残りの日を投げない', async () => {
-    const busy = Array.from({ length: 10 }, (_, i) => ({ items: [at(`x${i}`, '2024-01-02T09:00:00+09:00')], nextToken: `T${i}` }))
-    const urls = stubByDate({ '2024-01-02': busy })
-    const { items } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
-    // 1/1 は 1 ページ（空）、混んだ 1/2 は上限の 5 ページで打ち切る
-    expect(urls.filter(u => u.includes('date=2024-01-02'))).toHaveLength(5)
-    expect(items).toHaveLength(5)
-    expect(vi.mocked(log.warn).mock.calls.some(c => String(c[0]).includes('1 日のページ上限'))).toBe(true)
-
-    const controller = new AbortController()
-    controller.abort()
-    const urls2 = stubByDate({})
-    await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 30, controller.signal)
-    expect(urls2).toHaveLength(0)
-  })
-
-  it('安全弁: 1 日の失敗で全体を捨てず、失敗した日を返す。全日が失敗したら投げる', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.includes('date=2024-01-01')) return { ok: false, status: 500, json: async () => ({}) } as unknown as Response
-      return { ok: true, json: async () => ({ items: [at('b', '2024-01-02T08:00:00+09:00')] }) } as unknown as Response
-    }))
-    const { items, failedDays } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)
-    expect(items.map(i => i.eventId)).toEqual(['b'])
-    expect(failedDays).toEqual(['2024-01-01'])
-
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) } as unknown as Response)))
-    await expect(fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 1, null)).rejects.toThrow()
-  })
-
-  it('安全弁: 日付に依らない失敗（401・403・429）はその場で投げ、残りの日を投げない', async () => {
-    for (const status of [401, 403, 429]) {
-      const calls = vi.fn(async () => ({ ok: false, status, json: async () => ({}) } as unknown as Response))
-      vi.stubGlobal('fetch', calls)
-      await expect(fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 30, null)).rejects.toThrow()
-      expect(calls).toHaveBeenCalledTimes(1)
-    }
-  })
-
-  it('安全弁: ほかの失敗も 3 日続いたら残りを投げず、取れた日の分は返す', async () => {
-    const urls: string[] = []
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      urls.push(url)
-      // 最初の 1 日だけ取れ、以後はずっと 500
-      if (urls.length === 1) return { ok: true, json: async () => ({ items: [at('a', '2023-12-03T12:00:00+09:00')] }) } as unknown as Response
-      return { ok: false, status: 500, json: async () => ({}) } as unknown as Response
-    }))
-    const { items, failedDays } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 30, null)
-    expect(urls).toHaveLength(4)
-    expect(items.map(i => i.eventId)).toEqual(['a'])
-    expect(failedDays).toHaveLength(30)
-  })
-
-  it('対照: 失敗が 2 日続いても、取れた日を挟めば打ち切らない', async () => {
-    let n = 0
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      n++
-      if (n % 3 === 0) return { ok: true, json: async () => ({ items: [] }) } as unknown as Response
-      return { ok: false, status: 500, json: async () => ({}) } as unknown as Response
-    }))
-    const { failedDays } = await fetchDmdataGdEarthquakesBefore('dummy-key', UNTIL, 30, null)
-    expect(n).toBe(31)
-    expect(failedDays.length).toBeGreaterThan(0)
-  })
-})
-
-describe('fetchDmdataGdEarthquakes', () => {
-  it('震源・発生時刻を持たない項目を除き、残りを返す', async () => {
-    stubPagedFetch([
-      { items: [gdItem({ eventId: 'a', daysAgo: 1 }), gdItemWithoutHypocenter('b'), gdItem({ eventId: 'c', daysAgo: 2 })] },
-    ])
-
-    const items = await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    expect(items.map(i => i.eventId)).toEqual(['a', 'c'])
-    expect(items[0].latitude).toBe(33.5)
-    expect(items[0].longitude).toBe(130.1)
-  })
-
-  it('震源を持たない項目でページングを打ち切らない（後続ページも取得する）', async () => {
-    // 1 ページ目の先頭に欠測項目を置く。発生時刻を持たない項目で cutoff 判定を通すと
-    // ここで全ページの探索が止まり、2 ページ目以降が丸ごと失われる。
-    const urls = stubPagedFetch([
-      { items: [gdItemWithoutHypocenter('x'), gdItem({ eventId: 'a', daysAgo: 1 })], nextToken: 'TOKEN2' },
-      { items: [gdItem({ eventId: 'b', daysAgo: 2 })] },
-    ])
-
-    const items = await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    expect(items.map(i => i.eventId)).toEqual(['a', 'b'])
-    expect(urls).toHaveLength(2)
-    expect(urls[1]).toContain('cursorToken=TOKEN2')
-  })
-
-  it('期間より古い項目に達したら、その時点で取得を打ち切る', async () => {
-    const urls = stubPagedFetch([
-      { items: [gdItem({ eventId: 'a', daysAgo: 1 }), gdItem({ eventId: 'old', daysAgo: 40 })], nextToken: 'TOKEN2' },
-      { items: [gdItem({ eventId: 'b', daysAgo: 2 })] },
-    ])
-
-    const items = await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    expect(items.map(i => i.eventId)).toEqual(['a'])
-    expect(urls).toHaveLength(1)
-  })
-
-  it('マグニチュードが無い・数値化できない場合は -1（不明）に落とす', async () => {
-    stubPagedFetch([
-      {
-        items: [
-          gdItem({ eventId: 'none', daysAgo: 1, magnitude: null }),
-          gdItem({ eventId: 'nan', daysAgo: 1, magnitude: '不明' }),
-          gdItem({ eventId: 'ok', daysAgo: 1, magnitude: '4.2' }),
-        ],
-      },
-    ])
-
-    const items = await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    expect(items.map(i => i.magnitude)).toEqual([-1, -1, 4.2])
-  })
-
-  it('深さが無い・数値化できない場合は -1（不明）に落とす', async () => {
-    stubPagedFetch([
-      { items: [gdItem({ eventId: 'a', daysAgo: 1, depth: '不明' }), gdItem({ eventId: 'b', daysAgo: 1, depth: '20' })] },
-    ])
-
-    const items = await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    expect(items.map(i => i.depth)).toEqual([-1, 20])
-  })
-
-  it('座標の値が読めない項目も除く（hypocenter はあるが値が欠けるケース）', async () => {
-    stubPagedFetch([
-      { items: [gdItem({ eventId: 'a', daysAgo: 1 }), gdItemWithBrokenCoordinate('broken')] },
-    ])
-
-    const items = await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    expect(items.map(i => i.eventId)).toEqual(['a'])
-  })
-
-  it('項目を捨てたときは件数と理由の内訳を警告に出す（黙って捨てない）', async () => {
-    stubPagedFetch([
-      {
-        items: [
-          gdItem({ eventId: 'a', daysAgo: 1 }),
-          gdItemWithoutHypocenter('b'),
-          gdItemWithBrokenCoordinate('c'),
-        ],
-      },
-    ])
-
-    await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    expect(log.warn).toHaveBeenCalledTimes(1)
-    const message = String(vi.mocked(log.warn).mock.calls[0][0])
-    expect(message).toContain('3 件中 2 件')
-    expect(message).toContain('発生時刻なし 1 件')
-    expect(message).toContain('震源座標なし 1 件')
-  })
-
-  it('全件を捨てたときは例外にする（空配列で既存のキャッシュを潰さない）', async () => {
-    // API の形が変わって全項目が読めなくなった場合。空配列を正常な結果として返すと
-    // 呼び出し側がそれをキャッシュし、直前まで出ていたヒートマップを消してしまう。
-    stubPagedFetch([{ items: [gdItemWithoutHypocenter('a'), gdItemWithoutHypocenter('b')] }])
-
-    await expect(fetchDmdataGdEarthquakes('dummy-key', 30)).rejects.toThrow('地図に置ける項目がありません')
-  })
-
-  it('取得結果が最初から 0 件なら例外にしない（本当に地震が無かった場合と区別する）', async () => {
-    stubPagedFetch([{ items: [] }])
-
-    await expect(fetchDmdataGdEarthquakes('dummy-key', 30)).resolves.toEqual([])
-    expect(log.warn).not.toHaveBeenCalled()
-  })
-
-  it('期間の端まで読み切った結果 0 件なら例外にしない（正常な打ち切りと全滅を区別する）', async () => {
-    // 期間内の項目が偶然すべて震源未決定で、その次が期間外だった並び。データは正常に読めており、
-    // 「期間内に地図へ置ける地震が無かった」という結論なので、異常として扱ってはいけない。
-    stubPagedFetch([
-      { items: [gdItemWithoutHypocenter('a'), gdItem({ eventId: 'old', daysAgo: 40 })], nextToken: 'TOKEN2' },
-    ])
-
-    await expect(fetchDmdataGdEarthquakes('dummy-key', 30)).resolves.toEqual([])
-  })
-
-  it('1 ページ丸ごと捨てたら後続ページを取りに行かない（空振りのリクエストを重ねない）', async () => {
-    // 震源未決定の項目は期間の打ち切り判定を素通りするため、この歯止めが無いと
-    // GD_EARTHQUAKE_MAX_PAGES ぶん（20 ページ）を空振りしてから例外になる。
-    const urls = stubPagedFetch([
-      { items: [gdItemWithoutHypocenter('a')], nextToken: 'T2' },
-      { items: [gdItemWithoutHypocenter('b')], nextToken: 'T3' },
-      { items: [gdItemWithoutHypocenter('c')], nextToken: 'T4' },
-    ])
-
-    await expect(fetchDmdataGdEarthquakes('dummy-key', 30)).rejects.toThrow('地図に置ける項目がありません')
-    expect(urls).toHaveLength(1)
-  })
-
-  it('全滅時の例外メッセージに理由の内訳を載せる', async () => {
-    stubPagedFetch([{ items: [gdItemWithoutHypocenter('a'), gdItemWithBrokenCoordinate('b')] }])
-
-    await expect(fetchDmdataGdEarthquakes('dummy-key', 30)).rejects.toThrow(
-      /発生時刻なし 1 件 \/ 震源座標なし 1 件/,
-    )
-  })
-
-  it('捨てる項目が無ければ警告を出さない', async () => {
-    stubPagedFetch([{ items: [gdItem({ eventId: 'a', daysAgo: 1 })] }])
-
-    await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    expect(log.warn).not.toHaveBeenCalled()
-  })
-
-  it('HTTP エラーは例外にする（スコープ不足の 403 等を握り潰さない）', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403 }) as unknown as Response))
-
-    await expect(fetchDmdataGdEarthquakes('dummy-key', 30)).rejects.toThrow('gd/earthquake: 403')
-  })
-
-  // 401/403 は契約スコープ不足やキー誤りで、再試行しても直らない。500 等の一時的な失敗と
-  // 同じ重さで流すと、コンソールを見た人が「待てば直る」と誤解する。
-  it('認証エラー (401/403) は error として記録する', async () => {
-    for (const status of [401, 403]) {
-      vi.clearAllMocks()
-      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status }) as unknown as Response))
-
-      await expect(fetchDmdataGdEarthquakes('dummy-key', 30)).rejects.toThrow()
-
-      expect(log.error).toHaveBeenCalledTimes(1)
-      expect(String(vi.mocked(log.error).mock.calls[0][0])).toContain('認証エラー')
-      expect(log.warn).not.toHaveBeenCalled()
-    }
-  })
-
-  it('一時的な失敗 (500 等) は warn に留める', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 }) as unknown as Response))
-
-    await expect(fetchDmdataGdEarthquakes('dummy-key', 30)).rejects.toThrow()
-
-    expect(log.warn).toHaveBeenCalledTimes(1)
-    expect(String(vi.mocked(log.warn).mock.calls[0][0])).toContain('取得失敗')
-    expect(log.error).not.toHaveBeenCalled()
-  })
-
-  // ページ上限（GD_EARTHQUAKE_MAX_PAGES = 20）に達したときの扱い。
-  // **他の一覧はいずれも上限到達を投げるか warn するのに、ここだけ無言で終わっていた**
-  // （→ `data-sources-spec.md` §2「ページを辿るループには上限を置く」）。
-  // 正・対照・安全弁の 3 つで固定する。
-  it('ページ上限に達したら記録を残し、読めた分は返す（黙って切らない）', async () => {
-    // 期間（30 日）に届く前にページが尽きない並び。各ページ 1 件・すべて cutoff の手前なので、
-    // 打ち切りの条件（期間の端・1 ページ全滅）はどちらも成立せず、上限だけが効く。
-    const urls = stubPagedFetch(
-      Array.from({ length: 25 }, (_, i) => ({
-        items: [gdItem({ eventId: `e${i}`, daysAgo: 1 })],
-        nextToken: `T${i + 1}`,
-      })),
-    )
-
-    const items = await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    // **投げない。** 呼び出し側が結果を 6 時間キャッシュするので、例外にすると空が居座る。
-    expect(urls).toHaveLength(20)
-    expect(items).toHaveLength(20)
-    expect(log.warn).toHaveBeenCalledTimes(1)
-    const message = String(vi.mocked(log.warn).mock.calls[0][0])
-    expect(message).toContain('ページ上限（20）')
-    expect(message).toContain('取れた 20 件')
-  })
-
-  // 対照: 上限の手前で終わった取得を「打ち切った」と記録してはいけない。
-  // これが無いと、正常な取得のたびに警告が出る実装でもテストが通ってしまう。
-  it('上限の手前で nextToken が尽きたら上限の記録は出ない', async () => {
-    const urls = stubPagedFetch([
-      { items: [gdItem({ eventId: 'a', daysAgo: 1 })], nextToken: 'T2' },
-      { items: [gdItem({ eventId: 'b', daysAgo: 2 })] },
-    ])
-
-    await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    expect(urls).toHaveLength(2)
-    expect(log.warn).not.toHaveBeenCalled()
-  })
-
-  // 安全弁: 上限の記録を足したことで、既存の「捨てた項目の内訳」の記録を潰していないこと。
-  // 2 つは別の事実（前者は期間が欠けた・後者は項目が読めなかった）なので、両方出る。
-  it('上限の記録と、捨てた項目の記録は別々に出る', async () => {
-    stubPagedFetch(
-      Array.from({ length: 25 }, (_, i) => ({
-        items: [gdItem({ eventId: `e${i}`, daysAgo: 1 }), gdItemWithoutHypocenter(`bad${i}`)],
-        nextToken: `T${i + 1}`,
-      })),
-    )
-
-    await fetchDmdataGdEarthquakes('dummy-key', 30)
-
-    expect(log.warn).toHaveBeenCalledTimes(2)
-    const messages = vi.mocked(log.warn).mock.calls.map(c => String(c[0]))
-    expect(messages.some(m => m.includes('ページ上限（20）'))).toBe(true)
-    expect(messages.some(m => m.includes('発生時刻なし 20 件'))).toBe(true)
-  })
-})
 describe('電文の body を復号できなかったときの記録', () => {
   const warnings = () => vi.mocked(log.warn).mock.calls.map(c => String(c[0]))
 
@@ -563,27 +159,10 @@ describe('電文の body を復号できなかったときの記録', () => {
   })
 })
 
-// 通信に載せられない文字（日本語入力の変換途中の値など）を含むキーが渡ったときの契約。
-// 呼び出し側（useEarthquakes）が通信前に弾くのが本筋だが、そこが漏れても
-// 「主系の取得は理由の分かる例外」という約束を守る。
-describe('APIキーが不正なときの取得の振る舞い', () => {
-  const INVALID_KEY = 'abc123あ'
-
-  // 失敗を隠さず例外にする契約。投げるのは DOMException ではなく理由の分かる型。
-  it('震源カタログは DmdataApiKeyError を投げ、通信を試みない', async () => {
-    const fetchSpy = vi.fn(async () => { throw new Error('通信してはいけない') })
-    vi.stubGlobal('fetch', fetchSpy)
-
-    await expect(fetchDmdataGdEarthquakes(INVALID_KEY, 30)).rejects.toThrow(DmdataApiKeyError)
-
-    expect(fetchSpy).not.toHaveBeenCalled()
-  })
-})
-
 // 今回の修正の背景そのもの。以前は btoa の DOMException が `err.message === 'auth'` に一致せず、
 // 30 秒間隔のバックオフで永久に再接続し続け、しかも失敗ログは debug 配下なので無音だった。
 //
-// authHeader はチケット取得の fetch より先に投げるため `new WebSocket()` へ到達しない。
+// 見出し（`apiHeaders()`）はチケット取得の fetch より先に投げるため `new WebSocket()` へ到達しない。
 // よって WebSocket をモックしなくてもこの分岐だけを検証できる。
 describe('DmdataWebSocket: APIキーが不正なとき', () => {
   /**
@@ -751,7 +330,7 @@ describe('releaseSocket（自分の枠を返す）', () => {
     const spy = vi.fn(async () => ({ ok: true, status: 200 }) as unknown as Response)
     vi.stubGlobal('fetch', spy)
 
-    await expect(releaseSocket('key', 42, false)).resolves.toBe('closed')
+    await expect(releaseSocket(dmdataKeyEndpoint('key'), 42, false)).resolves.toBe('closed')
     expect(spy).toHaveBeenCalledTimes(1)
     const [url, init] = vi.mocked(spy).mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toContain('/socket/42')
@@ -764,7 +343,7 @@ describe('releaseSocket（自分の枠を返す）', () => {
   it('403（スコープ無し）なら permanent を返し、warn に留める', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403 }) as unknown as Response))
 
-    await expect(releaseSocket('key', 7, false)).resolves.toBe('permanent')
+    await expect(releaseSocket(dmdataKeyEndpoint('key'), 7, false)).resolves.toBe('permanent')
     expect(log.warn).toHaveBeenCalledTimes(1)
     expect(String(vi.mocked(log.warn).mock.calls[0][0])).toContain('socket の枠を返せませんでした')
     expect(log.error).not.toHaveBeenCalled()
@@ -775,7 +354,7 @@ describe('releaseSocket（自分の枠を返す）', () => {
   it('通信が失敗しても投げずに transient を返す', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ネットワーク断') }))
 
-    await expect(releaseSocket('key', 7, false)).resolves.toBe('transient')
+    await expect(releaseSocket(dmdataKeyEndpoint('key'), 7, false)).resolves.toBe('transient')
     expect(log.warn).toHaveBeenCalledTimes(1)
   })
 
@@ -785,7 +364,7 @@ describe('releaseSocket（自分の枠を返す）', () => {
   it('5xx は transient（次の機会に試す価値がある）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503 }) as unknown as Response))
 
-    await expect(releaseSocket('key', 7, false)).resolves.toBe('transient')
+    await expect(releaseSocket(dmdataKeyEndpoint('key'), 7, false)).resolves.toBe('transient')
   })
 })
 
@@ -1457,7 +1036,7 @@ describe('fetchDmdataActiveEews', () => {
       telegram({ id: 'xml-1', head: { type: 'VXSE45', test: false } }).items,
     )
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.includes('/gd/eew/ev-recent'))).toBe(true)
   })
@@ -1470,7 +1049,7 @@ describe('fetchDmdataActiveEews', () => {
     const recent = new Date(serverNow() - 60_000).toISOString()
     stubEewFetch([{ eventId: 'ev-log', dateTime: recent }], [])
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     const infos = vi.mocked(log.info).mock.calls.map(c => String(c[0]))
     expect(infos.some(m => m.includes('発表中の緊急地震速報の復元'))).toBe(true)
@@ -1481,7 +1060,7 @@ describe('fetchDmdataActiveEews', () => {
   it('一覧が 0 件なら復元の記録を出さない', async () => {
     stubEewFetch([], [])
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     expect(log.info).not.toHaveBeenCalled()
   })
@@ -1490,7 +1069,7 @@ describe('fetchDmdataActiveEews', () => {
     const old = new Date(serverNow() - 60 * 60_000).toISOString()
     const urls = stubEewFetch([{ eventId: 'ev-old', dateTime: old }], [])
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.includes('/gd/eew/ev-old'))).toBe(false)
   })
@@ -1501,7 +1080,7 @@ describe('fetchDmdataActiveEews', () => {
       telegram({ id: 'xml-1', head: { type: 'VXSE45', test: false } }).items,
     )
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.includes('/gd/eew/ev-broken'))).toBe(true)
   })
@@ -1515,7 +1094,7 @@ describe('fetchDmdataActiveEews', () => {
       telegram({ id: 'xml-1', head: { type: 'VXSE45', test: true } }).items,
     )
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, true)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, true)
 
     expect(urls.some(u => u.includes('data.api.dmdata.jp'))).toBe(true)
   })
@@ -1527,7 +1106,7 @@ describe('fetchDmdataActiveEews', () => {
       telegram({ id: 'xml-1', head: { type: 'VXSE45', test: true } }).items,
     )
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.includes('data.api.dmdata.jp'))).toBe(false)
   })
@@ -1539,7 +1118,7 @@ describe('fetchDmdataActiveEews', () => {
       telegram({ id: 'json-1', originalId: 'xml-1', head: { type: 'VXSE45', test: false } }).items,
     )
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.endsWith('/xml-1'))).toBe(true)
     expect(urls.some(u => u.endsWith('/json-1'))).toBe(false)
@@ -1552,7 +1131,7 @@ describe('fetchDmdataActiveEews', () => {
       { serial: 1, telegrams: [{ id: 'xml-1', head: { type: 'VXSE45', test: false } }] },
     ])
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.endsWith('/xml-3'))).toBe(true)
     expect(urls.some(u => u.endsWith('/xml-1'))).toBe(false)
@@ -1562,18 +1141,18 @@ describe('fetchDmdataActiveEews', () => {
   describe('fetchDmdataActiveEewsOutcome の complete', () => {
     it('正: 一覧を引けなければ偽', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503 }) as unknown as Response))
-      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS, false)).complete).toBe(false)
+      expect((await fetchDmdataActiveEewsOutcome(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)).complete).toBe(false)
     })
 
     it('正: 窓の中の地震の詳細に報が 1 通も無ければ偽', async () => {
       const recent = new Date(serverNow() - 60_000).toISOString()
       stubEewFetch([{ eventId: 'ev-empty', dateTime: recent }], [])
-      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS, false)).complete).toBe(false)
+      expect((await fetchDmdataActiveEewsOutcome(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)).complete).toBe(false)
     })
 
     it('対照: 一覧が 0 件なら真（取るものが無い）', async () => {
       stubEewFetch([], [])
-      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS, false)).complete).toBe(true)
+      expect((await fetchDmdataActiveEewsOutcome(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)).complete).toBe(true)
     })
 
     it('対照: 訓練・試験の報だけなら真（復元しないのが正しい）', async () => {
@@ -1582,12 +1161,12 @@ describe('fetchDmdataActiveEews', () => {
         [{ eventId: 'ev-test', dateTime: recent }],
         telegram({ id: 'xml-1', head: { type: 'VXSE45', test: true } }).items,
       )
-      expect((await fetchDmdataActiveEewsOutcome(KEY, PREFERRED_CLASSIFICATIONS, false)).complete).toBe(true)
+      expect((await fetchDmdataActiveEewsOutcome(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)).complete).toBe(true)
     })
 
     it('対照: 緊急地震速報の区分を受けていなければ真（一覧も引かない）', async () => {
       const urls = stubEewFetch([], [])
-      const got = await fetchDmdataActiveEewsOutcome(KEY, ['telegram.earthquake'], false)
+      const got = await fetchDmdataActiveEewsOutcome(dmdataKeyEndpoint(KEY), ['telegram.earthquake'], false)
       expect(got.complete).toBe(true)
       expect(urls).toHaveLength(0)
     })
@@ -1596,7 +1175,7 @@ describe('fetchDmdataActiveEews', () => {
   it('一覧が失敗したら空配列を返し、失敗した事実を記録する', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503 }) as unknown as Response))
 
-    await expect(fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)).resolves.toEqual([])
+    await expect(fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)).resolves.toEqual([])
 
     expect(warnings().some(w => w.includes('発表中の緊急地震速報の一覧'))).toBe(true)
   })
@@ -1628,7 +1207,7 @@ describe('fetchDmdataActiveEews の部分失敗', () => {
       } as unknown as Response
     }))
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     // 壊れた 1 件に引きずられず、健全な側の電文本体まで辿り着いている
     expect(urls.some(u => u.endsWith('/xml-ok'))).toBe(true)
@@ -1655,7 +1234,7 @@ describe('fetchDmdataActiveEews の部分失敗', () => {
       } as unknown as Response
     }))
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     expect(urls.some(u => u.endsWith('/xml-page1'))).toBe(true)
     expect(warnings().some(w => w.includes('ページ目'))).toBe(true)
@@ -1675,7 +1254,7 @@ describe('fetchDmdataActiveEews の部分失敗', () => {
       return { ok: true, json: async () => ({ items: [{ eventId: 'ev1', dateTime: recent }] }) } as unknown as Response
     }))
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     expect(warnings().some(w => w.includes('読み取れませんでした'))).toBe(true)
   })
@@ -1693,7 +1272,7 @@ describe('fetchDmdataActiveEews の部分失敗', () => {
       return { ok: true, json: async () => ({ items: [{ eventId: 'ev1', dateTime: recent }] }) } as unknown as Response
     }))
 
-    await fetchDmdataActiveEews(KEY, PREFERRED_CLASSIFICATIONS, false)
+    await fetchDmdataActiveEews(dmdataKeyEndpoint(KEY), PREFERRED_CLASSIFICATIONS, false)
 
     expect(warnings().some(w => w.includes('読み取れませんでした'))).toBe(false)
   })
@@ -1785,7 +1364,7 @@ describe('fetchDmdataEewEventList', () => {
       item('20261003132605', '2026-10-03T13:26:01+09:00', { isCanceled: true }),
       item('20261003132452', '2026-10-03T13:24:48+09:00'),
     ]])
-    expect(await fetchDmdataEewEventList(KEY, FROM, TO)).toEqual({
+    expect(await fetchDmdataEewEventList(dmdataKeyEndpoint(KEY), FROM, TO)).toEqual({
       events: [
         { eventId: '20261003132605', canceled: true, lastReportMs: Date.parse('2026-10-03T13:26:01+09:00'), lastSerial: 5, warning: false },
         { eventId: '20261003132452', canceled: false, lastReportMs: Date.parse('2026-10-03T13:24:48+09:00'), lastSerial: 5, warning: false },
@@ -1802,34 +1381,34 @@ describe('fetchDmdataEewEventList', () => {
       [item('20261003132605', '2026-10-03T13:26:01+09:00', { isCanceled: true })],
       [item('20261003132452', '2026-10-03T13:24:48+09:00', { isCanceled: true })],
     ])
-    expect((await fetchDmdataEewEventList(KEY, FROM, TO)).events.map(e => e.eventId)).toEqual(['20261003132605', '20261003132452'])
+    expect((await fetchDmdataEewEventList(dmdataKeyEndpoint(KEY), FROM, TO)).events.map(e => e.eventId)).toEqual(['20261003132605', '20261003132452'])
     expect(urls[1]).toContain('cursorToken=t0')
     expect(urls[1]).toContain('limit=100')
   })
 
   it('平常時は記録を出さない', async () => {
     stubPages([[item('20261003132605', '2026-10-03T13:26:01+09:00')]])
-    await fetchDmdataEewEventList(KEY, FROM, TO)
+    await fetchDmdataEewEventList(dmdataKeyEndpoint(KEY), FROM, TO)
     expect(warnings()).toEqual([])
   })
 
   it('ページ上限で打ち切ったら記録する', async () => {
     const pages = Array.from({ length: 8 }, (_, i) => [item(String(20261003000000 + i), '2026-10-03T00:00:00+09:00')])
     const urls = stubPages(pages)
-    expect((await fetchDmdataEewEventList(KEY, FROM, TO)).complete).toBe(false)
+    expect((await fetchDmdataEewEventList(dmdataKeyEndpoint(KEY), FROM, TO)).complete).toBe(false)
     expect(urls).toHaveLength(5)
     expect(warnings().some(w => w.includes('打ち切りました'))).toBe(true)
   })
 
   it('期間が不正なら取りに行かない', async () => {
     const urls = stubPages([[]])
-    expect(await fetchDmdataEewEventList(KEY, TO, FROM)).toEqual({ events: [], complete: false })
+    expect(await fetchDmdataEewEventList(dmdataKeyEndpoint(KEY), TO, FROM)).toEqual({ events: [], complete: false })
     expect(urls).toHaveLength(0)
   })
 
   it('失敗しても投げず、集めた分を返して未完と印す', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500 }) as unknown as Response))
-    await expect(fetchDmdataEewEventList(KEY, FROM, TO)).resolves.toEqual({ events: [], complete: false })
+    await expect(fetchDmdataEewEventList(dmdataKeyEndpoint(KEY), FROM, TO)).resolves.toEqual({ events: [], complete: false })
   })
 })
 

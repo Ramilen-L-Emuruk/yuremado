@@ -700,24 +700,9 @@ export interface ShareOutcome {
   textCopied: boolean
 }
 
-/**
- * 本文へ載せるアプリの URL。
- *
- * **DMDSS 版から共有しても standard 版の URL を載せる**（2026-08-31 15:57 JST ユーザー選択「常に standard 版（推奨）」）。 DMDSS 版は DMDATA.JP の API キーが
- * 要るため、受け取った人がそのまま開くと設定画面に突き当たる。
- */
+/** 本文へ載せるアプリの URL（いま開いているアプリの入口）。 */
 export function currentAppUrl(): string {
-  return standardAppUrl(location.origin, import.meta.env.BASE_URL)
-}
-
-/**
- * `currentAppUrl` の中身を環境から切り離したもの（テストのため）。
- *
- * 末尾スラッシュの有無を問わず落とす。`base` の書き方を決めているのは `vite.config.ts` の一存なので、
- * そこが変わったときに本文の URL が黙って DMDSS 版へ戻らないようにしておく。
- */
-export function standardAppUrl(origin: string, base: string): string {
-  return new URL(base.replace(/dmdss\/?$/, ''), origin).href
+  return new URL(import.meta.env.BASE_URL, location.origin).href
 }
 
 /**

@@ -89,7 +89,7 @@ export interface RegionAggregate {
   label: LatLng
   /**
    * この区域に属する市町村の震度（電文の `Pref/Area/City`。並びは電文のまま＝気象庁の標準順）。
-   * 区域塗りの吹き出しに出す。**市町村の震度を載せない報（震度速報・標準版）では空**。
+   * 区域塗りの吹き出しに出す。**市町村の震度を載せない報（震度速報）では空**。
    */
   cities: JMAQuakeCity[]
   /** 区域コード（電文の `Area/Code`。吹き出しの末尾に添える） */
@@ -322,7 +322,7 @@ export function useQuakeLayerData(
 
   const lpgmActive = !!(lpgm && !lpgm.cancelled)
 
-  // 観測点を1つも持たない電文（震度速報＝DMDATA VXSE51／P2PQuake ScalePrompt）は、
+  // 観測点を1つも持たない電文（震度速報＝VXSE51）は、
   // 拡大しても増える情報が無い。区域の代表点をドットにすると「その地点の観測値」に
   // 見えてしまうため、ズームに関わらず区域集約を維持する。
   // LPGM 表示中は LPGM 側の粒度（lpgmMarkers）で決まるため対象外。

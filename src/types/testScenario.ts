@@ -28,4 +28,3 @@ export interface TestScenarioFile extends TestScenarioMeta {
   entries: TestScenarioEntry[]
 }
 
-export type TestScenarioIndex = TestScenarioMeta[]

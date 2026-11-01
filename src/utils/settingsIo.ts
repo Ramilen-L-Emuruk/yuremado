@@ -7,7 +7,7 @@
  * **React に依存しない純関数だけを置く。** 画面側（`SettingsTab`）はここを呼ぶだけにして、
  * 書式の決まりと検証をテストで固定できるようにする。
  */
-import type { AppSettings } from '../hooks/useSettings'
+import type { AppSettings, DevInjectedKeys } from '../hooks/useSettings'
 import { sanitize, migrateStoredSettings } from '../hooks/useSettings'
 import { formatFileStamp } from './formatters'
 
@@ -16,12 +16,18 @@ export interface SettingsFile {
   app: typeof SETTINGS_FILE_APP
   kind: 'settings'
   version: 1
-  /** どちらのビルドで書き出したか。読み込み側で食い違いを知らせるために持つ。 */
-  variant: SettingsVariant
+  /**
+   * 書き出したアプリの印。版を 1 つにまとめた後は `unified` だけを書く。読み込みは、まとめる前の
+   * `dmdss`・`standard` も受ける（docs/relay-server-design.md §0 の 2026-10-31 の行）。設定の型は同じなので、
+   * 印で読み方は変えない。
+   */
+  variant: SettingsFileVariant
   exportedAt: string
   settings: AppSettings
 }
-export type SettingsVariant = 'dmdss' | 'standard'
+export type SettingsFileVariant = 'unified' | 'dmdss' | 'standard'
+/** 書き出すときに付ける印。 */
+export const SETTINGS_FILE_VARIANT = 'unified'
 
 export const SETTINGS_FILE_VERSION = 1
 
@@ -33,10 +39,22 @@ export const SETTINGS_FILE_APP = 'yuremado'
  */
 export const LEGACY_SETTINGS_FILE_APP = 'realtime-earthquake-viewer'
 
+/**
+ * キーだけのファイル（`kind: 'keys'`）。発行スクリプト（`scripts/sign-arrival-token.ts`）が書き、設定の窓の
+ * 「読み込み」で入れる。予報キーと到達予想キーは入れる欄を普段は見せないので、入れる道はこれだけ
+ * （設計書 §0 の 2026-10-31「予報キーの欄」の行）。**ほかの設定には触らない。**
+ */
+export interface KeysFile {
+  app: typeof SETTINGS_FILE_APP
+  kind: 'keys'
+  version: 1
+  keys: { forecastKey?: string; arrivalToken?: string }
+}
+
 /** 書き出しの選び方。 */
 export interface SettingsExportOptions {
   /**
-   * 鍵（DMDATA の API キーと到達予想トークン）も含めるか。**既定は含めない**——画面のチェック欄を
+   * 鍵（DMDATA の API キー・到達予想トークン・予報キー）も含めるか。**既定は含めない**——画面のチェック欄を
    * 入れたときだけ真になる（2026-10-23 ユーザー選択「含めるかを書き出すときに選べる」）。
    */
   includeKeys: boolean
@@ -45,7 +63,7 @@ export interface SettingsExportOptions {
    * **含めると選ばれても、注入値と同じものは外す**。利用者が入れた鍵ではないため。
    * 省略可にしない —— 渡し忘れると注入値がファイルへ出る（`settingsToStore` と同じ理由）。
    */
-  injected: { apiKey: string | undefined; arrivalToken: string | undefined }
+  injected: DevInjectedKeys
 }
 
 /**
@@ -61,7 +79,6 @@ export interface SettingsExportOptions {
  */
 export function buildSettingsFile(
   settings: AppSettings,
-  variant: SettingsVariant,
   options: SettingsExportOptions,
   now = new Date(),
 ): SettingsFile {
@@ -71,19 +88,20 @@ export function buildSettingsFile(
     app: SETTINGS_FILE_APP,
     kind: 'settings',
     version: SETTINGS_FILE_VERSION,
-    variant,
+    variant: SETTINGS_FILE_VARIANT,
     exportedAt: now.toISOString(),
     settings: {
       ...settings,
       dmdataApiKey: keep(settings.dmdataApiKey, options.injected.apiKey),
       arrivalToken: keep(settings.arrivalToken, options.injected.arrivalToken),
+      forecastKey: keep(settings.forecastKey, options.injected.forecastKey),
     },
   }
 }
 
 /** 書き出したファイルに鍵が入ったか（画面の知らせを選ぶため）。 */
 export function settingsFileHasKeys(file: SettingsFile): boolean {
-  return file.settings.dmdataApiKey !== '' || file.settings.arrivalToken !== ''
+  return file.settings.dmdataApiKey !== '' || file.settings.arrivalToken !== '' || file.settings.forecastKey !== ''
 }
 
 /**
@@ -92,19 +110,23 @@ export function settingsFileHasKeys(file: SettingsFile): boolean {
  * 時刻印は `formatFileStamp` を使う（診断ログの書き出しと同じ）。独自に組むと、ゼロ埋めや
  * 時間帯の扱いが 2 か所に分かれる。
  */
-export function settingsFileName(variant: SettingsVariant, now = new Date()): string {
-  return `${formatFileStamp(now.getTime())}_quake-viewer-settings-${variant}.json`
+export function settingsFileName(now = new Date()): string {
+  return `${formatFileStamp(now.getTime())}_quake-viewer-settings.json`
 }
 
 export type ParseResult =
   | {
       ok: true
       settings: AppSettings
-      variant: SettingsVariant
       exportedAt: string | null
       usedFileApiKey: boolean
       /** 値が入っていたのに読めず、既定値へ落ちた項目名。→ {@link parseSettingsFile} */
       rejectedKeys: string[]
+      /**
+       * キーだけのファイルだったとき、入っていたキー（→ {@link KeysFile}）。設定のファイルなら null。
+       * 画面の知らせを選ぶのに使う（→ {@link keysFileNotice}）。
+       */
+      keysOnly: { forecastKey: boolean; arrivalToken: boolean } | null
     }
   | { ok: false; error: string }
 
@@ -127,7 +149,8 @@ export function parseSettingsFile(raw: unknown, current: AppSettings): ParseResu
   if (raw == null || typeof raw !== 'object') return { ok: false, error: '設定ファイルとして読めません（中身がありません）' }
   const o = raw as Omit<Partial<SettingsFile>, 'app'> & { app?: unknown }
   if (o.app !== SETTINGS_FILE_APP && o.app !== LEGACY_SETTINGS_FILE_APP) return { ok: false, error: 'このアプリの設定ファイルではありません' }
-  // `kind` は将来ほかの書き出し（設定以外）を足したときの取り違え防止。いまのところ設定しか無い。
+  if ((o as { kind?: unknown }).kind === 'keys') return parseKeysFile(raw as Partial<KeysFile>, current)
+  // `kind` は取り違え防止。読めるのは設定とキーだけのファイル。
   if (o.kind !== 'settings') return { ok: false, error: 'このアプリのファイルですが、設定ではありません' }
   // 形式の番号が無いものと、この版より新しいものを分ける。**同じ文面にしない** ——
   // 前者は壊れたファイルで、アプリを新しくしても直らない。
@@ -155,15 +178,55 @@ export function parseSettingsFile(raw: unknown, current: AppSettings): ParseResu
   // 到達予想トークンも同じ扱い（「鍵も含める」を選ばなければ入らないので、空なら今の値を残す）。
   const fileToken = typeof incoming.arrivalToken === 'string' ? incoming.arrivalToken : ''
   settings.arrivalToken = fileToken !== '' ? fileToken : current.arrivalToken
+  // 予報キーも同じ扱い。
+  const fileForecastKey = typeof incoming.forecastKey === 'string' ? incoming.forecastKey : ''
+  settings.forecastKey = fileForecastKey !== '' ? fileForecastKey : current.forecastKey
 
   return {
     ok: true,
     settings,
-    variant: o.variant === 'dmdss' ? 'dmdss' : 'standard',
     exportedAt: typeof o.exportedAt === 'string' ? o.exportedAt : null,
     usedFileApiKey,
-    rejectedKeys: rejectedKeys.filter(k => k !== 'dmdataApiKey' && k !== 'arrivalToken'),
+    rejectedKeys: rejectedKeys.filter(k => k !== 'dmdataApiKey' && k !== 'arrivalToken' && k !== 'forecastKey'),
+    keysOnly: null,
   }
+}
+
+/**
+ * キーだけのファイルを読む。入っていたキーだけを今の設定へ重ね、**ほかの設定はそのまま**にする。
+ * キーの中身（署名・期限）はここでは見ない —— 読み込んだ後に設定の窓の行が確かめて出す。
+ */
+function parseKeysFile(o: Partial<KeysFile>, current: AppSettings): ParseResult {
+  if (typeof o.version !== 'number') return { ok: false, error: '設定ファイルの形式が正しくありません（壊れている可能性があります）' }
+  if (o.version > SETTINGS_FILE_VERSION) {
+    return { ok: false, error: 'より新しいアプリで書き出されたファイルです。アプリを更新してください' }
+  }
+  const keys = o.keys != null && typeof o.keys === 'object' ? o.keys : {}
+  const pick = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+  const forecastKey = pick(keys.forecastKey)
+  const arrivalToken = pick(keys.arrivalToken)
+  if (forecastKey === '' && arrivalToken === '') return { ok: false, error: 'キーが入っていません' }
+  return {
+    ok: true,
+    settings: {
+      ...current,
+      forecastKey: forecastKey !== '' ? forecastKey : current.forecastKey,
+      arrivalToken: arrivalToken !== '' ? arrivalToken : current.arrivalToken,
+    },
+    exportedAt: null,
+    usedFileApiKey: false,
+    rejectedKeys: [],
+    keysOnly: { forecastKey: forecastKey !== '', arrivalToken: arrivalToken !== '' },
+  }
+}
+
+/**
+ * キーだけのファイルを読んだときの知らせ。
+ * 文面は 2026-10-31 ユーザー選択（予報キー・到達予想キーの読み込みの知らせ）。
+ */
+export function keysFileNotice(keys: { forecastKey: boolean; arrivalToken: boolean }): string {
+  const names = [keys.forecastKey ? '予報キー' : null, keys.arrivalToken ? '到達予想キー' : null].filter(Boolean)
+  return `${names.join('・')}を読み込みました（ほかの設定はそのままです）`
 }
 
 /**

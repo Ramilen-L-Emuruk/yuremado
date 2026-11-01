@@ -224,7 +224,7 @@ for (const ev of events) record(ev)
 **続報そのものは `alert` に出ない** —— 秒ごとに届くので、出すと「状態が動いた」という問いに
 答えられなくなる。続報の到来は `telegram` の側に出る。
 
-**EEW の `retracted`（誤報取消）と `expired`（自動解除）は重複配信の扱いが違う。** P2PQuake WS と
+**EEW の `retracted`（誤報取消）と `expired`（自動解除）は重複配信の扱いが違う。** 電文の WebSocket と
 Yahoo hypoInfo の両方から同一 EEW の消滅を検出すると、同じ状態遷移に対して複数回キャンセルが
 届くことがある（音・読み上げの二重鳴り防止と同じ現象）。`retracted` は重複を問わず記録する
 （ブラウザ通知と同じ基準——`hadKey=false` でも「自動解除済みの後に遅れて届いた本物の誤報取消」

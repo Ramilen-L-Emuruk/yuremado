@@ -67,7 +67,7 @@ export function tsunamiIssueNotification(event: JMATsunami, basis: TsunamiNotifi
  * 全区域が解除された報（`cancelReason: 'lifted'`）の通知（2026-10-19 ユーザー選択「送る (Recommended)」）。
  *
  * 本文は気象庁がその報に書いた文（固定付加文 0107 など。画面の解除表示と同じ `tsunamiLiftText`）。
- * 文を持たない報（P2PQuake など）では読み上げと同じ文にする（2026-10-19 ユーザー選択「読み上げと同じ文
+ * 文を持たない報では読み上げと同じ文にする（2026-10-19 ユーザー選択「読み上げと同じ文
  * (Recommended)」）。**閉じるまでは残さない** —— 終わったことの報せなので、自然に消えてよい。
  * tag は発表中の通知と同じなので、閉じるまで残していた前の通知はこれで置き換わる。
  */

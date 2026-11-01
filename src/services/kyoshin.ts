@@ -98,7 +98,7 @@ function jstParts(date: Date): { dateStr: string; ts: string } {
   return { dateStr, ts: `${dateStr}${p.hour}${p.minute}${p.second}` }
 }
 
-/** 緊急地震速報の予報円（P波/S波）。半径は km。震源深度・マグニチュードから自前計算する（標準版・DMDSS版共通）。 */
+/** 緊急地震速報の予報円（P波/S波）。半径は km。震源深度・マグニチュードから自前計算する。 */
 export interface PsWaveCircle {
   /** どの EEW の円かを識別する（eew.issue?.eventId ?? eew.id）。カメラフィットで単体を特定するために使う。 */
   eventId: string
@@ -195,9 +195,9 @@ export const YAHOO_EEW_ID_PREFIX = 'yahoo-eew-'
  * Yahoo hypoInfo の時刻（`2026/10/22 12:00:00`。時間帯を持たない日本時間）を ISO の形（`+09:00` つき）へ直す。
  * 時計表記でなければ元の文字列のまま。
  *
- * **標準版の緊急地震速報は P2PQuake とこの経路の 2 本から来て、経路をまたいで時刻で並べ・比べる**
- * （`eewSortTimeMs` ほか）。P2PQuake 側は入口で ISO の形へ直している（`services/p2pquake.ts` の `p2pTime`）ので、
- * こちらも揃えないと、日本国外の端末ではこの経路の時刻だけが端末の時間帯で読まれて前後がずれる。
+ * **緊急地震速報は DMDATA の電文とこの経路の 2 本から来て、経路をまたいで時刻で並べ・比べる**
+ * （`eewSortTimeMs` ほか）。DMDATA の時刻は元から時間帯つきの ISO の形なので、こちらも揃えないと、
+ * 日本国外の端末ではこの経路の時刻だけが端末の時間帯で読まれて前後がずれる。
  */
 function yahooTime(time: string): string {
   return time ? jstWallClockToIso(time) ?? time : time
@@ -652,7 +652,6 @@ function warnIfCalibrationStale(): void {
 /**
  * クロック同期ループを開始する。返り値の関数で停止する。
  * ライブモードでのみ呼ぶこと（リプレイ時は clock 側でサンプルが無視される）。
- * 強震モニタは両バリアントで動くため、この較正も standard / DMDSS の双方で走る。
  *
  * 1 周期の流れ:
  *   1. 外部の時刻サービスで較正する（1 リクエスト・実測 40ms 前後）

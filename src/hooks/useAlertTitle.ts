@@ -61,7 +61,7 @@ export function computeEEWTitle(eews: ReadonlyMap<string, EEWAlert>): string {
 /**
  * ウィンドウタイトルを、空でない部品だけ空白 1 つで繋いで作る（緊急地震速報・長周期地震動）。
  *
- * **震央地名が空の報（起こりうるのは標準版の取得元。実配信では未観測。→ `eewAlertToText`）で空白を二重に残さない。**
+ * **震央地名が空の報（→ `eewAlertToText`）で空白を二重に残さない。**
  * 受信時のタイトル（`useLiveEventHandler` の `eewOngoingTitleText`）と再評価のタイトル（{@link computeEEWTitle}）が
  * 同じ形になるよう、両方からこれを呼ぶ。
  */

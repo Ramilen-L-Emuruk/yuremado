@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, type CSSProperties } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
 import type { MapHandle } from './components/Map/mapTypes'
 import { IconNav, TAB_LABELS, type TabId } from './components/IconNav'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -60,9 +60,8 @@ import { useActionChecklist } from './hooks/useActionChecklist'
 import { useNearbyScope } from './hooks/useNearbyScope'
 import { useSeismoScope } from './hooks/useSeismoScope'
 import { useStationCoords } from './hooks/useStationCoords'
-import { useEarthquakes, MAX_HISTORY_RETAINED } from './hooks/useEarthquakes'
+import { useEarthquakes } from './hooks/useEarthquakes'
 import { useFetchThrottled } from './hooks/useFetchThrottled'
-import { useTestScenarios } from './hooks/useTestScenarios'
 import { PANEL_RATIO_MIN, useSettings } from './hooks/useSettings'
 import { squareMapLayout } from './utils/squareMapLayout'
 import { useAlertTitle, resolveAlertTitle } from './hooks/useAlertTitle'
@@ -114,8 +113,13 @@ import { EEW_LEAD_PHRASES } from './utils/ttsText'
 import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
 import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS, type ReplayFetchPurpose } from './hooks/useReplayController'
 import { fetchDmdataReplayEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
-import { PREFERRED_CLASSIFICATIONS } from './services/dmdataClassifications'
-import { fetchP2PReplayEvents, fetchP2PQuakeHistory, clearP2PReplayCache } from './services/p2pquakeReplay'
+import { relayRestEndpoint, relayGapStore, relayTokenStore } from './services/relayEndpoint'
+import { useForecastKeyCheck } from './hooks/useForecastKey'
+import { formatRelayGapNotices } from './utils/relayGapNotice'
+import { relayRestClassifications, restSources } from './services/dmdataClassifications'
+import { dmdataKeyEndpoint } from './services/dmdataEndpoint'
+import { fetchReplayFromSources } from './services/replaySources'
+import { isValidDmdataApiKey } from './utils/dmdataApiKey'
 import { withDmdataLoadMore, withoutLoadMore } from './services/replayQuakeHistory'
 import { beginLoadMoreGateTag } from './services/dmdataRequestGates'
 import type { ReplayQuakeHistoryResult } from './types/replay'
@@ -126,7 +130,6 @@ import { log } from './utils/logger'
 import { deliverBrowserNotification, NOTIFICATION_ICON, showBrowserNotification } from './utils/notifications'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
-import { isDmdss } from './utils/env'
 import { isLiveFeedHalted } from './utils/connectionStatus'
 import { ROOT_FRAME_CLASS } from './rootFrame'
 import { SHARE_CARD_FORMATS } from './utils/shareCard'
@@ -139,9 +142,8 @@ const EMPTY_SEISMO_STATIONS: readonly SeismoStationState[] = []
 
 // 平常時のウィンドウタイトル（index.html の <title> と一致させる）。
 // AutoHotKey 等が、情報更新時のタイトル変化を検知してイベントを発火できるようにする。
-const DEFAULT_TITLE = isDmdss
-  ? '揺れ窓 (DM-D.S.S)'
-  : '揺れ窓'
+// 版を 1 つにまとめたので「揺れ窓」に揃える（docs/relay-server-design.md §0 の 2026-10-31 の行）。
+const DEFAULT_TITLE = '揺れ窓'
 
 // siteConfigId 切替直後に kyoshin.sites / kyoshin.indices の siteConfigId が揃うまで
 // 下流へ渡す代替として使う空配列（毎レンダー新規生成しないようモジュール定数で共有）。
@@ -455,7 +457,7 @@ export function App() {
   activeTabRef.current = activeTab
   // ウィンドウタイトル（情報タイトル）管理
   const title = useAlertTitle({ activeEEWsRef, kyoshinDetectedRef })
-  // DMDSS版: WS接続中は現在時刻を毎秒更新して地図上の更新時刻をリアルタイム表示する
+  // WS接続中は現在時刻を毎秒更新して地図上の更新時刻をリアルタイム表示する
   const [nowTick, setNowTick] = useState<Date | null>(null)
 
   // 自動タブ切替の保持状態。「いつまで」「どの優先度で」確保しているかを持つ。
@@ -951,6 +953,15 @@ export function App() {
     )
   }, [requestAutoTab, settings.tsunamiPriorityDefault, settings.voicevoxEnabled])
 
+  // 予報キー（設計書 §0 の 2026-10-31「予報キー」の行）。手元の検証が通ったときだけ中継の札に添える ——
+  // 通らないキーを送っても中継は断るだけなので、送る前に止めておく。予報を流すかを決めるのは中継の側。
+  // 検証中であることも札の置き場へ伝える（済むまで中継の札を取らず、自分の鍵の予報の接続も張らない）。
+  // **`useEarthquakes` より前に置く** —— 同じ部品の副作用は書いた順に走るので、後ろに置くと、ページを開いた直後の
+  // 接続の副作用が検証中であることを知らないまま鍵の接続を張る
+  const forecastKeyStatus = useForecastKeyCheck(settings.forecastKey)
+  const forecastKeyToSend = forecastKeyStatus.valid ? settings.forecastKey.trim() : null
+  const forecastKeyChecking = forecastKeyStatus.checking
+  useEffect(() => { relayTokenStore.setForecastKey(forecastKeyToSend, forecastKeyChecking) }, [forecastKeyToSend, forecastKeyChecking])
   const handleLiveEventWithNotify = useCallback((event: LiveEvent, meta?: LiveEventMeta) => {
     if (event.kind === 'quake' && !event.cancelled && !meta?.quakeHeldBack) pendingQuakeNotifyRef.current.push(event)
     handleLiveEvent(event, meta)
@@ -958,7 +969,7 @@ export function App() {
   // 揺れ検知の束の広がり。下の検知結果から毎秒流し込み、EEW の自動解除を広がっている間は待たせる（eew-spec §7）
   const [eewSpreadLog] = useState(createDetectionSpreadLog)
   const {
-    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, internationalTsunamis, connectionStatus, dmdataClassifications, lastUpdate, isLoading, isLoadingMore, hasMore, error,
+    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, internationalTsunamis, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, keyForecastRefused, lastUpdate, isLoading, isLoadingMore, hasMore, error,
     historyLoss, loadMoreFailed, reconnectGapLoss,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
@@ -975,10 +986,16 @@ export function App() {
   earthquakesRef.current = earthquakes
   // 配信元の上限に達して取得を待たせているあいだ、地震タブにその旨を出す。
   // **損失とは別**（枠が空けばそのまま取りに行くので、欠けは出ない）。
-  //
-  // **標準版では見張らない。** あちらは DMDATA を使わないので門は常に空で、
-  // 周期処理だけが無駄に走る。
-  const fetchThrottled = useFetchThrottled(isDmdss)
+  const fetchThrottled = useFetchThrottled(true)
+  // 中継が見ていない区間の帯（地震タブ）。照合が済んで帳面から区間が消えれば、帯も消える
+  const relayGaps = useSyncExternalStore(relayGapStore.subscribe, relayGapStore.snapshot)
+  const relayGapNotices = useMemo(() => formatRelayGapNotices(relayGaps), [relayGaps])
+  // 鍵の入れ直しの案内（地震タブの帯・設定のキー欄）。鍵を入れたら印を下ろす —— 消したあとにまた出さない
+  const showKeyReentry = settings.dmdataKeyReentryNotice && settings.dmdataApiKey === ''
+  const dismissKeyReentry = useCallback(() => updateSetting('dmdataKeyReentryNotice', false), [updateSetting])
+  useEffect(() => {
+    if (settings.dmdataKeyReentryNotice && settings.dmdataApiKey !== '') updateSetting('dmdataKeyReentryNotice', false)
+  }, [settings.dmdataKeyReentryNotice, settings.dmdataApiKey, updateSetting])
   tsunamisRef.current = tsunamis
   nankaiActiveRef.current = nankai !== null
 
@@ -1047,24 +1064,24 @@ export function App() {
     quakeNotice:       simulateQuakeNotice,
     earthquakeCount:   simulateEarthquakeCount,
     earthquakeCountRetraction: simulateEarthquakeCountRetraction,
-    lpgmRetraction:    isDmdss ? simulateLpgmRetraction : undefined,
-    lpgmClassZero:     isDmdss ? simulateLpgmClassZero : undefined,
-    lpgmCategories:    isDmdss ? simulateLpgmCategories : undefined,
-    lpgmClassZeroRegion: isDmdss ? simulateLpgmClassZeroRegion : undefined,
+    lpgmRetraction:    simulateLpgmRetraction,
+    lpgmClassZero:     simulateLpgmClassZero,
+    lpgmCategories:    simulateLpgmCategories,
+    lpgmClassZeroRegion: simulateLpgmClassZeroRegion,
     trainingQuake:     simulateTrainingQuake,
     quakeAmendment:    simulateQuakeAmendment,
     quakeReportSequence: simulateQuakeReportSequence,
-    quakeCancel: isDmdss ? simulateQuakeCancel : undefined,
-    quakePartialCancel: isDmdss ? simulateQuakePartialCancel : undefined,
-    borrowFromTsunami: isDmdss ? simulateHypocenterFromTsunami : undefined,
+    quakeCancel: simulateQuakeCancel,
+    quakePartialCancel: simulateQuakePartialCancel,
+    borrowFromTsunami: simulateHypocenterFromTsunami,
     unreceivedQuake:   simulateUnreceivedQuake,
     maxScaleOrAboveQuake: simulateMaxScaleOrAboveQuake,
     areaUnreceivedQuake: simulateAreaUnreceivedQuake,
     tsunamiGradeChange: simulateTsunamiGradeChange,
-    tsunamiQuietReports: isDmdss ? simulateTsunamiQuietReports : undefined,
-    tsunamiExpiry: isDmdss ? simulateTsunamiExpiry : undefined,
-    tsunamiSourceAdded: isDmdss ? simulateTsunamiSourceAdded : undefined,
-    tsunamiInfoRetraction: isDmdss ? simulateTsunamiInfoRetraction : undefined,
+    tsunamiQuietReports: simulateTsunamiQuietReports,
+    tsunamiExpiry: simulateTsunamiExpiry,
+    tsunamiSourceAdded: simulateTsunamiSourceAdded,
+    tsunamiInfoRetraction: simulateTsunamiInfoRetraction,
     estimatedIntensity: simulateEstimatedIntensity,
     notification:      () => {
       // まとめて止めている間はテストも出さない（設定の窓では行ごと隠れるが、呼び出し口でも止める）
@@ -1123,14 +1140,12 @@ export function App() {
   }, [updateSetting])
   const togglePanelCollapsed = useCallback(() => setPanelCollapsed(c => !c), [])
 
-  const scenarioTest = useTestScenarios(loadReplayEvents)
-
   const {
     points: quakeHeatPoints,
     windowStartMs: heatWindowStartMs,
     completeness: heatCompleteness,
     intensityScale: heatIntensityScale,
-  } = useQuakeHeatmap(settings.showQuakeHeatmap, debouncedApiKey, earthquakes, replayTimeOffset, settings.heatmapPeriod)
+  } = useQuakeHeatmap(settings.showQuakeHeatmap, earthquakes, replayTimeOffset, settings.heatmapPeriod)
 
   // 最新の非解除津波電文から観測データを収集（地図バー描画用）
   const latestTsunamiObservations = useMemo(() => {
@@ -1445,7 +1460,7 @@ export function App() {
     setClockReplayOffset(replayTimeOffset)
   }, [replayTimeOffset])
 
-  // DMDSS版: リプレイ中はリプレイ時刻で毎秒更新、WS接続中は実時刻で毎秒更新、それ以外は null
+  // リプレイ中はリプレイ時刻で毎秒更新、WS接続中は実時刻で毎秒更新、それ以外は null
   useEffect(() => {
     if (replayTimeOffset !== null) {
       const tick = () => setNowTick(serverDate())
@@ -1453,7 +1468,7 @@ export function App() {
       const id = setInterval(tick, 1000)
       return () => clearInterval(id)
     }
-    if (!isDmdss || connectionStatus !== 'connected') {
+    if (connectionStatus !== 'connected') {
       setNowTick(null)
       return
     }
@@ -1762,18 +1777,27 @@ export function App() {
   // 読めない値で `null` を返す。空文字へ落として `datetime-local` の未入力扱いにする
   // （`null` を `value` に渡すと制御・非制御が切り替わったと React に警告される）。
   const [kyoshinInputDateTime, setKyoshinInputDateTime] = useState(() => formatDateTimeLocal(new Date()) ?? '')
+  const relayForecastScope = useSyncExternalStore(relayTokenStore.subscribe, relayTokenStore.forecastScope)
+  const forecastKeyRelayRejected = forecastKeyToSend !== null && relayForecastScope !== null && !relayForecastScope.granted
+  // 中継が予報キーを受け付けている。リプレイ・履歴・発生時刻の秒も中継から予報を引く（→ `relayRestClassifications`）
+  const relayForecastGranted = forecastKeyToSend !== null && relayForecastScope?.granted === true
+  // 過去の電文（リプレイ・発生時刻の秒）をどこからどの区分で引くか。鍵があれば、鍵が予報を断らない限り予報を鍵で
+  // DMDATA から引く —— ライブと同じ電文で再生する（設計書 §0 の 2026-10-31「自分で契約した鍵を入れた利用者も、予報キーの端末と同じ動きになるようにする」の行。→ `restSources`）
+  const keyRestEndpoint = useMemo(
+    () => (isValidDmdataApiKey(debouncedApiKey) ? dmdataKeyEndpoint(debouncedApiKey) : null),
+    [debouncedApiKey],
+  )
+  const pastSources = useMemo(
+    () => restSources(dmdataClassifications, relayForecastGranted, keyRestEndpoint !== null, keyForecastRefused),
+    [dmdataClassifications, relayForecastGranted, keyRestEndpoint, keyForecastRefused],
+  )
   // リプレイの取得・世代管理は useReplayController に集約している（非同期の完了順序に
   // 依存する状態機械のため、単体でテストできる形に切り出した）。
   // 時計への反映（setClockReplayOffset）は上の useEffect が replayTimeOffset を見て行う。
-  // 取得元はバリアントで変わる。DMDSS 版は DMDATA のアーカイブから当時の電文をまとめて取り、
-  // standard 版は P2PQuake の日付指定クエリで地震情報・津波を取る（P2PQuake には EEW を
-  // 過去日付で引く口が無いため、standard 版のリプレイ中の EEW は強震モニタ由来の検出が担う）。
-  //
-  // API キーはここだけ生の値を渡す。リプレイはユーザーがボタンを押した時点でしか通信せず、
-  // キー入力に連動して自動で走ることがないため、遅らせる必要がない
-  //（むしろ押した瞬間の最新値を使いたい）。
+  // 取得元は中継（`relayRestEndpoint`）経由の DMDATA のアーカイブで、当時の電文をまとめて取る。
+  // 対象期間がローカル履歴アーカイブに重なればそちらから読む（下記）。
   // 設定の窓の「テスト時刻設定」に出す、収録済みローカル履歴アーカイブの一覧。
-  // DMDATA/P2PQuakeのアーカイブが存在しない期間（DMDATAアーカイブの最古=2020-11-18より前等）を
+  // DMDATAのアーカイブが存在しない期間（DMDATAアーカイブの最古=2020-11-18より前等）を
   // 再現するための同梱データで、対象時刻がこの中の期間に該当すれば下記 fetchReplayEvents が
   // 通常のアーカイブ取得の代わりにこちらを使う（localArchiveReplay.ts 参照）。
   const { archives: historicalArchives, isLoading: historicalArchivesLoading } = useHistoricalArchiveIndex()
@@ -1792,7 +1816,7 @@ export function App() {
       const covering = findCoveringArchiveSync(historicalArchives, from, to)
       if (covering) return fetchLocalArchiveEvents(covering, from, to)
       // 収録範囲の終端を過ぎた直後（先読みが1時間ごとに次のウィンドウを取りに来た結果、
-      // ここで初めて収録範囲外に出た）場合、DMDATA/P2PQuakeにはそもそもデータの無い時代
+      // ここで初めて収録範囲外に出た）場合、DMDATAにはそもそもデータの無い時代
       // なので静かにフォールバックせず、専用のエラーで知らせる（見つからなければ null で
       // 通常どおりのフォールバックへ進む）。
       const justEnded = findArchiveJustEndedSync(historicalArchives, from, REPLAY_WINDOW_MS)
@@ -1801,31 +1825,26 @@ export function App() {
           `ローカル履歴アーカイブ「${justEnded.label}」の収録範囲の終端に達しました。これ以降は再生できません`,
         ))
       }
-      return isDmdss
-        // 「試験報を受信（検証用）」はライブだけでなく再生にも効かせる。**設定の文面は
+      // 「試験報を受信（検証用）」はライブだけでなく再生にも効かせる。**設定の文面は
         // 経路を限っていない**のに、ここへ渡さないと「ライブでは届くが再生では届かない」
         // という、名前から読み取れない食い違いになる。訓練報は年に数回しか流れないので、
         // 再生で拾えないと実電文で確かめる手段が事実上テストボタンだけになる。
         // 区分はライブの接続が取り決めたものを使う（再生中はライブを止めているが、値は残っている）。
-        // 一度も繋がっていなければ既定の区分で引く（→ `services/dmdataClassifications.ts`）
-        ? fetchDmdataReplayEvents(settings.dmdataApiKey, from, to, settings.dmdataTestDelivery, dmdataClassifications ?? PREFERRED_CLASSIFICATIONS, signal)
-        // standard 版は合図を受け取らない —— 日ごとの取得を本編と初期状態が相乗りするため
-        // （→ `p2pquakeReplay.ts` の `fetchAllPages`）
-        : fetchP2PReplayEvents(from, to)
+        // 一度も繋がっていなければ中継の既定の区分で引く。予報は、中継が予報キーを受け付けていれば中継から、
+        // 自分の鍵の予報が通っていれば鍵から引く（→ `restSources`・`fetchReplayFromSources`）
+      return fetchReplayFromSources(
+        (endpoint, classifications) => fetchDmdataReplayEvents(endpoint, from, to, settings.dmdataTestDelivery, classifications, signal),
+        relayRestEndpoint, keyRestEndpoint, pastSources,
+      )
     },
-    [settings.dmdataApiKey, settings.dmdataTestDelivery, historicalArchives, dmdataClassifications],
-  )
-  const clearReplayCacheForVariant = useCallback(
-    () => { if (isDmdss) clearReplayCache(); else clearP2PReplayCache() },
-    [],
+    [settings.dmdataTestDelivery, historicalArchives, pastSources, keyRestEndpoint],
   )
   // 再生開始時刻より前の履歴（地震カードの一覧と、初期状態に足す 24 時間より前の電文）。
-  // 取得元は再生用と同じくバリアントで変わるが、引き方が違う。**どちらもライブ接続時の
-  // 初回履歴と同じ範囲を読む** —— DMDSS 版は日次アーカイブを 7 日ぶん（件数では打ち切らない。
-  // → `HISTORY_WINDOW_DAYS`）、standard 版は P2PQuake のクエリを 1 回引いて地震の件数で切る。
+  // 取得元は再生用と同じく中継経由の DMDATA のアーカイブ。**ライブ接続時の初回履歴と同じ範囲を読む**
+  // —— 日次アーカイブを 7 日ぶん（件数では打ち切らない。→ `HISTORY_WINDOW_DAYS`）。
   // こちらも fetchReplayEvents と同じく、対象期間がローカル履歴アーカイブに重なればそちらを使う
-  // （重ならなければ DMDATA/P2PQuake 側は「そもそもデータの無い時代」で必ず失敗するため）。
-  // ローカル履歴アーカイブはどちらの版でも 7 日ぶんを全部返し、件数では切らない（2026-10-14 ユーザー選択）。
+  // （重ならなければ DMDATA 側は「そもそもデータの無い時代」で必ず失敗するため）。
+  // ローカル履歴アーカイブも 7 日ぶんを全部返し、件数では切らない（2026-10-14 ユーザー選択）。
   // 重なり判定には履歴の遡り幅（7 日）ではなく fetchReplayEvents の「初期状態」と同じ
   // REPLAY_PRE_WINDOW_MS（24時間）を使う。ここを独自の幅にすると、本編・初期状態はアーカイブに
   // 重ならないのに履歴だけ数日先の無関係なアーカイブに重なってしまい、再生は実データ側で
@@ -1837,14 +1856,13 @@ export function App() {
     (before: Date, signal: AbortSignal): Promise<ReplayQuakeHistoryResult> => {
       const covering = findCoveringArchiveSync(historicalArchives, new Date(before.getTime() - REPLAY_PRE_WINDOW_MS), before)
       if (covering) return fetchLocalArchiveQuakeHistory(covering, before, HISTORY_WINDOW_DAYS).then(withoutLoadMore)
-      if (!isDmdss) return fetchP2PQuakeHistory(before, MAX_HISTORY_RETAINED, signal)
       // 履歴（再生開始より前の地震カード）も本編と同じ扱いにする。片方だけ通すと
       // 「再生には訓練報が出るのにカードの一覧には無い」形でずれる。
-      const classifications = dmdataClassifications ?? PREFERRED_CLASSIFICATIONS
-      const { dmdataApiKey, dmdataTestDelivery } = settings
+      const classifications = relayRestClassifications(dmdataClassifications, relayForecastGranted)
+      const { dmdataTestDelivery } = settings
       const fetchWindow = (windowBefore: Date, windowSignal: AbortSignal | null, gateTag: GateTag | undefined) =>
         fetchDmdataQuakeHistoryFor(
-          classifications, dmdataApiKey, windowBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, windowSignal,
+          classifications, relayRestEndpoint, windowBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, windowSignal,
           undefined, undefined, gateTag,
         )
       // 続きは押すたびに新しい印を付けて取る（ライブの「もっと見る」と同じ。ボタンが門の残り時間を数える）
@@ -1852,7 +1870,7 @@ export function App() {
         result, before, (windowBefore, windowSignal) => fetchWindow(windowBefore, windowSignal, beginLoadMoreGateTag()),
       ))
     },
-    [settings.dmdataApiKey, settings.dmdataTestDelivery, historicalArchives, dmdataClassifications],
+    [settings.dmdataTestDelivery, historicalArchives, dmdataClassifications, relayForecastGranted],
   )
   /**
    * 行動チェックリストのリセット。**宣言が `useReplayController` より後になる**ため、
@@ -2040,7 +2058,7 @@ export function App() {
     fetchEvents: fetchReplayEvents,
     fetchQuakeHistory: fetchReplayQuakeHistory,
     restoreQuakeHistory,
-    clearCache: clearReplayCacheForVariant,
+    clearCache: clearReplayCache,
     timeOffset: replayTimeOffset,
     setTimeOffset: setReplayTimeOffset,
     resetState,
@@ -2139,9 +2157,10 @@ export function App() {
     return findCoveringArchiveSync(historicalArchives, now, new Date(now.getTime() + 1))?.id ?? null
   }, [replayTimeOffset, nowTick, historicalArchives])
 
-  // DMDSS版: Yahoo hypoInfo からのEEW検出は不要（DMDATAが直接配信するため）
+  // 強震モニタ（Yahoo hypoInfo）の緊急地震速報は全員が受ける。同じ地震は DMDATA の報が届いたら丸ごと置き換える
+  // （`mergeEewReport`。docs/relay-server-design.md §0 の 2026-10-30 の行）
   const kyoshin = useKyoshinRealtime(true, {
-    onEEWEvent: isDmdss ? undefined : injectEvent,
+    onEEWEvent: injectEvent,
     timeOffset: replayTimeOffset,
     localArchiveId: localKyoshinArchiveId,
   })
@@ -2269,7 +2288,7 @@ export function App() {
     if (alertActive) setPanelCollapsed(false)
   }, [alertActive])
 
-  // EEWデータから P波・S波半径を自前計算（100ms更新でスムーズ拡張、標準版・DMDSS版共通）
+  // EEWデータから P波・S波半径を自前計算（100ms更新でスムーズ拡張）
   // eewsForMap（activeEEWsNoCancelled の配列）と同一内容のため使い回して二重 useMemo を避ける。
   const psWave = usePsWaveCalc(eewsForMap, replayTimeOffset)
 
@@ -2559,11 +2578,9 @@ export function App() {
   const quakeOriginSeconds = useQuakeOriginSeconds({
     // 自作・公開のどちらかの波形カードに使うときだけ、発生秒を取りに行く。
     enabled: settings.publicWaveEnabled || (settings.seismoEnabled && settings.seismoWave !== 'off'),
-    isDmdss,
-    apiKey: debouncedApiKey,
-    // ライブでは接続が区分を取り決めるまで待つ。再生中は、一度も繋がっていなければ既定の区分で引く
-    // （リプレイの取得と同じ扱い。→ 上の `fetchDmdataReplayEvents` の呼び出し）。
-    classifications: replayTimeOffset === null ? dmdataClassifications : (dmdataClassifications ?? PREFERRED_CLASSIFICATIONS),
+    // 引く先と区分はリプレイの取得と同じ（→ 上の `fetchReplayFromSources` の呼び出し）
+    sources: pastSources,
+    keyEndpoint: keyRestEndpoint,
     quakes: filteredEarthquakes,
     activeEEWs,
     replayOffsetMs: replayTimeOffset,
@@ -2688,13 +2705,13 @@ export function App() {
   const waveChartShown = waveChartDrawn && !squareLayout.waveHidden
 
   // 地図左上の更新時刻: リアルタイム表示はリアルタイム震度(kyoshin)の更新時刻、
-  // DMDSS版かつWS接続中は現在時刻を毎秒更新、それ以外は最終受信時刻を表示する。
+  // 接続中は現在時刻を毎秒更新、それ以外は最終受信時刻を表示する。
   const overlayUpdateTime =
     mapTab === 'realtime'
       ? kyoshin.dataTime
         ? new Date(kyoshin.dataTime)
         : null
-      : (isDmdss && nowTick !== null)
+      : nowTick !== null
         ? nowTick
         : lastUpdate
   // 更新がエラーで停止しているか（リアルタイム=取得連続失敗 / それ以外=WS切断）。
@@ -2704,7 +2721,7 @@ export function App() {
   const overlayError =
     mapTab === 'realtime'
       ? kyoshin.error
-      : isLiveFeedHalted(connectionStatus)
+      : isLiveFeedHalted(connectionStatus, relayUpstream)
 
   return (
     // 画面いっぱいの高さは h-dvh（100dvh）で取る。dvh はブラウザ UI の出入りに追従するため、
@@ -2960,12 +2977,14 @@ export function App() {
                 isLoadingMore={isLoadingMore}
                 hasMore={hasMore}
                 onLoadMore={loadMoreEarthquakes}
-                watchLoadMoreThrottle={isDmdss}
+                watchLoadMoreThrottle={true}
                 error={error}
                 historyLoss={historyLoss}
                 loadMoreFailed={loadMoreFailed}
                 reconnectGapLoss={reconnectGapLoss}
                 fetchThrottled={fetchThrottled}
+                relayGapNotices={relayGapNotices}
+                onDismissKeyReentry={showKeyReentry ? dismissKeyReentry : null}
                 lpgmByEventId={lpgmByEventId}
                 updateMarks={quakeUpdateMarks}
                 activeLpgmEventId={activeLpgmEventId}
@@ -3060,8 +3079,13 @@ export function App() {
                 settings={settings}
                 onUpdate={updateSetting}
                 arrivalTokenStatus={arrivalTokenStatus}
+                forecastKeyStatus={forecastKeyStatus}
+                forecastKeyRelayRejected={forecastKeyRelayRejected}
+                relayForecastLive={relayForecastLive}
                 onReplaceSettings={replaceSettings}
                 dmdataConnectionStatus={connectionStatus}
+                relayUpstream={relayUpstream}
+                keyForecastStatus={keyForecastStatus}
                 dmdataClassifications={dmdataClassifications}
                 onTest={testHandlers}
                 kyoshinTimeOffset={replayTimeOffset}
@@ -3073,7 +3097,6 @@ export function App() {
                 onStopReplay={replay.stop}
                 historicalArchives={historicalArchives}
                 historicalArchivesLoading={historicalArchivesLoading}
-                scenarioTest={scenarioTest}
                 seismoUnreadableCount={seismo.unreadableCount}
               />
             </ErrorBoundary>

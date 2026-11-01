@@ -9,6 +9,7 @@
 // あわせて、**設定の窓へ出す材料（検証中か・通らなかった理由）が門を緩めないこと**も見る。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
+import { useEffect } from 'react'
 
 /** 進められるサーバー同期時刻。偽のタイマーと一緒に進める。 */
 let now = Date.parse('2026-09-22T00:00:00+09:00')
@@ -128,6 +129,71 @@ describe('useArrivalTokenCheck', () => {
     expect(h.result.current.valid).toBe(false)
     await settle()
     expect(h.result.current.valid).toBe(false)
+  })
+
+  describe('差し替えた描画の副作用へ前の値の結果を渡さない', () => {
+    // `App.tsx` の予報キーと同じ組み方 —— 同じ描画の副作用で「有効ならキーを、検証中ならその印を」
+    // 札の置き場へ渡す。差し替えた描画で前の値の「有効」が返ると、**検証していない値が中継へ渡り
+    // 札を取りに行く。** 描画をまたいだ後の値（`h.result.current`）では見えないので、副作用が
+    // 受け取った値を順に控えて見る。
+    const last = <T,>(xs: readonly T[]): T | undefined => xs[xs.length - 1]
+    function useHarness(t: string, sent: Array<{ key: string | null; checking: boolean }>) {
+      const status = useArrivalTokenCheck(t)
+      const keyToSend = status.valid ? t.trim() : null
+      const checking = status.checking
+      useEffect(() => { sent.push({ key: keyToSend, checking }) }, [keyToSend, checking, sent])
+      return status
+    }
+
+    it('検証済みの A から B へ替えた描画では、B を検証が済むまで渡さない（正）', async () => {
+      expByToken.set('A', now + 10 * DAY)
+      expByToken.set('B', now + 10 * DAY)
+      const sent: Array<{ key: string | null; checking: boolean }> = []
+      const h = renderHook(({ t }) => useHarness(t, sent), { initialProps: { t: 'A' } })
+      await settle()
+      expect(last(sent)).toEqual({ key: 'A', checking: false })
+
+      // 検証を止めておき、差し替えの描画で渡ったものだけを見る。
+      let release: () => void = () => {}
+      verify.mockImplementationOnce((token: string) => new Promise((resolve) => {
+        release = () => resolve({ valid: true, expMs: expByToken.get(token) ?? 0, problem: null })
+      }))
+      const before = sent.length
+      act(() => { h.rerender({ t: 'B' }) })
+      const afterSwap = sent.slice(before)
+      expect(afterSwap.some((s) => s.key === 'B')).toBe(false)
+      expect(last(afterSwap)).toEqual({ key: null, checking: true })
+
+      // 検証が通ったら渡す。
+      await act(async () => { release(); await vi.advanceTimersByTimeAsync(0) })
+      expect(last(sent)).toEqual({ key: 'B', checking: false })
+    })
+
+    it('A のままなら、描き直しても渡し続ける（対照）', async () => {
+      expByToken.set('A', now + 10 * DAY)
+      const sent: Array<{ key: string | null; checking: boolean }> = []
+      const h = renderHook(({ t }) => useHarness(t, sent), { initialProps: { t: 'A' } })
+      await settle()
+      const before = sent.length
+      act(() => { h.rerender({ t: 'A' }) })
+      await settle()
+      // 値が変わらないので副作用は走り直さず、渡したままになっている。
+      expect(sent.slice(before)).toEqual([])
+      expect(last(sent)).toEqual({ key: 'A', checking: false })
+      expect(h.result.current.valid).toBe(true)
+    })
+
+    it('空白を足しただけの描画では、閉じずに渡したまま（安全弁）', async () => {
+      // 検証した値との突き合わせは空白を落とした値で行う。生の値で比べると、打鍵のたびに閉じる。
+      expByToken.set('A', now + 10 * DAY)
+      const sent: Array<{ key: string | null; checking: boolean }> = []
+      const h = renderHook(({ t }) => useHarness(t, sent), { initialProps: { t: 'A' } })
+      await settle()
+      const before = sent.length
+      act(() => { h.rerender({ t: ' A ' }) })
+      expect(sent.slice(before).some((s) => s.key === null)).toBe(false)
+      expect(h.result.current.valid).toBe(true)
+    })
   })
 
   it('検証が済むまでは「確認中」で、理由をまだ出さない（正）', async () => {

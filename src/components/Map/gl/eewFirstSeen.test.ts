@@ -17,7 +17,7 @@ const eew = (eventId: string, lat = 37.5, lng = 137.2): EEWAlert =>
     earthquake: { hypocenter: { latitude: lat, longitude: lng } },
   }) as unknown as EEWAlert
 
-/** 位置不明のセンチネル（標準版の P2PQuake が座標を持たない報で寄こす値）。 */
+/** 位置不明のセンチネル（震源の位置が判らない報に入る値）。 */
 const COORD_UNKNOWN = -200
 
 describe('syncEewFirstSeen', () => {
@@ -85,7 +85,7 @@ describe('syncEewFirstSeen', () => {
   })
 
   it('座標が NaN の EEW も記録しない', () => {
-    // Arrange: 標準版（Yahoo 強震モニタ）は座標の文字列が空だと NaN になる。**否定形の判定
+    // Arrange: 強震モニタ（Yahoo）の緊急地震速報は座標の文字列が空だと NaN になる。**否定形の判定
     // （`lat <= -200`）では弾けない**ので、記録側もセンチネルと同じ扱いにしておく必要がある。
     const seen = new Map<string, number>()
     const focused = { current: null as string | null }

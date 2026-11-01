@@ -1,6 +1,6 @@
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { MapMode } from '../components/Map/mapTypes'
-import { canPresentLpgmClass, computeDisplayEEWLevel, eewKindLabel, eewMaxLpgmClassInfo, eewMaxScale, eewMaxScaleInfo, isEewScaleZeroForecast, isProvisionalHypocenter, statesEewLpgmClassZero } from './eew'
+import { canPresentLpgmClass, computeDisplayEEWLevel, eewDisplaySerial, eewKindLabel, eewMaxLpgmClassInfo, eewMaxScale, eewMaxScaleInfo, isEewScaleZeroForecast, isProvisionalHypocenter, statesEewLpgmClassZero } from './eew'
 import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTime, formatQuakeDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth, hasHypocenterFacts } from './formatters'
 import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove, isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
@@ -239,7 +239,7 @@ function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['
   const subtitle = sortEewsBySeverity(liveEews).map(eewSubtitle).join(' ／ ')
   const info = eewMaxScaleInfo(eew)
   const knownScale = isValidIntensityScale(info.scale) && info.scale >= 0
-  const serial = eew.issue?.serial
+  const serial = eewDisplaySerial(eew)
   // 日時として読めない発生時刻は落とすが、**報番号は残す**（別の事実なので巻き込まない）。
   // 両方とも無ければ欄ごと出さない。
   // **値が無いときは整形を呼ばない**（「非常に強い揺れを検知」の報は発生時刻を持たない）。呼ぶと
