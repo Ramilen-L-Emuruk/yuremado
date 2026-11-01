@@ -1,7 +1,7 @@
 import { parseEarthquakeFromXml, parseTsunamiFromXml } from './dmdataParser'
 import { parseTar } from '../utils/tarParser'
 import type { JMAQuake, EEWAlert, JMATsunami } from '../types/earthquake'
-import { selectActiveEews, computeEverSpecialWarningEventIds, computeFirstIssueTimes, eewEventKey } from '../utils/eew'
+import { selectActiveEews, computeEverSpecialWarningEventIds, computeFirstIssueTimes, eewEventKey, supersedesEewReport } from '../utils/eew'
 import { gunzip } from '../utils/gzip'
 import { createArchiveBodyCache } from '../utils/archiveBodyCache'
 import { readArchiveBody, writeArchiveBody } from '../utils/archiveBodyDb'
@@ -3163,7 +3163,7 @@ export async function fetchDmdataEewOrigins(
   const dec = new TextDecoder()
   // 地震ごとに報番号のいちばん大きい報へ畳む。**日をまたいで続報が出た地震は、両方の日に最終報の候補が出る**
   // （日ごとに選ぶので）。後に読んだ日を勝たせると、目録の並び次第で途中の報が残る。
-  const byEvent = new Map<string, { serial: number; eew: EEWAlert }>()
+  const byEvent = new Map<string, { eew: EEWAlert }>()
   /** 読めた目録に載った、地震ごとの最大の報番号（種別を問わない）。 */
   const seenSerial = new Map<string, number>()
   /** 受けている種別の報を目録で選んだ地震（本文を読めなかったら、地震ごとに取り直す）。 */
@@ -3223,16 +3223,17 @@ export async function fetchDmdataEewOrigins(
           log.warn(`[eew-origin] 最終報を読み取れませんでした date=${item.date} id=${entry.id}`)
           continue
         }
-        const serial = Number(entry.xmlReport?.head?.serial)
         const cur = byEvent.get(eventId)
-        if (cur === undefined || serial > cur.serial) byEvent.set(eventId, { serial, eew })
+        // 系列（予報・警報）が違えば報番号は比べられない。発表時刻で比べる（`supersedesEewReport`）
+        if (cur === undefined || supersedesEewReport(cur.eew, eew)) byEvent.set(eventId, { eew })
       } catch (e) {
         log.warn(`[eew-origin] 最終報を読み取れませんでした date=${item.date} id=${entry.id}`, e)
       }
     }
   }
   // 2'. 電文一覧が警報も返す繋ぎ先（中継）: 一覧と地震ごとの詳細の代わりに、電文一覧から地震ごとの最終報を読む。
-  // アーカイブで読めた報より報番号の大きい報だけ差し替える（日をまたいだ続報・束がまだ無い日の地震もここで入る）
+  // アーカイブで読めた報より新しい報だけ差し替える。同じ系列なら報番号、系列が違えば発表時刻で比べる
+  // （日をまたいだ続報・束がまだ無い日の地震もここで入る）
   if (endpoint.telegramListHasEew) {
     let fromList = 0
     if (!stopped()) {
@@ -3241,10 +3242,9 @@ export async function fetchDmdataEewOrigins(
       for (const eew of listed.finals) {
         const eventId = eew.issue?.eventId
         if (!eventId) continue
-        const serial = Number(eew.issue?.serial)
         const cur = byEvent.get(eventId)
-        if (cur === undefined || serial > cur.serial) {
-          byEvent.set(eventId, { serial, eew })
+        if (cur === undefined || supersedesEewReport(cur.eew, eew)) {
+          byEvent.set(eventId, { eew })
           fromList += 1
         }
       }

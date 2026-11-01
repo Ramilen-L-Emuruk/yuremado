@@ -32,7 +32,7 @@ import { withBorrowedFromTsunami, borrowFromTsunamiIntoCards } from '../utils/bo
 import { loadStationCoords, onStationCoordsLoaded, areaPrefIndexOf, getAreaPrefIndexCache } from '../utils/stationCoords'
 import type { AreaPrefIndex } from '../utils/quakePoints'
 import {
-  calcEEWCancelTime, eewSerial, eewEventKey, eewIssueTimeMs, mergeEewReport, eewStaleness, acceptEewReport,
+  calcEEWCancelTime, eewSerial, eewSerialSeries, eewEventKey, eewIssueTimeMs, mergeEewReport, eewStaleness, acceptEewReport,
   supplementEewReport, raisesEewAlert,
   noteEewNotified, isSameReportFromOtherOrigin, isOlderEewReport, type EewAcceptance,
   endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, rememberEewFirstIssueTime,
@@ -338,7 +338,7 @@ function skipEndedEew(ended: ReadonlyMap<string, EndedEew>, eew: EEWAlert, path:
   const basis = match === 'cancelled'
     ? '取消で終えた'
     : match === 'serial'
-      ? `消えるまでに第 ${record.serialByOrigin.get(eew.origin)} 報まで受けていた`
+      ? `消えるまでに第 ${record.serialBySeries.get(eewSerialSeries(eew))} 報まで受けていた`
       : '消えるまでに受けた報より発表時刻が新しくない'
   log.info(`[eew] ${path}: ${key}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報）は ${Math.round((nowMs - record.endedAtMs) / 1000)} 秒前に画面から消えた地震の報なので採りません（${basis}）`)
   return true
@@ -386,13 +386,13 @@ function mergeEndedEew(
   previous: EndedEew | undefined, acceptance: EewAcceptance, cancelled: boolean, nowMs: number,
   lastReport: EEWAlert, firstIssueTime: string | null | undefined,
 ): EndedEew {
-  const serialByOrigin = new Map(previous?.serialByOrigin)
-  for (const [origin, serial] of acceptance.serialByOrigin) {
-    serialByOrigin.set(origin, Math.max(serial, serialByOrigin.get(origin) ?? serial))
+  const serialBySeries = new Map(previous?.serialBySeries)
+  for (const [series, serial] of acceptance.serialBySeries) {
+    serialBySeries.set(series, Math.max(serial, serialBySeries.get(series) ?? serial))
   }
   const issues = [previous?.latestIssueMs, acceptance.latestIssueMs].filter((v): v is number => typeof v === 'number')
   return {
-    serialByOrigin,
+    serialBySeries,
     latestIssueMs: issues.length > 0 ? Math.max(...issues) : null,
     endedAtMs: nowMs,
     cancelled: cancelled || (previous?.cancelled ?? false),
@@ -1750,7 +1750,7 @@ export function useEarthquakes(
           // 順序の入れ替わり自体は想定内だが、判定が誤り続けるとその EEW は以降更新されない。
           // 捨てた事実が残らないと原因に辿り着けないため記録する（頻度は 1 地震あたり数件）。
           log.debug(`[eew] 古い報を破棄: key=${key} 経路=${incoming.origin}`
-            + ` 受理済み=#${acceptance?.serialByOrigin.get(incoming.origin) ?? '(なし)'}/${acceptance?.latestIssueMs ?? '(なし)'}`
+            + ` 受理済み=#${acceptance?.serialBySeries.get(eewSerialSeries(incoming)) ?? '(なし)'}/${acceptance?.latestIssueMs ?? '(なし)'}`
             + ` 受信=#${eewSerial(incoming) ?? '(なし)'}/${eewIssueTimeMs(incoming) ?? '(なし)'}`)
           recordSkippedTelegram(incoming, 'staleSerial')
           // 報は捨てても、運んできた特別警報の印だけは移す（→ `carryEverSpecialWarning`）
@@ -2848,7 +2848,7 @@ export function useEarthquakes(
         const key = eewEventKey(eew)
         const acceptance = eewAcceptanceRef.current.get(key)
         if (!acceptance) startedWhileAway = true
-        const accepted = acceptance?.serialByOrigin.get(eew.origin)
+        const accepted = acceptance?.serialBySeries.get(eewSerialSeries(eew))
         const serial = eewSerial(eew)
         if (accepted === undefined || serial === null || serial > accepted) return true
         // 報は積まないが、詳細の全報から載せた特別警報の印は移す（→ `carryEverSpecialWarning`）。取得の間にライブが追いつくと

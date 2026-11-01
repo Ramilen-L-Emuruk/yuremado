@@ -179,6 +179,8 @@ function eewSample(): EewSample {
     strongShakingText: '強い揺れ',
     kind: 'eew',
     origin: 'dmdata',
+    serialSeries: 'warning',
+    forecastSerial: '30',
     id: `dmdata-eew-${EVENT_ID}-1`,
     time: iso(),
     test: false,

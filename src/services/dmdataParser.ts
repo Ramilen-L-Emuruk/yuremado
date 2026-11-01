@@ -1625,7 +1625,9 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
   return {
     kind: 'eew',
     origin: 'dmdata',
-    id: `dmdata-eew-${eventId}-${serial}`,
+    // 警報の電文の報番号は警報だけの通し番号なので、予報の同じ番号の報と id が重ならないよう印を付ける
+    id: headType === 'VXSE43' ? `dmdata-eew-${eventId}-w${serial}` : `dmdata-eew-${eventId}-${serial}`,
+    ...(headType === 'VXSE43' && { serialSeries: 'warning' as const }),
     time: reportTime,
     test: false,
     ...(eewHeadline && { headline: eewHeadline }),

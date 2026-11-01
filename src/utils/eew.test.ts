@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { calcShakingDurationSec, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, eewFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast } from './eew'
+import { calcShakingDurationSec, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, eewFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, eewSerialSeries, eewDisplaySerial, supersedesEewReport, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast } from './eew'
 import { travelTimeSec } from './travelTime'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
@@ -1368,7 +1368,7 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（強震モ�
   // 発表中の速報の取り直しが、もう終えた地震の報を返したか（→ `useEarthquakes` の `eewEndedRef`）
   describe('endedEewMatch', () => {
     const ENDED_AT = 1_000_000
-    const ended: EndedEew = { serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT, cancelled: false, lastReport: null, firstIssueTime: undefined }
+    const ended: EndedEew = { serialBySeries: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT, cancelled: false, lastReport: null, firstIssueTime: undefined }
     const match = (over: Partial<EndedEew> | undefined, eew: EEWAlert, nowMs = ENDED_AT + 1000) =>
       endedEewMatch(over === undefined ? undefined : { ...ended, ...over }, eew, nowMs, ACTIVE_EEW_WINDOW_MS)
     // 正: 同じ経路で、終えたときの報番号以下の報は終えた地震の報
@@ -1453,6 +1453,90 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（強震モ�
     it('新しい報は fresh', () => {
       const acc = acceptEewReport(undefined, report('yahoo', '17', YAHOO_TIME))
       expect(eewStaleness(acc, report('dmdata', '2', LATER))).toBe('fresh')
+    })
+  })
+
+  // 警報の電文（VXSE43）の報番号は警報だけの通し番号。2024-01-01 能登の本震では警報の第2報（16:10:43）が
+  // 予報の第20報、第3報（16:11:07）が予報の第30報と同じ発表時刻（控え eew-warning / eew-forecast の 2024-01-01）
+  describe('警報の電文の報番号（警報だけの通し番号）', () => {
+    const W2_TIME = '2024-01-01T16:10:43+09:00'
+    const W3_TIME = '2024-01-01T16:11:07+09:00'
+    const warning = (serial: string, time: string) => report('dmdata', serial, time, { serialSeries: 'warning' })
+    it('系列は経路と別に持つ（警報は dmdata:warning、予報は dmdata）', () => {
+      expect(eewSerialSeries(warning('2', W2_TIME))).toBe('dmdata:warning')
+      expect(eewSerialSeries(report('dmdata', '20', W2_TIME))).toBe('dmdata')
+      expect(eewSerialSeries(report('yahoo', '20', W2_TIME))).toBe('yahoo')
+    })
+    // 正: 予報の第30報の後に届いた警報の第3報は、番号が小さくても古い報として捨てない（同じ秒なので fresh）
+    it('予報の番号の後に届いた警報の小さな番号を古いと見なさない', () => {
+      const acc = acceptEewReport(undefined, report('dmdata', '30', W3_TIME))
+      expect(eewStaleness(acc, warning('3', W3_TIME))).toBe('fresh')
+      expect(isOlderEewReport(report('dmdata', '30', W3_TIME), warning('3', W3_TIME))).toBe(false)
+    })
+    // 対照: 予報どうしは今までどおり報番号で比べる
+    it('予報どうしは報番号で比べる', () => {
+      const acc = acceptEewReport(undefined, report('dmdata', '30', W3_TIME))
+      expect(eewStaleness(acc, report('dmdata', '20', W3_TIME))).toBe('stale')
+    })
+    // 安全弁: 警報どうしは警報の番号で比べる（第3報の後の第2報は古い）
+    it('警報どうしは警報の番号で比べる', () => {
+      const acc = acceptEewReport(undefined, warning('3', W3_TIME))
+      expect(eewStaleness(acc, warning('2', W3_TIME))).toBe('stale')
+      expect(eewStaleness(acc, warning('4', W3_TIME))).toBe('fresh')
+    })
+    // 正: 表示中の予報の番号を、警報の電文の番号で上書きしない（2026-11-01 ユーザー選択「予報の番号だけ出す」）
+    it('統合しても表示する番号は予報の通し番号のまま', () => {
+      const merged = mergeEewReport(report('dmdata', '30', W3_TIME), warning('3', W3_TIME))
+      expect(eewDisplaySerial(merged)).toBe(30)
+      // 報そのものは警報のまま（比べ方は警報の系列と番号で行う）
+      expect(eewSerialSeries(merged)).toBe('dmdata:warning')
+      expect(eewSerial(merged)).toBe(3)
+      // 警報が続いても、表示中だった予報の番号を出し続ける
+      expect(eewDisplaySerial(mergeEewReport(merged, warning('4', LATER)))).toBe(30)
+    })
+    // 正: 表示中が強震モニタの報でも番号を出し続ける（強震モニタの報は中身が変わるまで流れてこない）
+    it('表示中が強震モニタの報でも、その番号を出し続ける', () => {
+      const merged = mergeEewReport(report('yahoo', '30', W3_TIME), warning('3', W3_TIME))
+      expect(eewDisplaySerial(merged)).toBe(30)
+      expect(merged.origin).toBe('dmdata')
+    })
+    // 安全弁: 強震モニタの番号を電文の系列へ移さない（移すと後の予報 第2報 などを古いと捨てる）
+    it('引き継いだ強震モニタの番号は新旧の比べ方に使わない', () => {
+      const merged = mergeEewReport(report('yahoo', '30', W3_TIME), warning('3', W3_TIME))
+      expect(isOlderEewReport(merged, report('dmdata', '2', W3_TIME))).toBe(false)
+      // 次の強震モニタの報・予報の電文は、その報の番号を出す（引き継いだ番号は捨てる）
+      const viaYahoo = mergeEewReport(merged, report('yahoo', '31', LATER))
+      expect(eewDisplaySerial(viaYahoo)).toBe(31)
+      expect(viaYahoo.forecastSerial).toBeUndefined()
+      expect(viaYahoo.serialSeries).toBeUndefined()
+      expect(mergeEewReport(merged, report('dmdata', '2', LATER)).forecastSerial).toBeUndefined()
+    })
+    // 対照: 予報の電文で統合すれば、その番号を出す
+    it('予報の電文で統合すればその番号を出す', () => {
+      const merged = mergeEewReport(report('yahoo', '30', W3_TIME), report('dmdata', '31', LATER))
+      expect(eewDisplaySerial(merged)).toBe(31)
+    })
+    // 安全弁: 警報の電文しか届いていない地震は番号を出さない（警報の番号を予報の番号として見せない）
+    it('警報の電文しか届いていなければ番号を出さない', () => {
+      expect(eewDisplaySerial(mergeEewReport(undefined, warning('1', W2_TIME)))).toBeNull()
+      expect(eewDisplaySerial(mergeEewReport(warning('1', W2_TIME), warning('2', W2_TIME)))).toBeNull()
+    })
+    // 最終報を 1 通に絞るとき: 系列が違えば発表時刻で、同じなら報番号で、厳密に新しいときだけ差し替える
+    it('最終報選びは系列が違えば発表時刻で比べる', () => {
+      expect(supersedesEewReport(report('dmdata', '30', W2_TIME), warning('3', W3_TIME))).toBe(true)
+      expect(supersedesEewReport(report('dmdata', '30', W3_TIME), warning('3', W2_TIME))).toBe(false)
+    })
+    it('同じ系列は報番号で比べ、同じ報では差し替えない', () => {
+      expect(supersedesEewReport(warning('3', W3_TIME), warning('2', W3_TIME))).toBe(false)
+      expect(supersedesEewReport(warning('2', W3_TIME), warning('3', W3_TIME))).toBe(true)
+      expect(supersedesEewReport(warning('3', W3_TIME), warning('3', W3_TIME))).toBe(false)
+    })
+    // 終えた地震の記憶も系列ごとに比べる
+    it('終えた地震の記憶も系列ごとに比べる', () => {
+      const acc = acceptEewReport(acceptEewReport(undefined, report('dmdata', '46', LATER)), warning('3', W3_TIME))
+      const ended: EndedEew = { serialBySeries: acc.serialBySeries, latestIssueMs: acc.latestIssueMs, endedAtMs: 1_000, cancelled: false, lastReport: null, firstIssueTime: undefined }
+      expect(endedEewMatch(ended, warning('3', W3_TIME), 2_000, ACTIVE_EEW_WINDOW_MS)).toBe('serial')
+      expect(endedEewMatch(ended, warning('4', LATER), 2_000, ACTIVE_EEW_WINDOW_MS)).toBeNull()
     })
   })
 
@@ -1770,7 +1854,7 @@ describe('isLateEewCancel（取消の前に画面から消えた地震へ届い�
   const ENDED_AT = 1_000_000
   const lastReport = makeEEW({ origin: 'dmdata' })
   const ended: EndedEew = {
-    serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: null, endedAtMs: ENDED_AT, cancelled: false,
+    serialBySeries: new Map([['dmdata', 3]] as const), latestIssueMs: null, endedAtMs: ENDED_AT, cancelled: false,
     lastReport, firstIssueTime: '2026-01-01T12:00:05Z',
   }
   const cancel = makeEEW({ cancelled: true })

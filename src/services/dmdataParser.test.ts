@@ -1390,6 +1390,16 @@ describe('parseEEWFromXml: severity・cancel・LPGM', () => {
     expect(parseEEWFromXml('VXSE43', eewXml())!.severity).toBe('Warning')
   })
 
+  // 警報の電文の報番号は警報だけの通し番号（→ `EEWAlert.serialSeries`）。予報の同じ番号の報と id も分ける
+  it('VXSE43 の報番号は警報の系列の印を持ち、id も予報と分ける', () => {
+    const warning = parseEEWFromXml('VXSE43', eewXml())!
+    const forecast = parseEEWFromXml('VXSE45', eewXml())!
+    expect(warning.serialSeries).toBe('warning')
+    expect(forecast.serialSeries).toBeUndefined()
+    expect(warning.issue?.serial).toBe(forecast.issue?.serial)
+    expect(warning.id).not.toBe(forecast.id)
+  })
+
   it('区域の Kind が「緊急地震速報（警報）」なら VXSE45 でも severity=Warning に格上げ', () => {
     const xml = eewXml({ pref: eewPref('<From>5+</From><To>5+</To>', '11', '緊急地震速報（警報）') })
     expect(parseEEWFromXml('VXSE45', xml)!.severity).toBe('Warning')

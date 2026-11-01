@@ -15,7 +15,7 @@ import { cancelBlockOffset } from '../../utils/cancelBlockOffset'
 import { formatDateTime, formatDepth, formatMagnitudeWithCondition, formatTime, hasDepth, hasMagnitude, magnitudeHeading } from '../../utils/formatters'
 import { getIntensityColor, getIntensityLabel, getEewAreaIntensityLabel, getIntensityBgColor, getMagnitudeColor, getDepthColor } from '../../utils/intensity'
 import { getLpgmClassLabel, getLpgmClassLabelWithApproxAbove, getLpgmClassColor, getLpgmClassBgColor } from '../../utils/lpgm'
-import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, isEewScaleZeroForecast, statesEewLpgmClassZero, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst } from '../../utils/eew'
+import { eewAreas, eewEventKey, eewMaxScaleInfo, eewMaxLpgmClassInfo, eewSerial, eewSerialSeries, eewDisplaySerial, computeDisplayEEWLevel, eewNoForecastReason, canPresentLpgmClass, isEewScaleZeroForecast, statesEewLpgmClassZero, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, eewForecastChangeText, isEewHypocenterSettled, isEewAreaArrived, sortEewWarningRegions, eewAreaArrivalKind, eewArrivalEtaSec, isProvisionalHypocenter, compareEewNewestFirst } from '../../utils/eew'
 import { eewForecastChangeFirstSeenAt } from '../../utils/eewForecastChangeSeen'
 import { KYOSHIN_SUB_ZERO_COLOR, kyoshinDetectionScaleLabel, kyoshinIndexToJma, kyoshinIndexToLabel, kyoshinIntensityColor } from '../../utils/kyoshinIntensity'
 import { SHINDO0_COLOR } from '../../utils/measuredIntensity'
@@ -195,7 +195,8 @@ function eewForecastChangeRemainingMs(key: string, nowMs: number): number {
 function useHeldForecastChange(eew: EEWAlert): string {
   const text = eewForecastChangeText(eew)
   const serial = eewSerial(eew)
-  const seenKey = `${eewEventKey(eew)}#${serial}#${text}`
+  // 報番号は数え方（系列）ごとの番号なので、系列も鍵に入れる（警報の第 N 報と予報の第 N 報を取り違えない）
+  const seenKey = `${eewEventKey(eew)}#${eewSerialSeries(eew)}#${serial}#${text}`
   const [held, setHeld] = useState(() => (text && eewForecastChangeRemainingMs(seenKey, Date.now()) > 0 ? text : ''))
   const timerRef = useRef(0)
   useEffect(() => {
@@ -350,7 +351,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
   const isWarning = level >= 1
   const isSpecial = level === 2
   const areas = eewAreas(eew)
-  const serial = eewSerial(eew)
+  const serial = eewDisplaySerial(eew)
   const { hypocenter } = eew.earthquake
   // **値が無いときは整形を呼ばない。** 呼ぶと「読めない値が来た」として記録され、
   // 「電文が時刻を持たない」ことと区別が付かなくなる（他の呼び出しと表記も揃う）。

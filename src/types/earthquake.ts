@@ -1287,6 +1287,16 @@ export interface EEWForecastChange {
  */
 export type EewOrigin = 'dmdata' | 'yahoo' | 'archive' | 'test'
 
+/**
+ * 報番号の数え方の系列（→ `utils/eew.ts` の `eewSerialSeries`）。経路（{@link EewOrigin}）に、
+ * **警報の電文（VXSE43）の通し番号**を別の系列として足したもの。
+ *
+ * 警報の電文の報番号は警報だけの通し番号で、予報（VXSE45・強震モニタ）の通し番号とは数え方が違う
+ * （2024-01-01 能登の本震で、警報の第1・2・3報は予報の第1・20・30報と同じ発表時刻）。どちらも経路は
+ * `dmdata` なので、経路だけで分けると同じ数え方として比べてしまう。
+ */
+export type EewSerialSeries = EewOrigin | 'dmdata:warning'
+
 export interface EEWAlert {
   /**
    * 見出し文（`Head/Headline/Text`）。→ {@link JMAQuake.headline}（扱いも同じ）
@@ -1415,7 +1425,20 @@ export interface EEWAlert {
    *   取消は時刻を言わずに読む（2026-10-19 ユーザー承認「時刻を言わない (Recommended)」）
    */
   firstIssueTime?: string | null
-  // issue.serial = 情報番号（第N報）
+  /**
+   * `issue.serial` が警報の電文（VXSE43）の通し番号か（→ {@link EewSerialSeries}）。パーサーが VXSE43 の報にだけ立てる。
+   *
+   * **画面・地図・共有カードの「第N報」には警報の通し番号を出さない**（予報の通し番号だけを出す。
+   * 2026-11-01 ユーザー選択「予報の番号だけ出す」）。表示する番号は `eewDisplaySerial` で引く。
+   */
+  serialSeries?: 'warning'
+  /**
+   * 警報の電文（`serialSeries: 'warning'`）を統合したとき、それまで表示していた予報の通し番号（電文の予報・強震モニタの
+   * どちらでも）。**表示だけに使う**（`eewDisplaySerial`）—— 新旧の比べ方と台帳は `issue.serial`（警報の番号）と
+   * 警報の系列で行う。予報の報を統合すると消える（その報の番号を出す）
+   */
+  forecastSerial?: string
+  // issue.serial = 情報番号（第N報）。数え方は serialSeries を見る
   issue?: {
     eventId?: string
     serial?: string

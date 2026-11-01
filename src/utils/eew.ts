@@ -1,4 +1,4 @@
-import type { EEWAlert, EEWRegion, EewOrigin } from '../types/earthquake'
+import type { EEWAlert, EEWRegion, EewOrigin, EewSerialSeries } from '../types/earthquake'
 import { parseJstTimeMs } from './quakeOriginSeconds'
 import { hasDepth, hasMagnitude } from './formatters'
 import { hasKnownEpicenter, hypocentralDistanceKm } from './geo'
@@ -904,10 +904,28 @@ export function eewPhase2ScaleStabilityMs(currentScale: number, baseScale: numbe
     : EEW_PHASE2_STABILITY_SMALL_MS
 }
 
-/** 情報番号（第N報）。取得できなければ null。 */
+/** 情報番号（第N報）。取得できなければ null。数え方は {@link eewSerialSeries} で見る。 */
 export function eewSerial(eew: EEWAlert): number | null {
   const n = Number(eew.issue?.serial)
   return Number.isInteger(n) && n > 0 ? n : null
+}
+
+/**
+ * 報番号の数え方の系列（→ `EewSerialSeries`）。**報番号どうしを比べてよいのは、系列が同じ報だけ。**
+ * 経路が同じ `dmdata` でも、警報の電文（VXSE43）は警報だけの通し番号なので別の系列にする。
+ */
+export function eewSerialSeries(eew: EEWAlert): EewSerialSeries {
+  return eew.origin === 'dmdata' && eew.serialSeries === 'warning' ? 'dmdata:warning' : eew.origin
+}
+
+/**
+ * 画面・地図・共有カードに「第N報」として出す報番号。**警報の通し番号は出さない**（予報の通し番号だけを出す。
+ * 2026-11-01 ユーザー選択「予報の番号だけ出す」）。警報の電文しか届いていない地震では番号を出さない。
+ */
+export function eewDisplaySerial(eew: EEWAlert): number | null {
+  if (eew.serialSeries !== 'warning') return eewSerial(eew)
+  const held = eew.forecastSerial === undefined ? NaN : Number(eew.forecastSerial)
+  return Number.isFinite(held) ? held : null
 }
 
 /**
@@ -932,8 +950,8 @@ export function eewIssueTimeMs(eew: EEWAlert): number | null {
  * 受けるので、経路ごとの報番号と、経路をまたいだ発表時刻を持つ。**
  */
 export interface EewAcceptance {
-  /** 経路ごとに受理した最大の報番号。**経路をまたいで比べない**（数え方が違う） */
-  readonly serialByOrigin: ReadonlyMap<EewOrigin, number>
+  /** 報番号の系列（→ `eewSerialSeries`）ごとに受理した最大の報番号。**系列をまたいで比べない**（数え方が違う） */
+  readonly serialBySeries: ReadonlyMap<EewSerialSeries, number>
   /** 受理した報のうち最も新しい発表時刻（秒）。経路をまたいだ新旧はこれで比べる */
   readonly latestIssueMs: number | null
   /**
@@ -949,7 +967,7 @@ export interface EewAcceptance {
 }
 
 export const EMPTY_EEW_ACCEPTANCE: EewAcceptance = {
-  serialByOrigin: new Map(), latestIssueMs: null, notifiedIssueMs: new Map(), receipts: 0,
+  serialBySeries: new Map(), latestIssueMs: null, notifiedIssueMs: new Map(), receipts: 0,
 }
 
 /**
@@ -983,8 +1001,8 @@ export const ACTIVE_EEW_WINDOW_MS = 15 * 60 * 1000
 
 /** 表示を終えた（自動解除・取消で画面から消えた）地震について覚えておくこと。 */
 export interface EndedEew {
-  /** 終えるまでに受理した、経路ごとの最大の報番号（台帳の `serialByOrigin` を写したもの） */
-  readonly serialByOrigin: ReadonlyMap<EewOrigin, number>
+  /** 終えるまでに受理した、報番号の系列ごとの最大の報番号（台帳の `serialBySeries` を写したもの） */
+  readonly serialBySeries: ReadonlyMap<EewSerialSeries, number>
   /** 終えるまでに受理した報のうち最も新しい発表時刻（台帳の `latestIssueMs`）。経路をまたいだ比較に使う */
   readonly latestIssueMs: number | null
   /** 画面から消えた時刻（エポックミリ秒） */
@@ -1028,7 +1046,7 @@ export function endedEewMatch(
   const elapsed = nowMs - ended.endedAtMs
   if (elapsed < 0 || elapsed > keepMs) return null
   if (ended.cancelled) return 'cancelled'
-  const endedSerial = ended.serialByOrigin.get(incoming.origin)
+  const endedSerial = ended.serialBySeries.get(eewSerialSeries(incoming))
   const serial = eewSerial(incoming)
   if (endedSerial !== undefined && serial !== null) return serial <= endedSerial ? 'serial' : null
   const issueMs = eewIssueTimeMs(incoming)
@@ -1082,7 +1100,7 @@ export function eewStaleness(
 ): 'fresh' | 'stale' | 'olderFromOtherOrigin' {
   if (!acceptance) return 'fresh'
   const serial = eewSerial(incoming)
-  const accepted = acceptance.serialByOrigin.get(incoming.origin)
+  const accepted = acceptance.serialBySeries.get(eewSerialSeries(incoming))
   if (serial !== null && accepted !== undefined && serial < accepted) return 'stale'
   const issueMs = eewIssueTimeMs(incoming)
   return issueMs !== null && acceptance.latestIssueMs !== null && issueMs < acceptance.latestIssueMs
@@ -1131,11 +1149,11 @@ export function raisesEewAlert(merged: EEWAlert, previous: EEWAlert): boolean {
 /**
  * 表示中の EEW（`shown`）より古い報か。状態更新の側の二重化で使う（入口は台帳で判定する）。
  *
- * 比べ方は {@link isStaleEewReport} と同じ —— 同じ経路なら報番号、経路が違えば発表時刻（秒）。
+ * 比べ方は {@link isStaleEewReport} と同じ —— 報番号の系列（{@link eewSerialSeries}）が同じなら報番号、違えば発表時刻（秒）。
  * `shown.origin` は最後に統合した報の経路（→ `EEWAlert.origin`）。
  */
 export function isOlderEewReport(shown: EEWAlert, incoming: EEWAlert): boolean {
-  if (shown.origin === incoming.origin) {
+  if (eewSerialSeries(shown) === eewSerialSeries(incoming)) {
     const a = eewSerial(shown)
     const b = eewSerial(incoming)
     if (a !== null && b !== null) return b < a
@@ -1145,15 +1163,31 @@ export function isOlderEewReport(shown: EEWAlert, incoming: EEWAlert): boolean {
   return ta !== null && tb !== null && tb < ta
 }
 
+/**
+ * `incoming` が `shown` より**厳密に新しい**報か（同じ報・比べられない報は偽）。比べ方は `isOlderEewReport` と同じで、
+ * 同じ系列なら報番号、系列が違えば発表時刻。地震ごとの最終報を 1 通に絞るときに使う。
+ */
+export function supersedesEewReport(shown: EEWAlert, incoming: EEWAlert): boolean {
+  if (eewSerialSeries(shown) === eewSerialSeries(incoming)) {
+    const a = eewSerial(shown)
+    const b = eewSerial(incoming)
+    if (a !== null && b !== null) return b > a
+  }
+  const ta = eewIssueTimeMs(shown)
+  const tb = eewIssueTimeMs(incoming)
+  return ta !== null && tb !== null && tb > ta
+}
+
 /** 報を受理したあとの台帳（純関数。元の台帳は変えない）。 */
 export function acceptEewReport(acceptance: EewAcceptance | undefined, incoming: EEWAlert): EewAcceptance {
   const base = acceptance ?? EMPTY_EEW_ACCEPTANCE
-  const serialByOrigin = new Map(base.serialByOrigin)
+  const serialBySeries = new Map(base.serialBySeries)
   const serial = eewSerial(incoming)
-  if (serial !== null) serialByOrigin.set(incoming.origin, Math.max(serial, serialByOrigin.get(incoming.origin) ?? 0))
+  const series = eewSerialSeries(incoming)
+  if (serial !== null) serialBySeries.set(series, Math.max(serial, serialBySeries.get(series) ?? 0))
   const issueMs = eewIssueTimeMs(incoming)
   const latestIssueMs = issueMs === null ? base.latestIssueMs : Math.max(issueMs, base.latestIssueMs ?? issueMs)
-  return { ...base, serialByOrigin, latestIssueMs, receipts: base.receipts + 1 }
+  return { ...base, serialBySeries, latestIssueMs, receipts: base.receipts + 1 }
 }
 
 /** 音・通知を出したことを台帳へ書く（純関数）。発表時刻が読めない報は書かない。 */
@@ -1184,7 +1218,8 @@ export function isSameReportFromOtherOrigin(acceptance: EewAcceptance | undefine
  * | 経路 | 運ばないので保つ欄 |
  * |---|---|
  * | Yahoo | 区域・仮定震源の別（`earthquake.condition`）・地震発現時刻。規模は読めなかった報（`NaN`）だけ |
- * | DMDATA・保存データ・テスト | なし（丸ごと置き換える） |
+ * | DMDATA の警報（VXSE43） | 報番号（警報だけの通し番号なので、表示中の予報の通し番号を保つ） |
+ * | DMDATA の予報・保存データ・テスト | なし（丸ごと置き換える） |
  *
  * - **仮定震源の別は、Yahoo が新しい報番号で来ても直前の電文の報の値を保つ**（2026-10-14 ユーザー承認
  *   「直前の P2PQuake の値を保つ」）。P2PQuake の経路を外す前は、電文の報を P2PQuake が運んでいた。Yahoo は仮定震源要素かどうかを運ばない
@@ -1206,8 +1241,10 @@ export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAler
         hypocenter: [incoming.earthquake.hypocenter.latitude, incoming.earthquake.hypocenter.longitude],
       })
     }
+    // 強震モニタの報は予報の番号を運ぶので、警報の電文から残った系列の印と引き継いだ番号を外す（その報の番号を出す）
+    const { serialSeries: _shownSeries, forecastSerial: _heldSerial, ...shown } = existing
     base = {
-      ...existing,
+      ...shown,
       origin: incoming.origin,
       id: incoming.id,
       time: incoming.time,
@@ -1233,6 +1270,13 @@ export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAler
           : { ...incoming.earthquake.hypocenter, magnitude: existing.earthquake.hypocenter.magnitude },
       },
     }
+  } else if (incoming.serialSeries === 'warning') {
+    // **画面の「第N報」には表示中だった予報の番号を出し続ける**（予報の通し番号だけを出す。2026-11-01 ユーザー選択
+    // 「予報の番号だけ出す」）。報そのもの（報番号・系列・経路）は届いた警報のままにし、表示用の番号だけを
+    // `forecastSerial` へ引き継ぐ。報番号を差し替えて系列を偽ると、新旧の比べ方が別の数え方の番号を比べる
+    // （強震モニタの番号を電文の系列へ移すと、後から届く予報を古いと見て捨てる）
+    const held = eewDisplaySerial(existing)
+    base = held === null ? incoming : { ...incoming, forecastSerial: String(held) }
   } else {
     base = incoming
   }

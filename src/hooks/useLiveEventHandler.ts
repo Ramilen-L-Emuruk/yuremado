@@ -12,7 +12,7 @@ import {
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
   EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast,
   isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewFirstIssueTime, eewCancelNotificationBody,
-  eewSerial, eewIssueTimeMs, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, type EewNotifiedForecast,
+  eewSerial, eewSerialSeries, eewIssueTimeMs, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, type EewNotifiedForecast,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
 } from '../utils/eew'
 import { hasKnownEpicenter } from '../utils/geo'
@@ -1311,11 +1311,11 @@ export interface LiveEventHandlerDeps {
 /**
  * 復元で受け取った報が、読み上げ側が最後に見た報（`seen`）より新しいか。
  *
- * 同じ経路なら報番号、経路が違うか報番号が読めなければ発表時刻（秒）で比べる（`eewStaleness` と同じ考え方）。
+ * 報番号の系列（`eewSerialSeries`）が同じなら報番号、系列が違うか報番号が読めなければ発表時刻（秒）で比べる（`eewStaleness` と同じ考え方）。
  * **比べられないときは新しいと見なさない** —— 配信元の一覧は遅れていることがあり、その報で記憶を巻き戻さないため。
  */
 function isLaterEewReport(incoming: EEWAlert, seen: EEWAlert): boolean {
-  if (incoming.origin === seen.origin) {
+  if (eewSerialSeries(incoming) === eewSerialSeries(seen)) {
     const a = eewSerial(incoming)
     const b = eewSerial(seen)
     if (a !== null && b !== null) return a > b
@@ -1327,7 +1327,7 @@ function isLaterEewReport(incoming: EEWAlert, seen: EEWAlert): boolean {
 
 /** {@link isLaterEewReport} と同じ比べ方で、古いか同じだと言えるか（どちらも言えなければ「比べられない」）。 */
 function isEarlierOrSameEewReport(incoming: EEWAlert, seen: EEWAlert): boolean {
-  if (incoming.origin === seen.origin) {
+  if (eewSerialSeries(incoming) === eewSerialSeries(seen)) {
     const a = eewSerial(incoming)
     const b = eewSerial(seen)
     if (a !== null && b !== null) return a <= b
