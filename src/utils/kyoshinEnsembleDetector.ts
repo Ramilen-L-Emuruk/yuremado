@@ -10,7 +10,7 @@
  * 値はすべて、組み合わせの検知器を評価したときのもの（値の一覧は仕様書§5、評価の経緯は設計書§43）。
  */
 import { createClusterDetector } from './kyoshinClusterDetector'
-import type { QuietTables } from './kyoshinQuietTables'
+import { quietSiteKey, type QuietTables } from './kyoshinQuietTables'
 import { createStatDetector, type DetectorFrame, type DetectorReport } from './kyoshinStatDetector'
 
 export type { DetectorFrame, DetectorReport } from './kyoshinStatDetector'
@@ -27,7 +27,7 @@ export const ENSEMBLE_KEEP_MS = KEEP_SEC * 1000
  */
 const F_HI = 12, F_RISE = 6, F_NB_KM = 40, F_NB_LV = 8, F_NB_RISE = 4, F_WIN = 10, F_HOLD = 30
 /**
- * まばらな所の規則: SP_KM 以内の点が SP_MAXN 以下しかない点だけが対象。その点が直前 F_WIN 秒の最小より SP_RISE 段以上跳ね、
+ * まばらな所の規則: SP_KM 以内の点が SP_MAXN 以下しかない点だけが対象。その点が直前 F_WIN 秒の最小（静かな点は SP_WIDE_WIN 秒の最小も）より SP_RISE 段以上跳ね、
  * SP_KM 以内の別の点も SP_NB 段以上上がっていて、上がった時刻の差が「距離 / 3 km/s + SP_SLACK 秒」以内なら検知する。
  * 同じ点が SP_QUIET 秒の内に跳ねていたら、揺れの続きとして新しい跳ねに数えない（ゆらぎの多い点の判定は SP_NOISE_*）
  */
@@ -40,6 +40,14 @@ const SP_PAIR_MAX = 45
 const SP_NOISE_WIN = 1800, SP_NOISE_MAX = 3
 /** 1 点だけの跳ね（早い段だけ）: まばらな点がこの段数以上跳ねたら、隣の裏付けが無くても、ゆらぎの多い点でなければ早い段を出す */
 const SP_SOLO = 6
+/**
+ * 広い窓: 平常から細かくちらつかない点に限り、跳ねを直前 SP_WIDE_WIN フレームの最小からも測る（大きい方を使う）。
+ * 揺れが 10 秒以上かけて少しずつ上がる点は、F_WIN フレームの最小からでは SP_RISE 段に届かない。
+ * 細かくちらつく点では長い窓の最小がちらつきの谷を拾い、上がったまま留まった値まで跳ねに数えてしまうので、
+ * 平常のゆらぎの表で 1 段以上の上がりが 1 時間に SP_WIDE_FIRE1 秒以下の点だけに効かせる（表に無い点は広げない）。
+ * 長い窓の最小は、欠測を挟まない直近の続きだけから取る —— 欠測の前の最小から、欠測明けの値を跳ねとして測らないため
+ */
+const SP_WIDE_WIN = 30, SP_WIDE_FIRE1 = 20
 
 const RAD = Math.PI / 180
 const hav = (a: number, b: number, c: number, d: number) => {
@@ -78,6 +86,22 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
   /** 直前 F_WIN 秒の点ごとの最小（127 = 値が無い） */
   let mn = new Int8Array(n).fill(127)
   const ringMin = () => { mn = new Int8Array(n).fill(127); for (const r of ring) for (let i = 0; i < n; i++) if (r[i] >= 0 && r[i] < mn[i]) mn[i] = r[i] }
+  /** 直近 SP_WIDE_WIN 秒の値と、その点ごとの最小（まばらな所の規則の広い窓）。最小は新しい方から欠測に当たるまでの値で取る */
+  const wideRing: Int8Array[] = []
+  let wideMn = new Int8Array(n).fill(127)
+  const wideRingMin = () => {
+    wideMn = new Int8Array(n).fill(127)
+    for (let i = 0; i < n; i++) {
+      for (let k = wideRing.length - 1; k >= 0; k--) {
+        const x = wideRing[k][i]
+        if (x < 0) break
+        if (x < wideMn[i]) wideMn[i] = x
+      }
+    }
+  }
+  /** 広い窓を効かせる点（平常から細かくちらつかない点）。表を差し替えたら引き直す */
+  const wideOkOf = (t: QuietTables) => sites.map((s) => { const r = t.fire[quietSiteKey(s)]; return !!r && r[0] <= SP_WIDE_FIRE1 })
+  let wideOk = wideOkOf(tables)
   const nbS: { j: number; d: number }[][] = sites.map((s, i) => {
     const l: { j: number; d: number }[] = []
     for (let j = 0; j < n; j++) if (j !== i) { const d = hav(s[0], s[1], sites[j][0], sites[j][1]); if (d <= SP_KM) l.push({ j, d }) }
@@ -108,19 +132,21 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
         const rise = (i: number) => (v[i] >= 0 && mn[i] !== 127 ? v[i] - mn[i] : -99)
         for (let i = 0; i < n; i++) {
           const r = rise(i)
+          /** 跳ね（広い窓を効かせる点は、長い窓の最小からの上がりと大きい方）。隣の上がりとゆらぎの数え方は r のまま */
+          const jump = wideOk[i] && v[i] >= 0 && wideMn[i] !== 127 ? Math.max(r, v[i] - wideMn[i]) : r
           if (r >= SP_NB) {
             lastNb[i] = f.ms
             const l = nbSecs[i]
             l.push(f.ms)
             while (l.length && f.ms - l[0] > SP_NOISE_WIN * 1000) l.shift()
           }
-          if (r < spRise || nbS[i].length > SP_MAXN || nbS[i].length === 0) { if (r >= spRise) lastBig[i] = f.ms; continue }
+          if (jump < spRise || nbS[i].length > SP_MAXN || nbS[i].length === 0) { if (jump >= spRise) lastBig[i] = f.ms; continue }
           const quiet = f.ms - lastBig[i] > SP_QUIET * 1000 || f.ms - lastBig[i] <= 1000
           if (f.ms - lastBig[i] > 1000) lastBig[i] = f.ms
           if (!quiet) continue
           let ok = false
           for (const { j, d } of nbS[i]) if (Math.abs(f.ms - lastNb[j]) <= (d / 3 + SP_SLACK) * 1000) { ok = true; break }
-          if (!ok && !withConfirmed && r >= SP_SOLO && !noisy(i, f.ms)) { hit(i, f.ms - 1000, f.ms); continue }
+          if (!ok && !withConfirmed && jump >= SP_SOLO && !noisy(i, f.ms)) { hit(i, f.ms - 1000, f.ms); continue }
           if (!ok) { trigAt[i] = f.ms; continue }
           if (!withConfirmed && noisy(i, f.ms)) continue
           hit(i, f.ms - 1000, f.ms)
@@ -189,16 +215,19 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
     setTables(next: QuietTables): void {
       stat.setTables(next)
       cluster.setTables(next)
+      wideOk = wideOkOf(next)
     },
     /** 1 秒ぶんを入れ、いま出ている束（段階ごとに 1 行）を返す */
     push(f: DetectorFrame): EnsembleReport[] {
       const subs: [string, DetectorReport][] = stat.push(f).map(r => [`s:${r.id}`, r] as [string, DetectorReport])
       for (const r of cluster.push(f)) { subs.push([`c:${r.id}`, r]); subs.push([`c:${r.id}`, { ...r, tier: 'early' }]) }
-      if (ring.length >= 3) ringMin()
+      if (ring.length >= 3) { ringMin(); wideRingMin() }
       subs.push(...fastStep(f))
       subs.push(...sparseMain(f), ...sparseEarly(f))
       ring.push(Int8Array.from(f.values))
       if (ring.length > F_WIN) ring.shift()
+      wideRing.push(Int8Array.from(f.values))
+      if (wideRing.length > SP_WIDE_WIN) wideRing.shift()
       type Row = { sites: Set<number>; sources: Set<EnsembleSource> }
       const tiers = new Map<Bundle, Map<DetectorReport['tier'], Row>>()
       const add = (b: Bundle, r: DetectorReport, source: EnsembleSource) => {
