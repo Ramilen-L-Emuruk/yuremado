@@ -79,7 +79,6 @@ const renderTab = async (quake: JMAQuake, selected: boolean, lpgm?: JMALpgm) => 
       loadMoreFailed={false}
       reconnectGapLoss={false}
       fetchThrottled={false}
-      relayGapNotices={[]}
       onDismissKeyReentry={null}
       lpgmByEventId={lpgm ? new Map([[EVENT_ID, lpgm]]) : new Map()}
       updateMarks={new Map()}

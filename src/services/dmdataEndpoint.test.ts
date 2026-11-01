@@ -24,7 +24,6 @@ const FAKE: DmdataEndpoint = {
   waitApiSlot: async () => {},
   waitDataSlot: async () => {},
   observe: () => {},
-  noteListGaps: () => {},
   apiHeaders: () => {
     if (!fakePrepared) throw new Error('用意を待たずに見出しを作った')
     return { 'X-Relay-Token': 'api-tag' }

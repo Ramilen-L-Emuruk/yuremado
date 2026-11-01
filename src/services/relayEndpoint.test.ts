@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createRelayGate, createRelayTokenStore, relayEndpoint, RelayTokenError, RELAY_API_BASE, RELAY_DATA_BASE, RELAY_PRIVATE_BASE } from './relayEndpoint'
-import { createRelayGapStore } from './relayListGaps'
 
 const HOUR = 3_600_000
 const RELAY_NOW = Date.parse('2026-10-31T00:00:00Z')
@@ -254,7 +253,7 @@ describe('中継の繋ぎ先', () => {
       ensure: async () => { current = 'tok'; return 'tok' },
       invalidate: () => { current = null },
       setForecastKey: () => {}, forecastKey: () => null, forecastKeyChecking: () => false, forecastScope: () => null, subscribe: () => () => {},
-    }, createRelayGate(), createRelayGapStore())
+    }, createRelayGate())
     expect(ep.apiBase).toBe(RELAY_API_BASE)
     expect(ep.dataBase).toBe(RELAY_DATA_BASE)
     expect(ep.problem()).toBeNull()
@@ -273,7 +272,7 @@ describe('中継の繋ぎ先', () => {
       ensure: async () => { current = 'tok'; return 'tok' },
       invalidate: () => { current = null },
       setForecastKey: () => {}, forecastKey: () => null, forecastKeyChecking: () => false, forecastScope: () => null, subscribe: () => () => {},
-    }, gate, createRelayGapStore())
+    }, gate)
     const privateUrl = `${RELAY_PRIVATE_BASE}t/abc`
     expect(() => ep.dataHeaders(privateUrl)).toThrow(RelayTokenError)
     await ep.prepare()
@@ -289,7 +288,7 @@ describe('中継の繋ぎ先', () => {
   it('401 で札を捨て、429 で Retry-After を門へ覚えさせる', async () => {
     let current: string | null = 'tok'
     const gate = createRelayGate({ nowMs: () => 0 })
-    const ep = relayEndpoint({ current: () => current, ensure: async () => 'tok', invalidate: () => { current = null }, setForecastKey: () => {}, forecastKey: () => null, forecastKeyChecking: () => false, forecastScope: () => null, subscribe: () => () => {} }, gate, createRelayGapStore())
+    const ep = relayEndpoint({ current: () => current, ensure: async () => 'tok', invalidate: () => { current = null }, setForecastKey: () => {}, forecastKey: () => null, forecastKeyChecking: () => false, forecastScope: () => null, subscribe: () => () => {} }, gate)
     ep.observe(200, null)
     expect(current).toBe('tok')
     ep.observe(401, null)
