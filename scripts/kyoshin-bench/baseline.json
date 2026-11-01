@@ -402,7 +402,7 @@
    "confirmedFrames": 0,
    "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "18:00:27 茨城県|常陸太田市大中町"
@@ -485,7 +485,7 @@
    "confirmedFrames": 0,
    "unrelated": 5,
    "unrelatedConfirmed": 3,
-   "unrelatedNoCatalog": 3,
+   "unrelatedNoCatalog": 2,
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
     "07:23:58 熊本県|芦北町田浦町",
@@ -664,8 +664,8 @@
    "confirmedFrames": 0,
    "unrelated": 3,
    "unrelatedConfirmed": 2,
-   "unrelatedNoCatalog": 2,
-   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "16:37:06 京都府|京都右京区太秦",
     "16:39:21 岩手県|宮古市五月町",
@@ -1161,8 +1161,8 @@
    "confirmedFrames": 131,
    "unrelated": 1,
    "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 1,
-   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "00:21:58 青森県|むつ市金谷"
    ]
@@ -2155,8 +2155,8 @@
    "confirmedFrames": 83,
    "unrelated": 2,
    "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 2,
-   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "09:19:13 青森県|田子町田子",
     "09:20:53 高知県|四万十町大正"
@@ -2582,8 +2582,8 @@
    "confirmedFrames": 73,
    "unrelated": 2,
    "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 2,
-   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "02:19:26 茨城県|水戸市千波町",
     "02:19:56 埼玉県|熊谷市江南"
@@ -6899,8 +6899,8 @@
    "confirmedFrames": 79,
    "unrelated": 1,
    "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 1,
-   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "19:36:25 群馬県|神流町生利"
    ]

@@ -83,6 +83,7 @@ import { createEnsembleDetector } from '../src/utils/kyoshinEnsembleDetector'
 import { createEnsembleTracker } from '../src/utils/kyoshinEnsembleTracker'
 import { validateQuietTables, type QuietTables } from '../src/utils/kyoshinQuietTables'
 import { haversineKm } from '../src/utils/geo'
+import { matchCatalog, type CatalogQuake } from './lib/kyoshinCatalogMatch'
 import { WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, firstContinuousIndex, mayStopWarmup } from '../src/utils/kyoshinWarmup'
 
 const CACHE_DIR = kyoshinBenchCacheDir()
@@ -415,19 +416,9 @@ function relatedQuake(e: Pick<Detection, 'epicenter'>, w: WindowSpec, nowMs: num
  * 突き合わせる。窓の `quakes` は気象庁が震度を発表した地震だけなので、無感の小さな地震による本物の揺れも「無関係」に数えられる。
  * それを分けて数え、どの地震にも当てはまらない検知（ノイズの疑い）を見えるようにする。
  *
- * 当てはまりの条件は、検知が見え始める {@link CATALOG_MATCH_BEFORE_MS} 前〜{@link CATALOG_MATCH_AFTER_MS} 後に発生し、
- * 震央が検知の位置から M に応じた距離（{@link catalogReachKm}）以内にある地震。
+ * 当てはまりの規則は `scripts/lib/kyoshinCatalogMatch.ts`（連続した日を流す評価と共有）。
  */
-const CATALOG_MATCH_BEFORE_MS = 120_000
-const CATALOG_MATCH_AFTER_MS = 10_000
 const JST_OFFSET_MS = 9 * 3_600_000
-function catalogReachKm(mag: number): number {
-  if (!Number.isFinite(mag) || mag < 3) return 100
-  if (mag < 4) return 200
-  if (mag < 5) return 400
-  return 1000
-}
-interface CatalogQuake { t: number; lat: number; lng: number; mag: number }
 const catalogYears = new Map<number, CatalogQuake[] | null>()
 function catalogYear(y: number): CatalogQuake[] | null {
   if (catalogYears.has(y)) return catalogYears.get(y) ?? null
@@ -435,13 +426,17 @@ function catalogYear(y: number): CatalogQuake[] | null {
   let list: CatalogQuake[] | null = null
   if (existsSync(path)) {
     const r = JSON.parse(readFileSync(path, 'utf8')) as {
-      count: number; startMs: number; timeScale: number; coordScale: number; magScale: number
-      t: number[]; lat: number[]; lng: number[]; mag: (number | null)[]
+      count: number; startMs: number; timeScale: number; coordScale: number; magScale: number; depthScale: number
+      t: number[]; lat: number[]; lng: number[]; dep: (number | null)[]; mag: (number | null)[]
     }
     list = []
     for (let i = 0; i < r.count; i++) {
       const m = r.mag[i]
-      list.push({ t: r.startMs + (r.t[i] * 1000) / r.timeScale, lat: r.lat[i] / r.coordScale, lng: r.lng[i] / r.coordScale, mag: m === null ? NaN : m / r.magScale })
+      const d = r.dep[i]
+      list.push({
+        t: r.startMs + (r.t[i] * 1000) / r.timeScale, lat: r.lat[i] / r.coordScale, lng: r.lng[i] / r.coordScale,
+        depth: d === null ? NaN : d / r.depthScale, mag: m === null ? NaN : m / r.magScale,
+      })
     }
   }
   catalogYears.set(y, list)
@@ -453,7 +448,7 @@ function inCatalog(benchMs: number, pos: [number, number] | null): boolean | nul
   const real = benchMs - JST_OFFSET_MS
   const list = catalogYear(new Date(real).getUTCFullYear())
   if (list === null) return null
-  return list.some((q) => q.t >= real - CATALOG_MATCH_BEFORE_MS && q.t <= real + CATALOG_MATCH_AFTER_MS && haversineKm(pos[0], pos[1], q.lat, q.lng) <= catalogReachKm(q.mag))
+  return matchCatalog(real, pos, list) !== null
 }
 
 const stationCoords = JSON.parse(readFileSync('public/data/station-coords.json', 'utf8')) as {
