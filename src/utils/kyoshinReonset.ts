@@ -1,4 +1,4 @@
-// 同じ場所の 2 つ目の地震を見分ける（設計書§40）。**判定は検知エンジンの出力を読むだけ**で、
+// 同じ場所の 2 つ目の地震を見分ける（設計書§40・§51）。**判定は検知エンジンの出力を読むだけ**で、
 // 検知そのものには関与しない。
 //
 // 【なぜ要るか】確定している検知の内側（同じイベント・別地点として鳴った地域の内側）で次の地震が
@@ -6,22 +6,18 @@
 // 段が上がらなければ更新音も鳴らないので、本震の揺れが続く中の余震は音もタブ移動も無かった
 // （2026-10-22 ユーザー選択「2 つ目も鳴らすよう設計する」）。
 //
-// 【何を見るか】確定しているイベントのメンバーで、`REONSET_QUIET_MS` の間 新しい立ち上がりが無かった
-// あと、`REONSET_BURST_MS` の内に `REONSET_MIN_POINTS` 点以上が新しく立ち上がったら「2 つ目」とみなす。
-// 鳴らしたら同じイベントでは `REONSET_QUIET_MS` 鳴らさない。イベントが現れてから `REONSET_QUIET_MS` も
-// 鳴らさない（1 つ目の地震の立ち上がりそのもの）。
-//
-// 【値の根拠】余震の多い 3 窓（福島県沖 2022・トカラ列島 2025・能登 2024。計 1.5 時間）で、確定が続く
-// 最中に来た M3.5 以上 162 件のうち、今の音が鳴らない 81 件の 6 件を拾い、発火 6 回のうち二度鳴りは 3 回。
-// 普段の 795 窓では発火 2 回（地震に結び付く 1・二度鳴り 1）。静けさを 30 秒にすると拾う数は 9 件へ
-// 増えるが、普段の窓で二度鳴りが 8 回へ増える（2026-10-24 計測・ユーザー選択「60 秒静か・3 点 (Recommended)」）。
+// 【もう一度の立ち上がり】続いている確かな束の中で一度立ち上がった点が、`REONSET_QUIET_MS` 静かになってから
+// もう一度立ち上がり、それが生きている束（と前に出した合図）の地震の波では説明できない（震央からの距離 ÷
+// 経過秒が `REONSET_ONSET_KMPS_MIN`〜`REONSET_ONSET_KMPS_MAX` km/s に入らない）なら「新しい揺れの候補」にする。
+// `REONSET_BURST_MS` の内に `REONSET_CLUSTER_KM` 以内へ `REONSET_MIN_POINTS` 点以上の候補が集まったら合図を出す。
+// 束全体の静けさは待たない —— 余震が続くと束全体はいつまでも静かにならず、前の見分け方（束全体で 60 秒静か・
+// 3 点）は能登 2024 の 1 週間で、束が続く最中に起きた有感地震 33 件のうち 1 件しか拾えなかった。
+// 2026-11-02 ユーザー選択「この形で実装へ進む (Recommended)」。計測は設計書§51。
 //
 // 【新しい束】組み合わせの検知器は、同じ場所の 2 つ目の揺れを別の束として出すことがある。その束は
-// 現れたばかりなので上の見分け方（現れてから 60 秒は鳴らさない）では鳴らず、別地点の発報も一度鳴った
-// 地域の内側では鳴らない。そこで、近く（`REONSET_NEARBY_KM` の内）の確かな束が `REONSET_QUIET_MS` 以上
-// 続いている最中に、別の束が確かな段になったら、それも「2 つ目」とみなす。余震の多い 3 窓で、最中に新しい
-// 束が確かな段になった 11 回のうち 7 回は音が無く、能登の 5 回は M3.9〜M5.0 の余震だった
-// （2026-10-29 計測・ユーザー選択「新しい束でも鳴らす (Recommended)」）。
+// 現れたばかりなので上の見分け方では鳴らず、別地点の発報も一度鳴った地域の内側では鳴らない。そこで、
+// 近く（`REONSET_NEARBY_KM` の内）の確かな束が `REONSET_SETTLED_MS` 以上続いている最中に、別の束が確かな段に
+// なったら、それも「2 つ目」とみなす（2026-10-29 計測・ユーザー選択「新しい束でも鳴らす (Recommended)」）。
 //
 // 【同じ地震の波は外す】先の束の揺れ始めから新しい束の揺れ始めまでの間に、地震の波が先の束の位置から
 // 届く距離（見かけの速さが `REONSET_WAVE_KMPS_MIN`〜`REONSET_WAVE_KMPS_MAX`）なら、それは同じ地震の揺れが
@@ -34,12 +30,33 @@
 import type { EnsembleDetection } from './kyoshinEnsembleTracker'
 import { haversineKm } from './geo'
 
-/** 新しい立ち上がりが無かった時間がこれ以上続いてから、まとまった立ち上がりを「2 つ目」とみなす（ms） */
-export const REONSET_QUIET_MS = 60_000
-/** 立ち上がりを 1 つのまとまりとして数える幅（ms） */
+/** 点が前に立ち上がってからこの長さは、その点のもう一度の立ち上がりを候補に数えない（ms。同じ揺れの S 波・後続の揺れを外す） */
+export const REONSET_QUIET_MS = 20_000
+/** 候補を 1 つのまとまりとして数える幅（ms） */
 export const REONSET_BURST_MS = 3_000
-/** 「2 つ目」とみなす、まとまった新しい立ち上がりの点数 */
-export const REONSET_MIN_POINTS = 3
+/** 「2 つ目」とみなす、まとまった候補の点数 */
+export const REONSET_MIN_POINTS = 2
+/** まとまりとみなす候補どうしの距離（km） */
+export const REONSET_CLUSTER_KM = 40
+/** 候補にする点は、確かな束の位置からこの距離の内だけ（km。2 つ目の地震は 1 つ目のすぐ近くで起きる） */
+export const REONSET_ONSET_NEAR_KM = 100
+/** 3 点に満たないまとまりで鳴らすのは、確かな束の位置からこの距離の内だけ（km。2 点は偶然そろいやすい） */
+export const REONSET_PAIR_NEAR_KM = 60
+/** 立ち上がりが、生きている束の地震の波で説明できるとみなす見かけの速さ（km/s） */
+export const REONSET_ONSET_KMPS_MIN = 1.5
+export const REONSET_ONSET_KMPS_MAX = 8
+/** 出した合図の位置と時刻を、後の立ち上がりを説明する地震として覚える長さ（ms） */
+export const REONSET_EXPLAIN_MS = 120_000
+/**
+ * 近くの確かな束が始まってからこの長さの間に上がった点は数えない（ms）。1 つ目の地震の揺れの続き
+ * （小さな地震の近くの点が 20 秒以上空けてもう一度上がる形）で鳴らさないため。60・90・120 秒を比べ、
+ * 有感地震を拾う数を落とさない 60 秒を採った（2026-11-02 ユーザー選択「60 秒の守りを足す (Recommended)」。計測は設計書§51）
+ */
+export const REONSET_GUARD_MS = 60_000
+/** 束の揺れ始めのこの長さ前から立ち上がっていた点も、その束の中で立ち上がった点に数える（ms） */
+export const REONSET_ONSET_SLACK_MS = 5_000
+/** 新しい束を「2 つ目」とみなすのは、近くの確かな束がこの長さ以上続いているときだけ（ms） */
+export const REONSET_SETTLED_MS = 60_000
 /**
  * 新しい束を「同じ場所の 2 つ目」とみなす、続いている確かな束との距離（km。束の位置どうし）。
  * 別地点の発報が同じ地震とみなす距離（`useKyoshinAlerts` の `REGION_MATCH_KM`）と同じ値にした。これより
@@ -50,22 +67,25 @@ export const REONSET_NEARBY_KM = 300
 export const REONSET_WAVE_KMPS_MIN = 2.5
 export const REONSET_WAVE_KMPS_MAX = 5
 
-interface PerEvent {
-  /** イベントを初めて見たデータ時刻 */
-  firstSeenMs: number
-  /** 確かな段で初めて見たデータ時刻（まだなら null） */
-  confirmedSinceMs: number | null
-  /** メンバーが最後に新しく立ち上がったデータ時刻（無ければ firstSeenMs） */
-  lastOnsetMs: number
-  /** 静けさを挟んだあとの立ち上がり（データ時刻と観測点キー） */
-  burst: { ms: number; key: string }[]
-  /** 最後に鳴らしたデータ時刻 */
-  lastFireMs: number
+/** 観測点のキー（`kyoshinSiteKeys` の `緯度,経度` か `緯度,経度#n`）から座標を読む。読めなければ null */
+export function keyLatLng(key: string): [number, number] | null {
+  const m = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?:#\d+)?$/.exec(key)
+  return m ? [Number(m[1]), Number(m[2])] : null
 }
+
+/** 新しい揺れの候補（説明できない、もう一度の立ち上がり） */
+interface Candidate { ms: number; key: string; lat: number; lng: number }
 
 /** `stepReonset` が持ち越す状態（呼び出し側が ref で保持する）。 */
 export interface ReonsetState {
-  byId: Map<string, PerEvent>
+  /** 束を確かな段で初めて見たデータ時刻（新しい束の見分けに使う） */
+  confirmedSince: Map<string, number>
+  /** 点が最後に「直近に立ち上がった」へ入ったデータ時刻 */
+  lastEntry: Map<string, number>
+  /** まだまとまりになっていない候補 */
+  candidates: Candidate[]
+  /** 出した合図の位置と時刻（後の立ち上がりを説明する地震として使う） */
+  fired: { ms: number; lat: number; lng: number }[]
   /** 前のフレームで「直近に立ち上がった」観測点 */
   prevRecent: Set<string>
   /** 直近に処理したデータ時刻（巻き戻りの検出と、同じフレームの二度渡しの判定に使う） */
@@ -75,7 +95,7 @@ export interface ReonsetState {
 }
 
 export function createReonsetState(): ReonsetState {
-  return { byId: new Map(), prevRecent: new Set(), lastMs: -Infinity, lastResult: null }
+  return { confirmedSince: new Map(), lastEntry: new Map(), candidates: [], fired: [], prevRecent: new Set(), lastMs: -Infinity, lastResult: null }
 }
 
 /** 「2 つ目」の合図。どのイベントで、どの観測点が立ち上がったか。 */
@@ -86,6 +106,8 @@ export interface ReonsetAlert {
   /** まとまって新しく立ち上がった観測点のキー */
   keys: string[]
 }
+
+type Detection = Pick<EnsembleDetection, 'id' | 'confidence' | 'memberKeys' | 'epicenter' | 'originTimeMs'>
 
 /**
  * 1 フレーム分を取り込み、「同じ場所の 2 つ目の地震」とみなせる立ち上がりがあれば返す（1 フレーム 1 件）。
@@ -99,16 +121,15 @@ export interface ReonsetAlert {
  */
 export function stepReonset(
   state: ReonsetState,
-  detections: readonly Pick<EnsembleDetection, 'id' | 'confidence' | 'memberKeys' | 'epicenter' | 'originTimeMs'>[],
+  detections: readonly Detection[],
   recentOnsetKeys: Iterable<string>,
   nowMs: number,
 ): ReonsetAlert | null {
   if (!Number.isFinite(nowMs)) return null
   if (nowMs === state.lastMs) return state.lastResult
   if (nowMs < state.lastMs) {
-    state.byId.clear()
-    state.prevRecent = new Set()
-    state.lastResult = null
+    const fresh = createReonsetState()
+    Object.assign(state, fresh)
   }
   state.lastMs = nowMs
 
@@ -116,62 +137,90 @@ export function stepReonset(
   const newOnsets = [...recent].filter((k) => !state.prevRecent.has(k))
   state.prevRecent = recent
 
-  let result: ReonsetAlert | null = null
-  const alive = new Set<string>()
+  // 立ち上がりの記録（lastEntry）を毎フレーム進めるため、もう一度の立ち上がり側は新しい束の合図が出たフレームでも走らせる
+  const bundle = newBundleAlert(state, detections, nowMs)
+  const rerise = reriseAlert(state, detections, newOnsets, nowMs)
+  const result = bundle ?? rerise
+  state.lastResult = result
+  return result
+}
+
+/** 新しい束: 近くの確かな束が続く最中に、別の束が確かな段になった */
+function newBundleAlert(state: ReonsetState, detections: readonly Detection[], nowMs: number): ReonsetAlert | null {
   // このフレームで確かな段になった束は、前のフレームまでの記録だけと比べる（同じフレームで確かな段に
   // なった束どうしを「続いている束」と取り違えないよう、先に記録を読んでから書き足す）
   const settledConfirmed = detections.filter((e) => {
-    const since = state.byId.get(e.id)?.confirmedSinceMs
-    return e.confidence === 'confirmed' && since != null && nowMs - since >= REONSET_QUIET_MS
+    const since = state.confirmedSince.get(e.id)
+    return e.confidence === 'confirmed' && since != null && nowMs - since >= REONSET_SETTLED_MS
   })
+  let result: ReonsetAlert | null = null
+  const alive = new Set<string>()
   for (const e of detections) {
     alive.add(e.id)
-    let t = state.byId.get(e.id)
-    if (!t) {
-      t = { firstSeenMs: nowMs, confirmedSinceMs: null, lastOnsetMs: nowMs, burst: [], lastFireMs: -Infinity }
-      state.byId.set(e.id, t)
-    }
-    if (e.confidence !== 'confirmed') continue
-    if (t.confirmedSinceMs === null) {
-      t.confirmedSinceMs = nowMs
-      const others = settledConfirmed.filter((o) => o.id !== e.id)
-      const km = (o: (typeof others)[number]) => haversineKm(o.epicenter[0], o.epicenter[1], e.epicenter[0], e.epicenter[1])
-      const nearby = others.some((o) => km(o) <= REONSET_NEARBY_KM)
-      const sameQuakeWave = others.some((o) => {
-        const dtSec = (e.originTimeMs - o.originTimeMs) / 1000
-        if (!(dtSec > 0)) return false
-        const v = km(o) / dtSec
-        return v >= REONSET_WAVE_KMPS_MIN && v <= REONSET_WAVE_KMPS_MAX
-      })
-      if (result === null && nearby && !sameQuakeWave) {
-        result = { eventId: e.id, atMs: nowMs, keys: [...e.memberKeys] }
-        t.lastFireMs = nowMs
-        t.burst = []
-        continue
-      }
-    }
-    const members = new Set(e.memberKeys)
-    const fresh = newOnsets.filter((k) => members.has(k))
-    t.burst = t.burst.filter((b) => nowMs - b.ms <= REONSET_BURST_MS)
-    if (fresh.length > 0) {
-      // 静けさを挟まない立ち上がり（続いている揺れの中）はまとまりに数えない
-      if (t.burst.length > 0 || nowMs - t.lastOnsetMs >= REONSET_QUIET_MS) {
-        for (const key of fresh) t.burst.push({ ms: nowMs, key })
-      }
-      t.lastOnsetMs = nowMs
-    }
-    if (
-      result === null
-      && t.burst.length >= REONSET_MIN_POINTS
-      && nowMs - t.lastFireMs >= REONSET_QUIET_MS
-      && nowMs - t.firstSeenMs >= REONSET_QUIET_MS
-    ) {
-      result = { eventId: e.id, atMs: nowMs, keys: t.burst.map((b) => b.key) }
-      t.lastFireMs = nowMs
-      t.burst = []
+    if (e.confidence !== 'confirmed' || state.confirmedSince.has(e.id)) continue
+    state.confirmedSince.set(e.id, nowMs)
+    if (result !== null) continue
+    const others = settledConfirmed.filter((o) => o.id !== e.id)
+    const km = (o: Detection) => haversineKm(o.epicenter[0], o.epicenter[1], e.epicenter[0], e.epicenter[1])
+    const nearby = others.some((o) => km(o) <= REONSET_NEARBY_KM)
+    const sameQuakeWave = others.some((o) => {
+      const dtSec = (e.originTimeMs - o.originTimeMs) / 1000
+      if (!(dtSec > 0)) return false
+      const v = km(o) / dtSec
+      return v >= REONSET_WAVE_KMPS_MIN && v <= REONSET_WAVE_KMPS_MAX
+    })
+    if (nearby && !sameQuakeWave) {
+      result = { eventId: e.id, atMs: nowMs, keys: [...e.memberKeys] }
+      const pos = e.epicenter
+      state.fired.push({ ms: nowMs, lat: pos[0], lng: pos[1] })
     }
   }
-  for (const id of state.byId.keys()) if (!alive.has(id)) state.byId.delete(id)
-  state.lastResult = result
+  for (const id of state.confirmedSince.keys()) if (!alive.has(id)) state.confirmedSince.delete(id)
   return result
+}
+
+/** もう一度の立ち上がり: 束の中で一度上がった点が静けさの後に上がり、今の揺れの波で説明できない点がまとまった */
+function reriseAlert(state: ReonsetState, detections: readonly Detection[], newOnsets: readonly string[], nowMs: number): ReonsetAlert | null {
+  state.fired = state.fired.filter((x) => nowMs - x.ms <= REONSET_EXPLAIN_MS)
+  const confirmed = detections.filter((d) => d.confidence === 'confirmed')
+  // 立ち上がりを説明する地震: 生きている束の揺れ始めと、前に出した合図（揺れ始めは合図の少し前）
+  const sources = [
+    ...detections.map((d) => ({ lat: d.epicenter[0], lng: d.epicenter[1], t0: d.originTimeMs })),
+    ...state.fired.map((x) => ({ lat: x.lat, lng: x.lng, t0: x.ms - REONSET_ONSET_SLACK_MS })),
+  ]
+  for (const key of newOnsets) {
+    const prev = state.lastEntry.get(key)
+    state.lastEntry.set(key, nowMs)
+    // 初めて上がった点（1 つ目の地震の波が届いただけのことが多い）と、静けさを挟まない上がり（揺れの続き）は数えない
+    if (prev == null || nowMs - prev < REONSET_QUIET_MS) continue
+    const pos = keyLatLng(key)
+    if (!pos) continue
+    const [lat, lng] = pos
+    const near = confirmed.filter((d) => haversineKm(d.epicenter[0], d.epicenter[1], lat, lng) <= REONSET_ONSET_NEAR_KM)
+    // 近くの確かな束が始まってから一度上がった点の、もう一度の立ち上がりだけを数える
+    if (!near.some((d) => prev >= d.originTimeMs - REONSET_ONSET_SLACK_MS)) continue
+    // 近くの確かな束が始まったばかりなら、その地震の揺れの続きとみなす
+    if (near.some((d) => nowMs - d.originTimeMs < REONSET_GUARD_MS)) continue
+    const explained = sources.some((s) => {
+      const dtSec = (nowMs - s.t0) / 1000
+      if (dtSec <= 0) return false
+      const v = haversineKm(s.lat, s.lng, lat, lng) / dtSec
+      return v >= REONSET_ONSET_KMPS_MIN && v <= REONSET_ONSET_KMPS_MAX
+    })
+    if (!explained) state.candidates.push({ ms: nowMs, key, lat, lng })
+  }
+  state.candidates = state.candidates.filter((c) => nowMs - c.ms <= REONSET_BURST_MS)
+  for (const c of state.candidates) {
+    const group = state.candidates.filter((o) => haversineKm(c.lat, c.lng, o.lat, o.lng) <= REONSET_CLUSTER_KM)
+    if (group.length < REONSET_MIN_POINTS) continue
+    const distTo = (d: Detection) => haversineKm(d.epicenter[0], d.epicenter[1], c.lat, c.lng)
+    if (group.length < 3 && !confirmed.some((d) => distTo(d) <= REONSET_PAIR_NEAR_KM)) continue
+    const owner = confirmed.reduce<Detection | null>((best, d) => (best === null || distTo(d) < distTo(best) ? d : best), null)
+    if (owner === null) continue
+    state.fired.push({ ms: nowMs, lat: c.lat, lng: c.lng })
+    const used = new Set(group)
+    state.candidates = state.candidates.filter((o) => !used.has(o))
+    return { eventId: owner.id, atMs: nowMs, keys: group.map((g) => g.key) }
+  }
+  return null
 }
