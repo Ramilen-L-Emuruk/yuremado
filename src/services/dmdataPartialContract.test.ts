@@ -258,3 +258,62 @@ describe('DmdataWebSocket: 一部の区分しか契約していない人', () =>
     }
   })
 })
+
+describe('DmdataWebSocket: 予報だけを受ける鍵の接続', () => {
+  // 正: 予報も警報も断られる鍵は「予報は受けられない」（空の区分）で決まる。既定の区分（予報を含む）で
+  // 決めると、リプレイ・発生時刻の秒・起動時の復元が、断られる問い合わせを毎回この鍵で投げる
+  it('予報も警報も断られたら、空の区分で決まる', async () => {
+    stubSocketStart(['telegram.earthquake'])
+    const ws = new DmdataWebSocket({ kind: 'keyForecast', apiKey: 'valid-key' })
+    const refused = vi.fn()
+    ws.onForecastRefused = refused
+    try {
+      ws.connect()
+      await drain()
+      await expect(ws.classificationsReady).resolves.toEqual([])
+      // 決着の約束とは別に知らせる（約束が上限の時間で先に決着していても届くように）
+      expect(refused).toHaveBeenCalledTimes(1)
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 対照: 予報を受けられる鍵は予報で決まる
+  it('予報を受けられる鍵は予報で決まる', async () => {
+    stubSocketStart(['eew.forecast'])
+    const ws = new DmdataWebSocket({ kind: 'keyForecast', apiKey: 'valid-key' })
+    const refused = vi.fn()
+    ws.onForecastRefused = refused
+    try {
+      ws.connect()
+      await drain()
+      await expect(ws.classificationsReady).resolves.toEqual(['eew.forecast'])
+      expect(refused).not.toHaveBeenCalled()
+    } finally {
+      ws.disconnect()
+    }
+  })
+
+  // 安全弁: 一時的な失敗（409 が続く）では「断られた」と決めず、上限の時間で既定の区分に倒す
+  // （この端末の鍵が予報を受けられる見込みを消さない）
+  it('409 が続くときは、上限の時間で既定の区分に決まる', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn(async () => (
+      { status: 409, json: async () => ({ status: 'error', error: { message: 'full', code: 409 } }) } as unknown as Response
+    )))
+    vi.stubGlobal('WebSocket', FakeWs as unknown as typeof WebSocket)
+    const ws = new DmdataWebSocket({ kind: 'keyForecast', apiKey: 'valid-key' })
+    let settled: readonly string[] | null = null
+    void ws.classificationsReady.then((c) => { settled = c })
+    const refused = vi.fn()
+    ws.onForecastRefused = refused
+    try {
+      ws.connect()
+      await vi.advanceTimersByTimeAsync(16_000)
+      expect(settled).toEqual(PREFERRED_CLASSIFICATIONS)
+      expect(refused).not.toHaveBeenCalled()
+    } finally {
+      ws.disconnect()
+    }
+  })
+})

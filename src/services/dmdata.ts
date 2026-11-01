@@ -599,6 +599,12 @@ export class DmdataWebSocket {
   /** 配信元が区分を受け付けたとき（繋がるたび）。設定の窓の「受信している区分」に使う */
   onClassifications: ((c: readonly DmdataClassification[]) => void) | null = null
   /**
+   * 予報だけを申し込む鍵の接続が、この鍵では予報を受けられないと分かったとき（交渉で予報が外れた・認証で断られた・
+   * 鍵の文字が使えない）。`classificationsReady` は 1 度しか決まらないので、上限の時間で既定の区分へ先に決着した後に
+   * 断られても、こちらは届く
+   */
+  onForecastRefused: (() => void) | null = null
+  /**
    * 配信元が購読の開始（`type: "start"`）を告げたとき（繋がるたび）。`previousAliveAtMs` は
    * **張り直しのときだけ**値を持ち、前の接続で最後に何かを受けた時刻（サーバー時計）。最初の接続では null。
    * 切れていた間の電文はこの接続では届かないので、呼び出し側が取り戻す。
@@ -670,6 +676,7 @@ export class DmdataWebSocket {
         })
         this.settleClassifications(ticket.classifications)
         this.halted = true
+        this.onForecastRefused?.()
         this.onStatusChange?.('disconnected')
         return
       }
@@ -683,8 +690,13 @@ export class DmdataWebSocket {
       // 鍵の文字が不正。受けられる区分が無いときも `fetchTicketUrl` が `auth` として投げる）。既定の区分へ倒し、履歴の取得が従来どおりの失敗を画面へ出せるようにする。
       // 409・通信の失敗のような一時的な失敗では決めない —— 決めると、次の再接続で一部の区分だけで
       // 繋がっても、履歴と復元が既定の区分のまま走る。決まらなければ上限の時間で倒す（`connect`）
+      //
+      // **予報だけを申し込む鍵の接続は、空の区分で決める。** ここへ来たのは予報も警報も断られたか、鍵そのものが
+      // 使えないときで、どちらにしてもこの鍵では予報を引けない。既定の区分（予報を含む）で決めると、
+      // リプレイ・発生時刻の秒・起動時の復元が「予報を受けられる鍵」と読み、断られる問い合わせを毎回投げる
       if ((err instanceof Error && err.message === 'auth') || err instanceof DmdataApiKeyError) {
-        this.settleClassifications(PREFERRED_CLASSIFICATIONS)
+        this.settleClassifications(this.forecastOnly ? [] : PREFERRED_CLASSIFICATIONS)
+        if (this.forecastOnly && !this.stopped) this.onForecastRefused?.()
       }
       if (this.stopped) return
       const reason = err instanceof Error ? err.message : String(err)

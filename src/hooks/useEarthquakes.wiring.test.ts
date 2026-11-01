@@ -69,6 +69,7 @@ const { sockets, FakeWebSocket, socketOptions } = vi.hoisted(() => {
     onEvent: ((e: unknown, telegramId?: string) => void) | null
     onReconnected: ((lastReceivedAtMs: number) => void) | null
     onClassifications: ((c: readonly string[]) => void) | null
+    onForecastRefused: (() => void) | null
     onStarted: ((info: { previousAliveAtMs: number | null }) => void) | null
     onRelayActiveEew: ((active: { events: readonly unknown[]; incomplete: boolean }) => void) | null
     onRelayUpstream: ((status: { connected: boolean; disconnectedAtMs: number | null }) => void) | null
@@ -77,28 +78,44 @@ const { sockets, FakeWebSocket, socketOptions } = vi.hoisted(() => {
    * 次に作る代役の振る舞い。`holdClassifications` を立てると、最初の取り決めがいつまでも決まらない
    * （同時接続の上限で 409 が続く形）。テストごとに `beforeEach` で戻す。
    */
-  const socketOptions = { holdClassifications: false }
+  const socketOptions = {
+    holdClassifications: false,
+    /** 自分の鍵の予報の接続が取り決めで決着させる区分（null なら既定の全区分）。予報を断られた形を作るのに使う */
+    keyClassifications: null as readonly string[] | null,
+  }
   class FakeWebSocket {
     onEvent: ((e: unknown, telegramId?: string) => void) | null = null
     onStatusChange: ((s: string) => void) | null = null
     onRawMessage: ((e: unknown) => void) | null = null
     onReconnected: ((lastReceivedAtMs: number) => void) | null = null
     onClassifications: ((c: readonly string[]) => void) | null = null
+    onForecastRefused: (() => void) | null = null
     onStarted: ((info: { previousAliveAtMs: number | null }) => void) | null = null
     onRelayActiveEew: ((active: { events: readonly unknown[]; incomplete: boolean }) => void) | null = null
     onRelayUpstream: ((status: { connected: boolean; disconnectedAtMs: number | null }) => void) | null = null
     hasReceivedTelegram(_id: string): boolean { return false }
     // 本物は最初の取り決めが済んだ時点で解決する。ここでは全区分を受けている人として即座に返す
-    readonly classificationsReady: Promise<readonly string[]> = socketOptions.holdClassifications
-      ? new Promise<readonly string[]>(() => {})
-      : Promise.resolve(['eew.forecast', 'telegram.earthquake'])
+    readonly classificationsReady: Promise<readonly string[]>
     connected = false
     readonly source: unknown
     constructor(source?: unknown) {
       this.source = source
+      const isKey = typeof source === 'object' && source !== null && (source as { kind?: unknown }).kind === 'keyForecast'
+      this.classificationsReady = socketOptions.holdClassifications
+        ? new Promise<readonly string[]>(() => {})
+        : Promise.resolve(isKey && socketOptions.keyClassifications !== null
+          ? socketOptions.keyClassifications
+          : ['eew.forecast', 'telegram.earthquake'])
       sockets.push(this)
     }
-    connect() { this.connected = true }
+    connect() {
+      this.connected = true
+      // 本物は取り決めで予報が外れたら `onForecastRefused` を呼んで止まる（→ `DmdataWebSocket.tryConnect`）
+      const isKey = typeof this.source === 'object' && this.source !== null && (this.source as { kind?: unknown }).kind === 'keyForecast'
+      const refused = isKey && !socketOptions.holdClassifications && socketOptions.keyClassifications !== null
+        && !socketOptions.keyClassifications.includes('eew.forecast')
+      if (refused) queueMicrotask(() => this.onForecastRefused?.())
+    }
     disconnect() { this.connected = false }
   }
   return { sockets, FakeWebSocket, socketOptions }
@@ -241,6 +258,7 @@ function skips(count: number, day = '2026-08-10'): Map<string, number> {
 beforeEach(() => {
   sockets.length = 0
   socketOptions.holdClassifications = false
+  socketOptions.keyClassifications = null
   // 戻り値の形はここで型付きに与える（実シグネチャと違えば型エラーになる）
   vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history())
 })
@@ -1853,6 +1871,42 @@ describe('予報キーの端末は中継の予報を先に使い、切れたら�
     expect(h.current.relayForecastLive).toBe(true)
     act(() => { vi.advanceTimersByTime(60_000) })
     expect(keySockets()[0].connected).toBe(false)
+  })
+
+  // 過去の電文の予報を鍵で引くかの材料（→ `restSources`）。断られたときだけ立ち、答える前は立たない
+  it('鍵の接続が予報を受け付けないと答えたら、keyForecastRefused を立てる', async () => {
+    socketOptions.keyClassifications = ['eew.warning']
+    const h = setup({ apiKey: 'dummy.key.with-period_123' })
+    await h.flush()
+    // 中継の答えを待つ間は鍵の接続を張らないので、断られることもない
+    expect(h.current.keyForecastRefused).toBe(false)
+    // 中継が答えないまま猶予が過ぎると鍵の接続を張り、そこで断られる
+    act(() => { vi.advanceTimersByTime(10_000) })
+    expect(keySockets()[0].connected).toBe(true)
+    await h.flush()
+    expect(h.current.keyForecastRefused).toBe(true)
+  })
+  it('鍵の接続が予報を受け付けたら、keyForecastRefused は立てない', async () => {
+    const h = setup({ apiKey: 'dummy.key.with-period_123' })
+    await h.flush()
+    expect(h.current.keyForecastRefused).toBe(false)
+  })
+  it('鍵の接続が答える前（409 が続く間）は、keyForecastRefused を立てない', async () => {
+    socketOptions.holdClassifications = true
+    const h = setup({ apiKey: 'dummy.key.with-period_123' })
+    await h.flush()
+    expect(h.current.keyForecastRefused).toBe(false)
+  })
+  // 安全弁: 区分が上限の時間で既定（予報を含む）へ先に決着した後に断られても立てる（決着の約束は 1 度しか決まらない）
+  it('区分が予報を含む形で先に決着した後に断られても、keyForecastRefused を立てる', async () => {
+    const h = setup({ apiKey: 'dummy.key.with-period_123' })
+    await h.flush()
+    expect(h.current.keyForecastRefused).toBe(false)
+    act(() => { keySockets()[0].onForecastRefused?.() })
+    expect(h.current.keyForecastRefused).toBe(true)
+    // 対照: その後、同じ鍵で予報を受けて繋がれば下ろす（一時的な 401/403 で立ったまま残さない）
+    act(() => { keySockets()[0].onClassifications?.(['eew.forecast']) })
+    expect(h.current.keyForecastRefused).toBe(false)
   })
 
   // 倒し先: 中継が DMDATA と切れたら鍵を張り、繋がり直したら閉じる

@@ -156,23 +156,32 @@ describe('relayRestClassifications', () => {
 describe('restSources', () => {
   // 自分の鍵の予報が通っている（区分に予報がある）なら、予報は鍵から引き、中継から警報を引かない（ライブと同じく VXSE43 を採らない）
   it('鍵の予報が通っていて中継が予報を配らないなら、予報は鍵から・中継は警報を外して引く', () => {
-    expect(restSources(['telegram.earthquake', 'eew.warning', 'eew.forecast'], false, true))
+    expect(restSources(['telegram.earthquake', 'eew.warning', 'eew.forecast'], false, true, false))
       .toEqual({ relay: ['telegram.earthquake'], keyForecast: true })
   })
-  it('鍵の予報が通っていないなら、中継の警報で引く', () => {
-    expect(restSources(['telegram.earthquake', 'eew.warning'], false, true))
+  // 鍵の接続が 409（枠が埋まっている）で繋がらない間・答える前も、過去の電文は枠を使わずに鍵で引ける
+  it('鍵の接続がまだ答えていなくても、予報は鍵から・中継は警報を外して引く', () => {
+    expect(restSources(null, false, true, false)).toEqual({ relay: ['telegram.earthquake'], keyForecast: true })
+    expect(restSources(['telegram.earthquake', 'eew.warning'], false, true, false))
+      .toEqual({ relay: ['telegram.earthquake'], keyForecast: true })
+  })
+  it('鍵が予報を受け付けないと答えたなら、中継の警報で引く', () => {
+    expect(restSources(['telegram.earthquake', 'eew.warning'], false, true, true))
       .toEqual({ relay: ['telegram.earthquake', 'eew.warning'], keyForecast: false })
-    expect(restSources(null, false, true)).toEqual({ relay: RELAY_CLASSIFICATIONS, keyForecast: false })
+    expect(restSources(null, false, true, true)).toEqual({ relay: RELAY_CLASSIFICATIONS, keyForecast: false })
   })
   // 鍵を消した直後は受けている区分がまだ前のまま。鍵が無ければ鍵からは引かない
   it('鍵が入っていなければ、区分に予報が残っていても中継の警報で引く', () => {
-    expect(restSources(['telegram.earthquake', 'eew.warning', 'eew.forecast'], false, false))
+    expect(restSources(['telegram.earthquake', 'eew.warning', 'eew.forecast'], false, false, false))
       .toEqual({ relay: ['telegram.earthquake', 'eew.warning'], keyForecast: false })
+    expect(restSources(null, false, false, false)).toEqual({ relay: RELAY_CLASSIFICATIONS, keyForecast: false })
   })
   // 中継が予報キーを受け付けていれば、鍵があっても中継から予報を引く（鍵の枠を使わない）
   it('中継が予報キーを受け付けているなら、鍵からは引かない', () => {
-    expect(restSources(['telegram.earthquake', 'eew.warning', 'eew.forecast'], true, true))
+    expect(restSources(['telegram.earthquake', 'eew.warning', 'eew.forecast'], true, true, false))
       .toEqual({ relay: ['telegram.earthquake', 'eew.warning', 'eew.forecast'], keyForecast: false })
+    expect(restSources(null, true, true, false))
+      .toEqual({ relay: [...RELAY_CLASSIFICATIONS, 'eew.forecast'], keyForecast: false })
   })
 })
 

@@ -608,6 +608,11 @@ export interface EarthquakeState {
    * 設定の窓の「受信している区分」と、リプレイが引く区分に使う（→ `services/dmdataClassifications.ts`）。
    */
   dmdataClassifications: readonly DmdataClassification[] | null
+  /**
+   * 自分の鍵の予報の接続を申し込んだら、配信元が予報を受け付けないと答えたか。答える前（409 で繋がらない間を含む）・
+   * 鍵が無いときは false。リプレイと発生時刻の秒が予報を鍵で引くかに使う（→ `services/dmdataClassifications.ts` の `restSources`）
+   */
+  keyForecastRefused: boolean
   lastUpdate: Date | null
   isLoading: boolean
   isLoadingMore: boolean
@@ -742,6 +747,7 @@ export function useEarthquakes(
     keyForecastStatus: null,
     relayForecastLive: false,
     dmdataClassifications: null,
+    keyForecastRefused: false,
     lastUpdate: null,
     isLoading: true,
     isLoadingMore: false,
@@ -2662,6 +2668,7 @@ export function useEarthquakes(
     setState(prev => ({
       ...prev, isLoading: true, connectionStatus: 'connecting', relayUpstream: null, relayForecastLive: false,
       keyForecastStatus: keyForecastApiKey === null ? null : 'connecting', error: null, dmdataClassifications: null,
+      keyForecastRefused: false,
     }))
 
     // DMDSS WebSocket 接続（dmdataTestDelivery 有効時は試験報・訓練報も受信）。
@@ -3558,6 +3565,17 @@ export function useEarthquakes(
         if (cancelled) return
         keyClassifications = classifications
         publishClassifications()
+        // 一時的な 401/403 で立った「断られた」は、同じ鍵で予報を受けて繋がった時点で下ろす
+        if (classifications.includes('eew.forecast')) {
+          setState(prev => prev.keyForecastRefused ? { ...prev, keyForecastRefused: false } : prev)
+        }
+      }
+      // この鍵では予報を受けられないと分かったら（交渉で予報が外れた・認証で断られた・鍵の文字が使えない）、
+      // 過去の電文の予報を鍵で引かない。決着の約束（`classificationsReady`）ではなく専用の口で受ける ——
+      // 約束は 1 度しか決まらず、上限の時間で既定の区分（予報を含む）へ先に決着した後に断られると届かない
+      keyWs.onForecastRefused = () => {
+        if (cancelled) return
+        setState(prev => prev.keyForecastRefused ? prev : { ...prev, keyForecastRefused: true })
       }
       keyWs.onStarted = ({ previousAliveAtMs }) => {
         if (cancelled || previousAliveAtMs === null) return

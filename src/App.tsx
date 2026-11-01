@@ -969,7 +969,7 @@ export function App() {
   // 揺れ検知の束の広がり。下の検知結果から毎秒流し込み、EEW の自動解除を広がっている間は待たせる（eew-spec §7）
   const [eewSpreadLog] = useState(createDetectionSpreadLog)
   const {
-    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, internationalTsunamis, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, lastUpdate, isLoading, isLoadingMore, hasMore, error,
+    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, internationalTsunamis, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, keyForecastRefused, lastUpdate, isLoading, isLoadingMore, hasMore, error,
     historyLoss, loadMoreFailed, reconnectGapLoss,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
@@ -1781,15 +1781,15 @@ export function App() {
   const forecastKeyRelayRejected = forecastKeyToSend !== null && relayForecastScope !== null && !relayForecastScope.granted
   // 中継が予報キーを受け付けている。リプレイ・履歴・発生時刻の秒も中継から予報を引く（→ `relayRestClassifications`）
   const relayForecastGranted = forecastKeyToSend !== null && relayForecastScope?.granted === true
-  // 過去の電文（リプレイ・発生時刻の秒）をどこからどの区分で引くか。自分の鍵の予報が通っている間は、予報を鍵で
+  // 過去の電文（リプレイ・発生時刻の秒）をどこからどの区分で引くか。鍵があれば、鍵が予報を断らない限り予報を鍵で
   // DMDATA から引く —— ライブと同じ電文で再生する（設計書 §0 の 2026-10-31「自分で契約した鍵を入れた利用者も、予報キーの端末と同じ動きになるようにする」の行。→ `restSources`）
   const keyRestEndpoint = useMemo(
     () => (isValidDmdataApiKey(debouncedApiKey) ? dmdataKeyEndpoint(debouncedApiKey) : null),
     [debouncedApiKey],
   )
   const pastSources = useMemo(
-    () => restSources(dmdataClassifications, relayForecastGranted, keyRestEndpoint !== null),
-    [dmdataClassifications, relayForecastGranted, keyRestEndpoint],
+    () => restSources(dmdataClassifications, relayForecastGranted, keyRestEndpoint !== null, keyForecastRefused),
+    [dmdataClassifications, relayForecastGranted, keyRestEndpoint, keyForecastRefused],
   )
   // リプレイの取得・世代管理は useReplayController に集約している（非同期の完了順序に
   // 依存する状態機械のため、単体でテストできる形に切り出した）。
