@@ -22,7 +22,6 @@ import type { DmdataEndpoint } from './dmdataEndpoint'
 import { fetchWithTimeout, isAbortedByCaller, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { fetchTelegramText, fetchTelegramBytes, telegramIdFromUrl } from './telegramBody'
 import { RateLimitWindowError } from './dmdataRequestGates'
-import { parseRelayListGaps } from './relayListGaps'
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { ReplayEntry } from '../types/replay'
 import {
@@ -426,9 +425,6 @@ async function listTelegrams(
     const json = await getJson<{ items?: TelegramListItem[]; nextToken?: string }>(
       `${endpoint.apiBase}/telegram?${params.toString()}`, endpoint, '電文の一覧', signal,
     )
-    // 中継の一覧は、語る範囲のうち見ていない区間を載せる（どのページも同じ答え）。帳面へ渡す（→ `relayListGaps.ts`）
-    const gaps = parseRelayListGaps(json)
-    if (gaps !== null) endpoint.noteListGaps(gaps)
     const pageItems = json.items ?? []
     items.push(...pageItems)
     if (stopOlderThan !== null && pageItems.length > 0) {

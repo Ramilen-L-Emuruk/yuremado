@@ -14,7 +14,6 @@
 import { authHeader, dmdataApiKeyProblem, type DmdataApiKeyProblem } from '../utils/dmdataApiKey'
 import { waitForApiSlot, waitForDataApiSlot } from './dmdataRequestGates'
 import type { GateTag } from '../utils/requestGate'
-import type { RelayListGaps } from './relayListGaps'
 
 /** 門で待つときの指定（`urgent` は待ち行列を追い越す・`tag` は誰の待ちかの印） */
 export interface GateSlotOptions {
@@ -64,11 +63,6 @@ export interface DmdataEndpoint {
    * 門へ覚えさせる。鍵の経路は何もしない（DMDATA の 429 は `dmdataRequestGates.ts` の側で扱う）
    */
   observe(status: number, headers: Headers | null): void
-  /**
-   * 電文一覧の応答が語った、繋ぎ先が見ていない区間（→ `relayListGaps.ts`）。中継は帳面へ取り込み、地震タブの帯が読む。
-   * DMDATA の一覧は印を返さないので、鍵の経路へは呼ばれない（呼ばれても何もしない）
-   */
-  noteListGaps(gaps: RelayListGaps): void
   /** 一覧・詳細・チケットへ付ける見出し。繋げないときは投げる（`authHeader` と同じ） */
   apiHeaders(): Record<string, string>
   /**
@@ -89,7 +83,6 @@ export function dmdataKeyEndpoint(apiKey: string): DmdataEndpoint {
     waitApiSlot: (opts) => waitForApiSlot(opts),
     waitDataSlot: (_url, opts) => waitForDataApiSlot(opts),
     observe: () => {},
-    noteListGaps: () => {},
     apiHeaders: () => ({ Authorization: authHeader(apiKey) }),
     dataHeaders: () => ({ Authorization: authHeader(apiKey) }),
   }

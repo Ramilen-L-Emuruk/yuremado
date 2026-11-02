@@ -113,9 +113,8 @@ import { EEW_LEAD_PHRASES } from './utils/ttsText'
 import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
 import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS, type ReplayFetchPurpose } from './hooks/useReplayController'
 import { fetchDmdataReplayEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
-import { relayRestEndpoint, relayGapStore, relayTokenStore } from './services/relayEndpoint'
+import { relayRestEndpoint, relayTokenStore } from './services/relayEndpoint'
 import { useForecastKeyCheck } from './hooks/useForecastKey'
-import { formatRelayGapNotices } from './utils/relayGapNotice'
 import { relayRestClassifications, restSources } from './services/dmdataClassifications'
 import { dmdataKeyEndpoint } from './services/dmdataEndpoint'
 import { fetchReplayFromSources } from './services/replaySources'
@@ -987,9 +986,6 @@ export function App() {
   // 配信元の上限に達して取得を待たせているあいだ、地震タブにその旨を出す。
   // **損失とは別**（枠が空けばそのまま取りに行くので、欠けは出ない）。
   const fetchThrottled = useFetchThrottled(true)
-  // 中継が見ていない区間の帯（地震タブ）。照合が済んで帳面から区間が消えれば、帯も消える
-  const relayGaps = useSyncExternalStore(relayGapStore.subscribe, relayGapStore.snapshot)
-  const relayGapNotices = useMemo(() => formatRelayGapNotices(relayGaps), [relayGaps])
   // 鍵の入れ直しの案内（地震タブの帯・設定のキー欄）。鍵を入れたら印を下ろす —— 消したあとにまた出さない
   const showKeyReentry = settings.dmdataKeyReentryNotice && settings.dmdataApiKey === ''
   const dismissKeyReentry = useCallback(() => updateSetting('dmdataKeyReentryNotice', false), [updateSetting])
@@ -2986,7 +2982,6 @@ export function App() {
                 loadMoreFailed={loadMoreFailed}
                 reconnectGapLoss={reconnectGapLoss}
                 fetchThrottled={fetchThrottled}
-                relayGapNotices={relayGapNotices}
                 onDismissKeyReentry={showKeyReentry ? dismissKeyReentry : null}
                 lpgmByEventId={lpgmByEventId}
                 updateMarks={quakeUpdateMarks}
