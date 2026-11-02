@@ -5,7 +5,7 @@
  * 1. 点ごとの量（`kyoshinOnsetFeatures.ts`）: y = 直近 6 秒の内に新しく達した段のうち、いまも保っている最大／
  *    y3 = 同じく 3 秒（近くの点が揃って上がったか）
  * 2. 点ごとの珍しさ: s_i = −log10 P_i(y ≥ いまの値)。P_i は平常の日の表を全体の裾へ縮めたもの（擬似件数 SHRINK）と、
- *    その点の直近（時定数 ONLINE_TAU で忘れる）の裾の大きいほう（荒れている点は割り引く）
+ *    その点の直近（時定数 ONLINE_TAU で忘れる）の裾の大きいほう（荒れている点は割り引く。近くの点と揃って上がった秒は直近に数えない）
  * 3. 走査: 珍しい点を中心に、半径 R の中で (a) s ≥ a の点の数が平常の期待値に比べてどれだけ多いか（ポアソンの裾）、
  *    (b) s ≥ 1 の点の s の和の裾（切り詰めた積の検定）の最小の裾を、組の数で割り引いて S = −log10(裾) − log10(組の数)
  * 4. 段階: S ≥ T_EARLY で早い段。S ≥ T_CONF で確かな段。確かな段は、点が長い基準より上にいる間は下ろさない
@@ -58,6 +58,12 @@ const SUSTAIN_MAX = 120
 const SHRINK = 2000
 const ONLINE_TAU = 1800
 const ONLINE_A = 600
+/**
+ * 直近の裾を数えるとき、COHERENT_KM 以内の別の点も同じ秒に上がっていたら、その秒の上がりは数えない。
+ * 点ひとつの荒れは近くの点と揃わないが、検知に届かなかった小さな地震は近くの点が揃って上がる。
+ * それを荒れとして覚えると、続く余震の珍しさが割り引かれて取りこぼす（設計書§52）
+ */
+const COHERENT_KM = 25
 const RADII = [25, 60, 150, 400]
 const RADII_Y3 = [25, 60]
 const LEVELS = [1, 1.5, 2, 3, 4]
@@ -116,7 +122,8 @@ const CHANS: ChanDef[] = [
   { name: 'y', radii: RADII, levels: LEVELS, centerMin: LEVELS[0], memMin: 1.5 },
   { name: 'y3', radii: RADII_Y3, levels: LEVELS, centerMin: LEVELS[0], memMin: 1.5 },
 ]
-const ALL_RADII = [...new Set(CHANS.flatMap(c => c.radii))].sort((a, b) => a - b)
+const ALL_RADII = [...new Set([...CHANS.flatMap(c => c.radii), COHERENT_KM])].sort((a, b) => a - b)
+const COHERENT_R = ALL_RADII.indexOf(COHERENT_KM)
 
 /** 観測点の近傍（近い順）と、半径ごとに何点目までが入るか。観測点リストが同じなら使い回す */
 const nbrCache = new WeakMap<object, { nbr: Int32Array[]; cut: Int32Array[] }>()
@@ -199,6 +206,12 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
     }
     return false
   }
+  /** 点 i の近く（COHERENT_KM 以内）の別の点も、いまこの量（y か y3。段の大きさは問わない）で上がっているか */
+  const coherent = (feat: ArrayLike<number>, i: number) => {
+    const nb = nbr[i], e = cutAll[i][COHERENT_R]
+    for (let t = 0; t < e; t++) { const j = nb[t]; if (j !== i && feat[j] > 0) return true }
+    return false
+  }
   const near = (c: number, e: Ev) => { for (const m of e.claimed) if (hav(sites[c][0], sites[c][1], sites[m][0], sites[m][1]) <= MERGE_KM) return true; return false }
   return {
     /** 平常のゆらぎの表を差し替える。点ごとの確率の基準（P0）だけを作り直し、直近に数えた分と追っている検知は残す */
@@ -224,8 +237,8 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
         for (let i = 0; i < n; i++) {
           const v = feat[i]
           sv[i] = v === NONE || v <= 0 ? 0 : lgP[i * K1 + Math.min(v, KMAX)]
-          // 直近の数えを更新（事象に入っている点は数えない）
-          if (v !== NONE && !inEvent[i]) {
+          // 直近の数えを更新（事象に入っている点と、近くの点と揃って上がった秒は数えない）
+          if (v !== NONE && !inEvent[i] && !(v > 0 && coherent(feat, i))) {
             onN[i] = onN[i] * decay + 1
             for (let k = 1; k <= KMAX; k++) onC[i * K1 + k] = onC[i * K1 + k] * decay + (v >= k ? 1 : 0)
           }

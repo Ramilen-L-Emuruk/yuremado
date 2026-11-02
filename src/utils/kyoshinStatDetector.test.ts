@@ -138,3 +138,80 @@ describe('種より先に上がった点も、顔ぶれの点から波で届け�
     expect(perSecond(runSlow(FAR_WAVE, reversed), back)).toEqual(perSecond(runSlow(FAR_WAVE), i => i))
   })
 })
+
+// 揺れの前の 1,800 秒ほど、検知に届かない小さな上がり（2 段・2 秒）を観測点ごとに 144 秒に 1 回ずつ入れる。
+// どの点も上がる回数は同じで、違うのは「同じ秒に近くの点も上がっているか」だけ。
+// 直近の裾に数えられると、その点の珍しさが割り引かれ、本番の揺れの確かな段が遅れる
+describe('近くの点と揃って上がった秒は、直近の荒れとして数えない', () => {
+  const PRE_FROM = 60
+  const QUAKE = 1900
+  const CYCLE = 144
+  /** 上がりの入れ方。pair = 隣り合う 2 点（約 9 km）が同じ秒に、alone = 1 点ずつ 4 秒ずらして */
+  type Pre = 'none' | 'pair' | 'alone'
+  function preRise(sites: readonly (readonly [number, number])[], pre: Pre, s: number, i: number): boolean {
+    if (pre === 'none' || s < PRE_FROM || s >= QUAKE - 30) return false
+    const t = (s - PRE_FROM) % CYCLE
+    // pair: 8 秒ごとに (2p, 2p+1) の組。alone: 4 秒ごとに 1 点
+    const slot = pre === 'pair' ? Math.floor(t / 8) * 2 : Math.floor(t / 4)
+    const at = pre === 'pair' ? Math.floor(t / 8) * 8 : Math.floor(t / 4) * 4
+    const mine = pre === 'pair' ? (i === slot || i === slot + 1) : i === slot
+    return mine && i < sites.length && t - at < 2
+  }
+  function quakeFrame(sites: readonly (readonly [number, number])[], pre: Pre, s: number): Int8Array {
+    const v = new Int8Array(sites.length)
+    for (let i = 0; i < sites.length; i++) {
+      const t = s - QUAKE - Math.hypot(sites[i][0] - sites[0][0], (sites[i][1] - sites[0][1]) * 0.82) * 111 / 6
+      v[i] = t >= 0 ? Math.min(7, 4 + Math.floor(t)) : preRise(sites, pre, s, i) ? 6 : 4
+    }
+    return v
+  }
+  const tablesFor = (sites: readonly (readonly [number, number])[]): QuietTables => ({
+    version: 1, days: ['test'], glob: tail(),
+    tails: Object.fromEntries(sites.map(s => [quietSiteKey(s), tail()])),
+    fire: Object.fromEntries(sites.map(s => [quietSiteKey(s), [0.1, 0.1, 0.1, 0.1, 0.1]])),
+  })
+  function runPre(sites: readonly (readonly [number, number])[], pre: Pre) {
+    const det = createStatDetector(sites, tablesFor(sites))
+    const out: DetectorReport[][] = []
+    for (let s = 0; s < QUAKE + 60; s++) out.push(det.push({ ms: T0 + s * 1000, values: quakeFrame(sites, pre, s) }))
+    return out
+  }
+  const beforeQuake = (out: DetectorReport[][]) => out.slice(0, QUAKE).flat().length
+
+  it('前提: 揺れの前の上がりは、どの入れ方でも検知にならない', () => {
+    expect(beforeQuake(runPre(NEAR, 'pair'))).toBe(0)
+    expect(beforeQuake(runPre(NEAR, 'alone'))).toBe(0)
+  })
+
+  it('正: 隣り合う 2 点が揃って上がっていた後でも、確かな段は前の上がりが無いときと同じ秒に出る', () => {
+    expect(firstConfirmed(runPre(NEAR, 'pair'))).toBe(firstConfirmed(runPre(NEAR, 'none')))
+  })
+
+  it('対照: 同じ回数でも 1 点ずつ上がっていた点は荒れとして割り引かれ、確かな段が遅れる', () => {
+    const quiet = firstConfirmed(runPre(NEAR, 'none'))
+    const alone = firstConfirmed(runPre(NEAR, 'alone'))
+    expect(quiet).toBeGreaterThanOrEqual(QUAKE)
+    expect(alone === -1 || alone > quiet).toBe(true)
+  })
+
+  // 東西の間隔だけを変えた 6×6（南北は 0.3 度 = 約 33 km）。揃って上がる組は東西の隣どうし
+  const grid = (dLng: number) => {
+    const g: [number, number][] = []
+    for (let a = 0; a < 6; a++) for (let b = 0; b < 6; b++) g.push([35 + a * 0.3, 137 + b * dLng])
+    return g
+  }
+
+  it('正: 25 km のすぐ内側（東西 0.26 度・約 24 km）の 2 点が揃って上がっても数えない', () => {
+    const inside = grid(0.26)
+    expect(firstConfirmed(runPre(inside, 'pair'))).toBe(firstConfirmed(runPre(inside, 'none')))
+  })
+
+  // 東西 0.3 度（約 27 km）では、隣の点も 25 km より外にいる。揃って上がっても数え続ける
+  it('安全弁: 25 km のすぐ外側（約 27 km）の 2 点が揃って上がっても、荒れとして数え、確かな段が遅れる', () => {
+    const wide = grid(0.3)
+    const quiet = firstConfirmed(runPre(wide, 'none'))
+    const pair = firstConfirmed(runPre(wide, 'pair'))
+    expect(quiet).toBeGreaterThanOrEqual(QUAKE)
+    expect(pair === -1 || pair > quiet).toBe(true)
+  })
+})

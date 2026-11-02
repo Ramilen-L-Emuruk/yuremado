@@ -283,7 +283,7 @@
   },
   "ng-ishikawa": {
    "tier": "likely",
-   "firstLikely": "01:23:11",
+   "firstLikely": "01:23:09",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -437,12 +437,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "13:04:00 鹿児島県|伊仙町伊仙"
+    "13:04:00 鹿児島県|伊仙町伊仙",
+    "13:09:52 熊本県|上天草市龍ヶ岳町"
    ]
   },
   "glitch-0724": {
@@ -488,8 +489,8 @@
    "unrelatedNoCatalog": 2,
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
-    "07:23:58 熊本県|芦北町田浦町",
-    "07:27:23 熊本県|球磨村渡",
+    "07:23:58 熊本県|八代市鏡町",
+    "07:27:23 熊本県|上天草市龍ヶ岳町",
     "07:40:52 北海道|函館市泊町"
    ]
   },
@@ -498,12 +499,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 2,
+   "unrelated": 3,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "13:07:33 鹿児島県|長島町鷹巣",
+    "13:07:32 鹿児島県|長島町鷹巣",
+    "13:11:10 岩手県|岩手洋野町大野",
     "13:19:17 熊本県|八代市新地町"
    ]
   },
@@ -517,9 +519,9 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "19:03:26 北海道|羅臼町岬町",
-    "19:33:24 青森県|東通村白糠",
-    "19:57:13 石川県|珠洲市正院町"
+    "19:03:15 北海道|斜里町ウトロ香川",
+    "19:33:23 北海道|函館市泊町",
+    "19:57:12 石川県|珠洲市正院町"
    ]
   },
   "calmx4": {
@@ -532,7 +534,7 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "04:35:11 鳥取県|江府町上之段広場",
+    "04:35:11 鳥取県|鳥取日野町根雨",
     "04:43:35 宮城県|石巻市泉町"
    ]
   },
@@ -541,11 +543,12 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
+    "10:31:40 和歌山県|かつらぎ町花園梁瀬",
     "10:54:48 熊本県|芦北町田浦町"
    ]
   },
@@ -554,12 +557,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 2,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "08:11:55 長崎県|長崎市長浦町"
+    "08:11:55 長崎県|長崎市長浦町",
+    "08:50:50 熊本県|芦北町田浦町"
    ]
   },
   "hour-0820-13": {
@@ -567,12 +571,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 2,
+   "unrelated": 3,
    "unrelatedConfirmed": 2,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "13:04:00 鹿児島県|伊仙町伊仙",
+    "13:09:52 熊本県|上天草市龍ヶ岳町",
     "13:19:41 広島県|世羅町西上原"
    ]
   },
@@ -654,7 +659,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "13:02:28 石川県|珠洲市正院町"
+    "13:02:28 石川県|珠洲市大谷町"
    ]
   },
   "fp0817-163840": {
@@ -662,14 +667,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 3,
+   "unrelated": 2,
    "unrelatedConfirmed": 2,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "16:37:06 京都府|京都右京区太秦",
-    "16:39:21 岩手県|宮古市五月町",
-    "16:40:08 北海道|浦河町築地"
+    "16:39:20 岩手県|宮古市五月町"
    ]
   },
   "fp0818-003849": {
@@ -798,7 +802,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "14:01:28 熊本県|八代市新地町"
+    "14:01:27 熊本県|八代市新地町"
    ]
   },
   "fp0819-200244": {
@@ -976,7 +980,7 @@
   },
   "jq1-0816-0112": {
    "tier": "confirmed",
-   "firstLikely": "01:12:21",
+   "firstLikely": "01:12:20",
    "firstConfirmed": "01:12:24",
    "confirmedFrames": 96,
    "unrelated": 0,
@@ -1017,7 +1021,7 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "04:35:31 千葉県|鎌ケ谷市新鎌ケ谷"
+    "04:35:30 千葉県|東金市日吉台"
    ]
   },
   "jq5-0816-0618": {
@@ -2040,7 +2044,7 @@
   },
   "wq33-0802-0119": {
    "tier": "confirmed",
-   "firstLikely": "01:19:30",
+   "firstLikely": "01:19:29",
    "firstConfirmed": "01:19:30",
    "confirmedFrames": 100,
    "unrelated": 0,
@@ -2073,7 +2077,7 @@
   },
   "wq36-0802-0434": {
    "tier": "confirmed",
-   "firstLikely": "04:34:44",
+   "firstLikely": "04:34:25",
    "firstConfirmed": "04:34:54",
    "confirmedFrames": 76,
    "unrelated": 0,
@@ -2117,7 +2121,7 @@
   },
   "wq40-0802-0804": {
    "tier": "confirmed",
-   "firstLikely": "08:04:56",
+   "firstLikely": "08:04:55",
    "firstConfirmed": "08:04:56",
    "confirmedFrames": 74,
    "unrelated": 0,
@@ -2153,13 +2157,12 @@
    "firstLikely": "09:19:47",
    "firstConfirmed": "09:19:47",
    "confirmedFrames": 83,
-   "unrelated": 2,
-   "unrelatedConfirmed": 1,
+   "unrelated": 1,
+   "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "09:19:13 青森県|田子町田子",
-    "09:20:53 高知県|四万十町大正"
+    "09:19:13 青森県|田子町田子"
    ]
   },
   "wq44-0802-0945": {
@@ -2413,7 +2416,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "05:53:32 茨城県|水戸市千波町"
+    "05:53:30 茨城県|水戸市千波町"
    ]
   },
   "wq66-0803-0641": {
@@ -2487,11 +2490,12 @@
    "firstLikely": "15:00:43",
    "firstConfirmed": "15:00:45",
    "confirmedFrames": 85,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
+    "15:01:49 北海道|恵庭市京町",
     "15:02:06 宮崎県|宮崎都農町役場"
    ]
   },
@@ -2561,7 +2565,7 @@
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
     "23:41:17 北海道|十勝大樹町東本通",
-    "23:41:47 青森県|東通村白糠"
+    "23:41:46 青森県|東通村白糠"
    ]
   },
   "wq79-0804-0013": {
@@ -2928,7 +2932,7 @@
   },
   "wq111-0805-1037": {
    "tier": "likely",
-   "firstLikely": "10:37:33",
+   "firstLikely": "10:37:31",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -3095,7 +3099,7 @@
   },
   "wq126-0806-1150": {
    "tier": "confirmed",
-   "firstLikely": "11:51:02",
+   "firstLikely": "11:50:50",
    "firstConfirmed": "11:51:02",
    "confirmedFrames": 68,
    "unrelated": 0,
@@ -3246,7 +3250,7 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "08:09:34 熊本県|熊本美里町馬場"
+    "08:09:31 熊本県|熊本美里町馬場"
    ]
   },
   "wq140-0807-1002": {
@@ -3385,14 +3389,16 @@
   },
   "wq152-0808-0917": {
    "tier": "confirmed",
-   "firstLikely": "09:17:30",
+   "firstLikely": "09:17:29",
    "firstConfirmed": "09:17:30",
    "confirmedFrames": 100,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "09:17:59 秋田県|北秋田市阿仁水無"
+   ]
   },
   "wq153-0808-0928": {
    "tier": "confirmed",
@@ -3444,7 +3450,7 @@
    "tier": "confirmed",
    "firstLikely": "12:32:13",
    "firstConfirmed": "12:32:19",
-   "confirmedFrames": 80,
+   "confirmedFrames": 83,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4157,7 +4163,7 @@
   },
   "wq221-0813-1035": {
    "tier": "confirmed",
-   "firstLikely": "10:35:11",
+   "firstLikely": "10:35:10",
    "firstConfirmed": "10:35:11",
    "confirmedFrames": 119,
    "unrelated": 0,
@@ -4382,11 +4388,12 @@
    "firstLikely": "17:29:40",
    "firstConfirmed": "17:29:40",
    "confirmedFrames": 90,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
+    "17:30:16 埼玉県|小鹿野町小鹿野",
     "17:31:05 宮城県|石巻市北上町"
    ]
   },
@@ -4403,7 +4410,7 @@
   },
   "wq243-0814-1908": {
    "tier": "confirmed",
-   "firstLikely": "19:08:41",
+   "firstLikely": "19:08:40",
    "firstConfirmed": "19:08:41",
    "confirmedFrames": 89,
    "unrelated": 0,
@@ -4927,11 +4934,13 @@
    "firstLikely": "17:55:23",
    "firstConfirmed": "17:55:24",
    "confirmedFrames": 76,
-   "unrelated": 0,
-   "unrelatedConfirmed": 0,
+   "unrelated": 1,
+   "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "17:56:14 高知県|四万十町大正"
+   ]
   },
   "oq29-0506-0435": {
    "tier": "confirmed",
@@ -5020,7 +5029,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "15:40:37 鹿児島県|肝付町北方"
+    "15:40:35 鹿児島県|肝付町北方"
    ]
   },
   "oq37-0507-1551": {
@@ -5248,11 +5257,13 @@
    "firstLikely": "10:41:33",
    "firstConfirmed": "10:41:36",
    "confirmedFrames": 64,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "10:42:06 岐阜県|白川村鳩谷"
+   ]
   },
   "oq58-0511-1127": {
    "tier": "confirmed",
@@ -6162,7 +6173,7 @@
   },
   "oq140-0526-1408": {
    "tier": "confirmed",
-   "firstLikely": "14:08:35",
+   "firstLikely": "14:08:34",
    "firstConfirmed": "14:08:35",
    "confirmedFrames": 65,
    "unrelated": 0,
@@ -6261,7 +6272,7 @@
   },
   "oq149-0528-0159": {
    "tier": "confirmed",
-   "firstLikely": "01:59:45",
+   "firstLikely": "01:59:44",
    "firstConfirmed": "01:59:49",
    "confirmedFrames": 51,
    "unrelated": 0,
@@ -6571,7 +6582,7 @@
   },
   "oq177-0604-0403": {
    "tier": "confirmed",
-   "firstLikely": "04:03:14",
+   "firstLikely": "04:03:15",
    "firstConfirmed": "04:03:17",
    "confirmedFrames": 83,
    "unrelated": 0,
@@ -6629,11 +6640,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "12:04:30 長野県|白馬村北城"
+   ]
   },
   "oq183-0604-1234": {
    "tier": "confirmed",
@@ -6800,7 +6813,7 @@
   },
   "oq197-0609-0304": {
    "tier": "confirmed",
-   "firstLikely": "03:05:00",
+   "firstLikely": "03:04:59",
    "firstConfirmed": "03:05:01",
    "confirmedFrames": 39,
    "unrelated": 0,
@@ -6844,16 +6857,14 @@
   },
   "oq201-0610-0929": {
    "tier": "confirmed",
-   "firstLikely": "09:29:27",
+   "firstLikely": "09:29:26",
    "firstConfirmed": "09:29:27",
    "confirmedFrames": 73,
-   "unrelated": 1,
-   "unrelatedConfirmed": 1,
+   "unrelated": 0,
+   "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": [
-    "09:30:24 北海道|士幌町士幌"
-   ]
+   "unrelatedAt": []
   },
   "oq202-0610-1253": {
    "tier": "none",
@@ -7355,7 +7366,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "05:40:36 北海道|胆振伊達市大滝区本町",
+    "05:40:35 北海道|胆振伊達市大滝区本町",
     "05:40:36 青森県|東通村白糠"
    ]
   },
@@ -7468,8 +7479,8 @@
    "unrelatedNoCatalog": 2,
    "unrelatedNoCatalogConfirmed": 2,
    "unrelatedAt": [
-    "00:49:36 北海道|中富良野町本町",
-    "00:50:11 岡山県|高梁市松原通"
+    "00:49:35 北海道|中富良野町本町",
+    "00:50:11 岡山県|高梁市有漢町"
    ]
   },
   "oq257-0624-0517": {
@@ -7611,8 +7622,8 @@
   "oq269-0625-0812": {
    "tier": "confirmed",
    "firstLikely": "08:12:36",
-   "firstConfirmed": "08:12:40",
-   "confirmedFrames": 60,
+   "firstConfirmed": "08:12:39",
+   "confirmedFrames": 61,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7644,8 +7655,8 @@
   "oq272-0625-0908": {
    "tier": "confirmed",
    "firstLikely": "09:08:39",
-   "firstConfirmed": "09:08:43",
-   "confirmedFrames": 57,
+   "firstConfirmed": "09:08:42",
+   "confirmedFrames": 58,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7655,8 +7666,8 @@
   "oq273-0625-0933": {
    "tier": "confirmed",
    "firstLikely": "09:33:22",
-   "firstConfirmed": "09:33:26",
-   "confirmedFrames": 74,
+   "firstConfirmed": "09:33:25",
+   "confirmedFrames": 75,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7786,9 +7797,9 @@
   },
   "oq285-0626-1252": {
    "tier": "confirmed",
-   "firstLikely": "12:53:09",
-   "firstConfirmed": "12:53:10",
-   "confirmedFrames": 30,
+   "firstLikely": "12:53:05",
+   "firstConfirmed": "12:53:11",
+   "confirmedFrames": 29,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8031,8 +8042,8 @@
   "oq307-0628-2349": {
    "tier": "confirmed",
    "firstLikely": "23:49:36",
-   "firstConfirmed": "23:49:42",
-   "confirmedFrames": 58,
+   "firstConfirmed": "23:49:41",
+   "confirmedFrames": 59,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8099,13 +8110,11 @@
    "firstLikely": "09:38:22",
    "firstConfirmed": "09:38:22",
    "confirmedFrames": 78,
-   "unrelated": 1,
+   "unrelated": 0,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": [
-    "09:39:17 山梨県|山梨北杜市小淵沢町"
-   ]
+   "unrelatedAt": []
   },
   "oq314-0630-1029": {
    "tier": "confirmed",
@@ -8472,7 +8481,7 @@
   },
   "oq347-0703-1724": {
    "tier": "confirmed",
-   "firstLikely": "17:25:07",
+   "firstLikely": "17:25:06",
    "firstConfirmed": "17:25:08",
    "confirmedFrames": 32,
    "unrelated": 0,
@@ -8612,7 +8621,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "02:27:22 北海道|千歳市支笏湖温泉"
+    "02:27:20 北海道|千歳市支笏湖温泉"
    ]
   },
   "oq360-0706-0255": {
@@ -8783,8 +8792,8 @@
   "oq375-0709-2059": {
    "tier": "confirmed",
    "firstLikely": "20:59:15",
-   "firstConfirmed": "20:59:16",
-   "confirmedFrames": 84,
+   "firstConfirmed": "20:59:17",
+   "confirmedFrames": 83,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
