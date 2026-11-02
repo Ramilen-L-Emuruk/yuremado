@@ -220,3 +220,82 @@ describe('まばらな所の規則のゆらぎの門', () => {
     expect(sparseConfirmedFrom(stuck(ON - 1000), ON - 5)).toBe(ON + 35)
   })
 })
+
+describe('まばらな所の規則の、近くの点だけが少ない点', () => {
+  // B（組の相手）と A（跳ねる点）は 22 km。120 km 以内には 70〜100 km 離れた 8 点もいて、今の規則（120 km 以内が 6 点以下）には入らない。
+  // A から 40 km 以内には B しかいない（伊豆諸島の新島・三宅島の並び）
+  const B: [number, number] = [34.6, 139.3]
+  const A: [number, number] = [34.4, 139.3]
+  const FAR: [number, number][] = [
+    [35.1, 139.3], [35.2, 139.3], [33.7, 139.3], [33.6, 139.3],
+    [34.4, 140.1], [34.4, 140.2], [34.4, 138.5], [34.4, 138.4],
+  ]
+  const ON = 2400
+  const tablesFor = (sites: [number, number][]): QuietTables => {
+    const tail = (): TailCounts => {
+      const y = Array.from({ length: 12 }, (_, k) => Math.round(100_000 * 0.0005 / (k + 1)))
+      return { n: 100_000, y, y3: [...y] }
+    }
+    return {
+      version: 1, days: ['test'], glob: tail(),
+      tails: Object.fromEntries(sites.map(s => [quietSiteKey(s), tail()])),
+      fire: Object.fromEntries(sites.map(s => [quietSiteKey(s), [30, 1, 0.1, 0, 0]])),
+    }
+  }
+  /** `sites` の先頭 2 点を B・A として `values(s)` の段で流し、まばらな所の規則が出した段の秒を返す */
+  const sparseAt = (sites: [number, number][], values: (s: number) => [number, number]) => {
+    const det = createEnsembleDetector(sites, tablesFor(sites))
+    let early = -1, confirmed = -1
+    for (let s = 0; s < ON + 60; s++) {
+      const [b, a] = values(s)
+      const v = Int8Array.from(sites.map((_, i) => (i === 0 ? b : i === 1 ? a : 2)))
+      const rs = det.push({ ms: T0 + s * 1000, values: v }).filter(r => r.sources.includes('sparse'))
+      if (early < 0 && rs.some(r => r.tier === 'early')) early = s
+      if (confirmed < 0 && rs.some(r => r.tier === 'confirmed')) confirmed = s
+    }
+    return { early, confirmed }
+  }
+  const SITES_NEAR: [number, number][] = [B, A, ...FAR]
+  /** A が ON 秒に段 2 → 7、B が同じ秒に段 2 → `bTo` */
+  const shake = (bTo: number) => (s: number): [number, number] => (s < ON ? [2, 2] : [bTo, 7])
+
+  it('正: 40 km 以内の隣が 4 段以上上がれば、跳ねた秒に確かな段になる', () => {
+    expect(sparseAt(SITES_NEAR, shake(6)).confirmed).toBe(ON)
+  })
+
+  it('対照: 隣の上がりが 3 段なら組にしない（今の規則の点なら 3 段で組にする）', () => {
+    expect(sparseAt(SITES_NEAR, shake(5)).confirmed).toBe(-1)
+  })
+
+  it('対照: 隣が上がらなければ、6 段以上の 1 点の跳ねでも早い段を出さない（早い段の経路は使わない）', () => {
+    const solo = (s: number): [number, number] => (s < ON ? [2, 2] : [2, 9])
+    expect(sparseAt(SITES_NEAR, solo)).toEqual({ early: -1, confirmed: -1 })
+  })
+
+  it('対照: 直前 30 分に A がすぐ戻る跳ねを 4 回していたら、ゆらぎの多い点として組にしない', () => {
+    const spikes = [ON - 900, ON - 800, ON - 700, ON - 600]
+    const v = (s: number): [number, number] => (s < ON ? [2, spikes.includes(s) ? 6 : 2] : [6, 7])
+    expect(sparseAt(SITES_NEAR, v).confirmed).toBe(-1)
+  })
+
+  it('正: 隣が観測点の並びで後ろにいても、同じ秒に上がれば跳ねた秒に確かな段になる', () => {
+    const swapped: [number, number][] = [A, B, ...FAR]
+    expect(sparseAt(swapped, (s) => { const [b, a] = shake(6)(s); return [a, b] }).confirmed).toBe(ON)
+  })
+
+  it('対照: 隣が直前 30 分にすぐ戻る跳ねを 4 回していたら、ゆらぎの多い隣として組にしない', () => {
+    const spikes = [ON - 900, ON - 800, ON - 700, ON - 600]
+    const v = (s: number): [number, number] => (s < ON ? [spikes.includes(s) ? 6 : 2, 2] : [6, 7])
+    expect(sparseAt(SITES_NEAR, v).confirmed).toBe(-1)
+  })
+
+  it('対照: 4 段の跳ねは隣が上がっても早い段を出さない（早い段だけの経路は使わない）', () => {
+    const four = (s: number): [number, number] => (s < ON ? [2, 2] : [6, 6])
+    expect(sparseAt(SITES_NEAR, four)).toEqual({ early: -1, confirmed: -1 })
+  })
+
+  it('安全弁: 40 km 以内に 3 点いる点は対象にしない（同じ揺れでも確かな段にしない）', () => {
+    const crowded: [number, number][] = [B, A, [34.25, 139.3], [34.4, 139.5], ...FAR]
+    expect(sparseAt(crowded, shake(6)).confirmed).toBe(-1)
+  })
+})

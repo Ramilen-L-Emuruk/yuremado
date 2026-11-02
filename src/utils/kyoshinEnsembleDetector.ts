@@ -27,9 +27,10 @@ export const ENSEMBLE_KEEP_MS = KEEP_SEC * 1000
  */
 const F_HI = 12, F_RISE = 6, F_NB_KM = 40, F_NB_LV = 8, F_NB_RISE = 4, F_WIN = 10, F_HOLD = 30
 /**
- * まばらな所の規則: SP_KM 以内の点が SP_MAXN 以下しかない点だけが対象。その点が直前 F_WIN 秒の最小（静かな点は SP_WIDE_WIN 秒の最小も）より SP_RISE 段以上跳ね、
+ * まばらな所の規則: SP_KM 以内の点が SP_MAXN 以下しかない点と、近くの点だけが少ない点（下記 SP_NEAR_*。条件を絞る）が対象。その点が直前 F_WIN 秒の最小（静かな点は SP_WIDE_WIN 秒の最小も）より SP_RISE 段以上跳ね、
  * SP_KM 以内の別の点も SP_NB 段以上上がっていて、上がった時刻の差が「距離 / 3 km/s + SP_SLACK 秒」以内なら検知する。
  * 同じ点が SP_QUIET 秒の内に跳ねていたら、揺れの続きとして新しい跳ねに数えない（ゆらぎの多い点の判定は SP_NOISE_*）
+ * 近くの点だけが少ない点では、組にする隣の距離と上がりの条件が別になる（下記 SP_NEAR_*）
  */
 const SP_KM = 120, SP_MAXN = 6, SP_RISE = 5, SP_NB = 3, SP_SLACK = 3, SP_QUIET = 60
 /** 早い段だけを出す低いしきい値の経路 */
@@ -52,6 +53,12 @@ const SP_SOLO = 6
  * 長い窓の最小は、欠測を挟まない直近の続きだけから取る —— 欠測の前の最小から、欠測明けの値を跳ねとして測らないため
  */
 const SP_WIDE_WIN = 30, SP_WIDE_FIRE1 = 20
+/**
+ * 近くの点だけが少ない点: SP_KM 以内には点が多くても、SP_NEAR_KM 以内に 1〜SP_NEAR_MAXN 点しかない点（伊豆諸島・奥尻・対馬など）も規則に入れる。
+ * ただし主の経路で同じ時間差の内に組になったときだけ当て（早い段だけの経路・1 点の跳ね・後から組にする向きでは当てない）、組にする隣は SP_NEAR_KM 以内で SP_NEAR_NB 段以上上がった点に限り、
+ * 跳ねた点も隣もゆらぎの多い点でないことを求める —— 絞らないと、離島の点のゆらぎで当たらない確かな段が大きく増える（設計書§54）
+ */
+const SP_NEAR_KM = 40, SP_NEAR_MAXN = 2, SP_NEAR_NB = 4
 
 const RAD = Math.PI / 180
 const hav = (a: number, b: number, c: number, d: number) => {
@@ -111,10 +118,19 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
     for (let j = 0; j < n; j++) if (j !== i) { const d = hav(s[0], s[1], sites[j][0], sites[j][1]); if (d <= SP_KM) l.push({ j, d }) }
     return l
   })
+  /** まばらな所の規則の対象。0 = 対象外・1 = SP_KM 以内の点が少ない点・2 = 近くの点だけが少ない点（SP_NEAR_KM 以内に 1〜SP_NEAR_MAXN 点） */
+  const sparseKind = nbS.map((l) => {
+    if (l.length === 0) return 0
+    if (l.length <= SP_MAXN) return 1
+    const c = l.filter(x => x.d <= SP_NEAR_KM).length
+    return c >= 1 && c <= SP_NEAR_MAXN ? 2 : 0
+  })
 
   /** まばらな所の規則。跳ねの段数ごとに状態を分けて持つ。withConfirmed が偽なら早い段だけを出す */
   const makeSparse = (spRise: number, withConfirmed: boolean, tag: string) => {
     const lastNb = new Float64Array(n).fill(-Infinity), lastBig = new Float64Array(n).fill(-Infinity)
+    /** 点ごとの、直前 F_WIN フレームの最小から SP_NEAR_NB 段以上上がった最後のフレームの時刻（近くの点だけが少ない点の組の相手） */
+    const lastNear = new Float64Array(n).fill(-Infinity)
     const sparses: Fast[] = []
     const trigAt = new Float64Array(n).fill(-Infinity)
     /** 点ごとの、すぐ戻った SP_NB 段以上の上がりの秒（ゆらぎの多さを数える） */
@@ -143,6 +159,8 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
       const v = f.values, out: [string, DetectorReport][] = []
       if (ring.length >= 3) {
         const rise = (i: number) => (v[i] >= 0 && mn[i] !== 127 ? v[i] - mn[i] : -99)
+        /** この秒に跳ねた、近くの点だけが少ない点 */
+        const nearCands: number[] = []
         for (let i = 0; i < n; i++) {
           const r = rise(i)
           /** 跳ね（広い窓を効かせる点は、長い窓の最小からの上がりと大きい方）。隣の上がりとゆらぎの数え方は r のまま */
@@ -164,6 +182,7 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
               heldAt[i] = f.ms
             } else if (held && f.ms - heldAt[i] > SP_NOISE_WIN * 1000) heldAt[i] = NaN
           }
+          if (r >= SP_NEAR_NB) lastNear[i] = f.ms
           if (r >= SP_NB) {
             lastNb[i] = f.ms
             if (Number.isNaN(heldAt[i])) {
@@ -171,16 +190,26 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
               p.push(f.ms)
             }
           }
-          if (jump < spRise || nbS[i].length > SP_MAXN || nbS[i].length === 0) { if (jump >= spRise) lastBig[i] = f.ms; continue }
+          if (jump < spRise || sparseKind[i] === 0) { if (jump >= spRise) lastBig[i] = f.ms; continue }
           const quiet = f.ms - lastBig[i] > SP_QUIET * 1000 || f.ms - lastBig[i] <= 1000
           if (f.ms - lastBig[i] > 1000) lastBig[i] = f.ms
           if (!quiet) continue
+          if (sparseKind[i] === 2) {
+            // 組の相手は全点の lastNear を書き終えてから見る（観測点の並び順で、同じ秒に上がった隣を取りこぼさないため）
+            if (withConfirmed && !noisy(i, f.ms)) nearCands.push(i)
+            continue
+          }
           let ok = false
           for (const { j, d } of nbS[i]) if (Math.abs(f.ms - lastNb[j]) <= (d / 3 + SP_SLACK) * 1000) { ok = true; break }
           if (!ok && !withConfirmed && jump >= SP_SOLO && !noisy(i, f.ms)) { hit(i, f.ms - 1000, f.ms); continue }
           if (!ok) { trigAt[i] = f.ms; continue }
           if (!withConfirmed && noisy(i, f.ms)) continue
           hit(i, f.ms - 1000, f.ms)
+        }
+        for (const i of nearCands) {
+          for (const { j, d } of nbS[i]) {
+            if (d <= SP_NEAR_KM && !noisy(j, f.ms) && Math.abs(f.ms - lastNear[j]) <= (d / 3 + SP_SLACK) * 1000) { hit(i, f.ms - 1000, f.ms); break }
+          }
         }
         // 跳ねた点より隣が後から上がった場合も、同じ時間差の内なら組にする
         for (let i = 0; i < n; i++) {
