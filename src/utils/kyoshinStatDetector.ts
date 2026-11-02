@@ -3,9 +3,10 @@
  * 近くの点で束ねて「偶然では起きない」度合い（ポアソンの裾の確率）で判定する走査統計。
  *
  * 1. 点ごとの量（`kyoshinOnsetFeatures.ts`）: y = 直近 6 秒の内に新しく達した段のうち、いまも保っている最大／
- *    y3 = 同じく 3 秒（近くの点が揃って上がったか）
+ *    y3 = 同じく 3 秒（近くの点が揃って上がったか）／y15 = 同じく 15 秒（ゆっくり揃って上がる小さな地震。早い段までしか上げない）
  * 2. 点ごとの珍しさ: s_i = −log10 P_i(y ≥ いまの値)。P_i は平常の日の表を全体の裾へ縮めたもの（擬似件数 SHRINK）と、
- *    その点の直近（時定数 ONLINE_TAU で忘れる）の裾の大きいほう（荒れている点は割り引く。近くの点と揃って上がった秒は直近に数えない）
+ *    その点の直近（時定数 ONLINE_TAU で忘れる）の裾の大きいほう（荒れている点は割り引く。近くの点と揃って上がった秒は直近に数えない。
+ *    割り引きは表の ONLINE_CAP 倍まで）
  * 3. 走査: 珍しい点を中心に、半径 R の中で (a) s ≥ a の点の数が平常の期待値に比べてどれだけ多いか（ポアソンの裾）、
  *    (b) s ≥ 1 の点の s の和の裾（切り詰めた積の検定）の最小の裾を、組の数で割り引いて S = −log10(裾) − log10(組の数)
  * 4. 段階: S ≥ T_EARLY で早い段。S ≥ T_CONF で確かな段。確かな段は、点が長い基準より上にいる間は下ろさない
@@ -64,6 +65,11 @@ const ONLINE_A = 600
  * それを荒れとして覚えると、続く余震の珍しさが割り引かれて取りこぼす（設計書§52）
  */
 const COHERENT_KM = 25
+/**
+ * 直近の裾で割り引くのは、平常の日の表の確率の ONLINE_CAP 倍まで。余震が続く間は点の直近の裾が膨らみ、
+ * 割り引きが表の 5〜100 倍に達して、点が揃って上がった小さな余震を拾えなくなる（設計書§55）
+ */
+const ONLINE_CAP = 3
 const RADII = [25, 60, 150, 400]
 const RADII_Y3 = [25, 60]
 const LEVELS = [1, 1.5, 2, 3, 4]
@@ -117,10 +123,13 @@ function logTPM(w: number, mu: number): number {
   return total <= 0 ? -300 : Math.min(0, Math.log10(total))
 }
 
-type ChanDef = { name: 'y' | 'y3'; radii: number[]; levels: number[]; centerMin: number; memMin: number }
+/** earlyOnly: この量だけでは確かな段へ上げない（点数を T_CONF の手前で止める） */
+type ChanDef = { name: 'y' | 'y3' | 'y15'; radii: number[]; levels: number[]; centerMin: number; memMin: number; earlyOnly?: boolean }
 const CHANS: ChanDef[] = [
   { name: 'y', radii: RADII, levels: LEVELS, centerMin: LEVELS[0], memMin: 1.5 },
   { name: 'y3', radii: RADII_Y3, levels: LEVELS, centerMin: LEVELS[0], memMin: 1.5 },
+  // 15 秒の窓は広い範囲の点がゆっくり揃って上がる雑音でも点数が立つので、確かな段は y・y3 に任せる（設計書§55）
+  { name: 'y15', radii: RADII, levels: LEVELS, centerMin: LEVELS[0], memMin: 1.5, earlyOnly: true },
 ]
 const ALL_RADII = [...new Set([...CHANS.flatMap(c => c.radii), COHERENT_KM])].sort((a, b) => a - b)
 const COHERENT_R = ALL_RADII.indexOf(COHERENT_KM)
@@ -175,14 +184,14 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
       for (let k = 1; k <= KMAX; k++) {
         let p = P0[i * K1 + k]
         const pr = (onC[i * K1 + k] + ONLINE_A * p) / (onN[i] + ONLINE_A)
-        if (pr > p) p = pr
+        if (pr > p) p = Math.min(pr, p * ONLINE_CAP)
         P[i * K1 + k] = p; lgP[i * K1 + k] = -Math.log10(p)
       }
       for (let l = 0; l < L; l++) { let v = 0; for (let k = 1; k <= KMAX; k++) if (lgP[i * K1 + k] >= lv[l]) { v = P[i * K1 + k]; break } q[i * L + l] = v }
     }
   }
   chans.forEach(refresh)
-  const featOf = (name: ChanDef['name']) => (name === 'y' ? F.y : F.y3)
+  const featOf = (name: ChanDef['name']) => (name === 'y' ? F.y : name === 'y3' ? F.y3 : F.y15)
   const inEvent = new Uint8Array(n)
   type Ev = {
     id: string; seed: number; startMs: number; members: Map<number, number>; claimed: Set<number>; firstOnset: number; lastSupport: number; confStreak: number
@@ -266,6 +275,7 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
               if (v > S) { S = v; Rb = ct[r] }
             }
           }
+          if (ch.def.earlyOnly) S = Math.min(S, T_CONF - 1e-6)
           if (S >= T_EARLY) {
             const mem: number[] = []
             for (let t = 0; t < Rb; t++) if (sv[nb[t]] >= ch.def.memMin) mem.push(nb[t])

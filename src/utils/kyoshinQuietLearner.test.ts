@@ -9,7 +9,7 @@ const T0 = Date.UTC(2025, 11, 31, 15)
 const HOUR = 3_600_000
 
 const last = <T>(xs: T[]): T => xs[xs.length - 1]
-const tail = (n: number): TailCounts =>({ n, y: new Array(12).fill(0), y3: new Array(12).fill(0) })
+const tail = (n: number): TailCounts =>({ n, y: new Array(12).fill(0), y3: new Array(12).fill(0), y15: new Array(12).fill(0) })
 const PRIOR: QuietTables = {
   version: 1, days: ['20260911'], glob: tail(200_000),
   tails: { [K0]: tail(100_000), [quietSiteKey(SITES[1])]: tail(100_000) },
@@ -160,13 +160,19 @@ describe('端末に残した状態を読み戻す', () => {
 
   it('安全弁: 数え方を変える前の版（1・雑音の表の窓が 4〜60 秒前）で数えた分は使わず、数え直す', () => {
     const old = { ...good(), counts: { ...good().counts, version: 1 } }
-    expect(QUIET_COUNTS_VERSION).toBe(2)
+    expect(QUIET_COUNTS_VERSION).toBe(3)
+    expect(parseQuietLearnerState(JSON.parse(JSON.stringify(old)))).toBeNull()
+  })
+
+  it('安全弁: 15 秒の窓（y15）を数える前の版（2）で数えた分は使わず、数え直す', () => {
+    const { y15: _drop, ...noY15 } = good().counts.glob
+    const old = { ...good(), counts: { ...good().counts, version: 2, glob: noY15 } }
     expect(parseQuietLearnerState(JSON.parse(JSON.stringify(old)))).toBeNull()
   })
 
   it('安全弁: 点ごとの数の並びの長さが違う・版が違う・形が違うものは使わない', () => {
     const s = good()
-    s.counts.tails[K0] = { n: 10, y: [1], y3: new Array(12).fill(0) }
+    s.counts.tails[K0] = { n: 10, y: [1], y3: new Array(12).fill(0), y15: new Array(12).fill(0) }
     expect(parseQuietLearnerState(s)).toBeNull()
     expect(parseQuietLearnerState({ ...good(), counts: { ...good().counts, version: 99 as typeof QUIET_COUNTS_VERSION } })).toBeNull()
     expect(parseQuietLearnerState(null)).toBeNull()

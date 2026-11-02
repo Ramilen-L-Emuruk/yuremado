@@ -143,6 +143,8 @@ describe('端末で数えた分を薄めて持ち越す', () => {
     const k = quietSiteKey(SITES[0])
     expect(after.tails[k].n).toBeCloseTo(before.tails[k].n / 2, 9)
     expect(after.tails[k].y[1]).toBeCloseTo(before.tails[k].y[1] / 2, 9)
+    expect(before.tails[k].y15[1]).toBeGreaterThan(0)
+    expect(after.tails[k].y15[1]).toBeCloseTo(before.tails[k].y15[1] / 2, 9)
     expect(after.glob.n).toBeCloseTo(before.glob.n / 2, 9)
   })
 
@@ -173,14 +175,14 @@ describe('配る表と端末で数えた分を混ぜる', () => {
   const k0 = quietSiteKey(SITES[0])
   const prior = (n: number, y2: number, fire2: number): QuietTables => ({
     version: 1, days: ['20260911'],
-    glob: { n, y: [y2, y2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], y3: new Array(12).fill(0) },
-    tails: { [k0]: { n, y: [y2, y2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], y3: new Array(12).fill(0) } },
+    glob: { n, y: [y2, y2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], y3: new Array(12).fill(0), y15: new Array(12).fill(0) },
+    tails: { [k0]: { n, y: [y2, y2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], y3: new Array(12).fill(0), y15: new Array(12).fill(0) } },
     fire: { [k0]: [fire2, fire2, 0, 0, 0] },
   })
   const learned = (n: number, y2: number, fireSec: number, fireHits2: number): QuietCounts => ({
     version: QUIET_COUNTS_VERSION,
-    glob: { n, y: [y2, y2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], y3: new Array(12).fill(0) },
-    tails: { [k0]: { n, y: [y2, y2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], y3: new Array(12).fill(0) } },
+    glob: { n, y: [y2, y2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], y3: new Array(12).fill(0), y15: new Array(12).fill(0) },
+    tails: { [k0]: { n, y: [y2, y2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], y3: new Array(12).fill(0), y15: new Array(12).fill(0) } },
     fire: { [k0]: { sec: fireSec, hits: [fireHits2, fireHits2, 0, 0, 0] } },
   })
   const rate2 = (t: QuietTables) => t.tails[k0].y[1] / t.tails[k0].n
@@ -203,6 +205,18 @@ describe('配る表と端末で数えた分を混ぜる', () => {
     // 配る表は 3 日ぶん（259,200 秒）で 1%。重みを 86,400 秒に抑え、端末で同じ 86,400 秒数えた 3% と混ぜる → 2%
     const t = blendQuietTables(prior(259_200, 2_592, 0), learned(86_400, 2_592, 0, 0), 86_400)
     expect(rate2(t)).toBeCloseTo(0.02, 6)
+  })
+
+  it('正: 15 秒の窓（y15）の裾も、y と同じ重みで端末の率へ寄る', () => {
+    const p = prior(100_000, 0, 0)
+    p.tails[k0].y15 = [1_000, 1_000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    const l = learned(9_900_000, 0, 9_900_000, 0)
+    l.tails[k0].y15 = [396_000, 396_000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    const t = blendQuietTables(p, l, 100_000)
+    expect(t.tails[k0].y15[1] / t.tails[k0].n).toBeCloseTo(0.0397, 4)
+    // 15 秒の窓だけに数を入れても、y・y3 の裾へは混ざらない
+    expect(t.tails[k0].y[1]).toBe(0)
+    expect(t.tails[k0].y3[1]).toBe(0)
   })
 
   it('安全弁: 混ぜた表は配る表と同じ検分を通る', () => {

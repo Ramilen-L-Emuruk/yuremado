@@ -23,7 +23,7 @@ function frame(s: number): Int8Array {
 function tables(rate: number, fire: number): QuietTables {
   const tail = (): TailCounts => {
     const y = Array.from({ length: 12 }, (_, k) => Math.round(100_000 * rate / (k + 1)))
-    return { n: 100_000, y, y3: [...y] }
+    return { n: 100_000, y, y3: [...y], y15: [...y] }
   }
   return {
     version: 1, days: ['test'], glob: tail(),
@@ -78,7 +78,7 @@ describe('まばらな所の規則の広い窓', () => {
   const pairTables = (fire1: number): QuietTables => {
     const tail = (): TailCounts => {
       const y = Array.from({ length: 12 }, (_, k) => Math.round(100_000 * 0.0005 / (k + 1)))
-      return { n: 100_000, y, y3: [...y] }
+      return { n: 100_000, y, y3: [...y], y15: [...y] }
     }
     return {
       version: 1, days: ['test'], glob: tail(),
@@ -142,7 +142,7 @@ describe('まばらな所の規則のゆらぎの門', () => {
   const ON = 2400
   const tail = (): TailCounts => {
     const y = Array.from({ length: 12 }, (_, k) => Math.round(100_000 * 0.0005 / (k + 1)))
-    return { n: 100_000, y, y3: [...y] }
+    return { n: 100_000, y, y3: [...y], y15: [...y] }
   }
   /** 1 段以上の上がりが 1 時間に 12 秒の静かな点（久米島の 12.2 回/時に近い） */
   const BUSY: QuietTables = {
@@ -234,7 +234,7 @@ describe('まばらな所の規則の、近くの点だけが少ない点', () =
   const tablesFor = (sites: [number, number][]): QuietTables => {
     const tail = (): TailCounts => {
       const y = Array.from({ length: 12 }, (_, k) => Math.round(100_000 * 0.0005 / (k + 1)))
-      return { n: 100_000, y, y3: [...y] }
+      return { n: 100_000, y, y3: [...y], y15: [...y] }
     }
     return {
       version: 1, days: ['test'], glob: tail(),

@@ -31,7 +31,7 @@ function frame(s: number, midAt: number): Int8Array {
 
 const tail = (): TailCounts => {
   const y = Array.from({ length: 12 }, (_, k) => Math.round(100_000 * 0.0005 / (k + 1)))
-  return { n: 100_000, y, y3: [...y] }
+  return { n: 100_000, y, y3: [...y], y15: [...y] }
 }
 const QUIET: QuietTables = {
   version: 1, days: ['test'], glob: tail(),
@@ -183,23 +183,26 @@ describe('近くの点と揃って上がった秒は、直近の荒れとして�
     expect(beforeQuake(runPre(NEAR, 'alone'))).toBe(0)
   })
 
-  it('正: 隣り合う 2 点が揃って上がっていた後でも、確かな段は前の上がりが無いときと同じ秒に出る', () => {
-    expect(firstConfirmed(runPre(NEAR, 'pair'))).toBe(firstConfirmed(runPre(NEAR, 'none')))
-  })
-
-  it('対照: 同じ回数でも 1 点ずつ上がっていた点は荒れとして割り引かれ、確かな段が遅れる', () => {
-    const quiet = firstConfirmed(runPre(NEAR, 'none'))
-    const alone = firstConfirmed(runPre(NEAR, 'alone'))
-    expect(quiet).toBeGreaterThanOrEqual(QUAKE)
-    expect(alone === -1 || alone > quiet).toBe(true)
-  })
-
   // 東西の間隔だけを変えた 6×6（南北は 0.3 度 = 約 33 km）。揃って上がる組は東西の隣どうし
   const grid = (dLng: number) => {
     const g: [number, number][] = []
     for (let a = 0; a < 6; a++) for (let b = 0; b < 6; b++) g.push([35 + a * 0.3, 137 + b * dLng])
     return g
   }
+  // 割り引きは表の ONLINE_CAP 倍までなので、0.1 度おきの密な格子では 1 点ずつの荒れを割り引いても点数が余り、確かな段は遅れない。
+  // 東西 0.2 度（約 18 km・25 km の内側）の格子なら、割り引きの差が確かな段の秒に出る
+  const MIDDLE = grid(0.2)
+
+  it('正: 隣り合う 2 点が揃って上がっていた後でも、確かな段は前の上がりが無いときと同じ秒に出る', () => {
+    expect(firstConfirmed(runPre(MIDDLE, 'pair'))).toBe(firstConfirmed(runPre(MIDDLE, 'none')))
+  })
+
+  it('対照: 同じ回数でも 1 点ずつ上がっていた点は荒れとして割り引かれ、確かな段が遅れる', () => {
+    const quiet = firstConfirmed(runPre(MIDDLE, 'none'))
+    const alone = firstConfirmed(runPre(MIDDLE, 'alone'))
+    expect(quiet).toBeGreaterThanOrEqual(QUAKE)
+    expect(alone === -1 || alone > quiet).toBe(true)
+  })
 
   it('正: 25 km のすぐ内側（東西 0.26 度・約 24 km）の 2 点が揃って上がっても数えない', () => {
     const inside = grid(0.26)
@@ -213,5 +216,56 @@ describe('近くの点と揃って上がった秒は、直近の荒れとして�
     const pair = firstConfirmed(runPre(wide, 'pair'))
     expect(quiet).toBeGreaterThanOrEqual(QUAKE)
     expect(pair === -1 || pair > quiet).toBe(true)
+  })
+
+  // 直近の裾で割り引くのは表の ONLINE_CAP（3）倍まで。上限が無いと、この配置で確かな段は 3 秒遅れた（設計書§55）
+  it('正: 1 点ずつの荒れで割り引かれても、割り引きは上限で止まり、確かな段の遅れは 1 秒に収まる', () => {
+    const quiet = firstConfirmed(runPre(MIDDLE, 'none'))
+    const alone = firstConfirmed(runPre(MIDDLE, 'alone'))
+    expect(alone).toBeGreaterThan(quiet)
+    expect(alone - quiet).toBeLessThanOrEqual(1)
+  })
+})
+
+// 3×3 の点（0.1 度おき）が、per 点ずつ gap 秒おきに d 段上がってそのまま保つ（i 番目の点は ON + floor(i / per)×gap 秒）。
+// 1 点ずつ 4 秒おきなら、6 秒の窓（y）には同時に 1〜2 点しか入らず、15 秒の窓（y15）には 3〜4 点が入る
+describe('15 秒の窓は、ゆっくり揃って上がる点を早い段まで上げる', () => {
+  const G: [number, number][] = []
+  for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) G.push([35 + a * 0.1, 137 + b * 0.1])
+  const ON = 300
+  const tables: QuietTables = {
+    version: 1, days: ['test'], glob: tail(),
+    tails: Object.fromEntries(G.map(s => [quietSiteKey(s), tail()])),
+    fire: Object.fromEntries(G.map(s => [quietSiteKey(s), [0.1, 0.1, 0.1, 0.1, 0.1]])),
+  }
+  const staggered = (gap: number, d: number, per = 1) => {
+    const det = createStatDetector(G, tables)
+    const out: DetectorReport[][] = []
+    for (let s = 0; s < ON + G.length * gap + 30; s++) {
+      const v = new Int8Array(G.length)
+      for (let i = 0; i < G.length; i++) v[i] = s < ON + Math.floor(i / per) * gap ? 4 : 4 + d
+      out.push(det.push({ ms: T0 + s * 1000, values: v }))
+    }
+    return out
+  }
+  const firstEarly = (out: DetectorReport[][]) => out.findIndex(rs => rs.some(r => r.tier === 'early'))
+
+  // 15 秒の窓が無いと、この並びは早い段にも届かなかった（6 秒の窓には 2 点しか揃わない。設計書§55）
+  it('正: 4 秒ずつずらして 2 段上がる点の並びは、早い段に上がる', () => {
+    expect(firstEarly(staggered(4, 2))).toBeGreaterThanOrEqual(ON)
+  })
+
+  it('対照: 6 秒ずつずらすと 15 秒の窓にも 2〜3 点しか揃わず、早い段にも上がらない', () => {
+    expect(staggered(6, 2).flat()).toEqual([])
+  })
+
+  // 15 秒の窓は広い範囲の点がゆっくり揃って上がる雑音でも点数が立つので、確かな段は 6 秒・3 秒の窓に任せる。
+  // 2 点ずつ 3 秒おきの並びは、15 秒の窓にも確かな段へ上げさせると 6 秒後に確かな段へ上がる（設計書§55）
+  it('安全弁: 15 秒の窓の点数は確かな段の手前で止まり、2 点ずつ 3 秒おきに上がる並びも早い段どまりになる', () => {
+    for (const [gap, d] of [[3, 2], [4, 3]] as const) {
+      const out = staggered(gap, d, 2)
+      expect(firstEarly(out)).toBeGreaterThanOrEqual(ON)
+      expect(firstConfirmed(out)).toBe(-1)
+    }
   })
 })
