@@ -396,13 +396,13 @@ npm version patch   # または minor / major
 
 `package.json` の更新・コミット作成・git tag（`vX.Y.Z`）作成までが自動で行われる。`src/components/SettingsTab/index.tsx` のバージョン表示は `vite.config.ts` の `define`（`__APP_VERSION__`）経由で `package.json` を参照しているため**手動更新は不要**。
 
-**着手前チェック #3 で未コミットの変更をユーザー判断で通していても、`npm version` は自分で作業ツリーがクリーンであることを求める**（`Git working directory not clean` で落ちる）。このリポジトリでは **`public/data/test-scenarios/index.json`** がよくこれに当たる（2 回続けてここで止まった例がある）—— 手元で実地震テストシナリオを置くと一覧が書き換わるが、コミット済みの空配列のテンプレートが正なので、書き換えた分はコミットしない（扱いは [`docs/spec/settings-pwa-spec.md`](../../../docs/spec/settings-pwa-spec.md) §6「シナリオ本体の扱い」）。#3 でこのファイル（など、コミットしない手元のファイル）だけが dirty と分かった時点で、この手順の直前に退避する段取りを組んでおく。マージ（手順 3）はこのファイルに触らないので、マージの前の退避は要らない。
+**着手前チェック #3 で未コミットの変更をユーザー判断で通していても、`npm version` は自分で作業ツリーがクリーンであることを求める**（`Git working directory not clean` で落ちる）。追跡しているが手元で書き換えてコミットしないファイルが dirty のままだと、ここで止まる。#3 でそうしたファイルだけが dirty と分かった時点で、この手順の直前に退避する段取りを組んでおく。マージ（手順 3）がそのファイルに触らないなら、マージの前の退避は要らない。
 
 **stash はすべてのワークツリーと、同じリポジトリで動く他のセッションとで共有される。** 素の `git stash pop` は積まれている先頭を取るので、自分の退避が積まれていなかったとき（対象が未追跡で pathspec が当たらなかった・変更が無くて `No local changes to save` になった等）には、他のセッションの退避を作業ツリーへ広げて消す。次の 4 段を、**別々の呼び出しで**この順に行う。
 
 1. 退避する前の `git status --porcelain` を控え（4 で比べる元になる）、一意の印を付けて退避する（印には今回の版番号や時刻を入れ、他と重ならないようにする）:
    ```bash
-   git stash push -m "release-tmp-<一意の印>: public/data/test-scenarios/index.json" -- public/data/test-scenarios/index.json
+   git stash push -m "release-tmp-<一意の印>: <ファイル>" -- <ファイル>
    ```
 2. 自分の退避の SHA を引き、`TaskCreate` の `metadata` に書く（シェルの変数は呼び出しをまたいで残らない）。**印の付いた行が無ければ、退避されていない。** 3 へ進まず、状況をユーザーへ提示する（2 行以上当たったときも同じ。印が他と重なっている）:
    ```bash
