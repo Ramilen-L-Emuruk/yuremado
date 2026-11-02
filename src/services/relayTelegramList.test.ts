@@ -28,7 +28,6 @@ const RELAY: DmdataEndpoint = {
   waitApiSlot: async () => {},
   waitDataSlot: async () => {},
   observe: () => {},
-  noteListGaps: () => {},
   apiHeaders: () => ({ Authorization: 'Bearer test' }),
   dataHeaders: () => ({}),
 }
@@ -94,8 +93,6 @@ function mockRelay(o: {
   list: ListTelegram[]
   bodies: Record<string, string>
   listStatus?: number
-  /** 中継の一覧が載せる見ていない区間（そのまま応答へ載せる） */
-  gapsBody?: { gapsSpan: { from: string; to: string }; gaps: { classification: string; from: string; to: string }[] }
 }): string[] {
   const urls: string[] = []
   vi.stubGlobal('fetch', vi.fn(async (input: string) => {
@@ -103,7 +100,7 @@ function mockRelay(o: {
     const ok = (json: unknown) => ({ ok: true, status: 200, headers: new Headers(), json: async () => json } as unknown as Response)
     if (input.startsWith(`${RELAY.apiBase}/telegram?`)) {
       if (o.listStatus !== undefined) return { ok: false, status: o.listStatus, headers: new Headers() } as unknown as Response
-      return ok({ status: 'ok', items: o.list.map(listItem), ...o.gapsBody })
+      return ok({ status: 'ok', items: o.list.map(listItem) })
     }
     if (input.startsWith(`${RELAY.apiBase}/archive?`)) return ok({ status: 'ok', items: [] })
     if (input.startsWith(RELAY.dataBase)) {
@@ -310,32 +307,6 @@ describe('fetchLiveReplayEntries（中継）', () => {
     expect(kinds.filter(k => k === 'eew')).toHaveLength(2)
     expect(kinds.filter(k => k === 'quake')).toHaveLength(1)
     expect(result.failedSources).toEqual([])
-  })
-})
-
-describe('見ていない区間', () => {
-  it('一覧の応答に載った見ていない区間を、繋ぎ先へ渡す', async () => {
-    const noteListGaps = vi.fn()
-    mockRelay({
-      list: [],
-      bodies: {},
-      gapsBody: {
-        gapsSpan: { from: '2026-10-30T15:00:00Z', to: '2026-10-31T03:00:00Z' },
-        gaps: [{ classification: 'eew.warning', from: '2026-10-30T20:00:00Z', to: '2026-10-30T21:00:00Z' }],
-      },
-    })
-    await fetchListedHypocenters({ ...RELAY, noteListGaps }, FROM, TO, null)
-    expect(noteListGaps).toHaveBeenCalledWith({
-      span: { fromMs: Date.parse('2026-10-30T15:00:00Z'), toMs: Date.parse('2026-10-31T03:00:00Z') },
-      gaps: [{ classification: 'eew.warning', fromMs: Date.parse('2026-10-30T20:00:00Z'), toMs: Date.parse('2026-10-30T21:00:00Z') }],
-    })
-  })
-
-  it('対照: 印を載せない応答（DMDATA の一覧）では渡さない', async () => {
-    const noteListGaps = vi.fn()
-    mockRelay({ list: [], bodies: {} })
-    await fetchListedHypocenters({ ...RELAY, noteListGaps }, FROM, TO, null)
-    expect(noteListGaps).not.toHaveBeenCalled()
   })
 })
 

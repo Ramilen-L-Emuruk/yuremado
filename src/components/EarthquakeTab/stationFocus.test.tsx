@@ -126,7 +126,6 @@ function renderCard(
       loadMoreFailed={false}
       reconnectGapLoss={false}
       fetchThrottled={false}
-      relayGapNotices={[]}
       onDismissKeyReentry={null}
       lpgmByEventId={opts.lpgm ? new Map([[EVENT_ID, opts.lpgm]]) : new Map()}
       updateMarks={new Map()}
