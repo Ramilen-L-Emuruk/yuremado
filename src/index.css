@@ -125,7 +125,7 @@
      開いたカードの見出しの段と震度の枠・震源の値を一覧の上へ貼りつけ、スマホの帯は出さない。超えるなら
      狭い組と同じ帯を出し、枠と値は流す（2026-11-03 発言「並び方じゃなくて高さ見たほうがいいのかな」、選択
      「4 割まで (Recommended)」）。測って印 data-stick-tall を付けるのはカード（→ EarthquakeCard の STICK_MAX_SHARE）。
-     見出しの段の高さはカードが --qk-open-head-h に書く */
+     見出しの段の高さはカードがこの枠自身の --qk-open-head-h に書く */
   .quake-list-scope [data-stick-tall] .quake-open-head {
     position: sticky;
     top: var(--qk-head-h);
@@ -147,14 +147,23 @@
     column-gap: 1.125rem;
     align-items: start;
   }
-  /* 隣どうしがどちらも閉じた県なら、低いほうを伸ばして下の線を合わせる（→ EarthquakeCard の pairedClosed） */
-  .quake-list-scope .quake-ints > .quake-int-pair {
-    align-self: stretch;
-    display: flex;
-    flex-direction: column;
+  /* 県（または区域）の塊は、見出しの行と開いた中身の 2 段。左右の塊を同じ 2 段に乗せて（サブグリッド）、
+     見出しの行どうしをいつも同じ高さにそろえる —— 「（未入電あり）」で高くなった行の隣も、片方を開いた・
+     閉じている途中でも、下の線がずれない（2026-11-03 発言「アニメーション中横の行変にならない？
+     高さも未入電ありに合ってたのが左開くと縮むし」）。中身の段は左右で長いほうに合わせて空く */
+  /* サブグリッドが使えない古い端末（Chrome 116・Safari 15 以前）では当てない（見出しの行どうしはそろわず、
+     塊ごとに上から並ぶだけ。壊れはしない） */
+  @supports (grid-template-rows: subgrid) {
+    .quake-list-scope .quake-ints > div {
+      display: grid;
+      grid-row: span 2;
+      grid-template-rows: subgrid;
+    }
   }
-  .quake-list-scope .quake-ints > .quake-int-pair > * {
-    flex: 1 1 auto;
+  /* 開いた中身の枠は段の高さまで伸ばさない。伸ばすと、短い側の枠（左端の線と地の色）が、長い側に合わせて
+     空いた所まで下へ伸びて見える（2026-11-03 発言「どっちも開いたらこうなるのはおかしくない？」） */
+  .quake-list-scope .quake-ints > div > :nth-child(2) {
+    align-self: start;
   }
 }
 /* 開いた県・地域の中身を包む枠（見本 opened.html の .ints .sub）。左の線の色は県の値の色を呼ぶ側が付ける */
@@ -341,4 +350,50 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .update-fade-text,
   .update-fade-bg { animation-timing-function: steps(1, end); }
+}
+
+/* 地震タブの押せる所（2026-11-03 選択「乗せたら明るく・押すと沈む (Recommended)」）。新しい印や文言は足さない。
+   震度の枠（quake-tile）は、乗せた部分（quake-tile-part：震度の部分か長周期の札）だけを少し明るくする。枠ごと明るくすると、
+   震度に乗せただけで長周期の札まで光る。押している間は、押した部分を含む塊を少し縮めて沈ませる（札を押したら札だけ）。
+   震度の部分は枠の地の色を受け継いで、明るくする地を自分で持つ。
+   quake-press-row は横に長い行（閉じた行・帯・県や区域の行）に付け、押している間だけ少し暗くする（行を縮めると不自然なため）。
+   端末で動きを減らす設定なら、沈む動きだけ止める */
+.quake-tile,
+.quake-tile-part {
+  transition: filter 100ms ease-out, transform 100ms ease-out;
+}
+.quake-tile [data-tile] {
+  background-color: inherit;
+}
+.quake-tile-part:hover {
+  filter: brightness(1.15);
+}
+/* 沈む動きは、動きを減らす設定でない端末だけ（後ろで打ち消すと、`:has()` の付いた規則のほうが強くて消えない） */
+@media (prefers-reduced-motion: no-preference) {
+  .quake-tile-lpgm:active {
+    transform: scale(0.97);
+  }
+  /* `:has()` の無い端末では、この規則だけが落ちる（同じ規則に札の分を並べると、札の沈みまで一緒に落ちる）。
+     落ちた端末では、震度の部分を押しても枠は沈まない */
+  @supports selector(:has(*)) {
+    .quake-tile:active:not(:has(.quake-tile-lpgm:active)) {
+      transform: scale(0.97);
+    }
+  }
+}
+.quake-press-row {
+  transition: filter 100ms ease-out;
+}
+.quake-press-row:hover {
+  filter: brightness(1.12);
+}
+.quake-press-row:active {
+  filter: brightness(0.9);
+}
+@media (prefers-reduced-motion: reduce) {
+  .quake-tile,
+  .quake-tile-part,
+  .quake-press-row {
+    transition: none;
+  }
 }

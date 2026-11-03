@@ -65,7 +65,7 @@ export function QuakeOpenPin({ targetRef, onActivate, onLpgmActivate, children }
       const shift = Math.min(0, room - bandHeightRef.current)
       setState(prev => (prev.show === show && prev.shift === shift ? prev : { show, shift }))
     }
-    const watch = () => {
+    const watch = (measure: boolean) => {
       // 巻ける祖先は画面の向き・幅で入れ替わる（左右分割と上下分割で巻く箱が違う）ので、変わったら張り直す
       const next = scrollParentOf(target)
       if (next !== root) {
@@ -73,15 +73,18 @@ export function QuakeOpenPin({ targetRef, onActivate, onLpgmActivate, children }
         root = next
         root?.addEventListener('scroll', update, { passive: true })
       }
-      update()
+      if (measure) update()
     }
-    watch()
-    window.addEventListener('resize', watch)
     // 報の一覧・補足の開閉でカードの高さが変わったときも測り直す（巻かなくても枠の位置は動く）
     const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update)
+    // 張った直後は測らず、ResizeObserver の初回の呼び出しに任せる（カードを開いた描き直しの中で位置を読むと、
+    // レイアウトを 1 回余計に強いる。開いた直後は帯を出さないのが正しいので、初期値のままで困らない）
+    watch(ro === null || card === null)
+    const onResize = () => watch(true)
+    window.addEventListener('resize', onResize)
     if (ro && card) ro.observe(card)
     return () => {
-      window.removeEventListener('resize', watch)
+      window.removeEventListener('resize', onResize)
       root?.removeEventListener('scroll', update)
       ro?.disconnect()
     }
@@ -107,8 +110,14 @@ export function QuakeOpenPin({ targetRef, onActivate, onLpgmActivate, children }
         tabIndex={activate ? 0 : undefined}
         aria-expanded={activate ? true : undefined}
         onClick={activate ? onClick : undefined}
-        onKeyDown={activate ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate() } } : undefined}
-        className={`border-b border-border bg-card transition-[transform,visibility] ease-out motion-reduce:transition-none ${state.show ? '' : 'invisible'} ${activate ? 'cursor-pointer' : ''}`}
+        onKeyDown={activate ? (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return
+          e.preventDefault()
+          // 札に止まっているときは長周期の節へ、それ以外は畳む（押したときと同じ振り分け）
+          if (onLpgmActivate && (e.target as HTMLElement).closest('[data-tile-lpgm]')) onLpgmActivate()
+          else activate()
+        } : undefined}
+        className={`border-b border-border bg-card transition-[transform,visibility] ease-out motion-reduce:transition-none ${state.show ? '' : 'invisible'} ${activate ? 'cursor-pointer quake-press-row' : ''}`}
         style={{
           padding: '7px var(--qk-pad)',
           transitionDuration: `${BAND_SLIDE_MS}ms`,

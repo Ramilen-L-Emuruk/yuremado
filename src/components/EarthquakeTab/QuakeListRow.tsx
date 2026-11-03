@@ -12,6 +12,11 @@ import { getLpgmClassColor, getLpgmClassLabel } from '../../utils/lpgm'
  * スマホ幅の開いたカードで上に貼りつく帯も、この行と同じ作りを使う（2026-11-02 選択「畳んだ行の帯」）。
  */
 export interface QuakeListRowProps {
+  /**
+   * 長周期の札を Tab で止まれるようにするか。狭い画面の帯でだけ真（帯の中で札を押すと長周期の節へ巻く。
+   * → `QuakeOpenPin` の `onLpgmActivate`）。閉じた行では行全体が 1 つのボタンなので止めない。
+   */
+  lpgmTabbable: boolean
   /** 震度の色を引く値（`maxScale`。不明は -1）。 */
   scale: number
   /** 枠に出す震度の文字（例「5弱」「?」）。 */
@@ -84,7 +89,7 @@ export function quakeTileColors(scale: number): { backgroundColor: string; borde
   return { backgroundColor: getIntensityBgColor(scale), border: `2px solid ${getIntensityColor(scale)}`, color: '#ffffff' }
 }
 
-export function QuakeListRow({ scale, scaleLabel, orAbove, lpgmClass, heading, chips, tsunami, time, name, magnitude, depth }: QuakeListRowProps) {
+export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmClass, heading, chips, tsunami, time, name, magnitude, depth }: QuakeListRowProps) {
   const rowRef = useRef<HTMLDivElement>(null)
   const topRef = useRef<HTMLDivElement>(null)
   const nameRef = useRef<HTMLSpanElement>(null)
@@ -161,6 +166,7 @@ export function QuakeListRow({ scale, scaleLabel, orAbove, lpgmClass, heading, c
         {lpgmClass !== null && (
           <div
             data-tile-lpgm
+            tabIndex={lpgmTabbable ? 0 : undefined}
             className="flex h-[15px] w-full items-center justify-center text-[10.5px] font-bold tracking-[.02em] text-white"
             style={{ backgroundColor: getLpgmClassColor(lpgmClass), borderTop: '1px solid rgba(0,0,0,.35)' }}
           >

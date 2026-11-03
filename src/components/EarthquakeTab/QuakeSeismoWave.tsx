@@ -264,6 +264,26 @@ export function QuakeSeismoWave({ waves, quakeLabel, view }: Props) {
   )
 }
 
+/**
+ * 波形を描く時機。既定は**次のフレームを出した後**（`requestAnimationFrame` の中で `setTimeout(0)`）——
+ * `requestAnimationFrame` だけだと、押した操作と同じフレームの描画の直前に走り、そのフレームが伸びる。
+ * 返り値は予約の取り消し。テストは `schedule` を差し替えてその場で描かせる。
+ */
+export const wavePaintScheduler = {
+  schedule(paint: () => void): () => void {
+    if (typeof requestAnimationFrame !== 'function') {
+      paint()
+      return () => {}
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const frame = requestAnimationFrame(() => { timer = setTimeout(paint, 0) })
+    return () => {
+      cancelAnimationFrame(frame)
+      if (timer !== null) clearTimeout(timer)
+    }
+  },
+}
+
 const subscribeNothing = (): (() => void) => () => {}
 const readNothing = (): number => 0
 
@@ -437,12 +457,33 @@ function HistoryWave({
       setScaleText(paintWaveColumns(canvas, buildShared, wave.interrupted, { marks, visibleAxes: CARD_VISIBLE_AXES, ticks, unit: wave.unit.label, vertical }))
       publish()
     }
-    paint()
+    // 描いたときの大きさ。見張りを始めた直後の初回の呼び出しは、この大きさのままなら描き直さない
+    // （描いた直後にもう一度描くと、カードを開くたびに波形を 2 回描き、地震を切り替える 1 フレームが伸びる）
+    let paintedW = -1
+    let paintedH = -1
+    let pending = true
+    const paintAndRemember = (): void => {
+      pending = false
+      paint()
+      paintedW = canvas.clientWidth
+      paintedH = canvas.clientHeight
+    }
+    // **描くのは、いまのフレームを出した後**（→ `wavePaintScheduler`）。カードを開いた描き直しの中で描くと、
+    // 押した 1 フレームに波形の描画（観測点ごとに数十 ms）が積まれる
+    const cancelPaint = wavePaintScheduler.schedule(paintAndRemember)
     // **幅が変わったら描き直す。** カードは畳んだり開いたりするので、最初に描いた
-    // ときの幅のまま残ると引き伸ばされてぼける。
-    const observer = new ResizeObserver(() => paint())
+    // ときの幅のまま残ると引き伸ばされてぼける。描く前（予約中）の呼び出しは、予約した描画に任せる
+    // 比べるのは控えと同じ物差し（`clientWidth`・`clientHeight`）。ResizeObserver の中ではレイアウトが済んでいるので読んでも重くない
+    const observer = new ResizeObserver(() => {
+      if (pending) return
+      if (canvas.clientWidth === paintedW && canvas.clientHeight === paintedH) return
+      paintAndRemember()
+    })
     observer.observe(canvas)
-    return () => observer.disconnect()
+    return () => {
+      cancelPaint()
+      observer.disconnect()
+    }
     // 列が伸びたら描き直す（繋ぎ足しは `useSeismoQuakeWaves` が新しい参照で渡す）。
     // **到達も依存に入れる** —— 続報で震源が動くと線の位置が変わる。
     //

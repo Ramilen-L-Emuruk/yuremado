@@ -34,7 +34,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const baseProps: QuakeListRowProps = {
+const baseProps: QuakeListRowProps = { lpgmTabbable: false,
   scale: 45, scaleLabel: '5弱', orAbove: false, lpgmClass: null,
   heading: <span>震源・震度情報</span>, chips: <span data-chip>訓練</span>,
   tsunami: { text: '津波の心配なし', color: '#fff' },

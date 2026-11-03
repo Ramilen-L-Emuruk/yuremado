@@ -98,15 +98,27 @@ describe('地震カードの国際津波関連情報（英文）', () => {
     expect(box?.querySelector('pre')?.textContent).toBe(TEXT)
   })
 
-  it('枠を押してもカードの選択は動かない', async () => {
+  // 開いたカードの地（押せる所の外）を押すと、地図を全体へ寄せ直すために選択を呼び直す
+  // （2026-11-03 選択「開いたカードの地を押す (Recommended)」）。枠は畳まない本文なので地に数える
+  it('枠の本文を押すと選択を呼び直し、字を選んだ後の指の離しでは呼ばない', async () => {
     const onSelect = vi.fn()
-    await renderTab(makeQuake('遠地地震'), [BULLETIN], onSelect)
-    const title = screen.getByText('国際津波関連情報（英文）', { exact: false })
-    fireEvent.click(title)
-    fireEvent.click(title.parentElement!.querySelector('pre')!)
+    const quake = makeQuake('遠地地震')
+    await renderTab(quake, [BULLETIN], onSelect)
+    const pre = screen.getByText('国際津波関連情報（英文）', { exact: false }).parentElement!.querySelector('pre')!
+    fireEvent.click(pre)
+    expect(onSelect).toHaveBeenCalledWith(quakeEventKey(quake))
+    // 安全弁: 本文をなぞって選んでいる間の指の離しは地のクリックに数えない
+    onSelect.mockClear()
+    const range = document.createRange()
+    range.selectNodeContents(pre)
+    window.getSelection()!.removeAllRanges()
+    window.getSelection()!.addRange(range)
+    fireEvent.click(pre)
     expect(onSelect).not.toHaveBeenCalled()
-    // 対照: 開いたカードの見出しの行を押せばカードが畳まれる（枠が消える）
+    window.getSelection()!.removeAllRanges()
+    // 対照: 見出しの行を押すとカードが畳まれるだけで、選択は呼ばない
     fireEvent.click(screen.getByRole('button', { expanded: true, name: /^▾/ }))
+    expect(onSelect).not.toHaveBeenCalled()
     expect(screen.queryByText('国際津波関連情報（英文）', { exact: false })).toBeNull()
   })
 
@@ -117,7 +129,7 @@ describe('地震カードの国際津波関連情報（英文）', () => {
     await renderTab(makeQuake('遠地地震'), [BULLETIN], onSelect)
     fireEvent.click(screen.getByRole('button', { expanded: true, name: /^▾/ }))
     expect(onSelect).not.toHaveBeenCalled()
-    const row = screen.getByRole('button', { pressed: true })
+    const row = screen.getByRole('button', { current: true })
     expect(row.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(row)
     expect(onSelect).not.toHaveBeenCalled()

@@ -54,7 +54,7 @@ import { groupUnreceivedPointNames, type UnreceivedPointGroup } from './unreceiv
 import { QuakeSeismoWave } from './QuakeSeismoWave'
 import { QuakeListRow, TileScaleLabel, quakeTileColors } from './QuakeListRow'
 import { QuakeOpenPin } from './QuakeOpenPin'
-import { DisclosureCaret, growInOnMount, growFrom, fadeIn, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, CANCEL_FADE_MS } from './quakeMotion'
+import { DisclosureCaret, Reveal, growFrom, fadeIn, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, CANCEL_FADE_MS } from './quakeMotion'
 import { quakeReportTimeline, formatTimelineTime } from '../../utils/quakeReportTimeline'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import type { SeismoWaveCollapsedView } from '../../hooks/useSettings'
@@ -202,7 +202,7 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
         },
       } : {})}
       data-quake-row
-      className={`${QUAKE_ROW_CLASS}${activate ? ' cursor-pointer hover:bg-white/5' : ''}`}
+      className={`${QUAKE_ROW_CLASS}${activate ? ' cursor-pointer hover:bg-white/5 quake-press-row' : ''}`}
       style={{ ...quakeRowStyle(depth, mark), gridTemplateColumns: `${intensityValueColumn(unreceivedLayout)} 1fr auto` }}
     >
       {/* 震度の欄。「震度」の語は付けない（見本 opened.html の .ir）。未入電の行は「5弱以上」と
@@ -257,6 +257,26 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
       </span>
     </div>
   )
+}
+
+/** 押せる所（開閉の行・札・ボタン・地図へ寄せる名前・見出しの段・帯）。ここで起きたクリックは地のクリックに数えない。 */
+/** 閉じた行で組まない補足の空の形。 */
+const NO_COMMENTS: ReturnType<typeof jmaCommentGroups> = { groups: [], showHeadings: false }
+
+const INTERACTIVE_IN_CARD = 'button, a, input, select, textarea, summary, [role="button"], [tabindex], .cursor-pointer, .quake-open-head, .quake-pin'
+
+/**
+ * 開いたカードの地を押したか。押せる所の中のクリックと、字を選んだ後の指の離しは数えない
+ * （観測点の名前をなぞって写そうとしただけで地図が動かないように）。
+ */
+function isPlainBackgroundClick(e: React.MouseEvent<HTMLElement>): boolean {
+  const target = e.target as Element | null
+  if (!target) return false
+  // 探すのはカードの内側だけ（一覧の枠などカードの外の祖先が押せる印を持っても、地のクリックを潰さない）
+  const hit = target.closest(INTERACTIVE_IN_CARD)
+  if (hit && e.currentTarget.contains(hit)) return false
+  const selection = window.getSelection?.()
+  return !selection || selection.isCollapsed
 }
 
 /** 広い組で見出しの段と震度の枠を貼りつける上限（一覧の見える高さに対する割合。→ `data-stick-tall`）。 */
@@ -414,7 +434,7 @@ function LpgmRow({ label, lgInt, int, nonJma, depth, expandKey, expanded, onTogg
         },
       } : {})}
       data-quake-row
-      className={`${QUAKE_ROW_CLASS}${activate ? ' cursor-pointer hover:bg-white/5' : ''}`}
+      className={`${QUAKE_ROW_CLASS}${activate ? ' cursor-pointer hover:bg-white/5 quake-press-row' : ''}`}
       style={{ ...quakeRowStyle(depth, mark), gridTemplateColumns: '3.25rem 1fr auto' }}
     >
       {/* 階級の札（52px の欄。見本 opened.html の .lgg）。節の見出しが「長周期地震動」なので「長周期」は添えない。 */}
@@ -601,8 +621,9 @@ function JmaNotesFold({ open, onToggle, groups, showHeadings, extra }: {
   showHeadings: boolean
   extra?: React.ReactNode
 }) {
+  // 見出しと中身の間は中身の側の上の余白で取る（親の gap にすると、縮み終えた瞬間にその分だけ下が詰まる）
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col">
       <div
         role="button"
         tabIndex={0}
@@ -614,8 +635,7 @@ function JmaNotesFold({ open, onToggle, groups, showHeadings, extra }: {
       >
         気象庁からの補足 <DisclosureCaret open={open} />
       </div>
-      {open && (
-        <div ref={growInOnMount} data-jma-notes="" className="flex w-full flex-col gap-2 rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary roomy:text-sm">
+      <Reveal open={open} data-jma-notes="" className="mt-1.5 flex w-full flex-col gap-2 rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary roomy:text-sm">{() => (<>
           {groups.map(g => (
             <div key={g.kind} className="flex flex-col gap-0.5">
               {showHeadings && <div data-jma-heading="" className="font-semibold text-[#cfd6dd]">{g.heading}</div>}
@@ -624,8 +644,7 @@ function JmaNotesFold({ open, onToggle, groups, showHeadings, extra }: {
             </div>
           ))}
           {extra}
-        </div>
-      )}
+        </>)}</Reveal>
     </div>
   )
 }
@@ -688,7 +707,7 @@ function borrowedSourceNote(
  * 置いていて、**理由が画面に出る場面がほとんど無かった**。写しを 2 つ持つと片方だけ直る形になるので、
  * 1 つにまとめてある。
  */
-/** 取消の覆いを出した瞬間に薄くから濃くする（`ref` に渡す。理由は `growInOnMount` と同じく関数を 1 つにする）。 */
+/** 取消の覆いを出した瞬間に薄くから濃くする（`ref` に渡す。描き直すたびに付け直されて何度も動かないよう、関数を 1 つにする）。 */
 function fadeOverlayOnMount(el: HTMLElement | null): void {
   if (el) fadeIn(el, CANCEL_FADE_MS)
 }
@@ -802,7 +821,15 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     const from = resizeFromRef.current
     resizeFromRef.current = null
     const el = isSelected ? openRootRef.current : rowRef.current
-    if (from !== null && el) growFrom(el, from, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, true)
+    if (from === null || !el) return
+    const anim = growFrom(el, from, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, true)
+    // 開くときは、見出しの段より下の中身を薄くから出す。高さだけを伸ばすと、伸び始めに見出し文などの
+    // 行が上半分だけ切れて見え、崩れたように見える（2026-11-03 発言「開いた瞬間崩れる瞬間が一瞬あります。」）
+    if (anim && isSelected) {
+      for (const child of Array.from(el.children)) {
+        if (child instanceof HTMLElement && !child.matches('.quake-open-head, .quake-pin')) fadeIn(child, CARD_RESIZE_MS)
+      }
+    }
   }, [isSelected])
   // 控えた高さが使われずに残ったら（押しても開閉が変わらなかった）捨てる。残すと、後で別の経路で
   // 開閉が変わったときに古い高さから動く。上の effect より後に置く（同じ描き直しなら先に使われる）
@@ -883,11 +910,10 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   // （2026-10-29 ユーザー承認。→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。
   const forecastParagraph = quake.forecastText?.trim() ? forecastRest : (quake.foreignTsunamiText ?? '')
   // 1 文 1 行・中身で呼ぶ見出しに組む（→ `jmaCommentGroups`）。海外への津波の見通しは津波の文として並ぶ。
-  const quakeComments = jmaCommentGroups({
-    forecast: forecastParagraph,
-    varComment: quake.varCommentText,
-    free: quake.freeText,
-  })
+  // 開いたカードでしか出さないので、閉じた行では組まない（一覧の全カードが描き直す回に、カードの数だけ回さない）
+  const quakeComments = useMemo(() => isSelected
+    ? jmaCommentGroups({ forecast: forecastParagraph, varComment: quake.varCommentText, free: quake.freeText })
+    : NO_COMMENTS, [isSelected, forecastParagraph, quake.varCommentText, quake.freeText])
   // 気象庁が文面を変えて表と一致しなくなったら記録を残す（一致しないと札の下に津波の文が重なって出るだけで、
   // ほかに気づく手掛かりが無い）。描画中の副作用にしないよう effect で出し、間引きは記録側が持つ。
   const domesticTsunamiCode = earthquake.domesticTsunamiCode
@@ -902,11 +928,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const categoryNote = lpgm ? lpgmCategoryNoteWithRegions(lpgm.category, lpgm.headline) : ''
   /** 補足の見出しを出すか（判定は読み上げ側の診断と共有する → `canOpenLpgmNotes`）。 */
   const hasLpgmNotes = canOpenLpgmNotes(lpgm)
-  const lpgmComments = jmaCommentGroups({
-    forecast: lpgm?.forecastText,
-    varComment: lpgm?.varCommentText,
-    free: lpgm?.freeFormText,
-  })
+  const lpgmComments = useMemo(() => isSelected
+    ? jmaCommentGroups({ forecast: lpgm?.forecastText, varComment: lpgm?.varCommentText, free: lpgm?.freeFormText })
+    : NO_COMMENTS, [isSelected, lpgm?.forecastText, lpgm?.varCommentText, lpgm?.freeFormText])
   // 震度分布ボタン。引き当ては一覧の側で済んでいる（→ {@link Props.estimatedIntensity}）。
   const matchedEstimated = estimatedIntensity
   const distributionState = estimatedIntensityAvailability(quake, matchedEstimated)
@@ -1276,8 +1300,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
   // 一覧の 1 行（見本 closed5）。閉じたカードと、開いたカードのスマホの帯（→ `QuakeOpenPin`）で同じものを使う。
   const quakeDate = readDateTime('quakeListRow', earthquake.time)
-  const listRow = (
+  const listRowFor = (lpgmTabbable: boolean) => (
   <QuakeListRow
+    lpgmTabbable={lpgmTabbable}
     scale={maxScale}
     scaleLabel={maxScaleLabel}
     orAbove={maxScaleOrAbove}
@@ -1327,14 +1352,20 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     const root = scrollParentOf(card)
     const measure = () => {
       const headH = head.getBoundingClientRect().height
-      card.style.setProperty('--qk-open-head-h', `${headH}px`)
+      // 読むのは貼りつく震度の枠（`.quake-stick`）だけなので、そこへ書く。カードの根へ書くと、受け継ぐ中身
+      // （開いた県の観測点まで）のスタイルを全部計算し直す
+      facts.style.setProperty('--qk-open-head-h', `${headH}px`)
       const stuck = listHeadPx(card) + headH + facts.getBoundingClientRect().height
       const view = root?.clientHeight ?? 0
       card.toggleAttribute('data-stick-tall', view > 0 && stuck <= view * STICK_MAX_SHARE)
     }
-    measure()
     window.addEventListener('resize', measure)
-    if (typeof ResizeObserver === 'undefined') return () => window.removeEventListener('resize', measure)
+    if (typeof ResizeObserver === 'undefined') {
+      measure()
+      return () => window.removeEventListener('resize', measure)
+    }
+    // ここで測らず、ResizeObserver の初回の呼び出しに任せる（見張りを始めると、その回の描画の前に一度呼ばれる）。
+    // 描き替えた直後に高さを読むと、カードを開いた描き直しの中でレイアウトを 1 回余計に強いる
     const ro = new ResizeObserver(measure)
     ro.observe(head)
     ro.observe(facts)
@@ -1407,12 +1438,15 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       <div
         {...{ [QUAKE_CARD_KEY_ATTR]: eventKey }}
         ref={openRootRef}
+        // 地（押せる所の外）を押すと、地図をこの地震の全体へ寄せ直す（2026-11-03 選択「開いたカードの地を押す
+        // (Recommended)」。前の作りでは開いたカード全体が 1 つのボタンで、どこを押しても寄せ直していた）
+        onClick={quake.cancelledAt ? undefined : (e) => { if (isPlainBackgroundClick(e)) onSelect?.(eventKey) }}
         className="quake-open relative border-b border-border bg-card"
         style={{ padding: '4px var(--qk-pad) 16px', fontSize: 'var(--qk-f)', boxShadow: `inset 3px 0 0 ${tileBg}` }}
       >
         {quake.cancelledAt && <QuakeCancelOverlay cancelText={quake.cancelText} compact={false} fade={fadeCancel} />}
         {/* スマホ幅では、震度の枠が画面の外へ出たら閉じた行と同じ帯を上に貼りつける（2026-11-02 選択「畳んだ行の帯」） */}
-        <QuakeOpenPin targetRef={factsRef} onActivate={quake.cancelledAt ? undefined : collapseCard} onLpgmActivate={lpgmShown ? toLpgm : undefined}>{listRow}</QuakeOpenPin>
+        <QuakeOpenPin targetRef={factsRef} onActivate={quake.cancelledAt ? undefined : collapseCard} onLpgmActivate={lpgmShown ? toLpgm : undefined}>{listRowFor(!!lpgmShown && !quake.cancelledAt)}</QuakeOpenPin>
         {/* 見出しの行。押すと畳む（選択は外さない）。 */}
         <div ref={openHeadRef} className="quake-open-head flex flex-wrap items-baseline gap-x-2.5 gap-y-1 border-b border-border bg-card py-2" style={{ fontSize: 'var(--qk-fs)' }}>
           <button
@@ -1446,16 +1480,14 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             </button>
           )}
         </div>
-        {timelineOpen && (
-          <div ref={growInOnMount} className="mt-1.5 mb-0.5 rounded-md border border-border px-2.5 py-1 text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+        <Reveal open={timelineOpen} className="mt-1.5 mb-0.5 rounded-md border border-border px-2.5 py-1 text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{() => (<>
             {timeline.map((e, idx) => (
               <div key={idx} className={`flex justify-between gap-3 py-[3px] ${idx > 0 ? 'border-t border-border/60' : ''}`}>
                 <span>{e.label}</span>
                 <span className="tabular-nums">{e.ms !== null ? formatTimelineTime(e.ms) : QUAKE_LIST_TIME_UNKNOWN}</span>
               </div>
             ))}
-          </div>
-        )}
+          </>)}</Reveal>
 
         {/* 一部の取消（震源情報まで進んだカードに震度速報だけの取消が届いた等）。カードは残し、
             取り消された情報の名前と、気象庁が書いた理由（`Body/Text`）をそのまま出す
@@ -1485,10 +1517,10 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               tabIndex={0}
               onClick={toInts}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toInts() } }}
-              className="relative box-border flex cursor-pointer flex-col self-stretch overflow-hidden rounded-md"
+              className="quake-tile relative box-border flex cursor-pointer flex-col self-stretch overflow-hidden rounded-md"
               style={{ ...quakeTileColors(maxScale), width: 'var(--qk-big)' }}
             >
-              <div data-tile className="flex flex-1 flex-col items-center justify-center gap-1 py-1 leading-none">
+              <div data-tile className="quake-tile-part flex flex-1 flex-col items-center justify-center gap-1 py-1 leading-none">
                 <span className="font-semibold" style={{ fontSize: 'var(--qk-fs)', color: liftForContrast(getIntensityColor(maxScale), getIntensityBgColor(maxScale)) }}>最大震度</span>
                 <span className="font-black" style={{ fontSize: 'calc(var(--qk-big-f) * 0.75)' }}>
                   <TileScaleLabel label={maxScaleLabel} />
@@ -1502,7 +1534,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   tabIndex={0}
                   onClick={(e) => { e.stopPropagation(); toLpgm() }}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toLpgm() } }}
-                  className="flex items-center justify-center font-bold text-white"
+                  className="quake-tile-part quake-tile-lpgm flex items-center justify-center font-bold text-white"
                   style={{ height: 'var(--qk-band-h)', fontSize: 'var(--qk-band-f)', backgroundColor: getLpgmClassColor(lpgmShown.maxClass), borderTop: '1px solid rgba(0,0,0,.35)' }}
                 >
                   {getLpgmClassLabel(lpgmShown.maxClass).replace('階級', '長周期')}
@@ -1788,8 +1820,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   onToggle={toggle}
                   onFocus={focusBoundsHandler(areaBounds.get(region.name) ?? null)}
                 />
-                {expanded.has(`area:${region.name}`) && (
-                  <div ref={growInOnMount}>
+                <Reveal open={expanded.has(`area:${region.name}`)}>{() => (<>
                     {region.cities.map(city => (
                       <div key={city.name}>
                         <IntensityRow
@@ -1806,29 +1837,22 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                           onToggle={toggle}
                           onFocus={focusCityHandler(pref, city.stations)}
                         />
-                        {expanded.has(`city:${region.name}/${city.name}`) && <div ref={growInOnMount}>{city.stations.map(st => stationRow(st, (depth + 2) as 2 | 3, pref))}</div>}
+                        <Reveal open={expanded.has(`city:${region.name}/${city.name}`)}>{() => (<>{city.stations.map(st => stationRow(st, (depth + 2) as 2 | 3, pref))}</>)}</Reveal>
                       </div>
                     ))}
                     {/* 市町村に紐付かない観測点（市町村を読めなかった観測点）。
                         → `IntensityRegionRow.stations` */}
                     {region.stations.map(st => stationRow(st, (depth + 1) as 1 | 2, pref))}
-                  </div>
-                )}
+                  </>)}</Reveal>
               </Fragment>
             )
 
-            // 広い画面の左右 2 列で、隣どうし（0 と 1、2 と 3 …）がどちらも閉じていれば、低いほうを高いほうに
-            // そろえて下の線を合わせる（「（未入電あり）」の行だけ高くなる分。2026-11-03 選択「その行と隣の行だけ
-            // そろえる (Recommended)」）。開いている県とはそろえない（隣の列に大きな空きが出る）。
             const groupKey = (row: typeof prefGroups[number]) => row.kind === 'pref' ? `pref:${row.pref}` : `area:${row.name}`
-            const pairedClosed = (i: number) => {
-              const partner = prefGroups[i ^ 1]
-              return partner !== undefined && !expanded.has(groupKey(prefGroups[i])) && !expanded.has(groupKey(partner))
-            }
             return (
               <div className="quake-ints border-t border-border/60">
-                {prefGroups.map((row, i) => (
-                  <div key={groupKey(row)} className={pairedClosed(i) ? 'quake-int-pair' : undefined}>
+                {/* 塊ごとに子は 2 つ（見出しの行・開いた中身）。広い画面ではこの 2 段で左右をそろえる（→ index.css） */}
+                {prefGroups.map(row => (
+                  <div key={groupKey(row)}>
                     {row.kind === 'area' ? regionTree(row, 0, '') : (
                       <>
                         <IntensityRow
@@ -1848,8 +1872,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                           onToggle={toggle}
                           onFocus={focusBoundsHandler(prefBounds.get(row.pref) ?? null)}
                         />
-                        {expanded.has(`pref:${row.pref}`) && (
-                          <div ref={growInOnMount} className="quake-sub" style={{ borderLeftColor: getIntensityColor(row.scale) }}>
+                        <Reveal open={expanded.has(`pref:${row.pref}`)} className="quake-sub" style={{ borderLeftColor: getIntensityColor(row.scale) }}>{() => (<>
                             {row.regions.map(region => regionTree(region, 1, row.pref))}
                             {/* 区域が決まらない市町村（見出しにだけある市町村）。観測点と同じく県の直下へ置く */}
                             {row.cities.map(city => (
@@ -1871,8 +1894,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                             ))}
                             {/* 区域を引けない観測点（県は分かっている）。長周期の一覧と同じく県の直下へ置く */}
                             {row.stations.map(st => stationRow(st, 1, row.pref))}
-                          </div>
-                        )}
+                          </>)}</Reveal>
                       </>
                     )}
                   </div>
@@ -1955,9 +1977,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                       onToggle={toggle}
                       onFocus={focusHandlerFor(prefName, st.name)}
                     />
-                    {stationKey && st.periods && expanded.has(stationKey) && (
-                      <div ref={growInOnMount}><LpgmPeriodList periods={st.periods} depth={depth} /></div>
-                    )}
+                    <Reveal open={!!stationKey && !!st.periods && expanded.has(stationKey)}>{() => (<>{st.periods && <LpgmPeriodList periods={st.periods} depth={depth} />}</>)}</Reveal>
                   </Fragment>
                 )
               }
@@ -1983,8 +2003,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                         onToggle={toggle}
                         onFocus={focusBoundsHandler(prefBounds.get(prefRow.name) ?? null)}
                       />
-                      {expanded.has(topKey) && (
-                        <div ref={growInOnMount} className="quake-sub" style={{ borderLeftColor: getLpgmClassColor(prefRow.maxLgInt) }}>
+                      <Reveal open={expanded.has(topKey)} className="quake-sub" style={{ borderLeftColor: getLpgmClassColor(prefRow.maxLgInt) }}>{() => (<>
                           {prefRow.areas.map(area => (
                             <div key={area.name}>
                               <LpgmRow
@@ -1998,13 +2017,12 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                                 onToggle={toggle}
                                 onFocus={focusBoundsHandler(areaBounds.get(area.name) ?? null)}
                               />
-                              {expanded.has(`lpgm:area:${area.name}`) && <div ref={growInOnMount}>{area.stations.map(st => lpgmStationNode(st, prefRow.name, area.name, 2))}</div>}
+                              <Reveal open={expanded.has(`lpgm:area:${area.name}`)}>{() => (<>{area.stations.map(st => lpgmStationNode(st, prefRow.name, area.name, 2))}</>)}</Reveal>
                             </div>
                           ))}
                           {/* 区域が分からない観測点（→ `LpgmPrefRow.stations`）。 */}
                           {prefRow.stations.map(st => lpgmStationNode(st, prefRow.name, '', 1))}
-                        </div>
-                      )}
+                        </>)}</Reveal>
                     </div>
                     )
                   })}
@@ -2053,14 +2071,15 @@ export const EarthquakeCard = memo(function EarthquakeCard({
         if (selected) setCollapsed(false)
         else onSelect?.(eventKey)
       }}
-      aria-pressed={selected}
+      // 選んでいることは aria-current で伝える（押すと開き直すだけなので、押した状態の札にはしない）
+      aria-current={selected ? 'true' : undefined}
       aria-expanded={false}
-      className={`relative block w-full border-b border-border text-left transition-colors ${quake.cancelledAt ? 'cursor-default' : 'cursor-pointer hover:bg-white/5'}`}
+      className={`relative block w-full border-b border-border text-left transition-colors ${quake.cancelledAt ? 'cursor-default' : 'cursor-pointer hover:bg-white/5 quake-press-row'}`}
       // 選んだまま畳んだ行は、見本 opened.html の選ばれた行（.r.sel）の形で出す
       style={{ padding: '7px var(--qk-pad)', ...(selected ? { backgroundColor: '#16191d', boxShadow: `inset 3px 0 0 ${getIntensityColor(maxScale)}` } : {}) }}
     >
       {quake.cancelledAt && <QuakeCancelOverlay cancelText={quake.cancelText} compact fade={fadeCancel} />}
-      {listRow}
+      {listRowFor(false)}
     </button>
   )
 })
