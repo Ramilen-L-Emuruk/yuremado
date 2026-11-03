@@ -7,7 +7,8 @@
 // 全区間の回数が `-1` で、有感だけが値を持つ —— そのまま出すと帯に「-1回」と並ぶ。
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
-import { EarthquakeCountDetail, earthquakeCountHeadline } from './EarthquakeCountDetail'
+import { EarthquakeCountDetail } from './EarthquakeCountDetail'
+import { earthquakeCountHeadline } from '../../utils/earthquakeCountSummary'
 import { withTz } from '../../test-utils/withTz'
 import type { JMAEarthquakeCount, JMAEarthquakeCountItem } from '../../types/earthquake'
 

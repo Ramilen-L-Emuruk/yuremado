@@ -105,6 +105,16 @@ export interface AppSettings {
   notifyTsunami: boolean           // 津波のブラウザ通知（予報以上の発表・続報と全区域解除。→ audio-tts-spec §7）
   notifyDetection: boolean         // 強震モニタの揺れ検知時にブラウザ通知を送る
   notifyNankai: boolean            // 南海トラフ地震臨時情報・後発地震注意情報・臨時の解説情報のブラウザ通知（2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
+  /**
+   * アプリを閉じている間も中継からプッシュ通知を受け取る（docs/relay-server-design.md §6.7）。既定はオフ
+   * （2026-11-03 ユーザー選択「設定で入れたときだけ (Recommended)」）。入れた端末だけが中継へ送り先と通知の設定の写しを登録する
+   */
+  pushNotifyEnabled: boolean
+  /**
+   * 通知を絞る都道府県（2 桁のコード。空なら全国）。プッシュ通知にも画面内の通知にも効き、絞るのは通知だけ
+   * （2026-11-03 ユーザー選択「都道府県を選べる・既定は全国 (Recommended)」「両方に掛ける (Recommended)」）
+   */
+  notifyPrefectures: string[]
   homeLat: number | null           // ホーム地点 緯度（null = 未設定）
   homeLng: number | null           // ホーム地点 経度（null = 未設定）
   /**
@@ -328,6 +338,8 @@ export const DEFAULTS: AppSettings = {
   // 揺れ検知の通知は既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」。検知ベンチの静かな窓 22 本・11.3 時間のうち 2 本で確定まで進んだ）。
   notifyDetection: false,
   notifyNankai: true,
+  pushNotifyEnabled: false,
+  notifyPrefectures: [],
   homeLat: null,
   homeLng: null,
   arrivalToken: '',
@@ -388,6 +400,19 @@ export const DEFAULTS: AppSettings = {
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.min(max, Math.max(min, value))
+}
+
+/** 都道府県のコード（01〜47 の 2 桁）の並び。読めない値は捨て、重複を除いて並べる */
+function ensurePrefectureCodes(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  for (const v of value) {
+    if (typeof v !== 'string' || !/^\d{2}$/.test(v)) continue
+    const n = Number(v)
+    if (n < 1 || n > 47 || out.includes(v)) continue
+    out.push(v)
+  }
+  return out.sort()
 }
 
 function ensureBool(value: unknown, fallback: boolean): boolean {
@@ -524,6 +549,8 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     notifyTsunami: ensureBool(partial.notifyTsunami, DEFAULTS.notifyTsunami),
     notifyDetection: ensureBool(partial.notifyDetection, DEFAULTS.notifyDetection),
     notifyNankai: ensureBool(partial.notifyNankai, DEFAULTS.notifyNankai),
+    pushNotifyEnabled: ensureBool(partial.pushNotifyEnabled, DEFAULTS.pushNotifyEnabled),
+    notifyPrefectures: ensurePrefectureCodes(partial.notifyPrefectures),
     homeLat: clampNumberOrNull(partial.homeLat, -90, 90),
     homeLng: clampNumberOrNull(partial.homeLng, -180, 180),
     arrivalToken: ensureString(partial.arrivalToken, DEFAULTS.arrivalToken),

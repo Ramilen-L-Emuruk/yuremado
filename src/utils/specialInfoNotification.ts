@@ -27,6 +27,7 @@ const COMMENTARY_NAME = '南海トラフ地震関連解説情報'
 const LPGM_NAME = '長周期地震動に関する観測情報'
 const ESTIMATED_NAME = '推計震度分布図'
 const COUNT_NAME = '地震回数に関する情報'
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 function cancelled(name: string, tag: string, subject = name): SpecialInfoNotification {
   return { title: `${name} 取消`, body: `${subject}は取り消されました`, tag }
@@ -81,7 +82,9 @@ export function lpgmNotification(event: JMALpgm, cancelSubjectName: string): Spe
  */
 export function estimatedIntensityNotification(event: JMAEstimatedIntensity, isNew: boolean): SpecialInfoNotification {
   const d = readDateTime('estimatedIntensityNotification', event.arrivalTime)
-  const when = d ? `${d.getHours()}時${String(d.getMinutes()).padStart(2, '0')}分頃発生した地震の` : ''
+  // 時刻は日本時間で読む。端末の時間帯で読むと、中継（UTC で動く）が送るプッシュ通知と画面内の通知で時刻がずれる
+  const jst = d ? new Date(d.getTime() + JST_OFFSET_MS) : null
+  const when = jst ? `${jst.getUTCHours()}時${String(jst.getUTCMinutes()).padStart(2, '0')}分頃発生した地震の` : ''
   return {
     title: ESTIMATED_NAME,
     body: `${when}${ESTIMATED_NAME}${isNew ? 'を受信しました' : 'が更新されました'}`,

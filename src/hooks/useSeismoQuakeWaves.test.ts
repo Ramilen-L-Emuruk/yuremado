@@ -10,6 +10,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { NO_SCOPE, type NearbyScope } from '../utils/actionChecklistTrigger'
 import type { ReachStation } from '../utils/seismoQuakeReach'
+import type { SeismoQuakeWave } from './useSeismoQuakeWaves'
 import { quakeEventKey } from '../utils/quakeMerge'
 import { computeWaveArrival } from '../utils/seismoWaveArrival'
 import type { OriginSeconds } from '../utils/quakeOriginSeconds'
@@ -175,6 +176,25 @@ describe('rememberPicks', () => {
 
   it('観測点を読めていなければ何も足さない', () => {
     expect(rememberPicks(new Map(), targetsOf(['station-1']), null, new Set([key])).size).toBe(0)
+  })
+  // 正: 震源が判らない報（震源が決まる前の震度速報）で選んだ組は覚えない。震度速報は震度3以上の区域しか
+  // 載せず、近所が載っていなくても全国の最大震度で選ぶので、固定すると遠い地震でも外れなくなる。
+  it('震源が判らない報で選んだ組は覚えない', () => {
+    const flash = unknownHypocenter(q)
+    const targets = pickTargets([flash], NO_SCOPE, new Map(), [FAR], NO_KEPT)
+    expect(targets).toMatchObject([{ stationIds: ['station-far'] }])
+    expect(rememberPicks(new Map(), targets, [FAR], new Set([key])).has(key)).toBe(false)
+  })
+
+  // 安全弁: 震度速報の段で選んだ遠い観測点は、震源つきの続報で予測し直して外れる。届く観測点は残る。
+  it('震度速報の段で選んだ遠い観測点は、震源つきの続報で外れる', () => {
+    const small = { ...q, earthquake: { ...q.earthquake, hypocenter: { ...q.earthquake.hypocenter, magnitude: 4.0 } } } as JMAQuake
+    const flash = unknownHypocenter(small)
+    const stations = [NEAR, FAR]
+    const first = pickTargets([flash], NO_SCOPE, new Map(), stations, NO_KEPT)
+    expect(first).toMatchObject([{ stationIds: ['station-1', 'station-far'] }])
+    const kept = rememberPicks(new Map(), first, stations, new Set([key]))
+    expect(pickTargets([small], NO_SCOPE, new Map(), stations, kept)).toMatchObject([{ stationIds: ['station-1'] }])
   })
 })
 
@@ -619,6 +639,83 @@ describe('useSeismoQuakeWaves', () => {
     await waitFor(() => expect(result.current.size).toBe(1))
     rerender({ quakes: [] })
     await waitFor(() => expect(result.current.size).toBe(0))
+  })
+
+  // 震度速報の段で選んだ観測点のうち、震源つきの続報で届かないと判った観測点の波形だけを消す。届く観測点は残す。
+  // 地震ごとにしか外さないと、観測点を離して置いたホストで遠い観測点の波形だけが残る
+  // （2026-11-03 千葉県北東部 M4.7 で、届かない遠い観測点の波形がカードに残った）。
+  it('震度速報の段で選んだ遠い観測点の波形は、震源つきの続報で消え、近い観測点は残る', async () => {
+    fetchSeismoStatus.mockResolvedValue({
+      ...okStatus(),
+      stations: [
+        { stationId: 'station-1', displayName: '自宅', lat: NEAR.lat, lon: NEAR.lon },
+        { stationId: 'station-far', displayName: '遠く', lat: FAR.lat, lon: FAR.lon },
+      ],
+      usualIntensities: new Map([['station-1', -1.3], ['station-far', -1.3]]),
+    })
+    fetchSeismoWaveHistory.mockImplementation(({ stationId }: { stationId: string }) => history({ stationId }))
+    const full = quake('a', '2026/09/29 22:00:00', 30, [] as JMAQuake['points'])
+    const small = { ...full, earthquake: { ...full.earthquake, hypocenter: { ...full.earthquake.hypocenter, magnitude: 4.0 } } } as JMAQuake
+    const flash = unknownHypocenter(small)
+    const stationsOf = (m: ReadonlyMap<string, readonly SeismoQuakeWave[]>) => [...m.values()].flat().map((w) => w.stationId).sort()
+    const { result, rerender } = renderHook(
+      ({ quakes }: { quakes: JMAQuake[] }) =>
+        useSeismoQuakeWaves({
+          enabled: true,
+          baseUrl: 'http://host:50506',
+          quakes,
+          scope: NO_SCOPE,
+          readWave: () => null,
+          replayOffsetMs: null,
+          originSeconds: new Map(),
+          subscribeWaveRevised: NO_REVISED,
+        }),
+      { initialProps: { quakes: [flash] } },
+    )
+    await waitFor(() => expect(stationsOf(result.current)).toEqual(['station-1', 'station-far']))
+    rerender({ quakes: [small] })
+    await waitFor(() => expect(stationsOf(result.current)).toEqual(['station-1']))
+  })
+
+  // 安全弁: ホストの `/status` から観測点が一時的に消えても（基板が繋ぎ直す前など）、出ていた波形は消さない。
+  // 消えるのは、ホストが知っている観測点を予測し直して届かなかったときだけ。
+  it('ホストから一時的に消えた観測点の波形は残す', async () => {
+    const both = {
+      ...okStatus(),
+      stations: [
+        { stationId: 'station-1', displayName: '自宅', lat: NEAR.lat, lon: NEAR.lon },
+        { stationId: 'station-far', displayName: '遠く', lat: FAR.lat, lon: FAR.lon },
+      ],
+      usualIntensities: new Map([['station-1', -1.3], ['station-far', -1.3]]),
+    }
+    fetchSeismoStatus.mockResolvedValue(both)
+    fetchSeismoWaveHistory.mockImplementation(({ stationId }: { stationId: string }) => history({ stationId }))
+    const flash = unknownHypocenter(quake('a', '2026/09/29 22:00:00', 30, [] as JMAQuake['points']))
+    const stationsOf = (m: ReadonlyMap<string, readonly SeismoQuakeWave[]>, key: string) =>
+      (m.get(key) ?? []).map((w) => w.stationId).sort()
+    const { result, rerender } = renderHook(
+      ({ quakes }: { quakes: JMAQuake[] }) =>
+        useSeismoQuakeWaves({
+          enabled: true,
+          baseUrl: 'http://host:50506',
+          quakes,
+          scope: NO_SCOPE,
+          readWave: () => null,
+          replayOffsetMs: null,
+          originSeconds: new Map(),
+          subscribeWaveRevised: NO_REVISED,
+        }),
+      { initialProps: { quakes: [flash] } },
+    )
+    const key = quakeEventKey(flash)
+    await waitFor(() => expect(stationsOf(result.current, key)).toEqual(['station-1', 'station-far']))
+    // 地震が増えると `/status` を読み直す。そこで遠い観測点が載っていない。
+    fetchSeismoStatus.mockResolvedValue({ ...both, stations: [both.stations[0]], usualIntensities: new Map([['station-1', -1.3]]) })
+    const next = unknownHypocenter(quake('b', '2026/09/29 23:00:00', 30, [] as JMAQuake['points']))
+    rerender({ quakes: [next, flash] })
+    await waitFor(() => expect(fetchSeismoStatus).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.has(quakeEventKey(next))).toBe(true))
+    expect(stationsOf(result.current, key)).toEqual(['station-1', 'station-far'])
   })
 
   it('観測点の座標をホストが持っていなければ到達時刻は付かない', async () => {
