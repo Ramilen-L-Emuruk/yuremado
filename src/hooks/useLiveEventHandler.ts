@@ -11,10 +11,11 @@ import {
   eewMaxScaleInfo, isForecastScaleHigher, isForecastLpgmHigher, eewNoForecastReason, computeSingleEEWLevel, computeDisplayEEWLevel, canPresentLpgmClass,
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
   EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast,
-  isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewNotified, eewAnnounceShouldNotify, eewCancelShouldNotify, rememberEewFirstIssueTime, eewCancelNotificationBody,
-  eewSerial, eewSerialSeries, eewIssueTimeMs, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, type EewNotifiedForecast,
+  isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewNotified, eewAnnounceShouldNotify, eewCancelShouldNotify, rememberEewFirstIssueTime,
+  eewSerial, eewSerialSeries, eewIssueTimeMs, eewNotifiedForecast, raisesNotifiedForecast, type EewNotifiedForecast,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
 } from '../utils/eew'
+import { stepEewAnnounce, eewAnnounceNotice, eewCancelNotice } from '../utils/eewNotifyTracker'
 import { hasKnownEpicenter } from '../utils/geo'
 import { showBrowserNotification } from '../utils/notifications'
 import {
@@ -4162,7 +4163,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                 remembered: eewLastHypocenterNameRef.current.size,
               })
             }
-            showBrowserNotification('緊急地震速報 取消', eewCancelNotificationBody(cancelName), `eew-cancel-${key}`)
+            const notice = eewCancelNotice(key, cancelName)
+            showBrowserNotification(notice.title, notice.body, notice.tag)
           }
         }
         // 誤報取消（訂正）だけは、鳴っている途中の読み上げも打ち切る対象として覚えておく。
@@ -4198,20 +4200,23 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 上書きしない —— 前の報が名乗った名前のほうが、空よりは事実に近い。
       rememberEewHypocenterName(eewLastHypocenterNameRef.current, key, event.earthquake.hypocenter.name)
 
-      const currentLevel = computeSingleEEWLevel(event)
       // 上限が定まらない報は通知・タイトルでも「以上」を添える（値だけでは下限の断定になる）。
       const { scale, orAbove: scaleOrAbove } = eewMaxScaleInfo(event)
 
-      // 新規発報か続報かを判定し、レベルの格上げを検出する。
-      // 震度・長周期階級の引き上げはここでは見ない。読み上げ側は「実際に発話した値」と
+      // 新規発報か続報か・区分の格上げ・通知に出した予想の引き上げは共用の部品で決める（→ `stepEewAnnounce`。
+      // 中継のプッシュ通知も同じものを使う）。記憶（区分・通知の基準）はここで持ち、決定どおりに書き換える。
+      // 震度・長周期階級の引き上げを読み上げで言い直すかはここでは見ない。読み上げ側は「実際に発話した値」と
       // 「発話する直前の最新値」を比べるため（enqueuePhase2）、受信時点の比較は使わない。
-      const isNew = !activeEEWLevelsRef.current.has(key)
+      // 別の経路から受けた同じ報（`eewSameReport`）は値が上がっていないことが入口で決まっている
+      const announce = stepEewAnnounce(event, eewSameReport, {
+        level: activeEEWLevelsRef.current.get(key),
+        baseline: eewNotifyBaselineRef.current.get(key),
+      })
+      const { currentLevel, isNew, levelUpgraded, severityUpgraded, forecastRaised } = announce
       // **新規発報を到来順の軸へ刻む。** 予約済みの非 EEW は、これより後の連番なら「先に届いて
       // いた」ので待って読み、これより前なら「後から重いものに追い越された」ので取り下げる
       // （`overtakenByHeavierArrival`）。続報では進めない —— 理由は同 ref の注記。
       if (isNew) latestEewSpeechSeqRef.current = ++speechArrivalSeqRef.current
-      const prevLevel = activeEEWLevelsRef.current.get(key) ?? 0
-      const levelUpgraded = !isNew && currentLevel > prevLevel
       // 録画ツール向けの記録。**続報そのものは残さない** —— 秒ごとに届くので、残すと
       // 「警報の状態が動いた」という問いに答えられなくなる（続報の到来は `telegram` の側に出る）。
       if (isNew || levelUpgraded) {
@@ -4220,12 +4225,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           grade: eewKindLabel(currentLevel), telegram: currentReplayTelegram(),
         })
       }
-      // 区分（予報→警報）の格上げだけを見る特別扱い。`levelUpgraded` は警報→特別警報の
+      // `severityUpgraded` は区分（予報→警報）の格上げだけを見る特別扱い。`levelUpgraded` は警報→特別警報の
       // 格上げも含んでしまうが、特別警報は「緊急地震速報」という同じ区分の中の話で、
       // 音声では「警報」に統一する方針（docs/spec/eew-spec.md §4）。震度の安定待ちを
       // スキップしてよいのは、区分そのものが変わる予報→警報のときだけ
       // （警報→特別警報は震度の値の変化に過ぎず、安定待ちを通すべき）。
-      const severityUpgraded = !isNew && currentLevel >= 1 && prevLevel < 1
 
       // 新規発報・レベルアップは抑制なしで即時移動。続報は抑制タイマーを確認する。
       if (isNew || levelUpgraded) {
@@ -4234,10 +4238,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       } else if (!eewSameReport) {
         setActiveTabRealtimeOnUpdate()
       }
-      activeEEWLevelsRef.current.set(
-        key,
-        (isNew ? currentLevel : Math.max(prevLevel, currentLevel)) as 0 | 1 | 2,
-      )
+      activeEEWLevelsRef.current.set(key, announce.memory.level)
       // spokenEEW*Ref（読み上げた震度・階級・区分）は受信時点では更新しない。
       // 発話の直前だけで更新する（理由は宣言箇所のコメント）。
 
@@ -4252,14 +4253,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       // 通知は新規発報・区分の格上げに加え、**通知に出した予想震度・長周期地震動階級が上がったとき**にも同じタグで
       // 出し直す（ブラウザが前の通知を置き換える。2026-10-21 ユーザー承認「直す (Recommended)」）。別の経路から受けた
-      // 同じ報（`eewSameReport`）は値が上がっていないことが入口で決まっている
-      const notifyForecast = eewNotifiedForecast(event)
-      const notifyBaseline = eewNotifyBaselineRef.current.get(key)
-      const forecastRaised = !eewSameReport && raisesNotifiedForecast(notifyForecast, notifyBaseline)
-      // 基準は上げるだけ（下がった続報で下げると、戻ったときに同じ予想で出し直す）
-      if (!notifyBaseline || raisesNotifiedForecast(notifyForecast, notifyBaseline)) {
-        eewNotifyBaselineRef.current.set(key, notifyForecast)
-      }
+      // 同じ報（`eewSameReport`）は値が上がっていないことが入口で決まっている。基準は上げるだけ（→ `stepEewAnnounce`）
+      eewNotifyBaselineRef.current.set(key, announce.memory.baseline)
       if (notificationAllowed(settings, 'eew') && notificationRegionAllowed(settings, eewPrefectures(event))
         && eewAnnounceShouldNotify({
           isNew, levelUpgraded, forecastRaised,
@@ -4267,20 +4262,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           alreadyNotified: eewNotifiedKeysRef.current.has(key),
         })) {
         rememberEewNotified(eewNotifiedKeysRef.current, key)
-        // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。通知の見出しも実態に合わせる。
-        // **見出しは表示用の区分で決める**（特別警報の下げ止まり。→ eew-spec.md §4）。一度でも特別警報だった地震は、
-        // 続報で震度が下がってから長周期の予想が上がる・格上げが立つなどで出し直しても「特別警報」のまま。
+        // 見出し・本文・tag は共用の部品（→ `eewAnnounceNotice`。見出しは表示用の区分で、特別警報の下げ止まりを効かせる）。
         // `event` は入口で統合した報で、印（`everSpecialWarning`）を運んでいる（`useEarthquakes` の `mergeEewReport`）。
         // 出すかどうか（格上げ・予想の引き上げ）は生の区分のまま —— 下げ止まりは見出しの文言だけに効かせる
-        const notifyLevel = computeDisplayEEWLevel(event)
-        const eewNotifyTitle = notifyLevel === 2 ? '緊急地震速報 特別警報'
-          : notifyLevel === 1 ? '緊急地震速報 警報' : eewKindLabel(0)
-        showBrowserNotification(
-          eewNotifyTitle,
-          eewNotificationBody(event.earthquake.hypocenter.name, notifyForecast),
-          `eew-${key}`,
-          true,
-        )
+        const notice = eewAnnounceNotice(key, event, announce.forecast)
+        showBrowserNotification(notice.title, notice.body, notice.tag, true)
       }
       // EEW タイトルをイベントデータから構築（state は未更新のため event 直接参照）
       title.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, event))
