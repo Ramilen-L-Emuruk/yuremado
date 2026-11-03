@@ -18,10 +18,9 @@ import {
 import { hasKnownEpicenter } from '../utils/geo'
 import { showBrowserNotification } from '../utils/notifications'
 import {
-  nankaiNotification, kohatsuNotification, nankaiCommentaryNotification, lpgmNotification,
-  estimatedIntensityNotification, earthquakeCountNotification,
-} from '../utils/specialInfoNotification'
-import { earthquakeCountHeadline } from '../components/SpecialInfoBanner/EarthquakeCountDetail'
+  type SpecialInfoEvent, planSpecialInfoNotification,
+} from '../utils/specialInfoPush'
+import { earthquakeCountHeadline } from '../utils/earthquakeCountSummary'
 import { tsunamiIssueNotification, tsunamiLiftNotification, tsunamiEndNotification, tsunamiObservationNotification, TSUNAMI_OBS_NOTIFICATION_TAG } from '../utils/tsunamiNotification'
 import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiGradeReport, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, isTsunamiExpired, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, forecastHeightChangedAreas, rememberForecastHeights, type SpokenTideEntry, tsunamiValueMarks, rememberTsunamiValues, createTsunamiValueMemory, clearTsunamiValueMemory, NO_TSUNAMI_VALUE_MARKS, type TsunamiValueMarks, type TsunamiValueMemory } from '../utils/tsunami'
 import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
@@ -47,7 +46,7 @@ import { applyQuakeCancelToCard, compareReportAge, createQuakeFoldKeys, extractQ
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import { serverDate } from '../utils/clock'
 import { estimatedIntensityTopicKey, type EstimatedIntensityTopicAnchor } from '../utils/estimatedIntensity'
-import { notificationAllowed } from '../utils/notificationGate'
+import { notificationAllowed, notificationRegionAllowed } from '../utils/notificationGate'
 
 // ─── 録画ツール向けイベントログの記録（→ `docs/spec/recording-interface-spec.md`）────────
 //
@@ -1784,6 +1783,18 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   /** 発表を通知した電文への取消か（真なら記憶から外す）。 */
   const takeNotified = (key: string): boolean => notifiedSpecialInfoRef.current.delete(key)
   /**
+   * 南海・後発・関連解説・長周期・推計・地震回数の通知を出す。出すかと文面は中継と共用の判定（`planSpecialInfoNotification`）が
+   * 決め、ここは設定（種類の入り切り・地域）と、取消のための「発表を通知したか」の記憶だけを見る
+   */
+  const notifySpecialInfo = (event: SpecialInfoEvent) => {
+    const plan = planSpecialInfoNotification(event, id => lpgmNotifiedNameRef.current.get(id))
+    if (!plan) return
+    if (!notificationAllowed(settings, plan.kind) || !notificationRegionAllowed(settings, plan.prefectures)) return
+    if (plan.requires !== undefined && !takeNotified(plan.requires)) return
+    showBrowserNotification(plan.notification.title, plan.notification.body, plan.notification.tag)
+    if (plan.remember !== undefined) rememberNotified(plan.remember)
+  }
+  /**
    * 推計震度分布図の読み上げの主題を地震ごとに決めるための、見た地震の覚え（→ `estimatedIntensityTopicKey`）。
    * 上限つき。**時間軸が変わったら空にする**（`resetTracking`）—— ライブで覚えた地震へ、再生で届いた
    * 震源不明の分布図が結び付くのを避けるため。
@@ -3005,10 +3016,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         seenLpgmEventIdsRef.current.delete(lpgmEvent.eventId)
         if (settings.soundEnabled) playAlertSound('earthquakeCancel')
         // 発表の通知を同じ札で置き換える（2026-10-24 ユーザー選択「出す (Recommended)」）。地名は発表で覚えた値から引く
-        if (notificationAllowed(settings, 'quake') && takeNotified(`lpgm:${lpgmEvent.eventId}`)) {
-          const n = lpgmNotification(lpgmEvent, lpgmNotifiedNameRef.current.get(lpgmEvent.eventId) ?? '')
-          showBrowserNotification(n.title, n.body, n.tag)
-        }
+        notifySpecialInfo({ kind: 'lpgm', data: lpgmEvent })
         lpgmNotifiedNameRef.current.delete(lpgmEvent.eventId)
         title.releaseTitle('lpgm', lpgmEvent.eventId)
         if (settings.voicevoxEnabled) {
@@ -3052,11 +3060,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       const lpgmName = lpgmEvent.hypocenter?.name.trim() ?? ''
       title.setTitle(joinTitleParts('長周期地震動', lpgmName, `最大階級${lpgmEvent.maxClass}`))
       title.scheduleTitleRevert('lpgm', lpgmEvent.eventId)
-      if (notificationAllowed(settings, 'quake')) {
-        const n = lpgmNotification(lpgmEvent, '')
-        showBrowserNotification(n.title, n.body, n.tag)
-        rememberNotified(`lpgm:${lpgmEvent.eventId}`)
-      }
+      notifySpecialInfo({ kind: 'lpgm', data: lpgmEvent })
       // 取消の通知で地名を言うために覚える（取消の電文は震源を持たない）
       if (lpgmNotifiedNameRef.current.size >= LPGM_NAME_MEMORY_MAX) lpgmNotifiedNameRef.current.clear()
       lpgmNotifiedNameRef.current.set(lpgmEvent.eventId, lpgmName)
@@ -3128,10 +3132,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       // 受信したことをブラウザ通知に出す（推計の最大震度は出さない。2026-10-22 ユーザー選択「「受信した」を通知する」）。
       // 地震情報の通知の設定に従う（2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
-      if (notificationAllowed(settings, 'quake')) {
-        const n = estimatedIntensityNotification(ei, isNew !== false)
-        showBrowserNotification(n.title, n.body, n.tag)
-      }
+      notifySpecialInfo({ kind: 'estimatedIntensity', data: ei, isNew: isNew !== false })
       if (settings.voicevoxEnabled) {
         // **読み上げ文は常に非空**（`estimatedIntensityToText` は時刻が読めなくても末尾の句を
         // 返す）。長周期のような「文が空なら受信時要求へ落とす」分岐が要らないのはそのため。
@@ -3168,10 +3169,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 最中に取消が届いても取り下げられない（取り消された回数をそのあと読み上げる）。
         // 帯が消えるので、パネルの展開も要らない。
         if (settings.soundEnabled) playAlertSound('earthquakeCancel')
-        if (notificationAllowed(settings, 'quake') && takeNotified(`earthquakeCount:${count.eventId}`)) {
-          const n = earthquakeCountNotification(count, '')
-          showBrowserNotification(n.title, n.body, n.tag)
-        }
+        notifySpecialInfo({ kind: 'earthquakeCount', data: count })
         title.releaseTitle('earthquakeCount', count.eventId)
         if (settings.voicevoxEnabled) {
           speakNonEEWDelayed(
@@ -3192,11 +3190,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       const countHeadline = earthquakeCountHeadline(count)
       title.setTitle(countHeadline === '地震回数に関する情報' ? countHeadline : `地震回数に関する情報 ${countHeadline}`)
       title.scheduleTitleRevert('earthquakeCount', count.eventId)
-      if (notificationAllowed(settings, 'quake')) {
-        const n = earthquakeCountNotification(count, countHeadline)
-        showBrowserNotification(n.title, n.body, n.tag)
-        rememberNotified(`earthquakeCount:${count.eventId}`)
-      }
+      notifySpecialInfo({ kind: 'earthquakeCount', data: count })
       if (settings.voicevoxEnabled) {
         // 帯で伝える情報なのでタブは動かさない（理由は上）。伝える区間を選べない報
         // （回数を伴わない発表報など）でも `earthquakeCountToText` は種別名を返す。
@@ -3266,10 +3260,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 「伝える (Recommended)」。→ `useEarthquakes` の `decideDispatch`）。帯は消えるのでパネルは開かない。
         // 主題は発表と共有する（理由は地震回数の取消と同じ）。
         if (settings.soundEnabled) playAlertSound('specialInfoCancel')
-        if (notificationAllowed(settings, 'nankai') && takeNotified(`nankaiCommentary:${commentary.id}`)) {
-          const n = nankaiCommentaryNotification(commentary)
-          showBrowserNotification(n.title, n.body, n.tag)
-        }
+        notifySpecialInfo({ kind: 'nankaiCommentary', data: commentary })
         title.releaseTitle('nankaiCommentary', commentary.id)
         if (settings.voicevoxEnabled) {
           speakNonEEWDelayed(
@@ -3286,11 +3277,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         title.scheduleTitleRevert('nankaiCommentary', commentary.id)
       }
       // 臨時解説だけ通知する（定例解説は平常時にも毎月届く。2026-10-24 ユーザー選択「出す (Recommended)」）
-      if (notificationAllowed(settings, 'nankai') && commentary.serialName === '臨時解説') {
-        const n = nankaiCommentaryNotification(commentary)
-        showBrowserNotification(n.title, n.body, n.tag)
-        rememberNotified(`nankaiCommentary:${commentary.id}`)
-      }
+      notifySpecialInfo({ kind: 'nankaiCommentary', data: commentary })
       // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側）。
       expandPanelForSpecialInfo()
       if (settings.soundEnabled) {
@@ -3364,10 +3351,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // ブラウザ通知（発表・調査終了・取消。2026-10-22 ユーザー選択「通知を出す (Recommended)」、設定は 2026-10-24 ユーザー
       // 選択「南海は新設、他は地震情報に (Recommended)」）。本文は気象庁の要約（2026-10-23 ユーザー選択「通知の本文に使う
       // (Recommended)」）
-      if (notificationAllowed(settings, 'nankai')) {
-        const n = event.kind === 'nankai' ? nankaiNotification(event.data) : kohatsuNotification(event.data)
-        showBrowserNotification(n.title, n.body, n.tag)
-      }
+      notifySpecialInfo(event.kind === 'nankai' ? { kind: 'nankai', data: event.data } : { kind: 'kohatsu', data: event.data })
       return
     }
 

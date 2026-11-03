@@ -239,7 +239,8 @@ function parseTelegramXml(xml: string, logPrefix: string): Document | null {
   } catch (e) {
     return dropTelegram(logPrefix, `XML の解析で例外が出ました: ${String(e)}`)
   }
-  if (doc.querySelector('parsererror')) {
+  // `querySelector` は使わない。中継（Workers）で使う XML の DOM（@xmldom/xmldom）には無い
+  if (doc.getElementsByTagName('parsererror').length > 0) {
     return dropTelegram(logPrefix, 'XML として読めません（parsererror）')
   }
   return doc
