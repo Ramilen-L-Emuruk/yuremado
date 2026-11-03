@@ -1,9 +1,10 @@
 // 同じ地震について届いた報のうち、発表が最も新しい報の値を地震カードの上段へ当てる規則
 // （2026-11-03 ユーザー選択「発表時刻が最も新しい報 (Recommended)」「長周期と同じくカード本体へまとめる (Recommended)」）。
 import { describe, it, expect } from 'vitest'
-import { withLatestQuakeFacts, latestQuakeFactsIntoCards } from './latestQuakeFacts'
+import { withLatestQuakeFacts as withLatestQuakeFactsAll, latestQuakeFactsIntoCards as latestQuakeFactsIntoCardsAll } from './latestQuakeFacts'
 import './quakeMerge'
-import type { JMAQuake, JMAEstimatedIntensity, JMALpgm } from '../types/earthquake'
+import type { JMAQuake, JMAEstimatedIntensity, JMALpgm, JMATsunami, TsunamiSourceEarthquake } from '../types/earthquake'
+import { borrowFromTsunamiIntoCards } from './borrowFromTsunami'
 import { CELL_LAT_DEG, CELL_LON_DEG } from './bufrEstimatedIntensity'
 
 const EVENT = '20240101161010'
@@ -46,6 +47,11 @@ function ei(reportTime: string, lat = 37.51, lon = 137.22): JMAEstimatedIntensit
 }
 
 const map = (l?: JMALpgm) => new Map(l ? [[EVENT, l]] : [])
+// 津波を使わないテストは、津波の一覧を空で渡す
+const withLatestQuakeFacts = (card: JMAQuake, l: Map<string, JMALpgm>, eis: readonly JMAEstimatedIntensity[]) =>
+  withLatestQuakeFactsAll(card, l, eis, [], [])
+const latestQuakeFactsIntoCards = (cards: JMAQuake[], l: Map<string, JMALpgm>, eis: readonly JMAEstimatedIntensity[]) =>
+  latestQuakeFactsIntoCardsAll(cards, l, eis, [])
 
 describe('withLatestQuakeFacts', () => {
   // 正: 地震情報より後に出た長周期が別の値を運べば、その値をカードの上段に出す
@@ -189,5 +195,170 @@ describe('mergeQuakeInto は当てた値を地震情報の値として引き継�
     const merged = mergeQuakeInto(applied, next)
     expect(merged.quakeInfoFacts).toBeUndefined()
     expect(merged.earthquake.hypocenter.magnitude).toBe(7.5)
+  })
+})
+
+// 津波電文の原因地震も同じ地震の報として当てる（2026-11-03 ユーザー選択「入れる (Recommended)」）
+describe('津波電文の原因地震を当てる', () => {
+  const source = (over: Partial<TsunamiSourceEarthquake> = {}): TsunamiSourceEarthquake => ({
+    hypocenterName: '石川県能登地方', magnitude: 7.6, magnitudeType: 'Mj', originTime: '2024-01-01T16:10:00+09:00',
+    arrivalTime: '2024-01-01T16:10:00+09:00', latitude: 37.5, longitude: 137.2, depth: 0, ...over,
+  })
+  const tsunami = (reportTime: string, over: Partial<JMATsunami> = {}, src = source()): JMATsunami => ({
+    kind: 'tsunami', id: `dmdata-tsunami-${EVENT}-${reportTime}`, eventId: EVENT, time: reportTime, cancelled: false,
+    infoName: '津波警報・津波注意報・津波予報', issue: { source: 'dmdata', time: reportTime, type: 'Focus' },
+    areas: [], sourceEarthquakes: [src], ...over,
+  } as JMATsunami)
+
+  // 正: 地震情報より新しい津波が新しい規模を運べば、上段へ当て、出どころに津波の印を付ける（能登 16:22 の形）
+  it('地震情報より新しい津波の規模を当て、津波情報の印を付ける', () => {
+    const card = quake('2024-01-01T16:16:00+09:00')
+    const out = withLatestQuakeFactsAll(card, map(), [], [tsunami('2024-01-01T16:22:00+09:00')], [card])
+    expect(out.earthquake.hypocenter.magnitude).toBe(7.6)
+    expect(out.hypocenterSource?.shortLabel).toBe('津波情報')
+    expect(out.quakeInfoFacts?.hypocenter.magnitude).toBe(7.4)
+  })
+
+  // 対照: 地震情報のほうが新しければ当てない（16:24 の地震情報が同じ更新を伝えた後）
+  it('地震情報のほうが新しければ当てない', () => {
+    const card = quake('2024-01-01T16:24:00+09:00', 7.6)
+    expect(withLatestQuakeFactsAll(card, map(), [], [tsunami('2024-01-01T16:22:00+09:00')], [card])).toBe(card)
+  })
+
+  // 安全弁: 取り消された津波は当てず、当てていた値は地震情報の値へ戻る
+  it('取り消された津波は当てず、当てていた値を戻す', () => {
+    const card = quake('2024-01-01T16:16:00+09:00')
+    const applied = withLatestQuakeFactsAll(card, map(), [], [tsunami('2024-01-01T16:22:00+09:00')], [card])
+    const cancelled = tsunami('2024-01-01T16:22:00+09:00', { cancelledAt: new Date(), cancelReason: 'retracted' })
+    const back = withLatestQuakeFactsAll(applied, map(), [], [cancelled], [card])
+    expect(back.earthquake.hypocenter.magnitude).toBe(7.4)
+    expect(back.hypocenterSource).toBeUndefined()
+  })
+
+  // 安全弁: 津波を当てたカードは、借りる処理が上書きしない（当てる側が毎回組み立て直す）
+  it('当てたカードに借りる処理を掛けても変わらない', () => {
+    const card = quake('2024-01-01T16:16:00+09:00')
+    const tsu = [tsunami('2024-01-01T16:22:00+09:00')]
+    const applied = withLatestQuakeFactsAll(card, map(), [], tsu, [card])
+    expect(borrowFromTsunamiIntoCards([applied], tsu)[0]).toBe(applied)
+  })
+
+  // 正: 長周期と津波の両方が新しければ、発表がより新しいほう
+  it('長周期と津波のうち発表が新しいほうを当てる', () => {
+    const card = quake('2024-01-01T16:16:00+09:00')
+    const out = withLatestQuakeFactsAll(card, map(lpgm('2024-01-01T16:23:00+09:00', 7.5)), [], [tsunami('2024-01-01T16:22:00+09:00')], [card])
+    expect(out.earthquake.hypocenter.magnitude).toBe(7.5)
+    expect(out.hypocenterSource).toBeUndefined()
+  })
+})
+
+describe('当てた津波の値を覚えておく（一覧に無いだけでは戻さない）', () => {
+  const src = (over: Partial<TsunamiSourceEarthquake> = {}): TsunamiSourceEarthquake => ({
+    hypocenterName: '石川県能登地方', magnitude: 7.6, magnitudeType: 'Mj', arrivalTime: '2024-01-01T16:10:00+09:00',
+    latitude: 37.5, longitude: 137.2, depth: 0, ...over,
+  })
+  const tsu = (reportTime: string, over: Partial<JMATsunami> = {}): JMATsunami => ({
+    kind: 'tsunami', id: `t-${reportTime}`, eventId: EVENT, time: reportTime, cancelled: false,
+    infoName: '津波警報・津波注意報・津波予報', issue: { source: 'dmdata', time: reportTime, type: 'Focus' },
+    areas: [], sourceEarthquakes: [src()], ...over,
+  } as JMATsunami)
+  const applied = () => {
+    const card = quake('2024-01-01T16:16:00+09:00')
+    return withLatestQuakeFactsAll(card, map(), [], [tsu('2024-01-01T16:22:00+09:00')], [card])
+  }
+
+  // 安全弁: 解除・失効で津波が一覧から消えても、当てた津波の値は残る（津波の値は取り下げられていない）
+  it('津波が一覧から消えても当てた値を残す', () => {
+    const a = applied()
+    const out = withLatestQuakeFactsAll(a, map(), [], [], [a])
+    expect(out.earthquake.hypocenter.magnitude).toBe(7.6)
+    expect(out.hypocenterSource?.shortLabel).toBe('津波情報')
+  })
+
+  // 安全弁: 原因地震を持たない続報（観測だけの報など）が来ても、当てた値は残る
+  it('原因地震を持たない続報では戻さない', () => {
+    const a = applied()
+    const out = withLatestQuakeFactsAll(a, map(), [], [tsu('2024-01-01T16:40:00+09:00', { sourceEarthquakes: undefined })], [a])
+    expect(out.earthquake.hypocenter.magnitude).toBe(7.6)
+  })
+
+  // 安全弁: 解除された津波（取消ではない）の値も残す
+  it('解除された津波の値は残す', () => {
+    const a = applied()
+    const lifted = tsu('2024-01-01T16:22:00+09:00', { cancelledAt: new Date(), cancelReason: 'lifted' })
+    expect(withLatestQuakeFactsAll(a, map(), [], [lifted], [a]).earthquake.hypocenter.magnitude).toBe(7.6)
+  })
+
+  // 正: 取り消されたと分かったら、覚えていた値も捨てて地震情報の値へ戻す。その後一覧から消えても戻ったまま
+  it('取り消されたら覚えていた値も捨てる', () => {
+    const a = applied()
+    const retracted = tsu('2024-01-01T16:22:00+09:00', { cancelledAt: new Date(), cancelReason: 'retracted' })
+    const back = withLatestQuakeFactsAll(a, map(), [], [retracted], [a])
+    expect(back.earthquake.hypocenter.magnitude).toBe(7.4)
+    expect(back.appliedTsunamiSource).toBeUndefined()
+    expect(withLatestQuakeFactsAll(back, map(), [], [], [back]).earthquake.hypocenter.magnitude).toBe(7.4)
+  })
+
+  // 安全弁: 解除の報（cancelled: true・cancelReason: 'lifted'）は取消ではない
+  it('解除の報そのものでは戻さない', () => {
+    const a = applied()
+    const lift = tsu('2024-01-01T17:00:00+09:00', { cancelled: true, cancelReason: 'lifted', sourceEarthquakes: undefined })
+    expect(withLatestQuakeFactsAll(a, map(), [], [lift], [a]).earthquake.hypocenter.magnitude).toBe(7.6)
+  })
+
+  // 正: 津波が一覧から消えた後でも、届いた取消の報だけで戻す（表示中の津波に当たらない取消）
+  it('一覧に津波が無くても、取消の報が届けば戻す', () => {
+    const a = applied()
+    const gone = withLatestQuakeFactsAll(a, map(), [], [], [a])
+    const retraction = tsu('2024-01-01T17:00:00+09:00', { cancelled: true, cancelReason: 'retracted', sourceEarthquakes: undefined })
+    const back = withLatestQuakeFactsAll(gone, map(), [], [retraction], [gone])
+    expect(back.earthquake.hypocenter.magnitude).toBe(7.4)
+    expect(back.appliedTsunamiSource).toBeUndefined()
+  })
+
+  // 正: 覚えた津波の番号（暫定の番号）を指す取消でも戻す
+  it('覚えた津波の番号を指す取消で戻す', () => {
+    const a = applied()
+    const renumbered = { ...a, id: 'dmdata-quake-20240101161099-1' }
+    const retraction = tsu('2024-01-01T17:00:00+09:00', { cancelled: true, cancelReason: 'retracted', sourceEarthquakes: undefined })
+    expect(withLatestQuakeFactsAll(renumbered, map(), [], [retraction], [renumbered]).earthquake.hypocenter.magnitude).toBe(7.4)
+  })
+
+  // 安全弁: 番号を足して切り替わった津波（A → A B）の後に、別の津波（B C）の取消が来ても、地震 A のカードは戻さない
+  it('番号の重なる別の津波の取消では戻さない', () => {
+    const card = quake('2024-01-01T16:16:00+09:00')
+    const switched = tsu('2024-01-01T16:22:00+09:00', { eventId: `${EVENT} 20240101170000` })
+    const a = withLatestQuakeFactsAll(card, map(), [], [switched], [card])
+    expect(a.earthquake.hypocenter.magnitude).toBe(7.6)
+    const other = tsu('2024-01-01T17:30:00+09:00', { eventId: '20240101170000 20240101171111', cancelled: true, cancelReason: 'retracted', sourceEarthquakes: undefined })
+    expect(withLatestQuakeFactsAll(a, map(), [], [other], [a]).earthquake.hypocenter.magnitude).toBe(7.6)
+  })
+
+  // 安全弁: 覚えた報より古い取消（再配信）では戻さない
+  it('覚えた報より古い取消では戻さない', () => {
+    const a = applied()
+    const stale = tsu('2024-01-01T16:20:00+09:00', { cancelled: true, cancelReason: 'retracted', sourceEarthquakes: undefined })
+    expect(withLatestQuakeFactsAll(a, map(), [], [stale], [a]).earthquake.hypocenter.magnitude).toBe(7.6)
+  })
+
+  // 安全弁: 地震情報の続報を統合しても覚えた値は引き継ぎ、続報より津波が新しければ当て続ける
+  it('統合は覚えた津波の値を引き継ぐ', async () => {
+    const { mergeQuakeInto } = await import('./quakeMerge')
+    const a = applied()
+    const next = { ...quake('2024-01-01T16:18:00+09:00', 7.4), id: `dmdata-quake-${EVENT}-2` }
+    const merged = mergeQuakeInto(a, next)
+    expect(merged.appliedTsunamiSource?.source.magnitude).toBe(7.6)
+    expect(withLatestQuakeFactsAll(merged, map(), [], [], [merged]).earthquake.hypocenter.magnitude).toBe(7.6)
+  })
+
+  // 正・対照: 規模は 3 つ組で採る。報が規模を運べば種類も報の値、運ばなければ 3 つとも地震情報のまま
+  it('規模の値・説明・種類を組で採る', () => {
+    const card = quake('2024-01-01T16:16:00+09:00')
+    const typed = { ...card, earthquake: { ...card.earthquake, hypocenter: { ...card.earthquake.hypocenter, magnitudeType: 'Mj' } } }
+    const noType = withLatestQuakeFactsAll(typed, map(), [], [tsu('2024-01-01T16:22:00+09:00', { sourceEarthquakes: [src({ magnitudeType: undefined })] })], [typed])
+    expect(noType.earthquake.hypocenter.magnitude).toBe(7.6)
+    expect(noType.earthquake.hypocenter.magnitudeType).toBeUndefined()
+    const noMag = withLatestQuakeFactsAll(typed, map(), [], [tsu('2024-01-01T16:22:00+09:00', { sourceEarthquakes: [src({ magnitude: undefined, magnitudeType: undefined, latitude: 37.6 })] })], [typed])
+    expect(noMag.earthquake.hypocenter).toMatchObject({ magnitude: 7.4, magnitudeType: 'Mj', latitude: 37.6 })
   })
 })

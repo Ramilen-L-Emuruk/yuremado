@@ -31,6 +31,7 @@ const EMPTY = {
   earthquakes: [],
   lpgmByEventId: new Map<string, JMALpgm>(),
   estimatedIntensities: [],
+  tsunamis: [],
   quakeUpdateMarks: new Map(),
   quakeMarkMemory: new Map(),
 }

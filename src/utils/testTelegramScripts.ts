@@ -503,6 +503,26 @@ export const HYPOCENTER_FROM_TSUNAMI: TestTelegramScript = {
   ],
 }
 
+/**
+ * 津波の続報が、地震情報より新しい規模を伝える場面のテスト（能登本震の実電文の並び。2026-11-03 ユーザー選択
+ * 「別のボタンを足す (Recommended)」）。
+ *
+ *   1. 震源・震度に関する情報（16:16。M7.4。カードは自前の震源を持つ）
+ *   2. 津波警報の続報（16:22。M7.6。**地震情報より新しいので、カードの上段も M7.6 になり「津波情報より」が付く**）
+ *   3. 震源・震度に関する情報の続報（16:24。M7.6。地震情報のほうが新しくなり、出どころの印が消える）
+ *
+ * 震源を持たない震度速報が借りる経路は {@link HYPOCENTER_FROM_TSUNAMI} が持つ。ここへ混ぜると、借りた震源が
+ * 津波の続報に追随する経路が通らなくなるので分けた（→ `utils/latestQuakeFacts.ts`）。
+ */
+export const MAGNITUDE_FROM_TSUNAMI: TestTelegramScript = {
+  anchor: 2,
+  steps: [
+    { file: NOTO.detail1, headType: 'VXSE53', atMs: 0 },
+    { file: NOTO.tsunami2, headType: 'VTSE41', atMs: HYPOCENTER_BORROW_STEP_MS },
+    { file: NOTO.detail2, headType: 'VXSE53', atMs: HYPOCENTER_BORROW_UPDATE_MS },
+  ],
+}
+
 // ───────────────────────── 津波 ─────────────────────────
 
 /**
@@ -1983,7 +2003,7 @@ function isoZ(ms: number): string {
 export const ALL_TEST_TELEGRAM_SCRIPTS: Readonly<Record<string, TestTelegramScript>> = {
   EARTHQUAKE, TRAINING_QUAKE, UNRECEIVED_QUAKE, MAX_SCALE_OR_ABOVE_QUAKE, AREA_UNRECEIVED_QUAKE,
   FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI, HEADLINE_ONLY_CITY, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
-  QUAKE_PARTIAL_CANCEL, HYPOCENTER_FROM_TSUNAMI,
+  QUAKE_PARTIAL_CANCEL, HYPOCENTER_FROM_TSUNAMI, MAGNITUDE_FROM_TSUNAMI,
   TSUNAMI_MAJOR_WARNING, TSUNAMI_QUIET_REPORTS, TSUNAMI_WARNING, TSUNAMI_WATCH, TSUNAMI_FORECAST, TSUNAMI_EXPIRY, TSUNAMI_GRADE_CHANGE,
   TSUNAMI_SOURCE_ADDED, TSUNAMI_RETRACTION, TSUNAMI_INFO_RETRACTION,
   NANKAI_CHECKING, NANKAI_WATCH, NANKAI_WARNING, NANKAI_RETRACTION,

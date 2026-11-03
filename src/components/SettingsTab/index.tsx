@@ -92,6 +92,8 @@ export interface TestFunctions {
   /** 地震情報の一部の取消（震度速報だけの取消）。 */
   quakePartialCancel?: () => void
   borrowFromTsunami?: () => void
+  /** 津波の続報が地震情報より新しい規模を伝える場面。 */
+  magnitudeFromTsunami?: () => void
   unreceivedQuake?: () => void
   maxScaleOrAboveQuake?: () => void
   tsunamiGradeChange?: () => void
@@ -2469,6 +2471,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {onTest.borrowFromTsunami && (
           <Row label="津波が先に伝える震源" description="震度速報 → 津波警報 → 震度速報の続報 → 津波の続報（2024年能登半島地震の本震と同じ順序）。震度速報は震源を持たないが、津波警報が載せている震源を借りてカードと読み上げに出し、行に「津波情報より」と出どころが付く">
             <TestButton color="yellow" onClick={onTest.borrowFromTsunami}>震源の借用テスト</TestButton>
+          </Row>
+        )}
+        {onTest.magnitudeFromTsunami && (
+          <Row label="津波が後から伝える規模" description="震源・震度情報（M7.4）→ 津波の続報（M7.6）→ 震源・震度情報の続報（M7.6）（2024年能登半島地震の本震と同じ順序）。津波の続報が地震情報より新しい規模を伝えると、カードの規模も M7.6 になり、行に「津波情報より」と出どころが付く。次の震源・震度情報が届くと出どころの印は消える">
+            <TestButton color="yellow" onClick={onTest.magnitudeFromTsunami}>規模の更新テスト</TestButton>
           </Row>
         )}
         {onTest.trainingQuake && (

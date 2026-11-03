@@ -829,7 +829,11 @@ export function mergeQuakeInto(
   const incoming = withoutLatestQuakeFacts(incomingCard)
   const body = mergeQuakeIntoBody(existing, incoming, opts)
   // 据え置き（同じ参照を返す）は、戻す前の参照のまま返す（「変化なし＝同一参照」の約束を保つ）
-  const result = existingCard && body === existing ? existingCard : body
+  const merged = existingCard && body === existing ? existingCard : body
+  // **当てた津波の値は、どの分岐を通っても引き継ぐ**（→ `JMAQuake.appliedTsunamiSource`）。本体の分岐は `...incoming` を
+  // 土台にすることがあり、そのとき黙って落ちる。落ちると、津波が一覧から消えた後に当てた値が地震情報の値へ戻る
+  const carriedTsunami = existingCard?.appliedTsunamiSource ?? incomingCard.appliedTsunamiSource
+  const result = carriedTsunami && !merged.appliedTsunamiSource ? { ...merged, appliedTsunamiSource: carriedTsunami } : merged
   // **一部の取消の記録は、どの分岐を通っても引き継ぐ**（→ `JMAQuake.retractedReports`）。
   // 本体は分岐ごとに `...existing` か `...incoming` を土台にするので、土台が電文の側だと
   // 黙って落ちる。分岐 1 つずつに書き足すと、分岐が増えたときに必ず漏れる。

@@ -466,7 +466,7 @@ function marksFromHistory(
  * こちらだけ出ない形にはしない（→ `lpgmRowSnapshot`）。
  */
 export function applyLiveLpgmWithMarks(
-  prev: Pick<EarthquakeState, 'earthquakes' | 'lpgmByEventId' | 'estimatedIntensities' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
+  prev: Pick<EarthquakeState, 'earthquakes' | 'lpgmByEventId' | 'estimatedIntensities' | 'tsunamis' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
   lpgm: JMALpgm,
   now: number,
 ): Pick<EarthquakeState, 'earthquakes' | 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
@@ -481,12 +481,12 @@ export function applyLiveLpgmWithMarks(
         ...unmarked,
         ...applyLatestFactsWithMarks(
           { earthquakes: retracted, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory },
-          next, prev.estimatedIntensities, now,
+          next, prev.estimatedIntensities, prev.tsunamis, now,
         ),
       }
     } catch (err) {
       log.error('[lpgm] 長周期の取消で上段を戻す印を付けられなかった（取消は積んだ）', { eventId: lpgm.eventId, err })
-      return { ...unmarked, earthquakes: latestQuakeFactsIntoCards(retracted, next, prev.estimatedIntensities) }
+      return { ...unmarked, earthquakes: latestQuakeFactsIntoCards(retracted, next, prev.estimatedIntensities, prev.tsunamis) }
     }
   }
   // **印付けが投げても一覧の更新は通す。** ここは `setState` の更新関数の中で走るので、
@@ -499,7 +499,7 @@ export function applyLiveLpgmWithMarks(
       ...lpgmMarked,
       ...applyLatestFactsWithMarks(
         { earthquakes: prev.earthquakes, quakeUpdateMarks: lpgmMarked.quakeUpdateMarks, quakeMarkMemory: lpgmMarked.quakeMarkMemory },
-        next, prev.estimatedIntensities, now,
+        next, prev.estimatedIntensities, prev.tsunamis, now,
       ),
     }
   } catch (err) {
@@ -526,7 +526,7 @@ function settleHistoryCards(
   lpgmRetractions: readonly LpgmRetraction[],
 ): JMAQuake[] {
   const borrowed = lpgmRetractionsIntoCards(borrowFromTsunamiIntoCards(cards, tsunamis), lpgmRetractions)
-  const shown = latestQuakeFactsIntoCards(borrowed, lpgmByEventId, estimatedIntensities)
+  const shown = latestQuakeFactsIntoCards(borrowed, lpgmByEventId, estimatedIntensities, tsunamis)
   if (shown === borrowed) return borrowed
   shown.forEach((card, i) => {
     if (card === borrowed[i]) return
@@ -554,9 +554,10 @@ export function applyLatestFactsWithMarks(
   prev: Pick<EarthquakeState, 'earthquakes' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
   lpgmByEventId: ReadonlyMap<string, JMALpgm>,
   estimatedIntensities: readonly JMAEstimatedIntensity[],
+  tsunamis: readonly JMATsunami[],
   now: number,
 ): Pick<EarthquakeState, 'earthquakes' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
-  const next = latestQuakeFactsIntoCards(prev.earthquakes, lpgmByEventId, estimatedIntensities)
+  const next = latestQuakeFactsIntoCards(prev.earthquakes, lpgmByEventId, estimatedIntensities, tsunamis)
   // **受け取った欄だけを返す。** `prev` そのものを返すと、呼び出し側が展開したとき、他の欄（同じ更新で新しくした推計の
   // 一覧など）を古い値で上書きする
   if (next === prev.earthquakes) {
@@ -1602,7 +1603,7 @@ export function useEarthquakes(
     setState(prev => ({
       ...prev,
       estimatedIntensities: list,
-      ...applyLatestFactsWithMarks(prev, prev.lpgmByEventId, list, Date.now()),
+      ...applyLatestFactsWithMarks(prev, prev.lpgmByEventId, list, prev.tsunamis, Date.now()),
     }))
     // 初報か続報かは**台帳**で決める。`update.reason` では決められない —— 履歴から黙って
     // 取り込んだ分布も「持っている」側に入るので、まだ伝えていない地震の分布が `newer` になる。
@@ -2235,7 +2236,8 @@ export function useEarthquakes(
                 // 当て直しは借りた震源・津波区分を持たない（控えの電文から組み直すため）。
                 // 通常の続報と同じく、統合の後で借り直す（→ 下の `withBorrowedFromTsunami`）。
                 const card = withLatestQuakeFacts(
-                  withBorrowedFromTsunami(effect.card, prev.tsunamis, prev.earthquakes), prev.lpgmByEventId, prev.estimatedIntensities)
+                  withBorrowedFromTsunami(effect.card, prev.tsunamis, prev.earthquakes), prev.lpgmByEventId, prev.estimatedIntensities,
+                  prev.tsunamis, prev.earthquakes)
                 // 当て直したカードの姿を記憶へ写す（履歴の同じ分岐と揃える。写すのは借り直した後の
                 // 画面に出る値）。**印は出さない** —— 取り消されて消えた値は「いま動いた」ではない。
                 markMemory ??= new Map(prev.quakeMarkMemory)
@@ -2306,7 +2308,8 @@ export function useEarthquakes(
           // 津波が後から届く順序は、下の 'tsunami' 側が拾う。
           // 長周期・推計が、届いた地震情報より新しい値を運んでいれば上段へ当てる（→ `utils/latestQuakeFacts.ts`）
           const merged = withLatestQuakeFacts(
-            withBorrowedFromTsunami(mergedCard, prev.tsunamis, prev.earthquakes), prev.lpgmByEventId, prev.estimatedIntensities)
+            withBorrowedFromTsunami(mergedCard, prev.tsunamis, prev.earthquakes), prev.lpgmByEventId, prev.estimatedIntensities,
+            prev.tsunamis, prev.earthquakes)
           // 統合の結果、暫定 ID で作られたカードが確定 ID を持つカードと重複することがある。
           // 履歴経路（mergeQuakeHistory）と同じ畳み込みをここでも通す（理由は coalesceByEventId）。
           //
@@ -2317,7 +2320,7 @@ export function useEarthquakes(
           const next = latestQuakeFactsIntoCards(coalesceByEventId([
             merged,
             ...prev.earthquakes.filter(e => e.cancelledAt || !sameQuakeEntry(e, quake, getAreaPrefIndexCache())),
-          ]), prev.lpgmByEventId, prev.estimatedIntensities)
+          ]), prev.lpgmByEventId, prev.estimatedIntensities, prev.tsunamis)
           // カードの更新の印。**併合が済んだここで取る** —— 続報の持ち越し規則（§6.4）を
           // 適用したあとの「画面に出ている値」どうしを比べたいので、電文の側では取れない。
           // 受信ハンドラ（`useLiveEventHandler`）はこの統合より前に呼ばれるため、あちらでも取れない。
@@ -2362,14 +2365,52 @@ export function useEarthquakes(
           // **報を当てた結果は `stepTsunamiState` が決める**（失効予約の積み直しと同じ答えを使うため。
           // 片方だけ書き換えると、画面の津波と失効の予約が別の期限で動く）。
           const step = stepTsunamiState(current, tsunami, now)
-          if (step.kind === 'ignored') return prev
+          // **届いた報が取消なら、どの分岐でもその報自身を当て込みに見せる。** 表示中の津波に当たらない取消（解除・失効の後に
+          // 届いた・別の津波の取消・一部取消で組み直した）でも、その津波から当てて覚えていた値を捨てる（→ `JMAQuake.appliedTsunamiSource`）。
+          // 一部取消で組み直した津波が原因地震を持てば、その値で当て直す
+          const retraction: JMATsunami[] = tsunami.cancelReason === 'retracted' ? [tsunami] : []
+          // 津波の一覧を入れ替えたら、地震カードの上段を当て直す（借りる → 当てる の順。地震情報の受信・履歴の組み直しと同じ）。
+          // **津波の続報だけでなく、取消・解除・失効でも通す。** 取消で当てていた値を戻すのも、続報で動いた値に更新の印を付けるのも
+          // ここでしか起きない（→ `utils/latestQuakeFacts.ts`）。`seen` は当て込みが見る津波の一覧で、状態に残す一覧と違うことがある
+          const withTsunamiFacts = (tsunamis: JMATsunami[], shown: JMATsunami[] = tsunamis): EarthquakeState => {
+            const seen = [...shown, ...retraction]
+            const borrowed = borrowFromTsunamiIntoCards(prev.earthquakes, seen)
+            // **印付けが投げても一覧の更新は通す**（長周期の経路と同じ。`setState` の更新関数の中で投げると画面ごと落ちる）
+            try {
+              return {
+                ...prev,
+                tsunamis,
+                ...applyLatestFactsWithMarks(
+                  { earthquakes: borrowed, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory },
+                  prev.lpgmByEventId, prev.estimatedIntensities, seen, Date.now(),
+                ),
+                lastUpdate: now,
+              }
+            } catch (err) {
+              log.error('[tsunami] 地震カードの上段を当て直す印を付けられなかった（津波は更新した）', { id: tsunami.id, err })
+              return {
+                ...prev, tsunamis, lastUpdate: now,
+                earthquakes: latestQuakeFactsIntoCards(borrowed, prev.lpgmByEventId, prev.estimatedIntensities, seen),
+              }
+            }
+          }
+          // 無視した取消でも当て直す（取り消された津波から当てた値を捨てるため）。**地震カードが変わらなければ状態ごと据え置き、
+          // 変わっても津波の一覧と「更新」の時刻には触らない** —— 津波には何も起きていない
+          if (step.kind === 'ignored') {
+            if (retraction.length === 0) return prev
+            const refit = withTsunamiFacts(prev.tsunamis as JMATsunami[])
+            if (refit.earthquakes === prev.earthquakes) return prev
+            return { ...refit, tsunamis: prev.tsunamis, lastUpdate: prev.lastUpdate }
+          }
           if (step.kind === 'ended') {
             if (step.reason === 'retractedAll') {
               // 津波情報・沖合の観測だけの取消で、組み立てに使った報がその種類だけだった（警報等を受けていない）。
               log.warn(`[tsunami] ${tsunami.headType} の取消で組み直す報が残らないため、津波を外します: id=${current?.id}`)
-              return { ...prev, tsunamis: [], lastUpdate: now }
+              // 一覧からは外すが、当て込みには「取り消された」ことを見せる。見せないと、当てていた津波の値を覚えたまま残す
+              // （一覧に無いだけの津波は、解除・失効と区別が付かない → `JMAQuake.appliedTsunamiSource`）
+              return withTsunamiFacts([], current ? [{ ...current, cancelledAt: now, cancelReason: 'retracted' }] : [])
             }
-            if (step.reason === 'outdated') return { ...prev, tsunamis: [], lastUpdate: now }
+            if (step.reason === 'outdated') return withTsunamiFacts([])
             // 解除・取消・期限切れのいずれも同じ10秒表示を経る。表示内容は cancelReason で出し分ける（TsunamiTab側）。
             if (current && !current.cancelledAt) {
               // TSU-4: purge 予約に対象 id を持たせ、他イベントが後で置換した場合に誤って
@@ -2384,19 +2425,15 @@ export function useEarthquakes(
               // その報だけが持つ項目は名指しで移さないと落ちる（`cancelText` は気象庁が書いた取消しの
               // 理由、`liftText` は全区域解除の報に気象庁が書いた文で、どちらも他のどこにも無い）。
               const liftText = tsunami.cancelReason === 'lifted' ? tsunamiLiftText(tsunami) : undefined
-              return {
-                ...prev,
-                tsunamis: [{
-                  ...current,
-                  cancelledAt: now,
-                  cancelReason: tsunami.cancelReason,
-                  ...(tsunami.cancelText && { cancelText: tsunami.cancelText }),
-                  ...(liftText && { liftText }),
-                }],
-                lastUpdate: now,
-              }
+              return withTsunamiFacts([{
+                ...current,
+                cancelledAt: now,
+                cancelReason: tsunami.cancelReason,
+                ...(tsunami.cancelText && { cancelText: tsunami.cancelText }),
+                ...(liftText && { liftText }),
+              }])
             }
-            return { ...prev, tsunamis: [], lastUpdate: now }
+            return withTsunamiFacts([])
           }
           // 番号が 1 つも重ならない津波が、表示中の津波の解除を待たずに届いた。
           //
@@ -2410,18 +2447,10 @@ export function useEarthquakes(
           // 続報の引き継ぎ（観測のみ電文で区域を保つ・観測点のマージ等）は `mergeTsunamiReports` の 1 箇所に
           // ある（`stepTsunamiState` 経由）。ここへ書き写すと、履歴からの復元（`withInheritedTsunamiFacts`）との
           // 間で片方だけに項目が足され、「ライブ受信では出るのにリロードすると消える」形の欠落が生まれる。
-          return {
-            ...prev,
-            tsunamis: [step.tsunami],
-            // 津波が先に震源を伝える順序を拾う（→ `borrowFromTsunamiIntoCards`）。続報でも配り直すのは、
-            // 津波電文の震源が更新されるため（能登では 16:22 に Ｍ７．４→Ｍ７．６。地震情報が同じ更新を
-            // 伝えるのは 2 分後の 16:24）。
-            // 借りた後に、長周期・推計の値を当て直す（履歴の組み直しと地震情報の受信と同じ順）
-            earthquakes: latestQuakeFactsIntoCards(
-              borrowFromTsunamiIntoCards(prev.earthquakes, [step.tsunami]), prev.lpgmByEventId, prev.estimatedIntensities,
-            ),
-            lastUpdate: now,
-          }
+          // 津波が先に震源を伝える順序を拾う（→ `borrowFromTsunamiIntoCards`）。続報でも配り直すのは、
+          // 津波電文の震源が更新されるため（能登では 16:22 に Ｍ７．４→Ｍ７．６。地震情報が同じ更新を
+          // 伝えるのは 2 分後の 16:24）。震源を持つカードにも、津波のほうが新しければ当てる（→ `withTsunamiFacts`）
+          return withTsunamiFacts([step.tsunami])
         }
         case 'eew': {
           const eew = event as EEWAlert
@@ -4138,6 +4167,9 @@ export function useEarthquakes(
    */
   const simulateHypocenterFromTsunami = useCallback(() => runTestTelegramScript(s => s.HYPOCENTER_FROM_TSUNAMI), [runTestTelegramScript])
 
+  /** 津波の続報が地震情報より新しい規模を伝える場面のテスト（→ `MAGNITUDE_FROM_TSUNAMI`）。 */
+  const simulateMagnitudeFromTsunami = useCallback(() => runTestTelegramScript(s => s.MAGNITUDE_FROM_TSUNAMI), [runTestTelegramScript])
+
   /**
    * 津波の原因地震が後から加わる場面のテスト（→ `createTestTsunamiSourceAdded`）。
    *
@@ -4647,6 +4679,7 @@ export function useEarthquakes(
     simulateQuakeCancel,
     simulateQuakePartialCancel,
     simulateHypocenterFromTsunami,
+    simulateMagnitudeFromTsunami,
     simulateTsunamiSourceAdded,
     simulateTsunamiInfoRetraction,
     resetState,

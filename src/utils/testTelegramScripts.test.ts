@@ -985,3 +985,19 @@ describe('震源の借用テスト', () => {
     expect(tsunami2.sourceEarthquakes?.[0]?.magnitude).toBe(7.6)
   })
 })
+
+describe('規模の更新テスト', () => {
+  // 津波の続報が地震情報より新しい規模を運び、その後の地震情報が同じ規模で追いつく並び（能登本震の 16:16・16:22・16:24）
+  it('震源・震度情報 → 津波の続報 → 震源・震度情報の続報 の順で、津波だけが間の報として新しい規模を運ぶ', async () => {
+    const events = payloads(await build(scripts.MAGNITUDE_FROM_TSUNAMI)).map(p => (p.kind === 'event' ? p.event : null))
+    expect(events.map(e => e?.kind)).toEqual(['quake', 'tsunami', 'quake'])
+    const [detail1, tsunami2, detail2] = events as [JMAQuake, JMATsunami, JMAQuake]
+    expect(tsunami2.eventId).toBe(extractQuakeEventId(detail1))
+    expect(detail1.earthquake.hypocenter.magnitude).toBe(7.4)
+    expect(tsunami2.sourceEarthquakes?.[0]?.magnitude).toBe(7.6)
+    expect(detail2.earthquake.hypocenter.magnitude).toBe(7.6)
+    // 押した時刻へずらしても、発表の前後は実電文のまま（津波が 2 つの地震情報の間）
+    expect(Date.parse(detail1.time)).toBeLessThan(Date.parse(tsunami2.time))
+    expect(Date.parse(tsunami2.time)).toBeLessThan(Date.parse(detail2.time))
+  })
+})

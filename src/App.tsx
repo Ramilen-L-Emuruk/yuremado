@@ -1045,7 +1045,7 @@ export function App() {
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
-    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
+    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     resetState, loadReplayEvents, peekUpcomingPayloads, restoreQuakeHistory,
   } = useEarthquakes(handleLiveEventWithNotify, debouncedApiKey, settings.dmdataTestDelivery, replayTimeOffset, handleStartupRestore, restoreStartupEews, eewSpreadLog)
@@ -1137,6 +1137,7 @@ export function App() {
     quakeCancel: simulateQuakeCancel,
     quakePartialCancel: simulateQuakePartialCancel,
     borrowFromTsunami: simulateHypocenterFromTsunami,
+    magnitudeFromTsunami: simulateMagnitudeFromTsunami,
     unreceivedQuake:   simulateUnreceivedQuake,
     maxScaleOrAboveQuake: simulateMaxScaleOrAboveQuake,
     areaUnreceivedQuake: simulateAreaUnreceivedQuake,
@@ -1165,7 +1166,7 @@ export function App() {
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
-    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
+    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     settings.notifyEnabled,
   ])

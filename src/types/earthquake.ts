@@ -613,6 +613,27 @@ export interface JMAQuake {
     hypocenterSource?: BorrowedFromTsunami
   }
   /**
+   * 上段へ当てた津波電文の原因地震と、その報の時刻（→ `utils/latestQuakeFacts.ts`）。津波を当てたことの無いカードでは持たない。
+   *
+   * **状態に持つ津波は最新の 1 件だけ**で、解除・失効で一覧から消え、原因地震を持たない続報で上書きされる。一覧だけを見て
+   * 当てると、そのたびに当てた値が地震情報の値へ戻る。そこで当てた値をここに覚え、**その地震の津波が取り消されたと
+   * 分かったときだけ**捨てる（解除と失効は津波の値を取り下げない。→ `borrowFromTsunami.ts` の `isBorrowableTsunami`）。
+   * 地震情報の続報の統合（`mergeQuakeInto`）も引き継ぐ。
+   */
+  appliedTsunamiSource?: {
+    source: TsunamiSourceEarthquake
+    /**
+     * 当てた津波の地震の番号（`tsunamiEventIds`）。取消を突き合わせるのに使う。カードの番号だけで見ると、震度速報の暫定の
+     * 番号から確定の番号へ統合で変わった後に、古い番号を指す取消が当たらない
+     */
+    eventIds: string[]
+    /** 当てた津波の報の発表時刻（新旧の比較に使う） */
+    time: string
+    createdAtMs?: number
+    /** 震源の行に付ける「津波情報より」の印 */
+    mark: BorrowedFromTsunami
+  }
+  /**
    * 津波区分（`earthquake.domesticTsunami`）を津波電文の等級から借りたときの出どころ。
    * → {@link BorrowedFromTsunami}
    *
