@@ -2756,8 +2756,17 @@ export function useEarthquakes(
     // 繋いだ時点で予報キーの検証中だったら `undefined`。札は検証が済んでから取る（→ `RelayTokenStore.ensure`）ので、
     // 検証が済んだ時点のキーがこの接続のキーになり、張り直さない
     let relayForecastKeyAtOpen: string | null | undefined = relayTokenStore.forecastKeyChecking() ? undefined : relayTokenStore.forecastKey()
+    // 使用状況データの識別子（設計書 §6.6）も札に署名されている。オフにしたのに古い札の接続が残ると、
+    // 閉じたときに接続の長さが数えられるので、識別子が変わったら張り直す
+    let relayUsageInstallAtOpen = relayTokenStore.usageInstall()
     const unsubscribeRelayTokens = relayTokenStore.subscribe(() => {
       if (cancelled) return
+      let reopenReason: string | null = null
+      const install = relayTokenStore.usageInstall()
+      if (install !== relayUsageInstallAtOpen) {
+        relayUsageInstallAtOpen = install
+        reopenReason = '使用状況データの送信の設定が変わった'
+      }
       // 検証中はキーが決まっていないので繋ぎ直さない（書き換えの途中で何度も繋ぎ直さない）
       if (!relayTokenStore.forecastKeyChecking()) {
         const key = relayTokenStore.forecastKey()
@@ -2765,17 +2774,22 @@ export function useEarthquakes(
           relayForecastKeyAtOpen = key
         } else if (key !== relayForecastKeyAtOpen) {
           relayForecastKeyAtOpen = key
-          log.info('[relay] 予報キーが変わったため、中継へ繋ぎ直します')
-          endRelayReopen()
-          relayReopening = true
-          relayReopenTimer = setTimeout(() => {
-            relayReopenTimer = null
-            relayReopening = false
-            syncForecastRoute()
-          }, RELAY_FORECAST_STARTUP_GRACE_MS)
-          ws.disconnect()
-          ws.connect()
+          reopenReason = '予報キーが変わった'
         }
+      }
+      // 2 つが同時に変わっても繋ぎ直しは 1 回。どちらの理由でも、張り直しの間に自分の鍵の予報を余計に張らないよう
+      // relayReopening を立ててから繋ぎ直す（DMDATA の同時接続の枠を食わない）
+      if (reopenReason !== null) {
+        log.info(`[relay] ${reopenReason}ため、中継へ繋ぎ直します`)
+        endRelayReopen()
+        relayReopening = true
+        relayReopenTimer = setTimeout(() => {
+          relayReopenTimer = null
+          relayReopening = false
+          syncForecastRoute()
+        }, RELAY_FORECAST_STARTUP_GRACE_MS)
+        ws.disconnect()
+        ws.connect()
       }
       syncForecastRoute()
     })

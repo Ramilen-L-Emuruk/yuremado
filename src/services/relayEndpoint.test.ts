@@ -197,6 +197,52 @@ describe('中継の札と予報キー', () => {
   })
 })
 
+describe('中継の札と使用状況データ', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => tokenResponse())
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => { vi.unstubAllGlobals() })
+  const INSTALL = 'c'.repeat(32)
+  const store = () => createRelayTokenStore({ origin: 'https://relay.test', nowMs: () => 1000, wallNowMs: () => RELAY_NOW })
+  const init = (i: number) => fetchMock.mock.calls[i][1] as RequestInit
+
+  it('正: 許可している間は、札を取るときに本文 usage へ報告を添える', async () => {
+    const s = store()
+    s.setUsage(INSTALL, () => ({ install: INSTALL, os: 'ios' }))
+    await s.ensure()
+    expect(JSON.parse(String(init(0).body))).toEqual({ usage: { install: INSTALL, os: 'ios' } })
+    expect((init(0).headers as Record<string, string>)['Content-Type']).toBe('application/json')
+    expect(s.usageInstall()).toBe(INSTALL)
+  })
+  it('安全弁: 許可していなければ本文を付けない', async () => {
+    const s = store()
+    await s.ensure()
+    expect(init(0).body).toBeUndefined()
+  })
+  it('識別子が変わったら札を捨てて取り直す（オフにしたら識別子の無い札になる）', async () => {
+    const s = store()
+    const seen: string[] = []
+    s.subscribe(() => { seen.push(String(s.usageInstall())) })
+    s.setUsage(INSTALL, () => ({ install: INSTALL }))
+    await s.ensure()
+    s.setUsage(null, null)
+    expect(s.current()).toBeNull()
+    await s.ensure()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(init(1).body).toBeUndefined()
+    expect(seen).toContain('null')
+  })
+  it('対照: 同じ識別子のまま報告の関数だけ替えても、札は捨てない', async () => {
+    const s = store()
+    s.setUsage(INSTALL, () => ({ a: 1 }))
+    await s.ensure()
+    s.setUsage(INSTALL, () => ({ a: 2 }))
+    expect(s.current()).toBe('tok-1')
+  })
+})
+
 describe('中継の札を待つ呼び手の中断', () => {
   let release!: (r: Response) => void
   let fetchMock: ReturnType<typeof vi.fn>
@@ -252,7 +298,7 @@ describe('中継の繋ぎ先', () => {
       current: () => current,
       ensure: async () => { current = 'tok'; return 'tok' },
       invalidate: () => { current = null },
-      setForecastKey: () => {}, forecastKey: () => null, forecastKeyChecking: () => false, forecastScope: () => null, subscribe: () => () => {},
+      setForecastKey: () => {}, forecastKey: () => null, forecastKeyChecking: () => false, forecastScope: () => null, setUsage: () => {}, usageInstall: () => null, subscribe: () => () => {},
     }, createRelayGate())
     expect(ep.apiBase).toBe(RELAY_API_BASE)
     expect(ep.dataBase).toBe(RELAY_DATA_BASE)
@@ -271,7 +317,7 @@ describe('中継の繋ぎ先', () => {
       current: () => current,
       ensure: async () => { current = 'tok'; return 'tok' },
       invalidate: () => { current = null },
-      setForecastKey: () => {}, forecastKey: () => null, forecastKeyChecking: () => false, forecastScope: () => null, subscribe: () => () => {},
+      setForecastKey: () => {}, forecastKey: () => null, forecastKeyChecking: () => false, forecastScope: () => null, setUsage: () => {}, usageInstall: () => null, subscribe: () => () => {},
     }, gate)
     const privateUrl = `${RELAY_PRIVATE_BASE}t/abc`
     expect(() => ep.dataHeaders(privateUrl)).toThrow(RelayTokenError)
@@ -288,7 +334,7 @@ describe('中継の繋ぎ先', () => {
   it('401 で札を捨て、429 で Retry-After を門へ覚えさせる', async () => {
     let current: string | null = 'tok'
     const gate = createRelayGate({ nowMs: () => 0 })
-    const ep = relayEndpoint({ current: () => current, ensure: async () => 'tok', invalidate: () => { current = null }, setForecastKey: () => {}, forecastKey: () => null, forecastKeyChecking: () => false, forecastScope: () => null, subscribe: () => () => {} }, gate)
+    const ep = relayEndpoint({ current: () => current, ensure: async () => 'tok', invalidate: () => { current = null }, setForecastKey: () => {}, forecastKey: () => null, forecastKeyChecking: () => false, forecastScope: () => null, setUsage: () => {}, usageInstall: () => null, subscribe: () => () => {} }, gate)
     ep.observe(200, null)
     expect(current).toBe('tok')
     ep.observe(401, null)

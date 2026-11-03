@@ -2150,10 +2150,19 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
       <Section category="about" title="このアプリについて">
         <AppVersionRow />
         <ReleaseHistoryRow />
+        {/* 使用状況データ（設計書 §6.6）。既定はオフで、初めて開いたときの同意の窓（UsageConsentDialog）か、
+            ここでオンにした間だけ送る。文面は 2026-11-03 ユーザー選択「VS Code・Apple の形」 */}
+        <Row
+          label="使用状況データを送信する"
+          description={'開いたタブ・使っている機能・端末の種類などを送ります。名前・IP アドレス・登録した地点は送りません。' +
+            'オフにすると、この端末の識別子も消えます。'}
+        >
+          <Toggle checked={settings.usageStatsEnabled} onChange={v => onUpdate('usageStatsEnabled', v)} />
+        </Row>
         {/* 利用規約・プライバシーポリシーへの導線。
-            **同意を求める画面は出さない。** 無償・アカウント不要・利用者の情報を集めない
-            アプリなので、起動を 1 手止めてまで読ませる筋合いが無い（通例もこの形）。
-            読みたい人がここから辿れることを担保する。
+            **規約に同意を求める画面は出さない。** 無償・アカウント不要のアプリなので、起動を 1 手止めてまで
+            読ませる筋合いが無い（通例もこの形）。読みたい人がここから辿れることを担保する。
+            使用状況データの送信だけは、送る前に同意の窓で尋ねる（上の行）。
 
             **規約の本体はリポジトリの Markdown へ置き、ここからは GitHub を開く。**
             同じサイト内で配信する形（HTML を用意する）も採れるが、更新のたびに
