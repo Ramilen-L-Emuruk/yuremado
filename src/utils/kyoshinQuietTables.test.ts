@@ -16,7 +16,7 @@ const T0 = Date.UTC(2024, 7, 29)
 
 /** 点ごとの値の並びを、1 秒ずつ流す。 */
 function feedSeries(baker: QuietTableBaker, series: number[][], startMs = T0, cfg = 'c1', sites = SITES): void {
-  for (let s = 0; s < series[0].length; s++) baker.feed(startMs + s * 1000, cfg, sites, series.map(v => v[s]), true)
+  for (let s = 0; s < series[0].length; s++) baker.feed(startMs + s * 1000, cfg, sites, series.map(v => v[s]), true, null)
 }
 const flat = (len: number, v = 3) => Array.from({ length: len }, () => v)
 
@@ -72,10 +72,78 @@ describe('平常のゆらぎの表を焼く数え方', () => {
     feedSeries(all, [rise, flat(rise.length)])
     const skip = new QuietTableBaker()
     // 81〜83 秒目（上がり）だけ数えない。前後の秒は同じに数える
-    for (let s = 0; s < rise.length; s++) skip.feed(T0 + s * 1000, 'c1', SITES, [rise[s], 3], s < 80 || s > 82)
+    for (let s = 0; s < rise.length; s++) skip.feed(T0 + s * 1000, 'c1', SITES, [rise[s], 3], s < 80 || s > 82, null)
     const k = quietSiteKey(SITES[0])
     expect(skip.result([]).tails[k].n).toBe(all.result([]).tails[k].n - 3)
     expect(skip.result([]).tails[k].y[1]).toBeLessThan(all.result([]).tails[k].y[1])
+  })
+
+  describe('点ごとの数えない印（震源リストの地震の揺れが届いた秒を外す）', () => {
+    const rise = [...flat(80), 5, 5, 5, ...flat(20)]
+    /** 81〜83 秒目（上がり）に、`marked` の点だけ数えない印を付けて流す */
+    const bake = (marked: number[]) => {
+      const b = new QuietTableBaker()
+      for (let s = 0; s < rise.length; s++) {
+        const skip = new Uint8Array(2)
+        if (s >= 80 && s <= 82) for (const i of marked) skip[i] = 1
+        b.feed(T0 + s * 1000, 'c1', SITES, [rise[s], rise[s]], true, skip)
+      }
+      return b.counts()
+    }
+    const k0 = quietSiteKey(SITES[0]), k1 = quietSiteKey(SITES[1])
+
+    it('正: 印の付いた点の秒は、判定できた秒にも上がりにも足さない（印の無い点は数える）', () => {
+      const c = bake([0])
+      expect(c.tails[k0].n).toBe(c.tails[k1].n - 3)
+      expect(c.tails[k0].y[1]).toBe(0)
+      expect(c.tails[k1].y[1]).toBeGreaterThan(0)
+      expect(c.glob.y[1]).toBe(c.tails[k1].y[1])
+    })
+
+    it('対照: 印がどれも 0 なら、null を渡したときと同じに数える', () => {
+      const b = new QuietTableBaker()
+      for (let s = 0; s < rise.length; s++) b.feed(T0 + s * 1000, 'c1', SITES, [rise[s], rise[s]], true, null)
+      expect(bake([])).toEqual(b.counts())
+    })
+
+    it('安全弁: 印の付いた秒も上がりの基準には使うので、印が外れた後の秒の数え方は変わらない', () => {
+      // 81 秒目に 6 へ上がってそのまま保つ。81〜83 秒目に印を付け、数えるのは 84 秒目以降だけ
+      const twice = [...flat(80), ...flat(30, 6)]
+      const run = (mark: boolean) => {
+        const b = new QuietTableBaker()
+        for (let s = 0; s < twice.length; s++) {
+          const skip = new Uint8Array(2)
+          if (mark && s >= 80 && s <= 82) skip[0] = 1
+          b.feed(T0 + s * 1000, 'c1', SITES, [twice[s], 3], s >= 83, skip)
+        }
+        return b.counts().tails[k0]
+      }
+      // 印の秒を上がりの基準から外す作りだと、上がった時刻が印の後へずれ、84 秒目以降に数える上がりが食い違う
+      expect(run(true)).toEqual(run(false))
+      expect(run(true).y[1]).toBeGreaterThan(0)
+    })
+
+    it('正: 雑音の表（発火）でも、印の付いた点の秒は判定できた秒にも発火にも数えない', () => {
+      // 70 秒目に 2 から 4 へ跳ねる。輪が 60 秒ぶん埋まってから数え始める
+      const spike = Array.from({ length: 80 }, (_, s) => (s === 70 ? 4 : 2))
+      const run = (mark: boolean) => {
+        const b = new QuietTableBaker()
+        for (let s = 0; s < spike.length; s++) {
+          const skip = new Uint8Array(2)
+          if (mark && s === 70) skip[0] = 1
+          b.feed(T0 + s * 1000, 'c1', SITES, [spike[s], 2], true, skip)
+        }
+        return b.counts().fire[k0]
+      }
+      expect(run(false).hits[1]).toBe(1)
+      expect(run(true).hits[1]).toBe(0)
+      expect(run(false).sec - run(true).sec).toBe(1)
+    })
+
+    it('安全弁: 観測点の数と印の数が食い違う秒は受け付けない', () => {
+      const b = new QuietTableBaker()
+      expect(() => b.feed(T0, 'c1', SITES, [1, 1], true, new Uint8Array(1))).toThrow()
+    })
   })
 
   /** d 秒前に 4 へ跳ねた点が、いま 4 のとき、いまの 1 秒が 2 段以上の上がりに数えられるか（その秒だけ数える） */
@@ -83,7 +151,7 @@ describe('平常のゆらぎの表を焼く数え方', () => {
     const len = 80, now = len - 1
     const s0 = Array.from({ length: len }, (_, i) => (i === now || i === now - d ? 4 : 2))
     const b = new QuietTableBaker()
-    for (let s = 0; s < len; s++) b.feed(T0 + s * 1000, 'c1', SITES, [s0[s], 2], s === now)
+    for (let s = 0; s < len; s++) b.feed(T0 + s * 1000, 'c1', SITES, [s0[s], 2], s === now, null)
     return (b.counts().fire[quietSiteKey(SITES[0])]?.hits[1] ?? 0) > 0
   }
 
@@ -129,7 +197,7 @@ describe('平常のゆらぎの表を焼く数え方', () => {
 
   it('観測点の数と値の数が食い違う秒は受け付けない', () => {
     const b = new QuietTableBaker()
-    expect(() => b.feed(T0, 'c1', SITES, [1], true)).toThrow()
+    expect(() => b.feed(T0, 'c1', SITES, [1], true, null)).toThrow()
   })
 })
 

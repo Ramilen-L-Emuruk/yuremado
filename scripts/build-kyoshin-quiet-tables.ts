@@ -3,7 +3,8 @@
  *
  *   npx tsx scripts/build-kyoshin-quiet-tables.ts [--days=YYYYMMDD,…] [--fetch] [--out=<パス>]
  *
- * 地震の無い平常の日の秒フレームを全部流し、観測点ごとに「どれくらいの上がりが普段から起きるか」を数える。
+ * 地震の少ない平常の日の秒フレームを全部流し、観測点ごとに「どれくらいの上がりが普段から起きるか」を数える。
+ * ただし震源リストの地震の揺れが届いた秒は、点ごとに数えない（外し方は `scripts/lib/kyoshinQuakeSkip.ts`。設計書§56）。
  * 数え方と表の形は `src/utils/kyoshinQuietTables.ts`。組み合わせの検知器はこの表で観測点ごとの珍しさと
  * 発火のしきい値を決めるので、**焼く日を変えたら検知器の評価（検知率・平常の日の誤報）を測り直すこと。**
  *
@@ -12,12 +13,16 @@
  * - 観測点の座標はメインの checkout の `.cache/kyoshin-bench/sites_<版>.json`（`bench-kyoshin` と共有。決め方は `scripts/lib/kyoshinBenchCache.ts`）
  * - **控えに無い時間があれば、取ることになる件数を出して止まる。** `--fetch` を付けたときだけ Yahoo から取る
  *   （1 時間 3,600 件・1 日 86,400 件。西が駄目な秒は東も試すので、その分だけ増える）。取ったものは控えに残す
+ * - 震源は `scripts/lib/hypocenterDays.ts` で控えから読む（焼く日と、日付をまたいで揺れが届く前後の日）。控えに無い日は、
+ *   `--fetch` のときだけ気象庁の日別の震源リストを取る（1 日 1 件）。日別の震源リストが出そろう前の日（今日から 3 日の内）を含むなら焼かない
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cacheDir } from './lib/cacheDir.mjs'
 import { kyoshinBenchCacheDir } from './lib/kyoshinBenchCache'
+import { DAILY_FETCH_INTERVAL_MS, fetchDailyHypocenters, readDayHypocenters, settledDay, shiftDay, todayJst, type DayQuakes } from './lib/hypocenterDays'
+import { QuakeSkipper } from './lib/kyoshinQuakeSkip'
 import { QuietTableBaker, quietSiteKey, type QuietTables } from '../src/utils/kyoshinQuietTables'
 
 /**
@@ -47,6 +52,8 @@ const MIN_COVERAGE = 0.9
 
 const pad = (n: number) => String(n).padStart(2, '0')
 export const hourPath = (day: string, h: number) => join(QUIET_DIR, `${day}-${pad(h)}.bin`)
+/** 震源の発生時刻（UTC）を控えの秒フレームの時刻（日本時間の時刻を UTC として数えたもの）へ直す差 */
+const JST_OFFSET_MS = 9 * 3_600_000
 /** 控えの「秒」は日本時間の 0 時からの秒数。日本時間の時刻をそのまま UTC として数える（使うのは秒の間隔だけ）。 */
 const dayStartMs = (day: string) => Date.UTC(+day.slice(0, 4), +day.slice(4, 6) - 1, +day.slice(6, 8))
 
@@ -154,6 +161,11 @@ async function main(): Promise<void> {
   const out = resolve(arg('out') ?? DEFAULT_OUT)
   const allowFetch = process.argv.includes('--fetch')
   if (days.some(d => !/^\d{8}$/.test(d))) throw new Error(`--days は YYYYMMDD をカンマで区切って渡してください（${days.join(',')}）`)
+  // 焼く日と、日付をまたいで揺れが届く前後の日の震源を使う。震源リストが出そろう前の日を含むなら、何も取りに行く前に止める
+  const quakeDays = [...new Set(days.flatMap(d => [shiftDay(d, -1), d, shiftDay(d, 1)]))].sort()
+  const settled = settledDay(todayJst())
+  const unsettled = quakeDays.filter(d => d > settled)
+  if (unsettled.length > 0) throw new Error(`震源リストが出そろっていないことがある日を含みます（${unsettled.join(' ')}）。焼く日は ${settled} の前日までにしてください`)
 
   const missing = days.flatMap(d => Array.from({ length: 24 }, (_, h) => ({ d, h }))).filter(({ d, h }) => !existsSync(hourPath(d, h)))
   if (missing.length > 0) {
@@ -169,9 +181,31 @@ async function main(): Promise<void> {
     if (short.length > 0) throw new Error(`取れた秒が 9 割に届かない時間があるので焼きません（${short.join(' ')}）。--fetch で走らせ直すと取り直します`)
   }
 
+  // 焼き始める前に、前後の日まで震源をすべて読めることを確かめる
+  const noQuakes = quakeDays.filter(d => readDayHypocenters(d) === null)
+  if (noQuakes.length > 0) {
+    console.log(`震源の控えが無い日 ${noQuakes.length} 件（${noQuakes.join(' ')}）。取ると ${noQuakes.length} 件のリクエストになる`)
+    if (!allowFetch) throw new Error('震源の控えが足りないので止めます（取るなら --fetch を付けて走らせ直してください）')
+    for (const d of noQuakes) {
+      await fetchDailyHypocenters(d)
+      await new Promise(r => setTimeout(r, DAILY_FETCH_INTERVAL_MS))
+    }
+  }
+
+  const hypos = new Map<string, DayQuakes>()
+  for (const d of quakeDays) {
+    const h = readDayHypocenters(d)
+    if (h === null) throw new Error(`${d} の震源を読めません`)
+    if (h.unreadable > 0) throw new Error(`${d} の震源に読めない行が ${h.unreadable} 行あります（外す秒を決められないので焼きません）`)
+    hypos.set(d, h)
+  }
+
   const baker = new QuietTableBaker()
   for (const day of days) {
-    let frames = 0, mismatched = 0
+    let frames = 0, mismatched = 0, siteSec = 0, skippedSec = 0
+    const hypo = hypos.get(day)!
+    const quakes = [shiftDay(day, -1), day, shiftDay(day, 1)].flatMap(d => hypos.get(d)!.quakes)
+    const skippers = new Map<string, QuakeSkipper>()
     const cfgs = new Set<string>()
     for (let h = 0; h < 24; h++) {
       // 控えは取ったときに 1 時間 9 割を確かめているが、それより前に控えた分には掛かっていない。読むときにも確かめる
@@ -183,13 +217,20 @@ async function main(): Promise<void> {
         const sites = await loadSites(f.cfg, allowFetch)
         // 観測点リストと点数が食い違う秒は、どの値がどの点か分からないので数えない
         if (sites.length !== f.values.length) { mismatched++; continue }
-        // 焼く日は地震の無い平常の日を選んであるので、どの秒も数える
-        baker.feed(f.ms, f.cfg, sites, f.values, true)
+        // 震源リストの地震の揺れが届いた点の秒だけ数えない（平常の日にも小さな地震は毎日数百件ある）
+        let skipper = skippers.get(f.cfg)
+        if (!skipper) { skipper = new QuakeSkipper(sites, quakes, JST_OFFSET_MS); skippers.set(f.cfg, skipper) }
+        const skip = skipper.maskAt(f.ms)
+        for (let i = 0; i < sites.length; i++) if (f.values[i] >= 0) { siteSec++; if (skip[i]) skippedSec++ }
+        baker.feed(f.ms, f.cfg, sites, f.values, true, skip)
         frames++
         cfgs.add(f.cfg)
       }
     }
-    console.log(`${day}: ${frames} 秒（1 日の ${(frames / 864).toFixed(1)}%）・観測点リスト ${[...cfgs].join(' ')}${mismatched ? `・点数が食い違って数えなかった秒 ${mismatched}` : ''}`)
+    // 地震は毎日数百件あるので、外した秒が 0 なら時刻の直し方か震源の読み方が壊れている
+    if (siteSec === 0) throw new Error(`${day} は判定できた点の秒が 0 でした`)
+    if (skippedSec === 0) throw new Error(`${day} は震源 ${hypo.quakes.length} 件に対して外した点の秒が 0 でした（時刻の直し方か震源の読み方を確かめてください）`)
+    console.log(`${day}: ${frames} 秒（1 日の ${(frames / 864).toFixed(1)}%）・観測点リスト ${[...cfgs].join(' ')}・震源 ${hypo.quakes.length} 件（${hypo.source}）で外した点の秒 ${(100 * skippedSec / siteSec).toFixed(1)}%${mismatched ? `・点数が食い違って数えなかった秒 ${mismatched}` : ''}`)
     if (frames < 86_400 * MIN_COVERAGE) throw new Error(`${day} は ${frames} 秒しか数えられませんでした（1 日の 9 割に届かないので焼きません）`)
   }
 

@@ -173,15 +173,18 @@ export class QuietTableBaker {
    * 1 秒ぶんを入れる。`values` は観測点の並び（-1 = 欠測）。
    * `count` が偽の秒は、上がりを測る直前の値としては使うが数には足さない（揺れ検知が出ていた秒を「普段」と覚えないため。
    * 入れずに飛ばすと、60 秒を超える途切れとして測り直しになり、前後の秒まで数え損ねる）。
+   * `skip` は点ごとの印（1 = この秒のこの点は数えない）。表を焼くときに、震源リストの地震の揺れが届いた点の秒を外すのに使う
+   * （平常の日にも小さな地震は毎日数百件起きていて、その揺れを「普段」と覚えると揺れの珍しさを低く見る。設計書§56）。点ごとに外さないなら null。
    */
-  feed(ms: number, cfg: string, sites: readonly (readonly [number, number])[], values: ArrayLike<number>, count: boolean): void {
+  feed(ms: number, cfg: string, sites: readonly (readonly [number, number])[], values: ArrayLike<number>, count: boolean, skip: Uint8Array | null): void {
     const n = sites.length
     if (values.length !== n) throw new Error(`観測点の数（${n}）と値の数（${values.length}）が食い違っています（${cfg}）`)
     // 時刻が巻き戻ったとき（端末で時間軸が替わったとき）も、前の値から上がりを数えないよう数え直す
     if (this.features === null || cfg !== this.cfg || ms - this.prevMs > RESET_GAP_MS || ms <= this.prevMs) this.reset(cfg, sites)
     this.prevMs = ms
-    this.countTails(values, count)
-    this.countFire(values, count)
+    if (skip !== null && skip.length !== n) throw new Error(`観測点の数（${n}）と数えない印の数（${skip.length}）が食い違っています（${cfg}）`)
+    this.countTails(values, count, skip)
+    this.countFire(values, count, skip)
   }
 
   /** いま持っている数の写し。端末に残して、次に開いたときに `fromCounts` で戻す。 */
@@ -249,13 +252,13 @@ export class QuietTableBaker {
     this.fireFilled = 0
   }
 
-  private countTails(values: ArrayLike<number>, count: boolean): void {
+  private countTails(values: ArrayLike<number>, count: boolean, skip: Uint8Array | null): void {
     const F = this.features!
     F.push(values)
     if (!count) return
     const g = this.glob
     for (let i = 0; i < F.n; i++) {
-      if (F.x[i] === NONE) continue
+      if (F.x[i] === NONE || skip?.[i]) continue
       const a = this.siteTails[i]
       a.n++; g.n++
       for (let k = 1; k <= Math.min(F.y[i], KMAX); k++) { a.y[k - 1]++; g.y[k - 1]++ }
@@ -264,12 +267,12 @@ export class QuietTableBaker {
     }
   }
 
-  private countFire(values: ArrayLike<number>, count: boolean): void {
+  private countFire(values: ArrayLike<number>, count: boolean, skip: Uint8Array | null): void {
     const n = this.siteKeys.length, ring = this.fireRing, pos = this.firePos
     if (count && this.fireFilled >= FIRE_L) {
       for (let i = 0; i < n; i++) {
         const v = values[i]
-        if (v < 0) continue
+        if (v < 0 || skip?.[i]) continue
         // 輪の pos はまだ書いていない枠（= FIRE_L 秒前の値）、pos − d が d 秒前の値
         let mx = -1
         for (let d = FIRE_LAG; d < FIRE_L; d++) {
