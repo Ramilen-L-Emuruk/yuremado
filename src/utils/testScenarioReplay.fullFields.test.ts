@@ -36,6 +36,7 @@ type QuakeSample = DeepRequired<Omit<JMAQuake,
   | 'eventKey' | 'reports' | 'sourceTelegrams' | 'retractedReports' // カードの統合が積む
   | 'intensityFromCache' // 震度の控えから補ったときの印
   | 'hypocenterSource' | 'domesticTsunamiSource' // 津波電文から借りたときの印
+  | 'quakeInfoFacts' // 長周期・推計の値を当てる前の地震情報の値（電文の欄ではない）
 >>
 type TsunamiSample = DeepRequired<Omit<JMATsunami,
   | 'cancelledAt' // 解除を当てたときに受信処理が付ける（Date）

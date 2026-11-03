@@ -92,10 +92,15 @@ export const EARTHQUAKE: TestTelegramScript = {
  */
 export const TRAINING_QUAKE: TestTelegramScript = {
   anchor: 0,
-  steps: [{
-    file: NOTO.detail2, headType: 'VXSE53', atMs: 0,
-    rewrite: xml => replaceOnce(xml, '<Status>通常</Status>', '<Status>訓練</Status>'),
-  }],
+  steps: [
+    { file: NOTO.detail2, headType: 'VXSE53', atMs: 0, rewrite: xml => replaceOnce(xml, '<Status>通常</Status>', '<Status>訓練</Status>') },
+    // 長周期の欄の「訓練報」の札も確かめられるように、地震テストと同じ長周期の電文も訓練にする
+    // （2026-11-03 ユーザー選択「足してこの文面にする (Recommended)」）
+    {
+      file: NOTO.lpgm, headType: 'VXSE62', atMs: 0,
+      rewrite: xml => replaceOnce(markFirstLgStation(xml), '<Status>通常</Status>', '<Status>訓練</Status>'),
+    },
+  ],
 }
 
 /**

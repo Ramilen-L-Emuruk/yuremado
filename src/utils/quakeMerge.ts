@@ -438,6 +438,22 @@ function refoldFromTelegrams(
   return existing.retractedReports ? { ...card, retractedReports: existing.retractedReports } : card
 }
 
+/**
+ * 長周期・推計から当てた上段の値を外し、地震情報が運んだ値へ戻したカード（→ `JMAQuake.quakeInfoFacts`）。
+ * 当てていなければ同じ参照を返す。
+ */
+export function withoutLatestQuakeFacts(card: JMAQuake): JMAQuake {
+  const facts = card.quakeInfoFacts
+  if (!facts) return card
+  const { quakeInfoFacts: _facts, hypocenterSource: _source, ...rest } = card
+  return {
+    ...rest,
+    // 当てて動く欄だけを戻す。それ以外（当てた後に津波から借りた津波区分など）は今の値のまま
+    earthquake: { ...card.earthquake, hypocenter: facts.hypocenter, time: facts.time, maxScale: facts.maxScale },
+    ...(facts.hypocenterSource && { hypocenterSource: facts.hypocenterSource }),
+  }
+}
+
 // 電文 ID 文字列から eventId（14桁タイムスタンプ）を抽出する。
 // VXSE51/52/53/61 はすべて同じ eventId を共有するため、同一地震の同定に使用できる。
 // 電文 ID の書式: `dmdata-quake-YYYYMMDDhhmmss-<serial>`。
@@ -802,11 +818,18 @@ function domesticTsunamiFrom(
 }
 
 export function mergeQuakeInto(
-  existing: JMAQuake | undefined,
-  incoming: JMAQuake,
+  existingCard: JMAQuake | undefined,
+  incomingCard: JMAQuake,
   opts?: Parameters<typeof mergeQuakeIntoBody>[2],
 ): JMAQuake {
-  const result = mergeQuakeIntoBody(existing, incoming, opts)
+  // **地震情報の値どうしで統合する。** 長周期・推計から当てた上段の値は地震情報の値ではないので、統合の前に戻し、
+  // 当てるのは呼び出し側が統合の後に行う（→ `utils/latestQuakeFacts.ts`）。戻さないと、当てた値が地震情報の値として
+  // 続報へ引き継がれ、当てた報が取り消されても戻せない
+  const existing = existingCard && withoutLatestQuakeFacts(existingCard)
+  const incoming = withoutLatestQuakeFacts(incomingCard)
+  const body = mergeQuakeIntoBody(existing, incoming, opts)
+  // 据え置き（同じ参照を返す）は、戻す前の参照のまま返す（「変化なし＝同一参照」の約束を保つ）
+  const result = existingCard && body === existing ? existingCard : body
   // **一部の取消の記録は、どの分岐を通っても引き継ぐ**（→ `JMAQuake.retractedReports`）。
   // 本体は分岐ごとに `...existing` か `...incoming` を土台にするので、土台が電文の側だと
   // 黙って落ちる。分岐 1 つずつに書き足すと、分岐が増えたときに必ず漏れる。

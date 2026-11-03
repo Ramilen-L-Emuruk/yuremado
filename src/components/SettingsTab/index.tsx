@@ -2472,7 +2472,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
         {onTest.trainingQuake && (
-          <Row label="訓練報" description="中身は地震テストと同じで、電文ヘッダの運用種別（訓練）だけが違う。本物と同じく画面・音・読み上げへ流し、カードに「訓練報」の印を出す">
+          <Row label="訓練報" description="中身は地震テストと同じ（地震情報と長周期地震動に関する観測情報）で、電文ヘッダの運用種別（訓練）だけが違う。本物と同じく画面・音・読み上げへ流し、カードと長周期の欄に「訓練報」の印を出す">
             <TestButton color="yellow" onClick={onTest.trainingQuake}>訓練報テスト</TestButton>
           </Row>
         )}

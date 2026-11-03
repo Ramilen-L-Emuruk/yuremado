@@ -6,7 +6,8 @@
 import { describe, it, expect } from 'vitest'
 import { muteConsoleError } from '../test-utils/muteConsoleError'
 import { applyLiveLpgmWithMarks } from './useEarthquakes'
-import { lpgmMarkKey, rowMarkKey } from '../utils/quakeUpdateMark'
+import { lpgmMarkKey, rowMarkKey, rememberQuakeCard, quakeFactSnapshot } from '../utils/quakeUpdateMark'
+import { quakeEventKey } from '../utils/quakeMerge'
 import type { JMALpgm } from '../types/earthquake'
 
 const EVENT_ID = '20240101161000'
@@ -29,6 +30,7 @@ function lpgm(over: Partial<JMALpgm> & { maxLgInt: number; time: string }): JMAL
 const EMPTY = {
   earthquakes: [],
   lpgmByEventId: new Map<string, JMALpgm>(),
+  estimatedIntensities: [],
   quakeUpdateMarks: new Map(),
   quakeMarkMemory: new Map(),
 }
@@ -118,5 +120,68 @@ describe('applyLiveLpgmWithMarks: 長周期の欄の値の印', () => {
   it('安全弁: 初報では欄に印を付けない', () => {
     const s = applyLiveLpgmWithMarks(EMPTY, withFacts('2024-01-01T07:40:00Z', 5.7, 50), 1_000)
     expect(s.quakeUpdateMarks.get(lpgmMarkKey(EVENT_ID))).toBeUndefined()
+  })
+})
+
+// 長周期が地震情報より新しい値を運んだら、地震カードの上段へ当て、出ていた値と比べて印を付ける
+// （2026-11-03 ユーザー選択「発表時刻が最も新しい報 (Recommended)」「出ていた値と比べて付ける (Recommended)」）
+describe('applyLiveLpgmWithMarks が地震カードへ当てる値', () => {
+  const card = {
+    kind: 'quake',
+    id: `dmdata-quake-${EVENT_ID}-1`,
+    time: '2024-01-01T16:16:00+09:00',
+    issue: { source: '気象庁', time: '2024-01-01T16:16:00+09:00', type: '震源・震度情報', correct: 'なし' },
+    earthquake: {
+      time: '2024-01-01T16:10:00+09:00',
+      hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2, depth: 0, magnitude: 7.4 },
+      maxScale: 70,
+      domesticTsunami: '警報等',
+    },
+    points: [],
+  } as unknown as import('../types/earthquake').JMAQuake
+  // カードが出していた値の記憶（本物の流れでは、地震情報を受けた時点で作られている）
+  const memory = new Map<string, import('../utils/quakeUpdateMark').QuakeMarkMemory>()
+  rememberQuakeCard(memory, quakeEventKey(card), {
+    facts: quakeFactSnapshot(card), rows: new Map(), issuedAt: 0, reportType: '震源・震度情報', telegramType: '震源・震度情報', revise: null,
+  })
+  const withCard = { ...EMPTY, earthquakes: [card], quakeMarkMemory: memory }
+  const newerLpgm = (magnitude: number) => lpgm({
+    maxLgInt: 4, time: '2024-01-01T16:23:00+09:00', magnitude,
+    hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2, depth: 0 },
+  })
+
+  // 正: 長周期のほうが新しく、規模が違えば上段を差し替え、規模に印を付ける
+  it('正: 新しい長周期の規模を上段へ当て、規模に印を付ける', () => {
+    const s = applyLiveLpgmWithMarks(withCard, newerLpgm(7.6), 1_000)
+    expect(s.earthquakes[0].earthquake.hypocenter.magnitude).toBe(7.6)
+    expect(s.quakeUpdateMarks.get(quakeEventKey(card))?.facts.get('magnitude')).toBe('raised')
+  })
+
+  // 対照: 同じ値なら一覧の参照を変えない（描き直させない）
+  it('対照: 値が同じなら地震の一覧の参照を変えない', () => {
+    const s = applyLiveLpgmWithMarks(withCard, newerLpgm(7.4), 1_000)
+    expect(s.earthquakes).toBe(withCard.earthquakes)
+  })
+
+  // 正: 当てていた長周期が取り消されたら、上段を地震情報の値へ戻し、規模に印を付ける（2026-11-03 ユーザー選択「戻す (Recommended)」）
+  it('正: 長周期の取消で、当てていた上段の値を地震情報の値へ戻す', () => {
+    const applied = applyLiveLpgmWithMarks(withCard, newerLpgm(7.6), 1_000)
+    const cancel = lpgm({ maxLgInt: 4, time: '2024-01-01T16:30:00+09:00', cancelled: true })
+    const s = applyLiveLpgmWithMarks({ ...withCard, ...applied }, cancel, 2_000)
+    expect(s.earthquakes[0].earthquake.hypocenter.magnitude).toBe(7.4)
+    expect(s.earthquakes[0].quakeInfoFacts).toBeUndefined()
+    expect(s.quakeUpdateMarks.get(quakeEventKey(card))?.facts.get('magnitude')).toBe('lowered')
+  })
+
+  // 安全弁: 長周期を当てても、記憶の電文の種別は直前の地震情報のまま（次の地震情報が Revise と欄の初出を使える）。
+  // 直前の地震情報が付けた行の印も残す（行はこの報で変わっていない）
+  it('安全弁: 記憶の種別と、直前の地震情報が付けた行の印を保つ', () => {
+    const key = quakeEventKey(card)
+    const rowMarks = new Map([['row:1', 'new' as const]])
+    const marked = { ...withCard, quakeUpdateMarks: new Map([[key, { facts: new Map(), rows: rowMarks, markedAt: 500 }]]) }
+    const s = applyLiveLpgmWithMarks(marked, newerLpgm(7.6), 1_000)
+    expect(s.quakeMarkMemory.get(key)?.telegramType).toBe('震源・震度情報')
+    expect(s.quakeUpdateMarks.get(key)?.rows).toBe(rowMarks)
+    expect(s.quakeUpdateMarks.get(key)?.facts.get('magnitude')).toBe('raised')
   })
 })

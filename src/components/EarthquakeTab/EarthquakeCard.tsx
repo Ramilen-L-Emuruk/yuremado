@@ -45,7 +45,6 @@ import { rowMarkKey, rowMarkOf, type QuakeCardMarks, type QuakeUpdateField } fro
 import { intensityRowsToExpand, lpgmRowsToExpand, mergeAutoExpanded } from '../../utils/autoExpandMarkedRows'
 import { UPDATE_MARK_COLOR, type UpdateStatus } from '../../utils/updateMark'
 import { UpdateDot } from '../UpdateDot'
-import { LpgmQuakeFacts } from './LpgmQuakeFacts'
 
 import { useStationCoords } from '../../hooks/useStationCoords'
 import { useSubRegions } from '../../hooks/useSubRegions'
@@ -1908,9 +1907,20 @@ export const EarthquakeCard = memo(function EarthquakeCard({
         {/* 長周期地震動（電文の値・一覧・補足）。地図の塗りは上の切り替えで出す */}
         {lpgmShown && (
           <div ref={lpgmSectionRef} className="mt-3.5 flex flex-col gap-1.5">
-            <h4 className="m-0 font-semibold text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>長周期地震動</h4>
-          {/* 長周期の電文自身が持つ震源・規模・全国の最大震度・地震発現時刻（→ `LpgmQuakeFacts`） */}
-          {lpgm && !lpgm.cancelled && <LpgmQuakeFacts lpgm={lpgm} marks={lpgmMarks} />}
+            <h4 className="m-0 flex items-center gap-2 font-semibold text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+              長周期地震動
+              {/* 長周期の電文が名乗る運用種別。訓練・試験のときだけ、地震カードと同じ札を出す（2026-11-03 ユーザー選択
+                  「地震カードと同じ札を出す (Recommended)」。新しい文言は足さない） */}
+              {lpgm?.operationStatus && (
+                <span className="rounded-sm px-1.5 font-bold" style={{ backgroundColor: '#1f2937', color: '#fcd34d', border: '1px solid #d97706' }}>
+                  {lpgm.operationStatus}報
+                </span>
+              )}
+            </h4>
+          {/* 震源・規模・全国の最大震度・地震発現時刻は、この欄には出さない。発表が最も新しい報の値をカードの上段へ当てている
+              （→ `utils/latestQuakeFacts.ts`。2026-11-03 ユーザー選択「発表時刻が最も新しい報 (Recommended)」の説明
+              「長周期の欄の震源の行は外し」）。見出し文（`Head/Headline/Text`）は長周期のことなので電文のまま出す */}
+          {lpgm && !lpgm.cancelled && lpgm.headline && (<div className="text-[#cfd6dd]">{lpgm.headline}</div>)}
           {/* 電文の「観測情報の種類」（`LgCategory`）が伝えているのは、階級を観測した地域の中に
               震度が小さい地域があるかどうか。**分類番号は出さず意味だけ書く**（→ `lpgmCategoryNote`）。
               **この一文だけは畳まない。** 1 行しかないうえ、その地震でしか言えない事実で、

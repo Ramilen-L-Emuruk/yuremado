@@ -2998,7 +2998,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     log.warn(`${DMDATA_LOG_PREFIX} VXSE62 の全国の最大震度を読めません（無視します）: "${obsRawInt}"`)
   }
 
-  // 震源の要素（→ `LpgmHypocenter`）。地震カードの長周期の欄に出す（→ `LpgmQuakeFacts`）。
+  // 震源の要素（→ `LpgmHypocenter`）。最も新しい報なら地震カードの上段へ当てる（→ `utils/latestQuakeFacts.ts`）。
   const lpgmHypoEl = earthquakeEl ? xmlQ(earthquakeEl, 'Hypocenter') : null
   const lpgmHypoAreaEl = lpgmHypoEl ? xmlQ(lpgmHypoEl, 'Area') : null
   let lpgmHypocenter: import('../types/earthquake').LpgmHypocenter | undefined

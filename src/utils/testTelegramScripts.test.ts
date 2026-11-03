@@ -167,6 +167,15 @@ describe('訓練報テスト', () => {
     expect(normal.operationStatus).toBeUndefined()
     expect(training.points.length).toBe(normal.points.length)
   })
+
+  // 長周期の欄の「訓練報」の札を確かめられるよう、長周期の電文も訓練にする
+  it('長周期の電文も運用種別だけが「訓練」になる', async () => {
+    const [training] = lpgmsOf(await build(scripts.TRAINING_QUAKE))
+    const [normal] = lpgmsOf(await build(scripts.EARTHQUAKE))
+    expect(training.operationStatus).toBe('訓練')
+    expect(normal.operationStatus).toBeUndefined()
+    expect(training.maxClass).toBe(normal.maxClass)
+  })
 })
 
 describe('種別遷移テスト', () => {
