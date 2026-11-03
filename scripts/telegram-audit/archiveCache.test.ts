@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { resetArchiveCacheForTest, listArchive, archiveCacheStats, runArchiveScript } from './archive-cache.mjs'
+import { resetArchiveCacheForTest, listArchive, archiveCacheStats, runArchiveScript, findApiKey } from './archive-cache.mjs'
 import { markResult, incompleteNotes, noteIncomplete } from '../lib/incompleteness.mjs'
 
 // **中身は使わない。** どのテストも `fetch` をスタブするのでネットワークへは出ない。
@@ -201,5 +201,27 @@ describe('アーカイブを取るスクリプトの定型', () => {
     await expect(runArchiveScript('テストの定型', async () => { throw boom })).rejects.toBe(boom)
 
     expect(errors.mock.calls.flat().join(' ')).toContain('控えから')
+  })
+})
+
+describe('API キーの探し方', () => {
+  const here = { path: 'ワークツリー/.env.local', text: null }
+  const main = { path: 'メイン/.env.local', text: 'OTHER=1\nDMDATA_API_KEY=main-key\n' }
+
+  // 正: ワークツリーに `.env.local` が無ければ、メインの checkout の分を読む
+  it('このリポジトリに無ければ、次の場所（メインの checkout）を読む', () => {
+    expect(findApiKey(undefined, [here, main])).toBe('main-key')
+  })
+
+  // 対照: 環境変数とこのリポジトリの `.env.local` は、メインより先に効く
+  it('環境変数・このリポジトリの分が先に効く', () => {
+    expect(findApiKey(' env-key ', [here, main])).toBe('env-key')
+    expect(findApiKey(undefined, [{ path: 'ワークツリー/.env.local', text: 'DMDATA_API_KEY=wt-key' }, main])).toBe('wt-key')
+  })
+
+  // 安全弁: どこにも無ければ、探した場所を並べて投げる（キーの行が空でも見つかった扱いにしない）
+  it('どこにも無ければ探した場所を並べて投げる', () => {
+    const empty = { path: 'メイン/.env.local', text: 'DMDATA_API_KEY=   \n' }
+    expect(() => findApiKey('', [here, empty])).toThrow(/ワークツリー\/\.env\.local か メイン\/\.env\.local/)
   })
 })

@@ -24,7 +24,7 @@ import zlib from 'node:zlib'
 // 要求して throw するため、このモジュール（根のパスしか要らない）まで環境変数に縛られ、
 // レート制御を単体テストへ掛けられなくなる。
 import { REPO } from '../lib/repo-root.mjs'
-import { cacheDir } from '../lib/cacheDir.mjs'
+import { cacheDir, mainCheckoutRoot } from '../lib/cacheDir.mjs'
 // レート制御は `scripts/lib/rateGate.mjs` に集約している。**DMDATA 専用ではない** ——
 // `kind` で取得元を分ける汎用の門で、P2PQuake の履歴走査・観測点索引の走査も同じものを通す。
 import { gate, resetRateGateForTest, sleep } from '../lib/rateGate.mjs'
@@ -201,6 +201,11 @@ function cachePathFor(classification, item) {
   return path.join(ARCHIVE_CACHE_DIR, classification.replace(/\./g, '-'), `${safeDay}__${safeId}.tar.gz`)
 }
 
+/** その日の本体が控えにあるか（取らずに確かめる）。控えの名前を呼び出し側で組み立て直さないために公開している。 */
+export function isArchiveCached({ classification, item }) {
+  return fs.existsSync(cachePathFor(classification, item))
+}
+
 /**
  * 1 日分のアーカイブを tar の中身（gzip を解いた Buffer）として返す。控えがあればそれを使う。
  *
@@ -259,17 +264,48 @@ export function* tarEntries(buf) {
   }
 }
 
-/** API キーを読む。**ワークツリーには `.env.local` が無い**ことがある（Git 管理外なので切っても付いてこない）。 */
+/**
+ * API キーを探す。純関数（テストで固定する）。環境変数 `DMDATA_API_KEY` を先に見て、無ければ `envFiles` を順に見る
+ * （中身が null のものは「ファイルが無い」）。見つからなければ、探した場所を並べて投げる（キーの値は文面に入れない）。
+ *
+ * @param {string | undefined} envValue
+ * @param {{ path: string, text: string | null }[]} envFiles
+ * @returns {string}
+ */
+export function findApiKey(envValue, envFiles) {
+  if (envValue?.trim()) return envValue.trim()
+  for (const f of envFiles) {
+    const m = f.text?.match(/^DMDATA_API_KEY=(.+)$/m)
+    if (m && m[1].trim()) return m[1].trim()
+  }
+  throw new Error(`DMDATA の API キーが見つかりません。DMDATA_API_KEY で渡すか、${envFiles.map((f) => f.path).join(' か ')} に置いてください`)
+}
+
+/**
+ * API キーを読んで認証ヘッダーを組む。**ワークツリーには `.env.local` が無い**ことがある（Git 管理外なので切っても付いてこない）ので、
+ * このリポジトリの `.env.local` に無ければメインの checkout の `.env.local` を読む（写さずにその場で読む）。
+ */
 export function apiAuthHeader() {
-  const key = (() => {
-    if (process.env.DMDATA_API_KEY) return process.env.DMDATA_API_KEY.trim()
-    const envPath = path.join(REPO, '.env.local')
-    if (fs.existsSync(envPath)) {
-      const m = fs.readFileSync(envPath, 'utf8').match(/^DMDATA_API_KEY=(.+)$/m)
-      if (m) return m[1].trim()
-    }
-    throw new Error(`DMDATA の API キーが見つかりません。DMDATA_API_KEY で渡すか ${path.join(REPO, '.env.local')} に置いてください`)
-  })()
+  const roots = [REPO]
+  let mainError = null
+  try {
+    const main = mainCheckoutRoot()
+    if (path.resolve(main) !== path.resolve(REPO)) roots.push(main)
+  } catch (e) {
+    // メインの checkout を引けないときは、このリポジトリの分だけで探す。見つからなければ、引けなかった理由も添えて投げる
+    mainError = e instanceof Error ? e.message : String(e)
+  }
+  const envFiles = roots.map((r) => {
+    const p = path.join(r, '.env.local')
+    return { path: p, text: fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null }
+  })
+  let key
+  try {
+    key = findApiKey(process.env.DMDATA_API_KEY, envFiles)
+  } catch (e) {
+    if (mainError === null) throw e
+    throw new Error(`${e instanceof Error ? e.message : e}（メインの checkout は引けなかった: ${mainError}）`)
+  }
   return { Authorization: 'Basic ' + Buffer.from(key + ':').toString('base64') }
 }
 

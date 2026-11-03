@@ -43,7 +43,10 @@ export const ARCHIVE_CACHE_DIR: string
 /** 地震情報・津波・長周期地震動・推計震度分布図が入る分類。**呼び出し側で文字列を書かない。** */
 export const EARTHQUAKE_CLASSIFICATION: string
 
-/** API キーを読んで認証ヘッダーを組む。`DMDATA_API_KEY` か `.env.local` から取り、無ければ投げる。 */
+/** API キーを探す。環境変数を先に、無ければ `envFiles` を順に見る（`text` が null は「ファイルが無い」）。無ければ探した場所を並べて投げる。 */
+export function findApiKey(envValue: string | undefined, envFiles: readonly { path: string; text: string | null }[]): string
+
+/** API キーを読んで認証ヘッダーを組む。`DMDATA_API_KEY` か、このリポジトリかメインの checkout の `.env.local` から取り、無ければ投げる。 */
 export function apiAuthHeader(): ArchiveAuth
 
 /** 一覧のアイテムが指す日。**`datetime ?? date` を呼び出し側で書き写さないため**に公開している。 */
@@ -61,6 +64,9 @@ export function listArchive(options: {
   to: string
   auth: ArchiveAuth
 }): Promise<ArchiveItem[]>
+
+/** その日の本体が控えにあるか（取らずに確かめる）。 */
+export function isArchiveCached(options: { classification: string; item: ArchiveItem }): boolean
 
 /** 1 日分のアーカイブを tar の中身（gzip を解いた Buffer）として返す。控えがあればそれを使う。 */
 export function loadArchiveTar(options: {
