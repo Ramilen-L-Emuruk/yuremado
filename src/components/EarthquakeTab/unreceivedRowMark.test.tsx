@@ -68,6 +68,7 @@ const renderTab = async (quake: JMAQuake) => {
     loadMoreFailed={false}
     reconnectGapLoss={false}
     fetchThrottled={false}
+    onDismissKeyReentry={null}
     lpgmByEventId={new Map()}
     updateMarks={new Map()}
     activeLpgmEventId={null}
@@ -129,11 +130,11 @@ describe('震度一覧の未入電の印', () => {
 
   // 安全弁: 県・区域の行は**積み上げの値**なので「未入電」と断定しない。
   //
-  // 標準版（P2PQuake）は区域のロールアップ点を持たないため、区域の値は配下の観測点から
+  // 区域のロールアップ点を持たない電文では、区域の値は配下の観測点から
   // 積み上がる。積み上げは震度の大小で決まるので、**観測できた震度3 と未入電（下限 45）が
   // 混在すると未入電が勝つ**。そこで「未入電」と書くと、届いている観測値を無かったことにする。
   it('観測値と未入電が混在する区域・県は「未入電あり」にする', async () => {
-    // 観測点を市町村へ紐付けない（標準版は市町村を配信しないので、観測点は区域の直下に付く
+    // 観測点を市町村へ紐付けない（市町村を持たない観測点は区域の直下に付く
     // → docs/spec/quake-spec.md §5「観測点がどの市町村・区域に属するか」）。
     const mixedRollup: EarthquakePoint[] = [
       station({ addr: OBSERVED_STATION, scale: 30, city: undefined }),

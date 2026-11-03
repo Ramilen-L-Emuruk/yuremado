@@ -162,9 +162,4 @@ describe('makeReplayLogEntry', () => {
     expect(failed.kind).toBe('quake')
   })
 
-  it('配信元は既定で DMDSS、指定すれば標準版になる', () => {
-    const base = { headType: '551', origin: 'replay' as const, rawBody: {}, payload: null, isTest: false }
-    expect(makeReplayLogEntry(base).source).toBe('dmdss')
-    expect(makeReplayLogEntry({ ...base, source: 'p2pquake' }).source).toBe('p2pquake')
-  })
 })

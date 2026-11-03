@@ -6,7 +6,7 @@
 // 次の取得そのものが仕込まれない）。上限に当たった取得はここで例外にし、既存の失敗の経路へ乗せる。
 //
 // 生成データ（public/data/*.json）は取得状況の集計を持つ `fetchJsonWithTimeout` を使う。
-// 外部の配信元（DMDATA・P2PQuake・強震モニタ・VOICEVOX・海底地形）はこちらを使う。
+// 外部の配信元（DMDATA・強震モニタ・VOICEVOX・海底地形）はこちらを使う。
 
 /**
  * DMDATA のアーカイブ本体（1 日ぶんの tar.gz）の上限。
@@ -18,7 +18,7 @@
 export const ARCHIVE_BODY_FETCH_TIMEOUT_MS = 60_000
 
 /**
- * DMDATA の API（目録・一覧・電文本体・WebSocket のチケット）・P2PQuake・強震モニタの観測点一覧・
+ * DMDATA の API（目録・一覧・電文本体・WebSocket のチケット）・強震モニタの観測点一覧・
  * 海底地形のタイルの上限。
  *
  * 中身はどれも小さく、時間はほぼ応答待ち。実測の最長は WebSocket のチケット（`/v2/socket`）の

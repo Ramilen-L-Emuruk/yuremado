@@ -4,17 +4,13 @@
 React + TypeScript + MapLibre GL JS で構築されています。
 [kotoho7/scratch-realtime-earthquake-viewer-page](https://github.com/kotoho7/scratch-realtime-earthquake-viewer-page) を参考にしています。
 
-**通常版（P2PQuake）**: https://ramilen-l-emuruk.github.io/yuremado/
-
-**DM-D.S.S 版（DMDATA.JP）**: https://ramilen-l-emuruk.github.io/yuremado/dmdss/
+**アプリ**: https://yuremado.com/
 
 **YouTube（再現リプレイの動画）**: https://www.youtube.com/@Yuremado
 
 **X（更新のお知らせ）**: https://x.com/Yuremado
 
 **不具合の報告・ご要望（GitHub Issues）**: https://github.com/Ramilen-L-Emuruk/yuremado/issues
-
-> 「DM-D.S.S」は DMDATA.JP のサービス名。以下のドキュメントとコード（`VITE_VARIANT=dmdss`）では表記を短縮して **DMDSS** と記載する。
 
 ## 主な機能
 
@@ -32,21 +28,16 @@ React + TypeScript + MapLibre GL JS で構築されています。
 - **PWA 対応**: ホーム画面へのインストールとオフラインキャッシュに対応
 - **スマートフォン対応**: 画面の向きに応じた地図と情報の並べ替え、表示中タブの再タップで情報パネルを畳んで地図を全画面表示（縦画面では境界のドラッグで比率も調整可）
 - **VOICEVOX 読み上げ**: ローカル VOICEVOX と連携して情報を音声で読み上げ（任意）
-- **電文ログ**: 受信電文の一覧・生電文コピー・ダウンロード（開発・検証用途。DM-D.S.S 版は DMDATA の電文、標準版は P2PQuake の受信を記録）
+- **電文ログ**: 受信電文の一覧・生電文コピー・ダウンロード（開発・検証用途）
 - **共有カード**: 表示中の地図を、見出しと出典を添えた 1 枚の画像にして共有・保存（表示中の内容の概要を本文として添えます）
 
 各機能の詳細仕様は [`docs/spec/`](docs/spec/) 配下の機能別仕様書を参照。
 
-## ビルドバリアント
+## 情報の受け取り方
 
-standard 版と DM-D.S.S 版の 2 種類のビルドを同一リポジトリから生成できます。
-
-| バリアント | dev 起動 | データソース | 配信パス |
-|---|---|---|---|
-| 通常版 | `npm run dev` | P2PQuake + Yahoo 強震モニタ | `/yuremado/` |
-| DM-D.S.S 版 | `npm run dev:dmdss` | DMDATA.JP + Yahoo 強震モニタ | `/yuremado/dmdss/` |
-
-バリアント別の有効機能マトリクスは [`docs/spec/architecture-spec.md`](docs/spec/architecture-spec.md) 参照。
+地震・津波などの電文は、開発者が運営する配信サーバー（DMDATA.JP の電文を中継するもの）から、誰でも受け取れます。
+緊急地震速報の予報を見たい方は、ご自身で契約した DMDATA.JP の API キーを設定の窓に入れると、予報だけを DMDATA.JP から直接受け取ります。
+リアルタイム震度は強震モニタ（Yahoo）から受け取ります。詳しくは [`docs/spec/architecture-spec.md`](docs/spec/architecture-spec.md) を参照。
 
 ## セットアップ
 
@@ -57,12 +48,10 @@ standard 版と DM-D.S.S 版の 2 種類のビルドを同一リポジトリか�
 npm install
 
 # 開発サーバー起動（http://localhost:5173）
-npm run dev            # 通常版
-npm run dev:dmdss      # DM-D.S.S 版
+npm run dev
 
-# 本番ビルド
-npm run build          # 通常版 → dist/
-npm run build:dmdss    # DM-D.S.S 版 → dist-dmdss/
+# 本番ビルド（dist/）
+npm run build
 
 # 本番プレビュー
 npm run preview
@@ -82,14 +71,14 @@ npm run preview
 開発時は以下の仕様書を参照してください。**実コードと食い違う場合は実コードを正とします**。
 
 - [`docs/spec/README.md`](docs/spec/README.md) — 仕様書一覧のインデックス
-- [`docs/spec/architecture-spec.md`](docs/spec/architecture-spec.md) — 全体アーキテクチャ・バリアント切替
+- [`docs/spec/architecture-spec.md`](docs/spec/architecture-spec.md) — 全体アーキテクチャ
 - [`docs/spec/eew-spec.md`](docs/spec/eew-spec.md) — 緊急地震速報
 - [`docs/spec/tsunami-spec.md`](docs/spec/tsunami-spec.md) — 津波情報
 - [`docs/spec/quake-spec.md`](docs/spec/quake-spec.md) — 地震情報
 - [`docs/spec/map-rendering-spec.md`](docs/spec/map-rendering-spec.md) — 地図描画
 - [`docs/spec/audio-tts-spec.md`](docs/spec/audio-tts-spec.md) — 通知音・読み上げ・タイトル連携
-- [`docs/spec/data-sources-spec.md`](docs/spec/data-sources-spec.md) — DMDATA / P2PQuake / Yahoo の統合
-- [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) — 設定・PWA・実地震テスト
+- [`docs/spec/data-sources-spec.md`](docs/spec/data-sources-spec.md) — 配信サーバー（中継）/ DMDATA / Yahoo の統合
+- [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) — 設定・PWA・テストボタン・リプレイ
 - [`docs/spec/action-checklist-spec.md`](docs/spec/action-checklist-spec.md) — 行動チェックリスト
 - [`docs/spec/share-card-spec.md`](docs/spec/share-card-spec.md) — 共有カード
 - [`docs/spec/kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) — 強震モニタ揺れ検知エンジン
@@ -110,8 +99,9 @@ npm run preview
 - 強震モニタの震度は推定値であり、気象庁発表の震度と異なる場合があります。
 - 緊急地震速報は予測情報のため、実際の揺れと異なる場合があります。
 - 主要動の到達予測は、気象庁が**地域ごと**（都道府県を 3〜4 つに分けた広さ）に発表した値です。同じ地域の中でも場所によって到達時刻は異なります。
-- P2PQuake API は非公式サービスのため、サービス継続性は保証されません。
-- DM-D.S.S 版で入力する DMDATA.JP API キーは端末内に平文で保存されます。共有端末での利用には注意してください（詳細は[プライバシーポリシー](docs/privacy-policy.md)）。
+- 地震・津波などの情報は開発者が個人で運営する配信サーバーを通して届くため、サービスの継続性は保証されません。
+- 設定の窓で入力する DMDATA.JP API キーは端末内に平文で保存されます。共有端末での利用には注意してください（詳細は[プライバシーポリシー](docs/privacy-policy.md)）。
+- 以前のアドレス（https://ramilen-l-emuruk.github.io/yuremado/ と https://ramilen-l-emuruk.github.io/yuremado/dmdss/）は、いまのアドレス（https://yuremado.com/）へ設定を引き継ぐための案内のページになっています。
 
 ## ライセンス
 
@@ -121,7 +111,7 @@ MIT License（[LICENSE](LICENSE)）。
 （`npm run build-third-party-licenses` で `package.json` の `dependencies` とその依存先から生成）。
 
 **データ・地図・フォントの出典**:
-- 地震情報・緊急地震速報・津波情報: 気象庁 — 配信は通常版が [P2PQuake API v2](https://www.p2pquake.net/)、DM-D.S.S 版が [DMDATA.JP](https://dmdata.jp/)
+- 地震情報・緊急地震速報・津波情報: 気象庁 — 配信は [DMDATA.JP](https://dmdata.jp/)（開発者が運営する配信サーバーが中継。緊急地震速報の予報は API キーを入れた端末が直接受信）。緊急地震速報は強震モニタ（[Yahoo!天気・災害](https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/)）からも受信
 - リアルタイム震度: [防災科学技術研究所 強震モニタ](https://www.kmoni.bosai.go.jp/) — 配信は [Yahoo!天気・災害](https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/) 経由
 - 公開観測点の波形: 気象庁（JP 網）— 配信は [EarthScope](https://www.earthscope.org/)（NSF NGF）経由（[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja)）
 - 地図データ: 「気象庁 予報区等 GIS データ（都道府県・地震情報／細分区域・津波予報区）」 — GeoJSON 化: [Ichihai1415/JMA-GIS-GeoJSON](https://github.com/Ichihai1415/JMA-GIS-GeoJSON)（CC BY 4.0）

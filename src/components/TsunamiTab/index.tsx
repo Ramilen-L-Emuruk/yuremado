@@ -161,12 +161,12 @@ const GRADE_LABEL: Record<TsunamiGrade, string> = {
   Unknown:      '不明',
 }
 
-/** 官署の行（「編集官署 気象庁本庁　発表官署 気象庁」。地震カードと同じく区切り記号を置かず間隔で分ける）。片方しか無ければその片方だけ。どちらも無ければ空文字。 */
-function officeLine(issue: JMATsunami['issue']): string {
+/** 官署の塊（「編集官署 気象庁本庁」「発表官署 気象庁」）。地震カードと同じく区切り記号を置かず間隔で分ける。片方しか無ければその片方だけ。 */
+function officeLabels(issue: JMATsunami['issue']): string[] {
   return [
     issue.editorialOffice && `編集官署 ${issue.editorialOffice}`,
     issue.publishingOffice && `発表官署 ${issue.publishingOffice}`,
-  ].filter(Boolean).join('　')
+  ].filter((s): s is string => Boolean(s))
 }
 
 // 等級カードを積む順は読み上げと共有する（`GRADES_IN_CARD_ORDER`）。ここに独自の配列を置くと、
@@ -265,7 +265,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
   // 条件は 2 つ。**直近の受信で動いた区域であること**（`areaGradeChangedKeys`。区域が持つ
   // `lastGrade` は変化後の続報にも残るため、これが無いと出続ける）と、**前回が「津波なし」
   // （`Unknown`）でないこと**（新規発表の報では全区域がそこから始まり、全部の行に付いて
-  // 意味を持たなくなる）。`lastGrade` は DMDATA 経路のみが持つ（P2PQuake は配信しない）。
+  // 意味を持たなくなる）。`lastGrade` は電文が `LastKind` を持つ区域だけが持つ。
   const gradeChange = areaGradeChangedKeys?.has(tsunamiAreaKey(area))
     && area.lastGrade && area.lastGrade !== 'Unknown' && area.lastGrade !== area.grade
     ? {
@@ -278,8 +278,8 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
   const stations = area.stations ?? []
   // 実測値がある観測点名のセット（予測だけの行から外す）
   const observedNames = new Set(observations.map(o => o.name))
-  // **`immediate` は文言が読めないときの補い。** P2PQuake も 3 値の文言をそのまま配信するが、
-  // `firstHeight` を持たない古いデータでは真偽値しか残らない。**「ただちに津波来襲と予測」と
+  // **`immediate` は文言が読めないときの補い。** `firstHeight` を持たない古いデータでは
+  // 真偽値しか残らない。**「ただちに津波来襲と予測」と
   // 1 対 1 ではなく**、実データでは「津波到達中と推測」の区域でも真になる（第１波の到達を
   // 確認では偽）ので、文言が読めるならそちらを優先する
   // （→ [`tsunami-spec.md`](../../../docs/spec/tsunami-spec.md) §9「区域の到達状況」）。
@@ -305,7 +305,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
 
           **この結線は自動テストが無い。** jsdom はレイアウトを持たないため追従の effect
           （`planFollowScroll` を呼ぶ側）を発火させられなかった。確かめるときは実機で測る ――
-          DMDSS 版の dev サーバーで設定の窓の「変化の小さい続報テスト」を流し、
+          dev サーバーで設定の窓の「変化の小さい続報テスト」を流し、
           `Element.prototype.scrollTo` を差し替えて送り先を記録する。**送り先は「区域見出しの
           上端 − 余白 24px − バナーの高さ」**になる（バナーは sticky で、追従は
           `viewTop = containerRect.top + stickyBannerHeight` を見る。実測で約 190px あった。
@@ -875,7 +875,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   //
   // **同じ津波かは番号の重なりで見る**（`isSameTsunamiEvent` と同じ物差し。運用種別も揃えて比べる）。番号の組を
   // 1 つの文字列の鍵へ縮める（最小の番号など）と、組み直しや、より小さい番号を持つ報の追加で鍵が動き、
-  // 等級が動いていないのに閉じる。番号を持たない電文（標準版）は `id` で比べる —— その電文は続報として束ねられない
+  // 等級が動いていないのに閉じる。番号を持たない電文（`EventID` が空）は `id` で比べる —— その電文は続報として束ねられない
   // （`isTsunamiContinuation`）ので前報の中身も引き継がず、報ごとに閉じても「等級が動いたときだけ閉じる」との食い違いにはならない。
   const commentsIdentity = active[0]
     ? `${active[0].operationStatus ?? ''}|${tsunamiEventIds(active[0]).join(' ') || `#${active[0].id}`}`
@@ -1420,8 +1420,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   // 並べても読み手の行動を変えない（2026-10-21 ユーザー選択「今のまま記録する (Recommended)」。全期間の解除の報 2 通は
   // どちらも失効時刻を持たない）。
   //
-  // **standard 版（P2PQuake）では出ない** —— あちらの API はこの値を持たない。アプリが積む
-  // 24 時間のフェイルセーフ（`useEarthquakes.ts`）は気象庁が言っていない時刻なので、
+  // **電文が期限を載せない報では出ない。** 気象庁が言っていない時刻は
   // **画面へ出してはいけない**（発表値の顔で推測が並ぶ）。ここが `validDateTime` だけを見て
   // いるので自然にそうなる。
   //
@@ -1565,11 +1564,18 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 **`issue.source` は見ない** —— 発表官署へ落ちるので「編集官署」と名乗ると事実を誤らせる。
                 最新の報の官署を出す（統合は新報の `issue` を採る）。取消・解除の表示中も出す。 */}
             {/* 発表官署（`Control/PublishingOffice`）を編集官署の隣に「編集官署 …　発表官署 …」の形で添える
-                （2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・地震カードと同じ形）。 */}
+                （2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・文面は地震カードと同じ。置き場所は違う）。
+                官署は名前の途中で割らず、収まらないときは官署ごと次の行へ送る（2026-11-01 ユーザー選択
+                「今回一緒に直す (Recommended)」）。情報名は長い（「大津波警報・津波警報・津波注意報・津波予報」など）ので、狭い幅では途中で折り返す。 */}
             {(active[0]?.infoName || active[0]?.issue.editorialOffice || active[0]?.issue.publishingOffice) && (
               <div className="mt-0.5" style={{ fontSize: '0.625rem', color: isCancelledDisplay ? '#6b7280' : topStyle.headerColor, opacity: 0.6 }}>
                 {active[0].infoName}
-                {officeLine(active[0].issue) && `${active[0].infoName ? '　' : ''}${officeLine(active[0].issue)}`}
+                {officeLabels(active[0].issue).map((label, i) => (
+                  <Fragment key={label}>
+                    {(i > 0 || active[0].infoName) && '　'}
+                    <span className="whitespace-nowrap">{label}</span>
+                  </Fragment>
+                ))}
               </div>
             )}
             {/* 気象庁が書いた取消しの概要（電文の `Body/Text`）。アプリの定型文（上の `cancelInfo.desc`）

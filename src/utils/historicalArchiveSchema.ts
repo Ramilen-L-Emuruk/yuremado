@@ -5,15 +5,15 @@ import { withStoredEewOrigin } from './eewOrigin'
 import { REPLAY_PAYLOAD_KINDS } from './replayPayloadKinds'
 
 // ローカル履歴アーカイブ（`public/data/historical-archives/`）の型検証ガード。
-// testScenarioSchema.ts と同じ考え方: 壊れた JSON を検証なしで使うと実行時例外や
+// 壊れた JSON を検証なしで使うと実行時例外や
 // 破損エントリの再生につながるため、配信側の破損に対して防御的に振る舞う。
 //
-// このファイルの内容は `capture-test-scenario.ts` のように実電文から機械生成されるのではなく、
+// このファイルの内容は実電文から機械生成されるのではなく、
 // 気象庁公表資料を典拠に手作業で書き起こしている（`docs/spec/settings-pwa-spec.md` §6 参照）。
 // typo が混入しやすい経路。**ErrorBoundary はあるが、それが受け止めるのは「その範囲を表示できない」
 // という結果でしかない。** 壊れた値を画面まで通さないほうが安いので、判別子（kind）の存在だけでなく、
-// 震度値・警報区分など描画に直結するフィールドの値域までここで弾く。中間値（`25` 等）や未知の区分がそのまま state に乗ると、既存の実地震シナリオ
-// （`testScenarioSchema.ts`・`eew-spec.md` §4）と同じ理由でカードやバッジの表示が壊れる。
+// 震度値・警報区分など描画に直結するフィールドの値域までここで弾く。中間値（`25` 等）や未知の区分がそのまま state に乗ると、
+// カードやバッジの表示が壊れる（`eew-spec.md` §4）。
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -54,7 +54,7 @@ function isArchiveMeta(v: unknown): v is HistoricalArchiveMeta {
   return true
 }
 
-/** index.json の型検証。壊れた要素は落として通ったものだけ返す（testScenarioSchema.ts と同じ方針）。 */
+/** index.json の型検証。壊れた要素は落として通ったものだけ返す。 */
 export function validateHistoricalArchiveIndex(
   v: unknown,
 ): { valid: HistoricalArchiveIndex; skipped: number; malformed: boolean } {

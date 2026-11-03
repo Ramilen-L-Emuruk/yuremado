@@ -88,14 +88,13 @@ function readWallClock(time: string): { y: number; mo: number; d: number; h: num
  * 時間帯を持たない日本時間の時計表記を、ISO の形（`2026-10-24T01:09:42.830+09:00`）へ直す。
  * **時計表記でないもの・暦にない日時は `null`**（呼び出し側が元の文字列のまま扱う）。
  *
- * P2PQuake の時刻を内部の型へ入れる前に通す（→ `services/p2pquake.ts` の `p2pTime`）。
+ * Yahoo hypoInfo の時刻を内部の型へ入れる前に通す（→ `services/kyoshin.ts` の `yahooTime`）。
  * そのまま `new Date()` へ渡すと 2 つの穴がある。
  * - **Safari は小数の秒が付いた形（`2026/10/24 01:09:42.83`）を読めない**（WebKit 26.5 で `NaN` を
- *   実測した。小数の秒が無い形は読める）。受信時刻は必ずこの形なので、Safari では受信時刻で
- *   並べる・比べる処理がまとめて効かなくなる
+ *   実測した。小数の秒が無い形は読める）
  * - **時間帯を持たないので、端末の時間帯で読まれる**（日本国外の端末では Chrome でも時刻がずれる）
  *
- * DMDATA 版の時刻は元から時間帯つきの ISO の形なので、ここで揃えると両バリアントで下流の読み方が 1 つになる。
+ * DMDATA の電文の時刻は元から時間帯つきの ISO の形なので、ここで揃えると下流の読み方が 1 つになる。
  * 小数の秒は 3 桁（ミリ秒）に揃え、4 桁目からは切り捨てる。
  */
 export function jstWallClockToIso(time: string): string | null {
@@ -108,8 +107,8 @@ export function jstWallClockToIso(time: string): string | null {
 /**
  * 地震カードの時刻をエポックミリ秒へ直す。**読めなければ `NaN`。**
  *
- * **時間帯を持たない表記は日本時間として読む。** P2PQuake の時刻（`2026/10/03 13:26:00`）は
- * 気象庁の日本時間の時計表記で、`new Date()` に渡すと端末の時間帯で読まれる —— 日本国外の
+ * **時間帯を持たない表記は日本時間として読む。** 時計表記（`2026/10/03 13:26:00`）を
+ * `new Date()` に渡すと端末の時間帯で読まれる —— 日本国外の
  * 端末では、気象庁の地震一覧（時間帯つきの絶対時刻）と分が合わず、突き合わせが全滅する。
  * 時間帯を持つ表記（DMDATA の ISO 形式）はそのまま読む。
  */
@@ -123,7 +122,7 @@ export function parseJstTimeMs(time: string): number {
 /**
  * 緊急地震速報の発生時刻を、その地震カードの秒として使ってよいか。
  *
- * - **仮定震源要素の報なら使わない**（`assumed === true`）。見分けられない値（`null`。標準版の強震モニタの
+ * - **仮定震源要素の報なら使わない**（`assumed === true`）。見分けられない値（`null`。強震モニタの
  *   緊急地震速報）は使う（2026-10-15 ユーザー承認「仮定震源の報は使わない（推奨）」の説明「標準版の
  *   強震モニタ経路は仮定を見分けられないので除けない」）
  * - **地震情報の分に入らなければ結ばない** —— 同じ地震 ID の中身が別の地震で食い違うことがある
@@ -257,61 +256,4 @@ export function catalogYearsFor(quakeTimeMs: number): number[] {
   const a = yearOf(head - QUAKE_MINUTE_LEAD_MS)
   const b = yearOf(head + QUAKE_MINUTE_TAIL_MS)
   return a === b ? [a] : [a, b]
-}
-
-/** 気象庁の地震一覧（`bosai/quake/data/list.json`）の 1 件のうち、突き合わせに使う欄。 */
-export interface JmaQuakeListEntry {
-  /** 地震 ID。 */
-  readonly eid: string
-  /** 発生時刻（ISO・分まで）。 */
-  readonly at: string
-  /** 震央地名。 */
-  readonly anm: string
-  /** マグニチュード（文字列。不明なら空のことがある）。 */
-  readonly mag: string
-}
-
-/** 突き合わせる側（地震カード）の材料。 */
-export interface QuakeForIdLookup {
-  /** 地震カードの発生時刻（分まで）。 */
-  readonly timeMs: number
-  /** 震央地名。 */
-  readonly epicenter: string
-  /** マグニチュード。不明なら `null`。 */
-  readonly magnitude: number | null
-}
-
-/**
- * 地震 ID を持たない地震カード（P2PQuake 経路）について、気象庁の地震一覧から地震 ID を引く。
- * **1 つに決まらなければ `null`。**
- *
- * **発生の分と震央地名が一致するものを探し、複数あれば規模で絞る。** それでも 2 つ以上残れば
- * 採らない —— 同じ分・同じ震央地名・同じ規模の地震は区別できず、取り違えると別の地震の
- * 秒で線を引くことになる（取り違えは「線が無い」より重い）。
- *
- * 一覧は 1 つの地震について報ごとに行を持つ（震度速報・震源・震度情報…）ので、
- * 同じ `eid` は 1 つに数える。
- */
-export function findJmaEventId(
-  quake: QuakeForIdLookup,
-  entries: readonly JmaQuakeListEntry[],
-): string | null {
-  if (!Number.isFinite(quake.timeMs) || quake.epicenter === '') return null
-  const minute = Math.floor(quake.timeMs / MINUTE_MS)
-  const sameMinuteAndPlace = entries.filter((e) => {
-    const at = Date.parse(e.at)
-    return Number.isFinite(at) && Math.floor(at / MINUTE_MS) === minute && e.anm === quake.epicenter
-  })
-  const pick = (list: readonly JmaQuakeListEntry[]): string | null => {
-    const ids = new Set(list.map((e) => e.eid))
-    return ids.size === 1 ? [...ids][0] : null
-  }
-  const first = pick(sameMinuteAndPlace)
-  if (first !== null || sameMinuteAndPlace.length === 0) return first
-  if (quake.magnitude === null) return null
-  const sameMag = sameMinuteAndPlace.filter((e) => {
-    const mag = Number.parseFloat(e.mag)
-    return Number.isFinite(mag) && Math.abs(mag - (quake.magnitude as number)) < 0.05
-  })
-  return pick(sameMag)
 }

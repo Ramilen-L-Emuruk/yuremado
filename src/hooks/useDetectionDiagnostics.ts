@@ -11,7 +11,6 @@ import {
   type DiagnosticRecord,
 } from '../utils/detectionDiagnostics'
 import { saveRecord } from '../utils/detectionDiagnosticsDb'
-import { isDmdss } from '../utils/env'
 import { log } from '../utils/logger'
 
 // 揺れ検知が走ったときの「アプリが実際に見た値」を記録するフック。
@@ -100,7 +99,6 @@ export function useDetectionDiagnostics(
             noiseFloors,
           },
           __APP_VERSION__,
-          isDmdss ? 'dmdss' : 'standard',
         )
       }
     }

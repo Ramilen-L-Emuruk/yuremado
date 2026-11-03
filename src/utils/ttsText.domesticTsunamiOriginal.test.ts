@@ -70,7 +70,7 @@ describe('国内の地震情報の津波の一文', () => {
     expect(text).toContain(TEXT_0230)
   })
 
-  // 対照: コードを持たない経路（P2PQuake）は区分の文のまま。
+  // 対照: コードを持たない電文は区分の文のまま。
   it('コードが無ければ区分の文を読む', () => {
     const text = earthquakeToText(quake({ domesticTsunami: 'なし' }), OPTS, true)
     expect(text).toContain(TEXT_0215)

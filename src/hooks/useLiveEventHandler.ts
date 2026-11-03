@@ -12,7 +12,7 @@ import {
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
   EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast,
   isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewFirstIssueTime, eewCancelNotificationBody,
-  eewSerial, eewIssueTimeMs, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, type EewNotifiedForecast,
+  eewSerial, eewSerialSeries, eewIssueTimeMs, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, type EewNotifiedForecast,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
 } from '../utils/eew'
 import { hasKnownEpicenter } from '../utils/geo'
@@ -268,7 +268,7 @@ type SpeechPriority = typeof SPEECH_PRIORITY[keyof typeof SPEECH_PRIORITY]
  * 見ずに到来順だけで裁くので、崩れたまま放つと**警報の予約が、後から届いた観測情報に
  * 「追い越された」と判定されて取り下がる**（聞き逃してはいけない側が消える）。
  *
- * なお P2PQuake（standard 版）は続報ごとにキーが変わりうるため、既存カードを引けなかった初報同士
+ * なお `EventID` を持たない電文は続報ごとにキーが変わりうるため、既存カードを引けなかった初報同士
  * では同じ地震でも別主題になる。そのとき取り下げは働かず、先に読み始めた側が後発に切られる従来の
  * 挙動に戻るだけで、情報が消える方向には倒れない。
  */
@@ -522,7 +522,7 @@ function sleep(ms: number): Promise<void> {
  * ここで落とすと最大級の地震ほどタイトルが震央地名だけになる。
  *
  * **規模が判らなければ「M不明」と出す**（2026-10-23 ユーザー選択「「M不明」を出す方へ揃える (Recommended)」）。
- * DMDSS 版は電文の説明（`Ｍ不明`）を通して既に「M不明」と出ていて、説明を持たない標準版だけが落としていた。
+ * 電文の説明（`Ｍ不明`）を持つ報はそれを通して「M不明」と出る。説明を持たない報もここで同じく「M不明」と出す。
  */
 function magnitudeTitlePart(hypocenter: Hypocenter): string {
   const text = formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)
@@ -650,10 +650,8 @@ export function ttsRegionOptions(settings: AppSettings): TtsSpeechOptions {
 // される。utils/clock.ts の Page Visibility 対応コメント参照）にキューが一括で捌けると
 // 直前の統合結果を含まないため、同じ地震の続報を「新規」と誤判定して音が鳴り直す。
 //
-// DMDATA は全報が eventId を共有する。P2PQuake は eventId を持たないが、earthquake.time と震源名は
-// 続報間で変わらない（変わるのは訂正報・震源要素更新のときで、それは通知に値する変化）。
-// 実測（2026-10-18 に /history?codes=551 を 140 通・2026-09-28〜10-18）: 同じ鍵の続報 3 組、
-// 鍵がずれた形 0 件（数分違いの近い組 1 つは別の地震だった）。
+// DMDATA は全報が eventId を共有する。eventId を持たない電文は earthquake.time と震源名で束ねる
+// （続報間で変わるのは訂正報・震源要素更新のときで、それは通知に値する変化）。
 // issue.type まで含めるのは、震度速報／震源情報／各地の震度情報を別報として扱うため。
 function newQuakeTrackingKey(q: JMAQuake): string {
   const base = extractQuakeEventIdFromId(q.id)
@@ -718,7 +716,7 @@ function reserveQuakeSpokenStates(states: Map<string, QuakeSpokenState>, keys: r
  *   別の地震の震源を「伝えた」ことにはならない）
  * - 失効時刻は 1 つ目の原因地震の主題へ積む（従来の置き場所）
  *
- * 識別番号を持たない電文（P2PQuake）では既読を持てないので null。
+ * 識別番号を持たない電文（`EventID` が空）では既読を持てないので null。
  *
  * @returns 既読と、震源を語っている間に見せるカードの主題（結べた最初の地震）
  */
@@ -761,9 +759,8 @@ function tsunamiQuakeSpokenFor(
  * 津波の解除・誤報取消を「もう伝えた」と覚える鍵。ライブとリプレイの復元で同じ鍵を使うこと
  * （ずれると、復元で既読にした取消をライブの続きでもう一度読む）。
  *
- * `eventId` を持たない電文は発表日時（`issue.time`）を鍵にする。P2PQuake 552 は EventID を
- * 持たず、`id` は配信 1 件ごとの識別子で同じ発表でも揃う保証が無いので、`id` では同じ解除の 2 度目を
- * 見分けられない（XML 経路の parseTsunamiFromXml も EventID 欠落時に空文字を返すので `||` で判定する）。
+ * `eventId` を持たない電文は発表日時（`issue.time`）を鍵にする。`id` は同じ発表でも揃う保証が無いので、
+ * `id` では同じ解除の 2 度目を見分けられない（parseTsunamiFromXml は EventID 欠落時に空文字を返しうるので `||` で判定する）。
  */
 function tsunamiCancelKey(report: JMATsunami): string {
   return report.eventId || (report.issue.time ? `issue:${report.issue.time}` : report.id)
@@ -888,8 +885,8 @@ export function createPreWindowQuakeTopics(): (quake: JMAQuake) => { topic: stri
  * **同じ地震について何度も呼ばれる**（窓の手前の報を 1 通ずつ舐めるため）。`applySpokenRefs` は
  * 震度が上がったときだけ書き換える単調なマージなので、繰り返し呼んでも最終状態は変わらない。
  *
- * **主題は呼び出し側が決める。** 報ごとに `quakeEventKey` を呼ぶと、識別子を持たない経路
- * （P2PQuake）では報ごとに別の鍵になる（理由は呼び出し側の注記）。
+ * **主題は呼び出し側が決める。** 報ごとに `quakeEventKey` を呼ぶと、識別子を持たない電文
+ * では報ごとに別の鍵になる（理由は呼び出し側の注記）。
  */
 function rememberQuakeSpeechAsSpoken(
   quake: JMAQuake,
@@ -959,7 +956,7 @@ interface TsunamiCardOrderBasis {
  * カードのハイライト（`setAreaGradeChangedKeys`）も同じ組から作るが、Set にするため並びに依らない。
  *
  * **引き継ぐ条件はカードと同じ述語（`isTsunamiContinuation`）で判定する。** カードは別の地震の
- * 津波・解除表示中のカードからは値を引き継がず、`eventId` を持たない経路（P2PQuake）では
+ * 津波・解除表示中のカードからは値を引き継がず、`eventId` を持たない電文では
  * そもそも蓄積しない。ここだけ無条件に混ぜると、**カードに無い観測点で並べ替えた結果**を
  * 上の 4 つが使うことになる。
  *
@@ -1314,11 +1311,11 @@ export interface LiveEventHandlerDeps {
 /**
  * 復元で受け取った報が、読み上げ側が最後に見た報（`seen`）より新しいか。
  *
- * 同じ経路なら報番号、経路が違うか報番号が読めなければ発表時刻（秒）で比べる（`eewStaleness` と同じ考え方）。
+ * 報番号の系列（`eewSerialSeries`）が同じなら報番号、系列が違うか報番号が読めなければ発表時刻（秒）で比べる（`eewStaleness` と同じ考え方）。
  * **比べられないときは新しいと見なさない** —— 配信元の一覧は遅れていることがあり、その報で記憶を巻き戻さないため。
  */
 function isLaterEewReport(incoming: EEWAlert, seen: EEWAlert): boolean {
-  if (incoming.origin === seen.origin) {
+  if (eewSerialSeries(incoming) === eewSerialSeries(seen)) {
     const a = eewSerial(incoming)
     const b = eewSerial(seen)
     if (a !== null && b !== null) return a > b
@@ -1330,7 +1327,7 @@ function isLaterEewReport(incoming: EEWAlert, seen: EEWAlert): boolean {
 
 /** {@link isLaterEewReport} と同じ比べ方で、古いか同じだと言えるか（どちらも言えなければ「比べられない」）。 */
 function isEarlierOrSameEewReport(incoming: EEWAlert, seen: EEWAlert): boolean {
-  if (incoming.origin === seen.origin) {
+  if (eewSerialSeries(incoming) === eewSerialSeries(seen)) {
     const a = eewSerial(incoming)
     const b = eewSerial(seen)
     if (a !== null && b !== null) return a <= b
@@ -1799,8 +1796,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    * 気象庁が書いた文のうち、**既に声にした文**（→ `speakTelegramText`）。鍵は「事象 × 1 文」
    * （`TelegramTextUnit.key`。組み立ては `telegramTextSpokenSubject`）。
    *
-   * **電文の `id` を鍵にしない。** 生の電文は統合前で `eventKey` を持たず、P2PQuake 経路の
-   * 鍵（`initialQuakeKey`）は電文の `id` を含むため、**続報のたびに別の鍵になって既読が効かない**
+   * **電文の `id` を鍵にしない。** 生の電文は統合前で `eventKey` を持たず、識別子を持たない
+   * 電文の鍵（`initialQuakeKey`）は電文の `id` を含むため、**続報のたびに別の鍵になって既読が効かない**
    * （同じ「＊印は…」を報のたびに読むことになる）。事象の識別子（`eventId`）なら続報で共有される。
    *
    * **本文まるごとではなく文で持つ。** 津波の避難行動の固定付加文は等級が動くたびに節が増減し、
@@ -2992,7 +2989,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    * 状態には載らない。担うのは通知音・読み上げ・（一部は）自動タブ切替だけ。
    */
   const handleExtraLiveEvent = (event: ExtraLiveEvent) => {
-    // 長周期地震動情報（DMDSS版のみ）
+    // 長周期地震動情報
     if (event.kind === 'lpgm') {
       const lpgmEvent = event.data
       if (lpgmEvent.cancelled) {
@@ -3076,7 +3073,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       return
     }
 
-    // 推計震度分布図（DMDSS版のみ）。
+    // 推計震度分布図。
     //
     // 地震から数分後に届く。**地震そのものの事実は既に地震情報で伝え終えている**ので、
     // ここが足すのは「震度の広がりが、気象庁の推計として出そろった」ことだけ。
@@ -3151,7 +3148,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       return
     }
-    // 地震回数に関する情報（DMDSS版のみ）。
+    // 地震回数に関する情報。
     //
     // **帯で出す**（特別情報バナー。並びは後発地震の下）。伝えるのは群発という続いている「状況」で、
     // 地震カードのように 1 件ずつ増える「出来事」ではない。しかも群発の最中は小さな地震で
@@ -3213,7 +3210,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       return
     }
 
-    // 地震・津波に関するお知らせ（DMDSS版のみ）。**音と読み上げは設定で有効にしたときだけ**
+    // 地震・津波に関するお知らせ。**音と読み上げは設定で有効にしたときだけ**
     // （`quakeNoticeAlerts`。既定は行わない。解説情報の `nankaiCommentaryAlerts` と同じ形）。
     //
     // 音は解説情報の音（`specialInfoCommentary`）を借りる。読むのは見出しだけで、本文は気象庁が書いた文として
@@ -3254,7 +3251,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       return
     }
 
-    // 南海トラフ関連解説情報（DMDSS版のみ）。臨時情報とは別の帯に出るため、ここでも別扱いにする。
+    // 南海トラフ関連解説情報。臨時情報とは別の帯に出るため、ここでも別扱いにする。
     //
     // **ウィンドウタイトルは、臨時情報を出していないときだけ書き換える**（2026-10-23 ユーザー選択「臨時情報が無いときだけ
     // 出す」）。臨時情報の発表期間中は解説情報が毎日届くため、書き換えると「南海トラフ臨時情報（巨大地震注意）」の
@@ -3311,7 +3308,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       return
     }
 
-    // 南海トラフ臨時情報・後発地震注意情報（DMDSS版のみ）
+    // 南海トラフ臨時情報・後発地震注意情報
     if (event.kind === 'nankai' || event.kind === 'kohatsu') {
       if (!event.data.cancelled) {
         // 帯は地図に重なって出るため、パネルを畳んでいると気づきにくい。いったん開く（戻す判断は App 側）。
@@ -3554,7 +3551,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 「片方だけ直されると画面と声が食い違う」と書いている形を、修正の中に持ち込むことになる。
     const quakeHeldBack = event.kind === 'quake' && meta?.quakeHeldBack === true
     // **別の経路から既に受けて知らせた緊急地震速報と同じ報か**（→ `LiveEventMeta.eewSameReport`。
-    // standard 版は Yahoo と P2PQuake が同じ報を運ぶ）。真なら音とタブ移動を起こさない
+    // 強震モニタ（Yahoo）と DMDATA の電文が同じ報を運ぶ）。真なら音とタブ移動を起こさない
     // （ブラウザ通知は新規・格上げのときしか出さないので、この印が立つ報ではもともと出ない）。
     // 読み上げとウィンドウタイトルは止めない —— 後から来た経路が運んだ欄で最新の値が変わりうる。
     const eewSameReport = event.kind === 'eew' && meta?.eewSameReport === true
@@ -3776,7 +3773,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (isNewQuake) {
         markQuakeReportSeen(seenQuakeReportKeysRef.current, incomingKey)
       }
-      // 選択 ID はカードと照合するため eventKey で渡す。P2PQuake は続報ごとにレコード id が
+      // 選択 ID はカードと照合するため eventKey で渡す。EventID を持たない電文は続報ごとにレコード id が
       // 変わるので、既存カードがあればそのキーを引き継ぐ（このハンドラは useEarthquakes の
       // 統合より前に呼ばれるため、earthquakesRef はこの電文を取り込む前の状態）。
       // 同一 tick に複数電文が捌けて ref が追いつかない場合はキーが実カードと一致せず、
@@ -3964,15 +3961,6 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           )
         }
       }
-    } else if (event.kind === 'tsunami' && event.cancelled && event.failsafeExpiry) {
-      // **標準版の 24 時間の安全弁で消える津波**（→ `JMATsunami.failsafeExpiry`）。音・読み上げ・通知・タブ移動を
-      // 起こさない —— 気象庁が言っていない時刻に「失効しました」と伝えないため（2026-10-23 ユーザー選択「安全弁では
-      // 「失効」と名乗らない (Recommended)」）。**記憶の後始末だけは本物の失効と同じく行う**（残すと、次の津波を
-      // 前の津波の続きと取り違える）。
-      log.info(`[tsunami] 標準版の安全弁で津波を外すため、音・読み上げ・通知を出さない: id=${event.id}`)
-      if (tsunamiStep?.kind === 'ended') forgetEndedTsunami()
-      skipTelegramTextRef.current = true
-      return
     } else if (event.kind === 'tsunami' && event.cancelled) {
       // 録画ツール向けの記録。**解除・取消・失効は電文が言い分けている**（`cancelReason`）ので、
       // そのまま残す。読めない値のときは「解除」へ倒す（画面の扱いと揃える）。
@@ -4082,7 +4070,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // EEW キャンセル（誤報取消）または解除（最終報満了）: レベル追跡から除去
         // expired: true は最終報タイマー満了による自動解除 → 音は鳴らさない
         //   （自動解除で音もタブ移動も起こさないことは 2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）
-        // hadKey: P2PQuake WS と Yahoo の両方から cancel が来た場合の二重鳴り防止（AUD-2）
+        // hadKey: 同じ EEW の cancel が複数届いた場合の二重鳴り防止（AUD-2）
         const hadKey = activeEEWLevelsRef.current.has(key)
         // 取消の前に画面から消えた地震の誤報取消（→ `eewLateCancel`）。画面に出ていた地震と同じく伝える
         // （2026-10-21 ユーザー承認「直す (Recommended)」）
@@ -4092,8 +4080,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 録画ツール向けの記録。**誤報取消と自動解除（最終報の満了）を言い分ける** ——
         // 前者は訂正で、後者は時間切れ。編集側から見ると意味がまるで違う。
         //
-        // **自動解除は `hadKey` のときだけ記録する。** P2PQuake WS と Yahoo hypoInfo の両方から
-        // 最終報の消滅を検出すると同じ EEW の expired キャンセルが複数キューに積まれ（コメント
+        // **自動解除は `hadKey` のときだけ記録する。** 最終報の満了の予約と強震モニタの消滅検出が
+        // 重なると同じ EEW の expired キャンセルが複数キューに積まれ（コメント
         // 「AUD-2」参照）、2 発目以降は `hadKey=false` で音・タブ移動も起こさない。記録だけ
         // 無条件に出すとここだけ二重・三重になり、「1 つの EEW が複数回失効した」と誤読される。
         //
@@ -5305,7 +5293,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     }
 
     // ブラウザ通知（津波）— 音が無効でも送る。
-    // **出すのは等級を発表する報（VTSE41・P2PQuake）だけ**（`isTsunamiGradeReport`）。津波情報（VTSE51）も区域を
+    // **出すのは等級を発表する報（VTSE41 と、種別を持たない報）だけ**（`isTsunamiGradeReport`）。津波情報（VTSE51）も区域を
     // 載せるが、中身は直前の VTSE41 の写しなので、ここで出すと発表のたびに同じ「発表」の通知が重なる（閉じた
     // 通知も出し直す）。VTSE51・VTSE52 は観測点の印を決めたあとで、観測情報の通知として出す
     // （`tsunamiObservationNotification`）。区域が空の報を弾くのは、見出しを等級から・本文を区域名から作るため
@@ -6455,8 +6443,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
      * 窓の手前で見た地震と、そこへ与えた読み上げの主題。
      *
      * **報ごとに鍵を作らないこと。** 生の電文へ `quakeEventKey` を直に当てると、識別子を
-     * 持たない経路（P2PQuake）では続報のたびに別の鍵になる —— この復元が消したかった症状
-     * そのものが、standard 版でだけ残る。理由と束ね方は `createPreWindowQuakeTopics`（と
+     * 持たない電文では続報のたびに別の鍵になる —— この復元が消したかった症状
+     * そのものが、その電文でだけ残る。理由と束ね方は `createPreWindowQuakeTopics`（と
      * その先の `createQuakeFoldKeys`）が持つ。
      */
     const quakeTopicFor = createPreWindowQuakeTopics()
@@ -6474,9 +6462,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         const ev = payload.event
         if (ev.kind === 'quake') {
           // ライブ経路（上の handleLiveEvent）と同じキーの組み立て方にそろえる。
-          // **この復元はバリアントを問わず呼ばれる。** リプレイの配線（`App.tsx` の
-          // `onStartReplay`）は 1 つで、バリアントで分かれるのは取得元だけ。そのため
-          // 識別子を持たない経路（P2PQuake）でも通り、鍵の作り方に注意が要る
+          // 識別子を持たない電文でも通るので、鍵の作り方に注意が要る
           // （上の `quakeTopicFor` の注記）。
           //
           // **「声にした内容」（`spokenQuakeStatesRef`）は復元しない。意図的。** 窓の手前の報は
@@ -6761,11 +6747,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
             rememberObservationStatesForDisplay(tsunami.observations ?? [], lastObsMissingRef.current, lastObsReportedHeightRef.current)
             rememberTsunamiValues(tsunami, tsunamiValueMemoryRef.current)
             // ライブ経路が持つ「等級を語れない電文では既読にしない」ガード（`canTellGrade`）は
-            // ここに無い。この復元はバリアントを問わず呼ばれるが（上の地震の注記）、どちらでも
-            // 効かせる場面が無い —— DMDATA は未知の区分を安全側で津波警報へ丸めるので
+            // ここに無い。効かせる場面が無い —— DMDATA は未知の区分を安全側で津波警報へ丸めるので
             // （`dmdataParser` の Kind/Code 判定）、区域が残ったまま等級だけ落ちた電文が届かない。
-            // P2PQuake 552 は等級 `Unknown` を正規の値として持つが、観測点も前回の等級
-            // （`lastGrade`）も持たないので、ここで既読へ積むものがそもそも無い。
             // ライブ側のガードを変えるときはこの非対称でよいか確かめる。
             // **欠測の観測点は名前を到達確認の記憶へ入れない**（理由は `rememberObservationHeights`）。
             // 波高だけは進める——欠測と同時に来た「これまでの最大波」を読み直さないため。

@@ -56,18 +56,17 @@ export const OFFLINE_DATA_EXCLUDED: readonly { path: string; reason: string }[] 
   { path: 'hypocenter/', reason: '長期震源カタログ（合計 約 34 MB）。眺めた年だけを取りに行く' },
   { path: 'historical-archives/', reason: 'ローカル履歴アーカイブ。再生するときだけ読む' },
   { path: 'historical-archives-kyoshin/', reason: '手元で生成した K-NET 由来の再生データ（Git 管理外）' },
-  { path: 'test-scenarios/', reason: '実地震テストのシナリオ（Git 管理外）。再生するときだけ読む' },
   { path: 'test-telegrams/', reason: 'テストボタンが流す電文。押されたときだけ読む（検証用で、オフラインで要らない）' },
 ]
 
 /**
- * 実行時キャッシュの名前。**バリアントで分ける。**
+ * 実行時キャッシュの名前。末尾は `vite.config.ts` の `RUNTIME_CACHE_SUFFIX` が決める。
  *
- * キャッシュの名前はオリジン全体で共有される。両方の版を同じブラウザで開くと、同じ名前では
- * 2 つの Service Worker が 1 つの控えへ書き込むことになり、どちらの版の控えかが名前から分からない。
+ * キャッシュの名前はオリジン全体で共有されるので、同じオリジンに別のアプリを置いたときに
+ * 控えが混ざらないよう、末尾で分けられる形にしてある。
  */
-export function offlineDataCacheName(variant: string): string {
-  return `generated-data-${variant}`
+export function offlineDataCacheName(suffix: string): string {
+  return `generated-data-${suffix}`
 }
 
 function escapeRegExp(s: string): string {
@@ -77,9 +76,8 @@ function escapeRegExp(s: string): string {
 /**
  * 実行時キャッシュの規則に渡す URL の正規表現。
  *
- * **自分の配信パス（`base`）の直下の `data/` だけに当たる。** standard 版の `base`（`/yuremado/`）は
- * DMDSS 版（`/yuremado/dmdss/`）を包むので、`/data/` だけで当てると、standard 版の Service Worker が
- * DMDSS 版のページを制御している間（DMDSS 版を初めて開いたとき）に DMDSS 版の取得まで自分の控えへ入れる。
+ * **自分の配信パス（`base`）の直下の `data/` だけに当たる。** 配信パスが別の配信パスを包む置き方
+ * （`/a/` の下に `/a/b/`）をしても、内側のアプリの取得まで自分の控えへ入れないため。
  *
  * 先頭が `/` なので、Workbox の規則（他オリジンの URL は先頭から一致したときだけ当たる）により
  * 他オリジンの URL には当たらない。
@@ -118,12 +116,12 @@ export async function offlineDataCacheWillUpdate({ response }: { response: Respo
 }
 
 /** `vite.config.ts` の `runtimeCaching` へ渡す規則。 */
-export function offlineDataRuntimeCaching(base: string, variant: string): RuntimeCaching {
+export function offlineDataRuntimeCaching(base: string, suffix: string): RuntimeCaching {
   return {
     urlPattern: offlineDataUrlPattern(base),
     handler: 'NetworkFirst',
     options: {
-      cacheName: offlineDataCacheName(variant),
+      cacheName: offlineDataCacheName(suffix),
       networkTimeoutSeconds: OFFLINE_DATA_NETWORK_TIMEOUT_SECONDS,
       plugins: [{ cacheWillUpdate: offlineDataCacheWillUpdate }],
     },

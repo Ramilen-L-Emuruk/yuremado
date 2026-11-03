@@ -91,7 +91,7 @@ function idOf(e: ReplayEntry): string {
 }
 
 function fetched(entries: ReplayEntry[], skipped = 0, failedArchiveUrls: string[] = []): ReplayFetchResult {
-  return { entries, skippedByDay: skips(skipped), failedArchiveUrls, rateLimitedSources: [], rateLimitedTelegrams: 0 }
+  return { entries, skippedByDay: skips(skipped), failedArchiveUrls, rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
 }
 
 /**
@@ -719,7 +719,7 @@ describe('useReplayController の履歴', () => {
     h.fetches[1].resolve(fetched([]))
     await h.flush(started)
 
-    // 遡る範囲はバリアントが決める（App の `fetchReplayQuakeHistory`）ので、渡すのは上端だけ
+    // 遡る範囲は呼び出し側が決める（App の `fetchReplayQuakeHistory`）ので、渡すのは上端だけ
     expect(h.deps.fetchQuakeHistory).toHaveBeenCalledTimes(1)
     expect(h.historyArgs[0].before.getTime()).toBe(target.getTime())
   })
@@ -961,18 +961,19 @@ describe('useReplayController: 24 時間より前の津波を初期状態に載�
   // 期限を一度も伝えていない津波は、ライブと同じ扱いにする（2026-10-23 ユーザー選択「ライブと同じく残す」。
   // → `dmdataReplay.ts` の `isStaleWithoutValidity`）。
   // **覆した: 識別子を持つ津波は 24 時間を過ぎても落とさない**（以前は識別子によらず 24 時間で落としていた）。
-  // ライブの DMDSS 版は期限の無い津波に失効の予約を積まず、解除か続報まで残す。
+  // ライブは期限の無い津波に失効の予約を積まず、解除か続報まで残す。
   it('正（覆した）: 識別子を持ち期限を持たない津波は、最後の報から 24 時間を過ぎても載る', async () => {
     const target = quietTarget()
     const kept = await startWith(target, [forecastTsunami('t1', hoursBefore(target, 30))])
     expect(kept.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(1)
   })
 
-  // 安全弁: 識別子を持たない津波（P2PQuake）は、ライブの標準版の安全弁と同じ 24 時間で落とす。
-  it('安全弁: 識別子を持たず期限も持たない津波は、最後の報から 24 時間を過ぎていれば載らない', async () => {
+  // **覆した: 識別子を持たない津波も 24 時間で落とさない**（`EventID` が空の津波電文は全期間 651 通で 0 通。
+  // 2026-10-31 ユーザー選択「分岐を外す (Recommended)」）。識別子の有無では分けず、ライブと同じく残す。
+  it('正（覆した）: 識別子を持たず期限も持たない津波も、最後の報から 24 時間を過ぎても載る', async () => {
     const target = quietTarget()
-    const stale = await startWith(target, [{ ...forecastTsunami('t1', hoursBefore(target, 30)), eventId: undefined }])
-    expect(stale.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(0)
+    const kept = await startWith(target, [{ ...forecastTsunami('t1', hoursBefore(target, 30)), eventId: undefined }])
+    expect(kept.loaded.filter(e => kindOf(e) === 'tsunami')).toHaveLength(1)
   })
 
   it('対照: 識別子を持たない津波でも、最後の報が 24 時間以内なら載る', async () => {

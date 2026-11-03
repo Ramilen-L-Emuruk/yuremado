@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { calcShakingDurationSec, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, eewFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast } from './eew'
+import { calcShakingDurationSec, eewEpicenterRankLabel, eewEpicenterRank2Label, eewMagnitudeRankLabel, eewMagnitudePointsLabel, isEewHypocenterSettled, eewForecastChangeText, calcArrivalSafetyMarginSec, calcEEWAutoCancelSec, calcEEWCancelTime, calcFeltRadiusKm, eewFeltRadiusKm, predictMeasuredIntensity, diffHypoInfoEvents, computeSingleEEWLevel, computeDisplayEEWLevel, computeEverSpecialWarningEventIds, eewMaxLpgmClass, eewMaxScale, eewMaxScaleInfo, isForecastScaleHigher, eewNoForecastReason, canPresentLpgmClass, eewSerial, eewSerialSeries, eewDisplaySerial, supersedesEewReport, selectEEWSoundType, eewPhase2ScaleStabilityMs, EEW_PHASE2_STABILITY_SMALL_MS, EEW_PHASE2_STABILITY_LARGE_MS, isEewAreaArrived, selectActiveEews, isUnannouncedHypocenter, mergeEewAreaArrival, NO_EEW_AREA_ARRIVAL, eewArrivalEtaSecFromMs, eewIssueTimeMs, isStaleEewReport, isOlderEewReport, acceptEewReport, noteEewNotified, isSameReportFromOtherOrigin, mergeEewReport, eewStaleness, supplementEewReport, raisesEewAlert, type HypoInfoPendingMissing, type AnnouncedHypocenter, rememberEewHypocenterName, rememberEewFirstIssueTime, EEW_HYPOCENTER_NAME_MEMORY_MAX, endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast } from './eew'
 import { travelTimeSec } from './travelTime'
 import type { YahooHypoInfoItem } from '../services/kyoshin'
 import type { EEWAlert, EEWRegion, IntensityScale, LpgmClass } from '../types/earthquake'
@@ -443,10 +443,10 @@ describe('eewMaxScaleInfo: 「〜以上」の集約', () => {
     expect(eewMaxScaleInfo(eew)).toEqual({ scale: 70, orAbove: false })
   })
 
-  // 対照: standard 版は区域（P2PQuake）と電文全体の値（Yahoo）が別の経路なので、印が無ければ区域を先に見る
-  it('standard 版は印が無ければ区域を先に見る', () => {
+  // 対照: 強震モニタの報は、区域（中継の警報で補ったもの）と電文全体の値が別の経路なので、印が無ければ区域を先に見る
+  it('強震モニタの報は印が無ければ区域を先に見る', () => {
     const eew = makeEEW({
-      origin: 'p2pquake',
+      origin: 'yahoo',
       areas: [area({ scaleFrom: 40, scaleTo: 40, scaleToOrAbove: true })],
       forecastMaxScale: 70,
     })
@@ -753,7 +753,7 @@ describe('calcEEWAutoCancelSec: 自動解除までの秒数（揺れの届く半
 })
 
 describe('calcEEWAutoCancelSec: 規模が判らない値は M6.0 として求める', () => {
-  // 正: NaN（強震モニタ・DMDATA の規模不明）と -1（P2PQuake の規模不明）は M6.0 と同じ秒数
+  // 正: NaN（強震モニタ・DMDATA の規模不明）と負の値（-1）は M6.0 と同じ秒数
   it('NaN と -1 は M6.0 と同じ', () => {
     expect(calcEEWAutoCancelSec(Number.NaN, 10)).toBe(calcEEWAutoCancelSec(6.0, 10))
     expect(calcEEWAutoCancelSec(-1, 10)).toBe(calcEEWAutoCancelSec(6.0, 10))
@@ -1189,8 +1189,8 @@ describe('最大予測値の変化の一文', () => {
 
 
 // 区域で主要動が既に到達したかの判定。**電文は同じ事実を 2 通りで伝えてくる** ——
-// 区域の `Condition`（DMDATA だけが配信）と、種別コードの下 1 桁（両経路が持つ）。
-// 片方だけを見ると standard 版（P2PQuake）で到達済みの区域が画面から黙って消える。
+// 区域の `Condition` と、種別コードの下 1 桁。
+// 片方だけを見ると、もう片方しか持たない区域で到達済みの区域が画面から黙って消える。
 describe('isEewAreaArrived', () => {
   const area = (o: Partial<EEWRegion>): EEWRegion => ({
     pref: '', name: 'テスト区域', scaleFrom: 40, scaleTo: 45, kindCode: '10', arrivalTime: null, ...o,
@@ -1201,7 +1201,7 @@ describe('isEewAreaArrived', () => {
     expect(isEewAreaArrived(area({ arrived: true }))).toBe(true)
   })
 
-  // 正: **`Condition` が無くても種別コードで判る。** これが無いと standard 版で穴が残る。
+  // 正: **`Condition` が無くても種別コードで判る。**
   it('Condition が無くても種別コードが 01/11 なら到達済み', () => {
     expect(isEewAreaArrived(area({ kindCode: '01' }))).toBe(true)
     expect(isEewAreaArrived(area({ kindCode: '11' }))).toBe(true)
@@ -1358,8 +1358,8 @@ describe('eewArrivalEtaSecFromMs', () => {
   })
 })
 
-describe('経路をまたいだ緊急地震速報の台帳と統合（standard 版）', () => {
-  const P2P_TIME = '2026/10/16 12:40:02' // P2PQuake は時間帯を持たない表記（日本時間）
+describe('経路をまたいだ緊急地震速報の台帳と統合（強震モニタと電文）', () => {
+  const P2P_TIME = '2026/10/16 12:40:02' // 時間帯を持たない表記（日本時間）
   const YAHOO_TIME = '2026-10-16T12:40:02+09:00'
   const LATER = '2026-10-16T12:40:41+09:00'
   const report = (origin: EEWAlert['origin'], serial: string, time: string, over: Partial<EEWAlert> = {}) =>
@@ -1368,7 +1368,7 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
   // 発表中の速報の取り直しが、もう終えた地震の報を返したか（→ `useEarthquakes` の `eewEndedRef`）
   describe('endedEewMatch', () => {
     const ENDED_AT = 1_000_000
-    const ended: EndedEew = { serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT, cancelled: false, lastReport: null, firstIssueTime: undefined }
+    const ended: EndedEew = { serialBySeries: new Map([['dmdata', 3]] as const), latestIssueMs: Date.parse(YAHOO_TIME), endedAtMs: ENDED_AT, cancelled: false, lastReport: null, firstIssueTime: undefined }
     const match = (over: Partial<EndedEew> | undefined, eew: EEWAlert, nowMs = ENDED_AT + 1000) =>
       endedEewMatch(over === undefined ? undefined : { ...ended, ...over }, eew, nowMs, ACTIVE_EEW_WINDOW_MS)
     // 正: 同じ経路で、終えたときの報番号以下の報は終えた地震の報
@@ -1409,27 +1409,27 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
   })
 
   describe('eewIssueTimeMs', () => {
-    it('時間帯を持たない P2PQuake の表記を日本時間として読み、Yahoo の表記と同じ秒になる', () => {
-      expect(eewIssueTimeMs(report('p2pquake', '1', P2P_TIME))).toBe(eewIssueTimeMs(report('yahoo', '17', YAHOO_TIME)))
+    it('時間帯を持たない表記を日本時間として読み、Yahoo の表記と同じ秒になる', () => {
+      expect(eewIssueTimeMs(report('dmdata', '1', P2P_TIME))).toBe(eewIssueTimeMs(report('yahoo', '17', YAHOO_TIME)))
     })
     it('ミリ秒を落とす（経路でミリ秒が揃わない）', () => {
-      expect(eewIssueTimeMs(report('p2pquake', '1', '2026-10-16T12:40:02.734+09:00')))
+      expect(eewIssueTimeMs(report('dmdata', '1', '2026-10-16T12:40:02.734+09:00')))
         .toBe(eewIssueTimeMs(report('yahoo', '17', YAHOO_TIME)))
     })
     it('読めない時刻は null（0 で埋めない）', () => {
-      expect(eewIssueTimeMs(report('p2pquake', '1', 'not-a-time'))).toBeNull()
+      expect(eewIssueTimeMs(report('dmdata', '1', 'not-a-time'))).toBeNull()
     })
   })
 
   describe('isStaleEewReport', () => {
-    // 2026-10-16 千島列島の実測: 同じ報が P2PQuake では 1、Yahoo では 17 と番号付けされていた
-    it('経路をまたいだ報番号は比べない（Yahoo 17 の後の P2PQuake 1 は同じ秒なら採る）', () => {
+    // 2026-10-16 千島列島の実測: 同じ報が P2PQuake の配った警報では 1、Yahoo では 17 と番号付けされていた
+    it('経路をまたいだ報番号は比べない（Yahoo 17 の後の電文の 1 は同じ秒なら採る）', () => {
       const acc = acceptEewReport(undefined, report('yahoo', '17', YAHOO_TIME))
-      expect(isStaleEewReport(acc, report('p2pquake', '1', P2P_TIME))).toBe(false)
+      expect(isStaleEewReport(acc, report('dmdata', '1', P2P_TIME))).toBe(false)
     })
     it('経路をまたいでは発表時刻で比べる（古い秒は捨てる）', () => {
       const acc = acceptEewReport(undefined, report('yahoo', '19', LATER))
-      expect(isStaleEewReport(acc, report('p2pquake', '1', P2P_TIME))).toBe(true)
+      expect(isStaleEewReport(acc, report('dmdata', '1', P2P_TIME))).toBe(true)
     })
     it('同じ経路の中では報番号で比べる（同じ秒の 2 報）', () => {
       const acc = acceptEewReport(undefined, report('dmdata', '3', YAHOO_TIME))
@@ -1437,41 +1437,125 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
       expect(isStaleEewReport(acc, report('dmdata', '3', YAHOO_TIME))).toBe(false)
     })
     it('台帳が無ければ古くない', () => {
-      expect(isStaleEewReport(undefined, report('p2pquake', '1', P2P_TIME))).toBe(false)
+      expect(isStaleEewReport(undefined, report('dmdata', '1', P2P_TIME))).toBe(false)
     })
   })
 
   describe('eewStaleness', () => {
     it('別の経路の新しい報より古い報は olderFromOtherOrigin（捨てずに補う余地を残す）', () => {
       const acc = acceptEewReport(undefined, report('yahoo', '19', LATER))
-      expect(eewStaleness(acc, report('p2pquake', '1', P2P_TIME))).toBe('olderFromOtherOrigin')
+      expect(eewStaleness(acc, report('dmdata', '1', P2P_TIME))).toBe('olderFromOtherOrigin')
     })
     it('同じ経路で報番号の古い報は stale（補わない）', () => {
-      const acc = acceptEewReport(acceptEewReport(undefined, report('p2pquake', '2', P2P_TIME)), report('yahoo', '19', LATER))
-      expect(eewStaleness(acc, report('p2pquake', '1', P2P_TIME))).toBe('stale')
+      const acc = acceptEewReport(acceptEewReport(undefined, report('dmdata', '2', P2P_TIME)), report('yahoo', '19', LATER))
+      expect(eewStaleness(acc, report('dmdata', '1', P2P_TIME))).toBe('stale')
     })
     it('新しい報は fresh', () => {
       const acc = acceptEewReport(undefined, report('yahoo', '17', YAHOO_TIME))
-      expect(eewStaleness(acc, report('p2pquake', '2', LATER))).toBe('fresh')
+      expect(eewStaleness(acc, report('dmdata', '2', LATER))).toBe('fresh')
+    })
+  })
+
+  // 警報の電文（VXSE43）の報番号は警報だけの通し番号。2024-01-01 能登の本震では警報の第2報（16:10:43）が
+  // 予報の第20報、第3報（16:11:07）が予報の第30報と同じ発表時刻（控え eew-warning / eew-forecast の 2024-01-01）
+  describe('警報の電文の報番号（警報だけの通し番号）', () => {
+    const W2_TIME = '2024-01-01T16:10:43+09:00'
+    const W3_TIME = '2024-01-01T16:11:07+09:00'
+    const warning = (serial: string, time: string) => report('dmdata', serial, time, { serialSeries: 'warning' })
+    it('系列は経路と別に持つ（警報は dmdata:warning、予報は dmdata）', () => {
+      expect(eewSerialSeries(warning('2', W2_TIME))).toBe('dmdata:warning')
+      expect(eewSerialSeries(report('dmdata', '20', W2_TIME))).toBe('dmdata')
+      expect(eewSerialSeries(report('yahoo', '20', W2_TIME))).toBe('yahoo')
+    })
+    // 正: 予報の第30報の後に届いた警報の第3報は、番号が小さくても古い報として捨てない（同じ秒なので fresh）
+    it('予報の番号の後に届いた警報の小さな番号を古いと見なさない', () => {
+      const acc = acceptEewReport(undefined, report('dmdata', '30', W3_TIME))
+      expect(eewStaleness(acc, warning('3', W3_TIME))).toBe('fresh')
+      expect(isOlderEewReport(report('dmdata', '30', W3_TIME), warning('3', W3_TIME))).toBe(false)
+    })
+    // 対照: 予報どうしは今までどおり報番号で比べる
+    it('予報どうしは報番号で比べる', () => {
+      const acc = acceptEewReport(undefined, report('dmdata', '30', W3_TIME))
+      expect(eewStaleness(acc, report('dmdata', '20', W3_TIME))).toBe('stale')
+    })
+    // 安全弁: 警報どうしは警報の番号で比べる（第3報の後の第2報は古い）
+    it('警報どうしは警報の番号で比べる', () => {
+      const acc = acceptEewReport(undefined, warning('3', W3_TIME))
+      expect(eewStaleness(acc, warning('2', W3_TIME))).toBe('stale')
+      expect(eewStaleness(acc, warning('4', W3_TIME))).toBe('fresh')
+    })
+    // 正: 表示中の予報の番号を、警報の電文の番号で上書きしない（2026-11-01 ユーザー選択「予報の番号だけ出す」）
+    it('統合しても表示する番号は予報の通し番号のまま', () => {
+      const merged = mergeEewReport(report('dmdata', '30', W3_TIME), warning('3', W3_TIME))
+      expect(eewDisplaySerial(merged)).toBe(30)
+      // 報そのものは警報のまま（比べ方は警報の系列と番号で行う）
+      expect(eewSerialSeries(merged)).toBe('dmdata:warning')
+      expect(eewSerial(merged)).toBe(3)
+      // 警報が続いても、表示中だった予報の番号を出し続ける
+      expect(eewDisplaySerial(mergeEewReport(merged, warning('4', LATER)))).toBe(30)
+    })
+    // 正: 表示中が強震モニタの報でも番号を出し続ける（強震モニタの報は中身が変わるまで流れてこない）
+    it('表示中が強震モニタの報でも、その番号を出し続ける', () => {
+      const merged = mergeEewReport(report('yahoo', '30', W3_TIME), warning('3', W3_TIME))
+      expect(eewDisplaySerial(merged)).toBe(30)
+      expect(merged.origin).toBe('dmdata')
+    })
+    // 安全弁: 強震モニタの番号を電文の系列へ移さない（移すと後の予報 第2報 などを古いと捨てる）
+    it('引き継いだ強震モニタの番号は新旧の比べ方に使わない', () => {
+      const merged = mergeEewReport(report('yahoo', '30', W3_TIME), warning('3', W3_TIME))
+      expect(isOlderEewReport(merged, report('dmdata', '2', W3_TIME))).toBe(false)
+      // 次の強震モニタの報・予報の電文は、その報の番号を出す（引き継いだ番号は捨てる）
+      const viaYahoo = mergeEewReport(merged, report('yahoo', '31', LATER))
+      expect(eewDisplaySerial(viaYahoo)).toBe(31)
+      expect(viaYahoo.forecastSerial).toBeUndefined()
+      expect(viaYahoo.serialSeries).toBeUndefined()
+      expect(mergeEewReport(merged, report('dmdata', '2', LATER)).forecastSerial).toBeUndefined()
+    })
+    // 対照: 予報の電文で統合すれば、その番号を出す
+    it('予報の電文で統合すればその番号を出す', () => {
+      const merged = mergeEewReport(report('yahoo', '30', W3_TIME), report('dmdata', '31', LATER))
+      expect(eewDisplaySerial(merged)).toBe(31)
+    })
+    // 安全弁: 警報の電文しか届いていない地震は番号を出さない（警報の番号を予報の番号として見せない）
+    it('警報の電文しか届いていなければ番号を出さない', () => {
+      expect(eewDisplaySerial(mergeEewReport(undefined, warning('1', W2_TIME)))).toBeNull()
+      expect(eewDisplaySerial(mergeEewReport(warning('1', W2_TIME), warning('2', W2_TIME)))).toBeNull()
+    })
+    // 最終報を 1 通に絞るとき: 系列が違えば発表時刻で、同じなら報番号で、厳密に新しいときだけ差し替える
+    it('最終報選びは系列が違えば発表時刻で比べる', () => {
+      expect(supersedesEewReport(report('dmdata', '30', W2_TIME), warning('3', W3_TIME))).toBe(true)
+      expect(supersedesEewReport(report('dmdata', '30', W3_TIME), warning('3', W2_TIME))).toBe(false)
+    })
+    it('同じ系列は報番号で比べ、同じ報では差し替えない', () => {
+      expect(supersedesEewReport(warning('3', W3_TIME), warning('2', W3_TIME))).toBe(false)
+      expect(supersedesEewReport(warning('2', W3_TIME), warning('3', W3_TIME))).toBe(true)
+      expect(supersedesEewReport(warning('3', W3_TIME), warning('3', W3_TIME))).toBe(false)
+    })
+    // 終えた地震の記憶も系列ごとに比べる
+    it('終えた地震の記憶も系列ごとに比べる', () => {
+      const acc = acceptEewReport(acceptEewReport(undefined, report('dmdata', '46', LATER)), warning('3', W3_TIME))
+      const ended: EndedEew = { serialBySeries: acc.serialBySeries, latestIssueMs: acc.latestIssueMs, endedAtMs: 1_000, cancelled: false, lastReport: null, firstIssueTime: undefined }
+      expect(endedEewMatch(ended, warning('3', W3_TIME), 2_000, ACTIVE_EEW_WINDOW_MS)).toBe('serial')
+      expect(endedEewMatch(ended, warning('4', LATER), 2_000, ACTIVE_EEW_WINDOW_MS)).toBeNull()
     })
   })
 
   describe('acceptEewReport の受理回数', () => {
     it('どの経路の報でも 1 つずつ増える（見張りの解除が新しい報を受けたかを見る）', () => {
-      const a1 = acceptEewReport(undefined, report('p2pquake', '1', P2P_TIME))
+      const a1 = acceptEewReport(undefined, report('dmdata', '1', P2P_TIME))
       const a2 = acceptEewReport(a1, report('yahoo', '17', YAHOO_TIME))
       expect([a1.receipts, a2.receipts]).toEqual([1, 2])
     })
   })
 
-  describe('supplementEewReport（遅れて届いた P2PQuake の報で補う）', () => {
+  describe('supplementEewReport（遅れて届いた電文の報で補う）', () => {
     const area = (name: string, scaleTo: IntensityScale = 50): EEWRegion =>
       ({ pref: '', name, scaleFrom: 40, scaleTo, kindCode: '11', arrivalTime: null })
     const yahoo = report('yahoo', '19', LATER, {
       severity: 'Forecast',
       earthquake: { ...makeEEW().earthquake, condition: '', hypocenter: { name: '新しい震源', latitude: 40, longitude: 140, depth: 20, magnitude: 7 } },
     })
-    const late = report('p2pquake', '1', P2P_TIME, {
+    const late = report('dmdata', '1', P2P_TIME, {
       severity: 'Warning',
       areas: [area('石川県能登', 60)],
       earthquake: { ...makeEEW().earthquake, condition: '仮定震源要素', hypocenter: { name: '古い震源', latitude: 37, longitude: 137, depth: 10, magnitude: 6 } },
@@ -1497,7 +1581,7 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
   describe('maxScaleFromForecast（区域が古い報のものか）', () => {
     const area = (scaleTo: IntensityScale): EEWRegion =>
       ({ pref: '', name: '石川県能登', scaleFrom: 40, scaleTo, kindCode: '11', arrivalTime: null })
-    const p2pReport = report('p2pquake', '1', P2P_TIME, { severity: 'Warning', areas: [area(50)] })
+    const p2pReport = report('dmdata', '1', P2P_TIME, { severity: 'Warning', areas: [area(50)] })
     it('Yahoo の続報が運んだ電文全体の値で最大を見る（正）', () => {
       const merged = mergeEewReport(p2pReport, report('yahoo', '19', LATER, { severity: 'Warning', forecastMaxScale: 55 }))
       expect(eewMaxScale(merged)).toBe(55)
@@ -1511,9 +1595,9 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
       const merged = mergeEewReport(p2pReport, report('yahoo', '19', LATER, { severity: 'Warning' }))
       expect(eewMaxScale(merged)).toBe(50)
     })
-    it('P2PQuake の新しい報が区域を運んだら、また区域で見る', () => {
+    it('電文の新しい報が区域を運んだら、また区域で見る', () => {
       const viaYahoo = mergeEewReport(p2pReport, report('yahoo', '19', LATER, { severity: 'Warning', forecastMaxScale: 55 }))
-      const next = mergeEewReport(viaYahoo, report('p2pquake', '2', LATER, { severity: 'Warning', areas: [area(45)] }))
+      const next = mergeEewReport(viaYahoo, report('dmdata', '2', LATER, { severity: 'Warning', areas: [area(45)] }))
       expect(eewMaxScale(next)).toBe(45)
     })
   })
@@ -1537,29 +1621,29 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
 
   describe('isOlderEewReport（状態側の二重化）', () => {
     it('同じ経路なら報番号、違えば発表時刻で比べる', () => {
-      expect(isOlderEewReport(report('yahoo', '17', YAHOO_TIME), report('p2pquake', '1', P2P_TIME))).toBe(false)
-      expect(isOlderEewReport(report('yahoo', '19', LATER), report('p2pquake', '1', P2P_TIME))).toBe(true)
-      expect(isOlderEewReport(report('p2pquake', '2', P2P_TIME), report('p2pquake', '1', P2P_TIME))).toBe(true)
+      expect(isOlderEewReport(report('yahoo', '17', YAHOO_TIME), report('dmdata', '1', P2P_TIME))).toBe(false)
+      expect(isOlderEewReport(report('yahoo', '19', LATER), report('dmdata', '1', P2P_TIME))).toBe(true)
+      expect(isOlderEewReport(report('dmdata', '2', P2P_TIME), report('dmdata', '1', P2P_TIME))).toBe(true)
     })
   })
 
   describe('isSameReportFromOtherOrigin', () => {
     const notified = (r: EEWAlert) => noteEewNotified(acceptEewReport(undefined, r), r)
     it('別の経路で知らせた同じ秒の報は「同じ報」', () => {
-      expect(isSameReportFromOtherOrigin(notified(report('yahoo', '17', YAHOO_TIME)), report('p2pquake', '1', P2P_TIME))).toBe(true)
+      expect(isSameReportFromOtherOrigin(notified(report('yahoo', '17', YAHOO_TIME)), report('dmdata', '1', P2P_TIME))).toBe(true)
     })
     it('同じ経路から同じ秒の報がもう一度来ても「同じ報」にしない（訂正報は知らせ直す）', () => {
-      expect(isSameReportFromOtherOrigin(notified(report('p2pquake', '1', P2P_TIME)), report('p2pquake', '1', P2P_TIME))).toBe(false)
+      expect(isSameReportFromOtherOrigin(notified(report('dmdata', '1', P2P_TIME)), report('dmdata', '1', P2P_TIME))).toBe(false)
     })
     it('違う秒の報は「同じ報」にしない', () => {
-      expect(isSameReportFromOtherOrigin(notified(report('yahoo', '17', YAHOO_TIME)), report('p2pquake', '2', LATER))).toBe(false)
+      expect(isSameReportFromOtherOrigin(notified(report('yahoo', '17', YAHOO_TIME)), report('dmdata', '2', LATER))).toBe(false)
     })
   })
 
   describe('mergeEewReport', () => {
     const area = (name: string, scaleTo: IntensityScale = 50): EEWRegion =>
       ({ pref: '', name, scaleFrom: 40, scaleTo, kindCode: '11', arrivalTime: null })
-    const p2p = report('p2pquake', '1', P2P_TIME, {
+    const p2p = report('dmdata', '1', P2P_TIME, {
       areas: [area('石川県能登')],
       earthquake: { ...makeEEW().earthquake, condition: '仮定震源要素', arrivalTime: '2026-10-16T12:40:00+09:00' },
     })
@@ -1581,16 +1665,8 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
       expect(merged.issue?.serial).toBe('19')
     })
 
-    it('P2PQuake の続報は予想の最大震度と最終報の印を保つ（運ばないので）', () => {
-      const yahoo = report('yahoo', '17', YAHOO_TIME, { forecastMaxScale: 50, isFinal: true })
-      const merged = mergeEewReport(yahoo, p2p)
-      expect(merged.forecastMaxScale).toBe(50)
-      expect(merged.isFinal).toBe(true)
-      expect(merged.areas?.map(a => a.name)).toEqual(['石川県能登'])
-    })
-
     describe('Yahoo の規模が読めない報（NaN）', () => {
-      const p2pM = report('p2pquake', '1', P2P_TIME, {
+      const p2pM = report('dmdata', '1', P2P_TIME, {
         earthquake: { ...makeEEW().earthquake, hypocenter: { name: '古い震源', latitude: 37, longitude: 137, depth: 10, magnitude: 6.1 } },
       })
       const yahooAt = (magnitude: number) => report('yahoo', '19', LATER, {
@@ -1608,13 +1684,13 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
       it('読めた規模は差し替える', () => {
         expect(mergeEewReport(p2pM, yahooAt(6.8)).earthquake.hypocenter.magnitude).toBe(6.8)
       })
-      // 正: Yahoo が先に着き、遅れて届いた P2PQuake の報が規模を埋める
-      it('遅れて届いた P2PQuake の報で、読めていない規模を埋める', () => {
+      // 正: Yahoo が先に着き、遅れて届いた電文の報が規模を埋める
+      it('遅れて届いた電文の報で、読めていない規模を埋める', () => {
         const merged = supplementEewReport(mergeEewReport(undefined, yahooAt(Number.NaN)), p2pM)
         expect(merged.earthquake.hypocenter.magnitude).toBe(6.1)
         expect(merged.earthquake.hypocenter.name).toBe('新しい震源')
       })
-      // 安全弁: 届いた報も規模を持たない（P2PQuake の -1）なら書き込まない
+      // 安全弁: 届いた報も規模を持たない（負の値）なら書き込まない
       it('遅れて届いた報も規模不明なら、表示中の値を変えない', () => {
         const unknown = { ...p2pM, earthquake: { ...p2pM.earthquake, hypocenter: { ...p2pM.earthquake.hypocenter, magnitude: -1 } } }
         const merged = supplementEewReport(mergeEewReport(undefined, yahooAt(Number.NaN)), unknown)
@@ -1627,32 +1703,27 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（standard �
       })
     })
 
-    it('区域を持たない P2PQuake の報は前の区域を消さない', () => {
-      const merged = mergeEewReport(p2p, report('p2pquake', '2', LATER, { areas: undefined }))
-      expect(merged.areas?.map(a => a.name)).toEqual(['石川県能登'])
-    })
-
     // 正: 予報 → 警報は届いた報の区分で引き上げる
     it('届いた報が警報なら、前が予報でも警報へ上げる', () => {
       const merged = mergeEewReport(
         report('yahoo', '17', YAHOO_TIME, { severity: 'Forecast' }),
-        report('p2pquake', '1', P2P_TIME, { severity: 'Warning' }),
+        report('dmdata', '1', P2P_TIME, { severity: 'Warning' }),
       )
       expect(merged.severity).toBe('Warning')
     })
     // 対照: 警報は引き下げない
     it('一度警報になったら、予報の続報でも下げない', () => {
       const merged = mergeEewReport(
-        report('p2pquake', '1', P2P_TIME, { severity: 'Warning' }),
+        report('dmdata', '1', P2P_TIME, { severity: 'Warning' }),
         report('yahoo', '19', LATER, { severity: 'Forecast' }),
       )
       expect(merged.severity).toBe('Warning')
     })
     // 安全弁: 特別警報の下げ止まりは保つ
     it('特別警報の印は弱い続報で消えない', () => {
-      const special = mergeEewReport(undefined, report('p2pquake', '1', P2P_TIME, { areas: [area('石川県能登', 60)] }))
+      const special = mergeEewReport(undefined, report('dmdata', '1', P2P_TIME, { areas: [area('石川県能登', 60)] }))
       expect(special.everSpecialWarning).toBe(true)
-      const next = mergeEewReport(special, report('p2pquake', '2', LATER, { areas: [area('新潟県上越', 50)] }))
+      const next = mergeEewReport(special, report('dmdata', '2', LATER, { areas: [area('新潟県上越', 50)] }))
       expect(next.everSpecialWarning).toBe(true)
     })
 
@@ -1756,18 +1827,11 @@ describe('rememberEewHypocenterName', () => {
   })
 })
 
-describe('admitTrainingEew（標準版の訓練報・試験報を設定に従って流す）', () => {
+describe('admitTrainingEew（強震モニタの訓練報を設定に従って流す）', () => {
   it('正: 設定が真なら、強震モニタの訓練報は test を外して「訓練」の印を付ける', () => {
     const out = admitTrainingEew(makeEEW({ origin: 'yahoo', test: true }), true)
     expect(out.test).toBe(false)
     expect(out.operationStatus).toBe('訓練')
-  })
-
-  it('正: 設定が真なら、P2PQuake の試験報は test を外して「試験」の印を付ける（取消の報も同じ）', () => {
-    const out = admitTrainingEew(makeEEW({ origin: 'p2pquake', test: true, cancelled: true }), true)
-    expect(out.test).toBe(false)
-    expect(out.operationStatus).toBe('試験')
-    expect(out.cancelled).toBe(true)
   })
 
   it('対照: 設定が偽（既定）なら test のまま返す（受信側が捨てる）', () => {
@@ -1776,11 +1840,11 @@ describe('admitTrainingEew（標準版の訓練報・試験報を設定に従っ
   })
 
   it('安全弁: 本物の報（test: false）は設定によらず触らない', () => {
-    const eew = makeEEW({ origin: 'p2pquake', test: false })
+    const eew = makeEEW({ origin: 'yahoo', test: false })
     expect(admitTrainingEew(eew, true)).toBe(eew)
   })
 
-  it('安全弁: 強震モニタ・P2PQuake 以外の経路は変えない（DMDATA は受信の時点で同じ設定を見ている）', () => {
+  it('安全弁: 強震モニタ以外の経路は変えない（DMDATA は受信の時点で同じ設定を見ている）', () => {
     const eew = makeEEW({ origin: 'dmdata', test: true })
     expect(admitTrainingEew(eew, true)).toBe(eew)
   })
@@ -1790,7 +1854,7 @@ describe('isLateEewCancel（取消の前に画面から消えた地震へ届い�
   const ENDED_AT = 1_000_000
   const lastReport = makeEEW({ origin: 'dmdata' })
   const ended: EndedEew = {
-    serialByOrigin: new Map([['dmdata', 3]] as const), latestIssueMs: null, endedAtMs: ENDED_AT, cancelled: false,
+    serialBySeries: new Map([['dmdata', 3]] as const), latestIssueMs: null, endedAtMs: ENDED_AT, cancelled: false,
     lastReport, firstIssueTime: '2026-01-01T12:00:05Z',
   }
   const cancel = makeEEW({ cancelled: true })

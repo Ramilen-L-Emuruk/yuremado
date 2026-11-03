@@ -3,7 +3,7 @@ import type { EEWAlert } from '../types/earthquake'
 import type { LatLng } from '../utils/stationCoords'
 import { useSubRegions } from './useSubRegions'
 import { ringsBounds, type SubRegion } from '../utils/subregions'
-import { NO_EEW_AREA_ARRIVAL, eewAreas, eewMaxScaleInfo, isEewScaleZeroForecast, isProvisionalHypocenter, mergeEewAreaArrival, type EewAreaArrival } from '../utils/eew'
+import { NO_EEW_AREA_ARRIVAL, eewAreas, eewDisplaySerial, eewMaxScaleInfo, isEewScaleZeroForecast, isProvisionalHypocenter, mergeEewAreaArrival, type EewAreaArrival } from '../utils/eew'
 import { isValidIntensityScale } from '../utils/intensity'
 import { isValidLpgmClass } from '../utils/lpgm'
 import { hasKnownEpicenter, normalizeEpicenterLng } from '../utils/geo'
@@ -218,7 +218,7 @@ export function useEewLayerData(
           magnitudeCondition: hc.magnitudeCondition,
           depth: hc.depth,
           depthAtLeast: hc.depthAtLeast === true,
-          serial: eew.issue?.serial ?? '',
+          serial: eewDisplaySerial(eew)?.toString() ?? '',
           severity: eew.severity,
           maxScale: scale,
           maxScaleOrAbove: orAbove,

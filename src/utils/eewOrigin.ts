@@ -1,10 +1,10 @@
 import type { EewOrigin } from '../types/earthquake'
 import { log } from './logger'
 
-const EEW_ORIGINS: ReadonlySet<string> = new Set<EewOrigin>(['dmdata', 'p2pquake', 'yahoo', 'archive', 'test'])
+const EEW_ORIGINS: ReadonlySet<string> = new Set<EewOrigin>(['dmdata', 'yahoo', 'archive', 'test'])
 
 /**
- * 保存しておいた JSON（ローカル履歴アーカイブ・テストシナリオ）から読んだ積荷に、緊急地震速報の
+ * 保存しておいた JSON（ローカル履歴アーカイブ）から読んだ積荷に、緊急地震速報の
  * 出どころ（`EEWAlert.origin`）を補う。
  *
  * **型では必須の欄だが、保存データは出どころの欄ができる前に作られている。** 読み込みの検証で

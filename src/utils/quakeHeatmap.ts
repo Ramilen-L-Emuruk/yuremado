@@ -85,7 +85,7 @@ export interface HeatPoint {
   depth: number
   /**
    * 深さが「700km以上」という下限だけの値か（`Hypocenter.depthAtLeast`）。吹き出しで「700km以上」と出す。
-   * 土台の取得元（P2PQuake・DMDATA の GD Earthquake List）は持たないので常に偽。
+   * 長期震源カタログ由来の点は持たないので偽。
    */
   depthAtLeast: boolean
   /**
@@ -100,7 +100,7 @@ export interface HeatPoint {
    * **「M 不明」と「Ｍ８を超える巨大地震」を見分けるための欄。** どちらも `magnitude` は数値に
    * ならないので、これが無いと最大級の地震が最も薄い点になる。`undefined` ではなく `null` で
    * 持つのは、土台のキャッシュ（JSON）を通っても欄が消えないようにするため。
-   * 土台の取得元（P2PQuake・DMDATA の GD Earthquake List）は説明を返さないので、常に `null`。
+   * 長期震源カタログ由来の点は説明を持たないので `null`。
    */
   magnitudeCondition: string | null
   /**
@@ -127,10 +127,9 @@ export function heatMagnitude(magnitude: number): number {
   return Number.isFinite(magnitude) ? magnitude : -1
 }
 
-// 地震の同一性判定キー。DMDSS版の id には14桁の eventId が埋め込まれておりそれを使う
-// （GD Earthquake List の eventId フィールドも同じ14桁形式のため突き合わせ可能）。
-// 通常版（P2PQuake）の id はこの形式を持たないため地震の時刻にフォールバックするが、
-// P2PQuake の地震の時刻は分単位のため震源名まで含めて「同じ分に起きた別の地震」を分ける
+// 地震の同一性判定キー。電文の id には14桁の eventId が埋め込まれておりそれを使う。
+// id がこの形式を持たないときは地震の時刻にフォールバックするが、
+// 地震の時刻は分単位のため震源名まで含めて「同じ分に起きた別の地震」を分ける
 // （震源名を持たない震度速報は座標も無く、ヒートマップでは hasValidHypocenter で除外される）。
 // 副作用: 震源を訂正した報は訂正前後で別キーになり、1 つの地震が 2 点残ることがある。
 // ヒートマップは分布の統計表示なので、別々の地震が 1 点に潰れる方を避ける選択をしている

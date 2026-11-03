@@ -3,7 +3,6 @@ import { buildOriginSecondsMap, catalogYearsNeeded, eewOriginsFromActive, type L
 import { quakeEventKey } from '../utils/quakeMerge'
 import type { EEWAlert, JMAQuake } from '../types/earthquake'
 import type { EewOriginEntry } from '../utils/eewOriginStore'
-import type { JmaQuakeListEntry } from '../utils/quakeOriginSeconds'
 
 function quake(id: string, time: string, name: string, magnitude: number): JMAQuake {
   return {
@@ -42,67 +41,35 @@ const CATALOG: LoadedCatalog = {
   coveredThroughMs: CATALOG_MS + 10 * 24 * 3600_000,
 }
 
-describe('buildOriginSecondsMap（DMDSS 版）', () => {
-  // DMDSS 版のカードは電文 ID に地震 ID を持つ（`dmdata-quake-<eventId>-<serial>`）。
+describe('buildOriginSecondsMap', () => {
+  // カードは電文 ID に地震 ID を持つ（`dmdata-quake-<eventId>-<serial>`）。
   const card = quake('dmdata-quake-20261003132605-3', '2026-10-03T13:26:00+09:00', '熊本県天草・芦北地方', 3.5)
 
   test('同じ地震 ID の緊急地震速報があればその発生時刻', () => {
     const map = buildOriginSecondsMap({
-      quakes: [card], isDmdss: true, eewOrigins: new Map([['20261003132605', decided(EEW_MS)]]), jmaList: [], catalog: CATALOG,
+      quakes: [card], eewOrigins: new Map([['20261003132605', decided(EEW_MS)]]), catalog: CATALOG,
     })
     expect(map.get(quakeEventKey(card))).toEqual({ originMs: EEW_MS, source: 'eew' })
   })
 
   test('無ければ長期震源カタログ', () => {
-    const map = buildOriginSecondsMap({ quakes: [card], isDmdss: true, eewOrigins: new Map(), jmaList: [], catalog: CATALOG })
+    const map = buildOriginSecondsMap({ quakes: [card], eewOrigins: new Map(), catalog: CATALOG })
     expect(map.get(quakeEventKey(card))).toEqual({ originMs: CATALOG_MS, source: 'catalog' })
   })
 
   // 2026-10-15 ユーザー承認「カタログが届くまで線を引かない」。地震 ID の時刻へは落とさない。
   test('カタログにも無ければ秒は無い（地震 ID の時刻は使わない）', () => {
-    const map = buildOriginSecondsMap({ quakes: [card], isDmdss: true, eewOrigins: new Map(), jmaList: [], catalog: null })
+    const map = buildOriginSecondsMap({ quakes: [card], eewOrigins: new Map(), catalog: null })
     expect(map.size).toBe(0)
   })
 
   test('仮定震源要素の報しか無ければカタログへ回る', () => {
     const map = buildOriginSecondsMap({
-      quakes: [card], isDmdss: true,
+      quakes: [card],
       eewOrigins: new Map([['20261003132605', { originMs: EEW_MS + 5_000, assumed: true }]]),
-      jmaList: [], catalog: CATALOG,
+      catalog: CATALOG,
     })
     expect(map.get(quakeEventKey(card))).toEqual({ originMs: CATALOG_MS, source: 'catalog' })
-  })
-
-  test('気象庁の一覧は見ない（地震 ID はカードが持っている）', () => {
-    const p2pLike = quake('p2p-1', '2026-10-03T13:26:00+09:00', '熊本県天草・芦北地方', 3.5)
-    const list: JmaQuakeListEntry[] = [
-      { eid: '20261003132605', at: '2026-10-03T13:26:00+09:00', anm: '熊本県天草・芦北地方', mag: '3.5' },
-    ]
-    const map = buildOriginSecondsMap({
-      quakes: [p2pLike], isDmdss: true, eewOrigins: new Map([['20261003132605', decided(EEW_MS)]]), jmaList: list, catalog: null,
-    })
-    expect(map.size).toBe(0)
-  })
-})
-
-describe('buildOriginSecondsMap（標準版）', () => {
-  const card = quake('p2p-abc', '2026/10/03 13:26:00', '熊本県天草・芦北地方', 3.5)
-  const list: JmaQuakeListEntry[] = [
-    { eid: '20261003132605', at: '2026-10-03T13:26:00+09:00', anm: '熊本県天草・芦北地方', mag: '3.5' },
-  ]
-
-  test('気象庁の一覧で地震 ID を引き、緊急地震速報の発生時刻へ結び付ける', () => {
-    const map = buildOriginSecondsMap({
-      quakes: [card], isDmdss: false, eewOrigins: new Map([['20261003132605', decided(EEW_MS)]]), jmaList: list, catalog: null,
-    })
-    expect(map.get(quakeEventKey(card))).toEqual({ originMs: EEW_MS, source: 'eew' })
-  })
-
-  test('一覧で引けなければ緊急地震速報は結べない（カタログは地震 ID なしで引ける）', () => {
-    const eewOrigins = new Map([['20261003132605', decided(EEW_MS)]])
-    expect(buildOriginSecondsMap({ quakes: [card], isDmdss: false, eewOrigins, jmaList: [], catalog: null }).size).toBe(0)
-    expect(buildOriginSecondsMap({ quakes: [card], isDmdss: false, eewOrigins, jmaList: [], catalog: CATALOG })
-      .get(quakeEventKey(card))).toEqual({ originMs: CATALOG_MS, source: 'catalog' })
   })
 })
 
@@ -115,9 +82,9 @@ describe('buildOriginSecondsMap（カタログの年）', () => {
       years: new Map([[2026, { timeMs: [newYear + 3_000], lat: [32.5], lng: [130.5], magnitude: [3.5], external: [0] }]]),
       coveredThroughMs: newYear + 86400_000,
     }
-    expect(buildOriginSecondsMap({ quakes: [card], isDmdss: true, eewOrigins: new Map(), jmaList: [], catalog: only2026 }).size).toBe(0)
+    expect(buildOriginSecondsMap({ quakes: [card], eewOrigins: new Map(), catalog: only2026 }).size).toBe(0)
     const both: LoadedCatalog = { ...only2026, years: new Map([...only2026.years, [2025, { timeMs: [], lat: [], lng: [], magnitude: [], external: [] }]]) }
-    expect(buildOriginSecondsMap({ quakes: [card], isDmdss: true, eewOrigins: new Map(), jmaList: [], catalog: both })
+    expect(buildOriginSecondsMap({ quakes: [card], eewOrigins: new Map(), catalog: both })
       .get(quakeEventKey(card))).toEqual({ originMs: newYear + 3_000, source: 'catalog' })
   })
 })
@@ -126,15 +93,15 @@ describe('catalogYearsNeeded', () => {
   const card = quake('dmdata-quake-20261003132605-3', '2026-10-03T13:26:00+09:00', '熊本県天草・芦北地方', 3.5)
 
   test('緊急地震速報から秒が取れない地震の年だけ', () => {
-    expect(catalogYearsNeeded({ quakes: [card], isDmdss: true, eewOrigins: new Map(), jmaList: [] })).toEqual([2026])
+    expect(catalogYearsNeeded({ quakes: [card], eewOrigins: new Map() })).toEqual([2026])
     expect(catalogYearsNeeded({
-      quakes: [card], isDmdss: true, eewOrigins: new Map([['20261003132605', decided(EEW_MS)]]), jmaList: [],
+      quakes: [card], eewOrigins: new Map([['20261003132605', decided(EEW_MS)]]),
     })).toEqual([])
   })
 
   test('震央か規模が判らない地震は数えない', () => {
     const noMag = quake('dmdata-quake-20261003132605-1', '2026-10-03T13:26:00+09:00', '熊本県天草・芦北地方', Number.NaN)
-    expect(catalogYearsNeeded({ quakes: [noMag], isDmdss: true, eewOrigins: new Map(), jmaList: [] })).toEqual([])
+    expect(catalogYearsNeeded({ quakes: [noMag], eewOrigins: new Map() })).toEqual([])
   })
 })
 

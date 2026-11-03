@@ -93,12 +93,14 @@ describe('public/data の分類', () => {
 })
 
 describe('offlineDataUrlPattern', () => {
+  const root = offlineDataUrlPattern('/')
   const standard = offlineDataUrlPattern('/yuremado/')
   const dmdss = offlineDataUrlPattern('/yuremado/dmdss/')
   const origin = 'https://example.github.io'
 
   it('自分の配信パスの控える生成データに当たる（正）', () => {
     for (const f of OFFLINE_DATA_FILES) {
+      expect(root.test(`${origin}/data/${f}`)).toBe(true)
       expect(standard.test(`${origin}/yuremado/data/${f}`)).toBe(true)
       expect(dmdss.test(`${origin}/yuremado/dmdss/data/${f}`)).toBe(true)
     }
@@ -107,13 +109,12 @@ describe('offlineDataUrlPattern', () => {
   it('控えない生成データには当たらない（対照）', () => {
     expect(standard.test(`${origin}/yuremado/data/hypocenter/2024.json`)).toBe(false)
     expect(standard.test(`${origin}/yuremado/data/historical-archives/index.json`)).toBe(false)
-    expect(standard.test(`${origin}/yuremado/data/test-scenarios/index.json`)).toBe(false)
     // 名前の一部だけが一致するもの（`.` を任意の 1 文字として扱っていない）
     expect(standard.test(`${origin}/yuremado/data/subregionsXjson`)).toBe(false)
     expect(standard.test(`${origin}/yuremado/data/subregions.json.bak`)).toBe(false)
   })
 
-  it('standard 版の規則は DMDSS 版の取得に当たらない（安全弁 — 配信パスが包むため）', () => {
+  it('外側の配信パスの規則は、内側の配信パスの取得に当たらない（安全弁 — 配信パスが包む置き方）', () => {
     expect(standard.test(`${origin}/yuremado/dmdss/data/subregions.json`)).toBe(false)
     expect(dmdss.test(`${origin}/yuremado/data/subregions.json`)).toBe(false)
   })
@@ -127,13 +128,13 @@ describe('offlineDataUrlPattern', () => {
 })
 
 describe('offlineDataCacheName', () => {
-  it('バリアントで名前が分かれる（同じオリジンで 2 つの版が同じ控えへ書かない）', () => {
+  it('末尾で名前が分かれる（同じオリジンの別のアプリと同じ控えへ書かない）', () => {
     expect(offlineDataCacheName('standard')).not.toBe(offlineDataCacheName('dmdss'))
   })
 })
 
 describe('offlineDataRuntimeCaching', () => {
-  it('NetworkFirst で、バリアントのキャッシュ名・時間切れ・検分を持つ', () => {
+  it('NetworkFirst で、末尾を付けたキャッシュ名・時間切れ・検分を持つ', () => {
     const rule = offlineDataRuntimeCaching('/yuremado/dmdss/', 'dmdss')
     expect(rule.handler).toBe('NetworkFirst')
     expect(String(rule.urlPattern)).toBe(String(offlineDataUrlPattern('/yuremado/dmdss/')))
@@ -147,7 +148,7 @@ describe('offlineDataRuntimeCaching', () => {
   })
 
   it('vite.config.ts が規則をそのまま runtimeCaching へ渡している', () => {
-    expect(VITE_CONFIG).toMatch(/^\s*offlineDataRuntimeCaching\(base, variant\),\s*$/m)
+    expect(VITE_CONFIG).toMatch(/^\s*offlineDataRuntimeCaching\(base, RUNTIME_CACHE_SUFFIX\),\s*$/m)
   })
 })
 

@@ -255,7 +255,7 @@ describe('取得状況の集約', { timeout: 15_000 }, () => {
   })
 
   it('同じ label の取得が重なったら本数で数える（1 本終わっただけで解除しない）', async () => {
-    // 実地震テストシナリオの連続再生のように、同じ label で複数の取得が並行しうる
+    // 同じ label で複数の取得が並行しうる
     const settlers: Array<(r: Response) => void> = []
     vi.stubGlobal(
       'fetch',

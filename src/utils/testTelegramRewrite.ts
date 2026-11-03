@@ -211,12 +211,8 @@ const TSUNAMI_LIFT_CODE: Readonly<Record<string, { code: string; name: string }>
  *
  * **段階を飛ばした解除は実配信では起きにくい**（大津波警報はふつう津波警報・注意報を経て解除される）。
  * テストボタンが表示を片付けるための報なので、そこは割り切る。
- *
- * @param options.includeForecast 予報の区域も「津波なし（00）」として載せる。**予報だけの津波を
- *   標準版で片付けるときだけ使う** —— 気象庁は予報の終わりに電文を出さず（DMDSS 版は失効時刻で消える）、
- *   この形は実配信に無い。標準版は失効の予約を持たないので、片付けの報が要る
  */
-export function toAllLifted(doc: Document, options: { includeForecast?: boolean } = {}): void {
+export function toAllLifted(doc: Document): void {
   const head = only(doc, 'Head')
   const title = childOf(head, 'Title')
   if (title) title.textContent = '津波予報'
@@ -231,9 +227,7 @@ export function toAllLifted(doc: Document, options: { includeForecast?: boolean 
     const category = childOf(item, 'Category')
     const kind = category && childOf(category, 'Kind')
     const code = kind ? childText(kind, 'Code') : undefined
-    const lift = code
-      ? TSUNAMI_LIFT_CODE[code] ?? (options.includeForecast && /^7[123]$/.test(code) ? { code: '00', name: '津波なし' } : undefined)
-      : undefined
+    const lift = code ? TSUNAMI_LIFT_CODE[code] : undefined
     if (!kind || !category || !lift) { item.remove(); continue }
     const kindName = childText(kind, 'Name') ?? ''
     // 前回の等級を元の等級にする（無ければ作る）

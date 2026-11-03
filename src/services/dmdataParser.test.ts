@@ -804,8 +804,7 @@ describe('XML 経路が落としてはいけない項目（地震）', () => {
   })
 
   // 対照: **編集官署が無い電文では undefined。** `issue.source` と違い発表官署へ落とさない ——
-  // 落ちた値を「編集官署」と名乗って出すと、ラベルが事実を誤らせる（標準版の全カードに
-  // 「編集官署 気象庁」が出ていた。この守りを外すとそれが戻る）。
+  // 落ちた値を「編集官署」と名乗って出すと、ラベルが事実を誤らせる（発表官署が編集官署として出る）。
   it('編集官署が無ければ undefined（発表官署へ落とさない）', () => {
     const xml = VXSE53_XML
       .replace('<EditorialOffice>気象庁本庁</EditorialOffice>', '')
@@ -1391,6 +1390,16 @@ describe('parseEEWFromXml: severity・cancel・LPGM', () => {
     expect(parseEEWFromXml('VXSE43', eewXml())!.severity).toBe('Warning')
   })
 
+  // 警報の電文の報番号は警報だけの通し番号（→ `EEWAlert.serialSeries`）。予報の同じ番号の報と id も分ける
+  it('VXSE43 の報番号は警報の系列の印を持ち、id も予報と分ける', () => {
+    const warning = parseEEWFromXml('VXSE43', eewXml())!
+    const forecast = parseEEWFromXml('VXSE45', eewXml())!
+    expect(warning.serialSeries).toBe('warning')
+    expect(forecast.serialSeries).toBeUndefined()
+    expect(warning.issue?.serial).toBe(forecast.issue?.serial)
+    expect(warning.id).not.toBe(forecast.id)
+  })
+
   it('区域の Kind が「緊急地震速報（警報）」なら VXSE45 でも severity=Warning に格上げ', () => {
     const xml = eewXml({ pref: eewPref('<From>5+</From><To>5+</To>', '11', '緊急地震速報（警報）') })
     expect(parseEEWFromXml('VXSE45', xml)!.severity).toBe('Warning')
@@ -1399,7 +1408,7 @@ describe('parseEEWFromXml: severity・cancel・LPGM', () => {
   // **座標は -200（位置不明センチネル）で埋める。0 にしてはならない** ——0 はギニア湾沖の有効な
   // 座標として `hasKnownEpicenter` を通り、地図に震源×印を立てうる。いまは取消済みの EEW が
   // `cancelledAt` で先に除かれるため表に出ないが、二重防御の奥が壊れた状態を残さない。
-  // 他の経路（VXSE51・震度速報・p2pquake の COORD_UNKNOWN）と同じ値に揃えてある。
+  // 他の電文（VXSE51・震度速報）と同じ値に揃えてある。
   it('取消は cancelled 電文（座標は位置不明センチネル・areas 空・VXSE43 は severity=Warning 保持）', () => {
     const xml = eewXml({ infoType: '取消', pref: eewPref('<From>5+</From><To>5+</To>') })
     const eew = parseEEWFromXml('VXSE43', xml)!
@@ -6554,7 +6563,7 @@ describe('緊急地震速報の警報対象地方（Head/Headline/Information）
 })
 
 describe('緊急地震速報の区域が属する府県予報区（Pref/Name）', () => {
-  // 正: 区域へ府県予報区名が付く。**これが無いと DMDSS 版で「対象地域」欄が空になる**
+  // 正: 区域へ府県予報区名が付く。**これが無いと「対象地域」欄が空になる**
   //（`RealtimeTab` は `areas.filter(a => a.pref)` で絞るため）。
   it('区域へ府県予報区名を持たせる', () => {
     const e = parseEEWFromXml('VXSE45', eewXml({ pref: eewPref('<From>5-</From><To>5+</To>') }))

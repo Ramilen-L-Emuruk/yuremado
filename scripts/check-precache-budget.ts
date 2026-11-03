@@ -1,7 +1,7 @@
 /**
  * ビルド後の出力を走査し、precache に載る 1 ファイルの大きさを予算と突き合わせる。
  *
- * `npm run build` / `npm run build:dmdss` の後段で走る。予算を超えたら exit 1 で止める。
+ * `npm run build` の後段で走る。予算を超えたら exit 1 で止める。
  * 上限そのものは vite-plugin-pwa が見ていて超えればビルドが落ちるが、それでは
  * 「上限すれすれで走っていること」が見えない（→ `scripts/precacheBudget.ts` の冒頭）。
  *
@@ -27,7 +27,7 @@
 import { readdirSync, statSync, existsSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { outDirForVariant } from './buildOutDir'
+import { BUILD_OUT_DIR } from './buildOutDir'
 import {
   PRECACHE_EXTENSIONS,
   evaluatePrecacheBudget,
@@ -55,8 +55,7 @@ function collect(root: string, dir: string, acc: PrecacheFile[]): void {
 }
 
 function main(): void {
-  const variant = process.env.VITE_VARIANT
-  const outDir = outDirForVariant(variant)
+  const outDir = BUILD_OUT_DIR
 
   if (!existsSync(outDir)) {
     console.error(`precache budget: 出力ディレクトリ ${outDir} がありません（先にビルドすること）`)

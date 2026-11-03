@@ -18,25 +18,22 @@
 //
 // アーカイブとの同等性は実データで確認済み。詳細は docs/spec/settings-pwa-spec.md §6。
 import { log } from '../utils/logger'
-import { authHeader } from '../utils/dmdataApiKey'
+import type { DmdataEndpoint } from './dmdataEndpoint'
 import { fetchWithTimeout, isAbortedByCaller, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { fetchTelegramText, fetchTelegramBytes, telegramIdFromUrl } from './telegramBody'
 import { RateLimitWindowError } from './dmdataRequestGates'
-import type { JMAQuake, JMATsunami } from '../types/earthquake'
+import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { ReplayEntry } from '../types/replay'
 import {
   isHandledType, QUAKE_TYPES, TSUNAMI_TYPES, HISTORY_EXTRA_TYPES, historyExtraKey,
-  buildXmlPayload, isBinaryTelegramType, buildBinaryPayload, TELEGRAM_DATA_BASE,
-  isFilteredBinaryTelegram, type BinaryReplayPayload, type DayEewHeadType, eewHeadTypeForDay,
+  buildXmlPayload, isBinaryTelegramType, buildBinaryPayload,
+  isFilteredBinaryTelegram, type BinaryReplayPayload, type DayEewHeadType, eewHeadTypeForDay, type EewHeadType,
 } from './dmdataTelegramPayload'
 import { eewHeadTypeFor, hasQuakeTelegrams, type DmdataClassification } from './dmdataClassifications'
-import { waitForApiSlot } from './dmdataRequestGates'
 import { BufrFragmentStore, fragmentKey } from './bufrTelegramAssembly'
 import { createSkipCounter, UNKNOWN_SKIP_DAY } from '../utils/telegramLoss'
 import { makeReplayLogEntry } from './telegramLogEntry'
 
-const API_BASE = 'https://api.dmdata.jp/v2'
-/** 電文本体の配信元。一覧が返す `url` と同じ形を id から組むのに使う。 */
 /** 一覧 API の 1 ページあたりの取得件数（API の上限）。 */
 const LIST_LIMIT = 100
 /**
@@ -50,7 +47,6 @@ const LIST_LIMIT = 100
  * 20 ページ＝2000 件あれば、このアプリが扱う窓（数日ぶん・1 日十数通）には十分すぎる。
  * 上限に達したら**記録を残す** —— 黙って切ると取りこぼしが「静かな時間帯」に化ける。
  *
- * 同じ形の上限は震源カタログにもある（`dmdata.ts` の `GD_EARTHQUAKE_MAX_PAGES`）。
  * **ページを辿るループを新しく書くときは必ず上限を置くこと。**
  */
 const LIST_MAX_PAGES = 20
@@ -102,6 +98,8 @@ interface TelegramListItem {
    */
   receivedTime: string
   url: string
+  /** XML 版の電文の見出しの一部（地震 ID と報番号）。DMDATA の一覧も中継の一覧も載せる */
+  xmlReport?: { head?: { eventId?: string | null; serial?: string | null } }
 }
 
 interface EewListItem {
@@ -294,7 +292,7 @@ async function mapWithLimit<T>(items: T[], limit: number, fn: (item: T) => Promi
   }
 }
 
-async function getJson<T>(url: string, apiKey: string, what: string, signal: AbortSignal | null): Promise<T> {
+async function getJson<T>(url: string, endpoint: DmdataEndpoint, what: string, signal: AbortSignal | null): Promise<T> {
   // **枠を待ってから投げる。** ここを通るのは `api.dmdata.jp` の一覧・目録・EEW の詳細で、
   // **どれもページを辿るループの中にいる** —— 応答が速ければ待ちなしで次のページへ進むので、
   // 門が無いと瞬間のレートが上限へ寄る。配信元は「定常的に 2req/s 以上のアクセスはお控え
@@ -302,11 +300,13 @@ async function getJson<T>(url: string, apiKey: string, what: string, signal: Abo
   //
   // **共通の口へ置く。** 呼び出し側ごとに書くと、経路を足したときに掛け忘れる
   // （実際に一覧の 3 経路が素通ししていた）。
-  await waitForApiSlot()
+  await endpoint.waitApiSlot()
+  await endpoint.prepare(signal)
   const json = await fetchWithTimeout(
     url,
-    { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: { Authorization: authHeader(apiKey) } } },
+    { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: endpoint.apiHeaders() } },
     async (res) => {
+      endpoint.observe(res.status, res.headers ?? null)
       if (!res.ok) throw new Error(`${what}を取得できなかった: ${res.status}`)
       return (await res.json()) as { status?: string } & T
     },
@@ -323,11 +323,11 @@ async function getJson<T>(url: string, apiKey: string, what: string, signal: Abo
  * IndexedDB の控え（→ `telegramBody.ts`）。**同じ窓を再生し直すたびに取り直さない**ため、
  * 奥の段が要る（リプレイは検証で何度も同じ範囲を流す）。
  */
-function fetchBody(url: string, apiKey: string): Promise<string> {
+function fetchBody(url: string, endpoint: DmdataEndpoint): Promise<string> {
   const cached = bodyCache.get(url)
   if (cached) return cached
   const promise = (async () => {
-    const body = await fetchTelegramText(apiKey, url)
+    const body = await fetchTelegramText(endpoint, url)
     // **429 の窓で見送った分は専用の型で投げる。** アーカイブ本体と同じ扱いにする
     // （→ `services/dmdataRequestGates.ts` の `RateLimitWindowError`）。通常の失敗と
     // 混ぜると、待てば取れるものが恒久的な喪失として記録・画面に出る
@@ -361,11 +361,11 @@ function fetchBody(url: string, apiKey: string): Promise<string> {
  * 両方で引くことが無いため。
  */
 const binaryBodyCache = new Map<string, Promise<Uint8Array>>()
-function fetchBinaryBody(url: string, apiKey: string): Promise<Uint8Array> {
+function fetchBinaryBody(url: string, endpoint: DmdataEndpoint): Promise<Uint8Array> {
   const cached = binaryBodyCache.get(url)
   if (cached) return cached
   const promise = (async () => {
-    const { bytes, status, rateLimitedUntil } = await fetchTelegramBytes(apiKey, url)
+    const { bytes, status, rateLimitedUntil } = await fetchTelegramBytes(endpoint, url)
     if (rateLimitedUntil !== null) {
       throw new RateLimitWindowError(telegramIdFromUrl(url) ?? url, rateLimitedUntil)
     }
@@ -398,7 +398,7 @@ export class TelegramListPageLimitError extends Error {
 }
 
 async function listTelegrams(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   utcFrom: string,
   utcTo: string,
   includeTest: boolean,
@@ -423,7 +423,7 @@ async function listTelegrams(
     if (includeTest) params.set('test', 'including')
     if (cursorToken) params.set('cursorToken', cursorToken)
     const json = await getJson<{ items?: TelegramListItem[]; nextToken?: string }>(
-      `${API_BASE}/telegram?${params.toString()}`, apiKey, '電文の一覧', signal,
+      `${endpoint.apiBase}/telegram?${params.toString()}`, endpoint, '電文の一覧', signal,
     )
     const pageItems = json.items ?? []
     items.push(...pageItems)
@@ -577,6 +577,11 @@ function classifyTelegram(
   return time >= fromTime && time < toTime ? 'include' : 'exclude'
 }
 
+/** 一覧の 1 件が緊急地震速報の電文か（中継の電文一覧は警報も載せる → `DmdataEndpoint.telegramListHasEew`） */
+function isEewListItem(item: TelegramListItem): boolean {
+  return /^VXSE4[2-5]$/.test(item?.head?.type ?? '')
+}
+
 /**
  * EEW の全報を電文一覧の形で集める。
  *
@@ -603,7 +608,7 @@ function classifyTelegram(
  * > そちらだけを見て「無い」と結論しないこと（実測値と経緯は CLAUDE.md「調査レビュー」2026-09-11）。
  */
 async function listEewTelegrams(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   utcFrom: string,
   utcTo: string,
   fromTime: Date,
@@ -617,7 +622,7 @@ async function listEewTelegrams(
     const params = new URLSearchParams({ datetime: `${utcFrom}~${utcTo}`, limit: String(LIST_LIMIT) })
     if (cursorToken) params.set('cursorToken', cursorToken)
     const json = await getJson<{ items?: EewListItem[]; nextToken?: string }>(
-      `${API_BASE}/gd/eew?${params.toString()}`, apiKey, '緊急地震速報の一覧', signal,
+      `${endpoint.apiBase}/gd/eew?${params.toString()}`, endpoint, '緊急地震速報の一覧', signal,
     )
     events.push(...(json.items ?? []))
     if (!json.nextToken) break
@@ -658,7 +663,7 @@ async function listEewTelegrams(
       // 直列化する**ので瞬間 8req/s にはならない（同じ定数を使う電文本体の取得は
       // 6 秒の門で直列化されている）。
       const json = await getJson<{ items?: Array<{ telegrams?: TelegramListItem[] }> }>(
-        `${API_BASE}/gd/eew/${encodeURIComponent(ev.eventId)}`, apiKey, '緊急地震速報の詳細', signal,
+        `${endpoint.apiBase}/gd/eew/${encodeURIComponent(ev.eventId)}`, endpoint, '緊急地震速報の詳細', signal,
       )
       for (const rep of json.items ?? []) {
         for (const tg of rep.telegrams ?? []) {
@@ -673,7 +678,7 @@ async function listEewTelegrams(
             skipCounter.add(skipDayOf(tg.receivedTime))
             continue
           }
-          items.push({ ...tg, id: xmlId, originalId: undefined, url: `${TELEGRAM_DATA_BASE}${xmlId}` })
+          items.push({ ...tg, id: xmlId, originalId: undefined, url: `${endpoint.dataBase}${xmlId}` })
         }
       }
     } catch (e) {
@@ -718,6 +723,11 @@ export interface LiveReplayResult {
    * アーカイブの失敗と同じ集合へ積む。
    */
   failedSources: string[]
+  /**
+   * `failedSources` のうち、その日の一覧を丸ごと引けなかったもの（`live-telegram:<日>` / `live-eew:<日>`）と、その日。
+   * 地震 1 つ分の失敗（`eew:<eventId>`）は載せない（→ `types/replay.ts` の `ReplayFetchResult.lostSourceDays`）。
+   */
+  lostSourceDays: ReadonlyMap<string, string>
   /**
    * 429 の窓が明けるまで取りに行かなかった電文の数。
    *
@@ -806,7 +816,7 @@ class LiveBinaryTelegrams {
 /**
  * アーカイブが無い日の電文を集めて再生用エントリにする。
  *
- * @param apiKey DMDATA の APIキー
+ * @param endpoint 繋ぐ先と認証（→ `dmdataEndpoint.ts`）
  * @param fromTime 取得したい期間の始まり
  * @param toTime 取得したい期間の終わり（この時刻は含まない）
  * @param days 当日経路が担当する JST 日付（`resolveLiveDates` の結果）
@@ -815,7 +825,7 @@ class LiveBinaryTelegrams {
  *   一部だけ引けなかったときは投げず、引けた分を返して失敗を `failedSources` に記録する
  */
 export async function fetchLiveReplayEntries(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   fromTime: Date,
   toTime: Date,
   days: string[],
@@ -823,13 +833,14 @@ export async function fetchLiveReplayEntries(
   /**
    * 受けている区分（→ `dmdataClassifications.ts`）。**受けていない区分の一覧は引かない** ——
    * 地震・津波関連が無ければ `/v2/telegram` を、緊急地震速報が無ければ `/v2/gd/eew` を飛ばす。
+   * 電文一覧が警報も返す繋ぎ先（中継）では、`/v2/gd/eew` を引かず一覧から警報も取る。
    */
   classifications: readonly DmdataClassification[],
   /** 止める合図。一覧と EEW の詳細の取得を打ち切る（電文本体は相乗りするので打ち切らない）。 */
   signal: AbortSignal | null,
 ): Promise<LiveReplayResult> {
   if (days.length === 0) {
-    return { entries: [], skippedByDay: new Map(), scanSkippedByDay: new Map(), failedSources: [], rateLimitedTelegrams: 0 }
+    return { entries: [], skippedByDay: new Map(), scanSkippedByDay: new Map(), failedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
   }
   const daySet = new Set(days)
   const { from: utcFrom, to: utcTo } = utcRangeForJstDates(days)
@@ -839,21 +850,26 @@ export async function fetchLiveReplayEntries(
   // 当日経路 1 本しか無い窓（本編の 1 時間）では、それが全滅と見なされて例外になり、
   // 地震電文が取れていたのに再生ごと止まる。
   const eewHeadType = eewHeadTypeFor(classifications)
-  const wantsTelegrams = hasQuakeTelegrams(classifications)
   const wantsEew = eewHeadType !== null
+  // 中継の電文一覧は警報も載せる（→ `DmdataEndpoint.telegramListHasEew`）。そのときは `/v2/gd/eew` を辿らず、
+  // 一覧に載った警報をほかの電文と同じ判定に掛ける
+  const eewInTelegramList = wantsEew && endpoint.telegramListHasEew
+  const wantsTelegrams = hasQuakeTelegrams(classifications) || eewInTelegramList
+  const walksEewEvents = wantsEew && !eewInTelegramList
   const noEew = { items: [] as TelegramListItem[], failedSources: [] as string[], skippedByDay: new Map<string, number>() as ReadonlyMap<string, number> }
   const settled = await Promise.allSettled([
-    wantsTelegrams ? listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal, null) : Promise.resolve([] as TelegramListItem[]),
-    wantsEew ? listEewTelegrams(apiKey, utcFrom, utcTo, fromTime, toTime, signal) : Promise.resolve(noEew),
+    wantsTelegrams ? listTelegrams(endpoint, utcFrom, utcTo, includeTest, signal, null) : Promise.resolve([] as TelegramListItem[]),
+    walksEewEvents ? listEewTelegrams(endpoint, utcFrom, utcTo, fromTime, toTime, signal) : Promise.resolve(noEew),
   ])
   /** 実際に引いた一覧の本数。全滅の判定の分母（引いていない一覧を「読めた」に数えない）。 */
-  const attemptedLists = (wantsTelegrams ? 1 : 0) + (wantsEew ? 1 : 0)
+  const attemptedLists = (wantsTelegrams ? 1 : 0) + (walksEewEvents ? 1 : 0)
   // **止められたら、一覧の失敗として記録せずに打ち切りを投げる**（呼び出し元が要らないと決めた結果）
   for (const r of settled) {
     if (r.status === 'rejected' && isAbortedByCaller(r.reason)) throw r.reason
   }
   const dayLabel = days.join(',')
   const listFailures: string[] = []
+  const lostSourceDays = new Map<string, string>()
   // 失敗した一覧の本数。全滅（＝その日ぶんが 1 通も取れていない）の判定に使う。
   // 識別子の件数と分けるのは、識別子を日ごとに 1 本ずつ積むため。
   let failedListCount = 0
@@ -863,7 +879,10 @@ export async function fetchLiveReplayEntries(
     failedListCount++
     // 識別子は日ごとに分ける。まとめて 1 本にすると、日の組み合わせが違う取得
     //（本編・初期状態・先読み）で同じ失敗が別物として数えられ、識別子で数える意味が消える。
-    for (const day of days) listFailures.push(`${label}:${day}`)
+    for (const day of days) {
+      listFailures.push(`${label}:${day}`)
+      lostSourceDays.set(`${label}:${day}`, day)
+    }
     return fallback
   }
   const telegramList = take(settled[0], 'live-telegram', [] as TelegramListItem[])
@@ -871,7 +890,7 @@ export async function fetchLiveReplayEntries(
   // 設定を入れているのに EEW の一覧が試験報を 1 通も返さないことを記録する（`listTelegrams` と同じ形）。
   // この口は訓練・試験の EEW を返さない（→ `listEewTelegrams` の注記）ので、0 通は普通の結果。
   // 0 通でなくなったら、配信元の口が変わったので注記を見直すこと。
-  if (includeTest && wantsEew && settled[1].status === 'fulfilled') {
+  if (includeTest && walksEewEvents && settled[1].status === 'fulfilled') {
     const testCount = eew.items.filter(i => i.head?.test).length
     log.info(`[replay] 当日経路の緊急地震速報の一覧 件数=${eew.items.length} うち試験報=${testCount}（この口は訓練・試験報を返さない）`)
   }
@@ -888,7 +907,7 @@ export async function fetchLiveReplayEntries(
   scanSkipCounter.addAll(eew.skippedByDay)
   /** 429 の窓で見送った電文の数。**取りこぼしとは別に数える**（待てば取れる）。 */
   let rateLimitedTelegrams = 0
-  // EEW は /v2/gd/eew から来るが、XML 版を指す形へ組み替えてあるので同じ判定に掛けられる。
+  // EEW は /v2/gd/eew から来るが（中継なら電文一覧から）、XML 版を指す形へ組み替えてあるので同じ判定に掛けられる。
   const targets: TelegramListItem[] = []
   const listed = [...telegramList, ...eew.items]
   const times = liveEntryTimes(listed)
@@ -898,7 +917,8 @@ export async function fetchLiveReplayEntries(
   // VXSE45 を 1 通ずつ対で持つので、どの地震が窓に入っても結果は変わらない（当日経路が埋めるのは控えの無い
   // 直近の日だけで、VXSE44 だけの日は来ない）。
   const eewItemsByDay = new Map<string, TelegramListItem[]>()
-  for (const item of eew.items) {
+  const eewItems = eewInTelegramList ? telegramList.filter(i => isEewListItem(i)) : eew.items
+  for (const item of eewItems) {
     const day = skipDayOf(item.receivedTime)
     const items = eewItemsByDay.get(day) ?? []
     items.push(item)
@@ -923,7 +943,7 @@ export async function fetchLiveReplayEntries(
     try {
       // 二進電文（IXAC41）はテキストへ落とさず、分割の結合を経てから読む。
       if (isBinaryTelegramType(headType)) {
-        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, apiKey))
+        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, endpoint))
         if (binPayload === 'pending') return
         if (binPayload === 'unreadable') {
           log.warn(`[replay] 二進電文の読み取りに失敗しスキップ id=${item.id} type=${headType}`)
@@ -952,7 +972,7 @@ export async function fetchLiveReplayEntries(
         })
         return
       }
-      const xml = await fetchBody(item.url, apiKey)
+      const xml = await fetchBody(item.url, endpoint)
       const payload = buildXmlPayload(headType, xml, dayEewHeadTypeOf(item))
       if (!payload) {
         log.warn(`[replay] 電文のパースに失敗しスキップ id=${item.id} type=${headType}`)
@@ -1008,7 +1028,7 @@ export async function fetchLiveReplayEntries(
   const scanSkippedByDay = scanSkipCounter.toMap()
   const skippedTotal = [...skippedByDay.values(), ...scanSkippedByDay.values()].reduce((a, b) => a + b, 0)
   log.info(`[replay] アーカイブ未生成の日を当日経路で補完 日=${dayLabel} 電文=${entries.length} 取りこぼし=${skippedTotal} 読めなかった取得元=${failedSources.length}`)
-  return { entries, skippedByDay, scanSkippedByDay, failedSources, rateLimitedTelegrams }
+  return { entries, skippedByDay, scanSkippedByDay, failedSources, rateLimitedTelegrams, lostSourceDays }
 }
 
 /**
@@ -1023,7 +1043,7 @@ async function collectHistoryTelegrams(
   targets: TelegramListItem[],
   times: ReadonlyMap<TelegramListItem, Date | null>,
   includeTest: boolean,
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   noteSkip: () => void,
 ): Promise<{
   quakes: JMAQuake[]; tsunamis: JMATsunami[]; extras: ReplayEntry[]
@@ -1048,7 +1068,7 @@ async function collectHistoryTelegrams(
     try {
       // 二進電文はテキストへ落とさず、分割の結合を経てから読む（`fetchLiveReplayEntries` と同じ）。
       if (isBinaryTelegramType(item.head.type)) {
-        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, apiKey))
+        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, endpoint))
         if (binPayload === 'pending') return
         if (binPayload === 'unreadable') {
           log.warn(`[replay] 履歴用の二進電文の読み取りに失敗しスキップ id=${item.id} type=${item.head.type}`)
@@ -1069,7 +1089,7 @@ async function collectHistoryTelegrams(
         return
       }
       // 履歴は緊急地震速報を扱わない（`HISTORY_EXTRA_TYPES` に入っていない）ので、取り込む EEW 種別は無し
-      const payload = buildXmlPayload(item.head.type, await fetchBody(item.url, apiKey), null)
+      const payload = buildXmlPayload(item.head.type, await fetchBody(item.url, endpoint), null)
       if (HISTORY_EXTRA_TYPES.has(item.head.type)) {
         if (payload === null || historyExtraKey(payload) === null) {
           log.warn(`[replay] 履歴用電文のパースに失敗しスキップ id=${item.id} type=${item.head.type}`)
@@ -1139,14 +1159,14 @@ async function collectHistoryTelegrams(
  * 日単位で呼ぶ。履歴の打ち切りが日単位のため（日の途中で切ると同一イベントの続報が分断され、
  * 震度速報だけのカードが残りうる）、複数日をまとめて取ると打ち切りの判断ができない。
  *
- * @param apiKey DMDATA の APIキー
+ * @param endpoint 繋ぐ先と認証（→ `dmdataEndpoint.ts`）
  * @param day 対象の JST 日付（YYYY-MM-DD）
  * @param before この時刻より後に受信した電文は採らない（＝再生開始時刻）
  * @returns 統合前の生の地震電文と取りこぼし件数
  * @throws 一覧 API が失敗した場合
  */
 export async function fetchLiveQuakeTelegrams(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   day: string,
   before: Date,
   includeTest: boolean,
@@ -1169,7 +1189,7 @@ export async function fetchLiveQuakeTelegrams(
   // 窓判定は上限を含まないため、1ms 足して同じ範囲にする。
   const until = new Date(before.getTime() + 1)
 
-  const list = await listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal, null)
+  const list = await listTelegrams(endpoint, utcFrom, utcTo, includeTest, signal, null)
   // **この関数は 1 日ぶんを担当する**（引数 `day`）ので、取りこぼしはすべてその日に付く。
   const skipCounter = createSkipCounter()
   /** 429 の窓で見送った電文の数。**取りこぼしとは別に数える**（待てば取れる）。 */
@@ -1195,7 +1215,7 @@ export async function fetchLiveQuakeTelegrams(
   }
 
   const { quakes, tsunamis, extras, rateLimitedTelegrams: bodyRateLimited } = await collectHistoryTelegrams(
-    targets, times, includeTest, apiKey, () => skipCounter.add(day),
+    targets, times, includeTest, endpoint, () => skipCounter.add(day),
   )
   rateLimitedTelegrams += bodyRateLimited
   return { quakes, tsunamis, extras, skippedByDay: skipCounter.toMap(), rateLimitedTelegrams }
@@ -1213,7 +1233,7 @@ export async function fetchLiveQuakeTelegrams(
  * @throws 一覧が失敗したとき。ページの上限に達したときは投げず、読めた分（窓の新しい側）を返して `reachedOnlyBack` に届いた端を入れる
  */
 export async function fetchLiveTelegramsBetween(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   from: Date,
   to: Date,
   includeTest: boolean,
@@ -1248,7 +1268,7 @@ export async function fetchLiveTelegramsBetween(
   let list: TelegramListItem[]
   let reachedOnlyBack: Date | null = null
   try {
-    list = await listTelegrams(apiKey, utcFrom, utcTo, includeTest, signal, from)
+    list = await listTelegrams(endpoint, utcFrom, utcTo, includeTest, signal, from)
   } catch (err) {
     if (!(err instanceof TelegramListPageLimitError)) throw err
     list = [...err.items]
@@ -1274,6 +1294,207 @@ export async function fetchLiveTelegramsBetween(
       else targets.push(item)
     }
   }
-  const read = await collectHistoryTelegrams(targets, times, includeTest, apiKey, () => { skipped++ })
+  const read = await collectHistoryTelegrams(targets, times, includeTest, endpoint, () => { skipped++ })
   return { ...read, alreadyReceivedCount, skipped, reachedOnlyBack }
+}
+
+/** 電文一覧から集めた、地震ごとの緊急地震速報の最終報（→ {@link fetchListedEewFinals}） */
+export interface ListedEewFinals {
+  /** 地震ごとの最終報（取消の報も含む。`cancelled` が立つ） */
+  readonly finals: EEWAlert[]
+  /** 期間を取りきれたか（一覧の失敗・ページの上限・読めない報・本文の取れない報があれば偽） */
+  readonly complete: boolean
+}
+
+/** 本文を取る地震の数の上限（`dmdataReplay.ts` の地震ごとの経路の `EEW_PER_EVENT_MAX` と同じ 50） */
+const LISTED_EEW_MAX_EVENTS = 50
+
+/**
+ * 期間に緊急地震速報を出した地震ごとに、最終報（報番号がいちばん大きい報）を電文一覧から選んで本文を読む。
+ *
+ * **電文一覧が警報も返す繋ぎ先（中継）だけで使う**（→ `DmdataEndpoint.telegramListHasEew`）。DMDATA の一覧は警報を
+ * 返さないので、そちらは `/v2/gd/eew` を辿る（`dmdataReplay.ts` の `fetchDmdataEewOrigins` の 2）。加工データの代わりに
+ * 電文から作る（docs/relay-server-design.md §0 の 2026-10-31「加工データは配らない」の行）。
+ *
+ * 試験の報・JSON 版・受けていない種別は選ばない。地震 ID か報番号を名乗らない報は選ばず、取りきれていない側に数える。
+ * 失敗しても投げない（止める合図だけは投げ直す）。
+ */
+export async function fetchListedEewFinals(
+  endpoint: DmdataEndpoint,
+  fromTime: Date,
+  toTime: Date,
+  eewHeadType: EewHeadType,
+  signal: AbortSignal | null,
+): Promise<ListedEewFinals> {
+  const days = enumerateJstDates(fromTime, toTime)
+  if (days.length === 0) return { finals: [], complete: true }
+  const { from: utcFrom, to: utcTo } = utcRangeForJstDates(days)
+  let complete = true
+  let items: readonly TelegramListItem[]
+  try {
+    items = await listTelegrams(endpoint, utcFrom, utcTo, false, signal, fromTime)
+  } catch (e) {
+    if (isAbortedByCaller(e)) throw e
+    if (e instanceof TelegramListPageLimitError) {
+      // 一覧は新しい順なので、読めた分は期間の新しい側。それだけでも当てる
+      items = e.items
+      complete = false
+      log.warn('[eew-origin] 電文一覧のページの上限に当たりました（読めた新しい側の緊急地震速報だけを使います）', e)
+    } else {
+      log.warn('[eew-origin] 電文一覧を引けませんでした（期間の緊急地震速報を取れません）', e)
+      return { finals: [], complete: false }
+    }
+  }
+  const fromMs = fromTime.getTime()
+  const toMs = toTime.getTime()
+  const byEvent = new Map<string, { serial: number; item: TelegramListItem }>()
+  let unidentified = 0
+  for (const item of items) {
+    if (!item?.head || item.head.test || item.originalId || item.head.type !== eewHeadType) continue
+    const receivedMs = Date.parse(typeof item.receivedTime === 'string' ? item.receivedTime : '')
+    if (Number.isFinite(receivedMs) && (receivedMs < fromMs || receivedMs >= toMs)) continue
+    const eventId = item.xmlReport?.head?.eventId
+    const serialText = item.xmlReport?.head?.serial
+    // 空文字は `Number('')` が 0 になって通ってしまうので、文字列の中身で見る
+    const serial = typeof serialText === 'string' && serialText.trim() !== '' ? Number(serialText) : Number.NaN
+    if (!eventId || !Number.isFinite(serial)) {
+      unidentified += 1
+      continue
+    }
+    const cur = byEvent.get(eventId)
+    if (cur === undefined || serial > cur.serial) byEvent.set(eventId, { serial, item })
+  }
+  if (unidentified > 0) {
+    complete = false
+    log.warn(`[eew-origin] 電文一覧に地震 ID か報番号を読めない緊急地震速報が ${unidentified} 通ありました（その報は選びません）`)
+  }
+  // 新しい地震から読む（上限で切るとき、古い側を落とす）
+  const targets = [...byEvent.values()]
+    .sort((a, b) => (Date.parse(b.item.receivedTime) || 0) - (Date.parse(a.item.receivedTime) || 0))
+  if (targets.length > LISTED_EEW_MAX_EVENTS) {
+    complete = false
+    log.warn(`[eew-origin] 最終報を読む地震が上限（${LISTED_EEW_MAX_EVENTS} 地震）を超えたため古い側を打ち切りました（残り ${targets.length - LISTED_EEW_MAX_EVENTS} 地震）`)
+    targets.length = LISTED_EEW_MAX_EVENTS
+  }
+  const finals: EEWAlert[] = []
+  await mapWithLimit(targets, BODY_CONCURRENCY, async ({ item }) => {
+    try {
+      const xml = await fetchBody(item.url, endpoint)
+      const payload = buildXmlPayload(item.head.type, xml, eewHeadType)
+      const eew = payload?.kind === 'event' && payload.event.kind === 'eew' ? (payload.event as EEWAlert) : null
+      if (eew === null) {
+        complete = false
+        log.warn(`[eew-origin] 最終報を読み取れませんでした id=${item.id}`)
+        return
+      }
+      finals.push(eew)
+    } catch (e) {
+      if (isAbortedByCaller(e)) throw e
+      complete = false
+      log.warn(`[eew-origin] 最終報の本文を取れませんでした id=${item.id}`, e)
+    }
+  })
+  return { finals, complete }
+}
+
+/** 電文一覧から集めた、期間の地震の震源（→ {@link fetchListedHypocenters}） */
+export interface ListedHypocenters {
+  /** 地震ごとに 1 件（取り消された地震は含めない） */
+  readonly quakes: JMAQuake[]
+  /** 期間を取りきれたか（一覧の失敗・ページの上限・読めない報・本文の取れない報・件数の上限があれば偽） */
+  readonly complete: boolean
+}
+
+/** 本文を取る地震の数の上限。ヒートマップの末尾は最長 30 日（`useQuakeHeatmap.ts` の `API_TAIL_MAX_DAYS`） */
+const LISTED_HYPOCENTER_MAX_EVENTS = 2000
+/** 震源を載せる電文。VXSE53 と震源要素の更新 VXSE61 を先に採り、無い地震だけ震源に関する情報 VXSE52 を採る */
+const HYPOCENTER_PRIMARY_TYPES = new Set(['VXSE53', 'VXSE61'])
+const HYPOCENTER_FALLBACK_TYPES = new Set(['VXSE52'])
+
+/**
+ * 期間に震源の電文が出た地震ごとに、いちばん新しい震源の電文を電文一覧から選んで本文を読む（ヒートマップの末尾。
+ * 加工データの `/v2/gd/earthquake` の代わりに電文から作る → docs/relay-server-design.md §0 の 2026-10-31
+ * 「加工データは配らない」の行）。
+ *
+ * 一覧は新しい順なので、地震 ID ごとに最初に現れた電文がいちばん新しい。報番号は情報の種類ごとに数えるので比べない。
+ * 期間は受信時刻で区切る（リプレイでは再生を始めた時刻より後の電文を採らない）。試験の報・JSON 版は選ばない。
+ * いちばん新しい報が取消なら、その地震は出さない。失敗しても投げない（止める合図だけは投げ直す）。
+ */
+export async function fetchListedHypocenters(
+  endpoint: DmdataEndpoint,
+  fromTime: Date,
+  toTime: Date,
+  signal: AbortSignal | null,
+): Promise<ListedHypocenters> {
+  const days = enumerateJstDates(fromTime, toTime)
+  if (days.length === 0) return { quakes: [], complete: true }
+  const { from: utcFrom, to: utcTo } = utcRangeForJstDates(days)
+  let complete = true
+  let items: readonly TelegramListItem[]
+  try {
+    items = await listTelegrams(endpoint, utcFrom, utcTo, false, signal, fromTime)
+  } catch (e) {
+    if (isAbortedByCaller(e)) throw e
+    if (e instanceof TelegramListPageLimitError) {
+      // 一覧は新しい順なので、読めた分は期間の新しい側。それだけでも描く
+      items = e.items
+      complete = false
+      log.warn('[data] 地震活動ヒートマップ: 電文一覧のページの上限に当たりました（読めた新しい側の地震だけを描きます）', e)
+    } else {
+      log.warn('[data] 地震活動ヒートマップ: 電文一覧を引けませんでした', e)
+      return { quakes: [], complete: false }
+    }
+  }
+  const fromMs = fromTime.getTime()
+  const toMs = toTime.getTime()
+  const primary = new Map<string, TelegramListItem>()
+  const fallback = new Map<string, TelegramListItem>()
+  let unidentified = 0
+  for (const item of items) {
+    const type = item?.head?.type ?? ''
+    const isPrimary = HYPOCENTER_PRIMARY_TYPES.has(type)
+    if (!isPrimary && !HYPOCENTER_FALLBACK_TYPES.has(type)) continue
+    if (item.head.test || item.originalId) continue
+    const receivedMs = Date.parse(typeof item.receivedTime === 'string' ? item.receivedTime : '')
+    if (Number.isFinite(receivedMs) && (receivedMs < fromMs || receivedMs >= toMs)) continue
+    const eventId = item.xmlReport?.head?.eventId
+    if (!eventId) {
+      unidentified += 1
+      continue
+    }
+    const byEvent = isPrimary ? primary : fallback
+    if (!byEvent.has(eventId)) byEvent.set(eventId, item)
+  }
+  if (unidentified > 0) {
+    complete = false
+    log.warn(`[data] 地震活動ヒートマップ: 電文一覧に地震 ID を読めない震源の電文が ${unidentified} 通ありました（その報は選びません）`)
+  }
+  const targets = [...primary.values()]
+  for (const [eventId, item] of fallback) if (!primary.has(eventId)) targets.push(item)
+  // 新しい地震から読む（上限で切るとき、古い側を落とす）
+  targets.sort((a, b) => (Date.parse(b.receivedTime) || 0) - (Date.parse(a.receivedTime) || 0))
+  if (targets.length > LISTED_HYPOCENTER_MAX_EVENTS) {
+    complete = false
+    log.warn(`[data] 地震活動ヒートマップ: 震源を読む地震が上限（${LISTED_HYPOCENTER_MAX_EVENTS} 地震）を超えたため古い側を打ち切りました（残り ${targets.length - LISTED_HYPOCENTER_MAX_EVENTS} 地震）`)
+    targets.length = LISTED_HYPOCENTER_MAX_EVENTS
+  }
+  const quakes: JMAQuake[] = []
+  await mapWithLimit(targets, BODY_CONCURRENCY, async (item) => {
+    try {
+      const xml = await fetchBody(item.url, endpoint)
+      const payload = buildXmlPayload(item.head.type, xml, null)
+      const quake = payload?.kind === 'event' && payload.event.kind === 'quake' ? (payload.event as JMAQuake) : null
+      if (quake === null) {
+        complete = false
+        log.warn(`[data] 地震活動ヒートマップ: 震源の電文を読み取れませんでした id=${item.id}`)
+        return
+      }
+      if (!quake.cancelled) quakes.push(quake)
+    } catch (e) {
+      if (isAbortedByCaller(e)) throw e
+      complete = false
+      log.warn(`[data] 地震活動ヒートマップ: 震源の電文の本文を取れませんでした id=${item.id}`, e)
+    }
+  })
+  return { quakes, complete }
 }

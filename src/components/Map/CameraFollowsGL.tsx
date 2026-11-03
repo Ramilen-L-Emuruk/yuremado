@@ -1386,8 +1386,8 @@ export function TsunamiFitGL({
     //   「番号の重ならない津波で表示中の津波を置き換えます」）。**signature は非空のまま変わる**ので、
     //   空を経由したかだけでは見分けられない。**運用種別が同じで番号が 1 つでも重なれば同じ津波**（気象庁は別の地震の
     //   寄与で番号を足して切り替える。訓練の報は通常の津波と混ぜない。→ `utils/tsunami.ts` の `isSameTsunamiEvent`）。**両方の識別子が
-    //   取れるときだけ見る** —— 片方でも空なら「別物」と言えないので従来どおり差分を取る（標準版は
-    //   識別子を持たないため常にこちら）
+    //   取れるときだけ見る** —— 片方でも空なら「別物」と言えないので従来どおり差分を取る（電文に
+    //   `EventID` が無い津波はこちら）
     const tsunamiPresent = tsunamiSignature !== ''
     const tsunamiSwitched = tsunamiPresent && !!tsunamiEventId && !!prevEventIdRef.current
       && (tsunamiOperationStatus !== prevOperationStatusRef.current || !eventIdsOverlap(tsunamiEventId, prevEventIdRef.current))

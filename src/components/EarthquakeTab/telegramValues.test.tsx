@@ -79,6 +79,7 @@ const renderTab = async (quake: JMAQuake, selected: boolean, lpgm?: JMALpgm) => 
       loadMoreFailed={false}
       reconnectGapLoss={false}
       fetchThrottled={false}
+      onDismissKeyReentry={null}
       lpgmByEventId={lpgm ? new Map([[EVENT_ID, lpgm]]) : new Map()}
       updateMarks={new Map()}
       activeLpgmEventId={null}
@@ -107,7 +108,7 @@ describe('規模の種別（Mj／M）', () => {
     expect(screen.getAllByText(/Mj7\.6/).length).toBeGreaterThan(0)
   })
 
-  // 対照: 種別を持たない電文（標準版）は従来どおり `M`。
+  // 対照: 種別を持たない電文は従来どおり `M`。
   it('種別が無ければ従来どおり M', async () => {
     await renderTab(makeQuake(), false)
     expect(screen.getAllByText(/M7\.6/).length).toBeGreaterThan(0)
@@ -147,16 +148,14 @@ describe('編集した官署', () => {
     expect(screen.getAllByText('編集官署 大阪管区気象台').length).toBeGreaterThan(0)
   })
 
-  // 対照: 編集官署を持たない電文（標準版）では、欄ごと出さない。
+  // 対照: 編集官署を持たない電文では、欄ごと出さない。
   it('電文に無ければ出さない', async () => {
     await renderTab(makeQuake({ editorialOffice: null }), true)
     expect(screen.queryByText(/編集官署/)).toBeNull()
   })
 
-  // 安全弁: **`issue.source` は出さない。** あちらは DMDATA では発表官署（「気象庁」）へ落ち、
-  // 標準版では P2PQuake の発表元が入る。「編集官署」と名乗って出すとラベルが事実を誤らせる
-  // （2026-10-23 ユーザー承認「欄を分ける」。この守りが無いと標準版の全カードに
-  // 「編集官署 気象庁」が出る）。
+  // 安全弁: **`issue.source` は出さない。** あちらは編集官署が無いと発表官署（「気象庁」）へ落ちる。
+  // 「編集官署」と名乗って出すとラベルが事実を誤らせる（2026-10-23 ユーザー承認「欄を分ける」）。
   it('発表元を編集官署として出さない', async () => {
     await renderTab(makeQuake({ issueSource: '気象庁', editorialOffice: null }), true)
     expect(screen.queryByText(/編集官署/)).toBeNull()

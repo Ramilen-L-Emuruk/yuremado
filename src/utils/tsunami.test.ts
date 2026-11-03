@@ -140,7 +140,7 @@ describe('isTsunamiNewFire', () => {
     expect(isTsunamiNewFire(next, current)).toBe(false)
   })
 
-  it('eventId が両方 undefined でも原因地震の originTime が異なれば true（P2PQuake 経路のフォールバック）', () => {
+  it('eventId が両方 undefined でも原因地震の originTime が異なれば true（識別子を持たない報のフォールバック）', () => {
     const current = makeTsunami({ sourceEarthquakes: [{ hypocenterName: 'A', originTime: '2026-01-01T00:00:00Z' }] })
     const next = makeTsunami({ sourceEarthquakes: [{ hypocenterName: 'B', originTime: '2026-01-02T00:00:00Z' }] })
     expect(isTsunamiNewFire(next, current)).toBe(true)
@@ -226,7 +226,7 @@ describe('isCancelForCurrentTsunami', () => {
     expect(isCancelForCurrentTsunami(cancel, current)).toBe(false)
   })
 
-  // eventId を持たない経路（P2PQuake の 552）は同一イベントか判定できないので時刻で見る。
+  // eventId を持たない報は同一イベントか判定できないので時刻で見る。
   it('eventId が無いときは、表示中より古い解除を弾く', () => {
     const current = makeTsunami({ time: '2026-01-01T12:10:00Z' })
     const cancel = makeTsunami({ cancelled: true, time: '2026-01-01T12:00:00Z' })
@@ -413,7 +413,7 @@ describe('isTsunamiContinuation', () => {
     expect(isTsunamiContinuation(t({ eventId: 'E1' }), t({ eventId: 'E2' }))).toBe(false)
   })
 
-  // 対照: eventId を持たない経路（P2PQuake の 552）は同一性を判定できない
+  // 対照: eventId を持たない報は同一性を判定できない
   it('どちらかが eventId を持たなければ引き継がない', () => {
     expect(isTsunamiContinuation(t({ eventId: undefined }), t())).toBe(false)
     expect(isTsunamiContinuation(t(), t({ eventId: undefined }))).toBe(false)
@@ -706,7 +706,7 @@ describe('latestValidDateTime', () => {
     expect(latestValidDateTime(reports)).toBe('2024-01-03T09:00:00+09:00')
   })
 
-  it('期限を伝えた報が 1 通も無ければ undefined（standard 版は構造的に持たない）', () => {
+  it('期限を伝えた報が 1 通も無ければ undefined', () => {
     expect(latestValidDateTime([makeTsunami({ time: '2024-01-01T16:12:00+09:00' })])).toBeUndefined()
   })
 
@@ -749,7 +749,7 @@ describe('withInheritedTsunamiFacts', () => {
     expect(withInheritedTsunamiFacts(latest, [latest, older]).validDateTime).toBe('2024-01-02T17:00:00+09:00')
   })
 
-  it('eventId が無い経路（P2PQuake）では id が一致する報だけを見る', () => {
+  it('eventId が無い報では id が一致する報だけを見る', () => {
     const other = makeTsunami({ id: 'x', time: '2024-01-02T10:00:00+09:00', validDateTime: '2024-01-02T17:00:00+09:00' })
     const latest = makeTsunami({ id: 'b', time: '2024-01-02T10:03:00+09:00' })
     expect(withInheritedTsunamiFacts(latest, [latest, other]).validDateTime).toBeUndefined()
@@ -967,7 +967,7 @@ describe('tsunamiAreaGradeChanges（区域単位の等級変化）', () => {
     expect(changes.flatMap(c => c.areas).map(a => a.name)).not.toContain('石川県能登')
   })
 
-  it('対照: lastGrade を持たない区域（P2PQuake 経路）は数えない', () => {
+  it('対照: lastGrade を持たない区域は数えない', () => {
     const tsunami = makeTsunami({
       areas: [makeArea({ code: '711', name: '福岡県日本海沿岸', grade: 'Forecast' })],
     })
@@ -1642,7 +1642,7 @@ describe('mergeTsunamiAreas', () => {
     expect(mergeTsunamiAreas(prev, next, false)[0].stations?.[0].name).toBe('宮古')
   })
 
-  // 種別を判定できない経路（P2PQuake）は安全側＝継ぐ。あちらは観測点を配信しないので実害は無いが、
+  // 種別を判定できない報は安全側＝継ぐ。
   // 判定できないことを「継がない」に倒すと、種別が増えたときに黙って落ちる。
   it('種別が分からなければ継ぐ', () => {
     const prev = [withStations('岩手県', '210')]
@@ -1650,7 +1650,7 @@ describe('mergeTsunamiAreas', () => {
     expect(mergeTsunamiAreas(prev, next, undefined)[0].stations?.length).toBe(1)
   })
 
-  // 区域コードが無い経路（P2PQuake）でも名前で引き当てられること。
+  // 区域コードが無い区域でも名前で引き当てられること。
   it('コードが無ければ区域名で引き当てる', () => {
     const prev = [makeArea({ name: '岩手県', code: undefined, stations: [{ name: '宮古', code: '21001' }] })]
     const next = [makeArea({ name: '岩手県', code: undefined })]
@@ -1776,7 +1776,7 @@ describe('evacuationActionLine', () => {
     ])).toBeUndefined()
   })
 
-  // 付加文が無い経路（P2PQuake）では採れない。呼び出し側がアプリの文へ戻る。
+  // 付加文が無い報では採れない。呼び出し側がアプリの文へ戻る。
   it('付加文が無ければ採らない', () => {
     expect(evacuationActionLine(undefined)).toBeUndefined()
     expect(evacuationActionLine([])).toBeUndefined()

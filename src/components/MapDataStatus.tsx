@@ -18,7 +18,7 @@ const SHOW_PENDING_AFTER_MS = 3000
  * `utils/mapDataStatusText.ts`）。詳細は `console` に出している。
  * 正常時（取得中が短く、失敗も無い）は何も描かない。
  *
- * 対象は地図の見た目に関わるデータだけ（読み上げ辞書・実地震テストシナリオは
+ * 対象は地図の見た目に関わるデータだけ（読み上げ辞書は
  * `trackStatus: false` で除外している。fetchJson.ts 参照）。失敗があるときは
  * 取得中より優先して失敗を出す（両方は出さない）。
  */

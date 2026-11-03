@@ -99,7 +99,7 @@ describe('earthquakeToText: 遠地地震', () => {
     expect(text).not.toContain('この地震による津波の心配はありません。')
   })
 
-  // P2PQuake は付加文を運ばず、海外への津波の見通しを値で運ぶ（→ `JMAQuake.foreignTsunamiText`）
+  // 付加文が無く、海外への津波の見通しを値で持つ形（→ `JMAQuake.foreignTsunamiText`）
   it('付加文が無い経路では、津波区分の文に続けて海外への津波の見通しを読む', () => {
     const foreignTsunamiText = '太平洋の広域に津波発生の可能性があります。'
     const text = earthquakeToText({ ...makeQuake({ forecastText: undefined }), foreignTsunamiText }, TTS_OPTS, true)
@@ -113,7 +113,7 @@ describe('earthquakeToText: 遠地地震', () => {
     expect(text.split(forecastText)).toHaveLength(2)
   })
 
-  it('付加文が無い経路（P2PQuake）では津波区分から文を起こす', () => {
+  it('付加文が無い電文では津波区分から文を起こす', () => {
     const text = earthquakeToText(makeQuake({ forecastText: undefined }), TTS_OPTS, true)
     expect(text.endsWith('この地震による津波の心配はありません。')).toBe(true)
   })
@@ -323,7 +323,7 @@ describe('eewIntensityToText: 長周期地震動階級の読み上げ', () => {
     expect(eewIntensityToText(eew)).toBe('予想最大震度0。予想最大階級0。')
   })
 
-  // 上限が定まらない報（DMDATA の to='over' / P2PQuake の scaleTo=99）は下限側の階級を持つ。
+  // 上限が定まらない報（DMDATA の to='over'）は下限側の階級を持つ。
   // 語を落とすと「震度4程度以上」を「震度4」と断定した放送になる。
   // **語は気象庁の表現に合わせてある**（→ `getIntensityLabelWithApproxAbove`）。
   describe('eewIntensityToText: 「〜程度以上」の読み上げ', () => {
@@ -2183,7 +2183,6 @@ describe('earthquakeToText: 座標テーブルが無いときの地域名', () =
   })
 
   // 対照: 震度が判っていないなら足すものが無い。震度の値が欠けた文にしない
-  // （P2PQuake の maxScale は「無いのが正常」なケースがある。→ docs/spec/data-sources-spec.md §3）
   it('震度が判らない電文では言いかけの一文を足さない（地震情報）', () => {
     const quake = makeLocalQuake('各地の震度情報', -1 as IntensityScale, [
       { pref: '', addr: '糸魚川市一の宮', isArea: false, scale: -1 as IntensityScale },
@@ -3496,7 +3495,7 @@ describe('telegramTextToSpeak: 気象庁が書いた文', () => {
     expect(telegramTextToSpeak(quakeWithComment(), OFF)).toBeNull()
   })
 
-  // P2PQuake の地震は `eventId` を持たない。主題が全件 `quake:` に潰れると、別の地震の同じ文を二度と読まない
+  // `eventId` を持たない地震情報で、主題が全件 `quake:` に潰れると、別の地震の同じ文を二度と読まない
   it('eventId を持たない地震でも、地震の時刻で主題を分ける', () => {
     const a = telegramTextToSpeak(quakeWithComment({ eventId: undefined }), ON)
     const b = telegramTextToSpeak(quakeWithComment({

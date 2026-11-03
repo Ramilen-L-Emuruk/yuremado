@@ -83,6 +83,7 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
       loadMoreFailed={false}
       reconnectGapLoss={false}
       fetchThrottled={false}
+      onDismissKeyReentry={null}
       lpgmByEventId={new Map()}
       updateMarks={new Map()}
       activeLpgmEventId={null}

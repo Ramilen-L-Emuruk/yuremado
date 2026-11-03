@@ -68,7 +68,7 @@ function makeQuake(over: { id?: string; p2p?: boolean } = {}): JMAQuake {
     kind: 'quake',
     // **既定は DMDATA の形。** 地震の同一性は `id` から取り出した `EventID`（14 桁）で決まる
     // （`quakeEventKey`）。素の文字列にすると報ごとに別の地震と見なされる。
-    // `p2p: true` は識別子を持たない経路（P2PQuake）の形で、そちらの鍵の寄せ方を確かめるのに使う。
+    // `p2p: true` は識別子を持たない電文（`EventID` が空）の形で、そちらの鍵の寄せ方を確かめるのに使う。
     id: over.p2p ? `p2p-${over.id ?? 'quake-1'}` : `dmdata-xml-quake-20260101120000-${over.id ?? 'quake-1'}`,
     time: '2026-01-01T12:00:00Z',
     issue: { source: 'JMA', time: '2026-01-01T12:00:00Z', type: '各地の震度情報', correct: 'なし' },
@@ -216,9 +216,9 @@ describe('録画モードの既読復元', () => {
     expect(mainSpeeches().join('')).not.toContain('津波')
   })
 
-  // 正: 標準版（P2PQuake 552）の解除は EventID を持たず、`id` は配信ごとに変わる。ライブと同じ鍵
-  // （発表日時）で既読にしないと、窓の手前で伝えた解除を窓の中で別の `id` の同じ解除として読み直す。
-  it('EventID の無い解除も、発表日時が同じなら読み直さない（標準版）', async () => {
+  // 正: EventID の無い解除は、ライブと同じ鍵（発表日時）で既読にする。`id` で見ると、窓の手前で
+  // 伝えた解除を、窓の中で `id` の違う同じ解除として読み直す。
+  it('EventID の無い解除も、発表日時が同じなら読み直さない', async () => {
     const { handleLiveEvent, restorePreWindowTracking } = setup({ recordingMode: true })
     const p2pCancel = (id: string): JMATsunami => ({ ...makeTsunamiCancel(), id, eventId: undefined } as unknown as JMATsunami)
     restorePreWindowTracking(preWindow(p2pCancel('p2p-a') as unknown as LiveEvent))
@@ -311,7 +311,7 @@ describe('録画モードの既読復元', () => {
     await drain()
     expect(mainSpeeches().join('')).not.toContain('マグニチュードが更新されました')
   })
-  // 正: 識別子を持たない経路（P2PQuake）で、窓の手前に同じ地震の報が 2 通あっても両方復元される。
+  // 正: 識別子を持たない電文（`EventID` が空）で、窓の手前に同じ地震の報が 2 通あっても両方復元される。
   //
   // **報ごとに鍵を作ると、2 通目以降の記憶がライブ経路から参照されない鍵の下へ入る** ——
   // `quakeEventKey` は識別子が無いと `p2p:<地震の時刻>#<その報の id>` へ落ち、続報のたびに

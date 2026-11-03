@@ -88,8 +88,8 @@ export function bearingDeg(lat1: number, lng1: number, lat2: number, lng2: numbe
 /**
  * 震源の位置が判っているか。**否定形（`lat <= -200`）で書かないこと。**
  *
- * 位置が判らない震源の表れ方は情報源で 2 通りある。DMDATA・P2PQuake は `-200` のセンチネルを
- * 入れる（震度速報のように震源を伴わない電文・取消電文）。一方 Yahoo 強震モニタ（標準版の EEW）は
+ * 位置が判らない震源の表れ方は情報源で 2 通りある。DMDATA は `-200` のセンチネルを
+ * 入れる（震度速報のように震源を伴わない電文・取消電文）。一方 Yahoo 強震モニタ（強震モニタ由来の EEW）は
  * 座標の文字列が空だと `NaN` になる（`services/kyoshin.ts` の `parseCoord`）。
  *
  * `NaN` はどの比較演算でも false になるため、`lat > -200` と書けば弾けるが、否定形の

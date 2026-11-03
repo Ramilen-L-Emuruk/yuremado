@@ -1,5 +1,9 @@
 /**
- * 到達予想トークンの発行。
+ * 到達予想トークン・予報キーの発行。
+ *
+ * **予報キー**（`--kind=forecast`）は、中継から緊急地震速報の予報を受けるためのキー（設計書
+ * `docs/relay-server-design.md` §0 の 2026-10-31「予報キー」の行）。形も署名の方式も到達予想トークンと同じで、
+ * **鍵の組だけを別にする** —— 到達予想キーを渡した相手に予報まで流れないようにするため。
  *
  * 自前計算による「特定地点への主要動到達予想」は、鍵を渡した相手だけが使える形にしてある
  * （背景と法令上の整理は `docs/spec/eew-spec.md`）。このスクリプトは**秘密鍵で署名した
@@ -19,9 +23,14 @@
  * 使い方:
  *   npx tsx scripts/sign-arrival-token.ts --init          # 鍵を作る（初回だけ）
  *   npx tsx scripts/sign-arrival-token.ts --subject=自分  # トークンを 1 本発行する
+ *   npx tsx scripts/sign-arrival-token.ts --kind=forecast --init           # 予報キーの鍵を作る
+ *   npx tsx scripts/sign-arrival-token.ts --kind=forecast --subject=自分   # 予報キーを 1 本発行する
+ *
+ * `--out=<ファイル>` を足すと、発行したキーだけを入れたファイル（設定の窓の「読み込む」で入れる形。
+ * `src/utils/settingsIo.ts` の `KeysFile`）も書く。既にあるファイルは上書きしない。
  */
 import { createSign, generateKeyPairSync } from 'node:crypto'
-import { appendFileSync, existsSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -29,14 +38,53 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(HERE, '..')
 const ENV_PATH = resolve(REPO_ROOT, '.env.local')
 
+/** 発行するキーの種類 */
+export type KeyKind = 'arrival' | 'forecast'
+
 /**
- * 秘密鍵の置き場所。**`ARRIVAL_` で始めない。** `vite.config.ts` は `loadEnv` に
- * プレフィクスを渡して環境変数を読むので、注入対象（`ARRIVAL_TOKEN`）と同じ頭文字にすると
+ * 種類ごとの置き場所と名前。
+ *
+ * **秘密鍵の変数は `ARRIVAL_`・`FORECAST_` で始めない。** `vite.config.ts` は `loadEnv` に
+ * プレフィクスを渡して環境変数を読むので、注入対象（`ARRIVAL_TOKEN`・`FORECAST_KEY`）と同じ頭文字にすると
  * 秘密鍵までバンドルへ載りうる。
  */
-const PRIVATE_KEY_VAR = 'TOKEN_SIGNING_PRIVATE_KEY'
-/** dev サーバーで自動投入する自分用トークン。 */
-const TOKEN_VAR = 'ARRIVAL_TOKEN'
+export const KEY_KINDS: Record<KeyKind, {
+  privateKeyVar: string
+  /** dev サーバーで自動投入する自分用のキー */
+  tokenVar: string
+  /** キーだけのファイルでの欄の名前（`KeysFile.keys`） */
+  fileKey: 'arrivalToken' | 'forecastKey'
+  label: string
+  /** 公開鍵を貼る先（案内に出す） */
+  publicKeyTargets: string
+}> = {
+  arrival: {
+    privateKeyVar: 'TOKEN_SIGNING_PRIVATE_KEY',
+    tokenVar: 'ARRIVAL_TOKEN',
+    fileKey: 'arrivalToken',
+    label: '到達予想トークン',
+    publicKeyTargets: 'src/utils/arrivalToken.ts の PUBLIC_KEY_SPKI_BASE64',
+  },
+  forecast: {
+    privateKeyVar: 'TOKEN_SIGNING_FORECAST_PRIVATE_KEY',
+    tokenVar: 'FORECAST_KEY',
+    fileKey: 'forecastKey',
+    label: '予報キー',
+    publicKeyTargets: 'src/utils/forecastKey.ts の FORECAST_PUBLIC_KEY_SPKI_BASE64 と、中継の FORECAST_PUBLIC_KEY',
+  },
+}
+
+/** `--kind=` を読む。指定が無ければ到達予想トークン */
+export function parseKindArg(kindArg: string | undefined): KeyKind {
+  if (kindArg === undefined) return 'arrival'
+  if (kindArg === 'arrival' || kindArg === 'forecast') return kindArg
+  throw new Error(`--kind は arrival か forecast です: ${kindArg}`)
+}
+
+/** キーだけのファイルの中身（`src/utils/settingsIo.ts` の `KeysFile` と同じ形） */
+export function buildKeysFile(kind: KeyKind, token: string): string {
+  return JSON.stringify({ app: 'yuremado', kind: 'keys', version: 1, keys: { [KEY_KINDS[kind].fileKey]: token } }, null, 2) + '\n'
+}
 
 /** 既定の有効期間。無期限にしないのは、渡した相手の分を失効させる手段を残すため。 */
 const DEFAULT_DAYS = 365
@@ -91,10 +139,11 @@ function readEnvVar(name: string): string | null {
   return readEnvVarFromText(readFileSync(ENV_PATH, 'utf8'), name)
 }
 
-function init(): void {
-  if (readEnvVar(PRIVATE_KEY_VAR)) {
+function init(kind: KeyKind): void {
+  const { privateKeyVar, label, publicKeyTargets } = KEY_KINDS[kind]
+  if (readEnvVar(privateKeyVar)) {
     throw new Error(
-      `${PRIVATE_KEY_VAR} が既に ${ENV_PATH} にあります。作り直すと発行済みのトークンが全部無効になるので、` +
+      `${privateKeyVar} が既に ${ENV_PATH} にあります。作り直すと発行済みの${label}が全部無効になるので、` +
         '意図しているなら手で消してから実行してください。',
     )
   }
@@ -102,9 +151,9 @@ function init(): void {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
   const priv = privateKey.export({ type: 'pkcs8', format: 'der' }) as Buffer
   const pub = publicKey.export({ type: 'spki', format: 'der' }) as Buffer
-  appendFileSync(ENV_PATH, `\n# 到達予想トークンの署名鍵（アプリは読まない・配らない）\n${PRIVATE_KEY_VAR}=${priv.toString('base64')}\n`, 'utf8')
-  console.log(`秘密鍵を ${ENV_PATH} へ書きました（${PRIVATE_KEY_VAR}）。`)
-  console.log('\n公開鍵（src/utils/arrivalToken.ts の PUBLIC_KEY_SPKI_BASE64 へ貼る。公開してよい値）:')
+  appendFileSync(ENV_PATH, `\n# ${label}の署名鍵（アプリは読まない・配らない）\n${privateKeyVar}=${priv.toString('base64')}\n`, 'utf8')
+  console.log(`秘密鍵を ${ENV_PATH} へ書きました（${privateKeyVar}）。`)
+  console.log(`\n公開鍵（${publicKeyTargets} へ貼る。公開してよい値）:`)
   console.log(pub.toString('base64'))
 }
 
@@ -135,9 +184,11 @@ export function parseDaysArg(daysArg: string | undefined): number {
   return days
 }
 
-function sign(subject: string, days: number): string {
-  const b64 = readEnvVar(PRIVATE_KEY_VAR)
-  if (!b64) throw new Error(`${PRIVATE_KEY_VAR} がありません。先に --init を実行してください。`)
+function sign(kind: KeyKind, subject: string, days: number): string {
+  const { privateKeyVar } = KEY_KINDS[kind]
+  const b64 = readEnvVar(privateKeyVar)
+  const initHint = kind === 'arrival' ? '--init' : `--kind=${kind} --init`
+  if (!b64) throw new Error(`${privateKeyVar} がありません。先に ${initHint} を実行してください。`)
   const nowSec = Math.floor(Date.now() / 1000)
   // **並びを固定した JSON を自分で組む。** `JSON.stringify` のキー順は入力順なので、
   // ここで書いた順がそのまま署名対象になる。検証側は中身を読むだけで順序に依存しない。
@@ -155,22 +206,33 @@ function sign(subject: string, days: number): string {
 
 export function main(): void {
   const args = process.argv.slice(2)
+  const argOf = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.slice(`--${name}=`.length)
+  const kind = parseKindArg(argOf('kind'))
   if (args.includes('--init')) {
-    init()
+    init(kind)
     return
   }
-  const subject = args.find((a) => a.startsWith('--subject='))?.slice('--subject='.length)
+  const subject = argOf('subject')
   if (!subject) {
     throw new Error('--subject=<渡す相手の名前> は必須です（--init で鍵を作ってから実行します）')
   }
-  const daysArg = args.find((a) => a.startsWith('--days='))?.slice('--days='.length)
-  const token = sign(subject, parseDaysArg(daysArg))
+  // 書き出し先は署名の前に確かめる（発行してから断ると、出力だけ流れて控えが残らない）
+  const out = argOf('out')
+  if (out !== undefined && (out === '' || existsSync(resolve(out)))) {
+    throw new Error(`--out のファイルが空か、既にあります（上書きしません）: ${out}`)
+  }
+  const token = sign(kind, subject, parseDaysArg(argOf('days')))
   console.log(token)
-  if (!readEnvVar(TOKEN_VAR)) {
-    appendFileSync(ENV_PATH, `\n# dev サーバーで自動投入する自分用トークン\n${TOKEN_VAR}=${token}\n`, 'utf8')
-    console.log(`\n${ENV_PATH} へ ${TOKEN_VAR} として書きました（dev サーバーで自動投入されます）。`)
+  if (out !== undefined) {
+    writeFileSync(resolve(out), buildKeysFile(kind, token), { encoding: 'utf8', flag: 'wx' })
+    console.log(`\nキーだけのファイルを ${resolve(out)} へ書きました（設定の窓の「読み込む」で入れます）。`)
+  }
+  const { tokenVar, label } = KEY_KINDS[kind]
+  if (!readEnvVar(tokenVar)) {
+    appendFileSync(ENV_PATH, `\n# dev サーバーで自動投入する自分用の${label}\n${tokenVar}=${token}\n`, 'utf8')
+    console.log(`\n${ENV_PATH} へ ${tokenVar} として書きました（dev サーバーで自動投入されます）。`)
   } else {
-    console.log(`\n${ENV_PATH} には既に ${TOKEN_VAR} があるので上書きしていません。差し替えるなら手で書き換えてください。`)
+    console.log(`\n${ENV_PATH} には既に ${tokenVar} があるので上書きしていません。差し替えるなら手で書き換えてください。`)
   }
 }
 

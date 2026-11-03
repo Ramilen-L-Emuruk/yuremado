@@ -1,8 +1,8 @@
 // 長周期地震動の報を 1 通当てたときの印（`applyLiveLpgmWithMarks`）。
 //
-// **キュー経路と DMDSS 版の WebSocket 経路が同じ関数を通る。** WebSocket 経路だけ
-// `applyLiveLpgm` しか呼んでいなかった頃は、DMDSS 版のライブで長周期の一覧に印が付かなかった
-// （キュー経路を通るテスト・リプレイでは付くので、実機でしか見えない）。
+// **キュー経路と WebSocket 経路が同じ関数を通る。** WebSocket 経路だけ `applyLiveLpgm` を
+// 呼ぶ形にすると、ライブで長周期の一覧に印が付かない（キュー経路を通るテスト・リプレイでは
+// 付くので、実機でしか見えない）。
 import { describe, it, expect } from 'vitest'
 import { muteConsoleError } from '../test-utils/muteConsoleError'
 import { applyLiveLpgmWithMarks } from './useEarthquakes'

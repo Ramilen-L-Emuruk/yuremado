@@ -88,13 +88,13 @@ describe('offlineBathymetryRuntimeCaching', () => {
     expect(rule.options?.plugins?.[0]?.cachedResponseWillBeUsed).toBe(offlineBathymetryCachedResponseWillBeUsed)
   })
 
-  it('キャッシュ名はバリアントで分かれ、生成データの控えとも重ならない', () => {
+  it('キャッシュ名は末尾で分かれ、生成データの控えとも重ならない', () => {
     expect(offlineBathymetryCacheName('standard')).not.toBe(offlineBathymetryCacheName('dmdss'))
     expect(offlineBathymetryCacheName('dmdss')).not.toBe(offlineDataCacheName('dmdss'))
   })
 
   it('vite.config.ts が規則をそのまま runtimeCaching へ渡している', () => {
-    expect(VITE_CONFIG).toMatch(/^\s*offlineBathymetryRuntimeCaching\(variant\),\s*$/m)
+    expect(VITE_CONFIG).toMatch(/^\s*offlineBathymetryRuntimeCaching\(RUNTIME_CACHE_SUFFIX\),\s*$/m)
   })
 })
 

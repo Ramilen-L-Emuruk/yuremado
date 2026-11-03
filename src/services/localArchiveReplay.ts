@@ -1,7 +1,7 @@
-// DMDATA/P2PQuakeアーカイブが存在しない期間（DMDATAアーカイブの最古=2020-11-18より前等）向けの、
+// DMDATA アーカイブが存在しない期間（DMDATAアーカイブの最古=2020-11-18より前等）向けの、
 // アプリに同梱したローカル履歴アーカイブからの読み出し。App.tsx の fetchReplayEvents は
 // findCoveringArchiveSync で対象範囲がここに収録されているか先に確認し、見つかれば
-// DMDATA/P2PQuakeへ問い合わせる代わりにここから返す（ReplayFetchResult の形は共通）。
+// DMDATA へ問い合わせる代わりにここから返す（ReplayFetchResult の形は共通）。
 //
 // DMDATAアーカイブと違い、対象期間の電文は最初から index.json 側で分かっている
 // （ネットワーク越しに逐次アーカイブ一覧を取りに行く必要がない）ため、ここでは
@@ -55,7 +55,7 @@ function loadIndex(): Promise<HistoricalArchiveIndex> {
       return valid
     })
     .catch((e) => {
-      // 履歴アーカイブは無くても既存のDMDATA/P2PQuake経路にフォールバックできるため、
+      // 履歴アーカイブは無くても DMDATA の経路にフォールバックできるため、
       // 取得失敗時は「収録なし」として扱い、リプレイ全体は失敗させない。
       log.error('[localArchive] index.json の取得に失敗', e)
       indexCache = null
@@ -78,7 +78,7 @@ function loadFile(id: string): Promise<HistoricalArchiveFile | null> {
       // ここで一度だけログに出す（loadFile はキャッシュされるため、以後の
       // fetchLocalArchiveEvents/fetchLocalArchiveQuakeHistory からの呼び出しでは再実行されない）。
       // ReplayFetchResult.skipped には反映しない: このデータは手作業で書き起こしたもので
-      // DMDATA/P2PQuake のような継続的な配信物ではなく、壊れたエントリがあれば発表直後の
+      // DMDATA のような継続的な配信物ではなく、壊れたエントリがあれば発表直後の
       // 通知ではなくコンソールログで十分検出できる。1 通ごとに何回再取得されるか不定の
       // ReplayFetchResult.skipped に載せると、本編・初期状態・先読みの都度重複加算され、
       // 実際の欠落件数より大きく見える方が実害が大きい。
@@ -106,12 +106,12 @@ export function listHistoricalArchives(): Promise<HistoricalArchiveIndex> {
 
 /**
  * 指定範囲 [fromTime, toTime) と重なるローカル履歴アーカイブを探す（同期）。無ければ null
- * （呼び出し側はDMDATA/P2PQuakeへフォールバック）。
+ * （呼び出し側は DMDATA へフォールバック）。
  *
  * 「範囲に重なるか」で判定するのは、useReplayController が「本編」だけでなく「初期状態」
  * （対象時刻から遡る 24 時間）や先読みも同じ fetchEvents 経由で問い合わせるため。対象時刻
  * そのものは収録範囲内でも、その 24 時間前は収録範囲の外に出ることがほとんどで、単純に
- * 「fromTime が収録範囲内か」だけで判定すると初期状態の問い合わせだけDMDATA/P2PQuakeへ
+ * 「fromTime が収録範囲内か」だけで判定すると初期状態の問い合わせだけ DMDATA へ
  * 漏れてしまう（そちらにはそもそもデータが無い時代のため、取得失敗でリプレイ全体が止まる）。
  * 収録範囲に重なる問い合わせは「その期間、収録データ上は何も無かった」という空の成功として
  * 扱えばよいため、重なりがあれば常にこのアーカイブを使う。
@@ -158,7 +158,7 @@ export function findUncollectedArchiveSync(index: HistoricalArchiveIndex, fromTi
  *
  * useReplayController の先読みは 1 時間（`windowMs`）ごとに次のウィンドウを取得しに行く。
  * ローカルアーカイブの収録範囲は数十分〜1時間程度と短いため、再生を続けていると必ず終端を
- * 越える瞬間が来る。`findCoveringArchiveSync` が null を返した時点で単純にDMDATA/P2PQuakeへ
+ * 越える瞬間が来る。`findCoveringArchiveSync` が null を返した時点で単純に DMDATA へ
  * フォールバックすると、そちらにはそもそもデータの存在しない時代のため、無警告のまま
  * 空成功または的外れなエラー（「DMDATAアーカイブが無い」等）になる。この関数で「ついさっきまで
  * ローカルアーカイブの範囲内だった」ことを検出し、呼び出し側が専用のエラーメッセージを出せる
@@ -200,7 +200,7 @@ export function uncollectedFetchVerdict(
 
 /** 電文が 1 通も無く、取りこぼしも無い取得結果（集めていない日を空で返すとき）。 */
 export function emptyReplayFetchResult(): ReplayFetchResult {
-  return { entries: [], skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0 }
+  return { entries: [], skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
 }
 
 export async function fetchLocalArchiveEvents(
@@ -211,7 +211,7 @@ export async function fetchLocalArchiveEvents(
   const file = await loadFile(meta.id)
   if (!file) {
     // 一覧には載っていたが本体が読めない = 全滅扱い（dmdataReplay.ts の「全アーカイブ失敗」と同じ粒度）。
-    return { entries: [], skippedByDay: new Map(), failedArchiveUrls: [fileUrl(meta.id)], rateLimitedSources: [], rateLimitedTelegrams: 0 }
+    return { entries: [], skippedByDay: new Map(), failedArchiveUrls: [fileUrl(meta.id)], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
   }
 
   const entries: ReplayEntry[] = file.entries
@@ -225,14 +225,14 @@ export async function fetchLocalArchiveEvents(
 
   entries.sort((a, b) => a.replayTime.getTime() - b.replayTime.getTime())
 
-  return { entries, skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0 }
+  return { entries, skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 /**
- * 履歴の窓の下端。**DMDSS 版の履歴と同じく JST の日で切る**（`fetchDmdataQuakeHistory` は
+ * 履歴の窓の下端。**DMDATA の履歴と同じく JST の日で切る**（`fetchDmdataQuakeHistory` は
  * `before` の `maxDays` 日前を含む JST 日から日次アーカイブを読む）。
  */
 function historyWindowStartMs(before: Date, maxDays: number): number {
@@ -243,18 +243,18 @@ function historyWindowStartMs(before: Date, maxDays: number): number {
 /**
  * 地震カードの履歴（`fetchReplayQuakeHistory`）のローカル版。
  *
- * **どちらの版でも `maxDays` 日（`HISTORY_WINDOW_DAYS`）を全部返し、件数では切らない**
- * （2026-10-14 ユーザー選択。DMDSS 版の履歴と同じ扱い）。地震に畳んで選び、選んだ地震の電文は
+ * **`maxDays` 日（`HISTORY_WINDOW_DAYS`）を全部返し、件数では切らない**
+ * （2026-10-14 ユーザー選択。DMDATA の履歴と同じ扱い）。地震に畳んで選び、選んだ地震の電文は
  * 窓より前のものも含めて全部返す（→ `selectQuakeHistory`）。以前は地震情報の電文を新しい順に
  * 件数で切っていて、熊本の本震直前は 52 地震のうち 18 枚しか残らず、途中で切れたカードもできていた。
  *
  * **同じ窓から津波と、帯・長周期・推計震度分布図（`extras`）も返す。** 初期状態（24 時間）で
- * 足りない分を補う材料で、DMDSS 版の履歴と同じ形にする（帯は電文ごと、長周期は地震ごとに最新 1 通。
+ * 足りない分を補う材料で、DMDATA の履歴と同じ形にする（帯は電文ごと、長周期は地震ごとに最新 1 通。
  * 鍵は `historyExtraKey`）。津波・長周期・推計震度分布図は、窓の中の地震・津波の続きなら窓より前の
  * 報も返す（帯は窓の中だけ。判定と理由は本文）。
  *
  * 何も無ければ空配列で成功として返す（＝「その期間、地震は無かった」という正当な結果。
- * DMDATA/P2PQuakeへフォールバックしない）。
+ * DMDATA へフォールバックしない）。
  */
 export async function fetchLocalArchiveQuakeHistory(
   meta: HistoricalArchiveMeta,
@@ -286,7 +286,7 @@ export async function fetchLocalArchiveQuakeHistory(
     .filter(({ ms }) => Number.isFinite(ms) && ms < beforeMs)
     .sort((a, b) => a.ms - b.ms)
 
-  // 地震情報は新しい順に並べて返す（P2PQuake の履歴と揃える。統合は `reportOrderKey` で並べ直すが、
+  // 地震情報は新しい順に並べて返す（統合は `reportOrderKey` で並べ直すが、
   // 同じ順位の報どうしは入力の並びがそのまま効く）
   const quakeEntries = timed
     .filter(({ entry }) => entry.payload.kind === 'event' && entry.payload.event.kind === 'quake')
@@ -299,7 +299,7 @@ export async function fetchLocalArchiveQuakeHistory(
     getAreaPrefIndexCache(),
   ).map(quakeOf)
 
-  // **窓より前の津波・長周期・推計震度分布図も、窓の中の地震・津波の続きなら入れる**（DMDSS 版の
+  // **窓より前の津波・長周期・推計震度分布図も、窓の中の地震・津波の続きなら入れる**（DMDATA の
   // 履歴が窓の端で切れた地震を補うのと同じ判定。→ `dmdataReplay.ts` の `straddlingDayPlans`）。
   // 地震だけは `selectQuakeHistory` が窓より前の報も返すので、ここでそろえないと、窓の端で切れた
   // 地震のカードは前半の報まであるのに、その津波・長周期・分布図だけ前半が欠ける。
@@ -308,7 +308,7 @@ export async function fetchLocalArchiveQuakeHistory(
   // - 推計震度分布図: 識別子を持たないので、選んだ地震に発現時刻と震源で結び付くもの
   //   （カードとの引き当てと同じ物差し → `matchEstimatedIntensity`）
   // **帯（南海トラフ・解説情報・後発地震・お知らせ・地震回数）は窓の中だけにする。** どれも
-  // 地震に結び付かない電文で「窓の端で切れた地震の続き」という判定が当たらず、DMDSS 版の履歴も
+  // 地震に結び付かない電文で「窓の端で切れた地震の続き」という判定が当たらず、DMDATA の履歴も
   // 窓の日だけから拾う。
   const quakeEventIds = new Set(
     quakes.map(q => extractQuakeEventIdFromId(q.id)).filter((id): id is string => id !== null),

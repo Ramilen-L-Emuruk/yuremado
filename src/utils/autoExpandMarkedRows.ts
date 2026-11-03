@@ -52,7 +52,7 @@ export function intensityRowsToExpand(
         if (marks.has(rowMarkKey.station(st.name))) openAll([...ancestors, areaKey, cityKeyStr])
       }
     }
-    // 市町村に紐付かない観測点（P2PQuake 経路はすべてこちら）。
+    // 市町村に紐付かない観測点。
     for (const st of region.stations) {
       if (marks.has(rowMarkKey.station(st.name))) openAll([...ancestors, areaKey])
     }

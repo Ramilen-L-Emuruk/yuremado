@@ -50,7 +50,7 @@ describe('等級の帯は電文の名前を出す', () => {
     expect(screen.getByText('大津波警報')).toBeTruthy()
   })
 
-  it('対照: 名前を持たない区域（標準版）は等級の名前で 1 枚にまとめる', () => {
+  it('対照: 名前を持たない区域は等級の名前で 1 枚にまとめる', () => {
     renderTab(makeTsunami({ areas: [area('岩手県', '210', 'MajorWarning'), area('宮城県', '220', 'MajorWarning')] }))
     expect(screen.getAllByText('大津波警報')).toHaveLength(1)
     expect(screen.queryByText('大津波警報：発表')).toBeNull()
@@ -69,7 +69,14 @@ describe('見出し文と官署', () => {
   })
 
   it('編集官署の隣に発表官署を出す', () => {
+    const { container } = renderTab(makeTsunami())
+    expect(container.textContent).toMatch(/編集官署 気象庁本庁\s発表官署 気象庁/)
+  })
+
+  // 官署の名前の途中で行が割れないよう、官署ごとに折り返し止めの塊にする（2026-11-01 ユーザー選択「今回一緒に直す (Recommended)」）
+  it('官署を名前の途中で割らない塊で出す', () => {
     renderTab(makeTsunami())
-    expect(screen.getByText(/編集官署 気象庁本庁\s発表官署 気象庁/)).toBeTruthy()
+    expect(screen.getByText('編集官署 気象庁本庁').className).toContain('whitespace-nowrap')
+    expect(screen.getByText('発表官署 気象庁').className).toContain('whitespace-nowrap')
   })
 })

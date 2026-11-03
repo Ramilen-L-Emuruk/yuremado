@@ -13,8 +13,8 @@ export interface Hypocenter {
    *
    * 電文も「位置は決まっているが深さは不明」を想定している ——気象庁の緊急地震速報のコード電文は
    * 深さの値域に「不明」を持ち（緯度経度には無い）、XML では高さフィールドを省いて
-   * `description="…深さ不明"` を添える形で届く（実例は遠地地震）。取得元 3 つとも -1 を作る
-   * （DMDATA は `parseJmaCoord`・P2PQuake は `DEPTH_UNKNOWN`・Yahoo hypoInfo は `parseDepth`）。
+   * `description="…深さ不明"` を添える形で届く（実例は遠地地震）。取得元 2 つとも -1 を作る
+   * （DMDATA は `parseJmaCoord`・Yahoo hypoInfo は `parseDepth`）。
    *
    * **`?? 既定値` では既定値が当たらない。** センチネルは null でも undefined でもないので
    * 素通りし、`Math.max(0, …)` を重ねると最も浅い地震として扱われる。予報円・自動解除・
@@ -54,7 +54,7 @@ export interface Hypocenter {
    * 置く欄（開いた地震カード・緊急地震速報のカード）は、`Mj` なら見出しが種別の名前を名乗る
    * （→ `formatters.ts` の `magnitudePrefix` / `magnitudeHeading`）。
    *
-   * P2PQuake 経路は相当する項目を配信しないため常に undefined。そのときは従来どおり `M`。
+   * 電文に種別が無いときは undefined で、そのときは `M`。
    */
   magnitudeType?: string
   /**
@@ -93,9 +93,9 @@ export interface Hypocenter {
  *
  * **`EEWAlert.test` とは別物。** あちらは「画面・音・地図へ流さない」ための抑制フラグで、
  * 検証用に受信した試験報はあえて `test: false` にして流している（DMDATA は `services/dmdata.ts`、
- * 標準版の緊急地震速報は `utils/eew.ts` の `admitTrainingEew`）。
+ * 強震モニタの緊急地震速報は `utils/eew.ts` の `admitTrainingEew`）。
  * こちらは**報の運用種別**で、表示に印を付けるためだけに持つ。DMDATA は電文が自分で名乗る値、
- * 標準版の緊急地震速報は経路の旗（強震モニタの `isTraining`・P2PQuake の `test`）から付けた値。
+ * 強震モニタの緊急地震速報は経路の旗（`isTraining`）から付けた値。
  *
  * 「通常」は持たせない（既定の状態に欄を割く意味がない）。
  */
@@ -167,7 +167,7 @@ export interface EarthquakePoint {
    * 緯度・経度・所属区域だけで、市町村は入っていない。電文は観測点を市町村の下に置いて
    * いるので、**読み取りの時点で拾わないと後から復元できない**。
    *
-   * DMDATA の XML 経路でのみ入る。P2PQuake は観測点を市町村でまとめずに配信するため空。
+   * 電文が観測点を市町村の下に置いているときだけ入る。
    */
   city?: string
   /**
@@ -187,8 +187,7 @@ export interface EarthquakePoint {
    * 3. **座標表に頼らずに区域へ置ける。** 逆引き（`lookupStationRegion`）は座標表が要り、
    *    読み込み前・取得失敗・新設観測点では引けない。電文が言っている区域はそれより確実。
    *
-   * DMDATA の XML 経路でのみ入る。P2PQuake は区域と観測点を別の電文で配信するため空で、
-   * そちらは従来どおり座標表からの逆引きに頼る。
+   * 電文が観測点を区域の下に置いているときだけ入る。無い点は座標表からの逆引きに頼る。
    */
   area?: string
 }
@@ -249,7 +248,7 @@ export interface QuakeRetractedReport {
 /**
  * 訂正の種別。
  *
- * - `'不明'` は **P2PQuake の `Unknown`（訂正の有無が不明）だけ**が持つ。訂正だと分かっていない
+ * - `'不明'` は訂正の有無が不明な報を表す（いまの読み取りにこの値を作る経路は無い）。訂正だと分かっていない
  *   ので「訂正」の印は出さない。ただしカードの合流では訂正の可能性ありとして扱い、震源名が
  *   違う報も同じ地震へ合流させる（2026-10-18 ユーザー承認・選んだ選択肢「印だけ消す」）。判定は
  *   `utils/quakeMerge.ts` の `isKnownCorrection`（印・記録）と `allowsHypocenterChange`（合流）
@@ -332,7 +331,7 @@ export interface JMAQuake {
   kind: 'quake'
   id: string
   /**
-   * 電文が配信する地震の識別子（DMDATA は 14 桁タイムスタンプ）。P2PQuake 経路では配信されない。
+   * 電文が配信する地震の識別子（DMDATA は 14 桁タイムスタンプ）。電文の `EventID` が空なら undefined。
    *
    * **同一性判定には使わない。** 統合・選択・通知は `eventKey`、または `id` 文字列から抜く
    * `extractQuakeEventId`（`utils/quakeMerge.ts`）で行う。このフィールドを直接読むのは
@@ -360,9 +359,8 @@ export interface JMAQuake {
   cancelText?: string
   issue: {
     /**
-     * 電文を出したところ。**DMDATA は編集官署（無ければ発表官署）、標準版は P2PQuake の
-     * 発表元（「気象庁」等）** —— 経路で意味が違うので、**画面には出さない**
-     * （→ `editorialOffice`）。
+     * 電文を出したところ。**編集官署（無ければ発表官署）** —— どちらが入ったか区別できないので、
+     * **画面には出さない**（→ `editorialOffice`）。
      */
     source: string
     /**
@@ -370,10 +368,10 @@ export interface JMAQuake {
      *
      * **画面へ「編集官署 …」と出す**（2026-10-21 ユーザー「常に出したいです。」・文面は
      * 2026-10-22 ユーザー承認「3-B 編集官署 …」）。ラベルが「編集官署」と名乗る以上、
-     * 編集官署そのものが入っているときだけ出す —— `source` は発表官署や標準版の発表元へ
+     * 編集官署そのものが入っているときだけ出す —— `source` は発表官署へ
      * 落ちるので、あれを出すとラベルが事実を誤らせる（2026-10-23 ユーザー承認「欄を分ける」）。
      *
-     * 標準版（P2PQuake）は相当する項目を配信しないので常に undefined。
+     * 電文に編集官署が無ければ undefined。
      * 実測と規約は `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」。
      */
     editorialOffice?: string
@@ -381,7 +379,7 @@ export interface JMAQuake {
      * 電文を発表した官署（`Control/PublishingOffice`）。**編集官署へは落とさない。**
      *
      * 画面は編集官署の隣に「発表官署 …」と出す（2026-10-30 ユーザー選択「編集官署の隣に出す
-     * (Recommended)」・「編集官署の隣に同じ形で (Recommended)」）。標準版（P2PQuake）は常に undefined。
+     * (Recommended)」・「編集官署の隣に同じ形で (Recommended)」）。電文に発表官署が無ければ undefined。
      */
     publishingOffice?: string
     time: string
@@ -402,7 +400,7 @@ export interface JMAQuake {
     maxScale: IntensityScale
     domesticTsunami: DomesticTsunami
     /**
-     * `domesticTsunami` を決めた固定付加文のコード。**DMDATA 経路でだけ入る**（P2PQuake は区分の値だけを配る）。
+     * `domesticTsunami` を決めた固定付加文のコード。電文に固定付加文が無ければ入らない。
      *
      * **区分と必ず一緒に動かす。** 区分を書き換える箇所（統合で片側を採る・津波電文から借りる）で
      * コードだけ古い側に残ると、札が区分と違うことを言う。借りた区分は電文の付加文から来ていないので、
@@ -416,25 +414,25 @@ export interface JMAQuake {
   operationStatus?: TelegramOperationStatus
   points: EarthquakePoint[]
   /**
-   * 市町村ごとの震度（`Pref/Area/City`）。DMDATA の XML 経路でのみ入る。
+   * 市町村ごとの震度（`Pref/Area/City`）。
    *
    * 区域（一次細分区域）と観測点の**あいだの粒度**。気象庁の発表単位のひとつで、
-   * カードの詳細表示で区域の下にぶら下げる。P2PQuake 経路は配信しないため undefined。
+   * カードの詳細表示で区域の下にぶら下げる。電文に市町村の行が無ければ undefined。
    */
   cities?: JMAQuakeCity[]
   /**
    * 同一地震を貫いて変わらない内部キー。統合・選択・通知の同一性判定はすべてこれで行う。
    * `mergeQuakeInto` が統合のたびに既存カードの値を引き継ぐため、続報で `id` が変わっても不変。
-   * DMDATA 経路は電文が共有する eventId、P2PQuake 経路は eventId が配信されないため
-   * 最初に受信した報から生成する（生成規則は `utils/quakeMerge.ts` の `quakeEventKey`）。
+   * 電文が共有する eventId から作る。`EventID` が空の電文では最初に受信した報から
+   * 生成する（生成規則は `utils/quakeMerge.ts` の `quakeEventKey`）。
    * 統合前の生電文には存在しないため optional。
    */
   eventKey?: string
   /**
-   * 気象庁の付加文（津波に関する固定付加文）の原文。DMDATA 経路でのみ得られる。
+   * 気象庁の付加文（津波に関する固定付加文）の原文。
    * 遠地地震は付加文コードが 021x 系だけでは表現しきれない（022x/023x 系を併用する）ため、
    * domesticTsunami への丸め込みで意味が落ちる。原文を読み上げに使う用途で保持する。
-   * P2PQuake 経路は固定付加文を配信しないため undefined。
+   * 電文に固定付加文が無ければ undefined。
    */
   forecastText?: string
   /**
@@ -458,7 +456,7 @@ export interface JMAQuake {
    */
   varCommentCodes?: readonly string[]
   /**
-   * 気象庁の自由付加文（`Comments/FreeFormComment`）の原文。**両方の経路で得られる**（P2PQuake 経路の取り込み方は末尾）。
+   * 気象庁の自由付加文（`Comments/FreeFormComment`）の原文。
    *
    * 固定付加文（`forecastText`）が津波区分ごとの定型文であるのに対し、こちらは電文ごとに
    * 書き起こされる本文で、**続報で実際に更新されるのはこちら側**であることが多い（観測された
@@ -467,20 +465,17 @@ export interface JMAQuake {
    *
    * 全角スペースで整形された表が入ることがあるため、**改行と空白をそのまま保持する**
    * （前後の空行だけ落とす）。表示側も `whitespace-pre-wrap` で受けること。
-   *
-   * P2PQuake 経路は `comments.freeFormComment` から入れる（空文字は undefined）。
    */
   freeText?: string
   /**
-   * 海外で発生した地震による日本以外への津波の見通し（P2PQuake の `earthquake.foreignTsunami`）を、
-   * 気象庁の固定付加文（コード 0221〜0228）の文面へ起こしたもの。**P2PQuake 経路だけが持つ。**
+   * 海外で発生した地震による日本以外への津波の見通しを、気象庁の固定付加文（コード 0221〜0228）の
+   * 文面へ起こしたもの。**いまの読み取りにこの欄へ値を入れる経路は無い**（DMDATA の電文は
+   * 付加文の原文 {@link forecastText} にこの文を持つ）。
    *
-   * DMDATA 経路は付加文の原文（{@link forecastText}）にこの文が入っているので要らない。P2PQuake は
-   * 付加文を配信せず、区分の値だけを運ぶ。読み上げの遠地地震の文で、国内の津波の区分の文に続けて読む
-   * （2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。地震カードの付加文の枠では、DMDSS 版の
+   * 読み上げの遠地地震の文で、国内の津波の区分の文に続けて読む
+   * （2026-10-18 ユーザー承認・選んだ選択肢「表の文面でよい」）。地震カードの付加文の枠では、
    * 固定付加文と同じ先頭の段落に出す（2026-10-29 ユーザー承認。→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。
    * 読み上げも枠も、{@link forecastText} があればそちらを使う。
-   * 値と文面の対応は `services/p2pquake.ts` の `FOREIGN_TSUNAMI_TEXT`。
    */
   foreignTsunamiText?: string
   /**
@@ -493,8 +488,7 @@ export interface JMAQuake {
   /**
    * この電文を一意に指す鍵。**同じ電文を二度数えないために持つ**（→ {@link JMAQuake.reports}）。
    *
-   * DMDATA は `Control/Title`（電文の種別名）と `Control/DateTime`（電文を作成した時刻・秒精度）の組、
-   * P2PQuake は電文ごとに振られる `id`。DMDATA で作成時刻だけを使わない理由は
+   * `Control/Title`（電文の種別名）と `Control/DateTime`（電文を作成した時刻・秒精度）の組。作成時刻だけを使わない理由は
    * docs/spec/quake-spec.md §8「同じ電文を二度数えない」（組み立ては `utils/telegramKey.ts`）。
    *
    * **`id` では代用できない。** DMDATA 経路の `id` は `dmdata-quake-<eventId>-<serial>` だが、
@@ -513,8 +507,7 @@ export interface JMAQuake {
    * **{@link JMAQuake.telegramKey} とは用途が違う。** あちらは「同じ電文か」を見る生の文字列で、
    * 読めない値でもそのまま鍵にする。こちらは「どちらが新しいか」を見る数値で、読めない値は持たせない。
    *
-   * DMDATA の XML 経路だけが持つ。P2PQuake・テストボタン・収録シナリオは持たず、比べる側が
-   * {@link JMAQuake.time} へ落ちる。
+   * 作成時刻を読めなかった報は持たず、比べる側が {@link JMAQuake.time} へ落ちる。
    */
   createdAtMs?: number
   /**
@@ -522,7 +515,7 @@ export interface JMAQuake {
    * 続報の変化を伝える種別か。**真のとき、`Revise` の無い行は「直前の同じ種別の報から動いていない」**。
    *
    * DMDATA の XML 経路の震源・震度情報（VXSE53）だけが持つ。**遠地地震に関する情報は VXSE53 でも持たない**
-   * （震度の行が無い）。P2PQuake 経路は `Revise` を配信しない。全期間の控えでの付き方
+   * （震度の行が無い）。全期間の控えでの付き方
    * （同じ種別の続報にだけ載り、種別が変わった直後と震度速報の続報には無い）は
    * `docs/spec/quake-spec.md` §8「電文の `Revise` で行の印を付ける」。
    * 使い方は `utils/quakeUpdateMark.ts` の {@link quakeTelegramRevise}。
@@ -788,7 +781,7 @@ export interface TsunamiArea {
    * 大津波警報には「大津波警報」（コード 52）と「大津波警報：発表」（コード 53・その報で大津波警報になった区域）がある。
    * 等級カードの帯はこの名前を出し、名前ごとにカードを分ける（2026-10-30 ユーザー選択「電文の名前を出す (Recommended)」・
    * 「カードを分ける (Recommended)」）。読み上げは 53 も「大津波警報」と言う（2026-10-30 ユーザー選択「今のまま「大津波警報」
-   * (Recommended)」）。DMDATA 経路のみ（P2PQuake は配信しない）。
+   * (Recommended)」）。電文に名前が無ければ undefined。
    */
   kindName?: string
   /**
@@ -804,7 +797,7 @@ export interface TsunamiArea {
    * 見ていると、他の区域に注意報が残っている限り「変化なし」に見える
    * （→ docs/spec/tsunami-spec.md §10「区域単位で等級が動いた報」）。
    *
-   * DMDATA 経路のみ。P2PQuake は相当する項目を配信しないため常に undefined。
+   * 電文に `LastKind` が無ければ undefined。
    */
   lastGrade?: TsunamiGrade
   immediate: boolean
@@ -819,10 +812,10 @@ export interface TsunamiArea {
   maxHeight?: {
     description: string
     // 数値表現[m]。「巨大」「高い」のように数値化されない予想波高では欠落する
-    // （P2PQuake の仕様どおりの挙動。表示・読み上げはいずれも description しか見ない）。
+    // （表示・読み上げはいずれも description しか見ない）。
     value?: number
     /**
-     * 続報での位置づけ（`Forecast/Item/MaxHeight/Revise`）。「追加」または「更新」。DMDATA 経路のみ。
+     * 続報での位置づけ（`Forecast/Item/MaxHeight/Revise`）。「追加」または「更新」。
      * カードの予想波高の印に使う（→ `utils/tsunami.ts` の `tsunamiValueMarks`）。読み上げは使わない。
      */
     revise?: string
@@ -836,7 +829,7 @@ export interface TsunamiArea {
    * 対して、予想される津波の高さが最初に数値で発表された場合や、大津波警報の中で予想される
    * 津波の高さが上方修正された場合」）。同じ語で出すと取り違える。
    *
-   * DMDATA 経路のみ。P2PQuake は相当する項目を配信しないため常に undefined。
+   * 電文が「重要」と付けていなければ undefined。
    */
   forecastHeightImportant?: boolean
   stations?: TsunamiStation[]
@@ -954,8 +947,7 @@ export interface JMATsunami {
   kind: 'tsunami'
   /**
    * 報 1 通の識別子。**同じ津波かどうかの判定には使わない**（それは `eventId`）。
-   * DMDSS 版は `EventID`・種別・報番号から作る（作り方と種別を入れる理由は `parseTsunamiFromXml`）。
-   * standard 版は P2PQuake の文書 ID。
+   * `EventID`・種別・報番号から作る（作り方と種別を入れる理由は `parseTsunamiFromXml`）。
    */
   id: string
   /**
@@ -973,12 +965,12 @@ export interface JMATsunami {
    * {@link JMAQuake.createdAtMs} と同じ（比べるのは `utils/quakeMerge.ts` の `compareReportAge`・`reportOrderKey`）。
    *
    * 同じ津波の津波警報等（`VTSE41`）と津波情報（`VTSE51`）は、同じ分の発表時刻で並ぶことがある（数えた値は
-   * `docs/spec/tsunami-spec.md` §3「報の新旧は作成時刻で比べる」）。DMDATA の XML 経路だけが持つ。
+   * `docs/spec/tsunami-spec.md` §3「報の新旧は作成時刻で比べる」）。作成時刻を読めなかった報は持たない。
    */
   createdAtMs?: number
   /**
    * 電文の種類（`VTSE41` 津波警報・注意報・予報／`VTSE51` 津波情報／`VTSE52` 沖合の津波観測に
-   * 関する情報）。DMDATA の XML 経路だけが持つ。P2PQuake（standard 版）とテストデータの一部は持たない。
+   * 関する情報）。テストデータの一部は持たない。
    *
    * **種類で扱いが変わる事実が 2 つある。** 有効期限と本文は津波警報等（VTSE41）が決める
    * （→ `mergeTsunamiReports`）。取消は種類ごとの単位で届き、VTSE41 の取消だけが津波全体を消す
@@ -1042,8 +1034,6 @@ export interface JMATsunami {
    * 分ける唯一の材料。** 中身からは見分けられないので電文種別から立てる
    * （`TsunamiObservation.offshore` と同じやり方）。使い方と根拠は
    * docs/spec/tsunami-spec.md §5「区域の潮位観測点」。
-   *
-   * P2PQuake 経路は観測点を配信しないため undefined。
    */
   carriesForecastStations?: boolean
   /**
@@ -1094,16 +1084,6 @@ export interface JMATsunami {
    * それを前提にしている。前の津波の地震は画面に並べるだけで、それらのどれにも使わない。
    */
   previousSourceEarthquakes?: TsunamiSourceEarthquake[]
-  /**
-   * **標準版（P2PQuake）の 24 時間の安全弁が積んだ消去**であることの印（電文には無い。アプリが積む失効の予約にだけ付く）。
-   *
-   * 標準版は失効時刻を受け取れないので、解除電文が届かない場合に備えて 24 時間後に津波を消す。**その時刻は気象庁が
-   * 言っていないので「失効」と名乗らない** —— 画面の帯・タイトル・音・読み上げ・通知のどれも出さずに畳む
-   * （2026-10-23 ユーザー選択「安全弁では「失効」と名乗らない (Recommended)」・帯は 2026-10-24 ユーザー選択
-   * 「帯を出さず消す (Recommended)」）。受信側の記憶の後始末は本物の失効と同じく行う。
-   * 実際の失効時刻が届いた（`validDateTime` を持つ）報の予約には付かない。
-   */
-  failsafeExpiry?: true
   // 若干の海面変動など予報のみの場合、JMAは明示的なキャンセル電文を送らず
   // ValidDateTime の経過でのみ有効期限が示される。
   validDateTime?: string
@@ -1118,7 +1098,7 @@ export interface JMATsunami {
     /**
      * 電文を編集した官署（`Control/EditorialOffice`）。**発表官署へは落とさない**（`JMAQuake.issue.editorialOffice` と同じ）。
      * 津波カードに地震カードと同じ「編集官署 …」の形で出す（2026-10-29 ユーザー承認「地震カードと同じく出す (Recommended)」）。
-     * 標準版（P2PQuake）と、編集官署を持たない電文では無い。
+     * 編集官署を持たない電文では無い。
      */
     editorialOffice?: string
     /**
@@ -1158,7 +1138,6 @@ export interface JMATsunami {
    * **全区域が解除された報（全解除）では載せない。** そちらは `cancelled: true` /
    * `cancelReason: 'lifted'` で伝える。
    *
-   * DMDATA XML 経路のみ。P2PQuake は解除コードに相当する値を配信しない
    * （→ docs/spec/tsunami-spec.md §10「区域の顔ぶれが報ごとに変わること」）。
    */
   cancelledAreas?: TsunamiArea[]
@@ -1190,17 +1169,13 @@ export interface JMATsunami {
 
 export interface EEWRegion {
   /**
-   * その区域が属する上位の区分。**経路で粒度が違う。**
+   * その区域が属する上位の区分。**府県予報区**（`Body/Intensity/Forecast/Pref/Name`）で、
+   * 都道府県名ではなく、気象庁が緊急地震速報のために定めた区分。「熊本」のように「県」が付かない。
+   * 鹿児島は「鹿児島」と「奄美」、北海道は「北海道道央」等の 4 つ、沖縄は「沖縄本島」等の 4 つに
+   * 分かれる（実電文で 56 種）。
    *
-   * - DMDATA（XML）: **府県予報区**（`Body/Intensity/Forecast/Pref/Name`）。都道府県名ではなく、
-   *   気象庁が緊急地震速報のために定めた区分で「熊本」のように「県」が付かない。鹿児島は
-   *   「鹿児島」と「奄美」、北海道は「北海道道央」等の 4 つ、沖縄は「沖縄本島」等の 4 つに分かれる
-   *   （実電文で 56 種）
-   * - P2PQuake: 都道府県名（「宮城県」）
-   *
-   * **どちらの経路でも `name`（細分区域）より 1 段上**という関係は同じなので、警報／予報の
-   * 振り分け（`RealtimeTab` の「対象地域」欄）は共通に書ける。**表示のときに「県」を補わない**
-   * —— 上の分割があるので、機械的に付けると実在しない区分名になる。
+   * `name`（細分区域）より 1 段上の区分で、警報／予報の振り分け（`RealtimeTab` の「対象地域」欄）に使う。
+   * **表示のときに「県」を補わない** —— 上の分割があるので、機械的に付けると実在しない区分名になる。
    *
    * より広い**地方予報区**（北陸・甲信・東海…）は区域ではなく報そのものに付く
    * （→ {@link EEWAlert.warningRegions}）。
@@ -1217,7 +1192,7 @@ export interface EEWRegion {
   scaleTo: IntensityScale
   /**
    * 予想震度の上限が定まっていない（`scaleTo` は「〜以上」の下限）ことを表す。
-   * DMDATA の `to: "over"`・P2PQuake の `scaleTo: 99` がこれに当たる。どちらも
+   * DMDATA の `to: "over"` がこれに当たる。
    * `scaleTo` には下限側の値（= `scaleFrom`）を入れ、「以上」はこのフラグで持つ。
    * 詳細は docs/spec/data-sources-spec.md §8「上限を定めない予想震度」。
    */
@@ -1235,9 +1210,7 @@ export interface EEWRegion {
    * こちらを出す（電文解説資料 Ⅱ.21 2-1-5-3-6・2-1-5-3-7）。
    *
    * **判定にこのフィールドを直接使わないこと。`isEewAreaArrived`（`utils/eew.ts`）を通す。**
-   * 同じ事実を電文は 2 通りで伝えており、`Condition` を配信するのは DMDATA だけ。P2PQuake は
-   * 種別コード（01/11）の側でしか伝えてこないので、ここだけを見ると standard 版で到達済みの
-   * 区域が「時刻も印も持たない区域」に落ちて画面から消える。
+   * 同じ事実を電文は 2 通り（この `Condition` と種別コード 01/11）で伝えており、判定は両方を見る。
    */
   arrived?: boolean
   lgIntTo?: LpgmClass  // 地域別予想長周期地震動階級。電文に含まれない場合は undefined
@@ -1303,17 +1276,26 @@ export interface EEWForecastChange {
  * **経路ごとに運ぶ欄が違う**ので、同じ地震の報を経路をまたいで統合するときに要る
  * （→ `utils/eew.ts` の `mergeEewReport`。運ばない欄は既存の値を保つ）。
  *
- * - `dmdata`: DMDATA の電文（DMDSS 版。欄はすべて運ぶ）
- * - `p2pquake`: P2PQuake の 556（standard 版。警報だけ。区域・仮定震源は運ぶが、予想の最大震度・最終報の印は運ばない）
- * - `yahoo`: Yahoo 強震モニタの hypoInfo（standard 版。予報も含む。区域・仮定震源は運ばない）
- * - `archive`: 保存しておいた電文から組み立てた報（ローカル履歴アーカイブ・テストシナリオ）
+ * - `dmdata`: DMDATA の電文（欄はすべて運ぶ）。警報（VXSE43）は中継からも届き、予報（VXSE45）は自分の鍵があるときだけ届く
+ * - `yahoo`: Yahoo 強震モニタの hypoInfo（全員に届く。予報も含む。区域・仮定震源の別は運ばない）
+ * - `archive`: 保存しておいた電文から組み立てた報（ローカル履歴アーカイブ）
  * - `test`: 設定の窓のテストボタンが組み立てた報
  *
- * **報番号の数え方も経路で違う。** P2PQuake の `serial` は警報だけの番号、Yahoo の `reportNum` は
- * 予報からの通し番号（2026-10-16 千島列島の報で、発表時刻 12:40:02 が Yahoo 17・P2PQuake 1）。
+ * **報番号の数え方も経路で違う。** Yahoo の `reportNum` は予報からの通し番号で、電文の報番号とは
+ * 揃わない（2026-10-16 千島列島の報で、発表時刻 12:40:02 の報が Yahoo 17・警報の電文を配っていた P2PQuake では 1）。
  * 経路をまたいで報番号を比べないこと。比べるなら発表時刻（`issue.time`）を使う。
  */
-export type EewOrigin = 'dmdata' | 'p2pquake' | 'yahoo' | 'archive' | 'test'
+export type EewOrigin = 'dmdata' | 'yahoo' | 'archive' | 'test'
+
+/**
+ * 報番号の数え方の系列（→ `utils/eew.ts` の `eewSerialSeries`）。経路（{@link EewOrigin}）に、
+ * **警報の電文（VXSE43）の通し番号**を別の系列として足したもの。
+ *
+ * 警報の電文の報番号は警報だけの通し番号で、予報（VXSE45・強震モニタ）の通し番号とは数え方が違う
+ * （2024-01-01 能登の本震で、警報の第1・2・3報は予報の第1・20・30報と同じ発表時刻）。どちらも経路は
+ * `dmdata` なので、経路だけで分けると同じ数え方として比べてしまう。
+ */
+export type EewSerialSeries = EewOrigin | 'dmdata:warning'
 
 export interface EEWAlert {
   /**
@@ -1327,8 +1309,8 @@ export interface EEWAlert {
    * 東海　関東で強い揺れ」の形）。読み上げの第 1.5 フェーズと EEW カードが使う。
    *
    * **`Body` には無い。** 入っているのは `Head/Headline/Information` の地方予報区ブロックだけで、
-   * `Body/Intensity/Forecast` は府県予報区 → 細分区域の 2 階層。P2PQuake / Yahoo 経路は
-   * この要素を配信しないため常に空（DMDSS 版限定）。
+   * `Body/Intensity/Forecast` は府県予報区 → 細分区域の 2 階層。DMDATA の電文だけが持ち、
+   * Yahoo 経路の報では常に空。
    *
    * 値域は 14 種（北海道・東北・関東・伊豆諸島・小笠原・北陸・甲信・東海・近畿・中国・四国・
    * 九州・奄美・沖縄）。
@@ -1340,7 +1322,7 @@ export interface EEWAlert {
    *
    * **カードで、その地方名にだけ一瞬色を付けるのに使う**（→ `docs/spec/eew-spec.md` §3「警報の対象地方」）。
    * **読み上げには使わない** —— 前報からの差分なので、前報を取りこぼしていれば一緒に落ちる
-   * （→ `docs/spec/eew-spec.md` §3「警報の対象地方」）。DMDSS 版限定。
+   * （→ `docs/spec/eew-spec.md` §3「警報の対象地方」）。DMDATA の電文だけが持つ。
    */
   addedWarningRegions?: string[]
   /**
@@ -1370,7 +1352,8 @@ export interface EEWAlert {
    * 画面・地図・予報円の扱いは仮定震源要素に揃える（判定は `utils/eew.ts` の `isProvisionalHypocenter`）。
    *
    * 資料はこの形を「緊急地震速報（地震動予報）」と「緊急地震速報（予報）」に限っており、警報には出ない。
-   * DMDSS 版限定（P2PQuake / Yahoo 経路はこの区別を運ばない）。
+   * DMDATA の電文だけが持つ（Yahoo 経路はこの区別を運ばない）。予報の形なので、自分の鍵で予報（VXSE45）を
+   * 受けているときだけ届く。
    */
   strongShakingOnly?: true
   /**
@@ -1414,9 +1397,9 @@ export interface EEWAlert {
      * 中身は観測網の配置で決まる値で、**「仕様上不変」と確かめたわけではない**
      * （→ `docs/spec/eew-spec.md` §3「地震の時刻は発生時刻を出す」）。
      *
-     * **空文字を先に弾くこと** —— Yahoo hypoInfo 経路（standard 版）は
+     * **空文字を先に弾くこと** —— Yahoo hypoInfo 経路は
      * この値を配信しないため `services/kyoshin.ts` が空文字を入れる（カードは空なら行を出さない）。
-     * P2PQuake 経路は値を持ち、Yahoo の続報はその値を保つ（`mergeEewReport`）。
+     * DMDATA の報は値を持ち、Yahoo の続報はその値を保つ（`mergeEewReport`）。
      */
     arrivalTime: string
     condition: string
@@ -1442,7 +1425,20 @@ export interface EEWAlert {
    *   取消は時刻を言わずに読む（2026-10-19 ユーザー承認「時刻を言わない (Recommended)」）
    */
   firstIssueTime?: string | null
-  // issue.serial = 情報番号（第N報）
+  /**
+   * `issue.serial` が警報の電文（VXSE43）の通し番号か（→ {@link EewSerialSeries}）。パーサーが VXSE43 の報にだけ立てる。
+   *
+   * **画面・地図・共有カードの「第N報」には警報の通し番号を出さない**（予報の通し番号だけを出す。
+   * 2026-11-01 ユーザー選択「予報の番号だけ出す」）。表示する番号は `eewDisplaySerial` で引く。
+   */
+  serialSeries?: 'warning'
+  /**
+   * 警報の電文（`serialSeries: 'warning'`）を統合したとき、それまで表示していた予報の通し番号（電文の予報・強震モニタの
+   * どちらでも）。**表示だけに使う**（`eewDisplaySerial`）—— 新旧の比べ方と台帳は `issue.serial`（警報の番号）と
+   * 警報の系列で行う。予報の報を統合すると消える（その報の番号を出す）
+   */
+  forecastSerial?: string
+  // issue.serial = 情報番号（第N報）。数え方は serialSeries を見る
   issue?: {
     eventId?: string
     serial?: string
@@ -1466,10 +1462,10 @@ export interface EEWAlert {
    */
   forecastMaxScaleBelow1?: true
   /**
-   * 予想の最大震度を `forecastMaxScale` で見るか（区域の最大より優先する）。standard 版で、区域を運ばない
-   * Yahoo の続報が電文全体の値を新しく運んだときに立つ（`mergeEewReport`）—— 区域は前の P2PQuake の報の
-   * ものなので、そちらの最大で見ると新しい報の引き上げ・引き下げが隠れる。P2PQuake の新しい報が区域を
-   * 運んだら下ろす。DMDATA の報は区域と電文全体の値が同じ報から来るので立たない。
+   * 予想の最大震度を `forecastMaxScale` で見るか（区域の最大より優先する）。区域を運ばない
+   * Yahoo の続報が電文全体の値を新しく運んだときに立つ（`mergeEewReport`）—— 区域は前の DMDATA の報の
+   * ものなので、そちらの最大で見ると新しい報の引き上げ・引き下げが隠れる。DMDATA の新しい報が届けば
+   * 丸ごと置き換わって下りる。DMDATA の報は区域と電文全体の値が同じ報から来るので立たない。
    */
   maxScaleFromForecast?: boolean
   // DMDATA EEW 電文 body.intensity.forecastMaxLpgmInt から取得した推定最大長周期地震動階級（1〜4）。
@@ -1854,8 +1850,8 @@ export interface LiveEventMeta {
     duplicate: boolean
   }
   /**
-   * その緊急地震速報が、**別の経路から既に受けて知らせた報と同じ報**か（standard 版。Yahoo と
-   * P2PQuake の両方が同じ報を運ぶ）。同じ報かどうかは発表時刻（秒）で見分ける（報番号は経路で
+   * その緊急地震速報が、**別の経路から既に受けて知らせた報と同じ報**か（Yahoo と DMDATA の
+   * 両方が同じ報を運ぶ）。同じ報かどうかは発表時刻（秒）で見分ける（報番号は経路で
    * 数え方が違う。→ `EewOrigin`）。
    *
    * 真なら音・ブラウザ通知・自動タブ切替を起こさない（2026-10-18 ユーザー承認「最初の 1 通だけ」）。
@@ -2329,7 +2325,7 @@ export type TelegramOrigin = 'live' | 'test' | 'replay'
 export interface TelegramLogEntry {
   id: string
   receivedAt: Date
-  source: 'dmdss' | 'p2pquake'
+  source: 'dmdss'
   /** この行がどの経路で入ったか（→ `TelegramOrigin`）。 */
   origin: TelegramOrigin
   headType: string

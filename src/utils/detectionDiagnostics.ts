@@ -87,8 +87,6 @@ export interface DiagnosticRecord {
   id: string
   /** アプリのバージョン（`__APP_VERSION__`） */
   version: string
-  /** ビルドバリアント（standard / dmdss） */
-  variant: string
   /** 検知したデータ時刻(ms) */
   dataTimeMs: number
   /** 観測点リストの版（`siteConfigId`） */
@@ -226,7 +224,7 @@ export class DiagnosticCapture {
    * 同じイベント ID では一度だけ。加えて、前に開いてから `OPEN_COOLDOWN_MS` の間は開かない
    * （1 つの地震が生む複数イベントで上限を食い潰さないため）。
    */
-  open(seed: CaptureSeed, version: string, variant: string): void {
+  open(seed: CaptureSeed, version: string): void {
     if (this.opened.has(seed.event.id)) {
       // 既に開いている記録でも、到達した確信度と確定の内訳は追い続ける（後から育つため）
       this.noteReached(seed.event.id, seed.event.confidence)
@@ -236,7 +234,7 @@ export class DiagnosticCapture {
     if (this.lastOpenedMs != null && seed.dataTimeMs - this.lastOpenedMs < OPEN_COOLDOWN_MS) return
     this.lastOpenedMs = seed.dataTimeMs
     this.opened.add(seed.event.id)
-    this.versionOf.set(seed.event.id, { version, variant })
+    this.versionOf.set(seed.event.id, version)
     this.noteReached(seed.event.id, seed.event.confidence)
     this.noteProgress(seed.event.id, seed.confirmed, seed.event.sources)
     // 開いた時点の直近フレーム（検知フレームを含む）を前側として取り込む
@@ -270,7 +268,7 @@ export class DiagnosticCapture {
     this.lastFrameMs = null
   }
 
-  private readonly versionOf = new Map<string, { version: string; variant: string }>()
+  private readonly versionOf = new Map<string, string>()
   /** イベント ID → 到達した最高の確信度 */
   private readonly reached = new Map<string, string>()
 
@@ -303,8 +301,7 @@ export class DiagnosticCapture {
     const v = this.versionOf.get(seed.event.id)
     return {
       id: `${seed.dataTimeMs}-${seed.event.id}`,
-      version: v?.version ?? '',
-      variant: v?.variant ?? '',
+      version: v ?? '',
       dataTimeMs: seed.dataTimeMs,
       siteConfigId: seed.siteConfigId,
       sites: seed.sites,
