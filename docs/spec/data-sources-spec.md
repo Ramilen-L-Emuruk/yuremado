@@ -1961,7 +1961,7 @@ DMDATA の公開一覧では `telegram.earthquake` は 17 種。突き合わせ�
 
 ## 2.5 中継（yuremado-relay）
 
-**誰でも、電文は開発者が運営する中継から受ける。** 中継は Cloudflare 上で DMDATA の WebSocket を 1 本張り、
+**誰でも、電文は開発者が運営する中継から受ける。** 中継は Cloudflare 上で DMDATA の WebSocket を 2 本（受け手 A・B）張り、
 届いた電文を**加工せずに**控えて配る。ソースは非公開のリポジトリ `yuremado-relay` にあり、このリポジトリには無い。
 アプリとの約束（配る形・取得の口）の正は設計書 [`relay-server-design.md`](../relay-server-design.md)（§6・§6.1・§4.7）で、
 ここにはアプリから見た要点だけを書く。
