@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  createReonsetState, stepReonset, REONSET_QUIET_MS, REONSET_GUARD_MS, REONSET_SETTLED_MS, REONSET_PAIR_NEAR_KM, REONSET_ONSET_NEAR_KM,
+  createReonsetState, stepReonset, REONSET_QUIET_MS, REONSET_GUARD_MS, REONSET_BURST_MS, REONSET_SETTLED_MS, REONSET_PAIR_NEAR_KM, REONSET_ONSET_NEAR_KM,
 } from './kyoshinReonset'
 import type { EnsembleDetection } from './kyoshinEnsembleTracker'
 import { fakeEnsembleDetection } from '../test-utils/ensembleDetection'
@@ -45,15 +45,27 @@ describe('stepReonset: もう一度の立ち上がり（2026-11-02 ユーザー�
   })
 
   it('対照: 前の立ち上がりから REONSET_QUIET_MS に届かない上がり（同じ揺れの続き）では出さない', () => {
-    // 守り（REONSET_GUARD_MS）の内で一度上がり、守りを過ぎてから静けさに届かないうちにまた上がる。
-    // 静けさの判定が無ければ、後の上がりは合図になる
+    // 守り（REONSET_GUARD_MS）を過ぎてから P だけが一度上がり、静けさに届かないうちに P・Q が上がる。
+    // Q は前の立ち上がりから十分たっているので候補になるが、P は静けさの内なので候補にならず、1 点で合図にならない。
+    // 静けさの判定が無ければ、P・Q の 2 点で合図になる。
+    // 間に P が直近から外れるフレームを挟む（直前のフレームにも居た点は、新しい立ち上がりとして数えられない）。
+    // 関数単体の分岐を確かめるもので、実データでは床の係の直近の窓（RECENT_ONSET_MS = 8 秒）が 1 秒で外れることは無い
     const s = rose([P, Q])
-    const first = T0 + REONSET_GUARD_MS - 15_000
-    expect(stepReonset(s, [ev()], [P, Q], first)).toBeNull()
-    stepReonset(s, [ev()], [], first + 5000)
-    const t = first + REONSET_QUIET_MS - 3000
-    expect(t - T0).toBeGreaterThanOrEqual(REONSET_GUARD_MS)
+    const first = T0 + REONSET_GUARD_MS + 10_000
+    expect(stepReonset(s, [ev()], [P], first)).toBeNull()
+    stepReonset(s, [ev()], [], first + 1000)
+    const t = first + REONSET_QUIET_MS - 1000
+    expect(t - first).toBeGreaterThan(REONSET_BURST_MS)
     expect(stepReonset(s, [ev()], [P, Q], t)).toBeNull()
+  })
+
+  it('正: 束が始まって REONSET_GUARD_MS を過ぎれば、静けさ（REONSET_QUIET_MS）だけ空けたもう一度の上がりで合図を出す（能登 2024-01-02 07:37 の形）', () => {
+    // 1 つ目の地震（M3.9）で上がった点が、17 秒後に 2 km 隣で起きた 2 つ目の地震（M4.2・震度3）でもう一度上がる。
+    // 束の揺れ始めから 24 秒・前の立ち上がり（T0+1 秒）から 23 秒
+    const s = rose([P, Q])
+    const t = T0 + 24_000
+    expect(t - T0).toBeGreaterThanOrEqual(REONSET_GUARD_MS)
+    expect(stepReonset(s, [ev()], [P, Q], t)).toEqual({ eventId: 'evt-1', atMs: t, keys: [P, Q] })
   })
 
   it('対照: 束の中で初めて上がった点は数えない（1 つ目の地震の波が届いただけのことが多い）', () => {
@@ -74,8 +86,11 @@ describe('stepReonset: もう一度の立ち上がり（2026-11-02 ユーザー�
   })
 
   it('対照: 近くの確かな束が始まって REONSET_GUARD_MS に届かない上がり（1 つ目の地震の揺れの続き）は数えない', () => {
+    // 前の立ち上がり（T0+1 秒）から静けさは過ぎているので、守りが無ければ合図になる
     const s = rose([P, Q])
-    expect(stepReonset(s, [ev()], [P, Q], T0 + 40_000)).toBeNull()
+    const t = T0 + REONSET_GUARD_MS - 2000
+    expect(t - (T0 + 1000)).toBeGreaterThanOrEqual(REONSET_QUIET_MS)
+    expect(stepReonset(s, [ev()], [P, Q], t)).toBeNull()
   })
 
   it('安全弁: 同じ遠さでも、波では届かない遅い上がり（1.5 km/s 未満）は数える', () => {
@@ -128,7 +143,7 @@ describe('stepReonset: もう一度の立ち上がり（2026-11-02 ユーザー�
   it('安全弁: データ時刻が巻き戻ったら（リプレイの開始）状態を捨てる', () => {
     const s = rose([P, Q])
     stepReonset(s, [ev()], [], T0 + 100_000)
-    // 巻き戻した先（T0+60 秒）は、捨てなければ前の立ち上がり（T0+1 秒）から 20 秒以上たったもう一度の上がりに見える。
+    // 巻き戻した先（T0+60 秒）は、捨てなければ前の立ち上がり（T0+1 秒）から REONSET_QUIET_MS 以上たったもう一度の上がりに見える。
     // 捨てていれば前の時間軸の立ち上がりを覚えていないので、初めての上がりとして数えない
     expect(stepReonset(s, [ev()], [P, Q], T0 + 60_000)).toBeNull()
   })
@@ -146,9 +161,12 @@ describe('stepReonset: もう一度の立ち上がり（2026-11-02 ユーザー�
     const b = fakeEnsembleDetection({ id: 'evt-2', confidence: 'confirmed', epicenter: [37.5, 137.2], originTimeMs: T0 + 5_000, memberKeys: ['b1'] })
     const s = rose([P, Q])
     expect(stepReonset(s, [ev(), b], [P, Q], T0 + 61_000)?.eventId).toBe('evt-2')
-    stepReonset(s, [ev(), b], [], T0 + 70_000)
-    // 覚えていれば前の立ち上がりは T0+61 秒で、14 秒後の上がりは同じ揺れの続き。覚えていないと T0+1 秒から 74 秒たった上がりに見える
-    expect(stepReonset(s, [ev(), b], [P, Q], T0 + 75_000)).toBeNull()
+    stepReonset(s, [ev(), b], [], T0 + 62_000)
+    // 覚えていれば前の立ち上がりは T0+61 秒で、静けさ（REONSET_QUIET_MS）に届かない上がりは同じ揺れの続き。
+    // 覚えていないと T0+1 秒から 1 分以上たった上がりに見える
+    const t = T0 + 61_000 + REONSET_QUIET_MS - 1000
+    expect(t).toBeGreaterThan(T0 + 62_000)
+    expect(stepReonset(s, [ev(), b], [P, Q], t)).toBeNull()
   })
 })
 
