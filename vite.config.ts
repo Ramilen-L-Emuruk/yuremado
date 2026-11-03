@@ -211,8 +211,9 @@ export default defineConfig(configEnv => ({
         // 検査スクリプトと同じ値を見るため。片方だけ書き換えると検査がすり抜ける）。
         globPatterns: [...PRECACHE_GLOB_PATTERNS],
         maximumFileSizeToCacheInBytes: PRECACHE_MAX_FILE_BYTES,
-        // 通知を押したときの処理（`public/sw-notification-click.js`）。sw.js と同じ場所に置かれるので相対で書く
-        importScripts: ['sw-notification-click.js'],
+        // 通知を押したときの処理（`public/sw-notification-click.js`）と、プッシュ通知を受けたときの処理（`public/sw-push.js`）。
+        // sw.js と同じ場所に置かれるので相対で書く
+        importScripts: ['sw-notification-click.js', 'sw-push.js'],
         // 古い版の事前キャッシュを SW の入れ替えで片付ける。版を分けていた頃は standard 版のスコープが
         // DMDSS 版のスコープを包んでいて、片付けが DMDSS 版の事前キャッシュまで消すため standard 版だけ切っていた。
         // 独自ドメインの直下には包まれるスコープが無いので、既定どおり片付ける。

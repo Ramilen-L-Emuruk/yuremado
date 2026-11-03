@@ -498,6 +498,44 @@ export function rememberEewHypocenterName(memory: Map<string, string>, key: stri
 }
 
 /**
+ * 発表の通知を出した地震（eventId）を覚える。設定「通知する地域」で県を選んだ人向けに、**選んだ県が続報で加わった**ときに
+ * 出し直すのと、**通知した地震の取消だけを出す**（2026-11-03 ユーザー選択「通知した地震の取消だけ (Recommended)」）のに使う。
+ * 取消が消えた後に遅れて届くことがあるので、地震の追跡とは別に持ち、件数の上限で古いものから捨てる。
+ */
+export function rememberEewNotified(memory: Set<string>, key: string): void {
+  memory.delete(key)
+  memory.add(key)
+  while (memory.size > EEW_HYPOCENTER_NAME_MEMORY_MAX) {
+    const oldest = memory.values().next().value
+    if (oldest === undefined) break
+    memory.delete(oldest)
+  }
+}
+
+/**
+ * 緊急地震速報の発表・続報で通知を出すか（種類と地域の可否を通った後）。新規・区分の格上げ・予想の引き上げで出す。
+ * 地域を選んでいる人には、**まだ通知していない地震**も出す —— 1 報目では選んだ県が対象に入らず、続報で加わることがある
+ * （区分や予想が変わらなければ、上の 3 つのどれも立たない）
+ */
+export function eewAnnounceShouldNotify(o: {
+  isNew: boolean
+  levelUpgraded: boolean
+  forecastRaised: boolean
+  regionSelected: boolean
+  alreadyNotified: boolean
+}): boolean {
+  return o.isNew || o.levelUpgraded || o.forecastRaised || (o.regionSelected && !o.alreadyNotified)
+}
+
+/**
+ * 緊急地震速報の取消を通知するか（種類の可否を通った後）。取消の電文は区域を持たないので地域では絞れない。
+ * 地域を選んでいる人には、発表を通知した地震の取消だけを出す。選んでいなければ、記憶に無い地震の取消も出す（今までどおり）
+ */
+export function eewCancelShouldNotify(o: { regionSelected: boolean; notified: boolean }): boolean {
+  return !o.regionSelected || o.notified
+}
+
+/**
  * 地震ごとに、手元で最初に受けた報の発表時刻を覚える。誤報取消の読み上げ
  * （`eewCancelToText`）が「〇時〇分に発表された」と言うための値。
  *

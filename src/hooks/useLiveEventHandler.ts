@@ -11,7 +11,7 @@ import {
   eewMaxScaleInfo, isForecastScaleHigher, isForecastLpgmHigher, eewNoForecastReason, computeSingleEEWLevel, computeDisplayEEWLevel, canPresentLpgmClass,
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
   EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast,
-  isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewFirstIssueTime, eewCancelNotificationBody,
+  isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewNotified, eewAnnounceShouldNotify, eewCancelShouldNotify, rememberEewFirstIssueTime, eewCancelNotificationBody,
   eewSerial, eewSerialSeries, eewIssueTimeMs, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, type EewNotifiedForecast,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
 } from '../utils/eew'
@@ -47,6 +47,7 @@ import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import { serverDate } from '../utils/clock'
 import { estimatedIntensityTopicKey, type EstimatedIntensityTopicAnchor } from '../utils/estimatedIntensity'
 import { notificationAllowed, notificationRegionAllowed } from '../utils/notificationGate'
+import { eewPrefectures, estimatedIntensityPrefectures, tsunamiPrefectures } from '../utils/notificationRegions'
 
 // ─── 録画ツール向けイベントログの記録（→ `docs/spec/recording-interface-spec.md`）────────
 //
@@ -1732,6 +1733,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   // **通知を出さなかった報でも進める** —— 起動時に復元した報（通知しない）や、通知の設定を後から入れたときも、
   // 見ていた値から上がったら知らせる（2026-10-22 ユーザー承認「上がったら出す (Recommended)」）。解除・取消で落とす
   const eewNotifyBaselineRef = useRef<Map<string, EewNotifiedForecast>>(new Map())
+  // 発表の通知を出した地震（→ `rememberEewNotified`）。地域を選んだ人の出し直しと取消の可否に使う。
+  // 取消は追跡を捨てた後にも届くので、`forgetEewTracking` では落とさない（件数の上限で古いものから捨てる）
+  const eewNotifiedKeysRef = useRef<Set<string>>(new Set())
   // 第 1 フェーズ（震源の読み上げ）の進み具合。eventId 別。
   // **予報から警報へ上がったときに、言い直すかどうか・何回言い直すかをこれ 1 つで決める。**
   //
@@ -1789,7 +1793,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
   const notifySpecialInfo = (event: SpecialInfoEvent) => {
     const plan = planSpecialInfoNotification(event, id => lpgmNotifiedNameRef.current.get(id))
     if (!plan) return
-    if (!notificationAllowed(settings, plan.kind) || !notificationRegionAllowed(settings, plan.prefectures)) return
+    // 推計震度分布図は、元の地震の地震カードの県で絞る（電文は県を持たない。→ `estimatedIntensityPrefectures`）
+    const prefectures = event.kind === 'estimatedIntensity'
+      ? estimatedIntensityPrefectures(event.data, earthquakesRef.current)
+      : plan.prefectures
+    if (!notificationAllowed(settings, plan.kind) || !notificationRegionAllowed(settings, prefectures)) return
     if (plan.requires !== undefined && !takeNotified(plan.requires)) return
     showBrowserNotification(plan.notification.title, plan.notification.body, plan.notification.tag)
     if (plan.remember !== undefined) rememberNotified(plan.remember)
@@ -3630,6 +3638,14 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     const tsunamiCardBasis: TsunamiCardOrderBasis = event.kind === 'tsunami'
       ? tsunamiCardOrderBasis(event, tsunamisRef.current[0])
       : { areas: [], observations: [], liftedAreas: [] }
+    // 設定「通知する地域」で津波の通知を絞るときの県。電文の区域にカードの区域を足す —— 取消・観測の報は
+    // 区域を載せないことがあり、電文だけでは絞れない（読めなければ null で絞らない。→ notificationRegions.ts）
+    const tsunamiRegion = event.kind === 'tsunami'
+      ? tsunamiPrefectures({
+        areas: [...event.areas, ...tsunamiCardBasis.areas],
+        cancelledAreas: [...(event.cancelledAreas ?? []), ...tsunamiCardBasis.liftedAreas],
+      })
+      : null
     // 津波の続報が「区域単位で等級が動いた報」か（全体の最上位等級は変わらないが、一部の区域で
     // 解除・切替・引き上げが起きている）。**観測情報と同じ枠に入れないための判定。**
     // 気象庁は一部解除でも区域を電文から消さず等級の降格として載せるため、他の区域に注意報が
@@ -3993,7 +4009,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // 落とすより重い。
         // 止めていても、閉じるまで残る通知を出していたなら置き換える（`tsunamiPersistentNotificationShownRef`）
         if (tsunamiStep?.kind === 'ended'
-          && (notificationAllowed(settings, 'tsunami') || tsunamiPersistentNotificationShownRef.current)) {
+          && ((notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion))
+            || tsunamiPersistentNotificationShownRef.current)) {
           // 取消・失効だけを終わりの通知へ回し、それ以外（読めない値を含む）は解除の通知へ倒す（音・読み上げの扱いと揃える）
           const n = event.cancelReason === 'retracted' || event.cancelReason === 'expired'
             ? tsunamiEndNotification(event)
@@ -4133,7 +4150,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               ))
             }
           }
-          if (notificationAllowed(settings, 'eew')) {
+          if (notificationAllowed(settings, 'eew')
+            && eewCancelShouldNotify({ regionSelected: settings.notifyPrefectures.length > 0, notified: eewNotifiedKeysRef.current.has(key) })) {
             const cancelName = event.earthquake.hypocenter.name || eewLastHypocenterNameRef.current.get(key)
               || lateCancel?.hypocenterName
             // 画面に出ていた地震（hadKey・消えた後の取消）なのに名前を引けないのは、記憶の鍵がずれたか記憶が消えた印。
@@ -4242,7 +4260,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       if (!notifyBaseline || raisesNotifiedForecast(notifyForecast, notifyBaseline)) {
         eewNotifyBaselineRef.current.set(key, notifyForecast)
       }
-      if (notificationAllowed(settings, 'eew') && (isNew || levelUpgraded || forecastRaised)) {
+      if (notificationAllowed(settings, 'eew') && notificationRegionAllowed(settings, eewPrefectures(event))
+        && eewAnnounceShouldNotify({
+          isNew, levelUpgraded, forecastRaised,
+          regionSelected: settings.notifyPrefectures.length > 0,
+          alreadyNotified: eewNotifiedKeysRef.current.has(key),
+        })) {
+        rememberEewNotified(eewNotifiedKeysRef.current, key)
         // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。通知の見出しも実態に合わせる。
         // **見出しは表示用の区分で決める**（特別警報の下げ止まり。→ eew-spec.md §4）。一度でも特別警報だった地震は、
         // 続報で震度が下がってから長周期の予想が上がる・格上げが立つなどで出し直しても「特別警報」のまま。
@@ -5283,7 +5307,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // （`tsunamiObservationNotification`）。区域が空の報を弾くのは、見出しを等級から・本文を区域名から作るため
     // （`isTsunamiObservationOnly`。発表する報で区域が空なのは解除だけで、そちらは `cancelled` で先に外れる）。
     if (event.kind === 'tsunami' && !event.cancelled && isTsunamiGradeReport(event) && !isTsunamiObservationOnly(event)
-      && notificationAllowed(settings, 'tsunami')) {
+      && notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)) {
       // 中身（見出し・区域の並び・「ほか N 区域」・解除の行・閉じるまで残すか）は `tsunamiIssueNotification`。
       // **区域はカードの材料（`tsunamiCardBasis`）から取る**——電文順で切ると、カードの先頭に並ぶ
       // 深刻な区域が通知から落ちる。
@@ -6188,7 +6212,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 中身はこの報でカードに印が付いた観測点なので、印を決めたここで出す。印が 1 つも無い報（同じ値の再送・
       // 満潮時刻だけの報）は出さない。
       if (!isTsunamiGradeReport(event) && newStatusEntries.length > 0
-        && notificationAllowed(settings, 'tsunami')) {
+        && notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)) {
         const markedNames = new Set(newStatusEntries.map(([name]) => name))
         const marked = sortObservationsForCardDisplay(tsunamiCardBasis.observations, tsunamiCardBasis.areas, tsunamiCardBasis.liftedAreas)
           .filter(o => markedNames.has(o.name))
@@ -6303,6 +6327,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     eewTtsEventsRef.current.clear()
     eewFirstIssueTimeRef.current.clear()
     eewNotifyBaselineRef.current.clear()
+    eewNotifiedKeysRef.current.clear()
     eewPhase1TokensRef.current.clear()
     eewPhase2TokensRef.current.clear()
     // 誤報取消の読み上げの予約も捨てる。**予約自体は `cancelPendingSpeech` が取り消すので、
@@ -6585,6 +6610,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
 
           activeEEWLevelsRef.current.set(key, restoredDisplayLevel)
           eewNotifyBaselineRef.current.set(key, notifiedForecast)
+          // 起動時に戻した地震（基準がまだ無い）は通知を出さないが、**ライブで受けていれば通知していた地震だけ**通知済みとして数える
+          // （地域を選んだ人に、次のライブ報で「まだ通知していない」として出さない）。選んだ県に関わらない地震を数えると、その取消が
+          // 届き、続報で選んだ県が加わっても出し直せない。張り直し（ライブで見ていた地震）は印をそのまま
+          if (!prevNotified && notificationAllowed(settingsRef.current, 'eew')
+            && notificationRegionAllowed(settingsRef.current, eewPrefectures(eew))) {
+            rememberEewNotified(eewNotifiedKeysRef.current, key)
+          }
           // 「その緊急地震速報が生きているか」の印も、他の記憶と同じ地点へ揃える
           // （取消の報は上で追跡ごと捨てているのでここへ来ない）。
           //
