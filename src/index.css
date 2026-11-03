@@ -97,6 +97,12 @@
   --qk-fact-gap: 0.75rem;
   --qk-head-h: 1.625rem;    /* 一覧の見出しの行（震度・時刻・震央地名…）26px。巻いても上に残る */
 }
+/* 開いたカードの震度の枠の下端に置く影の受け皿。普段は高さを持たない（影を描くのは貼りついている間だけ。下の @container quake-stick）。
+   親（.quake-stick）に gap を持たせると、高さ 0 でもこの子のぶん隙間が増える */
+.quake-stick-edge {
+  display: block;
+  height: 0;
+}
 /* 一覧の見出しの行は巻いても上に残るので、カードへ寄せるときはその下へ着地させる（→ useFollowScroll） */
 .quake-list [data-quake-key] {
   scroll-margin-top: var(--qk-head-h);
@@ -135,6 +141,19 @@
     position: sticky;
     top: calc(var(--qk-head-h) + var(--qk-open-head-h, 0px));
     z-index: 2;
+    /* 貼りついている間だけ下端に、狭い組の帯と同じ境の線と影を付ける（2026-11-03 選択「帯と同じ影を付ける (Recommended)」）。
+       scroll-state の問い合わせは箱の子にしか効かないので、描くのは子の quake-stick-edge。使えない端末では影が付かないだけ。
+       名前を付けた箱なので、名前の無い幅の問い合わせ（@container (min-width: …)）はこれまでどおり一覧の箱を見る */
+    container: quake-stick / scroll-state;
+  }
+  @container quake-stick scroll-state(stuck: top) {
+    .quake-list-scope [data-stick-tall] .quake-stick-edge {
+      position: absolute;
+      inset: auto 0 0 0;
+      border-bottom: 1px solid var(--color-border);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, .55);
+      pointer-events: none;
+    }
   }
   .quake-list-scope [data-stick-tall] .quake-pin {
     display: none;

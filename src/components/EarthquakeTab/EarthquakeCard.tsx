@@ -1654,6 +1654,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               </div>
             </div>
           </div>
+          {/* 貼りついている間だけ下端に出す境の線と影（→ index.css の quake-stick-edge） */}
+          <i aria-hidden className="quake-stick-edge" />
         </div>
 
         {/* 気象庁が添えた文は畳んで置き、読み上げのあいだ開く（→ `JmaNotesFold`） */}
