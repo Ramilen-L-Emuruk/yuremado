@@ -55,6 +55,7 @@ const renderTab = async (quake: JMAQuake) => {
   <EarthquakeTab
     earthquakes={[quake]}
     selectedId={quakeEventKey(quake)}
+    selectSeq={0}
     speakingKey={null}
     followSpeech={false}
     onSelect={() => {}}
@@ -112,8 +113,8 @@ describe('震度一覧の未入電の印', () => {
     await renderTab(makeQuake(MIXED))
     openDownToStations()
     expect(rowText(UNRECEIVED_STATION)).toContain('未入電')
-    // 「以上」の語も併せて出る（なぜ「以上」なのかを印が説明する）。
-    expect(rowText(UNRECEIVED_STATION)).toContain('震度5弱以上')
+    // 「以上」の語も併せて出る（なぜ「以上」なのかを印が説明する）。震度の欄は「震度」の語を付けない。
+    expect(rowText(UNRECEIVED_STATION)).toContain('5弱以上')
   })
 
   // 対照: 観測できた行には出ない。
@@ -146,28 +147,28 @@ describe('震度一覧の未入電の印', () => {
     for (const name of [PREF, AREA]) {
       const text = rowText(name)
       // 値は未入電から来ているので「以上」は付く（上限が定まらないことは伝える）。
-      expect(text, name).toContain('震度5弱以上')
+      expect(text, name).toContain('5弱以上')
       // ただし断定はしない。
       expect(text, name).toContain('未入電あり')
       expect(text.replace('未入電あり', ''), name).not.toContain('未入電')
     }
   })
 
-  // 安全弁: 印は**震度の側**へ置く。地名の側へ戻さない。
+  // 安全弁: 印は**震度の列**（震度の下）へ置き、地名の列へ混ぜない。
   //
-  // 地名の右端を行ごとに揃えるための配置。地名と同じ流れに置くと、揃えるためにいちばん長い
-  // 「未入電あり」ぶん（5 文字・約 3.75rem）の枠を全行で空けることになり、狭い画面では
-  // **印を持たない行まで地名が折り返す**（実測: 幅 320px で 47 行中 7 行）。
-  it('印は震度の側に置き、地名の枠へ入れない', async () => {
+  // 行は 3 列（震度・地名・開閉）。印を地名の列へ入れると、地名と同じ流れで折り返し、
+  // 地名の後ろに続く `＊` との区別もつかなくなる。
+  it('印は震度の列に置き、地名の列へ入れない', async () => {
     await renderTab(makeQuake(MIXED))
     const row = rowEl(PREF)
     expect(row, '県の行が見つからない').toBeTruthy()
-    expect(row!.children[0].textContent).toContain('未入電あり')
+    expect(row!.children[0].textContent).toBe('4（未入電あり）')
     expect(row!.children[1].textContent).not.toContain('未入電')
+    expect(row!.children[2].textContent).not.toContain('未入電')
   })
 
-  // 安全弁: `＊` は地名と別の枠に出す（同じ理由。地名の右端が 1 文字ぶんずれるのを防ぐ）。
-  it('＊ は地名と別の枠に出す', async () => {
+  // 安全弁: `＊` は地名と別の要素で、地名のすぐ後ろに続ける（電文が名前の末尾へ置く印なので離さない）。
+  it('＊ は地名と別の要素で、地名に続けて出す', async () => {
     await renderTab(makeQuake([
       { pref: PREF, addr: PREF, isArea: true, scale: 40 },
       { pref: '', addr: AREA, isArea: true, scale: 40 },
@@ -176,7 +177,7 @@ describe('震度一覧の未入電の印', () => {
     openDownToStations()
     const row = rowEl(OBSERVED_STATION)
     expect(row, '観測点の行が見つからない').toBeTruthy()
-    // 地名の枠は名前だけ。行全体では名前の直後に ＊ が続く。
+    // 地名の要素は名前だけ。行全体では名前の直後に ＊ が続く。
     expect(row!.children[1].children[0].textContent).toBe(OBSERVED_STATION)
     expect(row!.textContent).toContain(`${OBSERVED_STATION}＊`)
   })

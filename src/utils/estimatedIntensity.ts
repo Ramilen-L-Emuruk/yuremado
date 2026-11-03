@@ -199,7 +199,7 @@ export function estimatedIntensityFor(
  * （根拠は下の `ISSUE_MIN_SCALE`）。畳めばこの関数自体が「一致する電文を持っているか」と
  * 同義になり、発表条件を調べ直さないと元へ戻せない。
  *
- * **`awaiting`（震度5弱以上で分布図を待っている間）も、ボタンは「このアプリの簡易推定」と名乗る。**
+ * **`awaiting`（震度5弱以上で分布図を待っている間）も、切り替えは「簡易推定」と名乗る（2026-11-02 ユーザー選択「「簡易推定」」。それまでは「このアプリの簡易推定」）。**
  * 待っていることは画面に出さない（2026-10-22 ユーザー選択「今のまま記録する」。推した「待っている と出す」
  * ではない）。全期間で 5 弱以上 106 件中 92 件に待ち時間があり、中央値は約 4 分・最大 23 分だった。
  */
@@ -378,7 +378,9 @@ export function upsertEstimatedIntensity(
   if (!update.apply) return { list, update }
   if (index < 0) return { list: [...list, next], update }
   const replaced = list.slice()
-  replaced[index] = next
+  // 置き換える前の報の発表時刻を引き継ぐ（開いたカードの報の一覧に前の報も出すため。→ `previousTimes`）
+  const prev = list[index]
+  replaced[index] = { ...next, previousTimes: [...(prev.previousTimes ?? []), prev.time] }
   return { list: replaced, update }
 }
 

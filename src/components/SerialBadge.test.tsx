@@ -70,6 +70,7 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
     <EarthquakeTab
       earthquakes={[quake]}
       selectedId={selected ? quakeEventKey(quake) : 'other'}
+      selectSeq={0}
       speakingKey={null}
       followSpeech={false}
       onSelect={() => {}}
@@ -106,8 +107,11 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
   return container
 }
 
-/** 種別ヘッダー（`緊急地震速報（警報）#1` / `震度速報 #2 / 震源情報` を出す帯）。 */
+/** 緊急地震速報の種別ヘッダー（`緊急地震速報（警報）#1` を出す帯）。 */
 const header = (container: HTMLElement) => container.querySelector('.tracking-widest') as HTMLElement
+
+/** 開いた地震情報カードの見出し（`震度速報 #2 / 震源情報` を出す、押すと畳むボタン）。 */
+const quakeHeading = (container: HTMLElement) => container.querySelector('button[aria-expanded="true"]') as HTMLElement
 
 /**
  * ヘッダーの中の報番号だけを取り出す。
@@ -136,7 +140,7 @@ describe('報番号の見た目', () => {
 
   // 正: 地震情報カードでも同じ形で出る。**種別名へ直付けしない。**
   it('地震情報カードでも報番号が別の要素で出る', async () => {
-    const head = header(await renderQuake(makeQuake(TWO_AND_ONE)))
+    const head = quakeHeading(await renderQuake(makeQuake(TWO_AND_ONE)))
     expect(head.textContent).toContain('震度速報')
     expect(head.textContent).toContain('震源情報')
     const badge = serialEl(head)
@@ -146,22 +150,18 @@ describe('報番号の見た目', () => {
     expect(badge!.textContent).not.toContain('震度速報')
   })
 
-  // **安全弁: 2 つの器が同じ見た目であること。** 片方だけ書き換えたらここで止まる。
-  it('緊急地震速報と地震情報カードで器のクラスが一致する', async () => {
-    const eewHead = header(await renderEEW(makeEEW('1')))
-    const eewBadge = serialEl(eewHead)!
-    const eewClasses = { head: eewHead.className, badge: eewBadge.className }
+  // **安全弁: 報番号の器が同じ見た目であること。** 片方だけ書き換えたらここで止まる。
+  // 見出しそのものの体裁は揃えない —— 地震情報カードは一覧の行と同じ見出し行に種別を書く。
+  it('緊急地震速報と地震情報カードで報番号のクラスが一致する', async () => {
+    const eewClass = serialEl(header(await renderEEW(makeEEW('1'))))!.className
     cleanup()
-    const quakeHead = header(await renderQuake(makeQuake(TWO_AND_ONE)))
-    expect(serialEl(quakeHead)!.className).toBe(eewClasses.badge)
-    // 種別ヘッダーそのものも同じ器。番号の細さ・薄さはこの中での相対的な弱さなので、
-    // 器が違えば同じクラスでも見え方が変わる。
-    expect(quakeHead.className).toBe(eewClasses.head)
+    const quakeHead = quakeHeading(await renderQuake(makeQuake(TWO_AND_ONE)))
+    expect(serialEl(quakeHead)!.className).toBe(eewClass)
   })
 
   // 対照: 1 通しか受け取っていない種別には番号を付けない。
   it('1 通だけの種別には報番号を出さない', async () => {
-    const head = header(await renderQuake(makeQuake([{ type: '震源情報', keys: ['2024-01-01T07:10:30Z'] }])))
+    const head = quakeHeading(await renderQuake(makeQuake([{ type: '震源情報', keys: ['2024-01-01T07:10:30Z'] }])))
     expect(head.textContent).toContain('震源情報')
     expect(serialEl(head)).toBeNull()
   })

@@ -986,7 +986,8 @@ function readTsunamiBodyText(doc: Document): string | undefined {
  *
  * **どの種別でも、本文や既読の要素に無い事実は含まない**（実電文で確かめた。地震情報は
  * 震源と時刻、長周期は階級、緊急地震速報は空、震源要素更新の文中の時刻は `ReportDateTime` と
- * 同じ）。落とさないために読むだけで、画面に出すのは本文が長い南海トラフ・後発地震だけ。
+ * 同じ）。画面に出すのは地震情報（開いたカード）・津波・南海トラフ・後発地震。長周期は地域名を取り出すのにだけ使う
+ * （→ docs/spec/quake-spec.md §8「見出し文（`Head/Headline/Text`）は、地震情報では開いたカードに出す」）。
  */
 function readHeadlineText(doc: Document): string {
   const headEl = xmlQ(doc, 'Head')
@@ -1693,7 +1694,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   if (!doc) return null
 
   const quakeOperationStatus = parseOperationStatus(doc)
-  // 見出し文。**読んで持つだけで画面には出さない**（→ `readHeadlineText`）。
+  // 見出し文。開いた地震カードに原文のまま出す（→ `readHeadlineText`・docs/spec/quake-spec.md §8）。
   const quakeHeadline = readHeadlineText(doc)
   const reportDateTime = readReportDateTime(doc, '地震情報', DMDATA_LOG_PREFIX)
   const eventId = xmlText(xmlQ(doc, 'EventID'))

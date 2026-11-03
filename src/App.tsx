@@ -280,6 +280,9 @@ export function App() {
   // 区別するために使う（明示選択中はユーザー操作中フラグを無視して強制フィット・
   // CameraFollowsGL.tsx QuakeFitGL 参照）。
   const [quakeSelectionTick, setQuakeSelectionTick] = useState(0)
+  // 選択が呼ばれるたびに進む番号（利用者の操作・続報・読み上げのどれでも）。選んだまま畳んだ地震カードは、
+  // これが進んだら開き直す（2026-11-03 選択「どれが来ても開き直す (Recommended)」。→ EarthquakeCard の `reopenSignal`）
+  const [quakeSelectSeq, setQuakeSelectSeq] = useState(0)
   const [focusedObsName, setFocusedObsName] = useState<{ name: string; ts: number } | null>(null)
   /**
    * カードの一覧の行をクリックしたときの寄り先（地震カードの観測点・県・区域・市町村と、
@@ -366,6 +369,7 @@ export function App() {
     const closeOverlay = shouldCloseOverlayOnSelection(selectedQuakeIdRef.current, eventKey)
     selectedQuakeIdRef.current = eventKey
     setSelectedQuakeId(eventKey)
+    setQuakeSelectSeq(n => n + 1)
     if (closeOverlay) applyQuakeOverlay(null, '別の地震を選んだ')
     if (opts?.explicit) setQuakeSelectionTick(t => t + 1)
   }, [])
@@ -2970,6 +2974,7 @@ export function App() {
               <EarthquakeTab
                 earthquakes={filteredEarthquakes}
                 selectedId={selectedQuakeKey}
+                selectSeq={quakeSelectSeq}
                 speakingKey={speakingQuakeKey}
                 followSpeech={settings.voicevoxEnabled}
                 onSelect={selectQuakeFromCard}

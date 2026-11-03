@@ -15,6 +15,7 @@ import { EarthquakeTab } from './index'
 import { quakeEventKey } from '../../utils/quakeMerge'
 import type { JMAQuake, EarthquakePoint, JMAQuakeCity } from '../../types/earthquake'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
+import { findIntensityRow } from '../../test-utils/intensityRow'
 
 afterEach(cleanup)
 
@@ -57,6 +58,7 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
   <EarthquakeTab
     earthquakes={[quake]}
     selectedId={quakeEventKey(quake)}
+    selectSeq={0}
     speakingKey={null}
     followSpeech={false}
     onSelect={() => {}}
@@ -122,13 +124,14 @@ describe('未入電トグル', () => {
   // 正: 開いているあいだは震度一覧と差し替える（同じ場所に 2 つ並べない）。
   it('開いているあいだは震度一覧を出さない', async () => {
     const { rerender } = await renderTab(makeQuake(MIXED))
-    // 閉じているときは県の行（震度一覧の最上段）が出ている。
-    expect(screen.getByText('震度4')).toBeTruthy()
+    // 閉じているときは県の行（震度一覧の最上段）が、県の震度と範囲の行の添え書きつきで出ている。
+    expect(findIntensityRow(PREF)?.children[0]?.textContent).toBe('4（未入電あり）')
 
     rerender(
       <EarthquakeTab
         earthquakes={[makeQuake(MIXED)]}
         selectedId={quakeEventKey(makeQuake(MIXED))}
+        selectSeq={0}
         speakingKey={null}
         followSpeech={false}
         onSelect={() => {}}
@@ -161,7 +164,7 @@ describe('未入電トグル', () => {
         seismoWaveView="composite"
       />,
     )
-    expect(screen.queryByText('震度4')).toBeNull()
+    expect(findIntensityRow(PREF)).toBeUndefined()
   })
 
   // 安全弁: 未入電が 1 件も無い電文ではボタンを出さない（押しても何も出ないボタンを作らない）。
@@ -186,7 +189,7 @@ describe('未入電トグル', () => {
     ]
     await renderTab(makeQuake(allObserved), { unreceivedOpen: true })
     expect(screen.queryByText(/^震度を入手していない/)).toBeNull()
-    expect(screen.getByText('震度4')).toBeTruthy()
+    expect(findIntensityRow(PREF)?.children[0]?.textContent).toBe('4')
   })
 
   // 安全弁: 単位は中身に合わせる。区域しか持たない電文（震度速報）では「地域」になる。

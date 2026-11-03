@@ -2211,6 +2211,12 @@ export interface JMAEstimatedIntensity {
   /** 発表時刻（電文ヘッダの時刻・ISO） */
   time: string
   /**
+   * この報が置き換えた、同じ地震の前の報の発表時刻（古い順）。一覧は地震ごとに最新の 1 通しか
+   * 持たない（→ `upsertEstimatedIntensity`）ので、開いた地震カードの報の一覧（`quakeReportTimeline`）が
+   * 前の報も並べられるよう、置き換えるときにここへ引き継ぐ。電文から読む値ではない。
+   */
+  previousTimes?: readonly string[]
+  /**
    * 地震発現時刻（ISO・分まで）。**この電文は `eventId` を持たない**ので、地震カードとの
    * 結び付けはこの時刻で行う。
    *

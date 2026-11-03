@@ -186,6 +186,24 @@ describe('instantiateScenario', () => {
       expect('createdAtMs' in b).toBe(false)
     })
 
+    // 開いたカードの「更新」と報の一覧は、電文の鍵（`題名|作成時刻`）の時刻を読む。
+    it('電文の鍵（telegramKey）の時刻も同じ delta でずらし、秒までの形を保つ', () => {
+      const baseTime = '2024-01-01T07:10:00Z'
+      const delta = NOW.getTime() - new Date(baseTime).getTime()
+      const scenario: TestScenarioFile = {
+        id: 'test', label: 'テスト', description: '', category: 'quake', durationMs: 0,
+        baseTime,
+        entries: [
+          { offsetMs: 0, payload: { kind: 'event', event: makeQuake({ telegramKey: '震源・震度に関する情報|2024-01-01T07:30:42Z' }) } },
+          { offsetMs: 0, payload: { kind: 'event', event: makeQuake({ id: 'dmdata-quake-20240101070900-2' }) } },
+        ],
+      }
+      const [a, b] = instantiateScenario(scenario, NOW).map(r => (r.payload as { kind: 'event'; event: JMAQuake }).event)
+      const shiftedTime = new Date(Date.parse('2024-01-01T07:30:42Z') + delta).toISOString().replace('.000Z', 'Z')
+      expect(a.telegramKey).toBe(`震源・震度に関する情報|${shiftedTime}`)
+      expect('telegramKey' in b).toBe(false)
+    })
+
     it('idに埋め込まれたeventIdが再採番され、既存の正規表現にマッチし続ける', () => {
       const quake = makeQuake()
       const scenario: TestScenarioFile = {

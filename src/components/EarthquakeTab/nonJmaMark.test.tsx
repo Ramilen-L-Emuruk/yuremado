@@ -82,6 +82,7 @@ const renderTab = async (quake: JMAQuake, lpgm?: JMALpgm, opts: { unreceivedOpen
   <EarthquakeTab
     earthquakes={[quake]}
     selectedId={quakeEventKey(quake)}
+    selectSeq={0}
     speakingKey={null}
     followSpeech={false}
     onSelect={() => {}}

@@ -1,7 +1,9 @@
-import { memo, useRef } from 'react'
+import { Fragment, memo, useLayoutEffect, useRef } from 'react'
 import type { JMAQuake, JMALpgm, JMAEstimatedIntensity, JMAInternationalTsunami } from '../../types/earthquake'
 import { EarthquakeCard } from './EarthquakeCard'
 import { LoadMoreButton } from './LoadMoreButton'
+import { QuakeListHeader, QuakeListDayLabel } from './QuakeListRow'
+import { quakeListDay } from '../../utils/quakeListDay'
 import { extractQuakeEventId, quakeEventKey } from '../../utils/quakeMerge'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import type { SeismoWaveCollapsedView } from '../../hooks/useSettings'
@@ -11,6 +13,7 @@ import { internationalTsunamisFor } from '../../utils/internationalTsunami'
 import type { LatLng } from '../../utils/stationCoords'
 import { quakeCardScrollTarget, QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
 import { useFollowScroll } from '../../hooks/useFollowScroll'
+import { growFrom, ROW_INSERT_MS, CARD_RESIZE_ANIMATION_ID } from './quakeMotion'
 import {
   type TelegramLoss, formatHistoryLossNotice, HISTORY_LOAD_MORE_FAILED_NOTICE, RECONNECT_GAP_LOSS_NOTICE,
   formatRateLimitedNotice, FETCH_THROTTLED_NOTICE, KEY_REENTRY_NOTICE,
@@ -19,6 +22,11 @@ import {
 interface Props {
   earthquakes: JMAQuake[]
   selectedId: string | null
+  /**
+   * 選択が呼ばれるたびに進む番号（→ App の `quakeSelectSeq`）。選ばれたカードにだけ渡す
+   * （他のカードへ渡すと、選ぶたびに全カードの memo が素通りする）。
+   */
+  selectSeq: number
   /**
    * いま読み上げが語っている地震の鍵（`quakeEventKey`。語っていなければ null）。
    * 読み上げが有効なあいだ、一覧はこのカードへ寄せる（→ `utils/quakeCardScroll.ts`）。
@@ -141,11 +149,32 @@ interface Notice { text: string; tone: 'loss' | 'info'; onClose?: () => void }
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, relayGapNotices, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, internationalTsunamis, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, relayGapNotices, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, internationalTsunamis, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 寄せる相手と寄せ直す合図は `quakeCardScrollTarget`、寄せ方は共有のフック（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。
   const scrollTarget = quakeCardScrollTarget({ earthquakes, selectedKey: selectedId, speakingKey, followSpeech })
+  // 新しい地震が一覧の先頭に届いたら、上から差し込む（2026-11-03 選択「新しい地震の差し込み」。説明「起動時に
+  // 履歴をまとめて読むときと『もっと見る』では動かさない。続報で値が変わったときは今の更新の印のまま」）。
+  // 見たことのある鍵を覚え、読み込みが落ち着いた後に**先頭へ**初めて現れた鍵だけを動かす（もっと見るは末尾に足される）
+  const seenKeysRef = useRef<Set<string> | null>(null)
+  useLayoutEffect(() => {
+    if (earthquakes.length === 0) {
+      seenKeysRef.current = null
+      return
+    }
+    if (isLoading) return
+    const keys = earthquakes.map(quakeEventKey)
+    const seen = seenKeysRef.current
+    seenKeysRef.current = new Set(keys)
+    if (seen === null || isLoadingMore || seen.has(keys[0])) return
+    // 先頭に 1 件だけ足された形（2 件目以降はすべて前に見た鍵）のときだけ。一覧が丸ごと差し替わった
+    // （絞り込み・リプレイの開始と停止など）ときは、先頭が変わっても新着ではないので動かさない
+    if (!keys.slice(1).every(k => seen.has(k))) return
+    const el = listRef.current?.querySelector<HTMLElement>(`[${QUAKE_CARD_KEY_ATTR}="${CSS.escape(keys[0])}"]`)
+    // 寄せ（useFollowScroll）は、この名前の動きが走っている間は待つ（伸びている途中の高さで寄せ方を決めない）
+    if (el) growFrom(el, 0, ROW_INSERT_MS, CARD_RESIZE_ANIMATION_ID)
+  }, [earthquakes, isLoading, isLoadingMore])
   useFollowScroll(listRef, scrollTarget?.signature ?? null, () =>
     scrollTarget ? listRef.current?.querySelector<HTMLElement>(`[${QUAKE_CARD_KEY_ATTR}="${CSS.escape(scrollTarget.key)}"]`) ?? null : null)
   // 履歴について知らせる帯。**5 つを別に持つ**（確定した損失／429 で見送った分／押し直せば
@@ -227,19 +256,38 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
     )
   }
 
+  // 日付が前の行と変わったところに区切りを置く（見本の「11月1日」。年は常に添える）。
+  // 比べる相手は直前に区切りを置いた日（時刻の読めない行を挟んでも同じ日の区切りを二度置かない）
+  let lastDayKey: string | null = null
+  const dayLabels = earthquakes.map(q => {
+    const day = quakeListDay(q.earthquake.time)
+    if (!day || day.key === lastDayKey) return null
+    lastDayKey = day.key
+    return day.label
+  })
+
   return (
-    <div ref={listRef} className="p-2 space-y-1.5 roomy:p-3 roomy:space-y-2">
-      {notices.map(n => <HistoryNotice key={n.text} tone={n.tone} onClose={n.onClose}>{n.text}</HistoryNotice>)}
-      {earthquakes.map((quake, i) => (
+    // 大きさは一覧自身の幅で切り替える（2026-11-02 選択「パネル自身の幅 (Recommended)」。値は src/index.css の quake-list）
+    <div ref={listRef} className="quake-list">
+     <div className="quake-list-scope">
+      {notices.length > 0 && (
+        <div className="space-y-1.5 p-2 roomy:p-3">
+          {notices.map(n => <HistoryNotice key={n.text} tone={n.tone} onClose={n.onClose}>{n.text}</HistoryNotice>)}
+        </div>
+      )}
+      <QuakeListHeader />
+      {earthquakes.map((quake, i) => {
+        return (
+        // QUAKE-4: 続報で id 末尾の serial が変わるたびに EarthquakeCard がリマウントされ、
+        // isSelected の副作用（強制スクロール）が発火してユーザー操作を妨害する。
+        // eventKey は続報でも変わらないため、React の key・選択判定の両方をこれで安定させる
+        // （どちらも quakeEventKey に統一。earthquake.time は同じ分に起きた別の地震と衝突する）。
+        <Fragment key={quakeEventKey(quake)}>
+        {dayLabels[i] && <QuakeListDayLabel label={dayLabels[i]!} />}
         <EarthquakeCard
-          // QUAKE-4: 続報で id 末尾の serial が変わるたびに EarthquakeCard がリマウントされ、
-          // isSelected の副作用（強制スクロール）が発火してユーザー操作を妨害する。
-          // eventKey は続報でも変わらないため、React の key・選択判定の両方をこれで安定させる
-          // （どちらも quakeEventKey に統一。earthquake.time は同じ分に起きた別の地震と衝突する）。
-          key={quakeEventKey(quake)}
           quake={quake}
-          isLatest={i === 0}
           isSelected={quakeEventKey(quake) === selectedId}
+          reopenSignal={quakeEventKey(quake) === selectedId ? selectSeq : 0}
           // **包まずにそのまま渡す。** ここで包むと毎レンダー新しい関数になり、
           // `EarthquakeCard` の memo が素通りする（地震の鍵はカード側で作る）。
           onSelect={onSelect}
@@ -260,7 +308,9 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
           seismoWaveFailed={seismoWaveFailedKeys.has(quakeEventKey(quake))}
           seismoWaveView={seismoWaveView}
         />
-      ))}
+        </Fragment>
+        )
+      })}
       {hasMore && (
         <LoadMoreButton onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} watchThrottle={watchLoadMoreThrottle} />
       )}
@@ -272,6 +322,7 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
         // どれも「これ以上は遡れない」ことは共通なので、文言は 1 つで足りる。
         <p className="text-center text-xs text-secondary py-2">これ以上は遡れません</p>
       )}
+     </div>
     </div>
   )
 })

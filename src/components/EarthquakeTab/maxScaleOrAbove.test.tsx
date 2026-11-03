@@ -3,14 +3,14 @@
 // カードの最大震度に付く「以上」（→ docs/spec/quake-spec.md §4「震度5弱以上未入電」）。
 //
 // **語を本体と同じ大きさで並べると器から溢れる。** 最大震度は値を大きく出す欄なので、
-// 「5弱」から「5弱以上」になると桁数が倍になり、開いた表示では横並びのラベルと競って
-// 折り返し、畳んだ表示（7rem 角に固定）では収まらない。**語は縮められない**（気象庁の
+// 「5弱」から「5弱以上」になると桁数が倍になり、震度の枠（開いたカード・一覧の閉じた行とも
+// 幅を固定）に収まらない。**語は縮められない**（気象庁の
 // 表現をそのまま使う決まり）ので、本体より小さく添えることで受けている。
 //
 // 震度一覧の行は結合した 1 つの文字列（「震度5弱以上」）のままで、そちらは
 // `unreceivedRowMark.test.tsx` が守っている。分けたのは最大震度の欄だけ。
 import { describe, it, expect, afterEach } from 'vitest'
-import { render, cleanup, screen, within } from '@testing-library/react'
+import { render, cleanup, within } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
 import { EarthquakeTab } from './index'
 import { quakeEventKey } from '../../utils/quakeMerge'
@@ -71,6 +71,7 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
   <EarthquakeTab
     earthquakes={[quake]}
     selectedId={selected ? quakeEventKey(quake) : null}
+    selectSeq={0}
     speakingKey={null}
     followSpeech={false}
     onSelect={() => {}}
@@ -106,11 +107,15 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
   await flushDataEffects()
 }
 
-/** 最大震度の欄（「最大震度」のラベルと値を抱える器）。 */
-const maxScaleBox = () => screen.getByText('最大震度').parentElement!
+/** 最大震度の枠（値と「以上」を抱える器。開いたカードと閉じた行の両方が `data-tile` を持つ）。 */
+const maxScaleBox = () => {
+  const box = document.querySelector<HTMLElement>('[data-tile]')
+  if (!box) throw new Error('最大震度の枠が見つかりません')
+  return box
+}
 
-/** 値の本体（`font-black` を持つ span）。 */
-const valueEl = () => maxScaleBox().querySelector('.font-black')!
+/** 値の本体（`data-tile-value` を持つ span）。 */
+const valueEl = () => maxScaleBox().querySelector('[data-tile-value]')!
 
 describe('カードの最大震度に付く「以上」', () => {
   // 正: 階級が一致すれば語が出る。開いた表示・畳んだ表示の両方に要る
@@ -148,9 +153,7 @@ describe('カードの最大震度に付く「以上」', () => {
   // 語が値の中へ素のテキストとして混ざると（`getIntensityLabelWithOrAbove` を欄へ直接使うと）
   // 大きさを分けられず、器から溢れる。
   //
-  // **要素の親子関係は表示で違う**（開いた表示は本体の span の中へ入れ、畳んだ表示は値の下へ
-  // 兄弟として置く）。**どちらであってもよい**ので、ここで見るのは「語だけを持つ独立した
-  // 要素になっているか」だけ。
+  // ここで見るのは「語だけを持つ独立した要素になっているか」だけ（親子関係は問わない）。
   it.each([
     ['開いた', true],
     ['畳んだ', false],

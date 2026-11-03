@@ -413,7 +413,7 @@
 | 日時の壊れ方を検知する層（電文層・表示層）の境界を見誤ると、時間帯を明示しない壊れた値が無警告で `NaN:N` と表示される | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「日時は 2 つの層で確かめる」 |
 | APIキー文字検証を通信前に弾く経路と弾かない経路で揃えないと、無効な鍵のまま401/403を連発するか原因の違う「未設定」「不正」を同じ文言で伝える | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「認証」 |
 | 南海トラフ 3 種別・後発地震に共通する見出し文/次回発表予定/参考情報の読み取り窓口を 1 箇所に保たないと、経路ごとに要約の有無が食い違う | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「3 種別に共通する要素は 1 箇所で読む」 |
-| 見出し文（`Head/Headline/Text`）をそのまま画面へ出すと、本文と重複する事実が二重に表示される | [`quake-spec.md`](../../docs/spec/quake-spec.md) §8「見出し文（`Head/Headline/Text`）は読むが、地震情報では出さない」 |
+| 見出し文（`Head/Headline/Text`）を出す種別は種別ごとに決めてある（地震情報・津波は出す、長周期は地域名にだけ使う）。出す種別を足し引きするときは、本文と重複する事実が二重に出ないかを見る | [`quake-spec.md`](../../docs/spec/quake-spec.md) §8「見出し文（`Head/Headline/Text`）は、地震情報では開いたカードに出す」 |
 | 見出しの構造化（`Head/Headline/Information`）を新しい事実の入口として読むと、`Body` の部分集合を二重に読み込む（例外は 2 つ。緊急地震速報の警報報の地方予報区ブロックと、震源・震度に関する情報で本文に無い市町村） | [`quake-spec.md`](../../docs/spec/quake-spec.md) §8「見出しの構造化（`Head/Headline/Information`）は読まない」 |
 | 南海トラフ 3 電文の段階判定を `Head/InfoKind` で行うと、臨時情報/解説情報でコード体系が重複し段階が上書きされる | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「南海トラフ関連の 3 種別（VYSE50 / VYSE51 / VYSE52）」 |
 | 長期震源カタログの数値欄を桁数固定で読むと、緯度が最大 78km ずれる | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §6「読み取りで踏んだ罠」「異常を検知する仕組み」 |

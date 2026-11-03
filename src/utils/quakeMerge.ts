@@ -902,8 +902,7 @@ function mergeQuakeIntoBody(
       // その報だけが持つ文が捨てられる。
       ...pickVarComment(incoming, existing),
       // 見出し文も自由付加文と同じ「その報だけが持つ文」なので同じ側を採る。
-      // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
-      // この経路だけ古い見出しが残る形になる。
+      // 開いたカードに出すので、この経路だけ古い見出しが残らないようにする。
       headline: incoming.headline ?? existing.headline,
     }, incoming)
   }
@@ -1053,8 +1052,7 @@ function mergeQuakeIntoBody(
       // 固定付加文（その他）も同じ考え方で補う。
       ...pickVarComment(result, existing),
       // 見出し文も自由付加文と同じ「その報だけが持つ文」なので同じ側を採る。
-      // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
-      // この経路だけ古い見出しが残る形になる。
+      // 開いたカードに出すので、この経路だけ古い見出しが残らないようにする。
       headline: result.headline ?? existing.headline,
     }
   }
@@ -1156,8 +1154,7 @@ function mergeQuakeIntoBody(
       // 固定付加文（その他）も新しい側（＝ここでは震源要素更新）を残す。
       ...pickVarComment(existing, result),
       // 見出し文も自由付加文と同じ「その報だけが持つ文」なので同じ側を採る。
-      // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
-      // この経路だけ古い見出しが残る形になる。
+      // 開いたカードに出すので、この経路だけ古い見出しが残らないようにする。
       headline: existing.headline ?? result.headline,
     }, existing)
   }

@@ -62,6 +62,7 @@ const renderTab = async (updateMarks: ReadonlyMap<string, QuakeCardMarks>, selec
   <EarthquakeTab
     earthquakes={[QUAKE]}
     selectedId={selectedId}
+    selectSeq={0}
     speakingKey={null}
     followSpeech={false}
     onSelect={() => {}}
@@ -130,6 +131,7 @@ describe('印の付いた行の自動展開（カードとの配線）', () => {
       <EarthquakeTab
         earthquakes={[QUAKE]}
         selectedId={KEY}
+        selectSeq={0}
         speakingKey={null}
         followSpeech={false}
         onSelect={() => {}}

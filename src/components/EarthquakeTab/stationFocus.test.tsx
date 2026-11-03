@@ -12,7 +12,7 @@ import type { StationCoordsData } from '../../utils/stationCoords'
 import { EarthquakeTab } from './index'
 import { quakeEventKey } from '../../utils/quakeMerge'
 import type { JMAQuake, JMALpgm, EarthquakePoint, JMAQuakeCity } from '../../types/earthquake'
-import { findIntensityRow, openIntensityRows } from '../../test-utils/intensityRow'
+import { findIntensityRow, openIntensityRows, openIntensityRowsIn } from '../../test-utils/intensityRow'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
 
 // `vi.mock` のファクトリより先に評価させる（巻き上げられるため、通常の定数は参照できない）。
@@ -113,6 +113,7 @@ function renderCard(
     <EarthquakeTab
       earthquakes={[quake]}
       selectedId={quakeEventKey(quake)}
+      selectSeq={0}
       speakingKey={null}
       followSpeech={false}
       onSelect={() => {}}
@@ -151,6 +152,11 @@ function renderCard(
 function renderOpened(onFocusMap: (positions: [number, number][]) => void) {
   renderCard(QUAKE, onFocusMap)
   openIntensityRows(f.PREF, f.AREA, f.CITY)
+}
+
+/** 開いたカードの長周期地震動の欄（震度の一覧とは別の欄に並ぶ）。 */
+function lpgmSection(): HTMLElement {
+  return screen.getByText('長周期地震動', { selector: 'h4' }).parentElement!
 }
 
 /** 行を押す。押せない行にも同じ操作を通す（そちらは何も起きないことを見るため）。 */
@@ -304,7 +310,7 @@ describe('長周期地震動の観測点の行をクリックしたときの寄�
   it('座標を引ける観測点を押すと、その地点が寄り先になる', () => {
     const onFocusMap = vi.fn()
     renderCard(QUAKE, onFocusMap, { lpgm: LPGM })
-    openIntensityRows(f.PREF, f.AREA)
+    openIntensityRowsIn(lpgmSection(), f.PREF, f.AREA)
 
     const row = clickRow(f.KNOWN)
 
@@ -330,7 +336,7 @@ describe('長周期地震動の観測点の行をクリックしたときの寄�
   it('座標を引けない観測点は押せる見た目にならない', () => {
     const onFocusMap = vi.fn()
     renderCard(QUAKE, onFocusMap, { lpgm: LPGM })
-    openIntensityRows(f.PREF, f.AREA)
+    openIntensityRowsIn(lpgmSection(), f.PREF, f.AREA)
 
     const row = clickRow(f.UNKNOWN)
 
@@ -356,7 +362,7 @@ describe('長周期地震動の観測点の行に出す周期ごとの内訳', (
   it('内訳を持つ観測点の行は押すと内訳を開く', () => {
     const onFocusMap = vi.fn()
     renderCard(QUAKE, onFocusMap, { lpgm: LPGM_WITH_PERIODS })
-    openIntensityRows(f.PREF, f.AREA)
+    openIntensityRowsIn(lpgmSection(), f.PREF, f.AREA)
     expect(screen.queryByText('揺れの周期ごと（階級・揺れの大きさ）')).toBeNull()
 
     const row = clickRow(f.KNOWN)
@@ -380,7 +386,7 @@ describe('長周期地震動の観測点の行に出す周期ごとの内訳', (
   it('内訳を持つ観測点も、名前を押せば地図へ寄る', () => {
     const onFocusMap = vi.fn()
     renderCard(QUAKE, onFocusMap, { lpgm: LPGM_WITH_PERIODS })
-    openIntensityRows(f.PREF, f.AREA)
+    openIntensityRowsIn(lpgmSection(), f.PREF, f.AREA)
 
     fireEvent.click(labelOf(f.KNOWN))
 
@@ -391,7 +397,7 @@ describe('長周期地震動の観測点の行に出す周期ごとの内訳', (
   // 対照: 内訳を持たない観測点は開閉を持たない（座標も引けないので押せないまま）。
   it('内訳を持たない観測点の行は開けない', () => {
     renderCard(QUAKE, vi.fn(), { lpgm: LPGM_WITH_PERIODS })
-    openIntensityRows(f.PREF, f.AREA)
+    openIntensityRowsIn(lpgmSection(), f.PREF, f.AREA)
 
     const row = clickRow(f.UNKNOWN)
 
@@ -408,8 +414,8 @@ describe('長周期地震動の観測点の行に出す周期ごとの内訳', (
 function labelOf(name: string): HTMLElement {
   const row = findIntensityRow(name)
   expect(row, `${name} の行が見つからない`).toBeTruthy()
-  // 地名は右端を揃えるための枠 span に包まれており、当たり判定はその内側にある。
-  return row!.children[1].children[0].children[0] as HTMLElement
+  // 地名の列（2 つ目）の先頭が地名そのもので、上位段ではそこが当たり判定になる。
+  return row!.children[1].children[0] as HTMLElement
 }
 
 describe('県・区域・市町村の地名をクリックしたときの寄り先', () => {

@@ -67,6 +67,7 @@ async function renderTab(opts: {
     <EarthquakeTab
       earthquakes={earthquakes}
       selectedId={earthquakes[0] ? quakeEventKey(earthquakes[0]) : null}
+      selectSeq={0}
       speakingKey={null}
       followSpeech={false}
       onSelect={() => {}}

@@ -194,6 +194,7 @@ async function outputOf(type: string, ev: unknown, orig: unknown = ev): Promise<
     const q = ev as JMAQuake
     const dom = await renderText(
       <EarthquakeTab {...earthquakeTabProps()} earthquakes={[q]} selectedId={quakeEventKey(q)}
+ selectSeq={0}
         lpgmByEventId={new Map<string, JMALpgm>()} activeLpgmEventId={null} />,
     )
     return [dom, safe(() => earthquakeToText(q, OPTS_ALL, true)), tg].join('\n--\n')
@@ -215,6 +216,7 @@ async function outputOf(type: string, ev: unknown, orig: unknown = ev): Promise<
     } as unknown as JMAQuake
     const dom = await renderText(
       <EarthquakeTab {...earthquakeTabProps()} earthquakes={[shell]} selectedId={quakeEventKey(shell)}
+ selectSeq={0}
         lpgmByEventId={new Map([[eid, l]])} activeLpgmEventId={eid} />,
     )
     return [dom, safe(() => lpgmToText(l, OPTS_ALL, true)), tg].join('\n--\n')
