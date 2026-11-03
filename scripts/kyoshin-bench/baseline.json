@@ -64,11 +64,13 @@
    "firstLikely": "06:49:55",
    "firstConfirmed": "06:49:55",
    "confirmedFrames": 65,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "06:49:03 千葉県|鋸南町下佐久間"
+   ]
   },
   "pc-miyagioki": {
    "tier": "confirmed",
@@ -1128,7 +1130,7 @@
   },
   "jq14-0816-2142": {
    "tier": "confirmed",
-   "firstLikely": "21:42:10",
+   "firstLikely": "21:42:09",
    "firstConfirmed": "21:42:10",
    "confirmedFrames": 113,
    "unrelated": 0,
@@ -1510,7 +1512,7 @@
   },
   "jq48-0820-0945": {
    "tier": "confirmed",
-   "firstLikely": "09:45:55",
+   "firstLikely": "09:45:54",
    "firstConfirmed": "09:45:55",
    "confirmedFrames": 125,
    "unrelated": 0,
@@ -1697,13 +1699,11 @@
    "firstLikely": "00:57:32",
    "firstConfirmed": "00:57:32",
    "confirmedFrames": 98,
-   "unrelated": 1,
+   "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": [
-    "00:58:04 宮崎県|宮崎市佐土原町下田島"
-   ]
+   "unrelatedAt": []
   },
   "wq2-0801-0148": {
    "tier": "confirmed",
@@ -2252,7 +2252,7 @@
   },
   "wq51-0802-1755": {
    "tier": "confirmed",
-   "firstLikely": "17:55:44",
+   "firstLikely": "17:55:43",
    "firstConfirmed": "17:55:45",
    "confirmedFrames": 85,
    "unrelated": 0,
@@ -2498,11 +2498,12 @@
    "firstLikely": "15:00:43",
    "firstConfirmed": "15:00:45",
    "confirmedFrames": 85,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
+    "15:01:49 北海道|恵庭市京町",
     "15:02:06 宮崎県|宮崎都農町役場"
    ]
   },
@@ -3459,7 +3460,7 @@
    "tier": "confirmed",
    "firstLikely": "12:32:13",
    "firstConfirmed": "12:32:16",
-   "confirmedFrames": 86,
+   "confirmedFrames": 89,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3918,8 +3919,8 @@
   "wq198-0811-1428": {
    "tier": "confirmed",
    "firstLikely": "14:29:00",
-   "firstConfirmed": "14:29:01",
-   "confirmedFrames": 69,
+   "firstConfirmed": "14:29:00",
+   "confirmedFrames": 70,
    "unrelated": 1,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 1,
@@ -4401,12 +4402,11 @@
    "firstLikely": "17:29:40",
    "firstConfirmed": "17:29:40",
    "confirmedFrames": 90,
-   "unrelated": 2,
+   "unrelated": 1,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "17:30:16 埼玉県|ときがわ町桃木",
     "17:31:04 宮城県|石巻市北上町"
    ]
   },
@@ -5765,11 +5765,13 @@
    "firstLikely": "08:24:05",
    "firstConfirmed": "08:24:05",
    "confirmedFrames": 95,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "08:25:20 大分県|日田市大山町"
+   ]
   },
   "oq103-0518-0836": {
    "tier": "confirmed",
@@ -6656,7 +6658,7 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "12:04:30 長野県|白馬村北城"
+    "12:04:29 秋田県|仙北市角館町中菅沢"
    ]
   },
   "oq183-0604-1234": {
@@ -6873,13 +6875,11 @@
    "firstLikely": "09:29:26",
    "firstConfirmed": "09:29:27",
    "confirmedFrames": 73,
-   "unrelated": 1,
-   "unrelatedConfirmed": 1,
+   "unrelated": 0,
+   "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": [
-    "09:30:23 北海道|士幌町士幌"
-   ]
+   "unrelatedAt": []
   },
   "oq202-0610-1253": {
    "tier": "none",
@@ -8639,7 +8639,7 @@
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
     "02:27:00 青森県|十和田市西十二番町",
-    "02:27:22 北海道|千歳市支笏湖温泉"
+    "02:27:20 北海道|千歳市支笏湖温泉"
    ]
   },
   "oq360-0706-0255": {

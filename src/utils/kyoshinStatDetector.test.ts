@@ -269,3 +269,41 @@ describe('15 秒の窓は、ゆっくり揃って上がる点を早い段まで�
     }
   })
 })
+
+describe('値の無い点は、平常の期待値に数えない', () => {
+  // 6×6 の近くの組のうち、先頭の k 点が一斉に rise 段上がる。残りの点は欠測（-1）か、値はあるが静か（段 4 のまま）
+  const ON = 300
+  function burst(k: number, rise: number, others: 'missing' | 'quiet'): DetectorReport[][] {
+    const det = createStatDetector(NEAR, QUIET)
+    const out: DetectorReport[][] = []
+    for (let s = 0; s < ON + 60; s++) {
+      const v = new Int8Array(NEAR.length)
+      for (let i = 0; i < NEAR.length; i++) v[i] = i < k ? (s >= ON ? 4 + rise : 4) : others === 'missing' ? -1 : 4
+      out.push(det.push({ ms: T0 + s * 1000, values: v }))
+    }
+    return out
+  }
+
+  // 欠測の点は上がりようがないのに、平常なら珍しく上がる点の数の期待値へ足すと、まわりが欠けた所ほど
+  // 「偶然ではない」と言うのに多くの点が要る（能登 2024 の 01-03 以降に、震央付近の点の半分ほどが欠けた中で取りこぼした。設計書§62）
+  it('正: まわりの点が欠測していれば、5 点が 6 段上がっただけで確かな段に上がる', () => {
+    expect(firstConfirmed(burst(5, 6, 'missing'))).toBeGreaterThanOrEqual(ON)
+  })
+
+  it('対照: 同じ 5 点の上がりでも、まわりの点が値を届けていて静かなら早い段どまり', () => {
+    const out = burst(5, 6, 'quiet')
+    expect(out.flat().some(r => r.tier === 'early')).toBe(true)
+    expect(firstConfirmed(out)).toBe(-1)
+  })
+
+  it('安全弁: まわりの点が欠測していても、2 点だけの上がりは検知にしない', () => {
+    expect(burst(2, 8, 'missing').flat()).toEqual([])
+  })
+
+  // 有効な点が少ない近傍では、数点の上がりが前より高く評価される。確かな段までは、まわりが静かなときと同じく上がらないこと
+  it('安全弁: まわりの点が欠測していても、3 点だけの上がりは 8 段でも早い段どまり', () => {
+    const out = burst(3, 8, 'missing')
+    expect(out.flat().some(r => r.tier === 'early')).toBe(true)
+    expect(firstConfirmed(out)).toBe(-1)
+  })
+})
