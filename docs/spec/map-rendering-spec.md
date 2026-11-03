@@ -1690,6 +1690,44 @@ __frameProfiler.dump()                              // 要約をコンソール�
 囲うこと**——本番ビルドでは `sourceURL` が minify 後のバンドルを指すため、囲っていない処理は名前が
 出ない。
 
+### 足す前と足した後を比べる（スタイル計算とレイアウトの合計まで）
+
+`__frameProfiler` が出すのは、長いフレーム（Long Animation Frames。50ms を超えたものだけ）とその中の
+スクリプト・強制レイアウトまで。**スタイル計算とレイアウトの合計、50ms に届かない増分は出ない**ので、
+そこは Chrome のトレース（`UpdateLayoutTree`・`Layout`・`Paint` の所要の合計）で読む。
+
+- **比べる相手は別の dev サーバーで並べて立てる。** 足す前の版はメインの checkout（`main`）で `npm run dev` を
+  バックグラウンドで立てる（同じ場所の二本目は門が止めるが、別の場所なら通り、ポートはずれる）。両方のタブで
+  同じテストボタンの電文を流し、同じ操作を同じ回数行う
+- 動いている間に、強震モニタの実際の検知で自動のタブ切替が起きると、押した先が裏のタブになって値が意味を失う。
+  計る前後で、押した相手が画面に出ていたか（`document.elementFromPoint`）を確かめる
+- 実際に動いた形（Playwright MCP の `browser_run_code_unsafe` に関数として渡す。`sel` は押す相手の CSS セレクタ）:
+
+```js
+async (page) => {
+  const p = page.context().pages()[0]
+  await p.bringToFront()   // 窓が裏にあると rAF と動きが止まり、値が意味を失う
+  const cdp = await p.context().newCDPSession(p)
+  const out = []
+  for (let i = 0; i < 6; i++) {
+    const events = []
+    cdp.removeAllListeners('Tracing.dataCollected')
+    cdp.on('Tracing.dataCollected', (e) => events.push(...e.value))
+    const done = new Promise((r) => cdp.once('Tracing.tracingComplete', r))
+    await cdp.send('Tracing.start', { categories: 'devtools.timeline', transferMode: 'ReportEvents' })
+    await p.evaluate((s) => document.querySelector(s)?.click(), 'button[data-quake-key]')
+    await p.waitForTimeout(400)
+    await cdp.send('Tracing.end'); await done
+    const sum = {}
+    for (const e of events) if (e.ph === 'X' && ['UpdateLayoutTree', 'Layout', 'Paint'].includes(e.name)) sum[e.name] = (sum[e.name] ?? 0) + e.dur / 1000
+    out.push(sum)
+    await p.waitForTimeout(1500)
+  }
+  await cdp.detach()
+  return out
+}
+```
+
 ## 12. WebGL が使えないとき
 
 ### 地図をそもそも作れなかったとき
@@ -3963,3 +4001,4 @@ canvas source へ視野ぶんだけ焼いていた頃は、2 つの限界があ�
 - 2026-10-29: 揺れ検知エンジンを組み合わせの検知器へ入れ替えたのに合わせ、2026-08-21 の項が指していた検知仕様書の節を、当時の検知エンジンの話だと分かる書き方に改めた
 - 2026-10-29: §6「揺れ検知追従の目標範囲」を、検知に入った震度0 未満の点も描いて寄せ先に含め、震度0 未満が 60 秒続いた点を描く点から外す形に合わせた（2026-10-29 ユーザー「検知しているなら描画するべきだと思います」、寄せ方はユーザー選択「常に寄せる・下がった点は外す」）
 - 2026-10-31: 標準版と DMDSS 版を 1 つにまとめた形へ直した。§14 のヒートマップの末尾の出どころを、DMDATA の震源カタログ・P2PQuake から中継の震源の電文へ改めた。§6・§8・§9 の版で分けていた記述を外した
+- 2026-11-03: §11 に「足す前と足した後を比べる」（2 つの版の立て方とトレースの取り方）を足した
