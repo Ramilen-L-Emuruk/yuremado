@@ -11,6 +11,7 @@
 
 import type { DmdataEndpoint } from './dmdataEndpoint'
 import { fetchJsonOutcome, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
+import { log } from '../utils/logger'
 
 /** 中継の Worker の土台（末尾の `/` なし） */
 export const RELAY_ORIGIN = 'https://relay.yuremado.com'
@@ -77,6 +78,14 @@ export interface RelayTokenStore {
   forecastKeyChecking(): boolean
   /** 最後に取った札で中継が予報キーへ返した答え。予報キーを添えていない・まだ取っていないなら null */
   forecastScope(): RelayForecastScope | null
+  /**
+   * 使用状況データ（設計書 §6.6）。許可している間は一意の識別子と、札を取るときに添える報告を組む関数を渡す。
+   * 許可していないなら両方 null。**識別子が変わったら今の札を捨てる** —— 識別子は札に署名されているので、
+   * オフにしても古い札のままでは接続の長さが数えられ続ける
+   */
+  setUsage(install: string | null, report: (() => unknown) | null): void
+  /** いま札に添えている識別子（許可していなければ null） */
+  usageInstall(): string | null
   /** 札を取り直したり捨てたりしたら呼ぶ（予報の答えを画面へ出すため）。戻り値で外す */
   subscribe(listener: () => void): () => void
 }
@@ -128,6 +137,8 @@ export function createRelayTokenStore(opts: {
   let checked: Promise<void> = Promise.resolve()
   let resolveChecked: (() => void) | null = null
   let scope: RelayForecastScope | null = null
+  let usageInstall: string | null = null
+  let usageReport: (() => unknown) | null = null
   /** 札を捨てるたびに進める。取りに行っている間にキーが変わったら、届いた札を使わない */
   let generation = 0
   const listeners = new Set<() => void>()
@@ -139,12 +150,25 @@ export function createRelayTokenStore(opts: {
   async function issue(): Promise<string> {
     const startedGeneration = generation
     const sentKey = forecastKey
+    const headers: Record<string, string> = sentKey === null ? {} : { Authorization: `Forecast ${sentKey}` }
+    // 許可している間だけ、識別子と端末・設定の情報を本文に添える（許可していなければ本文を付けない）
+    const sentInstall = usageInstall
+    let requestBody: string | undefined
+    if (usageInstall !== null && usageReport !== null) {
+      // 報告を組む処理が投げても札は取る（記録のために配信を止めない）。そのときは本文を付けない＝送らない側へ倒す
+      try {
+        requestBody = JSON.stringify({ usage: usageReport() })
+        headers['Content-Type'] = 'application/json'
+      } catch (err) {
+        log.warn('[使用状況] 札に添える報告を組めなかった（この札では送らない）', err)
+      }
+    }
     const outcome = await fetchJsonOutcome(
       `${origin}/token`,
       {
         timeoutMs: API_FETCH_TIMEOUT_MS,
         signal: null,
-        init: sentKey === null ? { method: 'POST' } : { method: 'POST', headers: { Authorization: `Forecast ${sentKey}` } },
+        init: { method: 'POST', headers, ...(requestBody === undefined ? {} : { body: requestBody }) },
       },
       (res) => res.ok,
     )
@@ -158,6 +182,10 @@ export function createRelayTokenStore(opts: {
     const relayNow = Date.parse(outcome.headers?.get('Date') ?? '')
     const remaining = expiresMs - (Number.isFinite(relayNow) ? relayNow : wallNowMs())
     if (remaining <= REFRESH_MARGIN_MS) throw new RelayTokenError('中継の札の期限が短すぎます', outcome.status)
+    // 取りに行っている間に使用状況データの識別子が変わった（許可を切り替えた）。古い識別子の札は渡さず取り直す
+    // ——渡すと、許可を外した後もその札の接続に古い識別子が付いたままになる
+    // 自分で取り直さず、まとめた取得に相乗りする（setUsage が前の取得を外しているので、新しい識別子の取得は 1 本で済む）
+    if (startedGeneration !== generation && sentInstall !== usageInstall) return shared()
     // 取りに行っている間に予報キーが変わった。古いキーの札は渡すが覚えない（次の ensure で新しいキーで取り直す）
     if (startedGeneration !== generation) return body.token
     token = body.token
@@ -230,6 +258,16 @@ export function createRelayTokenStore(opts: {
     forecastKey: () => forecastKey,
     forecastKeyChecking: () => checking,
     forecastScope: () => scope,
+    setUsage(install, report) {
+      usageReport = install === null ? null : report
+      if (install === usageInstall) return
+      usageInstall = install
+      drop()
+      // 前の識別子で投げた取得には相乗りさせない
+      if (inflight?.issuing) inflight = null
+      notify()
+    },
+    usageInstall: () => usageInstall,
     subscribe(listener) {
       listeners.add(listener)
       return () => { listeners.delete(listener) }

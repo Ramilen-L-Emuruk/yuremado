@@ -318,3 +318,20 @@ describe('キーだけのファイル（kind: keys）', () => {
     expect(settingsFileHasKeys(withKeys)).toBe(true)
   })
 })
+
+// 使用状況データの送信の許可は運ばない（2026-11-03 ユーザー選択「運ばない (Recommended)」）
+describe('使用状況データの送信の許可', () => {
+  const on: AppSettings = { ...DEFAULTS, usageStatsEnabled: true }
+  it('書き出したファイルには許可を入れない（いつもオフで書く）', () => {
+    expect(buildSettingsFile(on, NO_KEYS).settings.usageStatsEnabled).toBe(false)
+  })
+  it('安全弁: オンと書かれたファイルを読み込んでも、許可していない端末はオフのまま', () => {
+    const file = { ...buildSettingsFile(DEFAULTS, NO_KEYS), settings: { ...DEFAULTS, usageStatsEnabled: true } }
+    const r = parseSettingsFile(file, DEFAULTS)
+    expect(r.ok && r.settings.usageStatsEnabled).toBe(false)
+  })
+  it('対照: 許可している端末は、オフと書かれたファイルを読み込んでもオンのまま', () => {
+    const r = parseSettingsFile(buildSettingsFile(DEFAULTS, NO_KEYS), on)
+    expect(r.ok && r.settings.usageStatsEnabled).toBe(true)
+  })
+})

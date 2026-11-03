@@ -77,6 +77,8 @@ function fakeTokens(): RelayTokenStore & { ensure: ReturnType<typeof vi.fn>; inv
     forecastKey: () => null,
     forecastKeyChecking: () => false,
     forecastScope: () => null,
+    setUsage: () => {},
+    usageInstall: () => null,
     subscribe: () => () => {},
   }
 }

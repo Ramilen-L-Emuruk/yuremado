@@ -95,6 +95,9 @@ export function buildSettingsFile(
       dmdataApiKey: keep(settings.dmdataApiKey, options.injected.apiKey),
       arrivalToken: keep(settings.arrivalToken, options.injected.arrivalToken),
       forecastKey: keep(settings.forecastKey, options.injected.forecastKey),
+      // 使用状況データの送信の許可は運ばない（2026-11-03 ユーザー選択「運ばない (Recommended)」）。読み込む側も
+      // ファイルの値を見ずに端末の値を残すが、ファイルにも許可の印を残さないよう常にオフで書く
+      usageStatsEnabled: false,
     },
   }
 }
@@ -181,6 +184,8 @@ export function parseSettingsFile(raw: unknown, current: AppSettings): ParseResu
   // 予報キーも同じ扱い。
   const fileForecastKey = typeof incoming.forecastKey === 'string' ? incoming.forecastKey : ''
   settings.forecastKey = fileForecastKey !== '' ? fileForecastKey : current.forecastKey
+  // 使用状況データの送信の許可は運ばない。端末ごとに同意の窓か設定の窓で決める（2026-11-03 ユーザー選択「運ばない (Recommended)」）
+  settings.usageStatsEnabled = current.usageStatsEnabled
 
   return {
     ok: true,
