@@ -194,6 +194,13 @@ export interface AppSettings {
    */
   seismoEnabled: boolean
   /**
+   * 使用状況データを送信する（設計書 §6.6・プライバシーポリシー §1）。**既定はオフ** で、初めて開いたときの
+   * 同意の窓で［許可する］を押したときと、設定の窓でオンにしたときだけオンになる（2026-11-03 ユーザー発言
+   * 「やっぱ規定オフのほうがいいかな。で全員最初にポップアップするようにして、そこで同意した人だけ送るようにするのが誠実な気がする」）。
+   * オフにすると一意の識別子も消す（→ `services/usageStats.ts`）
+   */
+  usageStatsEnabled: boolean
+  /**
    * 自作地震計ホストの基点 URL（空文字 = 未設定）。
    *
    * **既定は空文字で、`.env.local` からの自動投入もしない。** VOICEVOX と違い、
@@ -261,6 +268,8 @@ export const DAY_NIGHT_OPACITY_MAX = 0.95
 // 前の設定は、旧 URL の橋渡しのページが URL の # で渡す（→ `utils/settingsHandoff.ts`）か、書き出し・読み込みで持ってくる。
 // 読み込みは前の 2 つの版の印も受ける（→ `utils/settingsIo.ts`）。
 const STORAGE_KEY = 'quake-viewer-settings'
+/** 設定を置く鍵（別のタブでの書き換えを `storage` で追うため外へ出す。→ App の使用状況データ） */
+export const SETTINGS_STORAGE_KEY = STORAGE_KEY
 
 /**
  * 設定の既定値。
@@ -362,6 +371,7 @@ export const DEFAULTS: AppSettings = {
   ttsReadEewWarningRegions: true,
   // 自作地震計は既定で無効。**URL の既定値も置かない** —— 繋ぎ先は端末ごとに違う。
   seismoEnabled: false,
+  usageStatsEnabled: false,
   seismoHostUrl: '',
   // **波形は既定で「揺れたときだけ」**（2026-10-23 選択「既定を「揺れたときだけ」にする」）。合成波形は毎秒 15 KB
   // （1 日約 1.3 GB）を受け取り続けるので、設定の窓の注記にその量を出す。自作地震計そのものが既定で無効なので、
@@ -545,6 +555,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     ttsReadEewLpgmClass: ensureBool(partial.ttsReadEewLpgmClass, DEFAULTS.ttsReadEewLpgmClass),
     ttsReadEewWarningRegions: ensureBool(partial.ttsReadEewWarningRegions, DEFAULTS.ttsReadEewWarningRegions),
     seismoEnabled: ensureBool(partial.seismoEnabled, DEFAULTS.seismoEnabled),
+    usageStatsEnabled: ensureBool(partial.usageStatsEnabled, DEFAULTS.usageStatsEnabled),
     // **URL の形をここで検めない。** `voicevoxUrl` と同じ扱いで、文字列として通す
     // ——入力途中の値も保存されるので、ここで弾くと打っている最中に消える。
     // 形の判定は使う側（`isValidSeismoHostUrl`）の仕事。
@@ -879,5 +890,13 @@ export function useSettings() {
     return persisted
   }, [])
 
-  return { settings, updateSetting, replaceSettings }
+  /**
+   * 別のタブが保存した 1 項目を、保存せずに取り込む（`storage` で追うとき用）。`updateSetting` で取り込むと、
+   * このタブの古い設定を丸ごと書き戻して、別のタブで変えたほかの項目を古い値へ戻してしまう
+   */
+  const adoptExternalSetting = useCallback(<K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    setSettings(prev => (prev[key] === value ? prev : { ...prev, [key]: value }))
+  }, [])
+
+  return { settings, updateSetting, replaceSettings, adoptExternalSetting }
 }

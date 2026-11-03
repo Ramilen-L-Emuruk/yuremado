@@ -62,7 +62,7 @@ import { useSeismoScope } from './hooks/useSeismoScope'
 import { useStationCoords } from './hooks/useStationCoords'
 import { useEarthquakes } from './hooks/useEarthquakes'
 import { useFetchThrottled } from './hooks/useFetchThrottled'
-import { PANEL_RATIO_MIN, useSettings } from './hooks/useSettings'
+import { PANEL_RATIO_MIN, SETTINGS_STORAGE_KEY, useSettings } from './hooks/useSettings'
 import { squareMapLayout } from './utils/squareMapLayout'
 import { useAlertTitle, resolveAlertTitle } from './hooks/useAlertTitle'
 import { useReloadSchedule } from './hooks/useReloadSchedule'
@@ -114,6 +114,11 @@ import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from '.
 import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS, type ReplayFetchPurpose } from './hooks/useReplayController'
 import { fetchDmdataReplayEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
 import { relayRestEndpoint, relayTokenStore } from './services/relayEndpoint'
+import {
+  browserUsageEnv, buildUsageReport, countUsage, flushUsage, markUsageConsentAnswered, setUsageCounting, syncInstallIdSafely,
+  USAGE_FLUSH_INTERVAL_MS, usageConsentAnswered, usageCounter, type UsageSettingsFlags, withUsageCount,
+} from './services/usageStats'
+import { UsageConsentDialog } from './components/UsageConsentDialog'
 import { useForecastKeyCheck } from './hooks/useForecastKey'
 import { relayRestClassifications, restSources } from './services/dmdataClassifications'
 import { dmdataKeyEndpoint } from './services/dmdataEndpoint'
@@ -177,7 +182,7 @@ function showQuakeNotification(n: QuakeNotification): Promise<void> {
 }
 
 export function App() {
-  const { settings, updateSetting, replaceSettings } = useSettings()
+  const { settings, updateSetting, replaceSettings, adoptExternalSetting } = useSettings()
   const [activeTab, setActiveTabState] = useState<TabId>(settings.defaultTab)
   // 津波タブを自動で見せた回数。増えるたびに津波カードのスクロールを先頭へ戻す
   // （増やす条件と理由は `requestAutoTab`）。
@@ -242,6 +247,7 @@ export function App() {
     if (settingsOpenRef.current === open) return
     settingsOpenRef.current = open
     setSettingsOpen(open)
+    if (open) countUsage('settings')
     recordReplayEvent({ type: 'overlay', overlay: 'settings', open, reason, subject: null })
   }, [])
   const setActiveTab = useCallback((tab: TabId) => {
@@ -961,6 +967,63 @@ export function App() {
   const forecastKeyToSend = forecastKeyStatus.valid ? settings.forecastKey.trim() : null
   const forecastKeyChecking = forecastKeyStatus.checking
   useEffect(() => { relayTokenStore.setForecastKey(forecastKeyToSend, forecastKeyChecking) }, [forecastKeyToSend, forecastKeyChecking])
+
+  // 使用状況データ（設計書 §6.6）。許可している間だけ一意の識別子を持ち、札を取るときに端末と設定の情報を添え、
+  // 操作の回数を数える。報告は札を取るたびに組み直すので、設定の使い方は ref で最新を読む
+  const usageFlagsRef = useRef<UsageSettingsFlags>({ apiKey: false, tts: false, sound: false, notify: false, seismo: false })
+  usageFlagsRef.current = {
+    apiKey: settings.dmdataApiKey !== '', tts: settings.voicevoxEnabled, sound: settings.soundEnabled,
+    notify: settings.notifyEnabled, seismo: settings.seismoEnabled,
+  }
+  const applyUsageEnabled = (enabled: boolean) => {
+    const install = syncInstallIdSafely(enabled)
+    relayTokenStore.setUsage(install, install === null ? null : () => buildUsageReport(install, usageFlagsRef.current, browserUsageEnv(__APP_VERSION__)))
+    setUsageCounting(install !== null)
+  }
+  // 最初の描画の前に 1 度だけ渡しておく。effect を待つと、先に走る中継の接続（useEarthquakes）が識別子の無い札を取ってから
+  // 繋ぎ直すことになる（同じ値を渡し直しても札は捨てないので、二重に呼ばれても害は無い）
+  const usageAppliedRef = useRef(false)
+  if (!usageAppliedRef.current) {
+    usageAppliedRef.current = true
+    applyUsageEnabled(settings.usageStatsEnabled)
+  }
+  useEffect(() => {
+    applyUsageEnabled(settings.usageStatsEnabled)
+    // applyUsageEnabled は ref と定数しか読まない
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.usageStatsEnabled])
+  // 別のタブ（ブラウザで開いたものとホーム画面から開いたもの）で切り替えたら追う。追わないと、古いタブが
+  // 許可を外した後も識別子を持ったまま送り、設定を保存したときに古い「オン」を書き戻す
+  const usageEnabledRef = useRef(settings.usageStatsEnabled)
+  usageEnabledRef.current = settings.usageStatsEnabled
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== SETTINGS_STORAGE_KEY || e.newValue === null) return
+      let other: unknown
+      try { other = (JSON.parse(e.newValue) as { usageStatsEnabled?: unknown }).usageStatsEnabled } catch { return }
+      if (typeof other === 'boolean' && other !== usageEnabledRef.current) adoptExternalSetting('usageStatsEnabled', other)
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [adoptExternalSetting])
+  useEffect(() => {
+    if (!settings.usageStatsEnabled) return
+    const flush = () => { void flushUsage(usageCounter, relayTokenStore) }
+    const timer = setInterval(flush, USAGE_FLUSH_INTERVAL_MS)
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush() }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [settings.usageStatsEnabled])
+  // 同意の窓。その端末でまだ答えていなければ 1 度だけ出す（答えた・閉じた印は USAGE_CONSENT_ASKED_KEY）
+  const [usageConsentOpen, setUsageConsentOpen] = useState(() => !usageConsentAnswered())
+  const answerUsageConsent = useCallback((allowed: boolean) => {
+    markUsageConsentAnswered()
+    if (allowed) updateSetting('usageStatsEnabled', true)
+    setUsageConsentOpen(false)
+  }, [updateSetting])
   const handleLiveEventWithNotify = useCallback((event: LiveEvent, meta?: LiveEventMeta) => {
     if (event.kind === 'quake' && !event.cancelled && !meta?.quakeHeldBack) pendingQuakeNotifyRef.current.push(event)
     handleLiveEvent(event, meta)
@@ -1102,6 +1165,8 @@ export function App() {
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     settings.notifyEnabled,
   ])
+  // 設定の窓のテストボタンは、押した回数を使用状況データに数える（許可している間だけ。→ `countUsage`）
+  const countedTestHandlers = useMemo(() => withUsageCount('test', testHandlers), [testHandlers])
   // IconNav の onTabChange。手動選択は必ず即時反映し、以後 TAB_HOLD_MS の間は自動切替に
   // 奪わせない（EEW の新規発報・レベルアップ・誤報取消だけはこれより強い）。
   // 表示中のタブをもう一度押した場合はタブ切替ではなく、パネルの折りたたみをトグルする
@@ -1112,6 +1177,7 @@ export function App() {
       return
     }
     log.info(`[tab] → ${tab} (手動選択)`)
+    countUsage(`tab:${tab}`)
     setActiveTabByUser(tab)
   }, [setActiveTabByUser])
 
@@ -2063,6 +2129,12 @@ export function App() {
     restorePreWindowTracking,
     loadReplayEvents,
   })
+  // 設定の窓からリプレイを始めた回数を使用状況データに数える（許可している間だけ）。診断アクセサ（下）からの開始は数えない
+  const replayStart = replay.start
+  const startReplayCounted = useCallback((...args: Parameters<typeof replayStart>) => {
+    countUsage('replay')
+    return replayStart(...args)
+  }, [replayStart])
 
   // 外からリプレイを操るための診断アクセサ（`__frameProfiler`・`__cameraUpdateSkip` 等と同じ流儀）。
   //
@@ -3068,6 +3140,7 @@ export function App() {
         </div>
 
         {/* 設定は窓（2026-10-27 ユーザー承認）。閉じている間も中身を外さずに隠す（→ `SettingsDialog`） */}
+        {usageConsentOpen && <UsageConsentDialog onAnswer={answerUsageConsent} />}
         <SettingsDialog open={settingsOpen} onClose={closeSettings} returnFocusRef={settingsButtonRef}>
             <ErrorBoundary variant="region" label={TAB_LABELS.settings}>
               <SettingsTab
@@ -3082,13 +3155,13 @@ export function App() {
                 relayUpstream={relayUpstream}
                 keyForecastStatus={keyForecastStatus}
                 dmdataClassifications={dmdataClassifications}
-                onTest={testHandlers}
+                onTest={countedTestHandlers}
                 kyoshinTimeOffset={replayTimeOffset}
                 kyoshinInputDateTime={kyoshinInputDateTime}
                 onSetKyoshinInputDateTime={setKyoshinInputDateTime}
                 replayIsFetching={replay.isFetching}
                 replayError={replay.error}
-                onStartReplay={replay.start}
+                onStartReplay={startReplayCounted}
                 onStopReplay={replay.stop}
                 historicalArchives={historicalArchives}
                 historicalArchivesLoading={historicalArchivesLoading}

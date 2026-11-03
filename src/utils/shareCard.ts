@@ -1,6 +1,7 @@
 import type { MapCaptureResult } from '../components/Map/gl/captureMap'
 import { log } from './logger'
 import { readableTextColor } from './contrast'
+import { countUsage } from '../services/usageStats'
 import { heatmapPeriodText, type LegendBlock, type LegendChip } from '../components/MapLegend/legendBlocks'
 
 // 共有カードの合成と書き出し。地図の撮影は components/Map/gl/captureMap.ts の担当で、
@@ -720,6 +721,8 @@ export function currentAppUrl(): string {
  * 上限に達したらボタンだけ戻す——シートが開いている可能性があるので、保存へは落とさない。
  */
 export async function shareOrDownloadImage(blob: Blob, filename: string, text: string): Promise<ShareOutcome> {
+  // 共有カードを使った回数（使用状況データ。許可している間だけ数える）
+  countUsage('share')
   const file = new File([blob], filename, { type: blob.type })
   const data: ShareData = { files: [file], text }
   if (navigator.canShare?.(data)) {
