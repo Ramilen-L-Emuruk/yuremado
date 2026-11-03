@@ -5,6 +5,8 @@ import { currentAppUpdater, type ManualCheckResult } from '../../services/appUpd
 import type { AppSettings, TtsUnreceivedDetail } from '../../hooks/useSettings'
 import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX, devInjectedKeys } from '../../hooks/useSettings'
 import { Toggle } from '../Toggle'
+import { PrefecturePicker } from './PrefecturePicker'
+import { pushSupported, requestPushPermission } from '../../services/pushSubscription'
 import { TELEGRAM_TEXT_BLOCK_KEYS, TELEGRAM_BOILERPLATE_KEYS, type TelegramTextBlockKey, type TelegramTextBlocks, type TelegramBoilerplateKey, type TelegramBoilerplateReads } from '../../utils/ttsText'
 import type { ConnectionStatus } from '../../types/earthquake'
 import { forecastConnectionLabel, telegramConnectionLabel } from './connectionLabel'
@@ -1467,6 +1469,28 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <Row label="南海トラフ・後発地震の通知" description="南海トラフ地震臨時情報・北海道・三陸沖後発地震注意情報と、臨時の解説情報を受けたときに通知します">
               <Toggle checked={settings.notifyNankai} onChange={v => onUpdate('notifyNankai', v)} />
             </Row>
+            {/* 地域の絞りは画面内の通知にもプッシュ通知にも効く（2026-11-03 ユーザー選択「両方に掛ける (Recommended)」。
+                名前と説明は 2026-11-03 ユーザー選択「通知する地域」） */}
+            <Row label="通知する地域" description="選んだ都道府県に関わる情報だけを通知します。地震情報は震度を観測した都道府県、緊急地震速報は対象の地域、津波は予報区で見ます。選ばなければ全国の情報を通知します。南海トラフ・後発地震・地震回数など、地域を持たない情報は絞りません">
+              <PrefecturePicker value={settings.notifyPrefectures} onChange={v => onUpdate('notifyPrefectures', v)} />
+            </Row>
+            {/* プッシュ通知（docs/relay-server-design.md §6.7）。購読を扱えないブラウザ（安全な接続でない・Push API が無い）では出さない。
+                名前と説明は 2026-11-03 ユーザー選択「プッシュ通知」 */}
+            {pushSupported() && (
+              <Row label="プッシュ通知" description="アプリを閉じているときや、ほかのアプリを使っているときも通知を受け取ります。オンにすると、この端末の通知の届け先と通知の設定を配信サーバーに登録します">
+                {/* 入れるときは、押した操作の中で最初に許可を求める（Safari・Firefox は操作から離れた許可の要求を尋ねない）。
+                    許可されなければ入れない */}
+                <Toggle
+                  checked={settings.pushNotifyEnabled}
+                  onChange={v => {
+                    if (!v) { onUpdate('pushNotifyEnabled', false); return }
+                    void requestPushPermission()
+                      .then(ok => { if (ok) onUpdate('pushNotifyEnabled', true) })
+                      .catch((err: unknown) => log.warn('[push] 通知の許可を求められませんでした', err))
+                  }}
+                />
+              </Row>
+            )}
           </>
         )}
         <Row label="通知許可" description="ブラウザの通知権限を確認・許可します">

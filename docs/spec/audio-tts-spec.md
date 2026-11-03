@@ -5418,6 +5418,7 @@ A の未入電を読みながら B の一覧を開く。
   - `settings.notifyDetection` — 強震モニタ揺れ検知時のブラウザ通知 ON/OFF
   - `settings.notifyNankai` — 臨時情報・後発地震注意情報・臨時の解説情報のブラウザ通知 ON/OFF（既定オン）
 - `settings.notifyQuake` と `settings.notifyMinScale` — 地震情報の通知のオンオフと最低震度。長周期地震動・推計震度分布図・地震回数に関する情報の通知もこのオンオフに従う。どの通知も、まとめて止める `settings.notifyEnabled` がオフなら出さない（判定は `utils/notificationGate.ts`）
+- `settings.notifyPrefectures` — 「通知する地域」。選んだ都道府県に関わる報だけを通知する（空なら全国。県の読み方と、絞らない情報は [`settings-pwa-spec.md`](settings-pwa-spec.md) §2 の通知の補足）
 - **読み上げの詳しさは 5 項目**（既定はすべて「この設定を入れる前の挙動」。§4「読み上げの詳しさ」と
   上記「気象庁が書いた文は最下位の層で読む」）:
   - `settings.ttsReadHypocenterDetail` — 震源の深さ・規模を読む

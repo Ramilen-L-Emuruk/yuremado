@@ -335,3 +335,24 @@ describe('使用状況データの送信の許可', () => {
     expect(r.ok && r.settings.usageStatsEnabled).toBe(true)
   })
 })
+
+// プッシュ通知の購読も運ばない（2026-11-03 ユーザー選択「設定で入れたときだけ (Recommended)」）
+describe('プッシュ通知の購読', () => {
+  const on: AppSettings = { ...DEFAULTS, pushNotifyEnabled: true }
+  it('書き出したファイルには入れない（いつもオフで書く）', () => {
+    expect(buildSettingsFile(on, NO_KEYS).settings.pushNotifyEnabled).toBe(false)
+  })
+  it('安全弁: オンと書かれたファイルを読み込んでも、購読していない端末はオフのまま', () => {
+    const file = { ...buildSettingsFile(DEFAULTS, NO_KEYS), settings: { ...DEFAULTS, pushNotifyEnabled: true } }
+    const r = parseSettingsFile(file, DEFAULTS)
+    expect(r.ok && r.settings.pushNotifyEnabled).toBe(false)
+  })
+  it('対照: 購読している端末は、オフと書かれたファイルを読み込んでもオンのまま', () => {
+    const r = parseSettingsFile(buildSettingsFile(DEFAULTS, NO_KEYS), on)
+    expect(r.ok && r.settings.pushNotifyEnabled).toBe(true)
+  })
+  it('通知する地域は運ぶ（端末に結びつかない設定）', () => {
+    const r = parseSettingsFile(buildSettingsFile({ ...DEFAULTS, notifyPrefectures: ['13', '16'] }, NO_KEYS), DEFAULTS)
+    expect(r.ok && r.settings.notifyPrefectures).toEqual(['13', '16'])
+  })
+})

@@ -27,7 +27,6 @@ import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, tr
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
 import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, MAX_LPGM_RETRACTIONS, recordLpgmRetractions, type LpgmRetraction } from '../utils/lpgmRetraction'
-import { isObservedLpgmClass } from '../utils/lpgm'
 import { withBorrowedFromTsunami, borrowFromTsunamiIntoCards } from '../utils/borrowFromTsunami'
 import { loadStationCoords, onStationCoordsLoaded, areaPrefIndexOf, getAreaPrefIndexCache } from '../utils/stationCoords'
 import type { AreaPrefIndex } from '../utils/quakePoints'
@@ -50,6 +49,10 @@ import { isAbortedByCaller } from '../utils/fetchWithTimeout'
 import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
 // テストデータは押されてから読む（静的に取り込まない理由・失敗したときの扱い・先読みの
 // 段取りは `utils/testDataLoader.ts` にまとめてある）。
+import {
+  cancelOverOtherUnit, decideDispatch as decideBandDispatch, earthquakeCountBandDecision, kohatsuBandDecision,
+  lpgmNotifiable, nankaiBandDecision, nankaiCommentaryBandDecision, noteConveyedCancel as noteBandConveyedCancel,
+} from '../utils/specialInfoBands'
 import { loadTestTelegramScripts } from '../utils/testDataLoader'
 import { buildTestTelegramEntries, type TestTelegramScript } from '../utils/testTelegrams'
 
@@ -98,27 +101,6 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
   }
 }
 
-/**
- * lpgm が `onLiveEvent`（音・読み上げ・タブ移動）の対象になるか。
- *
- * - **発表**は最大階級 0 の報も含めてすべて（2026-10-30 ユーザー選択「階級 1 以上と同じ型
- *   (Recommended)」・#1201。それまでは階級 1 以上だけで、最大階級 0 の報は音・読み上げ・通知・
- *   タイトル・自動で開くのどれも出さなかった）。パーサーは 0〜4 以外を捨てるので、ここでの値域の確かめは
- *   型の効かない経路（シナリオの手書き JSON など）から壊れた値が来たときのための保険
- * - **取消**は常に（画面に出していない地震への取消でも伝える。2026-10-22 ユーザー選択「地震情報に揃えて伝える
- *   (Recommended)」で 2026-10-15 の「表示中を消した時だけ（推奨）」を覆した）。同じ取消の 2 通目は
- *   呼び出し側（`shouldDispatch`）が止める
- *
- * **他の 5 種別（nankai 等）と違い、これは「反映されたか」と一致しない。** あちらは
- * `applyXxx` が期限切れ等で棄却すると `lpgmByEventId` 相当の state 自体を書き換えないが、
- * lpgm は取消なら削除・それ以外なら必ず追加する形で **`lpgmByEventId` を常に書き換える**
- * （呼び出し側の `setState` を参照）。ここが偽でも画面（長周期一覧・バッジ）は更新されうる
- * ので、記録の理由はどちらも `notApplied`（＝反映されなかった）ではなく
- * `notDispatched`（＝音読み上げの対象外と決めている）にする（3 巡目レビューで指摘）。
- */
-function lpgmNotifiable(lpgm: JMALpgm): boolean {
-  return lpgm.cancelled || isObservedLpgmClass(lpgm.maxClass)
-}
 
 // 電文ログの保持は経路ごとに分ける（ライブは 24 時間・テストと再生は件数。→ `utils/telegramLogBuffer.ts`）
 /** 何も届かない間に 24 時間より古いライブの行を捨てる間隔（ミリ秒）。 */
@@ -947,44 +929,27 @@ export function useEarthquakes(
     kind: string, telegram: { id: string; time: string; cancelled: boolean }, applied: boolean, silent: boolean | undefined,
     otherUnitShown: boolean,
   ): 'dispatch' | ReplayTelegramSkip => {
-    if (!telegram.cancelled) return !applied ? 'notApplied' : silent ? 'silentReplayInit' : 'dispatch'
-    const duplicate = !noteConveyedCancel(kind, telegram)
-    if (silent) return 'silentReplayInit'
-    if (otherUnitShown) {
-      log.info(`[${kind}] 別の情報単位の帯を出しているので、古い単位への取消は音と読み上げを出さない id=${telegram.id}`)
-      return 'notApplied'
+    // 判定は中継のプッシュ通知と共用する（→ `utils/specialInfoBands.ts` の `decideDispatch`）。ここは記録だけを足す
+    const decision = decideBandDispatch(conveyedCancelsRef.current, kind, telegram, applied, silent, otherUnitShown)
+    if (telegram.cancelled && !silent) {
+      if (otherUnitShown) log.info(`[${kind}] 別の情報単位の帯を出しているので、古い単位への取消は音と読み上げを出さない id=${telegram.id}`)
+      else if (decision === 'notDispatched') log.info(`[${kind}] 既に伝えた取消なので音と読み上げを出さない id=${telegram.id}`)
+      else if (!applied) log.info(`[${kind}] 画面に出していない情報への取消も伝えます id=${telegram.id}`)
     }
-    if (duplicate) {
-      log.info(`[${kind}] 既に伝えた取消なので音と読み上げを出さない id=${telegram.id}`)
-      return 'notDispatched'
-    }
-    if (!applied) log.info(`[${kind}] 画面に出していない情報への取消も伝えます id=${telegram.id}`)
-    return 'dispatch'
+    return decision
   }
   /**
    * 取消を「伝えた」に数える。**初めてなら真**（もう数えてあれば偽＝二重配信）。起動時の履歴で当てた取消も
    * ここを通す —— 通さないと、同じ取消が後からライブで届いたとき（再接続・重複配信）に鳴り直す。
    */
-  const noteConveyedCancel = (kind: string, telegram: { id: string; time: string }): boolean => {
-    const key = `${kind}:${telegram.id}|${telegram.time}`
-    if (conveyedCancelsRef.current.has(key)) return false
-    // 取消は年に数通しか無いが、上限は置く（長く開いたままの端末で増え続けないように）
-    if (conveyedCancelsRef.current.size >= 500) conveyedCancelsRef.current.clear()
-    conveyedCancelsRef.current.add(key)
-    return true
-  }
+  const noteConveyedCancel = (kind: string, telegram: { id: string; time: string }): boolean =>
+    noteBandConveyedCancel(conveyedCancelsRef.current, kind, telegram)
   /** 履歴の長周期を記録する理由（流さない経路。取消は「伝えた」に数える。→ {@link decideDispatch}）。 */
   const silentLpgmSkip = (lpgm: JMALpgm): ReplayTelegramSkip => {
     if (!lpgmNotifiable(lpgm)) return 'notDispatched'
     const decision = decideDispatch('lpgm', lpgm, true, true, false)
     return decision === 'dispatch' ? 'silentReplayInit' : decision
   }
-  /**
-   * 臨時情報・後発地震注意情報の取消が、**いま出ている別の情報単位の帯の下で届いた古い取消か**。帯へ当てる前に見る
-   * （当てた後では、消したのか元から別だったのかが分からない）。判定の形は `applyNankai`・`applyKohatsu` の照合と同じ。
-   */
-  const cancelOverOtherUnit = (shownEventId: string | null, telegram: { eventId: string; cancelled: boolean; retracted?: boolean }): boolean =>
-    telegram.cancelled && telegram.retracted === true && shownEventId !== null && shownEventId !== telegram.eventId
   // 受理した EEW の報番号（キーは `eewEventKey`）。古い報の判定に使う。
   //
   // **`stateRef` では判定できない。** あれはレンダー時にしか進まないが、キューのディスパッチャは
@@ -1193,7 +1158,8 @@ export function useEarthquakes(
     //
     // 取消は「その電文が指す情報単位」を取り消すので、対象と同じ識別情報を持つ（電文解説資料
     // Ⅰ.別紙ウ）。遅れて届いた古い取消が新しい段階の帯を消さないよう、そちらだけ照合する。
-    if (nankai.retracted && shownNankaiEventIdRef.current !== nankai.eventId) {
+    // 判定は中継のプッシュ通知と共用する（→ `nankaiBandDecision`）
+    if (!nankaiBandDecision(shownNankaiEventIdRef.current, nankai).apply) {
       // 表示していない場合（記憶が空）もここへ来る。帯は触らない（音と読み上げは呼び出し側が起こす）。
       log.info(shownNankaiEventIdRef.current === null
         ? `[nankai] 表示していない情報単位への取消のため帯は触りません received=${nankai.eventId}`
@@ -1218,6 +1184,8 @@ export function useEarthquakes(
         kohatsuExpireTimerRef.current = undefined
       }
     }
+    // 判定は中継のプッシュ通知と共用する（→ `kohatsuBandDecision`）
+    const kohatsuDecision = kohatsuBandDecision(shownKohatsuEventIdRef.current, kohatsu, getTimeRef.current().getTime())
     if (!kohatsu.cancelled) {
       const expireMs = new Date(kohatsu.expireAt).getTime() - getTimeRef.current().getTime()
       // **期限切れは出さない。** かつては取得側（`fetchDmdataKohatsu`）が期限切れを除いて
@@ -1227,11 +1195,10 @@ export function useEarthquakes(
       //
       // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない
       // （解説情報・地震回数・お知らせと同じ方針）。
-      if (!Number.isFinite(expireMs)) {
-        log.warn('[data] 後発地震注意情報の期限を計算できません', kohatsu.expireAt)
+      if (!kohatsuDecision.apply) {
+        if (kohatsuDecision.reason === 'badExpire') log.warn('[data] 後発地震注意情報の期限を計算できません', kohatsu.expireAt)
         return false
       }
-      if (expireMs <= 0) return false
 
       clearExpireTimer()
       kohatsuExpireTimerRef.current = window.setTimeout(() => {
@@ -1245,7 +1212,7 @@ export function useEarthquakes(
     }
     // 照合は取消だけ（理由は `applyNankai`）。後発地震に「調査終了」相当の段階は無いが、
     // 判定の形を揃えておく ―― 片方だけ違う規則にすると、次に触る人がどちらが正しいか判らない。
-    if (kohatsu.retracted && shownKohatsuEventIdRef.current !== kohatsu.eventId) {
+    if (!kohatsuDecision.apply) {
       // 表示していない場合もここへ来る（理由は `applyNankai` の同じ箇所に同じ）
       log.info(shownKohatsuEventIdRef.current === null
         ? `[kohatsu] 表示していない情報単位への取消のため帯は触りません received=${kohatsu.eventId}`
@@ -1274,7 +1241,8 @@ export function useEarthquakes(
       // 最新の情報番号の値」と定められている（電文解説資料 Ⅰ.別紙ウ 2.）ので、帯に出している号
       // （＝最新号）と一致する。古い号を指す取消だけが弾かれる ―― それがここで防ぎたいもの。
       const shown = shownCommentaryIdRef.current
-      if (shown !== commentary.id) {
+      // 判定は中継のプッシュ通知と共用する（→ `nankaiCommentaryBandDecision`）
+      if (!nankaiCommentaryBandDecision(shown, commentary, getTimeRef.current().getTime()).apply) {
         log.info(`[nankaiCommentary] 別の号への取消のため帯を残します received=${commentary.id} shown=${shown}`)
         return false
       }
@@ -1291,12 +1259,12 @@ export function useEarthquakes(
 
     const remainMs = new Date(commentary.expireAt).getTime() - getTimeRef.current().getTime()
     // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない。前者はパーサや
-    // 時刻シフト（testScenarioReplay）のバグを示すため記録を残す。
-    if (!Number.isFinite(remainMs)) {
-      log.warn('[data] 南海トラフ関連解説情報の期限を計算できません', commentary.expireAt)
+    // 時刻シフト（testScenarioReplay）のバグを示すため記録を残す。判定は中継と共用する（→ `nankaiCommentaryBandDecision`）
+    const commentaryDecision = nankaiCommentaryBandDecision(shownCommentaryIdRef.current, commentary, getTimeRef.current().getTime())
+    if (!commentaryDecision.apply) {
+      if (commentaryDecision.reason === 'badExpire') log.warn('[data] 南海トラフ関連解説情報の期限を計算できません', commentary.expireAt)
       return false
     }
-    if (remainMs <= 0) return false
 
     if (nankaiCommentaryExpireTimerRef.current !== undefined) {
       window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
@@ -1407,10 +1375,12 @@ export function useEarthquakes(
    * 「-1 を「発表なし」に (推奨)」）。
    */
   const applyEarthquakeCount = useCallback((count: JMAEarthquakeCount): boolean => {
+    // 判定は中継のプッシュ通知と共用する（→ `earthquakeCountBandDecision`）
+    const countDecision = earthquakeCountBandDecision(shownEarthquakeCountEventIdRef.current, count, getTimeRef.current().getTime())
     if (count.cancelled) {
       // 取消は id ではなく eventId で照合する。回数情報は同じ群発について報を重ねるので、
       // 取消が指すのは「その群発について直前に出した報」＝いま出している報になる。
-      if (shownEarthquakeCountEventIdRef.current !== count.eventId) {
+      if (!countDecision.apply) {
         log.info(`[earthquakeCount] 別の群発への取消のため帯を残します received=${count.eventId} shown=${shownEarthquakeCountEventIdRef.current}`)
         return false
       }
@@ -1424,15 +1394,12 @@ export function useEarthquakes(
       // 取消がどこへも流れず、直前に読み上げた回数が訂正されないまま残る。
       return true
     }
-    if (count.items.length === 0 && !count.body) return false
-
-    const remainMs = new Date(count.expireAt).getTime() - getTimeRef.current().getTime()
-    // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない（解説情報と同じ）。
-    if (!Number.isFinite(remainMs)) {
-      log.warn('[data] 地震回数に関する情報の期限を計算できません', count.expireAt)
+    // 回数も本文も無い報・期限切れは出さない。「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない（解説情報と同じ）
+    if (!countDecision.apply) {
+      if (countDecision.reason === 'badExpire') log.warn('[data] 地震回数に関する情報の期限を計算できません', count.expireAt)
       return false
     }
-    if (remainMs <= 0) return false
+    const remainMs = new Date(count.expireAt).getTime() - getTimeRef.current().getTime()
 
     if (earthquakeCountExpireTimerRef.current !== undefined) {
       window.clearTimeout(earthquakeCountExpireTimerRef.current)

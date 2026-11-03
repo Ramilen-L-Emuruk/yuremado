@@ -17,6 +17,7 @@ import { MapDataStatus } from './components/MapDataStatus'
 import { MapRenderStatus } from './components/MapRenderStatus'
 import { ShareCardButton } from './components/ShareCardButton'
 import { useShareCard } from './hooks/useShareCard'
+import { usePushSubscription } from './hooks/usePushSubscription'
 import { SeismoLinkStatus } from './components/SeismoLinkStatus'
 import { SeismoOverlay } from './components/SeismoOverlay'
 import { useSeismoStation, type SeismoStationState } from './hooks/useSeismoStation'
@@ -137,7 +138,8 @@ import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/
 import { isLiveFeedHalted } from './utils/connectionStatus'
 import { ROOT_FRAME_CLASS } from './rootFrame'
 import { SHARE_CARD_FORMATS } from './utils/shareCard'
-import { effectiveNotifyMinScale } from './utils/notificationGate'
+import { effectiveNotifyMinScale, notificationRegionAllowed } from './utils/notificationGate'
+import { quakePrefectures } from './utils/notificationRegions'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
@@ -183,6 +185,8 @@ function showQuakeNotification(n: QuakeNotification): Promise<void> {
 
 export function App() {
   const { settings, updateSetting, replaceSettings, adoptExternalSetting } = useSettings()
+  // プッシュ通知の購読を設定に合わせる（docs/relay-server-design.md §6.7）
+  usePushSubscription(settings, updateSetting)
   const [activeTab, setActiveTabState] = useState<TabId>(settings.defaultTab)
   // 津波タブを自動で見せた回数。増えるたびに津波カードのスクロールを先頭へ戻す
   // （増やす条件と理由は `requestAutoTab`）。
@@ -993,15 +997,23 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.usageStatsEnabled])
   // 別のタブ（ブラウザで開いたものとホーム画面から開いたもの）で切り替えたら追う。追わないと、古いタブが
-  // 許可を外した後も識別子を持ったまま送り、設定を保存したときに古い「オン」を書き戻す
+  // 許可を外した後も識別子を持ったまま送り、設定を保存したときに古い「オン」を書き戻す。
+  // プッシュ通知の購読も同じ（古いタブが「オン」を書き戻すと、消した購読をそのタブが作り直す）
   const usageEnabledRef = useRef(settings.usageStatsEnabled)
   usageEnabledRef.current = settings.usageStatsEnabled
+  const pushEnabledRef = useRef(settings.pushNotifyEnabled)
+  pushEnabledRef.current = settings.pushNotifyEnabled
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key !== SETTINGS_STORAGE_KEY || e.newValue === null) return
-      let other: unknown
-      try { other = (JSON.parse(e.newValue) as { usageStatsEnabled?: unknown }).usageStatsEnabled } catch { return }
-      if (typeof other === 'boolean' && other !== usageEnabledRef.current) adoptExternalSetting('usageStatsEnabled', other)
+      let other: { usageStatsEnabled?: unknown; pushNotifyEnabled?: unknown }
+      try { other = JSON.parse(e.newValue) as typeof other } catch { return }
+      if (typeof other.usageStatsEnabled === 'boolean' && other.usageStatsEnabled !== usageEnabledRef.current) {
+        adoptExternalSetting('usageStatsEnabled', other.usageStatsEnabled)
+      }
+      if (typeof other.pushNotifyEnabled === 'boolean' && other.pushNotifyEnabled !== pushEnabledRef.current) {
+        adoptExternalSetting('pushNotifyEnabled', other.pushNotifyEnabled)
+      }
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
@@ -1443,6 +1455,9 @@ export function App() {
   // 通知しないとき（まとめて止めている・地震情報の通知を切っている）は -1（`effectiveNotifyMinScale`）
   const notifyMinScaleRef = useRef(effectiveNotifyMinScale(settings))
   notifyMinScaleRef.current = effectiveNotifyMinScale(settings)
+  // 設定「通知する地域」（docs/relay-server-design.md §6.7）。地域を選んでいれば、その県で震度を観測した地震だけ通知する
+  const notifyPrefecturesRef = useRef(settings.notifyPrefectures)
+  notifyPrefecturesRef.current = settings.notifyPrefectures
   useEffect(() => {
     const pending = pendingQuakeNotifyRef.current
     if (pending.length === 0) return
@@ -1460,6 +1475,11 @@ export function App() {
       log.debug(`[notify] 地震情報の報からカードを引けず、通知を考えない（${incoming.id}・${incoming.issue.type}・最大震度 ${incoming.earthquake.maxScale}）`)
     }
     for (const { card, reportKeys } of cards) {
+      // 選んだ地域で震度を観測していない地震は通知しない。覚えもしない（続報で選んだ県が加われば、そのとき初めて通知する）
+      if (!notificationRegionAllowed({ notifyPrefectures: notifyPrefecturesRef.current }, quakePrefectures(card))) {
+        log.debug(`[notify] 選んだ地域で震度を観測していない地震なので通知しない（${card.eventKey ?? card.id}）`)
+        continue
+      }
       // **通知は補助の経路なので、ここで投げても画面を落とさない**（App のレンダー・effect の例外は
       // 根の受け皿でしか拾えず、画面全体が消える）。1 件が投げても残りの地震は見る。失敗は記録に残す。
       try {

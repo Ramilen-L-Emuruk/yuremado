@@ -32,3 +32,12 @@ export function notificationAllowed(settings: NotificationSettings, kind: Notifi
 export function effectiveNotifyMinScale(settings: NotificationSettings): number {
   return notificationAllowed(settings, 'quake') ? settings.notifyMinScale : -1
 }
+
+/**
+ * 通知が関わる都道府県（2 桁のコード）が、設定「通知する地域」に入っているか。地域を選んでいなければ全国。
+ * `null` は地域で絞らない通知（南海トラフなど）。中継のプッシュ通知も同じ判定をする（docs/relay-server-design.md §6.7）。
+ */
+export function notificationRegionAllowed(settings: Pick<AppSettings, 'notifyPrefectures'>, prefectures: readonly string[] | null): boolean {
+  if (prefectures === null || settings.notifyPrefectures.length === 0) return true
+  return prefectures.some(p => settings.notifyPrefectures.includes(p))
+}

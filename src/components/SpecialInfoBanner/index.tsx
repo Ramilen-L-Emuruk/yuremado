@@ -4,7 +4,8 @@ import type {
   EarthquakeInfoMeta, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount,
   TelegramOperationStatus,
 } from '../../types/earthquake'
-import { EarthquakeCountDetail, earthquakeCountHeadline } from './EarthquakeCountDetail'
+import { EarthquakeCountDetail } from './EarthquakeCountDetail'
+import { earthquakeCountHeadline } from '../../utils/earthquakeCountSummary'
 import type { SpecialInfoBanners } from './useSpecialInfoBanners'
 
 interface Props {
