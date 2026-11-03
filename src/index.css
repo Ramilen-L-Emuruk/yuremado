@@ -371,6 +371,29 @@ body {
   .update-fade-bg { animation-timing-function: steps(1, end); }
 }
 
+/* 1 行に収まらない文を流す（→ components/Marquee.tsx）。同じ文を 2 つ並べ、1 周の距離
+   （--marquee-shift。文の幅＋間）だけ進めて頭へ戻す。速さは部品が animation-duration で決める。
+   transform だけを動かすので、描き直しは合成の段で済む。 */
+@keyframes marquee-run {
+  from { transform: translateX(0); }
+  to { transform: translateX(calc(-1 * var(--marquee-shift))); }
+}
+.marquee-run {
+  display: inline-block;
+  animation: marquee-run linear infinite;
+}
+/* 動きを減らす設定では流さず、1 つ目だけを残して末尾を「…」で切る */
+@media (prefers-reduced-motion: reduce) {
+  .marquee-run {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    animation: none;
+  }
+  .marquee-run > :nth-child(2) { display: none; }
+  .marquee-run > :first-child { display: inline; }
+}
+
 /* 地震タブの押せる所（2026-11-03 選択「乗せたら明るく・押すと沈む (Recommended)」）。新しい印や文言は足さない。
    震度の枠（quake-tile）は、乗せた部分（quake-tile-part：震度の部分か長周期の札）だけを少し明るくする。枠ごと明るくすると、
    震度に乗せただけで長周期の札まで光る。押している間は、押した部分を含む塊を少し縮めて沈ませる（札を押したら札だけ）。
