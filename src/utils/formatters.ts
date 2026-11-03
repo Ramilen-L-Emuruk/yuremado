@@ -208,7 +208,7 @@ export function formatTimeMin(isoString: string): string | null {
   return `${h}:${m}`
 }
 
-/** 「3:12」「15:42」（時は詰め、分は 2 桁）。中継が見ていない区間の帯と、中継が切れた時刻に使う */
+/** 「3:12」「15:42」（時は詰め、分は 2 桁）。中継が切れた時刻に使う */
 export function formatHourMinute(d: Date): string {
   return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`
 }

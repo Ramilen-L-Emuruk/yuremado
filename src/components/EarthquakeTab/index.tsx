@@ -60,11 +60,6 @@ interface Props {
    */
   fetchThrottled: boolean
   /**
-   * 中継が見ていない区間の帯の文（1 区間 1 行。→ `utils/relayGapNotice.ts`）。照合が済めば消える。
-   * **欠けているかもしれないので損失の色で出す**（2026-10-31 ユーザー選択の説明「取りこぼしの帯と同じ場所・同じ色」）
-   */
-  relayGapNotices: readonly string[]
-  /**
    * 鍵の入れ直しの案内を閉じる。案内を出さないときは null（→ `utils/telegramLoss.ts` の `KEY_REENTRY_NOTICE`）
    */
   onDismissKeyReentry: (() => void) | null
@@ -149,7 +144,7 @@ interface Notice { text: string; tone: 'loss' | 'info'; onClose?: () => void }
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, relayGapNotices, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, internationalTsunamis, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, estimatedIntensities, internationalTsunamis, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 寄せる相手と寄せ直す合図は `quakeCardScrollTarget`、寄せ方は共有のフック（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。
@@ -187,7 +182,6 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
     formatRateLimitedNotice(historyLoss),
     loadMoreFailed ? HISTORY_LOAD_MORE_FAILED_NOTICE : null,
     reconnectGapLoss ? RECONNECT_GAP_LOSS_NOTICE : null,
-    ...relayGapNotices,
   ].filter((t): t is string => t !== null).map(text => ({ text, tone: 'loss' as const }))
   // **取得に失敗しても、カードがあれば一覧は残す**（2026-10-21 ユーザー承認「直す (Recommended)」。
   // カードがあれば一覧を残し、失敗は既存の帯で。文言は足さない）。起動時の履歴より先に、または失敗の後に

@@ -1817,7 +1817,7 @@ npm スクリプトと生成・計測スクリプトの一覧（いつ走らせ�
 - 地図は MapLibre GL JS（`JapanMapGL`）に一本化。`MapView` が App と地図実装の間の薄いラッパー。旧 Leaflet 版 JapanMap とエンジン切替フラグは F7 で撤去済み。
 - 地図のモード（`JapanMapGL` の `mode`）: `quake`（地震）／`tsunami`（津波海岸線）／`kyoshin`（リアルタイム震度・予報円）／`catalog`（長期震源カタログの点群）。
 - 生成データ（`public/data/*.json`）は座標が大きいため遅延読込（初回利用時に一度だけ fetch しキャッシュ）。  
-  地図は常時表示のため、地図が使うもの（`prefectures.json` / `subregions.json` / `station-coords.json` / `tsunami-zones.json` / `active-faults.json` / `plate-boundaries.json` / `tsunami-obs-coords.json`）は表示モードに関わらず地図の初回表示時にまとめて要求する。実地震テストシナリオの本体だけは再生時に取得する。
+  地図は常時表示のため、地図が使うもの（`prefectures.json` / `subregions.json` / `station-coords.json` / `tsunami-zones.json` / `active-faults.json` / `plate-boundaries.json` / `tsunami-obs-coords.json`）は表示モードに関わらず地図の初回表示時にまとめて要求する。
 
 ## コード整合性チェックポイント
 

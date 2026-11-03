@@ -58,7 +58,6 @@ async function renderTab(opts: {
   loadMoreFailed?: boolean
   reconnectGapLoss?: boolean
   fetchThrottled?: boolean
-  relayGapNotices?: readonly string[]
   onDismissKeyReentry?: (() => void) | null
   error?: string | null
 }) {
@@ -81,7 +80,6 @@ async function renderTab(opts: {
       loadMoreFailed={opts.loadMoreFailed ?? false}
       reconnectGapLoss={opts.reconnectGapLoss ?? false}
       fetchThrottled={opts.fetchThrottled ?? false}
-      relayGapNotices={opts.relayGapNotices ?? []}
       onDismissKeyReentry={opts.onDismissKeyReentry ?? null}
       lpgmByEventId={new Map()}
       updateMarks={new Map()}
@@ -284,25 +282,9 @@ describe('取得制限中の帯', () => {
   })
 })
 
-// 中継が見ていない区間（2026-10-31 ユーザー選択の文面）と、鍵の入れ直しの案内（同日）
-describe('見ていない区間の帯と鍵の入れ直しの案内', () => {
-  const GAP = '10/31 3:12〜3:40 の地震・津波の電文が欠けている可能性（照合中）'
+// 鍵の入れ直しの案内（2026-10-31 ユーザー選択の文面）
+describe('鍵の入れ直しの案内', () => {
   const KEY = '予報を受けるには、設定で API キーを入れ直してください（アドレスが変わったため引き継いでいません）'
-
-  // 正: 見ていない区間は 1 区間 1 行で、取りこぼしと同じ色で出す
-  it('正: 見ていない区間を取りこぼしの帯と同じ色で出す', async () => {
-    await renderTab({ relayGapNotices: [GAP] })
-
-    const band = screen.getByText(GAP).closest('div.rounded-lg')
-    expect(band?.className).toContain('amber')
-  })
-
-  // 対照: 照合が済んで区間が無くなれば帯も無い
-  it('対照: 区間が無ければ出さない', async () => {
-    await renderTab({})
-
-    expect(screen.queryByText(/欠けている可能性/)).toBeNull()
-  })
 
   // 正: 案内は青で、［×］で閉じられる
   it('正: 鍵の入れ直しの案内を青で出し、［×］で閉じる', async () => {
@@ -317,7 +299,7 @@ describe('見ていない区間の帯と鍵の入れ直しの案内', () => {
 
   // 安全弁: 案内を出さないときは閉じるボタンも無い（他の帯には閉じるボタンを付けない）
   it('安全弁: 案内を出さないときは閉じるボタンも出さない', async () => {
-    await renderTab({ relayGapNotices: [GAP], fetchThrottled: true })
+    await renderTab({ fetchThrottled: true })
 
     expect(screen.queryByText(KEY)).toBeNull()
     expect(screen.queryByRole('button', { name: '閉じる' })).toBeNull()
@@ -325,18 +307,15 @@ describe('見ていない区間の帯と鍵の入れ直しの案内', () => {
 })
 
 // 取得がまるごと失敗してカードが 0 件の全画面でも、鍵の入れ直しの案内は出す（中継に繋がらない初回こそ要る）。
-// 「欠けた」系の帯（見ていない区間も含む）は重ねない（上の「全滅の表示には帯を重ねない」と同じ理由）
 describe('全画面の失敗表示と帯', () => {
-  it('カードが 0 件で取得に失敗しても鍵の入れ直しの案内は出し、見ていない区間の帯は重ねない', async () => {
+  it('カードが 0 件で取得に失敗しても鍵の入れ直しの案内は出す', async () => {
     await renderTab({
       earthquakes: [],
       error: 'Failed to fetch',
-      relayGapNotices: ['10/31 3:12〜3:40 の地震・津波の電文が欠けている可能性（照合中）'],
       onDismissKeyReentry: () => {},
     })
 
     expect(screen.getByText('データの取得に失敗')).toBeTruthy()
     expect(screen.getByText(/入れ直してください/)).toBeTruthy()
-    expect(screen.queryByText(/欠けている可能性/)).toBeNull()
   })
 })

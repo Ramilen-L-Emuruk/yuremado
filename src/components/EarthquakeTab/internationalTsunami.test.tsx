@@ -61,7 +61,6 @@ const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami
       loadMoreFailed={false}
       reconnectGapLoss={false}
       fetchThrottled={false}
-      relayGapNotices={[]}
       onDismissKeyReentry={null}
       lpgmByEventId={new Map()}
       updateMarks={new Map()}

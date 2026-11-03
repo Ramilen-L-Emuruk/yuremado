@@ -11,7 +11,6 @@
 
 import type { DmdataEndpoint } from './dmdataEndpoint'
 import { fetchJsonOutcome, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
-import { createRelayGapStore, type RelayGapStore } from './relayListGaps'
 
 /** 中継の Worker の土台（末尾の `/` なし） */
 export const RELAY_ORIGIN = 'https://relay.yuremado.com'
@@ -281,8 +280,6 @@ export function createRelayGate(opts: {
  */
 export const relayTokenStore = createRelayTokenStore()
 export const relayGate = createRelayGate()
-/** 中継が見ていない区間の帳面（地震タブの帯が読む。→ `relayListGaps.ts`） */
-export const relayGapStore = createRelayGapStore()
 
 /** 中継の門で待たされている残り（ミリ秒）。待っていなければ null */
 export function relayThrottleRemainingMs(): number | null {
@@ -297,7 +294,7 @@ function bearer(store: RelayTokenStore): Record<string, string> {
 }
 
 /** 中継へ繋ぐ。API と予報の本体には札を付け、公開バケットの本体には何も付けない */
-export function relayEndpoint(store: RelayTokenStore, gate: RelayGate, gaps: RelayGapStore): DmdataEndpoint {
+export function relayEndpoint(store: RelayTokenStore, gate: RelayGate): DmdataEndpoint {
   return {
     apiBase: RELAY_API_BASE,
     dataBase: RELAY_DATA_BASE,
@@ -314,12 +311,11 @@ export function relayEndpoint(store: RelayTokenStore, gate: RelayGate, gaps: Rel
       if (status === 401) store.invalidate()
       if (status === 429) gate.noteRetryAfter(Number(headers?.get('Retry-After') ?? Number.NaN))
     },
-    noteListGaps: (observed) => gaps.note(observed),
     apiHeaders: () => bearer(store),
     // 公開バケットには何も付けない（付けると CORS の下調べが走るうえ、要らない札を外へ出す）
     dataHeaders: (url) => (isRelayPrivateUrl(url) ? bearer(store) : {}),
   }
 }
 
-/** アプリの REST の取得（履歴・取り戻し・もっと見る・リプレイ）が使う中継の繋ぎ先。札・門・見ていない区間の帳面は上の 1 組を共有する */
-export const relayRestEndpoint: DmdataEndpoint = relayEndpoint(relayTokenStore, relayGate, relayGapStore)
+/** アプリの REST の取得（履歴・取り戻し・もっと見る・リプレイ）が使う中継の繋ぎ先。札と門は上の 1 組を共有する */
+export const relayRestEndpoint: DmdataEndpoint = relayEndpoint(relayTokenStore, relayGate)
