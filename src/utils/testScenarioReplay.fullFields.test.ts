@@ -38,6 +38,7 @@ type QuakeSample = DeepRequired<Omit<JMAQuake,
   | 'hypocenterSource' | 'domesticTsunamiSource' // 津波電文から借りたときの印
   | 'quakeInfoFacts' // 長周期・推計の値を当てる前の地震情報の値（電文の欄ではない）
   | 'appliedTsunamiSource' // 上段へ当てた津波の原因地震の控え（電文の欄ではない）
+  | 'fromInternationalTsunami' // 英文だけから組んだカードの印（電文の欄ではない）
 >>
 type TsunamiSample = DeepRequired<Omit<JMATsunami,
   | 'cancelledAt' // 解除を当てたときに受信処理が付ける（Date）
@@ -325,6 +326,7 @@ function internationalTsunamiSample(): DeepRequired<JMAInternationalTsunami> {
   return {
     id: wepa60Id(time, 'TSUNAMI BULLETIN NUMBER 001', 'WEPA60 RJTD 250003'), title: 'TSUNAMI BULLETIN NUMBER 001',
     time, originTime: iso(), isCommunicationsTest: false, text: 'WEPA60 RJTD 250003',
+    epicenter: { latitude: 4.8, longitude: 127.4 }, regionName: 'TALAUD ISLANDS, INDONESIA', magnitude: 7.0, magnitudeType: 'Mj', depthKm: 139,
   }
 }
 

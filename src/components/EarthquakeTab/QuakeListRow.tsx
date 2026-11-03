@@ -29,8 +29,8 @@ export interface QuakeListRowProps {
   heading: ReactNode
   /** 上の段の札（訓練報・訂正）。 */
   chips: ReactNode
-  /** 津波の文と色。 */
-  tsunami: { text: string; color: string; title?: string }
+  /** 津波の文と色。null なら出さない（国際津波関連情報だけのカード。英文に国内の津波の区分は無い）。 */
+  tsunami: { text: string; color: string; title?: string } | null
   /** 時刻（HH:MM）。 */
   time: string
   /** 震央地名。 */
@@ -110,7 +110,7 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
     if (!row || !top || !nm) return
     const key = [
       widthTick, headingRef.current?.textContent, chipsRef.current?.textContent,
-      tsunami.text, name, magnitude?.text, depth?.text,
+      tsunami?.text, name, magnitude?.text, depth?.text,
     ].join('|')
     if (key !== measuredFor.current) {
       measuredFor.current = key
@@ -177,7 +177,7 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
       <div ref={topRef} className="col-start-2 col-end-6 row-start-1 flex min-h-[18px] items-center gap-1.5" style={{ fontSize: 'var(--qk-fs)' }}>
         <span ref={headingRef} className="min-w-0 flex-1 whitespace-nowrap">{heading}</span>
         {!dropChips && <span ref={chipsRef} className="contents">{chips}</span>}
-        <span className="whitespace-nowrap font-bold" style={{ color: tsunami.color }} title={tsunami.title}>{tsunami.text}</span>
+        {tsunami && <span className="whitespace-nowrap font-bold" style={{ color: tsunami.color }} title={tsunami.title}>{tsunami.text}</span>}
       </div>
       {dropChips && (
         <div className="col-start-2 col-end-6 row-start-2 flex justify-end gap-1.5" style={{ fontSize: 'var(--qk-fs)' }}><span ref={chipsRef} className="contents">{chips}</span></div>

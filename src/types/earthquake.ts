@@ -596,6 +596,13 @@ export interface JMAQuake {
    */
   hypocenterSource?: BorrowedFromTsunami
   /**
+   * 国際津波関連情報（WEPA60）の英文だけから組んだカードか（→ `utils/internationalTsunami.ts` の `internationalTsunamiIndex`）。
+   * 気象庁が地震情報を出さなかった地震（海外の M6.5〜6.9 など）に出る報で、付く地震カードが無い。状態の一覧には入れず、
+   * 一覧を画面へ渡す手前で差し込む（2026-11-03 ユーザー選択「国内に付け、無い分はカードに (Recommended)」「英文の値をそのまま並べる (Recommended)」）。
+   * 見出しは「国際津波関連情報」、時刻の行の名前は「地震発生時刻」（英文の ORIGIN TIME は発生時刻。2026-11-03 ユーザー選択「「地震発生時刻」 (Recommended)」）
+   */
+  fromInternationalTsunami?: true
+  /**
    * 長周期地震動観測情報・推計震度分布図の値を上段へ当てる前の、**地震情報が運んだ上段の値**
    * （→ `utils/latestQuakeFacts.ts`）。当てていないカードでは持たない。
    *
@@ -2127,6 +2134,16 @@ export interface JMAInternationalTsunami {
   isCommunicationsTest: boolean
   /** 電文の本文そのまま（行末の空白と最後の `=` だけ落とす） */
   text: string
+  /** `PRELIMINARY EPICENTER:LAT04.8NORTH LON127.4EAST` の暫定の震央（南緯・西経は負）。地震の報にだけある */
+  epicenter?: { latitude: number; longitude: number }
+  /** 震央の行の次の行の地名（英文のまま。例 `TALAUD ISLANDS, INDONESIA`） */
+  regionName?: string
+  /** `MAG:7.0` の規模 */
+  magnitude?: number
+  /** 規模の種類。`(MJMA)` は `Mj`、`(MW)` は `Mw`。書かれていなければ持たない */
+  magnitudeType?: 'Mj' | 'Mw'
+  /** `FOCAL DEPTH:139KM` の深さ（km）。書かれた報にだけある */
+  depthKm?: number
 }
 
 /** {@link JMAEarthquakeCount} の 1 区間。 */

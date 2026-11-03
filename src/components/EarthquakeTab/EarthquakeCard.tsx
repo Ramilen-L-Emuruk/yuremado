@@ -15,6 +15,8 @@ import {
   formatQuakeTimeLabeled,
   formatQuakeTime,
   QUAKE_ARRIVAL_TIME_LABEL,
+  QUAKE_ORIGIN_TIME_LABEL,
+  INTERNATIONAL_TSUNAMI_INFO_NAME,
   QUAKE_ARRIVAL_TIME_UNKNOWN,
   formatDepth,
   formatDomesticTsunami,
@@ -553,7 +555,7 @@ interface Props {
   estimatedIntensity?: JMAEstimatedIntensity | null
   /**
    * **この地震の**国際津波関連情報（WEPA60。引き当て済み・付かなければ空）。遠地地震のカードにだけ付く
-   * （→ `internationalTsunamisFor`）。**必須にしてある** —— 渡し忘れると英文の情報が黙って出なくなる。
+   * （→ `internationalTsunamiIndex`）。**必須にしてある** —— 渡し忘れると英文の情報が黙って出なくなる。
    */
   internationalTsunamis: readonly JMAInternationalTsunami[]
   /** この地震の震度分布モードを開いているか。 */
@@ -781,6 +783,14 @@ function QuakeReportHeading({ reports, fallback, lpgmInfoName, colored = false }
       )}
     </>
   )
+}
+
+/**
+ * 国際津波関連情報（WEPA60）の英文だけから組んだカードの見出し（→ `JMAQuake.fromInternationalTsunami`）。地震情報の報を持たないので、
+ * 報の名乗りを並べる {@link QuakeReportHeading} の代わりに使う。色は遠地地震の報と同じ。
+ */
+function InternationalTsunamiHeading() {
+  return <span style={{ color: issueTypeTextColor('遠地地震') }}>{INTERNATIONAL_TSUNAMI_INFO_NAME}</span>
 }
 
 /**
@@ -1307,7 +1317,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     scaleLabel={maxScaleLabel}
     orAbove={maxScaleOrAbove}
     lpgmClass={lpgm && !lpgm.cancelled ? lpgm.maxClass : null}
-    heading={<QuakeReportHeading reports={quake.reports} fallback={issue.type} colored />}
+    heading={quake.fromInternationalTsunami
+      ? <InternationalTsunamiHeading />
+      : <QuakeReportHeading reports={quake.reports} fallback={issue.type} colored />}
     chips={<>
       {quake.operationStatus && (
         <span className="shrink-0 rounded-[3px] px-1.5 font-bold leading-[1.55]" style={{ backgroundColor: '#1f2937', color: '#fcd34d', border: '1px solid #d97706' }}>
@@ -1320,7 +1332,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
         </span>
       )}
     </>}
-    tsunami={{ text: tsunamiInfo.text, color: tsunamiInfo.color, title: domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined }}
+    tsunami={quake.fromInternationalTsunami ? null : { text: tsunamiInfo.text, color: tsunamiInfo.color, title: domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined }}
     time={quakeDate ? formatHourMinute(quakeDate) : QUAKE_LIST_TIME_UNKNOWN}
     name={epicenterLabel}
     magnitude={hasFacts ? { text: formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType), value: hypocenter.magnitude } : null}
@@ -1457,7 +1469,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           >
             <span className="text-[#9fb3c8]">▾</span>
             <b className="font-semibold text-[#cfd6dd]" style={{ fontSize: 'var(--qk-f)' }}>
-              <QuakeReportHeading reports={quake.reports} fallback={issue.type} lpgmInfoName={lpgm?.infoName} colored />
+              {quake.fromInternationalTsunami
+                ? <InternationalTsunamiHeading />
+                : <QuakeReportHeading reports={quake.reports} fallback={issue.type} lpgmInfoName={lpgm?.infoName} colored />}
             </b>
           </button>
           {/* 電文が自分で名乗っている運用種別（`Control/Status`）。訓練・試験のときだけ出す。 */}
@@ -1578,22 +1592,25 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                 <div>
                   {quakeTimeText ? (
                     <>
-                      <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{QUAKE_ARRIVAL_TIME_LABEL}</span>
+                      <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+                        {quake.fromInternationalTsunami ? QUAKE_ORIGIN_TIME_LABEL : QUAKE_ARRIVAL_TIME_LABEL}
+                      </span>
                       <b className="font-bold tabular-nums leading-tight" style={{ fontSize: 'var(--qk-val)' }}>{quakeTimeText}</b>
                     </>
                   ) : (
                     <b className="font-bold leading-tight" style={{ fontSize: 'var(--qk-val)' }}>{QUAKE_ARRIVAL_TIME_UNKNOWN}</b>
                   )}
                 </div>
-                {/* 国内津波情報。「津波警報等」だけは語に何が含まれるか説明を添える（→ `formatDomesticTsunami`）。 */}
-                <div title={domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined}>
+                {/* 国内津波情報。「津波警報等」だけは語に何が含まれるか説明を添える（→ `formatDomesticTsunami`）。
+                    国際津波関連情報だけのカードには出さない（英文に国内の津波の区分は無い。→ quake-spec.md §3） */}
+                {!quake.fromInternationalTsunami && <div title={domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined}>
                   <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>津波</span>
                   <b className="font-bold leading-tight" style={{ fontSize: 'var(--qk-val)', color: tsunamiInfo.color }}>
                     {tsunamiInfo.text}
                     {borrowedDomesticTsunami && <BorrowedMark />}
                     {markDot('domesticTsunami', 'sm', 'align-top ml-1')}
                   </b>
-                </div>
+                </div>}
                 {hasFacts && (
                   <>
                     <i className="h-0 basis-full" />

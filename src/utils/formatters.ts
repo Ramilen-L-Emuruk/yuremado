@@ -119,6 +119,15 @@ export function formatDateTimeMin(isoString: string): string | null {
  */
 export const QUAKE_ARRIVAL_TIME_LABEL = '地震発現時刻'
 
+/**
+ * 地震発生時刻（`OriginTime`）の名前。**国際津波関連情報（WEPA60）の英文だけから組んだカードでだけ使う** —— 英文の `ORIGIN TIME` は
+ * 発生時刻で、地震情報のカードの {@link QUAKE_ARRIVAL_TIME_LABEL} とは別の値（2026-11-03 ユーザー選択「「地震発生時刻」 (Recommended)」）。
+ */
+export const QUAKE_ORIGIN_TIME_LABEL = '地震発生時刻'
+
+/** 国際津波関連情報（WEPA60）の英文だけから組んだカードの見出し（2026-11-03 ユーザー選択「英文の値をそのまま並べる (Recommended)」）。 */
+export const INTERNATIONAL_TSUNAMI_INFO_NAME = '国際津波関連情報'
+
 /** 地震発現時刻を日時として読めなかったときに出す語。 */
 export const QUAKE_ARRIVAL_TIME_UNKNOWN = '地震発現時刻不明'
 

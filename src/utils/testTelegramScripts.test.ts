@@ -20,7 +20,8 @@ import { eewAreas, eewMaxScale, computeSingleEEWLevel, isProvisionalHypocenter }
 import { earthquakeToSegments, createQuakeSpokenState, applySpokenRefs } from './ttsText'
 import { joinSegments } from './ttsFollow'
 import { reportsText } from '../test-utils/quakeReports'
-import { internationalTsunamisFor } from './internationalTsunami'
+import { internationalTsunamiIndex } from './internationalTsunami'
+import { quakeEventKey } from './quakeMerge'
 import { editXml, descendants, only } from './testTelegramRewrite'
 
 const NOW = new Date('2026-10-22T03:00:00.000Z')
@@ -466,7 +467,27 @@ describe('遠地地震テスト・巨大地震テスト', () => {
     expect(quake.issue.type).toBe('遠地地震')
     expect(bulletins).toHaveLength(1)
     expect(bulletins[0].title).toBe('TSUNAMI BULLETIN NUMBER 001')
-    expect(internationalTsunamisFor(quake, bulletins)).toEqual(bulletins)
+    expect(internationalTsunamiIndex([quake], bulletins).byQuakeKey.get(quakeEventKey(quake))).toEqual(bulletins)
+    // 自作の英文の深さは実電文の書式（FOCAL DEPTH の行に規模と並ぶ）で書き、読み取りが拾える
+    expect(bulletins[0]).toMatchObject({ depthKm: 140, magnitude: 7.0, regionName: 'TALAUD ISLANDS, INDONESIA' })
+  })
+
+  // 英文だけテスト（2026-11-03 ユーザー選択「別の行を足す (Recommended)」）: 国内の地震に付く英文と、付くカードの無い英文
+  it('英文だけテストは日向灘の地震に付く英文と、どのカードにも付かない英文を流す', async () => {
+    const built = await build(scripts.INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY)
+    const [quake] = quakesOf(built)
+    const bulletins = payloads(built).flatMap(p => (p.kind === 'internationalTsunami' ? [p.data] : []))
+    expect(quake.issue.type).not.toBe('遠地地震')
+    expect(bulletins).toHaveLength(2)
+    const [hyuganada, mindanao] = bulletins
+    const index = internationalTsunamiIndex([quake], bulletins)
+    expect(index.byQuakeKey.get(quakeEventKey(quake))).toEqual([hyuganada])
+    expect(hyuganada).toMatchObject({ regionName: 'KYUSHU, JAPAN', magnitude: 7.1, magnitudeType: 'Mj' })
+    const cards = index.cards
+    expect(cards).toHaveLength(1)
+    expect(cards[0].earthquake.hypocenter).toMatchObject({ name: 'MINDANAO, PHILIPPINES', magnitude: 6.9, depth: 30 })
+    // 押した時刻より未来の地震にならない（台本は日向灘を「いま」に合わせる）
+    expect(Date.parse(mindanao.originTime!)).toBeLessThan(Date.parse(quake.earthquake.time))
   })
 
   it('巨大地震は規模が数値にならず、「Ｍ８を超える巨大地震」と区別される', async () => {

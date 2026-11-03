@@ -42,7 +42,7 @@ import { decideFinalReportExpiry, type DetectionSpreadLog, type EewExpiryDecisio
 import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEventLog'
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
-import { unattachedInternationalTsunamis, upsertInternationalTsunami } from '../utils/internationalTsunami'
+import { internationalTsunamiIndex, upsertInternationalTsunami } from '../utils/internationalTsunami'
 import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState, tsunamiLiftText } from '../utils/tsunami'
 import { log } from '../utils/logger'
 import { serverNow, serverDate, isServerClockTrusted } from '../utils/clock'
@@ -687,7 +687,7 @@ export interface EarthquakeState {
   estimatedIntensities: readonly JMAEstimatedIntensity[]
   /**
    * 国際津波関連情報（WEPA60）。届いた報をすべて持ち、遠地地震のカードが発生時刻で引く
-   * （→ `internationalTsunamisFor`）。**音・読み上げ・通知は無い**（2026-10-30 ユーザー選択
+   * （→ `internationalTsunamiIndex`）。**音・読み上げ・通知は無い**（2026-10-30 ユーザー選択
    * 「受けて英文のまま出す (Recommended)」）。入れるのは `upsertInternationalTsunami` だけ。
    * 発表は年に数通（通信試験を含む）なので件数に上限は置かない。
    */
@@ -896,17 +896,17 @@ export function useEarthquakes(
     return () => clearInterval(timer)
   }, [])
 
-  // 国際津波関連情報は遠地地震のカードにだけ畳んで出すので、付く先が無い報は画面のどこにも出ない。
-  // 黙って消えないよう、1 報につき 1 回だけ記録する（遠地地震の情報が後から届けば、そのとき付く）
+  // 国際津波関連情報で付く地震カードの無い報は、英文だけのカードとして一覧に出る（→ `internationalTsunamiIndex`）。
+  // 発生時刻を読めなかった報だけはどこにも出ないので、黙って消えないよう 1 報につき 1 回だけ記録する
   const reportedUnattachedRef = useRef(new Set<string>())
   useEffect(() => {
-    for (const x of unattachedInternationalTsunamis(state.earthquakes, state.internationalTsunamis)) {
+    for (const x of internationalTsunamiIndex(state.earthquakes, state.internationalTsunamis).unattached) {
       if (reportedUnattachedRef.current.has(x.id)) continue
       reportedUnattachedRef.current.add(x.id)
       if (x.originTime === undefined) {
         log.warn(`[quake] 国際津波関連情報の発生時刻を読めず、どの地震カードにも付きません（画面に出ません）: ${x.title} ${x.time}`)
       } else {
-        log.info(`[quake] 国際津波関連情報に付く遠地地震のカードがまだありません（届けば付きます）: ${x.title} 発生 ${x.originTime}`)
+        log.info(`[quake] 国際津波関連情報に付く地震カードが無いので、英文だけのカードで出します（地震情報が届けばそのカードに付きます）: ${x.title} 発生 ${x.originTime}`)
       }
     }
   }, [state.earthquakes, state.internationalTsunamis])
@@ -4233,6 +4233,8 @@ export function useEarthquakes(
   /** 遠地地震と国際津波関連情報（WEPA60）のテスト（→ `testTelegramScripts.ts` の `FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI`）。 */
   const simulateForeignQuakeInternationalTsunami = useCallback(
     () => runTestTelegramScript(s => s.FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI), [runTestTelegramScript])
+  /** 国際津波関連情報が国内の地震に付く形と、英文だけのカードになる形のテスト（→ `INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY`）。 */
+  const simulateInternationalTsunamiDomesticAndOnly = useCallback(() => runTestTelegramScript(s => s.INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY), [runTestTelegramScript])
   /** 見出しにだけある市町村のテスト（→ `testTelegramScripts.ts` の `HEADLINE_ONLY_CITY`）。 */
   const simulateHeadlineOnlyCity = useCallback(() => runTestTelegramScript(s => s.HEADLINE_ONLY_CITY), [runTestTelegramScript])
 
@@ -4680,6 +4682,7 @@ export function useEarthquakes(
     simulateQuakePartialCancel,
     simulateHypocenterFromTsunami,
     simulateMagnitudeFromTsunami,
+    simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded,
     simulateTsunamiInfoRetraction,
     resetState,

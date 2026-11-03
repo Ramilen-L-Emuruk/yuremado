@@ -86,7 +86,7 @@ const renderTab = async (quake: JMAQuake, selected: boolean, lpgm?: JMALpgm) => 
       activeLpgmEventId={null}
       onToggleLpgm={() => {}}
       estimatedIntensities={[]}
-      internationalTsunamis={[]}
+      internationalTsunamisByQuake={new Map()}
       distributionQuakeKey={null}
       onToggleDistribution={() => {}}
       unreceivedQuakeKey={null}

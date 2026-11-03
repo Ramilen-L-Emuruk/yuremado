@@ -219,6 +219,26 @@ export const FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI: TestTelegramScript = {
 }
 
 /**
+ * 英文だけテスト（2026-11-03 ユーザー選択「別の行を足す (Recommended)」）。国際津波関連情報（WEPA60）が国内の地震のカードに付く形と、
+ * 付く地震カードの無い報が英文だけのカードになる形（→ `utils/internationalTsunami.ts`）。
+ *
+ *   1. 2024-08-08 16:42 日向灘 M7.1 の震源・震度に関する情報（NII の実電文）
+ *   2. 同じ地震の WEPA60（自作の英文 `synthetic/wepa60-hyuganada.txt`。実電文の行の並びに倣い、発生時刻 07:42Z・震央・規模を合わせた）
+ *   3. 地震情報の無い地震の WEPA60（自作の英文 `synthetic/wepa60-mindanao.txt`。ミンダナオの M6.9。発生は日向灘の 22 分前）
+ *
+ * **3 の発生時刻を日向灘より前にしてある。** 台本は 1 つの差分で全体を押した時刻へずらすので（`anchor`）、後にすると押した時刻より
+ * 未来の地震になる。
+ */
+export const INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY: TestTelegramScript = {
+  anchor: 0,
+  steps: [
+    { file: nii('20240808075502_0_VXSE53_010000'), headType: 'VXSE53', atMs: 0 },
+    { file: 'synthetic/wepa60-hyuganada.txt', headType: 'WEPA60', atMs: 3_000 },
+    { file: 'synthetic/wepa60-mindanao.txt', headType: 'WEPA60', atMs: 6_000 },
+  ],
+}
+
+/**
  * 巨大地震テスト（遠地地震で規模が「Ｍ８を超える巨大地震」の報）。
  *
  * 元は気象庁のサンプル電文（2010-02-27 チリ中部沿岸・遠地地震に関する情報・付加文 0221 0228 0229）。
@@ -2002,7 +2022,7 @@ function isoZ(ms: number): string {
 /** 台本の一覧（テストで全件を流して読めることを確かめる）。 */
 export const ALL_TEST_TELEGRAM_SCRIPTS: Readonly<Record<string, TestTelegramScript>> = {
   EARTHQUAKE, TRAINING_QUAKE, UNRECEIVED_QUAKE, MAX_SCALE_OR_ABOVE_QUAKE, AREA_UNRECEIVED_QUAKE,
-  FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI, HEADLINE_ONLY_CITY, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
+  FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI, INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY, HEADLINE_ONLY_CITY, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
   QUAKE_PARTIAL_CANCEL, HYPOCENTER_FROM_TSUNAMI, MAGNITUDE_FROM_TSUNAMI,
   TSUNAMI_MAJOR_WARNING, TSUNAMI_QUIET_REPORTS, TSUNAMI_WARNING, TSUNAMI_WATCH, TSUNAMI_FORECAST, TSUNAMI_EXPIRY, TSUNAMI_GRADE_CHANGE,
   TSUNAMI_SOURCE_ADDED, TSUNAMI_RETRACTION, TSUNAMI_INFO_RETRACTION,

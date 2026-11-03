@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 //
-// 遠地地震のカードに国際津波関連情報（WEPA60・英文）を畳んで添える（2026-10-30 ユーザー選択
-// 「受けて英文のまま出す (Recommended)」）。結び付けの判定は `utils/internationalTsunami.test.ts`、
-// ここは渡された報がカードに原文のまま出ることと、国内の地震のカードに出ないことを固定する。
+// 地震カードに国際津波関連情報（WEPA60・英文）を添える（2026-10-30 ユーザー選択
+// 「受けて英文のまま出す (Recommended)」・2026-11-03 ユーザー選択「国内に付け、無い分はカードに (Recommended)」）。
+// 結び付けの判定は `utils/internationalTsunami.test.ts`、ここは渡された報がカードに原文のまま出ることと、
+// 英文だけのカードの見出し・時刻の名前・津波の欄を固定する。
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -10,6 +11,7 @@ import { EarthquakeTab } from './index'
 import { quakeEventKey } from '../../utils/quakeMerge'
 import type { IssueType, JMAInternationalTsunami, JMAQuake } from '../../types/earthquake'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
+import { internationalTsunamiIndex } from '../../utils/internationalTsunami'
 
 afterEach(cleanup)
 
@@ -67,7 +69,7 @@ const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami
       activeLpgmEventId={null}
       onToggleLpgm={() => {}}
       estimatedIntensities={[]}
-      internationalTsunamis={bulletins}
+      internationalTsunamisByQuake={internationalTsunamiIndex([quake], bulletins).byQuakeKey}
       distributionQuakeKey={null}
       onToggleDistribution={() => {}}
       unreceivedQuakeKey={null}
@@ -149,6 +151,29 @@ describe('地震カードの国際津波関連情報（英文）', () => {
     // 正: 番号が進むと開き直す
     await act(async () => { rerender(tabElement(quake, [BULLETIN], () => {}, 1)) })
     expect(screen.getByText('国際津波関連情報（英文）', { exact: false })).toBeTruthy()
+  })
+
+  // 正: 国内の地震のカードにも、渡された報を出す
+  it('国内の地震のカードにも出す', async () => {
+    await renderTab(makeQuake('震源・震度情報'), [BULLETIN])
+    expect(screen.getByText('国際津波関連情報（英文）', { exact: false })).toBeTruthy()
+  })
+
+  // 英文だけのカード（2026-11-03 ユーザー選択「英文の値をそのまま並べる (Recommended)」「「地震発生時刻」 (Recommended)」）
+  it('英文だけのカードは見出しが「国際津波関連情報」、時刻の名前が「地震発生時刻」で、津波の欄を出さない', async () => {
+    const [card] = internationalTsunamiIndex([], [{ ...BULLETIN, regionName: 'TALAUD ISLANDS, INDONESIA', epicenter: { latitude: 4.8, longitude: 127.4 }, magnitude: 7.0 }]).cards
+    await renderTab(card, [BULLETIN])
+    expect(screen.getAllByText('国際津波関連情報').length).toBeGreaterThan(0)
+    expect(screen.getByText('地震発生時刻')).toBeTruthy()
+    expect(screen.queryByText('地震発現時刻')).toBeNull()
+    expect(screen.queryByText('津波')).toBeNull()
+  })
+
+  // 対照: 地震情報のカードは今までどおり「地震発現時刻」と津波の欄を出す
+  it('地震情報のカードは「地震発現時刻」と津波の欄を出す', async () => {
+    await renderTab(makeQuake('遠地地震'), [BULLETIN])
+    expect(screen.getByText('地震発現時刻')).toBeTruthy()
+    expect(screen.getByText('津波')).toBeTruthy()
   })
 
   it('報が無ければ枠を出さない', async () => {
