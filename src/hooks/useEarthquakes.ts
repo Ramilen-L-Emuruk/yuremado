@@ -43,6 +43,7 @@ import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEvent
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
 import { internationalTsunamiIndex, upsertInternationalTsunami } from '../utils/internationalTsunami'
+import { fetchFailureReason } from '../utils/fetchFailure'
 import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState, tsunamiLiftText } from '../utils/tsunami'
 import { log } from '../utils/logger'
 import { serverNow, serverDate, isServerClockTrusted } from '../utils/clock'
@@ -3321,7 +3322,8 @@ export function useEarthquakes(
           // 画面には理由の分からないメッセージしか出ないため、手がかりを残さないと追えない。
           // **引いた区分も添える** —— 受けていない区分を引いて断られたのか、通信の失敗なのかをここで見分ける
           log.error('[data] DMDATA 履歴取得失敗', { 区分: classifications, err })
-          const msg = err instanceof Error ? err.message : '取得失敗'
+          // 通信の失敗はブラウザの英語の文を画面に出さない（英語の文は上の記録に残る。→ `fetchFailureReason`）
+          const msg = fetchFailureReason(err)
           setState(prev => ({ ...prev, isLoading: false, error: msg }))
         })
 
