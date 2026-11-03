@@ -24,6 +24,7 @@ import {
   hasHypocenterFacts,
   hasMagnitude,
   magnitudeHeading,
+  formatHypocenterSource,
   formatMagnitudeWithCondition,
   formatCoordinate,
   formatNameFromMark,
@@ -1572,7 +1573,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               )}
               {/* 震源を決めた機関（`Hypocenter/Source`）。津波カードと同じ文面（2026-10-22 ユーザー承認「6-A 津波タブと同じ」）。 */}
               {hypocenter.source && (
-                <div className="text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>震源決定: {hypocenter.source}（気象庁以外）</div>
+                <div className="text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{formatHypocenterSource(hypocenter.source)}</div>
               )}
               <div className="mt-2.5 flex flex-wrap gap-x-6 gap-y-2.5">
                 <div>

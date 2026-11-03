@@ -287,9 +287,17 @@ export function magnitudePrefix(magnitudeType: string | undefined): string {
  * 「利用の手引き」は遠地地震について、気象庁 CMT による Mw を採ることがあるとも書いている ——
  * **気象庁自身が決めた値に `M` が付く経路を否定できない。**
  *
- * 機関そのものは別の行で出す（→ `EarthquakeCard` の「震源決定: …（気象庁以外）」）。
+ * 機関そのものは別の行で出す（→ {@link formatHypocenterSource}）。
  * あちらは電文に機関が入っているときだけ出るので、言い過ぎにならない。
  */
+/**
+ * 震源決定機関の行（「震源決定: ＰＴＷＣ（気象庁以外）」）。地震カードと津波の原因地震で同じ文にする。
+ * 電文に機関（`Hypocenter/Source`）が入っているときだけ出す。
+ */
+export function formatHypocenterSource(source: string): string {
+  return `震源決定: ${source}（気象庁以外）`
+}
+
 export function magnitudeHeading(magnitudeType: string | undefined): string {
   if (magnitudeType === 'Mj') return '気象庁マグニチュード'
   return 'マグニチュード'
