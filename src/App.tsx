@@ -2673,11 +2673,19 @@ export function App() {
     activeEEWs,
     replayOffsetMs: replayTimeOffset,
   })
+  // 波形を出すかを見る範囲は、ホーム地点ではなく自作地震計の周り（座標が無ければホーム地点。→ hooks/useSeismoScope.ts）。
+  // 地図の下端の波形（下の `useSeismoWaveVisibility`）と地震カードの波形（すぐ下）の両方が使う。
+  const seismoScope = useSeismoScope({
+    stations: seismoView.stations,
+    homeScope: nearbyScope,
+    stationCoords: stationCoordsForChecklist,
+    kyoshinSites: kyoshinSitesGated,
+  })
   const { waves: seismoQuakeWaves, failedEventKeys: seismoWaveFailedKeys } = useSeismoQuakeWavesWithStatus({
     enabled: settings.seismoEnabled && settings.seismoWave !== 'off',
     baseUrl: settings.seismoHostUrl,
     quakes: filteredEarthquakes,
-    scope: nearbyScope,
+    scope: seismoScope,
     readWave: seismo.readWave,
     replayOffsetMs: replayTimeOffset,
     originSeconds: quakeOriginSeconds,
@@ -2743,13 +2751,6 @@ export function App() {
   //
   // **再生中も設定どおりに判定する**（観測点は再生時刻のぶん。→ `useSeismoReplay`）。再生している EEW・強震モニタの
   // 検知・自作地震計の震度で、ライブと同じく出し入れする。
-  // 波形を出すかを見る範囲は、ホーム地点ではなく自作地震計の周り（座標が無ければホーム地点。→ hooks/useSeismoScope.ts）。
-  const seismoScope = useSeismoScope({
-    stations: seismoView.stations,
-    homeScope: nearbyScope,
-    stationCoords: stationCoordsForChecklist,
-    kyoshinSites: kyoshinSitesGated,
-  })
   const showSeismoWave = useSeismoWaveVisibility({
     mode: settings.seismoWave,
     scope: seismoScope,
