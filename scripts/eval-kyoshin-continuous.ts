@@ -31,13 +31,11 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { unzipSync } from 'fflate'
 import { cacheDir } from './lib/cacheDir.mjs'
 import { kyoshinBenchCacheDir } from './lib/kyoshinBenchCache'
 import { CATALOG_DEEP_FOCUS_KM, chanceOfMatch, matchCatalog, watchedQuakes, type CatalogQuake } from './lib/kyoshinCatalogMatch'
 import { fetchHour, hourPath, loadSites, readQuietHour } from './build-kyoshin-quiet-tables'
-import { parseHypocenterRecord } from './hypocenterRecord'
-import { extractDailyHypocenterRows, parseDailyHypocenterLine } from './hypocenterDailyRecord'
+import { DAILY_FETCH_INTERVAL_MS, DAILY_SETTLE_DAYS, fetchDailyHypocenters, readDayHypocenters, settledDay, type QuakeSource } from './lib/hypocenterDays'
 import { createEnsembleDetector } from '../src/utils/kyoshinEnsembleDetector'
 import { createEnsembleTracker } from '../src/utils/kyoshinEnsembleTracker'
 import { validateQuietTables } from '../src/utils/kyoshinQuietTables'
@@ -45,11 +43,7 @@ import { haversineKm } from '../src/utils/geo'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const TABLES_PATH = resolve(HERE, '../public/data/kyoshin-quiet-tables.json')
-const HYPO_DIR = cacheDir('hypocenter-cache')
 const OUT_DIR = cacheDir('kyoshin-continuous-runs')
-const DAILY_BASE = 'https://www.data.jma.go.jp/eqev/data/daily_map'
-/** 日別の震源リストを続けて取るときの間（`build-hypocenter-catalog` の `DAILY_FETCH_INTERVAL_MS` に倣う） */
-const DAILY_FETCH_INTERVAL_MS = 120
 const JST_OFFSET_MS = 9 * 3_600_000
 const DAY_SEC = 86_400
 const DAY_MS = DAY_SEC * 1000
@@ -60,11 +54,6 @@ const MAX_GAP_MS = 60_000
 /** 取りこぼしを数える地震の M の下限と、観測点からの距離の上限（km）。観測網の外の地震は数えない */
 const MISS_MIN_MAG = 3
 const MISS_MAX_SITE_KM = 50
-/**
- * 日別の震源リストが出そろうまで待つ日数。これより新しい日のリストを取ると、途中までの一覧を確定扱いで控えてしまう。
- * 2026-10-29 のリストは 10-31 に取って 972 件そろっていた（2 日後）。1 日ぶんの余裕を足して 3 日
- */
-const DAILY_SETTLE_DAYS = 3
 /** 2 時間続けて 1 秒も取れなければ、配信が無い範囲とみて取得を止める */
 const EMPTY_HOURS_TO_STOP = 2
 /**
@@ -116,61 +105,7 @@ export function resolveDays(daysArg: string | undefined, from: string | undefine
 // 気象庁の震源
 // ---------------------------------------------------------------------------
 
-type QuakeSource = '確定値' | '日別の震源リスト'
-interface DayQuakes { source: QuakeSource; quakes: CatalogQuake[]; unreadable: number }
-
-const zipTexts = new Map<string, string | null>()
-function zipText(year: string): string | null {
-  if (zipTexts.has(year)) return zipTexts.get(year) ?? null
-  const path = join(HYPO_DIR, 'zip', `h${year}.zip`)
-  let text: string | null = null
-  if (existsSync(path)) {
-    const files = Object.values(unzipSync(new Uint8Array(readFileSync(path))))
-    if (files.length !== 1) throw new Error(`${path} の中身が ${files.length} 本です（1 年 1 本を前提にしています）`)
-    text = new TextDecoder('latin1').decode(files[0])
-  }
-  zipTexts.set(year, text)
-  return text
-}
-
-/** その日の震源を控えから読む。確定値を優先し、無ければ日別の震源リスト。どちらも無ければ null。読めなかった行も数える。 */
-function readQuakes(day: string): DayQuakes | null {
-  const text = zipText(day.slice(0, 4))
-  if (text !== null) {
-    const quakes: CatalogQuake[] = []
-    let unreadable = 0
-    const prefix = `J${day}`
-    for (const line of text.split(/\r?\n/)) {
-      if (!line.startsWith(prefix)) continue
-      const r = parseHypocenterRecord(line)
-      if (r) quakes.push({ t: r.timeMs, lat: r.lat, lng: r.lng, depth: r.depth ?? NaN, mag: r.magnitude ?? NaN })
-      else unreadable++
-    }
-    if (quakes.length > 0) return { source: '確定値', quakes, unreadable }
-  }
-  const html = join(HYPO_DIR, `${day}.html`)
-  if (!existsSync(html)) return null
-  const quakes: CatalogQuake[] = []
-  let unreadable = 0
-  for (const line of extractDailyHypocenterRows(readFileSync(html, 'utf8'))) {
-    const r = parseDailyHypocenterLine(line)
-    if (r) quakes.push({ t: r.timeMs, lat: r.lat, lng: r.lng, depth: r.depth, mag: r.magnitude ?? NaN })
-    else unreadable++
-  }
-  // 日本で 1 日の地震が 0 件になることは無い（`build-hypocenter-catalog` の実測で最小 391 件）。0 件の控えは壊れている
-  if (quakes.length === 0) throw new Error(`${html} から震源を 1 件も読めませんでした（控えが壊れている疑い。消してから --fetch で取り直してください）`)
-  return { source: '日別の震源リスト', quakes, unreadable }
-}
-
-/** 日別の震源リストを 1 件取って控える。中身が 0 件なら控えない（`build-hypocenter-catalog` の `fetchDailyHtml` と同じ扱い）。 */
-async function fetchDaily(day: string): Promise<void> {
-  const res = await fetch(`${DAILY_BASE}/${day}.html`)
-  if (!res.ok) throw new Error(`${day} の震源リストを取れませんでした（HTTP ${res.status}）`)
-  const html = await res.text()
-  if (extractDailyHypocenterRows(html).length === 0) throw new Error(`${day} の震源リストが 0 件でした（控えません）`)
-  mkdirSync(HYPO_DIR, { recursive: true })
-  writeFileSync(join(HYPO_DIR, `${day}.html`), html, 'utf8')
-}
+// 震源の控えの読み書きは scripts/lib/hypocenterDays.ts
 
 /** 控えた秒フレームの見出しから、使われている観測点の版を拾う */
 function cfgsOf(day: string, h: number): string[] {
@@ -237,12 +172,12 @@ async function main(): Promise<void> {
 
   // 控えに無いものを数える（ここまでは 1 件も取らない）
   const missingHours = days.flatMap((d) => Array.from({ length: 24 }, (_, h) => ({ d, h }))).filter(({ d, h }) => !existsSync(hourPath(d, h)))
-  const missingQuakeDays = days.filter((d) => readQuakes(d) === null)
-  const settled = dayOf(dayStartMs(todayJst) - DAILY_SETTLE_DAYS * DAY_MS)
+  const missingQuakeDays = days.filter((d) => readDayHypocenters(d) === null)
+  const settled = settledDay(todayJst)
   const unsettled = missingQuakeDays.filter((d) => d > settled)
   if (unsettled.length > 0) throw new Error(`${settled} より新しい日の震源リストは出そろっていないことがあるので取りません（${unsettled.join(',')}）。日を改めて走らせてください`)
   // 控えにあっても、出そろう前に取った日別の震源リストかもしれない（他の道具が取った控えなど）
-  const earlyCached = days.filter((d) => d > settled && readQuakes(d)?.source === '日別の震源リスト')
+  const earlyCached = days.filter((d) => d > settled && readDayHypocenters(d)?.source === '日別の震源リスト')
   if (earlyCached.length > 0) console.log(`  注意: ${earlyCached.join(' ')} は控えの日別の震源リストを使う。${DAILY_SETTLE_DAYS} 日以内の日は出そろう前に取った控えかもしれない`)
   const knownCfgs = new Set(days.flatMap((d) => Array.from({ length: 24 }, (_, h) => h).filter((h) => existsSync(hourPath(d, h))).flatMap((h) => cfgsOf(d, h))))
   const missingSites = [...knownCfgs].filter((c) => !existsSync(join(kyoshinBenchCacheDir(), `sites_${c}.json`)))
@@ -260,7 +195,7 @@ async function main(): Promise<void> {
 
   // 震源リストは 1 日 1 件で、取れない日（配信の範囲外）が分かるのはここなので、時間より先に取る
   for (const d of missingQuakeDays) {
-    await fetchDaily(d)
+    await fetchDailyHypocenters(d)
     console.log(`  ${d} の震源リストを控えた`)
     await sleep(DAILY_FETCH_INTERVAL_MS)
   }
@@ -303,7 +238,7 @@ async function main(): Promise<void> {
   // 期間の頭の検知が前日の地震に当たれるよう、控えにあれば前日の震源も読む（取りには行かない）
   const prev = (() => {
     try {
-      return readQuakes(dayOf(fromFrameMs - DAY_MS))
+      return readDayHypocenters(dayOf(fromFrameMs - DAY_MS))
     } catch (e) {
       console.log(`前日の震源の控えを読めなかったので使わない: ${e instanceof Error ? e.message : e}`)
       return null
@@ -312,7 +247,7 @@ async function main(): Promise<void> {
   if (prev) quakes.push(...prev.quakes)
 
   for (const day of days) {
-    const q = readQuakes(day)
+    const q = readDayHypocenters(day)
     if (q === null) throw new Error(`${day} の震源が控えにありません`)
     quakes.push(...q.quakes)
     const run: DayRun = {
