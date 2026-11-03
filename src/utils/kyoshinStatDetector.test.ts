@@ -307,3 +307,38 @@ describe('値の無い点は、平常の期待値に数えない', () => {
     expect(firstConfirmed(out)).toBe(-1)
   })
 })
+
+describe('値の無い点が多い中心は、早い段の下限を下げる', () => {
+  // 6×6 の近くの組のうち `up` の点が一斉に rise 段上がる。`missing` の点は欠測（-1）、残りは値はあるが静か（段 4 のまま）
+  const ON = 300
+  function burst(up: number[], rise: number, missing: (i: number) => boolean): DetectorReport[][] {
+    const det = createStatDetector(NEAR, QUIET)
+    const out: DetectorReport[][] = []
+    for (let s = 0; s < ON + 60; s++) {
+      const v = new Int8Array(NEAR.length)
+      for (let i = 0; i < NEAR.length; i++) v[i] = up.includes(i) ? (s >= ON ? 4 + rise : 4) : missing(i) ? -1 : 4
+      out.push(det.push({ ms: T0 + s * 1000, values: v }))
+    }
+    return out
+  }
+  const THREE = [0, 1, 6] // 隅の点と、東・北の隣
+  const mostlyMissing = (i: number) => i % 4 !== 0 // 4 点に 3 点が欠測
+  const fewMissing = (i: number) => i % 3 === 2 // 3 点に 1 点が欠測
+
+  // 値の届く点が少ないと、揺れていても点数が数え切れない（能登 2024 の 01-03 以降、2 点以上上がった有感が点数 8〜10 で止まった。設計書§65）。
+  // 下げる前（下限 10）は、この並びでは何も出なかった
+  it('正: 近くの点の多くが欠測なら、3 点が 1 段上がっただけで早い段に上がる（確かな段へは上がらない）', () => {
+    const out = burst(THREE, 1, mostlyMissing)
+    expect(out.flat().some(r => r.tier === 'early')).toBe(true)
+    expect(firstConfirmed(out)).toBe(-1)
+  })
+
+  it('対照: 同じ 3 点の上がりでも、欠測が少なければ下限は下がらず、何も出ない', () => {
+    expect(burst(THREE, 1, fewMissing).flat()).toEqual([])
+  })
+
+  // 下げた下限だけで届いた候補は、候補の点が 3 点以上要る（§57 で入れなかった 2 点の組を、欠測の多い所で入れない）
+  it('安全弁: 近くの点の多くが欠測でも、2 点だけの上がりは何段でも検知にしない', () => {
+    for (const rise of [1, 3, 8]) expect(burst([0, 1], rise, mostlyMissing).flat()).toEqual([])
+  })
+})

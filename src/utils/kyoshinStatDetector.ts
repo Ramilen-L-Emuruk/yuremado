@@ -39,6 +39,14 @@ export interface DetectorFrame {
 }
 
 const T_EARLY = 10
+/** 値の無い点が多い中心での、早い段の下限（設計書§65）。確かな段の下限（T_CONF）は変えない */
+const T_EARLY_MISS = 8
+/** 値の無い点が多いとみなす割合（いちばん狭い半径の内の点のうち） */
+const MISS_FRAC = 0.4
+/** 値の無い点が多いとみなすのに要る、いちばん狭い半径の内の点の数 */
+const MISS_MIN_N = 3
+/** 下げた下限（T_EARLY_MISS）だけで届いた候補に要る、候補の点の数 */
+const MISS_MEM_N = 3
 const T_CONF = 20
 const CONF_HOLD = 1
 /** 早い段は出してからこの秒数は出し続け、確かな段へ上がらなければ下ろす（事象は覚えたまま黙る） */
@@ -259,10 +267,12 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
           const nb = nbr[c], ct = cutAll[c]
           let S = 0, Rb = 0
           cnt.fill(0); mus.fill(0)
-          let e = 0, W = 0
+          let e = 0, W = 0, nearNone = 0
+          const r0 = ch.ri[0], near = ct[r0]
           for (const r of ch.ri) {
             for (; e < ct[r]; e++) {
               const j = nb[e], s = sv[j]
+              if (r === r0 && feat[j] === NONE) nearNone++
               // 値の無い点（欠測・起動直後や欠測明けで基準の揃わない点）は上がりようがないので、平常の期待値に入れない
               // （珍しさは 0 なので数と和には元から入らない）。足すと、まわりの点が欠けた所ほど「偶然ではない」と言うのに多くの点が要る（設計書§62）
               if (feat[j] === NONE) continue
@@ -280,9 +290,14 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
             }
           }
           if (ch.def.earlyOnly) S = Math.min(S, T_CONF - 1e-6)
-          if (S >= T_EARLY) {
+          // いちばん狭い半径の内で値の無い点が多い中心は、早い段の下限を下げる。値の届く点が少ないと、揺れていても点数が数え切れないため。
+          // 欠測の割合はいちばん狭い半径で測り、S を出した半径（Rb）は問わない（設計書§65）
+          const sparseData = near >= MISS_MIN_N && nearNone >= MISS_FRAC * near
+          if (S >= (sparseData ? T_EARLY_MISS : T_EARLY)) {
             const mem: number[] = []
             for (let t = 0; t < Rb; t++) if (sv[nb[t]] >= ch.def.memMin) mem.push(nb[t])
+            // 下げた下限だけで届いた候補は、候補の点が MISS_MEM_N 点以上要る（2 点だけの上がりは、欠測の中でも検知にしない）
+            if (S < T_EARLY && mem.length < MISS_MEM_N) continue
             sig.push({ c, S, mem, s: sv })
           }
         }
