@@ -23,7 +23,7 @@ import {
 import { earthquakeCountHeadline } from '../utils/earthquakeCountSummary'
 import { tsunamiIssueNotification, tsunamiLiftNotification, tsunamiEndNotification, tsunamiObservationNotification, TSUNAMI_OBS_NOTIFICATION_TAG } from '../utils/tsunamiNotification'
 import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiGradeReport, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, isTsunamiExpired, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, forecastHeightChangedAreas, rememberForecastHeights, type SpokenTideEntry, tsunamiValueMarks, rememberTsunamiValues, createTsunamiValueMemory, clearTsunamiValueMemory, NO_TSUNAMI_VALUE_MARKS, type TsunamiValueMarks, type TsunamiValueMemory } from '../utils/tsunami'
-import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
+import { linkTsunamiSources, shownTsunamiSource } from '../utils/tsunamiSourceLinks'
 import {
   playAlertSound, ttsDelayFor, maxTtsDelay, speechNotBefore, msUntilAudioTime, type AlertSoundType,
 } from '../utils/alertSound'
@@ -749,7 +749,12 @@ function tsunamiQuakeSpokenFor(
     const quakeReportedLater = quakeAge !== undefined
       && Number.isFinite(Date.parse(tsunamiAge.time)) && Number.isFinite(Date.parse(quakeAge.time))
       && compareReportAge(quakeAge, tsunamiAge) > 0
-    return { source: link.source, spoken: quakeSpokenStateFor(states, key), subject: card ? quakeEventKey(card) : undefined, quakeReportedLater }
+    // 原因地震は結べた地震カードの上段の値で語る（→ `shownTsunamiSource`。津波カードの原因地震の行と同じ値。
+    // 2026-11-03 ユーザー選択「結べた地震カードの値 (Recommended)」）。結べなければ津波電文の値のまま。
+    // 取り消されたカードと同じ番号の生きているカードが並ぶことがあるので、値を採るカードは津波カードの行と同じ条件
+    // （取り消されていないもの）で引き直す（→ `shownTsunamiSources`）。既読の鍵と主題は従来どおり `card` で決める
+    const shownCard = link.eventId ? cards.find(q => extractQuakeEventIdFromId(q.id) === link.eventId && !q.cancelledAt) : undefined
+    return { source: shownTsunamiSource(link.source, shownCard), spoken: quakeSpokenStateFor(states, key), subject: card ? quakeEventKey(card) : undefined, quakeReportedLater }
   })
   const expiry = sources[0]?.spoken ?? quakeSpokenStateFor(states, expiryKey)
   return { spoken: { expiry, sources }, subject: sources.find(s => s.subject)?.subject }

@@ -73,3 +73,69 @@ function minuteOf(iso: string | undefined): number | null {
   const ms = Date.parse(iso)
   return Number.isFinite(ms) ? Math.floor(ms / 60_000) : null
 }
+
+/**
+ * 津波の原因地震を、**結べた地震カードの上段の値**で表したもの（2026-11-03 ユーザー選択「結べた地震カードの値 (Recommended)」）。
+ * 上段は同じ地震の報（地震情報・長周期・推計・津波）のうち発表が最も新しい値なので（→ `latestQuakeFacts.ts`）、
+ * 津波カードの原因地震の行・読み上げ・地図の×印・共有カードがこれを通すと、地震カードと同じ値になる。
+ * 全期間で、津波の原因地震を持つ 71 地震のうち 27 地震で、津波電文の値がその地震の地震情報の最終報と違う。
+ *
+ * 結べなければ（`card` が無い・取り消されたカード・震源名を持たない震度速報のカード）津波電文の値のまま返す。
+ *
+ * **カードが値を持たない欄は電文の値を残す**（欄ごとに「カードに有効な値があればカード、無ければ電文」）。カードが
+ * 「判らない」と言っているだけで電文の値を捨てると、電文にしか無い値（遠地地震の深さ・震源決定機関など）が画面と声から
+ * 黙って落ちる（→ CLAUDE.md「電文の情報をすべてそのまま伝える」）。組で意味を持つ欄は組で扱う —— 座標は緯度経度の両方、
+ * 規模は値と種別（カードが説明「Ｍ不明」等を持つならそれ）、震央補助表現はその文と材料（`markCode` ほか）。
+ */
+export function shownTsunamiSource(source: TsunamiSourceEarthquake, card: JMAQuake | undefined): TsunamiSourceEarthquake {
+  if (!card || card.cancelledAt || card.cancelled) return source
+  const h = card.earthquake.hypocenter
+  if (!h.name) return source
+  const shown: TsunamiSourceEarthquake = { ...source, hypocenterName: h.name }
+  // 上段の時刻は地震カードの時刻（発現時刻）。津波の行は `sourceEarthquakeTime`（発現時刻を先に採る）で読む
+  if (card.earthquake.time) shown.arrivalTime = card.earthquake.time
+  if (h.code) { shown.code = h.code; if (h.detailedCode) shown.detailedCode = h.detailedCode; else delete shown.detailedCode }
+  if (Number.isFinite(h.latitude) && Number.isFinite(h.longitude)) { shown.latitude = h.latitude; shown.longitude = h.longitude }
+  if (Number.isFinite(h.magnitude) && h.magnitude >= 0) {
+    shown.magnitude = h.magnitude
+    if (h.magnitudeType) shown.magnitudeType = h.magnitudeType; else delete shown.magnitudeType
+    delete shown.magnitudeCondition
+  } else if (h.magnitudeCondition) {
+    // カードが規模を「Ｍ不明」「Ｍ８を超える巨大地震」と言っているなら、それが上段の値
+    shown.magnitudeCondition = h.magnitudeCondition
+    delete shown.magnitude
+    delete shown.magnitudeType
+  }
+  if (Number.isFinite(h.depth) && h.depth >= 0) {
+    shown.depth = h.depth
+    if (h.depthAtLeast) shown.depthAtLeast = true; else delete shown.depthAtLeast
+  }
+  if (h.nameFromMark) {
+    shown.nameFromMark = h.nameFromMark
+    for (const k of ['markCode', 'direction', 'distanceKm'] as const) delete shown[k]
+    if (h.markCode) shown.markCode = h.markCode
+    if (h.direction) shown.direction = h.direction
+    if (h.distanceKm !== undefined) shown.distanceKm = h.distanceKm
+  }
+  // 震源決定機関は「誰が決めた震源か」なので、震源の値と組にする。カードが震源の位置か規模を決めているなら、
+  // 機関もカードの側に従う（カードが持たなければ出さない）。電文の「ＰＴＷＣ」を気象庁が決めた値の横に残すと、
+  // 誰の値かを取り違えさせる。カードがどちらも持たないときだけ、電文の機関を値と一緒に残す
+  const cardDecided = (Number.isFinite(h.latitude) && Number.isFinite(h.longitude)) || (Number.isFinite(h.magnitude) && h.magnitude >= 0)
+  if (h.source) shown.source = h.source
+  else if (cardDecided) delete shown.source
+  return shown
+}
+
+/**
+ * 津波の原因地震を、それぞれ結べた地震カードの上段の値で表して並べる（電文の順のまま。→ {@link shownTsunamiSource}）。
+ * 結べなかった原因地震は電文の値のまま。
+ */
+export function shownTsunamiSources(
+  tsunami: Pick<JMATsunami, 'eventId' | 'foldedReports' | 'sourceEarthquakes'>,
+  quakes: readonly JMAQuake[],
+): TsunamiSourceEarthquake[] {
+  return linkTsunamiSources(tsunami, quakes).map(link => shownTsunamiSource(
+    link.source,
+    link.eventId ? quakes.find(q => extractQuakeEventId(q) === link.eventId && !q.cancelledAt) : undefined,
+  ))
+}
