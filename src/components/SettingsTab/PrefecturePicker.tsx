@@ -51,7 +51,7 @@ export function PrefecturePicker({ value, onChange }: { value: readonly string[]
       <button
         ref={openerRef}
         type="button"
-        className="text-xs px-2 py-1 rounded bg-white/10 hover:bg-white/15 text-primary"
+        className="rounded-md border border-border bg-panel px-3 py-1.5 text-xs text-white whitespace-nowrap transition-colors motion-reduce:transition-none hover:bg-white/10"
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen(true)}
@@ -60,7 +60,7 @@ export function PrefecturePicker({ value, onChange }: { value: readonly string[]
       </button>
       {open && createPortal(
         <div
-          className="fixed inset-0 z-100000 flex items-center justify-center bg-black/60 p-2 sm:p-6"
+          className="fixed inset-0 z-100000 flex items-center justify-center bg-black/60 p-2 sm:p-6 [--text-sm:0.90625rem] [--text-xs:0.71875rem] min-[520px]:[--text-sm:1rem] min-[520px]:[--text-xs:0.78125rem]"
           // ポータルでも React のイベントは設定の窓の暗幕まで伝わるので、ここで止める（変更履歴の窓と同じ）
           onClick={e => {
             e.stopPropagation()
@@ -73,10 +73,10 @@ export function PrefecturePicker({ value, onChange }: { value: readonly string[]
             role="dialog"
             aria-modal="true"
             aria-label="通知する地域"
-            className="max-h-full overflow-y-auto rounded-lg border border-border bg-panel p-4 shadow-2xl shadow-black/60"
+            className="max-h-full overflow-y-auto rounded-md border border-border bg-panel p-4 shadow-[0_3px_8px_rgba(0,0,0,.55)]"
           >
             <div className="mb-3 flex items-center justify-between gap-4">
-              <span className="text-sm text-primary">通知する地域</span>
+              <span className="text-sm text-white">通知する地域</span>
               <span className="text-xs text-secondary">{prefectureSummary(value)}</span>
             </div>
             <div className="grid grid-cols-3 gap-x-4 gap-y-1.5 text-xs text-secondary">
@@ -88,7 +88,7 @@ export function PrefecturePicker({ value, onChange }: { value: readonly string[]
               ))}
             </div>
             <div className="mt-4 flex justify-end">
-              <button ref={closeRef} type="button" className="rounded bg-white/10 px-3 py-1 text-xs text-primary hover:bg-white/15" onClick={() => setOpen(false)}>
+              <button ref={closeRef} type="button" className="rounded-md border border-border bg-panel px-3 py-1.5 text-xs text-white whitespace-nowrap transition-colors motion-reduce:transition-none hover:bg-white/10" onClick={() => setOpen(false)}>
                 閉じる
               </button>
             </div>
