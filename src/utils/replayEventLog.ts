@@ -143,7 +143,7 @@ export interface ReplaySpeechChunkEvent extends ReplayEventCommon {
 /** 通知音の再生。 */
 export interface ReplaySoundEvent extends ReplayEventCommon {
   type: 'sound'
-  /** 音の種別（`AlertSoundType`）。 */
+  /** 音の種別（`AlertSoundType`。時報の音は `'timeSignal'`）。 */
   sound: string
   telegram: ReplayTelegramRef | null
 }

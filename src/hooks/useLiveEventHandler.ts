@@ -28,6 +28,7 @@ import { linkTsunamiSources, shownTsunamiSource } from '../utils/tsunamiSourceLi
 import {
   playAlertSound, ttsDelayFor, maxTtsDelay, speechNotBefore, msUntilAudioTime, type AlertSoundType,
 } from '../utils/alertSound'
+import { registerPendingSpeechProbe } from '../utils/pendingSpeech'
 import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
 import {
   recordReplayEvent, nextSpeechId, truncateReplayText, withReplayTelegramContext,
@@ -6280,6 +6281,20 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       rememberObservationStatesForDisplay(event.observations ?? [], lastObsMissingRef.current, lastObsReportedHeightRef.current)
     }
   }
+
+  // 「これから読み上げる予定があるか」を時報へ渡す（→ `utils/pendingSpeech.ts`）。時報はこれと
+  // `isSpeaking()` を見て、電文の読み上げを切らないよう声を省く。数えるのは、予約済みでまだ
+  // 読み始めていないもの —— 通知音との間の予約・EEW の連鎖・予想値の付く待ちと確定待ち・
+  // 誤報取消の予約・優先度ごとの予約（`speechBlocker` は揺れ検知の予約だけを見るが、時報は
+  // どの優先度の予約にも割り込まない）。読み上げの最中は `isSpeaking()` が答えるので、ここでは数えない。
+  useEffect(() => registerPendingSpeechProbe(() => ({
+    scheduledSpeeches: pendingSpeechRef.current.size,
+    eewChainPending: eewSpeechPendingRef.current,
+    eewPhase2Timers: eewTtsMaxTimersRef.current.size,
+    eewStabilityWaits: eewScaleStabilityRef.current.size + eewLpgmStabilityRef.current.size,
+    eewCancelPending: eewCancelSpeechRef.current.size,
+    scheduledPriorities: latestScheduledSeqByPriorityRef.current.size,
+  })), [])
 
   // EEW 読み上げタイマーと観測点ステータス自動消去タイマーをアンマウント時にクリーンアップする
   useEffect(() => {

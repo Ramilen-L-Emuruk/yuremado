@@ -12,6 +12,11 @@ import type { SeismoWaveMode } from '../utils/seismoWaveTrigger'
 import { DEFAULT_WAVE_SPAN_SEC, ensureWaveSpanSec, type WaveSpanSec } from '../utils/waveSpan'
 import { SHARE_CARD_FORMATS, type ShareCardFormatId } from '../utils/shareCard'
 import { DEFAULT_HEATMAP_PERIOD, isHeatmapPeriod, type HeatmapPeriod } from '../utils/quakeHeatmap'
+import {
+  MINUTES_PER_DAY,
+  TIME_SIGNAL_CLOCKS, TIME_SIGNAL_INTERVALS, TIME_SIGNAL_ORDERS, TIME_SIGNAL_PHRASES, TIME_SIGNAL_SOUNDS, TIME_SIGNAL_WHILE_SPEAKING,
+  type TimeSignalClock, type TimeSignalIntervalMin, type TimeSignalOrder, type TimeSignalPhrase, type TimeSignalSound, type TimeSignalWhileSpeaking,
+} from '../utils/timeSignal'
 
 /** 波形を展開していないときに出すもの（→ {@link AppSettings.seismoWaveCollapsedView}）。 */
 export type SeismoWaveCollapsedView = 'composite' | 'overlay'
@@ -190,6 +195,22 @@ export interface AppSettings {
    * 「警報の対象地方を、予想値の前に伝える」）。
    */
   ttsReadEewWarningRegions: boolean
+  // ── 時報（→ `utils/timeSignal.ts`・`hooks/useTimeSignal.ts`。決めたことは timeSignal.ts の冒頭） ──
+  timeSignalEnabled: boolean
+  timeSignalIntervalMin: TimeSignalIntervalMin
+  timeSignalSound: TimeSignalSound
+  timeSignalOrder: TimeSignalOrder
+  timeSignalPhrase: TimeSignalPhrase
+  timeSignalClock: TimeSignalClock
+  /** 鳴らさない時間帯を使うか。時刻は 0 時からの分（0〜1439） */
+  timeSignalQuietEnabled: boolean
+  timeSignalQuietStartMin: number
+  timeSignalQuietEndMin: number
+  timeSignalWhileSpeaking: TimeSignalWhileSpeaking
+  /** 時報だけの音量（0〜1）。null なら通知音と共通の `soundVolume` */
+  timeSignalVolume: number | null
+  /** 時報だけの声（VOICEVOX の話者 ID）。null なら読み上げと共通の `voicevoxSpeakerId` */
+  timeSignalSpeakerId: number | null
   /**
    * 自作地震計ホスト（`seismo-host/`）へ繋ぐ。
    *
@@ -381,6 +402,21 @@ export const DEFAULTS: AppSettings = {
   // 選ぶ項目なので既定を変えないが、これは新しく足す発話で、しかも「予想値の読み上げを
   // 遅らせる」ことが目的。既定で切っておくと、目的そのものが誰にも届かない。
   ttsReadEewWarningRegions: true,
+  // 時報は既定で切（2026-11-04 ユーザー選択「切 (Recommended)」）。ほかの既定も同じ日に選んだもの:
+  // 間隔は毎正時・音はピッ・ピッ・ピッ・ポーン・順番は音が先・文は「15時30分です」・24 時間制・
+  // 重なったら音だけ・音量と声は共通に合わせる。鳴らさない時間帯の 22:00〜7:00 は、諮った文言の例の値
+  timeSignalEnabled: false,
+  timeSignalIntervalMin: 60,
+  timeSignalSound: 'pips',
+  timeSignalOrder: 'soundFirst',
+  timeSignalPhrase: 'desu',
+  timeSignalClock: '24h',
+  timeSignalQuietEnabled: false,
+  timeSignalQuietStartMin: 22 * 60,
+  timeSignalQuietEndMin: 7 * 60,
+  timeSignalWhileSpeaking: 'soundOnly',
+  timeSignalVolume: null,
+  timeSignalSpeakerId: null,
   // 自作地震計は既定で無効。**URL の既定値も置かない** —— 繋ぎ先は端末ごとに違う。
   seismoEnabled: false,
   usageStatsEnabled: false,
@@ -421,6 +457,16 @@ function ensureBool(value: unknown, fallback: boolean): boolean {
 
 function ensureString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback
+}
+
+/** 決まった値のどれかでなければ既定値に落とす */
+function ensureOneOf<T extends string | number>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return (allowed as readonly unknown[]).includes(value) ? value as T : fallback
+}
+
+/** 0 時からの分（0〜1439 の整数）。範囲外・小数は既定値に落とす */
+function ensureMinuteOfDay(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < MINUTES_PER_DAY ? value : fallback
 }
 
 function ensureDefaultTab(value: unknown, fallback: DefaultTabSetting): DefaultTabSetting {
@@ -581,6 +627,18 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     ttsReadHypocenterDetail: ensureBool(partial.ttsReadHypocenterDetail, DEFAULTS.ttsReadHypocenterDetail),
     ttsReadEewLpgmClass: ensureBool(partial.ttsReadEewLpgmClass, DEFAULTS.ttsReadEewLpgmClass),
     ttsReadEewWarningRegions: ensureBool(partial.ttsReadEewWarningRegions, DEFAULTS.ttsReadEewWarningRegions),
+    timeSignalEnabled: ensureBool(partial.timeSignalEnabled, DEFAULTS.timeSignalEnabled),
+    timeSignalIntervalMin: ensureOneOf(partial.timeSignalIntervalMin, TIME_SIGNAL_INTERVALS, DEFAULTS.timeSignalIntervalMin),
+    timeSignalSound: ensureOneOf(partial.timeSignalSound, TIME_SIGNAL_SOUNDS, DEFAULTS.timeSignalSound),
+    timeSignalOrder: ensureOneOf(partial.timeSignalOrder, TIME_SIGNAL_ORDERS, DEFAULTS.timeSignalOrder),
+    timeSignalPhrase: ensureOneOf(partial.timeSignalPhrase, TIME_SIGNAL_PHRASES, DEFAULTS.timeSignalPhrase),
+    timeSignalClock: ensureOneOf(partial.timeSignalClock, TIME_SIGNAL_CLOCKS, DEFAULTS.timeSignalClock),
+    timeSignalQuietEnabled: ensureBool(partial.timeSignalQuietEnabled, DEFAULTS.timeSignalQuietEnabled),
+    timeSignalQuietStartMin: ensureMinuteOfDay(partial.timeSignalQuietStartMin, DEFAULTS.timeSignalQuietStartMin),
+    timeSignalQuietEndMin: ensureMinuteOfDay(partial.timeSignalQuietEndMin, DEFAULTS.timeSignalQuietEndMin),
+    timeSignalWhileSpeaking: ensureOneOf(partial.timeSignalWhileSpeaking, TIME_SIGNAL_WHILE_SPEAKING, DEFAULTS.timeSignalWhileSpeaking),
+    timeSignalVolume: clampNumberOrNull(partial.timeSignalVolume, 0, 1),
+    timeSignalSpeakerId: clampNumberOrNull(partial.timeSignalSpeakerId, 0, 100000),
     seismoEnabled: ensureBool(partial.seismoEnabled, DEFAULTS.seismoEnabled),
     usageStatsEnabled: ensureBool(partial.usageStatsEnabled, DEFAULTS.usageStatsEnabled),
     // **URL の形をここで検めない。** `voicevoxUrl` と同じ扱いで、文字列として通す
