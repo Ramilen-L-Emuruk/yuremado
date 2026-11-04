@@ -1307,6 +1307,53 @@ describe('震源・津波区分を津波電文から借りる結線', () => {
     expect(card.earthquake.domesticTsunami).toBe('警報等')
   })
 
+  /** 震源を持つ震源・震度情報（M7.4）。発表は `ageSec` 秒前。 */
+  function detail(ageSec: number): JMAQuake {
+    const at = new Date(serverDate().getTime() - ageSec * 1000).toISOString()
+    return {
+      ...prompt(),
+      time: at,
+      issue: { source: 'dmdata', time: at, type: '震源・震度情報', correct: 'なし' },
+      earthquake: {
+        time: at,
+        hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2, depth: 0, magnitude: 7.4 },
+        maxScale: 70,
+        domesticTsunami: '警報等',
+      },
+    }
+  }
+
+  // 正: 震源を持つカードにも、それより新しい津波の続報の規模を当て、印を付ける。取消が来たら地震情報の値へ戻す
+  // （2026-11-03 ユーザー選択「入れる (Recommended)」。'tsunami' ケースの続報と取消の両方の分岐を通す）
+  it('地震情報より新しい津波の規模を当て、津波の取消で戻す', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, detail(60))
+    const newer = tsunami()
+    push(h, { ...newer, sourceEarthquakes: [{ ...newer.sourceEarthquakes![0], magnitude: 7.6 }] })
+    let card = h.current.earthquakes[0]
+    expect(card.earthquake.hypocenter.magnitude).toBe(7.6)
+    expect(card.hypocenterSource?.shortLabel).toBe('津波情報')
+    expect([...h.current.quakeUpdateMarks.values()][0]?.facts.get('magnitude')).toBe('raised')
+    push(h, { ...tsunami(), cancelled: true, cancelReason: 'retracted' as const, areas: [] })
+    card = h.current.earthquakes[0]
+    expect(card.earthquake.hypocenter.magnitude).toBe(7.4)
+    expect(card.hypocenterSource).toBeUndefined()
+  })
+
+  // 正: 解除の 10 秒表示の間に届いた取消（表示中の津波に当たらない取消）でも、当てていた値を戻す
+  it('解除の後に届いた津波の取消でも、当てていた値を戻す', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, detail(60))
+    const newer = tsunami()
+    push(h, { ...newer, sourceEarthquakes: [{ ...newer.sourceEarthquakes![0], magnitude: 7.6 }] })
+    push(h, { ...tsunami(), cancelled: true, cancelReason: 'lifted' as const, areas: [] })
+    expect(h.current.earthquakes[0].earthquake.hypocenter.magnitude).toBe(7.6)
+    push(h, { ...tsunami(), cancelled: true, cancelReason: 'retracted' as const, areas: [] })
+    expect(h.current.earthquakes[0].earthquake.hypocenter.magnitude).toBe(7.4)
+  })
+
   // 安全弁: 別の地震の津波からは借りない（結ぶ根拠は `eventId` の一致だけ）。
   it('eventId が違う津波からは借りない', async () => {
     const h = setup()

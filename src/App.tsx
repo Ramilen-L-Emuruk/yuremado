@@ -105,6 +105,7 @@ import {
 } from './utils/quakeOverlay'
 import { findEndedTsunami, isTsunamiForecastOnly, tsunamiOverallGrade } from './utils/tsunami'
 import { filterDisplayedQuakes } from './utils/displayedQuakes'
+import { internationalTsunamiIndex, withInternationalTsunamiCards } from './utils/internationalTsunami'
 import { playCountdownBeep, unlockAudio, setSoundVolume, setKeepAliveEnabled } from './utils/alertSound'
 import { loadTtsPhraseBreakDict } from './utils/ttsPhraseBreakDict'
 import { loadTtsStationReadings } from './utils/ttsStationReadings'
@@ -289,6 +290,9 @@ export function App() {
   // 区別するために使う（明示選択中はユーザー操作中フラグを無視して強制フィット・
   // CameraFollowsGL.tsx QuakeFitGL 参照）。
   const [quakeSelectionTick, setQuakeSelectionTick] = useState(0)
+  // 選択が呼ばれるたびに進む番号（利用者の操作・続報・読み上げのどれでも）。選んだまま畳んだ地震カードは、
+  // これが進んだら開き直す（2026-11-03 選択「どれが来ても開き直す (Recommended)」。→ EarthquakeCard の `reopenSignal`）
+  const [quakeSelectSeq, setQuakeSelectSeq] = useState(0)
   const [focusedObsName, setFocusedObsName] = useState<{ name: string; ts: number } | null>(null)
   /**
    * カードの一覧の行をクリックしたときの寄り先（地震カードの観測点・県・区域・市町村と、
@@ -375,6 +379,7 @@ export function App() {
     const closeOverlay = shouldCloseOverlayOnSelection(selectedQuakeIdRef.current, eventKey)
     selectedQuakeIdRef.current = eventKey
     setSelectedQuakeId(eventKey)
+    setQuakeSelectSeq(n => n + 1)
     if (closeOverlay) applyQuakeOverlay(null, '別の地震を選んだ')
     if (opts?.explicit) setQuakeSelectionTick(t => t + 1)
   }, [])
@@ -1053,7 +1058,7 @@ export function App() {
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
-    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
+    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     resetState, loadReplayEvents, peekUpcomingPayloads, restoreQuakeHistory,
   } = useEarthquakes(handleLiveEventWithNotify, debouncedApiKey, settings.dmdataTestDelivery, replayTimeOffset, handleStartupRestore, restoreStartupEews, eewSpreadLog)
@@ -1107,6 +1112,7 @@ export function App() {
     foreignQuake:      simulateForeignQuake,
     foreignQuakeHuge:  simulateForeignQuakeHuge,
     foreignQuakeInternationalTsunami: simulateForeignQuakeInternationalTsunami,
+    internationalTsunamiDomesticAndOnly: simulateInternationalTsunamiDomesticAndOnly,
     headlineOnlyCity:  simulateHeadlineOnlyCity,
     eew:               simulateEEW,
     eewWarning:        simulateEEWWarning,
@@ -1145,6 +1151,7 @@ export function App() {
     quakeCancel: simulateQuakeCancel,
     quakePartialCancel: simulateQuakePartialCancel,
     borrowFromTsunami: simulateHypocenterFromTsunami,
+    magnitudeFromTsunami: simulateMagnitudeFromTsunami,
     unreceivedQuake:   simulateUnreceivedQuake,
     maxScaleOrAboveQuake: simulateMaxScaleOrAboveQuake,
     areaUnreceivedQuake: simulateAreaUnreceivedQuake,
@@ -1173,7 +1180,7 @@ export function App() {
     simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
-    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
+    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     settings.notifyEnabled,
   ])
@@ -1327,10 +1334,17 @@ export function App() {
   // filter は毎回新規配列を返すため useMemo で参照を安定化する
   // （EarthquakeTab / TsunamiTab へ props として渡すため。毎レンダー新配列を渡すと
   // shallow compare で常に不一致となり React.memo が実質無効化される）。
-  // 何を外し、何を外さないか（遠地地震・津波の原因地震）は `filterDisplayedQuakes`。
+  // 何を外し、何を外さないか（遠地地震・津波の原因地震・英文の付いた地震）は `filterDisplayedQuakes`。
+  //
+  // 国際津波関連情報の結び付けは、絞る前の全カードで 1 回だけ作る（→ `internationalTsunamiIndex`）。付く地震カードの無い報は、
+  // ここで英文だけのカードにして差し込む。状態の一覧には入れないので、音・読み上げ・通知は鳴らない（2026-10-30 の決定どおり）
+  const internationalTsunamiIdx = useMemo(
+    () => internationalTsunamiIndex(earthquakes, internationalTsunamis),
+    [earthquakes, internationalTsunamis],
+  )
   const filteredEarthquakes = useMemo(
-    () => filterDisplayedQuakes(earthquakes, settings.minDisplayScale, tsunamis),
-    [earthquakes, settings.minDisplayScale, tsunamis],
+    () => withInternationalTsunamiCards(filterDisplayedQuakes(earthquakes, settings.minDisplayScale, tsunamis, internationalTsunamiIdx.byQuakeKey), internationalTsunamiIdx),
+    [earthquakes, settings.minDisplayScale, tsunamis, internationalTsunamiIdx],
   )
 
   const latest = filteredEarthquakes[0] ?? null
@@ -3059,6 +3073,7 @@ export function App() {
               <EarthquakeTab
                 earthquakes={filteredEarthquakes}
                 selectedId={selectedQuakeKey}
+                selectSeq={quakeSelectSeq}
                 speakingKey={speakingQuakeKey}
                 followSpeech={settings.voicevoxEnabled}
                 onSelect={selectQuakeFromCard}
@@ -3078,7 +3093,7 @@ export function App() {
                 activeLpgmEventId={activeLpgmEventId}
                 onToggleLpgm={toggleLpgmFromEarthquake}
                 estimatedIntensities={estimatedIntensities}
-                internationalTsunamis={internationalTsunamis}
+                internationalTsunamisByQuake={internationalTsunamiIdx.byQuakeKey}
                 distributionQuakeKey={distributionQuakeKey}
                 onToggleDistribution={toggleDistribution}
                 unreceivedQuakeKey={unreceivedQuakeKey}

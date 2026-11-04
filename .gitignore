@@ -69,6 +69,7 @@ verify-*.jpg
 !.claude/agents/code-explorer.md
 !.claude/agents/doc-objectivity-reviewer.md
 !.claude/agents/meta-reviewer.md
+!.claude/agents/perf-reviewer.md
 !.claude/agents/silent-failure-hunter.md
 # .claude/skills/ も同じホワイトリスト方式。スキルは 1 つがディレクトリ単位のため、
 # ディレクトリを再包含する行（!.claude/skills/<name>/）が要る。

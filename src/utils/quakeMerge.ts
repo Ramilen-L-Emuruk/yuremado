@@ -438,6 +438,22 @@ function refoldFromTelegrams(
   return existing.retractedReports ? { ...card, retractedReports: existing.retractedReports } : card
 }
 
+/**
+ * 長周期・推計から当てた上段の値を外し、地震情報が運んだ値へ戻したカード（→ `JMAQuake.quakeInfoFacts`）。
+ * 当てていなければ同じ参照を返す。
+ */
+export function withoutLatestQuakeFacts(card: JMAQuake): JMAQuake {
+  const facts = card.quakeInfoFacts
+  if (!facts) return card
+  const { quakeInfoFacts: _facts, hypocenterSource: _source, ...rest } = card
+  return {
+    ...rest,
+    // 当てて動く欄だけを戻す。それ以外（当てた後に津波から借りた津波区分など）は今の値のまま
+    earthquake: { ...card.earthquake, hypocenter: facts.hypocenter, time: facts.time, maxScale: facts.maxScale },
+    ...(facts.hypocenterSource && { hypocenterSource: facts.hypocenterSource }),
+  }
+}
+
 // 電文 ID 文字列から eventId（14桁タイムスタンプ）を抽出する。
 // VXSE51/52/53/61 はすべて同じ eventId を共有するため、同一地震の同定に使用できる。
 // 電文 ID の書式: `dmdata-quake-YYYYMMDDhhmmss-<serial>`。
@@ -802,11 +818,22 @@ function domesticTsunamiFrom(
 }
 
 export function mergeQuakeInto(
-  existing: JMAQuake | undefined,
-  incoming: JMAQuake,
+  existingCard: JMAQuake | undefined,
+  incomingCard: JMAQuake,
   opts?: Parameters<typeof mergeQuakeIntoBody>[2],
 ): JMAQuake {
-  const result = mergeQuakeIntoBody(existing, incoming, opts)
+  // **地震情報の値どうしで統合する。** 長周期・推計から当てた上段の値は地震情報の値ではないので、統合の前に戻し、
+  // 当てるのは呼び出し側が統合の後に行う（→ `utils/latestQuakeFacts.ts`）。戻さないと、当てた値が地震情報の値として
+  // 続報へ引き継がれ、当てた報が取り消されても戻せない
+  const existing = existingCard && withoutLatestQuakeFacts(existingCard)
+  const incoming = withoutLatestQuakeFacts(incomingCard)
+  const body = mergeQuakeIntoBody(existing, incoming, opts)
+  // 据え置き（同じ参照を返す）は、戻す前の参照のまま返す（「変化なし＝同一参照」の約束を保つ）
+  const merged = existingCard && body === existing ? existingCard : body
+  // **当てた津波の値は、どの分岐を通っても引き継ぐ**（→ `JMAQuake.appliedTsunamiSource`）。本体の分岐は `...incoming` を
+  // 土台にすることがあり、そのとき黙って落ちる。落ちると、津波が一覧から消えた後に当てた値が地震情報の値へ戻る
+  const carriedTsunami = existingCard?.appliedTsunamiSource ?? incomingCard.appliedTsunamiSource
+  const result = carriedTsunami && !merged.appliedTsunamiSource ? { ...merged, appliedTsunamiSource: carriedTsunami } : merged
   // **一部の取消の記録は、どの分岐を通っても引き継ぐ**（→ `JMAQuake.retractedReports`）。
   // 本体は分岐ごとに `...existing` か `...incoming` を土台にするので、土台が電文の側だと
   // 黙って落ちる。分岐 1 つずつに書き足すと、分岐が増えたときに必ず漏れる。
@@ -902,8 +929,7 @@ function mergeQuakeIntoBody(
       // その報だけが持つ文が捨てられる。
       ...pickVarComment(incoming, existing),
       // 見出し文も自由付加文と同じ「その報だけが持つ文」なので同じ側を採る。
-      // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
-      // この経路だけ古い見出しが残る形になる。
+      // 開いたカードに出すので、この経路だけ古い見出しが残らないようにする。
       headline: incoming.headline ?? existing.headline,
     }, incoming)
   }
@@ -1053,8 +1079,7 @@ function mergeQuakeIntoBody(
       // 固定付加文（その他）も同じ考え方で補う。
       ...pickVarComment(result, existing),
       // 見出し文も自由付加文と同じ「その報だけが持つ文」なので同じ側を採る。
-      // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
-      // この経路だけ古い見出しが残る形になる。
+      // 開いたカードに出すので、この経路だけ古い見出しが残らないようにする。
       headline: result.headline ?? existing.headline,
     }
   }
@@ -1156,8 +1181,7 @@ function mergeQuakeIntoBody(
       // 固定付加文（その他）も新しい側（＝ここでは震源要素更新）を残す。
       ...pickVarComment(existing, result),
       // 見出し文も自由付加文と同じ「その報だけが持つ文」なので同じ側を採る。
-      // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
-      // この経路だけ古い見出しが残る形になる。
+      // 開いたカードに出すので、この経路だけ古い見出しが残らないようにする。
       headline: existing.headline ?? result.headline,
     }, existing)
   }
