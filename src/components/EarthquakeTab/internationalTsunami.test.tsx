@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 //
-// 遠地地震のカードに国際津波関連情報（WEPA60・英文）を畳んで添える（2026-10-30 ユーザー選択
-// 「受けて英文のまま出す (Recommended)」）。結び付けの判定は `utils/internationalTsunami.test.ts`、
-// ここは渡された報がカードに原文のまま出ることと、国内の地震のカードに出ないことを固定する。
+// 地震カードに国際津波関連情報（WEPA60・英文）を添える（2026-10-30 ユーザー選択
+// 「受けて英文のまま出す (Recommended)」・2026-11-03 ユーザー選択「国内に付け、無い分はカードに (Recommended)」）。
+// 結び付けの判定は `utils/internationalTsunami.test.ts`、ここは渡された報がカードに原文のまま出ることと、
+// 英文だけのカードの見出し・時刻の名前・津波の欄を固定する。
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
 import { EarthquakeTab } from './index'
 import { quakeEventKey } from '../../utils/quakeMerge'
 import type { IssueType, JMAInternationalTsunami, JMAQuake } from '../../types/earthquake'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
+import { internationalTsunamiIndex } from '../../utils/internationalTsunami'
 
 afterEach(cleanup)
 
@@ -43,11 +45,11 @@ function makeQuake(type: IssueType): JMAQuake {
   }
 }
 
-const renderTab = async (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami[], onSelect: (id: string) => void = () => {}) => {
-  render(
+const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami[], onSelect: (id: string) => void, selectSeq: number) => (
     <EarthquakeTab
       earthquakes={[quake]}
       selectedId={quakeEventKey(quake)}
+      selectSeq={selectSeq}
       speakingKey={null}
       followSpeech={false}
       onSelect={onSelect}
@@ -67,7 +69,7 @@ const renderTab = async (quake: JMAQuake, bulletins: readonly JMAInternationalTs
       activeLpgmEventId={null}
       onToggleLpgm={() => {}}
       estimatedIntensities={[]}
-      internationalTsunamis={bulletins}
+      internationalTsunamisByQuake={internationalTsunamiIndex([quake], bulletins).byQuakeKey}
       distributionQuakeKey={null}
       onToggleDistribution={() => {}}
       unreceivedQuakeKey={null}
@@ -77,30 +79,101 @@ const renderTab = async (quake: JMAQuake, bulletins: readonly JMAInternationalTs
       seismoWaves={new Map()}
       seismoWaveFailedKeys={new Set()}
       seismoWaveView="composite"
-    />,
-  )
+    />
+)
+
+const renderTab = async (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami[], onSelect: (id: string) => void = () => {}) => {
+  const view = render(tabElement(quake, bulletins, onSelect, 0))
   await flushDataEffects()
+  return view
 }
 
 describe('地震カードの国際津波関連情報（英文）', () => {
-  it('渡された報を、題名つきの畳んだ枠に原文のまま出す', async () => {
+  // 付加文の下に、畳まずに本文ごと出す（→ docs/quake-tab-redesign.md。2026-11-01
+  // 「それぞれ自分の欄を持つ (Recommended)」）
+  it('渡された報を、題名つきの枠に畳まず原文のまま出す', async () => {
     await renderTab(makeQuake('遠地地震'), [BULLETIN])
-    const summary = screen.getByText('国際津波関連情報（英文）', { exact: false })
-    expect(summary.textContent).toContain('TSUNAMI BULLETIN NUMBER 001')
-    const details = summary.closest('details')
-    expect(details?.open).toBe(false)
-    expect(details?.querySelector('pre')?.textContent).toBe(TEXT)
+    const title = screen.getByText('国際津波関連情報（英文）', { exact: false })
+    expect(title.textContent).toContain('TSUNAMI BULLETIN NUMBER 001')
+    expect(title.closest('details')).toBeNull()
+    const box = title.parentElement
+    expect(box?.querySelector('pre')?.textContent).toBe(TEXT)
   })
 
-  it('枠を開いてもカードの選択は動かない（押した操作をカードへ伝えない）', async () => {
+  // 開いたカードの地（押せる所の外）を押すと、地図を全体へ寄せ直すために選択を呼び直す
+  // （2026-11-03 選択「開いたカードの地を押す (Recommended)」）。枠は畳まない本文なので地に数える
+  it('枠の本文を押すと選択を呼び直し、字を選んだ後の指の離しでは呼ばない', async () => {
+    const onSelect = vi.fn()
+    const quake = makeQuake('遠地地震')
+    await renderTab(quake, [BULLETIN], onSelect)
+    const pre = screen.getByText('国際津波関連情報（英文）', { exact: false }).parentElement!.querySelector('pre')!
+    fireEvent.click(pre)
+    expect(onSelect).toHaveBeenCalledWith(quakeEventKey(quake))
+    // 安全弁: 本文をなぞって選んでいる間の指の離しは地のクリックに数えない
+    onSelect.mockClear()
+    const range = document.createRange()
+    range.selectNodeContents(pre)
+    window.getSelection()!.removeAllRanges()
+    window.getSelection()!.addRange(range)
+    fireEvent.click(pre)
+    expect(onSelect).not.toHaveBeenCalled()
+    window.getSelection()!.removeAllRanges()
+    // 対照: 見出しの行を押すとカードが畳まれるだけで、選択は呼ばない
+    fireEvent.click(screen.getByRole('button', { expanded: true, name: /^▾/ }))
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(screen.queryByText('国際津波関連情報（英文）', { exact: false })).toBeNull()
+  })
+
+  // 見出しの行は畳むだけで、選択は外さない（2026-11-03 選択「見出しも帯も閉じるだけ (Recommended)」）。
+  // 畳んだ行をもう一度押すと開き直すだけで、親へは伝えない（地図を動かさない）
+  it('見出しで畳んでも選択を外さず、畳んだ行を押すと親へ伝えずに開き直す', async () => {
     const onSelect = vi.fn()
     await renderTab(makeQuake('遠地地震'), [BULLETIN], onSelect)
-    const summary = screen.getByText('国際津波関連情報（英文）', { exact: false })
-    fireEvent.click(summary)
+    fireEvent.click(screen.getByRole('button', { expanded: true, name: /^▾/ }))
     expect(onSelect).not.toHaveBeenCalled()
-    // 対照: カードの見出し（震源名）を押せばカードへ伝わる
-    fireEvent.click(screen.getAllByText('インドネシア付近')[0])
-    expect(onSelect).toHaveBeenCalled()
+    const row = screen.getByRole('button', { current: true })
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(row)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(screen.getByText('国際津波関連情報（英文）', { exact: false })).toBeTruthy()
+  })
+
+  // 選んだまま畳んでいても、選択が呼ばれたら（同じ地震の続報・読み上げ・津波タブからのリンク）開き直す
+  // （2026-11-03 選択「どれが来ても開き直す (Recommended)」）
+  it('畳んだカードは、選択の番号が進んだら開き直す', async () => {
+    const quake = makeQuake('遠地地震')
+    const { rerender } = await renderTab(quake, [BULLETIN])
+    fireEvent.click(screen.getByRole('button', { expanded: true, name: /^▾/ }))
+    expect(screen.queryByText('国際津波関連情報（英文）', { exact: false })).toBeNull()
+    // 対照: 番号が同じまま描き直しても畳んだまま
+    await act(async () => { rerender(tabElement(quake, [BULLETIN], () => {}, 0)) })
+    expect(screen.queryByText('国際津波関連情報（英文）', { exact: false })).toBeNull()
+    // 正: 番号が進むと開き直す
+    await act(async () => { rerender(tabElement(quake, [BULLETIN], () => {}, 1)) })
+    expect(screen.getByText('国際津波関連情報（英文）', { exact: false })).toBeTruthy()
+  })
+
+  // 正: 国内の地震のカードにも、渡された報を出す
+  it('国内の地震のカードにも出す', async () => {
+    await renderTab(makeQuake('震源・震度情報'), [BULLETIN])
+    expect(screen.getByText('国際津波関連情報（英文）', { exact: false })).toBeTruthy()
+  })
+
+  // 英文だけのカード（2026-11-03 ユーザー選択「英文の値をそのまま並べる (Recommended)」「「地震発生時刻」 (Recommended)」）
+  it('英文だけのカードは見出しが「国際津波関連情報」、時刻の名前が「地震発生時刻」で、津波の欄を出さない', async () => {
+    const [card] = internationalTsunamiIndex([], [{ ...BULLETIN, regionName: 'TALAUD ISLANDS, INDONESIA', epicenter: { latitude: 4.8, longitude: 127.4 }, magnitude: 7.0 }]).cards
+    await renderTab(card, [BULLETIN])
+    expect(screen.getAllByText('国際津波関連情報').length).toBeGreaterThan(0)
+    expect(screen.getByText('地震発生時刻')).toBeTruthy()
+    expect(screen.queryByText('地震発現時刻')).toBeNull()
+    expect(screen.queryByText('津波')).toBeNull()
+  })
+
+  // 対照: 地震情報のカードは今までどおり「地震発現時刻」と津波の欄を出す
+  it('地震情報のカードは「地震発現時刻」と津波の欄を出す', async () => {
+    await renderTab(makeQuake('遠地地震'), [BULLETIN])
+    expect(screen.getByText('地震発現時刻')).toBeTruthy()
+    expect(screen.getByText('津波')).toBeTruthy()
   })
 
   it('報が無ければ枠を出さない', async () => {

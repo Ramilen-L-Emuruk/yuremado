@@ -5,7 +5,7 @@
 // 区域の点に県名を積む電文で区域ごと落ちる。索引を渡す形と渡さない形の両方を固定する。
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { isAreaPoint, buildIntensityRows, cityKey, type IntensityPrefRow, type IntensityRowDeps } from './quakePoints'
+import { isAreaPoint, buildIntensityRows, cityKey, intensityRowsShowUnreceivedNote, type IntensityPrefRow, type IntensityRowDeps } from './quakePoints'
 import { areaPrefIndexOf, type StationCoordsData } from './stationCoords'
 import type { EarthquakePoint, IntensityScale } from '../types/earthquake'
 
@@ -468,5 +468,30 @@ describe('buildIntensityRows', () => {
       )
       expect(result.rows.map(r => (r.kind === 'pref' ? r.pref : r.name))).toEqual(['岩手県沿岸北部', '宮城県'])
     })
+  })
+})
+
+describe('intensityRowsShowUnreceivedNote', () => {
+  const st = (unreceived: boolean) => ({ name: 's', scale: 30 as IntensityScale, unreceived, nonJma: false })
+  const city = (over: { unreceived?: boolean; hasUnreceived?: boolean; stations?: ReturnType<typeof st>[] } = {}) =>
+    ({ name: 'c', scale: 30 as IntensityScale, unreceived: false, hasUnreceived: false, stations: [], ...over })
+  const region = (over: Record<string, unknown> = {}) =>
+    ({ name: 'r', scale: 30 as IntensityScale, unreceived: false, hasUnreceived: false, cities: [], stations: [], ...over })
+  const pref = (over: Record<string, unknown> = {}): IntensityPrefRow =>
+    ({ kind: 'pref', pref: 'p', scale: 30 as IntensityScale, unreceived: false, hasUnreceived: false, regions: [], stations: [], cities: [], ...over }) as IntensityPrefRow
+
+  // 正: 奥の観測点だけが未入電でも、注記を描く行があるので欄を広げる
+  it('奥の観測点の未入電でも真', () => {
+    expect(intensityRowsShowUnreceivedNote([pref({ regions: [region({ cities: [city({ stations: [st(true)] })] })] })])).toBe(true)
+  })
+
+  // 対照: 注記を描く行が 1 つも無ければ偽（県の行の「自分の未入電」は注記を描かない）
+  it('注記を描く行が無ければ偽', () => {
+    expect(intensityRowsShowUnreceivedNote([pref({ unreceived: true, regions: [region()] })])).toBe(false)
+  })
+
+  // 安全弁: 県を引けない区域（最上段の区域）の範囲の未入電も拾う
+  it('最上段の区域の範囲の未入電も真', () => {
+    expect(intensityRowsShowUnreceivedNote([{ kind: 'area', ...region({ hasUnreceived: true }) } as never])).toBe(true)
   })
 })

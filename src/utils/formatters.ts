@@ -119,6 +119,15 @@ export function formatDateTimeMin(isoString: string): string | null {
  */
 export const QUAKE_ARRIVAL_TIME_LABEL = '地震発現時刻'
 
+/**
+ * 地震発生時刻（`OriginTime`）の名前。**国際津波関連情報（WEPA60）の英文だけから組んだカードでだけ使う** —— 英文の `ORIGIN TIME` は
+ * 発生時刻で、地震情報のカードの {@link QUAKE_ARRIVAL_TIME_LABEL} とは別の値（2026-11-03 ユーザー選択「「地震発生時刻」 (Recommended)」）。
+ */
+export const QUAKE_ORIGIN_TIME_LABEL = '地震発生時刻'
+
+/** 国際津波関連情報（WEPA60）の英文だけから組んだカードの見出し（2026-11-03 ユーザー選択「英文の値をそのまま並べる (Recommended)」）。 */
+export const INTERNATIONAL_TSUNAMI_INFO_NAME = '国際津波関連情報'
+
 /** 地震発現時刻を日時として読めなかったときに出す語。 */
 export const QUAKE_ARRIVAL_TIME_UNKNOWN = '地震発現時刻不明'
 
@@ -287,9 +296,17 @@ export function magnitudePrefix(magnitudeType: string | undefined): string {
  * 「利用の手引き」は遠地地震について、気象庁 CMT による Mw を採ることがあるとも書いている ——
  * **気象庁自身が決めた値に `M` が付く経路を否定できない。**
  *
- * 機関そのものは別の行で出す（→ `EarthquakeCard` の「震源決定: …（気象庁以外）」）。
+ * 機関そのものは別の行で出す（→ {@link formatHypocenterSource}）。
  * あちらは電文に機関が入っているときだけ出るので、言い過ぎにならない。
  */
+/**
+ * 震源決定機関の行（「震源決定: ＰＴＷＣ（気象庁以外）」）。地震カードと津波の原因地震で同じ文にする。
+ * 電文に機関（`Hypocenter/Source`）が入っているときだけ出す。
+ */
+export function formatHypocenterSource(source: string): string {
+  return `震源決定: ${source}（気象庁以外）`
+}
+
 export function magnitudeHeading(magnitudeType: string | undefined): string {
   if (magnitudeType === 'Mj') return '気象庁マグニチュード'
   return 'マグニチュード'

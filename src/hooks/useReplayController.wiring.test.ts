@@ -272,6 +272,24 @@ describe('useReplayController の start', () => {
     expect(h.current.isFetching).toBe(false)
   })
 
+  // 正: 通信そのものの失敗は、画面の赤字にブラウザの英語の文を出さず「通信できませんでした」（2026-11-03 ユーザー選択
+  // 「リプレイにも広げる (Recommended)」）。安全弁: 記録（録画ツール向けの出来事）には英語の原文を残す
+  it('通信の失敗は画面では日本語にし、記録には原文を残す', async () => {
+    drainReplayEvents()
+    const h = setup()
+    const started = h.start(quietTarget())
+
+    h.fetches[0].reject(new TypeError('Failed to fetch'))
+    h.fetches[1].resolve(fetched([]))
+    await h.flush(started)
+
+    expect(h.current.error).toMatch(/本編/)
+    expect(h.current.error).toMatch(/通信できませんでした/)
+    expect(h.current.error).not.toMatch(/Failed to fetch/)
+    const recorded = drainReplayEvents().events.filter(e => e.type === 'fetch' && e.phase === 'error')
+    expect(recorded.some(e => 'message' in e && String(e.message).includes('Failed to fetch'))).toBe(true)
+  })
+
   it('取得に失敗した後もリセット（stop）で時計を戻せる', async () => {
     const h = setup()
     const started = h.start(quietTarget())

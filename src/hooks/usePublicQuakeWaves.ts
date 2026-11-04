@@ -235,6 +235,10 @@ export function usePublicQuakeWaves(params: {
         if (prev?.busy) continue
         const extended = prev !== undefined && range.toMs > prev.toMs
         if (prev?.done && !extended) continue
+        // 組み立て済みの仮の控えは、範囲が保存庫に入りきるまで読み直さない。中身は入りきってから取り直すまで変わらない
+        // （`publicWaveCacheVerdict` の 'wait'）。この見直しは地震を選ぶたびにも走るので、読み直すと発生から数分のあいだ、
+        // 選ぶたびに控えの読み出しと組み立てが乗る
+        if (prev !== undefined && prev.wave !== null && !extended && !isPublicWaveRangeSettled(range, Date.now())) continue
         // 失敗の上限と待ちは、範囲が伸びたときも守る（伸びるたびに取り直すと上限が効かない）。諦めたら待ちは無限。
         if (prev !== undefined && Date.now() < prev.retryAtMs) continue
         const slot: Slot = prev ?? { wave: null, epoch: s.epoch, rawBytes: null, busy: false, done: false, toMs: range.toMs, failures: 0, retryAtMs: 0 }

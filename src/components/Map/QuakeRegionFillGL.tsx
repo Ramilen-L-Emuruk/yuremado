@@ -9,6 +9,8 @@ import type { JMAQuakeCity } from '../../types/earthquake'
 import type { RegionAggregate } from '../../hooks/useQuakeLayerData'
 import { ringToLngLat } from './gl/geojson'
 import { addOrderedLayer } from './gl/layerOrder'
+import { whenIdle } from './gl/whenIdle'
+import { isMapStyleGone } from './gl/mapStyleGone'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { escapeHtml, popupCodeHtml } from './gl/popupHtml'
 import { ensureIntensityIcons, intensityIconId, INTENSITY_ICON_BASE_RADIUS, UNRECEIVED_COLOR } from './gl/intensityIcons'
@@ -192,16 +194,45 @@ export function QuakeRegionFillGL({ regionAggregates, iconScale, visible }: Prop
     }
   }, [map])
 
-  // データ／倍率変化: 塗り・ラベルを差し替え。
+  // データ／倍率変化: 塗り・ラベルを差し替え。**出していない間は、手の空いた時間に流し込む**（→ `whenIdle`）。
+  // 寄った画では観測点の層が代わりに出るので、地震を選ぶたびに見えない区域の形（数万点）をその場で地図へ渡すと、
+  // 地図が切り分け直す分だけ選んだ瞬間のフレームが伸びる。出ていない間も流しておくのは、引いた画へ移った瞬間に
+  // 切り分けが済んでいないと、層が空のまま一瞬出るため
+  const pushedRef = useRef<{ regions: RegionAggregate[]; iconScale: number } | null>(null)
   useEffect(() => {
     if (!map || !addedRef.current) return
-    const fillSrc = map.getSource(FILL_SRC) as GeoJSONSource | undefined
-    fillSrc?.setData(buildFillFC(regionAggregates))
-    const labelSrc = map.getSource(LABEL_SRC) as GeoJSONSource | undefined
-    labelSrc?.setData(buildLabelFC(regionAggregates, iconScale))
-  }, [map, regionAggregates, iconScale])
+    const pushed = pushedRef.current
+    if (pushed && pushed.regions === regionAggregates && pushed.iconScale === iconScale) return
+    const push = (): void => {
+      pushedRef.current = { regions: regionAggregates, iconScale }
+      const fillSrc = map.getSource(FILL_SRC) as GeoJSONSource | undefined
+      fillSrc?.setData(buildFillFC(regionAggregates))
+      const labelSrc = map.getSource(LABEL_SRC) as GeoJSONSource | undefined
+      labelSrc?.setData(buildLabelFC(regionAggregates, iconScale))
+    }
+    if (visible) {
+      push()
+      return
+    }
+    // 先読みが済む前に引いた画へ移っても、**前の地震の塗りを出さない**よう、まず空にしておく（空なら軽い）
+    if (pushedRef.current !== null) {
+      pushedRef.current = null
+      ;(map.getSource(FILL_SRC) as GeoJSONSource | undefined)?.setData(EMPTY_FILL_FC)
+      ;(map.getSource(LABEL_SRC) as GeoJSONSource | undefined)?.setData(EMPTY_LABEL_FC)
+    }
+    // 予約が走る前に地図が壊されていたら（作り直しの合間）、流し込まずに終える
+    return whenIdle(() => {
+      try {
+        push()
+      } catch (err) {
+        if (!isMapStyleGone(map)) throw err
+      }
+    })
+  }, [map, regionAggregates, iconScale, visible])
+  // 層を作り直したら（地図の作り直し）、流し込んだ控えも捨てる
+  useEffect(() => () => { pushedRef.current = null }, [map])
 
-  // 表示切替（fill/line/ラベル レイヤー）。
+  // 表示切替（fill/line/ラベル レイヤー）。上の流し込みより後に置く（出すときは中身を入れてから出す）。
   useEffect(() => {
     if (!map || !map.getLayer(FILL_LYR)) return
     const v = visible ? 'visible' : 'none'

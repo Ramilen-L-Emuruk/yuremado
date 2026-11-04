@@ -185,6 +185,57 @@ describe('usePublicQuakeWaves', () => {
     expect(archive.fetch).toHaveBeenCalledTimes(1)
   })
 
+  // 正: 組み立て済みの仮の控え（範囲がまだ保存庫に入りきっていない）は、地震を選び直しても読み直さない（選ぶたびに組み立てが乗る）。
+  // 対照: 範囲が入りきったら取り直して組み立て直す
+  it('仮の控えは選び直しても組み立て直さず、範囲が入りきってから取り直す', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.parse('2026-10-13T11:46:00Z'))
+    archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB']) })
+    const quakes = [quake('q1', TIME, 30)]
+    const key = quakeEventKey(quakes[0])
+    const h = renderHook(({ opened }: { opened: string | null }) =>
+      usePublicQuakeWaves({ enabled: true, quakes, originSeconds: NO_SECONDS, openedEventKey: opened, liveNumbers: null, readLiveRaw, replayOffsetMs: null }),
+      { initialProps: { opened: null as string | null } },
+    )
+    await waitFor(() => expect(h.result.current.get(key)?.length).toBe(2))
+    const decoded = decode.calls.get('AAA')
+    // 選び直しのたびに、控えの読み出しが終わるまで待ってから数える（待たずに数えると、直す前の作りでも増える前に数えて通る）
+    for (const opened of [key, null, key]) {
+      await act(async () => { h.rerender({ opened }) })
+      await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+    }
+    expect(decode.calls.get('AAA')).toBe(decoded)
+    expect(archive.fetch).toHaveBeenCalledTimes(1)
+    vi.setSystemTime(Date.parse('2026-10-13T13:00:00Z'))
+    await act(async () => { h.rerender({ opened: null }) })
+    await waitFor(() => expect(archive.fetch).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(decode.calls.get('AAA')).toBeGreaterThan(decoded!))
+  })
+
+  // 安全弁: 入りきっていない仮の控えでも、範囲が後ろへ伸びたら（次の地震が消えて区切りが緩んだ）読み直して組み直す。
+  // 取り直すのは入りきってから（publicWaveCacheVerdict の 'wait'）なので、取得の回数は増えない
+  it('仮の控えでも、範囲が後ろへ伸びたら読み直して組み直す', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.parse('2026-10-13T11:46:00Z'))
+    archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB']) })
+    const q1 = quake('q1', TIME, 30)
+    const next = quake('q2', '2026/10/13 20:45:00', 30)
+    const h = renderHook(({ quakes }: { quakes: readonly JMAQuake[] }) =>
+      usePublicQuakeWaves({ enabled: true, quakes, originSeconds: NO_SECONDS, openedEventKey: null, liveNumbers: null, readLiveRaw, replayOffsetMs: null }),
+      { initialProps: { quakes: [next, q1] as readonly JMAQuake[] } },
+    )
+    await waitFor(() => expect(h.result.current.get(quakeEventKey(q1))?.length).toBe(2))
+    // 次の地震は見本のレコードが発生より前で終わるので波形が出ない。両方の取得と組み立てが済むまで待つ
+    await waitFor(() => expect(archive.fetch).toHaveBeenCalledTimes(2))
+    await act(async () => { await new Promise((r) => setTimeout(r, 100)) })
+    const before = decode.calls.get('AAA')!
+    const fetched = archive.fetch.mock.calls.length
+    await act(async () => { h.rerender({ quakes: [q1] }) })
+    await waitFor(() => expect(decode.calls.get('AAA')).toBeGreaterThan(before))
+    expect(archive.fetch).toHaveBeenCalledTimes(fetched)
+    expect(h.result.current.get(quakeEventKey(q1))![0].range.toMs).toBeGreaterThan(Date.parse('2026-10-13T11:45:00Z'))
+  })
+
   it('取得後に発生秒が判明したら、再取得せず時間軸と到達線を更新する', async () => {
     archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB']) })
     const quakes = [quake('q1', TIME, 30)]

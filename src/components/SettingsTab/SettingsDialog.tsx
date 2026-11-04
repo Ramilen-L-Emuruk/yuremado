@@ -150,10 +150,19 @@ export function SettingsDialog({ open, onClose, returnFocusRef, children }: {
         aria-modal="true"
         aria-label="設定"
         {...{ [SETTINGS_DIALOG_ATTR]: '' }}
-        className="flex h-full w-full flex-col overflow-hidden bg-app sm:h-[85dvh] sm:max-h-full sm:max-w-[880px] sm:rounded-lg sm:border sm:border-border sm:shadow-2xl sm:shadow-black/60"
+        // 角丸と影は全画面でそろえた物差し（窓は rounded-md・影は 1 種）
+        className="flex h-full w-full flex-col overflow-hidden bg-app sm:h-[85dvh] sm:max-h-full sm:max-w-[880px] sm:rounded-md sm:border sm:border-border sm:shadow-[0_3px_8px_rgba(0,0,0,.55)]"
         // 窓の下のページ（App）は、操作のたびにアイドル復帰の時間を計り直す。窓の中の操作もその「操作」に
         // 数えたいので、ここでは伝播を止めない。
       >
+        {/* 窓の中の文字を地震タブの 2 組にそろえる（2026-11-04 共通部が配った物差し「帯と窓だけ揃える (Recommended)」）。
+            狭い組は本文 14.5px・小 11.5px、窓の幅が 520px 以上なら本文 16px・小 12.5px。窓の中は `text-sm`（本文）と
+            `text-xs`（小）で書いてあるので、その 2 つの大きさの変数をここで差し替える。`contents` なので並びには効かない。
+            **境は画面の幅で測る**（`min-[520px]:`）。窓の幅は 640px 未満では画面と同じ、以上では 520px を下回らないので、
+            窓の幅で測るのと同じ境になる。窓をコンテナクエリの器にしないのは、器が中の `fixed`（説明の吹き出し）の
+            包含ブロックになり、吹き出しの位置が窓の左上基準へずれるため。body へ出す別窓（`PrefecturePicker` など）には
+            この変数が届かないので、それぞれの根で同じ組を当てる */}
+        <div className="contents [--text-sm:0.90625rem] [--text-xs:0.71875rem] min-[520px]:[--text-sm:1rem] min-[520px]:[--text-xs:0.78125rem]">
         <div
           className="flex shrink-0 items-center gap-2 border-b border-border bg-panel px-3 py-2"
           style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top, 0px))' }}
@@ -200,7 +209,7 @@ export function SettingsDialog({ open, onClose, returnFocusRef, children }: {
                       setActive(c.id)
                       setShowList(false)
                     }}
-                    className={`flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm transition-colors sm:py-2 ${
+                    className={`flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-sm transition-colors motion-reduce:transition-none sm:py-2 ${
                       selected ? 'sm:bg-white/15 sm:text-white' : ''
                     } ${'separated' in c ? 'text-secondary' : 'text-white'} hover:bg-white/5`}
                   >
@@ -221,6 +230,7 @@ export function SettingsDialog({ open, onClose, returnFocusRef, children }: {
               <ActiveCategoryContext.Provider value={active}>{children}</ActiveCategoryContext.Provider>
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>
