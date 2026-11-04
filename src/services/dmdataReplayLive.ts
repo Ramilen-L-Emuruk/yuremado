@@ -23,7 +23,7 @@ import { fetchWithTimeout, isAbortedByCaller, API_FETCH_TIMEOUT_MS } from '../ut
 import { fetchTelegramText, fetchTelegramBytes, telegramIdFromUrl } from './telegramBody'
 import { RateLimitWindowError } from './dmdataRequestGates'
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
-import type { ReplayEntry } from '../types/replay'
+import type { ReplayEntry, ReplayLogOnlyEntry } from '../types/replay'
 import {
   isHandledType, QUAKE_TYPES, TSUNAMI_TYPES, HISTORY_EXTRA_TYPES, historyExtraKey,
   buildXmlPayload, isBinaryTelegramType, buildBinaryPayload,
@@ -577,6 +577,50 @@ function classifyTelegram(
   return time >= fromTime && time < toTime ? 'include' : 'exclude'
 }
 
+/**
+ * 再生で、画面へは流さず電文ログにだけ積む電文か（見出しだけで決める）。**ライブが行を積むものに揃える**
+ * （2026-11-04 ユーザー選択「ライブと同じに積む (Recommended)」。ライブの振り分けは `dmdata.ts` の `handleMessage`）。
+ *
+ * - 試験報を受けない設定で届いた試験報（ライブは `filtered` で積む）
+ * - 取り込まない種類（配信テスト VXSE42・VXSE56 など）と、取り込まない側の緊急地震速報
+ *   （VXSE45 のある日の VXSE44・予報を受けている人の VXSE43）。VXSE42 は試験報を受ける設定のときもライブが積む
+ *
+ * 窓・担当日・JSON 版（`originalId`）の判定は呼び出し側が持つ（取り込む電文と同じ判定に掛ける）。
+ *
+ * @param eewHeadType その日に緊急地震速報として読む種別（`eewHeadTypeForDay`）
+ */
+export function isReplayLogOnly(
+  head: { readonly type: string; readonly test?: boolean },
+  includeTest: boolean,
+  eewHeadType: DayEewHeadType | null,
+): boolean {
+  if (head.test === true && !includeTest) return true
+  return !isHandledType(head.type, eewHeadType)
+}
+
+/**
+ * 当日経路の一覧の 1 件を、電文ログにだけ積むか。`classifyTelegram` が `exclude` と答えたものに掛ける。
+ *
+ * **窓・担当日・版の判定は `classifyTelegram` と同じ。** 窓の外の電文は、その窓を読む回が積む（窓は重ならないので
+ * 同じ電文が 2 行にならない）。受信時刻が読めない電文は積まない（取り込む電文なら取りこぼしに数える形で、
+ * こちらは数え方を変えない）。
+ */
+function isLogOnlyListItem(
+  item: TelegramListItem,
+  time: Date | null,
+  fromTime: Date,
+  toTime: Date,
+  days: ReadonlySet<string>,
+  includeTest: boolean,
+  eewHeadType: DayEewHeadType | null,
+): boolean {
+  if (!item?.head || item.originalId || time === null) return false
+  if (!isReplayLogOnly(item.head, includeTest, eewHeadType)) return false
+  const receivedMs = Date.parse(typeof item.receivedTime === 'string' ? item.receivedTime : '')
+  if (!Number.isFinite(receivedMs) || !days.has(toJstDateStr(new Date(receivedMs)))) return false
+  return time >= fromTime && time < toTime
+}
+
 /** 一覧の 1 件が緊急地震速報の電文か（中継の電文一覧は警報も載せる → `DmdataEndpoint.telegramListHasEew`） */
 function isEewListItem(item: TelegramListItem): boolean {
   return /^VXSE4[2-5]$/.test(item?.head?.type ?? '')
@@ -697,6 +741,8 @@ async function listEewTelegrams(
 
 export interface LiveReplayResult {
   entries: ReplayEntry[]
+  /** 電文ログにだけ積む行（→ `types/replay.ts` の `ReplayFetchResult.logOnlyEntries`）。 */
+  logOnlyEntries: ReplayLogOnlyEntry[]
   /**
    * 取り込めなかった電文の数を JST 日ごとに（理由は `utils/telegramLoss.ts` の `skippedByDay`）。
    *
@@ -765,15 +811,15 @@ class LiveBinaryTelegrams {
   /**
    * 断片の本体を受け取る。
    *
-   * @returns 結合して読めたペイロード（試験報でも返す。捨てるかは呼び出し側が
-   *   `isFilteredBinaryTelegram` で決め、捨てたことを記録する）／まだ揃っていなければ
-   *   `'pending'`／読み取りに失敗したら `'unreadable'`
+   * @returns まだ揃っていなければ `'pending'`。揃ったら結合した電文（`joined`。電文ログの行に元の二進として
+   *   持たせる）と、読めたペイロード（試験報でも返す。捨てるかは呼び出し側が `isFilteredBinaryTelegram` で決め、
+   *   捨てたことを記録する）。読み取りに失敗したら `payload` は `null`
    */
-  accept(item: TelegramListItem, bytes: Uint8Array): BinaryReplayPayload | 'pending' | 'unreadable' {
+  accept(item: TelegramListItem, bytes: Uint8Array): 'pending' | { joined: Uint8Array; payload: BinaryReplayPayload | null } {
     const joined = this.fragments.add(LiveBinaryTelegrams.keyOf(item), item.head.designation, bytes, Date.now())
     // まだ揃っていない断片。**取りこぼしには数えない**（残りは同じ一覧の別エントリにある）。
     if (!joined) return 'pending'
-    return buildBinaryPayload(item.head.type, joined, item.id, item.head.time) ?? 'unreadable'
+    return { joined, payload: buildBinaryPayload(item.head.type, joined, item.id, item.head.time) }
   }
 
   /**
@@ -824,7 +870,23 @@ class LiveBinaryTelegrams {
  * @throws 2 本の一覧をすべて引けなかった場合（その日ぶんが 1 通も取れていない状態）。
  *   一部だけ引けなかったときは投げず、引けた分を返して失敗を `failedSources` に記録する
  */
-export async function fetchLiveReplayEntries(
+export function fetchLiveReplayEntries(
+  endpoint: DmdataEndpoint,
+  fromTime: Date,
+  toTime: Date,
+  days: string[],
+  includeTest: boolean,
+  classifications: readonly DmdataClassification[],
+  signal: AbortSignal | null,
+): Promise<LiveReplayResult> {
+  return fetchLiveReplayEntriesWith(endpoint, fromTime, toTime, days, includeTest, classifications, signal, true)
+}
+
+/**
+ * `fetchLiveReplayEntries` の本体。`withLogOnly` が偽なら、電文ログにだけ積む電文（→ `isReplayLogOnly`）を
+ * 選ばず、その本体も取らない（再生の初期状態は電文ログの行を画面に載せないので、取っても捨てるだけになる）。
+ */
+export async function fetchLiveReplayEntriesWith(
   endpoint: DmdataEndpoint,
   fromTime: Date,
   toTime: Date,
@@ -838,9 +900,10 @@ export async function fetchLiveReplayEntries(
   classifications: readonly DmdataClassification[],
   /** 止める合図。一覧と EEW の詳細の取得を打ち切る（電文本体は相乗りするので打ち切らない）。 */
   signal: AbortSignal | null,
+  withLogOnly: boolean,
 ): Promise<LiveReplayResult> {
   if (days.length === 0) {
-    return { entries: [], skippedByDay: new Map(), scanSkippedByDay: new Map(), failedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
+    return { entries: [], logOnlyEntries: [], skippedByDay: new Map(), scanSkippedByDay: new Map(), failedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
   }
   const daySet = new Set(days)
   const { from: utcFrom, to: utcTo } = utcRangeForJstDates(days)
@@ -927,27 +990,62 @@ export async function fetchLiveReplayEntries(
   const dayEewHeadTypeOf = (item: TelegramListItem): DayEewHeadType | null =>
     eewHeadTypeForDay(eewHeadType, eewItemsByDay.get(skipDayOf(item.receivedTime)) ?? [])
   const malformedSeen = new Set<string>()
+  /**
+   * 電文ログにだけ積む電文（→ `isReplayLogOnly`）。**本体を取って本文ごと積む**（ライブも本文を復号して積む）。
+   * 取得に失敗しても取りこぼしにも見送りにも数えない —— 取り込む電文ではないので、数え方は変えない。
+   */
+  const logOnlyTargets = new Set<TelegramListItem>()
   for (const item of listed) {
-    const verdict = classifyTelegram(item, times.get(item) ?? null, fromTime, toTime, daySet, includeTest, dayEewHeadTypeOf(item))
+    const time = times.get(item) ?? null
+    const itemEewHeadType = dayEewHeadTypeOf(item)
+    const verdict = classifyTelegram(item, time, fromTime, toTime, daySet, includeTest, itemEewHeadType)
     if (verdict === 'malformed') {
       if (isFirstMalformed(item, malformedSeen)) scanSkipCounter.add(skipDayOf(item.receivedTime))
     }
     else if (verdict === 'include') targets.push(item)
+    else if (withLogOnly && isLogOnlyListItem(item, time, fromTime, toTime, daySet, includeTest, itemEewHeadType)) {
+      logOnlyTargets.add(item)
+      targets.push(item)
+    }
   }
 
   const entries: ReplayEntry[] = []
+  const logOnlyEntries: ReplayLogOnlyEntry[] = []
+  const pushLogOnly = (
+    item: TelegramListItem, rawBody: unknown, opts: { rawBytes: Uint8Array | null; errorMessage: string | null; isTest: boolean },
+  ): void => {
+    logOnlyEntries.push({
+      // 再生時刻は窓の判定と同じ値（二進電文は最後の断片の受信時刻 → `liveEntryTimes`）
+      replayTime: times.get(item) ?? new Date(item.receivedTime),
+      logEntry: makeReplayLogEntry({
+        headType: item.head.type, origin: 'replay', rawHead: item.head, rawBody, rawBytes: opts.rawBytes,
+        payload: null, errorMessage: opts.errorMessage, isTest: opts.isTest,
+      }),
+    })
+  }
   // 二進電文（推計震度分布図）の結合と数え方（→ `LiveBinaryTelegrams`）。
   const binaries = new LiveBinaryTelegrams()
   await mapWithLimit(targets, BODY_CONCURRENCY, async (item) => {
     const headType = item.head.type
+    if (logOnlyTargets.has(item)) {
+      await collectLogOnlyTelegram(item, endpoint, pushLogOnly)
+      return
+    }
     try {
       // 二進電文（IXAC41）はテキストへ落とさず、分割の結合を経てから読む。
       if (isBinaryTelegramType(headType)) {
-        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, endpoint))
-        if (binPayload === 'pending') return
-        if (binPayload === 'unreadable') {
+        const bytes = await fetchBinaryBody(item.url, endpoint)
+        const accepted = binaries.accept(item, bytes)
+        if (accepted === 'pending') {
+          // まだ揃っていない断片。**本文は電文ログへ入れない**（ライブと同じ —— 1 断片が最大 512KB ある）
+          pushLogOnly(item, `（BUFR の断片 ${bytes.length} バイト・結合待ち）`, { rawBytes: null, errorMessage: null, isTest: item.head.test === true })
+          return
+        }
+        const { joined, payload: binPayload } = accepted
+        if (binPayload === null) {
           log.warn(`[replay] 二進電文の読み取りに失敗しスキップ id=${item.id} type=${headType}`)
           skipCounter.add(skipDayOf(item.receivedTime))
+          pushLogOnly(item, `（BUFR ${joined.length} バイト）`, { rawBytes: joined, errorMessage: 'bufr decode failed', isTest: item.head.test === true })
           return
         }
         // **試験報は取りこぼしに数えない**（正常な配信。非 XML 電文は `item.head.test` で
@@ -955,19 +1053,24 @@ export async function fetchLiveReplayEntries(
         //
         // **捨てたことは記録する。** リプレイはこの判定の一次検証手段なので、誤って通常の
         // 電文まで弾いていても「なぜかその電文だけ画面に出ない」以上の手がかりが残らない
-        // （ライブ経路は元から記録している。片方だけ無音にしない）。
+        // （ライブ経路は元から記録している。片方だけ無音にしない）。電文ログにも積む（ライブと同じ）
         if (isFilteredBinaryTelegram(binPayload, includeTest)) {
           log.info(`[replay] 二進電文の試験報を流しません id=${item.id} type=${headType}`)
+          pushLogOnly(
+            item, `（BUFR ${joined.length} バイト・電文の種類 ${binPayload.data.telegramKind}）`,
+            { rawBytes: joined, errorMessage: null, isTest: true },
+          )
           return
         }
         // 再生時刻は窓の判定と同じ値（最後の断片の受信時刻 → `liveEntryTimes`）
         entries.push({
           payload: binPayload,
           replayTime: times.get(item) ?? new Date(item.receivedTime),
-          // 本文は要約だけ（ライブと同じ理由 —— 1 断片が最大 512KB ある）
+          // 本文は要約だけ（ライブと同じ文。1 断片が最大 512KB ある）。結合した元の二進は `rawBytes` に持たせる
           logEntry: makeReplayLogEntry({
-            headType, origin: 'replay', rawBody: `（BUFR ${binPayload.data.count} セル）`,
-            payload: binPayload, isTest: item.head.test === true,
+            headType, origin: 'replay', rawHead: item.head,
+            rawBody: `（BUFR ${joined.length} バイト・${binPayload.data.count} セル）`, rawBytes: joined,
+            payload: binPayload, errorMessage: null, isTest: item.head.test === true,
           }),
         })
         return
@@ -977,6 +1080,8 @@ export async function fetchLiveReplayEntries(
       if (!payload) {
         log.warn(`[replay] 電文のパースに失敗しスキップ id=${item.id} type=${headType}`)
         skipCounter.add(skipDayOf(item.receivedTime))
+        // ライブも読めなかった XML は `filtered` で積む（`dmdata.ts` の `buildXmlPayload` が null のとき）
+        pushLogOnly(item, xml, { rawBytes: null, errorMessage: null, isTest: item.head.test === true })
         return
       }
       // 再生時刻は窓の判定と同じ受信時刻（ミリ秒精度。アーカイブ経路がファイル名の 17 桁から
@@ -985,7 +1090,8 @@ export async function fetchLiveReplayEntries(
         payload,
         replayTime: new Date(item.receivedTime),
         logEntry: makeReplayLogEntry({
-          headType, origin: 'replay', rawBody: xml, payload, isTest: item.head.test === true,
+          headType, origin: 'replay', rawHead: item.head, rawBody: xml, rawBytes: null,
+          payload, errorMessage: null, isTest: item.head.test === true,
         }),
       })
     } catch (e) {
@@ -1027,8 +1133,50 @@ export async function fetchLiveReplayEntries(
   const skippedByDay = skipCounter.toMap()
   const scanSkippedByDay = scanSkipCounter.toMap()
   const skippedTotal = [...skippedByDay.values(), ...scanSkippedByDay.values()].reduce((a, b) => a + b, 0)
-  log.info(`[replay] アーカイブ未生成の日を当日経路で補完 日=${dayLabel} 電文=${entries.length} 取りこぼし=${skippedTotal} 読めなかった取得元=${failedSources.length}`)
-  return { entries, skippedByDay, scanSkippedByDay, failedSources, rateLimitedTelegrams, lostSourceDays }
+  log.info(`[replay] アーカイブ未生成の日を当日経路で補完 日=${dayLabel} 電文=${entries.length} 電文ログだけの行=${logOnlyEntries.length} 取りこぼし=${skippedTotal} 読めなかった取得元=${failedSources.length}`)
+  // 本体は並行して取るので、積んだ順は受信の順ではない
+  logOnlyEntries.sort((a, b) => a.replayTime.getTime() - b.replayTime.getTime())
+  return { entries, logOnlyEntries, skippedByDay, scanSkippedByDay, failedSources, rateLimitedTelegrams, lostSourceDays }
+}
+
+/** 電文ログにだけ積む電文の本体を取れなかった行の理由（行の赤字にそのまま出る）。アーカイブ経路も同じ文を使う */
+export const REPLAY_LOG_ONLY_FETCH_FAILED = '本文を取得できませんでした'
+
+/**
+ * 電文ログにだけ積む電文（→ `isReplayLogOnly`）の本体を取って行にする。
+ *
+ * **取得に失敗しても取りこぼしにも見送りにも数えない。** 取り込む電文ではないので、取りこぼしの数え方は
+ * 変えない（行を積むことと、取りこぼしに数えることは別）。**行は本文なしのエラーで積む** —— 積まないと、
+ * 「その時間に電文が無かった」と見分けられない（2026-11-04 ユーザー選択「エラーの行で積む (Recommended)」）。
+ * 429 の窓で見送ったものも、本文を取っていないので同じ行にする。
+ *
+ * 二進電文はここへ来ない想定（二進は推計震度分布図だけで、扱う種類であり、配信元は二進の試験報に `test` を立てない）。
+ * 来たら本体を取らずに要約の文だけで積む（1 断片が最大 512KB あり、結合もしないので読めない）。
+ */
+async function collectLogOnlyTelegram(
+  item: TelegramListItem,
+  endpoint: DmdataEndpoint,
+  push: (item: TelegramListItem, rawBody: unknown, opts: { rawBytes: Uint8Array | null; errorMessage: string | null; isTest: boolean }) => void,
+): Promise<void> {
+  const isTest = item.head.test === true
+  if (isBinaryTelegramType(item.head.type)) {
+    push(item, '（BUFR の断片・本文は取りません）', { rawBytes: null, errorMessage: null, isTest })
+    return
+  }
+  // 取得だけを try に入れる（行の組み立てが投げたときに「取れなかった」と取り違えて 2 行積まない）
+  let body: string
+  try {
+    body = await fetchBody(item.url, endpoint)
+  } catch (e) {
+    if (e instanceof RateLimitWindowError) {
+      log.info(`[replay] 電文ログにだけ積む電文は 429 の窓が明けるまで取りに行きません id=${item.id} type=${item.head.type}`)
+    } else {
+      log.warn(`[replay] 電文ログにだけ積む電文の本体を取れませんでした id=${item.id} type=${item.head.type}`, e)
+    }
+    push(item, null, { rawBytes: null, errorMessage: REPLAY_LOG_ONLY_FETCH_FAILED, isTest })
+    return
+  }
+  push(item, body, { rawBytes: null, errorMessage: null, isTest })
 }
 
 /**
@@ -1068,9 +1216,10 @@ async function collectHistoryTelegrams(
     try {
       // 二進電文はテキストへ落とさず、分割の結合を経てから読む（`fetchLiveReplayEntries` と同じ）。
       if (isBinaryTelegramType(item.head.type)) {
-        const binPayload = binaries.accept(item, await fetchBinaryBody(item.url, endpoint))
-        if (binPayload === 'pending') return
-        if (binPayload === 'unreadable') {
+        const accepted = binaries.accept(item, await fetchBinaryBody(item.url, endpoint))
+        if (accepted === 'pending') return
+        const binPayload = accepted.payload
+        if (binPayload === null) {
           log.warn(`[replay] 履歴用の二進電文の読み取りに失敗しスキップ id=${item.id} type=${item.head.type}`)
           noteSkip()
           return

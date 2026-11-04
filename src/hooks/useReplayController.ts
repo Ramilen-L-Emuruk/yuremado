@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { filterPreWindowEvents } from '../services/dmdataReplay'
 import { historyExtraKey } from '../services/dmdataTelegramPayload'
-import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
+import type { ReplayEntry, ReplayFetchResult, ReplayLogOnlyEntry, QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
 import type { JMATsunami } from '../types/earthquake'
 import { serverNow, serverDate } from '../utils/clock'
 import { log } from '../utils/logger'
@@ -216,7 +216,8 @@ export interface ReplayControllerDeps {
   /** pre-window の電文から T 時点の追跡 ref を復元する。 */
   restorePreWindowTracking: (entries: ReplayEntry[]) => void
   /** 取得した電文を再生キューへ積む。 */
-  loadReplayEvents: (entries: ReplayEntry[]) => void
+  /** `logOnlyEntries` は電文ログにだけ積む行（試験報・読まない種類・読めなかった電文。→ `ReplayFetchResult.logOnlyEntries`） */
+  loadReplayEvents: (entries: ReplayEntry[], logOnlyEntries: readonly ReplayLogOnlyEntry[]) => void
 }
 
 export interface ReplayController {
@@ -515,7 +516,8 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
         log.error('[replay] 窓の手前からの状態復元に失敗（再生は継続）', e)
       }
 
-      d.loadReplayEvents([...preFiltered, ...normal.entries])
+      // 初期状態（窓の手前 24 時間）の材料は電文ログへ載せない（`architecture-spec.md` §4「載せない経路もある」）ので、行は本編の分だけ
+      d.loadReplayEvents([...preFiltered, ...normal.entries], normal.logOnlyEntries)
 
       // 取りこぼしがあれば、再生は始まっていても必ず知らせる。黙って減った電文は
       // 「そういう時間帯だった」と見分けが付かず、テスト結果の誤読につながる。
@@ -611,7 +613,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
         // **積む途中で投げたら、その区間は取り直さずに諦める**（途中まで積んだかもしれず、取り直すと同じ電文を 2 度積む）。
         // 取得の失敗と分けるのは取り直しの側と同じ理由（下の `.then(成功, 失敗)`）。
         try {
-          depsRef.current.loadReplayEvents(result.entries)
+          depsRef.current.loadReplayEvents(result.entries, result.logOnlyEntries)
         } catch (e) {
           log.error(`[replay] 先読みした ${fmt(nextFrom)} からの 1 時間を積む途中で投げた（取り直さない）`, e)
           setLoss((prev) => addFailedPrefetch(addLoss(prev, result)))
@@ -691,7 +693,8 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
                 log.error('[replay] 取り直した先読みの過ぎた電文から状態を復元できなかった（積むのは続ける）', e)
               }
             }
-            depsRef.current.loadReplayEvents(lateEntriesSilenced(result.entries, nowMs))
+            // 時刻が過ぎた行は、次のティックで積まれる（音・画面は持たないので、黙らせる必要は無い）
+            depsRef.current.loadReplayEvents(lateEntriesSilenced(result.entries, nowMs), result.logOnlyEntries)
           } catch (e) {
             // **取り直さない**（途中まで積んだかもしれず、取り直すと同じ電文を 2 度積む）。諦めたことを残す。
             log.error(`[replay] 先読みに失敗していた ${fmt(item.from)} からの 1 時間を取り直せたが、積む途中で投げた（取り直さない）`, e)

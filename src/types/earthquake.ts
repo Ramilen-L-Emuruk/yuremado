@@ -2405,5 +2405,11 @@ export interface TelegramLogEntry {
   kind?: TelegramLogKind
   rawHead?: unknown
   rawBody: unknown
+  /**
+   * 二進電文（推計震度分布図の BUFR）の、断片を結合した元の電文。ダウンロードはこれを `.bin` で落とす
+   * （2026-11-04 ユーザー選択「残して落とせる (Recommended)」）。`rawBody` には画面に出す要約の文が入る。
+   * 結合待ちの断片の行には付けない。
+   */
+  rawBytes?: Uint8Array
   errorMessage?: string
 }

@@ -3,7 +3,7 @@ import type { TelegramLogEntry } from '../../types/earthquake'
 import { NON_EEW_HANDLED_TYPES, EEW_HEAD_TYPES, DISPATCHED_WITHOUT_PARSER } from '../../services/dmdataTelegramPayload'
 import {
   HEAD_TYPE_LABEL, KIND_LABEL, KIND_OPTIONS, headTypeLabel, matchesTelegramFilter, readKindFilter,
-  telegramLogKindOf,
+  telegramLogKindOf, telegramTitleOf,
 } from './labels'
 
 describe('HEAD_TYPE_LABEL', () => {
@@ -135,4 +135,40 @@ describe('matchesTelegramFilter', () => {
     expect(matchesTelegramFilter(skipped, 'all', 'all')).toBe(true)
   })
 
+})
+
+describe('telegramTitleOf', () => {
+  const xml = (title: string) =>
+    `<?xml version="1.0"?><Report><Control><Title>${title}</Title><Status>通常</Status></Control><Head><Title>見出しの題</Title></Head></Report>`
+
+  // 正: XML の電文は Control/Title をそのまま出す（Head の Title は使わない）
+  it('XML の電文は Control の Title を返す', () => {
+    expect(telegramTitleOf({ headType: 'VXSE62', rawBody: xml('長周期地震動に関する観測情報') })).toBe('長周期地震動に関する観測情報')
+  })
+
+  // 対照: XML でない本文（復号に失敗した base64・二進）は短い名前へ倒す
+  it('XML でない本文は種別名を返す', () => {
+    expect(telegramTitleOf({ headType: 'VXSE62', rawBody: 'PFJlcG9ydD4=' })).toBe('長周期')
+    expect(telegramTitleOf({ headType: 'IXAC41', rawBody: new Uint8Array([1, 2]) })).toBe('推計震度分布図作図用データ')
+  })
+
+  // 安全弁: Control が無い・Title が空の XML も短い名前へ倒す（空の名前を出さない）
+  it('Control/Title が読めない XML は種別名を返す', () => {
+    expect(telegramTitleOf({ headType: 'VXSE53', rawBody: '<Report/>' })).toBe('震源・震度')
+    expect(telegramTitleOf({ headType: 'VXSE53', rawBody: '<Report><Head><Title>見出し</Title></Head></Report>' })).toBe('震源・震度')
+    expect(telegramTitleOf({ headType: 'ZZZZ99', rawBody: '<Report/>' })).toBe('ZZZZ99')
+  })
+})
+
+describe('telegramTitleOf の許容幅', () => {
+  // 訓練・試験の読み取り（telegramOperationStatus.ts）と同じく、接頭辞と属性の付いた Control も読む
+  it('接頭辞・属性の付いた Control の Title を読む', () => {
+    const body = '<jmx:Report><jmx:Control xmlns:jmx="x"><jmx:Title> 震源に関する情報 </jmx:Title></jmx:Control></jmx:Report>'
+    expect(telegramTitleOf({ headType: 'VXSE52', rawBody: body })).toBe('震源に関する情報')
+  })
+
+  // 安全弁: 空の Title は名前にしない
+  it('空の Title は種別名へ倒す', () => {
+    expect(telegramTitleOf({ headType: 'VXSE52', rawBody: '<Report><Control><Title>  </Title></Control></Report>' })).toBe('震源情報')
+  })
 })

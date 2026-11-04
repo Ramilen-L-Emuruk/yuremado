@@ -80,6 +80,7 @@ export interface TestFunctions {
   nankaiCommentaryAdHoc?: () => void
   nankaiCommentaryRetraction?: () => void
   nankaiCommentaryRoutine?: () => void
+  activityInfo?: () => void
   kohatsu?: () => void
   kohatsuRetraction?: () => void
   quakeNotice?: () => void
@@ -2560,6 +2561,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {onTest.nankaiCommentaryRoutine && (
           <Row label="南海トラフ地震関連解説情報（定例解説）" description="平常時に毎月届く電文。バナー表示 + specialInfoCommentary 音（閉じるボタンあり・7日で自動消去）">
             <TestButton color="teal" onClick={onTest.nankaiCommentaryRoutine}>定例解説テスト</TestButton>
+          </Row>
+        )}
+        {onTest.activityInfo && (
+          <Row label="地震の活動状況等に関する情報" description="電文ログに「スキップ」の行が 1 行出るだけ。カード・帯・音は出ない（この種類は読まず、電文ログに本文ごと積む）">
+            <TestButton color="teal" onClick={onTest.activityInfo}>活動状況等テスト</TestButton>
           </Row>
         )}
         {onTest.kohatsu && (

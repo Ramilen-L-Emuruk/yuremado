@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useLayoutEffect, useRef } from 'react'
 import { RangeSlider } from '../RangeSlider'
 import { DateField } from '../DateField'
 import { Toggle } from '../Toggle'
@@ -80,11 +80,18 @@ const COLOR_BY_LABEL: Record<CatalogColorBy, string> = {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="bg-card rounded-lg border border-border overflow-hidden mb-3">
-      <div className="px-4 py-2.5 bg-panel border-b border-border">
-        <h2 className="text-white text-sm font-bold">{title}</h2>
-      </div>
-      <div className="divide-y divide-border">{children}</div>
+    // 設定の窓の節と同じ形（地も角丸も無く、上下の線と行の区切り線だけ。見出しは小さい弱い字）
+    <section className="mb-4">
+      {/* 巻いている間は、その節の見出しを件数の行の下に残す（2026-11-04 ユーザー選択「貼りつける (Recommended)」）。
+          件数の行は折り返すことがあるので、高さは測った値（--catalog-head-h）を使う */}
+      <h2
+        className="sticky z-[1] bg-panel pt-1 pb-1.5 font-bold text-secondary"
+        style={{ top: 'var(--catalog-head-h, 0px)', paddingInline: 'var(--qk-pad)' }}
+      >
+        {title}
+      </h2>
+      {/* isolate: スライダーのつまみの重なり順（3・4）を節の中に閉じる。閉じないと、巻いたときに貼りついた件数の行と見出しの上へ透ける */}
+      <div className="isolate divide-y divide-border border-y border-border">{children}</div>
     </section>
   )
 }
@@ -101,11 +108,11 @@ function Row({
 }) {
   return (
     // data-settings-row は説明の吹き出しが基準にする矩形の目印（`DescriptionTip` 参照）。
-    <div data-settings-row className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+    <div data-settings-row className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2.5" style={{ paddingInline: 'var(--qk-pad)' }}>
       <div className="min-w-0 grow basis-32">
         {description
           ? <DescriptionTip label={label} description={description} />
-          : <p className="text-white text-sm">{label}</p>}
+          : <p className="text-white" style={{ fontSize: 'var(--qk-f)' }}>{label}</p>}
       </div>
       <div className="flex items-center gap-2">{children}</div>
     </div>
@@ -132,19 +139,19 @@ function RangeRow({
   children: React.ReactNode
 }) {
   return (
-    <div data-settings-row className="px-4 py-3">
+    <div data-settings-row className="py-2.5" style={{ paddingInline: 'var(--qk-pad)' }}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4">
         <DescriptionTip label={label} description={description} />
-        <p className="text-secondary text-xs tabular-nums">{valueText}</p>
+        <p className="text-secondary tabular-nums">{valueText}</p>
       </div>
-      {note && <p className="text-secondary text-xs text-right">{note}</p>}
+      {note && <p className="text-secondary text-right">{note}</p>}
       <div className="mt-1">{children}</div>
     </div>
   )
 }
 
 const SELECT_CLASS =
-  'bg-panel border border-border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500'
+  'bg-panel border border-border text-white rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500'
 
 // 日付ピッカー。**`color-scheme` を暗い側へ寄せる**——ブラウザが描くカレンダーのアイコンと
 // ポップアップは配色をここから決めるため、指定しないと暗い背景の上に明るい部品が乗る。
@@ -179,6 +186,22 @@ export const CatalogTab = memo(function CatalogTab({
   const lastYear = jstYearOf(periodMax)
   const completeness = index ? catalogCompleteness(index, filter) : null
 
+  // 貼りついた件数の行の高さを、節の見出しが貼りつく位置として渡す。描き直さずに済むよう CSS の変数で渡す
+  const scopeRef = useRef<HTMLDivElement>(null)
+  const headRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const scope = scopeRef.current
+    const head = headRef.current
+    if (!scope || !head) return
+    const apply = () => scope.style.setProperty('--catalog-head-h', `${head.getBoundingClientRect().height}px`)
+    apply()
+    // 見張れない環境（試験の環境など）では、最初に測った高さのまま
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(apply)
+    ro.observe(head)
+    return () => ro.disconnect()
+  }, [])
+
   // 期間の決め方そのものは `hypocenterCatalogView` の純粋関数に置いてある（単体テストの対象）。
   // ここは値を繋ぐだけ。
   const changeYears = (nextFrom: number, nextTo: number) => {
@@ -194,7 +217,58 @@ export const CatalogTab = memo(function CatalogTab({
 
 
   return (
-    <div className="p-3">
+    // 文字と余白は地震一覧と同じ 2 組（器の幅 520px で切り替え。値は src/index.css の quake-list）
+    <div className="quake-list">
+    <div ref={scopeRef} className="quake-list-scope pb-3" style={{ fontSize: 'var(--qk-fs)' }}>
+      {/* 件数は一番上に貼りつける。絞り込みを動かしながら数が見えるように（2026-11-04 ユーザー選択
+          「上に貼りつける (Recommended)」。前は一番下の「表示中」の枠にあり、狭い画面ではスライダーと同時に見えなかった） */}
+      {/* data-settings-row は説明の吹き出しが基準にする矩形の目印（`DescriptionTip` 参照）。説明の文は前の
+          「件数」の行のまま（2026-11-04 ユーザー選択「「表示中」に戻す (Recommended)」） */}
+      <div ref={headRef} data-settings-row className="sticky top-0 z-[2] flex flex-wrap items-baseline gap-x-2 border-b border-border bg-panel" style={{ padding: '8px var(--qk-pad)' }}>
+        <DescriptionTip
+          label="表示中"
+          description={
+            loading ? '年ごとのデータを取得しています'
+              : pending ? '絞り込みを変えた直後です。数えなおしが終わると入れ替わります'
+                : '地図に出ている点の数です'
+          }
+        />
+        <span className="text-white tabular-nums" style={{ fontSize: 'var(--qk-f)' }}>
+          {pointCount.toLocaleString()} 件
+          {/* 2026-10-18 ユーザー選択「内訳を出す」。0 件なら括弧ごと出さない。 */}
+          {unknownMagnitudeCount > 0 && `（うち M 不明 ${unknownMagnitudeCount.toLocaleString()} 件）`}
+        </span>
+        {(loading || pending) && (
+          <span className="text-secondary">{loading ? '読み込み中' : '更新中'}</span>
+        )}
+      </div>
+      {/* 件数を読み違えないための知らせは、件数の行の真下に置く（取得できなかった年があると件数は少なく出る）。
+          下の節の後ろに置くと、件数を見ながら絞り込みを動かしている間は目に入らない */}
+      {(error || missingYears.length > 0) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-2" style={{ paddingInline: 'var(--qk-pad)' }}>
+          <p className="text-red-400">
+            {/* **まるごと取れなかったときは言い方を変える。** 「そのぶん少なく」では、
+                1 件も出ていない状態が「少し欠けている」と読める。 */}
+            {error
+              ?? (missingYears.length >= requestedYears
+                ? `${formatMissingYears(missingYears)} 年を取得できず（この期間の地震は 1 件も出ていません）`
+                : `${formatMissingYears(missingYears)} 年を取得できず（件数はそのぶん少なく出ています）`)}
+          </p>
+          <button
+            onClick={onRetry}
+            className="rounded-md border border-border bg-panel px-3 py-1.5 text-white whitespace-nowrap transition-colors motion-reduce:transition-none hover:bg-white/10"
+          >
+            再試行
+          </button>
+        </div>
+      )}
+      {completeness?.belowComplete && (
+        <p className="text-yellow-400 pt-2" style={{ paddingInline: 'var(--qk-pad)' }}>
+          {oldestYearOf(filter)} 年まで遡ると、記録が揃うのは M {completeness.completeMin.toFixed(1)} 以上です。
+          それより小さい地震は少なく見えます。
+        </p>
+      )}
+      <div className="pt-3">
       <Section title="絞り込み">
         <RangeRow
           label="期間"
@@ -223,7 +297,7 @@ export const CatalogTab = memo(function CatalogTab({
               onCommit={(v) => changeDate(v, 'from')}
               className={DATE_INPUT_CLASS}
             />
-            <span className="text-secondary text-xs">〜</span>
+            <span className="text-secondary">〜</span>
             <DateField
               label="期間の終了日"
               value={toDateInputValue(filter.toMs)}
@@ -346,7 +420,7 @@ export const CatalogTab = memo(function CatalogTab({
         </Row>
         <Row label="点の基準サイズ" description="点の直径です。強調表示がオンのときは、この大きさに倍率が掛かります">
           {/* **値は隠さない。** 隠してよいのは説明文だけ（スライダーを見ても px は読めない）。 */}
-          <span className="text-secondary text-xs tabular-nums">{view.sizePx.toFixed(1)} px</span>
+          <span className="text-secondary tabular-nums">{view.sizePx.toFixed(1)} px</span>
           <input
             type="range"
             aria-label="点の基準サイズ"
@@ -360,57 +434,19 @@ export const CatalogTab = memo(function CatalogTab({
         </Row>
       </Section>
 
-      <Section title="表示中">
-        <Row
-          label="件数"
-          description={
-            loading ? '年ごとのデータを取得しています'
-              : pending ? '絞り込みを変えた直後です。数えなおしが終わると入れ替わります'
-                : '地図に出ている点の数です'
-          }
-        >
-          <span className="text-white text-sm tabular-nums">
-            {pointCount.toLocaleString()} 件
-            {/* 2026-10-18 ユーザー選択「内訳を出す」。0 件なら括弧ごと出さない。 */}
-            {unknownMagnitudeCount > 0 && `（うち M 不明 ${unknownMagnitudeCount.toLocaleString()} 件）`}
-          </span>
-          {(loading || pending) && (
-            <span className="text-secondary text-xs">{loading ? '読み込み中' : '更新中'}</span>
-          )}
-        </Row>
-      </Section>
-
-      {(error || missingYears.length > 0) && (
-        <div className="px-1 mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <p className="text-xs text-red-400">
-            {/* **まるごと取れなかったときは言い方を変える。** 「そのぶん少なく」では、
-                1 件も出ていない状態が「少し欠けている」と読める。 */}
-            {error
-              ?? (missingYears.length >= requestedYears
-                ? `${formatMissingYears(missingYears)} 年を取得できず（この期間の地震は 1 件も出ていません）`
-                : `${formatMissingYears(missingYears)} 年を取得できず（件数はそのぶん少なく出ています）`)}
-          </p>
-          <button
-            onClick={onRetry}
-            className="text-xs text-white bg-panel border border-border rounded-sm px-2 py-1 hover:border-blue-500"
-          >
-            再試行
-          </button>
+      {/* 「 / 」で繋いだ出典は 1 つ 1 行にする。器の幅 520px 未満はラベルの下に左寄せ、以上はラベルの右に右寄せ
+          （設定の窓からの横展開。2026-11-04 ユーザー選択済み） */}
+      {index && (
+        <div className="flex flex-col gap-x-4 text-secondary @min-[520px]:flex-row @min-[520px]:justify-between" style={{ paddingInline: 'var(--qk-pad)' }}>
+          <span className="shrink-0">出典</span>
+          <div className="flex flex-col @min-[520px]:items-end @min-[520px]:text-right">
+            {index.source.split(' / ').map((s) => <span key={s}>{s}</span>)}
+            <span>（{index.license}）</span>
+          </div>
         </div>
       )}
-
-      {completeness?.belowComplete && (
-        <p className="text-xs text-yellow-400 px-1 mb-3">
-          {oldestYearOf(filter)} 年まで遡ると、記録が揃うのは M {completeness.completeMin.toFixed(1)} 以上です。
-          それより小さい地震は少なく見えます。
-        </p>
-      )}
-
-      {index && (
-        <p className="text-xs text-secondary px-1">
-          出典: {index.source}（{index.license}）
-        </p>
-      )}
+      </div>
+    </div>
     </div>
   )
 })

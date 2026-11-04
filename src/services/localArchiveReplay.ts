@@ -200,7 +200,7 @@ export function uncollectedFetchVerdict(
 
 /** 電文が 1 通も無く、取りこぼしも無い取得結果（集めていない日を空で返すとき）。 */
 export function emptyReplayFetchResult(): ReplayFetchResult {
-  return { entries: [], skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
+  return { entries: [], logOnlyEntries: [], skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
 }
 
 export async function fetchLocalArchiveEvents(
@@ -211,7 +211,7 @@ export async function fetchLocalArchiveEvents(
   const file = await loadFile(meta.id)
   if (!file) {
     // 一覧には載っていたが本体が読めない = 全滅扱い（dmdataReplay.ts の「全アーカイブ失敗」と同じ粒度）。
-    return { entries: [], skippedByDay: new Map(), failedArchiveUrls: [fileUrl(meta.id)], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
+    return { entries: [], logOnlyEntries: [], skippedByDay: new Map(), failedArchiveUrls: [fileUrl(meta.id)], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
   }
 
   const entries: ReplayEntry[] = file.entries
@@ -225,7 +225,8 @@ export async function fetchLocalArchiveEvents(
 
   entries.sort((a, b) => a.replayTime.getTime() - b.replayTime.getTime())
 
-  return { entries, skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
+  // 電文の本文を持たないので、電文ログにだけ積む行も無い
+  return { entries, logOnlyEntries: [], skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000

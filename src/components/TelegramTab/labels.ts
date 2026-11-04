@@ -53,6 +53,31 @@ export function headTypeLabel(headType: string): string {
 }
 
 /**
+ * 電文の Control/Title。`Control` の中だけを見る（Head にも同名の Title がある）。開始タグの属性と接頭辞は、
+ * 訓練・試験の読み取り（`utils/telegramOperationStatus.ts`）と同じく許す。
+ */
+const CONTROL_BLOCK = /<(?:[\w.-]+:)?Control\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?Control>/
+const TITLE = /<(?:[\w.-]+:)?Title\b[^>]*>\s*([^<]*?)\s*<\/(?:[\w.-]+:)?Title>/
+
+/** 一度読んだ行の名前（行は作られた後に書き換えない）。2,022 行を描くたびに本文をなめ直さない。 */
+const titleCache = new WeakMap<object, string>()
+
+/**
+ * 行に出す名前。XML の電文は本文の Control/Title をそのまま出す（2026-11-04 ユーザー選択「電文の Title を
+ * そのまま (Recommended)」）。Title が読めない行（二進の推計震度分布図・復号に失敗した base64・捨てた試験報）は
+ * 種別名（{@link headTypeLabel}）を出す。
+ */
+export function telegramTitleOf(entry: Pick<TelegramLogEntry, 'headType' | 'rawBody'>): string {
+  const cached = titleCache.get(entry)
+  if (cached !== undefined) return cached
+  const body = entry.rawBody
+  const control = typeof body === 'string' && body.trimStart().startsWith('<') ? CONTROL_BLOCK.exec(body)?.[1] : undefined
+  const title = (control === undefined ? undefined : TITLE.exec(control)?.[1]) || headTypeLabel(entry.headType)
+  titleCache.set(entry, title)
+  return title
+}
+
+/**
  * 行の前段に出す短い名前。**書いた順が、種別の絞り込みの選択肢の並びになる**
  * （`KIND_OPTIONS`）。`Record<TelegramLogKind, string>` なので、種別を足して書き忘れると
  * 型エラーになり、選択肢にも自動で並ぶ。
