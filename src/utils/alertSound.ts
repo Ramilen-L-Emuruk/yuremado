@@ -7,13 +7,8 @@ import { recordReplayEvent, currentReplayTelegram } from './replayEventLog'
 // 注意: ブラウザの自動再生制限により、ユーザー操作（クリック等）が一度行われるまで
 // 音は鳴らない。初回操作時に unlockAudio() を呼んで AudioContext を有効化する。
 
-export type AlertSoundType =
-  'earthquake' | 'earthquakePrompt' | 'earthquakeInfo'
-  | 'eew' | 'eewUpdate' | 'eewFinal' | 'eewCancel' | 'eewSpecial' | 'eewForecast'
-  | 'tsunami' | 'tsunamiMajor' | 'tsunamiWatch' | 'tsunamiForecast' | 'tsunamiUpdate' | 'tsunamiCancel'
-  | 'kyoshin' | 'kyoshinCandidate'
-  | 'specialInfo' | 'specialInfoCommentary' | 'earthquakeCount'
-  | 'earthquakeCancel' | 'specialInfoCancel'
+import type { AlertSoundType } from './alertSoundType'
+export type { AlertSoundType }
 
 let audioCtx: AudioContext | null = null
 

@@ -32,11 +32,11 @@ import { withLatestQuakeFacts, latestQuakeFactsIntoCards } from '../utils/latest
 import { loadStationCoords, onStationCoordsLoaded, areaPrefIndexOf, getAreaPrefIndexCache } from '../utils/stationCoords'
 import type { AreaPrefIndex } from '../utils/quakePoints'
 import {
-  calcEEWCancelTime, eewSerial, eewSerialSeries, eewEventKey, eewIssueTimeMs, mergeEewReport, eewStaleness, acceptEewReport,
-  supplementEewReport, raisesEewAlert,
-  noteEewNotified, isSameReportFromOtherOrigin, isOlderEewReport, type EewAcceptance,
-  endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, rememberEewFirstIssueTime,
+  calcEEWCancelTime, eewSerial, eewSerialSeries, eewEventKey, eewIssueTimeMs, mergeEewReport,
+  supplementEewReport, isOlderEewReport, type EewAcceptance,
+  endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, type EndedEewMatch, admitTrainingEew, rememberEewFirstIssueTime,
 } from '../utils/eew'
+import { decideEewReportEntry, decideEewCancelEntry, endEewOnExpiry, mergeEndedEew } from '../utils/eewNotifyTracker'
 import { decideFinalReportExpiry, type DetectionSpreadLog, type EewExpiryDecision } from '../utils/eewSpreadHold'
 import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEventLog'
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
@@ -342,80 +342,43 @@ type TestEEWKind = 'special' | 'warning' | 'forecast' | 'assumed' | 'deep' | 'st
 type TestEEWPressEntry = { index: number; now: Date; finalizeTimer: number }
 /**
  * 届いた報が、画面から消えた地震の報なら `true` を返し、弾いたことを記録に残す（→ `endedEewMatch`）。
- * 発表中の速報の取り直し（起動時・張り直し）と、ライブの入口（`handleEvent`）の両方が通る。
+ * 発表中の速報の取り直し（起動時・張り直し）が通る。ライブの入口は共用の判定（`decideEewReportEntry`）が同じ比べ方をする。
  * **黙って弾かない** —— 誤って本物を弾いたとき、画面には「出ない」としか現れない。
  */
 function skipEndedEew(ended: ReadonlyMap<string, EndedEew>, eew: EEWAlert, path: string): boolean {
-  const key = eewEventKey(eew)
-  const record = ended.get(key)
-  const nowMs = serverNow()
-  const match = endedEewMatch(record, eew, nowMs, ACTIVE_EEW_WINDOW_MS)
+  const record = ended.get(eewEventKey(eew))
+  const match = endedEewMatch(record, eew, serverNow(), ACTIVE_EEW_WINDOW_MS)
   if (match === null || !record) return false
+  logSkippedEndedEew(record, match, eew, path)
+  return true
+}
+
+/** 消えた地震の報を採らなかったことの記録（取り直しとライブの入口で同じ文面） */
+function logSkippedEndedEew(record: EndedEew, match: EndedEewMatch, eew: EEWAlert, path: string): void {
   const basis = match === 'cancelled'
     ? '取消で終えた'
     : match === 'serial'
       ? `消えるまでに第 ${record.serialBySeries.get(eewSerialSeries(eew))} 報まで受けていた`
       : '消えるまでに受けた報より発表時刻が新しくない'
-  log.info(`[eew] ${path}: ${key}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報）は ${Math.round((nowMs - record.endedAtMs) / 1000)} 秒前に画面から消えた地震の報なので採りません（${basis}）`)
-  return true
+  log.info(`[eew] ${path}: ${eewEventKey(eew)}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報）は ${Math.round((serverNow() - record.endedAtMs) / 1000)} 秒前に画面から消えた地震の報なので採りません（${basis}）`)
 }
 
 /**
- * 届いた報が、**その報自身の自動解除の時刻（`calcEEWCancelTime`）を既に過ぎている**なら `true` を返し、弾いたことを記録に残す。
- * ライブの入口（`handleEvent`）で、画面に出ていない地震の報にだけ使う。
+ * 自動解除の時刻を過ぎた報（→ `decideEewReportEntry` の `expired`）の記録に添える中身。
  *
  * 強震モニタ（Yahoo）は、終わった速報の最終報を一覧に 150〜180 秒残す（2026-10-21 に 2 地震で実測）。一覧を前回との差分で見る処理（`diffHypoInfoEvents`）は作り直されると
  * 前に見た項目を忘れるので（起動・リプレイの開始と終わり）、その間に作り直すと最終報を「新しい項目」として出し直す。
  * 自動解除は最終報から 60 秒以上先なので、出直した報は音と読み上げを鳴らしてから、すぐ消える。消えた地震の記憶
- * （`skipEndedEew`）はリセットで捨てるので、ここでは報の時刻だけで判定する。
- *
+ * （`skipEndedEew`）はリセットで捨てるので、入口は報の時刻だけで判定する。
  * **時計を信じられないときは弾かない**（`isServerClockTrusted`）。未較正の端末は壁時計がずれていることがあり、
- * 進んだ時計で比べると本物の報まで捨てる。弾かなかったことは debug に残す。
- * **発表時刻が読めない報も弾かない。** `calcEEWCancelTime` は発表時刻が読めないと震源時刻だけで解除の時刻を決め、
- * 「発表から 60 秒は残す」下限が外れる —— その値で比べると、届いたばかりの初報を古い報と取り違えうる。
- * 2026-10-21 ユーザー承認「おすすめで」
+ * 進んだ時計で比べると本物の報まで捨てる。**発表時刻が読めない報も弾かない。** `calcEEWCancelTime` は発表時刻が読めないと
+ * 震源時刻だけで解除の時刻を決め、「発表から 60 秒は残す」下限が外れる —— その値で比べると、届いたばかりの初報を古い報と
+ * 取り違えうる。2026-10-21 ユーザー承認「おすすめで」
  */
-function skipExpiredEew(eew: EEWAlert, path: string): boolean {
-  const issueMs = eewIssueTimeMs(eew)
-  if (issueMs === null) return false
-  const cancelMs = calcEEWCancelTime(eew, new Date(issueMs)).getTime()
-  if (!Number.isFinite(cancelMs)) return false
-  const nowMs = serverNow()
-  if (cancelMs > nowMs) return false
-  const detail = `${eewEventKey(eew)}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報`
-    + ` 発表=${new Date(issueMs).toISOString()} 自動解除=${new Date(cancelMs).toISOString()} いま=${new Date(nowMs).toISOString()}`
+function expiredEewDetail(eew: EEWAlert, issueMs: number, cancelMs: number): string {
+  return `${eewEventKey(eew)}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報`
+    + ` 発表=${new Date(issueMs).toISOString()} 自動解除=${new Date(cancelMs).toISOString()} いま=${new Date(serverNow()).toISOString()}`
     + ` M=${eew.earthquake.hypocenter.magnitude} 深さ=${eew.earthquake.hypocenter.depth}）`
-  if (!isServerClockTrusted()) {
-    log.debug(`[eew] ${path}: ${detail}は自動解除の時刻を過ぎて見えますが、時計が未較正なので採ります`)
-    return false
-  }
-  log.info(`[eew] ${path}: ${detail}は自動解除の時刻を ${Math.round((nowMs - cancelMs) / 1000)} 秒過ぎた報なので採りません`)
-  return true
-}
-
-/**
- * 画面から消えた地震の記憶を作る。**前に消えたときの記憶があれば、経路ごとの報番号と発表時刻は大きいほうを残す** ——
- * 台帳は消えた時点で捨てるので、載り直した地震の台帳は載り直した後の報しか数えていない。上書きすると記憶が縮み、
- * 前に消えたときの報を取り直しが返したとき通してしまう。取消で終えた印も、一度立てば落とさない（取消は終端）。
- */
-function mergeEndedEew(
-  previous: EndedEew | undefined, acceptance: EewAcceptance, cancelled: boolean, nowMs: number,
-  lastReport: EEWAlert, firstIssueTime: string | null | undefined,
-): EndedEew {
-  const serialBySeries = new Map(previous?.serialBySeries)
-  for (const [series, serial] of acceptance.serialBySeries) {
-    serialBySeries.set(series, Math.max(serial, serialBySeries.get(series) ?? serial))
-  }
-  const issues = [previous?.latestIssueMs, acceptance.latestIssueMs].filter((v): v is number => typeof v === 'number')
-  return {
-    serialBySeries,
-    latestIssueMs: issues.length > 0 ? Math.max(...issues) : null,
-    endedAtMs: nowMs,
-    cancelled: cancelled || (previous?.cancelled ?? false),
-    lastReport,
-    // 第 1 報の時刻は一度覚えたら変えない（前に消えたときの記憶が先）
-    firstIssueTime: previous?.firstIssueTime !== undefined ? previous.firstIssueTime : firstIssueTime,
-  }
 }
 
 /**
@@ -1791,9 +1754,17 @@ export function useEarthquakes(
       const key = eewEventKey(incoming)
       if (!incoming.cancelled && !incoming.expired && !incoming.test) {
         const acceptance = eewAcceptanceRef.current.get(key)
-        const staleness = eewStaleness(acceptance, incoming)
         const previous = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
-        if (previous?.cancelled || previous?.cancelledAt) {
+        // 採るかの判定は共用の部品（→ `decideEewReportEntry`。中継のプッシュ通知も同じものを使う）。ここは決定を当てはめて記録を残す
+        const entry = decideEewReportEntry({
+          incoming, acceptance, previous, ended: eewEndedRef.current.get(key), nowMs: serverNow(),
+          // **静かに積まれた報（`isSilentRef`）には時刻の判定を掛けない** —— 起動時・張り直しの復元とリプレイの初期状態で、
+          // 鳴らないうえ、古さは取得側が判定している（`selectActiveEews`）。ここで落とすと、復元した側は読み上げの記憶と
+          // タブ移動を「戻した」つもりで進め、画面だけが空になる
+          checkExpired: !isSilentRef.current,
+          clockTrusted: isServerClockTrusted(),
+        })
+        if (entry.kind === 'cancelledTerminal') {
           // **取消は終端**（状態側と同じ。docs/spec/eew-spec.md §10）。入口で止めないと、状態は無視するのに
           // 音・通知が鳴る。
           log.debug(`[eew] 取消済みの速報へ届いた報を破棄: key=${key} 経路=${incoming.origin}`
@@ -1801,42 +1772,46 @@ export function useEarthquakes(
           recordSkippedTelegram(incoming, 'notApplied')
           return
         }
-        // **画面から消えた地震の報は採らない**（→ `eewEndedRef`・`endedEewMatch`）。台帳と写しは消えた時点で捨てるので、
-        // 消えた後に届いた同じ報・古い報は上の比べ方では「新しい報」に見え、終わった速報が音と読み上げごと戻る
-        // （強震モニタ（Yahoo）は、一覧から 2 回続けて欠けた項目が戻ると同じ報を出し直す）。取消で終えた地震は
-        // 報番号によらず採らない（取消は終端）。2026-10-21 ユーザー承認「おすすめで」
-        if (!acceptance && !previous && skipEndedEew(eewEndedRef.current, incoming, 'ライブの受信')) {
+        if (entry.kind === 'ended') {
+          // **画面から消えた地震の報は採らない**（→ `eewEndedRef`・`endedEewMatch`）。台帳と写しは消えた時点で捨てるので、
+          // 消えた後に届いた同じ報・古い報は上の比べ方では「新しい報」に見え、終わった速報が音と読み上げごと戻る
+          // （強震モニタ（Yahoo）は、一覧から 2 回続けて欠けた項目が戻ると同じ報を出し直す）。取消で終えた地震は
+          // 報番号によらず採らない（取消は終端）。2026-10-21 ユーザー承認「おすすめで」
+          logSkippedEndedEew(entry.ended, entry.match, incoming, 'ライブの受信')
           recordSkippedTelegram(incoming, 'notApplied')
           return
         }
-        // **自動解除の時刻を過ぎた報も採らない**（→ `skipExpiredEew`）。消えた地震の記憶はリセットで捨てるので、
-        // 差分を見る処理を作り直した直後に Yahoo の一覧に残る最終報が届くと、上の判定では止まらない。
-        // **画面に出ている地震には掛けない** —— 出ている地震は最終報（自動解除の予約）か取消で終わるので、
-        // 古い時刻の続報を入口で落とすと、続報が運ぶ値が届かないだけになる。
-        // **静かに積まれた報（`isSilentRef`）にも掛けない** —— 起動時・張り直しの復元とリプレイの初期状態で、
-        // 鳴らないうえ、古さは取得側が判定している（`selectActiveEews`）。ここで落とすと、復元した側は読み上げの記憶と
-        // タブ移動を「戻した」つもりで進め、画面だけが空になる。
-        if (!acceptance && !previous && !isSilentRef.current && skipExpiredEew(incoming, 'ライブの受信')) {
+        if (entry.kind === 'expired') {
+          // **自動解除の時刻を過ぎた報も採らない**（→ `decideEewReportEntry`）。消えた地震の記憶はリセットで捨てるので、
+          // 差分を見る処理を作り直した直後に Yahoo の一覧に残る最終報が届くと、上の判定では止まらない。
+          // **画面に出ている地震には掛けない** —— 出ている地震は最終報（自動解除の予約）か取消で終わるので、
+          // 古い時刻の続報を入口で落とすと、続報が運ぶ値が届かないだけになる。
+          log.info(`[eew] ライブの受信: ${expiredEewDetail(incoming, entry.issueMs, entry.cancelMs)}は自動解除の時刻を`
+            + ` ${Math.round((serverNow() - entry.cancelMs) / 1000)} 秒過ぎた報なので採りません`)
           recordSkippedTelegram(incoming, 'notApplied')
           return
         }
+        if (entry.kind === 'expiredUntrusted') {
+          log.debug(`[eew] ライブの受信: ${expiredEewDetail(incoming, entry.issueMs, entry.cancelMs)}は自動解除の時刻を過ぎて見えますが、時計が未較正なので採ります`)
+        }
+        const taken = entry.kind === 'expiredUntrusted' ? entry.then : entry
         // 第 1 報の時刻を覚える（一度覚えたら変えない。→ `eewFirstIssueTimeRef`）
         rememberEewFirstIssueTime(eewFirstIssueTimeRef.current, key, incoming)
-        if (staleness === 'olderFromOtherOrigin' && incoming.origin === 'dmdata' && previous) {
+        if (taken.kind === 'supplement') {
           // **捨てない。** Yahoo は 1 秒ごとに取りに行くので、速報が続くあいだは電文の報（中継の警報 VXSE43・
           // 自分の鍵の予報）が Yahoo の次の報より後に着くことがある。捨てると区域と仮定震源の別が
           // 一度も入らない（区域・仮定震源の別は電文から得る。docs/relay-server-design.md §0 の 2026-10-30 の行）。
           // 震源・震度・報番号は新しい側のまま。新しい報ではないので音・タブ移動は起こさない
           // （区分や予想の最大震度が上がったときだけ知らせる。2026-10-19 ユーザー承認・選んだ選択肢「上がったときだけ鳴らす」）。
-          eewMerged = supplementEewReport(previous, incoming)
+          eewMerged = taken.merged
           eewSupplement = true
-          eewSameReport = !raisesEewAlert(eewMerged, previous)
-          eewAcceptanceRef.current.set(key, acceptEewReport(acceptance, incoming))
+          eewSameReport = taken.sameReport
+          eewAcceptanceRef.current.set(key, taken.acceptance)
           eewLatestRef.current.set(key, eewMerged)
           log.debug(`[eew] 遅れて届いた電文の報で区域・仮定震源を補った: key=${key} 経路=${incoming.origin}`
             + ` 受信=#${eewSerial(incoming) ?? '(なし)'}/${eewIssueTimeMs(incoming) ?? '(なし)'}`
             + ` 受理済み=${acceptance?.latestIssueMs ?? '(なし)'}`)
-        } else if (staleness !== 'fresh') {
+        } else if (taken.kind === 'stale') {
           // 順序の入れ替わり自体は想定内だが、判定が誤り続けるとその EEW は以降更新されない。
           // 捨てた事実が残らないと原因に辿り着けないため記録する（頻度は 1 地震あたり数件）。
           log.debug(`[eew] 古い報を破棄: key=${key} 経路=${incoming.origin}`
@@ -1847,32 +1822,28 @@ export function useEarthquakes(
           if (incoming.everSpecialWarning) carryEverSpecialWarning(key, `入口で古い報として捨てた報 経路=${incoming.origin}`)
           return
         } else {
-          eewMerged = mergeEewReport(previous, incoming)
-          // **区分や予想の最大震度が上がった報は「同じ報」として黙らせない**（上がったこと自体を知らせる）。
-          // 同じ秒に別の報が出ることがある（能登本震の実配信で 46 報中 13 報）ので、秒だけでは
-          // 「同じ報」と言い切れない —— 値が上がっていれば知らせる側へ倒す。
-          eewSameReport = previous !== undefined
-            && isSameReportFromOtherOrigin(acceptance, incoming)
-            && !raisesEewAlert(eewMerged, previous)
+          eewMerged = taken.merged
+          eewSameReport = taken.sameReport
           if (eewSameReport) {
             log.debug(`[eew] 別の経路から受けた同じ報のため音・タブ移動を止める: key=${key} 経路=${incoming.origin}`
               + ` 発表=${eewIssueTimeMs(incoming) ?? '(なし)'}`)
           }
-          const accepted = acceptEewReport(acceptance, incoming)
-          eewAcceptanceRef.current.set(key, eewSameReport ? accepted : noteEewNotified(accepted, incoming))
+          eewAcceptanceRef.current.set(key, taken.acceptance)
           eewLatestRef.current.set(key, eewMerged)
         }
       } else if (incoming.expired || incoming.test) {
         // 自動解除は、消えた地震の記憶をこの場で書く（effect でも書くが、それを待つと同じティックに続けて届いた誤報取消を
         // 「消えた後の取消」と見分けられない。2026-10-22 ユーザー承認「直す (Recommended)」）。取消で終えた地震は対象外
         if (incoming.expired) {
-          const shown = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
-          const acceptance = eewAcceptanceRef.current.get(key)
-          if (shown && acceptance && !shown.cancelled && !shown.cancelledAt) {
-            const { cancelledAt: _cancelledAt, ...lastReport } = shown
-            eewEndedRef.current.set(key, mergeEndedEew(
-              eewEndedRef.current.get(key), acceptance, false, serverNow(), lastReport, eewFirstIssueTimeRef.current.get(key),
-            ))
+          const ended = endEewOnExpiry({
+            ended: eewEndedRef.current.get(key),
+            shown: eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key),
+            acceptance: eewAcceptanceRef.current.get(key),
+            nowMs: serverNow(),
+            firstIssueTime: eewFirstIssueTimeRef.current.get(key),
+          })
+          if (ended) {
+            eewEndedRef.current.set(key, ended)
             eewExpiringRef.current.add(key)
           }
         }
@@ -1888,14 +1859,18 @@ export function useEarthquakes(
         // （2026-10-21 ユーザー承認「直す (Recommended)」）。同じ取消が別の経路から遅れて届いても、記憶に取消が
         // 載っているので 2 度は伝えない
         const ended = eewEndedRef.current.get(key)
-        const gone = !stateRef.current.activeEEWs.has(key) || eewExpiringRef.current.has(key)
-        if (ended && !ended.cancelled && !latest && gone) {
+        const cancelEntry = decideEewCancelEntry({
+          incoming, ended, latest,
+          gone: !stateRef.current.activeEEWs.has(key) || eewExpiringRef.current.has(key),
+          nowMs: serverNow(),
+        })
+        if (ended && cancelEntry) {
           const sinceEndedSec = Math.round((serverNow() - ended.endedAtMs) / 1000)
-          if (isLateEewCancel(ended, incoming, serverNow(), ACTIVE_EEW_WINDOW_MS)) {
-            eewLateCancelBase = ended.lastReport
+          if (cancelEntry.late) {
+            eewLateCancelBase = cancelEntry.late.lastReport
             eewLateCancel = {
-              firstIssueTime: ended.firstIssueTime,
-              hypocenterName: ended.lastReport.earthquake.hypocenter.name,
+              firstIssueTime: cancelEntry.late.firstIssueTime,
+              hypocenterName: cancelEntry.late.lastReport.earthquake.hypocenter.name,
             }
             log.info(`[eew] 画面から消えた後に届いた誤報取消: 最後の報に取消を載せて 10 秒戻し、読み上げ側へ印を渡す key=${key}`
               + ` 経路=${incoming.origin} 消えてから=${sinceEndedSec}秒`)
@@ -1904,7 +1879,7 @@ export function useEarthquakes(
             log.debug(`[eew] 画面から消えた地震の誤報取消は通知だけにする: key=${key} 経路=${incoming.origin}`
               + ` 消えてから=${sinceEndedSec}秒 最後の報=${ended.lastReport ? 'あり' : 'なし'}`)
           }
-          eewEndedRef.current.set(key, { ...ended, cancelled: true })
+          eewEndedRef.current.set(key, cancelEntry.ended)
         }
       }
     }

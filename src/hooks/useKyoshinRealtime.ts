@@ -9,7 +9,7 @@ import {
 import { createLocalKyoshinArchiveSource } from '../services/kyoshinLocalArchiveSource'
 import { createFrameQueue } from '../utils/kyoshinFrameQueue'
 import type { EEWAlert } from '../types/earthquake'
-import { diffHypoInfoEvents, type HypoInfoPendingMissing } from '../utils/eew'
+import { diffHypoInfoEvents, type HypoInfoPendingMissing } from '../utils/eewHypoInfoDiff'
 import { serverDate } from '../utils/clock'
 import { createLogThrottle, log } from '../utils/logger'
 
