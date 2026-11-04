@@ -660,8 +660,12 @@ function logEewExpiry(key: string, decision: EewExpiryDecision): void {
   if (decision.kind !== 'expire') return
   const reason = {
     'no-bundle': '結び付く揺れ検知の束が無い',
+    'no-network-data': '結び付く揺れ検知の束が無い（観測点の一覧が無いか強震モニタが止まっていて、観測網へ波が届くのを待てなかった）',
+    'first-arrival-elapsed': '最寄りの観測点へ P 波が届く見込みから 60 秒待ったが、広がる束が無かった',
     'grace-elapsed': '束に点が加わらなくなって 30 秒が過ぎた',
-    'cap': '式の時刻から 5 分の上限に当たった',
+    's-arrival-elapsed': '束の場所へ S 波が届く見込みから 30 秒が過ぎた',
+    'cap': '式の時刻から 5 分の上限に当たった（束はまだ広がっていた）',
+    'cap-first-arrival': '式の時刻から 5 分の上限に当たった（観測網へ波が届くのを待っていた）',
     'formula-unknown': '式の時刻を決められない',
   }[decision.reason]
   const line = `[eew] 自動解除: key=${key} 理由=${reason}`

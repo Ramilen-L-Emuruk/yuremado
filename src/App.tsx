@@ -2264,6 +2264,11 @@ export function App() {
     }
     eewSpreadLog.push(Date.parse(kyoshinV2.dataTime), kyoshinV2.detections)
   }, [eewSpreadLog, kyoshinV2.dataTime, kyoshinV2.detections])
+  // 最寄りの観測点へ P 波が届くまでは解除を待つので、観測点の座標も渡す（観測網から遠い海域の地震。eew-spec §7）
+  // 一覧を取り直す間に空になっても前の一覧を保つ（空にすると、待っている解除が観測網への波を待たずに消える）
+  useEffect(() => {
+    if (kyoshin.sites.length > 0) eewSpreadLog.setSites(kyoshin.sites)
+  }, [eewSpreadLog, kyoshin.sites])
   // siteConfigId 切替直後の一時的な「新 indices・旧 sites」状態では sites[i] と indices[i] を
   // 位置対応で使う下流（描画・タブ表示・派生ビュー）でも誤ペアリングが起きるため、両者の
   // siteConfigId が揃うまで空配列にゲートする。sitelist の非同期取得が完了した次フレームで

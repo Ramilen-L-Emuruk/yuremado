@@ -91,7 +91,7 @@ export function predictMeasuredIntensity(mjma: number, depth: number, epicentral
 const UNKNOWN_MAGNITUDE_ASSUMED = 6.0
 
 /** 深さが判らない報の自動解除を求めるときに置く深さ（km。固定の仮定値） */
-const UNKNOWN_DEPTH_ASSUMED_KM = 30
+export const UNKNOWN_DEPTH_ASSUMED_KM = 30
 
 /**
  * EEW の揺れが届く半径（km）。{@link calcFeltRadiusKm} を計測震度 {@link EEW_REACH_INTENSITY}（0）で引く。
