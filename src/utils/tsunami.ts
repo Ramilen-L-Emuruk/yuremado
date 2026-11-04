@@ -188,6 +188,13 @@ export function isRetractedTsunamiInfoUnit(
 }
 
 /**
+ * 全区域が解除されたことを告げる文。読み上げと、気象庁の文を持たない解除の報の通知本文が共有する
+ * （2026-10-19 ユーザー選択「読み上げと同じ文 (Recommended)」）。ここに置くのは、通知の文面（`tsunamiNotification.ts`）が
+ * 読み上げの文を組む大きなモジュール（`ttsText.ts`）を読まずに済むようにするため（中継へ写す範囲を小さく保つ）。
+ */
+export const TSUNAMI_ALL_LIFTED_SENTENCE = '津波警報等は全て解除されました。'
+
+/**
  * 全区域の解除の報に気象庁が書いた文を、画面に出す 1 つの文字列にする（本文・固定付加文・自由付加文の順に改行で連ねる）。
  *
  * 並びは気象庁の文の読み上げ（`telegramTextToSpeak` の津波の分岐）と同じ。どれも無ければ undefined。
@@ -380,7 +387,7 @@ export function isCancelForCurrentTsunami(cancel: JMATsunami, current: JMATsunam
  * 新報を「表示中の津波の続報」として扱い、前報の区域・観測点を引き継いでよいかを判定する。
  *
  * **カードの状態更新（`useEarthquakes`）と、カードの並びを引く基準の組み立て
- * （`useLiveEventHandler` の `tsunamiCardOrderBasis`）で同じ述語を使うこと。** 前者だけが
+ * （`utils/tsunamiNotifyTracker.ts` の `tsunamiCardOrderBasis`）で同じ述語を使うこと。** 前者だけが
  * 引き継ぎを断ると、その基準を渡す先が「カードに無い観測点」で並べ替えた結果を使うことになる
  * （渡す先の一覧は `tsunamiCardOrderBasis` の宣言箇所。ここで数え上げないのは、経路が増えたときに
  * 取りこぼすため）。逆も同じで、片方だけ緩めれば黙って食い違う。
