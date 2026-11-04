@@ -269,7 +269,7 @@ describe('EEW カードの到達予測一覧', () => {
 // 区域を灰色で塗るので、塗れる区域が 1 つも無い報では押せない形のまま出す（押しても地図が空になるため）。
 describe('予想長周期地震動 階級0 のバッジ', () => {
   const lpgmZero = (areas: EEWRegion[]): EEWAlert => ({ ...makeEEW(areas), forecastMaxLpgmBelowClass1: true })
-  const badge = () => screen.getByText('予想長周期地震動').closest('button, div')
+  const badge = () => screen.getByText('長周期0').closest('button, div')
 
   it('正: 階級 0 を予想した区域があれば押せる形（ボタン）で出す', () => {
     renderTab(lpgmZero([area({ name: '宮城県北部', arrivalTime: after(10), lgIntBelowClass1: true })]))
@@ -279,6 +279,6 @@ describe('予想長周期地震動 階級0 のバッジ', () => {
   it('対照: 塗れる区域が無ければ押せない形で出す（「階級0」の語は出す）', () => {
     renderTab(lpgmZero([area({ name: '宮城県北部', arrivalTime: after(10) })]))
     expect(badge()?.tagName).toBe('DIV')
-    expect(screen.getByText('階級0')).toBeTruthy()
+    expect(screen.getByText('長周期0')).toBeTruthy()
   })
 })

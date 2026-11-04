@@ -106,8 +106,12 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
   return container
 }
 
-/** 緊急地震速報の種別ヘッダー（`緊急地震速報（警報）#1` を出す帯）。 */
-const header = (container: HTMLElement) => container.querySelector('.tracking-widest') as HTMLElement
+/**
+ * 緊急地震速報の見出しの段（`緊急地震速報（警報）` と報番号を並べる行）。種別名の要素から 1 つ上の行を取る ——
+ * 見た目のクラスを目印にすると、見出しの体裁を変えるたびにこのテストが黙って null を掴む。
+ */
+const header = (container: HTMLElement) =>
+  ([...container.querySelectorAll('b')].find(el => el.textContent?.startsWith('緊急地震速報'))?.parentElement ?? null) as HTMLElement
 
 /** 開いた地震情報カードの見出し（`震度速報 #2 / 震源情報` を出す、押すと畳むボタン）。 */
 const quakeHeading = (container: HTMLElement) => container.querySelector('button[aria-expanded="true"]') as HTMLElement
