@@ -10,6 +10,7 @@
 import { useLayoutEffect, useRef } from 'react'
 import { planFollowScroll } from '../utils/ttsFollow'
 import { log } from '../utils/logger'
+import { CARD_RESIZE_ANIMATION_ID } from '../components/EarthquakeTab/quakeMotion'
 
 /** 縦にスクロールする最も近い祖先（タブごとの枠。`App.tsx` の `TAB_SCROLLER_CLASS`）。 */
 export function scrollParentOf(el: HTMLElement): HTMLElement | null {
@@ -76,11 +77,21 @@ export function useFollowScroll(
     if (scroller.clientHeight <= 0) return
     const target = find()
     if (!target) return
+    // 相手の高さが動いている最中（地震カードを開く・畳む動き）なら、伸び終えてから寄せる。
+    // 途中の高さで測ると、収まるか・どこまで巻くかの判断を誤る（→ components/EarthquakeTab/quakeMotion.tsx）
+    const resizing = target.getAnimations?.().filter(a => a.id === CARD_RESIZE_ANIMATION_ID && a.playState === 'running') ?? []
+    if (resizing.length > 0) {
+      Promise.all(resizing.map(a => a.finished.catch(() => undefined))).then(() => tryApply.current())
+      return
+    }
     appliedRef.current = sig
     const view = scroller.getBoundingClientRect()
     const rect = target.getBoundingClientRect()
+    // 上に貼りつく見出しがあるなら、その下を見える範囲の上端にする（寄せた先が見出しに隠れないように）。
+    // 見出しの高さは寄せる相手が `scroll-margin-top` で名乗る（CSS の標準の書き方に合わせる）。
+    const marginTop = parseFloat(getComputedStyle(target).scrollMarginTop) || 0
     const next = planFollowScroll({
-      viewTop: view.top,
+      viewTop: view.top + marginTop,
       viewBottom: view.top + scroller.clientHeight,
       currentRects: [{ top: rect.top, bottom: rect.bottom }],
       upcomingRects: [],

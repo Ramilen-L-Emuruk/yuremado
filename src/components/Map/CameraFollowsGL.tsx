@@ -154,7 +154,12 @@ export function QuakeFitGL({
       log.debug('[mapGL] quake fit スキップ (userInteracting)')
       return
     }
-    if (explicit) resetUserInteraction()
+    if (explicit) {
+      resetUserInteraction()
+      // 別の地震を開いた・閉じたときは、前の地震の地点で開いた吹き出しを閉じる
+      // （一覧から寄せるとき `FocusTargetGL` が閉じるのと同じ扱い）。
+      closeMapPopup(map)
+    }
     lastFitRef.current = signature
     log.debug(`[mapGL] quake fit (${positions.length}点${explicit ? ' 明示選択' : ''}・上限 ${zoomPolicy})`)
     fitToPositions(map, positions, { padding: 48, durationSec: 1.0, maxZoom: maxZoomForPolicy(map, zoomPolicy) })

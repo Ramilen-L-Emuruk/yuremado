@@ -65,8 +65,41 @@ function readWepa60(raw: string): Wepa60Read {
       ...(originTime && { originTime }),
       isCommunicationsTest: isCommunicationsTestTitle(title),
       text,
+      ...readHypocentralParameters(lines),
     },
   }
+}
+
+/**
+ * 震源の値を読む（地震の報にだけある）。全期間の控え（2020-11〜2026-10）の地震の報 163 通の書式:
+ * - 震央 `PRELIMINARY EPICENTER:LAT04.8NORTH LON127.4EAST`（163 通すべて。南緯は `SOUTH`）。地名はその次の行
+ * - 規模 `MAG:7.0`（163 通すべて。`(MJMA)`・`(MW)` が付くことがある。深さと同じ行に書く報もある）
+ * - 深さ `FOCAL DEPTH:139KM`（12 通だけ）
+ * 読めない値は持たない（本文はそのまま出すので、値が欠けても電文の中身は画面に残る）。
+ */
+function readHypocentralParameters(lines: readonly string[]): Partial<JMAInternationalTsunami> {
+  const out: Partial<JMAInternationalTsunami> = {}
+  const epiAt = lines.findIndex(line => /^\s*PRELIMINARY EPICENTER:/.test(line))
+  if (epiAt >= 0) {
+    const m = lines[epiAt].match(/LAT\s*(\d+(?:\.\d+)?)\s*(NORTH|SOUTH)\s+LON\s*(\d+(?:\.\d+)?)\s*(EAST|WEST)/)
+    if (m) {
+      out.epicenter = {
+        latitude: Number(m[1]) * (m[2] === 'SOUTH' ? -1 : 1),
+        longitude: Number(m[3]) * (m[4] === 'WEST' ? -1 : 1),
+      }
+    }
+    // 地名は震央の次の行（字下げされている）。空行や次の項目なら持たない
+    const next = lines[epiAt + 1]
+    if (next && /^\s+\S/.test(next) && !next.includes(':')) out.regionName = next.trim()
+  }
+  const mag = lines.join('\n').match(/MAG:\s*(\d+(?:\.\d+)?)(?:\s*\((MJMA|MW)\))?/)
+  if (mag) {
+    out.magnitude = Number(mag[1])
+    if (mag[2]) out.magnitudeType = mag[2] === 'MJMA' ? 'Mj' : 'Mw'
+  }
+  const depth = lines.join('\n').match(/FOCAL DEPTH:\s*(\d+(?:\.\d+)?)\s*KM/)
+  if (depth) out.depthKm = Number(depth[1])
+  return out
 }
 
 /**

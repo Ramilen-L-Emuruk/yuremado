@@ -121,14 +121,39 @@ export function borrowHypocenterFromTsunami(
   // 値で固まる。借り物かどうかは `hypocenterSource` の有無が単一の目印で、自前の震源が
   // 入った時点で落ちる（→ `quakeMerge.ts` の `mergeQuakeInto`）。
   if (!isHypocenterPending(quake) && !quake.hypocenterSource) return null
-  const eventId = extractQuakeEventId(quake)
-  if (!eventId) return null
-  const found = tsunamiToBorrowFrom(eventId, tsunamis, quakes.includes(quake) ? quakes : [...quakes, quake])
+  // **長周期・推計・津波の値を上段へ当てたカードは借りない。** 当てた値は当てる側（`utils/latestQuakeFacts.ts`）が
+  // 毎回組み立て直すので、ここで上書きすると二重に書くことになる。津波の新しい報はあちらが拾う
+  if (quake.quakeInfoFacts) return null
+  const found = newestTsunamiSourceOf(quake, tsunamis, quakes)
   if (!found) return null
   return {
     hypocenter: tsunamiSourceHypocenter(found.source),
     source: sourceOf(found.tsunami),
   }
+}
+
+/**
+ * そのカードの地震について、借りてよい津波のうち発表が最も新しいものと、その原因地震。無ければ `null`。
+ * 選び方は {@link tsunamiToBorrowFrom}（取消を除き、EventID で結び、その地震の原因地震だけを採る）。
+ *
+ * 震源が未確定のカードに借りるとき（{@link borrowHypocenterFromTsunami}）と、地震情報より新しい津波の値を
+ * 上段へ当てるとき（`utils/latestQuakeFacts.ts`）の両方が使う。選び方を 2 か所に書かないため。
+ */
+export function newestTsunamiSourceOf(
+  quake: JMAQuake,
+  tsunamis: readonly JMATsunami[],
+  /** 原因地震と地震カードを結ぶ相手（→ `linkTsunamiSources`）。`quake` 自身を含んでいなくてよい。 */
+  quakes: readonly JMAQuake[],
+): { tsunami: JMATsunami; source: TsunamiSourceEarthquake } | null {
+  if (tsunamis.length === 0) return null
+  const eventId = extractQuakeEventId(quake)
+  if (!eventId) return null
+  return tsunamiToBorrowFrom(eventId, tsunamis, quakes.includes(quake) ? quakes : [...quakes, quake])
+}
+
+/** 借りた値の出どころ（震源の行の「津波情報より」の印）。当てる側（`utils/latestQuakeFacts.ts`）も同じ形で付ける。 */
+export function borrowedSourceOf(tsunami: JMATsunami): BorrowedFromTsunami {
+  return sourceOf(tsunami)
 }
 
 /**

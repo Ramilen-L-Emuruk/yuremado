@@ -37,7 +37,7 @@ import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
 import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_LPGM_CLASS_ZERO_TEXT, EEW_UPGRADE_PHRASE, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiExpiryChangeSegments, tsunamiAreaGradeChangeToSegments, tsunamiAreaGradeChangeActionSegments, tsunamiForecastHeightChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
-import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
+import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, quakeTelegramTextTarget, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
 import { TAB_PRIORITY, type TabPriority } from '../utils/tabPriority'
 import { hasPendingEewSpeech } from '../utils/eewPendingSpeech'
@@ -3443,9 +3443,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // （→ `ttsFollow.ts` の `telegramText`）。文の中身では分けず 1 つにまとめている ——
     // 求められているのは「読み始めたら開く」ことで、どの段落を読んでいるかの追従ではない。
     //
-    // **開く先がある種別にだけ参照を付ける。** 地震情報の付加文は元から畳んでいないので
-    // 開く相手がいない。無条件に付けると、誰も反応しない追従セッションが立ち上がっては終わる
-    // （症状が出ないぶん、後から読んで意図を確かめられない）。
+    // **開く先がある種別にだけ参照を付ける**（→ `TELEGRAM_TEXT_OPEN_TARGET_KINDS`）。無条件に付けると、
+    // 誰も反応しない追従セッションが立ち上がっては終わる（症状が出ないぶん、後から読んで意図を確かめられない）。
     const segments: SpeechSegment[] = [{
       text,
       // **お知らせの帯を表示しない設定なら付けない。** 帯が描かれないので開く先が無い。
@@ -3453,12 +3452,14 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         && !(event.kind === 'quakeNotice' && !settings.quakeNoticeBanner)
         ? [{ kind: 'telegramText' }] : [],
     }]
-    // **長周期地震動観測情報だけ、どの地震の補足かまで主題に載せる。** 地震カードは複数
+    // **地震情報と長周期地震動観測情報は、どの地震の補足かまで主題に載せる。** 地震カードは複数
     // 並ぶので、種別だけではどのカードを開くか決まらない（バナーと津波の面は画面に 1 つ）。
-    // 鍵は `eventId` —— カードが長周期を引き当てるのに使っているものと同じ（`lpgmByEventId`）。
+    // 長周期の鍵は `eventId` —— カードが長周期を引き当てるのに使っているものと同じ（`lpgmByEventId`）。
     const subject = event.kind === 'lpgm'
       ? telegramTextSubject(event.kind, event.data.eventId)
-      : telegramTextSubject(event.kind)
+      : event.kind === 'quake'
+        ? telegramTextSubject(event.kind, quakeTelegramTextTarget(event))
+        : telegramTextSubject(event.kind)
     speakNonEEWDelayed(
       text,
       SPEECH_PRIORITY.commentary,
@@ -3687,42 +3688,48 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       title.clearTitleTimer('earthquake')
       title.applyPriority()
+      // 取消電文の issue.time は取消電文自体の発表時刻であり、取り消された元の地震情報の発表時刻ではない。
+      // 読み上げには同一 eventId で最後に受信した地震情報（既存カード）の time を使う。
+      //
+      // **当たったカードと効き方は受信側が入口で決めたもの（`meta.quakeCancel`）を使う。** ここで
+      // 画面の状態から探し直すと、同じティックに続けて届いた報がまだ反映されていない状態や、同じ
+      // EventID の取消済みの古いカードを掴み、「地震情報全体の取消」と「一部の取消」を取り違える。
+      // 判断が渡らない経路（呼び出し元が `meta` を持たない）だけ、従来どおり画面の状態から探す。
+      const cancelEventId = extractQuakeEventIdFromId(event.id)
+      const decided = meta?.quakeCancel
+      const original = decided
+        ? decided.target
+        : cancelEventId
+          ? earthquakesRef.current.find(e => !e.cancelledAt && extractQuakeEventIdFromId(e.id) === cancelEventId)
+          : undefined
+      // **鍵は取り消されるカードから作る**（続報の主題 `quakeEventKey(existingCard ?? incomingQuake)`
+      // と同じ流儀）。生の取消電文から作ると、暫定 EventID が付け替えられた地震ではカードの
+      // `eventKey`（最初の報の値を据え置く）と食い違い、主題が続報と揃わないうえ、一覧も取消カードを
+      // 見つけられずに選択中のカードへ落ちる —— 「カードが片付いた後に語る」正常な空振りと同じ形に
+      // なるので、記録にも残らない。
+      const cancelQuakeKey = quakeEventKey(original ?? (event as import('../types/earthquake').JMAQuake))
+      // **一部の取消は情報名で言う**（カードは残るので「地震情報は取り消されました」は誤り）。
+      // 見分けはカードへ当てる側と同じ関数（`applyQuakeCancelToCard`）で付ける。判断が渡らない経路で
+      // 台帳を渡さないのは、前の取消で外した報が、当て直したカードの控えにもう残っていないため。
+      const fallback = !decided && original
+        ? applyQuakeCancelToCard(original, event, [], getAreaPrefIndexCache())
+        : undefined
+      const retracted = decided
+        ? decided.retracted
+        : fallback?.kind === 'partial' ? fallback.retracted : undefined
+      // **一部の取消が届いたら、その地震の行を開く**（2026-11-01 選択「自動で開き、閉じた行には出さない
+      // (Recommended)」）。閉じた行には一部取消を出さないので、開かないと取り下げた事実が画面のどこにも
+      // 現れない。読み上げの有無に関わらず開く（声を切っている人にも画面で伝える）。
+      if (retracted && original) {
+        log.info('[quake] 一部の取消を受けたので、その地震の行を開く', { issueType: retracted.issueType })
+        selectQuake(cancelQuakeKey)
+      }
       if (settings.voicevoxEnabled) {
         // **この経路は `flushSpoken()` を呼ばない。** 続報の差分と違い、取消の読み上げは
         // 区域の既読を参照しないため（`earthquakeCancelToText` は断片も `onSpokenRefs` も持たない）。
         // 進行中の読み上げを取消が実際に切ったなら、切られた側の `finally` が完了時のフラッシュで
         // 正しく記録する。「差分を組む直前に確定させる」という決まりの対象外
         // （→ docs/spec/audio-tts-spec.md §4「既読になるのは「声になった分」だけ」）。
-        //
-        // 取消電文の issue.time は取消電文自体の発表時刻であり、取り消された元の地震情報の発表時刻ではない。
-        // 読み上げには同一 eventId で最後に受信した地震情報（既存カード）の time を使う。
-        //
-        // **当たったカードと効き方は受信側が入口で決めたもの（`meta.quakeCancel`）を使う。** ここで
-        // 画面の状態から探し直すと、同じティックに続けて届いた報がまだ反映されていない状態や、同じ
-        // EventID の取消済みの古いカードを掴み、「地震情報全体の取消」と「一部の取消」を取り違える。
-        // 判断が渡らない経路（呼び出し元が `meta` を持たない）だけ、従来どおり画面の状態から探す。
-        const cancelEventId = extractQuakeEventIdFromId(event.id)
-        const decided = meta?.quakeCancel
-        const original = decided
-          ? decided.target
-          : cancelEventId
-            ? earthquakesRef.current.find(e => !e.cancelledAt && extractQuakeEventIdFromId(e.id) === cancelEventId)
-            : undefined
-        // **鍵は取り消されるカードから作る**（続報の主題 `quakeEventKey(existingCard ?? incomingQuake)`
-        // と同じ流儀）。生の取消電文から作ると、暫定 EventID が付け替えられた地震ではカードの
-        // `eventKey`（最初の報の値を据え置く）と食い違い、主題が続報と揃わないうえ、一覧も取消カードを
-        // 見つけられずに選択中のカードへ落ちる —— 「カードが片付いた後に語る」正常な空振りと同じ形に
-        // なるので、記録にも残らない。
-        const cancelQuakeKey = quakeEventKey(original ?? (event as import('../types/earthquake').JMAQuake))
-        // **一部の取消は情報名で言う**（カードは残るので「地震情報は取り消されました」は誤り）。
-        // 見分けはカードへ当てる側と同じ関数（`applyQuakeCancelToCard`）で付ける。判断が渡らない経路で
-        // 台帳を渡さないのは、前の取消で外した報が、当て直したカードの控えにもう残っていないため。
-        const fallback = !decided && original
-          ? applyQuakeCancelToCard(original, event, [], getAreaPrefIndexCache())
-          : undefined
-        const retracted = decided
-          ? decided.retracted
-          : fallback?.kind === 'partial' ? fallback.retracted : undefined
         speakNonEEWDelayed(
           retracted
             ? earthquakeReportCancelToText(retracted.issueType, retracted.reportTime, event.cancelText)

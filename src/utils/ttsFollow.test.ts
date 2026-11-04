@@ -827,11 +827,11 @@ describe('TELEGRAM_TEXT_OPEN_TARGET_KINDS', () => {
   // **「畳んでいるか」は種別ごとに実装を見て決める。** まとめて扱うと片方だけ当たっている
   // 状態に気づけない —— 長周期を「地震情報と同じで畳んでいない」と扱って外していたのがその形で、
   // 実際には「気象庁からの補足」として畳んであり、中身は読み上げる 3 ブロックそのものだった。
-  it('畳んである 7 種別を持ち、畳んでいない地震情報を持たない', () => {
+  it('畳んである 8 種別を持つ', () => {
+    // 地震情報の付加文も「気象庁からの補足」として畳む（→ docs/quake-tab-redesign.md。
+    // 2026-11-01「畳んで、読み上げで開く (Recommended)」）
     expect([...TELEGRAM_TEXT_OPEN_TARGET_KINDS].sort())
-      .toEqual(['earthquakeCount', 'kohatsu', 'lpgm', 'nankai', 'nankaiCommentary', 'quakeNotice', 'tsunami'])
-    // 地震情報の付加文だけは元から畳んでいない（開く相手がいない）
-    expect(TELEGRAM_TEXT_OPEN_TARGET_KINDS.has('quake')).toBe(false)
+      .toEqual(['earthquakeCount', 'kohatsu', 'lpgm', 'nankai', 'nankaiCommentary', 'quake', 'quakeNotice', 'tsunami'])
   })
 
   // 安全弁: **開く側が実在すること。** ここが空振りすると、読み上げても画面が動かないだけで
@@ -849,6 +849,7 @@ describe('TELEGRAM_TEXT_OPEN_TARGET_KINDS', () => {
       const found = kind === 'tsunami' ? app.includes("telegramTextSubject('tsunami')")
         // 長周期だけは地震の識別子まで含むので、主題を組み立てる関数の呼び出しで探す
         : kind === 'lpgm' ? quakeCard.includes("telegramTextSubject('lpgm'")
+          : kind === 'quake' ? quakeCard.includes("telegramTextSubject('quake'")
           : banner.includes(`speaking('${kind}')`)
       expect(found, `「${kind}」を開く側が見つからない`).toBe(true)
     }

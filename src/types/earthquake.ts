@@ -237,9 +237,15 @@ export interface QuakeReportRecord {
  * 出すための材料として持つ（2026-10-15 ユーザー承認「残して取消の理由を出す（推奨）」）。
  */
 export interface QuakeRetractedReport {
-  /** 取り消された情報の種別（取消電文の種別）。 */
-  issueType: IssueType
-  /** 取り消された報の発表時刻（`ReportDateTime`）。その種別の報が複数あれば最後のもの。 */
+  /**
+   * 取り消された情報の種別（取消電文の種別）。長周期地震動観測情報の取消は情報名（`長周期地震動に関する観測情報`）で
+   * 積む（→ `utils/lpgmRetraction.ts` の `lpgmRetractionsIntoCards`）。
+   */
+  issueType: IssueType | '長周期地震動に関する観測情報'
+  /**
+   * 取り消された報の発表時刻（`ReportDateTime`）。その種別の報が複数あれば最後のもの。
+   * **長周期の取消だけは取消電文の発表時刻**（取り下げた報の時刻を引けないことがあるため。→ `lpgmRetractionsIntoCards`）。
+   */
   reportTime: string
   /** 取消電文の取消しの概要（`Body/Text`）。気象庁が書いた理由で、そのまま出す。 */
   cancelText?: string
@@ -589,6 +595,51 @@ export interface JMAQuake {
    * 出どころの注記を出し分けるので、常に埋めると自前の震源にまで注記が付く。
    */
   hypocenterSource?: BorrowedFromTsunami
+  /**
+   * 国際津波関連情報（WEPA60）の英文だけから組んだカードか（→ `utils/internationalTsunami.ts` の `internationalTsunamiIndex`）。
+   * 気象庁が地震情報を出さなかった地震（海外の M6.5〜6.9 など）に出る報で、付く地震カードが無い。状態の一覧には入れず、
+   * 一覧を画面へ渡す手前で差し込む（2026-11-03 ユーザー選択「国内に付け、無い分はカードに (Recommended)」「英文の値をそのまま並べる (Recommended)」）。
+   * 見出しは「国際津波関連情報」、時刻の行の名前は「地震発生時刻」（英文の ORIGIN TIME は発生時刻。2026-11-03 ユーザー選択「「地震発生時刻」 (Recommended)」）
+   */
+  fromInternationalTsunami?: true
+  /**
+   * 長周期地震動観測情報・推計震度分布図の値を上段へ当てる前の、**地震情報が運んだ上段の値**
+   * （→ `utils/latestQuakeFacts.ts`）。当てていないカードでは持たない。
+   *
+   * 当て直すときは毎回ここから組み立てる。だから、当てた報が取り消されたら上段は残った報の値へ戻る
+   * （2026-11-03 ユーザー選択「戻す (Recommended)」）。地震情報の続報の統合（`mergeQuakeInto`）もこの値へ戻してから
+   * 統合し、当てるのはその後（当てた値を地震情報の値として引き継がない）。
+   *
+   * **持つのは当てて動く欄だけ**（震源・地震発現時刻・全国の最大震度と、外した借り物の印）。`earthquake` を丸ごと持つと、
+   * 当てた後に津波から借りた津波区分（`domesticTsunami`）まで当てた時点の値へ巻き戻る。
+   */
+  quakeInfoFacts?: {
+    hypocenter: Hypocenter
+    time: string
+    maxScale: JMAQuake['earthquake']['maxScale']
+    hypocenterSource?: BorrowedFromTsunami
+  }
+  /**
+   * 上段へ当てた津波電文の原因地震と、その報の時刻（→ `utils/latestQuakeFacts.ts`）。津波を当てたことの無いカードでは持たない。
+   *
+   * **状態に持つ津波は最新の 1 件だけ**で、解除・失効で一覧から消え、原因地震を持たない続報で上書きされる。一覧だけを見て
+   * 当てると、そのたびに当てた値が地震情報の値へ戻る。そこで当てた値をここに覚え、**その地震の津波が取り消されたと
+   * 分かったときだけ**捨てる（解除と失効は津波の値を取り下げない。→ `borrowFromTsunami.ts` の `isBorrowableTsunami`）。
+   * 地震情報の続報の統合（`mergeQuakeInto`）も引き継ぐ。
+   */
+  appliedTsunamiSource?: {
+    source: TsunamiSourceEarthquake
+    /**
+     * 当てた津波の地震の番号（`tsunamiEventIds`）。取消を突き合わせるのに使う。カードの番号だけで見ると、震度速報の暫定の
+     * 番号から確定の番号へ統合で変わった後に、古い番号を指す取消が当たらない
+     */
+    eventIds: string[]
+    /** 当てた津波の報の発表時刻（新旧の比較に使う） */
+    time: string
+    createdAtMs?: number
+    /** 震源の行に付ける「津波情報より」の印 */
+    mark: BorrowedFromTsunami
+  }
   /**
    * 津波区分（`earthquake.domesticTsunami`）を津波電文の等級から借りたときの出どころ。
    * → {@link BorrowedFromTsunami}
@@ -1571,8 +1622,8 @@ export interface LpgmPoint {
 /**
  * 長周期地震動観測情報が持つ震源の要素（`Body/Earthquake/Hypocenter`）。
  *
- * **地震カードの長周期の欄に出す**（震央地名と深さ。→ `LpgmQuakeFacts`。2026-10-29 ユーザー承認「長周期の欄にも出す」、
- * 形は同日「1行・名前と深さ (Recommended)」）。座標と震央補助表現は読んで持つだけで、欄には出さない。
+ * **長周期の報が同じ地震の報のうち最も新しければ、地震カードの上段へ当てる**（→ `utils/latestQuakeFacts.ts`。2026-11-03
+ * ユーザー選択「発表時刻が最も新しい報 (Recommended)」）。長周期の欄そのものには出さない。
  */
 export interface LpgmHypocenter extends HypocenterAreaDetail {
   /**
@@ -1582,8 +1633,7 @@ export interface LpgmHypocenter extends HypocenterAreaDetail {
   name: string
   /**
    * 震源決定機関（`Hypocenter/Source`）。→ {@link TsunamiSourceEarthquake.source}
-   * （意味は同じ）。長周期の欄に、地震カードと同じ文「震源決定: …（気象庁以外）」で出す
-   * （2026-10-29 ユーザー承認「含める (Recommended)」。→ `LpgmQuakeFacts`）
+   * （意味は同じ）。上段へ当てたとき、地震カードの「震源決定: …（気象庁以外）」の行に出る（→ `utils/latestQuakeFacts.ts`）
    */
   source?: string
 }
@@ -1699,14 +1749,14 @@ export interface JMALpgm {
   /**
    * 全国の最大震度（`Intensity/Observation/MaxInt`）。
    *
-   * **地震カードの長周期の欄に「最大震度N」で出す**（→ `LpgmQuakeFacts`。2026-10-29 ユーザー承認「長周期の欄にも出す」）。
+   * **長周期の報が最も新しければ、地震カードの上段の最大震度へ当てる**（→ `utils/latestQuakeFacts.ts`）。
    * 区域・観測点ごとの震度（{@link LpgmRegion.maxInt} / {@link LpgmPoint.int}）は
    * 階級と並べる意味があるので出している。
    */
   maxInt?: IntensityScale
   /**
    * 地震の規模（`jmx_eb:Magnitude`）。数値で求まらないときは持たせない。
-   * 長周期の欄に地震カードと同じ書き方（`Mj7.6`）で出す（→ {@link maxInt}）
+   * 上段へ当てる値の 1 つ（→ {@link maxInt}）
    */
   magnitude?: number
   /**
@@ -1721,7 +1771,7 @@ export interface JMALpgm {
    *
    * **読み上げの「◯時◯分頃発生した地震で」はこちらを先に採る**（`lpgmToText`）。
    * 地震情報・津波カードと同じ規則で、揃えないと同じ地震の時刻が経路によって 1 分ずれる。
-   * 長周期の欄には「地震発現時刻 1月1日 16:10」の形で出す（→ {@link maxInt}）。**無いときは発生時刻で代えない** ——
+   * 最も新しい報なら地震カードの上段の地震発現時刻へ当てる（→ `utils/latestQuakeFacts.ts`）。**無いときは発生時刻で代えない** ——
    * 「地震発現時刻」と名乗る欄に別の時刻を出すことになる。
    */
   arrivalTime?: string
@@ -2084,6 +2134,16 @@ export interface JMAInternationalTsunami {
   isCommunicationsTest: boolean
   /** 電文の本文そのまま（行末の空白と最後の `=` だけ落とす） */
   text: string
+  /** `PRELIMINARY EPICENTER:LAT04.8NORTH LON127.4EAST` の暫定の震央（南緯・西経は負）。地震の報にだけある */
+  epicenter?: { latitude: number; longitude: number }
+  /** 震央の行の次の行の地名（英文のまま。例 `TALAUD ISLANDS, INDONESIA`） */
+  regionName?: string
+  /** `MAG:7.0` の規模 */
+  magnitude?: number
+  /** 規模の種類。`(MJMA)` は `Mj`、`(MW)` は `Mw`。書かれていなければ持たない */
+  magnitudeType?: 'Mj' | 'Mw'
+  /** `FOCAL DEPTH:139KM` の深さ（km）。書かれた報にだけある */
+  depthKm?: number
 }
 
 /** {@link JMAEarthquakeCount} の 1 区間。 */
@@ -2210,6 +2270,12 @@ export interface JMAEstimatedIntensity {
   id: string
   /** 発表時刻（電文ヘッダの時刻・ISO） */
   time: string
+  /**
+   * この報が置き換えた、同じ地震の前の報の発表時刻（古い順）。一覧は地震ごとに最新の 1 通しか
+   * 持たない（→ `upsertEstimatedIntensity`）ので、開いた地震カードの報の一覧（`quakeReportTimeline`）が
+   * 前の報も並べられるよう、置き換えるときにここへ引き継ぐ。電文から読む値ではない。
+   */
+  previousTimes?: readonly string[]
   /**
    * 地震発現時刻（ISO・分まで）。**この電文は `eventId` を持たない**ので、地震カードとの
    * 結び付けはこの時刻で行う。

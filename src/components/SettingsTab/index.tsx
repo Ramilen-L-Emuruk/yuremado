@@ -49,6 +49,8 @@ export interface TestFunctions {
   foreignQuake: () => void
   foreignQuakeHuge: () => void
   foreignQuakeInternationalTsunami: () => void
+  /** 国際津波関連情報が国内の地震に付く形と、英文だけのカードになる形。 */
+  internationalTsunamiDomesticAndOnly: () => void
   headlineOnlyCity: () => void
   eew: () => void
   eewWarning: () => void
@@ -94,6 +96,8 @@ export interface TestFunctions {
   /** 地震情報の一部の取消（震度速報だけの取消）。 */
   quakePartialCancel?: () => void
   borrowFromTsunami?: () => void
+  /** 津波の続報が地震情報より新しい規模を伝える場面。 */
+  magnitudeFromTsunami?: () => void
   unreceivedQuake?: () => void
   maxScaleOrAboveQuake?: () => void
   tsunamiGradeChange?: () => void
@@ -2468,8 +2472,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="遠地地震（規模を速報できない報）" description="チリ中部沿岸 M8を超える巨大地震 – earthquakeInfo 音 / 規模が数値で出ない第一報。日本への津波の有無は調査中">
           <TestButton color="purple" onClick={onTest.foreignQuakeHuge}>巨大地震テスト</TestButton>
         </Row>
-        <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに畳んだ原文が付く。英文そのものには音・読み上げ・通知が無い">
+        <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに原文の欄が付く。英文そのものには音・読み上げ・通知が無い">
           <TestButton color="purple" onClick={onTest.foreignQuakeInternationalTsunami}>国際津波関連情報テスト</TestButton>
+        </Row>
+        <Row label="国内の地震と英文だけの国際津波関連情報" description="日向灘 M7.1（実データ）の震源・震度情報と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、日向灘の地震カードに原文が付く / 6 秒後に、地震情報の無い地震の英文が届き、一覧に英文だけのカード（国際津波関連情報）が出る。英文そのものには音・読み上げ・通知が無い">
+          <TestButton color="purple" onClick={onTest.internationalTsunamiDomesticAndOnly}>英文だけテスト</TestButton>
         </Row>
         <Row label="見出しにだけある市町村" description="2024-01-01 佐渡付近の震源・震度に関する情報（実データ）で、輪島市が見出しにだけ載っている形 – earthquakeInfo 音 / 震度一覧の石川県能登の下に輪島市（震度3）が並ぶ。この市町村には観測点の行が無い">
           <TestButton color="purple" onClick={onTest.headlineOnlyCity}>見出しの市町村テスト</TestButton>
@@ -2495,8 +2502,13 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <TestButton color="yellow" onClick={onTest.borrowFromTsunami}>震源の借用テスト</TestButton>
           </Row>
         )}
+        {onTest.magnitudeFromTsunami && (
+          <Row label="津波が後から伝える規模" description="震源・震度情報（M7.4）→ 津波の続報（M7.6）→ 震源・震度情報の続報（M7.6）（2024年能登半島地震の本震と同じ順序）。津波の続報が地震情報より新しい規模を伝えると、カードの規模も M7.6 になり、行に「津波情報より」と出どころが付く。次の震源・震度情報が届くと出どころの印は消える">
+            <TestButton color="yellow" onClick={onTest.magnitudeFromTsunami}>規模の更新テスト</TestButton>
+          </Row>
+        )}
         {onTest.trainingQuake && (
-          <Row label="訓練報" description="中身は地震テストと同じで、電文ヘッダの運用種別（訓練）だけが違う。本物と同じく画面・音・読み上げへ流し、カードに「訓練報」の印を出す">
+          <Row label="訓練報" description="中身は地震テストと同じ（地震情報と長周期地震動に関する観測情報）で、電文ヘッダの運用種別（訓練）だけが違う。本物と同じく画面・音・読み上げへ流し、カードと長周期の欄に「訓練報」の印を出す">
             <TestButton color="yellow" onClick={onTest.trainingQuake}>訓練報テスト</TestButton>
           </Row>
         )}
