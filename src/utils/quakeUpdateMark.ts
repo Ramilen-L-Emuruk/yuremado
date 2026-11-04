@@ -431,7 +431,7 @@ function collectRevise(
  * なければ `null`（→ `JMAQuake.reportsRevise`。DMDATA の震源・震度情報だけが真）。
  *
  * **併合後のカードではなく、届いた電文そのものを渡すこと。** `Revise` は電文が自分の行に
- * 付けた印で、併合後のカードには前の報や震度の控え（`fillIntensityFromCache`）から写った点が
+ * 付けた印で、併合後のカードには前の報や震度の控え（`fillQuakeIntensity`）から写った点が
  * 混ざる。
  *
  * **使うのは、直前に届いた電文が同じ種別のときだけ**（{@link advanceQuakeMarks} が決める）。

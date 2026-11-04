@@ -576,7 +576,7 @@ export interface JMAQuake {
   retractedReports?: readonly QuakeRetractedReport[]
   /**
    * 震度を持たない電文（震源情報など）へ、震度速報の控えから震度を補ったときに立つ印
-   * （`useEarthquakes` の `fillIntensityFromCache`）。
+   * （`utils/quakeNotifyTracker.ts` の `fillQuakeIntensity`）。
    *
    * **補った震度は電文の内容ではない。** 元の震度速報が取り消されたら、当て直しの前にこの印の
    * 付いた電文から震度を外す（→ `quakeMerge.ts` の `applyQuakeCancelToCard`）。印が無いと、
