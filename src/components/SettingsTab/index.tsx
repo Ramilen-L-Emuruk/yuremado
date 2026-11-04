@@ -825,32 +825,26 @@ function Row({ label, description, hint, children }: {
   hint?: string
   children?: React.ReactNode
 }) {
-  // ラベル側に最低幅（basis-32 = 8rem）を与えたうえで折り返しを許可する。右のコントロールは
-  // 幅を譲らない（select の選択肢や URL 入力は縮めると読めなくなる）ため、両方を 1 行に詰めると
-  // パネル幅が最も狭いスマホ横（sideNarrow = w-panel-narrow）でラベルが数文字幅まで潰れ、
-  // 1 文字ずつ改行される。
-  // flex-wrap なら収まらない行だけがラベル上・コントロール下の 2 段に落ち、トグルのような
-  // 細いコントロールの行は 1 行のまま保たれる（スマホ横は画面高が狭く、一律の縦積みは割に合わない）。
-  // 最低幅は「2 段に落とす行」を選ぶ閾値でもある。sideNarrow・UI 倍率 100%・既定の表示状態での
-  // 実測では行の内寸が 289px で、閾値は 289 -（最低幅 128 + gap 16）= 145px。これを超える
-  // コントロールだけが 2 段になり、対象は APIキーの入力欄（192px）・震度更新の試聴ボタン列
-  // （231px）・開始時刻の入力（206px）の 3 行。1 段に留まる最大は活断層線の濃さのスライダー
-  // （136px）。寸法はすべて rem なので倍率を変えても比率は保たれる。VOICEVOX 設定のように
-  // 条件付きで現れる行はこの数に含めていない。
-  // 広げすぎると通知種別の行（コントロール 63〜98px）まで巻き込んで画面高を浪費する。
-  // 伸長指定に flex-1 を使わないこと: flex ショートハンドが flex-basis を 0% で上書きし、
-  // 最低幅が効かなくなる（Tailwind は flex-basis より flex を後に出力する）。
+  // **ラベルが 1 行のままコントロールと横に並ぶ行だけ横並びにし、入らない行はコントロールを下の段へ落とす**
+  // （2026-11-04 ユーザー発言「収まらないものだけ下にしてほしいんだけど。なんで折り返してるものと、説明とボタンを分けてる
+  // 行があるの？」）。ラベルを折り返してまで横に詰めると、コントロールの幅しだいで同じ並びの中に
+  // 「ラベルを折り返して横並び」と「コントロールだけ下」が混ざる。
+  // 仕組み: ラベルの箱の flex-basis を既定（auto＝中身の 1 行の幅）にし、flex-wrap に任せる。ラベル 1 行＋コントロールが
+  // 行に入らなければ、コントロールが次の段へ回る。ラベル自身が行より長いときだけ、ラベルがその段の中で折れる（min-w-0）。
+  // 前提の文（hint）は判定に数えない（`w-0 min-w-full` で中身の幅を 0 として扱い、表示は全幅）。長い前提の文があるだけで
+  // コントロールが下へ落ちないように。右のコントロールは幅を譲らない（select の選択肢や URL 入力は縮めると読めなくなる）。
+  // 伸長指定に flex-1 を使わないこと: flex ショートハンドが flex-basis を 0% で上書きし、ラベル 1 行の幅で判定できなくなる。
   return (
     // data-settings-row は説明の吹き出しが基準にする矩形の目印。ラベルではなく行を基準に
     // することで、2 段に折り返した行でコントロールを覆わない（DescriptionTip 参照）。
     <div data-settings-row className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-      <div className="min-w-0 grow basis-32">
+      <div className="min-w-0 grow">
         {/* 説明文は常時表示せず、ラベルをホバー・タップしたときだけ吹き出しで出す。
             設定の窓は行数が多く、全行に説明文を敷くと縦が 3 割伸びる（4804px→6310px）。 */}
         {description
           ? <DescriptionTip label={label} description={description} />
           : <p className="text-white text-sm">{label}</p>}
-        {hint && <p className="text-secondary text-xs mt-0.5">{hint}</p>}
+        {hint && <p className="text-secondary text-xs mt-0.5 w-0 min-w-full">{hint}</p>}
       </div>
       {/* ml-auto は 2 段に落ちた行のためにある。折り返した 2 行目はコントロール 1 個だけの行になり、
           アイテムが 1 個の行では justify-between が flex-start にフォールバックして左寄せになる
@@ -873,7 +867,7 @@ function Row({ label, description, hint, children }: {
  * 切り替えの 520px は地震タブと同じ境」）。きっかけは、出典を「/」で繋いだ 1 行が 390px で
  * 「使用ソフトウェアのライセン／ス」のように値の途中で折れていたこと。
  *
- * `Row` の「ラベルに最低幅を与える」規則は使わない。出典行はラベルが短く値が長いので、ラベルは自然幅にする
+ * `Row` の並べ方（ラベル 1 行＋コントロールが入らなければ下へ）は使わない。出典行は値が長いので、ラベルは自然幅にする
  * （`shrink-0`）。1 つの出典が行より長いときだけ、その中で折れる（`min-w-0`）。
  */
 function CreditRow({ label, items }: { label: string; items: readonly React.ReactNode[] }) {
@@ -1178,33 +1172,37 @@ function HomeLocationSection({
           {error && <span className="text-xs text-red-400 text-right">{error}</span>}
         </div>
       </Row>
-      <Row label="緯度・経度で入れる">
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <label className="flex items-center gap-1 text-xs text-secondary">
+      {/* ラベルの下に、緯度・経度の欄と［この地点にする］を行の幅いっぱいに 1 列で並べる（2026-11-04 ユーザー発言
+          「緯度経度で選ぶところが気に食わん」の後、見本を見ての選択「案 A：全幅で 1 列 (Recommended)」）。右寄せで詰めると
+          欄が行の途中に浮いて見えるので、この行だけは `Row` の「ラベル左・操作右」を使わない。2 つの欄は同じ幅 */}
+      <div data-settings-row className="flex flex-col gap-2 px-4 py-3">
+        <p className="text-white text-sm">緯度・経度で入れる</p>
+        <div className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
+          <label className="flex min-w-0 items-center gap-1 whitespace-nowrap text-xs text-secondary">
             緯度
             <input
               type="text"
               inputMode="decimal"
               value={latText}
               onChange={e => handleCoordinateChange(e.target.value, setLatText)}
-              className="w-24 bg-panel border border-border rounded-sm px-1.5 py-1 text-xs text-white font-mono"
+              className="w-full min-w-0 bg-panel border border-border rounded-sm px-1.5 py-1 text-xs text-white font-mono"
             />
           </label>
-          <label className="flex items-center gap-1 text-xs text-secondary">
+          <label className="flex min-w-0 items-center gap-1 whitespace-nowrap text-xs text-secondary">
             経度
             <input
               type="text"
               inputMode="decimal"
               value={lngText}
               onChange={e => handleCoordinateChange(e.target.value, setLngText)}
-              className="w-24 bg-panel border border-border rounded-sm px-1.5 py-1 text-xs text-white font-mono"
+              className="w-full min-w-0 bg-panel border border-border rounded-sm px-1.5 py-1 text-xs text-white font-mono"
             />
           </label>
           <button onClick={handleApply} disabled={!canApply} className={ACTION_BUTTON_CLASS}>
             この地点にする
           </button>
         </div>
-      </Row>
+      </div>
     </>
   )
 }
