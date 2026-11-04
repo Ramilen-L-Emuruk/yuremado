@@ -1272,6 +1272,8 @@ function SWaveArrivalCountdown({ row }: { row: SWaveArrivalRow }) {
 // 反応が収まっている間の段のチップの背景。主張を持たない灰で、白文字とのコントラストは約 7.6:1。
 // 段の色を消しつつラベルは読める濃さを保つ（経緯は KyoshinDetectionSummary 内のコメント）。
 const SETTLED_CHIP_BG = '#4b5563'
+/** 字が詰まる所で「0以下」の代わりに書く語（震度の枠の数字・棒の札。2026-11-04 ユーザー発言「小さい狭いところ全体に適用したいです」） */
+const BELOW_ZERO_SHORT_LABEL = '≦0'
 
 // `border` はチップの背景色として使う。白文字（12px 太字＝WCAG の Large Text 緩和に該当しない）を
 // 載せるため 4.5:1 が要る。confirmed の #ef4444 は 3.76:1・likely の #d97706 は 3.19:1 で足りず、
@@ -1505,7 +1507,9 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   const belowZeroCount = activeCount === 0 && topTier === 'confirmed' ? subZeroCount : 0
   const belowZero = belowZeroCount > 0
   const settled = activeCount === 0 && !belowZero
-  const maxLabelShown = maxLabel ?? (belowZero ? kyoshinDetectionScaleLabel(0) : null)
+  // 字が詰まる所（震度の枠の数字・棒の札）では「0以下」を「≦0」と書く（2026-11-04 ユーザー発言「「0以下」じゃなくて「≦0」とかにしたら」、
+  // 範囲は「小さい狭いところ全体に適用したいです」）。本文・判定の内訳・通知・共有カードの文は「0以下」のまま
+  const maxLabelShown = maxLabel ?? (belowZero ? BELOW_ZERO_SHORT_LABEL : null)
   const strongestName = settled ? null : strongestRegionName(points, subregions)
 
   return (
@@ -1535,10 +1539,11 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
           style={{ minWidth: 'var(--rt-tile-w)', backgroundColor: frameBg, border: `2px solid ${frameBorder}` }}
         >
           <span className="whitespace-nowrap font-semibold text-[length:var(--qk-fs)]" style={{ color: liftForContrast(frameBorder, frameBg) }}>最大リアルタイム震度</span>
-          {/* 「0以下」は 3 文字あるので一段小さくする（それでも 3 文字ぶん約 4.5rem で、枠の下限 4.25rem より少し広がる） */}
           <span
             className="font-black leading-none text-white"
-            style={{ fontSize: maxLabel === null && belowZero ? 'calc(var(--qk-big-f) * 0.4 * var(--rt-tw))' : 'calc(var(--qk-big-f) * 0.75 * var(--rt-tw))' }}
+            title={maxLabel === null && belowZero ? '震度0以下' : undefined}
+            aria-label={maxLabel === null && belowZero ? '震度0以下' : undefined}
+            style={{ fontSize: 'calc(var(--qk-big-f) * 0.75 * var(--rt-tw))' }}
           >
             {maxLabelShown ?? '—'}
           </span>
@@ -1549,13 +1554,16 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
             <div className="flex flex-col gap-1">
               {groups.map(g => (
                 <div key={g.label} className="flex items-center gap-2">
-                  {/* 幅は「0以下」（3 文字）が縁の内側に収まる幅に揃える（行ごとに幅が違うと棒の左端がずれる）。
+                  {/* 幅は 2 文字の札（「5弱」「≦0」）が縁の内側に収まる幅に揃える（行ごとに幅が違うと棒の左端がずれる）。
+                      震度0 未満の行は「0以下」ではなく「≦0」と書く（→ `BELOW_ZERO_SHORT_LABEL`）。
                       札の形は到達一覧の震度の札と同じ（震度の色の縁・震度の色を 35% 混ぜた地・白い字） */}
                   <span
                     className="box-border text-center text-[length:var(--qk-fs)] font-extrabold leading-tight whitespace-nowrap text-white rounded-[3px] shrink-0"
-                    style={{ width: 'calc(2.8em + 4px)', border: `2px solid ${g.color}`, background: `color-mix(in srgb, ${g.color} 35%, #141414)` }}
+                    title={g.label === subZeroLabel ? '震度0以下' : undefined}
+                    aria-label={g.label === subZeroLabel ? '震度0以下' : undefined}
+                    style={{ width: 'calc(2.2em + 4px)', border: `2px solid ${g.color}`, background: `color-mix(in srgb, ${g.color} 35%, #141414)` }}
                   >
-                    {g.label}
+                    {g.label === subZeroLabel ? BELOW_ZERO_SHORT_LABEL : g.label}
                   </span>
                   <div className="flex-1 h-2 rounded-[3px] overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
                     <div style={{ width: `${(g.count / maxCount) * 100}%`, height: '100%', background: g.color }} />

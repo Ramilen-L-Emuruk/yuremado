@@ -75,7 +75,7 @@ describe('検知カードは渡された点列をそのまま集計する', () =
     // index 5 = value -0.5（震度0未満）・index -1 = 欠測
     renderTab(confirmed, [P('a', 7), P('sub', 5), P('missing', -1)])
     expect(screen.getByText(/2観測点で反応/)).toBeTruthy()
-    const rowOfLabel = screen.getByText('0以下').parentElement?.textContent ?? ''
+    const rowOfLabel = screen.getByText('≦0').parentElement?.textContent ?? ''
     expect(rowOfLabel).toMatch(/1点$/)
   })
 
@@ -93,8 +93,13 @@ describe('検知カードは渡された点列をそのまま集計する', () =
       // index 5・4 = 震度0未満・index -1 = 欠測（欠測は数えない）
       renderTab(members('sub1', 'sub2', 'missing'), [P('sub1', 5), P('sub2', 4), P('missing', -1)])
       expect(screen.getByText(/2観測点で震度0以下の反応/)).toBeTruthy()
-      // 最大リアルタイム震度と「0以下」の行の 2 箇所に出る
-      expect(screen.getAllByText('0以下')).toHaveLength(2)
+      // 最大リアルタイム震度と「0以下」の行の 2 箇所に「≦0」と出る。どちらもホバーと画面読み上げには「震度0以下」と伝える
+      const shortLabels = screen.getAllByText('≦0')
+      expect(shortLabels).toHaveLength(2)
+      for (const el of shortLabels) {
+        expect(el.getAttribute('title')).toBe('震度0以下')
+        expect(el.getAttribute('aria-label')).toBe('震度0以下')
+      }
       expect(screen.queryByText(/観測点の反応は収まりました/)).toBeNull()
     })
 
@@ -102,7 +107,7 @@ describe('検知カードは渡された点列をそのまま集計する', () =
       renderTab([fakeEvent({ id: 'evt-3', confidence: 'likely', memberKeys: ['sub1'] })], [P('sub1', 5)])
       expect(screen.getByText(/観測点の反応は収まりました/)).toBeTruthy()
       expect(screen.queryByText(/震度0以下の反応/)).toBeNull()
-      const rowOfLabel = screen.getByText('0以下').parentElement?.textContent ?? ''
+      const rowOfLabel = screen.getByText('≦0').parentElement?.textContent ?? ''
       expect(rowOfLabel).toMatch(/1点$/)
     })
 
@@ -118,7 +123,7 @@ describe('検知カードは渡された点列をそのまま集計する', () =
     it('安全弁: 全員欠測なら「反応は収まりました」（欠測を震度0以下と言わない）', () => {
       renderTab(members('missing'), [P('missing', -1)])
       expect(screen.getByText(/観測点の反応は収まりました/)).toBeTruthy()
-      expect(screen.queryByText('0以下')).toBeNull()
+      expect(screen.queryByText('≦0')).toBeNull()
     })
 
     it('正: 直前の値を保持して描いている点も、地図と同じく数える', () => {
