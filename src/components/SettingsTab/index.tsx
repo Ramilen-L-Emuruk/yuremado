@@ -42,6 +42,11 @@ import { buildSettingsFile, keysFileNotice, parseSettingsFile, settingsFileHasKe
 import { isValidHomeLocation, parseCoordinateNumber, splitPastedLatLng } from '../../utils/homeLocationInput'
 import { SHARE_CARD_FORMATS } from '../../utils/shareCard'
 import { HEATMAP_PERIODS, isHeatmapPeriod } from '../../utils/quakeHeatmap'
+import {
+  TIME_SIGNAL_CLOCKS, TIME_SIGNAL_INTERVALS, TIME_SIGNAL_ORDERS, TIME_SIGNAL_PHRASES, TIME_SIGNAL_SOUNDS, TIME_SIGNAL_WHILE_SPEAKING,
+  minuteToTimeValue, timeSignalSpeechText, timeValueToMinute,
+  type TimeSignalClock, type TimeSignalIntervalMin, type TimeSignalOrder, type TimeSignalPhrase, type TimeSignalSound, type TimeSignalWhileSpeaking,
+} from '../../utils/timeSignal'
 import { ReleaseNotesDialog } from '../ReleaseNotesDialog'
 import { allNotes, type ReleaseNoteEntry } from '../../utils/releaseNotes'
 import { SETTINGS_CATEGORIES, useIsSettingsCategoryActive, type SettingsCategoryId } from './SettingsDialog'
@@ -813,6 +818,132 @@ function ReleaseHistoryRow() {
 
 const selectAllNotes = (entries: readonly ReleaseNoteEntry[]) => allNotes(entries)
 
+const TIME_SIGNAL_INTERVAL_LABELS: Record<TimeSignalIntervalMin, string> = {
+  60: '1時間ごと', 30: '30分ごと', 15: '15分ごと', 10: '10分ごと', 5: '5分ごと',
+}
+const TIME_SIGNAL_SOUND_LABELS: Record<TimeSignalSound, string> = {
+  pips: 'ピッ・ピッ・ピッ・ポーン', pon: 'ポーン', chime: 'チャイム', none: '鳴らさない',
+}
+const TIME_SIGNAL_ORDER_LABELS: Record<TimeSignalOrder, string> = { soundFirst: '音が先', speechFirst: '読み上げが先' }
+const TIME_SIGNAL_CLOCK_LABELS: Record<TimeSignalClock, string> = { '24h': '24時間制', '12h': '12時間制' }
+const TIME_SIGNAL_WHILE_SPEAKING_LABELS: Record<TimeSignalWhileSpeaking, string> = { soundOnly: '音だけ鳴らす', skip: '鳴らさない' }
+/** 読み上げの文の選択肢に出す例の時刻（15時30分） */
+const TIME_SIGNAL_EXAMPLE_AT = new Date(2026, 0, 1, 15, 30).getTime()
+
+/**
+ * 時報の行（→ `hooks/useTimeSignal.ts`・audio-tts-spec.md §2「時報」）。文言は 2026-11-04 ユーザー選択（行ごとの答えは
+ * settings-pwa-spec.md §2「時報」）。読み上げにだけ効く行は VOICEVOX 読み上げが有効なときだけ出す。
+ */
+export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
+  settings: AppSettings
+  onUpdate: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
+  /** 選べる声。VOICEVOX に繋がっていないときは空（声の行を出さない） */
+  voicevoxSpeakers: readonly VoicevoxSpeaker[]
+}) {
+  const selectClass = 'bg-input border border-border rounded-sm px-2 py-1 text-xs text-white'
+  const speech = settings.voicevoxEnabled
+  return (
+    <>
+      <Row label="時報" description="決めた間隔で、音と読み上げで時刻を知らせます">
+        <Toggle checked={settings.timeSignalEnabled} onChange={v => onUpdate('timeSignalEnabled', v)} />
+      </Row>
+      {settings.timeSignalEnabled && (
+        <>
+          <Row label="間隔">
+            <select value={settings.timeSignalIntervalMin} className={selectClass}
+              onChange={e => onUpdate('timeSignalIntervalMin', ensureTimeSignalInterval(Number(e.target.value)))}>
+              {TIME_SIGNAL_INTERVALS.map(v => <option key={v} value={v}>{TIME_SIGNAL_INTERVAL_LABELS[v]}</option>)}
+            </select>
+          </Row>
+          <Row label="音">
+            <select value={settings.timeSignalSound} className={selectClass}
+              onChange={e => onUpdate('timeSignalSound', e.target.value as TimeSignalSound)}>
+              {TIME_SIGNAL_SOUNDS.map(v => <option key={v} value={v}>{TIME_SIGNAL_SOUND_LABELS[v]}</option>)}
+            </select>
+          </Row>
+          {speech && (
+            <>
+              <Row label="順番">
+                <select value={settings.timeSignalOrder} className={selectClass}
+                  onChange={e => onUpdate('timeSignalOrder', e.target.value as TimeSignalOrder)}>
+                  {TIME_SIGNAL_ORDERS.map(v => <option key={v} value={v}>{TIME_SIGNAL_ORDER_LABELS[v]}</option>)}
+                </select>
+              </Row>
+              <Row label="読み上げの文">
+                <select value={settings.timeSignalPhrase} className={selectClass}
+                  onChange={e => onUpdate('timeSignalPhrase', e.target.value as TimeSignalPhrase)}>
+                  {TIME_SIGNAL_PHRASES.map(v => (
+                    <option key={v} value={v}>{timeSignalSpeechText(TIME_SIGNAL_EXAMPLE_AT, settings.timeSignalClock, v)}</option>
+                  ))}
+                </select>
+              </Row>
+              <Row label="時刻の読み方">
+                <select value={settings.timeSignalClock} className={selectClass}
+                  onChange={e => onUpdate('timeSignalClock', e.target.value as TimeSignalClock)}>
+                  {TIME_SIGNAL_CLOCKS.map(v => <option key={v} value={v}>{TIME_SIGNAL_CLOCK_LABELS[v]}</option>)}
+                </select>
+              </Row>
+            </>
+          )}
+          <Row label="鳴らさない時間帯" description="日をまたいで指定できます">
+            <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-white">
+              {settings.timeSignalQuietEnabled && (
+                <>
+                  <input type="time" value={minuteToTimeValue(settings.timeSignalQuietStartMin)} className={selectClass}
+                    onChange={e => { const m = timeValueToMinute(e.target.value); if (m !== null) onUpdate('timeSignalQuietStartMin', m) }} />
+                  <span>から</span>
+                  <input type="time" value={minuteToTimeValue(settings.timeSignalQuietEndMin)} className={selectClass}
+                    onChange={e => { const m = timeValueToMinute(e.target.value); if (m !== null) onUpdate('timeSignalQuietEndMin', m) }} />
+                  <span>まで</span>
+                </>
+              )}
+              <Toggle checked={settings.timeSignalQuietEnabled} onChange={v => onUpdate('timeSignalQuietEnabled', v)} />
+            </div>
+          </Row>
+          {speech && (
+            <Row label="読み上げと重なったとき" description="地震や津波の読み上げの最中に時刻が来たときの扱いです。通知音とは重ねて鳴らします">
+              <select value={settings.timeSignalWhileSpeaking} className={selectClass}
+                onChange={e => onUpdate('timeSignalWhileSpeaking', e.target.value as TimeSignalWhileSpeaking)}>
+                {TIME_SIGNAL_WHILE_SPEAKING.map(v => <option key={v} value={v}>{TIME_SIGNAL_WHILE_SPEAKING_LABELS[v]}</option>)}
+              </select>
+            </Row>
+          )}
+          <Row label="時報の音量">
+            <div className="flex items-center gap-2 text-xs text-white">
+              {settings.timeSignalVolume !== null && (
+                <>
+                  <span className="text-secondary w-8 text-right">{Math.round(settings.timeSignalVolume * 100)}%</span>
+                  <input type="range" min={0} max={1} step={0.05} value={settings.timeSignalVolume}
+                    onChange={e => onUpdate('timeSignalVolume', Number(e.target.value))} className="w-24 accent-blue-500" />
+                </>
+              )}
+              <span>通知音と同じ</span>
+              <Toggle checked={settings.timeSignalVolume === null}
+                onChange={v => onUpdate('timeSignalVolume', v ? null : settings.soundVolume)} />
+
+            </div>
+          </Row>
+          {speech && voicevoxSpeakers.length > 0 && (
+            <Row label="時報の声">
+              <select value={settings.timeSignalSpeakerId ?? ''} className={selectClass}
+                onChange={e => onUpdate('timeSignalSpeakerId', e.target.value === '' ? null : Number(e.target.value))}>
+                <option value="">読み上げと同じ</option>
+                {voicevoxSpeakers.flatMap(spk =>
+                  spk.styles.map(st => <option key={st.id} value={st.id}>{spk.name}（{st.name}）</option>),
+                )}
+              </select>
+            </Row>
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
+/** select の値を間隔に戻す（選択肢に無い値は毎正時） */
+const ensureTimeSignalInterval = (v: number): TimeSignalIntervalMin =>
+  (TIME_SIGNAL_INTERVALS as readonly number[]).includes(v) ? v as TimeSignalIntervalMin : 60
+
 function Row({ label, description, hint, children }: {
   label: string
   description?: string
@@ -1524,7 +1655,8 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             onChange={v => onUpdate('soundEnabled', v)}
           />
         </Row>
-        {(settings.soundEnabled || settings.voicevoxEnabled) && (
+        {/* 時報も鳴らすので数える（時報の「通知音と同じ」はこの音量を指す。切ると行ごと消えて辿れない） */}
+        {(settings.soundEnabled || settings.voicevoxEnabled || settings.timeSignalEnabled) && (
           <Row label="音量" description="通知音と読み上げに共通の音量です">
             <div className="flex items-center gap-2">
               <span className="text-xs text-secondary w-8 text-right">
@@ -1649,6 +1781,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             onChange={v => onUpdate('kyoshinDetectSpeech', v)}
           />
         </Row>
+        <TimeSignalRows settings={settings} onUpdate={onUpdate} voicevoxSpeakers={voicevoxStatus === 'available' ? voicevoxSpeakers : []} />
       </Section>
 
       {/* 読み上げの詳しさ。VOICEVOX を有効にしたときだけ出す（無効な端末では何も効かないため）。

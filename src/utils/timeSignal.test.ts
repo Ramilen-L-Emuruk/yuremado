@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   TIME_SIGNAL_SOUND_SHAPE, TIME_SIGNAL_SPEECH_GAP_SEC,
-  isInQuietHours, nextSignalAt, speechStartOffsetSec, timeSignalClockText, timeSignalSpeechText,
+  isInQuietHours, minuteToTimeValue, nextSignalAt, speechStartOffsetSec, timeSignalClockText, timeSignalSpeechText, timeValueToMinute,
 } from './timeSignal'
 
 // 日時は現地時刻で組む（境も現地時刻で決まるので、CI の時間帯によらず同じに通る）
@@ -85,5 +85,25 @@ describe('speechStartOffsetSec', () => {
   })
   it('読み上げが先で音なしなら、境ちょうどに読み終わる', () => {
     expect(speechStartOffsetSec('none', 'speechFirst', 1.5)).toBeCloseTo(-1.5)
+  })
+})
+
+describe('minuteToTimeValue / timeValueToMinute', () => {
+  it('分と HH:MM を往復する（境の 0 時と 23 時 59 分）', () => {
+    expect(minuteToTimeValue(0)).toBe('00:00')
+    expect(minuteToTimeValue(23 * 60 + 59)).toBe('23:59')
+    expect(timeValueToMinute('00:00')).toBe(0)
+    expect(timeValueToMinute('23:59')).toBe(23 * 60 + 59)
+    expect(timeValueToMinute(minuteToTimeValue(22 * 60))).toBe(22 * 60)
+  })
+  it('秒が付いていれば捨てる', () => {
+    expect(timeValueToMinute('07:30:15')).toBe(7 * 60 + 30)
+    expect(timeValueToMinute('07:30:15.250')).toBe(7 * 60 + 30)
+  })
+  it('読めない値は null（空・範囲外・形が違う）', () => {
+    expect(timeValueToMinute('')).toBeNull()
+    expect(timeValueToMinute('24:00')).toBeNull()
+    expect(timeValueToMinute('12:60')).toBeNull()
+    expect(timeValueToMinute('7:30')).toBeNull()
   })
 })

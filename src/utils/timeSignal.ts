@@ -34,6 +34,20 @@ export const TIME_SIGNAL_WHILE_SPEAKING: readonly TimeSignalWhileSpeaking[] = ['
 /** 1 日の分（0〜1439）。 */
 export const MINUTES_PER_DAY = 24 * 60
 
+/** 0 時からの分を `<input type="time">` の値（`HH:MM`）にする */
+export function minuteToTimeValue(m: number): string {
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+}
+
+/** `<input type="time">` の値（`HH:MM`。秒が付いていれば捨てる）を 0 時からの分にする。読めなければ null */
+export function timeValueToMinute(v: string): number | null {
+  const m = /^(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(v)
+  if (!m) return null
+  const h = Number(m[1])
+  const min = Number(m[2])
+  return h < 24 && min < 60 ? h * 60 + min : null
+}
+
 /**
  * `nowMs` より**後**の最初の境（epoch ms）。境は端末の現地時刻で、毎時 0 分から `intervalMin` ごと。
  *
