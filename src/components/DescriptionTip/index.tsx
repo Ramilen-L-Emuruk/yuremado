@@ -145,7 +145,8 @@ export function DescriptionTip({ label, description }: Props) {
           role="tooltip"
           // マウスを遮らせない。吹き出しは行の下に出るぶん次の行に重なるため、操作を
           // 受け付けると覆った下のコントロールが押せなくなる（本文の選択より操作を優先する）。
-          className="fixed z-50 rounded-md border border-border bg-panel px-2.5 py-1.5 text-xs text-secondary leading-snug shadow-lg shadow-black/50 pointer-events-none"
+          // 折り返し・寄せ・太さは自分で持つ（本文は呼び出し側の行の兄弟に出るので、行の nowrap や太字を継いでしまう）。
+          className="fixed z-50 rounded-md border border-border bg-panel px-2.5 py-1.5 text-xs text-secondary leading-snug whitespace-normal text-left font-normal shadow-[0_3px_8px_rgba(0,0,0,.55)] pointer-events-none"
           style={{
             left: placement?.left ?? 0,
             top: placement?.top ?? 0,

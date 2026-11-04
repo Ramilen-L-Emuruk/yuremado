@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { CANCEL_FADE_MS, fadeIn } from './EarthquakeTab/quakeMotion'
 
 const PRIVACY_POLICY_URL = 'https://github.com/Ramilen-L-Emuruk/yuremado/blob/main/docs/privacy-policy.md'
 
@@ -14,6 +15,11 @@ export function UsageConsentDialog({ onAnswer }: {
   onAnswer: (allowed: boolean) => void
 }) {
   const denyRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  // 窓は地震タブの取消の覆いと同じ 250ms で薄くから出す（2026-11-04 ユーザー選択「揃える (Recommended)」。動きを減らす設定では出さない）
+  useLayoutEffect(() => {
+    if (panelRef.current) fadeIn(panelRef.current, CANCEL_FADE_MS)
+  }, [])
 
   // 既定の焦点は［許可しない］に置く（Enter を押しただけで送る側に倒れないように）
   useEffect(() => { denyRef.current?.focus() }, [])
@@ -26,7 +32,7 @@ export function UsageConsentDialog({ onAnswer }: {
     return () => window.removeEventListener('keydown', onKey)
   }, [onAnswer])
 
-  const button = 'rounded-sm border border-border px-3 py-1 text-xs hover:bg-white/10 hover:text-white'
+  const button = 'rounded-md border border-border bg-panel px-3 py-1 text-(length:--ui-fs) hover:bg-white/10 hover:text-white'
   const content = (
     <div
       className="fixed inset-0 z-100000 flex items-center justify-center bg-black/60 p-2 sm:p-6"
@@ -38,17 +44,20 @@ export function UsageConsentDialog({ onAnswer }: {
       role="presentation"
     >
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="usage-consent-title"
-        className="flex w-full max-w-md flex-col gap-3 rounded-lg border border-border bg-panel p-4 text-sm shadow-2xl shadow-black/60"
+        className="ui-text flex w-full max-w-md flex-col gap-3 rounded-md border border-border bg-panel p-4 shadow-[0_3px_8px_rgba(0,0,0,.55)]"
       >
+        {/* 文字の 2 組の値を持つ包み（並べ方は窓の flex のまま。→ index.css の ui-text） */}
+        <div className="ui-text-scope contents text-(length:--ui-f)">
         <div id="usage-consent-title" className="text-white">揺れ窓の改善にご協力ください</div>
-        <p className="text-xs leading-relaxed text-secondary">
+        <p className="text-(length:--ui-fs) leading-relaxed text-secondary">
           使用状況データ（開いたタブ・使っている機能・端末の種類など）を開発者に送信することを許可しますか？
           名前・IP アドレス・登録した地点は送信しません。この設定はいつでも変更できます。
         </p>
-        <a href={PRIVACY_POLICY_URL} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:text-blue-300">
+        <a href={PRIVACY_POLICY_URL} target="_blank" rel="noopener noreferrer" className="text-(length:--ui-fs) text-blue-400 hover:text-blue-300">
           プライバシーポリシー
         </a>
         <div className="flex justify-end gap-2">
@@ -58,6 +67,7 @@ export function UsageConsentDialog({ onAnswer }: {
           <button type="button" onClick={() => onAnswer(true)} className={`${button} text-white`}>
             許可する
           </button>
+        </div>
         </div>
       </div>
     </div>

@@ -20,7 +20,7 @@ export function MapUpdateTime({ lastUpdate, error = false }: Props) {
   const valid = lastUpdate && !Number.isNaN(lastUpdate.getTime())
   return (
     <div
-      className={`bg-black/80 font-mono rounded text-sm px-2 py-0.5 roomy:text-xl roomy:px-2.5 roomy:py-1 whitespace-nowrap ${
+      className={`bg-panel/90 font-mono rounded-sm text-sm px-2 py-0.5 roomy:text-xl roomy:px-2.5 roomy:py-1 whitespace-nowrap ${
         error ? 'text-red-400' : 'text-white'
       }`}
     >

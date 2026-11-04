@@ -145,7 +145,7 @@ export const IconNav = memo(function IconNav({ activeTab, onTabChange, panelColl
               aria-haspopup="dialog"
               aria-expanded={settingsOpen}
               title={item.label}
-              className={`relative w-11 h-11 flex items-center justify-center rounded-lg transition-colors ${
+              className={`relative w-11 h-11 flex items-center justify-center rounded-md transition-colors motion-reduce:transition-none ${
                 settingsOpen ? 'bg-white/15 text-white' : 'text-secondary hover:text-white hover:bg-white/5'
               }`}
             >
@@ -165,11 +165,11 @@ export const IconNav = memo(function IconNav({ activeTab, onTabChange, panelColl
             aria-current={isActive}
             aria-expanded={isActive ? !panelCollapsed : undefined}
             title={isActive ? `${item.label}（もう一度押すとパネルを${panelCollapsed ? '開く' : '畳む'}）` : item.label}
-            className={`relative w-11 h-11 flex items-center justify-center rounded-lg transition-colors ${
+            className={`relative w-11 h-11 flex items-center justify-center rounded-md transition-colors motion-reduce:transition-none ${
               isActive
                 ? panelCollapsed
                   // 折りたたみ中は「選択中だが内容は非表示」であることを、塗りを弱めて示す。
-                  ? 'bg-white/5 text-white/70'
+                  ? 'bg-white/5 text-secondary'
                   : 'bg-white/15 text-white'
                 : 'text-secondary hover:text-white hover:bg-white/5'
             }`}

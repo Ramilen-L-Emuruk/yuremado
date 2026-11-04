@@ -103,8 +103,13 @@ function ReturnRun({ boxRef, textRef, text, overflow, className, testId }: {
     if (typeof matchMedia !== 'function') return
     const mq = matchMedia(REDUCED_MOTION)
     const onChange = () => setReduced(mq.matches)
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
+    // Safari 13 以前の MediaQueryList は addEventListener を持たない（古い addListener だけ）
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', onChange)
+      return () => mq.removeEventListener('change', onChange)
+    }
+    mq.addListener(onChange)
+    return () => mq.removeListener(onChange)
   }, [])
 
   useEffect(() => {

@@ -19,13 +19,13 @@ export function Toggle({
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={`
-        relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+        relative inline-flex h-6 w-11 items-center rounded-full transition-colors motion-reduce:transition-none
         ${checked ? 'bg-blue-500' : 'bg-border'}
       `}
     >
       <span
         className={`
-          inline-block h-4 w-4 rounded-full bg-white shadow transition-transform
+          inline-block h-4 w-4 rounded-full bg-white shadow transition-transform motion-reduce:transition-none
           ${checked ? 'translate-x-6' : 'translate-x-1'}
         `}
       />
