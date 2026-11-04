@@ -50,7 +50,7 @@ import {
   type CatalogFilter, type CatalogViewOptions, type CatalogPointCloud,
 } from './utils/hypocenterCatalogView'
 import { SpecialInfoBanner, shareButtonBottomClass, shareButtonRowHeightClass } from './components/SpecialInfoBanner'
-import { useSpecialInfoBanners } from './components/SpecialInfoBanner/useSpecialInfoBanners'
+import { NO_BAND_ITEMS, useSpecialInfoBanners } from './components/SpecialInfoBanner/useSpecialInfoBanners'
 import { MapLegend } from './components/MapLegend'
 import { isMapAreaShort } from './components/MapLegend/autoCollapse'
 import { buildLegendBlocks, EMPTY_LEGEND_SOURCES, withHeatmapPeriod, heatmapCompletenessNote, type MapLegendSources, type LegendBlock, type LegendHeatmapPeriod } from './components/MapLegend/legendBlocks'
@@ -1048,7 +1048,7 @@ export function App() {
   // 揺れ検知の束の広がり。下の検知結果から毎秒流し込み、EEW の自動解除を広がっている間は待たせる（eew-spec §7）
   const [eewSpreadLog] = useState(createDetectionSpreadLog)
   const {
-    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, internationalTsunamis, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, keyForecastRefused, lastUpdate, isLoading, isLoadingMore, hasMore, error,
+    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentaryList, kohatsuList, quakeNoticeList, earthquakeCountList, estimatedIntensities, internationalTsunamis, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, keyForecastRefused, lastUpdate, isLoading, isLoadingMore, hasMore, error,
     historyLoss, loadMoreFailed, reconnectGapLoss,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
@@ -2770,9 +2770,9 @@ export function App() {
   // 地図に重ねる特別情報の帯の束。**閉じた帯を除いた「いま出す帯」を、帯の描画と共有ボタンの置き場所が同じ値で見る。**
   // お知らせの帯は設定で隠せるので、隠しているときは元データごと渡さない。
   const specialInfoBanners = useSpecialInfoBanners({
-    nankai, nankaiCommentary, kohatsu,
-    quakeNotice: settings.quakeNoticeBanner ? quakeNotice : null,
-    earthquakeCount,
+    nankai, nankaiCommentary: nankaiCommentaryList, kohatsu: kohatsuList,
+    quakeNotice: settings.quakeNoticeBanner ? quakeNoticeList : NO_BAND_ITEMS,
+    earthquakeCount: earthquakeCountList,
   })
   // 地図の下の波形の枠に渡すもの。**出さないなら空・null**（出すかどうかはここで決める）。
   const waveChartStations = showSeismoWave ? seismoView.stations : EMPTY_SEISMO_STATIONS

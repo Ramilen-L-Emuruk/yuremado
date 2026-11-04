@@ -1370,6 +1370,9 @@ export const KOHATSU_RETRACTION: TestTelegramScript = {
   ],
 }
 
+/** お知らせテストの 2 通目を流すまでの間（同じだけ発表時刻も進める。分はまたがない） */
+export const QUAKE_NOTICE_SECOND_MS = 5_000
+
 /** お知らせの自由付加文。電文解説資料 Ⅱ.51 の事例の文（サンプル電文は持たない）。 */
 const QUAKE_NOTICE_FREE_TEXT = '保守点検の時刻が変更になりました。'
 
@@ -1379,6 +1382,12 @@ const QUAKE_NOTICE_FREE_TEXT = '保守点検の時刻が変更になりました
  * **自由付加文を足す**（電文解説資料 Ⅱ.51 の事例の文）。サンプルは持たないが、本文の後に続けて出る・
  * 続けて読まれる形を確かめる入口がほかに無い。置いたサンプルからは問い合わせ先（氏名と電話番号）の
  * 段落を外してある（→ `public/data/test-telegrams/README.md`）。
+ *
+ * **2 通目に、同じ分の別のお知らせを流す**（`QUAKE_NOTICE_SECOND_MS` 後）。帯は別件のお知らせを 1 本に積む
+ * （→ `utils/specialInfoBandList.ts`）ので、「ほか 1 件」と開いた一覧・行の × を確かめる入口になる。実配信でも
+ * 同じ分に別のお知らせが数十秒おきに並ぶ（自治体ごとの「震度データ入電停止」など。→ `quakeNoticeId`）ので、
+ * 作成時刻と発表時刻だけを進め、`EventID`（発表時刻を分で切ったもの）はそのまま残す。サンプルは 1 通しか無いので
+ * 本文は同じ。自由付加文は 1 通目だけに付く。
  */
 export const QUAKE_NOTICE: TestTelegramScript = {
   anchor: 0,
@@ -1391,6 +1400,11 @@ export const QUAKE_NOTICE: TestTelegramScript = {
       free.textContent = QUAKE_NOTICE_FREE_TEXT
       comments.appendChild(free)
       body.appendChild(comments)
+    }),
+  }, {
+    file: sample('42_01_01_100514_VZSE40'), headType: 'VZSE40', atMs: QUAKE_NOTICE_SECOND_MS,
+    rewrite: xml => editXml(xml, (doc) => {
+      shiftIssueTime(doc, QUAKE_NOTICE_SECOND_MS / 1000)
     }),
   }],
 }

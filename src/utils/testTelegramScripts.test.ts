@@ -844,6 +844,17 @@ describe('南海トラフ・後発地震・お知らせ・地震回数・長周�
     expect(notice.freeText).toBe('保守点検の時刻が変更になりました。')
   })
 
+  // 帯に積む形（別件のお知らせ 2 通）を確かめる入口。同じ分の別のお知らせ —— 実配信の並び方のまま
+  it('お知らせテストは同じ分の別のお知らせを 2 通流す', async () => {
+    const notices = dataOf(await build(scripts.QUAKE_NOTICE), 'quakeNotice') as { id: string; eventId: string; reportDateTime: string; freeText?: string }[]
+    expect(notices).toHaveLength(2)
+    const [a, b] = notices
+    expect(b.id).not.toBe(a.id)
+    expect(b.eventId).toBe(a.eventId)
+    expect(Date.parse(b.reportDateTime) - Date.parse(a.reportDateTime)).toBe(scripts.QUAKE_NOTICE_SECOND_MS)
+    expect(b.freeText).toBeUndefined()
+  })
+
   it('地震回数は回数が全区間「発表なし」で、有感回数は持つ', async () => {
     const [count] = dataOf(await build(scripts.EARTHQUAKE_COUNT), 'earthquakeCount') as { items: { number: number | null; feltNumber: number | null }[] }[]
     expect(count.items.length).toBe(5)

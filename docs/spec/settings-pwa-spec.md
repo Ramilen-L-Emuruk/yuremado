@@ -483,7 +483,7 @@ VOICEVOX 読み上げの「要：VOICEVOXアプリ起動」。吹き出しに入
 | `quake-viewer-settings` | ユーザー設定（保存先はこの 1 つ。[`relay-server-design.md`](../relay-server-design.md) §0 の 2026-10-31「保存先は 1 つ」の行） | ブラウザ |
 | `kyoshin-v3-learned` | 強震モニタの観測点ごとの慢性ノイズ床（震度0 の点の表示の絞り込みと「今揺れ始めた点」に使う。`utils/kyoshinNoiseFloor.ts`） | ブラウザ |
 | `quake-heatmap-tail-v2` | 地震活動ヒートマップのうち、長期震源カタログの終端より後ろを中継の電文一覧で埋めた分の控え（カタログ側はファイルとしてブラウザのキャッシュに載る。旧い鍵 `quake-heatmap-tail-v1`・`quake-heatmap-tail-dmdss-v1` などは見かけたら消す。`hooks/useQuakeHeatmap.ts`） | ブラウザ |
-| `nankai-dismissed` / `nankai-commentary-dismissed` / `kohatsu-dismissed` / `earthquake-count-dismissed` / `quake-notice-dismissed` | 閉じた特別情報の帯の電文 id（種類ごとに 1 件。`SpecialInfoBanner/useSpecialInfoBanners.ts`）。臨時情報と後発地震は 2026-10-24 に加えた | ブラウザ |
+| `nankai-dismissed` / `nankai-commentary-dismissed` / `kohatsu-dismissed` / `earthquake-count-dismissed` / `quake-notice-dismissed` | 閉じた特別情報の帯の電文 id の一覧（種類ごとに JSON の配列で 100 件まで。1 つの id の文字列だけの古い形も読む。`SpecialInfoBanner/useSpecialInfoBanners.ts`）。臨時情報と後発地震は 2026-10-24 に加えた | ブラウザ |
 | `seismo-quiet-levels` | 自作地震計の観測点ごとに最後に測れた静かさ（gal）とそのデータ時刻（`utils/seismoQuietMemo.ts`）。静かさを測れない間の縦の下限に使う | ブラウザ |
 | `yuremado-usage-install-id` | 使用状況データの一意の識別子（32 桁の 16 進。許可している間だけ。オフにすると消す。→ §4.9） | ブラウザ |
 | `yuremado-usage-consent-asked` | 使用状況データの同意の窓に答えた（閉じた）印。あれば窓を出さない（→ §4.9） | ブラウザ |
@@ -2344,7 +2344,7 @@ DMDATA へ自分の鍵で繋ぐ当日経路は、電文一覧と EEW のイベ�
 | 長周期地震動（階級0の地域）テスト | `LPGM_CLASS_ZERO_REGION` | 階級 1 以上の報に混ざった階級 0 の地域が、他の階級と同じ設定で読み上げられること（→ [`audio-tts-spec.md`](audio-tts-spec.md) §4「地域列挙の範囲」）。あわせて長周期の欄に電文の震源・規模・最大震度・地震発現時刻の行が出て、3 秒後の続報で規模に更新の印が付くこと（→ [`quake-spec.md`](quake-spec.md) §8「階級と震度は並べて出す」）。**階級 1 以上の報に階級 0 の地域が混ざる標本も、長周期の続報の標本も全期間に無い**ので、2024-01-01 16:56 石川県能登地方の長周期の電文（最大階級 2）に階級 0 の「富山県東部」（震度 3 は同じ地震の地震情報の値）を書き足し、続報はその規模を Ｍ５．７ → Ｍ５．８ に書き換え報番号を進めて作る。先に同じ地震の地震情報を 1 通流す（2026-10-29 ユーザー選択「新しいボタンを足す (Recommended)」・続報は同日「続報も流す (Recommended)」） |
 | 推計震度分布図テスト | `ESTIMATED_INTENSITY` | 地図が自前の推定から公式へ替わり、カードの「震度分布」ボタンの表示も切り替わる。**続報まで流すのは、読み上げの「受信しました」／「更新されました」の言い分けが続報でしか通らないため。** 最後の地震情報で分布モードが閉じて発表値へ戻ることも見られる（→ [`quake-spec.md`](quake-spec.md) §9「震度分布モード」）。**分布だけは合成の二進電文**（下記「推計震度分布図だけは合成する」） |
 | 地震回数テスト | `EARTHQUAKE_COUNT` | 特別情報バナー（cyan）+ `earthquakeCount` 音。**畳んだ見出しが累積の区間から組まれ、発表なしの回数を出さないこと**（2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」。→ [`quake-spec.md`](quake-spec.md) §8「地震回数に関する情報」） |
-| お知らせテスト | `QUAKE_NOTICE` | 地震・津波に関するお知らせのバナー（slate）。**音と読み上げは設定を有効にしたときだけ**（運用連絡のため。→ [`data-sources-spec.md`](data-sources-spec.md) §2「扱う電文種別」）。本文は記書き（改行と全角スペースで組んだ形）が帯の中でどう見えるか |
+| お知らせテスト | `QUAKE_NOTICE` | 地震・津波に関するお知らせのバナー（slate）。**音と読み上げは設定を有効にしたときだけ**（運用連絡のため。→ [`data-sources-spec.md`](data-sources-spec.md) §2「扱う電文種別」）。本文は記書き（改行と全角スペースで組んだ形）が帯の中でどう見えるか。**5 秒後に同じ分の別のお知らせをもう 1 通流す** —— 帯に積む形（「ほか 1 件」・開いた一覧・行の ×）を確かめる入口（実配信でも同じ分に別のお知らせが並ぶ） |
 | 取消テスト（地震回数） | `EARTHQUAKE_COUNT_RETRACTION` | 帯が消え、`earthquakeCancel` 音が鳴る。**取消の理由（`Body/Text`）が届く先は読み上げだけ** —— この種別は取消で帯ごと消えるため、地震・津波・EEW のようにカードへ残せない |
 | 訂正報テスト | `QUAKE_AMENDMENT` | 「震源を訂正」の印と、気象庁の「震源要素を訂正します。」の一文（→ [`quake-spec.md`](quake-spec.md) §8「固定付加文（その他）…はそのまま出す」）。**2 通流すのは、訂正報が単独では届かないから** —— 1 通だけでは何が訂正されたのかが画面に出ない |
 | 種別遷移テスト | `QUAKE_REPORT_SEQUENCE` | **受け取った種別を並べた見出しを実機で確かめられる入口はここだけ**（あわせて、1 通目の区域の最大震度を 1 段下げてあるので、3 通目で上がる＝**ブラウザ通知の「最大震度更新」**も通せる）（→ [`quake-spec.md`](quake-spec.md) §8「見出しには受け取った種別を並べる」）。ほかに 3 つ、ここでしか出ない形がある —— **観測点だけが増えた続報**（「観測地点が追加されましたが、地域ごとの最大震度は変わっていません。」→ [`audio-tts-spec.md`](audio-tts-spec.md) §4「続報は差分だけ読む」）・**完全版のあとに届く震度速報**（何も動かないことを見る。→ [`quake-spec.md`](quake-spec.md) §6.3「完全版を受けた後の速報段階」）・**震度が上下する続報**（動いた印が親の行へ持ち上がる。→ 同 §8「カードの更新の印」） |
@@ -3324,3 +3324,4 @@ Playwright / Chrome DevTools でボタン発火後の DOM 状態を確認した�
 - 2026-11-03: §7 に規模の更新テスト（`MAGNITUDE_FROM_TSUNAMI`）を足した（津波の続報が地震情報より新しい規模を地震カードへ当てる経路）
 - 2026-11-03: §2「最低表示震度」に、国際津波関連情報の付いた地震を対象外にすることを足した。§7 に英文だけテスト（`INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY`）を足した。国際津波関連情報テストの自作の英文の深さの行を、実電文の書式（`FOCAL DEPTH:… MAG:…`）に直した
 - 2026-11-03: §5.5 の取得の失敗の知らせ（全画面と帯・リプレイの赤字）で、通信そのものの失敗の中身を「通信できませんでした」にした（`fetchFailureReason`）
+- 2026-11-04: §3 の保存キーで、閉じた特別情報の帯の記録を種類ごとの id の一覧にした（帯が種類ごとに複数を積む形になったため。→ [`architecture-spec.md`](architecture-spec.md) §4）。§7 のお知らせテストが同じ分の別のお知らせを 2 通流すようにした
