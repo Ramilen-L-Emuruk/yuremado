@@ -162,6 +162,8 @@ async function fillLostDays(
     },
     {
       entries: fromWarning,
+      // 電文ログにだけ積む行も、埋めた日の分だけを警報の側から足す（地図へ流す報と同じ日に絞る）
+      logOnlyEntries: warning.logOnlyEntries.filter(e => filledDays.has(toJstDateStr(e.replayTime))),
       skippedByDay: warningSkips,
       failedArchiveUrls: [],
       rateLimitedSources: [],
@@ -281,8 +283,11 @@ function mergeReplayResults(a: ReplayFetchResult, b: ReplayFetchResult): ReplayF
       entries[i] = { ...entries[i], replayTime: new Date(entries[i - 1].replayTime.getTime() + 1) }
     }
   }
+  // 電文ログにだけ積む行も受信時刻の順に並べる（時刻のずらしは要らない。キューは同じ時刻でも順に出す）
+  const logOnlyEntries = [...a.logOnlyEntries, ...b.logOnlyEntries].sort((x, y) => x.replayTime.getTime() - y.replayTime.getTime())
   return {
     entries,
+    logOnlyEntries,
     skippedByDay: sumSkippedByDay(a.skippedByDay, b.skippedByDay),
     failedArchiveUrls: [...a.failedArchiveUrls, ...b.failedArchiveUrls],
     rateLimitedSources: [...a.rateLimitedSources, ...b.rateLimitedSources],

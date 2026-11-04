@@ -36,6 +36,7 @@ vi.mock('./dmdataTelegramPayload', async (importOriginal) => {
 import { DmdataWebSocket, type DmdataEvent } from './dmdata'
 import { buildXmlPayload, TELEGRAM_KIND_OF_HEAD_TYPE, isBinaryTelegramType } from './dmdataTelegramPayload'
 import { log } from '../utils/logger'
+import { buildSampleTelegram } from '../test-utils/bufrBuild'
 
 // 2024-01-01 能登半島地震の緊急地震速報（地震動予報・警報級）を最小化したもの。
 const EEW_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -189,12 +190,32 @@ describe('ライブ受信の振り分け', () => {
     expect(warnings().some(w => w.includes('VXSE53 は種別の表に無いため読みません'))).toBe(true)
   })
 
-  // 安全弁: VXSE42（配信テスト）は何もしない（疎通の確認だけ）
-  it('VXSE42 は通知も電文ログも出さない', async () => {
-    const { events, logs, send } = setup()
-    await send('VXSE42', '<Report/>')
+  // 安全弁: VXSE42（配信テスト）は通知しない（疎通の確認だけ）。届いたことと本文は電文ログに残す
+  // （以前は電文ログにも出さなかった。2026-11-04 ユーザー選択「行を出し本文も読める形に (Recommended)」
+  // 「ライブと同じに積む (Recommended)」で、試験報を受ける設定でも行を残す形に覆した）
+  it('VXSE42 は通知せず、本文ごと電文ログにだけ積む', async () => {
+    const { events, logs, send } = setup(true)
+    await send('VXSE42', '<Report/>', true)
     expect(events).toEqual([])
-    expect(logs).toEqual([])
+    expect(logs.map(l => [l.status, l.rawBody])).toEqual([['filtered', '<Report/>']])
+  })
+
+  // 正: 読まない種類（VXSE56）も、復号した本文ごと「スキップ」の行で積む。画面へは流さない
+  it('読まない種類は通知せず、復号した本文ごと電文ログに積む', async () => {
+    const { events, logs, send } = setup()
+    await send('VXSE56', '<Report><Control><Title>地震の活動状況等に関する情報</Title></Control></Report>')
+    expect(vi.mocked(buildXmlPayload)).not.toHaveBeenCalled()
+    expect(events).toEqual([])
+    expect(logs.map(l => [l.status, l.headType, typeof l.rawBody === 'string' && l.rawBody.includes('地震の活動状況等')]))
+      .toEqual([['filtered', 'VXSE56', true]])
+  })
+
+  // 安全弁: 読まない種類の試験報も、base64 のままではなく復号した本文で積む
+  it('読まない種類の試験報も復号した本文で積む', async () => {
+    const { logs, send } = setup()
+    await send('VXSE56', '<Report><Control><Title>x</Title><Status>試験</Status></Control></Report>', true)
+    expect(logs.map(l => [l.status, l.operationStatus, typeof l.rawBody === 'string' && l.rawBody.startsWith('<Report>')]))
+      .toEqual([['filtered', '試験', true]])
   })
 })
 
@@ -223,5 +244,43 @@ describe('受け付けない試験報の電文ログ', () => {
     // 実配信の本文は base64 ＋ gzip。復号しないので、届いたままの文字列が行に残る
     await send('XXXX99', 'H4sIAAAAAAAA', true)
     expect(logs.map(l => [l.status, l.isTest, l.operationStatus, l.rawBody])).toEqual([['filtered', true, undefined, 'H4sIAAAAAAAA']])
+  })
+})
+
+// 推計震度分布図（IXAC41）の行が、結合した元の二進を持つこと（2026-11-04 ユーザー選択「残して落とせる (Recommended)」）。
+// `makeLogEntry` は位置で渡す引数が多く、二進の渡し忘れが型でもほかのテストでも捕まらないので、ここで固定する
+describe('推計震度分布図の電文ログ', () => {
+  const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes))
+  const sendBinary = (ws: DmdataWebSocket, bytes: Uint8Array, designation: string | null) =>
+    (ws as unknown as {
+      handleMessage(m: Record<string, unknown>, emit: (ev: DmdataEvent, telegramId: string) => void): Promise<void>
+    }).handleMessage({
+      type: 'data', id: `id-${designation ?? 'first'}`,
+      head: { type: 'IXAC41', test: false, author: 'RJTD', time: '2026-08-10T03:06:00Z', designation },
+      body: b64(bytes), encoding: 'base64', format: 'binary',
+    }, (ev, telegramId) => ws.onEvent?.(ev, telegramId))
+
+  // 正: 結合して読めた行は元の二進をそのまま持つ。対照: 結合待ちの断片の行は持たない（1 断片が最大 512KB あるため）
+  it('結合して読めた行は元の二進を持ち、結合待ちの断片の行は持たない', async () => {
+    const bin = buildSampleTelegram()
+    const ws = new DmdataWebSocket('valid-key', false)
+    const got: TelegramLogEntry[] = []
+    ws.onRawMessage = e => { got.push(e) }
+    await sendBinary(ws, bin.slice(0, 32), null)
+    await sendBinary(ws, bin.slice(32), 'RRA')
+    expect(got.map(l => l.status)).toEqual(['filtered', 'parsed'])
+    expect('rawBytes' in got[0]).toBe(false)
+    expect([...(got[1].rawBytes ?? [])]).toEqual([...bin])
+  })
+
+  // 安全弁: 読めなかった二進も、元の電文を落とせるよう二進を持つ
+  it('読めなかった二進の行も元の二進を持つ', async () => {
+    const junk = buildSampleTelegram({ section4LengthOverride: 0xffffff })
+    const ws = new DmdataWebSocket('valid-key', false)
+    const got: TelegramLogEntry[] = []
+    ws.onRawMessage = e => { got.push(e) }
+    await sendBinary(ws, junk, null)
+    expect(got.map(l => [l.status, l.errorMessage])).toEqual([['error', 'bufr decode failed']])
+    expect([...(got[0].rawBytes ?? [])]).toEqual([...junk])
   })
 })

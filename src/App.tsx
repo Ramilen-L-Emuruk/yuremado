@@ -114,7 +114,7 @@ import { warmFixedPhrases, isValidVoicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS, isSpeak
 import { EEW_LEAD_PHRASES } from './utils/ttsText'
 import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
 import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS, type ReplayFetchPurpose } from './hooks/useReplayController'
-import { fetchDmdataReplayEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
+import { fetchDmdataReplayEvents, fetchDmdataReplayInitialEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
 import { relayRestEndpoint, relayTokenStore } from './services/relayEndpoint'
 import {
   browserUsageEnv, buildUsageReport, countUsage, flushUsage, markUsageConsentAnswered, setUsageCounting, syncInstallIdSafely,
@@ -1055,7 +1055,7 @@ export function App() {
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
@@ -1136,6 +1136,7 @@ export function App() {
     nankaiCommentaryAdHoc:   () => simulateNankaiCommentary('臨時解説'),
     nankaiCommentaryRetraction: simulateNankaiCommentaryRetraction,
     nankaiCommentaryRoutine: () => simulateNankaiCommentary('定例解説'),
+    activityInfo: simulateActivityInfo,
     kohatsu:           simulateKohatsu,
     kohatsuRetraction: simulateKohatsuRetraction,
     quakeNotice:       simulateQuakeNotice,
@@ -1177,7 +1178,7 @@ export function App() {
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
@@ -1929,7 +1930,10 @@ export function App() {
         // 一度も繋がっていなければ中継の既定の区分で引く。予報は、中継が予報キーを受け付けていれば中継から、
         // 自分の鍵の予報が通っていれば鍵から引く（→ `restSources`・`fetchReplayFromSources`）
       return fetchReplayFromSources(
-        (endpoint, classifications) => fetchDmdataReplayEvents(endpoint, from, to, settings.dmdataTestDelivery, classifications, signal),
+        // 初期状態（窓の手前 24 時間）は電文ログの行を載せないので、その本体を取りに行かない入口を使う
+        (endpoint, classifications) => (purpose === 'initial' ? fetchDmdataReplayInitialEvents : fetchDmdataReplayEvents)(
+          endpoint, from, to, settings.dmdataTestDelivery, classifications, signal,
+        ),
         relayRestEndpoint, keyRestEndpoint, pastSources,
       )
     },

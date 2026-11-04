@@ -19,7 +19,7 @@ function entry(id: string, ms: number): ReplayEntry {
 }
 
 function result(entries: ReplayEntry[], extra: Partial<ReplayFetchResult> = {}): ReplayFetchResult {
-  return { entries, skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map(), ...extra }
+  return { entries, logOnlyEntries: [], skippedByDay: new Map(), failedArchiveUrls: [], rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map(), ...extra } as ReplayFetchResult
 }
 
 /** 呼ばれた繋ぎ先と区分を記録し、表から結果を返す偽の取得 */
@@ -178,6 +178,23 @@ describe('fetchReplayFromSources: 鍵が読めなかった日だけ埋める', (
     })
     const got = await fetchReplayFromSources(fetchFrom, RELAY, KEY, SOURCES)
     expect(ids(got)).toEqual(['q1', 'wC1', 'wC2'])
+  })
+
+  // 電文ログにだけ積む行も、埋めた日の分だけ中継の警報から採る（読めた日の分は鍵側の行があるので重ねない）。
+  // 鍵側の行は消さない。連結した後は再生時刻の順に並ぶ
+  it('正: 電文ログにだけ積む行も、埋めた日の分だけ中継から採り、鍵側の行と時刻順に並べる', async () => {
+    const logRow = (id: string, ms: number) => ({
+      replayTime: new Date(ms),
+      logEntry: { id, receivedAt: new Date(ms), source: 'dmdss', origin: 'replay', headType: 'VXSE42', isTest: true, status: 'filtered', rawBody: '' },
+    }) as ReplayFetchResult['logOnlyEntries'][number]
+    const { fetchFrom } = fakeFetch(async (endpoint, cls) => {
+      if (endpoint === KEY) return keyPartial({ logOnlyEntries: [logRow('k30', DAY30 + 5000)] })
+      return cls.includes('eew.warning')
+        ? relayWarning({ logOnlyEntries: [logRow('r30', DAY30 + 6000), logRow('r31', DAY31 + 1000)] })
+        : relayQuake()
+    })
+    const got = await fetchReplayFromSources(fetchFrom, RELAY, KEY, SOURCES)
+    expect(got.logOnlyEntries.map(e => e.logEntry.id)).toEqual(['k30', 'r31'])
   })
 
   it('対照: 鍵がすべての日を読めたら、中継の警報は引かない', async () => {

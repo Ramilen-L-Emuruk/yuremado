@@ -91,7 +91,7 @@ function idOf(e: ReplayEntry): string {
 }
 
 function fetched(entries: ReplayEntry[], skipped = 0, failedArchiveUrls: string[] = []): ReplayFetchResult {
-  return { entries, skippedByDay: skips(skipped), failedArchiveUrls, rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
+  return { entries, logOnlyEntries: [], skippedByDay: skips(skipped), failedArchiveUrls, rateLimitedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map() }
 }
 
 /**

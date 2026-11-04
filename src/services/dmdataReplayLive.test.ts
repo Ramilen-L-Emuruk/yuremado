@@ -13,7 +13,7 @@ import { muteConsoleError } from '../test-utils/muteConsoleError'
 import { buildSampleTelegram } from '../test-utils/bufrBuild'
 import {
   enumerateJstDates, resolveLiveDates, toJstDateStr, archiveDaysForWindow, archiveListRange,
-  fetchLiveReplayEntries, fetchLiveQuakeTelegrams, fetchLiveTelegramsBetween, clearLiveReplayCache,
+  fetchLiveReplayEntries, fetchLiveReplayEntriesWith, fetchLiveQuakeTelegrams, fetchLiveTelegramsBetween, clearLiveReplayCache,
 } from './dmdataReplayLive'
 import { setBodyGateIntervalForTest } from './telegramBody'
 import {
@@ -425,7 +425,7 @@ describe('fetchLiveReplayEntries', () => {
     globalThis.fetch = fn as unknown as typeof fetch
     const result = await fetchLiveReplayEntries(dmdataKeyEndpoint('key'), FROM, TO, [], false, PREFERRED_CLASSIFICATIONS, null)
     expect(result).toEqual({
-      entries: [], skippedByDay: new Map(), scanSkippedByDay: new Map(), failedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map(),
+      entries: [], logOnlyEntries: [], skippedByDay: new Map(), scanSkippedByDay: new Map(), failedSources: [], rateLimitedTelegrams: 0, lostSourceDays: new Map(),
     })
     expect(fn).not.toHaveBeenCalled()
   })
@@ -713,6 +713,169 @@ describe('fetchLiveReplayEntries', () => {
     expect(result.entries).toHaveLength(0)
     // 落としたのは「対象外」であって取りこぼしではない
     expect(skippedTotal(result.skippedByDay)).toBe(0)
+  })
+
+  // 再生の電文ログはライブと同じに積む（2026-11-04 ユーザー選択「ライブと同じに積む (Recommended)」）。
+  // 画面へは流さず、電文ログにだけ積む行（`logOnlyEntries`）として返す。
+  describe('電文ログにだけ積む行', () => {
+    const VXSE56_XML = '<?xml version="1.0"?><Report><Control><Title>地震の活動状況等に関する情報</Title><Status>通常</Status></Control></Report>'
+
+    // 正: 扱わない種類（VXSE56）は本体を取り、本文と見出しごと `filtered` の行にする（ライブは本文ごと積む）
+    it('正: 窓の内側の扱わない種類は、本体を取って filtered の行にする（画面へは流さない）', async () => {
+      const { fn, urls } = mockLive({
+        list: [{ id: 'd1', type: 'VXSE56', headTime: '2026-08-23T02:00:00Z', receivedTime: '2026-08-23T02:00:00.500Z', url: 'https://b/d1' }],
+        bodies: { 'https://b/d1': VXSE56_XML },
+      })
+      globalThis.fetch = fn as unknown as typeof fetch
+      const result = await fetchLiveReplayEntries(dmdataKeyEndpoint('key'), FROM, TO, DAYS, false, PREFERRED_CLASSIFICATIONS, null)
+      expect(result.entries).toHaveLength(0)
+      expect(result.logOnlyEntries).toHaveLength(1)
+      const row = result.logOnlyEntries[0]
+      expect(row.replayTime.toISOString()).toBe('2026-08-23T02:00:00.500Z')
+      expect(row.logEntry).toMatchObject({ status: 'filtered', headType: 'VXSE56', origin: 'replay', rawBody: VXSE56_XML, isTest: false })
+      expect(row.logEntry.rawHead).toMatchObject({ type: 'VXSE56', time: '2026-08-23T02:00:00Z', test: false })
+      expect(urls.filter(u => u === 'https://b/d1')).toHaveLength(1)
+      // 行を積むことと、取りこぼしに数えることは別
+      expect(skippedTotal(result.skippedByDay)).toBe(0)
+    })
+
+    // 対照: 窓の外・担当日の外の扱わない種類は、本体も取らず行も積まない（その窓を読む回が積む）
+    it('対照: 窓の外と担当日の外の扱わない種類は、本体を取らず行も積まない', async () => {
+      const from = new Date('2026-08-23T01:00:00Z')
+      const { fn, urls } = mockLive({
+        list: [
+          { id: 'd2', type: 'VXSE56', headTime: '2026-08-23T00:59:00Z', receivedTime: '2026-08-23T00:59:59.000Z', url: 'https://b/d2' },
+          { id: 'd3', type: 'VXSE56', headTime: '2026-08-23T15:00:00Z', receivedTime: '2026-08-23T15:00:00.000Z', url: 'https://b/d3' },
+          { id: 'd4', originalId: 'd5', type: 'VXSE56', headTime: '2026-08-23T02:00:00Z', receivedTime: '2026-08-23T02:00:00.000Z', url: 'https://b/d4' },
+        ],
+        bodies: { 'https://b/d2': VXSE56_XML, 'https://b/d3': VXSE56_XML, 'https://b/d4': VXSE56_XML },
+      })
+      globalThis.fetch = fn as unknown as typeof fetch
+      const result = await fetchLiveReplayEntries(dmdataKeyEndpoint('key'), from, TO, DAYS, false, PREFERRED_CLASSIFICATIONS, null)
+      expect(result.logOnlyEntries).toHaveLength(0)
+      expect(urls.some(u => u.startsWith('https://b/'))).toBe(false)
+    })
+
+    // 安全弁: 読めた電文は今どおり画面へ流し、見出しつきの parsed の行を持つ。行だけの側へ混ざらない
+    it('安全弁: 読めた電文は今どおり entries に入り、見出しつきの parsed の行を持つ', async () => {
+      const { fn } = mockLive({
+        list: [
+          { id: 'q1', type: 'VXSE53', headTime: '2026-08-23T02:00:00Z', receivedTime: '2026-08-23T02:00:01.500Z', url: 'https://b/q1' },
+          { id: 'd6', type: 'VXSE56', headTime: '2026-08-23T02:00:00Z', receivedTime: '2026-08-23T02:00:02.000Z', url: 'https://b/d6' },
+        ],
+        bodies: { 'https://b/q1': quakeBody('20260823110000', '2026-08-23T11:00:00+09:00'), 'https://b/d6': VXSE56_XML },
+      })
+      globalThis.fetch = fn as unknown as typeof fetch
+      const result = await fetchLiveReplayEntries(dmdataKeyEndpoint('key'), FROM, TO, DAYS, false, PREFERRED_CLASSIFICATIONS, null)
+      expect(result.entries).toHaveLength(1)
+      expect(result.entries[0].logEntry).toMatchObject({ status: 'parsed', headType: 'VXSE53' })
+      expect(result.entries[0].logEntry?.rawHead).toMatchObject({ type: 'VXSE53' })
+      expect(result.logOnlyEntries.map(e => e.logEntry.headType)).toEqual(['VXSE56'])
+    })
+
+    // 対照: 再生の初期状態（窓の手前 24 時間）は行を電文ログに載せないので、行だけの電文を選ばず本体も取りに行かない
+    // （当日経路は 1 通ずつ取るので、取れば毎正時の配信テストだけで 24 時間に 24 通になる）
+    it('対照: 行を積まない取得では、行だけの電文の本体を取りに行かない', async () => {
+      const { fn, urls } = mockLive({
+        list: [{ id: 'd8', type: 'VXSE56', headTime: '2026-08-23T02:00:00Z', receivedTime: '2026-08-23T02:00:00.000Z', url: 'https://b/d8' }],
+        bodies: { 'https://b/d8': '<Report/>' },
+      })
+      globalThis.fetch = fn as unknown as typeof fetch
+      const result = await fetchLiveReplayEntriesWith(dmdataKeyEndpoint('key'), FROM, TO, DAYS, false, PREFERRED_CLASSIFICATIONS, null, false)
+      expect(result.logOnlyEntries).toHaveLength(0)
+      expect(urls).not.toContain('https://b/d8')
+    })
+
+    // 安全弁: 行だけの電文の本体を取れなくても、取りこぼしにも見送りにも数えない（数え方は変えない）。
+    // 行は「本文を取得できませんでした」のエラーで積む（2026-11-04 ユーザー選択「エラーの行で積む (Recommended)」）
+    it('安全弁: 行だけの電文の本体を取れなくても、取りこぼしに数えず本文なしのエラーの行で積む', async () => {
+      const { fn } = mockLive({
+        list: [{ id: 'd7', type: 'VXSE56', headTime: '2026-08-23T02:00:00Z', receivedTime: '2026-08-23T02:00:00.000Z', url: 'https://b/d7' }],
+        bodies: { 'https://b/d7': 'error' },
+      })
+      globalThis.fetch = fn as unknown as typeof fetch
+      const result = await fetchLiveReplayEntries(dmdataKeyEndpoint('key'), FROM, TO, DAYS, false, PREFERRED_CLASSIFICATIONS, null)
+      expect(result.logOnlyEntries.map(e => e.logEntry)).toMatchObject([
+        { headType: 'VXSE56', status: 'error', errorMessage: '本文を取得できませんでした', rawBody: null },
+      ])
+      expect(skippedTotal(result.skippedByDay)).toBe(0)
+      expect(result.rateLimitedTelegrams).toBe(0)
+      expect(result.failedSources).toEqual([])
+    })
+
+    // 正: 読めなかった XML は、ライブと同じく filtered の行で積み、取りこぼしにも今どおり数える
+    it('正: 読めなかった XML は filtered の行を積み、取りこぼしにも数える', async () => {
+      const { fn } = mockLive({
+        list: [{ id: 'q2', type: 'VXSE53', headTime: '2026-08-23T02:00:00Z', receivedTime: '2026-08-23T02:00:01.000Z', url: 'https://b/q2' }],
+        bodies: { 'https://b/q2': '<broken' },
+      })
+      globalThis.fetch = fn as unknown as typeof fetch
+      const result = await fetchLiveReplayEntries(dmdataKeyEndpoint('key'), FROM, TO, DAYS, false, PREFERRED_CLASSIFICATIONS, null)
+      expect(result.entries).toHaveLength(0)
+      expect(skippedTotal(result.skippedByDay)).toBe(1)
+      expect(result.logOnlyEntries).toHaveLength(1)
+      expect(result.logOnlyEntries[0].logEntry).toMatchObject({ status: 'filtered', headType: 'VXSE53', rawBody: '<broken' })
+    })
+
+    // 安全弁: 試験報を受ける設定で一覧に載った試験報のうち、取り込まない種類（VXSE42）は取り込まず行だけ積む
+    // （ライブも受ける設定のとき VXSE42 を filtered で積む）。取り込む種類の試験報は今どおり取り込む
+    it('安全弁: 試験報を受ける設定でも、取り込まない種類の試験報は行だけ積み、取り込む種類は取り込む', async () => {
+      const { fn } = mockLive({
+        list: [
+          { id: 'v42', type: 'VXSE42', headTime: '2026-08-23T02:00:00Z', receivedTime: '2026-08-23T02:00:00.000Z', url: 'https://b/v42', test: true },
+          { id: 'tq1', type: 'VXSE53', headTime: '2026-08-23T03:00:00Z', receivedTime: '2026-08-23T03:00:01.000Z', url: 'https://b/tq1', test: true },
+        ],
+        bodies: { 'https://b/v42': '<Report/>', 'https://b/tq1': quakeBody('20260823120000', '2026-08-23T12:00:00+09:00') },
+      })
+      globalThis.fetch = fn as unknown as typeof fetch
+      const result = await fetchLiveReplayEntries(dmdataKeyEndpoint('key'), FROM, TO, DAYS, true, PREFERRED_CLASSIFICATIONS, null)
+      expect(result.entries.map(e => e.logEntry?.headType)).toEqual(['VXSE53'])
+      expect(result.logOnlyEntries.map(e => e.logEntry)).toMatchObject([{ status: 'filtered', headType: 'VXSE42', isTest: true }])
+    })
+
+    // 推計震度分布図の行は、結合した元の二進を持つ（2026-11-04 ユーザー選択「残して落とせる (Recommended)」）。
+    // 結合待ちの断片の行には付けない
+    it('推計震度分布図の行は結合した二進を持ち、結合待ちの断片の行は持たない', async () => {
+      const bin = buildSampleTelegram()
+      const cut = 32
+      const { fn } = mockLive({
+        list: [
+          { id: 'ixL1', type: 'IXAC41', headTime: '2026-08-23T02:05:00Z', receivedTime: '2026-08-23T02:05:02.000Z', url: 'https://b/ixL1', designation: null },
+          { id: 'ixL2', type: 'IXAC41', headTime: '2026-08-23T02:05:00Z', receivedTime: '2026-08-23T02:05:03.000Z', url: 'https://b/ixL2', designation: 'RRA' },
+        ],
+        binaries: { 'https://b/ixL1': bin.slice(0, cut), 'https://b/ixL2': bin.slice(cut) },
+      })
+      globalThis.fetch = fn as unknown as typeof fetch
+      const result = await fetchLiveReplayEntries(dmdataKeyEndpoint('key'), FROM, TO, DAYS, false, PREFERRED_CLASSIFICATIONS, null)
+      expect(result.entries).toHaveLength(1)
+      const parsed = result.entries[0].logEntry
+      expect(parsed?.status).toBe('parsed')
+      expect([...(parsed?.rawBytes ?? [])]).toEqual([...bin])
+      expect(parsed?.rawBody).toBe(`（BUFR ${bin.length} バイト・${(result.entries[0].payload as { data: { count: number } }).data.count} セル）`)
+      // 先に届いた側の断片は結合待ちの行になる（どちらが先かは並行取得の順で決まる）
+      expect(result.logOnlyEntries).toHaveLength(1)
+      const pending = result.logOnlyEntries[0].logEntry
+      expect(pending.status).toBe('filtered')
+      expect(String(pending.rawBody)).toMatch(/^（BUFR の断片 \d+ バイト・結合待ち）$/)
+      expect('rawBytes' in pending).toBe(false)
+    })
+
+    // 読めなかった二進は、ライブと同じ error の行（理由つき）で積み、取りこぼしにも今どおり数える
+    it('読めなかった二進は error の行を積み、取りこぼしにも数える', async () => {
+      // 結合は済む（全長は宣言どおり）が、第4節の長さが電文に収まらず読めない形
+      const junk = buildSampleTelegram({ section4LengthOverride: 0xffffff })
+      const { fn } = mockLive({
+        list: [{ id: 'ixJ', type: 'IXAC41', headTime: '2026-08-23T02:05:00Z', receivedTime: '2026-08-23T02:05:02.000Z', url: 'https://b/ixJ', designation: null }],
+        binaries: { 'https://b/ixJ': junk },
+      })
+      globalThis.fetch = fn as unknown as typeof fetch
+      const result = await fetchLiveReplayEntries(dmdataKeyEndpoint('key'), FROM, TO, DAYS, false, PREFERRED_CLASSIFICATIONS, null)
+      expect(result.entries).toHaveLength(0)
+      expect(skippedTotal(result.skippedByDay)).toBe(1)
+      expect(result.logOnlyEntries).toHaveLength(1)
+      expect(result.logOnlyEntries[0].logEntry).toMatchObject({ status: 'error', errorMessage: 'bufr decode failed', rawBody: `（BUFR ${junk.length} バイト）` })
+      expect([...(result.logOnlyEntries[0].logEntry.rawBytes ?? [])]).toEqual([...junk])
+    })
   })
 
   // 当日経路（アーカイブがまだ無い日）も同じ扱いにする。**ただしこちらは一覧 API が

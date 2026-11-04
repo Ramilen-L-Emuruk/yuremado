@@ -56,7 +56,7 @@ import {
   lpgmNotifiable, nankaiBandDecision, nankaiCommentaryBandDecision, noteConveyedCancel as noteBandConveyedCancel,
 } from '../utils/specialInfoBands'
 import { loadTestTelegramScripts } from '../utils/testDataLoader'
-import { buildTestTelegramEntries, type TestTelegramScript } from '../utils/testTelegrams'
+import { buildTestLogOnlyEntries, buildTestTelegramEntries, defaultTestTelegramFetcher, type TestTelegramScript } from '../utils/testTelegrams'
 
 /**
  * 画面・音へ回らずに落とした電文を、録画ツール向けに記録する
@@ -145,6 +145,12 @@ type QueuePayload =
   | { kind: 'purge-cancelled-quake'; id: string }
   | { kind: 'purge-cancelled-eew'; key: string }
   | { kind: 'purge-cancelled-tsunami'; id: string }
+  /**
+   * 電文ログにだけ積む行（再生の `ReplayFetchResult.logOnlyEntries`）。発火のときに `logEntry` を積むだけで、
+   * 地図・カード・音・読み上げには何も流さない。**発火の時刻に積むのは、ほかの電文の行と並びの意味を揃えるため**
+   * （窓ぶんを先に組むので、入れた時点で積むとまだ再生時刻に来ていない行が並ぶ → `QueueEntry.logEntry`）。
+   */
+  | { kind: 'logOnly' }
 
 interface QueueEntry {
   eventTime: Date
@@ -2706,6 +2712,12 @@ export function useEarthquakes(
         } else if (payload.kind === 'internationalTsunami') {
           // 画面（遠地地震のカード）へ足すだけ。`onLiveEvent` へは流さない（音・読み上げ・通知が無い）
           applyInternationalTsunami(payload.data)
+        } else if (payload.kind === 'logOnly') {
+          // 電文ログへは上で積んだ。画面へは何も流さない（取り込まない電文・読めなかった電文の行）
+        } else {
+          // 種別を足して分岐を書き忘れたら、型検査がここで落とす
+          const unhandled: never = payload
+          log.error('[queue] 振り分けの無い種別のエントリを捨てた', { kind: (unhandled as { kind?: unknown }).kind })
         }
         isSilentRef.current = false
       }
@@ -4406,6 +4418,27 @@ export function useEarthquakes(
   /** 関連解説情報の取消テスト（→ `NANKAI_COMMENTARY_RETRACTION`）。 */
   const simulateNankaiCommentaryRetraction = useCallback(() => runTestTelegramScript(s => s.NANKAI_COMMENTARY_RETRACTION), [runTestTelegramScript])
 
+  /**
+   * 地震の活動状況等に関する情報（VXSE56）のテスト（→ `ACTIVITY_INFO`）。読まない種類なので、ライブと同じく
+   * 電文ログに本文ごと「スキップ」の行だけを積む（受信と同じ待ち行列の `logOnly` で、リセットで一緒に落ちる）。
+   */
+  const simulateActivityInfo = useCallback(async () => {
+    const generation = testGenerationRef.current
+    try {
+      const scripts = await loadTestTelegramScripts()
+      const rows = await buildTestLogOnlyEntries(scripts.ACTIVITY_INFO, serverDate(), defaultTestTelegramFetcher)
+      if (generation !== testGenerationRef.current) {
+        log.debug('[test] 組んでいる間にリセットされたので、テスト用の電文を捨てました')
+        return
+      }
+      for (const { replayTime, logEntry } of rows) {
+        eventQueueRef.current.push({ eventTime: replayTime, payload: { kind: 'logOnly' }, logEntry })
+      }
+    } catch (err) {
+      log.error('[test] テスト用の電文を流せませんでした', err)
+    }
+  }, [])
+
   /** 北海道・三陸沖後発地震注意情報のテスト（サンプル電文。→ `KOHATSU`）。 */
   const simulateKohatsu = useCallback(() => runTestTelegramScript(s => s.KOHATSU), [runTestTelegramScript])
 
@@ -4580,10 +4613,23 @@ export function useEarthquakes(
     })
   }, [])
 
-  const loadReplayEvents = useCallback((entries: import('../types/replay').ReplayEntry[]) => {
+  /**
+   * 再生の電文をキューへ積む。
+   *
+   * @param logOnlyEntries 電文ログにだけ積む行（`ReplayFetchResult.logOnlyEntries`）。**必須にしてある** ——
+   *   渡し忘れると、再生の電文ログから取り込まない電文・読めなかった電文の行だけが黙って消える。
+   *   積まないと決めた呼び出し（初期状態の復元。窓の手前 24 時間ぶんは電文ログへ載せない）は `[]` を明示して渡す
+   */
+  const loadReplayEvents = useCallback((
+    entries: import('../types/replay').ReplayEntry[],
+    logOnlyEntries: readonly import('../types/replay').ReplayLogOnlyEntry[],
+  ) => {
     for (const { payload, replayTime, silent, logEntry } of entries) {
       // 電文ログの行はキューへ預け、発火のときに積む（理由は `QueueEntry.logEntry`）
       eventQueueRef.current.push({ eventTime: replayTime, payload, silent, logEntry })
+    }
+    for (const { replayTime, logEntry } of logOnlyEntries) {
+      eventQueueRef.current.push({ eventTime: replayTime, payload: { kind: 'logOnly' }, logEntry })
     }
   }, [])
 
@@ -4626,6 +4672,8 @@ export function useEarthquakes(
       if (payload.kind === 'purge-cancelled-quake') continue
       if (payload.kind === 'purge-cancelled-eew') continue
       if (payload.kind === 'purge-cancelled-tsunami') continue
+      // 電文ログだけの行も電文として流れないので、投機の対象にしない
+      if (payload.kind === 'logOnly') continue
       out.push(payload)
     }
     return out
@@ -4643,7 +4691,7 @@ export function useEarthquakes(
     simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence,

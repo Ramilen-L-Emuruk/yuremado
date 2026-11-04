@@ -1347,6 +1347,14 @@ export const NANKAI_COMMENTARY_ROUTINE: TestTelegramScript = {
   anchor: 0, steps: [{ file: nii('20260907080008_0_VYSE52_010000'), headType: 'VYSE52', atMs: 0 }],
 }
 
+/**
+ * 地震の活動状況等に関する情報（VXSE56）テスト（2024-08-08 日向灘。同じ時刻の南海トラフ地震臨時情報と対の実電文）。
+ * 読まない種類なので、電文ログに本文ごと「スキップ」の行が 1 行出るだけ（→ `buildTestLogOnlyEntries`）。
+ */
+export const ACTIVITY_INFO: TestTelegramScript = {
+  anchor: 0, steps: [{ file: nii('20240808080034_0_VXSE56_010000'), headType: 'VXSE56', atMs: 0 }],
+}
+
 const KOHATSU_SAMPLE = sample('80_01_01_260917_VYSE60')
 
 /** 北海道・三陸沖後発地震注意情報テスト（気象庁のサンプル電文 80_01_01）。 */

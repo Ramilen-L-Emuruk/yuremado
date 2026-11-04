@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { EEWAlert, JMALpgm, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { ReplayPayload } from '../types/replay'
-import { buildTestTelegramEntries, clearTestTelegramCacheForTest, type BuiltTestTelegram, type TestTelegramScript } from './testTelegrams'
+import { buildTestLogOnlyEntries, buildTestTelegramEntries, clearTestTelegramCacheForTest, type BuiltTestTelegram, type TestTelegramScript } from './testTelegrams'
 import * as scripts from './testTelegramScripts'
 import { mergeQuakeInto, mergeQuakeHistory, extractQuakeEventId } from './quakeMerge'
 import { eewAreas, eewMaxScale, computeSingleEEWLevel, isProvisionalHypocenter } from './eew'
@@ -1020,5 +1020,22 @@ describe('規模の更新テスト', () => {
     // 押した時刻へずらしても、発表の前後は実電文のまま（津波が 2 つの地震情報の間）
     expect(Date.parse(detail1.time)).toBeLessThan(Date.parse(tsunami2.time))
     expect(Date.parse(tsunami2.time)).toBeLessThan(Date.parse(detail2.time))
+  })
+})
+
+// 読まない種類（VXSE56）のテストは、ライブと同じく電文ログに本文ごと「スキップ」の行だけを積む
+describe('電文ログにだけ積むテスト', () => {
+  // 正: 置いてある実電文から、本文ごと filtered の行が 1 行できる
+  it('地震の活動状況等に関する情報は、本文ごと filtered の行になる', async () => {
+    const rows = await buildTestLogOnlyEntries(scripts.ACTIVITY_INFO, NOW, fetcher)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].replayTime.getTime()).toBe(NOW.getTime())
+    expect(rows[0].logEntry).toMatchObject({ headType: 'VXSE56', status: 'filtered', origin: 'test', isTest: false })
+    expect(String(rows[0].logEntry.rawBody)).toContain('<Title>地震の活動状況等に関する情報</Title>')
+  })
+
+  // 安全弁: 読む種類を行だけにすると、ライブでは画面に出る電文が出なくなるので止める
+  it('読む種類の電文は行だけにできない', async () => {
+    await expect(buildTestLogOnlyEntries(scripts.NANKAI_COMMENTARY_ROUTINE, NOW, fetcher)).rejects.toThrow('読む種類の電文は行だけにできません')
   })
 })

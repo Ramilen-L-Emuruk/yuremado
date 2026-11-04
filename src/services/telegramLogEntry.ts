@@ -1,8 +1,9 @@
 // 電文ログの行を組み立てる（リプレイ・テストボタン用）。
 //
-// **ライブの経路はここを通らない。** あちらは受信処理の中で配信元の `head` ごと持っている
-// ので自前で組む（`dmdata.ts` の `makeLogEntry`）。こちらは
-// 電文の本文しか手元に無く、`origin` も固定なので別に置く。
+// **ライブの経路はここを通らない。** あちらは受信処理の中で自前で組む（`dmdata.ts` の `makeLogEntry`）。
+// こちらは `origin` が固定で、受信時刻を発火のときに打ち直すので別に置く。行の形（`status`・
+// `errorMessage`・本文の要約の文）はライブに揃える —— 再生はライブと同じに積む（2026-11-04 ユーザー選択
+// 「ライブと同じに積む (Recommended)」）。
 //
 // 行の `origin` で「ライブで届いたのか、こちらが流したのか」を分ける（→ `TelegramOrigin`）。
 import type { ReplayPayload } from '../types/replay'
@@ -24,25 +25,39 @@ export interface ReplayLogEntryInput {
   headType: string
   /** どの経路で入ったか。ライブはここを通らないので除く。 */
   origin: Exclude<TelegramOrigin, 'live'>
+  /**
+   * 配信元が電文に添えた見出し（DMDATA の `head`。`type`・`author`・`time`・`designation`・`test`）。
+   * アーカイブは目録（`telegrams.json`）の `head`、当日経路は電文一覧の `head` をそのまま渡す。
+   * 見出しを持たない経路（テストボタン）は `undefined` を明示して渡す。
+   *
+   * **任意（`?`）にしない。** 経路を足したときに渡し忘れると、その経路の行だけ見出しが黙って欠ける。
+   */
+  rawHead: unknown
   /** 画面と書き出しに出す本文。XML はそのまま、二進電文は要約の文字列。 */
   rawBody: unknown
   /**
-   * 組み立てた結果。`null`（対象外の種別・読めなかった）なら行は `filtered`。
-   *
-   * **いまの呼び出し元はすべて読めたものしか渡さない。** リプレイ・テストボタンは
-   * 読めなかった電文をその場で捨てて取りこぼしへ数えており（`windowSkips`・`skipCounter`）、
-   * 行を作らない。つまり**再生では、読めなかった電文は電文ログに出ない**
-   * （ライブは `error`・`filtered` の行で残す。2026-10-23 ユーザー選択「今回は載せない（推奨）」）。
-   * `null` の分岐を残してあるのは、載せると決めたときにここを通せるようにするため。
+   * 二進電文（推計震度分布図）の、断片を結合した元の電文。ダウンロードはこれを落とす
+   * （2026-11-04 ユーザー選択「残して落とせる (Recommended)」）。二進でない電文と、結合待ちの断片は `null`。
+   */
+  rawBytes: Uint8Array | null
+  /**
+   * 組み立てた結果。`null` なら行は `filtered`（取り込まない種別・捨てた試験報・結合待ちの断片・読めなかった電文）
+   * か `error`（`errorMessage` を渡したとき）。ライブも読めなかった XML は `filtered` で積む。
    */
   payload: ReplayPayload | null
-  /** 気象庁が訓練・試験として流した電文か（`Control/Status` 由来）。 */
+  /**
+   * 読めなかった理由（ライブと同じ語。`'bufr decode failed'` など）。渡すと行は `error` になる。
+   * `payload` があるときは `null`。
+   */
+  errorMessage: string | null
+  /** 気象庁が訓練・試験として流した電文か（配信元の `head.test`。二進電文は本文の電文の種類から）。 */
   isTest: boolean
 }
 
 /** 電文ログの行を 1 つ組む（リプレイ・テストボタン用）。 */
 export function makeReplayLogEntry(input: ReplayLogEntryInput): TelegramLogEntry {
-  const { headType, origin, rawBody, payload, isTest } = input
+  const { headType, origin, rawHead, rawBody, rawBytes, payload, errorMessage, isTest } = input
+  const status: TelegramLogEntry['status'] = payload ? 'parsed' : errorMessage !== null ? 'error' : 'filtered'
   return {
     id: `${Date.now()}-${seq++}`,
     // **ここで入れるのは仮の値。** 積む側（`useEarthquakes.ts` のディスパッチャ）が発火の
@@ -57,9 +72,12 @@ export function makeReplayLogEntry(input: ReplayLogEntryInput): TelegramLogEntry
     isTest,
     // ライブ（`dmdata.ts` の `makeLogEntry`）と同じく本文から読む。リプレイの電文は XML のまま届く
     operationStatus: typeof rawBody === 'string' ? readTelegramOperationStatus(rawBody) : undefined,
-    status: payload ? 'parsed' : 'filtered',
-    // 読めたものは読んだ結果から、読めなかったものは種別コードから引く（ライブと同じ）
+    status,
+    // 読めたものは読んだ結果から、読めなかったものは種別コードから引く
     kind: payload ? telegramKindOfPayload(payload) : telegramKindOfHeadType(headType),
+    rawHead,
     rawBody,
+    ...(rawBytes !== null ? { rawBytes } : {}),
+    ...(errorMessage !== null && !payload ? { errorMessage } : {}),
   }
 }
