@@ -85,6 +85,11 @@ export interface CatalogPointCloud {
    */
   depthUnknown: Uint8Array
   /**
+   * 日別の震源リスト（速報値）の年の地震なら 1。吹き出しに「速報値」の 1 行を出し、秒を取得元の桁（0.1 秒）で書くのに使う
+   * （2026-11-04 ユーザー選択「吹き出しに出す (Recommended)」「0.01 秒まで出す (Recommended)」）。
+   */
+  preliminary: Uint8Array
+  /**
    * 発生年で色を付けるときに使った両端（UTC epoch ミリ秒）。点が 1 つも残らなければ `null`。
    *
    * **絞り込みに残った点だけで測った値で、期間の指定そのものではない。** 色の位置はこの幅で
@@ -795,6 +800,7 @@ export function buildCatalogPointCloud(
   const intensityCode: (string | null)[] = new Array(count)
   const external = new Uint8Array(count)
   const depthUnknown = new Uint8Array(count)
+  const preliminary = new Uint8Array(count)
   // **形の列は気象庁以外の点が残ったときだけ作る。** 既定の表示では作らず、全点共通の円で描く。
   const shapeIds = externalCount > 0 ? new Uint8Array(count) : undefined
   const ringId = depthPointShapeId('ring')
@@ -825,6 +831,7 @@ export function buildCatalogPointCloud(
       intensityCode[k] = y.intensityCode.get(i) ?? null
       external[k] = isExternal ? 1 : 0
       depthUnknown[k] = unknownDepth ? 1 : 0
+      preliminary[k] = y.quality === 'preliminary' ? 1 : 0
       if (shapeIds) shapeIds[k] = isExternal ? ringId : circleId
       const [r, g, b] =
         options.colorBy === 'depth'
@@ -862,6 +869,7 @@ export function buildCatalogPointCloud(
     intensityCode,
     external,
     depthUnknown,
+    preliminary,
     // **色を付けるのに使った幅をそのまま渡す。** 凡例が期間の指定から目盛りを組むと、
     // 絞り込みで端まで点が残っていないときに色と食い違う。点が 0 件なら `timeLo` は
     // `Infinity` のままなので `null` にする（そのまま渡すと目盛りが 1970 年になる）。

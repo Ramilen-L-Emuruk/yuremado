@@ -32,15 +32,34 @@ interface Props {
   visible: boolean
 }
 
-/** 発生時刻を日本時間で読める形へ。カタログの時刻は UTC epoch ミリ秒で入っている。 */
-function formatCatalogTime(ms: number): string {
+/**
+ * 秒の欄が空白の記録がある年代の終わり（JST の年）。生成データは空白の秒を 0 秒で埋めていて、どれが空白だったかの印を
+ * 持たない（`scripts/hypocenterRecord.ts` の `secondUnknown`。1919〜1950 年に 18 件）。
+ */
+const BLANK_SECOND_LAST_YEAR = 1950
+
+/**
+ * 発生時刻を日本時間で読める形へ。カタログの時刻は UTC epoch ミリ秒で入っている。
+ *
+ * **秒まで出す**（2026-11-04 ユーザー選択「0.01 秒まで出す (Recommended)」）。桁は取得元のまま —— 地震月報（カタログ編）は
+ * 0.01 秒、日別の震源リスト（速報値）は 0.1 秒。秒の欄が空白の記録がある年代で、ちょうど 0 秒のものは分までにする
+ * （空白を 0 秒で埋めた値を「00.00 秒」と名乗らないため。その年代の本当の 0 秒も分までになるが、無い値は出さない）。
+ */
+export function formatCatalogTime(ms: number, preliminary: boolean): string {
   // 実行環境のタイムゾーンに依らず日本時間で出す（`getFullYear` 等は端末の設定で答えが変わる）。
   const d = new Date(ms + 9 * 3600 * 1000)
   const p = (n: number) => String(n).padStart(2, '0')
-  return (
-    `${d.getUTCFullYear()}/${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())} ` +
-    `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
-  )
+  const head = `${d.getUTCFullYear()}/${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
+  const digits = preliminary ? 1 : 2
+  // 生成データの時刻は 0.01 秒刻みの整数から戻した値なので、浮動小数の端数を取得元の桁へ丸める
+  const scale = 10 ** digits
+  // 1970 年より前は負の数なので、余りを 0〜59,999 へ寄せてから秒にする（`%` は負の余りを返す）
+  const msInMinute = (((ms + 9 * 3600 * 1000) % 60_000) + 60_000) % 60_000
+  const secScaled = Math.round((msInMinute / 1000) * scale)
+  if (secScaled === 0 && d.getUTCFullYear() <= BLANK_SECOND_LAST_YEAR) return head
+  // 丸めで 60 秒へ届く端数は、分の繰り上がりを避けて 59.99 秒側へ寄せる（取得元は 60 秒を書かない）
+  const sec = Math.min(secScaled, 60 * scale - 1) / scale
+  return `${head}:${sec.toFixed(digits).padStart(digits + 3, '0')}`
 }
 
 /**
@@ -79,7 +98,10 @@ function buildPopupHtml(cloud: CatalogPointCloud, i: number): string {
   const depth = cloud.depthUnknown[i] === 1 ? '深さ不明' : `深さ ${formatCatalogDepth(cloud.columns.depthKm[i])}`
   return (
     `<div class="text-sm" style="min-width:170px">` +
-    `<div class="font-bold" style="margin-bottom:4px">${formatCatalogTime(cloud.timeMs[i])}</div>` +
+    `<div class="font-bold" style="margin-bottom:4px">${formatCatalogTime(cloud.timeMs[i], cloud.preliminary[i] === 1)}</div>` +
+    // 日別の震源リスト（速報値）の年の地震。取得元は「暫定値であり、変更になる場合があります」と書く
+    // （2026-11-04 ユーザー選択「吹き出しに出す (Recommended)」。語はタブの期間の注記と同じ）
+    (cloud.preliminary[i] === 1 ? `<div class="text-xs" style="color:#94a3b8">速報値</div>` : '') +
     (name != null ? `<div class="text-xs">${escapeHtml(name)}</div>` : '') +
     (intensity != null ? `<div class="text-xs">${escapeHtml(intensity)}</div>` : '') +
     `<div class="text-xs" style="color:#94a3b8">` +
