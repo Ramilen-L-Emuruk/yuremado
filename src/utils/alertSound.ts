@@ -1125,7 +1125,119 @@ export function playAlertSound(type: AlertSoundType): void {
   // **持ち主はここで引く。** 電文の処理中に呼ばれれば付き、強震モニタの検知音のように
   // 電文と無関係な経路では空になる（それが正しい）。
   recordReplayEvent({ type: 'sound', sound: type, telegram: currentReplayTelegram() })
+  alertSpeechPendingUntil = Math.max(
+    alertSpeechPendingUntil,
+    ctx.currentTime + SOUND_LEAD_SEC + ttsDelayFor(type) / 1000 + ALERT_SPEECH_PENDING_MARGIN_SEC,
+  )
   playGuarded(`playAlertSound(${type})`, () => PLAYERS[type](ctx, ctx.currentTime + SOUND_LEAD_SEC))
+}
+
+/**
+ * 通知音のあと、読み上げが始まるまでの AudioContext の時刻（秒）。{@link isAlertSpeechPending} が読む。
+ *
+ * 読み上げは通知音の鳴り終わりを待ってから始まる（{@link ttsDelayFor}）ので、その間は `isSpeaking()` が偽になる。
+ * 時報がこの隙間に声を出すと、電文の読み上げの先行合成を潰したうえで、すぐ電文に割り込まれる。
+ * 読み上げを伴わない種別や、読み上げを切っている端末でも立つ（控えめに倒す。時報が 1 回省かれるだけ）。
+ */
+let alertSpeechPendingUntil = 0
+
+/** 読み上げの呼び出しが通知音の鳴り終わりからずれる分の余裕（秒）。予約のタイマーと合成の開始の遅れを見込む。 */
+const ALERT_SPEECH_PENDING_MARGIN_SEC = 0.5
+
+/**
+ * 通知音を鳴らしたあと、その読み上げを待っている最中か。時報が「他の読み上げの最中」に数える
+ * （`hooks/useTimeSignal.ts`。読み上げそのものの最中は `voicevox.ts` の `isSpeaking()` が答える）。
+ */
+export function isAlertSpeechPending(): boolean {
+  return audioCtx !== null && audioCtx.currentTime < alertSpeechPendingUntil
+}
+
+/** {@link scheduleTimeSignalSound} が返す持ち手。 */
+export interface TimeSignalSoundHandle {
+  /** まだ鳴っていない分を取り消し、鳴っている分は止める。二度呼んでもよい */
+  cancel: () => void
+}
+
+/** 時報の音の大きさ（音量 1 のとき）。純音なので、通知音の `ding` と同じ段に置く */
+const TIME_SIGNAL_BASE_GAIN = 0.30
+
+/**
+ * 時報の音を、AudioContext の時刻 `markAt`（合図＝ポーン・チャイムの頭）へ先に予約する。
+ * 音の前置きと余韻の長さは `utils/timeSignal.ts` の `TIME_SIGNAL_SOUND_SHAPE` と揃えてある。
+ *
+ * 時報専用のつまみ（`GainNode`）を挟んでマスターへ流すので、取り消すと予約した分もまとめて止まる。
+ * 通知音とは重ねて鳴らす（2026-11-04 ユーザー選択「通知音はすべて重ねる」）。重なった音圧はマスターのコンプレッサーが抑える。
+ * 録画ツール向けの記録（`recordReplayEvent`）には載せない —— 電文から鳴った音ではない。
+ *
+ * @param volume 時報だけの音量（0〜1）。null なら通知音と共通の音量
+ * @returns AudioContext が無い（ユーザー操作前）・`markAt` の前置きが既に過ぎているときは null
+ */
+export function scheduleTimeSignalSound(
+  kind: 'pips' | 'pon' | 'chime',
+  markAt: number,
+  volume: number | null,
+): TimeSignalSoundHandle | null {
+  const ctx = getCtx()
+  if (!ctx) {
+    log.debug(`[sound] 時報の音をスキップ (AudioContext なし) kind=${kind}`)
+    return null
+  }
+  if (ctx.state === 'suspended') {
+    ctx.resume().catch(err =>
+      log.warn(`[sound] 時報の音の予約中に AudioContext の再開に失敗: ${String(err)}`))
+  }
+  syncKeepAlive()
+  const first = kind === 'pips' ? markAt - 3 : markAt
+  if (first < ctx.currentTime + SOUND_LEAD_SEC) {
+    log.debug(`[sound] 時報の音をスキップ (鳴らし始める時刻を過ぎた) kind=${kind} 遅れ=${(ctx.currentTime - first).toFixed(3)}s`)
+    return null
+  }
+  let bus: GainNode | null = null
+  playGuarded(`scheduleTimeSignalSound(${kind})`, () => {
+    const g = ctx.createGain()
+    g.gain.value = 1
+    g.connect(getMasterInput(ctx))
+    bus = g
+    const p = TIME_SIGNAL_BASE_GAIN * Math.min(1, Math.max(0, volume ?? globalVolume))
+    if (kind === 'pips') {
+      // 予報音は 440 Hz・0.1 秒、正報音は 880 Hz。高さは電話・ラジオの時報でよく言われる値で、実物では確かめていない
+      for (const s of [3, 2, 1]) {
+        gateTone(ctx, g, 'sine', 440, markAt - s, 0.1, p, { attack: 0.004, release: 0.01 })
+      }
+    }
+    if (kind === 'pips' || kind === 'pon') {
+      decayTone(ctx, g, 'sine', 880, markAt, 0.004, p, markAt + 1.2)
+      decayTone(ctx, g, 'sine', 1760, markAt, 0.004, p * 0.12, markAt + 0.3)
+    } else {
+      // 上がる 4 音（ド・ミ・ソ・ド）。最後の音の余韻で 1.6 秒
+      const notes = [523.25, 659.25, 783.99, 1046.5]
+      notes.forEach((freq, i) => {
+        const t = markAt + i * 0.3
+        decayTone(ctx, g, 'sine', freq, t, 0.006, p, t + 0.7)
+        decayTone(ctx, g, 'sine', freq * 2, t, 0.006, p * 0.15, t + 0.2)
+      })
+    }
+  })
+  // 型の絞り込みは関数の中の代入を追わない（`bus` が常に null に見える）ので、ここで戻す
+  const node = bus as GainNode | null
+  if (node === null) return null
+  let cancelled = false
+  return {
+    cancel: () => {
+      if (cancelled) return
+      cancelled = true
+      try {
+        const now = ctx.currentTime
+        node.gain.cancelScheduledValues(now)
+        node.gain.setValueAtTime(node.gain.value, now)
+        node.gain.linearRampToValueAtTime(0, now + 0.02)
+        // 予約済みの発振器はつまみの先で鳴り続けるので、絞り切ってから外す
+        setTimeout(() => { try { node.disconnect() } catch { /* 外し済み */ } }, 100)
+      } catch (err) {
+        log.warn(`[sound] 時報の音の取り消しに失敗: ${String(err)}`)
+      }
+    },
+  }
 }
 
 // S波到着カウントダウンの段階ごとのパルス数。ゲート周波数（下記 gateHzMap）と揃えて
