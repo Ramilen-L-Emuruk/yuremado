@@ -87,6 +87,8 @@ describe('ActionChecklist の外枠', () => {
     scale: 45,
     scope: 'nationwide' as const,
     onDismiss: () => {},
+    unreceived: false,
+    focusOnOpen: false,
     onRestore: () => {},
     topInset: 120,
     areaHeight: 600,

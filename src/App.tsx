@@ -2465,6 +2465,25 @@ export function App() {
   })
   // 宣言が useReplayController より後になるため ref 経由で渡す（上記 resetLocalState 参照）。
   resetActionChecklistRef.current = actionChecklist.resetForReplay
+  // 地図が低い画面では、行動チェックリストを畳んだ札で出し、押したら地図の上に重ねて開く
+  // （2026-11-04 ユーザー選択「狭いときは札で出す (Recommended)」。開いたまま出すと、帯と合わせて地図の 9 割以上を覆っていた）。
+  // 低いかの境は凡例が自動で畳む境と同じ（`mapAreaShort`）。**フックの「閉じた」記録には触らない** ——
+  // ここで畳むのは見せ方だけで、閉じるボタンを押したときの扱い（次の余震を畳んで出す）はフックが持つ。
+  // 札を押して開いた帯の識別子を覚え、別の揺れの帯に替わったら札へ戻す。
+  const [checklistPeekKey, setChecklistPeekKey] = useState<string | null>(null)
+  const checklistKey = actionChecklist.state?.key ?? null
+  const checklistCompact = mapAreaShort && !actionChecklist.collapsed && checklistPeekKey !== checklistKey
+  const checklistOverlay = mapAreaShort && !actionChecklist.collapsed && checklistPeekKey === checklistKey
+  const restoreChecklist = useCallback(() => {
+    setChecklistPeekKey(checklistKey)
+    actionChecklist.restore()
+  }, [checklistKey, actionChecklist.restore])
+  // 閉じた・帯が消えた（リプレイの開始と停止を含む）ら、札を開いた記録を捨てる。残すと、同じ揺れが震度を上げて
+  // フックが開き直したときや、同じ地震を再生し直したときに、札を押していないのに重ねて開く
+  const checklistGone = actionChecklist.state === null || actionChecklist.collapsed
+  useEffect(() => {
+    if (checklistGone) setChecklistPeekKey(null)
+  }, [checklistGone])
 
   // 直前に鳴らした（鳴らす機会のあった）地震と秒数。**地震の鍵と組で覚える** —— 秒数だけで比べると、
   // 地震が替わった直後に前の地震と同じ秒数だったとき鳴らない。
@@ -2951,14 +2970,16 @@ export function App() {
                 下限は各コンポーネントが自分の外枠に値で書く（`min-height` を書かない子は中身の高さで
                 止まって縮まず、`min-h-0` の子は見出しまで潰れる）。 */}
             <div className="absolute inset-0 z-99999 pointer-events-none flex flex-col">
-              {actionChecklist.state && (
+              {actionChecklist.state && !checklistOverlay && (
                 <ActionChecklist
                   reason={actionChecklist.state.reason}
                   scale={actionChecklist.state.scale}
+                  unreceived={actionChecklist.state.unreceived}
                   scope={actionChecklist.state.scope}
-                  collapsed={actionChecklist.collapsed}
+                  collapsed={actionChecklist.collapsed || checklistCompact}
+                  focusOnOpen={false}
                   onDismiss={actionChecklist.dismiss}
-                  onRestore={actionChecklist.restore}
+                  onRestore={restoreChecklist}
                   topInset={topCornersBottom + TOP_CORNERS_GAP_PX}
                   areaHeight={mapAreaHeight}
                   below={{
@@ -3010,6 +3031,26 @@ export function App() {
                 atScreenBottom={!waveChartShown}
               />
             </div>
+            {/* 地図が低いときに札から開いた行動チェックリスト。**縦並びの外に重ねる** —— 縦並びに入れると
+                凡例・帯と高さを分け合って中で切れる。ここでは地図の高さいっぱいまで伸び、凡例と帯の上にも重なる
+                （閉じれば札に戻る。→ `checklistOverlay`）。下に残すものは無いので `below` はすべて偽。 */}
+            {actionChecklist.state && checklistOverlay && (
+              <div className="absolute inset-0 z-99999 pointer-events-none flex flex-col">
+                <ActionChecklist
+                  reason={actionChecklist.state.reason}
+                  scale={actionChecklist.state.scale}
+                  unreceived={actionChecklist.state.unreceived}
+                  scope={actionChecklist.state.scope}
+                  collapsed={false}
+                  focusOnOpen
+                  onDismiss={actionChecklist.dismiss}
+                  onRestore={restoreChecklist}
+                  topInset={topCornersBottom + TOP_CORNERS_GAP_PX}
+                  areaHeight={mapAreaHeight}
+                  below={{ legend: false, shareRow: false, shareRowAtScreenBottom: false, banner: false }}
+                />
+              </div>
+            )}
           </div>
           {/* 自作地震計の合成波形。**地図の外**（→ すぐ上の器のコメント）。
               包みは地図の下限に押されて縮む（中の枠がスクロールする）。パネルを上限より広げたら高さ 0 で隠す
