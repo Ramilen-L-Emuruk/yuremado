@@ -194,7 +194,7 @@ function toRgb(color: string): string {
 function cardRoot(): HTMLElement {
   const anchor = screen.getByText(/観測点で反応|観測点の反応は収まりました/)
   let el: HTMLElement | null = anchor as HTMLElement
-  while (el && !(el.classList.contains('rounded-lg') && el.classList.contains('overflow-hidden'))) {
+  while (el && !(el.classList.contains('rounded-md') && el.classList.contains('overflow-hidden'))) {
     el = el.parentElement
   }
   if (!el) throw new Error('検知カードのルート要素が見つからない')
@@ -474,13 +474,13 @@ describe('EEW カードの仮定震源要素の見せ方', () => {
   it('予想震度が無い報では長周期階級バッジを出さない', () => {
     renderEEW(assumedEEW({ forecastMaxLpgmClass: 3 }))
     expect(screen.getByText('予想震度なし')).toBeTruthy()
-    expect(screen.queryByText('予想長周期地震動')).toBeNull()
+    expect(screen.queryByText(/^長周期/)).toBeNull()
   })
 
   // 安全弁: 震度が出る報では従来どおり階級バッジを出す（ガードが広すぎないことの確認）。
   it('予想震度がある報では長周期階級バッジを出す', () => {
     renderEEW(fakeEEW({ forecastMaxScale: 40, forecastMaxLpgmClass: 3 }))
-    expect(screen.getByText('予想長周期地震動')).toBeTruthy()
+    expect(screen.getByText('長周期3')).toBeTruthy()
   })
 })
 
