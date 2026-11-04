@@ -34,6 +34,7 @@ import { TsunamiArrivalMarkersGL } from './TsunamiArrivalMarkersGL'
 import { TsunamiMissingMarkersGL } from './TsunamiMissingMarkersGL'
 import { TsunamiSourceEpicentersGL } from './TsunamiSourceEpicentersGL'
 import type { TsunamiSourceEarthquake } from '../../types/earthquake'
+import { distinctShownTsunamiSources } from '../../utils/tsunamiSourceLinks'
 import { EewRegionFillGL } from './EewRegionFillGL'
 import { EewLpgmRegionFillGL } from './EewLpgmRegionFillGL'
 import { EewEpicentersGL } from './EewEpicentersGL'
@@ -116,6 +117,7 @@ export function JapanMapGL({
   unreceivedMode = false,
   estimatedIntensity = null,
   tsunamis = [],
+  tsunamiSourceQuakes,
   observations = [],
   obsUpdateStatus,
   eews = [],
@@ -266,20 +268,11 @@ export function JapanMapGL({
   // 表示中の津波の原因地震（×印に使う）。地震カードで選んだ地震ではなく、津波電文が名乗るもの。
   // **海岸線と同じく、解除されていない津波を全部見る**（`useTsunamiLayerData` の `tsunamiLines`）。1 件目だけにすると、
   // 線は出ているのに震源の×が欠ける津波ができる。同じ地震（震源名と時刻が同じ）は 1 度だけ。
+  // 結べた地震カードがあれば、その上段の値で描く（津波カードの原因地震の行・読み上げと同じ値。→ `distinctShownTsunamiSources`）。
   const tsunamiSources = useMemo(() => {
-    const seen = new Set<string>()
-    const out: TsunamiSourceEarthquake[] = []
-    for (const t of tsunamis) {
-      if (t.cancelled) continue
-      for (const s of t.sourceEarthquakes ?? []) {
-        const key = `${s.hypocenterName}|${s.originTime ?? ''}|${s.arrivalTime ?? ''}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        out.push(s)
-      }
-    }
+    const out: TsunamiSourceEarthquake[] = distinctShownTsunamiSources(tsunamis, tsunamiSourceQuakes)
     return out.length > 0 ? out : NO_TSUNAMI_SOURCES
-  }, [tsunamis])
+  }, [tsunamis, tsunamiSourceQuakes])
   // 観測行クリックで寄せられる点。**カードに出ている観測点をすべて含める**こと——
   // 実測（観測棒）だけにすると、到達確認の行をクリックしても地図が動かない。
   const focusablePoints = useMemo(

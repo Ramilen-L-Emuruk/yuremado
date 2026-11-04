@@ -74,6 +74,7 @@ function input(over: Partial<ShareCardContentInput> & { mode: MapMode }): ShareC
   return {
     quake: null,
     tsunamis: [],
+    tsunamiSourceQuakes: [],
     eews: [],
     showBathymetry: true,
     showActiveFaults: true,
@@ -427,6 +428,43 @@ describe('buildShareCardContent — 津波', () => {
     expect(c.header.subtitle).toContain('日向灘')
     expect(c.header.subtitle).not.toContain('土佐湾')
     expect(c.header.subtitle).toContain('1 区域')
+  })
+
+  // 原因地震は、結べた地震カードの上段の値で並べる（津波カードの原因地震の行・地図の×印と同じ値。→ `shownTsunamiSources`）。
+  it('結べた地震カードがあれば、原因地震をその値で並べる', () => {
+    const t = { ...tsunami(), eventId: '20260824123400' } as JMATsunami
+    const card = { ...quake({ magnitude: 7.6, depth: 40 }), id: 'dmdata-quake-20260824123400-1' } as JMAQuake
+    const c = build(input({ mode: 'tsunami', tsunamis: [t], tsunamiSourceQuakes: [card] }))
+    expect(c.header.subtitle).toContain('M7.6')
+    expect(c.header.subtitle).not.toContain('M8.1')
+  })
+
+  // 正: 同じ地震を 2 つの津波が運び、どちらも同じ地震カードと結べれば 1 件にまとめる。深さもカードの値になる
+  it('同じ地震を運ぶ 2 つの津波は、結べた値で 1 件にまとめる', () => {
+    // 原因地震に時刻を持たせる（時刻の無い同士は結べなくても重なるので、それでは重ね方を確かめられない）
+    const withTime = [{ hypocenterName: '日向灘', magnitude: 8.1, arrivalTime: '2026-08-24T12:34:00+09:00' }]
+    const a = { ...tsunami(), eventId: '20260824123400', sourceEarthquakes: withTime } as JMATsunami
+    const b = { ...tsunami({ areaName: '高知県' }), id: 't2', eventId: '20260824123400', sourceEarthquakes: withTime } as JMATsunami
+    const card = { ...quake({ magnitude: 7.6, depth: 40 }), id: 'dmdata-quake-20260824123400-1' } as JMAQuake
+    const c = build(input({ mode: 'tsunami', tsunamis: [a, b], tsunamiSourceQuakes: [card] }))
+    expect(c.header.subtitle?.split('日向灘').length).toBe(2)
+    expect(c.header.subtitle).toContain('40km')
+  })
+
+  // 安全弁: 取り消された地震カードとは結ばず、津波電文の値のまま。
+  it('取り消された地震カードの値は使わない', () => {
+    const t = { ...tsunami(), eventId: '20260824123400' } as JMATsunami
+    const card = { ...quake({ magnitude: 7.6 }), id: 'dmdata-quake-20260824123400-1', cancelledAt: 1 } as unknown as JMAQuake
+    const c = build(input({ mode: 'tsunami', tsunamis: [t], tsunamiSourceQuakes: [card] }))
+    expect(c.header.subtitle).toContain('M8.1')
+  })
+
+  // 対照: 結べる地震カードが無ければ、津波電文の値のまま。
+  it('結べる地震カードが無ければ、津波電文の値のまま並べる', () => {
+    const t = { ...tsunami(), eventId: '20260824123400' } as JMATsunami
+    const other = { ...quake({ magnitude: 7.6 }), id: 'dmdata-quake-20260101000000-1' } as JMAQuake
+    const c = build(input({ mode: 'tsunami', tsunamis: [t], tsunamiSourceQuakes: [other] }))
+    expect(c.header.subtitle).toContain('M8.1')
   })
 
   // 見出しの文字色は付けない。注意報の `formatTsunamiGrade().color` は黒で、暗い見出し帯の上では読めなかった。

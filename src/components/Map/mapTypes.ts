@@ -74,6 +74,11 @@ export interface JapanMapProps {
   publicStationMarkers: readonly PublicStationMarker[]
   quake: JMAQuake | null
   tsunamis: JMATsunami[]
+  /**
+   * 津波の原因地震を結ぶ相手の地震カード（津波タブに渡すものと同じ）。×印は結べた地震カードの上段の値で描く
+   * （→ `utils/tsunamiSourceLinks.ts` の `shownTsunamiSources`）。
+   */
+  tsunamiSourceQuakes: readonly JMAQuake[]
   observations?: TsunamiObservation[]
   lpgm?: JMALpgm
   /**

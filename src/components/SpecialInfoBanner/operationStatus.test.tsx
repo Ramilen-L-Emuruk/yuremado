@@ -68,18 +68,18 @@ const earthquakeCount = (operationStatus?: TelegramOperationStatus): JMAEarthqua
 describe('特別情報の帯の運用種別', () => {
   // 正: 5 つの帯すべてに印が出る。**帯ごとに書くと片方だけ落ちる**ので、まとめて見る。
   it('訓練報はどの帯にも印が出る', () => {
-    render(<Banners items={{ nankai: nankai('訓練'), nankaiCommentary: commentary('訓練'), kohatsu: kohatsu('訓練'), quakeNotice: quakeNotice('訓練'), earthquakeCount: earthquakeCount('訓練') }} />)
+    render(<Banners items={{ nankai: nankai('訓練'), nankaiCommentary: [commentary('訓練')], kohatsu: [kohatsu('訓練')], quakeNotice: [quakeNotice('訓練')], earthquakeCount: [earthquakeCount('訓練')] }} />)
     expect(screen.getAllByText('訓練報')).toHaveLength(5)
   })
 
   it('試験報も同じ', () => {
-    render(<Banners items={{ nankai: nankai('試験'), nankaiCommentary: commentary('試験'), kohatsu: kohatsu('試験'), quakeNotice: quakeNotice('試験'), earthquakeCount: earthquakeCount('試験') }} />)
+    render(<Banners items={{ nankai: nankai('試験'), nankaiCommentary: [commentary('試験')], kohatsu: [kohatsu('試験')], quakeNotice: [quakeNotice('試験')], earthquakeCount: [earthquakeCount('試験')] }} />)
     expect(screen.getAllByText('試験報')).toHaveLength(5)
   })
 
   // 対照: 通常の報では印を出さない。**平常時に余計な印が出ないこと**を押さえる。
   it('通常の報では印を出さない', () => {
-    render(<Banners items={{ nankai: nankai(), nankaiCommentary: commentary(), kohatsu: kohatsu(), quakeNotice: quakeNotice(), earthquakeCount: earthquakeCount() }} />)
+    render(<Banners items={{ nankai: nankai(), nankaiCommentary: [commentary()], kohatsu: [kohatsu()], quakeNotice: [quakeNotice()], earthquakeCount: [earthquakeCount()] }} />)
     expect(screen.queryByText('訓練報')).toBeNull()
     expect(screen.queryByText('試験報')).toBeNull()
     // 帯そのものは出ている（印だけが出ない）
@@ -95,11 +95,11 @@ describe('特別情報の帯の運用種別', () => {
 // 後発地震注意情報の帯を開いた中の発表時刻の行。**電文に期限の要素は無い**ので、アプリが帯を畳む
 // 7 日（`expireAt`）を「まで有効」と言い切らない（2026-10-19 ユーザー選択「発表時刻だけにする (Recommended)」）。
 describe('後発地震注意情報の帯の発表時刻の行', () => {
-  const none: SpecialInfoItems = { nankai: null, nankaiCommentary: null, kohatsu: null, quakeNotice: null, earthquakeCount: null }
+  const none: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
 
   // 正: 開くと発表時刻が出る。
   it('開くと発表時刻を出す', () => {
-    render(<Banners items={{ ...none, kohatsu: kohatsu() }} />)
+    render(<Banners items={{ ...none, kohatsu: [kohatsu()] }} />)
     fireEvent.click(screen.getByText('北海道・三陸沖後発地震注意情報を発表しました。'))
     expect(screen.getByText(/^発表: /)).toBeTruthy()
   })
@@ -107,7 +107,7 @@ describe('後発地震注意情報の帯の発表時刻の行', () => {
   // 安全弁: 帯を畳む時刻は持っていても、期限として出さない。畳む時刻を発表と見分けの付く
   // 年（2099 年）にして、その日時がどの形でも画面に出ていないことを見る。
   it('「まで有効」も畳む時刻も出さない', () => {
-    const { container } = render(<Banners items={{ ...none, kohatsu: { ...kohatsu(), expireAt: '2099-12-31T23:59:00+09:00' } }} />)
+    const { container } = render(<Banners items={{ ...none, kohatsu: [{ ...kohatsu(), expireAt: '2099-12-31T23:59:00+09:00' }] }} />)
     fireEvent.click(screen.getByText('北海道・三陸沖後発地震注意情報を発表しました。'))
     expect(container.textContent).not.toContain('まで有効')
     expect(container.textContent).not.toContain('12/31')
@@ -123,13 +123,13 @@ describe('特別情報の帯の下端の余白', () => {
 
   // 正: 画面の下端に接しているときは包みに余白の指定が載る
   it('下端に接していれば余白を付ける', () => {
-    const { container } = render(<Banners items={{ nankai: null, nankaiCommentary: null, kohatsu: null, quakeNotice: quakeNotice(), earthquakeCount: null }} />)
+    const { container } = render(<Banners items={{ nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [quakeNotice()], earthquakeCount: [] }} />)
     expect(scroller(container).className).toContain(SAFE)
   })
 
   // 対照: 地図の下に波形が出ていて下端に届かないときは付けない
   it('下端に接していなければ余白を付けない', () => {
-    const { container } = render(<Banners items={{ nankai: null, nankaiCommentary: null, kohatsu: null, quakeNotice: quakeNotice(), earthquakeCount: null }} atScreenBottom={false} />)
+    const { container } = render(<Banners items={{ nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [quakeNotice()], earthquakeCount: [] }} atScreenBottom={false} />)
     expect(scroller(container).className).not.toContain('safe-area-inset-bottom')
   })
 
@@ -163,7 +163,7 @@ describe('特別情報の帯の下端の余白', () => {
   // 安全弁: 帯の 1 枚 1 枚は余白を持たない（最後の 1 枚へは包みから効かせる）。帯の側に戻すと、
   // 波形が出ていても余白が付き、帯と帯の間にも隙間ができうる
   it('帯の 1 枚 1 枚は余白を持たない', () => {
-    const { container } = render(<Banners items={{ nankai: nankai(), nankaiCommentary: commentary(), kohatsu: kohatsu(), quakeNotice: quakeNotice(), earthquakeCount: earthquakeCount() }} />)
+    const { container } = render(<Banners items={{ nankai: nankai(), nankaiCommentary: [commentary()], kohatsu: [kohatsu()], quakeNotice: [quakeNotice()], earthquakeCount: [earthquakeCount()] }} />)
     for (const child of Array.from(scroller(container).children)) {
       expect((child as HTMLElement).className).not.toContain('safe-area-inset-bottom')
     }
@@ -171,11 +171,11 @@ describe('特別情報の帯の下端の余白', () => {
 })
 
 describe('閉じた帯と「いま出す帯」', () => {
-  const none: SpecialInfoItems = { nankai: null, nankaiCommentary: null, kohatsu: null, quakeNotice: null, earthquakeCount: null }
+  const none: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
 
   // 正: 帯が 1 枚あれば描き、閉じたら消える
   it('閉じると、その帯は描かれない', () => {
-    const { container } = render(<Banners items={{ ...none, quakeNotice: quakeNotice() }} />)
+    const { container } = render(<Banners items={{ ...none, quakeNotice: [quakeNotice()] }} />)
     expect(screen.getByText('お知らせ')).toBeTruthy()
     fireEvent.click(screen.getByLabelText('お知らせを閉じる'))
     expect(screen.queryByText('お知らせ')).toBeNull()
@@ -185,9 +185,9 @@ describe('閉じた帯と「いま出す帯」', () => {
 
   // 対照: 閉じた id と違う電文（続報）なら出直す
   it('続報（別の id）が届けば出直す', () => {
-    const { rerender } = render(<Banners items={{ ...none, quakeNotice: quakeNotice() }} />)
+    const { rerender } = render(<Banners items={{ ...none, quakeNotice: [quakeNotice()] }} />)
     fireEvent.click(screen.getByLabelText('お知らせを閉じる'))
-    rerender(<Banners items={{ ...none, quakeNotice: { ...quakeNotice(), id: 'q2' } }} />)
+    rerender(<Banners items={{ ...none, quakeNotice: [{ ...quakeNotice(), id: 'q2' }] }} />)
     expect(screen.getByText('お知らせ')).toBeTruthy()
   })
 
@@ -199,7 +199,7 @@ describe('閉じた帯と「いま出す帯」', () => {
       shown = b.shown
       return <SpecialInfoBanner banners={b} speakingTelegramTextSubject={null} readsAppendix={false} atScreenBottom />
     }
-    render(<Probe items={{ ...none, earthquakeCount: earthquakeCount() }} />)
+    render(<Probe items={{ ...none, earthquakeCount: [earthquakeCount()] }} />)
     expect(shown).toBe(true)
     fireEvent.click(screen.getByLabelText(/閉じる/))
     expect(shown).toBe(false)
@@ -207,19 +207,19 @@ describe('閉じた帯と「いま出す帯」', () => {
 
   // 閉じた id はリロードしても残る（localStorage）
   it('閉じた電文はマウントし直しても出ない', () => {
-    const first = render(<Banners items={{ ...none, quakeNotice: quakeNotice() }} />)
+    const first = render(<Banners items={{ ...none, quakeNotice: [quakeNotice()] }} />)
     fireEvent.click(screen.getByLabelText('お知らせを閉じる'))
     first.unmount()
-    const { container } = render(<Banners items={{ ...none, quakeNotice: quakeNotice() }} />)
+    const { container } = render(<Banners items={{ ...none, quakeNotice: [quakeNotice()] }} />)
     expect(container.firstChild).toBeNull()
   })
 
   // 閉じた種類ごとに、決まったキーへ書く。キーの文字列を取り違えると、更新した端末で閉じた帯が
   // 復活する（型検査では捕まらない）。3 種とも従来のキー名のまま
   it('3 種はそれぞれ従来のキーへ id を書き、互いに干渉しない', () => {
-    render(<Banners items={{ ...none, nankaiCommentary: commentary(), quakeNotice: quakeNotice(), earthquakeCount: earthquakeCount() }} />)
+    render(<Banners items={{ ...none, nankaiCommentary: [commentary()], quakeNotice: [quakeNotice()], earthquakeCount: [earthquakeCount()] }} />)
     fireEvent.click(screen.getByLabelText('解説情報を閉じる'))
-    expect(localStorage.getItem('nankai-commentary-dismissed')).toBe('c1')
+    expect(localStorage.getItem('nankai-commentary-dismissed')).toBe(JSON.stringify(['c1']))
     expect(localStorage.getItem('quake-notice-dismissed')).toBeNull()
     expect(localStorage.getItem('earthquake-count-dismissed')).toBeNull()
     // 残りの 2 枚は出たまま
@@ -227,21 +227,21 @@ describe('閉じた帯と「いま出す帯」', () => {
     expect(screen.getByText('地震回数')).toBeTruthy()
     fireEvent.click(screen.getByLabelText('お知らせを閉じる'))
     fireEvent.click(screen.getByLabelText('地震回数を閉じる'))
-    expect(localStorage.getItem('quake-notice-dismissed')).toBe('q1')
-    expect(localStorage.getItem('earthquake-count-dismissed')).toBe('ec1')
+    expect(localStorage.getItem('quake-notice-dismissed')).toBe(JSON.stringify(['q1']))
+    expect(localStorage.getItem('earthquake-count-dismissed')).toBe(JSON.stringify(['ec1']))
   })
 
   // 臨時情報と後発地震注意情報も閉じられる（2026-10-22 ユーザー選択「閉じられるようにする」）
   it('正: 臨時情報と後発地震注意情報も閉じられ、それぞれのキーへ書く', () => {
     const n = nankai()
     const k = kohatsu()
-    render(<Banners items={{ ...none, nankai: n, kohatsu: k }} />)
+    render(<Banners items={{ ...none, nankai: n, kohatsu: [k] }} />)
     fireEvent.click(screen.getByLabelText('臨時情報を閉じる'))
-    expect(localStorage.getItem('nankai-dismissed')).toBe(n.id)
+    expect(localStorage.getItem('nankai-dismissed')).toBe(JSON.stringify([n.id]))
     expect(localStorage.getItem('kohatsu-dismissed')).toBeNull()
     expect(screen.queryByLabelText('臨時情報を閉じる')).toBeNull()
     fireEvent.click(screen.getByLabelText('後発地震注意情報を閉じる'))
-    expect(localStorage.getItem('kohatsu-dismissed')).toBe(k.id)
+    expect(localStorage.getItem('kohatsu-dismissed')).toBe(JSON.stringify([k.id]))
   })
 
   // 対照: 段階が変わった臨時情報（別の id）は、閉じても出直す
@@ -256,14 +256,14 @@ describe('閉じた帯と「いま出す帯」', () => {
   // 正: 閉じた当時の書式（dmdata-xml-）の id でも、今の書式の電文を閉じたままにする
   it('閉じた id は書式を揃えてから突き合わせる', () => {
     localStorage.setItem('quake-notice-dismissed', 'dmdata-xml-abc')
-    const { container } = render(<Banners items={{ ...none, quakeNotice: { ...quakeNotice(), id: 'dmdata-abc' } }} />)
+    const { container } = render(<Banners items={{ ...none, quakeNotice: [{ ...quakeNotice(), id: 'dmdata-abc' }] }} />)
     expect(container.firstChild).toBeNull()
   })
 
   // 対照: 書式を揃えても別の電文なら出す
   it('書式を揃えても別の id なら出す', () => {
     localStorage.setItem('quake-notice-dismissed', 'dmdata-xml-abc')
-    render(<Banners items={{ ...none, quakeNotice: { ...quakeNotice(), id: 'dmdata-def' } }} />)
+    render(<Banners items={{ ...none, quakeNotice: [{ ...quakeNotice(), id: 'dmdata-def' }] }} />)
     expect(screen.getByText('お知らせ')).toBeTruthy()
   })
 

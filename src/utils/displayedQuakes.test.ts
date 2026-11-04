@@ -55,4 +55,16 @@ describe('filterDisplayedQuakes', () => {
     const byQuake = new Map([[quakeEventKey(withBulletin), []]])
     expect(filterDisplayedQuakes([withBulletin, without], 30, [], byQuake).map(q => q.id)).toEqual([withBulletin.id])
   })
+
+  // 正: 最大震度が「5弱以上（未入電）」の地震は、5強以上を選んでいても外さない（2026-11-04 ユーザー選択「5強以上の設定でも残す (Recommended)」）。
+  // 対照: 同じ 5弱でも未入電の点が無ければ、5強以上では外す。
+  // 安全弁: 未入電が最大震度より下の階級の点にだけあるなら「以上」ではないので外す。
+  it('最大震度が「5弱以上（未入電）」の地震は、5強以上を選んでいても外さない', () => {
+    const pt = (addr: string, scale: IntensityScale, unreceived = false) => ({ pref: '', addr, isArea: true, scale, ...(unreceived && { unreceived: true }) })
+    const orAbove = { ...quake('20260102000000', 45), points: [pt('石川県能登', 45, true), pt('新潟県上越', 45)] } as JMAQuake
+    const plain = { ...quake('20260102010000', 45), points: [pt('石川県能登', 45)] } as JMAQuake
+    const lower = { ...quake('20260102020000', 40), points: [pt('石川県能登', 40), pt('新潟県上越', 30, true)] } as JMAQuake
+    expect(filterDisplayedQuakes([orAbove, plain, lower], 50, [], new Map()).map(q => q.id)).toEqual([orAbove.id])
+    expect(filterDisplayedQuakes([orAbove], 70, [], new Map())).toHaveLength(1)
+  })
 })

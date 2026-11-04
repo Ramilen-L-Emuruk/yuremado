@@ -89,6 +89,52 @@ export function earthquakeCountBandDecision(
   return e ? { apply: false, reason: 'expired' } : { apply: true }
 }
 
+/**
+ * 帯に**複数を積む** 4 種（解説情報・後発地震注意情報・地震回数・お知らせ）で、上の判定へ渡す「いま出している情報単位」を
+ * 一覧から選ぶ。届いた電文が指す単位が一覧にあればそれを、無ければ一覧の先頭（無ければ null）を渡す。
+ *
+ * **上の関数の答えはそのまま使う**（中継のプッシュ通知と同じ答えを出すため、引数と答えは変えない）。一覧にあれば
+ * 「出している単位への取消」、無ければ「別の単位（一覧が空なら出していない）への取消」として判定される。
+ */
+function pickShown(shownKeys: readonly string[], key: string): string | null {
+  return shownKeys.includes(key) ? key : (shownKeys[0] ?? null)
+}
+
+/** `cancelOverOtherUnit` の一覧版。一覧に無い単位への取消で、一覧に別の単位が出ているとき真 */
+export function cancelOverOtherUnitInList(
+  shownEventIds: readonly string[],
+  telegram: { eventId: string; cancelled: boolean; retracted?: boolean },
+): boolean {
+  return cancelOverOtherUnit(pickShown(shownEventIds, telegram.eventId), telegram)
+}
+
+/** `kohatsuBandDecision` の一覧版（一覧は帯に積んでいる報の `eventId`） */
+export function kohatsuListDecision(
+  shownEventIds: readonly string[],
+  kohatsu: Pick<JMAKohatsu, 'eventId' | 'cancelled' | 'retracted' | 'expireAt'>,
+  nowMs: number,
+): BandDecision {
+  return kohatsuBandDecision(pickShown(shownEventIds, kohatsu.eventId), kohatsu, nowMs)
+}
+
+/** `nankaiCommentaryBandDecision` の一覧版（一覧は帯に積んでいる号の `id`） */
+export function nankaiCommentaryListDecision(
+  shownIds: readonly string[],
+  commentary: Pick<JMANankaiCommentary, 'id' | 'cancelled' | 'expireAt'>,
+  nowMs: number,
+): BandDecision {
+  return nankaiCommentaryBandDecision(pickShown(shownIds, commentary.id), commentary, nowMs)
+}
+
+/** `earthquakeCountBandDecision` の一覧版（一覧は帯に積んでいる報の `eventId`） */
+export function earthquakeCountListDecision(
+  shownEventIds: readonly string[],
+  count: Pick<JMAEarthquakeCount, 'eventId' | 'cancelled' | 'items' | 'body' | 'expireAt'>,
+  nowMs: number,
+): BandDecision {
+  return earthquakeCountBandDecision(pickShown(shownEventIds, count.eventId), count, nowMs)
+}
+
 /** 伝えた取消の記憶の上限（取消は年に数通しか無いが、長く開いたままの端末で増え続けないように） */
 export const CONVEYED_CANCELS_MAX = 500
 

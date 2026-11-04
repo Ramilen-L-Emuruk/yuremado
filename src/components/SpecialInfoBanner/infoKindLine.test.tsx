@@ -11,7 +11,7 @@ import type { JMAKohatsu, JMANankai, JMANankaiCommentary } from '../../types/ear
 afterEach(cleanup)
 beforeEach(() => localStorage.clear())
 
-const EMPTY: SpecialInfoItems = { nankai: null, nankaiCommentary: null, kohatsu: null, quakeNotice: null, earthquakeCount: null }
+const EMPTY: SpecialInfoItems = { nankai: null, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
 
 function Banners({ items }: { items: Partial<SpecialInfoItems> }) {
   const banners = useSpecialInfoBanners({ ...EMPTY, ...items })
@@ -48,8 +48,8 @@ describe('帯の見出しの下の情報の種別', () => {
   it('臨時情報・解説情報・後発地震の帯に出る', () => {
     render(<Banners items={{
       nankai: nankai({ earthquakeInfoType: '南海トラフ地震に関連する情報', earthquakeInfoKind: '南海トラフ地震臨時情報' }),
-      nankaiCommentary: commentary({ earthquakeInfoType: '南海トラフ地震に関連する情報', earthquakeInfoKind: '南海トラフ地震関連解説情報' }),
-      kohatsu: kohatsu({ earthquakeInfoType: '北海道・三陸沖後発地震注意情報', earthquakeInfoKind: '北海道・三陸沖後発地震注意情報' }),
+      nankaiCommentary: [commentary({ earthquakeInfoType: '南海トラフ地震に関連する情報', earthquakeInfoKind: '南海トラフ地震関連解説情報' })],
+      kohatsu: [kohatsu({ earthquakeInfoType: '北海道・三陸沖後発地震注意情報', earthquakeInfoKind: '北海道・三陸沖後発地震注意情報' })],
     }} />)
     const lines = screen.getAllByTestId('info-kind-line').map(el => el.textContent)
     expect(lines).toEqual([

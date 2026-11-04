@@ -135,6 +135,19 @@ describe('decideQuakeNotification', () => {
     expect(decide(lowered, 'r2', first.next)).toBeNull()
   })
 
+  // 正: 最大震度が「5弱以上（未入電）」なら、5強以上の閾値でも出す（実際は 5強以上だった可能性がある。
+  // 2026-11-04 ユーザー選択「5強以上の設定でも残す (Recommended)」）。
+  // 対照: 同じ 5弱でも未入電の点が無ければ、5強の閾値では出さない（上の「閾値に届かなければ」と同じ）。
+  // 安全弁: 未入電が最大震度より下の階級の点にだけあるなら「以上」ではないので、閾値どおり出さない。
+  it('最大震度が「5弱以上（未入電）」なら、5強以上の閾値でも出す', () => {
+    const orAbove = makeQuake({ points: [area('石川県能登', 45, true), area('新潟県上越', 45)] })
+    expect(decide(orAbove, 'r1', null, 50)?.notification.body).toContain('5弱以上')
+    expect(decide(orAbove, 'r1', null, 70)).not.toBeNull()
+    expect(decide(prompt, 'r1', null, 50)).toBeNull()
+    const lowerUnreceived = makeQuake({ maxScale: 40, points: [area('石川県能登', 40), area('新潟県上越', 30, true)] })
+    expect(decide(lowerUnreceived, 'r1', null, 50)).toBeNull()
+  })
+
   // 正: 震源が判ったあとで最大震度の階級が上がったら、頭に「最大震度更新」を付ける。
   it('震源が判ったあと最大震度が上がったら「最大震度更新」を付ける', () => {
     const first = decide(withHypo, 'r1', null)!

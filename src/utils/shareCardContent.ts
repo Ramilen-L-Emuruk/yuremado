@@ -6,6 +6,7 @@ import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithA
 import { isMaxScaleUnreceived } from './quakePoints'
 import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader } from './shareCard'
 import { isTsunamiForecastOnly, sourceEarthquakeTime, tsunamiOverallGrade } from './tsunami'
+import { shownTsunamiSources } from './tsunamiSourceLinks'
 import { hasKnownEpicenter } from './geo'
 import { kyoshinDetectionScaleLabel } from './kyoshinIntensity'
 import { getLpgmClassLabelWithApproxAbove } from './lpgm'
@@ -22,6 +23,8 @@ export interface ShareCardContentInput {
   mode: MapMode
   quake: JMAQuake | null
   tsunamis: JMATsunami[]
+  /** 津波の原因地震を結ぶ相手の地震カード（津波タブに渡すものと同じ。→ `shownTsunamiSources`） */
+  tsunamiSourceQuakes: readonly JMAQuake[]
   eews: EEWAlert[]
   /**
    * 地図に描いているか（設定の値をそのまま渡す）。
@@ -61,6 +64,7 @@ export function buildShareCardContent(
     mode,
     quake,
     tsunamis,
+    tsunamiSourceQuakes,
     eews,
     showBathymetry,
     showActiveFaults,
@@ -93,7 +97,7 @@ export function buildShareCardContent(
   if (liveEews.length > 0) notices.unshift(EEW_NOTICE)
 
   const base =
-    mode === 'tsunami' ? tsunamiContent(tsunamis) : mode === 'kyoshin' ? kyoshinContent(liveEews, kyoshinDetection) : quakeContent(quake)
+    mode === 'tsunami' ? tsunamiContent(tsunamis, tsunamiSourceQuakes) : mode === 'kyoshin' ? kyoshinContent(liveEews, kyoshinDetection) : quakeContent(quake)
   return { ...base, notices, shareText: buildShareText(base.header, appUrl) }
 }
 
@@ -165,7 +169,7 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   }
 }
 
-function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
+function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[]): ContentWithoutNotices {
   // **解除表示中（`cancelledAt`）も外す。** 等級の判定（`tsunamiOverallGrade`・`isTsunamiForecastOnly`）は
   // どちらも外すので、ここで残すと見出しは発表中の津波、区域数・震源・時刻は解除された津波、と出どころが割れる。
   const live = tsunamis.filter((t) => !t.cancelled && !t.cancelledAt)
@@ -184,7 +188,8 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   // **震源名と規模が同じ別の地震には地震発現時刻を添える**（2026-10-21 ユーザー選択「B は案1」。全期間の津波電文 651 通のうち
   // 1 通。2023-12-03 の VTSE41 がフィリピン付近の M7.0 を 2 つ載せた）。添えないと同じ文が 2 つ並ぶか、1 つに畳まれて地震が消える。
   const collected: { text: string; time: string | undefined; ms: number }[] = []
-  for (const source of live.flatMap((t) => t.sourceEarthquakes ?? [])) {
+  // 原因地震は、結べた地震カードの上段の値で並べる（津波カードの原因地震の行・地図の×印と同じ値。→ `shownTsunamiSources`）。
+  for (const source of live.flatMap((t) => shownTsunamiSources(t, quakes))) {
     // 規模が数値で無いときは説明を出す（「Ｍ８を超える巨大地震」）。落とすと、**最も重大な
     // 地震ほど震源名だけの薄い画像になる**。
     // 規模の記号は電文の種別（`Mj7.6`）。津波カードの原因地震の行・地図の吹き出しと揃える

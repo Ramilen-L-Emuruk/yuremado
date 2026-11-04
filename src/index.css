@@ -185,6 +185,23 @@
     align-self: start;
   }
 }
+/* 帯・行動チェックリスト・小さい窓の文字。地震一覧と同じ 2 組（狭い組 本文 14.5px・小 11.5px／広い組 16px・12.5px）を、
+   画面の幅ではなく器自身の幅 520px で切り替える（2026-11-04 ユーザー選択「帯と窓だけ揃える (Recommended)」）。
+   器（ui-text）に幅の問い合わせを置き、値は中の ui-text-scope が持つ（問い合わせは器自身の値を変えられないため）。
+   使う側は `text-(length:--ui-f)`・`text-(length:--ui-fs)` で読む。 */
+@utility ui-text {
+  container-type: inline-size;
+}
+.ui-text-scope {
+  --ui-f: 0.90625rem;
+  --ui-fs: 0.71875rem;
+}
+@container (min-width: 520px) {
+  .ui-text-scope {
+    --ui-f: 1rem;
+    --ui-fs: 0.78125rem;
+  }
+}
 /* 開いた県・地域の中身を包む枠（見本 opened.html の .ints .sub）。左の線の色は県の値の色を呼ぶ側が付ける */
 @utility quake-sub {
   margin: 2px 0 4px;
@@ -211,10 +228,10 @@
     cursor: pointer;
   }
 
-  /* v4 は placeholder を文字色の半透明にしたので、v3 の既定（gray-400）に戻す。 */
+  /* v4 は placeholder を文字色の半透明にしたので、弱い字の色（secondary）に固定する。 */
   input::placeholder,
   textarea::placeholder {
-    color: #9ca3af;
+    color: var(--color-secondary);
   }
 }
 
@@ -255,26 +272,26 @@ body {
   z-index: 100000;
 }
 .maplibregl-popup-content {
-  background: #1a1d26;
+  background: var(--color-card);
   color: #e2e8f0;
-  border: 1px solid #2a2d38;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55);
   /* 内容は Tailwind の rem ベースで書かれており UI 倍率に追従するため、余白・閉じるボタンも
      rem で揃える（px のままだと倍率を上げたとき中身だけ膨らんで余白が詰まる）。
      枠線・角丸・影は装飾のヘアラインなので倍率に連動させない。 */
   padding: 0.5rem 0.75rem;
 }
-.maplibregl-popup-close-button { color: #94a3b8; font-size: 1rem; }
+.maplibregl-popup-close-button { color: var(--color-secondary); font-size: 1rem; }
 /* 吹き出しの三角は anchor 方向ごとに border で描かれるため、各方向を背景色に合わせる。 */
-.maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: #1a1d26; }
-.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: #1a1d26; }
-.maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: #1a1d26; }
-.maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: #1a1d26; }
-.maplibregl-popup-anchor-top-left .maplibregl-popup-tip { border-bottom-color: #1a1d26; }
-.maplibregl-popup-anchor-top-right .maplibregl-popup-tip { border-bottom-color: #1a1d26; }
-.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip { border-top-color: #1a1d26; }
-.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip { border-top-color: #1a1d26; }
+.maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: var(--color-card); }
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: var(--color-card); }
+.maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: var(--color-card); }
+.maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: var(--color-card); }
+.maplibregl-popup-anchor-top-left .maplibregl-popup-tip { border-bottom-color: var(--color-card); }
+.maplibregl-popup-anchor-top-right .maplibregl-popup-tip { border-bottom-color: var(--color-card); }
+.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip { border-top-color: var(--color-card); }
+.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip { border-top-color: var(--color-card); }
 
 /* ホバー用ポップアップ（gl/popupRegistry.ts）。吹き出し自身がマウスを受け取ると
    「点から外れた」と判定されて出る/消えるを繰り返すため、当たり判定から外す。 */
@@ -369,6 +386,39 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .update-fade-text,
   .update-fade-bg { animation-timing-function: steps(1, end); }
+}
+
+/* 1 行に収まらない文を流す（→ components/Marquee.tsx）。同じ文を、それぞれの後ろに同じ間を付けて 2 つ並べ、
+   列の半分（文の幅＋間）だけ進めて頭へ戻す。速さは部品が animation-duration で決める。
+   transform だけを、測った値を持ち込まない keyframes で動かす（var() を入れると合成の段で回せないことがある）。 */
+@keyframes marquee-run {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.marquee-run {
+  display: inline-block;
+  animation: marquee-run linear infinite;
+}
+/* 動きを減らす設定では流さず、1 つ目だけを残して末尾を「…」で切る */
+@media (prefers-reduced-motion: reduce) {
+  .marquee-run {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    animation: none;
+  }
+  .marquee-run > :nth-child(2) { display: none; }
+  .marquee-run > :first-child { display: inline; }
+}
+
+/* 凡例の開閉で、前の中身を薄くしながら重ねる（`MapLegend` の `useLegendMotion`。長さは開閉の動きと同じ 150ms）。
+   動きを減らす設定では重ねる中身そのものを出さない */
+@keyframes legend-ghost-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.legend-ghost {
+  animation: legend-ghost-out 150ms ease-out forwards;
 }
 
 /* 地震タブの押せる所（2026-11-03 選択「乗せたら明るく・押すと沈む (Recommended)」）。新しい印や文言は足さない。

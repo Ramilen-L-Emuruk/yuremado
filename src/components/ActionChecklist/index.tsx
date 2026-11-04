@@ -11,8 +11,10 @@
 //
 // 【畳んだ状態で 3 つだけ見せる】揺れた直後に読めるのはせいぜいそのくらい。残りは開いてもらう。
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { log } from '../../utils/logger'
+import { Marquee } from '../Marquee'
+import { DisclosureCaret, Reveal } from '../EarthquakeTab/quakeMotion'
 import {
   IMMEDIATE_ACTIONS,
   EMERGENCY_KIT,
@@ -30,6 +32,13 @@ interface Props {
   reason: ChecklistReason
   /** 判定のもとになった震度階級（気象庁の値）。 */
   scale: number
+  /** 震度が「5弱以上（未入電）」か。札を「震度5弱以上」と書く（2026-11-04 ユーザー選択「「震度5弱以上」 (Recommended)」）。 */
+  unreceived: boolean
+  /**
+   * 開いた形で出たら、閉じるボタンへフォーカスを送るか。地図が低い画面で札を押すと、札とは別の所（地図の上に重ねる形）で
+   * 描き直されるので、送らないとフォーカスが消え、キーボードや支援技術では開いた帯へ戻れない（→ App の `checklistOverlay`）
+   */
+  focusOnOpen: boolean
   /**
    * 実際にどの範囲で判定したか（→ `ChecklistScope`）。見出しの言い回しと、見出しの下の 1 行に使う。
    * **地点を登録しているかではない** —— 地点があっても全国基準へ倒れることがある。
@@ -109,7 +118,7 @@ export function checklistBasisText(reason: ChecklistReason, scope: ChecklistScop
  * 入れ子の `flex-col`: 縦並びで縮められたとき、中の帯が縮んでスクロールできるようにする
  * （`max-h-full` では親の高さが確定しないことがあり、効かない）。
  */
-const WRAPPER_CLASS = 'px-2 flex flex-col items-center'
+const WRAPPER_CLASS = 'ui-text px-2 flex flex-col items-center'
 
 /**
  * 開いた帯の外枠だけに置く下限。上の余白（`topInset`）＋ 見出し 1 行ぶん（2.5rem）。
@@ -224,17 +233,6 @@ function CloseIcon() {
   )
 }
 
-function ChevronIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`w-4 h-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
-      viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-    >
-      <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 /** 畳んだボタンの目印。チェックの付いた紙で「読むもの」だと分かるようにする。 */
 function ChecklistIcon() {
   return (
@@ -246,12 +244,17 @@ function ChecklistIcon() {
   )
 }
 
-export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, onRestore, topInset, areaHeight, below }: Props) {
+export function ActionChecklist({ reason, scale, unreceived, focusOnOpen, scope, collapsed, onDismiss, onRestore, topInset, areaHeight, below }: Props) {
   const [open, setOpen] = useState(false)
   const [kitOpen, setKitOpen] = useState(false)
+  const closeRef = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    if (focusOnOpen && !collapsed) closeRef.current?.focus()
+  }, [focusOnOpen, collapsed])
 
   const shown = open ? IMMEDIATE_ACTIONS : IMMEDIATE_ACTIONS.slice(0, COLLAPSED_ACTION_COUNT)
-  const label = getIntensityLabel(scale)
+  // 未入電の地震は地震カードと同じく「5弱以上」と書く（実際は 5強以上だった可能性がある）
+  const label = `${getIntensityLabel(scale)}${unreceived ? '以上' : ''}`
 
   // 畳んだ状態。**消さずにボタンを残す** —— 余震のたびに帯が出直すのは邪魔だが、読み返したく
   // なることはある。震度を添えるのは、畳んでいる間に届いた揺れの大きさが分かるようにするため。
@@ -259,12 +262,12 @@ export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, on
     return (
       <div className={`${WRAPPER_CLASS} shrink-0`} style={{ paddingTop: checklistTopPadding(topInset, areaHeight, below) }}>
         <button
-          className="pointer-events-auto flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-950/90 border border-red-400/80 shadow-lg text-white/90 hover:text-white hover:bg-red-900/90"
+          className="ui-text-scope pointer-events-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-950/90 border border-red-400/80 shadow-[0_3px_8px_rgba(0,0,0,.55)] text-white hover:bg-red-900/90"
           onClick={onRestore}
           aria-label={`${scaleAriaText(reason, label)}の行動チェックリストを開く`}
         >
           <ChecklistIcon />
-          <span className="text-xs font-bold whitespace-nowrap">
+          <span className="text-(length:--ui-fs) font-bold whitespace-nowrap">
             <span className={SCALE_WIDTH_PLAIN}><ScaleText reason={reason} label={label} /></span> 行動チェック
           </span>
         </button>
@@ -279,20 +282,19 @@ export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, on
     >
       {/* w-fit で中身の幅に合わせる。畳んだ状態は 3 行しかないので、固定幅にすると横に間延びして
           地図を無駄に覆う。展開すれば中身が増えて自然に広がり、max-w-2xl で頭打ちにする。 */}
-      <div className="pointer-events-auto w-fit max-w-2xl min-h-0 max-h-[70dvh] overflow-y-auto overflow-x-hidden overscroll-x-none rounded-lg bg-red-950/95 border-2 border-red-400 shadow-lg">
+      <div className="ui-text-scope pointer-events-auto w-fit max-w-2xl min-h-0 max-h-[70dvh] overflow-y-auto overflow-x-hidden overscroll-x-none rounded-md bg-red-950/95 border-2 border-red-400 shadow-[0_3px_8px_rgba(0,0,0,.55)]">
         <div className="px-3 py-2 flex items-start gap-2">
           {/* 判定の根拠は見出しの下に 1 行だけ。仕組みの説明は設定の窓の「出す最低震度」の項目に置いてある。 */}
           <div className="min-w-0 flex-1 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
-            <span className={`text-xs font-bold text-white px-1.5 py-0.5 rounded-sm bg-red-500 shrink-0 ${SCALE_WIDTH_BADGE}`}>
+            <span className={`text-(length:--ui-fs) font-bold text-white px-1.5 py-0.5 rounded-[3px] bg-red-500 shrink-0 ${SCALE_WIDTH_BADGE}`}>
               <ScaleText reason={reason} label={label} />
             </span>
-            <span className="text-white text-sm font-bold leading-tight">
-              {checklistHeadline(reason, scope)}
-            </span>
-            <span className="basis-full text-white/70 text-xs leading-tight">{checklistBasisText(reason, scope)}</span>
+            <Marquee className="min-w-0 flex-1 text-white text-(length:--ui-f) font-bold leading-tight" text={checklistHeadline(reason, scope)} />
+            <Marquee className="basis-full text-secondary text-(length:--ui-fs) leading-tight" text={checklistBasisText(reason, scope)} />
           </div>
           <button
-            className="text-white/70 hover:text-white p-1 -m-1 shrink-0"
+            ref={closeRef}
+            className="text-secondary hover:text-white p-1 -m-1 shrink-0"
             onClick={onDismiss}
             aria-label="チェックリストを閉じる"
           >
@@ -303,11 +305,11 @@ export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, on
         <ol className="px-3 pb-1 space-y-1.5">
           {shown.map((item, i) => (
             <li key={item.text} className="flex gap-2">
-              <span className="text-red-300 text-sm font-bold shrink-0 tabular-nums">{i + 1}.</span>
+              <span className="text-red-300 text-(length:--ui-f) font-bold shrink-0 tabular-nums">{i + 1}.</span>
               <div className="min-w-0">
-                <p className="text-white text-sm font-bold leading-tight">{item.text}</p>
+                <p className="text-white text-(length:--ui-f) font-bold leading-tight">{item.text}</p>
                 {item.detail && open && (
-                  <p className="text-white/70 text-xs leading-relaxed mt-0.5">{item.detail}</p>
+                  <p className="text-secondary text-(length:--ui-fs) leading-relaxed mt-0.5">{item.detail}</p>
                 )}
               </div>
             </li>
@@ -315,42 +317,42 @@ export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, on
         </ol>
 
         <button
-          className="w-full px-3 py-1.5 flex items-center justify-center gap-1 text-white/80 hover:text-white text-xs"
+          className="w-full px-3 py-1.5 flex items-center justify-center gap-1 text-secondary hover:text-white text-(length:--ui-fs)"
           onClick={() => setOpen(v => !v)}
         >
           {open ? '閉じる' : `続きを見る（全 ${IMMEDIATE_ACTIONS.length} 項目）`}
-          <ChevronIcon open={open} />
+          <span className="shrink-0 text-secondary"><DisclosureCaret open={open} /></span>
         </button>
 
-        {open && (
+        <Reveal open={open}>{() => (
           <div className="px-3 pb-2">
             <button
               className="w-full py-1.5 flex items-center justify-between gap-2 text-left border-t border-red-400/40"
               onClick={() => setKitOpen(v => !v)}
             >
-              <span className="text-white text-sm font-bold">避難するとき持ち出すもの</span>
-              <ChevronIcon open={kitOpen} />
+              <span className="text-white text-(length:--ui-f) font-bold">避難するとき持ち出すもの</span>
+              <span className="shrink-0 text-secondary"><DisclosureCaret open={kitOpen} /></span>
             </button>
-            {kitOpen && (
+            <Reveal open={kitOpen}>{() => (
               <div className="space-y-1.5 pb-1">
-                <p className="text-white/70 text-xs leading-relaxed">
+                <p className="text-secondary text-(length:--ui-fs) leading-relaxed">
                   両手が空くリュックにまとめ、軽くコンパクトに。持病の薬・杖・乳幼児用品など、
                   必要なものは各自で足してください。
                 </p>
                 {EMERGENCY_KIT.map(group => (
                   <div key={group.label}>
-                    <p className="text-red-300 text-xs font-bold">{group.label}</p>
-                    <p className="text-white/90 text-xs leading-relaxed">{group.items.join('・')}</p>
+                    <p className="text-red-300 text-(length:--ui-fs) font-bold">{group.label}</p>
+                    <p className="text-white text-(length:--ui-fs) leading-relaxed">{group.items.join('・')}</p>
                   </div>
                 ))}
               </div>
-            )}
-            <p className="text-white/50 text-xs leading-relaxed border-t border-red-400/40 pt-1.5 mt-1">
+            )}</Reveal>
+            <p className="text-secondary text-(length:--ui-fs) leading-relaxed border-t border-red-400/40 pt-1.5 mt-1">
               出典:{' '}
               {CHECKLIST_SOURCES.map((s, i) => (
                 <span key={s.url}>
                   {i > 0 && '／'}
-                  <a href={s.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-white/80">
+                  <a href={s.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-secondary">
                     {s.label}
                   </a>
                 </span>
@@ -358,7 +360,7 @@ export function ActionChecklist({ reason, scale, scope, collapsed, onDismiss, on
               。実際の避難は気象庁・自治体の指示に従ってください。
             </p>
           </div>
-        )}
+        )}</Reveal>
       </div>
     </div>
   )

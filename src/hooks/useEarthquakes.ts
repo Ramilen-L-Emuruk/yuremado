@@ -52,9 +52,10 @@ import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dm
 // テストデータは押されてから読む（静的に取り込まない理由・失敗したときの扱い・先読みの
 // 段取りは `utils/testDataLoader.ts` にまとめてある）。
 import {
-  cancelOverOtherUnit, decideDispatch as decideBandDispatch, earthquakeCountBandDecision, kohatsuBandDecision,
-  lpgmNotifiable, nankaiBandDecision, nankaiCommentaryBandDecision, noteConveyedCancel as noteBandConveyedCancel,
+  cancelOverOtherUnit, cancelOverOtherUnitInList, decideDispatch as decideBandDispatch, earthquakeCountListDecision, kohatsuListDecision,
+  lpgmNotifiable, nankaiBandDecision, nankaiCommentaryListDecision, noteConveyedCancel as noteBandConveyedCancel,
 } from '../utils/specialInfoBands'
+import { dropExpiredUpTo, earliestExpiryMs, putBandItem, type BandListItem } from '../utils/specialInfoBandList'
 import { loadTestTelegramScripts } from '../utils/testDataLoader'
 import { buildTestTelegramEntries, type TestTelegramScript } from '../utils/testTelegrams'
 
@@ -107,6 +108,31 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
 // 電文ログの保持は経路ごとに分ける（ライブは 24 時間・テストと再生は件数。→ `utils/telegramLogBuffer.ts`）
 /** 何も届かない間に 24 時間より古いライブの行を捨てる間隔（ミリ秒）。 */
 const TELEGRAM_LOG_PRUNE_INTERVAL_MS = 10 * 60 * 1000
+
+/** 帯に複数を積む 4 種（→ `utils/specialInfoBandList.ts`） */
+type BandListKind = 'nankaiCommentary' | 'kohatsu' | 'quakeNotice' | 'earthquakeCount'
+interface BandLists {
+  nankaiCommentary: readonly JMANankaiCommentary[]
+  kohatsu: readonly JMAKohatsu[]
+  quakeNotice: readonly JMAQuakeNotice[]
+  earthquakeCount: readonly JMAEarthquakeCount[]
+}
+const EMPTY_BAND_LISTS: BandLists = { nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
+/** 一覧を置く state の欄 */
+const BAND_LIST_FIELDS = {
+  nankaiCommentary: 'nankaiCommentaryList',
+  kohatsu: 'kohatsuList',
+  quakeNotice: 'quakeNoticeList',
+  earthquakeCount: 'earthquakeCountList',
+} as const satisfies Record<BandListKind, keyof EarthquakeState>
+
+/** 帯の期限の予約をすべて落とす（アンマウント・リセット） */
+function clearBandExpireTimers(timers: Partial<Record<BandListKind, number>>): void {
+  for (const kind of Object.keys(timers) as BandListKind[]) {
+    window.clearTimeout(timers[kind])
+    delete timers[kind]
+  }
+}
 
 const MAX_QUAKE_RETRACTIONS = 20  // 取消を見た事実の台帳の最大保持件数（`rememberQuakeRetraction`）
 
@@ -647,13 +673,19 @@ export interface EarthquakeState {
   tsunamis: JMATsunami[]
   activeEEWs: ReadonlyMap<string, EEWAlert>
   lpgmByEventId: ReadonlyMap<string, JMALpgm>
+  /** 南海トラフ地震臨時情報。**最新の 1 通だけ持つ**（新しい報が前の報を置き換える。2026-11-04 ユーザー選択「臨時情報は最新で置き換える (Recommended)」） */
   nankai: JMANankai | null
-  nankaiCommentary: JMANankaiCommentary | null
-  kohatsu: JMAKohatsu | null
-  /** 地震・津波に関するお知らせ（VZSE40）。最新の 1 通だけ持つ */
-  quakeNotice: JMAQuakeNotice | null
-  /** 地震回数に関する情報（VXSE60）。最新の 1 通だけ持つ */
-  earthquakeCount: JMAEarthquakeCount | null
+  /**
+   * 南海トラフ地震関連解説情報。**帯に積む一覧（新しい順）**。同じ期間の臨時解説（同じ `eventId`）の号は置き換え、
+   * 別の期間・定例解説（電文ごとに `eventId` が変わる）は積む（→ `utils/specialInfoBandList.ts`）
+   */
+  nankaiCommentaryList: readonly JMANankaiCommentary[]
+  /** 北海道・三陸沖後発地震注意情報の一覧（新しい順）。同じ `eventId` の報は置き換える */
+  kohatsuList: readonly JMAKohatsu[]
+  /** 地震・津波に関するお知らせ（VZSE40）の一覧（新しい順）。1 通ずつが別件（`id` で見分ける） */
+  quakeNoticeList: readonly JMAQuakeNotice[]
+  /** 地震回数に関する情報（VXSE60）の一覧（新しい順）。同じ群発（`eventId`）の報は置き換える */
+  earthquakeCountList: readonly JMAEarthquakeCount[]
   /**
    * 推計震度分布図（IXAC41・IXAC40）。**地震ごとに 1 通**（その地震の最新）を持つ。
    *
@@ -841,10 +873,10 @@ export function useEarthquakes(
     activeEEWs: new Map(),
     lpgmByEventId: new Map(),
     nankai: null,
-    nankaiCommentary: null,
-    kohatsu: null,
-    quakeNotice: null,
-    earthquakeCount: null,
+    nankaiCommentaryList: EMPTY_BAND_LISTS.nankaiCommentary,
+    kohatsuList: EMPTY_BAND_LISTS.kohatsu,
+    quakeNoticeList: EMPTY_BAND_LISTS.quakeNotice,
+    earthquakeCountList: EMPTY_BAND_LISTS.earthquakeCount,
     estimatedIntensities: [],
     internationalTsunamis: [],
     quakeUpdateMarks: new Map(),
@@ -977,15 +1009,10 @@ export function useEarthquakes(
   // 1 ティックの中で複数のイベントを処理する（理由は `eewAcceptanceRef` の宣言箇所に同じ）。
   // こちらは反映した時点で即座に進むため、同じティックの中でも正しく比べられる。
   const shownNankaiEventIdRef = useRef<string | null>(null)
-  const shownKohatsuEventIdRef = useRef<string | null>(null)
-  // 解説情報だけは `id`（識別情報と号数の組）で持つ。理由は `applyNankaiCommentary` の照合箇所。
-  const shownCommentaryIdRef = useRef<string | null>(null)
-  // 表示中のお知らせ。取消は元のお知らせの `EventID` しか持たないので、`id` と並べて覚える
-  // （照合は `applyQuakeNotice`）。
-  const shownQuakeNoticeRef = useRef<{ id: string; eventId: string } | null>(null)
-  // 表示中の地震回数の群発識別子。**取消が自分宛かを同期的に判定する**ために持つ
-  // （`setState` の中で照合すると、読み上げを起こすかどうかをその場で返せない）。
-  const shownEarthquakeCountEventIdRef = useRef<string | null>(null)
+  // 帯に積んでいる 4 種の一覧（state の `nankaiCommentaryList` 等と同じもの）。**取消が自分宛かを同期的に判定する**ために
+  // ref でも持つ（理由は上に同じ。`setState` の中で照合すると、読み上げを起こすかどうかをその場で返せない）。
+  // 書くのは `commitBandList` とリセットだけ。要素は state と同じ参照なので、本体を二重に抱えることはない。
+  const bandListsRef = useRef<BandLists>(EMPTY_BAND_LISTS)
   // 現在の state を WS コールバック内から参照するための ref
   const stateRef = useRef(state)
   stateRef.current = state
@@ -1146,13 +1173,10 @@ export function useEarthquakes(
   // 言い分けるのに使う（→ `isNewEstimatedIntensity`）。**持っている一覧では代われない** ——
   // 履歴から黙って取り込んだ分布は持っているが、まだ伝えていない。
   const shownEstimatedIntensityArrivalsRef = useRef<string[]>([])
-  // 後発地震注意情報（VYSE60）の帯を発表から 7 日で畳むタイマー（電文に期限は無く、7 日はアプリの都合）
-  const kohatsuExpireTimerRef = useRef<number | undefined>(undefined)
-  // 南海トラフ地震関連解説情報（VYSE51/52）の7日間有効期限タイマー。
-  // 解説情報には解除電文が無く、定例解説は平常時にも毎月届く。期限で畳まないと帯が常駐する。
-  const nankaiCommentaryExpireTimerRef = useRef<number | undefined>(undefined)
-  const quakeNoticeExpireTimerRef = useRef<number | undefined>(undefined)
-  const earthquakeCountExpireTimerRef = useRef<number | undefined>(undefined)
+  // 帯に積む 4 種の一覧から、届いて 7 日（`expireAt`）を過ぎた報を 1 件ずつ外す予約。種類ごとに 1 本で、
+  // いちばん早い期限に合わせて張り直す（→ `commitBandList`）。電文に期限は無く、7 日はアプリの都合。
+  // 解説情報には解除電文が無く、定例解説は平常時にも毎月届く。期限で外さないと帯が常駐する。
+  const bandExpireTimersRef = useRef<Partial<Record<BandListKind, number>>>({})
   // イベントキュー: ディスパッチャーが 10ms ごとに、発火時刻の来たものを先頭から処理する。
   // リプレイ時は eventTime と再生時刻を比較して発火制御する（並びと取り出しの規約は `EventQueue`）。
   const eventQueueRef = useLazyRef<EventQueue>(createEventQueue)
@@ -1297,171 +1321,150 @@ export function useEarthquakes(
   }, [])
 
   /**
-   * 後発地震注意情報を帯へ反映する。失効の予約もここで持つ。
+   * 帯に積む 4 種の一覧を置き換え、期限の予約を張り直す。**一覧を書くのはここだけ**（とリセット）。
+   *
+   * 期限の予約は種類ごとに 1 本で、一覧の中のいちばん早い期限に合わせる。発火したら、**予約した期限までの報を
+   * 外して**（1 件ずつ消える。2026-11-04 ユーザー選択）残りで張り直す。発火した時点の時計で比べ直さないのは
+   * `dropExpiredUpTo` の理由のとおり。期限までの待ちに使う「いま」は getTimeRef（= clock の serverDate）で、
+   * 過去日の再生でも「届いて 7 日」が再生時計の上で数えられる。
+   */
+  const commitBandList = useCallback(function commit<K extends BandListKind>(kind: K, list: BandLists[K]): void {
+    if (bandListsRef.current[kind] === list) return
+    bandListsRef.current = { ...bandListsRef.current, [kind]: list }
+    const field = BAND_LIST_FIELDS[kind]
+    setState(prev => ({ ...prev, [field]: list }))
+    const timers = bandExpireTimersRef.current
+    if (timers[kind] !== undefined) {
+      window.clearTimeout(timers[kind])
+      delete timers[kind]
+    }
+    const untilMs = earliestExpiryMs(list)
+    if (untilMs === null) return
+    timers[kind] = window.setTimeout(() => {
+      delete timers[kind]
+      commit(kind, dropExpiredUpTo<BandListItem>(bandListsRef.current[kind], untilMs) as BandLists[K])
+    }, Math.max(0, untilMs - getTimeRef.current().getTime()))
+  }, [])
+
+  /**
+   * 後発地震注意情報を帯へ反映する。**同じ `eventId` の報は置き換え、別の `eventId` は積む。**
    * 呼ぶ場所と戻り値の意味は `applyNankai` に同じ。
    */
   const applyKohatsu = useCallback((kohatsu: JMAKohatsu): boolean => {
-    // **期限タイマーは、この報を帯へ当てると決めてから止める。** 先に止めると、別の情報単位宛ての取消や
-    // 期限切れの古い報が届いたとき、帯は残るのに表示中の報の期限だけが失われて居座る（お知らせと同じ）。
-    const clearExpireTimer = () => {
-      if (kohatsuExpireTimerRef.current !== undefined) {
-        window.clearTimeout(kohatsuExpireTimerRef.current)
-        kohatsuExpireTimerRef.current = undefined
-      }
-    }
-    // 判定は中継のプッシュ通知と共用する（→ `kohatsuBandDecision`）
-    const kohatsuDecision = kohatsuBandDecision(shownKohatsuEventIdRef.current, kohatsu, getTimeRef.current().getTime())
+    const list = bandListsRef.current.kohatsu
+    // 判定は中継のプッシュ通知と共用する（→ `kohatsuBandDecision`。一覧から照合先を選ぶのが `kohatsuListDecision`）
+    const kohatsuDecision = kohatsuListDecision(list.map(k => k.eventId), kohatsu, getTimeRef.current().getTime())
     if (!kohatsu.cancelled) {
-      const expireMs = new Date(kohatsu.expireAt).getTime() - getTimeRef.current().getTime()
-      // **期限切れは出さない。** かつては取得側（`fetchDmdataKohatsu`）が期限切れを除いて
-      // 返していたので、ここへは届かなかった。履歴をアーカイブ経由の 1 本へ寄せたことで
-      // **遡り幅の中の最新 1 通がそのまま渡る**ようになり、期限切れも届く。
-      // タイマーを張らないだけでは足りない —— 表示は出たまま、消える契機が 1 つも無くなる。
-      //
-      // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない
-      // （解説情報・地震回数・お知らせと同じ方針）。
+      // **期限切れは出さない。** 履歴はアーカイブ経由で遡り幅の中の報がそのまま渡るので、期限切れも届く。
+      // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない（解説情報・地震回数・お知らせと同じ方針）。
       if (!kohatsuDecision.apply) {
         if (kohatsuDecision.reason === 'badExpire') log.warn('[data] 後発地震注意情報の期限を計算できません', kohatsu.expireAt)
         return false
       }
-
-      clearExpireTimer()
-      kohatsuExpireTimerRef.current = window.setTimeout(() => {
-        kohatsuExpireTimerRef.current = undefined
-        shownKohatsuEventIdRef.current = null
-        setState(prev => ({ ...prev, kohatsu: null }))
-      }, expireMs)
-      shownKohatsuEventIdRef.current = kohatsu.eventId
-      setState(prev => ({ ...prev, kohatsu }))
+      const next = putBandItem(list, kohatsu, shown => shown.eventId === kohatsu.eventId)
+      if (next === null) {
+        log.info(`[kohatsu] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${kohatsu.id}`)
+        return false
+      }
+      commitBandList('kohatsu', next)
       return true
     }
-    // 照合は取消だけ（理由は `applyNankai`）。後発地震に「調査終了」相当の段階は無いが、
-    // 判定の形を揃えておく ―― 片方だけ違う規則にすると、次に触る人がどちらが正しいか判らない。
+    // 照合は取消だけ（理由は `applyNankai`）。取消が指す情報単位（`eventId`）の報だけを外す。
     if (!kohatsuDecision.apply) {
-      // 表示していない場合もここへ来る（理由は `applyNankai` の同じ箇所に同じ）
-      log.info(shownKohatsuEventIdRef.current === null
+      // 一覧が空の場合もここへ来る（理由は `applyNankai` の同じ箇所に同じ）
+      log.info(list.length === 0
         ? `[kohatsu] 表示していない情報単位への取消のため帯は触りません received=${kohatsu.eventId}`
-        : `[kohatsu] 別の情報単位への取消のため帯を残します received=${kohatsu.eventId} shown=${shownKohatsuEventIdRef.current}`)
+        : `[kohatsu] 別の情報単位への取消のため帯を残します received=${kohatsu.eventId} shown=${list.map(k => k.eventId).join(',')}`)
       return false
     }
-    clearExpireTimer()
-    shownKohatsuEventIdRef.current = null
-    setState(prev => ({ ...prev, kohatsu: null }))
+    commitBandList('kohatsu', list.filter(k => k.eventId !== kohatsu.eventId))
     return true
-  }, [])
+  }, [commitBandList])
 
+  /**
+   * 南海トラフ地震関連解説情報を反映する。**同じ期間の臨時解説（同じ `eventId`）の号は置き換え、別の期間・定例解説は積む**
+   * （定例解説は電文ごとに `eventId` が変わるので別件になる）。期限切れの報は出さない。
+   */
   const applyNankaiCommentary = useCallback((commentary: JMANankaiCommentary): boolean => {
-    // 取消電文は帯を消す。**戻り値は帯を消したか**（他の帯と同じ）。音と読み上げは帯を消したかによらず
+    const list = bandListsRef.current.nankaiCommentary
+    // 判定は中継のプッシュ通知と共用する（→ `nankaiCommentaryBandDecision`。一覧から照合先を選ぶのが `nankaiCommentaryListDecision`）
+    const commentaryDecision = nankaiCommentaryListDecision(list.map(c => c.id), commentary, getTimeRef.current().getTime())
+    // 取消電文は、指す号を一覧から外す。**戻り値は帯を変えたか**（他の帯と同じ）。音と読み上げは帯を変えたかによらず
     // 起こす（解説情報の設定がオンの端末だけ。2026-10-22 ユーザー選択「設定を入れたときだけ鳴らし読む
     // (Recommended)」・2026-10-24 ユーザー選択「伝える (Recommended)」。→ `decideDispatch`）
     if (commentary.cancelled) {
-      // 失効の予約と同じく、消す前に `id` を照合する（待っている間に新しい解説へ入れ替わって
-      // いた場合にそちらを消さないため）。
+      // **照合は `id`（識別情報と号数の組）。`eventId` では足りない。** 臨時解説（VYSE51）は一連の期間で `eventId` が固定で、
+      // 号数は `Serial` にしか出ない（→ docs/spec/data-sources-spec.md §2 の表）。`eventId` だけを比べると、連日届く別の号を
+      // 同じものとして扱う。
       //
-      // **`eventId` では足りない。** 臨時解説（VYSE51）は一連の期間で `eventId` が固定で、
-      // 号数は `Serial` にしか出ない（→ docs/spec/data-sources-spec.md §2 の表）。`eventId` だけを
-      // 比べると、連日届く別の号を同じものとして扱い、照合が素通りする。`id` は両方を含む。
-      //
-      // **`id` を要求しても正当な取消は弾かれない。** 取消電文の `Serial` は「直前の時点における
-      // 最新の情報番号の値」と定められている（電文解説資料 Ⅰ.別紙ウ 2.）ので、帯に出している号
-      // （＝最新号）と一致する。古い号を指す取消だけが弾かれる ―― それがここで防ぎたいもの。
-      const shown = shownCommentaryIdRef.current
-      // 判定は中継のプッシュ通知と共用する（→ `nankaiCommentaryBandDecision`）
-      if (!nankaiCommentaryBandDecision(shown, commentary, getTimeRef.current().getTime()).apply) {
-        log.info(`[nankaiCommentary] 別の号への取消のため帯を残します received=${commentary.id} shown=${shown}`)
+      // **`id` を要求しても正当な取消は弾かれない。** 取消電文の `Serial` は「直前の時点における最新の情報番号の値」と
+      // 定められている（電文解説資料 Ⅰ.別紙ウ 2.）ので、一覧に積んでいる号（その期間の最新号）と一致する。古い号を指す
+      // 取消だけが弾かれる ―― それがここで防ぎたいもの。
+      if (!commentaryDecision.apply) {
+        log.info(`[nankaiCommentary] 帯に積んでいない号への取消のため帯を残します received=${commentary.id} shown=${list.map(c => c.id).join(',')}`)
         return false
       }
-      // **期限タイマーは号を照合した後で止める**（お知らせと同じ）。先に止めると、別の号への取消で
-      // 帯は残るのに 7 日の期限だけが失われて居座る。
-      if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-        window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-        nankaiCommentaryExpireTimerRef.current = undefined
-      }
-      shownCommentaryIdRef.current = null
-      setState(prev => ({ ...prev, nankaiCommentary: null }))
+      commitBandList('nankaiCommentary', list.filter(c => c.id !== commentary.id))
       return true
     }
-
-    const remainMs = new Date(commentary.expireAt).getTime() - getTimeRef.current().getTime()
     // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない。前者はパーサや
-    // 時刻シフト（testScenarioReplay）のバグを示すため記録を残す。判定は中継と共用する（→ `nankaiCommentaryBandDecision`）
-    const commentaryDecision = nankaiCommentaryBandDecision(shownCommentaryIdRef.current, commentary, getTimeRef.current().getTime())
+    // 時刻シフト（testScenarioReplay）のバグを示すため記録を残す。
     if (!commentaryDecision.apply) {
       if (commentaryDecision.reason === 'badExpire') log.warn('[data] 南海トラフ関連解説情報の期限を計算できません', commentary.expireAt)
       return false
     }
-
-    if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-      window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
+    const next = putBandItem(list, commentary, shown => shown.eventId === commentary.eventId)
+    if (next === null) {
+      log.info(`[nankaiCommentary] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${commentary.id}`)
+      return false
     }
-    shownCommentaryIdRef.current = commentary.id
-    setState(prev => ({ ...prev, nankaiCommentary: commentary }))
-    nankaiCommentaryExpireTimerRef.current = window.setTimeout(() => {
-      nankaiCommentaryExpireTimerRef.current = undefined
-      if (shownCommentaryIdRef.current === commentary.id) shownCommentaryIdRef.current = null
-      setState(prev => (
-        prev.nankaiCommentary?.id === commentary.id ? { ...prev, nankaiCommentary: null } : prev
-      ))
-    }, remainMs)
+    commitBandList('nankaiCommentary', next)
     return true
-  }, [])
+  }, [commitBandList])
 
   /**
-   * 地震・津波に関するお知らせ（VZSE40）を反映する。
+   * 地震・津波に関するお知らせ（VZSE40）を反映する。**1 通ずつが別件**（`id` は `EventID` と `Control/DateTime` の組。
+   * → `quakeNoticeId`）なので積む。同じ `id` が重ねて届いたら置き換える。
    *
-   * 帯の扱いは南海トラフ関連解説情報とほぼ同じ（最新の 1 通・7 日で畳む・取消で消す）。
    * **7 日は表示上の都合**で、気象庁が期限を定めているわけではない（後発地震注意情報の帯の 7 日も同じ）。
    *
-   * 戻り値は「画面の状態を変えたか」（帯を出した・取消で帯を消した）。呼び出し側は真のときだけ
+   * 戻り値は「画面の状態を変えたか」（帯に積んだ・取消で一覧から外した）。呼び出し側は真のときだけ
    * `onLiveEvent` へ流す（読み上げるかは受け手が設定で決める）。偽なら流さず、録画向けの記録を
-   * `notApplied` で残す —— 隣の `applyNankaiCommentary`・`applyKohatsu` と同じ形。
-   *
-   * **記録はこの関数の中で行わない。** かつてはお知らせだけが音も読み上げも持たず、この関数が
-   * `notDispatched` を自分で記録する唯一の例外だった。読み上げを持った（設定で有効にしたとき）ので、
-   * 他の帯と同じく呼び出し側が「流した／流さなかった理由」を記録する。
+   * `notApplied` で残す —— 隣の `applyNankaiCommentary`・`applyKohatsu` と同じ形。記録はこの関数の中で行わない。
    */
   const applyQuakeNotice = useCallback((notice: JMAQuakeNotice): boolean => {
+    const list = bandListsRef.current.quakeNotice
     if (notice.cancelled) {
-      // 消す前に、取消が表示中のお知らせ宛てかを照合する（待っている間に新しいお知らせへ
-      // 入れ替わっていたら、そちらを消さない）。
-      //
       // **照合は `EventID` で行う。`id` ではない。** 取消は元のお知らせの `EventID` を引き継ぐ ——
       // 気象庁公式のサンプル（`jmaxml_20260723_Samples.zip` の `42_03_01_220402_VZSE40.xml`）は発表時刻が 2022-04-02 06:58 なのに
       // `EventID` は `20220402050100`（＝05:01）で、自分の発表時刻ではなく**取り消す対象の発表時刻**を
       // 指している（発表側のサンプルでは `EventID` ＝自分の発表時刻）。`id` には電文の作成時刻が
       // 入るので（→ `quakeNoticeId`）、発表と取消で一致しない。
       //
-      // **同じ分に別のお知らせが出ていたら、どちら宛てかは電文から決められない。** 取消が持つのは
-      // 分までの `EventID` だけで、元のお知らせの作成時刻は載らない。表示中の 1 通と分が一致すれば
-      // 消す。**実配信の取消は未観測**（アーカイブの控えのお知らせ 605 通に 0 通。→ docs/spec/data-sources-spec.md §2
+      // **`EventID` と運用種別が同じものは、積まれている全件を外す。** 気象庁の解説資料（共通別紙ア・ウ）は、
+      // お知らせの「独立した情報単位」を情報名称・運用種別・識別情報（`EventID` ＝発表の日時分）の組とし、
+      // 取消は「『独立した情報単位』全体について…取り消す」と定めている。同じ分に出た 2 通は同じ単位なので、
+      // 取消は両方に効く（2026-11-04 ユーザー選択「気象庁どおりすべて外す (Recommended)」）。
+      // **実配信の取消は未観測**（全期間の控え 2020-11-18〜2026-10-31 のお知らせ 608 通に 0 通。→ docs/spec/data-sources-spec.md §2
       // 「扱う電文種別」）なので、届いたら形を確かめること。
       //
       // **`EventID` が空の取消は照合しない。** 空どうしは「同じお知らせ」の証拠にならない
       // （パーサーは空を記録して通す）。
-      const shown = shownQuakeNoticeRef.current
-      if (shown == null) {
+      if (list.length === 0) {
         log.info(`[quakeNotice] 表示中のお知らせが無いため取消を当てません received=${notice.eventId}`)
         return false
       }
-      if (notice.eventId === '' || shown.eventId !== notice.eventId) {
-        log.info(`[quakeNotice] 別のお知らせへの取消のため帯を残します received=${notice.eventId} shown=${shown.eventId}`)
+      const sameUnit = (n: JMAQuakeNotice) => n.eventId === notice.eventId && n.operationStatus === notice.operationStatus
+      const targets = notice.eventId === '' ? [] : list.filter(sameUnit)
+      if (targets.length === 0) {
+        log.info(`[quakeNotice] 帯に積んでいないお知らせへの取消のため帯を残します received=${notice.eventId} shown=${list.map(n => n.eventId).join(',')}`)
         return false
       }
-      // どのお知らせを消したかは記録に残す。同じ分に別のお知らせが出ていた場合、取消の本来の宛先とは
-      // 別の 1 通を消した可能性があり、それは後から id を突き合わせないと分からない。
-      log.info(`[quakeNotice] 取消で帯を消します eventId=${notice.eventId} shown=${shown.id} cancel=${notice.id}`)
-      // **期限タイマーは id を照合した後で止める。** 先に止めると、別のお知らせ宛ての取消が届いたとき、
-      // 表示中のお知らせの 7 日の期限だけが失われて帯が居座る。
-      if (quakeNoticeExpireTimerRef.current !== undefined) {
-        window.clearTimeout(quakeNoticeExpireTimerRef.current)
-        quakeNoticeExpireTimerRef.current = undefined
-      }
-      shownQuakeNoticeRef.current = null
-      setState(prev => ({ ...prev, quakeNotice: null }))
-      // **取消しの理由（パーサーは `body` に読んでいる）は画面に出さない。** 取消では帯ごと消え、
-      // 中身が運用連絡なので、消すためだけに帯を出し直すほどのものでもない。読み上げを有効にした
-      // 端末では、理由は読み上げが伝える（→ `quakeNoticeToText`）。
-      // **真を返す** —— 帯を消した（画面が変わった）ので、受け手へ流して取消を読ませる。
+      log.info(`[quakeNotice] 取消で一覧から外します eventId=${notice.eventId} shown=${targets.map(n => n.id).join(',')} cancel=${notice.id}`)
+      commitBandList('quakeNotice', list.filter(n => !sameUnit(n)))
+      // **取消しの理由（パーサーは `body` に読んでいる）は画面に出さない。** 中身が運用連絡なので、外すためだけに帯を
+      // 出し直すほどのものでもない。読み上げを有効にした端末では、理由は読み上げが伝える（→ `quakeNoticeToText`）。
+      // **真を返す** —— 一覧を変えた（画面が変わった）ので、受け手へ流して取消を読ませる。
       return true
     }
 
@@ -1472,26 +1475,20 @@ export function useEarthquakes(
       return false
     }
     if (remainMs <= 0) return false
-
-    if (quakeNoticeExpireTimerRef.current !== undefined) {
-      window.clearTimeout(quakeNoticeExpireTimerRef.current)
+    const next = putBandItem(list, notice, shown => shown.id === notice.id)
+    if (next === null) {
+      log.info(`[quakeNotice] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${notice.id}`)
+      return false
     }
-    shownQuakeNoticeRef.current = { id: notice.id, eventId: notice.eventId }
-    setState(prev => ({ ...prev, quakeNotice: notice }))
-    quakeNoticeExpireTimerRef.current = window.setTimeout(() => {
-      quakeNoticeExpireTimerRef.current = undefined
-      if (shownQuakeNoticeRef.current?.id === notice.id) shownQuakeNoticeRef.current = null
-      setState(prev => (prev.quakeNotice?.id === notice.id ? { ...prev, quakeNotice: null } : prev))
-    }, remainMs)
+    commitBandList('quakeNotice', next)
     return true
-  }, [])
+  }, [commitBandList])
 
   /**
-   * 地震回数に関する情報（VXSE60）を反映する。
+   * 地震回数に関する情報（VXSE60）を反映する。**同じ群発（`eventId`）の報は置き換え、別の群発は積む。**
    *
-   * 帯の扱いは南海トラフ関連解説情報・お知らせと同じ（最新の 1 通・7 日で畳む・取消で消す）。
    * **7 日は表示上の都合**で、気象庁が期限を定めているわけではない —— この情報に終わりの宣言は
-   * 無く、群発が収まれば発表が止まるだけ。畳む契機を次報と取消だけにすると、収まったあとも
+   * 無く、群発が収まれば発表が止まるだけ。外す契機を次報と取消だけにすると、収まったあとも
    * 帯が居座る。
    *
    * **区間も本文も無い報は反映しない。** 中身が空の帯を出しても伝わるものが無く、
@@ -1500,21 +1497,17 @@ export function useEarthquakes(
    * 「-1 を「発表なし」に (推奨)」）。
    */
   const applyEarthquakeCount = useCallback((count: JMAEarthquakeCount): boolean => {
-    // 判定は中継のプッシュ通知と共用する（→ `earthquakeCountBandDecision`）
-    const countDecision = earthquakeCountBandDecision(shownEarthquakeCountEventIdRef.current, count, getTimeRef.current().getTime())
+    const list = bandListsRef.current.earthquakeCount
+    // 判定は中継のプッシュ通知と共用する（→ `earthquakeCountBandDecision`。一覧から照合先を選ぶのが `earthquakeCountListDecision`）
+    const countDecision = earthquakeCountListDecision(list.map(c => c.eventId), count, getTimeRef.current().getTime())
     if (count.cancelled) {
       // 取消は id ではなく eventId で照合する。回数情報は同じ群発について報を重ねるので、
-      // 取消が指すのは「その群発について直前に出した報」＝いま出している報になる。
+      // 取消が指すのは「その群発について直前に出した報」＝一覧に積んでいるその群発の報になる。
       if (!countDecision.apply) {
-        log.info(`[earthquakeCount] 別の群発への取消のため帯を残します received=${count.eventId} shown=${shownEarthquakeCountEventIdRef.current}`)
+        log.info(`[earthquakeCount] 帯に積んでいない群発への取消のため帯を残します received=${count.eventId} shown=${list.map(c => c.eventId).join(',')}`)
         return false
       }
-      if (earthquakeCountExpireTimerRef.current !== undefined) {
-        window.clearTimeout(earthquakeCountExpireTimerRef.current)
-        earthquakeCountExpireTimerRef.current = undefined
-      }
-      shownEarthquakeCountEventIdRef.current = null
-      setState(prev => ({ ...prev, earthquakeCount: null }))
+      commitBandList('earthquakeCount', list.filter(c => c.eventId !== count.eventId))
       // **true を返す。** 読み上げ側が「取り消された」ことを伝えるため。false にすると
       // 取消がどこへも流れず、直前に読み上げた回数が訂正されないまま残る。
       return true
@@ -1524,20 +1517,14 @@ export function useEarthquakes(
       if (countDecision.reason === 'badExpire') log.warn('[data] 地震回数に関する情報の期限を計算できません', count.expireAt)
       return false
     }
-    const remainMs = new Date(count.expireAt).getTime() - getTimeRef.current().getTime()
-
-    if (earthquakeCountExpireTimerRef.current !== undefined) {
-      window.clearTimeout(earthquakeCountExpireTimerRef.current)
+    const next = putBandItem(list, count, shown => shown.eventId === count.eventId)
+    if (next === null) {
+      log.info(`[earthquakeCount] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${count.id}`)
+      return false
     }
-    shownEarthquakeCountEventIdRef.current = count.eventId
-    setState(prev => ({ ...prev, earthquakeCount: count }))
-    earthquakeCountExpireTimerRef.current = window.setTimeout(() => {
-      earthquakeCountExpireTimerRef.current = undefined
-      if (shownEarthquakeCountEventIdRef.current === count.eventId) shownEarthquakeCountEventIdRef.current = null
-      setState(prev => (prev.earthquakeCount?.id === count.id ? { ...prev, earthquakeCount: null } : prev))
-    }, remainMs)
+    commitBandList('earthquakeCount', next)
     return true
-  }, [])
+  }, [commitBandList])
 
   /**
    * 推計震度分布図（IXAC41）を反映する。**地震ごとに 1 通**を持つ（→ `upsertEstimatedIntensity`）。
@@ -2671,7 +2658,7 @@ export function useEarthquakes(
           })
         } else if (payload.kind === 'kohatsu') {
           const kohatsu = payload.data
-          const otherUnit = cancelOverOtherUnit(shownKohatsuEventIdRef.current, kohatsu)
+          const otherUnit = cancelOverOtherUnitInList(bandListsRef.current.kohatsu.map(k => k.eventId), kohatsu)
           const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), silent, otherUnit)
           if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
@@ -2718,22 +2705,12 @@ export function useEarthquakes(
   }, [handleEvent])
 
   // アンマウント時にタイマーとキューをクリア。
-  // 7日タイマーは 4 つある（後発地震・南海トラフ関連解説情報・地震津波に関するお知らせ・地震回数）。
-  // **1 つでも落とし忘れると**、残った側が最大7日後にアンマウント済みのクロージャの setState を呼ぶ。
+  // 帯の期限の予約（後発地震・南海トラフ関連解説情報・地震津波に関するお知らせ・地震回数の 4 種）も落とす。
+  // **落とし忘れると**、最大7日後にアンマウント済みのクロージャの setState を呼ぶ。
   useEffect(() => {
+    const bandExpireTimers = bandExpireTimersRef.current
     return () => {
-      if (kohatsuExpireTimerRef.current !== undefined) {
-        window.clearTimeout(kohatsuExpireTimerRef.current)
-      }
-      if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-        window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-      }
-      if (quakeNoticeExpireTimerRef.current !== undefined) {
-        window.clearTimeout(quakeNoticeExpireTimerRef.current)
-      }
-      if (earthquakeCountExpireTimerRef.current !== undefined) {
-        window.clearTimeout(earthquakeCountExpireTimerRef.current)
-      }
+      clearBandExpireTimers(bandExpireTimers)
       // テストボタンが張った待ちも全部落とす（→ `clearTestSimulationTimers`）。
       // **キューを空にするだけでは足りない** —— 津波と EEW のテストはキューを通らず
       // `handleEvent` を直接呼ぶ。
@@ -3174,9 +3151,9 @@ export function useEarthquakes(
           // 定めており、判定材料は `App` が持っている。
           if (tsunamis.length > 0) onStartupRestoreRef.current?.('tsunami')
           // **臨時情報・後発地震・解説情報はヘルパ経由で入れる。** ここで state を直書きすると、
-          // 表示中の識別情報を覚える記憶（`shownNankaiEventIdRef` 等）が進まず、以後に届いた
-          // 取消の照合が「表示していない」と誤判定して無条件に帯を消す。後発地震の期限タイマーも
-          // `applyKohatsu` が張るので、ここで重ねて張らない。
+          // 表示中の識別情報を覚える記憶（`shownNankaiEventIdRef`・帯の一覧の控え `bandListsRef`）が進まず、以後に届いた
+          // 取消の照合が「表示していない」と誤判定する。帯の期限の予約も `commitBandList` が張るので、
+          // ここで重ねて張らない。
           // **`extras` は種別ごとに振り分けてヘルパへ渡す。** 再生キューへ流す形（リプレイ側）は
           // ここでは採れない —— あちらは `silent` で音を抑えるが、こちらは音・読み上げ・通知を
           // 起こす経路（`handleEvent`）を通ることになる。
@@ -3388,7 +3365,7 @@ export function useEarthquakes(
         }
       } else if (ev.kind === 'kohatsu') {
         const kohatsu = ev.data
-        const otherUnit = cancelOverOtherUnit(shownKohatsuEventIdRef.current, kohatsu)
+        const otherUnit = cancelOverOtherUnitInList(bandListsRef.current.kohatsu.map(k => k.eventId), kohatsu)
         const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), false, otherUnit)
         if (decision === 'dispatch') {
           onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
@@ -4463,10 +4440,7 @@ export function useEarthquakes(
     // 消えた帯の識別情報と比べられる）。取消テストの待ちも落とす ―― リプレイへ切り替えた後で
     // テスト用の取消がキューへ紛れ込むのを防ぐ。
     shownNankaiEventIdRef.current = null
-    shownKohatsuEventIdRef.current = null
-    shownCommentaryIdRef.current = null
-    shownQuakeNoticeRef.current = null
-    shownEarthquakeCountEventIdRef.current = null
+    bandListsRef.current = EMPTY_BAND_LISTS
     // 伝えた取消の記憶も前の時間軸のもの（→ `conveyedCancelsRef`）
     conveyedCancelsRef.current.clear()
     estimatedIntensitiesRef.current = []
@@ -4491,10 +4465,10 @@ export function useEarthquakes(
       activeEEWs: new Map(),
       lpgmByEventId: new Map(),
       nankai: null,
-      nankaiCommentary: null,
-      kohatsu: null,
-      quakeNotice: null,
-      earthquakeCount: null,
+      nankaiCommentaryList: EMPTY_BAND_LISTS.nankaiCommentary,
+      kohatsuList: EMPTY_BAND_LISTS.kohatsu,
+      quakeNoticeList: EMPTY_BAND_LISTS.quakeNotice,
+      earthquakeCountList: EMPTY_BAND_LISTS.earthquakeCount,
       estimatedIntensities: [],
       internationalTsunamis: [],
       // 時間軸が変わるので、印とその記憶も落とす（残すと再生開始直後の報が
@@ -4523,26 +4497,9 @@ export function useEarthquakes(
     }))
     eventQueueRef.current.clear()
     quakeIntensityCacheRef.current.clear()
-    // 後発地震注意情報の7日タイマーもリセット対象。resetState 後に古いタイマーが残ると、
-    // リプレイモード切替→ライブ復帰後に発火して新しく設定された kohatsu を null に上書きしうる。
-    if (kohatsuExpireTimerRef.current !== undefined) {
-      window.clearTimeout(kohatsuExpireTimerRef.current)
-      kohatsuExpireTimerRef.current = undefined
-    }
-    // 解説情報の7日タイマーも同じ理由でリセットする
-    if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-      window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-      nankaiCommentaryExpireTimerRef.current = undefined
-    }
-    // 地震・津波に関するお知らせ（VZSE40）・地震回数（VXSE60）の7日タイマーも同じ
-    if (quakeNoticeExpireTimerRef.current !== undefined) {
-      window.clearTimeout(quakeNoticeExpireTimerRef.current)
-      quakeNoticeExpireTimerRef.current = undefined
-    }
-    if (earthquakeCountExpireTimerRef.current !== undefined) {
-      window.clearTimeout(earthquakeCountExpireTimerRef.current)
-      earthquakeCountExpireTimerRef.current = undefined
-    }
+    // 帯の期限の予約もリセット対象。resetState 後に古い予約が残ると、リプレイモード切替→ライブ復帰後に
+    // 発火して、新しく積んだ一覧を前の時間軸の一覧で上書きしうる。
+    clearBandExpireTimers(bandExpireTimersRef.current)
   }, [clearTestSimulationTimers])
 
   /**

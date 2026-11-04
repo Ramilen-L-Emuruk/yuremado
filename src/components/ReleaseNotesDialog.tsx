@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { CANCEL_FADE_MS, fadeIn } from './EarthquakeTab/quakeMotion'
 import { fetchReleaseNotes } from '../services/releaseNotesSource'
 import { isAbortedByCaller } from '../utils/fetchWithTimeout'
 import { log } from '../utils/logger'
@@ -23,6 +24,11 @@ export function ReleaseNotesDialog({ title, select, onClose }: {
   const [state, setState] = useState<{ kind: 'loading' } | { kind: 'failed' } | { kind: 'ready'; views: ReleaseNoteView[] }>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
   const closeRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  // 窓は地震タブの取消の覆いと同じ 250ms で薄くから出す（2026-11-04 ユーザー選択「揃える (Recommended)」。動きを減らす設定では出さない）
+  useLayoutEffect(() => {
+    if (panelRef.current) fadeIn(panelRef.current, CANCEL_FADE_MS)
+  }, [])
 
   useEffect(() => {
     const ac = new AbortController()
@@ -66,36 +72,40 @@ export function ReleaseNotesDialog({ title, select, onClose }: {
       role="presentation"
     >
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={title ?? (state.kind === 'ready' && state.views[0] !== undefined ? `${state.views[0].version} の変更内容` : '変更内容')}
-        className="flex max-h-full w-full max-w-lg flex-col gap-3 overflow-y-auto rounded-lg border border-border bg-panel p-4 text-sm shadow-2xl shadow-black/60"
+        className="ui-text flex max-h-full w-full max-w-lg flex-col gap-3 overflow-y-auto rounded-md border border-border bg-panel p-4 shadow-[0_3px_8px_rgba(0,0,0,.55)]"
       >
+        {/* 文字の 2 組の値を持つ包み（並べ方は窓の flex のまま。→ index.css の ui-text） */}
+        <div className="ui-text-scope contents text-(length:--ui-f)">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1 text-white">{title}</div>
           <button
             ref={closeRef}
             type="button"
             onClick={onClose}
-            className="rounded-sm border border-border px-3 py-1 text-xs text-secondary hover:bg-white/10 hover:text-white"
+            className="rounded-md border border-border bg-panel px-3 py-1 text-(length:--ui-fs) text-secondary hover:bg-white/10 hover:text-white"
           >
             閉じる
           </button>
         </div>
-        {state.kind === 'loading' && <div className="text-xs text-secondary">読み込み中</div>}
+        {state.kind === 'loading' && <div className="text-(length:--ui-fs) text-secondary">読み込み中</div>}
         {state.kind === 'failed' && (
-          <div className="flex items-center gap-3 text-xs text-secondary">
+          <div className="flex items-center gap-3 text-(length:--ui-fs) text-secondary">
             <span>変更内容を読み込めませんでした</span>
             <button
               type="button"
               onClick={retry}
-              className="rounded-sm border border-border px-3 py-1 text-xs text-secondary hover:bg-white/10 hover:text-white"
+              className="rounded-md border border-border bg-panel px-3 py-1 text-(length:--ui-fs) text-secondary hover:bg-white/10 hover:text-white"
             >
               もう一度
             </button>
           </div>
         )}
         {state.kind === 'ready' && state.views.map((v) => <VersionNotes key={v.version} view={v} />)}
+        </div>
       </div>
     </div>
   )
@@ -105,9 +115,9 @@ export function ReleaseNotesDialog({ title, select, onClose }: {
 function VersionNotes({ view }: { view: ReleaseNoteView }) {
   return (
     <section className="flex flex-col gap-1">
-      <h3 className="text-sm text-white">{view.version} の変更内容</h3>
+      <h3 className="text-(length:--ui-f) text-white">{view.version} の変更内容</h3>
       {view.minorOnly
-        ? <p className="text-xs text-white/85">軽微な修正</p>
+        ? <p className="text-(length:--ui-fs) text-secondary">軽微な修正</p>
         : (
           <>
             <NoteList label="追加" items={view.added} />
@@ -122,8 +132,8 @@ function NoteList({ label, items }: { label: string; items: string[] }) {
   if (items.length === 0) return null
   return (
     <div>
-      <div className="text-xs text-secondary">{label}</div>
-      <ul className="ml-4 list-disc text-xs text-white/85">
+      <div className="text-(length:--ui-fs) text-secondary">{label}</div>
+      <ul className="ml-4 list-disc text-(length:--ui-fs) text-secondary">
         {items.map((t, i) => <li key={i}>{t}</li>)}
       </ul>
     </div>
