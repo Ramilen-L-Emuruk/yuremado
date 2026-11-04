@@ -1767,7 +1767,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
         return (
           <div key={t.id} className="flex flex-col gap-3 relative">
             {t.cancelledAt && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-lg" style={{ minHeight: '5rem' }}>
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-md" style={{ minHeight: '5rem' }}>
                 <span className="font-black text-white" style={{ fontSize: '2.5rem', lineHeight: 1.1 }}>{cancelInfo.badge}</span>
                 <span className="text-sm font-bold text-white/90 mt-1">{cancelInfo.desc}</span>
               </div>

@@ -17,7 +17,7 @@ export interface TsunamiSourceLink {
 /**
  * 津波の原因地震（`Body/Earthquake`、地震ごとに 1 件）を、`EventID` に並ぶ地震の識別番号と結ぶ。
  * **原因地震と地震カードの対応はここだけで決める**（震源の借用・バナーの「▶ 地震情報」・読み上げの既読が
- * 同じ答えを使う。共有カードは結びを使わず原因地震を全件並べる）。
+ * 同じ答えを使う。地図の×印と共有カードも、結べた地震カードの値で原因地震を全件並べる）。
  *
  * **どの `Earthquake` 要素がどの番号に当たるかは電文仕様に書かれていない**（電文解説資料 Ⅱ.11-6 は
  * 「地震毎に本要素を記載」とだけ言う）。また番号そのものは発生時刻などの物理的な意味を持たない
@@ -138,4 +138,29 @@ export function shownTsunamiSources(
     link.source,
     link.eventId ? quakes.find(q => extractQuakeEventId(q) === link.eventId && !q.cancelledAt) : undefined,
   ))
+}
+
+/**
+ * 表示中の津波すべての原因地震を、結べた地震カードの上段の値で表し、同じ地震を 1 度だけにして並べる（地図の×印）。
+ * 取り消された津波は見ない。**同じ地震かは震源名と時刻の瞬間で見る**（共有カードと同じ決まり）。時刻を文字で比べると、
+ * 同じ地震を運ぶ 2 つの津波のうち片方だけが地震カードと結べたとき、時刻の書き方が違って同じ地震が 2 つ並ぶ。
+ * 時刻を読めないものは、読めない同士を震源名だけで重ねる。
+ */
+export function distinctShownTsunamiSources(
+  tsunamis: readonly Pick<JMATsunami, 'cancelled' | 'eventId' | 'foldedReports' | 'sourceEarthquakes'>[],
+  quakes: readonly JMAQuake[],
+): TsunamiSourceEarthquake[] {
+  const seen = new Set<string>()
+  const out: TsunamiSourceEarthquake[] = []
+  for (const t of tsunamis) {
+    if (t.cancelled) continue
+    for (const s of shownTsunamiSources(t, quakes)) {
+      const ms = Date.parse(sourceEarthquakeTime(s) ?? '')
+      const key = `${s.hypocenterName}|${Number.isFinite(ms) ? ms : ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(s)
+    }
+  }
+  return out
 }

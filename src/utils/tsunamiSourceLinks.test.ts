@@ -1,6 +1,6 @@
 // 津波の原因地震を、結べた地震カードの上段の値で表す（2026-11-03 ユーザー選択「結べた地震カードの値 (Recommended)」）。
 import { describe, it, expect } from 'vitest'
-import { shownTsunamiSource, shownTsunamiSources } from './tsunamiSourceLinks'
+import { distinctShownTsunamiSources, shownTsunamiSource, shownTsunamiSources } from './tsunamiSourceLinks'
 import './quakeMerge'
 import type { JMAQuake, JMATsunami, TsunamiSourceEarthquake } from '../types/earthquake'
 
@@ -81,5 +81,30 @@ describe('shownTsunamiSources', () => {
     const tsunami = { eventId: EVENT, sourceEarthquakes: [fromTsunami] } as Pick<JMATsunami, 'eventId' | 'foldedReports' | 'sourceEarthquakes'>
     expect(shownTsunamiSources(tsunami, [card()])[0].magnitude).toBe(7.6)
     expect(shownTsunamiSources({ ...tsunami, eventId: '20240101000000' }, [card()])[0].magnitude).toBe(7.4)
+  })
+})
+
+describe('distinctShownTsunamiSources', () => {
+  type T = Pick<JMATsunami, 'cancelled' | 'eventId' | 'foldedReports' | 'sourceEarthquakes'>
+  // 結べる津波（番号が地震カードと同じ）と、結べない津波（番号が違う）が同じ地震を運ぶ形
+  const linked: T = { cancelled: false, eventId: EVENT, sourceEarthquakes: [fromTsunami] }
+  const unlinked: T = { cancelled: false, eventId: '20240101000000', sourceEarthquakes: [{ ...fromTsunami, arrivalTime: '2024-01-01T07:10:00Z' }] }
+
+  // 正: 片方だけ結べて時刻の書き方が違っても、同じ瞬間・同じ震源名なら 1 つにまとめる
+  it('時刻の書き方が違っても、同じ地震は 1 度だけ', () => {
+    const out = distinctShownTsunamiSources([linked, unlinked], [card()])
+    expect(out).toHaveLength(1)
+    expect(out[0].magnitude).toBe(7.6)
+  })
+
+  // 対照: 時刻が違えば別の地震として並べる
+  it('時刻が違う地震は別に並べる', () => {
+    const other: T = { cancelled: false, eventId: '20240101000000', sourceEarthquakes: [{ ...fromTsunami, arrivalTime: '2024-01-01T17:00:00+09:00' }] }
+    expect(distinctShownTsunamiSources([linked, other], [card()])).toHaveLength(2)
+  })
+
+  // 安全弁: 取り消された津波の原因地震は描かない
+  it('取り消された津波は見ない', () => {
+    expect(distinctShownTsunamiSources([{ ...linked, cancelled: true }], [card()])).toEqual([])
   })
 })

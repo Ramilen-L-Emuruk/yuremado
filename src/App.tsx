@@ -2759,6 +2759,7 @@ export function App() {
     mode: mapMode,
     quake: mapQuake,
     tsunamis,
+    tsunamiSourceQuakes: filteredEarthquakes,
     eews: eewsForMap,
     // 出典に何を挙げるかは「地図に描かれているか」で決まるため、表示の設定をそのまま渡す。
     showBathymetry: settings.showBathymetry,
@@ -2883,6 +2884,7 @@ export function App() {
                 onLegendSourcesChange={setLegendSources}
                 quake={mapQuake}
                 tsunamis={tsunamis}
+                tsunamiSourceQuakes={filteredEarthquakes}
                 observations={latestTsunamiObservations}
                 lpgm={activeLpgm ?? undefined}
                 distributionMode={mapDistributionMode}
