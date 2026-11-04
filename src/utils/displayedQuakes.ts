@@ -1,6 +1,7 @@
 // 地震タブに出す地震を「最低表示震度」で絞る。App が地震タブ・津波タブ・地図へ渡す一覧はこれを通す。
 import type { JMAInternationalTsunami, JMAQuake, JMATsunami } from '../types/earthquake'
 import { extractQuakeEventId, quakeEventKey } from './quakeMerge'
+import { isMaxScaleUnreceived } from './quakePoints'
 import { tsunamiEventIds } from './tsunami'
 
 /**
@@ -16,6 +17,9 @@ import { tsunamiEventIds } from './tsunami'
  *   （`extractQuakeEventId`）で、津波タブの引き当て（`linkTsunamiSources`）と同じ識別子を使う
  * - 国際津波関連情報（英文）の付いた地震。隠すと英文もどこにも出なくなる（2026-11-03 ユーザー選択「地震ごと残す (Recommended)」）。
  *   `internationalTsunamisByQuake` は絞る前の全カードで結んだもの（→ `internationalTsunamiIndex` の `byQuakeKey`）
+ * - 最大震度が「5弱以上（未入電）」の地震。最大震度は下限の 5弱として持つが、実際は 5強以上だった可能性があるので、
+ *   5強以上を選んでいても外さない（2026-11-04 ユーザー選択「5強以上の設定でも残す (Recommended)」。全期間の控え
+ *   16,022 地震のうち 2 件）
  */
 export function filterDisplayedQuakes(
   earthquakes: readonly JMAQuake[],
@@ -28,6 +32,7 @@ export function filterDisplayedQuakes(
   return earthquakes.filter(q => {
     if (q.issue.type === '遠地地震') return true
     if (q.earthquake.maxScale >= minDisplayScale) return true
+    if (isMaxScaleUnreceived(q.earthquake.maxScale, q.points)) return true
     if (internationalTsunamisByQuake.has(quakeEventKey(q))) return true
     const id = extractQuakeEventId(q)
     return id !== null && sourceIds.has(id)
