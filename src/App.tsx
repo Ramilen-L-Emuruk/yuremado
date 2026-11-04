@@ -63,8 +63,8 @@ import { useSeismoScope } from './hooks/useSeismoScope'
 import { useStationCoords } from './hooks/useStationCoords'
 import { useEarthquakes } from './hooks/useEarthquakes'
 import { useFetchThrottled } from './hooks/useFetchThrottled'
-import { PANEL_RATIO_MIN, SETTINGS_STORAGE_KEY, useSettings } from './hooks/useSettings'
-import { squareMapLayout } from './utils/squareMapLayout'
+import { SETTINGS_STORAGE_KEY, useSettings } from './hooks/useSettings'
+import { waveStackLayout } from './utils/waveStackLayout'
 import { useAlertTitle, resolveAlertTitle } from './hooks/useAlertTitle'
 import { useReloadSchedule } from './hooks/useReloadSchedule'
 import { AppUpdateBadge } from './components/AppUpdateBadge'
@@ -1203,20 +1203,13 @@ export function App() {
   // パネル境界のつまみ操作。ドラッグ中（Change）は state だけを更新して追従性を保ち、
   // 指を離した時点（Commit）で設定へ保存する。折りたたみ中にドラッグされた場合は
   // 「引き出す」操作とみなして展開する。
-  // 縦積みで波形が出ている間に、つまみでパネルを動かしたか（`utils/squareMapLayout.ts` の `adjustedWhileWave`）。
-  // 動かしたら縮めずにその比率を使い、上限より広げたら波形の枠を隠す。波形が消えたら偽へ戻す（下の effect）。
-  // 「いま縮めうる状態か」は下の描画で毎回書き直す。
-  const [panelAdjustedWhileWave, setPanelAdjustedWhileWave] = useState(false)
-  const squareBorrowingRef = useRef(false)
   const handlePanelRatioChange = useCallback((ratio: number) => {
     setPanelCollapsed(false)
     setPanelRatio(ratio)
-    if (squareBorrowingRef.current) setPanelAdjustedWhileWave(true)
   }, [])
   const handlePanelRatioCommit = useCallback((ratio: number) => {
     setPanelCollapsed(false)
     setPanelRatio(ratio)
-    if (squareBorrowingRef.current) setPanelAdjustedWhileWave(true)
     updateSetting('panelRatio', ratio)
   }, [updateSetting])
   const togglePanelCollapsed = useCallback(() => setPanelCollapsed(c => !c), [])
@@ -2059,10 +2052,12 @@ export function App() {
     ro.observe(area)
     return () => ro.disconnect()
   }, [])
-  // 縦積みで下部の波形が出ている間、地図を正方形に保つための寸法（→ utils/squareMapLayout.ts）。
+  // 縦積みで下部の波形が出ている間の高さの配り方に使う寸法（→ utils/waveStackLayout.ts）。
   // 測るのは器（地図の列・つまみ・パネル・下のナビを積む）と地図の列とパネル、それに波形の先頭の段。
-  // **つまみとナビの高さは「器 − 地図の列 − パネル」で出す** —— 1 つずつ測ると、器に何かを足したときに引き忘れる
-  // （この差は地図の列とパネルの配り方に依らない）。
+  // **つまみとナビの高さは「器 − 地図の列 − パネル ＋ 重ねている量」で出す** —— 1 つずつ測ると、器に何かを足したときに
+  // 引き忘れる。パネルを地図の列へ重ねている間は、重ねた分だけ差が縮むので足し戻す（足し戻さないと、重ねるほど
+  // つまみとナビが低く測れ、重ねる量がまた増える）。
+  const waveOverlapRef = useRef(0)
   const layoutRef = useRef<HTMLDivElement | null>(null)
   const mapColumnRef = useRef<HTMLDivElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -2073,10 +2068,10 @@ export function App() {
     const el = layoutRef.current
     const column = mapColumnRef.current
     const panel = panelRef.current
-    // **測れないときは記録を残す。** 地図を正方形に保つ配り方が働かず、画面には「波形が出ると地図が帯になる」
+    // **測れないときは記録を残す。** 波形の 1 段を残す配り方が働かず、画面には「波形が出ると波形が押し出される」
     // （直す前の症状）としか現れないため（凡例の自動折りたたみと同じ扱い）。
     if (!el || !column || !panel || typeof ResizeObserver === 'undefined') {
-      log.warn('[layout] 地図の列とパネルの高さを測れないため、縦積みの画面で地図を正方形に保つ配り方は働きません', {
+      log.warn('[layout] 地図の列とパネルの高さを測れないため、縦積みの画面で波形の 1 段を残す配り方は働きません', {
         hasContainer: !!el,
         hasMapColumn: !!column,
         hasPanel: !!panel,
@@ -2086,7 +2081,7 @@ export function App() {
     }
     const report = () => {
       const r = el.getBoundingClientRect()
-      const other = r.height - column.getBoundingClientRect().height - panel.getBoundingClientRect().height
+      const other = r.height - column.getBoundingClientRect().height - panel.getBoundingClientRect().height + waveOverlapRef.current
       setLayoutSize((prev) => (prev !== null && prev.width === r.width && prev.height === r.height && prev.other === other
         ? prev
         : { width: r.width, height: r.height, other }))
@@ -2785,27 +2780,20 @@ export function App() {
   // 枠が実際に段を描くか。描くと地図の高さが削れ、地図に重ねた帯は画面の下端に届かなくなる。
   // **「出す」と判定しただけでは足りない** —— 段が 0 なら枠は何も描かない（→ SeismoWaveChart/chartRows.ts）。
   const waveChartDrawn = hasWaveChartRows(waveChartStations, waveChartPublic)
-  // 縦積みで波形が出ている間は、地図の正方形と波形の 1 段を先に取り、足りない分だけパネルを縮めて見せる
-  // （2026-10-24 ユーザー選択「一旦Aで作ってみて」）。**保存してあるパネルの比率は変えない**。
-  // つまみで動かしたらその比率を使い、上限より広げたら波形の枠を隠す（地図の正方形は残す）。
-  // 左右分割ではパネルの高さも地図の下限も CSS 側で効かない（`side:h-auto`・`side:min-h-0`）。
-  const squareLayout = squareMapLayout({
-    containerWidth: layoutSize?.width ?? 0,
+  // 縦積みで波形が出ている間は、パネルを広げるとまず地図が縮み、地図が器の高さの一定の割合まで縮んだ所で
+  // 地図と波形が止まり、その先はパネルが下から重なって覆う（→ utils/waveStackLayout.ts。2026-11-04 ユーザー選択）。
+  // **パネルの比率は動かさない。** 左右分割では重なりも地図の下限も CSS 側で効かない（`side:` の指定）。
+  const panelShownRatio = panelCollapsed ? 0 : panelRatio
+  const waveLayout = waveStackLayout({
     containerHeight: layoutSize?.height ?? 0,
     otherHeight: layoutSize?.other ?? 0,
     leadRowHeight: waveChartDrawn ? waveLeadRowHeight : null,
-    panelRatio: panelCollapsed ? 0 : panelRatio,
-    adjustedWhileWave: panelAdjustedWhileWave,
-    minPanelRatio: PANEL_RATIO_MIN,
+    panelRatio: panelShownRatio,
   })
-  squareBorrowingRef.current = squareLayout.borrowing
-  // 波形が消えたら「動かした」を忘れる —— 次に波形が出たら、また縮めて見せる。
-  useEffect(() => {
-    if (!waveChartDrawn) setPanelAdjustedWhileWave(false)
-  }, [waveChartDrawn])
-  // 波形の枠が画面に見えているか。**隠しているときも枠は外さない**（外すと先頭の段の高さが測れなくなり、
-  // 「縮めうる状態」から外れて枠がまた出てくる）。地図に重ねた帯の下端の余白は、見えているかで決める。
-  const waveChartShown = waveChartDrawn && !squareLayout.waveHidden
+  waveOverlapRef.current = waveLayout.overlap
+  // 波形の枠を描いているか。地図に重ねた帯の下端の余白はこれで決める（パネルに覆われていても、
+  // 帯は地図の下端にあって画面の下端には届かない）。
+  const waveChartShown = waveChartDrawn
 
   // 地図左上の更新時刻: リアルタイム表示はリアルタイム震度(kyoshin)の更新時刻、
   // 接続中は現在時刻を毎秒更新、それ以外は最終受信時刻を表示する。
@@ -2842,8 +2830,9 @@ export function App() {
         ref={layoutRef}
         className="flex-1 overflow-hidden flex flex-col side:flex-row"
         style={{
-          '--panel-ratio': squareLayout.panelRatio,
-          '--map-min-height': `${squareLayout.mapMinHeight}px`,
+          '--panel-ratio': panelShownRatio,
+          '--map-min-height': `${waveLayout.mapMinHeight}px`,
+          '--wave-overlap': `${waveLayout.overlap}px`,
         } as CSSProperties}
       >
         {/* 常時表示の地図エリア（タブに応じて内容を切替） */}
@@ -2857,8 +2846,8 @@ export function App() {
 
             **凡例と特別情報バナーは地図に重ねたまま。** あちらは地図の上に出すもので、
             地の絵が透けて見えることに意味がある（波形は観測値そのものなので透かさない）。 */}
-        <div ref={mapColumnRef} className="flex-1 min-h-0 flex flex-col">
-          {/* 縦積みで波形が出ている間だけ高さの下限を置く（地図を正方形に保つ。→ utils/squareMapLayout.ts）。
+        <div ref={mapColumnRef} className="flex-1 min-h-0 flex flex-col isolate">
+          {/* 縦積みで波形が出ている間だけ高さの下限を置く（波形の先頭の段を押し出させない。→ utils/waveStackLayout.ts）。
               下限があるので、波形の枠は 1 段を残して縮み、2 段目以降は枠の中でずらして見る。 */}
           <div ref={mapAreaRef} className="relative flex-1 min-h-(--map-min-height) side:min-h-0">
             {/* **包むのは地図だけ。** ここで受け止めれば App の state は生きたままなので、地図が
@@ -3026,7 +3015,7 @@ export function App() {
               包みは地図の下限に押されて縮む（中の枠がスクロールする）。パネルを上限より広げたら高さ 0 で隠す
               （外さない理由は `waveChartShown`）。 */}
           {waveChartDrawn && (
-            <div className={`min-h-0 flex flex-col overflow-hidden${squareLayout.waveHidden ? ' h-0 invisible' : ''}`}>
+            <div className="min-h-0 flex flex-col overflow-hidden" {...(waveLayout.waveCovered ? { inert: '' } : {})}>
             <SeismoWaveChart
               stations={waveChartStations}
               readWave={seismoView.readLiveWave}
@@ -3038,7 +3027,7 @@ export function App() {
               spanSec={settings.waveSpanSec}
               onFocusStation={focusMapPositions}
               onLeadRowHeightChange={setWaveLeadRowHeight}
-              paused={squareLayout.waveHidden}
+              paused={waveLayout.waveCovered}
             />
             </div>
           )}
@@ -3046,9 +3035,8 @@ export function App() {
 
         {/* 地図とパネルの境界（縦積み時のみ）。ドラッグで高さ比率を変え、タップで折りたたむ。 */}
         <PanelResizeHandle
-          // 見えている高さから掴ませる（地図を正方形に保つために縮めている間、保存した比率から始めると
-          // 指を動かしても縮めた高さまで戻るあいだ何も動かない）。畳んでいるときは展開したときの比率。
-          ratio={panelCollapsed ? panelRatio : squareLayout.panelRatio}
+          // 畳んでいるときは展開したときの比率。波形が出ていてもパネルの比率は動かさないので、保存した比率そのまま
+          ratio={panelRatio}
           collapsed={panelCollapsed}
           onRatioChange={handlePanelRatioChange}
           onRatioCommit={handlePanelRatioCommit}
@@ -3062,7 +3050,7 @@ export function App() {
             左右分割時の幅は `w-panel` / `w-panel-narrow`（src/index.css で定義）。24rem/20rem から
             2rem ずつ広げてある。地震カードの震度バッジを正方形（従来 80px 幅 → カード高さと同じ
             約 112px）にした分、本文カラムが痩せないようにするため。 */}
-        <div ref={panelRef} className={`shrink-0 h-[calc(var(--panel-ratio)*100%)] overflow-hidden side:h-auto side:flex-none border-border relative ${
+        <div ref={panelRef} className={`shrink-0 h-[calc(var(--panel-ratio)*100%)] overflow-hidden side:h-auto side:flex-none border-border relative z-10 ${
           panelCollapsed ? 'side:w-0 side:border-l-0' : 'side:w-panel sideNarrow:w-panel-narrow side:border-l'
         }`}>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'earthquake' ? ' invisible pointer-events-none' : ''}`}>

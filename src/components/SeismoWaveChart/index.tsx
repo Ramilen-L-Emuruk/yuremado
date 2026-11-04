@@ -175,13 +175,13 @@ interface Props {
    */
   onFocusStation: (positions: LatLng[]) => void
   /**
-   * 先頭の段の高さ（px）が変わったら知らせる。縦積みのレイアウトが、地図を正方形に保ったうえで波形の 1 段ぶんを
-   * 残すのに使う（`utils/squareMapLayout.ts`）。枠の上限（`STACK_MAX_HEIGHT_CLASS`）で頭打ちにした値で、
+   * 先頭の段の高さ（px）が変わったら知らせる。縦積みのレイアウトが、地図が縮むときも波形の 1 段ぶんを
+   * 残すのに使う（`utils/waveStackLayout.ts`）。枠の上限（`STACK_MAX_HEIGHT_CLASS`）で頭打ちにした値で、
    * 枠を外したときは `null`。
    */
   onLeadRowHeightChange: (px: number | null) => void
   /**
-   * 枠が隠れているか（縦積みでパネルを広げたとき。`utils/squareMapLayout.ts`）。**隠れている間は絵を組まない**
+   * 先頭の段までパネルに覆われて見えないか（縦積みでパネルを広げたとき。`utils/waveStackLayout.ts`）。**隠れている間は絵を組まない**
    * （見えない枠のために全段を描き続けない）。出たらすぐ組み直す。
    */
   paused: boolean
@@ -300,7 +300,7 @@ export function SeismoWaveChart({ stations, readWave, publicWaves, collapsedView
     }
     report()
     if (typeof ResizeObserver === 'undefined') {
-      log.warn('[seismo-wave] 波形の段の高さを見張れないため、縦積みの画面で地図を正方形に保つ配り方は最初に測った高さのまま動きます')
+      log.warn('[seismo-wave] 波形の段の高さを見張れないため、縦積みの画面で波形の 1 段を残す配り方は最初に測った高さのまま動きます')
       return () => onLeadRowHeightChangeRef.current(null)
     }
     const observer = new ResizeObserver(report)
