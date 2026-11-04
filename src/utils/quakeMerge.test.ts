@@ -2672,7 +2672,7 @@ describe('取消は情報名称の単位で当てる（applyQuakeCancelToCard）
         eventId, id: `dmdata-quake-${eventId}-5`, type: '震源情報',
         time: '2024-01-01T14:09:00Z', createdAtMs: at('2024-01-01T14:09:00Z'), hypoName: '石川県能登地方',
       }),
-      // 控え（`fillIntensityFromCache`）が震度速報の震度で埋めた形
+      // 控え（`fillQuakeIntensity`）が震度速報の震度で埋めた形
       earthquake: { ...makeNoIntensity({ eventId, hypoName: '石川県能登地方' }).earthquake, maxScale: 70 as const },
       points: 震度速報.points,
       intensityFromCache: true as const,

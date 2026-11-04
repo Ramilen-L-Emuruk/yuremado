@@ -55,7 +55,8 @@ export function quakePrefectures(quake: Pick<JMAQuake, 'points'>): string[] | nu
  */
 export function estimatedIntensityPrefectures(
   ei: Pick<JMAEstimatedIntensity, 'arrivalTime' | 'hypocenter'>,
-  quakes: readonly JMAQuake[],
+  /** 地震カード（読むのは取消の印・震源と時刻・都道府県の行だけ。中継は地震ごとにこの形だけを覚えて渡す） */
+  quakes: readonly Pick<JMAQuake, 'cancelledAt' | 'earthquake' | 'points'>[],
 ): string[] | null {
   const hits = quakes.filter(q => !q.cancelledAt && isSameEstimatedIntensityQuake({
     arrivalTime: q.earthquake.time,
