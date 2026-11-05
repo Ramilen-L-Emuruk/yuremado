@@ -2640,6 +2640,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
      * 開けなかった記録すら残らない。
      */
     onWithdrawn?: () => void,
+    /**
+     * **声に出す直前の見直し。** 真を返したら読まずに捨てる。問う時点は追い越しの判定と同じ 2 回
+     * （間が明けた時点・順番を待ち終えた時点）。いまの利用者は揺れ検知だけ（→ `speakKyoshinDetection`）で、
+     * 他の読み上げには「後から届いた報で読む意味が消える」問いが無いので渡さない。
+     * 捨てた理由の記録は渡す側が持つ。例外は握って読む側へ倒す（追い越しの判定と同じ方針）。
+     */
+    dropBeforeSpeaking?: () => boolean,
   ) => {
     // 予約した時点で、自分より重い読み上げが走っていたか。**先出しでタブを取るかの判断だけに使う**
     // （取り下げの判定は下の連番で行う。あちらは到来順そのものを見るので、予約時に塞がっていたか
@@ -2691,6 +2698,16 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       try { onWithdrawn?.() } catch (err) { log.warn(`[tts] 取り下げ時の後始末に失敗 topic=${topic}`, err) }
       return true
     }
+    /** 声に出す直前の見直し（→ 引数 `dropBeforeSpeaking`）。捨てるなら枠から降りて真を返す */
+    const dropIfStale = (): boolean => {
+      if (!dropBeforeSpeaking) return false
+      let drop = false
+      try { drop = dropBeforeSpeaking() } catch (err) { log.warn(`[tts] 声に出す直前の見直しに失敗（読み上げは続行）topic=${topic}`, err) }
+      if (!drop) return false
+      releaseLatestSchedule(seq, topic, priority)
+      prewarmed?.abort()
+      return true
+    }
     scheduleSpeech(
       delay,
       () => {
@@ -2713,6 +2730,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // `overtakenByHeavierArrival` が厳密不等号で見るので同格はここへ来ない。どちらも
         // 読みたい相手であり、順序が入れ替わって聞こえる不利より片方が消える不利の方が重い。
         if (withdrawIfOvertaken('間が明けた時点')) return
+        if (dropIfStale()) return
         speakNonEEW(
           text,
           priority,
@@ -2737,8 +2755,9 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           // 黙って見送るときも枠から降りる（降りないと前の予約を巻き込む。理由は引数の注記）
           () => releaseLatestSchedule(seq, topic, priority),
           subject,
-          // 順番を待っているあいだの追い越しを、声に出す直前にもう一度見る
-          () => withdrawIfOvertaken('順番を待っているあいだ'),
+          // 順番を待っているあいだの追い越しと、渡された見直しを、声に出す直前にもう一度見る
+          // （速報の読み上げを待ち終えた後もここを通る）
+          () => withdrawIfOvertaken('順番を待っているあいだ') || dropIfStale(),
         )
       },
       () => {
@@ -6729,14 +6748,23 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
    * 待っている間に EEW が届けば、到来順の裁き（`overtakenByHeavierArrival`）が取り下げる。
    * 逆に、待っている間に間が明けた軽い読み上げ（地震情報）は取り下げず、検知を言い終えるまで待たせる
    * （`speechBlocker` の 'pendingDetection'。2026-10-31 ユーザー選択「取り下げず後で読む (Recommended)」）。
+   *
+   * `dropBeforeSpeaking` は声に出す直前（間が明けた時点と、速報などの順番を待ち終えた時点）に呼び、真なら捨てる。
+   * 揺れ検知のフックが、その時点の発表中の速報の P 波が検知の時刻に届いていたかを答える（→ `useKyoshinAlerts` の
+   * `eewReachedRecheck`）。予約が速報の新規発報より後に入った検知は追い越しの判定（`overtakenByHeavierArrival`）に
+   * 掛からず、速報を読み終えた後で読まれるので、そこをこの見直しが拾う。
+   * 読み始めた検知に速報が割り込んだときは、`speakWithVoicevox` が止めて終わるだけで、続きも読み直しも無い。
    */
-  const speakKyoshinDetection = (text: string, delayMs: number): void => {
+  const speakKyoshinDetection = (text: string, delayMs: number, dropBeforeSpeaking: () => boolean): void => {
     if (!settings.voicevoxEnabled) {
       // 設定「揺れ検知の読み上げ」を入れていても、読み上げ自体が切れていれば鳴らない。黙った理由を残す
       log.debug(`[kyoshin] 読み上げ（VOICEVOX）が無効のため揺れ検知を読まない: ${text}`)
       return
     }
-    speakNonEEWDelayed(text, SPEECH_PRIORITY.kyoshinDetect, delayMs, `kyoshinDetect:${++kyoshinDetectSpeechSeqRef.current}`)
+    speakNonEEWDelayed(
+      text, SPEECH_PRIORITY.kyoshinDetect, delayMs, `kyoshinDetect:${++kyoshinDetectSpeechSeqRef.current}`,
+      undefined, undefined, undefined, undefined, undefined, undefined, dropBeforeSpeaking,
+    )
   }
 
   return { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks: tsunamiValueMarksState, focusedDistrict, eewNoForecastSettledKeys, speakKyoshinDetection }
