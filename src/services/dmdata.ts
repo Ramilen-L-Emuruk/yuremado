@@ -22,6 +22,7 @@ import { log, createLogThrottle } from '../utils/logger'
 import { DmdataApiKeyError, dmdataApiKeyMessage } from '../utils/dmdataApiKey'
 import { dmdataKeyEndpoint, type DmdataEndpoint } from './dmdataEndpoint'
 import { RELAY_ORIGIN, RelayTokenError, type RelayTokenStore } from './relayEndpoint'
+import { answerPushProbe, attachRelaySocket } from './notifyQuietWhileOpen'
 import { fetchJsonOutcome, outcomeJson, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { fetchTelegramText } from './telegramBody'
 import { readTelegramOperationStatus } from '../utils/telegramOperationStatus'
@@ -621,6 +622,8 @@ export class DmdataWebSocket {
   private readonly relay: RelaySocketSource | null
   /** 鍵で予報だけを受ける接続か（→ {@link KeyForecastSocketSource}） */
   private readonly forecastOnly: boolean
+  /** いまの接続を、設定「アプリを開いている間は通知しない」の名乗り先から外す（接続ごとに `openWs` が差し替える） */
+  private detachPushQuiet: () => void = () => {}
 
   /** 受け取り済みの電文か（取り戻しで本体を取り直さないために使う） */
   hasReceivedTelegram(id: string): boolean {
@@ -807,6 +810,14 @@ export class DmdataWebSocket {
     const ws = new WebSocket(url, protocols)
     // この接続が `start` を受けたか（→ `lastAliveAtMs`）
     let startedThisSocket = false
+    // 中継が「プッシュ通知を送る前に尋ねる口がある」と名乗った接続の、名乗り先の登録を外す口（→ notifyQuietWhileOpen.ts）
+    let detachPushQuiet: (() => void) | null = null
+    // 登録するのは `relay-status` を受けた後（開いている）なので、開く前に送って投げることはない。投げたら受け側が記録する
+    const sendOnThisSocket = (text: string): void => { ws.send(text) }
+    this.detachPushQuiet = () => {
+      detachPushQuiet?.()
+      detachPushQuiet = null
+    }
     this.ws = ws
     this.closingErrorCode = null
     // start 受信で正常購読が確定するまで reconnectAttempt を維持する（DMD-3）。
@@ -832,12 +843,24 @@ export class DmdataWebSocket {
         startedThisSocket = true
       }
       if (startedThisSocket) this.lastAliveAtMs = serverNow()
+      if (this.relay !== null) {
+        // 中継の問いには、電文の処理を待たずにここで答える（中継は約 2 秒しか待たない）
+        if (msg.type === 'relay-push-probe') {
+          answerPushProbe(msg, sendOnThisSocket)
+          return
+        }
+        if (msg.type === 'relay-status' && msg.pushQuiet === true && detachPushQuiet === null) {
+          detachPushQuiet = attachRelaySocket(sendOnThisSocket)
+        }
+      }
       // body の復号は非同期（gunzip）。発火後は待たない。
       void this.handleMessage(msg, (event, telegramId) => this.onEvent?.(event, telegramId))
     }
 
     ws.onclose = (ev) => {
       if (this.debug) dlog('WebSocket close', { code: ev.code, reason: ev.reason })
+      detachPushQuiet?.()
+      detachPushQuiet = null
       this.stopPingWatchdog()
       this.stopStableConnectionTimer()
       if (this.stopped || this.halted) return
@@ -888,6 +911,8 @@ export class DmdataWebSocket {
       const elapsed = performance.now() - this.lastActivityAt
       if (elapsed > PING_WATCHDOG_MS) {
         if (this.debug) dlog('ping ウォッチドッグ発火・自発 close', { elapsedMs: Math.round(elapsed) })
+        // 半開きの接続は onclose が遅れるので、名乗り先の登録はここで外す
+        this.detachPushQuiet()
         try { this.ws?.close() } catch { /* 既に close 済みは無視 */ }
       }
     }, PING_WATCHDOG_CHECK_MS)
@@ -1319,6 +1344,8 @@ export class DmdataWebSocket {
       this.ws.close()
       this.ws = null
     }
+    // onclose を外して閉じたので、名乗り先の登録はここで外す
+    this.detachPushQuiet()
   }
 }
 

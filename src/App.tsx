@@ -18,6 +18,7 @@ import { MapRenderStatus } from './components/MapRenderStatus'
 import { ShareCardButton } from './components/ShareCardButton'
 import { useShareCard } from './hooks/useShareCard'
 import { usePushSubscription } from './hooks/usePushSubscription'
+import { installNotifyQuietVisibilityWatch, installServiceWorkerQuietAnswer, setNotifyQuietWhileOpen } from './services/notifyQuietWhileOpen'
 import { SeismoLinkStatus } from './components/SeismoLinkStatus'
 import { SeismoOverlay } from './components/SeismoOverlay'
 import { useSeismoStation, type SeismoStationState } from './hooks/useSeismoStation'
@@ -136,7 +137,7 @@ import type { GateTag } from './utils/requestGate'
 import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerdict, emptyReplayFetchResult, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
 import { useHistoricalArchiveIndex } from './hooks/useHistoricalArchiveIndex'
 import { log } from './utils/logger'
-import { deliverBrowserNotification, NOTIFICATION_ICON, showBrowserNotification } from './utils/notifications'
+import { deliverBrowserNotification, NOTIFICATION_ICON, showTestBrowserNotification } from './utils/notifications'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isLiveFeedHalted } from './utils/connectionStatus'
@@ -191,6 +192,11 @@ export function App() {
   const { settings, updateSetting, replaceSettings, adoptExternalSetting } = useSettings()
   // プッシュ通知の購読を設定に合わせる（docs/relay-server-design.md §6.7）
   usePushSubscription(settings, updateSetting)
+  // 設定「アプリを開いている間は通知しない」を、通知の出し口・中継への名乗り・Service Worker の問いへ渡す
+  // （→ services/notifyQuietWhileOpen.ts）
+  useEffect(() => { setNotifyQuietWhileOpen(settings.notifyQuietWhileOpen) }, [settings.notifyQuietWhileOpen])
+  useEffect(() => installServiceWorkerQuietAnswer(), [])
+  useEffect(() => installNotifyQuietVisibilityWatch(), [])
   const [activeTab, setActiveTabState] = useState<TabId>(settings.defaultTab)
   // 津波タブを自動で見せた回数。増えるたびに津波カードのスクロールを先頭へ戻す
   // （増やす条件と理由は `requestAutoTab`）。
@@ -1196,7 +1202,7 @@ export function App() {
         alert('先に「通知を許可する」を押してください。')
         return
       }
-      showBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
+      showTestBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
     },
   }), [
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,

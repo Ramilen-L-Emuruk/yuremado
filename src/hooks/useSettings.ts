@@ -116,6 +116,12 @@ export interface AppSettings {
    */
   pushNotifyEnabled: boolean
   /**
+   * アプリが画面に出ている間は、通知（プッシュ通知を含む）を出さない。画面の表示・通知音・読み上げは止めない。既定はオフ
+   * （2026-11-05 ユーザー選択「画面に出ている間だけ止める (Recommended)」「受け取りを待って送る (Recommended)」）。
+   * 判定と止める場所は `services/notifyQuietWhileOpen.ts`
+   */
+  notifyQuietWhileOpen: boolean
+  /**
    * 通知を絞る都道府県（2 桁のコード。空なら全国）。プッシュ通知にも画面内の通知にも効き、絞るのは通知だけ
    * （2026-11-03 ユーザー選択「都道府県を選べる・既定は全国 (Recommended)」「両方に掛ける (Recommended)」）
    */
@@ -373,6 +379,7 @@ export const DEFAULTS: AppSettings = {
   notifyDetection: false,
   notifyNankai: true,
   pushNotifyEnabled: false,
+  notifyQuietWhileOpen: false,
   notifyPrefectures: [],
   homeLat: null,
   homeLng: null,
@@ -611,6 +618,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     notifyDetection: ensureBool(partial.notifyDetection, DEFAULTS.notifyDetection),
     notifyNankai: ensureBool(partial.notifyNankai, DEFAULTS.notifyNankai),
     pushNotifyEnabled: ensureBool(partial.pushNotifyEnabled, DEFAULTS.pushNotifyEnabled),
+    notifyQuietWhileOpen: ensureBool(partial.notifyQuietWhileOpen, DEFAULTS.notifyQuietWhileOpen),
     notifyPrefectures: ensurePrefectureCodes(partial.notifyPrefectures),
     homeLat: clampNumberOrNull(partial.homeLat, -90, 90),
     homeLng: clampNumberOrNull(partial.homeLng, -180, 180),

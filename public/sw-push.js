@@ -10,6 +10,43 @@
 // 中身が読めなくても黙って捨てない。失敗はここ（Service Worker のコンソール）にしか残せない。
 const PUSH_ICON = new URL('icons/icon.svg', self.registration.scope).href
 
+// 設定「アプリを開いている間は通知しない」（src/services/notifyQuietWhileOpen.ts）。ふだんは中継が送る前に尋ねて送らないので、
+// ここへ届くのは尋ねる前に送られていた分（切り替わりの瞬間・中継との接続が切れていた間）だけ。
+// **捨ててよいのは Chromium 系だけ** —— Chromium はそのサイトのタブが見えていれば、通知を出さないプッシュを咎めない。
+// iPhone・Safari（WebKit）は窓が見えていても数えて 3 回で購読を打ち切り、Firefox も回数の枠から引くので、必ず出す。
+// 見分けは navigator.userAgentData（Chromium 系にだけある）
+const QUIET_ANSWER_TIMEOUT_MS = 500
+
+async function quietWhileOpen() {
+  if (!self.navigator || !self.navigator.userAgentData) return false
+  try {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    const visible = windows.filter((c) => c.visibilityState === 'visible')
+    if (visible.length === 0) return false
+    const answers = await Promise.all(visible.map(askQuiet))
+    return answers.some((a) => a)
+  } catch (err) {
+    console.error('[push] アプリを開いている間の扱いを確かめられなかったので、通知を出す', err)
+    return false
+  }
+}
+
+// 見えている窓に止めるかを尋ねる。返事が無ければ止めない（出す側へ倒す）
+function askQuiet(client) {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel()
+    const timer = setTimeout(() => {
+      console.warn('[push] 見えているアプリの窓から返事が無いので、通知を出す')
+      resolve(false)
+    }, QUIET_ANSWER_TIMEOUT_MS)
+    channel.port1.onmessage = (ev) => {
+      clearTimeout(timer)
+      resolve(!!(ev.data && ev.data.quiet === true))
+    }
+    client.postMessage({ type: 'push-quiet-query' }, [channel.port2])
+  })
+}
+
 self.addEventListener('push', (event) => {
   let data = null
   try {
@@ -26,6 +63,10 @@ self.addEventListener('push', (event) => {
     renotify: true,
   }
   event.waitUntil((async () => {
+    if (await quietWhileOpen()) {
+      console.info('[push] 設定によりアプリが画面に出ている間は通知を出さない', options.tag)
+      return
+    }
     try {
       await self.registration.showNotification(title, options)
     } catch (err) {
