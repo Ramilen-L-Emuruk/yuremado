@@ -1,4 +1,4 @@
-import type { EEWAlert, EEWRegion, EewOrigin, EewSerialSeries } from '../types/earthquake'
+import type { EEWAlert, EEWRegion, EewOrigin, EewSerialSeries, Hypocenter } from '../types/earthquake'
 import { parseJstTimeMs } from './quakeOriginSeconds'
 import { hasDepth, hasMagnitude } from './formatters'
 import { hasKnownEpicenter, hypocentralDistanceKm } from './geo'
@@ -1147,7 +1147,7 @@ export function eewStaleness(
 
 /**
  * 強震モニタ（Yahoo）がもっと新しい報を先に運んだあとに届いた電文の報（中継の警報 VXSE43・自分の鍵の予報）
- * から、**電文しか運ばない欄だけ**を表示中の報へ補う（区域・仮定震源の別）。震源・震度・報番号・
+ * から、**電文しか運ばない欄だけ**を表示中の報へ補う（区域・仮定震源の別・震源のうち電文しか運ばない欄 → `withTelegramOnlyHypocenterFields`）。震源の数値・震度・報番号・
  * 発表時刻は新しい側（`existing`）を保つ。**ただし表示中の規模が読めていない（`NaN`。Yahoo が規模を欠いた報）
  * なら、届いた報の規模で埋める** —— Yahoo が先に着く以上、電文の規模はこの経路でしか入らない。
  *
@@ -1161,10 +1161,15 @@ export function supplementEewReport(existing: EEWAlert, incoming: EEWAlert): EEW
     earthquake: {
       ...existing.earthquake,
       condition: incoming.earthquake.condition,
-      hypocenter: hasMagnitude(existing.earthquake.hypocenter.magnitude)
-        || !hasMagnitude(incoming.earthquake.hypocenter.magnitude)
-        ? existing.earthquake.hypocenter
-        : { ...existing.earthquake.hypocenter, magnitude: incoming.earthquake.hypocenter.magnitude },
+      // 電文だけが運ぶ震源の欄（規模の種別 `Mj` など）も重ねる。重ねないと、強震モニタが先に着く並びでは
+      // 「気象庁マグニチュード」が次の新しい電文の報まで「マグニチュード」のまま残る
+      hypocenter: withTelegramOnlyHypocenterFields(
+        hasMagnitude(existing.earthquake.hypocenter.magnitude)
+          || !hasMagnitude(incoming.earthquake.hypocenter.magnitude)
+          ? existing.earthquake.hypocenter
+          : { ...existing.earthquake.hypocenter, magnitude: incoming.earthquake.hypocenter.magnitude },
+        incoming.earthquake.hypocenter,
+      ),
     },
     severity: existing.severity === 'Warning' ? 'Warning' : incoming.severity,
   }
@@ -1248,13 +1253,66 @@ export function isSameReportFromOtherOrigin(acceptance: EewAcceptance | undefine
 }
 
 /**
+ * 表示中の報が電文から来ていて、強震モニタの報がそれと**同じ報**か。**発表時刻が秒まで同じで、予報の報番号も同じ**
+ * ときだけ真。
+ *
+ * - **発表時刻だけでは足りない。** 同じ秒に別の報が出る（能登本震の実配信で 46 報中 13 報が同一秒 → `isStaleEewReport`）。
+ *   時刻だけで同じ報と見なすと、同じ秒の次の報（引き上げ・震源の更新）を捨てて電文の古い値に固定する
+ * - 比べる報番号は予報の通し番号（→ `eewDisplaySerial`）。強震モニタの報番号は気象庁の予報の報番号で、電文の予報と
+ *   数え方が同じ。警報の電文だけを受けて予報の番号を持たないときは比べられないので、同じ報とは言わない
+ *   （強震モニタの値へ差し替える。電文だけの欄は `mergeYahooHypocenter` が保つ）
+ * - どちらかの発表時刻・報番号が読めなければ同じ報とは言わない
+ */
+function isSameReportAsTelegram(existing: EEWAlert, incoming: EEWAlert): boolean {
+  if (existing.origin === 'yahoo') return false
+  const a = eewIssueTimeMs(existing)
+  const b = eewIssueTimeMs(incoming)
+  if (a === null || b === null || a !== b) return false
+  const shownSerial = eewDisplaySerial(existing)
+  const yahooSerial = eewSerial(incoming)
+  return shownSerial !== null && yahooSerial !== null && shownSerial === yahooSerial
+}
+
+/**
+ * 強震モニタの報の震源を、表示中の震源へ重ねる。**数値（位置・深さ・規模）は強震モニタの新しい値、電文しか運ばない
+ * 欄は表示中の値**（2026-11-05 ユーザー選択「同じ報は電文を保つ (Recommended)」。強震モニタが新しい報を運んだときの扱い）。
+ *
+ * - 規模が読めなかった報（`NaN`）では前の規模を保つ —— 消すとカードの M が「不明」へ戻り、規模から決める
+ *   自動解除も既定の M6 相当へずれる
+ * - 規模の種別（`Mj`）は保つ。緊急地震速報の規模は `Mj` か、欄そのものが無いかのどちらか（→ `formatters.ts` の
+ *   `magnitudePrefix`）なので、強震モニタの規模も同じ種別として出す
+ * - 規模の説明（「Ｍ８を超える巨大地震」など）は、規模が数値にならないときだけ保つ（電文も数値が読めたときは
+ *   持たせない → `dmdataParser.ts`）
+ * - 深さの「以上」は深さが同じときだけ、震央地名コードは震央地名が同じときだけ保つ（値が変われば前の印は当たらない）
+ */
+function mergeYahooHypocenter(shown: Hypocenter, yahoo: Hypocenter): Hypocenter {
+  const magnitude = hasMagnitude(yahoo.magnitude) ? yahoo.magnitude : shown.magnitude
+  return withTelegramOnlyHypocenterFields({ ...yahoo, magnitude }, shown)
+}
+
+/**
+ * 震源（`base`。数値は強震モニタの値）へ、電文の震源（`telegram`）だけが運ぶ欄を重ねる（→ {@link mergeYahooHypocenter}。
+ * 当て方の条件もそちら）。強震モニタの報を合わせるときと、強震モニタの後から電文の報が遅れて届いたとき
+ * （→ `supplementEewReport`）の両方で使う。
+ */
+function withTelegramOnlyHypocenterFields(base: Hypocenter, telegram: Hypocenter): Hypocenter {
+  return {
+    ...base,
+    ...(telegram.magnitudeType && { magnitudeType: telegram.magnitudeType }),
+    ...(!hasMagnitude(base.magnitude) && telegram.magnitudeCondition && { magnitudeCondition: telegram.magnitudeCondition }),
+    ...(telegram.depthAtLeast && base.depth === telegram.depth && { depthAtLeast: true }),
+    ...(telegram.code && base.name === telegram.name && { code: telegram.code }),
+  }
+}
+
+/**
  * 同じ地震の報を 1 つに統合する。**状態に入れる値・読み上げと通知へ渡す値は、すべてこれを通す。**
  *
  * **経路が運ばない欄は既存の値を保つ**（Yahoo と DMDATA の 2 経路が同じ地震を運ぶ）。
  *
  * | 経路 | 運ばないので保つ欄 |
  * |---|---|
- * | Yahoo | 区域・仮定震源の別（`earthquake.condition`）・地震発現時刻。規模は読めなかった報（`NaN`）だけ |
+ * | Yahoo | 区域・仮定震源の別（`earthquake.condition`）・地震発現時刻・震源のうち電文しか運ばない欄（→ `mergeYahooHypocenter`）。規模は読めなかった報（`NaN`）だけ。**電文で受けた報と同じ報なら全部**（→ `isSameReportAsTelegram`） |
  * | DMDATA の警報（VXSE43） | 報番号（警報だけの通し番号なので、表示中の予報の通し番号を保つ） |
  * | DMDATA の予報・保存データ・テスト | なし（丸ごと置き換える） |
  *
@@ -1268,6 +1326,12 @@ export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAler
   let base: EEWAlert
   if (!existing) {
     base = incoming
+  } else if (incoming.origin === 'yahoo' && isSameReportAsTelegram(existing, incoming)) {
+    // **電文で受けた報と同じ報（同じ秒・同じ報番号）を強震モニタが後から運んだ。** 強震モニタは電文より運ぶ欄が少なく
+    // （規模の種別・規模の説明・深さの「以上」・震央地名コードを持たない）、同じ報なので値は電文と同じ。電文のまま保つ
+    // （2026-11-05 ユーザー選択「同じ報は電文を保つ (Recommended)」）。置き換えると「気象庁マグニチュード」が
+    // 「マグニチュード」へ落ちる
+    base = existing
   } else if (incoming.origin === 'yahoo') {
     const keepsPreviousMagnitude = !hasMagnitude(incoming.earthquake.hypocenter.magnitude)
       && hasMagnitude(existing.earthquake.hypocenter.magnitude)
@@ -1300,11 +1364,7 @@ export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAler
       earthquake: {
         ...existing.earthquake,
         originTime: incoming.earthquake.originTime,
-        // Yahoo の規模は欠けることがある。**読めなかった報（`NaN`）で前の値（電文の報など）を消さない**
-        // —— 消すとカードの M が「不明」へ戻り、規模から決める自動解除も既定の M6 相当へずれる。
-        hypocenter: hasMagnitude(incoming.earthquake.hypocenter.magnitude)
-          ? incoming.earthquake.hypocenter
-          : { ...incoming.earthquake.hypocenter, magnitude: existing.earthquake.hypocenter.magnitude },
+        hypocenter: mergeYahooHypocenter(existing.earthquake.hypocenter, incoming.earthquake.hypocenter),
       },
     }
   } else if (incoming.serialSeries === 'warning') {
@@ -1319,7 +1379,10 @@ export function mergeEewReport(existing: EEWAlert | undefined, incoming: EEWAler
   }
   // **届いた報の区分から引き上げる**（`base` ではない）。経路ごとの分岐は既存の値を土台に
   // 組むので、`base.severity` は既存のまま —— 予報を警報へ上げる報を取りこぼす。
-  const severity = existing?.severity === 'Warning' ? 'Warning' : incoming.severity
+  // ただし電文と同じ報を強震モニタが運んだときは電文の区分のまま（強震モニタの区分は震度からの推定でしかない）
+  const severity = existing?.severity === 'Warning' ? 'Warning'
+    : base === existing ? existing.severity
+      : incoming.severity
   const merged: EEWAlert = { ...base, severity }
   return {
     ...merged,
