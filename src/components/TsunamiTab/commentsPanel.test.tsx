@@ -11,7 +11,7 @@
 // レンダーでも ref の書き換えだけが残り、描き直したときに閉じそこねる。その形は
 // 実機（dev サーバー）では再現したが、このテストは通ってしまった。**レンダーの取り消しが
 // 絡む欠陥はここでは出ない**ので、実機での確認を省かないこと。
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { TsunamiTab } from './index'
 import type { JMATsunami, TsunamiArea } from '../../types/earthquake'
@@ -148,6 +148,68 @@ describe('バナーから開く付加文の面', () => {
   it('対照: 取消の理由も取消前の文も無い取消しの表示では入口にしない', () => {
     renderTab([makeTsunami({ cancelled: true, cancelledAt: new Date('2026-04-20T18:00:00Z'), bodyText: undefined, warningComments: undefined, freeText: undefined })])
     expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  // 正: 区域の一覧に重ねる取消の覆い（z-10）は、一覧の箱（`isolate`）の中に閉じる。閉じないと、DOM で後ろにある覆いが
+  // 巻いて上へ貼りついたバナー（同じ z-10）と、そこから開いた面（z-20）の上へ被さる。
+  it('取消の覆いは、バナーを含まない箱の中で重なりを閉じる', () => {
+    const { container } = renderTab([makeTsunami({ cancelled: true, cancelReason: 'retracted', cancelledAt: new Date('2026-04-20T18:00:00Z') })])
+    const overlay = container.querySelector<HTMLElement>('.bg-black\\/70')
+    expect(overlay).not.toBeNull()
+    const box = overlay!.parentElement!
+    expect(box.classList.contains('isolate')).toBe(true)
+    // 安全弁: 閉じる箱にバナー（入口の行を持つ）が入っていたら、バナーごと覆いの下になる
+    expect(box.querySelector('[data-comments-entry]')).toBeNull()
+    expect(container.querySelector('[data-comments-entry]')).not.toBeNull()
+  })
+})
+
+// 狭い画面でバナーを流したときの 1 行の帯（→ `bannerStickMode`）。隠している間に影がタブの上端へ覗かないこと。
+describe('バナーの代わりに出す帯', () => {
+  afterEach(() => {
+    // 片付けを先に済ませてから寸法の差し替えを戻す（戻した本物でアンマウント時の処理が走らないように）
+    cleanup()
+    vi.restoreAllMocks()
+  })
+
+  /**
+   * 寸法を差し替えて帯の形にする。パネルの高さ 400・バナーの高さ 300（4 割の 160 を超える）・帯の高さ 30。
+   * `bannerBottom` はバナーの下端の位置。帯を出すかは「バナーの下端 − パネルの上端」が帯の高さ以下かで決まるので、
+   * 帯以外の要素は上端を 0 に揃える（パネルの上端を 0 にするため。高さと下端の辻褄は合わせない）。
+   */
+  function renderBand(bannerBottom: number) {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400)
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const isBand = this.getAttribute('role') === 'button' && this.hasAttribute('aria-hidden')
+      const height = isBand ? 30 : 300
+      const bottom = isBand ? 30 : bannerBottom
+      return { x: 0, y: 0, left: 0, right: 300, width: 300, top: 0, bottom, height, toJSON: () => ({}) } as DOMRect
+    })
+    const { container } = renderTab([makeTsunami()])
+    const band = container.querySelector<HTMLElement>('[role="button"][aria-hidden]')
+    expect(band).not.toBeNull()
+    return band!
+  }
+
+  // 正: バナーが見えている間は帯を隠す。押し出すだけでなく `invisible` を付ける（影が上端に覗かない）。
+  it('隠している間は invisible を付ける', () => {
+    const band = renderBand(300)
+    expect(band.getAttribute('aria-hidden')).toBe('true')
+    expect(band.classList.contains('invisible')).toBe(true)
+  })
+
+  // 対照: バナーが上へ抜けたら帯を出す。出している間は visibility を明示せず、タブの `invisible` を受け継ぐ。
+  it('出している間は invisible も visible も付けない', () => {
+    const band = renderBand(0)
+    expect(band.getAttribute('aria-hidden')).toBe('false')
+    expect(band.classList.contains('invisible')).toBe(false)
+    expect(band.classList.contains('visible')).toBe(false)
+  })
+
+  // 安全弁: 引っ込む動きの間は見えたままにする（visibility を遷移に入れていないと、押した瞬間に消えて動きが見えない）
+  it('visibility を出し入れの遷移に入れる', () => {
+    const band = renderBand(300)
+    expect(band.className).toContain('transition-[transform,visibility]')
   })
 })
 

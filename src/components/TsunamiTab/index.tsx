@@ -676,7 +676,9 @@ function TsunamiGradeCard({ grade, label, isFirstOfGrade, areas, observations, o
             const markColor = marks.length === 0 ? undefined
               : UPDATE_MARK_COLOR[marks.some(m => m.status === 'new') ? 'new' : 'changed']
             // 区域を読むときの合わせ先はこの見出し（どの等級・どの高さの話かが視野から消えないように）。
-            // 高さの区切りが無い組が先頭に来たときは、等級名だけの見出しがその後ろの区切りの無い組もまとめて受ける。
+            // 高さの無い区域は続く分が 1 つの組に束ねてあり（→ `groupAreasByHeight`）、先頭の組なら等級名だけの見出しを
+            // 立てて、その組を巻く間ずっと貼りつく。高さのある組を挟んだ後ろの高さの無い組は見出しを持たないので、
+            // その区域もこの見出しが受ける。
             const anchored = group.heightLabel ? group.areas : groups.slice(gi).filter(g => !g.heightLabel).flatMap(g => g.areas)
             return (
               <TsunamiGradeHeader
@@ -1579,7 +1581,11 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
             aria-hidden={!bandShown}
             onClick={scrollToBanner}
             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scrollToBanner() } }}
-            className={`flex items-center gap-2 cursor-pointer transition-transform duration-150 ease-out motion-reduce:transition-none shadow-[0_3px_8px_rgba(0,0,0,.55)]${bandShown ? '' : ' pointer-events-none'}`}
+            // 隠している間は `invisible` も付ける。上へ押し出すだけだと、帯の下の影（下へ 3px＋ぼかし 8px）が
+            // タブの上端に覗く。`visibility` を出し入れの遷移に入れるので、引っ込む動きの間は見えたまま、
+            // 引っ込み終えてから消える。出している間は `visible` を明示しない —— タブは `invisible` の付け外しで
+            // 切り替わるので、明示すると隠れたタブの上に帯だけが残る（地震タブの帯 `QuakeOpenPin` と同じ作り）。
+            className={`flex items-center gap-2 cursor-pointer transition-[transform,visibility] duration-150 ease-out motion-reduce:transition-none shadow-[0_3px_8px_rgba(0,0,0,.55)]${bandShown ? '' : ' invisible pointer-events-none'}`}
             style={{
               padding: '6px var(--qk-pad)',
               background: bannerBand,
@@ -1784,7 +1790,9 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
         const unmatched = observations.filter(o =>
           !t.areas.some(a => matchesArea(o, a)) && !liftedAreas.some(a => matchesArea(o, a)))
         return (
-          <div key={t.id} className="flex flex-col gap-3 relative">
+          // `isolate`: 取消の覆い（z-10）をこの箱の中に閉じる。閉じないと、巻いたときに上へ貼りつくバナー（z-10）と
+          // そこから開いた補足の面（z-20）より前に出て、覆いが被さる。
+          <div key={t.id} className="flex flex-col gap-3 relative isolate">
             {t.cancelledAt && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-md" style={{ minHeight: '5rem' }}>
                 <span className="font-black text-white" style={{ fontSize: '2.5rem', lineHeight: 1.1 }}>{cancelInfo.badge}</span>

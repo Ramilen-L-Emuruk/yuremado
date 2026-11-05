@@ -391,9 +391,27 @@ describe('groupAreasForCardDisplay / sortAreasForCardDisplay', () => {
     ]).map(a => a.name)).toEqual(['宮城県', '岩手県'])
   })
 
-  it('波高を持たない区域は独立したグループになる', () => {
-    const groups = groupAreasForCardDisplay([area('岩手県', '210'), area('宮城県', '220')], [])
-    expect(groups.map(g => g.heightLabel)).toEqual([null, null])
+  // 正（2026-11-05 ユーザー選択「高さの無い区域を 1 つの組に束ねる (Recommended)」で覆した。それまでは 1 区域ずつ別の組）:
+  // 続く区域は 1 つの組にする。等級の見出しは組の中で貼りつくので、分かれていると最初の 1 区域の間しか貼りつかない。
+  it('波高を持たない区域が続けば 1 つの組にまとめる', () => {
+    const groups = groupAreasForCardDisplay([area('岩手県', '210'), area('宮城県', '220'), area('福島県', '250')], [])
+    expect(groups.map(g => [g.heightLabel, g.areas.map(a => a.name)]))
+      .toEqual([[null, ['岩手県', '宮城県', '福島県']]])
+  })
+
+  // 対照: 高さのある区域が間に挟まれば、ほかの高さと同じく分かれる
+  it('波高を持たない区域でも、波高のある区域を挟めば別の組になる', () => {
+    const groups = groupAreasForCardDisplay([area('岩手県', '210'), area('宮城県', '220', '3m'), area('福島県', '250')], [])
+    expect(groups.map(g => [g.heightLabel, g.areas.map(a => a.name)]))
+      .toEqual([[null, ['岩手県']], ['3m', ['宮城県']], [null, ['福島県']]])
+  })
+
+  // 安全弁: 束ねても区域の並びは束ねる前（1 区域ずつの組）と同じ。観測のある区域を組の中で上へ回さない
+  // （回すとカードと読み上げの順が変わる）
+  it('波高を持たない区域を束ねても、観測で並べ替えず電文順のまま', () => {
+    const areas = [area('岩手県', '210'), area('宮城県', '220'), area('福島県', '250')]
+    const obs = [height('福島県', '250', 1.2), height('宮城県', '220', 2.4)]
+    expect(sortAreasForCardDisplay(areas, obs).map(a => a.name)).toEqual(['岩手県', '宮城県', '福島県'])
   })
 })
 
