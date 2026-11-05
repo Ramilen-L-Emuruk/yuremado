@@ -278,12 +278,25 @@ export interface AppSettings {
    */
   publicWaveAlwaysConnected: boolean
   panelRatio: number             // 縦積みレイアウト（スマホ縦など）でのパネル高さ比率（0.2〜0.8）
+  /**
+   * 左右分割（`side`。PC など）でのパネルの幅（rem）。**`null` は動かしていない**印で、既定の 35rem を使う。
+   * 境界のつまみを離した時点で保存する。画面が狭いときに見せる幅は詰めるが、ここは書き換えない
+   * （→ `utils/panelWidth.ts`。2026-11-05 ユーザー選択「PC とスマホ横で別々に覚える (Recommended)」）。
+   */
+  panelWidthSide: number | null
+  /** 左右分割のうち狭い画面（`sideNarrow`。スマホ横）でのパネルの幅（rem）。`null` は既定の 22rem */
+  panelWidthSideNarrow: number | null
 }
 
 // パネル高さ比率の可動範囲。境界のつまみをドラッグしたときのクランプ幅と、
 // localStorage 復元時の sanitize で同じ値を使う（UI とストレージで範囲がずれないようにする）。
 export const PANEL_RATIO_MIN = 0.2
 export const PANEL_RATIO_MAX = 0.8
+
+// 左右分割のパネル幅（rem）の下限と、保存した値を読むときの緩い上限。見せるときの上限は画面の幅で決まる
+// （地図を 360px 残すまで。→ `utils/panelWidth.ts`。2026-11-05 ユーザー選択「20rem〜地図を 360px 残すまで (Recommended)」）。
+export const PANEL_WIDTH_MIN_REM = 20
+export const PANEL_WIDTH_STORED_MAX_REM = 200
 
 /**
  * 夜側の濃さの範囲。UI のスライダーと localStorage 復元時の丸めで同じ値を使う。
@@ -431,6 +444,8 @@ export const DEFAULTS: AppSettings = {
   publicWaveEnabled: true,
   publicWaveAlwaysConnected: false,
   panelRatio: 0.45,
+  panelWidthSide: null,
+  panelWidthSideNarrow: null,
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -652,6 +667,9 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     publicWaveEnabled: ensureBool(partial.publicWaveEnabled, DEFAULTS.publicWaveEnabled),
     publicWaveAlwaysConnected: ensureBool(partial.publicWaveAlwaysConnected, DEFAULTS.publicWaveAlwaysConnected),
     panelRatio: clampNumber(partial.panelRatio, PANEL_RATIO_MIN, PANEL_RATIO_MAX, DEFAULTS.panelRatio),
+    // 上限は画面の幅で決まるので、保存の段では下限と、壊れた値を弾く緩い上限だけを当てる
+    panelWidthSide: clampNumberOrNull(partial.panelWidthSide, PANEL_WIDTH_MIN_REM, PANEL_WIDTH_STORED_MAX_REM),
+    panelWidthSideNarrow: clampNumberOrNull(partial.panelWidthSideNarrow, PANEL_WIDTH_MIN_REM, PANEL_WIDTH_STORED_MAX_REM),
   }
 }
 
