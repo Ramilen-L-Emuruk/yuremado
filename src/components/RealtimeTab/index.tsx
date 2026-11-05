@@ -1276,8 +1276,10 @@ function SWaveArrivalCountdown({ row }: { row: SWaveArrivalRow }) {
 // 段の色を消しつつラベルは読める濃さを保つ（経緯は KyoshinDetectionSummary 内のコメント）。
 const SETTLED_CHIP_BG = '#4b5563'
 /**
- * 字が詰まる所で「0未満」の代わりに書く語（震度の枠の数字・棒の札。範囲は 2026-11-04 ユーザー発言「小さい狭いところ全体に適用したいです」。
- * 語は 2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」で「≦0」から改めた —— 「≦0」は「0」の行と並ぶと 0 を含むように読める）
+ * 震度の棒の札（「5弱」と同じ 2 文字幅にそろえた札）で「0未満」の代わりに書く語。使うのはこの札だけで、最大リアルタイム震度の
+ * 枠の数字は「0未満」と書く（2026-11-05 ユーザー発言「あれ、＜0の表示は狭いところだけって言ったはずなんだけど」、続く選択
+ * 「棒の札だけ (Recommended)」）。語は 2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」で「≦0」から改めた
+ * —— 「≦0」は「0」の行と並ぶと 0 を含むように読める
  */
 const BELOW_ZERO_SHORT_LABEL = '<0'
 
@@ -1446,7 +1448,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   const maxLabel = kyoshinIndexToLabel(maxIndex)
   const groups = LABEL_ORDER.filter(l => counts.has(l)).map(l => ({ label: l, ...counts.get(l)! }))
   const subZeroLabel = kyoshinDetectionScaleLabel(0)
-  // ホバーと画面読み上げで、字を詰めた「<0」の代わりに伝える語（本文の「震度0未満の反応」と同じ呼び名）
+  // 棒の札「<0」と枠の「0未満」を、ホバーと画面読み上げで伝える語（本文の「震度0未満の反応」と同じ呼び名）
   const subZeroFullLabel = subZeroLabel ? `震度${subZeroLabel}` : undefined
   if (subZeroCount > 0 && subZeroLabel) groups.push({ label: subZeroLabel, color: KYOSHIN_SUB_ZERO_COLOR, count: subZeroCount })
   const rawMaxCount = groups.reduce((m, g) => Math.max(m, g.count), 1)
@@ -1516,10 +1518,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   const belowZeroCount = activeCount === 0 && topTier === 'confirmed' ? subZeroCount : 0
   const belowZero = belowZeroCount > 0
   const settled = activeCount === 0 && !belowZero
-  // 字が詰まる所（震度の枠の数字・棒の札）では「0未満」を「<0」と書く（範囲は 2026-11-04 ユーザー発言
-  // 「小さい狭いところ全体に適用したいです」、語は 2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」）。
-  // 本文・判定の内訳・通知・共有カードの文は「0未満」のまま
-  const maxLabelShown = maxLabel ?? (belowZero ? BELOW_ZERO_SHORT_LABEL : null)
+  // 枠の数字は「0未満」と書く。「<0」と詰めるのは棒の札だけ（→ `BELOW_ZERO_SHORT_LABEL`）
+  const maxLabelShown = maxLabel ?? (belowZero ? subZeroLabel : null)
   const strongestName = settled ? null : strongestRegionName(points, subregions)
 
   return (
@@ -1555,7 +1555,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
             aria-label={maxLabel === null && belowZero ? subZeroFullLabel : undefined}
             style={{ fontSize: 'calc(var(--qk-big-f) * 0.75 * var(--rt-tw))' }}
           >
-            {maxLabelShown ?? '—'}
+            {/* 地震タブ・緊急地震速報の枠と同じく「弱・強・未満」を 0.55 倍で添える（2026-11-05 ユーザー選択「そろえる (Recommended)」） */}
+            {maxLabelShown === null ? '—' : <TileScaleLabel label={maxLabelShown} />}
           </span>
         </div>
         <div className="flex flex-col gap-1.5 flex-1 min-w-0">

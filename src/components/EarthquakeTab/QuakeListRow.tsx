@@ -74,10 +74,12 @@ export function QuakeListDayLabel({ label }: { label: string }) {
 /**
  * 震度の値（「5強」なら「5」と「強」）。数字はそのままの大きさで、「弱」「強」だけ小さく添える
  * （2026-11-03 選択「B2：縦に伸ばし中身は中央 (Recommended)」。見本の案 B は弱・強を数字の 0.55 倍で添える）。
+ * 揺れ検知の「0未満」の「未満」も同じく 0.55 倍で添える（2026-11-05 ユーザー発言「未満だけ小さくしたら」、続く選択
+ * 「数字の横に 0.55 倍 (Recommended)」）。
  * 値の本体（`data-tile-value`）は 1 つの要素のまま —— 「以上」はこれとは別の要素で添える（→ `maxScaleOrAbove`）。
  */
 export function TileScaleLabel({ label }: { label: string }) {
-  const m = /^(.*?)([弱強])$/.exec(label)
+  const m = /^(.*?)(弱|強|未満)$/.exec(label)
   return (
     <span data-tile-value className="whitespace-nowrap">
       {m ? <>{m[1]}<span style={{ fontSize: '0.55em' }}>{m[2]}</span></> : label}
