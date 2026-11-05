@@ -31,6 +31,7 @@
 import type { EEWAlert, JMAQuake } from '../types/earthquake'
 import { eewAreas, eewMaxScale } from './eew'
 import { isValidIntensityScale } from './intensity'
+import { isMaxScaleUnreceived } from './quakePoints'
 import type { DetectedPoint } from './kyoshinDetectionView'
 import { kyoshinIndexToJma } from './kyoshinIntensity'
 import { hasKnownEpicenter, haversineKm } from './geo'
@@ -85,6 +86,12 @@ export type ChecklistScope = 'near' | 'nearArea' | 'nearDetected' | 'nationwide'
 export interface ChecklistJudgement {
   scale: number
   scope: ChecklistScope
+  /**
+   * 最大の震度が「5弱以上（未入電）」か。**出す最低震度が 5強以上でも出す**（5強以上だった可能性があるため。
+   * 2026-11-04 ユーザー選択「5強以上の設定でも残す (Recommended)」）。帯の札は「震度5弱以上」と書く
+   * （同日の選択「「震度5弱以上」 (Recommended)」）
+   */
+  unreceived: boolean
 }
 
 /** 位置を持たない（または半径内に観測点が無い）ことを表す。全国基準で判定する。 */
@@ -138,7 +145,9 @@ export function judgeQuakeForScope(
   if (!isUsableThreshold(minScale)) return null
   const nationwide = (): ChecklistJudgement | null => {
     const max = quake.earthquake.maxScale
-    return isValidIntensityScale(max) && max >= minScale ? { scale: max, scope: 'nationwide' } : null
+    if (!isValidIntensityScale(max)) return null
+    const unreceived = isMaxScaleUnreceived(max, quake.points ?? [])
+    return max >= minScale || unreceived ? { scale: max, scope: 'nationwide', unreceived } : null
   }
   if (!hasNearby(scope)) return nationwide()
 
@@ -146,6 +155,8 @@ export function judgeQuakeForScope(
   let max: number | null = null
   // 最大値を区域の点から採ったか。同じ震度なら観測点の側を採る（範囲を狭く名乗れる方）。
   let maxFromArea = false
+  // 最大値を採った点が未入電（「5弱以上」）か
+  let maxUnreceived = false
   for (const p of quake.points ?? []) {
     // `pref` は見ない。DMDATA は区域・観測点とも空で積み、都道府県のロールアップ点だけが県名を持つため、
     // 名前だけで引き当てる（`nearbyStationNames` / `nearbyRegionNames` も名前で持つ）。
@@ -157,12 +168,15 @@ export function judgeQuakeForScope(
     // 有効な点が 1 つも無い電文で全国基準へ倒れなくなる（黙って出なくなる）。
     if (!isValidIntensityScale(p.scale)) continue
     matched = true
-    if (p.scale < minScale) continue
+    // 未入電の点（「5弱以上」）は、閾値が 5強以上でも落とさない（5強以上だった可能性がある）
+    if (p.scale < minScale && !p.unreceived) continue
     if (max == null || p.scale > max) {
       max = p.scale
       maxFromArea = p.isArea
-    } else if (p.scale === max && !p.isArea) {
-      maxFromArea = false
+      maxUnreceived = p.unreceived === true
+    } else if (p.scale === max) {
+      if (!p.isArea) maxFromArea = false
+      if (p.unreceived) maxUnreceived = true
     }
   }
   // 半径内に該当する点が 1 つも無かったときの読み方は 2 通りある。
@@ -190,7 +204,7 @@ export function judgeQuakeForScope(
     if (!hasStationPoint && minScale < AREA_REPORT_FLOOR) return nationwide()
     return null
   }
-  return max == null ? null : { scale: max, scope: maxFromArea ? 'nearArea' : 'near' }
+  return max == null ? null : { scale: max, scope: maxFromArea ? 'nearArea' : 'near', unreceived: maxUnreceived }
 }
 
 /**
@@ -255,7 +269,7 @@ export function judgeKyoshinForScope(
   if (points.length === 0) return null
   const scanAll = (): ChecklistJudgement | null => {
     const max = scanPoints(points, minScale, null).max
-    return max == null ? null : { scale: max, scope: 'nationwide' }
+    return max == null ? null : { scale: max, scope: 'nationwide', unreceived: false }
   }
   // 半径内に強震モニタの観測点が 1 つも無ければ絞れないので、確定メンバー全体で見る（地点が
   // 未登録の場合と、登録されていても近くに観測点が無い離島などの両方がここに入る）。
@@ -272,7 +286,7 @@ export function judgeKyoshinForScope(
   // （`buildSiteIndex`）。渡ってくる値は瞬断を直前値で埋めた保持値だが、途絶が保持期間を過ぎれば
   // 欠測のセンチネルへ戻る。
   if (!near.observed) return scanAll()
-  return near.max == null ? null : { scale: near.max, scope: 'near' }
+  return near.max == null ? null : { scale: near.max, scope: 'near', unreceived: false }
 }
 
 /**
@@ -355,14 +369,14 @@ export function judgeEewForScope(
     if (!hasKnownEpicenter(latitude, longitude)) return null
     const near = scope.centers.some((c) => haversineKm(latitude, longitude, c.lat, c.lng) <= NEARBY_RADIUS_KM)
     const max = eewMaxScale(eew)
-    return near && isValidIntensityScale(max) && max >= minScale ? { scale: max, scope: 'nearDetected' } : null
+    return near && isValidIntensityScale(max) && max >= minScale ? { scale: max, scope: 'nearDetected', unreceived: false } : null
   }
   const regions = eewAreas(eew)
   const canNarrow = hasNearby(scope) && scope.regionNames.size > 0
   if (regions.length === 0 && canNarrow) return null
   if (!canNarrow) {
     const max = eewMaxScale(eew)
-    return isValidIntensityScale(max) && max >= minScale ? { scale: max, scope: 'nationwide' } : null
+    return isValidIntensityScale(max) && max >= minScale ? { scale: max, scope: 'nationwide', unreceived: false } : null
   }
   // ここで `eewMaxScaleInfo` を使わないのは、あれが「電文全体の最大」を返す関数だから。
   // 欲しいのは自宅の区域だけの最大なので、区域を絞ってから同じ検証（階級表にある値か）を当てる。
@@ -375,5 +389,5 @@ export function judgeEewForScope(
     }
   }
   // 区域はあるが自宅の区域が対象外だった場合は「自宅は閾値未満」と読める。ここは倒さない。
-  return max == null ? null : { scale: max, scope: 'near' }
+  return max == null ? null : { scale: max, scope: 'near', unreceived: false }
 }

@@ -86,6 +86,8 @@ export interface ChecklistState {
   scope: ChecklistScope
   /** 畳んだ対象を見分けるための識別子。 */
   key: string
+  /** 震度が「5弱以上（未入電）」か。札を「震度5弱以上」と書く（→ `ChecklistJudgement.unreceived`）。 */
+  unreceived: boolean
 }
 
 // 時刻は壁時計（`Date.now()`）で測る。ここで要るのは「畳んでから 1 時間」という**経過時間**だけで、
@@ -333,9 +335,10 @@ export function useActionChecklist(params: {
 
     // 中身が変わらないなら触らない（開いた項目の状態を保つため）。**震度は比較に含める** ——
     // 同じ EEW の続報で予想が上がることがあり、キーだけで弾くとその引き上げを取りこぼす。
+    // **未入電の印も含める** —— 同じ 45 のまま「5弱以上」と「5弱」が入れ替わると、札の「以上」だけが古く残る
     const cur = stateRef.current
     if (
-      cur && cur.key === next.key && cur.scale === next.scale && cur.scope === next.scope
+      cur && cur.key === next.key && cur.scale === next.scale && cur.scope === next.scope && cur.unreceived === next.unreceived
       && wasCollapsed === keepCollapsed
     ) return true
 
@@ -344,7 +347,7 @@ export function useActionChecklist(params: {
     // 判定した範囲（`scope`）だけが変わった回は、見出しと根拠の 1 行を描き直すだけで記録しない。
     // 強震モニタは毎秒判定し、半径内の点が欠測を出入りすると `near` と `nationwide` が往復するので、
     // 記録すると同じ揺れで「帯が出た」が積み上がる
-    if (cur && cur.key === next.key && cur.scale === next.scale && wasCollapsed === keepCollapsed) return true
+    if (cur && cur.key === next.key && cur.scale === next.scale && cur.unreceived === next.unreceived && wasCollapsed === keepCollapsed) return true
     // 録画ツール向けの記録（→ `docs/spec/recording-interface-spec.md`）。**中身が変わらない
     // 回は上で抜けている**ので、ここへ来るのは画面が実際に動いたときだけ。畳んだまま出す
     // 場合（`keepCollapsed`）も「帯は出ている」ので開いた側として残す。
@@ -454,7 +457,7 @@ export function useActionChecklist(params: {
         // **報番号を含む `eew.id` は使わない。** 続報のたびにキーが変わり、畳んだものが開き直す。
         if (eewHit == null || hit.scale > eewHit.scale) eewHit = { ...hit, key: `eew:${eewEventKey(eew)}` }
       }
-      if (eewHit) return { reason: 'eew', scale: eewHit.scale, scope: eewHit.scope, key: eewHit.key }
+      if (eewHit) return { reason: 'eew', scale: eewHit.scale, scope: eewHit.scope, key: eewHit.key, unreceived: false }
 
       if (kyoshinHit != null) {
         if (kyoshinAnchorRef.current == null) {
@@ -463,7 +466,7 @@ export function useActionChecklist(params: {
             ?? (latestQuake ? quakeEventKey(latestQuake) : null)
             ?? new Date().toISOString()
         }
-        return { reason: 'kyoshin', scale: kyoshinHit.scale, scope: kyoshinHit.scope, key: `kyoshin:${kyoshinAnchorRef.current}` }
+        return { reason: 'kyoshin', scale: kyoshinHit.scale, scope: kyoshinHit.scope, key: `kyoshin:${kyoshinAnchorRef.current}`, unreceived: false }
       }
 
       // **詰まっている間に地震情報へ落とさない。** 揺れが続いているのに「強い揺れがありました」
@@ -476,7 +479,7 @@ export function useActionChecklist(params: {
       // **取消表示中のカードは外す。** 顔ぶれ（`updateJudgedQuakes`）は鍵で持つので、同じ鍵の生きた
       // カードと並んでいると取消カードもここまで来る。**寿命が尽きて消したものも選ぶ前に外す** ——
       // 外さないと、それが最大のとき `show` で弾かれ、閾値に達した別の地震まで出なくなる。
-      let quakeHit: { scale: number; scope: ChecklistScope; key: string } | null = null
+      let quakeHit: { scale: number; scope: ChecklistScope; key: string; unreceived: boolean } | null = null
       for (const q of quakes) {
         if (isQuakeCancelled(q)) continue
         const eventKey = quakeEventKey(q)
@@ -488,7 +491,7 @@ export function useActionChecklist(params: {
         if (hit == null) continue
         if (quakeHit == null || hit.scale > quakeHit.scale) quakeHit = { ...hit, key }
       }
-      if (quakeHit) return { reason: 'quake', scale: quakeHit.scale, scope: quakeHit.scope, key: quakeHit.key }
+      if (quakeHit) return { reason: 'quake', scale: quakeHit.scale, scope: quakeHit.scope, key: quakeHit.key, unreceived: quakeHit.unreceived }
       return null
     }
   }, [eews, kyoshinHit, kyoshinStalled, quakes, latestQuake, scope, minScale, show, applySuppress])

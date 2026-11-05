@@ -57,14 +57,17 @@ describe('EEW カードの固定付加文', () => {
     expect(screen.getByText(COMMENT)).toBeTruthy()
   })
 
-  // 安全弁: 位置が予想値のバナー群の直後であること（末尾へ戻していないこと）。
-  it('予想最大震度より後・発生時刻より前に置く', () => {
-    renderTab(makeEEW())
+  // 安全弁: 位置が震度の枠と値の段（予想最大震度・震源・時刻・M・深さ）の直後であること（末尾へ戻していないこと）。
+  // 枠と値の段はカードの頭に置く（2026-11-04 ユーザー選択「この形で決める (Recommended)」）ので、付加文はその下になる
+  it('震度の枠と値の段より後・主要動の到達より前に置く', () => {
+    // 到達予測の区域を持たせ、到達の欄を必ず出す（無いと「末尾へ戻していない」の確認が効かない）
+    renderTab(makeEEW({ areas: [{ name: '宮崎県南部平野部', pref: '', scaleFrom: 50, scaleTo: 50, kindCode: '10', arrivalTime: '2026-01-01T12:00:40Z' }] }))
     const comment = screen.getByText(COMMENT)
     const maxScaleLabel = screen.getByText('予想最大震度')
-    const originTime = screen.getByText(/^地震発生時刻 /)
+    const originTime = screen.getByText('地震発生時刻')
     expect(precedes(maxScaleLabel, comment)).toBe(true)
-    expect(precedes(comment, originTime)).toBe(true)
+    expect(precedes(originTime, comment)).toBe(true)
+    expect(precedes(comment, screen.getByText('主要動の到達（予測）'))).toBe(true)
   })
 
   // 対照: 付加文を持たない報（実電文では予報級）では何も足さない。

@@ -53,8 +53,11 @@
    差し引く 4rem はアイコンナビの実測幅（約 3.5rem）に余白を見た値。
    単位は vw ではなく dvw。ビューポート単位は d 付きに揃える規約による
    （docs/spec/architecture-spec.md「画面いっぱいへの広がりとセーフエリア」規則 3）。 */
+/* 左右分割の幅は 35rem（UI 倍率 1 で 560px）。地震カードの広い組（枠 128px・地名 32px）が
+   値を 2 列に並べたまま収まる幅で、26rem（416px）では上の枠が 435px に伸びて値が 1 列に落ちた
+   （2026-11-02 ユーザー選択「PC のパネルを広げる」。→ docs/quake-tab-redesign.md）。 */
 @utility w-panel {
-  width: min(26rem, calc(100dvw - 4rem));
+  width: min(35rem, calc(100dvw - 4rem));
 }
 @utility w-panel-narrow {
   width: min(22rem, calc(100dvw - 4rem));
@@ -66,6 +69,144 @@
   --color-card: #1a1d26;
   --color-border: #2a2d38;
   --color-secondary: #94a3b8;
+}
+
+/* 地震一覧の文字と寸法。**画面の幅ではなく一覧自身の幅**で狭い組・広い組を切り替える
+   （コンテナクエリ。境は 520px）。PC の左右分割（35rem）とタブレット縦は広い組、スマホの縦・横は
+   狭い組になる。値は確定した見本（.playwright-mcp/mock/opened.html）のまま
+   （2026-11-02 ユーザー選択「パネル自身の幅 (Recommended)」「見本の値のまま (Recommended)」。
+   → docs/quake-tab-redesign.md「共通の土台」）。rem で書くのは UI 倍率に追従させるため。 */
+@utility quake-list {
+  container-type: inline-size;
+  --qk-f: 0.90625rem;       /* 本文 14.5px */
+  --qk-fs: 0.71875rem;      /* 小さい文字 11.5px */
+  --qk-pad: 0.625rem;       /* 左右の余白 10px */
+  --qk-gap: 0.3125rem;      /* 列の間 5px */
+  --qk-tile-w: 3.125rem;    /* 閉じた行の震度の枠 50×44・数字 22px */
+  --qk-tile-h: 2.75rem;
+  --qk-tile-f: 1.375rem;
+  --qk-col-t: 2.3125rem;    /* 時刻の列 37px */
+  --qk-col-m: 2.9375rem;    /* 規模の列 47px */
+  --qk-col-d: 4.25rem;      /* 深さの列 68px */
+  --qk-big: 4.5rem;         /* 開いた枠 72px・数字 54px */
+  --qk-big-f: 3.375rem;
+  --qk-name: 1.4375rem;     /* 開いた震央地名 23px */
+  --qk-val: 1.3125rem;      /* 開いた値 21px */
+  --qk-band-h: 1.625rem;    /* 開いた枠の長周期の帯 26px・字 14px */
+  --qk-band-f: 0.875rem;
+  --qk-fact-gap: 0.75rem;
+  --qk-head-h: 1.625rem;    /* 一覧の見出しの行（震度・時刻・震央地名…）26px。巻いても上に残る */
+}
+/* 開いたカードの震度の枠の下端に置く影の受け皿。普段は高さを持たない（影を描くのは貼りついている間だけ。下の @container quake-stick）。
+   親（.quake-stick）に gap を持たせると、高さ 0 でもこの子のぶん隙間が増える */
+.quake-stick-edge {
+  display: block;
+  height: 0;
+}
+/* 一覧の見出しの行は巻いても上に残るので、カードへ寄せるときはその下へ着地させる（→ useFollowScroll） */
+.quake-list [data-quake-key] {
+  scroll-margin-top: var(--qk-head-h);
+}
+@container (min-width: 520px) {
+  .quake-list-scope {
+    --qk-f: 1rem;
+    --qk-fs: 0.78125rem;
+    --qk-pad: 0.875rem;
+    --qk-gap: 0.625rem;
+    --qk-tile-w: 3.75rem;
+    --qk-tile-h: 3.125rem;
+    --qk-tile-f: 1.625rem;
+    --qk-col-t: 2.625rem;
+    --qk-col-m: 3.375rem;
+    --qk-col-d: 4.875rem;
+    --qk-big: 8rem;
+    --qk-big-f: 5.5rem;
+    --qk-name: 2rem;
+    --qk-val: 1.75rem;
+    --qk-band-h: 2.625rem;
+    --qk-band-f: 1.375rem;
+    --qk-fact-gap: 1.125rem;
+  }
+  /* 広い組で、貼りつく高さ（一覧の見出しの行＋見出しの段＋震度の枠と値）が一覧の見える高さの 4 割までなら、
+     開いたカードの見出しの段と震度の枠・震源の値を一覧の上へ貼りつけ、スマホの帯は出さない。超えるなら
+     狭い組と同じ帯を出し、枠と値は流す（2026-11-03 発言「並び方じゃなくて高さ見たほうがいいのかな」、選択
+     「4 割まで (Recommended)」）。測って印 data-stick-tall を付けるのはカード（→ EarthquakeCard の STICK_MAX_SHARE）。
+     見出しの段の高さはカードがこの枠自身の --qk-open-head-h に書く */
+  .quake-list-scope [data-stick-tall] .quake-open-head {
+    position: sticky;
+    top: var(--qk-head-h);
+    z-index: 2;
+  }
+  .quake-list-scope [data-stick-tall] .quake-stick {
+    position: sticky;
+    top: calc(var(--qk-head-h) + var(--qk-open-head-h, 0px));
+    z-index: 2;
+    /* 貼りついている間だけ下端に、狭い組の帯と同じ境の線と影を付ける（2026-11-03 選択「帯と同じ影を付ける (Recommended)」）。
+       scroll-state の問い合わせは箱の子にしか効かないので、描くのは子の quake-stick-edge。使えない端末では影が付かないだけ。
+       名前を付けた箱なので、名前の無い幅の問い合わせ（@container (min-width: …)）はこれまでどおり一覧の箱を見る */
+    container: quake-stick / scroll-state;
+  }
+  @container quake-stick scroll-state(stuck: top) {
+    .quake-list-scope [data-stick-tall] .quake-stick-edge {
+      position: absolute;
+      inset: auto 0 0 0;
+      border-bottom: 1px solid var(--color-border);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, .55);
+      pointer-events: none;
+    }
+  }
+  .quake-list-scope [data-stick-tall] .quake-pin {
+    display: none;
+  }
+  /* 震度・長周期の一覧は左右交互の 2 列。開いた県の中身はその県の列の中だけに収める
+     （2026-11-01 選択「この形にする (Recommended)」。→ docs/quake-tab-redesign.md） */
+  .quake-list-scope .quake-ints {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 1.125rem;
+    align-items: start;
+  }
+  /* 県（または区域）の塊は、見出しの行と開いた中身の 2 段。左右の塊を同じ 2 段に乗せて（サブグリッド）、
+     見出しの行どうしをいつも同じ高さにそろえる —— 「（未入電あり）」で高くなった行の隣も、片方を開いた・
+     閉じている途中でも、下の線がずれない（2026-11-03 発言「アニメーション中横の行変にならない？
+     高さも未入電ありに合ってたのが左開くと縮むし」）。中身の段は左右で長いほうに合わせて空く */
+  /* サブグリッドが使えない古い端末（Chrome 116・Safari 15 以前）では当てない（見出しの行どうしはそろわず、
+     塊ごとに上から並ぶだけ。壊れはしない） */
+  @supports (grid-template-rows: subgrid) {
+    .quake-list-scope .quake-ints > div {
+      display: grid;
+      grid-row: span 2;
+      grid-template-rows: subgrid;
+    }
+  }
+  /* 開いた中身の枠は段の高さまで伸ばさない。伸ばすと、短い側の枠（左端の線と地の色）が、長い側に合わせて
+     空いた所まで下へ伸びて見える（2026-11-03 発言「どっちも開いたらこうなるのはおかしくない？」） */
+  .quake-list-scope .quake-ints > div > :nth-child(2) {
+    align-self: start;
+  }
+}
+/* 帯・行動チェックリスト・小さい窓の文字。地震一覧と同じ 2 組（狭い組 本文 14.5px・小 11.5px／広い組 16px・12.5px）を、
+   画面の幅ではなく器自身の幅 520px で切り替える（2026-11-04 ユーザー選択「帯と窓だけ揃える (Recommended)」）。
+   器（ui-text）に幅の問い合わせを置き、値は中の ui-text-scope が持つ（問い合わせは器自身の値を変えられないため）。
+   使う側は `text-(length:--ui-f)`・`text-(length:--ui-fs)` で読む。 */
+@utility ui-text {
+  container-type: inline-size;
+}
+.ui-text-scope {
+  --ui-f: 0.90625rem;
+  --ui-fs: 0.71875rem;
+}
+@container (min-width: 520px) {
+  .ui-text-scope {
+    --ui-f: 1rem;
+    --ui-fs: 0.78125rem;
+  }
+}
+/* 開いた県・地域の中身を包む枠（見本 opened.html の .ints .sub）。左の線の色は県の値の色を呼ぶ側が付ける */
+@utility quake-sub {
+  margin: 2px 0 4px;
+  border-left: 2px solid transparent;
+  background: rgb(0 0 0 / 0.18);
 }
 
 /* v4 で枠線の既定色が currentcolor に変わったので、v3 の既定（gray-200）へ戻す。
@@ -87,10 +228,10 @@
     cursor: pointer;
   }
 
-  /* v4 は placeholder を文字色の半透明にしたので、v3 の既定（gray-400）に戻す。 */
+  /* v4 は placeholder を文字色の半透明にしたので、弱い字の色（secondary）に固定する。 */
   input::placeholder,
   textarea::placeholder {
-    color: #9ca3af;
+    color: var(--color-secondary);
   }
 }
 
@@ -131,26 +272,26 @@ body {
   z-index: 100000;
 }
 .maplibregl-popup-content {
-  background: #1a1d26;
+  background: var(--color-card);
   color: #e2e8f0;
-  border: 1px solid #2a2d38;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55);
   /* 内容は Tailwind の rem ベースで書かれており UI 倍率に追従するため、余白・閉じるボタンも
      rem で揃える（px のままだと倍率を上げたとき中身だけ膨らんで余白が詰まる）。
      枠線・角丸・影は装飾のヘアラインなので倍率に連動させない。 */
   padding: 0.5rem 0.75rem;
 }
-.maplibregl-popup-close-button { color: #94a3b8; font-size: 1rem; }
+.maplibregl-popup-close-button { color: var(--color-secondary); font-size: 1rem; }
 /* 吹き出しの三角は anchor 方向ごとに border で描かれるため、各方向を背景色に合わせる。 */
-.maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: #1a1d26; }
-.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: #1a1d26; }
-.maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: #1a1d26; }
-.maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: #1a1d26; }
-.maplibregl-popup-anchor-top-left .maplibregl-popup-tip { border-bottom-color: #1a1d26; }
-.maplibregl-popup-anchor-top-right .maplibregl-popup-tip { border-bottom-color: #1a1d26; }
-.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip { border-top-color: #1a1d26; }
-.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip { border-top-color: #1a1d26; }
+.maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: var(--color-card); }
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: var(--color-card); }
+.maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: var(--color-card); }
+.maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: var(--color-card); }
+.maplibregl-popup-anchor-top-left .maplibregl-popup-tip { border-bottom-color: var(--color-card); }
+.maplibregl-popup-anchor-top-right .maplibregl-popup-tip { border-bottom-color: var(--color-card); }
+.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip { border-top-color: var(--color-card); }
+.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip { border-top-color: var(--color-card); }
 
 /* ホバー用ポップアップ（gl/popupRegistry.ts）。吹き出し自身がマウスを受け取ると
    「点から外れた」と判定されて出る/消えるを繰り返すため、当たり判定から外す。 */
@@ -245,4 +386,83 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .update-fade-text,
   .update-fade-bg { animation-timing-function: steps(1, end); }
+}
+
+/* 1 行に収まらない文を流す（→ components/Marquee.tsx）。同じ文を、それぞれの後ろに同じ間を付けて 2 つ並べ、
+   列の半分（文の幅＋間）だけ進めて頭へ戻す。速さは部品が animation-duration で決める。
+   transform だけを、測った値を持ち込まない keyframes で動かす（var() を入れると合成の段で回せないことがある）。 */
+@keyframes marquee-run {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.marquee-run {
+  display: inline-block;
+  animation: marquee-run linear infinite;
+}
+/* 動きを減らす設定では流さず、1 つ目だけを残して末尾を「…」で切る */
+@media (prefers-reduced-motion: reduce) {
+  .marquee-run {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    animation: none;
+  }
+  .marquee-run > :nth-child(2) { display: none; }
+  .marquee-run > :first-child { display: inline; }
+}
+
+/* 凡例の開閉で、前の中身を薄くしながら重ねる（`MapLegend` の `useLegendMotion`。長さは開閉の動きと同じ 150ms）。
+   動きを減らす設定では重ねる中身そのものを出さない */
+@keyframes legend-ghost-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.legend-ghost {
+  animation: legend-ghost-out 150ms ease-out forwards;
+}
+
+/* 地震タブの押せる所（2026-11-03 選択「乗せたら明るく・押すと沈む (Recommended)」）。新しい印や文言は足さない。
+   震度の枠（quake-tile）は、乗せた部分（quake-tile-part：震度の部分か長周期の札）だけを少し明るくする。枠ごと明るくすると、
+   震度に乗せただけで長周期の札まで光る。押している間は、押した部分を含む塊を少し縮めて沈ませる（札を押したら札だけ）。
+   震度の部分は枠の地の色を受け継いで、明るくする地を自分で持つ。
+   quake-press-row は横に長い行（閉じた行・帯・県や区域の行）に付け、押している間だけ少し暗くする（行を縮めると不自然なため）。
+   端末で動きを減らす設定なら、沈む動きだけ止める */
+.quake-tile,
+.quake-tile-part {
+  transition: filter 100ms ease-out, transform 100ms ease-out;
+}
+.quake-tile [data-tile] {
+  background-color: inherit;
+}
+.quake-tile-part:hover {
+  filter: brightness(1.15);
+}
+/* 沈む動きは、動きを減らす設定でない端末だけ（後ろで打ち消すと、`:has()` の付いた規則のほうが強くて消えない） */
+@media (prefers-reduced-motion: no-preference) {
+  .quake-tile-lpgm:active {
+    transform: scale(0.97);
+  }
+  /* `:has()` の無い端末では、この規則だけが落ちる（同じ規則に札の分を並べると、札の沈みまで一緒に落ちる）。
+     落ちた端末では、震度の部分を押しても枠は沈まない */
+  @supports selector(:has(*)) {
+    .quake-tile:active:not(:has(.quake-tile-lpgm:active)) {
+      transform: scale(0.97);
+    }
+  }
+}
+.quake-press-row {
+  transition: filter 100ms ease-out;
+}
+.quake-press-row:hover {
+  filter: brightness(1.12);
+}
+.quake-press-row:active {
+  filter: brightness(0.9);
+}
+@media (prefers-reduced-motion: reduce) {
+  .quake-tile,
+  .quake-tile-part,
+  .quake-press-row {
+    transition: none;
+  }
 }

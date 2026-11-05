@@ -41,9 +41,30 @@ describe('parseWepa60Text', () => {
       originTime: '2021-01-21T12:23:00.000Z',
       isCommunicationsTest: false,
       text: expect.stringContaining('TALAUD ISLANDS, INDONESIA'),
+      epicenter: { latitude: 4.8, longitude: 127.4 },
+      regionName: 'TALAUD ISLANDS, INDONESIA',
+      magnitude: 7.0,
     })
     expect(r!.text.startsWith('WEPA60 RJTD 211247\n')).toBe(true)
     expect(r!.text.endsWith('EXPECTED FROM THIS EARTHQUAKE.')).toBe(true)
+  })
+
+  // 実電文の書式（全期間の控えの地震の報 163 通）: 南緯・西経は SOUTH・WEST、規模の種類は (MJMA)・(MW)、深さは FOCAL DEPTH の行で
+  // 規模と同じ行に書かれることがある
+  it('南緯・西経・規模の種類・深さ（規模と同じ行）を読む', () => {
+    const r = parseWepa60Text(BULLETIN
+      .replace('PRELIMINARY EPICENTER:LAT4.8NORTH LON127.4EAST', 'PRELIMINARY EPICENTER:LAT15.2SOUTH LON173.1WEST')
+      .replace('MAG:7.0', 'FOCAL DEPTH:139KM MAG:7.3 (MW)'))
+    expect(r).toMatchObject({ epicenter: { latitude: -15.2, longitude: -173.1 }, magnitude: 7.3, magnitudeType: 'Mw', depthKm: 139 })
+    expect(parseWepa60Text(BULLETIN.replace('MAG:7.0', 'MAG:6.9 (MJMA)'))?.magnitudeType).toBe('Mj')
+  })
+
+  // 安全弁: 震源の値が無い報（通信試験）は、値を持たない
+  it('震源の値が無い報は震央・地名・規模を持たない', () => {
+    const r = parseWepa60Text(COMM_TEST)
+    expect(r?.epicenter).toBeUndefined()
+    expect(r?.regionName).toBeUndefined()
+    expect(r?.magnitude).toBeUndefined()
   })
 
   it('通信試験は発生時刻を持たず、試験の印が立つ（改行が CRLF でも読める）', () => {

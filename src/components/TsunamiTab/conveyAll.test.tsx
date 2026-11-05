@@ -43,17 +43,21 @@ function makeTsunami(over: Partial<JMATsunami> = {}): JMATsunami {
 const renderTab = (tsunami: JMATsunami) =>
   render(<TsunamiTab tsunamiValueMarks={NO_TSUNAMI_VALUE_MARKS} tsunamis={[tsunami]} isVisible />)
 
+/** 等級カードの見出しに出た等級の名前（バナーの帯にも等級名が出るので、見出しだけを数える）。 */
+const gradeLabels = (container: HTMLElement) =>
+  [...container.querySelectorAll('[data-grade-label]')].map(el => el.textContent)
+
 describe('等級の帯は電文の名前を出す', () => {
   it('正: 「大津波警報：発表」の区域は、その名前のカードに分けて出す', () => {
-    renderTab(makeTsunami())
-    expect(screen.getByText('大津波警報：発表')).toBeTruthy()
-    expect(screen.getByText('大津波警報')).toBeTruthy()
+    const { container } = renderTab(makeTsunami())
+    expect(gradeLabels(container)).toContain('大津波警報：発表')
+    expect(gradeLabels(container)).toContain('大津波警報')
   })
 
   it('対照: 名前を持たない区域は等級の名前で 1 枚にまとめる', () => {
-    renderTab(makeTsunami({ areas: [area('岩手県', '210', 'MajorWarning'), area('宮城県', '220', 'MajorWarning')] }))
-    expect(screen.getAllByText('大津波警報')).toHaveLength(1)
-    expect(screen.queryByText('大津波警報：発表')).toBeNull()
+    const { container } = renderTab(makeTsunami({ areas: [area('岩手県', '210', 'MajorWarning'), area('宮城県', '220', 'MajorWarning')] }))
+    expect(gradeLabels(container)).toEqual(['大津波警報'])
+    expect(gradeLabels(container)).not.toContain('大津波警報：発表')
   })
 
   it('津波予報は「津波予報（若干の海面変動）」と名乗る', () => {

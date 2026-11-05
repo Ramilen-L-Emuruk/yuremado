@@ -937,7 +937,7 @@ export class DmdataWebSocket {
     const bytes = await decodeTelegramBytes(msg)
     if (bytes === null) {
       // 理由と間引きは `decodeTelegramBytes` が持つ（テキスト側と同じ）。
-      this.onRawMessage?.(this.makeLogEntry(headType, head, null, isTest, 'error', undefined, 'body decode failed'))
+      this.onRawMessage?.(this.makeLogEntry(headType, head, null, isTest, 'error', undefined, 'body decode failed', undefined))
       return
     }
     const author = typeof head?.author === 'string' ? head.author : ''
@@ -948,7 +948,7 @@ export class DmdataWebSocket {
       // まだ揃っていない断片。**本文は電文ログへ入れない** —— 1 断片が最大 512KB あり、
       // ログは直近ぶんを保持するので、生の本文を積むと数 MB が居座る。
       this.onRawMessage?.(this.makeLogEntry(
-        headType, head, `（BUFR の断片 ${bytes.length} バイト・結合待ち）`, isTest, 'filtered',
+        headType, head, `（BUFR の断片 ${bytes.length} バイト・結合待ち）`, isTest, 'filtered', undefined, undefined, undefined,
       ))
       return
     }
@@ -957,7 +957,7 @@ export class DmdataWebSocket {
     if (payload?.kind !== 'estimatedIntensity') {
       // 読めなかった理由は復号側が記録している（→ `bufrEstimatedIntensity.ts`）。
       this.onRawMessage?.(this.makeLogEntry(
-        headType, head, `（BUFR ${joined.length} バイト）`, isTest, 'error', undefined, 'bufr decode failed',
+        headType, head, `（BUFR ${joined.length} バイト）`, isTest, 'error', undefined, 'bufr decode failed', joined,
       ))
       return
     }
@@ -971,14 +971,16 @@ export class DmdataWebSocket {
       this.onRawMessage?.(this.makeLogEntry(
         headType, head,
         `（BUFR ${joined.length} バイト・電文の種類 ${payload.data.telegramKind}）`,
-        true, 'filtered',
+        true, 'filtered', undefined, undefined, joined,
       ))
       return
     }
     if (this.debug) dlog('推計震度分布図を受信', { bytes: joined.length, cells: payload.data.count })
     this.onRawMessage?.(this.makeLogEntry(
       headType, head, `（BUFR ${joined.length} バイト・${payload.data.count} セル）`,
-      isTest, 'parsed', 'estimatedIntensity',
+      // 結合した元の電文も行に持たせ、ダウンロードで .bin を落とす（2026-11-04 ユーザー選択「残して落とせる (Recommended)」。
+      // 1 通の中央 45,502 バイト・最大 1,245,910 バイト＝全期間の控え 83 通）
+      isTest, 'parsed', 'estimatedIntensity', undefined, joined,
     ))
     this.onEvent?.({ kind: 'estimatedIntensity', data: payload.data }, id)
   }
@@ -1004,8 +1006,10 @@ export class DmdataWebSocket {
     rawBody: unknown,
     isTest: boolean,
     status: TelegramLogEntry['status'],
-    kind?: TelegramLogEntry['kind'],
-    errorMessage?: string,
+    kind: TelegramLogEntry['kind'] | undefined,
+    errorMessage: string | undefined,
+    /** 推計震度分布図の結合した元の電文（→ `TelegramLogEntry.rawBytes`）。ほかの種類は `undefined` */
+    rawBytes: Uint8Array | undefined,
   ): TelegramLogEntry {
     return {
       id: `${Date.now()}-${Math.random()}`,
@@ -1020,6 +1024,7 @@ export class DmdataWebSocket {
       kind,
       rawHead,
       rawBody,
+      ...(rawBytes ? { rawBytes } : {}),
       errorMessage,
     }
   }
@@ -1109,18 +1114,19 @@ export class DmdataWebSocket {
         // **本文を復号してから積む。** 訓練と試験を分けるのは本文の `Control/Status` で、復号しないと
         // 毎正時の配信テストまで「訓練・試験」としか出せない。XML 電文の試験報は小さい（VXSE42 は数 KB）。
         // 二進電文はこの経路へ来ない（配信元は非 XML の試験報に `test` を立てない）。
-        // 本文を使わない種別は、通常の経路と同じく復号しない（`needsBodyDecode`）。
-        if (!needsBodyDecode(headType) || isBinaryTelegramType(headType)) {
-          this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, true, 'filtered'))
+        // 読まない種類（VXSE56）の試験報も復号して本文を見せる（2026-11-04 ユーザー選択「行を出し本文も読める形に
+        // (Recommended)」。全期間の控えで 30 通）
+        if (isBinaryTelegramType(headType)) {
+          this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, true, 'filtered', undefined, undefined, undefined))
           return
         }
         const body = await decodeTelegramText(msg)
         if (body === null) {
           // 通常の経路の復号失敗と同じ形で積む（圧縮されたままの本文を「捨てた試験報」に見せない）
-          this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, true, 'error', undefined, 'body decode failed'))
+          this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, true, 'error', undefined, 'body decode failed', undefined))
           return
         }
-        this.onRawMessage?.(this.makeLogEntry(headType, head, body, true, 'filtered'))
+        this.onRawMessage?.(this.makeLogEntry(headType, head, body, true, 'filtered', undefined, undefined, undefined))
       }
       return
     }
@@ -1137,7 +1143,16 @@ export class DmdataWebSocket {
     // ここをパーサーへ渡す種別だけで絞ると、**購読していない VXSE43 が届いたことを知らせる警告まで
     // 黙る** —— 配信分類の変わり目に気づく唯一の経路なので、節約のために消してはならない。
     if (!needsBodyDecode(headType)) {
-      if (this.debug) dlog('対象外の電文種別（本文は復号しない）', { headType, format: msg.format })
+      // **読まない種類も、電文ログには本文ごと積む**（2026-11-04 ユーザー選択「行を出し本文も読める形に (Recommended)」。
+      // 実配信で当たるのは VXSE56 だけ＝全期間の控えで 74 通）。画面・音・読み上げへは流さない。
+      // 二進の電文はこの経路へ来ない（本文を復号する種類の集合に入れてある推計震度分布図だけが二進）
+      if (this.debug) dlog('対象外の電文種別（電文ログにだけ積む）', { headType, format: msg.format })
+      const text = await decodeTelegramText(msg)
+      if (text === null) {
+        this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, isTest, 'error', undefined, 'body decode failed', undefined))
+        return
+      }
+      this.onRawMessage?.(this.makeLogEntry(headType, head, text, isTest, 'filtered', undefined, undefined, undefined))
       return
     }
 
@@ -1153,7 +1168,7 @@ export class DmdataWebSocket {
       // 理由の別と間引きは `decodeTelegramText` が持つ（**そこにしか理由は無い**）。ここで
       // 重ねて警告すると、持続的な障害のとき間引きの効かない側が電文のたびに鳴り、
       // 理由付きの記録がそこに埋もれる。ここは電文ログへ残すだけにする。
-      this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, isTest, 'error', undefined, 'body decode failed'))
+      this.onRawMessage?.(this.makeLogEntry(headType, head, msg.body, isTest, 'error', undefined, 'body decode failed', undefined))
       return
     }
     // **本文を読めた電文だけ「受け取り済み」にする**（→ `hasReceivedTelegram`）。取り戻しはこの印の付いた
@@ -1166,6 +1181,9 @@ export class DmdataWebSocket {
     // VXSE42（配信テスト）: 震源データなし。配信経路の疎通確認のみ。
     if (headType === 'VXSE42') {
       if (this.debug) dlog('VXSE42 配信テスト受信（EEWデータなし・配信経路正常）')
+      // 試験報を受ける設定のときもここへ来る。読まないが、届いたことと本文は電文ログに残す
+      // （受けない設定では上の試験報の分岐が同じ形で積んでいる）
+      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered', undefined, undefined, undefined))
       return
     }
 
@@ -1186,7 +1204,7 @@ export class DmdataWebSocket {
       // VXSE44 は購読中の `eew.forecast` に含まれ、予報級 EEW のたびに毎報届く**想定内**の電文。
       // 廃止予定の旧形式で VXSE45 の下位互換のため取り込まない（→ `dmdataTelegramPayload.ts` の `EEW_HEAD_TYPES`）。
       // 異常ではないので warn を上げず、電文ログにだけ残す。
-      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
+      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered', undefined, undefined, undefined))
       return
     }
     if (kind === undefined) {
@@ -1194,19 +1212,19 @@ export class DmdataWebSocket {
       // 種別の表へ載せ忘れた」ときだけ（表と集合の一致は `dmdataTelegramPayload.test.ts` が見る）。
       // **debug に依らず**残す —— 黙ると、その種別の電文が画面にも電文ログにも出ないまま消える。
       warnUnknownKind(() => log.warn(`[dmdata] ${headType} は種別の表に無いため読みません（TELEGRAM_KIND_OF_HEAD_TYPE への追加漏れ）`))
-      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
+      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered', undefined, undefined, undefined))
       return
     }
     const payload = buildXmlPayload(headType, xml, this.eewHeadType)
     if (!payload) {
       // 読めなかった理由のうち書式の異常と見なすものは `buildXmlPayload` が記録する
       if (this.debug) dlog('パース結果が null', { headType, kind })
-      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered'))
+      this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'filtered', undefined, undefined, undefined))
       return
     }
     const event = toDmdataEvent(payload, isTest)
     if (this.debug) dlog('電文を受信 → 通知', { headType, kind: event.kind })
-    this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', telegramKindOfPayload(payload)))
+    this.onRawMessage?.(this.makeLogEntry(headType, head, xml, isTest, 'parsed', telegramKindOfPayload(payload), undefined, undefined))
     emit(event, typeof msg.id === 'string' ? msg.id : '')
   }
 

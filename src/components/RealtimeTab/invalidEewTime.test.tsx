@@ -51,8 +51,9 @@ describe('緊急地震速報カードの時刻が読めないとき', () => {
   // 対照: 読める値では 2 行とも気象庁の名前を見出しにして出し、到達予測も「不明」にならない。
   it('読める値では従来どおり出す', () => {
     const { container } = renderTab(makeEEW('2026-01-01T12:00:00Z', [forecastArea('宮崎県南部平野部', '2026-01-01T12:00:40Z')]))
-    expect(container.textContent).toMatch(/地震発生時刻 2026\/01\/01 \d{2}:\d{2}:00/)
-    expect(container.textContent).toMatch(/地震発現時刻 2026\/01\/01 \d{2}:\d{2}:20/)
+    // 書き方は「1月1日 21:00:00」（2026-11-04 ユーザー選択「「11月4日 1:13:27」 (Recommended)」）。発生時刻は見出しと値が別の行
+    expect(container.textContent).toMatch(/地震発生時刻\s*1月1日 \d{1,2}:\d{2}:00/)
+    expect(container.textContent).toMatch(/地震発現時刻\s*1月1日 \d{1,2}:\d{2}:20/)
     expect(container.textContent).not.toContain('ごろ')
     // 発現時刻の見出しにだけ意味の吹き出しを添える（2026-10-22 ユーザー承認「ホバーで説明を出す」）。
     // 吹き出しは開くまで描かれない。押して（タップと同じ）中身を確かめる。
@@ -70,7 +71,7 @@ describe('緊急地震速報カードの時刻が読めないとき', () => {
     const { container } = renderTab(makeEEW('壊れた値', [forecastArea('宮崎県南部平野部', '2026-01-01T12:00:40Z')]))
     expect(container.textContent).not.toContain('地震発生時刻')
     // 対照: 発現時刻の行は道連れにならない。
-    expect(container.textContent).toMatch(/地震発現時刻 2026\/01\/01/)
+    expect(container.textContent).toMatch(/地震発現時刻\s*1月1日/)
     expect(container.textContent).not.toContain('NaN')
     // 対照: 震源名など他の情報は残る（時刻が読めないことで欄が道連れにならない）。
     expect(screen.getByText('日向灘')).toBeTruthy()

@@ -11,10 +11,11 @@ import {
   eewMaxScaleInfo, isForecastScaleHigher, isForecastLpgmHigher, eewNoForecastReason, computeSingleEEWLevel, computeDisplayEEWLevel, canPresentLpgmClass,
   selectEEWSoundType, eewKindLabel, eewPhase2ScaleStabilityMs, sortEewWarningRegions,
   EEW_PHASE2_STABILITY_MAX_WAIT_MS, EEW_PHASE2_LPGM_STABILITY_MS, eewMaxLpgmClassInfo, isEewLpgmClassZeroForecast, statesEewLpgmClassZero, isEewScaleZeroForecast,
-  isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewNotified, eewAnnounceShouldNotify, eewCancelShouldNotify, rememberEewFirstIssueTime, eewCancelNotificationBody,
-  eewSerial, eewSerialSeries, eewIssueTimeMs, eewNotifiedForecast, eewNotificationBody, raisesNotifiedForecast, type EewNotifiedForecast,
+  isUnannouncedHypocenter, eewEventKey, rememberEewHypocenterName, rememberEewNotified, eewAnnounceShouldNotify, eewCancelShouldNotify, rememberEewFirstIssueTime,
+  eewSerial, eewSerialSeries, eewIssueTimeMs, eewNotifiedForecast, raisesNotifiedForecast, type EewNotifiedForecast,
   type EewMaxScaleInfo, type EewMaxLpgmClassInfo, type AnnouncedHypocenter,
 } from '../utils/eew'
+import { stepEewAnnounce, eewAnnounceNotice, eewCancelNotice } from '../utils/eewNotifyTracker'
 import { hasKnownEpicenter } from '../utils/geo'
 import { showBrowserNotification } from '../utils/notifications'
 import {
@@ -23,10 +24,11 @@ import {
 import { earthquakeCountHeadline } from '../utils/earthquakeCountSummary'
 import { tsunamiIssueNotification, tsunamiLiftNotification, tsunamiEndNotification, tsunamiObservationNotification, TSUNAMI_OBS_NOTIFICATION_TAG } from '../utils/tsunamiNotification'
 import { GRADE_PRIORITY, TSUNAMI_GRADE_LIFTED, tsunamiLiftedAreas, isWarningLevelWhileObserving, tsunamiMaxGrade, tsunamiAreaGradeChanges, selectUnspokenAreaGradeChanges, rememberAreaGrades, tsunamiAreaKey, isTsunamiNewFire, isTsunamiGradeUpgrade, isTsunamiGradeReport, isTsunamiObservationOnly, isTsunamiContinuation, isPartialTsunamiRetraction, tsunamiEventIds, sourceEarthquakeTime, stepTsunamiState, isTsunamiExpired, matchesArea, sortAreasAcrossGradesForCardDisplay, sortObservationsForCardDisplay, mergeTsunamiObservations, isObservationMissing, hasMaxHeightTimeAdvanced, hasObservedHeightRisen, hasObservedHeightLowered, firstWaveSpokenKey, changedObservationFields, type ObsUpdateMark, isTideReport, tideReportChange, rememberTideEntries, forecastHeightChangedAreas, rememberForecastHeights, type SpokenTideEntry, tsunamiValueMarks, rememberTsunamiValues, createTsunamiValueMemory, clearTsunamiValueMemory, NO_TSUNAMI_VALUE_MARKS, type TsunamiValueMarks, type TsunamiValueMemory } from '../utils/tsunami'
-import { linkTsunamiSources } from '../utils/tsunamiSourceLinks'
+import { linkTsunamiSources, shownTsunamiSource } from '../utils/tsunamiSourceLinks'
 import {
   playAlertSound, ttsDelayFor, maxTtsDelay, speechNotBefore, msUntilAudioTime, type AlertSoundType,
 } from '../utils/alertSound'
+import { registerPendingSpeechProbe } from '../utils/pendingSpeech'
 import { speakWithVoicevox, prewarmVoicevox, getSpeechClock, stopSpeech, isAudioPlaying, type PrewarmedSpeech, type ShouldStillPlay, type SpeechOutcome, type ChunkScheduledListener } from '../utils/voicevox'
 import {
   recordReplayEvent, nextSpeechId, truncateReplayText, withReplayTelegramContext,
@@ -37,7 +39,7 @@ import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
 import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_LPGM_CLASS_ZERO_TEXT, EEW_UPGRADE_PHRASE, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiExpiryChangeSegments, tsunamiAreaGradeChangeToSegments, tsunamiAreaGradeChangeActionSegments, tsunamiForecastHeightChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
-import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
+import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, quakeTelegramTextTarget, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
 import { log, createLogThrottle } from '../utils/logger'
 import { TAB_PRIORITY, type TabPriority } from '../utils/tabPriority'
 import { hasPendingEewSpeech } from '../utils/eewPendingSpeech'
@@ -749,7 +751,12 @@ function tsunamiQuakeSpokenFor(
     const quakeReportedLater = quakeAge !== undefined
       && Number.isFinite(Date.parse(tsunamiAge.time)) && Number.isFinite(Date.parse(quakeAge.time))
       && compareReportAge(quakeAge, tsunamiAge) > 0
-    return { source: link.source, spoken: quakeSpokenStateFor(states, key), subject: card ? quakeEventKey(card) : undefined, quakeReportedLater }
+    // 原因地震は結べた地震カードの上段の値で語る（→ `shownTsunamiSource`。津波カードの原因地震の行と同じ値。
+    // 2026-11-03 ユーザー選択「結べた地震カードの値 (Recommended)」）。結べなければ津波電文の値のまま。
+    // 取り消されたカードと同じ番号の生きているカードが並ぶことがあるので、値を採るカードは津波カードの行と同じ条件
+    // （取り消されていないもの）で引き直す（→ `shownTsunamiSources`）。既読の鍵と主題は従来どおり `card` で決める
+    const shownCard = link.eventId ? cards.find(q => extractQuakeEventIdFromId(q.id) === link.eventId && !q.cancelledAt) : undefined
+    return { source: shownTsunamiSource(link.source, shownCard), spoken: quakeSpokenStateFor(states, key), subject: card ? quakeEventKey(card) : undefined, quakeReportedLater }
   })
   const expiry = sources[0]?.spoken ?? quakeSpokenStateFor(states, expiryKey)
   return { spoken: { expiry, sources }, subject: sources.find(s => s.subject)?.subject }
@@ -3443,9 +3450,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // （→ `ttsFollow.ts` の `telegramText`）。文の中身では分けず 1 つにまとめている ——
     // 求められているのは「読み始めたら開く」ことで、どの段落を読んでいるかの追従ではない。
     //
-    // **開く先がある種別にだけ参照を付ける。** 地震情報の付加文は元から畳んでいないので
-    // 開く相手がいない。無条件に付けると、誰も反応しない追従セッションが立ち上がっては終わる
-    // （症状が出ないぶん、後から読んで意図を確かめられない）。
+    // **開く先がある種別にだけ参照を付ける**（→ `TELEGRAM_TEXT_OPEN_TARGET_KINDS`）。無条件に付けると、
+    // 誰も反応しない追従セッションが立ち上がっては終わる（症状が出ないぶん、後から読んで意図を確かめられない）。
     const segments: SpeechSegment[] = [{
       text,
       // **お知らせの帯を表示しない設定なら付けない。** 帯が描かれないので開く先が無い。
@@ -3453,12 +3459,14 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         && !(event.kind === 'quakeNotice' && !settings.quakeNoticeBanner)
         ? [{ kind: 'telegramText' }] : [],
     }]
-    // **長周期地震動観測情報だけ、どの地震の補足かまで主題に載せる。** 地震カードは複数
+    // **地震情報と長周期地震動観測情報は、どの地震の補足かまで主題に載せる。** 地震カードは複数
     // 並ぶので、種別だけではどのカードを開くか決まらない（バナーと津波の面は画面に 1 つ）。
-    // 鍵は `eventId` —— カードが長周期を引き当てるのに使っているものと同じ（`lpgmByEventId`）。
+    // 長周期の鍵は `eventId` —— カードが長周期を引き当てるのに使っているものと同じ（`lpgmByEventId`）。
     const subject = event.kind === 'lpgm'
       ? telegramTextSubject(event.kind, event.data.eventId)
-      : telegramTextSubject(event.kind)
+      : event.kind === 'quake'
+        ? telegramTextSubject(event.kind, quakeTelegramTextTarget(event))
+        : telegramTextSubject(event.kind)
     speakNonEEWDelayed(
       text,
       SPEECH_PRIORITY.commentary,
@@ -3687,42 +3695,48 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       title.clearTitleTimer('earthquake')
       title.applyPriority()
+      // 取消電文の issue.time は取消電文自体の発表時刻であり、取り消された元の地震情報の発表時刻ではない。
+      // 読み上げには同一 eventId で最後に受信した地震情報（既存カード）の time を使う。
+      //
+      // **当たったカードと効き方は受信側が入口で決めたもの（`meta.quakeCancel`）を使う。** ここで
+      // 画面の状態から探し直すと、同じティックに続けて届いた報がまだ反映されていない状態や、同じ
+      // EventID の取消済みの古いカードを掴み、「地震情報全体の取消」と「一部の取消」を取り違える。
+      // 判断が渡らない経路（呼び出し元が `meta` を持たない）だけ、従来どおり画面の状態から探す。
+      const cancelEventId = extractQuakeEventIdFromId(event.id)
+      const decided = meta?.quakeCancel
+      const original = decided
+        ? decided.target
+        : cancelEventId
+          ? earthquakesRef.current.find(e => !e.cancelledAt && extractQuakeEventIdFromId(e.id) === cancelEventId)
+          : undefined
+      // **鍵は取り消されるカードから作る**（続報の主題 `quakeEventKey(existingCard ?? incomingQuake)`
+      // と同じ流儀）。生の取消電文から作ると、暫定 EventID が付け替えられた地震ではカードの
+      // `eventKey`（最初の報の値を据え置く）と食い違い、主題が続報と揃わないうえ、一覧も取消カードを
+      // 見つけられずに選択中のカードへ落ちる —— 「カードが片付いた後に語る」正常な空振りと同じ形に
+      // なるので、記録にも残らない。
+      const cancelQuakeKey = quakeEventKey(original ?? (event as import('../types/earthquake').JMAQuake))
+      // **一部の取消は情報名で言う**（カードは残るので「地震情報は取り消されました」は誤り）。
+      // 見分けはカードへ当てる側と同じ関数（`applyQuakeCancelToCard`）で付ける。判断が渡らない経路で
+      // 台帳を渡さないのは、前の取消で外した報が、当て直したカードの控えにもう残っていないため。
+      const fallback = !decided && original
+        ? applyQuakeCancelToCard(original, event, [], getAreaPrefIndexCache())
+        : undefined
+      const retracted = decided
+        ? decided.retracted
+        : fallback?.kind === 'partial' ? fallback.retracted : undefined
+      // **一部の取消が届いたら、その地震の行を開く**（2026-11-01 選択「自動で開き、閉じた行には出さない
+      // (Recommended)」）。閉じた行には一部取消を出さないので、開かないと取り下げた事実が画面のどこにも
+      // 現れない。読み上げの有無に関わらず開く（声を切っている人にも画面で伝える）。
+      if (retracted && original) {
+        log.info('[quake] 一部の取消を受けたので、その地震の行を開く', { issueType: retracted.issueType })
+        selectQuake(cancelQuakeKey)
+      }
       if (settings.voicevoxEnabled) {
         // **この経路は `flushSpoken()` を呼ばない。** 続報の差分と違い、取消の読み上げは
         // 区域の既読を参照しないため（`earthquakeCancelToText` は断片も `onSpokenRefs` も持たない）。
         // 進行中の読み上げを取消が実際に切ったなら、切られた側の `finally` が完了時のフラッシュで
         // 正しく記録する。「差分を組む直前に確定させる」という決まりの対象外
         // （→ docs/spec/audio-tts-spec.md §4「既読になるのは「声になった分」だけ」）。
-        //
-        // 取消電文の issue.time は取消電文自体の発表時刻であり、取り消された元の地震情報の発表時刻ではない。
-        // 読み上げには同一 eventId で最後に受信した地震情報（既存カード）の time を使う。
-        //
-        // **当たったカードと効き方は受信側が入口で決めたもの（`meta.quakeCancel`）を使う。** ここで
-        // 画面の状態から探し直すと、同じティックに続けて届いた報がまだ反映されていない状態や、同じ
-        // EventID の取消済みの古いカードを掴み、「地震情報全体の取消」と「一部の取消」を取り違える。
-        // 判断が渡らない経路（呼び出し元が `meta` を持たない）だけ、従来どおり画面の状態から探す。
-        const cancelEventId = extractQuakeEventIdFromId(event.id)
-        const decided = meta?.quakeCancel
-        const original = decided
-          ? decided.target
-          : cancelEventId
-            ? earthquakesRef.current.find(e => !e.cancelledAt && extractQuakeEventIdFromId(e.id) === cancelEventId)
-            : undefined
-        // **鍵は取り消されるカードから作る**（続報の主題 `quakeEventKey(existingCard ?? incomingQuake)`
-        // と同じ流儀）。生の取消電文から作ると、暫定 EventID が付け替えられた地震ではカードの
-        // `eventKey`（最初の報の値を据え置く）と食い違い、主題が続報と揃わないうえ、一覧も取消カードを
-        // 見つけられずに選択中のカードへ落ちる —— 「カードが片付いた後に語る」正常な空振りと同じ形に
-        // なるので、記録にも残らない。
-        const cancelQuakeKey = quakeEventKey(original ?? (event as import('../types/earthquake').JMAQuake))
-        // **一部の取消は情報名で言う**（カードは残るので「地震情報は取り消されました」は誤り）。
-        // 見分けはカードへ当てる側と同じ関数（`applyQuakeCancelToCard`）で付ける。判断が渡らない経路で
-        // 台帳を渡さないのは、前の取消で外した報が、当て直したカードの控えにもう残っていないため。
-        const fallback = !decided && original
-          ? applyQuakeCancelToCard(original, event, [], getAreaPrefIndexCache())
-          : undefined
-        const retracted = decided
-          ? decided.retracted
-          : fallback?.kind === 'partial' ? fallback.retracted : undefined
         speakNonEEWDelayed(
           retracted
             ? earthquakeReportCancelToText(retracted.issueType, retracted.reportTime, event.cancelText)
@@ -4162,7 +4176,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
                 remembered: eewLastHypocenterNameRef.current.size,
               })
             }
-            showBrowserNotification('緊急地震速報 取消', eewCancelNotificationBody(cancelName), `eew-cancel-${key}`)
+            const notice = eewCancelNotice(key, cancelName)
+            showBrowserNotification(notice.title, notice.body, notice.tag)
           }
         }
         // 誤報取消（訂正）だけは、鳴っている途中の読み上げも打ち切る対象として覚えておく。
@@ -4198,20 +4213,23 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 上書きしない —— 前の報が名乗った名前のほうが、空よりは事実に近い。
       rememberEewHypocenterName(eewLastHypocenterNameRef.current, key, event.earthquake.hypocenter.name)
 
-      const currentLevel = computeSingleEEWLevel(event)
       // 上限が定まらない報は通知・タイトルでも「以上」を添える（値だけでは下限の断定になる）。
       const { scale, orAbove: scaleOrAbove } = eewMaxScaleInfo(event)
 
-      // 新規発報か続報かを判定し、レベルの格上げを検出する。
-      // 震度・長周期階級の引き上げはここでは見ない。読み上げ側は「実際に発話した値」と
+      // 新規発報か続報か・区分の格上げ・通知に出した予想の引き上げは共用の部品で決める（→ `stepEewAnnounce`。
+      // 中継のプッシュ通知も同じものを使う）。記憶（区分・通知の基準）はここで持ち、決定どおりに書き換える。
+      // 震度・長周期階級の引き上げを読み上げで言い直すかはここでは見ない。読み上げ側は「実際に発話した値」と
       // 「発話する直前の最新値」を比べるため（enqueuePhase2）、受信時点の比較は使わない。
-      const isNew = !activeEEWLevelsRef.current.has(key)
+      // 別の経路から受けた同じ報（`eewSameReport`）は値が上がっていないことが入口で決まっている
+      const announce = stepEewAnnounce(event, eewSameReport, {
+        level: activeEEWLevelsRef.current.get(key),
+        baseline: eewNotifyBaselineRef.current.get(key),
+      })
+      const { currentLevel, isNew, levelUpgraded, severityUpgraded, forecastRaised } = announce
       // **新規発報を到来順の軸へ刻む。** 予約済みの非 EEW は、これより後の連番なら「先に届いて
       // いた」ので待って読み、これより前なら「後から重いものに追い越された」ので取り下げる
       // （`overtakenByHeavierArrival`）。続報では進めない —— 理由は同 ref の注記。
       if (isNew) latestEewSpeechSeqRef.current = ++speechArrivalSeqRef.current
-      const prevLevel = activeEEWLevelsRef.current.get(key) ?? 0
-      const levelUpgraded = !isNew && currentLevel > prevLevel
       // 録画ツール向けの記録。**続報そのものは残さない** —— 秒ごとに届くので、残すと
       // 「警報の状態が動いた」という問いに答えられなくなる（続報の到来は `telegram` の側に出る）。
       if (isNew || levelUpgraded) {
@@ -4220,12 +4238,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           grade: eewKindLabel(currentLevel), telegram: currentReplayTelegram(),
         })
       }
-      // 区分（予報→警報）の格上げだけを見る特別扱い。`levelUpgraded` は警報→特別警報の
+      // `severityUpgraded` は区分（予報→警報）の格上げだけを見る特別扱い。`levelUpgraded` は警報→特別警報の
       // 格上げも含んでしまうが、特別警報は「緊急地震速報」という同じ区分の中の話で、
       // 音声では「警報」に統一する方針（docs/spec/eew-spec.md §4）。震度の安定待ちを
       // スキップしてよいのは、区分そのものが変わる予報→警報のときだけ
       // （警報→特別警報は震度の値の変化に過ぎず、安定待ちを通すべき）。
-      const severityUpgraded = !isNew && currentLevel >= 1 && prevLevel < 1
 
       // 新規発報・レベルアップは抑制なしで即時移動。続報は抑制タイマーを確認する。
       if (isNew || levelUpgraded) {
@@ -4234,10 +4251,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       } else if (!eewSameReport) {
         setActiveTabRealtimeOnUpdate()
       }
-      activeEEWLevelsRef.current.set(
-        key,
-        (isNew ? currentLevel : Math.max(prevLevel, currentLevel)) as 0 | 1 | 2,
-      )
+      activeEEWLevelsRef.current.set(key, announce.memory.level)
       // spokenEEW*Ref（読み上げた震度・階級・区分）は受信時点では更新しない。
       // 発話の直前だけで更新する（理由は宣言箇所のコメント）。
 
@@ -4252,14 +4266,8 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       }
       // 通知は新規発報・区分の格上げに加え、**通知に出した予想震度・長周期地震動階級が上がったとき**にも同じタグで
       // 出し直す（ブラウザが前の通知を置き換える。2026-10-21 ユーザー承認「直す (Recommended)」）。別の経路から受けた
-      // 同じ報（`eewSameReport`）は値が上がっていないことが入口で決まっている
-      const notifyForecast = eewNotifiedForecast(event)
-      const notifyBaseline = eewNotifyBaselineRef.current.get(key)
-      const forecastRaised = !eewSameReport && raisesNotifiedForecast(notifyForecast, notifyBaseline)
-      // 基準は上げるだけ（下がった続報で下げると、戻ったときに同じ予想で出し直す）
-      if (!notifyBaseline || raisesNotifiedForecast(notifyForecast, notifyBaseline)) {
-        eewNotifyBaselineRef.current.set(key, notifyForecast)
-      }
+      // 同じ報（`eewSameReport`）は値が上がっていないことが入口で決まっている。基準は上げるだけ（→ `stepEewAnnounce`）
+      eewNotifyBaselineRef.current.set(key, announce.memory.baseline)
       if (notificationAllowed(settings, 'eew') && notificationRegionAllowed(settings, eewPrefectures(event))
         && eewAnnounceShouldNotify({
           isNew, levelUpgraded, forecastRaised,
@@ -4267,20 +4275,11 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
           alreadyNotified: eewNotifiedKeysRef.current.has(key),
         })) {
         rememberEewNotified(eewNotifiedKeysRef.current, key)
-        // 予報級の電文は VXSE45「緊急地震速報（地震動予報）」。通知の見出しも実態に合わせる。
-        // **見出しは表示用の区分で決める**（特別警報の下げ止まり。→ eew-spec.md §4）。一度でも特別警報だった地震は、
-        // 続報で震度が下がってから長周期の予想が上がる・格上げが立つなどで出し直しても「特別警報」のまま。
+        // 見出し・本文・tag は共用の部品（→ `eewAnnounceNotice`。見出しは表示用の区分で、特別警報の下げ止まりを効かせる）。
         // `event` は入口で統合した報で、印（`everSpecialWarning`）を運んでいる（`useEarthquakes` の `mergeEewReport`）。
         // 出すかどうか（格上げ・予想の引き上げ）は生の区分のまま —— 下げ止まりは見出しの文言だけに効かせる
-        const notifyLevel = computeDisplayEEWLevel(event)
-        const eewNotifyTitle = notifyLevel === 2 ? '緊急地震速報 特別警報'
-          : notifyLevel === 1 ? '緊急地震速報 警報' : eewKindLabel(0)
-        showBrowserNotification(
-          eewNotifyTitle,
-          eewNotificationBody(event.earthquake.hypocenter.name, notifyForecast),
-          `eew-${key}`,
-          true,
-        )
+        const notice = eewAnnounceNotice(key, event, announce.forecast)
+        showBrowserNotification(notice.title, notice.body, notice.tag, true)
       }
       // EEW タイトルをイベントデータから構築（state は未更新のため event 直接参照）
       title.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, event))
@@ -6282,6 +6281,20 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       rememberObservationStatesForDisplay(event.observations ?? [], lastObsMissingRef.current, lastObsReportedHeightRef.current)
     }
   }
+
+  // 「これから読み上げる予定があるか」を時報へ渡す（→ `utils/pendingSpeech.ts`）。時報はこれと
+  // `isSpeaking()` を見て、電文の読み上げを切らないよう声を省く。数えるのは、予約済みでまだ
+  // 読み始めていないもの —— 通知音との間の予約・EEW の連鎖・予想値の付く待ちと確定待ち・
+  // 誤報取消の予約・優先度ごとの予約（`speechBlocker` は揺れ検知の予約だけを見るが、時報は
+  // どの優先度の予約にも割り込まない）。読み上げの最中は `isSpeaking()` が答えるので、ここでは数えない。
+  useEffect(() => registerPendingSpeechProbe(() => ({
+    scheduledSpeeches: pendingSpeechRef.current.size,
+    eewChainPending: eewSpeechPendingRef.current,
+    eewPhase2Timers: eewTtsMaxTimersRef.current.size,
+    eewStabilityWaits: eewScaleStabilityRef.current.size + eewLpgmStabilityRef.current.size,
+    eewCancelPending: eewCancelSpeechRef.current.size,
+    scheduledPriorities: latestScheduledSeqByPriorityRef.current.size,
+  })), [])
 
   // EEW 読み上げタイマーと観測点ステータス自動消去タイマーをアンマウント時にクリーンアップする
   useEffect(() => {

@@ -142,24 +142,57 @@ describe('dropTelegramLogOrigins', () => {
   })
 })
 
-// 組み立て側（`services/telegramLogEntry.ts`）の分岐。**いまの呼び出し元は読めたものしか
-// 渡さない**ので `filtered` は実運用では通らないが、載せると決めたときにここを通す。
-// 未テストのまま残すと、通した途端に壊れていても気づけない。
+// 組み立て側（`services/telegramLogEntry.ts`）の分岐。再生はライブと同じく、取り込まない電文（`filtered`）と
+// 読めなかった電文（`filtered`・`error`）の行も積む（2026-11-04 ユーザー選択「ライブと同じに積む (Recommended)」）。
 describe('makeReplayLogEntry', () => {
+  const head = { type: 'VXSE53', author: 'RJTD', time: '2026-10-30T16:47:00.000Z', designation: null, test: false }
+
   it('読めた電文は parsed、読めなかった電文は filtered として組む', () => {
     const parsed = makeReplayLogEntry({
-      headType: 'VXSE53', origin: 'test', rawBody: '<Report/>',
-      payload: { kind: 'nankai', data: {} as never }, isTest: false,
+      headType: 'VXSE53', origin: 'test', rawHead: undefined, rawBody: '<Report/>', rawBytes: null,
+      payload: { kind: 'nankai', data: {} as never }, errorMessage: null, isTest: false,
     })
     expect(parsed.status).toBe('parsed')
     expect(parsed.kind).toBe('nankai')
+    expect(parsed.errorMessage).toBeUndefined()
 
     const failed = makeReplayLogEntry({
-      headType: 'VXSE53', origin: 'replay', rawBody: '<broken', payload: null, isTest: false,
+      headType: 'VXSE53', origin: 'replay', rawHead: head, rawBody: '<broken', rawBytes: null,
+      payload: null, errorMessage: null, isTest: false,
     })
     expect(failed.status).toBe('filtered')
     // 読めなかったときは電文種別コードから種別を引く（ライブと同じ）
     expect(failed.kind).toBe('quake')
   })
 
+  it('理由を渡すと error の行になり、理由を errorMessage に持つ（ライブと同じ語）', () => {
+    const entry = makeReplayLogEntry({
+      headType: 'IXAC41', origin: 'replay', rawHead: head, rawBody: '（BUFR 3 バイト）', rawBytes: new Uint8Array([1, 2, 3]),
+      payload: null, errorMessage: 'bufr decode failed', isTest: false,
+    })
+    expect(entry.status).toBe('error')
+    expect(entry.errorMessage).toBe('bufr decode failed')
+  })
+
+  it('見出し（rawHead）と結合した二進（rawBytes）をそのまま持つ／持たないときは rawBytes の欄ごと無い', () => {
+    const bytes = new Uint8Array([0x42, 0x55, 0x46, 0x52])
+    const withBytes = makeReplayLogEntry({
+      headType: 'IXAC41', origin: 'replay', rawHead: head, rawBody: '（BUFR 4 バイト・1 セル）', rawBytes: bytes,
+      payload: null, errorMessage: null, isTest: false,
+    })
+    expect(withBytes.rawHead).toBe(head)
+    expect(withBytes.rawBytes).toBe(bytes)
+    // 対照: 結合待ちの断片・XML の電文は二進を持たない
+    const without = makeReplayLogEntry({
+      headType: 'IXAC41', origin: 'replay', rawHead: head, rawBody: '（BUFR の断片 4 バイト・結合待ち）', rawBytes: null,
+      payload: null, errorMessage: null, isTest: false,
+    })
+    expect('rawBytes' in without).toBe(false)
+    // 安全弁: 見出しの無い経路（テストボタン）は undefined のまま
+    const noHead = makeReplayLogEntry({
+      headType: 'VXSE53', origin: 'test', rawHead: undefined, rawBody: '<Report/>', rawBytes: null,
+      payload: null, errorMessage: null, isTest: false,
+    })
+    expect(noHead.rawHead).toBeUndefined()
+  })
 })

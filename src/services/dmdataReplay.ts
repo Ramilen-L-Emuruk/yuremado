@@ -17,7 +17,7 @@ import {
 import type { AreaPrefIndex } from '../utils/quakePoints'
 import { latestValidDateTime, foldTsunamiReports, isSameTsunamiEvent, stepTsunamiState, tsunamiEventIds } from '../utils/tsunami'
 import { matchEstimatedIntensity } from '../utils/estimatedIntensity'
-import type { ReplayEntry, ReplayPayload, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
+import type { ReplayEntry, ReplayLogOnlyEntry, ReplayPayload, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
 import {
   isHandledType, QUAKE_TYPES, TSUNAMI_TYPES, HISTORY_EXTRA_TYPES, LPGM_TYPES, ESTIMATED_INTENSITY_TYPES, historyExtraKey,
   buildXmlPayload, isBinaryTelegramType, buildBinaryPayload, type EewHeadType, type DayEewHeadType, eewHeadTypeForDay,
@@ -25,8 +25,8 @@ import {
 } from './dmdataTelegramPayload'
 import { BufrFragmentStore, fragmentKey } from './bufrTelegramAssembly'
 import {
-  clearLiveReplayCache, fetchLiveQuakeTelegrams, fetchLiveReplayEntries, resolveLiveDates,
-  archiveDaysForWindow, archiveListRange, toJstDateStr, fetchListedEewFinals,
+  clearLiveReplayCache, fetchLiveQuakeTelegrams, fetchLiveReplayEntriesWith, resolveLiveDates, REPLAY_LOG_ONLY_FETCH_FAILED,
+  archiveDaysForWindow, archiveListRange, toJstDateStr, fetchListedEewFinals, isReplayLogOnly,
 } from './dmdataReplayLive'
 import { eewHeadTypeFor, hasQuakeTelegrams, type DmdataClassification } from './dmdataClassifications'
 import {
@@ -787,15 +787,26 @@ interface ManifestPlan {
  * （窓を前へ進めるので同じ電文を二度読まない）。効くのは**窓に 1 件も入らない日**で、
  * 静かな 1 時間の窓では本体を読まずに済む。
  *
+ * **電文ログにだけ積む電文（`logOnly`）も本体が要る**（本文ごと積む。ライブも本文を復号して積む →
+ * `dmdataReplayLive.ts` の `isReplayLogOnly`）。そのため、`eew.forecast` では毎正時の配信テスト（VXSE42 の試験報）が
+ * どの 1 時間の窓にも入り、緊急地震速報の無い日も本体を落とす。
+ *
  * `head` を持たないエントリも（捨てずに）返す —— 消費側が記録して取りこぼしに数えるため。
  */
 type ReplayPlan =
   | { kind: 'malformed'; entry: ManifestEntry | undefined; needsBody: false }
-  | ({ kind: 'entry' } & ManifestPlan)
+  | ({
+    kind: 'entry'
+    /**
+     * 画面へは流さず電文ログにだけ積むか（窓の内側で、`isReplayLogOnly` が真のもの）。真なら `include` は偽。
+     * **取りこぼしには数えない**（取り込む電文ではない）。
+     */
+    logOnly: boolean
+  } & ManifestPlan)
 
 function planReplayEntries(
   manifest: ManifestEntry[],
-  opts: { includeTest: boolean; fromTime: Date; toTime: Date; eewHeadType: DayEewHeadType | null },
+  opts: { includeTest: boolean; fromTime: Date; toTime: Date; eewHeadType: DayEewHeadType | null; withLogOnly: boolean },
 ): ReplayPlan[] {
   const plans: ReplayPlan[] = []
   const times = manifestEntryTimes(manifest)
@@ -804,17 +815,26 @@ function planReplayEntries(
       plans.push({ kind: 'malformed', entry, needsBody: false })
       continue
     }
-    if (!opts.includeTest && entry.head.test) continue
     if (entry.originalId) continue
     const time = times.get(entry) ?? null
+    // **捨てる試験報は、時刻が読めなくても取りこぼしに数えない**（もとから数えていない。行を積むようにしても数え方は変えない）
+    const droppedTest = !opts.includeTest && entry.head.test
     if (time === null) {
-      plans.push({ kind: 'entry', entry, time: null, include: false, needsBody: false })
+      if (droppedTest) continue
+      plans.push({ kind: 'entry', entry, time: null, include: false, logOnly: false, needsBody: false })
       continue
     }
-    const include = isReplayTarget(entry, time, opts.fromTime, opts.toTime, opts.eewHeadType)
-    plans.push({ kind: 'entry', entry, time, include, needsBody: include })
+    const inWindow = isInReplayWindow(time, opts.fromTime, opts.toTime)
+    const include = !droppedTest && isReplayTarget(entry, time, opts.fromTime, opts.toTime, opts.eewHeadType)
+    const logOnly = opts.withLogOnly && !include && inWindow && isReplayLogOnly(entry.head, opts.includeTest, opts.eewHeadType)
+    plans.push({ kind: 'entry', entry, time, include, logOnly, needsBody: include || logOnly })
   }
   return plans
+}
+
+/** 本編の窓の内側か（左は含む・右は含まない）。取り込む電文と電文ログだけの電文で同じ境界を使う。 */
+function isInReplayWindow(time: Date, fromTime: Date, toTime: Date): boolean {
+  return time >= fromTime && time < toTime
 }
 
 /**
@@ -828,7 +848,7 @@ function planReplayEntries(
 function isReplayTarget(
   entry: ManifestEntry, time: Date, fromTime: Date, toTime: Date, eewHeadType: DayEewHeadType | null,
 ): boolean {
-  return time >= fromTime && time < toTime && isHandledType(entry.head.type, eewHeadType)
+  return isInReplayWindow(time, fromTime, toTime) && isHandledType(entry.head.type, eewHeadType)
 }
 
 /** その日の計画に、本体を要するものが 1 件でもあるか。 */
@@ -854,7 +874,33 @@ function requireArchiveBody(
   throw new Error(`本体を落としていない日の電文を読もうとした（事前判定のずれ） date=${date} id=${String(entry.id)}`)
 }
 
-export async function fetchDmdataReplayEvents(
+export function fetchDmdataReplayEvents(
+  endpoint: DmdataEndpoint,
+  fromTime: Date,
+  toTime: Date,
+  includeTest: boolean,
+  classifications: readonly DmdataClassification[],
+  signal: AbortSignal | null,
+): Promise<ReplayFetchResult> {
+  return fetchReplayEvents(endpoint, fromTime, toTime, includeTest, classifications, signal, true)
+}
+
+/**
+ * 再生の初期状態（窓の手前 24 時間）を取る。**電文ログにだけ積む電文を選ばず、その本体も取らない** ——
+ * 初期状態の行は電文ログに載せないので、取っても捨てるだけになる（毎正時の配信テストだけで 24 時間に 24 通ある）。
+ */
+export function fetchDmdataReplayInitialEvents(
+  endpoint: DmdataEndpoint,
+  fromTime: Date,
+  toTime: Date,
+  includeTest: boolean,
+  classifications: readonly DmdataClassification[],
+  signal: AbortSignal | null,
+): Promise<ReplayFetchResult> {
+  return fetchReplayEvents(endpoint, fromTime, toTime, includeTest, classifications, signal, false)
+}
+
+async function fetchReplayEvents(
   endpoint: DmdataEndpoint,
   fromTime: Date,
   toTime: Date,
@@ -871,6 +917,8 @@ export async function fetchDmdataReplayEvents(
    * 止めた側だけで切ると相乗りした側まで落ちる（取れた分は控えに残る）。
    */
   signal: AbortSignal | null,
+  /** 電文ログにだけ積む電文の行を作るか（→ `fetchDmdataReplayInitialEvents`） */
+  withLogOnly: boolean,
 ): Promise<ReplayFetchResult> {
   // **落とす日を JST で決めて、目録もその範囲だけ引く。**
   //
@@ -909,6 +957,8 @@ export async function fetchDmdataReplayEvents(
 
   const dec = new TextDecoder()
   const entries: ReplayEntry[] = []
+  /** 電文ログにだけ積む行（→ `ReplayFetchResult.logOnlyEntries`）。取りこぼしの数え方とは別に積む。 */
+  const logOnlyEntries: ReplayLogOnlyEntry[] = []
   // 分割された二進電文の結合待ち。**アーカイブをまたいで共有する** —— 断片は同じ日の同じ
   // アーカイブに入るのが普通だが、日付の境目で分かれても拾えるようにしておく。
   // この取得 1 回きりの入れ物なので、ライブの断片とは混ざらない。
@@ -1024,7 +1074,7 @@ export async function fetchDmdataReplayEvents(
       if (dayEewHeadType === 'VXSE44') log.info(`[replay] VXSE45 の無い日なので VXSE44 を緊急地震速報として読みます date=${item.date}`)
       // 絞り込み（試験報・重複排除・時刻・窓・種別）は計画へ集約してある。
       // **判定と消費で同じ配列を回すこと**が肝（→ `ManifestPlan`）。
-      const plans = planReplayEntries(manifest, { includeTest, fromTime, toTime, eewHeadType: dayEewHeadType })
+      const plans = planReplayEntries(manifest, { includeTest, fromTime, toTime, eewHeadType: dayEewHeadType, withLogOnly })
       // **窓に 1 件も入らない日は本体を落とさない。** 落としても中身を読まずに捨てるだけで、
       // 静かな 1 時間の窓では毎回それが起きる。
       if (files === undefined && planNeedsBody(plans)) {
@@ -1054,12 +1104,52 @@ export async function fetchDmdataReplayEvents(
           scanSkips.add(item.date)
           continue
         }
+        const headType = entry.head.type
+        /** この電文を電文ログにだけ積む（地図・カードへは流さない）。行の形はライブに揃える（→ `isReplayLogOnly`）。 */
+        const pushLogOnly = (
+          rawBody: unknown, opts: { rawBytes: Uint8Array | null; errorMessage: string | null; isTest: boolean },
+        ): void => {
+          logOnlyEntries.push({
+            replayTime: entryTime,
+            logEntry: makeReplayLogEntry({
+              headType, origin: 'replay', rawHead: entry.head, rawBody, rawBytes: opts.rawBytes,
+              payload: null, errorMessage: opts.errorMessage, isTest: opts.isTest,
+            }),
+          })
+        }
+
+        if (plan.logOnly) {
+          // 電文ログにだけ積む電文（捨てる試験報・扱わない種類・取り込まない側の緊急地震速報）。
+          // **本体が見つからなくても取りこぼしに数えない**（取り込む電文ではないので、数え方は変えない）。
+          // 行は本文なしのエラーで積む（積まないと「電文が無かった」と見分けられない。当日経路と同じ扱い）
+          const isTest = entry.head.test === true
+          try {
+            const dayFiles = requireArchiveBody(files, entry, item.date)
+            const name = findBodyFileName(entry, dayFiles)
+            const bytes = name ? dayFiles.get(name) : undefined
+            if (!bytes) {
+              log.info(`[replay] 電文ログにだけ積む電文の本体が見つかりません id=${entry.id} type=${headType}（${bodyMissReason(entry)}）`)
+              pushLogOnly(null, { rawBytes: null, errorMessage: REPLAY_LOG_ONLY_FETCH_FAILED, isTest })
+              continue
+            }
+            // 二進電文は結合しない（1 断片が最大 512KB ある。ライブも試験報の断片は結合せずに積む）
+            pushLogOnly(
+              isBinaryTelegramType(headType) ? `（BUFR の断片 ${bytes.length} バイト）` : dec.decode(bytes),
+              { rawBytes: null, errorMessage: null, isTest },
+            )
+          } catch (e) {
+            log.error(`[replay] 電文ログにだけ積む電文を読めませんでした id=${entry.id} type=${headType}`, e)
+            pushLogOnly(null, { rawBytes: null, errorMessage: REPLAY_LOG_ONLY_FETCH_FAILED, isTest })
+          }
+          continue
+        }
+
         const include = plan.include
-        // 窓の外と、この実装が扱わない種別はここで落とす（どちらも通常運転で起きるので
+        // 窓の外の電文と、窓の内側でも取り込まない電文はここで落とす（どちらも通常運転で起きるので
         // 黙って捨てる。先に絞らないと、対象外の電文が大量に警告を出して本当の異常が埋もれる）。
+        // 窓の内側の取り込まない電文は、上で行だけ積んである。
         if (!include) continue
 
-        const headType = entry.head.type
         try {
           // ここから先は本体が要る。計画が要ると答えた日は上で落としてある。
           const dayFiles = requireArchiveBody(files, entry, item.date)
@@ -1085,14 +1175,22 @@ export async function fetchDmdataReplayEvents(
             )
             // まだ揃っていない断片。**取りこぼしには数えない** —— 残りの断片は同じ
             // アーカイブの後続エントリに入っており、揃った時点で 1 通として積まれる。
-            if (!joined) continue
+            // 電文ログには積む（ライブと同じ文。本文は入れない —— 1 断片が最大 512KB ある）
+            if (!joined) {
+              pushLogOnly(`（BUFR の断片 ${binBytes.length} バイト・結合待ち）`, { rawBytes: null, errorMessage: null, isTest: entry.head.test === true })
+              continue
+            }
             const binPayload = buildBinaryPayload(headType, joined, entry.id, entry.head.time)
             // **試験報は取りこぼしに数えない。** 正常な配信で、読めなかったわけではない
             // （非 XML 電文は `entry.head.test` で弾けないため本文で判定する
             // → `isFilteredBinaryTelegram`）。**捨てたことは記録する** —— 理由は
-            // `dmdataReplayLive.ts` の同じ判定にある。
+            // `dmdataReplayLive.ts` の同じ判定にある。電文ログにも積む（ライブと同じ）
             if (binPayload && isFilteredBinaryTelegram(binPayload, includeTest)) {
               log.info(`[replay] 二進電文の試験報を流しません id=${entry.id} type=${headType}`)
+              pushLogOnly(
+                `（BUFR ${joined.length} バイト・電文の種類 ${binPayload.data.telegramKind}）`,
+                { rawBytes: joined, errorMessage: null, isTest: true },
+              )
               continue
             }
             if (binPayload) {
@@ -1100,16 +1198,19 @@ export async function fetchDmdataReplayEvents(
               entries.push({
                 payload: binPayload,
                 replayTime: entryTime,
-                // 本文は要約だけ入れる（ライブと同じ理由 —— 1 断片が最大 512KB ある）
+                // 本文は要約だけ入れる（ライブと同じ理由 —— 1 断片が最大 512KB ある）。
+                // 結合した元の二進は `rawBytes` に持たせる（ダウンロードはこちらを落とす）
                 logEntry: makeReplayLogEntry({
-                  headType, origin: 'replay',
-                  rawBody: `（BUFR ${joined.length} バイト・${binPayload.data.count} セル）`,
-                  payload: binPayload, isTest: entry.head.test === true,
+                  headType, origin: 'replay', rawHead: entry.head,
+                  rawBody: `（BUFR ${joined.length} バイト・${binPayload.data.count} セル）`, rawBytes: joined,
+                  payload: binPayload, errorMessage: null, isTest: entry.head.test === true,
                 }),
               })
             } else {
               log.warn(`[replay] 二進電文の読み取りに失敗しスキップ id=${entry.id} type=${headType}`)
               windowSkips.add(item.date)
+              // ライブと同じ形の `error` の行（取りこぼしに数えることとは別に積む）
+              pushLogOnly(`（BUFR ${joined.length} バイト）`, { rawBytes: joined, errorMessage: 'bufr decode failed', isTest: entry.head.test === true })
             }
             continue
           }
@@ -1131,12 +1232,15 @@ export async function fetchDmdataReplayEvents(
               payload,
               replayTime: entryTime,
               logEntry: makeReplayLogEntry({
-                headType, origin: 'replay', rawBody: xml, payload, isTest: entry.head.test === true,
+                headType, origin: 'replay', rawHead: entry.head, rawBody: xml, rawBytes: null,
+                payload, errorMessage: null, isTest: entry.head.test === true,
               }),
             })
           } else {
             log.warn(`[replay] 電文のパースに失敗しスキップ id=${entry.id} type=${headType}`)
             windowSkips.add(item.date)
+            // ライブも読めなかった XML は `filtered` で積む（`dmdata.ts` の `buildXmlPayload` が null のとき）
+            pushLogOnly(xml, { rawBytes: null, errorMessage: null, isTest: entry.head.test === true })
           }
         } catch (e) {
           // 1 通の想定外の例外で全体を落とさない（XML の破損はパーサが null を返すため
@@ -1175,8 +1279,9 @@ export async function fetchDmdataReplayEvents(
   const liveDates = resolveLiveDates(fromTime, toTime, items.map(i => i.date))
   if (liveDates.length > 0) {
     try {
-      const live = await fetchLiveReplayEntries(endpoint, fromTime, toTime, liveDates, includeTest, classifications, signal)
+      const live = await fetchLiveReplayEntriesWith(endpoint, fromTime, toTime, liveDates, includeTest, classifications, signal, withLogOnly)
       entries.push(...live.entries)
+      logOnlyEntries.push(...live.logOnlyEntries)
       windowSkips.addAll(live.skippedByDay)
       scanSkips.addAll(live.scanSkippedByDay)
       rateLimitedTelegrams += live.rateLimitedTelegrams
@@ -1273,7 +1378,10 @@ export async function fetchDmdataReplayEvents(
     }
   }
 
-  return { entries, skippedByDay: replaySkippedByDay, failedArchiveUrls, rateLimitedSources, rateLimitedTelegrams, lostSourceDays }
+  // 行だけのものは発火の順に並べるだけ（画面へ流さないので、同じ時刻をずらす必要は無い。キューは同じ時刻を積んだ順に出す）
+  logOnlyEntries.sort((a, b) => a.replayTime.getTime() - b.replayTime.getTime())
+
+  return { entries, logOnlyEntries, skippedByDay: replaySkippedByDay, failedArchiveUrls, rateLimitedSources, rateLimitedTelegrams, lostSourceDays }
 }
 
 /** 初期状態に載せるかどうかを、津波イベント単位で決めた結果。 */

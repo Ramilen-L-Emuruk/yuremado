@@ -1,4 +1,5 @@
-import { memo } from 'react'
+import { memo, useLayoutEffect, useRef, useState } from 'react'
+import { DisclosureCaret, INNER_GROW_MS, prefersReducedMotion } from '../EarthquakeTab/quakeMotion'
 import { readableTextColor } from '../../utils/contrast'
 import { heatmapPeriodText, representativeBlock, type LegendBlock, type LegendChip, type LegendHeatmapPeriod, type LegendSwatch, type LegendTick } from './legendBlocks'
 import { HEATMAP_PERIODS, type HeatmapPeriod } from '../../utils/quakeHeatmap'
@@ -157,7 +158,7 @@ function Ramp({
     <div style={{ width }}>
       <div className="h-[0.4rem] rounded-xs" style={{ background: gradient }} />
       {ticks.length > 0 && (
-        <div className={`relative mt-[0.1rem] h-[0.6rem] text-white/70 ${m.title}`}>
+        <div className={`relative mt-[0.1rem] h-[0.6rem] text-secondary ${m.title}`}>
           {ticks.map((tick) => (
             <span
               key={tick.label}
@@ -224,7 +225,7 @@ function HeatmapPeriodControl({
   const index = Math.max(0, HEATMAP_PERIODS.findIndex((p) => p.key === value.period))
   return (
     <div style={{ width }} className="mt-[0.2rem]">
-      <div className={`text-white/70 ${m.title}`}>
+      <div className={`text-secondary ${m.title}`}>
         {heatmapPeriodText(value)}
       </div>
       <input
@@ -249,7 +250,7 @@ function HeatmapPeriodControl({
 
 /** 開閉の向きを示す三角。**状態は `aria-expanded` が伝えるので読み上げからは外す。** */
 function Caret({ open }: { open: boolean }) {
-  return <span aria-hidden className="text-[0.5rem] leading-none opacity-70">{open ? '▾' : '▸'}</span>
+  return <span aria-hidden className="text-[0.5rem] leading-none opacity-70"><DisclosureCaret open={open} /></span>
 }
 
 interface Props {
@@ -262,17 +263,108 @@ interface Props {
   onHeatmapPeriodChange: (period: HeatmapPeriod) => void
 }
 
+/**
+ * 開閉の動き（2026-11-04 選択「決定どおり動かす (Recommended)」）。畳んだ形と開いた形は中身も幅も違うので、
+ * 枠の幅と高さを前の大きさから今の大きさへ動かし、その間だけ前の中身を薄くしながら重ねる。新しい中身は薄くから出す。
+ * 凡例は地図の右下の隅に立つので、前の中身は枠の右下に揃えて重ねる（枠は右下を軸に伸び縮みする）。
+ */
+function useLegendMotion(collapsed: boolean) {
+  const boxRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  /** 動いていない間の枠の大きさ。開閉の動きの出発点（動きの途中で押されたら、そのときの見た目の大きさから始める） */
+  const sizeRef = useRef<{ w: number; h: number } | null>(null)
+  const prevCollapsedRef = useRef(collapsed)
+  const animRef = useRef<{ box: Animation; body: Animation | null } | null>(null)
+  /** 薄くしながら重ねている前の中身（畳み具合・そのときの枠の幅・重ね直すたびに変える鍵）。null なら重ねていない */
+  const [ghost, setGhost] = useState<{ collapsed: boolean; width: number; key: number } | null>(null)
+  /** 印の向き。新しい中身の印を前の向きで描き、次の描画で今の向きへ回す（同じ向きで描くと回らない） */
+  const [caretOpen, setCaretOpen] = useState(!collapsed)
+
+  const measure = () => {
+    const box = boxRef.current
+    if (!box) return
+    const r = box.getBoundingClientRect()
+    sizeRef.current = { w: r.width, h: r.height }
+  }
+
+  useLayoutEffect(() => {
+    if (prevCollapsedRef.current === collapsed) return
+    const before = prevCollapsedRef.current
+    prevCollapsedRef.current = collapsed
+    const raf = requestAnimationFrame(() => setCaretOpen(!collapsed))
+    const box = boxRef.current
+    const body = bodyRef.current
+    // 動きの途中で押されたら、いま見えている大きさと濃さから始める（控えの値から始めると一瞬跳ぶ）
+    const running = animRef.current
+    const live = running && box ? box.getBoundingClientRect() : null
+    const from = live ? { w: live.width, h: live.height } : sizeRef.current
+    const bodyOpacity = running && body ? parseFloat(getComputedStyle(body).opacity) : 0
+    running?.box.cancel()
+    running?.body?.cancel()
+    animRef.current = null
+    if (box) box.style.overflow = ''
+    if (body) body.style.width = ''
+    measure()
+    const to = sizeRef.current
+    if (!box || !body || !from || !to || prefersReducedMotion() || typeof box.animate !== 'function') {
+      setGhost(null)
+      return () => cancelAnimationFrame(raf)
+    }
+    // 新しい中身は行き先の幅で組んだまま見せる（枠の途中の幅で組み直すと、折り返してから伸びる）
+    body.style.width = `${body.getBoundingClientRect().width}px`
+    setGhost(g => ({ collapsed: before, width: from.w, key: (g?.key ?? 0) + 1 }))
+    box.style.overflow = 'clip'
+    const boxAnim = box.animate(
+      [{ width: `${from.w}px`, height: `${from.h}px` }, { width: `${to.w}px`, height: `${to.h}px` }],
+      { duration: INNER_GROW_MS, easing: 'ease-in-out' },
+    )
+    const bodyAnim = body.animate([{ opacity: Number.isFinite(bodyOpacity) ? bodyOpacity : 0 }, { opacity: 1 }], { duration: INNER_GROW_MS, easing: 'ease-out' })
+    const mine = { box: boxAnim, body: bodyAnim }
+    animRef.current = mine
+    // 止められた動きの後始末は、次の動きが済ませている（ここで戻すと次の動きの切り方と重ねを消す）
+    const done = () => {
+      if (animRef.current !== mine) return
+      animRef.current = null
+      box.style.overflow = ''
+      body.style.width = ''
+      setGhost(null)
+      measure()
+    }
+    boxAnim.finished.then(done, done)
+    return () => cancelAnimationFrame(raf)
+  }, [collapsed])
+
+  // 枠の大きさは、中身が替わったときも、パネルの比率・画面の向き・文字の大きさが変わったときも控え直す
+  // （描き直されないまま大きさだけ変わることがある）。動いている間は測らない —— 測ると途中の大きさを控える
+  useLayoutEffect(() => {
+    const box = boxRef.current
+    if (!box) return
+    if (animRef.current === null) measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => { if (animRef.current === null) measure() })
+    ro.observe(box)
+    return () => ro.disconnect()
+  })
+
+  useLayoutEffect(() => () => {
+    animRef.current?.box.cancel()
+    animRef.current?.body?.cancel()
+  }, [])
+
+  return { boxRef, bodyRef, ghost, caretOpen }
+}
+
 export const MapLegend = memo(function MapLegend({ blocks, collapsed, onToggle, compact = false, onHeatmapPeriodChange }: Props) {
+  const { boxRef, bodyRef, ghost, caretOpen } = useLegendMotion(collapsed)
   // 描くものが無ければ枠ごと出さない（空の箱は地図を隠すだけ）。
   if (blocks.length === 0) return null
 
   const m = compact ? COMPACT : REGULAR
-  const representative = collapsed ? representativeBlock(blocks) : null
-  const rampWidth = compact ? '8.5rem' : '10rem'
 
   return (
     <div
-      className={`pointer-events-auto rounded-md border border-white/15 bg-[rgba(10,12,16,0.84)] shadow-lg ${m.pad}`}
+      ref={boxRef}
+      className={`relative pointer-events-auto rounded-md border border-border bg-panel/90 shadow-[0_3px_8px_rgba(0,0,0,.55)] ${m.pad}`}
       style={{
         // 幅の上限は、反対の隅（左下）に立つ共有ボタン（幅 2.25rem・左端から `max(0.5rem, 左のセーフエリア)`）と
         // その右の隙間 0.5rem を差し引いた幅。差し引かないと、凡例を開いた 360px 幅の画面でボタンに 12px 重なる。
@@ -281,6 +373,38 @@ export const MapLegend = memo(function MapLegend({ blocks, collapsed, onToggle, 
         marginBottom: '0.5rem',
       }}
     >
+      <div ref={bodyRef}>
+        <LegendBody blocks={blocks} collapsed={collapsed} caretOpen={caretOpen} onToggle={onToggle} m={m} compact={compact} onHeatmapPeriodChange={onHeatmapPeriodChange} />
+      </div>
+      {ghost !== null && (
+        // 前の中身。押せないようにし、読み上げからも外す（今の中身と二重に読まれる）
+        <div
+          key={ghost.key}
+          aria-hidden
+          {...{ inert: '' }}
+          className={`legend-ghost pointer-events-none absolute bottom-0 right-0 ${m.pad}`}
+          style={{ width: ghost.width }}
+        >
+          <LegendBody blocks={blocks} collapsed={ghost.collapsed} caretOpen={!ghost.collapsed} onToggle={onToggle} m={m} compact={compact} onHeatmapPeriodChange={onHeatmapPeriodChange} />
+        </div>
+      )}
+    </div>
+  )
+})
+
+function LegendBody({ blocks, collapsed, caretOpen, onToggle, m, compact, onHeatmapPeriodChange }: {
+  blocks: LegendBlock[]
+  collapsed: boolean
+  caretOpen: boolean
+  onToggle: () => void
+  m: typeof REGULAR
+  compact: boolean
+  onHeatmapPeriodChange: (period: HeatmapPeriod) => void
+}) {
+  const representative = collapsed ? representativeBlock(blocks) : null
+  const rampWidth = compact ? '8.5rem' : '10rem'
+  return (
+    <>
       {representative ? (
         // 畳んだとき。見出しは短い名前にして、色見本と 1 行へ収める。
         <button
@@ -289,9 +413,9 @@ export const MapLegend = memo(function MapLegend({ blocks, collapsed, onToggle, 
           aria-expanded={false}
           className={`flex w-full items-center gap-[0.35rem] text-left ${m.hit.collapsed}`}
         >
-          <span className={`font-bold text-white/60 ${m.title}`}>{representative.shortTitle}</span>
+          <span className={`font-bold text-secondary ${m.title}`}>{representative.shortTitle}</span>
           <Swatch swatch={representative.swatch} rampWidth={rampWidth} m={m} labels={false} />
-          <Caret open={false} />
+          <Caret open={caretOpen} />
         </button>
       ) : (
         blocks.map((block, i) => (
@@ -303,13 +427,13 @@ export const MapLegend = memo(function MapLegend({ blocks, collapsed, onToggle, 
                 type="button"
                 onClick={onToggle}
                 aria-expanded
-                className={`flex w-full items-center justify-between gap-2 text-left font-bold tracking-wide text-white/55 ${m.title} ${m.hit.heading}`}
+                className={`flex w-full items-center justify-between gap-2 text-left font-bold tracking-wide text-secondary ${m.title} ${m.hit.heading}`}
               >
                 <span>{block.title}</span>
-                <Caret open />
+                <Caret open={caretOpen} />
               </button>
             ) : (
-              <div className={`font-bold tracking-wide text-white/55 ${m.title}`}>{block.title}</div>
+              <div className={`font-bold tracking-wide text-secondary ${m.title}`}>{block.title}</div>
             )}
             <div className="mt-[0.1rem]">
               <Swatch swatch={block.swatch} rampWidth={rampWidth} m={m} />
@@ -320,6 +444,6 @@ export const MapLegend = memo(function MapLegend({ blocks, collapsed, onToggle, 
           </div>
         ))
       )}
-    </div>
+    </>
   )
-})
+}

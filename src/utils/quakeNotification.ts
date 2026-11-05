@@ -220,7 +220,9 @@ export function decideQuakeNotification(
   }
   const maxScale = quake.earthquake.maxScale
   const foreign = quake.issue.type === '遠地地震'
-  if (!foreign && maxScale < notifyMinScale) return null
+  // 最大震度が「5弱以上（未入電）」なら、実際は 5強以上だった可能性があるので、5強以上を選んでいても通知する
+  // （2026-11-04 ユーザー選択「5強以上の設定でも残す (Recommended)」。一覧の絞り `filterDisplayedQuakes` と同じ扱い）
+  if (!foreign && maxScale < notifyMinScale && !isMaxScaleUnreceived(maxScale, quake.points)) return null
   const withHypocenter = foreign || !isHypocenterPending(quake)
   const body = foreign ? foreignQuakeNotificationBody(quake)
     : !withHypocenter ? scalePromptNotificationBody(quake, areaPrefIndex)

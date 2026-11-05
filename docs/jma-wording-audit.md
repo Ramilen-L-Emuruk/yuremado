@@ -75,14 +75,14 @@
 | D2 | `最大波高は観測中` | `components/Map/TsunamiArrivalMarkersGL.tsx:34`（地図のホバー） | 波高を持たない観測点すべて（「微弱」も含む） | 観測中・微弱 eq:1310-1318。資料の語は「これまでの最大波の高さ」（eq:1302） | 別の値に公式名 | 高 | D1 と同じ判定で出し分ける |
 | D3 | `最大波 {hh:mm}`・凡例の `観測波高`・`観測した津波の高さ`・読み上げの `最大波高は観測中です。`・`観測された波高に変わりはありません。` | `utils/tsunami.ts:1387`（画面）、`components/MapLegend/legendBlocks.ts:382-383`（凡例）、`utils/ttsText.ts:3251・3252・3424`（読み上げ） | `MaxHeight`【津波の最大波（観測値）】 | 「これまでの最大波」「これまでの最大波の高さ」eq:1290-1302（地図の欠測のホバーはこの語を使っている） | 短縮 | 高 | `これまでの最大波 {hh:mm}`・`これまでの最大波の高さ` |
 | D4 | `到達時刻不明` | `utils/tsunami.ts:1369`（画面） | 観測の `FirstHeight/Condition`＝第１波識別不能 | 「第１波識別不能」eq:1277 | 言い換え | 高 | `第1波識別不能` |
-| D5 | `{hh:mm} 押し波`・`到達: {hh:mm}（押し）`・`{hh:mm} 到達（押し）` | `components/TsunamiTab/index.tsx:430・603`（画面）、`components/Map/TsunamiArrivalMarkersGL.tsx:29`（地図のホバー） | 観測した第１波 | 【津波の第１波（観測値）】eq:1276 | 言い換え（3 箇所で形も違う） | 高 | `第1波 {hh:mm}（押し）` |
+| D5 | `{hh:mm} 押し波`・`{hh:mm} 到達（押し）`（沖合観測の行の `到達: {hh:mm}（押し）` は 2026-11-04 に沿岸の行と同じ `{hh:mm} 押し波` へそろえた。ユーザー選択「沿岸と同じ書き方 (Recommended)」） | `components/TsunamiTab/index.tsx`（画面・観測点の行）、`components/Map/TsunamiArrivalMarkersGL.tsx:29`（地図のホバー） | 観測した第１波 | 【津波の第１波（観測値）】eq:1276 | 言い換え（2 箇所で形も違う） | 高 | `第1波 {hh:mm}（押し）` |
 | D6 | `{hh:mm}到達予想`（推定値の行） | `components/TsunamiTab/index.tsx:1709`（画面） | `Estimation/Item/FirstHeight` | 【津波到達時刻（推定値）】eq:1736 | 別の値に公式名（予報区の「到達予想時刻」の語） | 高 | `{hh:mm}到達と推定` |
 | D7 | `沿岸への推定（気象庁発表）` | `components/TsunamiTab/index.tsx:1687`（画面） | `Body/Tsunami/Estimation` | 【津波の推定値】eq:1727・【沿岸地域】eq:1734 | 言い換え | 高 | `津波の推定値（沿岸地域）` |
 | D8 | `沖合観測` | `components/TsunamiTab/index.tsx:1675`（画面） | どの区域にも結びつかない観測点 | 「沖合の潮位観測点」eq:219 | 短縮 | 低 | `沖合の潮位観測点` |
 | D9 | バッジ `実測`・`予測` | `utils/tsunami.ts:1258`・`components/TsunamiTab/index.tsx:527`（画面） | 観測値／予報だけの観測点 | 【津波の観測値】eq:1262・到達予想時刻 eq:1565 | 言い換え | 低 | `観測値`・`予想` |
 | D10 | `更新 {日時}` | `components/TsunamiTab/index.tsx:1461`（画面） | `Head/ReportDateTime` | 【発表時刻】eq:69（特別情報の帯は「発表:」） | 言い換え | 高 | `発表 {日時}` |
 | D11 | `観測 {hh:mm} 時点` | `components/TsunamiTab/index.tsx:1468`（画面） | `Head/TargetDateTime` | 【基点時刻】。津波の観測値では「津波の観測状況を確定した時刻」eq:71-72 | 言い換え | 低 | — |
-| D12 | `震源: {震央地名}` | `components/TsunamiTab/index.tsx:1555`（画面） | `Hypocenter/Area/DetailedName`、無ければ `Name` | 【震央地名】eq:1193・【詳細震央地名】eq:1228 | 言い換え | 低 | `震央地名: ` |
+| D12 | `震源: {震央地名}`（2026-11-04 のバナーの作り直しで前置きを外し、震央地名を大きく出す形にした。ユーザー選択「B1 帯は等級だけ (Recommended)」の見本に前置きが無い） | `components/TsunamiTab/index.tsx`（画面・バナーの原因地震の行） | `Hypocenter/Area/DetailedName`、無ければ `Name` | 【震央地名】eq:1193・【詳細震央地名】eq:1228 | 言い換え | 低 | `震央地名: ` |
 | D13 | `津波情報 解除`・`この津波情報は解除されました`・`津波情報 取消`・`この津波情報は誤って発表されたため取り消されました` | `utils/tsunamiCancelLabel.ts:14-15`（画面） | 津波警報・注意報・予報の全解除・取消 | 「津波情報」は津波警報・注意報・予報とは別の情報の名前（eq:25）。総称は「津波警報等」。全解除の通知は「津波警報等の解除」と書いている | 別の値に公式名 | 高 | `津波警報等 解除`・`津波警報等 取消` |
 | D14 | `津波情報より`（地震カードが津波の電文から借りた震源の出どころ） | `utils/borrowFromTsunami.ts:32` → `components/EarthquakeTab/EarthquakeCard.tsx:516`（画面）、`components/SettingsTab/index.tsx:1993`（設定の窓） | 原因地震を借りた津波の電文（津波警報・注意報・予報を含む） | eq:25 | 別の値に公式名 | 高 | `津波警報等より` |
 | D15 | `津波情報の発表中はデフォルトタブを津波情報にします` | `components/SettingsTab/index.tsx:1461`（設定の窓） | 津波警報・注意報・予報が出ているか | eq:25 | 別の値に公式名 | 低 | — |

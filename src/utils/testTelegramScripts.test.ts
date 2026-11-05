@@ -13,14 +13,15 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { EEWAlert, JMALpgm, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { ReplayPayload } from '../types/replay'
-import { buildTestTelegramEntries, clearTestTelegramCacheForTest, type BuiltTestTelegram, type TestTelegramScript } from './testTelegrams'
+import { buildTestLogOnlyEntries, buildTestTelegramEntries, clearTestTelegramCacheForTest, type BuiltTestTelegram, type TestTelegramScript } from './testTelegrams'
 import * as scripts from './testTelegramScripts'
 import { mergeQuakeInto, mergeQuakeHistory, extractQuakeEventId } from './quakeMerge'
 import { eewAreas, eewMaxScale, computeSingleEEWLevel, isProvisionalHypocenter } from './eew'
 import { earthquakeToSegments, createQuakeSpokenState, applySpokenRefs } from './ttsText'
 import { joinSegments } from './ttsFollow'
 import { reportsText } from '../test-utils/quakeReports'
-import { internationalTsunamisFor } from './internationalTsunami'
+import { internationalTsunamiIndex } from './internationalTsunami'
+import { quakeEventKey } from './quakeMerge'
 import { editXml, descendants, only } from './testTelegramRewrite'
 
 const NOW = new Date('2026-10-22T03:00:00.000Z')
@@ -166,6 +167,15 @@ describe('訓練報テスト', () => {
     expect(training.operationStatus).toBe('訓練')
     expect(normal.operationStatus).toBeUndefined()
     expect(training.points.length).toBe(normal.points.length)
+  })
+
+  // 長周期の欄の「訓練報」の札を確かめられるよう、長周期の電文も訓練にする
+  it('長周期の電文も運用種別だけが「訓練」になる', async () => {
+    const [training] = lpgmsOf(await build(scripts.TRAINING_QUAKE))
+    const [normal] = lpgmsOf(await build(scripts.EARTHQUAKE))
+    expect(training.operationStatus).toBe('訓練')
+    expect(normal.operationStatus).toBeUndefined()
+    expect(training.maxClass).toBe(normal.maxClass)
   })
 })
 
@@ -457,7 +467,27 @@ describe('遠地地震テスト・巨大地震テスト', () => {
     expect(quake.issue.type).toBe('遠地地震')
     expect(bulletins).toHaveLength(1)
     expect(bulletins[0].title).toBe('TSUNAMI BULLETIN NUMBER 001')
-    expect(internationalTsunamisFor(quake, bulletins)).toEqual(bulletins)
+    expect(internationalTsunamiIndex([quake], bulletins).byQuakeKey.get(quakeEventKey(quake))).toEqual(bulletins)
+    // 自作の英文の深さは実電文の書式（FOCAL DEPTH の行に規模と並ぶ）で書き、読み取りが拾える
+    expect(bulletins[0]).toMatchObject({ depthKm: 140, magnitude: 7.0, regionName: 'TALAUD ISLANDS, INDONESIA' })
+  })
+
+  // 英文だけテスト（2026-11-03 ユーザー選択「別の行を足す (Recommended)」）: 国内の地震に付く英文と、付くカードの無い英文
+  it('英文だけテストは日向灘の地震に付く英文と、どのカードにも付かない英文を流す', async () => {
+    const built = await build(scripts.INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY)
+    const [quake] = quakesOf(built)
+    const bulletins = payloads(built).flatMap(p => (p.kind === 'internationalTsunami' ? [p.data] : []))
+    expect(quake.issue.type).not.toBe('遠地地震')
+    expect(bulletins).toHaveLength(2)
+    const [hyuganada, mindanao] = bulletins
+    const index = internationalTsunamiIndex([quake], bulletins)
+    expect(index.byQuakeKey.get(quakeEventKey(quake))).toEqual([hyuganada])
+    expect(hyuganada).toMatchObject({ regionName: 'KYUSHU, JAPAN', magnitude: 7.1, magnitudeType: 'Mj' })
+    const cards = index.cards
+    expect(cards).toHaveLength(1)
+    expect(cards[0].earthquake.hypocenter).toMatchObject({ name: 'MINDANAO, PHILIPPINES', magnitude: 6.9, depth: 30 })
+    // 押した時刻より未来の地震にならない（台本は日向灘を「いま」に合わせる）
+    expect(Date.parse(mindanao.originTime!)).toBeLessThan(Date.parse(quake.earthquake.time))
   })
 
   it('巨大地震は規模が数値にならず、「Ｍ８を超える巨大地震」と区別される', async () => {
@@ -814,6 +844,17 @@ describe('南海トラフ・後発地震・お知らせ・地震回数・長周�
     expect(notice.freeText).toBe('保守点検の時刻が変更になりました。')
   })
 
+  // 帯に積む形（別件のお知らせ 2 通）を確かめる入口。同じ分の別のお知らせ —— 実配信の並び方のまま
+  it('お知らせテストは同じ分の別のお知らせを 2 通流す', async () => {
+    const notices = dataOf(await build(scripts.QUAKE_NOTICE), 'quakeNotice') as { id: string; eventId: string; reportDateTime: string; freeText?: string }[]
+    expect(notices).toHaveLength(2)
+    const [a, b] = notices
+    expect(b.id).not.toBe(a.id)
+    expect(b.eventId).toBe(a.eventId)
+    expect(Date.parse(b.reportDateTime) - Date.parse(a.reportDateTime)).toBe(scripts.QUAKE_NOTICE_SECOND_MS)
+    expect(b.freeText).toBeUndefined()
+  })
+
   it('地震回数は回数が全区間「発表なし」で、有感回数は持つ', async () => {
     const [count] = dataOf(await build(scripts.EARTHQUAKE_COUNT), 'earthquakeCount') as { items: { number: number | null; feltNumber: number | null }[] }[]
     expect(count.items.length).toBe(5)
@@ -974,5 +1015,38 @@ describe('震源の借用テスト', () => {
     expect(prompt1.earthquake.hypocenter.name).toBe('')
     expect(tsunami1.sourceEarthquakes?.[0]?.magnitude).toBe(7.4)
     expect(tsunami2.sourceEarthquakes?.[0]?.magnitude).toBe(7.6)
+  })
+})
+
+describe('規模の更新テスト', () => {
+  // 津波の続報が地震情報より新しい規模を運び、その後の地震情報が同じ規模で追いつく並び（能登本震の 16:16・16:22・16:24）
+  it('震源・震度情報 → 津波の続報 → 震源・震度情報の続報 の順で、津波だけが間の報として新しい規模を運ぶ', async () => {
+    const events = payloads(await build(scripts.MAGNITUDE_FROM_TSUNAMI)).map(p => (p.kind === 'event' ? p.event : null))
+    expect(events.map(e => e?.kind)).toEqual(['quake', 'tsunami', 'quake'])
+    const [detail1, tsunami2, detail2] = events as [JMAQuake, JMATsunami, JMAQuake]
+    expect(tsunami2.eventId).toBe(extractQuakeEventId(detail1))
+    expect(detail1.earthquake.hypocenter.magnitude).toBe(7.4)
+    expect(tsunami2.sourceEarthquakes?.[0]?.magnitude).toBe(7.6)
+    expect(detail2.earthquake.hypocenter.magnitude).toBe(7.6)
+    // 押した時刻へずらしても、発表の前後は実電文のまま（津波が 2 つの地震情報の間）
+    expect(Date.parse(detail1.time)).toBeLessThan(Date.parse(tsunami2.time))
+    expect(Date.parse(tsunami2.time)).toBeLessThan(Date.parse(detail2.time))
+  })
+})
+
+// 読まない種類（VXSE56）のテストは、ライブと同じく電文ログに本文ごと「スキップ」の行だけを積む
+describe('電文ログにだけ積むテスト', () => {
+  // 正: 置いてある実電文から、本文ごと filtered の行が 1 行できる
+  it('地震の活動状況等に関する情報は、本文ごと filtered の行になる', async () => {
+    const rows = await buildTestLogOnlyEntries(scripts.ACTIVITY_INFO, NOW, fetcher)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].replayTime.getTime()).toBe(NOW.getTime())
+    expect(rows[0].logEntry).toMatchObject({ headType: 'VXSE56', status: 'filtered', origin: 'test', isTest: false })
+    expect(String(rows[0].logEntry.rawBody)).toContain('<Title>地震の活動状況等に関する情報</Title>')
+  })
+
+  // 安全弁: 読む種類を行だけにすると、ライブでは画面に出る電文が出なくなるので止める
+  it('読む種類の電文は行だけにできない', async () => {
+    await expect(buildTestLogOnlyEntries(scripts.NANKAI_COMMENTARY_ROUTINE, NOW, fetcher)).rejects.toThrow('読む種類の電文は行だけにできません')
   })
 })

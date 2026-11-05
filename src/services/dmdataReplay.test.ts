@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs'
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import { PREFERRED_CLASSIFICATIONS } from './dmdataClassifications'
 import {
-  fetchDmdataReplayEvents, fetchDmdataQuakeHistory, clearReplayCache, clearArchiveCacheForTest,
+  fetchDmdataReplayEvents, fetchDmdataReplayInitialEvents, fetchDmdataQuakeHistory, clearReplayCache, clearArchiveCacheForTest,
   clearParseCachesForTest, filterPreWindowEvents, isArchiveCacheable, HISTORY_WINDOW_DAYS, fetchDmdataEewOrigins, needsPerEventFetch,
   compareExtraTieBreak,
 } from './dmdataReplay'
@@ -77,6 +77,7 @@ beforeEach(async () => {
 // stream() を持たないため全件が落ちる。必要な 1 つだけを node 環境へ足す。
 import { JSDOM } from 'jsdom'
 import { dmdataKeyEndpoint } from './dmdataEndpoint'
+import { muteConsoleError } from '../test-utils/muteConsoleError'
 
 /** テスト用: 日ごとの取りこぼしを合計する（実装が日ごとに持つようになったため）。 */
 function skippedTotal(m: ReadonlyMap<string, number>): number {
@@ -3656,6 +3657,225 @@ describe('窓に入る電文が無い日は本体を落とさない', () => {
 
     expect(quiet.entries).toHaveLength(0)
     expect(counter.bodies).toBe(1)
+  })
+})
+
+// 再生の電文ログはライブと同じに積む（2026-11-04 ユーザー選択「ライブと同じに積む (Recommended)」）。
+// 取り込まない電文・読めなかった電文は、画面へは流さず `logOnlyEntries` に行として返す。
+describe('電文ログにだけ積む行（アーカイブ経路）', () => {
+  const originalFetch = globalThis.fetch
+  beforeEach(async () => {
+    await clearAllCaches()
+    muteConsoleError()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+  afterEach(async () => {
+    globalThis.fetch = originalFetch
+    await clearAllCaches()
+    vi.restoreAllMocks()
+  })
+
+  const VXSE56_XML = '<?xml version="1.0"?><Report><Control><Title>地震の活動状況等に関する情報</Title><Status>通常</Status></Control></Report>'
+  const VXSE42_XML = '<?xml version="1.0"?><Report><Control><Title>緊急地震速報配信テスト</Title><Status>試験</Status></Control></Report>'
+
+  async function run(files: Array<{ name: string; content: string | Uint8Array }>, includeTest = false, from = FROM, to = TO) {
+    globalThis.fetch = mockArchives([{ url: 'https://x/log', gz: await makeTarGz(files) }]) as unknown as typeof fetch
+    return fetchDmdataReplayEvents(dmdataKeyEndpoint('key'), from, to, includeTest, PREFERRED_CLASSIFICATIONS, null)
+  }
+
+  // 正: 捨てる試験報は、本文と見出しごと filtered の行にする（ライブは本文を復号して積む）。取りこぼしには数えない
+  it('正: 窓の内側の捨てる試験報は filtered の行になり、画面へは流さない', async () => {
+    const result = await run([
+      { name: 'telegrams.json', content: JSON.stringify([manifestEntry('n0000001'), manifestTestEntry('t0000001')]) },
+      { name: defaultFileName('n0000001'), content: quakeBody('岩手県沖') },
+      { name: 't0000001_20260810030600000_0.xml', content: quakeBody('日本海中部') },
+    ])
+    expect(result.entries).toHaveLength(1)
+    expect(result.logOnlyEntries).toHaveLength(1)
+    const row = result.logOnlyEntries[0]
+    expect(row.replayTime.toISOString()).toBe('2026-08-10T03:06:00.000Z')
+    expect(row.logEntry).toMatchObject({ status: 'filtered', headType: 'VXSE53', origin: 'replay', isTest: true })
+    expect(String(row.logEntry.rawBody)).toContain('日本海中部')
+    // 見出しは目録（telegrams.json）の head をそのまま持つ
+    expect(row.logEntry.rawHead).toEqual({ type: 'VXSE53', time: '2026-08-10T12:06:00+09:00', test: true, designation: null })
+    expect(skippedTotal(result.skippedByDay)).toBe(0)
+  })
+
+  // 正: 扱わない種類（VXSE56）と、取り込まない側の緊急地震速報（VXSE45 のある日の VXSE44）も filtered の行にする
+  it('正: 扱わない種類と、VXSE45 のある日の VXSE44 は filtered の行になる', async () => {
+    const result = await run([
+      {
+        name: 'telegrams.json', content: JSON.stringify([
+          manifestEntry('u0000001', 'VXSE56', '2026-08-10T12:01:00+09:00'),
+          manifestEntry('e0000045', 'VXSE45', '2026-08-11T05:00:00+09:00'),   // 窓の外。日の判定（VXSE45 のある日）にだけ効く
+          manifestEntry('e0000044', 'VXSE44', '2026-08-10T12:02:00+09:00'),
+        ]),
+      },
+      { name: defaultFileName('u0000001', '2026-08-10T12:01:00+09:00'), content: VXSE56_XML },
+      { name: defaultFileName('e0000044', '2026-08-10T12:02:00+09:00'), content: '<Report><Control><Title>緊急地震速報（地震動予報）</Title></Control></Report>' },
+    ])
+    expect(result.entries).toHaveLength(0)
+    expect(result.logOnlyEntries.map(e => [e.logEntry.headType, e.logEntry.status])).toEqual([['VXSE56', 'filtered'], ['VXSE44', 'filtered']])
+    expect(result.logOnlyEntries[0].logEntry.rawBody).toBe(VXSE56_XML)
+    expect(skippedTotal(result.skippedByDay)).toBe(0)
+  })
+
+  // 対照: 窓の外の行だけの電文は積まない（その窓を読む回が積む。窓は重ならないので 2 行にならない）。JSON 版も積まない
+  it('対照: 窓の外と JSON 版の行だけの電文は積まない', async () => {
+    const from = new Date('2026-08-10T12:30:00+09:00')
+    const result = await run([
+      {
+        name: 'telegrams.json', content: JSON.stringify([
+          manifestTestEntry('t0000002'),                                               // 12:06（窓より前）
+          { ...manifestEntry('j0000001', 'VXSE56', '2026-08-10T13:00:00+09:00'), originalId: 'x0000001' },
+        ]),
+      },
+      { name: 't0000002_20260810030600000_0.xml', content: quakeBody('日本海中部') },
+      { name: defaultFileName('j0000001', '2026-08-10T13:00:00+09:00'), content: VXSE56_XML },
+    ], false, from, TO)
+    expect(result.logOnlyEntries).toHaveLength(0)
+  })
+
+  // 対照: 再生の初期状態（窓の手前 24 時間）は行を電文ログに載せないので、行だけの電文を選ばない
+  it('対照: 初期状態の取得は行だけの電文を選ばない', async () => {
+    globalThis.fetch = mockArchives([{ url: 'https://x/log', gz: await makeTarGz([
+      { name: 'telegrams.json', content: JSON.stringify([manifestEntry('n0000004'), manifestTestEntry('t0000004')]) },
+      { name: defaultFileName('n0000004'), content: quakeBody('岩手県沖') },
+      { name: 't0000004_20260810030600000_0.xml', content: quakeBody('日本海中部') },
+    ]) }]) as unknown as typeof fetch
+    const result = await fetchDmdataReplayInitialEvents(dmdataKeyEndpoint('key'), FROM, TO, false, PREFERRED_CLASSIFICATIONS, null)
+    expect(result.logOnlyEntries).toHaveLength(0)
+    // 取り込む電文は今どおり読む
+    expect(result.entries).toHaveLength(1)
+  })
+
+  // 安全弁: 読めた電文は今どおり画面へ流し、見出しつきの parsed の行を持つ
+  it('安全弁: 読めた電文は今どおり entries に入り、見出しつきの parsed の行を持つ', async () => {
+    const result = await run([
+      { name: 'telegrams.json', content: JSON.stringify([manifestEntry('n0000002')]) },
+      { name: defaultFileName('n0000002'), content: quakeBody('岩手県沖') },
+    ])
+    expect(result.entries).toHaveLength(1)
+    expect(result.entries[0].logEntry).toMatchObject({ status: 'parsed', headType: 'VXSE53' })
+    expect(result.entries[0].logEntry?.rawHead).toMatchObject({ type: 'VXSE53', test: false })
+    expect(result.logOnlyEntries).toHaveLength(0)
+  })
+
+  // 安全弁: 行だけの電文の本体が見つからなくても、取りこぼしに数えない（数え方は変えない）
+  // 本体が無い行は「本文を取得できませんでした」のエラーで積む（2026-11-04 ユーザー選択「エラーの行で積む (Recommended)」。
+  // 前は行ごと落としていて、その時間に電文が無かったのと見分けられなかった）。取りこぼしの数え方は変えない
+  it('安全弁: 行だけの電文の本体が無くても取りこぼしに数えず、本文なしのエラーの行で積む', async () => {
+    const result = await run([
+      { name: 'telegrams.json', content: JSON.stringify([manifestTestEntry('t0000003')]) },
+      // 本体を入れない
+    ])
+    expect(result.logOnlyEntries.map(e => e.logEntry)).toMatchObject([
+      { status: 'error', errorMessage: '本文を取得できませんでした', rawBody: null },
+    ])
+    expect(skippedTotal(result.skippedByDay)).toBe(0)
+  })
+
+  // 正: 読めなかった XML は、ライブと同じく filtered の行で積み、取りこぼしにも今どおり数える
+  it('正: 読めなかった XML は filtered の行を積み、取りこぼしにも数える', async () => {
+    const result = await run([
+      { name: 'telegrams.json', content: JSON.stringify([manifestEntry('b0000001')]) },
+      { name: defaultFileName('b0000001'), content: '<broken' },
+    ])
+    expect(result.entries).toHaveLength(0)
+    expect(skippedTotal(result.skippedByDay)).toBe(1)
+    expect(result.logOnlyEntries.map(e => e.logEntry)).toMatchObject([{ status: 'filtered', headType: 'VXSE53', rawBody: '<broken' }])
+  })
+
+  // 配信テスト VXSE42 はライブに揃える: 試験報を捨てる設定でも受ける設定でも、取り込まずに filtered の行だけ積む
+  it.each([false, true])('VXSE42 は取り込まずに filtered の行だけ積む（試験報を受ける設定=%s）', async (includeTest) => {
+    const result = await run([
+      { name: 'telegrams.json', content: JSON.stringify([manifestTestEntry('v4200001', 'VXSE42')]) },
+      { name: 'v4200001_20260810030600000_0.xml', content: VXSE42_XML },
+    ], includeTest)
+    expect(result.entries).toHaveLength(0)
+    expect(result.logOnlyEntries.map(e => e.logEntry)).toMatchObject([{ status: 'filtered', headType: 'VXSE42', isTest: true, operationStatus: '試験' }])
+    expect(skippedTotal(result.skippedByDay)).toBe(0)
+  })
+
+  // 推計震度分布図: 結合した行は元の二進を持ち（2026-11-04 ユーザー選択「残して落とせる (Recommended)」）、
+  // 結合待ちの断片の行は持たない。読めなかった二進は error の行（理由つき）で、取りこぼしにも数える
+  it('推計震度分布図の行は結合した二進を持ち、結合待ちの断片の行は持たない', async () => {
+    const bin = buildSampleTelegram()
+    const cut = 32
+    const result = await run([
+      {
+        name: 'telegrams.json', content: JSON.stringify([
+          manifestEntry('bin0101', 'IXAC41', '2026-08-10T12:06:00+09:00', null, binFileName('bin0101')),
+          manifestEntry('bin0102', 'IXAC41', '2026-08-10T12:06:00+09:00', 'RRA', binFileName('bin0102', '20260810030600100')),
+        ]),
+      },
+      { name: binFileName('bin0101'), content: bin.slice(0, cut) },
+      { name: binFileName('bin0102', '20260810030600100'), content: bin.slice(cut) },
+    ])
+    expect(result.entries).toHaveLength(1)
+    const parsed = result.entries[0].logEntry
+    expect(parsed?.status).toBe('parsed')
+    expect([...(parsed?.rawBytes ?? [])]).toEqual([...bin])
+    expect(result.logOnlyEntries).toHaveLength(1)
+    expect(result.logOnlyEntries[0].logEntry).toMatchObject({ status: 'filtered', rawBody: `（BUFR の断片 ${cut} バイト・結合待ち）` })
+    expect('rawBytes' in result.logOnlyEntries[0].logEntry).toBe(false)
+    expect(skippedTotal(result.skippedByDay)).toBe(0)
+  })
+
+  it('読めなかった二進は error の行を積み、取りこぼしにも数える', async () => {
+    // 結合は済む（全長は宣言どおり）が、第4節の長さが電文に収まらず読めない形
+    const junk = buildSampleTelegram({ section4LengthOverride: 0xffffff })
+    const result = await run([
+      { name: 'telegrams.json', content: JSON.stringify([manifestEntry('bin0201', 'IXAC41', '2026-08-10T12:06:00+09:00', null, binFileName('bin0201'))]) },
+      { name: binFileName('bin0201'), content: junk },
+    ])
+    expect(result.entries).toHaveLength(0)
+    expect(skippedTotal(result.skippedByDay)).toBe(1)
+    expect(result.logOnlyEntries.map(e => e.logEntry)).toMatchObject([{ status: 'error', errorMessage: 'bufr decode failed', rawBody: `（BUFR ${junk.length} バイト）` }])
+    expect([...(result.logOnlyEntries[0].logEntry.rawBytes ?? [])]).toEqual([...junk])
+  })
+
+  // 束を落とす日: 窓の内側に行だけの電文しか無い日も本体を落とす（本文ごと積むため）。
+  // 窓の外にしか無い日は今どおり落とさない
+  describe('本体（日ごとの束）を落とすか', () => {
+    const URL_D = 'https://x/log-only'
+    async function archiveWithOnlyTest(): Promise<Uint8Array> {
+      return makeTarGz([
+        { name: 'telegrams.json', content: JSON.stringify([manifestTestEntry('v4200002', 'VXSE42')]) },
+        { name: 'v4200002_20260810030600000_0.xml', content: VXSE42_XML },
+      ])
+    }
+    function countingFetch(gz: Uint8Array): { bodies: number } {
+      const base = mockArchives([{ url: URL_D, gz }])
+      const counter = { bodies: 0 }
+      globalThis.fetch = (async (input: string) => {
+        if (String(input) === URL_D) counter.bodies++
+        return base(String(input))
+      }) as unknown as typeof fetch
+      return counter
+    }
+
+    it('正: 窓の内側に行だけの電文しか無くても、目録の控えがあるとき本体を落として行を積む', async () => {
+      const counter = countingFetch(await archiveWithOnlyTest())
+      await fetchDmdataReplayEvents(dmdataKeyEndpoint('key'), FROM, TO, false, PREFERRED_CLASSIFICATIONS, null)
+      expect(counter.bodies).toBe(1)
+      clearArchiveCacheForTest()   // 目録の控えは残し、本体の控えだけ落とす
+      const again = await fetchDmdataReplayEvents(dmdataKeyEndpoint('key'), FROM, TO, false, PREFERRED_CLASSIFICATIONS, null)
+      expect(counter.bodies).toBe(2)
+      expect(again.logOnlyEntries).toHaveLength(1)
+    })
+
+    it('対照: 行だけの電文が窓の外にしか無ければ、目録の控えがあるとき本体を落とさない', async () => {
+      const counter = countingFetch(await archiveWithOnlyTest())
+      await fetchDmdataReplayEvents(dmdataKeyEndpoint('key'), FROM, TO, false, PREFERRED_CLASSIFICATIONS, null)
+      expect(counter.bodies).toBe(1)
+      clearArchiveCacheForTest()
+      const quiet = await fetchDmdataReplayEvents(
+        dmdataKeyEndpoint('key'), new Date('2026-08-10T01:00:00+09:00'), new Date('2026-08-10T02:00:00+09:00'), false, PREFERRED_CLASSIFICATIONS, null,
+      )
+      expect(counter.bodies).toBe(1)
+      expect(quiet.logOnlyEntries).toHaveLength(0)
+    })
   })
 })
 

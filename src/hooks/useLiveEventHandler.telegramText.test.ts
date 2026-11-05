@@ -223,15 +223,24 @@ describe('気象庁が書いた文の読み上げ（配線）', () => {
     expect(followCalls[0].subject).toBe('telegramText:nankai')
   })
 
-  // 対照: **開く先が無い種別では立てない。** 地震情報の付加文は元から畳んでいないので
-  // 開く相手がいない（→ `TELEGRAM_TEXT_OPEN_TARGET_KINDS`）。誰も反応しないセッションを
-  // 立ち上げては終わる状態にしない —— 症状が出ないぶん、後から意図を確かめられなくなる
-  it('開く先が無い種別（地震情報）では追従セッションを立てない', async () => {
+  // 正: **地震情報も主題に地震の識別子まで載せる。** 付加文は地震カードの「気象庁からの補足」に
+  // 畳んであり（2026-11-01 選択「畳んで、読み上げで開く (Recommended)」）、カードは複数並ぶ。
+  it('地震情報では、主題に地震の識別子まで載せる', async () => {
+    const { handleLiveEvent } = setup()
+    handleLiveEvent(makeQuake({ eventId: '20260101120000' }))
+    await drain()
+    expect(telegramSpeeches()).toHaveLength(1)
+    expect(followCalls.map(c => c.kind)).toEqual(['begin', 'end'])
+    expect(followCalls[0].subject).toBe(telegramTextSubject('quake', '20260101120000'))
+  })
+
+  // 安全弁: `EventID` を持たない地震情報は地震の時刻で主題を作る（既読の鍵と同じ決め方）。
+  // 識別子が無い電文どうしが 1 つの主題へ潰れ、別のカードの補足まで開く、ということが起きない。
+  it('EventID を持たない地震情報は、地震の時刻で主題を作る', async () => {
     const { handleLiveEvent } = setup()
     handleLiveEvent(makeQuake())
     await drain()
-    expect(telegramSpeeches()).toHaveLength(1)   // 読み上げ自体は起きる
-    expect(followCalls).toEqual([])              // 追従だけ立たない
+    expect(followCalls[0].subject).toBe(telegramTextSubject('quake', 'time:2026-01-01T12:00:00Z'))
   })
 
   // 正: **長周期は主題に地震の識別子まで載せる。** 地震カードは複数並ぶので、種別だけでは

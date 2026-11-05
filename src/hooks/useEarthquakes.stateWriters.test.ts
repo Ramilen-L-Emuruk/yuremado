@@ -45,15 +45,15 @@ function blockRange(lines: string[], declaration: string): { start: number; end:
   throw new Error(`ブロックの終端が見つかりません: ${declaration}`)
 }
 
-describe('南海トラフ臨時情報・後発地震注意情報の帯を書く場所', () => {
+describe('南海トラフ臨時情報・帯に積む 4 種の一覧を書く場所', () => {
   const source = readFileSync(SOURCE, 'utf-8')
   const lines = source.split('\n')
 
   // 書いてよい場所。**ここを増やすときは、増やす理由をコメントに残すこと。**
   const allowed = [
-    // 規則の置き場所。すべての経路はここを通す
+    // 規則の置き場所。すべての経路はここを通す（後発地震注意情報など積む 4 種は、一覧を書く `commitBandList` を通す）
     'const applyNankai = useCallback',
-    'const applyKohatsu = useCallback',
+    'const commitBandList = useCallback',
     // 初期値と全体のリセット。どちらも null を入れるだけで、識別情報の記憶も併せて落とす
     'useState<EarthquakeState>({',
     'const resetState = useCallback',
@@ -61,35 +61,43 @@ describe('南海トラフ臨時情報・後発地震注意情報の帯を書く�
 
   const isAllowed = (lineNo: number) => allowed.some(r => lineNo >= r.start && lineNo <= r.end)
 
-  it('state へ nankai / kohatsu を書くのは、規則を置いた関数・初期値・リセットだけ', () => {
+  it('state へ nankai と帯の一覧を書くのは、規則を置いた関数・初期値・リセットだけ', () => {
     const offenders: string[] = []
     lines.forEach((line, i) => {
       const lineNo = i + 1
-      // `setState` の更新式で帯へ値を入れている行だけを見る（型宣言や比較は対象外）
-      if (!/\bprev,\s*(nankai|kohatsu)\s*:/.test(line) && !/^\s*(nankai|kohatsu):\s/.test(line)) return
-      // 型定義（`nankai: JMANankai | null`）は除く
-      if (/:\s*(JMANankai|JMAKohatsu)\b/.test(line)) return
+      // `setState` の更新式で帯へ値を入れている行・一覧の控え（ref）を書き換えている行だけを見る（型宣言や比較は対象外）
+      const writes = /\bprev,\s*(nankai|nankaiCommentaryList|kohatsuList|quakeNoticeList|earthquakeCountList)\s*:/.test(line)
+        || /^\s*(nankai|nankaiCommentaryList|kohatsuList|quakeNoticeList|earthquakeCountList):\s/.test(line)
+        || /\[field\]:/.test(line)
+        || /bandListsRef\.current\s*=[^=]/.test(line)
+      if (!writes) return
+      // 型定義（`nankai: JMANankai | null`・`kohatsuList: readonly JMAKohatsu[]`）は除く
+      if (/:\s*(readonly\s+)?(JMANankai|JMANankaiCommentary|JMAKohatsu|JMAQuakeNotice|JMAEarthquakeCount)\b/.test(line)) return
       if (isAllowed(lineNo)) return
       offenders.push(`${lineNo}: ${line.trim()}`)
     })
     expect(
       offenders,
-      '帯へ直接書いている場所があります。applyNankai / applyKohatsu を通してください'
-      + '（通さないと取消の照合が効かず、表示中の識別情報の記憶も進みません）',
+      '帯へ直接書いている場所があります。applyNankai / commitBandList を通してください'
+      + '（通さないと取消の照合が効かず、一覧の控えと期限の予約も進みません）',
     ).toEqual([])
   })
 
-  it('後発地震の失効タイマーを張るのは applyKohatsu だけ', () => {
-    // 初回の履歴取得が独自に張り直していたため、`applyKohatsu` と二重に持っていた。
-    // 片方だけが識別情報の記憶を落とす状態になり、規則が食い違う
-    const range = blockRange(lines, 'const applyKohatsu = useCallback')
+  it('帯の期限の予約を張るのは commitBandList だけ', () => {
+    // 初回の履歴取得が独自に張り直していたため、反映の関数と二重に持っていたことがある。
+    // 片方だけが控えを進める状態になり、規則が食い違う
+    const range = blockRange(lines, 'const commitBandList = useCallback')
     const offenders: string[] = []
+    let seen = 0
     lines.forEach((line, i) => {
       const lineNo = i + 1
-      if (!/kohatsuExpireTimerRef\.current = window\.setTimeout/.test(line)) return
+      if (!/(timers\[kind\]|ExpireTimerRef\.current) = window\.setTimeout/.test(line)) return
+      seen++
       if (lineNo >= range.start && lineNo <= range.end) return
       offenders.push(`${lineNo}: ${line.trim()}`)
     })
-    expect(offenders, '失効タイマーを applyKohatsu の外で張っています').toEqual([])
+    // 検算: 予約を張る行が 1 つも見つからないなら、書き方が変わってこの検査が素通りしている
+    expect(seen).toBeGreaterThan(0)
+    expect(offenders, '期限の予約を commitBandList の外で張っています').toEqual([])
   })
 })

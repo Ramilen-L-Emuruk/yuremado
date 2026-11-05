@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, cleanup, act } from '@testing-library/react'
 import type { LiveEvent, LiveEventMeta, EEWAlert, JMALpgm, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, IntensityScale } from '../types/earthquake'
 import type { ReplayEntry, ReplayPayload, ReplayQuakeHistoryResult } from '../types/replay'
-import type { JMAKohatsu } from '../types/earthquake'
+import type { JMAKohatsu, TelegramLogEntry } from '../types/earthquake'
 import { serverDate, setReplayOffset } from '../utils/clock'
 import {
   drainReplayEvents, __resetReplayEventLogForTest, type ReplayTelegramEvent,
@@ -662,7 +662,7 @@ describe('キューは配列を差し替えない（同じ電文を二度処理�
       h.current.loadReplayEvents([
         { payload: { kind: 'event', event: 津波(at, 60_000) }, replayTime: at, logEntry: null },
         { payload: { kind: 'event', event: 地震情報(at) }, replayTime: at, logEntry: null },
-      ])
+      ], [])
     })
 
     act(() => { vi.advanceTimersByTime(100) })
@@ -671,6 +671,43 @@ describe('キューは配列を差し替えない（同じ電文を二度処理�
     // ティックを回し続けても増えない（キューに残っていない）。
     act(() => { vi.advanceTimersByTime(5_000) })
     expect(地震の通知数(onLiveEvent)).toBe(1)
+  })
+
+  // 再生の電文ログはライブと同じに積む（2026-11-04 ユーザー選択「ライブと同じに積む (Recommended)」）。
+  // 取り込まない電文の行（`logOnlyEntries`）は、発火の時刻に電文ログへ積むだけで、画面へは何も流さない
+  it('電文ログだけの行は発火の時刻に積み、画面へは流さず、後ろの電文も止めない', () => {
+    setReplayOffset(OFFSET_MS)
+    const onLiveEvent = vi.fn()
+    const h = setup({ offset: OFFSET_MS, onLiveEvent })
+    const at = serverDate()
+    const rowAt = new Date(at.getTime() + 2_000)
+    const quakeAt = new Date(at.getTime() + 3_000)
+    const row: TelegramLogEntry = {
+      id: 'log-only-1', receivedAt: new Date(0), source: 'dmdss', origin: 'replay', headType: 'VXSE56',
+      isTest: false, status: 'filtered', rawHead: { type: 'VXSE56' }, rawBody: '<Report/>',
+    }
+    const rowsOf = () => h.current.telegramLog.filter(r => r.id === 'log-only-1')
+
+    act(() => {
+      h.current.loadReplayEvents(
+        [{ payload: { kind: 'event', event: 地震情報(quakeAt) }, replayTime: quakeAt, logEntry: null }],
+        [{ replayTime: rowAt, logEntry: row }],
+      )
+    })
+    // 対照: 発火の時刻より前は積まない（窓ぶんを先に組むので、入れた時点で積むとまだ来ていない行が並ぶ）
+    act(() => { vi.advanceTimersByTime(100) })
+    expect(rowsOf()).toHaveLength(0)
+
+    // 正: 発火の時刻に 1 行だけ積む。受信時刻は発火のときに打ち直す
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(rowsOf()).toHaveLength(1)
+    expect(rowsOf()[0].receivedAt.getTime()).not.toBe(0)
+    expect(onLiveEvent).not.toHaveBeenCalled()
+
+    // 安全弁: 後ろの電文は今どおり画面へ流れる（行だけの項目で止まらない・黙らない）
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(地震の通知数(onLiveEvent)).toBe(1)
+    expect(rowsOf()).toHaveLength(1)
   })
 
   // 実際の再現（2024-01-02 16:59 開始）ではキューに数十件が並び、張り替えは何度も起きていた。
@@ -688,7 +725,7 @@ describe('キューは配列を差し替えない（同じ電文を二度処理�
         { payload: { kind: 'event', event: 地震情報(at, 1) }, replayTime: at, logEntry: null },
         { payload: { kind: 'event', event: 津波(at, 90_000, 2) }, replayTime: at, logEntry: null },
         { payload: { kind: 'event', event: 地震情報(at, 2) }, replayTime: at, logEntry: null },
-      ])
+      ], [])
     })
 
     act(() => { vi.advanceTimersByTime(100) })
@@ -712,7 +749,7 @@ describe('キューは配列を差し替えない（同じ電文を二度処理�
       h.current.loadReplayEvents([
         { payload: { kind: 'event', event: 地震情報(at, 1) }, replayTime: new Date(NaN), logEntry: null },
         { payload: { kind: 'event', event: 地震情報(at, 2) }, replayTime: at, logEntry: null },
-      ])
+      ], [])
     })
 
     act(() => { vi.advanceTimersByTime(100) })
@@ -1140,24 +1177,24 @@ describe('南海トラフ関連解説情報の帯は期限で畳む', () => {
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'nankaiCommentary', data: commentary('c-fresh', 60_000) })] }))
     const h = setup()
     await h.flush()
-    expect(h.current.nankaiCommentary?.id).toBe('c-fresh')
+    expect(h.current.nankaiCommentaryList[0]?.id).toBe('c-fresh')
   })
 
   it('期限切れの解説情報は載せない（先月の定例解説が起動時に出ないこと）', async () => {
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'nankaiCommentary', data: commentary('c-stale', -1_000) })] }))
     const h = setup()
     await h.flush()
-    expect(h.current.nankaiCommentary).toBeNull()
+    expect(h.current.nankaiCommentaryList).toEqual([])
   })
 
   it('期限が来たら帯を畳む', async () => {
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'nankaiCommentary', data: commentary('c-expiring', 5_000) })] }))
     const h = setup()
     await h.flush()
-    expect(h.current.nankaiCommentary?.id).toBe('c-expiring')
+    expect(h.current.nankaiCommentaryList[0]?.id).toBe('c-expiring')
 
     act(() => { vi.advanceTimersByTime(5_001) })
-    expect(h.current.nankaiCommentary).toBeNull()
+    expect(h.current.nankaiCommentaryList).toEqual([])
   })
 
   it('期限日時が壊れていれば載せない（期限計算が破綻した状態で帯を出さない）', async () => {
@@ -1165,14 +1202,14 @@ describe('南海トラフ関連解説情報の帯は期限で畳む', () => {
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'nankaiCommentary', data: broken })] }))
     const h = setup()
     await h.flush()
-    expect(h.current.nankaiCommentary).toBeNull()
+    expect(h.current.nankaiCommentaryList).toEqual([])
   })
 
   it('取消電文で帯を消す（期限を待たずに畳む）', async () => {
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'nankaiCommentary', data: commentary('c-live', 60_000) })] }))
     const h = setup()
     await h.flush()
-    expect(h.current.nankaiCommentary?.id).toBe('c-live')
+    expect(h.current.nankaiCommentaryList[0]?.id).toBe('c-live')
 
     // 取消はライブ受信経路（injectEvent は AppEvent 専用なので、キュー経由の payload を使う）。
     // **取消は対象と同じ `eventId` を持つ**（電文解説資料 Ⅰ.別紙ウ「独立した情報単位」）ので、
@@ -1182,10 +1219,10 @@ describe('南海トラフ関連解説情報の帯は期限で畳む', () => {
         payload: { kind: 'nankaiCommentary', data: { ...commentary('c-live', 60_000), cancelled: true } },
         replayTime: serverDate(),
         logEntry: null,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
-    expect(h.current.nankaiCommentary).toBeNull()
+    expect(h.current.nankaiCommentaryList).toEqual([])
   })
 
   // 安全弁: 表示中でない解説情報の取消は、表示中の帯の期限タイマーを止めない。
@@ -1194,20 +1231,20 @@ describe('南海トラフ関連解説情報の帯は期限で畳む', () => {
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'nankaiCommentary', data: commentary('c-shown', 5_000) })] }))
     const h = setup()
     await h.flush()
-    expect(h.current.nankaiCommentary?.id).toBe('c-shown')
+    expect(h.current.nankaiCommentaryList[0]?.id).toBe('c-shown')
 
     act(() => {
       h.current.loadReplayEvents([{
         payload: { kind: 'nankaiCommentary', data: { ...commentary('c-other', 60_000), cancelled: true } },
         replayTime: serverDate(),
         logEntry: null,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
-    expect(h.current.nankaiCommentary?.id).toBe('c-shown')
+    expect(h.current.nankaiCommentaryList[0]?.id).toBe('c-shown')
 
     act(() => { vi.advanceTimersByTime(5_001) })
-    expect(h.current.nankaiCommentary).toBeNull()
+    expect(h.current.nankaiCommentaryList).toEqual([])
   })
 
   // 安全弁: 別の情報単位に向けた取消で、いま出ている帯を消さない。気象庁は発表ごとに別の
@@ -1216,17 +1253,17 @@ describe('南海トラフ関連解説情報の帯は期限で畳む', () => {
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'nankaiCommentary', data: commentary('c-live', 60_000) })] }))
     const h = setup()
     await h.flush()
-    expect(h.current.nankaiCommentary?.id).toBe('c-live')
+    expect(h.current.nankaiCommentaryList[0]?.id).toBe('c-live')
 
     act(() => {
       h.current.loadReplayEvents([{
         payload: { kind: 'nankaiCommentary', data: { ...commentary('c-other', 60_000), cancelled: true } },
         replayTime: serverDate(),
         logEntry: null,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
-    expect(h.current.nankaiCommentary?.id).toBe('c-live')
+    expect(h.current.nankaiCommentaryList[0]?.id).toBe('c-live')
   })
 })
 
@@ -1307,6 +1344,53 @@ describe('震源・津波区分を津波電文から借りる結線', () => {
     expect(card.earthquake.domesticTsunami).toBe('警報等')
   })
 
+  /** 震源を持つ震源・震度情報（M7.4）。発表は `ageSec` 秒前。 */
+  function detail(ageSec: number): JMAQuake {
+    const at = new Date(serverDate().getTime() - ageSec * 1000).toISOString()
+    return {
+      ...prompt(),
+      time: at,
+      issue: { source: 'dmdata', time: at, type: '震源・震度情報', correct: 'なし' },
+      earthquake: {
+        time: at,
+        hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2, depth: 0, magnitude: 7.4 },
+        maxScale: 70,
+        domesticTsunami: '警報等',
+      },
+    }
+  }
+
+  // 正: 震源を持つカードにも、それより新しい津波の続報の規模を当て、印を付ける。取消が来たら地震情報の値へ戻す
+  // （2026-11-03 ユーザー選択「入れる (Recommended)」。'tsunami' ケースの続報と取消の両方の分岐を通す）
+  it('地震情報より新しい津波の規模を当て、津波の取消で戻す', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, detail(60))
+    const newer = tsunami()
+    push(h, { ...newer, sourceEarthquakes: [{ ...newer.sourceEarthquakes![0], magnitude: 7.6 }] })
+    let card = h.current.earthquakes[0]
+    expect(card.earthquake.hypocenter.magnitude).toBe(7.6)
+    expect(card.hypocenterSource?.shortLabel).toBe('津波情報')
+    expect([...h.current.quakeUpdateMarks.values()][0]?.facts.get('magnitude')).toBe('raised')
+    push(h, { ...tsunami(), cancelled: true, cancelReason: 'retracted' as const, areas: [] })
+    card = h.current.earthquakes[0]
+    expect(card.earthquake.hypocenter.magnitude).toBe(7.4)
+    expect(card.hypocenterSource).toBeUndefined()
+  })
+
+  // 正: 解除の 10 秒表示の間に届いた取消（表示中の津波に当たらない取消）でも、当てていた値を戻す
+  it('解除の後に届いた津波の取消でも、当てていた値を戻す', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, detail(60))
+    const newer = tsunami()
+    push(h, { ...newer, sourceEarthquakes: [{ ...newer.sourceEarthquakes![0], magnitude: 7.6 }] })
+    push(h, { ...tsunami(), cancelled: true, cancelReason: 'lifted' as const, areas: [] })
+    expect(h.current.earthquakes[0].earthquake.hypocenter.magnitude).toBe(7.6)
+    push(h, { ...tsunami(), cancelled: true, cancelReason: 'retracted' as const, areas: [] })
+    expect(h.current.earthquakes[0].earthquake.hypocenter.magnitude).toBe(7.4)
+  })
+
   // 安全弁: 別の地震の津波からは借りない（結ぶ根拠は `eventId` の一致だけ）。
   it('eventId が違う津波からは借りない', async () => {
     const h = setup()
@@ -1364,7 +1448,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
 
   /** キュー経由で 1 件流す（`injectEvent` は AppEvent 専用なのでこちらを使う）。 */
   function push(h: ReturnType<typeof setup>, payload: import('../types/replay').ReplayPayload) {
-    act(() => { h.current.loadReplayEvents([{ payload, replayTime: serverDate(), logEntry: null }]) })
+    act(() => { h.current.loadReplayEvents([{ payload, replayTime: serverDate(), logEntry: null }], []) })
     act(() => { vi.advanceTimersByTime(50) })
   }
 
@@ -1376,10 +1460,10 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     const h = setup()
     await h.flush()
     push(h, { kind: 'quakeNotice', data: notice('n-live', 5_000) })
-    expect(h.current.quakeNotice?.id).toBe('n-live')
+    expect(h.current.quakeNoticeList[0]?.id).toBe('n-live')
 
     act(() => { vi.advanceTimersByTime(5_001) })
-    expect(h.current.quakeNotice).toBeNull()
+    expect(h.current.quakeNoticeList).toEqual([])
   })
 
   // 対照: 期限切れのお知らせは載せない（リプレイで過去の窓を再生したときに出ないこと）。
@@ -1387,7 +1471,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     const h = setup()
     await h.flush()
     push(h, { kind: 'quakeNotice', data: notice('n-stale', -1_000) })
-    expect(h.current.quakeNotice).toBeNull()
+    expect(h.current.quakeNoticeList).toEqual([])
   })
 
   // 正: 取消で帯を消す。**照合は `EventID`** ―― 取消は元のお知らせの `EventID` を引き継ぐが、
@@ -1396,23 +1480,32 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     const h = setup()
     await h.flush()
     push(h, { kind: 'quakeNotice', data: notice('n-live', 60_000) })
-    expect(h.current.quakeNotice?.id).toBe('n-live')
+    expect(h.current.quakeNoticeList[0]?.id).toBe('n-live')
 
     push(h, { kind: 'quakeNotice', data: { ...notice('n-live', 60_000), id: 'n-live-cancel', cancelled: true } })
-    expect(h.current.quakeNotice).toBeNull()
+    expect(h.current.quakeNoticeList).toEqual([])
   })
 
-  // 既知の限界を固定する: 同じ分に別のお知らせ（EventID が同じ）が出て表示を置き換えたあと、先の
-  // お知らせ宛ての取消が届くと、表示中の 1 通を消す。取消は分までの EventID しか持たず、どちら宛てかを
-  // 電文から決められないため。
-  it('同じ EventID の別のお知らせが表示中なら、取消はそれを消す', async () => {
+  // 正: 同じ分に出た 2 通は気象庁の「独立した情報単位」が同じ（情報名称・運用種別・EventID）。
+  // 取消は単位全体を取り消すので、両方を外す。別の単位（EventID が違う）は残す。
+  it('同じ EventID のお知らせが 2 通積まれていたら、取消は両方を外す', async () => {
     const h = setup()
     await h.flush()
     push(h, { kind: 'quakeNotice', data: notice('n-a', 60_000) })
     push(h, { kind: 'quakeNotice', data: { ...notice('n-b', 60_000), eventId: 'n-a-event' } })
-    expect(h.current.quakeNotice?.id).toBe('n-b')
+    push(h, { kind: 'quakeNotice', data: notice('n-c', 60_000) })
+    expect(h.current.quakeNoticeList.map(n => n.id)).toEqual(['n-c', 'n-b', 'n-a'])
     push(h, { kind: 'quakeNotice', data: { ...notice('n-a', 60_000), id: 'n-a-cancel', cancelled: true } })
-    expect(h.current.quakeNotice).toBeNull()
+    expect(h.current.quakeNoticeList.map(n => n.id)).toEqual(['n-c'])
+  })
+
+  // 安全弁: 運用種別が違えば別の単位。訓練の取消で通常のお知らせを外さない。
+  it('運用種別が違う取消ではお知らせを外さない', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'quakeNotice', data: notice('n-a', 60_000) })
+    push(h, { kind: 'quakeNotice', data: { ...notice('n-a', 60_000), id: 'n-a-cancel', cancelled: true, operationStatus: '訓練' } })
+    expect(h.current.quakeNoticeList.map(n => n.id)).toEqual(['n-a'])
   })
 
   // 安全弁: EventID が空の取消は照合しない（空どうしは同じお知らせの証拠にならない）。
@@ -1421,7 +1514,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     await h.flush()
     push(h, { kind: 'quakeNotice', data: { ...notice('n-live', 60_000), eventId: '' } })
     push(h, { kind: 'quakeNotice', data: { ...notice('n-cancel', 60_000), eventId: '', cancelled: true } })
-    expect(h.current.quakeNotice?.id).toBe('n-live')
+    expect(h.current.quakeNoticeList[0]?.id).toBe('n-live')
   })
 
   // 安全弁: 別のお知らせに向けた取消で、いま出ている帯を消さない。
@@ -1430,7 +1523,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     await h.flush()
     push(h, { kind: 'quakeNotice', data: notice('n-live', 60_000) })
     push(h, { kind: 'quakeNotice', data: { ...notice('n-other', 60_000), cancelled: true } })
-    expect(h.current.quakeNotice?.id).toBe('n-live')
+    expect(h.current.quakeNoticeList[0]?.id).toBe('n-live')
   })
 
   // 正: 地震回数も**期限で畳む**。気象庁はこの情報の終わりを宣言しない（群発が収まれば発表が
@@ -1442,13 +1535,13 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     const h = setup()
     await h.flush()
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', [item('累積地震回数', 1704, 1)], 5_000) })
-    expect(h.current.earthquakeCount?.items[0].number).toBe(1704)
+    expect(h.current.earthquakeCountList[0]?.items[0].number).toBe(1704)
 
     act(() => { vi.advanceTimersByTime(4_000) })
-    expect(h.current.earthquakeCount?.items[0].number).toBe(1704)
+    expect(h.current.earthquakeCountList[0]?.items[0].number).toBe(1704)
 
     act(() => { vi.advanceTimersByTime(1_001) })
-    expect(h.current.earthquakeCount).toBeNull()
+    expect(h.current.earthquakeCountList).toEqual([])
   })
 
   // 対照: 期限切れの報は載せない（リプレイで過去の窓を再生したときに出ないこと）。
@@ -1456,7 +1549,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     const h = setup()
     await h.flush()
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', [item('累積地震回数', 1704, 1)], -1_000) })
-    expect(h.current.earthquakeCount).toBeNull()
+    expect(h.current.earthquakeCountList).toEqual([])
   })
 
   // 正: 続報で置き換わる。
@@ -1465,7 +1558,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     await h.flush()
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', [item('累積地震回数', 1704, 1)]) })
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', [item('累積地震回数', 1810, 2)]) })
-    expect(h.current.earthquakeCount?.items[0].number).toBe(1810)
+    expect(h.current.earthquakeCountList[0]?.items[0].number).toBe(1810)
   })
 
   // 正: 取消でカードを消す。**照合は `eventId`** ―― 回数情報は同じ群発について報を重ねるので、
@@ -1475,7 +1568,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     await h.flush()
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', [item('累積地震回数', 1704, 1)]) })
     push(h, { kind: 'earthquakeCount', data: { ...count('20080824150500', []), cancelled: true } })
-    expect(h.current.earthquakeCount).toBeNull()
+    expect(h.current.earthquakeCountList).toEqual([])
   })
 
   // 安全弁: 別の群発に向けた取消では消さない。
@@ -1484,7 +1577,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     await h.flush()
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', [item('累積地震回数', 1704, 1)]) })
     push(h, { kind: 'earthquakeCount', data: { ...count('20260101000000', []), cancelled: true } })
-    expect(h.current.earthquakeCount?.eventId).toBe('20080824150500')
+    expect(h.current.earthquakeCountList[0]?.eventId).toBe('20080824150500')
   })
 
   // 安全弁: 区間も本文も無い報は帯にしない。中身が空の帯を出しても伝わる
@@ -1493,7 +1586,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     const h = setup()
     await h.flush()
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', []) })
-    expect(h.current.earthquakeCount).toBeNull()
+    expect(h.current.earthquakeCountList).toEqual([])
   })
 
   // 正: 回数を伴わない発表報（区間 0 件・本文あり）は帯にする
@@ -1502,7 +1595,7 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     const h = setup()
     await h.flush()
     push(h, { kind: 'earthquakeCount', data: { ...count('20080824150500', []), body: '本文です。' } })
-    expect(h.current.earthquakeCount?.body).toBe('本文です。')
+    expect(h.current.earthquakeCountList[0]?.body).toBe('本文です。')
   })
 
   // 安全弁: リセット（リプレイの開始・ライブ復帰）で両方とも消える。**時間軸が変わる**ので、
@@ -1512,12 +1605,12 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     await h.flush()
     push(h, { kind: 'quakeNotice', data: notice('n-live', 60_000) })
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', [item('累積地震回数', 1704, 1)]) })
-    expect(h.current.quakeNotice).not.toBeNull()
-    expect(h.current.earthquakeCount).not.toBeNull()
+    expect(h.current.quakeNoticeList).not.toEqual([])
+    expect(h.current.earthquakeCountList).not.toEqual([])
 
     act(() => { h.current.resetState() })
-    expect(h.current.quakeNotice).toBeNull()
-    expect(h.current.earthquakeCount).toBeNull()
+    expect(h.current.quakeNoticeList).toEqual([])
+    expect(h.current.earthquakeCountList).toEqual([])
   })
 
   // 安全弁: **種別をまたいで記憶を巻き込まない。** お知らせの取消処理が地震回数の識別子まで
@@ -1530,11 +1623,11 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', [item('累積地震回数', 1704, 1)]) })
     push(h, { kind: 'quakeNotice', data: notice('n-live', 60_000) })
     push(h, { kind: 'quakeNotice', data: { ...notice('n-live', 60_000), cancelled: true } })
-    expect(h.current.quakeNotice).toBeNull()
+    expect(h.current.quakeNoticeList).toEqual([])
 
     // ここで地震回数の記憶が消えていると、この取消が効かない
     push(h, { kind: 'earthquakeCount', data: { ...count('20080824150500', []), cancelled: true } })
-    expect(h.current.earthquakeCount).toBeNull()
+    expect(h.current.earthquakeCountList).toEqual([])
   })
 
   // 安全弁: リセットは**表示中の識別情報の記憶も落とす**。落とし忘れると、リセット後に
@@ -1549,13 +1642,168 @@ describe('地震・津波に関するお知らせ（VZSE40）と地震回数（V
 
     push(h, { kind: 'quakeNotice', data: notice('n-live', 60_000) })
     push(h, { kind: 'earthquakeCount', data: count('20080824150500', [item('累積地震回数', 1704, 1)]) })
-    expect(h.current.quakeNotice?.id).toBe('n-live')
-    expect(h.current.earthquakeCount?.eventId).toBe('20080824150500')
+    expect(h.current.quakeNoticeList[0]?.id).toBe('n-live')
+    expect(h.current.earthquakeCountList[0]?.eventId).toBe('20080824150500')
 
     push(h, { kind: 'quakeNotice', data: { ...notice('n-live', 60_000), cancelled: true } })
     push(h, { kind: 'earthquakeCount', data: { ...count('20080824150500', []), cancelled: true } })
-    expect(h.current.quakeNotice).toBeNull()
-    expect(h.current.earthquakeCount).toBeNull()
+    expect(h.current.quakeNoticeList).toEqual([])
+    expect(h.current.earthquakeCountList).toEqual([])
+  })
+})
+
+// 帯に積む 4 種の一覧（2026-11-04 ユーザー選択「1 本に積む (Recommended)」「臨時情報は最新で置き換える (Recommended)」）。
+// 同じ件の続報は置き換え、別件は積む。取消は指す 1 通だけを外し、期限は 1 件ずつ来る。
+describe('帯は種類ごとに別件を積み、同じ件の続報は置き換える', () => {
+  const ago = (ms: number) => new Date(serverDate().getTime() - ms).toISOString()
+  const after = (ms: number) => new Date(serverDate().getTime() + ms).toISOString()
+
+  function notice(id: string, o: Partial<JMAQuakeNotice> = {}): JMAQuakeNotice {
+    return {
+      id, time: ago(0), eventId: `${id}-event`, headline: `お知らせ ${id}`, body: '本文',
+      cancelled: false, reportDateTime: ago(0), expireAt: after(60_000), ...o,
+    }
+  }
+  function count(eventId: string, number: number, o: Partial<JMAEarthquakeCount> = {}): JMAEarthquakeCount {
+    return {
+      id: `dmdata-quake-count-${eventId}-${number}`, time: ago(0), eventId,
+      headline: '地震回数に関する情報をお知らせします。',
+      items: [{ type: '累積地震回数', startTime: ago(0), endTime: ago(0), number, feltNumber: 1 }],
+      cancelled: false, reportDateTime: ago(0), expireAt: after(60_000), ...o,
+    }
+  }
+  function commentary(id: string, eventId: string, o: Partial<JMANankaiCommentary> = {}): JMANankaiCommentary {
+    return {
+      id, time: ago(0), eventId, serialCode: '100', serialName: '臨時解説',
+      headline: '南海トラフ地震関連解説情報', summary: '', body: '本文',
+      cancelled: false, reportDateTime: ago(0), expireAt: after(60_000), ...o,
+    }
+  }
+  function kohatsuInfo(eventId: string, o: Partial<JMAKohatsu> = {}): JMAKohatsu {
+    return {
+      id: `dmdata-kohatsu-${eventId}-1`, time: ago(0), eventId, headline: '北海道・三陸沖後発地震注意情報', body: '本文',
+      cancelled: false, reportDateTime: ago(0), expireAt: after(60_000), ...o,
+    }
+  }
+  function nankai(eventId: string, kindName: string) {
+    return {
+      id: `n-${eventId}`, time: ago(0), eventId, kindCode: '0202', kindName,
+      headline: `南海トラフ地震臨時情報（${kindName}）`, body: '', cancelled: false, reportDateTime: ago(0),
+    }
+  }
+
+  function push(h: ReturnType<typeof setup>, payload: import('../types/replay').ReplayPayload) {
+    act(() => { h.current.loadReplayEvents([{ payload, replayTime: serverDate(), logEntry: null }], []) })
+    act(() => { vi.advanceTimersByTime(50) })
+  }
+
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  // 正: 別のお知らせ 2 通は 2 件積む。新しい順（発表時刻の降順）に並ぶ
+  it('正: 別のお知らせは積み、新しい順に並ぶ', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'quakeNotice', data: notice('n-old', { reportDateTime: ago(60_000) }) })
+    push(h, { kind: 'quakeNotice', data: notice('n-new') })
+    expect(h.current.quakeNoticeList.map(n => n.id)).toEqual(['n-new', 'n-old'])
+  })
+
+  // 対照: 同じ id のお知らせが重ねて届いても 1 件のまま
+  it('対照: 同じ id のお知らせは置き換える', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'quakeNotice', data: notice('n-a') })
+    push(h, { kind: 'quakeNotice', data: notice('n-a', { body: '重ねて届いた本文' }) })
+    expect(h.current.quakeNoticeList.map(n => n.body)).toEqual(['重ねて届いた本文'])
+  })
+
+  // 正と対照: 地震回数は同じ群発（eventId）の続報で置き換え、別の群発は積む
+  it('地震回数は同じ群発の続報で置き換え、別の群発は積む', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'earthquakeCount', data: count('20080824150500', 1704) })
+    push(h, { kind: 'earthquakeCount', data: count('20080824150500', 1810) })
+    expect(h.current.earthquakeCountList.map(c => c.items[0].number)).toEqual([1810])
+    push(h, { kind: 'earthquakeCount', data: count('20260101000000', 12) })
+    expect(h.current.earthquakeCountList.map(c => c.eventId)).toEqual(['20260101000000', '20080824150500'])
+  })
+
+  // 正と対照: 解説情報は同じ期間の臨時解説（同じ eventId）の号で置き換え、定例解説（別の eventId）は積む
+  it('解説情報は同じ期間の号で置き換え、別の期間・定例解説は積む', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'nankaiCommentary', data: commentary('c-1', 'period-A') })
+    push(h, { kind: 'nankaiCommentary', data: commentary('c-2', 'period-A') })
+    expect(h.current.nankaiCommentaryList.map(c => c.id)).toEqual(['c-2'])
+    push(h, { kind: 'nankaiCommentary', data: commentary('c-routine', 'routine-1', { serialName: '定例解説' }) })
+    expect(h.current.nankaiCommentaryList.map(c => c.id)).toEqual(['c-routine', 'c-2'])
+  })
+
+  it('後発地震注意情報は同じ eventId で置き換え、別の eventId は積む', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'kohatsu', data: kohatsuInfo('k-A') })
+    push(h, { kind: 'kohatsu', data: kohatsuInfo('k-A', { body: '続報' }) })
+    expect(h.current.kohatsuList.map(k => k.body)).toEqual(['続報'])
+    push(h, { kind: 'kohatsu', data: kohatsuInfo('k-B') })
+    expect(h.current.kohatsuList.map(k => k.eventId)).toEqual(['k-B', 'k-A'])
+  })
+
+  // 安全弁: 南海トラフ地震臨時情報は積まない。電文ごとに eventId が変わっても、新しい報が前の報を置き換える
+  it('安全弁: 臨時情報は別の eventId でも積まずに置き換える', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'nankai', data: nankai('evt-1', '調査中') })
+    push(h, { kind: 'nankai', data: nankai('evt-2', '巨大地震注意') })
+    expect(h.current.nankai?.kindName).toBe('巨大地震注意')
+  })
+
+  // 取消は指す 1 通だけを外す（残りは残る）
+  it('取消は指す 1 通だけを外す', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'earthquakeCount', data: count('ev-A', 1) })
+    push(h, { kind: 'earthquakeCount', data: count('ev-B', 2) })
+    push(h, { kind: 'earthquakeCount', data: count('ev-A', 1, { cancelled: true, items: [] }) })
+    expect(h.current.earthquakeCountList.map(c => c.eventId)).toEqual(['ev-B'])
+
+    push(h, { kind: 'kohatsu', data: kohatsuInfo('k-A') })
+    push(h, { kind: 'kohatsu', data: kohatsuInfo('k-B') })
+    push(h, { kind: 'kohatsu', data: kohatsuInfo('k-A', { cancelled: true, retracted: true }) })
+    expect(h.current.kohatsuList.map(k => k.eventId)).toEqual(['k-B'])
+
+    push(h, { kind: 'nankaiCommentary', data: commentary('c-A', 'period-A') })
+    push(h, { kind: 'nankaiCommentary', data: commentary('c-B', 'period-B') })
+    push(h, { kind: 'nankaiCommentary', data: commentary('c-A', 'period-A', { cancelled: true }) })
+    expect(h.current.nankaiCommentaryList.map(c => c.id)).toEqual(['c-B'])
+  })
+
+  // 安全弁: 積んでいない件への取消は何も外さない（今の照合の考え方のまま）
+  it('安全弁: 積んでいない件への取消は何も外さない', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'earthquakeCount', data: count('ev-A', 1) })
+    push(h, { kind: 'earthquakeCount', data: count('ev-other', 1, { cancelled: true, items: [] }) })
+    expect(h.current.earthquakeCountList.map(c => c.eventId)).toEqual(['ev-A'])
+    push(h, { kind: 'nankaiCommentary', data: commentary('c-A', 'period-A') })
+    push(h, { kind: 'nankaiCommentary', data: commentary('c-old', 'period-A', { cancelled: true }) })
+    expect(h.current.nankaiCommentaryList.map(c => c.id)).toEqual(['c-A'])
+  })
+
+  // 期限は 1 件ずつ来る。早い期限の 1 通だけが先に外れる
+  it('期限を過ぎたものは 1 件ずつ外れる', async () => {
+    const h = setup()
+    await h.flush()
+    push(h, { kind: 'quakeNotice', data: notice('n-short', { expireAt: after(5_000) }) })
+    push(h, { kind: 'quakeNotice', data: notice('n-long', { expireAt: after(20_000) }) })
+    expect(h.current.quakeNoticeList.map(n => n.id).sort()).toEqual(['n-long', 'n-short'])
+
+    act(() => { vi.advanceTimersByTime(6_000) })
+    expect(h.current.quakeNoticeList.map(n => n.id)).toEqual(['n-long'])
+
+    act(() => { vi.advanceTimersByTime(15_000) })
+    expect(h.current.quakeNoticeList).toEqual([])
   })
 })
 
@@ -1587,7 +1835,7 @@ describe('推計震度分布図の結線', () => {
     act(() => {
       h.current.loadReplayEvents([
         { payload: { kind: 'estimatedIntensity', data }, replayTime: serverDate(), silent, logEntry: null },
-      ])
+      ], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
   }
@@ -3519,7 +3767,7 @@ describe('南海トラフ臨時情報の取消の適用先', () => {
     const before = events.length
     act(() => { sockets[0].onEvent?.(kohatsu('k-OLD', { cancelled: true, retracted: true })) })
     expect(events.length).toBe(before)
-    expect(h.current.kohatsu?.eventId).toBe('k-A')
+    expect(h.current.kohatsuList[0]?.eventId).toBe('k-A')
   })
 
   it('対照: 同じ取消でも発表時刻が違えば別の電文として流す（テストボタンの押し直し）', async () => {
@@ -3626,14 +3874,14 @@ describe('テストボタンの待ちの後始末', () => {
     await h.flush()
     await act(async () => { await h.current.simulateEarthquakeCountRetraction() })
     act(() => { vi.advanceTimersByTime(50) })
-    expect(h.current.earthquakeCount).not.toBeNull()
+    expect(h.current.earthquakeCountList).not.toEqual([])
 
     act(() => { h.current.resetState() })
-    expect(h.current.earthquakeCount).toBeNull()
+    expect(h.current.earthquakeCountList).toEqual([])
 
     // 取消が遅れて届いても、リセット後の画面には何も起こさない
     act(() => { vi.advanceTimersByTime(120_000) })
-    expect(h.current.earthquakeCount).toBeNull()
+    expect(h.current.earthquakeCountList).toEqual([])
   })
 
   // 安全弁: 押し直したときに前の待ちを引きずらない。**前の待ちが生きていると、
@@ -4265,8 +4513,8 @@ describe('起動時に 7 日間の帯を復元する', () => {
     await h.flush()
 
     expect(fetchDmdataQuakeHistory).toHaveBeenCalled()
-    expect(h.current.earthquakeCount?.id).toBe('c1')
-    expect(h.current.quakeNotice?.id).toBe('n1')
+    expect(h.current.earthquakeCountList[0]?.id).toBe('c1')
+    expect(h.current.quakeNoticeList[0]?.id).toBe('n1')
   })
 
   // 安全弁: この経路（起動・API キー変更・リプレイ往復の再接続のたびに走る）で拾った最大 7 日前の
@@ -4281,7 +4529,7 @@ describe('起動時に 7 日間の帯を復元する', () => {
     const h = setup({ onLiveEvent })
     await h.flush()
 
-    expect(h.current.quakeNotice?.id).toBe('n1')
+    expect(h.current.quakeNoticeList[0]?.id).toBe('n1')
     // 起動時に拾った古いお知らせを読み上げへ流さない
     expect(onLiveEvent).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'quakeNotice' }))
     const notDispatched = drainReplayEvents().events
@@ -4293,8 +4541,8 @@ describe('起動時に 7 日間の帯を復元する', () => {
     const h = setup()
     await h.flush()
 
-    expect(h.current.earthquakeCount).toBeNull()
-    expect(h.current.quakeNotice).toBeNull()
+    expect(h.current.earthquakeCountList).toEqual([])
+    expect(h.current.quakeNoticeList).toEqual([])
   })
 
   // 安全弁: 履歴の取得が落ちたら**黙って空にしない**。
@@ -4308,7 +4556,7 @@ describe('起動時に 7 日間の帯を復元する', () => {
     const h = setup()
     await h.flush()
 
-    expect(h.current.earthquakeCount).toBeNull()
+    expect(h.current.earthquakeCountList).toEqual([])
     expect(h.current.error).toBe('落ちた')
   })
 })
@@ -4343,7 +4591,7 @@ describe('後発地震注意情報の帯は期限で弾く', () => {
     const h = setup()
     await h.flush()
 
-    expect(h.current.kohatsu?.eventId).toBe('k1')
+    expect(h.current.kohatsuList[0]?.eventId).toBe('k1')
   })
 
   // 対照: 期限切れは出さない。**これが濾し器を失って壊れていた形**
@@ -4352,7 +4600,7 @@ describe('後発地震注意情報の帯は期限で弾く', () => {
     const h = setup()
     await h.flush()
 
-    expect(h.current.kohatsu).toBeNull()
+    expect(h.current.kohatsuList).toEqual([])
   })
 
   // 安全弁: 日時が壊れていても出さない。**「正当に期限切れ」と同じ無言の見送りに潰さず記録する**
@@ -4362,7 +4610,7 @@ describe('後発地震注意情報の帯は期限で弾く', () => {
     const h = setup()
     await h.flush()
 
-    expect(h.current.kohatsu).toBeNull()
+    expect(h.current.kohatsuList).toEqual([])
     expect(vi.mocked(log.warn).mock.calls.map(c => c.join(' ')).join(' | '))
       .toContain('後発地震注意情報の期限を計算できません')
   })
@@ -4379,7 +4627,7 @@ describe('後発地震注意情報の帯は期限で弾く', () => {
     const h = setup()
     await h.flush()
 
-    expect(h.current.kohatsu).toBeNull()
+    expect(h.current.kohatsuList).toEqual([])
   })
 })
 
@@ -4404,7 +4652,7 @@ describe('後発地震注意情報の期限タイマーは、帯を書き換え�
   }
 
   const inject = (h: ReturnType<typeof setup>, k: JMAKohatsu) => {
-    act(() => { h.current.loadReplayEvents([{ payload: { kind: 'kohatsu', data: k }, replayTime: serverDate(), logEntry: null }]) })
+    act(() => { h.current.loadReplayEvents([{ payload: { kind: 'kohatsu', data: k }, replayTime: serverDate(), logEntry: null }], []) })
     act(() => { vi.advanceTimersByTime(50) })
   }
 
@@ -4414,14 +4662,14 @@ describe('後発地震注意情報の期限タイマーは、帯を書き換え�
     vi.mocked(fetchDmdataQuakeHistory).mockResolvedValue(history({ extras: [extra({ kind: 'kohatsu', data: kohatsu('k1', 5_000) })] }))
     const h = setup()
     await h.flush()
-    expect(h.current.kohatsu?.eventId).toBe('k1')
+    expect(h.current.kohatsuList[0]?.eventId).toBe('k1')
 
     inject(h, kohatsu('k2', -1_000))
     inject(h, kohatsu('k3', 60_000, true))
-    expect(h.current.kohatsu?.eventId).toBe('k1')
+    expect(h.current.kohatsuList[0]?.eventId).toBe('k1')
 
     act(() => { vi.advanceTimersByTime(5_001) })
-    expect(h.current.kohatsu).toBeNull()
+    expect(h.current.kohatsuList).toEqual([])
   })
 
   // 対照: 同じ識別情報の取消は帯を消し、期限のタイマーも残さない。
@@ -4431,7 +4679,7 @@ describe('後発地震注意情報の期限タイマーは、帯を書き換え�
     await h.flush()
 
     inject(h, kohatsu('k1', 5_000, true))
-    expect(h.current.kohatsu).toBeNull()
+    expect(h.current.kohatsuList).toEqual([])
   })
 })
 
@@ -4604,7 +4852,7 @@ describe('近く発火する電文を覗く', () => {
       h.current.loadReplayEvents([
         { payload: commentaryPayload('in-10s'), replayTime: new Date(now.getTime() + 10_000), logEntry: null },
         { payload: commentaryPayload('in-30s'), replayTime: new Date(now.getTime() + 30_000), logEntry: null },
-      ])
+      ], [])
     })
     expect(idsOf(h.current.peekUpcomingPayloads(60_000))).toEqual(['in-10s', 'in-30s'])
   })
@@ -4617,7 +4865,7 @@ describe('近く発火する電文を覗く', () => {
       h.current.loadReplayEvents([
         { payload: commentaryPayload('in-10s'), replayTime: new Date(now.getTime() + 10_000), logEntry: null },
         { payload: commentaryPayload('in-5m'), replayTime: new Date(now.getTime() + 300_000), logEntry: null },
-      ])
+      ], [])
     })
     expect(idsOf(h.current.peekUpcomingPayloads(60_000))).toEqual(['in-10s'])
   })
@@ -4631,7 +4879,7 @@ describe('近く発火する電文を覗く', () => {
       h.current.loadReplayEvents([
         { payload: commentaryPayload('past'), replayTime: new Date(now.getTime() - 1000), logEntry: null },
         { payload: commentaryPayload('future'), replayTime: new Date(now.getTime() + 10_000), logEntry: null },
-      ])
+      ], [])
     })
     expect(idsOf(h.current.peekUpcomingPayloads(60_000))).toEqual(['future'])
   })
@@ -4647,7 +4895,7 @@ describe('近く発火する電文を覗く', () => {
       h.current.loadReplayEvents([
         { payload: commentaryPayload('silent'), replayTime: new Date(now.getTime() + 10_000), silent: true, logEntry: null },
         { payload: commentaryPayload('normal'), replayTime: new Date(now.getTime() + 20_000), logEntry: null },
-      ])
+      ], [])
     })
     expect(idsOf(h.current.peekUpcomingPayloads(60_000))).toEqual(['normal'])
   })
@@ -4659,7 +4907,7 @@ describe('近く発火する電文を覗く', () => {
     act(() => {
       h.current.loadReplayEvents([
         { payload: commentaryPayload('in-10s'), replayTime: new Date(now.getTime() + 10_000), logEntry: null },
-      ])
+      ], [])
     })
     expect(h.current.peekUpcomingPayloads(Number.NaN)).toEqual([])
   })
@@ -5034,7 +5282,7 @@ describe('カードが採らない電文には「据え置き」の印を付け�
 // 裏口からカードへ入り込まないこと（→ docs/spec/quake-spec.md §6.3）。
 //
 // キャッシュは VXSE51（震度速報）の値を控え、後続の震度を持たない電文（震源情報等）を
-// `fillIntensityFromCache` で補うためのもの。据え置かれた震度速報の値を書いてしまうと、
+// `fillQuakeIntensity` で補うためのもの。据え置かれた震度速報の値を書いてしまうと、
 // 後続の震源情報がその値で補完され、`hasIntensity(incoming)` が真になって
 // `mergeQuakeInto` の「既存の震度で補完する」分岐を通らなくなる —— カードは正しく
 // 据え置いたはずの震度・地域ではなく、据え置かれた電文の震度・地域をそのまま採用してしまう。
@@ -5156,7 +5404,7 @@ describe('据え置かれた震度速報は震度キャッシュを汚さない'
     act(() => {
       h.current.loadReplayEvents([
         { payload: { kind: 'event', event: retracted }, replayTime: new Date(serverDate().getTime() - 1000), silent: true, logEntry: null },
-      ])
+      ], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
 
@@ -5242,7 +5490,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         },
         replayTime: now,
         logEntry: null,
-      }])
+      }], [])
     })
     // キューは 10ms 間隔で捌く（`injectEvent` と違い即時ではない）
     act(() => { vi.advanceTimersByTime(50) })
@@ -5265,12 +5513,12 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
       h.current.loadReplayEvents([
         { payload: { kind: 'quakeNotice', data: { ...base, id: 'notice-a', eventId: 'a', cancelled: false } }, replayTime: now, logEntry: null },
         { payload: { kind: 'quakeNotice', data: { ...base, id: 'notice-b', eventId: 'b', cancelled: true } }, replayTime: now, logEntry: null },
-      ])
+      ], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
-    expect(h.current.quakeNotice?.id).toBe('notice-a')
+    expect(h.current.quakeNoticeList[0]?.id).toBe('notice-a')
     act(() => { vi.advanceTimersByTime(61_000) })
-    expect(h.current.quakeNotice).toBeNull()
+    expect(h.current.quakeNoticeList).toEqual([])
   })
 
   // 対照: 期限切れで帯へ反映できなかったお知らせは流さず、notApplied として記録する
@@ -5293,7 +5541,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         },
         replayTime: now,
         logEntry: null,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
 
@@ -5325,7 +5573,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         replayTime: now,
         logEntry: null,
         silent: true,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
 
@@ -5354,7 +5602,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         },
         replayTime: now,
         logEntry: null,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
 
@@ -5382,7 +5630,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         },
         replayTime: now,
         logEntry: null,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
 
@@ -5409,7 +5657,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         },
         replayTime: now,
         logEntry: null,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
 
@@ -5445,7 +5693,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         payload: { kind: 'lpgm', data: lpgmData({ cancelled: true }) },
         replayTime: serverDate(),
         logEntry: null,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
 
@@ -5465,7 +5713,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         payload: { kind: 'lpgm', data: lpgmData({ maxClass: 0 }) },
         replayTime: serverDate(),
         logEntry: null,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
 
@@ -5485,7 +5733,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         replayTime: serverDate(),
         logEntry: null,
         silent: true,
-      }])
+      }], [])
     })
     act(() => { vi.advanceTimersByTime(50) })
 
@@ -5753,7 +6001,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         expect(nankaiRecords[0].skipped).toBe('notApplied')
 
         // 後続の kohatsu は例外に巻き込まれず、通常どおり反映・記録される
-        expect(h.current.kohatsu?.eventId).toBe('k-after-throw')
+        expect(h.current.kohatsuList[0]?.eventId).toBe('k-after-throw')
         const kohatsuRecords = telegrams.filter(t => t.kind === 'kohatsu')
         expect(kohatsuRecords).toHaveLength(1)
         expect(kohatsuRecords[0].skipped).toBe('silentReplayInit')
@@ -5777,7 +6025,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
         const h = setup()
         await h.flush()
 
-        expect(h.current.quakeNotice?.id).toBe('notice-startup')
+        expect(h.current.quakeNoticeList[0]?.id).toBe('notice-startup')
         const records = loggedTelegrams().filter(t => t.kind === 'quakeNotice')
         expect(records).toHaveLength(1)
         expect(records[0].skipped).toBe('silentReplayInit')
@@ -5847,7 +6095,7 @@ describe('録画ツール向けの記録: onLiveEvent へ届かない電文', ()
 
         await act(async () => { await h.current.loadMoreEarthquakes() })
 
-        expect(h.current.quakeNotice).toBeNull()
+        expect(h.current.quakeNoticeList).toEqual([])
         const records = loggedTelegrams().filter(t => t.kind === 'quakeNotice')
         expect(records).toHaveLength(1)
         expect(records[0].skipped).toBe('notDispatched')

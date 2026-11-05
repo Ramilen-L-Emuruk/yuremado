@@ -1,3 +1,4 @@
+import { Marquee } from './Marquee'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { subscribeDataLoadStatus, getDataLoadStatus } from '../utils/fetchJson'
 import { mapDataFailureText } from '../utils/mapDataStatusText'
@@ -43,14 +44,14 @@ export function MapDataStatus() {
 
   return (
     <div
-      className={`bg-black/80 rounded text-xs px-2 py-0.5 roomy:text-lg roomy:px-2.5 roomy:py-1 ${
-        failed ? 'text-amber-300' : 'text-white/70'
+      className={`bg-panel/90 rounded-sm text-xs px-2 py-0.5 roomy:text-lg roomy:px-2.5 roomy:py-1 ${
+        failed ? 'text-amber-300' : 'text-secondary'
       }`}
     >
       {/* 取り直しは取得口（`utils/fetchJson.ts`）が 30 秒から倍々で 5 回行い、諦めたら再読み込みを促す。
           主節を言い切りで止めて 1 行へ収める形は、地震タブの通知に揃えてある
           （→ `utils/telegramLoss.ts` の `formatHistoryLossNotice`）。 */}
-      {failed ? mapDataFailureText(status.failures) : 'データを取得中…'}
+      <Marquee text={(failed ? mapDataFailureText(status.failures) : 'データを取得中…') ?? ''} />
     </div>
   )
 }

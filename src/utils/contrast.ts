@@ -60,3 +60,37 @@ export function readableTextColor(bgHex: string): string {
   const withBlack = (l + 0.05) / 0.05
   return withBlack > withWhite ? TEXT_ON_FILL_DARK : TEXT_ON_FILL_LIGHT
 }
+
+/** 小さな字に求めるコントラスト比（WCAG AA・通常サイズ）。 */
+export const SMALL_TEXT_MIN_CONTRAST = 4.5
+
+/**
+ * 濃い地 `bgHex` の上に色の字 `fgHex` を載せるとき、地との比が `min` に届くまで字を白へ寄せた色を返す。
+ * 届いていれば `fgHex` のまま。色味（色相）は保ち、明るさだけを足りない分だけ上げる。
+ *
+ * 震度の枠の「最大震度」で使う（2026-11-03 選択「足りない分だけ白へ寄せる (Recommended)」。震度の色そのままでは
+ * 震度2・6弱・6強・7・不明が 4.5:1 に届かない）。解釈できない色では `fgHex` を返す。
+ */
+export function liftForContrast(fgHex: string, bgHex: string, min = SMALL_TEXT_MIN_CONTRAST): string {
+  const fg = parseHex(fgHex)
+  const bg = parseHex(bgHex)
+  if (!fg || !bg) return fgHex
+  const toHex = (rgb: number[]) => '#' + rgb.map(v => Math.min(255, Math.ceil(v)).toString(16).padStart(2, '0')).join('')
+  const mix = (t: number) => fg.map(v => v + (255 - v) * t)
+  const lb = relativeLuminance(...bg)
+  const ratio = (t: number) => {
+    const lf = relativeLuminance(...(mix(t) as [number, number, number]))
+    return (Math.max(lf, lb) + 0.05) / (Math.min(lf, lb) + 0.05)
+  }
+  if (ratio(0) >= min) return fgHex
+  // 白へ寄せるほど比は上がる（地は字より暗い）ので、届く最小の寄せ幅を二分探索で求める。
+  // 16 進へ丸めるときは切り上げる（四捨五入だと届いた比が 4.49 に落ちる）
+  let lo = 0
+  let hi = 1
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2
+    if (ratio(mid) >= min) hi = mid
+    else lo = mid
+  }
+  return toHex(mix(hi))
+}

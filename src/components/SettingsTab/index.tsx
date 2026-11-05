@@ -5,6 +5,8 @@ import { currentAppUpdater, type ManualCheckResult } from '../../services/appUpd
 import type { AppSettings, TtsUnreceivedDetail } from '../../hooks/useSettings'
 import { DAY_NIGHT_OPACITY_MIN, DAY_NIGHT_OPACITY_MAX, devInjectedKeys } from '../../hooks/useSettings'
 import { Toggle } from '../Toggle'
+import { quakeTileColors } from '../EarthquakeTab/QuakeListRow'
+import { DisclosureCaret, Reveal } from '../EarthquakeTab/quakeMotion'
 import { PrefecturePicker } from './PrefecturePicker'
 import { pushSupported, requestPushPermission } from '../../services/pushSubscription'
 import { TELEGRAM_TEXT_BLOCK_KEYS, TELEGRAM_BOILERPLATE_KEYS, type TelegramTextBlockKey, type TelegramTextBlocks, type TelegramBoilerplateKey, type TelegramBoilerplateReads } from '../../utils/ttsText'
@@ -40,6 +42,11 @@ import { buildSettingsFile, keysFileNotice, parseSettingsFile, settingsFileHasKe
 import { isValidHomeLocation, parseCoordinateNumber, splitPastedLatLng } from '../../utils/homeLocationInput'
 import { SHARE_CARD_FORMATS } from '../../utils/shareCard'
 import { HEATMAP_PERIODS, isHeatmapPeriod } from '../../utils/quakeHeatmap'
+import {
+  TIME_SIGNAL_CLOCKS, TIME_SIGNAL_INTERVALS, TIME_SIGNAL_ORDERS, TIME_SIGNAL_PHRASES, TIME_SIGNAL_SOUNDS, TIME_SIGNAL_WHILE_SPEAKING,
+  minuteToTimeValue, timeSignalSpeechText, timeValueToMinute,
+  type TimeSignalClock, type TimeSignalIntervalMin, type TimeSignalOrder, type TimeSignalPhrase, type TimeSignalSound, type TimeSignalWhileSpeaking,
+} from '../../utils/timeSignal'
 import { ReleaseNotesDialog } from '../ReleaseNotesDialog'
 import { allNotes, type ReleaseNoteEntry } from '../../utils/releaseNotes'
 import { SETTINGS_CATEGORIES, useIsSettingsCategoryActive, type SettingsCategoryId } from './SettingsDialog'
@@ -49,6 +56,8 @@ export interface TestFunctions {
   foreignQuake: () => void
   foreignQuakeHuge: () => void
   foreignQuakeInternationalTsunami: () => void
+  /** 国際津波関連情報が国内の地震に付く形と、英文だけのカードになる形。 */
+  internationalTsunamiDomesticAndOnly: () => void
   headlineOnlyCity: () => void
   eew: () => void
   eewWarning: () => void
@@ -76,6 +85,7 @@ export interface TestFunctions {
   nankaiCommentaryAdHoc?: () => void
   nankaiCommentaryRetraction?: () => void
   nankaiCommentaryRoutine?: () => void
+  activityInfo?: () => void
   kohatsu?: () => void
   kohatsuRetraction?: () => void
   quakeNotice?: () => void
@@ -94,6 +104,8 @@ export interface TestFunctions {
   /** 地震情報の一部の取消（震度速報だけの取消）。 */
   quakePartialCancel?: () => void
   borrowFromTsunami?: () => void
+  /** 津波の続報が地震情報より新しい規模を伝える場面。 */
+  magnitudeFromTsunami?: () => void
   unreceivedQuake?: () => void
   maxScaleOrAboveQuake?: () => void
   tsunamiGradeChange?: () => void
@@ -180,14 +192,19 @@ const EMPTY_HISTORICAL_ARCHIVES: HistoricalArchiveIndex = []
  * 見出しが分類名と同じ（「音と読み上げ」など）なら、分類の一覧（幅の狭い画面では窓の上端）と同じ名前の
  * 繰り返しになるので画面には出さない（読み上げ用には残す）。
  * 見出しどうしの間は外枠（`SettingsTab` の根の `gap`）が空ける。隠した見出しは間を取らない。
+ *
+ * **出している見出しは、その見出しの行を巻いている間だけ窓の上に貼りつける**（2026-11-04 津波タブの見直しでユーザーが選んだ
+ * 「巻いたときに上に残すもの: 段の見出し」を全画面へ広げたもの。見出しが流れると、どの段を見ているか分からなくなるため）。
+ * 貼りつく範囲は `section` の中だけなので、次の見出しが来れば押し上げられて入れ替わる。見出しの下の線は見出し自身が持つ
+ * （貼りついている間も、下へ潜る行との境が残るように）。
  */
 function Section({ category, title, children }: { category: SettingsCategoryId; title: string; children: React.ReactNode }) {
   const active = useIsSettingsCategoryActive(category)
   const sameAsCategory = SETTINGS_CATEGORIES.some((c) => c.id === category && c.label === title)
   return (
     <section hidden={!active}>
-      <h3 className={sameAsCategory ? 'sr-only' : 'mb-1.5 px-4 text-xs font-bold text-secondary'}>{title}</h3>
-      <div className="divide-y divide-border border-y border-border">{children}</div>
+      <h3 className={sameAsCategory ? 'sr-only' : 'sticky top-0 z-10 border-b border-border bg-app px-4 py-1.5 text-xs font-bold text-secondary'}>{title}</h3>
+      <div className={`divide-y divide-border border-b border-border ${sameAsCategory ? 'border-t' : ''}`}>{children}</div>
     </section>
   )
 }
@@ -297,10 +314,10 @@ function SettingsIoRow({ settings, onReplace }: {
           />
           鍵も含める
         </label>
-        <button onClick={download} className="px-3 py-1.5 rounded-sm text-xs bg-panel border border-border text-white">
+        <button onClick={download} className={ACTION_BUTTON_CLASS}>
           書き出す
         </button>
-        <button onClick={() => inputRef.current?.click()} className="px-3 py-1.5 rounded-sm text-xs bg-panel border border-border text-white">
+        <button onClick={() => inputRef.current?.click()} className={ACTION_BUTTON_CLASS}>
           読み込む
         </button>
       </div>
@@ -382,14 +399,14 @@ function DiagnosticLogRow() {
         <button
           onClick={() => { void download() }}
           disabled={busy || !count}
-          className="px-3 py-1.5 rounded-sm text-xs bg-panel border border-border text-white disabled:opacity-40"
+          className={ACTION_BUTTON_CLASS}
         >
           書き出す
         </button>
         <button
           onClick={() => { void clear() }}
           disabled={busy || !count}
-          className="px-3 py-1.5 rounded-sm text-xs bg-panel border border-border text-secondary disabled:opacity-40"
+          className={ACTION_BUTTON_CLASS}
         >
           消去
         </button>
@@ -430,7 +447,7 @@ function KyoshinImportRow({ historicalArchives }: { historicalArchives: Historic
       <button
         onClick={() => inputRef.current?.click()}
         disabled={busy}
-        className="px-3 py-1.5 rounded-sm text-xs bg-panel border border-border text-white disabled:opacity-40"
+        className={ACTION_BUTTON_CLASS}
       >
         {importing ? '取り込み中…' : 'ZIPを選択'}
       </button>
@@ -442,7 +459,7 @@ function KyoshinImportRow({ historicalArchives }: { historicalArchives: Historic
               <button
                 onClick={() => { void deleteArchive(s.archiveId) }}
                 disabled={busy}
-                className="px-2 py-1 rounded-sm text-xs bg-panel border border-border text-secondary disabled:opacity-40"
+                className={ACTION_BUTTON_CLASS}
               >
                 {deletingArchiveId === s.archiveId ? '削除中…' : '削除'}
               </button>
@@ -609,11 +626,12 @@ function TelegramTextBlockRows({ blocks, onChange }: {
               {enabled} / {TELEGRAM_TEXT_BLOCK_KEYS.length} 項目
             </span>
           </span>
-          <span className="text-secondary text-xs">{open ? '閉じる' : '開く'}</span>
+          <span className="text-secondary text-xs"><DisclosureCaret open={open} /></span>
         </button>
       </div>
-      {open && TELEGRAM_TEXT_BLOCK_GROUPS.map(group => (
-        <div key={group.title}>
+      {/* 区切り線は窓の行と同じ（Section の divide-y は直下の子にしか効かないので、包んだ分をここで引き直す） */}
+      <Reveal open={open} className="divide-y divide-border">{() => TELEGRAM_TEXT_BLOCK_GROUPS.map(group => (
+        <div key={group.title} className="divide-y divide-border">
           <div className="px-4 py-1.5 bg-panel/60 text-secondary text-xs">{group.title}</div>
           {group.keys.map(key => (
             <Row
@@ -628,7 +646,7 @@ function TelegramTextBlockRows({ blocks, onChange }: {
             </Row>
           ))}
         </div>
-      ))}
+      ))}</Reveal>
     </>
   )
 }
@@ -692,11 +710,11 @@ function TelegramBoilerplateRows({ reads, onChange }: {
               {enabled} / {TELEGRAM_BOILERPLATE_KEYS.length} 項目
             </span>
           </span>
-          <span className="text-secondary text-xs">{open ? '閉じる' : '開く'}</span>
+          <span className="text-secondary text-xs"><DisclosureCaret open={open} /></span>
         </button>
       </div>
-      {open && (
-        <div>
+      <Reveal open={open}>{() => (
+        <div className="divide-y divide-border">
           <div className="px-4 py-1.5 bg-panel/60 text-secondary text-xs">
             事象によらずほぼ同じ文です。切っても画面には出ます
           </div>
@@ -713,7 +731,7 @@ function TelegramBoilerplateRows({ reads, onChange }: {
             </Row>
           ))}
         </div>
-      )}
+      )}</Reveal>
     </>
   )
 }
@@ -757,7 +775,7 @@ function AppVersionRow() {
     status = (
       <>
         <span>新しいバージョン{update.newVersion !== null ? ` ${update.newVersion}` : ''}</span>
-        <button type="button" onClick={() => updater.apply()} className={SMALL_BUTTON_CLASS}>今すぐ更新</button>
+        <button type="button" onClick={() => updater.apply()} className={ACTION_BUTTON_CLASS}>今すぐ更新</button>
       </>
     )
   }
@@ -765,7 +783,7 @@ function AppVersionRow() {
     <Row label="バージョン">
       <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs text-secondary">
         <span>{__APP_VERSION__}</span>
-        <button type="button" onClick={check} disabled={shown === 'checking'} className={`${SMALL_BUTTON_CLASS} disabled:opacity-50`}>
+        <button type="button" onClick={check} disabled={shown === 'checking'} className={ACTION_BUTTON_CLASS}>
           更新を確認
         </button>
         {status}
@@ -774,7 +792,12 @@ function AppVersionRow() {
   )
 }
 
-const SMALL_BUTTON_CLASS = 'rounded-sm border border-border px-3 py-1 text-xs text-secondary hover:bg-white/10 hover:text-white whitespace-nowrap'
+/**
+ * 設定の窓の操作ボタン（取得・確定・書き出し・消すなど）の形。すべてこの 1 つにそろえる（2026-11-04 ユーザー選択
+ * 「枠のボタンにそろえる (Recommended)」。説明「…全部、枠の形（地は面の色・線はテーマの線・角丸 6px・押せる所は
+ * 乗せると明るく）にそろえる。…電文・通知音のテストボタンの色分けは種類を表しているので残す（角丸だけ 6px に）」）。
+ */
+const ACTION_BUTTON_CLASS = 'rounded-md border border-border bg-panel px-3 py-1.5 text-xs text-white whitespace-nowrap transition-colors motion-reduce:transition-none hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-panel'
 
 /** 「変更履歴」の行。［表示］で全部の版の変更内容を窓に出す（2026-10-26 ユーザー承認「［表示］で窓を開く」）。 */
 function ReleaseHistoryRow() {
@@ -785,7 +808,7 @@ function ReleaseHistoryRow() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={SMALL_BUTTON_CLASS}
+        className={ACTION_BUTTON_CLASS}
       >
         表示
       </button>
@@ -795,6 +818,132 @@ function ReleaseHistoryRow() {
 }
 
 const selectAllNotes = (entries: readonly ReleaseNoteEntry[]) => allNotes(entries)
+
+const TIME_SIGNAL_INTERVAL_LABELS: Record<TimeSignalIntervalMin, string> = {
+  60: '1時間ごと', 30: '30分ごと', 15: '15分ごと', 10: '10分ごと', 5: '5分ごと',
+}
+const TIME_SIGNAL_SOUND_LABELS: Record<TimeSignalSound, string> = {
+  pips: 'ピッ・ピッ・ピッ・ポーン', pon: 'ポーン', chime: 'チャイム', none: '鳴らさない',
+}
+const TIME_SIGNAL_ORDER_LABELS: Record<TimeSignalOrder, string> = { soundFirst: '音が先', speechFirst: '読み上げが先' }
+const TIME_SIGNAL_CLOCK_LABELS: Record<TimeSignalClock, string> = { '24h': '24時間制', '12h': '12時間制' }
+const TIME_SIGNAL_WHILE_SPEAKING_LABELS: Record<TimeSignalWhileSpeaking, string> = { soundOnly: '音だけ鳴らす', skip: '鳴らさない' }
+/** 読み上げの文の選択肢に出す例の時刻（15時30分） */
+const TIME_SIGNAL_EXAMPLE_AT = new Date(2026, 0, 1, 15, 30).getTime()
+
+/**
+ * 時報の行（→ `hooks/useTimeSignal.ts`・audio-tts-spec.md §2「時報」）。文言は 2026-11-04 ユーザー選択（行ごとの答えは
+ * settings-pwa-spec.md §2「時報」）。読み上げにだけ効く行は VOICEVOX 読み上げが有効なときだけ出す。
+ */
+export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
+  settings: AppSettings
+  onUpdate: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
+  /** 選べる声。VOICEVOX に繋がっていないときは空（声の行を出さない） */
+  voicevoxSpeakers: readonly VoicevoxSpeaker[]
+}) {
+  const selectClass = 'bg-input border border-border rounded-sm px-2 py-1 text-xs text-white'
+  const speech = settings.voicevoxEnabled
+  return (
+    <>
+      <Row label="時報" description="決めた間隔で、音と読み上げで時刻を知らせます">
+        <Toggle checked={settings.timeSignalEnabled} onChange={v => onUpdate('timeSignalEnabled', v)} />
+      </Row>
+      {settings.timeSignalEnabled && (
+        <>
+          <Row label="間隔">
+            <select value={settings.timeSignalIntervalMin} className={selectClass}
+              onChange={e => onUpdate('timeSignalIntervalMin', ensureTimeSignalInterval(Number(e.target.value)))}>
+              {TIME_SIGNAL_INTERVALS.map(v => <option key={v} value={v}>{TIME_SIGNAL_INTERVAL_LABELS[v]}</option>)}
+            </select>
+          </Row>
+          <Row label="音">
+            <select value={settings.timeSignalSound} className={selectClass}
+              onChange={e => onUpdate('timeSignalSound', e.target.value as TimeSignalSound)}>
+              {TIME_SIGNAL_SOUNDS.map(v => <option key={v} value={v}>{TIME_SIGNAL_SOUND_LABELS[v]}</option>)}
+            </select>
+          </Row>
+          {speech && (
+            <>
+              <Row label="順番">
+                <select value={settings.timeSignalOrder} className={selectClass}
+                  onChange={e => onUpdate('timeSignalOrder', e.target.value as TimeSignalOrder)}>
+                  {TIME_SIGNAL_ORDERS.map(v => <option key={v} value={v}>{TIME_SIGNAL_ORDER_LABELS[v]}</option>)}
+                </select>
+              </Row>
+              <Row label="読み上げの文">
+                <select value={settings.timeSignalPhrase} className={selectClass}
+                  onChange={e => onUpdate('timeSignalPhrase', e.target.value as TimeSignalPhrase)}>
+                  {TIME_SIGNAL_PHRASES.map(v => (
+                    <option key={v} value={v}>{timeSignalSpeechText(TIME_SIGNAL_EXAMPLE_AT, settings.timeSignalClock, v)}</option>
+                  ))}
+                </select>
+              </Row>
+              <Row label="時刻の読み方">
+                <select value={settings.timeSignalClock} className={selectClass}
+                  onChange={e => onUpdate('timeSignalClock', e.target.value as TimeSignalClock)}>
+                  {TIME_SIGNAL_CLOCKS.map(v => <option key={v} value={v}>{TIME_SIGNAL_CLOCK_LABELS[v]}</option>)}
+                </select>
+              </Row>
+            </>
+          )}
+          <Row label="鳴らさない時間帯" description="日をまたいで指定できます">
+            <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-white">
+              {settings.timeSignalQuietEnabled && (
+                <>
+                  <input type="time" value={minuteToTimeValue(settings.timeSignalQuietStartMin)} className={selectClass}
+                    onChange={e => { const m = timeValueToMinute(e.target.value); if (m !== null) onUpdate('timeSignalQuietStartMin', m) }} />
+                  <span>から</span>
+                  <input type="time" value={minuteToTimeValue(settings.timeSignalQuietEndMin)} className={selectClass}
+                    onChange={e => { const m = timeValueToMinute(e.target.value); if (m !== null) onUpdate('timeSignalQuietEndMin', m) }} />
+                  <span>まで</span>
+                </>
+              )}
+              <Toggle checked={settings.timeSignalQuietEnabled} onChange={v => onUpdate('timeSignalQuietEnabled', v)} />
+            </div>
+          </Row>
+          {speech && (
+            <Row label="読み上げと重なったとき" description="地震や津波の読み上げの最中に時刻が来たときの扱いです。通知音とは重ねて鳴らします">
+              <select value={settings.timeSignalWhileSpeaking} className={selectClass}
+                onChange={e => onUpdate('timeSignalWhileSpeaking', e.target.value as TimeSignalWhileSpeaking)}>
+                {TIME_SIGNAL_WHILE_SPEAKING.map(v => <option key={v} value={v}>{TIME_SIGNAL_WHILE_SPEAKING_LABELS[v]}</option>)}
+              </select>
+            </Row>
+          )}
+          <Row label="時報の音量">
+            <div className="flex items-center gap-2 text-xs text-white">
+              {settings.timeSignalVolume !== null && (
+                <>
+                  <span className="text-secondary w-8 text-right">{Math.round(settings.timeSignalVolume * 100)}%</span>
+                  <input type="range" min={0} max={1} step={0.05} value={settings.timeSignalVolume}
+                    onChange={e => onUpdate('timeSignalVolume', Number(e.target.value))} className="w-24 accent-blue-500" />
+                </>
+              )}
+              <span>通知音と同じ</span>
+              <Toggle checked={settings.timeSignalVolume === null}
+                onChange={v => onUpdate('timeSignalVolume', v ? null : settings.soundVolume)} />
+
+            </div>
+          </Row>
+          {speech && voicevoxSpeakers.length > 0 && (
+            <Row label="時報の声">
+              <select value={settings.timeSignalSpeakerId ?? ''} className={selectClass}
+                onChange={e => onUpdate('timeSignalSpeakerId', e.target.value === '' ? null : Number(e.target.value))}>
+                <option value="">読み上げと同じ</option>
+                {voicevoxSpeakers.flatMap(spk =>
+                  spk.styles.map(st => <option key={st.id} value={st.id}>{spk.name}（{st.name}）</option>),
+                )}
+              </select>
+            </Row>
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
+/** select の値を間隔に戻す（選択肢に無い値は毎正時） */
+const ensureTimeSignalInterval = (v: number): TimeSignalIntervalMin =>
+  (TIME_SIGNAL_INTERVALS as readonly number[]).includes(v) ? v as TimeSignalIntervalMin : 60
 
 function Row({ label, description, hint, children }: {
   label: string
@@ -808,39 +957,33 @@ function Row({ label, description, hint, children }: {
   hint?: string
   children?: React.ReactNode
 }) {
-  // ラベル側に最低幅（basis-32 = 8rem）を与えたうえで折り返しを許可する。右のコントロールは
-  // 幅を譲らない（select の選択肢や URL 入力は縮めると読めなくなる）ため、両方を 1 行に詰めると
-  // パネル幅が最も狭いスマホ横（sideNarrow = w-panel-narrow）でラベルが数文字幅まで潰れ、
-  // 1 文字ずつ改行される。
-  // flex-wrap なら収まらない行だけがラベル上・コントロール下の 2 段に落ち、トグルのような
-  // 細いコントロールの行は 1 行のまま保たれる（スマホ横は画面高が狭く、一律の縦積みは割に合わない）。
-  // 最低幅は「2 段に落とす行」を選ぶ閾値でもある。sideNarrow・UI 倍率 100%・既定の表示状態での
-  // 実測では行の内寸が 289px で、閾値は 289 -（最低幅 128 + gap 16）= 145px。これを超える
-  // コントロールだけが 2 段になり、対象は APIキーの入力欄（192px）・震度更新の試聴ボタン列
-  // （231px）・開始時刻の入力（206px）の 3 行。1 段に留まる最大は活断層線の濃さのスライダー
-  // （136px）。寸法はすべて rem なので倍率を変えても比率は保たれる。VOICEVOX 設定のように
-  // 条件付きで現れる行はこの数に含めていない。
-  // 広げすぎると通知種別の行（コントロール 63〜98px）まで巻き込んで画面高を浪費する。
-  // 伸長指定に flex-1 を使わないこと: flex ショートハンドが flex-basis を 0% で上書きし、
-  // 最低幅が効かなくなる（Tailwind は flex-basis より flex を後に出力する）。
+  // **ラベルが 1 行のままコントロールと横に並ぶ行だけ横並びにし、入らない行はコントロールを下の段へ落とす**
+  // （2026-11-04 ユーザー発言「収まらないものだけ下にしてほしいんだけど。なんで折り返してるものと、説明とボタンを分けてる
+  // 行があるの？」）。ラベルを折り返してまで横に詰めると、コントロールの幅しだいで同じ並びの中に
+  // 「ラベルを折り返して横並び」と「コントロールだけ下」が混ざる。
+  // 仕組み: ラベルの箱の flex-basis を既定（auto＝中身の 1 行の幅）にし、flex-wrap に任せる。ラベル 1 行＋コントロールが
+  // 行に入らなければ、コントロールが次の段へ回る。ラベル自身が行より長いときだけ、ラベルがその段の中で折れる（min-w-0）。
+  // 前提の文（hint）は判定に数えない（`w-0 min-w-full` で中身の幅を 0 として扱い、表示は全幅）。長い前提の文があるだけで
+  // コントロールが下へ落ちないように。右のコントロールは幅を譲らない（select の選択肢や URL 入力は縮めると読めなくなる）。
+  // 伸長指定に flex-1 を使わないこと: flex ショートハンドが flex-basis を 0% で上書きし、ラベル 1 行の幅で判定できなくなる。
   return (
     // data-settings-row は説明の吹き出しが基準にする矩形の目印。ラベルではなく行を基準に
     // することで、2 段に折り返した行でコントロールを覆わない（DescriptionTip 参照）。
     <div data-settings-row className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-      <div className="min-w-0 grow basis-32">
+      <div className="min-w-0 grow">
         {/* 説明文は常時表示せず、ラベルをホバー・タップしたときだけ吹き出しで出す。
             設定の窓は行数が多く、全行に説明文を敷くと縦が 3 割伸びる（4804px→6310px）。 */}
         {description
           ? <DescriptionTip label={label} description={description} />
           : <p className="text-white text-sm">{label}</p>}
-        {hint && <p className="text-secondary text-xs mt-0.5">{hint}</p>}
+        {hint && <p className="text-secondary text-xs mt-0.5 w-0 min-w-full">{hint}</p>}
       </div>
       {/* ml-auto は 2 段に落ちた行のためにある。折り返した 2 行目はコントロール 1 個だけの行になり、
           アイテムが 1 個の行では justify-between が flex-start にフォールバックして左寄せになる
           （コントロール側が自前で持つ justify-end は中身の並びにしか効かない）。
           1 行に収まる行では先にラベルの grow が余白を使い切るので、この ml-auto は何もしない。
           max-w-full は行幅を超える中身への歯止め。flex-shrink-0 は「余白が足りないとき縮まない」
-          という指定でしかなく、中身が行より広い場合ははみ出して Section の overflow-hidden に
+          という指定でしかなく、中身が行より広い場合ははみ出して窓の中身の overflow-x-hidden に
           切り取られる（データ出典の一行がこれに当たった。その行は現在 CreditRow へ移している）。
           max-width なら shrink とは別の制約として効くので、幅を譲らせたくない select や
           入力欄はそのままに、超過分だけ折り返せる。 */}
@@ -850,34 +993,30 @@ function Row({ label, description, hint, children }: {
 }
 
 /**
- * 出典表記の行。`Row` の「ラベルに最低幅を与える」規則をあえて使わない。
+ * 出典表記の行。**1 つの出典を 1 行**に並べ、窓の幅で並べ方を変える —— 520px 未満（スマホ）はラベルの下に
+ * 左寄せ、520px 以上はラベルの右に右寄せ（2026-11-04 ユーザー選択「幅で並べ方を変える (Recommended)」。説明「どの幅でも
+ * 『1 つの出典＝1 行』にそろえる。…区切りの『 / 』『・』は行を分けるので消える。出典の文面そのものは変えない。
+ * 切り替えの 520px は地震タブと同じ境」）。きっかけは、出典を「/」で繋いだ 1 行が 390px で
+ * 「使用ソフトウェアのライセン／ス」のように値の途中で折れていたこと。
  *
- * `Row` はラベルに最低幅 8rem（128px）を確保するが、出典行はラベルが短く値が長いため
- * この規則と噛み合わない。「地図」は 2 文字でも 128px を取り、値（実測 285px）と間隔を
- * 足すと 429px になって行の内寸（PC 幅で 353px）を超え、ラベル上・値下の 2 段に
- * 折り返してしまう。ラベルを自然幅にすれば 325px で 1 行に収まる。
- * この実測値は当時の短い文言のもので、いまの「地図」の値はこれより長い。**噛み合わない理由の
- * 説明であって、この長さに合わせた設計ではない**——値がどれだけ伸びても下記の折り返しで吸う。
- *
- * 値は折り返せるテキスト（出典・リンク）に限るため、幅が足りないときは 2 段に落とすのではなく
- * 右側で折り返させる（`min-w-0`）。ラベル側は潰さない（`shrink-0`）。
- *
- * 値側に `grow` が要る。付けないと値の枠が中身の最大幅ちょうどで確定し、1px 未満の
- * 端数で折り返してしまう（余白は残っているのに 2 行になる）。余った幅を吸わせて回避する。
- * 右寄せは `grow` と `text-right` で成立するので `justify-between` は置かない
- * （2 要素の一方が余白を吸い切る配置では `justify-content` は何もしない）。
+ * `Row` の並べ方（ラベル 1 行＋コントロールが入らなければ下へ）は使わない。出典行は値が長いので、ラベルは自然幅にする
+ * （`shrink-0`）。1 つの出典が行より長いときだけ、その中で折れる（`min-w-0`）。
  */
-function CreditRow({ label, children }: { label: string; children: React.ReactNode }) {
+function CreditRow({ label, items }: { label: string; items: readonly React.ReactNode[] }) {
   return (
     // data-settings-row は Row と同じ目印。この行は今のところ説明文を持たないため吹き出しは
     // 出ないが、後から説明を足したときに基準が行全体になるよう先に付けておく（付け忘れると
     // ラベル 1 個分の矩形が基準になり、値を覆わないための設計が効かなくなる）。
-    <div data-settings-row className="flex items-baseline gap-x-4 px-4 py-3">
+    <div data-settings-row className="flex flex-col gap-1 px-4 py-3 min-[520px]:flex-row min-[520px]:items-start min-[520px]:gap-x-4">
       <p className="text-white text-sm shrink-0">{label}</p>
-      <div className="min-w-0 grow text-right">{children}</div>
+      <ul className="min-w-0 grow flex flex-col items-start gap-0.5 text-xs text-secondary min-[520px]:items-end min-[520px]:text-right">
+        {items.map((item, i) => <li key={i}>{item}</li>)}
+      </ul>
     </div>
   )
 }
+
+const CREDIT_LINK_CLASS = 'text-blue-400 hover:text-blue-300'
 
 const SCALE_OPTIONS = [10, 20, 30, 40, 45, 50, 55, 60, 70] as const
 
@@ -907,13 +1046,16 @@ function ScaleSelect({ value, onChange, noneLabel = 'すべて表示', includeNo
   )
 }
 
+/**
+ * 選んだ震度の横の札。地震一覧の小さな震度の枠と同じ作り（震度の濃い地・震度の色の縁・白い字）にそろえる
+ * （2026-11-04 ユーザー選択「地震タブの枠にそろえる (Recommended)」）。
+ */
 function IntensityBadge({ scale }: { scale: number }) {
   if (scale === -1) return null
-  const fill = getIntensityColor(scale)
   return (
     <span
-      className="inline-block text-xs font-bold px-1.5 py-0.5 rounded-sm"
-      style={{ backgroundColor: fill, color: readableTextColor(fill) }}
+      className="inline-block text-xs font-bold px-1.5 py-0.5 rounded-md"
+      style={quakeTileColors(scale)}
     >
       震度{getIntensityLabel(scale)}
     </span>
@@ -955,7 +1097,7 @@ function TestButton({ color, onClick, children, disabled }: {
     <button
       onClick={handle}
       disabled={disabled}
-      className={`text-xs text-white px-3 py-1.5 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+      className={`text-xs text-white px-3 py-1.5 rounded-md transition-colors motion-reduce:transition-none disabled:opacity-40 disabled:cursor-not-allowed ${
         fired ? 'bg-gray-600' : BUTTON_CLASSES[color]
       }`}
     >
@@ -992,7 +1134,7 @@ function IntensityPlayButton({ kyoshinIndex }: { kyoshinIndex: number }) {
     <button
       onClick={handle}
       title={`震度${label} の更新音を試聴`}
-      className={`text-xs font-bold px-2 py-1 rounded-sm transition-opacity ${active ? 'opacity-40' : 'hover:opacity-75'}`}
+      className={`text-xs font-bold px-2 py-1 rounded-md transition-opacity motion-reduce:transition-none ${active ? 'opacity-40' : 'hover:opacity-75'}`}
       style={{ backgroundColor: fill, color: readableTextColor(fill) }}
     >
       {label}
@@ -1018,7 +1160,7 @@ function CountdownPlayButton({ second }: { second: number }) {
     <button
       onClick={handle}
       title={`S 波到達まで残り ${second} 秒の音を試聴`}
-      className={`text-xs font-bold text-white px-2 py-1 rounded transition-opacity ${
+      className={`text-xs font-bold text-white px-2 py-1 rounded-md transition-opacity motion-reduce:transition-none ${
         active ? 'opacity-40' : ''
       } ${second === 1 ? BUTTON_CLASSES.red : BUTTON_CLASSES.blue}`}
     >
@@ -1043,7 +1185,7 @@ function NotificationPermissionButton() {
   return (
     <button
       onClick={request}
-      className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-sm transition-colors"
+      className={ACTION_BUTTON_CLASS}
     >
       通知を許可する
     </button>
@@ -1137,64 +1279,63 @@ function HomeLocationSection({
     setError(null)
   }, [typedLat, typedLng, onUpdate])
 
+  // 他の設定と同じ行の形（ラベル左・操作右）で 2 行に並べる（2026-11-04 ユーザー選択「行の形にそろえる (Recommended)」。
+  // 説明「1 行目はラベル『現在地』、下に今の説明文…をそのまま常に出し、右に今の値…と［現在地を取得］［クリア］。
+  // 2 行目はラベル『緯度・経度で入れる』、右に緯度・経度の欄と［この地点にする］」）
   return (
-    <div className="px-4 py-3 space-y-2">
-      <p className="text-xs text-secondary">現在地を主要動到達の基準点として使用します。HTTPS または localhost が必要です。</p>
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-xs text-white font-mono">
-          {isSet
-            ? `北緯${homeLat!.toFixed(4)}° 東経${homeLng!.toFixed(4)}°`
-            : '未設定'}
-        </span>
-        <div className="flex gap-2">
-          <button
-            onClick={handleGetLocation}
-            disabled={loading}
-            className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white px-3 py-1.5 rounded-sm transition-colors"
-          >
-            {loading ? '取得中…' : '現在地を取得'}
-          </button>
-          {isSet && (
-            <button
-              onClick={handleClear}
-              className="text-xs bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded-sm transition-colors"
-            >
-              クリア
+    <>
+      <Row label="現在地" hint="現在地を主要動到達の基準点として使用します。HTTPS または localhost が必要です。">
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span className="text-xs text-secondary font-mono">
+              {isSet
+                ? <><span className="whitespace-nowrap">北緯{homeLat!.toFixed(4)}°</span> <span className="whitespace-nowrap">東経{homeLng!.toFixed(4)}°</span></>
+                : '未設定'}
+            </span>
+            <button onClick={handleGetLocation} disabled={loading} className={ACTION_BUTTON_CLASS}>
+              {loading ? '取得中…' : '現在地を取得'}
             </button>
-          )}
+            {isSet && (
+              <button onClick={handleClear} className={ACTION_BUTTON_CLASS}>
+                クリア
+              </button>
+            )}
+          </div>
+          {error && <span className="text-xs text-red-400 text-right">{error}</span>}
+        </div>
+      </Row>
+      {/* ラベルの下に、緯度・経度の欄と［この地点にする］を行の幅いっぱいに 1 列で並べる（2026-11-04 ユーザー発言
+          「緯度経度で選ぶところが気に食わん」の後、見本を見ての選択「案 A：全幅で 1 列 (Recommended)」）。右寄せで詰めると
+          欄が行の途中に浮いて見えるので、この行だけは `Row` の「ラベル左・操作右」を使わない。2 つの欄は同じ幅 */}
+      <div data-settings-row className="flex flex-col gap-2 px-4 py-3">
+        <p className="text-white text-sm">緯度・経度で入れる</p>
+        <div className="grid grid-cols-[1fr_1fr_auto] items-center gap-2">
+          <label className="flex min-w-0 items-center gap-1 whitespace-nowrap text-xs text-secondary">
+            緯度
+            <input
+              type="text"
+              inputMode="decimal"
+              value={latText}
+              onChange={e => handleCoordinateChange(e.target.value, setLatText)}
+              className="w-full min-w-0 bg-panel border border-border rounded-sm px-1.5 py-1 text-xs text-white font-mono"
+            />
+          </label>
+          <label className="flex min-w-0 items-center gap-1 whitespace-nowrap text-xs text-secondary">
+            経度
+            <input
+              type="text"
+              inputMode="decimal"
+              value={lngText}
+              onChange={e => handleCoordinateChange(e.target.value, setLngText)}
+              className="w-full min-w-0 bg-panel border border-border rounded-sm px-1.5 py-1 text-xs text-white font-mono"
+            />
+          </label>
+          <button onClick={handleApply} disabled={!canApply} className={ACTION_BUTTON_CLASS}>
+            この地点にする
+          </button>
         </div>
       </div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <label className="flex items-center gap-1 text-xs text-secondary">
-          緯度
-          <input
-            type="text"
-            inputMode="decimal"
-            value={latText}
-            onChange={e => handleCoordinateChange(e.target.value, setLatText)}
-            className="w-24 bg-panel border border-border rounded-sm px-1.5 py-0.5 text-xs text-white font-mono"
-          />
-        </label>
-        <label className="flex items-center gap-1 text-xs text-secondary">
-          経度
-          <input
-            type="text"
-            inputMode="decimal"
-            value={lngText}
-            onChange={e => handleCoordinateChange(e.target.value, setLngText)}
-            className="w-24 bg-panel border border-border rounded-sm px-1.5 py-0.5 text-xs text-white font-mono"
-          />
-        </label>
-        <button
-          onClick={handleApply}
-          disabled={!canApply}
-          className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white px-3 py-1.5 rounded-sm transition-colors"
-        >
-          この地点にする
-        </button>
-      </div>
-      {error && <p className="text-xs text-red-400">{error}</p>}
-    </div>
+    </>
   )
 }
 
@@ -1220,7 +1361,7 @@ function HomeLocationSection({
  * —— 分岐を JSX の中に置くとテストで押さえられない。
  */
 const ARRIVAL_TOKEN_TONE_CLASS: Record<ArrivalTokenStatusTone, string> = {
-  checking: 'text-gray-400',
+  checking: 'text-secondary',
   valid: 'text-green-400 font-medium',
   problem: 'text-red-400',
 }
@@ -1236,21 +1377,25 @@ function SignedKeyRowBody(
 ) {
   const line = arrivalTokenStatusLine(status)
   return (
+    // 状態の文と［消す］を 1 行に並べる（2026-11-04 ユーザー選択「行の形にそろえる (Recommended)」。説明「到達予想キーは
+    // 『有効（2027/09/22 10:16 まで）』と［消す］を同じ 1 行に並べる」）。入らない幅では文が［消す］の左で折れる
     <div className="flex flex-col items-end gap-1">
-      <button
-        type="button"
-        onClick={onClear}
-        className="text-xs px-2 py-1 rounded border border-border bg-panel text-gray-300 hover:text-white hover:border-gray-400"
-      >
-        消す
-      </button>
-      {line && (
-        <p className={`text-xs w-56 text-left leading-snug ${ARRIVAL_TOKEN_TONE_CLASS[line.tone]}`}>
-          {line.text}
-        </p>
-      )}
+      <div className="flex items-center justify-end gap-2">
+        {line && (
+          <span className={`text-xs text-right leading-snug ${ARRIVAL_TOKEN_TONE_CLASS[line.tone]}`}>
+            {line.text}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={onClear}
+          className={ACTION_BUTTON_CLASS}
+        >
+          消す
+        </button>
+      </div>
       {relayRejected && (
-        <p className="text-xs w-56 text-left leading-snug text-red-400">{FORECAST_KEY_RELAY_REJECTED}</p>
+        <span className="text-xs text-right leading-snug text-red-400">{FORECAST_KEY_RELAY_REJECTED}</span>
       )}
     </div>
   )
@@ -1399,7 +1544,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               onChange={e => onUpdate('dmdataApiKey', e.target.value)}
               placeholder="APIキーを入力"
               autoComplete="off"
-              className={`bg-panel border text-white text-xs rounded px-2 py-1.5 focus:outline-hidden w-48 ${
+              className={`bg-panel border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden w-48 ${
                 isApiKeyInvalid ? 'border-red-500 focus:border-red-500' : 'border-border focus:border-blue-500'
               }`}
             />
@@ -1511,7 +1656,8 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             onChange={v => onUpdate('soundEnabled', v)}
           />
         </Row>
-        {(settings.soundEnabled || settings.voicevoxEnabled) && (
+        {/* 時報も鳴らすので数える（時報の「通知音と同じ」はこの音量を指す。切ると行ごと消えて辿れない） */}
+        {(settings.soundEnabled || settings.voicevoxEnabled || settings.timeSignalEnabled) && (
           <Row label="音量" description="通知音と読み上げに共通の音量です">
             <div className="flex items-center gap-2">
               <span className="text-xs text-secondary w-8 text-right">
@@ -1548,7 +1694,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                   type="text"
                   value={settings.voicevoxUrl}
                   onChange={e => onUpdate('voicevoxUrl', e.target.value)}
-                  className={`bg-input border rounded px-2 py-1 text-xs text-white w-44 ${
+                  className={`bg-input border rounded-sm px-2 py-1 text-xs text-white w-44 ${
                     voicevoxStatus === 'invalid' ? 'border-red-500' : 'border-border'
                   }`}
                   spellCheck={false}
@@ -1636,6 +1782,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             onChange={v => onUpdate('kyoshinDetectSpeech', v)}
           />
         </Row>
+        <TimeSignalRows settings={settings} onUpdate={onUpdate} voicevoxSpeakers={voicevoxStatus === 'available' ? voicevoxSpeakers : []} />
       </Section>
 
       {/* 読み上げの詳しさ。VOICEVOX を有効にしたときだけ出す（無効な端末では何も効かないため）。
@@ -1925,7 +2072,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               return (
                 <div key={scale} className="flex items-center gap-1.5">
                   <span
-                    className="w-6 h-6 rounded-sm flex items-center justify-center text-xs font-bold"
+                    className="w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold"
                     style={{ backgroundColor: fill, color: readableTextColor(fill) }}
                   >
                     {label}
@@ -2048,7 +2195,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                 type="text"
                 value={settings.seismoHostUrl}
                 onChange={e => onUpdate('seismoHostUrl', e.target.value)}
-                className={`bg-input border rounded px-2 py-1 text-xs text-white w-44 ${
+                className={`bg-input border rounded-sm px-2 py-1 text-xs text-white w-44 ${
                   seismoStatus.kind === 'invalid' ? 'border-red-500' : 'border-border'
                 }`}
                 spellCheck={false}
@@ -2109,7 +2256,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               <select
                 value={settings.seismoWaveCollapsedView}
                 onChange={e => onUpdate('seismoWaveCollapsedView', e.target.value as AppSettings['seismoWaveCollapsedView'])}
-                className="bg-panel border border-border text-white text-xs rounded px-2 py-1.5 focus:outline-none focus:border-blue-500"
+                className="bg-panel border border-border text-white text-xs rounded-sm px-2 py-1.5 focus:outline-hidden focus:border-blue-500"
               >
                 <option value="composite">合成</option>
                 <option value="overlay">3成分を重ねる</option>
@@ -2192,30 +2339,14 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             同じサイト内で配信する形（HTML を用意する）も採れるが、更新のたびに
             Markdown と HTML の 2 つを保たねばならず、片方だけ古くなる。
             第三者ライセンスだけは配信物に含まれる（`public/`）ので同一サイト内で開く。 */}
-        <CreditRow label="規約">
-          <span className="text-xs text-secondary">
-            <a href="https://github.com/Ramilen-L-Emuruk/yuremado/blob/main/docs/terms-of-service.md"
-              target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">
-              利用規約
-            </a>
-            <span className="mx-1">/</span>
-            <a href="https://github.com/Ramilen-L-Emuruk/yuremado/blob/main/docs/privacy-policy.md"
-              target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">
-              プライバシーポリシー
-            </a>
-            <span className="mx-1">/</span>
-            <a href={`${import.meta.env.BASE_URL}third-party-licenses.txt`}
-              target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300">
-              使用ソフトウェアのライセンス
-            </a>
-          </span>
-        </CreditRow>
-        <CreditRow label="地震・津波データ">
-          <a href="https://dmdata.jp/" target="_blank" rel="noopener noreferrer"
-            className="text-xs text-blue-400 hover:text-blue-300">
-            Project DM-D.S.S
-          </a>
-        </CreditRow>
+        <CreditRow label="規約" items={[
+          <a href="https://github.com/Ramilen-L-Emuruk/yuremado/blob/main/docs/terms-of-service.md" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>利用規約</a>,
+          <a href="https://github.com/Ramilen-L-Emuruk/yuremado/blob/main/docs/privacy-policy.md" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>プライバシーポリシー</a>,
+          <a href={`${import.meta.env.BASE_URL}third-party-licenses.txt`} target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>使用ソフトウェアのライセンス</a>,
+        ]} />
+        <CreditRow label="地震・津波データ" items={[
+          <a href="https://dmdata.jp/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>Project DM-D.S.S</a>,
+        ]} />
         {/* **一次出典と配信経路の両方を出す。** データを作っているのは防災科学技術研究所で、
             アプリが実際に取得しているのは Yahoo!天気・災害 の配信（`services/kyoshin.ts`）。
             片方だけだと、出典としては足りないか（配信元を伏せる）、事実と食い違う（作成者を伏せる）。
@@ -2224,40 +2355,18 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
 
             **すぐ上の「地震・津波データ」行と粒度が揃っていないのは意図したもの。** あちらは
             配信 API（DM-D.S.S）だけを出し、一次出典（気象庁）は README 側で担保している。 */}
-        <CreditRow label="リアルタイム震度">
-          <span className="text-xs text-secondary">
-            <a href="https://www.kmoni.bosai.go.jp/" target="_blank" rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300">
-              防災科研 強震モニタ
-            </a>
-            <span className="mx-1">/</span>
-            <a href="https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/" target="_blank" rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300">
-              Yahoo!天気・災害
-            </a>
-          </span>
-        </CreditRow>
+        <CreditRow label="リアルタイム震度" items={[
+          <a href="https://www.kmoni.bosai.go.jp/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>防災科研 強震モニタ</a>,
+          <a href="https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>Yahoo!天気・災害</a>,
+        ]} />
         {/* 下部の波形に出す公開観測点（気象庁の広帯域地震計・JP 網）。文面は `docs/public-waveform-design.md` §0
             （2026-10-15 ユーザー承認）。EarthScope は運用者がライセンスを宣言していない網を CC BY 4.0 で配るので、
             運用者（気象庁）・配信した施設（EarthScope）・ライセンスの 3 つを挙げる（同 §2）。 */}
-        <CreditRow label="公開観測点の波形">
-          <span className="text-xs text-secondary">
-            <a href="https://www.jma.go.jp/" target="_blank" rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300">
-              気象庁
-            </a>
-            （JP 網）・配信{' '}
-            <a href="https://www.earthscope.org/" target="_blank" rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300">
-              EarthScope
-            </a>
-            （NSF NGF）・
-            <a href="https://creativecommons.org/licenses/by/4.0/deed.ja" target="_blank" rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300">
-              CC BY 4.0
-            </a>
-          </span>
-        </CreditRow>
+        <CreditRow label="公開観測点の波形" items={[
+          <><a href="https://www.jma.go.jp/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>気象庁</a>（JP 網）</>,
+          <>配信 <a href="https://www.earthscope.org/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>EarthScope</a>（NSF NGF）</>,
+          <a href="https://creativecommons.org/licenses/by/4.0/deed.ja" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>CC BY 4.0</a>,
+        ]} />
         {/* 地図に描いているデータの出典。実体は各生成スクリプト・ローダーの冒頭コメント
             （scripts/build-prefectures.mjs・build-subregions.mjs・build-tsunami-zones.mjs・
             build-active-faults.mjs・build-plate-boundaries.mjs・build-hypocenter-catalog.ts、
@@ -2284,11 +2393,13 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             使われているか読めないものに付ける（「活断層データベース」は名称が用途を兼ねるので
             付けない）。**「」は元の資料名**——通称で呼んでいるものに付ける。
             PB2002 だけ用途が後ろへ回るのは、`PB2002 (Bird, 2003)` が割ってはならない引用の単位だから。 */}
-        <CreditRow label="地図">
-          <span className="text-xs text-secondary">
-            気象庁 予報区等 GIS データ（境界・海岸線） / 気象庁 震源カタログ「地震月報」「震源リスト」 / GEBCO・NOAA NCEI（海底地形） / 産総研 活断層データベース / PB2002 (Bird, 2003)（プレート境界）
-          </span>
-        </CreditRow>
+        <CreditRow label="地図" items={[
+          '気象庁 予報区等 GIS データ（境界・海岸線）',
+          '気象庁 震源カタログ「地震月報」「震源リスト」',
+          'GEBCO・NOAA NCEI（海底地形）',
+          '産総研 活断層データベース',
+          'PB2002 (Bird, 2003)（プレート境界）',
+        ]} />
         <Row label="サーバー時刻オフセット" description="端末の時計と、サーバーから得た時刻の差です。診断用です。「未較正」は、まだサーバーの時刻を得られていない状態です">
           <ServerClockOffsetDisplay />
         </Row>
@@ -2468,8 +2579,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="遠地地震（規模を速報できない報）" description="チリ中部沿岸 M8を超える巨大地震 – earthquakeInfo 音 / 規模が数値で出ない第一報。日本への津波の有無は調査中">
           <TestButton color="purple" onClick={onTest.foreignQuakeHuge}>巨大地震テスト</TestButton>
         </Row>
-        <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに畳んだ原文が付く。英文そのものには音・読み上げ・通知が無い">
+        <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに原文の欄が付く。英文そのものには音・読み上げ・通知が無い">
           <TestButton color="purple" onClick={onTest.foreignQuakeInternationalTsunami}>国際津波関連情報テスト</TestButton>
+        </Row>
+        <Row label="国内の地震と英文だけの国際津波関連情報" description="日向灘 M7.1（実データ）の震源・震度情報と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、日向灘の地震カードに原文が付く / 6 秒後に、地震情報の無い地震の英文が届き、一覧に英文だけのカード（国際津波関連情報）が出る。英文そのものには音・読み上げ・通知が無い">
+          <TestButton color="purple" onClick={onTest.internationalTsunamiDomesticAndOnly}>英文だけテスト</TestButton>
         </Row>
         <Row label="見出しにだけある市町村" description="2024-01-01 佐渡付近の震源・震度に関する情報（実データ）で、輪島市が見出しにだけ載っている形 – earthquakeInfo 音 / 震度一覧の石川県能登の下に輪島市（震度3）が並ぶ。この市町村には観測点の行が無い">
           <TestButton color="purple" onClick={onTest.headlineOnlyCity}>見出しの市町村テスト</TestButton>
@@ -2495,8 +2609,13 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <TestButton color="yellow" onClick={onTest.borrowFromTsunami}>震源の借用テスト</TestButton>
           </Row>
         )}
+        {onTest.magnitudeFromTsunami && (
+          <Row label="津波が後から伝える規模" description="震源・震度情報（M7.4）→ 津波の続報（M7.6）→ 震源・震度情報の続報（M7.6）（2024年能登半島地震の本震と同じ順序）。津波の続報が地震情報より新しい規模を伝えると、カードの規模も M7.6 になり、行に「津波情報より」と出どころが付く。次の震源・震度情報が届くと出どころの印は消える">
+            <TestButton color="yellow" onClick={onTest.magnitudeFromTsunami}>規模の更新テスト</TestButton>
+          </Row>
+        )}
         {onTest.trainingQuake && (
-          <Row label="訓練報" description="中身は地震テストと同じで、電文ヘッダの運用種別（訓練）だけが違う。本物と同じく画面・音・読み上げへ流し、カードに「訓練報」の印を出す">
+          <Row label="訓練報" description="中身は地震テストと同じ（地震情報と長周期地震動に関する観測情報）で、電文ヘッダの運用種別（訓練）だけが違う。本物と同じく画面・音・読み上げへ流し、カードと長周期の欄に「訓練報」の印を出す">
             <TestButton color="yellow" onClick={onTest.trainingQuake}>訓練報テスト</TestButton>
           </Row>
         )}
@@ -2575,6 +2694,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {onTest.nankaiCommentaryRoutine && (
           <Row label="南海トラフ地震関連解説情報（定例解説）" description="平常時に毎月届く電文。バナー表示 + specialInfoCommentary 音（閉じるボタンあり・7日で自動消去）">
             <TestButton color="teal" onClick={onTest.nankaiCommentaryRoutine}>定例解説テスト</TestButton>
+          </Row>
+        )}
+        {onTest.activityInfo && (
+          <Row label="地震の活動状況等に関する情報" description="電文ログに「スキップ」の行が 1 行出るだけ。カード・帯・音は出ない（この種類は読まず、電文ログに本文ごと積む）">
+            <TestButton color="teal" onClick={onTest.activityInfo}>活動状況等テスト</TestButton>
           </Row>
         )}
         {onTest.kohatsu && (
@@ -2658,7 +2782,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                   <button
                     onClick={() => onStartReplay(new Date(new Date(a.firstEventTime).getTime() - 60_000))}
                     disabled={replayIsFetching || historicalArchivesLoading}
-                    className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white px-2 py-1 rounded-sm transition-colors whitespace-nowrap"
+                    className={ACTION_BUTTON_CLASS}
                   >
                     再生
                   </button>
@@ -2678,7 +2802,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <button
               onClick={handleTimeConfirm}
               disabled={!kyoshinInputDateTime || replayIsFetching || historicalArchivesLoading}
-              className="text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white px-3 py-1.5 rounded-sm transition-colors"
+              className={ACTION_BUTTON_CLASS}
             >
               {replayIsFetching ? '取得中…' : historicalArchivesLoading ? '準備中…' : '確定'}
             </button>
@@ -2698,7 +2822,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               <span className="text-xs text-green-400">{replayStartLabel} から</span>
               <button
                 onClick={onStopReplay}
-                className="text-xs bg-gray-600 hover:bg-gray-500 text-white px-3 py-1.5 rounded-sm transition-colors"
+                className={ACTION_BUTTON_CLASS}
               >
                 リセット
               </button>

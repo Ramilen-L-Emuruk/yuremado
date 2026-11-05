@@ -92,10 +92,15 @@ export const EARTHQUAKE: TestTelegramScript = {
  */
 export const TRAINING_QUAKE: TestTelegramScript = {
   anchor: 0,
-  steps: [{
-    file: NOTO.detail2, headType: 'VXSE53', atMs: 0,
-    rewrite: xml => replaceOnce(xml, '<Status>通常</Status>', '<Status>訓練</Status>'),
-  }],
+  steps: [
+    { file: NOTO.detail2, headType: 'VXSE53', atMs: 0, rewrite: xml => replaceOnce(xml, '<Status>通常</Status>', '<Status>訓練</Status>') },
+    // 長周期の欄の「訓練報」の札も確かめられるように、地震テストと同じ長周期の電文も訓練にする
+    // （2026-11-03 ユーザー選択「足してこの文面にする (Recommended)」）
+    {
+      file: NOTO.lpgm, headType: 'VXSE62', atMs: 0,
+      rewrite: xml => replaceOnce(markFirstLgStation(xml), '<Status>通常</Status>', '<Status>訓練</Status>'),
+    },
+  ],
 }
 
 /**
@@ -210,6 +215,26 @@ export const FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI: TestTelegramScript = {
   steps: [
     { file: nii('20210121125105_0_VXSE53_010000'), headType: 'VXSE53', atMs: 0 },
     { file: 'synthetic/wepa60-talaud.txt', headType: 'WEPA60', atMs: 3_000 },
+  ],
+}
+
+/**
+ * 英文だけテスト（2026-11-03 ユーザー選択「別の行を足す (Recommended)」）。国際津波関連情報（WEPA60）が国内の地震のカードに付く形と、
+ * 付く地震カードの無い報が英文だけのカードになる形（→ `utils/internationalTsunami.ts`）。
+ *
+ *   1. 2024-08-08 16:42 日向灘 M7.1 の震源・震度に関する情報（NII の実電文）
+ *   2. 同じ地震の WEPA60（自作の英文 `synthetic/wepa60-hyuganada.txt`。実電文の行の並びに倣い、発生時刻 07:42Z・震央・規模を合わせた）
+ *   3. 地震情報の無い地震の WEPA60（自作の英文 `synthetic/wepa60-mindanao.txt`。ミンダナオの M6.9。発生は日向灘の 22 分前）
+ *
+ * **3 の発生時刻を日向灘より前にしてある。** 台本は 1 つの差分で全体を押した時刻へずらすので（`anchor`）、後にすると押した時刻より
+ * 未来の地震になる。
+ */
+export const INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY: TestTelegramScript = {
+  anchor: 0,
+  steps: [
+    { file: nii('20240808075502_0_VXSE53_010000'), headType: 'VXSE53', atMs: 0 },
+    { file: 'synthetic/wepa60-hyuganada.txt', headType: 'WEPA60', atMs: 3_000 },
+    { file: 'synthetic/wepa60-mindanao.txt', headType: 'WEPA60', atMs: 6_000 },
   ],
 }
 
@@ -495,6 +520,26 @@ export const HYPOCENTER_FROM_TSUNAMI: TestTelegramScript = {
     { file: NOTO.tsunami1, headType: 'VTSE41', atMs: HYPOCENTER_BORROW_STEP_MS },
     { file: NOTO.prompt2, headType: 'VXSE51', atMs: HYPOCENTER_BORROW_STEP_MS * 2 },
     { file: NOTO.tsunami2, headType: 'VTSE41', atMs: HYPOCENTER_BORROW_UPDATE_MS },
+  ],
+}
+
+/**
+ * 津波の続報が、地震情報より新しい規模を伝える場面のテスト（能登本震の実電文の並び。2026-11-03 ユーザー選択
+ * 「別のボタンを足す (Recommended)」）。
+ *
+ *   1. 震源・震度に関する情報（16:16。M7.4。カードは自前の震源を持つ）
+ *   2. 津波警報の続報（16:22。M7.6。**地震情報より新しいので、カードの上段も M7.6 になり「津波情報より」が付く**）
+ *   3. 震源・震度に関する情報の続報（16:24。M7.6。地震情報のほうが新しくなり、出どころの印が消える）
+ *
+ * 震源を持たない震度速報が借りる経路は {@link HYPOCENTER_FROM_TSUNAMI} が持つ。ここへ混ぜると、借りた震源が
+ * 津波の続報に追随する経路が通らなくなるので分けた（→ `utils/latestQuakeFacts.ts`）。
+ */
+export const MAGNITUDE_FROM_TSUNAMI: TestTelegramScript = {
+  anchor: 2,
+  steps: [
+    { file: NOTO.detail1, headType: 'VXSE53', atMs: 0 },
+    { file: NOTO.tsunami2, headType: 'VTSE41', atMs: HYPOCENTER_BORROW_STEP_MS },
+    { file: NOTO.detail2, headType: 'VXSE53', atMs: HYPOCENTER_BORROW_UPDATE_MS },
   ],
 }
 
@@ -1302,6 +1347,14 @@ export const NANKAI_COMMENTARY_ROUTINE: TestTelegramScript = {
   anchor: 0, steps: [{ file: nii('20260907080008_0_VYSE52_010000'), headType: 'VYSE52', atMs: 0 }],
 }
 
+/**
+ * 地震の活動状況等に関する情報（VXSE56）テスト（2024-08-08 日向灘。同じ時刻の南海トラフ地震臨時情報と対の実電文）。
+ * 読まない種類なので、電文ログに本文ごと「スキップ」の行が 1 行出るだけ（→ `buildTestLogOnlyEntries`）。
+ */
+export const ACTIVITY_INFO: TestTelegramScript = {
+  anchor: 0, steps: [{ file: nii('20240808080034_0_VXSE56_010000'), headType: 'VXSE56', atMs: 0 }],
+}
+
 const KOHATSU_SAMPLE = sample('80_01_01_260917_VYSE60')
 
 /** 北海道・三陸沖後発地震注意情報テスト（気象庁のサンプル電文 80_01_01）。 */
@@ -1325,6 +1378,9 @@ export const KOHATSU_RETRACTION: TestTelegramScript = {
   ],
 }
 
+/** お知らせテストの 2 通目を流すまでの間（同じだけ発表時刻も進める。分はまたがない） */
+export const QUAKE_NOTICE_SECOND_MS = 5_000
+
 /** お知らせの自由付加文。電文解説資料 Ⅱ.51 の事例の文（サンプル電文は持たない）。 */
 const QUAKE_NOTICE_FREE_TEXT = '保守点検の時刻が変更になりました。'
 
@@ -1334,6 +1390,12 @@ const QUAKE_NOTICE_FREE_TEXT = '保守点検の時刻が変更になりました
  * **自由付加文を足す**（電文解説資料 Ⅱ.51 の事例の文）。サンプルは持たないが、本文の後に続けて出る・
  * 続けて読まれる形を確かめる入口がほかに無い。置いたサンプルからは問い合わせ先（氏名と電話番号）の
  * 段落を外してある（→ `public/data/test-telegrams/README.md`）。
+ *
+ * **2 通目に、同じ分の別のお知らせを流す**（`QUAKE_NOTICE_SECOND_MS` 後）。帯は別件のお知らせを 1 本に積む
+ * （→ `utils/specialInfoBandList.ts`）ので、「ほか 1 件」と開いた一覧・行の × を確かめる入口になる。実配信でも
+ * 同じ分に別のお知らせが数十秒おきに並ぶ（自治体ごとの「震度データ入電停止」など。→ `quakeNoticeId`）ので、
+ * 作成時刻と発表時刻だけを進め、`EventID`（発表時刻を分で切ったもの）はそのまま残す。サンプルは 1 通しか無いので
+ * 本文は同じ。自由付加文は 1 通目だけに付く。
  */
 export const QUAKE_NOTICE: TestTelegramScript = {
   anchor: 0,
@@ -1346,6 +1408,11 @@ export const QUAKE_NOTICE: TestTelegramScript = {
       free.textContent = QUAKE_NOTICE_FREE_TEXT
       comments.appendChild(free)
       body.appendChild(comments)
+    }),
+  }, {
+    file: sample('42_01_01_100514_VZSE40'), headType: 'VZSE40', atMs: QUAKE_NOTICE_SECOND_MS,
+    rewrite: xml => editXml(xml, (doc) => {
+      shiftIssueTime(doc, QUAKE_NOTICE_SECOND_MS / 1000)
     }),
   }],
 }
@@ -1977,8 +2044,8 @@ function isoZ(ms: number): string {
 /** 台本の一覧（テストで全件を流して読めることを確かめる）。 */
 export const ALL_TEST_TELEGRAM_SCRIPTS: Readonly<Record<string, TestTelegramScript>> = {
   EARTHQUAKE, TRAINING_QUAKE, UNRECEIVED_QUAKE, MAX_SCALE_OR_ABOVE_QUAKE, AREA_UNRECEIVED_QUAKE,
-  FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI, HEADLINE_ONLY_CITY, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
-  QUAKE_PARTIAL_CANCEL, HYPOCENTER_FROM_TSUNAMI,
+  FOREIGN_QUAKE, FOREIGN_QUAKE_HUGE, FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI, INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY, HEADLINE_ONLY_CITY, QUAKE_AMENDMENT, QUAKE_REPORT_SEQUENCE, QUAKE_CANCEL,
+  QUAKE_PARTIAL_CANCEL, HYPOCENTER_FROM_TSUNAMI, MAGNITUDE_FROM_TSUNAMI,
   TSUNAMI_MAJOR_WARNING, TSUNAMI_QUIET_REPORTS, TSUNAMI_WARNING, TSUNAMI_WATCH, TSUNAMI_FORECAST, TSUNAMI_EXPIRY, TSUNAMI_GRADE_CHANGE,
   TSUNAMI_SOURCE_ADDED, TSUNAMI_RETRACTION, TSUNAMI_INFO_RETRACTION,
   NANKAI_CHECKING, NANKAI_WATCH, NANKAI_WARNING, NANKAI_RETRACTION,

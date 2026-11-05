@@ -118,7 +118,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <button
             type="button"
             onClick={this.handleReload}
-            className="mt-1 rounded-md border border-border bg-slate-800/90 px-4 py-2 text-sm transition-colors hover:bg-slate-700/90 roomy:text-lg"
+            className="mt-1 rounded-md border border-border bg-panel px-4 py-2 text-sm transition-colors motion-reduce:transition-none hover:bg-white/10 roomy:text-lg"
           >
             再読み込み
           </button>
@@ -137,7 +137,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <button
             type="button"
             onClick={this.handleRetry}
-            className="rounded-md border border-border bg-slate-800/90 px-3 py-1.5 text-xs transition-colors hover:bg-slate-700/90 roomy:text-base"
+            className="rounded-md border border-border bg-panel px-3 py-1.5 text-xs transition-colors motion-reduce:transition-none hover:bg-white/10 roomy:text-base"
           >
             再表示
           </button>

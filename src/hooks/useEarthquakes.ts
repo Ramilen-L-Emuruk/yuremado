@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLazyRef } from './useLazyRef'
-import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, EEWAlert, IntensityScale, EarthquakePoint, AppEvent, LiveEvent, LiveEventMeta, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
+import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, EEWAlert, AppEvent, LiveEvent, LiveEventMeta, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
 import { historyCursorFromOldestDay, type HistoryCursor } from '../utils/historyCursor'
 import type { QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
 // 種別ごとの取得関数（`fetchDmdataEarthquakes` ほか 8 本）は撤去済み。履歴はアーカイブ経由の
@@ -22,25 +22,28 @@ import {
   mergeHistoryLoss,
 } from '../utils/telegramLoss'
 import { appendToTelegramLog, dropTelegramLogOrigins, pruneTelegramLog } from '../utils/telegramLogBuffer'
-import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, findRetractionTie, logRetractionTie, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
+import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, findRetractionTie, logRetractionTie, quakeRetractionOf, addQuakeRetraction, applyQuakeCancelToCard, reportOrderKey } from '../utils/quakeMerge'
+import { type QuakeIntensityCache, fillQuakeIntensity, findQuakeCancelTarget, isLiveQuakeCancelTarget, isQuakeReportHeldBack, noteQuakeIntensity, quakeCardAfterReport } from '../utils/quakeNotifyTracker'
 import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmFactSnapshot, vanishedFacts, lpgmRowSnapshot, lpgmMarkKey, lpgmTelegramRevise, quakeTelegramRevise, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
-import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, MAX_LPGM_RETRACTIONS, recordLpgmRetractions, type LpgmRetraction } from '../utils/lpgmRetraction'
+import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, lpgmRetractionsIntoCards, MAX_LPGM_RETRACTIONS, recordLpgmRetractions, type LpgmRetraction } from '../utils/lpgmRetraction'
 import { withBorrowedFromTsunami, borrowFromTsunamiIntoCards } from '../utils/borrowFromTsunami'
+import { withLatestQuakeFacts, latestQuakeFactsIntoCards } from '../utils/latestQuakeFacts'
 import { loadStationCoords, onStationCoordsLoaded, areaPrefIndexOf, getAreaPrefIndexCache } from '../utils/stationCoords'
 import type { AreaPrefIndex } from '../utils/quakePoints'
 import {
-  calcEEWCancelTime, eewSerial, eewSerialSeries, eewEventKey, eewIssueTimeMs, mergeEewReport, eewStaleness, acceptEewReport,
-  supplementEewReport, raisesEewAlert,
-  noteEewNotified, isSameReportFromOtherOrigin, isOlderEewReport, type EewAcceptance,
-  endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, rememberEewFirstIssueTime,
+  calcEEWCancelTime, eewSerial, eewSerialSeries, eewEventKey, eewIssueTimeMs, mergeEewReport,
+  supplementEewReport, isOlderEewReport, type EewAcceptance,
+  endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, type EndedEewMatch, admitTrainingEew, rememberEewFirstIssueTime,
 } from '../utils/eew'
+import { decideEewReportEntry, decideEewCancelEntry, endEewOnExpiry, mergeEndedEew } from '../utils/eewNotifyTracker'
 import { decideFinalReportExpiry, type DetectionSpreadLog, type EewExpiryDecision } from '../utils/eewSpreadHold'
 import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEventLog'
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
-import { unattachedInternationalTsunamis, upsertInternationalTsunami } from '../utils/internationalTsunami'
+import { internationalTsunamiIndex, upsertInternationalTsunami } from '../utils/internationalTsunami'
+import { fetchFailureReason } from '../utils/fetchFailure'
 import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState, tsunamiLiftText } from '../utils/tsunami'
 import { log } from '../utils/logger'
 import { serverNow, serverDate, isServerClockTrusted } from '../utils/clock'
@@ -50,11 +53,12 @@ import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dm
 // テストデータは押されてから読む（静的に取り込まない理由・失敗したときの扱い・先読みの
 // 段取りは `utils/testDataLoader.ts` にまとめてある）。
 import {
-  cancelOverOtherUnit, decideDispatch as decideBandDispatch, earthquakeCountBandDecision, kohatsuBandDecision,
-  lpgmNotifiable, nankaiBandDecision, nankaiCommentaryBandDecision, noteConveyedCancel as noteBandConveyedCancel,
+  cancelOverOtherUnit, cancelOverOtherUnitInList, decideDispatch as decideBandDispatch, earthquakeCountListDecision, kohatsuListDecision,
+  lpgmNotifiable, nankaiBandDecision, nankaiCommentaryListDecision, noteConveyedCancel as noteBandConveyedCancel,
 } from '../utils/specialInfoBands'
+import { dropExpiredUpTo, earliestExpiryMs, putBandItem, type BandListItem } from '../utils/specialInfoBandList'
 import { loadTestTelegramScripts } from '../utils/testDataLoader'
-import { buildTestTelegramEntries, type TestTelegramScript } from '../utils/testTelegrams'
+import { buildTestLogOnlyEntries, buildTestTelegramEntries, defaultTestTelegramFetcher, type TestTelegramScript } from '../utils/testTelegrams'
 
 /**
  * 画面・音へ回らずに落とした電文を、録画ツール向けに記録する
@@ -106,30 +110,33 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
 /** 何も届かない間に 24 時間より古いライブの行を捨てる間隔（ミリ秒）。 */
 const TELEGRAM_LOG_PRUNE_INTERVAL_MS = 10 * 60 * 1000
 
+/** 帯に複数を積む 4 種（→ `utils/specialInfoBandList.ts`） */
+type BandListKind = 'nankaiCommentary' | 'kohatsu' | 'quakeNotice' | 'earthquakeCount'
+interface BandLists {
+  nankaiCommentary: readonly JMANankaiCommentary[]
+  kohatsu: readonly JMAKohatsu[]
+  quakeNotice: readonly JMAQuakeNotice[]
+  earthquakeCount: readonly JMAEarthquakeCount[]
+}
+const EMPTY_BAND_LISTS: BandLists = { nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
+/** 一覧を置く state の欄 */
+const BAND_LIST_FIELDS = {
+  nankaiCommentary: 'nankaiCommentaryList',
+  kohatsu: 'kohatsuList',
+  quakeNotice: 'quakeNoticeList',
+  earthquakeCount: 'earthquakeCountList',
+} as const satisfies Record<BandListKind, keyof EarthquakeState>
+
+/** 帯の期限の予約をすべて落とす（アンマウント・リセット） */
+function clearBandExpireTimers(timers: Partial<Record<BandListKind, number>>): void {
+  for (const kind of Object.keys(timers) as BandListKind[]) {
+    window.clearTimeout(timers[kind])
+    delete timers[kind]
+  }
+}
+
 const MAX_QUAKE_RETRACTIONS = 20  // 取消を見た事実の台帳の最大保持件数（`rememberQuakeRetraction`）
 
-/**
- * 取消電文が効くカード（取消表示中でないもの）か。
- *
- * 照合の中身は `quakeMerge.ts` の `isQuakeCancelTarget`（情報名称の単位で、カードが取消より前に
- * その種別の報を受けていたか）。ライブは**取消表示中のカードを対象から外す**ところだけを足す
- * （二重に取消表示を張って 10 秒の purge を延ばさないため）。
- *
- * 台帳への記録（入口）と実際の取消の適用（`setState` の中）で**同じ述語を使う**ために切り出して
- * いる。書き写すと片方だけが変わり、記録と適用の範囲が静かにずれる。
- */
-function isLiveQuakeCancelTarget(card: JMAQuake, cancel: JMAQuake, areaPrefIndex: AreaPrefIndex): boolean {
-  return !card.cancelledAt && isQuakeCancelTarget(card, cancel, areaPrefIndex)
-}
-
-/** 取消電文が効くカードを探す。判定は `isLiveQuakeCancelTarget`。 */
-function findQuakeCancelTarget(
-  cards: readonly JMAQuake[],
-  cancel: JMAQuake,
-  areaPrefIndex: AreaPrefIndex,
-): JMAQuake | undefined {
-  return cards.find(card => isLiveQuakeCancelTarget(card, cancel, areaPrefIndex))
-}
 type QueuePayload =
   | { kind: 'event'; event: AppEvent }
   | { kind: 'lpgm'; data: JMALpgm }
@@ -143,6 +150,12 @@ type QueuePayload =
   | { kind: 'purge-cancelled-quake'; id: string }
   | { kind: 'purge-cancelled-eew'; key: string }
   | { kind: 'purge-cancelled-tsunami'; id: string }
+  /**
+   * 電文ログにだけ積む行（再生の `ReplayFetchResult.logOnlyEntries`）。発火のときに `logEntry` を積むだけで、
+   * 地図・カード・音・読み上げには何も流さない。**発火の時刻に積むのは、ほかの電文の行と並びの意味を揃えるため**
+   * （窓ぶんを先に組むので、入れた時点で積むとまだ再生時刻に来ていない行が並ぶ → `QueueEntry.logEntry`）。
+   */
+  | { kind: 'logOnly' }
 
 interface QueueEntry {
   eventTime: Date
@@ -308,80 +321,43 @@ type TestEEWKind = 'special' | 'warning' | 'forecast' | 'assumed' | 'deep' | 'st
 type TestEEWPressEntry = { index: number; now: Date; finalizeTimer: number }
 /**
  * 届いた報が、画面から消えた地震の報なら `true` を返し、弾いたことを記録に残す（→ `endedEewMatch`）。
- * 発表中の速報の取り直し（起動時・張り直し）と、ライブの入口（`handleEvent`）の両方が通る。
+ * 発表中の速報の取り直し（起動時・張り直し）が通る。ライブの入口は共用の判定（`decideEewReportEntry`）が同じ比べ方をする。
  * **黙って弾かない** —— 誤って本物を弾いたとき、画面には「出ない」としか現れない。
  */
 function skipEndedEew(ended: ReadonlyMap<string, EndedEew>, eew: EEWAlert, path: string): boolean {
-  const key = eewEventKey(eew)
-  const record = ended.get(key)
-  const nowMs = serverNow()
-  const match = endedEewMatch(record, eew, nowMs, ACTIVE_EEW_WINDOW_MS)
+  const record = ended.get(eewEventKey(eew))
+  const match = endedEewMatch(record, eew, serverNow(), ACTIVE_EEW_WINDOW_MS)
   if (match === null || !record) return false
+  logSkippedEndedEew(record, match, eew, path)
+  return true
+}
+
+/** 消えた地震の報を採らなかったことの記録（取り直しとライブの入口で同じ文面） */
+function logSkippedEndedEew(record: EndedEew, match: EndedEewMatch, eew: EEWAlert, path: string): void {
   const basis = match === 'cancelled'
     ? '取消で終えた'
     : match === 'serial'
       ? `消えるまでに第 ${record.serialBySeries.get(eewSerialSeries(eew))} 報まで受けていた`
       : '消えるまでに受けた報より発表時刻が新しくない'
-  log.info(`[eew] ${path}: ${key}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報）は ${Math.round((nowMs - record.endedAtMs) / 1000)} 秒前に画面から消えた地震の報なので採りません（${basis}）`)
-  return true
+  log.info(`[eew] ${path}: ${eewEventKey(eew)}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報）は ${Math.round((serverNow() - record.endedAtMs) / 1000)} 秒前に画面から消えた地震の報なので採りません（${basis}）`)
 }
 
 /**
- * 届いた報が、**その報自身の自動解除の時刻（`calcEEWCancelTime`）を既に過ぎている**なら `true` を返し、弾いたことを記録に残す。
- * ライブの入口（`handleEvent`）で、画面に出ていない地震の報にだけ使う。
+ * 自動解除の時刻を過ぎた報（→ `decideEewReportEntry` の `expired`）の記録に添える中身。
  *
  * 強震モニタ（Yahoo）は、終わった速報の最終報を一覧に 150〜180 秒残す（2026-10-21 に 2 地震で実測）。一覧を前回との差分で見る処理（`diffHypoInfoEvents`）は作り直されると
  * 前に見た項目を忘れるので（起動・リプレイの開始と終わり）、その間に作り直すと最終報を「新しい項目」として出し直す。
  * 自動解除は最終報から 60 秒以上先なので、出直した報は音と読み上げを鳴らしてから、すぐ消える。消えた地震の記憶
- * （`skipEndedEew`）はリセットで捨てるので、ここでは報の時刻だけで判定する。
- *
+ * （`skipEndedEew`）はリセットで捨てるので、入口は報の時刻だけで判定する。
  * **時計を信じられないときは弾かない**（`isServerClockTrusted`）。未較正の端末は壁時計がずれていることがあり、
- * 進んだ時計で比べると本物の報まで捨てる。弾かなかったことは debug に残す。
- * **発表時刻が読めない報も弾かない。** `calcEEWCancelTime` は発表時刻が読めないと震源時刻だけで解除の時刻を決め、
- * 「発表から 60 秒は残す」下限が外れる —— その値で比べると、届いたばかりの初報を古い報と取り違えうる。
- * 2026-10-21 ユーザー承認「おすすめで」
+ * 進んだ時計で比べると本物の報まで捨てる。**発表時刻が読めない報も弾かない。** `calcEEWCancelTime` は発表時刻が読めないと
+ * 震源時刻だけで解除の時刻を決め、「発表から 60 秒は残す」下限が外れる —— その値で比べると、届いたばかりの初報を古い報と
+ * 取り違えうる。2026-10-21 ユーザー承認「おすすめで」
  */
-function skipExpiredEew(eew: EEWAlert, path: string): boolean {
-  const issueMs = eewIssueTimeMs(eew)
-  if (issueMs === null) return false
-  const cancelMs = calcEEWCancelTime(eew, new Date(issueMs)).getTime()
-  if (!Number.isFinite(cancelMs)) return false
-  const nowMs = serverNow()
-  if (cancelMs > nowMs) return false
-  const detail = `${eewEventKey(eew)}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報`
-    + ` 発表=${new Date(issueMs).toISOString()} 自動解除=${new Date(cancelMs).toISOString()} いま=${new Date(nowMs).toISOString()}`
+function expiredEewDetail(eew: EEWAlert, issueMs: number, cancelMs: number): string {
+  return `${eewEventKey(eew)}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報`
+    + ` 発表=${new Date(issueMs).toISOString()} 自動解除=${new Date(cancelMs).toISOString()} いま=${new Date(serverNow()).toISOString()}`
     + ` M=${eew.earthquake.hypocenter.magnitude} 深さ=${eew.earthquake.hypocenter.depth}）`
-  if (!isServerClockTrusted()) {
-    log.debug(`[eew] ${path}: ${detail}は自動解除の時刻を過ぎて見えますが、時計が未較正なので採ります`)
-    return false
-  }
-  log.info(`[eew] ${path}: ${detail}は自動解除の時刻を ${Math.round((nowMs - cancelMs) / 1000)} 秒過ぎた報なので採りません`)
-  return true
-}
-
-/**
- * 画面から消えた地震の記憶を作る。**前に消えたときの記憶があれば、経路ごとの報番号と発表時刻は大きいほうを残す** ——
- * 台帳は消えた時点で捨てるので、載り直した地震の台帳は載り直した後の報しか数えていない。上書きすると記憶が縮み、
- * 前に消えたときの報を取り直しが返したとき通してしまう。取消で終えた印も、一度立てば落とさない（取消は終端）。
- */
-function mergeEndedEew(
-  previous: EndedEew | undefined, acceptance: EewAcceptance, cancelled: boolean, nowMs: number,
-  lastReport: EEWAlert, firstIssueTime: string | null | undefined,
-): EndedEew {
-  const serialBySeries = new Map(previous?.serialBySeries)
-  for (const [series, serial] of acceptance.serialBySeries) {
-    serialBySeries.set(series, Math.max(serial, serialBySeries.get(series) ?? serial))
-  }
-  const issues = [previous?.latestIssueMs, acceptance.latestIssueMs].filter((v): v is number => typeof v === 'number')
-  return {
-    serialBySeries,
-    latestIssueMs: issues.length > 0 ? Math.max(...issues) : null,
-    endedAtMs: nowMs,
-    cancelled: cancelled || (previous?.cancelled ?? false),
-    lastReport,
-    // 第 1 報の時刻は一度覚えたら変えない（前に消えたときの記憶が先）
-    firstIssueTime: previous?.firstIssueTime !== undefined ? previous.firstIssueTime : firstIssueTime,
-  }
 }
 
 /**
@@ -447,22 +423,140 @@ function marksFromHistory(
  * こちらだけ出ない形にはしない（→ `lpgmRowSnapshot`）。
  */
 export function applyLiveLpgmWithMarks(
-  prev: Pick<EarthquakeState, 'earthquakes' | 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
+  prev: Pick<EarthquakeState, 'earthquakes' | 'lpgmByEventId' | 'estimatedIntensities' | 'tsunamis' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
   lpgm: JMALpgm,
   now: number,
-): Pick<EarthquakeState, 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
+): Pick<EarthquakeState, 'earthquakes' | 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
   const next = applyLiveLpgm(prev.lpgmByEventId, lpgm)
-  const unmarked = { lpgmByEventId: next, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory }
-  if (lpgm.cancelled) return unmarked
+  const unmarked = { earthquakes: prev.earthquakes, lpgmByEventId: next, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory }
+  // 取消は、同じ地震のカードに「長周期地震動に関する観測情報は取り消されました」と理由を積み（→ `lpgmRetractionsIntoCards`）、
+  // その長周期から当てていた上段の値を、残った報の値へ戻す（2026-11-03 ユーザー選択「戻す (Recommended)」）
+  if (lpgm.cancelled) {
+    const retracted = lpgmRetractionsIntoCards(prev.earthquakes, [lpgmRetractionOf(lpgm)])
+    try {
+      return {
+        ...unmarked,
+        ...applyLatestFactsWithMarks(
+          { earthquakes: retracted, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory },
+          next, prev.estimatedIntensities, prev.tsunamis, now,
+        ),
+      }
+    } catch (err) {
+      log.error('[lpgm] 長周期の取消で上段を戻す印を付けられなかった（取消は積んだ）', { eventId: lpgm.eventId, err })
+      return { ...unmarked, earthquakes: latestQuakeFactsIntoCards(retracted, next, prev.estimatedIntensities, prev.tsunamis) }
+    }
+  }
   // **印付けが投げても一覧の更新は通す。** ここは `setState` の更新関数の中で走るので、
   // 投げると周りの受け皿に届かず描画中の例外になり、画面ごと落ちる。印は補助なので、
   // 付け損ねたら記録を残して据え置く。
   try {
-    return markedLpgmState(prev, lpgm, next, now)
+    const lpgmMarked = markedLpgmState(prev, lpgm, next, now)
+    // 長周期が地震情報より新しい値を運んでいれば、地震カードの上段へ当てる（→ `utils/latestQuakeFacts.ts`）
+    return {
+      ...lpgmMarked,
+      ...applyLatestFactsWithMarks(
+        { earthquakes: prev.earthquakes, quakeUpdateMarks: lpgmMarked.quakeUpdateMarks, quakeMarkMemory: lpgmMarked.quakeMarkMemory },
+        next, prev.estimatedIntensities, prev.tsunamis, now,
+      ),
+    }
   } catch (err) {
     log.error('[lpgm] 長周期の一覧の更新の印を付けられなかった（一覧は更新した）', { eventId: lpgm.eventId, err })
     return unmarked
   }
+}
+
+/**
+ * 履歴から組み直したカードへ、津波から借りる値と、長周期・推計の新しい値を当てる（→ `borrowFromTsunamiIntoCards`・
+ * `utils/latestQuakeFacts.ts`）。**長周期・推計で値が変わったカードは、印の記憶も当てた後の値で書き直す** —— 記憶は
+ * 畳み込みの途中で地震情報の値から作られている。直さないと、次に届く報が「出ていた値」ではなく地震情報の値と比べられ、
+ * 動いていない欄に印が付く（2026-11-03 ユーザー選択「出ていた値と比べて付ける (Recommended)」）。
+ *
+ * `markMemory` は書き換える（畳み込みが作った、この更新だけの Map）。印は出さない（履歴は「もう起きたこと」なので）。
+ */
+function settleHistoryCards(
+  cards: JMAQuake[],
+  markMemory: Map<string, QuakeMarkMemory>,
+  tsunamis: readonly JMATsunami[],
+  lpgmByEventId: ReadonlyMap<string, JMALpgm>,
+  estimatedIntensities: readonly JMAEstimatedIntensity[],
+  /** 長周期の取消の台帳。取り消されたことをカードへ積む（→ `lpgmRetractionsIntoCards`） */
+  lpgmRetractions: readonly LpgmRetraction[],
+): JMAQuake[] {
+  const borrowed = lpgmRetractionsIntoCards(borrowFromTsunamiIntoCards(cards, tsunamis), lpgmRetractions)
+  const shown = latestQuakeFactsIntoCards(borrowed, lpgmByEventId, estimatedIntensities, tsunamis)
+  if (shown === borrowed) return borrowed
+  shown.forEach((card, i) => {
+    if (card === borrowed[i]) return
+    rememberQuakeCard(markMemory, quakeEventKey(card), {
+      facts: quakeFactSnapshot(card),
+      rows: quakeRowSnapshot(card.points, card.cities ?? [], getAreaPrefIndexCache()),
+      issuedAt: markIssuedAt(card.issue.time),
+      reportType: card.issue.type,
+      // 地震情報の電文の報ではない（`Revise` も欄の初出も使わない）
+      telegramType: null,
+      revise: null,
+    })
+  })
+  return shown
+}
+
+/**
+ * 長周期・推計の報を受けたとき、その値を地震カードの上段へ当て（→ `utils/latestQuakeFacts.ts`）、**値が変わったカードに
+ * だけ**更新の印を進める。比べる相手はそのカードが出していた値の記憶なので、印は「出ていた値と比べて」付く
+ * （2026-11-03 ユーザー選択「出ていた値と比べて付ける (Recommended)」）。
+ *
+ * 1 枚も変わらなければ元の参照をそのまま返す（一覧も印も描き直させない）。
+ */
+export function applyLatestFactsWithMarks(
+  prev: Pick<EarthquakeState, 'earthquakes' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
+  lpgmByEventId: ReadonlyMap<string, JMALpgm>,
+  estimatedIntensities: readonly JMAEstimatedIntensity[],
+  tsunamis: readonly JMATsunami[],
+  now: number,
+): Pick<EarthquakeState, 'earthquakes' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
+  const next = latestQuakeFactsIntoCards(prev.earthquakes, lpgmByEventId, estimatedIntensities, tsunamis)
+  // **受け取った欄だけを返す。** `prev` そのものを返すと、呼び出し側が展開したとき、他の欄（同じ更新で新しくした推計の
+  // 一覧など）を古い値で上書きする
+  if (next === prev.earthquakes) {
+    return { earthquakes: prev.earthquakes, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory }
+  }
+  let marks: ReadonlyMap<string, QuakeCardMarks> = prev.quakeUpdateMarks
+  let memory: ReadonlyMap<string, QuakeMarkMemory> = prev.quakeMarkMemory
+  const liveKeys = liveMarkKeys(next, lpgmByEventId)
+  next.forEach((card, i) => {
+    if (card === prev.earthquakes[i]) return
+    const key = quakeEventKey(card)
+    const before = memory.get(key)
+    const beforeMarks = marks.get(key)
+    const state = advanceQuakeMarks({
+      prev: { memory, marks },
+      key,
+      snapshot: {
+        facts: quakeFactSnapshot(card),
+        // 当てて変わるのは上段だけで、行（観測点・市町村）は変わらない。前の写しをそのまま使う
+        rows: before?.rows ?? quakeRowSnapshot(card.points, card.cities ?? [], getAreaPrefIndexCache()),
+        issuedAt: markIssuedAt(card.issue.time),
+        reportType: card.issue.type,
+        // **電文の種別は、直前の地震情報のものを引き継ぐ。** 長周期・推計は行を運ばない報なので、ここで種別を書き換えると、
+        // 次の地震情報が `Revise` と欄の初出を使えなくなる（→ `advanceQuakeMarks` の `sameTelegramType`）
+        telegramType: before?.telegramType ?? null,
+        revise: null,
+      },
+      liveKeys,
+      now,
+    })
+    marks = state.marks
+    memory = state.memory
+    // **直前の地震情報が付けた行の印は残す。** 行はこの報で変わっていないので、消すと「その地震情報で増えた観測点」の印が
+    // 上段の値が動いただけで消える
+    if (beforeMarks && beforeMarks.rows.size > 0 && now - beforeMarks.markedAt < UPDATE_MARK_TTL_MS) {
+      const after = marks.get(key)
+      const kept = new Map(marks)
+      kept.set(key, { facts: after?.facts ?? new Map(), rows: beforeMarks.rows, markedAt: after?.markedAt ?? beforeMarks.markedAt })
+      marks = kept
+    }
+  })
+  return { earthquakes: next, quakeUpdateMarks: marks, quakeMarkMemory: memory }
 }
 
 function markedLpgmState(
@@ -472,7 +566,8 @@ function markedLpgmState(
   now: number,
 ): Pick<EarthquakeState, 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
   const key = lpgmMarkKey(lpgm.eventId)
-  // 長周期の欄が出す震源名・規模・深さ・全国の最大震度（→ `lpgmFactSnapshot`。地震カードと同じ写し方）
+  // 長周期の報が運ぶ震源名・規模・深さ・全国の最大震度（→ `lpgmFactSnapshot`。地震カードと同じ写し方）。長周期の欄には
+  // もう出さない（上段へ当てる。→ `applyLatestFactsWithMarks`）が、続報で値が消えたことの記録に使う
   const facts = lpgmFactSnapshot(lpgm)
   const vanished = vanishedFacts(prev.quakeMarkMemory.get(key)?.facts, facts)
   if (vanished.length > 0) {
@@ -526,13 +621,19 @@ export interface EarthquakeState {
   tsunamis: JMATsunami[]
   activeEEWs: ReadonlyMap<string, EEWAlert>
   lpgmByEventId: ReadonlyMap<string, JMALpgm>
+  /** 南海トラフ地震臨時情報。**最新の 1 通だけ持つ**（新しい報が前の報を置き換える。2026-11-04 ユーザー選択「臨時情報は最新で置き換える (Recommended)」） */
   nankai: JMANankai | null
-  nankaiCommentary: JMANankaiCommentary | null
-  kohatsu: JMAKohatsu | null
-  /** 地震・津波に関するお知らせ（VZSE40）。最新の 1 通だけ持つ */
-  quakeNotice: JMAQuakeNotice | null
-  /** 地震回数に関する情報（VXSE60）。最新の 1 通だけ持つ */
-  earthquakeCount: JMAEarthquakeCount | null
+  /**
+   * 南海トラフ地震関連解説情報。**帯に積む一覧（新しい順）**。同じ期間の臨時解説（同じ `eventId`）の号は置き換え、
+   * 別の期間・定例解説（電文ごとに `eventId` が変わる）は積む（→ `utils/specialInfoBandList.ts`）
+   */
+  nankaiCommentaryList: readonly JMANankaiCommentary[]
+  /** 北海道・三陸沖後発地震注意情報の一覧（新しい順）。同じ `eventId` の報は置き換える */
+  kohatsuList: readonly JMAKohatsu[]
+  /** 地震・津波に関するお知らせ（VZSE40）の一覧（新しい順）。1 通ずつが別件（`id` で見分ける） */
+  quakeNoticeList: readonly JMAQuakeNotice[]
+  /** 地震回数に関する情報（VXSE60）の一覧（新しい順）。同じ群発（`eventId`）の報は置き換える */
+  earthquakeCountList: readonly JMAEarthquakeCount[]
   /**
    * 推計震度分布図（IXAC41・IXAC40）。**地震ごとに 1 通**（その地震の最新）を持つ。
    *
@@ -549,7 +650,7 @@ export interface EarthquakeState {
   estimatedIntensities: readonly JMAEstimatedIntensity[]
   /**
    * 国際津波関連情報（WEPA60）。届いた報をすべて持ち、遠地地震のカードが発生時刻で引く
-   * （→ `internationalTsunamisFor`）。**音・読み上げ・通知は無い**（2026-10-30 ユーザー選択
+   * （→ `internationalTsunamiIndex`）。**音・読み上げ・通知は無い**（2026-10-30 ユーザー選択
    * 「受けて英文のまま出す (Recommended)」）。入れるのは `upsertInternationalTsunami` だけ。
    * 発表は年に数通（通信試験を含む）なので件数に上限は置かない。
    */
@@ -660,8 +761,12 @@ function logEewExpiry(key: string, decision: EewExpiryDecision): void {
   if (decision.kind !== 'expire') return
   const reason = {
     'no-bundle': '結び付く揺れ検知の束が無い',
+    'no-network-data': '結び付く揺れ検知の束が無い（観測点の一覧が無いか強震モニタが止まっていて、観測網へ波が届くのを待てなかった）',
+    'first-arrival-elapsed': '最寄りの観測点へ P 波が届く見込みから 60 秒待ったが、広がる束が無かった',
     'grace-elapsed': '束に点が加わらなくなって 30 秒が過ぎた',
-    'cap': '式の時刻から 5 分の上限に当たった',
+    's-arrival-elapsed': '束の場所へ S 波が届く見込みから 30 秒が過ぎた',
+    'cap': '式の時刻から 5 分の上限に当たった（束はまだ広がっていた）',
+    'cap-first-arrival': '式の時刻から 5 分の上限に当たった（観測網へ波が届くのを待っていた）',
     'formula-unknown': '式の時刻を決められない',
   }[decision.reason]
   const line = `[eew] 自動解除: key=${key} 理由=${reason}`
@@ -716,10 +821,10 @@ export function useEarthquakes(
     activeEEWs: new Map(),
     lpgmByEventId: new Map(),
     nankai: null,
-    nankaiCommentary: null,
-    kohatsu: null,
-    quakeNotice: null,
-    earthquakeCount: null,
+    nankaiCommentaryList: EMPTY_BAND_LISTS.nankaiCommentary,
+    kohatsuList: EMPTY_BAND_LISTS.kohatsu,
+    quakeNoticeList: EMPTY_BAND_LISTS.quakeNotice,
+    earthquakeCountList: EMPTY_BAND_LISTS.earthquakeCount,
     estimatedIntensities: [],
     internationalTsunamis: [],
     quakeUpdateMarks: new Map(),
@@ -758,17 +863,17 @@ export function useEarthquakes(
     return () => clearInterval(timer)
   }, [])
 
-  // 国際津波関連情報は遠地地震のカードにだけ畳んで出すので、付く先が無い報は画面のどこにも出ない。
-  // 黙って消えないよう、1 報につき 1 回だけ記録する（遠地地震の情報が後から届けば、そのとき付く）
+  // 国際津波関連情報で付く地震カードの無い報は、英文だけのカードとして一覧に出る（→ `internationalTsunamiIndex`）。
+  // 発生時刻を読めなかった報だけはどこにも出ないので、黙って消えないよう 1 報につき 1 回だけ記録する
   const reportedUnattachedRef = useRef(new Set<string>())
   useEffect(() => {
-    for (const x of unattachedInternationalTsunamis(state.earthquakes, state.internationalTsunamis)) {
+    for (const x of internationalTsunamiIndex(state.earthquakes, state.internationalTsunamis).unattached) {
       if (reportedUnattachedRef.current.has(x.id)) continue
       reportedUnattachedRef.current.add(x.id)
       if (x.originTime === undefined) {
         log.warn(`[quake] 国際津波関連情報の発生時刻を読めず、どの地震カードにも付きません（画面に出ません）: ${x.title} ${x.time}`)
       } else {
-        log.info(`[quake] 国際津波関連情報に付く遠地地震のカードがまだありません（届けば付きます）: ${x.title} 発生 ${x.originTime}`)
+        log.info(`[quake] 国際津波関連情報に付く地震カードが無いので、英文だけのカードで出します（地震情報が届けばそのカードに付きます）: ${x.title} 発生 ${x.originTime}`)
       }
     }
   }, [state.earthquakes, state.internationalTsunamis])
@@ -852,15 +957,10 @@ export function useEarthquakes(
   // 1 ティックの中で複数のイベントを処理する（理由は `eewAcceptanceRef` の宣言箇所に同じ）。
   // こちらは反映した時点で即座に進むため、同じティックの中でも正しく比べられる。
   const shownNankaiEventIdRef = useRef<string | null>(null)
-  const shownKohatsuEventIdRef = useRef<string | null>(null)
-  // 解説情報だけは `id`（識別情報と号数の組）で持つ。理由は `applyNankaiCommentary` の照合箇所。
-  const shownCommentaryIdRef = useRef<string | null>(null)
-  // 表示中のお知らせ。取消は元のお知らせの `EventID` しか持たないので、`id` と並べて覚える
-  // （照合は `applyQuakeNotice`）。
-  const shownQuakeNoticeRef = useRef<{ id: string; eventId: string } | null>(null)
-  // 表示中の地震回数の群発識別子。**取消が自分宛かを同期的に判定する**ために持つ
-  // （`setState` の中で照合すると、読み上げを起こすかどうかをその場で返せない）。
-  const shownEarthquakeCountEventIdRef = useRef<string | null>(null)
+  // 帯に積んでいる 4 種の一覧（state の `nankaiCommentaryList` 等と同じもの）。**取消が自分宛かを同期的に判定する**ために
+  // ref でも持つ（理由は上に同じ。`setState` の中で照合すると、読み上げを起こすかどうかをその場で返せない）。
+  // 書くのは `commitBandList` とリセットだけ。要素は state と同じ参照なので、本体を二重に抱えることはない。
+  const bandListsRef = useRef<BandLists>(EMPTY_BAND_LISTS)
   // 現在の state を WS コールバック内から参照するための ref
   const stateRef = useRef(state)
   stateRef.current = state
@@ -1000,7 +1100,7 @@ export function useEarthquakes(
   // VXSE51 受信時に震度データをキャッシュし、後続の VXSE52（震源情報）に補完する。
   // VXSE52 は震源のみで震度を持たないため、VXSE51 の maxScale・points を引き継ぐ。
   // `report` は控えた震度速報の発表時刻・作成時刻（取消がこの報より後かを比べるため）
-  const quakeIntensityCacheRef = useRef<Map<string, { maxScale: IntensityScale; points: EarthquakePoint[]; report: ReportAge }>>(new Map())
+  const quakeIntensityCacheRef = useRef<QuakeIntensityCache>(new Map())
   // 取消を見た事実の台帳。取消の後に届いた報のうち「取消より前に発表されたもの」を捨てるために使う
   // （判定は `isRetractedQuakeReport`。切り分けの理由は docs/spec/quake-spec.md §6.2）。
   //
@@ -1021,13 +1121,10 @@ export function useEarthquakes(
   // 言い分けるのに使う（→ `isNewEstimatedIntensity`）。**持っている一覧では代われない** ——
   // 履歴から黙って取り込んだ分布は持っているが、まだ伝えていない。
   const shownEstimatedIntensityArrivalsRef = useRef<string[]>([])
-  // 後発地震注意情報（VYSE60）の帯を発表から 7 日で畳むタイマー（電文に期限は無く、7 日はアプリの都合）
-  const kohatsuExpireTimerRef = useRef<number | undefined>(undefined)
-  // 南海トラフ地震関連解説情報（VYSE51/52）の7日間有効期限タイマー。
-  // 解説情報には解除電文が無く、定例解説は平常時にも毎月届く。期限で畳まないと帯が常駐する。
-  const nankaiCommentaryExpireTimerRef = useRef<number | undefined>(undefined)
-  const quakeNoticeExpireTimerRef = useRef<number | undefined>(undefined)
-  const earthquakeCountExpireTimerRef = useRef<number | undefined>(undefined)
+  // 帯に積む 4 種の一覧から、届いて 7 日（`expireAt`）を過ぎた報を 1 件ずつ外す予約。種類ごとに 1 本で、
+  // いちばん早い期限に合わせて張り直す（→ `commitBandList`）。電文に期限は無く、7 日はアプリの都合。
+  // 解説情報には解除電文が無く、定例解説は平常時にも毎月届く。期限で外さないと帯が常駐する。
+  const bandExpireTimersRef = useRef<Partial<Record<BandListKind, number>>>({})
   // イベントキュー: ディスパッチャーが 10ms ごとに、発火時刻の来たものを先頭から処理する。
   // リプレイ時は eventTime と再生時刻を比較して発火制御する（並びと取り出しの規約は `EventQueue`）。
   const eventQueueRef = useLazyRef<EventQueue>(createEventQueue)
@@ -1172,171 +1269,150 @@ export function useEarthquakes(
   }, [])
 
   /**
-   * 後発地震注意情報を帯へ反映する。失効の予約もここで持つ。
+   * 帯に積む 4 種の一覧を置き換え、期限の予約を張り直す。**一覧を書くのはここだけ**（とリセット）。
+   *
+   * 期限の予約は種類ごとに 1 本で、一覧の中のいちばん早い期限に合わせる。発火したら、**予約した期限までの報を
+   * 外して**（1 件ずつ消える。2026-11-04 ユーザー選択）残りで張り直す。発火した時点の時計で比べ直さないのは
+   * `dropExpiredUpTo` の理由のとおり。期限までの待ちに使う「いま」は getTimeRef（= clock の serverDate）で、
+   * 過去日の再生でも「届いて 7 日」が再生時計の上で数えられる。
+   */
+  const commitBandList = useCallback(function commit<K extends BandListKind>(kind: K, list: BandLists[K]): void {
+    if (bandListsRef.current[kind] === list) return
+    bandListsRef.current = { ...bandListsRef.current, [kind]: list }
+    const field = BAND_LIST_FIELDS[kind]
+    setState(prev => ({ ...prev, [field]: list }))
+    const timers = bandExpireTimersRef.current
+    if (timers[kind] !== undefined) {
+      window.clearTimeout(timers[kind])
+      delete timers[kind]
+    }
+    const untilMs = earliestExpiryMs(list)
+    if (untilMs === null) return
+    timers[kind] = window.setTimeout(() => {
+      delete timers[kind]
+      commit(kind, dropExpiredUpTo<BandListItem>(bandListsRef.current[kind], untilMs) as BandLists[K])
+    }, Math.max(0, untilMs - getTimeRef.current().getTime()))
+  }, [])
+
+  /**
+   * 後発地震注意情報を帯へ反映する。**同じ `eventId` の報は置き換え、別の `eventId` は積む。**
    * 呼ぶ場所と戻り値の意味は `applyNankai` に同じ。
    */
   const applyKohatsu = useCallback((kohatsu: JMAKohatsu): boolean => {
-    // **期限タイマーは、この報を帯へ当てると決めてから止める。** 先に止めると、別の情報単位宛ての取消や
-    // 期限切れの古い報が届いたとき、帯は残るのに表示中の報の期限だけが失われて居座る（お知らせと同じ）。
-    const clearExpireTimer = () => {
-      if (kohatsuExpireTimerRef.current !== undefined) {
-        window.clearTimeout(kohatsuExpireTimerRef.current)
-        kohatsuExpireTimerRef.current = undefined
-      }
-    }
-    // 判定は中継のプッシュ通知と共用する（→ `kohatsuBandDecision`）
-    const kohatsuDecision = kohatsuBandDecision(shownKohatsuEventIdRef.current, kohatsu, getTimeRef.current().getTime())
+    const list = bandListsRef.current.kohatsu
+    // 判定は中継のプッシュ通知と共用する（→ `kohatsuBandDecision`。一覧から照合先を選ぶのが `kohatsuListDecision`）
+    const kohatsuDecision = kohatsuListDecision(list.map(k => k.eventId), kohatsu, getTimeRef.current().getTime())
     if (!kohatsu.cancelled) {
-      const expireMs = new Date(kohatsu.expireAt).getTime() - getTimeRef.current().getTime()
-      // **期限切れは出さない。** かつては取得側（`fetchDmdataKohatsu`）が期限切れを除いて
-      // 返していたので、ここへは届かなかった。履歴をアーカイブ経由の 1 本へ寄せたことで
-      // **遡り幅の中の最新 1 通がそのまま渡る**ようになり、期限切れも届く。
-      // タイマーを張らないだけでは足りない —— 表示は出たまま、消える契機が 1 つも無くなる。
-      //
-      // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない
-      // （解説情報・地震回数・お知らせと同じ方針）。
+      // **期限切れは出さない。** 履歴はアーカイブ経由で遡り幅の中の報がそのまま渡るので、期限切れも届く。
+      // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない（解説情報・地震回数・お知らせと同じ方針）。
       if (!kohatsuDecision.apply) {
         if (kohatsuDecision.reason === 'badExpire') log.warn('[data] 後発地震注意情報の期限を計算できません', kohatsu.expireAt)
         return false
       }
-
-      clearExpireTimer()
-      kohatsuExpireTimerRef.current = window.setTimeout(() => {
-        kohatsuExpireTimerRef.current = undefined
-        shownKohatsuEventIdRef.current = null
-        setState(prev => ({ ...prev, kohatsu: null }))
-      }, expireMs)
-      shownKohatsuEventIdRef.current = kohatsu.eventId
-      setState(prev => ({ ...prev, kohatsu }))
+      const next = putBandItem(list, kohatsu, shown => shown.eventId === kohatsu.eventId)
+      if (next === null) {
+        log.info(`[kohatsu] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${kohatsu.id}`)
+        return false
+      }
+      commitBandList('kohatsu', next)
       return true
     }
-    // 照合は取消だけ（理由は `applyNankai`）。後発地震に「調査終了」相当の段階は無いが、
-    // 判定の形を揃えておく ―― 片方だけ違う規則にすると、次に触る人がどちらが正しいか判らない。
+    // 照合は取消だけ（理由は `applyNankai`）。取消が指す情報単位（`eventId`）の報だけを外す。
     if (!kohatsuDecision.apply) {
-      // 表示していない場合もここへ来る（理由は `applyNankai` の同じ箇所に同じ）
-      log.info(shownKohatsuEventIdRef.current === null
+      // 一覧が空の場合もここへ来る（理由は `applyNankai` の同じ箇所に同じ）
+      log.info(list.length === 0
         ? `[kohatsu] 表示していない情報単位への取消のため帯は触りません received=${kohatsu.eventId}`
-        : `[kohatsu] 別の情報単位への取消のため帯を残します received=${kohatsu.eventId} shown=${shownKohatsuEventIdRef.current}`)
+        : `[kohatsu] 別の情報単位への取消のため帯を残します received=${kohatsu.eventId} shown=${list.map(k => k.eventId).join(',')}`)
       return false
     }
-    clearExpireTimer()
-    shownKohatsuEventIdRef.current = null
-    setState(prev => ({ ...prev, kohatsu: null }))
+    commitBandList('kohatsu', list.filter(k => k.eventId !== kohatsu.eventId))
     return true
-  }, [])
+  }, [commitBandList])
 
+  /**
+   * 南海トラフ地震関連解説情報を反映する。**同じ期間の臨時解説（同じ `eventId`）の号は置き換え、別の期間・定例解説は積む**
+   * （定例解説は電文ごとに `eventId` が変わるので別件になる）。期限切れの報は出さない。
+   */
   const applyNankaiCommentary = useCallback((commentary: JMANankaiCommentary): boolean => {
-    // 取消電文は帯を消す。**戻り値は帯を消したか**（他の帯と同じ）。音と読み上げは帯を消したかによらず
+    const list = bandListsRef.current.nankaiCommentary
+    // 判定は中継のプッシュ通知と共用する（→ `nankaiCommentaryBandDecision`。一覧から照合先を選ぶのが `nankaiCommentaryListDecision`）
+    const commentaryDecision = nankaiCommentaryListDecision(list.map(c => c.id), commentary, getTimeRef.current().getTime())
+    // 取消電文は、指す号を一覧から外す。**戻り値は帯を変えたか**（他の帯と同じ）。音と読み上げは帯を変えたかによらず
     // 起こす（解説情報の設定がオンの端末だけ。2026-10-22 ユーザー選択「設定を入れたときだけ鳴らし読む
     // (Recommended)」・2026-10-24 ユーザー選択「伝える (Recommended)」。→ `decideDispatch`）
     if (commentary.cancelled) {
-      // 失効の予約と同じく、消す前に `id` を照合する（待っている間に新しい解説へ入れ替わって
-      // いた場合にそちらを消さないため）。
+      // **照合は `id`（識別情報と号数の組）。`eventId` では足りない。** 臨時解説（VYSE51）は一連の期間で `eventId` が固定で、
+      // 号数は `Serial` にしか出ない（→ docs/spec/data-sources-spec.md §2 の表）。`eventId` だけを比べると、連日届く別の号を
+      // 同じものとして扱う。
       //
-      // **`eventId` では足りない。** 臨時解説（VYSE51）は一連の期間で `eventId` が固定で、
-      // 号数は `Serial` にしか出ない（→ docs/spec/data-sources-spec.md §2 の表）。`eventId` だけを
-      // 比べると、連日届く別の号を同じものとして扱い、照合が素通りする。`id` は両方を含む。
-      //
-      // **`id` を要求しても正当な取消は弾かれない。** 取消電文の `Serial` は「直前の時点における
-      // 最新の情報番号の値」と定められている（電文解説資料 Ⅰ.別紙ウ 2.）ので、帯に出している号
-      // （＝最新号）と一致する。古い号を指す取消だけが弾かれる ―― それがここで防ぎたいもの。
-      const shown = shownCommentaryIdRef.current
-      // 判定は中継のプッシュ通知と共用する（→ `nankaiCommentaryBandDecision`）
-      if (!nankaiCommentaryBandDecision(shown, commentary, getTimeRef.current().getTime()).apply) {
-        log.info(`[nankaiCommentary] 別の号への取消のため帯を残します received=${commentary.id} shown=${shown}`)
+      // **`id` を要求しても正当な取消は弾かれない。** 取消電文の `Serial` は「直前の時点における最新の情報番号の値」と
+      // 定められている（電文解説資料 Ⅰ.別紙ウ 2.）ので、一覧に積んでいる号（その期間の最新号）と一致する。古い号を指す
+      // 取消だけが弾かれる ―― それがここで防ぎたいもの。
+      if (!commentaryDecision.apply) {
+        log.info(`[nankaiCommentary] 帯に積んでいない号への取消のため帯を残します received=${commentary.id} shown=${list.map(c => c.id).join(',')}`)
         return false
       }
-      // **期限タイマーは号を照合した後で止める**（お知らせと同じ）。先に止めると、別の号への取消で
-      // 帯は残るのに 7 日の期限だけが失われて居座る。
-      if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-        window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-        nankaiCommentaryExpireTimerRef.current = undefined
-      }
-      shownCommentaryIdRef.current = null
-      setState(prev => ({ ...prev, nankaiCommentary: null }))
+      commitBandList('nankaiCommentary', list.filter(c => c.id !== commentary.id))
       return true
     }
-
-    const remainMs = new Date(commentary.expireAt).getTime() - getTimeRef.current().getTime()
     // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない。前者はパーサや
-    // 時刻シフト（testScenarioReplay）のバグを示すため記録を残す。判定は中継と共用する（→ `nankaiCommentaryBandDecision`）
-    const commentaryDecision = nankaiCommentaryBandDecision(shownCommentaryIdRef.current, commentary, getTimeRef.current().getTime())
+    // 時刻シフト（testScenarioReplay）のバグを示すため記録を残す。
     if (!commentaryDecision.apply) {
       if (commentaryDecision.reason === 'badExpire') log.warn('[data] 南海トラフ関連解説情報の期限を計算できません', commentary.expireAt)
       return false
     }
-
-    if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-      window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
+    const next = putBandItem(list, commentary, shown => shown.eventId === commentary.eventId)
+    if (next === null) {
+      log.info(`[nankaiCommentary] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${commentary.id}`)
+      return false
     }
-    shownCommentaryIdRef.current = commentary.id
-    setState(prev => ({ ...prev, nankaiCommentary: commentary }))
-    nankaiCommentaryExpireTimerRef.current = window.setTimeout(() => {
-      nankaiCommentaryExpireTimerRef.current = undefined
-      if (shownCommentaryIdRef.current === commentary.id) shownCommentaryIdRef.current = null
-      setState(prev => (
-        prev.nankaiCommentary?.id === commentary.id ? { ...prev, nankaiCommentary: null } : prev
-      ))
-    }, remainMs)
+    commitBandList('nankaiCommentary', next)
     return true
-  }, [])
+  }, [commitBandList])
 
   /**
-   * 地震・津波に関するお知らせ（VZSE40）を反映する。
+   * 地震・津波に関するお知らせ（VZSE40）を反映する。**1 通ずつが別件**（`id` は `EventID` と `Control/DateTime` の組。
+   * → `quakeNoticeId`）なので積む。同じ `id` が重ねて届いたら置き換える。
    *
-   * 帯の扱いは南海トラフ関連解説情報とほぼ同じ（最新の 1 通・7 日で畳む・取消で消す）。
    * **7 日は表示上の都合**で、気象庁が期限を定めているわけではない（後発地震注意情報の帯の 7 日も同じ）。
    *
-   * 戻り値は「画面の状態を変えたか」（帯を出した・取消で帯を消した）。呼び出し側は真のときだけ
+   * 戻り値は「画面の状態を変えたか」（帯に積んだ・取消で一覧から外した）。呼び出し側は真のときだけ
    * `onLiveEvent` へ流す（読み上げるかは受け手が設定で決める）。偽なら流さず、録画向けの記録を
-   * `notApplied` で残す —— 隣の `applyNankaiCommentary`・`applyKohatsu` と同じ形。
-   *
-   * **記録はこの関数の中で行わない。** かつてはお知らせだけが音も読み上げも持たず、この関数が
-   * `notDispatched` を自分で記録する唯一の例外だった。読み上げを持った（設定で有効にしたとき）ので、
-   * 他の帯と同じく呼び出し側が「流した／流さなかった理由」を記録する。
+   * `notApplied` で残す —— 隣の `applyNankaiCommentary`・`applyKohatsu` と同じ形。記録はこの関数の中で行わない。
    */
   const applyQuakeNotice = useCallback((notice: JMAQuakeNotice): boolean => {
+    const list = bandListsRef.current.quakeNotice
     if (notice.cancelled) {
-      // 消す前に、取消が表示中のお知らせ宛てかを照合する（待っている間に新しいお知らせへ
-      // 入れ替わっていたら、そちらを消さない）。
-      //
       // **照合は `EventID` で行う。`id` ではない。** 取消は元のお知らせの `EventID` を引き継ぐ ——
       // 気象庁公式のサンプル（`jmaxml_20260723_Samples.zip` の `42_03_01_220402_VZSE40.xml`）は発表時刻が 2022-04-02 06:58 なのに
       // `EventID` は `20220402050100`（＝05:01）で、自分の発表時刻ではなく**取り消す対象の発表時刻**を
       // 指している（発表側のサンプルでは `EventID` ＝自分の発表時刻）。`id` には電文の作成時刻が
       // 入るので（→ `quakeNoticeId`）、発表と取消で一致しない。
       //
-      // **同じ分に別のお知らせが出ていたら、どちら宛てかは電文から決められない。** 取消が持つのは
-      // 分までの `EventID` だけで、元のお知らせの作成時刻は載らない。表示中の 1 通と分が一致すれば
-      // 消す。**実配信の取消は未観測**（アーカイブの控えのお知らせ 605 通に 0 通。→ docs/spec/data-sources-spec.md §2
+      // **`EventID` と運用種別が同じものは、積まれている全件を外す。** 気象庁の解説資料（共通別紙ア・ウ）は、
+      // お知らせの「独立した情報単位」を情報名称・運用種別・識別情報（`EventID` ＝発表の日時分）の組とし、
+      // 取消は「『独立した情報単位』全体について…取り消す」と定めている。同じ分に出た 2 通は同じ単位なので、
+      // 取消は両方に効く（2026-11-04 ユーザー選択「気象庁どおりすべて外す (Recommended)」）。
+      // **実配信の取消は未観測**（全期間の控え 2020-11-18〜2026-10-31 のお知らせ 608 通に 0 通。→ docs/spec/data-sources-spec.md §2
       // 「扱う電文種別」）なので、届いたら形を確かめること。
       //
       // **`EventID` が空の取消は照合しない。** 空どうしは「同じお知らせ」の証拠にならない
       // （パーサーは空を記録して通す）。
-      const shown = shownQuakeNoticeRef.current
-      if (shown == null) {
+      if (list.length === 0) {
         log.info(`[quakeNotice] 表示中のお知らせが無いため取消を当てません received=${notice.eventId}`)
         return false
       }
-      if (notice.eventId === '' || shown.eventId !== notice.eventId) {
-        log.info(`[quakeNotice] 別のお知らせへの取消のため帯を残します received=${notice.eventId} shown=${shown.eventId}`)
+      const sameUnit = (n: JMAQuakeNotice) => n.eventId === notice.eventId && n.operationStatus === notice.operationStatus
+      const targets = notice.eventId === '' ? [] : list.filter(sameUnit)
+      if (targets.length === 0) {
+        log.info(`[quakeNotice] 帯に積んでいないお知らせへの取消のため帯を残します received=${notice.eventId} shown=${list.map(n => n.eventId).join(',')}`)
         return false
       }
-      // どのお知らせを消したかは記録に残す。同じ分に別のお知らせが出ていた場合、取消の本来の宛先とは
-      // 別の 1 通を消した可能性があり、それは後から id を突き合わせないと分からない。
-      log.info(`[quakeNotice] 取消で帯を消します eventId=${notice.eventId} shown=${shown.id} cancel=${notice.id}`)
-      // **期限タイマーは id を照合した後で止める。** 先に止めると、別のお知らせ宛ての取消が届いたとき、
-      // 表示中のお知らせの 7 日の期限だけが失われて帯が居座る。
-      if (quakeNoticeExpireTimerRef.current !== undefined) {
-        window.clearTimeout(quakeNoticeExpireTimerRef.current)
-        quakeNoticeExpireTimerRef.current = undefined
-      }
-      shownQuakeNoticeRef.current = null
-      setState(prev => ({ ...prev, quakeNotice: null }))
-      // **取消しの理由（パーサーは `body` に読んでいる）は画面に出さない。** 取消では帯ごと消え、
-      // 中身が運用連絡なので、消すためだけに帯を出し直すほどのものでもない。読み上げを有効にした
-      // 端末では、理由は読み上げが伝える（→ `quakeNoticeToText`）。
-      // **真を返す** —— 帯を消した（画面が変わった）ので、受け手へ流して取消を読ませる。
+      log.info(`[quakeNotice] 取消で一覧から外します eventId=${notice.eventId} shown=${targets.map(n => n.id).join(',')} cancel=${notice.id}`)
+      commitBandList('quakeNotice', list.filter(n => !sameUnit(n)))
+      // **取消しの理由（パーサーは `body` に読んでいる）は画面に出さない。** 中身が運用連絡なので、外すためだけに帯を
+      // 出し直すほどのものでもない。読み上げを有効にした端末では、理由は読み上げが伝える（→ `quakeNoticeToText`）。
+      // **真を返す** —— 一覧を変えた（画面が変わった）ので、受け手へ流して取消を読ませる。
       return true
     }
 
@@ -1347,26 +1423,20 @@ export function useEarthquakes(
       return false
     }
     if (remainMs <= 0) return false
-
-    if (quakeNoticeExpireTimerRef.current !== undefined) {
-      window.clearTimeout(quakeNoticeExpireTimerRef.current)
+    const next = putBandItem(list, notice, shown => shown.id === notice.id)
+    if (next === null) {
+      log.info(`[quakeNotice] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${notice.id}`)
+      return false
     }
-    shownQuakeNoticeRef.current = { id: notice.id, eventId: notice.eventId }
-    setState(prev => ({ ...prev, quakeNotice: notice }))
-    quakeNoticeExpireTimerRef.current = window.setTimeout(() => {
-      quakeNoticeExpireTimerRef.current = undefined
-      if (shownQuakeNoticeRef.current?.id === notice.id) shownQuakeNoticeRef.current = null
-      setState(prev => (prev.quakeNotice?.id === notice.id ? { ...prev, quakeNotice: null } : prev))
-    }, remainMs)
+    commitBandList('quakeNotice', next)
     return true
-  }, [])
+  }, [commitBandList])
 
   /**
-   * 地震回数に関する情報（VXSE60）を反映する。
+   * 地震回数に関する情報（VXSE60）を反映する。**同じ群発（`eventId`）の報は置き換え、別の群発は積む。**
    *
-   * 帯の扱いは南海トラフ関連解説情報・お知らせと同じ（最新の 1 通・7 日で畳む・取消で消す）。
    * **7 日は表示上の都合**で、気象庁が期限を定めているわけではない —— この情報に終わりの宣言は
-   * 無く、群発が収まれば発表が止まるだけ。畳む契機を次報と取消だけにすると、収まったあとも
+   * 無く、群発が収まれば発表が止まるだけ。外す契機を次報と取消だけにすると、収まったあとも
    * 帯が居座る。
    *
    * **区間も本文も無い報は反映しない。** 中身が空の帯を出しても伝わるものが無く、
@@ -1375,21 +1445,17 @@ export function useEarthquakes(
    * 「-1 を「発表なし」に (推奨)」）。
    */
   const applyEarthquakeCount = useCallback((count: JMAEarthquakeCount): boolean => {
-    // 判定は中継のプッシュ通知と共用する（→ `earthquakeCountBandDecision`）
-    const countDecision = earthquakeCountBandDecision(shownEarthquakeCountEventIdRef.current, count, getTimeRef.current().getTime())
+    const list = bandListsRef.current.earthquakeCount
+    // 判定は中継のプッシュ通知と共用する（→ `earthquakeCountBandDecision`。一覧から照合先を選ぶのが `earthquakeCountListDecision`）
+    const countDecision = earthquakeCountListDecision(list.map(c => c.eventId), count, getTimeRef.current().getTime())
     if (count.cancelled) {
       // 取消は id ではなく eventId で照合する。回数情報は同じ群発について報を重ねるので、
-      // 取消が指すのは「その群発について直前に出した報」＝いま出している報になる。
+      // 取消が指すのは「その群発について直前に出した報」＝一覧に積んでいるその群発の報になる。
       if (!countDecision.apply) {
-        log.info(`[earthquakeCount] 別の群発への取消のため帯を残します received=${count.eventId} shown=${shownEarthquakeCountEventIdRef.current}`)
+        log.info(`[earthquakeCount] 帯に積んでいない群発への取消のため帯を残します received=${count.eventId} shown=${list.map(c => c.eventId).join(',')}`)
         return false
       }
-      if (earthquakeCountExpireTimerRef.current !== undefined) {
-        window.clearTimeout(earthquakeCountExpireTimerRef.current)
-        earthquakeCountExpireTimerRef.current = undefined
-      }
-      shownEarthquakeCountEventIdRef.current = null
-      setState(prev => ({ ...prev, earthquakeCount: null }))
+      commitBandList('earthquakeCount', list.filter(c => c.eventId !== count.eventId))
       // **true を返す。** 読み上げ側が「取り消された」ことを伝えるため。false にすると
       // 取消がどこへも流れず、直前に読み上げた回数が訂正されないまま残る。
       return true
@@ -1399,20 +1465,14 @@ export function useEarthquakes(
       if (countDecision.reason === 'badExpire') log.warn('[data] 地震回数に関する情報の期限を計算できません', count.expireAt)
       return false
     }
-    const remainMs = new Date(count.expireAt).getTime() - getTimeRef.current().getTime()
-
-    if (earthquakeCountExpireTimerRef.current !== undefined) {
-      window.clearTimeout(earthquakeCountExpireTimerRef.current)
+    const next = putBandItem(list, count, shown => shown.eventId === count.eventId)
+    if (next === null) {
+      log.info(`[earthquakeCount] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${count.id}`)
+      return false
     }
-    shownEarthquakeCountEventIdRef.current = count.eventId
-    setState(prev => ({ ...prev, earthquakeCount: count }))
-    earthquakeCountExpireTimerRef.current = window.setTimeout(() => {
-      earthquakeCountExpireTimerRef.current = undefined
-      if (shownEarthquakeCountEventIdRef.current === count.eventId) shownEarthquakeCountEventIdRef.current = null
-      setState(prev => (prev.earthquakeCount?.id === count.id ? { ...prev, earthquakeCount: null } : prev))
-    }, remainMs)
+    commitBandList('earthquakeCount', next)
     return true
-  }, [])
+  }, [commitBandList])
 
   /**
    * 推計震度分布図（IXAC41）を反映する。**地震ごとに 1 通**を持つ（→ `upsertEstimatedIntensity`）。
@@ -1446,7 +1506,12 @@ export function useEarthquakes(
     }
     if (!update.apply) return null
     estimatedIntensitiesRef.current = list
-    setState(prev => ({ ...prev, estimatedIntensities: list }))
+    // 推計が地震情報より新しい値を運んでいれば、地震カードの上段へ当てる（→ `utils/latestQuakeFacts.ts`）
+    setState(prev => ({
+      ...prev,
+      estimatedIntensities: list,
+      ...applyLatestFactsWithMarks(prev, prev.lpgmByEventId, list, prev.tsunamis, Date.now()),
+    }))
     // 初報か続報かは**台帳**で決める。`update.reason` では決められない —— 履歴から黙って
     // 取り込んだ分布も「持っている」側に入るので、まだ伝えていない地震の分布が `newer` になる。
     const isNew = isNewEstimatedIntensity(shownEstimatedIntensityArrivalsRef.current, data.arrivalTime)
@@ -1488,29 +1553,6 @@ export function useEarthquakes(
    * `stateRef` はレンダー時にしか進まないので、それだけを見ると同じティックで捌かれた直前の報を
    * 反映できない（理由と、継ぎ足しで埋めようとして失敗した経緯は `pendingQuakeCardsRef`）。
    */
-  /**
-   * 震度を持たない電文（VXSE52/53）を、震度速報の震度で補う。
-   *
-   * **統合側と据え置き判定側で同じ述語を通す。** 補完の有無で `hasIntensity(incoming)` が
-   * 変わり、`quakeHoldBack` はそこで判定軸を切り替える（実震度を持つなら発表時刻・
-   * 持たないなら種別優先度）。片方だけ補完すると、**同じ電文について統合は受け入れ・判定は
-   * 据え置きと答える**形でずれる。
-   */
-  const fillIntensityFromCache = useCallback((quake: JMAQuake): JMAQuake => {
-    if (quake.earthquake.maxScale >= 0 || quake.points.length > 0) return quake
-    const cached = quakeIntensityCacheRef.current.get(quakeEventKey(quake))
-    if (!cached) return quake
-    // **補ったことに印を付ける**（`intensityFromCache`）。補った電文はそのままカードの控え
-    // （`sourceTelegrams`）へ積まれるので、元の震度速報が取り消されたとき、当て直しがこの印を
-    // 見て補った震度を外す（→ `quakeMerge.ts` の `applyQuakeCancelToCard`）。
-    return {
-      ...quake,
-      earthquake: { ...quake.earthquake, maxScale: cached.maxScale },
-      points: cached.points,
-      intensityFromCache: true,
-    }
-  }, [])
-
   const findQuakeCardForHoldBack = useCallback((quake: JMAQuake, index: AreaPrefIndex) => {
     const pending = pendingQuakeCardsRef.current
     // **写しにその地震が載っているなら、そちらで完結させる**（`?? stateRef` へ落とさない）。
@@ -1556,70 +1598,16 @@ export function useEarthquakes(
       : undefined
     // 取消の当て方も統合側と同じ（`applyQuakeCancelToCard`）。一部の取消なら写しも当て直した
     // カードにする —— 取消済みと載せると、直後の続報の判定が「取消済みだから受け入れる」側へ倒れる。
-    const effect = quake.cancelled && canceled
-      ? applyQuakeCancelToCard(canceled, quake, quakeRetractionsRef.current, index)
-      : undefined
-    const card = quake.cancelled
-      ? (effect?.kind === 'partial' ? effect.card
-        : effect?.kind === 'whole' && canceled ? { ...canceled, cancelledAt: getTimeRef.current() } : undefined)
-      // 記録は統合側（`setState` の中）が出す。ここで出すと同じ電文について二重に残る。
-      : mergeQuakeInto(existing, quake, { quiet: true })
+    // 統合の記録は統合側（`setState` の中）が出す（`quakeCardAfterReport` は黙って統合する）。
+    const card = quakeCardAfterReport({
+      existing, quake, cancelTarget: canceled, retractions: quakeRetractionsRef.current,
+      areaPrefIndex: index, cancelledAt: getTimeRef.current(),
+    })
     if (!card) return
     const list = pendingQuakeCardsRef.current
     const at = list.findIndex(c => sameQuakeEntry(c, card, index))
     if (at < 0) list.push(card)
     else list[at] = card
-  }, [])
-
-  /**
-   * その地震情報を**地震カードが採らないか**（据え置くか）。真なら音・読み上げ・ウィンドウ
-   * タイトル・自動タブ切替を起こさない（→ {@link LiveEventMeta.quakeHeldBack}。何を止めるかは
-   * 受け取る側が決める）。
-   *
-   * **判定は `quakeHoldBack` を統合側と共有する**（写しを持たない）。実例: 2024-11-26
-   * 22:47 の大阪府北部（完全版・最大震度1）の 55 秒後に、1 分後に起きた石川県西方沖の揺れが
-   * 紛れ込んだ震度速報（福井県嶺南・滋賀県北部の震度3）が同じ EventID で届く。カードは
-   * 据え置いていたのに、読み上げだけが「新たに最大震度3を…観測しました」と言い、ウィンドウ
-   * タイトルも「最大震度3」へ変わっていた。
-   * → docs/spec/quake-spec.md §6.3「据え置いた電文は、音・読み上げ・タイトル・タブ移動・選択・
-   * 分布モードのクローズも起こさない」
-   *
-   * **既存カードは同じティックの写しから引く**（`findQuakeCardForHoldBack`）。`stateRef` だけを
-   * 見ると鮮度が足りず、取消を処理した直後に**取消前のカードを既存として拾って**「画面には
-   * 新しいカードが出ているのに声だけ止まる」逆向きの食い違いを作る。
-   */
-  const isQuakeReportHeldBack = useCallback((existing: JMAQuake | undefined, quake: JMAQuake, retracted: boolean): boolean => {
-    // **統合側がその報を採らない門は 2 つある。** 片方だけを見ると、もう片方で捨てられた電文が
-    // 音・読み上げ・タイトル・タブ移動だけを動かす（→ docs/spec/quake-spec.md §6.3
-    //「カードが採らない門は 2 つ」）。
-    //
-    // ① 取消より前に発表された報（§6.2）。**`existing` を見ても分からない** —— 対象カードは
-    //    取消済みなので `findExistingQuakeCard` が候補から外し、`existing` は `undefined` に
-    //    なる。そのまま「据え置かない」へ倒すと、**画面には何も出ないのに声だけが鳴る**。
-    //    判定は統合側と同じ述語をそのまま使う（狭い条件＝種別一致・同じ地震・取消以前を持って
-    //    いる。ここを「取消を見たか」へ広げると、取消を経験した地震で以後ずっと黙る）。
-    //    **判断は受け取るだけ**（`retracted`）—— 入口で 1 回決めて、写しの更新と状態更新にも
-    //    同じ値が渡る（理由は `handleEvent` の `quakeRetracted`）。
-    if (retracted) {
-      log.info('[quake] 取消以前に発表された報なので音・読み上げ・タイトル・タブ移動を起こさない', {
-        incomingId: quake.id, incomingType: quake.issue.type, incomingTime: quake.time,
-      })
-      return true
-    }
-    // ② 据え置き（`quakeHoldBack`）。
-    if (!existing) return false
-    const held = quakeHoldBack(existing, quake)
-    if (!held) return false
-    // **記録するかも述語が決める**（`notable`）。ここで条件を書き下すと統合側の絞り込みを
-    // 書き写すことになり、片方だけ古くなったときにこちらの記録だけが溢れる。
-    if (held.notable) {
-      log.info('[quake] カードが採らない電文なので音・読み上げ・タイトル・タブ移動を起こさない', {
-        reason: held.reason, incomingId: quake.id, incomingType: quake.issue.type,
-        existingType: existing.issue.type,
-        droppedMaxScale: quake.earthquake.maxScale, droppedPoints: quake.points.length,
-      })
-    }
-    return true
   }, [])
 
   /**
@@ -1668,9 +1656,17 @@ export function useEarthquakes(
       const key = eewEventKey(incoming)
       if (!incoming.cancelled && !incoming.expired && !incoming.test) {
         const acceptance = eewAcceptanceRef.current.get(key)
-        const staleness = eewStaleness(acceptance, incoming)
         const previous = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
-        if (previous?.cancelled || previous?.cancelledAt) {
+        // 採るかの判定は共用の部品（→ `decideEewReportEntry`。中継のプッシュ通知も同じものを使う）。ここは決定を当てはめて記録を残す
+        const entry = decideEewReportEntry({
+          incoming, acceptance, previous, ended: eewEndedRef.current.get(key), nowMs: serverNow(),
+          // **静かに積まれた報（`isSilentRef`）には時刻の判定を掛けない** —— 起動時・張り直しの復元とリプレイの初期状態で、
+          // 鳴らないうえ、古さは取得側が判定している（`selectActiveEews`）。ここで落とすと、復元した側は読み上げの記憶と
+          // タブ移動を「戻した」つもりで進め、画面だけが空になる
+          checkExpired: !isSilentRef.current,
+          clockTrusted: isServerClockTrusted(),
+        })
+        if (entry.kind === 'cancelledTerminal') {
           // **取消は終端**（状態側と同じ。docs/spec/eew-spec.md §10）。入口で止めないと、状態は無視するのに
           // 音・通知が鳴る。
           log.debug(`[eew] 取消済みの速報へ届いた報を破棄: key=${key} 経路=${incoming.origin}`
@@ -1678,42 +1674,46 @@ export function useEarthquakes(
           recordSkippedTelegram(incoming, 'notApplied')
           return
         }
-        // **画面から消えた地震の報は採らない**（→ `eewEndedRef`・`endedEewMatch`）。台帳と写しは消えた時点で捨てるので、
-        // 消えた後に届いた同じ報・古い報は上の比べ方では「新しい報」に見え、終わった速報が音と読み上げごと戻る
-        // （強震モニタ（Yahoo）は、一覧から 2 回続けて欠けた項目が戻ると同じ報を出し直す）。取消で終えた地震は
-        // 報番号によらず採らない（取消は終端）。2026-10-21 ユーザー承認「おすすめで」
-        if (!acceptance && !previous && skipEndedEew(eewEndedRef.current, incoming, 'ライブの受信')) {
+        if (entry.kind === 'ended') {
+          // **画面から消えた地震の報は採らない**（→ `eewEndedRef`・`endedEewMatch`）。台帳と写しは消えた時点で捨てるので、
+          // 消えた後に届いた同じ報・古い報は上の比べ方では「新しい報」に見え、終わった速報が音と読み上げごと戻る
+          // （強震モニタ（Yahoo）は、一覧から 2 回続けて欠けた項目が戻ると同じ報を出し直す）。取消で終えた地震は
+          // 報番号によらず採らない（取消は終端）。2026-10-21 ユーザー承認「おすすめで」
+          logSkippedEndedEew(entry.ended, entry.match, incoming, 'ライブの受信')
           recordSkippedTelegram(incoming, 'notApplied')
           return
         }
-        // **自動解除の時刻を過ぎた報も採らない**（→ `skipExpiredEew`）。消えた地震の記憶はリセットで捨てるので、
-        // 差分を見る処理を作り直した直後に Yahoo の一覧に残る最終報が届くと、上の判定では止まらない。
-        // **画面に出ている地震には掛けない** —— 出ている地震は最終報（自動解除の予約）か取消で終わるので、
-        // 古い時刻の続報を入口で落とすと、続報が運ぶ値が届かないだけになる。
-        // **静かに積まれた報（`isSilentRef`）にも掛けない** —— 起動時・張り直しの復元とリプレイの初期状態で、
-        // 鳴らないうえ、古さは取得側が判定している（`selectActiveEews`）。ここで落とすと、復元した側は読み上げの記憶と
-        // タブ移動を「戻した」つもりで進め、画面だけが空になる。
-        if (!acceptance && !previous && !isSilentRef.current && skipExpiredEew(incoming, 'ライブの受信')) {
+        if (entry.kind === 'expired') {
+          // **自動解除の時刻を過ぎた報も採らない**（→ `decideEewReportEntry`）。消えた地震の記憶はリセットで捨てるので、
+          // 差分を見る処理を作り直した直後に Yahoo の一覧に残る最終報が届くと、上の判定では止まらない。
+          // **画面に出ている地震には掛けない** —— 出ている地震は最終報（自動解除の予約）か取消で終わるので、
+          // 古い時刻の続報を入口で落とすと、続報が運ぶ値が届かないだけになる。
+          log.info(`[eew] ライブの受信: ${expiredEewDetail(incoming, entry.issueMs, entry.cancelMs)}は自動解除の時刻を`
+            + ` ${Math.round((serverNow() - entry.cancelMs) / 1000)} 秒過ぎた報なので採りません`)
           recordSkippedTelegram(incoming, 'notApplied')
           return
         }
+        if (entry.kind === 'expiredUntrusted') {
+          log.debug(`[eew] ライブの受信: ${expiredEewDetail(incoming, entry.issueMs, entry.cancelMs)}は自動解除の時刻を過ぎて見えますが、時計が未較正なので採ります`)
+        }
+        const taken = entry.kind === 'expiredUntrusted' ? entry.then : entry
         // 第 1 報の時刻を覚える（一度覚えたら変えない。→ `eewFirstIssueTimeRef`）
         rememberEewFirstIssueTime(eewFirstIssueTimeRef.current, key, incoming)
-        if (staleness === 'olderFromOtherOrigin' && incoming.origin === 'dmdata' && previous) {
+        if (taken.kind === 'supplement') {
           // **捨てない。** Yahoo は 1 秒ごとに取りに行くので、速報が続くあいだは電文の報（中継の警報 VXSE43・
           // 自分の鍵の予報）が Yahoo の次の報より後に着くことがある。捨てると区域と仮定震源の別が
           // 一度も入らない（区域・仮定震源の別は電文から得る。docs/relay-server-design.md §0 の 2026-10-30 の行）。
           // 震源・震度・報番号は新しい側のまま。新しい報ではないので音・タブ移動は起こさない
           // （区分や予想の最大震度が上がったときだけ知らせる。2026-10-19 ユーザー承認・選んだ選択肢「上がったときだけ鳴らす」）。
-          eewMerged = supplementEewReport(previous, incoming)
+          eewMerged = taken.merged
           eewSupplement = true
-          eewSameReport = !raisesEewAlert(eewMerged, previous)
-          eewAcceptanceRef.current.set(key, acceptEewReport(acceptance, incoming))
+          eewSameReport = taken.sameReport
+          eewAcceptanceRef.current.set(key, taken.acceptance)
           eewLatestRef.current.set(key, eewMerged)
           log.debug(`[eew] 遅れて届いた電文の報で区域・仮定震源を補った: key=${key} 経路=${incoming.origin}`
             + ` 受信=#${eewSerial(incoming) ?? '(なし)'}/${eewIssueTimeMs(incoming) ?? '(なし)'}`
             + ` 受理済み=${acceptance?.latestIssueMs ?? '(なし)'}`)
-        } else if (staleness !== 'fresh') {
+        } else if (taken.kind === 'stale') {
           // 順序の入れ替わり自体は想定内だが、判定が誤り続けるとその EEW は以降更新されない。
           // 捨てた事実が残らないと原因に辿り着けないため記録する（頻度は 1 地震あたり数件）。
           log.debug(`[eew] 古い報を破棄: key=${key} 経路=${incoming.origin}`
@@ -1724,32 +1724,28 @@ export function useEarthquakes(
           if (incoming.everSpecialWarning) carryEverSpecialWarning(key, `入口で古い報として捨てた報 経路=${incoming.origin}`)
           return
         } else {
-          eewMerged = mergeEewReport(previous, incoming)
-          // **区分や予想の最大震度が上がった報は「同じ報」として黙らせない**（上がったこと自体を知らせる）。
-          // 同じ秒に別の報が出ることがある（能登本震の実配信で 46 報中 13 報）ので、秒だけでは
-          // 「同じ報」と言い切れない —— 値が上がっていれば知らせる側へ倒す。
-          eewSameReport = previous !== undefined
-            && isSameReportFromOtherOrigin(acceptance, incoming)
-            && !raisesEewAlert(eewMerged, previous)
+          eewMerged = taken.merged
+          eewSameReport = taken.sameReport
           if (eewSameReport) {
             log.debug(`[eew] 別の経路から受けた同じ報のため音・タブ移動を止める: key=${key} 経路=${incoming.origin}`
               + ` 発表=${eewIssueTimeMs(incoming) ?? '(なし)'}`)
           }
-          const accepted = acceptEewReport(acceptance, incoming)
-          eewAcceptanceRef.current.set(key, eewSameReport ? accepted : noteEewNotified(accepted, incoming))
+          eewAcceptanceRef.current.set(key, taken.acceptance)
           eewLatestRef.current.set(key, eewMerged)
         }
       } else if (incoming.expired || incoming.test) {
         // 自動解除は、消えた地震の記憶をこの場で書く（effect でも書くが、それを待つと同じティックに続けて届いた誤報取消を
         // 「消えた後の取消」と見分けられない。2026-10-22 ユーザー承認「直す (Recommended)」）。取消で終えた地震は対象外
         if (incoming.expired) {
-          const shown = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
-          const acceptance = eewAcceptanceRef.current.get(key)
-          if (shown && acceptance && !shown.cancelled && !shown.cancelledAt) {
-            const { cancelledAt: _cancelledAt, ...lastReport } = shown
-            eewEndedRef.current.set(key, mergeEndedEew(
-              eewEndedRef.current.get(key), acceptance, false, serverNow(), lastReport, eewFirstIssueTimeRef.current.get(key),
-            ))
+          const ended = endEewOnExpiry({
+            ended: eewEndedRef.current.get(key),
+            shown: eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key),
+            acceptance: eewAcceptanceRef.current.get(key),
+            nowMs: serverNow(),
+            firstIssueTime: eewFirstIssueTimeRef.current.get(key),
+          })
+          if (ended) {
+            eewEndedRef.current.set(key, ended)
             eewExpiringRef.current.add(key)
           }
         }
@@ -1765,14 +1761,18 @@ export function useEarthquakes(
         // （2026-10-21 ユーザー承認「直す (Recommended)」）。同じ取消が別の経路から遅れて届いても、記憶に取消が
         // 載っているので 2 度は伝えない
         const ended = eewEndedRef.current.get(key)
-        const gone = !stateRef.current.activeEEWs.has(key) || eewExpiringRef.current.has(key)
-        if (ended && !ended.cancelled && !latest && gone) {
+        const cancelEntry = decideEewCancelEntry({
+          incoming, ended, latest,
+          gone: !stateRef.current.activeEEWs.has(key) || eewExpiringRef.current.has(key),
+          nowMs: serverNow(),
+        })
+        if (ended && cancelEntry) {
           const sinceEndedSec = Math.round((serverNow() - ended.endedAtMs) / 1000)
-          if (isLateEewCancel(ended, incoming, serverNow(), ACTIVE_EEW_WINDOW_MS)) {
-            eewLateCancelBase = ended.lastReport
+          if (cancelEntry.late) {
+            eewLateCancelBase = cancelEntry.late.lastReport
             eewLateCancel = {
-              firstIssueTime: ended.firstIssueTime,
-              hypocenterName: ended.lastReport.earthquake.hypocenter.name,
+              firstIssueTime: cancelEntry.late.firstIssueTime,
+              hypocenterName: cancelEntry.late.lastReport.earthquake.hypocenter.name,
             }
             log.info(`[eew] 画面から消えた後に届いた誤報取消: 最後の報に取消を載せて 10 秒戻し、読み上げ側へ印を渡す key=${key}`
               + ` 経路=${incoming.origin} 消えてから=${sinceEndedSec}秒`)
@@ -1781,7 +1781,7 @@ export function useEarthquakes(
             log.debug(`[eew] 画面から消えた地震の誤報取消は通知だけにする: key=${key} 経路=${incoming.origin}`
               + ` 消えてから=${sinceEndedSec}秒 最後の報=${ended.lastReport ? 'あり' : 'なし'}`)
           }
-          eewEndedRef.current.set(key, { ...ended, cancelled: true })
+          eewEndedRef.current.set(key, cancelEntry.ended)
         }
       }
     }
@@ -1808,7 +1808,7 @@ export function useEarthquakes(
     // 発表時刻・持たないなら種別優先度）。**`setState` の更新関数はレンダー時に走る**ので、
     // 中で補完し直すと「判定は補完前・統合は補完後」の組み合わせが起きる —— 同じティックで
     // 震源情報のあとに震度速報が捌かれると、震度速報の書き込みが両者のあいだに挟まる。
-    const filledQuake = event.kind === 'quake' ? fillIntensityFromCache(event) : undefined
+    const filledQuake = event.kind === 'quake' ? fillQuakeIntensity(event, quakeIntensityCacheRef.current) : undefined
     /**
      * **その電文を状態がそもそも受理しないか**（取消より前に発表された報。→ §6.2）。
      *
@@ -1863,6 +1863,9 @@ export function useEarthquakes(
         existing = findQuakeCardForHoldBack(quake, index)
         resolved = true
         // 取消は内容の更新ではなくカードを消す操作なので、据え置き判定の対象外。
+        // **既存カードは同じティックの写しから引く**（`findQuakeCardForHoldBack`）。`stateRef` だけを
+        // 見ると鮮度が足りず、取消を処理した直後に**取消前のカードを既存として拾って**「画面には
+        // 新しいカードが出ているのに声だけ止まる」逆向きの食い違いを作る。
         if (!isSilentRef.current && !event.cancelled) {
           quakeHeldBack = isQuakeReportHeldBack(existing, quake, quakeRetracted)
         }
@@ -1933,52 +1936,19 @@ export function useEarthquakes(
       }
     }
 
-    // 地震情報（551）の震度キャッシュ更新は setState の外で行う
+    // 地震情報（551）の震度の控えと取消の台帳は setState の外で進める
     if (event.kind === 'quake') {
       const quake = event as JMAQuake
-      // キャッシュのキーはイベントの安定キー。eventId を持つ電文は全報で一致する。
-      // eventId を持たない電文は報ごとに別キーになるためこのキャッシュは実質効かず、通常経路では
-      // mergeQuakeInto（既存カードの震度で埋める）が同じ補完を担う。ただし対象カードが
-      // 既に消えている場合（取消の 10 秒後 purge など）はどちらも効かず震度は欠落する。
-      // ここを earthquake.time に戻すと、同じ分に起きた別の地震の震度を引いてしまう。
-      const cacheKey = quakeEventKey(quake)
-      // VXSE51 の震度データをキャッシュ（後続 VXSE52 への補完用）。
-      // **据え置き（`quakeHeldBack`）・取消より前に発表された報（`quakeRetracted`）は書かない。**
-      // どちらもカードが内容を採らない・採れない電文で、書くと裏口からカードへ入り込む——
-      // 据え置かれた震度速報 B の points がキャッシュへ残ったまま、後続の震源情報（震度を
-      // 持たない）が `fillIntensityFromCache` で B を取り込むと `hasIntensity(incoming)` が
-      // 真になり、`mergeQuakeInto` の「既存の震度で補完する」分岐を通らず、カード側は正しく
-      // 据え置いた A の points ではなく B の points をそのまま採用してしまう
-      // （既存カードが完全版なら `isSupersededByExistingCard` が先に守るが、震度速報の段階
-      // では守りが無い）。
-      if (!quakeHeldBack && !quakeRetracted
-        && quake.issue.type === '震度速報' && quake.earthquake.maxScale >= 0) {
-        quakeIntensityCacheRef.current.set(cacheKey, {
-          maxScale: quake.earthquake.maxScale,
-          points: quake.points,
-          report: { time: quake.time, ...(quake.createdAtMs !== undefined && { createdAtMs: quake.createdAtMs }) },
-        })
-      }
-      // 取消を見た事実も**入口で**台帳へ積む（EEW 側の台帳と同じ置き方）。`setState` の更新関数は
+      // 取消を見た事実は**入口で**台帳へ積む（EEW 側の台帳と同じ置き方）。`setState` の更新関数は
       // 再実行されうるため、そこに副作用を置くと同じ記録が二重に積まれ、台帳の実効容量が縮む。
-      if (quake.cancelled) {
-        // 当たったカードを渡せると照合の材料が揃う（理由は `QuakeRetraction`）。当たり先は入口で
-        // 決めたもの（`quakeCancel`。写しも見ている）を使う。決められなかったときだけ状態から引く。
-        const target = quakeCancel?.target ?? findQuakeCancelTarget(stateRef.current.earthquakes, quake, getAreaPrefIndexCache())
-        rememberQuakeRetraction(quakeRetractionOf(quake, target))
-        // **震度速報の取消なら、その震度の控えも捨てる。** 残すと、取消の後に届く震度を持たない報
-        // （震源情報）が取り消された震度で埋め戻される。鍵は電文とカードの両方で引く（暫定 EventID の
-        // 付け替えでカードの鍵が電文と違うことがある。→ `quakeEventKey`）。
-        // **捨てるのは取消より前に発表された震度速報の控えだけ**（カードへの当て方と同じ規則）。
-        // 取消の後に発表し直された震度速報が先に届いて控えられていれば、それは残す。
-        if (quake.issue.type === '震度速報') {
-          const keys = new Set([cacheKey, ...(target ? [quakeEventKey(target)] : [])])
-          for (const key of keys) {
-            const cached = quakeIntensityCacheRef.current.get(key)
-            if (cached && (!quake.time || compareReportAge(cached.report, quake) <= 0)) quakeIntensityCacheRef.current.delete(key)
-          }
-        }
-      }
+      // 当たったカードを渡せると照合の材料が揃う（理由は `QuakeRetraction`）。当たり先は入口で
+      // 決めたもの（`quakeCancel`。写しも見ている）を使う。決められなかったときだけ状態から引く。
+      const cancelTarget = quake.cancelled
+        ? quakeCancel?.target ?? findQuakeCancelTarget(stateRef.current.earthquakes, quake, getAreaPrefIndexCache())
+        : undefined
+      if (quake.cancelled) rememberQuakeRetraction(quakeRetractionOf(quake, cancelTarget))
+      // 震度速報の震度を控える・取り消された震度速報の控えを捨てる（規則は `noteQuakeIntensity`）
+      noteQuakeIntensity(quakeIntensityCacheRef.current, quake, { heldBack: quakeHeldBack, retracted: quakeRetracted, cancelTarget })
     }
 
     // 津波: 期限切れ時刻に失効のイベント（`cancelReason: 'expired'`）をキューへ積む。
@@ -2077,7 +2047,9 @@ export function useEarthquakes(
               if (effect.kind === 'partial') {
                 // 当て直しは借りた震源・津波区分を持たない（控えの電文から組み直すため）。
                 // 通常の続報と同じく、統合の後で借り直す（→ 下の `withBorrowedFromTsunami`）。
-                const card = withBorrowedFromTsunami(effect.card, prev.tsunamis, prev.earthquakes)
+                const card = withLatestQuakeFacts(
+                  withBorrowedFromTsunami(effect.card, prev.tsunamis, prev.earthquakes), prev.lpgmByEventId, prev.estimatedIntensities,
+                  prev.tsunamis, prev.earthquakes)
                 // 当て直したカードの姿を記憶へ写す（履歴の同じ分岐と揃える。写すのは借り直した後の
                 // 画面に出る値）。**印は出さない** —— 取り消されて消えた値は「いま動いた」ではない。
                 markMemory ??= new Map(prev.quakeMarkMemory)
@@ -2146,16 +2118,21 @@ export function useEarthquakes(
           // **据え置き（`mergedCard === existing`）の経路は上で抜けている** —— そこで借りると
           // 中身が同じでも参照だけが変わり、「変化なし＝同一参照」の約束が崩れる。
           // 津波が後から届く順序は、下の 'tsunami' 側が拾う。
-          const merged = withBorrowedFromTsunami(mergedCard, prev.tsunamis, prev.earthquakes)
+          // 長周期・推計が、届いた地震情報より新しい値を運んでいれば上段へ当てる（→ `utils/latestQuakeFacts.ts`）
+          const merged = withLatestQuakeFacts(
+            withBorrowedFromTsunami(mergedCard, prev.tsunamis, prev.earthquakes), prev.lpgmByEventId, prev.estimatedIntensities,
+            prev.tsunamis, prev.earthquakes)
           // 統合の結果、暫定 ID で作られたカードが確定 ID を持つカードと重複することがある。
           // 履歴経路（mergeQuakeHistory）と同じ畳み込みをここでも通す（理由は coalesceByEventId）。
           //
           // **取消表示中のカードは差し替えの対象から外す（残す）。** ここで落とすと 10 秒表示を
           // 待たずに消え、しかも purge 予約（`id` で対象を引く）が空振りする。
-          const next = coalesceByEventId([
+          //
+          // 畳むときの統合（`mergeQuakeInto`）は当てた値を外すので、畳んだ後に当て直す（履歴の組み直しと同じ順）
+          const next = latestQuakeFactsIntoCards(coalesceByEventId([
             merged,
             ...prev.earthquakes.filter(e => e.cancelledAt || !sameQuakeEntry(e, quake, getAreaPrefIndexCache())),
-          ])
+          ]), prev.lpgmByEventId, prev.estimatedIntensities, prev.tsunamis)
           // カードの更新の印。**併合が済んだここで取る** —— 続報の持ち越し規則（§6.4）を
           // 適用したあとの「画面に出ている値」どうしを比べたいので、電文の側では取れない。
           // 受信ハンドラ（`useLiveEventHandler`）はこの統合より前に呼ばれるため、あちらでも取れない。
@@ -2200,14 +2177,52 @@ export function useEarthquakes(
           // **報を当てた結果は `stepTsunamiState` が決める**（失効予約の積み直しと同じ答えを使うため。
           // 片方だけ書き換えると、画面の津波と失効の予約が別の期限で動く）。
           const step = stepTsunamiState(current, tsunami, now)
-          if (step.kind === 'ignored') return prev
+          // **届いた報が取消なら、どの分岐でもその報自身を当て込みに見せる。** 表示中の津波に当たらない取消（解除・失効の後に
+          // 届いた・別の津波の取消・一部取消で組み直した）でも、その津波から当てて覚えていた値を捨てる（→ `JMAQuake.appliedTsunamiSource`）。
+          // 一部取消で組み直した津波が原因地震を持てば、その値で当て直す
+          const retraction: JMATsunami[] = tsunami.cancelReason === 'retracted' ? [tsunami] : []
+          // 津波の一覧を入れ替えたら、地震カードの上段を当て直す（借りる → 当てる の順。地震情報の受信・履歴の組み直しと同じ）。
+          // **津波の続報だけでなく、取消・解除・失効でも通す。** 取消で当てていた値を戻すのも、続報で動いた値に更新の印を付けるのも
+          // ここでしか起きない（→ `utils/latestQuakeFacts.ts`）。`seen` は当て込みが見る津波の一覧で、状態に残す一覧と違うことがある
+          const withTsunamiFacts = (tsunamis: JMATsunami[], shown: JMATsunami[] = tsunamis): EarthquakeState => {
+            const seen = [...shown, ...retraction]
+            const borrowed = borrowFromTsunamiIntoCards(prev.earthquakes, seen)
+            // **印付けが投げても一覧の更新は通す**（長周期の経路と同じ。`setState` の更新関数の中で投げると画面ごと落ちる）
+            try {
+              return {
+                ...prev,
+                tsunamis,
+                ...applyLatestFactsWithMarks(
+                  { earthquakes: borrowed, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory },
+                  prev.lpgmByEventId, prev.estimatedIntensities, seen, Date.now(),
+                ),
+                lastUpdate: now,
+              }
+            } catch (err) {
+              log.error('[tsunami] 地震カードの上段を当て直す印を付けられなかった（津波は更新した）', { id: tsunami.id, err })
+              return {
+                ...prev, tsunamis, lastUpdate: now,
+                earthquakes: latestQuakeFactsIntoCards(borrowed, prev.lpgmByEventId, prev.estimatedIntensities, seen),
+              }
+            }
+          }
+          // 無視した取消でも当て直す（取り消された津波から当てた値を捨てるため）。**地震カードが変わらなければ状態ごと据え置き、
+          // 変わっても津波の一覧と「更新」の時刻には触らない** —— 津波には何も起きていない
+          if (step.kind === 'ignored') {
+            if (retraction.length === 0) return prev
+            const refit = withTsunamiFacts(prev.tsunamis as JMATsunami[])
+            if (refit.earthquakes === prev.earthquakes) return prev
+            return { ...refit, tsunamis: prev.tsunamis, lastUpdate: prev.lastUpdate }
+          }
           if (step.kind === 'ended') {
             if (step.reason === 'retractedAll') {
               // 津波情報・沖合の観測だけの取消で、組み立てに使った報がその種類だけだった（警報等を受けていない）。
               log.warn(`[tsunami] ${tsunami.headType} の取消で組み直す報が残らないため、津波を外します: id=${current?.id}`)
-              return { ...prev, tsunamis: [], lastUpdate: now }
+              // 一覧からは外すが、当て込みには「取り消された」ことを見せる。見せないと、当てていた津波の値を覚えたまま残す
+              // （一覧に無いだけの津波は、解除・失効と区別が付かない → `JMAQuake.appliedTsunamiSource`）
+              return withTsunamiFacts([], current ? [{ ...current, cancelledAt: now, cancelReason: 'retracted' }] : [])
             }
-            if (step.reason === 'outdated') return { ...prev, tsunamis: [], lastUpdate: now }
+            if (step.reason === 'outdated') return withTsunamiFacts([])
             // 解除・取消・期限切れのいずれも同じ10秒表示を経る。表示内容は cancelReason で出し分ける（TsunamiTab側）。
             if (current && !current.cancelledAt) {
               // TSU-4: purge 予約に対象 id を持たせ、他イベントが後で置換した場合に誤って
@@ -2222,19 +2237,15 @@ export function useEarthquakes(
               // その報だけが持つ項目は名指しで移さないと落ちる（`cancelText` は気象庁が書いた取消しの
               // 理由、`liftText` は全区域解除の報に気象庁が書いた文で、どちらも他のどこにも無い）。
               const liftText = tsunami.cancelReason === 'lifted' ? tsunamiLiftText(tsunami) : undefined
-              return {
-                ...prev,
-                tsunamis: [{
-                  ...current,
-                  cancelledAt: now,
-                  cancelReason: tsunami.cancelReason,
-                  ...(tsunami.cancelText && { cancelText: tsunami.cancelText }),
-                  ...(liftText && { liftText }),
-                }],
-                lastUpdate: now,
-              }
+              return withTsunamiFacts([{
+                ...current,
+                cancelledAt: now,
+                cancelReason: tsunami.cancelReason,
+                ...(tsunami.cancelText && { cancelText: tsunami.cancelText }),
+                ...(liftText && { liftText }),
+              }])
             }
-            return { ...prev, tsunamis: [], lastUpdate: now }
+            return withTsunamiFacts([])
           }
           // 番号が 1 つも重ならない津波が、表示中の津波の解除を待たずに届いた。
           //
@@ -2248,15 +2259,10 @@ export function useEarthquakes(
           // 続報の引き継ぎ（観測のみ電文で区域を保つ・観測点のマージ等）は `mergeTsunamiReports` の 1 箇所に
           // ある（`stepTsunamiState` 経由）。ここへ書き写すと、履歴からの復元（`withInheritedTsunamiFacts`）との
           // 間で片方だけに項目が足され、「ライブ受信では出るのにリロードすると消える」形の欠落が生まれる。
-          return {
-            ...prev,
-            tsunamis: [step.tsunami],
-            // 津波が先に震源を伝える順序を拾う（→ `borrowFromTsunamiIntoCards`）。続報でも配り直すのは、
-            // 津波電文の震源が更新されるため（能登では 16:22 に Ｍ７．４→Ｍ７．６。地震情報が同じ更新を
-            // 伝えるのは 2 分後の 16:24）。
-            earthquakes: borrowFromTsunamiIntoCards(prev.earthquakes, [step.tsunami]),
-            lastUpdate: now,
-          }
+          // 津波が先に震源を伝える順序を拾う（→ `borrowFromTsunamiIntoCards`）。続報でも配り直すのは、
+          // 津波電文の震源が更新されるため（能登では 16:22 に Ｍ７．４→Ｍ７．６。地震情報が同じ更新を
+          // 伝えるのは 2 分後の 16:24）。震源を持つカードにも、津波のほうが新しければ当てる（→ `withTsunamiFacts`）
+          return withTsunamiFacts([step.tsunami])
         }
         case 'eew': {
           const eew = event as EEWAlert
@@ -2505,7 +2511,7 @@ export function useEarthquakes(
           })
         } else if (payload.kind === 'kohatsu') {
           const kohatsu = payload.data
-          const otherUnit = cancelOverOtherUnit(shownKohatsuEventIdRef.current, kohatsu)
+          const otherUnit = cancelOverOtherUnitInList(bandListsRef.current.kohatsu.map(k => k.eventId), kohatsu)
           const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), silent, otherUnit)
           if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
@@ -2544,6 +2550,12 @@ export function useEarthquakes(
         } else if (payload.kind === 'internationalTsunami') {
           // 画面（遠地地震のカード）へ足すだけ。`onLiveEvent` へは流さない（音・読み上げ・通知が無い）
           applyInternationalTsunami(payload.data)
+        } else if (payload.kind === 'logOnly') {
+          // 電文ログへは上で積んだ。画面へは何も流さない（取り込まない電文・読めなかった電文の行）
+        } else {
+          // 種別を足して分岐を書き忘れたら、型検査がここで落とす
+          const unhandled: never = payload
+          log.error('[queue] 振り分けの無い種別のエントリを捨てた', { kind: (unhandled as { kind?: unknown }).kind })
         }
         isSilentRef.current = false
       }
@@ -2552,22 +2564,12 @@ export function useEarthquakes(
   }, [handleEvent])
 
   // アンマウント時にタイマーとキューをクリア。
-  // 7日タイマーは 4 つある（後発地震・南海トラフ関連解説情報・地震津波に関するお知らせ・地震回数）。
-  // **1 つでも落とし忘れると**、残った側が最大7日後にアンマウント済みのクロージャの setState を呼ぶ。
+  // 帯の期限の予約（後発地震・南海トラフ関連解説情報・地震津波に関するお知らせ・地震回数の 4 種）も落とす。
+  // **落とし忘れると**、最大7日後にアンマウント済みのクロージャの setState を呼ぶ。
   useEffect(() => {
+    const bandExpireTimers = bandExpireTimersRef.current
     return () => {
-      if (kohatsuExpireTimerRef.current !== undefined) {
-        window.clearTimeout(kohatsuExpireTimerRef.current)
-      }
-      if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-        window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-      }
-      if (quakeNoticeExpireTimerRef.current !== undefined) {
-        window.clearTimeout(quakeNoticeExpireTimerRef.current)
-      }
-      if (earthquakeCountExpireTimerRef.current !== undefined) {
-        window.clearTimeout(earthquakeCountExpireTimerRef.current)
-      }
+      clearBandExpireTimers(bandExpireTimers)
       // テストボタンが張った待ちも全部落とす（→ `clearTestSimulationTimers`）。
       // **キューを空にするだけでは足りない** —— 津波と EEW のテストはキューを通らず
       // `handleEvent` を直接呼ぶ。
@@ -2788,10 +2790,11 @@ export function useEarthquakes(
         const { cards, markMemory } = mergeQuakeHistory(
           partial, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
         )
+        const shown = settleHistoryCards(cards, markMemory, prev.tsunamis, prev.lpgmByEventId, prev.estimatedIntensities, lpgmRetractionsRef.current)
         return {
           ...prev,
           ...marksFromHistory(markMemory, cards, prev.lpgmByEventId, prev.quakeUpdateMarks),
-          earthquakes: borrowFromTsunamiIntoCards(cards, prev.tsunamis),
+          earthquakes: shown,
           lastUpdate: serverDate(),
         }
       })
@@ -2975,15 +2978,16 @@ export function useEarthquakes(
               quakeEvents, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
             )
             const nextTsunamis = applyHistoryTsunami ? tsunamis : prev.tsunamis
+            // **貸し手は同じ更新で復元する `tsunamis` と `lpgmByEventId`。`prev` ではない** ——
+            // 起動時の復元では前の状態が空なので、そちらを見ると 1 枚も借りられない。
+            const shown = settleHistoryCards(cards, markMemory, nextTsunamis, lpgmByEventId, prev.estimatedIntensities, lpgmRetractionsRef.current)
             return {
               ...prev,
               // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
               // **長周期の鍵はこの更新で復元する `lpgmByEventId` から数える。`prev` ではない** ——
               // 起動時は前の状態が空なので、そちらを見ると復元した長周期の記憶ごと落とす。
               ...marksFromHistory(markMemory, cards, lpgmByEventId, prev.quakeUpdateMarks),
-              // **貸し手は同じ更新で復元する `tsunamis`。`prev.tsunamis` ではない** ——
-              // 起動時の復元では前の状態が空なので、そちらを見ると 1 枚も借りられない。
-              earthquakes: borrowFromTsunamiIntoCards(cards, nextTsunamis),
+              earthquakes: shown,
               tsunamis: nextTsunamis,
               lpgmByEventId,
               lastUpdate: serverDate(),
@@ -3006,9 +3010,9 @@ export function useEarthquakes(
           // 定めており、判定材料は `App` が持っている。
           if (tsunamis.length > 0) onStartupRestoreRef.current?.('tsunami')
           // **臨時情報・後発地震・解説情報はヘルパ経由で入れる。** ここで state を直書きすると、
-          // 表示中の識別情報を覚える記憶（`shownNankaiEventIdRef` 等）が進まず、以後に届いた
-          // 取消の照合が「表示していない」と誤判定して無条件に帯を消す。後発地震の期限タイマーも
-          // `applyKohatsu` が張るので、ここで重ねて張らない。
+          // 表示中の識別情報を覚える記憶（`shownNankaiEventIdRef`・帯の一覧の控え `bandListsRef`）が進まず、以後に届いた
+          // 取消の照合が「表示していない」と誤判定する。帯の期限の予約も `commitBandList` が張るので、
+          // ここで重ねて張らない。
           // **`extras` は種別ごとに振り分けてヘルパへ渡す。** 再生キューへ流す形（リプレイ側）は
           // ここでは採れない —— あちらは `silent` で音を抑えるが、こちらは音・読み上げ・通知を
           // 起こす経路（`handleEvent`）を通ることになる。
@@ -3125,7 +3129,8 @@ export function useEarthquakes(
           // 画面には理由の分からないメッセージしか出ないため、手がかりを残さないと追えない。
           // **引いた区分も添える** —— 受けていない区分を引いて断られたのか、通信の失敗なのかをここで見分ける
           log.error('[data] DMDATA 履歴取得失敗', { 区分: classifications, err })
-          const msg = err instanceof Error ? err.message : '取得失敗'
+          // 通信の失敗はブラウザの英語の文を画面に出さない（英語の文は上の記録に残る。→ `fetchFailureReason`）
+          const msg = fetchFailureReason(err)
           setState(prev => ({ ...prev, isLoading: false, error: msg }))
         })
 
@@ -3219,7 +3224,7 @@ export function useEarthquakes(
         }
       } else if (ev.kind === 'kohatsu') {
         const kohatsu = ev.data
-        const otherUnit = cancelOverOtherUnit(shownKohatsuEventIdRef.current, kohatsu)
+        const otherUnit = cancelOverOtherUnitInList(bandListsRef.current.kohatsu.map(k => k.eventId), kohatsu)
         const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), false, otherUnit)
         if (decision === 'dispatch') {
           onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
@@ -3680,7 +3685,7 @@ export function useEarthquakes(
       const { cards, markMemory } = mergeQuakeHistory(
         events, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
       )
-      const merged = borrowFromTsunamiIntoCards(cards, prev.tsunamis)
+      const merged = settleHistoryCards(cards, markMemory, prev.tsunamis, lpgmByEventId, prev.estimatedIntensities, lpgmRetractionsRef.current)
       return {
         ...prev,
         // **長周期の鍵はこの更新で積み増した `lpgmByEventId` から数える** ——
@@ -3772,10 +3777,11 @@ export function useEarthquakes(
           const { cards, markMemory } = mergeQuakeHistory(
             partial, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
           )
+          const shown = settleHistoryCards(cards, markMemory, prev.tsunamis, prev.lpgmByEventId, prev.estimatedIntensities, lpgmRetractionsRef.current)
           return {
             ...prev,
             ...marksFromHistory(markMemory, cards, prev.lpgmByEventId, prev.quakeUpdateMarks),
-            earthquakes: borrowFromTsunamiIntoCards(cards, prev.tsunamis),
+            earthquakes: shown,
           }
         })
       }
@@ -3970,6 +3976,9 @@ export function useEarthquakes(
    */
   const simulateHypocenterFromTsunami = useCallback(() => runTestTelegramScript(s => s.HYPOCENTER_FROM_TSUNAMI), [runTestTelegramScript])
 
+  /** 津波の続報が地震情報より新しい規模を伝える場面のテスト（→ `MAGNITUDE_FROM_TSUNAMI`）。 */
+  const simulateMagnitudeFromTsunami = useCallback(() => runTestTelegramScript(s => s.MAGNITUDE_FROM_TSUNAMI), [runTestTelegramScript])
+
   /**
    * 津波の原因地震が後から加わる場面のテスト（→ `createTestTsunamiSourceAdded`）。
    *
@@ -4033,6 +4042,8 @@ export function useEarthquakes(
   /** 遠地地震と国際津波関連情報（WEPA60）のテスト（→ `testTelegramScripts.ts` の `FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI`）。 */
   const simulateForeignQuakeInternationalTsunami = useCallback(
     () => runTestTelegramScript(s => s.FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI), [runTestTelegramScript])
+  /** 国際津波関連情報が国内の地震に付く形と、英文だけのカードになる形のテスト（→ `INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY`）。 */
+  const simulateInternationalTsunamiDomesticAndOnly = useCallback(() => runTestTelegramScript(s => s.INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY), [runTestTelegramScript])
   /** 見出しにだけある市町村のテスト（→ `testTelegramScripts.ts` の `HEADLINE_ONLY_CITY`）。 */
   const simulateHeadlineOnlyCity = useCallback(() => runTestTelegramScript(s => s.HEADLINE_ONLY_CITY), [runTestTelegramScript])
 
@@ -4235,6 +4246,27 @@ export function useEarthquakes(
   /** 関連解説情報の取消テスト（→ `NANKAI_COMMENTARY_RETRACTION`）。 */
   const simulateNankaiCommentaryRetraction = useCallback(() => runTestTelegramScript(s => s.NANKAI_COMMENTARY_RETRACTION), [runTestTelegramScript])
 
+  /**
+   * 地震の活動状況等に関する情報（VXSE56）のテスト（→ `ACTIVITY_INFO`）。読まない種類なので、ライブと同じく
+   * 電文ログに本文ごと「スキップ」の行だけを積む（受信と同じ待ち行列の `logOnly` で、リセットで一緒に落ちる）。
+   */
+  const simulateActivityInfo = useCallback(async () => {
+    const generation = testGenerationRef.current
+    try {
+      const scripts = await loadTestTelegramScripts()
+      const rows = await buildTestLogOnlyEntries(scripts.ACTIVITY_INFO, serverDate(), defaultTestTelegramFetcher)
+      if (generation !== testGenerationRef.current) {
+        log.debug('[test] 組んでいる間にリセットされたので、テスト用の電文を捨てました')
+        return
+      }
+      for (const { replayTime, logEntry } of rows) {
+        eventQueueRef.current.push({ eventTime: replayTime, payload: { kind: 'logOnly' }, logEntry })
+      }
+    } catch (err) {
+      log.error('[test] テスト用の電文を流せませんでした', err)
+    }
+  }, [])
+
   /** 北海道・三陸沖後発地震注意情報のテスト（サンプル電文。→ `KOHATSU`）。 */
   const simulateKohatsu = useCallback(() => runTestTelegramScript(s => s.KOHATSU), [runTestTelegramScript])
 
@@ -4288,10 +4320,7 @@ export function useEarthquakes(
     // 消えた帯の識別情報と比べられる）。取消テストの待ちも落とす ―― リプレイへ切り替えた後で
     // テスト用の取消がキューへ紛れ込むのを防ぐ。
     shownNankaiEventIdRef.current = null
-    shownKohatsuEventIdRef.current = null
-    shownCommentaryIdRef.current = null
-    shownQuakeNoticeRef.current = null
-    shownEarthquakeCountEventIdRef.current = null
+    bandListsRef.current = EMPTY_BAND_LISTS
     // 伝えた取消の記憶も前の時間軸のもの（→ `conveyedCancelsRef`）
     conveyedCancelsRef.current.clear()
     estimatedIntensitiesRef.current = []
@@ -4316,10 +4345,10 @@ export function useEarthquakes(
       activeEEWs: new Map(),
       lpgmByEventId: new Map(),
       nankai: null,
-      nankaiCommentary: null,
-      kohatsu: null,
-      quakeNotice: null,
-      earthquakeCount: null,
+      nankaiCommentaryList: EMPTY_BAND_LISTS.nankaiCommentary,
+      kohatsuList: EMPTY_BAND_LISTS.kohatsu,
+      quakeNoticeList: EMPTY_BAND_LISTS.quakeNotice,
+      earthquakeCountList: EMPTY_BAND_LISTS.earthquakeCount,
       estimatedIntensities: [],
       internationalTsunamis: [],
       // 時間軸が変わるので、印とその記憶も落とす（残すと再生開始直後の報が
@@ -4348,26 +4377,9 @@ export function useEarthquakes(
     }))
     eventQueueRef.current.clear()
     quakeIntensityCacheRef.current.clear()
-    // 後発地震注意情報の7日タイマーもリセット対象。resetState 後に古いタイマーが残ると、
-    // リプレイモード切替→ライブ復帰後に発火して新しく設定された kohatsu を null に上書きしうる。
-    if (kohatsuExpireTimerRef.current !== undefined) {
-      window.clearTimeout(kohatsuExpireTimerRef.current)
-      kohatsuExpireTimerRef.current = undefined
-    }
-    // 解説情報の7日タイマーも同じ理由でリセットする
-    if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-      window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-      nankaiCommentaryExpireTimerRef.current = undefined
-    }
-    // 地震・津波に関するお知らせ（VZSE40）・地震回数（VXSE60）の7日タイマーも同じ
-    if (quakeNoticeExpireTimerRef.current !== undefined) {
-      window.clearTimeout(quakeNoticeExpireTimerRef.current)
-      quakeNoticeExpireTimerRef.current = undefined
-    }
-    if (earthquakeCountExpireTimerRef.current !== undefined) {
-      window.clearTimeout(earthquakeCountExpireTimerRef.current)
-      earthquakeCountExpireTimerRef.current = undefined
-    }
+    // 帯の期限の予約もリセット対象。resetState 後に古い予約が残ると、リプレイモード切替→ライブ復帰後に
+    // 発火して、新しく積んだ一覧を前の時間軸の一覧で上書きしうる。
+    clearBandExpireTimers(bandExpireTimersRef.current)
   }, [clearTestSimulationTimers])
 
   /**
@@ -4400,18 +4412,32 @@ export function useEarthquakes(
       const { cards, markMemory } = mergeQuakeHistory(
         quakes, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
       )
+      const shown = settleHistoryCards(cards, markMemory, prev.tsunamis, prev.lpgmByEventId, prev.estimatedIntensities, lpgmRetractionsRef.current)
       return {
         ...prev,
         ...marksFromHistory(markMemory, cards, prev.lpgmByEventId, prev.quakeUpdateMarks),
-        earthquakes: borrowFromTsunamiIntoCards(cards, prev.tsunamis),
+        earthquakes: shown,
       }
     })
   }, [])
 
-  const loadReplayEvents = useCallback((entries: import('../types/replay').ReplayEntry[]) => {
+  /**
+   * 再生の電文をキューへ積む。
+   *
+   * @param logOnlyEntries 電文ログにだけ積む行（`ReplayFetchResult.logOnlyEntries`）。**必須にしてある** ——
+   *   渡し忘れると、再生の電文ログから取り込まない電文・読めなかった電文の行だけが黙って消える。
+   *   積まないと決めた呼び出し（初期状態の復元。窓の手前 24 時間ぶんは電文ログへ載せない）は `[]` を明示して渡す
+   */
+  const loadReplayEvents = useCallback((
+    entries: import('../types/replay').ReplayEntry[],
+    logOnlyEntries: readonly import('../types/replay').ReplayLogOnlyEntry[],
+  ) => {
     for (const { payload, replayTime, silent, logEntry } of entries) {
       // 電文ログの行はキューへ預け、発火のときに積む（理由は `QueueEntry.logEntry`）
       eventQueueRef.current.push({ eventTime: replayTime, payload, silent, logEntry })
+    }
+    for (const { replayTime, logEntry } of logOnlyEntries) {
+      eventQueueRef.current.push({ eventTime: replayTime, payload: { kind: 'logOnly' }, logEntry })
     }
   }, [])
 
@@ -4454,6 +4480,8 @@ export function useEarthquakes(
       if (payload.kind === 'purge-cancelled-quake') continue
       if (payload.kind === 'purge-cancelled-eew') continue
       if (payload.kind === 'purge-cancelled-tsunami') continue
+      // 電文ログだけの行も電文として流れないので、投機の対象にしない
+      if (payload.kind === 'logOnly') continue
       out.push(payload)
     }
     return out
@@ -4471,13 +4499,15 @@ export function useEarthquakes(
     simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence,
     simulateQuakeCancel,
     simulateQuakePartialCancel,
     simulateHypocenterFromTsunami,
+    simulateMagnitudeFromTsunami,
+    simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded,
     simulateTsunamiInfoRetraction,
     resetState,

@@ -1,9 +1,9 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAutoOpenWhileSpeaking } from '../../hooks/useAutoOpenWhileSpeaking'
 import type { JMAQuake, JMATsunami, TsunamiArea, TsunamiEstimation, TsunamiObservation, TsunamiWarningComment } from '../../types/earthquake'
-import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
+import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTimeMin, formatDepth, formatHypocenterSource, formatMagnitude, formatMagnitudeCondition, formatNameFromMark, formatTimeMin, hasDepth } from '../../utils/formatters'
 import { quakeEventKey, extractQuakeEventId } from '../../utils/quakeMerge'
-import { linkTsunamiSources } from '../../utils/tsunamiSourceLinks'
+import { linkTsunamiSources, shownTsunamiSource } from '../../utils/tsunamiSourceLinks'
 import { groupAreasForCardDisplay, splitAreasByKindName, tsunamiLiftedAreas, matchesArea, observationBadges, observationHeightText, observationArrivalFallbackText, observationMaxHeightTimeText, estimationBadges, estimationHeightText, forecastHeightImportantBadge, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME, isTsunamiGradeRaised, sourceEarthquakeTime, tsunamiAreaKey, tsunamiEventIds, evacuationActionLine, fallbackEvacuationAction, tideStationKey, arrivalConditionBadge, ARRIVAL_CONDITION_BADGE, type ObsUpdateMark, type ObsUpdateField, type TsunamiValueMarks, type EstimationUpdateField } from '../../utils/tsunami'
 import { TSUNAMI_MISSING_COLOR as MISSING_COLOR } from '../../utils/tsunamiStyle'
 import { CANCEL_REASON_LABEL } from '../../utils/tsunamiCancelLabel'
@@ -13,7 +13,8 @@ import { getSpeechClock } from '../../utils/voicevox'
 import { INTERACTION_HOLD_SEC } from '../Map/gl/camera'
 import { log } from '../../utils/logger'
 import { useTsunamiObsCoords } from '../../hooks/useTsunamiObsCoords'
-import { commentsOverlayMaxHeight, canShowCommentsOverlay, isBannerSticky } from './overlayHeight'
+import { commentsOverlayMaxHeight, canShowCommentsOverlay, bannerStickMode } from './overlayHeight'
+import { DisclosureCaret, prefersReducedMotion } from '../EarthquakeTab/quakeMotion'
 import { useTsunamiZones } from '../../hooks/useTsunamiZones'
 import { ringsBoundsIndex, EMPTY_BOUNDS_INDEX } from '../../utils/subregions'
 import type { LatLng } from '../../utils/stationCoords'
@@ -180,14 +181,25 @@ function districtMatchesArea(district: { code?: string; name?: string }, area: T
 }
 
 /**
- * 予想波高ごとの見出し。**その高さの区域に予想波高の印が付いていれば、文字にその色を当てる**（どの区域かは
+ * 等級と予想の高さの見出し（「大津波警報　5m」）。**その等級の区域を巻いている間はバナー（または帯）の下に貼りつく**
+ * （2026-11-04 ユーザー選択「地震タブと同じ規則 (Recommended)」の説明「…等級と予想の高さの見出しも、その等級の区域を
+ * 巻いている間はバナー／帯の下に貼りつける」）。貼りつく位置はスクロールの器が持つ `--ts-stick-top`。
+ *
+ * 高さの区切りが無い組（予想の高さを持たない区域）は等級名だけを出す。
+ * **その高さの区域に予想波高の印が付いていれば、高さの文字にその色を当てる**（どの区域かは
  * 区域の行の縦線が示す。2026-10-24 ユーザー選択「見出し＋行の縦線 (Recommended)」）。
  */
-function TsunamiHeightHeader({ label, style, markColor }: { label: string; style: GradeStyle; markColor: string | undefined }) {
+function TsunamiGradeHeader({ gradeLabel, heightLabel, style, markColor, anchorRef }: { gradeLabel: string; heightLabel: string | undefined; style: GradeStyle; markColor: string | undefined; anchorRef: (el: HTMLDivElement | null) => void }) {
   return (
-    <div className="px-3 py-1 font-black leading-none text-[1.125rem] roomy:px-4 roomy:text-[1.375rem]"
-      style={{ color: markColor ?? style.heightColor, backgroundColor: `${style.cardBorder}14`, borderBottom: `1px solid ${style.cardBorder}33` }}>
-      {label}
+    <div ref={anchorRef} data-grade-header=""
+      className="sticky z-[5] flex items-baseline gap-2.5 flex-wrap"
+      style={{ top: 'var(--ts-stick-top, 0px)', padding: '4px var(--qk-pad)', backgroundColor: style.headerBg, borderBottom: `1px solid ${style.cardBorder}55` }}>
+      <span data-grade-label="" className="font-extrabold" style={{ fontSize: 'var(--qk-fs)', color: style.headerColor }}>{gradeLabel}</span>
+      {heightLabel && (
+        <span className="font-black leading-none" style={{ fontSize: 'calc(var(--qk-f) + 6px)', color: markColor ?? style.heightColor }}>
+          {heightLabel}
+        </span>
+      )}
     </div>
   )
 }
@@ -198,43 +210,146 @@ function TsunamiHeightHeader({ label, style, markColor }: { label: string; style
  * **1 件目と 2 件目以降で同じものを通すこと。** 電文は原因地震を複数持ちうる（短い間に起きた
  * 地震がまとめて 1 通で発表される）ので、別々に書くと項目を足したとき片方に漏れる。
  */
-function SourceEarthquakeLine({ eq, prefix, link }: {
+function SourceEarthquakeLine({ eq, link }: {
   eq: NonNullable<JMATsunami['sourceEarthquakes']>[number]
-  prefix: string
   link: React.ReactNode
 }) {
   const quakeTime = sourceEarthquakeTime(eq)
   // 日時として読めなければ句ごと落とす（→ `formatters.ts` の `readDateTime`）。震源名・規模・
   // 深さが並ぶ行の付随情報なので、「地震発現時刻」の語だけが残るより出さないほうがよい。
   const quakeHm = quakeTime ? formatTimeMin(quakeTime) : null
+  // 規模の記号は電文の種別（`Mj7.6`）。地震カードと同じ `formatMagnitude` を通す（2026-10-29 ユーザー承認
+  // 「地震カードと同じく出す (Recommended)」「Mj7.6 の形 (Recommended)」）。規模が数値で無いときは気象庁が添えた説明を出す
+  // （「Ｍ８を超える巨大地震」）。ここを空にすると、最大級の地震ほど震源名だけの薄い表示になる。
+  const magnitudeText = eq.magnitude !== undefined
+    ? formatMagnitude(eq.magnitude, eq.magnitudeType)
+    : eq.magnitudeCondition ? formatMagnitudeCondition(eq.magnitudeCondition) : null
+  // 深さ。**遠地地震による津波では、震源の深さがこの電文にしか無い**（対応する地震情報が発表されないことがある）。
+  // `0` は「ごく浅い」という有効値なので `hasDepth` で弾く。**値によらず「深さ」を前置する** —— 地震カード・地図・
+  // 共有カードもそう出しており、ここだけ省くとアプリの中で表記が割れる。
+  const depthText = eq.depth !== undefined && hasDepth(eq.depth) ? `深さ ${formatDepth(eq.depth, eq.depthAtLeast === true)}` : null
+  // 震央地名を大きく、規模と深さを次に大きく（2026-11-04 ユーザー選択「B1 帯は等級だけ (Recommended)」の見本）。
+  // 値のかたまりの途中では折り返さず、入らなければかたまりごと次の行へ送る。
   return (
-    <div>
-      {prefix}{eq.hypocenterName}
-      {/* 規模の記号は電文の種別（`Mj7.6`）。地震カードと同じ `formatMagnitude` を通す（2026-10-29 ユーザー承認
-          「地震カードと同じく出す (Recommended)」「Mj7.6 の形 (Recommended)」）。直書きすると種別を渡し忘れても型が落ちない。
-          規模が数値で無いときは気象庁が添えた説明を出す（「Ｍ８を超える巨大地震」）。
-          ここを空にすると、最大級の地震ほど震源名だけの薄い表示になる。 */}
-      {eq.magnitude !== undefined
-        ? `　${formatMagnitude(eq.magnitude, eq.magnitudeType)}`
-        : eq.magnitudeCondition && `　${formatMagnitudeCondition(eq.magnitudeCondition)}`}
-      {/* 深さ。**遠地地震による津波では、震源の深さがこの電文にしか無い**（対応する地震情報が
-          発表されないことがある）。`0` は「ごく浅い」という有効値なので `hasDepth` で弾く。
-          **値によらず「深さ」を前置する** —— 地震カード・地図・共有カードもそう出しており、
-          ここだけ省くとアプリの中で表記が割れる。 */}
-      {eq.depth !== undefined && hasDepth(eq.depth) && `　深さ ${formatDepth(eq.depth, eq.depthAtLeast === true)}`}
+    <div data-source-line="" className="flex flex-wrap items-baseline gap-x-3.5 gap-y-0.5" style={{ marginBottom: 4 }}>
+      <span className="font-extrabold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 4px)' }}>{eq.hypocenterName}</span>
+      {magnitudeText && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{magnitudeText}</span>}
+      {depthText && <span className="font-bold text-white whitespace-nowrap" style={{ fontSize: 'calc(var(--qk-f) + 2px)' }}>{depthText}</span>}
       {/* 地震の時刻は `sourceEarthquakeTime` を通す（**発現時刻を先に採る**）。発生時刻を出すと、
           同じ地震が地震カードと津波カードで 1 分違って見える。理由と実電文で測った数字は
           `docs/spec/tsunami-spec.md` §4 が正。 */}
-      {quakeHm && `　${QUAKE_ARRIVAL_TIME_LABEL} ${quakeHm}`}
+      {quakeHm && <span className="text-secondary whitespace-nowrap" style={{ fontSize: 'var(--qk-fs)' }}>{QUAKE_ARRIVAL_TIME_LABEL} {quakeHm}</span>}
       {link}
       {/* 震央補助表現（「御前崎の北東40km付近」）と震源決定機関（「ＰＴＷＣ」等）。
           前者は震央地名より具体的に場所が分かり、後者は誰が決めた値かを示す。
-          前者は数字と単位だけ半角へ直し（`formatNameFromMark`。地震カードと同じ）、後者は原文のまま出す。 */}
-      {eq.nameFromMark && <div>{formatNameFromMark(eq.nameFromMark)}</div>}
-      {/* この要素は**気象庁以外の機関が決めた震源を採用したときだけ**入る（Ⅱ.13 2-3-2）ので、
+          前者は数字と単位だけ半角へ直し（`formatNameFromMark`。地震カードと同じ）、後者は原文のまま出す。
+          後者は**気象庁以外の機関が決めた震源を採用したときだけ**入る（Ⅱ.13 2-3-2）ので、
           機関名だけでは含意（気象庁の決定ではない）が伝わらない。ラベルに書く。 */}
-      {eq.source && <div>震源決定: {eq.source}（気象庁以外）</div>}
+      {eq.nameFromMark && <div className="w-full text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{formatNameFromMark(eq.nameFromMark)}</div>}
+      {eq.source && <div className="w-full text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{formatHypocenterSource(eq.source)}</div>}
     </div>
+  )
+}
+
+/** 電文が名乗る運用種別（訓練・試験）の札。色は地震タブの札と同じ（2026-11-02 選択「今のアプリの色 (Recommended)」）。 */
+function OperationStatusChip({ status }: { status: string }) {
+  return (
+    <span className="shrink-0 whitespace-nowrap rounded-[3px] px-1.5 font-bold"
+      style={{ fontSize: 'var(--qk-fs)', backgroundColor: '#1f2937', color: '#fcd34d', border: '1px solid #d97706' }}>
+      {status}報
+    </span>
+  )
+}
+
+/**
+ * 寄せと追従の視野から引く、貼りつく等級の見出しの高さ。**寄せた先では行の真上に見出しが貼りつく**ので、
+ * 引かないと行の頭が見出しの裏へ潜る。見出しはどの等級も同じ作りなので、最初の 1 つで測る。
+ */
+function stuckGradeHeaderHeight(container: HTMLElement): number {
+  const header = container.querySelector<HTMLElement>('[data-grade-header]')
+  return header ? header.getBoundingClientRect().height : 0
+}
+
+/** 時刻の欄の 1 項目。動いた項目だけ文字に色を当てる（→ 観測点の行の `fieldColor`）。 */
+interface TimePart { text: string; color?: string }
+
+/**
+ * 観測点の行（区域の下・沖合・解除された区域の下で共通）。**細い線で区切った表の行**にする
+ * （2026-11-04 ユーザー選択「表の行にする (Recommended)」。地震タブの 1 件 1 行の一覧に合わせ、枠つきの箱をやめた）。
+ *
+ * 左に観測点名と札、その下に時刻の欄、右端に波高。**左の縦線は印が無い行でも幅を取る**（透明で置く）——
+ * 付いたり消えたりで行の中身が横へずれないように。
+ */
+function StationRow({ rowRef, name, nameColor, nameWeight, chips, timeParts, height, markColor, onActivate }: {
+  rowRef?: (el: HTMLDivElement | null) => void
+  name: string
+  nameColor: string
+  nameWeight: 'bold' | 'semibold'
+  chips: React.ReactNode
+  timeParts: TimePart[]
+  /** 右端に出す波高（数値なら大きく、文字なら本文の大きさ）。無ければ null。 */
+  height: { text: string; numeric: boolean; color?: string } | null
+  markColor: string | null | undefined
+  /** 押すと地図がその観測点へ寄る。押せない行は undefined。 */
+  onActivate?: () => void
+}) {
+  return (
+    <div
+      ref={rowRef}
+      data-station-row=""
+      className={`grid grid-cols-[1fr_auto] items-center gap-x-2 border-t border-border/60${onActivate ? ' cursor-pointer hover:brightness-125 transition-[filter] motion-reduce:transition-none' : ''}`}
+      style={{ padding: '5px var(--qk-pad) 5px calc(var(--qk-pad) + 12px)', borderLeft: `3px solid ${markColor ?? 'transparent'}` }}
+      onClick={onActivate}
+      role={onActivate ? 'button' : undefined}
+      tabIndex={onActivate ? 0 : undefined}
+      onKeyDown={onActivate ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate() } } : undefined}
+    >
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className={nameWeight === 'bold' ? 'font-bold' : 'font-semibold'} style={{ fontSize: 'var(--qk-f)', color: nameColor }}>{name}</span>
+          {chips}
+        </div>
+        {timeParts.length > 0 && (
+          <div data-station-times="" className="text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+            {timeParts.map((part, pi) => (
+              // **区切りの空白は色を当てる範囲の外に置く。** 中へ入れると、動いた項目の
+              // 手前の空白まで塗られて色の帯が項目からずれる。値の途中では折り返さない。
+              <Fragment key={pi}>
+                {pi > 0 ? '　' : ''}
+                <span className="whitespace-nowrap" style={part.color ? { color: part.color, fontWeight: 600 } : undefined}>{part.text}</span>
+              </Fragment>
+            ))}
+          </div>
+        )}
+      </div>
+      {height && (
+        <span className="whitespace-nowrap text-right"
+          style={height.numeric
+            ? { fontSize: 'calc(var(--qk-f) + 4px)', fontWeight: 800, color: height.color ?? '#ffffff' }
+            : { fontSize: 'var(--qk-f)', color: height.color ?? 'var(--color-secondary)', fontWeight: height.color ? 600 : undefined }}>
+          {height.text}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** 観測点の札（実測・欠測・到達確認など。語は `observationBadges` が決める）。 */
+function ObservationChips({ obs, tint }: { obs: TsunamiObservation; tint: { bg: string; fg: string } }) {
+  return (
+    <>
+      {observationBadges(obs).map(label => (
+        <span
+          key={label}
+          className="font-bold px-1.5 rounded-[3px] whitespace-nowrap"
+          style={{ fontSize: 'var(--qk-fs)', ...(label === '欠測'
+            ? { background: `${MISSING_COLOR}26`, color: MISSING_COLOR }
+            : { background: tint.bg, color: tint.fg }) }}
+        >
+          {label}
+        </span>
+      ))}
+    </>
   )
 }
 
@@ -291,7 +406,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
   }
 
   return (
-    <div ref={setRowRef} className="border-b border-white/5 last:border-0"
+    <div ref={setRowRef} data-area-row="" className="border-t border-border first:border-t-0"
       /* 予想波高の印。**印が無い行でも幅を取る**（透明で置く。付いたり消えたりで行の中身が横へずれないように）。 */
       style={{ borderLeft: `3px solid ${forecastMarkColor ?? 'transparent'}` }}>
       {/* 読み上げが配下の観測点を読むときの前置き。**この見出し 1 行だけを登録する** ――
@@ -309,19 +424,20 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
           `Element.prototype.scrollTo` を差し替えて送り先を記録する。**送り先は「区域見出しの
           上端 − 余白 24px − バナーの高さ」**になる（バナーは sticky で、追従は
           `viewTop = containerRect.top + stickyBannerHeight` を見る。実測で約 190px あった。
-          パネルを縮めて貼り付けを外している間はバナーの高さを引かない → `isBannerSticky`）。
+          帯の形のときは帯の高さを引く → `bannerStickMode`。貼りついた等級の見出しの高さも引く → `stuckGradeHeaderHeight`）。
           前置きが効いていなければ、同じ式が観測点の行の上端に一致する。 */}
       <div ref={el => {
         for (const obs of observations) registerSpeechAnchor(speechRowKeys({ kind: 'station', name: obs.name }), el)
       }}
-        className="flex items-center gap-2 px-3 py-2 roomy:gap-3 roomy:px-4 roomy:py-3">
+        className="flex items-center gap-2"
+        style={{ padding: '7px var(--qk-pad) 4px' }}>
         <div className="flex-1 min-w-0">
           {/* 区域名を押すとその予報区の海岸線が入る範囲へ地図が寄る。**押せるのは境界を引ける
               区域だけ**（観測点の行と同じ規律 → §9「観測点の行・区域名をクリックしたときの寄り先」）。
               行全体を押せるようにしないのは、この行が観測点の一覧を抱えているため。 */}
           <span
-            className={`text-white font-semibold block text-[1.0625rem] roomy:text-[1.25rem]${areaFocus ? ' cursor-pointer hover:underline' : ''}`}
-            style={{ lineHeight: '1.2' }}
+            className={`text-white font-bold block${areaFocus ? ' cursor-pointer hover:underline' : ''}`}
+            style={{ lineHeight: '1.2', fontSize: 'calc(var(--qk-f) + 1px)' }}
             {...(areaFocus ? {
               role: 'button' as const,
               tabIndex: 0,
@@ -334,12 +450,12 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
             {area.name}
           </span>
           {arrivalText && (
-            <span className="block mt-1" style={{ fontSize: '0.9375rem', color: style.arrivalColor }}>
+            <span className="block mt-0.5" style={{ fontSize: 'var(--qk-fs)', color: style.arrivalColor }}>
               {arrivalText}
             </span>
           )}
           {gradeChange && (
-            <span className="block mt-1" style={{ fontSize: '0.8125rem', color: gradeChange.raised ? '#f87171' : '#9ca3af' }}>
+            <span className="block mt-0.5" style={{ fontSize: 'var(--qk-fs)', color: gradeChange.raised ? '#f87171' : 'var(--color-secondary)' }}>
               {gradeChange.label}から{gradeChange.raised ? '引き上げ' : '切り替え'}
             </span>
           )}
@@ -347,29 +463,26 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
               （電文の `MaxHeight/Condition` = 重要）。観測・推定の「重要」とは意味が違うので
               語を分けている（→ tsunami.ts の forecastHeightImportantBadge）。 */}
           {area.forecastHeightImportant && (
-            <span className="block mt-1" style={{ fontSize: '0.8125rem', color: '#f87171' }}>
+            <span className="block mt-0.5" style={{ fontSize: 'var(--qk-fs)', color: '#f87171' }}>
               {forecastHeightImportantBadge()}
             </span>
           )}
         </div>
         {arrivalBadge && (
-          <span className="shrink-0 text-xs font-bold px-2 py-1 rounded-sm border"
-            style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.15)', borderColor: '#ef4444' }}>
+          <span className="shrink-0 font-bold px-1.5 rounded-[3px] border whitespace-nowrap"
+            style={{ fontSize: 'var(--qk-fs)', color: '#f87171', backgroundColor: 'rgba(239,68,68,0.15)', borderColor: '#ef4444' }}>
             {arrivalBadge}
           </span>
         )}
       </div>
       {/* 観測点ごとに実測・予測を統合して表示 */}
       {(observations.length > 0 || stations.length > 0) && (
-        <div className="mx-4 mb-3 flex flex-col gap-1.5">
+        <div>
           {/* 実測値あり観測点 */}
           {observations.map((obs, i) => {
             const clickable = !!onObservationClick && canFocusObs(obs.name)
             const updateMark = obsUpdateStatus?.get(obs.name)
             const markColor = updateMark ? UPDATE_MARK_COLOR[updateMark.status] : null
-            const borderLeftStyle = markColor
-              ? `3px solid ${markColor}`
-              : `1px solid ${style.cardBorder}38`
             /**
              * その項目に当てる文字色。**縦線と同じ色**を使う（同じ出来事を指す印なので、別の色に
              * すると読み手が 2 つの語彙を覚えることになる）。縦線が「この地点で何かあった」、
@@ -402,7 +515,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
             // 空のとき字下げだけが残る（到達予想を足す前から、欠測の行の満潮時刻がそうなっていた）。
             // **項目ごとに印を分けるので、1 本の文字列へ繋がない。** 動いた項目の肩へ点を置くには
             // 区切って描くしかない（間の全角空白も要素として挟む）。
-            const timeParts: { text: string; color?: string }[] = [
+            const timeParts: TimePart[] = [
               {
                 text: obsArrivalHm
                   ? `${obsArrivalHm}${obs.initial ? ` ${obs.initial}波` : ''}`
@@ -420,62 +533,26 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
               // 同名 station があれば満潮時刻をここに表示。動いたら時刻の文字に色を付ける（→ `highTideColor`）
               { text: matchedHighTideHm ? `満潮 ${matchedHighTideHm}` : '', color: highTideColor(obs.name) },
             ].filter(p => p.text)
+            const heightText = observationHeightText(obs)
             return (
-              <div
+              <StationRow
                 key={i}
                 /* 追従スクロールの引き当て用。読み上げが読むのは実測・到達確認の観測点だけなので、
                    下の「予測のみ」の行は登録しない（同名の行が 2 つあると引き当てが曖昧になる） */
-                ref={el => registerSpeechRow?.([`station:${obs.name}`], el)}
-                className={`px-3 py-2 rounded${clickable ? ' cursor-pointer hover:brightness-125 transition-[filter]' : ''}`}
-                style={{ background: `${style.cardBorder}12`, border: `1px solid ${style.cardBorder}38`, borderLeft: borderLeftStyle }}
-                onClick={clickable ? () => onObservationClick!(obs.name) : undefined}
-                role={clickable ? 'button' : undefined}
-                tabIndex={clickable ? 0 : undefined}
-                onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onObservationClick!(obs.name) } : undefined}
-              >
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold" style={{ fontSize: '0.8125rem', color: style.heightColor }}>{obs.name}</span>
-                      {observationBadges(obs).map(label => (
-                        <span
-                          key={label}
-                          className="text-xs font-bold px-1.5 py-0.5 rounded-sm"
-                          style={label === '欠測'
-                            ? { background: `${MISSING_COLOR}26`, color: MISSING_COLOR }
-                            : { background: `${style.cardBorder}30`, color: style.heightColor }}
-                        >
-                          {label}
-                        </span>
-                      ))}
-                    </div>
-                    {timeParts.length > 0 && (
-                      <div className="mt-1" style={{ fontSize: '0.6875rem', color: '#9ca3af' }}>
-                        {timeParts.map((part, pi) => (
-                          // **区切りの空白は色を当てる範囲の外に置く。** 中へ入れると、動いた項目の
-                          // 手前の空白まで塗られて色の帯が項目からずれる。
-                          <Fragment key={pi}>
-                            {pi > 0 ? '　' : ''}
-                            <span style={part.color ? { color: part.color, fontWeight: 600 } : undefined}>{part.text}</span>
-                          </Fragment>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {/* **波高の既定は白。** 等級は等級カードの枠と見出しが示しているので、ここを
-                      等級の色で塗るのは同じ事実の繰り返しで、動いた項目に文字色を当てる余地も
-                      失っていた（→ `docs/spec/tsunami-spec.md` §9）。 */}
-                  {obs.height ? (
-                    <span className="font-bold shrink-0" style={{ fontSize: '1.25rem', color: fieldColor('height') ?? '#ffffff' }}>
-                      {observationHeightText(obs)}
-                    </span>
-                  ) : observationHeightText(obs) && (
-                    /* 数値の代わりの文字（「観測中」など）にも波高の印を当てる。`MaxHeight/Revise` の
-                       「追加」で付く印は、値を持たないこの形にしか出番が無い */
-                    <span className="shrink-0" style={{ fontSize: '0.8125rem', color: '#9ca3af', ...(fieldColor('height') ? { color: fieldColor('height'), fontWeight: 600 } : {}) }}>{observationHeightText(obs)}</span>
-                  )}
-                </div>
-              </div>
+                rowRef={el => registerSpeechRow?.([`station:${obs.name}`], el)}
+                name={obs.name}
+                nameColor={style.heightColor}
+                nameWeight="bold"
+                chips={<ObservationChips obs={obs} tint={{ bg: `${style.cardBorder}30`, fg: style.heightColor }} />}
+                timeParts={timeParts}
+                /* **波高の既定は白。** 等級は等級カードの枠と見出しが示しているので、ここを
+                   等級の色で塗るのは同じ事実の繰り返しで、動いた項目に文字色を当てる余地も
+                   失っていた（→ `docs/spec/tsunami-spec.md` §9）。数値の代わりの文字（「観測中」など）にも
+                   波高の印を当てる —— `MaxHeight/Revise` の「追加」で付く印は、値を持たないこの形にしか出番が無い。 */
+                height={heightText ? { text: heightText, numeric: !!obs.height, color: fieldColor('height') } : null}
+                markColor={markColor}
+                onActivate={clickable ? () => onObservationClick!(obs.name) : undefined}
+              />
             )
           })}
           {/* 実測値なし観測点（station のみ） */}
@@ -488,7 +565,7 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
             const stArrivalHm = st.arrivalTime ? formatTimeMin(st.arrivalTime) : null
             const stHighTideHm = st.highTideDateTime ? formatTimeMin(st.highTideDateTime) : null
             const stArrivalBadge = arrivalConditionBadge(st.arrivalCondition)
-            const timeParts: { text: string; color?: string }[] = [
+            const timeParts: TimePart[] = [
               { text: stArrivalHm ? `到達予想 ${stArrivalHm}` : '' },
               { text: stHighTideHm ? `満潮 ${stHighTideHm}` : '', color: highTideColor(st.name) },
             ].filter(p => p.text)
@@ -496,38 +573,27 @@ function TsunamiAreaRow({ area, observations, style, onObservationClick, canFocu
             // 10,100 行）。押せるかは実測の行と同じく座標表に名前があるか（`canFocusObs`）。
             const stClickable = !!onObservationClick && canFocusObs(st.name)
             return (
-              <div key={i}
-                className={`px-3 py-2 rounded-sm${stClickable ? ' cursor-pointer hover:brightness-125 transition-[filter]' : ''}`}
-                style={{ border: '1px solid rgba(255,255,255,0.09)', background: 'rgba(255,255,255,0.03)' }}
-                onClick={stClickable ? () => onObservationClick!(st.name) : undefined}
-                role={stClickable ? 'button' : undefined}
-                tabIndex={stClickable ? 0 : undefined}
-                onKeyDown={stClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onObservationClick!(st.name) } : undefined}>
-                <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="font-semibold" style={{ fontSize: '0.8125rem', color: '#d1d5db' }}>{st.name}</span>
-                  {/* 観測点ごとの到達状況（「津波到達中と推測」「第１波の到達を確認」）があれば、「予測」の代わりに
-                      区域の到達状況と同じ語・同じ見た目のバッジを出す（2026-10-19 ユーザー選択「「予測」を置き換える（推奨）」）。
-                      すでに来ていると推測される点を「予測」と書かない。 */}
-                  {stArrivalBadge ? (
-                    <span className="text-xs font-bold px-1.5 py-0.5 rounded-sm border"
-                      style={{ color: '#f87171', backgroundColor: 'rgba(239,68,68,0.15)', borderColor: '#ef4444' }}>
-                      {stArrivalBadge}
-                    </span>
-                  ) : (
-                    <span className="text-xs font-bold px-1.5 py-0.5 rounded-sm" style={{ background: 'rgba(255,255,255,0.08)', color: '#9ca3af' }}>予測</span>
-                  )}
-                </div>
-                {timeParts.length > 0 && (
-                  <div className="mt-1" style={{ fontSize: '0.6875rem', color: '#9ca3af' }}>
-                    {timeParts.map((part, pi) => (
-                      <Fragment key={pi}>
-                        {pi > 0 ? '　' : ''}
-                        <span style={part.color ? { color: part.color, fontWeight: 600 } : undefined}>{part.text}</span>
-                      </Fragment>
-                    ))}
-                  </div>
+              <StationRow
+                key={i}
+                name={st.name}
+                nameColor="#d1d5db"
+                nameWeight="semibold"
+                /* 観測点ごとの到達状況（「津波到達中と推測」「第１波の到達を確認」）があれば、「予測」の代わりに
+                   区域の到達状況と同じ語・同じ見た目のバッジを出す（2026-10-19 ユーザー選択「「予測」を置き換える（推奨）」）。
+                   すでに来ていると推測される点を「予測」と書かない。 */
+                chips={stArrivalBadge ? (
+                  <span className="font-bold px-1.5 rounded-[3px] border whitespace-nowrap"
+                    style={{ fontSize: 'var(--qk-fs)', color: '#f87171', backgroundColor: 'rgba(239,68,68,0.15)', borderColor: '#ef4444' }}>
+                    {stArrivalBadge}
+                  </span>
+                ) : (
+                  <span className="font-bold px-1.5 rounded-[3px] text-secondary" style={{ fontSize: 'var(--qk-fs)', background: 'rgba(255,255,255,0.08)' }}>予測</span>
                 )}
-              </div>
+                timeParts={timeParts}
+                height={null}
+                markColor={null}
+                onActivate={stClickable ? () => onObservationClick!(st.name) : undefined}
+              />
             )
           })}
         </div>
@@ -555,73 +621,35 @@ function TsunamiObservationRow({ obs, onObservationClick, canFocusObs, registerS
     markColor && updateMark?.fields.has(field) ? markColor : undefined
   const maxHeightTimeText = observationMaxHeightTimeText(obs)
   const arrivalFallbackText = observationArrivalFallbackText(obs)
+  // 時刻の欄は沿岸の観測点の行と同じ書き方にする（「00:56 引き波　最大波 …　（ＧＰＳ波浪計）」。
+  // 2026-11-04 ユーザー選択「沿岸と同じ書き方 (Recommended)」）。最大波の観測時刻は**到達時刻の有無に関わらず出す**
+  // （第1波を識別できなくても最大波は観測できている電文がある）。区域に紐づく行と同じく、代わりの文字にも第1波の印を当てる。
+  const timeParts: TimePart[] = [
+    { text: arrivalHm ? `${arrivalHm}${obs.initial ? ` ${obs.initial}波` : ''}` : arrivalFallbackText, color: fieldColor('firstWave') },
+    { text: maxHeightTimeText, color: fieldColor('maxHeightTime') },
+    // 特殊観測機器（「ＧＮＳＳ波浪計」「水圧計」）。沖合の観測点だけが持つ。電文の語をそのまま出す ——
+    // 言い換えると、どちらの計器が測った値か分からなくなる。**括弧で括る** —— 素で並べると地名や別の値と読める。
+    { text: obs.sensor ? `（${obs.sensor}）` : '' },
+  ].filter(p => p.text)
+  const heightText = observationHeightText(obs)
   return (
-    <div
+    <StationRow
       /* 追従スクロールの引き当て用。この行は区域に紐づかない観測点（沖合）で、読み上げは
          区域の下の観測点と同じように読む。登録しないとその観測点を読んでいる間だけカードが
          動かず、引き当て失敗の診断も鳴る */
-      ref={el => registerSpeechRow?.([`station:${obs.name}`], el)}
-      className={`flex items-center gap-2 px-3 py-2 border-b border-white/5 last:border-0 roomy:gap-3 roomy:px-4 roomy:py-3${clickable ? ' cursor-pointer hover:brightness-125 transition-[filter]' : ''}`}
-      /* **印が無い行でも幅を取る**（透明で置く）。付いたり消えたりで行の中身が横へずれると、
-         一覧を目で追っているときに行がまとめて動いて見える。 */
-      style={{ borderLeft: `3px solid ${markColor ?? 'transparent'}` }}
-      onClick={clickable ? () => onObservationClick!(obs.name) : undefined}
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onObservationClick!(obs.name) } : undefined}
-    >
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-white font-semibold text-[1rem] roomy:text-[1.125rem]">
-            {obs.name}
-          </span>
-          {/* 区域に紐づく行と同じ語を出す（バッジの決め方は `observationBadges`）。ここへ出さないと、
-              沖合の観測点だけ欠測・到達確認が画面から落ちる。**語を間引かない** —— この行だけ「到達確認」を
-              外していた時期があり、波高がまだ出ていない沖合の観測点は印が 1 つも出なかった。 */}
-          {observationBadges(obs).map(label => (
-            <span
-              key={label}
-              className="text-xs font-bold px-1.5 py-0.5 rounded-sm"
-              style={label === '欠測'
-                ? { background: `${MISSING_COLOR}26`, color: MISSING_COLOR }
-                : { background: 'rgba(255,255,255,0.08)', color: '#9ca3af' }}
-            >
-              {label}
-            </span>
-          ))}
-        </div>
-        {/* 最大波の観測時刻は**到達時刻の有無に関わらず出す**（第1波を識別できなくても
-            最大波は観測できている電文がある）。区域に紐づく行と同じ述語を通す。 */}
-        {arrivalHm ? (
-          <span className="block mt-1 text-secondary" style={{ fontSize: '0.8125rem' }}>
-            <span style={fieldColor('firstWave') ? { color: fieldColor('firstWave'), fontWeight: 600 } : undefined}>
-              到達: {arrivalHm}{obs.initial ? `（${obs.initial}）` : ''}
-            </span>
-            {maxHeightTimeText && <>　<span style={fieldColor('maxHeightTime') ? { color: fieldColor('maxHeightTime'), fontWeight: 600 } : undefined}>{maxHeightTimeText}</span></>}
-            {/* 特殊観測機器（「ＧＮＳＳ波浪計」「水圧計」）。沖合の観測点だけが持つ。
-                電文の語をそのまま出す —— 言い換えると、どちらの計器が測った値か分からなくなる。
-                **括弧で括る** —— 「到達: 」のラベルは時刻にしか掛かっておらず、素で並べると
-                地名や別の値と読める。 */}
-            {obs.sensor && `　（${obs.sensor}）`}
-          </span>
-        ) : (arrivalFallbackText || maxHeightTimeText || obs.sensor) && (
-          <span className="block mt-1 text-secondary" style={{ fontSize: '0.8125rem' }}>
-            {/* 区域に紐づく行と同じく、代わりの文字にも第1波の印を当てる */}
-            {arrivalFallbackText && <span style={fieldColor('firstWave') ? { color: fieldColor('firstWave'), fontWeight: 600 } : undefined}>{arrivalFallbackText}</span>}
-            {maxHeightTimeText && <>{arrivalFallbackText ? '　' : ''}<span style={fieldColor('maxHeightTime') ? { color: fieldColor('maxHeightTime'), fontWeight: 600 } : undefined}>{maxHeightTimeText}</span></>}
-            {obs.sensor && `${arrivalFallbackText || maxHeightTimeText ? '　' : ''}（${obs.sensor}）`}
-          </span>
-        )}
-      </div>
-      {observationHeightText(obs) && (
-        <span
-          className={fieldColor('height') ? 'shrink-0' : 'text-secondary shrink-0'}
-          style={{ fontSize: '1rem', ...(fieldColor('height') ? { color: fieldColor('height'), fontWeight: 600 } : {}) }}
-        >
-          {observationHeightText(obs)}
-        </span>
-      )}
-    </div>
+      rowRef={el => registerSpeechRow?.([`station:${obs.name}`], el)}
+      name={obs.name}
+      nameColor="#ffffff"
+      nameWeight="bold"
+      /* 区域に紐づく行と同じ語を出す（バッジの決め方は `observationBadges`）。ここへ出さないと、
+         沖合の観測点だけ欠測・到達確認が画面から落ちる。**語を間引かない** —— この行だけ「到達確認」を
+         外していた時期があり、波高がまだ出ていない沖合の観測点は印が 1 つも出なかった。 */
+      chips={<ObservationChips obs={obs} tint={{ bg: 'rgba(255,255,255,0.08)', fg: 'var(--color-secondary)' }} />}
+      timeParts={timeParts}
+      height={heightText ? { text: heightText, numeric: !!obs.height, color: fieldColor('height') } : null}
+      markColor={markColor}
+      onActivate={clickable ? () => onObservationClick!(obs.name) : undefined}
+    />
   )
 }
 
@@ -635,27 +663,32 @@ function TsunamiGradeCard({ grade, label, isFirstOfGrade, areas, observations, o
        来ない。全体を範囲にすれば視野に収まらない限り送られ、上端（＝帯）に揃う。 */
     // 同じ等級が電文の名前で 2 枚に分かれたときは、等級を告げたときの合わせ先を先頭の 1 枚にだけ登録する
     // （2 枚目で上書きすると、読み上げが等級を言った時点で後ろのカードへ飛ぶ）。
+    // **`overflow-hidden` にしない** —— 隠す箱はスクロールの器になり、中の見出しの貼りつき（`sticky`）が効かなくなる。
+    // 角丸の外へはみ出す分は `overflow-clip` で切る（器にならない）。
     <div ref={isFirstOfGrade ? (el => registerSpeechRow?.(speechRowKeys({ kind: 'grade', grade }), el)) : undefined}
-      className="bg-card rounded-lg overflow-hidden"
-      style={{ border: `2px solid ${style.cardBorder}`, boxShadow: `0 0 0 1px ${style.cardBorder}40` }}>
-      {/* 区域を読むときの合わせ先はこの帯（どの等級の話かが視野から消えないように） */}
-      <div ref={el => {
-        for (const area of areas) {
-          registerSpeechAnchor(speechRowKeys({ kind: 'area', code: area.code, name: area.name }), el)
-        }
-      }}
-        className="w-full py-1.5 px-4 text-center text-xs font-bold tracking-widest"
-        style={{ backgroundColor: style.headerBg, color: style.headerColor, borderBottom: `1px solid ${style.headerBorder}` }}>
-        {label}
-      </div>
+      className="bg-card rounded-sm overflow-clip"
+      style={{ border: `2px solid ${style.cardBorder}` }}>
       {groups.map((group, gi) => (
         <div key={gi}>
-          {group.heightLabel && (() => {
+          {(group.heightLabel || gi === 0) && (() => {
             // その高さの区域のどれかに予想波高の印があれば、見出しにも色を当てる。「追加」（緑）が混ざれば緑を優先する。
             const marks = group.areas.map(a => tsunamiValueMarks.forecastHeight.get(tsunamiAreaKey(a))).filter(m => !!m)
             const markColor = marks.length === 0 ? undefined
               : UPDATE_MARK_COLOR[marks.some(m => m.status === 'new') ? 'new' : 'changed']
-            return <TsunamiHeightHeader label={group.heightLabel} style={style} markColor={markColor} />
+            // 区域を読むときの合わせ先はこの見出し（どの等級・どの高さの話かが視野から消えないように）。
+            // 高さの区切りが無い組が先頭に来たときは、等級名だけの見出しがその後ろの区切りの無い組もまとめて受ける。
+            const anchored = group.heightLabel ? group.areas : groups.slice(gi).filter(g => !g.heightLabel).flatMap(g => g.areas)
+            return (
+              <TsunamiGradeHeader
+                gradeLabel={label}
+                heightLabel={group.heightLabel || undefined}
+                style={style}
+                markColor={markColor}
+                anchorRef={el => {
+                  for (const area of anchored) registerSpeechAnchor(speechRowKeys({ kind: 'area', code: area.code, name: area.name }), el)
+                }}
+              />
+            )
           })()}
           {group.areas.map((area, i) => (
             <TsunamiAreaRow
@@ -701,7 +734,7 @@ function TsunamiCancelledCard({ areas, observations, onObservationClick, canFocu
   // 「〇〇警報。」と等級を告げる箇所を指すため。解除の読み上げは区域名しか指さないので、
   // ここに鍵を置いても誰も引かない。
   return (
-    <div className="bg-card rounded-lg overflow-hidden"
+    <div className="bg-card rounded-sm overflow-hidden"
       style={{ border: `2px solid ${style.cardBorder}`, boxShadow: `0 0 0 1px ${style.cardBorder}40` }}>
       <div ref={el => {
         for (const area of areas) {
@@ -902,17 +935,20 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
 
   // バナーの実高さを測る。使い道は 2 つ。
   //   - 読み上げの追従と受信時の寄せが視野から引く高さ（貼り付けている間だけ）
-  //   - 貼り付けるかどうかの判定（`isBannerSticky`）
+  //   - 大きいまま貼り付けるか、流して帯にするかの判定（`bannerStickMode`）
   // 発令中/解除・地震カードリンクの有無で行数が変わるので、固定値では合わない。
   // 「津波情報なし」表示から実データ表示への切替でバナー要素自体が生成し直されるため、
   // useRef + 空配列 useEffect ではなく callback ref で mount のたびに監視し直す
   const bannerObserverRef = useRef<ResizeObserver | null>(null)
+  const bannerElRef = useRef<HTMLDivElement | null>(null)
   const [bannerHeight, setBannerHeight] = useState(0)
 
   const bannerRef = useCallback((el: HTMLDivElement | null) => {
+    bannerElRef.current = el
     bannerObserverRef.current?.disconnect()
     bannerObserverRef.current = null
-    if (!el) return
+    // 消えたら 0 へ戻す。前の津波の高さが残ると、次の津波の最初の判定が古い高さで決まる
+    if (!el) { setBannerHeight(0); return }
     // contentRect は padding を含まない content-box。バナーには pt-3 の padding があるため
     // 実際の占有高さ（border-box）は getBoundingClientRect で測る
     const observer = new ResizeObserver(() => {
@@ -941,11 +977,15 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   // ままで上限が付かず、開いた付加文がパネルの外まで伸びる（実際にそうなった）。
   const [panelHeight, setPanelHeight] = useState(0)
   const panelObserverRef = useRef<ResizeObserver | null>(null)
+  // 器の要素そのものも状態に持つ。**帯の見張り（下の effect）は器ごとに張り直す** —— 津波が無い間は器ごと消え、次の津波で
+  // 新しい器が作られる。参照だけで持つと effect が走り直さず、2 回目以降の津波で帯が一度も出なかった。
+  const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null)
   const setContainerRef = useCallback((el: HTMLDivElement | null) => {
     containerRef.current = el
+    setContainerEl(el)
     panelObserverRef.current?.disconnect()
     panelObserverRef.current = null
-    if (!el) return
+    if (!el) { setPanelHeight(0); return }
     const observer = new ResizeObserver(() => setPanelHeight(el.clientHeight))
     observer.observe(el)
     panelObserverRef.current = observer
@@ -954,11 +994,50 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   // 面の高さの上限と、そもそも開かせてよいかの判断（→ `overlayHeight.ts`）。
   // **寸法の判断はコンポーネントの外に置く** —— ここに書くとテストで押さえられない。
   const commentsMaxHeight = commentsOverlayMaxHeight(panelHeight, bannerHeight)
-  // バナーを貼り付けるか（→ `isBannerSticky`）。パネルを縮めてバナーが居場所を食いすぎるときは
-  // 貼り付けをやめ、行と一緒に流す。**追従と受信時の寄せが視野から引くのは、貼り付けている間の
-  // 高さだけ** —— 流しているバナーはスクロールで上へ抜けるので、視野を削らない。
-  const bannerSticky = isBannerSticky(panelHeight, bannerHeight)
-  const stickyBannerHeight = bannerSticky ? bannerHeight : 0
+  // バナーを大きいまま貼り付けるか、流して巻いたら 1 行の帯を出すか（→ `bannerStickMode`）。
+  // **追従と受信時の寄せが視野から引くのは、上に貼りついているものの高さ** —— 大きいまま貼るならバナー、
+  // 帯の形なら帯（流しているバナーはスクロールで上へ抜け、代わりに帯が出る）。
+  const bannerMode = bannerStickMode(panelHeight, bannerHeight)
+  const [bandHeight, setBandHeight] = useState(0)
+  const [bandShown, setBandShown] = useState(false)
+  const bandObserverRef = useRef<ResizeObserver | null>(null)
+  const setBandRef = useCallback((el: HTMLDivElement | null) => {
+    bandObserverRef.current?.disconnect()
+    bandObserverRef.current = null
+    if (!el) { setBandHeight(0); return }
+    const observer = new ResizeObserver(() => setBandHeight(el.getBoundingClientRect().height))
+    observer.observe(el)
+    bandObserverRef.current = observer
+    setBandHeight(el.getBoundingClientRect().height)
+  }, [])
+  // 帯を出すのは、流しているバナーが帯の高さより上へ抜けたときだけ。巻くたびに測る（描画は状態が変わったときだけ）。
+  useEffect(() => {
+    const container = containerEl
+    if (bannerMode !== 'band' || !container) { setBandShown(false); return }
+    let raf = 0
+    const measure = () => {
+      raf = 0
+      const banner = bannerElRef.current
+      if (!banner) return
+      const gone = banner.getBoundingClientRect().bottom - container.getBoundingClientRect().top <= Math.max(bandHeight, 1)
+      setBandShown(gone)
+    }
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(measure) }
+    measure()
+    container.addEventListener('scroll', onScroll, { passive: true })
+    return () => { container.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf) }
+    // バナーの高さが続報で変わったときも測り直す（巻かなくても、帯を出すかが変わる）
+  }, [bannerMode, bandHeight, bannerHeight, containerEl])
+  // 帯が出たら、バナーの下へ重ねた付加文の面を閉じる。面はバナーと一緒に上へ抜け、閉じる入口が見えなくなる
+  useEffect(() => {
+    if (bandShown) setCommentsOpen(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 帯が出た瞬間だけ閉じる（開閉の関数が変わっても閉じ直さない）
+  }, [bandShown])
+  /** 帯を押すと先頭へ戻り、バナーを見せる。端末で「動きを減らす」を選んでいれば一度に飛ぶ。 */
+  const scrollToBanner = useCallback(() => {
+    containerRef.current?.scrollTo({ top: 0, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+  }, [])
+  const stickyBannerHeight = bannerMode === 'stick' ? bannerHeight : bandHeight
   // **出す場所が無いときも入口にしない。** パネルを縮めるとバナーだけで埋まり、面は
   // 高さ 0 になる。開くと矢印が ▶→▼ に変わるだけで中身は 1 行も見えず、理由も出ない。
   const canOpenComments = hasCommentsToShow && canShowCommentsOverlay(commentsMaxHeight)
@@ -1209,7 +1288,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
       // （変更区域へ寄せるフォールバック）まで道連れで止まり、画面が一切動かなくなる。
       if (currentRects.length === 0) return
 
-      const viewTop = containerRect.top + stickyBannerHeight
+      const viewTop = containerRect.top + stickyBannerHeight + stuckGradeHeaderHeight(container)
       // **動けないことを黙らせない。** `planFollowScroll` はこのとき `null` を返すが、「もう
       // 見えている」ときと見分けが付かない。読み上げ 1 本につき 1 回だけ残す。
       //
@@ -1322,7 +1401,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
       if (changedEls.length === 0) return
 
       const containerRect = container.getBoundingClientRect()
-      const viewTop = containerRect.top + stickyBannerHeight
+      const viewTop = containerRect.top + stickyBannerHeight + stuckGradeHeaderHeight(container)
       const viewBottom = containerRect.bottom
       const availableHeight = viewBottom - viewTop
       // 視野が無ければ寄せない。下の「収まらないときは先頭の行を上端へ」が、視野の外（パネルの
@@ -1448,140 +1527,114 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
     : undefined)
   const linkedQuake = linkedQuakes.find((q): q is JMAQuake => !!q)
 
+  // バナーの色。等級の帯は等級の枠の色で塗り、字は白（取消・解除の表示中は灰色）。等級の色そのものは変えない。
+  const bannerBand = isCancelledDisplay ? '#4b5563' : topStyle.cardBorder
+  const bannerFg = isCancelledDisplay ? '#9ca3af' : topStyle.headerColor
+  // 巻いたときの 1 行の帯に出す文。どれもバナーにある値（2026-11-04 ユーザー選択「地震タブと同じ規則 (Recommended)」の説明
+  // 「帯の中身は『大津波警報 発表中』・震源の 1 行（三陸沖　Mj8.9　00:50）・『更新 01:05』（どれも今バナーにある値）」）。
+  const bannerTitle = isCancelledDisplay ? cancelInfo.title : `${GRADE_LABEL[topGrade]} 発表中`
+  const bandSource = sourceEarthquake ? shownTsunamiSource(sourceEarthquake, linkedQuakes[0]) : undefined
+  const bandSourceText = bandSource ? [
+    bandSource.hypocenterName,
+    bandSource.magnitude !== undefined ? formatMagnitude(bandSource.magnitude, bandSource.magnitudeType)
+      : bandSource.magnitudeCondition ? formatMagnitudeCondition(bandSource.magnitudeCondition) : '',
+    (() => { const t = sourceEarthquakeTime(bandSource); return t ? formatTimeMin(t) ?? '' : '' })(),
+  ].filter(Boolean).join('　') : ''
+
   // h-full を持つ下記の要素自身がスクロール領域になるため、横スクロールの抑止は
   // App.tsx の TAB_SCROLLER_CLASS ではなくここで行う（祖先の指定は子に効かない）。
   return (
-    <div ref={setContainerRef} className="h-full overflow-y-auto overflow-x-hidden overscroll-x-none">
-      {/* 発令中 / 解除バナー（sticky で常時表示）。対応する地震カードがある場合のみクリック可能。 */}
-      {/* 貼り付けるのはパネルに行の居場所が残るときだけ（→ `isBannerSticky`）。外すときも
-          `relative` は残す —— 開いた付加文の面がこの要素を基準に重なる。 */}
-      <div ref={bannerRef} className={`${bannerSticky ? 'sticky top-0 ' : ''}z-10 px-3 pt-3 relative`}>
+    // 文字と余白は地震タブの 2 組（器自身の幅 520px で切り替える `quake-list`）を使う。
+    // 等級の見出しはバナーが貼りついている間だけその下へ貼りつく（`--ts-stick-top`）。
+    <div ref={setContainerRef} className="quake-list h-full overflow-y-auto overflow-x-hidden overscroll-x-none"
+      style={{ '--ts-stick-top': `${stickyBannerHeight}px` } as React.CSSProperties}>
+     <div className="quake-list-scope">
+      {/* 狭い画面などでバナーが見える高さの 4 割を超えるときは、バナーを流し、巻いて上へ抜けたら 1 行の帯を上に出す
+          （2026-11-04 ユーザー選択「地震タブと同じ規則 (Recommended)」。→ `overlayHeight.ts` の `bannerStickMode`）。
+          帯は高さ 0 の貼りつく箱の中へ重ねる —— 流れの中に場所を取らせると、出し入れのたびに下の行が上下する。 */}
+      {bannerMode === 'band' && (
+        <div className="sticky top-0 z-30 h-0">
+          <div
+            ref={setBandRef}
+            role="button"
+            tabIndex={bandShown ? 0 : -1}
+            aria-hidden={!bandShown}
+            onClick={scrollToBanner}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scrollToBanner() } }}
+            className={`flex items-center gap-2 cursor-pointer transition-transform duration-150 ease-out motion-reduce:transition-none shadow-[0_3px_8px_rgba(0,0,0,.55)]${bandShown ? '' : ' pointer-events-none'}`}
+            style={{
+              padding: '6px var(--qk-pad)',
+              background: bannerBand,
+              transform: bandShown ? 'translateY(0)' : 'translateY(-110%)',
+            }}>
+            <span className="font-extrabold text-white whitespace-nowrap" style={{ fontSize: 'var(--qk-f)' }}>{bannerTitle}</span>
+            {active[0]?.operationStatus && <OperationStatusChip status={active[0].operationStatus} />}
+            <span className="min-w-0 flex-1 truncate text-white/90" style={{ fontSize: 'var(--qk-fs)' }}>{bandSourceText}</span>
+            {latestHm && <span className="whitespace-nowrap text-white/90" style={{ fontSize: 'var(--qk-fs)' }}>更新 {latestHm}</span>}
+          </div>
+        </div>
+      )}
+      {/* 発令中 / 解除バナー。対応する地震カードがある場合のみクリック可能。
+          貼り付けるのはバナーが見える高さの 4 割までのときだけ（→ `bannerStickMode`）。外すときも
+          `relative` は残す —— 開いた付加文の面がこの要素を基準に重なる。
+          **貼りつく包みには面の色を敷く** —— 敷かないと、包みの上の余白から巻いた行が透けて見える。 */}
+      <div ref={bannerRef} className={`${bannerMode === 'stick' ? 'sticky top-0 ' : ''}z-10 bg-panel relative`}
+        style={{ padding: 'var(--qk-pad) var(--qk-pad) 0' }}>
         <div
           role={linkedQuake ? 'button' : undefined}
           tabIndex={linkedQuake ? 0 : undefined}
           onClick={linkedQuake ? () => onEarthquakeLink?.(quakeEventKey(linkedQuake)) : undefined}
           onKeyDown={linkedQuake ? (e) => { if (e.key === 'Enter' || e.key === ' ') onEarthquakeLink?.(quakeEventKey(linkedQuake)) } : undefined}
-          className={`rounded-lg overflow-hidden${linkedQuake ? ' cursor-pointer hover:opacity-90 transition-opacity' : ''}`}
-          style={{ background: isCancelledDisplay ? '#1a1a1a' : topStyle.headerBg, border: `2px solid ${isCancelledDisplay ? '#4b5563' : topStyle.cardBorder}` }}>
-          <div className="px-3 py-2 roomy:px-4 roomy:py-3"
-            style={{ background: isCancelledDisplay ? 'rgba(75,85,99,0.18)' : `${topStyle.cardBorder}18` }}>
-            <div className="flex items-center justify-between gap-2">
-              <div className="font-bold flex items-center gap-2" style={{ fontSize: '0.875rem', color: isCancelledDisplay ? '#9ca3af' : topStyle.headerColor }}>
-                {isCancelledDisplay ? cancelInfo.title : `${GRADE_LABEL[topGrade]} 発表中`}
-                {/* 電文が自分で名乗っている運用種別（`Control/Status`）。訓練・試験のときだけ出す。
-                    印が無いと、訓練の大津波警報が本物と同じ顔で出る。 */}
-                {active[0]?.operationStatus && (
-                  <span
-                    className="px-1.5 py-0.5 rounded-sm shrink-0"
-                    style={{ fontSize: '0.6875rem', backgroundColor: '#1f2937', color: '#fcd34d', border: '1px solid #d97706' }}
-                  >
-                    {active[0].operationStatus}報
-                  </span>
-                )}
-              </div>
-              {(latestUpdatedText || observationAsOf || expiryText) && (
-                <div className="text-right shrink-0" style={{ fontSize: '0.6875rem', color: isCancelledDisplay ? '#6b7280' : topStyle.arrivalColor, opacity: 0.8 }}>
-                  {/* 発表時刻が日時として読めなければこの行だけ落とす。観測時点の行は残す —— 2 つは
-                      別の事実で、片方が読めないことをもう片方を隠す理由にしない。 */}
-                  {/* **語を先に置く。** 下の失効時刻と対で読ませるため、日時を持つ行は
-                      「語 → 値」で揃える（観測の行は「観測 ◯◯ 時点」と語で挟んで文に
-                      なっているので、そのまま触らない）。 */}
-                  {latestUpdatedText && <div>更新 {latestUpdatedText}</div>}
-                  {/* 観測状況を確定した時刻（電文の `Head/TargetDateTime`）。観測情報でのみ入り、
-                      実電文では最大 6 分さかのぼる。**下の波高がいつ時点のものか**を示す。
-
-                      **発表時刻と同じ分なら出さない。** 同じ数字が 2 つ並ぶだけで、
-                      「観測値が発表より前の時点のもの」という肝心の意味が薄れる。 */}
-                  {observationAsOf && (
-                    <div style={{ opacity: 0.85 }}>観測 {observationAsOf} 時点</div>
-                  )}
-                  {/* 失効時刻（電文の `ValidDateTime`）。上の 2 つは過去の時刻、これだけが未来。
-
-                      **語は「失効」の 2 文字に留める。** 上の「更新」と字数が揃うので右側の
-                      ブロックが更新の行より広がらない。「失効時刻」と 4 文字にすると、広いパネルで
-                      この行が右側を広げたぶん左の見出しが折り返し、「発表中」が行をまたいで割れた
-                      （実測）。**読み上げは「失効時刻」と言う**（→ `utils/ttsText.ts`）—— 耳には
-                      2 文字だと何の時刻か伝わらない。気象庁の要素名も「失効時刻」。
-
-                      **この行を足したときのバナーの伸びは実測 0〜12px。** 狭い画面では見出しが
-                      先に 2 行へ折り返しているため右側の 2 行が収まって 0px（モバイル上下分割
-                      390×740）。広いパネルでは見出しが 1 行なので右側の 2 行ぶんで +12px
-                      （幅 1700px）。バナーの高さの制約は `docs/spec/tsunami-spec.md` §9 が持つ。 */}
-                  {expiryText && (
-                    <div style={{ opacity: 0.85 }}>失効 {expiryText}</div>
-                  )}
-                </div>
-              )}
+          className={`bg-card rounded-sm overflow-hidden${linkedQuake ? ' cursor-pointer hover:brightness-110 transition-[filter] motion-reduce:transition-none' : ''}`}
+          style={{ border: `2px solid ${bannerBand}` }}>
+          {/* 等級の帯（2026-11-04 ユーザー選択「B1 帯は等級だけ (Recommended)」）。時刻は帯に積まず、すぐ下の行へ流す ——
+              右に縦へ積むと、見出しの左右に余白ができていた（同日の発言「観測時刻のせいで左右に変な余白がある」）。 */}
+          <div className="flex items-baseline gap-x-2.5 gap-y-0.5 flex-wrap" style={{ background: bannerBand, padding: '5px 12px' }}>
+            <span className="font-black text-white" style={{ fontSize: 'calc(var(--qk-f) + 12px)', lineHeight: 1.15 }}>
+              {isCancelledDisplay ? cancelInfo.title : GRADE_LABEL[topGrade]}
+            </span>
+            {!isCancelledDisplay && <span className="font-bold text-white" style={{ fontSize: 'var(--qk-f)' }}>発表中</span>}
+            {/* 電文が自分で名乗っている運用種別（`Control/Status`）。訓練・試験のときだけ出す。
+                印が無いと、訓練の大津波警報が本物と同じ顔で出る。 */}
+            {active[0]?.operationStatus && <OperationStatusChip status={active[0].operationStatus} />}
+          </div>
+          {(latestUpdatedText || observationAsOf || expiryText) && (
+            <div className="text-secondary" style={{ fontSize: 'var(--qk-fs)', padding: '6px 12px 0' }}>
+              {/* 発表時刻が日時として読めなければこの項目だけ落とす。観測時点・失効は残す —— 別の事実で、片方が
+                  読めないことをもう片方を隠す理由にしない。項目の途中では折り返さず、入らなければ項目ごと次の行へ送る。 */}
+              {[
+                latestUpdatedText && `更新 ${latestUpdatedText}`,
+                // 観測状況を確定した時刻（電文の `Head/TargetDateTime`）。観測情報でのみ入り、
+                // 実電文では最大 6 分さかのぼる。**下の波高がいつ時点のものか**を示す。
+                observationAsOf && `観測 ${observationAsOf} 時点`,
+                // 失効時刻（電文の `ValidDateTime`）。上の 2 つは過去の時刻、これだけが未来。
+                // 語は「失効」の 2 文字（気象庁の要素名は「失効時刻」。読み上げは「失効時刻」と言う → `utils/ttsText.ts`）。
+                expiryText && `失効 ${expiryText}`,
+              ].filter((s): s is string => !!s).map((s, i) => (
+                <Fragment key={s}>{i > 0 && '　'}<span className="whitespace-nowrap">{s}</span></Fragment>
+              ))}
             </div>
-            {/* 見出し文（電文の `Head/Headline/Text`）。**見出しの下に原文のまま出す**（改行も保つ。2026-10-30 ユーザー選択
+          )}
+          <div style={{ padding: '4px 12px 0' }}>
+            {/* 行動指示の行。**気象庁の避難行動の付加文があればそれを出す**（無ければアプリの文。文面は読み上げと共有する
+                `fallbackEvacuationAction` —— 別々に持つと、片方だけ直したときに画面と声が違う行動を指示することになる）。
+                見出し文に同じ文があっても両方出す（2026-11-04 ユーザー選択「両方そのまま出す (Recommended)」。
+                控えの全期間の津波警報・注意報 184 通のうち、見出し文にこの文がある 35 通は 35 通とも付加文にもあった）。 */}
+            <div className="font-extrabold" style={{ fontSize: 'calc(var(--qk-f) + 2px)', color: bannerFg, lineHeight: 1.4 }}>
+              {isCancelledDisplay ? cancelInfo.desc : bannerActionLine ?? fallbackEvacuationAction(topGrade)}
+            </div>
+            {/* 見出し文（電文の `Head/Headline/Text`）。**原文のまま出す**（改行も保つ。2026-10-30 ユーザー選択
                 「カードに出す (Recommended)」。書き方の内訳は tsunami-spec.md §4）。最新の報のものを出す
                 （統合は新報の見出し文を採る）。取消・解除の表示中も出す（その報の見出し文なので）。 */}
             {active[0]?.headline && (
-              <div className="mt-0.5" style={{ fontSize: '0.6875rem', color: isCancelledDisplay ? '#9ca3af' : topStyle.headerColor, lineHeight: 1.5, whiteSpace: 'pre-line' }}>
+              <div className="text-white" style={{ fontSize: 'var(--qk-f)', lineHeight: 1.55, whiteSpace: 'pre-line' }}>
                 {active[0].headline}
-              </div>
-            )}
-            {/* 行動指示の行。**気象庁の避難行動の付加文があればそれを出す**（無ければアプリの文）。
-                ここはこれまでアプリが書いた文だけを出していたが、公式の文があるならそちらが正しい
-                （→ CLAUDE.md「利用者へ出す語を気象庁の表現と揃える」）。採れる条件は
-                `evacuationActionLine`。
-
-                **この行が付加文への入口を兼ねる。** バナーは行の居場所が残る間は sticky なので、
-                行を足すとその分だけ区域一覧の居場所が減り、貼り付けが外れる境目も早まる —— 縦の短い
-                画面ではバナーだけでパネルの半分以上を使う（実測値は docs/spec/tsunami-spec.md §9）。だから増やさず、既にある行に役目を持たせる。
-
-                **操作要素が入れ子になる**（外側のバナーも地震カードへ移動できる）。支援技術には
-                正しく伝わらないが、外へ出すと上の行数の問題に戻る。既知の限界として仕様書 §9 に
-                記してある。地震カードの震度一覧も同じ制約を抱えている。 */}
-            <div
-              className={`mt-1 flex items-start gap-1.5${canOpenComments ? ' cursor-pointer' : ''}`}
-              role={canOpenComments ? 'button' : undefined}
-              tabIndex={canOpenComments ? 0 : undefined}
-              aria-expanded={canOpenComments ? commentsOpen : undefined}
-              // **バナー自身のクリック（地震カードへの移動）へ伝播させない。**
-              onClick={canOpenComments ? e => { e.stopPropagation(); setCommentsOpen(!commentsOpen) } : undefined}
-              onKeyDown={canOpenComments ? e => {
-                if (e.key !== 'Enter' && e.key !== ' ') return
-                e.preventDefault(); e.stopPropagation(); setCommentsOpen(!commentsOpen)
-              } : undefined}
-              style={{ fontSize: '0.6875rem', color: isCancelledDisplay ? '#6b7280' : topStyle.headerColor, opacity: 0.8 }}>
-              <span className="flex-1">
-                {/* 気象庁の文が採れなければアプリの文へ落ちる。**文面は読み上げと共有する**
-                    （`fallbackEvacuationAction`）—— 別々に持つと、片方だけ直したときに画面と声が
-                    違う行動を指示することになる。 */}
-                {isCancelledDisplay ? cancelInfo.desc : bannerActionLine ?? fallbackEvacuationAction(topGrade)}
-              </span>
-              {canOpenComments && <span className="shrink-0" style={{ fontSize: '0.625rem', opacity: 0.8 }}>{commentsOpen ? '▼' : '▶'}</span>}
-            </div>
-            {/* 電文が名乗る情報名（`Head/Title`）。**上の等級表示とは別物** —— あちらはアプリが
-                区域の等級から組み立てた見出しで、こちらは気象庁がその報に付けた名前。
-                同じ VTSE51 が「津波観測に関する情報」と「各地の満潮時刻・津波到達予想時刻に
-                関する情報」を名乗り分けるので、**種別コードだけでは今どちらを見ているか分からない。**
-                行動指示より下に、目立たせずに置く。 */}
-            {/* 電文を編集した官署（`Control/EditorialOffice`）を情報名の後ろへ「編集官署 …」の形で添える
-                （2026-10-29 ユーザー承認「地震カードと同じく出す (Recommended)」、置き場所は
-                「A 情報名の行の後ろ (Recommended)」）。行を足さないのでバナーの高さも右上の幅も変わらない。
-                **`issue.source` は見ない** —— 発表官署へ落ちるので「編集官署」と名乗ると事実を誤らせる。
-                最新の報の官署を出す（統合は新報の `issue` を採る）。取消・解除の表示中も出す。 */}
-            {/* 発表官署（`Control/PublishingOffice`）を編集官署の隣に「編集官署 …　発表官署 …」の形で添える
-                （2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」・文面は地震カードと同じ。置き場所は違う）。
-                官署は名前の途中で割らず、収まらないときは官署ごと次の行へ送る（2026-11-01 ユーザー選択
-                「今回一緒に直す (Recommended)」）。情報名は長い（「大津波警報・津波警報・津波注意報・津波予報」など）ので、狭い幅では途中で折り返す。 */}
-            {(active[0]?.infoName || active[0]?.issue.editorialOffice || active[0]?.issue.publishingOffice) && (
-              <div className="mt-0.5" style={{ fontSize: '0.625rem', color: isCancelledDisplay ? '#6b7280' : topStyle.headerColor, opacity: 0.6 }}>
-                {active[0].infoName}
-                {officeLabels(active[0].issue).map((label, i) => (
-                  <Fragment key={label}>
-                    {(i > 0 || active[0].infoName) && '　'}
-                    <span className="whitespace-nowrap">{label}</span>
-                  </Fragment>
-                ))}
               </div>
             )}
             {/* 気象庁が書いた取消しの概要（電文の `Body/Text`）。アプリの定型文（上の `cancelInfo.desc`）
                 とは別で、なぜ取り消したのかはここにしか無い。 */}
             {isCancelledDisplay && active[0]?.cancelText && (
-              <div className="mt-1" style={{ fontSize: '0.6875rem', color: '#9ca3af', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+              <div className="mt-1 text-secondary" style={{ fontSize: 'var(--qk-fs)', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
                 {active[0].cancelText}
               </div>
             )}
@@ -1589,57 +1642,89 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 （2026-10-14 ユーザー選択「画面にも出し、読み上げる」）。解除された区域名は出さない
                 （2026-10-19 ユーザー選択「出さない（推奨）」）。 */}
             {isCancelledDisplay && active[0]?.liftText && (
-              <div className="mt-1" style={{ fontSize: '0.6875rem', color: '#9ca3af', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+              <div className="mt-1 text-secondary" style={{ fontSize: 'var(--qk-fs)', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
                 {active[0].liftText}
               </div>
             )}
-            {/* **取消・解除の表示中も出す**（2026-10-21 ユーザー選択「原因地震も出す (Recommended)」。全期間の解除 2 通とも
-                原因地震を持つ）。色は取消表示の灰色に揃える。 */}
-            {(sourceEarthquake || previousSourceEarthquakes.length > 0) && (
-              <div className="mt-1.5 pt-1.5" style={{ fontSize: '0.6875rem', color: isCancelledDisplay ? '#9ca3af' : topStyle.arrivalColor, opacity: 0.9, borderTop: `1px solid ${isCancelledDisplay ? '#4b556366' : `${topStyle.cardBorder}40`}` }}>
-                {/* 短い間に複数の地震が起きると、1 つの津波情報にまとめて発表される。
-                    2 件目以降を落とすと、どの地震による津波なのかが読み取れなくなる。
-                    **1 件目と 2 件目以降で別々に書かない** —— 項目を足したとき片方に漏れる
-                    （実際、震央補助表現と震源決定機関を 1 件目にだけ足して 2 件目で落としていた）。 */}
-                {sourceEarthquakes.map((eq, i) => (
-                  <SourceEarthquakeLine
-                    key={i}
-                    eq={eq}
-                    prefix={i === 0 ? '震源: ' : ''}
-                    link={linkedQuakes[i]
-                      ? (linkedQuakes[i] === linkedQuake
-                        // 先頭の結べた地震はバナー全体が押せるので、印だけを添える（従来の形）。
-                        ? <span style={{ marginLeft: '0.375rem', fontSize: '0.625rem', opacity: 0.7 }}>▶ 地震情報</span>
-                        // 2 つ目以降はその行の印だけがその地震へ寄せる（バナー全体のクリックへ流さない）。
-                        : <span
-                            role="button"
-                            tabIndex={0}
-                            onClick={(e) => { e.stopPropagation(); onEarthquakeLink?.(quakeEventKey(linkedQuakes[i]!)) }}
-                            onKeyDown={(e) => {
-                              if (e.key !== 'Enter' && e.key !== ' ') return
-                              // Space の既定の動き（パネルのスクロール）を止める。`button` 要素なら自前で止めるが、これは `role="button"`。
-                              e.preventDefault()
-                              e.stopPropagation()
-                              onEarthquakeLink?.(quakeEventKey(linkedQuakes[i]!))
-                            }}
-                            style={{ marginLeft: '0.375rem', fontSize: '0.625rem', opacity: 0.7, cursor: 'pointer' }}
-                          >▶ 地震情報</span>)
-                      : null}
-                  />
-                ))}
-                {/* 前の津波の原因地震。地震カードへの印は付けない —— 結び付け（`linkTsunamiSources`）は今の報の原因地震だけを
-                    相手にする。1 件目だけ、今の報に原因地震が無ければ「震源: 」を前置きする。 */}
-                {previousSourceEarthquakes.map((eq, i) => (
-                  <SourceEarthquakeLine
-                    key={`prev-${i}`}
-                    eq={eq}
-                    prefix={i === 0 && !sourceEarthquake ? '震源: ' : ''}
-                    link={null}
-                  />
-                ))}
+            {/* 付加文への入口。地震カードの「気象庁からの補足 ▸」と同じ畳んだ行（2026-11-04 ユーザー選択「B1 帯は等級だけ
+                (Recommended)」の見本）。開いた中身はこれまでどおりバナーの下へ重ねる（流し込むと区域一覧が押し下がる）。
+                **バナー自身のクリック（地震カードへの移動）へ伝播させない。** */}
+            {canOpenComments && (
+              <div
+                role="button"
+                tabIndex={0}
+                aria-expanded={commentsOpen}
+                onClick={e => { e.stopPropagation(); setCommentsOpen(!commentsOpen) }}
+                onKeyDown={e => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return
+                  e.preventDefault(); e.stopPropagation(); setCommentsOpen(!commentsOpen)
+                }}
+                className="mt-1.5 cursor-pointer rounded-sm bg-panel px-2.5 py-1.5 text-secondary hover:text-white"
+                style={{ fontSize: 'var(--qk-fs)' }}>
+                気象庁からの補足 <DisclosureCaret open={commentsOpen} />
               </div>
             )}
           </div>
+          {/* 原因地震。**取消・解除の表示中も出す**（2026-10-21 ユーザー選択「原因地震も出す (Recommended)」。全期間の解除 2 通とも
+              原因地震を持つ）。 */}
+          {(sourceEarthquake || previousSourceEarthquakes.length > 0) && (
+            <div className="mt-2 border-t border-border" style={{ padding: '6px 12px 0' }}>
+              {/* 短い間に複数の地震が起きると、1 つの津波情報にまとめて発表される。
+                  2 件目以降を落とすと、どの地震による津波なのかが読み取れなくなる。
+                  **1 件目と 2 件目以降で別々に書かない** —— 項目を足したとき片方に漏れる
+                  （実際、震央補助表現と震源決定機関を 1 件目にだけ足して 2 件目で落としていた）。 */}
+              {sourceEarthquakes.map((eq, i) => (
+                <SourceEarthquakeLine
+                  key={i}
+                  // 結べた地震カードがあれば、その上段の値で出す（→ `shownTsunamiSource`）
+                  eq={shownTsunamiSource(eq, linkedQuakes[i])}
+                  link={linkedQuakes[i]
+                    ? (linkedQuakes[i] === linkedQuake
+                      // 先頭の結べた地震はバナー全体が押せるので、印だけを添える（従来の形）。
+                      ? <span className="text-secondary" style={{ marginLeft: '0.375rem', fontSize: 'var(--qk-fs)' }}>▶ 地震情報</span>
+                      // 2 つ目以降はその行の印だけがその地震へ寄せる（バナー全体のクリックへ流さない）。
+                      : <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => { e.stopPropagation(); onEarthquakeLink?.(quakeEventKey(linkedQuakes[i]!)) }}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter' && e.key !== ' ') return
+                            // Space の既定の動き（パネルのスクロール）を止める。`button` 要素なら自前で止めるが、これは `role="button"`。
+                            e.preventDefault()
+                            e.stopPropagation()
+                            onEarthquakeLink?.(quakeEventKey(linkedQuakes[i]!))
+                          }}
+                          className="text-secondary cursor-pointer"
+                          style={{ marginLeft: '0.375rem', fontSize: 'var(--qk-fs)' }}
+                        >▶ 地震情報</span>)
+                    : null}
+                />
+              ))}
+              {/* 前の津波の原因地震。地震カードへの印は付けない —— 結び付け（`linkTsunamiSources`）は今の報の原因地震だけを
+                  相手にする。 */}
+              {previousSourceEarthquakes.map((eq, i) => (
+                <SourceEarthquakeLine
+                  key={`prev-${i}`}
+                  eq={eq}
+                  link={null}
+                />
+              ))}
+            </div>
+          )}
+          {/* 電文が名乗る情報名（`Head/Title`）と官署。**上の等級の帯とは別物** —— あちらはアプリが区域の等級から組み立てた
+              見出しで、こちらは気象庁がその報に付けた名前（同じ VTSE51 が「津波観測に関する情報」と「各地の満潮時刻・
+              津波到達予想時刻に関する情報」を名乗り分ける）。官署は「編集官署 …　発表官署 …」の形（2026-10-29 ユーザー承認
+              「地震カードと同じく出す (Recommended)」・2026-10-30 ユーザー選択「編集官署の隣に出す (Recommended)」）。
+              **`issue.source` は見ない** —— 発表官署へ落ちるので「編集官署」と名乗ると事実を誤らせる。
+              名前の途中で割らず、収まらないときは項目ごと次の行へ送る（2026-11-01 ユーザー選択「今回一緒に直す (Recommended)」）。 */}
+          {(active[0]?.infoName || active[0]?.issue.editorialOffice || active[0]?.issue.publishingOffice) && (
+            <div className="text-secondary" style={{ fontSize: 'var(--qk-fs)', padding: '6px 12px 8px' }}>
+              {[active[0].infoName, ...officeLabels(active[0].issue)].filter((s): s is string => !!s).map((s, i) => (
+                <Fragment key={s}>{i > 0 && '　'}<span className="whitespace-nowrap">{s}</span></Fragment>
+              ))}
+            </div>
+          )}
+          {!(active[0]?.infoName || active[0]?.issue.editorialOffice || active[0]?.issue.publishingOffice) && <div style={{ height: 8 }} />}
         </div>
         {/* 開いた付加文。**バナーの下へ重ねる（流し込まない）。**
             流し込むとバナーが伸びて、後ろの区域一覧が押し下がる —— 読むつもりで開いただけで
@@ -1649,23 +1734,22 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
             枠だけ残り、しかも入口が死んでいて閉じられない形ができる。 */}
         {commentsOpen && canOpenComments && (
           <div
-            className="absolute left-3 right-3 z-20 rounded-b-lg overflow-y-auto overscroll-contain px-3 pb-3 pt-1.5 roomy:px-4"
+            className="absolute z-20 rounded-b-sm overflow-y-auto overscroll-contain bg-card px-3 pb-3 pt-2 shadow-[0_3px_8px_rgba(0,0,0,.55)]"
             style={{
+              left: 'var(--qk-pad)',
+              right: 'var(--qk-pad)',
               top: '100%',
-              marginTop: '-0.5rem',
-              background: isCancelledDisplay ? '#1a1a1a' : topStyle.headerBg,
-              border: `2px solid ${isCancelledDisplay ? '#4b5563' : topStyle.cardBorder}`,
+              border: `2px solid ${bannerBand}`,
               borderTop: 'none',
               maxHeight: commentsMaxHeight,
-              boxShadow: '0 8px 16px rgba(0,0,0,0.45)',
             }}>
             <TsunamiCommentBody
               endText={bannerEndText}
               bodyText={bannerBodyText}
               comments={bannerComments}
               freeText={bannerFreeText}
-              borderColor={isCancelledDisplay ? '#4b556366' : `${topStyle.cardBorder}40`}
-              textColor={isCancelledDisplay ? '#9ca3af' : topStyle.headerColor}
+              borderColor="var(--color-border)"
+              textColor="#e6e9ec"
             />
           </div>
         )}
@@ -1683,7 +1767,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
         return (
           <div key={t.id} className="flex flex-col gap-3 relative">
             {t.cancelledAt && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-lg" style={{ minHeight: '5rem' }}>
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-md" style={{ minHeight: '5rem' }}>
                 <span className="font-black text-white" style={{ fontSize: '2.5rem', lineHeight: 1.1 }}>{cancelInfo.badge}</span>
                 <span className="text-sm font-bold text-white/90 mt-1">{cancelInfo.desc}</span>
               </div>
@@ -1729,7 +1813,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
               registerSpeechAnchor={registerSpeechAnchor}
             />
             {(unmatched.length > 0 || (t.estimations?.length ?? 0) > 0) && (
-              <div className="bg-card rounded-lg overflow-hidden"
+              <div className="bg-card rounded-sm overflow-hidden"
                 style={{ border: '2px solid #1d4ed8', boxShadow: '0 0 0 1px rgba(29,78,216,0.25)' }}>
                 {/* 実測が 1 件も無く推定だけが届く電文もあるので、見出しは中身に合わせる。 */}
                 {unmatched.length > 0 && (
@@ -1765,6 +1849,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
         )
       })}
       </div>
+     </div>
     </div>
   )
 })

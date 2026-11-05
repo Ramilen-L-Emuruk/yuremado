@@ -164,6 +164,22 @@ export type IntensityOrphanRegionRow = { kind: 'area' } & IntensityRegionRow
 /** 震度一覧の最上段の行（都道府県、または県を引けない区域）。 */
 export type IntensityTopRow = IntensityPrefRow | IntensityOrphanRegionRow
 
+/**
+ * 震度一覧のどこかの行に「（未入電）」「（未入電あり）」の注記が付くか。付くなら震度の欄を広げる。
+ *
+ * **画面が注記を付ける条件と 1 対 1 に揃える**（`EarthquakeCard.tsx` の `IntensityRow` へ渡す値）——
+ * 都道府県・区域の行は「範囲に未入電あり」、市町村は自分の未入電か範囲の未入電、観測点は自分の未入電。
+ * 電文の点の印から推し量ると、行に出ない未入電（座標表で行を組めなかった点など）で欄だけ広がる。
+ */
+export function intensityRowsShowUnreceivedNote(rows: readonly IntensityTopRow[]): boolean {
+  const station = (s: IntensityStationRow) => s.unreceived
+  const city = (c: IntensityCityRow) => c.unreceived || c.hasUnreceived || c.stations.some(station)
+  const region = (r: IntensityRegionRow) => r.hasUnreceived || r.cities.some(city) || r.stations.some(station)
+  return rows.some(row => row.kind === 'area'
+    ? region(row)
+    : row.hasUnreceived || row.regions.some(region) || row.cities.some(city) || row.stations.some(station))
+}
+
 /** {@link buildIntensityRows} の結果。 */
 export interface IntensityRows {
   rows: IntensityTopRow[]

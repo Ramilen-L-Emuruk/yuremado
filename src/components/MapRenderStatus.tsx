@@ -1,3 +1,4 @@
+import { Marquee } from './Marquee'
 import { useSyncExternalStore } from 'react'
 import { subscribeRenderHealth, getRenderHealth } from '../utils/renderHealth'
 
@@ -21,21 +22,21 @@ export function MapRenderStatus() {
   if (health.broken.length === 0 && health.uninteractive.length === 0) return null
 
   return (
-    <div className="bg-black/80 rounded-sm text-xs px-2 py-0.5 roomy:text-lg roomy:px-2.5 roomy:py-1 text-amber-300">
+    <div className="bg-panel/90 rounded-sm text-xs px-2 py-0.5 roomy:text-lg roomy:px-2.5 roomy:py-1 text-amber-300">
       {/* 文の形（言い切り・名前を主語に置く・この帯だけ括弧を使わない）の規約と理由は
           `docs/spec/settings-pwa-spec.md` §5.5「通知の文の形」。 */}
       {health.broken.length > 0 && (
-        <div>{nameList(health.broken)}を描けず</div>
+        <Marquee text={`${nameList(health.broken)}を描けず`} />
       )}
       {health.uninteractive.length > 0 && (
-        <div>{nameList(health.uninteractive)}はクリックに応じず</div>
+        <Marquee text={`${nameList(health.uninteractive)}はクリックに応じず`} />
       )}
       {/* **手掛かりは 2 つに共通なので 1 行にまとめる。** 片方にだけ添えると、もう片方は
           打つ手が無いように読める（実際にはどちらも同じ——一時的な不調なら作り直しで直り、
           恒久的なものならどちらも直らない）。
           再読み込みを挙げているのは、地図ごと作り直すとシェーダーも判定も新しく用意されるため。
           アプリが自分で作り直す機会（投影の切り替え）もあるが、利用者に案内できる操作ではない。 */}
-      <div className="opacity-80">再読み込みで直ることがあります</div>
+      <Marquee className="opacity-80" text="再読み込みで直ることがあります" />
     </div>
   )
 }
