@@ -63,7 +63,7 @@ import { useSeismoScope } from './hooks/useSeismoScope'
 import { useStationCoords } from './hooks/useStationCoords'
 import { useEarthquakes } from './hooks/useEarthquakes'
 import { useFetchThrottled } from './hooks/useFetchThrottled'
-import { SETTINGS_STORAGE_KEY, useSettings } from './hooks/useSettings'
+import { DEFAULTS as SETTINGS_DEFAULTS, SETTINGS_STORAGE_KEY, useSettings } from './hooks/useSettings'
 import { waveStackLayout } from './utils/waveStackLayout'
 import { useAlertTitle, resolveAlertTitle } from './hooks/useAlertTitle'
 import { useReloadSchedule } from './hooks/useReloadSchedule'
@@ -118,8 +118,8 @@ import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as RE
 import { fetchDmdataReplayEvents, fetchDmdataReplayInitialEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
 import { relayRestEndpoint, relayTokenStore } from './services/relayEndpoint'
 import {
-  browserUsageEnv, buildUsageReport, countUsage, flushUsage, markUsageConsentAnswered, setUsageCounting, syncInstallIdSafely,
-  USAGE_FLUSH_INTERVAL_MS, usageConsentAnswered, usageCounter, type UsageSettingsFlags, withUsageCount,
+  browserUsageEnv, buildUsageReportNow, countUsage, flushUsage, markUsageConsentAnswered, setUsageCounting, syncInstallIdSafely,
+  USAGE_FLUSH_INTERVAL_MS, usageConsentAnswered, usageCounter, type UsageSettingsFlags, usageSettingValues, markPrefsSentSafely, withUsageCount,
 } from './services/usageStats'
 import { UsageConsentDialog } from './components/UsageConsentDialog'
 import { useForecastKeyCheck } from './hooks/useForecastKey'
@@ -980,14 +980,25 @@ export function App() {
 
   // 使用状況データ（設計書 §6.6）。許可している間だけ一意の識別子を持ち、札を取るときに端末と設定の情報を添え、
   // 操作の回数を数える。報告は札を取るたびに組み直すので、設定の使い方は ref で最新を読む
+  // （設定の全項目を記録の文字列にするのも札を取るときだけ。描き直しのたびには組まない）
   const usageFlagsRef = useRef<UsageSettingsFlags>({ apiKey: false, tts: false, sound: false, notify: false, seismo: false })
   usageFlagsRef.current = {
     apiKey: settings.dmdataApiKey !== '', tts: settings.voicevoxEnabled, sound: settings.soundEnabled,
     notify: settings.notifyEnabled, seismo: settings.seismoEnabled,
   }
+  const usageSettingsRef = useRef(settings)
+  usageSettingsRef.current = settings
   const applyUsageEnabled = (enabled: boolean) => {
     const install = syncInstallIdSafely(enabled)
-    relayTokenStore.setUsage(install, install === null ? null : () => buildUsageReport(install, usageFlagsRef.current, browserUsageEnv(__APP_VERSION__)))
+    relayTokenStore.setUsage(
+      install,
+      // 設定の全項目は、変わったときと日（日本時間・サーバーの時刻）が替わったときだけ添える（同じ日に同じ値なら空）
+      install === null ? null : () => buildUsageReportNow(
+        install, usageFlagsRef.current, usageSettingValues(usageSettingsRef.current, SETTINGS_DEFAULTS),
+        browserUsageEnv(__APP_VERSION__), serverNow(),
+      ),
+      install === null ? null : (report, recorded) => markPrefsSentSafely(install, report, recorded),
+    )
     setUsageCounting(install !== null)
   }
   // 最初の描画の前に 1 度だけ渡しておく。effect を待つと、先に走る中継の接続（useEarthquakes）が識別子の無い札を取ってから

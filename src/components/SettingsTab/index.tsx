@@ -2325,7 +2325,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             ここでオンにした間だけ送る。文面は 2026-11-03 ユーザー選択「VS Code・Apple の形」 */}
         <Row
           label="使用状況データを送信する"
-          description={'開いたタブ・使っている機能・端末の種類などを送ります。名前・IP アドレス・登録した地点は送りません。' +
+          description={'開いたタブ・使っている機能・設定・端末の種類などを送ります。名前・IP アドレス・登録した地点は送りません。' +
             'オフにすると、この端末の識別子も消えます。'}
         >
           <Toggle checked={settings.usageStatsEnabled} onChange={v => onUpdate('usageStatsEnabled', v)} />
