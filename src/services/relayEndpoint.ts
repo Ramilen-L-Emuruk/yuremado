@@ -81,9 +81,11 @@ export interface RelayTokenStore {
   /**
    * 使用状況データ（設計書 §6.6）。許可している間は一意の識別子と、札を取るときに添える報告を組む関数を渡す。
    * 許可していないなら両方 null。**識別子が変わったら今の札を捨てる** —— 識別子は札に署名されているので、
-   * オフにしても古い札のままでは接続の長さが数えられ続ける
+   * オフにしても古い札のままでは接続の長さが数えられ続ける。
+   * `accepted` は、その報告を添えた札を中継が出したときに、送った報告と、中継が設定を記録できた件数（答えの `usagePrefsRecorded`。
+   * 前の版の中継は返さないので null）を渡して呼ぶ（設定の全項目を 1 日 1 回だけ送るため、送れたことを覚える。→ `usageStats.ts` の `markPrefsSent`）
    */
-  setUsage(install: string | null, report: (() => unknown) | null): void
+  setUsage(install: string | null, report: (() => unknown) | null, accepted: ((report: unknown, prefsRecorded: number | null) => void) | null): void
   /** いま札に添えている識別子（許可していなければ null） */
   usageInstall(): string | null
   /** 札を取り直したり捨てたりしたら呼ぶ（予報の答えを画面へ出すため）。戻り値で外す */
@@ -96,6 +98,8 @@ interface TokenResponse {
   expiresAt?: unknown
   forecast?: unknown
   forecastProblem?: unknown
+  usagePrefsRecorded?: unknown
+  usagePrefsRejected?: unknown
 }
 
 const abortedByCaller = () => new DOMException('呼び出し元が中継の札の待ちを打ち切りました', 'AbortError')
@@ -139,6 +143,7 @@ export function createRelayTokenStore(opts: {
   let scope: RelayForecastScope | null = null
   let usageInstall: string | null = null
   let usageReport: (() => unknown) | null = null
+  let usageAccepted: ((report: unknown, prefsRecorded: number | null) => void) | null = null
   /** 札を捨てるたびに進める。取りに行っている間にキーが変わったら、届いた札を使わない */
   let generation = 0
   const listeners = new Set<() => void>()
@@ -153,11 +158,15 @@ export function createRelayTokenStore(opts: {
     const headers: Record<string, string> = sentKey === null ? {} : { Authorization: `Forecast ${sentKey}` }
     // 許可している間だけ、識別子と端末・設定の情報を本文に添える（許可していなければ本文を付けない）
     const sentInstall = usageInstall
+    const sentAccepted = usageAccepted
     let requestBody: string | undefined
+    let sentReport: unknown = undefined
     if (usageInstall !== null && usageReport !== null) {
       // 報告を組む処理が投げても札は取る（記録のために配信を止めない）。そのときは本文を付けない＝送らない側へ倒す
       try {
-        requestBody = JSON.stringify({ usage: usageReport() })
+        const report = usageReport()
+        requestBody = JSON.stringify({ usage: report })
+        sentReport = report
         headers['Content-Type'] = 'application/json'
       } catch (err) {
         log.warn('[使用状況] 札に添える報告を組めなかった（この札では送らない）', err)
@@ -186,6 +195,14 @@ export function createRelayTokenStore(opts: {
     // ——渡すと、許可を外した後もその札の接続に古い識別子が付いたままになる
     // 自分で取り直さず、まとめた取得に相乗りする（setUsage が前の取得を外しているので、新しい識別子の取得は 1 本で済む）
     if (startedGeneration !== generation && sentInstall !== usageInstall) return shared()
+    // 中継が報告を添えた札を出した。送れたことを覚える側へ渡す（覚えられなくても札は使う）
+    if (sentReport !== undefined && sentAccepted !== null && sentInstall === usageInstall) {
+      const int = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null)
+      // 中継が受け付けた件数（書けた＋決まりに合わず捨てた）。前の版の中継は返さないので null
+      const rec = int(body.usagePrefsRecorded)
+      const recorded = rec === null ? null : rec + (int(body.usagePrefsRejected) ?? 0)
+      try { sentAccepted(sentReport, recorded) } catch (err) { log.warn('[使用状況] 送れた報告を覚えられなかった（次の札でも設定を送る）', err) }
+    }
     // 取りに行っている間に予報キーが変わった。古いキーの札は渡すが覚えない（次の ensure で新しいキーで取り直す）
     if (startedGeneration !== generation) return body.token
     token = body.token
@@ -258,8 +275,9 @@ export function createRelayTokenStore(opts: {
     forecastKey: () => forecastKey,
     forecastKeyChecking: () => checking,
     forecastScope: () => scope,
-    setUsage(install, report) {
+    setUsage(install, report, accepted) {
       usageReport = install === null ? null : report
+      usageAccepted = install === null ? null : accepted
       if (install === usageInstall) return
       usageInstall = install
       drop()

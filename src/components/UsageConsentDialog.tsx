@@ -54,7 +54,7 @@ export function UsageConsentDialog({ onAnswer }: {
         <div className="ui-text-scope contents text-(length:--ui-f)">
         <div id="usage-consent-title" className="text-white">揺れ窓の改善にご協力ください</div>
         <p className="text-(length:--ui-fs) leading-relaxed text-secondary">
-          使用状況データ（開いたタブ・使っている機能・端末の種類など）を開発者に送信することを許可しますか？
+          使用状況データ（開いたタブ・使っている機能・設定・端末の種類など）を開発者に送信することを許可しますか？
           名前・IP アドレス・登録した地点は送信しません。この設定はいつでも変更できます。
         </p>
         <a href={PRIVACY_POLICY_URL} target="_blank" rel="noopener noreferrer" className="text-(length:--ui-fs) text-blue-400 hover:text-blue-300">
