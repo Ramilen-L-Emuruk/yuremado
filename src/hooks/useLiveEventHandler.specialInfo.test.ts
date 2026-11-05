@@ -95,7 +95,7 @@ describe('臨時情報・後発地震注意情報', () => {
   it('正: 発表は通知を出す（本文は要約）', () => {
     const { handle } = setup()
     handle({ kind: 'nankai', data: nankai() })
-    expect(notify).toHaveBeenCalledWith('南海トラフ地震臨時情報（巨大地震注意）', '要約。', 'nankai')
+    expect(notify).toHaveBeenCalledWith('南海トラフ地震臨時情報（巨大地震注意）', '要約。', 'nankai', false, null)
   })
   it('対照: 「南海トラフ・後発地震の通知」を切れば出さない（地震情報の通知とは別）', () => {
     const { handle } = setup({ notifyNankai: false })
@@ -105,14 +105,14 @@ describe('臨時情報・後発地震注意情報', () => {
   it('安全弁: 地震情報の通知を切っていても、臨時情報の通知は出す', () => {
     const { handle } = setup({ notifyQuake: false })
     handle({ kind: 'kohatsu', data: kohatsu() })
-    expect(notify).toHaveBeenCalledWith('北海道・三陸沖後発地震注意情報', '要約。', 'kohatsu')
+    expect(notify).toHaveBeenCalledWith('北海道・三陸沖後発地震注意情報', '要約。', 'kohatsu', false, null)
   })
   it('正: 取消は南海トラフの系統の取消音を鳴らし、パネルを開き、取消の通知を出す', () => {
     const { handle, expandPanel } = setup()
     handle({ kind: 'nankai', data: nankai({ cancelled: true, retracted: true, kindName: '', kindCode: '' }) })
     expect(sound.mock.calls).toEqual([['specialInfoCancel']])
     expect(expandPanel).toHaveBeenCalled()
-    expect(notify).toHaveBeenCalledWith('南海トラフ地震臨時情報 取消', '南海トラフ地震臨時情報は取り消されました', 'nankai')
+    expect(notify).toHaveBeenCalledWith('南海トラフ地震臨時情報 取消', '南海トラフ地震臨時情報は取り消されました', 'nankai', false, null)
   })
   it('正: 調査終了も取消音とパネル展開', () => {
     const { handle, expandPanel } = setup()
@@ -149,7 +149,7 @@ describe('南海トラフ地震関連解説情報', () => {
     handle({ kind: 'nankaiCommentary', data: commentary({ id: 'c-2', serialName: '定例解説', serialCode: '200' }) })
     expect(notify).not.toHaveBeenCalled()
     handle({ kind: 'nankaiCommentary', data: commentary() })
-    expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報（第１号）', '要約。', 'nankai-commentary')
+    expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報（第１号）', '要約。', 'nankai-commentary', false, null)
   })
   it('正: 取消は取消音を鳴らし、発表を通知した号なら取消の通知で置き換える', () => {
     const { handle } = setup()
@@ -158,7 +158,7 @@ describe('南海トラフ地震関連解説情報', () => {
     notify.mockClear()
     handle({ kind: 'nankaiCommentary', data: commentary({ cancelled: true }) })
     expect(sound.mock.calls).toEqual([['specialInfoCancel']])
-    expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報 取消', '南海トラフ地震関連解説情報は取り消されました', 'nankai-commentary')
+    expect(notify).toHaveBeenCalledWith('南海トラフ地震関連解説情報 取消', '南海トラフ地震関連解説情報は取り消されました', 'nankai-commentary', false, null)
   })
   it('対照: 通知していない号（定例解説）への取消は通知しない', () => {
     const { handle } = setup()
@@ -179,7 +179,7 @@ describe('長周期地震動に関する観測情報', () => {
     const { handle, titles } = setup()
     handle({ kind: 'lpgm', data: lpgm() })
     expect(titles()).toEqual(['長周期地震動 石川県能登地方 最大階級3'])
-    expect(notify).toHaveBeenCalledWith('長周期地震動に関する観測情報', '石川県能登地方 最大長周期地震動階級3', 'lpgm-20260101161000')
+    expect(notify).toHaveBeenCalledWith('長周期地震動に関する観測情報', '石川県能登地方 最大長周期地震動階級3', 'lpgm-20260101161000', false, { tab: 'earthquake', lpgm: '20260101161000' })
   })
   // 最大階級 0 の報も階級 1 以上と同じく扱う（2026-10-30 ユーザー選択「階級 1 以上と同じ型 (Recommended)」）
   it('正: 最大階級 0 の報も音を鳴らし、タイトルと通知を出す', () => {
@@ -187,7 +187,7 @@ describe('長周期地震動に関する観測情報', () => {
     handle({ kind: 'lpgm', data: lpgm({ maxClass: 0 }) })
     expect(sound).toHaveBeenCalled()
     expect(titles()).toEqual(['長周期地震動 石川県能登地方 最大階級0'])
-    expect(notify).toHaveBeenCalledWith('長周期地震動に関する観測情報', '石川県能登地方 最大長周期地震動階級0', 'lpgm-20260101161000')
+    expect(notify).toHaveBeenCalledWith('長周期地震動に関する観測情報', '石川県能登地方 最大長周期地震動階級0', 'lpgm-20260101161000', false, { tab: 'earthquake', lpgm: '20260101161000' })
   })
   it('安全弁: 最大階級 0 の報でも、地震情報の通知を切れば通知しない', () => {
     const { handle } = setup({ notifyQuake: false })
@@ -209,6 +209,7 @@ describe('長周期地震動に関する観測情報', () => {
     expect(sound.mock.calls).toEqual([['earthquakeCancel']])
     expect(notify).toHaveBeenCalledWith(
       '長周期地震動に関する観測情報 取消', '石川県能登地方の長周期地震動に関する観測情報は取り消されました', 'lpgm-20260101161000',
+      false, null,
     )
   })
 })
@@ -218,7 +219,7 @@ describe('推計震度分布図', () => {
   it('正: 受信したことを通知する', () => {
     const { handle } = setup()
     handle({ kind: 'estimatedIntensity', data: ei, isNew: true })
-    expect(notify).toHaveBeenCalledWith('推計震度分布図', '10時05分頃発生した地震の推計震度分布図を受信しました', 'estimated-intensity-2026-10-24T10:05:00+09:00')
+    expect(notify).toHaveBeenCalledWith('推計震度分布図', '10時05分頃発生した地震の推計震度分布図を受信しました', 'estimated-intensity-2026-10-24T10:05:00+09:00', false, expect.objectContaining({ tab: 'earthquake', estimated: '2026-10-24T10:05:00+09:00' }))
   })
   it('対照: 地震情報の通知を切れば通知しない', () => {
     const { handle } = setup({ notifyQuake: false })
@@ -232,7 +233,7 @@ describe('地震回数に関する情報', () => {
     const { handle, titles } = setup()
     handle({ kind: 'earthquakeCount', data: count() })
     expect(titles()).toEqual(['地震回数に関する情報'])
-    expect(notify).toHaveBeenCalledWith('地震回数に関する情報', '', 'earthquake-count')
+    expect(notify).toHaveBeenCalledWith('地震回数に関する情報', '', 'earthquake-count', false, null)
   })
   it('正: 取消は地震情報の系統の取消音を鳴らし、発表を通知していれば取消の通知で置き換える', () => {
     const { handle } = setup()
@@ -241,7 +242,7 @@ describe('地震回数に関する情報', () => {
     notify.mockClear()
     handle({ kind: 'earthquakeCount', data: count({ id: 'ec-2', cancelled: true }) })
     expect(sound.mock.calls).toEqual([['earthquakeCancel']])
-    expect(notify).toHaveBeenCalledWith('地震回数に関する情報 取消', '地震回数に関する情報は取り消されました', 'earthquake-count')
+    expect(notify).toHaveBeenCalledWith('地震回数に関する情報 取消', '地震回数に関する情報は取り消されました', 'earthquake-count', false, null)
   })
   // 2026-10-24 ユーザー選択「発表を通知したものだけ (Recommended)」
   it('対照: 発表を通知していない群発への取消は、音だけで通知は出さない', () => {

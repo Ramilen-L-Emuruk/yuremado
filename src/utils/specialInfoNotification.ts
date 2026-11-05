@@ -2,6 +2,7 @@ import type {
   JMANankai, JMANankaiCommentary, JMAKohatsu, JMALpgm, JMAEarthquakeCount, JMAEstimatedIntensity,
 } from '../types/earthquake'
 import { readDateTime } from './formatters'
+import type { NotificationOpen } from './notificationOpen'
 
 /**
  * 南海トラフ・後発地震・関連解説情報・長周期地震動・推計震度分布図・地震回数のブラウザ通知の中身。
@@ -19,6 +20,11 @@ export interface SpecialInfoNotification {
   readonly title: string
   readonly body: string
   readonly tag: string
+  /**
+   * 押したときに開く先。長周期・推計は、その地震を選んで表示を開く。南海トラフ・後発・関連解説・地震回数と
+   * 取消は持たない（`null`。帯はどの画面でも地図の上に出ているので、アプリを前に出すだけ）
+   */
+  readonly open: NotificationOpen | null
 }
 
 const NANKAI_NAME = '南海トラフ地震臨時情報'
@@ -30,7 +36,7 @@ const COUNT_NAME = '地震回数に関する情報'
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
 
 function cancelled(name: string, tag: string, subject = name): SpecialInfoNotification {
-  return { title: `${name} 取消`, body: `${subject}は取り消されました`, tag }
+  return { title: `${name} 取消`, body: `${subject}は取り消されました`, tag, open: null }
 }
 
 /**
@@ -41,13 +47,13 @@ function cancelled(name: string, tag: string, subject = name): SpecialInfoNotifi
 export function nankaiNotification(event: JMANankai): SpecialInfoNotification {
   if (event.retracted) return cancelled(NANKAI_NAME, 'nankai')
   const stage = event.kindName || (event.cancelled ? '調査終了' : '')
-  return { title: stage ? `${NANKAI_NAME}（${stage}）` : NANKAI_NAME, body: event.summary ?? '', tag: 'nankai' }
+  return { title: stage ? `${NANKAI_NAME}（${stage}）` : NANKAI_NAME, body: event.summary ?? '', tag: 'nankai', open: null }
 }
 
 /** 後発地震注意情報の通知。この電文に終了の報は無いので、`cancelled` が立つのは取消だけ。 */
 export function kohatsuNotification(event: JMAKohatsu): SpecialInfoNotification {
   if (event.cancelled) return cancelled(KOHATSU_NAME, 'kohatsu')
-  return { title: KOHATSU_NAME, body: event.summary ?? '', tag: 'kohatsu' }
+  return { title: KOHATSU_NAME, body: event.summary ?? '', tag: 'kohatsu', open: null }
 }
 
 /**
@@ -56,7 +62,7 @@ export function kohatsuNotification(event: JMAKohatsu): SpecialInfoNotification 
  */
 export function nankaiCommentaryNotification(event: JMANankaiCommentary): SpecialInfoNotification {
   if (event.cancelled) return cancelled(COMMENTARY_NAME, 'nankai-commentary')
-  return { title: event.headline.trim() || COMMENTARY_NAME, body: event.summary ?? '', tag: 'nankai-commentary' }
+  return { title: event.headline.trim() || COMMENTARY_NAME, body: event.summary ?? '', tag: 'nankai-commentary', open: null }
 }
 
 /**
@@ -73,7 +79,7 @@ export function lpgmNotification(event: JMALpgm, cancelSubjectName: string): Spe
   }
   const name = event.hypocenter?.name.trim() ?? ''
   const cls = `最大長周期地震動階級${event.maxClass}`
-  return { title: LPGM_NAME, body: name ? `${name} ${cls}` : cls, tag }
+  return { title: LPGM_NAME, body: name ? `${name} ${cls}` : cls, tag, open: { tab: 'earthquake', lpgm: event.eventId } }
 }
 
 /**
@@ -89,6 +95,7 @@ export function estimatedIntensityNotification(event: JMAEstimatedIntensity, isN
     title: ESTIMATED_NAME,
     body: `${when}${ESTIMATED_NAME}${isNew ? 'を受信しました' : 'が更新されました'}`,
     tag: `estimated-intensity-${event.arrivalTime}`,
+    open: { tab: 'earthquake', estimated: event.arrivalTime, lat: event.hypocenter?.lat, lon: event.hypocenter?.lon },
   }
 }
 
@@ -98,5 +105,5 @@ export function estimatedIntensityNotification(event: JMAEstimatedIntensity, isN
  */
 export function earthquakeCountNotification(event: JMAEarthquakeCount, headline: string): SpecialInfoNotification {
   if (event.cancelled) return cancelled(COUNT_NAME, 'earthquake-count')
-  return { title: COUNT_NAME, body: headline === COUNT_NAME ? '' : headline, tag: 'earthquake-count' }
+  return { title: COUNT_NAME, body: headline === COUNT_NAME ? '' : headline, tag: 'earthquake-count', open: null }
 }
