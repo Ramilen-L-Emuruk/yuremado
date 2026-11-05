@@ -736,7 +736,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
 
   // confirmed 中はイベント自身のメンバー最大インデックス、likely 中は主候補イベントの最大インデックス。
   // 非検知時は音を鳴らさないため 0 でよい。confirmed の初期値は -1（欠測）——全地域のメンバーが欠測なら
-  // 通知の呼び名を付けない（0 から始めると計測震度 -3.0 の値があるように「0以下」と名乗る）
+  // 通知の呼び名を付けない（0 から始めると計測震度 -3.0 の値があるように「0未満」と名乗る）
   const effectiveKyoshinMaxIndex = useMemo(() => {
     if (confirmed) return confirmedShocks.reduce((max, s) => Math.max(max, s.index), -1)
     if (candidate) return candidateMaxIndex
