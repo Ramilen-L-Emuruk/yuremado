@@ -202,6 +202,8 @@ export const USAGE_TOP_LEVEL_SPECS = {
   mapLegendCollapsed: choice('state', '凡例を畳んでいるか', ['auto', 'open', 'collapsed'], 'auto'),
   seismoWaveExpanded: bool('state', '自作地震計の波形を展開しているか', false),
   panelRatio: num('state', '上下に分けたときのパネルの比率', 0.2, 0.8, 0.45),
+  panelWidthSide: num('state', '左右に分けたときのパネルの幅（PC・rem。null は既定）', 20, 200, null, true),
+  panelWidthSideNarrow: num('state', '左右に分けたときのパネルの幅（スマホ横・rem。null は既定）', 20, 200, null, true),
   dmdataKeyReentryNotice: bool('state', 'API キーの入れ直しのお知らせを出しているか', false),
 } as const satisfies Record<string, UsageSettingSpec>
 

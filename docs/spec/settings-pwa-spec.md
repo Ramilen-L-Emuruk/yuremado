@@ -916,7 +916,7 @@ npm run sign-arrival-token -- --kind=forecast --subject=<相手> --out=<ファ�
   名前・IP アドレス・登録した地点は送りません。オフにすると、この端末の識別子も消えます。」（同日ユーザー選択「VS Code・Apple の形」。
   「設定」は 2026-11-05 ユーザー選択「「設定」を足す (Recommended)」で同意の窓と一緒に足した）
 - **オンの間**（`services/usageStats.ts`）: 一意の識別子を作って保存し、中継の札を取るときに識別子と技術データ・設定のデータを添える
-  （`RelayTokenStore.setUsage`）。設定のデータは設定の窓の全項目（入れ子を区分ごとに数えて 106 項目）を記録の文字列にしたもの（`usageSettingValues`）で、
+  （`RelayTokenStore.setUsage`）。設定のデータは設定の窓の全項目（入れ子を区分ごとに数えて 108 項目）を記録の文字列にしたもの（`usageSettingValues`）で、
   項目と値の決まりは `utils/usageSettings.ts` の 1 か所が持つ（中継も同じファイルを写して届いた値を検める）。鍵・予報キー・到達予想キー・接続先の URL・
   ホーム地点は入れているかだけ（VOICEVOX の接続先は既定の localhost から変えたか）、通知する地域は選んだ都道府県の数だけを送る
   （2026-11-05 ユーザー選択「全項目・秘密と場所は「入れたか」だけ (Recommended)」「選んだ県の数だけ (Recommended)」）。札を取るときにだけ組む。
