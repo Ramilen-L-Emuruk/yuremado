@@ -2,7 +2,7 @@
  "results": {
   "pc-fukushimaoki": {
    "tier": "confirmed",
-   "firstLikely": "20:11:43",
+   "firstLikely": "20:11:44",
    "firstConfirmed": "20:11:44",
    "confirmedFrames": 46,
    "unrelated": 0,
@@ -27,19 +27,17 @@
    "firstLikely": "05:45:35",
    "firstConfirmed": "05:45:35",
    "confirmedFrames": 55,
-   "unrelated": 1,
+   "unrelated": 0,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": [
-    "05:45:21 沖縄県|名護市港"
-   ]
+   "unrelatedAt": []
   },
   "pc-nemuro": {
    "tier": "confirmed",
-   "firstLikely": "11:25:28",
-   "firstConfirmed": "11:25:32",
-   "confirmedFrames": 58,
+   "firstLikely": "11:25:27",
+   "firstConfirmed": "11:25:27",
+   "confirmedFrames": 63,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -56,7 +54,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "18:23:22 鹿児島県|指宿市十町"
+    "18:23:22 鹿児島県|指宿市山川新生町"
    ]
   },
   "pc-osumi": {
@@ -64,11 +62,13 @@
    "firstLikely": "06:49:55",
    "firstConfirmed": "06:49:55",
    "confirmedFrames": 65,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "06:49:03 千葉県|鋸南町下佐久間"
+   ]
   },
   "pc-miyagioki": {
    "tier": "confirmed",
@@ -217,9 +217,9 @@
   },
   "big-fukushima2022": {
    "tier": "confirmed",
-   "firstLikely": "23:35:51",
-   "firstConfirmed": "23:35:51",
-   "confirmedFrames": 158,
+   "firstLikely": "23:35:41",
+   "firstConfirmed": "23:35:41",
+   "confirmedFrames": 168,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -239,7 +239,7 @@
   },
   "big-hyuganada2024": {
    "tier": "confirmed",
-   "firstLikely": "16:43:05",
+   "firstLikely": "16:43:04",
    "firstConfirmed": "16:43:05",
    "confirmedFrames": 85,
    "unrelated": 0,
@@ -283,7 +283,7 @@
   },
   "ng-ishikawa": {
    "tier": "likely",
-   "firstLikely": "01:23:11",
+   "firstLikely": "01:23:07",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -402,7 +402,7 @@
    "confirmedFrames": 0,
    "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "18:00:27 茨城県|常陸太田市大中町"
@@ -429,7 +429,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "03:05:05 滋賀県|大津市木戸消防分団"
+    "03:05:05 京都府|京都左京区広河原能見町"
    ]
   },
   "calm-day": {
@@ -437,12 +437,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "13:04:00 鹿児島県|伊仙町伊仙"
+    "13:04:00 鹿児島県|伊仙町伊仙",
+    "13:09:47 熊本県|芦北町田浦町"
    ]
   },
   "glitch-0724": {
@@ -485,11 +486,11 @@
    "confirmedFrames": 0,
    "unrelated": 5,
    "unrelatedConfirmed": 3,
-   "unrelatedNoCatalog": 3,
+   "unrelatedNoCatalog": 2,
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
-    "07:23:58 熊本県|芦北町田浦町",
-    "07:27:23 熊本県|球磨村渡",
+    "07:23:57 熊本県|宇城市三角町",
+    "07:27:23 熊本県|上天草市龍ヶ岳町",
     "07:40:52 北海道|函館市泊町"
    ]
   },
@@ -498,13 +499,14 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 2,
+   "unrelated": 3,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "13:07:33 鹿児島県|長島町鷹巣",
-    "13:19:17 熊本県|八代市新地町"
+    "13:07:32 鹿児島県|長島町鷹巣",
+    "13:11:10 岩手県|岩手洋野町大野",
+    "13:19:16 熊本県|八代市新地町"
    ]
   },
   "calmx3": {
@@ -513,13 +515,13 @@
    "firstConfirmed": "19:30:30",
    "confirmedFrames": 129,
    "unrelated": 3,
-   "unrelatedConfirmed": 2,
+   "unrelatedConfirmed": 3,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "19:03:26 北海道|羅臼町岬町",
-    "19:33:24 青森県|東通村白糠",
-    "19:57:13 石川県|珠洲市正院町"
+    "19:03:14 北海道|斜里町ウトロ香川",
+    "19:33:23 北海道|函館市日ノ浜町",
+    "19:57:11 石川県|珠洲市正院町"
    ]
   },
   "calmx4": {
@@ -532,7 +534,7 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "04:35:11 鳥取県|江府町上之段広場",
+    "04:35:11 鳥取県|鳥取南部町法勝寺",
     "04:43:35 宮城県|石巻市泉町"
    ]
   },
@@ -541,12 +543,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "10:54:48 熊本県|芦北町田浦町"
+    "10:31:40 和歌山県|紀の川市粉河",
+    "10:54:47 熊本県|芦北町田浦町"
    ]
   },
   "hour-0819-08": {
@@ -554,12 +557,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 2,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "08:11:55 長崎県|長崎市長浦町"
+    "08:11:55 長崎県|長崎市長浦町",
+    "08:50:49 熊本県|芦北町田浦町"
    ]
   },
   "hour-0820-13": {
@@ -567,12 +571,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 2,
+   "unrelated": 3,
    "unrelatedConfirmed": 2,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "13:04:00 鹿児島県|伊仙町伊仙",
+    "13:09:47 熊本県|芦北町田浦町",
     "13:19:41 広島県|世羅町西上原"
    ]
   },
@@ -654,7 +659,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "13:02:28 石川県|珠洲市正院町"
+    "13:02:26 石川県|珠洲市正院町"
    ]
   },
   "fp0817-163840": {
@@ -662,14 +667,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 3,
+   "unrelated": 2,
    "unrelatedConfirmed": 2,
-   "unrelatedNoCatalog": 2,
-   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "16:37:06 京都府|京都右京区太秦",
-    "16:39:21 岩手県|宮古市五月町",
-    "16:40:08 北海道|浦河町築地"
+    "16:39:01 宮城県|登米市津山町"
    ]
   },
   "fp0818-003849": {
@@ -687,7 +691,7 @@
   },
   "fp0818-095359": {
    "tier": "confirmed",
-   "firstLikely": "09:54:32",
+   "firstLikely": "09:54:31",
    "firstConfirmed": "09:54:33",
    "confirmedFrames": 56,
    "unrelated": 0,
@@ -798,7 +802,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "14:01:28 熊本県|八代市新地町"
+    "14:01:27 熊本県|八代市新地町"
    ]
   },
   "fp0819-200244": {
@@ -896,12 +900,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 2,
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
-    "05:46:13 沖縄県|那覇市樋川"
+    "05:46:13 沖縄県|那覇市樋川",
+    "05:47:55 宮崎県|日向市富高"
    ]
   },
   "fp0821-070149": {
@@ -947,7 +952,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "16:25:05 熊本県|八代市新地町"
+    "16:25:05 熊本県|熊本南区富合町"
    ]
   },
   "fp0821-180601": {
@@ -960,7 +965,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "18:05:58 宮崎県|日向市東郷町山陰"
+    "18:05:57 宮崎県|日向市東郷町山陰"
    ]
   },
   "jq0-0816-0103": {
@@ -976,7 +981,7 @@
   },
   "jq1-0816-0112": {
    "tier": "confirmed",
-   "firstLikely": "01:12:21",
+   "firstLikely": "01:12:18",
    "firstConfirmed": "01:12:24",
    "confirmedFrames": 96,
    "unrelated": 0,
@@ -987,7 +992,7 @@
   },
   "jq2-0816-0259": {
    "tier": "confirmed",
-   "firstLikely": "02:59:09",
+   "firstLikely": "02:59:08",
    "firstConfirmed": "02:59:10",
    "confirmedFrames": 158,
    "unrelated": 0,
@@ -998,7 +1003,7 @@
   },
   "jq3-0816-0425": {
    "tier": "confirmed",
-   "firstLikely": "04:25:25",
+   "firstLikely": "04:25:24",
    "firstConfirmed": "04:25:25",
    "confirmedFrames": 154,
    "unrelated": 0,
@@ -1017,7 +1022,7 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "04:35:31 千葉県|鎌ケ谷市新鎌ケ谷"
+    "04:35:30 千葉県|東金市日吉台"
    ]
   },
   "jq5-0816-0618": {
@@ -1056,8 +1061,8 @@
   "jq8-0816-1332": {
    "tier": "confirmed",
    "firstLikely": "13:32:58",
-   "firstConfirmed": "13:33:04",
-   "confirmedFrames": 107,
+   "firstConfirmed": "13:33:00",
+   "confirmedFrames": 111,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1101,9 +1106,9 @@
   },
   "jq12-0816-1805": {
    "tier": "confirmed",
-   "firstLikely": "18:05:35",
-   "firstConfirmed": "18:05:35",
-   "confirmedFrames": 108,
+   "firstLikely": "18:05:34",
+   "firstConfirmed": "18:05:34",
+   "confirmedFrames": 109,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1123,7 +1128,7 @@
   },
   "jq14-0816-2142": {
    "tier": "confirmed",
-   "firstLikely": "21:42:10",
+   "firstLikely": "21:42:09",
    "firstConfirmed": "21:42:10",
    "confirmedFrames": 113,
    "unrelated": 0,
@@ -1161,8 +1166,8 @@
    "confirmedFrames": 131,
    "unrelated": 1,
    "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 1,
-   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "00:21:58 青森県|むつ市金谷"
    ]
@@ -1195,7 +1200,7 @@
    "tier": "confirmed",
    "firstLikely": "13:55:03",
    "firstConfirmed": "13:55:04",
-   "confirmedFrames": 69,
+   "confirmedFrames": 100,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1250,7 +1255,7 @@
    "tier": "confirmed",
    "firstLikely": "22:33:21",
    "firstConfirmed": "22:33:22",
-   "confirmedFrames": 126,
+   "confirmedFrames": 127,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1281,9 +1286,9 @@
   },
   "jq28-0818-0522": {
    "tier": "confirmed",
-   "firstLikely": "05:22:49",
-   "firstConfirmed": "05:22:49",
-   "confirmedFrames": 111,
+   "firstLikely": "05:22:48",
+   "firstConfirmed": "05:22:48",
+   "confirmedFrames": 112,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1294,7 +1299,7 @@
    "tier": "confirmed",
    "firstLikely": "05:45:54",
    "firstConfirmed": "05:45:54",
-   "confirmedFrames": 145,
+   "confirmedFrames": 141,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1314,9 +1319,9 @@
   },
   "jq31-0818-0954": {
    "tier": "confirmed",
-   "firstLikely": "09:54:32",
+   "firstLikely": "09:54:31",
    "firstConfirmed": "09:54:33",
-   "confirmedFrames": 120,
+   "confirmedFrames": 127,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1358,7 +1363,7 @@
   },
   "jq35-0818-1756": {
    "tier": "confirmed",
-   "firstLikely": "17:56:52",
+   "firstLikely": "17:56:50",
    "firstConfirmed": "17:56:52",
    "confirmedFrames": 121,
    "unrelated": 0,
@@ -1404,7 +1409,7 @@
    "tier": "confirmed",
    "firstLikely": "20:44:03",
    "firstConfirmed": "20:44:03",
-   "confirmedFrames": 100,
+   "confirmedFrames": 104,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1427,11 +1432,13 @@
    "firstLikely": "00:00:38",
    "firstConfirmed": "00:00:49",
    "confirmedFrames": 121,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "00:01:31 石川県|輪島市鳳至町"
+   ]
   },
   "jq42-0820-0050": {
    "tier": "confirmed",
@@ -1443,14 +1450,14 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
-    "00:51:01 熊本県|芦北町田浦町"
+    "00:51:00 熊本県|芦北町田浦町"
    ]
   },
   "jq43-0820-0055": {
    "tier": "confirmed",
    "firstLikely": "00:55:25",
    "firstConfirmed": "00:55:25",
-   "confirmedFrames": 135,
+   "confirmedFrames": 138,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1503,9 +1510,9 @@
   },
   "jq48-0820-0945": {
    "tier": "confirmed",
-   "firstLikely": "09:45:55",
-   "firstConfirmed": "09:45:56",
-   "confirmedFrames": 124,
+   "firstLikely": "09:45:54",
+   "firstConfirmed": "09:45:55",
+   "confirmedFrames": 125,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1516,7 +1523,7 @@
    "tier": "confirmed",
    "firstLikely": "11:40:16",
    "firstConfirmed": "11:40:17",
-   "confirmedFrames": 113,
+   "confirmedFrames": 137,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1571,7 +1578,7 @@
    "tier": "confirmed",
    "firstLikely": "03:15:46",
    "firstConfirmed": "03:15:48",
-   "confirmedFrames": 66,
+   "confirmedFrames": 86,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1624,9 +1631,9 @@
   },
   "jq59-0821-0911": {
    "tier": "confirmed",
-   "firstLikely": "09:11:22",
-   "firstConfirmed": "09:11:23",
-   "confirmedFrames": 109,
+   "firstLikely": "09:11:21",
+   "firstConfirmed": "09:11:22",
+   "confirmedFrames": 110,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1649,22 +1656,23 @@
   },
   "jq61-0821-2327": {
    "tier": "confirmed",
-   "firstLikely": "23:27:59",
+   "firstLikely": "23:27:58",
    "firstConfirmed": "23:27:59",
    "confirmedFrames": 121,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "23:28:55 茨城県|常陸大宮市山方"
+    "23:28:43 千葉県|横芝光町宮川",
+    "23:28:58 茨城県|常陸太田市大中町"
    ]
   },
   "jq62-0821-2332": {
    "tier": "confirmed",
    "firstLikely": "23:32:51",
    "firstConfirmed": "23:32:51",
-   "confirmedFrames": 104,
+   "confirmedFrames": 107,
    "unrelated": 1,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
@@ -1676,8 +1684,8 @@
   "wq0-0801-0005": {
    "tier": "confirmed",
    "firstLikely": "00:05:33",
-   "firstConfirmed": "00:05:34",
-   "confirmedFrames": 96,
+   "firstConfirmed": "00:05:33",
+   "confirmedFrames": 97,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1698,8 +1706,8 @@
   "wq2-0801-0148": {
    "tier": "confirmed",
    "firstLikely": "01:48:53",
-   "firstConfirmed": "01:48:54",
-   "confirmedFrames": 76,
+   "firstConfirmed": "01:48:53",
+   "confirmedFrames": 77,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1730,7 +1738,7 @@
   },
   "wq5-0801-0625": {
    "tier": "confirmed",
-   "firstLikely": "06:25:23",
+   "firstLikely": "06:25:22",
    "firstConfirmed": "06:25:23",
    "confirmedFrames": 107,
    "unrelated": 0,
@@ -1742,8 +1750,8 @@
   "wq6-0801-0642": {
    "tier": "confirmed",
    "firstLikely": "06:42:17",
-   "firstConfirmed": "06:42:18",
-   "confirmedFrames": 112,
+   "firstConfirmed": "06:42:17",
+   "confirmedFrames": 113,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1799,17 +1807,19 @@
    "firstLikely": "09:32:58",
    "firstConfirmed": "09:32:59",
    "confirmedFrames": 71,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "09:33:28 茨城県|北茨城市中郷町"
+   ]
   },
   "wq12-0801-1000": {
    "tier": "confirmed",
-   "firstLikely": "10:00:06",
-   "firstConfirmed": "10:00:06",
-   "confirmedFrames": 124,
+   "firstLikely": "10:00:05",
+   "firstConfirmed": "10:00:05",
+   "confirmedFrames": 125,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1896,8 +1906,8 @@
   "wq20-0801-1751": {
    "tier": "confirmed",
    "firstLikely": "17:51:45",
-   "firstConfirmed": "17:51:47",
-   "confirmedFrames": 83,
+   "firstConfirmed": "17:51:45",
+   "confirmedFrames": 85,
    "unrelated": 1,
    "unrelatedConfirmed": 1,
    "unrelatedNoCatalog": 0,
@@ -1952,9 +1962,9 @@
   },
   "wq25-0801-2213": {
    "tier": "confirmed",
-   "firstLikely": "22:13:02",
-   "firstConfirmed": "22:13:02",
-   "confirmedFrames": 128,
+   "firstLikely": "22:13:01",
+   "firstConfirmed": "22:13:01",
+   "confirmedFrames": 129,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -1987,7 +1997,7 @@
    "tier": "confirmed",
    "firstLikely": "22:59:05",
    "firstConfirmed": "22:59:05",
-   "confirmedFrames": 124,
+   "confirmedFrames": 125,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2018,7 +2028,7 @@
   },
   "wq31-0802-0040": {
    "tier": "confirmed",
-   "firstLikely": "00:40:58",
+   "firstLikely": "00:40:57",
    "firstConfirmed": "00:40:58",
    "confirmedFrames": 72,
    "unrelated": 0,
@@ -2030,8 +2040,8 @@
   "wq32-0802-0054": {
    "tier": "confirmed",
    "firstLikely": "00:54:40",
-   "firstConfirmed": "00:54:41",
-   "confirmedFrames": 89,
+   "firstConfirmed": "00:54:40",
+   "confirmedFrames": 90,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2040,7 +2050,7 @@
   },
   "wq33-0802-0119": {
    "tier": "confirmed",
-   "firstLikely": "01:19:30",
+   "firstLikely": "01:19:29",
    "firstConfirmed": "01:19:30",
    "confirmedFrames": 100,
    "unrelated": 0,
@@ -2051,9 +2061,9 @@
   },
   "wq34-0802-0139": {
    "tier": "confirmed",
-   "firstLikely": "01:39:06",
-   "firstConfirmed": "01:39:06",
-   "confirmedFrames": 118,
+   "firstLikely": "01:39:05",
+   "firstConfirmed": "01:39:05",
+   "confirmedFrames": 119,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2062,7 +2072,7 @@
   },
   "wq35-0802-0322": {
    "tier": "confirmed",
-   "firstLikely": "03:22:18",
+   "firstLikely": "03:22:17",
    "firstConfirmed": "03:22:18",
    "confirmedFrames": 112,
    "unrelated": 0,
@@ -2073,9 +2083,9 @@
   },
   "wq36-0802-0434": {
    "tier": "confirmed",
-   "firstLikely": "04:34:44",
-   "firstConfirmed": "04:34:54",
-   "confirmedFrames": 76,
+   "firstLikely": "04:34:25",
+   "firstConfirmed": "04:34:25",
+   "confirmedFrames": 105,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2096,8 +2106,8 @@
   "wq38-0802-0618": {
    "tier": "confirmed",
    "firstLikely": "06:18:06",
-   "firstConfirmed": "06:18:08",
-   "confirmedFrames": 122,
+   "firstConfirmed": "06:18:07",
+   "confirmedFrames": 123,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2117,7 +2127,7 @@
   },
   "wq40-0802-0804": {
    "tier": "confirmed",
-   "firstLikely": "08:04:56",
+   "firstLikely": "08:04:55",
    "firstConfirmed": "08:04:56",
    "confirmedFrames": 74,
    "unrelated": 0,
@@ -2153,13 +2163,12 @@
    "firstLikely": "09:19:47",
    "firstConfirmed": "09:19:47",
    "confirmedFrames": 83,
-   "unrelated": 2,
-   "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 2,
-   "unrelatedNoCatalogConfirmed": 1,
+   "unrelated": 1,
+   "unrelatedConfirmed": 0,
+   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "09:19:13 青森県|田子町田子",
-    "09:20:53 高知県|四万十町大正"
+    "09:19:13 青森県|田子町田子"
    ]
   },
   "wq44-0802-0945": {
@@ -2186,7 +2195,7 @@
   },
   "wq46-0802-1038": {
    "tier": "confirmed",
-   "firstLikely": "10:38:56",
+   "firstLikely": "10:38:25",
    "firstConfirmed": "10:38:56",
    "confirmedFrames": 74,
    "unrelated": 0,
@@ -2229,8 +2238,8 @@
    "unrelatedAt": []
   },
   "wq50-0802-1728": {
-   "tier": "none",
-   "firstLikely": null,
+   "tier": "likely",
+   "firstLikely": "17:29:21",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -2241,7 +2250,7 @@
   },
   "wq51-0802-1755": {
    "tier": "confirmed",
-   "firstLikely": "17:55:44",
+   "firstLikely": "17:55:43",
    "firstConfirmed": "17:55:45",
    "confirmedFrames": 85,
    "unrelated": 0,
@@ -2275,8 +2284,8 @@
   "wq54-0802-1922": {
    "tier": "confirmed",
    "firstLikely": "19:22:35",
-   "firstConfirmed": "19:22:36",
-   "confirmedFrames": 94,
+   "firstConfirmed": "19:22:35",
+   "confirmedFrames": 95,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2334,8 +2343,8 @@
   "wq59-0802-2041": {
    "tier": "confirmed",
    "firstLikely": "20:41:29",
-   "firstConfirmed": "20:41:34",
-   "confirmedFrames": 96,
+   "firstConfirmed": "20:41:30",
+   "confirmedFrames": 100,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2381,7 +2390,7 @@
   },
   "wq63-0803-0417": {
    "tier": "confirmed",
-   "firstLikely": "04:17:49",
+   "firstLikely": "04:17:47",
    "firstConfirmed": "04:17:49",
    "confirmedFrames": 81,
    "unrelated": 1,
@@ -2394,7 +2403,7 @@
   },
   "wq64-0803-0502": {
    "tier": "confirmed",
-   "firstLikely": "05:02:31",
+   "firstLikely": "05:02:32",
    "firstConfirmed": "05:02:33",
    "confirmedFrames": 97,
    "unrelated": 0,
@@ -2413,7 +2422,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "05:53:32 茨城県|水戸市千波町"
+    "05:53:30 茨城県|水戸市千波町"
    ]
   },
   "wq66-0803-0641": {
@@ -2451,7 +2460,7 @@
   },
   "wq69-0803-1221": {
    "tier": "confirmed",
-   "firstLikely": "12:21:47",
+   "firstLikely": "12:21:46",
    "firstConfirmed": "12:21:47",
    "confirmedFrames": 83,
    "unrelated": 0,
@@ -2487,11 +2496,12 @@
    "firstLikely": "15:00:43",
    "firstConfirmed": "15:00:45",
    "confirmedFrames": 85,
-   "unrelated": 1,
+   "unrelated": 2,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
+    "15:01:49 北海道|恵庭市京町",
     "15:02:06 宮崎県|宮崎都農町役場"
    ]
   },
@@ -2522,17 +2532,19 @@
    "firstLikely": "20:10:22",
    "firstConfirmed": "20:10:22",
    "confirmedFrames": 108,
-   "unrelated": 0,
-   "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
-   "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelated": 1,
+   "unrelatedConfirmed": 1,
+   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedAt": [
+    "20:11:52 愛知県|新城市作手高里縄手上"
+   ]
   },
   "wq76-0803-2021": {
    "tier": "confirmed",
    "firstLikely": "20:21:35",
-   "firstConfirmed": "20:21:36",
-   "confirmedFrames": 94,
+   "firstConfirmed": "20:21:35",
+   "confirmedFrames": 95,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2561,7 +2573,7 @@
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
     "23:41:17 北海道|十勝大樹町東本通",
-    "23:41:47 青森県|東通村白糠"
+    "23:41:46 青森県|東通村白糠"
    ]
   },
   "wq79-0804-0013": {
@@ -2582,8 +2594,8 @@
    "confirmedFrames": 73,
    "unrelated": 2,
    "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 2,
-   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "02:19:26 茨城県|水戸市千波町",
     "02:19:56 埼玉県|熊谷市江南"
@@ -2592,8 +2604,8 @@
   "wq81-0804-0702": {
    "tier": "confirmed",
    "firstLikely": "07:02:52",
-   "firstConfirmed": "07:02:53",
-   "confirmedFrames": 77,
+   "firstConfirmed": "07:02:52",
+   "confirmedFrames": 78,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2636,8 +2648,8 @@
   "wq85-0804-1207": {
    "tier": "confirmed",
    "firstLikely": "12:07:28",
-   "firstConfirmed": "12:07:32",
-   "confirmedFrames": 98,
+   "firstConfirmed": "12:07:31",
+   "confirmedFrames": 99,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2658,8 +2670,8 @@
   "wq87-0804-1246": {
    "tier": "confirmed",
    "firstLikely": "12:46:56",
-   "firstConfirmed": "12:46:58",
-   "confirmedFrames": 72,
+   "firstConfirmed": "12:46:57",
+   "confirmedFrames": 73,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2704,9 +2716,9 @@
   },
   "wq91-0804-1429": {
    "tier": "confirmed",
-   "firstLikely": "14:29:44",
-   "firstConfirmed": "14:29:44",
-   "confirmedFrames": 86,
+   "firstLikely": "14:29:43",
+   "firstConfirmed": "14:29:43",
+   "confirmedFrames": 87,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2727,8 +2739,8 @@
   "wq93-0804-1718": {
    "tier": "confirmed",
    "firstLikely": "17:18:46",
-   "firstConfirmed": "17:18:50",
-   "confirmedFrames": 80,
+   "firstConfirmed": "17:18:49",
+   "confirmedFrames": 81,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2749,8 +2761,8 @@
   "wq95-0804-1923": {
    "tier": "confirmed",
    "firstLikely": "19:23:44",
-   "firstConfirmed": "19:23:46",
-   "confirmedFrames": 84,
+   "firstConfirmed": "19:23:45",
+   "confirmedFrames": 85,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2803,7 +2815,7 @@
   },
   "wq100-0804-2342": {
    "tier": "confirmed",
-   "firstLikely": "23:42:57",
+   "firstLikely": "23:42:56",
    "firstConfirmed": "23:42:57",
    "confirmedFrames": 73,
    "unrelated": 0,
@@ -2826,8 +2838,8 @@
   "wq102-0805-0117": {
    "tier": "confirmed",
    "firstLikely": "01:17:25",
-   "firstConfirmed": "01:17:26",
-   "confirmedFrames": 104,
+   "firstConfirmed": "01:17:25",
+   "confirmedFrames": 105,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2858,7 +2870,7 @@
   },
   "wq105-0805-0359": {
    "tier": "confirmed",
-   "firstLikely": "03:59:38",
+   "firstLikely": "03:59:37",
    "firstConfirmed": "03:59:38",
    "confirmedFrames": 92,
    "unrelated": 0,
@@ -2923,14 +2935,14 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "10:04:34 北海道|赤井川村赤井川"
+    "10:04:33 北海道|赤井川村赤井川"
    ]
   },
   "wq111-0805-1037": {
-   "tier": "likely",
-   "firstLikely": "10:37:33",
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "10:37:31",
+   "firstConfirmed": "10:37:31",
+   "confirmedFrames": 62,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -2949,10 +2961,10 @@
    "unrelatedAt": []
   },
   "wq113-0805-1635": {
-   "tier": "likely",
+   "tier": "confirmed",
    "firstLikely": "16:35:47",
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "firstConfirmed": "16:35:47",
+   "confirmedFrames": 61,
    "unrelated": 1,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 1,
@@ -2962,10 +2974,10 @@
    ]
   },
   "wq114-0805-1716": {
-   "tier": "likely",
+   "tier": "confirmed",
    "firstLikely": "17:16:19",
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "firstConfirmed": "17:16:22",
+   "confirmedFrames": 98,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3007,9 +3019,9 @@
   },
   "wq118-0805-2352": {
    "tier": "confirmed",
-   "firstLikely": "23:52:09",
-   "firstConfirmed": "23:52:09",
-   "confirmedFrames": 121,
+   "firstLikely": "23:52:08",
+   "firstConfirmed": "23:52:08",
+   "confirmedFrames": 122,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3030,8 +3042,8 @@
   "wq120-0806-0135": {
    "tier": "confirmed",
    "firstLikely": "01:35:51",
-   "firstConfirmed": "01:35:52",
-   "confirmedFrames": 78,
+   "firstConfirmed": "01:35:51",
+   "confirmedFrames": 79,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3073,9 +3085,9 @@
   },
   "wq124-0806-0726": {
    "tier": "confirmed",
-   "firstLikely": "07:26:30",
-   "firstConfirmed": "07:26:34",
-   "confirmedFrames": 96,
+   "firstLikely": "07:26:28",
+   "firstConfirmed": "07:26:30",
+   "confirmedFrames": 100,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3083,10 +3095,10 @@
    "unrelatedAt": []
   },
   "wq125-0806-0819": {
-   "tier": "likely",
+   "tier": "confirmed",
    "firstLikely": "08:19:49",
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "firstConfirmed": "08:19:54",
+   "confirmedFrames": 76,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3095,9 +3107,9 @@
   },
   "wq126-0806-1150": {
    "tier": "confirmed",
-   "firstLikely": "11:51:02",
-   "firstConfirmed": "11:51:02",
-   "confirmedFrames": 68,
+   "firstLikely": "11:50:50",
+   "firstConfirmed": "11:50:55",
+   "confirmedFrames": 75,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3140,8 +3152,8 @@
   "wq130-0806-1437": {
    "tier": "confirmed",
    "firstLikely": "14:37:57",
-   "firstConfirmed": "14:38:00",
-   "confirmedFrames": 70,
+   "firstConfirmed": "14:37:58",
+   "confirmedFrames": 72,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3151,8 +3163,8 @@
   "wq131-0806-1821": {
    "tier": "confirmed",
    "firstLikely": "18:21:52",
-   "firstConfirmed": "18:21:59",
-   "confirmedFrames": 71,
+   "firstConfirmed": "18:21:55",
+   "confirmedFrames": 75,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3162,8 +3174,8 @@
   "wq132-0806-1907": {
    "tier": "confirmed",
    "firstLikely": "19:07:56",
-   "firstConfirmed": "19:07:57",
-   "confirmedFrames": 73,
+   "firstConfirmed": "19:07:56",
+   "confirmedFrames": 74,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3195,8 +3207,8 @@
   "wq135-0806-2121": {
    "tier": "confirmed",
    "firstLikely": "21:21:22",
-   "firstConfirmed": "21:21:23",
-   "confirmedFrames": 107,
+   "firstConfirmed": "21:21:22",
+   "confirmedFrames": 108,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3206,8 +3218,8 @@
   "wq136-0806-2321": {
    "tier": "confirmed",
    "firstLikely": "23:21:06",
-   "firstConfirmed": "23:21:08",
-   "confirmedFrames": 109,
+   "firstConfirmed": "23:21:06",
+   "confirmedFrames": 111,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3246,7 +3258,7 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "08:09:34 熊本県|熊本美里町馬場"
+    "08:09:31 熊本県|熊本美里町馬場"
    ]
   },
   "wq140-0807-1002": {
@@ -3276,8 +3288,8 @@
   "wq142-0807-1318": {
    "tier": "confirmed",
    "firstLikely": "13:18:38",
-   "firstConfirmed": "13:18:41",
-   "confirmedFrames": 89,
+   "firstConfirmed": "13:18:39",
+   "confirmedFrames": 91,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3286,7 +3298,7 @@
   },
   "wq143-0807-1405": {
    "tier": "confirmed",
-   "firstLikely": "14:05:14",
+   "firstLikely": "14:05:13",
    "firstConfirmed": "14:05:14",
    "confirmedFrames": 116,
    "unrelated": 0,
@@ -3298,8 +3310,8 @@
   "wq144-0807-1422": {
    "tier": "confirmed",
    "firstLikely": "14:22:35",
-   "firstConfirmed": "14:22:37",
-   "confirmedFrames": 93,
+   "firstConfirmed": "14:22:36",
+   "confirmedFrames": 94,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3365,7 +3377,7 @@
    "tier": "confirmed",
    "firstLikely": "03:22:12",
    "firstConfirmed": "03:22:12",
-   "confirmedFrames": 115,
+   "confirmedFrames": 103,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3385,25 +3397,29 @@
   },
   "wq152-0808-0917": {
    "tier": "confirmed",
-   "firstLikely": "09:17:30",
+   "firstLikely": "09:17:29",
    "firstConfirmed": "09:17:30",
    "confirmedFrames": 100,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "09:17:59 秋田県|北秋田市阿仁水無"
+   ]
   },
   "wq153-0808-0928": {
    "tier": "confirmed",
    "firstLikely": "09:28:53",
    "firstConfirmed": "09:28:53",
    "confirmedFrames": 77,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "09:28:05 鹿児島県|瀬戸内町古仁屋"
+   ]
   },
   "wq154-0808-1005": {
    "tier": "confirmed",
@@ -3429,7 +3445,7 @@
   },
   "wq156-0808-1107": {
    "tier": "confirmed",
-   "firstLikely": "11:07:30",
+   "firstLikely": "11:07:29",
    "firstConfirmed": "11:07:30",
    "confirmedFrames": 100,
    "unrelated": 0,
@@ -3441,8 +3457,8 @@
   "wq157-0808-1232": {
    "tier": "confirmed",
    "firstLikely": "12:32:13",
-   "firstConfirmed": "12:32:19",
-   "confirmedFrames": 80,
+   "firstConfirmed": "12:32:16",
+   "confirmedFrames": 89,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3561,7 +3577,7 @@
   },
   "wq168-0809-0605": {
    "tier": "confirmed",
-   "firstLikely": "06:05:39",
+   "firstLikely": "06:05:38",
    "firstConfirmed": "06:05:40",
    "confirmedFrames": 90,
    "unrelated": 0,
@@ -3597,17 +3613,19 @@
    "firstLikely": "14:05:20",
    "firstConfirmed": "14:05:20",
    "confirmedFrames": 110,
-   "unrelated": 0,
-   "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
-   "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelated": 1,
+   "unrelatedConfirmed": 1,
+   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedAt": [
+    "14:06:05 熊本県|八代市鏡町"
+   ]
   },
   "wq172-0809-1448": {
    "tier": "confirmed",
-   "firstLikely": "14:48:16",
-   "firstConfirmed": "14:48:16",
-   "confirmedFrames": 114,
+   "firstLikely": "14:48:15",
+   "firstConfirmed": "14:48:15",
+   "confirmedFrames": 115,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3660,7 +3678,7 @@
   },
   "wq177-0810-0733": {
    "tier": "confirmed",
-   "firstLikely": "07:33:40",
+   "firstLikely": "07:33:39",
    "firstConfirmed": "07:33:40",
    "confirmedFrames": 90,
    "unrelated": 0,
@@ -3681,8 +3699,8 @@
    "unrelatedAt": []
   },
   "wq179-0810-1222": {
-   "tier": "none",
-   "firstLikely": null,
+   "tier": "likely",
+   "firstLikely": "12:22:38",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -3693,7 +3711,7 @@
   },
   "wq180-0810-1357": {
    "tier": "confirmed",
-   "firstLikely": "13:57:27",
+   "firstLikely": "13:57:26",
    "firstConfirmed": "13:57:28",
    "confirmedFrames": 102,
    "unrelated": 0,
@@ -3705,13 +3723,14 @@
   "wq181-0810-1432": {
    "tier": "confirmed",
    "firstLikely": "14:32:33",
-   "firstConfirmed": "14:32:37",
-   "confirmedFrames": 93,
-   "unrelated": 1,
+   "firstConfirmed": "14:32:36",
+   "confirmedFrames": 94,
+   "unrelated": 2,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 2,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
+    "14:33:21 沖縄県|久米島町仲泊",
     "14:33:21 沖縄県|南城市佐敷字佐敷"
    ]
   },
@@ -3824,7 +3843,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "06:11:08 青森県|十和田市西十二番町"
+    "06:11:08 青森県|おいらせ町中下田"
    ]
   },
   "wq192-0811-0633": {
@@ -3848,7 +3867,7 @@
    "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
-    "07:12:09 奈良県|上北山村河合"
+    "07:12:08 奈良県|上北山村河合"
    ]
   },
   "wq194-0811-0844": {
@@ -3898,8 +3917,8 @@
   "wq198-0811-1428": {
    "tier": "confirmed",
    "firstLikely": "14:29:00",
-   "firstConfirmed": "14:29:01",
-   "confirmedFrames": 69,
+   "firstConfirmed": "14:29:00",
+   "confirmedFrames": 70,
    "unrelated": 1,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 1,
@@ -3910,9 +3929,9 @@
   },
   "wq199-0811-1642": {
    "tier": "confirmed",
-   "firstLikely": "16:42:33",
-   "firstConfirmed": "16:42:33",
-   "confirmedFrames": 97,
+   "firstLikely": "16:42:32",
+   "firstConfirmed": "16:42:32",
+   "confirmedFrames": 98,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -3989,7 +4008,7 @@
    "tier": "confirmed",
    "firstLikely": "02:11:38",
    "firstConfirmed": "02:11:45",
-   "confirmedFrames": 73,
+   "confirmedFrames": 85,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4019,8 +4038,8 @@
    "unrelatedAt": []
   },
   "wq209-0812-0547": {
-   "tier": "none",
-   "firstLikely": null,
+   "tier": "likely",
+   "firstLikely": "05:47:08",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -4031,9 +4050,9 @@
   },
   "wq210-0812-0610": {
    "tier": "confirmed",
-   "firstLikely": "06:10:07",
-   "firstConfirmed": "06:10:08",
-   "confirmedFrames": 98,
+   "firstLikely": "06:10:06",
+   "firstConfirmed": "06:10:07",
+   "confirmedFrames": 100,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4079,7 +4098,7 @@
    "tier": "confirmed",
    "firstLikely": "09:25:18",
    "firstConfirmed": "09:25:21",
-   "confirmedFrames": 101,
+   "confirmedFrames": 102,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4099,7 +4118,7 @@
   },
   "wq216-0812-1541": {
    "tier": "confirmed",
-   "firstLikely": "15:41:53",
+   "firstLikely": "15:41:52",
    "firstConfirmed": "15:41:53",
    "confirmedFrames": 77,
    "unrelated": 0,
@@ -4112,7 +4131,7 @@
    "tier": "confirmed",
    "firstLikely": "21:03:58",
    "firstConfirmed": "21:03:58",
-   "confirmedFrames": 68,
+   "confirmedFrames": 72,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4154,7 +4173,7 @@
   },
   "wq221-0813-1035": {
    "tier": "confirmed",
-   "firstLikely": "10:35:11",
+   "firstLikely": "10:35:10",
    "firstConfirmed": "10:35:11",
    "confirmedFrames": 119,
    "unrelated": 0,
@@ -4176,9 +4195,9 @@
   },
   "wq223-0813-1236": {
    "tier": "confirmed",
-   "firstLikely": "12:36:04",
-   "firstConfirmed": "12:36:04",
-   "confirmedFrames": 126,
+   "firstLikely": "12:36:03",
+   "firstConfirmed": "12:36:03",
+   "confirmedFrames": 127,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4209,7 +4228,7 @@
   },
   "wq226-0814-0025": {
    "tier": "confirmed",
-   "firstLikely": "00:25:32",
+   "firstLikely": "00:25:31",
    "firstConfirmed": "00:25:32",
    "confirmedFrames": 98,
    "unrelated": 0,
@@ -4297,7 +4316,7 @@
   },
   "wq234-0814-0539": {
    "tier": "confirmed",
-   "firstLikely": "05:39:32",
+   "firstLikely": "05:39:31",
    "firstConfirmed": "05:39:32",
    "confirmedFrames": 98,
    "unrelated": 0,
@@ -4333,11 +4352,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "13:55:25 栃木県|栃木那珂川町馬頭"
+   ]
   },
   "wq238-0814-1605": {
    "tier": "confirmed",
@@ -4352,7 +4373,7 @@
   },
   "wq239-0814-1629": {
    "tier": "confirmed",
-   "firstLikely": "16:29:29",
+   "firstLikely": "16:29:28",
    "firstConfirmed": "16:29:30",
    "confirmedFrames": 100,
    "unrelated": 0,
@@ -4382,7 +4403,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "17:31:05 宮城県|石巻市北上町"
+    "17:31:04 宮城県|石巻市北上町"
    ]
   },
   "wq242-0814-1802": {
@@ -4398,7 +4419,7 @@
   },
   "wq243-0814-1908": {
    "tier": "confirmed",
-   "firstLikely": "19:08:41",
+   "firstLikely": "19:08:40",
    "firstConfirmed": "19:08:41",
    "confirmedFrames": 89,
    "unrelated": 0,
@@ -4409,9 +4430,9 @@
   },
   "wq244-0814-2220": {
    "tier": "confirmed",
-   "firstLikely": "22:20:06",
-   "firstConfirmed": "22:20:06",
-   "confirmedFrames": 106,
+   "firstLikely": "22:20:03",
+   "firstConfirmed": "22:20:03",
+   "confirmedFrames": 109,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4421,8 +4442,8 @@
   "wq245-0814-2242": {
    "tier": "confirmed",
    "firstLikely": "22:43:10",
-   "firstConfirmed": "22:43:11",
-   "confirmedFrames": 59,
+   "firstConfirmed": "22:43:10",
+   "confirmedFrames": 60,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4464,7 +4485,7 @@
   },
   "wq249-0815-0638": {
    "tier": "confirmed",
-   "firstLikely": "06:38:57",
+   "firstLikely": "06:38:56",
    "firstConfirmed": "06:38:57",
    "confirmedFrames": 73,
    "unrelated": 1,
@@ -4543,7 +4564,7 @@
   },
   "wq256-0815-1058": {
    "tier": "confirmed",
-   "firstLikely": "10:58:43",
+   "firstLikely": "10:58:42",
    "firstConfirmed": "10:58:43",
    "confirmedFrames": 87,
    "unrelated": 0,
@@ -4578,7 +4599,7 @@
    "tier": "confirmed",
    "firstLikely": "20:30:44",
    "firstConfirmed": "20:30:44",
-   "confirmedFrames": 69,
+   "confirmedFrames": 86,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4643,8 +4664,8 @@
   "oq3-0501-2140": {
    "tier": "confirmed",
    "firstLikely": "21:40:30",
-   "firstConfirmed": "21:40:36",
-   "confirmedFrames": 64,
+   "firstConfirmed": "21:40:35",
+   "confirmedFrames": 65,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4686,9 +4707,9 @@
   },
   "oq7-0502-0435": {
    "tier": "confirmed",
-   "firstLikely": "04:35:52",
-   "firstConfirmed": "04:35:52",
-   "confirmedFrames": 48,
+   "firstLikely": "04:35:50",
+   "firstConfirmed": "04:35:54",
+   "confirmedFrames": 46,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4741,9 +4762,9 @@
   },
   "oq12-0502-2124": {
    "tier": "confirmed",
-   "firstLikely": "21:24:06",
-   "firstConfirmed": "21:24:06",
-   "confirmedFrames": 94,
+   "firstLikely": "21:24:05",
+   "firstConfirmed": "21:24:05",
+   "confirmedFrames": 95,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -4829,7 +4850,7 @@
   },
   "oq20-0504-1351": {
    "tier": "confirmed",
-   "firstLikely": "13:51:45",
+   "firstLikely": "13:51:43",
    "firstConfirmed": "13:51:45",
    "confirmedFrames": 55,
    "unrelated": 0,
@@ -5015,7 +5036,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "15:40:37 鹿児島県|肝付町北方"
+    "15:40:32 鹿児島県|肝付町北方"
    ]
   },
   "oq37-0507-1551": {
@@ -5086,7 +5107,7 @@
   },
   "oq43-0509-0210": {
    "tier": "confirmed",
-   "firstLikely": "02:10:38",
+   "firstLikely": "02:10:37",
    "firstConfirmed": "02:10:38",
    "confirmedFrames": 62,
    "unrelated": 0,
@@ -5110,7 +5131,7 @@
    "tier": "confirmed",
    "firstLikely": "10:27:08",
    "firstConfirmed": "10:27:08",
-   "confirmedFrames": 71,
+   "confirmedFrames": 91,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5187,7 +5208,7 @@
    "tier": "confirmed",
    "firstLikely": "06:04:17",
    "firstConfirmed": "06:04:22",
-   "confirmedFrames": 67,
+   "confirmedFrames": 78,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5207,7 +5228,7 @@
   },
   "oq54-0511-0025": {
    "tier": "confirmed",
-   "firstLikely": "00:25:30",
+   "firstLikely": "00:25:29",
    "firstConfirmed": "00:25:30",
    "confirmedFrames": 70,
    "unrelated": 0,
@@ -5243,15 +5264,17 @@
    "firstLikely": "10:41:33",
    "firstConfirmed": "10:41:36",
    "confirmedFrames": 64,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "10:42:06 岐阜県|白川村鳩谷"
+   ]
   },
   "oq58-0511-1127": {
    "tier": "confirmed",
-   "firstLikely": "11:28:03",
+   "firstLikely": "11:28:02",
    "firstConfirmed": "11:28:05",
    "confirmedFrames": 35,
    "unrelated": 0,
@@ -5318,8 +5341,8 @@
   "oq64-0512-1932": {
    "tier": "confirmed",
    "firstLikely": "19:32:29",
-   "firstConfirmed": "19:32:40",
-   "confirmedFrames": 60,
+   "firstConfirmed": "19:32:29",
+   "confirmedFrames": 71,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5417,8 +5440,8 @@
   "oq73-0514-0232": {
    "tier": "confirmed",
    "firstLikely": "02:32:45",
-   "firstConfirmed": "02:32:45",
-   "confirmedFrames": 55,
+   "firstConfirmed": "02:32:46",
+   "confirmedFrames": 54,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5460,7 +5483,7 @@
   },
   "oq77-0514-0511": {
    "tier": "confirmed",
-   "firstLikely": "05:11:07",
+   "firstLikely": "05:11:06",
    "firstConfirmed": "05:11:08",
    "confirmedFrames": 92,
    "unrelated": 0,
@@ -5505,8 +5528,8 @@
   "oq81-0514-1055": {
    "tier": "confirmed",
    "firstLikely": "10:55:46",
-   "firstConfirmed": "10:55:48",
-   "confirmedFrames": 52,
+   "firstConfirmed": "10:55:47",
+   "confirmedFrames": 53,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5548,7 +5571,7 @@
   },
   "oq85-0515-0823": {
    "tier": "confirmed",
-   "firstLikely": "08:23:17",
+   "firstLikely": "08:23:16",
    "firstConfirmed": "08:23:17",
    "confirmedFrames": 83,
    "unrelated": 0,
@@ -5638,7 +5661,7 @@
    "tier": "confirmed",
    "firstLikely": "01:09:11",
    "firstConfirmed": "01:09:14",
-   "confirmedFrames": 67,
+   "confirmedFrames": 83,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5669,7 +5692,7 @@
   },
   "oq96-0517-0555": {
    "tier": "confirmed",
-   "firstLikely": "05:55:48",
+   "firstLikely": "05:55:47",
    "firstConfirmed": "05:55:48",
    "confirmedFrames": 52,
    "unrelated": 0,
@@ -5737,18 +5760,20 @@
    "tier": "confirmed",
    "firstLikely": "08:24:05",
    "firstConfirmed": "08:24:05",
-   "confirmedFrames": 93,
-   "unrelated": 0,
+   "confirmedFrames": 95,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "08:25:20 大分県|日田市大山町"
+   ]
   },
   "oq103-0518-0836": {
    "tier": "confirmed",
    "firstLikely": "08:36:31",
    "firstConfirmed": "08:36:35",
-   "confirmedFrames": 63,
+   "confirmedFrames": 65,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5769,8 +5794,8 @@
   "oq105-0519-0204": {
    "tier": "confirmed",
    "firstLikely": "02:04:51",
-   "firstConfirmed": "02:04:52",
-   "confirmedFrames": 48,
+   "firstConfirmed": "02:04:51",
+   "confirmedFrames": 49,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5801,7 +5826,7 @@
   },
   "oq108-0519-1923": {
    "tier": "confirmed",
-   "firstLikely": "19:23:54",
+   "firstLikely": "19:23:53",
    "firstConfirmed": "19:23:54",
    "confirmedFrames": 46,
    "unrelated": 0,
@@ -5899,10 +5924,10 @@
    "unrelatedAt": []
   },
   "oq117-0521-1011": {
-   "tier": "likely",
-   "firstLikely": "10:11:53",
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "10:12:05",
+   "firstConfirmed": "10:12:06",
+   "confirmedFrames": 34,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -5988,7 +6013,7 @@
   },
   "oq125-0523-1520": {
    "tier": "confirmed",
-   "firstLikely": "15:20:39",
+   "firstLikely": "15:20:38",
    "firstConfirmed": "15:20:39",
    "confirmedFrames": 61,
    "unrelated": 0,
@@ -6000,8 +6025,8 @@
   "oq126-0523-2231": {
    "tier": "confirmed",
    "firstLikely": "22:31:50",
-   "firstConfirmed": "22:31:52",
-   "confirmedFrames": 48,
+   "firstConfirmed": "22:31:51",
+   "confirmedFrames": 49,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6076,9 +6101,9 @@
   },
   "oq133-0524-1551": {
    "tier": "confirmed",
-   "firstLikely": "15:51:54",
-   "firstConfirmed": "15:51:54",
-   "confirmedFrames": 46,
+   "firstLikely": "15:51:51",
+   "firstConfirmed": "15:51:51",
+   "confirmedFrames": 49,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6111,7 +6136,7 @@
    "tier": "confirmed",
    "firstLikely": "20:15:17",
    "firstConfirmed": "20:15:17",
-   "confirmedFrames": 81,
+   "confirmedFrames": 83,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6155,7 +6180,7 @@
   },
   "oq140-0526-1408": {
    "tier": "confirmed",
-   "firstLikely": "14:08:35",
+   "firstLikely": "14:08:34",
    "firstConfirmed": "14:08:35",
    "confirmedFrames": 65,
    "unrelated": 0,
@@ -6177,7 +6202,7 @@
   },
   "oq142-0527-0157": {
    "tier": "likely",
-   "firstLikely": "01:58:03",
+   "firstLikely": "01:58:01",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -6322,7 +6347,7 @@
    "tier": "confirmed",
    "firstLikely": "05:21:05",
    "firstConfirmed": "05:21:07",
-   "confirmedFrames": 83,
+   "confirmedFrames": 93,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6386,7 +6411,7 @@
   },
   "oq161-0531-1822": {
    "tier": "confirmed",
-   "firstLikely": "18:22:24",
+   "firstLikely": "18:22:23",
    "firstConfirmed": "18:22:24",
    "confirmedFrames": 76,
    "unrelated": 0,
@@ -6463,7 +6488,7 @@
   },
   "oq168-0602-0050": {
    "tier": "confirmed",
-   "firstLikely": "00:50:34",
+   "firstLikely": "00:50:33",
    "firstConfirmed": "00:50:35",
    "confirmedFrames": 65,
    "unrelated": 0,
@@ -6564,7 +6589,7 @@
   },
   "oq177-0604-0403": {
    "tier": "confirmed",
-   "firstLikely": "04:03:14",
+   "firstLikely": "04:03:15",
    "firstConfirmed": "04:03:17",
    "confirmedFrames": 83,
    "unrelated": 0,
@@ -6574,10 +6599,10 @@
    "unrelatedAt": []
   },
   "oq178-0604-0600": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "06:00:13",
+   "firstConfirmed": "06:00:13",
+   "confirmedFrames": 65,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -6622,11 +6647,13 @@
    "firstLikely": null,
    "firstConfirmed": null,
    "confirmedFrames": 0,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalog": 1,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "12:04:29 秋田県|仙北市角館町中菅沢"
+   ]
   },
   "oq183-0604-1234": {
    "tier": "confirmed",
@@ -6755,7 +6782,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "15:46:41 宮城県|登米市東和町"
+    "15:46:52 宮城県|石巻市鮎川浜"
    ]
   },
   "oq194-0607-2245": {
@@ -6785,15 +6812,17 @@
    "firstLikely": "23:42:43",
    "firstConfirmed": "23:42:43",
    "confirmedFrames": 57,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "23:43:01 鹿児島県|鹿児島市喜入町"
+   ]
   },
   "oq197-0609-0304": {
    "tier": "confirmed",
-   "firstLikely": "03:05:00",
+   "firstLikely": "03:04:59",
    "firstConfirmed": "03:05:01",
    "confirmedFrames": 39,
    "unrelated": 0,
@@ -6837,16 +6866,14 @@
   },
   "oq201-0610-0929": {
    "tier": "confirmed",
-   "firstLikely": "09:29:27",
+   "firstLikely": "09:29:26",
    "firstConfirmed": "09:29:27",
    "confirmedFrames": 73,
-   "unrelated": 1,
-   "unrelatedConfirmed": 1,
+   "unrelated": 0,
+   "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": [
-    "09:30:24 北海道|士幌町士幌"
-   ]
+   "unrelatedAt": []
   },
   "oq202-0610-1253": {
    "tier": "none",
@@ -6899,8 +6926,8 @@
    "confirmedFrames": 79,
    "unrelated": 1,
    "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 1,
-   "unrelatedNoCatalogConfirmed": 1,
+   "unrelatedNoCatalog": 0,
+   "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
     "19:36:25 群馬県|神流町生利"
    ]
@@ -6910,11 +6937,13 @@
    "firstLikely": "22:48:56",
    "firstConfirmed": "22:48:57",
    "confirmedFrames": 43,
-   "unrelated": 0,
+   "unrelated": 1,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": []
+   "unrelatedAt": [
+    "22:48:15 茨城県|常陸大宮市上小瀬"
+   ]
   },
   "oq208-0611-0125": {
    "tier": "confirmed",
@@ -7087,7 +7116,7 @@
   },
   "oq223-0615-1542": {
    "tier": "confirmed",
-   "firstLikely": "15:42:30",
+   "firstLikely": "15:42:29",
    "firstConfirmed": "15:42:31",
    "confirmedFrames": 69,
    "unrelated": 0,
@@ -7348,7 +7377,7 @@
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
    "unrelatedAt": [
-    "05:40:36 北海道|胆振伊達市大滝区本町",
+    "05:40:35 北海道|胆振伊達市大滝区本町",
     "05:40:36 青森県|東通村白糠"
    ]
   },
@@ -7461,7 +7490,7 @@
    "unrelatedNoCatalog": 2,
    "unrelatedNoCatalogConfirmed": 2,
    "unrelatedAt": [
-    "00:49:36 北海道|中富良野町本町",
+    "00:49:35 北海道|中富良野町本町",
     "00:50:11 岡山県|高梁市松原通"
    ]
   },
@@ -7504,7 +7533,7 @@
    "tier": "confirmed",
    "firstLikely": "13:21:21",
    "firstConfirmed": "13:21:23",
-   "confirmedFrames": 76,
+   "confirmedFrames": 77,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7604,8 +7633,8 @@
   "oq269-0625-0812": {
    "tier": "confirmed",
    "firstLikely": "08:12:36",
-   "firstConfirmed": "08:12:40",
-   "confirmedFrames": 60,
+   "firstConfirmed": "08:12:39",
+   "confirmedFrames": 61,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7615,8 +7644,8 @@
   "oq270-0625-0822": {
    "tier": "confirmed",
    "firstLikely": "08:22:23",
-   "firstConfirmed": "08:22:31",
-   "confirmedFrames": 69,
+   "firstConfirmed": "08:22:29",
+   "confirmedFrames": 71,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7637,8 +7666,8 @@
   "oq272-0625-0908": {
    "tier": "confirmed",
    "firstLikely": "09:08:39",
-   "firstConfirmed": "09:08:43",
-   "confirmedFrames": 57,
+   "firstConfirmed": "09:08:41",
+   "confirmedFrames": 59,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7648,8 +7677,8 @@
   "oq273-0625-0933": {
    "tier": "confirmed",
    "firstLikely": "09:33:22",
-   "firstConfirmed": "09:33:26",
-   "confirmedFrames": 74,
+   "firstConfirmed": "09:33:24",
+   "confirmedFrames": 76,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7658,7 +7687,7 @@
   },
   "oq274-0625-1011": {
    "tier": "confirmed",
-   "firstLikely": "10:11:10",
+   "firstLikely": "10:11:09",
    "firstConfirmed": "10:11:10",
    "confirmedFrames": 90,
    "unrelated": 0,
@@ -7692,8 +7721,8 @@
   "oq277-0625-1218": {
    "tier": "confirmed",
    "firstLikely": "12:18:26",
-   "firstConfirmed": "12:18:26",
-   "confirmedFrames": 74,
+   "firstConfirmed": "12:18:27",
+   "confirmedFrames": 73,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7703,8 +7732,8 @@
   "oq278-0625-1921": {
    "tier": "confirmed",
    "firstLikely": "19:21:51",
-   "firstConfirmed": "19:21:53",
-   "confirmedFrames": 47,
+   "firstConfirmed": "19:21:52",
+   "confirmedFrames": 48,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7779,7 +7808,7 @@
   },
   "oq285-0626-1252": {
    "tier": "confirmed",
-   "firstLikely": "12:53:09",
+   "firstLikely": "12:53:05",
    "firstConfirmed": "12:53:10",
    "confirmedFrames": 30,
    "unrelated": 0,
@@ -7923,8 +7952,8 @@
   "oq298-0627-1151": {
    "tier": "confirmed",
    "firstLikely": "11:51:09",
-   "firstConfirmed": "11:51:10",
-   "confirmedFrames": 90,
+   "firstConfirmed": "11:51:09",
+   "confirmedFrames": 91,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -7977,7 +8006,7 @@
   },
   "oq303-0628-0521": {
    "tier": "confirmed",
-   "firstLikely": "05:22:03",
+   "firstLikely": "05:22:02",
    "firstConfirmed": "05:22:03",
    "confirmedFrames": 37,
    "unrelated": 0,
@@ -8024,8 +8053,8 @@
   "oq307-0628-2349": {
    "tier": "confirmed",
    "firstLikely": "23:49:36",
-   "firstConfirmed": "23:49:42",
-   "confirmedFrames": 58,
+   "firstConfirmed": "23:49:40",
+   "confirmedFrames": 60,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8092,13 +8121,11 @@
    "firstLikely": "09:38:22",
    "firstConfirmed": "09:38:22",
    "confirmedFrames": 78,
-   "unrelated": 1,
+   "unrelated": 0,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": [
-    "09:39:17 山梨県|山梨北杜市小淵沢町"
-   ]
+   "unrelatedAt": []
   },
   "oq314-0630-1029": {
    "tier": "confirmed",
@@ -8137,7 +8164,7 @@
    "tier": "confirmed",
    "firstLikely": "13:59:25",
    "firstConfirmed": "13:59:25",
-   "confirmedFrames": 74,
+   "confirmedFrames": 75,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8179,7 +8206,7 @@
   },
   "oq321-0701-0131": {
    "tier": "confirmed",
-   "firstLikely": "01:31:55",
+   "firstLikely": "01:31:54",
    "firstConfirmed": "01:31:55",
    "confirmedFrames": 45,
    "unrelated": 0,
@@ -8333,7 +8360,7 @@
   },
   "oq335-0702-1348": {
    "tier": "confirmed",
-   "firstLikely": "13:48:32",
+   "firstLikely": "13:48:31",
    "firstConfirmed": "13:48:33",
    "confirmedFrames": 67,
    "unrelated": 0,
@@ -8400,8 +8427,8 @@
   "oq341-0703-0530": {
    "tier": "confirmed",
    "firstLikely": "05:30:24",
-   "firstConfirmed": "05:30:31",
-   "confirmedFrames": 69,
+   "firstConfirmed": "05:30:24",
+   "confirmedFrames": 76,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8431,8 +8458,8 @@
    "unrelatedAt": []
   },
   "oq344-0703-1253": {
-   "tier": "none",
-   "firstLikely": null,
+   "tier": "likely",
+   "firstLikely": "12:53:55",
    "firstConfirmed": null,
    "confirmedFrames": 0,
    "unrelated": 0,
@@ -8445,7 +8472,7 @@
    "tier": "confirmed",
    "firstLikely": "13:05:07",
    "firstConfirmed": "13:05:14",
-   "confirmedFrames": 83,
+   "confirmedFrames": 86,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8465,7 +8492,7 @@
   },
   "oq347-0703-1724": {
    "tier": "confirmed",
-   "firstLikely": "17:25:07",
+   "firstLikely": "17:25:06",
    "firstConfirmed": "17:25:08",
    "confirmedFrames": 32,
    "unrelated": 0,
@@ -8487,7 +8514,7 @@
   },
   "oq349-0703-2337": {
    "tier": "confirmed",
-   "firstLikely": "23:37:36",
+   "firstLikely": "23:37:35",
    "firstConfirmed": "23:37:36",
    "confirmedFrames": 64,
    "unrelated": 0,
@@ -8509,7 +8536,7 @@
   },
   "oq351-0704-0725": {
    "tier": "confirmed",
-   "firstLikely": "07:25:20",
+   "firstLikely": "07:25:19",
    "firstConfirmed": "07:25:20",
    "confirmedFrames": 80,
    "unrelated": 0,
@@ -8565,8 +8592,8 @@
   "oq356-0705-0206": {
    "tier": "confirmed",
    "firstLikely": "02:06:26",
-   "firstConfirmed": "02:06:29",
-   "confirmedFrames": 71,
+   "firstConfirmed": "02:06:28",
+   "confirmedFrames": 72,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8586,9 +8613,9 @@
   },
   "oq358-0706-0006": {
    "tier": "confirmed",
-   "firstLikely": "00:06:46",
-   "firstConfirmed": "00:06:47",
-   "confirmedFrames": 53,
+   "firstLikely": "00:06:45",
+   "firstConfirmed": "00:06:45",
+   "confirmedFrames": 55,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8600,12 +8627,13 @@
    "firstLikely": "02:26:29",
    "firstConfirmed": "02:26:32",
    "confirmedFrames": 68,
-   "unrelated": 1,
-   "unrelatedConfirmed": 1,
-   "unrelatedNoCatalog": 0,
-   "unrelatedNoCatalogConfirmed": 0,
+   "unrelated": 2,
+   "unrelatedConfirmed": 2,
+   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalogConfirmed": 1,
    "unrelatedAt": [
-    "02:27:22 北海道|千歳市支笏湖温泉"
+    "02:27:00 青森県|十和田市西十二番町",
+    "02:27:20 北海道|千歳市支笏湖温泉"
    ]
   },
   "oq360-0706-0255": {
@@ -8742,7 +8770,7 @@
   },
   "oq372-0709-1405": {
    "tier": "confirmed",
-   "firstLikely": "14:05:24",
+   "firstLikely": "14:05:23",
    "firstConfirmed": "14:05:24",
    "confirmedFrames": 76,
    "unrelated": 0,
@@ -8763,10 +8791,10 @@
    "unrelatedAt": []
   },
   "oq374-0709-1926": {
-   "tier": "none",
-   "firstLikely": null,
-   "firstConfirmed": null,
-   "confirmedFrames": 0,
+   "tier": "confirmed",
+   "firstLikely": "19:26:43",
+   "firstConfirmed": "19:26:43",
+   "confirmedFrames": 57,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8799,7 +8827,7 @@
    "tier": "confirmed",
    "firstLikely": "01:22:03",
    "firstConfirmed": "01:22:03",
-   "confirmedFrames": 80,
+   "confirmedFrames": 97,
    "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
@@ -8874,7 +8902,7 @@
   },
   "oq384-0713-1443": {
    "tier": "confirmed",
-   "firstLikely": "14:44:02",
+   "firstLikely": "14:44:00",
    "firstConfirmed": "14:44:02",
    "confirmedFrames": 38,
    "unrelated": 1,

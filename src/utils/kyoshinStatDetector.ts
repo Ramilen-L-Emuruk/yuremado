@@ -3,11 +3,13 @@
  * 近くの点で束ねて「偶然では起きない」度合い（ポアソンの裾の確率）で判定する走査統計。
  *
  * 1. 点ごとの量（`kyoshinOnsetFeatures.ts`）: y = 直近 6 秒の内に新しく達した段のうち、いまも保っている最大／
- *    y3 = 同じく 3 秒（近くの点が揃って上がったか）
+ *    y3 = 同じく 3 秒（近くの点が揃って上がったか）／y15 = 同じく 15 秒（ゆっくり揃って上がる小さな地震。早い段までしか上げない）
  * 2. 点ごとの珍しさ: s_i = −log10 P_i(y ≥ いまの値)。P_i は平常の日の表を全体の裾へ縮めたもの（擬似件数 SHRINK）と、
- *    その点の直近（時定数 ONLINE_TAU で忘れる）の裾の大きいほう（荒れている点は割り引く）
+ *    その点の直近（時定数 ONLINE_TAU で忘れる）の裾の大きいほう（荒れている点は割り引く。近くの点と揃って上がった秒は直近に数えない。
+ *    割り引きは表の ONLINE_CAP 倍まで）
  * 3. 走査: 珍しい点を中心に、半径 R の中で (a) s ≥ a の点の数が平常の期待値に比べてどれだけ多いか（ポアソンの裾）、
- *    (b) s ≥ 1 の点の s の和の裾（切り詰めた積の検定）の最小の裾を、組の数で割り引いて S = −log10(裾) − log10(組の数)
+ *    (b) s ≥ 1 の点の s の和の裾（切り詰めた積の検定）の最小の裾を、組の数で割り引いて S = −log10(裾) − log10(組の数)。
+ *    値の無い点（欠測・起動直後や欠測明けで基準の揃わない点）は、平常の期待値に入れない
  * 4. 段階: S ≥ T_EARLY で早い段。S ≥ T_CONF で確かな段。確かな段は、点が長い基準より上にいる間は下ろさない
  * 5. 1 つの揺れ = 1 つの id: S の大きい候補から順に、すでに別の候補が取った点を半分以上借りている候補はその候補の支えにする。
  *    新しい候補は、生きている事象の点から MERGE_KM 以内ならその事象へ（ただし古い事象へ強い候補が来たら別の揺れとして出し直す）。
@@ -37,6 +39,14 @@ export interface DetectorFrame {
 }
 
 const T_EARLY = 10
+/** 値の無い点が多い中心での、早い段の下限（設計書§65）。確かな段の下限（T_CONF）は変えない */
+const T_EARLY_MISS = 8
+/** 値の無い点が多いとみなす割合（いちばん狭い半径の内の点のうち） */
+const MISS_FRAC = 0.4
+/** 値の無い点が多いとみなすのに要る、いちばん狭い半径の内の点の数 */
+const MISS_MIN_N = 3
+/** 下げた下限（T_EARLY_MISS）だけで届いた候補に要る、候補の点の数 */
+const MISS_MEM_N = 3
 const T_CONF = 20
 const CONF_HOLD = 1
 /** 早い段は出してからこの秒数は出し続け、確かな段へ上がらなければ下ろす（事象は覚えたまま黙る） */
@@ -58,6 +68,17 @@ const SUSTAIN_MAX = 120
 const SHRINK = 2000
 const ONLINE_TAU = 1800
 const ONLINE_A = 600
+/**
+ * 直近の裾を数えるとき、COHERENT_KM 以内の別の点も同じ秒に上がっていたら、その秒の上がりは数えない。
+ * 点ひとつの荒れは近くの点と揃わないが、検知に届かなかった小さな地震は近くの点が揃って上がる。
+ * それを荒れとして覚えると、続く余震の珍しさが割り引かれて取りこぼす（設計書§52）
+ */
+const COHERENT_KM = 25
+/**
+ * 直近の裾で割り引くのは、平常の日の表の確率の ONLINE_CAP 倍まで。余震が続く間は点の直近の裾が膨らみ、
+ * 割り引きが表の 5〜100 倍に達して、点が揃って上がった小さな余震を拾えなくなる（設計書§55）
+ */
+const ONLINE_CAP = 3
 const RADII = [25, 60, 150, 400]
 const RADII_Y3 = [25, 60]
 const LEVELS = [1, 1.5, 2, 3, 4]
@@ -111,12 +132,16 @@ function logTPM(w: number, mu: number): number {
   return total <= 0 ? -300 : Math.min(0, Math.log10(total))
 }
 
-type ChanDef = { name: 'y' | 'y3'; radii: number[]; levels: number[]; centerMin: number; memMin: number }
+/** earlyOnly: この量だけでは確かな段へ上げない（点数を T_CONF の手前で止める） */
+type ChanDef = { name: 'y' | 'y3' | 'y15'; radii: number[]; levels: number[]; centerMin: number; memMin: number; earlyOnly?: boolean }
 const CHANS: ChanDef[] = [
   { name: 'y', radii: RADII, levels: LEVELS, centerMin: LEVELS[0], memMin: 1.5 },
   { name: 'y3', radii: RADII_Y3, levels: LEVELS, centerMin: LEVELS[0], memMin: 1.5 },
+  // 15 秒の窓は広い範囲の点がゆっくり揃って上がる雑音でも点数が立つので、確かな段は y・y3 に任せる（設計書§55）
+  { name: 'y15', radii: RADII, levels: LEVELS, centerMin: LEVELS[0], memMin: 1.5, earlyOnly: true },
 ]
-const ALL_RADII = [...new Set(CHANS.flatMap(c => c.radii))].sort((a, b) => a - b)
+const ALL_RADII = [...new Set([...CHANS.flatMap(c => c.radii), COHERENT_KM])].sort((a, b) => a - b)
+const COHERENT_R = ALL_RADII.indexOf(COHERENT_KM)
 
 /** 観測点の近傍（近い順）と、半径ごとに何点目までが入るか。観測点リストが同じなら使い回す */
 const nbrCache = new WeakMap<object, { nbr: Int32Array[]; cut: Int32Array[] }>()
@@ -168,14 +193,14 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
       for (let k = 1; k <= KMAX; k++) {
         let p = P0[i * K1 + k]
         const pr = (onC[i * K1 + k] + ONLINE_A * p) / (onN[i] + ONLINE_A)
-        if (pr > p) p = pr
+        if (pr > p) p = Math.min(pr, p * ONLINE_CAP)
         P[i * K1 + k] = p; lgP[i * K1 + k] = -Math.log10(p)
       }
       for (let l = 0; l < L; l++) { let v = 0; for (let k = 1; k <= KMAX; k++) if (lgP[i * K1 + k] >= lv[l]) { v = P[i * K1 + k]; break } q[i * L + l] = v }
     }
   }
   chans.forEach(refresh)
-  const featOf = (name: ChanDef['name']) => (name === 'y' ? F.y : F.y3)
+  const featOf = (name: ChanDef['name']) => (name === 'y' ? F.y : name === 'y3' ? F.y3 : F.y15)
   const inEvent = new Uint8Array(n)
   type Ev = {
     id: string; seed: number; startMs: number; members: Map<number, number>; claimed: Set<number>; firstOnset: number; lastSupport: number; confStreak: number
@@ -197,6 +222,12 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
       const om = e.members.get(m)
       if (om !== undefined && d <= REACH_V * Math.max(0, (onsetMs - om) / 1000) + REACH_SLACK) return true
     }
+    return false
+  }
+  /** 点 i の近く（COHERENT_KM 以内）の別の点も、いまこの量（y か y3。段の大きさは問わない）で上がっているか */
+  const coherent = (feat: ArrayLike<number>, i: number) => {
+    const nb = nbr[i], e = cutAll[i][COHERENT_R]
+    for (let t = 0; t < e; t++) { const j = nb[t]; if (j !== i && feat[j] > 0) return true }
     return false
   }
   const near = (c: number, e: Ev) => { for (const m of e.claimed) if (hav(sites[c][0], sites[c][1], sites[m][0], sites[m][1]) <= MERGE_KM) return true; return false }
@@ -224,8 +255,8 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
         for (let i = 0; i < n; i++) {
           const v = feat[i]
           sv[i] = v === NONE || v <= 0 ? 0 : lgP[i * K1 + Math.min(v, KMAX)]
-          // 直近の数えを更新（事象に入っている点は数えない）
-          if (v !== NONE && !inEvent[i]) {
+          // 直近の数えを更新（事象に入っている点と、近くの点と揃って上がった秒は数えない）
+          if (v !== NONE && !inEvent[i] && !(v > 0 && coherent(feat, i))) {
             onN[i] = onN[i] * decay + 1
             for (let k = 1; k <= KMAX; k++) onC[i * K1 + k] = onC[i * K1 + k] * decay + (v >= k ? 1 : 0)
           }
@@ -236,10 +267,15 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
           const nb = nbr[c], ct = cutAll[c]
           let S = 0, Rb = 0
           cnt.fill(0); mus.fill(0)
-          let e = 0, W = 0
+          let e = 0, W = 0, nearNone = 0
+          const r0 = ch.ri[0], near = ct[r0]
           for (const r of ch.ri) {
             for (; e < ct[r]; e++) {
               const j = nb[e], s = sv[j]
+              if (r === r0 && feat[j] === NONE) nearNone++
+              // 値の無い点（欠測・起動直後や欠測明けで基準の揃わない点）は上がりようがないので、平常の期待値に入れない
+              // （珍しさは 0 なので数と和には元から入らない）。足すと、まわりの点が欠けた所ほど「偶然ではない」と言うのに多くの点が要る（設計書§62）
+              if (feat[j] === NONE) continue
               if (s >= 1) W += s
               for (let l = 0; l < L; l++) { mus[l] += q[j * L + l]; if (s >= lv[l]) cnt[l]++ }
             }
@@ -253,9 +289,15 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
               if (v > S) { S = v; Rb = ct[r] }
             }
           }
-          if (S >= T_EARLY) {
+          if (ch.def.earlyOnly) S = Math.min(S, T_CONF - 1e-6)
+          // いちばん狭い半径の内で値の無い点が多い中心は、早い段の下限を下げる。値の届く点が少ないと、揺れていても点数が数え切れないため。
+          // 欠測の割合はいちばん狭い半径で測り、S を出した半径（Rb）は問わない（設計書§65）
+          const sparseData = near >= MISS_MIN_N && nearNone >= MISS_FRAC * near
+          if (S >= (sparseData ? T_EARLY_MISS : T_EARLY)) {
             const mem: number[] = []
             for (let t = 0; t < Rb; t++) if (sv[nb[t]] >= ch.def.memMin) mem.push(nb[t])
+            // 下げた下限だけで届いた候補は、候補の点が MISS_MEM_N 点以上要る（2 点だけの上がりは、欠測の中でも検知にしない）
+            if (S < T_EARLY && mem.length < MISS_MEM_N) continue
             sig.push({ c, S, mem, s: sv })
           }
         }

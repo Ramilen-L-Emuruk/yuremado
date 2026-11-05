@@ -81,7 +81,7 @@ import { useDetectionDiagnostics } from './hooks/useDetectionDiagnostics'
 import { createSpeechFollowController, telegramTextSubject, type SpeechFollowSession } from './utils/ttsFollow'
 import { useTelegramTextSpeechFollow } from './hooks/useTelegramTextSpeechFollow'
 import { deriveKyoshinView } from './utils/kyoshinDetectionView'
-import { createReonsetState, stepReonset } from './utils/kyoshinReonset'
+import { createReonsetState, keyLatLng, stepReonset } from './utils/kyoshinReonset'
 import { filterSubThresholdIndices } from './utils/kyoshinSubThresholdFilter'
 import { countdownBeepTarget, useSWaveCountdown } from './hooks/useSWaveCountdown'
 import { pickArrivalEews, pickPublicWaveEews } from './utils/countdownEew'
@@ -2357,9 +2357,12 @@ export function App() {
     // `kyoshinView` だけが変わったレンダー・StrictMode の二重描画）印は同じなので、鳴らす側は 1 回だけ動く
     const stamp = { key: `${alert.eventId}@${alert.atMs}`, atMs: alert.atMs }
     if (best) return { ...stamp, focus: { lat: best.lat, lng: best.lng } }
-    // 立ち上がった点が引けない（観測点リストの入れ替え中など）ときは、イベントの重心へ寄せる。
-    // **合図は捨てない** —— `stepReonset` は既に鳴らしたことにしているので、ここで捨てると
-    // 音もタブ移動も無いまま 60 秒鳴らなくなる（`confirmedShocks` の寄せ先と同じ考え方）
+    // 立ち上がった点が地図の点に無い（まだ描いていない・観測点リストの入れ替え中など）ときは、
+    // 点のキーの座標へ寄せる。それも読めなければイベントの重心へ寄せる。
+    // **合図は捨てない** —— `stepReonset` は既に鳴らしたことにしていて、合図はその地震の波で説明できる間
+    // 次の合図を止めるので、ここで捨てると知らせないまま黙る（`confirmedShocks` の寄せ先と同じ考え方）
+    const keyPos = alert.keys.map(keyLatLng).find((p) => p !== null)
+    if (keyPos) return { ...stamp, focus: { lat: keyPos[0], lng: keyPos[1] } }
     const ep = kyoshinV2.detections.find((d) => d.id === alert.eventId)?.epicenter
     if (ep) return { ...stamp, focus: { lat: ep[0], lng: ep[1] } }
     log.warn(`[kyoshin] 同じ場所の 2 つ目の揺れの寄せ先を引けなかった（${alert.eventId}）。寄せずに音だけ鳴らす`)

@@ -115,8 +115,8 @@ const ALLOWED: { file: string; call: string; why: string }[] = [
   },
   {
     file: 'archive-cache.mjs',
-    call: "fs.readFileSync(envPath, 'utf8')",
-    why: '`.env.local` から API キーを読む。読めなければ例外で止まる',
+    call: "fs.readFileSync(p, 'utf8')",
+    why: '`.env.local`（このリポジトリとメインの checkout）から API キーを読む。どこにも無ければ探した場所を並べて例外で止まる',
   },
 
   // --- 人が読むレポート（印は本文へ `incompletenessBanner` で入れてある） ---
