@@ -2990,9 +2990,10 @@ export function App() {
                 陸を隠しにくいから（2026-10-27 ユーザー指示「そもそも右上じゃなくて左上にしたい(地震計と入れ替える。日本列島が右上向きだから)」）。
                 **下端の帯（凡例・特別情報バナー）とは重ならない** —— あちらは全幅の絶対配置で、
                 下側へ置いたものは押し上げてもらえずに重なる。行動チェックリストの帯は、この列の下端から始める（`topCornersBottom`）。
-                z-99999: 区域集約震度バッジ（QuakeRegionFillGL）は el.style.zIndex = scale*1000 で、
-                scale は JMA 震度階級の数値コード（震度7 = 70）まであるため最大 70000 まで積む。
-                それより確実に高い値にして常に最前面に出す。 */}
+                z-99999: 地図の中の物（HTML マーカー・MapLibre の操作ボタン・撮影中の静止画）と、地図の吹き出し
+                （`.maplibregl-popup` の 99998。→ src/index.css）より前に出す。地図の要素は重なりの文脈を作らないので、
+                吹き出しの z はここと直に比べられる。値を変えるときは吹き出しの側も合わせる
+                （→ src/components/Map/popupLayering.test.ts）。 */}
             <div
               ref={topCornersRef}
               className="absolute z-99999 pointer-events-none flex items-start justify-between gap-2"
