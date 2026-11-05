@@ -81,6 +81,8 @@ function regionDescendantKeys(region: IntensityRegionRow): string[] {
 const LPGM_NOTES_KEY = 'lpgm:notes'
 /** 地震情報の「気象庁からの補足」の開閉の鍵（長周期の補足と同じ `expanded` を共有する）。 */
 const QUAKE_NOTES_KEY = 'quake:notes'
+/** 国際津波関連情報（WEPA60）の 1 報の開閉の鍵（同じ `expanded` を共有する）。 */
+const internationalTsunamiFoldKey = (id: string): string => `wepa60:${id}`
 
 /**
  * 区域も都道府県も分からず、長周期の一覧に置けなかった観測点を記録する
@@ -1670,18 +1672,34 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           </div>
         )}
 
-        {/* 国際津波関連情報（WEPA60）。付加文の下に置き、本文は畳まず出す（2026-11-01 選択
-            「それぞれ自分の欄を持つ (Recommended)」・「国際津波関連情報はいいんじゃない？」に続く選択） */}
+        {/* 国際津波関連情報（WEPA60）。付加文の下に置き（2026-11-01 選択「それぞれ自分の欄を持つ (Recommended)」）、
+            報ごとに見出しの行で開閉する。英文だけのカードでは初めから開き、地震情報のカードでは閉じて置く
+            （2026-11-05 ユーザー発言「遠地地震とかはそれしか無いから開いていいけど、地震情報はほかに情報があるのに
+            押されて見えなくなるので」、選択「英文だけのカードだけ開く」）。鍵が `expanded` にあるのは初めの開き方から
+            押して変えた報 */}
         {internationalTsunamis.length > 0 && (
           <div className="mt-3.5 flex flex-col gap-1.5">
-            {internationalTsunamis.map(x => (
-              <div key={x.id} className="w-full rounded-lg border border-border bg-panel px-3 py-1 text-xs text-secondary roomy:text-sm">
-                <div className="py-1 text-white">
-                  国際津波関連情報（英文）<span className="ml-2 text-secondary">{x.title}</span>
+            {internationalTsunamis.map(x => {
+              const key = internationalTsunamiFoldKey(x.id)
+              const open = expanded.has(key) !== (quake.fromInternationalTsunami === true)
+              return (
+                <div key={x.id} className="w-full rounded-lg border border-border bg-panel px-3 py-1 text-xs text-secondary roomy:text-sm">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={open}
+                    onClick={(e) => { e.stopPropagation(); toggle(key) }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); toggle(key) } }}
+                    className="cursor-pointer py-1 text-white"
+                  >
+                    国際津波関連情報（英文）<span className="ml-2 text-secondary">{x.title}</span> <DisclosureCaret open={open} />
+                  </div>
+                  <Reveal open={open}>{() => (
+                    <pre className="overflow-x-auto whitespace-pre-wrap break-words pb-2 font-mono leading-relaxed">{x.text}</pre>
+                  )}</Reveal>
                 </div>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-words pb-2 font-mono leading-relaxed">{x.text}</pre>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 
