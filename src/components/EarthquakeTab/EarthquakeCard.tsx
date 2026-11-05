@@ -321,7 +321,7 @@ function finitePx(v: string): number {
   return Number.isFinite(n) ? n : 0
 }
 
-/** 一覧の見出しの行の高さ（`--qk-head-h`。`scroll-margin-top` と同じ値を読むので単位を問わない）。 */
+/** 上に貼りついて残る一覧の見出しの行と日付の区切りの高さ（`scroll-margin-top` と同じ値を読むので単位を問わない）。 */
 function listHeadPx(el: HTMLElement): number {
   const card = el.closest<HTMLElement>(`[${QUAKE_CARD_KEY_ATTR}]`)
   return card ? finitePx(getComputedStyle(card).scrollMarginTop) : 0

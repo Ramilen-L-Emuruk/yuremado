@@ -47,7 +47,7 @@ const LIST_COLUMNS = 'var(--qk-tile-w) var(--qk-col-t) 1fr minmax(var(--qk-col-m
 /** 一覧の先頭の列の見出し（見本の .hdr）。 */
 export function QuakeListHeader() {
   return (
-    // 巻いても上に残す（開いたカードの帯・枠はこの下に貼りつく。高さは index.css の --qk-head-h）
+    // 巻いても上に残す（日付の区切りがこの下に、開いたカードの帯・枠はさらにその下に貼りつく。高さは index.css の --qk-head-h）
     <div
       className="sticky top-0 z-[4] grid items-center border-b border-border bg-panel text-[11px] text-secondary"
       style={{ gridTemplateColumns: LIST_COLUMNS, columnGap: 'var(--qk-gap)', padding: '0 var(--qk-pad)', height: 'var(--qk-head-h)' }}
@@ -57,10 +57,15 @@ export function QuakeListHeader() {
   )
 }
 
-/** 日付の区切り（見本の .day）。 */
+/**
+ * 日付の区切り（見本の .day）。巻いても一覧の見出しの行の下に貼りつき、次の日の区切りに押し上げられる
+ * （束ねるのは `EarthquakeTab`。2026-11-05 ユーザー発言「普通にヘッダ(震度 時刻 震央地名 規模 深さ)の下に張り付くイメージ」）。
+ * 高さは `--qk-day-h` で決め打つ（開いたカードの帯・枠はこの下に貼りつくので、高さが分かっていないと重なる）。
+ * 地の色を敷くのは、下を流れる行が透けないようにするため。
+ */
 export function QuakeListDayLabel({ label }: { label: string }) {
   return (
-    <div className="border-b border-border/60 text-secondary" style={{ padding: '8px var(--qk-pad) 3px', fontSize: 'var(--qk-fs)' }}>
+    <div className="sticky z-[3] flex items-end border-b border-border/60 bg-app text-secondary" style={{ top: 'var(--qk-head-h)', height: 'var(--qk-day-h)', padding: '0 var(--qk-pad) 3px', fontSize: 'var(--qk-fs)' }}>
       {label}
     </div>
   )
