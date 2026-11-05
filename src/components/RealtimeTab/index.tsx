@@ -1,7 +1,7 @@
 // リアルタイムタブの右パネル。地図エリアは JapanMap が強震モニタ（観測点）と
 // 予報円を描画し、ここでは EEW 情報カード・強震モニタ検知(V2)カード・注記を表示する。
 // 震度スケールの凡例は地図へ重ねる `MapLegend` が持つ（同じものを 2 箇所に出さない）。
-import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useFieldFlash, type FieldFlash } from '../../hooks/useFieldFlash'
 import { EEW_FLASH_COLOR, UPDATE_MARK_WASH, EEW_HIGHLIGHT_FADE_MS } from '../../utils/updateMark'
 import type { EEWAlert } from '../../types/earthquake'
@@ -641,6 +641,8 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
         border: `2px solid ${cardBorder}`,
         padding: '0 var(--qk-pad) 12px',
         fontSize: 'var(--qk-f)',
+        // 下に貼りついた主要動のカウントダウンの高さを名乗る。寄せる側（`useFollowScroll`）はその上を見える範囲の下端にする
+        scrollMarginBottom: 'var(--rt-sticky-bottom, 0px)',
         // 語っているあいだは区分の色のリングを太く・不透明にし、外側へ同系色の明るいトーン
         // （speakingRingColor）を添える。
         //
@@ -1208,7 +1210,8 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
     ...(arrival.rows.some((r) => r.source === 'own') ? ['※推定値。実際の到達時間は異なる場合があります'] : []),
   ]
   // 見出しは「主要動」だけにし、届いたか・何秒後かは下の値の行が伝える（2026-11-04 ユーザー選択「詰めて上へ (Recommended)」。
-  // 速報のカードより上に置くので、高さを 2 行に詰めて速報の枠と時刻を最初の画面に残す）
+  // 高さを 2 行に詰める。置き場所は 2026-11-05 に速報のカードの下・下端に貼りつく形へ変えたので、詰めた高さは
+  // 貼りついている間に速報のカードを隠す量を小さくしている）
   const heading = noForecastOnly
     ? (single && lead.distanceKm !== null ? `震源から ${lead.distanceKm.toFixed(0)} km` : '主要動の到達予測なし')
     : '主要動'
@@ -1613,13 +1616,27 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
     const ms = eew.cancelledAt?.getTime()
     if (ms !== undefined && ms > latestCancelMs) { latestCancelMs = ms; latestCancelKey = eewEventKey(eew) }
   }
+  // 下に貼りつくカウントダウンの高さ。速報のカードが `scroll-margin-bottom` として名乗り、寄せた先がカウントダウンの
+  // 裏へ潜らないようにする（→ `useFollowScroll`）。カウントダウンは出たり消えたりするので callback ref で見張り直す
+  const [countdownHeight, setCountdownHeight] = useState(0)
+  const countdownObserverRef = useRef<ResizeObserver | null>(null)
+  const countdownRef = useCallback((el: HTMLDivElement | null) => {
+    countdownObserverRef.current?.disconnect()
+    countdownObserverRef.current = null
+    if (!el) { setCountdownHeight(0); return }
+    const measure = () => setCountdownHeight(el.getBoundingClientRect().height)
+    if (typeof ResizeObserver === 'function') {
+      const observer = new ResizeObserver(measure)
+      observer.observe(el)
+      countdownObserverRef.current = observer
+    }
+    measure()
+  }, [])
   return (
     // 文字と寸法は地震タブと同じ 2 組を、パネル自身の幅（520px）で切り替える（→ src/index.css の quake-list）
     <div className="quake-list min-h-full">
-    <div className="quake-list-scope flex flex-col min-h-full p-2 gap-2 @min-[520px]:p-3 @min-[520px]:gap-3 [--rt-k:0.82] [--rt-tw:1.25] @min-[520px]:[--rt-k:1] @min-[520px]:[--rt-tw:1.2] [--rt-tile-w:calc(var(--qk-big)*var(--rt-tw))]">
-      {/* ホーム地点の区域の秒数は、速報のカードより上に置く。到達一覧が伸びても最初の画面に残す
-          （2026-11-04 ユーザー選択「詰めて上へ (Recommended)」） */}
-      {swaveArrival !== null && <SWaveArrivalCard arrival={swaveArrival} />}
+    <div className="quake-list-scope flex flex-col min-h-full p-2 gap-2 @min-[520px]:p-3 @min-[520px]:gap-3 [--rt-k:0.82] [--rt-tw:1.25] @min-[520px]:[--rt-k:1] @min-[520px]:[--rt-tw:1.2] [--rt-tile-w:calc(var(--qk-big)*var(--rt-tw))]"
+      style={{ '--rt-sticky-bottom': `${countdownHeight}px` } as React.CSSProperties}>
       {/* データカード */}
       {[...eews]
         .sort(compareEewNewestFirst)
@@ -1637,6 +1654,15 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
           />
         ))
       }
+      {/* ホーム地点の区域の秒数は、速報のカードの下に置き、巻いて下へ外れたら枠の下端に貼りつける
+          （2026-11-05 ユーザー回答「カウントダウンは下に持ってきて、ほかのタブとは逆に、巻いたら下に貼り付けるようにしたら？
+          EEWは上に大事な情報があるので上を隠したくないです」。2026-11-04 の「詰めて上へ」を置き換える）。
+          上に置くと、読み上げで速報のカードの頭へ寄せたときにカウントダウンが枠の外へ押し出されていた */}
+      {swaveArrival !== null && (
+        <div ref={countdownRef} className="sticky bottom-0 z-10 rounded-md shadow-[0_-3px_8px_rgba(0,0,0,.55)]">
+          <SWaveArrivalCard arrival={swaveArrival} />
+        </div>
+      )}
 
       {/* 強震モニタ検知: 早い段・確かな段を 1 つの揺れとして集約表示する。
           大地震では揺れが複数の束に分かれて検知器が複数の検知を返すため、
