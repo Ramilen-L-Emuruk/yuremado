@@ -1410,7 +1410,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
     .filter(e => e.confidence === topTier)
     .reduce<EnsembleDetection | null>((best, e) => (!best || intensityOf(e) > intensityOf(best) ? e : best), null)
   const summary = primary ? ensembleSummary(primary) : null
-  const heading = '強震モニタ検知'
+  const heading = '揺れ検知'
   const regionCount = events.length
   const earliestMs = events.reduce((m, e) => Math.min(m, e.originTimeMs), Infinity)
   const time = new Date(earliestMs).toLocaleTimeString('ja-JP', { hour12: false })
@@ -1647,7 +1647,7 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
         return (
           <div className="flex flex-col gap-2">
             <KyoshinDetectionSummary events={events} points={kyoshinDetectedPoints} visible={visible && pageVisible} subregions={subregions} />
-            <p className="text-[length:var(--qk-fs)] text-secondary">※強震モニタによる推定値。気象庁発表とは異なる場合があります。</p>
+            <p className="text-[length:var(--qk-fs)] text-secondary">※リアルタイムの推定値。気象庁発表とは異なる場合があります。</p>
           </div>
         )
       })()}
@@ -1672,8 +1672,7 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
         {/* 注記 */}
         <div className="bg-card rounded-md p-3 border border-border">
           <p className="text-secondary text-[length:var(--qk-fs)] leading-relaxed">
-            ※ データ出典: Yahoo!天気・災害 リアルタイム震度（防災科学技術研究所 強震モニタ）。
-            表示される震度はリアルタイムの推定値であり、気象庁が発表する震度とは異なる場合があります。
+            ※ 表示される震度はリアルタイムの推定値であり、気象庁が発表する震度とは異なる場合があります。
           </p>
         </div>
       </div>

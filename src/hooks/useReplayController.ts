@@ -547,7 +547,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
       // 「再生中」と赤字が並ぶ矛盾は、設定の窓が `replayStartLabel` の有無で見出しを
       // 「再生中の警告」と「取得失敗」に出し分けることで既に解消されている。
       // 先読み位置だけは畳む（アーカイブが読めない以上、続きを取りに行っても同じ失敗を繰り返す）。
-      setFetchError(`${screenMsgOf(e)}（地震・津波の電文は再生されません。強震モニタの再生は継続します）`)
+      setFetchError(`${screenMsgOf(e)}（地震・津波の電文は再生されません。リアルタイム震度の再生は継続します）`)
       prefetchEndRef.current = null
       // 録画ツール向けの記録。**世代の照合を通った後に置く** —— 前に置くと、停止済みの
       // セッションの失敗まで「いまの再生が失敗した」として並ぶ。

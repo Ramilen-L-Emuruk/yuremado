@@ -143,23 +143,23 @@ describe('検知カードは渡された点列をそのまま集計する', () =
   })
 
   // 段は震度では分けない（2026-10-29 ユーザー選択「段のまま鳴らす」）。震度0の早い段でも見出しは同じ
-  it('見出しは段・震度によらず「強震モニタ検知」（段はチップで示す）', () => {
+  it('見出しは段・震度によらず「揺れ検知」（段はチップで示す）', () => {
     renderTab([fakeEvent({ id: 'evt-2', confidence: 'likely', maxIntensity: 0.0 })], [P('a', 7)])
-    expect(screen.getByText('強震モニタ検知')).toBeTruthy()
+    expect(screen.getByText('揺れ検知')).toBeTruthy()
     expect(screen.getByText('可能性')).toBeTruthy()
     expect(screen.queryByText(/兆候/)).toBeNull()
   })
 
-  it('確かな段でも見出しは「強震モニタ検知」で、チップが「検知」になる', () => {
+  it('確かな段でも見出しは「揺れ検知」で、チップが「検知」になる', () => {
     renderTab([fakeEvent({ id: 'evt-1', confidence: 'confirmed' })], [P('a', 7)])
-    expect(screen.getByText('強震モニタ検知')).toBeTruthy()
+    expect(screen.getByText('揺れ検知')).toBeTruthy()
     expect(screen.getByText('検知')).toBeTruthy()
   })
 
   it('検知が無いときはカードを出さない', () => {
     renderTab([], [P('a', 7)])
     expect(screen.queryByText(/観測点で反応/)).toBeNull()
-    expect(screen.queryByText('強震モニタ検知')).toBeNull()
+    expect(screen.queryByText('揺れ検知')).toBeNull()
   })
 
   it('複数イベントのときは地域数を添える', () => {

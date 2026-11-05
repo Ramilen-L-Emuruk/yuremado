@@ -790,7 +790,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
         if (notificationAllowed(settings, 'detection')) {
           const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
           // 呼び名は「最大リアルタイム震度」（2026-10-31 ユーザー承認「折り返したりが起きないなら最大リアルタイム震度がいいですね」）。強まったとき・別地点の通知も同じ
-          showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}（強震モニタ）`, 'kyoshin-detection')
+          showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}`, 'kyoshin-detection')
           notifiedLevelRef.current = kyoshinLevel(effectiveKyoshinMaxIndex)
         }
         // 読み上げは確定の立ち上がりで 1 回だけ（2026-10-31 ユーザー選択「地名だけ・1回 (Recommended)」。
@@ -876,7 +876,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     const level = kyoshinLevel(effectiveKyoshinMaxIndex)
     if (notifiedLevelRef.current < 0 || level <= notifiedLevelRef.current) return
     const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
-    showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}（強震モニタ）`, 'kyoshin-detection')
+    showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}`, 'kyoshin-detection')
     notifiedLevelRef.current = level
   }
   useEffect(() => {
@@ -954,7 +954,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     if (notificationAllowed(settings, 'detection')) {
       // 全体の最大震度ではなく、発報した地域自身の推定震度を出す（「別の地点」の報せなので）
       const label = kyoshinDetectionScaleLabel(alert.index) ?? '?'
-      showBrowserNotification('別の地点で揺れを検知', `最大リアルタイム震度 ${label}（強震モニタ）`, 'kyoshin-detection-new')
+      showBrowserNotification('別の地点で揺れを検知', `最大リアルタイム震度 ${label}`, 'kyoshin-detection-new')
     }
     // 読み上げは別地点の地域ごとに 1 回（地域は一度鳴ったら二度と鳴らない。→ `stepAlertRegions`）。
     // 「茨城県南部でも揺れを検知。」（2026-10-31 ユーザー選択「境を直してから読む (Recommended)」）。
