@@ -61,6 +61,13 @@ const SP_WIDE_WIN = 30, SP_WIDE_FIRE1 = 20
  */
 const SP_CEIL_LAG = 3, SP_CEIL_L = 60, SP_CEIL_RISE = 3
 /**
+ * その場で騒がしいとみる点: 直近 SP_LOUD_WIN 秒に、隣の点が時間差（「距離 / 3 km/s ＋ SP_SLACK」）の内に 1 つも上がらなかった居座り
+ * （SP_SPIKE_SEC 秒のうちに戻らなかった SP_NB 段以上の上がり）を SP_LOUD_N 回以上出した点も、騒がしい点と同じく天井を見る。
+ * 表を焼いた日には静かでも、その時期だけ居座るゆらぎを繰り返す点（久米島・対馬など）があるため（設計書§68）。
+ * 隣の裏付けがあったかは、上がり始めから SP_PAIR_MAX 秒たってから、点ごとに直近 SP_HIST_SEC 秒の上がった秒で見る
+ */
+const SP_LOUD_WIN = 21600, SP_LOUD_N = 3, SP_HIST_SEC = 100
+/**
  * 近くの点だけが少ない点: SP_KM 以内には点が多くても、SP_NEAR_KM 以内に 1〜SP_NEAR_MAXN 点しかない点（伊豆諸島・奥尻・対馬など）も規則に入れる。
  * ただし主の経路で同じ時間差の内に組になったときだけ当て（早い段だけの経路・1 点の跳ね・後から組にする向きでは当てない）、組にする隣は SP_NEAR_KM 以内で SP_NEAR_NB 段以上上がった点に限り、
  * 跳ねた点も隣もゆらぎの多い点でないことを求める —— 絞らないと、離島の点のゆらぎで当たらない確かな段が大きく増える（設計書§54）
@@ -160,6 +167,19 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
      * SP_NOISE_WIN 秒たつ（元の値そのものが上がったまま）まで続ける
      */
     const heldAt = new Float64Array(n).fill(NaN)
+    /** 点ごとの、直近 SP_HIST_SEC 秒に SP_NB 段以上上がった秒（居座った上がりに隣の裏付けがあったかを後から見る） */
+    const nbHist: number[][] = Array.from({ length: n }, () => [])
+    /** 裏付けを待っている居座った上がり（点・上がり始め） */
+    const heldPend: { i: number; t0: number }[] = []
+    /** 点ごとの、隣の裏付けの無い居座った上がりの始まり（直近 SP_LOUD_WIN 秒） */
+    const soloHolds: number[][] = Array.from({ length: n }, () => [])
+    /** 天井を見る点か: 平常のゆらぎの表で騒がしい点か、直近に隣の裏付けの無い居座りを SP_LOUD_N 回以上出した点 */
+    const loudNow = (i: number, now: number) => {
+      if (loud[i]) return true
+      let c = 0
+      for (const t of soloHolds[i]) if (now - t <= SP_LOUD_WIN * 1000) c++
+      return c >= SP_LOUD_N
+    }
     const noisy = (i: number, now: number) => {
       let c = 0
       for (const t of nbSecs[i]) if (now - t > SP_QUIET * 1000 && now - t <= SP_NOISE_WIN * 1000) c++
@@ -177,8 +197,24 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
         const rise = (i: number) => (v[i] >= 0 && mn[i] !== 127 ? v[i] - mn[i] : -99)
         /** この秒に跳ねた、近くの点だけが少ない点 */
         const nearCands: number[] = []
+        // 居座った上がりのうち、隣の点が時間差の内に 1 つも上がらなかったものを、その点の居座る雑音として数える
+        for (let k = heldPend.length - 1; k >= 0; k--) {
+          const h = heldPend[k]
+          if (f.ms - h.t0 < SP_PAIR_MAX * 1000) continue
+          heldPend.splice(k, 1)
+          if (nbS[h.i].some(({ j, d }) => nbHist[j].some(t => Math.abs(t - h.t0) <= (d / 3 + SP_SLACK) * 1000))) continue
+          const l = soloHolds[h.i]
+          l.push(h.t0)
+          while (l.length && f.ms - l[0] > SP_LOUD_WIN * 1000) l.shift()
+        }
         for (let i = 0; i < n; i++) {
           const r = rise(i)
+          // その場で騒がしいとみる点の数え（天井を見るのは早い段だけの経路なので、主の経路では数えない）
+          if (!withConfirmed && r >= SP_NB) {
+            const hl = nbHist[i]
+            hl.push(f.ms)
+            while (hl.length && f.ms - hl[0] > SP_HIST_SEC * 1000) hl.shift()
+          }
           /** 跳ね（広い窓を効かせる点は、長い窓の最小からの上がりと大きい方）。隣の上がりとゆらぎの数え方は r のまま */
           const jump = wideOk[i] && v[i] >= 0 && wideMn[i] !== 127 ? Math.max(r, v[i] - wideMn[i]) : r
           const p = pend[i]
@@ -194,6 +230,7 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
               p.length = 0
               heldAt[i] = NaN
             } else if (p.length && f.ms - p[0] > SP_SPIKE_SEC * 1000) {
+              if (!withConfirmed && sparseKind[i] !== 0) heldPend.push({ i, t0: p[0] })
               p.length = 0
               heldAt[i] = f.ms
             } else if (held && f.ms - heldAt[i] > SP_NOISE_WIN * 1000) heldAt[i] = NaN
@@ -207,8 +244,8 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
             }
           }
           if (jump < spRise || sparseKind[i] === 0) { if (jump >= spRise) lastBig[i] = f.ms; continue }
-          // 騒がしい点は、直前 1 分の天井へ戻っただけの跳ねを起点にしない（隣の相手としての上がりは数えたまま）
-          if (!withConfirmed && loud[i] && v[i] - ceilOf(i) < SP_CEIL_RISE) continue
+          // 騒がしい点（表で騒がしいか、直近に隣の裏付けの無い居座りを繰り返した点）は、直前 1 分の天井へ戻っただけの跳ねを起点にしない（隣の相手としての上がりは数えたまま）
+          if (!withConfirmed && loudNow(i, f.ms) && v[i] - ceilOf(i) < SP_CEIL_RISE) continue
           const quiet = f.ms - lastBig[i] > SP_QUIET * 1000 || f.ms - lastBig[i] <= 1000
           if (f.ms - lastBig[i] > 1000) lastBig[i] = f.ms
           if (!quiet) continue

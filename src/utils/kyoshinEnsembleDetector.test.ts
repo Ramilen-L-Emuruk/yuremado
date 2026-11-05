@@ -391,3 +391,58 @@ describe('まばらな所の規則の、騒がしい点の天井', () => {
     expect(at).toBe(-1)
   })
 })
+
+describe('まばらな所の規則の、その場で騒がしいとみる点', () => {
+  // 120 km 以内に互いしかいない 2 点（44 km 離れた離島の組）。表では A も B も静かな点（騒がしい点の天井は掛からない）
+  const PAIR: [number, number][] = [[30.0, 130.0], [30.4, 130.0]]
+  const ON = 26_000
+  const tail = (): TailCounts => {
+    const y = Array.from({ length: 12 }, (_, k) => Math.round(100_000 * 0.0005 / (k + 1)))
+    return { n: 100_000, y, y3: [...y], y15: [...y] }
+  }
+  const CALM: QuietTables = {
+    version: 1, days: ['test'], glob: tail(),
+    tails: Object.fromEntries(PAIR.map(s => [quietSiteKey(s), tail()])),
+    fire: Object.fromEntries(PAIR.map(s => [quietSiteKey(s), [12, 1, 0.1, 0, 0]])),
+  }
+  /**
+   * A が `holds` の各秒から 70 秒、段 0 → 4 へ上がって居座る（`backed` なら B も同じ秒に段 2 → 5 へ上がる）。
+   * ON の 90 秒前からは段 6 で居座り（これも隣の裏付けの無い居座り 1 回）、ON の 3 秒前に段 0 へ落ちて ON に段 6 へ戻る
+   */
+  const holdsThenDipBack = (holds: number[], backed = false) => (s: number) => {
+    if (s >= ON - 90) return [s < ON - 3 || s >= ON ? 6 : 0, 2]
+    const on = holds.some(t => s >= t && s < t + 70)
+    return [on ? 4 : 0, on && backed ? 5 : 2]
+  }
+  /** 居座りの後、段 0 の A が ON に段 6 へ跳ねる（直前 1 分の最大からも 6 段） */
+  const holdsThenFresh = (holds: number[]) => (s: number) => [s < ON ? (holds.some(t => s >= t && s < t + 70) ? 4 : 0) : 6, 2]
+  /** まばらな所の規則が ON の 5 秒前以降に早い段を出した最初の秒（無ければ -1） */
+  const earlyAt = (values: (s: number) => number[]) => {
+    const det = createEnsembleDetector(PAIR, CALM)
+    for (let s = 0; s < ON + 30; s++) {
+      const rs = det.push({ ms: T0 + s * 1000, values: Int8Array.from(values(s)) })
+      if (s >= ON - 5 && rs.some(r => r.tier === 'early' && r.sources.includes('sparse'))) return s
+    }
+    return -1
+  }
+
+  it('正: 隣の裏付けの無い居座りが直近 6 時間に 3 回あれば、表で静かな点でも天井へ戻っただけの跳ねを早い段にしない', () => {
+    expect(earlyAt(holdsThenDipBack([ON - 1000, ON - 800]))).toBe(-1)
+  })
+
+  it('対照: 居座りが 2 回なら、同じ戻りを早い段にする', () => {
+    expect(earlyAt(holdsThenDipBack([ON - 1000]))).toBe(ON)
+  })
+
+  it('安全弁: 隣も同じ秒に上がった居座りは数えない', () => {
+    expect(earlyAt(holdsThenDipBack([ON - 1000, ON - 800], true))).toBe(ON)
+  })
+
+  it('安全弁: 6 時間より前の居座りは数えない', () => {
+    expect(earlyAt(holdsThenDipBack([ON - 25_000, ON - 24_000]))).toBe(ON)
+  })
+
+  it('安全弁: 騒がしいとみた点でも、直前 1 分の天井を超える跳ねは今までどおり早い段にする', () => {
+    expect(earlyAt(holdsThenFresh([ON - 1000, ON - 800, ON - 600]))).toBe(ON)
+  })
+})
