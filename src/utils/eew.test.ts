@@ -1704,6 +1704,87 @@ describe('経路をまたいだ緊急地震速報の台帳と統合（強震モ�
       })
     })
 
+    // 電文だけが運ぶ震源の欄（規模の種別・規模の説明・深さの「以上」・震央地名コード）を強震モニタで消さない
+    describe('電文と強震モニタの報を合わせる（電文だけが運ぶ欄）', () => {
+      const telegram = report('dmdata', '5', P2P_TIME, {
+        severity: 'Forecast',
+        earthquake: {
+          ...makeEEW().earthquake,
+          hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2, depth: 10, magnitude: 7.4, magnitudeType: 'Mj', code: '390' },
+        },
+      })
+      const yahoo = (time: string, hypocenter: Partial<EEWAlert['earthquake']['hypocenter']> = {}, over: Partial<EEWAlert> = {}) =>
+        report('yahoo', '5', time, {
+          earthquake: {
+            ...makeEEW().earthquake,
+            hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.3, depth: 10, magnitude: 7.4, ...hypocenter },
+          },
+          ...over,
+        })
+
+      // 正: 電文で受けた報と同じ報（同じ発表時刻）を強震モニタが後から運んでも、電文の値のまま
+      it('同じ報なら電文の震源・区分・経路を保つ', () => {
+        const merged = mergeEewReport(telegram, yahoo(YAHOO_TIME, {}, { severity: 'Warning' }))
+        expect(merged.earthquake.hypocenter).toEqual(telegram.earthquake.hypocenter)
+        expect(merged.severity).toBe('Forecast')
+        expect(merged.origin).toBe('dmdata')
+      })
+      // 正: 強震モニタが新しい報を運んだら数値は差し替え、規模の種別と震央地名コードは保つ
+      it('新しい報は数値を差し替え、規模の種別と震央地名コードを保つ', () => {
+        const merged = mergeEewReport(telegram, yahoo(LATER, { magnitude: 7.6 }))
+        expect(merged.earthquake.hypocenter.magnitude).toBe(7.6)
+        expect(merged.earthquake.hypocenter.longitude).toBe(137.3)
+        expect(merged.earthquake.hypocenter.magnitudeType).toBe('Mj')
+        expect(merged.earthquake.hypocenter.code).toBe('390')
+        expect(merged.origin).toBe('yahoo')
+      })
+      // 対照: 値が変わった欄に前の印は当てない（震央地名が変われば地名コード、深さが変われば「以上」）
+      it('震央地名・深さが変われば、前のコードと「以上」は外す', () => {
+        const deep = { ...telegram, earthquake: { ...telegram.earthquake, hypocenter: { ...telegram.earthquake.hypocenter, depth: 700, depthAtLeast: true } } }
+        const same = mergeEewReport(deep, yahoo(LATER, { depth: 700 }))
+        expect(same.earthquake.hypocenter.depthAtLeast).toBe(true)
+        const moved = mergeEewReport(deep, yahoo(LATER, { name: '佐渡付近', depth: 650 }))
+        expect(moved.earthquake.hypocenter.depthAtLeast).toBeUndefined()
+        expect(moved.earthquake.hypocenter.code).toBeUndefined()
+      })
+      // 安全弁: 規模の説明は規模が数値にならないときだけ保つ（数値が出たら説明は付けない）
+      it('規模の説明は規模が読めないときだけ保つ', () => {
+        const huge = { ...telegram, earthquake: { ...telegram.earthquake, hypocenter: { ...telegram.earthquake.hypocenter, magnitude: Number.NaN, magnitudeCondition: 'Ｍ８を超える巨大地震' } } }
+        expect(mergeEewReport(huge, yahoo(LATER, { magnitude: Number.NaN })).earthquake.hypocenter.magnitudeCondition).toBe('Ｍ８を超える巨大地震')
+        expect(mergeEewReport(huge, yahoo(LATER, { magnitude: 8.1 })).earthquake.hypocenter.magnitudeCondition).toBeUndefined()
+      })
+      // 正: 強震モニタが先に着き、遅れて届いた電文の報で規模の種別を補う（Yahoo が速い実運用の主な並び）
+      it('遅れて届いた電文の報で、規模の種別と震央地名コードを補う', () => {
+        const merged = supplementEewReport(mergeEewReport(undefined, yahoo(LATER, { magnitude: 7.6 })), telegram)
+        expect(merged.earthquake.hypocenter.magnitude).toBe(7.6)
+        expect(merged.earthquake.hypocenter.magnitudeType).toBe('Mj')
+        expect(merged.earthquake.hypocenter.code).toBe('390')
+      })
+      // 対照: 同じ秒でも報番号が違えば別の報（能登本震では 46 報中 13 報が同一秒）。強震モニタの値で差し替える
+      it('同じ秒でも報番号が違えば差し替える', () => {
+        const merged = mergeEewReport(telegram, report('yahoo', '6', YAHOO_TIME, {
+          severity: 'Warning',
+          earthquake: { ...makeEEW().earthquake, hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.3, depth: 10, magnitude: 7.6 } },
+        }))
+        expect(merged.earthquake.hypocenter.magnitude).toBe(7.6)
+        expect(merged.earthquake.hypocenter.magnitudeType).toBe('Mj')
+        expect(merged.severity).toBe('Warning')
+        expect(merged.origin).toBe('yahoo')
+      })
+      // 安全弁: 予報の番号を持たない警報の電文だけを表示中なら、同じ秒でも同じ報と言わない（比べられない）
+      it('予報の番号を持たない警報の電文とは、同じ報と見なさない', () => {
+        const warningOnly = { ...telegram, serialSeries: 'warning' as const, issue: { ...telegram.issue!, serial: '1' } }
+        const merged = mergeEewReport(warningOnly, yahoo(YAHOO_TIME, { magnitude: 7.5 }))
+        expect(merged.earthquake.hypocenter.magnitude).toBe(7.5)
+        expect(merged.earthquake.hypocenter.magnitudeType).toBe('Mj')
+      })
+      // 安全弁: 表示中も強震モニタの報なら「同じ報」の扱いをしない（今までどおり差し替える）
+      it('表示中が強震モニタの報なら、同じ発表時刻でも差し替える', () => {
+        const merged = mergeEewReport(yahoo(YAHOO_TIME), yahoo(YAHOO_TIME, { magnitude: 7.5 }))
+        expect(merged.earthquake.hypocenter.magnitude).toBe(7.5)
+      })
+    })
+
     // 正: 予報 → 警報は届いた報の区分で引き上げる
     it('届いた報が警報なら、前が予報でも警報へ上げる', () => {
       const merged = mergeEewReport(
