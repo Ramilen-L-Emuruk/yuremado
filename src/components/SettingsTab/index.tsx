@@ -841,7 +841,7 @@ export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
   /** 選べる声。VOICEVOX に繋がっていないときは空（声の行を出さない） */
   voicevoxSpeakers: readonly VoicevoxSpeaker[]
 }) {
-  const selectClass = 'bg-input border border-border rounded-sm px-2 py-1 text-xs text-white'
+  const selectClass = 'bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white'
   const speech = settings.voicevoxEnabled
   return (
     <>
@@ -1694,7 +1694,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                   type="text"
                   value={settings.voicevoxUrl}
                   onChange={e => onUpdate('voicevoxUrl', e.target.value)}
-                  className={`bg-input border rounded-sm px-2 py-1 text-xs text-white w-44 ${
+                  className={`bg-panel border rounded-sm px-2 py-1 text-xs text-white w-44 ${
                     voicevoxStatus === 'invalid' ? 'border-red-500' : 'border-border'
                   }`}
                   spellCheck={false}
@@ -1726,7 +1726,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                   <select
                     value={settings.voicevoxSpeakerId}
                     onChange={e => onUpdate('voicevoxSpeakerId', Number(e.target.value))}
-                    className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+                    className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
                   >
                     {voicevoxSpeakers.flatMap(spk =>
                       spk.styles.map(st => (
@@ -1794,7 +1794,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsIntensityLevels}
               onChange={e => onUpdate('ttsIntensityLevels', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               {/* 最後の選択肢は「すべての階級」。値は階級の段数から導く（数を直接書くと、
                   階級が増減したときに選択肢だけが古い段数のまま残る）。 */}
@@ -1821,7 +1821,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsAlwaysReadLpgmClass}
               onChange={e => onUpdate('ttsAlwaysReadLpgmClass', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               <option value={-1}>階数の設定どおり</option>
               {[0, 1, 2, 3, 4].map(n => (
@@ -1833,7 +1833,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsMaxRegions}
               onChange={e => onUpdate('ttsMaxRegions', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               {[0, 3, 5, 10, 15, 20].map(n => (
                 <option key={n} value={n}>{n === 0 ? '無制限' : `${n}地域`}</option>
@@ -1845,7 +1845,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               <select
                 value={settings.ttsRegionTolerance}
                 onChange={e => onUpdate('ttsRegionTolerance', Number(e.target.value))}
-                className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+                className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
               >
                 {[0, 1, 2, 3, 5].map(n => (
                   <option key={n} value={n}>{n === 0 ? '許容しない' : `+${n}地域まで`}</option>
@@ -1863,7 +1863,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsUnreceivedDetail}
               onChange={e => onUpdate('ttsUnreceivedDetail', e.target.value as TtsUnreceivedDetail)}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               <option value="stations">地点名</option>
               <option value="areas">区域名</option>
@@ -1874,7 +1874,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsMaxObservationPoints}
               onChange={e => onUpdate('ttsMaxObservationPoints', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               {[0, 1, 3, 5, 10, 15, 20].map(n => (
                 <option key={n} value={n}>{n === 0 ? '無制限' : `${n}地点`}</option>
@@ -2195,7 +2195,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                 type="text"
                 value={settings.seismoHostUrl}
                 onChange={e => onUpdate('seismoHostUrl', e.target.value)}
-                className={`bg-input border rounded-sm px-2 py-1 text-xs text-white w-44 ${
+                className={`bg-panel border rounded-sm px-2 py-1 text-xs text-white w-44 ${
                   seismoStatus.kind === 'invalid' ? 'border-red-500' : 'border-border'
                 }`}
                 spellCheck={false}
