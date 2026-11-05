@@ -141,10 +141,12 @@
     top: calc(var(--qk-head-h) + var(--qk-day-h));
     z-index: 2;
   }
+  /* 震度の枠は見出しの段（z 2）の下に描く（z 1）。カードの終わりで枠が押し上げられて見出しの段と重なるとき、
+     同じ z だと DOM で後ろの枠が見出しの段の上へ被さる。日付の区切り（z 3）・一覧の見出しの行（z 4）より下なのは変わらない */
   .quake-list-scope [data-stick-tall] .quake-stick {
     position: sticky;
     top: calc(var(--qk-head-h) + var(--qk-day-h) + var(--qk-open-head-h, 0px));
-    z-index: 2;
+    z-index: 1;
     /* 貼りついている間だけ下端に、狭い組の帯と同じ境の線と影を付ける（2026-11-03 選択「帯と同じ影を付ける (Recommended)」）。
        scroll-state の問い合わせは箱の子にしか効かないので、描くのは子の quake-stick-edge。使えない端末では影が付かないだけ。
        名前を付けた箱なので、名前の無い幅の問い合わせ（@container (min-width: …)）はこれまでどおり一覧の箱を見る */

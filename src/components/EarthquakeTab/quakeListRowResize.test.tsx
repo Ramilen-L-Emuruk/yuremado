@@ -96,3 +96,34 @@ describe('閉じた行の段の測り方', () => {
     expect(chipsDropped(container)).toBe(true)
   })
 })
+
+// 欄に入らない震央地名（2026-11-05 ユーザー選択「B 「…」で省く」）。字の途中で黙って切らず、末尾を「…」にして全文を title で持つ。
+describe('閉じた行の震央地名', () => {
+  const nameEl = (c: HTMLElement) => {
+    const el = [...c.querySelectorAll<HTMLElement>('span')].find(s => s.textContent === baseProps.name && s.classList.contains('col-start-3'))
+    expect(el).toBeDefined()
+    return el!
+  }
+
+  // 正: 1 行のまま末尾を「…」で省く
+  it('1 行のまま末尾を省く', () => {
+    const { container } = render(<QuakeListRow {...baseProps} />)
+    const cls = nameEl(container).classList
+    expect(cls.contains('text-ellipsis')).toBe(true)
+    expect(cls.contains('overflow-hidden')).toBe(true)
+    expect(cls.contains('whitespace-nowrap')).toBe(true)
+  })
+
+  // 正: 全文を title で持つ（ホバーで読める）
+  it('全文を title で持つ', () => {
+    const { container } = render(<QuakeListRow {...baseProps} />)
+    expect(nameEl(container).title).toBe('石川県能登地方')
+  })
+
+  // 安全弁: 地名が入らないときに規模と深さを下の段へ下げる判定は変わらない（省いても scrollWidth は全文の幅）
+  it('地名が入らなければ規模と深さは下の段へ下がる', () => {
+    const { container } = render(<QuakeListRow {...baseProps} />)
+    const magnitude = [...container.querySelectorAll<HTMLElement>('span')].find(s => s.textContent === 'M7.6')
+    expect(magnitude?.style.gridColumn).toBe('3 / 5')
+  })
+})
