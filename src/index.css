@@ -99,6 +99,7 @@
   --qk-band-f: 0.875rem;
   --qk-fact-gap: 0.75rem;
   --qk-head-h: 1.625rem;    /* 一覧の見出しの行（震度・時刻・震央地名…）26px。巻いても上に残る */
+  --qk-day-h: 1.75rem;      /* 日付の区切り 28px。見出しの行の下に貼りつく */
 }
 /* 開いたカードの震度の枠の下端に置く影の受け皿。普段は高さを持たない（影を描くのは貼りついている間だけ。下の @container quake-stick）。
    親（.quake-stick）に gap を持たせると、高さ 0 でもこの子のぶん隙間が増える */
@@ -106,9 +107,9 @@
   display: block;
   height: 0;
 }
-/* 一覧の見出しの行は巻いても上に残るので、カードへ寄せるときはその下へ着地させる（→ useFollowScroll） */
+/* 一覧の見出しの行と日付の区切りは巻いても上に残るので、カードへ寄せるときはその下へ着地させる（→ useFollowScroll） */
 .quake-list [data-quake-key] {
-  scroll-margin-top: var(--qk-head-h);
+  scroll-margin-top: calc(var(--qk-head-h) + var(--qk-day-h));
 }
 @container (min-width: 520px) {
   .quake-list-scope {
@@ -137,12 +138,12 @@
      見出しの段の高さはカードがこの枠自身の --qk-open-head-h に書く */
   .quake-list-scope [data-stick-tall] .quake-open-head {
     position: sticky;
-    top: var(--qk-head-h);
+    top: calc(var(--qk-head-h) + var(--qk-day-h));
     z-index: 2;
   }
   .quake-list-scope [data-stick-tall] .quake-stick {
     position: sticky;
-    top: calc(var(--qk-head-h) + var(--qk-open-head-h, 0px));
+    top: calc(var(--qk-head-h) + var(--qk-day-h) + var(--qk-open-head-h, 0px));
     z-index: 2;
     /* 貼りついている間だけ下端に、狭い組の帯と同じ境の線と影を付ける（2026-11-03 選択「帯と同じ影を付ける (Recommended)」）。
        scroll-state の問い合わせは箱の子にしか効かないので、描くのは子の quake-stick-edge。使えない端末では影が付かないだけ。

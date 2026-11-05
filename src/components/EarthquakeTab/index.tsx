@@ -1,4 +1,4 @@
-import { Fragment, memo, useLayoutEffect, useRef } from 'react'
+import { memo, useLayoutEffect, useRef } from 'react'
 import type { JMAQuake, JMALpgm, JMAEstimatedIntensity, JMAInternationalTsunami } from '../../types/earthquake'
 import { EarthquakeCard } from './EarthquakeCard'
 import { LoadMoreButton } from './LoadMoreButton'
@@ -260,13 +260,26 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
 
   // 日付が前の行と変わったところに区切りを置く（見本の「11月1日」。年は常に添える）。
   // 比べる相手は直前に区切りを置いた日（時刻の読めない行を挟んでも同じ日の区切りを二度置かない）
+  // **区切りから次の区切りの手前までを 1 つの束にする。** 日付の行は束の中で一覧の見出しの行の下へ貼りつき、
+  // 束の終わりで次の日の行に押し上げられる（2026-11-05 ユーザー発言「普通にヘッダ(震度 時刻 震央地名 規模 深さ)の下に
+  // 張り付くイメージ」）。束の鍵は日の鍵（区切りより前の時刻の読めない行だけの束は先頭の行の鍵）
+  // 同じ日の束が離れて 2 つできたとき（並びが時刻の降順から外れた行を挟んだとき）だけ、鍵に番号を添える
+  const dayGroups: { key: string; label: string | null; quakes: JMAQuake[] }[] = []
+  const dayKeyCount = new Map<string, number>()
   let lastDayKey: string | null = null
-  const dayLabels = earthquakes.map(q => {
+  for (const q of earthquakes) {
     const day = quakeListDay(q.earthquake.time)
-    if (!day || day.key === lastDayKey) return null
-    lastDayKey = day.key
-    return day.label
-  })
+    if (day && day.key !== lastDayKey) {
+      lastDayKey = day.key
+      const n = dayKeyCount.get(day.key) ?? 0
+      dayKeyCount.set(day.key, n + 1)
+      dayGroups.push({ key: n === 0 ? `day:${day.key}` : `day:${day.key}:${n}`, label: day.label, quakes: [q] })
+    } else if (dayGroups.length === 0) {
+      dayGroups.push({ key: `lead:${quakeEventKey(q)}`, label: null, quakes: [q] })
+    } else {
+      dayGroups[dayGroups.length - 1].quakes.push(q)
+    }
+  }
 
   return (
     // 大きさは一覧自身の幅で切り替える（2026-11-02 選択「パネル自身の幅 (Recommended)」。値は src/index.css の quake-list）
@@ -278,15 +291,17 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
         </div>
       )}
       <QuakeListHeader />
-      {earthquakes.map((quake, i) => {
+      {dayGroups.map(group => (
+       <section key={group.key}>
+        {group.label && <QuakeListDayLabel label={group.label} />}
+        {group.quakes.map(quake => {
         return (
         // QUAKE-4: 続報で id 末尾の serial が変わるたびに EarthquakeCard がリマウントされ、
         // isSelected の副作用（強制スクロール）が発火してユーザー操作を妨害する。
         // eventKey は続報でも変わらないため、React の key・選択判定の両方をこれで安定させる
         // （どちらも quakeEventKey に統一。earthquake.time は同じ分に起きた別の地震と衝突する）。
-        <Fragment key={quakeEventKey(quake)}>
-        {dayLabels[i] && <QuakeListDayLabel label={dayLabels[i]!} />}
         <EarthquakeCard
+          key={quakeEventKey(quake)}
           quake={quake}
           isSelected={quakeEventKey(quake) === selectedId}
           reopenSignal={quakeEventKey(quake) === selectedId ? selectSeq : 0}
@@ -310,9 +325,10 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
           seismoWaveFailed={seismoWaveFailedKeys.has(quakeEventKey(quake))}
           seismoWaveView={seismoWaveView}
         />
-        </Fragment>
         )
-      })}
+        })}
+       </section>
+      ))}
       {hasMore && (
         <LoadMoreButton onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} watchThrottle={watchLoadMoreThrottle} />
       )}

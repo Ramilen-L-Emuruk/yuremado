@@ -3158,10 +3158,12 @@ export function App() {
         {/* パネル（タブに応じて内容を切替）。縦積み時は --panel-ratio 由来の高さ + スクロール。
             折りたたみ時は縦積みなら高さ（--panel-ratio=0）、左右分割なら幅が 0 になり地図が全画面になる。
             各タブを absolute で重ねて visibility で切り替えることで、スクロール位置をタブごとに独立管理する。
+            **地の色（bg-app）を敷く。** 縦積みで波形が出ている間はパネルが波形の上へ重なる（→ utils/waveStackLayout.ts）ので、
+            背景を持たない中身（日付の区切り・見出し・空の案内）から下の波形が透けないようにする。重ならないときは画面の地と同じ色。
             折りたたみを含め display:none（hidden クラス）を使わないのは、scrollTop がリセットされるため。
             左右分割時の幅は `w-panel` / `w-panel-narrow`（src/index.css で定義）。境のつまみで変えた幅は
             --panel-w-side / --panel-w-narrow で受ける（→ utils/panelWidth.ts）。 */}
-        <div ref={panelRef} className={`shrink-0 h-[calc(var(--panel-ratio)*100%)] overflow-hidden side:h-auto side:flex-none border-border relative z-10 ${
+        <div ref={panelRef} className={`shrink-0 h-[calc(var(--panel-ratio)*100%)] overflow-hidden side:h-auto side:flex-none border-border bg-app relative z-10 ${
           panelCollapsed ? 'side:w-0 side:border-l-0' : 'side:w-panel sideNarrow:w-panel-narrow side:border-l'
         }`}>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'earthquake' ? ' invisible pointer-events-none' : ''}`}>
