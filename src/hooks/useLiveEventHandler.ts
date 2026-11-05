@@ -5094,11 +5094,13 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     // 通知も出し直す）。VTSE51・VTSE52 は観測点の印を決めたあとで、観測情報の通知として出す
     // （`tsunamiObservationNotification`）。区域が空の報を弾くのは、見出しを等級から・本文を区域名から作るため
     // （`isTsunamiObservationOnly`。発表する報で区域が空なのは解除だけで、そちらは `cancelled` で先に外れる）。
-    // 出すかは `tsunamiIssueNotificationFor`（中継のプッシュ通知と共用）、中身（見出し・区域の並び・「ほか N 区域」・解除の行・
+    // 設定（種類の入り切り・地域）を先に見て、出すときだけ組む。報の種類で出すかは `tsunamiIssueNotificationFor`（中継のプッシュ通知と共用）、中身（見出し・区域の並び・「ほか N 区域」・解除の行・
     // 閉じるまで残すか）は `tsunamiIssueNotification`。**区域はカードの材料（`tsunamiCardBasis`）から取る**——電文順で切ると、
     // カードの先頭に並ぶ深刻な区域が通知から落ちる。
-    const tsunamiIssue = event.kind === 'tsunami' ? tsunamiIssueNotificationFor(event, tsunamiCardBasis) : null
-    if (tsunamiIssue && notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)) {
+    const tsunamiIssue = event.kind === 'tsunami' && notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)
+      ? tsunamiIssueNotificationFor(event, tsunamiCardBasis)
+      : null
+    if (tsunamiIssue) {
       const n = tsunamiIssue
       showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction, n.open)
       // 同じ札で置き換えるので、閉じるまで残すかは最後に出した通知で決まる（予報へ下がった報なら残さない）
