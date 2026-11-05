@@ -27,13 +27,11 @@
    "firstLikely": "05:45:35",
    "firstConfirmed": "05:45:35",
    "confirmedFrames": 55,
-   "unrelated": 1,
+   "unrelated": 0,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": [
-    "05:45:21 沖縄県|名護市港"
-   ]
+   "unrelatedAt": []
   },
   "pc-nemuro": {
    "tier": "confirmed",
@@ -4310,13 +4308,11 @@
    "firstLikely": "05:31:18",
    "firstConfirmed": "05:31:20",
    "confirmedFrames": 110,
-   "unrelated": 1,
+   "unrelated": 0,
    "unrelatedConfirmed": 0,
-   "unrelatedNoCatalog": 1,
+   "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": [
-    "05:32:57 沖縄県|那覇市樋川"
-   ]
+   "unrelatedAt": []
   },
   "wq234-0814-0539": {
    "tier": "confirmed",
@@ -5929,16 +5925,14 @@
   },
   "oq117-0521-1011": {
    "tier": "confirmed",
-   "firstLikely": "10:11:53",
+   "firstLikely": "10:12:05",
    "firstConfirmed": "10:12:06",
    "confirmedFrames": 34,
-   "unrelated": 1,
+   "unrelated": 0,
    "unrelatedConfirmed": 0,
    "unrelatedNoCatalog": 0,
    "unrelatedNoCatalogConfirmed": 0,
-   "unrelatedAt": [
-    "10:12:26 鹿児島県|伊仙町伊仙"
-   ]
+   "unrelatedAt": []
   },
   "oq118-0521-1320": {
    "tier": "confirmed",

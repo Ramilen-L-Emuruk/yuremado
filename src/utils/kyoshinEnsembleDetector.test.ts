@@ -299,3 +299,95 @@ describe('まばらな所の規則の、近くの点だけが少ない点', () =
     expect(sparseAt(crowded, shake(6)).confirmed).toBe(-1)
   })
 })
+
+describe('まばらな所の規則の、騒がしい点の天井', () => {
+  // 120 km 以内に互いしかいない 2 点（44 km 離れた離島の組）。B は段 2 のまま動かない（隣の裏付けが無い、1 点だけの跳ね）
+  const PAIR: [number, number][] = [[30.0, 130.0], [30.4, 130.0]]
+  const ON = 300
+  const pairTables = (fire1: number): QuietTables => {
+    const tail = (): TailCounts => {
+      const y = Array.from({ length: 12 }, (_, k) => Math.round(100_000 * 0.0005 / (k + 1)))
+      return { n: 100_000, y, y3: [...y], y15: [...y] }
+    }
+    return {
+      version: 1, days: ['test'], glob: tail(),
+      tails: Object.fromEntries(PAIR.map(s => [quietSiteKey(s), tail()])),
+      fire: Object.fromEntries(PAIR.map(s => [quietSiteKey(s), [fire1, 1, 0.1, 0, 0]])),
+    }
+  }
+  const CALM = pairTables(12) // 久米島（26.3,126.7）の 12.2 回/時に近い
+  const LOUD = pairTables(62) // 沖縄本島の南部（26.2,127.7）の 61.9 回/時に近い
+  /**
+   * 居座るゆらぎ: A が ON の 90 秒前に段 0 → `level` へ上がって居座り、ON の 3 秒前に段 0 へ落ち、ON に段 6 へ戻る。
+   * 直前 10 秒の最小からは 6 段の跳ね（1 点だけの跳ね SP_SOLO に届く）、3〜59 秒前の最大からは 6 − `level` 段
+   */
+  const dipBack = (level: number) => (s: number) => [s < ON - 90 ? 0 : s < ON - 3 ? level : s < ON ? 0 : 6, 2]
+  /** 平常から段 0 の A が、ON に段 6 へ跳ねる（直前 1 分の最大からも 6 段） */
+  const fresh = (s: number) => [s < ON ? 0 : 6, 2]
+  /** まばらな所の規則が `from` 秒以降に段階 `tier` を出した最初の秒（無ければ -1） */
+  const sparseAt = (values: (s: number) => number[], t: QuietTables, tier: 'early' | 'confirmed', from = ON - 5) => {
+    const det = createEnsembleDetector(PAIR, t)
+    for (let s = 0; s < ON + 60; s++) {
+      const rs = det.push({ ms: T0 + s * 1000, values: Int8Array.from(values(s)) })
+      if (s >= from && rs.some(r => r.tier === tier && r.sources.includes('sparse'))) return s
+    }
+    return -1
+  }
+
+  it('正: 騒がしい点が、直前 1 分の天井（段 6）へ戻っただけの跳ねは早い段にしない', () => {
+    expect(sparseAt(dipBack(6), LOUD, 'early')).toBe(-1)
+  })
+
+  it('対照: 平常から細かくちらつかない点なら、同じ戻りでも早い段にする（天井を見るのは騒がしい点だけ）', () => {
+    expect(sparseAt(dipBack(6), CALM, 'early')).toBe(ON)
+  })
+
+  it('安全弁: 騒がしい点でも、直前 1 分の天井を超える跳ねは今までどおり早い段にする', () => {
+    expect(sparseAt(fresh, LOUD, 'early')).toBe(ON)
+  })
+
+  it('境: 天井から 3 段上がれば早い段にし、2 段なら早い段にしない', () => {
+    expect(sparseAt(dipBack(3), LOUD, 'early')).toBe(ON)
+    expect(sparseAt(dipBack(4), LOUD, 'early')).toBe(-1)
+  })
+
+  it('安全弁: 隣も上がって組になる確かな段は、騒がしい点の天井を見ない', () => {
+    // 天井へ戻っただけの跳ね（段 0 → 7、天井 7）に、B が同じ秒に段 2 → 6 で応える
+    const paired = (s: number) => [s < ON - 90 ? 0 : s < ON - 3 ? 7 : s < ON ? 0 : 7, s < ON ? 2 : 6]
+    expect(sparseAt(paired, LOUD, 'confirmed')).toBe(ON)
+  })
+
+  /**
+   * 隣つきの早い段だけの経路: A は段 4 で居座ってから一瞬落ちて戻る（直前 10 秒の最小から 4 段・天井から 0 段。主の経路の 5 段には届かない）。
+   * B は ON から `lag` 秒後に段 2 → 5 へ上がる（隣の裏付け）
+   */
+  const dipBackWithNb = (lag: number) => (s: number) => [s < ON - 90 ? 0 : s < ON - 3 ? 4 : s < ON ? 0 : 4, s < ON + lag ? 2 : 5]
+  /** 平常から段 0 の A が ON に段 4 へ跳ね、B が ON から `lag` 秒後に段 2 → 5 へ上がる */
+  const freshWithNb = (lag: number) => (s: number) => [s < ON ? 0 : 4, s < ON + lag ? 2 : 5]
+
+  it('正: 隣が同じ秒に上がっても、騒がしい点の天井へ戻っただけの跳ねは早い段にしない（1 の経路）', () => {
+    expect(sparseAt(dipBackWithNb(0), LOUD, 'early')).toBe(-1)
+    expect(sparseAt(freshWithNb(0), LOUD, 'early')).toBe(ON)
+  })
+
+  it('正: 隣が後から上がっても、騒がしい点の天井へ戻っただけの跳ねは早い段にしない（2 の経路）', () => {
+    expect(sparseAt(dipBackWithNb(5), LOUD, 'early')).toBe(-1)
+    expect(sparseAt(freshWithNb(5), LOUD, 'early')).toBe(ON + 5)
+  })
+
+  it('対照: 平常から細かくちらつかない点なら、隣つきの同じ戻りは早い段にする（1・2 の経路）', () => {
+    expect(sparseAt(dipBackWithNb(0), CALM, 'early')).toBe(ON)
+    expect(sparseAt(dipBackWithNb(5), CALM, 'early')).toBe(ON + 5)
+  })
+
+  it('表を差し替えると、天井を見る点も引き直す', () => {
+    const det = createEnsembleDetector(PAIR, CALM)
+    let at = -1
+    for (let s = 0; s < ON + 60 && at < 0; s++) {
+      if (s === ON - 60) det.setTables(LOUD)
+      const rs = det.push({ ms: T0 + s * 1000, values: Int8Array.from(dipBack(6)(s)) })
+      if (s >= ON - 5 && rs.some(r => r.tier === 'early' && r.sources.includes('sparse'))) at = s
+    }
+    expect(at).toBe(-1)
+  })
+})

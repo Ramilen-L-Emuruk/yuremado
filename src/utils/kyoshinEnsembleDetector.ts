@@ -54,6 +54,13 @@ const SP_SOLO = 6
  */
 const SP_WIDE_WIN = 30, SP_WIDE_FIRE1 = 20
 /**
+ * 騒がしい点の天井: 平常のゆらぎの表で 1 段以上の上がりが 1 時間に SP_WIDE_FIRE1 秒を超える点は、早い段だけの経路では、
+ * 跳ねた値が直前 SP_CEIL_LAG〜SP_CEIL_L−1 秒の最大を SP_CEIL_RISE 段以上超えたときだけ起点にする。
+ * 沖縄本島の点などは、上がって 1 分ほど居座ってから戻るゆらぎを 1 日に何度も出し、一瞬落ちてから元の高さへ戻るだけで
+ * 直前 F_WIN 秒の最小からは跳ねに見える。直前 1 分の最大（平常のゆらぎの表の雑音の物差しと同じ窓）を超えない戻りは起点にしない（設計書§67）
+ */
+const SP_CEIL_LAG = 3, SP_CEIL_L = 60, SP_CEIL_RISE = 3
+/**
  * 近くの点だけが少ない点: SP_KM 以内には点が多くても、SP_NEAR_KM 以内に 1〜SP_NEAR_MAXN 点しかない点（伊豆諸島・奥尻・対馬など）も規則に入れる。
  * ただし主の経路で同じ時間差の内に組になったときだけ当て（早い段だけの経路・1 点の跳ね・後から組にする向きでは当てない）、組にする隣は SP_NEAR_KM 以内で SP_NEAR_NB 段以上上がった点に限り、
  * 跳ねた点も隣もゆらぎの多い点でないことを求める —— 絞らないと、離島の点のゆらぎで当たらない確かな段が大きく増える（設計書§54）
@@ -113,6 +120,15 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
   /** 広い窓を効かせる点（平常から細かくちらつかない点）。表を差し替えたら引き直す */
   const wideOkOf = (t: QuietTables) => sites.map((s) => { const r = t.fire[quietSiteKey(s)]; return !!r && r[0] <= SP_WIDE_FIRE1 })
   let wideOk = wideOkOf(tables)
+  /** 天井を見る点（騒がしい点）と、直前 SP_CEIL_L−1 秒の値 */
+  const loudOf = (t: QuietTables) => sites.map((s) => { const r = t.fire[quietSiteKey(s)]; return !!r && r[0] > SP_WIDE_FIRE1 })
+  let loud = loudOf(tables)
+  const ceilRing: Int8Array[] = []
+  const ceilOf = (i: number) => {
+    let mx = -1
+    for (let d = SP_CEIL_LAG; d <= ceilRing.length; d++) { const x = ceilRing[ceilRing.length - d][i]; if (x > mx) mx = x }
+    return mx
+  }
   const nbS: { j: number; d: number }[][] = sites.map((s, i) => {
     const l: { j: number; d: number }[] = []
     for (let j = 0; j < n; j++) if (j !== i) { const d = hav(s[0], s[1], sites[j][0], sites[j][1]); if (d <= SP_KM) l.push({ j, d }) }
@@ -191,6 +207,8 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
             }
           }
           if (jump < spRise || sparseKind[i] === 0) { if (jump >= spRise) lastBig[i] = f.ms; continue }
+          // 騒がしい点は、直前 1 分の天井へ戻っただけの跳ねを起点にしない（隣の相手としての上がりは数えたまま）
+          if (!withConfirmed && loud[i] && v[i] - ceilOf(i) < SP_CEIL_RISE) continue
           const quiet = f.ms - lastBig[i] > SP_QUIET * 1000 || f.ms - lastBig[i] <= 1000
           if (f.ms - lastBig[i] > 1000) lastBig[i] = f.ms
           if (!quiet) continue
@@ -276,6 +294,7 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
       stat.setTables(next)
       cluster.setTables(next)
       wideOk = wideOkOf(next)
+      loud = loudOf(next)
     },
     /** 1 秒ぶんを入れ、いま出ている束（段階ごとに 1 行）を返す */
     push(f: DetectorFrame): EnsembleReport[] {
@@ -288,6 +307,8 @@ export function createEnsembleDetector(sites: readonly (readonly [number, number
       if (ring.length > F_WIN) ring.shift()
       wideRing.push(Int8Array.from(f.values))
       if (wideRing.length > SP_WIDE_WIN) wideRing.shift()
+      ceilRing.push(Int8Array.from(f.values))
+      if (ceilRing.length > SP_CEIL_L - 1) ceilRing.shift()
       type Row = { sites: Set<number>; sources: Set<EnsembleSource> }
       const tiers = new Map<Bundle, Map<DetectorReport['tier'], Row>>()
       const add = (b: Bundle, r: DetectorReport, source: EnsembleSource) => {
