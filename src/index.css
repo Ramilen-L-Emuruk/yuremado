@@ -159,6 +159,9 @@
       pointer-events: none;
     }
   }
+  /* 帯の受け皿（quake-pin）も消す。受け皿の display を見て「帯ごと隠している」と判断する所がある
+     （QuakeOpenPin・EarthquakeCard の scrollToSection）ので、入れ物（quake-pin-track）だけを消さない */
+  .quake-list-scope [data-stick-tall] .quake-pin-track,
   .quake-list-scope [data-stick-tall] .quake-pin {
     display: none;
   }
