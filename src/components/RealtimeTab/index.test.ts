@@ -107,17 +107,26 @@ describe('検知カードは渡された点列をそのまま集計する', () =
   describe('震度0以上の点が無く、震度0未満の点だけがあるとき', () => {
     const members = (...keys: string[]) => [fakeEvent({ id: 'evt-c', confidence: 'confirmed', memberKeys: keys })]
 
-    it('正: 「震度0未満の反応」と出し、最大リアルタイム震度は「<0」', () => {
+    // 2026-11-05 ユーザー発言「あれ、＜0の表示は狭いところだけって言ったはずなんだけど」、続く選択「棒の札だけ (Recommended)」
+    it('正: 「震度0未満の反応」と出し、最大リアルタイム震度は「0未満」・「<0」は棒の札だけ', () => {
       // index 5・4 = 震度0未満・index -1 = 欠測（欠測は数えない）
       renderTab(members('sub1', 'sub2', 'missing'), [P('sub1', 5), P('sub2', 4), P('missing', -1)])
       expect(screen.getByText(/2観測点で震度0未満の反応/)).toBeTruthy()
-      // 最大リアルタイム震度と震度0未満の行の 2 箇所に「<0」と出る。どちらもホバーと画面読み上げには「震度0未満」と伝える
+      // 最大リアルタイム震度の枠の数字は「0未満」で、「未満」だけを「弱・強」と同じく小さく添える
+      // （2026-11-05 ユーザー選択「数字の横に 0.55 倍 (Recommended)」）
+      // 枠は 1 つだけ（他に増えたら、別の要素を見ていないかをここで止める）
+      const tiles = document.querySelectorAll('[data-tile-value]')
+      expect(tiles.length).toBe(1)
+      const tileValue = tiles[0]
+      expect(tileValue.textContent).toBe('0未満')
+      expect(tileValue.parentElement!.getAttribute('aria-label')).toBe('震度0未満')
+      const suffix = [...tileValue.querySelectorAll('span')].find(s => s.textContent === '未満')!
+      expect(suffix.style.fontSize).toBe('0.55em')
+      // 「<0」は震度0未満の行の札の 1 箇所だけ。ホバーと画面読み上げには「震度0未満」と伝える
       const shortLabels = screen.getAllByText('<0')
-      expect(shortLabels).toHaveLength(2)
-      for (const el of shortLabels) {
-        expect(el.getAttribute('title')).toBe('震度0未満')
-        expect(el.getAttribute('aria-label')).toBe('震度0未満')
-      }
+      expect(shortLabels).toHaveLength(1)
+      expect(shortLabels[0].getAttribute('title')).toBe('震度0未満')
+      expect(shortLabels[0].getAttribute('aria-label')).toBe('震度0未満')
       expect(screen.queryByText(/観測点の反応は収まりました/)).toBeNull()
     })
 
@@ -158,6 +167,19 @@ describe('検知カードは渡された点列をそのまま集計する', () =
     const rowOfCount = (count: string) => screen.getByText(count).parentElement?.textContent ?? ''
     expect(rowOfCount('2点')).toMatch(/^0/)
     expect(rowOfCount('1点')).toMatch(/^1/)
+  })
+
+  // 地震タブ・緊急地震速報の枠と同じく、「弱・強」は数字の 0.55 倍で添える（2026-11-05 ユーザー選択「そろえる (Recommended)」）
+  it('最大リアルタイム震度の枠の「弱・強」は数字より小さく添える', () => {
+    // index 18 = 計測震度 6.0（震度6強）
+    renderTab(confirmed, [P('a', 18)])
+    // 枠は 1 つだけ（他に増えたら、別の要素を見ていないかをここで止める）
+    const tiles = document.querySelectorAll('[data-tile-value]')
+    expect(tiles.length).toBe(1)
+    const tileValue = tiles[0]
+    expect(tileValue.textContent).toBe('6強')
+    const suffix = [...tileValue.querySelectorAll('span')].find(s => s.textContent === '強')!
+    expect(suffix.style.fontSize).toBe('0.55em')
   })
 
   // 段は震度では分けない（2026-10-29 ユーザー選択「段のまま鳴らす」）。震度0の早い段でも見出しは同じ
