@@ -57,6 +57,7 @@ async function renderTab(opts: { earthquakes: JMAQuake[]; hasMore: boolean; isLo
       updateMarks={new Map()}
       activeLpgmEventId={null}
       onToggleLpgm={() => {}}
+      lpgmFocus={null}
       estimatedIntensities={[]}
       internationalTsunamisByQuake={new Map()}
       distributionQuakeKey={null}
