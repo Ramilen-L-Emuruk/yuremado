@@ -1,4 +1,6 @@
 import { log } from './logger'
+import { notificationOpenQuery, parseNotificationOpen, type NotificationOpen } from './notificationOpen'
+import { emitNotificationOpen } from './notificationClick'
 
 /** 通知に渡す指定。`renotify` は型定義（lib.dom）に無いが、ブラウザは受け付ける。 */
 export type BrowserNotificationOptions = NotificationOptions & { renotify?: boolean }
@@ -142,16 +144,49 @@ async function showWithRegistration(
 
 function showWithConstructor(title: string, options: BrowserNotificationOptions): void {
   if (!options.renotify) {
-    new Notification(title, options)
+    listenPageNotificationClick(new Notification(title, options))
     return
   }
   try {
-    new Notification(title, options)
+    listenPageNotificationClick(new Notification(title, options))
   } catch (err) {
     log.warn(`[notify] 音を鳴らし直す指定（renotify）付きで出せなかったので、外して出し直す（${options.tag ?? ''}）`, err)
-    new Notification(title, withoutRenotify(options))
+    listenPageNotificationClick(new Notification(title, withoutRenotify(options)))
   }
 }
+
+/**
+ * ページから出した通知（`new Notification()`）を押したときの処理。こちらは Service Worker を通らないので、
+ * `public/sw-notification-click.js` と同じこと（画面を前に出し、開き先があれば知らせる）をここで行う。
+ */
+function listenPageNotificationClick(notification: Notification): void {
+  notification.onclick = () => {
+    notification.close()
+    try {
+      window.focus()
+    } catch (err) {
+      log.debug('[notify] 通知を押したが、画面を前に出せなかった', err)
+    }
+    const open = readNotificationData(notification.data)
+    if (open) emitNotificationOpen(open, 'ページの通知')
+  }
+}
+
+/** 通知の data（`{ open: 問い合わせの形 }`）から開き先を読む。無ければ `null` */
+function readNotificationData(data: unknown): NotificationOpen | null {
+  if (typeof data !== 'object' || data === null) return null
+  const query = (data as { open?: unknown }).open
+  if (typeof query !== 'string' || query === '') return null
+  const open = parseNotificationOpen(query)
+  if (open === null) log.warn(`[notify] 通知を押したが、開き先を読めなかった（${query}）`)
+  return open
+}
+
+/** 通知の data に入れる形。中継のプッシュ通知（`public/sw-push.js` が本文の `open` を入れる）と揃える */
+export function notificationData(open: NotificationOpen | null): { open: string } {
+  return { open: notificationOpenQuery(open) }
+}
+
 
 function withoutRenotify(options: BrowserNotificationOptions): NotificationOptions {
   const { renotify: _renotify, ...rest } = options
@@ -169,6 +204,8 @@ export const NOTIFICATION_ICON = `${import.meta.env.BASE_URL}icons/icon.svg`
  * 「今の場面で知らせ直す (Recommended)」「今出している報で知らせ直す (Recommended)」）。
  * 呼び出し側は出すと決めた報でだけ呼ぶので、ここで知らせ直しても鳴りすぎない。出し方は {@link deliverBrowserNotification}。
  *
+ * `open` は押したときの開き先（→ `notificationOpen.ts`）。持たない通知は `null` を渡す（押すとアプリを前に出すだけ）。
+ *
  * **例外を外へ投げない。** 呼び出し側はこの後に音・読み上げ・記憶の後始末を続けるので、ここで投げると
  * 通知 1 つのためにそれらが丸ごと飛ぶ。出せなかったことは記録に残す。
  */
@@ -176,9 +213,10 @@ export function showBrowserNotification(
   title: string,
   body: string,
   tag: string,
-  requireInteraction = false,
+  requireInteraction: boolean,
+  open: NotificationOpen | null,
 ): void {
   if (!canShowBrowserNotification()) return
-  deliverBrowserNotification(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction, renotify: true })
+  deliverBrowserNotification(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction, renotify: true, data: notificationData(open) })
     .catch((e: unknown) => log.error(`[notify] ブラウザ通知を出せませんでした（${tag}）`, e))
 }

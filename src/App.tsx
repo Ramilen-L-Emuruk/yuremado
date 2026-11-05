@@ -18,6 +18,7 @@ import { MapRenderStatus } from './components/MapRenderStatus'
 import { ShareCardButton } from './components/ShareCardButton'
 import { useShareCard } from './hooks/useShareCard'
 import { usePushSubscription } from './hooks/usePushSubscription'
+import { useNotificationOpen } from './hooks/useNotificationOpen'
 import { SeismoLinkStatus } from './components/SeismoLinkStatus'
 import { SeismoOverlay } from './components/SeismoOverlay'
 import { useSeismoStation, type SeismoStationState } from './hooks/useSeismoStation'
@@ -136,7 +137,7 @@ import type { GateTag } from './utils/requestGate'
 import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerdict, emptyReplayFetchResult, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
 import { useHistoricalArchiveIndex } from './hooks/useHistoricalArchiveIndex'
 import { log } from './utils/logger'
-import { deliverBrowserNotification, NOTIFICATION_ICON, showBrowserNotification } from './utils/notifications'
+import { deliverBrowserNotification, NOTIFICATION_ICON, notificationData, showBrowserNotification } from './utils/notifications'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isLiveFeedHalted } from './utils/connectionStatus'
@@ -184,7 +185,7 @@ const TAB_SCROLLER_CLASS = 'absolute inset-0 overflow-y-auto overflow-x-hidden o
  * {@link deliverBrowserNotification}。
  */
 function showQuakeNotification(n: QuakeNotification): Promise<void> {
-  return deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: true })
+  return deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: true, data: notificationData(n.open) })
 }
 
 export function App() {
@@ -431,6 +432,14 @@ export function App() {
    */
   const openLpgmFromQuake = useCallback((eventId: string) => {
     applyQuakeOverlay(prev => openLpgmOverlay(prev, eventId, 'earthquake'), '長周期地震動を自動で開いた')
+  }, [])
+  // 長周期・推計の通知を押したとき（→ `useNotificationOpen`）。開き方は受信と同じで、記録の理由だけ分ける。
+  // 推計は、通知の側で選んだ地震カードの鍵でそのまま開く（受信の口のように時刻で引き直さない。選んだカードと食い違わないため）
+  const openLpgmFromNotification = useCallback((eventId: string) => {
+    applyQuakeOverlay(prev => openLpgmOverlay(prev, eventId, 'earthquake'), '長周期地震動の通知を押した')
+  }, [])
+  const openDistributionFromNotification = useCallback((eventKey: string) => {
+    applyQuakeOverlay(prev => openDistributionOverlay(prev, eventKey), '推計震度分布図の通知を押した')
   }, [])
   // 震度分布ボタン。こちらは鍵が `eventKey` なのでそのまま渡せる
   // （選択の実体を合わせる理由は `toggleLpgmFromEarthquake`）。
@@ -1196,7 +1205,7 @@ export function App() {
         alert('先に「通知を許可する」を押してください。')
         return
       }
-      showBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
+      showBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification', false, null)
     },
   }), [
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
@@ -1450,6 +1459,15 @@ export function App() {
       selectQuake(null)
     }
   }, [filteredEarthquakes, selectedQuakeId, selectQuake])
+
+  // 通知を押したときの開き先（docs/relay-server-design.md §6.7「押したときの開き先」）。手で選んだのと同じ扱いで
+  // タブを移し、地震を選ぶ（2026-11-05 ユーザー選択「手で選んだのと同じ扱い (Recommended)」）
+  useNotificationOpen(filteredEarthquakes, earthquakes, { activeTab, selectionTick: quakeSelectionTick }, {
+    openTab: setActiveTabByUser,
+    selectQuake: selectQuakeFromCard,
+    openLpgm: openLpgmFromNotification,
+    openDistribution: openDistributionFromNotification,
+  })
 
   // 未入電が 1 件も無くなったら未入電モードを閉じる。
   //

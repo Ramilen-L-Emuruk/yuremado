@@ -72,7 +72,7 @@ describe('全区域解除の報の通知', () => {
   // 2026-10-19 ユーザー選択「送る (Recommended)」
   it('正: 気象庁が書いた文を本文にし、閉じるまでは残さない', () => {
     const n = tsunamiLiftNotification({ warningComments: [{ key: 'VTSE41', text: LIFT_TEXT }] })
-    expect(n).toEqual({ title: '津波警報等の解除', body: LIFT_TEXT, requireInteraction: false })
+    expect(n).toEqual({ title: '津波警報等の解除', body: LIFT_TEXT, requireInteraction: false, open: { tab: 'tsunami' } })
   })
 
   // 2026-10-19 ユーザー選択「読み上げと同じ文 (Recommended)」
@@ -91,7 +91,7 @@ describe('tsunamiObservationNotification', () => {
       o('珠洲市長橋'),
       o('富山', { condition: { maxHeightMissing: true } }),
     ])
-    expect(n).toEqual({ title: '沖合の津波観測に関する情報', body: '輪島港 1.2m、珠洲市長橋 到達確認、富山 欠測', requireInteraction: false })
+    expect(n).toEqual({ title: '沖合の津波観測に関する情報', body: '輪島港 1.2m、珠洲市長橋 到達確認、富山 欠測', requireInteraction: false, open: { tab: 'tsunami' } })
   })
 
   it('正: 上限を超えた分は「ほか N 地点」にまとめる', () => {
@@ -111,13 +111,13 @@ describe('tsunamiObservationNotification', () => {
 describe('tsunamiEndNotification', () => {
   it('正: 取消は理由を本文に、無ければ定型の文', () => {
     expect(tsunamiEndNotification({ cancelReason: 'retracted', cancelText: '取り消します。' }))
-      .toEqual({ title: '津波警報等の取消', body: '取り消します。', requireInteraction: false })
+      .toEqual({ title: '津波警報等の取消', body: '取り消します。', requireInteraction: false, open: { tab: 'tsunami' } })
     expect(tsunamiEndNotification({ cancelReason: 'retracted' })?.body).toBe('津波警報等は誤って発表されたため取り消されました。')
   })
 
   it('正: 失効は「津波予報の失効」', () => {
     expect(tsunamiEndNotification({ cancelReason: 'expired' }))
-      .toEqual({ title: '津波予報の失効', body: '津波予報は失効しました。', requireInteraction: false })
+      .toEqual({ title: '津波予報の失効', body: '津波予報は失効しました。', requireInteraction: false, open: { tab: 'tsunami' } })
   })
 
   it('対照: 解除はこの関数では作らない（解除の通知は別の関数）', () => {

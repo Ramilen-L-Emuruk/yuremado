@@ -43,3 +43,13 @@ describe('Service Worker が読み込むファイル', () => {
   })
 })
 
+
+// 通知を押したときの文の種類は、Service Worker（素の JS）とアプリ（`notificationClick.ts`）で別々に書いてある。
+// ずれると、開いている画面へ渡した開き先が黙って捨てられる
+describe('通知を押したときの文の種類', () => {
+  it('Service Worker が送る種類と、アプリが受ける種類が同じ', async () => {
+    const { NOTIFICATION_OPEN_MESSAGE } = await import('../src/utils/notificationClick')
+    const sw = readFileSync(`${ROOT}public/sw-notification-click.js`, 'utf-8')
+    expect(sw).toContain(`type: '${NOTIFICATION_OPEN_MESSAGE}'`)
+  })
+})

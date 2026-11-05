@@ -1600,7 +1600,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       : plan.prefectures
     if (!notificationAllowed(settings, plan.kind) || !notificationRegionAllowed(settings, prefectures)) return
     if (plan.requires !== undefined && !takeNotified(plan.requires)) return
-    showBrowserNotification(plan.notification.title, plan.notification.body, plan.notification.tag)
+    showBrowserNotification(plan.notification.title, plan.notification.body, plan.notification.tag, false, plan.notification.open)
     if (plan.remember !== undefined) rememberNotified(plan.remember)
   }
   /**
@@ -3820,7 +3820,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         const n = tsunamiEndNotificationFor(event, tsunamiStep)
         if (n && ((notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion))
             || tsunamiPersistentNotificationShownRef.current)) {
-          showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction)
+          showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction, n.open)
           tsunamiPersistentNotificationShownRef.current = n.requireInteraction
         }
         if (settings.voicevoxEnabled) {
@@ -3966,7 +3966,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
               })
             }
             const notice = eewCancelNotice(key, cancelName)
-            showBrowserNotification(notice.title, notice.body, notice.tag)
+            showBrowserNotification(notice.title, notice.body, notice.tag, false, notice.open)
           }
         }
         // 誤報取消（訂正）だけは、鳴っている途中の読み上げも打ち切る対象として覚えておく。
@@ -4068,7 +4068,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
         // `event` は入口で統合した報で、印（`everSpecialWarning`）を運んでいる（`useEarthquakes` の `mergeEewReport`）。
         // 出すかどうか（格上げ・予想の引き上げ）は生の区分のまま —— 下げ止まりは見出しの文言だけに効かせる
         const notice = eewAnnounceNotice(key, event, announce.forecast)
-        showBrowserNotification(notice.title, notice.body, notice.tag, true)
+        showBrowserNotification(notice.title, notice.body, notice.tag, true, notice.open)
       }
       // EEW タイトルをイベントデータから構築（state は未更新のため event 直接参照）
       title.setOngoingTitle(eewOngoingTitleText(activeEEWLevelsRef.current, event))
@@ -5100,7 +5100,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
     const tsunamiIssue = event.kind === 'tsunami' ? tsunamiIssueNotificationFor(event, tsunamiCardBasis) : null
     if (tsunamiIssue && notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)) {
       const n = tsunamiIssue
-      showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction)
+      showBrowserNotification(n.title, n.body, 'tsunami', n.requireInteraction, n.open)
       // 同じ札で置き換えるので、閉じるまで残すかは最後に出した通知で決まる（予報へ下がった報なら残さない）
       tsunamiPersistentNotificationShownRef.current = n.requireInteraction
     }
@@ -5911,7 +5911,7 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 出すかと中身は `tsunamiObservationNotificationFor`（中継のプッシュ通知と共用）。
       if (notificationAllowed(settings, 'tsunami') && notificationRegionAllowed(settings, tsunamiRegion)) {
         const n = tsunamiObservationNotificationFor(event, marks552, tsunamiCardBasis)
-        if (n) showBrowserNotification(n.title, n.body, TSUNAMI_OBS_NOTIFICATION_TAG, n.requireInteraction)
+        if (n) showBrowserNotification(n.title, n.body, TSUNAMI_OBS_NOTIFICATION_TAG, n.requireInteraction, n.open)
       }
       window.clearTimeout(obsStatusClearTimerRef.current)
       obsStatusClearTimerRef.current = window.setTimeout(() => setObsUpdateStatus(new Map()), TSUNAMI_BADGE_TTL_MS)

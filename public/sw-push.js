@@ -2,7 +2,7 @@
 // `importScripts` で読み込む（vite.config.ts の `workbox.importScripts`）。名前を変えたらあちらも直すこと
 // （読み込めないと Service Worker のインストールごと失敗する。scripts/swImportScripts.test.ts が見る）。
 //
-// 中継が送るのは題・本文・tag・閉じるまで残すかだけ。判定と文面は中継がアプリと同じ部品で作っている。
+// 中継が送るのは題・本文・tag・閉じるまで残すか・押したときの開き先（`open`。URL の問い合わせの形）。判定と文面は中継がアプリと同じ部品で作っている。
 // **出し方は画面内の通知（src/utils/notifications.ts の showBrowserNotification）と揃える** —— 同じ tag で置き換え、
 // 置き換えでも知らせ直す（renotify）。アプリを開いている端末では画面内の通知と同じ tag なので、1 つにまとまる。
 //
@@ -24,6 +24,8 @@ self.addEventListener('push', (event) => {
     tag: data && typeof data.tag === 'string' && data.tag ? data.tag : 'push',
     requireInteraction: !!(data && data.requireInteraction),
     renotify: true,
+    // 押したときの開き先。読むのは sw-notification-click.js（画面内の通知も同じ形で data に入れる）
+    data: { open: data && typeof data.open === 'string' ? data.open : '' },
   }
   event.waitUntil((async () => {
     try {

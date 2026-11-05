@@ -18,7 +18,7 @@ const nankai = (over: Partial<JMANankai>): JMANankai => ({
 describe('nankaiNotification', () => {
   it('正: 見出しは段階名を括弧で、本文は要約', () => {
     expect(nankaiNotification(nankai({}))).toEqual({
-      title: '南海トラフ地震臨時情報（巨大地震注意）', body: '要約の文。', tag: 'nankai',
+      title: '南海トラフ地震臨時情報（巨大地震注意）', body: '要約の文。', tag: 'nankai', open: null,
     })
   })
   it('正: 調査終了も段階名で出す（取消と混ぜない）', () => {
@@ -26,7 +26,7 @@ describe('nankaiNotification', () => {
   })
   it('正: 取消は「取消」の見出しと「取り消されました」の本文で、発表と同じ札', () => {
     expect(nankaiNotification(nankai({ cancelled: true, retracted: true, kindName: '', kindCode: '' }))).toEqual({
-      title: '南海トラフ地震臨時情報 取消', body: '南海トラフ地震臨時情報は取り消されました', tag: 'nankai',
+      title: '南海トラフ地震臨時情報 取消', body: '南海トラフ地震臨時情報は取り消されました', tag: 'nankai', open: null,
     })
   })
   it('対照: 要約の無い報は本文なし', () => {
@@ -40,11 +40,11 @@ describe('kohatsuNotification', () => {
     reportDateTime: '', expireAt: '', summary: '要約。', ...over,
   })
   it('正: 情報名と要約', () => {
-    expect(kohatsuNotification(kohatsu({}))).toEqual({ title: '北海道・三陸沖後発地震注意情報', body: '要約。', tag: 'kohatsu' })
+    expect(kohatsuNotification(kohatsu({}))).toEqual({ title: '北海道・三陸沖後発地震注意情報', body: '要約。', tag: 'kohatsu', open: null })
   })
   it('正: 取消', () => {
     expect(kohatsuNotification(kohatsu({ cancelled: true, retracted: true }))).toEqual({
-      title: '北海道・三陸沖後発地震注意情報 取消', body: '北海道・三陸沖後発地震注意情報は取り消されました', tag: 'kohatsu',
+      title: '北海道・三陸沖後発地震注意情報 取消', body: '北海道・三陸沖後発地震注意情報は取り消されました', tag: 'kohatsu', open: null,
     })
   })
 })
@@ -74,6 +74,7 @@ describe('lpgmNotification', () => {
   it('正: 震央地名と最大長周期地震動階級', () => {
     expect(lpgmNotification(lpgm({}), '')).toEqual({
       title: '長周期地震動に関する観測情報', body: '石川県能登地方 最大長周期地震動階級3', tag: 'lpgm-20260101161000',
+      open: { tab: 'earthquake', lpgm: '20260101161000' },
     })
   })
   it('対照: 地名が無ければ階級だけ', () => {
@@ -84,6 +85,8 @@ describe('lpgmNotification', () => {
       title: '長周期地震動に関する観測情報 取消',
       body: '石川県能登地方の長周期地震動に関する観測情報は取り消されました',
       tag: 'lpgm-20260101161000',
+      // 取り消された報には開く表示が無いので、開き先を持たない
+      open: null,
     })
   })
   it('対照: 地名を覚えていない取消は地名なし', () => {
@@ -108,7 +111,7 @@ describe('earthquakeCountNotification', () => {
   const count = (over: Partial<JMAEarthquakeCount>) => ({ cancelled: false, ...over }) as JMAEarthquakeCount
   it('正: 本文は帯の見出し', () => {
     expect(earthquakeCountNotification(count({}), '10/24 09時から 1,704回（うち有感 25回）')).toEqual({
-      title: '地震回数に関する情報', body: '10/24 09時から 1,704回（うち有感 25回）', tag: 'earthquake-count',
+      title: '地震回数に関する情報', body: '10/24 09時から 1,704回（うち有感 25回）', tag: 'earthquake-count', open: null,
     })
   })
   it('対照: 見出しが種別名だけなら本文なし', () => {
