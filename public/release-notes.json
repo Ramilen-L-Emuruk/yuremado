@@ -1,6 +1,26 @@
 {
   "versions": [
     {
+      "version": "6.7.0",
+      "date": "2026-11-06",
+      "added": [
+        {
+          "text": "長周期地震動の情報が届いたとき、その欄まで巻くように改善",
+          "variant": "both"
+        },
+        {
+          "text": "設定の窓の見出しを整理",
+          "variant": "both"
+        }
+      ],
+      "fixed": [
+        {
+          "text": "揺れ検知の震度の欄の表示を修正",
+          "variant": "both"
+        }
+      ]
+    },
+    {
       "version": "6.6.0",
       "date": "2026-11-05",
       "added": [
