@@ -1624,23 +1624,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <Row label="通知する地域" description="選んだ都道府県に関わる情報だけを通知します。地震情報は震度を観測した都道府県、緊急地震速報は対象の地域、津波は予報区で見ます。選ばなければ全国の情報を通知します。南海トラフ・後発地震・地震回数など、地域を持たない情報は絞りません">
               <PrefecturePicker value={settings.notifyPrefectures} onChange={v => onUpdate('notifyPrefectures', v)} />
             </Row>
-            {/* プッシュ通知（docs/relay-server-design.md §6.7）。購読を扱えないブラウザ（安全な接続でない・Push API が無い）では出さない。
-                名前と説明は 2026-11-03 ユーザー選択「プッシュ通知」 */}
-            {pushSupported() && (
-              <Row label="プッシュ通知" description="アプリを閉じているときや、ほかのアプリを使っているときも通知を受け取ります。オンにすると、この端末の通知の届け先と通知の設定を配信サーバーに登録します">
-                {/* 入れるときは、押した操作の中で最初に許可を求める（Safari・Firefox は操作から離れた許可の要求を尋ねない）。
-                    許可されなければ入れない */}
-                <Toggle
-                  checked={settings.pushNotifyEnabled}
-                  onChange={v => {
-                    if (!v) { onUpdate('pushNotifyEnabled', false); return }
-                    void requestPushPermission()
-                      .then(ok => { if (ok) onUpdate('pushNotifyEnabled', true) })
-                      .catch((err: unknown) => log.warn('[push] 通知の許可を求められませんでした', err))
-                  }}
-                />
-              </Row>
-            )}
           </>
         )}
         <Row label="通知許可" description="ブラウザの通知権限を確認・許可します">
@@ -1653,6 +1636,28 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
       </Section>
+
+      {/* プッシュ通知（docs/relay-server-design.md §6.7）は配信サーバーへ届け先を登録する別の仕組みなので、見出しを分ける
+          （2026-11-06 ユーザー選択「プッシュ通知」）。上の種類ごとの通知・地域の絞りがそのまま効くので、
+          通知をまとめて止めている間は見出しごと出さない。購読を扱えないブラウザ（安全な接続でない・Push API が無い）でも出さない。
+          名前と説明は 2026-11-03 ユーザー選択「プッシュ通知」 */}
+      {settings.notifyEnabled && pushSupported() && (
+        <Section category="notification" title="プッシュ通知">
+          <Row label="プッシュ通知" description="アプリを閉じているときや、ほかのアプリを使っているときも通知を受け取ります。オンにすると、この端末の通知の届け先と通知の設定を配信サーバーに登録します">
+            {/* 入れるときは、押した操作の中で最初に許可を求める（Safari・Firefox は操作から離れた許可の要求を尋ねない）。
+                許可されなければ入れない */}
+            <Toggle
+              checked={settings.pushNotifyEnabled}
+              onChange={v => {
+                if (!v) { onUpdate('pushNotifyEnabled', false); return }
+                void requestPushPermission()
+                  .then(ok => { if (ok) onUpdate('pushNotifyEnabled', true) })
+                  .catch((err: unknown) => log.warn('[push] 通知の許可を求められませんでした', err))
+              }}
+            />
+          </Row>
+        </Section>
+      )}
 
       <Section category="sound" title="音と読み上げ">
         <Row label="通知音" description="地震・緊急地震速報・津波の受信時に音を鳴らします">
@@ -1680,6 +1685,46 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </div>
           </Row>
         )}
+        {/* 解説情報は平常時でも毎月1回は必ず届くため、音と読み上げを個別に切れるようにしている。
+            臨時情報（段階の発表）はこの設定に関わらず鳴る。 */}
+        <Row
+          label="解説情報の音・読み上げ"
+          description="南海トラフ地震関連解説情報の通知音と読み上げを行います。この情報は平常時も毎月届きます"
+        >
+          <Toggle
+            checked={settings.nankaiCommentaryAlerts}
+            onChange={v => onUpdate('nankaiCommentaryAlerts', v)}
+          />
+        </Row>
+        <Row
+          label="お知らせの音・読み上げ"
+          description="地震・津波に関するお知らせの通知音と読み上げを行います"
+        >
+          <Toggle
+            checked={settings.quakeNoticeAlerts}
+            onChange={v => onUpdate('quakeNoticeAlerts', v)}
+          />
+        </Row>
+        {/* 文言は 2026-10-31 ユーザー選択「「揺れ検知の読み上げ」 (Recommended)」、説明文の最後の一文は同日「範囲内と書く (Recommended)」。既定はオフ */}
+        <Row
+          label="揺れ検知の読み上げ"
+          description="揺れを検知したとき、最も強く揺れている地域の名前を読み上げます。緊急地震速報の範囲内の揺れは読み上げません"
+        >
+          <Toggle
+            checked={settings.kyoshinDetectSpeech}
+            onChange={v => onUpdate('kyoshinDetectSpeech', v)}
+          />
+        </Row>
+      </Section>
+
+      {/* 時報は地震・津波の音や読み上げとは別の機能なので、見出しを分ける（2026-11-06 ユーザー発言「時報は独立したセクションにしたいです。」、
+          置き場所は選択「音と読み上げのすぐ下」、行の名前は選択「「時報」のまま (Recommended)」） */}
+      <Section category="sound" title="時報">
+        <TimeSignalRows settings={settings} onUpdate={onUpdate} voicevoxSpeakers={voicevoxStatus === 'available' ? voicevoxSpeakers : []} />
+      </Section>
+
+      {/* VOICEVOX の接続と声（2026-11-06 ユーザー選択「VOICEVOX」）。読み上げの入り切りもここに置き、何を読むかの行は上の「音と読み上げ」に残す */}
+      <Section category="sound" title="VOICEVOX">
         {/* 「要：VOICEVOXアプリ起動」は hint に置いて常時見せる。説明文に混ぜて隠すと、
             ON にしたとき「接続状態: 起動していません」だけが見えて原因に辿り着けない。 */}
         <Row
@@ -1757,37 +1802,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             )}
           </>
         )}
-        {/* 解説情報は平常時でも毎月1回は必ず届くため、音と読み上げを個別に切れるようにしている。
-            臨時情報（段階の発表）はこの設定に関わらず鳴る。 */}
-        <Row
-          label="解説情報の音・読み上げ"
-          description="南海トラフ地震関連解説情報の通知音と読み上げを行います。この情報は平常時も毎月届きます"
-        >
-          <Toggle
-            checked={settings.nankaiCommentaryAlerts}
-            onChange={v => onUpdate('nankaiCommentaryAlerts', v)}
-          />
-        </Row>
-        <Row
-          label="お知らせの音・読み上げ"
-          description="地震・津波に関するお知らせの通知音と読み上げを行います"
-        >
-          <Toggle
-            checked={settings.quakeNoticeAlerts}
-            onChange={v => onUpdate('quakeNoticeAlerts', v)}
-          />
-        </Row>
-        {/* 文言は 2026-10-31 ユーザー選択「「揺れ検知の読み上げ」 (Recommended)」、説明文の最後の一文は同日「範囲内と書く (Recommended)」。既定はオフ */}
-        <Row
-          label="揺れ検知の読み上げ"
-          description="揺れを検知したとき、最も強く揺れている地域の名前を読み上げます。緊急地震速報の範囲内の揺れは読み上げません"
-        >
-          <Toggle
-            checked={settings.kyoshinDetectSpeech}
-            onChange={v => onUpdate('kyoshinDetectSpeech', v)}
-          />
-        </Row>
-        <TimeSignalRows settings={settings} onUpdate={onUpdate} voicevoxSpeakers={voicevoxStatus === 'available' ? voicevoxSpeakers : []} />
       </Section>
 
       {/* 読み上げの詳しさ。VOICEVOX を有効にしたときだけ出す（無効な端末では何も効かないため）。
@@ -1966,6 +1980,22 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             ))}
           </select>
         </Row>
+        {/* 2026-10-23 ユーザー選択「やることとして積む (Recommended)」・寸法と文面は 2026-10-24 ユーザー選択 */}
+        {/* 地震・津波に関するお知らせ（運用連絡）。帯と、音・読み上げを別々に切り替える
+            （文言は 2026-10-18 ユーザー承認）。 */}
+        <Row
+          label="お知らせを表示"
+          description="地震・津波に関するお知らせを地図の下に表示します"
+        >
+          <Toggle
+            checked={settings.quakeNoticeBanner}
+            onChange={v => onUpdate('quakeNoticeBanner', v)}
+          />
+        </Row>
+      </Section>
+
+      {/* 地図に重ねるものの入り切り（2026-11-06 ユーザー選択「地図」） */}
+      <Section category="display" title="地図">
         {/* ── 地図レイヤー: 地形 → 明るさ → 地質構造 → 観測データ の順。
             濃さのような従属する項目は、親のトグルがオンのときだけ出す（VOICEVOX の関連設定と同じ） ── */}
         <Row label="海底地形を表示" description="背景の海域に海底地形（陰影）を表示します">
@@ -2054,18 +2084,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             onChange={v => onUpdate('showMapLegend', v)}
           />
         </Row>
-        {/* 2026-10-23 ユーザー選択「やることとして積む (Recommended)」・寸法と文面は 2026-10-24 ユーザー選択 */}
-        {/* 地震・津波に関するお知らせ（運用連絡）。帯と、音・読み上げを別々に切り替える
-            （文言は 2026-10-18 ユーザー承認）。 */}
-        <Row
-          label="お知らせを表示"
-          description="地震・津波に関するお知らせを地図の下に表示します"
-        >
-          <Toggle
-            checked={settings.quakeNoticeBanner}
-            onChange={v => onUpdate('quakeNoticeBanner', v)}
-          />
-        </Row>
       </Section>
 
       <Section category="display" title="震度スケール">
@@ -2129,6 +2147,19 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <option value={1800}>30分</option>
           </select>
         </Row>
+        <Row label="定期自動リロード" description="毎日午前5時に画面を再起動してメモリを解放します。地震・津波・緊急地震速報の発表中は延期します">
+          <Toggle
+            checked={settings.periodicReloadHours > 0}
+            onChange={v => onUpdate('periodicReloadHours', v ? 1 : 0)}
+          />
+        </Row>
+        <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりません">
+          <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
+        </Row>
+      </Section>
+
+      {/* 行動チェックリスト（→ action-checklist-spec.md）。タブの切り替えとは別の機能なので見出しを分ける（2026-11-06 ユーザー選択「行動チェックリスト」） */}
+      <Section category="behavior" title="行動チェックリスト">
         <Row label="行動チェックリスト" description="強い揺れのときに、とるべき行動と持ち出すものを画面上部に出します。緊急地震速報・リアルタイム震度・地震情報のいずれかで判定します">
           <Toggle
             checked={settings.actionChecklistEnabled}
@@ -2147,15 +2178,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </div>
           </Row>
         )}
-        <Row label="定期自動リロード" description="毎日午前5時に画面を再起動してメモリを解放します。地震・津波・緊急地震速報の発表中は延期します">
-          <Toggle
-            checked={settings.periodicReloadHours > 0}
-            onChange={v => onUpdate('periodicReloadHours', v ? 1 : 0)}
-          />
-        </Row>
-        <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりません">
-          <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
-        </Row>
       </Section>
 
       <Section category="location" title="ホーム地点">
