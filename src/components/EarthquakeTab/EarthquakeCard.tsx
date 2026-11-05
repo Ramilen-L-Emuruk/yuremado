@@ -839,7 +839,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     // 行が上半分だけ切れて見え、崩れたように見える（2026-11-03 発言「開いた瞬間崩れる瞬間が一瞬あります。」）
     if (anim && isSelected) {
       for (const child of Array.from(el.children)) {
-        if (child instanceof HTMLElement && !child.matches('.quake-open-head, .quake-pin')) fadeIn(child, CARD_RESIZE_MS)
+        if (child instanceof HTMLElement && !child.matches('.quake-open-head, .quake-pin-track')) fadeIn(child, CARD_RESIZE_MS)
       }
     }
   }, [isSelected])
