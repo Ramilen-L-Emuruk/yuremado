@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   commentsOverlayMaxHeight,
   canShowCommentsOverlay,
+  canShowCommentsEntry,
   COMMENTS_OVERLAY_GAP,
   COMMENTS_MIN_HEIGHT,
   bannerStickMode,
@@ -76,5 +77,25 @@ describe('canShowCommentsOverlay', () => {
   // 安全弁: 測る前は開かせる側へ倒す。閉じると表示直後だけ押せない入口になる。
   it('まだ測れていなければ開かせる', () => {
     expect(canShowCommentsOverlay(undefined)).toBe(true)
+  })
+})
+
+describe('canShowCommentsEntry', () => {
+  // 正: 幅 390×844 の実測（パネル 380px・入口を除いたバナー 307px・入口 36px）。入口を出すと余りが 29px で、
+  // 面の最低の高さに届かないので出さない。
+  it('入口を出したときの余りで決める', () => {
+    expect(canShowCommentsEntry(380, 307, 36)).toBe(false)
+  })
+
+  // 対照: 同じバナーでも、入口の高さを足さずに測ると出す側へ倒れる。これを入口の有無で交互に使うと揺れ続けた。
+  it('入口を除いた高さだけなら出す側になる（揺れていた形）', () => {
+    expect(canShowCommentsEntry(380, 307, 0)).toBe(true)
+    expect(canShowCommentsOverlay(commentsOverlayMaxHeight(380, 307 + 36))).toBe(false)
+  })
+
+  // 安全弁: パネルが十分高ければ入口は出る（判定を厳しくしすぎていない）。
+  it('余りが足りれば出す', () => {
+    expect(canShowCommentsEntry(900, 307, 36)).toBe(true)
+    expect(canShowCommentsEntry(380 + 19, 307, 36)).toBe(true)
   })
 })

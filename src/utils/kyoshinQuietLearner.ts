@@ -132,7 +132,7 @@ export function createQuietLearner(o: QuietLearnerOptions): QuietLearner {
         const f = queue.shift() as Pending
         // この秒の前後 guardMs に検知が出ていれば数えない（後ろ側は、いまの秒までに出た検知で分かる）
         const count = lastDetectMs < f.ms - o.guardMs
-        baker.feed(f.ms, f.cfg, f.sites, f.values, count)
+        baker.feed(f.ms, f.cfg, f.sites, f.values, count, null)
         if (count) hourSec[hourOfJst(f.ms)]++
         rebuild(f.ms)
       }

@@ -841,7 +841,7 @@ export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
   /** 選べる声。VOICEVOX に繋がっていないときは空（声の行を出さない） */
   voicevoxSpeakers: readonly VoicevoxSpeaker[]
 }) {
-  const selectClass = 'bg-input border border-border rounded-sm px-2 py-1 text-xs text-white'
+  const selectClass = 'bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white'
   const speech = settings.voicevoxEnabled
   return (
     <>
@@ -1602,7 +1602,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               </Row>
             )}
             {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 → 南海トラフ の順 ── */}
-            <Row label="揺れ検知通知" description="強震モニタで揺れを検知したときに通知します。推定値のため、通知は多めになります">
+            <Row label="揺れ検知通知" description="揺れを検知したときに通知します。推定値のため、通知は多めになります">
               <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
             </Row>
             <Row label="緊急地震速報の通知" description="緊急地震速報が出たときと、警報・特別警報へ上がったときに通知します">
@@ -1694,7 +1694,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                   type="text"
                   value={settings.voicevoxUrl}
                   onChange={e => onUpdate('voicevoxUrl', e.target.value)}
-                  className={`bg-input border rounded-sm px-2 py-1 text-xs text-white w-44 ${
+                  className={`bg-panel border rounded-sm px-2 py-1 text-xs text-white w-44 ${
                     voicevoxStatus === 'invalid' ? 'border-red-500' : 'border-border'
                   }`}
                   spellCheck={false}
@@ -1726,7 +1726,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                   <select
                     value={settings.voicevoxSpeakerId}
                     onChange={e => onUpdate('voicevoxSpeakerId', Number(e.target.value))}
-                    className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+                    className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
                   >
                     {voicevoxSpeakers.flatMap(spk =>
                       spk.styles.map(st => (
@@ -1775,7 +1775,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         {/* 文言は 2026-10-31 ユーザー選択「「揺れ検知の読み上げ」 (Recommended)」、説明文の最後の一文は同日「範囲内と書く (Recommended)」。既定はオフ */}
         <Row
           label="揺れ検知の読み上げ"
-          description="強震モニタで揺れを検知したとき、最も強く揺れている地域の名前を読み上げます。緊急地震速報の範囲内の揺れは読み上げません"
+          description="揺れを検知したとき、最も強く揺れている地域の名前を読み上げます。緊急地震速報の範囲内の揺れは読み上げません"
         >
           <Toggle
             checked={settings.kyoshinDetectSpeech}
@@ -1794,7 +1794,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsIntensityLevels}
               onChange={e => onUpdate('ttsIntensityLevels', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               {/* 最後の選択肢は「すべての階級」。値は階級の段数から導く（数を直接書くと、
                   階級が増減したときに選択肢だけが古い段数のまま残る）。 */}
@@ -1821,7 +1821,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsAlwaysReadLpgmClass}
               onChange={e => onUpdate('ttsAlwaysReadLpgmClass', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               <option value={-1}>階数の設定どおり</option>
               {[0, 1, 2, 3, 4].map(n => (
@@ -1833,7 +1833,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsMaxRegions}
               onChange={e => onUpdate('ttsMaxRegions', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               {[0, 3, 5, 10, 15, 20].map(n => (
                 <option key={n} value={n}>{n === 0 ? '無制限' : `${n}地域`}</option>
@@ -1845,7 +1845,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               <select
                 value={settings.ttsRegionTolerance}
                 onChange={e => onUpdate('ttsRegionTolerance', Number(e.target.value))}
-                className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+                className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
               >
                 {[0, 1, 2, 3, 5].map(n => (
                   <option key={n} value={n}>{n === 0 ? '許容しない' : `+${n}地域まで`}</option>
@@ -1863,7 +1863,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsUnreceivedDetail}
               onChange={e => onUpdate('ttsUnreceivedDetail', e.target.value as TtsUnreceivedDetail)}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               <option value="stations">地点名</option>
               <option value="areas">区域名</option>
@@ -1874,7 +1874,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsMaxObservationPoints}
               onChange={e => onUpdate('ttsMaxObservationPoints', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               {[0, 1, 3, 5, 10, 15, 20].map(n => (
                 <option key={n} value={n}>{n === 0 ? '無制限' : `${n}地点`}</option>
@@ -2195,7 +2195,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                 type="text"
                 value={settings.seismoHostUrl}
                 onChange={e => onUpdate('seismoHostUrl', e.target.value)}
-                className={`bg-input border rounded-sm px-2 py-1 text-xs text-white w-44 ${
+                className={`bg-panel border rounded-sm px-2 py-1 text-xs text-white w-44 ${
                   seismoStatus.kind === 'invalid' ? 'border-red-500' : 'border-border'
                 }`}
                 spellCheck={false}
@@ -2346,18 +2346,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         ]} />
         <CreditRow label="地震・津波データ" items={[
           <a href="https://dmdata.jp/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>Project DM-D.S.S</a>,
-        ]} />
-        {/* **一次出典と配信経路の両方を出す。** データを作っているのは防災科学技術研究所で、
-            アプリが実際に取得しているのは Yahoo!天気・災害 の配信（`services/kyoshin.ts`）。
-            片方だけだと、出典としては足りないか（配信元を伏せる）、事実と食い違う（作成者を伏せる）。
-            **同じ二段書きにしてあるのは README の出典節**（`docs/spec/data-sources-spec.md` §1 は
-            配信元の呼称を挙げるだけ・§4 は接続先とデータ形式の技術仕様で、この枠組みは持たない）。
-
-            **すぐ上の「地震・津波データ」行と粒度が揃っていないのは意図したもの。** あちらは
-            配信 API（DM-D.S.S）だけを出し、一次出典（気象庁）は README 側で担保している。 */}
-        <CreditRow label="リアルタイム震度" items={[
-          <a href="https://www.kmoni.bosai.go.jp/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>防災科研 強震モニタ</a>,
-          <a href="https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>Yahoo!天気・災害</a>,
         ]} />
         {/* 下部の波形に出す公開観測点（気象庁の広帯域地震計・JP 網）。文面は `docs/public-waveform-design.md` §0
             （2026-10-15 ユーザー承認）。EarthScope は運用者がライセンスを宣言していない網を CC BY 4.0 で配るので、

@@ -21,6 +21,8 @@ export const KMAX = 12
 export const SHORT = 10
 /** y: この秒数の内に新しく達した段だけを数える。 */
 export const ONSET_W = 6
+/** y15: ゆっくり揃って上がる点を拾う広い窓（秒）。y の 6 秒では届く前に窓を出てしまう、小さな地震の遅い上がりを見る（設計書§55）。 */
+export const ONSET_W15 = 15
 /** y3: 近くの点がそろって上がったかを見る狭い窓（秒）。窓を狭くするほど偶然には揃わない。 */
 export const ONSET_W3 = 3
 /** 判定できないことを表す値。 */
@@ -48,6 +50,8 @@ export class OnsetFeatures {
   readonly y: Int16Array
   /** y の窓を ONSET_W3 秒にしたもの */
   readonly y3: Int16Array
+  /** y の窓を ONSET_W15 秒にしたもの */
+  readonly y15: Int16Array
   /** 最後に判定できた x（初めは 99 = 立ち上がりとして数えない。立ち上げ直後に全点が一斉に上がったように見えるのを防ぐ） */
   private readonly lastX: Int16Array
   /** 観測点 × (KMAX+1): その段へ最後に上がった秒（通し番号） */
@@ -68,6 +72,7 @@ export class OnsetFeatures {
     this.base = new Int16Array(n)
     this.y = new Int16Array(n).fill(NONE)
     this.y3 = new Int16Array(n).fill(NONE)
+    this.y15 = new Int16Array(n).fill(NONE)
     this.lastX = new Int16Array(n).fill(99)
     this.upAt = new Int32Array(n * (KMAX + 1)).fill(-1e9)
     this.up1 = new Int32Array(n).fill(-1)
@@ -104,7 +109,7 @@ export class OnsetFeatures {
       this.j[i] = jj
       const x = rr === NONE || jj === NONE ? NONE : Math.min(rr, jj)
       this.x[i] = x
-      if (x === NONE) { this.y[i] = NONE; this.y3[i] = NONE; continue }
+      if (x === NONE) { this.y[i] = NONE; this.y3[i] = NONE; this.y15[i] = NONE; continue }
       const lx = this.lastX[i], ub = i * (KMAX + 1)
       for (let k = Math.max(1, lx + 1); k <= Math.min(x, KMAX); k++) this.upAt[ub + k] = this.t
       let y = 0
@@ -113,6 +118,9 @@ export class OnsetFeatures {
       let y3 = 0
       for (let k = Math.min(x, KMAX); k >= 1; k--) if (this.t - this.upAt[ub + k] < ONSET_W3) { y3 = k; break }
       this.y3[i] = y3
+      let y15 = 0
+      for (let k = Math.min(x, KMAX); k >= 1; k--) if (this.t - this.upAt[ub + k] < ONSET_W15) { y15 = k; break }
+      this.y15[i] = y15
       if (x >= 1) { if (this.up1[i] < 0 || lx < 1) this.up1[i] = this.upAt[ub + 1] } else this.up1[i] = -1
       this.lastX[i] = x
     }
