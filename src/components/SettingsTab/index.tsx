@@ -1583,6 +1583,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
         {settings.notifyEnabled && (
           <>
+            {/* 名前と説明は 2026-11-05 ユーザー選択「画面に出ている間だけ止める (Recommended)」。止める場所は
+                services/notifyQuietWhileOpen.ts（プッシュ通知は中継が送る前に尋ねる。2026-11-05 選択「受け取りを待って送る (Recommended)」） */}
+            <Row label="アプリを開いている間は通知しない" description="アプリが画面に出ている間は、通知（プッシュ通知を含む）を出しません。画面の表示と、通知音・読み上げはそのままです">
+              <Toggle checked={settings.notifyQuietWhileOpen} onChange={v => onUpdate('notifyQuietWhileOpen', v)} />
+            </Row>
             {/* **種別のトグルは地震情報の通知から独立させる**（2026-10-22 ユーザー選択「3 種を切り離す (Recommended)」。
                 行の文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。入り切りは最低震度と別の値で持つ
                 （切って入れ直しても最低震度を忘れない。2026-10-25 ユーザー承認）。 */}

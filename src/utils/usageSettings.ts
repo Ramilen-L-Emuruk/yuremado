@@ -115,6 +115,7 @@ export const USAGE_TOP_LEVEL_SPECS = {
   dmdataTestDelivery: bool('connection', '試験報を受信（検証用）', false),
   // ブラウザ通知
   notifyEnabled: bool('notification', '通知を表示', true),
+  notifyQuietWhileOpen: bool('notification', 'アプリを開いている間は通知しない', false),
   notifyQuake: bool('notification', '地震情報の通知', true),
   notifyMinScale: choice('notification', '通知する最低震度', INTENSITY_SCALES, 30),
   notifyDetection: bool('notification', '揺れ検知通知', false),
