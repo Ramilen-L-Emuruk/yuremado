@@ -8,7 +8,7 @@ import {
   resolveNonRealtimeTabSource, shouldResetTsunamiScroll, shouldDeferRevertWhileSpeaking,
   type TabHold, type TabPriority, type TabHoldSource, type TabFollowMark,
 } from './utils/tabPriority'
-import { PanelResizeHandle } from './components/PanelResizeHandle'
+import { PanelResizeHandle, PanelWidthHandle } from './components/PanelResizeHandle'
 import { MapView, type MapMode } from './components/Map/MapView'
 import type { ShakeFocus, MapFocusTarget } from './components/Map/mapTypes'
 import { getAreaPrefIndexCache, type LatLng } from './utils/stationCoords'
@@ -65,6 +65,8 @@ import { useEarthquakes } from './hooks/useEarthquakes'
 import { useFetchThrottled } from './hooks/useFetchThrottled'
 import { DEFAULTS as SETTINGS_DEFAULTS, SETTINGS_STORAGE_KEY, useSettings } from './hooks/useSettings'
 import { waveStackLayout } from './utils/waveStackLayout'
+import { useMediaQuery } from './hooks/useMediaQuery'
+import { PANEL_WIDTH_DEFAULT_NARROW_REM, PANEL_WIDTH_DEFAULT_SIDE_REM, SIDE_NARROW_QUERY, panelWidthCss } from './utils/panelWidth'
 import { useAlertTitle, resolveAlertTitle } from './hooks/useAlertTitle'
 import { useReloadSchedule } from './hooks/useReloadSchedule'
 import { AppUpdateBadge } from './components/AppUpdateBadge'
@@ -199,6 +201,16 @@ export function App() {
   // 縦積みレイアウト（スマホ縦など）でのパネル高さ比率。ドラッグ中は毎フレームここだけを
   // 更新し、指を離した時点で設定（localStorage）へ保存する。
   const [panelRatio, setPanelRatio] = useState(settings.panelRatio)
+  // 左右分割でのパネルの幅（rem・null は既定）。PC とスマホ横で別に持つ（2026-11-05 ユーザー選択
+  // 「PC とスマホ横で別々に覚える (Recommended)」）。離した時点でここと設定へ入れる（ドラッグ中は `handlePanelWidthChange`）。
+  const [panelWidthSide, setPanelWidthSide] = useState(settings.panelWidthSide)
+  const [panelWidthSideNarrow, setPanelWidthSideNarrow] = useState(settings.panelWidthSideNarrow)
+  const sideNarrow = useMediaQuery(SIDE_NARROW_QUERY)
+  // 保存した値が外から変わったら（設定の読み込み）見せる値も合わせる。つまみを離した時点の保存は
+  // 同じ値なので何も起きず、ドラッグ中は保存しないので引き戻されない。
+  useEffect(() => { setPanelRatio(settings.panelRatio) }, [settings.panelRatio])
+  useEffect(() => { setPanelWidthSide(settings.panelWidthSide) }, [settings.panelWidthSide])
+  useEffect(() => { setPanelWidthSideNarrow(settings.panelWidthSideNarrow) }, [settings.panelWidthSideNarrow])
   // 特別情報（南海トラフ臨時情報・後発地震注意情報・関連解説情報）の受信でパネルを一時的に
   // 開いたときの「元の状態」。null = 追跡していない／true = 元は畳んでいた（戻すとき畳む）／
   // false = 元から開いていた（戻すときは何もしない）。
@@ -1226,6 +1238,25 @@ export function App() {
     updateSetting('panelRatio', ratio)
   }, [updateSetting])
   const togglePanelCollapsed = useCallback(() => setPanelCollapsed(c => !c), [])
+  // 左右分割の境のつまみ。いま出ている側（PC かスマホ横か）の幅だけを変え、もう片方は触らない。
+  // 折りたたみ中にドラッグされたら、縦積みのつまみと同じく「引き出す」操作とみなして展開する。
+  // **ドラッグ中は state を更新せず、CSS 変数を器へ直に書く。** state を通すと pointermove のたびに App 全体を
+  // 描き直す。離した時点で state へ入れると、React が同じ値を書き直す（state が同じ値のままなら React は触らず、
+  // 直に書いた値が残る。それも離した時点の値なので食い違わない）。
+  const handlePanelWidthChange = useCallback((rem: number) => {
+    if (panelCollapsedRef.current) setPanelCollapsed(false)
+    layoutRef.current?.style.setProperty(sideNarrow ? '--panel-w-narrow' : '--panel-w-side', panelWidthCss(rem) ?? null)
+  }, [sideNarrow])
+  const handlePanelWidthCommit = useCallback((rem: number) => {
+    setPanelCollapsed(false)
+    if (sideNarrow) {
+      setPanelWidthSideNarrow(rem)
+      updateSetting('panelWidthSideNarrow', rem)
+    } else {
+      setPanelWidthSide(rem)
+      updateSetting('panelWidthSide', rem)
+    }
+  }, [sideNarrow, updateSetting])
 
   const {
     points: quakeHeatPoints,
@@ -2872,7 +2903,7 @@ export function App() {
       {/* 地図(左) | パネル | アイコンナビ(右端)。
           side ブレークポイント未満（スマホ縦など）は縦積み(地図上・つまみ・パネル・ナビ下)になり、
           パネルの高さは --panel-ratio（つまみのドラッグで可変・折りたたみ時 0）で決まる。
-          side 以上（PC・スマホ横）は左右分割で、パネル幅は固定。 */}
+          side 以上（PC・スマホ横）は左右分割で、パネル幅は境の縦のつまみで変えられる（--panel-w-side / --panel-w-narrow）。 */}
       <div
         ref={layoutRef}
         className="flex-1 overflow-hidden flex flex-col side:flex-row"
@@ -2880,6 +2911,8 @@ export function App() {
           '--panel-ratio': panelShownRatio,
           '--map-min-height': `${waveLayout.mapMinHeight}px`,
           '--wave-overlap': `${waveLayout.overlap}px`,
+          '--panel-w-side': panelWidthCss(panelWidthSide),
+          '--panel-w-narrow': panelWidthCss(panelWidthSideNarrow),
         } as CSSProperties}
       >
         {/* 常時表示の地図エリア（タブに応じて内容を切替） */}
@@ -3112,14 +3145,22 @@ export function App() {
           onRatioCommit={handlePanelRatioCommit}
           onToggleCollapse={togglePanelCollapsed}
         />
+        {/* 地図とパネルの境界（左右分割時のみ）。横へのドラッグで幅を変え、タップで折りたたむ。 */}
+        <PanelWidthHandle
+          widthRem={sideNarrow ? panelWidthSideNarrow : panelWidthSide}
+          defaultRem={sideNarrow ? PANEL_WIDTH_DEFAULT_NARROW_REM : PANEL_WIDTH_DEFAULT_SIDE_REM}
+          collapsed={panelCollapsed}
+          onWidthChange={handlePanelWidthChange}
+          onWidthCommit={handlePanelWidthCommit}
+          onToggleCollapse={togglePanelCollapsed}
+        />
 
         {/* パネル（タブに応じて内容を切替）。縦積み時は --panel-ratio 由来の高さ + スクロール。
             折りたたみ時は縦積みなら高さ（--panel-ratio=0）、左右分割なら幅が 0 になり地図が全画面になる。
             各タブを absolute で重ねて visibility で切り替えることで、スクロール位置をタブごとに独立管理する。
             折りたたみを含め display:none（hidden クラス）を使わないのは、scrollTop がリセットされるため。
-            左右分割時の幅は `w-panel` / `w-panel-narrow`（src/index.css で定義）。24rem/20rem から
-            2rem ずつ広げてある。地震カードの震度バッジを正方形（従来 80px 幅 → カード高さと同じ
-            約 112px）にした分、本文カラムが痩せないようにするため。 */}
+            左右分割時の幅は `w-panel` / `w-panel-narrow`（src/index.css で定義）。境のつまみで変えた幅は
+            --panel-w-side / --panel-w-narrow で受ける（→ utils/panelWidth.ts）。 */}
         <div ref={panelRef} className={`shrink-0 h-[calc(var(--panel-ratio)*100%)] overflow-hidden side:h-auto side:flex-none border-border relative z-10 ${
           panelCollapsed ? 'side:w-0 side:border-l-0' : 'side:w-panel sideNarrow:w-panel-narrow side:border-l'
         }`}>
