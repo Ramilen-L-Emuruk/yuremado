@@ -1,15 +1,18 @@
 // 国内の地震情報の津波の一文と、固定付加文の残りの読み上げ。
 //
 // - 津波の一文は、区分を決めた固定付加文のコードの気象庁の文を読む（→ `domesticTsunamiSegmentOf`）。
-//   区分から文を起こすと気象庁が書いていないことを言う（コード表との突き合わせは docs/jma-wording-audit.md E1〜E3）
+//   区分から文を起こすと気象庁が書いていないことを言う（コード表との突き合わせは docs/jma-wording-audit.md E1〜E3）。
+//   0211 だけは括弧書きを除いて読む（2026-11-05 ユーザー選択「読み上げだけ「津波警報等を発表中です。」 (Recommended)」）
 // - 固定付加文のうち津波の一文以外は、「気象庁の発表文」の内訳「固定付加文」（`quakeForecast`）で読む
 //   （2026-10-23 ユーザー選択「A: 発表文の内訳に足す (Recommended)」）
 import { describe, it, expect, vi } from 'vitest'
 import { log } from './logger'
 import {
   earthquakeToSegments, earthquakeToText, createQuakeSpokenState, applySpokenRefs, telegramTextToSpeak,
-  TELEGRAM_BOILERPLATE_DEFAULT_READS, TELEGRAM_TEXT_BLOCK_KEYS, DOMESTIC_TSUNAMI_CODE_TEXT, type TtsSpeechOptions, type TelegramTextBlocks,
+  TELEGRAM_BOILERPLATE_DEFAULT_READS, TELEGRAM_TEXT_BLOCK_KEYS, DOMESTIC_TSUNAMI_CODE_TEXT, DOMESTIC_TSUNAMI_CODE_SPEECH,
+  type TtsSpeechOptions, type TelegramTextBlocks,
 } from './ttsText'
+import { domesticTsunamiCardForecastText } from './domesticTsunamiComment'
 import { joinSegments } from './ttsFollow'
 import type { DomesticTsunami, DomesticTsunamiCode, IssueType, JMAQuake } from '../types/earthquake'
 
@@ -83,6 +86,57 @@ describe('国内の地震情報の津波の一文', () => {
     expect(text).toContain(TEXT_0212)
     expect(text).not.toContain(TEXT_0226)
     expect(text).not.toContain(TEXT_0241)
+  })
+})
+
+describe('0211 の読み上げ（括弧書きを除く。2026-11-05 ユーザー選択）', () => {
+  const TEXT_0211 = '津波警報等（大津波警報・津波警報あるいは津波注意報）を発表中です。'
+
+  // 正: 0211 を持つ地震情報は「津波警報等を発表中です。」と読み、括弧書きを読まない。
+  it('0211 は「津波警報等を発表中です。」と読む', () => {
+    const text = earthquakeToText(quake({ domesticTsunami: '警報等', code: '0211', forecastText: TEXT_0211 }), OPTS, true)
+    expect(text).toContain('津波警報等を発表中です。')
+    expect(text).not.toContain('大津波警報・津波警報あるいは津波注意報')
+    expect(text).not.toContain('現在津波警報等')
+  })
+
+  // 対照: 画面の文（地震カードの枠）は電文の全文のまま。
+  it('画面の文は全文のまま', () => {
+    expect(DOMESTIC_TSUNAMI_CODE_TEXT['0211']).toBe(TEXT_0211)
+    expect(domesticTsunamiCardForecastText(`${TEXT_0211}${TEXT_0241}`, '0211')).toContain(TEXT_0211)
+  })
+
+  // 安全弁: 読み上げの文は、原文から全角括弧とその中身を除いたものと一致する（原文の表が変われば落ちる）。
+  it('読み上げの文は原文から括弧書きを除いたもの', () => {
+    expect(DOMESTIC_TSUNAMI_CODE_SPEECH['0211']).toBe(DOMESTIC_TSUNAMI_CODE_TEXT['0211'].replace(/（[^）]*）/g, ''))
+  })
+
+  // 正: 遠地地震に関する情報の付加文に 0211 の原文があれば、括弧書きを除いて読む。ほかの文はそのまま読む
+  // （2026-11-05 ユーザー選択「遠地地震も「津波警報等を発表中です。」 (Recommended)」）。
+  it('遠地地震でも 0211 は括弧書きを除いて読む', () => {
+    const foreign = quake({ type: '遠地地震', domesticTsunami: '警報等', code: '0211', forecastText: `${TEXT_0211}${TEXT_0226}` })
+    const text = earthquakeToText(foreign, OPTS, true)
+    expect(text).toContain('津波警報等を発表中です。')
+    expect(text).toContain(TEXT_0226)
+    expect(text).not.toContain('大津波警報・津波警報あるいは津波注意報')
+    // 対照: 画面とカードが使う原文は全文のまま
+    expect(foreign.forecastText).toContain(TEXT_0211)
+    expect(domesticTsunamiCardForecastText(foreign.forecastText!, '0211')).toContain(TEXT_0211)
+  })
+
+  // 安全弁: 0211 を持たない遠地地震は、付加文の原文を今どおり読む。
+  it('0211 を持たない遠地地震は原文のまま読む', () => {
+    const text = earthquakeToText(quake({ type: '遠地地震', domesticTsunami: 'なし', code: '0230', forecastText: `${TEXT_0226}${TEXT_0230}` }), OPTS, true)
+    expect(text).toContain(`${TEXT_0226}${TEXT_0230}`)
+  })
+
+  // 安全弁: コードを持たない電文は従来の区分の文。0211 以外のコードは画面と同じ気象庁の文を読む。
+  it('コードを持たなければ区分の文、ほかのコードは画面と同じ文', () => {
+    expect(earthquakeToText(quake({ domesticTsunami: '警報等' }), OPTS, true)).toContain('現在津波警報等を発表中です。')
+    for (const code of Object.keys(DOMESTIC_TSUNAMI_CODE_TEXT) as DomesticTsunamiCode[]) {
+      if (code === '0211') continue
+      expect(DOMESTIC_TSUNAMI_CODE_SPEECH[code], code).toBe(DOMESTIC_TSUNAMI_CODE_TEXT[code])
+    }
   })
 })
 
