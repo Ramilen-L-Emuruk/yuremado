@@ -2851,7 +2851,7 @@ export function App() {
     showPublicStations: publicStationMarkers.length > 0,
     // 揺れ検知中の見出し（緊急地震速報が無いとき）。最大リアルタイム震度の段は、ブラウザ通知の本文が使う値と同じ式で決める
     // （確定中は確定した点の最大・可能性の段階は主候補の最大。`useKyoshinAlerts` の `effectiveKyoshinMaxIndex`）。
-    // どちらも値を持つ点が無ければ -1（欠測）——0 は「0以下」と焼かれるので、欠測を 0 から始めない
+    // どちらも値を持つ点が無ければ -1（欠測）——0 は「0未満」と焼かれるので、欠測を 0 から始めない
     kyoshinDetection: kyoshinView.confirmed
       ? { state: 'confirmed', maxIndex: kyoshinView.confirmedShocks.reduce((max, s) => Math.max(max, s.index), -1) }
       : kyoshinView.candidate
