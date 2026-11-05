@@ -98,6 +98,7 @@ import { formatDateTimeLocal } from './utils/formatters'
 import { computeEEWLevel, eewEventKey, eewMaxLpgmClass } from './utils/eew'
 import { createDetectionSpreadLog } from './utils/eewSpreadHold'
 import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
+import type { LpgmSectionFocus } from './utils/quakeCardScroll'
 import { canOpenLpgmNotes } from './utils/lpgm'
 import { estimatedIntensityFor, matchEstimatedIntensityArrival } from './utils/estimatedIntensity'
 import {
@@ -188,6 +189,9 @@ const TAB_SCROLLER_CLASS = 'absolute inset-0 overflow-y-auto overflow-x-hidden o
 function showQuakeNotification(n: QuakeNotification): Promise<void> {
   return deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: true, data: notificationData(n.open) })
 }
+
+/** 長周期の節を見せる求めが、紐づく地震カードを待つ上限（→ App の引き当ての effect）。 */
+const LPGM_FOCUS_WAIT_MS = 10_000
 
 export function App() {
   const { settings, updateSetting, replaceSettings, adoptExternalSetting } = useSettings()
@@ -398,10 +402,33 @@ export function App() {
     // **追加表示を閉じるのは、別の地震へ移るときだけ**（判定と理由は `shouldCloseOverlayOnSelection`）。
     const closeOverlay = shouldCloseOverlayOnSelection(selectedQuakeIdRef.current, eventKey)
     selectedQuakeIdRef.current = eventKey
+    // 別の地震へ移ったら、長周期の節を見せる求めは捨てる。残すと、後でその地震を選び直したときに
+    // カードの頭ではなく長周期の節へ巻く
+    // （引き当て前の求めは捨てない。引き当てる側が選択中のカードと照らす。同じ地震の続報が同じ瞬間に
+    // 届いて選び直されても、求めを落とさないため）
+    setLpgmFocus(f => (f && f.key !== eventKey ? null : f))
     setSelectedQuakeId(eventKey)
     setQuakeSelectSeq(n => n + 1)
     if (closeOverlay) applyQuakeOverlay(null, '別の地震を選んだ')
     if (opts?.explicit) setQuakeSelectionTick(t => t + 1)
+  }, [])
+  /**
+   * 長周期地震動の節を見せる求め（→ `quakeCardScrollTarget`）。長周期地震動観測情報の受信と、長周期の通知を
+   * 押したときに、長周期の札を押したときと同じ位置へ巻く（2026-11-06 ユーザー選択「長周期の節へ巻く
+   * (Recommended)」「同じく巻く (Recommended)」）。**巻くのは地震タブの中だけ** —— タブは動かさない
+   * （受信はタブの追従、通知はタブを移す口がそれぞれ受け持つ）。
+   */
+  const [lpgmFocus, setLpgmFocus] = useState<LpgmSectionFocus | null>(null)
+  /**
+   * 求めは電文の `eventId` のまま受け、カードへの引き当ては次の描画で行う（→ 下の引き当ての effect）。
+   * **ここで `earthquakesRef` から引かない** —— あの控えは描画のたびに書き換わるので、同じ瞬間に届いた
+   * 地震情報（テストの台本や、続けて配られた電文）はまだ載っておらず、カードを引けずに求めを落とす。
+   */
+  const [lpgmFocusRequest, setLpgmFocusRequest] = useState<{ eventId: string; seq: number; at: number } | null>(null)
+  const lpgmFocusSeqRef = useRef(0)
+  const focusLpgmSection = useCallback((eventId: string) => {
+    lpgmFocusSeqRef.current += 1
+    setLpgmFocusRequest({ eventId, seq: lpgmFocusSeqRef.current, at: performance.now() })
   }, [])
   // 地震情報タブ / EEW（リアルタイム）タブそれぞれで長周期の表示をトグルするハンドラー。
   // 同じ eventId を再度渡すと非表示化、それ以外の eventId なら表示中の source を切り替える。
@@ -438,12 +465,14 @@ export function App() {
    */
   const openLpgmFromQuake = useCallback((eventId: string) => {
     applyQuakeOverlay(prev => openLpgmOverlay(prev, eventId, 'earthquake'), '長周期地震動を自動で開いた')
-  }, [])
+    focusLpgmSection(eventId)
+  }, [focusLpgmSection])
   // 長周期・推計の通知を押したとき（→ `useNotificationOpen`）。開き方は受信と同じで、記録の理由だけ分ける。
   // 推計は、通知の側で選んだ地震カードの鍵でそのまま開く（受信の口のように時刻で引き直さない。選んだカードと食い違わないため）
   const openLpgmFromNotification = useCallback((eventId: string) => {
     applyQuakeOverlay(prev => openLpgmOverlay(prev, eventId, 'earthquake'), '長周期地震動の通知を押した')
-  }, [])
+    focusLpgmSection(eventId)
+  }, [focusLpgmSection])
   const openDistributionFromNotification = useCallback((eventKey: string) => {
     applyQuakeOverlay(prev => openDistributionOverlay(prev, eventKey), '推計震度分布図の通知を押した')
   }, [])
@@ -1417,6 +1446,32 @@ export function App() {
   // 選択中に見えているカードの鍵。**開いているカードに従うものは `selectedQuakeId` ではなくこちらを見る** ——
   // 起動直後や選んだカードが取り消された後は `selectedQuakeId` が表示中のカードを指していない。
   const selectedQuakeKey = selectedQuake ? quakeEventKey(selectedQuake) : null
+  // 長周期の節を見せる求めを、地震カードへ引き当てる（求めの受け口は `focusLpgmSection`）。引き当てるのは
+  // 選択中のカードに当たったときだけで、当たらなければ求めを捨てる（別の地震を見ている人の画面は動かさない）。
+  // 紐づくカードがまだ無いなら、一覧が次に変わるまで待つ（同じ瞬間に届いた地震情報が載るのを待つため）。
+  // 待つのは `LPGM_FOCUS_WAIT_MS` まで。過ぎた求めは捨てる —— 後でその地震が届いたときに、利用者が
+  // 何もしていないのに急に巻くことになる。
+  // `quakeId` は引き当てた時点のカードの報（読み上げが無効なとき、この後の続報でカードの頭へ戻すため）
+  useEffect(() => {
+    if (!lpgmFocusRequest) return
+    const { eventId, seq, at } = lpgmFocusRequest
+    // 期限はカードが見つかったかどうかより先に見る（期限の後に届いたカードへ巻かない）。
+    // 評価するのは一覧か選択が変わった描画だけで、変わらなければ求めは残るが、残っても巻く先が無い
+    if (performance.now() - at > LPGM_FOCUS_WAIT_MS) {
+      setLpgmFocusRequest(null)
+      log.info(`[地震タブ] 長周期の節へ巻かない（紐づく地震カードを待ちきれなかった・${eventId}）`)
+      return
+    }
+    const key = quakeKeyForLpgmEventId(earthquakes, eventId)
+    const quake = key ? earthquakes.find(q => quakeEventKey(q) === key) : undefined
+    if (!key || !quake) return
+    setLpgmFocusRequest(null)
+    if (key !== selectedQuakeKey) {
+      log.info(`[地震タブ] 長周期の節へ巻かない（選択中のカードが別の地震・${eventId}）`)
+      return
+    }
+    setLpgmFocus({ key, seq, quakeId: quake.id })
+  }, [lpgmFocusRequest, earthquakes, selectedQuakeKey])
   // 地図に表示中の LPGM（バッジクリックでトグル）
   const activeLpgm = activeLpgmEventId ? (lpgmByEventId.get(activeLpgmEventId) ?? null) : null
 
@@ -2197,6 +2252,9 @@ export function App() {
     // いることがある）。そちらは EEW が消えた副作用で別の effect が閉じるが、1 テンポ遅れる
     // うえ「ここを見ればリセットが完結している」と読めなくなる。
     applyQuakeOverlay(null, 'リセット')
+    // 長周期の節を見せる求め。引き当て済みの分は上の `selectQuake(null)` が落とすので、ここは引き当て前の分。
+    // 残すと、新しい時間軸で同じ地震のカードが現れた瞬間に古い求めで巻く
+    setLpgmFocusRequest(null)
     // 特別情報でパネルを開いたときの「元の状態」。持ち越すと、次にバナーが消えたときに
     // 切り替え前の状態へ戻す。
     setSpecialInfoPanelHold(null)
@@ -3218,6 +3276,7 @@ export function App() {
                 updateMarks={quakeUpdateMarks}
                 activeLpgmEventId={activeLpgmEventId}
                 onToggleLpgm={toggleLpgmFromEarthquake}
+                lpgmFocus={lpgmFocus}
                 estimatedIntensities={estimatedIntensities}
                 internationalTsunamisByQuake={internationalTsunamiIdx.byQuakeKey}
                 distributionQuakeKey={distributionQuakeKey}

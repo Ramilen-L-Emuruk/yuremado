@@ -550,6 +550,12 @@ interface Props {
   activeLpgmEventId?: string | null
   onToggleLpgm?: (eventId: string) => void
   /**
+   * 長周期地震動の節を見せる求めの番号（求めが無い・このカードの番でなければ 0）。進んだら、開いたカードの
+   * 長周期の節を、長周期の札を押したときと同じ位置へ巻く（2026-11-06 ユーザー選択「長周期の節へ巻く
+   * (Recommended)」「同じく巻く (Recommended)」。長周期地震動観測情報の受信と、長周期の通知を押したとき）。
+   */
+  lpgmFocusSeq: number
+  /**
    * **この地震の**推計震度分布図（引き当て済み。無ければ null）。引き当ては一覧の側で行う
    * （→ `estimatedIntensityFor`）—— 一覧ごと渡すと、別の地震の分布が届くたびに全カードの
    * `memo` が素通りする。
@@ -806,7 +812,7 @@ function InternationalTsunamiHeading() {
  * 親で包まず、**地震の鍵をこちら側で作って渡す**（→ {@link Props.onSelect}）。
  */
 export const EarthquakeCard = memo(function EarthquakeCard({
-  quake, isSelected: selected = false, reopenSignal, onSelect, lpgm, activeLpgmEventId, onToggleLpgm,
+  quake, isSelected: selected = false, reopenSignal, onSelect, lpgm, activeLpgmEventId, onToggleLpgm, lpgmFocusSeq,
   estimatedIntensity = null, internationalTsunamis, distributionActive = false, onToggleDistribution,
   unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
   marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView,
@@ -850,6 +856,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   useLayoutEffect(() => { resizeFromRef.current = null })
   const collapseCard = () => {
     resizeFromRef.current = openRootRef.current?.getBoundingClientRect().height ?? null
+    // 畳んだら、長周期の節を見せる求めは済んだことにする（後で開き直したときに古い求めで急に巻かない）
+    lpgmFocusDoneRef.current = lpgmFocusSeq
     setCollapsed(true)
   }
   // 貼りつく帯から畳むと、カードが縮んで畳んだ行が画面の上へ抜けることがある。抜けたら行を一覧の頭へ戻す
@@ -1391,6 +1399,28 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       window.removeEventListener('resize', measure)
     }
   }, [isSelected])
+  // 長周期の節を見せる求め（→ `lpgmFocusSeq`）。巻けるのは、開いていて長周期の節が描かれているときだけ。
+  // まだ巻けない（畳んでいたのを開き直す途中・長周期の電文が先に届いた）なら、巻けるようになった描き直しで巻く。
+  // カードの開く動きが走っている間は、伸び終えてから巻く（途中の高さで測ると着地がずれる。→ useFollowScroll と同じ）
+  const lpgmFocusDoneRef = useRef(0)
+  const lpgmSectionShown = !!lpgm && !lpgm.cancelled
+  useLayoutEffect(() => {
+    const seq = lpgmFocusSeq
+    if (seq === 0 || lpgmFocusDoneRef.current === seq || !isSelected || !lpgmSectionShown) return
+    const section = lpgmSectionRef.current
+    const root = openRootRef.current
+    if (!section || !root) return
+    lpgmFocusDoneRef.current = seq
+    const resizing = root.getAnimations?.().filter(a => a.id === CARD_RESIZE_ANIMATION_ID && a.playState === 'running') ?? []
+    if (resizing.length === 0) {
+      scrollOpenSectionIntoView(section)
+      return
+    }
+    void Promise.all(resizing.map(a => a.finished.catch(() => undefined))).then(() => {
+      // 伸びている間に畳まれた・別の求めが来たなら巻かない
+      if (section.isConnected && lpgmFocusDoneRef.current === seq) scrollOpenSectionIntoView(section)
+    }).catch((err: unknown) => log.warn('[地震タブ] 長周期の節へ巻けなかった', err))
+  }, [lpgmFocusSeq, isSelected, lpgmSectionShown])
   // 一覧に載せるのは、カードに紐づく電文すべて（2026-11-01 選択「紐づく電文のうち最新の発表時刻 (Recommended)」。
   // 地震情報・長周期・国際津波・推計震度分布図・値を借りた津波の電文）。借りた津波は震源と津波の有無で
   // 別の報になりうるので、同じ報（名前と時刻が同じ）は 1 行にまとめる。
