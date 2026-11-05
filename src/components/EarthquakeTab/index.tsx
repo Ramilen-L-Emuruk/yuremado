@@ -246,6 +246,14 @@ export const EarthquakeTab = memo(function EarthquakeTab({ earthquakes, selected
         <div className="flex-1 flex items-center justify-center">
           <p className="text-secondary text-sm">地震情報はありません</p>
         </div>
+        {/* **空でも「もっと見る」を出す。** 最低表示震度を上げていて、読んだ範囲にその震度以上の地震が無いと
+            一覧は空になるが、遡れば出る地震はある。出さないと押す口が無くなる（2026-11-03 ユーザー選択
+            「空でもボタンを出す (Recommended)」。1 回に読む日数も文面も一覧の末尾と同じ） */}
+        {hasMore && (
+          <div className="p-2 roomy:p-3">
+            <LoadMoreButton onLoadMore={onLoadMore} isLoadingMore={isLoadingMore} watchThrottle={watchLoadMoreThrottle} />
+          </div>
+        )}
       </div>
     )
   }
