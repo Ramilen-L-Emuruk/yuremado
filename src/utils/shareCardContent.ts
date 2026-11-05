@@ -275,8 +275,8 @@ function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['
  * 緊急地震速報が無いときのリアルタイム震度の見出し。**揺れを検知していれば、検知と最大リアルタイム震度を出す**（2026-10-23 ユーザー選択
  * 「揺れ検知中は推定最大震度を出す (Recommended)」。文面は 2026-10-24 ユーザー選択「この文面で (Recommended)」）。見出しは
  * ウィンドウタイトルと同じ「揺れ検知」／「揺れの可能性」、副見出しはブラウザ通知の本文と同じ「最大リアルタイム震度 5弱」。
- * 呼び名「最大リアルタイム震度」は通知・検知カードと同じ（2026-10-31 ユーザー承認「折り返したりが起きないなら最大リアルタイム震度がいいですね」。段の名前は `kyoshinDetectionScaleLabel`）。震度0 未満は「0以下」と焼く（2026-10-29 ユーザー選択
- * 「「0以下」を焼く (Recommended)」。測った値で、不明ではない）。欠測なら副見出しは出さない（通知は「?」を出すが、画像は訂正できないので焼かない）。
+ * 呼び名「最大リアルタイム震度」は通知・検知カードと同じ（2026-10-31 ユーザー承認「折り返したりが起きないなら最大リアルタイム震度がいいですね」。段の名前は `kyoshinDetectionScaleLabel`）。震度0 未満は「0未満」と焼く（焼くことは 2026-10-29 ユーザー選択
+ * 「「0以下」を焼く (Recommended)」、呼び名は 2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」。測った値で、不明ではない）。欠測なら副見出しは出さない（通知は「?」を出すが、画像は訂正できないので焼かない）。
  */
 function detectionContent(detection: ShareCardContentInput['kyoshinDetection']): ContentWithoutNotices {
   if (!detection) return { header: { title: 'リアルタイム震度' }, filenameLabel: 'realtime' }

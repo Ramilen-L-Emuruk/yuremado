@@ -19,6 +19,7 @@ import { ShareCardButton } from './components/ShareCardButton'
 import { useShareCard } from './hooks/useShareCard'
 import { usePushSubscription } from './hooks/usePushSubscription'
 import { useNotificationOpen } from './hooks/useNotificationOpen'
+import { installNotifyQuietVisibilityWatch, installServiceWorkerQuietAnswer, setNotifyQuietWhileOpen } from './services/notifyQuietWhileOpen'
 import { SeismoLinkStatus } from './components/SeismoLinkStatus'
 import { SeismoOverlay } from './components/SeismoOverlay'
 import { useSeismoStation, type SeismoStationState } from './hooks/useSeismoStation'
@@ -137,7 +138,7 @@ import type { GateTag } from './utils/requestGate'
 import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerdict, emptyReplayFetchResult, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
 import { useHistoricalArchiveIndex } from './hooks/useHistoricalArchiveIndex'
 import { log } from './utils/logger'
-import { deliverBrowserNotification, NOTIFICATION_ICON, notificationData, showBrowserNotification } from './utils/notifications'
+import { deliverBrowserNotification, NOTIFICATION_ICON, notificationData, showTestBrowserNotification } from './utils/notifications'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
 import { isLiveFeedHalted } from './utils/connectionStatus'
@@ -192,6 +193,11 @@ export function App() {
   const { settings, updateSetting, replaceSettings, adoptExternalSetting } = useSettings()
   // プッシュ通知の購読を設定に合わせる（docs/relay-server-design.md §6.7）
   usePushSubscription(settings, updateSetting)
+  // 設定「アプリを開いている間は通知しない」を、通知の出し口・中継への名乗り・Service Worker の問いへ渡す
+  // （→ services/notifyQuietWhileOpen.ts）
+  useEffect(() => { setNotifyQuietWhileOpen(settings.notifyQuietWhileOpen) }, [settings.notifyQuietWhileOpen])
+  useEffect(() => installServiceWorkerQuietAnswer(), [])
+  useEffect(() => installNotifyQuietVisibilityWatch(), [])
   const [activeTab, setActiveTabState] = useState<TabId>(settings.defaultTab)
   // 津波タブを自動で見せた回数。増えるたびに津波カードのスクロールを先頭へ戻す
   // （増やす条件と理由は `requestAutoTab`）。
@@ -1205,7 +1211,7 @@ export function App() {
         alert('先に「通知を許可する」を押してください。')
         return
       }
-      showBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification', false, null)
+      showTestBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
     },
   }), [
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
@@ -2845,7 +2851,7 @@ export function App() {
     showPublicStations: publicStationMarkers.length > 0,
     // 揺れ検知中の見出し（緊急地震速報が無いとき）。最大リアルタイム震度の段は、ブラウザ通知の本文が使う値と同じ式で決める
     // （確定中は確定した点の最大・可能性の段階は主候補の最大。`useKyoshinAlerts` の `effectiveKyoshinMaxIndex`）。
-    // どちらも値を持つ点が無ければ -1（欠測）——0 は「0以下」と焼かれるので、欠測を 0 から始めない
+    // どちらも値を持つ点が無ければ -1（欠測）——0 は「0未満」と焼かれるので、欠測を 0 から始めない
     kyoshinDetection: kyoshinView.confirmed
       ? { state: 'confirmed', maxIndex: kyoshinView.confirmedShocks.reduce((max, s) => Math.max(max, s.index), -1) }
       : kyoshinView.candidate
@@ -3008,9 +3014,10 @@ export function App() {
                 陸を隠しにくいから（2026-10-27 ユーザー指示「そもそも右上じゃなくて左上にしたい(地震計と入れ替える。日本列島が右上向きだから)」）。
                 **下端の帯（凡例・特別情報バナー）とは重ならない** —— あちらは全幅の絶対配置で、
                 下側へ置いたものは押し上げてもらえずに重なる。行動チェックリストの帯は、この列の下端から始める（`topCornersBottom`）。
-                z-99999: 区域集約震度バッジ（QuakeRegionFillGL）は el.style.zIndex = scale*1000 で、
-                scale は JMA 震度階級の数値コード（震度7 = 70）まであるため最大 70000 まで積む。
-                それより確実に高い値にして常に最前面に出す。 */}
+                z-99999: 地図の中の物（HTML マーカー・MapLibre の操作ボタン・撮影中の静止画）と、地図の吹き出し
+                （`.maplibregl-popup` の 99998。→ src/index.css）より前に出す。地図の要素は重なりの文脈を作らないので、
+                吹き出しの z はここと直に比べられる。値を変えるときは吹き出しの側も合わせる
+                （→ src/components/Map/popupLayering.test.ts）。 */}
             <div
               ref={topCornersRef}
               className="absolute z-99999 pointer-events-none flex items-start justify-between gap-2"

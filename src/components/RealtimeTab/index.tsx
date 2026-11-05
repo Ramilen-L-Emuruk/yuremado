@@ -1275,8 +1275,11 @@ function SWaveArrivalCountdown({ row }: { row: SWaveArrivalRow }) {
 // 反応が収まっている間の段のチップの背景。主張を持たない灰で、白文字とのコントラストは約 7.6:1。
 // 段の色を消しつつラベルは読める濃さを保つ（経緯は KyoshinDetectionSummary 内のコメント）。
 const SETTLED_CHIP_BG = '#4b5563'
-/** 字が詰まる所で「0以下」の代わりに書く語（震度の枠の数字・棒の札。2026-11-04 ユーザー発言「小さい狭いところ全体に適用したいです」） */
-const BELOW_ZERO_SHORT_LABEL = '≦0'
+/**
+ * 字が詰まる所で「0未満」の代わりに書く語（震度の枠の数字・棒の札。範囲は 2026-11-04 ユーザー発言「小さい狭いところ全体に適用したいです」。
+ * 語は 2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」で「≦0」から改めた —— 「≦0」は「0」の行と並ぶと 0 を含むように読める）
+ */
+const BELOW_ZERO_SHORT_LABEL = '<0'
 
 // `border` はチップの背景色として使う。白文字（12px 太字＝WCAG の Large Text 緩和に該当しない）を
 // 載せるため 4.5:1 が要る。confirmed の #ef4444 は 3.76:1・likely の #d97706 は 3.19:1 で足りず、
@@ -1422,8 +1425,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   // 描く点（`drawnKeys`）から用意する）。以前はここでも同じ計算を組み立てていたが、同じ入力から
   // 同じ結果になることに頼ると、片方の実装を変えたときに黙って食い違う。
   // 数える対象は地図が描く点と同じ「値のある点」（欠測は数えない）。震度階級の付く点は階級ごとの行へ、
-  // 震度0 未満の点は一番下の「0以下」の行へ数える（地図の文字なしの印と同じ点。2026-10-29 ユーザー選択
-  // 「棒に「0以下」を足す (Recommended)」）。地図の検知点マーカー（gl/kyoshinDetectedFeatures.ts の
+  // 震度0 未満の点は一番下の「0未満」の行へ数える（地図の文字なしの印と同じ点。2026-10-29 ユーザー選択
+  // 「棒に「0以下」を足す (Recommended)」。呼び名は 2026-11-05 に「0未満」へ改めた）。地図の検知点マーカー（gl/kyoshinDetectedFeatures.ts の
   // buildFeatures）も同じ判定で描き分けており、ここと基準を分けると表示点数が食い違う。
   const counts = new Map<string, { color: string; count: number }>()
   let maxIndex = 0
@@ -1443,6 +1446,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   const maxLabel = kyoshinIndexToLabel(maxIndex)
   const groups = LABEL_ORDER.filter(l => counts.has(l)).map(l => ({ label: l, ...counts.get(l)! }))
   const subZeroLabel = kyoshinDetectionScaleLabel(0)
+  // ホバーと画面読み上げで、字を詰めた「<0」の代わりに伝える語（本文の「震度0未満の反応」と同じ呼び名）
+  const subZeroFullLabel = subZeroLabel ? `震度${subZeroLabel}` : undefined
   if (subZeroCount > 0 && subZeroLabel) groups.push({ label: subZeroLabel, color: KYOSHIN_SUB_ZERO_COLOR, count: subZeroCount })
   const rawMaxCount = groups.reduce((m, g) => Math.max(m, g.count), 1)
   // バー幅のスケール（分母）は、カードが見えている間は**下げない**。瞬間値を分母にすると、
@@ -1501,17 +1506,19 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   //
   // ただし**確かな段で、加わった点が全員震度0 未満**（欠測を除く）のときは収まったと言わない。組み合わせの検知器は
   // 震度1 に届かない揺れも確かな段にするので、揺れの最中でも震度0以上の点が 1 つも無いことがある。このときは
-  // 最大リアルタイム震度を「0以下」、本文を「N観測点で震度0以下の反応」と出し、色も弱めない
-  // （2026-10-29 ユーザー選択「「震度0以下」で出す (Recommended)」）。検知は最後の報告から `ENSEMBLE_KEEP_MS` 残るので、
+  // 最大リアルタイム震度を「0未満」、本文を「N観測点で震度0未満の反応」と出し、色も弱めない
+  // （2026-10-29 ユーザー選択「「震度0以下」で出す (Recommended)」。呼び名は 2026-11-05 ユーザー選択
+  // 「「0未満」と「<0」にする (Recommended)」で「0未満」へ改めた）。検知は最後の報告から `ENSEMBLE_KEEP_MS` 残るので、
   // 本当に収まった後の余韻もこの形で出る。数えるのは地図に描いている震度0 未満の印と同じ点（早い段の点・直前の値を
   // 保持して描いている点も含む。2026-10-29 ユーザー選択「地図と同じ点を数える (Recommended)」）。
-  // 早い段だけのときは本文を「収まりました」のままにし、「0以下」の行だけを出す
+  // 早い段だけのときは本文を「収まりました」のままにし、「0未満」の行だけを出す
   // （2026-10-29 ユーザー選択「「0以下」の行を出す (Recommended)」）
   const belowZeroCount = activeCount === 0 && topTier === 'confirmed' ? subZeroCount : 0
   const belowZero = belowZeroCount > 0
   const settled = activeCount === 0 && !belowZero
-  // 字が詰まる所（震度の枠の数字・棒の札）では「0以下」を「≦0」と書く（2026-11-04 ユーザー発言「「0以下」じゃなくて「≦0」とかにしたら」、
-  // 範囲は「小さい狭いところ全体に適用したいです」）。本文・判定の内訳・通知・共有カードの文は「0以下」のまま
+  // 字が詰まる所（震度の枠の数字・棒の札）では「0未満」を「<0」と書く（範囲は 2026-11-04 ユーザー発言
+  // 「小さい狭いところ全体に適用したいです」、語は 2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」）。
+  // 本文・判定の内訳・通知・共有カードの文は「0未満」のまま
   const maxLabelShown = maxLabel ?? (belowZero ? BELOW_ZERO_SHORT_LABEL : null)
   const strongestName = settled ? null : strongestRegionName(points, subregions)
 
@@ -1544,8 +1551,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
           <span className="whitespace-nowrap font-semibold text-[length:var(--qk-fs)]" style={{ color: liftForContrast(frameBorder, frameBg) }}>最大リアルタイム震度</span>
           <span
             className="font-black leading-none text-white"
-            title={maxLabel === null && belowZero ? '震度0以下' : undefined}
-            aria-label={maxLabel === null && belowZero ? '震度0以下' : undefined}
+            title={maxLabel === null && belowZero ? subZeroFullLabel : undefined}
+            aria-label={maxLabel === null && belowZero ? subZeroFullLabel : undefined}
             style={{ fontSize: 'calc(var(--qk-big-f) * 0.75 * var(--rt-tw))' }}
           >
             {maxLabelShown ?? '—'}
@@ -1557,13 +1564,13 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
             <div className="flex flex-col gap-1">
               {groups.map(g => (
                 <div key={g.label} className="flex items-center gap-2">
-                  {/* 幅は 2 文字の札（「5弱」「≦0」）が縁の内側に収まる幅に揃える（行ごとに幅が違うと棒の左端がずれる）。
-                      震度0 未満の行は「0以下」ではなく「≦0」と書く（→ `BELOW_ZERO_SHORT_LABEL`）。
+                  {/* 幅は 2 文字の札（「5弱」「<0」）が縁の内側に収まる幅に揃える（行ごとに幅が違うと棒の左端がずれる）。
+                      震度0 未満の行は「0未満」ではなく「<0」と書く（→ `BELOW_ZERO_SHORT_LABEL`）。
                       札の形は到達一覧の震度の札と同じ（震度の色の縁・震度の色を 35% 混ぜた地・白い字） */}
                   <span
                     className="box-border text-center text-[length:var(--qk-fs)] font-extrabold leading-tight whitespace-nowrap text-white rounded-[3px] shrink-0"
-                    title={g.label === subZeroLabel ? '震度0以下' : undefined}
-                    aria-label={g.label === subZeroLabel ? '震度0以下' : undefined}
+                    title={g.label === subZeroLabel ? subZeroFullLabel : undefined}
+                    aria-label={g.label === subZeroLabel ? subZeroFullLabel : undefined}
                     style={{ width: 'calc(2.2em + 4px)', border: `2px solid ${g.color}`, background: `color-mix(in srgb, ${g.color} 35%, #141414)` }}
                   >
                     {g.label === subZeroLabel ? BELOW_ZERO_SHORT_LABEL : g.label}
@@ -1591,7 +1598,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
             {activeCount > 0
               ? `${activeCount + subZeroCount}観測点で反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
               : belowZero
-                ? `${belowZeroCount}観測点で震度0以下の反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
+                ? `${belowZeroCount}観測点で${subZeroFullLabel ?? ''}の反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
                 : `観測点の反応は収まりました${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''}`}
           </span>
           {/* 段のチップが「どの段か」を示すのに対し、この行は何がその検知を支えたかを示す。確かな段は確定した瞬間の

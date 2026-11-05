@@ -1,3 +1,4 @@
+import { quietNow } from '../services/notifyQuietWhileOpen'
 import { log } from './logger'
 import { notificationOpenQuery, parseNotificationOpen, type NotificationOpen } from './notificationOpen'
 import { emitNotificationOpen } from './notificationClick'
@@ -27,6 +28,16 @@ export function canShowBrowserNotification(): boolean {
  * 前の通知が残っていれば知らせ直さずに差し替わるだけになるが、中身の置き換え自体は伝わる。
  */
 export async function deliverBrowserNotification(title: string, options: BrowserNotificationOptions): Promise<void> {
+  // 設定「アプリを開いている間は通知しない」（→ services/notifyQuietWhileOpen.ts）。出さずに済ませる（呼び出し側は出したものとして扱う）
+  if (quietNow()) {
+    log.info(`[notify] 設定によりアプリが画面に出ている間は通知を出さない（${title}・${options.tag ?? ''}）`)
+    return
+  }
+  return deliverEvenWhileOpen(title, options)
+}
+
+/** 通知を出す本体（設定「アプリを開いている間は通知しない」を見ない）。出し方は {@link deliverBrowserNotification} */
+async function deliverEvenWhileOpen(title: string, options: BrowserNotificationOptions): Promise<void> {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
     showWithConstructor(title, options)
     return
@@ -219,4 +230,15 @@ export function showBrowserNotification(
   if (!canShowBrowserNotification()) return
   deliverBrowserNotification(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction, renotify: true, data: notificationData(open) })
     .catch((e: unknown) => log.error(`[notify] ブラウザ通知を出せませんでした（${tag}）`, e))
+}
+
+/**
+ * 設定の窓の「通知テスト」。**設定「アプリを開いている間は通知しない」によらず出す** —— 押すときはいつもアプリが画面に
+ * 出ているので、止めると押しても何も起きないボタンになる（2026-11-05 ユーザー選択「設定によらず出す (Recommended)」）。
+ * 許可の有無は呼び出し側が確かめる。例外を外へ投げない
+ */
+export function showTestBrowserNotification(title: string, body: string, tag: string): void {
+  if (!canShowBrowserNotification()) return
+  deliverEvenWhileOpen(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction: false, renotify: true, data: notificationData(null) })
+    .catch((e: unknown) => log.error(`[notify] テスト通知を出せませんでした（${tag}）`, e))
 }

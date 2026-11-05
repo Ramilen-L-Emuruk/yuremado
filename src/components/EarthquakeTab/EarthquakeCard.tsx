@@ -727,8 +727,9 @@ function QuakeCancelOverlay({ cancelText, compact, fade }: { cancelText?: string
     // 閉じた行は高さが 1 行ぶんしか無いので、縦に 3 段積むと下が切れる。「取消」を左に置き、
     // 文の 2 行を右に積む（2026-11-03 選択「案 A：横に並べる (Recommended)」）。
     // 理由が長くて収まらないときは、右の列の中でスクロールできるようにしておく。
+    // 角は丸めない（開いたカードの覆いと同じ）。行は四角いので、丸めると四隅だけ暗くならずに残る。
     return (
-      <div ref={fade ? fadeOverlayOnMount : undefined} className="absolute inset-0 flex items-center justify-center gap-3 bg-black/70 z-10 rounded-lg px-3">
+      <div ref={fade ? fadeOverlayOnMount : undefined} className="absolute inset-0 flex items-center justify-center gap-3 bg-black/70 z-10 px-3">
         <span className="flex-none font-black text-white" style={{ fontSize: '1.5rem', lineHeight: 1.1 }}>取消</span>
         <div className="flex flex-col min-w-0 max-h-full overflow-y-auto py-1">
           <span className="text-xs font-bold text-white/90">この地震情報は取り消されました</span>
@@ -739,13 +740,14 @@ function QuakeCancelOverlay({ cancelText, compact, fade }: { cancelText?: string
       </div>
     )
   }
+  // 角は丸めない。開いたカードは四角い（角丸を持たない）ので、丸めると四隅 8px だけ暗くならずに残る。
   return (
-    <div ref={fade ? fadeOverlayOnMount : undefined} className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-lg px-4">
+    <div ref={fade ? fadeOverlayOnMount : undefined} className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 px-4">
       <span className="font-black text-white" style={{ fontSize: '3rem', lineHeight: 1.1 }}>取消</span>
       <span className="text-sm font-bold text-white/90 mt-1">この地震情報は取り消されました</span>
-      {/* カードは `overflow-hidden` で、オーバーレイは `absolute inset-0`。**本文が下地の
-          高さを超えると下が切れる**（読み上げは長文を画面へ委ねる設計なので、そこで切れると
-          理由がどこにも残らない）。この要素の中でスクロールできるようにしておく。 */}
+      {/* オーバーレイは `absolute inset-0` でカードの高さに固定される。**本文がそれを超えると
+          覆いの上下へはみ出し、カードの外の行と重なる**（読み上げは長文を画面へ委ねる設計なので、
+          読めなくなると理由がどこにも残らない）。この要素の中でスクロールできるようにしておく。 */}
       {cancelText && (
         <span className="mt-2 text-center text-white/80 overflow-y-auto" style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-line', maxHeight: '40%' }}>
           {cancelText}
@@ -839,7 +841,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     // 行が上半分だけ切れて見え、崩れたように見える（2026-11-03 発言「開いた瞬間崩れる瞬間が一瞬あります。」）
     if (anim && isSelected) {
       for (const child of Array.from(el.children)) {
-        if (child instanceof HTMLElement && !child.matches('.quake-open-head, .quake-pin')) fadeIn(child, CARD_RESIZE_MS)
+        if (child instanceof HTMLElement && !child.matches('.quake-open-head, .quake-pin-track')) fadeIn(child, CARD_RESIZE_MS)
       }
     }
   }, [isSelected])
@@ -1455,7 +1457,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
         // 地（押せる所の外）を押すと、地図をこの地震の全体へ寄せ直す（2026-11-03 選択「開いたカードの地を押す
         // (Recommended)」。前の作りでは開いたカード全体が 1 つのボタンで、どこを押しても寄せ直していた）
         onClick={quake.cancelledAt ? undefined : (e) => { if (isPlainBackgroundClick(e)) onSelect?.(eventKey) }}
-        className="quake-open relative border-b border-border bg-card"
+        // `isolate`: 取消の覆い（z-10）と中で貼りつく段をこのカードの中に閉じる。閉じないと、一覧の見出しの行（z-[4]）・
+        // 日付の区切り（z-[3]）と同じ重なりで比べられ、巻いたとき覆いがその上へ被る
+        className="quake-open relative isolate border-b border-border bg-card"
         style={{ padding: '4px var(--qk-pad) 16px', fontSize: 'var(--qk-f)', boxShadow: `inset 3px 0 0 ${tileBg}` }}
       >
         {quake.cancelledAt && <QuakeCancelOverlay cancelText={quake.cancelText} compact={false} fade={fadeCancel} />}
@@ -2122,7 +2126,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       // 選んでいることは aria-current で伝える（押すと開き直すだけなので、押した状態の札にはしない）
       aria-current={selected ? 'true' : undefined}
       aria-expanded={false}
-      className={`relative block w-full border-b border-border text-left transition-colors ${quake.cancelledAt ? 'cursor-default' : 'cursor-pointer hover:bg-white/5 quake-press-row'}`}
+      // `isolate`: 取消の覆い（z-10）を行の中に閉じる（理由は開いたカードの箱と同じ）
+      className={`relative isolate block w-full border-b border-border text-left transition-colors ${quake.cancelledAt ? 'cursor-default' : 'cursor-pointer hover:bg-white/5 quake-press-row'}`}
       // 選んだまま畳んだ行は、見本 opened.html の選ばれた行（.r.sel）の形で出す
       style={{ padding: '7px var(--qk-pad)', ...(selected ? { backgroundColor: '#16191d', boxShadow: `inset 3px 0 0 ${getIntensityColor(maxScale)}` } : {}) }}
     >

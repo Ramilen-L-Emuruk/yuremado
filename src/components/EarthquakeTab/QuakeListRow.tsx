@@ -188,7 +188,10 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
         <div className="col-start-2 col-end-6 row-start-2 flex justify-end gap-1.5" style={{ fontSize: 'var(--qk-fs)' }}><span ref={chipsRef} className="contents">{chips}</span></div>
       )}
       <span data-col="time" className="col-start-2 tabular-nums text-secondary" style={{ gridRow: nameRow, fontSize: 'var(--qk-f)' }}>{time}</span>
-      <span ref={nameRef} className="col-start-3 min-w-0 overflow-hidden whitespace-nowrap font-bold text-white" style={{ gridRow: nameRow, fontSize: 'var(--qk-f)' }}>{name}</span>
+      {/* 震央地名。規模と深さを下の段へ下げても欄に入らないときは、1 行のまま末尾を「…」で省き、全文は `title` で
+          持たせる（2026-11-05 ユーザー選択「B 「…」で省く」。全文の出し方とスマホの扱いは docs/quake-tab-redesign.md の表）。
+          省いても `scrollWidth` は全文の幅のままなので、段を下げる判定は変わらない */}
+      <span ref={nameRef} title={name} className="col-start-3 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-bold text-white" style={{ gridRow: nameRow, fontSize: 'var(--qk-f)' }}>{name}</span>
       <span className="flex items-center justify-end gap-1.5 whitespace-nowrap tabular-nums" style={{ gridRow: valueRow, gridColumn: dropValues ? '3 / 5' : '4', fontSize: 'var(--qk-f)' }}>
         {magnitude && <><i className="inline-block h-[1.05em] w-1 rounded-[2px]" style={{ backgroundColor: getMagnitudeColor(magnitude.value) }} />{magnitude.text}</>}
       </span>
