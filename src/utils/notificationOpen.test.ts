@@ -9,6 +9,8 @@ describe('notificationOpenQuery / parseNotificationOpen', () => {
     { tab: 'earthquake', lpgm: '20260101161000' },
     { tab: 'earthquake', estimated: '2026-01-01T16:10:00+09:00', lat: 37.5, lon: 137.27 },
     { tab: 'earthquake', estimated: '2026-01-01T16:10:00+09:00' },
+    { tab: 'earthquake', wepa60: '2020-12-24T23:43:00.000Z', lat: 13.9, lon: 120.5 },
+    { tab: 'earthquake', wepa60: '2020-12-24T23:43:00.000Z' },
   ]
   it('正: 問い合わせの形へ直して読み戻すと同じ開き先になる（記号を含む値も）', () => {
     for (const open of cases) {

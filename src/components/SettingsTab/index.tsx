@@ -2594,10 +2594,10 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="遠地地震（規模を速報できない報）" description="チリ中部沿岸 M8を超える巨大地震 – earthquakeInfo 音 / 規模が数値で出ない第一報。日本への津波の有無は調査中">
           <TestButton color="purple" onClick={onTest.foreignQuakeHuge}>巨大地震テスト</TestButton>
         </Row>
-        <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに原文の欄が付く。英文そのものには音・読み上げ・通知が無い">
+        <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに原文の欄が付く。英文が届くと earthquakeInfo 音と通知が出て、日本語で要約を読み上げる">
           <TestButton color="purple" onClick={onTest.foreignQuakeInternationalTsunami}>国際津波関連情報テスト</TestButton>
         </Row>
-        <Row label="国内の地震と英文だけの国際津波関連情報" description="日向灘 M7.1（実データ）の震源・震度情報と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、日向灘の地震カードに原文が付く / 6 秒後に、地震情報の無い地震の英文が届き、一覧に英文だけのカード（国際津波関連情報）が出る。英文そのものには音・読み上げ・通知が無い">
+        <Row label="国内の地震と英文だけの国際津波関連情報" description="日向灘 M7.1（実データ）の震源・震度情報と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、日向灘の地震カードに原文が付く / 6 秒後に、地震情報の無い地震の英文が届き、一覧に英文だけのカード（国際津波関連情報）が出る / 9 秒後に通信試験の英文が届く。英文が届くと earthquakeInfo 音と通知が出て、日本語で要約を読み上げる">
           <TestButton color="purple" onClick={onTest.internationalTsunamiDomesticAndOnly}>英文だけテスト</TestButton>
         </Row>
         <Row label="見出しにだけある市町村" description="2024-01-01 佐渡付近の震源・震度に関する情報（実データ）で、輪島市が見出しにだけ載っている形 – earthquakeInfo 音 / 震度一覧の石川県能登の下に輪島市（震度3）が並ぶ。この市町村には観測点の行が無い">

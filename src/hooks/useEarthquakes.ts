@@ -650,8 +650,8 @@ export interface EarthquakeState {
   estimatedIntensities: readonly JMAEstimatedIntensity[]
   /**
    * 国際津波関連情報（WEPA60）。届いた報をすべて持ち、遠地地震のカードが発生時刻で引く
-   * （→ `internationalTsunamiIndex`）。**音・読み上げ・通知は無い**（2026-10-30 ユーザー選択
-   * 「受けて英文のまま出す (Recommended)」）。入れるのは `upsertInternationalTsunami` だけ。
+   * （→ `internationalTsunamiIndex`）。一覧へ新しく足せた報は `onLiveEvent` へも流し、読み上げ・通知・音で伝える
+   * （2026-11-06 ユーザー選択「読み上げ・通知・音をまとめて足す」）。入れるのは `upsertInternationalTsunami` だけ。
    * 発表は年に数通（通信試験を含む）なので件数に上限は置かない。
    */
   internationalTsunamis: readonly JMAInternationalTsunami[]
@@ -2548,8 +2548,14 @@ export function useEarthquakes(
             recordSkippedTelegram({ kind: 'estimatedIntensity', data: ei }, applied ? 'silentReplayInit' : 'notApplied')
           }
         } else if (payload.kind === 'internationalTsunami') {
-          // 画面（遠地地震のカード）へ足すだけ。`onLiveEvent` へは流さない（音・読み上げ・通知が無い）
-          applyInternationalTsunami(payload.data)
+          // 一覧へ新しく足せた報だけ `onLiveEvent` へ流す（読み上げ・通知・音はその先）。同じ報の 2 度目は流さない
+          const intl = payload.data
+          const applied = applyInternationalTsunami(intl)
+          if (applied && !silent) {
+            onLiveEventRef.current?.({ kind: 'internationalTsunami', data: intl })
+          } else {
+            recordSkippedTelegram({ kind: 'internationalTsunami', data: intl }, applied ? 'silentReplayInit' : 'notApplied')
+          }
         } else if (payload.kind === 'logOnly') {
           // 電文ログへは上で積んだ。画面へは何も流さない（取り込まない電文・読めなかった電文の行）
         } else {
@@ -3074,7 +3080,7 @@ export function useEarthquakes(
                 recordSkippedTelegram({ kind: 'estimatedIntensity', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
                 break
               }
-              // 国際津波関連情報は遠地地震のカードに添えるもの。カードと同じく履歴から足す（音などは元から無い）
+              // 国際津波関連情報は地震カードに添えるもの。カードと同じく履歴から黙って足す（履歴は読み上げない）
               case 'internationalTsunami':
                 tryApplyExtra('国際津波関連情報', p.data, applyInternationalTsunami)
                 break
@@ -3255,8 +3261,13 @@ export function useEarthquakes(
           recordSkippedTelegram({ kind: 'estimatedIntensity', data: ei }, 'notApplied')
         }
       } else if (ev.kind === 'internationalTsunami') {
-        // 画面へ足すだけ（`onLiveEvent` へは流さない。音・読み上げ・通知が無い）
-        applyInternationalTsunami(ev.data)
+        // 一覧へ新しく足せた報だけ `onLiveEvent` へ流す。ライブと取り戻しで同じ報を 2 度受けても、読み上げ・通知は 1 回
+        const intl = ev.data
+        if (applyInternationalTsunami(intl)) {
+          onLiveEventRef.current?.({ kind: 'internationalTsunami', data: intl })
+        } else {
+          recordSkippedTelegram({ kind: 'internationalTsunami', data: intl }, 'notApplied')
+        }
       } else {
         const data = ev.data
         if (data.kind === 'eew' && keyForecastLive && !relayNamesForecast) {

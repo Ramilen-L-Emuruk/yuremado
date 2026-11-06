@@ -484,19 +484,23 @@ describe('遠地地震テスト・巨大地震テスト', () => {
   })
 
   // 英文だけテスト（2026-11-03 ユーザー選択「別の行を足す (Recommended)」）: 国内の地震に付く英文と、付くカードの無い英文
-  it('英文だけテストは日向灘の地震に付く英文と、どのカードにも付かない英文を流す', async () => {
+  it('英文だけテストは日向灘の地震に付く英文と、どのカードにも付かない英文と、通信試験を流す', async () => {
     const built = await build(scripts.INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY)
     const [quake] = quakesOf(built)
     const bulletins = payloads(built).flatMap(p => (p.kind === 'internationalTsunami' ? [p.data] : []))
     expect(quake.issue.type).not.toBe('遠地地震')
-    expect(bulletins).toHaveLength(2)
-    const [hyuganada, mindanao] = bulletins
+    expect(bulletins).toHaveLength(3)
+    const [hyuganada, mindanao, commTest] = bulletins
     const index = internationalTsunamiIndex([quake], bulletins)
     expect(index.byQuakeKey.get(quakeEventKey(quake))).toEqual([hyuganada])
-    expect(hyuganada).toMatchObject({ regionName: 'KYUSHU, JAPAN', magnitude: 7.1, magnitudeType: 'Mj' })
+    expect(hyuganada).toMatchObject({ regionName: 'KYUSHU, JAPAN', magnitude: 7.1, magnitudeType: 'Mj', evaluation: 'verySmall' })
     const cards = index.cards
     expect(cards).toHaveLength(1)
-    expect(cards[0].earthquake.hypocenter).toMatchObject({ name: 'MINDANAO, PHILIPPINES', magnitude: 6.9, depth: 30 })
+    // 深さは 100 km 以深の地震にだけ書かれる（気象庁 技術情報 第522号 別紙1（4））ので、30 km の地震の英文には無い
+    expect(cards[0].earthquake.hypocenter).toMatchObject({ name: 'MINDANAO, PHILIPPINES', magnitude: 6.9, depth: -1 })
+    // 通信試験はどのカードにも付かず、読み上げ・通知・音だけが出る
+    expect(commTest).toMatchObject({ isCommunicationsTest: true, title: 'NWPTA COMMUNICATIONS TEST' })
+    expect(index.unattached).not.toContain(commTest)
     // 押した時刻より未来の地震にならない（台本は日向灘を「いま」に合わせる）
     expect(Date.parse(mindanao.originTime!)).toBeLessThan(Date.parse(quake.earthquake.time))
   })

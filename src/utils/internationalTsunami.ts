@@ -112,6 +112,49 @@ function buildIndex(quakes: readonly JMAQuake[], list: readonly JMAInternational
   return { byQuakeKey: stable, cards, unattached }
 }
 
+/** 英文だけのカードの鍵（`quakeEventKey`）。同じ発生時刻（分）の報は 1 枚にまとまる（→ {@link cardFrom}） */
+export function internationalTsunamiCardKey(originTime: string): string {
+  return `wepa60-quake-${originTime}`
+}
+
+/**
+ * 通知を押したときの開き先（英文の発生時刻と震央）が指す地震カードの鍵。通知は中継からも届き、中継は地震カードを持たないので、
+ * 開く側が画面と同じ選び方（{@link bestQuakeFor}）で引き直す。付く地震カードが無ければ英文だけのカードの鍵
+ */
+export function internationalTsunamiOpenKey(quakes: readonly JMAQuake[], originTime: string, lat?: number, lon?: number): string {
+  const probe = {
+    id: '', title: '', time: originTime, originTime, isCommunicationsTest: false, text: '',
+    ...(lat !== undefined && lon !== undefined && { epicenter: { latitude: lat, longitude: lon } }),
+  } satisfies JMAInternationalTsunami
+  return internationalTsunamiTarget(quakes, probe)?.key ?? internationalTsunamiCardKey(originTime)
+}
+
+/**
+ * 英文の報が付く地震カードの、日本語の震源名（読み上げと通知で震源を言うのに使う）。付く先は画面と同じ選び方（{@link bestQuakeFor}）。
+ * 付く地震カードが無い・震源名が空・取り消されたカードなら undefined（読み上げは電文の座標で言う）
+ */
+export function internationalTsunamiQuakeName(quakes: readonly JMAQuake[], x: JMAInternationalTsunami): string | undefined {
+  return internationalTsunamiTarget(quakes, x)?.quakeName
+}
+
+/**
+ * 英文の報を受けたときに選ぶ地震カードの鍵と、その日本語の震源名。付く地震カードがあればそのカード（画面と同じ選び方）、
+ * 無ければ英文だけのカード（{@link internationalTsunamiCardKey}）。通信試験と発生時刻を読めない報はどのカードにも付かないので null
+ */
+export function internationalTsunamiTarget(
+  quakes: readonly JMAQuake[], x: JMAInternationalTsunami,
+): { key: string; quakeName?: string; cancelled?: true } | null {
+  if (x.isCommunicationsTest || x.originTime === undefined) return null
+  // 候補は画面の結び付け（`buildIndex`）と同じく、取り消されたカードも含める。外すと、画面が取り消されたカードに英文を付けているのに
+  // 選ぶ側は英文だけのカード（画面に無い）を指し、選択も通知の開き先も空振りする
+  const best = bestQuakeFor(x, quakes.filter(q => !q.fromInternationalTsunami))
+  if (!best) return { key: internationalTsunamiCardKey(x.originTime) }
+  // 取り消されたカードの震源名は言わない（取り消された報の地名を事実として読まない。座標で言う側へ倒す）
+  if (best.cancelledAt) return { key: quakeEventKey(best), cancelled: true }
+  const name = best.earthquake.hypocenter.name.trim()
+  return { key: quakeEventKey(best), ...(name && { quakeName: name }) }
+}
+
 /** 報を付けるカード（→ {@link internationalTsunamiIndex} の選び方）。付けられるカードが無ければ null */
 function bestQuakeFor(x: JMAInternationalTsunami, quakes: readonly JMAQuake[]): JMAQuake | null {
   const ms = originMsOf(x)
@@ -183,7 +226,7 @@ function cardFrom(latest: JMAInternationalTsunami): JMAQuake {
   const cached = cardCache.get(latest)
   if (cached) return cached
   const originTime = latest.originTime!
-  const key = `wepa60-quake-${originTime}`
+  const key = internationalTsunamiCardKey(originTime)
   const card = {
     kind: 'quake',
     id: key,
