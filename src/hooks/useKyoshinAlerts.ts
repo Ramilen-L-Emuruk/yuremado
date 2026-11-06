@@ -12,8 +12,9 @@ import { hasKnownEpicenter, haversineKm } from '../utils/geo'
 import { log } from '../utils/logger'
 import { reachRadiusKm } from '../utils/travelTime'
 import { eewFeltRadiusKm, isProvisionalHypocenter } from '../utils/eew'
+import { isBundleTiedToEew } from '../utils/eewSpreadHold'
 import type { ConfirmedShock, DetectedPoint } from '../utils/kyoshinDetectionView'
-import { dominantRegionName, kyoshinDetectSpeechText, kyoshinOtherRegionSpeechText, type RegionPoint } from '../utils/kyoshinRegionName'
+import { dominantRegionName, dominantRegionPeak, kyoshinDetectSpeechText, kyoshinOtherRegionSpeechText, type RegionPoint } from '../utils/kyoshinRegionName'
 import { getSubRegionsCache, loadSubRegions, type SubRegion } from '../utils/subregions'
 import { notificationAllowed } from '../utils/notificationGate'
 
@@ -461,10 +462,80 @@ export interface AlertRegionState {
   outbreakAtMs: number | null
   /** 直前に取り込んだフレームのデータ時刻。巻き戻り（リプレイの開始・やり直し）の検出に使う。 */
   lastNowMs: number | null
+  /**
+   * この検知エピソードで、もう「別の地点」として鳴らさない検知の束（`AlertShockInput.bundle.id`）。
+   * 最初の検知音で知らせた束・別の地点として知らせた束・速報に含めた束が入る（2026-11-06 ユーザー選択
+   * 「揺れの束ごとに覚える (Recommended)」）。
+   *
+   * **地域の印（`fired`・`absorbedByEew`）だけでは足りない。** 速報が出ている間は遠い揺れも速報の半径で同じ地域へ
+   * 束ねるが、解除されると束ねる距離が縮み（`isSameEarthquake`）、同じ束の揺れが新しい地域として数え直されて
+   * 「〜でも揺れを検知」が鳴った（2026-10-25 11:17:45 東京都２３区・2026-11-01 07:21:22 釧路地方中南部の動画、
+   * 能登 2024-01-01 16:15:38・16:15:43 の流し直し）。束は同じ揺れの間は変わらないので、束で覚えれば数え直さない。
+   */
+  knownBundleIds: Set<string>
+  /** 知らせ済みの束で別地点を見送ったことを記録した束（記録を束ごとに 1 回にするため。エピソードの終わりで忘れる） */
+  loggedKnownSkips: Set<string>
 }
 
 export function createAlertRegionState(): AlertRegionState {
-  return { regions: [], lastNewRegionAtMs: null, anyConfirmedPrev: false, outbreakAtMs: null, lastNowMs: null }
+  return { regions: [], lastNewRegionAtMs: null, anyConfirmedPrev: false, outbreakAtMs: null, lastNowMs: null, knownBundleIds: new Set(), loggedKnownSkips: new Set() }
+}
+
+/**
+ * 確かな段の立ち上がりで検知音（と通知）を出すか。出すなら、その揺れが走時で結べる発表中の速報を `sounded` へ覚える。
+ *
+ * **揺れがどれも、検知音を鳴らし済みの速報に走時で結べるなら出さない**（2026-11-06 ユーザー選択「結べる束なら鳴らさない
+ * (Recommended)」）。遠い地震では P 波の束と S 波の束の間で確かな段がいったん切れ、S 波の束で立ち直したときに
+ * 同じ地震で 2 回目の検知音が鳴っていた（2026-11-04 01:48 硫黄島近海: 01:50:46 の P 波の束が 01:53:01 に消え、
+ * 01:53:14 に S 波の束で立ち直した）。
+ *
+ * - 結べない揺れが 1 つでもあれば出す（別の地震かもしれない）
+ * - 発表を終えた速報の鍵は捨てる（同じ鍵の速報が後で出直したら、改めて鳴らす）
+ * - 揺れが無い・束を持たない揺れは出す側へ倒す
+ * - 結べた速報を覚えるのは、音か通知を実際に出すとき（`announce`）だけ。どちらも切れている間に覚えると、
+ *   途中で音を入れたときに、まだ一度も鳴らしていない速報の立ち直しが黙る
+ */
+export function shouldSoundConfirmedStart(
+  sounded: Set<string>,
+  shocks: readonly AlertShockInput[],
+  activeEEWs: ReadonlyMap<string, EEWAlert>,
+  announce: boolean,
+): boolean {
+  for (const k of [...sounded]) if (!activeEEWs.has(k)) sounded.delete(k)
+  const tiedKeysOf = (s: AlertShockInput): string[] => {
+    const b = s.bundle
+    if (!b) return []
+    return [...activeEEWs].filter(([, eew]) => isBundleTiedToEew(b.startedAtMs, b.epicenter, eew)).map(([k]) => k)
+  }
+  const tied = shocks.map(tiedKeysOf)
+  if (shocks.length > 0 && tied.every((keys) => keys.some((k) => sounded.has(k)))) {
+    log.info(`[kyoshin] 検知音を鳴らし済みの緊急地震速報に走時で結べる揺れで確かな段が立ち直したため、検知音とブラウザ通知は省略（束 ${shocks.map((s) => s.bundle?.id).join(',')}・速報 ${[...new Set(tied.flat())].join(',')}）`)
+    return false
+  }
+  if (announce) for (const keys of tied) for (const k of keys) sounded.add(k)
+  return true
+}
+
+/**
+ * 有感の半径の外の地域を、束が走時で結べた速報の揺れに含める。束・結べた速報・S 波の到達の見込みとの差を記録に残す
+ * （走時の窓の中で別の地震が始まったときも黙るので、後から「なぜ鳴らなかったか」を追えるようにする）。
+ */
+function markAbsorbedByTie(region: AlertRegion, shock: AlertShockInput, activeEEWs: ReadonlyMap<string, EEWAlert>): void {
+  if (region.absorbedByEew) return
+  region.absorbedByEew = true
+  const b = shock.bundle
+  const keys = b ? [...activeEEWs].filter(([, eew]) => isBundleTiedToEew(b.startedAtMs, b.epicenter, eew)).map(([k]) => k) : []
+  log.info(`[kyoshin] 揺れ検知の地域を、走時で結べた緊急地震速報の揺れに含めた（別の地点としては知らせない）: ${region.lat.toFixed(2)},${region.lng.toFixed(2)}・束 ${b?.id}・束の始まり ${b ? new Date(b.startedAtMs).toISOString() : '?'}・速報 ${keys.join(',')}`)
+}
+
+/** 発表中の速報のどれかに、その揺れの束が走時で結べるか（→ `isBundleTiedToEew`）。束を持たない揺れは結ばない */
+function isTiedToAnyEew(shock: AlertShockInput, activeEEWs: ReadonlyMap<string, EEWAlert>): boolean {
+  const b = shock.bundle
+  if (!b) return false
+  for (const eew of activeEEWs.values()) {
+    if (isBundleTiedToEew(b.startedAtMs, b.epicenter, eew)) return true
+  }
+  return false
 }
 
 /** `stepAlertRegions` が取り込む確定地域 1 件の形（`ConfirmedShock` はこれを満たす）。 */
@@ -473,6 +544,11 @@ export interface AlertShockInput {
   lng: number
   index: number
   peak?: { lat: number; lng: number }
+  /**
+   * もとの検知の束（`ConfirmedShock.bundle`）。アプリの経路（`ConfirmedShock`）では必ず持つ。
+   * 持たない揺れは、束で覚えること（`knownBundleIds`）と速報へ走時で結ぶこと（`isTiedToAnyEew`）をしない。
+   */
+  bundle?: { id: string; startedAtMs: number; epicenter: { lat: number; lng: number } }
 }
 
 /** 別地点として発報すべき地域。通知の「最大リアルタイム震度」はこの地域の値を使う（全体の最大ではない）。 */
@@ -499,6 +575,8 @@ function resetEpisode(state: AlertRegionState): void {
   state.regions = []
   state.outbreakAtMs = null
   state.lastNewRegionAtMs = null
+  state.knownBundleIds.clear()
+  state.loggedKnownSkips.clear()
 }
 
 /**
@@ -558,6 +636,8 @@ export function stepAlertRegions<S extends AlertShockInput>(
   const frameStartPos = new Map(state.regions.map((r) => [r, { lat: r.lat, lng: r.lng }]))
 
   let alert: NewRegionAlert<S> | null = null
+  /** このフレームで別の地点として知らせた地域（その束を覚えるため） */
+  let firedThisFrame: AlertRegion | null = null
   for (const s of shocks) {
     let reg: AlertRegion | null = null
     let bestDist = Infinity
@@ -571,19 +651,31 @@ export function stepAlertRegions<S extends AlertShockInput>(
       const d = haversineKm(s.lat, s.lng, lat, lng)
       if (d < bestDist) { bestDist = d; reg = r }
     }
+    // もう鳴らさない束か（最初の検知音・別の地点として知らせた束、速報に含めた束）。速報が解除されて
+    // 束ねる距離が縮んでも、同じ束の揺れは数え直さない（→ `knownBundleIds`）
+    const knownBundle = s.bundle !== undefined && state.knownBundleIds.has(s.bundle.id)
+    let createdInitial = false
     if (!reg) {
       // 初検知フレームで生成された地域は初検知エフェクトが鳴らすため fired=true にして抑制する。
+      // 知らせ済み・速報に含めた束の揺れが新しい地域になったときも、知らせ済みの地震の場所なので fired=true にする。
+      // その場所で後から始まった別の束は、別の地点ではなく「同じ場所の 2 つ目」が受け持つ（一度知らせた地域は二度鳴らない）
       const created: AlertRegion = {
-        lat: s.lat, lng: s.lng, fired: !state.anyConfirmedPrev, lastSeenAtMs: nowMs,
+        lat: s.lat, lng: s.lng, fired: !state.anyConfirmedPrev || knownBundle, lastSeenAtMs: nowMs,
         firstSeenAtMs: nowMs,
         absorbedByEew: false,
       }
+      if (knownBundle && state.anyConfirmedPrev) {
+        log.info(`[kyoshin] 知らせ済み・速報に含めた束の揺れが新しい地域になったが、別の地点としては知らせない: 束 ${s.bundle?.id}・${s.lat.toFixed(2)},${s.lng.toFixed(2)}`)
+      }
       if (isRegionWithinAnyEew(created, nowMs, activeEEWs)) markAbsorbedByEew(created)
+      else if (isTiedToAnyEew(s, activeEEWs)) markAbsorbedByTie(created, s, activeEEWs)
       state.regions.push(created)
       // 同じフレームの後続の確定点も、この地域を「フレーム開始時の位置」として扱えるようにする
       // （登録しないと、直前の点で動いた後の座標と比較され処理順に依存する）。
       frameStartPos.set(created, { lat: created.lat, lng: created.lng })
       if (state.outbreakAtMs == null) state.outbreakAtMs = created.firstSeenAtMs
+      createdInitial = !state.anyConfirmedPrev
+      reg = created
     } else {
       reg.lat = s.lat
       reg.lng = s.lng
@@ -595,15 +687,35 @@ export function stepAlertRegions<S extends AlertShockInput>(
       ) {
         // 座標を更新した後の位置で EEW の範囲をもう一度見る。地域の代表点は毎フレーム動くため、
         // フレーム冒頭の一括判定は 1 フレーム前の位置に対する結果になっている。
+        // 半径の外でも、束が速報に走時で結べれば同じ地震の揺れとして含める（速報の規模・深さが実際より小さいと
+        // 半径が揺れの届く範囲を覆わない。2026-11-04 硫黄島近海: 半径 417 km に対し愛知県東部の束は 1,071 km）
         if (isRegionWithinAnyEew(reg, nowMs, activeEEWs)) {
           markAbsorbedByEew(reg)
+        } else if (isTiedToAnyEew(s, activeEEWs)) {
+          markAbsorbedByTie(reg, s, activeEEWs)
+        } else if (knownBundle) {
+          // 知らせ済み・速報に含めた束が、まだ知らせていない地域に入った。この束では鳴らさない。
+          // 地域には印を立てない（立てると、同じ地域に照合された知らない束まで処理順しだいで黙る）。記録は束ごとに 1 回
+          if (s.bundle && !state.loggedKnownSkips.has(s.bundle.id)) {
+            state.loggedKnownSkips.add(s.bundle.id)
+            log.info(`[kyoshin] 知らせ済み・速報に含めた束が別の地域に入ったが、この束では別の地点として知らせない: 束 ${s.bundle.id}・${reg.lat.toFixed(2)},${reg.lng.toFixed(2)}`)
+          }
         } else {
           reg.fired = true
           state.lastNewRegionAtMs = nowMs
           alert = { shock: s, lat: s.lat, lng: s.lng, index: s.index, peak: s.peak }
+          firedThisFrame = reg
         }
       }
     }
+    // 束を覚えるのは、その束で地域が知らされた・速報に含められたときと、速報の発表中に知らせた地域・含めた地域へ入ったとき
+    // （速報の間は、地域どうしを速報の半径で束ねているので、そこへ入った束は速報の地震の揺れとみてよい）。
+    // 速報が解除された後に、知らせ済みの地域へ照合されただけの束は覚えない（覚えると、照合の距離の内で後から
+    // 始まった別の地震の束まで、検知が続く間ずっと黙らせる）
+    if (s.bundle && (
+      createdInitial || reg === firedThisFrame
+      || ((reg.absorbedByEew || reg.fired) && activeEEWs.size > 0)
+    )) state.knownBundleIds.add(s.bundle.id)
   }
 
   state.regions = state.regions.filter((r) => nowMs - r.lastSeenAtMs <= REGION_PRUNE_MS)
@@ -870,6 +982,8 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
   const notifiedLevelRef = useRef(-1)
   /** 途絶に入る直前に確定していた検知地点（復帰後との照合用）。 */
   const shocksBeforeStallRef = useRef<readonly ConfirmedShock[]>([])
+  /** 確かな段の立ち上がりで検知音を鳴らした揺れが走時で結べた、発表中の速報の鍵（→ `shouldSoundConfirmedStart`） */
+  const soundedEewKeysRef = useRef(new Set<string>())
   useEffect(() => {
     if (confirmed && !prevConfirmedRef.current) {
       const resumed = lostWhileStalledRef.current
@@ -888,10 +1002,16 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
         // 新しい揺れは、通知を出すかによらず段の記憶を戻してから始める（前の揺れの段が残ると、後から通知を
         // 入れたときに強まりの書き換えだけが出る）
         notifiedLevelRef.current = -1
-        if (settings.soundEnabled) {
+        // 発表中の速報で検知音を鳴らし済みで、立ち直した揺れがどれもその速報に走時で結べるなら、同じ地震の続き
+        // （遠い地震の P 波の束と S 波の束の間で確かな段がいったん切れる）。音と通知を省く（→ `shouldSoundConfirmedStart`）
+        const sound = shouldSoundConfirmedStart(
+          soundedEewKeysRef.current, confirmedShocksRef.current, activeEEWsRef.current,
+          settings.soundEnabled || notificationAllowed(settings, 'detection'),
+        )
+        if (sound && settings.soundEnabled) {
           playAlertSound('kyoshin')
         }
-        if (notificationAllowed(settings, 'detection')) {
+        if (sound && notificationAllowed(settings, 'detection')) {
           const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
           // 呼び名は「最大リアルタイム震度」（2026-10-31 ユーザー承認「折り返したりが起きないなら最大リアルタイム震度がいいですね」）。強まったとき・別地点の通知も同じ
           showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}`, 'kyoshin-detection', false, OPEN_REALTIME)
@@ -1073,9 +1193,15 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     // 後に定義されており、React は同じ flush の中で定義順に走らせるため、App 側の state には
     // 最後の要求だけが残る）。それでよい——別地点は「別の場所でも揺れている」ことをフル音量で
     // 知らせる報せで、同じ地震の強まりより見せる価値が高い。
+    //
+    // 読み上げる区域（「〇〇でも揺れを検知。」）の中で最も強い点へ寄せる（2026-11-06 ユーザー選択「寄せ先を読む区域に
+    // そろえる (Recommended)」）。揺れ全体の最も強い点は、広がった揺れでは読んだ区域と別の場所になる
+    // （2026-10-25: 「東京都２３区でも」と読んだ揺れの最も強い点は日高地方西部）。区域の境界データをまだ読み終えて
+    // いなければ、揺れ全体の最も強い点へ落とす（読み上げは読み終えるのを待つが、寄せは待たない）
+    const regionPeak = dominantRegionPeak(alert.shock.points, getSubRegionsCache())
     // ピークが無いのは、`ConfirmedShock` を作らない経路から `stepAlertRegions` を呼んだ場合だけ
     // （現状の実装には無い）。寄らずに黙って終わるより、旧来どおり重心へ落とす方が害が小さい。
-    requestShakeFocus(alert.peak ?? { lat: alert.lat, lng: alert.lng })
+    requestShakeFocus(regionPeak ?? alert.peak ?? { lat: alert.lat, lng: alert.lng })
     if (settings.soundEnabled) playAlertSound('kyoshin')
     if (notificationAllowed(settings, 'detection')) {
       // 全体の最大震度ではなく、発報した地域自身の推定震度を出す（「別の地点」の報せなので）
@@ -1199,6 +1325,8 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     regionStateRef.current = createAlertRegionState()
     // 別地点として鳴らしたフレームの時刻も落とす（巻き戻した先の同じ時刻で、2 つ目の合図を誤って抑えない）
     regionFiredAtRef.current = null
+    // 検知音を鳴らし済みの速報の鍵も落とす（同じ速報を再生し直したとき、立ち上がりの検知音を省かない）
+    soundedEewKeysRef.current.clear()
     // 境界データを待っている読み上げと、積んだまま予約していない読み上げは、旧い時間軸の揺れなので読まない
     speechGenRef.current++
     pendingSpeechesRef.current = []

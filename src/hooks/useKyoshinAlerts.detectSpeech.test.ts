@@ -20,6 +20,7 @@ import type { TabId } from '../components/IconNav'
 import type { SubRegion } from '../utils/subregions'
 import type { ConfirmedShock, DetectedPoint } from '../utils/kyoshinDetectionView'
 import { log } from '../utils/logger'
+import { testBundle } from '../test-utils/alertBundle'
 
 vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
@@ -41,7 +42,7 @@ vi.mock('../utils/subregions', async (orig) => {
   return { ...actual, getSubRegionsCache: () => loaded, loadSubRegions: () => loadImpl() }
 })
 
-const NOTO = { lat: 37.5, lng: 137.5, index: 11, peak: { lat: 37.5, lng: 137.5 }, points: [] }
+const NOTO = { lat: 37.5, lng: 137.5, index: 11, peak: { lat: 37.5, lng: 137.5 }, points: [], bundle: testBundle(37.5, 137.5) }
 const POINTS: DetectedPoint[] = [
   { key: 'a', lat: 37.5, lng: 137.5, index: 11 } as DetectedPoint,
   { key: 'b', lat: 37.6, lng: 137.6, index: 9 } as DetectedPoint,
@@ -120,12 +121,12 @@ const CONFIRMED = { confirmed: true, confirmedShocks: [NOTO] }
 /** 能登（37.5, 137.5）から約 775km 離れた福岡の揺れ。点は福岡テスト区域に入る */
 const FUKUOKA = {
   lat: 33.6, lng: 130.4, index: 9, peak: { lat: 33.6, lng: 130.4 },
-  points: [{ key: 'f', lat: 33.6, lng: 130.4, index: 9 } as DetectedPoint],
+  points: [{ key: 'f', lat: 33.6, lng: 130.4, index: 9 } as DetectedPoint], bundle: testBundle(33.6, 130.4),
 }
 /** 能登から真南へ約 400km の揺れ */
-const SOUTH_400 = { lat: 33.9, lng: 137.5, index: 9, peak: { lat: 33.9, lng: 137.5 }, points: [] }
+const SOUTH_400 = { lat: 33.9, lng: 137.5, index: 9, peak: { lat: 33.9, lng: 137.5 }, points: [], bundle: testBundle(33.9, 137.5) }
 /** 能登から真南へ約 200km の揺れ（下限 300km の内側） */
-const SOUTH_200 = { lat: 35.7, lng: 137.5, index: 9, peak: { lat: 35.7, lng: 137.5 }, points: [] }
+const SOUTH_200 = { lat: 35.7, lng: 137.5, index: 9, peak: { lat: 35.7, lng: 137.5 }, points: [], bundle: testBundle(35.7, 137.5) }
 
 describe('useKyoshinAlerts: 揺れ検知の読み上げ', () => {
   beforeEach(() => {
@@ -320,7 +321,7 @@ describe('useKyoshinAlerts: 揺れ検知の読み上げと緊急地震速報の 
   // 能登の週の控え（01-01 16:32:54）の形: 震源が仮の速報の発生 9 秒、揺れの重心は震源から約 120km だが、
   // 最も強い点は震源のそば（2026-11-05 ユーザー選択「最も強い点でも判定する (Recommended)」）
   const spreadShock = (peakLat: number): ConfirmedShock =>
-    ({ lat: 36.42, lng: 137.2, index: 9, peak: { lat: peakLat, lng: 137.2 }, points: [] })
+    ({ lat: 36.42, lng: 137.2, index: 9, peak: { lat: peakLat, lng: 137.2 }, points: [], bundle: testBundle(36.42, 137.2) })
 
   it('[正] 重心が P 波の円の外でも、最も強い点に届いていれば読まない（仮定震源・発生 9 秒）', () => {
     expect(haversineKm(37.5, 137.2, 36.42, 137.2)).toBeGreaterThan(115)
@@ -497,5 +498,46 @@ describe('useKyoshinAlerts: 別の地点の揺れ検知の読み上げ', () => {
     const eews = { current: new Map([['e1', eewAt(37.5, 137.5)]]) }
     const speak = drive(...framesOtherRegion({ activeEEWsRef: eews }))
     expect(speak.mock.calls.map((c) => c[0])).toEqual(['福岡テスト区域でも揺れを検知。'])
+  })
+})
+
+// 別の地点の寄せ先は、読み上げる区域の中で最も強い点（2026-11-06 ユーザー選択「寄せ先を読む区域にそろえる (Recommended)」）
+describe('useKyoshinAlerts: 別の地点の寄せ先', () => {
+  const t = (sec: number) => new Date(Date.parse(AT) + sec * 1000).toISOString()
+  /** 福岡テスト区域の 2 点（段 9・10）と、能登テスト区域の強い 1 点（段 15）を持つ揺れ。読む区域は福岡（重み 10.5 対 8） */
+  const WIDE = {
+    lat: 33.6, lng: 130.4, index: 15, peak: { lat: 37.2, lng: 137.2 },
+    points: [
+      { key: 'w1', lat: 33.5, lng: 130.5, index: 9 } as DetectedPoint,
+      { key: 'w2', lat: 33.6, lng: 130.6, index: 10 } as DetectedPoint,
+      { key: 'w3', lat: 37.2, lng: 137.2, index: 15 } as DetectedPoint,
+    ],
+    bundle: testBundle(33.6, 130.4),
+  }
+  function runOther() {
+    const focus = vi.fn()
+    const speak = vi.fn()
+    const { rerender } = renderHook((p: KyoshinAlertsDeps) => useKyoshinAlerts(p), {
+      initialProps: makeDeps({ onShakeFocus: focus, speakDetection: speak }),
+    })
+    rerender(makeDeps({ ...CONFIRMED, dataTime: t(0), onShakeFocus: focus, speakDetection: speak }))
+    for (const sec of [1, 3]) rerender(makeDeps({ confirmed: true, confirmedShocks: [NOTO, WIDE], dataTime: t(sec), onShakeFocus: focus, speakDetection: speak }))
+    return { focus, speak }
+  }
+
+  it('[正] 揺れ全体の最も強い点（能登の段 15）ではなく、読む区域（福岡）の中で最も強い点へ寄せる', () => {
+    const { focus, speak } = runOther()
+    expect(speak.mock.calls.map((c) => c[0])).toContain('福岡テスト区域でも揺れを検知。')
+    expect(focus).toHaveBeenLastCalledWith({ lat: 33.6, lng: 130.6 })
+  })
+
+  it('[安全弁] 区域の境界データをまだ読み終えていなければ、揺れ全体の最も強い点へ寄せる', () => {
+    loaded = null
+    try {
+      const { focus } = runOther()
+      expect(focus).toHaveBeenLastCalledWith({ lat: 37.2, lng: 137.2 })
+    } finally {
+      loaded = SUBREGIONS
+    }
   })
 })

@@ -16,6 +16,7 @@ import { DEFAULTS } from './useSettings'
 import type { AlertTitleApi } from './useAlertTitle'
 import type { EEWAlert } from '../types/earthquake'
 import type { TabId } from '../components/IconNav'
+import { testBundle } from '../test-utils/alertBundle'
 
 // 音の実体だけ差し替える。kyoshinLevel（震度→音レベルの境界）は本物を使う——レベルの上がり方が
 // 発火の条件そのものなので、ここを模擬すると何も検証しないテストになる。
@@ -30,8 +31,8 @@ vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
 // **重心（lat/lng）とピーク（peak）を意図的に離して置く。** 寄り先はピーク側でなければならない
 // ——重心はメンバーの平均で、広域に広がったイベントでは最も強く揺れている点から数十〜百数十 km
 // ずれる（2024-01-01 16:08 能登の再生で実測: 約 140km）。
-const NOTO = { lat: 37.5, lng: 137.0, index: 20, peak: { lat: 37.45, lng: 137.15 }, points: [] }
-const FUKUOKA = { lat: 33.6, lng: 130.4, index: 12, peak: { lat: 33.58, lng: 130.35 }, points: [] }
+const NOTO = { lat: 37.5, lng: 137.0, index: 20, peak: { lat: 37.45, lng: 137.15 }, points: [], bundle: testBundle(37.5, 137.0) }
+const FUKUOKA = { lat: 33.6, lng: 130.4, index: 12, peak: { lat: 33.58, lng: 130.35 }, points: [], bundle: testBundle(33.6, 130.4) }
 
 function makeDeps(over: Partial<KyoshinAlertsDeps> = {}): KyoshinAlertsDeps {
   return {

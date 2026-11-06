@@ -273,7 +273,7 @@ FAQ の文面から読んだ整理**である。
 
 ### 5. 揺れ検知の動的距離閾値
 
-- **実装**: [`useKyoshinAlerts.ts:246`](../src/hooks/useKyoshinAlerts.ts:246) `thresholdFromOrigin`
+- **実装**: [`useKyoshinAlerts.ts:250`](../src/hooks/useKyoshinAlerts.ts:250) `thresholdFromOrigin`
 
 強震モニタ（全国の観測点の揺れをリアルタイムに配信する仕組み）で揺れを検知したとき、
 それを「同じ地震の伝播」とみなすか「別の場所で起きた地震」とみなすかの距離のしきい値。
@@ -284,10 +284,14 @@ FAQ の文面から読んだ整理**である。
 
 緊急地震速報が無い場合は、震源の深さを 15km と仮置きし、**S 波**の到達半径で近似する（上限 800km）。
 起点の時刻には、その地域が最初に揺れを検知した時刻ではなく、**いま観測されている地震全体で最も古い
-検知時刻**を使うことがある（[`useKyoshinAlerts.ts:262`](../src/hooks/useKyoshinAlerts.ts:262) `pickOutbreakOrigin`）。
+検知時刻**を使うことがある（[`useKyoshinAlerts.ts:266`](../src/hooks/useKyoshinAlerts.ts:266) `pickOutbreakOrigin`）。
 遠い地域ほど揺れ始めが遅く、自分の検知時刻を起点にすると経過時間が短く見積もられるため。
 
-> 同じ計算をする `dynamicRegionThresholdKm`（同ファイル 233 行）もあるが、こちらは
+緊急地震速報の有感の半径の外でも、揺れ検知の束の始まりが、その速報の震源から束の最初の点までの P 波の到達の 30 秒前〜S 波の到達の 90 秒後に入れば、
+同じ地震の揺れとみなす（[`eewSpreadHold.ts`](../src/utils/eewSpreadHold.ts) `isBundleTiedToEew`。4 の広がり待ちと同じ走時の計算）。
+同じ判定で、確かな段の立ち直しの検知音も省く。どちらも**画面には出ない**（利用者に見えるのは、音と通知が出るかどうかだけ）。
+
+> 同じ計算をする `dynamicRegionThresholdKm`（同ファイル 237 行）もあるが、こちらは
 > テストからのみ呼ばれる。実行時に走るのは上記の経路。
 
 ### 6. 地図カメラの寄り先

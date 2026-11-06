@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   dominantRegionName,
+  dominantRegionPeak,
   kyoshinDetectSpeechText,
   kyoshinOtherRegionSpeechText,
   kyoshinPointRegionName,
@@ -123,5 +124,36 @@ describe('kyoshinOtherRegionSpeechText', () => {
   })
   it('区域名が無ければ「別の地点でも揺れを検知。」', () => {
     expect(kyoshinOtherRegionSpeechText(null)).toBe('別の地点でも揺れを検知。')
+  })
+})
+
+// 「〇〇でも揺れを検知。」の揺れへ寄せる先は、読む区域の中で最も強い点（2026-11-06 ユーザー選択「寄せ先を読む区域にそろえる (Recommended)」）
+describe('dominantRegionPeak', () => {
+  it('正: 読む区域（点が多い東区域）の中で最も強い点を返す。揺れ全体で最も強い西区域の点は選ばない', () => {
+    const points = [{ lat: 35.5, lng: 139.5, index: 15 }, { lat: 35.4, lng: 140.4, index: 9 }, { lat: 35.6, lng: 140.6, index: 11 }, { lat: 35.5, lng: 140.5, index: 9 }]
+    expect(dominantRegionName(points, SUBREGIONS)).toBe('東区域')
+    expect(dominantRegionPeak(points, SUBREGIONS)).toEqual({ lat: 35.6, lng: 140.6 })
+  })
+
+  it('対照: 読む区域が最も強い点の区域なら、揺れ全体の最も強い点と同じ', () => {
+    const points = [{ lat: 35.5, lng: 139.5, index: 9 }, { lat: 35.6, lng: 140.6, index: 15 }]
+    expect(dominantRegionPeak(points, SUBREGIONS)).toEqual({ lat: 35.6, lng: 140.6 })
+  })
+
+  it('対照: 段が同じ点が並んだら、先に現れた点', () => {
+    expect(dominantRegionPeak([{ lat: 35.4, lng: 140.4, index: 9 }, { lat: 35.6, lng: 140.6, index: 9 }], SUBREGIONS)).toEqual({ lat: 35.4, lng: 140.4 })
+  })
+
+  it('安全弁: 区域データが無い・点が無いときは null（呼び出し側が揺れ全体の最も強い点へ落とす）', () => {
+    expect(dominantRegionPeak([east(9)], null)).toBeNull()
+    expect(dominantRegionPeak([], SUBREGIONS)).toBeNull()
+  })
+
+  it('安全弁: 段が数でない点は比べず、区域の中の強い点を返す', () => {
+    expect(dominantRegionPeak([{ lat: 35.4, lng: 140.4, index: NaN }, { lat: 35.6, lng: 140.6, index: 9 }], SUBREGIONS)).toEqual({ lat: 35.6, lng: 140.6 })
+  })
+
+  it('安全弁: 区域の点がみな欠測でも、先に現れた点を返す', () => {
+    expect(dominantRegionPeak([{ lat: 35.4, lng: 140.4, index: -1 }, { lat: 35.6, lng: 140.6, index: -1 }], SUBREGIONS)).toEqual({ lat: 35.4, lng: 140.4 })
   })
 })
