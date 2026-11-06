@@ -1,5 +1,5 @@
 // 予報の発表状況（fc_hist）は発生時刻を分までしか書かないので、秒を長期震源カタログ
-// （public/data/hypocenter/<年>.json。気象庁の震源カタログを年ごとに詰めたもの）から補う。
+// （手元の `.cache/hypocenter-catalog/<年>.json`。気象庁の震源カタログを年ごとに詰めたもの。`scripts/lib/hypocenterCatalogDir.ts`）から補う。
 //
 // 発生時刻は予報円の半径を決める。分のまま（秒を 0）にすると、最大 59 秒ぶん早い時刻から
 // 波が広がった絵になる —— S 波でおよそ 200 km 先へ出る。
@@ -54,8 +54,8 @@ interface RawYear {
 }
 
 /** 年ファイルを読む。列の長さ・刻みが崩れていれば例外（黙って別の地震の値を組み合わせない）。 */
-export async function loadCatalogYear(root: string, year: number): Promise<CatalogYear> {
-  const raw = JSON.parse(await readFile(join(root, 'public', 'data', 'hypocenter', `${year}.json`), 'utf-8')) as RawYear
+export async function loadCatalogYear(catalogDir: string, year: number): Promise<CatalogYear> {
+  const raw = JSON.parse(await readFile(join(catalogDir, `${year}.json`), 'utf-8')) as RawYear
   for (const key of ['t', 'lat', 'lng', 'mag'] as const) {
     if (!Array.isArray(raw[key]) || raw[key].length !== raw.count) throw new Error(`震源カタログ ${year}: ${key} の長さが count と一致しません`)
   }

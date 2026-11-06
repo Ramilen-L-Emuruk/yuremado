@@ -83,7 +83,7 @@
 | 通信先 | 用途 | 移行後 |
 |---|---|---|
 | GitHub Actions（deploy.yml） | 両版のビルドと公開 | 配信先が変わらなければ残る |
-| GitHub Actions（update-hypocenter-catalog.yml） | 週 1 回、気象庁の日別ページを取り、main へ push する | 中継の Cron へ移せる【新規】 |
+| GitHub Actions（update-hypocenter-catalog.yml） | 週 1 回、気象庁の日別ページを取り、main へ push する | 中継の Cron へ移せる【新規】。2026-11-06 に移し、このワークフローは外した |
 
 ### seismo-host
 

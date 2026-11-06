@@ -67,10 +67,24 @@ export function extractDailyHypocenterRows(html: string): string[] {
   if (start < 0 || end < 0) {
     throw new Error('震源リストの <pre> が見つかりません（ページ構成が変わった可能性があります）')
   }
-  return html
-    .slice(start + '<pre>'.length, end)
-    .split('\n')
-    .filter((line) => ROW.test(line))
+  const rows: string[] = []
+  const unknown: string[] = []
+  for (const line of html.slice(start + '<pre>'.length, end).split('\n')) {
+    if (ROW.test(line)) rows.push(line)
+    else if (!isLayoutLine(line)) unknown.push(line)
+  }
+  // **形に合わない行を黙って捨てない。** 一部の行だけ書式が変わると、残りの行だけでその日が確定し、二度と取り直されない
+  // （2026-11-06 に 662 日分・494,545 行の控えを数え、空行・見出し・区切りの線のほかに形の外の行は 0 行だった）
+  if (unknown.length > 0) {
+    throw new Error(`震源リストに読めない行が ${unknown.length} 行あります（書式が変わった可能性があります。最初の行: ${unknown[0].slice(0, 80)}）`)
+  }
+  return rows
+}
+
+/** `<pre>` の中の、震源の行ではない決まった行（空行・見出し「年 月 日 …」・区切りの線） */
+function isLayoutLine(line: string): boolean {
+  const t = line.trim()
+  return t === '' || /^-+$/.test(t) || t.startsWith('年')
 }
 
 /** 1 行を読む。読めない行は `null`。 */

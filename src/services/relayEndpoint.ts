@@ -20,6 +20,11 @@ export const RELAY_API_BASE = `${RELAY_ORIGIN}/v2`
 /** 電文本体の土台（公開バケット。末尾の `/` あり。`${dataBase}${id}` で本体の URL になる） */
 export const RELAY_DATA_BASE = 'https://data.yuremado.com/t/'
 /**
+ * 長期震源カタログ（年ごとの JSON と目次）の土台（公開バケット。末尾の `/` なし）。中継の Cron が毎日書き足す
+ * （docs/relay-server-design.md §0 の 2026-10-29 の行。置き場所は 2026-11-06 ユーザー選択「全年を R2 へ (Recommended)」）
+ */
+export const RELAY_CATALOG_BASE = 'https://data.yuremado.com/h'
+/**
  * 予報（`eew.forecast`）の本体と束の土台。予報は公開バケットに置かず、中継の口が予報キーの札を確かめて返す
  * （設計書 §0 の 2026-10-31「予報キー」の行）。一覧が返す `url` がこの土台で始まる
  */

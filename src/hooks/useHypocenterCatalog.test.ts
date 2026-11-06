@@ -20,7 +20,15 @@ vi.mock('../utils/hypocenterCatalog', async () => {
   }
 })
 
+// 末尾（カタログの終端より後）は中継の電文一覧から取る。**本物の通信を投げない**よう差し替える（既定は 0 件で取りきれた）
+vi.mock('../services/dmdataReplayLive', () => ({
+  fetchListedHypocenters: vi.fn(),
+}))
+
 import { loadHypocenterIndex, loadHypocenterYear } from '../utils/hypocenterCatalog'
+import { fetchListedHypocenters } from '../services/dmdataReplayLive'
+import type { JMAQuake } from '../types/earthquake'
+import * as clock from '../utils/clock'
 import { useHypocenterCatalog } from './useHypocenterCatalog'
 
 const INDEX: HypocenterIndex = {
@@ -42,6 +50,8 @@ const makeYear = (year: number): HypocenterYear => {
   if (hit) return hit
   const y: HypocenterYear = {
     year,
+    source: 'catalog',
+    telegramLabels: null,
     count: 0,
     coveredThroughMs: 0,
     quality: 'final',
@@ -61,6 +71,7 @@ const makeYear = (year: number): HypocenterYear => {
 
 const mockIndex = vi.mocked(loadHypocenterIndex)
 const mockYear = vi.mocked(loadHypocenterYear)
+const mockTail = vi.mocked(fetchListedHypocenters)
 
 beforeEach(() => {
   YEAR_CACHE.clear()
@@ -68,6 +79,8 @@ beforeEach(() => {
   mockYear.mockReset()
   mockIndex.mockResolvedValue(INDEX)
   mockYear.mockImplementation((y: number) => Promise.resolve(makeYear(y)))
+  mockTail.mockReset()
+  mockTail.mockResolvedValue({ quakes: [], complete: true })
   muteConsoleError()
 })
 
@@ -184,5 +197,175 @@ describe('useHypocenterCatalog', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.years).toEqual([])
     expect(mockYear).not.toHaveBeenCalled()
+  })
+})
+
+const lastYear = (years: readonly HypocenterYear[]): HypocenterYear | undefined => years[years.length - 1]
+
+describe('useHypocenterCatalog の末尾（中継の地震情報の電文）', () => {
+  // 終端は 2022-12-30 00:00 JST。期間の終わりの年（2022）が終端の年に掛かる
+  const END = Date.UTC(2022, 11, 29, 15)
+  const quakeAt = (iso: string): JMAQuake => ({
+    kind: 'quake', id: iso, time: iso,
+    issue: { source: '', time: iso, type: 'DetailScale', correct: 'None' },
+    earthquake: {
+      time: iso,
+      hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2, depth: 10, magnitude: 3.1 },
+      maxScale: 30, domesticTsunami: 'None',
+    },
+    points: [],
+  } as unknown as JMAQuake)
+
+  /** 終端の年（2022）の年ファイルの終端を決める。目次の終端とずらして、控えの寿命の違いを作る */
+  const yearEndsAt = (endMs: number) => {
+    mockYear.mockImplementation((y: number) => Promise.resolve(y === 2022 ? { ...makeYear(y), coveredThroughMs: endMs } : makeYear(y)))
+  }
+
+  beforeEach(() => {
+    mockIndex.mockResolvedValue({ ...INDEX, coveredThroughMs: END })
+    yearEndsAt(END)
+    // 今を終端の 1 日半後に置く（末尾の上限 30 日の内）
+    vi.spyOn(clock, 'liveServerNow').mockReturnValue(END + 36 * 3600_000)
+  })
+
+  // 正: 取りきれたら、終端より後の地震だけを電文の年として後ろへ足し、範囲を返す。
+  it('取りきれたら、終端より後の地震を末尾の年として足す', async () => {
+    mockTail.mockResolvedValue({
+      quakes: [quakeAt('2022-12-29T14:59:00Z'), quakeAt('2022-12-29T15:30:00Z')],
+      complete: true,
+    })
+    const { result } = renderHook(() => useHypocenterCatalog(2020, 2022, true))
+    await waitFor(() => expect(result.current.tail).not.toBeNull())
+    const last = result.current.years[result.current.years.length - 1]
+    expect(last.source).toBe('telegram')
+    // 終端の手前（14:59Z）は年ファイルの側にあるので入れない
+    expect(last.count).toBe(1)
+    expect(last.telegramLabels?.[0].intensity).toBe('最大震度 3')
+    expect(result.current.tail?.fromMs).toBe(END)
+    expect(mockTail).toHaveBeenCalledTimes(1)
+  })
+
+  // 正: 目次だけが 1 日先へ進んでいても（年ファイルの控えが古い）、末尾は年ファイルの終端から足す（1 日抜けない）
+  it('年ファイルの終端が目次より前なら、年ファイルの終端から足す', async () => {
+    const yearEnd = END - 24 * 3600_000
+    yearEndsAt(yearEnd)
+    mockTail.mockResolvedValue({ quakes: [quakeAt('2022-12-29T03:00:00Z'), quakeAt('2022-12-29T15:30:00Z')], complete: true })
+    const { result } = renderHook(() => useHypocenterCatalog(2020, 2022, true))
+    await waitFor(() => expect(result.current.tail).not.toBeNull())
+    expect(result.current.tail?.fromMs).toBe(yearEnd)
+    expect(mockTail.mock.calls[0][1]).toEqual(new Date(yearEnd))
+    expect(lastYear(result.current.years)?.count).toBe(2)
+  })
+
+  // 対照: 年ファイルが目次より先へ進んでいても、年ファイルにある地震を末尾に重ねない
+  it('年ファイルの終端が目次より後なら、年ファイルの終端から足す（同じ地震を 2 つ並べない）', async () => {
+    const yearEnd = END + 24 * 3600_000
+    yearEndsAt(yearEnd)
+    mockTail.mockResolvedValue({ quakes: [quakeAt('2022-12-30T03:00:00Z'), quakeAt('2022-12-30T15:30:00Z')], complete: true })
+    const { result } = renderHook(() => useHypocenterCatalog(2020, 2022, true))
+    await waitFor(() => expect(result.current.tail).not.toBeNull())
+    expect(result.current.tail?.fromMs).toBe(yearEnd)
+    expect(lastYear(result.current.years)?.count).toBe(1)
+  })
+
+  // 正: 年をまたいだ直後、期間を新しい年だけにしても、終端の年を別に読んで末尾を足す
+  it('期間が終端の年より後だけでも、終端の年を読んで末尾を足す', async () => {
+    const { result } = renderHook(() => useHypocenterCatalog(2023, 2023, true))
+    await waitFor(() => expect(result.current.tail).not.toBeNull())
+    expect(result.current.tail?.fromMs).toBe(END)
+    expect(result.current.catalogEndMs).toBe(END)
+    expect(result.current.catalogYears).toEqual([])
+  })
+
+  // 正: 期間の端に使う終端は、目次ではなく読めた年ファイルの終端
+  it('catalogEndMs は年ファイルの終端', async () => {
+    const yearEnd = END - 24 * 3600_000
+    yearEndsAt(yearEnd)
+    const { result } = renderHook(() => useHypocenterCatalog(2020, 2022, true))
+    await waitFor(() => expect(result.current.catalogEndMs).toBe(yearEnd))
+  })
+
+  // 安全弁: 終端の年を読めていなければ、どこから足せば繋がるか分からないので足さない
+  it('終端の年を読めなければ足さない', async () => {
+    mockYear.mockImplementation((y: number) => (y === 2022 ? Promise.reject(new Error('404')) : Promise.resolve(makeYear(y))))
+    const { result } = renderHook(() => useHypocenterCatalog(2020, 2022, true))
+    await waitFor(() => expect(result.current.missingYears).toEqual([2022]))
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(mockTail).not.toHaveBeenCalled()
+    expect(result.current.tail).toBeNull()
+  })
+
+  // 正: 末尾を除いた並びは、末尾が届いても参照が変わらない（点群を組み直さずに済む）
+  it('catalogYears は末尾が届いても同じ参照のまま', async () => {
+    let release: (v: { quakes: JMAQuake[]; complete: boolean }) => void = () => {}
+    mockTail.mockReturnValue(new Promise((r) => { release = r }))
+    const { result } = renderHook(() => useHypocenterCatalog(2020, 2022, true))
+    await waitFor(() => expect(mockTail).toHaveBeenCalled())
+    expect(result.current.years).toHaveLength(3)
+    const before = result.current.catalogYears
+    await act(async () => { release({ quakes: [quakeAt('2022-12-29T15:30:00Z')], complete: true }) })
+    await waitFor(() => expect(result.current.tail).not.toBeNull())
+    expect(result.current.catalogYears).toBe(before)
+    expect(result.current.years).toHaveLength(4)
+  })
+
+  // 正: 取り直して中身が同じなら、末尾の年は前の参照のまま（範囲の終わりだけ進む）
+  it('取り直して中身が同じなら末尾の年の参照を保つ', async () => {
+    const now = vi.spyOn(clock, 'liveServerNow').mockReturnValue(END + 36 * 3600_000)
+    mockTail.mockResolvedValue({ quakes: [quakeAt('2022-12-29T15:30:00Z')], complete: true })
+    const { result } = renderHook(() => useHypocenterCatalog(2020, 2022, true))
+    await waitFor(() => expect(result.current.tail).not.toBeNull())
+    const first = lastYear(result.current.years)
+    now.mockReturnValue(END + 36 * 3600_000 + 11 * 60_000)
+    act(() => result.current.retry())
+    await waitFor(() => expect(mockTail).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.tail?.untilMs).toBe(END + 36 * 3600_000 + 11 * 60_000))
+    expect(lastYear(result.current.years)).toBe(first)
+  })
+
+  // 正: 失敗の直後でも、手で押した再試行は取り直す（対照: 押さなければ 60 秒は取り直さない）
+  it('失敗の直後に再試行を押せば取り直す', async () => {
+    mockTail.mockResolvedValueOnce({ quakes: [], complete: false })
+    const { result, rerender } = renderHook(({ to }) => useHypocenterCatalog(2020, to, true), { initialProps: { to: 2022 } })
+    await waitFor(() => expect(mockTail).toHaveBeenCalledTimes(1))
+    // 期間を行き来しただけ（再試行ではない）なら取り直さない
+    rerender({ to: 2021 })
+    rerender({ to: 2022 })
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(mockTail).toHaveBeenCalledTimes(1)
+    act(() => result.current.retry())
+    await waitFor(() => expect(mockTail).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(result.current.tail).not.toBeNull())
+  })
+
+  // 安全弁: 取りきれなかったら足さない（欠けた地震が「起きなかった」に見えないように）。
+  it('取りきれなかったら足さない', async () => {
+    mockTail.mockResolvedValue({ quakes: [quakeAt('2022-12-29T15:30:00Z')], complete: false })
+    const { result } = renderHook(() => useHypocenterCatalog(2020, 2022, true))
+    await waitFor(() => expect(mockTail).toHaveBeenCalled())
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)) })
+    expect(result.current.tail).toBeNull()
+    expect(result.current.years.every((y) => y.source === 'catalog')).toBe(true)
+  })
+
+  // 対照: 期間が終端の年に掛からなければ、取りに行かない。
+  it('期間が終端の年に掛からなければ取りに行かない', async () => {
+    renderHook(() => useHypocenterCatalog(2020, 2021, true))
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(mockTail).not.toHaveBeenCalled()
+  })
+})
+
+describe('useHypocenterCatalog の末尾の上限', () => {
+  // 安全弁: 終端が 30 日より前（書き足しが止まった）なら、電文一覧を引かず末尾も足さない。
+  it('終端が 30 日より前なら取りに行かない', async () => {
+    const end = Date.UTC(2022, 11, 29, 15)
+    mockIndex.mockResolvedValue({ ...INDEX, coveredThroughMs: end })
+    vi.spyOn(clock, 'liveServerNow').mockReturnValue(end + 31 * 24 * 3600_000)
+    const { result } = renderHook(() => useHypocenterCatalog(2020, 2022, true))
+    await waitFor(() => expect(result.current.index).not.toBeNull())
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    expect(mockTail).not.toHaveBeenCalled()
+    expect(result.current.tail).toBeNull()
   })
 })

@@ -4,6 +4,7 @@ import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs'
 import { runPwave } from './pwave.mts'
 import { initState, buildStationMeta, step } from '../../src/utils/kyoshinDetector.ts'
 import { kyoshinBenchCacheDir } from '../lib/kyoshinBenchCache.ts'
+import { requireHypocenterCatalogDir } from '../lib/hypocenterCatalogDir.ts'
 type Frame = { ms: number; ts: string; indices: number[]; cfg: string }
 const repo = process.cwd().replace(/\\/g, '/')
 const probeCache = kyoshinBenchCacheDir().replace(/\\/g, '/')
@@ -89,7 +90,7 @@ for (let i = 1; i <= frames.length; i++) {
 }
 // カタログ（日本時間の壁時計へ揃える）
 const Y = +day.slice(0, 4)
-const cat = JSON.parse(readFileSync(`${repo}/public/data/hypocenter/${Y}.json`, 'utf8'))
+const cat = JSON.parse(readFileSync(`${requireHypocenterCatalogDir()}/${Y}.json`, 'utf8'))
 const quakes: { ms: number; lat: number; lng: number; mag: number | null; name: string }[] = []
 for (let i = 0; i < cat.count; i++) {
   const ms = cat.startMs + cat.t[i] * (1000 / cat.timeScale) + 9 * 3600_000
