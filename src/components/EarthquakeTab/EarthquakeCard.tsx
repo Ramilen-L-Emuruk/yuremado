@@ -1556,7 +1556,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
         ))}
 
         {/* 見出し文（`Head/Headline/Text`）。電文のまま出す。 */}
-        {quake.headline && <div className="py-2 text-[#cfd6dd]">{quake.headline}</div>}
+        {quake.headline && <div className="pt-1 text-[#cfd6dd]">{quake.headline}</div>}
 
         {/* 震度の枠と震源の値。広い画面では一覧の上へ貼りつく（→ index.css の quake-stick） */}
         <div ref={factsRef} className="quake-stick bg-card">
@@ -1699,7 +1699,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
         {/* 気象庁が添えた文は畳んで置き、読み上げのあいだ開く（→ `JmaNotesFold`） */}
         {quakeComments.groups.length > 0 && (
-          <div className="mt-3.5">
+          <div className="mt-1.5">
             <JmaNotesFold
               open={quakeNotesOpen}
               onToggle={() => setQuakeNotesOpenByUser(!quakeNotesOpen)}
@@ -1715,7 +1715,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             押されて見えなくなるので」、選択「英文だけのカードだけ開く」）。鍵が `expanded` にあるのは初めの開き方から
             押して変えた報 */}
         {internationalTsunamis.length > 0 && (
-          <div className="mt-3.5 flex flex-col gap-1.5">
+          <div className="mt-1.5 flex flex-col gap-1.5">
             {internationalTsunamis.map(x => {
               const key = internationalTsunamiFoldKey(x.id)
               const open = expanded.has(key) !== (quake.fromInternationalTsunami === true)
@@ -1741,7 +1741,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
         )}
 
         {/* 各地の震度。見出しの右で地図の見せ方を切り替える（見本の「観測点・推計震度分布・長周期」） */}
-        <div ref={intsSectionRef} className="mt-3.5 flex flex-col gap-1.5">
+        <div ref={intsSectionRef} className="mt-1.5 flex flex-col gap-1">
           <div className="flex items-center justify-between gap-2">
             <h4 className="m-0 font-semibold text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>各地の震度</h4>
             {showObservedSeg && (
@@ -1980,7 +1980,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
         {/* 長周期地震動（電文の値・一覧・補足）。地図の塗りは上の切り替えで出す */}
         {lpgmShown && (
-          <div ref={lpgmSectionRef} className="mt-3.5 flex flex-col gap-1.5">
+          <div ref={lpgmSectionRef} className="mt-1.5 flex flex-col gap-1">
             <h4 className="m-0 flex items-center gap-2 font-semibold text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
               長周期地震動
               {/* 長周期の電文が名乗る運用種別。訓練・試験のときだけ、地震カードと同じ札を出す（2026-11-03 ユーザー選択
@@ -2118,7 +2118,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
         )}
 
 
-        <div className="mt-3.5">
+        <div className="mt-1.5">
           {/* 自作地震計が捉えたこの地震の区間（→ `useSeismoQuakeWaves`）。
               **記録が無ければ枠ごと出ない** —— 渡ってくるのは載せるものがあるときだけ。
               ライブで読み返せなかったときだけ、その旨を 1 行出す（`seismoWaveFailed`）。 */}
