@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { JMAInternationalTsunami, JMAQuake } from '../types/earthquake'
 import {
-  NO_INTERNATIONAL_TSUNAMIS, ORIGIN_MATCH_TOLERANCE_MS, internationalTsunamiIndex, upsertInternationalTsunami,
+  NO_INTERNATIONAL_TSUNAMIS, ORIGIN_MATCH_TOLERANCE_MS, internationalTsunamiIndex, internationalTsunamiQuakeName,
+  internationalTsunamiOpenKey, internationalTsunamiTarget, upsertInternationalTsunami,
   withInternationalTsunamiCards,
 } from './internationalTsunami'
 
@@ -176,5 +177,49 @@ describe('internationalTsunamiIndex の英文だけのカード', () => {
     const shown: JMAQuake[] = []
     expect(withInternationalTsunamiCards(shown, internationalTsunamiIndex([hidden], [bulletin()]))).toBe(shown)
     expect(withInternationalTsunamiCards(shown, internationalTsunamiIndex([], [bulletin()]))).toHaveLength(1)
+  })
+})
+
+describe('読み上げ・通知の付く先（internationalTsunamiQuakeName / internationalTsunamiOpenKey）', () => {
+  const named = (q: JMAQuake, name: string, extra: Partial<JMAQuake> = {}): JMAQuake =>
+    ({ ...q, ...extra, earthquake: { ...q.earthquake, hypocenter: { ...q.earthquake.hypocenter, name } } }) as JMAQuake
+
+  it('正: 画面と同じ選び方で結べた地震カードの震源名を返す', () => {
+    const card = named(quake('遠地地震', '2021-01-21T12:23:41.000Z', 4.8, 127.4), 'インドネシア付近')
+    expect(internationalTsunamiQuakeName([card], bulletin())).toBe('インドネシア付近')
+  })
+
+  it('対照: 結べるカードが無い・取り消されたカード・英文だけのカードなら返さない（座標で読む側へ倒す）', () => {
+    expect(internationalTsunamiQuakeName([], bulletin())).toBeUndefined()
+    const cancelled = named(FOREIGN, 'インドネシア付近', { cancelledAt: new Date('2021-01-21T13:00:00.000Z') })
+    expect(internationalTsunamiQuakeName([cancelled], bulletin())).toBeUndefined()
+    // 名前は言わないが、選ぶ先は画面の結び付けと同じく取り消されたカード（英文だけのカードは作られないので、そちらを指すと空振りする）
+    expect(internationalTsunamiTarget([cancelled], bulletin())?.key).toBe(cancelled.eventKey)
+    expect(attachedTo(cancelled, [cancelled], [bulletin()])).toHaveLength(1)
+    const fromEnglish = named(FOREIGN, 'TALAUD ISLANDS, INDONESIA', { fromInternationalTsunami: true } as Partial<JMAQuake>)
+    expect(internationalTsunamiQuakeName([fromEnglish], bulletin())).toBeUndefined()
+  })
+
+  it('安全弁: 通信試験はどのカードにも結ばない', () => {
+    const card = named(FOREIGN, 'インドネシア付近')
+    expect(internationalTsunamiQuakeName([card], bulletin({ isCommunicationsTest: true }))).toBeUndefined()
+  })
+
+  it('通知の開き先は画面の結び付けと同じカードを指し、付く先が無ければ英文だけのカードを指す', () => {
+    const origin = '2021-01-21T12:23:00.000Z'
+    const card = named(quake('遠地地震', '2021-01-21T12:23:41.000Z', 4.8, 127.4), 'インドネシア付近')
+    expect(internationalTsunamiOpenKey([card], origin, 4.8, 127.4)).toBe(card.eventKey)
+    // 300 km を超えて離れた震央・時刻の幅の外のカードは指さない（英文だけのカードを指す）
+    const english = withInternationalTsunamiCards([], internationalTsunamiIndex([], [bulletin()]))[0]
+    expect(internationalTsunamiOpenKey([named(quake('遠地地震', '2021-01-21T12:23:41.000Z', 35, 139), '関東')], origin, 4.8, 127.4)).toBe(english.eventKey)
+    expect(internationalTsunamiOpenKey([named(quake('遠地地震', '2021-01-21T12:30:00.000Z'), 'X')], origin)).toBe(english.eventKey)
+  })
+
+  it('前震と本震のように付けられるカードが 2 枚あっても、画面と同じく震央を突き合わせられた本震を指す', () => {
+    const origin = '2021-01-21T12:23:00.000Z'
+    const foreshock = named(quake('震度速報', '2021-01-21T12:22:10.000Z'), '')
+    const main = named(quake('震源・震度情報', '2021-01-21T12:23:41.000Z', 4.8, 127.4), 'インドネシア付近')
+    expect(internationalTsunamiOpenKey([foreshock, main], origin, 4.8, 127.4)).toBe(main.eventKey)
+    expect(attachedTo(main, [foreshock, main], [bulletin()])).toHaveLength(1)
   })
 })

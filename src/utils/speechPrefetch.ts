@@ -106,7 +106,8 @@ export function speculativeSpeechTexts(payload: ReplayPayload, opts: TtsSpeechOp
       add(quakeNoticeToText(payload.data))
       break
     case 'internationalTsunami':
-      // 読み上げない（2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」。声・通知・音は無し）
+      // **先に焼かない。** 読む文は受けた瞬間の地震カードの震源名で変わる（結べなければ座標。→ `internationalTsunamiToText`）ので、
+      // ここで組んだ文は当たらないことが多い。年に数通なので、届いてから合成する遅れで足りる。英文の本文は読まない
       return texts
   }
 

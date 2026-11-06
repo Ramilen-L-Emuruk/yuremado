@@ -327,6 +327,7 @@ function internationalTsunamiSample(): DeepRequired<JMAInternationalTsunami> {
     id: wepa60Id(time, 'TSUNAMI BULLETIN NUMBER 001', 'WEPA60 RJTD 250003'), title: 'TSUNAMI BULLETIN NUMBER 001',
     time, originTime: iso(), isCommunicationsTest: false, text: 'WEPA60 RJTD 250003',
     epicenter: { latitude: 4.8, longitude: 127.4 }, regionName: 'TALAUD ISLANDS, INDONESIA', magnitude: 7.0, magnitudeType: 'Mj', depthKm: 139,
+    bulletinNumber: 1, evaluation: 'none',
   }
 }
 

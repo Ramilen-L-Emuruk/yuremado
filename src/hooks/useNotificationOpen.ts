@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { TabId } from '../components/IconNav'
 import type { JMAQuake } from '../types/earthquake'
 import { matchEstimatedIntensityArrival } from '../utils/estimatedIntensity'
+import { internationalTsunamiOpenKey } from '../utils/internationalTsunami'
 import { log } from '../utils/logger'
 import { notificationOpenQuery, parseNotificationOpen, withoutNotificationOpen, type NotificationOpen } from '../utils/notificationOpen'
 import { subscribeNotificationOpen } from '../utils/notificationClick'
@@ -41,7 +42,11 @@ export function resolveNotificationOpen(
   if ('quake' in open) candidates = all.filter(q => quakeEventKey(q) === open.quake)
   else if ('lpgm' in open) candidates = all.filter(q => extractQuakeEventId(q) === open.lpgm)
   else if ('estimated' in open) candidates = all.filter(q => matchEstimatedIntensityArrival(q, open.estimated, open.lat, open.lon))
-  else return { kind: 'none' }
+  else if ('wepa60' in open) {
+    // 画面と同じ選び方で付く先を引く。付く地震カードの無い英文は、英文だけのカードとして `shown` にだけある（届いた地震カードの一覧には無い）
+    const key = internationalTsunamiOpenKey(all, open.wepa60, open.lat, open.lon)
+    candidates = [...all, ...shown.filter(q => q.fromInternationalTsunami)].filter(q => quakeEventKey(q) === key)
+  } else return { kind: 'none' }
   if (candidates.length === 0) return { kind: 'wait' }
   const live = candidates.filter(q => !q.cancelledAt)
   if (live.length === 0) return { kind: 'giveUp', reason: '取り消された地震' }

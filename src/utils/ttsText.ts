@@ -4903,5 +4903,8 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
     // 推計震度分布図は二進電文で、気象庁が書いた文を運ばない。
     case 'estimatedIntensity':
       return null
+    // 国際津波関連情報の本文は英文で、日本語の声では読めない（読むのは `internationalTsunamiToText` の要約だけ）
+    case 'internationalTsunami':
+      return null
   }
 }

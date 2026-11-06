@@ -1856,6 +1856,11 @@ export type ExtraLiveEvent =
      */
     isNew: boolean
   }
+  /**
+   * 国際津波関連情報（WEPA60）。一覧へ新しく足せた報だけが流れる（同じ報の 2 度目は流れない）。
+   * 読み上げ・通知・音は受け手の `handleExtraLiveEvent`。
+   */
+  | { kind: 'internationalTsunami'; data: JMAInternationalTsunami }
 
 /**
  * `onLiveEvent` が受け取る電文の全体。**`kind` で判別できる**ので、受け手は絞り込みだけで
@@ -2117,7 +2122,8 @@ export interface JMAQuakeNotice {
  * 国際津波関連情報（WEPA60）。北西太平洋津波情報センター（NWPTAC。気象庁が運営）が各国の機関へ
  * 出す英文の電文で、**XML ではなく平文**で届く。遠地地震に関する情報（VXSE53）と同じ地震について
  * 出るので、遠地地震のカードに原文のまま畳んで添える（2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」）。
- * 読み上げ・通知・音は無い。
+ * 受けたら読み上げ・通知・音でも伝える（2026-11-06 ユーザー選択「読み上げ・通知・音をまとめて足す」。読む文は
+ * `utils/internationalTsunamiSpeech.ts`）。
  *
  * 電文の形（実電文 3 通で確かめた）: 1 行目が `WEPA60 RJTD 250003`、2 行目が題名
  * （`TSUNAMI BULLETIN NUMBER 001`・通信試験は `NWPTA COMMUNICATIONS TEST`）、続いて
@@ -2146,7 +2152,24 @@ export interface JMAInternationalTsunami {
   magnitudeType?: 'Mj' | 'Mw'
   /** `FOCAL DEPTH:139KM` の深さ（km）。書かれた報にだけある */
   depthKm?: number
+  /** 題名 `TSUNAMI BULLETIN NUMBER 001` の番号。通信試験には無い */
+  bulletinNumber?: number
+  /**
+   * `EVALUATION` の段落（津波発生の可能性）。仕様で決まった 5 種のどれか（気象庁「配信資料に関する技術情報（地震火山編）
+   * 第522号」別紙1（5））。5 種のどれでもない文は持たない（原文は `text` に残る）
+   */
+  evaluation?: InternationalTsunamiEvaluation
 }
+
+/**
+ * 国際津波関連情報の津波発生の可能性（`EVALUATION`）。電文の文と 1 対 1:
+ * - `oceanWide` — `THERE IS A POSSIBILITY OF A DESTRUCTIVE OCEAN-WIDE TSUNAMI`
+ * - `regional` — `THERE IS A POSSIBILITY OF A DESTRUCTIVE REGIONAL TSUNAMI`
+ * - `localNearEpicenter` — `THERE IS A POSSIBILITY OF A DESTRUCTIVE LOCAL TSUNAMI NEAR THE EPICENTER`
+ * - `verySmall` — `THERE IS A VERY SMALL POSSIBILITY OF A DESTRUCTIVE LOCAL TSUNAMI`
+ * - `none` — `THERE IS NO POSSIBILITY OF A TSUNAMI`
+ */
+export type InternationalTsunamiEvaluation = 'oceanWide' | 'regional' | 'localNearEpicenter' | 'verySmall' | 'none'
 
 /** {@link JMAEarthquakeCount} の 1 区間。 */
 export interface JMAEarthquakeCountItem {

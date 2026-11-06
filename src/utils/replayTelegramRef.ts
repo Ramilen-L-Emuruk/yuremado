@@ -123,5 +123,16 @@ export function replayTelegramFacts(source: ReplayTelegramSource): ReplayTelegra
         serial: null,
         cancelled: source.data.cancelled,
       }
+    case 'internationalTsunami':
+      return {
+        kind: 'internationalTsunami',
+        // 題名（`TSUNAMI BULLETIN NUMBER 001`・`NWPTA COMMUNICATIONS TEST`）
+        infoType: source.data.title,
+        // **この電文は識別子を持たない**（英文に `EventID` は無い）。地震カードとは発生時刻と震央で結ぶ
+        eventId: null,
+        serial: source.data.bulletinNumber === undefined ? null : String(source.data.bulletinNumber),
+        // 取消の概念が無い種別
+        cancelled: false,
+      }
   }
 }
