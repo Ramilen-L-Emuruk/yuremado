@@ -346,13 +346,17 @@ function pinBandHeight(pin: HTMLElement, root: HTMLElement): number {
  * 呼ぶ側が決める（震度 36px・長周期 52px）。字下げは段ごとに 10px ずつ、文字は段ごとに 0.5px ずつ小さく
  * （2026-11-01 選択「この形にする (Recommended)」。最長の観測点名 12 文字＋＊が 1 行に収まる詰め方）。
  *
+ * 行の高さは上下 1px の余白と最低 22px（2026-11-06 ユーザー選択「字はそのまま行だけ詰める (Recommended)」）。
+ * 最低の高さは、字の小さい深い段が浅い段より低くならないように残している。22px は広い画面の県の段（字 15.5px・
+ * 行間 1.3 倍＋余白 2px＋下線 1px で約 23px）より少し低い値。字の大きい行・2 段の行は中身の高さで伸びる。
+ *
  * 左端の縦線は、この報でこの行（または配下）が動いた印。**印が無くても幅を取る**（透明で置く）。
  * 付いたり消えたりで地名の位置がずれると、一覧を目で追っているときに行がまとめて動いて見える。
  */
-const QUAKE_ROW_CLASS = 'grid items-center gap-x-1 border-b border-border/60 py-[3px] pr-1 leading-[1.3]'
+const QUAKE_ROW_CLASS = 'grid items-center gap-x-1 border-b border-border/60 py-px pr-1 leading-[1.3]'
 function quakeRowStyle(depth: 0 | 1 | 2 | 3, mark: UpdateStatus | undefined): React.CSSProperties {
   return {
-    minHeight: '1.75rem',
+    minHeight: '1.375rem',
     paddingLeft: `${depth * 0.625}rem`,
     fontSize: `calc(var(--qk-f) - ${0.5 + depth * 0.5}px)`,
     borderLeft: `3px solid ${mark ? UPDATE_MARK_COLOR[mark] : 'transparent'}`,
