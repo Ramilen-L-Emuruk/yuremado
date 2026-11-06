@@ -1,4 +1,4 @@
-import { WAVE_HISTORY_LEAD_MS, WAVE_HISTORY_TAIL_MS } from '../services/seismoWaveHistory'
+import { WAVE_HISTORY_LEAD_MS, WAVE_HISTORY_TAIL_MS, widenedStartMs } from '../services/seismoWaveHistory'
 
 /**
  * 地震カードの公開観測点の波形を、保存庫からどの範囲で取るか（`docs/public-waveform-design.md` §6.1・§6.2）。
@@ -27,15 +27,19 @@ export interface PublicWaveRange {
 /**
  * 取る範囲。`cutoffMs` は 1 つ新しい地震の発生（無ければ `null`）。`sArrivalMs` はその観測点への S 波の到達
  * （解けなければ `null`。範囲は通常の幅のまま）。範囲が空になるなら `null`。
+ *
+ * `earliestOriginMs` は本当の発生が入りうる最も早い時刻（`utils/quakeOriginSeconds.ts` の `earliestOriginMs`）。
+ * 始まりの広げ方は自作地震計と同じ（`services/seismoWaveHistory.ts` の `widenedStartMs`）。
  */
 export function publicWaveRange(params: {
   readonly originMs: number
+  readonly earliestOriginMs: number
   readonly cutoffMs: number | null
   readonly sArrivalMs: number | null
 }): PublicWaveRange | null {
-  const { originMs, cutoffMs, sArrivalMs } = params
+  const { originMs, earliestOriginMs, cutoffMs, sArrivalMs } = params
   if (!Number.isFinite(originMs)) return null
-  const fromMs = originMs - WAVE_HISTORY_LEAD_MS
+  const fromMs = widenedStartMs(originMs - WAVE_HISTORY_LEAD_MS, earliestOriginMs, originMs + WAVE_HISTORY_TAIL_MS - PUBLIC_WAVE_RANGE_MAX_MS)
   let toMs = originMs + WAVE_HISTORY_TAIL_MS
   if (sArrivalMs !== null && Number.isFinite(sArrivalMs)) toMs = Math.max(toMs, sArrivalMs + PUBLIC_S_ARRIVAL_PAD_MS)
   toMs = Math.min(toMs, fromMs + PUBLIC_WAVE_RANGE_MAX_MS)

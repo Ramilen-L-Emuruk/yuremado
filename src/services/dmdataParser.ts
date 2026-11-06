@@ -1813,6 +1813,12 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   const earthquakeTime = readTelegramDateTime(DMDATA_LOG_PREFIX, '地震の発現時刻（または発生時刻）', earthquakeEl
     ? (xmlText(xmlQ(earthquakeEl, 'ArrivalTime')) || xmlText(xmlQ(earthquakeEl, 'OriginTime')))
     : xmlText(xmlQ(doc, 'TargetDateTime')))
+  // 地震発生時刻（分まで）は別に持つ。発現時刻と分がずれる地震（深い・遠い）で、波形の線の起点の秒を
+  // 探す幅を決めるのに要る（→ `JMAQuake.earthquake.originTime`）。**震度速報は `Earthquake` を持たないので入らない**
+  // 読めなければ記録に落ち先を書く（秒は地震発現時刻の分の幅だけで探す。→ `utils/quakeOriginSeconds.ts`）
+  const earthquakeOriginTime = earthquakeEl
+    ? readTelegramDateTimeWithConsequence(DMDATA_LOG_PREFIX, '地震の発生時刻', xmlText(xmlQ(earthquakeEl, 'OriginTime')), '波形の線の起点の秒は地震発現時刻の分だけで探します')
+    : ''
 
   // Magnitude 要素が空・欠落の電文は「規模不明」。`|| 0` で 0 に潰すと M0.0 と実測値のように
   // 表示・読み上げされるため、NaN のまま返して不明判定（formatters の hasMagnitude）に委ねる。
@@ -2097,6 +2103,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     },
     earthquake: {
       time: earthquakeTime,
+      ...(earthquakeOriginTime && { originTime: earthquakeOriginTime }),
       hypocenter: {
         name: hypName,
         // 震度速報は震源情報なし。-200 は「位置不明」センチネル（`utils/geo.ts` の判定と揃えてある）。

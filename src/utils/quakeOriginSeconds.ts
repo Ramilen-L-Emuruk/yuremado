@@ -21,6 +21,7 @@
 // 出どころの取り方（どこから・いつ取るか）は `hooks/useQuakeOriginSeconds.ts`。ここは
 // 「手元の材料からどれを採るか」だけを決める純関数。
 
+import type { JMAQuake } from '../types/earthquake'
 import type { EewOriginEntry } from './eewOriginStore'
 import { haversineKm, hasKnownEpicenter } from './geo'
 import { hasMagnitude } from './formatters'
@@ -53,11 +54,65 @@ const MINUTE_MS = 60_000
 export const QUAKE_MINUTE_LEAD_MS = 30 * SECOND_MS
 export const QUAKE_MINUTE_TAIL_MS = 65 * SECOND_MS
 
-/** 地震情報の発生時刻（分まで）に対して、`originMs` が同じ地震の発生時刻として入りうるか。 */
-export function withinQuakeMinute(quakeTimeMs: number, originMs: number): boolean {
-  if (!Number.isFinite(quakeTimeMs) || !Number.isFinite(originMs)) return false
+/**
+ * 電文の地震発生時刻（`Earthquake/OriginTime`。分まで）に対して、本当の発生時刻が入りうる幅の余白（ms）。
+ * **分の頭の 5 秒前〜1 分 5 秒後。**
+ *
+ * **カードの時刻（地震発現の分）とは別に、こちらの幅でも探す**（2026-11-06 ユーザー選択「発生時刻の分で探し、だめなら
+ * 今の幅 (Recommended)」）。深い地震や遠い地震は、発生から最初の観測点に揺れが届くまで 30 秒を超えるので、
+ * 発現の分からは {@link QUAKE_MINUTE_LEAD_MS} 前に届かない（2026-10-25 11:09 小笠原諸島西方沖 M7.0・深さ約 500 km は、
+ * 発現 11:10 に対して発生 11:09:21〜22）。
+ *
+ * 余白を置くのは、地震情報の発生時刻と震源リストの確定値が数秒ずれるため。控えの全期間（2020-11〜2026-10・
+ * 地震情報 15,968 件）で数えると、余白 0 秒では今の幅で決まっていた 111 件が決まらなくなり、5 秒で 40 件、
+ * 10 秒で 80 件（幅が広がり候補が 2 つになる分が増える）。**決まらなかったら発現の分の幅へ戻る**ので、
+ * 今の幅で決まっていた地震は手放さない（秒が決まる地震は 14,128 → 14,346 件）。
+ */
+export const ORIGIN_MINUTE_MARGIN_MS = 5 * SECOND_MS
+
+/** 探す幅（エポックミリ秒の閉区間）。 */
+interface SearchWindow {
+  readonly fromMs: number
+  readonly toMs: number
+}
+
+/** 地震発現の分（カードの時刻）から探す幅。読めなければ `null`。 */
+function arrivalMinuteWindow(quakeTimeMs: number): SearchWindow | null {
+  if (!Number.isFinite(quakeTimeMs)) return null
   const head = Math.floor(quakeTimeMs / MINUTE_MS) * MINUTE_MS
-  return originMs >= head - QUAKE_MINUTE_LEAD_MS && originMs <= head + QUAKE_MINUTE_TAIL_MS
+  return { fromMs: head - QUAKE_MINUTE_LEAD_MS, toMs: head + QUAKE_MINUTE_TAIL_MS }
+}
+
+/** 電文の地震発生時刻の分から探す幅。電文が持たない（震度速報）・読めなければ `null`。 */
+function originMinuteWindow(originMinuteMs: number | null): SearchWindow | null {
+  if (originMinuteMs === null || !Number.isFinite(originMinuteMs)) return null
+  const head = Math.floor(originMinuteMs / MINUTE_MS) * MINUTE_MS
+  return { fromMs: head - ORIGIN_MINUTE_MARGIN_MS, toMs: head + MINUTE_MS + ORIGIN_MINUTE_MARGIN_MS }
+}
+
+const inWindow = (w: SearchWindow | null, ms: number): boolean => w !== null && ms >= w.fromMs && ms <= w.toMs
+
+/** 地震発現の分（カードの時刻）に対して、`originMs` が同じ地震の発生時刻として入りうるか。 */
+export function withinQuakeMinute(quakeTimeMs: number, originMs: number): boolean {
+  return Number.isFinite(originMs) && inWindow(arrivalMinuteWindow(quakeTimeMs), originMs)
+}
+
+/** 電文の地震発生時刻の分に対して、`originMs` が同じ地震の発生時刻として入りうるか。 */
+export function withinOriginMinute(originMinuteMs: number | null, originMs: number): boolean {
+  return Number.isFinite(originMs) && inWindow(originMinuteWindow(originMinuteMs), originMs)
+}
+
+/**
+ * 本当の発生時刻が入りうる最も早い時刻。**どちらの幅も作れなければ `NaN`。**
+ *
+ * 波形を取りに行く範囲の起点と、秒が取れないときの揺れが届きうる時間帯が使う（発生がカードの分の頭より
+ * 1 分以上前に出る地震で、0 の手前のノイズを測る区間や揺れ始めを範囲の外へ落とさないため）。
+ */
+export function earliestOriginMs(quakeTimeMs: number, originMinuteMs: number | null): number {
+  const starts = [arrivalMinuteWindow(quakeTimeMs), originMinuteWindow(originMinuteMs)]
+    .filter((w): w is SearchWindow => w !== null)
+    .map((w) => w.fromMs)
+  return starts.length === 0 ? Number.NaN : Math.min(...starts)
 }
 
 /** 時計表記（`YYYY/MM/DD hh:mm[:ss[.sss]]`・`YYYY-MM-DD hh:mm…` も可）。時間帯を持たない。 */
@@ -120,32 +175,55 @@ export function parseJstTimeMs(time: string): number {
 }
 
 /**
+ * 地震カードが持つ電文の地震発生時刻（分まで）をエポックミリ秒で。**電文が持たない（震度速報）・読めなければ `null`。**
+ * 日本時間として読む（{@link parseJstTimeMs}）。
+ */
+export function telegramOriginMinuteMs(q: Pick<JMAQuake, 'earthquake'>): number | null {
+  const raw = q.earthquake.originTime
+  if (raw === undefined) return null
+  const ms = parseJstTimeMs(raw)
+  return Number.isFinite(ms) ? ms : null
+}
+
+/**
  * 緊急地震速報の発生時刻を、その地震カードの秒として使ってよいか。
  *
  * - **仮定震源要素の報なら使わない**（`assumed === true`）。見分けられない値（`null`。強震モニタの
  *   緊急地震速報）は使う（2026-10-15 ユーザー承認「仮定震源の報は使わない（推奨）」の説明「標準版の
  *   強震モニタ経路は仮定を見分けられないので除けない」）
  * - **地震情報の分に入らなければ結ばない** —— 同じ地震 ID の中身が別の地震で食い違うことがある
- *   （電文解説資料の出現例４: 2 秒後に起きた別の地震が同じ地震 ID の処理に乗る）
+ *   （電文解説資料の出現例４: 2 秒後に起きた別の地震が同じ地震 ID の処理に乗る）。分は地震発生時刻の分
+ *   （{@link withinOriginMinute}）と地震発現の分（{@link withinQuakeMinute}）の**どちらかに入ればよい**
+ *
+ * @param quakeTimeMs 地震カードの時刻（地震発現の分）
+ * @param originMinuteMs 電文の地震発生時刻（分まで）。電文が持たなければ `null`
  */
-export function usableEewOrigin(quakeTimeMs: number, eew: EewOriginEntry | undefined): number | null {
+export function usableEewOrigin(
+  quakeTimeMs: number,
+  originMinuteMs: number | null,
+  eew: EewOriginEntry | undefined,
+): number | null {
   if (eew === undefined || eew.assumed === true) return null
-  return withinQuakeMinute(quakeTimeMs, eew.originMs) ? eew.originMs : null
+  return withinOriginMinute(originMinuteMs, eew.originMs) || withinQuakeMinute(quakeTimeMs, eew.originMs)
+    ? eew.originMs
+    : null
 }
 
 /**
  * 手元の材料から秒を決める。**どれも無ければ `null`。**
  *
- * @param params.quakeTimeMs 地震カードの発生時刻（分まで）
+ * @param params.quakeTimeMs 地震カードの時刻（地震発現の分）
+ * @param params.originMinuteMs 電文の地震発生時刻（分まで）。電文が持たなければ `null`
  * @param params.eew 同じ地震 ID の緊急地震速報の記録（地震 ID が判らない・記録が無ければ `undefined`）
  * @param params.catalogOriginMs 長期震源カタログから 1 つに決まった発生時刻（決まらなければ `null`）
  */
 export function resolveOriginSeconds(params: {
   readonly quakeTimeMs: number
+  readonly originMinuteMs: number | null
   readonly eew: EewOriginEntry | undefined
   readonly catalogOriginMs: number | null
 }): OriginSeconds | null {
-  const fromEew = usableEewOrigin(params.quakeTimeMs, params.eew)
+  const fromEew = usableEewOrigin(params.quakeTimeMs, params.originMinuteMs, params.eew)
   if (fromEew !== null) return { originMs: fromEew, source: 'eew' }
   const { catalogOriginMs } = params
   if (catalogOriginMs !== null && Number.isFinite(catalogOriginMs)) {
@@ -171,8 +249,10 @@ export interface CatalogColumns {
 
 /** 突き合わせる側（地震カード）の材料。 */
 export interface QuakeForCatalogLookup {
-  /** 地震カードの発生時刻（分まで）。 */
+  /** 地震カードの時刻（地震発現の分）。 */
   readonly timeMs: number
+  /** 電文の地震発生時刻（分まで）。電文が持たなければ `null`。 */
+  readonly originMinuteMs: number | null
   readonly latitude: number
   readonly longitude: number
   readonly magnitude: number
@@ -207,14 +287,19 @@ function lowerBound(times: ArrayLike<number>, fromMs: number): number {
 /**
  * 長期震源カタログから、その地震カードの発生時刻（秒まで）を引く。**1 つに決まらなければ `null`。**
  *
- * 地震カードの分（{@link withinQuakeMinute}）・震央 {@link CATALOG_MAX_DISTANCE_KM} 以内・規模の差
- * {@link CATALOG_MAX_MAGNITUDE_DIFF} 以内のものが**ちょうど 1 つ**のときだけ採る。群発の最中は
- * 1 分に同じ場所で複数の地震が起き、取り違えると別の地震の秒で線を引く（取り違えは「線が無い」より重い）。
+ * 幅の中で震央 {@link CATALOG_MAX_DISTANCE_KM} 以内・規模の差 {@link CATALOG_MAX_MAGNITUDE_DIFF} 以内のものが
+ * **ちょうど 1 つ**のときだけ採る。群発の最中は 1 分に同じ場所で複数の地震が起き、取り違えると別の地震の秒で
+ * 線を引く（取り違えは「線が無い」より重い）。
+ *
+ * **幅は 2 つを順に試す。** 先に電文の地震発生時刻の分（{@link ORIGIN_MINUTE_MARGIN_MS}）で探し、1 つに
+ * 決まらなければ地震発現の分（{@link withinQuakeMinute}）で探す（2026-11-06 ユーザー選択「発生時刻の分で探し、
+ * だめなら今の幅 (Recommended)」）。発生時刻の分のほうが狭く、同じ分の別の地震を拾いにくい。発現の分へ戻るのは、
+ * 地震情報の発生時刻と震源リストの確定値が数秒ずれて、発生時刻の分の幅から外れる地震があるため。
  *
  * **震央か規模が判らない地震では引かない**（震度速報・規模不明）。時刻だけで 1 つに決めると、
  * カタログにしか載らない小さな地震を取り違える。
  *
- * @param coveredThroughMs カタログが覆っている終端。**分の幅がこれを越える地震では引かない** ——
+ * @param coveredThroughMs カタログが覆っている終端。**幅がこれを越えるなら、その幅では引かない** ——
  *   まだ載っていない地震は「見つからない」のではなく「見ていない」で、残った別の候補を
  *   1 つに決まったと取り違える
  */
@@ -223,11 +308,22 @@ export function findCatalogOriginMs(
   years: readonly CatalogColumns[],
   coveredThroughMs: number,
 ): number | null {
-  if (!Number.isFinite(quake.timeMs)) return null
   if (!hasKnownEpicenter(quake.latitude, quake.longitude) || !hasMagnitude(quake.magnitude)) return null
-  const head = Math.floor(quake.timeMs / MINUTE_MS) * MINUTE_MS
-  const fromMs = head - QUAKE_MINUTE_LEAD_MS
-  const toMs = head + QUAKE_MINUTE_TAIL_MS
+  for (const window of [originMinuteWindow(quake.originMinuteMs), arrivalMinuteWindow(quake.timeMs)]) {
+    if (window === null) continue
+    const found = findUniqueIn(quake, years, coveredThroughMs, window)
+    if (found !== null) return found
+  }
+  return null
+}
+
+/** 幅の中で当てはまる地震がちょうど 1 つならその発生時刻。0 件・2 件以上・まだ載っていない幅なら `null`。 */
+function findUniqueIn(
+  quake: QuakeForCatalogLookup,
+  years: readonly CatalogColumns[],
+  coveredThroughMs: number,
+  { fromMs, toMs }: SearchWindow,
+): number | null {
   if (!(toMs <= coveredThroughMs)) return null
   let found: number | null = null
   for (const y of years) {
@@ -245,15 +341,18 @@ export function findCatalogOriginMs(
 }
 
 /**
- * 突き合わせに要る年（日本時間の暦年）。分の幅が年をまたぐなら両方。
+ * 突き合わせに要る年（日本時間の暦年・昇順）。探す 2 つの幅（{@link findCatalogOriginMs}）のどちらかが
+ * 年をまたぐなら両方。
  *
  * **カタログの年は日本時間で区切られている**（`HypocenterYear.timeMs` の注記）。
  */
-export function catalogYearsFor(quakeTimeMs: number): number[] {
-  if (!Number.isFinite(quakeTimeMs)) return []
-  const head = Math.floor(quakeTimeMs / MINUTE_MS) * MINUTE_MS
+export function catalogYearsFor(quakeTimeMs: number, originMinuteMs: number | null): number[] {
   const yearOf = (ms: number) => new Date(ms + JST_OFFSET_MS).getUTCFullYear()
-  const a = yearOf(head - QUAKE_MINUTE_LEAD_MS)
-  const b = yearOf(head + QUAKE_MINUTE_TAIL_MS)
-  return a === b ? [a] : [a, b]
+  const years = new Set<number>()
+  for (const w of [arrivalMinuteWindow(quakeTimeMs), originMinuteWindow(originMinuteMs)]) {
+    if (w === null) continue
+    years.add(yearOf(w.fromMs))
+    years.add(yearOf(w.toMs))
+  }
+  return [...years].sort((a, b) => a - b)
 }

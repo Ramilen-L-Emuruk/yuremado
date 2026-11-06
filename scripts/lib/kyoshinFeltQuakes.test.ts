@@ -108,14 +108,14 @@ describe('有感の地震と束を突き合わせる', () => {
   const days = ['20240102']
 
   it('正: 秒まで引くと、同じ分に先に起きた地震の束を当たりに数えない', () => {
-    const { rows } = matchFeltQuakes([FELT], [bundle], days, 600, [], JST, () => [FIRST, SECOND])
+    const { rows } = matchFeltQuakes([FELT], [bundle], days, 600, [], [], JST, () => [FIRST, SECOND])
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ t: SECOND.t, fromCatalog: true })
     expect(rows[0].matched).toEqual([])
   })
 
   it('対照: 震源リストに見つからなければ分のまま照合し、同じ束が当たる', () => {
-    const { rows } = matchFeltQuakes([FELT], [bundle], days, 600, [], JST, () => [])
+    const { rows } = matchFeltQuakes([FELT], [bundle], days, 600, [], [], JST, () => [])
     expect(rows[0]).toMatchObject({ t: MINUTE, fromCatalog: false })
     expect(rows[0].matched).toEqual([bundle])
   })
@@ -133,16 +133,46 @@ describe('有感の地震と束を突き合わせる', () => {
     const outsideDay = { ...FELT, eventId: 'e2', minuteMs: MINUTE + 86_400_000 }
     const { rows, outside } = matchFeltQuakes(
       [early, FELT, wellBefore, beforeBlind, blind, afterBlind, wellAfter, late, outsideDay], [{ ...bundle, inWarmup: true }], days, 600,
-      [{ day: '20240102', hour: 12 }], JST, () => [],
+      [{ day: '20240102', hour: 12 }], [], JST, () => [],
     )
     expect(outside.map((q) => q.eventId)).toEqual(['e0', 'e5', 'e4', 'e6', 'e3'])
     expect(rows.map((r) => r.quake.eventId)).toEqual(['e1', 'e7', 'e8'])
     expect(rows[0].matched).toEqual([])
   })
 
+  describe('検知器を作り直した点（時間の中の途切れ・観測点の版の変わり目）', () => {
+    // 15:00:00 まで流し、15:01:30 に作り直した（控えの時刻）。助走は 15:11:30 まで
+    const gap = { afterMs: Date.parse('2024-01-02T15:00:00+09:00') + JST, atMs: Date.parse('2024-01-02T15:01:30+09:00') + JST }
+    const q = (id: string, iso: string) => ({ ...FELT, eventId: id, minuteMs: Date.parse(iso) })
+
+    it('正: 途切れの間と作り直した後の助走の間、途切れる前の終わり際の余白の地震は数えずに分ける', () => {
+      const { rows, outside } = matchFeltQuakes(
+        [q('g1', '2024-01-02T14:59:00+09:00'), q('g2', '2024-01-02T15:01:00+09:00'), q('g3', '2024-01-02T15:10:00+09:00')],
+        [], ['20240102'], 600, [], [gap], JST, () => [],
+      )
+      expect(outside.map((x) => x.eventId)).toEqual(['g1', 'g2', 'g3'])
+      expect(rows).toEqual([])
+    })
+
+    it('対照: 余白より前・助走の後の地震は数える', () => {
+      const { rows, outside } = matchFeltQuakes(
+        [q('g0', '2024-01-02T14:57:00+09:00'), q('g4', '2024-01-02T15:12:00+09:00')],
+        [], ['20240102'], 600, [], [gap], JST, () => [],
+      )
+      expect(rows.map((r) => r.quake.eventId)).toEqual(['g0', 'g4'])
+      expect(outside).toEqual([])
+    })
+
+    it('安全弁: 期間の頭の作り直し（直前の秒が無い）は、区間の頭の助走より広げない', () => {
+      const head = { afterMs: null, atMs: Date.parse('2024-01-02T00:00:00+09:00') + JST }
+      const { rows } = matchFeltQuakes([q('h1', '2024-01-02T00:15:00+09:00')], [], ['20240102'], 600, [], [head], JST, () => [])
+      expect(rows.map((r) => r.quake.eventId)).toEqual(['h1'])
+    })
+  })
+
   it('安全弁: 流した日の外の地震では震源リストを引かない（流していない日の控えを要らない）', () => {
     const asked: string[] = []
-    matchFeltQuakes([{ ...FELT, eventId: 'e2', minuteMs: MINUTE + 86_400_000 }], [], days, 600, [], JST, (q) => { asked.push(q.eventId); return [] })
+    matchFeltQuakes([{ ...FELT, eventId: 'e2', minuteMs: MINUTE + 86_400_000 }], [], days, 600, [], [], JST, (q) => { asked.push(q.eventId); return [] })
     expect(asked).toEqual([])
   })
 
@@ -283,7 +313,7 @@ describe('震度速報だけの地震', () => {
 
   it('正: 結べなかった震度速報は、地域の代表点から 150 km の内で、分の頭の 10 秒前〜180 秒後に見え始めた束に当てる', () => {
     const edges = [ev(S_MIN - 10_000, [37.4, 137.0]), ev(S_MIN + 180_000, [37.4, 137.0])]
-    const { rows } = matchShindoOnly([shindo], edges, days, 600, [], JST, labelOf)
+    const { rows } = matchShindoOnly([shindo], edges, days, 600, [], [], JST, labelOf)
     expect(rows[0].matched).toEqual(edges)
     expect(rows[0].km.every((k) => k > 0 && k < 30)).toBe(true)
   })
@@ -293,7 +323,7 @@ describe('震度速報だけの地震', () => {
     const tooEarly = ev(S_MIN - 11_000, [37.4, 137.0])
     const tooLate = ev(S_MIN + 181_000, [37.4, 137.0])
     const warm = ev(S_MIN + 30_000, [37.4, 137.0], { inWarmup: true })
-    const { rows } = matchShindoOnly([shindo], [far, tooEarly, tooLate, warm], days, 600, [], JST, labelOf)
+    const { rows } = matchShindoOnly([shindo], [far, tooEarly, tooLate, warm], days, 600, [], [], JST, labelOf)
     expect(rows).toEqual([{ shindo, matched: [], km: [] }])
   })
 
@@ -304,7 +334,7 @@ describe('震度速報だけの地震', () => {
     const blind = { ...shindo, eventId: 's2', minuteMs: Date.parse('2024-01-04T12:30:00+09:00') }
     const partial = { ...shindo, eventId: 's3', topAreas: ['石川県能登', 'どこでもない地域'] }
     const otherDay = { ...shindo, eventId: 's4', minuteMs: S_MIN + 86_400_000 }
-    const r = matchShindoOnly([shindo, blind, partial, otherDay, nearEnd, beforeEnd], [], days, 600, [{ day: '20240104', hour: 12 }], JST, labelOf)
+    const r = matchShindoOnly([shindo, blind, partial, otherDay, nearEnd, beforeEnd], [], days, 600, [{ day: '20240104', hour: 12 }], [], JST, labelOf)
     expect(r.rows.map((x) => x.shindo.eventId)).toEqual(['s1', 'e2'])
     expect(r.outside.map((s) => s.eventId)).toEqual(['s2', 'e1'])
     expect(r.noLabel.map((s) => s.eventId)).toEqual(['s3'])

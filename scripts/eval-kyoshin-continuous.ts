@@ -17,13 +17,18 @@
  *   2 時間続けて 1 秒も取れなければ、配信が無い範囲とみて取得ごと止める。日別の震源リストは 1 日 1 件で、時間より先に取る。
  *   控えに無い時間が {@link MAX_FETCH_HOURS} 時間（`--max-fetch-hours`）を超えるなら、1 件も取らずに止まる
  * - 流す日は実在する今日より前の日に限る。1 回に流す日数の上限は `--max-days`（既定 31）。震源の控えが無い日のうち、
- *   今日から {@link DAILY_SETTLE_DAYS} 日の内の日は、気象庁の日別の震源リストが出そろっていないことがあるので取らずに止まる
- * - 続いた日は検知器を作り直さずに流す。秒が 60 秒を超えて途切れたとき・観測点の版が変わったとき・続いていない日の頭では作り直し、
- *   そこから {@link WARMUP_SEC} 秒は「見ていない」扱いにする（アプリは最低 10 分の助走を付けて始めるため。`src/utils/kyoshinWarmup.ts`）。
- *   助走の間に見え始めた検知は数えず、その間に起きた地震は取りこぼしにも数えない
- * - 結果は `.cache/kyoshin-continuous-runs/<最初の日>-<最後の日>-<日数>d.json` に書き、要約を画面に出す。
- *   欠け（控えの無い時間・読めなかった震源の行・点数の食い違い）があれば、結果に印を付けて終了コード 2 で終わる。
- *   時間の中で数秒欠けるだけなら印は付けない（60 秒以内の途切れは見ていた秒として埋める）
+ *   今日から {@link DAILY_SETTLE_DAYS} 日の内の日は、気象庁の日別の震源リストに後から地震が書き足されることがある（出そろっていない）ので取らずに止まる
+ * - 続いた日は検知器を作り直さずに流す。前の秒との間隔が 60 秒を超えたとき（控えの無い時間の後も含む）・観測点の版が変わったとき・
+ *   続いていない日の頭では作り直し、そこから {@link WARMUP_SEC} 秒は助走とする（アプリは最低 10 分の助走を付けて始めるため。
+ *   `src/utils/kyoshinWarmup.ts`）。作り直した秒と直前に流した秒は、日ごとに `runs[].restarts` へ残す
+ * - 結果は `.cache/kyoshin-continuous-runs/<最初の日>-<最後の日>-<日数>d.json` に書き、要約を画面に出す。数え方は次の 2 つに分かれる
+ *   - **欠けの印（`summary.complete` が false・終了コード 2）を付けるもの**: 控えや震源の側が欠けたもの。控えの無い時間・点数の食い違い・
+ *     読めなかった震源の行（期間の日と前日）・出そろう前かもしれない日別の震源リスト（期間の日と前日）。時間の中で数秒欠けるだけなら
+ *     付けない（前の秒との間隔が 60 秒以下なら、間の秒は見ていたものとして埋める）。1 秒も無い時間は控えの無い時間と同じに数える
+ *   - **印にせず、数えないもの**: 検知器が見ていなかった間。助走の間と、60 秒を超える欠けの間は「見ていた秒」（`watched`。
+ *     検知器が地震を拾えた秒）から外れ、その間に見え始めた検知も、その間に起きた地震の取りこぼしも数えない（数は `summary.blindTargets`）。
+ *     有感の照合（`eval-kyoshin-felt`）も `runs[].restarts` でその間の地震を数えない。M の決まっていない地震も取りこぼしの母数に入れない
+ *     （数は `summary.unknownMagNearNetwork`）。控えの無い時間は両方に当たる（印が付き、その後の助走の間は数えない）
  *
  * 突き合わせの規則は評価台と同じ（`scripts/lib/kyoshinCatalogMatch.ts`）。当てはまった件数には偶然の重なりが混ざるので、
  * **同じ位置・同じ規則で、その日に検知器が見ていた全秒に当てたときに当たる割合（偶然でも当たる見込み）**を並べて出す。
@@ -33,27 +38,20 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cacheDir } from './lib/cacheDir.mjs'
 import { kyoshinBenchCacheDir } from './lib/kyoshinBenchCache'
-import { CATALOG_DEEP_FOCUS_KM, chanceOfMatch, matchCatalog, watchedQuakes, type CatalogQuake } from './lib/kyoshinCatalogMatch'
+import { CATALOG_DEEP_FOCUS_KM, type CatalogQuake } from './lib/kyoshinCatalogMatch'
+import {
+  DAY_MS, JST_OFFSET_MS, MAX_GAP_MS, MISS_MIN_MAG, WARMUP_SEC, dayOf, dayStartMs, jstIso, pad, streamDays, summarizeRun,
+  type DayRun, type EventRow,
+} from './lib/kyoshinContinuousEval'
 import { fetchHour, hourPath, loadSites, readQuietHour } from './build-kyoshin-quiet-tables'
-import { DAILY_FETCH_INTERVAL_MS, DAILY_SETTLE_DAYS, fetchDailyHypocenters, readDayHypocenters, settledDay, type QuakeSource } from './lib/hypocenterDays'
+import { DAILY_FETCH_INTERVAL_MS, DAILY_SETTLE_DAYS, fetchDailyHypocenters, readDayHypocenters, settledDay, type DayQuakes } from './lib/hypocenterDays'
 import { createEnsembleDetector } from '../src/utils/kyoshinEnsembleDetector'
 import { createEnsembleTracker } from '../src/utils/kyoshinEnsembleTracker'
 import { validateQuietTables } from '../src/utils/kyoshinQuietTables'
-import { haversineKm } from '../src/utils/geo'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
 const TABLES_PATH = resolve(HERE, '../public/data/kyoshin-quiet-tables.json')
 const OUT_DIR = cacheDir('kyoshin-continuous-runs')
-const JST_OFFSET_MS = 9 * 3_600_000
-const DAY_SEC = 86_400
-const DAY_MS = DAY_SEC * 1000
-/** 検知器を作り直してから「見ていない」扱いにする秒数（アプリの助走の最低の長さ `WARMUP_MIN_BLOCKS` × 60 秒と揃える） */
-export const WARMUP_SEC = 600
-/** 秒フレームがこれより長く途切れたら、時間が飛んだまま流さずに検知器を作り直す */
-const MAX_GAP_MS = 60_000
-/** 取りこぼしを数える地震の M の下限と、観測点からの距離の上限（km）。観測網の外の地震は数えない */
-const MISS_MIN_MAG = 3
-const MISS_MAX_SITE_KM = 50
 /** 2 時間続けて 1 秒も取れなければ、配信が無い範囲とみて取得を止める */
 const EMPTY_HOURS_TO_STOP = 2
 /**
@@ -62,12 +60,6 @@ const EMPTY_HOURS_TO_STOP = 2
  */
 const MAX_FETCH_HOURS = 48
 
-const pad = (n: number) => String(n).padStart(2, '0')
-/** 控えの時刻（日本時間をそのまま UTC として数えたミリ秒）の日の頭 */
-const dayStartMs = (day: string) => Date.UTC(+day.slice(0, 4), +day.slice(4, 6) - 1, +day.slice(6, 8))
-const dayOf = (frameMs: number) => new Date(frameMs).toISOString().slice(0, 10).replace(/-/g, '')
-/** 控えの時刻を、日本時間と分かる ISO 文字列にする */
-const jstIso = (frameMs: number) => new Date(frameMs).toISOString().slice(0, 19) + '+09:00'
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 function arg(name: string): string | undefined {
@@ -123,42 +115,8 @@ function cfgsOf(day: string, h: number): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// 流す
+// 流して数える
 // ---------------------------------------------------------------------------
-
-export interface EventRow {
-  id: string
-  /** 見え始め（早い段に上がった秒）。控えの時刻（日本時間をそのまま UTC として数えたミリ秒） */
-  firstLikelyMs: number
-  firstConfirmedMs: number | null
-  /** 束を作った検知の位置（束の間は変わらない） */
-  pos: [number, number]
-  maxMembers: number
-  lastMs: number
-  /** 検知器を作り直してから {@link WARMUP_SEC} 秒の内に見え始めた */
-  inWarmup: boolean
-}
-
-interface DayRun {
-  day: string
-  /** 検知器へ流した秒 */
-  frames: number
-  /** 秒フレームが無かった秒（控えの無い時間・取れなかった秒） */
-  lostSec: number
-  /** 検知器が見ていた秒（流した秒から助走の間を除く） */
-  watched: number
-  /** 見ていなかった最長の続き（秒） */
-  longestBlindSec: number
-  /** 観測点リストと点数が食い違って流せなかった秒 */
-  mismatched: number
-  missingHours: number[]
-  quakeSource: QuakeSource
-  quakeCount: number
-  /** 震源の控えのうち読めなかった行 */
-  unreadableQuakeRows: number
-  /** 平常のゆらぎの表を焼いた日（誤報の少なさを測るには甘い日） */
-  tableDay: boolean
-}
 
 async function main(): Promise<void> {
   const todayJst = dayOf(Date.now() + JST_OFFSET_MS)
@@ -218,22 +176,6 @@ async function main(): Promise<void> {
   validateQuietTables(tables)
   const tableDays = new Set(tables.days)
   const fromFrameMs = dayStartMs(days[0])
-  const spanSec = (dayStartMs(days[days.length - 1]) - fromFrameMs) / 1000 + DAY_SEC
-  /** 検知器が見ていた秒（期間の頭から 1 秒刻み） */
-  const watched = new Uint8Array(spanSec)
-  const events = new Map<string, EventRow>()
-  const runs: DayRun[] = []
-  const quakes: CatalogQuake[] = []
-  /** 日ごとに使われた観測点（その日に出てきた版の和集合）。取りこぼしを数える「観測網の中」の判定に使う */
-  const daySites = new Map<string, Map<string, [number, number]>>()
-  const dayCfgs = new Map<string, Set<string>>()
-  let cfg: string | null = null
-  let sites: [number, number][] = []
-  let tracker: ReturnType<typeof createEnsembleTracker> | null = null
-  let restartMs = -Infinity
-  let lastFrameMs = -Infinity
-  // 検知器を作り直すと束の id が振り直されるので、何代目の検知器かを id に添えて重ならないようにする
-  let generation = 0
 
   // 期間の頭の検知が前日の地震に当たれるよう、控えにあれば前日の震源も読む（取りには行かない）
   const prev = (() => {
@@ -244,161 +186,72 @@ async function main(): Promise<void> {
       return null
     }
   })()
-  if (prev) quakes.push(...prev.quakes)
-
+  const quakes: CatalogQuake[] = prev ? [...prev.quakes] : []
+  const dayQuakes = new Map<string, DayQuakes>()
   for (const day of days) {
     const q = readDayHypocenters(day)
     if (q === null) throw new Error(`${day} の震源が控えにありません`)
+    dayQuakes.set(day, q)
     quakes.push(...q.quakes)
-    const run: DayRun = {
-      day, frames: 0, lostSec: 0, watched: 0, longestBlindSec: 0, mismatched: 0, missingHours: [],
-      quakeSource: q.source, quakeCount: q.quakes.length, unreadableQuakeRows: q.unreadable, tableDay: tableDays.has(day),
-    }
-    for (let h = 0; h < 24; h++) {
+  }
+
+  const stream = await streamDays(days, {
+    hourFrames: (day, h) => {
       const p = hourPath(day, h)
-      if (!existsSync(p)) { run.missingHours.push(h); continue }
-      for (const f of readQuietHour(readFileSync(p), day)) {
-        if (f.cfg === '') throw new Error(`${day}-${pad(h)} の控えに観測点の版が書かれていない秒があります（控えを消して取り直してください）`)
-        // 観測点の版が変わったとき・前の秒から途切れたとき（控えの無い時間を飛ばした・続いていない日）は作り直す
-        if (f.cfg !== cfg || tracker === null || f.ms - lastFrameMs > MAX_GAP_MS) {
-          if (f.cfg !== cfg) {
-            sites = await loadSites(f.cfg, allowFetch)
-            cfg = f.cfg
-          }
-          tracker = createEnsembleTracker(sites, createEnsembleDetector(sites, tables))
-          restartMs = f.ms
-          generation++
-        }
-        // 点数が食い違う秒は流せない。秒フレームが無い秒と同じ扱いにする（途切れの起点にしないので、次の正常な秒までが
-        // 60 秒以内なら下で埋め、それより長ければ次の秒で検知器を作り直す）
-        if (sites.length !== f.values.length) { run.mismatched++; continue }
-        // 作り直さずに続けた 60 秒以内の途切れ（無い秒・食い違った秒）は、検知器が続けて見ていたものとして埋める
-        // （1 秒の欠けで地震を母集団から落とさない）
-        const fillFrom = restartMs === f.ms ? f.ms : lastFrameMs + 1000
-        for (let t = fillFrom; t <= f.ms; t += 1000) {
-          const sec = (t - fromFrameMs) / 1000
-          if (t - restartMs >= WARMUP_SEC * 1000 && sec >= 0 && sec < spanSec && !watched[sec]) { watched[sec] = 1; run.watched++ }
-        }
-        lastFrameMs = f.ms
-        run.frames++
-        let used = dayCfgs.get(day)
-        if (!used) { used = new Set(); dayCfgs.set(day, used) }
-        if (!used.has(f.cfg)) {
-          used.add(f.cfg)
-          let m = daySites.get(day)
-          if (!m) { m = new Map(); daySites.set(day, m) }
-          for (const s of sites) m.set(`${s[0]},${s[1]}`, s)
-        }
-        for (const det of tracker.push({ ms: f.ms, values: f.values })) {
-          const key = `${generation}:${det.id}`
-          let e = events.get(key)
-          if (!e) {
-            e = { id: key, firstLikelyMs: f.ms, firstConfirmedMs: null, pos: [det.epicenter[0], det.epicenter[1]], maxMembers: 0, lastMs: f.ms, inWarmup: f.ms - restartMs < WARMUP_SEC * 1000 }
-            events.set(key, e)
-          }
-          if (det.confidence === 'confirmed' && e.firstConfirmedMs === null) e.firstConfirmedMs = f.ms
-          e.maxMembers = Math.max(e.maxMembers, det.memberKeys.length)
-          e.lastMs = f.ms
-        }
-      }
-    }
-    // その日の、見ていなかった最長の続き
-    const base = (dayStartMs(day) - fromFrameMs) / 1000
-    let blind = 0
-    for (let s = 0; s < DAY_SEC; s++) {
-      blind = watched[base + s] ? 0 : blind + 1
-      run.longestBlindSec = Math.max(run.longestBlindSec, blind)
-    }
-    run.lostSec = DAY_SEC - run.frames - run.mismatched
-    runs.push(run)
+      return existsSync(p) ? readQuietHour(readFileSync(p), day) : null
+    },
+    loadSites: (cfg) => loadSites(cfg, allowFetch),
+    createTracker: (sites) => createEnsembleTracker(sites, createEnsembleDetector(sites, tables)),
+    onDayStreamed: (r) => console.log(
+      `  ${r.day} を流した（${r.frames} 秒${r.lostSec ? `・秒フレームの無い秒 ${r.lostSec}` : ''}` +
+      `${r.missingHours.length ? `・控えの無い時間 ${r.missingHours.join(',')} 時` : ''}${r.mismatched ? `・点数が食い違った秒 ${r.mismatched}` : ''}）`,
+    ),
+  })
+  const runs: DayRun[] = stream.days.map((s) => {
+    const q = dayQuakes.get(s.day)!
+    return { ...s, quakeSource: q.source, quakeCount: q.quakes.length, unreadableQuakeRows: q.unreadable, tableDay: tableDays.has(s.day) }
+  })
+  for (const run of runs) {
     console.log(
-      `${day}: 流した ${run.frames} 秒${run.lostSec ? `（秒フレームの無い秒 ${run.lostSec}）` : ''}・見ていた ${run.watched} 秒（1 日の ${(run.watched / 864).toFixed(1)}%）・最長の見ていない続き ${run.longestBlindSec} 秒` +
+      `${run.day}: 流した ${run.frames} 秒${run.lostSec ? `（秒フレームの無い秒 ${run.lostSec}）` : ''}・見ていた ${run.watched} 秒（1 日の ${(run.watched / 864).toFixed(1)}%）・最長の見ていない続き ${run.longestBlindSec} 秒` +
       `・${run.quakeSource} ${run.quakeCount} 件${run.unreadableQuakeRows ? `（読めなかった行 ${run.unreadableQuakeRows}）` : ''}` +
       `${run.missingHours.length ? `・控えの無い時間 ${run.missingHours.join(',')} 時` : ''}${run.mismatched ? `・点数が食い違った秒 ${run.mismatched}` : ''}` +
       `${run.tableDay ? '・平常のゆらぎの表を焼いた日' : ''}`,
     )
   }
 
-  const sitesOfDay = new Map<string, [number, number][]>([...daySites].map(([d, m]) => [d, [...m.values()]]))
-  report(days, runs, [...events.values()], quakes, sitesOfDay, watched, fromFrameMs, prev !== null)
+  // 前日の控えも、出そろう前に取った日別の震源リストかもしれない（期間の頭の検知が当たれる地震が足りなくなる）
+  const prevDay = dayOf(fromFrameMs - DAY_MS)
+  const earlyQuakeDays = prev?.source === '日別の震源リスト' && prevDay > settled ? [prevDay, ...earlyCached] : earlyCached
+  report(days, runs, stream.events, quakes, stream.sitesOfDay, stream.watched, fromFrameMs, prev !== null, prev?.unreadable ?? 0, earlyQuakeDays)
 }
 
 function report(
   days: string[], runs: DayRun[], events: EventRow[], quakes: CatalogQuake[],
   sitesOfDay: Map<string, [number, number][]>, watched: Uint8Array, fromFrameMs: number, prevDayQuakes: boolean,
+  prevDayUnreadableRows: number, earlyQuakeDays: string[],
 ): void {
-  const fromMs = fromFrameMs - JST_OFFSET_MS
-  const counted = events.filter((e) => !e.inWarmup)
-  const rows = counted.map((e) => {
-    const m = matchCatalog(e.firstLikelyMs - JST_OFFSET_MS, e.pos, quakes)
-    return {
-      ...e,
-      firstLikelyAt: jstIso(e.firstLikelyMs),
-      firstConfirmedAt: e.firstConfirmedMs === null ? null : jstIso(e.firstConfirmedMs),
-      matched: m ? { at: jstIso(m.quake.t + JST_OFFSET_MS), mag: Number.isFinite(m.quake.mag) ? m.quake.mag : null, km: Math.round(m.km) } : null,
-    }
+  const { rows, confirmed, chances, missed, blindDays, summary } = summarizeRun({
+    runs, events, quakes, sitesOfDay, watched, fromFrameMs, prevDayQuakes, prevDayUnreadableRows, earlyQuakeDays,
   })
-  const confirmed = rows.filter((r) => r.firstConfirmedMs !== null)
+  const { complete } = summary
   const likelyOnly = rows.filter((r) => r.firstConfirmedMs === null)
-
-  // 偶然の見込み: 検知ごとに、見え始めた日のうち検知器が見ていた秒で当たる割合を足す。震源はその日の前後だけ渡す
-  const chanceOf = (r: (typeof rows)[number]) => {
-    const dayFrame = Math.floor(r.firstLikelyMs / DAY_MS) * DAY_MS
-    const dayFrom = dayFrame - JST_OFFSET_MS
-    const near = quakes.filter((q) => q.t >= dayFrom - DAY_MS && q.t < dayFrom + 2 * DAY_MS)
-    const off = (dayFrame - fromFrameMs) / 1000
-    return chanceOfMatch(r.pos, near, dayFrom, DAY_SEC, watched.subarray(off, off + DAY_SEC))
-  }
-  const chances = new Map(rows.map((r) => [r.id, chanceOf(r)]))
-  const sumChance = (rs: typeof rows) => rs.reduce((s, r) => s + (chances.get(r.id) ?? 0), 0)
-
-  // 取りこぼし: 観測網の中（いずれかの観測点から MISS_MAX_SITE_KM 以内）で、検知器が見ていた間に起きた M3 以上
-  // その地震が起きた日に使われていた観測点で判定する（新しい版で増えた点で古い日の網を広げない）
-  const nearNetwork = (q: CatalogQuake) =>
-    (sitesOfDay.get(dayOf(q.t + JST_OFFSET_MS)) ?? []).some(([lat, lng]) => haversineKm(lat, lng, q.lat, q.lng) <= MISS_MAX_SITE_KM)
-  const inSpan = (q: CatalogQuake) => q.t >= fromMs && q.t < fromMs + watched.length * 1000
-  const bigNear = quakes.filter((q) => q.mag >= MISS_MIN_MAG && inSpan(q)).filter(nearNetwork)
-  const targets = watchedQuakes(bigNear, fromMs, watched)
-  /** 期間内・観測網の中の M3 以上のうち、見ていない時間（助走・欠け）に掛かって数えなかった地震 */
-  const blindTargets = bigNear.length - targets.length
-  /** 観測点を 1 つも引けなかった日（有効な秒が無い日）の M3 以上。網の内外を判定できないので、上の数のどれにも入らない */
-  const noSiteDayTargets = quakes.filter((q) => q.mag >= MISS_MIN_MAG && inSpan(q) && !sitesOfDay.has(dayOf(q.t + JST_OFFSET_MS))).length
-  const unknownMag = watchedQuakes(quakes.filter((q) => !Number.isFinite(q.mag) && inSpan(q)).filter(nearNetwork), fromMs, watched).length
-  const hasBundle = (q: CatalogQuake) => rows.some((r) => matchCatalog(r.firstLikelyMs - JST_OFFSET_MS, r.pos, [q]) !== null)
-  // 深い地震は震央の真上がほとんど揺れない（異常震域）。検知器では直せない分なので、取りこぼしの母数から外して別の行で数える
-  const isDeep = (q: CatalogQuake) => Number.isFinite(q.depth) && q.depth >= CATALOG_DEEP_FOCUS_KM
-  const deepTargets = targets.filter(isDeep)
-  const deepWithBundle = deepTargets.filter(hasBundle).length
-  const shallowTargets = targets.filter((q) => !isDeep(q))
-  const missed = shallowTargets.filter((q) => !hasBundle(q))
-
-  // 欠けの判定は日の並び方に依らない量で行う（助走は欠けに数えない）。控えは 1 時間の 9 割で保存するので、時間の中で数秒欠けるのは
-  // ふつうに起きる。印を付けるのは、時間ごと無い・点数が食い違った・震源の行を読めなかった日だけ
-  const blindDays = runs.filter((r) => r.missingHours.length > 0 || r.mismatched > 0 || r.unreadableQuakeRows > 0)
-  const complete = blindDays.length === 0
-  const summary = {
-    confirmed: confirmed.length, confirmedMatched: confirmed.filter((r) => r.matched).length, confirmedChance: sumChance(confirmed),
-    likelyOnly: likelyOnly.length, likelyOnlyMatched: likelyOnly.filter((r) => r.matched).length, likelyOnlyChance: sumChance(likelyOnly),
-    targets: shallowTargets.length, missed: missed.length, deepTargets: deepTargets.length, deepWithBundle, blindTargets, noSiteDayTargets, unknownMagNearNetwork: unknownMag,
-    warmupEvents: events.length - counted.length,
-    watchedSec: runs.reduce((s, r) => s + r.watched, 0), mismatchedSec: runs.reduce((s, r) => s + r.mismatched, 0),
-    tableDays: runs.filter((r) => r.tableDay).map((r) => r.day),
-    sources: { 確定値: runs.filter((r) => r.quakeSource === '確定値').length, 日別の震源リスト: runs.filter((r) => r.quakeSource === '日別の震源リスト').length },
-    complete,
-    prevDayQuakes,
-  }
 
   console.log('')
   console.log(`期間 ${days[0]}〜${days[days.length - 1]}（${days.length} 日）・見ていた ${summary.watchedSec} 秒・作り直した直後 ${WARMUP_SEC} 秒の検知 ${summary.warmupEvents} 件は数えない`)
   console.log(`確かな段 ${confirmed.length} 件: 気象庁の震源に当たる ${summary.confirmedMatched} 件・偶然でも当たる見込み ${summary.confirmedChance.toFixed(1)} 件`)
   console.log(`早い段どまり ${likelyOnly.length} 件: 当たる ${summary.likelyOnlyMatched} 件・偶然でも当たる見込み ${summary.likelyOnlyChance.toFixed(1)} 件`)
-  console.log(`見ていた間に観測網の中で起きた深さ ${CATALOG_DEEP_FOCUS_KM} km 未満の M${MISS_MIN_MAG} 以上 ${shallowTargets.length} 件: 束が当たった ${shallowTargets.length - missed.length} 件・当たらなかった ${missed.length} 件（見ていない時間に掛かった ${blindTargets} 件・M が決まっていない ${unknownMag} 件は数えていない）`)
-  if (deepTargets.length > 0) console.log(`  深さ ${CATALOG_DEEP_FOCUS_KM} km 以上の M${MISS_MIN_MAG} 以上 ${deepTargets.length} 件（震央の真上は揺れにくいので上の数とは別）: 束が当たった ${deepWithBundle} 件`)
-  if (noSiteDayTargets > 0) console.log(`  秒フレームが 1 つも無い日の M${MISS_MIN_MAG} 以上 ${noSiteDayTargets} 件は、観測網の内外を判定できないので上の数に入れていない`)
+  console.log(`見ていた間に観測網の中で起きた深さ ${CATALOG_DEEP_FOCUS_KM} km 未満の M${MISS_MIN_MAG} 以上 ${summary.targets} 件: 束が当たった ${summary.targets - summary.missed} 件・当たらなかった ${summary.missed} 件（見ていない時間に掛かった ${summary.blindTargets} 件・M が決まっていない ${summary.unknownMagNearNetwork} 件は数えていない）`)
+  if (summary.deepTargets > 0) console.log(`  深さ ${CATALOG_DEEP_FOCUS_KM} km 以上の M${MISS_MIN_MAG} 以上 ${summary.deepTargets} 件（震央の真上は揺れにくいので上の数とは別）: 束が当たった ${summary.deepWithBundle} 件`)
+  if (summary.noSiteDayTargets > 0) console.log(`  秒フレームが 1 つも無い日の M${MISS_MIN_MAG} 以上 ${summary.noSiteDayTargets} 件は、観測網の内外を判定できないので上の数に入れていない`)
   for (const r of confirmed.filter((r) => !r.matched)) console.log(`  当たらない確かな段 ${r.firstConfirmedAt} 点数${r.maxMembers} ${r.pos.map((x) => x.toFixed(2)).join(',')}`)
   for (const q of missed) console.log(`  束の無い地震 ${jstIso(q.t + JST_OFFSET_MS)} M${q.mag} ${q.lat.toFixed(2)},${q.lng.toFixed(2)}`)
   if (summary.tableDays.length > 0) console.log(`平常のゆらぎの表を焼いた日 ${summary.tableDays.join(' ')} が入っている（その日の誤報は少なめに出る）`)
-  if (!complete) console.log(`欠けのある日 ${blindDays.length} 件（${blindDays.map((r) => r.day).join(' ')}）。控えの無い時間・読めなかった震源の行・点数の食い違いがある`)
+  if (blindDays.length > 0) console.log(`欠けのある日 ${blindDays.length} 件（${blindDays.map((r) => r.day).join(' ')}）。控えの無い時間・読めなかった震源の行・点数の食い違いがある`)
+  if (prevDayUnreadableRows > 0) console.log(`前日の震源の控えに読めなかった行が ${prevDayUnreadableRows} 行ある（期間の頭の検知がその地震に当たれない。欠けの印を付ける）`)
+  if (earlyQuakeDays.length > 0) console.log(`出そろう前に取ったかもしれない日別の震源リストを使った日 ${earlyQuakeDays.join(' ')}（取りこぼしが少なく出うる。欠けの印を付ける）`)
+  const restarts = runs.reduce((s, r) => s + r.restarts.length, 0)
+  console.log(`検知器を作り直した ${restarts} 回（控えの無い時間の後・観測点の版の変わり目・${MAX_GAP_MS / 1000} 秒を超える途切れの後。各日の restarts に残す）`)
   if (!prevDayQuakes) console.log('前日の震源の控えが無いので、期間の頭の検知は前日の地震に当たれない（その分、初日の数字は不利に出る）')
 
   mkdirSync(OUT_DIR, { recursive: true })

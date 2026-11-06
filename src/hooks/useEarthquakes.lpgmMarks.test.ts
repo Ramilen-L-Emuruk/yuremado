@@ -134,6 +134,8 @@ describe('applyLiveLpgmWithMarks が地震カードへ当てる値', () => {
     issue: { source: '気象庁', time: '2024-01-01T16:16:00+09:00', type: '震源・震度情報', correct: 'なし' },
     earthquake: {
       time: '2024-01-01T16:10:00+09:00',
+      // 実電文の地震情報は発生時刻を持つ（長周期と同じ値）
+      originTime: '2024-01-01T16:10:00+09:00',
       hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2, depth: 0, magnitude: 7.4 },
       maxScale: 70,
       domesticTsunami: '警報等',

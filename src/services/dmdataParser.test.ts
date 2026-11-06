@@ -6195,6 +6195,18 @@ describe('日時として読めない電文の時刻（津波以外の経路）'
       expect(parseEarthquakeFromXml('VXSE53', NOTO_UNRECEIVED_XML)!.earthquake.time).toBe('2024-01-01T16:10:00+09:00')
     })
 
+    // 地震発生時刻は発現時刻と別の欄に持つ（深い・遠い地震では分がずれる。→ `JMAQuake.earthquake.originTime`）
+    it('地震発生時刻を発現時刻と別に読む', () => {
+      const xml = replaceOnce(NOTO_UNRECEIVED_XML, '<OriginTime>2024-01-01T16:10:00+09:00</OriginTime>', '<OriginTime>2024-01-01T16:09:00+09:00</OriginTime>')
+      const quake = parseEarthquakeFromXml('VXSE53', xml)!
+      expect(quake.earthquake.time).toBe('2024-01-01T16:10:00+09:00')
+      expect(quake.earthquake.originTime).toBe('2024-01-01T16:09:00+09:00')
+    })
+
+    it('震度速報は地震発生時刻を持たない', () => {
+      expect(parseEarthquakeFromXml('VXSE51', VXSE51_XML)!.earthquake.originTime).toBeUndefined()
+    })
+
     it('発現時刻も読めなければ空にして記録する', () => {
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
       try {

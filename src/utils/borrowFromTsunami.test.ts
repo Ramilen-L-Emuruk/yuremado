@@ -204,6 +204,23 @@ describe('withBorrowedHypocenter', () => {
     expect(quake.hypocenterSource).toBeUndefined()
   })
 
+  // 地震発生時刻は震源と組で借りる（震度速報は持たない。波形の線の起点の秒を、借りた震源の発生時刻の分で探す）
+  it('原因地震の発生時刻も震源と一緒に借りる', () => {
+    const quake = makePrompt()
+    expect(quake.earthquake.originTime).toBeUndefined()
+    expect(withBorrowedHypocenter(quake, [makeTsunami()], []).earthquake.originTime).toBe('2024-01-01T16:10:00+09:00')
+  })
+
+  it('発生時刻だけが変わった続報なら借り直す', () => {
+    const borrowedCard = withBorrowedHypocenter(makePrompt(), [makeTsunami()], [])
+    const later = makeTsunami({
+      id: 'dmdata-tsunami-20240101161010-2',
+      time: '2024-01-01T07:25:00Z',
+      sourceEarthquakes: [notoSource({ originTime: '2024-01-01T16:09:00+09:00' })],
+    })
+    expect(withBorrowedHypocenter(borrowedCard, [later], []).earthquake.originTime).toBe('2024-01-01T16:09:00+09:00')
+  })
+
   // 安全弁: 津波の続報は 1 つの津波で 40 通を超える（能登の実電文）。震源を変えない続報で
   // 毎回新しいカードを作ると、地震一覧全体が無駄に描き直される。
   it('震源が変わらない続報では、元の参照をそのまま返す', () => {

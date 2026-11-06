@@ -98,6 +98,8 @@ export function tsunamiSourceHypocenter(src: TsunamiSourceEarthquake): Hypocente
 
 export interface BorrowedHypocenter {
   hypocenter: Hypocenter
+  /** 原因地震の発生時刻（→ `JMAQuake.earthquake.originTime`）。震源と組で借りる。津波電文が持たなければ入らない */
+  originTime?: string
   source: BorrowedFromTsunami
 }
 
@@ -128,6 +130,7 @@ export function borrowHypocenterFromTsunami(
   if (!found) return null
   return {
     hypocenter: tsunamiSourceHypocenter(found.source),
+    ...(found.source.originTime && { originTime: found.source.originTime }),
     source: sourceOf(found.tsunami),
   }
 }
@@ -196,7 +199,9 @@ export function withBorrowedHypocenter(quake: JMAQuake, tsunamis: readonly JMATs
   if (sameBorrowedHypocenter(quake, borrowed)) return quake
   return {
     ...quake,
-    earthquake: { ...quake.earthquake, hypocenter: borrowed.hypocenter },
+    // 発生時刻も震源と組で借りる（波形の線の起点の秒を、借りた震源の発生時刻の分で探す）
+    // 発生時刻は震源と組で差し替える（借りた報に無ければ消す）。別の報の震源に元の報の発生時刻を残すと、組が食い違う
+    earthquake: { ...quake.earthquake, hypocenter: borrowed.hypocenter, originTime: borrowed.originTime },
     hypocenterSource: borrowed.source,
   }
 }
@@ -214,7 +219,8 @@ function sameBorrowedHypocenter(quake: JMAQuake, borrowed: BorrowedHypocenter): 
   const a = quake.earthquake.hypocenter
   const b = borrowed.hypocenter
   // **規模は `NaN` を取りうる**ので `Object.is` で比べる（`NaN !== NaN`）。
-  return a.name === b.name
+  return quake.earthquake.originTime === borrowed.originTime
+    && a.name === b.name
     && a.latitude === b.latitude
     && a.longitude === b.longitude
     && a.depth === b.depth
