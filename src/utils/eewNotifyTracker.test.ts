@@ -219,7 +219,7 @@ describe('通知の文面', () => {
     const warn = report(1, { severity: 'Warning', forecastMaxScale: 45 })
     const step = stepEewAnnounce(warn, false, { level: undefined, baseline: undefined })
     expect(eewAnnounceNotice('ev1', warn, step.forecast)).toEqual({
-      title: '緊急地震速報 警報', body: '石川県能登地方 最大震度5弱予想', tag: 'eew-ev1',
+      title: '緊急地震速報 警報', body: '石川県能登地方 最大震度5弱予想', tag: 'eew-ev1', open: { tab: 'realtime' },
     })
     const fc = report(1)
     expect(eewAnnounceNotice('ev1', fc, stepEewAnnounce(fc, false, { level: undefined, baseline: undefined }).forecast).title).toBe('地震動予報')

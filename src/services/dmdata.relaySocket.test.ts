@@ -15,6 +15,7 @@ vi.mock('../utils/logger', async (importOriginal) => ({
 
 import { DmdataWebSocket, type DmdataEvent, type RelayActiveEew, type RelayUpstreamStatus } from './dmdata'
 import { RelayTokenError, type RelayTokenStore } from './relayEndpoint'
+import { resetNotifyQuietWhileOpenForTest, setNotifyQuietWhileOpen, setPushQuietBinding } from './notifyQuietWhileOpen'
 
 async function drain() {
   for (let i = 0; i < 20; i++) await Promise.resolve()
@@ -174,6 +175,52 @@ describe('DmdataWebSocket: 中継へ繋ぐ', () => {
       ])
     } finally {
       ws.disconnect()
+    }
+  })
+
+  // 正: 中継が尋ねる口を名乗ったら、設定「アプリを開いている間は通知しない」の名乗りを送り、問いに答える
+  // （→ notifyQuietWhileOpen.ts。答えるかの判定そのものは notifyQuietWhileOpen.test.ts）
+  it('relay-status の pushQuiet で名乗り、relay-push-probe に答える', async () => {
+    const { ws } = setup()
+    setNotifyQuietWhileOpen(true)
+    setPushQuietBinding({ endpoint: 'https://push.example/abc', auth: 'secret' })
+    try {
+      ws.connect()
+      await drain()
+      FakeWs.last?.receive({ type: 'relay-status', upstream: 'connected', disconnectedAt: null, pushQuiet: true })
+      // 2 度名乗られても 1 度だけ
+      FakeWs.last?.receive({ type: 'relay-status', upstream: 'connected', disconnectedAt: null, pushQuiet: true })
+      FakeWs.last?.receive({ type: 'relay-push-probe', probe: 'p1' })
+      await drain()
+      expect(FakeWs.last?.sent).toEqual([
+        '{"type":"push-quiet-bind","endpoint":"https://push.example/abc","auth":"secret"}',
+        '{"type":"push-probe-ack","probe":"p1"}',
+      ])
+      // 閉じた接続へは名乗り直さない
+      FakeWs.last?.close()
+      const closed = FakeWs.all[0]
+      setNotifyQuietWhileOpen(false)
+      expect(closed.sent).toHaveLength(2)
+    } finally {
+      ws.disconnect()
+      resetNotifyQuietWhileOpenForTest()
+    }
+  })
+
+  // 対照: 尋ねる口を名乗らない中継（古い版）には何も送らない（古い版は pong 以外を送る接続を閉じる）
+  it('pushQuiet の無い relay-status では名乗らない', async () => {
+    const { ws } = setup()
+    setNotifyQuietWhileOpen(true)
+    setPushQuietBinding({ endpoint: 'https://push.example/abc', auth: 'secret' })
+    try {
+      ws.connect()
+      await drain()
+      FakeWs.last?.receive({ type: 'relay-status', upstream: 'connected', disconnectedAt: null })
+      await drain()
+      expect(FakeWs.last?.sent).toEqual([])
+    } finally {
+      ws.disconnect()
+      resetNotifyQuietWhileOpenForTest()
     }
   })
 

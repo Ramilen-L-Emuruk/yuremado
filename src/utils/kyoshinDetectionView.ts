@@ -54,7 +54,7 @@ export interface KyoshinView {
   /**
    * 主 likely イベントのメンバーのうち値を持つ点の最大インデックス。値を持つ点が無ければ（全員欠測・likely が無い）-1。
    * `candidateMaxIndex` は音の段の基準なので 0 から始めるが、こちらは震度の呼び名を付ける側（共有カードの副見出し）が使う
-   * —— 0 は「震度0以下」と名乗るので、欠測を 0 と取り違えない
+   * —— 0 は「震度0未満」と名乗るので、欠測を 0 と取り違えない
    */
   candidatePeakIndex: number
   /**
@@ -212,7 +212,7 @@ export function deriveKyoshinView(
     // （`stepAlertRegions`）は `confirmedShocks` が空になったことを「確定が消えた」と読み、
     // 発報済み・EEW 吸収済みの記録を捨てる。捨てると入れ替えの直後に同じ地域が鳴り直す。
     // メンバーが全員欠測・索引に無いときは -1（欠測）にする。0 は計測震度 -3.0 という値なので、0 へ丸めると
-    // 通知が「最大リアルタイム震度 0以下」と値があるように名乗る（`kyoshinDetectionScaleLabel` は欠測を null にする）。
+    // 通知が「最大リアルタイム震度 0未満」と値があるように名乗る（`kyoshinDetectionScaleLabel` は欠測を null にする）。
     // 音の段（`kyoshinLevel`）は 0 未満を震度0 の段として扱う
     const [centroidLat, centroidLng] = n > 0 ? [sumLat / n, sumLng / n] : e.epicenter
     return [{

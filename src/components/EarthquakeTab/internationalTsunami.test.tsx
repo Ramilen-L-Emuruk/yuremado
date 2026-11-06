@@ -68,6 +68,7 @@ const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami
       updateMarks={new Map()}
       activeLpgmEventId={null}
       onToggleLpgm={() => {}}
+      lpgmFocus={null}
       estimatedIntensities={[]}
       internationalTsunamisByQuake={internationalTsunamiIndex([quake], bulletins).byQuakeKey}
       distributionQuakeKey={null}

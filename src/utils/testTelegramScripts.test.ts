@@ -122,6 +122,17 @@ describe('地震テスト', () => {
     expect(quake.points.some(p => !p.isArea && p.city)).toBe(true)
   })
 
+  // 能登本震の報は固定付加文 0211 を持つ。読み上げは括弧書きを除き、画面の原文は全文のまま
+  // （2026-11-05 ユーザー選択「読み上げだけ「津波警報等を発表中です。」 (Recommended)」）。
+  it('津波の一文は「津波警報等を発表中です。」と読み、原文は全文のまま', async () => {
+    const [quake] = quakesOf(await build(scripts.EARTHQUAKE))
+    expect(quake.earthquake.domesticTsunamiCode).toBe('0211')
+    const text = joinSegments(earthquakeToSegments(quake, { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }, true, createQuakeSpokenState()))
+    expect(text).toContain('津波警報等を発表中です。')
+    expect(text).not.toContain('大津波警報・津波警報あるいは津波注意報')
+    expect(quake.forecastText).toContain('津波警報等（大津波警報・津波警報あるいは津波注意報）を発表中です。')
+  })
+
   it('実電文が持つ項目がそのまま入る（震央補助表現・気象庁以外の印・付加文 2 種）', async () => {
     const [quake] = quakesOf(await build(scripts.EARTHQUAKE))
     expect(quake.earthquake.hypocenter.nameFromMark).toBe('輪島の東北東３０ｋｍ付近')

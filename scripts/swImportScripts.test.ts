@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+// テストの中で初めて読むと、並列で流したときに読み込みの待ちが 1 件目に乗り、既定の 5 秒で時間切れになる
+import { NOTIFICATION_OPEN_MESSAGE } from '../src/utils/notificationClick'
 
 // Service Worker が `importScripts` で読み込むファイル（`vite.config.ts` の `workbox.importScripts`）は、
 // `public/` に置いてビルド出力へ写す。**読み込めないと Service Worker のインストールごと失敗する** ——
@@ -43,3 +45,12 @@ describe('Service Worker が読み込むファイル', () => {
   })
 })
 
+
+// 通知を押したときの文の種類は、Service Worker（素の JS）とアプリ（`notificationClick.ts`）で別々に書いてある。
+// ずれると、開いている画面へ渡した開き先が黙って捨てられる
+describe('通知を押したときの文の種類', () => {
+  it('Service Worker が送る種類と、アプリが受ける種類が同じ', () => {
+    const sw = readFileSync(`${ROOT}public/sw-notification-click.js`, 'utf-8')
+    expect(sw).toContain(`type: '${NOTIFICATION_OPEN_MESSAGE}'`)
+  })
+})

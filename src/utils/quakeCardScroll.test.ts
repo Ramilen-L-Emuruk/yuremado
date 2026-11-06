@@ -20,7 +20,7 @@ function quake(eventKey: string, id: string, cancelledAt?: Date): JMAQuake {
 }
 
 const target = (input: Partial<QuakeCardScrollInput> & Pick<QuakeCardScrollInput, 'earthquakes'>) =>
-  quakeCardScrollTarget({ selectedKey: null, speakingKey: null, followSpeech: false, ...input })
+  quakeCardScrollTarget({ selectedKey: null, speakingKey: null, followSpeech: false, lpgmFocus: null, ...input })
 
 describe('quakeCardScrollTarget — 読み上げが有効なとき（声に合わせる）', () => {
   // 正: 語っているカードを、取消の表示・選択中のカードより先に選ぶ。別のカードを読んでいる最中に
@@ -145,5 +145,54 @@ describe('quakeCardScrollTarget — 読み上げが無効なとき（受信し�
     const before = target({ earthquakes: [quake('B', 'b1')], selectedKey: 'B' })!
     const after = target({ earthquakes: [quake('C', 'c1'), quake('B', 'b1')], selectedKey: 'B' })!
     expect(after.signature).toBe(before.signature)
+  })
+})
+
+describe('quakeCardScrollTarget — 長周期地震動の節を見せる求め', () => {
+  const focus = (key: string, seq: number, quakeId: string) => ({ key, seq, quakeId })
+
+  // 正: 求めが選択中のカードに向いていれば、カードの頭ではなく長周期の節を見せる。
+  it('選択中のカードへの求めなら長周期の節を選ぶ', () => {
+    for (const followSpeech of [false, true]) {
+      const t = target({ earthquakes: [quake('A', 'a1')], selectedKey: 'A', followSpeech, lpgmFocus: focus('A', 1, 'a1') })!
+      expect(t.key).toBe('A')
+      expect(t.section).toBe('lpgm')
+    }
+  })
+
+  // 正: 同じ地震でも求め直せば（通知をもう一度押す等）合図が変わる。
+  it('求め直すと合図が変わる', () => {
+    const first = target({ earthquakes: [quake('A', 'a1')], selectedKey: 'A', lpgmFocus: focus('A', 1, 'a1') })!
+    const again = target({ earthquakes: [quake('A', 'a1')], selectedKey: 'A', lpgmFocus: focus('A', 2, 'a1') })!
+    expect(again.signature).not.toBe(first.signature)
+  })
+
+  // 対照: 求めが別のカードに向いていれば、選択中のカードの頭へ寄せる。
+  it('求めが選択中でないカードに向いていれば、カードの頭を選ぶ', () => {
+    const t = target({ earthquakes: [quake('A', 'a1'), quake('B', 'b1')], selectedKey: 'B', lpgmFocus: focus('A', 1, 'a1') })!
+    expect(t.key).toBe('B')
+    expect(t.section).toBe('card')
+  })
+
+  // 対照: 読み上げが無効なとき、求めの後に続報が届いたら、今までどおりカードの頭へ寄せ直す。
+  it('読み上げが無効なら、求めの後の続報でカードの頭へ戻る', () => {
+    const t = target({ earthquakes: [quake('A', 'a2')], selectedKey: 'A', lpgmFocus: focus('A', 1, 'a1') })!
+    expect(t.section).toBe('card')
+  })
+
+  // 対照: 読み上げが有効なら、続報は語っているあいだ頭へ寄り、語り終えたあとは長周期の節に留まる。
+  it('読み上げが有効なら、続報を語り終えたあとも長周期の節に留まる', () => {
+    const speaking = target({ earthquakes: [quake('A', 'a2')], selectedKey: 'A', speakingKey: 'A', followSpeech: true, lpgmFocus: focus('A', 1, 'a1') })!
+    const done = target({ earthquakes: [quake('A', 'a2')], selectedKey: 'A', followSpeech: true, lpgmFocus: focus('A', 1, 'a1') })!
+    expect(speaking.section).toBe('card')
+    expect(done.section).toBe('lpgm')
+  })
+
+  // 安全弁: 語っているカード・取消の表示は、求めより先に見せる（今までの優先順位を崩さない）。
+  it('語っているカードと取消の表示は求めより優先する', () => {
+    const speaking = target({ earthquakes: [quake('A', 'a1'), quake('B', 'b1')], selectedKey: 'A', speakingKey: 'B', followSpeech: true, lpgmFocus: focus('A', 1, 'a1') })!
+    expect(speaking).toMatchObject({ key: 'B', section: 'card' })
+    const cancelled = target({ earthquakes: [quake('A', 'a1'), quake('C', 'c1', new Date(1000))], selectedKey: 'A', lpgmFocus: focus('A', 1, 'a1') })!
+    expect(cancelled).toMatchObject({ key: 'C', section: 'card' })
   })
 })

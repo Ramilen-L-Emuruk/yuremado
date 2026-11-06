@@ -132,6 +132,7 @@ function renderCard(
       updateMarks={new Map()}
       activeLpgmEventId={opts.lpgm ? EVENT_ID : null}
       onToggleLpgm={() => {}}
+      lpgmFocus={null}
       estimatedIntensities={[]}
       internationalTsunamisByQuake={new Map()}
       distributionQuakeKey={null}

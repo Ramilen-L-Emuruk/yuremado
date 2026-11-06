@@ -79,6 +79,7 @@ const renderTab = async (quake: JMAQuake, { selected = true, openNotes = true } 
       updateMarks={new Map()}
       activeLpgmEventId={null}
       onToggleLpgm={() => {}}
+      lpgmFocus={null}
       estimatedIntensities={[]}
       internationalTsunamisByQuake={new Map()}
       distributionQuakeKey={null}

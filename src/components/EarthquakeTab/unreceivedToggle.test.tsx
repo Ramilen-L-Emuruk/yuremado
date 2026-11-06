@@ -77,6 +77,7 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     updateMarks={new Map()}
     activeLpgmEventId={null}
     onToggleLpgm={() => {}}
+    lpgmFocus={null}
     estimatedIntensities={[]}
     internationalTsunamisByQuake={new Map()}
     distributionQuakeKey={null}
@@ -149,6 +150,7 @@ describe('未入電トグル', () => {
         updateMarks={new Map()}
         activeLpgmEventId={null}
         onToggleLpgm={() => {}}
+        lpgmFocus={null}
         estimatedIntensities={[]}
         internationalTsunamisByQuake={new Map()}
         distributionQuakeKey={null}

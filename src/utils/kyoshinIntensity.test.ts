@@ -4,10 +4,11 @@ import { SHINDO0_COLOR } from './measuredIntensity'
 
 // インデックスと計測震度の対応: 計測震度 = index * 0.5 - 3.0（index 6 が 0.0）
 describe('揺れ検知の震度の呼び名', () => {
-  it('正: 震度0 未満（計測震度が 0 を下回る）は「0以下」', () => {
-    expect(kyoshinDetectionScaleLabel(5)).toBe('0以下')
-    expect(kyoshinDetectionScaleLabel(0)).toBe('0以下')
-    expect(detectionScaleLabelFromValue(-0.1)).toBe('0以下')
+  // 2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」
+  it('正: 震度0 未満（計測震度が 0 を下回る）は「0未満」', () => {
+    expect(kyoshinDetectionScaleLabel(5)).toBe('0未満')
+    expect(kyoshinDetectionScaleLabel(0)).toBe('0未満')
+    expect(detectionScaleLabelFromValue(-0.1)).toBe('0未満')
   })
 
   it('対照: 震度0 以上はいまの階級のまま', () => {
@@ -17,7 +18,7 @@ describe('揺れ検知の震度の呼び名', () => {
     expect(detectionScaleLabelFromValue(4.4)).toBe('4')
   })
 
-  it('安全弁: 欠測・読めない値は呼び名を持たない（「0以下」に化けない）', () => {
+  it('安全弁: 欠測・読めない値は呼び名を持たない（「0未満」に化けない）', () => {
     expect(kyoshinDetectionScaleLabel(-1)).toBeNull()
     expect(kyoshinDetectionScaleLabel(undefined)).toBeNull()
     expect(kyoshinDetectionScaleLabel(Number.NaN)).toBeNull()
@@ -48,7 +49,7 @@ describe('震度0 未満の段の色', () => {
     expect(lum(KYOSHIN_SUB_ZERO_STEP_COLORS[KYOSHIN_SUB_ZERO_STEP_COLORS.length - 1]!)).toBeLessThan(lum(SHINDO0_COLOR))
   })
 
-  it('カードの「0以下」の行はいちばん強い段の色', () => {
+  it('カードの「0未満」の行はいちばん強い段の色', () => {
     expect(KYOSHIN_SUB_ZERO_COLOR).toBe(KYOSHIN_SUB_ZERO_STEP_COLORS[5])
   })
 

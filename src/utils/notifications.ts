@@ -1,4 +1,7 @@
+import { quietNow } from '../services/notifyQuietWhileOpen'
 import { log } from './logger'
+import { notificationOpenQuery, parseNotificationOpen, type NotificationOpen } from './notificationOpen'
+import { emitNotificationOpen } from './notificationClick'
 
 /** 通知に渡す指定。`renotify` は型定義（lib.dom）に無いが、ブラウザは受け付ける。 */
 export type BrowserNotificationOptions = NotificationOptions & { renotify?: boolean }
@@ -25,6 +28,16 @@ export function canShowBrowserNotification(): boolean {
  * 前の通知が残っていれば知らせ直さずに差し替わるだけになるが、中身の置き換え自体は伝わる。
  */
 export async function deliverBrowserNotification(title: string, options: BrowserNotificationOptions): Promise<void> {
+  // 設定「アプリを開いている間は通知しない」（→ services/notifyQuietWhileOpen.ts）。出さずに済ませる（呼び出し側は出したものとして扱う）
+  if (quietNow()) {
+    log.info(`[notify] 設定によりアプリが画面に出ている間は通知を出さない（${title}・${options.tag ?? ''}）`)
+    return
+  }
+  return deliverEvenWhileOpen(title, options)
+}
+
+/** 通知を出す本体（設定「アプリを開いている間は通知しない」を見ない）。出し方は {@link deliverBrowserNotification} */
+async function deliverEvenWhileOpen(title: string, options: BrowserNotificationOptions): Promise<void> {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
     showWithConstructor(title, options)
     return
@@ -142,16 +155,49 @@ async function showWithRegistration(
 
 function showWithConstructor(title: string, options: BrowserNotificationOptions): void {
   if (!options.renotify) {
-    new Notification(title, options)
+    listenPageNotificationClick(new Notification(title, options))
     return
   }
   try {
-    new Notification(title, options)
+    listenPageNotificationClick(new Notification(title, options))
   } catch (err) {
     log.warn(`[notify] 音を鳴らし直す指定（renotify）付きで出せなかったので、外して出し直す（${options.tag ?? ''}）`, err)
-    new Notification(title, withoutRenotify(options))
+    listenPageNotificationClick(new Notification(title, withoutRenotify(options)))
   }
 }
+
+/**
+ * ページから出した通知（`new Notification()`）を押したときの処理。こちらは Service Worker を通らないので、
+ * `public/sw-notification-click.js` と同じこと（画面を前に出し、開き先があれば知らせる）をここで行う。
+ */
+function listenPageNotificationClick(notification: Notification): void {
+  notification.onclick = () => {
+    notification.close()
+    try {
+      window.focus()
+    } catch (err) {
+      log.debug('[notify] 通知を押したが、画面を前に出せなかった', err)
+    }
+    const open = readNotificationData(notification.data)
+    if (open) emitNotificationOpen(open, 'ページの通知')
+  }
+}
+
+/** 通知の data（`{ open: 問い合わせの形 }`）から開き先を読む。無ければ `null` */
+function readNotificationData(data: unknown): NotificationOpen | null {
+  if (typeof data !== 'object' || data === null) return null
+  const query = (data as { open?: unknown }).open
+  if (typeof query !== 'string' || query === '') return null
+  const open = parseNotificationOpen(query)
+  if (open === null) log.warn(`[notify] 通知を押したが、開き先を読めなかった（${query}）`)
+  return open
+}
+
+/** 通知の data に入れる形。中継のプッシュ通知（`public/sw-push.js` が本文の `open` を入れる）と揃える */
+export function notificationData(open: NotificationOpen | null): { open: string } {
+  return { open: notificationOpenQuery(open) }
+}
+
 
 function withoutRenotify(options: BrowserNotificationOptions): NotificationOptions {
   const { renotify: _renotify, ...rest } = options
@@ -169,6 +215,8 @@ export const NOTIFICATION_ICON = `${import.meta.env.BASE_URL}icons/icon.svg`
  * 「今の場面で知らせ直す (Recommended)」「今出している報で知らせ直す (Recommended)」）。
  * 呼び出し側は出すと決めた報でだけ呼ぶので、ここで知らせ直しても鳴りすぎない。出し方は {@link deliverBrowserNotification}。
  *
+ * `open` は押したときの開き先（→ `notificationOpen.ts`）。持たない通知は `null` を渡す（押すとアプリを前に出すだけ）。
+ *
  * **例外を外へ投げない。** 呼び出し側はこの後に音・読み上げ・記憶の後始末を続けるので、ここで投げると
  * 通知 1 つのためにそれらが丸ごと飛ぶ。出せなかったことは記録に残す。
  */
@@ -176,9 +224,21 @@ export function showBrowserNotification(
   title: string,
   body: string,
   tag: string,
-  requireInteraction = false,
+  requireInteraction: boolean,
+  open: NotificationOpen | null,
 ): void {
   if (!canShowBrowserNotification()) return
-  deliverBrowserNotification(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction, renotify: true })
+  deliverBrowserNotification(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction, renotify: true, data: notificationData(open) })
     .catch((e: unknown) => log.error(`[notify] ブラウザ通知を出せませんでした（${tag}）`, e))
+}
+
+/**
+ * 設定の窓の「通知テスト」。**設定「アプリを開いている間は通知しない」によらず出す** —— 押すときはいつもアプリが画面に
+ * 出ているので、止めると押しても何も起きないボタンになる（2026-11-05 ユーザー選択「設定によらず出す (Recommended)」）。
+ * 許可の有無は呼び出し側が確かめる。例外を外へ投げない
+ */
+export function showTestBrowserNotification(title: string, body: string, tag: string): void {
+  if (!canShowBrowserNotification()) return
+  deliverEvenWhileOpen(title, { body, icon: NOTIFICATION_ICON, tag, requireInteraction: false, renotify: true, data: notificationData(null) })
+    .catch((e: unknown) => log.error(`[notify] テスト通知を出せませんでした（${tag}）`, e))
 }

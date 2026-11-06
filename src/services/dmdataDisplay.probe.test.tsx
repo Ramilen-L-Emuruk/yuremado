@@ -180,7 +180,7 @@ function earthquakeTabProps() {
     speakingKey: null, followSpeech: false, onSelect: () => {}, isLoading: false, isLoadingMore: false,
     hasMore: false, onLoadMore: () => {}, watchLoadMoreThrottle: false, error: null,
     historyLoss: createEmptyTelegramLoss(), loadMoreFailed: false, reconnectGapLoss: false, fetchThrottled: false, onDismissKeyReentry: null,
-    updateMarks: new Map(), onToggleLpgm: () => {}, estimatedIntensities: [], internationalTsunamisByQuake: new Map(), distributionQuakeKey: null,
+    updateMarks: new Map(), onToggleLpgm: () => {}, lpgmFocus: null, estimatedIntensities: [], internationalTsunamisByQuake: new Map(), distributionQuakeKey: null,
     onToggleDistribution: () => {}, unreceivedQuakeKey: null, onToggleUnreceived: () => {}, onFocusMap: () => {},
     speakingTelegramTextSubject: null, seismoWaves: new Map(), seismoWaveFailedKeys: new Set<string>(),
     seismoWaveView: 'composite',
