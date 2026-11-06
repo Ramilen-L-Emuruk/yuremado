@@ -50,7 +50,7 @@ describe('planSpecialInfoNotification', () => {
     expect(plan.kind).toBe('tsunami')
     expect(plan.prefectures).toBeNull()
     expect(plan.notification.title).toBe('国際津波関連情報')
-    expect(plan.notification.body).toBe('25日8時43分頃、北緯13.9度、東経120.5度で発生したマグニチュード6.5の地震について、被害をもたらす津波の可能性は非常に小さいです。')
+    expect(plan.notification.body).toBe('25日8時43分頃、北緯13.9度、東経120.5度で発生したマグニチュード6.5の地震について、被害をもたらす津波の可能性は非常に小さいと発表されました。')
     expect(plan.notification.open).toEqual({ tab: 'earthquake', wepa60: '2020-12-24T23:43:00.000Z', lat: 13.9, lon: 120.5 })
     // 結べた地震カードの震源名があれば、それで言う
     expect(planSpecialInfoNotification({ kind: 'internationalTsunami', data: x, quakeName: 'フィリピン諸島' }, noName)!.notification.body)
