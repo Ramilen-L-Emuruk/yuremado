@@ -13,6 +13,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { requireHypocenterCatalogDir } from './lib/hypocenterCatalogDir'
 import { eventIdOfPubHistDir, looksLikeEewPage, planEewSection, pubHistUrl, savePubHistCache } from './localEarthquakeArchiveBuilder'
 import { ARCHIVE_IDS, ARCHIVE_TARGETS } from './historicalArchiveTargets'
 import { PoliteFetcher, WaybackUnavailableError, mainCheckoutCacheDir, pageMatchesEventId } from './waybackFcHist'
@@ -62,7 +63,7 @@ async function main(): Promise<number> {
       dates: t.dates,
       windowStart: t.windowStart,
       windowEnd: t.windowEnd,
-      repoRoot: resolve(fileURLToPath(import.meta.url), '..', '..'),
+      catalogDir: requireHypocenterCatalogDir(),
     })
     const pending = new Set(p.pubHistToFetch)
     for (const e of p.pubHistEvents) {

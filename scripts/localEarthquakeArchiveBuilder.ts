@@ -112,8 +112,8 @@ export interface EewSectionOptions {
   dates: string[]
   windowStart: Date
   windowEnd: Date
-  /** リポジトリのトップ（震源カタログ public/data/hypocenter/ を読む） */
-  repoRoot: string
+  /** 手元の長期震源カタログの置き場所（`scripts/lib/hypocenterCatalogDir.ts` の `requireHypocenterCatalogDir`） */
+  catalogDir: string
 }
 
 /**
@@ -159,7 +159,7 @@ export async function planEewSection(opts: EewSectionOptions): Promise<EewSectio
   const catalogOf = async (year: number) => {
     let c = catalogs.get(year)
     if (!c) {
-      c = await loadCatalogYear(opts.repoRoot, year)
+      c = await loadCatalogYear(opts.catalogDir, year)
       catalogs.set(year, c)
     }
     return c

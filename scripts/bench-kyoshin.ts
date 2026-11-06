@@ -44,7 +44,7 @@
  * こちらで測る。助走の控えは `<キャッシュ>/warmup/<窓>.json`（件数は `--warmup-dry-run` で数える。静穏でも最低 10 分ぶん遡るので、全 795 窓で最短 47.7 万件）。
  * 助走を付けた測定ではベースラインを更新しない（入れ替えるときに決める）。
  *
- * 無関係な検知は、長期震源カタログ（`public/data/hypocenter/`。無感の地震も入る）とも突き合わせ、
+ * 無関係な検知は、長期震源カタログ（手元の `.cache/hypocenter-catalog/`。無感の地震も入る）とも突き合わせ、
  * どの地震にも当てはまらないもの（ノイズの疑い）の件数を別に出す。
  *
  * ## 窓カタログ
@@ -77,7 +77,8 @@
  *   決め方は `scripts/lib/kyoshinBenchCache.ts`）。環境変数 `KYOSHIN_BENCH_CACHE` で変えられる
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
+import { requireHypocenterCatalogDir } from './lib/hypocenterCatalogDir'
 import { kyoshinBenchCacheDir } from './lib/kyoshinBenchCache'
 import { createEnsembleDetector } from '../src/utils/kyoshinEnsembleDetector'
 import { createEnsembleTracker } from '../src/utils/kyoshinEnsembleTracker'
@@ -412,7 +413,7 @@ function relatedQuake(e: Pick<Detection, 'epicenter'>, w: WindowSpec, nowMs: num
 }
 
 /**
- * 無関係な検知を、長期震源カタログ（`public/data/hypocenter/<年>.json`。M2.0 以上と M が決まっていない地震・無感も入る）と
+ * 無関係な検知を、長期震源カタログ（手元の `.cache/hypocenter-catalog/<年>.json`。M2.0 以上と M が決まっていない地震・無感も入る）と
  * 突き合わせる。窓の `quakes` は気象庁が震度を発表した地震だけなので、無感の小さな地震による本物の揺れも「無関係」に数えられる。
  * それを分けて数え、どの地震にも当てはまらない検知（ノイズの疑い）を見えるようにする。
  *
@@ -422,9 +423,14 @@ const JST_OFFSET_MS = 9 * 3_600_000
 const catalogYears = new Map<number, CatalogQuake[] | null>()
 function catalogYear(y: number): CatalogQuake[] | null {
   if (catalogYears.has(y)) return catalogYears.get(y) ?? null
-  const path = `public/data/hypocenter/${y}.json`
+  const dir = requireHypocenterCatalogDir()
+  const path = join(dir, `${y}.json`)
   let list: CatalogQuake[] | null = null
-  if (existsSync(path)) {
+  if (!existsSync(path)) {
+    // 目次にある年のファイルが無いのは手元の写しが欠けている。「照合できない」で流すと、その年の窓の分類が黙って変わる
+    const indexYears = (JSON.parse(readFileSync(join(dir, 'index.json'), 'utf8')) as { years: number[] }).years
+    if (indexYears.includes(y)) throw new Error(`長期震源カタログの ${y} 年のファイルがありません（${path}）。npm run build-hypocenter-catalog で作り直してください`)
+  } else {
     const r = JSON.parse(readFileSync(path, 'utf8')) as {
       count: number; startMs: number; timeScale: number; coordScale: number; magScale: number; depthScale: number
       t: number[]; lat: number[]; lng: number[]; dep: (number | null)[]; mag: (number | null)[]

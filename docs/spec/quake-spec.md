@@ -988,7 +988,7 @@ XML 20,661 通）を走査すると、`City/Condition` に未入電が入って�
     → 上の「深さだけが判らない電文」）へは倒さない（同日承認「3a」＝「いまのまま 700 を予測震度の式へ渡す」）
 - **確かめた範囲では、届いた例が無い。** DMDATA のアーカイブの控え（§2）—— 地震情報 2020-11-18〜2026-10・
   緊急地震速報の予報 2022-07-20〜2026-10-18・警報 69 日 —— の電文に文字列 `-700000/` は 0 通。生成済みの長期震源カタログ
-  （`public/data/hypocenter/*.json`・1919〜2026 年。深さは `dep` を `depthScale` で割った値。→ [data-sources-spec.md](data-sources-spec.md) §6
+  （当時の `public/data/hypocenter/*.json`。いまは中継の公開バケット `data.yuremado.com/h/`・1919〜2026 年。深さは `dep` を `depthScale` で割った値。→ [data-sources-spec.md](data-sources-spec.md) §6
   「長期震源カタログ」）でも、最も深いのは 698.4km だった（2026-10-20 に数えた）
 - Yahoo hypoInfo は深さを文字列の数字部分で読むが、700km 以上がどう書かれるかは
   標本が無く確かめていない。実配信で見つかったら、その書き方から印を作る経路を足す
@@ -1204,7 +1204,7 @@ eventId は確定 ID に変わる。すると先に届いていた震源情報�
 | 確定報の `OriginTime` とも照合する | 11:03 の 2 枚は統合されるが、それが正しいかが決まっていない。根拠の無い統合になる |
 
 **同じ症状を調べ直すときは、電文だけで判断しない。** 確定報が載せる震源の**規模と深さ**を
-長期震源カタログ（`public/data/hypocenter/`。→ [`data-sources-spec.md`](data-sources-spec.md) §6
+長期震源カタログ（中継の公開バケット `data.yuremado.com/h/`。→ [`data-sources-spec.md`](data-sources-spec.md) §6
 「長期震源カタログ」）と突き合わせれば、**その確定報がどの地震のものかは確定できる**。決まらないのは
 震度速報の側で、あちらは震源を持たないため手掛かりが `TargetDateTime`（分）と区域しかない。
 
