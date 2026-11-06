@@ -22,9 +22,11 @@ export interface HypoInfoPendingMissing {
  * HYPO_INFO_MISSING_CONFIRM_TICKS 回連続で確認できて初めて解除を確定する。
  *
  * 解除確定時、直前に isCancel=true を確認できていれば「誤報取消」として cancelled のみ立てる。
- * それ以外（有効期限切れ・欠測からの復帰断念）は expired も立てて自動終了として扱い、
- * 誤報取消の音・通知（useLiveEventHandler の !event.expired かつ hadKey=true 分岐）を鳴らさないようにする。
- * hadKey は AUD-2 対応で追加された二重鳴り防止ガード（受信元別に cancel が届いた場合の 2 回目対策）。
+ * それ以外（終わった速報が一覧から外れた・欠測から戻らなかった）は expired と `vanishedFromList` を立てた自動解除を出す。
+ * 受け口はこの自動解除をその場では当てず、最終報から積む自動解除と同じ待ち（揺れ検知が広がっている間は待つ。
+ * eew-spec §7）を通してから消す（2026-11-06 ユーザー選択「消えたら①と同じ待ちを通す (Recommended)」）。
+ * 強震モニタは最終報を出さずに一覧から外すことがあり、そのときはこの報が速報を終わらせる唯一の合図になる。
+ * expired は誤報取消の音・通知（useLiveEventHandler の !event.expired かつ hadKey=true 分岐）を鳴らさないための印。
  */
 export function diffHypoInfoEvents(
   prev: YahooHypoInfoItem[],
@@ -63,9 +65,10 @@ export function diffHypoInfoEvents(
       continue
     }
     // 消える直前に確認できていた isCancel の値をそのまま尊重する（誤報取消 か 自動終了 かの分岐）
-    const wasExplicitCancel = item.isCancel === 'true'
     const cancelledEEW = hypoInfoItemToEEW(item)
-    events.push({ ...cancelledEEW, cancelled: true, expired: wasExplicitCancel ? undefined : true })
+    events.push(item.isCancel === 'true'
+      ? { ...cancelledEEW, cancelled: true }
+      : { ...cancelledEEW, cancelled: true, expired: true, vanishedFromList: true })
   }
 
   return { events, pendingMissing }
