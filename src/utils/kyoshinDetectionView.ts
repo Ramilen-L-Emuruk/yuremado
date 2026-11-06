@@ -90,6 +90,12 @@ export interface ConfirmedShock {
    * 先に揺れている地域の点に引っぱられて別地点の名前にならない。
    */
   points: readonly DetectedPoint[]
+  /**
+   * この揺れのもとの検知の束（`EnsembleDetection`）。「別の地点で揺れを検知」の判定が、速報に含めた束・
+   * 知らせた束を覚えるのと、速報に走時で結べるかを見るのに使う（`stepAlertRegions`）。
+   * `startedAtMs` は束を作った検知の揺れ始め（`originTimeMs`）、`epicenter` はその検知の位置（震源の推定ではない）。
+   */
+  bundle: { id: string; startedAtMs: number; epicenter: { lat: number; lng: number } }
 }
 
 /**
@@ -221,6 +227,7 @@ export function deriveKyoshinView(
       index: peak !== null && peak.index >= 0 ? peak.index : -1,
       peak: peak ? { lat: peak.lat, lng: peak.lng } : { lat: centroidLat, lng: centroidLng },
       points: resolveMembers(e.drawnKeys, byKey),
+      bundle: { id: e.id, startedAtMs: e.originTimeMs, epicenter: { lat: e.epicenter[0], lng: e.epicenter[1] } },
     }]
   })
 

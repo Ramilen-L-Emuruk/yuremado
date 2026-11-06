@@ -78,6 +78,35 @@ export function dominantRegionName(
   return best
 }
 
+/**
+ * 読み上げる区域（{@link dominantRegionName}）の中で、いちばん強く揺れている点。「〇〇でも揺れを検知。」と読む揺れへ
+ * 地図を寄せる先に使う（2026-11-06 ユーザー選択「寄せ先を読む区域にそろえる (Recommended)」）。
+ *
+ * 揺れ全体の最も強い点（`ConfirmedShock.peak`）へ寄せると、広がった揺れでは読んだ区域と別の場所が映る
+ * （2026-10-25 11:09 の深発地震: 「東京都２３区でも揺れを検知。」と読んだ揺れの最も強い点は日高地方西部だった）。
+ *
+ * - 段が同じ点が並んだら、点の並びで先に現れた点（区域名の決め方と同じく、先に揺れ始めた側）
+ * - その区域の点がみな欠測なら、並びで先に現れた点
+ * - 区域が決まらない（区域データが無い・点が無い）ときは null（呼び出し側が揺れ全体の最も強い点へ落とす）
+ */
+export function dominantRegionPeak(
+  points: Iterable<RegionPoint>,
+  subregions: readonly SubRegion[] | null,
+): { lat: number; lng: number } | null {
+  if (!subregions) return null
+  const list = [...points]
+  const name = dominantRegionName(list, subregions)
+  if (name === null) return null
+  // 欠測（負の段・数でない値）の点は強さを比べない。区域の点がみな欠測なら、並びで先に現れた点
+  const strength = (p: RegionPoint): number => (Number.isFinite(p.index) && p.index >= 0 ? p.index : -Infinity)
+  let best: RegionPoint | null = null
+  for (const p of list) {
+    if (kyoshinPointRegionName(p.lat, p.lng, subregions) !== name) continue
+    if (best === null || strength(p) > strength(best)) best = p
+  }
+  return best ? { lat: best.lat, lng: best.lng } : null
+}
+
 /** 区域ごとに重みを足す。重みが null の点は数えない。 */
 function tally(
   points: readonly RegionPoint[],

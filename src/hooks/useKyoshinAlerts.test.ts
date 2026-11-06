@@ -12,6 +12,7 @@ import { calcFeltRadiusKm, eewFeltRadiusKm } from '../utils/eew'
 import type { EEWAlert, Hypocenter } from '../types/earthquake'
 import type { ConfirmedShock } from '../utils/kyoshinDetectionView'
 import { haversineKm } from '../utils/geo'
+import { testBundle } from '../test-utils/alertBundle'
 
 function fakeRegion(overrides: Partial<AlertRegion> = {}): AlertRegion {
   return {
@@ -554,7 +555,7 @@ describe('stepAlertRegions', () => {
 // **迷ったら偽（鳴らす側）へ倒す**のが要件。偽になりすぎても余分に鳴るだけで済むが、真になりすぎると
 // 無関係な地震を無音で握り潰す。
 describe('isSameShakeAsBefore', () => {
-  const shockAt = (lat: number, lng: number): ConfirmedShock => ({ lat, lng, index: 20, peak: { lat, lng }, points: [] })
+  const shockAt = (lat: number, lng: number): ConfirmedShock => ({ lat, lng, index: 20, peak: { lat, lng }, points: [], bundle: testBundle(lat, lng) })
   const NOTO = shockAt(37.5, 137.0)
   const NEAR_NOTO = shockAt(37.6, 137.1) // 約 14km
   const FUKUOKA = shockAt(33.6, 130.4) // 能登から約 700km

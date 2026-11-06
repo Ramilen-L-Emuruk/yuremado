@@ -26,6 +26,7 @@ import { DEFAULTS } from './useSettings'
 import type { AlertTitleApi } from './useAlertTitle'
 import type { EEWAlert } from '../types/earthquake'
 import type { TabId } from '../components/IconNav'
+import { testBundle } from '../test-utils/alertBundle'
 
 vi.mock('../utils/alertSound', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../utils/alertSound')>()
@@ -33,9 +34,9 @@ vi.mock('../utils/alertSound', async (importOriginal) => {
 })
 vi.mock('../utils/notifications', () => ({ showBrowserNotification: vi.fn() }))
 
-const NOTO = { lat: 37.5, lng: 137.0, index: 20, peak: { lat: 37.45, lng: 137.15 }, points: [] }
+const NOTO = { lat: 37.5, lng: 137.0, index: 20, peak: { lat: 37.45, lng: 137.15 }, points: [], bundle: testBundle(37.5, 137.0) }
 // 能登から約 700km。途絶をまたいで同じ揺れとみなす SAME_SHAKE_KM(100km) より十分遠い。
-const FUKUOKA = { lat: 33.6, lng: 130.4, index: 20, peak: { lat: 33.58, lng: 130.35 }, points: [] }
+const FUKUOKA = { lat: 33.6, lng: 130.4, index: 20, peak: { lat: 33.58, lng: 130.35 }, points: [], bundle: testBundle(33.6, 130.4) }
 
 function makeDeps(over: Partial<KyoshinAlertsDeps> = {}): KyoshinAlertsDeps {
   return {

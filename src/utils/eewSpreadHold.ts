@@ -124,6 +124,37 @@ function eewSource(eew: EEWAlert): { lat: number; lng: number; depthKm: number; 
   return { lat: latitude, lng: longitude, depthKm: hasDepth(depth) ? depth : UNKNOWN_DEPTH_ASSUMED_KM, magnitude, originMs }
 }
 
+/** 束の始まりと位置が EEW の走時の窓に入るか、入るならその場所への S 波の到達の見込み（ms） */
+function travelWindowSArrival(
+  src: NonNullable<ReturnType<typeof eewSource>>,
+  startedAtMs: number,
+  lat: number,
+  lng: number,
+): number | null {
+  const distKm = haversineKm(lat, lng, src.lat, src.lng)
+  const earliestMs = src.originMs + Math.max(-ORIGIN_MATCH_BEFORE_MS, travelTimeSec('P', distKm, src.depthKm) * 1000 - TRAVEL_EARLY_MS)
+  const sArrivalMs = src.originMs + travelTimeSec('S', distKm, src.depthKm) * 1000
+  if (startedAtMs < earliestMs || startedAtMs > sArrivalMs + TRAVEL_LATE_MS) return null
+  return sArrivalMs
+}
+
+/**
+ * 検知の束がその EEW の地震の揺れか（束の始まりが、震源から束の最初の点までの P 波の到達の 30 秒前〜S 波の到達の
+ * 90 秒後に入る）。自動解除の広がり待ちと同じ結び方で、「別の地点で揺れを検知」と立ち直しの検知音も
+ * これで同じ地震とみなす（2026-11-06 ユーザー選択「走時で結べる束も含める (Recommended)」「結べる束なら鳴らさない (Recommended)」）。
+ * 仮の震源・震央や発生時刻が読めない報、位置や始まりが読めない束は結ばない。
+ */
+export function isBundleTiedToEew(
+  startedAtMs: number,
+  epicenter: { lat: number; lng: number },
+  eew: EEWAlert,
+): boolean {
+  if (!Number.isFinite(startedAtMs) || !hasKnownEpicenter(epicenter.lat, epicenter.lng)) return false
+  const src = eewSource(eew)
+  if (!src) return false
+  return travelWindowSArrival(src, startedAtMs, epicenter.lat, epicenter.lng) !== null
+}
+
 export function createDetectionSpreadLog(): DetectionSpreadLog {
   const bundles = new Map<string, BundleRecord>()
   let sites: readonly (readonly [number, number])[] = []
@@ -174,10 +205,8 @@ export function createDetectionSpreadLog(): DetectionSpreadLog {
         // 距離では切らない。速報の震源・深さ・規模は実際と大きく外れることがあり、その値で求めた有感半径の外でも
         // 同じ地震の揺れが広がる（2026-10-25 11:09: 強震モニタの報は深さ 10km・M6.2 で有感半径 826km、
         // 気象庁の決定は深さ 470km・M7.0 で、震央から 1124km の東北で発生の 290 秒後に揺れ検知が始まった）
-        const distKm = haversineKm(b.epicenter[0], b.epicenter[1], src.lat, src.lng)
-        const earliestMs = src.originMs + Math.max(-ORIGIN_MATCH_BEFORE_MS, travelTimeSec('P', distKm, src.depthKm) * 1000 - TRAVEL_EARLY_MS)
-        const sArrivalMs = src.originMs + travelTimeSec('S', distKm, src.depthKm) * 1000
-        if (b.firstMs < earliestMs || b.firstMs > sArrivalMs + TRAVEL_LATE_MS) continue
+        const sArrivalMs = travelWindowSArrival(src, b.firstMs, b.epicenter[0], b.epicenter[1])
+        if (sArrivalMs === null) continue
         // P 波で始まった束は、その場所へ S 波が届くまで広がりの途中とみなす。遠い地震では P 波の束が止まってから
         // S 波の束が始まるまで 1 分以上空く（2026-11-04 硫黄島近海で 74 秒）。近い地震では S 波が数秒で届くので効かない
         // 強震モニタが止まっていれば、後から来る S 波の束はできようがないので延ばさない
