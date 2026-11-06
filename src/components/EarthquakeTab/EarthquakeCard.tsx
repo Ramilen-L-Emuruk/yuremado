@@ -346,6 +346,9 @@ function pinBandHeight(pin: HTMLElement, root: HTMLElement): number {
  * 呼ぶ側が決める（震度 36px・長周期 52px）。字下げは段ごとに 10px ずつ、文字は段ごとに 0.5px ずつ小さく
  * （2026-11-01 選択「この形にする (Recommended)」。最長の観測点名 12 文字＋＊が 1 行に収まる詰め方）。
  *
+ * 行の高さ（上下 3px の余白・最低 28px）は指で押しやすい高さとして保つ（2026-11-06 ユーザー選択「元に戻す」、
+ * 理由の発言「タップしづらいので」）。
+ *
  * 左端の縦線は、この報でこの行（または配下）が動いた印。**印が無くても幅を取る**（透明で置く）。
  * 付いたり消えたりで地名の位置がずれると、一覧を目で追っているときに行がまとめて動いて見える。
  */
@@ -1557,7 +1560,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
 
         {/* 震度の枠と震源の値。広い画面では一覧の上へ貼りつく（→ index.css の quake-stick） */}
         <div ref={factsRef} className="quake-stick bg-card">
-          <div className="grid border-b border-border py-3" style={{ gridTemplateColumns: 'var(--qk-big) 1fr', gap: 'var(--qk-fact-gap)' }}>
+          <div className="grid border-b border-border py-2" style={{ gridTemplateColumns: 'var(--qk-big) 1fr', gap: 'var(--qk-fact-gap)' }}>
             {/* 前の版の形：濃い地・震度の色の縁・「最大震度」・白い極太の数字。右の文字の列に合わせて縦に伸ばし、
                 中身は上下の中央（2026-11-03 選択「B2：縦に伸ばし中身は中央 (Recommended)」）。
                 押すと各地の震度へ、長周期の札を押すと長周期地震動の節へ巻く（同日選択「震度の枠→各地の震度へ」
@@ -1624,11 +1627,11 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               {hypocenter.source && (
                 <div className="text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{formatHypocenterSource(hypocenter.source)}</div>
               )}
-              <div className="mt-2.5 flex flex-wrap gap-x-6 gap-y-2.5">
+              <div className="mt-1 flex flex-wrap gap-x-5 gap-y-1">
                 <div>
                   {quakeTimeText ? (
                     <>
-                      <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+                      <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
                         {quake.fromInternationalTsunami ? QUAKE_ORIGIN_TIME_LABEL : QUAKE_ARRIVAL_TIME_LABEL}
                       </span>
                       <b className="font-bold tabular-nums leading-tight" style={{ fontSize: 'var(--qk-val)' }}>{quakeTimeText}</b>
@@ -1640,7 +1643,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                 {/* 国内津波情報。「津波警報等」だけは語に何が含まれるか説明を添える（→ `formatDomesticTsunami`）。
                     国際津波関連情報だけのカードには出さない（英文に国内の津波の区分は無い。→ quake-spec.md §3） */}
                 {!quake.fromInternationalTsunami && <div title={domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined}>
-                  <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>津波</span>
+                  <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>津波</span>
                   <b className="font-bold leading-tight" style={{ fontSize: 'var(--qk-val)', color: tsunamiInfo.color }}>
                     {tsunamiInfo.text}
                     {borrowedDomesticTsunami && <BorrowedMark />}
@@ -1652,7 +1655,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                     <i className="h-0 basis-full" />
                     <div>
                       {/* 見出しは種別の名前、値は記号つき（2026-10-23 ユーザー承認「まあそれで行きましょう」）。→ `magnitudeHeading` */}
-                      <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+                      <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
                         {magnitudeHeading(hypocenter.magnitudeType)}
                         {borrowedHypocenter && <BorrowedMark />}
                       </span>
@@ -1667,7 +1670,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                       </b>
                     </div>
                     <div>
-                      <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+                      <span className="block leading-tight text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
                         深さ
                         {borrowedHypocenter && <BorrowedMark />}
                       </span>
