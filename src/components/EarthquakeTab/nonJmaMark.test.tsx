@@ -82,6 +82,7 @@ const renderTab = async (quake: JMAQuake, lpgm?: JMALpgm, opts: { unreceivedOpen
   <EarthquakeTab
     earthquakes={[quake]}
     selectedId={quakeEventKey(quake)}
+    selectSeq={0}
     speakingKey={null}
     followSpeech={false}
     onSelect={() => {}}
@@ -95,12 +96,14 @@ const renderTab = async (quake: JMAQuake, lpgm?: JMALpgm, opts: { unreceivedOpen
     loadMoreFailed={false}
     reconnectGapLoss={false}
     fetchThrottled={false}
+    onDismissKeyReentry={null}
     lpgmByEventId={lpgm ? new Map([[EVENT_ID, lpgm]]) : new Map()}
     updateMarks={new Map()}
     activeLpgmEventId={lpgm ? EVENT_ID : null}
     onToggleLpgm={() => {}}
+    lpgmFocus={null}
     estimatedIntensities={[]}
-    internationalTsunamis={[]}
+    internationalTsunamisByQuake={new Map()}
     distributionQuakeKey={null}
     onToggleDistribution={() => {}}
     unreceivedQuakeKey={opts.unreceivedOpen ? quakeEventKey(quake) : null}

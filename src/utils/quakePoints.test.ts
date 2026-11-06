@@ -2,10 +2,10 @@
 // → docs/spec/quake-spec.md §4「points 構造」
 //
 // 見分けを名前だけ（`addr !== pref`）で済ませると、区域名が県名と同じ奈良県が
-// 標準版（P2PQuake）で区域ごと落ちる。索引を渡す形と渡さない形の両方を固定する。
+// 区域の点に県名を積む電文で区域ごと落ちる。索引を渡す形と渡さない形の両方を固定する。
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { isAreaPoint, buildIntensityRows, cityKey, type IntensityPrefRow, type IntensityRowDeps } from './quakePoints'
+import { isAreaPoint, buildIntensityRows, cityKey, intensityRowsShowUnreceivedNote, type IntensityPrefRow, type IntensityRowDeps } from './quakePoints'
 import { areaPrefIndexOf, type StationCoordsData } from './stationCoords'
 import type { EarthquakePoint, IntensityScale } from '../types/earthquake'
 
@@ -19,7 +19,7 @@ function pt(pref: string, addr: string, isArea: boolean): EarthquakePoint {
 }
 
 describe('区域の点かロールアップ点か（索引あり）', () => {
-  // 正: P2PQuake は区域の点にも pref を積むため、奈良県は addr === pref になる。
+  // 正: 区域の点に pref を積むと、奈良県は addr === pref になる。
   // 名前だけで判断すると落ちるが、奈良県は一次細分区域として実在する。
   it('区域名が県名と同じ奈良県は、pref 付きでも区域の点', () => {
     expect(isAreaPoint(pt('奈良県', '奈良県', true), AREA_PREF_INDEX)).toBe(true)
@@ -102,9 +102,9 @@ describe('buildIntensityRows', () => {
     expect(rows[0].regions.map(r => r.name)).toEqual(['岩手県沿岸北部', '岩手県内陸北部'])
   })
 
-  // 正: 標準版（P2PQuake）の震度速報は区域の点にも県名を積む（`pref` が空でない）。
-  // `pref` の有無で区域を見分けると県の行だけが並び、配下の区域が 1 件も出なかった。
-  it('県名を持つ区域の点（標準版の震度速報）から区域の行を作る', () => {
+  // 正: 区域の点が県名を持つ（`pref` が空でない）震度速報でも区域の行を作る。
+  // `pref` の有無で区域を見分けると県の行だけが並び、配下の区域が 1 件も出ない。
+  it('県名を持つ区域の点（震度速報）から区域の行を作る', () => {
     const p2pArea = (pref: string, addr: string, scale: number, unreceived = false): EarthquakePoint =>
       ({ pref, addr, isArea: true, scale: s(scale), ...(unreceived && { unreceived }) })
     const rows = prefRowsOf([
@@ -118,7 +118,7 @@ describe('buildIntensityRows', () => {
     expect(rows.find(r => r.pref === '新潟県')?.regions.map(r => r.name)).toEqual(['新潟県上越'])
   })
 
-  // 安全弁: 区域名が県名と同じ奈良県は、標準版でも区域の行として出す（ロールアップ点と取り違えない）。
+  // 安全弁: 区域名が県名と同じ奈良県は、県名を持つ区域の点でも区域の行として出す（ロールアップ点と取り違えない）。
   it('県名と同じ名前の区域（奈良県）も区域の行として出す', () => {
     const rows = prefRowsOf([
       { pref: '奈良県', addr: '奈良県', isArea: true, scale: s(40) },
@@ -126,7 +126,7 @@ describe('buildIntensityRows', () => {
     expect(rows[0].regions.map(r => r.name)).toEqual(['奈良県'])
   })
 
-  // 正: 区域の点を持たない電文（P2PQuake の詳細報）では観測点から逆引きする。
+  // 正: 区域の点を持たない電文では観測点から逆引きする。
   it('区域の点が無ければ観測点の所属区域から作る', () => {
     const rows = prefRowsOf(
       [{ pref: '岩手県', addr: '宮古市田老', isArea: false, scale: s(40) }],
@@ -165,7 +165,7 @@ describe('buildIntensityRows', () => {
     expect(region.stations).toEqual([])
   })
 
-  // 安全弁: 市町村を持たない経路（P2PQuake）では、観測点が区域の直下に入る。
+  // 安全弁: 市町村を持たない観測点は、区域の直下に入る。
   it('市町村を持たない観測点は区域の直下に置く', () => {
     const rows = prefRowsOf([
       area('岩手県沿岸北部', 40),
@@ -468,5 +468,30 @@ describe('buildIntensityRows', () => {
       )
       expect(result.rows.map(r => (r.kind === 'pref' ? r.pref : r.name))).toEqual(['岩手県沿岸北部', '宮城県'])
     })
+  })
+})
+
+describe('intensityRowsShowUnreceivedNote', () => {
+  const st = (unreceived: boolean) => ({ name: 's', scale: 30 as IntensityScale, unreceived, nonJma: false })
+  const city = (over: { unreceived?: boolean; hasUnreceived?: boolean; stations?: ReturnType<typeof st>[] } = {}) =>
+    ({ name: 'c', scale: 30 as IntensityScale, unreceived: false, hasUnreceived: false, stations: [], ...over })
+  const region = (over: Record<string, unknown> = {}) =>
+    ({ name: 'r', scale: 30 as IntensityScale, unreceived: false, hasUnreceived: false, cities: [], stations: [], ...over })
+  const pref = (over: Record<string, unknown> = {}): IntensityPrefRow =>
+    ({ kind: 'pref', pref: 'p', scale: 30 as IntensityScale, unreceived: false, hasUnreceived: false, regions: [], stations: [], cities: [], ...over }) as IntensityPrefRow
+
+  // 正: 奥の観測点だけが未入電でも、注記を描く行があるので欄を広げる
+  it('奥の観測点の未入電でも真', () => {
+    expect(intensityRowsShowUnreceivedNote([pref({ regions: [region({ cities: [city({ stations: [st(true)] })] })] })])).toBe(true)
+  })
+
+  // 対照: 注記を描く行が 1 つも無ければ偽（県の行の「自分の未入電」は注記を描かない）
+  it('注記を描く行が無ければ偽', () => {
+    expect(intensityRowsShowUnreceivedNote([pref({ unreceived: true, regions: [region()] })])).toBe(false)
+  })
+
+  // 安全弁: 県を引けない区域（最上段の区域）の範囲の未入電も拾う
+  it('最上段の区域の範囲の未入電も真', () => {
+    expect(intensityRowsShowUnreceivedNote([{ kind: 'area', ...region({ hasUnreceived: true }) } as never])).toBe(true)
   })
 })

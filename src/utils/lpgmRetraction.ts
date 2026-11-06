@@ -10,8 +10,8 @@
  * 後から届いても採らない。取消より後に発表された報（発表し直した報）は採る。前後の比べ方は
  * 地震情報と同じ `compareReportAge`（作成時刻があれば秒まで、同じなら取消を尊重する）。
  */
-import type { JMALpgm } from '../types/earthquake'
-import { compareReportAge, reportOrderKey } from './quakeMerge'
+import type { JMALpgm, JMAQuake, QuakeRetractedReport } from '../types/earthquake'
+import { compareReportAge, extractQuakeEventId, reportOrderKey } from './quakeMerge'
 import { log } from './logger'
 
 /** 長周期の取消を見た事実。 */
@@ -21,7 +21,12 @@ export interface LpgmRetraction {
   time: string
   /** 取消電文の作成時刻（`Control/DateTime`）のミリ秒。 */
   createdAtMs?: number
+  /** 取消しの理由（`Body/Text`）。地震カードに電文のまま出す（→ {@link lpgmRetractionsIntoCards}） */
+  cancelText?: string
 }
+
+/** 長周期地震動観測情報の情報名（電文の `Head/Title`。実電文はこの 1 種類だけ。→ `JMALpgm.infoName`） */
+export const LPGM_INFO_NAME = '長周期地震動に関する観測情報'
 
 /** 台帳の上限。地震情報の台帳（`MAX_QUAKE_RETRACTIONS`）と同じ 20 件。 */
 export const MAX_LPGM_RETRACTIONS = 20
@@ -32,6 +37,7 @@ export function lpgmRetractionOf(cancel: JMALpgm): LpgmRetraction {
     eventId: cancel.eventId,
     time: cancel.time,
     ...(cancel.createdAtMs !== undefined && { createdAtMs: cancel.createdAtMs }),
+    ...(cancel.cancelText && { cancelText: cancel.cancelText }),
   }
 }
 
@@ -141,4 +147,38 @@ export function foldLpgmHistory(
     if (!existing || compareReportAge(lpgm, existing) > 0) result.set(lpgm.eventId, lpgm)
   }
   return result
+}
+
+/**
+ * 長周期の取消を、同じ地震の地震カードの「取り消された報」へ積む（→ `JMAQuake.retractedReports`）。
+ *
+ * **地震情報の一部取消と同じ場所・同じ形で出す**（2026-11-03 ユーザー選択「取消の文と理由を出す (Recommended)」。
+ * 説明「…『長周期地震動に関する観測情報は取り消されました』と出し、その下に気象庁の理由の文を電文のまま出す。…長周期の節と
+ * 閉じた行の『長周期』の札は、いまどおり消す」）。長周期の取消は長周期の一覧（`lpgmByEventId`）から報を消すだけなので、
+ * カードに積まないと、取り消されたこと自体が画面から消える。
+ *
+ * - 記録の `reportTime` には**取消電文の発表時刻**を入れる。取り下げた報は一覧から消えていて時刻を引けないことがあり
+ *   （履歴の畳み込みは取り下げた報を採らない）、ライブと履歴で同じ値にそろえるため。重複はこの時刻で弾く
+ * - 取消表示中のカードは触らない（カードごと取り下げられている）
+ *
+ * 1 枚も変わらなければ元の配列参照を返す。
+ */
+export function lpgmRetractionsIntoCards(cards: readonly JMAQuake[], retractions: readonly LpgmRetraction[]): JMAQuake[] {
+  if (retractions.length === 0) return cards as JMAQuake[]
+  let changed = false
+  const next = cards.map(card => {
+    if (card.cancelledAt || card.cancelled) return card
+    const eventId = extractQuakeEventId(card)
+    if (!eventId) return card
+    const mine = retractions.filter(r => r.eventId === eventId)
+    if (mine.length === 0) return card
+    const have = card.retractedReports ?? []
+    const added: QuakeRetractedReport[] = mine
+      .filter(r => !have.some(k => k.issueType === LPGM_INFO_NAME && k.reportTime === r.time))
+      .map(r => ({ issueType: LPGM_INFO_NAME, reportTime: r.time, ...(r.cancelText && { cancelText: r.cancelText }) }))
+    if (added.length === 0) return card
+    changed = true
+    return { ...card, retractedReports: [...have, ...added] }
+  })
+  return changed ? next : (cards as JMAQuake[])
 }

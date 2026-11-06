@@ -26,8 +26,9 @@ export function kyoshinIndexToLabel(index: number | undefined): string | null {
 }
 
 /**
- * 揺れ検知の震度を通知・検知カードへ出すときの呼び名。震度0 未満（計測震度が 0 を下回る）は「0以下」と呼ぶ
- * （2026-10-29 ユーザー選択「「震度0以下」と出す (Recommended)」）。組み合わせの検知器は震度1 に届かない揺れも
+ * 揺れ検知の震度を通知・検知カードへ出すときの呼び名。震度0 未満（計測震度が 0 を下回る）は「0未満」と呼ぶ
+ * （2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」。「0以下」は「0」の行と並ぶと 0 を含むように
+ * 読めるため、2026-10-29 の選択「「震度0以下」と出す (Recommended)」を覆した）。組み合わせの検知器は震度1 に届かない揺れも
  * 確かな段にするので、全員が震度0 未満のまま確かな段になりうる。欠測（負のインデックス）・読めない値は null
  */
 export function kyoshinDetectionScaleLabel(index: number | undefined): string | null {
@@ -43,7 +44,7 @@ export function detectionScaleLabelFromValue(value: number | null): string | nul
 }
 
 /** 震度0 未満の揺れ検知の呼び名 */
-const DETECTION_BELOW_ZERO_LABEL = '0以下'
+const DETECTION_BELOW_ZERO_LABEL = '0未満'
 
 /**
  * 検知に入った震度0 未満の点の色。インデックス 0〜5（計測震度 −3.0〜−0.5）の 6 段で、
@@ -75,7 +76,7 @@ export function kyoshinSubZeroStepRatio(step: number): number {
 }
 
 /**
- * 検知カードの「0以下」の行の色。行は段をまとめて数えるので、いちばん強い段の色を使う
+ * 検知カードの「0未満」の行の色。行は段をまとめて数えるので、いちばん強い段の色を使う
  * （2026-10-30 ユーザー選択「明るさと大きさで段を付ける (Recommended)」の説明文「カードの「0以下」の行の色は、
  * いちばん強い段の色に合わせる」）
  */

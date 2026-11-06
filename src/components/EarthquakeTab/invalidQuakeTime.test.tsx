@@ -7,7 +7,7 @@
 // ここはカードの主題（いつ起きた地震か）で、空欄にすると隣の種別バッジだけが残り、
 // 時刻を読み落としたのか電文に無いのか利用者に分からない。語を出すことを固定する。
 //
-// **開いた表示と畳んだ表示の 2 か所にある。** 片方だけ直しても型検査は通り、例外も出ない。
+// **開いたカードと一覧の閉じた行の 2 か所にある。** 片方だけ直しても型検査は通り、例外も出ない。
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
@@ -15,7 +15,7 @@ import { EarthquakeTab } from './index'
 import { quakeEventKey } from '../../utils/quakeMerge'
 import type { JMAQuake } from '../../types/earthquake'
 import { createEmptyTelegramLoss } from '../../utils/telegramLoss'
-import { formatQuakeTimeLabeled } from '../../utils/formatters'
+import { QUAKE_ARRIVAL_TIME_LABEL, QUAKE_ARRIVAL_TIME_UNKNOWN } from '../../utils/formatters'
 
 afterEach(cleanup)
 
@@ -46,6 +46,7 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
   <EarthquakeTab
     earthquakes={[quake]}
     selectedId={selected ? quakeEventKey(quake) : null}
+    selectSeq={0}
     speakingKey={null}
     followSpeech={false}
     onSelect={() => {}}
@@ -59,12 +60,14 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
     loadMoreFailed={false}
     reconnectGapLoss={false}
     fetchThrottled={false}
+    onDismissKeyReentry={null}
     lpgmByEventId={new Map()}
     updateMarks={new Map()}
     activeLpgmEventId={null}
     onToggleLpgm={() => {}}
+    lpgmFocus={null}
     estimatedIntensities={[]}
-    internationalTsunamis={[]}
+    internationalTsunamisByQuake={new Map()}
     distributionQuakeKey={null}
     onToggleDistribution={() => {}}
     unreceivedQuakeKey={null}
@@ -80,46 +83,37 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
   return result
 }
 
-/**
- * 畳んだカードの時刻の欄（文字列全体が `text` に一致し、折れない塊を子に持つ要素）を探し、
- * その塊の文字列を返す。見つからなければ空の配列。
- * 欄を文字列で絞るので、カードの別の段に折れない要素が増えても巻き込まない。
- */
-function collapsedTimePieces(container: HTMLElement, text: string): (string | null)[] {
-  const field = [...container.querySelectorAll('span')]
-    .find(s => s.textContent === text && s.querySelector(':scope > .whitespace-nowrap') !== null)
-  return field ? [...field.querySelectorAll(':scope > .whitespace-nowrap')].map(e => e.textContent) : []
+/** 一覧の閉じた行の時刻の欄（`QuakeListRow` の `data-col="time"`）の文字列。見つからなければ null。 */
+function collapsedTime(container: HTMLElement): string | null {
+  return container.querySelector('[data-col="time"]')?.textContent ?? null
 }
 
 describe('地震カードの地震発現時刻が読めないとき', () => {
-  // 対照: 読める値では従来どおりの表記。ガードが正常な値まで止めていないこと。
-  it('読める値では「地震発現時刻 ◯月◯日 ◯:◯◯」を出す', async () => {
+  // 対照: 読める値では見出し「地震発現時刻」と日時を出す。ガードが正常な値まで止めていないこと。
+  it('読める値では「地震発現時刻」の見出しと ◯月◯日 ◯:◯◯ を出す', async () => {
     await renderTab(makeQuake('2024-01-01T07:10:00Z'), true)
-    expect(screen.getAllByText(/^地震発現時刻 1月1日 \d{1,2}:\d{2}$/).length).toBeGreaterThan(0)
-    expect(screen.queryByText('地震発現時刻不明')).toBeNull()
+    expect(screen.getByText(QUAKE_ARRIVAL_TIME_LABEL)).toBeTruthy()
+    expect(screen.getByText('1月1日 16:10')).toBeTruthy()
+    expect(screen.queryByText(QUAKE_ARRIVAL_TIME_UNKNOWN)).toBeNull()
   })
 
-  // 対照（畳んだ表示）: 畳んだ表示は名前と日時を別の塊に分けて出す（境目でだけ折り返すため）。
-  // 上の `getAllByText` は要素 1 つの文字列で照合するので、開いた表示が一致するだけで通ってしまう。
-  // 畳んだ表示の文字列は、塊を繋いだ `textContent` で開いた表示と同じであることを確かめる。
-  it('畳んだ表示でも、名前と日時を同じ文字列で出し、それぞれ途中では折らない', async () => {
-    const quake = makeQuake('2024-01-01T07:10:00Z')
-    const { container } = await renderTab(quake, false)
-    expect(collapsedTimePieces(container, formatQuakeTimeLabeled(quake.earthquake.time)))
-      .toEqual(['地震発現時刻', '1月1日 16:10'])
+  // 対照（閉じた行）: 時刻の列は時と分だけ（日付は日の区切りが持つ）。
+  it('閉じた行の時刻の列は ◯:◯◯ を出す', async () => {
+    const { container } = await renderTab(makeQuake('2024-01-01T07:10:00Z'), false)
+    expect(collapsedTime(container)).toBe('16:10')
   })
 
   // 正: 開いた表示（選択中のカード）で語を出す。
   it('開いた表示では「地震発現時刻不明」を出す', async () => {
     await renderTab(makeQuake('壊れた値'), true)
-    expect(screen.getAllByText('地震発現時刻不明').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(QUAKE_ARRIVAL_TIME_UNKNOWN).length).toBeGreaterThan(0)
   })
 
-  // 正: 畳んだ表示にも同じ語を出す。**2 か所あるのがこのテストの要**
+  // 正: 閉じた行の時刻の列も空にしない（語は一覧の行の語）。**2 か所あるのがこのテストの要**
   // （片方だけ直しても型検査は通り、例外も出ない）。
-  it('畳んだ表示にも同じ語を出す', async () => {
+  it('閉じた行の時刻の列も空にしない', async () => {
     const { container } = await renderTab(makeQuake('壊れた値'), false)
-    expect(collapsedTimePieces(container, '地震発現時刻不明')).toEqual(['地震発現時刻不明'])
+    expect(collapsedTime(container)).toBe('不明')
   })
 
   // 安全弁: `NaN` がそのまま画面へ出ない（これが元の症状）。

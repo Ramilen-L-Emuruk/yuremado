@@ -135,7 +135,7 @@ describe('期限と本文は津波警報等（VTSE41）が決める（F7）', ()
     expect(merged.bodyText).toBe('予報の本文')
   })
 
-  // 安全弁: 種類を持たない報（P2PQuake・古いテストデータ）は従来どおり引き継ぐ
+  // 安全弁: 種類を持たない報（種類の欄を読めなかった報・古いテストデータ）は従来どおり引き継ぐ
   it('種類を持たない報は従来どおり期限を引き継ぐ', () => {
     const plain = report({ headType: undefined, time: '2010-07-14T18:50:00+09:00' })
     expect(mergeTsunamiReports(forecast, plain).validDateTime).toBe('2010-07-15T00:00:00+09:00')

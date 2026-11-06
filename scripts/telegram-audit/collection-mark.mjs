@@ -3,7 +3,7 @@
 // **なぜ札が要るか。** 収集（`fetch-samples.mjs` / `fetch-rare-samples.mjs`）の成果物は
 // `telegram-cache/` に並ぶ XML と二進のファイルそのもので、JSON ではない。**ファイルの山へは
 // 印を載せられない**ので、収集が途中で失敗しても下流（計測台・`triage.mjs`・
-// `testdata-shapes.mjs`・`header-survey.mjs`）には「その種別のサンプルが 0 件」としか見えない。
+// `header-survey.mjs`）には「その種別のサンプルが 0 件」としか見えない。
 // これは CLAUDE.md「調査レビュー」が挙げている 2026-09-11 の事故と同じ形
 // —— 走査した範囲を示せないまま「無い」と結論してしまう。
 //

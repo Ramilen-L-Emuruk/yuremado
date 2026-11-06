@@ -1,5 +1,5 @@
 // 外部 API のレスポンスを内部型へ組み立てるときの値取り出しヘルパ。
-// DMDATA.JP の JSON 電文（dmdataParser.ts）と P2PQuake API v2（p2pquake.ts）で共用する。
+// DMDATA.JP の JSON 電文（dmdataParser.ts）と自作地震計のホストの応答（seismo*.ts）で共用する。
 //
 // 外部データは信頼しない。型が合わない値は「無かったこと」にできる無害な既定値
 // （空文字・空オブジェクト・空配列・NaN）へ寄せ、呼び出し側が必須判定・センチネル変換を行う。

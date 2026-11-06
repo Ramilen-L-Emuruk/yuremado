@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { contrastRatio, readableTextColor, TEXT_ON_FILL_LIGHT, TEXT_ON_FILL_DARK } from './contrast'
-import { INTENSITY_COLORS } from './intensity'
+import { contrastRatio, readableTextColor, liftForContrast, SMALL_TEXT_MIN_CONTRAST, TEXT_ON_FILL_LIGHT, TEXT_ON_FILL_DARK } from './contrast'
+import { INTENSITY_COLORS, INTENSITY_BG_COLORS } from './intensity'
 import { SHINDO0_COLOR } from './measuredIntensity'
 import { getLpgmClassColor } from './lpgm'
 
@@ -86,5 +86,25 @@ describe('長周期地震動階級の配色に対する文字色の自動選択'
   it('階級不明のフォールバック色でも AA を満たす', () => {
     const bg = getLpgmClassColor(99)
     expect(contrastRatio(bg, readableTextColor(bg))!).toBeGreaterThanOrEqual(AA_NORMAL)
+  })
+})
+
+// 震度の枠の「最大震度」は、濃い地（INTENSITY_BG_COLORS）に震度の色の字。足りない震度だけ白へ寄せる
+describe('liftForContrast（震度の枠の「最大震度」の字色）', () => {
+  const scales = Object.keys(INTENSITY_COLORS)
+  // 正: どの震度でも地との比が 4.5:1 に届く
+  it.each(scales)('震度 %s の字は地と 4.5:1 以上', (k) => {
+    const fg = liftForContrast(INTENSITY_COLORS[Number(k)], INTENSITY_BG_COLORS[Number(k)])
+    expect(contrastRatio(fg, INTENSITY_BG_COLORS[Number(k)])!).toBeGreaterThanOrEqual(SMALL_TEXT_MIN_CONTRAST)
+  })
+  // 対照: もともと届いている震度（震度4 は 11.6:1）は震度の色のまま
+  it('届いている震度は色を変えない', () => {
+    expect(liftForContrast(INTENSITY_COLORS[40], INTENSITY_BG_COLORS[40])).toBe(INTENSITY_COLORS[40])
+  })
+  // 安全弁: 白へ寄せるのは足りない分だけ（震度7 を白にしてしまわない）
+  it('寄せるのは届く所まで', () => {
+    const fg = liftForContrast(INTENSITY_COLORS[70], INTENSITY_BG_COLORS[70])
+    expect(fg).not.toBe('#ffffff')
+    expect(contrastRatio(fg, INTENSITY_BG_COLORS[70])!).toBeLessThan(SMALL_TEXT_MIN_CONTRAST + 0.1)
   })
 })

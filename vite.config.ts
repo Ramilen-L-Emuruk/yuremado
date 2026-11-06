@@ -7,42 +7,34 @@ import { perfReportPlugin } from './scripts/perf/vite-plugin-perf-report'
 import { shouldInjectDevApiKey, shouldInjectDevArrivalToken } from './scripts/dev-api-key-gate'
 import { isInsideClaudeDir } from './scripts/dev-watch-ignore'
 import { devServerLockPlugin } from './scripts/dev-server-lock'
-import { outDirForVariant } from './scripts/buildOutDir'
+import { BUILD_OUT_DIR } from './scripts/buildOutDir'
 import { PRECACHE_GLOB_PATTERNS, PRECACHE_MAX_FILE_BYTES } from './scripts/precacheBudget'
-import { cleanupOutdatedCachesForVariant } from './scripts/precacheCleanup'
 import { offlineDataRuntimeCaching } from './scripts/offlineData'
 import { offlineBathymetryRuntimeCaching } from './scripts/offlineBathymetry'
-
-const variant = process.env.VITE_VARIANT ?? 'standard'
-const isDmdss = variant === 'dmdss'
 
 const pkg = JSON.parse(
   readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf-8'),
 )
 
-// DMDSS版は /dmdss/ サブパスに配信。base が異なるため SW スコープも自動で分離される。
-const base = isDmdss
-  ? '/yuremado/dmdss/'
-  : '/yuremado/'
+// 配信パス。版を 1 つにまとめたアプリは独自ドメインの直下（https://yuremado.com/）から配る
+// （docs/relay-server-design.md §0 の 2026-10-30 の行）。github.io の `/yuremado/`・`/yuremado/dmdss/` には
+// 橋渡しのページだけを置く。
+const base = '/'
 
-// SEC-4/manifest の DMDSS 版文言の単一情報源。以前は transformIndexHtml と manifest の
-// 2 箇所に同一リテラルがハードコードされて DRY 違反だった。
-const APP_STRINGS = {
-  standard: {
-    title: '揺れ窓',
-    shortName: '揺れ窓',
-    description: '気象庁の地震情報・緊急地震速報・津波情報をリアルタイムに表示します。',
-    appleTitle: '揺れ窓',
-  },
-  dmdss: {
-    title: '揺れ窓 (DM-D.S.S)',
-    shortName: '揺れ窓 DM-D.S.S',
-    description: 'DMDATA.JP (Project DM-D.S.S) で地震情報・緊急地震速報・津波情報をリアルタイムに表示します。',
-    appleTitle: '揺れ窓 DM-D.S.S',
-  },
+// 実行時キャッシュの名前の末尾（`generated-data-<これ>` など）。版を分けていた頃は版の名前を入れていた。
+// 新しいドメインには前の名前のキャッシュが無いので、どの名前でもよい。
+const RUNTIME_CACHE_SUFFIX = 'app'
+
+// dev サーバーの門（`scripts/dev-server-lock.ts`）の記録の鍵。版を分けていた頃は版の名前（standard・dmdss）だった
+const DEV_SERVER_LOCK_KEY = 'app'
+
+// manifest の文言。タイトル・説明は index.html の側にも同じものが書いてある（版が 1 つになったので書き換えない）。
+// タイトルは「揺れ窓」（docs/relay-server-design.md §0 の 2026-10-31 の行）。
+const strings = {
+  title: '揺れ窓',
+  shortName: '揺れ窓',
+  description: '気象庁の地震情報・緊急地震速報・津波情報をリアルタイムに表示します。',
 } as const
-
-const strings = isDmdss ? APP_STRINGS.dmdss : APP_STRINGS.standard
 
 // dev サーバーの監視対象から外す `.claude/` の絶対パス。
 //
@@ -72,20 +64,20 @@ const PROJECT_ROOT = fileURLToPath(new URL('.', import.meta.url))
 
 /**
  * dev サーバー限定で `.env.local` の DMDATA_API_KEY を import.meta.env へ注入する。
- * DMDSS 版の検証のたびに設定の窓へ API キーを貼り直す手間を省くための措置。
+ * 予報（鍵の経路）の検証のたびに設定の窓へ API キーを貼り直す手間を省くための措置。
  *
  * 露出を最小にするため、envPrefix は既定（VITE_ のみ）から広げず、このキー 1 本だけを
  * define で渡す。接頭辞を開放すると、将来 `.env.local` に置かれた別の DMDATA_ 系の秘密が
  * レビューを経ずにクライアントへ載ってしまう。
  *
  * 渡してよい状況の判定は `scripts/dev-api-key-gate.ts` の `shouldInjectDevApiKey`（build・preview・
- * standard 版・`--host` を除く）。ユニットテストで固定するため別ファイルに置いている。
+ * `--host` を除く）。ユニットテストで固定するため別ファイルに置いている。
  *
  * `server.host` を本ファイルで設定するようになったら、argv だけでは LAN 公開を判定できなく
  * なるので判定側も見直すこと。
  */
 function devApiKeyDefine(configEnv: ConfigEnv): Record<string, string> {
-  if (!shouldInjectDevApiKey(configEnv, isDmdss, process.argv)) return {}
+  if (!shouldInjectDevApiKey(configEnv, process.argv)) return {}
   const key = loadEnv(configEnv.mode, process.cwd(), 'DMDATA_').DMDATA_API_KEY
   return key ? { 'import.meta.env.DMDATA_API_KEY': JSON.stringify(key) } : {}
 }
@@ -102,6 +94,18 @@ function devArrivalTokenDefine(configEnv: ConfigEnv): Record<string, string> {
   return token ? { 'import.meta.env.ARRIVAL_TOKEN': JSON.stringify(token) } : {}
 }
 
+/**
+ * dev サーバーへ予報キーを流し込む（門は到達予想トークンと同じ `shouldInjectDevArrivalToken`）。
+ *
+ * **`FORECAST_` プレフィクスでしか読まない。** 予報キーの署名用の秘密鍵は `TOKEN_SIGNING_FORECAST_PRIVATE_KEY`
+ * という別の頭文字にしてあり、ここには入ってこない。
+ */
+function devForecastKeyDefine(configEnv: ConfigEnv): Record<string, string> {
+  if (!shouldInjectDevArrivalToken(configEnv, process.argv)) return {}
+  const key = loadEnv(configEnv.mode, process.cwd(), 'FORECAST_').FORECAST_KEY
+  return key ? { 'import.meta.env.FORECAST_KEY': JSON.stringify(key) } : {}
+}
+
 export default defineConfig(configEnv => ({
   base,
   server: {
@@ -113,7 +117,7 @@ export default defineConfig(configEnv => ({
     },
   },
   build: {
-    outDir: outDirForVariant(variant),
+    outDir: BUILD_OUT_DIR,
     rollupOptions: {
       output: {
         // **precache 上限（1 ファイル 2 MiB）に収めるためのチャンク分割。**
@@ -150,40 +154,18 @@ export default defineConfig(configEnv => ({
   // 描けてしまい切り分けにくい）。PoC で確認済みの既知の罠（MapLibre 移行 F0）。
   optimizeDeps: { exclude: ['maplibre-gl'] },
   define: {
-    'import.meta.env.VITE_VARIANT': JSON.stringify(variant),
     __APP_VERSION__: JSON.stringify(pkg.version),
     ...devApiKeyDefine(configEnv),
     ...devArrivalTokenDefine(configEnv),
+    ...devForecastKeyDefine(configEnv),
   },
   plugins: [
-    // 同じ場所・同じバリアントで二本目が立つのを止める門。**他より先に効かせる**ため先頭に置く。
+    // 同じ場所で二本目が立つのを止める門。**他より先に効かせる**ため先頭に置く。
     // Vite は使用中のポートを避けて勝手にずれるので、二重起動は失敗として現れない（→ そのファイル）
-    devServerLockPlugin({ variant, base, root: PROJECT_ROOT }),
+    devServerLockPlugin({ variant: DEV_SERVER_LOCK_KEY, base, root: PROJECT_ROOT }),
     react(),
     // dev サーバー専用: 実機計測の証跡収集（/__perf-script・/__perf-report）。build には含まれない
     perfReportPlugin(),
-    // SEC-4: index.html はバリアントに関係なく1本しかないため、build/dev 双方で置換して
-    // <title>・description・apple-mobile-web-app-title を DMDSS 版のときに書き換える。
-    // 文言は APP_STRINGS から取り、manifest との重複を避ける。
-    {
-      name: 'transform-index-html-variant',
-      transformIndexHtml(html) {
-        if (!isDmdss) return html
-        return html
-          .replace(
-            /<title>[^<]*<\/title>/,
-            `<title>${strings.title}</title>`,
-          )
-          .replace(
-            /<meta name="description" content="[^"]*"\s*\/?>/,
-            `<meta name="description" content="${strings.description}" />`,
-          )
-          .replace(
-            /<meta name="apple-mobile-web-app-title" content="[^"]*"\s*\/?>/,
-            `<meta name="apple-mobile-web-app-title" content="${strings.appleTitle}" />`,
-          )
-      },
-    },
     // 配信している版の番号（`version.json`）。開いているページが、待っている新しい版の番号を知るために読む
     // （`src/services/appUpdateRegister.ts`）。事前キャッシュにも実行時キャッシュにも載らない名前・場所に置く。
     {
@@ -229,20 +211,13 @@ export default defineConfig(configEnv => ({
         // 検査スクリプトと同じ値を見るため。片方だけ書き換えると検査がすり抜ける）。
         globPatterns: [...PRECACHE_GLOB_PATTERNS],
         maximumFileSizeToCacheInBytes: PRECACHE_MAX_FILE_BYTES,
-        // 通知を押したときの処理（`public/sw-notification-click.js`）。sw.js と同じ場所に置かれるので相対で書く
-        importScripts: ['sw-notification-click.js'],
-        // SEC-3: standard 版の scope が /yuremado/ で DMDSS 版の /dmdss/
-        // サブパスも包含するため、両バリアントを同一オリジンで訪れると standard の SW が
-        // DMDSS 版のナビゲーションリクエストを横取りしうる。standard 版のみ /dmdss/ を
-        // ナビゲーションフォールバックの対象外にする（DMDSS 版は自分自身のパスなので影響なし）。
-        // 末尾スラッシュ有り無し両対応: `/yuremado/dmdss`（手打ちで末尾スラッシュ抜け）
-        // でも `/yuremado/dmdss/`（正規パス）でもマッチさせる。
-        navigateFallbackDenylist: isDmdss
-          ? []
-          : [/^\/yuremado\/dmdss(\/|$)/],
-        // standard 版のスコープが DMDSS 版のスコープを包むせいで、古いキャッシュの片付けも
-        // DMDSS 版の事前キャッシュを巻き込む。standard 版だけ切る（理由と失うものは scripts/precacheCleanup.ts）。
-        cleanupOutdatedCaches: cleanupOutdatedCachesForVariant(variant),
+        // 通知を押したときの処理（`public/sw-notification-click.js`）と、プッシュ通知を受けたときの処理（`public/sw-push.js`）。
+        // sw.js と同じ場所に置かれるので相対で書く
+        importScripts: ['sw-notification-click.js', 'sw-push.js'],
+        // 古い版の事前キャッシュを SW の入れ替えで片付ける。版を分けていた頃は standard 版のスコープが
+        // DMDSS 版のスコープを包んでいて、片付けが DMDSS 版の事前キャッシュまで消すため standard 版だけ切っていた。
+        // 独自ドメインの直下には包まれるスコープが無いので、既定どおり片付ける。
+        cleanupOutdatedCaches: true,
         // **ここへ追記するときは、URL を正規表現リテラルで書くことに注意。**
         // ソース上は `https:\/\/...` とエスケープされるため、`https://` を素の文字列として
         // 探す走査には掛からない（外部への通信経路を数え上げる調査で実際に取りこぼした）。
@@ -262,25 +237,11 @@ export default defineConfig(configEnv => ({
           // 地図の生成データ 7 本と読み上げ辞書 3 本をオフラインでも使えるよう控える。
           // 対象のファイル名・規則・キャッシュ名は `scripts/offlineData.ts`（事前キャッシュに
           // 載せられない理由もそちら）。
-          offlineDataRuntimeCaching(base, variant),
+          offlineDataRuntimeCaching(base, RUNTIME_CACHE_SUFFIX),
           // 海底地形のタイルを、録画モードの先読みと同じ範囲だけ控え、控えを先に返す（範囲と理由は `scripts/offlineBathymetry.ts`）。
-          offlineBathymetryRuntimeCaching(variant),
-          {
-            // **`cache: 'no-store'` の要求は控えに通さない。** 標準版の接続を張り直したときの取り戻し
-            // （`fetchHistorySince`）がそれを付ける。NetworkFirst は通信に失敗すると控えを普通の
-            // 応答として返すので、切れていた間の分を取り戻せていないのに「取れた」に化けるため。
-            // この関数は Service Worker の中へ文字列として書き出されるので、外の変数を参照しないこと。
-            urlPattern: ({ url, request }) =>
-              /^https:\/\/api\.p2pquake\.net\/v2\/history/i.test(url.href) && request.cache !== 'no-store',
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'p2pquake-history',
-              expiration: {
-                maxEntries: 20,
-                maxAgeSeconds: 5 * 60,
-              },
-            },
-          },
+          offlineBathymetryRuntimeCaching(RUNTIME_CACHE_SUFFIX),
+          // 中継の一覧・束・札の口は載せない。一覧を控えから返すと、張り直したときの取り戻しが
+          // 取れていないのに「取れた」に化ける（束と電文本体はアプリが IndexedDB に控える）。
         ],
       },
     }),

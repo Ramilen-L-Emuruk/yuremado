@@ -22,7 +22,7 @@ import { fetchSeismoWaveHistory, buildWaveHistoryRange } from '../services/seism
 import { fetchSeismoStatus, isValidSeismoHostUrl, type SeismoStationWaveRevised } from '../services/seismoStream'
 import { RangeCoalescer } from '../services/seismoWaveRefill'
 import { quakeScaleForScope, type NearbyScope } from '../utils/actionChecklistTrigger'
-import { judgeQuakeReach, NO_FLOOR_WITHOUT_USUAL, type ReachStation } from '../utils/seismoQuakeReach'
+import { canPredictReach, judgeQuakeReach, NO_FLOOR_WITHOUT_USUAL, type ReachStation } from '../utils/seismoQuakeReach'
 import { serverNow } from '../utils/clock'
 import { createLogThrottle, log } from '../utils/logger'
 import { quakeEventKey } from '../utils/quakeMerge'
@@ -345,8 +345,8 @@ export function pickTargets(
   const found: Omit<SeismoWaveTarget, 'cutoffMs'>[] = []
   const seen = new Set<string>()
   for (const q of quakes) {
-    // **時間帯を持たない値（`2026/10/03 13:26:00`）は日本時間として読む。** P2PQuake の時刻は入口で
-    // `+09:00` つきの ISO の形へ直してあるが、直せなかった値はこの表記のまま来うる。
+    // **時間帯を持たない値（`2026/10/03 13:26:00`）は日本時間として読む。** 電文の時刻は
+    // `+09:00` つきの ISO の形で来るが、この表記の値が来ても同じ時刻に読む。
     // 端末の時間帯で読むと、日本国外の端末だけ窓と時間軸の 0 がずれる（ホストの記録は
     // 絶対時刻なので、ずれた分だけ別の区間を取りに行く）。
     const originMs = parseJstTimeMs(q.earthquake.time)
@@ -381,6 +381,11 @@ export function pickTargets(
  * 決まらない）。普段が読めない間は下限を置かずに選ぶので、そこで選んだ組まで固定すると、ホストの起動直後に
  * たまたま読んだだけで 7 日ぶんの遠い地震が開き直すまで外れなくなる。
  *
+ * **震源が判らない報で選んだ組は足さない**（{@link canPredictReach}）。震源が決まる前の震度速報は予測できず、
+ * 近所の震度へ倒す —— 震度速報は震度3以上の区域しか載せないので、近所が載っていなくても揺れていないとは
+ * 言えず、全国の最大震度で選ぶ。そこで固定すると、震源つきの続報で遠いと判っても外れない
+ * （2026-11-03 千葉県北東部 M4.7 で、届かない遠い観測点の波形が残った）。続報で予測し直す。
+ *
  * **前に覚えた組は残す**（和を取る）。一覧から消えた地震（取消）の分だけ落とす。観測点を読めていなければ
  * 何も足さない。
  */
@@ -396,6 +401,7 @@ export function rememberPicks(
     stations.filter((s) => s.usualMeasured !== null || s.lat === null || s.lon === null).map((s) => s.stationId),
   )
   for (const t of targets) {
+    if (!canPredictReach(t.hypocenter)) continue
     const ids = new Set([...(picked.get(t.eventKey) ?? []), ...t.stationIds.filter((id) => firm.has(id))])
     if (ids.size > 0) picked.set(t.eventKey, [...ids])
   }
@@ -628,6 +634,8 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
     readonly stations: readonly HostStation[]
   } | null>(null)
   const stationsForPick = hostStations !== null && hostStations.baseUrl === baseUrl ? hostStations.stations : null
+  const stationsForPickRef = useRef(stationsForPick)
+  stationsForPickRef.current = stationsForPick
   // **前に選んだ組**（→ {@link pickTargets} の `kept`）。**表示する震度の設定・接続先・時間軸が変わったら
   // 持ち越さない** —— 設定を変えて外したい地震まで残り、別の相手・別の時間軸の判定が混ざる。
   // 鍵ごと持つので、空にし忘れる経路が無い。
@@ -1469,9 +1477,13 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
     // **取り消されたら何も書かない**（接続先・時間軸が変わった。帳面ごと作り直されている）。
     if (ctrl.signal.aborted) return
     intensityCtrlRef.current = null
-    // **待っている間に対象から外れた地震は書かない**（取消・表示する震度の設定変更）。
-    // 書くと、外れたときに掃除した記録が死んだ鍵のまま居座る。
-    if (!targetsRef.current.some((t) => t.eventKey === job.eventKey)) {
+    // **待っている間に対象から外れた地震・観測点は書かない**（取消・表示する震度の設定変更・続報で届かないと判った）。
+    // 書くと、外れたときに掃除した記録が死んだ鍵のまま居座り、同じ組がまた選ばれても震度を訊き直さない。
+    // 観測点は帳面に項目が残っているかで見る（ホストから一時的に消えた観測点は、帳面を残すので訊き続ける）。
+    if (
+      !targetsRef.current.some((t) => t.eventKey === job.eventKey) ||
+      !(bookRef.current.get(job.eventKey)?.some((e) => e.stationId === job.stationId) ?? false)
+    ) {
       askIntensityRef.current()
       return
     }
@@ -1561,42 +1573,58 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
     const alive = new Map(targetsRef.current.map((t) => [t.eventKey, t]))
     // **先頭以外は「伸ばす番」ではない**（継ぎ足しの巡回が触るのは先頭だけ）。
     const headKey = targetsRef.current[0]?.eventKey
-    // **対象から外れた地震の「取り終えた」印を捨てる**（鍵は `地震|観測点`）。残すと、また選ばれたとき
+    // **対象から外れた組の「取り終えた」印を捨てる**（鍵は `地震|観測点`）。残すと、また選ばれたとき
     // （設定を戻した・普段が読めない間に選ばれて外れた地震が届く見込みに変わった）に取りに行かず、波形が出ない。
     // **帳面とは別に回す** —— 記録が無かった・取れなかった組は帳面を作らずに印だけ付く。
-    // **観測点単位では消さない**（地震が丸ごと外れたときだけ）—— 一部の観測点だけ外れても、出ていた波形は
-    // 出したままにする（迷ったら出す側へ倒す）。
+    // **観測点単位で外す。** 固定した組（`rememberPicks`）は対象に残り続けるので、対象から外れた観測点は
+    // 固定していない組 —— 震源が判らない報か、普段が読めない間に選んで、予測し直したら届かなかったもの。
+    // 地震ごとにしか外さないと、観測点を離して置いたホストで遠い観測点の波形だけが残る。
+    // **ホストが知っている観測点に限る。** `/status` から一時的に消えた観測点（基板が繋ぎ直す前など）も
+    // 対象から外れるが、それは予測し直した結果ではない —— 捨てると 7 日ぶんのカードから波形が消える。
+    const known = new Set((stationsForPickRef.current ?? []).map((st) => st.stationId))
+    const pairAlive = (key: string): boolean => {
+      const cut = key.lastIndexOf('|')
+      const target = alive.get(key.slice(0, cut))
+      if (target === undefined) return false
+      const stationId = key.slice(cut + 1)
+      return target.stationIds.includes(stationId) || !known.has(stationId)
+    }
     for (const doneKey of [...doneRef.current]) {
-      const eventKey = doneKey.slice(0, doneKey.lastIndexOf('|'))
-      if (!alive.has(eventKey)) doneRef.current.delete(doneKey)
+      if (!pairAlive(doneKey)) doneRef.current.delete(doneKey)
     }
     let changed = false
-    // 読み返せなかった記録のうち、対象から外れた地震のものを捨てる（一度も取れていない地震は帳面に無いので、別に見る）。
+    // 読み返せなかった記録のうち、対象から外れた組のものを捨てる（一度も取れていない地震は帳面に無いので、別に見る）。
     for (const failKey of [...failuresRef.current.keys()]) {
-      if (!alive.has(failKey.slice(0, failKey.lastIndexOf('|')))) failuresRef.current.delete(failKey)
+      if (!pairAlive(failKey)) failuresRef.current.delete(failKey)
+    }
+    for (const askKey of [...intensityAsksRef.current.keys()]) {
+      if (!pairAlive(askKey)) intensityAsksRef.current.delete(askKey)
     }
     publishFailedRef.current()
     for (const [key, entries] of [...bookRef.current]) {
       const target = alive.get(key)
-      // 取消・表示する震度の設定変更で対象から外れたもの。
+      // 取消・表示する震度の設定変更・続報で予測し直して届かなかったことで対象から外れたもの。
+      // 震度を訊いた記録・読み返せなかった記録は上で組ごとに捨てている。
       if (target === undefined) {
         bookRef.current.delete(key)
-        // 震度を訊いた記録も同じ鍵で捨てる（残すと 7 日ぶん積み上がる）。
-        for (const askKey of [...intensityAsksRef.current.keys()]) {
-          if (askKey.startsWith(`${key}|`)) intensityAsksRef.current.delete(askKey)
-        }
-        // 読み返せなかった記録も捨てる（残すと「取得できなかった」の鍵が積み上がる）。
-        for (const failKey of [...failuresRef.current.keys()]) {
-          if (failKey.startsWith(`${key}|`)) failuresRef.current.delete(failKey)
-        }
         changed = true
         continue
+      }
+      // 一部の観測点だけ外れたもの（上の `pairAlive` と同じ理由）。
+      const kept = entries.filter((e) => pairAlive(`${key}|${e.stationId}`))
+      if (kept.length !== entries.length) {
+        changed = true
+        if (kept.length === 0) {
+          bookRef.current.delete(key)
+          continue
+        }
+        bookRef.current.set(key, kept)
       }
       // **先頭から降りた地震の「途切れている」は戻す。** 継ぎ足しの巡回はもう
       // この地震を触らないので、立てたまま残すと**その絵は薄いまま固定される**
       // （新しい地震が来た拍子に、完結した前の地震のカードが壊れて見える）。
       if (key !== headKey) {
-        for (const entry of entries) {
+        for (const entry of kept) {
           if (!entry.interrupted) continue
           entry.interrupted = false
           changed = true
@@ -1605,7 +1633,7 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
       // **次の有感地震が現れたら、その手前まで切り戻す。** 繋いでいる最中はその地震が
       // いちばん新しいので右端の打ち切りが無く、**次の地震の電文が届くまでの間に
       // その揺れを取り込んでいる**（実測で発生から 90 秒ほど遅れて届く）。
-      for (const entry of entries) {
+      for (const entry of kept) {
         const next = trimAfter(entry.columns, target.cutoffMs)
         if (next === entry.columns) continue
         entry.columns = next

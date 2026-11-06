@@ -7,9 +7,12 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest'
 import { render, screen, cleanup, act } from '@testing-library/react'
 
-const gate = vi.hoisted(() => ({ drainsAt: null as number | null }))
+const gate = vi.hoisted(() => ({ drainsAt: null as number | null, relayRemaining: null as number | null }))
 vi.mock('../../services/dmdataRequestGates', () => ({
   loadMoreDrainsAt: () => gate.drainsAt,
+}))
+vi.mock('../../services/relayEndpoint', () => ({
+  relayThrottleRemainingMs: () => gate.relayRemaining,
 }))
 
 import { LoadMoreButton } from './LoadMoreButton'
@@ -18,6 +21,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(0)
   gate.drainsAt = null
+  gate.relayRemaining = null
 })
 afterEach(() => {
   cleanup()
@@ -53,11 +57,26 @@ describe('LoadMoreButton', () => {
     expect(screen.getByRole('button')).toHaveProperty('disabled', false)
   })
 
-  // 安全弁: 見張らない側（標準版）では門を読まず、従来どおり「取得中…」
+  // 安全弁: 見張らない側では門を読まず、従来どおり「取得中…」
   it('見張らない側では「取得中…」のまま', () => {
     gate.drainsAt = 135_000
     render(<LoadMoreButton onLoadMore={() => {}} isLoadingMore watchThrottle={false} />)
     expect(screen.getByRole('button').textContent).toBe('取得中…')
+  })
+
+  // 正: 中継の門で待たされていれば、その残りを出す
+  it('中継の門で待たされている間も残り時間を出す', () => {
+    gate.relayRemaining = 30_000
+    render(<LoadMoreButton onLoadMore={() => {}} isLoadingMore watchThrottle />)
+    expect(screen.getByRole('button').textContent).toBe('取得制限中（あと 0:30）')
+  })
+
+  // 対照: 両方の門で待っていれば遅いほうを出す
+  it('DMDATA の門と中継の門の両方で待っていれば遅いほう', () => {
+    gate.drainsAt = 20_000
+    gate.relayRemaining = 75_000
+    render(<LoadMoreButton onLoadMore={() => {}} isLoadingMore watchThrottle />)
+    expect(screen.getByRole('button').textContent).toBe('取得制限中（あと 1:15）')
   })
 
   // 安全弁: 永久に待つ窓（上限 0 件）は数えられないので「取得中…」にする

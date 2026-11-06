@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { log } from '../utils/logger'
-import { isDmdss } from '../utils/env'
+import { consumeSettingsHandoff } from '../utils/settingsHandoff'
 import { isValidIntensityScale } from '../utils/intensity'
 import { isObservedLpgmClass } from '../utils/lpgm'
 // 読み上げ文の作り方を決める値なので、定義は読み上げ側（`utils/ttsText.ts`）に置く。
@@ -12,6 +12,11 @@ import type { SeismoWaveMode } from '../utils/seismoWaveTrigger'
 import { DEFAULT_WAVE_SPAN_SEC, ensureWaveSpanSec, type WaveSpanSec } from '../utils/waveSpan'
 import { SHARE_CARD_FORMATS, type ShareCardFormatId } from '../utils/shareCard'
 import { DEFAULT_HEATMAP_PERIOD, isHeatmapPeriod, type HeatmapPeriod } from '../utils/quakeHeatmap'
+import {
+  MINUTES_PER_DAY,
+  TIME_SIGNAL_CLOCKS, TIME_SIGNAL_INTERVALS, TIME_SIGNAL_ORDERS, TIME_SIGNAL_PHRASES, TIME_SIGNAL_SOUNDS, TIME_SIGNAL_WHILE_SPEAKING,
+  type TimeSignalClock, type TimeSignalIntervalMin, type TimeSignalOrder, type TimeSignalPhrase, type TimeSignalSound, type TimeSignalWhileSpeaking,
+} from '../utils/timeSignal'
 
 /** 波形を展開していないときに出すもの（→ {@link AppSettings.seismoWaveCollapsedView}）。 */
 export type SeismoWaveCollapsedView = 'composite' | 'overlay'
@@ -70,6 +75,12 @@ export interface AppSettings {
    * 無効ならそちらが優先される。有効なら受信時にパネルを一時的に開く（他の帯と同じ）。
    */
   quakeNoticeAlerts: boolean
+  /**
+   * 揺れ検知が確かな段に上がったとき、揺れている区域の名前を 1 回読み上げる（「〇〇で揺れを検知。」）。
+   * 緊急地震速報の範囲内の揺れは読まない。`voicevoxEnabled` が無効なら読まない。
+   * 既定は行わない（2026-10-31 ユーザー選択「設定を足し既定オフ」）。
+   */
+  kyoshinDetectSpeech: boolean
   uiScale: number           // UI 倍率 (1 = 100%)
   mapIconScale: number      // 地図アイコンの倍率 (1 = 100%、UI 倍率とは独立)
   // 地図を傾けたとき、震源をどれだけ深く見せるか (1 = 実際の深さ)。水平方向は常に実スケール。
@@ -98,7 +109,23 @@ export interface AppSettings {
   notifyEEW: boolean               // 緊急地震速報の発報・昇格時にブラウザ通知を送る
   notifyTsunami: boolean           // 津波のブラウザ通知（予報以上の発表・続報と全区域解除。→ audio-tts-spec §7）
   notifyDetection: boolean         // 強震モニタの揺れ検知時にブラウザ通知を送る
-  notifyNankai: boolean            // 南海トラフ地震臨時情報・後発地震注意情報・臨時の解説情報のブラウザ通知（DMDSS 版。2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
+  notifyNankai: boolean            // 南海トラフ地震臨時情報・後発地震注意情報・臨時の解説情報のブラウザ通知（2026-10-24 ユーザー選択「南海は新設、他は地震情報に (Recommended)」）
+  /**
+   * アプリを閉じている間も中継からプッシュ通知を受け取る（docs/relay-server-design.md §6.7）。既定はオフ
+   * （2026-11-03 ユーザー選択「設定で入れたときだけ (Recommended)」）。入れた端末だけが中継へ送り先と通知の設定の写しを登録する
+   */
+  pushNotifyEnabled: boolean
+  /**
+   * アプリが画面に出ている間は、通知（プッシュ通知を含む）を出さない。画面の表示・通知音・読み上げは止めない。既定はオフ
+   * （2026-11-05 ユーザー選択「画面に出ている間だけ止める (Recommended)」「受け取りを待って送る (Recommended)」）。
+   * 判定と止める場所は `services/notifyQuietWhileOpen.ts`
+   */
+  notifyQuietWhileOpen: boolean
+  /**
+   * 通知を絞る都道府県（2 桁のコード。空なら全国）。プッシュ通知にも画面内の通知にも効き、絞るのは通知だけ
+   * （2026-11-03 ユーザー選択「都道府県を選べる・既定は全国 (Recommended)」「両方に掛ける (Recommended)」）
+   */
+  notifyPrefectures: string[]
   homeLat: number | null           // ホーム地点 緯度（null = 未設定）
   homeLng: number | null           // ホーム地点 経度（null = 未設定）
   /**
@@ -109,8 +136,18 @@ export interface AppSettings {
    * 第 17 条の許可を要する地震動の予報業務に当たりうるため（→ `utils/arrivalToken.ts`）。
    */
   arrivalToken: string
-  dmdataApiKey: string             // DMDATA.JP APIキー（DMDSS版のみ使用、空文字 = 未設定）
-  dmdataTestDelivery: boolean      // 試験報・訓練報を受信する（検証用）。DMDSS版は配信テスト VXSE42 等も、標準版は強震モニタ・P2PQuake の緊急地震速報の訓練報・試験報（→ admitTrainingEew）
+  /**
+   * 予報キー（空文字 = 未設定）。中継へ渡すと、緊急地震速報の予報（`eew.forecast`）も中継から届く
+   * （→ `utils/forecastKey.ts`）。到達予想キーと同じく、設定の窓では入れた後にしか行が出ない。
+   */
+  forecastKey: string
+  dmdataApiKey: string             // DMDATA.JP APIキー（空文字 = 未設定。未設定なら中継から受ける）
+  /**
+   * 鍵の入れ直しの案内を出すか（→ `utils/telegramLoss.ts` の `KEY_REENTRY_NOTICE`）。古い URL の橋渡しのページが、
+   * 前の設定に鍵があったときだけ立てて渡す。鍵を入れるか、地震タブの帯を［×］で閉じると下ろす
+   */
+  dmdataKeyReentryNotice: boolean
+  dmdataTestDelivery: boolean      // 試験報・訓練報を受信する（検証用）。DMDATA の配信テスト VXSE42 等と、強震モニタの緊急地震速報の訓練報（→ admitTrainingEew）
   voicevoxEnabled: boolean         // VOICEVOX 読み上げを有効にする
   voicevoxUrl: string              // VOICEVOX の HTTP API ベース URL
   voicevoxSpeakerId: number        // VOICEVOX 話者 ID
@@ -164,6 +201,22 @@ export interface AppSettings {
    * 「警報の対象地方を、予想値の前に伝える」）。
    */
   ttsReadEewWarningRegions: boolean
+  // ── 時報（→ `utils/timeSignal.ts`・`hooks/useTimeSignal.ts`。決めたことは timeSignal.ts の冒頭） ──
+  timeSignalEnabled: boolean
+  timeSignalIntervalMin: TimeSignalIntervalMin
+  timeSignalSound: TimeSignalSound
+  timeSignalOrder: TimeSignalOrder
+  timeSignalPhrase: TimeSignalPhrase
+  timeSignalClock: TimeSignalClock
+  /** 鳴らさない時間帯を使うか。時刻は 0 時からの分（0〜1439） */
+  timeSignalQuietEnabled: boolean
+  timeSignalQuietStartMin: number
+  timeSignalQuietEndMin: number
+  timeSignalWhileSpeaking: TimeSignalWhileSpeaking
+  /** 時報だけの音量（0〜1）。null なら通知音と共通の `soundVolume` */
+  timeSignalVolume: number | null
+  /** 時報だけの声（VOICEVOX の話者 ID）。null なら読み上げと共通の `voicevoxSpeakerId` */
+  timeSignalSpeakerId: number | null
   /**
    * 自作地震計ホスト（`seismo-host/`）へ繋ぐ。
    *
@@ -177,6 +230,13 @@ export interface AppSettings {
    * 「繋がりません」へ潰さない。→ `components/SettingsTab/seismoStatusLine.ts`）。
    */
   seismoEnabled: boolean
+  /**
+   * 使用状況データを送信する（設計書 §6.6・プライバシーポリシー §1）。**既定はオフ** で、初めて開いたときの
+   * 同意の窓で［許可する］を押したときと、設定の窓でオンにしたときだけオンになる（2026-11-03 ユーザー発言
+   * 「やっぱ規定オフのほうがいいかな。で全員最初にポップアップするようにして、そこで同意した人だけ送るようにするのが誠実な気がする」）。
+   * オフにすると一意の識別子も消す（→ `services/usageStats.ts`）
+   */
+  usageStatsEnabled: boolean
   /**
    * 自作地震計ホストの基点 URL（空文字 = 未設定）。
    *
@@ -224,12 +284,25 @@ export interface AppSettings {
    */
   publicWaveAlwaysConnected: boolean
   panelRatio: number             // 縦積みレイアウト（スマホ縦など）でのパネル高さ比率（0.2〜0.8）
+  /**
+   * 左右分割（`side`。PC など）でのパネルの幅（rem）。**`null` は動かしていない**印で、既定の 35rem を使う。
+   * 境界のつまみを離した時点で保存する。画面が狭いときに見せる幅は詰めるが、ここは書き換えない
+   * （→ `utils/panelWidth.ts`。2026-11-05 ユーザー選択「PC とスマホ横で別々に覚える (Recommended)」）。
+   */
+  panelWidthSide: number | null
+  /** 左右分割のうち狭い画面（`sideNarrow`。スマホ横）でのパネルの幅（rem）。`null` は既定の 22rem */
+  panelWidthSideNarrow: number | null
 }
 
 // パネル高さ比率の可動範囲。境界のつまみをドラッグしたときのクランプ幅と、
 // localStorage 復元時の sanitize で同じ値を使う（UI とストレージで範囲がずれないようにする）。
 export const PANEL_RATIO_MIN = 0.2
 export const PANEL_RATIO_MAX = 0.8
+
+// 左右分割のパネル幅（rem）の下限と、保存した値を読むときの緩い上限。見せるときの上限は画面の幅で決まる
+// （地図を 360px 残すまで。→ `utils/panelWidth.ts`。2026-11-05 ユーザー選択「20rem〜地図を 360px 残すまで (Recommended)」）。
+export const PANEL_WIDTH_MIN_REM = 20
+export const PANEL_WIDTH_STORED_MAX_REM = 200
 
 /**
  * 夜側の濃さの範囲。UI のスライダーと localStorage 復元時の丸めで同じ値を使う。
@@ -240,10 +313,13 @@ export const PANEL_RATIO_MAX = 0.8
 export const DAY_NIGHT_OPACITY_MIN = 0.2
 export const DAY_NIGHT_OPACITY_MAX = 0.95
 
-// 通常版とDMDSS版の設定を localStorage 上で分離する
-const STORAGE_KEY = isDmdss
-  ? 'quake-viewer-settings-dmdss'
-  : 'quake-viewer-settings'
+// 設定の保存先。版を 1 つにまとめた後は 1 つだけ（docs/relay-server-design.md §0 の 2026-10-31 の行）。
+// `quake-viewer-settings-dmdss` は読まない（新しいドメインで配るので、そこに前の設定は無い）。
+// 前の設定は、旧 URL の橋渡しのページが URL の # で渡す（→ `utils/settingsHandoff.ts`）か、書き出し・読み込みで持ってくる。
+// 読み込みは前の 2 つの版の印も受ける（→ `utils/settingsIo.ts`）。
+const STORAGE_KEY = 'quake-viewer-settings'
+/** 設定を置く鍵（別のタブでの書き換えを `storage` で追うため外へ出す。→ App の使用状況データ） */
+export const SETTINGS_STORAGE_KEY = STORAGE_KEY
 
 /**
  * 設定の既定値。
@@ -268,6 +344,7 @@ export const DEFAULTS: AppSettings = {
   quakeNoticeBanner: true,
   // 既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」）。
   quakeNoticeAlerts: false,
+  kyoshinDetectSpeech: false,
   uiScale: 1,
   mapIconScale: 1,
   hypocenterDepthScale: 1,
@@ -301,10 +378,15 @@ export const DEFAULTS: AppSettings = {
   // 揺れ検知の通知は既定でオフ（2026-10-23 選択「今のまま記録する (Recommended)」。検知ベンチの静かな窓 22 本・11.3 時間のうち 2 本で確定まで進んだ）。
   notifyDetection: false,
   notifyNankai: true,
+  pushNotifyEnabled: false,
+  notifyQuietWhileOpen: false,
+  notifyPrefectures: [],
   homeLat: null,
   homeLng: null,
   arrivalToken: '',
+  forecastKey: '',
   dmdataApiKey: '',
+  dmdataKeyReentryNotice: false,
   dmdataTestDelivery: false,
   voicevoxEnabled: false,
   voicevoxUrl: 'http://localhost:50021',
@@ -340,8 +422,24 @@ export const DEFAULTS: AppSettings = {
   // 選ぶ項目なので既定を変えないが、これは新しく足す発話で、しかも「予想値の読み上げを
   // 遅らせる」ことが目的。既定で切っておくと、目的そのものが誰にも届かない。
   ttsReadEewWarningRegions: true,
+  // 時報は既定で切（2026-11-04 ユーザー選択「切 (Recommended)」）。ほかの既定も同じ日に選んだもの:
+  // 間隔は毎正時・音はピッ・ピッ・ピッ・ポーン・順番は音が先・文は「15時30分です」・24 時間制・
+  // 重なったら音だけ・音量と声は共通に合わせる。鳴らさない時間帯の 22:00〜7:00 は、諮った文言の例の値
+  timeSignalEnabled: false,
+  timeSignalIntervalMin: 60,
+  timeSignalSound: 'pips',
+  timeSignalOrder: 'soundFirst',
+  timeSignalPhrase: 'desu',
+  timeSignalClock: '24h',
+  timeSignalQuietEnabled: false,
+  timeSignalQuietStartMin: 22 * 60,
+  timeSignalQuietEndMin: 7 * 60,
+  timeSignalWhileSpeaking: 'soundOnly',
+  timeSignalVolume: null,
+  timeSignalSpeakerId: null,
   // 自作地震計は既定で無効。**URL の既定値も置かない** —— 繋ぎ先は端末ごとに違う。
   seismoEnabled: false,
+  usageStatsEnabled: false,
   seismoHostUrl: '',
   // **波形は既定で「揺れたときだけ」**（2026-10-23 選択「既定を「揺れたときだけ」にする」）。合成波形は毎秒 15 KB
   // （1 日約 1.3 GB）を受け取り続けるので、設定の窓の注記にその量を出す。自作地震計そのものが既定で無効なので、
@@ -353,11 +451,26 @@ export const DEFAULTS: AppSettings = {
   publicWaveEnabled: true,
   publicWaveAlwaysConnected: false,
   panelRatio: 0.45,
+  panelWidthSide: null,
+  panelWidthSideNarrow: null,
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.min(max, Math.max(min, value))
+}
+
+/** 都道府県のコード（01〜47 の 2 桁）の並び。読めない値は捨て、重複を除いて並べる */
+function ensurePrefectureCodes(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  for (const v of value) {
+    if (typeof v !== 'string' || !/^\d{2}$/.test(v)) continue
+    const n = Number(v)
+    if (n < 1 || n > 47 || out.includes(v)) continue
+    out.push(v)
+  }
+  return out.sort()
 }
 
 function ensureBool(value: unknown, fallback: boolean): boolean {
@@ -366,6 +479,16 @@ function ensureBool(value: unknown, fallback: boolean): boolean {
 
 function ensureString(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback
+}
+
+/** 決まった値のどれかでなければ既定値に落とす */
+function ensureOneOf<T extends string | number>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return (allowed as readonly unknown[]).includes(value) ? value as T : fallback
+}
+
+/** 0 時からの分（0〜1439 の整数）。範囲外・小数は既定値に落とす */
+function ensureMinuteOfDay(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < MINUTES_PER_DAY ? value : fallback
 }
 
 function ensureDefaultTab(value: unknown, fallback: DefaultTabSetting): DefaultTabSetting {
@@ -469,6 +592,7 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     nankaiCommentaryAlerts: ensureBool(partial.nankaiCommentaryAlerts, DEFAULTS.nankaiCommentaryAlerts),
     quakeNoticeBanner: ensureBool(partial.quakeNoticeBanner, DEFAULTS.quakeNoticeBanner),
     quakeNoticeAlerts: ensureBool(partial.quakeNoticeAlerts, DEFAULTS.quakeNoticeAlerts),
+    kyoshinDetectSpeech: ensureBool(partial.kyoshinDetectSpeech, DEFAULTS.kyoshinDetectSpeech),
     uiScale: clampNumber(partial.uiScale, 0.5, 3, DEFAULTS.uiScale),
     mapIconScale: clampNumber(partial.mapIconScale, 0.5, 3, DEFAULTS.mapIconScale),
     hypocenterDepthScale: clampNumber(partial.hypocenterDepthScale, 1, 20, DEFAULTS.hypocenterDepthScale),
@@ -493,10 +617,15 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     notifyTsunami: ensureBool(partial.notifyTsunami, DEFAULTS.notifyTsunami),
     notifyDetection: ensureBool(partial.notifyDetection, DEFAULTS.notifyDetection),
     notifyNankai: ensureBool(partial.notifyNankai, DEFAULTS.notifyNankai),
+    pushNotifyEnabled: ensureBool(partial.pushNotifyEnabled, DEFAULTS.pushNotifyEnabled),
+    notifyQuietWhileOpen: ensureBool(partial.notifyQuietWhileOpen, DEFAULTS.notifyQuietWhileOpen),
+    notifyPrefectures: ensurePrefectureCodes(partial.notifyPrefectures),
     homeLat: clampNumberOrNull(partial.homeLat, -90, 90),
     homeLng: clampNumberOrNull(partial.homeLng, -180, 180),
     arrivalToken: ensureString(partial.arrivalToken, DEFAULTS.arrivalToken),
+    forecastKey: ensureString(partial.forecastKey, DEFAULTS.forecastKey),
     dmdataApiKey: ensureString(partial.dmdataApiKey, DEFAULTS.dmdataApiKey),
+    dmdataKeyReentryNotice: ensureBool(partial.dmdataKeyReentryNotice, DEFAULTS.dmdataKeyReentryNotice),
     dmdataTestDelivery: ensureBool(partial.dmdataTestDelivery, DEFAULTS.dmdataTestDelivery),
     voicevoxEnabled: ensureBool(partial.voicevoxEnabled, DEFAULTS.voicevoxEnabled),
     voicevoxUrl: ensureString(partial.voicevoxUrl, DEFAULTS.voicevoxUrl),
@@ -521,7 +650,20 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     ttsReadHypocenterDetail: ensureBool(partial.ttsReadHypocenterDetail, DEFAULTS.ttsReadHypocenterDetail),
     ttsReadEewLpgmClass: ensureBool(partial.ttsReadEewLpgmClass, DEFAULTS.ttsReadEewLpgmClass),
     ttsReadEewWarningRegions: ensureBool(partial.ttsReadEewWarningRegions, DEFAULTS.ttsReadEewWarningRegions),
+    timeSignalEnabled: ensureBool(partial.timeSignalEnabled, DEFAULTS.timeSignalEnabled),
+    timeSignalIntervalMin: ensureOneOf(partial.timeSignalIntervalMin, TIME_SIGNAL_INTERVALS, DEFAULTS.timeSignalIntervalMin),
+    timeSignalSound: ensureOneOf(partial.timeSignalSound, TIME_SIGNAL_SOUNDS, DEFAULTS.timeSignalSound),
+    timeSignalOrder: ensureOneOf(partial.timeSignalOrder, TIME_SIGNAL_ORDERS, DEFAULTS.timeSignalOrder),
+    timeSignalPhrase: ensureOneOf(partial.timeSignalPhrase, TIME_SIGNAL_PHRASES, DEFAULTS.timeSignalPhrase),
+    timeSignalClock: ensureOneOf(partial.timeSignalClock, TIME_SIGNAL_CLOCKS, DEFAULTS.timeSignalClock),
+    timeSignalQuietEnabled: ensureBool(partial.timeSignalQuietEnabled, DEFAULTS.timeSignalQuietEnabled),
+    timeSignalQuietStartMin: ensureMinuteOfDay(partial.timeSignalQuietStartMin, DEFAULTS.timeSignalQuietStartMin),
+    timeSignalQuietEndMin: ensureMinuteOfDay(partial.timeSignalQuietEndMin, DEFAULTS.timeSignalQuietEndMin),
+    timeSignalWhileSpeaking: ensureOneOf(partial.timeSignalWhileSpeaking, TIME_SIGNAL_WHILE_SPEAKING, DEFAULTS.timeSignalWhileSpeaking),
+    timeSignalVolume: clampNumberOrNull(partial.timeSignalVolume, 0, 1),
+    timeSignalSpeakerId: clampNumberOrNull(partial.timeSignalSpeakerId, 0, 100000),
     seismoEnabled: ensureBool(partial.seismoEnabled, DEFAULTS.seismoEnabled),
+    usageStatsEnabled: ensureBool(partial.usageStatsEnabled, DEFAULTS.usageStatsEnabled),
     // **URL の形をここで検めない。** `voicevoxUrl` と同じ扱いで、文字列として通す
     // ——入力途中の値も保存されるので、ここで弾くと打っている最中に消える。
     // 形の判定は使う側（`isValidSeismoHostUrl`）の仕事。
@@ -533,13 +675,16 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
     publicWaveEnabled: ensureBool(partial.publicWaveEnabled, DEFAULTS.publicWaveEnabled),
     publicWaveAlwaysConnected: ensureBool(partial.publicWaveAlwaysConnected, DEFAULTS.publicWaveAlwaysConnected),
     panelRatio: clampNumber(partial.panelRatio, PANEL_RATIO_MIN, PANEL_RATIO_MAX, DEFAULTS.panelRatio),
+    // 上限は画面の幅で決まるので、保存の段では下限と、壊れた値を弾く緩い上限だけを当てる
+    panelWidthSide: clampNumberOrNull(partial.panelWidthSide, PANEL_WIDTH_MIN_REM, PANEL_WIDTH_STORED_MAX_REM),
+    panelWidthSideNarrow: clampNumberOrNull(partial.panelWidthSideNarrow, PANEL_WIDTH_MIN_REM, PANEL_WIDTH_STORED_MAX_REM),
   }
 }
 
 /**
  * dev サーバーで自動投入する API キーを決める（検証のたびに設定の窓へ貼り直す手間を省く経路）。
  *
- * 値を渡しているのは vite.config.ts の devApiKeyDefine で、dev サーバー・DMDSS 版・`--host` なし
+ * 値を渡しているのは vite.config.ts の devApiKeyDefine で、dev サーバー・`--host` なし
  * のときだけ define する。ここで重ねて見るのは本番ビルドとテストの 2 つ。
  *   - 本番ビルドでは `DEV` が false に畳まれ、この分岐ごと消える。
  *   - テスト（`MODE === 'test'`）では、vitest が vite.config.ts を読まない独立設定
@@ -550,15 +695,13 @@ export function sanitize(partial: Partial<AppSettings>): AppSettings {
  */
 export function resolveDevApiKey(
   env: { DEV: boolean; MODE: string; DMDATA_API_KEY?: string },
-  isDmdssVariant: boolean,
 ): string | undefined {
   if (!env.DEV || env.MODE === 'test') return undefined
-  if (!isDmdssVariant) return undefined
   return env.DMDATA_API_KEY
 }
 
 function devApiKey(): string | undefined {
-  return resolveDevApiKey(import.meta.env, isDmdss)
+  return resolveDevApiKey(import.meta.env)
 }
 
 /**
@@ -575,8 +718,7 @@ export function injectDevApiKey(settings: AppSettings, key: string | undefined):
 /**
  * dev サーバーが注入した到達予想トークンを読む。
  *
- * **バリアントを問わない**（API キーと違う点）。トークンが開くのはホーム地点への到達予想で、
- * standard 版・DMDSS 版のどちらにもある機能。注入の可否そのものは
+ * トークンが開くのはホーム地点への到達予想。注入の可否そのものは
  * `scripts/dev-api-key-gate.ts` の `shouldInjectDevArrivalToken` が判定しており、
  * build には渡らない。
  */
@@ -590,12 +732,44 @@ function devArrivalToken(): string | undefined {
 }
 
 /**
- * dev サーバーが注入した鍵（API キーと到達予想トークン）。設定の書き出し（`utils/settingsIo.ts`）が
+ * dev サーバーが注入した予報キーを読む。注入の可否は到達予想トークンと同じ門
+ * （`scripts/dev-api-key-gate.ts` の `shouldInjectDevArrivalToken`）が決め、build には渡らない。
+ */
+export function resolveDevForecastKey(env: { DEV: boolean; MODE: string; FORECAST_KEY?: string }): string | undefined {
+  if (!env.DEV || env.MODE === 'test') return undefined
+  return env.FORECAST_KEY
+}
+
+function devForecastKey(): string | undefined {
+  return resolveDevForecastKey(import.meta.env)
+}
+
+/** dev サーバーが注入した鍵の組（API キー・到達予想トークン・予報キー） */
+export interface DevInjectedKeys {
+  apiKey: string | undefined
+  arrivalToken: string | undefined
+  forecastKey: string | undefined
+}
+
+/**
+ * dev サーバーが注入した鍵。設定の書き出し（`utils/settingsIo.ts`）が
  * 「鍵も含める」を選ばれても、注入値だけは外すために使う —— 利用者が入れた鍵ではなく `.env.local` の値なので、
  * 端末へ保存しない（`settingsToStore`）のと同じ扱いにする。
  */
-export function devInjectedKeys(): { apiKey: string | undefined; arrivalToken: string | undefined } {
-  return { apiKey: devApiKey(), arrivalToken: devArrivalToken() }
+export function devInjectedKeys(): DevInjectedKeys {
+  return { apiKey: devApiKey(), arrivalToken: devArrivalToken(), forecastKey: devForecastKey() }
+}
+
+/** 未設定のときだけ dev の予報キーを差し込む。手入力した値は踏み潰さない（到達予想トークンと同じ）。 */
+export function injectDevForecastKey(settings: AppSettings, key: string | undefined): AppSettings {
+  if (!key || settings.forecastKey !== '') return settings
+  return { ...settings, forecastKey: key }
+}
+
+/** localStorage へ書き出す形から、dev で自動投入した予報キーを外す（理由は `stripDevArrivalToken`）。 */
+export function stripDevForecastKey(settings: AppSettings, injectedKey: string | undefined): AppSettings {
+  if (!injectedKey || settings.forecastKey !== injectedKey) return settings
+  return { ...settings, forecastKey: '' }
 }
 
 /** 未設定のときだけ dev のトークンを差し込む。手入力した値は踏み潰さない。 */
@@ -652,16 +826,42 @@ export function settingsToStore(
    * 永続化されるとその前提が崩れる。`useSWaveCountdown` の `allowOwnCalculation` と同じ扱い。
    */
   injectedArrivalToken: string | undefined,
+  /** dev サーバーが注入した予報キー（無ければ `undefined` を明示して渡す。省略可にしない理由はトークンと同じ） */
+  injectedForecastKey: string | undefined,
 ): AppSettings {
-  // **トークンは `keepApiKey` に関わらず外す。** あの指示は「ファイルに明示された API キーを
-  // 残す」ためのもので、トークンには対応する指示が無い。外しても次の読み込みで注入し直される。
-  const withoutToken = stripDevArrivalToken(settings, injectedArrivalToken)
+  // **トークンと予報キーは `keepApiKey` に関わらず外す。** あの指示は「ファイルに明示された API キーを
+  // 残す」ためのもので、この 2 つには対応する指示が無い。外しても次の読み込みで注入し直される。
+  const withoutToken = stripDevForecastKey(stripDevArrivalToken(settings, injectedArrivalToken), injectedForecastKey)
   return keepApiKey ? withoutToken : stripDevApiKey(withoutToken, injectedKey)
 }
 
 // export はテスト向け（ランタイムからは useSettings 内でのみ使う）。
 export function load(): AppSettings {
-  return injectDevArrivalToken(injectDevApiKey(loadStored(), devApiKey()), devArrivalToken())
+  receiveSettingsHandoff()
+  return injectDevForecastKey(injectDevArrivalToken(injectDevApiKey(loadStored(), devApiKey()), devArrivalToken()), devForecastKey())
+}
+
+/**
+ * 旧 URL の橋渡しのページが URL の # に載せて渡した設定を、読み込む前に保存へ移す（→ `utils/settingsHandoff.ts`）。
+ * 移した後は # を消すので、2 回目以降の `load()`（StrictMode の二重実行など）では何もしない。
+ */
+function receiveSettingsHandoff(): void {
+  if (typeof window === 'undefined') return
+  try {
+    const result = consumeSettingsHandoff({
+      hash: window.location.hash,
+      clearHash: () => window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search),
+      storage: localStorage,
+      storageKey: STORAGE_KEY,
+      referrer: document.referrer,
+    })
+    if (result === 'foreign') log.warn('[settings] 旧アドレスの案内のページ以外から渡された設定は受け取らずに開く', { referrer: document.referrer })
+    else if (result === 'invalid') log.warn('[settings] 旧アドレスから渡された設定を読めなかったため、受け取らずに開く')
+    else if (result === 'kept') log.info('[settings] この端末には設定が既にあるため、旧アドレスから渡された設定は受け取らない')
+    else if (result === 'applied') log.info('[settings] 旧アドレスから渡された設定を受け取った')
+  } catch (e) {
+    log.warn('[settings] 旧アドレスから渡された設定の受け取りに失敗', e)
+  }
 }
 
 function loadStored(): AppSettings {
@@ -747,6 +947,7 @@ export function useSettings() {
   // dev で自動投入した値を保存対象から外すために覚えておく（理由は stripDevApiKey）。
   const injectedApiKey = useRef(devApiKey())
   const injectedArrivalToken = useRef(devArrivalToken())
+  const injectedForecastKey = useRef(devForecastKey())
 
   // useCallback で参照を安定化する（React.memo 化された SettingsTab へ props として
   // 渡されるため、毎レンダー新関数だと memo が破られる）。
@@ -758,7 +959,7 @@ export function useSettings() {
       const next = { ...prev, [key]: value }
       try {
         // 保存する形を決める窓口は `settingsToStore` の 1 つに寄せる（`replaceSettings` と共有）。
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsToStore(next, injectedApiKey.current, false, injectedArrivalToken.current)))
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsToStore(next, injectedApiKey.current, false, injectedArrivalToken.current, injectedForecastKey.current)))
       } catch (e) {
         // 容量超過・プライベートブラウジング等で保存できないケース。state には反映するので
         // 操作自体は効くが、次回の起動時には既定値へ戻る。無言だと「設定が勝手に戻る」
@@ -791,7 +992,7 @@ export function useSettings() {
   const replaceSettings = useCallback((next: AppSettings, keepApiKey = false): boolean => {
     let persisted = true
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsToStore(next, injectedApiKey.current, keepApiKey, injectedArrivalToken.current)))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settingsToStore(next, injectedApiKey.current, keepApiKey, injectedArrivalToken.current, injectedForecastKey.current)))
     } catch (e) {
       log.warn('[settings] localStorage への保存に失敗（この読み込みは次回起動時に失われる）', e)
       persisted = false
@@ -800,5 +1001,13 @@ export function useSettings() {
     return persisted
   }, [])
 
-  return { settings, updateSetting, replaceSettings }
+  /**
+   * 別のタブが保存した 1 項目を、保存せずに取り込む（`storage` で追うとき用）。`updateSetting` で取り込むと、
+   * このタブの古い設定を丸ごと書き戻して、別のタブで変えたほかの項目を古い値へ戻してしまう
+   */
+  const adoptExternalSetting = useCallback(<K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    setSettings(prev => (prev[key] === value ? prev : { ...prev, [key]: value }))
+  }, [])
+
+  return { settings, updateSetting, replaceSettings, adoptExternalSetting }
 }

@@ -5,8 +5,7 @@
 //
 // **確かめるのは「確かめたい形が実電文（と書き換え）から本当に出ているか」。** 手で内部型を
 // 組んでいた頃の検査（`testData.test.ts`）のうち、地震情報のボタンに当たるものをここへ移した。
-// 標準版を P2PQuake の形へ寄せる検査は移していない —— P2PQuake は廃止する予定で、テストボタンは
-// 両版とも同じ XML の読み取り結果を流す（2026-10-22 ユーザー原文「XMLにしましょう。近いうちに2つは
+// テストボタンは XML の読み取り結果を流す（2026-10-22 ユーザー原文「XMLにしましょう。近いうちに2つは
 // 統合するので。」「統合すると言うかP2PQuakeは廃止する」）。
 import { describe, it, expect, beforeEach } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -14,14 +13,15 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { EEWAlert, JMALpgm, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { ReplayPayload } from '../types/replay'
-import { buildTestTelegramEntries, clearTestTelegramCacheForTest, type BuiltTestTelegram, type TestTelegramScript } from './testTelegrams'
+import { buildTestLogOnlyEntries, buildTestTelegramEntries, clearTestTelegramCacheForTest, type BuiltTestTelegram, type TestTelegramScript } from './testTelegrams'
 import * as scripts from './testTelegramScripts'
 import { mergeQuakeInto, mergeQuakeHistory, extractQuakeEventId } from './quakeMerge'
 import { eewAreas, eewMaxScale, computeSingleEEWLevel, isProvisionalHypocenter } from './eew'
 import { earthquakeToSegments, createQuakeSpokenState, applySpokenRefs } from './ttsText'
 import { joinSegments } from './ttsFollow'
 import { reportsText } from '../test-utils/quakeReports'
-import { internationalTsunamisFor } from './internationalTsunami'
+import { internationalTsunamiIndex } from './internationalTsunami'
+import { quakeEventKey } from './quakeMerge'
 import { editXml, descendants, only } from './testTelegramRewrite'
 
 const NOW = new Date('2026-10-22T03:00:00.000Z')
@@ -32,8 +32,8 @@ const TELEGRAM_DIR = join(dirname(fileURLToPath(import.meta.url)), '../../public
 const fetcher = async (file: string): Promise<string> => readFileSync(join(TELEGRAM_DIR, file), 'utf8')
 const binaryFetcher = async (file: string): Promise<Uint8Array> => new Uint8Array(readFileSync(join(TELEGRAM_DIR, file)))
 
-async function build(script: TestTelegramScript, isDmdss = true): Promise<BuiltTestTelegram[]> {
-  return buildTestTelegramEntries(script, { isDmdss, now: NOW, fetcher, binaryFetcher })
+async function build(script: TestTelegramScript): Promise<BuiltTestTelegram[]> {
+  return buildTestTelegramEntries(script, { now: NOW, fetcher, binaryFetcher })
 }
 
 const payloads = (built: BuiltTestTelegram[]): ReplayPayload[] => built.map(b => b.entry.payload)
@@ -50,8 +50,8 @@ beforeEach(() => clearTestTelegramCacheForTest())
 
 describe('台本はどれも置いてある電文から組める', () => {
   for (const [name, script] of Object.entries(scripts.ALL_TEST_TELEGRAM_SCRIPTS)) {
-    it.each([true, false])(`${name}（DMDSS 版 = %s）`, async (isDmdss) => {
-      const built = await build(script, isDmdss)
+    it(name, async () => {
+      const built = await build(script)
       expect(built.length).toBeGreaterThan(0)
       // 流す時刻は押した時刻から、台本の順に並ぶ
       const times = built.map(b => b.entry.replayTime.getTime())
@@ -107,17 +107,6 @@ describe('台本はどれも置いてある電文から組める', () => {
       expect(issued).toBe(b.entry.replayTime.getTime())
     }
   })
-
-  // 安全弁: 押すたびに進む台本は、段の添字を押下の回数に使う。バリアントで段が落ちるとずれる
-  it('押すたびに進む台本は、バリアントで段を分けられない', async () => {
-    const broken: TestTelegramScript = {
-      ...scripts.EEW_FORECAST,
-      steps: scripts.EEW_FORECAST.steps.map((s, i) => (i === 1 ? { ...s, onlyIn: 'dmdss' as const } : s)),
-    }
-    await expect(build(broken, false)).rejects.toThrow('バリアントで段を分けられません')
-    // 対照: 分けていなければ通る
-    await expect(build(scripts.EEW_FORECAST, false)).resolves.toBeDefined()
-  })
 })
 
 describe('地震テスト', () => {
@@ -133,6 +122,17 @@ describe('地震テスト', () => {
     expect(quake.points.some(p => !p.isArea && p.city)).toBe(true)
   })
 
+  // 能登本震の報は固定付加文 0211 を持つ。読み上げは括弧書きを除き、画面の原文は全文のまま
+  // （2026-11-05 ユーザー選択「読み上げだけ「津波警報等を発表中です。」 (Recommended)」）。
+  it('津波の一文は「津波警報等を発表中です。」と読み、原文は全文のまま', async () => {
+    const [quake] = quakesOf(await build(scripts.EARTHQUAKE))
+    expect(quake.earthquake.domesticTsunamiCode).toBe('0211')
+    const text = joinSegments(earthquakeToSegments(quake, { intensityLevels: 0, maxRegions: 0, alwaysReadScale: -1, alwaysReadLpgmClass: -1, regionTolerance: 0 }, true, createQuakeSpokenState()))
+    expect(text).toContain('津波警報等を発表中です。')
+    expect(text).not.toContain('大津波警報・津波警報あるいは津波注意報')
+    expect(quake.forecastText).toContain('津波警報等（大津波警報・津波警報あるいは津波注意報）を発表中です。')
+  })
+
   it('実電文が持つ項目がそのまま入る（震央補助表現・気象庁以外の印・付加文 2 種）', async () => {
     const [quake] = quakesOf(await build(scripts.EARTHQUAKE))
     expect(quake.earthquake.hypocenter.nameFromMark).toBe('輪島の東北東３０ｋｍ付近')
@@ -144,20 +144,18 @@ describe('地震テスト', () => {
     expect(quake.issue.correct).toBe('なし')
   })
 
-  // 正・対照: 長周期地震動は DMDSS 版だけ（電文そのものが標準版の受信元から届かない）
-  it('長周期地震動は DMDSS 版だけで流し、地震と同じ識別子に紐付く', async () => {
-    const dmdss = payloads(await build(scripts.EARTHQUAKE, true))
-    const lpgm = dmdss.find(p => p.kind === 'lpgm')
+  it('長周期地震動も流し、地震と同じ識別子に紐付く', async () => {
+    const built = payloads(await build(scripts.EARTHQUAKE))
+    const lpgm = built.find(p => p.kind === 'lpgm')
     expect(lpgm).toBeDefined()
-    const quake = quakesOf(await build(scripts.EARTHQUAKE, true))[0]
+    const quake = quakesOf(await build(scripts.EARTHQUAKE))[0]
     expect(lpgm!.kind === 'lpgm' && lpgm!.data.eventId).toBe(extractQuakeEventId(quake))
-    expect(payloads(await build(scripts.EARTHQUAKE, false)).some(p => p.kind === 'lpgm')).toBe(false)
   })
 
   // 正: 長周期地震動にも、気象庁以外が運用する観測点の印が 1 点だけ立つ。**元の電文には 1 件も無い**
   // ので、ここで立てないと表示の経路を実機で一度も通せない（→ `markFirstLgStation`）。
   it('長周期地震動の先頭 1 点に、気象庁以外の観測点の印が立つ', async () => {
-    const lpgm = lpgmsOf(await build(scripts.EARTHQUAKE, true))[0]!
+    const lpgm = lpgmsOf(await build(scripts.EARTHQUAKE))[0]!
     const marked = (lpgm.points ?? []).filter(pt => pt.nonJma)
     expect(marked.length).toBe(1)
     // 印は名前から外れている（引き当てのため。→ quake-spec.md §8）
@@ -167,7 +165,7 @@ describe('地震テスト', () => {
   // 安全弁: 押すたびに別の地震になる（同じ識別子のまま 2 回押すと、続報として 1 枚に畳まれる）
   it('押すたびに識別子が付け替わる', async () => {
     const first = quakesOf(await build(scripts.EARTHQUAKE))[0]
-    const second = quakesOf(await buildTestTelegramEntries(scripts.EARTHQUAKE, { isDmdss: true, now: new Date(NOW.getTime() + 1000), fetcher, binaryFetcher }))[0]
+    const second = quakesOf(await buildTestTelegramEntries(scripts.EARTHQUAKE, { now: new Date(NOW.getTime() + 1000), fetcher, binaryFetcher }))[0]
     expect(first.eventId).toMatch(/^\d{14}$/)
     expect(second.eventId).not.toBe(first.eventId)
   })
@@ -180,6 +178,15 @@ describe('訓練報テスト', () => {
     expect(training.operationStatus).toBe('訓練')
     expect(normal.operationStatus).toBeUndefined()
     expect(training.points.length).toBe(normal.points.length)
+  })
+
+  // 長周期の欄の「訓練報」の札を確かめられるよう、長周期の電文も訓練にする
+  it('長周期の電文も運用種別だけが「訓練」になる', async () => {
+    const [training] = lpgmsOf(await build(scripts.TRAINING_QUAKE))
+    const [normal] = lpgmsOf(await build(scripts.EARTHQUAKE))
+    expect(training.operationStatus).toBe('訓練')
+    expect(normal.operationStatus).toBeUndefined()
+    expect(training.maxClass).toBe(normal.maxClass)
   })
 })
 
@@ -471,7 +478,31 @@ describe('遠地地震テスト・巨大地震テスト', () => {
     expect(quake.issue.type).toBe('遠地地震')
     expect(bulletins).toHaveLength(1)
     expect(bulletins[0].title).toBe('TSUNAMI BULLETIN NUMBER 001')
-    expect(internationalTsunamisFor(quake, bulletins)).toEqual(bulletins)
+    expect(internationalTsunamiIndex([quake], bulletins).byQuakeKey.get(quakeEventKey(quake))).toEqual(bulletins)
+    // 自作の英文の深さは実電文の書式（FOCAL DEPTH の行に規模と並ぶ）で書き、読み取りが拾える
+    expect(bulletins[0]).toMatchObject({ depthKm: 140, magnitude: 7.0, regionName: 'TALAUD ISLANDS, INDONESIA' })
+  })
+
+  // 英文だけテスト（2026-11-03 ユーザー選択「別の行を足す (Recommended)」）: 国内の地震に付く英文と、付くカードの無い英文
+  it('英文だけテストは日向灘の地震に付く英文と、どのカードにも付かない英文と、通信試験を流す', async () => {
+    const built = await build(scripts.INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY)
+    const [quake] = quakesOf(built)
+    const bulletins = payloads(built).flatMap(p => (p.kind === 'internationalTsunami' ? [p.data] : []))
+    expect(quake.issue.type).not.toBe('遠地地震')
+    expect(bulletins).toHaveLength(3)
+    const [hyuganada, mindanao, commTest] = bulletins
+    const index = internationalTsunamiIndex([quake], bulletins)
+    expect(index.byQuakeKey.get(quakeEventKey(quake))).toEqual([hyuganada])
+    expect(hyuganada).toMatchObject({ regionName: 'KYUSHU, JAPAN', magnitude: 7.1, magnitudeType: 'Mj', evaluation: 'verySmall' })
+    const cards = index.cards
+    expect(cards).toHaveLength(1)
+    // 深さは 100 km 以深の地震にだけ書かれる（気象庁 技術情報 第522号 別紙1（4））ので、30 km の地震の英文には無い
+    expect(cards[0].earthquake.hypocenter).toMatchObject({ name: 'MINDANAO, PHILIPPINES', magnitude: 6.9, depth: -1 })
+    // 通信試験はどのカードにも付かず、読み上げ・通知・音だけが出る
+    expect(commTest).toMatchObject({ isCommunicationsTest: true, title: 'NWPTA COMMUNICATIONS TEST' })
+    expect(index.unattached).not.toContain(commTest)
+    // 押した時刻より未来の地震にならない（台本は日向灘を「いま」に合わせる）
+    expect(Date.parse(mindanao.originTime!)).toBeLessThan(Date.parse(quake.earthquake.time))
   })
 
   it('巨大地震は規模が数値にならず、「Ｍ８を超える巨大地震」と区別される', async () => {
@@ -516,11 +547,11 @@ describe('津波情報は区域の等級と予想を動かさない', () => {
   // 同じ組み立てで、実配信の並びとして崩れていないことも見る —— **作成時刻の順に届く**（逆だと受け手が
   // 重ね直しへ回る。→ `utils/tsunami.ts` の `arrivesOutOfOrder`）、**第１波の到達確認は後戻りしない**。
   for (const [name, script] of Object.entries(scripts.ALL_TEST_TELEGRAM_SCRIPTS)) {
-    it.each([true, false])(`${name}（DMDSS 版 = %s）`, async (isDmdss) => {
+    it(name, async () => {
       let warning: Map<string, string> | undefined
       let lastCreatedAt = -Infinity
       const arrived = new Set<string>()
-      for (const t of tsunamisOf(await build(script, isDmdss))) {
+      for (const t of tsunamisOf(await build(script))) {
         if (!script.stepByPress && !script.pacedByApp && t.createdAtMs !== undefined) {
           expect(`${t.id} ${t.createdAtMs}`).toBe(`${t.id} ${Math.max(t.createdAtMs, lastCreatedAt)}`)
           lastCreatedAt = t.createdAtMs
@@ -719,17 +750,14 @@ describe('津波のテスト', () => {
     expect(lift.eventId).toBe(first.eventId)
   })
 
-  // 正・対照: 予報テストの片付けは標準版だけ（DMDSS 版は失効時刻で消える）
-  it('予報テストは失効時刻を持ち、片付けの報は標準版だけで流す', async () => {
-    const dmdss = tsunamisOf(await build(scripts.TSUNAMI_FORECAST, true))
-    expect(dmdss).toHaveLength(1)
-    expect(dmdss[0].areas.every(a => a.grade === 'Forecast')).toBe(true)
+  // 予報だけの津波は失効時刻で消える（気象庁は予報の終わりに電文を出さない）ので、片付けの報は流さない
+  it('予報テストは失効時刻を持ち、片付けの報を流さない', async () => {
+    const forecast = tsunamisOf(await build(scripts.TSUNAMI_FORECAST))
+    expect(forecast).toHaveLength(1)
+    expect(forecast[0].areas.every(a => a.grade === 'Forecast')).toBe(true)
     // **失効時刻は押した時刻から `TSUNAMI_DISMISS_MS` 後へ詰めてある。** 実電文は発表の
     // 約 3 時間後で、テストボタンでは待てない（ほかの津波テストの片付けと同じ長さに揃えた）。
-    expect(Date.parse(dmdss[0].validDateTime!) - NOW.getTime()).toBe(scripts.TSUNAMI_DISMISS_MS)
-    const standard = tsunamisOf(await build(scripts.TSUNAMI_FORECAST, false))
-    expect(standard).toHaveLength(2)
-    expect(standard[1].cancelled).toBe(true)
+    expect(Date.parse(forecast[0].validDateTime!) - NOW.getTime()).toBe(scripts.TSUNAMI_DISMISS_MS)
   })
 
   it('失効時刻テストは注意報のあと、予報だけ・失効時刻つきの報が届く', async () => {
@@ -829,6 +857,17 @@ describe('南海トラフ・後発地震・お知らせ・地震回数・長周�
     expect(notice.body).toContain('沖縄県の震度データ入電停止のお知らせ')
     expect(notice.body).not.toContain('問い合わせ')
     expect(notice.freeText).toBe('保守点検の時刻が変更になりました。')
+  })
+
+  // 帯に積む形（別件のお知らせ 2 通）を確かめる入口。同じ分の別のお知らせ —— 実配信の並び方のまま
+  it('お知らせテストは同じ分の別のお知らせを 2 通流す', async () => {
+    const notices = dataOf(await build(scripts.QUAKE_NOTICE), 'quakeNotice') as { id: string; eventId: string; reportDateTime: string; freeText?: string }[]
+    expect(notices).toHaveLength(2)
+    const [a, b] = notices
+    expect(b.id).not.toBe(a.id)
+    expect(b.eventId).toBe(a.eventId)
+    expect(Date.parse(b.reportDateTime) - Date.parse(a.reportDateTime)).toBe(scripts.QUAKE_NOTICE_SECOND_MS)
+    expect(b.freeText).toBeUndefined()
   })
 
   it('地震回数は回数が全区間「発表なし」で、有感回数は持つ', async () => {
@@ -991,5 +1030,38 @@ describe('震源の借用テスト', () => {
     expect(prompt1.earthquake.hypocenter.name).toBe('')
     expect(tsunami1.sourceEarthquakes?.[0]?.magnitude).toBe(7.4)
     expect(tsunami2.sourceEarthquakes?.[0]?.magnitude).toBe(7.6)
+  })
+})
+
+describe('規模の更新テスト', () => {
+  // 津波の続報が地震情報より新しい規模を運び、その後の地震情報が同じ規模で追いつく並び（能登本震の 16:16・16:22・16:24）
+  it('震源・震度情報 → 津波の続報 → 震源・震度情報の続報 の順で、津波だけが間の報として新しい規模を運ぶ', async () => {
+    const events = payloads(await build(scripts.MAGNITUDE_FROM_TSUNAMI)).map(p => (p.kind === 'event' ? p.event : null))
+    expect(events.map(e => e?.kind)).toEqual(['quake', 'tsunami', 'quake'])
+    const [detail1, tsunami2, detail2] = events as [JMAQuake, JMATsunami, JMAQuake]
+    expect(tsunami2.eventId).toBe(extractQuakeEventId(detail1))
+    expect(detail1.earthquake.hypocenter.magnitude).toBe(7.4)
+    expect(tsunami2.sourceEarthquakes?.[0]?.magnitude).toBe(7.6)
+    expect(detail2.earthquake.hypocenter.magnitude).toBe(7.6)
+    // 押した時刻へずらしても、発表の前後は実電文のまま（津波が 2 つの地震情報の間）
+    expect(Date.parse(detail1.time)).toBeLessThan(Date.parse(tsunami2.time))
+    expect(Date.parse(tsunami2.time)).toBeLessThan(Date.parse(detail2.time))
+  })
+})
+
+// 読まない種類（VXSE56）のテストは、ライブと同じく電文ログに本文ごと「スキップ」の行だけを積む
+describe('電文ログにだけ積むテスト', () => {
+  // 正: 置いてある実電文から、本文ごと filtered の行が 1 行できる
+  it('地震の活動状況等に関する情報は、本文ごと filtered の行になる', async () => {
+    const rows = await buildTestLogOnlyEntries(scripts.ACTIVITY_INFO, NOW, fetcher)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].replayTime.getTime()).toBe(NOW.getTime())
+    expect(rows[0].logEntry).toMatchObject({ headType: 'VXSE56', status: 'filtered', origin: 'test', isTest: false })
+    expect(String(rows[0].logEntry.rawBody)).toContain('<Title>地震の活動状況等に関する情報</Title>')
+  })
+
+  // 安全弁: 読む種類を行だけにすると、ライブでは画面に出る電文が出なくなるので止める
+  it('読む種類の電文は行だけにできない', async () => {
+    await expect(buildTestLogOnlyEntries(scripts.NANKAI_COMMENTARY_ROUTINE, NOW, fetcher)).rejects.toThrow('読む種類の電文は行だけにできません')
   })
 })

@@ -1,60 +1,64 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useLazyRef } from './useLazyRef'
-import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, EEWAlert, IntensityScale, EarthquakePoint, AppEvent, LiveEvent, LiveEventMeta, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
-import { fetchHistory, fetchHistorySince, fetchJmaQuakePage, P2PQuakeWebSocket, P2P_LOAD_MORE_BATCH } from '../services/p2pquake'
+import type { JMAQuake, JMATsunami, JMALpgm, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, EEWAlert, AppEvent, LiveEvent, LiveEventMeta, ConnectionStatus, TelegramLogEntry } from '../types/earthquake'
 import { historyCursorFromOldestDay, type HistoryCursor } from '../utils/historyCursor'
 import type { QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
 // 種別ごとの取得関数（`fetchDmdataEarthquakes` ほか 8 本）は撤去済み。履歴はアーカイブ経由の
 // 1 本へ寄せてある（→ `data-sources-spec.md` §2「大量に取るならアーカイブを使う」）。
 // **発表中の緊急地震速報だけは別**で、`/v2/telegram` にも当日のアーカイブにも無いため
 // `/v2/gd/eew` を辿る専用の経路が要る。
-import { DmdataWebSocket, fetchDmdataActiveEews, fetchDmdataActiveEewsOutcome } from '../services/dmdata'
+import { DmdataWebSocket, fetchDmdataActiveEews, fetchDmdataActiveEewsOutcome, RELAY_WEBSOCKET_URL, type RelayUpstreamStatus } from '../services/dmdata'
+import { relayRestEndpoint, relayTokenStore } from '../services/relayEndpoint'
+import { activeEewsFromRelay } from '../services/relayActiveEew'
 // 履歴の取得はリプレイ開始時の復元と実装を共有する（→ `data-sources-spec.md` §2
 // 「大量に取るならアーカイブを使う」）。同じ目的の実装を 2 本持たない。
 import { fetchDmdataQuakeHistoryFor, HISTORY_WINDOW_DAYS } from '../services/dmdataReplay'
+import { dmdataKeyEndpoint } from '../services/dmdataEndpoint'
 import { fetchLiveTelegramsBetween } from '../services/dmdataReplayLive'
 import { PREFERRED_CLASSIFICATIONS, type DmdataClassification } from '../services/dmdataClassifications'
-import {
-  forgetClassifications, loadRememberedClassifications, rememberClassifications, sameClassifications,
-} from '../services/dmdataClassificationMemory'
 import { beginLoadMoreGateTag } from '../services/dmdataRequestGates'
 import {
   type TelegramLoss, createEmptyTelegramLoss, telegramLossFrom, isTelegramLossEmpty,
   mergeHistoryLoss,
 } from '../utils/telegramLoss'
 import { appendToTelegramLog, dropTelegramLogOrigins, pruneTelegramLog } from '../utils/telegramLogBuffer'
-import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, findRetractionTie, logRetractionTie, quakeRetractionOf, addQuakeRetraction, quakeHoldBack, isQuakeCancelTarget, applyQuakeCancelToCard, compareReportAge, reportOrderKey, type ReportAge } from '../utils/quakeMerge'
+import { mergeQuakeInto, mergeQuakeHistory, sameQuakeEntry, sortQuakes, quakeEventKey, coalesceByEventId, findExistingQuakeCard, isRetractedQuakeReport, findRetractionTie, logRetractionTie, quakeRetractionOf, addQuakeRetraction, applyQuakeCancelToCard, reportOrderKey } from '../utils/quakeMerge'
+import { type QuakeIntensityCache, fillQuakeIntensity, findQuakeCancelTarget, isLiveQuakeCancelTarget, isQuakeReportHeldBack, noteQuakeIntensity, quakeCardAfterReport } from '../utils/quakeNotifyTracker'
 import { advanceQuakeMarks, markIssuedAt, pruneQuakeMarks, rememberQuakeCard, trimQuakeMarkMemory, quakeFactSnapshot, quakeRowSnapshot, lpgmFactSnapshot, vanishedFacts, lpgmRowSnapshot, lpgmMarkKey, lpgmTelegramRevise, quakeTelegramRevise, type QuakeCardMarks, type QuakeMarkMemory } from '../utils/quakeUpdateMark'
 import { UPDATE_MARK_TTL_MS } from '../utils/updateMark'
 import type { QuakeRetraction } from '../utils/quakeMerge'
-import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, MAX_LPGM_RETRACTIONS, recordLpgmRetractions, type LpgmRetraction } from '../utils/lpgmRetraction'
-import { isObservedLpgmClass } from '../utils/lpgm'
+import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, lpgmRetractionsIntoCards, MAX_LPGM_RETRACTIONS, recordLpgmRetractions, type LpgmRetraction } from '../utils/lpgmRetraction'
 import { withBorrowedFromTsunami, borrowFromTsunamiIntoCards } from '../utils/borrowFromTsunami'
-import { selectQuakeHistory } from '../utils/quakeHistorySelection'
+import { withLatestQuakeFacts, latestQuakeFactsIntoCards } from '../utils/latestQuakeFacts'
 import { loadStationCoords, onStationCoordsLoaded, areaPrefIndexOf, getAreaPrefIndexCache } from '../utils/stationCoords'
 import type { AreaPrefIndex } from '../utils/quakePoints'
 import {
-  calcEEWCancelTime, eewSerial, eewEventKey, eewIssueTimeMs, mergeEewReport, eewStaleness, acceptEewReport,
-  supplementEewReport, raisesEewAlert,
-  noteEewNotified, isSameReportFromOtherOrigin, isOlderEewReport, type EewAcceptance,
-  endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, admitTrainingEew, isLateEewCancel, rememberEewFirstIssueTime,
+  calcEEWCancelTime, eewSerial, eewSerialSeries, eewEventKey, eewIssueTimeMs, mergeEewReport,
+  supplementEewReport, isOlderEewReport, type EewAcceptance,
+  endedEewMatch, ACTIVE_EEW_WINDOW_MS, type EndedEew, type EndedEewMatch, admitTrainingEew, rememberEewFirstIssueTime,
 } from '../utils/eew'
-import { decideEewExpiry, decideFinalReportExpiry, type DetectionSpreadLog, type EewExpiryDecision } from '../utils/eewSpreadHold'
+import { decideEewReportEntry, decideEewCancelEntry, endEewOnExpiry, mergeEndedEew } from '../utils/eewNotifyTracker'
+import { decideFinalReportExpiry, type DetectionSpreadLog, type EewExpiryDecision } from '../utils/eewSpreadHold'
 import { recordReplayEvent, type ReplayTelegramSkip } from '../utils/replayEventLog'
 import { replayTelegramFacts, type ReplayTelegramSource } from '../utils/replayTelegramRef'
 import { upsertEstimatedIntensity, isNewEstimatedIntensity, rememberShownEstimatedIntensity } from '../utils/estimatedIntensity'
-import { unattachedInternationalTsunamis, upsertInternationalTsunami } from '../utils/internationalTsunami'
+import { internationalTsunamiIndex, upsertInternationalTsunami } from '../utils/internationalTsunami'
+import { fetchFailureReason } from '../utils/fetchFailure'
 import { withInheritedTsunamiFacts, isSameTsunamiEvent, stepTsunamiState, tsunamiLiftText } from '../utils/tsunami'
 import { log } from '../utils/logger'
 import { serverNow, serverDate, isServerClockTrusted } from '../utils/clock'
 import { isAbortedByCaller } from '../utils/fetchWithTimeout'
 
-import { isDmdss } from '../utils/env'
 import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
 // テストデータは押されてから読む（静的に取り込まない理由・失敗したときの扱い・先読みの
 // 段取りは `utils/testDataLoader.ts` にまとめてある）。
+import {
+  cancelOverOtherUnit, cancelOverOtherUnitInList, decideDispatch as decideBandDispatch, earthquakeCountListDecision, kohatsuListDecision,
+  lpgmNotifiable, nankaiBandDecision, nankaiCommentaryListDecision, noteConveyedCancel as noteBandConveyedCancel,
+} from '../utils/specialInfoBands'
+import { dropExpiredUpTo, earliestExpiryMs, putBandItem, type BandListItem } from '../utils/specialInfoBandList'
 import { loadTestTelegramScripts } from '../utils/testDataLoader'
-import { buildTestTelegramEntries, type TestTelegramScript } from '../utils/testTelegrams'
+import { buildTestLogOnlyEntries, buildTestTelegramEntries, defaultTestTelegramFetcher, type TestTelegramScript } from '../utils/testTelegrams'
 
 /**
  * 画面・音へ回らずに落とした電文を、録画ツール向けに記録する
@@ -101,70 +105,38 @@ function tryApplyExtra<T>(label: string, data: T, applyFn: (data: T) => boolean)
   }
 }
 
-/**
- * lpgm が `onLiveEvent`（音・読み上げ・タブ移動）の対象になるか。
- *
- * - **発表**は最大階級 0 の報も含めてすべて（2026-10-30 ユーザー選択「階級 1 以上と同じ型
- *   (Recommended)」・#1201。それまでは階級 1 以上だけで、最大階級 0 の報は音・読み上げ・通知・
- *   タイトル・自動で開くのどれも出さなかった）。パーサーは 0〜4 以外を捨てるので、ここでの値域の確かめは
- *   型の効かない経路（シナリオの手書き JSON など）から壊れた値が来たときのための保険
- * - **取消**は常に（画面に出していない地震への取消でも伝える。2026-10-22 ユーザー選択「地震情報に揃えて伝える
- *   (Recommended)」で 2026-10-15 の「表示中を消した時だけ（推奨）」を覆した）。同じ取消の 2 通目は
- *   呼び出し側（`shouldDispatch`）が止める
- *
- * **他の 5 種別（nankai 等）と違い、これは「反映されたか」と一致しない。** あちらは
- * `applyXxx` が期限切れ等で棄却すると `lpgmByEventId` 相当の state 自体を書き換えないが、
- * lpgm は取消なら削除・それ以外なら必ず追加する形で **`lpgmByEventId` を常に書き換える**
- * （呼び出し側の `setState` を参照）。ここが偽でも画面（長周期一覧・バッジ）は更新されうる
- * ので、記録の理由はどちらも `notApplied`（＝反映されなかった）ではなく
- * `notDispatched`（＝音読み上げの対象外と決めている）にする（3 巡目レビューで指摘）。
- */
-function lpgmNotifiable(lpgm: JMALpgm): boolean {
-  return lpgm.cancelled || isObservedLpgmClass(lpgm.maxClass)
-}
 
-// 初回に一覧へ並べる**地震の件数**（設定の最大選択値に合わせる。standard 版の経路だけが使う ——
-// DMDSS 版は日数で区切る）。リプレイ開始時の履歴復元（App の `fetchReplayQuakeHistory`）も
-// この値をそのまま使うため export している。片方だけ動かすと、ライブと再生でカードの厚みが
-// 黙って食い違う。
-//
-// **数えるのは地震で、電文ではない**（2026-10-14 ユーザー選択「ライブも地震 50 件に揃える」）。
-// 電文で数えると、地震の多い期間ほど 1 地震あたりの報が枠を食い、同じ設定でも一覧の枚数が
-// 期間ごとに変わる（実測で standard 版だけ 84 枚になったり、電文 50 通で切って 52 地震のうち
-// 18 枚しか残らなかったりした）。選び方は `selectQuakeHistory`（リプレイの履歴と共有）。
-export const MAX_HISTORY_RETAINED = 50
-
-// ライブの初回履歴で 1 回に引く電文数（`/jma` の上限）。**リクエストは 1 回のまま。**
-// 地震 50 件を選ぶ母数で、ここから `selectQuakeHistory` が地震の単位で絞る。
-const INITIAL_HISTORY_PAGE_SIZE = 100
 // 電文ログの保持は経路ごとに分ける（ライブは 24 時間・テストと再生は件数。→ `utils/telegramLogBuffer.ts`）
 /** 何も届かない間に 24 時間より古いライブの行を捨てる間隔（ミリ秒）。 */
 const TELEGRAM_LOG_PRUNE_INTERVAL_MS = 10 * 60 * 1000
 
+/** 帯に複数を積む 4 種（→ `utils/specialInfoBandList.ts`） */
+type BandListKind = 'nankaiCommentary' | 'kohatsu' | 'quakeNotice' | 'earthquakeCount'
+interface BandLists {
+  nankaiCommentary: readonly JMANankaiCommentary[]
+  kohatsu: readonly JMAKohatsu[]
+  quakeNotice: readonly JMAQuakeNotice[]
+  earthquakeCount: readonly JMAEarthquakeCount[]
+}
+const EMPTY_BAND_LISTS: BandLists = { nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] }
+/** 一覧を置く state の欄 */
+const BAND_LIST_FIELDS = {
+  nankaiCommentary: 'nankaiCommentaryList',
+  kohatsu: 'kohatsuList',
+  quakeNotice: 'quakeNoticeList',
+  earthquakeCount: 'earthquakeCountList',
+} as const satisfies Record<BandListKind, keyof EarthquakeState>
+
+/** 帯の期限の予約をすべて落とす（アンマウント・リセット） */
+function clearBandExpireTimers(timers: Partial<Record<BandListKind, number>>): void {
+  for (const kind of Object.keys(timers) as BandListKind[]) {
+    window.clearTimeout(timers[kind])
+    delete timers[kind]
+  }
+}
+
 const MAX_QUAKE_RETRACTIONS = 20  // 取消を見た事実の台帳の最大保持件数（`rememberQuakeRetraction`）
 
-/**
- * 取消電文が効くカード（取消表示中でないもの）か。
- *
- * 照合の中身は `quakeMerge.ts` の `isQuakeCancelTarget`（情報名称の単位で、カードが取消より前に
- * その種別の報を受けていたか）。ライブは**取消表示中のカードを対象から外す**ところだけを足す
- * （二重に取消表示を張って 10 秒の purge を延ばさないため）。
- *
- * 台帳への記録（入口）と実際の取消の適用（`setState` の中）で**同じ述語を使う**ために切り出して
- * いる。書き写すと片方だけが変わり、記録と適用の範囲が静かにずれる。
- */
-function isLiveQuakeCancelTarget(card: JMAQuake, cancel: JMAQuake, areaPrefIndex: AreaPrefIndex): boolean {
-  return !card.cancelledAt && isQuakeCancelTarget(card, cancel, areaPrefIndex)
-}
-
-/** 取消電文が効くカードを探す。判定は `isLiveQuakeCancelTarget`。 */
-function findQuakeCancelTarget(
-  cards: readonly JMAQuake[],
-  cancel: JMAQuake,
-  areaPrefIndex: AreaPrefIndex,
-): JMAQuake | undefined {
-  return cards.find(card => isLiveQuakeCancelTarget(card, cancel, areaPrefIndex))
-}
 type QueuePayload =
   | { kind: 'event'; event: AppEvent }
   | { kind: 'lpgm'; data: JMALpgm }
@@ -177,12 +149,13 @@ type QueuePayload =
   | { kind: 'internationalTsunami'; data: JMAInternationalTsunami }
   | { kind: 'purge-cancelled-quake'; id: string }
   | { kind: 'purge-cancelled-eew'; key: string }
-  /**
-   * 最終報を名乗らない経路（P2PQuake）の見張りの解除。`receipts` は予約した時点で台帳が受けていた
-   * 報の数（`EewAcceptance.receipts`）。発火した時点でそれより多く受けていれば、最新の報から張り直す。
-   */
-  | { kind: 'eew-watch-expiry'; key: string; receipts: number }
   | { kind: 'purge-cancelled-tsunami'; id: string }
+  /**
+   * 電文ログにだけ積む行（再生の `ReplayFetchResult.logOnlyEntries`）。発火のときに `logEntry` を積むだけで、
+   * 地図・カード・音・読み上げには何も流さない。**発火の時刻に積むのは、ほかの電文の行と並びの意味を揃えるため**
+   * （窓ぶんを先に組むので、入れた時点で積むとまだ再生時刻に来ていない行が並ぶ → `QueueEntry.logEntry`）。
+   */
+  | { kind: 'logOnly' }
 
 interface QueueEntry {
   eventTime: Date
@@ -326,7 +299,7 @@ function createEventQueue(): EventQueue {
   }
 }
 
-// DMDSS版 EEW の地域別予想震度には pref が含まれないため、細分区域名→都道府県の
+// DMDATA の EEW の地域別予想震度には pref が含まれないため、細分区域名→都道府県の
 // 逆引きインデックスで補完する（EEWカードの対象地域表示用。地図の色塗りは name のみで動く）。
 function enrichEEWPref(eew: EEWAlert, index: ReadonlyMap<string, string> | null): EEWAlert {
   if (!index || !eew.areas || eew.areas.length === 0) return eew
@@ -348,80 +321,43 @@ type TestEEWKind = 'special' | 'warning' | 'forecast' | 'assumed' | 'deep' | 'st
 type TestEEWPressEntry = { index: number; now: Date; finalizeTimer: number }
 /**
  * 届いた報が、画面から消えた地震の報なら `true` を返し、弾いたことを記録に残す（→ `endedEewMatch`）。
- * 発表中の速報の取り直し（起動時・張り直し）と、ライブの入口（`handleEvent`）の両方が通る。
+ * 発表中の速報の取り直し（起動時・張り直し）が通る。ライブの入口は共用の判定（`decideEewReportEntry`）が同じ比べ方をする。
  * **黙って弾かない** —— 誤って本物を弾いたとき、画面には「出ない」としか現れない。
  */
 function skipEndedEew(ended: ReadonlyMap<string, EndedEew>, eew: EEWAlert, path: string): boolean {
-  const key = eewEventKey(eew)
-  const record = ended.get(key)
-  const nowMs = serverNow()
-  const match = endedEewMatch(record, eew, nowMs, ACTIVE_EEW_WINDOW_MS)
+  const record = ended.get(eewEventKey(eew))
+  const match = endedEewMatch(record, eew, serverNow(), ACTIVE_EEW_WINDOW_MS)
   if (match === null || !record) return false
+  logSkippedEndedEew(record, match, eew, path)
+  return true
+}
+
+/** 消えた地震の報を採らなかったことの記録（取り直しとライブの入口で同じ文面） */
+function logSkippedEndedEew(record: EndedEew, match: EndedEewMatch, eew: EEWAlert, path: string): void {
   const basis = match === 'cancelled'
     ? '取消で終えた'
     : match === 'serial'
-      ? `消えるまでに第 ${record.serialByOrigin.get(eew.origin)} 報まで受けていた`
+      ? `消えるまでに第 ${record.serialBySeries.get(eewSerialSeries(eew))} 報まで受けていた`
       : '消えるまでに受けた報より発表時刻が新しくない'
-  log.info(`[eew] ${path}: ${key}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報）は ${Math.round((nowMs - record.endedAtMs) / 1000)} 秒前に画面から消えた地震の報なので採りません（${basis}）`)
-  return true
+  log.info(`[eew] ${path}: ${eewEventKey(eew)}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報）は ${Math.round((serverNow() - record.endedAtMs) / 1000)} 秒前に画面から消えた地震の報なので採りません（${basis}）`)
 }
 
 /**
- * 届いた報が、**その報自身の自動解除の時刻（`calcEEWCancelTime`）を既に過ぎている**なら `true` を返し、弾いたことを記録に残す。
- * ライブの入口（`handleEvent`）で、画面に出ていない地震の報にだけ使う。
+ * 自動解除の時刻を過ぎた報（→ `decideEewReportEntry` の `expired`）の記録に添える中身。
  *
- * 標準版の Yahoo は、終わった速報の最終報を一覧に 150〜180 秒残す（2026-10-21 に 2 地震で実測）。一覧を前回との差分で見る処理（`diffHypoInfoEvents`）は作り直されると
+ * 強震モニタ（Yahoo）は、終わった速報の最終報を一覧に 150〜180 秒残す（2026-10-21 に 2 地震で実測）。一覧を前回との差分で見る処理（`diffHypoInfoEvents`）は作り直されると
  * 前に見た項目を忘れるので（起動・リプレイの開始と終わり）、その間に作り直すと最終報を「新しい項目」として出し直す。
  * 自動解除は最終報から 60 秒以上先なので、出直した報は音と読み上げを鳴らしてから、すぐ消える。消えた地震の記憶
- * （`skipEndedEew`）はリセットで捨てるので、ここでは報の時刻だけで判定する。
- *
+ * （`skipEndedEew`）はリセットで捨てるので、入口は報の時刻だけで判定する。
  * **時計を信じられないときは弾かない**（`isServerClockTrusted`）。未較正の端末は壁時計がずれていることがあり、
- * 進んだ時計で比べると本物の報まで捨てる。弾かなかったことは debug に残す。
- * **発表時刻が読めない報も弾かない。** `calcEEWCancelTime` は発表時刻が読めないと震源時刻だけで解除の時刻を決め、
- * 「発表から 60 秒は残す」下限が外れる —— その値で比べると、届いたばかりの初報を古い報と取り違えうる。
- * 2026-10-21 ユーザー承認「おすすめで」
+ * 進んだ時計で比べると本物の報まで捨てる。**発表時刻が読めない報も弾かない。** `calcEEWCancelTime` は発表時刻が読めないと
+ * 震源時刻だけで解除の時刻を決め、「発表から 60 秒は残す」下限が外れる —— その値で比べると、届いたばかりの初報を古い報と
+ * 取り違えうる。2026-10-21 ユーザー承認「おすすめで」
  */
-function skipExpiredEew(eew: EEWAlert, path: string): boolean {
-  const issueMs = eewIssueTimeMs(eew)
-  if (issueMs === null) return false
-  const cancelMs = calcEEWCancelTime(eew, new Date(issueMs)).getTime()
-  if (!Number.isFinite(cancelMs)) return false
-  const nowMs = serverNow()
-  if (cancelMs > nowMs) return false
-  const detail = `${eewEventKey(eew)}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報`
-    + ` 発表=${new Date(issueMs).toISOString()} 自動解除=${new Date(cancelMs).toISOString()} いま=${new Date(nowMs).toISOString()}`
+function expiredEewDetail(eew: EEWAlert, issueMs: number, cancelMs: number): string {
+  return `${eewEventKey(eew)}（${eew.origin} 第 ${eewSerial(eew) ?? '?'} 報`
+    + ` 発表=${new Date(issueMs).toISOString()} 自動解除=${new Date(cancelMs).toISOString()} いま=${new Date(serverNow()).toISOString()}`
     + ` M=${eew.earthquake.hypocenter.magnitude} 深さ=${eew.earthquake.hypocenter.depth}）`
-  if (!isServerClockTrusted()) {
-    log.debug(`[eew] ${path}: ${detail}は自動解除の時刻を過ぎて見えますが、時計が未較正なので採ります`)
-    return false
-  }
-  log.info(`[eew] ${path}: ${detail}は自動解除の時刻を ${Math.round((nowMs - cancelMs) / 1000)} 秒過ぎた報なので採りません`)
-  return true
-}
-
-/**
- * 画面から消えた地震の記憶を作る。**前に消えたときの記憶があれば、経路ごとの報番号と発表時刻は大きいほうを残す** ——
- * 台帳は消えた時点で捨てるので、載り直した地震の台帳は載り直した後の報しか数えていない。上書きすると記憶が縮み、
- * 前に消えたときの報を取り直しが返したとき通してしまう。取消で終えた印も、一度立てば落とさない（取消は終端）。
- */
-function mergeEndedEew(
-  previous: EndedEew | undefined, acceptance: EewAcceptance, cancelled: boolean, nowMs: number,
-  lastReport: EEWAlert, firstIssueTime: string | null | undefined,
-): EndedEew {
-  const serialByOrigin = new Map(previous?.serialByOrigin)
-  for (const [origin, serial] of acceptance.serialByOrigin) {
-    serialByOrigin.set(origin, Math.max(serial, serialByOrigin.get(origin) ?? serial))
-  }
-  const issues = [previous?.latestIssueMs, acceptance.latestIssueMs].filter((v): v is number => typeof v === 'number')
-  return {
-    serialByOrigin,
-    latestIssueMs: issues.length > 0 ? Math.max(...issues) : null,
-    endedAtMs: nowMs,
-    cancelled: cancelled || (previous?.cancelled ?? false),
-    lastReport,
-    // 第 1 報の時刻は一度覚えたら変えない（前に消えたときの記憶が先）
-    firstIssueTime: previous?.firstIssueTime !== undefined ? previous.firstIssueTime : firstIssueTime,
-  }
 }
 
 /**
@@ -477,9 +413,9 @@ function marksFromHistory(
 /**
  * ライブで届いた長周期地震動の報を 1 通当て、一覧と更新の印を進める。
  *
- * **キュー経路（`handleEvent`）と DMDSS 版の WebSocket 経路の両方がここを通る。** 片方だけに
- * 印付けを書いていた頃は、DMDSS 版のライブで長周期の一覧に印が付かなかった（キュー経路を
- * 通るテスト・リプレイでは付くので、実機でしか見えない）。
+ * **キュー経路（`handleEvent`）と WebSocket 経路の両方がここを通る。** 片方だけに印付けを
+ * 書くと、ライブで長周期の一覧に印が付かない（キュー経路を通るテスト・リプレイでは付くので、
+ * 実機でしか見えない）。
  *
  * 長周期の一覧にも、震度一覧と同じ印を付ける。**取消では付けない**（一覧ごと消えるため）。
  * 控えの 60 日では長周期の続報が 1 通も無かった（24 件すべて単発）。ただしそれは
@@ -487,22 +423,140 @@ function marksFromHistory(
  * こちらだけ出ない形にはしない（→ `lpgmRowSnapshot`）。
  */
 export function applyLiveLpgmWithMarks(
-  prev: Pick<EarthquakeState, 'earthquakes' | 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
+  prev: Pick<EarthquakeState, 'earthquakes' | 'lpgmByEventId' | 'estimatedIntensities' | 'tsunamis' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
   lpgm: JMALpgm,
   now: number,
-): Pick<EarthquakeState, 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
+): Pick<EarthquakeState, 'earthquakes' | 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
   const next = applyLiveLpgm(prev.lpgmByEventId, lpgm)
-  const unmarked = { lpgmByEventId: next, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory }
-  if (lpgm.cancelled) return unmarked
+  const unmarked = { earthquakes: prev.earthquakes, lpgmByEventId: next, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory }
+  // 取消は、同じ地震のカードに「長周期地震動に関する観測情報は取り消されました」と理由を積み（→ `lpgmRetractionsIntoCards`）、
+  // その長周期から当てていた上段の値を、残った報の値へ戻す（2026-11-03 ユーザー選択「戻す (Recommended)」）
+  if (lpgm.cancelled) {
+    const retracted = lpgmRetractionsIntoCards(prev.earthquakes, [lpgmRetractionOf(lpgm)])
+    try {
+      return {
+        ...unmarked,
+        ...applyLatestFactsWithMarks(
+          { earthquakes: retracted, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory },
+          next, prev.estimatedIntensities, prev.tsunamis, now,
+        ),
+      }
+    } catch (err) {
+      log.error('[lpgm] 長周期の取消で上段を戻す印を付けられなかった（取消は積んだ）', { eventId: lpgm.eventId, err })
+      return { ...unmarked, earthquakes: latestQuakeFactsIntoCards(retracted, next, prev.estimatedIntensities, prev.tsunamis) }
+    }
+  }
   // **印付けが投げても一覧の更新は通す。** ここは `setState` の更新関数の中で走るので、
   // 投げると周りの受け皿に届かず描画中の例外になり、画面ごと落ちる。印は補助なので、
   // 付け損ねたら記録を残して据え置く。
   try {
-    return markedLpgmState(prev, lpgm, next, now)
+    const lpgmMarked = markedLpgmState(prev, lpgm, next, now)
+    // 長周期が地震情報より新しい値を運んでいれば、地震カードの上段へ当てる（→ `utils/latestQuakeFacts.ts`）
+    return {
+      ...lpgmMarked,
+      ...applyLatestFactsWithMarks(
+        { earthquakes: prev.earthquakes, quakeUpdateMarks: lpgmMarked.quakeUpdateMarks, quakeMarkMemory: lpgmMarked.quakeMarkMemory },
+        next, prev.estimatedIntensities, prev.tsunamis, now,
+      ),
+    }
   } catch (err) {
     log.error('[lpgm] 長周期の一覧の更新の印を付けられなかった（一覧は更新した）', { eventId: lpgm.eventId, err })
     return unmarked
   }
+}
+
+/**
+ * 履歴から組み直したカードへ、津波から借りる値と、長周期・推計の新しい値を当てる（→ `borrowFromTsunamiIntoCards`・
+ * `utils/latestQuakeFacts.ts`）。**長周期・推計で値が変わったカードは、印の記憶も当てた後の値で書き直す** —— 記憶は
+ * 畳み込みの途中で地震情報の値から作られている。直さないと、次に届く報が「出ていた値」ではなく地震情報の値と比べられ、
+ * 動いていない欄に印が付く（2026-11-03 ユーザー選択「出ていた値と比べて付ける (Recommended)」）。
+ *
+ * `markMemory` は書き換える（畳み込みが作った、この更新だけの Map）。印は出さない（履歴は「もう起きたこと」なので）。
+ */
+function settleHistoryCards(
+  cards: JMAQuake[],
+  markMemory: Map<string, QuakeMarkMemory>,
+  tsunamis: readonly JMATsunami[],
+  lpgmByEventId: ReadonlyMap<string, JMALpgm>,
+  estimatedIntensities: readonly JMAEstimatedIntensity[],
+  /** 長周期の取消の台帳。取り消されたことをカードへ積む（→ `lpgmRetractionsIntoCards`） */
+  lpgmRetractions: readonly LpgmRetraction[],
+): JMAQuake[] {
+  const borrowed = lpgmRetractionsIntoCards(borrowFromTsunamiIntoCards(cards, tsunamis), lpgmRetractions)
+  const shown = latestQuakeFactsIntoCards(borrowed, lpgmByEventId, estimatedIntensities, tsunamis)
+  if (shown === borrowed) return borrowed
+  shown.forEach((card, i) => {
+    if (card === borrowed[i]) return
+    rememberQuakeCard(markMemory, quakeEventKey(card), {
+      facts: quakeFactSnapshot(card),
+      rows: quakeRowSnapshot(card.points, card.cities ?? [], getAreaPrefIndexCache()),
+      issuedAt: markIssuedAt(card.issue.time),
+      reportType: card.issue.type,
+      // 地震情報の電文の報ではない（`Revise` も欄の初出も使わない）
+      telegramType: null,
+      revise: null,
+    })
+  })
+  return shown
+}
+
+/**
+ * 長周期・推計の報を受けたとき、その値を地震カードの上段へ当て（→ `utils/latestQuakeFacts.ts`）、**値が変わったカードに
+ * だけ**更新の印を進める。比べる相手はそのカードが出していた値の記憶なので、印は「出ていた値と比べて」付く
+ * （2026-11-03 ユーザー選択「出ていた値と比べて付ける (Recommended)」）。
+ *
+ * 1 枚も変わらなければ元の参照をそのまま返す（一覧も印も描き直させない）。
+ */
+export function applyLatestFactsWithMarks(
+  prev: Pick<EarthquakeState, 'earthquakes' | 'quakeUpdateMarks' | 'quakeMarkMemory'>,
+  lpgmByEventId: ReadonlyMap<string, JMALpgm>,
+  estimatedIntensities: readonly JMAEstimatedIntensity[],
+  tsunamis: readonly JMATsunami[],
+  now: number,
+): Pick<EarthquakeState, 'earthquakes' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
+  const next = latestQuakeFactsIntoCards(prev.earthquakes, lpgmByEventId, estimatedIntensities, tsunamis)
+  // **受け取った欄だけを返す。** `prev` そのものを返すと、呼び出し側が展開したとき、他の欄（同じ更新で新しくした推計の
+  // 一覧など）を古い値で上書きする
+  if (next === prev.earthquakes) {
+    return { earthquakes: prev.earthquakes, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory }
+  }
+  let marks: ReadonlyMap<string, QuakeCardMarks> = prev.quakeUpdateMarks
+  let memory: ReadonlyMap<string, QuakeMarkMemory> = prev.quakeMarkMemory
+  const liveKeys = liveMarkKeys(next, lpgmByEventId)
+  next.forEach((card, i) => {
+    if (card === prev.earthquakes[i]) return
+    const key = quakeEventKey(card)
+    const before = memory.get(key)
+    const beforeMarks = marks.get(key)
+    const state = advanceQuakeMarks({
+      prev: { memory, marks },
+      key,
+      snapshot: {
+        facts: quakeFactSnapshot(card),
+        // 当てて変わるのは上段だけで、行（観測点・市町村）は変わらない。前の写しをそのまま使う
+        rows: before?.rows ?? quakeRowSnapshot(card.points, card.cities ?? [], getAreaPrefIndexCache()),
+        issuedAt: markIssuedAt(card.issue.time),
+        reportType: card.issue.type,
+        // **電文の種別は、直前の地震情報のものを引き継ぐ。** 長周期・推計は行を運ばない報なので、ここで種別を書き換えると、
+        // 次の地震情報が `Revise` と欄の初出を使えなくなる（→ `advanceQuakeMarks` の `sameTelegramType`）
+        telegramType: before?.telegramType ?? null,
+        revise: null,
+      },
+      liveKeys,
+      now,
+    })
+    marks = state.marks
+    memory = state.memory
+    // **直前の地震情報が付けた行の印は残す。** 行はこの報で変わっていないので、消すと「その地震情報で増えた観測点」の印が
+    // 上段の値が動いただけで消える
+    if (beforeMarks && beforeMarks.rows.size > 0 && now - beforeMarks.markedAt < UPDATE_MARK_TTL_MS) {
+      const after = marks.get(key)
+      const kept = new Map(marks)
+      kept.set(key, { facts: after?.facts ?? new Map(), rows: beforeMarks.rows, markedAt: after?.markedAt ?? beforeMarks.markedAt })
+      marks = kept
+    }
+  })
+  return { earthquakes: next, quakeUpdateMarks: marks, quakeMarkMemory: memory }
 }
 
 function markedLpgmState(
@@ -512,7 +566,8 @@ function markedLpgmState(
   now: number,
 ): Pick<EarthquakeState, 'lpgmByEventId' | 'quakeUpdateMarks' | 'quakeMarkMemory'> {
   const key = lpgmMarkKey(lpgm.eventId)
-  // 長周期の欄が出す震源名・規模・深さ・全国の最大震度（→ `lpgmFactSnapshot`。地震カードと同じ写し方）
+  // 長周期の報が運ぶ震源名・規模・深さ・全国の最大震度（→ `lpgmFactSnapshot`。地震カードと同じ写し方）。長周期の欄には
+  // もう出さない（上段へ当てる。→ `applyLatestFactsWithMarks`）が、続報で値が消えたことの記録に使う
   const facts = lpgmFactSnapshot(lpgm)
   const vanished = vanishedFacts(prev.quakeMarkMemory.get(key)?.facts, facts)
   if (vanished.length > 0) {
@@ -538,37 +593,18 @@ function markedLpgmState(
 }
 
 /**
- * P2PQuake の津波の報（552）の束から、いま画面に出す津波を決める。
- *
- * **起動時の履歴と、張り直したときの取り戻しが同じ判断を通る**ためにここへ置く（片方だけ
- * 直すと、次に触る人がどちらが正なのか判らない）。P2PQuake の 552 は毎報が全区域の写しなので、
- * いちばん新しい 1 報だけを見ればよい。取消・失効していれば何も出さない。
- */
-function selectP2pTsunamiSnapshot(
-  tsunamiEvents: readonly JMATsunami[],
-  now: Date,
-): { latest: JMATsunami | undefined; active: JMATsunami[] } {
-  const all = [...tsunamiEvents].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-  // DMDSS 側と同じ引き継ぎ。P2PQuake の 552 は有効期限を持たないため実際には何も変わらないが、
-  // 経路ごとに扱いを違えない（片方だけ直すと、次に触る人がどちらが正なのか判断できない）。
-  const latest = all[0] && withInheritedTsunamiFacts(all[0], all)
-  const active = latest
-    && !latest.cancelled
-    && !(latest.validDateTime && new Date(latest.validDateTime) <= now)
-    ? [latest] : []
-  return { latest, active }
-}
-
-/**
  * 張り直したとき、最後に何かが届いた時刻からさらにこれだけ遡って取り戻す (ms)。
  *
  * 比べるのは手元の時計（`serverNow()`）と配信元が受け取った時刻なので、両者のずれと、
  * 切れる直前に届いていたはずの報が配信元で遅れて記録された分を見込む。重なって取った分は
  * 統合が同じ電文として重ねない（→ `utils/quakeMerge.ts` の `isSameTelegram`）。
  */
-const P2P_RECONNECT_BACKFILL_MARGIN_MS = 5 * 60 * 1000
-// DMDSS 版の取り戻しも同じ幅だけ遡る（最後に受け取った時刻の直前に出て、まだ届いていなかった電文を拾うため）
-const DMDATA_RECONNECT_BACKFILL_MARGIN_MS = P2P_RECONNECT_BACKFILL_MARGIN_MS
+const DMDATA_RECONNECT_BACKFILL_MARGIN_MS = 5 * 60 * 1000
+/**
+ * 予報キーの端末が起動してから、中継が予報を流しているかの答えを待つ長さ。この間は自分の鍵の予報の接続を張らない
+ * （中継から受けられれば張らずに済み、端末の枠を一瞬だけ使うことも無い）。待っても繋がらなければ鍵で受ける
+ */
+const RELAY_FORECAST_STARTUP_GRACE_MS = 10_000
 
 function liveMarkKeys(
   earthquakes: readonly JMAQuake[],
@@ -585,13 +621,19 @@ export interface EarthquakeState {
   tsunamis: JMATsunami[]
   activeEEWs: ReadonlyMap<string, EEWAlert>
   lpgmByEventId: ReadonlyMap<string, JMALpgm>
+  /** 南海トラフ地震臨時情報。**最新の 1 通だけ持つ**（新しい報が前の報を置き換える。2026-11-04 ユーザー選択「臨時情報は最新で置き換える (Recommended)」） */
   nankai: JMANankai | null
-  nankaiCommentary: JMANankaiCommentary | null
-  kohatsu: JMAKohatsu | null
-  /** 地震・津波に関するお知らせ（VZSE40）。最新の 1 通だけ持つ */
-  quakeNotice: JMAQuakeNotice | null
-  /** 地震回数に関する情報（VXSE60）。最新の 1 通だけ持つ */
-  earthquakeCount: JMAEarthquakeCount | null
+  /**
+   * 南海トラフ地震関連解説情報。**帯に積む一覧（新しい順）**。同じ期間の臨時解説（同じ `eventId`）の号は置き換え、
+   * 別の期間・定例解説（電文ごとに `eventId` が変わる）は積む（→ `utils/specialInfoBandList.ts`）
+   */
+  nankaiCommentaryList: readonly JMANankaiCommentary[]
+  /** 北海道・三陸沖後発地震注意情報の一覧（新しい順）。同じ `eventId` の報は置き換える */
+  kohatsuList: readonly JMAKohatsu[]
+  /** 地震・津波に関するお知らせ（VZSE40）の一覧（新しい順）。1 通ずつが別件（`id` で見分ける） */
+  quakeNoticeList: readonly JMAQuakeNotice[]
+  /** 地震回数に関する情報（VXSE60）の一覧（新しい順）。同じ群発（`eventId`）の報は置き換える */
+  earthquakeCountList: readonly JMAEarthquakeCount[]
   /**
    * 推計震度分布図（IXAC41・IXAC40）。**地震ごとに 1 通**（その地震の最新）を持つ。
    *
@@ -608,8 +650,8 @@ export interface EarthquakeState {
   estimatedIntensities: readonly JMAEstimatedIntensity[]
   /**
    * 国際津波関連情報（WEPA60）。届いた報をすべて持ち、遠地地震のカードが発生時刻で引く
-   * （→ `internationalTsunamisFor`）。**音・読み上げ・通知は無い**（2026-10-30 ユーザー選択
-   * 「受けて英文のまま出す (Recommended)」）。入れるのは `upsertInternationalTsunami` だけ。
+   * （→ `internationalTsunamiIndex`）。一覧へ新しく足せた報は `onLiveEvent` へも流し、読み上げ・通知・音で伝える
+   * （2026-11-06 ユーザー選択「読み上げ・通知・音をまとめて足す」）。入れるのは `upsertInternationalTsunami` だけ。
    * 発表は年に数通（通信試験を含む）なので件数に上限は置かない。
    */
   internationalTsunamis: readonly JMAInternationalTsunami[]
@@ -627,20 +669,40 @@ export interface EarthquakeState {
    * 書き込むと更新関数が純粋でなくなる（React が 2 度走らせたときに記憶が二重に進む）。
    */
   quakeMarkMemory: ReadonlyMap<string, QuakeMarkMemory>
+  /** 中継の接続（電文）の状態。設定の窓の「電文」の行と、地図の更新時刻の赤 */
   connectionStatus: ConnectionStatus
   /**
-   * DMDSS 版で、配信元が受け付けた購読区分（最後に繋がった接続のもの）。まだ繋がっていなければ null。
+   * 中継が DMDATA.JP と繋がっているか（中継の `relay-status`）。まだ知らせが無い・再生中は null。
+   * 中継とは繋がっていても、ここが切れていれば電文は届かない（設定の窓の「電文」の行・地図の更新時刻の赤）
+   */
+  relayUpstream: RelayUpstreamStatus | null
+  /**
+   * 自分の鍵の予報の接続の状態（設定の窓の「予報（APIキー）」の行）。鍵が無い・使えない・再生中は接続を作らないので null
+   */
+  keyForecastStatus: ConnectionStatus | null
+  /**
+   * 中継から予報（VXSE45）を受けているか。予報キーの札で繋がり、中継が `start` で予報の区分を名乗り、
+   * 中継が DMDATA.JP と繋がっている間だけ真（設計書 §0 の 2026-10-31「予報キー」の行）。真の間は自分の鍵の
+   * 予報の接続を閉じる（同じ行の「配信サーバーを先に、切れたら鍵」）。設定の窓の「予報」の行が経路を出すのに使う
+   */
+  relayForecastLive: boolean
+  /**
+   * 配信元が受け付けた購読区分（最後に繋がった接続のもの）。まだ繋がっていなければ null。
    * 設定の窓の「受信している区分」と、リプレイが引く区分に使う（→ `services/dmdataClassifications.ts`）。
-   * 標準版では常に null。
    */
   dmdataClassifications: readonly DmdataClassification[] | null
+  /**
+   * 自分の鍵の予報の接続を申し込んだら、配信元が予報を受け付けないと答えたか。答える前（409 で繋がらない間を含む）・
+   * 鍵が無いときは false。リプレイと発生時刻の秒が予報を鍵で引くかに使う（→ `services/dmdataClassifications.ts` の `restSources`）
+   */
+  keyForecastRefused: boolean
   lastUpdate: Date | null
   isLoading: boolean
   isLoadingMore: boolean
   hasMore: boolean
   error: string | null
   /**
-   * 履歴取得で読めなかった取得元・取り込めなかった電文。**DMDSS 版限定。**
+   * 履歴取得で読めなかった取得元・取り込めなかった電文。
    *
    * 履歴取得は例外を投げずに一部の失敗を吸収するため、`error` は立たない。**画面には取れた分の
    * カードだけが出て、失敗は何も出ない**状態だった。取得元が「日」単位になったぶん、1 日落ちれば
@@ -651,28 +713,24 @@ export interface EarthquakeState {
    * 数え直すので、積むと同じ損失を回数だけ数え、取得が回復しても消えない
    * （→ `utils/telegramLoss.ts` の表）。
    *
-   * **標準版（P2PQuake）では常に空。** あちらの履歴取得は「全部取れたか全滅か」で、部分的な
-   * 損失という概念を持たない（失敗は `error` へ落ちる）。**空であることは「欠けていない」ことの
-   * 保証ではない。**
-   *
    * 空へ戻すのは接続をやり直すときだけ。契機は下の接続 effect の依存が単一情報源で、
    * API キーの変更・試験報の受信設定の切り替え・リプレイの開始と終了が含まれる。
    */
   historyLoss: TelegramLoss
   /**
-   * 直近の「もっと見る」がまるごと失敗したか。**両バリアント共通。**
+   * 直近の「もっと見る」がまるごと失敗したか。
    *
    * **`historyLoss` とは別に持つ。** こちらは押し直せば回復しうるもので、遡る日数も押す前の値へ
    * 戻してある。次に成功したら消す。
    */
   loadMoreFailed: boolean
   /**
-   * 接続が切れていた間の電文を、取り戻せていないか。**両バリアント共通**（2026-10-21 ユーザー承認「A・X・揃える」）。
+   * 接続が切れていた間の電文を、取り戻せていないか（2026-10-21 ユーザー承認「A・X・揃える」）。
    *
    * **最初に取れなかった時点から立てる**（引き直しを待っている間も、諦めた後も）。引き直しは次に張り直したときにしか
    * 走らないので、接続が安定していればいつ来るか分からない —— その間も一覧には穴が空いている。
-   * DMDSS 版は、持ち越した区間を後の取り戻しが埋めたら降ろす。諦めた区間（引き直しても取れなかった・一覧の
-   * ページの上限に当たった）と、標準版の取り戻しの失敗は、再読み込みまで残す（どちらも同じ区間を引き直さない）。
+   * 持ち越した区間を後の取り戻しが埋めたら降ろす。諦めた区間（引き直しても取れなかった・一覧の
+   * ページの上限に当たった）は、再読み込みまで残す（同じ区間を引き直さない）。
    * 読めない形の電文は数えない（引き直しても再読み込みしても同じなので、知らせても直す手が無い）。
    *
    * 空へ戻すのは `historyLoss` と同じ契機（接続をやり直すとき・リプレイの開始）。
@@ -703,8 +761,12 @@ function logEewExpiry(key: string, decision: EewExpiryDecision): void {
   if (decision.kind !== 'expire') return
   const reason = {
     'no-bundle': '結び付く揺れ検知の束が無い',
+    'no-network-data': '結び付く揺れ検知の束が無い（観測点の一覧が無いか強震モニタが止まっていて、観測網へ波が届くのを待てなかった）',
+    'first-arrival-elapsed': '最寄りの観測点へ P 波が届く見込みから 60 秒待ったが、広がる束が無かった',
     'grace-elapsed': '束に点が加わらなくなって 30 秒が過ぎた',
-    'cap': '式の時刻から 5 分の上限に当たった',
+    's-arrival-elapsed': '束の場所へ S 波が届く見込みから 30 秒が過ぎた',
+    'cap': '式の時刻から 5 分の上限に当たった（束はまだ広がっていた）',
+    'cap-first-arrival': '式の時刻から 5 分の上限に当たった（観測網へ波が届くのを待っていた）',
     'formula-unknown': '式の時刻を決められない',
   }[decision.reason]
   const line = `[eew] 自動解除: key=${key} 理由=${reason}`
@@ -759,18 +821,22 @@ export function useEarthquakes(
     activeEEWs: new Map(),
     lpgmByEventId: new Map(),
     nankai: null,
-    nankaiCommentary: null,
-    kohatsu: null,
-    quakeNotice: null,
-    earthquakeCount: null,
+    nankaiCommentaryList: EMPTY_BAND_LISTS.nankaiCommentary,
+    kohatsuList: EMPTY_BAND_LISTS.kohatsu,
+    quakeNoticeList: EMPTY_BAND_LISTS.quakeNotice,
+    earthquakeCountList: EMPTY_BAND_LISTS.earthquakeCount,
     estimatedIntensities: [],
     internationalTsunamis: [],
     quakeUpdateMarks: new Map(),
     quakeMarkMemory: new Map(),
-    connectionStatus: (isDmdss && !isValidDmdataApiKey(dmdataApiKey)) ? 'disconnected' : 'connecting',
+    connectionStatus: 'connecting',
+    relayUpstream: null,
+    keyForecastStatus: null,
+    relayForecastLive: false,
     dmdataClassifications: null,
+    keyForecastRefused: false,
     lastUpdate: null,
-    isLoading: !(isDmdss && !isValidDmdataApiKey(dmdataApiKey)),
+    isLoading: true,
     isLoadingMore: false,
     hasMore: false,
     error: null,
@@ -797,17 +863,17 @@ export function useEarthquakes(
     return () => clearInterval(timer)
   }, [])
 
-  // 国際津波関連情報は遠地地震のカードにだけ畳んで出すので、付く先が無い報は画面のどこにも出ない。
-  // 黙って消えないよう、1 報につき 1 回だけ記録する（遠地地震の情報が後から届けば、そのとき付く）
+  // 国際津波関連情報で付く地震カードの無い報は、英文だけのカードとして一覧に出る（→ `internationalTsunamiIndex`）。
+  // 発生時刻を読めなかった報だけはどこにも出ないので、黙って消えないよう 1 報につき 1 回だけ記録する
   const reportedUnattachedRef = useRef(new Set<string>())
   useEffect(() => {
-    for (const x of unattachedInternationalTsunamis(state.earthquakes, state.internationalTsunamis)) {
+    for (const x of internationalTsunamiIndex(state.earthquakes, state.internationalTsunamis).unattached) {
       if (reportedUnattachedRef.current.has(x.id)) continue
       reportedUnattachedRef.current.add(x.id)
       if (x.originTime === undefined) {
         log.warn(`[quake] 国際津波関連情報の発生時刻を読めず、どの地震カードにも付きません（画面に出ません）: ${x.title} ${x.time}`)
       } else {
-        log.info(`[quake] 国際津波関連情報に付く遠地地震のカードがまだありません（届けば付きます）: ${x.title} 発生 ${x.originTime}`)
+        log.info(`[quake] 国際津波関連情報に付く地震カードが無いので、英文だけのカードで出します（地震情報が届けばそのカードに付きます）: ${x.title} 発生 ${x.originTime}`)
       }
     }
   }, [state.earthquakes, state.internationalTsunamis])
@@ -816,7 +882,6 @@ export function useEarthquakes(
     setState(prev => ({ ...prev, telegramLog: [] }))
   }, [])
 
-  const wsRef = useRef<P2PQuakeWebSocket | null>(null)
   // 最新のコールバックを ref で保持し、handleEvent を安定させる
   const onLiveEventRef = useRef(onLiveEvent)
   onLiveEventRef.current = onLiveEvent
@@ -892,32 +957,27 @@ export function useEarthquakes(
   // 1 ティックの中で複数のイベントを処理する（理由は `eewAcceptanceRef` の宣言箇所に同じ）。
   // こちらは反映した時点で即座に進むため、同じティックの中でも正しく比べられる。
   const shownNankaiEventIdRef = useRef<string | null>(null)
-  const shownKohatsuEventIdRef = useRef<string | null>(null)
-  // 解説情報だけは `id`（識別情報と号数の組）で持つ。理由は `applyNankaiCommentary` の照合箇所。
-  const shownCommentaryIdRef = useRef<string | null>(null)
-  // 表示中のお知らせ。取消は元のお知らせの `EventID` しか持たないので、`id` と並べて覚える
-  // （照合は `applyQuakeNotice`）。
-  const shownQuakeNoticeRef = useRef<{ id: string; eventId: string } | null>(null)
-  // 表示中の地震回数の群発識別子。**取消が自分宛かを同期的に判定する**ために持つ
-  // （`setState` の中で照合すると、読み上げを起こすかどうかをその場で返せない）。
-  const shownEarthquakeCountEventIdRef = useRef<string | null>(null)
+  // 帯に積んでいる 4 種の一覧（state の `nankaiCommentaryList` 等と同じもの）。**取消が自分宛かを同期的に判定する**ために
+  // ref でも持つ（理由は上に同じ。`setState` の中で照合すると、読み上げを起こすかどうかをその場で返せない）。
+  // 書くのは `commitBandList` とリセットだけ。要素は state と同じ参照なので、本体を二重に抱えることはない。
+  const bandListsRef = useRef<BandLists>(EMPTY_BAND_LISTS)
   // 現在の state を WS コールバック内から参照するための ref
   const stateRef = useRef(state)
   stateRef.current = state
   /**
-   * 失効予約の土台（DMDSS 版）。直前に報を当てた結果と、そのとき `stateRef` が見せていた津波の組。
+   * 失効予約の土台。直前に報を当てた結果と、そのとき `stateRef` が見せていた津波の組。
    * `stateRef` がまだ同じ津波を見せていれば（同じ周回に報が続けて届いた）、当てた結果のほうを土台にする。
    * 理由は失効予約を積む箇所の注記。
    */
   const expiryBasisRef = useRef<{ shownAtStep: JMATsunami | undefined; tsunami: JMATsunami | undefined } | null>(null)
   /**
-   * DMDSS 版で、ライブで当てた津波の報（解除・取消・失効を含む）のうちいちばん新しいものの並べる鍵
+   * ライブで当てた津波の報（解除・取消・失効を含む）のうちいちばん新しいものの並べる鍵
    * （`reportOrderKey`。作成時刻、無ければ発表時刻）。
    *
    * **起動時履歴の取り込みはこれより新しい報でしか津波を書き換えない。** 履歴の取得はライブの接続と並行して
    * 走り、数十秒〜数分かかる。その間にライブで当てた報（引き上げ・解除）を、取り込みの最後に履歴の古い最新報
    * （または空）で上書きすると、引き上げが巻き戻る・ライブで出た津波が消える・解除した津波が甦る。
-   * 標準版の `p2pTsunamiSeenMs` と同じ考え方。時間軸が変わるリセットで空に戻す。
+   * 時間軸が変わるリセットで空に戻す。
    */
   const liveTsunamiSeenKeyRef = useRef(Number.NEGATIVE_INFINITY)
   /**
@@ -969,44 +1029,27 @@ export function useEarthquakes(
     kind: string, telegram: { id: string; time: string; cancelled: boolean }, applied: boolean, silent: boolean | undefined,
     otherUnitShown: boolean,
   ): 'dispatch' | ReplayTelegramSkip => {
-    if (!telegram.cancelled) return !applied ? 'notApplied' : silent ? 'silentReplayInit' : 'dispatch'
-    const duplicate = !noteConveyedCancel(kind, telegram)
-    if (silent) return 'silentReplayInit'
-    if (otherUnitShown) {
-      log.info(`[${kind}] 別の情報単位の帯を出しているので、古い単位への取消は音と読み上げを出さない id=${telegram.id}`)
-      return 'notApplied'
+    // 判定は中継のプッシュ通知と共用する（→ `utils/specialInfoBands.ts` の `decideDispatch`）。ここは記録だけを足す
+    const decision = decideBandDispatch(conveyedCancelsRef.current, kind, telegram, applied, silent, otherUnitShown)
+    if (telegram.cancelled && !silent) {
+      if (otherUnitShown) log.info(`[${kind}] 別の情報単位の帯を出しているので、古い単位への取消は音と読み上げを出さない id=${telegram.id}`)
+      else if (decision === 'notDispatched') log.info(`[${kind}] 既に伝えた取消なので音と読み上げを出さない id=${telegram.id}`)
+      else if (!applied) log.info(`[${kind}] 画面に出していない情報への取消も伝えます id=${telegram.id}`)
     }
-    if (duplicate) {
-      log.info(`[${kind}] 既に伝えた取消なので音と読み上げを出さない id=${telegram.id}`)
-      return 'notDispatched'
-    }
-    if (!applied) log.info(`[${kind}] 画面に出していない情報への取消も伝えます id=${telegram.id}`)
-    return 'dispatch'
+    return decision
   }
   /**
    * 取消を「伝えた」に数える。**初めてなら真**（もう数えてあれば偽＝二重配信）。起動時の履歴で当てた取消も
    * ここを通す —— 通さないと、同じ取消が後からライブで届いたとき（再接続・重複配信）に鳴り直す。
    */
-  const noteConveyedCancel = (kind: string, telegram: { id: string; time: string }): boolean => {
-    const key = `${kind}:${telegram.id}|${telegram.time}`
-    if (conveyedCancelsRef.current.has(key)) return false
-    // 取消は年に数通しか無いが、上限は置く（長く開いたままの端末で増え続けないように）
-    if (conveyedCancelsRef.current.size >= 500) conveyedCancelsRef.current.clear()
-    conveyedCancelsRef.current.add(key)
-    return true
-  }
+  const noteConveyedCancel = (kind: string, telegram: { id: string; time: string }): boolean =>
+    noteBandConveyedCancel(conveyedCancelsRef.current, kind, telegram)
   /** 履歴の長周期を記録する理由（流さない経路。取消は「伝えた」に数える。→ {@link decideDispatch}）。 */
   const silentLpgmSkip = (lpgm: JMALpgm): ReplayTelegramSkip => {
     if (!lpgmNotifiable(lpgm)) return 'notDispatched'
     const decision = decideDispatch('lpgm', lpgm, true, true, false)
     return decision === 'dispatch' ? 'silentReplayInit' : decision
   }
-  /**
-   * 臨時情報・後発地震注意情報の取消が、**いま出ている別の情報単位の帯の下で届いた古い取消か**。帯へ当てる前に見る
-   * （当てた後では、消したのか元から別だったのかが分からない）。判定の形は `applyNankai`・`applyKohatsu` の照合と同じ。
-   */
-  const cancelOverOtherUnit = (shownEventId: string | null, telegram: { eventId: string; cancelled: boolean; retracted?: boolean }): boolean =>
-    telegram.cancelled && telegram.retracted === true && shownEventId !== null && shownEventId !== telegram.eventId
   // 受理した EEW の報番号（キーは `eewEventKey`）。古い報の判定に使う。
   //
   // **`stateRef` では判定できない。** あれはレンダー時にしか進まないが、キューのディスパッチャは
@@ -1015,9 +1058,9 @@ export function useEarthquakes(
   // 直前に受理した報より古い報を「新しい」と誤判定して通してしまう。こちらは受理した時点で
   // 即座に進むため、同じティックの中でも正しく比べられる。
   //
-  // **経路ごとの報番号と、経路をまたいだ発表時刻を持つ**（→ `EewAcceptance`）。standard 版は
-  // Yahoo と P2PQuake が同じ地震を運び、報番号の数え方が違う（P2PQuake の 1 と Yahoo の 17 が
-  // 同じ報）。番号 1 つの台帳で比べると、P2PQuake の報を毎回「古い」と見なして捨てる。
+  // **経路ごとの報番号と、経路をまたいだ発表時刻を持つ**（→ `EewAcceptance`）。強震モニタ（Yahoo）と
+  // DMDATA の電文が同じ地震を運び、報番号の数え方が経路で違う（→ `EewOrigin`）。番号 1 つの台帳で
+  // 比べると、番号の小さい側の経路の報を毎回「古い」と見なして捨てる。
   const eewAcceptanceRef = useRef<Map<string, EewAcceptance>>(new Map())
   /**
    * **表示を終えた（自動解除・取消で画面から消えた）地震**（キーは `eewEventKey`）。台帳は画面から消えた時点で
@@ -1048,21 +1091,22 @@ export function useEarthquakes(
    * **同じティックで統合した EEW の写し**（キーは `eewEventKey`）。
    *
    * 統合（`mergeEewReport`）は入口で 1 回だけ行い、その値を状態にも読み上げ・通知にも渡す。
-   * 土台を `stateRef` にすると、同じティックに続けて届いた報（Yahoo と P2PQuake の同じ報など）が
+   * 土台を `stateRef` にすると、同じティックに続けて届いた報（Yahoo と DMDATA の電文の同じ報など）が
    * 直前に統合した値を見られない。理由は `pendingQuakeCardsRef` と同じ。
    *
    * 表示が終わった EEW の分は台帳と一緒に掃除する。
    */
   const eewLatestRef = useRef<Map<string, EEWAlert>>(new Map())
   /**
-   * 見張りの解除（`eew-watch-expiry`）のうち、いま生きている 1 本の印（キーは `eewEventKey`・値は
-   * 予約したときの受理回数）。P2PQuake の報が届くたびに張り直すので、前の見張りはこれと合わなければ捨てる。
+   * 強震モニタの一覧から消えたことで積んだ自動解除の予約（地震 ID → 消えた報の発表時刻）。
+   * 最終報の予約と違い、最終でない報から積むので後から同じ地震の新しい報が届きうる。そのときは新しい報を採った時点で
+   * ここから外し、発火した予約は捨てる（外さないと、表示中の新しい報を古い報の式の時刻で消す）
    */
-  const eewWatchReceiptsRef = useRef<Map<string, number>>(new Map())
+  const eewVanishPendingRef = useRef<Map<string, string>>(new Map())
   // VXSE51 受信時に震度データをキャッシュし、後続の VXSE52（震源情報）に補完する。
   // VXSE52 は震源のみで震度を持たないため、VXSE51 の maxScale・points を引き継ぐ。
   // `report` は控えた震度速報の発表時刻・作成時刻（取消がこの報より後かを比べるため）
-  const quakeIntensityCacheRef = useRef<Map<string, { maxScale: IntensityScale; points: EarthquakePoint[]; report: ReportAge }>>(new Map())
+  const quakeIntensityCacheRef = useRef<QuakeIntensityCache>(new Map())
   // 取消を見た事実の台帳。取消の後に届いた報のうち「取消より前に発表されたもの」を捨てるために使う
   // （判定は `isRetractedQuakeReport`。切り分けの理由は docs/spec/quake-spec.md §6.2）。
   //
@@ -1083,13 +1127,10 @@ export function useEarthquakes(
   // 言い分けるのに使う（→ `isNewEstimatedIntensity`）。**持っている一覧では代われない** ——
   // 履歴から黙って取り込んだ分布は持っているが、まだ伝えていない。
   const shownEstimatedIntensityArrivalsRef = useRef<string[]>([])
-  // 後発地震注意情報（VYSE60）の帯を発表から 7 日で畳むタイマー（電文に期限は無く、7 日はアプリの都合）
-  const kohatsuExpireTimerRef = useRef<number | undefined>(undefined)
-  // 南海トラフ地震関連解説情報（VYSE51/52）の7日間有効期限タイマー。
-  // 解説情報には解除電文が無く、定例解説は平常時にも毎月届く。期限で畳まないと帯が常駐する。
-  const nankaiCommentaryExpireTimerRef = useRef<number | undefined>(undefined)
-  const quakeNoticeExpireTimerRef = useRef<number | undefined>(undefined)
-  const earthquakeCountExpireTimerRef = useRef<number | undefined>(undefined)
+  // 帯に積む 4 種の一覧から、届いて 7 日（`expireAt`）を過ぎた報を 1 件ずつ外す予約。種類ごとに 1 本で、
+  // いちばん早い期限に合わせて張り直す（→ `commitBandList`）。電文に期限は無く、7 日はアプリの都合。
+  // 解説情報には解除電文が無く、定例解説は平常時にも毎月届く。期限で外さないと帯が常駐する。
+  const bandExpireTimersRef = useRef<Partial<Record<BandListKind, number>>>({})
   // イベントキュー: ディスパッチャーが 10ms ごとに、発火時刻の来たものを先頭から処理する。
   // リプレイ時は eventTime と再生時刻を比較して発火制御する（並びと取り出しの規約は `EventQueue`）。
   const eventQueueRef = useLazyRef<EventQueue>(createEventQueue)
@@ -1115,12 +1156,12 @@ export function useEarthquakes(
    */
   const dmdataRestClassificationsRef = useRef<readonly DmdataClassification[]>(PREFERRED_CLASSIFICATIONS)
   /**
-   * DMDSS 版の履歴の版の通し番号（`startRestFetches` が進める）。「もっと見る」が、取得の途中で
-   * 取り直し（覚えた区分が外れていた）を挟んだかを見分ける。
+   * DMDATA の履歴の版の通し番号（`startRestFetches` が進める）。「もっと見る」が、取得の途中で
+   * 履歴の版が入れ替わったかを見分ける（いまは接続 1 回につき 1 版なので、入れ替わるのは時間軸が変わったときだけ）。
    */
   const dmdataRestRunRef = useRef(0)
   /**
-   * 進行中の DMDSS 版の履歴の取得が決着したら解ける約束（成否を問わない）。**「もっと見る」はこれを
+   * 進行中の DMDATA の履歴の取得が決着したら解ける約束（成否を問わない）。**「もっと見る」はこれを
    * 待ってからカーソルを読む** —— 待たずに読むと、後から終わった取り直しがカーソルを新しい側へ
    * 戻し、次の「もっと見る」が同じ窓を読み直す。
    */
@@ -1136,8 +1177,8 @@ export function useEarthquakes(
    * 再生中の「もっと見る」で続きを読む口（→ `ReplayQuakeHistoryResult.loadMore`）。**再生中はこちらだけを使う。**
    *
    * リプレイの開始時の履歴（`restoreQuakeHistory`）が置き、押すたびに次の口へ差し替わる。`null` なら再生中は
-   * 遡らない（ローカル履歴アーカイブ・在庫の端・履歴の取得に失敗した）。ライブの経路（`historyCursorRef`・
-   * `p2pRawOffsetRef`）は読む先が `serverDate()`（いま）なので、再生中に使うと再生時刻より未来の地震が並ぶ。
+   * 遡らない（ローカル履歴アーカイブ・在庫の端・履歴の取得に失敗した）。ライブの経路（`historyCursorRef`）は
+   * 読む先が `serverDate()`（いま）なので、再生中に使うと再生時刻より未来の地震が並ぶ。
    */
   const replayLoadMoreRef = useRef<ReplayQuakeHistoryResult['loadMore']>(null)
   /**
@@ -1152,16 +1193,6 @@ export function useEarthquakes(
    * 落ちないための判定に使う** —— 再生中に続きの口が無ければ、ライブの最新履歴を読まずに止める。
    */
   const replayActiveRef = useRef(replayTimeOffset !== null)
-  // 通常版「もっと見る」用の生 API 取得件数（重複除去後の earthquakes.length とは別管理）
-  // offset = earthquakes.length だと重複除去ズレで古いデータが抜け落ちるため、API 呼び出し回数ベースで管理する
-  const p2pRawOffsetRef = useRef(0)
-  /**
-   * 初回履歴で**選から漏れた電文**（標準版）。次の「もっと見る」で、新しい取得分と一緒に畳む。
-   *
-   * **捨てると、その地震は一覧に二度と出ない。** `offset` は引いた電文の数だけ進むので、次の取得は
-   * 漏れた電文より古いところから始まる。100 通に 51 地震以上が入る形＝**地震の多い期間ほど起きる**。
-   */
-  const p2pCarryOverRef = useRef<JMAQuake[]>([])
 
   // 予約の発火時刻は、リプレイ中でもそのまま使う。キューへ入るものはすべて再生時計の
   // 時間軸に乗っているため:
@@ -1188,7 +1219,7 @@ export function useEarthquakes(
     // 気づけないため、時刻が壊れていても「いま届いた」として扱うほうが害が小さい。
     const eventTime = Number.isFinite(parsed.getTime()) ? parsed : serverDate()
     // 電文ログの行は付けない。この口を通るのはライブ受信（`onLiveEvent`）で、行は
-    // 受信側（`dmdata.ts`・`p2pquake.ts`）が既に積んでいる。
+    // 受信側（`dmdata.ts`）が既に積んでいる。
     eventQueueRef.current.push({ eventTime, payload: { kind: 'event', event }, logEntry: null })
   }, [])
 
@@ -1230,7 +1261,8 @@ export function useEarthquakes(
     //
     // 取消は「その電文が指す情報単位」を取り消すので、対象と同じ識別情報を持つ（電文解説資料
     // Ⅰ.別紙ウ）。遅れて届いた古い取消が新しい段階の帯を消さないよう、そちらだけ照合する。
-    if (nankai.retracted && shownNankaiEventIdRef.current !== nankai.eventId) {
+    // 判定は中継のプッシュ通知と共用する（→ `nankaiBandDecision`）
+    if (!nankaiBandDecision(shownNankaiEventIdRef.current, nankai).apply) {
       // 表示していない場合（記憶が空）もここへ来る。帯は触らない（音と読み上げは呼び出し側が起こす）。
       log.info(shownNankaiEventIdRef.current === null
         ? `[nankai] 表示していない情報単位への取消のため帯は触りません received=${nankai.eventId}`
@@ -1243,169 +1275,150 @@ export function useEarthquakes(
   }, [])
 
   /**
-   * 後発地震注意情報を帯へ反映する。失効の予約もここで持つ。
-   * 呼ぶ場所と戻り値の意味は `applyNankai` に同じ。
+   * 帯に積む 4 種の一覧を置き換え、期限の予約を張り直す。**一覧を書くのはここだけ**（とリセット）。
+   *
+   * 期限の予約は種類ごとに 1 本で、一覧の中のいちばん早い期限に合わせる。発火したら、**予約した期限までの報を
+   * 外して**（1 件ずつ消える。2026-11-04 ユーザー選択）残りで張り直す。発火した時点の時計で比べ直さないのは
+   * `dropExpiredUpTo` の理由のとおり。期限までの待ちに使う「いま」は getTimeRef（= clock の serverDate）で、
+   * 過去日の再生でも「届いて 7 日」が再生時計の上で数えられる。
    */
-  const applyKohatsu = useCallback((kohatsu: JMAKohatsu): boolean => {
-    // **期限タイマーは、この報を帯へ当てると決めてから止める。** 先に止めると、別の情報単位宛ての取消や
-    // 期限切れの古い報が届いたとき、帯は残るのに表示中の報の期限だけが失われて居座る（お知らせと同じ）。
-    const clearExpireTimer = () => {
-      if (kohatsuExpireTimerRef.current !== undefined) {
-        window.clearTimeout(kohatsuExpireTimerRef.current)
-        kohatsuExpireTimerRef.current = undefined
-      }
+  const commitBandList = useCallback(function commit<K extends BandListKind>(kind: K, list: BandLists[K]): void {
+    if (bandListsRef.current[kind] === list) return
+    bandListsRef.current = { ...bandListsRef.current, [kind]: list }
+    const field = BAND_LIST_FIELDS[kind]
+    setState(prev => ({ ...prev, [field]: list }))
+    const timers = bandExpireTimersRef.current
+    if (timers[kind] !== undefined) {
+      window.clearTimeout(timers[kind])
+      delete timers[kind]
     }
-    if (!kohatsu.cancelled) {
-      const expireMs = new Date(kohatsu.expireAt).getTime() - getTimeRef.current().getTime()
-      // **期限切れは出さない。** かつては取得側（`fetchDmdataKohatsu`）が期限切れを除いて
-      // 返していたので、ここへは届かなかった。履歴をアーカイブ経由の 1 本へ寄せたことで
-      // **遡り幅の中の最新 1 通がそのまま渡る**ようになり、期限切れも届く。
-      // タイマーを張らないだけでは足りない —— 表示は出たまま、消える契機が 1 つも無くなる。
-      //
-      // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない
-      // （解説情報・地震回数・お知らせと同じ方針）。
-      if (!Number.isFinite(expireMs)) {
-        log.warn('[data] 後発地震注意情報の期限を計算できません', kohatsu.expireAt)
-        return false
-      }
-      if (expireMs <= 0) return false
-
-      clearExpireTimer()
-      kohatsuExpireTimerRef.current = window.setTimeout(() => {
-        kohatsuExpireTimerRef.current = undefined
-        shownKohatsuEventIdRef.current = null
-        setState(prev => ({ ...prev, kohatsu: null }))
-      }, expireMs)
-      shownKohatsuEventIdRef.current = kohatsu.eventId
-      setState(prev => ({ ...prev, kohatsu }))
-      return true
-    }
-    // 照合は取消だけ（理由は `applyNankai`）。後発地震に「調査終了」相当の段階は無いが、
-    // 判定の形を揃えておく ―― 片方だけ違う規則にすると、次に触る人がどちらが正しいか判らない。
-    if (kohatsu.retracted && shownKohatsuEventIdRef.current !== kohatsu.eventId) {
-      // 表示していない場合もここへ来る（理由は `applyNankai` の同じ箇所に同じ）
-      log.info(shownKohatsuEventIdRef.current === null
-        ? `[kohatsu] 表示していない情報単位への取消のため帯は触りません received=${kohatsu.eventId}`
-        : `[kohatsu] 別の情報単位への取消のため帯を残します received=${kohatsu.eventId} shown=${shownKohatsuEventIdRef.current}`)
-      return false
-    }
-    clearExpireTimer()
-    shownKohatsuEventIdRef.current = null
-    setState(prev => ({ ...prev, kohatsu: null }))
-    return true
-  }, [])
-
-  const applyNankaiCommentary = useCallback((commentary: JMANankaiCommentary): boolean => {
-    // 取消電文は帯を消す。**戻り値は帯を消したか**（他の帯と同じ）。音と読み上げは帯を消したかによらず
-    // 起こす（解説情報の設定がオンの端末だけ。2026-10-22 ユーザー選択「設定を入れたときだけ鳴らし読む
-    // (Recommended)」・2026-10-24 ユーザー選択「伝える (Recommended)」。→ `decideDispatch`）
-    if (commentary.cancelled) {
-      // 失効の予約と同じく、消す前に `id` を照合する（待っている間に新しい解説へ入れ替わって
-      // いた場合にそちらを消さないため）。
-      //
-      // **`eventId` では足りない。** 臨時解説（VYSE51）は一連の期間で `eventId` が固定で、
-      // 号数は `Serial` にしか出ない（→ docs/spec/data-sources-spec.md §2 の表）。`eventId` だけを
-      // 比べると、連日届く別の号を同じものとして扱い、照合が素通りする。`id` は両方を含む。
-      //
-      // **`id` を要求しても正当な取消は弾かれない。** 取消電文の `Serial` は「直前の時点における
-      // 最新の情報番号の値」と定められている（電文解説資料 Ⅰ.別紙ウ 2.）ので、帯に出している号
-      // （＝最新号）と一致する。古い号を指す取消だけが弾かれる ―― それがここで防ぎたいもの。
-      const shown = shownCommentaryIdRef.current
-      if (shown !== commentary.id) {
-        log.info(`[nankaiCommentary] 別の号への取消のため帯を残します received=${commentary.id} shown=${shown}`)
-        return false
-      }
-      // **期限タイマーは号を照合した後で止める**（お知らせと同じ）。先に止めると、別の号への取消で
-      // 帯は残るのに 7 日の期限だけが失われて居座る。
-      if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-        window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-        nankaiCommentaryExpireTimerRef.current = undefined
-      }
-      shownCommentaryIdRef.current = null
-      setState(prev => ({ ...prev, nankaiCommentary: null }))
-      return true
-    }
-
-    const remainMs = new Date(commentary.expireAt).getTime() - getTimeRef.current().getTime()
-    // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない。前者はパーサや
-    // 時刻シフト（testScenarioReplay）のバグを示すため記録を残す。
-    if (!Number.isFinite(remainMs)) {
-      log.warn('[data] 南海トラフ関連解説情報の期限を計算できません', commentary.expireAt)
-      return false
-    }
-    if (remainMs <= 0) return false
-
-    if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-      window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-    }
-    shownCommentaryIdRef.current = commentary.id
-    setState(prev => ({ ...prev, nankaiCommentary: commentary }))
-    nankaiCommentaryExpireTimerRef.current = window.setTimeout(() => {
-      nankaiCommentaryExpireTimerRef.current = undefined
-      if (shownCommentaryIdRef.current === commentary.id) shownCommentaryIdRef.current = null
-      setState(prev => (
-        prev.nankaiCommentary?.id === commentary.id ? { ...prev, nankaiCommentary: null } : prev
-      ))
-    }, remainMs)
-    return true
+    const untilMs = earliestExpiryMs(list)
+    if (untilMs === null) return
+    timers[kind] = window.setTimeout(() => {
+      delete timers[kind]
+      commit(kind, dropExpiredUpTo<BandListItem>(bandListsRef.current[kind], untilMs) as BandLists[K])
+    }, Math.max(0, untilMs - getTimeRef.current().getTime()))
   }, [])
 
   /**
-   * 地震・津波に関するお知らせ（VZSE40）を反映する。
+   * 後発地震注意情報を帯へ反映する。**同じ `eventId` の報は置き換え、別の `eventId` は積む。**
+   * 呼ぶ場所と戻り値の意味は `applyNankai` に同じ。
+   */
+  const applyKohatsu = useCallback((kohatsu: JMAKohatsu): boolean => {
+    const list = bandListsRef.current.kohatsu
+    // 判定は中継のプッシュ通知と共用する（→ `kohatsuBandDecision`。一覧から照合先を選ぶのが `kohatsuListDecision`）
+    const kohatsuDecision = kohatsuListDecision(list.map(k => k.eventId), kohatsu, getTimeRef.current().getTime())
+    if (!kohatsu.cancelled) {
+      // **期限切れは出さない。** 履歴はアーカイブ経由で遡り幅の中の報がそのまま渡るので、期限切れも届く。
+      // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない（解説情報・地震回数・お知らせと同じ方針）。
+      if (!kohatsuDecision.apply) {
+        if (kohatsuDecision.reason === 'badExpire') log.warn('[data] 後発地震注意情報の期限を計算できません', kohatsu.expireAt)
+        return false
+      }
+      const next = putBandItem(list, kohatsu, shown => shown.eventId === kohatsu.eventId)
+      if (next === null) {
+        log.info(`[kohatsu] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${kohatsu.id}`)
+        return false
+      }
+      commitBandList('kohatsu', next)
+      return true
+    }
+    // 照合は取消だけ（理由は `applyNankai`）。取消が指す情報単位（`eventId`）の報だけを外す。
+    if (!kohatsuDecision.apply) {
+      // 一覧が空の場合もここへ来る（理由は `applyNankai` の同じ箇所に同じ）
+      log.info(list.length === 0
+        ? `[kohatsu] 表示していない情報単位への取消のため帯は触りません received=${kohatsu.eventId}`
+        : `[kohatsu] 別の情報単位への取消のため帯を残します received=${kohatsu.eventId} shown=${list.map(k => k.eventId).join(',')}`)
+      return false
+    }
+    commitBandList('kohatsu', list.filter(k => k.eventId !== kohatsu.eventId))
+    return true
+  }, [commitBandList])
+
+  /**
+   * 南海トラフ地震関連解説情報を反映する。**同じ期間の臨時解説（同じ `eventId`）の号は置き換え、別の期間・定例解説は積む**
+   * （定例解説は電文ごとに `eventId` が変わるので別件になる）。期限切れの報は出さない。
+   */
+  const applyNankaiCommentary = useCallback((commentary: JMANankaiCommentary): boolean => {
+    const list = bandListsRef.current.nankaiCommentary
+    // 判定は中継のプッシュ通知と共用する（→ `nankaiCommentaryBandDecision`。一覧から照合先を選ぶのが `nankaiCommentaryListDecision`）
+    const commentaryDecision = nankaiCommentaryListDecision(list.map(c => c.id), commentary, getTimeRef.current().getTime())
+    // 取消電文は、指す号を一覧から外す。**戻り値は帯を変えたか**（他の帯と同じ）。音と読み上げは帯を変えたかによらず
+    // 起こす（解説情報の設定がオンの端末だけ。2026-10-22 ユーザー選択「設定を入れたときだけ鳴らし読む
+    // (Recommended)」・2026-10-24 ユーザー選択「伝える (Recommended)」。→ `decideDispatch`）
+    if (commentary.cancelled) {
+      // **照合は `id`（識別情報と号数の組）。`eventId` では足りない。** 臨時解説（VYSE51）は一連の期間で `eventId` が固定で、
+      // 号数は `Serial` にしか出ない（→ docs/spec/data-sources-spec.md §2 の表）。`eventId` だけを比べると、連日届く別の号を
+      // 同じものとして扱う。
+      //
+      // **`id` を要求しても正当な取消は弾かれない。** 取消電文の `Serial` は「直前の時点における最新の情報番号の値」と
+      // 定められている（電文解説資料 Ⅰ.別紙ウ 2.）ので、一覧に積んでいる号（その期間の最新号）と一致する。古い号を指す
+      // 取消だけが弾かれる ―― それがここで防ぎたいもの。
+      if (!commentaryDecision.apply) {
+        log.info(`[nankaiCommentary] 帯に積んでいない号への取消のため帯を残します received=${commentary.id} shown=${list.map(c => c.id).join(',')}`)
+        return false
+      }
+      commitBandList('nankaiCommentary', list.filter(c => c.id !== commentary.id))
+      return true
+    }
+    // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない。前者はパーサや
+    // 時刻シフト（testScenarioReplay）のバグを示すため記録を残す。
+    if (!commentaryDecision.apply) {
+      if (commentaryDecision.reason === 'badExpire') log.warn('[data] 南海トラフ関連解説情報の期限を計算できません', commentary.expireAt)
+      return false
+    }
+    const next = putBandItem(list, commentary, shown => shown.eventId === commentary.eventId)
+    if (next === null) {
+      log.info(`[nankaiCommentary] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${commentary.id}`)
+      return false
+    }
+    commitBandList('nankaiCommentary', next)
+    return true
+  }, [commitBandList])
+
+  /**
+   * 地震・津波に関するお知らせ（VZSE40）を反映する。**1 通ずつが別件**（`id` は `EventID` と `Control/DateTime` の組。
+   * → `quakeNoticeId`）なので積む。同じ `id` が重ねて届いたら置き換える。
    *
-   * 帯の扱いは南海トラフ関連解説情報とほぼ同じ（最新の 1 通・7 日で畳む・取消で消す）。
    * **7 日は表示上の都合**で、気象庁が期限を定めているわけではない（後発地震注意情報の帯の 7 日も同じ）。
    *
-   * 戻り値は「画面の状態を変えたか」（帯を出した・取消で帯を消した）。呼び出し側は真のときだけ
+   * 戻り値は「画面の状態を変えたか」（帯に積んだ・取消で一覧から外した）。呼び出し側は真のときだけ
    * `onLiveEvent` へ流す（読み上げるかは受け手が設定で決める）。偽なら流さず、録画向けの記録を
-   * `notApplied` で残す —— 隣の `applyNankaiCommentary`・`applyKohatsu` と同じ形。
-   *
-   * **記録はこの関数の中で行わない。** かつてはお知らせだけが音も読み上げも持たず、この関数が
-   * `notDispatched` を自分で記録する唯一の例外だった。読み上げを持った（設定で有効にしたとき）ので、
-   * 他の帯と同じく呼び出し側が「流した／流さなかった理由」を記録する。
+   * `notApplied` で残す —— 隣の `applyNankaiCommentary`・`applyKohatsu` と同じ形。記録はこの関数の中で行わない。
    */
   const applyQuakeNotice = useCallback((notice: JMAQuakeNotice): boolean => {
+    const list = bandListsRef.current.quakeNotice
     if (notice.cancelled) {
-      // 消す前に、取消が表示中のお知らせ宛てかを照合する（待っている間に新しいお知らせへ
-      // 入れ替わっていたら、そちらを消さない）。
-      //
       // **照合は `EventID` で行う。`id` ではない。** 取消は元のお知らせの `EventID` を引き継ぐ ——
       // 気象庁公式のサンプル（`jmaxml_20260723_Samples.zip` の `42_03_01_220402_VZSE40.xml`）は発表時刻が 2022-04-02 06:58 なのに
       // `EventID` は `20220402050100`（＝05:01）で、自分の発表時刻ではなく**取り消す対象の発表時刻**を
       // 指している（発表側のサンプルでは `EventID` ＝自分の発表時刻）。`id` には電文の作成時刻が
       // 入るので（→ `quakeNoticeId`）、発表と取消で一致しない。
       //
-      // **同じ分に別のお知らせが出ていたら、どちら宛てかは電文から決められない。** 取消が持つのは
-      // 分までの `EventID` だけで、元のお知らせの作成時刻は載らない。表示中の 1 通と分が一致すれば
-      // 消す。**実配信の取消は未観測**（アーカイブの控えのお知らせ 605 通に 0 通。→ docs/spec/data-sources-spec.md §2
+      // **`EventID` と運用種別が同じものは、積まれている全件を外す。** 気象庁の解説資料（共通別紙ア・ウ）は、
+      // お知らせの「独立した情報単位」を情報名称・運用種別・識別情報（`EventID` ＝発表の日時分）の組とし、
+      // 取消は「『独立した情報単位』全体について…取り消す」と定めている。同じ分に出た 2 通は同じ単位なので、
+      // 取消は両方に効く（2026-11-04 ユーザー選択「気象庁どおりすべて外す (Recommended)」）。
+      // **実配信の取消は未観測**（全期間の控え 2020-11-18〜2026-10-31 のお知らせ 608 通に 0 通。→ docs/spec/data-sources-spec.md §2
       // 「扱う電文種別」）なので、届いたら形を確かめること。
       //
       // **`EventID` が空の取消は照合しない。** 空どうしは「同じお知らせ」の証拠にならない
       // （パーサーは空を記録して通す）。
-      const shown = shownQuakeNoticeRef.current
-      if (shown == null) {
+      if (list.length === 0) {
         log.info(`[quakeNotice] 表示中のお知らせが無いため取消を当てません received=${notice.eventId}`)
         return false
       }
-      if (notice.eventId === '' || shown.eventId !== notice.eventId) {
-        log.info(`[quakeNotice] 別のお知らせへの取消のため帯を残します received=${notice.eventId} shown=${shown.eventId}`)
+      const sameUnit = (n: JMAQuakeNotice) => n.eventId === notice.eventId && n.operationStatus === notice.operationStatus
+      const targets = notice.eventId === '' ? [] : list.filter(sameUnit)
+      if (targets.length === 0) {
+        log.info(`[quakeNotice] 帯に積んでいないお知らせへの取消のため帯を残します received=${notice.eventId} shown=${list.map(n => n.eventId).join(',')}`)
         return false
       }
-      // どのお知らせを消したかは記録に残す。同じ分に別のお知らせが出ていた場合、取消の本来の宛先とは
-      // 別の 1 通を消した可能性があり、それは後から id を突き合わせないと分からない。
-      log.info(`[quakeNotice] 取消で帯を消します eventId=${notice.eventId} shown=${shown.id} cancel=${notice.id}`)
-      // **期限タイマーは id を照合した後で止める。** 先に止めると、別のお知らせ宛ての取消が届いたとき、
-      // 表示中のお知らせの 7 日の期限だけが失われて帯が居座る。
-      if (quakeNoticeExpireTimerRef.current !== undefined) {
-        window.clearTimeout(quakeNoticeExpireTimerRef.current)
-        quakeNoticeExpireTimerRef.current = undefined
-      }
-      shownQuakeNoticeRef.current = null
-      setState(prev => ({ ...prev, quakeNotice: null }))
-      // **取消しの理由（パーサーは `body` に読んでいる）は画面に出さない。** 取消では帯ごと消え、
-      // 中身が運用連絡なので、消すためだけに帯を出し直すほどのものでもない。読み上げを有効にした
-      // 端末では、理由は読み上げが伝える（→ `quakeNoticeToText`）。
-      // **真を返す** —— 帯を消した（画面が変わった）ので、受け手へ流して取消を読ませる。
+      log.info(`[quakeNotice] 取消で一覧から外します eventId=${notice.eventId} shown=${targets.map(n => n.id).join(',')} cancel=${notice.id}`)
+      commitBandList('quakeNotice', list.filter(n => !sameUnit(n)))
+      // **取消しの理由（パーサーは `body` に読んでいる）は画面に出さない。** 中身が運用連絡なので、外すためだけに帯を
+      // 出し直すほどのものでもない。読み上げを有効にした端末では、理由は読み上げが伝える（→ `quakeNoticeToText`）。
+      // **真を返す** —— 一覧を変えた（画面が変わった）ので、受け手へ流して取消を読ませる。
       return true
     }
 
@@ -1416,26 +1429,20 @@ export function useEarthquakes(
       return false
     }
     if (remainMs <= 0) return false
-
-    if (quakeNoticeExpireTimerRef.current !== undefined) {
-      window.clearTimeout(quakeNoticeExpireTimerRef.current)
+    const next = putBandItem(list, notice, shown => shown.id === notice.id)
+    if (next === null) {
+      log.info(`[quakeNotice] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${notice.id}`)
+      return false
     }
-    shownQuakeNoticeRef.current = { id: notice.id, eventId: notice.eventId }
-    setState(prev => ({ ...prev, quakeNotice: notice }))
-    quakeNoticeExpireTimerRef.current = window.setTimeout(() => {
-      quakeNoticeExpireTimerRef.current = undefined
-      if (shownQuakeNoticeRef.current?.id === notice.id) shownQuakeNoticeRef.current = null
-      setState(prev => (prev.quakeNotice?.id === notice.id ? { ...prev, quakeNotice: null } : prev))
-    }, remainMs)
+    commitBandList('quakeNotice', next)
     return true
-  }, [])
+  }, [commitBandList])
 
   /**
-   * 地震回数に関する情報（VXSE60）を反映する。
+   * 地震回数に関する情報（VXSE60）を反映する。**同じ群発（`eventId`）の報は置き換え、別の群発は積む。**
    *
-   * 帯の扱いは南海トラフ関連解説情報・お知らせと同じ（最新の 1 通・7 日で畳む・取消で消す）。
    * **7 日は表示上の都合**で、気象庁が期限を定めているわけではない —— この情報に終わりの宣言は
-   * 無く、群発が収まれば発表が止まるだけ。畳む契機を次報と取消だけにすると、収まったあとも
+   * 無く、群発が収まれば発表が止まるだけ。外す契機を次報と取消だけにすると、収まったあとも
    * 帯が居座る。
    *
    * **区間も本文も無い報は反映しない。** 中身が空の帯を出しても伝わるものが無く、
@@ -1444,45 +1451,34 @@ export function useEarthquakes(
    * 「-1 を「発表なし」に (推奨)」）。
    */
   const applyEarthquakeCount = useCallback((count: JMAEarthquakeCount): boolean => {
+    const list = bandListsRef.current.earthquakeCount
+    // 判定は中継のプッシュ通知と共用する（→ `earthquakeCountBandDecision`。一覧から照合先を選ぶのが `earthquakeCountListDecision`）
+    const countDecision = earthquakeCountListDecision(list.map(c => c.eventId), count, getTimeRef.current().getTime())
     if (count.cancelled) {
       // 取消は id ではなく eventId で照合する。回数情報は同じ群発について報を重ねるので、
-      // 取消が指すのは「その群発について直前に出した報」＝いま出している報になる。
-      if (shownEarthquakeCountEventIdRef.current !== count.eventId) {
-        log.info(`[earthquakeCount] 別の群発への取消のため帯を残します received=${count.eventId} shown=${shownEarthquakeCountEventIdRef.current}`)
+      // 取消が指すのは「その群発について直前に出した報」＝一覧に積んでいるその群発の報になる。
+      if (!countDecision.apply) {
+        log.info(`[earthquakeCount] 帯に積んでいない群発への取消のため帯を残します received=${count.eventId} shown=${list.map(c => c.eventId).join(',')}`)
         return false
       }
-      if (earthquakeCountExpireTimerRef.current !== undefined) {
-        window.clearTimeout(earthquakeCountExpireTimerRef.current)
-        earthquakeCountExpireTimerRef.current = undefined
-      }
-      shownEarthquakeCountEventIdRef.current = null
-      setState(prev => ({ ...prev, earthquakeCount: null }))
+      commitBandList('earthquakeCount', list.filter(c => c.eventId !== count.eventId))
       // **true を返す。** 読み上げ側が「取り消された」ことを伝えるため。false にすると
       // 取消がどこへも流れず、直前に読み上げた回数が訂正されないまま残る。
       return true
     }
-    if (count.items.length === 0 && !count.body) return false
-
-    const remainMs = new Date(count.expireAt).getTime() - getTimeRef.current().getTime()
-    // 「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない（解説情報と同じ）。
-    if (!Number.isFinite(remainMs)) {
-      log.warn('[data] 地震回数に関する情報の期限を計算できません', count.expireAt)
+    // 回数も本文も無い報・期限切れは出さない。「日時が壊れている」と「正当に期限切れ」を同じ無言の false に潰さない（解説情報と同じ）
+    if (!countDecision.apply) {
+      if (countDecision.reason === 'badExpire') log.warn('[data] 地震回数に関する情報の期限を計算できません', count.expireAt)
       return false
     }
-    if (remainMs <= 0) return false
-
-    if (earthquakeCountExpireTimerRef.current !== undefined) {
-      window.clearTimeout(earthquakeCountExpireTimerRef.current)
+    const next = putBandItem(list, count, shown => shown.eventId === count.eventId)
+    if (next === null) {
+      log.info(`[earthquakeCount] 同じ件のより新しい報が帯に出ているので、遅れて届いた報は当てません received=${count.id}`)
+      return false
     }
-    shownEarthquakeCountEventIdRef.current = count.eventId
-    setState(prev => ({ ...prev, earthquakeCount: count }))
-    earthquakeCountExpireTimerRef.current = window.setTimeout(() => {
-      earthquakeCountExpireTimerRef.current = undefined
-      if (shownEarthquakeCountEventIdRef.current === count.eventId) shownEarthquakeCountEventIdRef.current = null
-      setState(prev => (prev.earthquakeCount?.id === count.id ? { ...prev, earthquakeCount: null } : prev))
-    }, remainMs)
+    commitBandList('earthquakeCount', next)
     return true
-  }, [])
+  }, [commitBandList])
 
   /**
    * 推計震度分布図（IXAC41）を反映する。**地震ごとに 1 通**を持つ（→ `upsertEstimatedIntensity`）。
@@ -1516,7 +1512,12 @@ export function useEarthquakes(
     }
     if (!update.apply) return null
     estimatedIntensitiesRef.current = list
-    setState(prev => ({ ...prev, estimatedIntensities: list }))
+    // 推計が地震情報より新しい値を運んでいれば、地震カードの上段へ当てる（→ `utils/latestQuakeFacts.ts`）
+    setState(prev => ({
+      ...prev,
+      estimatedIntensities: list,
+      ...applyLatestFactsWithMarks(prev, prev.lpgmByEventId, list, prev.tsunamis, Date.now()),
+    }))
     // 初報か続報かは**台帳**で決める。`update.reason` では決められない —— 履歴から黙って
     // 取り込んだ分布も「持っている」側に入るので、まだ伝えていない地震の分布が `newer` になる。
     const isNew = isNewEstimatedIntensity(shownEstimatedIntensityArrivalsRef.current, data.arrivalTime)
@@ -1558,29 +1559,6 @@ export function useEarthquakes(
    * `stateRef` はレンダー時にしか進まないので、それだけを見ると同じティックで捌かれた直前の報を
    * 反映できない（理由と、継ぎ足しで埋めようとして失敗した経緯は `pendingQuakeCardsRef`）。
    */
-  /**
-   * 震度を持たない電文（VXSE52/53）を、震度速報の震度で補う。
-   *
-   * **統合側と据え置き判定側で同じ述語を通す。** 補完の有無で `hasIntensity(incoming)` が
-   * 変わり、`quakeHoldBack` はそこで判定軸を切り替える（実震度を持つなら発表時刻・
-   * 持たないなら種別優先度）。片方だけ補完すると、**同じ電文について統合は受け入れ・判定は
-   * 据え置きと答える**形でずれる。
-   */
-  const fillIntensityFromCache = useCallback((quake: JMAQuake): JMAQuake => {
-    if (quake.earthquake.maxScale >= 0 || quake.points.length > 0) return quake
-    const cached = quakeIntensityCacheRef.current.get(quakeEventKey(quake))
-    if (!cached) return quake
-    // **補ったことに印を付ける**（`intensityFromCache`）。補った電文はそのままカードの控え
-    // （`sourceTelegrams`）へ積まれるので、元の震度速報が取り消されたとき、当て直しがこの印を
-    // 見て補った震度を外す（→ `quakeMerge.ts` の `applyQuakeCancelToCard`）。
-    return {
-      ...quake,
-      earthquake: { ...quake.earthquake, maxScale: cached.maxScale },
-      points: cached.points,
-      intensityFromCache: true,
-    }
-  }, [])
-
   const findQuakeCardForHoldBack = useCallback((quake: JMAQuake, index: AreaPrefIndex) => {
     const pending = pendingQuakeCardsRef.current
     // **写しにその地震が載っているなら、そちらで完結させる**（`?? stateRef` へ落とさない）。
@@ -1626,70 +1604,16 @@ export function useEarthquakes(
       : undefined
     // 取消の当て方も統合側と同じ（`applyQuakeCancelToCard`）。一部の取消なら写しも当て直した
     // カードにする —— 取消済みと載せると、直後の続報の判定が「取消済みだから受け入れる」側へ倒れる。
-    const effect = quake.cancelled && canceled
-      ? applyQuakeCancelToCard(canceled, quake, quakeRetractionsRef.current, index)
-      : undefined
-    const card = quake.cancelled
-      ? (effect?.kind === 'partial' ? effect.card
-        : effect?.kind === 'whole' && canceled ? { ...canceled, cancelledAt: getTimeRef.current() } : undefined)
-      // 記録は統合側（`setState` の中）が出す。ここで出すと同じ電文について二重に残る。
-      : mergeQuakeInto(existing, quake, { quiet: true })
+    // 統合の記録は統合側（`setState` の中）が出す（`quakeCardAfterReport` は黙って統合する）。
+    const card = quakeCardAfterReport({
+      existing, quake, cancelTarget: canceled, retractions: quakeRetractionsRef.current,
+      areaPrefIndex: index, cancelledAt: getTimeRef.current(),
+    })
     if (!card) return
     const list = pendingQuakeCardsRef.current
     const at = list.findIndex(c => sameQuakeEntry(c, card, index))
     if (at < 0) list.push(card)
     else list[at] = card
-  }, [])
-
-  /**
-   * その地震情報を**地震カードが採らないか**（据え置くか）。真なら音・読み上げ・ウィンドウ
-   * タイトル・自動タブ切替を起こさない（→ {@link LiveEventMeta.quakeHeldBack}。何を止めるかは
-   * 受け取る側が決める）。
-   *
-   * **判定は `quakeHoldBack` を統合側と共有する**（写しを持たない）。実例: 2024-11-26
-   * 22:47 の大阪府北部（完全版・最大震度1）の 55 秒後に、1 分後に起きた石川県西方沖の揺れが
-   * 紛れ込んだ震度速報（福井県嶺南・滋賀県北部の震度3）が同じ EventID で届く。カードは
-   * 据え置いていたのに、読み上げだけが「新たに最大震度3を…観測しました」と言い、ウィンドウ
-   * タイトルも「最大震度3」へ変わっていた。
-   * → docs/spec/quake-spec.md §6.3「据え置いた電文は、音・読み上げ・タイトル・タブ移動・選択・
-   * 分布モードのクローズも起こさない」
-   *
-   * **既存カードは同じティックの写しから引く**（`findQuakeCardForHoldBack`）。`stateRef` だけを
-   * 見ると鮮度が足りず、取消を処理した直後に**取消前のカードを既存として拾って**「画面には
-   * 新しいカードが出ているのに声だけ止まる」逆向きの食い違いを作る。
-   */
-  const isQuakeReportHeldBack = useCallback((existing: JMAQuake | undefined, quake: JMAQuake, retracted: boolean): boolean => {
-    // **統合側がその報を採らない門は 2 つある。** 片方だけを見ると、もう片方で捨てられた電文が
-    // 音・読み上げ・タイトル・タブ移動だけを動かす（→ docs/spec/quake-spec.md §6.3
-    //「カードが採らない門は 2 つ」）。
-    //
-    // ① 取消より前に発表された報（§6.2）。**`existing` を見ても分からない** —— 対象カードは
-    //    取消済みなので `findExistingQuakeCard` が候補から外し、`existing` は `undefined` に
-    //    なる。そのまま「据え置かない」へ倒すと、**画面には何も出ないのに声だけが鳴る**。
-    //    判定は統合側と同じ述語をそのまま使う（狭い条件＝種別一致・同じ地震・取消以前を持って
-    //    いる。ここを「取消を見たか」へ広げると、取消を経験した地震で以後ずっと黙る）。
-    //    **判断は受け取るだけ**（`retracted`）—— 入口で 1 回決めて、写しの更新と状態更新にも
-    //    同じ値が渡る（理由は `handleEvent` の `quakeRetracted`）。
-    if (retracted) {
-      log.info('[quake] 取消以前に発表された報なので音・読み上げ・タイトル・タブ移動を起こさない', {
-        incomingId: quake.id, incomingType: quake.issue.type, incomingTime: quake.time,
-      })
-      return true
-    }
-    // ② 据え置き（`quakeHoldBack`）。
-    if (!existing) return false
-    const held = quakeHoldBack(existing, quake)
-    if (!held) return false
-    // **記録するかも述語が決める**（`notable`）。ここで条件を書き下すと統合側の絞り込みを
-    // 書き写すことになり、片方だけ古くなったときにこちらの記録だけが溢れる。
-    if (held.notable) {
-      log.info('[quake] カードが採らない電文なので音・読み上げ・タイトル・タブ移動を起こさない', {
-        reason: held.reason, incomingId: quake.id, incomingType: quake.issue.type,
-        existingType: existing.issue.type,
-        droppedMaxScale: quake.earthquake.maxScale, droppedPoints: quake.points.length,
-      })
-    }
-    return true
   }, [])
 
   /**
@@ -1712,21 +1636,42 @@ export function useEarthquakes(
   }, [])
 
   const handleEvent = useCallback((rawEvent: AppEvent) => {
-    // 標準版の訓練報・試験報は、設定「試験報を受信」が真なら印を付けて普通の報として流す（→ `admitTrainingEew`）。
+    // 強震モニタの訓練報は、設定「試験報を受信」が真なら印を付けて普通の報として流す（→ `admitTrainingEew`）。
     // 入口の最初で決める —— 下の判定・状態・読み上げ・通知が同じ 1 つの値を見るように。
     const event: AppEvent = rawEvent.kind === 'eew' ? admitTrainingEew(rawEvent, dmdataTestDeliveryRef.current) : rawEvent
+    // 強震モニタの一覧から取消の印なしで消えたことによる自動解除は、ここでは当てない。最終報から積む自動解除と
+    // 同じ待ち行列へ、その報から求めた式の時刻で積み直す。発火したときに揺れ検知の広がり待ち（eew-spec §7）を通る
+    // （2026-11-06 ユーザー選択「消えたら①と同じ待ちを通す (Recommended)」）。強震モニタは最終報を出さずに一覧から
+    // 外すことがあるので、消えたことを捨てると速報が画面に居座る
+    if (event.kind === 'eew' && event.vanishedFromList) {
+      const key = eewEventKey(event)
+      // 式は表示中の最新の報（震源要素と発表時刻）から求める。最終報の予約と同じく、震源と起点を同じ報から取る
+      const basis = eewLatestRef.current.get(key) ?? event
+      const formulaMs = calcEEWCancelTime(basis, new Date(basis.time)).getTime()
+      // 式の時刻を決められなくても積む（発火時の判断が「式の時刻を決められない」として記録してから消す）
+      const eventTime = new Date(Number.isFinite(formulaMs) ? formulaMs : getTimeRef.current().getTime())
+      // 印は付けたまま積む。発火した側が `eewVanishPendingRef` と照らして、後から新しい報を採っていれば捨てる
+      eewVanishPendingRef.current.set(key, event.time)
+      eventQueueRef.current.push({
+        eventTime,
+        payload: { kind: 'event', event },
+        logEntry: null,
+      })
+      log.debug(`[eew] 強震モニタの一覧から消えたので、自動解除を式の時刻で待つ: key=${key} 解除=${eventTime.toISOString()}`)
+      return
+    }
     // 古い報は**入口で**捨てる。この下の通知（読み上げ・ウィンドウタイトル）と自動解除の予約は
     // setState の外で走るため、状態更新の直前で弾いても間に合わない。地図・カードだけが新しい報を
     // 保ち、読み上げとタイトルが古い報で上書きされる——画面と音声が食い違う方が始末が悪い。
     // 取消・失効・テスト報は報番号に関わらず通す（弾くと誤報を消せなくなる）。
     //
     // **統合も入口で 1 回だけ行う**（`mergeEewReport`）。状態に入れる値と、読み上げ・通知へ渡す値を
-    // 同じものにするため —— かつては状態だけが統合され、読み上げには届いた電文がそのまま渡っていた
-    // （Yahoo の続報は区域も仮定震源の別も持たないので、P2PQuake が運んだ値が声から消えていた）。
+    // 同じものにするため —— 状態だけを統合すると、Yahoo の続報は区域も仮定震源の別も持たないので、
+    // DMDATA の電文が運んだ値が声から消える。
     let eewMerged: EEWAlert | undefined
     // 別の経路から既に受けて知らせた報と同じ報か（→ `LiveEventMeta.eewSameReport`）。
     let eewSameReport = false
-    // 別の経路が先に運んだ新しい報へ、遅れて届いた P2PQuake の報の区域・仮定震源の別だけを補ったか
+    // 別の経路が先に運んだ新しい報へ、遅れて届いた DMDATA の電文の区域・仮定震源の別だけを補ったか
     // （→ `supplementEewReport`）。状態側でも同じ補い方をする。
     let eewSupplement = false
     // 取消の前に画面から消えた（自動解除された）地震へ届いた誤報取消（→ `isLateEewCancel`・`LiveEventMeta.eewLateCancel`）。
@@ -1738,87 +1683,101 @@ export function useEarthquakes(
       const key = eewEventKey(incoming)
       if (!incoming.cancelled && !incoming.expired && !incoming.test) {
         const acceptance = eewAcceptanceRef.current.get(key)
-        const staleness = eewStaleness(acceptance, incoming)
         const previous = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
-        if (previous?.cancelled || previous?.cancelledAt) {
+        // 採るかの判定は共用の部品（→ `decideEewReportEntry`。中継のプッシュ通知も同じものを使う）。ここは決定を当てはめて記録を残す
+        const entry = decideEewReportEntry({
+          incoming, acceptance, previous, ended: eewEndedRef.current.get(key), nowMs: serverNow(),
+          // **静かに積まれた報（`isSilentRef`）には時刻の判定を掛けない** —— 起動時・張り直しの復元とリプレイの初期状態で、
+          // 鳴らないうえ、古さは取得側が判定している（`selectActiveEews`）。ここで落とすと、復元した側は読み上げの記憶と
+          // タブ移動を「戻した」つもりで進め、画面だけが空になる
+          checkExpired: !isSilentRef.current,
+          clockTrusted: isServerClockTrusted(),
+        })
+        if (entry.kind === 'cancelledTerminal') {
           // **取消は終端**（状態側と同じ。docs/spec/eew-spec.md §10）。入口で止めないと、状態は無視するのに
-          // 音・通知が鳴り、見張りの解除も積まれる。
+          // 音・通知が鳴る。
           log.debug(`[eew] 取消済みの速報へ届いた報を破棄: key=${key} 経路=${incoming.origin}`
             + ` 受信=#${eewSerial(incoming) ?? '(なし)'}`)
           recordSkippedTelegram(incoming, 'notApplied')
           return
         }
-        // **画面から消えた地震の報は採らない**（→ `eewEndedRef`・`endedEewMatch`）。台帳と写しは消えた時点で捨てるので、
-        // 消えた後に届いた同じ報・古い報は上の比べ方では「新しい報」に見え、終わった速報が音と読み上げごと戻る
-        // （標準版の Yahoo は、一覧から 2 回続けて欠けた項目が戻ると同じ報を出し直す）。取消で終えた地震は
-        // 報番号によらず採らない（取消は終端）。2026-10-21 ユーザー承認「おすすめで」
-        if (!acceptance && !previous && skipEndedEew(eewEndedRef.current, incoming, 'ライブの受信')) {
+        if (entry.kind === 'ended') {
+          // **画面から消えた地震の報は採らない**（→ `eewEndedRef`・`endedEewMatch`）。台帳と写しは消えた時点で捨てるので、
+          // 消えた後に届いた同じ報・古い報は上の比べ方では「新しい報」に見え、終わった速報が音と読み上げごと戻る
+          // （強震モニタ（Yahoo）は、一覧から 2 回続けて欠けた項目が戻ると同じ報を出し直す）。取消で終えた地震は
+          // 報番号によらず採らない（取消は終端）。2026-10-21 ユーザー承認「おすすめで」
+          logSkippedEndedEew(entry.ended, entry.match, incoming, 'ライブの受信')
           recordSkippedTelegram(incoming, 'notApplied')
           return
         }
-        // **自動解除の時刻を過ぎた報も採らない**（→ `skipExpiredEew`）。消えた地震の記憶はリセットで捨てるので、
-        // 差分を見る処理を作り直した直後に Yahoo の一覧に残る最終報が届くと、上の判定では止まらない。
-        // **画面に出ている地震には掛けない** —— 出ている地震は最終報（自動解除の予約）か取消で終わるので、
-        // 古い時刻の続報を入口で落とすと、続報が運ぶ値が届かないだけになる。
-        // **静かに積まれた報（`isSilentRef`）にも掛けない** —— 起動時・張り直しの復元とリプレイの初期状態で、
-        // 鳴らないうえ、古さは取得側が判定している（`selectActiveEews`）。ここで落とすと、復元した側は読み上げの記憶と
-        // タブ移動を「戻した」つもりで進め、画面だけが空になる。
-        if (!acceptance && !previous && !isSilentRef.current && skipExpiredEew(incoming, 'ライブの受信')) {
+        if (entry.kind === 'expired') {
+          // **自動解除の時刻を過ぎた報も採らない**（→ `decideEewReportEntry`）。消えた地震の記憶はリセットで捨てるので、
+          // 差分を見る処理を作り直した直後に Yahoo の一覧に残る最終報が届くと、上の判定では止まらない。
+          // **画面に出ている地震には掛けない** —— 出ている地震は最終報（自動解除の予約）か取消で終わるので、
+          // 古い時刻の続報を入口で落とすと、続報が運ぶ値が届かないだけになる。
+          log.info(`[eew] ライブの受信: ${expiredEewDetail(incoming, entry.issueMs, entry.cancelMs)}は自動解除の時刻を`
+            + ` ${Math.round((serverNow() - entry.cancelMs) / 1000)} 秒過ぎた報なので採りません`)
           recordSkippedTelegram(incoming, 'notApplied')
           return
         }
+        if (entry.kind === 'expiredUntrusted') {
+          log.debug(`[eew] ライブの受信: ${expiredEewDetail(incoming, entry.issueMs, entry.cancelMs)}は自動解除の時刻を過ぎて見えますが、時計が未較正なので採ります`)
+        }
+        const taken = entry.kind === 'expiredUntrusted' ? entry.then : entry
         // 第 1 報の時刻を覚える（一度覚えたら変えない。→ `eewFirstIssueTimeRef`）
         rememberEewFirstIssueTime(eewFirstIssueTimeRef.current, key, incoming)
-        if (staleness === 'olderFromOtherOrigin' && incoming.origin === 'p2pquake' && previous) {
-          // **捨てない。** Yahoo は 1 秒ごとに取りに行くので、速報が続くあいだは P2PQuake の報が
-          // Yahoo の次の報より後に着くことがある。捨てると区域と仮定震源の別が一度も入らない。
+        if (taken.kind === 'supplement') {
+          // **捨てない。** Yahoo は 1 秒ごとに取りに行くので、速報が続くあいだは電文の報（中継の警報 VXSE43・
+          // 自分の鍵の予報）が Yahoo の次の報より後に着くことがある。捨てると区域と仮定震源の別が
+          // 一度も入らない（区域・仮定震源の別は電文から得る。docs/relay-server-design.md §0 の 2026-10-30 の行）。
           // 震源・震度・報番号は新しい側のまま。新しい報ではないので音・タブ移動は起こさない
           // （区分や予想の最大震度が上がったときだけ知らせる。2026-10-19 ユーザー承認・選んだ選択肢「上がったときだけ鳴らす」）。
-          eewMerged = supplementEewReport(previous, incoming)
+          eewMerged = taken.merged
           eewSupplement = true
-          eewSameReport = !raisesEewAlert(eewMerged, previous)
-          eewAcceptanceRef.current.set(key, acceptEewReport(acceptance, incoming))
+          eewSameReport = taken.sameReport
+          eewAcceptanceRef.current.set(key, taken.acceptance)
           eewLatestRef.current.set(key, eewMerged)
-          log.debug(`[eew] 遅れて届いた P2PQuake の報で区域・仮定震源を補った: key=${key}`
+          log.debug(`[eew] 遅れて届いた電文の報で区域・仮定震源を補った: key=${key} 経路=${incoming.origin}`
             + ` 受信=#${eewSerial(incoming) ?? '(なし)'}/${eewIssueTimeMs(incoming) ?? '(なし)'}`
             + ` 受理済み=${acceptance?.latestIssueMs ?? '(なし)'}`)
-        } else if (staleness !== 'fresh') {
+        } else if (taken.kind === 'stale') {
           // 順序の入れ替わり自体は想定内だが、判定が誤り続けるとその EEW は以降更新されない。
           // 捨てた事実が残らないと原因に辿り着けないため記録する（頻度は 1 地震あたり数件）。
           log.debug(`[eew] 古い報を破棄: key=${key} 経路=${incoming.origin}`
-            + ` 受理済み=#${acceptance?.serialByOrigin.get(incoming.origin) ?? '(なし)'}/${acceptance?.latestIssueMs ?? '(なし)'}`
+            + ` 受理済み=#${acceptance?.serialBySeries.get(eewSerialSeries(incoming)) ?? '(なし)'}/${acceptance?.latestIssueMs ?? '(なし)'}`
             + ` 受信=#${eewSerial(incoming) ?? '(なし)'}/${eewIssueTimeMs(incoming) ?? '(なし)'}`)
           recordSkippedTelegram(incoming, 'staleSerial')
           // 報は捨てても、運んできた特別警報の印だけは移す（→ `carryEverSpecialWarning`）
           if (incoming.everSpecialWarning) carryEverSpecialWarning(key, `入口で古い報として捨てた報 経路=${incoming.origin}`)
           return
         } else {
-          eewMerged = mergeEewReport(previous, incoming)
-          // **区分や予想の最大震度が上がった報は「同じ報」として黙らせない**（上がったこと自体を知らせる）。
-          // 同じ秒に別の報が出ることがある（能登本震の実配信で 46 報中 13 報）ので、秒だけでは
-          // 「同じ報」と言い切れない —— 値が上がっていれば知らせる側へ倒す。
-          eewSameReport = previous !== undefined
-            && isSameReportFromOtherOrigin(acceptance, incoming)
-            && !raisesEewAlert(eewMerged, previous)
+          eewMerged = taken.merged
+          eewSameReport = taken.sameReport
           if (eewSameReport) {
             log.debug(`[eew] 別の経路から受けた同じ報のため音・タブ移動を止める: key=${key} 経路=${incoming.origin}`
               + ` 発表=${eewIssueTimeMs(incoming) ?? '(なし)'}`)
           }
-          const accepted = acceptEewReport(acceptance, incoming)
-          eewAcceptanceRef.current.set(key, eewSameReport ? accepted : noteEewNotified(accepted, incoming))
+          eewAcceptanceRef.current.set(key, taken.acceptance)
           eewLatestRef.current.set(key, eewMerged)
+          // 一覧から消えたことで積んだ予約は、新しい報を採った時点で無効にする（→ `eewVanishPendingRef`）。
+          // 別の経路から届いた同じ報（`eewSameReport`）では外さない —— 外すと、その報が最終報でなければ終わらせる合図が残らない
+          if (!eewSameReport && eewVanishPendingRef.current.delete(key)) {
+            log.debug(`[eew] 一覧から消えた後に新しい報を採ったので、消えたことによる自動解除の予約を外す: key=${key} 経路=${incoming.origin}`)
+          }
         }
       } else if (incoming.expired || incoming.test) {
         // 自動解除は、消えた地震の記憶をこの場で書く（effect でも書くが、それを待つと同じティックに続けて届いた誤報取消を
         // 「消えた後の取消」と見分けられない。2026-10-22 ユーザー承認「直す (Recommended)」）。取消で終えた地震は対象外
         if (incoming.expired) {
-          const shown = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
-          const acceptance = eewAcceptanceRef.current.get(key)
-          if (shown && acceptance && !shown.cancelled && !shown.cancelledAt) {
-            const { cancelledAt: _cancelledAt, ...lastReport } = shown
-            eewEndedRef.current.set(key, mergeEndedEew(
-              eewEndedRef.current.get(key), acceptance, false, serverNow(), lastReport, eewFirstIssueTimeRef.current.get(key),
-            ))
+          const ended = endEewOnExpiry({
+            ended: eewEndedRef.current.get(key),
+            shown: eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key),
+            acceptance: eewAcceptanceRef.current.get(key),
+            nowMs: serverNow(),
+            firstIssueTime: eewFirstIssueTimeRef.current.get(key),
+          })
+          if (ended) {
+            eewEndedRef.current.set(key, ended)
             eewExpiringRef.current.add(key)
           }
         }
@@ -1834,14 +1793,18 @@ export function useEarthquakes(
         // （2026-10-21 ユーザー承認「直す (Recommended)」）。同じ取消が別の経路から遅れて届いても、記憶に取消が
         // 載っているので 2 度は伝えない
         const ended = eewEndedRef.current.get(key)
-        const gone = !stateRef.current.activeEEWs.has(key) || eewExpiringRef.current.has(key)
-        if (ended && !ended.cancelled && !latest && gone) {
+        const cancelEntry = decideEewCancelEntry({
+          incoming, ended, latest,
+          gone: !stateRef.current.activeEEWs.has(key) || eewExpiringRef.current.has(key),
+          nowMs: serverNow(),
+        })
+        if (ended && cancelEntry) {
           const sinceEndedSec = Math.round((serverNow() - ended.endedAtMs) / 1000)
-          if (isLateEewCancel(ended, incoming, serverNow(), ACTIVE_EEW_WINDOW_MS)) {
-            eewLateCancelBase = ended.lastReport
+          if (cancelEntry.late) {
+            eewLateCancelBase = cancelEntry.late.lastReport
             eewLateCancel = {
-              firstIssueTime: ended.firstIssueTime,
-              hypocenterName: ended.lastReport.earthquake.hypocenter.name,
+              firstIssueTime: cancelEntry.late.firstIssueTime,
+              hypocenterName: cancelEntry.late.lastReport.earthquake.hypocenter.name,
             }
             log.info(`[eew] 画面から消えた後に届いた誤報取消: 最後の報に取消を載せて 10 秒戻し、読み上げ側へ印を渡す key=${key}`
               + ` 経路=${incoming.origin} 消えてから=${sinceEndedSec}秒`)
@@ -1850,11 +1813,9 @@ export function useEarthquakes(
             log.debug(`[eew] 画面から消えた地震の誤報取消は通知だけにする: key=${key} 経路=${incoming.origin}`
               + ` 消えてから=${sinceEndedSec}秒 最後の報=${ended.lastReport ? 'あり' : 'なし'}`)
           }
-          eewEndedRef.current.set(key, { ...ended, cancelled: true })
+          eewEndedRef.current.set(key, cancelEntry.ended)
         }
       }
-      // 取り消された・消えた速報の見張りは要らない（写しは取消前の値のままなので、見張りの側では見分けられない）。
-      if (incoming.cancelled || incoming.expired) eewWatchReceiptsRef.current.delete(key)
     }
     // 地震情報は**入口で**「カードが内容を採るか」を見て、採らない電文では音・読み上げ・
     // ウィンドウタイトル・自動タブ切替を起こさない。理由は上の EEW と同じ ——「地図・カードだけが
@@ -1879,7 +1840,7 @@ export function useEarthquakes(
     // 発表時刻・持たないなら種別優先度）。**`setState` の更新関数はレンダー時に走る**ので、
     // 中で補完し直すと「判定は補完前・統合は補完後」の組み合わせが起きる —— 同じティックで
     // 震源情報のあとに震度速報が捌かれると、震度速報の書き込みが両者のあいだに挟まる。
-    const filledQuake = event.kind === 'quake' ? fillIntensityFromCache(event) : undefined
+    const filledQuake = event.kind === 'quake' ? fillQuakeIntensity(event, quakeIntensityCacheRef.current) : undefined
     /**
      * **その電文を状態がそもそも受理しないか**（取消より前に発表された報。→ §6.2）。
      *
@@ -1934,6 +1895,9 @@ export function useEarthquakes(
         existing = findQuakeCardForHoldBack(quake, index)
         resolved = true
         // 取消は内容の更新ではなくカードを消す操作なので、据え置き判定の対象外。
+        // **既存カードは同じティックの写しから引く**（`findQuakeCardForHoldBack`）。`stateRef` だけを
+        // 見ると鮮度が足りず、取消を処理した直後に**取消前のカードを既存として拾って**「画面には
+        // 新しいカードが出ているのに声だけ止まる」逆向きの食い違いを作る。
         if (!isSilentRef.current && !event.cancelled) {
           quakeHeldBack = isQuakeReportHeldBack(existing, quake, quakeRetracted)
         }
@@ -1973,42 +1937,13 @@ export function useEarthquakes(
     }
 
     // 556（EEW）: 最終報受信時、解除時刻にキャンセルイベントをキューへ挿入する。
-    // standard版の Yahoo hypoInfo 経由 EEW は useKyoshinRealtime 側の消滅検出（diffHypoInfoEvents）
-    // でも独立に解除イベントが発生しうるため、同一 eventId に対しここでのタイマー式解除と
-    // 二重に発火することがある。2発目は activeEEWs から既に消えているため
-    // useEarthquakes/useLiveEventHandler の hadKey チェックで無視される（意図した重複）。
+    // 強震モニタ（Yahoo hypoInfo）経由の最終報もここで予約する。一覧から消えたことによる自動解除（`diffHypoInfoEvents`）も
+    // 入口の先頭で同じ待ち行列へ積むので、同一 eventId へ予約が 2 つ以上積まれることがある。2 つ目以降は activeEEWs から
+    // 既に消えているので useEarthquakes/useLiveEventHandler の hadKey チェックで無視される（意図した重複）。
     //
-    // **最終報を名乗らない経路（P2PQuake）は、受けるたびに見張りの解除を予約し直す。**
-    // P2PQuake の 556 は最終報の印を運ばないので、Yahoo が拾わなかった速報（Yahoo の取得が
-    // 止まっているときなど）は解除の予約が 1 つも積まれず、画面に残り続けていた。見張りは
-    // 発火した時点で台帳を見て、**どの経路からでも**より新しい報を受けていれば、その報から
-    // 張り直す（`eew-watch-expiry`）。捨てると、Yahoo の続報のあと Yahoo の取得が止まった
-    // ときに解除の予約が 1 つも残らない。比べるのは受理した回数で、発表時刻や報番号は見ない
-    // （どちらも読めない報がある）。DMDATA には広げない（2026-10-14 ユーザー承認「解除の予約も続報の
-    // 音・声も直す」の説明「見張りの解除は P2PQuake に限る」）—— あちらは最終報を名乗る。
     if (event.kind === 'eew') {
       const eew = event as EEWAlert
       const basis = eewMerged ?? eew
-      if (!eew.cancelled && !eew.test && !eew.isFinal && eew.origin === 'p2pquake') {
-        const key = eewEventKey(eew)
-        const acceptance = eewAcceptanceRef.current.get(key)
-        // 起点は受理した中でいちばん新しい発表時刻（遅れて届いた報で補ったときは、この報より新しい）。
-        const issueMs = acceptance?.latestIssueMs ?? eewIssueTimeMs(eew)
-        const cancelTime = calcEEWCancelTime(basis, new Date(issueMs ?? Number.NaN))
-        if (!Number.isFinite(cancelTime.getTime())) {
-          log.error('[eew] 発表時刻も震源時刻も読めないため見張りの解除を予約できません（取消が来るまで表示が残ります）'
-            + ` id=${eew.id} eventId=${eew.issue?.eventId ?? '(なし)'}`
-            + ` time="${eew.issue?.time ?? eew.time}" originTime="${eew.earthquake.originTime}"`)
-        } else {
-          const receipts = acceptance?.receipts ?? 0
-          eewWatchReceiptsRef.current.set(key, receipts)
-          eventQueueRef.current.push({
-            eventTime: cancelTime,
-            payload: { kind: 'eew-watch-expiry', key, receipts },
-            logEntry: null,
-          })
-        }
-      }
       if (!eew.cancelled && !eew.test && eew.isFinal) {
         const cancelTime = calcEEWCancelTime(basis, new Date(eew.time))
         // **予約できなかったことを、この経路の言葉で残す。** キューは発火時刻が読めない
@@ -2032,57 +1967,24 @@ export function useEarthquakes(
       }
     }
 
-    // 地震情報（551）の震度キャッシュ更新は setState の外で行う
+    // 地震情報（551）の震度の控えと取消の台帳は setState の外で進める
     if (event.kind === 'quake') {
       const quake = event as JMAQuake
-      // キャッシュのキーはイベントの安定キー。DMDATA は eventId なので全報で一致する。
-      // P2PQuake は報ごとに別キーになるためこのキャッシュは実質効かず、通常経路では
-      // mergeQuakeInto（既存カードの震度で埋める）が同じ補完を担う。ただし対象カードが
-      // 既に消えている場合（取消の 10 秒後 purge など）はどちらも効かず震度は欠落する。
-      // ここを earthquake.time に戻すと、同じ分に起きた別の地震の震度を引いてしまう。
-      const cacheKey = quakeEventKey(quake)
-      // VXSE51 の震度データをキャッシュ（後続 VXSE52 への補完用）。
-      // **据え置き（`quakeHeldBack`）・取消より前に発表された報（`quakeRetracted`）は書かない。**
-      // どちらもカードが内容を採らない・採れない電文で、書くと裏口からカードへ入り込む——
-      // 据え置かれた震度速報 B の points がキャッシュへ残ったまま、後続の震源情報（震度を
-      // 持たない）が `fillIntensityFromCache` で B を取り込むと `hasIntensity(incoming)` が
-      // 真になり、`mergeQuakeInto` の「既存の震度で補完する」分岐を通らず、カード側は正しく
-      // 据え置いた A の points ではなく B の points をそのまま採用してしまう
-      // （既存カードが完全版なら `isSupersededByExistingCard` が先に守るが、震度速報の段階
-      // では守りが無い）。
-      if (!quakeHeldBack && !quakeRetracted
-        && quake.issue.type === '震度速報' && quake.earthquake.maxScale >= 0) {
-        quakeIntensityCacheRef.current.set(cacheKey, {
-          maxScale: quake.earthquake.maxScale,
-          points: quake.points,
-          report: { time: quake.time, ...(quake.createdAtMs !== undefined && { createdAtMs: quake.createdAtMs }) },
-        })
-      }
-      // 取消を見た事実も**入口で**台帳へ積む（EEW 側の台帳と同じ置き方）。`setState` の更新関数は
+      // 取消を見た事実は**入口で**台帳へ積む（EEW 側の台帳と同じ置き方）。`setState` の更新関数は
       // 再実行されうるため、そこに副作用を置くと同じ記録が二重に積まれ、台帳の実効容量が縮む。
-      if (quake.cancelled) {
-        // 当たったカードを渡せると照合の材料が揃う（理由は `QuakeRetraction`）。当たり先は入口で
-        // 決めたもの（`quakeCancel`。写しも見ている）を使う。決められなかったときだけ状態から引く。
-        const target = quakeCancel?.target ?? findQuakeCancelTarget(stateRef.current.earthquakes, quake, getAreaPrefIndexCache())
-        rememberQuakeRetraction(quakeRetractionOf(quake, target))
-        // **震度速報の取消なら、その震度の控えも捨てる。** 残すと、取消の後に届く震度を持たない報
-        // （震源情報）が取り消された震度で埋め戻される。鍵は電文とカードの両方で引く（暫定 EventID の
-        // 付け替えでカードの鍵が電文と違うことがある。→ `quakeEventKey`）。
-        // **捨てるのは取消より前に発表された震度速報の控えだけ**（カードへの当て方と同じ規則）。
-        // 取消の後に発表し直された震度速報が先に届いて控えられていれば、それは残す。
-        if (quake.issue.type === '震度速報') {
-          const keys = new Set([cacheKey, ...(target ? [quakeEventKey(target)] : [])])
-          for (const key of keys) {
-            const cached = quakeIntensityCacheRef.current.get(key)
-            if (cached && (!quake.time || compareReportAge(cached.report, quake) <= 0)) quakeIntensityCacheRef.current.delete(key)
-          }
-        }
-      }
+      // 当たったカードを渡せると照合の材料が揃う（理由は `QuakeRetraction`）。当たり先は入口で
+      // 決めたもの（`quakeCancel`。写しも見ている）を使う。決められなかったときだけ状態から引く。
+      const cancelTarget = quake.cancelled
+        ? quakeCancel?.target ?? findQuakeCancelTarget(stateRef.current.earthquakes, quake, getAreaPrefIndexCache())
+        : undefined
+      if (quake.cancelled) rememberQuakeRetraction(quakeRetractionOf(quake, cancelTarget))
+      // 震度速報の震度を控える・取り消された震度速報の控えを捨てる（規則は `noteQuakeIntensity`）
+      noteQuakeIntensity(quakeIntensityCacheRef.current, quake, { heldBack: quakeHeldBack, retracted: quakeRetracted, cancelTarget })
     }
 
     // 津波: 期限切れ時刻に失効のイベント（`cancelReason: 'expired'`）をキューへ積む。
     //
-    // **DMDSS 版は「この報を当てたあとの津波」の期限で決める**（`stepTsunamiState`。状態更新と同じ答え）。
+    // **「この報を当てたあとの津波」の期限で決める**（`stepTsunamiState`。状態更新と同じ答え）。
     // 届いた報の期限だけを見ると、状態が報の種類ごとに決め直す期限と食い違う —— 期限を載せない
     // 津波警報・注意報（VTSE41）で状態の期限は消えるのに古い予約が残って注意報の発表中に「失効」する、
     // 津波情報だけの取消で予約がすべて外れて予報が失効しない、の 2 つが起きていた。
@@ -2090,15 +1992,11 @@ export function useEarthquakes(
     //
     // **`stateRef` はレンダー待ちで同じティックの間は進まない**（下の EEW の分岐に理由）。同じティックに
     // 津波の報が同じ周回に続けて届いたときの土台は、下の `expiryBasisRef` の注記。
-    //
-    // TSU-5A: standard 版（P2PQuake）は API 仕様上 validDateTime を持たないため、解除電文が届かない
-    // 例外ケースに備えて 24h 後の自動非表示フェイルセーフを積む（この経路は従来どおり届いた報で決める。
-    // 識別子も種類も無いので、当てたあとの津波を求めても答えが変わらない）。
     if (event.kind === 'tsunami') {
       const tsunami = event as JMATsunami
       const now = getTimeRef.current()
       // 失効の予約を積む（既に過ぎていれば、初期状態の再現に限りその場で失効させる）
-      const pushExpiry = (expireTime: Date, base: JMATsunami, failsafe: boolean) => {
+      const pushExpiry = (expireTime: Date, base: JMATsunami) => {
         // 初期状態の再現では、遡り幅（24 時間）の境目ぶんだけ「発表から 24 時間を過ぎた」
         // 電文が紛れうる。未来の予約しか積まないと、そういう津波は失効予約を持たないまま
         // 画面に残り、リプレイ中はライブ更新も止まっているので消す手段が無くなる。
@@ -2109,15 +2007,13 @@ export function useEarthquakes(
             eventTime: alreadyExpired ? now : expireTime,
             silent: alreadyExpired ? true : undefined,
             // 畳んだ報（`foldedReports`）は失効の判定に要らないので持ち回さない。
-            // 標準版の安全弁で積んだ消去には印を付ける（→ `JMATsunami.failsafeExpiry`。「失効」と名乗らずに畳む）。
-            payload: { kind: 'event', event: { ...base, foldedReports: undefined, cancelled: true, cancelReason: 'expired', ...(failsafe && { failsafeExpiry: true as const }) } as AppEvent },
+            payload: { kind: 'event', event: { ...base, foldedReports: undefined, cancelled: true, cancelReason: 'expired' } as AppEvent },
             logEntry: null,
           })
         }
       }
       // 津波は「常に 1 件スロット」（tsunami-spec §5・TSU-3）で管理されるため、expired 予約は最新 1 件だけ
-      // 残せば充分。P2PQuake 経路は eventId が無く id も続報ごとに変わるため、id/eventId 一致条件を課すと
-      // 古い予約が消えず積み上がる問題があった。
+      // 残せば充分。
       const purgeExpiry = () => eventQueueRef.current.retain(entry => {
         if (entry.payload.kind !== 'event') return true
         const ev = entry.payload.event
@@ -2134,52 +2030,28 @@ export function useEarthquakes(
         log.warn(`[tsunami] 有効期限を日時として読めないため失効予約を積みません: id=${t.id} validDateTime=${t.validDateTime}`)
         return null
       }
-      if (isDmdss) {
-        // **土台は「この周回で直前に当てた結果」。** `stateRef` は描き直しのたびにしか進まないので、同じ周回に
-        // 2 通目が届くと 1 通目を当てる前の津波のままになる。それを土台にすると、1 通目（期限なしの注意報）で
-        // 外した予約を 2 通目（津波情報）が古い予報の期限で積み直し、注意報の発表中に失効する。
-        // `stateRef` が直前の判定から動いていなければ（＝まだ描き直していない）、自分が当てた結果を使う。
-        // 動いていれば状態更新のほうが新しい（解除表示の片付け・リプレイの初期化を含む）ので、そちらに従う。
-        const shown = stateRef.current.tsunamis[0]
-        const pending = expiryBasisRef.current
-        const base = pending && pending.shownAtStep === shown ? pending.tsunami : shown
-        const step = stepTsunamiState(base, tsunami, now)
-        if (step.kind !== 'ignored') {
-          expiryBasisRef.current = { shownAtStep: shown, tsunami: step.kind === 'live' ? step.tsunami : undefined }
-          // 起動時履歴の取り込みが、これより古い報で津波を書き換えないように覚えておく（→ `liveTsunamiSeenKeyRef`）。
-          // **状態を変えなかった報（`ignored`）では進めない。** 履歴の取得中は表示中の津波が無いので、一部取消などは
-          // 何も当たらずに捨てられる。それで鍵だけ進めると、取り消されていない履歴の津波まで当たらなくなる。
-          // 時刻を読めない報（鍵が非有限）は覚えない。パーサーが津波の日時を入口で確かめるので、ライブでは届かない
-          const seenKey = reportOrderKey(tsunami)
-          if (Number.isFinite(seenKey) && seenKey > liveTsunamiSeenKeyRef.current) liveTsunamiSeenKeyRef.current = seenKey
-        }
-        if (step.kind !== 'ignored') {
-          purgeExpiry()
-          const expireTime = step.kind === 'live' ? parseValid(step.tsunami) : null
-          if (step.kind === 'live' && expireTime) pushExpiry(expireTime, step.tsunami, false)
-        }
-      } else {
-        let expireTime: Date | null = null
-        // 実際の失効時刻（中継などで `validDateTime` が届いた報）なら、その時刻で「失効」と名乗る。安全弁は名乗らない。
-        let failsafe = false
-        if (!tsunami.cancelled) {
-          expireTime = parseValid(tsunami)
-          if (!expireTime) {
-            failsafe = true
-            const FAILSAFE_MS = 24 * 60 * 60 * 1000
-            // 初期状態の再現（silent 注入）では、過去に発表された電文をまとめて「いま」流し直す。
-            // 受信時刻を基準にすると、20 時間前に出ていた津波が再生開始からさらに 24 時間残り、
-            // 実際の失効タイミングとずれる。この経路だけは発表時刻を基準にする。
-            const issuedAt = new Date(tsunami.time)
-            const baseMs = isSilentRef.current && Number.isFinite(issuedAt.getTime())
-              ? issuedAt.getTime()
-              : now.getTime()
-            expireTime = new Date(baseMs + FAILSAFE_MS)
-          }
-        }
-        // 明示解除電文でも purge するのは、TSU-5A の 24h 予約を解決済み津波に対して発火させないため。
-        if (tsunami.cancelled || expireTime) purgeExpiry()
-        if (expireTime) pushExpiry(expireTime, tsunami, failsafe)
+      // **土台は「この周回で直前に当てた結果」。** `stateRef` は描き直しのたびにしか進まないので、同じ周回に
+      // 2 通目が届くと 1 通目を当てる前の津波のままになる。それを土台にすると、1 通目（期限なしの注意報）で
+      // 外した予約を 2 通目（津波情報）が古い予報の期限で積み直し、注意報の発表中に失効する。
+      // `stateRef` が直前の判定から動いていなければ（＝まだ描き直していない）、自分が当てた結果を使う。
+      // 動いていれば状態更新のほうが新しい（解除表示の片付け・リプレイの初期化を含む）ので、そちらに従う。
+      const shown = stateRef.current.tsunamis[0]
+      const pending = expiryBasisRef.current
+      const base = pending && pending.shownAtStep === shown ? pending.tsunami : shown
+      const step = stepTsunamiState(base, tsunami, now)
+      if (step.kind !== 'ignored') {
+        expiryBasisRef.current = { shownAtStep: shown, tsunami: step.kind === 'live' ? step.tsunami : undefined }
+        // 起動時履歴の取り込みが、これより古い報で津波を書き換えないように覚えておく（→ `liveTsunamiSeenKeyRef`）。
+        // **状態を変えなかった報（`ignored`）では進めない。** 履歴の取得中は表示中の津波が無いので、一部取消などは
+        // 何も当たらずに捨てられる。それで鍵だけ進めると、取り消されていない履歴の津波まで当たらなくなる。
+        // 時刻を読めない報（鍵が非有限）は覚えない。パーサーが津波の日時を入口で確かめるので、ライブでは届かない
+        const seenKey = reportOrderKey(tsunami)
+        if (Number.isFinite(seenKey) && seenKey > liveTsunamiSeenKeyRef.current) liveTsunamiSeenKeyRef.current = seenKey
+      }
+      if (step.kind !== 'ignored') {
+        purgeExpiry()
+        const expireTime = step.kind === 'live' ? parseValid(step.tsunami) : null
+        if (step.kind === 'live' && expireTime) pushExpiry(expireTime, step.tsunami)
       }
     }
 
@@ -2206,7 +2078,9 @@ export function useEarthquakes(
               if (effect.kind === 'partial') {
                 // 当て直しは借りた震源・津波区分を持たない（控えの電文から組み直すため）。
                 // 通常の続報と同じく、統合の後で借り直す（→ 下の `withBorrowedFromTsunami`）。
-                const card = withBorrowedFromTsunami(effect.card, prev.tsunamis, prev.earthquakes)
+                const card = withLatestQuakeFacts(
+                  withBorrowedFromTsunami(effect.card, prev.tsunamis, prev.earthquakes), prev.lpgmByEventId, prev.estimatedIntensities,
+                  prev.tsunamis, prev.earthquakes)
                 // 当て直したカードの姿を記憶へ写す（履歴の同じ分岐と揃える。写すのは借り直した後の
                 // 画面に出る値）。**印は出さない** —— 取り消されて消えた値は「いま動いた」ではない。
                 markMemory ??= new Map(prev.quakeMarkMemory)
@@ -2275,16 +2149,21 @@ export function useEarthquakes(
           // **据え置き（`mergedCard === existing`）の経路は上で抜けている** —— そこで借りると
           // 中身が同じでも参照だけが変わり、「変化なし＝同一参照」の約束が崩れる。
           // 津波が後から届く順序は、下の 'tsunami' 側が拾う。
-          const merged = withBorrowedFromTsunami(mergedCard, prev.tsunamis, prev.earthquakes)
+          // 長周期・推計が、届いた地震情報より新しい値を運んでいれば上段へ当てる（→ `utils/latestQuakeFacts.ts`）
+          const merged = withLatestQuakeFacts(
+            withBorrowedFromTsunami(mergedCard, prev.tsunamis, prev.earthquakes), prev.lpgmByEventId, prev.estimatedIntensities,
+            prev.tsunamis, prev.earthquakes)
           // 統合の結果、暫定 ID で作られたカードが確定 ID を持つカードと重複することがある。
           // 履歴経路（mergeQuakeHistory）と同じ畳み込みをここでも通す（理由は coalesceByEventId）。
           //
           // **取消表示中のカードは差し替えの対象から外す（残す）。** ここで落とすと 10 秒表示を
           // 待たずに消え、しかも purge 予約（`id` で対象を引く）が空振りする。
-          const next = coalesceByEventId([
+          //
+          // 畳むときの統合（`mergeQuakeInto`）は当てた値を外すので、畳んだ後に当て直す（履歴の組み直しと同じ順）
+          const next = latestQuakeFactsIntoCards(coalesceByEventId([
             merged,
             ...prev.earthquakes.filter(e => e.cancelledAt || !sameQuakeEntry(e, quake, getAreaPrefIndexCache())),
-          ])
+          ]), prev.lpgmByEventId, prev.estimatedIntensities, prev.tsunamis)
           // カードの更新の印。**併合が済んだここで取る** —— 続報の持ち越し規則（§6.4）を
           // 適用したあとの「画面に出ている値」どうしを比べたいので、電文の側では取れない。
           // 受信ハンドラ（`useLiveEventHandler`）はこの統合より前に呼ばれるため、あちらでも取れない。
@@ -2329,21 +2208,52 @@ export function useEarthquakes(
           // **報を当てた結果は `stepTsunamiState` が決める**（失効予約の積み直しと同じ答えを使うため。
           // 片方だけ書き換えると、画面の津波と失効の予約が別の期限で動く）。
           const step = stepTsunamiState(current, tsunami, now)
-          if (step.kind === 'ignored') return prev
+          // **届いた報が取消なら、どの分岐でもその報自身を当て込みに見せる。** 表示中の津波に当たらない取消（解除・失効の後に
+          // 届いた・別の津波の取消・一部取消で組み直した）でも、その津波から当てて覚えていた値を捨てる（→ `JMAQuake.appliedTsunamiSource`）。
+          // 一部取消で組み直した津波が原因地震を持てば、その値で当て直す
+          const retraction: JMATsunami[] = tsunami.cancelReason === 'retracted' ? [tsunami] : []
+          // 津波の一覧を入れ替えたら、地震カードの上段を当て直す（借りる → 当てる の順。地震情報の受信・履歴の組み直しと同じ）。
+          // **津波の続報だけでなく、取消・解除・失効でも通す。** 取消で当てていた値を戻すのも、続報で動いた値に更新の印を付けるのも
+          // ここでしか起きない（→ `utils/latestQuakeFacts.ts`）。`seen` は当て込みが見る津波の一覧で、状態に残す一覧と違うことがある
+          const withTsunamiFacts = (tsunamis: JMATsunami[], shown: JMATsunami[] = tsunamis): EarthquakeState => {
+            const seen = [...shown, ...retraction]
+            const borrowed = borrowFromTsunamiIntoCards(prev.earthquakes, seen)
+            // **印付けが投げても一覧の更新は通す**（長周期の経路と同じ。`setState` の更新関数の中で投げると画面ごと落ちる）
+            try {
+              return {
+                ...prev,
+                tsunamis,
+                ...applyLatestFactsWithMarks(
+                  { earthquakes: borrowed, quakeUpdateMarks: prev.quakeUpdateMarks, quakeMarkMemory: prev.quakeMarkMemory },
+                  prev.lpgmByEventId, prev.estimatedIntensities, seen, Date.now(),
+                ),
+                lastUpdate: now,
+              }
+            } catch (err) {
+              log.error('[tsunami] 地震カードの上段を当て直す印を付けられなかった（津波は更新した）', { id: tsunami.id, err })
+              return {
+                ...prev, tsunamis, lastUpdate: now,
+                earthquakes: latestQuakeFactsIntoCards(borrowed, prev.lpgmByEventId, prev.estimatedIntensities, seen),
+              }
+            }
+          }
+          // 無視した取消でも当て直す（取り消された津波から当てた値を捨てるため）。**地震カードが変わらなければ状態ごと据え置き、
+          // 変わっても津波の一覧と「更新」の時刻には触らない** —— 津波には何も起きていない
+          if (step.kind === 'ignored') {
+            if (retraction.length === 0) return prev
+            const refit = withTsunamiFacts(prev.tsunamis as JMATsunami[])
+            if (refit.earthquakes === prev.earthquakes) return prev
+            return { ...refit, tsunamis: prev.tsunamis, lastUpdate: prev.lastUpdate }
+          }
           if (step.kind === 'ended') {
             if (step.reason === 'retractedAll') {
               // 津波情報・沖合の観測だけの取消で、組み立てに使った報がその種類だけだった（警報等を受けていない）。
               log.warn(`[tsunami] ${tsunami.headType} の取消で組み直す報が残らないため、津波を外します: id=${current?.id}`)
-              return { ...prev, tsunamis: [], lastUpdate: now }
+              // 一覧からは外すが、当て込みには「取り消された」ことを見せる。見せないと、当てていた津波の値を覚えたまま残す
+              // （一覧に無いだけの津波は、解除・失効と区別が付かない → `JMAQuake.appliedTsunamiSource`）
+              return withTsunamiFacts([], current ? [{ ...current, cancelledAt: now, cancelReason: 'retracted' }] : [])
             }
-            if (step.reason === 'outdated') return { ...prev, tsunamis: [], lastUpdate: now }
-            // **標準版の 24 時間の安全弁は帯を出さずに消す**（→ `JMATsunami.failsafeExpiry`）。気象庁が言っていない時刻に
-            // 「津波予報 失効」と出すと、発表値の顔で推測を並べることになる。タイトルも、解除の表示を経ずに消えた津波として
-            // 終わりの語を出さない（`App.tsx` の `findEndedTsunami`）。
-            if (tsunami.failsafeExpiry) {
-              log.info(`[tsunami] 標準版の安全弁（24 時間）で津波を外します（失効とは名乗らない）: id=${current?.id}`)
-              return { ...prev, tsunamis: [], lastUpdate: now }
-            }
+            if (step.reason === 'outdated') return withTsunamiFacts([])
             // 解除・取消・期限切れのいずれも同じ10秒表示を経る。表示内容は cancelReason で出し分ける（TsunamiTab側）。
             if (current && !current.cancelledAt) {
               // TSU-4: purge 予約に対象 id を持たせ、他イベントが後で置換した場合に誤って
@@ -2358,19 +2268,15 @@ export function useEarthquakes(
               // その報だけが持つ項目は名指しで移さないと落ちる（`cancelText` は気象庁が書いた取消しの
               // 理由、`liftText` は全区域解除の報に気象庁が書いた文で、どちらも他のどこにも無い）。
               const liftText = tsunami.cancelReason === 'lifted' ? tsunamiLiftText(tsunami) : undefined
-              return {
-                ...prev,
-                tsunamis: [{
-                  ...current,
-                  cancelledAt: now,
-                  cancelReason: tsunami.cancelReason,
-                  ...(tsunami.cancelText && { cancelText: tsunami.cancelText }),
-                  ...(liftText && { liftText }),
-                }],
-                lastUpdate: now,
-              }
+              return withTsunamiFacts([{
+                ...current,
+                cancelledAt: now,
+                cancelReason: tsunami.cancelReason,
+                ...(tsunami.cancelText && { cancelText: tsunami.cancelText }),
+                ...(liftText && { liftText }),
+              }])
             }
-            return { ...prev, tsunamis: [], lastUpdate: now }
+            return withTsunamiFacts([])
           }
           // 番号が 1 つも重ならない津波が、表示中の津波の解除を待たずに届いた。
           //
@@ -2384,15 +2290,10 @@ export function useEarthquakes(
           // 続報の引き継ぎ（観測のみ電文で区域を保つ・観測点のマージ等）は `mergeTsunamiReports` の 1 箇所に
           // ある（`stepTsunamiState` 経由）。ここへ書き写すと、履歴からの復元（`withInheritedTsunamiFacts`）との
           // 間で片方だけに項目が足され、「ライブ受信では出るのにリロードすると消える」形の欠落が生まれる。
-          return {
-            ...prev,
-            tsunamis: [step.tsunami],
-            // 津波が先に震源を伝える順序を拾う（→ `borrowFromTsunamiIntoCards`）。続報でも配り直すのは、
-            // 津波電文の震源が更新されるため（能登では 16:22 に Ｍ７．４→Ｍ７．６。地震情報が同じ更新を
-            // 伝えるのは 2 分後の 16:24）。
-            earthquakes: borrowFromTsunamiIntoCards(prev.earthquakes, [step.tsunami]),
-            lastUpdate: now,
-          }
+          // 津波が先に震源を伝える順序を拾う（→ `borrowFromTsunamiIntoCards`）。続報でも配り直すのは、
+          // 津波電文の震源が更新されるため（能登では 16:22 に Ｍ７．４→Ｍ７．６。地震情報が同じ更新を
+          // 伝えるのは 2 分後の 16:24）。震源を持つカードにも、津波のほうが新しければ当てる（→ `withTsunamiFacts`）
+          return withTsunamiFacts([step.tsunami])
         }
         case 'eew': {
           const eew = event as EEWAlert
@@ -2430,7 +2331,7 @@ export function useEarthquakes(
           // ディスパッチャは 1 ティックで複数のイベントを処理し、その間 `stateRef` は
           // レンダー待ちで進まないため、入口だけでは同じティックに積まれた報を取りこぼす。
           // 記録は入口に集約する（setState は再実行されうるので副作用を持たせない）。
-          // 遅れて届いた P2PQuake の報（`eewSupplement`）は古いのが前提なので、この判定を通さず補う。
+          // 遅れて届いた DMDATA の電文（`eewSupplement`）は古いのが前提なので、この判定を通さず補う。
           if (existing && isOlderEewReport(existing, eew) && !eewSupplement) return prev
           // **取消は終端。非取消の報で復活させない。** 取消電文は報番号の台帳を進めず
           // （入口のガードは `!incoming.cancelled` のときだけ記録する）、状態側も取消前の
@@ -2497,7 +2398,7 @@ export function useEarthquakes(
     }
     prevActiveEewKeysRef.current = new Map(state.activeEEWs)
     eewExpiringRef.current.clear()
-    for (const ledger of [eewAcceptanceRef.current, eewLatestRef.current, eewWatchReceiptsRef.current, eewFirstIssueTimeRef.current]) {
+    for (const ledger of [eewAcceptanceRef.current, eewLatestRef.current, eewFirstIssueTimeRef.current]) {
       for (const key of [...ledger.keys()]) {
         if (!state.activeEEWs.has(key)) ledger.delete(key)
       }
@@ -2528,7 +2429,16 @@ export function useEarthquakes(
         if (payload.kind === 'event') {
           // 自動解除（最終報から積んだ `expired` の取消）は、その地震の揺れ検知の束にまだ点が加わっていれば待たせる
           // （eew-spec §7「検知が広がっている間は待つ」）。待つ先は最後の追加から 30 秒・式の時刻から 5 分まで
-          const ev = payload.event
+          let ev = payload.event
+          if (ev.kind === 'eew' && ev.vanishedFromList) {
+            // 強震モニタの一覧から消えたことで積んだ予約。後から新しい報を採っていれば捨てる（→ `eewVanishPendingRef`）
+            const vanishKey = eewEventKey(ev)
+            if (eewVanishPendingRef.current.get(vanishKey) !== ev.time) {
+              log.debug(`[eew] 一覧から消えた後に新しい報を採ったので、消えたことによる自動解除を捨てる: key=${vanishKey}`)
+              isSilentRef.current = false
+              continue
+            }
+          }
           if (ev.kind === 'eew' && ev.expired) {
             const key = eewEventKey(ev)
             const shown = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
@@ -2536,12 +2446,14 @@ export function useEarthquakes(
             // ここで消すと取消の表示が途中で消える）
             if (shown && (shown.cancelled || shown.cancelledAt) && !shown.expired) {
               log.debug(`[eew] 誤報取消を受けた後の自動解除は捨てる: key=${key}`)
+              eewVanishPendingRef.current.delete(key)
               isSilentRef.current = false
               continue
             }
             // 画面に無い（別の経路が先に消した）なら待たない
             if (shown) {
-              const decision = decideExpirySafely(key, () => decideFinalReportExpiry(ev, now.getTime(), eewSpreadLogRef.current))
+              const expiring = ev
+              const decision = decideExpirySafely(key, () => decideFinalReportExpiry(expiring, now.getTime(), eewSpreadLogRef.current))
               if (decision.kind === 'hold') {
                 eventQueueRef.current.push({ ...entry, eventTime: new Date(decision.untilMs), logEntry: null })
                 log.debug(`[eew] 揺れ検知が広がっているので自動解除を待つ: key=${key} 解除=${new Date(decision.untilMs).toISOString()}`)
@@ -2552,6 +2464,11 @@ export function useEarthquakes(
             } else {
               log.debug(`[eew] 自動解除: 表示に無いので揺れ検知は見ない key=${key}`)
             }
+          }
+          if (ev.kind === 'eew' && ev.vanishedFromList) {
+            // 当てる直前に印を外す（付けたまま渡すと入口がまた予約として積む）
+            eewVanishPendingRef.current.delete(eewEventKey(ev))
+            ev = { ...ev, vanishedFromList: undefined }
           }
           handleEvent(ev)
         } else if (payload.kind === 'lpgm') {
@@ -2622,56 +2539,6 @@ export function useEarthquakes(
               quakeMarkMemory: new Map([...prev.quakeMarkMemory].filter(([k]) => live.has(k))),
             }
           })
-        } else if (payload.kind === 'eew-watch-expiry') {
-          const { key } = payload
-          const shown = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
-          if (eewWatchReceiptsRef.current.get(key) !== payload.receipts) {
-            // P2PQuake の新しい報が見張りを張り直した。生きているのはそちら。
-            log.debug(`[eew] 見張りの解除を捨てた（後から張り直した見張りがある）: key=${key}`)
-          } else if (!shown || shown.cancelled || shown.cancelledAt) {
-            eewWatchReceiptsRef.current.delete(key)
-            log.debug(`[eew] 見張りの解除を捨てた（既に消えている・取り消されている）: key=${key}`)
-          } else {
-            const acceptance = eewAcceptanceRef.current.get(key)
-            if (acceptance && acceptance.receipts > payload.receipts) {
-              // **経路をまたいで見る** —— Yahoo が続報を出し続けている間にこの見張りが発火すると、
-              // まだ発表中の速報を消し、次の Yahoo の報で「新規発表」として鳴り直す。捨てずに、
-              // いちばん新しい報から測り直す（Yahoo の取得が止まったら、そこから解除される）。
-              const cancelTime = calcEEWCancelTime(shown, new Date(acceptance.latestIssueMs ?? Number.NaN))
-              if (Number.isFinite(cancelTime.getTime())) {
-                eewWatchReceiptsRef.current.set(key, acceptance.receipts)
-                eventQueueRef.current.push({
-                  eventTime: cancelTime,
-                  payload: { kind: 'eew-watch-expiry', key, receipts: acceptance.receipts },
-                  logEntry: null,
-                })
-                log.debug(`[eew] 見張りの解除を新しい報から張り直した: key=${key} 解除=${cancelTime.toISOString()}`)
-              } else {
-                // 張り直す時刻が読めない。残すと取消が来るまで画面に居座るので、ここで解除する。
-                log.error(`[eew] 見張りの解除を張り直す時刻が読めないため、いま解除します: key=${key}`)
-                eewWatchReceiptsRef.current.delete(key)
-                handleEvent({ ...shown, cancelled: true, expired: true })
-              }
-            } else {
-              // 揺れ検知の束がまだ広がっていれば待つ（最終報から積んだ自動解除と同じ判断。式の時刻は見張りを積んだときと同じ起点で求める）
-              const decision = decideExpirySafely(key, () => {
-                const formulaMs = calcEEWCancelTime(shown, new Date(acceptance?.latestIssueMs ?? eewIssueTimeMs(shown) ?? Number.NaN)).getTime()
-                return decideEewExpiry(formulaMs, now.getTime(), eewSpreadLogRef.current.lastSpreadMs(shown))
-              })
-              if (decision.kind === 'hold') {
-                eventQueueRef.current.push({
-                  eventTime: new Date(decision.untilMs),
-                  payload: { kind: 'eew-watch-expiry', key, receipts: payload.receipts },
-                  logEntry: null,
-                })
-                log.debug(`[eew] 揺れ検知が広がっているので見張りの解除を待つ: key=${key} 解除=${new Date(decision.untilMs).toISOString()}`)
-              } else {
-                logEewExpiry(key, decision)
-                eewWatchReceiptsRef.current.delete(key)
-                handleEvent({ ...shown, cancelled: true, expired: true })
-              }
-            }
-          }
         } else if (payload.kind === 'purge-cancelled-eew') {
           const { key } = payload
           setState(prev => {
@@ -2691,7 +2558,7 @@ export function useEarthquakes(
           })
         } else if (payload.kind === 'kohatsu') {
           const kohatsu = payload.data
-          const otherUnit = cancelOverOtherUnit(shownKohatsuEventIdRef.current, kohatsu)
+          const otherUnit = cancelOverOtherUnitInList(bandListsRef.current.kohatsu.map(k => k.eventId), kohatsu)
           const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), silent, otherUnit)
           if (decision === 'dispatch') {
             onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
@@ -2728,8 +2595,20 @@ export function useEarthquakes(
             recordSkippedTelegram({ kind: 'estimatedIntensity', data: ei }, applied ? 'silentReplayInit' : 'notApplied')
           }
         } else if (payload.kind === 'internationalTsunami') {
-          // 画面（遠地地震のカード）へ足すだけ。`onLiveEvent` へは流さない（音・読み上げ・通知が無い）
-          applyInternationalTsunami(payload.data)
+          // 一覧へ新しく足せた報だけ `onLiveEvent` へ流す（読み上げ・通知・音はその先）。同じ報の 2 度目は流さない
+          const intl = payload.data
+          const applied = applyInternationalTsunami(intl)
+          if (applied && !silent) {
+            onLiveEventRef.current?.({ kind: 'internationalTsunami', data: intl })
+          } else {
+            recordSkippedTelegram({ kind: 'internationalTsunami', data: intl }, applied ? 'silentReplayInit' : 'notApplied')
+          }
+        } else if (payload.kind === 'logOnly') {
+          // 電文ログへは上で積んだ。画面へは何も流さない（取り込まない電文・読めなかった電文の行）
+        } else {
+          // 種別を足して分岐を書き忘れたら、型検査がここで落とす
+          const unhandled: never = payload
+          log.error('[queue] 振り分けの無い種別のエントリを捨てた', { kind: (unhandled as { kind?: unknown }).kind })
         }
         isSilentRef.current = false
       }
@@ -2738,27 +2617,18 @@ export function useEarthquakes(
   }, [handleEvent])
 
   // アンマウント時にタイマーとキューをクリア。
-  // 7日タイマーは 4 つある（後発地震・南海トラフ関連解説情報・地震津波に関するお知らせ・地震回数）。
-  // **1 つでも落とし忘れると**、残った側が最大7日後にアンマウント済みのクロージャの setState を呼ぶ。
+  // 帯の期限の予約（後発地震・南海トラフ関連解説情報・地震津波に関するお知らせ・地震回数の 4 種）も落とす。
+  // **落とし忘れると**、最大7日後にアンマウント済みのクロージャの setState を呼ぶ。
   useEffect(() => {
+    const bandExpireTimers = bandExpireTimersRef.current
     return () => {
-      if (kohatsuExpireTimerRef.current !== undefined) {
-        window.clearTimeout(kohatsuExpireTimerRef.current)
-      }
-      if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-        window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-      }
-      if (quakeNoticeExpireTimerRef.current !== undefined) {
-        window.clearTimeout(quakeNoticeExpireTimerRef.current)
-      }
-      if (earthquakeCountExpireTimerRef.current !== undefined) {
-        window.clearTimeout(earthquakeCountExpireTimerRef.current)
-      }
+      clearBandExpireTimers(bandExpireTimers)
       // テストボタンが張った待ちも全部落とす（→ `clearTestSimulationTimers`）。
       // **キューを空にするだけでは足りない** —— 津波と EEW のテストはキューを通らず
       // `handleEvent` を直接呼ぶ。
       clearTestSimulationTimers()
       eventQueueRef.current.clear()
+      eewVanishPendingRef.current.clear()
     }
   }, [clearTestSimulationTimers])
 
@@ -2784,11 +2654,8 @@ export function useEarthquakes(
         : { ...prev, historyLoss: createEmptyTelegramLoss(), loadMoreFailed: false, reconnectGapLoss: false }
     ))
 
-    // VAR-1: リプレイ中はライブ接続を止める（両バリアント共通）。過去の電文を流している最中に
+    // VAR-1: リプレイ中はライブ接続を止める。過去の電文を流している最中に
     // 現在時刻のライブ更新が混ざると、再生時刻より未来の地震がカードに並んで実際の経過を追えない。
-    // かつては standard 版だけ P2PQuake WS を継続していた（リプレイが強震モニタの時計ずらしに
-    // 過ぎず、地震・津波は何も流れなかったため）。現在は standard 版も当時の地震情報・津波を
-    // 取得して流すので、DMDSS 版と同じ扱いにする。
     if (replayTimeOffset !== null) {
       // 状態表示を再生中のものへ畳む。
       //
@@ -2806,1042 +2673,978 @@ export function useEarthquakes(
       //
       // 同じ参照を返す分岐を挟んで、無関係な再レンダーは起こさない。
       setState(prev => (
-        prev.connectionStatus === 'replay' && !prev.isLoading && !prev.error
+        prev.connectionStatus === 'replay' && !prev.isLoading && !prev.error && prev.relayUpstream === null && prev.keyForecastStatus === null && !prev.relayForecastLive
           ? prev
-          : { ...prev, connectionStatus: 'replay', isLoading: false, error: null }
+          : { ...prev, connectionStatus: 'replay', relayUpstream: null, keyForecastStatus: null, relayForecastLive: false, isLoading: false, error: null }
       ))
       return
     }
 
-    if (isDmdss) {
-      // --- DMDSS版: APIキー未設定なら接続しない ---
-      if (!dmdataApiKey) {
-        setState(prev => ({ ...prev, connectionStatus: 'disconnected', isLoading: false }))
-        return
-      }
+    // --- 地震・津波・警報は誰でも中継から受ける。自分の鍵は予報の接続だけに使う（docs/relay-server-design.md §7.3） ---
+    // 鍵が空なら鍵の接続を張らない。通信へ載せられない文字（全角・変換途中の値など）を含む鍵も張らない ——
+    // Basic 認証の見出しを組む時点で例外になる。鍵の入れ直しの案内は段 3b-e で画面へ出す（いまは記録だけ）
+    const keyForecastApiKey = dmdataApiKey !== '' && isValidDmdataApiKey(dmdataApiKey) ? dmdataApiKey : null
+    if (dmdataApiKey !== '' && keyForecastApiKey === null) {
+      log.warn(`[data] ${DMDATA_API_KEY_INVALID_MESSAGE}（予報の接続は張りません）`)
+    }
 
-      // 通信へ載せられない文字（全角・日本語入力の変換途中の値など）を含むキーでも接続しない。
-      // 素通しにすると Basic 認証ヘッダを組む時点で例外になり、履歴取得は英語の DOMException を
-      // そのまま画面に出し、WebSocket は理由を伏せたまま永久に再接続を繰り返す。
-      // 未設定と違って「入れたのに繋がらない」状態なので、理由を error に載せて画面へ出す。
-      if (!isValidDmdataApiKey(dmdataApiKey)) {
-        log.warn(`[data] ${DMDATA_API_KEY_INVALID_MESSAGE}`)
-        setState(prev => ({
+    setState(prev => ({
+      ...prev, isLoading: true, connectionStatus: 'connecting', relayUpstream: null, relayForecastLive: false,
+      keyForecastStatus: keyForecastApiKey === null ? null : 'connecting', error: null, dmdataClassifications: null,
+      keyForecastRefused: false,
+    }))
+
+    // DMDSS WebSocket 接続（dmdataTestDelivery 有効時は試験報・訓練報も受信）。
+    // **作るのは先、繋ぐのは後**（`connect()` は下）。履歴と起動時の復元は、受けられる区分が
+    // 分かってから取りに行くため —— 一部の区分しか受けられない人に、受けられない区分の一覧を
+    // 引いて断られる取得を出さない（→ `services/dmdataClassifications.ts`）。
+    // 中継の区分は決まっているので、`classificationsReady` はすぐに決着する（→ `DmdataWebSocket` の中継の繋ぎ方）
+    const ws = new DmdataWebSocket({ kind: 'relay', tokens: relayTokenStore, url: RELAY_WEBSOCKET_URL }, dmdataTestDelivery)
+    // 自分の鍵の予報の接続（鍵が使えるときだけ。§7.3）。予報 VXSE45 だけを申し込む
+    const keyWs = keyForecastApiKey === null
+      ? null
+      : new DmdataWebSocket({ kind: 'keyForecast', apiKey: keyForecastApiKey }, dmdataTestDelivery)
+    // 鍵の予報の接続が繋がっているか。繋がっている間は中継の警報 VXSE43 を取り込まない
+    // （§0 の 2026-10-30 の行。繋がっていない間は取り込む —— 同じく 2026-10-31 の行）
+    let keyForecastLive = false
+    // --- 中継から予報を受ける経路（予報キーの端末。設計書 §0 の 2026-10-31「予報キー」の行） ---
+    // ふだんは中継から予報を受け、中継と切れている間と、中継が DMDATA と切れている間だけ鍵の接続を張る
+    // （同じ日の「配信サーバーを先に、切れたら鍵 (Recommended)」）。中継が予報の区分を名乗った接続では、
+    // ソケットが警報 VXSE43 を採らず予報 VXSE45 を採る（→ `DmdataWebSocket` の `eewHeadType`）
+    let relayConnected = false
+    // 中継が DMDATA と切れていると言うまでは繋がっているとみなす（言われる前に鍵を張りに行かない）
+    let relayUpstreamUp = true
+    let relayNamesForecast = false
+    let relayEverConnected = false
+    let keyRunning = false
+    // 起動して中継の答えを待つ間は鍵を張らない（張ってすぐ閉じると、端末の枠を一瞬だけ使う）
+    let startupGraceOver = false
+    // 予報キーが変わって中継へ繋ぎ直している間。繋ぎ直しで中継と一瞬切れるのは、鍵を張る理由にしない
+    // （繋がり直すか、切れたと分かるか、起動の待ちと同じ長さが過ぎるまで）
+    let relayReopening = false
+    let relayReopenTimer: ReturnType<typeof setTimeout> | null = null
+    const endRelayReopen = (): void => {
+      relayReopening = false
+      if (relayReopenTimer !== null) clearTimeout(relayReopenTimer)
+      relayReopenTimer = null
+    }
+    const relayForecastLive = (): boolean => relayConnected && relayUpstreamUp && relayNamesForecast
+    // 中継から予報が来るはずか。予報キーの検証中か、札に予報キーを添えていて中継がまだ断っていない（答え待ちか、受け付けた）
+    const relayForecastExpected = (): boolean => {
+      if (relayTokenStore.forecastKeyChecking()) return true
+      const scope = relayTokenStore.forecastScope()
+      return relayTokenStore.forecastKey() !== null && (scope === null || scope.granted)
+    }
+    // 同じ予報が 2 つの接続から届くこと（切り替わりの重なり）がある。後から届いた方を捨てる。
+    // **見るのは電文そのものの id。** 中継は DMDATA の電文を `id` ごとそのまま運ぶので、同じ電文なら 2 つの接続で同じ値になる。
+    // 報の id（イベント ID と報番号）では見ない —— 取消は取り消す報と同じ報番号で届くので、取消を同じ報と取り違えて捨てる。
+    // 電文の id が無いときだけ、報の id に取消かどうかを添えて見る
+    const seenForecastKeys = new Set<string>()
+    const isSeenForecast = (eew: EEWAlert, telegramId: string): boolean => {
+      const key = telegramId ? `telegram:${telegramId}` : `report:${eew.id}:${eew.cancelled ? 'cancel' : 'issue'}`
+      if (seenForecastKeys.has(key)) return true
+      seenForecastKeys.add(key)
+      if (seenForecastKeys.size > 500) seenForecastKeys.delete(seenForecastKeys.values().next().value as string)
+      return false
+    }
+    const closeKeyForecast = (): void => {
+      if (keyWs === null || !keyRunning) return
+      keyRunning = false
+      keyForecastLive = false
+      keyWs.disconnect()
+      // 張り直しの合図を外して閉じるので、接続は状態を知らせてこない。ここで切れたことにする
+      setState(prev => prev.keyForecastStatus === 'disconnected' ? prev : { ...prev, keyForecastStatus: 'disconnected' })
+    }
+    const syncForecastRoute = (): void => {
+      if (cancelled) return
+      const live = relayForecastLive()
+      setState(prev => prev.relayForecastLive === live ? prev : { ...prev, relayForecastLive: live })
+      if (keyWs === null) return
+      // 中継から予報が来るはずの間（起動して中継の答えを待つ間・予報キーで繋ぎ直している間）は、鍵の接続を新しく張らない。
+      // 張ってあるものはここでは閉じない —— 閉じると、中継が予報を名乗るまでどちらからも予報が届かない
+      const holdOpening = relayForecastExpected() && (relayReopening || (!relayEverConnected && !startupGraceOver))
+      if (!live && !keyRunning && !holdOpening) {
+        keyRunning = true
+        keyWs.connect()
+      } else if (live && keyRunning) {
+        log.info('[relay] 中継から予報を受けているため、自分の鍵の予報の接続を閉じます')
+        closeKeyForecast()
+      }
+    }
+    const startupGraceTimer = setTimeout(() => {
+      startupGraceOver = true
+      syncForecastRoute()
+    }, RELAY_FORECAST_STARTUP_GRACE_MS)
+    // 予報キーを入れ替えたら、今の中継の接続は古い札（予報の印の有無）のままなので張り直す。
+    // 繋いだ時点で予報キーの検証中だったら `undefined`。札は検証が済んでから取る（→ `RelayTokenStore.ensure`）ので、
+    // 検証が済んだ時点のキーがこの接続のキーになり、張り直さない
+    let relayForecastKeyAtOpen: string | null | undefined = relayTokenStore.forecastKeyChecking() ? undefined : relayTokenStore.forecastKey()
+    // 使用状況データの識別子（設計書 §6.6）も札に署名されている。オフにしたのに古い札の接続が残ると、
+    // 閉じたときに接続の長さが数えられるので、識別子が変わったら張り直す
+    let relayUsageInstallAtOpen = relayTokenStore.usageInstall()
+    const unsubscribeRelayTokens = relayTokenStore.subscribe(() => {
+      if (cancelled) return
+      let reopenReason: string | null = null
+      const install = relayTokenStore.usageInstall()
+      if (install !== relayUsageInstallAtOpen) {
+        relayUsageInstallAtOpen = install
+        reopenReason = '使用状況データの送信の設定が変わった'
+      }
+      // 検証中はキーが決まっていないので繋ぎ直さない（書き換えの途中で何度も繋ぎ直さない）
+      if (!relayTokenStore.forecastKeyChecking()) {
+        const key = relayTokenStore.forecastKey()
+        if (relayForecastKeyAtOpen === undefined) {
+          relayForecastKeyAtOpen = key
+        } else if (key !== relayForecastKeyAtOpen) {
+          relayForecastKeyAtOpen = key
+          reopenReason = '予報キーが変わった'
+        }
+      }
+      // 2 つが同時に変わっても繋ぎ直しは 1 回。どちらの理由でも、張り直しの間に自分の鍵の予報を余計に張らないよう
+      // relayReopening を立ててから繋ぎ直す（DMDATA の同時接続の枠を食わない）
+      if (reopenReason !== null) {
+        log.info(`[relay] ${reopenReason}ため、中継へ繋ぎ直します`)
+        endRelayReopen()
+        relayReopening = true
+        relayReopenTimer = setTimeout(() => {
+          relayReopenTimer = null
+          relayReopening = false
+          syncForecastRoute()
+        }, RELAY_FORECAST_STARTUP_GRACE_MS)
+        ws.disconnect()
+        ws.connect()
+      }
+      syncForecastRoute()
+    })
+    // 履歴と復元の取得の版。新しい版を始めると前の版を打ち切り、その結果を捨てる（→ `startRestFetches`）。
+    // 中継の区分は繋ぐ前に決まるので、いまは接続 1 回につき 1 版だけ走る
+    let restRun = 0
+    let restAbort: AbortController | null = null
+    // 履歴と復元がキューへ積んだ EEW の電文 id（津波の失効予約は、外してから積むのでここに載せない）。**版をまたいで持つ** ——
+    // 前の版が打ち切られる前に積み終えていると、取り直しの版が同じものをもう一度積むことになる
+    // （EEW の報番号の台帳は同じ報番号の再送を通すので、入口では弾かれない）。
+    const restoredQueueKeys = new Set<string>()
+    // 起動時の履歴が目録を引いた右端（エポックミリ秒）。まだ引いていなければ `null`（→ `ws.onStarted`）
+    let historyBeforeMs: number | null = null
+
+    // **取れた分から順に画面へ出す。** 電文本体の取得は配信元の上限に合わせて
+    // 6 秒に 1 件へ直列化されるので（→ `services/telegramBody.ts`）、控えが空の初回は
+    // 全件が揃うまで数分かかる。揃うまで待つ形だと、そのあいだ地震の履歴が空のままになる。
+    // **控えが埋まっている 2 回目以降は待ちが無いので、実質いままでどおり一度に出る。**
+    // 取り直しで捨てた版の部分結果は当てない（`stale`）。
+    const applyPartialQuakesFor = (stale: () => boolean) => (partial: JMAQuake[]): void => {
+      if (stale()) return
+      // 記録する側が重複を弾くので、部分結果ごとに呼んでよい（`rememberQuakeRetraction`）
+      rememberQuakeRetractionsFromBatch(partial)
+      // **base は空ではなく現在値。** 取得のあいだにライブで届いた地震を消さないため
+      // （`mergeQuakeHistory` は電文の一意鍵（`telegramKey`）で同じ電文を二度数えないので、
+      // 同じ部分結果を重ねて当てても結果は変わらない）。
+      setState(prev => {
+        // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
+        const { cards, markMemory } = mergeQuakeHistory(
+          partial, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
+        )
+        const shown = settleHistoryCards(cards, markMemory, prev.tsunamis, prev.lpgmByEventId, prev.estimatedIntensities, lpgmRetractionsRef.current)
+        return {
           ...prev,
-          connectionStatus: 'disconnected',
-          isLoading: false,
-          error: DMDATA_API_KEY_INVALID_MESSAGE,
-        }))
-        return
-      }
+          ...marksFromHistory(markMemory, cards, prev.lpgmByEventId, prev.quakeUpdateMarks),
+          earthquakes: shown,
+          lastUpdate: serverDate(),
+        }
+      })
+      // **触るのは地震だけ。** 津波・長周期・補助情報は別経路で、ここで混ぜると
+      // まだ取得していないものを「無い」として画面へ出すことになる。
+      // `isLoading` も倒さない —— まだ増える途中なので、読み込み中のままが正しい。
+    }
 
-      setState(prev => ({ ...prev, isLoading: true, connectionStatus: 'connecting', error: null, dmdataClassifications: null }))
-
-      // DMDSS WebSocket 接続（dmdataTestDelivery 有効時は試験報・訓練報も受信）。
-      // **作るのは先、繋ぐのは後**（`connect()` は下）。履歴と起動時の復元は、受けられる区分が
-      // 分かってから取りに行くため —— 一部の区分しか受けられない人に、受けられない区分の一覧を
-      // 引いて断られる取得を出さない（→ `services/dmdataClassifications.ts`）。
-      const ws = new DmdataWebSocket(dmdataApiKey, dmdataTestDelivery)
-      wsRef.current = null
-      // **前回受け付けられた区分を覚えていれば、申し込みの結果を待たずにその区分で取りに行く**
-      // （→ `services/dmdataClassificationMemory.ts`）。チケットの発行は配信元の処理で 1.2〜2.2 秒かかり、
-      // 同時接続の枠が埋まっていると決まらないまま最大 15 秒待つ（2026-10-19 実測）。
-      // 覚えが無ければ（初めて開いた・鍵を入れ替えた）、今までどおり申し込みの結果
-      // （`classificationsReady`）を待つ。
-      const remembered = loadRememberedClassifications(dmdataApiKey)
-      // 履歴と復元の取得の版。覚えた区分で始めた取得が申し込みの結果と食い違ったら、版を進めて
-      // 前の版を打ち切り、その結果を捨てる（→ `startRestFetches`）。
-      let restRun = 0
-      let restAbort: AbortController | null = null
-      // 履歴と復元がキューへ積んだ EEW の電文 id（津波の失効予約は、外してから積むのでここに載せない）。**版をまたいで持つ** ——
-      // 前の版が打ち切られる前に積み終えていると、取り直しの版が同じものをもう一度積むことになる
-      // （EEW の報番号の台帳は同じ報番号の再送を通すので、入口では弾かれない）。
-      const restoredQueueKeys = new Set<string>()
-      // 覚えた区分で始めたときに、申し込みの結果との突き合わせを済ませたか。**最初に受け付けられた
-      // 区分とだけ比べる** —— 再接続のたびに比べ直すと、そのたびに履歴を取り直すことになる。
-      let rememberedChecked = remembered === null
-      // 起動時の履歴が目録を引いた右端（エポックミリ秒）。まだ引いていなければ `null`（→ `ws.onStarted`）
-      let historyBeforeMs: number | null = null
-
-      // **取れた分から順に画面へ出す。** 電文本体の取得は配信元の上限に合わせて
-      // 6 秒に 1 件へ直列化されるので（→ `services/telegramBody.ts`）、控えが空の初回は
-      // 全件が揃うまで数分かかる。揃うまで待つ形だと、そのあいだ地震の履歴が空のままになる。
-      // **控えが埋まっている 2 回目以降は待ちが無いので、実質いままでどおり一度に出る。**
-      // 取り直しで捨てた版の部分結果は当てない（`stale`）。
-      const applyPartialQuakesFor = (stale: () => boolean) => (partial: JMAQuake[]): void => {
-        if (stale()) return
-        // 記録する側が重複を弾くので、部分結果ごとに呼んでよい（`rememberQuakeRetraction`）
-        rememberQuakeRetractionsFromBatch(partial)
-        // **base は空ではなく現在値。** 取得のあいだにライブで届いた地震を消さないため
-        // （`mergeQuakeHistory` は電文の一意鍵（`telegramKey`）で同じ電文を二度数えないので、
-        // 同じ部分結果を重ねて当てても結果は変わらない）。
-        setState(prev => {
-          // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
-          const { cards, markMemory } = mergeQuakeHistory(
-            partial, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
-          )
-          return {
-            ...prev,
-            ...marksFromHistory(markMemory, cards, prev.lpgmByEventId, prev.quakeUpdateMarks),
-            earthquakes: borrowFromTsunamiIntoCards(cards, prev.tsunamis),
-            lastUpdate: serverDate(),
-          }
+    // **履歴はアーカイブ経由で 1 本にまとめて取る。**
+    //
+    // かつては地震・津波・補助情報 5 本を `Promise.all` で並行に取り、どれも
+    // 一覧（`/v2/telegram`）＋本体（`/v1/:id`）を 1 件ずつ叩いていた（実測で起動あたり
+    // 110 件超）。**大量に取るならアーカイブを使う** —— 1 日分が 1 ファイル（実測 gzip 10KB）で、
+    // 中の目録から地震・津波・帯・長周期を全部取り出せる（→ `data-sources-spec.md` §2
+    // 「大量に取るならアーカイブを使う」）。
+    //
+    // 実装はリプレイ開始時の履歴復元と共有する（`fetchDmdataQuakeHistoryFor`）。同じ目的の
+    // 実装を 2 本持つと、片方だけがアーカイブを使う今までの形に戻る。
+    //
+    // **履歴と発表中の緊急地震速報の復元を、区分を受け取って 1 版として走らせる。** 呼ぶのは
+    // 中継の区分が決まったとき（`ws.classificationsReady`）。
+    // 新しい版を始めると前の版を打ち切り、前の版の結果は `stale` で捨てる。
+    // 発表中の緊急地震速報のうち、当てる報を選ぶ（起動時の復元と張り直しの復元で共有する）。
+    // **台帳の報番号より新しい報だけ選ぶ** —— 表示中の速報の続報もここで入る（地震単位で除くと、前から
+    // 出ていた速報が古い予想のまま残る）。同じ報番号は入口が通してしまうので、ここで止める。
+    // 前の版が積み終えた電文（→ `restoredQueueKeys`）と、取り直しの最中に終えた地震（→ `eewEndedRef`）も選ばない。
+    // `startedWhileAway` は台帳に無い地震があったか（その地震はまだ画面に出ていない）
+    const pickUnappliedEews = (eews: readonly EEWAlert[], label: string): { fresh: EEWAlert[]; endedCount: number; startedWhileAway: boolean } => {
+      let endedCount = 0
+      let startedWhileAway = false
+      const fresh = eews.filter((eew) => {
+        if (restoredQueueKeys.has(`eew:${eew.id}`)) return false
+        // 取り直しの最中に終えた地震は戻さない（台帳は画面から消えた時点で捨てているので、下の比較では弾けない）
+        if (skipEndedEew(eewEndedRef.current, eew, label)) { endedCount++; return false }
+        const key = eewEventKey(eew)
+        const acceptance = eewAcceptanceRef.current.get(key)
+        if (!acceptance) startedWhileAway = true
+        const accepted = acceptance?.serialBySeries.get(eewSerialSeries(eew))
+        const serial = eewSerial(eew)
+        if (accepted === undefined || serial === null || serial > accepted) return true
+        // 報は積まないが、詳細の全報から載せた特別警報の印は移す（→ `carryEverSpecialWarning`）。取得の間にライブが追いつくと
+        // ここで落ちるので、移さないと切れていた間に特別警報だった速報が警報として残る
+        if (eew.everSpecialWarning) carryEverSpecialWarning(key, `${label}で受け取り済みの報`)
+        return false
+      })
+      return { fresh, endedCount, startedWhileAway }
+    }
+    // **発表中の緊急地震速報を起動時の状態として当てる。** 音も読み上げも鳴らさない。開いた本人は既に揺れを
+    // 体験しているので、起動直後の警報音は情報を足さずに驚かせるだけ（無音のままにすることは 2026-10-21 ユーザー承認
+    // 「無音のまま記録する (Recommended)」）。`silent` を立ててキューへ積むと、状態の更新と自動解除の予約
+    // （`handleEvent` が `calcEEWCancelTime` で積む）は通り、`onLiveEvent` だけが呼ばれない。画面を見せる側は
+    // タブ要求として別に出す。中継の「いま発表中の警報」と、自分の鍵の予報の `/v2/gd/eew` の両方から呼ぶ。
+    // 当てるのは台帳より新しい報だけで、タブ要求は台帳に無い地震があったときだけ出す（→ `pickUnappliedEews`）——
+    // 鍵の接続がページを開いてしばらく後に初めて繋がると、ここが中継で受けていた速報についても呼ばれる
+    const restoreStartupEews = (eews: readonly EEWAlert[], label: string): void => {
+      if (cancelled || eews.length === 0) return
+      const { fresh, startedWhileAway } = pickUnappliedEews(eews, label)
+      if (fresh.length === 0) return
+      for (const eew of fresh) {
+        restoredQueueKeys.add(`eew:${eew.id}`)
+        eventQueueRef.current.push({
+          eventTime: serverDate(),
+          silent: true,
+          payload: { kind: 'event', event: eew as AppEvent },
+          logEntry: null,
         })
-        // **触るのは地震だけ。** 津波・長周期・補助情報は別経路で、ここで混ぜると
-        // まだ取得していないものを「無い」として画面へ出すことになる。
-        // `isLoading` も倒さない —— まだ増える途中なので、読み込み中のままが正しい。
       }
+      log.info(`[data] 発表中の緊急地震速報を復元しました: ${fresh.length} 件`)
+      // 読み上げ側の記憶にも載せる（キューの報は silent なので読み上げ側へ届かない）。
+      // ここで投げても画面の要求は出す——記憶に載らなければ取消が声にならないだけで済むが、
+      // 画面が移らないと発表中の速報そのものに気づけない。
+      try {
+        onStartupRestoreEewsRef.current?.(fresh)
+      } catch (err) {
+        log.error('[data] 復元した緊急地震速報を読み上げ側へ渡せませんでした（取り消されても読み上げません）:', err)
+      }
+      if (startedWhileAway) onStartupRestoreRef.current?.('realtime')
+    }
 
-      // **履歴はアーカイブ経由で 1 本にまとめて取る。**
-      //
-      // かつては地震・津波・補助情報 5 本を `Promise.all` で並行に取り、どれも
-      // 一覧（`/v2/telegram`）＋本体（`/v1/:id`）を 1 件ずつ叩いていた（実測で起動あたり
-      // 110 件超）。**大量に取るならアーカイブを使う** —— 1 日分が 1 ファイル（実測 gzip 10KB）で、
-      // 中の目録から地震・津波・帯・長周期を全部取り出せる（→ `data-sources-spec.md` §2
-      // 「大量に取るならアーカイブを使う」）。
-      //
-      // 実装はリプレイ開始時の履歴復元と共有する（`fetchDmdataQuakeHistoryFor`）。同じ目的の
-      // 実装を 2 本持つと、片方だけがアーカイブを使う今までの形に戻る。
-      //
-      // **履歴と発表中の緊急地震速報の復元を、区分を受け取って 1 版として走らせる。** 呼ぶのは
-      // 覚えた区分で始めるとき・申し込みの結果を待って始めるとき・覚えた区分が食い違って取り直すとき。
-      // 新しい版を始めると前の版を打ち切り、前の版の結果は `stale` で捨てる。
-      const startRestFetches = (classifications: readonly DmdataClassification[]): void => {
-        const run = ++restRun
-        restAbort?.abort()
-        const abort = new AbortController()
-        restAbort = abort
-        // 時間軸が変わったとき（クリーンアップ）にも打ち切る。前の版のリスナは外さない —— 版は
-        // 多くて 2 つ（覚え・取り直し）で、打ち切り済みの版へもう一度 abort が届いても何も起きない
-        historyAbort.signal.addEventListener('abort', () => abort.abort(), { once: true })
-        const stale = () => cancelled || run !== restRun
-        dmdataRestRunRef.current++
-        dmdataRestClassificationsRef.current = classifications
-        const historyBefore = serverDate()
-        // 最初の版の右端だけ覚える（→ `ws.onStarted`。取り直しの版は右端が後ろへ伸びるだけで、隙間を作らない）
-        if (historyBeforeMs === null) historyBeforeMs = historyBefore.getTime()
-        // **取り直しなら読み込み中へ戻し、前の版のエラー表示を消す。** 前の版が覚えた区分のせいで
-        // 失敗していると、取り直しが数分かかる間「読み込み中」が消えたままエラーが残る
-        if (run > 1) setState(prev => ({ ...prev, isLoading: true, error: null }))
-        dmdataHistorySettledRef.current = Promise.resolve()
-          .then(() => (stale() ? Promise.reject(new Error('cancelled')) : fetchDmdataQuakeHistoryFor(
-            classifications,
-            dmdataApiKey, historyBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, abort.signal,
-            applyPartialQuakesFor(stale), stale,
-          )))
-          .then((history) => {
-            if (stale()) return
-            // **「もっと見る」はここの続きから読む。** 初回が読めなければ `null` のままで、
-            // 押されたときは初回と同じ範囲をもう一度試す。
-            //
-            // **`stale` を見たあとに置くこと。** 時間軸が変わった後の結果でカーソルを
-            // 進めると、新しい時間軸の「もっと見る」が古い軸で読んだ位置から続きを読む。
-            historyCursorRef.current = historyCursorFromOldestDay(history.oldestLoadedDay)
-            const quakeEvents = history.quakes
-            const tsunamiEvents = history.tsunamis
-            // 種別横断の生電文を eventId ごとに統合（リアルタイムと同一ロジック）。
-            rememberQuakeRetractionsFromBatch(quakeEvents)
-            // 新しい順。**作成時刻（秒まで）で並べる**（→ `reportOrderKey`）。同じ津波の津波警報等と津波情報は同じ分に
-            // 並ぶことがあり、履歴の並びは取得の完了順なので、分で並べると古い報が「最新」として画面に載りうる。
-            // **時刻を読めない報は先に外す。** `reportOrderKey` は読めない報を `Infinity`（昇順の末尾）にするので、
-            // 新しい順に並べると先頭へ来て、壊れた報が「最新」として画面に載る。外した件数は記録する。
-            const orderable = tsunamiEvents.filter(t => Number.isFinite(reportOrderKey(t)))
-            if (orderable.length < tsunamiEvents.length) {
-              const dropped = tsunamiEvents.filter(t => !Number.isFinite(reportOrderKey(t)))
-              const droppedCancels = dropped.filter(t => t.cancelled).length
-              log.warn(`[data] 時刻を読めない津波の報 ${dropped.length} 通（うち取消・解除 ${droppedCancels} 通）を、起動時履歴の最新報の候補から外しました`)
+    const startRestFetches = (classifications: readonly DmdataClassification[]): void => {
+      const run = ++restRun
+      restAbort?.abort()
+      const abort = new AbortController()
+      restAbort = abort
+      // 時間軸が変わったとき（クリーンアップ）にも打ち切る。前の版のリスナは外さない —— 打ち切り済みの版へ
+      // もう一度 abort が届いても何も起きない
+      historyAbort.signal.addEventListener('abort', () => abort.abort(), { once: true })
+      const stale = () => cancelled || run !== restRun
+      dmdataRestRunRef.current++
+      dmdataRestClassificationsRef.current = classifications
+      const historyBefore = serverDate()
+      // 最初の版の右端だけ覚える（→ `ws.onStarted`。取り直しの版は右端が後ろへ伸びるだけで、隙間を作らない）
+      if (historyBeforeMs === null) historyBeforeMs = historyBefore.getTime()
+      // **2 版目以降なら読み込み中へ戻し、前の版のエラー表示を消す。** 前の版が失敗していると、
+      // 取り直しが数分かかる間「読み込み中」が消えたままエラーが残る
+      if (run > 1) setState(prev => ({ ...prev, isLoading: true, error: null }))
+      dmdataHistorySettledRef.current = Promise.resolve()
+        .then(() => (stale() ? Promise.reject(new Error('cancelled')) : fetchDmdataQuakeHistoryFor(
+          classifications,
+          relayRestEndpoint, historyBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, abort.signal,
+          applyPartialQuakesFor(stale), stale,
+        )))
+        .then((history) => {
+          if (stale()) return
+          // **「もっと見る」はここの続きから読む。** 初回が読めなければ `null` のままで、
+          // 押されたときは初回と同じ範囲をもう一度試す。
+          //
+          // **`stale` を見たあとに置くこと。** 時間軸が変わった後の結果でカーソルを
+          // 進めると、新しい時間軸の「もっと見る」が古い軸で読んだ位置から続きを読む。
+          historyCursorRef.current = historyCursorFromOldestDay(history.oldestLoadedDay)
+          const quakeEvents = history.quakes
+          const tsunamiEvents = history.tsunamis
+          // 種別横断の生電文を eventId ごとに統合（リアルタイムと同一ロジック）。
+          rememberQuakeRetractionsFromBatch(quakeEvents)
+          // 新しい順。**作成時刻（秒まで）で並べる**（→ `reportOrderKey`）。同じ津波の津波警報等と津波情報は同じ分に
+          // 並ぶことがあり、履歴の並びは取得の完了順なので、分で並べると古い報が「最新」として画面に載りうる。
+          // **時刻を読めない報は先に外す。** `reportOrderKey` は読めない報を `Infinity`（昇順の末尾）にするので、
+          // 新しい順に並べると先頭へ来て、壊れた報が「最新」として画面に載る。外した件数は記録する。
+          const orderable = tsunamiEvents.filter(t => Number.isFinite(reportOrderKey(t)))
+          if (orderable.length < tsunamiEvents.length) {
+            const dropped = tsunamiEvents.filter(t => !Number.isFinite(reportOrderKey(t)))
+            const droppedCancels = dropped.filter(t => t.cancelled).length
+            log.warn(`[data] 時刻を読めない津波の報 ${dropped.length} 通（うち取消・解除 ${droppedCancels} 通）を、起動時履歴の最新報の候補から外しました`)
+          }
+          const allTsunami = orderable
+            .sort((a, b) => reportOrderKey(b) - reportOrderKey(a))
+          // 画面へ載せるのは最新報 1 通だけ。その報が有効期限を持たなくても、同じ津波の過去報が
+          // 伝えていれば引き継ぐ（引き継がないと下の失効予約が積まれず、期限切れの津波が消えない）。
+          const latestTsunami = allTsunami[0] && withInheritedTsunamiFacts(allTsunami[0], allTsunami)
+          // 気象庁は予報のみになった津波に必ず期限を付ける（tsunami-spec.md §3）。それが引き継げて
+          // いないなら、期限を伝えた報が取得件数の上限から押し出された疑いがある。放っておくと
+          // 「消えない津波」に化けるが、画面には何の痕跡も出ないので記録だけは残す。
+          if (latestTsunami && !latestTsunami.validDateTime && latestTsunami.areas.length > 0
+              && latestTsunami.areas.every(a => a.grade === 'Forecast')) {
+            log.warn(`[data] 予報のみの津波に有効期限が付いていません（期限を伝えた報を取得できていない可能性）: id=${latestTsunami.id}`)
+          }
+          const now = serverDate()
+          // **ライブで当てた報より古い履歴では津波を書き換えない**（→ `liveTsunamiSeenKeyRef`）。履歴の最新報が
+          // ライブで当てたどの報より新しいときだけ当てる。履歴に津波が無くても、ライブで当てた報があれば今の状態を残す。
+          const historyTsunamiKey = allTsunami[0] ? reportOrderKey(allTsunami[0]) : Number.NEGATIVE_INFINITY
+          const liveSeenKey = liveTsunamiSeenKeyRef.current
+          const applyHistoryTsunami = !(Number.isFinite(liveSeenKey) && liveSeenKey >= historyTsunamiKey)
+          if (!applyHistoryTsunami) {
+            const liveAt = new Date(liveSeenKey).toISOString()
+            if (allTsunami[0]) {
+              log.info(`[tsunami] 起動時履歴の最新報はライブで当てた報より新しくないので、津波は今の状態を残します: history=${allTsunami[0].id}（${new Date(historyTsunamiKey).toISOString()}） ライブ=${liveAt}`)
+            } else {
+              log.info(`[tsunami] 起動時履歴に津波は無かったが、ライブで津波の報を当てているので今の状態を残します: ライブ=${liveAt}`)
             }
-            const allTsunami = orderable
-              .sort((a, b) => reportOrderKey(b) - reportOrderKey(a))
-            // 画面へ載せるのは最新報 1 通だけ。その報が有効期限を持たなくても、同じ津波の過去報が
-            // 伝えていれば引き継ぐ（引き継がないと下の失効予約が積まれず、期限切れの津波が消えない）。
-            const latestTsunami = allTsunami[0] && withInheritedTsunamiFacts(allTsunami[0], allTsunami)
-            // 気象庁は予報のみになった津波に必ず期限を付ける（tsunami-spec.md §3）。それが引き継げて
-            // いないなら、期限を伝えた報が取得件数の上限から押し出された疑いがある。放っておくと
-            // 「消えない津波」に化けるが、画面には何の痕跡も出ないので記録だけは残す。
-            if (latestTsunami && !latestTsunami.validDateTime && latestTsunami.areas.length > 0
-                && latestTsunami.areas.every(a => a.grade === 'Forecast')) {
-              log.warn(`[data] 予報のみの津波に有効期限が付いていません（期限を伝えた報を取得できていない可能性）: id=${latestTsunami.id}`)
+          }
+          const tsunamis = applyHistoryTsunami && latestTsunami
+            && !latestTsunami.cancelled
+            && !(latestTsunami.validDateTime && new Date(latestTsunami.validDateTime) <= now)
+            ? [latestTsunami] : []
+
+          // 長周期は同じアーカイブに入っているので、拾うだけで追加の通信は要らない
+          const lpgmEvents = history.extras
+            .map(e => e.payload)
+            .filter((p): p is { kind: 'lpgm'; data: JMALpgm } => p.kind === 'lpgm')
+            .map(p => p.data)
+          for (const lpgm of lpgmEvents) {
+            // **キュー経路（`lpgmNotifiable`）と同じ判定で記録する。** ここも `onLiveEvent` を
+            // 呼ばないサイレント経路なので、通知しうる中身（最大階級 0 を含む発表）でも
+            // `silentReplayInit`、それ以外は `notDispatched`（→ `lpgmNotifiable` のコメント）。
+            // 取消は「伝えた」に数える（→ `decideDispatch`）—— 同じ取消が後からライブで届いても鳴らさない。
+            recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, silentLpgmSkip(lpgm))
+          }
+          if (stale()) return
+          // 地震ごとの 1 通へ畳む。**取消を台帳へ積み、その地震の取消より前の報は採らない**
+          // （取消を飛ばすだけだった頃は、取り消された長周期の表示が起動のたびに戻っていた）。
+          // 台帳へ積むのは `stale` を見た後 —— 見る前に積むと、リプレイの開始で空にした台帳へ
+          // 捨てるはずだった履歴の取消が入る。
+          recordLpgmRetractions(lpgmEvents, lpgmRetractionsRef.current)
+          const lpgmByEventId = foldLpgmHistory(new Map(), lpgmEvents, lpgmRetractionsRef.current)
+          setState(prev => {
+            // **ここも base は現在値。** 空から組み直すと、履歴を取っているあいだに
+            // ライブで届いた地震が最後に消える。取得が 6 秒に 1 件へ直列化されたことで
+            // その窓が数分に伸びたため、取りこぼしが実際に起きうる
+            // （→ `services/telegramBody.ts` の取得間隔）。
+            const { cards, markMemory } = mergeQuakeHistory(
+              quakeEvents, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
+            )
+            const nextTsunamis = applyHistoryTsunami ? tsunamis : prev.tsunamis
+            // **貸し手は同じ更新で復元する `tsunamis` と `lpgmByEventId`。`prev` ではない** ——
+            // 起動時の復元では前の状態が空なので、そちらを見ると 1 枚も借りられない。
+            const shown = settleHistoryCards(cards, markMemory, nextTsunamis, lpgmByEventId, prev.estimatedIntensities, lpgmRetractionsRef.current)
+            return {
+              ...prev,
+              // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
+              // **長周期の鍵はこの更新で復元する `lpgmByEventId` から数える。`prev` ではない** ——
+              // 起動時は前の状態が空なので、そちらを見ると復元した長周期の記憶ごと落とす。
+              ...marksFromHistory(markMemory, cards, lpgmByEventId, prev.quakeUpdateMarks),
+              earthquakes: shown,
+              tsunamis: nextTsunamis,
+              lpgmByEventId,
+              lastUpdate: serverDate(),
+              isLoading: false,
+              hasMore: history.hasMore,
+              error: null,
+              // **一部が読めなかったことは画面へ出す。** ここへ来るのは「全滅しなかった」
+              // ときだけで、`error` は立たない。出さないと「取れた分だけのカード」が
+              // 「これが最新の地震情報のすべて」に見える。
+              //
+              // **置き換える。** ここは起動時の 1 回きりで、遡りの起点になる
+              // （「もっと見る」側は壊れた電文だけ積む —— 理由はそちら）。
+              historyLoss: telegramLossFrom(history.skippedByDay, history.failedArchiveUrls, {
+                sources: history.rateLimitedSources, telegrams: history.rateLimitedTelegrams,
+              }),
             }
-            const now = serverDate()
-            // **ライブで当てた報より古い履歴では津波を書き換えない**（→ `liveTsunamiSeenKeyRef`）。履歴の最新報が
-            // ライブで当てたどの報より新しいときだけ当てる。履歴に津波が無くても、ライブで当てた報があれば今の状態を残す。
-            const historyTsunamiKey = allTsunami[0] ? reportOrderKey(allTsunami[0]) : Number.NEGATIVE_INFINITY
-            const liveSeenKey = liveTsunamiSeenKeyRef.current
-            const applyHistoryTsunami = !(Number.isFinite(liveSeenKey) && liveSeenKey >= historyTsunamiKey)
-            if (!applyHistoryTsunami) {
-              const liveAt = new Date(liveSeenKey).toISOString()
-              if (allTsunami[0]) {
-                log.info(`[tsunami] 起動時履歴の最新報はライブで当てた報より新しくないので、津波は今の状態を残します: history=${allTsunami[0].id}（${new Date(historyTsunamiKey).toISOString()}） ライブ=${liveAt}`)
-              } else {
-                log.info(`[tsunami] 起動時履歴に津波は無かったが、ライブで津波の報を当てているので今の状態を残します: ライブ=${liveAt}`)
+          })
+          // 発表中の津波は画面にも見せる。**設定を尊重するかどうかは受け取る側が決める**
+          // （`tsunamiPriorityDefault`）——その設定は「津波発表中はどのタブを既定にするか」を
+          // 定めており、判定材料は `App` が持っている。
+          if (tsunamis.length > 0) onStartupRestoreRef.current?.('tsunami')
+          // **臨時情報・後発地震・解説情報はヘルパ経由で入れる。** ここで state を直書きすると、
+          // 表示中の識別情報を覚える記憶（`shownNankaiEventIdRef`・帯の一覧の控え `bandListsRef`）が進まず、以後に届いた
+          // 取消の照合が「表示していない」と誤判定する。帯の期限の予約も `commitBandList` が張るので、
+          // ここで重ねて張らない。
+          // **`extras` は種別ごとに振り分けてヘルパへ渡す。** 再生キューへ流す形（リプレイ側）は
+          // ここでは採れない —— あちらは `silent` で音を抑えるが、こちらは音・読み上げ・通知を
+          // 起こす経路（`handleEvent`）を通ることになる。
+          //
+          // 期限切れ・取消の判定は apply 側が持つ（取得側へ写すと片方だけ直したときに食い違う）。
+          for (const e of history.extras) {
+            const p = e.payload
+            // **1 件ずつ独立させる。** この `for` は一回性（キュー経路のように `setInterval`
+            // で汲み直す仕組みが無い）なので、途中の 1 件が例外を投げるとループ全体・ループ
+            // 直後の津波失効イベント予約（下記）まで巻き添えになる（敵対的レビューで検出）。
+            // **例外時も `recordSkippedTelegram` を呼ぶ**（2 巡目レビューで検出）——`catch` で
+            // ログに残すだけだと、`applyXxx` が例外を投げた電文だけ録画イベントログから
+            // 完全に消え、「onLiveEvent を呼ぶかどうかに関わらず全件記録する」という
+            // このログの不変条件（ファイル冒頭のコメント）が例外時にだけ破られる。
+            // 反映できたかは確かめようがないので `notApplied`（反映されなかった）で記録する。
+            switch (p.kind) {
+              case 'lpgm': break            // 上で記録・`lpgmByEventId` へ入れた
+              // **`applied` を見て記録する。** キュー経路の silent 分岐（`applyNankai` 等の
+              // 呼び出し）と同じパターン——反映できたら `silentReplayInit`、棄却されたら
+              // `notApplied`。ここも `onLiveEvent` を呼ばないので、他 3 種別と同じ記録が漏れていた。
+              case 'nankai': {
+                const applied = tryApplyExtra('南海トラフ臨時情報', p.data, applyNankai)
+                // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
+                if (p.data.cancelled) noteConveyedCancel('nankai', p.data)
+                recordSkippedTelegram({ kind: 'nankai', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
+                break
+              }
+              case 'nankaiCommentary': {
+                const applied = tryApplyExtra('南海トラフ関連解説情報', p.data, applyNankaiCommentary)
+                // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
+                if (p.data.cancelled) noteConveyedCancel('nankaiCommentary', p.data)
+                recordSkippedTelegram({ kind: 'nankaiCommentary', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
+                break
+              }
+              case 'kohatsu': {
+                const applied = tryApplyExtra('後発地震注意情報', p.data, applyKohatsu)
+                // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
+                if (p.data.cancelled) noteConveyedCancel('kohatsu', p.data)
+                recordSkippedTelegram({ kind: 'kohatsu', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
+                break
+              }
+              case 'earthquakeCount': {
+                const applied = tryApplyExtra('地震回数に関する情報', p.data, applyEarthquakeCount)
+                // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
+                if (p.data.cancelled) noteConveyedCancel('earthquakeCount', p.data)
+                recordSkippedTelegram({ kind: 'earthquakeCount', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
+                break
+              }
+              case 'quakeNotice': {
+                const applied = tryApplyExtra('お知らせ', p.data, applyQuakeNotice)
+                recordSkippedTelegram({ kind: 'quakeNotice', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
+                break
+              }
+              // **推計震度分布図は地震ごとに持つ**ので、過去の地震の分布も入れてよい
+              // （同じ地震の古い報では退行しない → `upsertEstimatedIntensity`）。音・読み上げは
+              // 起こさない（`announce` 偽）——聞いていない分布を「伝えた」台帳にも積まない。
+              case 'estimatedIntensity': {
+                const applied = tryApplyExtra('推計震度分布図', p.data, data => applyEstimatedIntensity(data, false) !== null)
+                recordSkippedTelegram({ kind: 'estimatedIntensity', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
+                break
+              }
+              // 国際津波関連情報は地震カードに添えるもの。カードと同じく履歴から黙って足す（履歴は読み上げない）
+              case 'internationalTsunami':
+                tryApplyExtra('国際津波関連情報', p.data, applyInternationalTsunami)
+                break
+              case 'event':
+                // `HISTORY_EXTRA_TYPES` に入らないので届かない。**種別を足したときに
+                // ここで止まるよう、既定へ落とさず名指しで書く。**
+                // （「もっと見る」側の同一分岐にも同じ注記がある。片方だけ直さないこと）
+                break
+              default: {
+                const exhaustive: never = p
+                log.warn('[data] 履歴の補助情報に未知の種別', exhaustive)
               }
             }
-            const tsunamis = applyHistoryTsunami && latestTsunami
-              && !latestTsunami.cancelled
-              && !(latestTsunami.validDateTime && new Date(latestTsunami.validDateTime) <= now)
-              ? [latestTsunami] : []
-
-            // 長周期は同じアーカイブに入っているので、拾うだけで追加の通信は要らない
-            const lpgmEvents = history.extras
-              .map(e => e.payload)
-              .filter((p): p is { kind: 'lpgm'; data: JMALpgm } => p.kind === 'lpgm')
-              .map(p => p.data)
-            for (const lpgm of lpgmEvents) {
-              // **キュー経路（`lpgmNotifiable`）と同じ判定で記録する。** ここも `onLiveEvent` を
-              // 呼ばないサイレント経路なので、通知しうる中身（最大階級 0 を含む発表）でも
-              // `silentReplayInit`、それ以外は `notDispatched`（→ `lpgmNotifiable` のコメント）。
-              // 取消は「伝えた」に数える（→ `decideDispatch`）—— 同じ取消が後からライブで届いても鳴らさない。
-              recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, silentLpgmSkip(lpgm))
-            }
-            if (stale()) return
-            // 地震ごとの 1 通へ畳む。**取消を台帳へ積み、その地震の取消より前の報は採らない**
-            // （取消を飛ばすだけだった頃は、取り消された長周期の表示が起動のたびに戻っていた）。
-            // 台帳へ積むのは `stale` を見た後 —— 見る前に積むと、リプレイの開始で空にした台帳へ
-            // 捨てるはずだった履歴の取消が入る。
-            recordLpgmRetractions(lpgmEvents, lpgmRetractionsRef.current)
-            const lpgmByEventId = foldLpgmHistory(new Map(), lpgmEvents, lpgmRetractionsRef.current)
-            setState(prev => {
-              // **ここも base は現在値。** 空から組み直すと、履歴を取っているあいだに
-              // ライブで届いた地震が最後に消える。取得が 6 秒に 1 件へ直列化されたことで
-              // その窓が数分に伸びたため、取りこぼしが実際に起きうる
-              // （→ `services/telegramBody.ts` の取得間隔）。
-              const { cards, markMemory } = mergeQuakeHistory(
-                quakeEvents, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
-              )
-              const nextTsunamis = applyHistoryTsunami ? tsunamis : prev.tsunamis
-              return {
-                ...prev,
-                // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
-                // **長周期の鍵はこの更新で復元する `lpgmByEventId` から数える。`prev` ではない** ——
-                // 起動時は前の状態が空なので、そちらを見ると復元した長周期の記憶ごと落とす。
-                ...marksFromHistory(markMemory, cards, lpgmByEventId, prev.quakeUpdateMarks),
-                // **貸し手は同じ更新で復元する `tsunamis`。`prev.tsunamis` ではない** ——
-                // 起動時の復元では前の状態が空なので、そちらを見ると 1 枚も借りられない。
-                earthquakes: borrowFromTsunamiIntoCards(cards, nextTsunamis),
-                tsunamis: nextTsunamis,
-                lpgmByEventId,
-                lastUpdate: serverDate(),
-                isLoading: false,
-                hasMore: history.hasMore,
-                error: null,
-                // **一部が読めなかったことは画面へ出す。** ここへ来るのは「全滅しなかった」
-                // ときだけで、`error` は立たない。出さないと「取れた分だけのカード」が
-                // 「これが最新の地震情報のすべて」に見える。
-                //
-                // **置き換える。** ここは起動時の 1 回きりで、遡りの起点になる
-                // （「もっと見る」側は壊れた電文だけ積む —— 理由はそちら）。
-                historyLoss: telegramLossFrom(history.skippedByDay, history.failedArchiveUrls, {
-                  sources: history.rateLimitedSources, telegrams: history.rateLimitedTelegrams,
-                }),
-              }
+          }
+          // 初回ロードで津波が有効（validDateTime未来）の場合、キューへ解除イベントを挿入する。
+          // **履歴で津波を当てたときは、積む前に古い失効予約を外す**（ライブで報を当てるときと同じ。外さないと、
+          // ライブで先に当てた報の予約と履歴の予約が並び、早いほうが今の津波を終わらせる）。当てなかったときは触らない。
+          // **津波の予約は `restoredQueueKeys` で重複を止めない。** 外してから積むので重なりようがなく、区分の食い違いで
+          // 取り直す 2 回目は、1 回目の予約を外したあと同じ鍵で止められて、期限つきの津波が失効しなくなる。
+          if (applyHistoryTsunami) {
+            eventQueueRef.current.retain(entry => {
+              if (entry.payload.kind !== 'event') return true
+              const ev = entry.payload.event
+              return ev.kind !== 'tsunami' || (ev as JMATsunami).cancelReason !== 'expired'
             })
-            // 発表中の津波は画面にも見せる。**設定を尊重するかどうかは受け取る側が決める**
-            // （`tsunamiPriorityDefault`）——その設定は「津波発表中はどのタブを既定にするか」を
-            // 定めており、判定材料は `App` が持っている。
-            if (tsunamis.length > 0) onStartupRestoreRef.current?.('tsunami')
-            // **臨時情報・後発地震・解説情報はヘルパ経由で入れる。** ここで state を直書きすると、
-            // 表示中の識別情報を覚える記憶（`shownNankaiEventIdRef` 等）が進まず、以後に届いた
-            // 取消の照合が「表示していない」と誤判定して無条件に帯を消す。後発地震の期限タイマーも
-            // `applyKohatsu` が張るので、ここで重ねて張らない。
-            // **`extras` は種別ごとに振り分けてヘルパへ渡す。** 再生キューへ流す形（リプレイ側）は
-            // ここでは採れない —— あちらは `silent` で音を抑えるが、こちらは音・読み上げ・通知を
-            // 起こす経路（`handleEvent`）を通ることになる。
-            //
-            // 期限切れ・取消の判定は apply 側が持つ（取得側へ写すと片方だけ直したときに食い違う）。
-            for (const e of history.extras) {
-              const p = e.payload
-              // **1 件ずつ独立させる。** この `for` は一回性（キュー経路のように `setInterval`
-              // で汲み直す仕組みが無い）なので、途中の 1 件が例外を投げるとループ全体・ループ
-              // 直後の津波失効イベント予約（下記）まで巻き添えになる（敵対的レビューで検出）。
-              // **例外時も `recordSkippedTelegram` を呼ぶ**（2 巡目レビューで検出）——`catch` で
-              // ログに残すだけだと、`applyXxx` が例外を投げた電文だけ録画イベントログから
-              // 完全に消え、「onLiveEvent を呼ぶかどうかに関わらず全件記録する」という
-              // このログの不変条件（ファイル冒頭のコメント）が例外時にだけ破られる。
-              // 反映できたかは確かめようがないので `notApplied`（反映されなかった）で記録する。
-              switch (p.kind) {
-                case 'lpgm': break            // 上で記録・`lpgmByEventId` へ入れた
-                // **`applied` を見て記録する。** キュー経路の silent 分岐（`applyNankai` 等の
-                // 呼び出し）と同じパターン——反映できたら `silentReplayInit`、棄却されたら
-                // `notApplied`。ここも `onLiveEvent` を呼ばないので、他 3 種別と同じ記録が漏れていた。
-                case 'nankai': {
-                  const applied = tryApplyExtra('南海トラフ臨時情報', p.data, applyNankai)
-                  // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
-                  if (p.data.cancelled) noteConveyedCancel('nankai', p.data)
-                  recordSkippedTelegram({ kind: 'nankai', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
-                  break
-                }
-                case 'nankaiCommentary': {
-                  const applied = tryApplyExtra('南海トラフ関連解説情報', p.data, applyNankaiCommentary)
-                  // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
-                  if (p.data.cancelled) noteConveyedCancel('nankaiCommentary', p.data)
-                  recordSkippedTelegram({ kind: 'nankaiCommentary', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
-                  break
-                }
-                case 'kohatsu': {
-                  const applied = tryApplyExtra('後発地震注意情報', p.data, applyKohatsu)
-                  // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
-                  if (p.data.cancelled) noteConveyedCancel('kohatsu', p.data)
-                  recordSkippedTelegram({ kind: 'kohatsu', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
-                  break
-                }
-                case 'earthquakeCount': {
-                  const applied = tryApplyExtra('地震回数に関する情報', p.data, applyEarthquakeCount)
-                  // 取消は「伝えた」に数える（同じ取消がライブで届いても鳴り直さない。→ `noteConveyedCancel`）
-                  if (p.data.cancelled) noteConveyedCancel('earthquakeCount', p.data)
-                  recordSkippedTelegram({ kind: 'earthquakeCount', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
-                  break
-                }
-                case 'quakeNotice': {
-                  const applied = tryApplyExtra('お知らせ', p.data, applyQuakeNotice)
-                  recordSkippedTelegram({ kind: 'quakeNotice', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
-                  break
-                }
-                // **推計震度分布図は地震ごとに持つ**ので、過去の地震の分布も入れてよい
-                // （同じ地震の古い報では退行しない → `upsertEstimatedIntensity`）。音・読み上げは
-                // 起こさない（`announce` 偽）——聞いていない分布を「伝えた」台帳にも積まない。
-                case 'estimatedIntensity': {
-                  const applied = tryApplyExtra('推計震度分布図', p.data, data => applyEstimatedIntensity(data, false) !== null)
-                  recordSkippedTelegram({ kind: 'estimatedIntensity', data: p.data }, applied ? 'silentReplayInit' : 'notApplied')
-                  break
-                }
-                // 国際津波関連情報は遠地地震のカードに添えるもの。カードと同じく履歴から足す（音などは元から無い）
-                case 'internationalTsunami':
-                  tryApplyExtra('国際津波関連情報', p.data, applyInternationalTsunami)
-                  break
-                case 'event':
-                  // `HISTORY_EXTRA_TYPES` に入らないので届かない。**種別を足したときに
-                  // ここで止まるよう、既定へ落とさず名指しで書く。**
-                  // （「もっと見る」側の同一分岐にも同じ注記がある。片方だけ直さないこと）
-                  break
-                default: {
-                  const exhaustive: never = p
-                  log.warn('[data] 履歴の補助情報に未知の種別', exhaustive)
-                }
-              }
-            }
-            // 初回ロードで津波が有効（validDateTime未来）の場合、キューへ解除イベントを挿入する。
-            // **履歴で津波を当てたときは、積む前に古い失効予約を外す**（ライブで報を当てるときと同じ。外さないと、
-            // ライブで先に当てた報の予約と履歴の予約が並び、早いほうが今の津波を終わらせる）。当てなかったときは触らない。
-            // **津波の予約は `restoredQueueKeys` で重複を止めない。** 外してから積むので重なりようがなく、区分の食い違いで
-            // 取り直す 2 回目は、1 回目の予約を外したあと同じ鍵で止められて、期限つきの津波が失効しなくなる。
-            if (applyHistoryTsunami) {
-              eventQueueRef.current.retain(entry => {
-                if (entry.payload.kind !== 'event') return true
-                const ev = entry.payload.event
-                return ev.kind !== 'tsunami' || (ev as JMATsunami).cancelReason !== 'expired'
-              })
-            }
-            if (tsunamis.length > 0 && latestTsunami?.validDateTime) {
-              const expireTime = new Date(latestTsunami.validDateTime)
-              if (expireTime > serverDate()) {
-                eventQueueRef.current.push({
-                  eventTime: expireTime,
-                  payload: { kind: 'event', event: { ...latestTsunami, cancelled: true, cancelReason: 'expired' } as AppEvent },
-                  logEntry: null,
-                })
-              }
-            }
-          })
-          .catch((err: unknown) => {
-            if (stale()) {
-              // **取り直しで捨てた版の失敗は、画面には出さず記録にだけ残す。** 覚えた区分が外れていた
-              // 証拠なので、黙って捨てると「なぜ取り直したか」を追えない。時間軸が変わった後の
-              // 打ち切り（`cancelled`）は、従来どおり黙る
-              // 打ち切りによる失敗は想定内なので info、打ち切る前に起きた本物の失敗（402・500 等）は warn に分ける
-              if (!cancelled) {
-                const aborted = isAbortedByCaller(err) || (err instanceof Error && err.message === 'cancelled')
-                if (aborted) log.info('[data] 取り直しで打ち切った DMDATA 履歴取得', { 区分: classifications })
-                else log.warn('[data] 取り直しで捨てた版の DMDATA 履歴取得が失敗していた', { 区分: classifications, err })
-              }
-              return
-            }
-            // 記録を残すのは state と別の話。standard 版側の同じ .catch と揃える。
-            // ここへ来るのはキーの形が正しい場合の失敗（ネットワーク断・401・500 等）で、
-            // 画面には理由の分からないメッセージしか出ないため、手がかりを残さないと追えない。
-            // **引いた区分も添える** —— 前回受け付けられた区分の覚えで引いた場合、覚えが外れていた
-            // のか通信の失敗なのかをここで見分ける
-            log.error('[data] DMDATA 履歴取得失敗', { 区分: classifications, err })
-            const msg = err instanceof Error ? err.message : '取得失敗'
-            setState(prev => ({ ...prev, isLoading: false, error: msg }))
-          })
-
-        // **発表中の緊急地震速報を復元する。** 地震・津波の履歴とは別に走らせる —— 緊急地震速報の
-        // 取得は地震ごとに詳細を辿るぶん遅くなりうるのに、いちばん早く見せたいものだから。
-        // `Promise.all` へ入れると、取得の遅いこちらが地震一覧の表示まで待たせることになる。
-        //
-        // **音も読み上げも鳴らさない。** 開いた本人は既に揺れを体験しているので、起動直後の
-        // 警報音は情報を足さずに驚かせるだけ（無音のままにすることは 2026-10-21 ユーザー承認
-        // 「無音のまま記録する (Recommended)」）。`silent` を立ててキューへ積むと、状態の更新と
-        // 自動解除の予約（`handleEvent` が `calcEEWCancelTime` で積む）は通り、`onLiveEvent`
-        // だけが呼ばれない。画面を見せる側はタブ要求として別に出す。
-        // **この取得は打ち切りの合図を受け取らない**（`fetchDmdataActiveEews` が signal を持たない）。取り直しで
-        // 版が古くなっても通信は最後まで走り、結果だけ `stale` で捨てる。余分になるのは取り直しが起きた起動の
-        // 一覧 1 回ぶんだけなので、打ち切りの配線は足していない
-        void Promise.resolve()
-          .then(() => (stale() ? [] : fetchDmdataActiveEews(dmdataApiKey, classifications, dmdataTestDeliveryRef.current)))
-          .then(eews => {
-            if (stale() || eews.length === 0) return
-            // 前の版が積み終えた電文は積まない（→ `restoredQueueKeys`）。取り直しの最中に終えた地震も戻さない（→ `eewEndedRef`）
-            const fresh = eews.filter(eew => !restoredQueueKeys.has(`eew:${eew.id}`) && !skipEndedEew(eewEndedRef.current, eew, '起動時の復元'))
-            if (fresh.length === 0) return
-            for (const eew of fresh) {
-              restoredQueueKeys.add(`eew:${eew.id}`)
+          }
+          if (tsunamis.length > 0 && latestTsunami?.validDateTime) {
+            const expireTime = new Date(latestTsunami.validDateTime)
+            if (expireTime > serverDate()) {
               eventQueueRef.current.push({
-                eventTime: serverDate(),
-                silent: true,
-                payload: { kind: 'event', event: eew as AppEvent },
+                eventTime: expireTime,
+                payload: { kind: 'event', event: { ...latestTsunami, cancelled: true, cancelReason: 'expired' } as AppEvent },
                 logEntry: null,
               })
             }
-            log.info(`[data] 発表中の緊急地震速報を復元しました: ${fresh.length} 件`)
-            // 読み上げ側の記憶にも載せる（キューの報は silent なので読み上げ側へ届かない）。
-            // ここで投げても画面の要求は出す——記憶に載らなければ取消が声にならないだけで済むが、
-            // 画面が移らないと発表中の速報そのものに気づけない。
-            try {
-              onStartupRestoreEewsRef.current?.(fresh)
-            } catch (err) {
-              log.error('[data] 復元した緊急地震速報を読み上げ側へ渡せませんでした（取り消されても読み上げません）:', err)
+          }
+        })
+        .catch((err: unknown) => {
+          if (stale()) {
+            // **取り直しで捨てた版の失敗は、画面には出さず記録にだけ残す。** 時間軸が変わった後の
+            // 打ち切り（`cancelled`）は、従来どおり黙る
+            // 打ち切りによる失敗は想定内なので info、打ち切る前に起きた本物の失敗（402・500 等）は warn に分ける
+            if (!cancelled) {
+              const aborted = isAbortedByCaller(err) || (err instanceof Error && err.message === 'cancelled')
+              if (aborted) log.info('[data] 取り直しで打ち切った DMDATA 履歴取得', { 区分: classifications })
+              else log.warn('[data] 取り直しで捨てた版の DMDATA 履歴取得が失敗していた', { 区分: classifications, err })
             }
-            onStartupRestoreRef.current?.('realtime')
-          })
+            return
+          }
+          // 記録を残すのは state と別の話。
+          // ここへ来るのはキーの形が正しい場合の失敗（ネットワーク断・401・500 等）で、
+          // 画面には理由の分からないメッセージしか出ないため、手がかりを残さないと追えない。
+          // **引いた区分も添える** —— 受けていない区分を引いて断られたのか、通信の失敗なのかをここで見分ける
+          log.error('[data] DMDATA 履歴取得失敗', { 区分: classifications, err })
+          // 通信の失敗はブラウザの英語の文を画面に出さない（英語の文は上の記録に残る。→ `fetchFailureReason`）
+          const msg = fetchFailureReason(err)
+          setState(prev => ({ ...prev, isLoading: false, error: msg }))
+        })
+
+      // **発表中の緊急地震速報を復元する。** 地震・津波の履歴とは別に走らせる —— 緊急地震速報の
+      // 取得は地震ごとに詳細を辿るぶん遅くなりうるのに、いちばん早く見せたいものだから。
+      // `Promise.all` へ入れると、取得の遅いこちらが地震一覧の表示まで待たせることになる。
+      //
+      // **音も読み上げも鳴らさない。** 開いた本人は既に揺れを体験しているので、起動直後の
+      // 警報音は情報を足さずに驚かせるだけ（無音のままにすることは 2026-10-21 ユーザー承認
+      // 「無音のまま記録する (Recommended)」）。`silent` を立ててキューへ積むと、状態の更新と
+      // 自動解除の予約（`handleEvent` が `calcEEWCancelTime` で積む）は通り、`onLiveEvent`
+      // だけが呼ばれない。画面を見せる側はタブ要求として別に出す。
+      // **この取得は打ち切りの合図を受け取らない**（`fetchDmdataActiveEews` が signal を持たない）。取り直しで
+      // 版が古くなっても通信は最後まで走り、結果だけ `stale` で捨てる。余分になるのは取り直しが起きた起動の
+      // 一覧 1 回ぶんだけなので、打ち切りの配線は足していない
+      // 中継の警報は、中継が繋いだ直後に送る「いま発表中の警報」から当てる（→ `ws.onRelayActiveEew`）。
+      // ここで取るのは自分の鍵の予報だけ（加工データの `/v2/gd/eew` は鍵の経路にだけ残す。§0 の 2026-10-31 の行）
+      if (keyWs !== null && keyForecastApiKey !== null) {
+        const keyEndpoint = dmdataKeyEndpoint(keyForecastApiKey)
+        void keyWs.classificationsReady
+          .then((keyClassifications) => (stale() || !keyClassifications.includes('eew.forecast')
+            ? []
+            : fetchDmdataActiveEews(keyEndpoint, ['eew.forecast'], dmdataTestDeliveryRef.current)))
+          .then((eews) => { if (!stale()) restoreStartupEews(eews, '起動時の復元（鍵の予報）') })
           .catch((err: unknown) => {
             // 取得側で失敗はすべて捕まえて空配列を返すため、ここへは届かない想定。
             // 万一漏れた場合に地震・津波の履歴を巻き込まないための保険なので、素通しにせず記録を残す。
             log.error('[data] 発表中の緊急地震速報の復元で想定外の失敗', err)
           })
       }
+    }
 
-      if (remembered !== null) {
-        startRestFetches(remembered)
+    // 中継の区分で履歴を取る（中継の区分は繋ぐ前に決まっているので待たない）
+    void ws.classificationsReady.then((classifications) => {
+      if (!cancelled) startRestFetches(classifications)
+    })
+
+    // EEW の pref 補完用に細分区域名→都道府県の逆引きインデックスを先読みする。
+    // インデックスは取得成功の購読で受ける。この変数は接続中に届く「すべての」EEW に使い回される
+    // ため、単に .then で一度だけ埋めると、初回取得が一時的に失敗しただけでこの接続の間ずっと
+    // 補完が効かない状態に固定されてしまう。購読しておけば、他の呼び出し元（地図・地震カード）の
+    // 再取得が成功した時点で以降の EEW から補完が復帰する。
+    // 取得できなくても EEW 自体は流す（都道府県名が付かないだけ）が、無音にはしない。
+    let areaPrefIndex: ReadonlyMap<string, string> | null = null
+    const unsubscribeStationCoords = onStationCoordsLoaded(data => {
+      areaPrefIndex = areaPrefIndexOf(data)
+    })
+    loadStationCoords()
+      .catch(err => {
+        log.warn('[data] station-coords 取得失敗（EEW 予想震度の都道府県名が補完されない。読み上げの地域順も気象庁順に並ばない）', err)
+      })
+
+    ws.onEvent = (ev, telegramId) => {
+      if (ev.kind === 'lpgm') {
+        const lpgm = ev.data
+        // 台帳の扱いはキュー経路と同じ（→ `utils/lpgmRetraction.ts`）
+        if (lpgm.cancelled) addLpgmRetraction(lpgmRetractionsRef.current, lpgmRetractionOf(lpgm), MAX_LPGM_RETRACTIONS)
+        else if (isRetractedLpgm(lpgmRetractionsRef.current, lpgm)) {
+          log.warn('[lpgm] 取消以前に発表された報を捨てた', { eventId: lpgm.eventId, time: lpgm.time })
+          recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, 'notApplied')
+          return
+        }
+        // 印付けもキュー経路と同じ関数で（→ `applyLiveLpgmWithMarks`）
+        setState(prev => ({ ...prev, ...applyLiveLpgmWithMarks(prev, lpgm, Date.now()) }))
+        // 流すかの判定もキュー経路と同じ（→ `lpgmNotifiable`・`decideDispatch`）。この経路は常にライブ
+        // （silent の概念を持たない）。流さないものは録画ツール向けに必ず記録する（3巡目レビューで、ここだけ
+        // else が無く記録が丸ごと抜けていたのを検出した）。
+        const lpgmDecision = lpgmNotifiable(lpgm) ? decideDispatch('lpgm', lpgm, true, false, false) : 'notDispatched'
+        if (lpgmDecision === 'dispatch') {
+          onLiveEventRef.current?.({ kind: 'lpgm', data: lpgm })
+        } else {
+          recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmDecision)
+        }
+      } else if (ev.kind === 'nankai') {
+        const nankai = ev.data
+        // キュー経路と同じ関数を通す（規則を 2 箇所に書かない。理由は `applyNankai`）。
+        const otherUnit = cancelOverOtherUnit(shownNankaiEventIdRef.current, nankai)
+        const decision = decideDispatch('nankai', nankai, applyNankai(nankai), false, otherUnit)
+        if (decision === 'dispatch') {
+          onLiveEventRef.current?.({ kind: 'nankai', data: nankai })
+        } else {
+          recordSkippedTelegram({ kind: 'nankai', data: nankai }, decision)
+        }
+      } else if (ev.kind === 'nankaiCommentary') {
+        const commentary = ev.data
+        const decision = decideDispatch('nankaiCommentary', commentary, applyNankaiCommentary(commentary), false, false)
+        if (decision === 'dispatch') {
+          onLiveEventRef.current?.({ kind: 'nankaiCommentary', data: commentary })
+        } else {
+          recordSkippedTelegram({ kind: 'nankaiCommentary', data: commentary }, decision)
+        }
+      } else if (ev.kind === 'kohatsu') {
+        const kohatsu = ev.data
+        const otherUnit = cancelOverOtherUnitInList(bandListsRef.current.kohatsu.map(k => k.eventId), kohatsu)
+        const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), false, otherUnit)
+        if (decision === 'dispatch') {
+          onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
+        } else {
+          recordSkippedTelegram({ kind: 'kohatsu', data: kohatsu }, decision)
+        }
+      } else if (ev.kind === 'quakeNotice') {
+        const notice = ev.data
+        if (applyQuakeNotice(notice)) {
+          onLiveEventRef.current?.({ kind: 'quakeNotice', data: notice })
+        } else {
+          recordSkippedTelegram({ kind: 'quakeNotice', data: notice }, 'notApplied')
+        }
+      } else if (ev.kind === 'earthquakeCount') {
+        const count = ev.data
+        const decision = decideDispatch('earthquakeCount', count, applyEarthquakeCount(count), false, false)
+        if (decision === 'dispatch') {
+          onLiveEventRef.current?.({ kind: 'earthquakeCount', data: count })
+        } else {
+          recordSkippedTelegram({ kind: 'earthquakeCount', data: count }, decision)
+        }
+      } else if (ev.kind === 'estimatedIntensity') {
+        const ei = ev.data
+        const applied = applyEstimatedIntensity(ei, true)
+        if (applied) {
+          onLiveEventRef.current?.({ kind: 'estimatedIntensity', data: ei, isNew: applied.isNew })
+        } else {
+          recordSkippedTelegram({ kind: 'estimatedIntensity', data: ei }, 'notApplied')
+        }
+      } else if (ev.kind === 'internationalTsunami') {
+        // 一覧へ新しく足せた報だけ `onLiveEvent` へ流す。ライブと取り戻しで同じ報を 2 度受けても、読み上げ・通知は 1 回
+        const intl = ev.data
+        if (applyInternationalTsunami(intl)) {
+          onLiveEventRef.current?.({ kind: 'internationalTsunami', data: intl })
+        } else {
+          recordSkippedTelegram({ kind: 'internationalTsunami', data: intl }, 'notApplied')
+        }
       } else {
-        // 覚えが無ければ、申し込みの結果（決まらなければ上限の 15 秒で既定の区分）を待つ
-        void ws.classificationsReady.then((classifications) => {
-          if (!cancelled) startRestFetches(classifications)
-        })
-      }
-
-      // EEW の pref 補完用に細分区域名→都道府県の逆引きインデックスを先読みする。
-      // インデックスは取得成功の購読で受ける。この変数は接続中に届く「すべての」EEW に使い回される
-      // ため、単に .then で一度だけ埋めると、初回取得が一時的に失敗しただけでこの接続の間ずっと
-      // 補完が効かない状態に固定されてしまう。購読しておけば、他の呼び出し元（地図・地震カード）の
-      // 再取得が成功した時点で以降の EEW から補完が復帰する。
-      // 取得できなくても EEW 自体は流す（都道府県名が付かないだけ）が、無音にはしない。
-      let areaPrefIndex: ReadonlyMap<string, string> | null = null
-      const unsubscribeStationCoords = onStationCoordsLoaded(data => {
-        areaPrefIndex = areaPrefIndexOf(data)
-      })
-      loadStationCoords()
-        .catch(err => {
-          log.warn('[data] station-coords 取得失敗（EEW 予想震度の都道府県名が補完されない。読み上げの地域順も気象庁順に並ばない）', err)
-        })
-
-      ws.onEvent = (ev) => {
-        if (ev.kind === 'lpgm') {
-          const lpgm = ev.data
-          // 台帳の扱いはキュー経路と同じ（→ `utils/lpgmRetraction.ts`）
-          if (lpgm.cancelled) addLpgmRetraction(lpgmRetractionsRef.current, lpgmRetractionOf(lpgm), MAX_LPGM_RETRACTIONS)
-          else if (isRetractedLpgm(lpgmRetractionsRef.current, lpgm)) {
-            log.warn('[lpgm] 取消以前に発表された報を捨てた', { eventId: lpgm.eventId, time: lpgm.time })
-            recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, 'notApplied')
-            return
-          }
-          // 印付けもキュー経路と同じ関数で（→ `applyLiveLpgmWithMarks`）
-          setState(prev => ({ ...prev, ...applyLiveLpgmWithMarks(prev, lpgm, Date.now()) }))
-          // 流すかの判定もキュー経路と同じ（→ `lpgmNotifiable`・`decideDispatch`）。この経路は常にライブ
-          // （silent の概念を持たない）。流さないものは録画ツール向けに必ず記録する（3巡目レビューで、ここだけ
-          // else が無く記録が丸ごと抜けていたのを検出した）。
-          const lpgmDecision = lpgmNotifiable(lpgm) ? decideDispatch('lpgm', lpgm, true, false, false) : 'notDispatched'
-          if (lpgmDecision === 'dispatch') {
-            onLiveEventRef.current?.({ kind: 'lpgm', data: lpgm })
-          } else {
-            recordSkippedTelegram({ kind: 'lpgm', data: lpgm }, lpgmDecision)
-          }
-        } else if (ev.kind === 'nankai') {
-          const nankai = ev.data
-          // キュー経路と同じ関数を通す（規則を 2 箇所に書かない。理由は `applyNankai`）。
-          const otherUnit = cancelOverOtherUnit(shownNankaiEventIdRef.current, nankai)
-          const decision = decideDispatch('nankai', nankai, applyNankai(nankai), false, otherUnit)
-          if (decision === 'dispatch') {
-            onLiveEventRef.current?.({ kind: 'nankai', data: nankai })
-          } else {
-            recordSkippedTelegram({ kind: 'nankai', data: nankai }, decision)
-          }
-        } else if (ev.kind === 'nankaiCommentary') {
-          const commentary = ev.data
-          const decision = decideDispatch('nankaiCommentary', commentary, applyNankaiCommentary(commentary), false, false)
-          if (decision === 'dispatch') {
-            onLiveEventRef.current?.({ kind: 'nankaiCommentary', data: commentary })
-          } else {
-            recordSkippedTelegram({ kind: 'nankaiCommentary', data: commentary }, decision)
-          }
-        } else if (ev.kind === 'kohatsu') {
-          const kohatsu = ev.data
-          const otherUnit = cancelOverOtherUnit(shownKohatsuEventIdRef.current, kohatsu)
-          const decision = decideDispatch('kohatsu', kohatsu, applyKohatsu(kohatsu), false, otherUnit)
-          if (decision === 'dispatch') {
-            onLiveEventRef.current?.({ kind: 'kohatsu', data: kohatsu })
-          } else {
-            recordSkippedTelegram({ kind: 'kohatsu', data: kohatsu }, decision)
-          }
-        } else if (ev.kind === 'quakeNotice') {
-          const notice = ev.data
-          if (applyQuakeNotice(notice)) {
-            onLiveEventRef.current?.({ kind: 'quakeNotice', data: notice })
-          } else {
-            recordSkippedTelegram({ kind: 'quakeNotice', data: notice }, 'notApplied')
-          }
-        } else if (ev.kind === 'earthquakeCount') {
-          const count = ev.data
-          const decision = decideDispatch('earthquakeCount', count, applyEarthquakeCount(count), false, false)
-          if (decision === 'dispatch') {
-            onLiveEventRef.current?.({ kind: 'earthquakeCount', data: count })
-          } else {
-            recordSkippedTelegram({ kind: 'earthquakeCount', data: count }, decision)
-          }
-        } else if (ev.kind === 'estimatedIntensity') {
-          const ei = ev.data
-          const applied = applyEstimatedIntensity(ei, true)
-          if (applied) {
-            onLiveEventRef.current?.({ kind: 'estimatedIntensity', data: ei, isNew: applied.isNew })
-          } else {
-            recordSkippedTelegram({ kind: 'estimatedIntensity', data: ei }, 'notApplied')
-          }
-        } else if (ev.kind === 'internationalTsunami') {
-          // 画面へ足すだけ（`onLiveEvent` へは流さない。音・読み上げ・通知が無い）
-          applyInternationalTsunami(ev.data)
-        } else {
-          const data = ev.data
-          const enriched = data.kind === 'eew' ? enrichEEWPref(data as EEWAlert, areaPrefIndex) : data
-          enqueueEvent(enriched)
-        }
-      }
-      ws.onStatusChange = status =>
-        setState(prev => ({ ...prev, connectionStatus: status }))
-      ws.onRawMessage = appendTelegramLog
-      ws.onClassifications = (classifications) => {
-        if (cancelled) return
-        // 配信元が受け付けた区分を覚える（次に開いたとき、申し込みの結果を待たずに履歴を取るため）
-        rememberClassifications(dmdataApiKey, classifications)
-        // **覚えた区分で始めていたら、最初に受け付けられた区分と突き合わせる。** 食い違えば
-        // （契約・鍵の権限が変わった）、受け付けられた区分で履歴と復元を取り直す
-        if (!rememberedChecked) {
-          rememberedChecked = true
-          if (remembered !== null && !sameClassifications(remembered, classifications)) {
-            log.info('[DMDSS] 前回と受け付けられた区分が違うため、履歴と発表中の緊急地震速報を取り直します', {
-              前回: remembered, 今回: classifications,
-            })
-            startRestFetches(classifications)
-          }
-        }
-        // 「もっと見る」は押した時点の最新の区分で引く（最初の取り決めが既定の区分へ倒れた後で、
-        // 再接続が一部の区分だけで通った場合も追随する）
-        dmdataRestClassificationsRef.current = classifications
-        // 再接続のたびに同じ区分で状態を作り直さない（リプレイの取得関数まで作り直される）
-        setState(prev => (
-          prev.dmdataClassifications?.join(',') === classifications.join(',')
-            ? prev
-            : { ...prev, dmdataClassifications: classifications }
-        ))
-      }
-      // **覚えで始めて、最初の取り決めが受け付けを得ないまま決着したとき。** 突き合わせの相手が
-      // 無いので、理由で分ける
-      ws.onClassificationsUnsettled = (reason) => {
-        if (cancelled || remembered === null || rememberedChecked) return
-        if (reason === 'auth') {
-          // この鍵では繋がらない（認証エラー・受けられる区分が無い）。覚えを残すと、次の起動でも
-          // 受けられない区分で履歴を引いて断られるので消す。次の起動からは今までどおり申し込みの
-          // 結果を待つ。**この起動の履歴は覚えで走っているが、取り直さない** —— 既定の区分で引いても
-          // 同じく断られる見込みで、失敗は履歴取得の側が画面へ出す
-          rememberedChecked = true
-          forgetClassifications(dmdataApiKey)
-          log.warn('[DMDSS] 認証エラーのため、前回受け付けられた区分の覚えを消しました', { 前回: remembered })
+        const data = ev.data
+        if (data.kind === 'eew' && keyForecastLive && !relayNamesForecast) {
+          // 自分の鍵の予報の接続が繋がっている間は、中継の警報 VXSE43 を取り込まない（§0 の 2026-10-30 の行）
+          recordSkippedTelegram(data as EEWAlert, 'notApplied')
           return
         }
-        // 409・通信の失敗が続いて決まらない。覚えのまま続ける（既定の区分より、前回実際に受け付け
-        // られた区分のほうが当たっている見込みが高い）。**突き合わせは止めない** —— 後で繋がって
-        // 受け付けられた区分が違えば、そこで取り直す
-        log.info('[DMDSS] 受けられる区分をチケットで確かめられないため、前回受け付けられた区分のまま履歴と復元を続けます', { 前回: remembered })
-      }
-      // **繋がっていなかった間に出た電文を取り戻す**（#927）。DMDATA の WebSocket は張り直しても
-      // 切れていた間の電文を送り直さない。隙間は 2 つある ——
-      //   - 張り直し: 前の接続で最後に何か受け取った時刻から、いま繋がった時刻まで
-      //   - 起動: 履歴が目録を引いた時刻から、最初に繋がった時刻まで。申し込みの結果を待つ形でも、
-      //     区分はチケットの応えで決まり、その後に WebSocket が開くので隙間がある。前回受け付けられた
-      //     区分で先に始めた形・決まらないまま既定の区分で始めた形（409 が続く）では秒単位に伸びる。
-      //     最初に繋がった時点で履歴がまだ始まっていなければ、履歴が繋がった後の分まで引くので取りに行かない
-      // 起動時の履歴と同じく音・読み上げ・タブ移動は起こさない（標準版の張り直しの取り戻しと同じ扱い。
-      // 2026-10-20 ユーザー承認「おすすめで」）。キューへ `silent` で積み、ライブの報と同じ `handleEvent` を通す
-      // —— 統合（同じ電文を二度数えない・古い報で退行しない）と津波の新旧の比べ方をライブと共有するため。
-      //
-      // **取り戻しは 1 本ずつ順に走らせる**（標準版の `p2pBackfillChain` と同じ理由）。区間は下の `owedFromMs` 1 つに
-      // 寄せ、回が始まるときに受け取る —— 履歴を待っている間に張り直しが重なっても、最初の回がいちばん古い左端から
-      // 1 度だけ引き、後の回は引く区間が残っていないので何もせずに終わる（回線が明滅したとき、同じ左端あたりの窓を
-      // 回数ぶん引き直さない）。どの段が投げても鎖は解決済みに戻す —— 戻さないと、以後の張り直しの取り戻しが 1 つも走らなくなる。
-      //
-      // **緊急地震速報は別の鎖で回す。** 地震・津波の取り戻しは履歴を当て終えるまで待つが、発表中の速報を戻すのに
-      // 履歴は要らない。同じ鎖に並べると、履歴の取得が長引く間、張り直しの直後にいちばん要る速報が戻らない。
-      const makeChain = (label: string) => {
-        let chain: Promise<void> = Promise.resolve()
-        return (step: () => Promise<void>): void => {
-          chain = chain.then(step).catch((err: unknown) => {
-            if (!cancelled) log.error(`[DMDSS] ${label}の順番待ちで想定外の失敗`, err)
-          })
-        }
-      }
-      const enqueueBackfill = makeChain('取り戻し')
-      const enqueueEewRestore = makeChain('緊急地震速報の取り戻し')
-      // まだ取り戻せていない区間の左端（エポックミリ秒）。張り直しのたびに古いほうへ寄せ、取り戻しが始まるときに
-      // 受け取る。取れなかったとき（通信の失敗・取得制限で見送った電文・取り直せば読めうる電文がある）は戻す ——
-      // 次の窓は新しい「最後に受けた時刻」から始まるので、戻さないとその区間が二度と引かれない。
-      //
-      // **戻すのは 1 度だけ**（`owedIsRetry`）。引き直した回でもまた取れなければ、記録して諦める。回数を限らないと、
-      // 恒久的に読めない電文が 1 通あるだけで左端が古いまま窓が伸び続け、張り直しのたびに同じ区間を引き直す。
-      // 持ち越した区間に新しい張り直しの区間が合流すると、印は 1 つなので合流した分も引き直しの回になり、
-      // 次の回が失敗すると両方を諦める（張り直しが続くときに起きうる既知の制約。諦めたことは記録に残る）
-      let owedFromMs: number | null = null
-      let owedReason = ''
-      let owedIsRetry = false
-      const oweFrom = (fromMs: number, reason: string): void => {
-        if (owedFromMs === null || fromMs < owedFromMs) {
-          owedFromMs = fromMs
-          owedReason = reason
-        }
-      }
-      // 画面に「接続が切れていた間の電文を取り込めず」を出すかの 2 つの理由（→ `reconnectGapLoss`）。
-      // 持ち越した区間は次の回が引き直すので、回が始まるたびに降ろし、その回がまた取れなければ立て直す。
-      // 諦めた区間はこの接続の間は二度と引かないので、立てたら降ろさない（再読み込みで履歴が取り直す）
-      let gapCarried = false
-      let gapGivenUp = false
-      // 張り直しの間の緊急地震速報を取り直せなかった（→ `restoreEewsAfterReconnect`）。次の張り直しの取り直しは
-      // その時点で発表中のものを全部引き直すので、取れたら降ろす（2026-10-21 ユーザー承認「案1で」）
-      let eewGap = false
-      const publishGapLoss = (): void => {
-        const missing = gapCarried || gapGivenUp || eewGap
-        setState(prev => (prev.reconnectGapLoss === missing ? prev : { ...prev, reconnectGapLoss: missing }))
-      }
-      // **履歴を当て終えるまで待つ。** 先に当てると、履歴が過去の報から引き継ぐ津波の有効期限より前に、同じ報が
-      // 引き継ぎ元の無いまま当たる（履歴の取得は成否を問わず決着する）。待っている間に取り直しが始まったら、その新しい
-      // 版も待つ（「もっと見る」と同じ。1 本だけ待つと、待ち始めた時点の版しか見ない）
-      const waitHistorySettled = async (): Promise<void> => {
-        for (let waiting = dmdataHistorySettledRef.current; ; waiting = dmdataHistorySettledRef.current) {
-          await waiting.catch(() => {})
-          if (dmdataHistorySettledRef.current === waiting) return
-        }
-      }
-      const runBackfill = async (): Promise<void> => {
-        await waitHistorySettled()
-        // 始まる時点で区間を受け取る。ここより後に来た張り直しは、次の回が引く
-        if (cancelled || owedFromMs === null) return
-        const startMs = owedFromMs
-        const reason = owedReason
-        const isRetry = owedIsRetry
-        owedFromMs = null
-        owedIsRetry = false
-        // 持ち越していた区間はこの回が引き直す。取れなければ下でまた立てる
-        gapCarried = false
-        const from = new Date(startMs - DMDATA_RECONNECT_BACKFILL_MARGIN_MS)
-        const to = serverDate()
-        // 取れなかった区間を次の張り直しへ持ち越す。引き直しの回だったなら持ち越さずに諦める（→ `owedIsRetry`）
-        const carryOrGiveUp = (detail: string, err?: unknown, carryFromMs = startMs): void => {
-          if (isRetry) {
-            log.error(`[DMDSS] ${reason}の取り戻しを諦めました（${from.toISOString()}〜${to.toISOString()}。引き直しても${detail}。この間の電文が一覧に無いことがあります）`, ...(err === undefined ? [] : [err]))
-            gapGivenUp = true
-            return
-          }
-          oweFrom(carryFromMs, reason)
-          owedIsRetry = true
-          gapCarried = true
-          log.warn(`[DMDSS] ${reason}の取り戻しで${detail}（次に繋がり直したとき、1 度だけ引き直します）`, ...(err === undefined ? [] : [err]))
-        }
-        let got: Awaited<ReturnType<typeof fetchLiveTelegramsBetween>>
-        try {
-          got = await fetchLiveTelegramsBetween(
-            dmdataApiKey, from, to, dmdataTestDelivery, id => ws.hasReceivedTelegram(id), historyAbort.signal,
-          )
-        } catch (err) {
-          if (cancelled) return
-          // その場では取り直さない（次に繋がり直したとき、この区間から引き直す）。7 日の履歴を取り直すことはしない
-          // （2026-10-20 ユーザー承認「おすすめで」）。取れなかったことは地震タブの帯にも出す（→ `reconnectGapLoss`）
-          carryOrGiveUp('電文の一覧を引けませんでした', err)
-          publishGapLoss()
+        if (data.kind === 'eew' && relayNamesForecast && isSeenForecast(data as EEWAlert, telegramId)) {
+          // 中継の予報と鍵の予報の両方から同じ報が届いた（切り替わりの重なり）
+          recordSkippedTelegram(data as EEWAlert, 'notApplied')
           return
         }
-        if (cancelled) return
-        // 取れた分を当てる途中で投げたら、区間はもう受け取ってあるので持ち越されない。帯を立ててから投げ直す
-        // （投げ直した先は鎖の catch が記録する）。立てないと、取れていない区間があるのに帯が出ない
-        try {
-          const timed: { at: number; payload: QueuePayload }[] = []
-          // 受信時刻は取得側が必ず添える。万一引けなければ窓の右端に置く（先頭へ回して古い報として当てない）
-          const atOf = (e: JMAQuake | JMATsunami) => got.receivedAt.get(e)?.getTime() ?? to.getTime()
-          for (const q of got.quakes) timed.push({ at: atOf(q), payload: { kind: 'event', event: q } })
-          for (const t of got.tsunamis) timed.push({ at: atOf(t), payload: { kind: 'event', event: t } })
-          for (const e of got.extras) timed.push({ at: e.replayTime.getTime(), payload: e.payload })
-          // 受け取った順に当てる（キューは同じ発火時刻なら積んだ順に出す）
-          timed.sort((a, b) => a.at - b.at)
-          const eventTime = serverDate()
-          // **取り戻した電文は電文ログに載らない**（`logEntry: null`）。この経路は WebSocket を
-          // 通らないので `onRawMessage` が呼ばれず、本文も `ReplayPayload` へ読んだ後しか
-          // 手元に無い。**今回の変更より前からの穴**で、載せるには取得側が本文を保つ必要がある。
-          for (const { payload } of timed) eventQueueRef.current.push({ eventTime, silent: true, payload, logEntry: null })
-          log.info(`[DMDSS] ${reason}の取り戻し（${from.toISOString()}〜${to.toISOString()}）: 地震情報 ${got.quakes.length} 通・津波 ${got.tsunamis.length} 通・ほか ${got.extras.length} 通を当てます（ライブで受け取り済み ${got.alreadyReceivedCount} 通）`)
-          // 持ち越すときの左端。ページの上限に当たったなら、読めた新しい側だけに絞る（古い側をまた引くと同じところで止まる）
-          let carryFromMs = startMs
-          if (got.reachedOnlyBack !== null) {
-            // 一覧のページの上限に当たった。新しい側の読めた分は上で当てた。届かなかった古い側は、引き直しても同じところで
-            // 止まるので持ち越さずに諦める（2026-10-20 ユーザー承認「おすすめで」。7 日の履歴も取り直さない）
-            log.error(`[DMDSS] ${reason}の取り戻しで、電文一覧のページの上限に当たりました（${from.toISOString()}〜${got.reachedOnlyBack.toISOString()} の電文は取り戻していません。一覧に無いことがあります）`)
-            carryFromMs = got.reachedOnlyBack.getTime() + DMDATA_RECONNECT_BACKFILL_MARGIN_MS
-            gapGivenUp = true
-          }
-          // 待てば取れうる電文（取得制限で見送った・取得か読み取りが例外で終わった）があれば、次の取り戻しで同じ区間から引き直す
-          const retryable = got.rateLimitedTelegrams + got.failedTelegrams
-          if (retryable > 0 && got.failedTelegrams === 0) {
-            // 取得制限だけなら、引き直しの回数に数えない。429 の窓は待てば明けるので、明けた後の回で取れる
-            oweFrom(carryFromMs, reason)
-            owedIsRetry = isRetry
-            gapCarried = true
-            log.warn(`[DMDSS] ${reason}の取り戻しで、取得制限のため ${got.rateLimitedTelegrams} 通を見送りました（次に繋がり直したとき、引き直します）`)
-          } else if (retryable > 0) {
-            carryOrGiveUp(` ${retryable} 通を取れませんでした（取得制限で見送り ${got.rateLimitedTelegrams} 通・取得の失敗 ${got.failedTelegrams} 通）`, undefined, carryFromMs)
-          }
-          // 読めない形の電文と、断片が揃わなかった推計震度分布図。引き直しても同じなので持ち越さない
-          const unreadable = got.skipped - got.failedTelegrams
-          // 画面には数えない（→ `reconnectGapLoss`。引き直しても再読み込みしても同じ）
-          if (unreadable > 0) log.warn(`[DMDSS] ${reason}の取り戻しで、読めなかった電文（推計震度分布図の断片が揃わなかったものを含む）が ${unreadable} 通ありました`)
-          publishGapLoss()
-        } catch (err) {
+        const enriched = data.kind === 'eew' ? enrichEEWPref(data as EEWAlert, areaPrefIndex) : data
+        enqueueEvent(enriched)
+      }
+    }
+    ws.onStatusChange = status => {
+      // 中継と切れたら、中継から聞いた上流の状態は古いので捨てる（繋がり直せば中継が言い直す）
+      setState(prev => ({ ...prev, connectionStatus: status, relayUpstream: status === 'connected' ? prev.relayUpstream : null }))
+      // 繋ぎ直しは、繋がったか切れたと分かった時点で終わる
+      if (status !== 'connecting') endRelayReopen()
+      relayConnected = status === 'connected'
+      if (relayConnected) relayEverConnected = true
+      else relayUpstreamUp = true
+      syncForecastRoute()
+    }
+    ws.onRelayUpstream = upstream => {
+      setState(prev => (
+        prev.relayUpstream?.connected === upstream.connected && prev.relayUpstream.disconnectedAtMs === upstream.disconnectedAtMs
+          ? prev
+          : { ...prev, relayUpstream: upstream }
+      ))
+      relayUpstreamUp = upstream.connected
+      syncForecastRoute()
+    }
+    ws.onRawMessage = appendTelegramLog
+    // 受けている区分（設定の窓の「受信している区分」）は、中継の区分と自分の鍵の予報の区分を合わせたもの
+    let relayClassifications: readonly DmdataClassification[] = []
+    let keyClassifications: readonly DmdataClassification[] = []
+    const publishClassifications = (): void => {
+      const merged = [...new Set([...relayClassifications, ...keyClassifications])]
+      // 再接続のたびに同じ区分で状態を作り直さない（リプレイの取得関数まで作り直される）
+      setState(prev => (
+        prev.dmdataClassifications?.join(',') === merged.join(',')
+          ? prev
+          : { ...prev, dmdataClassifications: merged }
+      ))
+    }
+    ws.onClassifications = (classifications) => {
+      if (cancelled) return
+      relayClassifications = classifications
+      relayNamesForecast = classifications.includes('eew.forecast')
+      syncForecastRoute()
+      // 「もっと見る」は中継の区分で引く（中継の一覧と束は、中継が受けている区分だけを持つ）
+      dmdataRestClassificationsRef.current = classifications
+      publishClassifications()
+    }
+    // **繋がっていなかった間に出た電文を取り戻す**（#927）。DMDATA の WebSocket は張り直しても
+    // 切れていた間の電文を送り直さない。隙間は 2 つある ——
+    //   - 張り直し: 前の接続で最後に何か受け取った時刻から、いま繋がった時刻まで
+    //   - 起動: 履歴が目録を引いた時刻から、最初に繋がった時刻まで。申し込みの結果を待つ形でも、
+    //     履歴は繋ぐ前に始まり、その後に WebSocket が開くので隙間がある。
+    //     最初に繋がった時点で履歴がまだ始まっていなければ、履歴が繋がった後の分まで引くので取りに行かない
+    // 起動時の履歴と同じく音・読み上げ・タブ移動は起こさない（2026-10-20 ユーザー承認「おすすめで」）。キューへ `silent` で積み、ライブの報と同じ `handleEvent` を通す
+    // —— 統合（同じ電文を二度数えない・古い報で退行しない）と津波の新旧の比べ方をライブと共有するため。
+    //
+    // **取り戻しは 1 本ずつ順に走らせる**。区間は下の `owedFromMs` 1 つに
+    // 寄せ、回が始まるときに受け取る —— 履歴を待っている間に張り直しが重なっても、最初の回がいちばん古い左端から
+    // 1 度だけ引き、後の回は引く区間が残っていないので何もせずに終わる（回線が明滅したとき、同じ左端あたりの窓を
+    // 回数ぶん引き直さない）。どの段が投げても鎖は解決済みに戻す —— 戻さないと、以後の張り直しの取り戻しが 1 つも走らなくなる。
+    //
+    // **緊急地震速報は別の鎖で回す。** 地震・津波の取り戻しは履歴を当て終えるまで待つが、発表中の速報を戻すのに
+    // 履歴は要らない。同じ鎖に並べると、履歴の取得が長引く間、張り直しの直後にいちばん要る速報が戻らない。
+    const makeChain = (label: string) => {
+      let chain: Promise<void> = Promise.resolve()
+      return (step: () => Promise<void>): void => {
+        chain = chain.then(step).catch((err: unknown) => {
+          if (!cancelled) log.error(`[DMDSS] ${label}の順番待ちで想定外の失敗`, err)
+        })
+      }
+    }
+    const enqueueBackfill = makeChain('取り戻し')
+    const enqueueEewRestore = makeChain('緊急地震速報の取り戻し')
+    // まだ取り戻せていない区間の左端（エポックミリ秒）。張り直しのたびに古いほうへ寄せ、取り戻しが始まるときに
+    // 受け取る。取れなかったとき（通信の失敗・取得制限で見送った電文・取り直せば読めうる電文がある）は戻す ——
+    // 次の窓は新しい「最後に受けた時刻」から始まるので、戻さないとその区間が二度と引かれない。
+    //
+    // **戻すのは 1 度だけ**（`owedIsRetry`）。引き直した回でもまた取れなければ、記録して諦める。回数を限らないと、
+    // 恒久的に読めない電文が 1 通あるだけで左端が古いまま窓が伸び続け、張り直しのたびに同じ区間を引き直す。
+    // 持ち越した区間に新しい張り直しの区間が合流すると、印は 1 つなので合流した分も引き直しの回になり、
+    // 次の回が失敗すると両方を諦める（張り直しが続くときに起きうる既知の制約。諦めたことは記録に残る）
+    let owedFromMs: number | null = null
+    let owedReason = ''
+    let owedIsRetry = false
+    const oweFrom = (fromMs: number, reason: string): void => {
+      if (owedFromMs === null || fromMs < owedFromMs) {
+        owedFromMs = fromMs
+        owedReason = reason
+      }
+    }
+    // 画面に「接続が切れていた間の電文を取り込めず」を出すかの 2 つの理由（→ `reconnectGapLoss`）。
+    // 持ち越した区間は次の回が引き直すので、回が始まるたびに降ろし、その回がまた取れなければ立て直す。
+    // 諦めた区間はこの接続の間は二度と引かないので、立てたら降ろさない（再読み込みで履歴が取り直す）
+    let gapCarried = false
+    let gapGivenUp = false
+    // 張り直しの間の緊急地震速報を取り直せなかった（→ `restoreEewsAfterReconnect`）。次の張り直しの取り直しは
+    // その時点で発表中のものを全部引き直すので、取れたら降ろす（2026-10-21 ユーザー承認「案1で」）
+    let eewGap = false
+    const publishGapLoss = (): void => {
+      const missing = gapCarried || gapGivenUp || eewGap
+      setState(prev => (prev.reconnectGapLoss === missing ? prev : { ...prev, reconnectGapLoss: missing }))
+    }
+    // **履歴を当て終えるまで待つ。** 先に当てると、履歴が過去の報から引き継ぐ津波の有効期限より前に、同じ報が
+    // 引き継ぎ元の無いまま当たる（履歴の取得は成否を問わず決着する）。待っている間に取り直しが始まったら、その新しい
+    // 版も待つ（「もっと見る」と同じ。1 本だけ待つと、待ち始めた時点の版しか見ない）
+    const waitHistorySettled = async (): Promise<void> => {
+      for (let waiting = dmdataHistorySettledRef.current; ; waiting = dmdataHistorySettledRef.current) {
+        await waiting.catch(() => {})
+        if (dmdataHistorySettledRef.current === waiting) return
+      }
+    }
+    const runBackfill = async (): Promise<void> => {
+      await waitHistorySettled()
+      // 始まる時点で区間を受け取る。ここより後に来た張り直しは、次の回が引く
+      if (cancelled || owedFromMs === null) return
+      const startMs = owedFromMs
+      const reason = owedReason
+      const isRetry = owedIsRetry
+      owedFromMs = null
+      owedIsRetry = false
+      // 持ち越していた区間はこの回が引き直す。取れなければ下でまた立てる
+      gapCarried = false
+      const from = new Date(startMs - DMDATA_RECONNECT_BACKFILL_MARGIN_MS)
+      const to = serverDate()
+      // 取れなかった区間を次の張り直しへ持ち越す。引き直しの回だったなら持ち越さずに諦める（→ `owedIsRetry`）
+      const carryOrGiveUp = (detail: string, err?: unknown, carryFromMs = startMs): void => {
+        if (isRetry) {
+          log.error(`[DMDSS] ${reason}の取り戻しを諦めました（${from.toISOString()}〜${to.toISOString()}。引き直しても${detail}。この間の電文が一覧に無いことがあります）`, ...(err === undefined ? [] : [err]))
           gapGivenUp = true
-          publishGapLoss()
-          throw err
-        }
-      }
-      const backfillFrom = (fromMs: number, reason: string): void => {
-        oweFrom(fromMs, reason)
-        enqueueBackfill(runBackfill)
-      }
-      // 切れていた間に発表された緊急地震速報を戻す（起動時の復元と同じ取得）。音は鳴らさない。
-      // **台帳の報番号より新しい報だけ積む** —— 表示中の速報の続報もここで入る（地震単位で除くと、切れる前から
-      // 出ていた速報が古い予想のまま残る）。同じ報番号は入口が通してしまうので、ここで止める。
-      // **切れていた間に始まった地震（台帳に無い）があれば、起動時の復元と同じ画面の要求を出す**
-      // （2026-10-21 ユーザー承認「おすすめで」）。ライブなら発報で実時間タブへ移るので、出さないと音も画面の
-      // 移動も無いまま戻り、別のタブを見ている人は気づけない。強さは起動時と同じ（`onStartupRestore`）。
-      // 見ていた地震の続報だけなら出さない —— その画面は切れる前にもう移している
-      const restoreEewsAfterReconnect = async (): Promise<void> => {
-        if (cancelled) return
-        const classifications = dmdataRestClassificationsRef.current
-        if (!classifications) {
-          log.warn('[DMDSS] 受けられる区分がまだ決まっていないため、張り直しの間の緊急地震速報は取り直しません')
-          eewGap = true
-          publishGapLoss()
           return
         }
-        const { eews, complete } = await fetchDmdataActiveEewsOutcome(dmdataApiKey, classifications, dmdataTestDeliveryRef.current)
-        if (cancelled) return
-        eewGap = !complete
-        publishGapLoss()
-        let endedCount = 0
-        let startedWhileAway = false
-        const fresh = eews.filter((eew) => {
-          if (restoredQueueKeys.has(`eew:${eew.id}`)) return false
-          // 取り直しの最中に終えた地震は戻さない（台帳は画面から消えた時点で捨てているので、下の比較では弾けない）
-          if (skipEndedEew(eewEndedRef.current, eew, '張り直しの復元')) { endedCount++; return false }
-          const key = eewEventKey(eew)
-          const acceptance = eewAcceptanceRef.current.get(key)
-          if (!acceptance) startedWhileAway = true
-          const accepted = acceptance?.serialByOrigin.get(eew.origin)
-          const serial = eewSerial(eew)
-          if (accepted === undefined || serial === null || serial > accepted) return true
-          // 報は積まないが、詳細の全報から載せた特別警報の印は移す（→ `carryEverSpecialWarning`）。取得の間にライブが追いつくと
-          // ここで落ちるので、移さないと切れていた間に特別警報だった速報が警報として残る
-          if (eew.everSpecialWarning) carryEverSpecialWarning(key, '張り直しの復元で受け取り済みの報')
-          return false
-        })
-        if (fresh.length === 0) {
-          if (eews.length > 0) log.info(`[DMDSS] 張り直しの間の緊急地震速報: 発表中の ${eews.length} 件はどれも戻しません（受け取り済みの報 ${eews.length - endedCount} 件・画面から消えた地震の報 ${endedCount} 件）`)
-          return
-        }
-        for (const eew of fresh) {
-          restoredQueueKeys.add(`eew:${eew.id}`)
-          // 1 つ上の取り戻しと同じ理由で電文ログには載らない（`logEntry: null`）
-          eventQueueRef.current.push({ eventTime: serverDate(), silent: true, payload: { kind: 'event', event: eew as AppEvent }, logEntry: null })
-        }
-        log.info(`[DMDSS] 張り直しの間に発表された緊急地震速報を戻しました: ${fresh.length} 件（発表中 ${eews.length} 件のうち。受け取り済みの報 ${eews.length - fresh.length - endedCount} 件・画面から消えた地震の報 ${endedCount} 件は戻さない）${startedWhileAway ? '。切れていた間に始まった地震があるので実時間タブを要求します' : ''}`)
-        try {
-          onStartupRestoreEewsRef.current?.(fresh)
-        } catch (err) {
-          log.error('[DMDSS] 張り直しで戻した緊急地震速報を読み上げ側へ渡せませんでした（取り消されても読み上げません）:', err)
-        }
-        if (startedWhileAway) onStartupRestoreRef.current?.('realtime')
+        oweFrom(carryFromMs, reason)
+        owedIsRetry = true
+        gapCarried = true
+        log.warn(`[DMDSS] ${reason}の取り戻しで${detail}（次に繋がり直したとき、1 度だけ引き直します）`, ...(err === undefined ? [] : [err]))
       }
-      ws.onStarted = ({ previousAliveAtMs }) => {
-        if (cancelled) return
-        if (previousAliveAtMs !== null) {
-          backfillFrom(previousAliveAtMs, '張り直し')
-          enqueueEewRestore(restoreEewsAfterReconnect)
-        } else if (historyBeforeMs !== null) {
-          backfillFrom(historyBeforeMs, '起動から接続まで')
-        } else {
-          log.info('[DMDSS] 最初に繋がった時点で履歴がまだ始まっていないため、起動から接続までの取り戻しは見送ります（履歴が繋がった後の分まで引きます）')
-        }
-      }
-      ws.connect()
-
-      return () => {
-        cancelled = true
-        historyAbort.abort()
-        unsubscribeStationCoords()
-        ws.disconnect()
-      }
-    }
-
-    // --- 通常版: P2PQuake ---
-    // 取得に入る前に読み込み中へ戻す（DMDSS 分岐と対称）。これが無いと、リプレイを「リセット」で
-    // 終えた直後に地震一覧が一瞬「地震情報はありません」と出る——再生中は上の早期 return で
-    // isLoading を畳んでおり、stop() が state を空にした状態でこの分岐へ入るため、未取得なのに
-    // 「0 件」として表示されてしまう（EarthquakeTab は isLoading → error → 0件 の順に見る）。
-    setState(prev => (prev.isLoading && !prev.error ? prev : { ...prev, isLoading: true, error: null }))
-
-    // **この接続で見た津波の報のうち、いちばん新しい発表時刻**（エポックミリ秒）。張り直したときの
-    // 取り戻しは、これより新しい報があるときだけ津波を差し替える —— 張り直した直後にライブで
-    // 届いた取消を取り戻した古い発表報で上書きし、終わった津波を甦らせないため。
-    let p2pTsunamiSeenMs = Number.NEGATIVE_INFINITY
-    // 張り直しの取り戻しを順に並べる鎖（→ `ws.onReconnected`）。**先頭は起動時の履歴**（下で繋ぐ）
-    let p2pBackfillChain: Promise<void>
-    const noteP2pTsunamiSeen = (t: JMATsunami | undefined): void => {
-      if (!t) return
-      const ms = new Date(t.time).getTime()
-      if (Number.isFinite(ms) && ms > p2pTsunamiSeenMs) p2pTsunamiSeenMs = ms
-    }
-    // 有効な津波（validDateTime が未来）なら、キューへ解除イベントを挿入する。
-    // VAR-1 の副作用対応: standard 版で kyoshin リプレイのトグル時にこの effect が cleanup→
-    // 再実行されるため、同一 eventId の既存 expired 予約を除去してから積む（TSU-1 と同じ排除）。
-    // 起動時の履歴と、張り直したときの取り戻しの両方が通る。
-    const armP2pTsunamiExpiry = (latestTsunami: JMATsunami): void => {
-      if (!latestTsunami.validDateTime) return
-      const purgeKey = latestTsunami.eventId
-      eventQueueRef.current.retain(entry => {
-        if (entry.payload.kind !== 'event') return true
-        const ev = entry.payload.event
-        if (ev.kind !== 'tsunami') return true
-        const evAny = ev as JMATsunami
-        if (evAny.cancelReason !== 'expired') return true
-        if (purgeKey && evAny.eventId) return evAny.eventId !== purgeKey
-        return evAny.id !== latestTsunami.id
-      })
-      const expireTime = new Date(latestTsunami.validDateTime)
-      if (expireTime > serverDate()) {
-        eventQueueRef.current.push({
-          eventTime: expireTime,
-          payload: { kind: 'event', event: { ...latestTsunami, cancelled: true, cancelReason: 'expired' } as AppEvent },
-          logEntry: null,
-        })
-      }
-    }
-
-    // **張り直しの取り戻しは、この取得が片付いてから走らせる**（鎖の先頭に置く）。この取得は一覧を
-    // 空から組み直して丸ごと差し替えるので、取り戻しが先に終わると積んだ分を消してしまう。
-    // 失敗しても下の `.catch` で受けるので、鎖は止まらない
-    p2pBackfillChain = Promise.all([
-      fetchJmaQuakePage({ limit: INITIAL_HISTORY_PAGE_SIZE }, historyAbort.signal, 'foreground'),
-      fetchHistory([552], 10, 0, historyAbort.signal),
-    ])
-      .then(([quakePage, tsunamiEvents]) => {
-        const quakeEvents = quakePage.events
-        if (cancelled) return
-        // 種別横断の生電文をイベントごとに統合する（DMDSS 版・リアルタイムと同一ロジック）。
-        // 以前は earthquake.time をキーにした Map で「優先度が最も高い 1 報」を選んでいたが、
-        // P2PQuake の earthquake.time は分単位のため、同じ分に起きた別の地震が 1 枚に潰れていた。
-        rememberQuakeRetractionsFromBatch(quakeEvents)
-        // **地震の単位で選ぶ**（→ `MAX_HISTORY_RETAINED`・`selectQuakeHistory`）。API のページングは
-        // 電文単位なので、そのまま畳むと地震の多い期間ほど一覧が薄くなる。**取消の台帳へは選ぶ前の
-        // 全電文を積む** —— 選から漏れた地震の取消でも、後から届いた古い報を弾くのに要る。
-        //
-        // **時刻を読めない電文は選ぶ前に外す。** `selectQuakeHistory` は並べ替えに時刻を使うので、
-        // `NaN` が混ざると並びが壊れる（外した分は畳み込みへも渡さない —— どのみち新旧を決められない）。
-        // P2PQuake の時刻は読み取りの入口で ISO の形へ直してあるので（`services/p2pquake.ts` の `p2pTime`）、
-        // ここで外れるのは入口でも直せなかった電文だけ。**外したら記録する** —— 黙ると、一覧から地震が
-        // 消えた理由が残らない（かつて Safari で受信時刻を読めず、全件がここで黙って消えた）。
-        const historyTimed = quakeEvents.map(q => ({ q, time: new Date(q.time).getTime() }))
-        const historyCandidates = historyTimed.filter(c => Number.isFinite(c.time))
-        const historyUntimed = historyTimed.filter(c => !Number.isFinite(c.time))
-        if (historyUntimed.length > 0) {
-          log.warn(
-            `[p2pquake] 初回履歴で時刻を読めない地震情報 ${historyUntimed.length} 通を外した`,
-            historyUntimed.slice(0, 3).map(c => ({ id: c.q.id, time: c.q.time })),
-          )
-        }
-        const selected = selectQuakeHistory(
-          historyCandidates, c => c.q, c => c.time,
-          { maxEvents: MAX_HISTORY_RETAINED, windowStartMs: null },
-          getAreaPrefIndexCache(),
+      let got: Awaited<ReturnType<typeof fetchLiveTelegramsBetween>>
+      try {
+        got = await fetchLiveTelegramsBetween(
+          relayRestEndpoint, from, to, dmdataTestDelivery, id => ws.hasReceivedTelegram(id), historyAbort.signal,
         )
-        const selectedQuakes = selected.map(c => c.q)
-        // **選から漏れた電文は次の「もっと見る」へ回す。** 捨てると、その地震は一覧に二度と出ない ——
-        // `offset` は引いた電文の数だけ進むので、次の取得はこれより古い電文から始まる
-        // （100 通に 51 地震以上が入る形＝地震の多い期間ほど起きる）。
-        // **持ち越すのは選抜に掛けた電文のうち漏れたものだけ。** `quakeEvents` から引くと、
-        // 時刻を読めず選抜の手前で外した電文まで持ち越してしまい、次の「もっと見る」では
-        // 畳み込みへ入る —— 同じ電文が初回では外れ、次では入る食い違いになる
-        // （`readTime` は直せない時刻でも警告を出して元の文字列を返すので、この形は通り抜ける）。
-        const selectedSet = new Set(selectedQuakes)
-        p2pCarryOverRef.current = historyCandidates.filter(c => !selectedSet.has(c.q)).map(c => c.q)
-        // 畳み込みが作った記憶も受け取る（印は出さない。→ `marksFromHistory`）。
-        const { cards: earthquakes, markMemory } = mergeQuakeHistory(selectedQuakes, [], quakeRetractionsRef.current, getAreaPrefIndexCache())
-        const { latest: latestTsunami, active: tsunamis } = selectP2pTsunamiSnapshot(tsunamiEvents as JMATsunami[], serverDate())
-        // **「もっと見る」の起点は配信元が返した電文の数。** 選んだ地震の数でも、読めた電文の数でも
-        // ない —— API の `offset` は配信元が並べた電文で数えるので、読めなかった分まで進めないと
-        // 次の取得が同じ電文を引き直す（漏れた地震は上の `p2pCarryOverRef` が持ち越す）。
-        p2pRawOffsetRef.current = quakePage.rawCount
-        setState(prev => ({
-          ...prev,
-          // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
-          ...marksFromHistory(markMemory, earthquakes, prev.lpgmByEventId, prev.quakeUpdateMarks),
-          // ライブ経路・DMDSS の復元と同じ扱いを通す。**standard 版では貸し手が居ない**
-          // （P2PQuake は津波電文の原因地震を配信しない）ので実際には何も変わらないが、
-          // 経路ごとに扱いを違えない —— 片方だけ直すと、次に触る人がどちらが正なのか判らない。
-          earthquakes: borrowFromTsunamiIntoCards(earthquakes, tsunamis),
-          tsunamis,
-          lastUpdate: serverDate(),
-          isLoading: false,
-          // **配信元が返した電文の数で見る**（2026-10-23 ユーザー承認「引けた電文の数で見る」
-          // 「生の件数で見る」）。上限まで返ってきたなら、その先にまだ電文がある。
-          // **読めた電文の数では見ない** —— 1 通でも読めないと上限に届かず、先があるのに
-          // ボタンが消える。選んだ地震の数でも見ない（地震の少ない期間に 50 件へ届かない）。
-          //
-          // **持ち越しがあるときも出す。** 上限に届かない応答でも 50 地震を超えていれば漏れが出る
-          // （配信元の障害・短い応答）。ボタンが無いと、その地震は一覧に二度と出ない。
-          hasMore: quakePage.rawCount === INITIAL_HISTORY_PAGE_SIZE || p2pCarryOverRef.current.length > 0,
-          error: null,
-        }))
-        noteP2pTsunamiSeen(latestTsunami)
-        // 津波の復元は **standard 版でも効く**（DMDSS 版限定なのは緊急地震速報のほうだけで、
-        // P2PQuake には発表中の緊急地震速報を取る経路が無い）。
-        if (tsunamis.length > 0) onStartupRestoreRef.current?.('tsunami')
-        if (tsunamis.length > 0 && latestTsunami) armP2pTsunamiExpiry(latestTsunami)
-      })
-      .catch((err: unknown) => {
+      } catch (err) {
         if (cancelled) return
-        log.error('[fetch] 初回データ取得失敗', err)
-        const msg = err instanceof Error ? err.message : '取得失敗'
-        setState(prev => ({ ...prev, isLoading: false, error: msg }))
-      })
-
-    const ws = new P2PQuakeWebSocket()
-    wsRef.current = ws
-    // P2PQuake WS の EEW（VXSE43/45 相当・内部 code=556）も、Yahoo hypoInfo と同じく全処理（音・読み上げ・
-    // 通知・タブ移動）へ通す。どちらの経路から来ても `handleEvent` の入口で同じ地震の報として統合し
-    // （`mergeEewReport`）、同じ報を別の経路から受けたときは音・通知を起こさない（`eewSameReport`）。
-    // かつては Yahoo が先に拾った速報だけ P2PQuake を区域の注入に回していて、P2PQuake が先に拾った
-    // 速報の続報まで注入に回り、続報の音・読み上げ・通知が出なかった。
-    ws.onEvent = (event: AppEvent) => {
-      if (event.kind === 'eew') {
-        // 試験報は設定「試験報を受信」が真なら流す（印は `handleEvent` の入口で付く。→ `admitTrainingEew`）
-        if (event.test && !dmdataTestDeliveryRef.current) { recordSkippedTelegram(event, 'testReport'); return }
-        const eew = event as EEWAlert
-        // この key はそのまま台帳（`eewAcceptanceRef`）のキーになる。式を書き写すと
-        // 導出が変わったときに片方だけ追従し、台帳と状態のキーが割れる。
-        const key = eewEventKey(eew)
-        if (event.cancelled) {
-          // Yahoo が検出する前に誤報取消された場合は hypoInfo 消滅イベントが来ない。
-          // activeEEWs に残っていれば解除処理を通す。**取消の前に画面から消えた地震の誤報取消も通す**
-          // （普通の誤報取消と同じく伝える。→ `isLateEewCancel`。2026-10-22 ユーザー承認「効かせる (Recommended)」）。
-          // 判定は入口でもう一度行う（キューで待つ間に記憶が変わりうる）
-          const lateCancel = isLateEewCancel(eewEndedRef.current.get(key), eew, serverNow(), ACTIVE_EEW_WINDOW_MS)
-          if (stateRef.current.activeEEWs.has(key) || lateCancel) {
-            enqueueEvent(event)
-          } else {
-            // 画面に無く、消えた地震の記憶でも伝える取消ではない（窓切れ・取消済み・一度も出ていない）
-            log.debug(`[eew] P2PQuake の誤報取消を通さない（画面に無い地震）: key=${key}`)
-            recordSkippedTelegram(event, 'notApplied')
-          }
-          return
-        }
-        enqueueEvent(eew)
+        // その場では取り直さない（次に繋がり直したとき、この区間から引き直す）。7 日の履歴を取り直すことはしない
+        // （2026-10-20 ユーザー承認「おすすめで」）。取れなかったことは地震タブの帯にも出す（→ `reconnectGapLoss`）
+        carryOrGiveUp('電文の一覧を引けませんでした', err)
+        publishGapLoss()
         return
       }
-      if (event.kind === 'tsunami') noteP2pTsunamiSeen(event as JMATsunami)
-      enqueueEvent(event)
+      if (cancelled) return
+      // 取れた分を当てる途中で投げたら、区間はもう受け取ってあるので持ち越されない。帯を立ててから投げ直す
+      // （投げ直した先は鎖の catch が記録する）。立てないと、取れていない区間があるのに帯が出ない
+      try {
+        const timed: { at: number; payload: QueuePayload }[] = []
+        // 受信時刻は取得側が必ず添える。万一引けなければ窓の右端に置く（先頭へ回して古い報として当てない）
+        const atOf = (e: JMAQuake | JMATsunami) => got.receivedAt.get(e)?.getTime() ?? to.getTime()
+        for (const q of got.quakes) timed.push({ at: atOf(q), payload: { kind: 'event', event: q } })
+        for (const t of got.tsunamis) timed.push({ at: atOf(t), payload: { kind: 'event', event: t } })
+        for (const e of got.extras) timed.push({ at: e.replayTime.getTime(), payload: e.payload })
+        // 受け取った順に当てる（キューは同じ発火時刻なら積んだ順に出す）
+        timed.sort((a, b) => a.at - b.at)
+        const eventTime = serverDate()
+        // **取り戻した電文は電文ログに載らない**（`logEntry: null`）。この経路は WebSocket を
+        // 通らないので `onRawMessage` が呼ばれず、本文も `ReplayPayload` へ読んだ後しか
+        // 手元に無い。**今回の変更より前からの穴**で、載せるには取得側が本文を保つ必要がある。
+        for (const { payload } of timed) eventQueueRef.current.push({ eventTime, silent: true, payload, logEntry: null })
+        log.info(`[DMDSS] ${reason}の取り戻し（${from.toISOString()}〜${to.toISOString()}）: 地震情報 ${got.quakes.length} 通・津波 ${got.tsunamis.length} 通・ほか ${got.extras.length} 通を当てます（ライブで受け取り済み ${got.alreadyReceivedCount} 通）`)
+        // 持ち越すときの左端。ページの上限に当たったなら、読めた新しい側だけに絞る（古い側をまた引くと同じところで止まる）
+        let carryFromMs = startMs
+        if (got.reachedOnlyBack !== null) {
+          // 一覧のページの上限に当たった。新しい側の読めた分は上で当てた。届かなかった古い側は、引き直しても同じところで
+          // 止まるので持ち越さずに諦める（2026-10-20 ユーザー承認「おすすめで」。7 日の履歴も取り直さない）
+          log.error(`[DMDSS] ${reason}の取り戻しで、電文一覧のページの上限に当たりました（${from.toISOString()}〜${got.reachedOnlyBack.toISOString()} の電文は取り戻していません。一覧に無いことがあります）`)
+          carryFromMs = got.reachedOnlyBack.getTime() + DMDATA_RECONNECT_BACKFILL_MARGIN_MS
+          gapGivenUp = true
+        }
+        // 待てば取れうる電文（取得制限で見送った・取得か読み取りが例外で終わった）があれば、次の取り戻しで同じ区間から引き直す
+        const retryable = got.rateLimitedTelegrams + got.failedTelegrams
+        if (retryable > 0 && got.failedTelegrams === 0) {
+          // 取得制限だけなら、引き直しの回数に数えない。429 の窓は待てば明けるので、明けた後の回で取れる
+          oweFrom(carryFromMs, reason)
+          owedIsRetry = isRetry
+          gapCarried = true
+          log.warn(`[DMDSS] ${reason}の取り戻しで、取得制限のため ${got.rateLimitedTelegrams} 通を見送りました（次に繋がり直したとき、引き直します）`)
+        } else if (retryable > 0) {
+          carryOrGiveUp(` ${retryable} 通を取れませんでした（取得制限で見送り ${got.rateLimitedTelegrams} 通・取得の失敗 ${got.failedTelegrams} 通）`, undefined, carryFromMs)
+        }
+        // 読めない形の電文と、断片が揃わなかった推計震度分布図。引き直しても同じなので持ち越さない
+        const unreadable = got.skipped - got.failedTelegrams
+        // 画面には数えない（→ `reconnectGapLoss`。引き直しても再読み込みしても同じ）
+        if (unreadable > 0) log.warn(`[DMDSS] ${reason}の取り戻しで、読めなかった電文（推計震度分布図の断片が揃わなかったものを含む）が ${unreadable} 通ありました`)
+        publishGapLoss()
+      } catch (err) {
+        gapGivenUp = true
+        publishGapLoss()
+        throw err
+      }
     }
-    ws.onStatusChange = status =>
-      setState(prev => ({ ...prev, connectionStatus: status }))
-    ws.onRawMessage = appendTelegramLog
-    // **張り直したら、切れていた間の情報を取り戻す**（2026-10-06 ユーザー承認。見張りの張り直しも
-    // 普通の切断からの張り直しも同じ）。切れていた間に配信された報はこの接続では二度と届かない。
-    // 起動時の履歴と同じ扱いで積み、音・読み上げは出さない（2026-10-06 ユーザー承認）。
-    //
-    // **取り戻しは 1 本ずつ順に走らせる。** 回線が明滅して張り直しが重なると、取り戻しが並行して
-    // 同じ時間を何度も取る（`/history` の枠を想定より早く使う）。前の回を打ち切る形にしないのは、
-    // 前の回が担う「それより前に切れていた間」を落とすため。
-    ws.onReconnected = lastReceivedAtMs => {
-      p2pBackfillChain = p2pBackfillChain.then(() => backfillSince(lastReceivedAtMs))
+    const backfillFrom = (fromMs: number, reason: string): void => {
+      oweFrom(fromMs, reason)
+      enqueueBackfill(runBackfill)
     }
-    // 取り戻せなかった区間はこの接続の間は引き直さないので、立てたら再読み込みまで降ろさない（→ `reconnectGapLoss`）
-    const markP2pGapLoss = (): void => {
-      setState(prev => (prev.reconnectGapLoss ? prev : { ...prev, reconnectGapLoss: true }))
+    // 切れていた間に発表された緊急地震速報を戻す（起動時の復元と同じ取得）。音は鳴らさない。
+    // **台帳の報番号より新しい報だけ積む** —— 表示中の速報の続報もここで入る（地震単位で除くと、切れる前から
+    // 出ていた速報が古い予想のまま残る）。同じ報番号は入口が通してしまうので、ここで止める。
+    // **切れていた間に始まった地震（台帳に無い）があれば、起動時の復元と同じ画面の要求を出す**
+    // （2026-10-21 ユーザー承認「おすすめで」）。ライブなら発報で実時間タブへ移るので、出さないと音も画面の
+    // 移動も無いまま戻り、別のタブを見ている人は気づけない。強さは起動時と同じ（`onStartupRestore`）。
+    // 見ていた地震の続報だけなら出さない —— その画面は切れる前にもう移している
+    // 中継は張り直すたびに「いま発表中の警報」を送り直す（→ `ws.onRelayActiveEew`）。自分の鍵の予報は `/v2/gd/eew` で取り直す
+    const applyReconnectEews = (eews: readonly EEWAlert[], complete: boolean): void => {
+      if (cancelled) return
+      eewGap = !complete
+      publishGapLoss()
+      const { fresh, endedCount, startedWhileAway } = pickUnappliedEews(eews, '張り直しの復元')
+      if (fresh.length === 0) {
+        if (eews.length > 0) log.info(`[DMDSS] 張り直しの間の緊急地震速報: 発表中の ${eews.length} 件はどれも戻しません（受け取り済みの報 ${eews.length - endedCount} 件・画面から消えた地震の報 ${endedCount} 件）`)
+        return
+      }
+      for (const eew of fresh) {
+        restoredQueueKeys.add(`eew:${eew.id}`)
+        // 1 つ上の取り戻しと同じ理由で電文ログには載らない（`logEntry: null`）
+        eventQueueRef.current.push({ eventTime: serverDate(), silent: true, payload: { kind: 'event', event: eew as AppEvent }, logEntry: null })
+      }
+      log.info(`[DMDSS] 張り直しの間に発表された緊急地震速報を戻しました: ${fresh.length} 件（発表中 ${eews.length} 件のうち。受け取り済みの報 ${eews.length - fresh.length - endedCount} 件・画面から消えた地震の報 ${endedCount} 件は戻さない）${startedWhileAway ? '。切れていた間に始まった地震があるので実時間タブを要求します' : ''}`)
+      try {
+        onStartupRestoreEewsRef.current?.(fresh)
+      } catch (err) {
+        log.error('[DMDSS] 張り直しで戻した緊急地震速報を読み上げ側へ渡せませんでした（取り消されても読み上げません）:', err)
+      }
+      if (startedWhileAway) onStartupRestoreRef.current?.('realtime')
     }
-    const backfillSince = (lastReceivedAtMs: number): Promise<void> => {
-      if (cancelled) return Promise.resolve()
-      const sinceMs = lastReceivedAtMs - P2P_RECONNECT_BACKFILL_MARGIN_MS
-      return fetchHistorySince([551, 552], sinceMs, historyAbort.signal)
-        .then(({ events, rawCount, truncated }) => {
-          if (cancelled) return
-          if (truncated) {
-            // 黙って切ると、遡り切れなかった時間が「何も無かった」に化ける
-            log.warn(`[p2pquake] 張り直し後の取り戻しがページ上限に達しました（${new Date(sinceMs).toISOString()} まで遡り切れていない可能性・取得 ${events.length} 件）`)
-            // 遡り切れなかった古い側は、次の張り直しでも引き直さない（次の窓は新しい「最後に受けた時刻」から始まる）
-            markP2pGapLoss()
-          }
-          const quakes = events.filter((e): e is JMAQuake => e.kind === 'quake')
-          const tsunamiEvents = events.filter((e): e is JMATsunami => e.kind === 'tsunami')
-          const { latest: latestTsunami, active } = selectP2pTsunamiSnapshot(tsunamiEvents, serverDate())
-          const latestMs = latestTsunami ? new Date(latestTsunami.time).getTime() : Number.NaN
-          const replaceTsunami = latestTsunami !== undefined && Number.isFinite(latestMs) && latestMs > p2pTsunamiSeenMs
-          // 届いた件数も並べる。差は壊れていて捨てた分で、個々の理由は変換側が記録する
-          log.info(`[p2pquake] 張り直し後に取り戻した報: 配信元 ${rawCount} 件のうち 地震情報 ${quakes.length} 件・津波 ${tsunamiEvents.length} 件${replaceTsunami ? '（津波を差し替え）' : ''}`)
-          if (quakes.length === 0 && !replaceTsunami) return
-          noteP2pTsunamiSeen(latestTsunami)
-          rememberQuakeRetractionsFromBatch(quakes)
-          setState(prev => {
-            const tsunamis = replaceTsunami ? active : prev.tsunamis
-            // 既存カード群を base に統合する（「もっと見る」と同じ扱い）。同じ電文は重ねず、
-            // 古い報が後から当たっても当て直すので、ライブで届いた分と順番が前後しても崩れない。
-            const { cards, markMemory } = mergeQuakeHistory(
-              quakes, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
-            )
-            return {
-              ...prev,
-              ...marksFromHistory(markMemory, cards, prev.lpgmByEventId, prev.quakeUpdateMarks),
-              earthquakes: borrowFromTsunamiIntoCards(cards, tsunamis),
-              tsunamis,
-              lastUpdate: serverDate(),
-            }
-          })
-          if (replaceTsunami && active.length > 0 && latestTsunami) {
-            onStartupRestoreRef.current?.('tsunami')
-            armP2pTsunamiExpiry(latestTsunami)
-          }
-        })
-        .catch((err: unknown) => {
-          if (cancelled) return
-          // 失敗しても再試行しない（次に張り直したときは、その接続で最後に受けた時刻から取る）。切れていた間の分は
-          // 一覧に無いまま残るので、地震タブの帯にも出す（2026-10-21 ユーザー承認「A・X・揃える」。2026-10-06 には
-          // 記録だけと決めていた）。ここで投げ直さないので、順に並べる鎖（`p2pBackfillChain`）は止まらない
-          log.error('[p2pquake] 張り直し後の取り戻しに失敗', err)
-          markP2pGapLoss()
-        })
+    const restoreKeyForecastAfterReconnect = async (): Promise<void> => {
+      if (cancelled || keyForecastApiKey === null) return
+      const { eews, complete } = await fetchDmdataActiveEewsOutcome(dmdataKeyEndpoint(keyForecastApiKey), ['eew.forecast'], dmdataTestDeliveryRef.current)
+      applyReconnectEews(eews, complete)
     }
+    // 中継は繋ぐたびに「いま発表中の警報」を 1 通送る（発表中が無くても空で送る。設計書 §6.1）。
+    // この接続で最初に届いたものは起動時の復元、2 通目以降は張り直しの復元として当てる
+    let relayActiveEewCount = 0
+    ws.onRelayActiveEew = ({ events, incomplete }) => {
+      if (cancelled) return
+      const isStartup = ++relayActiveEewCount === 1
+      if (keyForecastLive && !relayNamesForecast) {
+        log.info('[relay] 自分の鍵の予報の接続が繋がっているため、中継の発表中の警報は当てません')
+        return
+      }
+      const eews = activeEewsFromRelay(events, serverDate())
+      if (isStartup) {
+        if (incomplete) log.warn('[relay] 中継の発表中の警報に読めない報がありました。読めた分だけを復元します')
+        restoreStartupEews(eews, '起動時の復元（中継）')
+      } else {
+        enqueueEewRestore(async () => applyReconnectEews(eews, !incomplete))
+      }
+    }
+    ws.onStarted = ({ previousAliveAtMs }) => {
+      if (cancelled) return
+      if (previousAliveAtMs !== null) {
+        backfillFrom(previousAliveAtMs, '張り直し')
+      } else if (historyBeforeMs !== null) {
+        backfillFrom(historyBeforeMs, '起動から接続まで')
+      } else {
+        log.info('[DMDSS] 最初に繋がった時点で履歴がまだ始まっていないため、起動から接続までの取り戻しは見送ります（履歴が繋がった後の分まで引きます）')
+      }
+    }
+    if (keyWs !== null) {
+      keyWs.onEvent = (ev, telegramId) => {
+        // 予報だけを申し込んでいるので、届くのは緊急地震速報だけ
+        if (ev.kind !== 'eew') return
+        if (relayNamesForecast && isSeenForecast(ev.data, telegramId)) {
+          recordSkippedTelegram(ev.data, 'notApplied')
+          return
+        }
+        enqueueEvent(enrichEEWPref(ev.data, areaPrefIndex))
+      }
+      keyWs.onRawMessage = appendTelegramLog
+      keyWs.onStatusChange = (status) => {
+        keyForecastLive = status === 'connected'
+        setState(prev => prev.keyForecastStatus === status ? prev : { ...prev, keyForecastStatus: status })
+      }
+      keyWs.onClassifications = (classifications) => {
+        if (cancelled) return
+        keyClassifications = classifications
+        publishClassifications()
+        // 一時的な 401/403 で立った「断られた」は、同じ鍵で予報を受けて繋がった時点で下ろす
+        if (classifications.includes('eew.forecast')) {
+          setState(prev => prev.keyForecastRefused ? { ...prev, keyForecastRefused: false } : prev)
+        }
+      }
+      // この鍵では予報を受けられないと分かったら（交渉で予報が外れた・認証で断られた・鍵の文字が使えない）、
+      // 過去の電文の予報を鍵で引かない。決着の約束（`classificationsReady`）ではなく専用の口で受ける ——
+      // 約束は 1 度しか決まらず、上限の時間で既定の区分（予報を含む）へ先に決着した後に断られると届かない
+      keyWs.onForecastRefused = () => {
+        if (cancelled) return
+        setState(prev => prev.keyForecastRefused ? prev : { ...prev, keyForecastRefused: true })
+      }
+      keyWs.onStarted = ({ previousAliveAtMs }) => {
+        if (cancelled || previousAliveAtMs === null) return
+        enqueueEewRestore(restoreKeyForecastAfterReconnect)
+      }
+    }
+    // 鍵の接続は張るかどうかを経路の判断に任せる（予報キーが無ければすぐ張る）
+    syncForecastRoute()
     ws.connect()
 
     return () => {
       cancelled = true
       historyAbort.abort()
+      unsubscribeStationCoords()
+      unsubscribeRelayTokens()
+      clearTimeout(startupGraceTimer)
+      endRelayReopen()
       ws.disconnect()
+      keyWs?.disconnect()
     }
   }, [handleEvent, enqueueEvent, appendTelegramLog, dmdataApiKey, dmdataTestDelivery, replayTimeOffset, carryEverSpecialWarning])
 
   /**
-   * 「もっと見る」で読んだ履歴を画面へ当てる。**ライブの DMDSS 版と再生中（両バリアント）が通る。**
+   * 「もっと見る」で読んだ履歴を画面へ当てる。**ライブと再生中の両方が通る。**
    *
    * 地震カードは既存のカードを base に統合し、長周期・推計震度分布図は反映し、帯（南海トラフ臨時情報・
    * 解説情報・後発地震注意情報・地震回数・お知らせ）は当てずに記録だけ残す。経路ごとに書き分けると、
@@ -3941,7 +3744,7 @@ export function useEarthquakes(
       const { cards, markMemory } = mergeQuakeHistory(
         events, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
       )
-      const merged = borrowFromTsunamiIntoCards(cards, prev.tsunamis)
+      const merged = settleHistoryCards(cards, markMemory, prev.tsunamis, lpgmByEventId, prev.estimatedIntensities, lpgmRetractionsRef.current)
       return {
         ...prev,
         // **長周期の鍵はこの更新で積み増した `lpgmByEventId` から数える** ——
@@ -4015,7 +3818,7 @@ export function useEarthquakes(
     // 接続 effect の `cancelled` はそちらのスコープに閉じていて、ここからは触れないので、
     // 作り直しのたびに進む世代の番号で見分ける。
     const generation = liveGenerationRef.current
-    // DMDSS 版の履歴の取り直しを挟んだ取得も古い（前の区分で読んだ続きを、取り直した一覧へ足さない）。
+    // 履歴の取り直しを挟んだ取得も古い（前の区分で読んだ続きを、取り直した一覧へ足さない）。
     // 下で、進行中の履歴の取得を待った後の番号に取り直す
     let restRun = dmdataRestRunRef.current
     const stale = () => liveGenerationRef.current !== generation || dmdataRestRunRef.current !== restRun
@@ -4023,106 +3826,74 @@ export function useEarthquakes(
     const signal = liveHistoryAbortRef.current?.signal ?? null
     setState(prev => ({ ...prev, isLoadingMore: true }))
     try {
-      if (isDmdss) {
-        const apiKey = dmdataApiKeyRef.current
-        // 初回と同じ理由で逐次に反映する。**控えが空のうちは 1 件 6 秒**なので、
-        // 揃うまで待つ形だと押してから数分ボタンが無反応に見える。
-        const applyPartialMore = (partial: JMAQuake[]): void => {
-          if (stale()) return
-          rememberQuakeRetractionsFromBatch(partial)
-          setState(prev => {
-            // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
-            const { cards, markMemory } = mergeQuakeHistory(
-              partial, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
-            )
-            return {
-              ...prev,
-              ...marksFromHistory(markMemory, cards, prev.lpgmByEventId, prev.quakeUpdateMarks),
-              earthquakes: borrowFromTsunamiIntoCards(cards, prev.tsunamis),
-            }
-          })
-        }
-        // **前回の続きから、窓 1 つぶんを丸ごと読む**（→ `historyCursorRef`）。件数では打ち切らない
-        // （→ `HISTORY_WINDOW_DAYS` の「件数の上限は置かない」）。
-        //
-        // カーソルが無いのは初回の履歴を読めていない場合。そのときは初回と同じ範囲を
-        // もう一度試す（進めないだけで、押しても何も起きない状態にはしない）。
-        // **進行中の履歴の取得（取り直しを含む）が決着するまで待つ**（→ `dmdataHistorySettledRef`）。
-        // 待つ間もボタンは「取得中…」のまま
-        // **待っている間に取り直しが始まったら、その新しい版も待つ**（待った約束が ref の中身と一致するまで繰り返す）。
-        // 1 本だけ待つと、新しい版がまだカーソルを書いていない（null の）うちに初回と同じ窓を読みに行く
-        for (let waiting = dmdataHistorySettledRef.current; ; waiting = dmdataHistorySettledRef.current) {
-          await waiting
-          if (dmdataHistorySettledRef.current === waiting) break
-        }
-        if (liveGenerationRef.current !== generation) return
-        restRun = dmdataRestRunRef.current
-        const before = historyCursorRef.current ?? serverDate()
-        // **押すたびに新しい印を付けて取る**（`beginLoadMoreGateTag`）。ボタンが、この取得が門を
-        // 通り終えるまでの残り時間を数える（→ `components/EarthquakeTab/LoadMoreButton.tsx`）。
-        // 使い回さないのは、中断された前回の待ちを今回の分として数えないため（理由はその関数）。
-        const history = await fetchDmdataQuakeHistoryFor(
-          dmdataRestClassificationsRef.current,
-          apiKey, before, HISTORY_WINDOW_DAYS, dmdataTestDeliveryRef.current, signal,
-          applyPartialMore, stale, beginLoadMoreGateTag(),
-        )
-        // 時間軸が変わっていたら、取れた分ごと捨てる（「取得中」の解除は finally が担う）
+      // 初回と同じ理由で逐次に反映する。**控えが空のうちは 1 件 6 秒**なので、
+      // 揃うまで待つ形だと押してから数分ボタンが無反応に見える。
+      const applyPartialMore = (partial: JMAQuake[]): void => {
         if (stale()) return
-        // **カーソルを進めるのは成功したときだけ。** 失敗（catch）や時間軸の変化では据え置き、
-        // 次に押したとき同じ窓を読み直す。先に進めて失敗時に戻す形にすると、接続を張り直す
-        // effect のリセット（`historyCursorRef.current = null`）を後から踏み潰しうる。
-        //
-        // **進まなかったのに「まだある」と言われたら記録する。** 押しても永久に増えない状態で、
-        // 画面には何の痕跡も出ない。取得側は読み切った日をカーソルにするので（地震が 0 件の日も
-        // 含む）、通常は在庫がある限り必ず進む。
-        const nextCursor = historyCursorFromOldestDay(history.oldestLoadedDay)
-        if (nextCursor) historyCursorRef.current = nextCursor
-        else if (history.hasMore) {
-          // **429 の待機と本物の不具合を混ぜない。** 窓の最新の日が 429 の窓に入っていると
-          // その日は読み切れず、カーソルは進まない —— それは待てば解ける正常な足踏みで、
-          // 警告にすると解消するまで押すたび出続けて診断の価値が落ちる。
-          if (history.rateLimitedSources.length > 0) {
-            log.info('[data] 履歴のカーソルは進みませんでした（429 の窓が明けるまでの足踏み）')
-          } else {
-            log.warn('[data] 履歴のカーソルが進みませんでした（押しても増えない状態になります）')
-          }
-        }
-        // **続きを出すかは取得側に任せる**（在庫＝アーカイブの目録が空になったか。→ `hasMore`）。
-        // 増えたかどうかでは判定しない —— 30 日まるごと震度1以上の地震が無いことは起きうるが、
-        // それは「もっと古い在庫が無い」ことを何も意味しない。遡り幅の上限も見ない（件数で打ち切って
-        // 読み残した日があってもボタンが死ぬ）。
-        applyLoadedHistory(history, history.hasMore)
-      } else {
-        const offset = p2pRawOffsetRef.current
-        const page = await fetchJmaQuakePage({ limit: P2P_LOAD_MORE_BATCH, offset }, signal, 'foreground')
-        // **配信元が返した数だけ進める**（読めた数ではない。理由は初回履歴の側と同じ）。
-        p2pRawOffsetRef.current += page.rawCount
-        // **初回に選から漏れた電文をここで合流させる**（→ `p2pCarryOverRef`）。取り込んだら空にする ——
-        // 残すと次の「もっと見る」でも同じ電文を畳み直す（`mergeQuakeHistory` は冪等なので
-        // カードは壊れないが、毎回無駄に畳むことになる）。
-        const events = [...p2pCarryOverRef.current, ...page.events]
-        p2pCarryOverRef.current = []
-        // 既存カード群を base に新バッチを統合する（DMDSS 版と同じ扱い）。
-        // バッチ跨ぎで同一イベントの続報が届いた場合もリアルタイムと同一結果になる。
-        // 台帳への記録は setState の外で行う（理由は DMDSS 版側と同じ）。
-        rememberQuakeRetractionsFromBatch(events)
+        rememberQuakeRetractionsFromBatch(partial)
         setState(prev => {
           // 畳み込みが作った記憶を受け取る（印は出さない。→ `marksFromHistory`）。
           const { cards, markMemory } = mergeQuakeHistory(
-            events, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
+            partial, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
           )
+          const shown = settleHistoryCards(cards, markMemory, prev.tsunamis, prev.lpgmByEventId, prev.estimatedIntensities, lpgmRetractionsRef.current)
           return {
             ...prev,
             ...marksFromHistory(markMemory, cards, prev.lpgmByEventId, prev.quakeUpdateMarks),
-            earthquakes: borrowFromTsunamiIntoCards(cards, prev.tsunamis),
-            // **配信元が返した数で見る**（持ち越し分を足した `events.length` では見ない ——
-            // 足したぶん上限を超えて、先が無いのにボタンが残る）。
-            hasMore: page.rawCount === P2P_LOAD_MORE_BATCH,
-            // 成功したので、押し直せば回復しうる側の表示は消す（DMDSS 版と揃える）
-            loadMoreFailed: false,
+            earthquakes: shown,
           }
         })
       }
+      // **前回の続きから、窓 1 つぶんを丸ごと読む**（→ `historyCursorRef`）。件数では打ち切らない
+      // （→ `HISTORY_WINDOW_DAYS` の「件数の上限は置かない」）。
+      //
+      // カーソルが無いのは初回の履歴を読めていない場合。そのときは初回と同じ範囲を
+      // もう一度試す（進めないだけで、押しても何も起きない状態にはしない）。
+      // **進行中の履歴の取得（取り直しを含む）が決着するまで待つ**（→ `dmdataHistorySettledRef`）。
+      // 待つ間もボタンは「取得中…」のまま
+      // **待っている間に取り直しが始まったら、その新しい版も待つ**（待った約束が ref の中身と一致するまで繰り返す）。
+      // 1 本だけ待つと、新しい版がまだカーソルを書いていない（null の）うちに初回と同じ窓を読みに行く
+      for (let waiting = dmdataHistorySettledRef.current; ; waiting = dmdataHistorySettledRef.current) {
+        await waiting
+        if (dmdataHistorySettledRef.current === waiting) break
+      }
+      if (liveGenerationRef.current !== generation) return
+      restRun = dmdataRestRunRef.current
+      const before = historyCursorRef.current ?? serverDate()
+      // **押すたびに新しい印を付けて取る**（`beginLoadMoreGateTag`）。ボタンが、この取得が門を
+      // 通り終えるまでの残り時間を数える（→ `components/EarthquakeTab/LoadMoreButton.tsx`）。
+      // 使い回さないのは、中断された前回の待ちを今回の分として数えないため（理由はその関数）。
+      const history = await fetchDmdataQuakeHistoryFor(
+        dmdataRestClassificationsRef.current,
+        relayRestEndpoint, before, HISTORY_WINDOW_DAYS, dmdataTestDeliveryRef.current, signal,
+        applyPartialMore, stale, beginLoadMoreGateTag(),
+      )
+      // 時間軸が変わっていたら、取れた分ごと捨てる（「取得中」の解除は finally が担う）
+      if (stale()) return
+      // **カーソルを進めるのは成功したときだけ。** 失敗（catch）や時間軸の変化では据え置き、
+      // 次に押したとき同じ窓を読み直す。先に進めて失敗時に戻す形にすると、接続を張り直す
+      // effect のリセット（`historyCursorRef.current = null`）を後から踏み潰しうる。
+      //
+      // **進まなかったのに「まだある」と言われたら記録する。** 押しても永久に増えない状態で、
+      // 画面には何の痕跡も出ない。取得側は読み切った日をカーソルにするので（地震が 0 件の日も
+      // 含む）、通常は在庫がある限り必ず進む。
+      const nextCursor = historyCursorFromOldestDay(history.oldestLoadedDay)
+      if (nextCursor) historyCursorRef.current = nextCursor
+      else if (history.hasMore) {
+        // **429 の待機と本物の不具合を混ぜない。** 窓の最新の日が 429 の窓に入っていると
+        // その日は読み切れず、カーソルは進まない —— それは待てば解ける正常な足踏みで、
+        // 警告にすると解消するまで押すたび出続けて診断の価値が落ちる。
+        if (history.rateLimitedSources.length > 0) {
+          log.info('[data] 履歴のカーソルは進みませんでした（429 の窓が明けるまでの足踏み）')
+        } else {
+          log.warn('[data] 履歴のカーソルが進みませんでした（押しても増えない状態になります）')
+        }
+      }
+      // **続きを出すかは取得側に任せる**（在庫＝アーカイブの目録が空になったか。→ `hasMore`）。
+      // 増えたかどうかでは判定しない —— 30 日まるごと震度1以上の地震が無いことは起きうるが、
+      // それは「もっと古い在庫が無い」ことを何も意味しない。遡り幅の上限も見ない（件数で打ち切って
+      // 読み残した日があってもボタンが死ぬ）。
+      applyLoadedHistory(history, history.hasMore)
     } catch (err) {
       // **時間軸が変わった後の失敗は「失敗」として記録しない。** 結果ごと捨てる取得なので、
       // 誰も困っていない。理由が本物なら新しい世代が同じ理由で失敗して、そちらが記録する。
@@ -4171,7 +3942,7 @@ export function useEarthquakes(
     const generation = testGenerationRef.current
     try {
       const scripts = await loadTestTelegramScripts()
-      const built = await buildTestTelegramEntries(pick(scripts), { isDmdss, now: serverDate() })
+      const built = await buildTestTelegramEntries(pick(scripts), { now: serverDate() })
       if (generation !== testGenerationRef.current) {
         log.debug('[test] 組んでいる間にリセットされたので、テスト用の電文を捨てました')
         return
@@ -4186,7 +3957,7 @@ export function useEarthquakes(
 
   /**
    * 地震テスト（能登本震の震源・震度に関する情報。→ `testTelegramScripts.ts` の `EARTHQUAKE`）。
-   * 長周期地震動の観測情報も一緒に流す（DMDSS 版だけ。電文そのものが標準版の受信元から届かない）。
+   * 長周期地震動の観測情報も一緒に流す。
    */
   const simulateEarthquake = useCallback(() => runTestTelegramScript(s => s.EARTHQUAKE), [runTestTelegramScript])
 
@@ -4202,13 +3973,11 @@ export function useEarthquakes(
    * **4 段目（満潮時刻の報）は、その印が消えないことを確かめるためにある。** 等級について何も
    * 言っていない続報で、アプリから見れば「まだ声にしていない等級変化が 1 件も無い報」になる。
    * かつては受信のたびに印を置き換えていたので、**これが届くと印が寿命を待たずに消えていた**。
-   *
-   * **DMDSS 版のみ。** 前回の等級（`LastKind`）は P2PQuake が配信しない。
    */
   const simulateTsunamiGradeChange = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_GRADE_CHANGE), [runTestTelegramScript])
 
   /**
-   * 「変化の小さい続報」テスト（DMDSS 版のみ。→ `testTelegramScripts.ts` の `TSUNAMI_QUIET_REPORTS`）。
+   * 「変化の小さい続報」テスト（→ `testTelegramScripts.ts` の `TSUNAMI_QUIET_REPORTS`）。
    *
    * **通知音だけが鳴って何も声にならなかった報を、実機で確かめる唯一の入口。** 発表 → 11 通の続報 →
    * 全解除と進む。段の表と、段ごとに動かす 1 項目は台本にある。間隔は読み上げが終わる程度に空ける
@@ -4250,12 +4019,12 @@ export function useEarthquakes(
 
   /**
    * 地震情報の取消のテスト（2024-01-01 23:05 の誤発表と 23:13 の取消。→ `QUAKE_CANCEL`）。
-   * **DMDSS 版のみ**（P2PQuake は地震情報の取消を配信しない）。取消はカードへ印を付け、
+   * 取消はカードへ印を付け、
    * 10 秒後に一覧から外す予約もキューへ積む（`useEarthquakes` の取消の分岐）。
    */
   const simulateQuakeCancel = useCallback(() => runTestTelegramScript(s => s.QUAKE_CANCEL), [runTestTelegramScript])
 
-  /** 地震情報の一部の取消のテスト（→ `QUAKE_PARTIAL_CANCEL`）。**DMDSS 版のみ**。 */
+  /** 地震情報の一部の取消のテスト（→ `QUAKE_PARTIAL_CANCEL`）。 */
   const simulateQuakePartialCancel = useCallback(() => runTestTelegramScript(s => s.QUAKE_PARTIAL_CANCEL), [runTestTelegramScript])
 
   /**
@@ -4263,27 +4032,24 @@ export function useEarthquakes(
    *
    * **受信と同じ経路（イベントキュー）へ積む。** 借りる処理は状態更新と読み上げの両方に
    * 入っているので、`handleEvent` を直接呼ぶと片方しか踏まない。
-   *
-   * **DMDSS 版のみ。** P2PQuake は津波電文の原因地震を配信しないため、standard 版では
-   * 借りる相手が居ない。
    */
   const simulateHypocenterFromTsunami = useCallback(() => runTestTelegramScript(s => s.HYPOCENTER_FROM_TSUNAMI), [runTestTelegramScript])
+
+  /** 津波の続報が地震情報より新しい規模を伝える場面のテスト（→ `MAGNITUDE_FROM_TSUNAMI`）。 */
+  const simulateMagnitudeFromTsunami = useCallback(() => runTestTelegramScript(s => s.MAGNITUDE_FROM_TSUNAMI), [runTestTelegramScript])
 
   /**
    * 津波の原因地震が後から加わる場面のテスト（→ `createTestTsunamiSourceAdded`）。
    *
    * **受信と同じ経路（イベントキュー）へ時刻つきで積む。** 解除まで含めて積むので待ちを張らずに済み、
    * リプレイ開始・リセットの `eventQueueRef.current.clear()` でそのまま落ちる。
-   *
-   * **DMDSS 版のみ。** P2PQuake は津波電文の `EventID` も原因地震も配信しない。
    */
   const simulateTsunamiSourceAdded = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_SOURCE_ADDED), [runTestTelegramScript])
 
   /**
    * 津波情報（VTSE51）だけが取り消される場面のテスト（→ `createTestTsunamiInfoRetraction`）。
    *
-   * 積み方は {@link simulateTsunamiSourceAdded} と同じ。**DMDSS 版のみ**（P2PQuake は情報名称ごとの
-   * 取消を配信しない）。
+   * 積み方は {@link simulateTsunamiSourceAdded} と同じ。
    */
   const simulateTsunamiInfoRetraction = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_INFO_RETRACTION), [runTestTelegramScript])
 
@@ -4294,8 +4060,6 @@ export function useEarthquakes(
    * 「配下に未入電の観測点があり、かつ市町村の最大震度が震度4以下（又は入電なし）」で、
    * 能登本震の未入電 3 地点が属する市町村はいずれも震度6強・6弱のため当たらない
    * （→ docs/spec/quake-spec.md §5「市町村の震度」）。
-   *
-   * **DMDSS 版のみ。** 市町村の粒度は DMDATA 経路でしか配信されない。
    */
   const simulateUnreceivedQuake = useCallback(() => runTestTelegramScript(s => s.UNRECEIVED_QUAKE), [runTestTelegramScript])
 
@@ -4306,8 +4070,6 @@ export function useEarthquakes(
    * 電文全体の最大震度が 45 の地震でだけ階級が一致し、カードの最大震度が「5弱以上」になる
    * （→ docs/spec/quake-spec.md §4「震度5弱以上未入電」）。地震テスト（能登本震・震度7）と
    * 未入電テスト（日向灘・震度5強）はどちらも階級が一致しないため、この形を持たない。
-   *
-   * **DMDSS 版のみ。** 未入電は DMDATA 経路でしか配信されない。
    */
   const simulateMaxScaleOrAboveQuake = useCallback(() => runTestTelegramScript(s => s.MAX_SCALE_OR_ABOVE_QUAKE), [runTestTelegramScript])
 
@@ -4317,8 +4079,6 @@ export function useEarthquakes(
    * **実電文の標本が無い形を出す唯一の入口。** 配下の市町村がすべて未入電のとき、気象庁は区域の
    * 最大震度を載せない（→ `createTestAreaUnreceivedQuake`）。その区域が一覧・読み上げから
    * 消えないことを実機で確かめる。
-   *
-   * **DMDSS 版のみ。** 未入電は DMDATA 経路でしか配信されない。
    */
   const simulateAreaUnreceivedQuake = useCallback(() => runTestTelegramScript(s => s.AREA_UNRECEIVED_QUAKE), [runTestTelegramScript])
 
@@ -4341,6 +4101,8 @@ export function useEarthquakes(
   /** 遠地地震と国際津波関連情報（WEPA60）のテスト（→ `testTelegramScripts.ts` の `FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI`）。 */
   const simulateForeignQuakeInternationalTsunami = useCallback(
     () => runTestTelegramScript(s => s.FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI), [runTestTelegramScript])
+  /** 国際津波関連情報が国内の地震に付く形と、英文だけのカードになる形のテスト（→ `INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY`）。 */
+  const simulateInternationalTsunamiDomesticAndOnly = useCallback(() => runTestTelegramScript(s => s.INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY), [runTestTelegramScript])
   /** 見出しにだけある市町村のテスト（→ `testTelegramScripts.ts` の `HEADLINE_ONLY_CITY`）。 */
   const simulateHeadlineOnlyCity = useCallback(() => runTestTelegramScript(s => s.HEADLINE_ONLY_CITY), [runTestTelegramScript])
 
@@ -4388,7 +4150,7 @@ export function useEarthquakes(
         log.debug(`[test] 緊急地震速報のテスト（${kind}）は最後まで進んでいます（黙れば最終報が届きます）`)
         return
       }
-      const built = await buildTestTelegramEntries(script, { isDmdss, now, limit: next + 1 })
+      const built = await buildTestTelegramEntries(script, { now, limit: next + 1 })
       const current = built[next]
       if (!current) throw new Error(`テスト用の台本の ${next + 1} 通目を組めませんでした`)
       if (generation !== testGenerationRef.current) {
@@ -4401,7 +4163,7 @@ export function useEarthquakes(
         // **最終報も同じ列へ並べる。** 押下と重なると、台帳を見る順番で取り違える
         void enqueueTestPress(kind, async () => {
           try {
-            const tail = await buildTestTelegramEntries(script, { isDmdss, now })
+            const tail = await buildTestTelegramEntries(script, { now })
             const last = tail[byPress.cancelIndex ?? tail.length - 1]
             if (generation !== testGenerationRef.current) {
               log.debug(`[test] 組んでいる間にリセットされたので、テスト用の最終報（${kind}）を捨てました`)
@@ -4439,8 +4201,9 @@ export function useEarthquakes(
   const simulateEEWDeep = useCallback(() => pressTestTelegramScript('deep', s => s.EEW_DEEP), [pressTestTelegramScript])
 
   /**
-   * 「予想震度なしのまま取消」テスト（DMDSS 版のみ。→ `EEW_NO_FORECAST`）。予想震度の欄そのものを
-   * 持たない報が続き、値が付かないまま取り消される。
+   * 「予想震度なしのまま取消」テスト（→ `EEW_NO_FORECAST`）。予想震度の欄そのものを
+   * 持たない報が続き、値が付かないまま取り消される。予報にしか無い形なので、ボタンは自分の鍵を
+   * 入れた人にだけ出す（設定の窓の `hasForecastKey`）。
    */
   const simulateEEWNoForecast = useCallback(() => pressTestTelegramScript('noForecast', s => s.EEW_NO_FORECAST), [pressTestTelegramScript])
 
@@ -4464,7 +4227,7 @@ export function useEarthquakes(
     const generation = testGenerationRef.current
     try {
       const scripts = await loadTestTelegramScripts()
-      const built = await buildTestTelegramEntries(scripts.EEW_LATE_RETRACTION, { isDmdss, now: serverDate() })
+      const built = await buildTestTelegramEntries(scripts.EEW_LATE_RETRACTION, { now: serverDate() })
       const [final, cancel] = built
       if (!final || !cancel) throw new Error('遅れた誤報取消テストの電文を組めませんでした')
       if (generation !== testGenerationRef.current) {
@@ -4506,13 +4269,12 @@ export function useEarthquakes(
   /**
    * 津波予報テスト（2024-11-26 石川県西方沖。→ `TSUNAMI_FORECAST`）。
    *
-   * 予報だけの津波は、DMDSS 版の実運用では失効時刻（`validDateTime`）で静かに消える（解除の電文を
-   * 伴わない）。標準版は失効の予約を持たないので、台本が片付けの報を標準版だけに流す。
+   * 予報だけの津波は、実運用では失効時刻（`validDateTime`）で静かに消える（解除の電文を伴わない）。
    */
   const simulateTsunamiForecast = useCallback(() => runTestTelegramScript(s => s.TSUNAMI_FORECAST), [runTestTelegramScript])
 
   /**
-   * 「津波注意報 → 津波予報（失効時刻つき）」テスト（DMDSS 版のみ。→ `TSUNAMI_EXPIRY`）。
+   * 「津波注意報 → 津波予報（失効時刻つき）」テスト（→ `TSUNAMI_EXPIRY`）。
    *
    * **等級の引き下げとして失効時刻が届く形を実機へ出せる入口はここだけ。** 1 通だけ流しても降格に
    * ならない —— 判定は前報の最上位等級との比較なので、注意報の報を先に通す。解除の報は流さない
@@ -4543,6 +4305,27 @@ export function useEarthquakes(
   /** 関連解説情報の取消テスト（→ `NANKAI_COMMENTARY_RETRACTION`）。 */
   const simulateNankaiCommentaryRetraction = useCallback(() => runTestTelegramScript(s => s.NANKAI_COMMENTARY_RETRACTION), [runTestTelegramScript])
 
+  /**
+   * 地震の活動状況等に関する情報（VXSE56）のテスト（→ `ACTIVITY_INFO`）。読まない種類なので、ライブと同じく
+   * 電文ログに本文ごと「スキップ」の行だけを積む（受信と同じ待ち行列の `logOnly` で、リセットで一緒に落ちる）。
+   */
+  const simulateActivityInfo = useCallback(async () => {
+    const generation = testGenerationRef.current
+    try {
+      const scripts = await loadTestTelegramScripts()
+      const rows = await buildTestLogOnlyEntries(scripts.ACTIVITY_INFO, serverDate(), defaultTestTelegramFetcher)
+      if (generation !== testGenerationRef.current) {
+        log.debug('[test] 組んでいる間にリセットされたので、テスト用の電文を捨てました')
+        return
+      }
+      for (const { replayTime, logEntry } of rows) {
+        eventQueueRef.current.push({ eventTime: replayTime, payload: { kind: 'logOnly' }, logEntry })
+      }
+    } catch (err) {
+      log.error('[test] テスト用の電文を流せませんでした', err)
+    }
+  }, [])
+
   /** 北海道・三陸沖後発地震注意情報のテスト（サンプル電文。→ `KOHATSU`）。 */
   const simulateKohatsu = useCallback(() => runTestTelegramScript(s => s.KOHATSU), [runTestTelegramScript])
 
@@ -4565,16 +4348,16 @@ export function useEarthquakes(
   const simulateEarthquakeCountRetraction = useCallback(() => runTestTelegramScript(s => s.EARTHQUAKE_COUNT_RETRACTION), [runTestTelegramScript])
 
   /**
-   * 長周期地震動の取消テスト（→ `LPGM_RETRACTION`。DMDSS 版のみ）。**取消の理由が届く先は読み上げだけ**
+   * 長周期地震動の取消テスト（→ `LPGM_RETRACTION`）。**取消の理由が届く先は読み上げだけ**
    * —— 取消で長周期の一覧・バッジごと消える。読み上げへ渡すかの判定（`lpgmNotifiable`・`decideDispatch`）を
    * ライブと同じ形で通す。
    */
   const simulateLpgmRetraction = useCallback(() => runTestTelegramScript(s => s.LPGM_RETRACTION), [runTestTelegramScript])
-  /** 階級 0 の長周期地震動テスト（→ `LPGM_CLASS_ZERO`。DMDSS 版のみ）。画面にだけ出て、音と読み上げは無い。 */
+  /** 階級 0 の長周期地震動テスト（→ `LPGM_CLASS_ZERO`）。画面にだけ出て、音と読み上げは無い。 */
   const simulateLpgmClassZero = useCallback(() => runTestTelegramScript(s => s.LPGM_CLASS_ZERO), [runTestTelegramScript])
-  /** 長周期地震動の観測情報の種類 1・3 のテスト（→ `LPGM_CATEGORIES`。DMDSS 版のみ）。 */
+  /** 長周期地震動の観測情報の種類 1・3 のテスト（→ `LPGM_CATEGORIES`）。 */
   const simulateLpgmCategories = useCallback(() => runTestTelegramScript(s => s.LPGM_CATEGORIES), [runTestTelegramScript])
-  /** 階級 0 の地域が混ざった長周期地震動と、その続報のテスト（→ `LPGM_CLASS_ZERO_REGION`。DMDSS 版のみ）。 */
+  /** 階級 0 の地域が混ざった長周期地震動と、その続報のテスト（→ `LPGM_CLASS_ZERO_REGION`）。 */
   const simulateLpgmClassZeroRegion = useCallback(() => runTestTelegramScript(s => s.LPGM_CLASS_ZERO_REGION), [runTestTelegramScript])
 
   const resetState = useCallback(() => {
@@ -4582,7 +4365,6 @@ export function useEarthquakes(
     // 同じ eventId の報が届いたとき、消えたはずの報番号と比べて誤って捨てうる。
     eewAcceptanceRef.current.clear()
     eewLatestRef.current.clear()
-    eewWatchReceiptsRef.current.clear()
     eewFirstIssueTimeRef.current.clear()
     eewExpiringRef.current.clear()
     // 揺れ検知の束も前の時間軸のもの。残すと、検知器が振り直した同じ名前の束を前の束の続きと取り違える
@@ -4597,10 +4379,7 @@ export function useEarthquakes(
     // 消えた帯の識別情報と比べられる）。取消テストの待ちも落とす ―― リプレイへ切り替えた後で
     // テスト用の取消がキューへ紛れ込むのを防ぐ。
     shownNankaiEventIdRef.current = null
-    shownKohatsuEventIdRef.current = null
-    shownCommentaryIdRef.current = null
-    shownQuakeNoticeRef.current = null
-    shownEarthquakeCountEventIdRef.current = null
+    bandListsRef.current = EMPTY_BAND_LISTS
     // 伝えた取消の記憶も前の時間軸のもの（→ `conveyedCancelsRef`）
     conveyedCancelsRef.current.clear()
     estimatedIntensitiesRef.current = []
@@ -4625,10 +4404,10 @@ export function useEarthquakes(
       activeEEWs: new Map(),
       lpgmByEventId: new Map(),
       nankai: null,
-      nankaiCommentary: null,
-      kohatsu: null,
-      quakeNotice: null,
-      earthquakeCount: null,
+      nankaiCommentaryList: EMPTY_BAND_LISTS.nankaiCommentary,
+      kohatsuList: EMPTY_BAND_LISTS.kohatsu,
+      quakeNoticeList: EMPTY_BAND_LISTS.quakeNotice,
+      earthquakeCountList: EMPTY_BAND_LISTS.earthquakeCount,
       estimatedIntensities: [],
       internationalTsunamis: [],
       // 時間軸が変わるので、印とその記憶も落とす（残すと再生開始直後の報が
@@ -4656,27 +4435,12 @@ export function useEarthquakes(
       telegramLog: dropTelegramLogOrigins(prev.telegramLog, ['test', 'replay']),
     }))
     eventQueueRef.current.clear()
+    // 待ち行列と一緒に、一覧から消えたことで積んだ予約の台帳も捨てる（→ `eewVanishPendingRef`）
+    eewVanishPendingRef.current.clear()
     quakeIntensityCacheRef.current.clear()
-    // 後発地震注意情報の7日タイマーもリセット対象。resetState 後に古いタイマーが残ると、
-    // リプレイモード切替→ライブ復帰後に発火して新しく設定された kohatsu を null に上書きしうる。
-    if (kohatsuExpireTimerRef.current !== undefined) {
-      window.clearTimeout(kohatsuExpireTimerRef.current)
-      kohatsuExpireTimerRef.current = undefined
-    }
-    // 解説情報の7日タイマーも同じ理由でリセットする
-    if (nankaiCommentaryExpireTimerRef.current !== undefined) {
-      window.clearTimeout(nankaiCommentaryExpireTimerRef.current)
-      nankaiCommentaryExpireTimerRef.current = undefined
-    }
-    // 地震・津波に関するお知らせ（VZSE40）・地震回数（VXSE60）の7日タイマーも同じ
-    if (quakeNoticeExpireTimerRef.current !== undefined) {
-      window.clearTimeout(quakeNoticeExpireTimerRef.current)
-      quakeNoticeExpireTimerRef.current = undefined
-    }
-    if (earthquakeCountExpireTimerRef.current !== undefined) {
-      window.clearTimeout(earthquakeCountExpireTimerRef.current)
-      earthquakeCountExpireTimerRef.current = undefined
-    }
+    // 帯の期限の予約もリセット対象。resetState 後に古い予約が残ると、リプレイモード切替→ライブ復帰後に
+    // 発火して、新しく積んだ一覧を前の時間軸の一覧で上書きしうる。
+    clearBandExpireTimers(bandExpireTimersRef.current)
   }, [clearTestSimulationTimers])
 
   /**
@@ -4709,18 +4473,32 @@ export function useEarthquakes(
       const { cards, markMemory } = mergeQuakeHistory(
         quakes, prev.earthquakes, quakeRetractionsRef.current, getAreaPrefIndexCache(), prev.quakeMarkMemory,
       )
+      const shown = settleHistoryCards(cards, markMemory, prev.tsunamis, prev.lpgmByEventId, prev.estimatedIntensities, lpgmRetractionsRef.current)
       return {
         ...prev,
         ...marksFromHistory(markMemory, cards, prev.lpgmByEventId, prev.quakeUpdateMarks),
-        earthquakes: borrowFromTsunamiIntoCards(cards, prev.tsunamis),
+        earthquakes: shown,
       }
     })
   }, [])
 
-  const loadReplayEvents = useCallback((entries: import('../types/replay').ReplayEntry[]) => {
+  /**
+   * 再生の電文をキューへ積む。
+   *
+   * @param logOnlyEntries 電文ログにだけ積む行（`ReplayFetchResult.logOnlyEntries`）。**必須にしてある** ——
+   *   渡し忘れると、再生の電文ログから取り込まない電文・読めなかった電文の行だけが黙って消える。
+   *   積まないと決めた呼び出し（初期状態の復元。窓の手前 24 時間ぶんは電文ログへ載せない）は `[]` を明示して渡す
+   */
+  const loadReplayEvents = useCallback((
+    entries: import('../types/replay').ReplayEntry[],
+    logOnlyEntries: readonly import('../types/replay').ReplayLogOnlyEntry[],
+  ) => {
     for (const { payload, replayTime, silent, logEntry } of entries) {
       // 電文ログの行はキューへ預け、発火のときに積む（理由は `QueueEntry.logEntry`）
       eventQueueRef.current.push({ eventTime: replayTime, payload, silent, logEntry })
+    }
+    for (const { replayTime, logEntry } of logOnlyEntries) {
+      eventQueueRef.current.push({ eventTime: replayTime, payload: { kind: 'logOnly' }, logEntry })
     }
   }, [])
 
@@ -4763,8 +4541,8 @@ export function useEarthquakes(
       if (payload.kind === 'purge-cancelled-quake') continue
       if (payload.kind === 'purge-cancelled-eew') continue
       if (payload.kind === 'purge-cancelled-tsunami') continue
-      // 見張りの解除は電文ではなく、発火しても読み上げるものが無い（失効は黙って消える）。
-      if (payload.kind === 'eew-watch-expiry') continue
+      // 電文ログだけの行も電文として流れないので、投機の対象にしない
+      if (payload.kind === 'logOnly') continue
       out.push(payload)
     }
     return out
@@ -4782,13 +4560,15 @@ export function useEarthquakes(
     simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
     simulateQuakeReportSequence,
     simulateQuakeCancel,
     simulateQuakePartialCancel,
     simulateHypocenterFromTsunami,
+    simulateMagnitudeFromTsunami,
+    simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded,
     simulateTsunamiInfoRetraction,
     resetState,

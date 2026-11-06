@@ -8,8 +8,8 @@
 // - パーサーを一度も通らないので、電文を正しく読めているかの証拠にならない
 // - 何の電文を元にしたのかが、コメントにしか残らない
 //
-// ここでは XML を**ライブ・リプレイと同じ入口**（`buildXmlPayload`）へ通し、実地震テストシナリオと
-// 同じ時刻の寄せ方（`instantiateScenario`）で「いま」へ寄せてから、受信と同じイベントキューへ積む。
+// ここでは XML を**ライブ・リプレイと同じ入口**（`buildXmlPayload`）へ通し、
+// 時刻の寄せ方（`instantiateScenario`）で「いま」へ寄せてから、受信と同じイベントキューへ積む。
 // 待ちをキューに持たせるので、リセット（リプレイの開始・停止）とアンマウントで一緒に落ちる。
 //
 // 置く XML は 2 種類（→ `public/data/test-telegrams/README.md`）。
@@ -19,9 +19,9 @@
 //
 // 実電文の一部だけを変えて流す場合（訓練報の印・訂正報など）は、**変える箇所を `rewrite` に書く**。
 // 元の XML を丸ごと写した合成ファイルを作るより、何を変えたかが一目で分かる。
-import type { ReplayEntry, ReplayPayload } from '../types/replay'
+import type { ReplayEntry, ReplayLogOnlyEntry, ReplayPayload } from '../types/replay'
 import type { TestScenarioFile } from '../types/testScenario'
-import { buildXmlPayload, buildBinaryPayload, isBinaryTelegramType, EEW_HEAD_TYPES, type EewHeadType } from '../services/dmdataTelegramPayload'
+import { buildXmlPayload, buildBinaryPayload, isBinaryTelegramType, telegramKindOfHeadType, EEW_HEAD_TYPES, type EewHeadType } from '../services/dmdataTelegramPayload'
 import { BufrFragmentStore } from '../services/bufrTelegramAssembly'
 import { instantiateScenario } from './testScenarioReplay'
 import { fetchWithTimeout } from './fetchWithTimeout'
@@ -36,18 +36,6 @@ export interface TestTelegramStep {
   headType: string
   /** 押してから流すまで（ミリ秒）。 */
   atMs: number
-  /**
-   * 片方の版でだけ流す。
-   *
-   * - `'dmdss'` … **DMDATA 経路でしか届かない電文**（長周期地震動の観測情報など）
-   * - `'standard'` … 標準版でだけ要る報。予報だけの津波は DMDSS 版では失効時刻で消える（解除の報は
-   *   出ない）が、標準版は失効の予約を持たないので、テストの後片付けに解除の報を流す
-   *
-   * 標準版の受信元（P2PQuake）は廃止する予定で（2026-10-22 ユーザー原文「XMLにしましょう。近いうちに
-   * 2つは統合するので。」「統合すると言うかP2PQuakeは廃止する」）、両版とも同じ XML の読み取り結果を
-   * 流す。ここで分けるのは、統合までのあいだ**電文そのものの届き方・消え方が違う**ところだけ。
-   */
-  onlyIn?: 'dmdss' | 'standard'
   /**
    * 実電文の一部を書き換えて流すとき、その書き換え。**変える箇所だけを書く**こと。
    * 書き換えが効かなかった（置き換える文字列が見つからなかった）ら例外にする —— 黙って
@@ -151,6 +139,9 @@ export function loadTestTelegramBytes(file: string, fetcher: TestTelegramBinaryF
   return pending
 }
 
+/** 置き場所（`TEST_TELEGRAM_DIR`）から XML の電文を読む既定の取り方。`buildTestLogOnlyEntries` に渡す */
+export const defaultTestTelegramFetcher: TestTelegramFetcher = (file) => defaultFetcher(file)
+
 /**
  * 電文 XML を読む（2 回目以降は読み込み済みのものを返す）。
  *
@@ -218,8 +209,6 @@ export interface BuiltTestTelegram {
 }
 
 export interface BuildTestTelegramOptions {
-  /** DMDSS 版か。`onlyIn` の電文を選り分けるのに使う。 */
-  isDmdss: boolean
   /** 「いま」。`serverDate()` を渡す。 */
   now: Date
   /** 緊急地震速報として読む種別。テストボタンは予報（VXSE45）を受けている形で流す。 */
@@ -257,23 +246,43 @@ async function assembleTestTelegramBytes(step: TestTelegramStep, fetcher: TestTe
   return assembled
 }
 
+/**
+ * 読まない種類の電文だけの台本から、電文ログにだけ積む行を組む（地震の活動状況等に関する情報 VXSE56 のテスト）。
+ * ライブと同じく、本文ごと「スキップ」（filtered）の行になり、カード・帯・音には出ない。
+ *
+ * **読む種類が混じっていたら止める。** 読む種類を行だけにすると、ライブでは画面に出る電文が出なくなり、
+ * 実機で確かめる入口として嘘になる（読む種類は `buildTestTelegramEntries` で流す）。
+ */
+export async function buildTestLogOnlyEntries(
+  script: TestTelegramScript,
+  now: Date,
+  fetcher: TestTelegramFetcher,
+): Promise<ReplayLogOnlyEntry[]> {
+  return Promise.all(script.steps.map(async (step) => {
+    if (telegramKindOfHeadType(step.headType) !== undefined || isBinaryTelegramType(step.headType)) {
+      throw new Error(`読む種類の電文は行だけにできません: ${step.file}（${step.headType}）`)
+    }
+    const raw = await loadTestTelegramXml(step.file, fetcher)
+    const xml = step.rewrite ? step.rewrite(raw, { now }) : raw
+    return {
+      replayTime: new Date(now.getTime() + step.atMs),
+      logEntry: makeReplayLogEntry({
+        headType: step.headType, origin: 'test', rawBody: xml, rawHead: undefined, rawBytes: null,
+        errorMessage: null, payload: null, isTest: false,
+      }),
+    }
+  }))
+}
+
 export async function buildTestTelegramEntries(
   script: TestTelegramScript,
   options: BuildTestTelegramOptions,
 ): Promise<BuiltTestTelegram[]> {
-  const { isDmdss, now, eewHeadType = 'VXSE45', fetcher = defaultFetcher, binaryFetcher = defaultBinaryFetcher } = options
+  const { now, eewHeadType = 'VXSE45', fetcher = defaultFetcher, binaryFetcher = defaultBinaryFetcher } = options
   const anchorStep = script.steps[script.anchor]
   if (!anchorStep) throw new Error(`テスト用の台本の基準（${script.anchor} 通目）がありません`)
-  // **絞り込みは読む前に。** 後ろでやると、流さない段の取得や書き換えが失敗しただけで
-  // 全体が失敗する（しかもそのバリアントでは一度も使わない電文のために取りに行く）。
-  const steps = script.steps.filter(step => step.onlyIn === undefined || step.onlyIn === (isDmdss ? 'dmdss' : 'standard'))
-  // **押すたびに進む台本では、バリアントで段を分けられない。** 押下の回数を段の添字に使うので
-  // （→ `useEarthquakes.ts` の `pressTestTelegramScript`）、片方の版で段が落ちると黙ってずれる。
-  if (script.stepByPress && steps.length !== script.steps.length) {
-    throw new Error('押すたびに進む台本では、バリアントで段を分けられません')
-  }
-  const anchorIndex = steps.indexOf(anchorStep)
-  if (anchorIndex < 0) throw new Error(`テスト用の台本の基準（${script.anchor} 通目）が、このバリアントでは流れません`)
+  const steps = script.steps
+  const anchorIndex = script.anchor
 
   const loaded = await Promise.all(steps.map(async (step) => {
     if (isBinaryTelegramType(step.headType)) {
@@ -287,14 +296,14 @@ export async function buildTestTelegramEntries(
       const issuedAt = new Date(now.getTime() + step.atMs).toISOString()
       const payload = buildBinaryPayload(step.headType, bytes, `test-${step.file}`, issuedAt)
       if (!payload) throw new Error(`テスト用の電文を読めませんでした: ${step.file}（${step.headType}）`)
-      return { step, xml: '', payload }
+      return { step, xml: '', payload, bytes }
     }
     if (step.continuations) throw new Error(`XML の電文は分割しません: ${step.file}`)
     const raw = await loadTestTelegramXml(step.file, fetcher)
     const xml = step.rewrite ? step.rewrite(raw, { now }) : raw
     const payload = buildXmlPayload(step.headType, xml, EEW_HEAD_TYPES.has(step.headType) ? eewHeadType : null)
     if (!payload) throw new Error(`テスト用の電文を読めませんでした: ${step.file}（${step.headType}）`)
-    return { step, xml, payload }
+    return { step, xml, payload, bytes: null }
   }))
 
   const anchor = loaded[anchorIndex]
@@ -312,7 +321,7 @@ export async function buildTestTelegramEntries(
   const entries = instantiateScenario(scenario, now)
   // **電文ログの行はここで入れる。** `instantiateScenario` は収録済みのシナリオ用で電文の本文を
   // 持たないが（→ そちらの `logEntry: null`）、テストボタンは読んだ本文が手元にある。
-  return kept.map(({ step, xml, payload }, i) => ({
+  return kept.map(({ step, xml, payload, bytes }, i) => ({
     step,
     xml,
     entry: {
@@ -322,6 +331,10 @@ export async function buildTestTelegramEntries(
         origin: 'test',
         // 二進電文は本文を持たない（ビット列）ので、ライブ・リプレイと同じく要約を入れる
         rawBody: xml || `（BUFR ${step.file}）`,
+        // テストボタンの電文は DMDATA の head を持たない。二進電文は結合した元の電文を持たせ、ライブと同じく .bin で落とせるようにする
+        rawHead: undefined,
+        rawBytes: bytes,
+        errorMessage: null,
         payload,
         // テストボタンの電文は訓練・試験報ではない（実配信の通常報を書き換えて作る）
         isTest: false,

@@ -136,8 +136,7 @@ function makeNoIntensity(o: QuakeOpts = {}): JMAQuake {
 // 震源要素を持たない電文では `NaN`（`dmdataParser.ts`）。
 //
 // **津波区分と固定付加文は自前で持つ。** 震度速報が津波の情報を持たないと思い込むと、そこを
-// 補完する誤った実装を通してしまう。実データ（能登 2024/1/1 の前震・
-// `public/data/test-scenarios/2024-noto.json`）では津波区分 `調査中`・固定付加文
+// 補完する誤った実装を通してしまう。実データ（能登 2024/1/1 の前震）では津波区分 `調査中`・固定付加文
 // 「今後の情報に注意してください。」が入っている。値をこれに揃えておく。
 function makePrompt(o: QuakeOpts = {}): JMAQuake {
   const base = makeQuake({ type: '震度速報', maxScale: 50, ...o })
@@ -161,7 +160,7 @@ describe('extractQuakeEventId', () => {
     expect(extractQuakeEventId(makeQuake({ id: 'dmdata-quake-20260728162718-3' }))).toBe('20260728162718')
   })
 
-  it('形式外の id では null を返す（P2P 由来など）', () => {
+  it('形式外の id では null を返す', () => {
     expect(extractQuakeEventId(makeQuake({ id: 'p2p-12345' }))).toBeNull()
   })
 })
@@ -344,7 +343,7 @@ describe('sameQuakeEntry', () => {
     expect(sameQuakeEntry(mk('dmdata-quake-20260824040519-2'), mk('dmdata-quake-20260824040526-2'))).toBe(false)
   })
 
-  // P2PQuake 経路（eventId が無い）でも区域の重なりが効くことを固定する。
+  // eventId を持たない電文でも区域の重なりが効くことを固定する。
   it('eventId が無い経路でも、同時刻・震源名が空・区域が重なれば同一イベントとする', () => {
     const prompt = makeQuake({
       id: 'p2p-1', type: '震度速報', hypoName: '',
@@ -375,7 +374,7 @@ describe('sameQuakeEntry', () => {
     expect(sameQuakeEntry(original, corrected)).toBe(true)
   })
 
-  // 訂正の有無が不明な報（P2PQuake の Unknown）も、合流では訂正の可能性ありとして扱う
+  // 訂正の有無が不明な報も、合流では訂正の可能性ありとして扱う
   // （2026-10-18 ユーザー承認・選んだ選択肢「印だけ消す」）。印は出さない（→ `isKnownCorrection`）。
   it('訂正の有無が不明な報も震源名が変わって同一イベントとみなす', () => {
     const original = makeQuake({ id: 'p2p-1', hypoName: '日向灘' })
@@ -390,9 +389,9 @@ describe('sameQuakeEntry', () => {
     expect(isKnownCorrection('震源を訂正')).toBe(true)
   })
 
-  // VXSE61（P2PQuake の DestinationAmended）は震源要素を差し替える電文で、issue.correct は
+  // VXSE61 は震源要素を差し替える電文で、issue.correct は
   // 「なし」のまま来る。これを訂正報と同じ扱いにしないと、震源名が変わった更新報が
-  // P2PQuake 経路で別カードに分裂する。
+  // eventId を持たない電文で別カードに分裂する。
   it('震源要素更新は issue.correct が「なし」でも震源名の変更を許容する', () => {
     const original = makeQuake({ id: 'p2p-1', hypoName: '石川県能登地方' })
     const amended = makeQuake({ id: 'p2p-2', hypoName: '能登半島沖', type: '顕著な地震の震源要素更新のお知らせ' })
@@ -413,7 +412,7 @@ describe('quakeEventKey', () => {
     expect(quakeEventKey(makeQuake({ id: 'dmdata-quake-20260728162718-1' }))).toBe('20260728162718')
   })
 
-  it('P2P 経路の生電文は地震の時刻とレコード id から作る', () => {
+  it('eventId を持たない生電文は地震の時刻とレコード id から作る', () => {
     const key = quakeEventKey(makeQuake({ id: 'p2p-1', quakeTime: '2026-07-28T07:27:00Z' }))
     expect(key).toBe('p2p:2026-07-28T07:27:00Z#p2p-1')
   })
@@ -1348,7 +1347,7 @@ describe('mergeQuakeHistory', () => {
     expect(mergeQuakeHistory([v51, v53])).toHaveLength(1)
   })
 
-  it('eventId が無い（P2P 由来）データは earthquake.time で集約し優先度で選ぶ', () => {
+  it('eventId が無いデータは earthquake.time で集約し優先度で選ぶ', () => {
     const a = makeQuake({ id: 'p2p-1', type: '震度速報', maxScale: 40, quakeTime: '2026-07-28T07:27:00Z', time: '2026-07-28T07:28:00Z' })
     const b = makeQuake({ id: 'p2p-2', type: '各地の震度情報', maxScale: 70, quakeTime: '2026-07-28T07:27:00Z', time: '2026-07-28T07:31:00Z' })
     const merged = mergeQuakeHistory([a, b])
@@ -1357,9 +1356,9 @@ describe('mergeQuakeHistory', () => {
   })
 
   // 2026-08-15 06:58 の実データ（群馬県南部 震度2／インドネシア、フローレスの遠地地震）。
-  // P2PQuake の地震の時刻は分単位のため両者の earthquake.time が完全一致し、
-  // 以前は優先度比較（各地の震度情報 4 > 遠地地震 0）で遠地地震のカードが捨てられていた。
-  it('P2P 由来で同じ分に起きた別震源の地震は 2 枚に分かれる', () => {
+  // 地震の時刻は分単位のため、eventId を持たないと両者の earthquake.time が完全一致し、
+  // 優先度比較（各地の震度情報 4 > 遠地地震 0）だけでは遠地地震のカードが捨てられる。
+  it('eventId を持たず同じ分に起きた別震源の地震は 2 枚に分かれる', () => {
     const domestic = makeQuake({
       id: 'p2p-1', type: '各地の震度情報', maxScale: 20, hypoName: '群馬県南部',
       quakeTime: '2026-08-15T06:58:00+09:00', time: '2026-08-15T07:01:29+09:00',
@@ -1390,7 +1389,7 @@ describe('mergeQuakeHistory', () => {
     expect(new Set(merged.map(q => q.eventKey)).size).toBe(2)
   })
 
-  it('P2P 経路で震源要素更新が震源名を変えてもカードは 1 枚のまま', () => {
+  it('eventId を持たない電文で震源要素更新が震源名を変えてもカードは 1 枚のまま', () => {
     const detail = makeQuake({
       id: 'p2p-1', type: '各地の震度情報', maxScale: 70,
       hypoName: '石川県能登地方', time: '2026-07-28T07:31:00Z',
@@ -1551,7 +1550,7 @@ describe('coalesceByEventId — 暫定 EventID で分かれたカードを畳む
     expect(coalesceByEventId([a, b])).toHaveLength(2)
   })
 
-  it('eventId を持たないカード（P2PQuake 経路）は畳まない', () => {
+  it('eventId を持たないカードは畳まない', () => {
     const a = makeQuake({ id: 'p2p-1' })
     const b = makeQuake({ id: 'p2p-2' })
     expect(coalesceByEventId([a, b])).toHaveLength(2)
@@ -1768,7 +1767,7 @@ describe('取消の後に届いた報', () => {
 
     it('正: 作成時刻を持たない経路でも、同じ分なら記録する（取消・報とも持たない／片方だけ持つ）', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-      // 両方持たない（P2PQuake）: 発表時刻の文字列で比べて同じ
+      // 両方持たない: 発表時刻の文字列で比べて同じ
       noteRetractionTie([quakeRetractionOf(取消, 取消済みカード)], 報(undefined), null)
       expect(tieLines(warn)).toHaveLength(1)
       // 片方だけ持つ: 分へ切り捨てて比べ、同じ分なら前後を決めない
@@ -1906,7 +1905,7 @@ describe('取消の後に届いた報', () => {
   })
 })
 
-// 区域名が県名と同じ奈良県は、標準版（P2PQuake）だと `addr === pref` になる。ロールアップ点と
+// 区域名が県名と同じ奈良県は、区域の点に県名を積む電文だと `addr === pref` になる。ロールアップ点と
 // 同じ形なので、名前だけで除くとこの区域が区域の重なり判定から消え、同じ分に起きた別々の地震を
 // 引き離せなくなる。索引を渡せば区域として数えられる（→ docs/spec/quake-spec.md §4）。
 describe('区域の重なり判定: 区域名が県名と同じ奈良県', () => {
@@ -1914,7 +1913,7 @@ describe('区域の重なり判定: 区域名が県名と同じ奈良県', () =>
     JSON.parse(readFileSync('public/data/station-coords.json', 'utf8')) as StationCoordsData,
   )
 
-  // 標準版は区域の点にも pref を積む。eventId を持たない ID にして区域の重なり判定へ通す。
+  // 区域の点に pref を積んだ形。eventId を持たない ID にして区域の重なり判定へ通す。
   const naraOnly = () => makeQuake({
     id: 'p2p-1', type: '震度速報', hypoName: '',
     points: [{ pref: '奈良県', addr: '奈良県', isArea: true, scale: 30 }],
@@ -2515,7 +2514,7 @@ describe('報の新旧は作成時刻（秒）で決める', () => {
       const newer = makePrompt({ time: MINUTE, createdAtMs: at(42), telegramKey: 'k42' })
       expect(quakeHoldBack(older, newer)).toBeNull()
     })
-    it('安全弁: 作成時刻を持たない経路（P2PQuake・テストボタン）は同じ分なら従来どおり受け入れる', () => {
+    it('安全弁: 作成時刻を持たない報は同じ分なら受け入れる', () => {
       const a = makePrompt({ time: MINUTE, telegramKey: 'a' })
       const b = makePrompt({ time: MINUTE, telegramKey: 'b' })
       expect(quakeHoldBack(a, b)).toBeNull()
@@ -2673,7 +2672,7 @@ describe('取消は情報名称の単位で当てる（applyQuakeCancelToCard）
         eventId, id: `dmdata-quake-${eventId}-5`, type: '震源情報',
         time: '2024-01-01T14:09:00Z', createdAtMs: at('2024-01-01T14:09:00Z'), hypoName: '石川県能登地方',
       }),
-      // 控え（`fillIntensityFromCache`）が震度速報の震度で埋めた形
+      // 控え（`fillQuakeIntensity`）が震度速報の震度で埋めた形
       earthquake: { ...makeNoIntensity({ eventId, hypoName: '石川県能登地方' }).earthquake, maxScale: 70 as const },
       points: 震度速報.points,
       intensityFromCache: true as const,

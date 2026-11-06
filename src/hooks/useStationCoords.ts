@@ -26,13 +26,12 @@ export function useStationCoords(): StationCoordsData | null {
     loadStationCoords().catch((err) => {
       // 座標テーブルが無いと、電文の地点（都道府県・観測点名）から緯度経度を引けないため
       // 観測点ドットが 1 つも描けない。区域塗りは電文が持つ区域（isArea:true）の点から
-      // 区域名で直接引くので座標テーブルに依存せず、DMDSS の詳細報・震度速報では残る。
-      // 一方で標準版（P2PQuake）の詳細報は観測点のみで区域を持たないため、地図から震度が消える
+      // 区域名で直接引くので座標テーブルに依存せず、詳細報・震度速報では残る
       // （docs/spec/quake-spec.md §4・§7.3）。
       if (!failureLogged) {
         failureLogged = true
         log.error(
-          '[data] station-coords 取得失敗（観測点ドットは描けない。区域を持たない電文＝標準版の詳細報は地図に震度が出ない。読み上げの地域順も気象庁順に並ばない）',
+          '[data] station-coords 取得失敗（観測点ドットは描けない。読み上げの地域順も気象庁順に並ばない）',
           err,
         )
       }

@@ -164,10 +164,10 @@ def kana(text):
 ## 5. 仕上げ
 
 - `npx tsc -b` / `npm test`（`src/utils/ttsPhraseBreakDict.test.ts` が記法と単独語キーの境界を実データで検定する）
-- ブラウザで**実際に合成へ渡る本文**を見る。dev サーバー（DMDSS 版）を起動して Playwright の `browser_evaluate` で:
+- ブラウザで**実際に合成へ渡る本文**を見る。dev サーバーを起動して Playwright の `browser_evaluate` で:
 
 ```js
-const mod = await import('/yuremado/dmdss/src/utils/voicevox.ts')
+const mod = await import('/src/utils/voicevox.ts')
 const sent = []
 const orig = window.fetch
 window.fetch = (...a) => {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { deliverBrowserNotification, showBrowserNotification, SW_REGISTRATION_TIMEOUT_MS, SW_SHOW_TIMEOUT_MS } from './notifications'
 import { log } from './logger'
+import { subscribeNotificationOpen } from './notificationClick'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -29,7 +30,7 @@ describe('showBrowserNotification', () => {
   it('正: 許可があれば tag と閉じるまで残すかを渡して出す', () => {
     const calls: { title: string; opts: NotificationOptions }[] = []
     stubNotification((title, opts) => calls.push({ title, opts }))
-    showBrowserNotification('津波警報', '岩手県', 'tsunami', true)
+    showBrowserNotification('津波警報', '岩手県', 'tsunami', true, null)
     // Service Worker に非対応の環境では同期のまま出す
     expect(calls).toHaveLength(1)
     expect(calls[0].opts).toMatchObject({ body: '岩手県', tag: 'tsunami', requireInteraction: true })
@@ -41,7 +42,7 @@ describe('showBrowserNotification', () => {
     stubNotification(() => {})
     const show = vi.fn((_title: string, _o?: NotificationOptions & { renotify?: boolean }) => Promise.resolve())
     stubServiceWorker({ active: {} as ServiceWorker, showNotification: show })
-    showBrowserNotification('地震情報テスト', '本文', 'test-notification')
+    showBrowserNotification('地震情報テスト', '本文', 'test-notification', false, null)
     await flush()
     expect(show).toHaveBeenCalledTimes(1)
     expect(show.mock.calls[0][1]).toMatchObject({ tag: 'test-notification', renotify: true })
@@ -50,7 +51,7 @@ describe('showBrowserNotification', () => {
   it('正: 置き換えでも知らせ直すよう renotify を付ける（ページから）', () => {
     const calls: (NotificationOptions & { renotify?: boolean })[] = []
     stubNotification((_title, opts) => calls.push(opts))
-    showBrowserNotification('地震情報テスト', '本文', 'test-notification')
+    showBrowserNotification('地震情報テスト', '本文', 'test-notification', false, null)
     expect(calls[0]).toMatchObject({ tag: 'test-notification', renotify: true })
   })
 
@@ -59,9 +60,65 @@ describe('showBrowserNotification', () => {
   it('安全弁: 通知を作れない環境でも例外を外へ出さず、記録を残す', async () => {
     stubNotification(() => { throw new TypeError('Illegal constructor') })
     const error = vi.spyOn(log, 'error').mockImplementation(() => {})
-    expect(() => showBrowserNotification('津波警報等の解除', '本文', 'tsunami')).not.toThrow()
+    expect(() => showBrowserNotification('津波警報等の解除', '本文', 'tsunami', false, null)).not.toThrow()
     await flush()
     expect(error).toHaveBeenCalledTimes(1)
+  })
+
+  it('正: 押したときの開き先を data に入れる（中継のプッシュ通知と同じ形）', () => {
+    const calls: NotificationOptions[] = []
+    stubNotification((_title, opts) => calls.push(opts))
+    showBrowserNotification('地震情報', '本文', 'k', false, { tab: 'earthquake', quake: '20260101162200' })
+    showBrowserNotification('南海トラフ地震臨時情報', '本文', 'nankai', false, null)
+    expect(calls[0].data).toEqual({ open: 'open=earthquake&quake=20260101162200' })
+    expect(calls[1].data).toEqual({ open: '' })
+  })
+
+  it('正: ページから出した通知を押すと、閉じて画面を前に出し、開き先を知らせる', () => {
+    const made: { onclick: (() => void) | null; data: unknown; close: () => void }[] = []
+    const Fake = function (this: { onclick: (() => void) | null; data: unknown; close: () => void }, _title: string, opts: NotificationOptions) {
+      this.onclick = null
+      this.data = opts.data
+      this.close = vi.fn()
+      made.push(this)
+    } as unknown as typeof Notification
+    Object.defineProperty(Fake, 'permission', { value: 'granted' })
+    vi.stubGlobal('Notification', Fake)
+    const focus = vi.fn()
+    vi.stubGlobal('window', { focus })
+    const opened: unknown[] = []
+    const stop = subscribeNotificationOpen(open => opened.push(open))
+    try {
+      showBrowserNotification('津波警報', '岩手県', 'tsunami', true, { tab: 'tsunami' })
+      made[0].onclick?.()
+    } finally {
+      stop()
+    }
+    expect(made[0].close).toHaveBeenCalledTimes(1)
+    expect(focus).toHaveBeenCalledTimes(1)
+    expect(opened).toEqual([{ tab: 'tsunami' }])
+  })
+
+  it('対照: 開き先の無い通知を押しても、知らせない（前に出すだけ）', () => {
+    const made: { onclick: (() => void) | null; data: unknown; close: () => void }[] = []
+    const Fake = function (this: { onclick: (() => void) | null; data: unknown; close: () => void }, _title: string, opts: NotificationOptions) {
+      this.onclick = null
+      this.data = opts.data
+      this.close = () => {}
+      made.push(this)
+    } as unknown as typeof Notification
+    Object.defineProperty(Fake, 'permission', { value: 'granted' })
+    vi.stubGlobal('Notification', Fake)
+    vi.stubGlobal('window', { focus: () => {} })
+    const opened: unknown[] = []
+    const stop = subscribeNotificationOpen(open => opened.push(open))
+    try {
+      showBrowserNotification('地震回数に関する情報', '本文', 'earthquake-count', false, null)
+      made[0].onclick?.()
+    } finally {
+      stop()
+    }
+    expect(opened).toEqual([])
   })
 
   it('対照: 許可が無ければ何もしない', async () => {
@@ -71,7 +128,7 @@ describe('showBrowserNotification', () => {
     vi.stubGlobal('Notification', Fake)
     const show = vi.fn(() => Promise.resolve())
     stubServiceWorker({ active: {} as ServiceWorker, showNotification: show })
-    showBrowserNotification('津波警報', '岩手県', 'tsunami')
+    showBrowserNotification('津波警報', '岩手県', 'tsunami', false, null)
     await flush()
     expect(calls).toHaveLength(0)
     expect(show).not.toHaveBeenCalled()
@@ -142,8 +199,8 @@ describe('deliverBrowserNotification', () => {
     expect('renotify' in opts[1]).toBe(false)
   })
 
-  // 同じオリジンに standard 版（/yuremado/）と DMDSS 版（/yuremado/dmdss/）が同居する。DMDSS 版の登録が
-  // まだ無いと standard 版の登録が返るが、それで出すと同じ tag の通知が登録をまたいで置き換わらない
+  // 同じオリジンに別のスコープの登録が同居すると、このページの登録がまだ無いうちはそちらが返る。
+  // それで出すと同じ tag の通知が登録をまたいで置き換わらない
   it('対照: 別のスコープの登録は使わず、ページから出す', async () => {
     const pageCalls: string[] = []
     stubNotification(title => pageCalls.push(title))

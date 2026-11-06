@@ -78,7 +78,7 @@ export function computeEewCircle(eew: EEWAlert, now: number): PsWaveCircle | nul
 }
 
 /**
- * アクティブな EEW の震源・発生時刻から P波・S波の地表到達半径を計算する（標準版・DMDSS版共通）。
+ * アクティブな EEW の震源・発生時刻から P波・S波の地表到達半径を計算する。
  * 100ms ごとに更新することでスムーズな拡張アニメーションを実現する。
  */
 export function usePsWaveCalc(

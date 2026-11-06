@@ -18,11 +18,11 @@ interface Props {
 
 /** 帯 1 本ぶんの見た目。**周りの帯（`MapUpdateTime` ほか）と揃える。** */
 const ROW_CLASS =
-  'bg-black/80 rounded-sm text-sm px-2 py-0.5 roomy:text-xl roomy:px-2.5 roomy:py-1' +
+  'bg-panel/90 rounded-sm text-sm px-2 py-0.5 roomy:text-xl roomy:px-2.5 roomy:py-1' +
   ' pointer-events-none flex items-center gap-1.5 roomy:gap-2 max-w-full'
 
 /** 震度バッジ。**行の高さを変えない**よう `leading-none` で詰める。 */
-const BADGE_CLASS = 'font-bold leading-none rounded-sm px-1.5 py-1 min-w-5 text-center shrink-0'
+const BADGE_CLASS = 'font-bold leading-none rounded-[3px] px-1.5 py-1 min-w-5 text-center shrink-0'
 
 export function SeismoOverlay({ stations }: Props) {
   const rows = seismoOverlayRows(stations)
@@ -41,7 +41,7 @@ export function SeismoOverlay({ stations }: Props) {
       {rows.map((row) => {
         // **値が途絶えたことは色だけで示す。文言は 1 つも足さない。**
         // 隣に並ぶ更新時刻の帯（`components/MapUpdateTime.tsx`）が、更新が止まったときに
-        // 文面を変えず `text-red-400` へ替えるのと同じ作法 —— 枠の見た目（`bg-black/80` の
+        // 文面を変えず `text-red-400` へ替えるのと同じ作法 —— 枠の見た目（`bg-panel/90` の
         // 丸角）もあちらと揃えてあるので、表現を分けると同じ「止まっている」が 2 通りの
         // 見え方になる。
         const tone = row.silent ? 'text-red-400' : 'text-white'

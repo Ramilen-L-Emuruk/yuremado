@@ -79,10 +79,17 @@ describe('parseDailyHypocenterLine', () => {
 })
 
 describe('extractDailyHypocenterRows', () => {
+  // 対照: 決まった行（見出し・区切りの線・空行）は読み飛ばす
   it('pre の中の震源リストだけを取り出す', () => {
-    const html = `<html><body><p>前置き</p><pre>\n見出しのような行\n${NOTO}\n${SINGLE_DIGIT_MIN}\n</pre><p>後書き</p></body></html>`
+    const html = `<html><body><p>前置き</p><pre>\n 年  月 日 時:分 秒  緯度  経度  深さ(km)  M  震央地名\n----------\n\n${NOTO}\n${SINGLE_DIGIT_MIN}\n</pre><p>後書き</p></body></html>`
     const rows = extractDailyHypocenterRows(html)
     expect(rows).toEqual([NOTO, SINGLE_DIGIT_MIN])
+  })
+
+  // 正: 形に合わない行が 1 行でもあれば例外（一部の行だけ書式が変わったまま、その日を確定させない）
+  it('形に合わない行があれば例外', () => {
+    const html = `<pre>\n${NOTO}\n2024/01/01 16:10 37.5N 137.3E 16km M7.6 石川県能登地方\n</pre>`
+    expect(() => extractDailyHypocenterRows(html)).toThrow(/読めない行が 1 行/)
   })
 
   // **0 件で返さず例外にする。** ページ構成が変わったのに「その日は地震が無かった」として

@@ -205,24 +205,44 @@ describe('電文ログの本文の見せ方・落とし方', () => {
 
   // 正: ダウンロードは XML そのもの。ヘッダを混ぜると XML 宣言が先頭でなくなり読めなくなる。
   it('XML は .xml で、ヘッダを混ぜずに落とす', () => {
-    const { text, ext } = formatEntryForDownload(xmlEntry(XML, { type: 'VXSE53' }))
-    expect(ext).toBe('xml')
-    expect(text).toBe(XML)
+    expect(formatEntryForDownload(xmlEntry(XML, { type: 'VXSE53' }))).toEqual({ text: XML, ext: 'xml' })
   })
 
-  // 安全弁: **文字列だからといって XML とは限らない。** 復号に失敗した電文と、復号の前に
-  // 捨てた試験報は、復号前の base64 がそのまま入る。これを XML 扱いすると base64 の塊に
-  // .xml が付き、ヘッダも落ちたファイルになる。
-  it('復号前の base64 は XML 扱いしない（ヘッダごと .json で落とす）', () => {
+  // 安全弁: **文字列だからといって XML とは限らない。** 復号に失敗した電文は、復号前の base64 が
+  // そのまま入る。これを XML や平文扱いすると base64 の塊に .xml・.txt が付き、ヘッダも落ちたファイルになる。
+  it('復号できなかった base64 は XML・平文扱いしない（ヘッダごと .json で落とす）', () => {
     const b64 = 'H4sIAAAAAAAAA6tWKkpNzMlRsl'
-    const { text, ext } = formatEntryForDownload(xmlEntry(b64, { type: 'VXSE53' }))
-    expect(ext).toBe('json')
-    expect(JSON.parse(text)).toEqual({ head: { type: 'VXSE53' }, body: b64 })
+    const d = formatEntryForDownload({ ...xmlEntry(b64, { type: 'VXSE53' }), status: 'error', errorMessage: 'body decode failed' })
+    expect(d.ext).toBe('json')
+    expect('text' in d && JSON.parse(d.text)).toEqual({ head: { type: 'VXSE53' }, body: b64 })
   })
 
-  // 対照: P2PQuake の本文はオブジェクトなので従来どおり JSON。
+  // 正: 平文の電文（国際津波関連情報）は改行どおりに見せ、本文そのままの .txt で落とす
+  it('平文の電文は改行どおりに見せ、.txt で落とす', () => {
+    const plain = 'WEPA60 RJTD 211247\r\nTSUNAMI BULLETIN NUMBER 001\r\n'
+    const e = { ...xmlEntry(plain, { type: 'WEPA60' }), headType: 'WEPA60', kind: 'internationalTsunami' as const }
+    expect(formatEntryForView(e)).toContain('TSUNAMI BULLETIN NUMBER 001\r\n')
+    expect(formatEntryForView(e)).not.toContain('\\r\\n')
+    expect(formatEntryForDownload(e)).toEqual({ text: plain, ext: 'txt' })
+  })
+
+  // 正: 推計震度分布図は、要約の文を見せ、結合した元の電文を .bin で落とす
+  it('二進の電文を持つ行は .bin で落とす', () => {
+    const bytes = new Uint8Array([0x42, 0x55, 0x46, 0x52])
+    const e = { ...xmlEntry('（BUFR 4 バイト・1 セル）'), headType: 'IXAC41', rawBytes: bytes }
+    expect(formatEntryForView(e)).toBe('（BUFR 4 バイト・1 セル）')
+    expect(formatEntryForDownload(e)).toEqual({ bytes, ext: 'bin' })
+  })
+
+  // 安全弁: 推計震度分布図で元の二進を持たない行（結合待ちの断片の要約）は、要約の文を元の電文に見せない
+  it('元の二進を持たない推計震度分布図の行は .txt にせず .json で落とす', () => {
+    const e = { ...xmlEntry('（BUFR の断片 512 バイト・結合待ち）'), headType: 'IXAC41', status: 'filtered' as const }
+    expect(formatEntryForDownload(e).ext).toBe('json')
+  })
+
+  // 対照: オブジェクトの本文は従来どおり JSON。
   it('オブジェクトの本文は従来どおり .json', () => {
-    const e = { ...xmlEntry(XML), source: 'p2pquake' as const, rawBody: { code: 551 } as unknown as string }
+    const e = { ...xmlEntry(XML), rawBody: { code: 551 } as unknown as string }
     expect(formatEntryForDownload(e).ext).toBe('json')
   })
 })

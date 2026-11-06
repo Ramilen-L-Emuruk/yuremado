@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { JSDOM } from 'jsdom'
 import { buildEewSection, buildQuakeAndTsunamiSection, finalizeArchive } from './localEarthquakeArchiveBuilder'
+import { requireHypocenterCatalogDir } from './lib/hypocenterCatalogDir'
 import { ARCHIVE_TARGETS } from './historicalArchiveTargets'
 
 const { window: jsdomWindow } = new JSDOM('')
@@ -51,7 +52,7 @@ async function main() {
     dates: TARGET.dates,
     windowStart: TARGET.windowStart,
     windowEnd: TARGET.windowEnd,
-    repoRoot: join(__dirname, '..'),
+    catalogDir: requireHypocenterCatalogDir(),
     knownGaps: TARGET.knownGaps,
   })
 

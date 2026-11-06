@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { TelegramLogEntry } from '../../types/earthquake'
 import { NON_EEW_HANDLED_TYPES, EEW_HEAD_TYPES, DISPATCHED_WITHOUT_PARSER } from '../../services/dmdataTelegramPayload'
-import { isSupportedCode } from '../../services/p2pquake'
 import {
   HEAD_TYPE_LABEL, KIND_LABEL, KIND_OPTIONS, headTypeLabel, matchesTelegramFilter, readKindFilter,
-  telegramLogKindOf,
+  telegramLogKindOf, telegramTitleOf,
 } from './labels'
 
 describe('HEAD_TYPE_LABEL', () => {
@@ -16,13 +15,6 @@ describe('HEAD_TYPE_LABEL', () => {
     expect(handled.filter(code => !(code in HEAD_TYPE_LABEL))).toEqual([])
   })
 
-  it('P2PQuake で扱う全コードに種別名がある', () => {
-    // P2PQuake のコードは 3 桁（551 地震情報・552 津波・556 EEW など）。扱うかは isSupportedCode が決める
-    const handled = Array.from({ length: 1000 }, (_, i) => i).filter(isSupportedCode)
-    expect(handled.length).toBeGreaterThan(0)
-    expect(handled.filter(code => !(String(code) in HEAD_TYPE_LABEL))).toEqual([])
-  })
-
   it('VYSE51・VYSE52 は括弧書きで見分けられる', () => {
     expect(HEAD_TYPE_LABEL.VYSE51).toBe('南海トラフ地震関連解説情報（臨時解説）')
     expect(HEAD_TYPE_LABEL.VYSE52).toBe('南海トラフ地震関連解説情報（定例解説）')
@@ -32,7 +24,7 @@ describe('HEAD_TYPE_LABEL', () => {
 describe('headTypeLabel', () => {
   it('載っているコードは種別名、扱わないコードはコードそのものを返す', () => {
     expect(headTypeLabel('VYSE50')).toBe('南海トラフ地震臨時情報')
-    // P2PQuake は扱わないコード（561 など）も filtered で記録する。名前は付けない
+    // 扱わないコード（試験報を捨てたときに種別を問わず記録したもの）には名前を付けない
     expect(headTypeLabel('561')).toBe('561')
   })
 
@@ -46,7 +38,6 @@ describe('telegramLogKindOf', () => {
   it('扱う全コードが種別を持つ（種別を持たない行でも絞り込みに当たる）', () => {
     const handled = [
       ...NON_EEW_HANDLED_TYPES, ...EEW_HEAD_TYPES, ...DISPATCHED_WITHOUT_PARSER,
-      ...Array.from({ length: 1000 }, (_, i) => i).filter(isSupportedCode).map(String),
     ]
     expect(handled.filter(headType => telegramLogKindOf({ headType, kind: undefined }) === undefined)).toEqual([])
   })
@@ -55,7 +46,7 @@ describe('telegramLogKindOf', () => {
     expect(telegramLogKindOf({ headType: 'IXAC41', kind: undefined })).toBe('estimatedIntensity')
     expect(telegramLogKindOf({ headType: 'VYSE52', kind: undefined })).toBe('nankaiCommentary')
     expect(telegramLogKindOf({ headType: 'VXSE42', kind: undefined })).toBe('eew')
-    expect(telegramLogKindOf({ headType: '552', kind: undefined })).toBe('tsunami')
+    expect(telegramLogKindOf({ headType: 'VTSE41', kind: undefined })).toBe('tsunami')
   })
 
   it('読めた行は読んだ結果の種別を使い、扱わないコードは種別を持たない', () => {
@@ -121,33 +112,63 @@ describe('matchesTelegramFilter', () => {
 
   it('いままで絞れなかった 6 種別でも絞れる', () => {
     for (const kind of ['nankai', 'nankaiCommentary', 'kohatsu', 'quakeNotice', 'earthquakeCount', 'estimatedIntensity'] as const) {
-      expect(matchesTelegramFilter(entry({ kind }), 'all', kind, 'all')).toBe(true)
-      expect(matchesTelegramFilter(entry({ kind: 'quake' }), 'all', kind, 'all')).toBe(false)
+      expect(matchesTelegramFilter(entry({ kind }), kind, 'all')).toBe(true)
+      expect(matchesTelegramFilter(entry({ kind: 'quake' }), kind, 'all')).toBe(false)
     }
   })
 
   it('結合待ちの断片・読み取りに失敗した行も、電文種別コードから種別で当たる', () => {
     const fragment = entry({ status: 'filtered', headType: 'IXAC41' })
-    expect(matchesTelegramFilter(fragment, 'all', 'estimatedIntensity', 'all')).toBe(true)
-    expect(matchesTelegramFilter(fragment, 'all', 'filtered', 'all')).toBe(true)
+    expect(matchesTelegramFilter(fragment, 'estimatedIntensity', 'all')).toBe(true)
+    expect(matchesTelegramFilter(fragment, 'filtered', 'all')).toBe(true)
     const failed = entry({ status: 'error', headType: 'VYSE50' })
-    expect(matchesTelegramFilter(failed, 'all', 'nankai', 'all')).toBe(true)
-    expect(matchesTelegramFilter(failed, 'all', 'error', 'all')).toBe(true)
-    expect(matchesTelegramFilter(failed, 'all', 'kohatsu', 'all')).toBe(false)
+    expect(matchesTelegramFilter(failed, 'nankai', 'all')).toBe(true)
+    expect(matchesTelegramFilter(failed, 'error', 'all')).toBe(true)
+    expect(matchesTelegramFilter(failed, 'kohatsu', 'all')).toBe(false)
   })
 
   it('扱わないコードの行（種別を持たない）は種別では当たらず、スキップでは当たる', () => {
     const skipped = entry({ status: 'filtered' })
-    expect(matchesTelegramFilter(skipped, 'all', 'quake', 'all')).toBe(false)
-    expect(matchesTelegramFilter(skipped, 'all', 'filtered', 'all')).toBe(true)
-    expect(matchesTelegramFilter(skipped, 'all', 'error', 'all')).toBe(false)
-    expect(matchesTelegramFilter(skipped, 'all', 'all', 'all')).toBe(true)
+    expect(matchesTelegramFilter(skipped, 'quake', 'all')).toBe(false)
+    expect(matchesTelegramFilter(skipped, 'filtered', 'all')).toBe(true)
+    expect(matchesTelegramFilter(skipped, 'error', 'all')).toBe(false)
+    expect(matchesTelegramFilter(skipped, 'all', 'all')).toBe(true)
   })
 
-  it('取得元の絞り込みは種別より先に効く', () => {
-    const p2p = entry({ source: 'p2pquake', kind: 'eew' })
-    expect(matchesTelegramFilter(p2p, 'dmdss', 'eew', 'all')).toBe(false)
-    expect(matchesTelegramFilter(p2p, 'p2pquake', 'eew', 'all')).toBe(true)
-    expect(matchesTelegramFilter(p2p, 'all', 'eew', 'all')).toBe(true)
+})
+
+describe('telegramTitleOf', () => {
+  const xml = (title: string) =>
+    `<?xml version="1.0"?><Report><Control><Title>${title}</Title><Status>通常</Status></Control><Head><Title>見出しの題</Title></Head></Report>`
+
+  // 正: XML の電文は Control/Title をそのまま出す（Head の Title は使わない）
+  it('XML の電文は Control の Title を返す', () => {
+    expect(telegramTitleOf({ headType: 'VXSE62', rawBody: xml('長周期地震動に関する観測情報') })).toBe('長周期地震動に関する観測情報')
+  })
+
+  // 対照: XML でない本文（復号に失敗した base64・二進）は短い名前へ倒す
+  it('XML でない本文は種別名を返す', () => {
+    expect(telegramTitleOf({ headType: 'VXSE62', rawBody: 'PFJlcG9ydD4=' })).toBe('長周期')
+    expect(telegramTitleOf({ headType: 'IXAC41', rawBody: new Uint8Array([1, 2]) })).toBe('推計震度分布図作図用データ')
+  })
+
+  // 安全弁: Control が無い・Title が空の XML も短い名前へ倒す（空の名前を出さない）
+  it('Control/Title が読めない XML は種別名を返す', () => {
+    expect(telegramTitleOf({ headType: 'VXSE53', rawBody: '<Report/>' })).toBe('震源・震度')
+    expect(telegramTitleOf({ headType: 'VXSE53', rawBody: '<Report><Head><Title>見出し</Title></Head></Report>' })).toBe('震源・震度')
+    expect(telegramTitleOf({ headType: 'ZZZZ99', rawBody: '<Report/>' })).toBe('ZZZZ99')
+  })
+})
+
+describe('telegramTitleOf の許容幅', () => {
+  // 訓練・試験の読み取り（telegramOperationStatus.ts）と同じく、接頭辞と属性の付いた Control も読む
+  it('接頭辞・属性の付いた Control の Title を読む', () => {
+    const body = '<jmx:Report><jmx:Control xmlns:jmx="x"><jmx:Title> 震源に関する情報 </jmx:Title></jmx:Control></jmx:Report>'
+    expect(telegramTitleOf({ headType: 'VXSE52', rawBody: body })).toBe('震源に関する情報')
+  })
+
+  // 安全弁: 空の Title は名前にしない
+  it('空の Title は種別名へ倒す', () => {
+    expect(telegramTitleOf({ headType: 'VXSE52', rawBody: '<Report><Control><Title>  </Title></Control></Report>' })).toBe('震源情報')
   })
 })

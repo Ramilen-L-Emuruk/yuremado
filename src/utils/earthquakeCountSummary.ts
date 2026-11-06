@@ -37,3 +37,40 @@ export function pickEarthquakeCountSummaryItem(count: JMAEarthquakeCount): JMAEa
   }
   return latestHour
 }
+
+/**
+ * 畳んだ帯に出す一行。
+ *
+ * **電文の見出し（`Head/Headline/Text`）は使わない** —— 「地震回数に関する情報をお知らせします。」
+ * という中身の無い定型文で、畳んだままでは何も伝わらない。区間の数字から組む。
+ *
+ * **どの区間の数字を出すかは読み上げと同じ関数で選ぶ**（`pickEarthquakeCountSummaryItem`。
+ * 累積 → 地震回数 → 最新の１時間地震回数）。選べなければ種別名だけを返す。
+ *
+ * **気象庁が発表しない値（電文の `-1`。型では `null`）は句ごと出さない**
+ * （2026-10-19 ユーザー承認「-1 を「発表なし」に (推奨)」）。回数だけが無ければ
+ * 「8/24 15時から 有感 1回」、有感だけが無ければ「8/24 15時から 5回」、両方無ければ種別名。
+ *
+ * **取消の分岐は持たない。** 取消が自分の群発に一致すれば `applyEarthquakeCount` が帯ごと消し、
+ * 一致しなければ表示中の帯はそのまま残る —— どちらの道でも取消の報がここへ渡ることはない。
+ * 防御のつもりで分岐を置くと、次に触る人へ「取消も描ける」という誤った保証を与える。
+ */
+export function earthquakeCountHeadline(count: JMAEarthquakeCount): string {
+  const total = pickEarthquakeCountSummaryItem(count)
+  if (!total) return '地震回数に関する情報'
+  const { number, feltNumber } = total
+  if (number === null && feltNumber === null) return '地震回数に関する情報'
+  // 日本時間で読む。端末の時間帯で読むと、中継（UTC で動く）が送るプッシュ通知と画面の帯で時刻がずれる
+  const start = new Date(new Date(total.startTime).getTime() + 9 * 60 * 60 * 1000)
+  const since = Number.isFinite(start.getTime())
+    ? `${start.getUTCMonth() + 1}/${start.getUTCDate()} ${String(start.getUTCHours()).padStart(2, '0')}時から `
+    : ''
+  if (number === null) return `${since}有感 ${formatCount(feltNumber)}回`
+  if (feltNumber === null) return `${since}${formatCount(number)}回`
+  return `${since}${formatCount(number)}回（うち有感 ${formatCount(feltNumber)}回）`
+}
+
+/** 回数を桁区切りで出す。**発表なし（`null`）は「—」**（開いた表のセルと同じ）。 */
+function formatCount(n: number | null): string {
+  return n === null ? '—' : n.toLocaleString('ja-JP')
+}

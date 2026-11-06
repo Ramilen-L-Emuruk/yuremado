@@ -1,3 +1,4 @@
+import { Marquee } from './Marquee'
 import { useEffect, useState } from 'react'
 import type { SeismoStreamState } from '../services/seismoStream'
 import { READING_STALE_MS } from '../hooks/useSeismoStation'
@@ -86,8 +87,8 @@ export function SeismoLinkStatus({ stream, urlUnusable }: Props) {
   if (!down || !shown) return null
 
   return (
-    <div className="bg-black/80 rounded-sm text-xs px-2 py-0.5 roomy:text-lg roomy:px-2.5 roomy:py-1 text-amber-300">
-      {TEXT}
+    <div className="bg-panel/90 rounded-sm text-xs px-2 py-0.5 roomy:text-lg roomy:px-2.5 roomy:py-1 text-amber-300">
+      <Marquee text={TEXT} />
     </div>
   )
 }

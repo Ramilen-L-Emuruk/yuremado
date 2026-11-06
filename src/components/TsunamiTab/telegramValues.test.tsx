@@ -56,6 +56,11 @@ const observed: TsunamiObservation = {
 const renderTab = (tsunami: JMATsunami, marks: TsunamiValueMarks = NO_TSUNAMI_VALUE_MARKS, extra: Record<string, unknown> = {}) =>
   render(<TsunamiTab tsunamiValueMarks={marks} tsunamis={[tsunami]} isVisible {...extra} />)
 
+/** バナーの原因地震の行（電文の順。前の津波の原因地震が後ろに続く）を、値を空白 1 つで区切った文で返す。 */
+const sourceLines = (container: HTMLElement) =>
+  [...container.querySelectorAll('[data-source-line]')].map(el =>
+    [...el.children].map(c => c.textContent).join(' '))
+
 describe('到達状況のバッジ', () => {
   // 正（2026-10-21 ユーザー選択「バッジも出す (Recommended)」）: 実測のある区域でもバッジを出す
   it('正: 実測のある区域でも到達状況のバッジを出す', () => {
@@ -111,7 +116,7 @@ describe('解除・取消の表示', () => {
   // 正（2026-10-21 ユーザー選択「原因地震も出す (Recommended)」）: 取消・解除の表示中も原因地震の行を出す
   it('正: 解除の表示中も原因地震の行を出す', () => {
     const { container } = renderTab(makeTsunami({ cancelled: true, cancelReason: 'lifted', cancelledAt: new Date('2026-04-20T06:00:00Z') }))
-    expect(container.textContent).toContain('震源: 福島県沖')
+    expect(sourceLines(container)[0]).toContain('福島県沖')
   })
 })
 
@@ -121,9 +126,10 @@ describe('前の津波の原因地震', () => {
     const { container } = renderTab(makeTsunami({
       previousSourceEarthquakes: [{ hypocenterName: '八丈島東方沖', magnitude: 5.9, arrivalTime: '2026-04-20T05:00:00' }],
     }))
-    const text = container.textContent ?? ''
-    expect(text).toContain('八丈島東方沖　M5.9')
-    expect(text.indexOf('福島県沖')).toBeLessThan(text.indexOf('八丈島東方沖'))
+    const lines = sourceLines(container)
+    expect(lines[0]).toContain('福島県沖')
+    expect(lines[1]).toContain('八丈島東方沖')
+    expect(lines[1]).toContain('M5.9')
   })
 })
 
@@ -134,14 +140,14 @@ describe('規模の種別と編集官署', () => {
       sourceEarthquakes: [{ hypocenterName: '福島県沖', magnitude: 7, magnitudeType: 'Mj' }],
       previousSourceEarthquakes: [{ hypocenterName: 'チリ中部沿岸', magnitude: 8.8, magnitudeType: 'M' }],
     }))
-    const text = container.textContent ?? ''
-    expect(text).toContain('福島県沖　Mj7.0')
-    expect(text).toContain('チリ中部沿岸　M8.8')
+    const lines = sourceLines(container)
+    expect(lines[0]).toContain('福島県沖 Mj7.0')
+    expect(lines[1]).toContain('チリ中部沿岸 M8.8')
   })
 
-  it('対照: 種別を持たない原因地震（標準版）は従来どおり「M7.3」', () => {
+  it('対照: 種別を持たない原因地震は従来どおり「M7.3」', () => {
     const { container } = renderTab(makeTsunami())
-    expect(container.textContent).toContain('福島県沖　M7.3')
+    expect(sourceLines(container)[0]).toContain('福島県沖 M7.3')
   })
 
   // 正（2026-10-29 ユーザー承認「A 情報名の行の後ろ (Recommended)」）: 情報名の行の後ろに「編集官署 …」を添える
@@ -159,7 +165,7 @@ describe('規模の種別と編集官署', () => {
     expect(screen.getByText('編集官署 気象庁本庁')).toBeTruthy()
   })
 
-  // 安全弁: 発表官署へ落ちる `issue.source` を「編集官署」と名乗って出さない（標準版の全カードに誤った官署が出る形を作らない）
+  // 安全弁: 発表官署へ落ちる `issue.source` を「編集官署」と名乗って出さない（編集官署の欄が無い報で誤った官署が出る形を作らない）
   it('安全弁: 編集官署の欄が無ければ、issue.source があっても「編集官署」を出さない', () => {
     const { container } = renderTab(makeTsunami({ infoName: '津波警報・注意報・予報' }))
     expect(container.textContent).not.toContain('編集官署')
@@ -173,13 +179,13 @@ describe('観測点以外の値の印', () => {
     renderTab(makeTsunami(), marks)
     const header = screen.getByText('6m') as HTMLElement
     expect(header.style.color).toBe(hexToRgb(UPDATE_MARK_COLOR.changed))
-    const row = screen.getByText('福島県').closest('.border-b') as HTMLElement
+    const row = screen.getByText('福島県').closest('[data-area-row]') as HTMLElement
     expect(row.style.borderLeft).toContain(hexToRgb(UPDATE_MARK_COLOR.changed))
   })
 
   it('対照: 印が無ければ見出しは等級の色のまま、縦線は透明', () => {
     renderTab(makeTsunami())
-    const row = screen.getByText('福島県').closest('.border-b') as HTMLElement
+    const row = screen.getByText('福島県').closest('[data-area-row]') as HTMLElement
     expect(row.style.borderLeft).toContain('transparent')
   })
 

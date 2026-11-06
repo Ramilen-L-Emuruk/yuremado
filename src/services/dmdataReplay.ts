@@ -1,12 +1,12 @@
 import { parseEarthquakeFromXml, parseTsunamiFromXml } from './dmdataParser'
 import { parseTar } from '../utils/tarParser'
 import type { JMAQuake, EEWAlert, JMATsunami } from '../types/earthquake'
-import { selectActiveEews, computeEverSpecialWarningEventIds, computeFirstIssueTimes, eewEventKey } from '../utils/eew'
+import { selectActiveEews, computeEverSpecialWarningEventIds, computeFirstIssueTimes, eewEventKey, supersedesEewReport } from '../utils/eew'
 import { gunzip } from '../utils/gzip'
 import { createArchiveBodyCache } from '../utils/archiveBodyCache'
 import { readArchiveBody, writeArchiveBody } from '../utils/archiveBodyDb'
 import { log, createLogThrottle } from '../utils/logger'
-import { authHeader } from '../utils/dmdataApiKey'
+import type { DmdataEndpoint } from './dmdataEndpoint'
 import {
   fetchWithTimeout, isAbortedByCaller, ARCHIVE_BODY_FETCH_TIMEOUT_MS, API_FETCH_TIMEOUT_MS,
 } from '../utils/fetchWithTimeout'
@@ -17,7 +17,7 @@ import {
 import type { AreaPrefIndex } from '../utils/quakePoints'
 import { latestValidDateTime, foldTsunamiReports, isSameTsunamiEvent, stepTsunamiState, tsunamiEventIds } from '../utils/tsunami'
 import { matchEstimatedIntensity } from '../utils/estimatedIntensity'
-import type { ReplayEntry, ReplayPayload, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
+import type { ReplayEntry, ReplayLogOnlyEntry, ReplayPayload, ReplayFetchResult, QuakeHistoryResult } from '../types/replay'
 import {
   isHandledType, QUAKE_TYPES, TSUNAMI_TYPES, HISTORY_EXTRA_TYPES, LPGM_TYPES, ESTIMATED_INTENSITY_TYPES, historyExtraKey,
   buildXmlPayload, isBinaryTelegramType, buildBinaryPayload, type EewHeadType, type DayEewHeadType, eewHeadTypeForDay,
@@ -25,12 +25,12 @@ import {
 } from './dmdataTelegramPayload'
 import { BufrFragmentStore, fragmentKey } from './bufrTelegramAssembly'
 import {
-  clearLiveReplayCache, fetchLiveQuakeTelegrams, fetchLiveReplayEntries, resolveLiveDates,
-  archiveDaysForWindow, archiveListRange, toJstDateStr,
+  clearLiveReplayCache, fetchLiveQuakeTelegrams, fetchLiveReplayEntriesWith, resolveLiveDates, REPLAY_LOG_ONLY_FETCH_FAILED,
+  archiveDaysForWindow, archiveListRange, toJstDateStr, fetchListedEewFinals, isReplayLogOnly,
 } from './dmdataReplayLive'
 import { eewHeadTypeFor, hasQuakeTelegrams, type DmdataClassification } from './dmdataClassifications'
 import {
-  waitForDataApiSlot, waitForApiSlot, rateLimitedUntil, noteRateLimited, noteRateLimitCleared,
+  rateLimitedUntil, noteRateLimited, noteRateLimitCleared,
   RateLimitWindowError,
 } from './dmdataRequestGates'
 import type { GateTag } from '../utils/requestGate'
@@ -337,7 +337,7 @@ const warnSameDayArchive = createLogThrottle(60_000)
  * 相乗りするので印は付かない**（同時要求を 1 本にまとめる控えの性質。`archiveBodyCache.ts`）。
  */
 function downloadArchive(
-  url: string, apiKey: string, date: string, gateTag: GateTag | null,
+  url: string, endpoint: DmdataEndpoint, date: string, gateTag: GateTag | null,
 ): Promise<Map<string, Uint8Array>> {
   const nowMs = Date.now()
   const cacheable = isArchiveCacheable(date, nowMs)
@@ -360,14 +360,19 @@ function downloadArchive(
     // 50req/5min の対象で、レート表の読み方が「3 行それぞれ」とも「3 行の合計」とも
     // 取れるため合算として扱う（→ `services/dmdataRequestGates.ts`）。
     // **控えから読めた分はここを通らない**（`archiveCache.get` が返す）。
-    await waitForDataApiSlot(gateTag ? { tag: gateTag } : undefined)
+    await endpoint.waitDataSlot(url, gateTag ? { tag: gateTag } : undefined)
+    await endpoint.prepare()
     // **止める合図は渡さない。** 同じアーカイブは本編・初期状態・履歴が相乗りする
     // （`archiveCache`）ので、1 人が止めると相乗りした側まで落ちる。上限だけで抑え、取れた分は
     // 控えに残して次に使う。
     const { status, gz } = await fetchWithTimeout(
       url,
-      { timeoutMs: ARCHIVE_BODY_FETCH_TIMEOUT_MS, signal: null, init: { headers: { Authorization: authHeader(apiKey) } } },
-      async res => ({ status: res.status, gz: res.ok ? new Uint8Array(await res.arrayBuffer()) : null }),
+      { timeoutMs: ARCHIVE_BODY_FETCH_TIMEOUT_MS, signal: null, init: { headers: endpoint.dataHeaders(url) } },
+      async res => {
+        // 中継の口から返す束（予報）の 401・429 は、一覧と同じく札を捨てる・待ちを覚える
+        endpoint.observe(res.status, res.headers)
+        return { status: res.status, gz: res.ok ? new Uint8Array(await res.arrayBuffer()) : null }
+      },
     )
     if (gz === null) {
       // **429 だけは窓を置く**（他の失敗は次の操作で取り直してよい）
@@ -439,7 +444,6 @@ const parsedTelegramCache = new Map<string, ParsedTelegram>()
  * あいだ読むたびに加算され、**壊れた 1 通が 5 件にも 20 件にも見える**。
  *
  * 合流する側（`addTelegramLoss`）は別々の取得を集める前提で足すので、ここで止めるしかない。
- * P2PQuake 経路の `reportedSkipCounts` と同じ役目 —— **あちらにあってこちらに無かった。**
  *
  * **「報告済みの日」の集合ではなく件数で持つ。** 当日ぶんは控えないので走査のたびに取り直し、
  * 後から届いた電文が壊れていれば件数が増える —— 集合だと増えた分を報告できず、
@@ -447,8 +451,16 @@ const parsedTelegramCache = new Map<string, ParsedTelegram>()
  * 増えたときはその増分だけが出る。
  *
  * 時間軸が変わったら捨てる（`clearReplayCache`）。同じ日でも別の再生では数え直してよい。
+ *
+ * **鍵は繋ぎ先と区分と日の組にする**（{@link skipReportKey}）。鍵を入れた人は同じ日を中継と自分の鍵の 2 か所から
+ * 読む（→ `replaySources.ts`）。日だけで持つと、片方で数えた件数がもう片方の増分を打ち消し、取りこぼしを少なく見せる。
  */
 const reportedReplaySkipCounts = new Map<string, number>()
+
+/** {@link reportedReplaySkipCounts} の鍵。 */
+function skipReportKey(endpoint: DmdataEndpoint, classifications: readonly DmdataClassification[], day: string): string {
+  return `${endpoint.apiBase}|${[...classifications].sort().join(',')}|${day}`
+}
 
 /**
  * 再生に使うセッション内の控えを捨てる。
@@ -674,7 +686,7 @@ const ARCHIVE_LIST_LIMIT = 100
  * （`LIST_MAX_PAGES` の由来を参照）。
  */
 async function listArchives(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   startDate: string,
   endDate: string,
   classification: string,
@@ -695,11 +707,13 @@ async function listArchives(
     // **枠を待ってから投げる。** ここは `api.dmdata.jp` なので本体の門（6 秒）ではなく
     // そちら側の門（500ms）を通る。**ページを辿るループの中なので、応答が速ければ
     // 待ちなしで連投される**（→ `services/dmdataRequestGates.ts`）。
-    await waitForApiSlot(gateTag ? { tag: gateTag } : undefined)
+    await endpoint.waitApiSlot(gateTag ? { tag: gateTag } : undefined)
+    await endpoint.prepare(signal)
     const listJson = await fetchWithTimeout(
-      `https://api.dmdata.jp/v2/archive?${params.toString()}`,
-      { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: { Authorization: authHeader(apiKey) } } },
+      `${endpoint.apiBase}/archive?${params.toString()}`,
+      { timeoutMs: API_FETCH_TIMEOUT_MS, signal, init: { headers: endpoint.apiHeaders() } },
       async (res) => {
+        endpoint.observe(res.status, res.headers ?? null)
         if (!res.ok) throw new Error(`アーカイブの一覧を取得できなかった: ${res.status}`)
         return (await res.json()) as { status: string; items: ArchiveItem[]; nextToken?: string }
       },
@@ -773,15 +787,26 @@ interface ManifestPlan {
  * （窓を前へ進めるので同じ電文を二度読まない）。効くのは**窓に 1 件も入らない日**で、
  * 静かな 1 時間の窓では本体を読まずに済む。
  *
+ * **電文ログにだけ積む電文（`logOnly`）も本体が要る**（本文ごと積む。ライブも本文を復号して積む →
+ * `dmdataReplayLive.ts` の `isReplayLogOnly`）。そのため、`eew.forecast` では毎正時の配信テスト（VXSE42 の試験報）が
+ * どの 1 時間の窓にも入り、緊急地震速報の無い日も本体を落とす。
+ *
  * `head` を持たないエントリも（捨てずに）返す —— 消費側が記録して取りこぼしに数えるため。
  */
 type ReplayPlan =
   | { kind: 'malformed'; entry: ManifestEntry | undefined; needsBody: false }
-  | ({ kind: 'entry' } & ManifestPlan)
+  | ({
+    kind: 'entry'
+    /**
+     * 画面へは流さず電文ログにだけ積むか（窓の内側で、`isReplayLogOnly` が真のもの）。真なら `include` は偽。
+     * **取りこぼしには数えない**（取り込む電文ではない）。
+     */
+    logOnly: boolean
+  } & ManifestPlan)
 
 function planReplayEntries(
   manifest: ManifestEntry[],
-  opts: { includeTest: boolean; fromTime: Date; toTime: Date; eewHeadType: DayEewHeadType | null },
+  opts: { includeTest: boolean; fromTime: Date; toTime: Date; eewHeadType: DayEewHeadType | null; withLogOnly: boolean },
 ): ReplayPlan[] {
   const plans: ReplayPlan[] = []
   const times = manifestEntryTimes(manifest)
@@ -790,17 +815,26 @@ function planReplayEntries(
       plans.push({ kind: 'malformed', entry, needsBody: false })
       continue
     }
-    if (!opts.includeTest && entry.head.test) continue
     if (entry.originalId) continue
     const time = times.get(entry) ?? null
+    // **捨てる試験報は、時刻が読めなくても取りこぼしに数えない**（もとから数えていない。行を積むようにしても数え方は変えない）
+    const droppedTest = !opts.includeTest && entry.head.test
     if (time === null) {
-      plans.push({ kind: 'entry', entry, time: null, include: false, needsBody: false })
+      if (droppedTest) continue
+      plans.push({ kind: 'entry', entry, time: null, include: false, logOnly: false, needsBody: false })
       continue
     }
-    const include = isReplayTarget(entry, time, opts.fromTime, opts.toTime, opts.eewHeadType)
-    plans.push({ kind: 'entry', entry, time, include, needsBody: include })
+    const inWindow = isInReplayWindow(time, opts.fromTime, opts.toTime)
+    const include = !droppedTest && isReplayTarget(entry, time, opts.fromTime, opts.toTime, opts.eewHeadType)
+    const logOnly = opts.withLogOnly && !include && inWindow && isReplayLogOnly(entry.head, opts.includeTest, opts.eewHeadType)
+    plans.push({ kind: 'entry', entry, time, include, logOnly, needsBody: include || logOnly })
   }
   return plans
+}
+
+/** 本編の窓の内側か（左は含む・右は含まない）。取り込む電文と電文ログだけの電文で同じ境界を使う。 */
+function isInReplayWindow(time: Date, fromTime: Date, toTime: Date): boolean {
+  return time >= fromTime && time < toTime
 }
 
 /**
@@ -814,7 +848,7 @@ function planReplayEntries(
 function isReplayTarget(
   entry: ManifestEntry, time: Date, fromTime: Date, toTime: Date, eewHeadType: DayEewHeadType | null,
 ): boolean {
-  return time >= fromTime && time < toTime && isHandledType(entry.head.type, eewHeadType)
+  return isInReplayWindow(time, fromTime, toTime) && isHandledType(entry.head.type, eewHeadType)
 }
 
 /** その日の計画に、本体を要するものが 1 件でもあるか。 */
@@ -840,8 +874,34 @@ function requireArchiveBody(
   throw new Error(`本体を落としていない日の電文を読もうとした（事前判定のずれ） date=${date} id=${String(entry.id)}`)
 }
 
-export async function fetchDmdataReplayEvents(
-  apiKey: string,
+export function fetchDmdataReplayEvents(
+  endpoint: DmdataEndpoint,
+  fromTime: Date,
+  toTime: Date,
+  includeTest: boolean,
+  classifications: readonly DmdataClassification[],
+  signal: AbortSignal | null,
+): Promise<ReplayFetchResult> {
+  return fetchReplayEvents(endpoint, fromTime, toTime, includeTest, classifications, signal, true)
+}
+
+/**
+ * 再生の初期状態（窓の手前 24 時間）を取る。**電文ログにだけ積む電文を選ばず、その本体も取らない** ——
+ * 初期状態の行は電文ログに載せないので、取っても捨てるだけになる（毎正時の配信テストだけで 24 時間に 24 通ある）。
+ */
+export function fetchDmdataReplayInitialEvents(
+  endpoint: DmdataEndpoint,
+  fromTime: Date,
+  toTime: Date,
+  includeTest: boolean,
+  classifications: readonly DmdataClassification[],
+  signal: AbortSignal | null,
+): Promise<ReplayFetchResult> {
+  return fetchReplayEvents(endpoint, fromTime, toTime, includeTest, classifications, signal, false)
+}
+
+async function fetchReplayEvents(
+  endpoint: DmdataEndpoint,
   fromTime: Date,
   toTime: Date,
   includeTest: boolean,
@@ -857,6 +917,8 @@ export async function fetchDmdataReplayEvents(
    * 止めた側だけで切ると相乗りした側まで落ちる（取れた分は控えに残る）。
    */
   signal: AbortSignal | null,
+  /** 電文ログにだけ積む電文の行を作るか（→ `fetchDmdataReplayInitialEvents`） */
+  withLogOnly: boolean,
 ): Promise<ReplayFetchResult> {
   // **落とす日を JST で決めて、目録もその範囲だけ引く。**
   //
@@ -883,7 +945,7 @@ export async function fetchDmdataReplayEvents(
   }
   const items = listRange === null
     ? []
-    : await listArchives(apiKey, listRange.from, listRange.to, classifications.join(','), signal, null)
+    : await listArchives(endpoint, listRange.from, listRange.to, classifications.join(','), signal, null)
   // **絞るのはダウンロードだけ。`resolveLiveDates` には絞る前の `items` を渡す**（下の
   // `liveDates`）—— 絞った後を渡すと、窓の外の日を「アーカイブが無い」と誤認して
   // 当日経路が余計に走る。目録の範囲は `wantedDays` を覆うだけなので通常は差が出ないが、
@@ -895,6 +957,8 @@ export async function fetchDmdataReplayEvents(
 
   const dec = new TextDecoder()
   const entries: ReplayEntry[] = []
+  /** 電文ログにだけ積む行（→ `ReplayFetchResult.logOnlyEntries`）。取りこぼしの数え方とは別に積む。 */
+  const logOnlyEntries: ReplayLogOnlyEntry[] = []
   // 分割された二進電文の結合待ち。**アーカイブをまたいで共有する** —— 断片は同じ日の同じ
   // アーカイブに入るのが普通だが、日付の境目で分かれても拾えるようにしておく。
   // この取得 1 回きりの入れ物なので、ライブの断片とは混ざらない。
@@ -937,6 +1001,8 @@ export async function fetchDmdataReplayEvents(
    * 「取得元N件」「電文N件」と単位を分けて出すため、混ぜると文面が嘘になる。
    */
   let rateLimitedTelegrams = 0
+  /** 上の 2 つの枠に積んだ識別子のうち、その日の分を丸ごと失ったものと、その日（→ `ReplayFetchResult.lostSourceDays`）。 */
+  const lostSourceDays = new Map<string, string>()
 
   await Promise.all(
     targets.map(async (item) => {
@@ -952,7 +1018,7 @@ export async function fetchDmdataReplayEvents(
        */
       const loadBody = async (): Promise<Map<string, Uint8Array> | undefined> => {
         try {
-          return await downloadArchive(item.url, apiKey, item.date, null)
+          return await downloadArchive(item.url, endpoint, item.date, null)
         } catch (e) {
           if (e instanceof RateLimitWindowError) {
             // **正常な待ちなので `error` では記録しない。** 待てば取れる
@@ -962,10 +1028,12 @@ export async function fetchDmdataReplayEvents(
               + `（あと ${Math.max(0, Math.round((e.until - Date.now()) / 1000))} 秒）`,
             )
             rateLimitedSources.push(item.url)
+            lostSourceDays.set(item.url, item.date)
             return undefined
           }
           log.error(`[replay] アーカイブの取得・展開に失敗したためスキップ date=${item.date} classification=${item.classification}`, e)
           failedArchiveUrls.push(item.url)
+          lostSourceDays.set(item.url, item.date)
           return undefined
         }
       }
@@ -985,6 +1053,7 @@ export async function fetchDmdataReplayEvents(
           // 化けて原因が追えなくなるため、取得失敗と同じ扱いで数える。
           log.warn(`[replay] アーカイブに telegrams.json が無いためスキップ date=${item.date} classification=${item.classification}`)
           failedArchiveUrls.push(item.url)
+          lostSourceDays.set(item.url, item.date)
           return
         }
         try {
@@ -993,6 +1062,7 @@ export async function fetchDmdataReplayEvents(
           // 目録自体が壊れている場合も同様に、そのアーカイブのみ諦めて他は継続する。
           log.error(`[replay] telegrams.json の解析に失敗したためスキップ date=${item.date} classification=${item.classification}`, e)
           failedArchiveUrls.push(item.url)
+          lostSourceDays.set(item.url, item.date)
           return
         }
         manifestCache.set(item.url, manifest)
@@ -1004,7 +1074,7 @@ export async function fetchDmdataReplayEvents(
       if (dayEewHeadType === 'VXSE44') log.info(`[replay] VXSE45 の無い日なので VXSE44 を緊急地震速報として読みます date=${item.date}`)
       // 絞り込み（試験報・重複排除・時刻・窓・種別）は計画へ集約してある。
       // **判定と消費で同じ配列を回すこと**が肝（→ `ManifestPlan`）。
-      const plans = planReplayEntries(manifest, { includeTest, fromTime, toTime, eewHeadType: dayEewHeadType })
+      const plans = planReplayEntries(manifest, { includeTest, fromTime, toTime, eewHeadType: dayEewHeadType, withLogOnly })
       // **窓に 1 件も入らない日は本体を落とさない。** 落としても中身を読まずに捨てるだけで、
       // 静かな 1 時間の窓では毎回それが起きる。
       if (files === undefined && planNeedsBody(plans)) {
@@ -1034,12 +1104,52 @@ export async function fetchDmdataReplayEvents(
           scanSkips.add(item.date)
           continue
         }
+        const headType = entry.head.type
+        /** この電文を電文ログにだけ積む（地図・カードへは流さない）。行の形はライブに揃える（→ `isReplayLogOnly`）。 */
+        const pushLogOnly = (
+          rawBody: unknown, opts: { rawBytes: Uint8Array | null; errorMessage: string | null; isTest: boolean },
+        ): void => {
+          logOnlyEntries.push({
+            replayTime: entryTime,
+            logEntry: makeReplayLogEntry({
+              headType, origin: 'replay', rawHead: entry.head, rawBody, rawBytes: opts.rawBytes,
+              payload: null, errorMessage: opts.errorMessage, isTest: opts.isTest,
+            }),
+          })
+        }
+
+        if (plan.logOnly) {
+          // 電文ログにだけ積む電文（捨てる試験報・扱わない種類・取り込まない側の緊急地震速報）。
+          // **本体が見つからなくても取りこぼしに数えない**（取り込む電文ではないので、数え方は変えない）。
+          // 行は本文なしのエラーで積む（積まないと「電文が無かった」と見分けられない。当日経路と同じ扱い）
+          const isTest = entry.head.test === true
+          try {
+            const dayFiles = requireArchiveBody(files, entry, item.date)
+            const name = findBodyFileName(entry, dayFiles)
+            const bytes = name ? dayFiles.get(name) : undefined
+            if (!bytes) {
+              log.info(`[replay] 電文ログにだけ積む電文の本体が見つかりません id=${entry.id} type=${headType}（${bodyMissReason(entry)}）`)
+              pushLogOnly(null, { rawBytes: null, errorMessage: REPLAY_LOG_ONLY_FETCH_FAILED, isTest })
+              continue
+            }
+            // 二進電文は結合しない（1 断片が最大 512KB ある。ライブも試験報の断片は結合せずに積む）
+            pushLogOnly(
+              isBinaryTelegramType(headType) ? `（BUFR の断片 ${bytes.length} バイト）` : dec.decode(bytes),
+              { rawBytes: null, errorMessage: null, isTest },
+            )
+          } catch (e) {
+            log.error(`[replay] 電文ログにだけ積む電文を読めませんでした id=${entry.id} type=${headType}`, e)
+            pushLogOnly(null, { rawBytes: null, errorMessage: REPLAY_LOG_ONLY_FETCH_FAILED, isTest })
+          }
+          continue
+        }
+
         const include = plan.include
-        // 窓の外と、この実装が扱わない種別はここで落とす（どちらも通常運転で起きるので
+        // 窓の外の電文と、窓の内側でも取り込まない電文はここで落とす（どちらも通常運転で起きるので
         // 黙って捨てる。先に絞らないと、対象外の電文が大量に警告を出して本当の異常が埋もれる）。
+        // 窓の内側の取り込まない電文は、上で行だけ積んである。
         if (!include) continue
 
-        const headType = entry.head.type
         try {
           // ここから先は本体が要る。計画が要ると答えた日は上で落としてある。
           const dayFiles = requireArchiveBody(files, entry, item.date)
@@ -1065,14 +1175,22 @@ export async function fetchDmdataReplayEvents(
             )
             // まだ揃っていない断片。**取りこぼしには数えない** —— 残りの断片は同じ
             // アーカイブの後続エントリに入っており、揃った時点で 1 通として積まれる。
-            if (!joined) continue
+            // 電文ログには積む（ライブと同じ文。本文は入れない —— 1 断片が最大 512KB ある）
+            if (!joined) {
+              pushLogOnly(`（BUFR の断片 ${binBytes.length} バイト・結合待ち）`, { rawBytes: null, errorMessage: null, isTest: entry.head.test === true })
+              continue
+            }
             const binPayload = buildBinaryPayload(headType, joined, entry.id, entry.head.time)
             // **試験報は取りこぼしに数えない。** 正常な配信で、読めなかったわけではない
             // （非 XML 電文は `entry.head.test` で弾けないため本文で判定する
             // → `isFilteredBinaryTelegram`）。**捨てたことは記録する** —— 理由は
-            // `dmdataReplayLive.ts` の同じ判定にある。
+            // `dmdataReplayLive.ts` の同じ判定にある。電文ログにも積む（ライブと同じ）
             if (binPayload && isFilteredBinaryTelegram(binPayload, includeTest)) {
               log.info(`[replay] 二進電文の試験報を流しません id=${entry.id} type=${headType}`)
+              pushLogOnly(
+                `（BUFR ${joined.length} バイト・電文の種類 ${binPayload.data.telegramKind}）`,
+                { rawBytes: joined, errorMessage: null, isTest: true },
+              )
               continue
             }
             if (binPayload) {
@@ -1080,16 +1198,19 @@ export async function fetchDmdataReplayEvents(
               entries.push({
                 payload: binPayload,
                 replayTime: entryTime,
-                // 本文は要約だけ入れる（ライブと同じ理由 —— 1 断片が最大 512KB ある）
+                // 本文は要約だけ入れる（ライブと同じ理由 —— 1 断片が最大 512KB ある）。
+                // 結合した元の二進は `rawBytes` に持たせる（ダウンロードはこちらを落とす）
                 logEntry: makeReplayLogEntry({
-                  headType, origin: 'replay',
-                  rawBody: `（BUFR ${joined.length} バイト・${binPayload.data.count} セル）`,
-                  payload: binPayload, isTest: entry.head.test === true,
+                  headType, origin: 'replay', rawHead: entry.head,
+                  rawBody: `（BUFR ${joined.length} バイト・${binPayload.data.count} セル）`, rawBytes: joined,
+                  payload: binPayload, errorMessage: null, isTest: entry.head.test === true,
                 }),
               })
             } else {
               log.warn(`[replay] 二進電文の読み取りに失敗しスキップ id=${entry.id} type=${headType}`)
               windowSkips.add(item.date)
+              // ライブと同じ形の `error` の行（取りこぼしに数えることとは別に積む）
+              pushLogOnly(`（BUFR ${joined.length} バイト）`, { rawBytes: joined, errorMessage: 'bufr decode failed', isTest: entry.head.test === true })
             }
             continue
           }
@@ -1111,12 +1232,15 @@ export async function fetchDmdataReplayEvents(
               payload,
               replayTime: entryTime,
               logEntry: makeReplayLogEntry({
-                headType, origin: 'replay', rawBody: xml, payload, isTest: entry.head.test === true,
+                headType, origin: 'replay', rawHead: entry.head, rawBody: xml, rawBytes: null,
+                payload, errorMessage: null, isTest: entry.head.test === true,
               }),
             })
           } else {
             log.warn(`[replay] 電文のパースに失敗しスキップ id=${entry.id} type=${headType}`)
             windowSkips.add(item.date)
+            // ライブも読めなかった XML は `filtered` で積む（`dmdata.ts` の `buildXmlPayload` が null のとき）
+            pushLogOnly(xml, { rawBytes: null, errorMessage: null, isTest: entry.head.test === true })
           }
         } catch (e) {
           // 1 通の想定外の例外で全体を落とさない（XML の破損はパーサが null を返すため
@@ -1155,12 +1279,14 @@ export async function fetchDmdataReplayEvents(
   const liveDates = resolveLiveDates(fromTime, toTime, items.map(i => i.date))
   if (liveDates.length > 0) {
     try {
-      const live = await fetchLiveReplayEntries(apiKey, fromTime, toTime, liveDates, includeTest, classifications, signal)
+      const live = await fetchLiveReplayEntriesWith(endpoint, fromTime, toTime, liveDates, includeTest, classifications, signal, withLogOnly)
       entries.push(...live.entries)
+      logOnlyEntries.push(...live.logOnlyEntries)
       windowSkips.addAll(live.skippedByDay)
       scanSkips.addAll(live.scanSkippedByDay)
       rateLimitedTelegrams += live.rateLimitedTelegrams
       failedArchiveUrls.push(...live.failedSources)
+      for (const [id, day] of live.lostSourceDays) lostSourceDays.set(id, day)
     } catch (e) {
       // アーカイブ 1 日ぶんが読めなかったときと同じ扱いにする。ここで素通しすると、当日の
       // 一覧 API が一度こけただけで、既に読めているアーカイブ側の電文まで巻き添えで捨てられる
@@ -1171,6 +1297,7 @@ export async function fetchDmdataReplayEvents(
       if (isAbortedByCaller(e)) throw e
       log.error(`[replay] 当日経路の取得に失敗したためスキップ 日=${liveDates.join(',')}`, e)
       failedArchiveUrls.push(...liveDates.map(liveSourceId))
+      for (const day of liveDates) lostSourceDays.set(liveSourceId(day), day)
       failedSourceDays += liveDates.length
     }
   }
@@ -1221,10 +1348,11 @@ export async function fetchDmdataReplayEvents(
     .reduce((a, b) => a + b, 0)
   const scanSkippedByDay = new Map<string, number>()
   for (const [day, n] of scanSkippedAll) {
-    const reported = reportedReplaySkipCounts.get(day) ?? 0
+    const reportKey = skipReportKey(endpoint, classifications, day)
+    const reported = reportedReplaySkipCounts.get(reportKey) ?? 0
     if (n <= reported) continue
     scanSkippedByDay.set(day, n - reported)
-    reportedReplaySkipCounts.set(day, n)
+    reportedReplaySkipCounts.set(reportKey, n)
   }
   const replaySkippedByDay = sumSkippedByDay(scanSkippedByDay, windowSkippedByDay)
   if (replaySkippedTotal > 0) {
@@ -1250,7 +1378,10 @@ export async function fetchDmdataReplayEvents(
     }
   }
 
-  return { entries, skippedByDay: replaySkippedByDay, failedArchiveUrls, rateLimitedSources, rateLimitedTelegrams }
+  // 行だけのものは発火の順に並べるだけ（画面へ流さないので、同じ時刻をずらす必要は無い。キューは同じ時刻を積んだ順に出す）
+  logOnlyEntries.sort((a, b) => a.replayTime.getTime() - b.replayTime.getTime())
+
+  return { entries, logOnlyEntries, skippedByDay: replaySkippedByDay, failedArchiveUrls, rateLimitedSources, rateLimitedTelegrams, lostSourceDays }
 }
 
 /** 初期状態に載せるかどうかを、津波イベント単位で決めた結果。 */
@@ -1268,7 +1399,7 @@ interface TsunamiPreWindowState {
  * 気象庁は別の地震が寄与すると同じ警報を切り替えて番号を足す（`A` → `A B`）。文字列で束ねると切替えの
  * 前後が別の束に割れ、解除済みの津波が再生開始直後に甦りうる（解除は `A B` の束にしか入らない）。
  *
- * `eventId` を持たない電文（P2PQuake の 552。この関数は DMDATA アーカイブだけでなく全バリアントの
+ * `eventId` を持たない電文（`EventID` が空の電文。この関数は DMDATA アーカイブだけでなくすべての取得元の
  * 初期状態で使われる——呼び出しは `useReplayController` に 1 箇所だけある）は同じ津波か決められない
  * ので、報 1 通ずつが別の束になる。その経路の扱いは下の `resolveTsunamiPreWindowStates` に書く。
  */
@@ -1382,13 +1513,13 @@ function resolveTsunamiPreWindowStates(
     }
     const folded = foldTsunamiReports(reports)
     const validDateTime = folded ? latestValidDateTime([folded]) : latestValidDateTime(reports)
-    // 期限を一度も伝えていない津波の扱いは、ライブと同じにする（→ `isStaleWithoutValidity`）。
-    // ただし識別子を持つ束でも、材料の古い側の端に接するものは期限の報が材料の外へ出た疑いが
-    // あるので、識別子の無い束と同じ 24 時間で落とす（→ `preWindowMaterialEdgeEndMs`）。
+    // 期限を一度も伝えていない津波は、ライブと同じく解除か続報まで残す。ただし材料の古い側の端に
+    // 接する束は、期限の報が材料の外へ出た疑いがあるので 24 時間で落とす（→ `preWindowMaterialEdgeEndMs`・
+    // `isStaleWithoutValidity`）。
     let expired: boolean
     if (validDateTime) {
       expired = new Date(validDateTime).getTime() <= targetTime.getTime()
-    } else if (!identified || touchesMaterialEdge(reports, edgeEndMs)) {
+    } else if (touchesMaterialEdge(reports, edgeEndMs)) {
       expired = isStaleWithoutValidity(reports, targetTime)
     } else if (latestReportMs(reports) === null) {
       expired = false
@@ -1416,16 +1547,13 @@ function resolveTsunamiPreWindowStates(
 }
 
 /**
- * 期限を一度も伝えていない津波を、どこまで遡って生かすか。**識別子（`eventId`）を持たない
- * 津波（P2PQuake）と、識別子を持っていても材料の古い側の端に接する束（→ `touchesMaterialEdge`）に使う。**
+ * 期限を一度も伝えていない津波を、どこまで遡って生かすか。**材料の古い側の端に接する束
+ * （→ `touchesMaterialEdge`）にだけ使う。**
  *
- * **ライブと同じ扱いにする**（2026-10-23 ユーザー選択「ライブと同じく残す」）。
- * - 識別子を持つ津波（DMDATA・ローカル履歴アーカイブ）は、ライブの DMDSS 版が期限の無い津波に
- *   失効の予約を積まず、解除か続報まで残す（→ `useEarthquakes` の `stepTsunamiState` の後）。
- *   初期状態でも落とさない
- * - 識別子を持たない津波は、ライブの標準版が期限の無い報に最後の報から 24 時間の安全弁を積む
- *   （→ `tsunami-spec.md` TSU-5A）。初期状態でも同じ 24 時間で落とす。落とさずに流すと、
- *   安全弁が過去の時刻に積まれて再生の開始直後に消えるだけになる
+ * それ以外の束は**ライブと同じ扱いにする**（2026-10-23 ユーザー選択「ライブと同じく残す」）。ライブは期限の無い
+ * 津波に失効の予約を積まず、解除か続報まで残す（→ `useEarthquakes` の `stepTsunamiState` の後）。
+ * 識別子（`EventID`）が空の津波電文は全期間の控え 651 通（VTSE41・51・52、2020-11-18〜2026-10-31）で 0 通なので、
+ * 識別子の有無では分けない（2026-10-31 ユーザー選択「分岐を外す (Recommended)」）。
  *
  * 気象庁は予報のみになった津波に期限を付ける（→ `tsunami-spec.md` §3）ので、通常は期限か
  * 解除のどちらかで決着し、ここへは来ない。来るのは期限を載せていない電文が混ざった場合で、
@@ -1505,8 +1633,8 @@ function touchesMaterialEdge(reports: readonly JMATsunami[], edgeEndMs: number):
  * 地震を「地震ごとに最新 1 報」へ畳む（初期状態用）。
  *
  * **鍵はライブ経路と同じ同一性判定から作る**（`createQuakeFoldKeys`）。電文 ID から
- * `eventId` を取り出す方法は DMDATA の書式にしか当たらず、識別子を持たない経路
- * （P2PQuake）では 1 通も畳めなかった。**畳めなかった報は 1 通ずつ流れてカードを更新し、
+ * `eventId` を取り出す方法は DMDATA の id の書式にしか当たらず、その書式に当たらない
+ * 報（`EventID` が空の電文など）を畳めない。**畳めなかった報は 1 通ずつ流れてカードを更新し、
  * 更新の印は `silent` を見ずに付く**ので、利用者が見ていない窓の手前の更新が
  * 再生開始直後の画面に残る。
  *
@@ -1519,7 +1647,7 @@ function touchesMaterialEdge(reports: readonly JMATsunami[], edgeEndMs: number):
  * 取消として捌く電文（→ `createQuakeFoldKeys`）。
  *
  * **発表順に見る。** カードを育てながら照合するため、順序が崩れると同じ地震を割りうる。
- * 取得元（アーカイブ・P2PQuake・ローカル履歴）はいずれも `replayTime` の昇順で返すが、
+ * 取得元（アーカイブ・ローカル履歴）はいずれも `replayTime` の昇順で返すが、
  * **ここではそれに依存せず並べ直す** —— 依存を残すと、取得元を 1 つ足したときに
  * 静かに壊れる。
  *
@@ -1558,11 +1686,8 @@ function foldPreWindowQuakes(
    * **照合の効きは `eventId` を持つ経路に限られる。** ライブ経路は取消が当たったカードを
    * `quakeRetractionOf` の第 2 引数へ渡すが、ここは畳み込みの前なのでまだカードが無い。
    * 取消電文は `earthquake.time` が空で、`sameQuakeEntry` は識別子が揃わない組を時刻で
-   * 落とすため、**識別子の無い経路ではこの保護が働かない**。いま実害は無い ——
-   * P2PQuake の地震情報は `cancelled` を読んでおらず（`services/p2pquake.ts` の
-   * `parseQuake`。読むのは津波と緊急地震速報だけ）、取消になりうるのは DMDATA 経路だけで、
-   * あちらは取消電文にも `eventId` を含む id が必ず付く。**識別子の無い経路に取消の概念が
-   * 入ったら、ここも当たるように直すこと。**
+   * 落とすため、**識別子の無い電文ではこの保護が働かない**。取消電文の id は `EventID` から
+   * 作る（`dmdata-quake-<EventID>-<報番号>`）ので、`EventID` が空の取消電文だけが当たらない。
    */
   const retractions: QuakeRetraction[] = []
   for (const entry of quakes) {
@@ -1744,9 +1869,9 @@ type PrefetchedBody =
 
 /** 本体の取得を投げて、結果に畳む（失敗も値として持つ。理由は `PrefetchedBody`）。 */
 function prefetchArchiveBody(
-  item: ArchiveItem, apiKey: string, gateTag: GateTag | null,
+  item: ArchiveItem, endpoint: DmdataEndpoint, gateTag: GateTag | null,
 ): Promise<PrefetchedBody> {
-  return downloadArchive(item.url, apiKey, item.date, gateTag).then(
+  return downloadArchive(item.url, endpoint, item.date, gateTag).then(
     files => ({ files }),
     (error: unknown) => ({ error }),
   )
@@ -2071,7 +2196,7 @@ async function readStraddlingDay(
   item: ArchiveItem,
   plan: StraddleDayPlan,
   knownQuakes: readonly JMAQuake[],
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   includeTest: boolean,
   before: Date,
   dec: TextDecoder,
@@ -2088,7 +2213,7 @@ async function readStraddlingDay(
   let files: Map<string, Uint8Array> | undefined
   let manifest = manifestCache.get(item.url)
   if (!manifest) {
-    files = await downloadArchive(item.url, apiKey, item.date, gateTag)
+    files = await downloadArchive(item.url, endpoint, item.date, gateTag)
     const manifestBytes = files.get('telegrams.json')
     if (!manifestBytes) throw new Error(`アーカイブに telegrams.json がありません date=${item.date}`)
     manifest = JSON.parse(dec.decode(manifestBytes)) as ManifestEntry[]
@@ -2125,7 +2250,7 @@ async function readStraddlingDay(
     return ids.length === 0 || ids.some(id => idsFor(want).has(id))
   })
   if (files === undefined && targets.some(({ entry }) => !parsedTelegramCache.has(entry.id))) {
-    files = await downloadArchive(item.url, apiKey, item.date, gateTag)
+    files = await downloadArchive(item.url, endpoint, item.date, gateTag)
   }
   const times = manifestEntryTimes(manifest)
   const quakes: JMAQuake[] = []
@@ -2285,7 +2410,7 @@ export function compareExtraTieBreak(a: ReplayPayload, b: ReplayPayload): number
  * @param maxDays この窓で読む日数（→ `HISTORY_WINDOW_DAYS`）。**遡れる範囲の上限ではない**
  */
 export async function fetchDmdataQuakeHistory(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   before: Date,
   maxDays: number,
   includeTest: boolean,
@@ -2354,7 +2479,7 @@ export async function fetchDmdataQuakeHistory(
   )
   const items = listRange === null
     ? []
-    : await listArchives(apiKey, listRange.from, listRange.to, 'telegram.earthquake', signal, gateTag ?? null)
+    : await listArchives(endpoint, listRange.from, listRange.to, 'telegram.earthquake', signal, gateTag ?? null)
   // **絞るのはダウンロードだけ。`resolveLiveDates` には絞る前の `items` を渡す**（下の
   // `liveDays`）—— 絞った後を渡すと、窓の外の日を「アーカイブが無い」と誤認して
   // 当日経路が余計に走る。
@@ -2449,7 +2574,7 @@ export async function fetchDmdataQuakeHistory(
     if (isStopped()) break
     if (!source.item) continue
     if (manifestCache.has(source.item.url)) continue
-    prefetchedBodies.set(source.item.url, prefetchArchiveBody(source.item, apiKey, gateTag ?? null))
+    prefetchedBodies.set(source.item.url, prefetchArchiveBody(source.item, endpoint, gateTag ?? null))
   }
 
   const dec = new TextDecoder()
@@ -2547,7 +2672,7 @@ export async function fetchDmdataQuakeHistory(
       // 同じ扱い）。ここで例外にすると、当日の一覧 API が一度こけただけで過去数日ぶんの
       // カードごと消える。
       try {
-        const live = await fetchLiveQuakeTelegrams(apiKey, source.date, before, includeTest, signal)
+        const live = await fetchLiveQuakeTelegrams(endpoint, source.date, before, includeTest, signal)
         for (const quake of live.quakes) {
           quakes.push(quake)
           eventIds.add(extractQuakeEventIdFromId(quake.id) ?? quake.id)
@@ -2607,7 +2732,7 @@ export async function fetchDmdataQuakeHistory(
           if ('error' in got) throw got.error
           return got.files
         }
-        return await downloadArchive(item.url, apiKey, item.date, gateTag ?? null)
+        return await downloadArchive(item.url, endpoint, item.date, gateTag ?? null)
       } catch (e) {
         if (e instanceof RateLimitWindowError) {
           // **取得の失敗と別の枠で数える。** 打てる手が違い（こちらは窓が明けるまで待つ）、
@@ -2761,7 +2886,7 @@ export async function fetchDmdataQuakeHistory(
         const range = archiveListRange(unlisted)
         const listed = range === null
           ? []
-          : await listArchives(apiKey, range.from, range.to, 'telegram.earthquake', signal, gateTag ?? null)
+          : await listArchives(endpoint, range.from, range.to, 'telegram.earthquake', signal, gateTag ?? null)
         for (const i of listed) if (!itemsByDay.has(i.date)) itemsByDay.set(i.date, i)
       } catch (e) {
         relistFailure = e
@@ -2784,7 +2909,7 @@ export async function fetchDmdataQuakeHistory(
           continue
         }
         const supplemented = await readStraddlingDay(
-          item, plan, quakes, apiKey, includeTest, before, dec, gateTag ?? null, binaryAssembly,
+          item, plan, quakes, endpoint, includeTest, before, dec, gateTag ?? null, binaryAssembly,
         )
         for (const quake of supplemented.quakes) quakes.push(quake)
         for (const tsunami of supplemented.tsunamis) tsunamis.push(tsunami)
@@ -3104,7 +3229,7 @@ export function needsPerEventFetch(
  * @param signal 止める合図（呼び出し側が結果を要らなくなったとき）。日・地震の区切りで見る
  */
 export async function fetchDmdataEewOrigins(
-  apiKey: string,
+  endpoint: DmdataEndpoint,
   fromTime: Date,
   toTime: Date,
   classifications: readonly DmdataClassification[],
@@ -3122,8 +3247,11 @@ export async function fetchDmdataEewOrigins(
   }
   const stopped = () => signal?.aborted === true
 
-  // 一覧は 2 の材料と取消の両方に使う（1〜数件）。
-  const list = await fetchDmdataEewEventList(apiKey, fromTime.getTime(), toTime.getTime())
+  // 一覧は 2 の材料と取消の両方に使う（1〜数件）。電文一覧が警報も返す繋ぎ先（中継）には一覧（加工データ）が無いので
+  // 引かず、2 と取消は電文一覧から取る（下の「2'」）
+  const list: { events: DmdataEewListEvent[]; complete: boolean } = endpoint.telegramListHasEew
+    ? { events: [], complete: true }
+    : await fetchDmdataEewEventList(endpoint, fromTime.getTime(), toTime.getTime())
   const canceledIds = list.events.filter(e => e.canceled).map(e => e.eventId)
   let complete = list.complete
 
@@ -3133,7 +3261,7 @@ export async function fetchDmdataEewOrigins(
   let items: ArchiveItem[] = []
   if (listRange !== null && !stopped()) {
     try {
-      items = await listArchives(apiKey, listRange.from, listRange.to, eewArchiveClassification(eewHeadType), null, null)
+      items = await listArchives(endpoint, listRange.from, listRange.to, eewArchiveClassification(eewHeadType), null, null)
     } catch (e) {
       complete = false
       log.warn('[eew-origin] アーカイブの目録を引けませんでした（一覧の地震を地震ごとに取ります）', e)
@@ -3143,7 +3271,7 @@ export async function fetchDmdataEewOrigins(
   const dec = new TextDecoder()
   // 地震ごとに報番号のいちばん大きい報へ畳む。**日をまたいで続報が出た地震は、両方の日に最終報の候補が出る**
   // （日ごとに選ぶので）。後に読んだ日を勝たせると、目録の並び次第で途中の報が残る。
-  const byEvent = new Map<string, { serial: number; eew: EEWAlert }>()
+  const byEvent = new Map<string, { eew: EEWAlert }>()
   /** 読めた目録に載った、地震ごとの最大の報番号（種別を問わない）。 */
   const seenSerial = new Map<string, number>()
   /** 受けている種別の報を目録で選んだ地震（本文を読めなかったら、地震ごとに取り直す）。 */
@@ -3160,7 +3288,7 @@ export async function fetchDmdataEewOrigins(
     try {
       let manifest = manifestCache.get(item.url)
       if (!manifest) {
-        files = await downloadArchive(item.url, apiKey, item.date, null)
+        files = await downloadArchive(item.url, endpoint, item.date, null)
         const manifestBytes = files.get('telegrams.json')
         if (!manifestBytes) throw new Error('telegrams.json がありません')
         manifest = JSON.parse(dec.decode(manifestBytes)) as ManifestEntry[]
@@ -3178,7 +3306,7 @@ export async function fetchDmdataEewOrigins(
         log.warn(`[eew-origin] 目録に地震 ID か報番号を読めない報が ${choice.unidentified} 通ありました date=${item.date}`
           + `（最初の id=${choice.firstUnidentifiedId ?? '不明'}。その報は選びません）`)
       }
-      if (picked.length > 0 && files === undefined) files = await downloadArchive(item.url, apiKey, item.date, null)
+      if (picked.length > 0 && files === undefined) files = await downloadArchive(item.url, endpoint, item.date, null)
     } catch (e) {
       failedDays += 1
       complete = false
@@ -3203,13 +3331,42 @@ export async function fetchDmdataEewOrigins(
           log.warn(`[eew-origin] 最終報を読み取れませんでした date=${item.date} id=${entry.id}`)
           continue
         }
-        const serial = Number(entry.xmlReport?.head?.serial)
         const cur = byEvent.get(eventId)
-        if (cur === undefined || serial > cur.serial) byEvent.set(eventId, { serial, eew })
+        // 系列（予報・警報）が違えば報番号は比べられない。発表時刻で比べる（`supersedesEewReport`）
+        if (cur === undefined || supersedesEewReport(cur.eew, eew)) byEvent.set(eventId, { eew })
       } catch (e) {
         log.warn(`[eew-origin] 最終報を読み取れませんでした date=${item.date} id=${entry.id}`, e)
       }
     }
+  }
+  // 2'. 電文一覧が警報も返す繋ぎ先（中継）: 一覧と地震ごとの詳細の代わりに、電文一覧から地震ごとの最終報を読む。
+  // アーカイブで読めた報より新しい報だけ差し替える。同じ系列なら報番号、系列が違えば発表時刻で比べる
+  // （日をまたいだ続報・束がまだ無い日の地震もここで入る）
+  if (endpoint.telegramListHasEew) {
+    let fromList = 0
+    if (!stopped()) {
+      const listed = await fetchListedEewFinals(endpoint, fromTime, toTime, eewHeadType, signal)
+      if (!listed.complete) complete = false
+      for (const eew of listed.finals) {
+        const eventId = eew.issue?.eventId
+        if (!eventId) continue
+        const cur = byEvent.get(eventId)
+        if (cur === undefined || supersedesEewReport(cur.eew, eew)) {
+          byEvent.set(eventId, { eew })
+          fromList += 1
+        }
+      }
+    }
+    for (const { eew } of byEvent.values()) {
+      finals.push(eew)
+      if (eew.cancelled && eew.issue?.eventId) canceledIds.push(eew.issue.eventId)
+    }
+    if (stopped()) complete = false
+    log.info(
+      `[eew-origin] 過去の緊急地震速報: アーカイブ ${readDayCount} 日（読めなかった ${failedDays} 日）・電文一覧から ${fromList} 地震を足して `
+      + `${byEvent.size} 地震・取消 ${canceledIds.length} 地震` + (complete ? '' : '（取りきれていません）'),
+    )
+    return { finals, canceledIds, complete }
   }
   for (const { eew } of byEvent.values()) finals.push(eew)
 
@@ -3231,7 +3388,6 @@ export async function fetchDmdataEewOrigins(
     complete = false
     log.warn(`[eew-origin] VXSE44 の日に最終報を読めなかった地震が ${skipped44} 件ありました（地震ごとの取得は VXSE45 を探すので回しません）`)
   }
-  const headers = { Authorization: authHeader(apiKey) }
   let fromLive = 0
   let tried = 0
   let consecutiveErrors = 0
@@ -3245,7 +3401,7 @@ export async function fetchDmdataEewOrigins(
     tried += 1
     let found: LatestEewReport
     try {
-      found = await fetchLatestEewReport(apiKey, headers, ev.eventId, eewHeadType, false, false)
+      found = await fetchLatestEewReport(endpoint, ev.eventId, eewHeadType, false, false)
     } catch (e) {
       log.warn(`[eew-origin] 最終報を取れませんでした eventId=${ev.eventId}`, e)
       found = { kind: 'failed' }

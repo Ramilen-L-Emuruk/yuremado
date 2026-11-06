@@ -19,6 +19,7 @@ import { getIntensityLabelWithOrAbove } from './intensity'
 import { formatMagnitudeWithCondition } from './formatters'
 import { isHypocenterPending, quakeEventKey, sameQuakeEntry } from './quakeMerge'
 import { log } from './logger'
+import type { NotificationOpen } from './notificationOpen'
 
 /**
  * 通知の重複判定に使う、報の鍵。電文の鍵（`telegramKey`）が無い報は **id・発表時刻・種別の組**で作る
@@ -126,6 +127,8 @@ export interface QuakeNotification {
    * 出す側は `renotify` を付ける（付けないと、前の通知が残っている間は黙って差し替わる）。
    */
   readonly tag: string
+  /** 押したときに開く先（その地震カード。→ `notificationOpen.ts`） */
+  readonly open: NotificationOpen
 }
 
 /**
@@ -220,7 +223,9 @@ export function decideQuakeNotification(
   }
   const maxScale = quake.earthquake.maxScale
   const foreign = quake.issue.type === '遠地地震'
-  if (!foreign && maxScale < notifyMinScale) return null
+  // 最大震度が「5弱以上（未入電）」なら、実際は 5強以上だった可能性があるので、5強以上を選んでいても通知する
+  // （2026-11-04 ユーザー選択「5強以上の設定でも残す (Recommended)」。一覧の絞り `filterDisplayedQuakes` と同じ扱い）
+  if (!foreign && maxScale < notifyMinScale && !isMaxScaleUnreceived(maxScale, quake.points)) return null
   const withHypocenter = foreign || !isHypocenterPending(quake)
   const body = foreign ? foreignQuakeNotificationBody(quake)
     : !withHypocenter ? scalePromptNotificationBody(quake, areaPrefIndex)
@@ -232,7 +237,7 @@ export function decideQuakeNotification(
     log.debug(`[notify] 地震情報の通知した報の記憶が上限 ${QUAKE_NOTIFIED_REPORTS_MAX} 件を超えたので、古い ${notified.length - QUAKE_NOTIFIED_REPORTS_MAX} 件を忘れる（${key}）`)
   }
   return {
-    notification: { title: '地震情報', body, tag: key },
+    notification: { title: '地震情報', body, tag: key, open: { tab: 'earthquake', quake: key } },
     next: { key, withHypocenter, maxScale, reportKeys: notified.slice(0, QUAKE_NOTIFIED_REPORTS_MAX) },
   }
 }

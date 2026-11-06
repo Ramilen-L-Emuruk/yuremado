@@ -28,10 +28,11 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { JSDOM } from 'jsdom'
 import { buildEewSection, buildQuakeAndTsunamiSection, finalizeArchive } from './localEarthquakeArchiveBuilder'
+import { requireHypocenterCatalogDir } from './lib/hypocenterCatalogDir'
 import { ARCHIVE_TARGETS } from './historicalArchiveTargets'
 
 // dmdataParser.ts の XML パースが `new DOMParser()` をブラウザグローバルとして参照するため、
-// Node.js環境ではjsdomで代替する（capture-test-scenario.ts と同じ対処）。
+// Node.js環境ではjsdomで代替する。
 const { window: jsdomWindow } = new JSDOM('')
 globalThis.DOMParser = jsdomWindow.DOMParser as unknown as typeof DOMParser
 
@@ -56,7 +57,7 @@ async function main() {
     dates: TARGET.dates,
     windowStart: TARGET.windowStart,
     windowEnd: TARGET.windowEnd,
-    repoRoot: join(__dirname, '..'),
+    catalogDir: requireHypocenterCatalogDir(),
     knownGaps: TARGET.knownGaps,
   })
 

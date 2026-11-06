@@ -186,10 +186,10 @@ describe('履歴の取り込みは届く順番によらず、ライブと同じ�
   })
 })
 
-// **標準版（P2PQuake）の形でも同じ答えになる。** あちらは EventID を持たず（`sameQuakeEntry` が
-// 地震の時刻と区域で同じ地震を見分ける）、「もっと見る」は件数でページを切るので、ページの境目を
-// またいで古い報が後から当たる。鍵（`telegramKey`）を持たない電文の同一判定も通る。
-describe('標準版（P2PQuake）の形', () => {
+// **EventID・作成時刻・鍵を持たない電文の形でも同じ答えになる。** EventID が無いと `sameQuakeEntry` が
+// 地震の時刻と区域で同じ地震を見分ける。ページの境目をまたいで古い報が後から当たる並びも通す。
+// 鍵（`telegramKey`）を持たない電文の同一判定も通る。
+describe('EventID を持たない電文の形', () => {
   const p2p = (o: { id: string; type: IssueType; time: string; tsunami: DomesticTsunami; withHypo: boolean; points: EarthquakePoint[] }): JMAQuake => ({
     kind: 'quake',
     id: o.id,
@@ -205,7 +205,7 @@ describe('標準版（P2PQuake）の形', () => {
     },
     points: o.points,
   })
-  // P2PQuake の発表時刻はスラッシュ区切り・オフセット無し（→ `mergeQuakeInto` の注記）
+  // 発表時刻はスラッシュ区切り・オフセット無しの時計表記（→ `mergeQuakeInto` の注記）
   const list = [
     p2p({ id: 'p1', type: '震度速報', time: '2026/06/26 22:30:32', tsunami: '調査中', withHypo: false, points: [area('山梨県', '山梨県東部・富士五湖', 55)] }),
     p2p({ id: 'p2', type: '震源情報', time: '2026/06/26 22:31:51', tsunami: 'なし', withHypo: true, points: [] }),

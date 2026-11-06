@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 //
-// 地震カードの「気象庁が添えた文」の枠（→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。
+// 地震カードの「気象庁からの補足」（→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。
 //
 // - 固定付加文（`forecastText`）・その他（`varCommentText`）・自由付加文（`freeText`）を **1 つの枠**に、
 //   電文と同じ並びで出す（2026-10-23 ユーザー承認「一つにまとめましょうか。」）
-// - 固定付加文から、津波の区分を決めるコードの文を除く（同日「それで進めて。」）。津波の札が同じ事実を伝えている
+// - 1 文 1 行にし、種類が 2 つ以上のときだけ「津波」「緊急地震速報」「その他」「自由付加文」の見出しを付ける
+//   （→ docs/quake-tab-redesign.md。2026-11-01「中身で呼ぶ (Recommended)」）
+// - 固定付加文から、津波の区分を決めるコードの文を除く（2026-10-23「それで進めて。」）。津波の札が同じ事実を伝えている
 //
 // 区分にならない文（0245「この地震で緊急地震速報を発表しましたが、強い揺れは観測されませんでした。」）は
 // この枠にしか現れない。消しても型検査は通り例外も出ないので、ここで固定する。
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 import { flushDataEffects } from '../../test-utils/flushDataEffects'
 import { EarthquakeTab } from './index'
 import { quakeEventKey } from '../../utils/quakeMerge'
@@ -49,11 +51,16 @@ function makeQuake(over: Partial<JMAQuake> = {}): JMAQuake {
   }
 }
 
-const renderTab = async (quake: JMAQuake, selected = true) => {
+/**
+ * 描いて、`openNotes` なら「気象庁からの補足」を開く。**開く行は必ず在ることを確かめる** ——
+ * 在るときだけ押す形だと、行ごと消えても中身の確かめが空振りして通ってしまう。
+ */
+const renderTab = async (quake: JMAQuake, { selected = true, openNotes = true } = {}) => {
   render(
     <EarthquakeTab
       earthquakes={[quake]}
       selectedId={selected ? quakeEventKey(quake) : null}
+      selectSeq={0}
       speakingKey={null}
       followSpeech={false}
       onSelect={() => {}}
@@ -67,12 +74,14 @@ const renderTab = async (quake: JMAQuake, selected = true) => {
       loadMoreFailed={false}
       reconnectGapLoss={false}
       fetchThrottled={false}
+      onDismissKeyReentry={null}
       lpgmByEventId={new Map()}
       updateMarks={new Map()}
       activeLpgmEventId={null}
       onToggleLpgm={() => {}}
+      lpgmFocus={null}
       estimatedIntensities={[]}
-      internationalTsunamis={[]}
+      internationalTsunamisByQuake={new Map()}
       distributionQuakeKey={null}
       onToggleDistribution={() => {}}
       unreceivedQuakeKey={null}
@@ -85,41 +94,64 @@ const renderTab = async (quake: JMAQuake, selected = true) => {
     />,
   )
   await flushDataEffects()
+  // 気象庁が添えた文は畳んで置くので、開いてから確かめる（畳んだ枠は中身を描かない）
+  if (openNotes) {
+    const toggle = screen.getByRole('button', { name: /^気象庁からの補足/ })
+    act(() => { fireEvent.click(toggle) })
+  }
 }
 
-/** 枠の中の段落を、出ている順に返す。 */
-function paragraphsInBox(anyText: string): string[] {
-  const box = screen.getByText(anyText).parentElement
-  if (!box) throw new Error('枠が見つかりません')
-  return Array.from(box.children).map(el => el.textContent ?? '')
+/** 補足の枠の中の行を、出ている順に返す（1 文 1 行）。 */
+function notesLines(): string[] {
+  return Array.from(document.querySelectorAll('[data-jma-notes] [data-jma-line]')).map(el => el.textContent ?? '')
+}
+
+/** 補足の枠の中の見出しを、出ている順に返す。 */
+function notesHeadings(): string[] {
+  return Array.from(document.querySelectorAll('[data-jma-notes] [data-jma-heading]')).map(el => el.textContent ?? '')
+}
+
+/** 補足の行そのものが無い（枠を出さない）。 */
+function expectNoNotes() {
+  expect(screen.queryByRole('button', { name: /^気象庁からの補足/ })).toBeNull()
+  expect(document.querySelector('[data-jma-notes]')).toBeNull()
 }
 
 describe('地震カードの付加文の枠', () => {
   // 正: 区分にならない文は出し、津波の区分の文は除く。
   it('津波の区分の文を除き、残りを出す', async () => {
     await renderTab(makeQuake())
-    expect(screen.getByText(EEW_SENTENCE)).toBeTruthy()
+    expect(notesLines()).toEqual([EEW_SENTENCE, VAR_COMMENT_TEXT])
     expect(screen.queryByText(TSUNAMI_SENTENCE, { exact: false })).toBeNull()
   })
 
-  // 正: 3 種を 1 つの枠に、電文と同じ並び（固定付加文 → その他 → 自由付加文）で出す。
-  it('3 種を 1 つの枠に電文の並びで出す', async () => {
+  // 正: 3 種を 1 つの枠に、電文と同じ並び（固定付加文 → その他 → 自由付加文）で、見出しを付けて出す。
+  it('3 種を 1 つの枠に電文の並びで、見出しを付けて出す', async () => {
     const freeText = '震源の近傍で、やや強い揺れを観測しました。'
     await renderTab(makeQuake({ freeText }))
-    expect(paragraphsInBox(EEW_SENTENCE)).toEqual([EEW_SENTENCE, VAR_COMMENT_TEXT, freeText])
+    expect(notesLines()).toEqual([EEW_SENTENCE, VAR_COMMENT_TEXT, freeText])
+    expect(notesHeadings()).toEqual(['緊急地震速報', 'その他', '自由付加文'])
   })
 
-  // 対照: 区分の文しか無い固定付加文は段落を作らない（空の段落を残さない）。
-  it('区分の文しか無ければ固定付加文の段落を作らない', async () => {
+  // 正: 続けて書かれた 2 文は 2 行に割る（1 文 1 行）。
+  it('続けて書かれた文を 1 文ずつの行に割る', async () => {
+    const second = 'この地震について、緊急地震速報を発表しています。'
+    await renderTab(makeQuake({ forecastText: TSUNAMI_SENTENCE + EEW_SENTENCE + second, varCommentText: undefined }))
+    expect(notesLines()).toEqual([EEW_SENTENCE, second])
+  })
+
+  // 対照: 区分の文しか無い固定付加文は行を作らず、種類が 1 つになるので見出しも付けない。
+  it('区分の文しか無ければ固定付加文の行を作らず、見出しも付けない', async () => {
     await renderTab(makeQuake({ forecastText: TSUNAMI_SENTENCE }))
-    expect(paragraphsInBox(VAR_COMMENT_TEXT)).toEqual([VAR_COMMENT_TEXT])
+    expect(notesLines()).toEqual([VAR_COMMENT_TEXT])
+    expect(notesHeadings()).toEqual([])
   })
 
-  // 対照: どれも残らなければ枠ごと出さない（P2PQuake 経路など付加文を持たない電文も同じ）。
+  // 対照: どれも残らなければ枠ごと出さない（付加文を持たない電文も同じ）。
   it('何も残らなければ枠を出さない', async () => {
-    await renderTab(makeQuake({ forecastText: TSUNAMI_SENTENCE, varCommentText: undefined }))
+    await renderTab(makeQuake({ forecastText: TSUNAMI_SENTENCE, varCommentText: undefined }), { openNotes: false })
     expect(screen.queryByText(TSUNAMI_SENTENCE, { exact: false })).toBeNull()
-    expect(document.querySelector('.whitespace-pre-wrap.bg-panel')).toBeNull()
+    expectNoNotes()
   })
 
   // 安全弁: 区分を津波電文から借りてコードを持たないカードでも、原文の津波の文は除く
@@ -127,12 +159,12 @@ describe('地震カードの付加文の枠', () => {
   it('コードを持たないカードでも区分の文を除く', async () => {
     const base = makeQuake()
     await renderTab(makeQuake({ earthquake: { ...base.earthquake, domesticTsunami: '警報等', domesticTsunamiCode: undefined } }))
-    expect(screen.getByText(EEW_SENTENCE)).toBeTruthy()
+    expect(notesLines()).toEqual([EEW_SENTENCE, VAR_COMMENT_TEXT])
     expect(screen.queryByText(TSUNAMI_SENTENCE, { exact: false })).toBeNull()
   })
 
   // 正: 札が伝えきれないコード（0212 の「被害の心配はありません」）は、カード自身のコードの文を残す
-  // （2026-10-23 ユーザー選択「Aでお願いします。」）。
+  // （2026-10-23 ユーザー選択「Aでお願いします。」）。津波の文と緊急地震速報の文は別の見出しへ分かれる。
   it('札が伝えきれないコードの文は残す', async () => {
     const own = 'この地震により、日本の沿岸では若干の海面変動があるかもしれませんが、被害の心配はありません。'
     const base = makeQuake()
@@ -140,7 +172,8 @@ describe('地震カードの付加文の枠', () => {
       forecastText: own + EEW_SENTENCE,
       earthquake: { ...base.earthquake, domesticTsunami: '若干の海面変動', domesticTsunamiCode: '0212' },
     }))
-    expect(paragraphsInBox(VAR_COMMENT_TEXT)[0]).toBe(own + EEW_SENTENCE)
+    expect(notesLines()).toEqual([own, EEW_SENTENCE, VAR_COMMENT_TEXT])
+    expect(notesHeadings()).toEqual(['津波', '緊急地震速報', 'その他'])
   })
 
   // 安全弁: 残すのはカード自身のコードの文だけ。コード 0212 のカードでも、原文が前の報のまま（0215 の文）なら除く。
@@ -149,7 +182,7 @@ describe('地震カードの付加文の枠', () => {
     await renderTab(makeQuake({
       earthquake: { ...base.earthquake, domesticTsunami: '若干の海面変動', domesticTsunamiCode: '0212' },
     }))
-    expect(paragraphsInBox(EEW_SENTENCE)[0]).toBe(EEW_SENTENCE)
+    expect(notesLines()).toEqual([EEW_SENTENCE, VAR_COMMENT_TEXT])
   })
 
   // 正: コードを持つのに表の文が原文に 1 つも無ければ（気象庁が文面を変えた疑い）記録を残す。
@@ -178,15 +211,15 @@ describe('地震カードの付加文の枠', () => {
   it('表と一致しない文は残す', async () => {
     const changed = 'この地震による津波の心配はありません'  // 句点が無い
     await renderTab(makeQuake({ forecastText: changed, varCommentText: undefined }))
-    expect(screen.getByText(changed)).toBeTruthy()
+    expect(notesLines()).toEqual([changed])
   })
 
-  // 標準版（P2PQuake）は固定付加文を持たず、海外への津波の見通しを値から起こした文（`foreignTsunamiText`）で持つ。
-  // DMDSS 版の固定付加文と同じ先頭の段落に出す（2026-10-29 ユーザー承認「原文のまま (Recommended)」「先頭 (Recommended)」）。
-  describe('標準版の海外への津波の見通し', () => {
+  // 固定付加文を持たず、海外への津波の見通しを値から起こした文（`foreignTsunamiText`）で持つ報。
+  // 固定付加文と同じ先頭の行に出す（2026-10-29 ユーザー承認「原文のまま (Recommended)」「先頭 (Recommended)」）。
+  describe('値から起こした海外への津波の見通し', () => {
     const FOREIGN = '太平洋の広域に津波発生の可能性があります。'
     const FREE = '震源の近傍で、やや強い揺れを観測しました。'
-    // P2PQuake 経路の形: 固定付加文・その他は無く、区分のコードも持たない。
+    // 固定付加文・その他は無く、区分のコードも持たない形。
     const p2pQuake = (over: Partial<JMAQuake> = {}) => {
       const base = makeQuake()
       return makeQuake({
@@ -197,16 +230,17 @@ describe('地震カードの付加文の枠', () => {
       })
     }
 
-    // 正: 固定付加文が無ければ、見通しの文を先頭の段落に出す。
+    // 正: 固定付加文が無ければ、見通しの文を先頭の行に出す（津波の文なので見出しは「津波」）。
     it('固定付加文の位置に出す', async () => {
       await renderTab(p2pQuake({ freeText: FREE }))
-      expect(paragraphsInBox(FOREIGN)).toEqual([FOREIGN, FREE])
+      expect(notesLines()).toEqual([FOREIGN, FREE])
+      expect(notesHeadings()).toEqual(['津波', '自由付加文'])
     })
 
     // 対照: 見通しが無ければ（None・Unknown・Checking）枠を出さない。
     it('見通しが無ければ枠を出さない', async () => {
-      await renderTab(p2pQuake({ foreignTsunamiText: undefined }))
-      expect(document.querySelector('.whitespace-pre-wrap.bg-panel')).toBeNull()
+      await renderTab(p2pQuake({ foreignTsunamiText: undefined }), { openNotes: false })
+      expectNoNotes()
     })
 
     // 安全弁: 固定付加文の原文があれば原文を使い、見通しを重ねない（同じ文が二度出る）。
@@ -214,24 +248,25 @@ describe('地震カードの付加文の枠', () => {
     it('原文があれば見通しを重ねない', async () => {
       await renderTab(makeQuake({ foreignTsunamiText: FOREIGN }))
       expect(screen.queryByText(FOREIGN, { exact: false })).toBeNull()
-      expect(paragraphsInBox(EEW_SENTENCE)).toEqual([EEW_SENTENCE, VAR_COMMENT_TEXT])
+      expect(notesLines()).toEqual([EEW_SENTENCE, VAR_COMMENT_TEXT])
     })
     it('原文が津波の区分の文だけでも見通しへ倒さない', async () => {
-      await renderTab(makeQuake({ forecastText: TSUNAMI_SENTENCE, varCommentText: undefined, foreignTsunamiText: FOREIGN }))
+      await renderTab(makeQuake({ forecastText: TSUNAMI_SENTENCE, varCommentText: undefined, foreignTsunamiText: FOREIGN }), { openNotes: false })
       expect(screen.queryByText(FOREIGN, { exact: false })).toBeNull()
-      expect(document.querySelector('.whitespace-pre-wrap.bg-panel')).toBeNull()
+      expectNoNotes()
     })
 
     // 安全弁: 空白だけの原文・空の原文は無いものとして見通しを出す（読み上げと同じ扱い）。
     it.each([['空白だけ', '  '], ['空', '']])('%sの原文なら見通しを出す', async (_label, forecastText) => {
       await renderTab(p2pQuake({ forecastText, varCommentText: VAR_COMMENT_TEXT }))
-      expect(paragraphsInBox(FOREIGN)).toEqual([FOREIGN, VAR_COMMENT_TEXT])
+      expect(notesLines()).toEqual([FOREIGN, VAR_COMMENT_TEXT])
     })
   })
 
   // 安全弁: 一覧の畳んだカードには出さない（選択中のカードだけ）。
   it('選んでいないカードには出さない', async () => {
-    await renderTab(makeQuake(), false)
+    await renderTab(makeQuake(), { selected: false, openNotes: false })
     expect(screen.queryByText(EEW_SENTENCE)).toBeNull()
+    expectNoNotes()
   })
 })

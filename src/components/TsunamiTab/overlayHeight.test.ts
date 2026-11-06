@@ -2,33 +2,31 @@ import { describe, it, expect } from 'vitest'
 import {
   commentsOverlayMaxHeight,
   canShowCommentsOverlay,
+  canShowCommentsEntry,
   COMMENTS_OVERLAY_GAP,
   COMMENTS_MIN_HEIGHT,
-  isBannerSticky,
-  BANNER_STICKY_MIN_ROOM_PX,
+  bannerStickMode,
+  BANNER_STICK_MAX_RATIO,
 } from './overlayHeight'
 
-// バナーを貼り付けるか（→ docs/spec/tsunami-spec.md §9「スクロールの自動制御」）。
-// 実測（DMDSS 版・大津波警報テスト）はバナー 182px。パネルは画面と比率で決まる。
-describe('isBannerSticky', () => {
-  // 正: 比率 0.2 の実測（パネル 128px）。貼ればパネルが埋まり、行に一度も届かない。
-  it('行の居場所が残らないなら貼り付けない', () => {
-    expect(isBannerSticky(128, 182)).toBe(false)
-    expect(isBannerSticky(182 + BANNER_STICKY_MIN_ROOM_PX - 1, 182)).toBe(false)
+// バナーを大きいまま貼り付けるか、流して帯にするか（→ docs/spec/tsunami-spec.md §9「スクロールの自動制御」）。
+describe('bannerStickMode', () => {
+  // 正: 幅 390×844 のパネルは 380px。バナーが 4 割（152px）を超えるなら帯にする。
+  it('見える高さの 4 割を超えるなら帯にする', () => {
+    expect(bannerStickMode(380, 300)).toBe('band')
+    expect(bannerStickMode(380, 380 * BANNER_STICK_MAX_RATIO + 1)).toBe('band')
   })
 
-  // 対照: 境界ちょうどからは貼る。既定の比率の実測（縦 640px でパネル 288px・縦 844px で 380px）は
-  // どちらも従来どおり貼り付く —— 割合（半分）で切っていた頃は 288px の側が外れていた。
-  it('行の居場所が残るなら貼り付ける', () => {
-    expect(isBannerSticky(182 + BANNER_STICKY_MIN_ROOM_PX, 182)).toBe(true)
-    expect(isBannerSticky(288, 182)).toBe(true)
-    expect(isBannerSticky(380, 182)).toBe(true)
+  // 対照: 境界ちょうどまでは大きいまま貼る。広い画面（パネル 900px）でバナー 300px なら貼る。
+  it('4 割までなら大きいまま貼り付ける', () => {
+    expect(bannerStickMode(380, 380 * BANNER_STICK_MAX_RATIO)).toBe('stick')
+    expect(bannerStickMode(900, 300)).toBe('stick')
   })
 
-  // 安全弁: 測る前（0）は貼る側へ倒す。表示直後の数フレームだけ貼り付けが外れて見えないように。
-  it('まだ測れていなければ貼り付ける', () => {
-    expect(isBannerSticky(0, 182)).toBe(true)
-    expect(isBannerSticky(180, 0)).toBe(true)
+  // 安全弁: 測る前（0）は大きいまま貼る側へ倒す。表示直後の数フレームだけ帯へ切り替わって見えないように。
+  it('まだ測れていなければ大きいまま貼り付ける', () => {
+    expect(bannerStickMode(0, 300)).toBe('stick')
+    expect(bannerStickMode(380, 0)).toBe('stick')
   })
 })
 
@@ -79,5 +77,25 @@ describe('canShowCommentsOverlay', () => {
   // 安全弁: 測る前は開かせる側へ倒す。閉じると表示直後だけ押せない入口になる。
   it('まだ測れていなければ開かせる', () => {
     expect(canShowCommentsOverlay(undefined)).toBe(true)
+  })
+})
+
+describe('canShowCommentsEntry', () => {
+  // 正: 幅 390×844 の実測（パネル 380px・入口を除いたバナー 307px・入口 36px）。入口を出すと余りが 29px で、
+  // 面の最低の高さに届かないので出さない。
+  it('入口を出したときの余りで決める', () => {
+    expect(canShowCommentsEntry(380, 307, 36)).toBe(false)
+  })
+
+  // 対照: 同じバナーでも、入口の高さを足さずに測ると出す側へ倒れる。これを入口の有無で交互に使うと揺れ続けた。
+  it('入口を除いた高さだけなら出す側になる（揺れていた形）', () => {
+    expect(canShowCommentsEntry(380, 307, 0)).toBe(true)
+    expect(canShowCommentsOverlay(commentsOverlayMaxHeight(380, 307 + 36))).toBe(false)
+  })
+
+  // 安全弁: パネルが十分高ければ入口は出る（判定を厳しくしすぎていない）。
+  it('余りが足りれば出す', () => {
+    expect(canShowCommentsEntry(900, 307, 36)).toBe(true)
+    expect(canShowCommentsEntry(380 + 19, 307, 36)).toBe(true)
   })
 })

@@ -12,7 +12,7 @@ import path from 'node:path'
 //   POST /__perf-report : 計測結果 JSON を scripts/perf/results/perf-<日時>-<label>.json へ保存する。
 //
 // 想定フロー（実機計測・使い方はスクリプト冒頭コメントも参照）:
-//   1. 開発機で `npm run dev:dmdss -- --host` を起動し LAN へ公開する
+//   1. 開発機で `npm run dev -- --host` を起動し LAN へ公開する
 //   2. 実機のブラウザでアプリを開き、DevTools から /__perf-script を script タグでロードする
 //   3. 計測完了時にスクリプトが本エンドポイントへ POST → 開発機側にファイルとして証跡が残る
 //

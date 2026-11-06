@@ -3,19 +3,18 @@
 //
 // **材料の集め方**
 //
-// | 材料 | DMDSS 版 | 標準版 |
-// |---|---|---|
-// | 画面に来た緊急地震速報 | 受信した電文（リプレイの再生区間も同じ経路で流れる） | 強震モニタ（Yahoo）の EEW・P2PQuake の警報 |
-// | 過去 7 日（＋境目の 1 日）ぶんの緊急地震速報 | 地震ごとの最終報の本文（日ごとのアーカイブ・まだ無い日は地震ごとに 1 通。`dmdataReplay.ts` の `fetchDmdataEewOrigins`） | P2PQuake の `/history?codes=556` を 1 回（直近 1 週間・警報だけ） |
-// | 地震 ID（緊急地震速報を結ぶ鍵） | カードの電文が持っている | 気象庁の地震一覧と突き合わせる |
-// | 長期震源カタログ | 同梱の `public/data/hypocenter/`（要る年だけ読む） | 同じ |
+// | 材料 | 取り方 |
+// |---|---|
+// | 画面に来た緊急地震速報 | 受信した電文と強震モニタ（Yahoo）の EEW（リプレイの再生区間も同じ経路で流れる） |
+// | 過去 7 日（＋境目の 1 日）ぶんの緊急地震速報 | 地震ごとの最終報の本文（中継の束・まだ束の無い日は中継の電文一覧から。`dmdataReplay.ts` の `fetchDmdataEewOrigins`） |
+// | 地震 ID（緊急地震速報を結ぶ鍵） | カードの電文が持っている |
+// | 長期震源カタログ | 中継の公開バケット `data.yuremado.com/h/`（要る年だけ読む） |
 //
-// **仮定震源要素だったかを見分けられるのは、電文の `condition` を持つ経路だけ**（DMDATA の受信電文・
-// P2PQuake）。DMDATA の一覧と詳細（`/v2/gd/eew`）は `condition` の欄を持たない（2026-10-15 に実物の応答で
-// 確かめた）ので、**一覧の発生時刻は使わず、最終報の本文から読む**（2026-10-15 ユーザー承認「地震ごとに本文で
-// 確かめる（推奨）」。取り方は同日「それで進めて」— 日ごとのアーカイブを読む）。強震モニタの緊急地震速報も
-// `condition` を持たないが、こちらは「見分けられない」として残し、使う（2026-10-15 ユーザー承認
-// 「仮定震源の報は使わない（推奨）」の説明「標準版の強震モニタ経路は仮定を見分けられないので除けない」）。
+// **仮定震源要素だったかを見分けられるのは、電文の `condition` を持つ経路だけ。** 加工データの一覧と詳細
+// （`/v2/gd/eew`）は `condition` の欄を持たない（2026-10-15 に実物の応答で確かめた）ので、**最終報の本文から読む**
+// （2026-10-15 ユーザー承認「地震ごとに本文で確かめる（推奨）」。取り方は同日「それで進めて」— 日ごとのアーカイブを
+// 読む）。強震モニタの緊急地震速報も `condition` を持たないが、こちらは「見分けられない」として残し、使う
+// （2026-10-15 ユーザー承認「仮定震源の報は使わない（推奨）」の説明「標準版の強震モニタ経路は仮定を見分けられないので除けない」）。
 //
 // **緊急地震速報の発生時刻は端末へ残す**（`utils/eewOriginStore.ts`）。リロードしても、リプレイを
 // 始め直しても、同じ地震について取り直さない。
@@ -24,10 +23,12 @@
 // 画面に来る経路で残るので、定期的には取らない。カタログは同梱データなので、要る年が変わったときに読む。
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { DmdataClassification } from '../services/dmdataClassifications'
+import type { DmdataClassification, RestSources } from '../services/dmdataClassifications'
+import type { DmdataEndpoint } from '../services/dmdataEndpoint'
+import { createRelayWarningMemo, fetchEewOriginsFromSources } from '../services/replaySources'
 import { fetchDmdataEewOrigins } from '../services/dmdataReplay'
+import { relayRestEndpoint } from '../services/relayEndpoint'
 import { YAHOO_EEW_ID_PREFIX } from '../services/kyoshin'
-import { fetchJmaQuakeList, fetchP2PEewOriginTimes } from '../services/quakeOriginSources'
 import { serverNow } from '../utils/clock'
 import {
   loadEewOrigins,
@@ -45,12 +46,10 @@ import { extractQuakeEventId, quakeEventKey } from '../utils/quakeMerge'
 import {
   catalogYearsFor,
   findCatalogOriginMs,
-  findJmaEventId,
   parseJstTimeMs,
   resolveOriginSeconds,
   usableEewOrigin,
   type CatalogColumns,
-  type JmaQuakeListEntry,
   type OriginSeconds,
 } from '../utils/quakeOriginSeconds'
 import type { EEWAlert, JMAQuake } from '../types/earthquake'
@@ -62,20 +61,6 @@ const DAY_MS = 24 * 60 * 60 * 1000
  * 前日に始まっていても拾えるよう、1 日だけ広く取る。
  */
 const EEW_LOOKBACK_MS = 8 * DAY_MS
-
-/**
- * P2PQuake の `/history` が遡れる幅（公式 API 仕様「1 週間以上古い情報は取得できない場合が
- * あります」）。**これより前の日付を再生するときは取りに行かない** —— 返ってくるのは
- * いまの 1 週間ぶんで、再生している日の地震は含まれないので、通信が無駄になるだけ。
- */
-const P2P_HISTORY_REACH_MS = 7 * DAY_MS
-
-/**
- * 気象庁の地震一覧が持つ幅（実測で約 1 か月。2026-10-04）。これより前の日付を再生するときは
- * 取りに行かない（理由は上と同じ）。**狭めに見積もって 25 日**とし、一覧が短くなっても
- * 無駄撃ちは「数日ぶんの再生で 1 回」にとどまる。
- */
-const JMA_LIST_REACH_MS = 25 * DAY_MS
 
 /** 日本時間（UTC+9）。カタログの年は日本時間で区切られている。 */
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
@@ -93,41 +78,27 @@ export interface LoadedCatalog {
 }
 
 /** 地震カードの材料（地震 ID と時刻）。2 か所で同じ式を使うので 1 つにまとめる。 */
-function quakeKeys(
-  q: JMAQuake,
-  isDmdss: boolean,
-  jmaList: readonly JmaQuakeListEntry[],
-): { readonly eventId: string | null; readonly timeMs: number } {
+function quakeKeys(q: JMAQuake): { readonly eventId: string | null; readonly timeMs: number } {
   // **日本時間として読む**（端末の時間帯で読むと、日本国外で突き合わせが全滅する）。
   const timeMs = parseJstTimeMs(q.earthquake.time)
-  const eventId = isDmdss
-    ? extractQuakeEventId(q)
-    : findJmaEventId({
-        timeMs,
-        epicenter: q.earthquake.hypocenter.name,
-        magnitude: hasMagnitude(q.earthquake.hypocenter.magnitude) ? q.earthquake.hypocenter.magnitude : null,
-      }, jmaList)
-  return { eventId, timeMs }
+  return { eventId: extractQuakeEventId(q), timeMs }
 }
 
 /**
  * 地震カードごとの秒を組み立てる。**テストから直に確かめられるよう外へ出してある。**
  *
- * 地震 ID は、DMDSS 版ならカードの電文から、標準版なら気象庁の地震一覧から引く。**地震 ID は
- * 緊急地震速報を結ぶ鍵にだけ使う**（秒の出どころにはしない）。
+ * 地震 ID はカードの電文から引く。**地震 ID は緊急地震速報を結ぶ鍵にだけ使う**（秒の出どころにはしない）。
  */
 export function buildOriginSecondsMap(params: {
   readonly quakes: readonly JMAQuake[]
-  readonly isDmdss: boolean
   readonly eewOrigins: ReadonlyMap<string, EewOriginEntry>
-  readonly jmaList: readonly JmaQuakeListEntry[]
   /** 読み込めた長期震源カタログ（まだ・読めないなら `null`）。 */
   readonly catalog: LoadedCatalog | null
 }): Map<string, OriginSeconds> {
-  const { quakes, isDmdss, eewOrigins, jmaList, catalog } = params
+  const { quakes, eewOrigins, catalog } = params
   const out = new Map<string, OriginSeconds>()
   for (const q of quakes) {
-    const { eventId, timeMs } = quakeKeys(q, isDmdss, jmaList)
+    const { eventId, timeMs } = quakeKeys(q)
     const eew = eventId === null ? undefined : eewOrigins.get(eventId)
     let catalogOriginMs: number | null = null
     if (usableEewOrigin(timeMs, eew) === null && catalog !== null) {
@@ -155,16 +126,14 @@ export function buildOriginSecondsMap(params: {
  */
 export function catalogYearsNeeded(params: {
   readonly quakes: readonly JMAQuake[]
-  readonly isDmdss: boolean
   readonly eewOrigins: ReadonlyMap<string, EewOriginEntry>
-  readonly jmaList: readonly JmaQuakeListEntry[]
 }): number[] {
-  const { quakes, isDmdss, eewOrigins, jmaList } = params
+  const { quakes, eewOrigins } = params
   const years = new Set<number>()
   for (const q of quakes) {
     const h = q.earthquake.hypocenter
     if (!hasKnownEpicenter(h.latitude, h.longitude) || !hasMagnitude(h.magnitude)) continue
-    const { eventId, timeMs } = quakeKeys(q, isDmdss, jmaList)
+    const { eventId, timeMs } = quakeKeys(q)
     if (usableEewOrigin(timeMs, eventId === null ? undefined : eewOrigins.get(eventId)) !== null) continue
     for (const y of catalogYearsFor(timeMs)) years.add(y)
   }
@@ -210,24 +179,27 @@ export function eewOriginsFromActive(eews: Iterable<EEWAlert>): {
 export function useQuakeOriginSeconds(params: {
   /** 波形を出さない設定なら何もしない（取りに行かず、端末にも残さない）。 */
   readonly enabled: boolean
-  readonly isDmdss: boolean
-  readonly apiKey: string
   /**
-   * 受けている区分（DMDSS 版）。**`null` の間は過去分を取りに行かない** —— 区分が決まる前に既定の区分で引くと、
-   * 一部の区分しか受けていない人のところで受けていない分類を引いて断られる（→ `dmdataClassifications.ts`）。
-   * 標準版では使わない。
+   * 引く先と区分（→ `dmdataClassifications.ts` の `restSources`）。予報は中継が予報キーを受け付けていれば中継から、
+   * 自分の鍵の予報が通っていれば鍵から引く（→ `replaySources.ts` の `fetchEewOriginsFromSources`）。
    */
-  readonly classifications: readonly DmdataClassification[] | null
+  readonly sources: RestSources
+  /** 自分の鍵の繋ぎ先。鍵が無ければ null */
+  readonly keyEndpoint: DmdataEndpoint | null
   readonly quakes: readonly JMAQuake[]
   readonly activeEEWs: ReadonlyMap<string, EEWAlert>
   /** リプレイ中の時刻のずれ（ライブなら `null`）。変わったら過去分を取り直す。 */
   readonly replayOffsetMs: number | null
 }): ReadonlyMap<string, OriginSeconds> {
-  const { enabled, isDmdss, apiKey, classifications, quakes, activeEEWs, replayOffsetMs } = params
-  // 依存は中身で持つ（配列の作り直しで取り直さない）。
-  const classificationsKey = classifications === null ? null : [...classifications].sort().join(',')
+  const { enabled, sources, keyEndpoint, quakes, activeEEWs, replayOffsetMs } = params
+  // 依存は中身で持つ（配列の作り直しで取り直さない）。鍵から引くかも中身に含める
+  const classificationsKey = [...sources.relay].sort().join(',')
+  const keyForecast = sources.keyForecast
+  // 鍵の繋ぎ先は鍵の文字列が変わったときだけ作り直される（呼び出し側の `useMemo`）。依存に入れず ref で読む
+  const keyEndpointRef = useRef(keyEndpoint)
+  keyEndpointRef.current = keyEndpoint
+  const keyPresent = keyEndpoint !== null
   const [eewOrigins, setEewOrigins] = useState<Map<string, EewOriginEntry>>(() => (enabled ? loadEewOrigins() : new Map()))
-  const [jmaList, setJmaList] = useState<readonly JmaQuakeListEntry[]>([])
   const [catalog, setCatalog] = useState<LoadedCatalog | null>(null)
   const originsRef = useRef(eewOrigins)
   originsRef.current = eewOrigins
@@ -276,59 +248,47 @@ export function useQuakeOriginSeconds(params: {
       if (origins.size > 0 || found.canceled.length > 0) recordRef.current(origins, found.canceled)
     }
     const anchor = serverNow()
-    const agoMs = Date.now() - anchor
-    if (isDmdss) {
-      if (apiKey && classificationsKey !== null) {
-        // **地震ごとの最終報の本文から読む。** 画面で受けた報と同じ関数で記録に変える（仮定震源要素の見分け・
-        // 取消・訓練報の扱いを 1 か所に揃える）。一覧が取消と伝えた地震も除く。
-        const cls = classificationsKey === '' ? [] : (classificationsKey.split(',') as DmdataClassification[])
-        // **取りきれなかったら間を置いて取り直す**（長期震源カタログと同じ回数・間隔）。取りきれなかった分は
-        // 「緊急地震速報が無かった」と区別が付かず、取り直さないとリロードまで線が引けない。アーカイブと電文本体は
-        // 控えに残るので、取り直しで飛ぶのは一覧と、読めなかった分だけ。
-        const fetchOnce = (attempt: number) => {
-          void fetchDmdataEewOrigins(apiKey, new Date(anchor - EEW_LOOKBACK_MS), new Date(anchor), cls, abort.signal)
-            .then((found) => {
-              if (cancelled) return
-              const { updates, removals } = eewOriginsFromActive(found.finals)
-              recordFetched({ origins: new Map(updates), canceled: [...removals, ...found.canceledIds] })
-              if (found.complete) return
-              if (attempt >= CATALOG_RETRY_LIMIT) {
-                log.warn(`[eew-origin] 過去の緊急地震速報を ${attempt + 1} 回取って取りきれませんでした（取れた分だけで線を引きます）`)
-                return
-              }
-              retryTimer = setTimeout(() => { if (!cancelled) fetchOnce(attempt + 1) }, CATALOG_RETRY_DELAY_MS)
-            })
-            .catch((err: unknown) => { log.warn('[eew-origin] 過去の緊急地震速報を記録できませんでした', err) })
-        }
-        fetchOnce(0)
-      }
-    } else {
-      if (agoMs < P2P_HISTORY_REACH_MS) {
-        void fetchP2PEewOriginTimes().then((found) => {
-          if (!cancelled) recordFetched(found)
+    // **地震ごとの最終報の本文から読む。** 画面で受けた報と同じ関数で記録に変える（仮定震源要素の見分け・
+    // 取消・訓練報の扱いを 1 か所に揃える）。一覧が取消と伝えた地震も除く。
+    const cls = classificationsKey === '' ? [] : (classificationsKey.split(',') as DmdataClassification[])
+    const fetchSources: RestSources = { relay: cls, keyForecast }
+    // **取りきれなかったら間を置いて取り直す**（長期震源カタログと同じ回数・間隔）。取りきれなかった分は
+    // 「緊急地震速報が無かった」と区別が付かず、取り直さないとリロードまで線が引けない。アーカイブと電文本体は
+    // 控えに残るので、取り直しで飛ぶのは一覧と、読めなかった分だけ。中継の警報は、取りきれていれば
+    // 取り直しの間で使い回す（期間はこの回の `anchor` で決まっているので、取り直しでも同じ）。
+    const relayWarningMemo = createRelayWarningMemo()
+    const fetchOnce = (attempt: number) => {
+      void fetchEewOriginsFromSources(
+        (endpoint, classifications) => fetchDmdataEewOrigins(endpoint, new Date(anchor - EEW_LOOKBACK_MS), new Date(anchor), classifications, abort.signal),
+        relayRestEndpoint, keyEndpointRef.current, fetchSources, relayWarningMemo,
+      )
+        .then((found) => {
+          if (cancelled) return
+          const { updates, removals } = eewOriginsFromActive(found.finals)
+          recordFetched({ origins: new Map(updates), canceled: [...removals, ...found.canceledIds] })
+          if (found.complete) return
+          if (attempt >= CATALOG_RETRY_LIMIT) {
+            log.warn(`[eew-origin] 過去の緊急地震速報を ${attempt + 1} 回取って取りきれませんでした（取れた分だけで線を引きます）`)
+            return
+          }
+          retryTimer = setTimeout(() => { if (!cancelled) fetchOnce(attempt + 1) }, CATALOG_RETRY_DELAY_MS)
         })
-      }
-      if (agoMs < JMA_LIST_REACH_MS) {
-        void fetchJmaQuakeList().then((list) => {
-          if (!cancelled) setJmaList(list)
-        })
-      } else {
-        setJmaList([])
-      }
+        .catch((err: unknown) => { log.warn('[eew-origin] 過去の緊急地震速報を記録できませんでした', err) })
     }
+    fetchOnce(0)
     return () => {
       cancelled = true
       abort.abort()
       if (retryTimer !== undefined) clearTimeout(retryTimer)
     }
-  }, [enabled, isDmdss, apiKey, classificationsKey, replayOffsetMs])
+  }, [enabled, classificationsKey, keyForecast, keyPresent, replayOffsetMs])
 
   // 長期震源カタログのうち、要る年を読む。**読めた年は捨てない**（ファイルの控えは
   // `hypocenterCatalog.ts` が持つので、読み直しても通信は出ない）。**年ごとに成否を扱う** —— 1 年の
   // 失敗で他の年まで巻き添えにしない。読めなかった年は間を置いて {@link CATALOG_RETRY_LIMIT} 回まで取り直す。
   const neededYearsKey = useMemo(
-    () => (enabled ? catalogYearsNeeded({ quakes, isDmdss, eewOrigins, jmaList }).join(',') : ''),
-    [enabled, quakes, isDmdss, eewOrigins, jmaList],
+    () => (enabled ? catalogYearsNeeded({ quakes, eewOrigins }).join(',') : ''),
+    [enabled, quakes, eewOrigins],
   )
   const [catalogRetry, setCatalogRetry] = useState(0)
   useEffect(() => { setCatalogRetry(0) }, [neededYearsKey])
@@ -380,7 +340,7 @@ export function useQuakeOriginSeconds(params: {
   }, [neededYearsKey, catalogRetry])
 
   return useMemo(
-    () => (enabled ? buildOriginSecondsMap({ quakes, isDmdss, eewOrigins, jmaList, catalog }) : new Map()),
-    [enabled, quakes, isDmdss, eewOrigins, jmaList, catalog],
+    () => (enabled ? buildOriginSecondsMap({ quakes, eewOrigins, catalog }) : new Map()),
+    [enabled, quakes, eewOrigins, catalog],
   )
 }

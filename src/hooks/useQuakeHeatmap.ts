@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { JMAQuake } from '../types/earthquake'
-import { fetchJmaQuakeHistory } from '../services/p2pquake'
-import { fetchDmdataGdEarthquakes, fetchDmdataGdEarthquakesBefore, type GdEarthquakeItem } from '../services/dmdata'
+import { fetchListedHypocenters } from '../services/dmdataReplayLive'
+import { relayRestEndpoint } from '../services/relayEndpoint'
 import {
   heatMagnitude,
   magnitudeToWeight,
@@ -23,25 +23,23 @@ import { log } from '../utils/logger'
 import { retryDelayAfter } from '../utils/retrySchedule'
 import { serverNow, liveServerNow } from '../utils/clock'
 
-import { isDmdss } from '../utils/env'
-import { isValidDmdataApiKey, DMDATA_API_KEY_INVALID_MESSAGE } from '../utils/dmdataApiKey'
 
 // 地震活動ヒートマップの点を集める。
 //
 // **長期震源カタログがある日はカタログから、カタログの終端より後だけを API から取る**
 // （2026-10-22 ユーザー選択「カタログ＋末尾の空きだけ API (Recommended)」。2026-10-25 に境目で濃さが約 15 倍
-// 落ちることを示したうえで「決定どおりで」）。カタログは M2.0 以上の全地震、API（DMDATA の
-// GD Earthquake List・P2PQuake）は震度を観測した地震だけなので、**境目より後は薄く見える**。
+// 落ちることを示したうえで「決定どおりで」）。カタログは M2.0 以上の全地震、末尾（中継の電文一覧から読む
+// 震源の電文）は震度を観測した地震だけなので、**境目より後は薄く見える**。
 // 期間は凡例のスライダーで選ぶ（`HeatmapPeriod`。2026-10-25 ユーザー選択「E の案でよい (Recommended)」）。
 //
-// DMDSS 版で API キーが無い・使えないときは**カタログの分だけ描き、末尾が入らないことを記録に残す**
-// （2026-10-22 ユーザー選択「カタログの分だけ出す (Recommended)」）。
+// 末尾は中継の電文一覧に載った震源の電文から作る（docs/relay-server-design.md §0 の 2026-10-31
+// 「加工データは配らない」の行。DMDATA の加工データ `/v2/gd/earthquake` は使わない）。鍵は要らない。
 
 // 末尾の API の取得は一定時間 localStorage の控えを使う。控えた後にライブで届いた地震は
 // earthquakes とのマージで別に足すので、控えがやや古くても実害は小さい。
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000
-// v4 から「カタログの終端より後」だけを控える（それまでは直近 30 日を丸ごと）。
-const CACHE_KEY = isDmdss ? 'quake-heatmap-tail-dmdss-v1' : 'quake-heatmap-tail-v1'
+// 「カタログの終端より後」だけを控える。v2 から中継の電文一覧で作る（版を 1 つにまとめる前の 2 つの控えは読まない）。
+const CACHE_KEY = 'quake-heatmap-tail-v2'
 // 旧形式の控えは二度と読まないので、見かけたら掃除する。
 const LEGACY_CACHE_KEYS = [
   'quake-heatmap-cache',
@@ -49,14 +47,16 @@ const LEGACY_CACHE_KEYS = [
   'quake-heatmap-cache-v2',
   'quake-heatmap-cache-v3',
   'quake-heatmap-cache-dmdss-v2',
+  'quake-heatmap-tail-v1',
+  'quake-heatmap-tail-dmdss-v1',
 ]
 
 const DAY_MS = 24 * 60 * 60 * 1000
 /** カタログの索引が読めなかったときに API で遡る上限（日）。API は 1 回の取得で 2000 件までしか返さない。 */
 const API_FALLBACK_MAX_DAYS = 30
 /**
- * カタログの終端より後を API で遡る上限（日）。カタログは週 1 回更新で、ふだん終端は 2〜9 日前。
- * 更新が止まって終端が遠くなっても、取る日数を際限なく伸ばさない（DMDSS 版のリプレイは 1 日 1 件ずつ取る）。
+ * カタログの終端より後を API で遡る上限（日）。カタログは中継が毎日書き足すので、ふだん終端は 2 日前。
+ * 更新が止まって終端が遠くなっても、取る日数を際限なく伸ばさない（リプレイは 1 日 1 件ずつ取る）。
  */
 const API_TAIL_MAX_DAYS = 30
 /** 期間のつまみを動かしてから、年ファイルの取得と格子化を始めるまでの待ち（ms）。通り過ぎた段では取らない。 */
@@ -96,23 +96,6 @@ function saveTailCache(fromMs: number, points: KeyedHeatPoint[]): void {
     // 容量超過等。次回また取得を試みるので致命的ではないが、黙って毎回取り直す状態になるため残す。
     log.warn('[data] 地震活動ヒートマップのキャッシュ保存に失敗（次回も取得し直します）', e)
   }
-}
-
-function fromGdItems(items: GdEarthquakeItem[]): KeyedHeatPoint[] {
-  return items.map((it): KeyedHeatPoint => ({
-    key: it.eventId,
-    lat: it.latitude,
-    lng: it.longitude,
-    // GD Earthquake List は規模の説明を返さない（不明は -1）。
-    weight: magnitudeToWeight(it.magnitude, null),
-    name: it.name,
-    time: it.originTime,
-    depth: it.depth,
-    depthAtLeast: false,
-    magnitude: heatMagnitude(it.magnitude),
-    magnitudeCondition: null,
-    count: 1,
-  }))
 }
 
 function fromJmaQuakes(quakes: JMAQuake[]): KeyedHeatPoint[] {
@@ -159,7 +142,6 @@ export interface QuakeHeatmapResult {
 
 export function useQuakeHeatmap(
   enabled: boolean,
-  dmdataApiKey: string,
   earthquakes: JMAQuake[],
   replayOffsetMs: number | null,
   period: HeatmapPeriod,
@@ -330,23 +312,10 @@ export function useQuakeHeatmap(
       setTailPoints([])
       return
     }
-    // DMDSS 版は gd.earthquake スコープ付きの APIキーが要る。**無ければカタログの分だけ描く**
-    // （冒頭の注記）。末尾が入らないことは記録に残す —— 画面にエラーを出さない経路なので、記録を落とすと
-    // 「直近だけ空いている」理由に辿り着けない。
-    if (isDmdss && !dmdataApiKey) {
-      log.warn('[data] 地震活動ヒートマップ: API キーが無いため、震源カタログの終端より後の地震は描きません')
-      setTailPoints([])
-      return
-    }
-    if (isDmdss && !isValidDmdataApiKey(dmdataApiKey)) {
-      log.warn(`[data] 地震活動ヒートマップ: 震源カタログの終端より後を取得しない: ${DMDATA_API_KEY_INVALID_MESSAGE}`)
-      // 取れないだけで、既に持っているものが無効になったわけではない。キー入力中はデバウンス（800ms）で
-      // ここを一時的に通るため、捨てると「直している最中に、見えていた点が消える」ことになる。
-      const cached = loadTailCache()
-      setTailPoints(cached && cached.fromMs <= tailFromMs ? cached.points : [])
-      return
-    }
-    const days = (untilMs - tailFromMs) / DAY_MS
+    // 末尾は中継の電文一覧から読む（冒頭の注記）。取りきれなかったら控えない
+    const loadRelay = (signal: AbortSignal): Promise<{ points: KeyedHeatPoint[]; complete: boolean }> =>
+      fetchListedHypocenters(relayRestEndpoint, new Date(tailFromMs), new Date(untilMs), signal)
+        .then(r => ({ points: fromJmaQuakes(r.quakes), complete: r.complete }))
 
     if (replayAnchorMs !== null) {
       const cacheKey = `${replayAnchorMs}|${tailFromMs}`
@@ -360,12 +329,7 @@ export function useQuakeHeatmap(
       setTailLoading(true)
       // complete が偽（取れなかった日がある）なら控えない。控えると、同じ開始時刻で再生し直しても
       // 欠けた日が戻らないまま表示され続ける
-      const loadReplay: Promise<{ points: KeyedHeatPoint[]; complete: boolean }> = isDmdss
-        ? fetchDmdataGdEarthquakesBefore(dmdataApiKey, replayAnchorMs, days, controller.signal)
-          .then(r => ({ points: fromGdItems(r.items), complete: r.failedDays.length === 0 }))
-        : fetchJmaQuakeHistory(days, replayAnchorMs, controller.signal)
-          .then(quakes => ({ points: fromJmaQuakes(quakes), complete: true }))
-      loadReplay
+      loadRelay(controller.signal)
         .then(({ points, complete }) => {
           if (controller.signal.aborted) return
           if (complete) {
@@ -405,15 +369,14 @@ export function useQuakeHeatmap(
     }
 
     let cancelled = false
+    const controller = new AbortController()
     setTailLoading(true)
-    const load = isDmdss
-      ? fetchDmdataGdEarthquakes(dmdataApiKey, days).then(fromGdItems)
-      : fetchJmaQuakeHistory(days, null, null).then(fromJmaQuakes)
-    load
-      .then(result => {
+    loadRelay(controller.signal)
+      .then(({ points, complete }) => {
         if (cancelled) return
-        setTailPoints(result)
-        saveTailCache(tailFromMs, result)
+        setTailPoints(points)
+        // 取りきれなかった分を 6 時間控えると、その間は欠けたまま描き続ける
+        if (complete) saveTailCache(tailFromMs, points)
       })
       .catch(err => {
         // ログは cancelled と無関係に必ず出す。状態更新を止めることと、失敗を記録しないことは
@@ -431,8 +394,10 @@ export function useQuakeHeatmap(
       })
     return () => {
       cancelled = true
+      controller.abort()
+      setTailLoading(false)
     }
-  }, [enabled, dmdataApiKey, replayAnchorMs, tailFromMs])
+  }, [enabled, replayAnchorMs, tailFromMs])
 
   // 末尾の点にライブ受信中の地震をマージする。取消済み・震源未確定・範囲外は除外し、
   // 同一地震（quakeIdentityKey）が両方にあればライブ側（最新情報）を優先する。

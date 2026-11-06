@@ -78,6 +78,7 @@ const renderTab = async (lpgm: JMALpgm) => {
   <EarthquakeTab
     earthquakes={[QUAKE]}
     selectedId={quakeEventKey(QUAKE)}
+    selectSeq={0}
     speakingKey={null}
     followSpeech={false}
     onSelect={() => {}}
@@ -91,12 +92,14 @@ const renderTab = async (lpgm: JMALpgm) => {
     loadMoreFailed={false}
     reconnectGapLoss={false}
     fetchThrottled={false}
+    onDismissKeyReentry={null}
     lpgmByEventId={new Map([[EVENT_ID, lpgm]])}
     updateMarks={new Map()}
     activeLpgmEventId={null}
     onToggleLpgm={() => {}}
+    lpgmFocus={null}
     estimatedIntensities={[]}
-    internationalTsunamis={[]}
+    internationalTsunamisByQuake={new Map()}
     distributionQuakeKey={null}
     onToggleDistribution={() => {}}
     unreceivedQuakeKey={null}
@@ -117,6 +120,7 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
   <EarthquakeTab
     earthquakes={[QUAKE]}
     selectedId={quakeEventKey(QUAKE)}
+    selectSeq={0}
     speakingKey={null}
     followSpeech={false}
     onSelect={() => {}}
@@ -130,12 +134,14 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     loadMoreFailed={false}
     reconnectGapLoss={false}
     fetchThrottled={false}
+    onDismissKeyReentry={null}
     lpgmByEventId={new Map([[EVENT_ID, lpgm]])}
     updateMarks={new Map()}
     activeLpgmEventId={null}
     onToggleLpgm={() => {}}
+    lpgmFocus={null}
     estimatedIntensities={[]}
-    internationalTsunamis={[]}
+    internationalTsunamisByQuake={new Map()}
     distributionQuakeKey={null}
     onToggleDistribution={() => {}}
     unreceivedQuakeKey={null}
@@ -157,8 +163,9 @@ const renderSpeaking = async (subject: string | null, lpgm: JMALpgm = makeLpgm()
 const SPEAKING = telegramTextSubject('lpgm', EVENT_ID)
 
 // **カード自体も `<button>`** で、そのアクセシブルネーム（カード全体の文字列）にも
-// 「気象庁からの補足」が含まれる。見出しだけを取るため、矢印まで込みの完全一致で絞る。
-const HEADER_NAME = /^気象庁からの補足\s*[▸▾]$/
+// 「気象庁からの補足」が含まれる。見出しだけを取るため、完全一致で絞る（開閉の印は回すだけの飾りで、
+// 名前には入らない。開いているかは `aria-expanded` で見る）。
+const HEADER_NAME = /^気象庁からの補足$/
 const notesHeader = () => screen.getByRole('button', { name: HEADER_NAME })
 
 describe('長周期地震動の「気象庁からの補足」の折りたたみ', () => {
@@ -192,8 +199,8 @@ describe('長周期地震動の「気象庁からの補足」の折りたたみ'
     await renderTab(makeLpgm(NO_NOTES))
 
     expect(screen.queryByRole('button', { name: HEADER_NAME })).toBeNull()
-    // 階級のバッジ自体は出ている（折りたたみが無いだけで、長周期の表示は生きている）
-    expect(screen.getByText('階級4')).toBeTruthy()
+    // 階級の帯自体は出ている（折りたたみが無いだけで、長周期の表示は生きている）
+    expect(screen.getByText('長周期4')).toBeTruthy()
   })
 
   // 安全弁: アプリが組む一文は折りたたみへ巻き込まない。

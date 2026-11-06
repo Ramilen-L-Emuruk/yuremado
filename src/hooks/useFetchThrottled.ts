@@ -1,5 +1,6 @@
 /**
- * いま配信元の上限に達していて、取得が待たされているか。
+ * いま配信元の上限に達していて、取得が待たされているか。DMDATA の門（鍵で繋ぐ取得）と、
+ * 中継の門（中継が 429 と `Retry-After` で待たせた取得）のどちらかで待っていれば待っているとみなす。
  *
  * **画面に「取得制限中」を出すためだけのもの。** 待ちが発生していること自体はアプリの動作に
  * 影響しない（枠が空けばそのまま取りに行く）ので、判定に使わないこと。
@@ -10,6 +11,9 @@
  */
 import { useEffect, useState } from 'react'
 import { dmdataThrottledUntil } from '../services/dmdataRequestGates'
+import { relayThrottleRemainingMs } from '../services/relayEndpoint'
+
+const isThrottled = () => dmdataThrottledUntil() !== null || relayThrottleRemainingMs() !== null
 
 /**
  * 様子を見る間隔。
@@ -20,8 +24,7 @@ import { dmdataThrottledUntil } from '../services/dmdataRequestGates'
 const POLL_MS = 1000
 
 /**
- * @param enabled 見張るかどうか。**標準版（P2PQuake）では `false` を渡す** ——
- *   あちらは DMDATA を一切使わないので門は常に空で、周期処理だけが無駄に走る。
+ * @param enabled 見張るかどうか。`false` なら周期処理を止め、出したままの告知も引っ込める。
  */
 export function useFetchThrottled(enabled: boolean): boolean {
   const [throttled, setThrottled] = useState(false)
@@ -33,9 +36,9 @@ export function useFetchThrottled(enabled: boolean): boolean {
     }
     // **最初の 1 回はすぐ見る。** 起動直後に上限へ達している状況（前のタブが枠を使い切った等）で、
     // 1 秒だけ告知が出ないのを避ける。
-    setThrottled(dmdataThrottledUntil() !== null)
+    setThrottled(isThrottled())
     const id = setInterval(() => {
-      setThrottled(dmdataThrottledUntil() !== null)
+      setThrottled(isThrottled())
     }, POLL_MS)
     return () => clearInterval(id)
   }, [enabled])

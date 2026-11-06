@@ -27,8 +27,8 @@ type DeepRequired<T> =
         : T
 
 /**
- * **電文には現れず、受信処理・カードの統合が後から付ける欄**は見本から外す。収録シナリオは
- * 電文をパーサーへ通した結果を記録したもので、これらは持たない（`capture-test-scenario.ts`）。
+ * **電文には現れず、受信処理・カードの統合が後から付ける欄**は見本から外す。シナリオは
+ * 電文をパーサーへ通した結果を記録したもので、これらは持たない（テストボタンの `testTelegrams.ts`）。
  * ここへ足すときは、電文から読む欄でないことを確かめてから足すこと。
  */
 type QuakeSample = DeepRequired<Omit<JMAQuake,
@@ -36,14 +36,19 @@ type QuakeSample = DeepRequired<Omit<JMAQuake,
   | 'eventKey' | 'reports' | 'sourceTelegrams' | 'retractedReports' // カードの統合が積む
   | 'intensityFromCache' // 震度の控えから補ったときの印
   | 'hypocenterSource' | 'domesticTsunamiSource' // 津波電文から借りたときの印
+  | 'quakeInfoFacts' // 長周期・推計の値を当てる前の地震情報の値（電文の欄ではない）
+  | 'appliedTsunamiSource' // 上段へ当てた津波の原因地震の控え（電文の欄ではない）
+  | 'fromInternationalTsunami' // 英文だけから組んだカードの印（電文の欄ではない）
 >>
 type TsunamiSample = DeepRequired<Omit<JMATsunami,
   | 'cancelledAt' // 解除を当てたときに受信処理が付ける（Date）
   | 'foldedReports' // 報を畳んだときに統合が積む
   | 'previousSourceEarthquakes' // 別の地震の津波で置き換えたときに統合が積む（時刻は積む前の報で既にずれている）
-  | 'failsafeExpiry' // 標準版の安全弁の予約にだけ付く印（電文には無い）
 >>
-type EewSample = DeepRequired<Omit<EEWAlert, 'cancelledAt'>>
+type EewSample = DeepRequired<Omit<EEWAlert,
+  | 'cancelledAt' // 取消を当てたときに受信処理が付ける（Date）
+  | 'vanishedFromList' // 強震モニタの一覧から消えたときに差分（diffHypoInfoEvents）が付ける印（電文の欄ではない）
+>>
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/
 
@@ -180,6 +185,8 @@ function eewSample(): EewSample {
     strongShakingText: '強い揺れ',
     kind: 'eew',
     origin: 'dmdata',
+    serialSeries: 'warning',
+    forecastSerial: '30',
     id: `dmdata-eew-${EVENT_ID}-1`,
     time: iso(),
     test: false,
@@ -302,7 +309,8 @@ function countSample(): DeepRequired<JMAEarthquakeCount> {
   }
 }
 
-function estimatedSample(): DeepRequired<JMAEstimatedIntensity> {
+// `previousTimes` は一覧へ入れるときに受信側が付ける欄（→ `upsertEstimatedIntensity`）。電文には現れない
+function estimatedSample(): DeepRequired<Omit<JMAEstimatedIntensity, 'previousTimes'>> {
   return {
     id: 'estimated-1', time: iso(), arrivalTime: iso(),
     hypocenter: { lat: 37.5, lon: 137.2, depthKm: 10 },
@@ -321,6 +329,8 @@ function internationalTsunamiSample(): DeepRequired<JMAInternationalTsunami> {
   return {
     id: wepa60Id(time, 'TSUNAMI BULLETIN NUMBER 001', 'WEPA60 RJTD 250003'), title: 'TSUNAMI BULLETIN NUMBER 001',
     time, originTime: iso(), isCommunicationsTest: false, text: 'WEPA60 RJTD 250003',
+    epicenter: { latitude: 4.8, longitude: 127.4 }, regionName: 'TALAUD ISLANDS, INDONESIA', magnitude: 7.0, magnitudeType: 'Mj', depthKm: 139,
+    bulletinNumber: 1, evaluation: 'none',
   }
 }
 

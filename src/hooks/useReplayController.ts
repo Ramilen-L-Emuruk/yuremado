@@ -13,11 +13,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { filterPreWindowEvents } from '../services/dmdataReplay'
 import { historyExtraKey } from '../services/dmdataTelegramPayload'
-import type { ReplayEntry, ReplayFetchResult, QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
+import type { ReplayEntry, ReplayFetchResult, ReplayLogOnlyEntry, QuakeHistoryResult, ReplayQuakeHistoryResult } from '../types/replay'
 import type { JMATsunami } from '../types/earthquake'
 import { serverNow, serverDate } from '../utils/clock'
 import { log } from '../utils/logger'
 import { recordReplayEvent } from '../utils/replayEventLog'
+import { fetchFailureReason } from '../utils/fetchFailure'
 import { retryDelayAfter } from '../utils/retrySchedule'
 import { getAreaPrefIndexCache } from '../utils/stationCoords'
 import {
@@ -82,7 +83,7 @@ export function replayTargetProblem(targetDate: Date, nowMs: number): string | n
  *
  * **津波警報等（VTSE41）の報どうしは `id` では見分けられない**（報番号が空で、同じ津波の全報が同じ `id`）。
  * 見分けるのは時刻で、**作成時刻（`createdAtMs`。秒まで）を使う**。発表時刻（分まで）だと、同じ分に出た 2 通が
- * 同じ鍵になって後のほうが足されない。作成時刻を持たない報（P2PQuake・テストデータ）は発表時刻で作る。
+ * 同じ鍵になって後のほうが足されない。作成時刻を持たない報（`Control/DateTime` を読めなかった電文・テスト用に組んだ報）は発表時刻で作る。
  * 情報名（`Head/Title`）も鍵に残す。
  */
 function tsunamiReportKey(tsunami: JMATsunami): string {
@@ -90,7 +91,7 @@ function tsunamiReportKey(tsunami: JMATsunami): string {
 }
 
 /**
- * 初期状態の材料を 1 本にまとめる。**24 時間の電文に、履歴（DMDSS 版は 7 日）の津波・帯・
+ * 初期状態の材料を 1 本にまとめる。**24 時間の電文に、履歴（7 日）の津波・帯・
  * 長周期のうち 24 時間に無いものを足す**（2026-10-05 ユーザー承認）。
  *
  * 足す理由は種別ごとに違う。
@@ -176,8 +177,8 @@ export type ReplayFetchPurpose = 'main' | 'initial' | 'prefetch'
 
 export interface ReplayControllerDeps {
   /**
-   * 指定範囲の電文を取得する。バリアントごとの取得元をここで差し替える
-   * （DMDSS 版は DMDATA アーカイブ、standard 版は P2PQuake の日付指定クエリ）。
+   * 指定範囲の電文を取得する。取得元は呼び出し側が渡す
+   * （中継経由の DMDATA アーカイブか、期間が重なればローカル履歴アーカイブ。→ `App.tsx` の `fetchReplayEvents`）。
    */
   fetchEvents: (fromTime: Date, toTime: Date, signal: AbortSignal, purpose: ReplayFetchPurpose) => Promise<ReplayFetchResult>
   /**
@@ -185,8 +186,8 @@ export interface ReplayControllerDeps {
    * - 地震カードの一覧を、ライブ接続時と同じ厚みにする（`restoreQuakeHistory`）
    * - 初期状態の材料に、24 時間より前の津波・帯・長周期を足す（`assemblePreWindowMaterial`）
    *
-   * **遡る範囲はバリアントが決める**（ライブ接続時の初回履歴と揃える。DMDSS 版は 7 日、
-   * 標準版とローカル履歴アーカイブは件数）。取得元はバリアントで差し替える。
+   * **遡る範囲と取得元は呼び出し側が決める**（ライブ接続時の初回履歴と揃えて 7 日。
+   * → `App.tsx` の `fetchReplayQuakeHistory`）。
    */
   fetchQuakeHistory: (before: Date, signal: AbortSignal) => Promise<ReplayQuakeHistoryResult>
   /**
@@ -215,7 +216,8 @@ export interface ReplayControllerDeps {
   /** pre-window の電文から T 時点の追跡 ref を復元する。 */
   restorePreWindowTracking: (entries: ReplayEntry[]) => void
   /** 取得した電文を再生キューへ積む。 */
-  loadReplayEvents: (entries: ReplayEntry[]) => void
+  /** `logOnlyEntries` は電文ログにだけ積む行（試験報・読まない種類・読めなかった電文。→ `ReplayFetchResult.logOnlyEntries`） */
+  loadReplayEvents: (entries: ReplayEntry[], logOnlyEntries: readonly ReplayLogOnlyEntry[]) => void
 }
 
 export interface ReplayController {
@@ -441,10 +443,10 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
       //   実際の状況と食い違うため）。どちらで失敗したかはメッセージに含める。
       const [normal, pre, history] = await Promise.all([
         d.fetchEvents(targetDate, toTime, signal, 'main').catch((e) => {
-          throw new Error(`本編（${fmt(targetDate)} 以降）の取得に失敗: ${msgOf(e)}`)
+          throw new WrappedFetchError(`本編（${fmt(targetDate)} 以降）の取得に失敗: ${screenMsgOf(e)}`, e)
         }),
         d.fetchEvents(preFrom, targetDate, signal, 'initial').catch((e) => {
-          throw new Error(`初期状態（過去 24 時間）の取得に失敗: ${msgOf(e)}`)
+          throw new WrappedFetchError(`初期状態（過去 24 時間）の取得に失敗: ${screenMsgOf(e)}`, e)
         }),
         historySettled,
       ])
@@ -461,7 +463,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
         d.restoreQuakeHistory(history.result)
       } else {
         log.error('[replay] 履歴の取得に失敗（初期状態は 24 時間ぶんで作る）', history.error)
-        setHistoryError(`地震カードの履歴を復元できませんでした（再生開始より前の地震が一覧に出ません。再生は継続中）: ${msgOf(history.error)}`)
+        setHistoryError(`地震カードの履歴を復元できませんでした（再生開始より前の地震が一覧に出ません。再生は継続中）: ${screenMsgOf(history.error)}`)
       }
 
       // pre-window: T 時点で有効な電文を即時発火（replayTime = T-1ms）させて初期状態を再現する
@@ -514,7 +516,8 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
         log.error('[replay] 窓の手前からの状態復元に失敗（再生は継続）', e)
       }
 
-      d.loadReplayEvents([...preFiltered, ...normal.entries])
+      // 初期状態（窓の手前 24 時間）の材料は電文ログへ載せない（`architecture-spec.md` §4「載せない経路もある」）ので、行は本編の分だけ
+      d.loadReplayEvents([...preFiltered, ...normal.entries], normal.logOnlyEntries)
 
       // 取りこぼしがあれば、再生は始まっていても必ず知らせる。黙って減った電文は
       // 「そういう時間帯だった」と見分けが付かず、テスト結果の誤読につながる。
@@ -535,7 +538,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
         log.info('[replay] 取得失敗時に別セッションへ切り替わっていたためエラー表示を抑制', msgOf(e))
         return
       }
-      log.error('[replay] リプレイデータ取得失敗', e)
+      log.error('[replay] リプレイデータ取得失敗', msgOf(e), e)
       // 地震電文が取れなくても**強震モニタのリプレイは成立する**ため、時刻オフセットは戻さない。
       // 強震モニタの供給元は `timeOffset != null` だけで過去フレームへ切り替わる別経路
       // （`useKyoshinRealtime` → `createYahooArchiveSource`）で、DMDATA のアーカイブには依存しない。
@@ -544,7 +547,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
       // 「再生中」と赤字が並ぶ矛盾は、設定の窓が `replayStartLabel` の有無で見出しを
       // 「再生中の警告」と「取得失敗」に出し分けることで既に解消されている。
       // 先読み位置だけは畳む（アーカイブが読めない以上、続きを取りに行っても同じ失敗を繰り返す）。
-      setFetchError(`${msgOf(e)}（地震・津波の電文は再生されません。強震モニタの再生は継続します）`)
+      setFetchError(`${screenMsgOf(e)}（地震・津波の電文は再生されません。リアルタイム震度の再生は継続します）`)
       prefetchEndRef.current = null
       // 録画ツール向けの記録。**世代の照合を通った後に置く** —— 前に置くと、停止済みの
       // セッションの失敗まで「いまの再生が失敗した」として並ぶ。
@@ -610,11 +613,11 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
         // **積む途中で投げたら、その区間は取り直さずに諦める**（途中まで積んだかもしれず、取り直すと同じ電文を 2 度積む）。
         // 取得の失敗と分けるのは取り直しの側と同じ理由（下の `.then(成功, 失敗)`）。
         try {
-          depsRef.current.loadReplayEvents(result.entries)
+          depsRef.current.loadReplayEvents(result.entries, result.logOnlyEntries)
         } catch (e) {
           log.error(`[replay] 先読みした ${fmt(nextFrom)} からの 1 時間を積む途中で投げた（取り直さない）`, e)
           setLoss((prev) => addFailedPrefetch(addLoss(prev, result)))
-          setFetchError(`先読みに失敗しました。${fmt(nextFrom)} からの 1 時間ぶんは再生されません: ${msgOf(e)}`)
+          setFetchError(`先読みに失敗しました。${fmt(nextFrom)} からの 1 時間ぶんは再生されません: ${screenMsgOf(e)}`)
           recordReplayEvent({ type: 'fetch', phase: 'error', target: 'prefetch', message: msgOf(e) })
           return
         }
@@ -642,7 +645,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
             { from: nextFrom, to: nextTo, failures: 1, retryAt: performance.now() + delay, inFlight: false },
           ]
         }
-        const retrying = `先読みに失敗しました。${fmt(nextFrom)} からの 1 時間ぶんを取り直しています: ${msgOf(e)}`
+        const retrying = `先読みに失敗しました。${fmt(nextFrom)} からの 1 時間ぶんを取り直しています: ${screenMsgOf(e)}`
         prefetchRetryingMessageRef.current = retrying
         setFetchError(retrying)
         // 世代の照合を通った後に置く（本編の失敗と同じ理由）
@@ -690,14 +693,15 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
                 log.error('[replay] 取り直した先読みの過ぎた電文から状態を復元できなかった（積むのは続ける）', e)
               }
             }
-            depsRef.current.loadReplayEvents(lateEntriesSilenced(result.entries, nowMs))
+            // 時刻が過ぎた行は、次のティックで積まれる（音・画面は持たないので、黙らせる必要は無い）
+            depsRef.current.loadReplayEvents(lateEntriesSilenced(result.entries, nowMs), result.logOnlyEntries)
           } catch (e) {
             // **取り直さない**（途中まで積んだかもしれず、取り直すと同じ電文を 2 度積む）。諦めたことを残す。
             log.error(`[replay] 先読みに失敗していた ${fmt(item.from)} からの 1 時間を取り直せたが、積む途中で投げた（取り直さない）`, e)
             if (prefetchRetriesRef.current.length === 0) prefetchRetryingMessageRef.current = null
             // 区間の欠けは数えたまま（`failedPrefetches` は外さない）。電文の取りこぼしの内訳だけ足す。
             setLoss((prev) => addLoss(prev, result))
-            setFetchError(`先読みに失敗しました。${fmt(item.from)} からの 1 時間ぶんは再生されません: ${msgOf(e)}`)
+            setFetchError(`先読みに失敗しました。${fmt(item.from)} からの 1 時間ぶんは再生されません: ${screenMsgOf(e)}`)
             recordReplayEvent({ type: 'fetch', phase: 'error', target: 'prefetch', message: msgOf(e) })
             return
           }
@@ -716,7 +720,7 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
           if (delay === null) {
             prefetchRetriesRef.current = prefetchRetriesRef.current.filter((r) => r !== item)
             log.error(`[replay] 先読みに失敗した ${fmt(item.from)} からの 1 時間を ${item.failures} 回続けて取れず、取り直しを諦めた`, e)
-            setFetchError(`先読みに失敗しました。${fmt(item.from)} からの 1 時間ぶんは再生されません: ${msgOf(e)}`)
+            setFetchError(`先読みに失敗しました。${fmt(item.from)} からの 1 時間ぶんは再生されません: ${screenMsgOf(e)}`)
           } else {
             item.retryAt = performance.now() + delay
             log.warn(`[replay] 先読みに失敗していた ${fmt(item.from)} からの 1 時間をまた取れなかった（${item.failures} 回目）。${Math.round(delay / 1000)} 秒後に取り直す:`, msgOf(e))
@@ -746,8 +750,25 @@ export function useReplayController(deps: ReplayControllerDeps): ReplayControlle
   return { isFetching, error, start, stop }
 }
 
+/**
+ * 記録（出来事の記録・ログ）に残す文。失敗の原文（ブラウザの英語の文を含む）をそのまま残し、包み直した失敗は元の失敗の文も添える。
+ * 画面へ出す文は {@link screenMsgOf}
+ */
 function msgOf(e: unknown): string {
+  if (e instanceof WrappedFetchError) return `${e.message}（元の失敗: ${msgOf(e.original)}）`
   return e instanceof Error ? e.message : String(e)
+}
+
+/** どの取得で失敗したかを添えて包み直した失敗。画面の文は日本語にし、元の失敗（英語の文を含む）は記録のために持つ */
+class WrappedFetchError extends Error {
+  constructor(message: string, readonly original: unknown) {
+    super(message)
+  }
+}
+
+/** 画面へ出す文。通信そのものの失敗はブラウザの英語の文にせず「通信できませんでした」（→ `fetchFailureReason`） */
+function screenMsgOf(e: unknown): string {
+  return fetchFailureReason(e)
 }
 
 function fmt(d: Date): string {

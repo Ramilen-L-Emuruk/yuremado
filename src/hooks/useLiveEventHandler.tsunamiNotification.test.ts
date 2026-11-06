@@ -79,13 +79,13 @@ describe('津波のブラウザ通知（受け手）', () => {
     handle(report([area('石川県能登', '360', 'Watch', 'Watch')], {
       cancelledAreas: [area('青森県日本海沿岸', '200', 'Unknown', 'Watch')],
     }))
-    expect(notify).toHaveBeenCalledWith('津波注意報', '石川県能登\n解除：青森県日本海沿岸', 'tsunami', true)
+    expect(notify).toHaveBeenCalledWith('津波注意報', '石川県能登\n解除：青森県日本海沿岸', 'tsunami', true, { tab: 'tsunami' })
   })
 
   it('対照: 津波予報だけの報は閉じるまで残さない', () => {
     const { handle } = setup()
     handle(report([area('石川県能登', '360', 'Forecast')]))
-    expect(notify).toHaveBeenCalledWith('津波予報（若干の海面変動）', '石川県能登', 'tsunami', false)
+    expect(notify).toHaveBeenCalledWith('津波予報（若干の海面変動）', '石川県能登', 'tsunami', false, { tab: 'tsunami' })
   })
 
   // 2026-10-19 ユーザー選択「送る (Recommended)」
@@ -95,7 +95,7 @@ describe('津波のブラウザ通知（受け手）', () => {
     notify.mockClear()
     const text = '現在、大津波警報・津波警報・津波注意報を発表している沿岸はありません。'
     handle(report([], { cancelled: true, cancelReason: 'lifted', warningComments: [{ key: 'VTSE41', text }] } as Partial<JMATsunami>))
-    expect(notify).toHaveBeenCalledWith('津波警報等の解除', text, 'tsunami', false)
+    expect(notify).toHaveBeenCalledWith('津波警報等の解除', text, 'tsunami', false, { tab: 'tsunami' })
   })
 
   it('安全弁: 同じ解除が 2 度届いても 1 回だけ送る', () => {
@@ -114,7 +114,7 @@ describe('津波のブラウザ通知（受け手）', () => {
     handle(report([area('石川県能登', '360', 'Watch')]))
     notify.mockClear()
     handle(report([], { cancelled: true, cancelReason: 'retracted', headType: 'VTSE41', cancelText: '津波注意報を取り消します。' } as Partial<JMATsunami>))
-    expect(notify).toHaveBeenCalledWith('津波警報等の取消', '津波注意報を取り消します。', 'tsunami', false)
+    expect(notify).toHaveBeenCalledWith('津波警報等の取消', '津波注意報を取り消します。', 'tsunami', false, { tab: 'tsunami' })
   })
 
   it('正: 取消理由を持たない取消は定型の文を送る', () => {
@@ -122,7 +122,7 @@ describe('津波のブラウザ通知（受け手）', () => {
     handle(report([area('石川県能登', '360', 'Watch')]))
     notify.mockClear()
     handle(report([], { cancelled: true, cancelReason: 'retracted', headType: 'VTSE41' } as Partial<JMATsunami>))
-    expect(notify).toHaveBeenCalledWith('津波警報等の取消', '津波警報等は誤って発表されたため取り消されました。', 'tsunami', false)
+    expect(notify).toHaveBeenCalledWith('津波警報等の取消', '津波警報等は誤って発表されたため取り消されました。', 'tsunami', false, { tab: 'tsunami' })
   })
 
   it('正: 失効は「津波予報の失効」を送る', () => {
@@ -130,16 +130,7 @@ describe('津波のブラウザ通知（受け手）', () => {
     handle(report([area('石川県能登', '360', 'Forecast')]))
     notify.mockClear()
     handle(report([], { cancelled: true, cancelReason: 'expired' } as Partial<JMATsunami>))
-    expect(notify).toHaveBeenCalledWith('津波予報の失効', '津波予報は失効しました。', 'tsunami', false)
-  })
-
-  // 安全弁（2026-10-23 ユーザー選択「安全弁では「失効」と名乗らない (Recommended)」）: 標準版の 24 時間の安全弁は通知しない
-  it('安全弁: 標準版の安全弁で消える津波は「失効」の通知を出さない', () => {
-    const { handle } = setup()
-    handle(report([area('石川県能登', '360', 'Forecast')], { eventId: undefined }))
-    notify.mockClear()
-    handle(report([], { eventId: undefined, cancelled: true, cancelReason: 'expired', failsafeExpiry: true } as Partial<JMATsunami>))
-    expect(notify).not.toHaveBeenCalled()
+    expect(notify).toHaveBeenCalledWith('津波予報の失効', '津波予報は失効しました。', 'tsunami', false, { tab: 'tsunami' })
   })
 
   // 安全弁: 津波情報だけの取消（警報等は続いている）は通知しない。終わったと読める通知で警報の通知を置き換えないため
@@ -161,7 +152,7 @@ describe('津波のブラウザ通知（受け手）', () => {
       { name: '輪島港', height: { value: 1.2, description: '1.2m' } },
       { name: '珠洲市長橋' },
     ] } as Partial<JMATsunami>))
-    expect(notify).toHaveBeenCalledWith('津波観測に関する情報', '輪島港 1.2m、珠洲市長橋 到達確認', 'tsunami-obs', false)
+    expect(notify).toHaveBeenCalledWith('津波観測に関する情報', '輪島港 1.2m、珠洲市長橋 到達確認', 'tsunami-obs', false, { tab: 'tsunami' })
   })
 
   // 等級を発表するのは VTSE41 だけ（2026-10-25 ユーザー選択「A 発表は VTSE41 だけ (Recommended)」）。
@@ -185,7 +176,7 @@ describe('津波のブラウザ通知（受け手）', () => {
       notify.mockClear()
       handle(copied({ infoName: '津波観測に関する情報', observations: [{ name: '輪島港', height: { value: 1.2, description: '1.2m' } }] }))
       expect(notify).toHaveBeenCalledTimes(1)
-      expect(notify).toHaveBeenCalledWith('津波観測に関する情報', '輪島港 1.2m', 'tsunami-obs', false)
+      expect(notify).toHaveBeenCalledWith('津波観測に関する情報', '輪島港 1.2m', 'tsunami-obs', false, { tab: 'tsunami' })
     })
 
     it('対照: 等級が同じでも VTSE41 の続報は発表の通知を出す', () => {
@@ -193,7 +184,7 @@ describe('津波のブラウザ通知（受け手）', () => {
       handle(issued())
       notify.mockClear()
       handle(report([area('石川県能登', '360', 'Warning', 'Warning'), area('富山県', '370', 'Watch')], { headType: 'VTSE41' }))
-      expect(notify).toHaveBeenCalledWith('津波警報', '石川県能登、富山県', 'tsunami', true)
+      expect(notify).toHaveBeenCalledWith('津波警報', '石川県能登、富山県', 'tsunami', true, { tab: 'tsunami' })
     })
 
     it('対照: 観測値が同じ VTSE51 の再送では、観測の通知も出さない', () => {
@@ -220,13 +211,13 @@ describe('津波のブラウザ通知（受け手）', () => {
       handle(issued())
       notify.mockClear()
       handle(report([], { headType: 'VTSE52', infoName: '沖合の津波観測に関する情報', observations: [{ name: '岩手釜石沖' }] } as Partial<JMATsunami>))
-      expect(notify).toHaveBeenCalledWith('沖合の津波観測に関する情報', '岩手釜石沖 到達確認', 'tsunami-obs', false)
+      expect(notify).toHaveBeenCalledWith('沖合の津波観測に関する情報', '岩手釜石沖 到達確認', 'tsunami-obs', false, { tab: 'tsunami' })
     })
 
-    it('安全弁: 種別を持たない報（P2PQuake）は発表の通知を出す', () => {
+    it('安全弁: 種別を持たない報は発表の通知を出す', () => {
       const { handle } = setup()
       handle(report([area('石川県能登', '360', 'Warning')], { eventId: undefined }))
-      expect(notify).toHaveBeenCalledWith('津波警報', '石川県能登', 'tsunami', true)
+      expect(notify).toHaveBeenCalledWith('津波警報', '石川県能登', 'tsunami', true, { tab: 'tsunami' })
     })
   })
 
@@ -259,13 +250,13 @@ describe('津波のブラウザ通知（受け手）', () => {
     expect(notify.mock.calls[0][0]).toBe('津波警報等の解除')
   })
 
-  // P2PQuake など理由を持たない解除は、画面と同じく解除へ倒す
+  // 理由を持たない解除は、画面と同じく解除へ倒す
   it('正: 理由を持たない解除は解除として送る', () => {
     const { handle } = setup()
     handle(report([area('石川県能登', '360', 'Watch')]))
     notify.mockClear()
     handle(report([], { cancelled: true } as Partial<JMATsunami>))
-    expect(notify).toHaveBeenCalledWith('津波警報等の解除', '津波警報等は全て解除されました。', 'tsunami', false)
+    expect(notify).toHaveBeenCalledWith('津波警報等の解除', '津波警報等は全て解除されました。', 'tsunami', false, { tab: 'tsunami' })
   })
 
   it('対照: 等級を読めなかった区域だけの報は閉じるまで残さない', () => {

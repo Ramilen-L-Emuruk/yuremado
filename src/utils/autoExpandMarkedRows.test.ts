@@ -25,7 +25,7 @@ describe('印の付いた行を見せるために開く行', () => {
     expect([...(open ?? [])].sort()).toEqual(['area:能登', 'city:能登/輪島市', 'pref:石川県'])
   })
 
-  // 正: 市町村に紐付かない観測点（P2PQuake 経路）は 2 段でよい。
+  // 正: 市町村に紐付かない観測点は 2 段でよい。
   it('市町村に紐付かない観測点は県と区域だけ開く', () => {
     const open = intensityRowsToExpand(rows, marksOf(rowMarkKey.station('珠洲')))
     expect([...(open ?? [])].sort()).toEqual(['area:能登', 'pref:石川県'])

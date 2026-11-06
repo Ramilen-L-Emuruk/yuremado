@@ -9,6 +9,10 @@ const h = vi.hoisted(() => ({
   loadHypocenterIndex: vi.fn(),
   loadHypocenterYear: vi.fn(),
 }))
+// 緊急地震速報は 1 通も無い（秒はカタログからだけ決まる）
+vi.mock('../services/dmdataReplay', () => ({
+  fetchDmdataEewOrigins: vi.fn(async () => ({ finals: [], canceledIds: [], complete: true })),
+}))
 vi.mock('../utils/hypocenterCatalog', () => ({
   loadHypocenterIndex: h.loadHypocenterIndex,
   loadHypocenterYear: h.loadHypocenterYear,
@@ -43,8 +47,7 @@ const flush = () => act(async () => { await vi.advanceTimersByTimeAsync(0) })
 
 function render() {
   return renderHook(() =>
-    // API キーを渡さないので緊急地震速報の一覧は取りに行かない（カタログだけを見る）。
-    useQuakeOriginSeconds({ enabled: true, isDmdss: true, apiKey: '', classifications: null, quakes: QUAKES, activeEEWs: NO_EEWS, replayOffsetMs: null }),
+    useQuakeOriginSeconds({ enabled: true, sources: { relay: ['telegram.earthquake', 'eew.warning'], keyForecast: false }, keyEndpoint: null, quakes: QUAKES, activeEEWs: NO_EEWS, replayOffsetMs: null }),
   )
 }
 

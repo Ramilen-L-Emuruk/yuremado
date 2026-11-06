@@ -26,7 +26,7 @@ const nankai: JMANankai = {
 } as unknown as JMANankai
 
 function Banner({ speaking, readsAppendix }: { speaking: boolean; readsAppendix: boolean }) {
-  const banners = useSpecialInfoBanners({ nankai, nankaiCommentary: null, kohatsu: null, quakeNotice: null, earthquakeCount: null })
+  const banners = useSpecialInfoBanners({ nankai, nankaiCommentary: [], kohatsu: [], quakeNotice: [], earthquakeCount: [] })
   return (
     <SpecialInfoBanner
       banners={banners}

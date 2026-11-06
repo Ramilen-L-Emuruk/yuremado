@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import type { JMALpgm } from '../types/earthquake'
-import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, recordLpgmRetractions, type LpgmRetraction } from './lpgmRetraction'
+import type { JMALpgm, JMAQuake } from '../types/earthquake'
+import { addLpgmRetraction, applyLiveLpgm, foldLpgmHistory, isRetractedLpgm, lpgmRetractionOf, recordLpgmRetractions, lpgmRetractionsIntoCards, LPGM_INFO_NAME, type LpgmRetraction } from './lpgmRetraction'
 
 const at = (iso: string) => Date.parse(iso)
 
@@ -141,5 +141,31 @@ describe('長周期の取消の台帳（lpgmRetraction）', () => {
       const 続報 = lpgm({ time: '2024-01-01T07:45:00Z', created: '2024-01-01T07:45:10Z', maxClass: 4 })
       expect(applyLiveLpgm(new Map([[発表.eventId, 発表]]), 続報).get(発表.eventId)).toBe(続報)
     })
+  })
+})
+
+// 長周期の取消を、地震情報の一部取消と同じく地震カードへ積む（2026-11-03 ユーザー選択「取消の文と理由を出す (Recommended)」）
+describe('lpgmRetractionsIntoCards', () => {
+  const card = { kind: 'quake', id: 'dmdata-quake-20240101161010-3', issue: { type: '震源・震度情報' } } as unknown as JMAQuake
+  const r: LpgmRetraction = { ...lpgmRetractionOf(取消), cancelText: '先ほどの、長周期地震動に関する観測情報を取り消します。' }
+
+  // 正: 同じ地震のカードに、情報名と気象庁の理由を積む
+  it('同じ地震のカードへ情報名と理由を積む', () => {
+    const [out] = lpgmRetractionsIntoCards([card], [r])
+    expect(out.retractedReports).toEqual([{ issueType: LPGM_INFO_NAME, reportTime: 取消.time, cancelText: r.cancelText }])
+  })
+
+  // 対照: 別の地震のカードには積まない（同じ配列を返す）
+  it('別の地震のカードは触らない', () => {
+    const cards = [card]
+    expect(lpgmRetractionsIntoCards(cards, [{ ...r, eventId: '20240101170000' }])).toBe(cards)
+  })
+
+  // 安全弁: 同じ取消を二度積まない（ライブと履歴で同じ取消が届く）・取消表示中のカードは触らない
+  it('同じ取消は二度積まず、取消表示中のカードは触らない', () => {
+    const once = lpgmRetractionsIntoCards([card], [r])
+    expect(lpgmRetractionsIntoCards(once, [r])).toBe(once)
+    const cancelled = [{ ...card, cancelledAt: new Date() }]
+    expect(lpgmRetractionsIntoCards(cancelled, [r])).toBe(cancelled)
   })
 })

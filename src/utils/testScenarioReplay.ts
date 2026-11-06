@@ -20,6 +20,21 @@ function shiftIsoNullable(iso: string | null, deltaMs: number): string | null {
   return iso === null ? null : shiftIso(iso, deltaMs)
 }
 
+/** 電文の鍵（`題名|作成時刻`。→ `utils/telegramKey.ts`）の時刻だけをずらす。 */
+function shiftTelegramKey(key: string, deltaMs: number): string {
+  const i = key.lastIndexOf('|')
+  if (i < 0) {
+    // 時刻を持たない鍵は、ずらした他の報と新旧が食い違う。止めはしないが、黙って通さない
+    log.warn(`[testScenario] 電文の鍵に時刻が無いためずらさずに通します: ${key}`)
+    return key
+  }
+  const original = key.slice(i + 1)
+  const shifted = shiftIso(original, deltaMs)
+  // 電文の `Control/DateTime` は秒までの形（`…:41Z`）。ずらした値もその形に揃える。
+  const sameForm = original.includes('.') ? shifted : shifted.replace(/\.\d{3}Z$/, 'Z')
+  return `${key.slice(0, i + 1)}${sameForm}`
+}
+
 type IdRemapper = (original: string | undefined) => string | undefined
 
 // シナリオ1回分の再生を通して、元のeventId文字列 -> 新IDの対応を一貫させる。
@@ -86,6 +101,9 @@ function remapAppEvent(event: AppEvent, deltaMs: number, remapId: IdRemapper): A
         ...(event.createdAtMs !== undefined && { createdAtMs: event.createdAtMs + deltaMs }),
         issue: { ...event.issue, time: shiftIso(event.issue.time, deltaMs) },
         earthquake: { ...event.earthquake, time: shiftIso(event.earthquake.time, deltaMs) },
+        // 電文の鍵（`題名|作成時刻`）の時刻も動かす。開いたカードの「更新」と報の一覧はこの時刻を
+        // 読むので、止めると見出しの時刻はずれたのに「更新」だけが収録当時の日付を出す。
+        ...(event.telegramKey !== undefined && { telegramKey: shiftTelegramKey(event.telegramKey, deltaMs) }),
       }
     }
     case 'tsunami': {
@@ -300,7 +318,7 @@ export function instantiateScenario(scenario: TestScenarioFile, now: Date): Repl
   return scenario.entries.map(entry => ({
     replayTime: new Date(now.getTime() + entry.offsetMs),
     silent: entry.silent,
-    // **電文ログへは載せない**（`logEntry: null`）。実地震テストシナリオは電文を読んだ結果を
+    // **電文ログへは載せない**（`logEntry: null`）。シナリオは電文を読んだ結果を
     // 収録したもので、電文の本文そのものを持っていない（ローカル履歴アーカイブと同じ）。
     logEntry: null,
     payload: remapPayload(entry.payload, deltaMs, remapId),

@@ -5,25 +5,24 @@
 // Service Worker から出した通知は、ここで処理を書かないと押しても閉じるだけになる。
 // 押したら、このアプリの画面を前面に出し、無ければアプリを開く。
 //
-// **探すのは、このスコープのアプリの画面だけ。** standard 版のスコープ（/yuremado/）は DMDSS 版
-// （/yuremado/dmdss/。vite.config.ts の `base`）の URL も包むので、URL の前方一致だけで探すと、standard 版の
-// 通知を押して DMDSS 版の画面が前に出る。内側のスコープの画面は外す。
+// **開き先**（通知の data の `open`。`open=earthquake&quake=…` の形。作るのも読むのもアプリの
+// src/utils/notificationOpen.ts で、ここは中身を見ない）があれば、前に出せた画面へ文で渡し、
+// アプリを開くときは URL の問い合わせに付ける。文の種類は src/utils/notificationClick.ts の
+// NOTIFICATION_OPEN_MESSAGE と揃える（scripts/swImportScripts.test.ts が見る）。
+//
+// **探すのは、このスコープのアプリの画面だけ**（URL がスコープで始まる画面）。
 // Service Worker が扱っていない画面（強制再読み込みの直後など）も拾う（`includeUncontrolled`）——
 // 拾わないと、開いているのに 2 つ目のアプリを開き、DMDATA の同時接続枠を余計に食う。
 //
 // 失敗はここ（Service Worker のコンソール）にしか残せない。
-const NESTED_SCOPE_DIRS = ['dmdss/']
-
 function isOwnWindow(url, scopePath) {
-  const path = new URL(url).pathname
-  if (!path.startsWith(scopePath)) return false
-  // 末尾のスラッシュが無い形（/yuremado/dmdss）も内側として外す（vite.config.ts の navigateFallbackDenylist と揃える）
-  return !NESTED_SCOPE_DIRS.some(dir => !scopePath.endsWith(dir)
-    && (path.startsWith(scopePath + dir) || path === scopePath + dir.slice(0, -1)))
+  return new URL(url).pathname.startsWith(scopePath)
 }
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
+  const data = event.notification.data
+  const open = data && typeof data.open === 'string' ? data.open : ''
   event.waitUntil((async () => {
     const scope = self.registration.scope
     const scopePath = new URL(scope).pathname
@@ -35,13 +34,22 @@ self.addEventListener('notificationclick', (event) => {
       if (target) {
         try {
           await target.focus()
+          // 前に出せてから渡す（断られて開き直すときに、裏の画面と新しい画面の両方で効かせない）
+          if (open) {
+            try {
+              target.postMessage({ type: 'notification-open', open })
+            } catch (err) {
+              console.error('[notify] 通知を押してアプリの画面を前に出したが、開き先を渡せなかった', open, err)
+            }
+          }
           return
         } catch (err) {
           console.error('[notify] 通知を押したが、アプリの画面を前に出せなかったので、開き直す', err)
         }
       }
-      const opened = await self.clients.openWindow(scope)
-      if (!opened) console.error('[notify] 通知を押したが、アプリを開けなかった', scope)
+      const url = open ? `${scope}?${open}` : scope
+      const opened = await self.clients.openWindow(url)
+      if (!opened) console.error('[notify] 通知を押したが、アプリを開けなかった', url)
     } catch (err) {
       console.error('[notify] 通知を押したときの処理に失敗した', err)
     }

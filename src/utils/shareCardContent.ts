@@ -1,11 +1,12 @@
 import type { EEWAlert, JMAQuake, JMATsunami } from '../types/earthquake'
 import type { MapMode } from '../components/Map/mapTypes'
-import { canPresentLpgmClass, computeDisplayEEWLevel, eewKindLabel, eewMaxLpgmClassInfo, eewMaxScale, eewMaxScaleInfo, isEewScaleZeroForecast, isProvisionalHypocenter, statesEewLpgmClassZero } from './eew'
+import { canPresentLpgmClass, computeDisplayEEWLevel, eewDisplaySerial, eewKindLabel, eewMaxLpgmClassInfo, eewMaxScale, eewMaxScaleInfo, isEewScaleZeroForecast, isProvisionalHypocenter, statesEewLpgmClassZero } from './eew'
 import { QUAKE_ARRIVAL_TIME_LABEL, formatDateTime, formatQuakeDateTime, formatTimeMin, formatDepth, formatMagnitude, formatMagnitudeCondition, formatMagnitudeWithCondition, formatTsunamiGrade, hasDepth, hasHypocenterFacts } from './formatters'
 import { getIntensityColor, getIntensityLabelWithOrAbove, getIntensityLabelWithApproxAbove, isValidIntensityScale } from './intensity'
 import { isMaxScaleUnreceived } from './quakePoints'
 import { ATTRIBUTION_SOURCES, attributionLine, EEW_NOTICE, type ShareCardHeader } from './shareCard'
 import { isTsunamiForecastOnly, sourceEarthquakeTime, tsunamiOverallGrade } from './tsunami'
+import { shownTsunamiSources } from './tsunamiSourceLinks'
 import { hasKnownEpicenter } from './geo'
 import { kyoshinDetectionScaleLabel } from './kyoshinIntensity'
 import { getLpgmClassLabelWithApproxAbove } from './lpgm'
@@ -22,6 +23,8 @@ export interface ShareCardContentInput {
   mode: MapMode
   quake: JMAQuake | null
   tsunamis: JMATsunami[]
+  /** 津波の原因地震を結ぶ相手の地震カード（津波タブに渡すものと同じ。→ `shownTsunamiSources`） */
+  tsunamiSourceQuakes: readonly JMAQuake[]
   eews: EEWAlert[]
   /**
    * 地図に描いているか（設定の値をそのまま渡す）。
@@ -35,7 +38,7 @@ export interface ShareCardContentInput {
   showPublicStations: boolean
   /**
    * 強震モニタの揺れ検知（緊急地震速報が無いときのリアルタイム震度の見出しに使う）。検知していなければ null。
-   * `maxIndex` は推定最大震度の強震モニタの段（ブラウザ通知の本文と同じ値。`useKyoshinAlerts` の `effectiveKyoshinMaxIndex`）。
+   * `maxIndex` は最大リアルタイム震度の強震モニタの段（ブラウザ通知の本文と同じ値。`useKyoshinAlerts` の `effectiveKyoshinMaxIndex`）。
    */
   kyoshinDetection: { state: 'confirmed' | 'candidate'; maxIndex: number } | null
 }
@@ -61,6 +64,7 @@ export function buildShareCardContent(
     mode,
     quake,
     tsunamis,
+    tsunamiSourceQuakes,
     eews,
     showBathymetry,
     showActiveFaults,
@@ -93,7 +97,7 @@ export function buildShareCardContent(
   if (liveEews.length > 0) notices.unshift(EEW_NOTICE)
 
   const base =
-    mode === 'tsunami' ? tsunamiContent(tsunamis) : mode === 'kyoshin' ? kyoshinContent(liveEews, kyoshinDetection) : quakeContent(quake)
+    mode === 'tsunami' ? tsunamiContent(tsunamis, tsunamiSourceQuakes) : mode === 'kyoshin' ? kyoshinContent(liveEews, kyoshinDetection) : quakeContent(quake)
   return { ...base, notices, shareText: buildShareText(base.header, appUrl) }
 }
 
@@ -165,7 +169,7 @@ function quakeContent(quake: JMAQuake | null): ContentWithoutNotices {
   }
 }
 
-function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
+function tsunamiContent(tsunamis: JMATsunami[], quakes: readonly JMAQuake[]): ContentWithoutNotices {
   // **解除表示中（`cancelledAt`）も外す。** 等級の判定（`tsunamiOverallGrade`・`isTsunamiForecastOnly`）は
   // どちらも外すので、ここで残すと見出しは発表中の津波、区域数・震源・時刻は解除された津波、と出どころが割れる。
   const live = tsunamis.filter((t) => !t.cancelled && !t.cancelledAt)
@@ -184,7 +188,8 @@ function tsunamiContent(tsunamis: JMATsunami[]): ContentWithoutNotices {
   // **震源名と規模が同じ別の地震には地震発現時刻を添える**（2026-10-21 ユーザー選択「B は案1」。全期間の津波電文 651 通のうち
   // 1 通。2023-12-03 の VTSE41 がフィリピン付近の M7.0 を 2 つ載せた）。添えないと同じ文が 2 つ並ぶか、1 つに畳まれて地震が消える。
   const collected: { text: string; time: string | undefined; ms: number }[] = []
-  for (const source of live.flatMap((t) => t.sourceEarthquakes ?? [])) {
+  // 原因地震は、結べた地震カードの上段の値で並べる（津波カードの原因地震の行・地図の×印と同じ値。→ `shownTsunamiSources`）。
+  for (const source of live.flatMap((t) => shownTsunamiSources(t, quakes))) {
     // 規模が数値で無いときは説明を出す（「Ｍ８を超える巨大地震」）。落とすと、**最も重大な
     // 地震ほど震源名だけの薄い画像になる**。
     // 規模の記号は電文の種別（`Mj7.6`）。津波カードの原因地震の行・地図の吹き出しと揃える
@@ -239,7 +244,7 @@ function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['
   const subtitle = sortEewsBySeverity(liveEews).map(eewSubtitle).join(' ／ ')
   const info = eewMaxScaleInfo(eew)
   const knownScale = isValidIntensityScale(info.scale) && info.scale >= 0
-  const serial = eew.issue?.serial
+  const serial = eewDisplaySerial(eew)
   // 日時として読めない発生時刻は落とすが、**報番号は残す**（別の事実なので巻き込まない）。
   // 両方とも無ければ欄ごと出さない。
   // **値が無いときは整形を呼ばない**（「非常に強い揺れを検知」の報は発生時刻を持たない）。呼ぶと
@@ -267,11 +272,11 @@ function kyoshinContent(liveEews: EEWAlert[], detection: ShareCardContentInput['
 }
 
 /**
- * 緊急地震速報が無いときのリアルタイム震度の見出し。**揺れを検知していれば、検知と推定最大震度を出す**（2026-10-23 ユーザー選択
+ * 緊急地震速報が無いときのリアルタイム震度の見出し。**揺れを検知していれば、検知と最大リアルタイム震度を出す**（2026-10-23 ユーザー選択
  * 「揺れ検知中は推定最大震度を出す (Recommended)」。文面は 2026-10-24 ユーザー選択「この文面で (Recommended)」）。見出しは
- * ウィンドウタイトルと同じ「揺れ検知」／「揺れの可能性」、副見出しはブラウザ通知の本文と同じ「推定最大震度 5弱（強震モニタ）」。
- * 推定最大震度の呼び名は通知と同じ（`kyoshinDetectionScaleLabel`）。震度0 未満は「0以下」と焼く（2026-10-29 ユーザー選択
- * 「「0以下」を焼く (Recommended)」。測った値で、不明ではない）。欠測なら副見出しは出さない（通知は「?」を出すが、画像は訂正できないので焼かない）。
+ * ウィンドウタイトルと同じ「揺れ検知」／「揺れの可能性」、副見出しはブラウザ通知の本文と同じ「最大リアルタイム震度 5弱」。
+ * 呼び名「最大リアルタイム震度」は通知・検知カードと同じ（2026-10-31 ユーザー承認「折り返したりが起きないなら最大リアルタイム震度がいいですね」。段の名前は `kyoshinDetectionScaleLabel`）。震度0 未満は「0未満」と焼く（焼くことは 2026-10-29 ユーザー選択
+ * 「「0以下」を焼く (Recommended)」、呼び名は 2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」。測った値で、不明ではない）。欠測なら副見出しは出さない（通知は「?」を出すが、画像は訂正できないので焼かない）。
  */
 function detectionContent(detection: ShareCardContentInput['kyoshinDetection']): ContentWithoutNotices {
   if (!detection) return { header: { title: 'リアルタイム震度' }, filenameLabel: 'realtime' }
@@ -279,7 +284,7 @@ function detectionContent(detection: ShareCardContentInput['kyoshinDetection']):
   return {
     header: {
       title: detection.state === 'confirmed' ? '揺れ検知' : '揺れの可能性',
-      subtitle: label ? `推定最大震度 ${label}（強震モニタ）` : undefined,
+      subtitle: label ? `最大リアルタイム震度 ${label}` : undefined,
     },
     filenameLabel: 'realtime',
   }

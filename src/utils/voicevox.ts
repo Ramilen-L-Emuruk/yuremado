@@ -1732,6 +1732,19 @@ export function speakWithVoicevox(...args: Parameters<typeof speakOnce>): Promis
   })
 }
 
+/**
+ * 読み上げの本数（{@link isSpeaking}）に数えずに読む。使うのは時報だけ（`hooks/useTimeSignal.ts`）。
+ *
+ * 数えると、時報の数秒のあいだ既定の状態へ戻す操作（アイドル復帰・自動タブ切替）が見送られる。時報は
+ * そうした判断に関わらないので数えない（2026-11-04 ユーザー選択「扱わない (Recommended)」）。
+ *
+ * **割り込みはふつうの読み上げと同じ。** 呼べば鳴っている読み上げを止めるので、呼ぶ側が先に
+ * {@link isSpeaking} を見ること。逆に、後から来た電文の読み上げはこの声を止める（それで正しい）。
+ */
+export function speakWithVoicevoxUncounted(...args: Parameters<typeof speakOnce>): Promise<SpeechOutcome> {
+  return speakOnce(...args)
+}
+
 /** {@link speakWithVoicevox} の本体。読み上げの本数を数えるのは包む側の責務。 */
 async function speakOnce(
   baseUrl: string,
@@ -1832,7 +1845,7 @@ async function speakOnce(
       log.debug('[VoiceVox] 先行合成が使えなかったため作り直す')
     }
     // 切り出し語（緊急地震速報の第 1 フェーズ）は起動時に作り置きしてある。
-    // 当たれば合成の往復を丸ごと省けるので、間を置かない経路でも待たずに鳴らせる。
+    // 当たれば合成の往復を丸ごと省けるので、先行合成が使えない経路（読む文を音の待ち明けに決める EEW）でも待たずに鳴らせる。
     // 間に合っていなければ待たずに普通の合成へ落ちる（`takeFixedPhrase` の注記を参照）。
     const fixed = takeFixedPhrase(baseUrl, speakerId, chunks[0])
     if (fixed) return fixed

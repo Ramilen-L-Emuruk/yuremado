@@ -41,7 +41,7 @@ const opts = (pubHistEvents: { idPrefix: string; dir: string }[]) => ({
   dates: ['20160416'],
   windowStart: new Date('2016-04-16T00:00:00+09:00'),
   windowEnd: new Date('2016-04-17T00:00:00+09:00'),
-  repoRoot: ROOT,
+  catalogDir: join(ROOT, 'scripts', 'fixtures', 'hypocenter-catalog'),
 })
 
 beforeEach(async () => {

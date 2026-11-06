@@ -17,8 +17,8 @@ const LABELS: Record<ShareCardState, string> = {
 
 /** 状態に応じた枠と文字の色。押せるかどうか（hover・disabled）は状態によらず共通。 */
 const TONES: Record<ShareCardState, string> = {
-  idle: 'border-slate-600/80 text-slate-200',
-  working: 'border-slate-600/80 text-slate-200',
+  idle: 'border-border text-secondary hover:text-white',
+  working: 'border-border text-secondary',
   error: 'border-red-500/70 text-red-300',
   copied: 'border-emerald-500/70 text-emerald-300',
   copyFailed: 'border-amber-500/70 text-amber-300',
@@ -33,7 +33,7 @@ export function ShareCardButton({ state, onClick }: ShareCardButtonProps) {
       disabled={state === 'working'}
       aria-label={label}
       title={label}
-      className={`flex h-9 w-9 items-center justify-center rounded-md border bg-slate-900/80 backdrop-blur-xs transition-colors hover:bg-slate-800/90 disabled:opacity-60 ${TONES[state]}`}
+      className={`flex h-9 w-9 items-center justify-center rounded-md border bg-panel transition-colors motion-reduce:transition-none hover:bg-white/10 disabled:opacity-60 ${TONES[state]}`}
     >
       <StateIcon state={state} className="h-5 w-5" />
     </button>

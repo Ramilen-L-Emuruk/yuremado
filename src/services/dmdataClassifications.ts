@@ -21,6 +21,65 @@ export type DmdataClassification = 'eew.forecast' | 'eew.warning' | 'telegram.ea
  */
 export const PREFERRED_CLASSIFICATIONS: readonly DmdataClassification[] = ['eew.forecast', 'telegram.earthquake']
 
+/** 中継（yuremado-relay）が申し込んでいる区分。予報は中継しない（docs/relay-server-design.md §4.1） */
+export const RELAY_CLASSIFICATIONS: readonly DmdataClassification[] = ['telegram.earthquake', 'eew.warning']
+
+/**
+ * 中継の一覧・束を引くときの区分。
+ *
+ * 受けている区分（中継の区分と自分の鍵の予報を合わせたもの）から予報を外す —— 予報キーの札でない中継は予報を
+ * 返さないので、予報を含めて引くと緊急地震速報を VXSE45 で探し、中継にある VXSE43 を 1 通も拾わない。
+ * **中継が予報キーを受け付けている（`relayForecast`）なら予報を足す** —— 中継の一覧・束に予報が載るので、
+ * 自分の鍵の端末と同じく VXSE45 で探す（設計書 §0 の 2026-10-31「予報キー」の行「鍵の端末と同じ結果」）。
+ * まだ何も受けていなければ中継の既定の区分で引く。
+ */
+export function relayRestClassifications(
+  received: readonly DmdataClassification[] | null,
+  relayForecast: boolean,
+): readonly DmdataClassification[] {
+  const relayOnly = (received ?? []).filter(c => c !== 'eew.forecast')
+  const base = relayOnly.length > 0 ? relayOnly : RELAY_CLASSIFICATIONS
+  return relayForecast ? [...base, 'eew.forecast'] : base
+}
+
+/** 過去の電文（リプレイ・発生時刻の秒）を引く先と区分。 */
+export interface RestSources {
+  /** 中継の一覧・束を引く区分 */
+  readonly relay: readonly DmdataClassification[]
+  /** 予報（`eew.forecast`）を自分の鍵で DMDATA から引くか */
+  readonly keyForecast: boolean
+}
+
+/**
+ * 過去の電文をどこからどの区分で引くかを決める。
+ *
+ * **ライブと同じ電文を引く**（設計書 §0 の 2026-10-31「自分で契約した鍵を入れた利用者も、予報キーの端末と同じ動きになるようにする」の行）。ライブでは、自分の鍵の予報が
+ * 通っている間は予報を鍵から受け、中継の警報（VXSE43）を採らない。過去の電文も予報は鍵で DMDATA から引き、
+ * 中継からは警報を外して引く。中継が予報キーを受け付けているなら鍵は使わない
+ * （中継の一覧・束に予報が載る → {@link relayRestClassifications}）。
+ *
+ * **鍵の接続がまだ答えていなくても鍵で引く。** 鍵の WebSocket は契約の同時接続枠が埋まっていると 409 で繋がらず、
+ * 繋がるまで区分が分からない。過去の電文は枠を使わずに引けるので、区分が分かるのを待つと予報だけが
+ * 引けないまま残る。鍵で引けなかったときは中継の警報で埋める（`replaySources.ts` の `fetchReplayFromSources`）。
+ * 鍵では予報を受けられないと配信元が答えたときだけ、初めから中継の警報で引く。
+ *
+ * @param received 受けている区分（中継の区分と自分の鍵の予報を合わせたもの）。まだ何も受けていなければ null
+ * @param relayForecast 中継が予報キーを受け付けているか
+ * @param hasKey 有効な形の APIキーが入っているか
+ * @param keyForecastRefused この鍵では予報を受けられないと分かったか（交渉で予報が外れた・認証で断られた・鍵の文字が
+ *   使えない。答える前・鍵が無いときは false。→ `DmdataWebSocket.onForecastRefused`）
+ */
+export function restSources(
+  received: readonly DmdataClassification[] | null,
+  relayForecast: boolean,
+  hasKey: boolean,
+  keyForecastRefused: boolean,
+): RestSources {
+  const relay = relayRestClassifications(received, relayForecast)
+  const keyForecast = hasKey && !relayForecast && !keyForecastRefused
+  return keyForecast ? { relay: relay.filter(c => c !== 'eew.warning'), keyForecast } : { relay, keyForecast }
+}
+
 /** 予報を受けられないときに代わりに試す区分。 */
 const FALLBACK_FOR: Partial<Record<DmdataClassification, DmdataClassification>> = {
   'eew.forecast': 'eew.warning',

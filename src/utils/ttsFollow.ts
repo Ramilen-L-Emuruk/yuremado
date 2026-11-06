@@ -271,10 +271,9 @@ export function hasBorrowedHypocenterFollowTarget(segments: readonly SpeechSegme
 /**
  * 気象庁が書いた文を読み上げたときに、画面へ開く先がある電文の種別。
  *
- * **入らないのは地震情報だけ。** あの付加文は元から畳んでおらず、開く相手がいない
- * （→ quake-spec.md §8「固定付加文（その他）…はそのまま出す」）。長周期地震動観測情報は
- * **畳んである**ので入る（同 §8「気象庁からの補足は畳んで置く」）—— 読み上げる 3 ブロックが
- * そのまま補足の中身で、開かなければ声だけが本文を伝えることになる。
+ * 地震情報と長周期地震動観測情報の付加文は、地震カードの「気象庁からの補足」に**畳んである**
+ * （2026-11-01 選択「畳んで、読み上げで開く (Recommended)」）。読み上げる 3 ブロックがそのまま
+ * 補足の中身で、開かなければ声だけが本文を伝えることになる。
  *
  * ここに無い種別では参照を付けない＝追従セッションを立てない。立ててしまうと、誰も反応しない
  * セッションが始まっては終わる状態になり、**症状が出ないぶん後から意図を確かめられない**。
@@ -287,8 +286,19 @@ export function hasBorrowedHypocenterFollowTarget(segments: readonly SpeechSegme
  * `ttsFollow.test.ts` が検査する。
  */
 export const TELEGRAM_TEXT_OPEN_TARGET_KINDS: ReadonlySet<string> = new Set([
-  'nankai', 'nankaiCommentary', 'kohatsu', 'earthquakeCount', 'quakeNotice', 'tsunami', 'lpgm',
+  'nankai', 'nankaiCommentary', 'kohatsu', 'earthquakeCount', 'quakeNotice', 'tsunami', 'lpgm', 'quake',
 ])
+
+/**
+ * 地震情報の付加文の主題に載せる「どの地震か」。地震カードは複数並ぶので、種別だけでは
+ * どのカードの補足を開くか決まらない。
+ *
+ * **既読の鍵（`ttsText.ts` の地震情報の分岐）と同じ決め方にする** —— `eventId` を持たない
+ * 電文は地震の時刻で代える。読む側と開く側が別の決め方をすると、黙って開かなくなる。
+ */
+export function quakeTelegramTextTarget(q: { eventId?: string; earthquake?: { time?: string } }): string {
+  return q.eventId ?? (q.earthquake?.time ? `time:${q.earthquake.time}` : '')
+}
 
 /**
  * 気象庁が書いた文の読み上げの主題（`SpeechFollowSession.subject`）を作る。
@@ -302,7 +312,7 @@ export const TELEGRAM_TEXT_OPEN_TARGET_KINDS: ReadonlySet<string> = new Set([
  *
  * @param kind 電文の種別
  * @param target 同じ種別の表示が画面に複数あるとき、どれを開くかを決める識別子。
- *   **長周期地震動観測情報だけが渡す** —— 地震カードは複数並ぶので、種別だけでは
+ *   **地震情報と長周期地震動観測情報だけが渡す** —— 地震カードは複数並ぶので、種別だけでは
  *   どのカードの補足を開くか決まらない。バナーと津波の面は画面に 1 つしか無いので要らない。
  */
 export function telegramTextSubject(kind: string, target?: string): string {

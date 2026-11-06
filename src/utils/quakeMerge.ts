@@ -36,7 +36,7 @@ const AMENDMENT_TYPE = '顕著な地震の震源要素更新のお知らせ'
 
 /** 報の新旧を比べるのに要る 2 つの時刻（→ {@link compareReportAge}）。 */
 export interface ReportAge {
-  /** 発表時刻（DMDATA は `Head/ReportDateTime`・分まで。P2PQuake は配信元の受信時刻）。 */
+  /** 発表時刻（`Head/ReportDateTime`・分まで）。 */
   time: string
   /** 電文の作成時刻（`Control/DateTime`）のミリ秒。DMDATA の XML 経路だけが持つ。 */
   createdAtMs?: number
@@ -50,11 +50,11 @@ export interface ReportAge {
  * 発表時刻（`time`）は DMDATA ではこれを分へ切り捨てた値なので、同じ分の報どうしの前後を
  * 決められない（数えた値は `docs/spec/quake-spec.md` §6.3）。
  *
- * **両方とも持たなければ `time` の文字列の辞書順で比べる。** P2PQuake・テストボタン・収録
- * シナリオは作成時刻を持たないので、それらどうしの比較は従来どおり。辞書順が時系列と一致するのは
- * 書式とタイムゾーンが揃っているときだけ。いまは DMDATA も P2PQuake も JST の ISO 8601（`+09:00`）で、
- * P2PQuake の時刻は読み取りの入口でミリ秒 3 桁に揃えてある（`services/p2pquake.ts` の `p2pTime`）。ただし
- * 小数の秒の桁は経路で揃っていないので、経路を混ぜて比べるなら `Date` を通すこと。
+ * **両方とも持たなければ `time` の文字列の辞書順で比べる。** 作成時刻を持たないのは
+ * `Control/DateTime` を読めなかった電文（`services/dmdataParser.ts` の `readCreatedAtMs`）。
+ * テストボタン・ローカル履歴アーカイブの電文も作成時刻を持つ。辞書順が時系列と一致するのは
+ * 書式とタイムゾーンが揃っているときだけ。いまはどの経路もパーサーを通した JST の ISO 8601
+ * （`+09:00`・秒まで）なので揃っている。書式の違う値を混ぜて比べるなら `Date` を通すこと。
  *
  * **片方だけ持つ組は分の単位で比べ、同じ分なら 0**（理由は本体のコメント）。
  *
@@ -120,11 +120,6 @@ export function reportOrderKey(q: ReportAge): number {
 
 /**
  * 震源も震度も持つ種別。これが届いたら、速報段階の種別は見出しから落とす。
- *
- * **標準版（P2PQuake）の「各地の震度情報」も完全版に数える**（2026-10-21 ユーザー承認。選択
- * 「標準版も同じにする (Recommended)」）。同じ内容（震源＋各地の震度）に付く情報種別が
- * バリアントで違うだけなので（DMDATA は VXSE53 の「震源・震度情報」）、片方だけ完全版から
- * 外すと、標準版では速報段階が完全版を上書きしてしまう。
  */
 const FULL_REPORT_TYPES: readonly IssueType[] = ['震源・震度情報', '各地の震度情報']
 
@@ -289,7 +284,6 @@ function mergeReportRecord(a: QuakeReportRecord, b: QuakeReportRecord): QuakeRep
  * 置き換えになりませんか？／なので震源・震度情報が来た時点でそれだけでいいと思います。」。
  * 会話記録 `ab047bec-233d-4a70-9d73-5cb848595c29.jsonl`）。**カードの中身を据え置くほうは別の発言**（2026-09-18。
  * → `docs/spec/quake-spec.md` §6.3「完全版を受けた後の速報段階」）。
- * 標準版の「各地の震度情報」を完全版に含める範囲は 2026-10-21 ユーザー承認。
  *
  * 代償として、**完全版を受け取った後に震度速報が届いても見出しには出ない**。この関数が見出しの
  * 記録（`reports`）から落とすので、記録にも残らない。残るのは当て直し用の電文の控え
@@ -394,7 +388,7 @@ function needsRefold(existing: JMAQuake, incoming: JMAQuake): boolean {
  * **並べる鍵が同じ電文どうしは受け取った順のまま**（安定ソート）。`mergeQuakeHistory` が
  * 1 回の中で作る並びと同じ規則。
  *
- * - **鍵（`eventKey`）は既存を引き継ぐ。** P2PQuake の鍵は最初に当たった報から作るので、
+ * - **鍵（`eventKey`）は既存を引き継ぐ。** `EventID` が空の電文の鍵は最初に当たった報から作るので、
  *   当て直しで最初の報が変わると鍵が変わり、選択・既読・更新の印との紐づきが切れる
  * - **取消より前に発表された報は当て直しでも採らない**（`isRetractedQuakeReport`）
  * - **据え置きの記録は出さない**（`quiet`）。同じ電文を何度も当てるので、記録が電文数の何倍にも
@@ -444,6 +438,22 @@ function refoldFromTelegrams(
   return existing.retractedReports ? { ...card, retractedReports: existing.retractedReports } : card
 }
 
+/**
+ * 長周期・推計から当てた上段の値を外し、地震情報が運んだ値へ戻したカード（→ `JMAQuake.quakeInfoFacts`）。
+ * 当てていなければ同じ参照を返す。
+ */
+export function withoutLatestQuakeFacts(card: JMAQuake): JMAQuake {
+  const facts = card.quakeInfoFacts
+  if (!facts) return card
+  const { quakeInfoFacts: _facts, hypocenterSource: _source, ...rest } = card
+  return {
+    ...rest,
+    // 当てて動く欄だけを戻す。それ以外（当てた後に津波から借りた津波区分など）は今の値のまま
+    earthquake: { ...card.earthquake, hypocenter: facts.hypocenter, time: facts.time, maxScale: facts.maxScale },
+    ...(facts.hypocenterSource && { hypocenterSource: facts.hypocenterSource }),
+  }
+}
+
 // 電文 ID 文字列から eventId（14桁タイムスタンプ）を抽出する。
 // VXSE51/52/53/61 はすべて同じ eventId を共有するため、同一地震の同定に使用できる。
 // 電文 ID の書式: `dmdata-quake-YYYYMMDDhhmmss-<serial>`。
@@ -465,8 +475,8 @@ export function quakeEventKey(q: JMAQuake): string {
   return q.eventKey ?? initialQuakeKey(q)
 }
 
-// 生電文からイベントキーを新規に作る。DMDATA は全報が共有する eventId をそのまま使う。
-// P2PQuake は eventId を配信せず、レコード id も報ごとに変わるため、
+// 生電文からイベントキーを新規に作る。全報が共有する eventId をそのまま使う。
+// `EventID` が空の電文は、報ごとに変わる id だけでは束ねられないため、
 // 「地震の時刻（`earthquake.time`）＋その報の id」で一意化する。このキーが作られるのはイベントの初報だけで、
 // 以降の続報は mergeQuakeInto が初報のキーを引き継ぐ（＝キーは事後的に安定する）。
 function initialQuakeKey(q: JMAQuake): string {
@@ -478,7 +488,7 @@ function initialQuakeKey(q: JMAQuake): string {
  * 引き当てられなければ null。
  *
  * **鍵の体系が違うので直接は渡せない。** 長周期の表示は電文の `eventId` で持つのに対し、
- * 選択はカードの `eventKey`（DMDATA は `eventId` 由来だが P2PQuake は地震の時刻＋レコード id）。
+ * 選択はカードの `eventKey`（`eventId` 由来。`EventID` が空の電文では地震の時刻＋レコード id）。
  *
  * **長周期電文の自動表示とカードのバッジで同じ述語を使う。** 別々に書くと、片方だけ条件を
  * 変えたときに静かにずれる（どちらも「その長周期はどの地震のものか」という同じ問いに答える）。
@@ -489,11 +499,11 @@ export function quakeKeyForLpgmEventId(quakes: readonly JMAQuake[], eventId: str
 }
 
 // 同一イベントのまま震源名が変わりうる電文か。
-// - 訂正報（infoType=訂正／P2PQuake の `correct`）: 震源そのものを訂正する
-// - 顕著な地震の震源要素更新（VXSE61 / P2PQuake の DestinationAmended）: 震源要素を差し替える
+// - 訂正報（infoType=訂正）: 震源そのものを訂正する
+// - 顕著な地震の震源要素更新（VXSE61）: 震源要素を差し替える
 //   電文で、`issue.correct` は「なし」のまま来る。mergeQuakeInto の分岐 A が hypocenter を
 //   丸ごと置き換える設計と対になる条件なので、ここから外すと震源名が変わった更新報が
-//   別カードに分裂する（P2PQuake 経路は eventId が無く震源名で判定するため）。
+//   別カードに分裂する（eventId が無い・食い違う組は震源名で判定するため）。
 // 訂正の有無が不明（`'不明'`）な報もここでは「変わりうる」側に入れる（→ `CorrectType`）。
 function allowsHypocenterChange(q: JMAQuake): boolean {
   return q.issue.correct !== 'なし' || q.issue.type === AMENDMENT_TYPE
@@ -502,7 +512,7 @@ function allowsHypocenterChange(q: JMAQuake): boolean {
 /**
  * 訂正報だと分かっている報か。**カードの「訂正」の印と記録はこれで決める。**
  *
- * 訂正の有無が不明な報（`'不明'`。P2PQuake の `Unknown`）は含めない —— 訂正されていない
+ * 訂正の有無が不明な報（`'不明'`）は含めない —— 訂正されていない
  * 地震カードに「訂正」の印が付く（2026-10-18 ユーザー承認・選んだ選択肢「印だけ消す」）。
  * カードの合流は別の判定（`allowsHypocenterChange`）で、そちらは不明も含める。
  */
@@ -557,13 +567,13 @@ export function hasOwnHypocenter(q: JMAQuake): boolean {
 
 // 一次細分区域の名前の集合。震度速報も、震度を伴う続報も同じ粒度で持つ。
 //
-// **都道府県のロールアップ点を除くこと。** DMDSS 経路（DMDATA）は県別の最大震度を
+// **都道府県のロールアップ点を除くこと。** パーサー（dmdataParser.ts）は県別の最大震度を
 // `{ pref: 名前, addr: 名前, isArea: true }` として足すため、`isArea` だけで絞ると県名が混ざる。
 // 県は区域より粗いので、同じ県の別々の区域で起きた 2 つの地震が「重なる」ことになってしまう。
 // 除き方は読み上げ側と揃える（判定は `quakePoints.ts` の `isAreaPoint` に集約）。
 //
 // **索引は引数で受ける。** このモジュールは座標テーブルを import できない（node 側スクリプトの
-// 型検査対象に入るため。capture-test-scenario → dmdataReplay → ここ）ので、ブラウザ側の
+// 型検査対象に入るため。scripts の生成スクリプト → dmdataReplay → ここ）ので、ブラウザ側の
 // 呼び出し元が `getAreaPrefIndexCache()` から渡す。null のときは名前だけの判定へ落ち、
 // 区域名が県名と同じ奈良県を取りこぼす——区域集合が小さくなる方向なので、判定は
 // 「引き離せない」へ倒れる（別の地震を同一視することはあっても、同じ地震を割ることはない）。
@@ -597,8 +607,8 @@ function hasDisjointAreas(a: JMAQuake, b: JMAQuake, areaPrefIndex: AreaPrefIndex
 // 分をまたぐとずれ、採り直しの救済に入ってもここで落ちてカードが 2 枚残る。**それを同じ地震と
 // みなしてよいかは電文からは決められない**ので分けたままにする（2026-10-14 ユーザー選択「分けたまま（推奨）」。
 // 実例と、時刻の照合を緩める案を採らない理由は `docs/spec/quake-spec.md` §6.1「時刻がずれた 2 枚」）。
-// P2PQuake は eventId が無いため地震の時刻で比較するが、同時刻は分単位でしか一致しない
-// （P2PQuake の地震の時刻は秒が常に 00）ので、震源名まで見て「同じ分に起きた別の地震」を分離する。
+// eventId で決まらない組は地震の時刻で比較するが、時刻は分単位なので、震源名まで見て
+// 「同じ分に起きた別の地震」を分離する。
 //
 // **eventId が食い違っても、それだけで別イベントとはしない。** 震源未確定の電文（震度速報）の
 // EventID は暫定値で採り直されうるため、その場合だけ内容での照合へ落とす。震源が判明している
@@ -606,8 +616,8 @@ function hasDisjointAreas(a: JMAQuake, b: JMAQuake, areaPrefIndex: AreaPrefIndex
 //
 // **採り直しの照合には「区域が重なる」という積極的な証拠を要求する。** 時刻の一致だけで
 // 合流させると、同じ分に起きた別の地震の震源情報（VXSE52 は区域を持たない）が震度速報の
-// カードを乗っ取り、揺れていない地域の震度が別の震源に貼り付く。eventId が無い経路
-// （P2PQuake）は従来どおり「1 つも重ならなければ別」の緩い基準を使う —— そちらは
+// カードを乗っ取り、揺れていない地域の震度が別の震源に貼り付く。片方でも eventId が無い組
+// （`EventID` が空の電文）は「1 つも重ならなければ別」の緩い基準を使う —— そちらは
 // eventId による分離が最初から無く、厳しくすると通常の続報まで分かれてしまうため。
 //
 // 第1分岐（双方が eventKey を持つ）は、実運用では incoming 側が統合前の生電文なので通らない。
@@ -616,7 +626,7 @@ function hasDisjointAreas(a: JMAQuake, b: JMAQuake, areaPrefIndex: AreaPrefIndex
 // 限界（`docs/spec/quake-spec.md` §6.1）:
 // - eventId が完全に一致すれば、地震の時刻も区域も見ずに同一と判断する
 // - 暫定 ID のカードは、区域を持たない電文（震源情報）とはその場では合流しない
-// - P2PQuake 経路では、同じ分に起きた別々の地震を常には分離できない（震源名が同じ場合など）
+// - eventId を持たない電文では、同じ分に起きた別々の地震を常には分離できない（震源名が同じ場合など）
 export function sameQuakeEntry(a: JMAQuake, b: JMAQuake, areaPrefIndex: AreaPrefIndex): boolean {
   if (a.eventKey && b.eventKey) return a.eventKey === b.eventKey
   const ea = extractQuakeEventId(a)
@@ -673,7 +683,7 @@ interface State {
  *
  * **鍵を報ごとに作らないこと。** ライブ経路が使う鍵はカードの `eventKey` で、その値は
  * **最初に処理された報**で固定される（`mergeQuakeInto`）。一方 `quakeEventKey` を生の電文へ
- * 直に当てると、識別子を持たない経路（P2PQuake）では `p2p:<地震の時刻>#<その報の id>` になり、
+ * 直に当てると、識別子を持たない電文（`EventID` が空）では `p2p:<地震の時刻>#<その報の id>` になり、
  * **続報のたびに別の鍵**になる。畳む側がこれを踏むと、同じ地震の報が 1 通も畳まれない。
  *
  * **突き合わせる相手を自前で最新化しないこと。** 初出の報を握り続けると、`sameQuakeEntry` の
@@ -770,7 +780,7 @@ export function sortQuakes(arr: JMAQuake[]): JMAQuake[] {
 // 戻り値が existing と同一参照なら「変化なし」を意味する（呼び出し側は状態を更新しない）。
 //
 // 統合結果には必ず eventKey を持たせる。既存カードがあればそのキーを引き継ぐため、
-// P2PQuake のように続報で id が変わる経路でも、カードのキーは初報のまま不変になる。
+// 続報で id が変わる電文でも、カードのキーは初報のまま不変になる。
 /**
  * 固定付加文（その他）の原文とコードを**同じ報から**採る。
  *
@@ -808,11 +818,22 @@ function domesticTsunamiFrom(
 }
 
 export function mergeQuakeInto(
-  existing: JMAQuake | undefined,
-  incoming: JMAQuake,
+  existingCard: JMAQuake | undefined,
+  incomingCard: JMAQuake,
   opts?: Parameters<typeof mergeQuakeIntoBody>[2],
 ): JMAQuake {
-  const result = mergeQuakeIntoBody(existing, incoming, opts)
+  // **地震情報の値どうしで統合する。** 長周期・推計から当てた上段の値は地震情報の値ではないので、統合の前に戻し、
+  // 当てるのは呼び出し側が統合の後に行う（→ `utils/latestQuakeFacts.ts`）。戻さないと、当てた値が地震情報の値として
+  // 続報へ引き継がれ、当てた報が取り消されても戻せない
+  const existing = existingCard && withoutLatestQuakeFacts(existingCard)
+  const incoming = withoutLatestQuakeFacts(incomingCard)
+  const body = mergeQuakeIntoBody(existing, incoming, opts)
+  // 据え置き（同じ参照を返す）は、戻す前の参照のまま返す（「変化なし＝同一参照」の約束を保つ）
+  const merged = existingCard && body === existing ? existingCard : body
+  // **当てた津波の値は、どの分岐を通っても引き継ぐ**（→ `JMAQuake.appliedTsunamiSource`）。本体の分岐は `...incoming` を
+  // 土台にすることがあり、そのとき黙って落ちる。落ちると、津波が一覧から消えた後に当てた値が地震情報の値へ戻る
+  const carriedTsunami = existingCard?.appliedTsunamiSource ?? incomingCard.appliedTsunamiSource
+  const result = carriedTsunami && !merged.appliedTsunamiSource ? { ...merged, appliedTsunamiSource: carriedTsunami } : merged
   // **一部の取消の記録は、どの分岐を通っても引き継ぐ**（→ `JMAQuake.retractedReports`）。
   // 本体は分岐ごとに `...existing` か `...incoming` を土台にするので、土台が電文の側だと
   // 黙って落ちる。分岐 1 つずつに書き足すと、分岐が増えたときに必ず漏れる。
@@ -908,8 +929,7 @@ function mergeQuakeIntoBody(
       // その報だけが持つ文が捨てられる。
       ...pickVarComment(incoming, existing),
       // 見出し文も自由付加文と同じ「その報だけが持つ文」なので同じ側を採る。
-      // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
-      // この経路だけ古い見出しが残る形になる。
+      // 開いたカードに出すので、この経路だけ古い見出しが残らないようにする。
       headline: incoming.headline ?? existing.headline,
     }, incoming)
   }
@@ -966,7 +986,7 @@ function mergeQuakeIntoBody(
   //   ReportDateTime）は分へ切り捨てた値で、同じ分に複数報が発表されることが普通にある（上の
   //   実データでも震源情報と震度速報の続報が同じ分に発表されていた）。電文解説資料 Ⅰ.（ⅱ）8 が
   //   最新情報の検索に `Control/DateTime` を参照するよう定めている。**作成時刻が同じ（秒まで）か、
-  //   作成時刻を持たない経路（P2PQuake・テストボタン）で発表時刻が同じ続報、片方だけが作成時刻を
+  //   作成時刻を持たない電文（`Control/DateTime` を読めなかった）どうしで発表時刻が同じ続報、片方だけが作成時刻を
   //   持つ組で分が同じ続報は受け入れる** ——
   //   `mergeQuakeInto` が時系列順に逐次呼ばれる前提（ライブ経路は受信順、`mergeQuakeHistory` は
   //   作成時刻でソート済み）に乗り、後から呼ばれた incoming を信じる。
@@ -981,12 +1001,10 @@ function mergeQuakeIntoBody(
   // 上書きを許すより、安全側（据え置き）に倒して記録を残す。
   //
   // **作成時刻を持たない経路の比較は、time の文字列の辞書順（`Date` を経由しない）。** これが時系列順と一致するのは
-  // existing/incoming が同じ書式・同じタイムゾーンオフセットで揃っているときだけ。DMDATA
-  // 経路（dmdataParser.ts）も P2PQuake 経路（p2pquake.ts。入口で `p2pTime` が直す）も ISO 8601 +
-  // `+09:00` だが、小数の秒の桁は経路で揃っていない（P2PQuake はミリ秒 3 桁、DMDATA は秒まで）。
-  // 実害が無いのは、standard 版は P2PQuake のみ・DMDSS 版は DMDATA のみとビルドバリアントごとに
-  // データソースが単一だから（`CLAUDE.md`）。両方を1つの mergeQuakeInto 呼び出し系列に混ぜる
-  // 変更をするなら、先に time を `Date` ベースの比較に置き換えること。
+  // existing/incoming が同じ書式・同じタイムゾーンオフセットで揃っているときだけ。いまは
+  // どの経路（ライブ・テストボタン・ローカル履歴アーカイブ）も dmdataParser.ts を通した
+  // ISO 8601 + `+09:00`（秒まで）で揃っている。書式の違う時刻を同じ mergeQuakeInto 呼び出し
+  // 系列に混ぜる変更をするなら、先に time を `Date` ベースの比較に置き換えること。
   // **判定そのものは {@link quakeHoldBack} が持つ。** ここに書き下すと、同じ判定を
   // 必要とする副作用側（音・読み上げ・ウィンドウタイトル・自動タブ切替）が写しを持つことになる。
   //
@@ -1028,7 +1046,7 @@ function mergeQuakeIntoBody(
   }
   if (held) return holdBack(existing)
   // **時刻では受け入れるが、種別優先度としては据え置き相当（既存の方が詳しい）だった場合は
-  // 記録を残す。** sameQuakeEntry は eventId が無い経路（P2PQuake）や暫定 ID の再採番で
+  // 記録を残す。** sameQuakeEntry は eventId が無い電文や暫定 ID の再採番で
   // 別の地震を同一と誤認識しうる（同関数の限界の節を参照）。誤認識が起きると、無関係な
   // 電文がここを通って正しいカードを無警告で上書きする。ログが無いと「地震カードの内容が
   // 急に後退した」ときに原因を辿れない。
@@ -1061,8 +1079,7 @@ function mergeQuakeIntoBody(
       // 固定付加文（その他）も同じ考え方で補う。
       ...pickVarComment(result, existing),
       // 見出し文も自由付加文と同じ「その報だけが持つ文」なので同じ側を採る。
-      // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
-      // この経路だけ古い見出しが残る形になる。
+      // 開いたカードに出すので、この経路だけ古い見出しが残らないようにする。
       headline: result.headline ?? existing.headline,
     }
   }
@@ -1164,8 +1181,7 @@ function mergeQuakeIntoBody(
       // 固定付加文（その他）も新しい側（＝ここでは震源要素更新）を残す。
       ...pickVarComment(existing, result),
       // 見出し文も自由付加文と同じ「その報だけが持つ文」なので同じ側を採る。
-      // **いまは画面に出していないが、扱いを揃えておく** —— 出すようになったとき、
-      // この経路だけ古い見出しが残る形になる。
+      // 開いたカードに出すので、この経路だけ古い見出しが残らないようにする。
       headline: existing.headline ?? result.headline,
     }, existing)
   }
@@ -1179,7 +1195,7 @@ function mergeQuakeIntoBody(
  * `entry` に何を入れるかで照合の精度が変わる。**取消を受けたカードがあればそれを入れる**
  * （震源名・地震の時刻・区域が揃っているため `sameQuakeEntry` の全経路が使える）。当たるカードが
  * 無かった場合は取消電文そのものを入れるが、そちらは地震の時刻・震源名とも空なので eventId でしか
- * 照合できない（§6.2）。eventId を持たない P2PQuake 経路では後者は当たらない。
+ * 照合できない（§6.2）。eventId を持たない取消電文では後者は当たらない。
  *
  * `issueType` は**取消電文の**種別。`entry` から読まずに別に持つのは、`entry` がカードのときに
  * その `issue.type` が取消電文と一致しているのは「取消のマッチング条件がそうだから」という
@@ -1225,14 +1241,14 @@ export function quakeRetractionOf(cancel: JMAQuake, matched?: JMAQuake): QuakeRe
  *   リプレイでは順序が入れ替わりうる（同じ分のタイは呼び出し側の入力順に委ねているため）。
  *   これは取り下げ済みの内容なので**捨てる**。この関数が `true` を返すのはこの場合
  * - **取消より後に発表された報**: 取り消した後に気象庁が発表し直した報か、別の地震の報が
- *   `sameQuakeEntry` で同一と判定されたもの（§6.1 の限界。P2PQuake 経路・暫定 EventID の採り直しで
+ *   `sameQuakeEntry` で同一と判定されたもの（§6.1 の限界。eventId を持たない電文・暫定 EventID の採り直しで
  *   起こりうる）。どちらも取り下げ済みの内容ではないので `false` を返す。カード全体が取り消されて
  *   いれば `findExistingQuakeCard` が取消済みカードを避けて**別カードとして立ち**、一部の取消で
  *   残ったカードならそこへ当たる。飲み込むと本物の地震が画面に出ない
  *
  * **作成時刻（`Control/DateTime`）で比べ、同じなら取り下げ側へ倒す。** 作成時刻は秒まであるので、
  * 同じ分の取消と報の前後もこれで決まる（→ {@link compareReportAge}）。秒まで同じときと、作成時刻を
- * 持たない経路（P2PQuake。発表時刻の比較へ落ちる）で同じになったときは、取消を尊重する方が安全。
+ * 持たない電文（発表時刻の比較へ落ちる）で同じになったときは、取消を尊重する方が安全。
  *
  * **発表時刻が空の報も取り下げ側へ倒す。** 空文字列どうしの比較は常に false になるため明示的に
  * 弾く必要がある（据え置き判定が空の `time` を扱うのと同じ理由）。
@@ -1508,7 +1524,7 @@ export function findExistingQuakeCardIndex(cards: JMAQuake[], incoming: JMAQuake
  * **eventKey では気づけない。** 続報で不変にするため既存カードから引き継ぐ値なので、
  * 2 枚は最後まで別のキーを持ち続ける。ここでは eventId だけを見て畳む。
  *
- * eventId を持たない電文（P2PQuake 経路）は対象外 —— そちらの同一性は `sameQuakeEntry` が見る。
+ * eventId を持たない電文は対象外 —— そちらの同一性は `sameQuakeEntry` が見る。
  *
  * **畳む相手は索引で引く。** 電文が 1 通届くたびにカード全体へ掛かる関数なので、1 枚ごとに
  * 並べ終えた側を頭から探す（そのたびに eventId を読み直す）形だと、カードの枚数の 2 乗で
@@ -1566,7 +1582,7 @@ export function coalesceByEventId(cards: JMAQuake[]): JMAQuake[] {
 // 並んだ報も発表された順に当たる。
 //
 // **既知の限界: 作成時刻が秒まで同じ電文（実電文 427 通で 1 対）と、作成時刻を持たない経路
-// （P2PQuake。発表時刻で並べる）で発表時刻が同じ電文は、newQuakes の入力順序がそのまま結果に
+// （発表時刻で並べる）で発表時刻が同じ電文は、newQuakes の入力順序がそのまま結果に
 // 効く。** ソートは安定ソート（Array.prototype.sort、ES2019 以降で仕様保証）なので、鍵が同値の
 // 要素は入力配列上の相対順序を保つ。mergeQuakeInto の据え置き判定は「incoming が実震度を持つ
 // 電文どうし」では issue.type の優先度を見ず時刻だけで判定するため、同値の震度速報が並べば
@@ -1750,9 +1766,7 @@ export function mergeQuakeHistory(
   // どちらの鍵も `touched` に入りうる。
   //
   // **吸収が実際に起きた鍵だけ書き直す。** 参照が変わっていなければ写す値も同じで、
-  // 書き直すだけ無駄になる。**standard 版（P2PQuake）ではここは 1 件も通らない** ——
-  // `extractQuakeEventId` は DMDATA の `id` の形だけを読むので、あちらでは畳み込みそのものが
-  // 起きない。
+  // 書き直すだけ無駄になる。
   //
   // **限界**: 畳み込みで残った側の鍵が `touched` に無い組み合わせ（片方にしか報が当たらず、
   // もう 1 枚は `base` 由来だったとき）では写し直しが起きない。そのカードの次の報で吸収分が

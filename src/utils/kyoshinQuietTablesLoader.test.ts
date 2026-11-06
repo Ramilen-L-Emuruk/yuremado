@@ -9,7 +9,7 @@ async function freshModule() {
   return await import('./kyoshinQuietTablesLoader')
 }
 
-const tail = (n: number) => ({ n, y: new Array(12).fill(1), y3: new Array(12).fill(1) })
+const tail = (n: number) => ({ n, y: new Array(12).fill(1), y3: new Array(12).fill(1), y15: new Array(12).fill(1) })
 const SAMPLE: QuietTables = {
   version: 1,
   days: ['20260911'],
@@ -86,7 +86,7 @@ describe('表の検分', () => {
   it('版が違う・観測点の数が崩れている・雑音の率が 5 段でないものは投げる', async () => {
     const { validateQuietTables } = await import('./kyoshinQuietTables')
     expect(() => validateQuietTables({ ...SAMPLE, version: 2 })).toThrow('版が違う')
-    expect(() => validateQuietTables({ ...SAMPLE, tails: { a: { n: 1, y: [1], y3: [1] } } })).toThrow('a の数が崩れている')
+    expect(() => validateQuietTables({ ...SAMPLE, tails: { a: { n: 1, y: [1], y3: [1], y15: [1] } } })).toThrow('a の数が崩れている')
     expect(() => validateQuietTables({ ...SAMPLE, fire: { a: [1, 2, 3] } })).toThrow('a の雑音の率が崩れている')
     expect(() => validateQuietTables({ ...SAMPLE, fire: { a: [1, 2, 3, 4, Number.NaN] } })).toThrow('a の雑音の率が崩れている')
   })

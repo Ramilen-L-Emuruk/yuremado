@@ -58,6 +58,14 @@ export type QuakeReach =
   | { readonly kind: 'unknown' }
 
 /**
+ * その震源で予測できるか（震央・深さ・規模がそろっているか）。{@link judgeQuakeReach} が `unknown` を返す条件のうち、
+ * 震源の側の分。**震源が決まる前の震度速報はここで落ちる。**
+ */
+export function canPredictReach(hypocenter: Hypocenter): boolean {
+  return hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude) && hasDepth(hypocenter.depth) && hasMagnitude(hypocenter.magnitude)
+}
+
+/**
  * その地震の揺れが、どの観測点まで届いたと見込めるか。
  *
  * **深さが判らない地震は予測しない。** 深さ 0 と読み替えると浅い地震として強めに出るが、
@@ -73,7 +81,7 @@ export function judgeQuakeReach(
   floorWithoutUsual: number,
 ): QuakeReach {
   const { latitude, longitude, depth, magnitude } = hypocenter
-  if (!hasKnownEpicenter(latitude, longitude) || !hasDepth(depth) || !hasMagnitude(magnitude)) return { kind: 'unknown' }
+  if (!canPredictReach(hypocenter)) return { kind: 'unknown' }
   const reached: string[] = []
   const unknown: string[] = []
   let predictable = 0

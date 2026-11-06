@@ -25,9 +25,9 @@ import type { RuntimeCaching } from 'workbox-build'
  * 全体像は `docs/spec/settings-pwa-spec.md` §5「生成データの控え」。
  */
 
-/** 実行時キャッシュの名前。生成データと同じ理由でバリアントで分ける（`scripts/offlineData.ts` の `offlineDataCacheName`）。 */
-export function offlineBathymetryCacheName(variant: string): string {
-  return `bathymetry-tiles-${variant}`
+/** 実行時キャッシュの名前。末尾の付け方は生成データと同じ（`scripts/offlineData.ts` の `offlineDataCacheName`）。 */
+export function offlineBathymetryCacheName(suffix: string): string {
+  return `bathymetry-tiles-${suffix}`
 }
 
 /**

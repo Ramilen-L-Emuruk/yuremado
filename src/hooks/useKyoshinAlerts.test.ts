@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { log } from '../utils/logger'
 import {
   dynamicRegionThresholdKm, isSameEarthquake, isRegionWithinAnyEew,
   createAlertRegionState, stepAlertRegions,
@@ -7,7 +8,7 @@ import {
   PROPAGATION_MAX_KM, isSameShakeAsBefore, SAME_SHAKE_KM, type AlertRegion,
 } from './useKyoshinAlerts'
 import { reachRadiusKm } from '../utils/travelTime'
-import { eewFeltRadiusKm } from '../utils/eew'
+import { calcFeltRadiusKm, eewFeltRadiusKm } from '../utils/eew'
 import type { EEWAlert, Hypocenter } from '../types/earthquake'
 import type { ConfirmedShock } from '../utils/kyoshinDetectionView'
 import { haversineKm } from '../utils/geo'
@@ -233,6 +234,8 @@ const COOLDOWN_FRAMES = NEW_REGION_COOLDOWN_MS / 1000
 
 const NOTO = { lat: 37.5, lng: 137.0, index: 20 }
 const FUKUOKA = { lat: 33.6, lng: 130.4, index: 12 }
+/** `stepAlertRegions` が発報したときの戻り値: 渡した確定地域そのもの（`shock`）と、その座標・震度 */
+const alertOf = (s: { lat: number; lng: number; index: number }) => ({ shock: s, lat: s.lat, lng: s.lng, index: s.index })
 const OKINAWA = { lat: 26.2, lng: 127.7, index: 12 }
 
 describe('isSameEarthquake の起点（地震全体 vs 地域自身）', () => {
@@ -284,8 +287,8 @@ describe('stepAlertRegions', () => {
     expect(stepAlertRegions(state, [NOTO], t, new Map())).toBeNull()               // 初検知フレーム
     expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 1000, new Map())).toBeNull() // 遠方を登録
     expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 2000, new Map())).toBeNull() // 持続 2 フレーム
-    // 発報した地域自身の座標と震度を返す（通知の「推定最大震度」に使う）
-    expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 3000, new Map())).toEqual(FUKUOKA)
+    // 発報した地域自身の座標と震度を返す（通知の「最大リアルタイム震度」に使う）
+    expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 3000, new Map())).toEqual(alertOf(FUKUOKA))
   })
 
   // 意図的に覆した: 以前は震度3 未満（index 11 未満）の地域を鳴らさなかった。2026-10-22 に下限を外した
@@ -301,7 +304,7 @@ describe('stepAlertRegions', () => {
     for (let i = 1; i <= COOLDOWN_FRAMES + 5; i++) {
       fired = stepAlertRegions(state, [NOTO, weakFar], t + i * 1000, new Map()) ?? fired
     }
-    expect(fired).toEqual(weakFar)
+    expect(fired).toEqual(alertOf(weakFar))
   })
 
   it('安全弁: 震度が低くても、持続の前（登録から 2 秒未満）には鳴らさない', () => {
@@ -378,6 +381,41 @@ describe('stepAlertRegions', () => {
     expect(state.regions.some((r) => r.absorbedByEew)).toBe(true)
   })
 
+  // 吸収すると鳴らないので、吸収したことを記録に残す。毎フレーム出すと記録が埋まるので、印が立った 1 回だけ
+  it('吸収した地域は、何フレーム続いても 1 回だけ記録に残す', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {})
+    try {
+      const origin = '2024-01-01T07:10:00.000Z'
+      const t0 = new Date(origin).getTime()
+      const hypocenter: Hypocenter = { name: '石川県能登地方', latitude: NOTO.lat, longitude: NOTO.lng, depth: 10, magnitude: 7.6 }
+      const eews = new Map([['eew-noto', fakeEEW('eew-noto', origin, hypocenter)]])
+      const state = createAlertRegionState()
+      const t = t0 + 170_000
+      stepAlertRegions(state, [NOTO], t, eews)
+      for (let i = 1; i <= COOLDOWN_FRAMES + 5; i++) stepAlertRegions(state, [NOTO, FUKUOKA], t + i * 1000, eews)
+      const absorbed = state.regions.filter((r) => r.absorbedByEew).length
+      const logged = info.mock.calls.filter((c) => String(c[0]).includes('緊急地震速報の揺れに含めた')).length
+      expect(absorbed).toBeGreaterThan(0)
+      expect(logged).toBe(absorbed)
+    } finally {
+      info.mockRestore()
+    }
+  })
+
+  // 対照: EEW が無ければ吸収しないので、記録も出ない
+  it('EEW が無ければ、吸収の記録は出ない', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {})
+    try {
+      const state = createAlertRegionState()
+      const t = 1_000_000
+      stepAlertRegions(state, [NOTO], t, new Map())
+      for (let i = 1; i <= COOLDOWN_FRAMES + 5; i++) stepAlertRegions(state, [NOTO, FUKUOKA], t + i * 1000, new Map())
+      expect(info.mock.calls.filter((c) => String(c[0]).includes('緊急地震速報の揺れに含めた'))).toHaveLength(0)
+    } finally {
+      info.mockRestore()
+    }
+  })
+
   it('同一フレーム内の確定点の並び順で、できる地域の数が変わらない', () => {
     const t = 1_000_000
     const run = (shocks: { lat: number; lng: number; index: number }[]) => {
@@ -430,7 +468,7 @@ describe('stepAlertRegions', () => {
     stepAlertRegions(state, [NOTO], t, new Map())
     stepAlertRegions(state, [NOTO, FUKUOKA], t + 1000, new Map())
     stepAlertRegions(state, [NOTO, FUKUOKA], t + 2000, new Map())
-    expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 3000, new Map())).toEqual(FUKUOKA)
+    expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 3000, new Map())).toEqual(alertOf(FUKUOKA))
     stepAlertRegions(state, [NOTO, FUKUOKA, OKINAWA], t + 4000, new Map()) // 沖縄を登録
     expect(stepAlertRegions(state, [NOTO, FUKUOKA, OKINAWA], t + 5000, new Map())).toBeNull() // 持続待ち
     return state
@@ -440,7 +478,7 @@ describe('stepAlertRegions', () => {
     const t = 1_000_000
     const state = firedOnceThenPending(t)
     // 前回発報（t+3000）からデータ時刻で 5 秒。フレーム数では 1 つしか進んでいない
-    expect(stepAlertRegions(state, [NOTO, FUKUOKA, OKINAWA], t + 8000, new Map())).toEqual(OKINAWA)
+    expect(stepAlertRegions(state, [NOTO, FUKUOKA, OKINAWA], t + 8000, new Map())).toEqual(alertOf(OKINAWA))
   })
 
   it('[正・持続] コマ飛びでデータ時刻が進めば、出現フレーム数が足りなくても持続を満たす', () => {
@@ -449,7 +487,7 @@ describe('stepAlertRegions', () => {
     stepAlertRegions(state, [NOTO], t, new Map())
     stepAlertRegions(state, [NOTO, FUKUOKA], t + 1000, new Map()) // 福岡を登録
     // 3 秒のコマ飛び。福岡が現れたのは 2 フレームだが、データ時刻では 3 秒続いている
-    expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 4000, new Map())).toEqual(FUKUOKA)
+    expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 4000, new Map())).toEqual(alertOf(FUKUOKA))
   })
 
   it('[正・破棄猶予] コマ飛びで猶予を超えた地域は、次のフレームまで残らず破棄される', () => {
@@ -470,7 +508,7 @@ describe('stepAlertRegions', () => {
     stepAlertRegions(state, [NOTO, FUKUOKA], t + 1000, new Map()) // 福岡を登録（1 回目）
     stepAlertRegions(state, [NOTO], t + 2000, new Map())          // 福岡が現れない（猶予内なので残る）
     // 実観測は 2 回だけ。数えているのは回数ではなく初検知からの幅
-    expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 3000, new Map())).toEqual(FUKUOKA)
+    expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 3000, new Map())).toEqual(alertOf(FUKUOKA))
   })
 
   it('[対照] 欠落が破棄猶予を超えたら地域は捨てられ、持続はやり直しになる', () => {
@@ -483,7 +521,7 @@ describe('stepAlertRegions', () => {
     // 登録し直しになるため、幅を貯め直すまで鳴らない
     expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 6000, new Map())).toBeNull()
     expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 7000, new Map())).toBeNull()
-    expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 8000, new Map())).toEqual(FUKUOKA)
+    expect(stepAlertRegions(state, [NOTO, FUKUOKA], t + 8000, new Map())).toEqual(alertOf(FUKUOKA))
   })
 
   it('[対照] 1 秒刻みのフレームではクールダウンの境界が動かない', () => {
@@ -491,7 +529,7 @@ describe('stepAlertRegions', () => {
     const state = firedOnceThenPending(t)
     expect(stepAlertRegions(state, [NOTO, FUKUOKA, OKINAWA], t + 6000, new Map())).toBeNull()  // 3 秒
     expect(stepAlertRegions(state, [NOTO, FUKUOKA, OKINAWA], t + 7000, new Map())).toBeNull()  // 4 秒
-    expect(stepAlertRegions(state, [NOTO, FUKUOKA, OKINAWA], t + 8000, new Map())).toEqual(OKINAWA) // 5 秒
+    expect(stepAlertRegions(state, [NOTO, FUKUOKA, OKINAWA], t + 8000, new Map())).toEqual(alertOf(OKINAWA)) // 5 秒
   })
 
   it('[安全弁] コマ飛びを挟んでも発報済みの記録は保たれ、同じ地域が二度鳴らない', () => {
@@ -516,7 +554,7 @@ describe('stepAlertRegions', () => {
 // **迷ったら偽（鳴らす側）へ倒す**のが要件。偽になりすぎても余分に鳴るだけで済むが、真になりすぎると
 // 無関係な地震を無音で握り潰す。
 describe('isSameShakeAsBefore', () => {
-  const shockAt = (lat: number, lng: number): ConfirmedShock => ({ lat, lng, index: 20, peak: { lat, lng } })
+  const shockAt = (lat: number, lng: number): ConfirmedShock => ({ lat, lng, index: 20, peak: { lat, lng }, points: [] })
   const NOTO = shockAt(37.5, 137.0)
   const NEAR_NOTO = shockAt(37.6, 137.1) // 約 14km
   const FUKUOKA = shockAt(33.6, 130.4) // 能登から約 700km
@@ -575,29 +613,38 @@ describe('EEW があるときの範囲（P 波で測り、有感半径で打ち�
     expect(isRegionWithinAnyEew(fakeRegion({ lat: TOKYO.lat, lng: TOKYO.lng }), atMs, new Map([[eew.id, eew]]))).toBe(true)
   })
 
-  // 浅い地震で、震源から約 667km 北の点。旧来の上限 800km の内側で、M6.0 の有感半径（479km）の外側。
+  // 浅い地震で、震源から北へ約 667km と約 900km の点。M6.0 の揺れが届く半径は、震度1 の距離で測ると 479km、
+  // 計測震度 0 の距離で測ると 761km（揺れ検知は震度0 未満も拾うので、0 で測る。2026-10-31 ユーザー選択「0 (Recommended)」）
   const SHALLOW = { lat: 31.5, lng: 130.5 }
   const NORTH_667 = fakeRegion({ lat: 31.5 + 6.0, lng: 130.5 })
+  const NORTH_900 = fakeRegion({ lat: 31.5 + 8.1, lng: 130.5 })
   const shallowEew = (magnitude: number) => fakeEEW('shallow', ORIGIN,
     { name: '九州地方', latitude: SHALLOW.lat, longitude: SHALLOW.lng, depth: 10, magnitude })
   const LATE = O + 400_000 // P 波の半径が上限を十分に超えた時刻
 
-  it('[正] 上限はその EEW の有感半径。M7.5 なら 667km 先も範囲に入る', () => {
-    expect(eewFeltRadiusKm(7.5, 10)).toBeGreaterThan(667)
+  it('[正] 上限はその EEW の揺れが届く半径。M7.5 なら 900km 先も範囲に入る', () => {
+    expect(eewFeltRadiusKm(7.5, 10)).toBeGreaterThan(900)
     const eew = shallowEew(7.5)
+    expect(isRegionWithinAnyEew(NORTH_900, LATE, new Map([[eew.id, eew]]))).toBe(true)
+  })
+
+  it('[正] 半径は計測震度 0 で測る。M6.0 の 667km 先（震度1 の距離 479km の外）も範囲に入る', () => {
+    expect(calcFeltRadiusKm(6.0, 10, 1.0)).toBeLessThan(667)
+    expect(eewFeltRadiusKm(6.0, 10)).toBe(calcFeltRadiusKm(6.0, 10, 0))
+    const eew = shallowEew(6.0)
     expect(isRegionWithinAnyEew(NORTH_667, LATE, new Map([[eew.id, eew]]))).toBe(true)
   })
 
-  it('[対照] M6.0 の有感半径は 667km に届かないので範囲に入らない（旧来の 800km より狭い）', () => {
-    expect(eewFeltRadiusKm(6.0, 10)).toBeLessThan(667)
+  it('[対照] M6.0 の揺れが届く半径（761km）は 900km に届かないので範囲に入らない（旧来の 800km より狭い）', () => {
+    expect(eewFeltRadiusKm(6.0, 10)).toBeLessThan(800)
     const eew = shallowEew(6.0)
-    expect(isRegionWithinAnyEew(NORTH_667, LATE, new Map([[eew.id, eew]]))).toBe(false)
+    expect(isRegionWithinAnyEew(NORTH_900, LATE, new Map([[eew.id, eew]]))).toBe(false)
   })
 
   it('[安全弁] 規模が判らない EEW は自動解除と同じく M6.0 として測る', () => {
     for (const unknown of [Number.NaN, -1]) {
       const eew = shallowEew(unknown)
-      expect(isRegionWithinAnyEew(NORTH_667, LATE, new Map([[eew.id, eew]]))).toBe(false)
+      expect(isRegionWithinAnyEew(NORTH_900, LATE, new Map([[eew.id, eew]]))).toBe(false)
     }
     expect(eewFeltRadiusKm(Number.NaN, 10)).toBe(eewFeltRadiusKm(6.0, 10))
   })

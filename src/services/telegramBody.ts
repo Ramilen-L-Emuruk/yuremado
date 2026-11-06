@@ -15,11 +15,11 @@
  * 独立したファイルに置いているのは循環 import を作らないため（`dmdata.ts` と
  * `dmdataReplayLive.ts` の両方から使い、後者は前者に依存していない）。
  */
-import { authHeader } from '../utils/dmdataApiKey'
+import type { DmdataEndpoint } from './dmdataEndpoint'
 import { fetchWithTimeout, API_FETCH_TIMEOUT_MS } from '../utils/fetchWithTimeout'
 import { readTelegramBody, writeTelegramBody } from '../utils/telegramBodyCache'
 import {
-  waitForDataApiSlot, dataApiGateWaiting, setDataApiGateIntervalForTest, resetDataApiGateForTest,
+  dataApiGateWaiting, setDataApiGateIntervalForTest, resetDataApiGateForTest,
   rateLimitedUntil, noteRateLimited, noteRateLimitCleared,
 } from './dmdataRequestGates'
 
@@ -166,12 +166,12 @@ export function telegramIdFromUrl(url: string): string | null {
  * 崩れても例外もログも出ず、優先度が黙って無効になる。
  */
 export function fetchTelegramText(
-  apiKey: string, url: string, opts?: { urgent?: boolean },
+  endpoint: DmdataEndpoint, url: string, opts?: { urgent?: boolean },
 ): Promise<TelegramTextResult> {
   const urgent = opts?.urgent ?? false
   const id = telegramIdFromUrl(url)
   // 鍵を作れない URL は控えも共有もしない（別の電文を同じ鍵で扱う危険を避ける）
-  if (!id) return fetchFresh(apiKey, url, null, urgent)
+  if (!id) return fetchFresh(endpoint, url, null, urgent)
 
   const pending = inFlight.get(id)
   if (pending) {
@@ -185,7 +185,7 @@ export function fetchTelegramText(
       stats.fromCache++
       return { xml: cached, status: null, fromCache: true, rateLimitedUntil: null }
     }
-    return fetchFresh(apiKey, url, id, urgent)
+    return fetchFresh(endpoint, url, id, urgent)
   })()
   inFlight.set(id, promise)
   // **成否によらず取り終わったら外す。** 成功なら次からは控えが応え、失敗なら取り直せる
@@ -220,7 +220,7 @@ export function fetchTelegramText(
  *   **門の枠を使う前に見る** —— 取りに行かないものに 6 秒の枠を消費させない。
  */
 async function fetchThroughGate<T>(
-  apiKey: string, url: string, id: string | null, urgent: boolean,
+  endpoint: DmdataEndpoint, url: string, id: string | null, urgent: boolean,
   read: (res: Response) => Promise<T>,
 ): Promise<{ kind: 'rateLimited'; until: number } | { kind: 'response'; status: number; value: T | null }> {
   const until = id ? rateLimitedUntil('body', id) : null
@@ -228,13 +228,18 @@ async function fetchThroughGate<T>(
     stats.rateLimited++
     return { kind: 'rateLimited', until }
   }
-  await waitForDataApiSlot({ urgent })
+  await endpoint.waitDataSlot(url, { urgent })
+  await endpoint.prepare()
   let out: { status: number; value: T | null }
   try {
     out = await fetchWithTimeout(
       url,
-      { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers: { Authorization: authHeader(apiKey) } } },
-      async res => ({ status: res.status, value: res.ok ? await read(res) : null }),
+      { timeoutMs: API_FETCH_TIMEOUT_MS, signal: null, init: { headers: endpoint.dataHeaders(url) } },
+      async res => {
+        // 中継の口から返す本体（予報）の 401・429 は、一覧と同じく札を捨てる・待ちを覚える
+        endpoint.observe(res.status, res.headers)
+        return { status: res.status, value: res.ok ? await read(res) : null }
+      },
     )
   } catch (e) {
     stats.failed++
@@ -253,9 +258,9 @@ async function fetchThroughGate<T>(
 
 /** 控えを見ずに取得して控える。 */
 async function fetchFresh(
-  apiKey: string, url: string, id: string | null, urgent: boolean,
+  endpoint: DmdataEndpoint, url: string, id: string | null, urgent: boolean,
 ): Promise<TelegramTextResult> {
-  const out = await fetchThroughGate(apiKey, url, id, urgent, res => res.text())
+  const out = await fetchThroughGate(endpoint, url, id, urgent, res => res.text())
   if (out.kind === 'rateLimited') {
     return { xml: null, status: 429, fromCache: false, rateLimitedUntil: out.until }
   }
@@ -296,9 +301,9 @@ export interface TelegramBytesResult {
  * `Promise<TelegramTextResult>` を持つため相乗りできず、呼び出し側が URL を鍵にした
  * `binaryBodyCache` で同じ役を果たしている。
  */
-export async function fetchTelegramBytes(apiKey: string, url: string): Promise<TelegramBytesResult> {
+export async function fetchTelegramBytes(endpoint: DmdataEndpoint, url: string): Promise<TelegramBytesResult> {
   const id = telegramIdFromUrl(url)
-  const out = await fetchThroughGate(apiKey, url, id, false, async res => new Uint8Array(await res.arrayBuffer()))
+  const out = await fetchThroughGate(endpoint, url, id, false, async res => new Uint8Array(await res.arrayBuffer()))
   if (out.kind === 'rateLimited') return { bytes: null, status: 429, rateLimitedUntil: out.until }
   const { status, value: bytes } = out
   if (bytes === null) return { bytes: null, status, rateLimitedUntil: null }

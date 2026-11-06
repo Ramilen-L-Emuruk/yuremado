@@ -50,8 +50,10 @@ function makeTsunami(stations: TsunamiArea['stations'], observations: TsunamiObs
 
 /** 観測点の行の時刻欄（名前の span と同じ枠にいる）。欄そのものが無ければ null。 */
 function timeLineOf(name: string): string | null {
-  const nameEl = screen.getByText(name)
-  const line = nameEl.parentElement?.parentElement?.querySelector('.mt-1')
+  const row = screen.getByText(name).closest('[data-station-row]')
+  // 行そのものが見つからないのは「時刻欄が無い」とは別の壊れ方。null を返すと欄が無いことを確かめるテストが素通りする
+  expect(row).not.toBeNull()
+  const line = row?.querySelector('[data-station-times]')
   return line ? line.textContent : null
 }
 

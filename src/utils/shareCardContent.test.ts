@@ -49,8 +49,8 @@ function eew(
   } as unknown as EEWAlert
 }
 
-/** 本文の末尾に入るアプリの URL。実際の値は `standardAppUrl` の担当（shareCard.test.ts）。 */
-const APP_URL = 'https://example.test/yuremado/'
+/** 本文の末尾に入るアプリの URL。実際の値は `currentAppUrl` が開いているページから作る。 */
+const APP_URL = 'https://example.test/'
 
 /** 見出しと出典を見るテストは URL を気にしないので、既定の URL で包んで呼ぶ。 */
 function build(i: ShareCardContentInput): ShareCardContent {
@@ -74,6 +74,7 @@ function input(over: Partial<ShareCardContentInput> & { mode: MapMode }): ShareC
   return {
     quake: null,
     tsunamis: [],
+    tsunamiSourceQuakes: [],
     eews: [],
     showBathymetry: true,
     showActiveFaults: true,
@@ -429,6 +430,43 @@ describe('buildShareCardContent — 津波', () => {
     expect(c.header.subtitle).toContain('1 区域')
   })
 
+  // 原因地震は、結べた地震カードの上段の値で並べる（津波カードの原因地震の行・地図の×印と同じ値。→ `shownTsunamiSources`）。
+  it('結べた地震カードがあれば、原因地震をその値で並べる', () => {
+    const t = { ...tsunami(), eventId: '20260824123400' } as JMATsunami
+    const card = { ...quake({ magnitude: 7.6, depth: 40 }), id: 'dmdata-quake-20260824123400-1' } as JMAQuake
+    const c = build(input({ mode: 'tsunami', tsunamis: [t], tsunamiSourceQuakes: [card] }))
+    expect(c.header.subtitle).toContain('M7.6')
+    expect(c.header.subtitle).not.toContain('M8.1')
+  })
+
+  // 正: 同じ地震を 2 つの津波が運び、どちらも同じ地震カードと結べれば 1 件にまとめる。深さもカードの値になる
+  it('同じ地震を運ぶ 2 つの津波は、結べた値で 1 件にまとめる', () => {
+    // 原因地震に時刻を持たせる（時刻の無い同士は結べなくても重なるので、それでは重ね方を確かめられない）
+    const withTime = [{ hypocenterName: '日向灘', magnitude: 8.1, arrivalTime: '2026-08-24T12:34:00+09:00' }]
+    const a = { ...tsunami(), eventId: '20260824123400', sourceEarthquakes: withTime } as JMATsunami
+    const b = { ...tsunami({ areaName: '高知県' }), id: 't2', eventId: '20260824123400', sourceEarthquakes: withTime } as JMATsunami
+    const card = { ...quake({ magnitude: 7.6, depth: 40 }), id: 'dmdata-quake-20260824123400-1' } as JMAQuake
+    const c = build(input({ mode: 'tsunami', tsunamis: [a, b], tsunamiSourceQuakes: [card] }))
+    expect(c.header.subtitle?.split('日向灘').length).toBe(2)
+    expect(c.header.subtitle).toContain('40km')
+  })
+
+  // 安全弁: 取り消された地震カードとは結ばず、津波電文の値のまま。
+  it('取り消された地震カードの値は使わない', () => {
+    const t = { ...tsunami(), eventId: '20260824123400' } as JMATsunami
+    const card = { ...quake({ magnitude: 7.6 }), id: 'dmdata-quake-20260824123400-1', cancelledAt: 1 } as unknown as JMAQuake
+    const c = build(input({ mode: 'tsunami', tsunamis: [t], tsunamiSourceQuakes: [card] }))
+    expect(c.header.subtitle).toContain('M8.1')
+  })
+
+  // 対照: 結べる地震カードが無ければ、津波電文の値のまま。
+  it('結べる地震カードが無ければ、津波電文の値のまま並べる', () => {
+    const t = { ...tsunami(), eventId: '20260824123400' } as JMATsunami
+    const other = { ...quake({ magnitude: 7.6 }), id: 'dmdata-quake-20260101000000-1' } as JMAQuake
+    const c = build(input({ mode: 'tsunami', tsunamis: [t], tsunamiSourceQuakes: [other] }))
+    expect(c.header.subtitle).toContain('M8.1')
+  })
+
   // 見出しの文字色は付けない。注意報の `formatTsunamiGrade().color` は黒で、暗い見出し帯の上では読めなかった。
   it('どの等級でも見出しの文字色を付けない（既定の白）', () => {
     for (const grade of ['MajorWarning', 'Warning', 'Watch', 'Forecast']) {
@@ -656,17 +694,18 @@ describe('buildShareCardContent — 複数の緊急地震速報・深さ・揺�
   })
 
   // 正（2026-10-23 ユーザー選択「揺れ検知中は推定最大震度を出す (Recommended)」・文面は 2026-10-24「この文面で (Recommended)」）
-  it('正: 緊急地震速報が無く揺れを検知していれば、見出しは「揺れ検知」と推定最大震度', () => {
+  it('正: 緊急地震速報が無く揺れを検知していれば、見出しは「揺れ検知」と最大リアルタイム震度', () => {
     const c = build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'confirmed', maxIndex: 30 } }))
     expect(c.header.title).toBe('揺れ検知')
-    expect(c.header.subtitle).toMatch(/^推定最大震度 .+（強震モニタ）$/)
+    expect(c.header.subtitle).toMatch(/^最大リアルタイム震度 [^\s（(]+$/)
     expect(build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'candidate', maxIndex: 30 } })).header.title).toBe('揺れの可能性')
   })
 
-  // 正（2026-10-29 ユーザー選択「「0以下」を焼く (Recommended)」）・安全弁（欠測は焼かない）
-  it('正: 推定最大震度が震度0 未満なら「0以下」を焼き、欠測（-1）なら副見出しを出さない', () => {
+  // 正（2026-10-29 ユーザー選択「「0以下」を焼く (Recommended)」、呼び名は 2026-11-05 ユーザー選択
+  // 「「0未満」と「<0」にする (Recommended)」）・安全弁（欠測は焼かない）
+  it('正: 最大リアルタイム震度が震度0 未満なら「0未満」を焼き、欠測（-1）なら副見出しを出さない', () => {
     expect(build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'confirmed', maxIndex: 0 } })).header.subtitle)
-      .toBe('推定最大震度 0以下（強震モニタ）')
+      .toBe('最大リアルタイム震度 0未満')
     const missing = build(input({ mode: 'kyoshin', kyoshinDetection: { state: 'confirmed', maxIndex: -1 } }))
     expect(missing.header.title).toBe('揺れ検知')
     expect(missing.header.subtitle).toBeUndefined()

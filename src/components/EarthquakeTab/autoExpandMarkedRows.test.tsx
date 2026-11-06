@@ -62,6 +62,7 @@ const renderTab = async (updateMarks: ReadonlyMap<string, QuakeCardMarks>, selec
   <EarthquakeTab
     earthquakes={[QUAKE]}
     selectedId={selectedId}
+    selectSeq={0}
     speakingKey={null}
     followSpeech={false}
     onSelect={() => {}}
@@ -75,12 +76,14 @@ const renderTab = async (updateMarks: ReadonlyMap<string, QuakeCardMarks>, selec
     loadMoreFailed={false}
     reconnectGapLoss={false}
     fetchThrottled={false}
+    onDismissKeyReentry={null}
     lpgmByEventId={new Map()}
     updateMarks={updateMarks}
     activeLpgmEventId={null}
     onToggleLpgm={() => {}}
+    lpgmFocus={null}
     estimatedIntensities={[]}
-    internationalTsunamis={[]}
+    internationalTsunamisByQuake={new Map()}
     distributionQuakeKey={null}
     onToggleDistribution={() => {}}
     unreceivedQuakeKey={null}
@@ -128,6 +131,7 @@ describe('印の付いた行の自動展開（カードとの配線）', () => {
       <EarthquakeTab
         earthquakes={[QUAKE]}
         selectedId={KEY}
+        selectSeq={0}
         speakingKey={null}
         followSpeech={false}
         onSelect={() => {}}
@@ -141,12 +145,14 @@ describe('印の付いた行の自動展開（カードとの配線）', () => {
         loadMoreFailed={false}
         reconnectGapLoss={false}
         fetchThrottled={false}
+        onDismissKeyReentry={null}
         lpgmByEventId={new Map()}
         updateMarks={marks}
         activeLpgmEventId={null}
         onToggleLpgm={() => {}}
+        lpgmFocus={null}
         estimatedIntensities={[]}
-        internationalTsunamis={[]}
+        internationalTsunamisByQuake={new Map()}
         distributionQuakeKey={null}
         onToggleDistribution={() => {}}
         unreceivedQuakeKey={null}

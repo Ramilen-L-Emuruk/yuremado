@@ -14,7 +14,7 @@ PRELIMINARY EPICENTER:LAT4.8NORTH LON127.4EAST
 MAG:7.0
 
 EVALUATION
- NO DESTRUCTIVE TSUNAMI IS EXPECTED FROM THIS EARTHQUAKE.
+ THERE IS NO POSSIBILITY OF A TSUNAMI
 
 =
 `
@@ -41,9 +41,32 @@ describe('parseWepa60Text', () => {
       originTime: '2021-01-21T12:23:00.000Z',
       isCommunicationsTest: false,
       text: expect.stringContaining('TALAUD ISLANDS, INDONESIA'),
+      epicenter: { latitude: 4.8, longitude: 127.4 },
+      regionName: 'TALAUD ISLANDS, INDONESIA',
+      magnitude: 7.0,
+      bulletinNumber: 1,
+      evaluation: 'none',
     })
     expect(r!.text.startsWith('WEPA60 RJTD 211247\n')).toBe(true)
-    expect(r!.text.endsWith('EXPECTED FROM THIS EARTHQUAKE.')).toBe(true)
+    expect(r!.text.endsWith('THERE IS NO POSSIBILITY OF A TSUNAMI')).toBe(true)
+  })
+
+  // 実電文の書式（全期間の控えの地震の報 163 通）: 南緯・西経は SOUTH・WEST、規模の種類は (MJMA)・(MW)、深さは FOCAL DEPTH の行で
+  // 規模と同じ行に書かれることがある
+  it('南緯・西経・規模の種類・深さ（規模と同じ行）を読む', () => {
+    const r = parseWepa60Text(BULLETIN
+      .replace('PRELIMINARY EPICENTER:LAT4.8NORTH LON127.4EAST', 'PRELIMINARY EPICENTER:LAT15.2SOUTH LON173.1WEST')
+      .replace('MAG:7.0', 'FOCAL DEPTH:139KM MAG:7.3 (MW)'))
+    expect(r).toMatchObject({ epicenter: { latitude: -15.2, longitude: -173.1 }, magnitude: 7.3, magnitudeType: 'Mw', depthKm: 139 })
+    expect(parseWepa60Text(BULLETIN.replace('MAG:7.0', 'MAG:6.9 (MJMA)'))?.magnitudeType).toBe('Mj')
+  })
+
+  // 安全弁: 震源の値が無い報（通信試験）は、値を持たない
+  it('震源の値が無い報は震央・地名・規模を持たない', () => {
+    const r = parseWepa60Text(COMM_TEST)
+    expect(r?.epicenter).toBeUndefined()
+    expect(r?.regionName).toBeUndefined()
+    expect(r?.magnitude).toBeUndefined()
   })
 
   it('通信試験は発生時刻を持たず、試験の印が立つ（改行が CRLF でも読める）', () => {
@@ -85,6 +108,24 @@ describe('parseWepa60Text', () => {
     const r = parseWepa60Text(BULLETIN.replace('ORIGIN TIME:1223Z', 'ORIGIN TIME:XXXXZ'))
     expect(r?.title).toBe('TSUNAMI BULLETIN NUMBER 001')
     expect(r?.originTime).toBeUndefined()
+  })
+
+  it('題名の番号と、評価の 5 種を読む（2 行に折れた文も 1 文として読む）', () => {
+    const withEval = (lines: string) => parseWepa60Text(BULLETIN.replace(' THERE IS NO POSSIBILITY OF A TSUNAMI', lines))
+    expect(parseWepa60Text(BULLETIN)).toMatchObject({ bulletinNumber: 1, evaluation: 'none' })
+    expect(withEval(' THERE IS A POSSIBILITY OF A DESTRUCTIVE OCEAN-WIDE TSUNAMI')?.evaluation).toBe('oceanWide')
+    expect(withEval(' THERE IS A POSSIBILITY OF A DESTRUCTIVE REGIONAL TSUNAMI')?.evaluation).toBe('regional')
+    expect(withEval(' THERE IS A POSSIBILITY OF A DESTRUCTIVE LOCAL TSUNAMI\n NEAR THE EPICENTER')?.evaluation).toBe('localNearEpicenter')
+    expect(withEval(' THERE IS A VERY SMALL POSSIBILITY OF A DESTRUCTIVE LOCAL\n TSUNAMI')?.evaluation).toBe('verySmall')
+    expect(parseWepa60Text(BULLETIN.replace('NUMBER 001', 'NUMBER 003'))?.bulletinNumber).toBe(3)
+  })
+
+  it('5 種のどれでもない評価文は持たない（似た文を言い換えて当てない）', () => {
+    const r = parseWepa60Text(BULLETIN.replace(' THERE IS NO POSSIBILITY OF A TSUNAMI', ' NO DESTRUCTIVE TSUNAMI IS EXPECTED.'))
+    expect(r?.evaluation).toBeUndefined()
+    expect(parseWepa60Text(COMM_TEST)).toMatchObject({ isCommunicationsTest: true })
+    expect(parseWepa60Text(COMM_TEST)?.evaluation).toBeUndefined()
+    expect(parseWepa60Text(COMM_TEST)?.bulletinNumber).toBeUndefined()
   })
 })
 

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+// テストの中で初めて読むと、並列で流したときに読み込みの待ちが 1 件目に乗り、既定の 5 秒で時間切れになる
+import { NOTIFICATION_OPEN_MESSAGE } from '../src/utils/notificationClick'
 
 // Service Worker が `importScripts` で読み込むファイル（`vite.config.ts` の `workbox.importScripts`）は、
 // `public/` に置いてビルド出力へ写す。**読み込めないと Service Worker のインストールごと失敗する** ——
@@ -43,19 +45,12 @@ describe('Service Worker が読み込むファイル', () => {
   })
 })
 
-// 通知を押したときの処理は、standard 版のスコープ（/yuremado/）から DMDSS 版（/yuremado/dmdss/）の画面を外す。
-// 外す名前はあちらに直書きしてあるので、`vite.config.ts` の DMDSS 版の `base` と食い違ったら止める
-// （食い違うと、standard 版の通知を押して DMDSS 版の画面が前に出る。エラーは出ない）。
-describe('通知を押したときに外す内側のスコープ', () => {
-  it('DMDSS 版の base の末尾と一致する', () => {
-    const clickHandler = readFileSync(`${ROOT}public/sw-notification-click.js`, 'utf-8')
-    const nested = clickHandler.match(/NESTED_SCOPE_DIRS\s*=\s*\[([^\]]*)\]/)
-    expect(nested).not.toBeNull()
-    const dirs = [...nested![1].matchAll(/['"]([^'"]+)['"]/g)].map(x => x[1])
-    const bases = stripLineComments(CONFIG).match(/const base = isDmdss\s*\?\s*'([^']+)'\s*:\s*'([^']+)'/)
-    expect(bases).not.toBeNull()
-    const [, dmdssBase, standardBase] = bases!
-    expect(dmdssBase.startsWith(standardBase)).toBe(true)
-    expect(dirs).toEqual([dmdssBase.slice(standardBase.length)])
+
+// 通知を押したときの文の種類は、Service Worker（素の JS）とアプリ（`notificationClick.ts`）で別々に書いてある。
+// ずれると、開いている画面へ渡した開き先が黙って捨てられる
+describe('通知を押したときの文の種類', () => {
+  it('Service Worker が送る種類と、アプリが受ける種類が同じ', () => {
+    const sw = readFileSync(`${ROOT}public/sw-notification-click.js`, 'utf-8')
+    expect(sw).toContain(`type: '${NOTIFICATION_OPEN_MESSAGE}'`)
   })
 })

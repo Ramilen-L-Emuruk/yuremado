@@ -1,7 +1,7 @@
 import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
 import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type EewMaxScaleInfo } from './eew'
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from './intensity'
-import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME, TSUNAMI_GRADE_LIFTED, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
+import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME, TSUNAMI_GRADE_LIFTED, TSUNAMI_ALL_LIFTED_SENTENCE, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
 import { joinSegments, plain, type SpeechSegment, type SpeechRef, type QuakeFact, type SpokenObservation } from './ttsFollow'
 import { getSubRegionsCache } from './subregions'
@@ -110,8 +110,7 @@ function regionNamesForScale(
   const areaPoints = matched.filter(p => isAreaPoint(p, idx.areaPrefIndex))
   if (areaPoints.length > 0) return aggregateAreaNamesByPref(areaPoints, idx.prefAreaNames, idx.areaPrefIndex, prefsWithAreaShown)
 
-  // 区域の点を持たない電文では観測点の所属区域を逆引きし、区域粒度で読む。P2PQuake の詳細報が
-  // 常にこの経路（区域は別電文で届くため。→ docs/spec/quake-spec.md §4）。
+  // 区域の点を持たない電文では観測点の所属区域を逆引きし、区域粒度で読む。
   const observations = matched.filter(p => !p.isArea)
   if (observations.length > 0) {
     const resolved: { pref: string; addr: string }[] = []
@@ -491,7 +490,7 @@ function selectRegionNames(
   regionOrder: RegionOrderIndex | null,
 ): { names: string[]; omittedNames: string[] } {
   // 震源位置が使えるか。0 は座標未設定、-200 は「位置不明」センチネル（震度速報のように震源を
-  // 持たない電文で入る。p2pquake.ts / dmdataParser.ts 参照）。どちらも距離の基準にはできない。
+  // 持たない電文で入る。dmdataParser.ts 参照）。どちらも距離の基準にはできない。
   // -200 を弾かないと、地球上に存在しない点からの距離で地域を選ぶことになる。
   const hasEpicenter = hypocenter != null
     && hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)
@@ -1050,8 +1049,8 @@ function intensityText(scale: IntensityScale | number): string {
 /**
  * 地域名を 1 件も作れなかったときに添える一文。震度が判っていればそれだけを伝え、
  * 判らなければ何も返さない。`intensityText` は震度不明で空文字を返すので、確かめずに埋めると
- * 「最大震度を観測しました」という助詞だけの文になる（`maxScale` は無いのが正常な経路もある。
- * → docs/spec/data-sources-spec.md §3）。
+ * 「最大震度を観測しました」という助詞だけの文になる（`maxScale` は無いのが正常な電文もある。
+ * 最大震度を持たない電文は `-1` で届く → `dmdataParser.ts` の `readIntensity`）。
  */
 function maxScaleOnlySentence(maxScale: IntensityScale, unreceived = false): string {
   const label = intensityText(maxScale)
@@ -1368,7 +1367,7 @@ const CANCEL_DECLARATION_SUBJECTS: ReadonlySet<string> = new Set([
  *
  * **震央地名が空なら名乗りだけを言い切る**（「緊急地震速報。」。2026-10-24 ユーザー選択「備えとして直す
  * (Recommended)」）。空の名前をそのまま埋めると「緊急地震速報、で地震。」と壊れる。名前が空になりうるのは
- * 標準版の取得元（P2PQuake は仕様上 `hypocenter.name` が必須でない・Yahoo の `regionName`。どちらも実配信では未観測）で、
+ * 強震モニタの取得元（Yahoo の `regionName`。実配信では未観測）で、
  * DMDATA は全期間 45,079 通すべて名前を持つ。震源更新（`hypocenterUpdate`）で名前が空のときは、
  * 呼び出し側が言い直しそのものを読まない（言い直す地名が無い）。
  */
@@ -1693,6 +1692,28 @@ function domesticTsunamiSegment(t: DomesticTsunami): SpeechSegment {
 export { DOMESTIC_TSUNAMI_CODE_TEXT }
 
 /**
+ * 読み上げで読む、区分を決める固定付加文の文。**0211 だけ括弧書きを除き、ほかは画面と同じ気象庁の文。**
+ *
+ * 0211 は読み上げでは「津波警報等を発表中です。」と読む（2026-11-05 ユーザー選択「読み上げだけ「津波警報等を発表中です。」 (Recommended)」。
+ * 2026-10-23 の「気象庁の原文を読む」を 0211 の読み上げについてだけ覆した）。括弧書き「（大津波警報・津波警報あるいは
+ * 津波注意報）」は「等」の中身の説明で、声では本題の前に警報の名前が続いてしまう。画面の地震カードは電文の全文のまま
+ * （`domesticTsunamiCardForecastText`）。
+ */
+export const DOMESTIC_TSUNAMI_CODE_SPEECH: Readonly<Record<DomesticTsunamiCode, string>> = {
+  ...DOMESTIC_TSUNAMI_CODE_TEXT,
+  '0211': '津波警報等を発表中です。',
+}
+
+/**
+ * 遠地地震に関する情報の付加文の原文を、読み上げる形にする。**原文の 0211 の文だけを読み上げ用の文へ置き換え**、
+ * ほかの文はそのまま読む（2026-11-05 ユーザー選択「遠地地震も「津波警報等を発表中です。」 (Recommended)」。画面は全文のまま）。
+ * 照合は表の文との完全一致で、文面が一字でも違えば原文のまま読む。
+ */
+function speakableForecast(text: string): string {
+  return text.split(DOMESTIC_TSUNAMI_CODE_TEXT['0211']).join(DOMESTIC_TSUNAMI_CODE_SPEECH['0211'])
+}
+
+/**
  * 津波区分の既読・差分の鍵。**区分とコードの組で作る** —— 区分が同じでもコードが違えば読み上げる文が
  * 違う（0212 と 0213 はどちらも「若干の海面変動」）ので、区分だけで比べると続報で文が変わっても黙る。
  */
@@ -1703,19 +1724,19 @@ export function domesticTsunamiFactValue(t: DomesticTsunami, code: DomesticTsuna
 /**
  * 国内の地震情報の津波の一文。**区分を決めたコードを持てば、そのコードの気象庁の文を読む**
  * （2026-10-23 ユーザー選択「気象庁の原文を読む (Recommended)」、範囲は同日の選択「A: 発表文の内訳に足す (Recommended)」で
- * 津波の文だけにした）。
+ * 津波の文だけにした）。0211 だけは括弧書きを除いた文を読む（→ {@link DOMESTIC_TSUNAMI_CODE_SPEECH}）。
  *
  * 区分から文を起こすと、区分へ丸めたぶん気象庁が書いていないことを言う —— 0230「この地震による日本への
  * 津波の影響はありません。」を 0215 の文で読み、0213・0214 の「注意してください」を「被害の心配はありません」に、
  * 0216 の「震源が海底の場合」を「ため」に変える（コード表との突き合わせは docs/jma-wording-audit.md E1〜E3）。
  *
- * **コードを持たないときは区分の文を読む。** 原文を持たない経路（P2PQuake）と、区分を津波電文から借りたとき
+ * **コードを持たないときは区分の文を読む。** 原文を持たない電文と、区分を津波電文から借りたとき
  * （借りるときにコードを捨てる）。
  */
 function domesticTsunamiSegmentOf(event: JMAQuake): SpeechSegment {
   const { domesticTsunami: t, domesticTsunamiCode: code } = event.earthquake
   return {
-    text: code ? DOMESTIC_TSUNAMI_CODE_TEXT[code] : domesticTsunamiText(t),
+    text: code ? DOMESTIC_TSUNAMI_CODE_SPEECH[code] : domesticTsunamiText(t),
     refs: [{ kind: 'quakeFact', fact: 'domesticTsunami', value: domesticTsunamiFactValue(t, code) }],
   }
 }
@@ -1745,7 +1766,7 @@ function depthUpdateValue(h: DepthFact): string {
  * DMDATA のアーカイブの控え（`.cache/dmdata-archive-cache/telegram-earthquake`。2,135 日・
  * 2020-11-18〜2026-10-18）の地震情報を数えた。震源名が空なのは震源要素を持たない震度速報
  * 1,771 通だけで、**「深さは判っているのに名前が無い」電文は 0 件**（震度速報は深さも持たない）。
- * 起きない形として残す。**標準版（P2PQuake）は数えていない** —— あちらの控えを持たないため。 震源名が空の電文では「〇〇、深さ10キロメートルを
+ * 起きない形として残す。震源名が空の電文では「〇〇、深さ10キロメートルを
  * 震源とする」の句ごと落ちるため、深さが判っていても声にならない。
  */
 function tellableHypocenterFacts(hypocenter: Hypocenter, opts?: TtsSpeechOptions): Set<QuakeFact> {
@@ -1875,9 +1896,8 @@ function cityKey(c: { code?: string; pref: string; name: string }): string {
  * - **問いが違う。** `Revise` が答えるのは「**直前の報**から何が変わったか」。こちらが要るのは
  *   「**最後に声にした報**から何が変わったか」で、割り込みで鳴らなかった報があると食い違う
  *   （記録を声になった分だけ進める規律の帰結 → `docs/spec/audio-tts-spec.md` §4）。
- * - **P2PQuake 経路が `Revise` を持たない。** standard 版だけ黙ることになる。
  *
- * 突き合わせなら両方を満たせる。`Revise` は逆に**検証の材料**として使える（テストで実電文の
+ * 突き合わせならこれを満たせる。`Revise` は逆に**検証の材料**として使える（テストで実電文の
  * 値と突き合わせの結果が一致することを固定してある）。
  *
  * **区域・都道府県の集約点（`isArea`）は数えない。** あれは区域の差分がもう見ており、
@@ -2143,10 +2163,11 @@ function buildEarthquakeSegments(
     const prefix = isNew ? '遠地地震に関する情報。' : '遠地地震に関する情報が更新されました。'
     // 付加文の原文を優先する。遠地地震は 022x/023x 系の付加文を併用するため、
     // domesticTsunami（021x 系の区分）へ丸めると意味が落ちる。
-    // 原文を持たない経路（P2PQuake）は区分から文を起こし、海外への津波の見通し
+    // 原文を持たない電文は区分から文を起こし、海外への津波の見通し
     // （`foreignTsunamiText`）があれば続ける。
     // **空白だけの付加文もここで区分側へ倒れる**（{@link endTelegramSentence} が空を返す）。
-    const forecast = endTelegramSentence(event.forecastText)
+    // 原文に 0211 の文があれば、国内の地震情報と同じく括弧書きを除いて読む（{@link speakableForecast}）。
+    const forecast = speakableForecast(endTelegramSentence(event.forecastText))
     const foreign = endTelegramSentence(event.foreignTsunamiText)
     const tail: SpeechSegment[] = forecast
       ? [plain(forecast)]
@@ -2194,7 +2215,7 @@ function buildEarthquakeSegments(
     //
     // **震源情報・その他（`isEpicenterOnly`）は震源要素しか運ばない**ので、その差分が空なら
     // それだけで言い切れる（観測点の記録は見ない。この種別では作られない）。下の階層を持つのは
-    // 震源・震度情報（VXSE53）と各地の震度情報（P2PQuake）だけ。
+    // 震源・震度情報（VXSE53）だけ。
     const nothingSaid = facts.length === 0 && regionSegs.length === 0 && unreceivedSegs.length === 0 && fallback.length === 0
     //
     // **区域の最大震度が下がった・区域が消えた報では言い切らない**（2026-10-19 ユーザー承認
@@ -3019,11 +3040,8 @@ export function tsunamiAreaGradeChangeToText(changes: readonly TsunamiAreaGradeC
   return joinSegments(tsunamiAreaGradeChangeToSegments(changes))
 }
 
-/**
- * 全区域が解除されたことを告げる文。読み上げと、気象庁の文を持たない解除の報の通知本文が共有する
- * （2026-10-19 ユーザー選択「読み上げと同じ文 (Recommended)」）。
- */
-export const TSUNAMI_ALL_LIFTED_SENTENCE = '津波警報等は全て解除されました。'
+/** 全区域が解除されたことを告げる文（定義は `utils/tsunami.ts`。通知の文面も同じものを読む）。 */
+export { TSUNAMI_ALL_LIFTED_SENTENCE }
 
 /** VTSE41/51/52 津波警報等 全解除の読み上げテキストを cancelReason ごとに生成する。 */
 export function tsunamiCancelToText(cancelReason: JMATsunami['cancelReason'], cancelText?: string): string {
@@ -4662,8 +4680,8 @@ export interface TelegramTextSpeech {
  * 片方だけ読んだ状態で他方を黙らせると前置きだけ聞いた文が残る。
  *
  * **事象の識別子を持たない電文では種別だけになる**（＝従来どおり文字列だけで既読）。
- * DMDATA の XML 経路は全種別が `EventID` を持つ。**P2PQuake の地震情報は持たない**ので、
- * 呼び出し側が地震の時刻を代わりに渡す（自由付加文を運ぶ経路はこの 2 つ）。
+ * 電文は全種別が `EventID` を持つ。地震情報で `EventID` が空のときは、
+ * 呼び出し側が地震の時刻を代わりに渡す。
  * **それでも欠けたときは黙って旧来の挙動へ戻る**ので、`speakTelegramText` の
  * 記録に主題を出して気づけるようにしてある。
  */
@@ -4783,7 +4801,7 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
         pick('quakeVarComment', event.varCommentText),
         pick('quakeFreeText', event.freeText),
       ], reads)
-      // **P2PQuake の地震は `eventId` を持たない**ので、地震の時刻で主題を作る（同じ地震の続報は
+      // **`eventId` を持たない地震情報**は、地震の時刻で主題を作る（同じ地震の続報は
       // 同じ時刻を運ぶ）。`eventId` だけだと全件が `quake:` に潰れ、別の地震の同じ文を二度と読まない。
       const quakeSubjectId = event.eventId ?? (event.earthquake?.time ? `time:${event.earthquake.time}` : undefined)
       return telegramSpeech(`地震情報について、気象庁の発表文をお伝えします。`, body, telegramTextSpokenSubject(event.kind, quakeSubjectId))
@@ -4884,6 +4902,9 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
     }
     // 推計震度分布図は二進電文で、気象庁が書いた文を運ばない。
     case 'estimatedIntensity':
+      return null
+    // 国際津波関連情報の本文は英文で、日本語の声では読めない（読むのは `internationalTsunamiToText` の要約だけ）
+    case 'internationalTsunami':
       return null
   }
 }

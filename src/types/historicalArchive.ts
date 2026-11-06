@@ -2,7 +2,7 @@ import type { ReplayPayload } from './replay'
 
 // 気象庁アーカイブに存在しない期間（DMDATAアーカイブの最古=2020-11-18より前等）を再現するための
 // ローカル収録データ。テスト時刻設定（App.tsx の fetchReplayEvents）が対象時刻をカバーする
-// パックを見つけたら、DMDATA/P2PQuakeアーカイブの代わりにこちらから読む。
+// パックを見つけたら、DMDATA アーカイブの代わりにこちらから読む。
 
 /** 実際に電文を集めた範囲（ISO の半開区間 [from, to)）。 */
 export interface HistoricalArchiveRange {
@@ -26,7 +26,7 @@ export interface HistoricalArchiveMeta {
 }
 
 export interface HistoricalArchiveEntry {
-  time: string  // 発表・発信時刻の絶対時刻（ISO）。テストシナリオの offsetMs と異なり相対シフトしない
+  time: string  // 発表・発信時刻の絶対時刻（ISO）。テストボタンの電文（offsetMs で「いま」へ寄せる）と異なり相対シフトしない
   payload: ReplayPayload
   silent?: boolean
 }

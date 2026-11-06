@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, type CSSProperties } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, type CSSProperties } from 'react'
 import type { MapHandle } from './components/Map/mapTypes'
 import { IconNav, TAB_LABELS, type TabId } from './components/IconNav'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -8,7 +8,7 @@ import {
   resolveNonRealtimeTabSource, shouldResetTsunamiScroll, shouldDeferRevertWhileSpeaking,
   type TabHold, type TabPriority, type TabHoldSource, type TabFollowMark,
 } from './utils/tabPriority'
-import { PanelResizeHandle } from './components/PanelResizeHandle'
+import { PanelResizeHandle, PanelWidthHandle } from './components/PanelResizeHandle'
 import { MapView, type MapMode } from './components/Map/MapView'
 import type { ShakeFocus, MapFocusTarget } from './components/Map/mapTypes'
 import { getAreaPrefIndexCache, type LatLng } from './utils/stationCoords'
@@ -17,6 +17,9 @@ import { MapDataStatus } from './components/MapDataStatus'
 import { MapRenderStatus } from './components/MapRenderStatus'
 import { ShareCardButton } from './components/ShareCardButton'
 import { useShareCard } from './hooks/useShareCard'
+import { usePushSubscription } from './hooks/usePushSubscription'
+import { useNotificationOpen } from './hooks/useNotificationOpen'
+import { installNotifyQuietVisibilityWatch, installServiceWorkerQuietAnswer, setNotifyQuietWhileOpen } from './services/notifyQuietWhileOpen'
 import { SeismoLinkStatus } from './components/SeismoLinkStatus'
 import { SeismoOverlay } from './components/SeismoOverlay'
 import { useSeismoStation, type SeismoStationState } from './hooks/useSeismoStation'
@@ -45,11 +48,11 @@ import {
   buildCatalogPointCloud, DEPTH_FILTER_MAX_KM, MAGNITUDE_FILTER_RANGE,
   LATITUDE_FILTER_RANGE, LONGITUDE_FILTER_RANGE,
   CATALOG_REBUILD_DEBOUNCE_MS,
-  jstYearOf, jstYearStartMs, jstYearEndMs, clampPeriodToRange, catalogPeriodBounds,
+  jstYearOf, jstYearStartMs, jstYearEndMs, catalogPeriodBounds, periodForBounds,
   type CatalogFilter, type CatalogViewOptions, type CatalogPointCloud,
 } from './utils/hypocenterCatalogView'
 import { SpecialInfoBanner, shareButtonBottomClass, shareButtonRowHeightClass } from './components/SpecialInfoBanner'
-import { useSpecialInfoBanners } from './components/SpecialInfoBanner/useSpecialInfoBanners'
+import { NO_BAND_ITEMS, useSpecialInfoBanners } from './components/SpecialInfoBanner/useSpecialInfoBanners'
 import { MapLegend } from './components/MapLegend'
 import { isMapAreaShort } from './components/MapLegend/autoCollapse'
 import { buildLegendBlocks, EMPTY_LEGEND_SOURCES, withHeatmapPeriod, heatmapCompletenessNote, type MapLegendSources, type LegendBlock, type LegendHeatmapPeriod } from './components/MapLegend/legendBlocks'
@@ -60,16 +63,18 @@ import { useActionChecklist } from './hooks/useActionChecklist'
 import { useNearbyScope } from './hooks/useNearbyScope'
 import { useSeismoScope } from './hooks/useSeismoScope'
 import { useStationCoords } from './hooks/useStationCoords'
-import { useEarthquakes, MAX_HISTORY_RETAINED } from './hooks/useEarthquakes'
+import { useEarthquakes } from './hooks/useEarthquakes'
 import { useFetchThrottled } from './hooks/useFetchThrottled'
-import { useTestScenarios } from './hooks/useTestScenarios'
-import { PANEL_RATIO_MIN, useSettings } from './hooks/useSettings'
-import { squareMapLayout } from './utils/squareMapLayout'
+import { DEFAULTS as SETTINGS_DEFAULTS, SETTINGS_STORAGE_KEY, useSettings } from './hooks/useSettings'
+import { waveStackLayout } from './utils/waveStackLayout'
+import { useMediaQuery } from './hooks/useMediaQuery'
+import { PANEL_WIDTH_DEFAULT_NARROW_REM, PANEL_WIDTH_DEFAULT_SIDE_REM, SIDE_NARROW_QUERY, panelWidthCss } from './utils/panelWidth'
 import { useAlertTitle, resolveAlertTitle } from './hooks/useAlertTitle'
 import { useReloadSchedule } from './hooks/useReloadSchedule'
 import { AppUpdateBadge } from './components/AppUpdateBadge'
 import { useLiveEventHandler, ttsRegionOptions } from './hooks/useLiveEventHandler'
 import { useSpeechPrefetch } from './hooks/useSpeechPrefetch'
+import { useTimeSignal } from './hooks/useTimeSignal'
 import { useUnreceivedSpeechFollow } from './hooks/useUnreceivedSpeechFollow'
 import { useBorrowedHypocenterFollow, type BorrowedHypocenterShowResult } from './hooks/useBorrowedHypocenterFollow'
 import { useKyoshinAlerts } from './hooks/useKyoshinAlerts'
@@ -80,7 +85,7 @@ import { useDetectionDiagnostics } from './hooks/useDetectionDiagnostics'
 import { createSpeechFollowController, telegramTextSubject, type SpeechFollowSession } from './utils/ttsFollow'
 import { useTelegramTextSpeechFollow } from './hooks/useTelegramTextSpeechFollow'
 import { deriveKyoshinView } from './utils/kyoshinDetectionView'
-import { createReonsetState, stepReonset } from './utils/kyoshinReonset'
+import { createReonsetState, keyLatLng, stepReonset } from './utils/kyoshinReonset'
 import { filterSubThresholdIndices } from './utils/kyoshinSubThresholdFilter'
 import { countdownBeepTarget, useSWaveCountdown } from './hooks/useSWaveCountdown'
 import { pickArrivalEews, pickPublicWaveEews } from './utils/countdownEew'
@@ -93,6 +98,7 @@ import { formatDateTimeLocal } from './utils/formatters'
 import { computeEEWLevel, eewEventKey, eewMaxLpgmClass } from './utils/eew'
 import { createDetectionSpreadLog } from './utils/eewSpreadHold'
 import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './utils/quakeMerge'
+import type { LpgmSectionFocus } from './utils/quakeCardScroll'
 import { canOpenLpgmNotes } from './utils/lpgm'
 import { estimatedIntensityFor, matchEstimatedIntensityArrival } from './utils/estimatedIntensity'
 import {
@@ -105,6 +111,7 @@ import {
 } from './utils/quakeOverlay'
 import { findEndedTsunami, isTsunamiForecastOnly, tsunamiOverallGrade } from './utils/tsunami'
 import { filterDisplayedQuakes } from './utils/displayedQuakes'
+import { internationalTsunamiIndex, withInternationalTsunamiCards } from './utils/internationalTsunami'
 import { playCountdownBeep, unlockAudio, setSoundVolume, setKeepAliveEnabled } from './utils/alertSound'
 import { loadTtsPhraseBreakDict } from './utils/ttsPhraseBreakDict'
 import { loadTtsStationReadings } from './utils/ttsStationReadings'
@@ -113,9 +120,18 @@ import { warmFixedPhrases, isValidVoicevoxUrl, VOICEVOX_URL_DEBOUNCE_MS, isSpeak
 import { EEW_LEAD_PHRASES } from './utils/ttsText'
 import type { EEWAlert, JMAQuake, JMATsunami, LiveEvent, LiveEventMeta } from './types/earthquake'
 import { useReplayController, WINDOW_MS as REPLAY_WINDOW_MS, PRE_WINDOW_MS as REPLAY_PRE_WINDOW_MS, type ReplayFetchPurpose } from './hooks/useReplayController'
-import { fetchDmdataReplayEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
-import { PREFERRED_CLASSIFICATIONS } from './services/dmdataClassifications'
-import { fetchP2PReplayEvents, fetchP2PQuakeHistory, clearP2PReplayCache } from './services/p2pquakeReplay'
+import { fetchDmdataReplayEvents, fetchDmdataReplayInitialEvents, fetchDmdataQuakeHistoryFor, clearReplayCache, HISTORY_WINDOW_DAYS } from './services/dmdataReplay'
+import { relayRestEndpoint, relayTokenStore } from './services/relayEndpoint'
+import {
+  browserUsageEnv, buildUsageReportNow, countUsage, flushUsage, markUsageConsentAnswered, setUsageCounting, syncInstallIdSafely,
+  USAGE_FLUSH_INTERVAL_MS, usageConsentAnswered, usageCounter, type UsageSettingsFlags, usageSettingValues, markPrefsSentSafely, withUsageCount,
+} from './services/usageStats'
+import { UsageConsentDialog } from './components/UsageConsentDialog'
+import { useForecastKeyCheck } from './hooks/useForecastKey'
+import { relayRestClassifications, restSources } from './services/dmdataClassifications'
+import { dmdataKeyEndpoint } from './services/dmdataEndpoint'
+import { fetchReplayFromSources } from './services/replaySources'
+import { isValidDmdataApiKey } from './utils/dmdataApiKey'
 import { withDmdataLoadMore, withoutLoadMore } from './services/replayQuakeHistory'
 import { beginLoadMoreGateTag } from './services/dmdataRequestGates'
 import type { ReplayQuakeHistoryResult } from './types/replay'
@@ -123,14 +139,14 @@ import type { GateTag } from './utils/requestGate'
 import { findCoveringArchiveSync, findArchiveJustEndedSync, uncollectedFetchVerdict, emptyReplayFetchResult, fetchLocalArchiveEvents, fetchLocalArchiveQuakeHistory } from './services/localArchiveReplay'
 import { useHistoricalArchiveIndex } from './hooks/useHistoricalArchiveIndex'
 import { log } from './utils/logger'
-import { deliverBrowserNotification, NOTIFICATION_ICON, showBrowserNotification } from './utils/notifications'
+import { deliverBrowserNotification, NOTIFICATION_ICON, notificationData, showTestBrowserNotification } from './utils/notifications'
 import { setReplayOffset as setClockReplayOffset, serverDate, serverNow } from './utils/clock'
 import { recordReplayEvent, drainReplayEvents, peekReplayEvents } from './utils/replayEventLog'
-import { isDmdss } from './utils/env'
 import { isLiveFeedHalted } from './utils/connectionStatus'
 import { ROOT_FRAME_CLASS } from './rootFrame'
 import { SHARE_CARD_FORMATS } from './utils/shareCard'
-import { effectiveNotifyMinScale } from './utils/notificationGate'
+import { effectiveNotifyMinScale, notificationRegionAllowed } from './utils/notificationGate'
+import { quakePrefectures } from './utils/notificationRegions'
 
 /** 凡例を切っているときに渡す空の組。**同一参照を使い回す**（毎回作ると共有カードの ref 更新が空回りする）。 */
 const EMPTY_LEGEND_BLOCKS: LegendBlock[] = []
@@ -139,9 +155,8 @@ const EMPTY_SEISMO_STATIONS: readonly SeismoStationState[] = []
 
 // 平常時のウィンドウタイトル（index.html の <title> と一致させる）。
 // AutoHotKey 等が、情報更新時のタイトル変化を検知してイベントを発火できるようにする。
-const DEFAULT_TITLE = isDmdss
-  ? '揺れ窓 (DM-D.S.S)'
-  : '揺れ窓'
+// 版を 1 つにまとめたので「揺れ窓」に揃える（docs/relay-server-design.md §0 の 2026-10-31 の行）。
+const DEFAULT_TITLE = '揺れ窓'
 
 // siteConfigId 切替直後に kyoshin.sites / kyoshin.indices の siteConfigId が揃うまで
 // 下流へ渡す代替として使う空配列（毎レンダー新規生成しないようモジュール定数で共有）。
@@ -172,11 +187,21 @@ const TAB_SCROLLER_CLASS = 'absolute inset-0 overflow-y-auto overflow-x-hidden o
  * {@link deliverBrowserNotification}。
  */
 function showQuakeNotification(n: QuakeNotification): Promise<void> {
-  return deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: true })
+  return deliverBrowserNotification(n.title, { body: n.body, icon: NOTIFICATION_ICON, tag: n.tag, renotify: true, data: notificationData(n.open) })
 }
 
+/** 長周期の節を見せる求めが、紐づく地震カードを待つ上限（→ App の引き当ての effect）。 */
+const LPGM_FOCUS_WAIT_MS = 10_000
+
 export function App() {
-  const { settings, updateSetting, replaceSettings } = useSettings()
+  const { settings, updateSetting, replaceSettings, adoptExternalSetting } = useSettings()
+  // プッシュ通知の購読を設定に合わせる（docs/relay-server-design.md §6.7）
+  usePushSubscription(settings, updateSetting)
+  // 設定「アプリを開いている間は通知しない」を、通知の出し口・中継への名乗り・Service Worker の問いへ渡す
+  // （→ services/notifyQuietWhileOpen.ts）
+  useEffect(() => { setNotifyQuietWhileOpen(settings.notifyQuietWhileOpen) }, [settings.notifyQuietWhileOpen])
+  useEffect(() => installServiceWorkerQuietAnswer(), [])
+  useEffect(() => installNotifyQuietVisibilityWatch(), [])
   const [activeTab, setActiveTabState] = useState<TabId>(settings.defaultTab)
   // 津波タブを自動で見せた回数。増えるたびに津波カードのスクロールを先頭へ戻す
   // （増やす条件と理由は `requestAutoTab`）。
@@ -187,6 +212,16 @@ export function App() {
   // 縦積みレイアウト（スマホ縦など）でのパネル高さ比率。ドラッグ中は毎フレームここだけを
   // 更新し、指を離した時点で設定（localStorage）へ保存する。
   const [panelRatio, setPanelRatio] = useState(settings.panelRatio)
+  // 左右分割でのパネルの幅（rem・null は既定）。PC とスマホ横で別に持つ（2026-11-05 ユーザー選択
+  // 「PC とスマホ横で別々に覚える (Recommended)」）。離した時点でここと設定へ入れる（ドラッグ中は `handlePanelWidthChange`）。
+  const [panelWidthSide, setPanelWidthSide] = useState(settings.panelWidthSide)
+  const [panelWidthSideNarrow, setPanelWidthSideNarrow] = useState(settings.panelWidthSideNarrow)
+  const sideNarrow = useMediaQuery(SIDE_NARROW_QUERY)
+  // 保存した値が外から変わったら（設定の読み込み）見せる値も合わせる。つまみを離した時点の保存は
+  // 同じ値なので何も起きず、ドラッグ中は保存しないので引き戻されない。
+  useEffect(() => { setPanelRatio(settings.panelRatio) }, [settings.panelRatio])
+  useEffect(() => { setPanelWidthSide(settings.panelWidthSide) }, [settings.panelWidthSide])
+  useEffect(() => { setPanelWidthSideNarrow(settings.panelWidthSideNarrow) }, [settings.panelWidthSideNarrow])
   // 特別情報（南海トラフ臨時情報・後発地震注意情報・関連解説情報）の受信でパネルを一時的に
   // 開いたときの「元の状態」。null = 追跡していない／true = 元は畳んでいた（戻すとき畳む）／
   // false = 元から開いていた（戻すときは何もしない）。
@@ -241,6 +276,7 @@ export function App() {
     if (settingsOpenRef.current === open) return
     settingsOpenRef.current = open
     setSettingsOpen(open)
+    if (open) countUsage('settings')
     recordReplayEvent({ type: 'overlay', overlay: 'settings', open, reason, subject: null })
   }, [])
   const setActiveTab = useCallback((tab: TabId) => {
@@ -278,6 +314,9 @@ export function App() {
   // 区別するために使う（明示選択中はユーザー操作中フラグを無視して強制フィット・
   // CameraFollowsGL.tsx QuakeFitGL 参照）。
   const [quakeSelectionTick, setQuakeSelectionTick] = useState(0)
+  // 選択が呼ばれるたびに進む番号（利用者の操作・続報・読み上げのどれでも）。選んだまま畳んだ地震カードは、
+  // これが進んだら開き直す（2026-11-03 選択「どれが来ても開き直す (Recommended)」。→ EarthquakeCard の `reopenSignal`）
+  const [quakeSelectSeq, setQuakeSelectSeq] = useState(0)
   const [focusedObsName, setFocusedObsName] = useState<{ name: string; ts: number } | null>(null)
   /**
    * カードの一覧の行をクリックしたときの寄り先（地震カードの観測点・県・区域・市町村と、
@@ -363,9 +402,33 @@ export function App() {
     // **追加表示を閉じるのは、別の地震へ移るときだけ**（判定と理由は `shouldCloseOverlayOnSelection`）。
     const closeOverlay = shouldCloseOverlayOnSelection(selectedQuakeIdRef.current, eventKey)
     selectedQuakeIdRef.current = eventKey
+    // 別の地震へ移ったら、長周期の節を見せる求めは捨てる。残すと、後でその地震を選び直したときに
+    // カードの頭ではなく長周期の節へ巻く
+    // （引き当て前の求めは捨てない。引き当てる側が選択中のカードと照らす。同じ地震の続報が同じ瞬間に
+    // 届いて選び直されても、求めを落とさないため）
+    setLpgmFocus(f => (f && f.key !== eventKey ? null : f))
     setSelectedQuakeId(eventKey)
+    setQuakeSelectSeq(n => n + 1)
     if (closeOverlay) applyQuakeOverlay(null, '別の地震を選んだ')
     if (opts?.explicit) setQuakeSelectionTick(t => t + 1)
+  }, [])
+  /**
+   * 長周期地震動の節を見せる求め（→ `quakeCardScrollTarget`）。長周期地震動観測情報の受信と、長周期の通知を
+   * 押したときに、長周期の札を押したときと同じ位置へ巻く（2026-11-06 ユーザー選択「長周期の節へ巻く
+   * (Recommended)」「同じく巻く (Recommended)」）。**巻くのは地震タブの中だけ** —— タブは動かさない
+   * （受信はタブの追従、通知はタブを移す口がそれぞれ受け持つ）。
+   */
+  const [lpgmFocus, setLpgmFocus] = useState<LpgmSectionFocus | null>(null)
+  /**
+   * 求めは電文の `eventId` のまま受け、カードへの引き当ては次の描画で行う（→ 下の引き当ての effect）。
+   * **ここで `earthquakesRef` から引かない** —— あの控えは描画のたびに書き換わるので、同じ瞬間に届いた
+   * 地震情報（テストの台本や、続けて配られた電文）はまだ載っておらず、カードを引けずに求めを落とす。
+   */
+  const [lpgmFocusRequest, setLpgmFocusRequest] = useState<{ eventId: string; seq: number; at: number } | null>(null)
+  const lpgmFocusSeqRef = useRef(0)
+  const focusLpgmSection = useCallback((eventId: string) => {
+    lpgmFocusSeqRef.current += 1
+    setLpgmFocusRequest({ eventId, seq: lpgmFocusSeqRef.current, at: performance.now() })
   }, [])
   // 地震情報タブ / EEW（リアルタイム）タブそれぞれで長周期の表示をトグルするハンドラー。
   // 同じ eventId を再度渡すと非表示化、それ以外の eventId なら表示中の source を切り替える。
@@ -402,6 +465,16 @@ export function App() {
    */
   const openLpgmFromQuake = useCallback((eventId: string) => {
     applyQuakeOverlay(prev => openLpgmOverlay(prev, eventId, 'earthquake'), '長周期地震動を自動で開いた')
+    focusLpgmSection(eventId)
+  }, [focusLpgmSection])
+  // 長周期・推計の通知を押したとき（→ `useNotificationOpen`）。開き方は受信と同じで、記録の理由だけ分ける。
+  // 推計は、通知の側で選んだ地震カードの鍵でそのまま開く（受信の口のように時刻で引き直さない。選んだカードと食い違わないため）
+  const openLpgmFromNotification = useCallback((eventId: string) => {
+    applyQuakeOverlay(prev => openLpgmOverlay(prev, eventId, 'earthquake'), '長周期地震動の通知を押した')
+    focusLpgmSection(eventId)
+  }, [focusLpgmSection])
+  const openDistributionFromNotification = useCallback((eventKey: string) => {
+    applyQuakeOverlay(prev => openDistributionOverlay(prev, eventKey), '推計震度分布図の通知を押した')
   }, [])
   // 震度分布ボタン。こちらは鍵が `eventKey` なのでそのまま渡せる
   // （選択の実体を合わせる理由は `toggleLpgmFromEarthquake`）。
@@ -455,7 +528,7 @@ export function App() {
   activeTabRef.current = activeTab
   // ウィンドウタイトル（情報タイトル）管理
   const title = useAlertTitle({ activeEEWsRef, kyoshinDetectedRef })
-  // DMDSS版: WS接続中は現在時刻を毎秒更新して地図上の更新時刻をリアルタイム表示する
+  // WS接続中は現在時刻を毎秒更新して地図上の更新時刻をリアルタイム表示する
   const [nowTick, setNowTick] = useState<Date | null>(null)
 
   // 自動タブ切替の保持状態。「いつまで」「どの優先度で」確保しているかを持つ。
@@ -904,7 +977,7 @@ export function App() {
   // 据え置いた報（`quakeHeldBack`）と取消は積まない —— 音・読み上げと同じく、カードが採らない報では動かさない。
   const pendingQuakeNotifyRef = useRef<JMAQuake[]>([])
   // ライブイベント受信処理（通知音・タイトル・タブ切替・読み上げ・ブラウザ通知）
-  const { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks, focusedDistrict, eewNoForecastSettledKeys } = useLiveEventHandler({
+  const { handleLiveEvent, resetTracking, restorePreWindowTracking, restoreStartupEews, obsUpdateStatus, areaGradeChangedKeys, tsunamiValueMarks, focusedDistrict, eewNoForecastSettledKeys, speakKyoshinDetection } = useLiveEventHandler({
     settings, title, earthquakesRef, tsunamisRef, nankaiActiveRef,
     setActiveTabNonRealtime, setActiveTabRealtimeOnUpdate, setActiveTabRealtimeUrgent,
     followSpeechTab, preSpeechTab, speechFollow, unreceivedFollow, telegramTextFollow,
@@ -951,6 +1024,91 @@ export function App() {
     )
   }, [requestAutoTab, settings.tsunamiPriorityDefault, settings.voicevoxEnabled])
 
+  // 予報キー（設計書 §0 の 2026-10-31「予報キー」の行）。手元の検証が通ったときだけ中継の札に添える ——
+  // 通らないキーを送っても中継は断るだけなので、送る前に止めておく。予報を流すかを決めるのは中継の側。
+  // 検証中であることも札の置き場へ伝える（済むまで中継の札を取らず、自分の鍵の予報の接続も張らない）。
+  // **`useEarthquakes` より前に置く** —— 同じ部品の副作用は書いた順に走るので、後ろに置くと、ページを開いた直後の
+  // 接続の副作用が検証中であることを知らないまま鍵の接続を張る
+  const forecastKeyStatus = useForecastKeyCheck(settings.forecastKey)
+  const forecastKeyToSend = forecastKeyStatus.valid ? settings.forecastKey.trim() : null
+  const forecastKeyChecking = forecastKeyStatus.checking
+  useEffect(() => { relayTokenStore.setForecastKey(forecastKeyToSend, forecastKeyChecking) }, [forecastKeyToSend, forecastKeyChecking])
+
+  // 使用状況データ（設計書 §6.6）。許可している間だけ一意の識別子を持ち、札を取るときに端末と設定の情報を添え、
+  // 操作の回数を数える。報告は札を取るたびに組み直すので、設定の使い方は ref で最新を読む
+  // （設定の全項目を記録の文字列にするのも札を取るときだけ。描き直しのたびには組まない）
+  const usageFlagsRef = useRef<UsageSettingsFlags>({ apiKey: false, tts: false, sound: false, notify: false, seismo: false })
+  usageFlagsRef.current = {
+    apiKey: settings.dmdataApiKey !== '', tts: settings.voicevoxEnabled, sound: settings.soundEnabled,
+    notify: settings.notifyEnabled, seismo: settings.seismoEnabled,
+  }
+  const usageSettingsRef = useRef(settings)
+  usageSettingsRef.current = settings
+  const applyUsageEnabled = (enabled: boolean) => {
+    const install = syncInstallIdSafely(enabled)
+    relayTokenStore.setUsage(
+      install,
+      // 設定の全項目は、変わったときと日（日本時間・サーバーの時刻）が替わったときだけ添える（同じ日に同じ値なら空）
+      install === null ? null : () => buildUsageReportNow(
+        install, usageFlagsRef.current, usageSettingValues(usageSettingsRef.current, SETTINGS_DEFAULTS),
+        browserUsageEnv(__APP_VERSION__), serverNow(),
+      ),
+      install === null ? null : (report, recorded) => markPrefsSentSafely(install, report, recorded),
+    )
+    setUsageCounting(install !== null)
+  }
+  // 最初の描画の前に 1 度だけ渡しておく。effect を待つと、先に走る中継の接続（useEarthquakes）が識別子の無い札を取ってから
+  // 繋ぎ直すことになる（同じ値を渡し直しても札は捨てないので、二重に呼ばれても害は無い）
+  const usageAppliedRef = useRef(false)
+  if (!usageAppliedRef.current) {
+    usageAppliedRef.current = true
+    applyUsageEnabled(settings.usageStatsEnabled)
+  }
+  useEffect(() => {
+    applyUsageEnabled(settings.usageStatsEnabled)
+    // applyUsageEnabled は ref と定数しか読まない
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.usageStatsEnabled])
+  // 別のタブ（ブラウザで開いたものとホーム画面から開いたもの）で切り替えたら追う。追わないと、古いタブが
+  // 許可を外した後も識別子を持ったまま送り、設定を保存したときに古い「オン」を書き戻す。
+  // プッシュ通知の購読も同じ（古いタブが「オン」を書き戻すと、消した購読をそのタブが作り直す）
+  const usageEnabledRef = useRef(settings.usageStatsEnabled)
+  usageEnabledRef.current = settings.usageStatsEnabled
+  const pushEnabledRef = useRef(settings.pushNotifyEnabled)
+  pushEnabledRef.current = settings.pushNotifyEnabled
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== SETTINGS_STORAGE_KEY || e.newValue === null) return
+      let other: { usageStatsEnabled?: unknown; pushNotifyEnabled?: unknown }
+      try { other = JSON.parse(e.newValue) as typeof other } catch { return }
+      if (typeof other.usageStatsEnabled === 'boolean' && other.usageStatsEnabled !== usageEnabledRef.current) {
+        adoptExternalSetting('usageStatsEnabled', other.usageStatsEnabled)
+      }
+      if (typeof other.pushNotifyEnabled === 'boolean' && other.pushNotifyEnabled !== pushEnabledRef.current) {
+        adoptExternalSetting('pushNotifyEnabled', other.pushNotifyEnabled)
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [adoptExternalSetting])
+  useEffect(() => {
+    if (!settings.usageStatsEnabled) return
+    const flush = () => { void flushUsage(usageCounter, relayTokenStore) }
+    const timer = setInterval(flush, USAGE_FLUSH_INTERVAL_MS)
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush() }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [settings.usageStatsEnabled])
+  // 同意の窓。その端末でまだ答えていなければ 1 度だけ出す（答えた・閉じた印は USAGE_CONSENT_ASKED_KEY）
+  const [usageConsentOpen, setUsageConsentOpen] = useState(() => !usageConsentAnswered())
+  const answerUsageConsent = useCallback((allowed: boolean) => {
+    markUsageConsentAnswered()
+    if (allowed) updateSetting('usageStatsEnabled', true)
+    setUsageConsentOpen(false)
+  }, [updateSetting])
   const handleLiveEventWithNotify = useCallback((event: LiveEvent, meta?: LiveEventMeta) => {
     if (event.kind === 'quake' && !event.cancelled && !meta?.quakeHeldBack) pendingQuakeNotifyRef.current.push(event)
     handleLiveEvent(event, meta)
@@ -958,27 +1116,30 @@ export function App() {
   // 揺れ検知の束の広がり。下の検知結果から毎秒流し込み、EEW の自動解除を広がっている間は待たせる（eew-spec §7）
   const [eewSpreadLog] = useState(createDetectionSpreadLog)
   const {
-    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentary, kohatsu, quakeNotice, earthquakeCount, estimatedIntensities, internationalTsunamis, connectionStatus, dmdataClassifications, lastUpdate, isLoading, isLoadingMore, hasMore, error,
+    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentaryList, kohatsuList, quakeNoticeList, earthquakeCountList, estimatedIntensities, internationalTsunamis, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, keyForecastRefused, lastUpdate, isLoading, isLoadingMore, hasMore, error,
     historyLoss, loadMoreFailed, reconnectGapLoss,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
-    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
+    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     resetState, loadReplayEvents, peekUpcomingPayloads, restoreQuakeHistory,
   } = useEarthquakes(handleLiveEventWithNotify, debouncedApiKey, settings.dmdataTestDelivery, replayTimeOffset, handleStartupRestore, restoreStartupEews, eewSpreadLog)
   earthquakesRef.current = earthquakes
   // 配信元の上限に達して取得を待たせているあいだ、地震タブにその旨を出す。
   // **損失とは別**（枠が空けばそのまま取りに行くので、欠けは出ない）。
-  //
-  // **標準版では見張らない。** あちらは DMDATA を使わないので門は常に空で、
-  // 周期処理だけが無駄に走る。
-  const fetchThrottled = useFetchThrottled(isDmdss)
+  const fetchThrottled = useFetchThrottled(true)
+  // 鍵の入れ直しの案内（地震タブの帯・設定のキー欄）。鍵を入れたら印を下ろす —— 消したあとにまた出さない
+  const showKeyReentry = settings.dmdataKeyReentryNotice && settings.dmdataApiKey === ''
+  const dismissKeyReentry = useCallback(() => updateSetting('dmdataKeyReentryNotice', false), [updateSetting])
+  useEffect(() => {
+    if (settings.dmdataKeyReentryNotice && settings.dmdataApiKey !== '') updateSetting('dmdataKeyReentryNotice', false)
+  }, [settings.dmdataKeyReentryNotice, settings.dmdataApiKey, updateSetting])
   tsunamisRef.current = tsunamis
   nankaiActiveRef.current = nankai !== null
 
@@ -1019,6 +1180,7 @@ export function App() {
     foreignQuake:      simulateForeignQuake,
     foreignQuakeHuge:  simulateForeignQuakeHuge,
     foreignQuakeInternationalTsunami: simulateForeignQuakeInternationalTsunami,
+    internationalTsunamiDomesticAndOnly: simulateInternationalTsunamiDomesticAndOnly,
     headlineOnlyCity:  simulateHeadlineOnlyCity,
     eew:               simulateEEW,
     eewWarning:        simulateEEWWarning,
@@ -1042,29 +1204,31 @@ export function App() {
     nankaiCommentaryAdHoc:   () => simulateNankaiCommentary('臨時解説'),
     nankaiCommentaryRetraction: simulateNankaiCommentaryRetraction,
     nankaiCommentaryRoutine: () => simulateNankaiCommentary('定例解説'),
+    activityInfo: simulateActivityInfo,
     kohatsu:           simulateKohatsu,
     kohatsuRetraction: simulateKohatsuRetraction,
     quakeNotice:       simulateQuakeNotice,
     earthquakeCount:   simulateEarthquakeCount,
     earthquakeCountRetraction: simulateEarthquakeCountRetraction,
-    lpgmRetraction:    isDmdss ? simulateLpgmRetraction : undefined,
-    lpgmClassZero:     isDmdss ? simulateLpgmClassZero : undefined,
-    lpgmCategories:    isDmdss ? simulateLpgmCategories : undefined,
-    lpgmClassZeroRegion: isDmdss ? simulateLpgmClassZeroRegion : undefined,
+    lpgmRetraction:    simulateLpgmRetraction,
+    lpgmClassZero:     simulateLpgmClassZero,
+    lpgmCategories:    simulateLpgmCategories,
+    lpgmClassZeroRegion: simulateLpgmClassZeroRegion,
     trainingQuake:     simulateTrainingQuake,
     quakeAmendment:    simulateQuakeAmendment,
     quakeReportSequence: simulateQuakeReportSequence,
-    quakeCancel: isDmdss ? simulateQuakeCancel : undefined,
-    quakePartialCancel: isDmdss ? simulateQuakePartialCancel : undefined,
-    borrowFromTsunami: isDmdss ? simulateHypocenterFromTsunami : undefined,
+    quakeCancel: simulateQuakeCancel,
+    quakePartialCancel: simulateQuakePartialCancel,
+    borrowFromTsunami: simulateHypocenterFromTsunami,
+    magnitudeFromTsunami: simulateMagnitudeFromTsunami,
     unreceivedQuake:   simulateUnreceivedQuake,
     maxScaleOrAboveQuake: simulateMaxScaleOrAboveQuake,
     areaUnreceivedQuake: simulateAreaUnreceivedQuake,
     tsunamiGradeChange: simulateTsunamiGradeChange,
-    tsunamiQuietReports: isDmdss ? simulateTsunamiQuietReports : undefined,
-    tsunamiExpiry: isDmdss ? simulateTsunamiExpiry : undefined,
-    tsunamiSourceAdded: isDmdss ? simulateTsunamiSourceAdded : undefined,
-    tsunamiInfoRetraction: isDmdss ? simulateTsunamiInfoRetraction : undefined,
+    tsunamiQuietReports: simulateTsunamiQuietReports,
+    tsunamiExpiry: simulateTsunamiExpiry,
+    tsunamiSourceAdded: simulateTsunamiSourceAdded,
+    tsunamiInfoRetraction: simulateTsunamiInfoRetraction,
     estimatedIntensity: simulateEstimatedIntensity,
     notification:      () => {
       // まとめて止めている間はテストも出さない（設定の窓では行ごと隠れるが、呼び出し口でも止める）
@@ -1076,19 +1240,21 @@ export function App() {
         alert('先に「通知を許可する」を押してください。')
         return
       }
-      showBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
+      showTestBrowserNotification('地震情報テスト', '東京都内陸部（テスト） 最大震度4 M5.5', 'test-notification')
     },
   }), [
     simulateEarthquake, simulateForeignQuake, simulateForeignQuakeHuge, simulateForeignQuakeInternationalTsunami, simulateHeadlineOnlyCity,
     simulateEEW, simulateEEWWarning, simulateEEWForecast, simulateEEWAssumed, simulateEEWStrongShaking, simulateEEWDeep, simulateEEWNoForecast, simulateEEWForecastZero, simulateEEWRetraction, simulateEEWLateRetraction,
     simulateTsunami, simulateTsunamiWarning, simulateTsunamiWatch, simulateTsunamiForecast, simulateTsunamiRetraction,
-    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateKohatsu, simulateKohatsuRetraction,
+    simulateNankai, simulateNankaiRetraction, simulateNankaiCommentary, simulateNankaiCommentaryRetraction, simulateActivityInfo, simulateKohatsu, simulateKohatsuRetraction,
     simulateQuakeNotice, simulateEarthquakeCount, simulateEarthquakeCountRetraction, simulateLpgmRetraction, simulateLpgmClassZero, simulateLpgmCategories, simulateLpgmClassZeroRegion, simulateEstimatedIntensity,
     simulateTrainingQuake, simulateUnreceivedQuake, simulateMaxScaleOrAboveQuake, simulateAreaUnreceivedQuake, simulateTsunamiGradeChange, simulateTsunamiQuietReports, simulateTsunamiExpiry, simulateQuakeAmendment,
-    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami,
+    simulateQuakeReportSequence, simulateQuakeCancel, simulateQuakePartialCancel, simulateHypocenterFromTsunami, simulateMagnitudeFromTsunami, simulateInternationalTsunamiDomesticAndOnly,
     simulateTsunamiSourceAdded, simulateTsunamiInfoRetraction,
     settings.notifyEnabled,
   ])
+  // 設定の窓のテストボタンは、押した回数を使用状況データに数える（許可している間だけ。→ `countUsage`）
+  const countedTestHandlers = useMemo(() => withUsageCount('test', testHandlers), [testHandlers])
   // IconNav の onTabChange。手動選択は必ず即時反映し、以後 TAB_HOLD_MS の間は自動切替に
   // 奪わせない（EEW の新規発報・レベルアップ・誤報取消だけはこれより強い）。
   // 表示中のタブをもう一度押した場合はタブ切替ではなく、パネルの折りたたみをトグルする
@@ -1099,38 +1265,49 @@ export function App() {
       return
     }
     log.info(`[tab] → ${tab} (手動選択)`)
+    countUsage(`tab:${tab}`)
     setActiveTabByUser(tab)
   }, [setActiveTabByUser])
 
   // パネル境界のつまみ操作。ドラッグ中（Change）は state だけを更新して追従性を保ち、
   // 指を離した時点（Commit）で設定へ保存する。折りたたみ中にドラッグされた場合は
   // 「引き出す」操作とみなして展開する。
-  // 縦積みで波形が出ている間に、つまみでパネルを動かしたか（`utils/squareMapLayout.ts` の `adjustedWhileWave`）。
-  // 動かしたら縮めずにその比率を使い、上限より広げたら波形の枠を隠す。波形が消えたら偽へ戻す（下の effect）。
-  // 「いま縮めうる状態か」は下の描画で毎回書き直す。
-  const [panelAdjustedWhileWave, setPanelAdjustedWhileWave] = useState(false)
-  const squareBorrowingRef = useRef(false)
   const handlePanelRatioChange = useCallback((ratio: number) => {
     setPanelCollapsed(false)
     setPanelRatio(ratio)
-    if (squareBorrowingRef.current) setPanelAdjustedWhileWave(true)
   }, [])
   const handlePanelRatioCommit = useCallback((ratio: number) => {
     setPanelCollapsed(false)
     setPanelRatio(ratio)
-    if (squareBorrowingRef.current) setPanelAdjustedWhileWave(true)
     updateSetting('panelRatio', ratio)
   }, [updateSetting])
   const togglePanelCollapsed = useCallback(() => setPanelCollapsed(c => !c), [])
-
-  const scenarioTest = useTestScenarios(loadReplayEvents)
+  // 左右分割の境のつまみ。いま出ている側（PC かスマホ横か）の幅だけを変え、もう片方は触らない。
+  // 折りたたみ中にドラッグされたら、縦積みのつまみと同じく「引き出す」操作とみなして展開する。
+  // **ドラッグ中は state を更新せず、CSS 変数を器へ直に書く。** state を通すと pointermove のたびに App 全体を
+  // 描き直す。離した時点で state へ入れると、React が同じ値を書き直す（state が同じ値のままなら React は触らず、
+  // 直に書いた値が残る。それも離した時点の値なので食い違わない）。
+  const handlePanelWidthChange = useCallback((rem: number) => {
+    if (panelCollapsedRef.current) setPanelCollapsed(false)
+    layoutRef.current?.style.setProperty(sideNarrow ? '--panel-w-narrow' : '--panel-w-side', panelWidthCss(rem) ?? null)
+  }, [sideNarrow])
+  const handlePanelWidthCommit = useCallback((rem: number) => {
+    setPanelCollapsed(false)
+    if (sideNarrow) {
+      setPanelWidthSideNarrow(rem)
+      updateSetting('panelWidthSideNarrow', rem)
+    } else {
+      setPanelWidthSide(rem)
+      updateSetting('panelWidthSide', rem)
+    }
+  }, [sideNarrow, updateSetting])
 
   const {
     points: quakeHeatPoints,
     windowStartMs: heatWindowStartMs,
     completeness: heatCompleteness,
     intensityScale: heatIntensityScale,
-  } = useQuakeHeatmap(settings.showQuakeHeatmap, debouncedApiKey, earthquakes, replayTimeOffset, settings.heatmapPeriod)
+  } = useQuakeHeatmap(settings.showQuakeHeatmap, earthquakes, replayTimeOffset, settings.heatmapPeriod)
 
   // 最新の非解除津波電文から観測データを収集（地図バー描画用）
   const latestTsunamiObservations = useMemo(() => {
@@ -1150,7 +1327,7 @@ export function App() {
     setSoundVolume(settings.soundVolume)
   }, [settings.soundVolume])
 
-  // 通知音・読み上げのどちらかが有効なときだけキープアライブを鳴らす（両方無効なら
+  // 通知音・読み上げ・時報のどれかが有効なときだけキープアライブを鳴らす（どれも無効なら
   // 実際に鳴らすものが無く、常時再生する意味も無い）。setSoundVolume() 側の
   // 「音量0=無音」という既存の契約と同じ理由で、鳴らす予定が無いのに鳴らし続けない。
   // **録画モード中は止める**（2026-09-27 13:26 JST ユーザー選択「このまま進める（推奨）」）。20Hz の常時ループ音は動画のエンコード・シークで可聴の
@@ -1158,8 +1335,8 @@ export function App() {
   // 通知音の間隔が長く空く録画中はキープアライブが守っていたハードウェア起床遅延が
   // 再発しうる**ことを受け入れている（→ audio-tts-spec.md §2「キープアライブ」）。
   useEffect(() => {
-    setKeepAliveEnabled((settings.soundEnabled || settings.voicevoxEnabled) && !settings.recordingMode)
-  }, [settings.soundEnabled, settings.voicevoxEnabled, settings.recordingMode])
+    setKeepAliveEnabled((settings.soundEnabled || settings.voicevoxEnabled || settings.timeSignalEnabled) && !settings.recordingMode)
+  }, [settings.soundEnabled, settings.voicevoxEnabled, settings.timeSignalEnabled, settings.recordingMode])
 
   // TTS の読み辞書をアプリ起動時に事前ロードする（VOICEVOX 有効・無効に関わらず）。
   // 手で書いた句区切り辞書と、生成物 2 つ（震度観測点名の読み・震央地名の句割り）。
@@ -1224,6 +1401,9 @@ export function App() {
     opts: ttsSpeechOptions,
   })
 
+  // 時報（→ hooks/useTimeSignal.ts）。読み上げの接続先は作り置きと同じく、入力が落ち着いた値を使う
+  useTimeSignal(settings, debouncedVoicevoxUrl)
+
   // ブラウザの自動再生制限に対応: 初回のユーザー操作で音声を有効化する
   useEffect(() => {
     const unlock = () => unlockAudio()
@@ -1238,10 +1418,17 @@ export function App() {
   // filter は毎回新規配列を返すため useMemo で参照を安定化する
   // （EarthquakeTab / TsunamiTab へ props として渡すため。毎レンダー新配列を渡すと
   // shallow compare で常に不一致となり React.memo が実質無効化される）。
-  // 何を外し、何を外さないか（遠地地震・津波の原因地震）は `filterDisplayedQuakes`。
+  // 何を外し、何を外さないか（遠地地震・津波の原因地震・英文の付いた地震）は `filterDisplayedQuakes`。
+  //
+  // 国際津波関連情報の結び付けは、絞る前の全カードで 1 回だけ作る（→ `internationalTsunamiIndex`）。付く地震カードの無い報は、
+  // ここで英文だけのカードにして差し込む。状態の一覧には入れないので、カードを足しても音・読み上げ・通知は起きない（報そのものは受けたときに useEarthquakes から流す）
+  const internationalTsunamiIdx = useMemo(
+    () => internationalTsunamiIndex(earthquakes, internationalTsunamis),
+    [earthquakes, internationalTsunamis],
+  )
   const filteredEarthquakes = useMemo(
-    () => filterDisplayedQuakes(earthquakes, settings.minDisplayScale, tsunamis),
-    [earthquakes, settings.minDisplayScale, tsunamis],
+    () => withInternationalTsunamiCards(filterDisplayedQuakes(earthquakes, settings.minDisplayScale, tsunamis, internationalTsunamiIdx.byQuakeKey), internationalTsunamiIdx),
+    [earthquakes, settings.minDisplayScale, tsunamis, internationalTsunamiIdx],
   )
 
   const latest = filteredEarthquakes[0] ?? null
@@ -1259,6 +1446,32 @@ export function App() {
   // 選択中に見えているカードの鍵。**開いているカードに従うものは `selectedQuakeId` ではなくこちらを見る** ——
   // 起動直後や選んだカードが取り消された後は `selectedQuakeId` が表示中のカードを指していない。
   const selectedQuakeKey = selectedQuake ? quakeEventKey(selectedQuake) : null
+  // 長周期の節を見せる求めを、地震カードへ引き当てる（求めの受け口は `focusLpgmSection`）。引き当てるのは
+  // 選択中のカードに当たったときだけで、当たらなければ求めを捨てる（別の地震を見ている人の画面は動かさない）。
+  // 紐づくカードがまだ無いなら、一覧が次に変わるまで待つ（同じ瞬間に届いた地震情報が載るのを待つため）。
+  // 待つのは `LPGM_FOCUS_WAIT_MS` まで。過ぎた求めは捨てる —— 後でその地震が届いたときに、利用者が
+  // 何もしていないのに急に巻くことになる。
+  // `quakeId` は引き当てた時点のカードの報（読み上げが無効なとき、この後の続報でカードの頭へ戻すため）
+  useEffect(() => {
+    if (!lpgmFocusRequest) return
+    const { eventId, seq, at } = lpgmFocusRequest
+    // 期限はカードが見つかったかどうかより先に見る（期限の後に届いたカードへ巻かない）。
+    // 評価するのは一覧か選択が変わった描画だけで、変わらなければ求めは残るが、残っても巻く先が無い
+    if (performance.now() - at > LPGM_FOCUS_WAIT_MS) {
+      setLpgmFocusRequest(null)
+      log.info(`[地震タブ] 長周期の節へ巻かない（紐づく地震カードを待ちきれなかった・${eventId}）`)
+      return
+    }
+    const key = quakeKeyForLpgmEventId(earthquakes, eventId)
+    const quake = key ? earthquakes.find(q => quakeEventKey(q) === key) : undefined
+    if (!key || !quake) return
+    setLpgmFocusRequest(null)
+    if (key !== selectedQuakeKey) {
+      log.info(`[地震タブ] 長周期の節へ巻かない（選択中のカードが別の地震・${eventId}）`)
+      return
+    }
+    setLpgmFocus({ key, seq, quakeId: quake.id })
+  }, [lpgmFocusRequest, earthquakes, selectedQuakeKey])
   // 地図に表示中の LPGM（バッジクリックでトグル）
   const activeLpgm = activeLpgmEventId ? (lpgmByEventId.get(activeLpgmEventId) ?? null) : null
 
@@ -1307,6 +1520,15 @@ export function App() {
       selectQuake(null)
     }
   }, [filteredEarthquakes, selectedQuakeId, selectQuake])
+
+  // 通知を押したときの開き先（docs/relay-server-design.md §6.7「押したときの開き先」）。手で選んだのと同じ扱いで
+  // タブを移し、地震を選ぶ（2026-11-05 ユーザー選択「手で選んだのと同じ扱い (Recommended)」）
+  useNotificationOpen(filteredEarthquakes, earthquakes, { activeTab, selectionTick: quakeSelectionTick }, {
+    openTab: setActiveTabByUser,
+    selectQuake: selectQuakeFromCard,
+    openLpgm: openLpgmFromNotification,
+    openDistribution: openDistributionFromNotification,
+  })
 
   // 未入電が 1 件も無くなったら未入電モードを閉じる。
   //
@@ -1366,6 +1588,9 @@ export function App() {
   // 通知しないとき（まとめて止めている・地震情報の通知を切っている）は -1（`effectiveNotifyMinScale`）
   const notifyMinScaleRef = useRef(effectiveNotifyMinScale(settings))
   notifyMinScaleRef.current = effectiveNotifyMinScale(settings)
+  // 設定「通知する地域」（docs/relay-server-design.md §6.7）。地域を選んでいれば、その県で震度を観測した地震だけ通知する
+  const notifyPrefecturesRef = useRef(settings.notifyPrefectures)
+  notifyPrefecturesRef.current = settings.notifyPrefectures
   useEffect(() => {
     const pending = pendingQuakeNotifyRef.current
     if (pending.length === 0) return
@@ -1383,6 +1608,11 @@ export function App() {
       log.debug(`[notify] 地震情報の報からカードを引けず、通知を考えない（${incoming.id}・${incoming.issue.type}・最大震度 ${incoming.earthquake.maxScale}）`)
     }
     for (const { card, reportKeys } of cards) {
+      // 選んだ地域で震度を観測していない地震は通知しない。覚えもしない（続報で選んだ県が加われば、そのとき初めて通知する）
+      if (!notificationRegionAllowed({ notifyPrefectures: notifyPrefecturesRef.current }, quakePrefectures(card))) {
+        log.debug(`[notify] 選んだ地域で震度を観測していない地震なので通知しない（${card.eventKey ?? card.id}）`)
+        continue
+      }
       // **通知は補助の経路なので、ここで投げても画面を落とさない**（App のレンダー・effect の例外は
       // 根の受け皿でしか拾えず、画面全体が消える）。1 件が投げても残りの地震は見る。失敗は記録に残す。
       try {
@@ -1445,7 +1675,7 @@ export function App() {
     setClockReplayOffset(replayTimeOffset)
   }, [replayTimeOffset])
 
-  // DMDSS版: リプレイ中はリプレイ時刻で毎秒更新、WS接続中は実時刻で毎秒更新、それ以外は null
+  // リプレイ中はリプレイ時刻で毎秒更新、WS接続中は実時刻で毎秒更新、それ以外は null
   useEffect(() => {
     if (replayTimeOffset !== null) {
       const tick = () => setNowTick(serverDate())
@@ -1453,7 +1683,7 @@ export function App() {
       const id = setInterval(tick, 1000)
       return () => clearInterval(id)
     }
-    if (!isDmdss || connectionStatus !== 'connected') {
+    if (connectionStatus !== 'connected') {
       setNowTick(null)
       return
     }
@@ -1514,7 +1744,16 @@ export function App() {
     jstYearOf(settledFilter.toMs),
     mapTab === 'catalog',
   )
-  const catalogIndex = catalog.index
+  // 期間の端は、目次の終端ではなく読めた年ファイルの終端で止める（`useHypocenterCatalog` の `catalogEndMs`）
+  const catalogIndex = useMemo(
+    () => (catalog.index && catalog.catalogEndMs !== null && catalog.catalogEndMs !== catalog.index.coveredThroughMs
+      ? { ...catalog.index, coveredThroughMs: catalog.catalogEndMs }
+      : catalog.index),
+    [catalog.index, catalog.catalogEndMs],
+  )
+  const catalogTailUntilMs = catalog.tail?.untilMs ?? null
+  // 期間の終わりが前の端にあったか（末尾が届いて端が伸びたとき、終わりも一緒に伸ばすため）
+  const catalogMaxRef = useRef<number | null>(null)
   // 索引が届いたら、期間を収録範囲へ収める。
   // **収める側も必要。** 年が明けた直後は「今年」がまだ収録されておらず、選択肢に無い値が残る。
   // **終わりはデータの最終日へ収める**（`catalogPeriodBounds`）。既定の終わり（今年の 12 月 31 日）は
@@ -1525,16 +1764,19 @@ export function App() {
   // （`catalogCompleteness` → 震源カタログタブ）で示す。
   useEffect(() => {
     if (!catalogIndex || catalogIndex.years.length === 0) return
+    const { minMs: lo, maxMs: hi } = catalogPeriodBounds(catalogIndex, catalogTailUntilMs)
+    const prevMax = catalogMaxRef.current
+    catalogMaxRef.current = hi
+    // **終わりが前の端にあったら、伸びた端まで一緒に伸ばす**（`periodForBounds`）。
+    // **収めるのは日ごと**（`clampPeriodToRange`）。両端をそれぞれ時刻で丸めると、選んでいる
+    // 期間が丸ごと収録の外にあるときに同じ 1 点へ潰れ、1 件も残らないのに見出しは
+    // 「1 日ぶん」と出る。
     setCatalogFilter((prev) => {
-      const { minMs: lo, maxMs: hi } = catalogPeriodBounds(catalogIndex)
-      // **収めるのは日ごと**（`clampPeriodToRange`）。両端をそれぞれ時刻で丸めると、選んでいる
-      // 期間が丸ごと収録の外にあるときに同じ 1 点へ潰れ、1 件も残らないのに見出しは
-      // 「1 日ぶん」と出る。
-      const { fromMs, toMs } = clampPeriodToRange(prev, lo, hi)
+      const { fromMs, toMs } = periodForBounds(prev, prevMax, { minMs: lo, maxMs: hi })
       if (fromMs === prev.fromMs && toMs === prev.toMs) return prev
       return { ...prev, fromMs, toMs }
     })
-  }, [catalogIndex])
+  }, [catalogIndex, catalogTailUntilMs])
   const handleCatalogFilterChange = useCallback((next: CatalogFilter) => {
     setCatalogFilter(next)
   }, [])
@@ -1547,14 +1789,22 @@ export function App() {
   // 最後に組んだものを持ったまま止め、タブへ戻った時に一度だけ追いつかせる。
   const catalogCloudRef = useRef<CatalogPointCloud | null>(null)
   const catalogActive = mapTab === 'catalog'
+  // **期間が末尾に掛かるまでは、末尾の無い並びで組む。** 末尾は索引より後に届き、届いた直後は期間の終わりがまだ前の端に
+  // ある（伸ばすのは上の効果）。そこで末尾の入った並びに替えると、末尾の点が 1 つも入らない組み直しが 1 回余計に走る。
+  // 年ファイルの終端は日の 0 時（日ごとに書き足す）なので、伸ばす前の終わり（前の日の最後の瞬間）はこの門を開けない。
+  // 終端が日の途中になっても、その日の終わりまで選んだ期間には末尾の点が入るので、開いた組み直しは無駄にならない
+  const catalogTailFromMs = catalog.tail?.fromMs ?? null
+  const catalogCloudYears = catalogTailFromMs !== null && Math.max(settledFilter.fromMs, settledFilter.toMs) >= catalogTailFromMs
+    ? catalog.years
+    : catalog.catalogYears
   const catalogCloud = useMemo(() => {
     if (!catalogActive) return catalogCloudRef.current
-    const next = catalog.years.length > 0
-      ? buildCatalogPointCloud(catalog.years, settledFilter, settledView)
+    const next = catalogCloudYears.length > 0
+      ? buildCatalogPointCloud(catalogCloudYears, settledFilter, settledView)
       : null
     catalogCloudRef.current = next
     return next
-  }, [catalogActive, catalog.years, settledFilter, settledView])
+  }, [catalogActive, catalogCloudYears, settledFilter, settledView])
 
   // 津波発表中フラグ（解除済みでない津波情報があるか。Forecast＝若干の海面変動も含む）とバッジ用グレード
   // tsunamiGrade は色分け用のため MajorWarning/Warning/Watch のみ（Forecast は除外）。ナビのバッジへ渡すときだけ、予報だけの
@@ -1762,18 +2012,27 @@ export function App() {
   // 読めない値で `null` を返す。空文字へ落として `datetime-local` の未入力扱いにする
   // （`null` を `value` に渡すと制御・非制御が切り替わったと React に警告される）。
   const [kyoshinInputDateTime, setKyoshinInputDateTime] = useState(() => formatDateTimeLocal(new Date()) ?? '')
+  const relayForecastScope = useSyncExternalStore(relayTokenStore.subscribe, relayTokenStore.forecastScope)
+  const forecastKeyRelayRejected = forecastKeyToSend !== null && relayForecastScope !== null && !relayForecastScope.granted
+  // 中継が予報キーを受け付けている。リプレイ・履歴・発生時刻の秒も中継から予報を引く（→ `relayRestClassifications`）
+  const relayForecastGranted = forecastKeyToSend !== null && relayForecastScope?.granted === true
+  // 過去の電文（リプレイ・発生時刻の秒）をどこからどの区分で引くか。鍵があれば、鍵が予報を断らない限り予報を鍵で
+  // DMDATA から引く —— ライブと同じ電文で再生する（設計書 §0 の 2026-10-31「自分で契約した鍵を入れた利用者も、予報キーの端末と同じ動きになるようにする」の行。→ `restSources`）
+  const keyRestEndpoint = useMemo(
+    () => (isValidDmdataApiKey(debouncedApiKey) ? dmdataKeyEndpoint(debouncedApiKey) : null),
+    [debouncedApiKey],
+  )
+  const pastSources = useMemo(
+    () => restSources(dmdataClassifications, relayForecastGranted, keyRestEndpoint !== null, keyForecastRefused),
+    [dmdataClassifications, relayForecastGranted, keyRestEndpoint, keyForecastRefused],
+  )
   // リプレイの取得・世代管理は useReplayController に集約している（非同期の完了順序に
   // 依存する状態機械のため、単体でテストできる形に切り出した）。
   // 時計への反映（setClockReplayOffset）は上の useEffect が replayTimeOffset を見て行う。
-  // 取得元はバリアントで変わる。DMDSS 版は DMDATA のアーカイブから当時の電文をまとめて取り、
-  // standard 版は P2PQuake の日付指定クエリで地震情報・津波を取る（P2PQuake には EEW を
-  // 過去日付で引く口が無いため、standard 版のリプレイ中の EEW は強震モニタ由来の検出が担う）。
-  //
-  // API キーはここだけ生の値を渡す。リプレイはユーザーがボタンを押した時点でしか通信せず、
-  // キー入力に連動して自動で走ることがないため、遅らせる必要がない
-  //（むしろ押した瞬間の最新値を使いたい）。
+  // 取得元は中継（`relayRestEndpoint`）経由の DMDATA のアーカイブで、当時の電文をまとめて取る。
+  // 対象期間がローカル履歴アーカイブに重なればそちらから読む（下記）。
   // 設定の窓の「テスト時刻設定」に出す、収録済みローカル履歴アーカイブの一覧。
-  // DMDATA/P2PQuakeのアーカイブが存在しない期間（DMDATAアーカイブの最古=2020-11-18より前等）を
+  // DMDATAのアーカイブが存在しない期間（DMDATAアーカイブの最古=2020-11-18より前等）を
   // 再現するための同梱データで、対象時刻がこの中の期間に該当すれば下記 fetchReplayEvents が
   // 通常のアーカイブ取得の代わりにこちらを使う（localArchiveReplay.ts 参照）。
   const { archives: historicalArchives, isLoading: historicalArchivesLoading } = useHistoricalArchiveIndex()
@@ -1792,7 +2051,7 @@ export function App() {
       const covering = findCoveringArchiveSync(historicalArchives, from, to)
       if (covering) return fetchLocalArchiveEvents(covering, from, to)
       // 収録範囲の終端を過ぎた直後（先読みが1時間ごとに次のウィンドウを取りに来た結果、
-      // ここで初めて収録範囲外に出た）場合、DMDATA/P2PQuakeにはそもそもデータの無い時代
+      // ここで初めて収録範囲外に出た）場合、DMDATAにはそもそもデータの無い時代
       // なので静かにフォールバックせず、専用のエラーで知らせる（見つからなければ null で
       // 通常どおりのフォールバックへ進む）。
       const justEnded = findArchiveJustEndedSync(historicalArchives, from, REPLAY_WINDOW_MS)
@@ -1801,31 +2060,29 @@ export function App() {
           `ローカル履歴アーカイブ「${justEnded.label}」の収録範囲の終端に達しました。これ以降は再生できません`,
         ))
       }
-      return isDmdss
-        // 「試験報を受信（検証用）」はライブだけでなく再生にも効かせる。**設定の文面は
+      // 「試験報を受信（検証用）」はライブだけでなく再生にも効かせる。**設定の文面は
         // 経路を限っていない**のに、ここへ渡さないと「ライブでは届くが再生では届かない」
         // という、名前から読み取れない食い違いになる。訓練報は年に数回しか流れないので、
         // 再生で拾えないと実電文で確かめる手段が事実上テストボタンだけになる。
         // 区分はライブの接続が取り決めたものを使う（再生中はライブを止めているが、値は残っている）。
-        // 一度も繋がっていなければ既定の区分で引く（→ `services/dmdataClassifications.ts`）
-        ? fetchDmdataReplayEvents(settings.dmdataApiKey, from, to, settings.dmdataTestDelivery, dmdataClassifications ?? PREFERRED_CLASSIFICATIONS, signal)
-        // standard 版は合図を受け取らない —— 日ごとの取得を本編と初期状態が相乗りするため
-        // （→ `p2pquakeReplay.ts` の `fetchAllPages`）
-        : fetchP2PReplayEvents(from, to)
+        // 一度も繋がっていなければ中継の既定の区分で引く。予報は、中継が予報キーを受け付けていれば中継から、
+        // 自分の鍵の予報が通っていれば鍵から引く（→ `restSources`・`fetchReplayFromSources`）
+      return fetchReplayFromSources(
+        // 初期状態（窓の手前 24 時間）は電文ログの行を載せないので、その本体を取りに行かない入口を使う
+        (endpoint, classifications) => (purpose === 'initial' ? fetchDmdataReplayInitialEvents : fetchDmdataReplayEvents)(
+          endpoint, from, to, settings.dmdataTestDelivery, classifications, signal,
+        ),
+        relayRestEndpoint, keyRestEndpoint, pastSources,
+      )
     },
-    [settings.dmdataApiKey, settings.dmdataTestDelivery, historicalArchives, dmdataClassifications],
-  )
-  const clearReplayCacheForVariant = useCallback(
-    () => { if (isDmdss) clearReplayCache(); else clearP2PReplayCache() },
-    [],
+    [settings.dmdataTestDelivery, historicalArchives, pastSources, keyRestEndpoint],
   )
   // 再生開始時刻より前の履歴（地震カードの一覧と、初期状態に足す 24 時間より前の電文）。
-  // 取得元は再生用と同じくバリアントで変わるが、引き方が違う。**どちらもライブ接続時の
-  // 初回履歴と同じ範囲を読む** —— DMDSS 版は日次アーカイブを 7 日ぶん（件数では打ち切らない。
-  // → `HISTORY_WINDOW_DAYS`）、standard 版は P2PQuake のクエリを 1 回引いて地震の件数で切る。
+  // 取得元は再生用と同じく中継経由の DMDATA のアーカイブ。**ライブ接続時の初回履歴と同じ範囲を読む**
+  // —— 日次アーカイブを 7 日ぶん（件数では打ち切らない。→ `HISTORY_WINDOW_DAYS`）。
   // こちらも fetchReplayEvents と同じく、対象期間がローカル履歴アーカイブに重なればそちらを使う
-  // （重ならなければ DMDATA/P2PQuake 側は「そもそもデータの無い時代」で必ず失敗するため）。
-  // ローカル履歴アーカイブはどちらの版でも 7 日ぶんを全部返し、件数では切らない（2026-10-14 ユーザー選択）。
+  // （重ならなければ DMDATA 側は「そもそもデータの無い時代」で必ず失敗するため）。
+  // ローカル履歴アーカイブも 7 日ぶんを全部返し、件数では切らない（2026-10-14 ユーザー選択）。
   // 重なり判定には履歴の遡り幅（7 日）ではなく fetchReplayEvents の「初期状態」と同じ
   // REPLAY_PRE_WINDOW_MS（24時間）を使う。ここを独自の幅にすると、本編・初期状態はアーカイブに
   // 重ならないのに履歴だけ数日先の無関係なアーカイブに重なってしまい、再生は実データ側で
@@ -1837,14 +2094,13 @@ export function App() {
     (before: Date, signal: AbortSignal): Promise<ReplayQuakeHistoryResult> => {
       const covering = findCoveringArchiveSync(historicalArchives, new Date(before.getTime() - REPLAY_PRE_WINDOW_MS), before)
       if (covering) return fetchLocalArchiveQuakeHistory(covering, before, HISTORY_WINDOW_DAYS).then(withoutLoadMore)
-      if (!isDmdss) return fetchP2PQuakeHistory(before, MAX_HISTORY_RETAINED, signal)
       // 履歴（再生開始より前の地震カード）も本編と同じ扱いにする。片方だけ通すと
       // 「再生には訓練報が出るのにカードの一覧には無い」形でずれる。
-      const classifications = dmdataClassifications ?? PREFERRED_CLASSIFICATIONS
-      const { dmdataApiKey, dmdataTestDelivery } = settings
+      const classifications = relayRestClassifications(dmdataClassifications, relayForecastGranted)
+      const { dmdataTestDelivery } = settings
       const fetchWindow = (windowBefore: Date, windowSignal: AbortSignal | null, gateTag: GateTag | undefined) =>
         fetchDmdataQuakeHistoryFor(
-          classifications, dmdataApiKey, windowBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, windowSignal,
+          classifications, relayRestEndpoint, windowBefore, HISTORY_WINDOW_DAYS, dmdataTestDelivery, windowSignal,
           undefined, undefined, gateTag,
         )
       // 続きは押すたびに新しい印を付けて取る（ライブの「もっと見る」と同じ。ボタンが門の残り時間を数える）
@@ -1852,7 +2108,7 @@ export function App() {
         result, before, (windowBefore, windowSignal) => fetchWindow(windowBefore, windowSignal, beginLoadMoreGateTag()),
       ))
     },
-    [settings.dmdataApiKey, settings.dmdataTestDelivery, historicalArchives, dmdataClassifications],
+    [settings.dmdataTestDelivery, historicalArchives, dmdataClassifications, relayForecastGranted],
   )
   /**
    * 行動チェックリストのリセット。**宣言が `useReplayController` より後になる**ため、
@@ -1945,10 +2201,12 @@ export function App() {
     ro.observe(area)
     return () => ro.disconnect()
   }, [])
-  // 縦積みで下部の波形が出ている間、地図を正方形に保つための寸法（→ utils/squareMapLayout.ts）。
+  // 縦積みで下部の波形が出ている間の高さの配り方に使う寸法（→ utils/waveStackLayout.ts）。
   // 測るのは器（地図の列・つまみ・パネル・下のナビを積む）と地図の列とパネル、それに波形の先頭の段。
-  // **つまみとナビの高さは「器 − 地図の列 − パネル」で出す** —— 1 つずつ測ると、器に何かを足したときに引き忘れる
-  // （この差は地図の列とパネルの配り方に依らない）。
+  // **つまみとナビの高さは「器 − 地図の列 − パネル ＋ 重ねている量」で出す** —— 1 つずつ測ると、器に何かを足したときに
+  // 引き忘れる。パネルを地図の列へ重ねている間は、重ねた分だけ差が縮むので足し戻す（足し戻さないと、重ねるほど
+  // つまみとナビが低く測れ、重ねる量がまた増える）。
+  const waveOverlapRef = useRef(0)
   const layoutRef = useRef<HTMLDivElement | null>(null)
   const mapColumnRef = useRef<HTMLDivElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -1959,10 +2217,10 @@ export function App() {
     const el = layoutRef.current
     const column = mapColumnRef.current
     const panel = panelRef.current
-    // **測れないときは記録を残す。** 地図を正方形に保つ配り方が働かず、画面には「波形が出ると地図が帯になる」
+    // **測れないときは記録を残す。** 波形の 1 段を残す配り方が働かず、画面には「波形が出ると波形が押し出される」
     // （直す前の症状）としか現れないため（凡例の自動折りたたみと同じ扱い）。
     if (!el || !column || !panel || typeof ResizeObserver === 'undefined') {
-      log.warn('[layout] 地図の列とパネルの高さを測れないため、縦積みの画面で地図を正方形に保つ配り方は働きません', {
+      log.warn('[layout] 地図の列とパネルの高さを測れないため、縦積みの画面で波形の 1 段を残す配り方は働きません', {
         hasContainer: !!el,
         hasMapColumn: !!column,
         hasPanel: !!panel,
@@ -1972,7 +2230,7 @@ export function App() {
     }
     const report = () => {
       const r = el.getBoundingClientRect()
-      const other = r.height - column.getBoundingClientRect().height - panel.getBoundingClientRect().height
+      const other = r.height - column.getBoundingClientRect().height - panel.getBoundingClientRect().height + waveOverlapRef.current
       setLayoutSize((prev) => (prev !== null && prev.width === r.width && prev.height === r.height && prev.other === other
         ? prev
         : { width: r.width, height: r.height, other }))
@@ -2014,6 +2272,9 @@ export function App() {
     // いることがある）。そちらは EEW が消えた副作用で別の effect が閉じるが、1 テンポ遅れる
     // うえ「ここを見ればリセットが完結している」と読めなくなる。
     applyQuakeOverlay(null, 'リセット')
+    // 長周期の節を見せる求め。引き当て済みの分は上の `selectQuake(null)` が落とすので、ここは引き当て前の分。
+    // 残すと、新しい時間軸で同じ地震のカードが現れた瞬間に古い求めで巻く
+    setLpgmFocusRequest(null)
     // 特別情報でパネルを開いたときの「元の状態」。持ち越すと、次にバナーが消えたときに
     // 切り替え前の状態へ戻す。
     setSpecialInfoPanelHold(null)
@@ -2040,7 +2301,7 @@ export function App() {
     fetchEvents: fetchReplayEvents,
     fetchQuakeHistory: fetchReplayQuakeHistory,
     restoreQuakeHistory,
-    clearCache: clearReplayCacheForVariant,
+    clearCache: clearReplayCache,
     timeOffset: replayTimeOffset,
     setTimeOffset: setReplayTimeOffset,
     resetState,
@@ -2049,6 +2310,12 @@ export function App() {
     restorePreWindowTracking,
     loadReplayEvents,
   })
+  // 設定の窓からリプレイを始めた回数を使用状況データに数える（許可している間だけ）。診断アクセサ（下）からの開始は数えない
+  const replayStart = replay.start
+  const startReplayCounted = useCallback((...args: Parameters<typeof replayStart>) => {
+    countUsage('replay')
+    return replayStart(...args)
+  }, [replayStart])
 
   // 外からリプレイを操るための診断アクセサ（`__frameProfiler`・`__cameraUpdateSkip` 等と同じ流儀）。
   //
@@ -2139,9 +2406,10 @@ export function App() {
     return findCoveringArchiveSync(historicalArchives, now, new Date(now.getTime() + 1))?.id ?? null
   }, [replayTimeOffset, nowTick, historicalArchives])
 
-  // DMDSS版: Yahoo hypoInfo からのEEW検出は不要（DMDATAが直接配信するため）
+  // 強震モニタ（Yahoo hypoInfo）の緊急地震速報は全員が受ける。同じ地震は DMDATA の報が届いたら丸ごと置き換える
+  // （`mergeEewReport`。docs/relay-server-design.md §0 の 2026-10-30 の行）
   const kyoshin = useKyoshinRealtime(true, {
-    onEEWEvent: isDmdss ? undefined : injectEvent,
+    onEEWEvent: injectEvent,
     timeOffset: replayTimeOffset,
     localArchiveId: localKyoshinArchiveId,
   })
@@ -2157,6 +2425,11 @@ export function App() {
     }
     eewSpreadLog.push(Date.parse(kyoshinV2.dataTime), kyoshinV2.detections)
   }, [eewSpreadLog, kyoshinV2.dataTime, kyoshinV2.detections])
+  // 最寄りの観測点へ P 波が届くまでは解除を待つので、観測点の座標も渡す（観測網から遠い海域の地震。eew-spec §7）
+  // 一覧を取り直す間に空になっても前の一覧を保つ（空にすると、待っている解除が観測網への波を待たずに消える）
+  useEffect(() => {
+    if (kyoshin.sites.length > 0) eewSpreadLog.setSites(kyoshin.sites)
+  }, [eewSpreadLog, kyoshin.sites])
   // siteConfigId 切替直後の一時的な「新 indices・旧 sites」状態では sites[i] と indices[i] を
   // 位置対応で使う下流（描画・タブ表示・派生ビュー）でも誤ペアリングが起きるため、両者の
   // siteConfigId が揃うまで空配列にゲートする。sitelist の非同期取得が完了した次フレームで
@@ -2228,9 +2501,12 @@ export function App() {
     // `kyoshinView` だけが変わったレンダー・StrictMode の二重描画）印は同じなので、鳴らす側は 1 回だけ動く
     const stamp = { key: `${alert.eventId}@${alert.atMs}`, atMs: alert.atMs }
     if (best) return { ...stamp, focus: { lat: best.lat, lng: best.lng } }
-    // 立ち上がった点が引けない（観測点リストの入れ替え中など）ときは、イベントの重心へ寄せる。
-    // **合図は捨てない** —— `stepReonset` は既に鳴らしたことにしているので、ここで捨てると
-    // 音もタブ移動も無いまま 60 秒鳴らなくなる（`confirmedShocks` の寄せ先と同じ考え方）
+    // 立ち上がった点が地図の点に無い（まだ描いていない・観測点リストの入れ替え中など）ときは、
+    // 点のキーの座標へ寄せる。それも読めなければイベントの重心へ寄せる。
+    // **合図は捨てない** —— `stepReonset` は既に鳴らしたことにしていて、合図はその地震の波で説明できる間
+    // 次の合図を止めるので、ここで捨てると知らせないまま黙る（`confirmedShocks` の寄せ先と同じ考え方）
+    const keyPos = alert.keys.map(keyLatLng).find((p) => p !== null)
+    if (keyPos) return { ...stamp, focus: { lat: keyPos[0], lng: keyPos[1] } }
     const ep = kyoshinV2.detections.find((d) => d.id === alert.eventId)?.epicenter
     if (ep) return { ...stamp, focus: { lat: ep[0], lng: ep[1] } }
     log.warn(`[kyoshin] 同じ場所の 2 つ目の揺れの寄せ先を引けなかった（${alert.eventId}）。寄せずに音だけ鳴らす`)
@@ -2269,7 +2545,7 @@ export function App() {
     if (alertActive) setPanelCollapsed(false)
   }, [alertActive])
 
-  // EEWデータから P波・S波半径を自前計算（100ms更新でスムーズ拡張、標準版・DMDSS版共通）
+  // EEWデータから P波・S波半径を自前計算（100ms更新でスムーズ拡張）
   // eewsForMap（activeEEWsNoCancelled の配列）と同一内容のため使い回して二重 useMemo を避ける。
   const psWave = usePsWaveCalc(eewsForMap, replayTimeOffset)
 
@@ -2349,6 +2625,25 @@ export function App() {
   })
   // 宣言が useReplayController より後になるため ref 経由で渡す（上記 resetLocalState 参照）。
   resetActionChecklistRef.current = actionChecklist.resetForReplay
+  // 地図が低い画面では、行動チェックリストを畳んだ札で出し、押したら地図の上に重ねて開く
+  // （2026-11-04 ユーザー選択「狭いときは札で出す (Recommended)」。開いたまま出すと、帯と合わせて地図の 9 割以上を覆っていた）。
+  // 低いかの境は凡例が自動で畳む境と同じ（`mapAreaShort`）。**フックの「閉じた」記録には触らない** ——
+  // ここで畳むのは見せ方だけで、閉じるボタンを押したときの扱い（次の余震を畳んで出す）はフックが持つ。
+  // 札を押して開いた帯の識別子を覚え、別の揺れの帯に替わったら札へ戻す。
+  const [checklistPeekKey, setChecklistPeekKey] = useState<string | null>(null)
+  const checklistKey = actionChecklist.state?.key ?? null
+  const checklistCompact = mapAreaShort && !actionChecklist.collapsed && checklistPeekKey !== checklistKey
+  const checklistOverlay = mapAreaShort && !actionChecklist.collapsed && checklistPeekKey === checklistKey
+  const restoreChecklist = useCallback(() => {
+    setChecklistPeekKey(checklistKey)
+    actionChecklist.restore()
+  }, [checklistKey, actionChecklist.restore])
+  // 閉じた・帯が消えた（リプレイの開始と停止を含む）ら、札を開いた記録を捨てる。残すと、同じ揺れが震度を上げて
+  // フックが開き直したときや、同じ地震を再生し直したときに、札を押していないのに重ねて開く
+  const checklistGone = actionChecklist.state === null || actionChecklist.collapsed
+  useEffect(() => {
+    if (checklistGone) setChecklistPeekKey(null)
+  }, [checklistGone])
 
   // 直前に鳴らした（鳴らす機会のあった）地震と秒数。**地震の鍵と組で覚える** —— 秒数だけで比べると、
   // 地震が替わった直後に前の地震と同じ秒数だったとき鳴らない。
@@ -2403,6 +2698,8 @@ export function App() {
     revertToDefaultTab,
     onShakeFocus: handleShakeFocus,
     reonset: kyoshinReonset,
+    detectedPoints: kyoshinView.detectedPoints,
+    speakDetection: speakKyoshinDetection,
   })
   // 宣言が useReplayController より後になるため ref 経由で渡す（上記 resetLocalState 参照）。
   resetKyoshinAlertsRef.current = kyoshinAlerts.resetForReplay
@@ -2557,20 +2854,26 @@ export function App() {
   const quakeOriginSeconds = useQuakeOriginSeconds({
     // 自作・公開のどちらかの波形カードに使うときだけ、発生秒を取りに行く。
     enabled: settings.publicWaveEnabled || (settings.seismoEnabled && settings.seismoWave !== 'off'),
-    isDmdss,
-    apiKey: debouncedApiKey,
-    // ライブでは接続が区分を取り決めるまで待つ。再生中は、一度も繋がっていなければ既定の区分で引く
-    // （リプレイの取得と同じ扱い。→ 上の `fetchDmdataReplayEvents` の呼び出し）。
-    classifications: replayTimeOffset === null ? dmdataClassifications : (dmdataClassifications ?? PREFERRED_CLASSIFICATIONS),
+    // 引く先と区分はリプレイの取得と同じ（→ 上の `fetchReplayFromSources` の呼び出し）
+    sources: pastSources,
+    keyEndpoint: keyRestEndpoint,
     quakes: filteredEarthquakes,
     activeEEWs,
     replayOffsetMs: replayTimeOffset,
+  })
+  // 波形を出すかを見る範囲は、ホーム地点ではなく自作地震計の周り（座標が無ければホーム地点。→ hooks/useSeismoScope.ts）。
+  // 地図の下端の波形（下の `useSeismoWaveVisibility`）と地震カードの波形（すぐ下）の両方が使う。
+  const seismoScope = useSeismoScope({
+    stations: seismoView.stations,
+    homeScope: nearbyScope,
+    stationCoords: stationCoordsForChecklist,
+    kyoshinSites: kyoshinSitesGated,
   })
   const { waves: seismoQuakeWaves, failedEventKeys: seismoWaveFailedKeys } = useSeismoQuakeWavesWithStatus({
     enabled: settings.seismoEnabled && settings.seismoWave !== 'off',
     baseUrl: settings.seismoHostUrl,
     quakes: filteredEarthquakes,
-    scope: nearbyScope,
+    scope: seismoScope,
     readWave: seismo.readWave,
     replayOffsetMs: replayTimeOffset,
     originSeconds: quakeOriginSeconds,
@@ -2616,6 +2919,7 @@ export function App() {
     mode: mapMode,
     quake: mapQuake,
     tsunamis,
+    tsunamiSourceQuakes: filteredEarthquakes,
     eews: eewsForMap,
     // 出典に何を挙げるかは「地図に描かれているか」で決まるため、表示の設定をそのまま渡す。
     showBathymetry: settings.showBathymetry,
@@ -2623,9 +2927,9 @@ export function App() {
     showPlateBoundaries: settings.showPlateBoundaries,
     // 公開観測点の三角は、下部に波形を出している間か、地震カードを開いている間だけ地図に描く（`PublicStationMarkersGL`）。
     showPublicStations: publicStationMarkers.length > 0,
-    // 揺れ検知中の見出し（緊急地震速報が無いとき）。推定最大震度の段は、ブラウザ通知の本文が使う値と同じ式で決める
+    // 揺れ検知中の見出し（緊急地震速報が無いとき）。最大リアルタイム震度の段は、ブラウザ通知の本文が使う値と同じ式で決める
     // （確定中は確定した点の最大・可能性の段階は主候補の最大。`useKyoshinAlerts` の `effectiveKyoshinMaxIndex`）。
-    // どちらも値を持つ点が無ければ -1（欠測）——0 は「0以下」と焼かれるので、欠測を 0 から始めない
+    // どちらも値を持つ点が無ければ -1（欠測）——0 は「0未満」と焼かれるので、欠測を 0 から始めない
     kyoshinDetection: kyoshinView.confirmed
       ? { state: 'confirmed', maxIndex: kyoshinView.confirmedShocks.reduce((max, s) => Math.max(max, s.index), -1) }
       : kyoshinView.candidate
@@ -2636,13 +2940,6 @@ export function App() {
   //
   // **再生中も設定どおりに判定する**（観測点は再生時刻のぶん。→ `useSeismoReplay`）。再生している EEW・強震モニタの
   // 検知・自作地震計の震度で、ライブと同じく出し入れする。
-  // 波形を出すかを見る範囲は、ホーム地点ではなく自作地震計の周り（座標が無ければホーム地点。→ hooks/useSeismoScope.ts）。
-  const seismoScope = useSeismoScope({
-    stations: seismoView.stations,
-    homeScope: nearbyScope,
-    stationCoords: stationCoordsForChecklist,
-    kyoshinSites: kyoshinSitesGated,
-  })
   const showSeismoWave = useSeismoWaveVisibility({
     mode: settings.seismoWave,
     scope: seismoScope,
@@ -2653,9 +2950,9 @@ export function App() {
   // 地図に重ねる特別情報の帯の束。**閉じた帯を除いた「いま出す帯」を、帯の描画と共有ボタンの置き場所が同じ値で見る。**
   // お知らせの帯は設定で隠せるので、隠しているときは元データごと渡さない。
   const specialInfoBanners = useSpecialInfoBanners({
-    nankai, nankaiCommentary, kohatsu,
-    quakeNotice: settings.quakeNoticeBanner ? quakeNotice : null,
-    earthquakeCount,
+    nankai, nankaiCommentary: nankaiCommentaryList, kohatsu: kohatsuList,
+    quakeNotice: settings.quakeNoticeBanner ? quakeNoticeList : NO_BAND_ITEMS,
+    earthquakeCount: earthquakeCountList,
   })
   // 地図の下の波形の枠に渡すもの。**出さないなら空・null**（出すかどうかはここで決める）。
   const waveChartStations = showSeismoWave ? seismoView.stations : EMPTY_SEISMO_STATIONS
@@ -2663,36 +2960,29 @@ export function App() {
   // 枠が実際に段を描くか。描くと地図の高さが削れ、地図に重ねた帯は画面の下端に届かなくなる。
   // **「出す」と判定しただけでは足りない** —— 段が 0 なら枠は何も描かない（→ SeismoWaveChart/chartRows.ts）。
   const waveChartDrawn = hasWaveChartRows(waveChartStations, waveChartPublic)
-  // 縦積みで波形が出ている間は、地図の正方形と波形の 1 段を先に取り、足りない分だけパネルを縮めて見せる
-  // （2026-10-24 ユーザー選択「一旦Aで作ってみて」）。**保存してあるパネルの比率は変えない**。
-  // つまみで動かしたらその比率を使い、上限より広げたら波形の枠を隠す（地図の正方形は残す）。
-  // 左右分割ではパネルの高さも地図の下限も CSS 側で効かない（`side:h-auto`・`side:min-h-0`）。
-  const squareLayout = squareMapLayout({
-    containerWidth: layoutSize?.width ?? 0,
+  // 縦積みで波形が出ている間は、パネルを広げるとまず地図が縮み、地図が器の高さの一定の割合まで縮んだ所で
+  // 地図と波形が止まり、その先はパネルが下から重なって覆う（→ utils/waveStackLayout.ts。2026-11-04 ユーザー選択）。
+  // **パネルの比率は動かさない。** 左右分割では重なりも地図の下限も CSS 側で効かない（`side:` の指定）。
+  const panelShownRatio = panelCollapsed ? 0 : panelRatio
+  const waveLayout = waveStackLayout({
     containerHeight: layoutSize?.height ?? 0,
     otherHeight: layoutSize?.other ?? 0,
     leadRowHeight: waveChartDrawn ? waveLeadRowHeight : null,
-    panelRatio: panelCollapsed ? 0 : panelRatio,
-    adjustedWhileWave: panelAdjustedWhileWave,
-    minPanelRatio: PANEL_RATIO_MIN,
+    panelRatio: panelShownRatio,
   })
-  squareBorrowingRef.current = squareLayout.borrowing
-  // 波形が消えたら「動かした」を忘れる —— 次に波形が出たら、また縮めて見せる。
-  useEffect(() => {
-    if (!waveChartDrawn) setPanelAdjustedWhileWave(false)
-  }, [waveChartDrawn])
-  // 波形の枠が画面に見えているか。**隠しているときも枠は外さない**（外すと先頭の段の高さが測れなくなり、
-  // 「縮めうる状態」から外れて枠がまた出てくる）。地図に重ねた帯の下端の余白は、見えているかで決める。
-  const waveChartShown = waveChartDrawn && !squareLayout.waveHidden
+  waveOverlapRef.current = waveLayout.overlap
+  // 波形の枠を描いているか。地図に重ねた帯の下端の余白はこれで決める（パネルに覆われていても、
+  // 帯は地図の下端にあって画面の下端には届かない）。
+  const waveChartShown = waveChartDrawn
 
   // 地図左上の更新時刻: リアルタイム表示はリアルタイム震度(kyoshin)の更新時刻、
-  // DMDSS版かつWS接続中は現在時刻を毎秒更新、それ以外は最終受信時刻を表示する。
+  // 接続中は現在時刻を毎秒更新、それ以外は最終受信時刻を表示する。
   const overlayUpdateTime =
     mapTab === 'realtime'
       ? kyoshin.dataTime
         ? new Date(kyoshin.dataTime)
         : null
-      : (isDmdss && nowTick !== null)
+      : nowTick !== null
         ? nowTick
         : lastUpdate
   // 更新がエラーで停止しているか（リアルタイム=取得連続失敗 / それ以外=WS切断）。
@@ -2702,7 +2992,7 @@ export function App() {
   const overlayError =
     mapTab === 'realtime'
       ? kyoshin.error
-      : isLiveFeedHalted(connectionStatus)
+      : isLiveFeedHalted(connectionStatus, relayUpstream)
 
   return (
     // 画面いっぱいの高さは h-dvh（100dvh）で取る。dvh はブラウザ UI の出入りに追従するため、
@@ -2715,13 +3005,16 @@ export function App() {
       {/* 地図(左) | パネル | アイコンナビ(右端)。
           side ブレークポイント未満（スマホ縦など）は縦積み(地図上・つまみ・パネル・ナビ下)になり、
           パネルの高さは --panel-ratio（つまみのドラッグで可変・折りたたみ時 0）で決まる。
-          side 以上（PC・スマホ横）は左右分割で、パネル幅は固定。 */}
+          side 以上（PC・スマホ横）は左右分割で、パネル幅は境の縦のつまみで変えられる（--panel-w-side / --panel-w-narrow）。 */}
       <div
         ref={layoutRef}
         className="flex-1 overflow-hidden flex flex-col side:flex-row"
         style={{
-          '--panel-ratio': squareLayout.panelRatio,
-          '--map-min-height': `${squareLayout.mapMinHeight}px`,
+          '--panel-ratio': panelShownRatio,
+          '--map-min-height': `${waveLayout.mapMinHeight}px`,
+          '--wave-overlap': `${waveLayout.overlap}px`,
+          '--panel-w-side': panelWidthCss(panelWidthSide),
+          '--panel-w-narrow': panelWidthCss(panelWidthSideNarrow),
         } as CSSProperties}
       >
         {/* 常時表示の地図エリア（タブに応じて内容を切替） */}
@@ -2735,8 +3028,8 @@ export function App() {
 
             **凡例と特別情報バナーは地図に重ねたまま。** あちらは地図の上に出すもので、
             地の絵が透けて見えることに意味がある（波形は観測値そのものなので透かさない）。 */}
-        <div ref={mapColumnRef} className="flex-1 min-h-0 flex flex-col">
-          {/* 縦積みで波形が出ている間だけ高さの下限を置く（地図を正方形に保つ。→ utils/squareMapLayout.ts）。
+        <div ref={mapColumnRef} className="flex-1 min-h-0 flex flex-col isolate">
+          {/* 縦積みで波形が出ている間だけ高さの下限を置く（波形の先頭の段を押し出させない。→ utils/waveStackLayout.ts）。
               下限があるので、波形の枠は 1 段を残して縮み、2 段目以降は枠の中でずらして見る。 */}
           <div ref={mapAreaRef} className="relative flex-1 min-h-(--map-min-height) side:min-h-0">
             {/* **包むのは地図だけ。** ここで受け止めれば App の state は生きたままなので、地図が
@@ -2753,6 +3046,7 @@ export function App() {
                 onLegendSourcesChange={setLegendSources}
                 quake={mapQuake}
                 tsunamis={tsunamis}
+                tsunamiSourceQuakes={filteredEarthquakes}
                 observations={latestTsunamiObservations}
                 lpgm={activeLpgm ?? undefined}
                 distributionMode={mapDistributionMode}
@@ -2798,9 +3092,10 @@ export function App() {
                 陸を隠しにくいから（2026-10-27 ユーザー指示「そもそも右上じゃなくて左上にしたい(地震計と入れ替える。日本列島が右上向きだから)」）。
                 **下端の帯（凡例・特別情報バナー）とは重ならない** —— あちらは全幅の絶対配置で、
                 下側へ置いたものは押し上げてもらえずに重なる。行動チェックリストの帯は、この列の下端から始める（`topCornersBottom`）。
-                z-99999: 区域集約震度バッジ（QuakeRegionFillGL）は el.style.zIndex = scale*1000 で、
-                scale は JMA 震度階級の数値コード（震度7 = 70）まであるため最大 70000 まで積む。
-                それより確実に高い値にして常に最前面に出す。 */}
+                z-99999: 地図の中の物（HTML マーカー・MapLibre の操作ボタン・撮影中の静止画）と、地図の吹き出し
+                （`.maplibregl-popup` の 99998。→ src/index.css）より前に出す。地図の要素は重なりの文脈を作らないので、
+                吹き出しの z はここと直に比べられる。値を変えるときは吹き出しの側も合わせる
+                （→ src/components/Map/popupLayering.test.ts）。 */}
             <div
               ref={topCornersRef}
               className="absolute z-99999 pointer-events-none flex items-start justify-between gap-2"
@@ -2840,14 +3135,16 @@ export function App() {
                 下限は各コンポーネントが自分の外枠に値で書く（`min-height` を書かない子は中身の高さで
                 止まって縮まず、`min-h-0` の子は見出しまで潰れる）。 */}
             <div className="absolute inset-0 z-99999 pointer-events-none flex flex-col">
-              {actionChecklist.state && (
+              {actionChecklist.state && !checklistOverlay && (
                 <ActionChecklist
                   reason={actionChecklist.state.reason}
                   scale={actionChecklist.state.scale}
+                  unreceived={actionChecklist.state.unreceived}
                   scope={actionChecklist.state.scope}
-                  collapsed={actionChecklist.collapsed}
+                  collapsed={actionChecklist.collapsed || checklistCompact}
+                  focusOnOpen={false}
                   onDismiss={actionChecklist.dismiss}
-                  onRestore={actionChecklist.restore}
+                  onRestore={restoreChecklist}
                   topInset={topCornersBottom + TOP_CORNERS_GAP_PX}
                   areaHeight={mapAreaHeight}
                   below={{
@@ -2899,12 +3196,32 @@ export function App() {
                 atScreenBottom={!waveChartShown}
               />
             </div>
+            {/* 地図が低いときに札から開いた行動チェックリスト。**縦並びの外に重ねる** —— 縦並びに入れると
+                凡例・帯と高さを分け合って中で切れる。ここでは地図の高さいっぱいまで伸び、凡例と帯の上にも重なる
+                （閉じれば札に戻る。→ `checklistOverlay`）。下に残すものは無いので `below` はすべて偽。 */}
+            {actionChecklist.state && checklistOverlay && (
+              <div className="absolute inset-0 z-99999 pointer-events-none flex flex-col">
+                <ActionChecklist
+                  reason={actionChecklist.state.reason}
+                  scale={actionChecklist.state.scale}
+                  unreceived={actionChecklist.state.unreceived}
+                  scope={actionChecklist.state.scope}
+                  collapsed={false}
+                  focusOnOpen
+                  onDismiss={actionChecklist.dismiss}
+                  onRestore={restoreChecklist}
+                  topInset={topCornersBottom + TOP_CORNERS_GAP_PX}
+                  areaHeight={mapAreaHeight}
+                  below={{ legend: false, shareRow: false, shareRowAtScreenBottom: false, banner: false }}
+                />
+              </div>
+            )}
           </div>
           {/* 自作地震計の合成波形。**地図の外**（→ すぐ上の器のコメント）。
               包みは地図の下限に押されて縮む（中の枠がスクロールする）。パネルを上限より広げたら高さ 0 で隠す
               （外さない理由は `waveChartShown`）。 */}
           {waveChartDrawn && (
-            <div className={`min-h-0 flex flex-col overflow-hidden${squareLayout.waveHidden ? ' h-0 invisible' : ''}`}>
+            <div className="min-h-0 flex flex-col overflow-hidden" {...(waveLayout.waveCovered ? { inert: '' } : {})}>
             <SeismoWaveChart
               stations={waveChartStations}
               readWave={seismoView.readLiveWave}
@@ -2916,7 +3233,7 @@ export function App() {
               spanSec={settings.waveSpanSec}
               onFocusStation={focusMapPositions}
               onLeadRowHeightChange={setWaveLeadRowHeight}
-              paused={squareLayout.waveHidden}
+              paused={waveLayout.waveCovered}
             />
             </div>
           )}
@@ -2924,23 +3241,32 @@ export function App() {
 
         {/* 地図とパネルの境界（縦積み時のみ）。ドラッグで高さ比率を変え、タップで折りたたむ。 */}
         <PanelResizeHandle
-          // 見えている高さから掴ませる（地図を正方形に保つために縮めている間、保存した比率から始めると
-          // 指を動かしても縮めた高さまで戻るあいだ何も動かない）。畳んでいるときは展開したときの比率。
-          ratio={panelCollapsed ? panelRatio : squareLayout.panelRatio}
+          // 畳んでいるときは展開したときの比率。波形が出ていてもパネルの比率は動かさないので、保存した比率そのまま
+          ratio={panelRatio}
           collapsed={panelCollapsed}
           onRatioChange={handlePanelRatioChange}
           onRatioCommit={handlePanelRatioCommit}
+          onToggleCollapse={togglePanelCollapsed}
+        />
+        {/* 地図とパネルの境界（左右分割時のみ）。横へのドラッグで幅を変え、タップで折りたたむ。 */}
+        <PanelWidthHandle
+          widthRem={sideNarrow ? panelWidthSideNarrow : panelWidthSide}
+          defaultRem={sideNarrow ? PANEL_WIDTH_DEFAULT_NARROW_REM : PANEL_WIDTH_DEFAULT_SIDE_REM}
+          collapsed={panelCollapsed}
+          onWidthChange={handlePanelWidthChange}
+          onWidthCommit={handlePanelWidthCommit}
           onToggleCollapse={togglePanelCollapsed}
         />
 
         {/* パネル（タブに応じて内容を切替）。縦積み時は --panel-ratio 由来の高さ + スクロール。
             折りたたみ時は縦積みなら高さ（--panel-ratio=0）、左右分割なら幅が 0 になり地図が全画面になる。
             各タブを absolute で重ねて visibility で切り替えることで、スクロール位置をタブごとに独立管理する。
+            **地の色（bg-app）を敷く。** 縦積みで波形が出ている間はパネルが波形の上へ重なる（→ utils/waveStackLayout.ts）ので、
+            背景を持たない中身（日付の区切り・見出し・空の案内）から下の波形が透けないようにする。重ならないときは画面の地と同じ色。
             折りたたみを含め display:none（hidden クラス）を使わないのは、scrollTop がリセットされるため。
-            左右分割時の幅は `w-panel` / `w-panel-narrow`（src/index.css で定義）。24rem/20rem から
-            2rem ずつ広げてある。地震カードの震度バッジを正方形（従来 80px 幅 → カード高さと同じ
-            約 112px）にした分、本文カラムが痩せないようにするため。 */}
-        <div ref={panelRef} className={`shrink-0 h-[calc(var(--panel-ratio)*100%)] overflow-hidden side:h-auto side:flex-none border-border relative ${
+            左右分割時の幅は `w-panel` / `w-panel-narrow`（src/index.css で定義）。境のつまみで変えた幅は
+            --panel-w-side / --panel-w-narrow で受ける（→ utils/panelWidth.ts）。 */}
+        <div ref={panelRef} className={`shrink-0 h-[calc(var(--panel-ratio)*100%)] overflow-hidden side:h-auto side:flex-none border-border bg-app relative z-10 ${
           panelCollapsed ? 'side:w-0 side:border-l-0' : 'side:w-panel sideNarrow:w-panel-narrow side:border-l'
         }`}>
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'earthquake' ? ' invisible pointer-events-none' : ''}`}>
@@ -2951,6 +3277,7 @@ export function App() {
               <EarthquakeTab
                 earthquakes={filteredEarthquakes}
                 selectedId={selectedQuakeKey}
+                selectSeq={quakeSelectSeq}
                 speakingKey={speakingQuakeKey}
                 followSpeech={settings.voicevoxEnabled}
                 onSelect={selectQuakeFromCard}
@@ -2958,18 +3285,20 @@ export function App() {
                 isLoadingMore={isLoadingMore}
                 hasMore={hasMore}
                 onLoadMore={loadMoreEarthquakes}
-                watchLoadMoreThrottle={isDmdss}
+                watchLoadMoreThrottle={true}
                 error={error}
                 historyLoss={historyLoss}
                 loadMoreFailed={loadMoreFailed}
                 reconnectGapLoss={reconnectGapLoss}
                 fetchThrottled={fetchThrottled}
+                onDismissKeyReentry={showKeyReentry ? dismissKeyReentry : null}
                 lpgmByEventId={lpgmByEventId}
                 updateMarks={quakeUpdateMarks}
                 activeLpgmEventId={activeLpgmEventId}
                 onToggleLpgm={toggleLpgmFromEarthquake}
+                lpgmFocus={lpgmFocus}
                 estimatedIntensities={estimatedIntensities}
-                internationalTsunamis={internationalTsunamis}
+                internationalTsunamisByQuake={internationalTsunamiIdx.byQuakeKey}
                 distributionQuakeKey={distributionQuakeKey}
                 onToggleDistribution={toggleDistribution}
                 unreceivedQuakeKey={unreceivedQuakeKey}
@@ -3026,7 +3355,7 @@ export function App() {
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'catalog' ? ' invisible pointer-events-none' : ''}`}>
             <ErrorBoundary variant="region" label={TAB_LABELS.catalog}>
               <CatalogTab
-                index={catalog.index}
+                index={catalogIndex}
                 filter={catalogFilter}
                 onFilterChange={handleCatalogFilterChange}
                 view={catalogView}
@@ -3041,6 +3370,7 @@ export function App() {
                 missingYears={catalog.missingYears}
                 requestedYears={catalog.requestedYears}
                 onRetry={catalog.retry}
+                tail={catalog.tail}
               />
             </ErrorBoundary>
           </div>
@@ -3052,26 +3382,31 @@ export function App() {
         </div>
 
         {/* 設定は窓（2026-10-27 ユーザー承認）。閉じている間も中身を外さずに隠す（→ `SettingsDialog`） */}
+        {usageConsentOpen && <UsageConsentDialog onAnswer={answerUsageConsent} />}
         <SettingsDialog open={settingsOpen} onClose={closeSettings} returnFocusRef={settingsButtonRef}>
             <ErrorBoundary variant="region" label={TAB_LABELS.settings}>
               <SettingsTab
                 settings={settings}
                 onUpdate={updateSetting}
                 arrivalTokenStatus={arrivalTokenStatus}
+                forecastKeyStatus={forecastKeyStatus}
+                forecastKeyRelayRejected={forecastKeyRelayRejected}
+                relayForecastLive={relayForecastLive}
                 onReplaceSettings={replaceSettings}
                 dmdataConnectionStatus={connectionStatus}
+                relayUpstream={relayUpstream}
+                keyForecastStatus={keyForecastStatus}
                 dmdataClassifications={dmdataClassifications}
-                onTest={testHandlers}
+                onTest={countedTestHandlers}
                 kyoshinTimeOffset={replayTimeOffset}
                 kyoshinInputDateTime={kyoshinInputDateTime}
                 onSetKyoshinInputDateTime={setKyoshinInputDateTime}
                 replayIsFetching={replay.isFetching}
                 replayError={replay.error}
-                onStartReplay={replay.start}
+                onStartReplay={startReplayCounted}
                 onStopReplay={replay.stop}
                 historicalArchives={historicalArchives}
                 historicalArchivesLoading={historicalArchivesLoading}
-                scenarioTest={scenarioTest}
                 seismoUnreadableCount={seismo.unreadableCount}
               />
             </ErrorBoundary>

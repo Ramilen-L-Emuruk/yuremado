@@ -1,11 +1,15 @@
+import { useState, type ReactNode } from 'react'
 import { useAutoOpenWhileSpeaking } from '../../hooks/useAutoOpenWhileSpeaking'
 import { telegramTextSubject } from '../../utils/ttsFollow'
 import type {
   EarthquakeInfoMeta, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAQuakeNotice, JMAEarthquakeCount,
   TelegramOperationStatus,
 } from '../../types/earthquake'
-import { EarthquakeCountDetail, earthquakeCountHeadline } from './EarthquakeCountDetail'
-import type { SpecialInfoBanners } from './useSpecialInfoBanners'
+import { EarthquakeCountDetail } from './EarthquakeCountDetail'
+import { Marquee } from '../Marquee'
+import { DisclosureCaret, Reveal } from '../EarthquakeTab/quakeMotion'
+import { earthquakeCountHeadline } from '../../utils/earthquakeCountSummary'
+import type { SpecialInfoBanners, StackedSpecialInfo } from './useSpecialInfoBanners'
 
 interface Props {
   /**
@@ -52,9 +56,9 @@ function CommentaryIcon() {
   )
 }
 
-function CloseIcon() {
+function CloseIcon({ small = false }: { small?: boolean }) {
   return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <svg className={small ? 'w-3.5 h-3.5' : 'w-4 h-4'} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
     </svg>
   )
@@ -153,7 +157,7 @@ export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, readsA
     // 南海トラフ臨時情報が記録も印も残さずに消える（はみ出していた頃より気づきにくい）。
     // 下限は値で書く —— 何も書かない（`auto`）と縦並びの子は中身の高さで止まり、縮まない。
     // 帯が 1 枚も無ければこのコンポーネント自体が何も描かないので、下限も場所を取らない。
-    <div className="w-full min-h-10 flex flex-col pointer-events-none">
+    <div className="ui-text w-full min-h-10 flex flex-col pointer-events-none">
       {/* max-h で高さが制約されるためこの要素自身がスクロール領域になる。overflow-y だけを auto に
           すると overflow-x も auto に格上げされ横スクロールしてしまうため、明示的に塞ぐ。
           **上限は 2 つ掛かる。** 画面の 40%（`max-h-[40dvh]`。地図が高くても帯が地図を覆いすぎ
@@ -162,18 +166,19 @@ export function SpecialInfoBanner({ banners, speakingTelegramTextSubject, readsA
           南海トラフ臨時情報は先頭なので、縮んでもスクロールの先頭に残る。
           単位は vh ではなく dvh。vh は iOS の PWA だとビューポートではなく画面全体の高さを指すため。
           SAFE_BOTTOM はここの直接の子の最後に効くので、バナー以外をこの中に足さないこと。 */}
-      <div className={`pointer-events-auto min-h-0 max-h-[40dvh] overflow-y-auto overflow-x-hidden overscroll-x-none${atScreenBottom ? ` ${SAFE_BOTTOM}` : ''}`}>
+      <div className={`ui-text-scope pointer-events-auto min-h-0 max-h-[40dvh] overflow-y-auto overflow-x-hidden overscroll-x-none${atScreenBottom ? ` ${SAFE_BOTTOM}` : ''}`}>
         {/* 南海トラフの 2 枚（臨時情報とその解説情報）を隣り合わせる。臨時情報の発表期間中は
             解説情報が毎日届いて両方が同時に出るため、間に別の事象（後発地震＝北海道・三陸沖）を
             挟むと同じ事象の話が分断されて読みにくい。重さの順よりこちらを優先する。 */}
         {nankai && <NankaiBanner nankai={nankai} speaking={speaking('nankai')} readsAppendix={readsAppendix} onDismiss={() => banners.dismiss('nankai')} />}
-        {nankaiCommentary && <CommentaryBanner commentary={nankaiCommentary} speaking={speaking('nankaiCommentary')} readsAppendix={readsAppendix} onDismiss={() => banners.dismiss('nankaiCommentary')} />}
-        {kohatsu && <KohatsuBanner kohatsu={kohatsu} speaking={speaking('kohatsu')} readsAppendix={readsAppendix} onDismiss={() => banners.dismiss('kohatsu')} />}
-        {earthquakeCount && <EarthquakeCountBanner count={earthquakeCount} speaking={speaking('earthquakeCount')} onDismiss={() => banners.dismiss('earthquakeCount')} />}
+        {/* 積む 4 種は、同じ種類が何通あっても 1 本の帯（→ `StackedBanner`）。閉じ方は帯の × が全件・行の × が 1 件 */}
+        {nankaiCommentary.length > 0 && <CommentaryBanner list={nankaiCommentary} speaking={speaking('nankaiCommentary')} readsAppendix={readsAppendix} banners={banners} />}
+        {kohatsu.length > 0 && <KohatsuBanner list={kohatsu} speaking={speaking('kohatsu')} readsAppendix={readsAppendix} banners={banners} />}
+        {earthquakeCount.length > 0 && <EarthquakeCountBanner list={earthquakeCount} speaking={speaking('earthquakeCount')} banners={banners} />}
         {/* お知らせ（運用連絡）は最後。上の 4 枚は「いま起きている・起こりうる地震」の話で、
             こちらは観測点の入電停止・配信試験といった裏方の連絡。同時に出たときに
             事象の話を先に読ませる。 */}
-        {quakeNotice && <NoticeBanner notice={quakeNotice} speaking={speaking('quakeNotice')} onDismiss={() => banners.dismiss('quakeNotice')} />}
+        {quakeNotice.length > 0 && <NoticeBanner list={quakeNotice} speaking={speaking('quakeNotice')} banners={banners} />}
       </div>
     </div>
   )
@@ -212,43 +217,32 @@ function EarthquakeInfoDetail({ info, speakingAppendix, subject, footer }: {
   return (
     <div className="px-3 pb-2">
       {info.summary && (
-        <p className="text-white text-xs font-medium leading-relaxed whitespace-pre-wrap mb-1">{info.summary}</p>
+        <p className="text-white text-(length:--ui-fs) font-medium leading-relaxed whitespace-pre-wrap mb-1">{info.summary}</p>
       )}
       {info.body && (
-        <p className="text-white/90 text-xs leading-relaxed whitespace-pre-wrap mb-1">{info.body}</p>
+        <p className="text-white text-(length:--ui-fs) leading-relaxed whitespace-pre-wrap mb-1">{info.body}</p>
       )}
       {info.nextAdvisory && (
         <div className="mb-1 border-l-2 border-white/30 pl-2">
-          <p className="text-white/60 text-[0.6875rem] font-bold mb-0.5">次の情報</p>
-          <p className="text-white/90 text-xs leading-relaxed whitespace-pre-wrap">{info.nextAdvisory}</p>
+          <p className="text-secondary text-(length:--ui-fs) font-bold mb-0.5">次の情報</p>
+          <p className="text-white text-(length:--ui-fs) leading-relaxed whitespace-pre-wrap">{info.nextAdvisory}</p>
         </div>
       )}
       {info.appendix && (
         <div className="mb-1">
           <button
-            className="text-white/70 hover:text-white text-[0.6875rem] underline decoration-dotted underline-offset-2"
+            className="text-secondary hover:text-white text-(length:--ui-fs) underline decoration-dotted underline-offset-2"
             onClick={() => setAppendixOpen(!appendixOpen)}
           >
             この種類の情報について{appendixOpen ? '（閉じる）' : '（開く）'}
           </button>
-          {appendixOpen && (
-            <p className="text-white/80 text-[0.6875rem] leading-relaxed whitespace-pre-wrap mt-1">{info.appendix}</p>
-          )}
+          <Reveal open={appendixOpen}>{() => (
+            <p className="text-secondary text-(length:--ui-fs) leading-relaxed whitespace-pre-wrap mt-1">{info.appendix}</p>
+          )}</Reveal>
         </div>
       )}
       {footer}
     </div>
-  )
-}
-
-function ChevronIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`w-4 h-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
-      fill="none" viewBox="0 0 24 24" stroke="currentColor"
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-    </svg>
   )
 }
 
@@ -267,7 +261,7 @@ function OperationStatusBadge({ status }: { status?: TelegramOperationStatus }) 
   if (!status) return null
   return (
     <span
-      className="text-xs font-bold px-1.5 py-0.5 rounded-sm shrink-0"
+      className="text-(length:--ui-fs) font-bold px-1.5 py-0.5 rounded-[3px] shrink-0"
       style={{ backgroundColor: '#1f2937', color: '#fcd34d', border: '1px solid #d97706' }}
     >
       {status}報
@@ -287,7 +281,7 @@ function OperationStatusBadge({ status }: { status?: TelegramOperationStatus }) 
 function InfoKindLine({ info }: { info: { earthquakeInfoType?: string; earthquakeInfoKind?: string } }) {
   const text = [...new Set([info.earthquakeInfoType, info.earthquakeInfoKind].filter(Boolean))].join('／')
   if (!text) return null
-  return <p className="text-white/60 text-[0.6875rem] leading-tight mt-0.5 truncate" data-testid="info-kind-line">{text}</p>
+  return <Marquee className="text-secondary text-(length:--ui-fs) leading-tight mt-0.5" text={text} testId="info-kind-line" />
 }
 
 function NankaiBanner({ nankai, speaking, readsAppendix, onDismiss }: { nankai: JMANankai; speaking: boolean; readsAppendix: boolean; onDismiss: () => void }) {
@@ -305,81 +299,210 @@ function NankaiBanner({ nankai, speaking, readsAppendix, onDismiss }: { nankai: 
         >
           <NankaiIcon />
           <div className="min-w-0 flex-1">
-            <div className="min-w-0 flex items-center gap-2 flex-wrap">
-              <span className={`text-xs font-bold text-white px-1.5 py-0.5 rounded-sm ${badge}`}>
+            <div className="min-w-0 flex items-center gap-2">
+              <span className={`text-(length:--ui-fs) font-bold text-white px-1.5 py-0.5 rounded-[3px] shrink-0 ${badge}`}>
                 {nankai.kindName}
               </span>
               <OperationStatusBadge status={nankai.operationStatus} />
-              <span className="text-white text-sm font-bold leading-tight truncate">{nankai.headline}</span>
+              <Marquee className="flex-1 text-white text-(length:--ui-f) font-bold leading-tight" text={nankai.headline} />
             </div>
             <InfoKindLine info={nankai} />
           </div>
-          <ChevronIcon open={open} />
+          <span className="shrink-0 text-secondary text-(length:--ui-f)"><DisclosureCaret open={open} /></span>
         </button>
         <button
-          className="shrink-0 p-1 text-white/70 hover:text-white"
+          className="shrink-0 p-1 text-secondary hover:text-white"
           onClick={onDismiss}
           aria-label="臨時情報を閉じる"
         >
           <CloseIcon />
         </button>
       </div>
-      {open && (
+      <Reveal open={open}>{() => (
         <EarthquakeInfoDetail info={nankai} speakingAppendix={speaking && readsAppendix} subject="nankai" footer={
-          <p className="text-white/60 text-xs">
+          <p className="text-secondary text-(length:--ui-fs)">
             発表: {new Date(nankai.reportDateTime).toLocaleString('ja-JP')}
           </p>
         } />
-      )}
+      )}</Reveal>
     </div>
   )
 }
 
-function KohatsuBanner({ kohatsu, speaking, readsAppendix, onDismiss }: { kohatsu: JMAKohatsu; speaking: boolean; readsAppendix: boolean; onDismiss: () => void }) {
-  const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'kohatsu')
-
+/**
+ * 積んでいる残りの件数（「ほか 2 件」。2026-11-04 ユーザー選択「「ほか 2 件」 (Recommended)」）。札の横に添える。
+ * **1 通だけなら出さない。読み上げには足さない**（同じ選択）。
+ */
+function MoreCount({ count }: { count: number }) {
+  if (count <= 0) return null
   return (
-    <div className="bg-blue-900/95 border-t-2 border-blue-400">
+    <span className="text-secondary text-(length:--ui-fs) shrink-0" data-testid="band-more-count">
+      ほか {count} 件
+    </span>
+  )
+}
+
+/**
+ * 同じ種類の報を 1 本に積んだ帯（解説情報・後発地震注意情報・地震回数・お知らせ）。2026-11-04 ユーザー選択「1 本に積む
+ * (Recommended)」「帯は全件・行は 1 件 (Recommended)」。
+ *
+ * - **見出しは最新の 1 通**（`list` の先頭。一覧は新しい順で届く）。札の横に残りの件数を添える
+ * - **開くと**、1 通だけならその本文。2 通以上なら新しい順に全件を行で並べ、最新の 1 件は開いた形、ほかは表題の行を押すと本文が開く
+ * - **右端の ×** は積まれている全件を閉じる。**行の ×** は 1 件だけを閉じる（残りがあれば帯は残り、見出しは次に新しい 1 通へ替わる）
+ */
+function StackedBanner<T extends { id: string; reportDateTime: string }>({
+  list, frameClass, icon, speaking, subject, header, rowTitle, detail, dismissAllLabel, dismissOneLabel, onDismissAll, onDismissOne,
+}: {
+  list: readonly T[]
+  /** 帯の地と上の線の色（種類ごとの色。変えない） */
+  frameClass: string
+  icon: ReactNode
+  /** この種類の文をいま読み上げているか。真のあいだ帯を開く（→ `useAutoOpenWhileSpeaking`） */
+  speaking: boolean
+  /** 録画ツール向けの記録に載せる主題（電文の種別） */
+  subject: StackedSpecialInfo
+  /** 見出しの中身。`more` は残りの件数（`MoreCount`）で、札の横に置く */
+  header: (latest: T, more: ReactNode) => ReactNode
+  /** 開いた一覧の行の表題 */
+  rowTitle: (item: T) => ReactNode
+  /** 本文。`latest` は最新の 1 通か（読み上げ中に参考情報を開くのは最新の 1 通だけ） */
+  detail: (item: T, latest: boolean) => ReactNode
+  dismissAllLabel: string
+  dismissOneLabel: string
+  onDismissAll: () => void
+  onDismissOne: (id: string) => void
+}) {
+  const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, subject)
+  const latest = list[0]
+  return (
+    <div className={frameClass}>
       {/* 展開トグルと閉じるボタンを横に並べる（button の入れ子は不正な HTML になるため） */}
       <div className="w-full px-3 py-2 flex items-center gap-2">
         <button
           className="min-w-0 flex-1 flex items-center gap-2 text-left"
           onClick={() => setOpen(!open)}
         >
-          <KohatsuIcon />
-          <div className="min-w-0 flex-1">
-            <div className="min-w-0 flex items-center gap-2 flex-wrap">
-              {/* **情報名の札は置かない。** 南海トラフの帯は気象庁のキーワード（「巨大地震注意」等）を
-                  札に出すが、後発地震注意情報にはそれに当たる語が無い。情報名を入れると、すぐ隣の
-                  見出し（電文の `Head/Headline/Text`。実電文は「北海道・三陸沖後発地震注意情報」）と
-                  同じ文字列が 2 つ並ぶ。**幅は足りる**（390px 幅でも札 186px・行 314px で収まり、
-                  見出しが次行へ回るだけ）が、同じ言葉を二度読ませる意味が無い。 */}
-              <OperationStatusBadge status={kohatsu.operationStatus} />
-              <span className="text-white text-sm font-bold leading-tight truncate">{kohatsu.headline}</span>
-            </div>
-            <InfoKindLine info={kohatsu} />
-          </div>
-          <ChevronIcon open={open} />
+          {icon}
+          {header(latest, <MoreCount count={list.length - 1} />)}
+          <span className="shrink-0 text-secondary text-(length:--ui-f)"><DisclosureCaret open={open} /></span>
         </button>
         <button
-          className="shrink-0 p-1 text-white/70 hover:text-white"
-          onClick={onDismiss}
-          aria-label="後発地震注意情報を閉じる"
+          className="shrink-0 p-1 text-secondary hover:text-white"
+          onClick={onDismissAll}
+          aria-label={dismissAllLabel}
         >
           <CloseIcon />
         </button>
       </div>
-      {open && (
-        // **期限は出さない**（2026-10-19 ユーザー選択「発表時刻だけにする (Recommended)」）。
-        // 電文に期限の要素は無く、帯を 7 日で畳むのはアプリの都合（`expireAt`）。これを「まで有効」と
-        // 言い切ると、気象庁が定めた期間のように読める。注意を呼びかける期間は気象庁の本文が語っている。
-        <EarthquakeInfoDetail info={kohatsu} speakingAppendix={speaking && readsAppendix} subject="kohatsu" footer={
-          <p className="text-white/60 text-xs">
+      <Reveal open={open}>{() => (
+        list.length === 1
+          ? detail(latest, true)
+          : (
+            <div className="pb-1">
+              {/* 最新の 1 件は開いた形で出す。新しい報が届く・最新の 1 件を閉じるで最新が入れ替わったら、
+                  key を替えて開き直す（前の最新は畳んだ形へ戻る） */}
+              {list.map((item, i) => (
+                <StackedRow key={i === 0 ? `${item.id}:latest` : item.id} defaultOpen={i === 0} title={rowTitle(item)} reportedAt={item.reportDateTime} detail={() => detail(item, i === 0)}
+                  dismissLabel={dismissOneLabel} onDismiss={() => onDismissOne(item.id)} />
+              ))}
+            </div>
+          )
+      )}</Reveal>
+    </div>
+  )
+}
+
+/** 積んだ帯を開いたときの 1 行（表題・開閉の印・その 1 件を閉じる ×）。本文は表題の行を押すと開く */
+function StackedRow({ defaultOpen, title, reportedAt, detail, dismissLabel, onDismiss }: {
+  defaultOpen: boolean
+  title: ReactNode
+  /** 発表時刻（ISO 8601）。同じ表題が並んでも見分けられるよう、表題の右に「11/04 16:05」の形で添える
+   *（2026-11-04 ユーザー選択「行の右に「11/04 16:05」 (Recommended)」） */
+  reportedAt: string
+  detail: () => ReactNode
+  dismissLabel: string
+  onDismiss: () => void
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="border-t border-white/15" data-testid="band-row">
+      <div className="w-full px-3 py-1 flex items-center gap-2">
+        <button
+          className="min-w-0 flex-1 flex items-center gap-2 text-left"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+        >
+          {title}
+          <span className="shrink-0 text-secondary text-(length:--ui-fs) tabular-nums">{rowTimeText(reportedAt)}</span>
+          <span className="shrink-0 text-secondary text-(length:--ui-fs)"><DisclosureCaret open={open} /></span>
+        </button>
+        <button
+          className="shrink-0 p-1 text-secondary hover:text-white"
+          onClick={onDismiss}
+          aria-label={dismissLabel}
+        >
+          <CloseIcon small />
+        </button>
+      </div>
+      <Reveal open={open}>{detail}</Reveal>
+    </div>
+  )
+}
+
+/** 行の発表時刻（日本時間の「月/日 時:分」）。読めない日時は空にする（行の表題だけで出す） */
+function rowTimeText(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+/** 行の表題の字（見出しより一段控えめに、太字にしない） */
+const ROW_TITLE = 'flex-1 text-white text-(length:--ui-f) leading-tight'
+
+function KohatsuBanner({ list, speaking, readsAppendix, banners }: { list: readonly JMAKohatsu[]; speaking: boolean; readsAppendix: boolean; banners: SpecialInfoBanners }) {
+  return (
+    <StackedBanner
+      list={list}
+      frameClass="bg-blue-900/95 border-t-2 border-blue-400"
+      icon={<KohatsuIcon />}
+      speaking={speaking}
+      subject="kohatsu"
+      header={(kohatsu, more) => (
+        <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex items-center gap-2">
+            {/* **情報名の札は置かない。** 南海トラフの帯は気象庁のキーワード（「巨大地震注意」等）を
+                札に出すが、後発地震注意情報にはそれに当たる語が無い。情報名を入れると、すぐ隣の
+                見出し（電文の `Head/Headline/Text`。実電文は「北海道・三陸沖後発地震注意情報」）と
+                同じ文字列が 2 つ並ぶ。**幅は足りる**（390px 幅でも札 186px・行 314px で収まり、
+                見出しが次行へ回るだけ）が、同じ言葉を二度読ませる意味が無い。残りの件数は札の位置（行の頭）に置く。 */}
+            {more}
+            <OperationStatusBadge status={kohatsu.operationStatus} />
+            <Marquee className="flex-1 text-white text-(length:--ui-f) font-bold leading-tight" text={kohatsu.headline} />
+          </div>
+          <InfoKindLine info={kohatsu} />
+        </div>
+      )}
+      rowTitle={kohatsu => (
+        <>
+          <OperationStatusBadge status={kohatsu.operationStatus} />
+          <Marquee className={ROW_TITLE} text={kohatsu.headline} />
+        </>
+      )}
+      // **期限は出さない**（2026-10-19 ユーザー選択「発表時刻だけにする (Recommended)」）。
+      // 電文に期限の要素は無く、届いて 7 日で帯から外すのはアプリの都合（`expireAt`）。これを「まで有効」と
+      // 言い切ると、気象庁が定めた期間のように読める。注意を呼びかける期間は気象庁の本文が語っている。
+      detail={(kohatsu, latest) => (
+        <EarthquakeInfoDetail info={kohatsu} speakingAppendix={latest && speaking && readsAppendix} subject="kohatsu" footer={
+          <p className="text-secondary text-(length:--ui-fs)">
             発表: {new Date(kohatsu.reportDateTime).toLocaleString('ja-JP')}
           </p>
         } />
       )}
-    </div>
+      dismissAllLabel="後発地震注意情報を閉じる"
+      dismissOneLabel="この後発地震注意情報を閉じる"
+      onDismissAll={() => banners.dismiss('kohatsu')}
+      onDismissOne={id => banners.dismissOne('kohatsu', id)}
+    />
   )
 }
 
@@ -388,49 +511,52 @@ function KohatsuBanner({ kohatsu, speaking, readsAppendix, onDismiss }: { kohats
 // 臨時情報（NankaiBanner）とは色もバッジも分けている。あちらの黄／橙／赤は段階の重さを表すが、
 // 解説情報は段階を持たないため、警戒度を読み取られない情報色（teal）にしている。
 //
-// 有効期限は出さない。内部では発表から 7 日で畳んでいるが、それは帯を常駐させないための
+// 有効期限は出さない。内部では届いて 7 日で一覧から外しているが、それは帯を常駐させないための
 // 表示上の都合であって、気象庁が期限を定めているわけではない（後発地震注意情報の帯の 7 日も同じ）。
-// 7 日で畳み期限を出さない形は 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」（お知らせ・地震回数の帯も同じ）。
-function CommentaryBanner({ commentary, speaking, readsAppendix, onDismiss }: { commentary: JMANankaiCommentary; speaking: boolean; readsAppendix: boolean; onDismiss: () => void }) {
-  const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'nankaiCommentary')
+// 7 日で外し期限を出さない形は 2026-10-22 ユーザー選択「今のまま記録する (Recommended)」（お知らせ・地震回数の帯も同じ）。
+function CommentaryBanner({ list, speaking, readsAppendix, banners }: { list: readonly JMANankaiCommentary[]; speaking: boolean; readsAppendix: boolean; banners: SpecialInfoBanners }) {
+  const serialBadge = (commentary: JMANankaiCommentary) => (
+    <span className="text-(length:--ui-fs) font-bold text-white px-1.5 py-0.5 rounded-[3px] shrink-0 bg-teal-500">
+      {commentary.serialName}
+    </span>
+  )
   return (
-    <div className="bg-teal-900/95 border-t-2 border-teal-400">
-      {/* 展開トグルと閉じるボタンを横に並べる。button の入れ子は不正な HTML になるため、
-          他の帯のように全体を 1 つの button で覆うことはできない */}
-      <div className="w-full px-3 py-2 flex items-center gap-2">
-        <button
-          className="min-w-0 flex-1 flex items-center gap-2 text-left"
-          onClick={() => setOpen(!open)}
-        >
-          <CommentaryIcon />
-          <div className="min-w-0 flex-1">
-            <div className="min-w-0 flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-bold text-white px-1.5 py-0.5 rounded-sm bg-teal-500 shrink-0">
-                {commentary.serialName}
-              </span>
-              <OperationStatusBadge status={commentary.operationStatus} />
-              <span className="text-white text-sm font-bold leading-tight truncate">{commentary.headline}</span>
-            </div>
-            <InfoKindLine info={commentary} />
+    <StackedBanner
+      list={list}
+      frameClass="bg-teal-900/95 border-t-2 border-teal-400"
+      icon={<CommentaryIcon />}
+      speaking={speaking}
+      subject="nankaiCommentary"
+      header={(commentary, more) => (
+        <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex items-center gap-2">
+            {serialBadge(commentary)}
+            {more}
+            <OperationStatusBadge status={commentary.operationStatus} />
+            <Marquee className="flex-1 text-white text-(length:--ui-f) font-bold leading-tight" text={commentary.headline} />
           </div>
-          <ChevronIcon open={open} />
-        </button>
-        <button
-          className="shrink-0 p-1 text-white/70 hover:text-white"
-          onClick={onDismiss}
-          aria-label="解説情報を閉じる"
-        >
-          <CloseIcon />
-        </button>
-      </div>
-      {open && (
-        <EarthquakeInfoDetail info={commentary} speakingAppendix={speaking && readsAppendix} subject="nankaiCommentary" footer={
-          <p className="text-white/60 text-xs">
+          <InfoKindLine info={commentary} />
+        </div>
+      )}
+      rowTitle={commentary => (
+        <>
+          {serialBadge(commentary)}
+          <OperationStatusBadge status={commentary.operationStatus} />
+          <Marquee className={ROW_TITLE} text={commentary.headline} />
+        </>
+      )}
+      detail={(commentary, latest) => (
+        <EarthquakeInfoDetail info={commentary} speakingAppendix={latest && speaking && readsAppendix} subject="nankaiCommentary" footer={
+          <p className="text-secondary text-(length:--ui-fs)">
             発表: {new Date(commentary.reportDateTime).toLocaleString('ja-JP')}
           </p>
         } />
       )}
-    </div>
+      dismissAllLabel="解説情報を閉じる"
+      dismissOneLabel="この解説情報を閉じる"
+      onDismissAll={() => banners.dismiss('nankaiCommentary')}
+      onDismissOne={id => banners.dismissOne('nankaiCommentary', id)}
+    />
   )
 }
 
@@ -444,53 +570,53 @@ function CommentaryBanner({ commentary, speaking, readsAppendix, onDismiss }: { 
 // は通さない。**改行と全角スペースをそのまま出す** —— 気象庁は「記」から始まる箇条書きを
 // 全角スペースの字下げで組んでおり、詰めると期間や連絡先の対応が崩れる。
 //
-// 有効期限（発表から 7 日）は出さない。解説情報と同じく帯を常駐させないための表示上の都合で、
+// 有効期限（届いて 7 日）は出さない。解説情報と同じく帯を常駐させないための表示上の都合で、
 // 気象庁が定めた期限ではない（2026-10-22 ユーザー選択「今のまま記録する (Recommended)」）。
-function NoticeBanner({ notice, speaking, onDismiss }: { notice: JMAQuakeNotice; speaking: boolean; onDismiss: () => void }) {
+function NoticeBanner({ list, speaking, banners }: { list: readonly JMAQuakeNotice[]; speaking: boolean; banners: SpecialInfoBanners }) {
   // 本文を読み上げている間は開く（他の帯と同じ。読み上げは設定で有効にしたときだけ）
-  const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'quakeNotice')
   return (
-    <div className="bg-slate-800/95 border-t-2 border-slate-400">
-      {/* 展開トグルと閉じるボタンを横に並べる（button の入れ子は不正な HTML になるため） */}
-      <div className="w-full px-3 py-2 flex items-center gap-2">
-        <button
-          className="min-w-0 flex-1 flex items-center gap-2 text-left"
-          onClick={() => setOpen(!open)}
-        >
-          <NoticeIcon />
-          <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-bold text-white px-1.5 py-0.5 rounded-sm bg-slate-500 shrink-0">
-              お知らせ
-            </span>
-            <OperationStatusBadge status={notice.operationStatus} />
-            <span className="text-white text-sm font-bold leading-tight truncate">{notice.headline}</span>
-          </div>
-          <ChevronIcon open={open} />
-        </button>
-        <button
-          className="shrink-0 p-1 text-white/70 hover:text-white"
-          onClick={onDismiss}
-          aria-label="お知らせを閉じる"
-        >
-          <CloseIcon />
-        </button>
-      </div>
-      {open && (
+    <StackedBanner
+      list={list}
+      frameClass="bg-slate-800/95 border-t-2 border-slate-400"
+      icon={<NoticeIcon />}
+      speaking={speaking}
+      subject="quakeNotice"
+      header={(notice, more) => (
+        <div className="min-w-0 flex-1 flex items-center gap-2">
+          <span className="text-(length:--ui-fs) font-bold text-white px-1.5 py-0.5 rounded-[3px] shrink-0 bg-slate-500">
+            お知らせ
+          </span>
+          {more}
+          <OperationStatusBadge status={notice.operationStatus} />
+          <Marquee className="flex-1 text-white text-(length:--ui-f) font-bold leading-tight" text={notice.headline} />
+        </div>
+      )}
+      rowTitle={notice => (
+        <>
+          <OperationStatusBadge status={notice.operationStatus} />
+          <Marquee className={ROW_TITLE} text={notice.headline} />
+        </>
+      )}
+      detail={notice => (
         <div className="px-3 pb-2">
           {notice.body && (
-            <p className="text-white/90 text-xs leading-relaxed whitespace-pre-wrap mb-1">{notice.body}</p>
+            <p className="text-white text-(length:--ui-fs) leading-relaxed whitespace-pre-wrap mb-1">{notice.body}</p>
           )}
           {/* 自由付加文は本文の後に空行を挟んで原文のまま出す（2026-10-19 ユーザー承認
               「本文に続けて出す (推奨)」）。空行は段落の間（`mt-3`）で表す */}
           {notice.freeText && (
-            <p className={`text-white/90 text-xs leading-relaxed whitespace-pre-wrap mb-1 ${notice.body ? 'mt-3' : ''}`}>{notice.freeText}</p>
+            <p className={`text-white text-(length:--ui-fs) leading-relaxed whitespace-pre-wrap mb-1 ${notice.body ? 'mt-3' : ''}`}>{notice.freeText}</p>
           )}
-          <p className="text-white/60 text-xs">
+          <p className="text-secondary text-(length:--ui-fs)">
             発表: {new Date(notice.reportDateTime).toLocaleString('ja-JP')}
           </p>
         </div>
       )}
-    </div>
+      dismissAllLabel="お知らせを閉じる"
+      dismissOneLabel="このお知らせを閉じる"
+      onDismissAll={() => banners.dismiss('quakeNotice')}
+      onDismissOne={id => banners.dismissOne('quakeNotice', id)}
+    />
   )
 }
 
@@ -503,44 +629,44 @@ function NoticeBanner({ notice, speaking, onDismiss }: { notice: JMAQuakeNotice;
 //
 // 色は青緑（cyan）。南海トラフの解説（teal）とは隣り合わないので紛れにくく、
 // 段階の重さを表す黄／橙／赤とも、運用連絡の無彩色とも別に見える。
-function EarthquakeCountBanner({ count, speaking, onDismiss }: { count: JMAEarthquakeCount; speaking: boolean; onDismiss: () => void }) {
-  const [open, setOpen] = useAutoOpenWhileSpeaking(speaking, 'earthquakeCount')
+function EarthquakeCountBanner({ list, speaking, banners }: { list: readonly JMAEarthquakeCount[]; speaking: boolean; banners: SpecialInfoBanners }) {
   return (
-    <div className="bg-cyan-900/95 border-t-2 border-cyan-400">
-      {/* 展開トグルと閉じるボタンを横に並べる（button の入れ子は不正な HTML になるため） */}
-      <div className="w-full px-3 py-2 flex items-center gap-2">
-        <button
-          className="min-w-0 flex-1 flex items-center gap-2 text-left"
-          onClick={() => setOpen(!open)}
-        >
-          <CountIcon />
-          <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-bold text-white px-1.5 py-0.5 rounded-sm bg-cyan-600 shrink-0">
-              地震回数
-            </span>
-            <OperationStatusBadge status={count.operationStatus} />
-            {/* **電文の見出しではなく累積の数字を出す。** 電文の見出しは「地震回数に関する情報を
-                お知らせします。」で、畳んだままでは何も伝わらない */}
-            <span className="text-white text-sm font-bold leading-tight truncate">
-              {earthquakeCountHeadline(count)}
-            </span>
-          </div>
-          <ChevronIcon open={open} />
-        </button>
-        <button
-          className="shrink-0 p-1 text-white/70 hover:text-white"
-          onClick={onDismiss}
-          aria-label="地震回数を閉じる"
-        >
-          <CloseIcon />
-        </button>
-      </div>
-      {open && <EarthquakeCountDetail count={count} />}
-      {open && (
-        <p className="px-3 pb-2 text-white/60 text-xs">
-          発表: {new Date(count.reportDateTime).toLocaleString('ja-JP')}
-        </p>
+    <StackedBanner
+      list={list}
+      frameClass="bg-cyan-900/95 border-t-2 border-cyan-400"
+      icon={<CountIcon />}
+      speaking={speaking}
+      subject="earthquakeCount"
+      header={(count, more) => (
+        <div className="min-w-0 flex-1 flex items-center gap-2">
+          <span className="text-(length:--ui-fs) font-bold text-white px-1.5 py-0.5 rounded-[3px] shrink-0 bg-cyan-600">
+            地震回数
+          </span>
+          {more}
+          <OperationStatusBadge status={count.operationStatus} />
+          {/* **電文の見出しではなく累積の数字を出す。** 電文の見出しは「地震回数に関する情報を
+              お知らせします。」で、畳んだままでは何も伝わらない */}
+          <Marquee className="flex-1 text-white text-(length:--ui-f) font-bold leading-tight" text={earthquakeCountHeadline(count)} />
+        </div>
       )}
-    </div>
+      rowTitle={count => (
+        <>
+          <OperationStatusBadge status={count.operationStatus} />
+          <Marquee className={ROW_TITLE} text={earthquakeCountHeadline(count)} />
+        </>
+      )}
+      detail={count => (
+        <>
+          <EarthquakeCountDetail count={count} />
+          <p className="px-3 pb-2 text-secondary text-(length:--ui-fs)">
+            発表: {new Date(count.reportDateTime).toLocaleString('ja-JP')}
+          </p>
+        </>
+      )}
+      dismissAllLabel="地震回数を閉じる"
+      dismissOneLabel="この地震回数の情報を閉じる"
+      onDismissAll={() => banners.dismiss('earthquakeCount')}
+      onDismissOne={id => banners.dismissOne('earthquakeCount', id)}
+    />
   )
 }

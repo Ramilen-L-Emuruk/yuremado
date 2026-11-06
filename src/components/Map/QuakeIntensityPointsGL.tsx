@@ -8,6 +8,8 @@ import type { IntensityMarker } from '../../hooks/useQuakeLayerData'
 import type { LatLng } from '../../utils/stationCoords'
 import { haversineKm } from '../../utils/geo'
 import { addOrderedLayer } from './gl/layerOrder'
+import { whenIdle } from './gl/whenIdle'
+import { isMapStyleGone } from './gl/mapStyleGone'
 import { registerPopupSource, type PopupHandle } from './gl/popupRegistry'
 import { badgeHtml, escapeHtml, popupCodeHtml } from './gl/popupHtml'
 import { NON_JMA_MARK_TITLE, withNonJmaMark } from '../../utils/formatters'
@@ -188,14 +190,41 @@ export function QuakeIntensityPointsGL({ markers, iconScale, visible, epicenter 
     }
   }, [map])
 
-  // データ／倍率変化で丸ごと差し替え。
+  // データ／倍率変化で丸ごと差し替え。**出していない間は、手の空いた時間に流し込む**（→ `whenIdle`）。
+  // 引いた画では区域の塗りが代わりに出るので、地震を選ぶたびに見えない観測点（千点を超える）をその場で地図へ渡すと、
+  // 地図が切り分け直す分だけ選んだ瞬間のフレームが伸びる（→ `QuakeRegionFillGL` の同じ扱い）
+  const pushedRef = useRef<{ markers: Props['markers']; iconScale: number; epicenter: Props['epicenter'] } | null>(null)
   useEffect(() => {
     if (!map || !addedRef.current) return
-    const src = map.getSource(SRC) as GeoJSONSource | undefined
-    src?.setData(buildFC(markers, iconScale, epicenter))
-  }, [map, markers, iconScale, epicenter])
+    const pushed = pushedRef.current
+    if (pushed && pushed.markers === markers && pushed.iconScale === iconScale && pushed.epicenter === epicenter) return
+    const push = (): void => {
+      pushedRef.current = { markers, iconScale, epicenter }
+      const src = map.getSource(SRC) as GeoJSONSource | undefined
+      src?.setData(buildFC(markers, iconScale, epicenter))
+    }
+    if (visible) {
+      push()
+      return
+    }
+    // 先読みが済む前に寄った画へ移っても、**前の地震の点を出さない**よう、まず空にしておく（空なら軽い）
+    if (pushedRef.current !== null) {
+      pushedRef.current = null
+      ;(map.getSource(SRC) as GeoJSONSource | undefined)?.setData(EMPTY_FC)
+    }
+    // 予約が走る前に地図が壊されていたら（作り直しの合間）、流し込まずに終える
+    return whenIdle(() => {
+      try {
+        push()
+      } catch (err) {
+        if (!isMapStyleGone(map)) throw err
+      }
+    })
+  }, [map, markers, iconScale, epicenter, visible])
+  // 層を作り直したら（地図の作り直し）、流し込んだ控えも捨てる
+  useEffect(() => () => { pushedRef.current = null }, [map])
 
-  // 表示切替（区域集約時は非表示）。
+  // 表示切替（区域集約時は非表示）。上の流し込みより後に置く（出すときは中身を入れてから出す）。
   useEffect(() => {
     if (!map || !map.getLayer(LYR)) return
     map.setLayoutProperty(LYR, 'visibility', visible ? 'visible' : 'none')

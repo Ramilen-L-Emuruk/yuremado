@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { RealtimeTab } from './index'
 import type { SWaveArrival, SWaveArrivalRow } from '../../hooks/useSWaveCountdown'
+import type { EEWAlert } from '../../types/earthquake'
 
 const BODY = 'ホーム地点の地域には、気象庁の到達予測時刻が出ていません'
 const NOTE = '※気象庁が発表した地域ごとの到達予測時刻です。同じ地域の中でも場所によって異なります'
@@ -48,7 +49,7 @@ describe('主要動の到達カード: 到達予測の出ていない地震', ()
     expect(screen.getByText('石川県能登')).toBeTruthy()
     expect(screen.getByText(BODY)).toBeTruthy()
     expect(screen.queryByText(NOTE)).toBeNull()
-    expect(screen.queryByText('主要動 到達カウントダウン')).toBeNull()
+    expect(screen.queryByText('主要動')).toBeNull()
     // 予測を出していないので、秒読みの橙ではなく灰色の枠
     expect(cardOf('震源から 120 km').style.borderColor).toBe('rgb(107, 114, 128)')
   })
@@ -58,7 +59,7 @@ describe('主要動の到達カード: 到達予測の出ていない地震', ()
       row({ key: 'near', hypocenterName: '能登半島沖', distanceKm: 40, etaSec: 23 }),
       noForecastRow('far', '佐渡付近', 150),
     ])
-    expect(screen.getByText('主要動 到達カウントダウン')).toBeTruthy()
+    expect(screen.getByText('主要動')).toBeTruthy()
     expect(screen.getByText('23')).toBeTruthy()
     expect(screen.getByText('佐渡付近')).toBeTruthy()
     expect(screen.getByText('震源から 150 km')).toBeTruthy()
@@ -77,7 +78,7 @@ describe('主要動の到達カード: 到達予測の出ていない地震', ()
   // 対照: 予測のある 1 件だけなら今までの見た目のまま（見出し・距離・注記）。
   it('予測のある 1 件だけなら今までどおり', () => {
     renderCard([row({ key: 'near', hypocenterName: '能登半島沖', distanceKm: 40, etaSec: 23 })])
-    expect(screen.getByText('主要動 到達カウントダウン')).toBeTruthy()
+    expect(screen.getByText('主要動')).toBeTruthy()
     expect(screen.getByText('震源から 40 km')).toBeTruthy()
     expect(screen.getByText(NOTE)).toBeTruthy()
     expect(screen.queryByText(BODY)).toBeNull()
@@ -117,5 +118,41 @@ describe('主要動の到達カード: 自前計算の行と発表値の行が�
     expect(screen.getAllByText('ホーム地点')).toHaveLength(1)
     expect(screen.getByText(OWN_NOTE)).toBeTruthy()
     expect(screen.queryByText(NOTE)).toBeNull()
+  })
+})
+
+// 置き場所: 緊急地震速報のカードの下で、巻いて外れたら下端に貼りつく（2026-11-05 ユーザー回答「カウントダウンは下に
+// 持ってきて、ほかのタブとは逆に、巻いたら下に貼り付けるようにしたら？」。2026-11-04 の「詰めて上へ」を覆した）。
+// 上に置くと、読み上げで速報のカードの頭へ寄せたときにカウントダウンが枠の外へ押し出されていた
+describe('主要動の到達カード: 置き場所', () => {
+  it('緊急地震速報のカードより後に描き、下端に貼りつく箱に入れる（上に置いていた形を覆した）', () => {
+    const arrival: SWaveArrival = { source: 'telegram', areaName: '石川県能登', rows: [row({ key: 'near', distanceKm: 40, etaSec: 23 })] }
+    const eew = {
+      kind: 'eew', origin: 'dmdata', id: 'test-eew', time: '2026-01-01T12:00:00Z', test: false,
+      earthquake: { originTime: '2026-01-01T12:00:00Z', condition: '', hypocenter: { name: '能登半島沖', latitude: 37.5, longitude: 137.2, depth: 10, magnitude: 6.5 } },
+      severity: 'Warning', cancelled: false, forecastMaxScale: 50,
+    } as EEWAlert
+    render(
+      <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={arrival} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
+    )
+    const countdown = screen.getByText('主要動')
+    const eewHeading = screen.getByText('能登半島沖')
+    expect(countdown.compareDocumentPosition(eewHeading) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
+    expect(countdown.closest('.sticky.bottom-0')).not.toBeNull()
+  })
+
+  // 対照: 速報のカードは、貼りついたカウントダウンの高さを `scroll-margin-bottom` で名乗る（寄せた先が裏へ潜らないように）
+  it('速報のカードが下に貼りついたものの高さを名乗る', () => {
+    const arrival: SWaveArrival = { source: 'telegram', areaName: '石川県能登', rows: [row({ key: 'near', distanceKm: 40, etaSec: 23 })] }
+    const eew = {
+      kind: 'eew', origin: 'dmdata', id: 'test-eew', time: '2026-01-01T12:00:00Z', test: false,
+      earthquake: { originTime: '2026-01-01T12:00:00Z', condition: '', hypocenter: { name: '能登半島沖', latitude: 37.5, longitude: 137.2, depth: 10, magnitude: 6.5 } },
+      severity: 'Warning', cancelled: false, forecastMaxScale: 50,
+    } as EEWAlert
+    render(
+      <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={arrival} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
+    )
+    const card = screen.getByText('能登半島沖').closest<HTMLElement>('.bg-card.rounded-md.overflow-hidden.relative')
+    expect(card?.style.scrollMarginBottom).toBe('var(--rt-sticky-bottom, 0px)')
   })
 })

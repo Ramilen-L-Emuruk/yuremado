@@ -135,7 +135,7 @@ describe('borrowHypocenterFromTsunami', () => {
     expect(borrowHypocenterFromTsunami(makePrompt(), [other], [])).toBeNull()
   })
 
-  it('eventId を持たない地震電文（P2PQuake 経路）では借りない', () => {
+  it('eventId を持たない地震電文（EventID が空）では借りない', () => {
     const p2p = makePrompt({ id: 'p2p-1' })
     expect(borrowHypocenterFromTsunami(p2p, [makeTsunami()], [])).toBeNull()
   })

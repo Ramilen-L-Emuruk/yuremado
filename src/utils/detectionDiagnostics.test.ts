@@ -63,7 +63,7 @@ describe('DiagnosticCapture', () => {
   it('検知の前後を切り出す（前は直近 LEAD_FRAMES、後ろは TAIL_FRAMES たまってから確定）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, LEAD_FRAMES + 10) // 前側を十分に貯める
-    c.open(seed('evt-1', t), '9.9.9', 'dmdss')
+    c.open(seed('evt-1', t), '9.9.9')
 
     // 後ろ側が足りないうちは確定しない
     feed(c, t, TAIL_FRAMES - 1)
@@ -74,7 +74,6 @@ describe('DiagnosticCapture', () => {
     expect(done).toHaveLength(1)
     expect(done[0].event.id).toBe('evt-1')
     expect(done[0].version).toBe('9.9.9')
-    expect(done[0].variant).toBe('dmdss')
     // 前側（LEAD_FRAMES + 検知フレーム）と後ろ側が入っている
     expect(done[0].frames.length).toBe(LEAD_FRAMES + 1 + TAIL_FRAMES)
     // データ時刻の昇順
@@ -85,8 +84,8 @@ describe('DiagnosticCapture', () => {
   it('同じイベントでは二度開かない（likely→confirmed で同じ記録が並ばない）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t), '1.0.0', 'standard')
-    c.open(seed('evt-1', t + 1000), '1.0.0', 'standard') // 確信度が上がって再度呼ばれた想定
+    c.open(seed('evt-1', t), '1.0.0')
+    c.open(seed('evt-1', t + 1000), '1.0.0') // 確信度が上がって再度呼ばれた想定
     feed(c, t, TAIL_FRAMES)
     expect(c.takeFinished()).toHaveLength(1)
   })
@@ -94,8 +93,8 @@ describe('DiagnosticCapture', () => {
   it('間隔を空ければ別のイベントは別の記録になる', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t), '1.0.0', 'standard')
-    c.open(seed('evt-2', t + OPEN_COOLDOWN_MS), '1.0.0', 'standard')
+    c.open(seed('evt-1', t), '1.0.0')
+    c.open(seed('evt-2', t + OPEN_COOLDOWN_MS), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     expect(c.takeFinished().map((r) => r.event.id).sort()).toEqual(['evt-1', 'evt-2'])
   })
@@ -105,9 +104,9 @@ describe('DiagnosticCapture', () => {
     // 中身もほとんど同じなので、先頭の 1 本だけ残す
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t), '1.0.0', 'standard')
-    c.open(seed('evt-2', t + 3000), '1.0.0', 'standard')
-    c.open(seed('evt-3', t + 10_000), '1.0.0', 'standard')
+    c.open(seed('evt-1', t), '1.0.0')
+    c.open(seed('evt-2', t + 3000), '1.0.0')
+    c.open(seed('evt-3', t + 10_000), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     expect(c.takeFinished().map((r) => r.event.id)).toEqual(['evt-1'])
   })
@@ -116,9 +115,9 @@ describe('DiagnosticCapture', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
     // 開いた時点は早い段
-    c.open(seed('evt-1', t, 'likely'), '1.0.0', 'standard')
+    c.open(seed('evt-1', t, 'likely'), '1.0.0')
     // その後 confirmed まで育つ
-    c.open(seed('evt-1', t + 2000, 'confirmed'), '1.0.0', 'standard')
+    c.open(seed('evt-1', t + 2000, 'confirmed'), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     const done = c.takeFinished()
     expect(done[0].event.confidence).toBe('likely') // 開いた瞬間の姿はそのまま
@@ -130,9 +129,9 @@ describe('DiagnosticCapture', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
     // 開いた時点は早い段で、まだ確定していない
-    c.open(seed('evt-1', t, 'likely'), '1.0.0', 'standard')
+    c.open(seed('evt-1', t, 'likely'), '1.0.0')
     // 2 フレーム後に確定へ育つ
-    c.open(seed('evt-1', t + 2000, 'confirmed', snapshot(6, t + 2000)), '1.0.0', 'standard')
+    c.open(seed('evt-1', t + 2000, 'confirmed', snapshot(6, t + 2000)), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     const done = c.takeFinished()
     expect(done[0].confirmed).toEqual({ atMs: t + 2000, size: 6, maxIntensity: 3.0 })
@@ -144,8 +143,8 @@ describe('DiagnosticCapture', () => {
   it('確定しなかった記録の confirmed は null', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t, 'likely'), '1.0.0', 'standard')
-    c.open(seed('evt-1', t + 2000, 'likely'), '1.0.0', 'standard')
+    c.open(seed('evt-1', t, 'likely'), '1.0.0')
+    c.open(seed('evt-1', t + 2000, 'likely'), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     expect(c.takeFinished()[0].confirmed).toBeNull()
   })
@@ -154,8 +153,8 @@ describe('DiagnosticCapture', () => {
   it('最初に届いた確定の控えを保ち、後から届いた控えでは差し替えない', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t, 'confirmed', snapshot(4, t)), '1.0.0', 'standard')
-    c.open(seed('evt-1', t + 2000, 'confirmed', snapshot(9, t - 3000)), '1.0.0', 'standard')
+    c.open(seed('evt-1', t, 'confirmed', snapshot(4, t)), '1.0.0')
+    c.open(seed('evt-1', t + 2000, 'confirmed', snapshot(9, t - 3000)), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     expect(c.takeFinished()[0].confirmed?.size).toBe(4)
   })
@@ -164,8 +163,8 @@ describe('DiagnosticCapture', () => {
   it('記録を閉じるまでに束を支えた部分を合わせて残す（開いた後に加わった分も含む）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t, 'likely', null, ['stat']), '1.0.0', 'standard')
-    c.open(seed('evt-1', t + 2000, 'confirmed', null, ['cluster', 'stat']), '1.0.0', 'standard')
+    c.open(seed('evt-1', t, 'likely', null, ['stat']), '1.0.0')
+    c.open(seed('evt-1', t + 2000, 'confirmed', null, ['cluster', 'stat']), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     const done = c.takeFinished()
     expect([...done[0].sources].sort()).toEqual(['cluster', 'stat'])
@@ -177,8 +176,8 @@ describe('DiagnosticCapture', () => {
   it('支えた部分は増える方向にだけ動かす', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t, 'likely', null, ['stat', 'fast']), '1.0.0', 'standard')
-    c.open(seed('evt-1', t + 2000, 'likely', null, ['stat']), '1.0.0', 'standard')
+    c.open(seed('evt-1', t, 'likely', null, ['stat', 'fast']), '1.0.0')
+    c.open(seed('evt-1', t + 2000, 'likely', null, ['stat']), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     expect([...c.takeFinished()[0].sources].sort()).toEqual(['fast', 'stat'])
   })
@@ -186,8 +185,8 @@ describe('DiagnosticCapture', () => {
   it('確信度は上がる方向にだけ動かす（保持で下がっても到達点は残る）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t, 'confirmed'), '1.0.0', 'standard')
-    c.open(seed('evt-1', t + 2000, 'likely'), '1.0.0', 'standard')
+    c.open(seed('evt-1', t, 'confirmed'), '1.0.0')
+    c.open(seed('evt-1', t + 2000, 'likely'), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     expect(c.takeFinished()[0].reachedConfidence).toBe('confirmed')
   })
@@ -195,7 +194,7 @@ describe('DiagnosticCapture', () => {
   it('flush は後ろ側が足りなくても確定する（画面を閉じるときフレームがもう来ない）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t), '1.0.0', 'standard')
+    c.open(seed('evt-1', t), '1.0.0')
     feed(c, t, 3)
     expect(c.takeFinished()).toHaveLength(0)
     const flushed = c.flush()
@@ -206,12 +205,12 @@ describe('DiagnosticCapture', () => {
   it('reset は溜めた分と開いている記録を捨てる（観測点集合が入れ替わると座標と値の対応が変わる）', () => {
     const c = new DiagnosticCapture()
     let t = feed(c, 0, 5)
-    c.open(seed('evt-1', t), '1.0.0', 'standard')
+    c.open(seed('evt-1', t), '1.0.0')
     c.reset()
     t = feed(c, t, TAIL_FRAMES)
     expect(c.takeFinished()).toHaveLength(0)
     // reset 後は同じ ID でも開き直せる（時刻は前へ進める。後退させると不連続として捨てられる）
-    c.open(seed('evt-1', t), '1.0.0', 'standard')
+    c.open(seed('evt-1', t), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     expect(c.takeFinished()).toHaveLength(1)
   })
@@ -222,13 +221,13 @@ describe('DiagnosticCapture', () => {
     const c = new DiagnosticCapture()
     const live = 1_700_000_000_000
     feed(c, live, 5)
-    c.open(seed('evt-live', live + 5000), '1.0.0', 'standard')
+    c.open(seed('evt-live', live + 5000), '1.0.0')
     // 過去へ巻き戻る（リプレイ開始）
     const past = live - 30 * 24 * 3600 * 1000
     feed(c, past, 5)
     expect(c.takeFinished()).toHaveLength(0) // 開いていた記録も捨てられる
     // 巻き戻った先でも新しい記録を開ける
-    c.open(seed('evt-replay', past + 5000), '1.0.0', 'standard')
+    c.open(seed('evt-replay', past + 5000), '1.0.0')
     feed(c, past + 5000, TAIL_FRAMES)
     const done = c.takeFinished()
     expect(done.map((r) => r.event.id)).toEqual(['evt-replay'])
@@ -239,7 +238,7 @@ describe('DiagnosticCapture', () => {
   it('データ時刻が大きく飛んでも捨てる（欠測で数分止まった後の復帰）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t), '1.0.0', 'standard')
+    c.open(seed('evt-1', t), '1.0.0')
     feed(c, t + 5 * 60 * 1000, TAIL_FRAMES) // 5 分飛ぶ
     expect(c.takeFinished()).toHaveLength(0)
   })
@@ -247,7 +246,7 @@ describe('DiagnosticCapture', () => {
   it('取り出した記録は内部から消える（同じものを二度保存しない）', () => {
     const c = new DiagnosticCapture()
     const t = feed(c, 0, 5)
-    c.open(seed('evt-1', t), '1.0.0', 'standard')
+    c.open(seed('evt-1', t), '1.0.0')
     feed(c, t, TAIL_FRAMES)
     expect(c.takeFinished()).toHaveLength(1)
     expect(c.takeFinished()).toHaveLength(0)

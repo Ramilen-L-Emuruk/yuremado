@@ -8,7 +8,7 @@
 import { act, render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { QuakeSeismoWave } from './QuakeSeismoWave'
+import { QuakeSeismoWave, wavePaintScheduler } from './QuakeSeismoWave'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import { paintCompositeColumns, paintWaveColumns, type PaintableColumns } from '../SeismoWaveChart/paintWave'
 import { COMPRESSED_VERTICAL_NOTE, LINEAR_VERTICAL, type VerticalMap } from '../SeismoWaveChart/verticalMap'
@@ -29,6 +29,11 @@ class NoopResizeObserver {
   disconnect() {}
 }
 globalThis.ResizeObserver = NoopResizeObserver as unknown as typeof ResizeObserver
+// 描く時機（既定は次のフレームの後）をその場にする。ここで見るのは描かせた範囲と曲線で、時機ではない
+wavePaintScheduler.schedule = (paint) => {
+  paint()
+  return () => {}
+}
 
 const ZERO_MS = Date.UTC(2026, 9, 19, 3, 0, 0)
 

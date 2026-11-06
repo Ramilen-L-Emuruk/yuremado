@@ -1,17 +1,23 @@
-import { Fragment, memo, useMemo, useRef, useEffect, useState } from 'react'
+import { Fragment, memo, useMemo, useRef, useEffect, useLayoutEffect, useState } from 'react'
 import type { JMAQuake, JMALpgm, IssueType, EarthquakePoint, IntensityScale, JMAEstimatedIntensity, JMAInternationalTsunami, QuakeReportRecord, BorrowedFromTsunami, LpgmPeriodBand } from '../../types/earthquake'
 import { quakeEventKey, isKnownCorrection } from '../../utils/quakeMerge'
 import { QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
-import { getLpgmClassLabel, getLpgmClassColor, getLpgmClassBgColor, lpgmCategoryNoteWithRegions, buildLpgmRows, canOpenLpgmNotes, lpgmPeriodRows, LPGM_PERIODS_HEADING, LPGM_PERIODS_NOTE, type LpgmStationRow } from '../../utils/lpgm'
-import { readableTextColor } from '../../utils/contrast'
+import { getLpgmClassLabel, getLpgmClassColor, lpgmCategoryNoteWithRegions, buildLpgmRows, canOpenLpgmNotes, lpgmPeriodRows, LPGM_PERIODS_HEADING, LPGM_PERIODS_NOTE, type LpgmStationRow } from '../../utils/lpgm'
+import { readableTextColor, liftForContrast } from '../../utils/contrast'
 import { estimatedIntensityAvailability, estimatedMarkMismatchNote } from '../../utils/estimatedIntensity'
-import { telegramTextSubject } from '../../utils/ttsFollow'
+import { telegramTextSubject, quakeTelegramTextTarget } from '../../utils/ttsFollow'
+import { jmaCommentGroups, type JmaCommentGroup } from '../../utils/jmaCommentGroups'
 import { domesticTsunamiCardForecastText, warnIfDomesticTsunamiSentenceMissing } from '../../utils/domesticTsunamiComment'
 import { useAutoOpenWhileSpeakingIn } from '../../hooks/useAutoOpenWhileSpeaking'
+import { scrollParentOf } from '../../hooks/useFollowScroll'
 import { SerialBadge } from '../SerialBadge'
 import {
   formatQuakeTimeLabeled,
-  quakeTimeLabeledParts,
+  formatQuakeTime,
+  QUAKE_ARRIVAL_TIME_LABEL,
+  QUAKE_ORIGIN_TIME_LABEL,
+  INTERNATIONAL_TSUNAMI_INFO_NAME,
+  QUAKE_ARRIVAL_TIME_UNKNOWN,
   formatDepth,
   formatDomesticTsunami,
   TSUNAMI_WARNING_GROUP_TITLE,
@@ -20,25 +26,27 @@ import {
   hasHypocenterFacts,
   hasMagnitude,
   magnitudeHeading,
+  formatHypocenterSource,
   formatMagnitudeWithCondition,
   formatCoordinate,
   formatNameFromMark,
   formatTimeMin,
+  formatHourMinute,
+  readDateTime,
   NON_JMA_MARK,
   NON_JMA_MARK_TITLE,
   withNonJmaMark,
 } from '../../utils/formatters'
-import { getIntensityLabel, getIntensityLabelWithOrAbove, getIntensityColor, getIntensityBgColor, getDepthColor, getMagnitudeColor } from '../../utils/intensity'
+import { getIntensityLabel, getIntensityColor, getIntensityBgColor, getDepthColor, getMagnitudeColor } from '../../utils/intensity'
 import { hasKnownEpicenter } from '../../utils/geo'
 
 import { areaPrefIndexOf, regionOrderIndexOf, stationPrefIndexOf, lookupPointCoords, lookupStationRegion, regionOrderRank, type LatLng } from '../../utils/stationCoords'
-import { isAreaPoint, isMaxScaleUnreceived, partitionUnreceivedPoints, unreceivedUnitLabel, buildIntensityRows, makeAreaPrefResolver, cityKey, type IntensityStationRow, type IntensityRegionRow, type IntensityRows } from '../../utils/quakePoints'
+import { isAreaPoint, isMaxScaleUnreceived, partitionUnreceivedPoints, unreceivedUnitLabel, buildIntensityRows, makeAreaPrefResolver, cityKey, intensityRowsShowUnreceivedNote, type IntensityStationRow, type IntensityRegionRow, type IntensityRows } from '../../utils/quakePoints'
 import { log } from '../../utils/logger'
 import { rowMarkKey, rowMarkOf, type QuakeCardMarks, type QuakeUpdateField } from '../../utils/quakeUpdateMark'
 import { intensityRowsToExpand, lpgmRowsToExpand, mergeAutoExpanded } from '../../utils/autoExpandMarkedRows'
 import { UPDATE_MARK_COLOR, type UpdateStatus } from '../../utils/updateMark'
 import { UpdateDot } from '../UpdateDot'
-import { LpgmQuakeFacts } from './LpgmQuakeFacts'
 
 import { useStationCoords } from '../../hooks/useStationCoords'
 import { useSubRegions } from '../../hooks/useSubRegions'
@@ -46,6 +54,10 @@ import { usePrefectures } from '../../hooks/usePrefectures'
 import { ringsBoundsIndex, EMPTY_BOUNDS_INDEX, type RingsBounds } from '../../utils/subregions'
 import { groupUnreceivedPointNames, type UnreceivedPointGroup } from './unreceivedPointNames'
 import { QuakeSeismoWave } from './QuakeSeismoWave'
+import { QuakeListRow, TileScaleLabel, quakeTileColors } from './QuakeListRow'
+import { QuakeOpenPin } from './QuakeOpenPin'
+import { DisclosureCaret, Reveal, growFrom, fadeIn, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, CANCEL_FADE_MS } from './quakeMotion'
+import { quakeReportTimeline, formatTimelineTime } from '../../utils/quakeReportTimeline'
 import type { SeismoQuakeWave } from '../../hooks/useSeismoQuakeWaves'
 import type { SeismoWaveCollapsedView } from '../../hooks/useSettings'
 
@@ -67,6 +79,10 @@ function regionDescendantKeys(region: IntensityRegionRow): string[] {
  * （行の側は `pref:` / `area:` / `city:` / `lpgm:pref:` / `lpgm:area:` を使う）。
  */
 const LPGM_NOTES_KEY = 'lpgm:notes'
+/** 地震情報の「気象庁からの補足」の開閉の鍵（長周期の補足と同じ `expanded` を共有する）。 */
+const QUAKE_NOTES_KEY = 'quake:notes'
+/** 国際津波関連情報（WEPA60）の 1 報の開閉の鍵（同じ `expanded` を共有する）。 */
+const internationalTsunamiFoldKey = (id: string): string => `wepa60:${id}`
 
 /**
  * 区域も都道府県も分からず、長周期の一覧に置けなかった観測点を記録する
@@ -94,6 +110,21 @@ function noteUnplaceableLpgmStation(lpgmId: string, stationName: string): void {
 const EMPTY_KEYS: ReadonlySet<string> = new Set()
 
 
+/** 震度の下へ添える「（未入電）」「（未入電あり）」の大きさ（行の文字に対する比）。 */
+const UNRECEIVED_NOTE_EM = 0.7
+
+/**
+ * 震度の欄の幅。未入電の行が無い一覧ではいまの 36px のまま、ある一覧では「（未入電あり）」（7 字）が入る幅で
+ * 全段の全行をそろえる。
+ *
+ * **観測点の段だけ詰めない。** 観測点の段は「未入電あり」を出さないので欄を「（未入電）」の幅まで詰められるが、
+ * 詰めると観測点の地名が親の市町村の地名より左から始まり、字下げの順が逆に見える（2026-11-02 ユーザー選択
+ * 「親より右へそろえる」）。
+ */
+function intensityValueColumn(unreceivedLayout: boolean): string {
+  return unreceivedLayout ? `${7 * UNRECEIVED_NOTE_EM + 0.3}em` : '2.25rem'
+}
+
 /**
  * 震度一覧の 1 行。都道府県・一次細分区域・市町村・観測点の 4 段で共有する。
  *
@@ -108,7 +139,7 @@ const EMPTY_KEYS: ReadonlySet<string> = new Set()
  * 入れ子を許さない。長周期のトグルと同じ作法）。開けない段には `role` も `tabIndex` も
  * 与えない —— 押せない行がタブ移動で止まると邪魔になる。
  */
-function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived, nonJma, depth, expandKey, expanded, onToggle, onFocus, mark }: {
+function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived, nonJma, depth, expandKey, expanded, onToggle, onFocus, mark, unreceivedLayout }: {
   label: string
   scale: IntensityScale
   /** その行の震度が未入電の値から来ている（ラベルへ「以上」を足す）。 */
@@ -116,9 +147,8 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
   /**
    * 「未入電」の印を出すか。**`unreceived` とは分ける。**
    *
-   * 県・区域の行の値は、電文が区域の `MaxInt` を持たないときに**配下から積み上げる**
-   * （標準版は区域のロールアップ点を持たないので常にこの経路）。積み上げは震度の大小で
-   * 決まるため、**観測できた震度3 と未入電（下限 45）が混在すると未入電が勝つ**。その行を
+   * 県・区域の行の値は、電文が区域の `MaxInt` を持たないときに**配下から積み上げる**。
+   * 積み上げは震度の大小で決まるため、**観測できた震度3 と未入電（下限 45）が混在すると未入電が勝つ**。その行を
    * 「未入電」と断定すると、届いている観測値を無かったことにする。**電文が直にその行について
    * 言っている場合だけ**に出す —— 観測点の行と、値を持たない市町村。範囲の行は下の
    * `hasUnreceived` が「未入電あり」を担う。
@@ -149,15 +179,15 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
    * 一覧を目で追っているときに行がまとめて動いて見える。
    */
   mark?: UpdateStatus
+  /**
+   * この一覧に未入電の行が 1 つでもあるか。あれば震度の欄を広げ、「（未入電）」「（未入電あり）」を
+   * 震度の下に書く余地を取る。**全行同じ幅にする** —— 印の付いた行だけ欄を広げると、その行だけ地名の
+   * 始まりがずれる。
+   */
+  unreceivedLayout: boolean
 }) {
   const canExpand = expandKey != null
   const isOpen = canExpand && expanded.has(expandKey)
-  // 字下げと文字の大きさで段を示す（地名の色・太さも下で段によって変える）。
-  // **震度の色は値だけで決める** —— 段の区別に流用すると、色が二通りの意味を持つ。
-  const pad = ['pl-2', 'pl-5', 'pl-8', 'pl-11'][depth]
-  const size = depth === 0
-    ? 'text-[0.9375rem] roomy:text-[1.125rem]'
-    : depth === 1 ? 'text-[0.875rem] roomy:text-[1rem]' : 'text-[0.8125rem] roomy:text-[0.9375rem]'
   // 行の主アクション。**開閉があればそちらが取る**（`onFocus` の注記を参照）。
   // `stopPropagation` は、カード自体の `<button>`（選択のトグル）へ伝わらせないため。
   const activate = canExpand ? () => onToggle(expandKey) : onFocus
@@ -175,97 +205,158 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
           if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); activate() }
         },
       } : {})}
-      className={`flex items-center ${pad} pr-2 py-0.5 ${depth === 0 ? 'roomy:py-1.5' : ''} ${size}${activate ? ' cursor-pointer hover:bg-white/5' : ''}`}
-      style={{ borderLeft: `3px solid ${mark ? UPDATE_MARK_COLOR[mark] : 'transparent'}` }}
+      data-quake-row
+      className={`${QUAKE_ROW_CLASS}${activate ? ' cursor-pointer hover:bg-white/5 quake-press-row' : ''}`}
+      style={{ ...quakeRowStyle(depth, mark), gridTemplateColumns: `${intensityValueColumn(unreceivedLayout)} 1fr auto` }}
     >
-      {/* 震度と、その値についての印（未入電）を左に置く。**印を地名の側へ置かない** ——
-          置くと右端を揃えるためにいちばん長い「未入電あり」ぶんの枠を全行で空けることになり、
-          狭い画面では印を持たない行まで地名が折り返す（実測: 幅 320px で 47 行中 7 行）。
-          震度の隣なら、なぜ「以上」なのかをその値の真横で言うことにもなる。 */}
-      <span className={`flex items-center shrink-0 gap-1.5 whitespace-nowrap${depth === 0 ? ' font-bold' : ''}`}>
-        <span style={{ color: getIntensityColor(scale) }}>
-          {/* 未入電は「5弱以上」。観測値と同じ顔で出すと、実際にはもっと強い可能性があることが
-              伝わらない。EEW の「上限を定めない予想震度」と同じ語を同じヘルパーで付ける。 */}
-          震度{getIntensityLabelWithOrAbove(scale, unreceived)}
-        </span>
-        {/* **その行自身が未入電か、配下にあるだけかを書き分ける。**
-            - 「未入電」＝この行の震度そのものが届いていない（観測点の行と、値を持たない市町村）
-            - 「未入電あり」＝この範囲に未入電の地点があるが、行の値は観測できている
+      {/* 震度の欄。「震度」の語は付けない（見本 opened.html の .ir）。未入電の行は「5弱以上」と
+          書き切り、その下へ小さく「（未入電）」「（未入電あり）」を添える（2026-11-02 ユーザー選択
+          「C4'' 段ごとにそろえる」。元の問いは「普通に五弱以上(未入電)とかって書いちゃだめなの？」）。
 
-            **「あり」の有無が意味を分ける。** 未入電は地点単位の事実なので、配下にあるだけの
-            県へ「〇〇県 未入電」と書くと県が丸ごと未入電に読める。逆に、行自身が未入電なのに
-            何も書かないと、**事実を持っている行が黙って、範囲の行だけが喋る**ことになる
-            （「震度5弱以上」の語だけでは、なぜ「以上」なのかが読み取れない）。
-
-            **両方は出さない。** 行自身が未入電なら、配下に未入電があることは言わずとも含む。
-            語は気象庁のものをそのまま使い、読み上げとも揃える。 */}
+          **その行自身が未入電か、配下にあるだけかを書き分ける。**
+          - 「未入電」＝この行の震度そのものが届いていない（観測点の行と、値を持たない市町村）
+          - 「未入電あり」＝この範囲に未入電の地点があるが、行の値は観測できている
+          未入電は地点単位の事実なので、配下にあるだけの県へ「未入電」と書くと県が丸ごと未入電に読める。
+          **両方は出さない。** 行自身が未入電なら、配下に未入電があることは言わずとも含む。
+          語は気象庁のものをそのまま使い、読み上げとも揃える。 */}
+      <span
+        className={`flex flex-col leading-[1.15] whitespace-nowrap${depth === 0 ? ' font-extrabold' : ' font-bold'}`}
+        style={{ color: getIntensityColor(scale) }}
+      >
+        <span>{getIntensityLabel(scale)}{unreceived && '以上'}</span>
         {(unreceivedIsOwn || hasUnreceived) && (
-          <span
-            className="text-[0.75rem] font-normal roomy:text-[0.875rem]"
-            style={{ color: '#9ca3af' }}
+          <small
+            className="font-normal"
+            style={{ fontSize: `${UNRECEIVED_NOTE_EM}em` }}
             title={unreceivedIsOwn
               ? '気象庁は震度5弱以上と推定していますが、震度が届いていません（未入電）'
               : 'この範囲に、震度が届いていない地点があります'}
           >
-            {unreceivedIsOwn ? '未入電' : '未入電あり'}
-          </span>
+            {unreceivedIsOwn ? '（未入電）' : '（未入電あり）'}
+          </small>
         )}
       </span>
-      {/* 地名は伸びる枠に入れて右端で揃え、`＊` と開閉の記号はそれぞれ固定幅の枠へ出す。
-          同じ流れに並べると、付いている行だけ地名が左へ押されて右端が揃わない（実測で 69px）。
-          **`＊` と地名のあいだは詰める** —— 電文が名前の末尾へ置く印なので、離すと別のものに
-          見える。枠を分けているのは右端を揃えるためで、見た目は続いているのが正しい。
-
-          **行の両端揃え（`justify-between`）は使わない。** この枠が `flex-1` で残り幅を
-          占めるので空きが生まれず、効かないクラスが意図だけ残ることになる。右端へ寄せるのは
-          この枠の中の `justify-end`。 */}
-      <span className="flex items-center justify-end min-w-0 flex-1">
-        {/* `text-right` は**折り返した 2 行目以降のため**。1 行に収まるあいだは上の
-            `justify-end` が寄せるので効かないが、長い観測点名（実データで最長 12 文字）が
-            折り返したとき、これが無いと 2 行目だけ左へ流れる。 */}
-        {/* 印が付いた行は**地名を印の色にする**。段の色（県の行だけ白）より優先させる ——
-            段は字下げと文字の大きさでも分かるが、動いたかどうかはここでしか分からない。
-            行の左端の縦線と 2 段構えにしてあるのは、**畳んだ親の行のため** —— 親の地名を
-            塗ると「その地名自身が動いた」に見えるので、配下が動いただけのときは縦線が担う。 */}
-        <span className="min-w-0 text-right" style={{ color: depth === 0 ? '#ffffff' : '#d1d5db' }}>
-          {/* 気象庁以外が運用する観測点には電文どおり `＊` を付ける。読み取りの側では
-              引き当てのために外してあるので、戻すのは表示のここ。記号だけでは何と対比して
-              いるのか分からないので説明を添える。**枠の幅は行の文字の大きさに連動させる**
-              （`em`）—— 段ごとに文字が小さくなるため。 */}
-          {/* 開閉を持つ行では、ここだけが寄せの当たり判定になる（`labelFocus`）。
-              **行に要素を足さない**のが選んだ理由 —— 行には既に震度・未入電の印・地名・`＊`・
-              開閉の記号が並んでおり、狭い画面では地名が折り返している。 */}
-          <span
-            title={nonJma ? NON_JMA_MARK_TITLE : undefined}
-            {...(labelFocus ? {
-              role: 'button' as const,
-              tabIndex: 0,
-              onClick: (e: React.MouseEvent) => { e.stopPropagation(); labelFocus() },
-              onKeyDown: (e: React.KeyboardEvent) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); labelFocus() }
-              },
-              className: 'cursor-pointer hover:underline',
-            } : {})}
-          >
-            {label}
-          </span>
-        </span>
+      {/* 地名は左寄せ。`＊` は電文が名前の末尾へ置く印なので、離さず名前に続ける。
+          開閉を持つ行では、地名だけが寄せの当たり判定になる（`labelFocus`）。 */}
+      <span className={`min-w-0 ${depth === 0 ? 'text-white' : 'text-secondary'}`}>
         <span
-          className="shrink-0 w-[1em] text-center"
-          style={{ color: depth === 0 ? '#ffffff' : '#d1d5db' }}
           title={nonJma ? NON_JMA_MARK_TITLE : undefined}
+          {...(labelFocus ? {
+            role: 'button' as const,
+            tabIndex: 0,
+            onClick: (e: React.MouseEvent) => { e.stopPropagation(); labelFocus() },
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); labelFocus() }
+            },
+            className: 'cursor-pointer hover:underline',
+          } : {})}
         >
-          {nonJma ? NON_JMA_MARK : ''}
+          {label}
         </span>
-        <span
-          className="ml-1.5 shrink-0 w-[1em] text-center text-[0.75rem] roomy:text-[0.875rem]"
-          style={{ color: '#9ca3af' }}
-        >
-          {canExpand ? (isOpen ? '▾' : '▸') : ''}
-        </span>
+        {nonJma && <span title={NON_JMA_MARK_TITLE}>{NON_JMA_MARK}</span>}
+      </span>
+      {/* 右端は開閉の記号だけ。 */}
+      <span className="flex items-center whitespace-nowrap text-secondary">
+        <span className="w-[1em] text-center text-[0.75rem]">{canExpand ? <DisclosureCaret open={isOpen} /> : ''}</span>
       </span>
     </div>
   )
+}
+
+/** 押せる所（開閉の行・札・ボタン・地図へ寄せる名前・見出しの段・帯）。ここで起きたクリックは地のクリックに数えない。 */
+/** 閉じた行で組まない補足の空の形。 */
+const NO_COMMENTS: ReturnType<typeof jmaCommentGroups> = { groups: [], showHeadings: false }
+
+const INTERACTIVE_IN_CARD = 'button, a, input, select, textarea, summary, [role="button"], [tabindex], .cursor-pointer, .quake-open-head, .quake-pin'
+
+/**
+ * 開いたカードの地を押したか。押せる所の中のクリックと、字を選んだ後の指の離しは数えない
+ * （観測点の名前をなぞって写そうとしただけで地図が動かないように）。
+ */
+function isPlainBackgroundClick(e: React.MouseEvent<HTMLElement>): boolean {
+  const target = e.target as Element | null
+  if (!target) return false
+  // 探すのはカードの内側だけ（一覧の枠などカードの外の祖先が押せる印を持っても、地のクリックを潰さない）
+  const hit = target.closest(INTERACTIVE_IN_CARD)
+  if (hit && e.currentTarget.contains(hit)) return false
+  const selection = window.getSelection?.()
+  return !selection || selection.isCollapsed
+}
+
+/** 広い組で見出しの段と震度の枠を貼りつける上限（一覧の見える高さに対する割合。→ `data-stick-tall`）。 */
+const STICK_MAX_SHARE = 0.4
+
+/**
+ * 開いたカードの節（各地の震度・長周期地震動）の頭を、一覧の見える範囲の上端へ巻く。
+ * 上に貼りついているもの（一覧の見出しの行・左右分割で貼りつく見出しの段と震度の枠・狭い画面の帯）の
+ * 下へ着地させる（重なると節の頭が隠れる）。端末で動きを減らす設定なら一息に飛ぶ。
+ */
+function scrollOpenSectionIntoView(section: HTMLElement) {
+  const root = scrollParentOf(section)
+  const card = section.closest<HTMLElement>(`[${QUAKE_CARD_KEY_ATTR}]`)
+  if (!root || !card) {
+    log.warn('[地震タブ] 節へ巻けない（巻く箱かカードが見つからない）')
+    return
+  }
+  let cover = listHeadPx(section)
+  const stick = card.querySelector<HTMLElement>('.quake-stick')
+  if (stick && getComputedStyle(stick).position === 'sticky') {
+    cover = Math.max(cover, finitePx(getComputedStyle(stick).top) + stick.getBoundingClientRect().height)
+  }
+  const pin = card.querySelector<HTMLElement>('.quake-pin')
+  if (pin && getComputedStyle(pin).display !== 'none') {
+    cover = Math.max(cover, finitePx(getComputedStyle(pin).top) + pinBandHeight(pin, root))
+  }
+  // 貼りついたものの下端に節の頭がくっつかないよう、少し空けて着地させる
+  const top = root.scrollTop + section.getBoundingClientRect().top - root.getBoundingClientRect().top - cover - 6
+  if (!Number.isFinite(top)) {
+    log.warn('[地震タブ] 節へ巻く位置を計算できない', { cover })
+    return
+  }
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  root.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' })
+}
+
+/** `12.5px` を数へ。読めない値（`auto` など）は 0（貼りついていない・位置を持たない扱い）。 */
+function finitePx(v: string): number {
+  const n = parseFloat(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+/** 上に貼りついて残る一覧の見出しの行と日付の区切りの高さ（`scroll-margin-top` と同じ値を読むので単位を問わない）。 */
+function listHeadPx(el: HTMLElement): number {
+  const card = el.closest<HTMLElement>(`[${QUAKE_CARD_KEY_ATTR}]`)
+  return card ? finitePx(getComputedStyle(card).scrollMarginTop) : 0
+}
+
+/**
+ * 狭い画面の帯の高さ。出たことがあれば帯が測った値（`data-band-h`）。まだ一度も出ていない
+ * （震度の枠を押して初めて巻く、がまさにこれ）ときは、同じ一覧の畳んだ行の高さで代える ——
+ * 帯は畳んだ行と同じ中身なので、折り返しの段が同じなら同じ高さになる。
+ */
+function pinBandHeight(pin: HTMLElement, root: HTMLElement): number {
+  const measured = Number(pin.dataset.bandH)
+  if (Number.isFinite(measured) && measured > 0) return measured
+  const row = root.querySelector<HTMLElement>(`button[${QUAKE_CARD_KEY_ATTR}]`)
+  return row ? row.getBoundingClientRect().height : 0
+}
+
+/**
+ * 震度・長周期の一覧の 1 行の共通の作り（見本 opened.html の .ir）。3 列の格子で、最初の列の幅は
+ * 呼ぶ側が決める（震度 36px・長周期 52px）。字下げは段ごとに 10px ずつ、文字は段ごとに 0.5px ずつ小さく
+ * （2026-11-01 選択「この形にする (Recommended)」。最長の観測点名 12 文字＋＊が 1 行に収まる詰め方）。
+ *
+ * 左端の縦線は、この報でこの行（または配下）が動いた印。**印が無くても幅を取る**（透明で置く）。
+ * 付いたり消えたりで地名の位置がずれると、一覧を目で追っているときに行がまとめて動いて見える。
+ */
+const QUAKE_ROW_CLASS = 'grid items-center gap-x-1 border-b border-border/60 py-[3px] pr-1 leading-[1.3]'
+function quakeRowStyle(depth: 0 | 1 | 2 | 3, mark: UpdateStatus | undefined): React.CSSProperties {
+  return {
+    minHeight: '1.75rem',
+    paddingLeft: `${depth * 0.625}rem`,
+    fontSize: `calc(var(--qk-f) - ${0.5 + depth * 0.5}px)`,
+    borderLeft: `3px solid ${mark ? UPDATE_MARK_COLOR[mark] : 'transparent'}`,
+  }
 }
 
 /**
@@ -274,14 +365,13 @@ function IntensityRow({ label, scale, unreceived, unreceivedIsOwn, hasUnreceived
  * `LPGM_PERIODS_HEADING`・`LPGM_PERIODS_NOTE`）。電文は区域や県の段に内訳を持たないので、開けるのは観測点だけ。
  */
 function LpgmPeriodList({ periods, depth }: { periods: readonly LpgmPeriodBand[]; depth: 1 | 2 }) {
-  // 観測点の行より一段深く字下げする（観測点の行の字下げは `LpgmRow` の pl-5 / pl-8）
-  const pad = depth === 1 ? 'pl-8' : 'pl-11'
+  // 観測点の行より一段深く字下げする（行の字下げは段ごとに 10px。→ `quakeRowStyle`）
   return (
-    <div className={`${pad} pr-2 pb-1 text-[0.75rem] roomy:text-[0.875rem]`}>
-      <div className="text-gray-400">{LPGM_PERIODS_HEADING}</div>
+    <div className="pr-2 pb-1 text-[0.75rem] roomy:text-[0.875rem]" style={{ paddingLeft: `${(depth + 1) * 0.625}rem` }}>
+      <div className="text-secondary">{LPGM_PERIODS_HEADING}</div>
       {lpgmPeriodRows(periods).map((r, i) => (
         <div key={i} className="flex items-center gap-1.5 leading-relaxed">
-          <span className="w-[2.5em] text-right text-gray-400">{r.label}</span>
+          <span className="w-[2.5em] text-right text-secondary">{r.label}</span>
           {r.lgInt !== null ? (
             <span
               className="inline-block min-w-[1.5em] px-1 text-center font-bold rounded-sm"
@@ -290,12 +380,12 @@ function LpgmPeriodList({ periods, depth }: { periods: readonly LpgmPeriodBand[]
               {r.lgInt}
             </span>
           ) : (
-            <span className="inline-block min-w-[1.5em] text-center text-slate-500">−</span>
+            <span className="inline-block min-w-[1.5em] text-center text-secondary">−</span>
           )}
-          <span className="tabular-nums text-gray-300">{r.sva}</span>
+          <span className="tabular-nums text-secondary">{r.sva}</span>
         </div>
       ))}
-      <div className="mt-0.5 text-gray-400">{LPGM_PERIODS_NOTE}</div>
+      <div className="mt-0.5 text-secondary">{LPGM_PERIODS_NOTE}</div>
     </div>
   )
 }
@@ -305,7 +395,7 @@ function LpgmPeriodList({ periods, depth }: { periods: readonly LpgmPeriodBand[]
  * （電文が持つ段数。震度一覧の 4 段から市町村を除いた形）。
  *
  * **見た目の規約は `IntensityRow` と揃える。** 段の区別に使うのは字下げ・文字の大きさと、
- * 地名の文字色（県の行だけ白、下の 2 段はグレー）、それに階級側の太字（県の行だけ）。
+ * 地名の文字色（県の行だけ白、下の 2 段はグレー）。
  * **階級の色（`getLpgmClassColor`）は値だけで決め、段では変えない** —— 段の区別に流用すると、
  * 色が二通りの意味を持つ。並べる震度も値によらずグレーで、こちらは階級の補足として置いている。
  */
@@ -331,14 +421,11 @@ function LpgmRow({ label, lgInt, int, nonJma, depth, expandKey, expanded, onTogg
 }) {
   const canExpand = expandKey != null
   const isOpen = canExpand && expanded.has(expandKey)
-  const pad = ['pl-2', 'pl-5', 'pl-8'][depth]
-  const size = depth === 0
-    ? 'text-[0.9375rem] roomy:text-[1.125rem]'
-    : depth === 1 ? 'text-[0.875rem] roomy:text-[1rem]' : 'text-[0.8125rem] roomy:text-[0.9375rem]'
   // 行の主アクション。開閉があればそちらが取る（`IntensityRow` と同じ）。
   const activate = canExpand ? () => onToggle(expandKey) : onFocus
   // 開閉を持つ行（県・区域）では、寄せを地名の部分へ移す。
   const labelFocus = canExpand ? onFocus : undefined
+  const classColor = getLpgmClassColor(lgInt)
   return (
     <div
       {...(activate ? {
@@ -350,59 +437,42 @@ function LpgmRow({ label, lgInt, int, nonJma, depth, expandKey, expanded, onTogg
           if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); activate() }
         },
       } : {})}
-      className={`flex items-center ${pad} pr-2 py-0.5 ${depth === 0 ? 'roomy:py-1.5' : ''} ${size}${activate ? ' cursor-pointer hover:bg-white/5' : ''}`}
-      style={{ borderLeft: `3px solid ${mark ? UPDATE_MARK_COLOR[mark] : 'transparent'}` }}
+      data-quake-row
+      className={`${QUAKE_ROW_CLASS}${activate ? ' cursor-pointer hover:bg-white/5 quake-press-row' : ''}`}
+      style={{ ...quakeRowStyle(depth, mark), gridTemplateColumns: '3.25rem 1fr auto' }}
     >
-      {/* 階級と、その範囲の最大震度を左に置く。**震度一覧と同じ並べ方**（値についての情報は
-          左、地名は右で揃える）。地名の側へ置くと、付いている行だけ地名が左へ押される。 */}
-      <span className={`flex items-baseline shrink-0 gap-1.5 whitespace-nowrap${depth === 0 ? ' font-bold' : ''}`}>
-        <span style={{ color: getLpgmClassColor(lgInt) }}>
-          長周期 {getLpgmClassLabel(lgInt)}
+      {/* 階級の札（52px の欄。見本 opened.html の .lgg）。節の見出しが「長周期地震動」なので「長周期」は添えない。 */}
+      <span>
+        <span
+          className="inline-block rounded-[3px] px-1.5 font-bold leading-[1.4]"
+          style={{ fontSize: 'var(--qk-fs)', background: classColor, color: readableTextColor(classColor) }}
+        >
+          {getLpgmClassLabel(lgInt)}
         </span>
-        {int !== undefined && (
-          <span className="text-[0.8125rem] font-normal text-gray-400 roomy:text-[0.9375rem]">
-            震度 {getIntensityLabel(int)}
-          </span>
-        )}
       </span>
-      {/* 地名は伸びる枠に入れて右端で揃え、`＊` と開閉の記号は固定幅の枠へ出す
-          （→ `IntensityRow`。`justify-between` を使わない理由と `text-right` の役目も
-          そちらに書いてある）。 */}
-      <span className="flex items-center justify-end min-w-0 flex-1">
-        {/* 印が付いた行は**地名を印の色にする**。段の色（県の行だけ白）より優先させる ——
-            段は字下げと文字の大きさでも分かるが、動いたかどうかはここでしか分からない。
-            行の左端の縦線と 2 段構えにしてあるのは、**畳んだ親の行のため** —— 親の地名を
-            塗ると「その地名自身が動いた」に見えるので、配下が動いただけのときは縦線が担う。 */}
-        <span className="min-w-0 text-right" style={{ color: depth === 0 ? '#ffffff' : '#d1d5db' }}>
-          {/* 気象庁以外が運用する観測点の印。震度一覧・地図の吹き出しと同じ扱い。 */}
-          <span
-            title={nonJma ? NON_JMA_MARK_TITLE : undefined}
-            {...(labelFocus ? {
-              role: 'button' as const,
-              tabIndex: 0,
-              onClick: (e: React.MouseEvent) => { e.stopPropagation(); labelFocus() },
-              onKeyDown: (e: React.KeyboardEvent) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); labelFocus() }
-              },
-              className: 'cursor-pointer hover:underline',
-            } : {})}
-          >
-            {label}
-          </span>
-        </span>
+      <span className={`min-w-0 ${depth === 0 ? 'text-white' : 'text-secondary'}`}>
+        {/* 気象庁以外が運用する観測点の印。震度一覧・地図の吹き出しと同じ扱い。 */}
         <span
-          className="shrink-0 w-[1em] text-center"
-          style={{ color: depth === 0 ? '#ffffff' : '#d1d5db' }}
           title={nonJma ? NON_JMA_MARK_TITLE : undefined}
+          {...(labelFocus ? {
+            role: 'button' as const,
+            tabIndex: 0,
+            onClick: (e: React.MouseEvent) => { e.stopPropagation(); labelFocus() },
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); labelFocus() }
+            },
+            className: 'cursor-pointer hover:underline',
+          } : {})}
         >
-          {nonJma ? NON_JMA_MARK : ''}
+          {label}
         </span>
-        <span
-          className="ml-1.5 shrink-0 w-[1em] text-center text-[0.75rem] roomy:text-[0.875rem]"
-          style={{ color: '#9ca3af' }}
-        >
-          {canExpand ? (isOpen ? '▾' : '▸') : ''}
-        </span>
+        {nonJma && <span title={NON_JMA_MARK_TITLE}>{NON_JMA_MARK}</span>}
+      </span>
+      {/* 右端に、その範囲の最大震度と開閉の記号。震度は階級の補足（「揺れは小さいのに高層階が大きく揺れた」
+          形が出る）なので、値によらずグレーで置く。 */}
+      <span className="flex items-center gap-1.5 whitespace-nowrap text-secondary">
+        {int !== undefined && <span className="text-[0.75rem]">震度{getIntensityLabel(int)}</span>}
+        <span className="w-[1em] text-center text-[0.75rem]">{canExpand ? <DisclosureCaret open={isOpen} /> : ''}</span>
       </span>
     </div>
   )
@@ -421,29 +491,24 @@ function issueTypeBadgeClass(type: IssueType): string {
   }
 }
 
-interface IssueTypeStyle {
-  headerBg: string
-  headerColor: string
-  headerBorder: string
-  cardBorder: string
-  cardBg: string
-}
-
-function getIssueTypeStyle(type: IssueType): IssueTypeStyle {
+/** 一覧の行の情報名の字色。札の色分け（{@link issueTypeBadgeClass}）と同じ組み分けで、地を塗らず字だけ色を付ける。 */
+function issueTypeTextColor(type: string): string {
   switch (type) {
     case '震度速報':
-    case '震源情報':
-      return { headerBg: '#451a03', headerColor: '#fbbf24', headerBorder: '#b45309', cardBorder: '#b45309', cardBg: '#1c1710' }
+    case '震源情報':                         return '#fcd34d'
     case '震源・震度情報':
     case '各地の震度情報':
-    case '顕著な地震の震源要素更新のお知らせ':
-      return { headerBg: '#0c2044', headerColor: '#93c5fd', headerBorder: '#1d4ed8', cardBorder: '#1d4ed8', cardBg: '#111827' }
-    case '遠地地震':
-      return { headerBg: '#2e1065', headerColor: '#d8b4fe', headerBorder: '#7e22ce', cardBorder: '#7e22ce', cardBg: '#1a1024' }
-    default:
-      return { headerBg: '#0c2044', headerColor: '#93c5fd', headerBorder: '#1d4ed8', cardBorder: '#1d4ed8', cardBg: '#111827' }
+    case '顕著な地震の震源要素更新のお知らせ': return '#93c5fd'
+    case '遠地地震':                          return '#d8b4fe'
+    default:                                  return '#94a3b8'
   }
 }
+
+/**
+ * 一覧の行で、地震の時刻を日時として読めなかったときに時刻の列へ出す語。
+ * （2026-11-02 選択「不明 (Recommended)」。→ docs/quake-tab-redesign.md「決まっていること」）
+ */
+const QUAKE_LIST_TIME_UNKNOWN = '不明'
 
 interface Props {
   quake: JMAQuake
@@ -465,8 +530,13 @@ interface Props {
    * 使うので、1 つにまとめると同じ区域名の行どうしで印が混ざる。
    */
   lpgmMarks: QuakeCardMarks | undefined
-  isLatest?: boolean
   isSelected?: boolean
+  /**
+   * 選ばれたカードにだけ渡す、選択が呼ばれるたびに進む番号（選ばれていないカードは 0）。
+   * 選んだまま畳んでいても、これが進んだら開き直す（同じ地震の続報・読み上げ・津波タブからのリンク。
+   * 2026-11-03 選択「どれが来ても開き直す (Recommended)」）。
+   */
+  reopenSignal: number
   /**
    * 押されたことを親へ伝える。**地震の鍵はこちらで作って渡す。**
    *
@@ -480,6 +550,12 @@ interface Props {
   activeLpgmEventId?: string | null
   onToggleLpgm?: (eventId: string) => void
   /**
+   * 長周期地震動の節を見せる求めの番号（求めが無い・このカードの番でなければ 0）。進んだら、開いたカードの
+   * 長周期の節を、長周期の札を押したときと同じ位置へ巻く（2026-11-06 ユーザー選択「長周期の節へ巻く
+   * (Recommended)」「同じく巻く (Recommended)」。長周期地震動観測情報の受信と、長周期の通知を押したとき）。
+   */
+  lpgmFocusSeq: number
+  /**
    * **この地震の**推計震度分布図（引き当て済み。無ければ null）。引き当ては一覧の側で行う
    * （→ `estimatedIntensityFor`）—— 一覧ごと渡すと、別の地震の分布が届くたびに全カードの
    * `memo` が素通りする。
@@ -487,7 +563,7 @@ interface Props {
   estimatedIntensity?: JMAEstimatedIntensity | null
   /**
    * **この地震の**国際津波関連情報（WEPA60。引き当て済み・付かなければ空）。遠地地震のカードにだけ付く
-   * （→ `internationalTsunamisFor`）。**必須にしてある** —— 渡し忘れると英文の情報が黙って出なくなる。
+   * （→ `internationalTsunamiIndex`）。**必須にしてある** —— 渡し忘れると英文の情報が黙って出なくなる。
    */
   internationalTsunamis: readonly JMAInternationalTsunami[]
   /** この地震の震度分布モードを開いているか。 */
@@ -537,6 +613,51 @@ interface Props {
  */
 /** 自作地震計の波形をライブで読み返せなかったときの 1 行（2026-10-24 ユーザー選択「取り直し中も出す (Recommended)」の文面）。 */
 const SEISMO_WAVE_FAILED_TEXT = '自作地震計: 波形を取得できなかった'
+
+/**
+ * 「気象庁からの補足」の畳んだ行と、開いたときの中身（→ `utils/jmaCommentGroups.ts`）。
+ *
+ * **地震情報と長周期地震動観測情報で同じ部品を使う**（2026-11-01 選択「畳んで、読み上げで開く
+ * (Recommended)」。畳んだ行の文面は「気象庁からの補足 ▸」で 2 つそろえる）。中身は 1 文 1 行で、
+ * 種類が 2 つ以上あるときだけ中身で呼ぶ見出しを付ける。`extra` は中身の末尾に足すもの（長周期の
+ * 詳細ページへのリンク）。
+ *
+ * 開閉は `<div role="button">` で作る（震度一覧の行と同じ作法）。押してもカードの選択は変えない。
+ */
+function JmaNotesFold({ open, onToggle, groups, showHeadings, extra }: {
+  open: boolean
+  onToggle: () => void
+  groups: readonly JmaCommentGroup[]
+  showHeadings: boolean
+  extra?: React.ReactNode
+}) {
+  // 見出しと中身の間は中身の側の上の余白で取る（親の gap にすると、縮み終えた瞬間にその分だけ下が詰まる）
+  return (
+    <div className="flex flex-col">
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={(e) => { e.stopPropagation(); onToggle() }}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onToggle() } }}
+        className="cursor-pointer rounded bg-panel px-2.5 py-1.5 text-secondary hover:text-white"
+        style={{ fontSize: 'var(--qk-fs)' }}
+      >
+        気象庁からの補足 <DisclosureCaret open={open} />
+      </div>
+      <Reveal open={open} data-jma-notes="" className="mt-1.5 flex w-full flex-col gap-2 rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary roomy:text-sm">{() => (<>
+          {groups.map(g => (
+            <div key={g.kind} className="flex flex-col gap-0.5">
+              {showHeadings && <div data-jma-heading="" className="font-semibold text-[#cfd6dd]">{g.heading}</div>}
+              {/* 自由付加文は全角空白で桁を揃えた表が入るので、行の中の空白を保つ */}
+              {g.lines.map((line, i) => <div key={i} data-jma-line="" style={{ whiteSpace: 'pre-wrap' }}>{line}</div>)}
+            </div>
+          ))}
+          {extra}
+        </>)}</Reveal>
+    </div>
+  )
+}
 
 /** 津波電文から借りた値の欄に添える印。説明は {@link borrowedSourceNote} がカードへ 1 行出す。 */
 const BORROWED_MARK = '※'
@@ -589,26 +710,6 @@ function borrowedSourceNote(
 }
 
 /**
- * 名前つきの地震の時刻（{@link formatQuakeTimeLabeled} と同じ文字列）を、名前と日時の境目でだけ
- * 折り返せる形で出す。畳んだカードの日時の段で使う（理由は呼び出し側）。
- * 縮める余地を持たせるため `shrink-0` は付けない。flex の既定の最小幅（中身の min-content）が
- * 折れない塊の幅になるので、それより細くはならない。そのため UI 倍率を大きくすると、塊 1 つが
- * 列より広くなってはみ出しうる。
- */
-function QuakeTimeLabeledWrapping({ time }: { time: string }) {
-  return (
-    <span className="text-base text-secondary">
-      {quakeTimeLabeledParts(time).map((part, i) => (
-        <Fragment key={i}>
-          {i > 0 && ' '}
-          <span className="whitespace-nowrap">{part}</span>
-        </Fragment>
-      ))}
-    </span>
-  )
-}
-
-/**
  * 取消されたカードに重ねる表示。**開いた表示と畳んだ表示で同じ部品を使う。**
  *
  * 取消を受けたカードは選択から外れて押せなくなる（`App.tsx` が選択を外す）ので、利用者が目にするのは
@@ -616,21 +717,45 @@ function QuakeTimeLabeledWrapping({ time }: { time: string }) {
  * 置いていて、**理由が画面に出る場面がほとんど無かった**。写しを 2 つ持つと片方だけ直る形になるので、
  * 1 つにまとめてある。
  */
-function QuakeCancelOverlay({ cancelText, compact }: { cancelText?: string; compact: boolean }) {
+/** 取消の覆いを出した瞬間に薄くから濃くする（`ref` に渡す。描き直すたびに付け直されて何度も動かないよう、関数を 1 つにする）。 */
+function fadeOverlayOnMount(el: HTMLElement | null): void {
+  if (el) fadeIn(el, CANCEL_FADE_MS)
+}
+
+/**
+ * `fade`: 見ている間に取消が届いたときだけ真（2026-11-03 選択「取消の覆いをふわっと」。説明「履歴として最初から
+ * 取消済みの地震は動かさない」）。
+ */
+function QuakeCancelOverlay({ cancelText, compact, fade }: { cancelText?: string; compact: boolean; fade: boolean }) {
+  // 気象庁が書いた取消しの概要（電文の `Body/Text`）は、アプリが組み立てた文言ではないので
+  // そのまま出す。オーバーレイは 10 秒で消えるが、理由を捨てる理由にはならない。
+  if (compact) {
+    // 閉じた行は高さが 1 行ぶんしか無いので、縦に 3 段積むと下が切れる。「取消」を左に置き、
+    // 文の 2 行を右に積む（2026-11-03 選択「案 A：横に並べる (Recommended)」）。
+    // 理由が長くて収まらないときは、右の列の中でスクロールできるようにしておく。
+    // 角は丸めない（開いたカードの覆いと同じ）。行は四角いので、丸めると四隅だけ暗くならずに残る。
+    return (
+      <div ref={fade ? fadeOverlayOnMount : undefined} className="absolute inset-0 flex items-center justify-center gap-3 bg-black/70 z-10 px-3">
+        <span className="flex-none font-black text-white" style={{ fontSize: '1.5rem', lineHeight: 1.1 }}>取消</span>
+        <div className="flex flex-col min-w-0 max-h-full overflow-y-auto py-1">
+          <span className="text-xs font-bold text-white/90">この地震情報は取り消されました</span>
+          {cancelText && (
+            <span className="text-white/80" style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-line' }}>{cancelText}</span>
+          )}
+        </div>
+      </div>
+    )
+  }
+  // 角は丸めない。開いたカードは四角い（角丸を持たない）ので、丸めると四隅 8px だけ暗くならずに残る。
   return (
-    <div className={`absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-lg ${compact ? 'px-3' : 'px-4'}`}>
-      <span className="font-black text-white" style={{ fontSize: compact ? '1.75rem' : '3rem', lineHeight: 1.1 }}>取消</span>
-      <span className={`${compact ? 'text-xs' : 'text-sm'} font-bold text-white/90 mt-1`}>この地震情報は取り消されました</span>
-      {/* 気象庁が書いた取消しの概要（電文の `Body/Text`）。アプリが組み立てた文言ではないので
-          そのまま出す。オーバーレイは 10 秒で消えるが、理由を捨てる理由にはならない。 */}
+    <div ref={fade ? fadeOverlayOnMount : undefined} className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 px-4">
+      <span className="font-black text-white" style={{ fontSize: '3rem', lineHeight: 1.1 }}>取消</span>
+      <span className="text-sm font-bold text-white/90 mt-1">この地震情報は取り消されました</span>
+      {/* オーバーレイは `absolute inset-0` でカードの高さに固定される。**本文がそれを超えると
+          覆いの上下へはみ出し、カードの外の行と重なる**（読み上げは長文を画面へ委ねる設計なので、
+          読めなくなると理由がどこにも残らない）。この要素の中でスクロールできるようにしておく。 */}
       {cancelText && (
-        // カードは `overflow-hidden` で、オーバーレイは `absolute inset-0`。**本文が下地の
-        // 高さを超えると下が切れる**（読み上げは長文を画面へ委ねる設計なので、そこで切れると
-        // 理由がどこにも残らない）。この要素の中でスクロールできるようにしておく。
-        <span
-          className={`${compact ? 'mt-1' : 'mt-2'} text-center text-white/80 overflow-y-auto`}
-          style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-line', maxHeight: '40%' }}
-        >
+        <span className="mt-2 text-center text-white/80 overflow-y-auto" style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-line', maxHeight: '40%' }}>
           {cancelText}
         </span>
       )}
@@ -646,15 +771,18 @@ function QuakeCancelOverlay({ cancelText, compact }: { cancelText?: string; comp
  * 名乗りで並べる。カード本体の帯は階級の見出しなので「長周期地震動」のまま短く残す。
  * 実電文の名乗りは「長周期地震動に関する観測情報」の 1 種類だけで、報ごとには変わらない。
  */
-function QuakeReportHeading({ reports, fallback, lpgmInfoName }: { reports?: QuakeReportRecord[]; fallback: IssueType; lpgmInfoName?: string }) {
+function QuakeReportHeading({ reports, fallback, lpgmInfoName, colored = false }: { reports?: QuakeReportRecord[]; fallback: IssueType; lpgmInfoName?: string; colored?: boolean }) {
   const labels = quakeReportLabels(reports, fallback)
   return (
     <>
       {labels.map((label, index) => (
         <Fragment key={`${index}:${label.type}`}>
           {index > 0 && ' / '}
-          {label.type}
-          {label.count != null && <SerialBadge serial={label.count} />}
+          {/* 一覧の行では情報名ごとに報の種類の色で書く（2026-11-01 選択「色分けする (Recommended)」） */}
+          <span style={colored ? { color: issueTypeTextColor(label.type) } : undefined}>
+            {label.type}
+            {label.count != null && <SerialBadge serial={label.count} />}
+          </span>
         </Fragment>
       ))}
       {lpgmInfoName && (
@@ -668,6 +796,14 @@ function QuakeReportHeading({ reports, fallback, lpgmInfoName }: { reports?: Qua
 }
 
 /**
+ * 国際津波関連情報（WEPA60）の英文だけから組んだカードの見出し（→ `JMAQuake.fromInternationalTsunami`）。地震情報の報を持たないので、
+ * 報の名乗りを並べる {@link QuakeReportHeading} の代わりに使う。色は遠地地震の報と同じ。
+ */
+function InternationalTsunamiHeading() {
+  return <span style={{ color: issueTypeTextColor('遠地地震') }}>{INTERNATIONAL_TSUNAMI_INFO_NAME}</span>
+}
+
+/**
  * 1 枚の地震カード。
  *
  * **`memo` で包む。** 自作地震計の波形を繋いでいる間、親（`EarthquakeTab`）は
@@ -676,13 +812,64 @@ function QuakeReportHeading({ reports, fallback, lpgmInfoName }: { reports?: Qua
  * 親で包まず、**地震の鍵をこちら側で作って渡す**（→ {@link Props.onSelect}）。
  */
 export const EarthquakeCard = memo(function EarthquakeCard({
-  quake, isLatest, isSelected, onSelect, lpgm, activeLpgmEventId, onToggleLpgm,
+  quake, isSelected: selected = false, reopenSignal, onSelect, lpgm, activeLpgmEventId, onToggleLpgm, lpgmFocusSeq,
   estimatedIntensity = null, internationalTsunamis, distributionActive = false, onToggleDistribution,
   unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
   marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView,
 }: Props) {
   /** このカードの地震を指す鍵。**親へ返すときに使う。** */
   const eventKey = quakeEventKey(quake)
+  // **畳むのはカードだけで、選択は外さない**（2026-11-03 選択「見出しも帯も閉じるだけ (Recommended)」。
+  // 説明「選択・地図・ポップアップはそのまま。畳んだ行をもう一度押すと開き直し、地図は動かさない」）。
+  // 開いて見せるのは、選ばれていて畳まれていないときだけ。別の地震が選ばれたら畳んだ印は捨てる。
+  const [collapsed, setCollapsed] = useState(false)
+  const rowRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => { if (!selected) setCollapsed(false) }, [selected])
+  useEffect(() => { if (reopenSignal !== 0) setCollapsed(false) }, [reopenSignal])
+  const isSelected = selected && !collapsed
+  // 取消の覆いを動かすのは、取消でない姿を一度でも描いた後に取消が届いたときの最初の 1 回だけ
+  // （開いたカードが取消で閉じた行へ替わると覆いが付け直されるので、2 回目は動かさない）
+  const sawUncancelledRef = useRef(!quake.cancelledAt)
+  const cancelFadeShownRef = useRef(false)
+  const fadeCancel = !!quake.cancelledAt && sawUncancelledRef.current && !cancelFadeShownRef.current
+  useEffect(() => { if (quake.cancelledAt) cancelFadeShownRef.current = sawUncancelledRef.current }, [quake.cancelledAt])
+  // カードを開く・畳むときの高さの動き（2026-11-03 選択「カードの開閉」。説明「行を押して開くとき、中身が下へ
+  // 180ms ほどで伸びる。見出し・帯で畳むときは縮む」）。押した瞬間の高さを控え、描き替わった後にそこから動かす
+  const openRootRef = useRef<HTMLDivElement>(null)
+  const resizeFromRef = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    const from = resizeFromRef.current
+    resizeFromRef.current = null
+    const el = isSelected ? openRootRef.current : rowRef.current
+    if (from === null || !el) return
+    const anim = growFrom(el, from, CARD_RESIZE_MS, CARD_RESIZE_ANIMATION_ID, true)
+    // 開くときは、見出しの段より下の中身を薄くから出す。高さだけを伸ばすと、伸び始めに見出し文などの
+    // 行が上半分だけ切れて見え、崩れたように見える（2026-11-03 発言「開いた瞬間崩れる瞬間が一瞬あります。」）
+    if (anim && isSelected) {
+      for (const child of Array.from(el.children)) {
+        if (child instanceof HTMLElement && !child.matches('.quake-open-head, .quake-pin-track')) fadeIn(child, CARD_RESIZE_MS)
+      }
+    }
+  }, [isSelected])
+  // 控えた高さが使われずに残ったら（押しても開閉が変わらなかった）捨てる。残すと、後で別の経路で
+  // 開閉が変わったときに古い高さから動く。上の effect より後に置く（同じ描き直しなら先に使われる）
+  useLayoutEffect(() => { resizeFromRef.current = null })
+  const collapseCard = () => {
+    resizeFromRef.current = openRootRef.current?.getBoundingClientRect().height ?? null
+    // 畳んだら、長周期の節を見せる求めは済んだことにする（後で開き直したときに古い求めで急に巻かない）
+    lpgmFocusDoneRef.current = lpgmFocusSeq
+    setCollapsed(true)
+  }
+  // 貼りつく帯から畳むと、カードが縮んで畳んだ行が画面の上へ抜けることがある。抜けたら行を一覧の頭へ戻す
+  useLayoutEffect(() => {
+    const row = rowRef.current
+    if (!collapsed || !row) return
+    const root = scrollParentOf(row)
+    // 一覧の見出しの行の下に潜っていても抜けたとみなす（着地の基準は scroll-margin-top と同じ値）
+    if (root && row.getBoundingClientRect().top < root.getBoundingClientRect().top + listHeadPx(row)) row.scrollIntoView({ block: 'start' })
+    // 押した見出し・帯は消えるので、フォーカスを畳んだ行へ移す（キーボードで畳んだ人が一覧の頭から辿り直さないように）
+    row.focus({ preventScroll: true })
+  }, [collapsed])
   /**
    * 印は**値の肩に置く点**で出す（→ `components/UpdateDot.tsx`）。文字色も器の色も触らない。
    *
@@ -738,19 +925,17 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const borrowedNote = borrowedSourceNote(borrowedHypocenter, borrowedDomesticTsunami)
   // 気象庁が添えた文の段落（電文の並び順。空の段落は持たない）。何も残らなければ枠ごと出さない。
   const forecastRest = quake.forecastText ? domesticTsunamiCardForecastText(quake.forecastText, earthquake.domesticTsunamiCode) : ''
-  // 標準版（P2PQuake）は固定付加文を持たず、海外への津波の見通しだけを値で運ぶ（→ `foreignTsunamiText`。
-  // 文面は気象庁の固定付加文 0221〜0228 の原文）。DMDSS 版ならこの文は固定付加文の原文に入っているので、
+  // 固定付加文の原文が無い報では、海外への津波の見通しを値から起こした文（→ `foreignTsunamiText`。
+  // 文面は気象庁の固定付加文 0221〜0228 の原文）を出す。原文にはこの文が入っているので、
   // 原文があればそちらを使う（有無の判定は読み上げと同じで、空白だけの原文は「無い」側へ倒す。二重に出さない）。
   // 原文から津波の文を除いて空になっても、見通しへは倒さない。置き場所は固定付加文と同じ先頭の段落
   // （2026-10-29 ユーザー承認。→ docs/spec/quake-spec.md §3「地震カードには付加文を 1 つの枠で出す」）。
   const forecastParagraph = quake.forecastText?.trim() ? forecastRest : (quake.foreignTsunamiText ?? '')
-  const commentParagraphs = [
-    { key: 'forecast', text: forecastParagraph },
-    // 末尾だけ詰める（`pre-wrap` なので末尾の改行が段落の間隔に上乗せされる）。自由付加文は全角スペースで
-    // 桁を揃えた表が入るので、先頭は触らない。
-    { key: 'var', text: (quake.varCommentText ?? '').trimEnd() },
-    { key: 'free', text: (quake.freeText ?? '').trimEnd() },
-  ].filter(p => p.text.trim() !== '')
+  // 1 文 1 行・中身で呼ぶ見出しに組む（→ `jmaCommentGroups`）。海外への津波の見通しは津波の文として並ぶ。
+  // 開いたカードでしか出さないので、閉じた行では組まない（一覧の全カードが描き直す回に、カードの数だけ回さない）
+  const quakeComments = useMemo(() => isSelected
+    ? jmaCommentGroups({ forecast: forecastParagraph, varComment: quake.varCommentText, free: quake.freeText })
+    : NO_COMMENTS, [isSelected, forecastParagraph, quake.varCommentText, quake.freeText])
   // 気象庁が文面を変えて表と一致しなくなったら記録を残す（一致しないと札の下に津波の文が重なって出るだけで、
   // ほかに気づく手掛かりが無い）。描画中の副作用にしないよう effect で出し、間引きは記録側が持つ。
   const domesticTsunamiCode = earthquake.domesticTsunamiCode
@@ -765,6 +950,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   const categoryNote = lpgm ? lpgmCategoryNoteWithRegions(lpgm.category, lpgm.headline) : ''
   /** 補足の見出しを出すか（判定は読み上げ側の診断と共有する → `canOpenLpgmNotes`）。 */
   const hasLpgmNotes = canOpenLpgmNotes(lpgm)
+  const lpgmComments = useMemo(() => isSelected
+    ? jmaCommentGroups({ forecast: lpgm?.forecastText, varComment: lpgm?.varCommentText, free: lpgm?.freeFormText })
+    : NO_COMMENTS, [isSelected, lpgm?.forecastText, lpgm?.varCommentText, lpgm?.freeFormText])
   // 震度分布ボタン。引き当ては一覧の側で済んでいる（→ {@link Props.estimatedIntensity}）。
   const matchedEstimated = estimatedIntensity
   const distributionState = estimatedIntensityAvailability(quake, matchedEstimated)
@@ -832,6 +1020,22 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     speakingLpgmNotes, lpgmNotesOpen, setLpgmNotesOpen,
     lpgm ? `lpgm:${lpgm.eventId}` : 'lpgm',
   )
+  /**
+   * 地震情報の補足。長周期と同じく既定で畳み、**この地震の**気象庁の文を読み上げているあいだだけ開く
+   * （2026-11-01 選択「畳んで、読み上げで開く (Recommended)」。手で開いたものは閉じない）。
+   * 主題は読む側と同じ関数で作る（→ `quakeTelegramTextTarget`）。録画ツール向けの `subject` は
+   * 地震カードの鍵（`quake:<eventKey>`。→ docs/spec/recording-interface-spec.md）。
+   */
+  const quakeNotesOpen = expanded.has(QUAKE_NOTES_KEY)
+  const setQuakeNotesOpen = (open: boolean) => setExpanded(prev => {
+    const next = new Set(prev)
+    if (open) next.add(QUAKE_NOTES_KEY); else next.delete(QUAKE_NOTES_KEY)
+    return next
+  })
+  const speakingQuakeNotes = speakingTelegramTextSubject === telegramTextSubject('quake', quakeTelegramTextTarget(quake))
+  const setQuakeNotesOpenByUser = useAutoOpenWhileSpeakingIn(
+    speakingQuakeNotes, quakeNotesOpen, setQuakeNotesOpen, `quake:${eventKey}`,
+  )
 
   /**
    * 未入電の点を切り分けた結果と、名前の解決に使う索引。**バッジとブロックで共有する。**
@@ -843,7 +1047,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
    * **行には出るのに印だけ付かない**という食い違いになる。
    *
    * **それでも所属を引けない場合、印を付ける行が決まらない。** DMDATA は観測点を `pref: ''` で
-   * 積むため、区域を持たない経路（P2PQuake）で座標テーブルが未読み込みのあいだ（起動直後の
+   * 積むため、電文が観測点の区域を持たず、座標テーブルが未読み込みのあいだ（起動直後の
    * 数百 ms）や、電文の観測点がテーブルに無い場合は県も区域も引けない。そのときは印が出ないが、
    * **ブロックには地点名が出る**ので情報自体は失われない（→ docs/spec/quake-spec.md §4）。
    */
@@ -957,7 +1161,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       const pref = prefOf(p)
       if (pref) unreceivedPrefs.add(pref)
       // 区域点はそのまま。都道府県ロールアップ点（addr === pref）は県として既に数えている。
-      // `pref` の有無では見分けない —— P2PQuake は区域の点にも県名を積む。
+      // 区域の点かどうかは `isAreaPoint` で見分ける。
       if (p.isArea) { if (isAreaPoint(p, areaPrefIndex)) unreceivedAreas.add(p.addr) }
       else {
         const region = regionOfStation(p)
@@ -1049,17 +1253,17 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     })
   }, [isSelected, lpgm, stationData])
 
-  // **一覧を組めずに震度一覧へ戻るときは記録する**（2026-10-22 ユーザー選択「戻すときに記録を残す (Recommended)」）。
-  // 押した利用者には震度一覧が出るだけで、長周期の行が組めなかったことは画面から分からない。
+  // **一覧を組めなかったときは記録する**（2026-10-22 ユーザー選択「戻すときに記録を残す (Recommended)」）。
+  // 長周期の欄には地域・観測点の行が無いまま出るだけで、組めなかったことは画面から分からない。
   // 同じ報で 1 回だけ残す（選択し直すたびに並ばないように）。
   const lpgmActiveHere = !!lpgm && !lpgm.cancelled && activeLpgmEventId === lpgm.eventId
   const lpgmFallbackNotedRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!isSelected || !lpgmActiveHere || !lpgm || lpgmGroups.length > 0) return
+    if (!isSelected || !lpgm || lpgm.cancelled || lpgmGroups.length > 0) return
     if (lpgmFallbackNotedRef.current === lpgm.id) return
     lpgmFallbackNotedRef.current = lpgm.id
-    log.warn(`[lpgm] 長周期地震動の一覧を組めず、震度一覧のまま出しました（${lpgm.id}・区域 ${lpgm.regions?.length ?? 0} 件・観測点 ${lpgm.points?.length ?? 0} 件・都道府県 ${lpgm.prefs?.length ?? 0} 件）`)
-  }, [isSelected, lpgmActiveHere, lpgm, lpgmGroups])
+    log.warn(`[lpgm] 長周期地震動の一覧を組めず、長周期の欄に地域・観測点の行を出せませんでした（${lpgm.id}・区域 ${lpgm.regions?.length ?? 0} 件・観測点 ${lpgm.points?.length ?? 0} 件・都道府県 ${lpgm.prefs?.length ?? 0} 件）`)
+  }, [isSelected, lpgm, lpgmGroups])
 
   /**
    * 印の付いた行が見えるように、その祖先を自動で開く。
@@ -1116,406 +1320,442 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     if (byLpgm.next !== expanded) setExpanded(byLpgm.next)
   }, [isSelected, rowsToExpand, lpgmToExpand, marks, lpgmMarks, expanded])
 
+  // 一覧の 1 行（見本 closed5）。閉じたカードと、開いたカードのスマホの帯（→ `QuakeOpenPin`）で同じものを使う。
+  const quakeDate = readDateTime('quakeListRow', earthquake.time)
+  const listRowFor = (lpgmTabbable: boolean) => (
+  <QuakeListRow
+    lpgmTabbable={lpgmTabbable}
+    scale={maxScale}
+    scaleLabel={maxScaleLabel}
+    orAbove={maxScaleOrAbove}
+    lpgmClass={lpgm && !lpgm.cancelled ? lpgm.maxClass : null}
+    heading={quake.fromInternationalTsunami
+      ? <InternationalTsunamiHeading />
+      : <QuakeReportHeading reports={quake.reports} fallback={issue.type} colored />}
+    chips={<>
+      {quake.operationStatus && (
+        <span className="shrink-0 rounded-[3px] px-1.5 font-bold leading-[1.55]" style={{ backgroundColor: '#1f2937', color: '#fcd34d', border: '1px solid #d97706' }}>
+          {quake.operationStatus}報
+        </span>
+      )}
+      {isKnownCorrection(issue.correct) && (
+        <span className="shrink-0 rounded-[3px] bg-yellow-900 px-1.5 font-bold leading-[1.55] text-yellow-300">
+          {formatCorrectType(issue.correct)}
+        </span>
+      )}
+    </>}
+    tsunami={quake.fromInternationalTsunami ? null : { text: tsunamiInfo.text, color: tsunamiInfo.color, title: domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined }}
+    time={quakeDate ? formatHourMinute(quakeDate) : QUAKE_LIST_TIME_UNKNOWN}
+    name={epicenterLabel}
+    magnitude={hasFacts ? { text: formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType), value: hypocenter.magnitude } : null}
+    depth={hasFacts ? { text: formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true), value: hypocenter.depth } : null}
+  />
+  )
+  // 開いたカードの開閉（報の一覧・気象庁からの補足）と、帯を出すかを見る震度の枠
+  const [timelineOpen, setTimelineOpen] = useState(false)
+  // 畳んだら報の一覧も閉じる（次に開いたとき、前に開いたままの一覧で始めない）
+  useEffect(() => { if (!isSelected) setTimelineOpen(false) }, [isSelected])
+  const factsRef = useRef<HTMLDivElement>(null)
+  // 見出しの段の高さをカードへ書く（左右分割の広い組では、震度の枠をこの段のすぐ下へ貼りつける。→ index.css）。
+  // 段は折り返して 2 行になることがあるので、決め打ちせずに測る
+  const openHeadRef = useRef<HTMLDivElement>(null)
+  // 震度の枠・長周期の札を押したときに巻く先（2026-11-03 選択「震度の枠→各地の震度へ」「長周期の札→長周期の節へ」）
+  const intsSectionRef = useRef<HTMLDivElement>(null)
+  const lpgmSectionRef = useRef<HTMLDivElement>(null)
+  const toInts = () => { if (intsSectionRef.current) scrollOpenSectionIntoView(intsSectionRef.current) }
+  const toLpgm = () => { if (lpgmSectionRef.current) scrollOpenSectionIntoView(lpgmSectionRef.current) }
+  // 広い組で見出しの段と震度の枠を貼りつけるのは、貼りつく高さ（一覧の見出しの行＋見出しの段＋枠と値）が
+  // 一覧の見える高さの 4 割までのときだけ。超えたら狭い組と同じ帯にする（2026-11-03 発言「並び方じゃなくて
+  // 高さ見たほうがいいのかな」、選択「4 割まで (Recommended)」）。印（`data-stick-tall`）は CSS が見る（→ index.css）。
+  // 測るのは貼りつけていてもいなくても同じ高さなので、印を付け替えても判定は往復しない
+  useLayoutEffect(() => {
+    const head = openHeadRef.current
+    const facts = factsRef.current
+    const card = head?.parentElement
+    if (!isSelected || !head || !facts || !card) return
+    const root = scrollParentOf(card)
+    const measure = () => {
+      const headH = head.getBoundingClientRect().height
+      // 読むのは貼りつく震度の枠（`.quake-stick`）だけなので、そこへ書く。カードの根へ書くと、受け継ぐ中身
+      // （開いた県の観測点まで）のスタイルを全部計算し直す
+      facts.style.setProperty('--qk-open-head-h', `${headH}px`)
+      const stuck = listHeadPx(card) + headH + facts.getBoundingClientRect().height
+      const view = root?.clientHeight ?? 0
+      card.toggleAttribute('data-stick-tall', view > 0 && stuck <= view * STICK_MAX_SHARE)
+    }
+    window.addEventListener('resize', measure)
+    if (typeof ResizeObserver === 'undefined') {
+      measure()
+      return () => window.removeEventListener('resize', measure)
+    }
+    // ここで測らず、ResizeObserver の初回の呼び出しに任せる（見張りを始めると、その回の描画の前に一度呼ばれる）。
+    // 描き替えた直後に高さを読むと、カードを開いた描き直しの中でレイアウトを 1 回余計に強いる
+    const ro = new ResizeObserver(measure)
+    ro.observe(head)
+    ro.observe(facts)
+    if (root) ro.observe(root)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [isSelected])
+  // 長周期の節を見せる求め（→ `lpgmFocusSeq`）。巻けるのは、開いていて長周期の節が描かれているときだけ。
+  // まだ巻けない（畳んでいたのを開き直す途中・長周期の電文が先に届いた）なら、巻けるようになった描き直しで巻く。
+  // カードの開く動きが走っている間は、伸び終えてから巻く（途中の高さで測ると着地がずれる。→ useFollowScroll と同じ）
+  const lpgmFocusDoneRef = useRef(0)
+  const lpgmSectionShown = !!lpgm && !lpgm.cancelled
+  useLayoutEffect(() => {
+    const seq = lpgmFocusSeq
+    if (seq === 0 || lpgmFocusDoneRef.current === seq || !isSelected || !lpgmSectionShown) return
+    const section = lpgmSectionRef.current
+    const root = openRootRef.current
+    if (!section || !root) return
+    lpgmFocusDoneRef.current = seq
+    const resizing = root.getAnimations?.().filter(a => a.id === CARD_RESIZE_ANIMATION_ID && a.playState === 'running') ?? []
+    if (resizing.length === 0) {
+      scrollOpenSectionIntoView(section)
+      return
+    }
+    void Promise.all(resizing.map(a => a.finished.catch(() => undefined))).then(() => {
+      // 伸びている間に畳まれた・別の求めが来たなら巻かない
+      if (section.isConnected && lpgmFocusDoneRef.current === seq) scrollOpenSectionIntoView(section)
+    }).catch((err: unknown) => log.warn('[地震タブ] 長周期の節へ巻けなかった', err))
+  }, [lpgmFocusSeq, isSelected, lpgmSectionShown])
+  // 一覧に載せるのは、カードに紐づく電文すべて（2026-11-01 選択「紐づく電文のうち最新の発表時刻 (Recommended)」。
+  // 地震情報・長周期・国際津波・推計震度分布図・値を借りた津波の電文）。借りた津波は震源と津波の有無で
+  // 別の報になりうるので、同じ報（名前と時刻が同じ）は 1 行にまとめる。
+  const borrowedTelegrams = useMemo(() => {
+    const seen = new Set<string>()
+    const out: { label: string; time: string }[] = []
+    for (const src of [quake.hypocenterSource, quake.domesticTsunamiSource]) {
+      if (!src) continue
+      const key = `${src.infoName}|${src.reportTime}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ label: src.infoName, time: src.reportTime })
+    }
+    return out
+  }, [quake.hypocenterSource, quake.domesticTsunamiSource])
+  // **開いたカードでだけ組む**（閉じた行は一覧を出さない）。長周期は最新の 1 報だけを持つが、
+  // 全期間の控え（2020-11〜2026-10・VXSE62 の地震 91 件）で同じ地震の 2 通目は 0 件だった
+  // （2026-11-02 に数えた）ので、1 報で届いた報をすべて指している。推計震度分布図は置き換えた
+  // 前の報の発表時刻を `previousTimes` に引き継いでいるので、それも並べる。
+  const timeline = useMemo(() => !isSelected ? [] : quakeReportTimeline(quake, [
+    ...(lpgm && !lpgm.cancelled ? [{ label: lpgm.infoName ?? '長周期地震動に関する観測情報', time: lpgm.time }] : []),
+    ...internationalTsunamis.map(x => ({ label: '国際津波関連情報', time: x.time })),
+    ...(estimatedIntensity
+      ? [...(estimatedIntensity.previousTimes ?? []), estimatedIntensity.time].map(time => ({ label: '推計震度分布図', time }))
+      : []),
+    ...borrowedTelegrams,
+  ]), [isSelected, quake, lpgm, internationalTsunamis, estimatedIntensity, borrowedTelegrams])
+
   if (isSelected) {
-    const typeStyle = getIssueTypeStyle(issue.type)
     const magColor = getMagnitudeColor(hypocenter.magnitude)
     const depthColor = getDepthColor(hypocenter.depth)
+    // 開いたカード（見本 opened.html の open()。→ docs/quake-tab-redesign.md「決まっていること」）。
+    // 上から: 見出しの行（押すと畳む・「更新」で報の一覧）→ 見出し文 → 震度の枠と震源の値（広い画面では
+    // 一覧の上へ貼りつく）→ 気象庁からの補足 → 各地の震度 → 長周期地震動 → 国際津波関連情報 → 波形 → 官署。
+    const lpgmShown = lpgm && !lpgm.cancelled ? lpgm : undefined
+    const quakeTimeText = formatQuakeTime(earthquake.time)
+    const lastTimeline = [...timeline].reverse().find(e => e.ms !== null)
+    const tileBg = getIntensityColor(maxScale)
+    const showObservedSeg = canDrawDistribution || !!lpgmShown
+    const toObserved = () => {
+      if (distributionActive) onToggleDistribution?.(eventKey)
+      if (lpgmActiveHere && lpgm) onToggleLpgm?.(lpgm.eventId)
+    }
+    // 切り替えの 1 つ。カード全体は <button> ではないが、行の作法（`div role="button"`）に揃える。
+    const segButton = (label: string, on: boolean, onClick: () => void, title?: string) => (
+      <div
+        key={label}
+        role="button"
+        tabIndex={0}
+        aria-pressed={on}
+        title={title}
+        onClick={(e) => { e.stopPropagation(); onClick() }}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onClick() } }}
+        className={`cursor-pointer whitespace-nowrap px-2 py-[3px] ${on ? 'bg-[#24303d] text-white' : 'text-secondary hover:text-white'}`}
+      >
+        {label}
+      </div>
+    )
 
     return (
-      <button
+      <div
         {...{ [QUAKE_CARD_KEY_ATTR]: eventKey }}
-        type="button"
-        onClick={quake.cancelledAt ? undefined : () => onSelect?.(eventKey)}
-        aria-pressed={true}
-        className={`w-full text-left bg-card rounded-lg border transition-colors overflow-hidden relative ${quake.cancelledAt ? 'cursor-default' : 'cursor-pointer hover:opacity-90'}`}
-        style={{
-          borderColor: typeStyle.cardBorder,
-          boxShadow: `0 0 0 1px ${typeStyle.cardBorder}40`,
-        }}
+        ref={openRootRef}
+        // 地（押せる所の外）を押すと、地図をこの地震の全体へ寄せ直す（2026-11-03 選択「開いたカードの地を押す
+        // (Recommended)」。前の作りでは開いたカード全体が 1 つのボタンで、どこを押しても寄せ直していた）
+        onClick={quake.cancelledAt ? undefined : (e) => { if (isPlainBackgroundClick(e)) onSelect?.(eventKey) }}
+        // `isolate`: 取消の覆い（z-10）と中で貼りつく段をこのカードの中に閉じる。閉じないと、一覧の見出しの行（z-[4]）・
+        // 日付の区切り（z-[3]）と同じ重なりで比べられ、巻いたとき覆いがその上へ被る
+        className="quake-open relative isolate border-b border-border bg-card"
+        style={{ padding: '4px var(--qk-pad) 16px', fontSize: 'var(--qk-f)', boxShadow: `inset 3px 0 0 ${tileBg}` }}
       >
-        {quake.cancelledAt && <QuakeCancelOverlay cancelText={quake.cancelText} compact={false} />}
-        {/* 種別ヘッダー */}
-        <div
-          className="w-full py-1.5 px-4 text-center text-xs font-bold tracking-widest"
-          style={{
-            backgroundColor: typeStyle.headerBg,
-            color: typeStyle.headerColor,
-            borderBottom: `1px solid ${typeStyle.headerBorder}`,
-          }}
-        >
-          {/* 受け取った電文種別を `/` でつないで出す（→ `QuakeReportHeading`）。気象庁は
-              震度速報 → 震源情報 → 震度速報 … と前後して発表するため、最後に届いた 1 種別だけ
-              だと「震源情報も受け取っている」ことが画面から消える。**色は代表種別のまま**。 */}
-          <QuakeReportHeading reports={quake.reports} fallback={issue.type} lpgmInfoName={lpgm?.infoName} />
-          {/* 電文が自分で名乗っている運用種別（`Control/Status`）。訓練・試験のときだけ出す。
-              **本物と見分けられるようにする** —— 検証用に受信した試験報もカードへ流している。 */}
+        {quake.cancelledAt && <QuakeCancelOverlay cancelText={quake.cancelText} compact={false} fade={fadeCancel} />}
+        {/* スマホ幅では、震度の枠が画面の外へ出たら閉じた行と同じ帯を上に貼りつける（2026-11-02 選択「畳んだ行の帯」） */}
+        <QuakeOpenPin targetRef={factsRef} onActivate={quake.cancelledAt ? undefined : collapseCard} onLpgmActivate={lpgmShown ? toLpgm : undefined}>{listRowFor(!!lpgmShown && !quake.cancelledAt)}</QuakeOpenPin>
+        {/* 見出しの行。押すと畳む（選択は外さない）。 */}
+        <div ref={openHeadRef} className="quake-open-head flex flex-wrap items-baseline gap-x-2.5 gap-y-1 border-b border-border bg-card py-2" style={{ fontSize: 'var(--qk-fs)' }}>
+          <button
+            type="button"
+            aria-expanded={true}
+            onClick={quake.cancelledAt ? undefined : collapseCard}
+            className="flex min-w-0 items-baseline gap-2.5 text-left"
+          >
+            <span className="text-[#9fb3c8]">▾</span>
+            <b className="font-semibold text-[#cfd6dd]" style={{ fontSize: 'var(--qk-f)' }}>
+              {quake.fromInternationalTsunami
+                ? <InternationalTsunamiHeading />
+                : <QuakeReportHeading reports={quake.reports} fallback={issue.type} lpgmInfoName={lpgm?.infoName} colored />}
+            </b>
+          </button>
+          {/* 電文が自分で名乗っている運用種別（`Control/Status`）。訓練・試験のときだけ出す。 */}
           {quake.operationStatus && (
-            <span className="ml-2 px-1.5 py-0.5 rounded-sm" style={{ backgroundColor: '#1f2937', color: '#fcd34d', border: '1px solid #d97706' }}>
+            <span className="rounded-sm px-1.5 font-bold" style={{ backgroundColor: '#1f2937', color: '#fcd34d', border: '1px solid #d97706' }}>
               {quake.operationStatus}報
             </span>
           )}
+          {isKnownCorrection(issue.correct) && (
+            <span className="rounded-sm bg-yellow-900 px-1.5 font-bold text-yellow-300">{formatCorrectType(issue.correct)}</span>
+          )}
+          {lastTimeline && lastTimeline.ms !== null && (
+            <button
+              type="button"
+              aria-expanded={timelineOpen}
+              onClick={() => setTimelineOpen(v => !v)}
+              className="whitespace-nowrap rounded border border-border px-1.5 text-[#9fb3c8] hover:text-white"
+            >
+              更新 {formatTimelineTime(lastTimeline.ms)} <DisclosureCaret open={timelineOpen} glyph="▾" turn={180} />
+            </button>
+          )}
         </div>
+        <Reveal open={timelineOpen} className="mt-1.5 mb-0.5 rounded-md border border-border px-2.5 py-1 text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{() => (<>
+            {timeline.map((e, idx) => (
+              <div key={idx} className={`flex justify-between gap-3 py-[3px] ${idx > 0 ? 'border-t border-border/60' : ''}`}>
+                <span>{e.label}</span>
+                <span className="tabular-nums">{e.ms !== null ? formatTimelineTime(e.ms) : QUAKE_LIST_TIME_UNKNOWN}</span>
+              </div>
+            ))}
+          </>)}</Reveal>
 
         {/* 一部の取消（震源情報まで進んだカードに震度速報だけの取消が届いた等）。カードは残し、
             取り消された情報の名前と、気象庁が書いた理由（`Body/Text`）をそのまま出す
             （2026-10-15 ユーザー承認「見出しの下に一行＋理由（推奨）」）。取り消された内容は
             当て直しでカードから消えているので、**ここが消えたことを伝える唯一の場所**。 */}
         {quake.retractedReports?.map(r => (
-          <div
-            key={`${r.issueType}#${r.reportTime}`}
-            className="px-4 py-1.5 text-center text-yellow-300 border-b border-border"
-          >
-            <div className="text-sm font-bold">{r.issueType}は取り消されました</div>
+          <div key={`${r.issueType}#${r.reportTime}`} className="border-b border-border py-1.5 text-yellow-300">
+            <div className="font-bold">{r.issueType}は取り消されました</div>
             {r.cancelText && (
-              <div className="mt-0.5 text-xs text-yellow-300/80" style={{ whiteSpace: 'pre-line' }}>{r.cancelText}</div>
+              <div className="mt-0.5 text-yellow-300/80" style={{ whiteSpace: 'pre-line', fontSize: 'var(--qk-fs)' }}>{r.cancelText}</div>
             )}
           </div>
         ))}
 
-        {/* 画面が狭い・低い環境（roomy 未満＝スマホ縦/横）では余白と文字を詰め、
-            各地の震度がスクロールせずに見えるようにする。roomy 以上は従来の寸法。 */}
-        <div className="flex flex-col gap-1.5 p-2 roomy:gap-2 roomy:p-3">
-          {/* 最大震度（横並び） */}
-          <div
-            className="relative w-full rounded-lg py-1.5 px-3 flex items-center justify-center gap-2 roomy:py-3 roomy:px-5 roomy:gap-4"
-            style={{
-              backgroundColor: getIntensityBgColor(maxScale),
-              border: `2px solid ${getIntensityColor(maxScale)}`,
-              // 枠は震度階級の色なので触らない。印は値の肩の点で出す（→ `markDot`）。
-            }}
-          >
-            <span className="text-sm font-medium roomy:text-base" style={{ color: getIntensityColor(maxScale) }}>
-              最大震度
-            </span>
-            <span
-              className="font-black leading-none text-[3.25rem] roomy:text-[5.5rem]"
-              style={{ color: '#ffffff' }}
-            >
-              {maxScaleLabel}
-              {/* 「以上」は本体より小さく添える（→ `maxScaleOrAbove` の注記）。同じ大きさで
-                  並べると横並びのラベルと競って折り返す。 */}
-              {maxScaleOrAbove && (
-                <span className="font-bold text-[1.25rem] roomy:text-[1.75rem]">以上</span>
-              )}
-            </span>
-            {/* **中央寄せの計算から外す。** 器は `justify-center` なので、印を flex の子として
-                足すと出た瞬間に「最大震度」と数字が印の幅＋隙間のぶん左へずれる。 */}
-            {markDot('maxScale', 'lg', 'absolute right-2 top-2 roomy:right-3 roomy:top-3')}
-          </div>
+        {/* 見出し文（`Head/Headline/Text`）。電文のまま出す。 */}
+        {quake.headline && <div className="py-2 text-[#cfd6dd]">{quake.headline}</div>}
 
-          {/* 長周期地震動観測情報（クリックで地図表示トグル）。
-              カード自体が<button>のため、ネスト禁止のHTML仕様に合わせ<div role="button">にする。 */}
-          {lpgm && !lpgm.cancelled && (
+        {/* 震度の枠と震源の値。広い画面では一覧の上へ貼りつく（→ index.css の quake-stick） */}
+        <div ref={factsRef} className="quake-stick bg-card">
+          <div className="grid border-b border-border py-3" style={{ gridTemplateColumns: 'var(--qk-big) 1fr', gap: 'var(--qk-fact-gap)' }}>
+            {/* 前の版の形：濃い地・震度の色の縁・「最大震度」・白い極太の数字。右の文字の列に合わせて縦に伸ばし、
+                中身は上下の中央（2026-11-03 選択「B2：縦に伸ばし中身は中央 (Recommended)」）。
+                押すと各地の震度へ、長周期の札を押すと長周期地震動の節へ巻く（同日選択「震度の枠→各地の震度へ」
+                「長周期の札→長周期の節へ」） */}
             <div
               role="button"
               tabIndex={0}
-              onClick={(e) => { e.stopPropagation(); onToggleLpgm?.(lpgm.eventId) }}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onToggleLpgm?.(lpgm.eventId) } }}
-              className="w-full rounded-lg py-1 px-3 flex items-center justify-center gap-2 hover:opacity-80 transition-opacity cursor-pointer roomy:py-2 roomy:px-4 roomy:gap-4"
-              style={{
-                backgroundColor: getLpgmClassBgColor(lpgm.maxClass),
-                // 枠線・アウトラインは装飾のヘアラインのため px 据え置き（UI 倍率に連動させない）。
-                // 文字・余白側は rem で書いてあり倍率に追従する。
-                border: `2px solid ${getLpgmClassColor(lpgm.maxClass)}`,
-                outline: activeLpgmEventId === lpgm.eventId
-                  ? `2px solid ${getLpgmClassColor(lpgm.maxClass)}`
-                  : undefined,
-                outlineOffset: '2px',
-              }}
+              onClick={toInts}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toInts() } }}
+              className="quake-tile relative box-border flex cursor-pointer flex-col self-stretch overflow-hidden rounded-md"
+              style={{ ...quakeTileColors(maxScale), width: 'var(--qk-big)' }}
             >
-              <span className="text-xs font-medium roomy:text-sm" style={{ color: getLpgmClassColor(lpgm.maxClass) }}>
-                長周期地震動
-              </span>
-              <span className="text-xl font-black roomy:text-2xl" style={{ color: '#ffffff' }}>
-                {getLpgmClassLabel(lpgm.maxClass)}
-              </span>
-            </div>
-          )}
-          {/* 長周期の電文自身が持つ震源・規模・全国の最大震度・地震発現時刻（→ `LpgmQuakeFacts`） */}
-          {lpgm && !lpgm.cancelled && <LpgmQuakeFacts lpgm={lpgm} marks={lpgmMarks} />}
-          {/* 電文の「観測情報の種類」（`LgCategory`）が伝えているのは、階級を観測した地域の中に
-              震度が小さい地域があるかどうか。**分類番号は出さず意味だけ書く**（→ `lpgmCategoryNote`）。
-              **この一文だけは畳まない。** 1 行しかないうえ、その地震でしか言えない事実で、
-              下の折りたたみに入れても縮む量はほとんど変わらない。 */}
-          {lpgm && !lpgm.cancelled && categoryNote && (
-            <div className="text-secondary" style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
-              {categoryNote}
-            </div>
-          )}
-          {/* 気象庁からの補足は畳んで置く。中身は付加文 3 種 —— 固定（`ForecastComment/Text`。
-              この地震について気象庁が添える定型文で、実電文では緊急地震速報の発表の有無を
-              伝えている）・その他の固定（`VarComment/Text`）・自由（`FreeFormComment`。階級ごとの
-              揺れの言い換え）—— と、気象庁の詳細ページ（`Comments/URI`）への導線。
-
-              **開いたままだと主要な情報が画面の外へ出る。** この位置は震央地名・規模より**上**で、
-              上下分割では開いたままだとどちらも初期表示に入らない。**押し下げ量の実測値は
-              docs/spec/quake-spec.md §8「気象庁からの補足は畳んで置く」が単一情報源**
-              （同じ値を 2 箇所に書くとずれる。**実測値の置き場所の作法**が津波の付加文と同じで、
-              畳むか重ねるかという見せ方のほうは別 —— 理由は同節）。
-
-              **「解説」の語を使わない。** 南海トラフ地震関連解説情報のバナーと同じ画面に並ぶため、
-              語幹が被ると別の情報だと読み取れない。
-
-              開閉は `<div role="button">` で作る（カード自体が `<button>` なので入れ子にできない。
-              震度一覧の行と同じ作法）。 */}
-          {hasLpgmNotes && (
-            <div
-              role="button"
-              tabIndex={0}
-              aria-expanded={lpgmNotesOpen}
-              onClick={(e) => { e.stopPropagation(); setLpgmNotesOpenByUser(!lpgmNotesOpen) }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.stopPropagation(); e.preventDefault(); setLpgmNotesOpenByUser(!lpgmNotesOpen)
-                }
-              }}
-              className="text-secondary w-fit cursor-pointer hover:text-white transition-colors"
-              style={{ fontSize: '0.75rem', lineHeight: 1.5 }}
-            >
-              気象庁からの補足
-              <span className="ml-1.5" style={{ color: '#9ca3af' }}>{lpgmNotesOpen ? '▾' : '▸'}</span>
-            </div>
-          )}
-          {/* **自由付加文は改行と空白を保つ**（地震情報側と同じ扱い。全角スペースの表が入る）。 */}
-          {lpgm && !lpgm.cancelled && lpgmNotesOpen && lpgm.forecastText && (
-            <div className="text-secondary" style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
-              {lpgm.forecastText}
-            </div>
-          )}
-          {lpgm && !lpgm.cancelled && lpgmNotesOpen && lpgm.varCommentText && (
-            <div className="text-secondary" style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
-              {lpgm.varCommentText}
-            </div>
-          )}
-          {lpgm && !lpgm.cancelled && lpgmNotesOpen && lpgm.freeFormText && (
-            <div
-              className="text-secondary"
-              style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}
-            >
-              {lpgm.freeFormText}
-            </div>
-          )}
-          {/* **アプリが出せないもの（波形・スペクトル）の在りかを電文自身が示している**ので、
-              そこへ行ける導線を残す。自由付加文も同じ URL を文中で案内しているため、
-              畳む単位はこの 4 つで 1 つにまとめている。 */}
-          {lpgm && !lpgm.cancelled && lpgmNotesOpen && lpgm.uri && (
-            <a
-              href={lpgm.uri}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="text-blue-400 underline w-fit"
-              style={{ fontSize: '0.75rem', lineHeight: 1.5 }}
-            >
-              気象庁の詳細ページ（波形・スペクトル）
-            </a>
-          )}
-
-          {/* 日時 + 訂正情報。**日時として読めないときは語を出す**（→ `formatters.ts` の
-              `readDateTime`）。ここはカードの主題（いつ起きた地震か）で、空欄にすると
-              隣の種別バッジだけが残り、時刻を読み落としたのか電文に無いのか分からない。 */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-secondary text-base roomy:text-xl">
-              {formatQuakeTimeLabeled(earthquake.time)}
-            </span>
-            {isKnownCorrection(issue.correct) && (
-              <span className="text-xs bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded-sm font-medium shrink-0">
-                {formatCorrectType(issue.correct)}
-              </span>
-            )}
-            {/* 電文を編集した官署（`Control/EditorialOffice`）。**常に出す**（2026-10-22 ユーザー承認
-                「3-B 編集官署 …」）。**`issue.source` ではなく専用の欄を見る** —— あちらは発表官署や
-                標準版の発表元へ落ちるので、出すとラベルが事実を誤らせる。実測と規約は
-                `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」。 */}
-            {issue.editorialOffice && (
-              <span className="text-xs text-secondary shrink-0">編集官署 {issue.editorialOffice}</span>
-            )}
-            {/* 電文を発表した官署（`Control/PublishingOffice`）。編集官署の隣に同じ形で出す
-                （2026-10-30 ユーザー選択「編集官署の隣に同じ形で (Recommended)」）。 */}
-            {issue.publishingOffice && (
-              <span className="text-xs text-secondary shrink-0">発表官署 {issue.publishingOffice}</span>
-            )}
-          </div>
-
-          {/* 震源地。**緯度・経度はこの直下に置く** —— どちらも「どこで起きたか」を言う欄で、
-              あいだに規模・津波・付加文を挟むと、震央地名を読んだあとに座標を探すことになる。 */}
-          {/* **印は名前を出しているときだけ。** 名前が無い報では固定文言「震源調査中」が出るので、
-              そこへ印を当てると**文言そのものが新しくなった**ように読め、借りた印なら「震源調査中」
-              という文言が津波から来たように読める。 */}
-          <div className="font-bold text-white leading-tight text-[1.375rem] roomy:text-[1.875rem] rounded-sm">
-            {epicenterLabel}
-            {borrowedHypocenter && hypocenter.name && <BorrowedMark />}
-            {hypocenter.name && markDot('hypocenterName', 'md', 'align-top ml-1')}
-          </div>
-          {/* 震央補助表現（「輪島の東北東30km付近」）。震央地名より具体的に場所が分かる。電文が
-              持っているときだけ出し、標準版（P2PQuake）は持たない。津波カードと同じくラベルを付けず、
-              座標と同じ大きさで震源名の直下に置く（2026-10-19 ユーザー承認「震源名の直下に 1 行 (推奨)」）。
-              **文が別の文へ変わったときだけ更新の印を付ける**（座標の行と同じ大きさ。2026-10-19 ユーザー承認
-              「1 で」）。文が現れただけの報では付けない（値が無い欄に値が付いたのと同じ扱い → `changedQuakeFacts`）。
-              **名前が無い報でも出す。** 震源名の欄は名前が無いと固定文言「震源調査中」に倒れるので印を
-              付けないが、この行は電文（借りたなら津波電文）が書いた文そのものなので、借りたなら印を付ける。 */}
-          {hypocenter.nameFromMark && (
-            <div className="text-xs text-secondary roomy:text-sm">
-              {formatNameFromMark(hypocenter.nameFromMark)}
-              {borrowedHypocenter && <BorrowedMark />}
-              {markDot('nameFromMark', 'sm', 'align-top ml-1')}
-            </div>
-          )}
-          {/* 震源を決めた機関（`Hypocenter/Source`）。**気象庁以外が決めた震源を採ったときだけ**
-              電文に入る（Ⅱ.33 1-3-2）ので、機関名だけでは含意（気象庁の決定ではない）が伝わらない。
-              ラベルに書く。**津波カードと同じ文面にする**（2026-10-22 ユーザー承認「6-A 津波タブと同じ」。
-              同じ事実を 2 箇所で別の言い方にしない）。機関名は原文のまま出す（例: 「ＵＳＧＳ」）。 */}
-          {hypocenter.source && (
-            <div className="text-xs text-secondary roomy:text-sm">
-              震源決定: {hypocenter.source}（気象庁以外）
-            </div>
-          )}
-          {hasLocation && (
-            <div className="text-xs text-secondary roomy:text-sm">
-              {formatCoordinate(hypocenter.latitude, hypocenter.longitude)}
-              {borrowedHypocenter && <BorrowedMark />}
-              {markDot('coordinate', 'sm', 'align-top ml-1')}
-            </div>
-          )}
-
-          {/* マグニチュード・深さ（2カラムグリッド） */}
-          {hasFacts && (
-            <div className="grid grid-cols-2 gap-2">
-              <div
-                className="flex flex-col gap-0.5 rounded-lg p-2 roomy:gap-1 roomy:p-2.5"
-                style={{
-                  backgroundColor: `${magColor}26`,
-                  border: `2px solid ${magColor}`,
-                  // 枠は器の色（規模の段階）なので触らない。印は値の肩の点で出す。
-                }}
-              >
-                {/* 見出しは種別の名前、値は記号つき（`Mj7.0`）。**名前と記号を同じ枠に並べ、記号の読み方を
-                    見出しで示す**（2026-10-23 ユーザー承認「まあそれで行きましょう」。値の下へ名前を添えていた版は
-                    「マグニチュード 7.0 気象庁マグニチュード」と読めた）。→ `magnitudeHeading` */}
-                <span className="text-xs font-medium tracking-wide" style={{ color: magColor }}>
-                  {magnitudeHeading(hypocenter.magnitudeType)}
-                  {borrowedHypocenter && <BorrowedMark />}
+              <div data-tile className="quake-tile-part flex flex-1 flex-col items-center justify-center gap-1 py-1 leading-none">
+                <span className="font-semibold" style={{ fontSize: 'var(--qk-fs)', color: liftForContrast(getIntensityColor(maxScale), getIntensityBgColor(maxScale)) }}>最大震度</span>
+                <span className="font-black" style={{ fontSize: 'calc(var(--qk-big-f) * 0.75)' }}>
+                  <TileScaleLabel label={maxScaleLabel} />
                 </span>
-                {/* 規模不明（-1／NaN）を toFixed に通すと "-1.0"／"NaN" と表示される。深さ側の formatDepth と揃える。
-                    数値が無くても気象庁が説明を添えていればそれを出す（「Ｍ８を超える巨大地震」を
-                    「不明」で潰さない）。説明は数値より長いので、そのときだけ字を小さくする。 */}
-                <span
-                  className={`font-black leading-none ${hypocenter.magnitudeCondition && !hasMagnitude(hypocenter.magnitude) ? 'text-[0.9375rem] roomy:text-[1.125rem] leading-snug' : 'text-[1.375rem] roomy:text-[1.75rem]'}`}
-                  style={{ color: '#ffffff' }}
+                {/* 「以上」は本体より小さく添える（→ `maxScaleOrAbove` の注記） */}
+                {maxScaleOrAbove && <span className="text-[0.8rem] font-bold">以上</span>}
+              </div>
+              {lpgmShown && (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); toLpgm() }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toLpgm() } }}
+                  className="quake-tile-part quake-tile-lpgm flex items-center justify-center font-bold text-white"
+                  style={{ height: 'var(--qk-band-h)', fontSize: 'var(--qk-band-f)', backgroundColor: getLpgmClassColor(lpgmShown.maxClass), borderTop: '1px solid rgba(0,0,0,.35)' }}
                 >
-                  {formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)}
-                  {markDot('magnitude', 'md', 'align-top ml-1')}
-                </span>
-              </div>
-              <div
-                className="flex flex-col gap-0.5 rounded-lg p-2 roomy:gap-1 roomy:p-2.5"
-                style={{
-                  backgroundColor: `${depthColor}26`,
-                  border: `2px solid ${depthColor}`,
-                  // 同上（枠は深さの段階の色）。
-                }}
-              >
-                <span className="text-xs font-medium tracking-wide" style={{ color: depthColor }}>
-                  深さ
-                  {borrowedHypocenter && <BorrowedMark />}
-                </span>
-                <span className="font-black leading-none text-[1.375rem] roomy:text-[1.75rem]" style={{ color: '#ffffff' }}>
-                  {formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}
-                  {markDot('depth', 'md', 'align-top ml-1')}
-                </span>
-              </div>
+                  {getLpgmClassLabel(lpgmShown.maxClass).replace('階級', '長周期')}
+                </div>
+              )}
+              {markDot('maxScale', 'md', 'absolute right-1 top-1')}
             </div>
-          )}
-
-          {/* 国内津波情報。「津波警報等」だけは語に何が含まれるか説明を添える（→ `formatDomesticTsunami`）。 */}
-          <div
-            className="relative w-full rounded-lg py-1 px-3 text-center font-bold text-sm roomy:py-2 roomy:text-base"
-            title={domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined}
-            style={{
-              backgroundColor: `${tsunamiInfo.color}22`,
-              border: `1px solid ${tsunamiInfo.color}`,
-              color: tsunamiInfo.color,
-            }}
-          >
-            {tsunamiInfo.text}
-            {borrowedDomesticTsunami && <BorrowedMark />}
-            {/* **この欄も他と同じ肩の印。** 文字が区分の色そのものなので文字色は触れないが、
-                点なら同じ表し方で置ける（枠で囲んでいた頃は、ここだけ別の見た目だった）。
-                最大震度の欄と同じく、中央寄せの計算から外す。 */}
-            {markDot('domesticTsunami', 'sm', 'absolute right-2 top-1/2 -translate-y-1/2')}
-          </div>
+            <div className="min-w-0">
+              {/* **印は名前を出しているときだけ。** 名前が無い報では固定文言「震源調査中」が出るので、
+                  そこへ印を当てると**文言そのものが新しくなった**ように読める。 */}
+              <div className="font-extrabold leading-tight text-white" style={{ fontSize: 'var(--qk-name)' }}>
+                {epicenterLabel}
+                {borrowedHypocenter && hypocenter.name && <BorrowedMark />}
+                {hypocenter.name && markDot('hypocenterName', 'md', 'align-top ml-1')}
+              </div>
+              {/* 震央補助表現と緯度・経度は震央地名の直下（どちらも「どこで起きたか」）。補助表現は文が
+                  別の文へ変わったときだけ印を付ける（2026-10-19 ユーザー承認「1 で」）。 */}
+              {(hypocenter.nameFromMark || hasLocation) && (
+                <div className="mt-0.5 text-secondary">
+                  {hypocenter.nameFromMark && (
+                    <span className="mr-3 inline-block whitespace-nowrap">
+                      {formatNameFromMark(hypocenter.nameFromMark)}
+                      {borrowedHypocenter && <BorrowedMark />}
+                      {markDot('nameFromMark', 'sm', 'align-top ml-1')}
+                    </span>
+                  )}
+                  {hasLocation && (
+                    <span className="inline-block whitespace-nowrap tabular-nums">
+                      {formatCoordinate(hypocenter.latitude, hypocenter.longitude)}
+                      {borrowedHypocenter && <BorrowedMark />}
+                      {markDot('coordinate', 'sm', 'align-top ml-1')}
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* 震源を決めた機関（`Hypocenter/Source`）。津波カードと同じ文面（2026-10-22 ユーザー承認「6-A 津波タブと同じ」）。 */}
+              {hypocenter.source && (
+                <div className="text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>{formatHypocenterSource(hypocenter.source)}</div>
+              )}
+              <div className="mt-2.5 flex flex-wrap gap-x-6 gap-y-2.5">
+                <div>
+                  {quakeTimeText ? (
+                    <>
+                      <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+                        {quake.fromInternationalTsunami ? QUAKE_ORIGIN_TIME_LABEL : QUAKE_ARRIVAL_TIME_LABEL}
+                      </span>
+                      <b className="font-bold tabular-nums leading-tight" style={{ fontSize: 'var(--qk-val)' }}>{quakeTimeText}</b>
+                    </>
+                  ) : (
+                    <b className="font-bold leading-tight" style={{ fontSize: 'var(--qk-val)' }}>{QUAKE_ARRIVAL_TIME_UNKNOWN}</b>
+                  )}
+                </div>
+                {/* 国内津波情報。「津波警報等」だけは語に何が含まれるか説明を添える（→ `formatDomesticTsunami`）。
+                    国際津波関連情報だけのカードには出さない（英文に国内の津波の区分は無い。→ quake-spec.md §3） */}
+                {!quake.fromInternationalTsunami && <div title={domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined}>
+                  <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>津波</span>
+                  <b className="font-bold leading-tight" style={{ fontSize: 'var(--qk-val)', color: tsunamiInfo.color }}>
+                    {tsunamiInfo.text}
+                    {borrowedDomesticTsunami && <BorrowedMark />}
+                    {markDot('domesticTsunami', 'sm', 'align-top ml-1')}
+                  </b>
+                </div>}
+                {hasFacts && (
+                  <>
+                    <i className="h-0 basis-full" />
+                    <div>
+                      {/* 見出しは種別の名前、値は記号つき（2026-10-23 ユーザー承認「まあそれで行きましょう」）。→ `magnitudeHeading` */}
+                      <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+                        {magnitudeHeading(hypocenter.magnitudeType)}
+                        {borrowedHypocenter && <BorrowedMark />}
+                      </span>
+                      {/* 「M8を超える巨大地震」のような文は字だけ縮める。行の大きさは深さの欄と同じに保ち、
+                          並んだ値と下端（基準線）と色の線の長さを揃える。 */}
+                      <b className="font-bold tabular-nums leading-tight" style={{ fontSize: 'var(--qk-val)' }}>
+                        <i className="mr-1.5 inline-block h-[0.9em] w-1 rounded-[2px] align-[-0.05em]" style={{ backgroundColor: magColor }} />
+                        <span style={hypocenter.magnitudeCondition && !hasMagnitude(hypocenter.magnitude) ? { fontSize: '0.7em' } : undefined}>
+                          {formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)}
+                        </span>
+                        {markDot('magnitude', 'md', 'align-top ml-1')}
+                      </b>
+                    </div>
+                    <div>
+                      <span className="block text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+                        深さ
+                        {borrowedHypocenter && <BorrowedMark />}
+                      </span>
+                      <b className="font-bold leading-tight" style={{ fontSize: 'var(--qk-val)' }}>
+                        <i className="mr-1.5 inline-block h-[0.9em] w-1 rounded-[2px] align-[-0.05em]" style={{ backgroundColor: depthColor }} />
+                        {formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}
+                        {markDot('depth', 'md', 'align-top ml-1')}
+                      </b>
+                    </div>
+                  </>
+                )}
           {/* 借りた値の説明。**印を付けた欄より後ろへ置く** —— 記号を見てから意味を探すので、
               説明が先にあると「何の話か」が分からないまま読むことになる。 */}
-          {borrowedNote && (
-            <div className="text-xs text-secondary roomy:text-sm" title={borrowedNote.title}>
-              {borrowedNote.text}
-            </div>
-          )}
+                {borrowedNote && (
+                  <div className="-mt-1 basis-full text-secondary" style={{ fontSize: 'var(--qk-fs)' }} title={borrowedNote.title}>
+                    {borrowedNote.text}
+                  </div>
+                )}
 
-          {/* 気象庁が添えた文（付加文 3 種）を **1 つの枠**に、電文と同じ並びで段落に分けて出す
-              （2026-10-23 ユーザー承認「一つにまとめましょうか。」）。3 種は電文の要素の区切りで、
-              読む人にとっての区切りではないので、枠を分けない。
-              - 固定付加文（`ForecastComment/Text`）: **津波の区分を決めるコードの文は除く**。上の津波の札が
-                同じ事実を伝えている。ただし札が伝えきれないコード（0211〜0214）は、カード自身のコードの文を残す
-                （同日の選択「Aでお願いします。」。→ `domesticTsunamiCardForecastText`）。区分にならない文
-                （例: 0245「この地震で緊急地震速報を発表しましたが、強い揺れは観測されませんでした。」）は、
-                この枠にしか現れない
-              - 固定付加文（その他）（`VarComment/Text`）: `＊` 印の説明など
-              - 自由付加文（`FreeFormComment`）: 電文ごとに書き起こされ、続報での更新はここに現れる。
-                全角スペースで整形された表が入るため `whitespace-pre-wrap` で改行と空白を保つ
-              コンパクト表示（一覧）には出さない。行数が電文次第で読めず、カードの高さが揃わなくなるため。 */}
-          {commentParagraphs.length > 0 && (
-            <div className="flex w-full flex-col gap-2 rounded-lg bg-panel px-3 py-2 text-xs leading-relaxed text-secondary whitespace-pre-wrap roomy:text-sm">
-              {commentParagraphs.map(p => <div key={p.key}>{p.text}</div>)}
+              </div>
             </div>
-          )}
+          </div>
+          {/* 貼りついている間だけ下端に出す境の線と影（→ index.css の quake-stick-edge） */}
+          <i aria-hidden className="quake-stick-edge" />
+        </div>
 
-          {/* 震度分布（クリックで地図の表示モードをトグル）。カード自体が <button> のため
-              入れ子を許さない（長周期のトグルと同じ作法）。
-              **どちらの分布を見ているかをボタンに書く。** 気象庁の推計とアプリ自身の推定は
-              見た目が似ているので、書かないと利用者が区別できない。 */}
-          {canDrawDistribution && (
-            <div
-              role="button"
-              tabIndex={0}
-              aria-pressed={distributionActive}
-              onClick={(e) => { e.stopPropagation(); onToggleDistribution?.(eventKey) }}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onToggleDistribution?.(eventKey) } }}
-              title={distributionState === 'official'
-                ? '気象庁が地盤の揺れやすさまで考慮して推計した震度の分布です'
-                : '観測点の震度をこのアプリが補間した目安です。気象庁の推計とは精度が違います'}
-              className={`w-full rounded-lg py-1 px-3 flex items-center justify-between gap-2 border transition-colors cursor-pointer hover:opacity-80 roomy:py-2 roomy:px-4 ${
-                distributionActive
-                  ? 'bg-blue-900/40 border-blue-500 outline-solid outline-2 outline-offset-2 outline-blue-500'
-                  : 'bg-panel border-border'
-              }`}
-            >
-              <span className="text-xs font-medium text-white roomy:text-sm">震度分布</span>
-              {/* **「推計」と「推定」だけでは分かれない。** どちらも日常語ではほぼ同義で、
-                  精度の差（気象庁は地盤の揺れやすさまで織り込む／こちらは観測点を補間しただけ）が
-                  読み取れない。**片方に「簡易」を入れて、語の重さで差を付ける。** */}
-              <span className={`text-xs roomy:text-sm ${distributionState === 'official' ? 'text-blue-300 font-bold' : 'text-secondary'}`}>
-                {distributionState === 'official' ? '気象庁の推計' : 'このアプリの簡易推定'}
-              </span>
-            </div>
-          )}
-          {/* 国際津波関連情報（WEPA60・英文）。北西太平洋津波情報センターが各国の機関へ出す電文を、原文のまま
-              畳んで添える（2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」）。読み上げ・通知・音は無い。
-              続報（BULLETIN NUMBER 002…）は報ごとに 1 つずつ、発表の古い順に並べる。 */}
-          {internationalTsunamis.map(x => (
-            <details
-              key={x.id}
-              className="w-full rounded-lg border border-border bg-panel px-3 py-1 text-xs text-secondary roomy:text-sm"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <summary className="cursor-pointer select-none py-1 text-white">
-                国際津波関連情報（英文）<span className="ml-2 text-secondary">{x.title}</span>
-              </summary>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words pb-2 font-mono leading-relaxed">{x.text}</pre>
-            </details>
-          ))}
-          {/* 推計の電文の震央補助表現。地震カードの補助表現と食い違うときだけ出す（2026-10-30 ユーザー承認
-              「地震カードの形で出す (Recommended)」）。読み上げには入れない。 */}
+        {/* 気象庁が添えた文は畳んで置き、読み上げのあいだ開く（→ `JmaNotesFold`） */}
+        {quakeComments.groups.length > 0 && (
+          <div className="mt-3.5">
+            <JmaNotesFold
+              open={quakeNotesOpen}
+              onToggle={() => setQuakeNotesOpenByUser(!quakeNotesOpen)}
+              groups={quakeComments.groups}
+              showHeadings={quakeComments.showHeadings}
+            />
+          </div>
+        )}
+
+        {/* 国際津波関連情報（WEPA60）。付加文の下に置き（2026-11-01 選択「それぞれ自分の欄を持つ (Recommended)」）、
+            報ごとに見出しの行で開閉する。英文だけのカードでは初めから開き、地震情報のカードでは閉じて置く
+            （2026-11-05 ユーザー発言「遠地地震とかはそれしか無いから開いていいけど、地震情報はほかに情報があるのに
+            押されて見えなくなるので」、選択「英文だけのカードだけ開く」）。鍵が `expanded` にあるのは初めの開き方から
+            押して変えた報 */}
+        {internationalTsunamis.length > 0 && (
+          <div className="mt-3.5 flex flex-col gap-1.5">
+            {internationalTsunamis.map(x => {
+              const key = internationalTsunamiFoldKey(x.id)
+              const open = expanded.has(key) !== (quake.fromInternationalTsunami === true)
+              return (
+                <div key={x.id} className="w-full rounded-lg border border-border bg-panel px-3 py-1 text-xs text-secondary roomy:text-sm">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={open}
+                    onClick={(e) => { e.stopPropagation(); toggle(key) }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); toggle(key) } }}
+                    className="cursor-pointer py-1 text-white"
+                  >
+                    国際津波関連情報（英文）<span className="ml-2 text-secondary">{x.title}</span> <DisclosureCaret open={open} />
+                  </div>
+                  <Reveal open={open}>{() => (
+                    <pre className="overflow-x-auto whitespace-pre-wrap break-words pb-2 font-mono leading-relaxed">{x.text}</pre>
+                  )}</Reveal>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* 各地の震度。見出しの右で地図の見せ方を切り替える（見本の「観測点・推計震度分布・長周期」） */}
+        <div ref={intsSectionRef} className="mt-3.5 flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="m-0 font-semibold text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>各地の震度</h4>
+            {showObservedSeg && (
+              <div className="flex divide-x divide-border overflow-hidden rounded border border-border" style={{ fontSize: 'var(--qk-fs)' }}>
+                {segButton('観測点', !distributionActive && !lpgmActiveHere, toObserved)}
+                {canDrawDistribution && segButton(
+                  distributionState === 'official' ? '推計震度分布' : '簡易推定',
+                  distributionActive,
+                  () => onToggleDistribution?.(eventKey),
+                  distributionState === 'official'
+                    ? '気象庁が地盤の揺れやすさまで考慮して推計した震度の分布です'
+                    : '観測点の震度をこのアプリが補間した目安です。気象庁の推計とは精度が違います',
+                )}
+                {lpgmShown && segButton('長周期', lpgmActiveHere, () => onToggleLpgm?.(lpgmShown.eventId))}
+              </div>
+            )}
+          </div>
           {estimatedMarkNote && (
             <div className="text-xs text-secondary roomy:text-sm">{estimatedMarkNote}</div>
           )}
@@ -1542,96 +1782,13 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               <span className="text-xs font-medium text-white roomy:text-sm">
                 震度を入手していない{unreceivedPoints.unit}
               </span>
-              <span className="text-xs font-bold roomy:text-sm" style={{ color: '#d1d5db' }}>
+              <span className="text-xs font-bold text-secondary roomy:text-sm">
                 {unreceivedPoints.count}{unreceivedPoints.unit}
               </span>
             </div>
           )}
 
-          {/* 各地の震度 / 長周期地震動階級（LPGM トグルオン時は階級表示に切り替え） */}
           {(() => {
-            if (lpgmActiveHere && lpgmGroups.length > 0) {
-              // 観測点の行。内訳を持つ観測点は開けて、開くと周期ごとの内訳を出す（→ `LpgmPeriodList`）。
-              // 開閉があると行を押すのは開閉になり、地図への寄せは観測点名へ移る（県・区域の行と同じ作法）。
-              // 開閉の鍵は県と区域で区切る（区域の分からない観測点は区域を空にする）。同じ名前の観測点が
-              // 別の区域・県にあっても、片方を開いたらもう片方まで開く、ということが起きないように
-              const lpgmStationNode = (st: LpgmStationRow, prefName: string, areaName: string, depth: 1 | 2) => {
-                const stationKey = st.periods ? `lpgm:station:${prefName}:${areaName}:${st.name}` : null
-                return (
-                  <Fragment key={st.name}>
-                    <LpgmRow
-                      label={st.name}
-                      lgInt={st.lgInt}
-                      int={st.int}
-                      nonJma={st.nonJma}
-                      mark={lpgmRowMark(rowMarkKey.station(st.name))}
-                      depth={depth}
-                      expandKey={stationKey}
-                      expanded={expanded}
-                      onToggle={toggle}
-                      onFocus={focusHandlerFor(prefName, st.name)}
-                    />
-                    {stationKey && st.periods && expanded.has(stationKey) && (
-                      <LpgmPeriodList periods={st.periods} depth={depth} />
-                    )}
-                  </Fragment>
-                )
-              }
-              return (
-                <div className="flex flex-col gap-0.5 pt-1 border-t border-white/10">
-                  {/* 最上段は都道府県か、都道府県を引けなかった区域（→ `LpgmPrefRow.kind`）。
-                      **鍵に段の種別を入れる** —— 区域名と県名は一致しうる（実データの「奈良県」）。 */}
-                  {lpgmGroups.map((prefRow, idx) => {
-                    const topKey = `lpgm:${prefRow.kind}:${prefRow.name}`
-                    return (
-                    <div
-                      key={topKey}
-                      className="rounded-sm"
-                      style={{ backgroundColor: idx % 2 === 0 ? 'rgba(255,255,255,0.03)' : 'transparent' }}
-                    >
-                      <LpgmRow
-                        label={prefRow.name}
-                        lgInt={prefRow.maxLgInt}
-                        int={prefRow.maxInt}
-                        mark={lpgmRowMark(rowMarkKey.pref(prefRow.name), [
-                          ...prefRow.areas.flatMap(a => [rowMarkKey.area(a.name), ...a.stations.map(st => rowMarkKey.station(st.name))]),
-                          ...prefRow.stations.map(st => rowMarkKey.station(st.name)),
-                        ])}
-                        depth={0}
-                        expandKey={prefRow.areas.length > 0 || prefRow.stations.length > 0 ? topKey : null}
-                        expanded={expanded}
-                        onToggle={toggle}
-                        onFocus={focusBoundsHandler(prefBounds.get(prefRow.name) ?? null)}
-                      />
-                      {expanded.has(topKey) && (
-                        <>
-                          {prefRow.areas.map(area => (
-                            <div key={area.name}>
-                              <LpgmRow
-                                label={area.name}
-                                lgInt={area.maxLgInt}
-                                int={area.maxInt}
-                                mark={lpgmRowMark(rowMarkKey.area(area.name), area.stations.map(st => rowMarkKey.station(st.name)))}
-                                depth={1}
-                                expandKey={area.stations.length > 0 ? `lpgm:area:${area.name}` : null}
-                                expanded={expanded}
-                                onToggle={toggle}
-                                onFocus={focusBoundsHandler(areaBounds.get(area.name) ?? null)}
-                              />
-                              {expanded.has(`lpgm:area:${area.name}`) && area.stations.map(st => lpgmStationNode(st, prefRow.name, area.name, 2))}
-                            </div>
-                          ))}
-                          {/* 区域が分からない観測点（→ `LpgmPrefRow.stations`）。 */}
-                          {prefRow.stations.map(st => lpgmStationNode(st, prefRow.name, '', 1))}
-                        </>
-                      )}
-                    </div>
-                    )
-                  })}
-                </div>
-              )
-            }
-
             // 未入電の一覧（トグルオン時は震度一覧と差し替える）。
             //
             // **4 段の入れ子にしない。** 全部が同じ「5弱以上」なので段を作っても分かれる情報が
@@ -1643,7 +1800,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   {/* **推定したのは気象庁**であることを書く。このアプリは強震モニタ由来の
                       値にも「推定」を使っており（リアルタイムタブ）、主語が無いと
                       「アプリが推定した値」と取り違えられる。 */}
-                  <div className="text-[0.6875rem] roomy:text-[0.8125rem]" style={{ color: '#9ca3af' }}>
+                  <div className="text-[0.6875rem] text-secondary roomy:text-[0.8125rem]">
                     気象庁は震度5弱以上と推定していますが、震度が届いていません（未入電）
                   </div>
                   {unreceivedPoints.groups.map((group, idx) => (
@@ -1695,6 +1852,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             }
 
             if (prefGroups.length === 0) return null
+            // 未入電の注記を描く行が 1 つでもあれば、震度の欄を広げる（→ `intensityValueColumn`）
+            const unreceivedLayout = intensityRowsShowUnreceivedNote(prefGroups)
 
             // 市町村に紐付かない観測点の行（区域の直下・県の直下の両方で使う）。
             const stationRow = (st: IntensityStationRow, depth: 1 | 2 | 3, pref: string) => (
@@ -1707,6 +1866,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                 nonJma={st.nonJma}
                 mark={rowMark(rowMarkKey.station(st.name))}
                 depth={depth}
+                unreceivedLayout={unreceivedLayout}
                 expandKey={null}
                 expanded={expanded}
                 onToggle={toggle}
@@ -1725,13 +1885,13 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                   hasUnreceived={region.hasUnreceived}
                   mark={rowMark(rowMarkKey.area(region.name), regionDescendantKeys(region))}
                   depth={depth}
+                  unreceivedLayout={unreceivedLayout}
                   expandKey={region.cities.length > 0 || region.stations.length > 0 ? `area:${region.name}` : null}
                   expanded={expanded}
                   onToggle={toggle}
                   onFocus={focusBoundsHandler(areaBounds.get(region.name) ?? null)}
                 />
-                {expanded.has(`area:${region.name}`) && (
-                  <>
+                <Reveal open={expanded.has(`area:${region.name}`)}>{() => (<>
                     {region.cities.map(city => (
                       <div key={city.name}>
                         <IntensityRow
@@ -1742,30 +1902,28 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                           hasUnreceived={city.hasUnreceived}
                           mark={rowMark(rowMarkKey.city(region.name, city.name), city.stations.map(st => rowMarkKey.station(st.name)))}
                           depth={(depth + 1) as 1 | 2}
+                          unreceivedLayout={unreceivedLayout}
                           expandKey={city.stations.length > 0 ? `city:${region.name}/${city.name}` : null}
                           expanded={expanded}
                           onToggle={toggle}
                           onFocus={focusCityHandler(pref, city.stations)}
                         />
-                        {expanded.has(`city:${region.name}/${city.name}`) && city.stations.map(st => stationRow(st, (depth + 2) as 2 | 3, pref))}
+                        <Reveal open={expanded.has(`city:${region.name}/${city.name}`)}>{() => (<>{city.stations.map(st => stationRow(st, (depth + 2) as 2 | 3, pref))}</>)}</Reveal>
                       </div>
                     ))}
-                    {/* 市町村に紐付かない観測点（P2PQuake 経路はすべてこちら）。
+                    {/* 市町村に紐付かない観測点（市町村を読めなかった観測点）。
                         → `IntensityRegionRow.stations` */}
                     {region.stations.map(st => stationRow(st, (depth + 1) as 1 | 2, pref))}
-                  </>
-                )}
+                  </>)}</Reveal>
               </Fragment>
             )
 
+            const groupKey = (row: typeof prefGroups[number]) => row.kind === 'pref' ? `pref:${row.pref}` : `area:${row.name}`
             return (
-              <div className="flex flex-col gap-0.5 pt-1 border-t border-white/10">
-                {prefGroups.map((row, idx) => (
-                  <div
-                    key={row.kind === 'pref' ? `pref:${row.pref}` : `area:${row.name}`}
-                    className="rounded-sm"
-                    style={{ backgroundColor: idx % 2 === 0 ? 'rgba(255,255,255,0.03)' : 'transparent' }}
-                  >
+              <div className="quake-ints border-t border-border/60">
+                {/* 塊ごとに子は 2 つ（見出しの行・開いた中身）。広い画面ではこの 2 段で左右をそろえる（→ index.css） */}
+                {prefGroups.map(row => (
+                  <div key={groupKey(row)}>
                     {row.kind === 'area' ? regionTree(row, 0, '') : (
                       <>
                         <IntensityRow
@@ -1779,13 +1937,13 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                             ...row.stations.map(st => rowMarkKey.station(st.name)),
                           ])}
                           depth={0}
+                          unreceivedLayout={unreceivedLayout}
                           expandKey={row.regions.length > 0 || row.cities.length > 0 || row.stations.length > 0 ? `pref:${row.pref}` : null}
                           expanded={expanded}
                           onToggle={toggle}
                           onFocus={focusBoundsHandler(prefBounds.get(row.pref) ?? null)}
                         />
-                        {expanded.has(`pref:${row.pref}`) && (
-                          <>
+                        <Reveal open={expanded.has(`pref:${row.pref}`)} className="quake-sub" style={{ borderLeftColor: getIntensityColor(row.scale) }}>{() => (<>
                             {row.regions.map(region => regionTree(region, 1, row.pref))}
                             {/* 区域が決まらない市町村（見出しにだけある市町村）。観測点と同じく県の直下へ置く */}
                             {row.cities.map(city => (
@@ -1798,6 +1956,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                                 hasUnreceived={city.hasUnreceived}
                                 mark={rowMark(rowMarkKey.city('', city.name))}
                                 depth={1}
+                                unreceivedLayout={unreceivedLayout}
                                 expandKey={null}
                                 expanded={expanded}
                                 onToggle={toggle}
@@ -1806,8 +1965,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
                             ))}
                             {/* 区域を引けない観測点（県は分かっている）。長周期の一覧と同じく県の直下へ置く */}
                             {row.stations.map(st => stationRow(st, 1, row.pref))}
-                          </>
-                        )}
+                          </>)}</Reveal>
                       </>
                     )}
                   </div>
@@ -1815,7 +1973,149 @@ export const EarthquakeCard = memo(function EarthquakeCard({
               </div>
             )
           })()}
+        </div>
 
+        {/* 長周期地震動（電文の値・一覧・補足）。地図の塗りは上の切り替えで出す */}
+        {lpgmShown && (
+          <div ref={lpgmSectionRef} className="mt-3.5 flex flex-col gap-1.5">
+            <h4 className="m-0 flex items-center gap-2 font-semibold text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+              長周期地震動
+              {/* 長周期の電文が名乗る運用種別。訓練・試験のときだけ、地震カードと同じ札を出す（2026-11-03 ユーザー選択
+                  「地震カードと同じ札を出す (Recommended)」。新しい文言は足さない） */}
+              {lpgm?.operationStatus && (
+                <span className="rounded-sm px-1.5 font-bold" style={{ backgroundColor: '#1f2937', color: '#fcd34d', border: '1px solid #d97706' }}>
+                  {lpgm.operationStatus}報
+                </span>
+              )}
+            </h4>
+          {/* 震源・規模・全国の最大震度・地震発現時刻は、この欄には出さない。発表が最も新しい報の値をカードの上段へ当てている
+              （→ `utils/latestQuakeFacts.ts`。2026-11-03 ユーザー選択「発表時刻が最も新しい報 (Recommended)」の説明
+              「長周期の欄の震源の行は外し」）。見出し文（`Head/Headline/Text`）は長周期のことなので電文のまま出す */}
+          {lpgm && !lpgm.cancelled && lpgm.headline && (<div className="text-[#cfd6dd]">{lpgm.headline}</div>)}
+          {/* 電文の「観測情報の種類」（`LgCategory`）が伝えているのは、階級を観測した地域の中に
+              震度が小さい地域があるかどうか。**分類番号は出さず意味だけ書く**（→ `lpgmCategoryNote`）。
+              **この一文だけは畳まない。** 1 行しかないうえ、その地震でしか言えない事実で、
+              下の折りたたみに入れても縮む量はほとんど変わらない。 */}
+          {lpgm && !lpgm.cancelled && categoryNote && (
+            <div className="text-secondary" style={{ fontSize: '0.75rem', lineHeight: 1.5 }}>
+              {categoryNote}
+            </div>
+          )}
+          {/* 気象庁からの補足は畳んで置く。中身は付加文 3 種 —— 固定（`ForecastComment/Text`。
+              この地震について気象庁が添える定型文で、実電文では緊急地震速報の発表の有無を
+              伝えている）・その他の固定（`VarComment/Text`）・自由（`FreeFormComment`。階級ごとの
+              揺れの言い換え）—— と、気象庁の詳細ページ（`Comments/URI`）への導線。
+
+              **地震情報の補足と同じく既定で畳み、読み上げのあいだだけ開く**（2026-11-01 選択「畳んで、
+              読み上げで開く (Recommended)」。→ docs/spec/quake-spec.md §8「気象庁からの補足は畳んで置く」）。
+
+              **「解説」の語を使わない。** 南海トラフ地震関連解説情報のバナーと同じ画面に並ぶため、
+              語幹が被ると別の情報だと読み取れない。
+
+              開閉は `<div role="button">` で作る（カード自体が `<button>` なので入れ子にできない。
+              震度一覧の行と同じ作法）。 */}
+          {/* **アプリが出せないもの（波形・スペクトル）の在りかを電文自身が示している**ので、
+              詳細ページ（`Comments/URI`）への導線を補足の末尾に残す。自由付加文も同じ URL を
+              文中で案内しているため、畳む単位は付加文 3 種と導線で 1 つにまとめている。 */}
+          {hasLpgmNotes && lpgm && !lpgm.cancelled && (
+            <JmaNotesFold
+              open={lpgmNotesOpen}
+              onToggle={() => setLpgmNotesOpenByUser(!lpgmNotesOpen)}
+              groups={lpgmComments.groups}
+              showHeadings={lpgmComments.showHeadings}
+              extra={lpgm.uri && (
+                <a
+                  href={lpgm.uri}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-blue-400 underline w-fit"
+                  style={{ overflowWrap: 'anywhere' }}
+                >
+                  気象庁の詳細ページ（波形・スペクトル）
+                </a>
+              )}
+            />
+          )}
+
+          {lpgmGroups.length > 0 && (() => {
+              // 観測点の行。内訳を持つ観測点は開けて、開くと周期ごとの内訳を出す（→ `LpgmPeriodList`）。
+              // 開閉があると行を押すのは開閉になり、地図への寄せは観測点名へ移る（県・区域の行と同じ作法）。
+              // 開閉の鍵は県と区域で区切る（区域の分からない観測点は区域を空にする）。同じ名前の観測点が
+              // 別の区域・県にあっても、片方を開いたらもう片方まで開く、ということが起きないように
+              const lpgmStationNode = (st: LpgmStationRow, prefName: string, areaName: string, depth: 1 | 2) => {
+                const stationKey = st.periods ? `lpgm:station:${prefName}:${areaName}:${st.name}` : null
+                return (
+                  <Fragment key={st.name}>
+                    <LpgmRow
+                      label={st.name}
+                      lgInt={st.lgInt}
+                      int={st.int}
+                      nonJma={st.nonJma}
+                      mark={lpgmRowMark(rowMarkKey.station(st.name))}
+                      depth={depth}
+                      expandKey={stationKey}
+                      expanded={expanded}
+                      onToggle={toggle}
+                      onFocus={focusHandlerFor(prefName, st.name)}
+                    />
+                    <Reveal open={!!stationKey && !!st.periods && expanded.has(stationKey)}>{() => (<>{st.periods && <LpgmPeriodList periods={st.periods} depth={depth} />}</>)}</Reveal>
+                  </Fragment>
+                )
+              }
+              return (
+                <div className="quake-ints border-t border-border/60">
+                  {/* 最上段は都道府県か、都道府県を引けなかった区域（→ `LpgmPrefRow.kind`）。
+                      **鍵に段の種別を入れる** —— 区域名と県名は一致しうる（実データの「奈良県」）。 */}
+                  {lpgmGroups.map(prefRow => {
+                    const topKey = `lpgm:${prefRow.kind}:${prefRow.name}`
+                    return (
+                    <div key={topKey}>
+                      <LpgmRow
+                        label={prefRow.name}
+                        lgInt={prefRow.maxLgInt}
+                        int={prefRow.maxInt}
+                        mark={lpgmRowMark(rowMarkKey.pref(prefRow.name), [
+                          ...prefRow.areas.flatMap(a => [rowMarkKey.area(a.name), ...a.stations.map(st => rowMarkKey.station(st.name))]),
+                          ...prefRow.stations.map(st => rowMarkKey.station(st.name)),
+                        ])}
+                        depth={0}
+                        expandKey={prefRow.areas.length > 0 || prefRow.stations.length > 0 ? topKey : null}
+                        expanded={expanded}
+                        onToggle={toggle}
+                        onFocus={focusBoundsHandler(prefBounds.get(prefRow.name) ?? null)}
+                      />
+                      <Reveal open={expanded.has(topKey)} className="quake-sub" style={{ borderLeftColor: getLpgmClassColor(prefRow.maxLgInt) }}>{() => (<>
+                          {prefRow.areas.map(area => (
+                            <div key={area.name}>
+                              <LpgmRow
+                                label={area.name}
+                                lgInt={area.maxLgInt}
+                                int={area.maxInt}
+                                mark={lpgmRowMark(rowMarkKey.area(area.name), area.stations.map(st => rowMarkKey.station(st.name)))}
+                                depth={1}
+                                expandKey={area.stations.length > 0 ? `lpgm:area:${area.name}` : null}
+                                expanded={expanded}
+                                onToggle={toggle}
+                                onFocus={focusBoundsHandler(areaBounds.get(area.name) ?? null)}
+                              />
+                              <Reveal open={expanded.has(`lpgm:area:${area.name}`)}>{() => (<>{area.stations.map(st => lpgmStationNode(st, prefRow.name, area.name, 2))}</>)}</Reveal>
+                            </div>
+                          ))}
+                          {/* 区域が分からない観測点（→ `LpgmPrefRow.stations`）。 */}
+                          {prefRow.stations.map(st => lpgmStationNode(st, prefRow.name, '', 1))}
+                        </>)}</Reveal>
+                    </div>
+                    )
+                  })}
+                </div>
+              )
+          })()}
+          </div>
+        )}
+
+
+        <div className="mt-3.5">
           {/* 自作地震計が捉えたこの地震の区間（→ `useSeismoQuakeWaves`）。
               **記録が無ければ枠ごと出ない** —— 渡ってくるのは載せるものがあるときだけ。
               ライブで読み返せなかったときだけ、その旨を 1 行出す（`seismoWaveFailed`）。 */}
@@ -1828,142 +2128,41 @@ export const EarthquakeCard = memo(function EarthquakeCard({
             quakeLabel={`${formatQuakeTimeLabeled(earthquake.time)} ${epicenterLabel}`}
           />
         </div>
-      </button>
+
+        {/* 官署（2026-11-01 ユーザー選択「官署を別の行へ (Recommended)」・2026-10-30 選択「編集官署の隣に同じ形で (Recommended)」）。
+            電文を編集した官署は常に出す（2026-10-22 ユーザー承認「3-B 編集官署 …」・docs/spec/quake-spec.md §8）。 */}
+        {(issue.editorialOffice || issue.publishingOffice) && (
+          <div className="mt-4 flex flex-wrap items-center gap-x-2 text-secondary" style={{ fontSize: 'var(--qk-fs)' }}>
+            {issue.editorialOffice && <span className="whitespace-nowrap">編集官署 {issue.editorialOffice}</span>}
+            {issue.publishingOffice && <span className="whitespace-nowrap">発表官署 {issue.publishingOffice}</span>}
+          </div>
+        )}
+      </div>
     )
   }
 
-  /* 非選択時：コンパクト横並びレイアウト */
-  const borderClass = isLatest ? 'border-blue-500/50' : 'border-border'
-
+  /* 非選択時：一覧の 1 行（見本 closed5。→ `QuakeListRow`） */
   return (
     <button
+      ref={rowRef}
       {...{ [QUAKE_CARD_KEY_ATTR]: eventKey }}
       type="button"
-      onClick={quake.cancelledAt ? undefined : () => onSelect?.(eventKey)}
-      aria-pressed={false}
-      className={`
-        w-full text-left bg-card rounded-lg p-3 border transition-colors relative
-        ${quake.cancelledAt ? 'cursor-default' : 'cursor-pointer hover:border-blue-400/60'}
-        ${borderClass}
-      `}
+      // 選んだまま畳んだ行は、押すと開き直すだけ（地図は動かさない）
+      onClick={quake.cancelledAt ? undefined : () => {
+        resizeFromRef.current = rowRef.current?.getBoundingClientRect().height ?? null
+        if (selected) setCollapsed(false)
+        else onSelect?.(eventKey)
+      }}
+      // 選んでいることは aria-current で伝える（押すと開き直すだけなので、押した状態の札にはしない）
+      aria-current={selected ? 'true' : undefined}
+      aria-expanded={false}
+      // `isolate`: 取消の覆い（z-10）を行の中に閉じる（理由は開いたカードの箱と同じ）
+      className={`relative isolate block w-full border-b border-border text-left transition-colors ${quake.cancelledAt ? 'cursor-default' : 'cursor-pointer hover:bg-white/5 quake-press-row'}`}
+      // 選んだまま畳んだ行は、見本 opened.html の選ばれた行（.r.sel）の形で出す
+      style={{ padding: '7px var(--qk-pad)', ...(selected ? { backgroundColor: '#16191d', boxShadow: `inset 3px 0 0 ${getIntensityColor(maxScale)}` } : {}) }}
     >
-      {quake.cancelledAt && <QuakeCancelOverlay cancelText={quake.cancelText} compact />}
-      <div className="flex items-stretch gap-3">
-        {/* 震度バッジ。7rem 角の正方形に固定する。右カラム（通常は 4 行）の高さとほぼ同じ寸法で、
-            カードの高さいっぱいに見える。
-            高さを右カラムに追従させる（`aspect-square` + stretch）方式は採らない。この行は高さが
-            兄弟の内容次第で決まるため、幅を確定する時点では高さが未定で、aspect-ratio が幅を
-            導けずコンテンツ幅（実測 60px）に潰れる。高さを固定した親の中でなら成立する手だが、
-            ここでは使えない。
-            寸法を固定した結果、右カラムが何行になってもバッジは正方形のまま保たれる。 */}
-        <div
-          className="shrink-0 self-center w-28 h-28 rounded-lg flex flex-col items-center justify-center px-1"
-          style={{
-            backgroundColor: getIntensityBgColor(maxScale),
-            border: `2px solid ${getIntensityColor(maxScale)}`,
-          }}
-        >
-          <span className="text-xs font-medium" style={{ color: getIntensityColor(maxScale) }}>
-            最大震度
-          </span>
-          <span
-            className="text-5xl font-black leading-tight"
-            style={{ color: getIntensityColor(maxScale) }}
-          >
-            {maxScaleLabel}
-          </span>
-          {/* **ここだけ値の下へ置く。** バッジは 7rem 角に固定してあり、「5弱」で幅をほぼ
-              使い切るため横には添えられない（→ `maxScaleOrAbove` の注記）。縦並びの器なので
-              下へ置けば正方形は崩れない。 */}
-          {maxScaleOrAbove && (
-            <span
-              className="text-sm font-bold leading-none"
-              style={{ color: getIntensityColor(maxScale) }}
-            >
-              以上
-            </span>
-          )}
-        </div>
-
-        {/* 地震詳細 */}
-        <div className="flex-1 min-w-0">
-          {/* 震源地名。1 行に固定し、収まらない分は末尾を省略する。
-              「熊本県天草・芦北地方」級の名前が折り返すとカードだけが縦に伸びて一覧の行が
-              揃わなくなるため、ここは伸ばさない。発表種別は日時の行へ逃がし、地名に幅を明け渡している。
-              津波から借りた震源でも印（※）と説明の行は出さない（2026-10-14 ユーザー選択「今のまま」。
-              開いたカードには出る。→ quake-spec §8「借りた値の出どころ」）。 */}
-          <div className="text-white font-bold text-lg leading-tight truncate mb-1">
-            {epicenterLabel}
-          </div>
-
-          {/* 日時 + 発表種別 + 訂正情報。
-              発表種別だけは末尾を省略して詰められるが、日時と訂正情報は縮まない。収まらない
-              ときは折り返して 2 行にする。訂正報（`isKnownCorrection(issue.correct)`）で 3 つ並ぶ場合の
-              ほか、パネルが狭いときや種別名が長いとき（「顕著な地震の震源要素更新のお知らせ」）は
-              2 つでも折り返す。詰め切って情報を欠けさせるより、カードが 1 行分高くなる方を
-              選んでいる（震度バッジは寸法固定なので正方形は崩れない）。 */}
-          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-            {/* 畳んだ表示。開いた表示（上）と同じ語を出す。
-                **名前と日時の境目でだけ折り返す。** 右の列は震度バッジ（7rem 角）の残りで、スマホの
-                横画面では 181px しか無く、1 行の「地震発現時刻 10月23日 11:17」（209px）が枠の外へ
-                はみ出していた。`shrink-0` を外すだけだと漢字の途中（「地震発現時｜刻」）でも折れるので、
-                名前と日時をそれぞれ折れない塊にし、その間の空白だけを折り返す場所にする。 */}
-            <QuakeTimeLabeledWrapping time={earthquake.time} />
-            {/* **長周期の名乗りは渡さない。** この段は `truncate` で末尾を省略するうえ、地名に幅を
-                明け渡している段。長い名乗りを足すと種別そのものが押し出される（開いた表示には出す）。 */}
-            <span className={`text-xs px-1.5 py-0.5 rounded-sm min-w-0 truncate ${issueTypeBadgeClass(issue.type)}`}>
-              <QuakeReportHeading reports={quake.reports} fallback={issue.type} />
-            </span>
-            {quake.operationStatus && (
-              <span className="text-xs px-1.5 py-0.5 rounded-sm font-bold shrink-0" style={{ backgroundColor: '#1f2937', color: '#fcd34d', border: '1px solid #d97706' }}>
-                {quake.operationStatus}報
-              </span>
-            )}
-            {isKnownCorrection(issue.correct) && (
-              <span className="text-xs bg-yellow-900 text-yellow-300 px-1.5 py-0.5 rounded-sm font-medium shrink-0">
-                {formatCorrectType(issue.correct)}
-              </span>
-            )}
-          </div>
-
-          {/* 深さ・マグニチュード */}
-          <div className="flex items-center gap-2 text-base mb-1">
-            {hasFacts && (
-              <span className="flex items-center gap-1 text-secondary">
-                <span>深さ</span>
-                <span className="text-white font-medium">{formatDepth(hypocenter.depth, hypocenter.depthAtLeast === true)}</span>
-                <span
-                  className="inline-block w-1.5 h-3.5 rounded-xs shrink-0"
-                  style={{ backgroundColor: getDepthColor(hypocenter.depth) }}
-                />
-                <span className="text-white font-medium">{formatMagnitudeWithCondition(hypocenter.magnitude, hypocenter.magnitudeCondition, hypocenter.magnitudeType)}</span>
-                <span
-                  className="inline-block w-1.5 h-3.5 rounded-xs shrink-0"
-                  style={{ backgroundColor: getMagnitudeColor(hypocenter.magnitude) }}
-                />
-              </span>
-            )}
-          </div>
-
-          {/* 一部の取消。畳んだ表示では 1 行だけ（理由は開いたカードで読む。2026-10-15 ユーザー承認
-              「一行だけ出す（推奨）」）。最大震度のバッジが黙って変わる形を避けるために出す。 */}
-          {quake.retractedReports?.map(r => (
-            <div key={`${r.issueType}#${r.reportTime}`} className="text-sm font-bold text-yellow-300 mb-1">
-              {r.issueType}は取り消されました
-            </div>
-          ))}
-
-          {/* 津波情報（常に最終行）。説明は選択時のカードと同じものを付ける
-              —— **一覧のほうが先に目に入る**ので、こちらだけ説明が無いと順序が逆になる。 */}
-          <div
-            className="text-base font-medium"
-            title={domesticTsunami === '警報等' ? TSUNAMI_WARNING_GROUP_TITLE : undefined}
-            style={{ color: tsunamiInfo.color }}
-          >
-            {tsunamiInfo.text}
-          </div>
-        </div>
-      </div>
+      {quake.cancelledAt && <QuakeCancelOverlay cancelText={quake.cancelText} compact fade={fadeCancel} />}
+      {listRowFor(false)}
     </button>
   )
 })

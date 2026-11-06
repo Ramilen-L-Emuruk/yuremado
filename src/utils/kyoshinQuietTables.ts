@@ -19,6 +19,8 @@ export interface TailCounts {
   y: number[]
   /** 同じものを 3 秒の窓で見たもの（y3） */
   y3: number[]
+  /** 同じものを 15 秒の窓で見たもの（y15） */
+  y15: number[]
 }
 
 export interface QuietTables {
@@ -50,12 +52,13 @@ export const FIRE_LAG = 3
 /** 雑音の表に持つ段差の数（1〜5 段以上）。 */
 const FIRE_STEPS = 5
 
-const emptyTail = (): TailCounts => ({ n: 0, y: new Array(KMAX).fill(0), y3: new Array(KMAX).fill(0) })
+const emptyTail = (): TailCounts => ({ n: 0, y: new Array(KMAX).fill(0), y3: new Array(KMAX).fill(0), y15: new Array(KMAX).fill(0) })
 
 const isTail = (v: unknown): v is TailCounts => {
   const t = v as TailCounts | null
   return !!t && typeof t === 'object' && typeof t.n === 'number' && t.n > 0
     && Array.isArray(t.y) && t.y.length === KMAX && Array.isArray(t.y3) && t.y3.length === KMAX
+    && Array.isArray(t.y15) && t.y15.length === KMAX
 }
 
 /**
@@ -82,8 +85,9 @@ export function validateQuietTables(raw: unknown): asserts raw is QuietTables {
  * 端末で数えた分の版。**数え方を変えたら上げる** —— 端末に残った古い数え方の分は、版が違えば読み込みで捨てて
  * 数え直す（{@link isQuietCounts}）。混ぜると、新しい数え方の表に古い数え方の回数が足し込まれる。
  * 2: 雑音の表の窓を 4〜60 秒前から 3〜59 秒前（`FIRE_LAG`〜`FIRE_L`−1）へ揃えた
+ * 3: 15 秒の窓の上がり（y15）を数えるようにした
  */
-export const QUIET_COUNTS_VERSION = 2
+export const QUIET_COUNTS_VERSION = 3
 
 /** 端末で数えた分。表（`QuietTables`）と違い、雑音の表を率ではなく秒と回数のまま持つ（あとから足し合わせるため）。 */
 export interface QuietCounts {
@@ -102,6 +106,7 @@ const isCountTail = (v: unknown): boolean => {
   return !!t && typeof t === 'object' && isCount(t.n)
     && Array.isArray(t.y) && t.y.length === KMAX && t.y.every(isCount)
     && Array.isArray(t.y3) && t.y3.length === KMAX && t.y3.every(isCount)
+    && Array.isArray(t.y15) && t.y15.length === KMAX && t.y15.every(isCount)
 }
 
 /**
@@ -129,7 +134,7 @@ export function blendQuietTables(prior: QuietTables, learned: QuietCounts, prior
     if (!(n > 0)) return null
     const sum = (a: number[] | undefined, b: number[] | undefined) =>
       Array.from({ length: KMAX }, (_, k) => (a ? a[k] * s : 0) + (b ? b[k] : 0))
-    return { n, y: sum(p?.y, l?.y), y3: sum(p?.y3, l?.y3) }
+    return { n, y: sum(p?.y, l?.y), y3: sum(p?.y3, l?.y3), y15: sum(p?.y15, l?.y15) }
   }
   const tails: Record<string, TailCounts> = {}
   for (const k of new Set([...Object.keys(prior.tails), ...Object.keys(learned.tails)])) {
@@ -168,20 +173,23 @@ export class QuietTableBaker {
    * 1 秒ぶんを入れる。`values` は観測点の並び（-1 = 欠測）。
    * `count` が偽の秒は、上がりを測る直前の値としては使うが数には足さない（揺れ検知が出ていた秒を「普段」と覚えないため。
    * 入れずに飛ばすと、60 秒を超える途切れとして測り直しになり、前後の秒まで数え損ねる）。
+   * `skip` は点ごとの印（1 = この秒のこの点は数えない）。表を焼くときに、震源リストの地震の揺れが届いた点の秒を外すのに使う
+   * （平常の日にも小さな地震は毎日数百件起きていて、その揺れを「普段」と覚えると揺れの珍しさを低く見る。設計書§56）。点ごとに外さないなら null。
    */
-  feed(ms: number, cfg: string, sites: readonly (readonly [number, number])[], values: ArrayLike<number>, count: boolean): void {
+  feed(ms: number, cfg: string, sites: readonly (readonly [number, number])[], values: ArrayLike<number>, count: boolean, skip: Uint8Array | null): void {
     const n = sites.length
     if (values.length !== n) throw new Error(`観測点の数（${n}）と値の数（${values.length}）が食い違っています（${cfg}）`)
     // 時刻が巻き戻ったとき（端末で時間軸が替わったとき）も、前の値から上がりを数えないよう数え直す
     if (this.features === null || cfg !== this.cfg || ms - this.prevMs > RESET_GAP_MS || ms <= this.prevMs) this.reset(cfg, sites)
     this.prevMs = ms
-    this.countTails(values, count)
-    this.countFire(values, count)
+    if (skip !== null && skip.length !== n) throw new Error(`観測点の数（${n}）と数えない印の数（${skip.length}）が食い違っています（${cfg}）`)
+    this.countTails(values, count, skip)
+    this.countFire(values, count, skip)
   }
 
   /** いま持っている数の写し。端末に残して、次に開いたときに `fromCounts` で戻す。 */
   counts(): QuietCounts {
-    const copy = (t: TailCounts): TailCounts => ({ n: t.n, y: [...t.y], y3: [...t.y3] })
+    const copy = (t: TailCounts): TailCounts => ({ n: t.n, y: [...t.y], y3: [...t.y3], y15: [...t.y15] })
     const tails: Record<string, TailCounts> = {}
     for (const [k, c] of this.tails) tails[k] = copy(c)
     const fire: Record<string, { sec: number; hits: number[] }> = {}
@@ -195,7 +203,8 @@ export class QuietTableBaker {
     b.glob.n = c.glob.n
     b.glob.y.splice(0, KMAX, ...c.glob.y)
     b.glob.y3.splice(0, KMAX, ...c.glob.y3)
-    for (const [k, t] of Object.entries(c.tails)) b.tails.set(k, { n: t.n, y: [...t.y], y3: [...t.y3] })
+    b.glob.y15.splice(0, KMAX, ...c.glob.y15)
+    for (const [k, t] of Object.entries(c.tails)) b.tails.set(k, { n: t.n, y: [...t.y], y3: [...t.y3], y15: [...t.y15] })
     for (const [k, f] of Object.entries(c.fire)) { b.fireSec.set(k, f.sec); b.fireHits.set(k, [...f.hits]) }
     return b
   }
@@ -208,7 +217,7 @@ export class QuietTableBaker {
     if (!(factor > 0 && factor <= 1)) throw new Error(`薄める割合は 0 より大きく 1 以下にしてください（${factor}）`)
     const scale = (t: TailCounts) => {
       t.n *= factor
-      for (let k = 0; k < KMAX; k++) { t.y[k] *= factor; t.y3[k] *= factor }
+      for (let k = 0; k < KMAX; k++) { t.y[k] *= factor; t.y3[k] *= factor; t.y15[k] *= factor }
     }
     scale(this.glob)
     for (const t of this.tails.values()) scale(t)
@@ -243,26 +252,27 @@ export class QuietTableBaker {
     this.fireFilled = 0
   }
 
-  private countTails(values: ArrayLike<number>, count: boolean): void {
+  private countTails(values: ArrayLike<number>, count: boolean, skip: Uint8Array | null): void {
     const F = this.features!
     F.push(values)
     if (!count) return
     const g = this.glob
     for (let i = 0; i < F.n; i++) {
-      if (F.x[i] === NONE) continue
+      if (F.x[i] === NONE || skip?.[i]) continue
       const a = this.siteTails[i]
       a.n++; g.n++
       for (let k = 1; k <= Math.min(F.y[i], KMAX); k++) { a.y[k - 1]++; g.y[k - 1]++ }
       for (let k = 1; k <= Math.min(F.y3[i], KMAX); k++) { a.y3[k - 1]++; g.y3[k - 1]++ }
+      for (let k = 1; k <= Math.min(F.y15[i], KMAX); k++) { a.y15[k - 1]++; g.y15[k - 1]++ }
     }
   }
 
-  private countFire(values: ArrayLike<number>, count: boolean): void {
+  private countFire(values: ArrayLike<number>, count: boolean, skip: Uint8Array | null): void {
     const n = this.siteKeys.length, ring = this.fireRing, pos = this.firePos
     if (count && this.fireFilled >= FIRE_L) {
       for (let i = 0; i < n; i++) {
         const v = values[i]
-        if (v < 0) continue
+        if (v < 0 || skip?.[i]) continue
         // 輪の pos はまだ書いていない枠（= FIRE_L 秒前の値）、pos − d が d 秒前の値
         let mx = -1
         for (let d = FIRE_LAG; d < FIRE_L; d++) {

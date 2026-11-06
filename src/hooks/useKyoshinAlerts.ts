@@ -3,15 +3,18 @@ import type { EEWAlert } from '../types/earthquake'
 import type { TabId } from '../components/IconNav'
 import type { AppSettings } from './useSettings'
 import type { AlertTitleApi } from './useAlertTitle'
-import { playAlertSound, playKyoshinUpdateSound, kyoshinLevel } from '../utils/alertSound'
+import { playAlertSound, playKyoshinUpdateSound, kyoshinLevel, ttsDelayFor, kyoshinUpdateSoundLengthMs } from '../utils/alertSound'
 import { kyoshinDetectionScaleLabel } from '../utils/kyoshinIntensity'
 import { showBrowserNotification } from '../utils/notifications'
+import { OPEN_REALTIME } from '../utils/notificationOpen'
 import { hasDepth } from '../utils/formatters'
 import { hasKnownEpicenter, haversineKm } from '../utils/geo'
 import { log } from '../utils/logger'
 import { reachRadiusKm } from '../utils/travelTime'
 import { eewFeltRadiusKm, isProvisionalHypocenter } from '../utils/eew'
-import type { ConfirmedShock } from '../utils/kyoshinDetectionView'
+import type { ConfirmedShock, DetectedPoint } from '../utils/kyoshinDetectionView'
+import { dominantRegionName, kyoshinDetectSpeechText, kyoshinOtherRegionSpeechText, type RegionPoint } from '../utils/kyoshinRegionName'
+import { getSubRegionsCache, loadSubRegions, type SubRegion } from '../utils/subregions'
 import { notificationAllowed } from '../utils/notificationGate'
 
 // 強震モニタの揺れ検知（V3 エンジン）に応じたタブ切替・ウィンドウタイトル・通知音・ブラウザ通知を担うフック。
@@ -25,7 +28,7 @@ import { notificationAllowed } from '../utils/notificationGate'
 //  - 検知中に離れた別地域が確定（動的距離閾値より遠い）→ 検知音（別地点の地震）
 //  - 各々の終了 → EEW が無ければデフォルトタブへ復帰
 // 音レベルは confirmed 中は confirmedShocks、likely 中は candidateMaxIndex（どちらもイベント自身の
-// メンバー観測点の最大インデックス。カードの推定最大震度と同じ導出元）で判定する。以前は全観測点の
+// メンバー観測点の最大インデックス。カードの最大リアルタイム震度と同じ導出元）で判定する。以前は全観測点の
 // 生インデックスを無条件スキャンしていたため、検知イベントと無関係な1点が閾値を跨ぐだけでカード表示と
 // 食い違う音が鳴ることがあった（2026-08-08 18:47 天草・芦北地方 M3.1 の誤報調査で発覚）。
 
@@ -277,6 +280,98 @@ function isWithinEewRadius(lat: number, lng: number, nowMs: number, eewInfo: Nea
   return haversineKm(lat, lng, eewInfo.lat, eewInfo.lng) <= threshold
 }
 
+/** 揺れ検知の読み上げが P 波の届きを測る、発表中の緊急地震速報 1 件の起点（→ `eewWaveOrigin`）。 */
+interface EewWaveOrigin {
+  lat: number
+  lng: number
+  originTimeMs: number
+  depth: number
+}
+
+/**
+ * 読み上げの判定に使う起点を緊急地震速報から取り出す。位置も時刻も読めなければ null（数えない）。
+ *
+ * **震源の決まっていない報（仮定震源要素・「非常に強い揺れを検知」の報。→ `isProvisionalHypocenter`）も
+ * 数える。** 報の位置（検知した観測点）を震源とみなす（2026-11-05 ユーザー選択「揺れが届いた所だけ読まない
+ * (Recommended)」）。別地点の発報（`extractEewInfo`）はこの形を外したままにしている。
+ *
+ * 時刻は発生時刻を使い、読めなければ発現時刻（観測点が検知した時刻）へ落とす。「非常に強い揺れを検知」の報は
+ * 発生時刻を持たないため。発現時刻は本当の発生より数秒遅いので、届いた範囲を狭く見積もる（読む側へ倒れる）。
+ *
+ * 取消を当てた報（`cancelledAt`。10 秒だけ画面に残る）は数えない。App が `activeEEWsRef` へ入れる前にも
+ * 外しているが、読み上げを見送る根拠にしないことをこの判定の側でも持つ。
+ */
+function eewWaveOrigin(eew: EEWAlert): EewWaveOrigin | null {
+  if (eew.cancelledAt) return null
+  const { hypocenter } = eew.earthquake
+  if (!hasKnownEpicenter(hypocenter.latitude, hypocenter.longitude)) return null
+  let originTimeMs = new Date(eew.earthquake.originTime).getTime()
+  if (!Number.isFinite(originTimeMs)) originTimeMs = new Date(eew.earthquake.arrivalTime).getTime()
+  if (!Number.isFinite(originTimeMs)) return null
+  return {
+    lat: hypocenter.latitude,
+    lng: hypocenter.longitude,
+    originTimeMs,
+    depth: hasDepth(hypocenter.depth) ? hypocenter.depth : DEFAULT_VIRTUAL_DEPTH_KM,
+  }
+}
+
+/**
+ * 発表中の緊急地震速報のどれかの P 波が、時刻 `nowMs` までに座標 (lat, lng) へ届いているか。揺れ検知の
+ * 読み上げ（最初の検知と別の地点）を見送るのに使う（2026-10-31 ユーザー選択「EEWの範囲内なら読まない
+ * (Recommended)」——同じ揺れを緊急地震速報が既に読んでいる。範囲の取り方は 2026-11-05 ユーザー選択
+ * 「揺れが届いた所だけ読まない (Recommended)」）。届く前の揺れはその地震のものではありえないので、別の地震として読む。
+ *
+ * - 範囲は P 波の到達半径（JMA2001 走時表）× `DYNAMIC_THRESHOLD_SAFETY_FACTOR` だけで決める。**有感半径では
+ *   打ち止めない** —— 初報の規模は小さく出ることがあり（能登 2024-01-01 の初報は M5.5）、P 波が届いた遠くの
+ *   揺れまで別の地震として読んでしまう
+ * - **下限（`REGION_MATCH_KM`）は置かない。** あの 300km は地域の照合を発生直後に安定させるための値で、
+ *   P 波が 300km に届くのは発生から 30 秒余り後（浅い震源・係数込み）。その間に下限を当てると、P 波が届いて
+ *   いない場所で起きた別の地震まで読まなくなる
+ * - 発生時刻より前（P 波がまだ地表に出ていない）は半径 0 なので、どこも届いていない
+ *
+ * **別地点の発報・地域の吸収（`isWithinEewRadius`・`absorbedByEew`）とは判定を分けている。** あちらは音・通知・
+ * カメラの寄せまで動かすので、読み上げのためにそちらの範囲を変えない。
+ */
+export function isReachedByActiveEewWave(
+  lat: number,
+  lng: number,
+  nowMs: number,
+  activeEews: ReadonlyMap<string, EEWAlert>,
+): boolean {
+  for (const eew of activeEews.values()) {
+    const origin = eewWaveOrigin(eew)
+    if (!origin) continue
+    const radius = reachRadiusKm('P', (nowMs - origin.originTimeMs) / 1000, origin.depth) * DYNAMIC_THRESHOLD_SAFETY_FACTOR
+    if (radius > 0 && haversineKm(lat, lng, origin.lat, origin.lng) <= radius) return true
+  }
+  return false
+}
+
+/** 揺れの場所。重心（`lat`/`lng`）と、最も強く揺れている点（`peak`）。 */
+export interface ShockPlace {
+  lat: number
+  lng: number
+  peak: { lat: number; lng: number }
+}
+
+/**
+ * 揺れ 1 つに、発表中の緊急地震速報の P 波が届いているか。**重心か最も強い点のどちらかに届いていれば届いたとみる**
+ * （2026-11-05 ユーザー選択「最も強い点でも判定する (Recommended)」）。
+ *
+ * 広く広がった揺れでは重心が震源から離れる（能登の再生で約 140km。`ConfirmedShock.peak` の注記）。震源が仮の
+ * 速報の直後は P 波の円がまだ小さいので、重心だけで見ると同じ地震の揺れを「届いていない」と取り違えて読む
+ * （能登の週の控えで 2 件。01-01 16:32:54 は発生から 9 秒・重心は震源から 121km・円は 61km。最も強い点では届いていた）。
+ */
+export function isShockReachedByActiveEewWave(
+  shock: ShockPlace,
+  nowMs: number,
+  activeEews: ReadonlyMap<string, EEWAlert>,
+): boolean {
+  return isReachedByActiveEewWave(shock.lat, shock.lng, nowMs, activeEews)
+    || isReachedByActiveEewWave(shock.peak.lat, shock.peak.lng, nowMs, activeEews)
+}
+
 /**
  * 地域(region)と新しい確定点(sLat, sLng)が「同一地震の伝播範囲内」とみなせるかを判定する。
  *
@@ -336,6 +431,19 @@ export function isRegionWithinAnyEew(
   return false
 }
 
+/**
+ * 地域を EEW の揺れに吸収した印を立て、立てた 1 回だけ記録する。
+ *
+ * **吸収すると「別の地点で揺れを検知」は鳴らない。** 吸収の範囲は EEW の揺れが届く半径（計測震度 0。
+ * 大きな地震では 1000km を超える）まで広いので、別の地震を取り込んで黙ったときに後から追えるよう、
+ * 地域の位置を残す。
+ */
+function markAbsorbedByEew(region: AlertRegion): void {
+  if (region.absorbedByEew) return
+  region.absorbedByEew = true
+  log.info(`[kyoshin] 揺れ検知の地域を緊急地震速報の揺れに含めた（別の地点としては知らせない）: ${region.lat.toFixed(2)},${region.lng.toFixed(2)}`)
+}
+
 /** 別地点発報の判定が持ち越す状態（フックの ref 群をまとめたもの）。 */
 export interface AlertRegionState {
   regions: AlertRegion[]
@@ -359,8 +467,21 @@ export function createAlertRegionState(): AlertRegionState {
   return { regions: [], lastNewRegionAtMs: null, anyConfirmedPrev: false, outbreakAtMs: null, lastNowMs: null }
 }
 
-/** 別地点として発報すべき地域。通知の「推定最大震度」はこの地域の値を使う（全体の最大ではない）。 */
-export interface NewRegionAlert {
+/** `stepAlertRegions` が取り込む確定地域 1 件の形（`ConfirmedShock` はこれを満たす）。 */
+export interface AlertShockInput {
+  lat: number
+  lng: number
+  index: number
+  peak?: { lat: number; lng: number }
+}
+
+/** 別地点として発報すべき地域。通知の「最大リアルタイム震度」はこの地域の値を使う（全体の最大ではない）。 */
+export interface NewRegionAlert<S extends AlertShockInput = AlertShockInput> {
+  /**
+   * 発報のもとになった確定地域そのもの。読み上げの区域名はここから引く（`ConfirmedShock.points`）。
+   * 型引数で受け取った形のまま返すので、呼び出し側は自分が渡した型の欄をそのまま読める。
+   */
+  shock: S
   lat: number
   lng: number
   /** その地域のメンバー観測点の最大計測震度インデックス。 */
@@ -405,12 +526,12 @@ function resetEpisode(state: AlertRegionState): void {
  *   触れずフレームを見送る。前フレームより過去へ戻った場合はエピソードの切り替えとして状態を捨てる
  * @returns 発報すべき地域（1 フレームにつき最大 1 件）。無ければ null
  */
-export function stepAlertRegions(
+export function stepAlertRegions<S extends AlertShockInput>(
   state: AlertRegionState,
-  shocks: readonly { lat: number; lng: number; index: number; peak?: { lat: number; lng: number } }[],
+  shocks: readonly S[],
   nowMs: number,
   activeEEWs: ReadonlyMap<string, EEWAlert>,
-): NewRegionAlert | null {
+): NewRegionAlert<S> | null {
   const anyConfirmed = shocks.length > 0
 
   // データ時刻が壊れているフレームは距離も EEW 範囲も判定できない。地域を作らずに見送る
@@ -428,7 +549,7 @@ export function stepAlertRegions(
   // EEW の伝播範囲に入ったことを記憶する（EEW 解除後の一斉発報を防ぐ）。判定は毎フレーム行うが、
   // 一度立った印は下ろさない。
   for (const r of state.regions) {
-    if (!r.absorbedByEew && isRegionWithinAnyEew(r, nowMs, activeEEWs)) r.absorbedByEew = true
+    if (!r.absorbedByEew && isRegionWithinAnyEew(r, nowMs, activeEEWs)) markAbsorbedByEew(r)
   }
 
   // マッチングはフレーム開始時の座標で行う。地域の代表点はマッチのたびに書き換わるため、素直に
@@ -436,7 +557,7 @@ export function stepAlertRegions(
   // 結果が変わる。
   const frameStartPos = new Map(state.regions.map((r) => [r, { lat: r.lat, lng: r.lng }]))
 
-  let alert: NewRegionAlert | null = null
+  let alert: NewRegionAlert<S> | null = null
   for (const s of shocks) {
     let reg: AlertRegion | null = null
     let bestDist = Infinity
@@ -457,7 +578,7 @@ export function stepAlertRegions(
         firstSeenAtMs: nowMs,
         absorbedByEew: false,
       }
-      created.absorbedByEew = isRegionWithinAnyEew(created, nowMs, activeEEWs)
+      if (isRegionWithinAnyEew(created, nowMs, activeEEWs)) markAbsorbedByEew(created)
       state.regions.push(created)
       // 同じフレームの後続の確定点も、この地域を「フレーム開始時の位置」として扱えるようにする
       // （登録しないと、直前の点で動いた後の座標と比較され処理順に依存する）。
@@ -475,11 +596,11 @@ export function stepAlertRegions(
         // 座標を更新した後の位置で EEW の範囲をもう一度見る。地域の代表点は毎フレーム動くため、
         // フレーム冒頭の一括判定は 1 フレーム前の位置に対する結果になっている。
         if (isRegionWithinAnyEew(reg, nowMs, activeEEWs)) {
-          reg.absorbedByEew = true
+          markAbsorbedByEew(reg)
         } else {
           reg.fired = true
           state.lastNewRegionAtMs = nowMs
-          alert = { lat: s.lat, lng: s.lng, index: s.index, peak: s.peak }
+          alert = { shock: s, lat: s.lat, lng: s.lng, index: s.index, peak: s.peak }
         }
       }
     }
@@ -531,6 +652,43 @@ export interface ReonsetSignal {
   atMs: number
   /** 寄せる先。引けなければ null（寄せずに音とタブ移動だけ出す） */
   focus: { lat: number; lng: number } | null
+}
+
+/** 揺れ検知の読み上げが区域の境界データを待つ上限（ms）。過ぎたら地名を言わずに読む（→ `speakPendingDetection`）。 */
+export const DETECT_SPEECH_REGION_WAIT_MS = 10_000
+
+/** 読み上げると決めた揺れ 1 件（区域名を決める点と、名前から文を作る口）。 */
+interface PendingDetectionSpeech {
+  points: readonly RegionPoint[]
+  textOf: (regionName: string | null) => string
+  /** 声に出す直前に呼ぶ見直し。真なら読まずに捨てる（→ `eewReachedRecheck`） */
+  dropBeforeSpeaking: () => boolean
+}
+
+/**
+ * 揺れ検知の読み上げを**声に出す直前**に見直す関数を作る。積んだ時に読むと決めた揺れでも、その後に届いた
+ * 緊急地震速報の P 波が**検知の時刻**（`detectedAtMs`。読む時刻ではない）に揺れの場所へ届いていたなら、
+ * 同じ地震の揺れなので捨てる（基準は積む時と同じ `isShockReachedByActiveEewWave`。2026-11-05 ユーザー選択
+ * 「揺れが届いた所だけ読まない (Recommended)」）。
+ *
+ * 要るのは、確定の瞬間に速報がまだ届いていないことがあるため。能登の本震（2024-01-01）は、揺れの確定が
+ * 16:10:15（データ時刻）、速報の初報（予報・警報とも）は 16:10:16 の発表だった。確定の時に積んだ読み上げは、
+ * 速報の読み上げを待ってから読まれうる。
+ *
+ * 場所がすべて届いていたときだけ捨てる。場所が無い・検知の時刻が読めないときは捨てない（読む側へ倒す）。
+ */
+function eewReachedRecheck(
+  places: readonly ShockPlace[],
+  detectedAtMs: number,
+  activeEEWsRef: React.MutableRefObject<ReadonlyMap<string, EEWAlert>>,
+): () => boolean {
+  return () => {
+    if (places.length === 0 || !Number.isFinite(detectedAtMs)) return false
+    const eews = activeEEWsRef.current
+    if (!places.every((p) => isShockReachedByActiveEewWave(p, detectedAtMs, eews))) return false
+    log.info(`[kyoshin] 読む直前に見直すと、緊急地震速報の揺れ（P 波）が検知の時刻に届いていたため揺れ検知の読み上げを捨てる（検知 ${new Date(detectedAtMs).toISOString()}・揺れ ${places.length} 件・発表中の緊急地震速報 ${eews.size} 件）`)
+    return true
+  }
 }
 
 export interface KyoshinAlertsDeps {
@@ -588,13 +746,43 @@ export interface KyoshinAlertsDeps {
    * null で、そのときは寄せずに音とタブ移動だけ出す。**必須にしている**（渡し忘れると黙って鳴らなくなるため）。
    */
   reonset: ReonsetSignal | null
+  /**
+   * 揺れ検知に入った観測点（検知カードと同じ点列）。読み上げる区域名を決めるのに使う
+   * （`dominantRegionName`。カードの区域名と同じ決め方）。
+   */
+  detectedPoints: readonly DetectedPoint[]
+  /**
+   * 揺れ検知を読み上げる（`useLiveEventHandler` の `speakKyoshinDetection`）。`delayMs` は音が鳴り始めてから
+   * 声を出すまでの間。`dropBeforeSpeaking` は声に出す直前（間が明けた時と、他の読み上げの順番を待ち終えた時）に
+   * 呼ばれ、真なら読まずに捨てる（→ `eewReachedRecheck`）。**必須にしている**（渡し忘れると設定を入れても黙って読まないため）。
+   */
+  speakDetection: (text: string, delayMs: number, dropBeforeSpeaking: () => boolean) => void
 }
 
 export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () => void } {
   const {
     confirmed, candidate, candidateMaxIndex, confirmedShocks, dataTime, stalled, settings, title,
     activeEEWsRef, defaultTabRef, setActiveTab, revertToDefaultTab, onShakeFocus, reonset,
+    detectedPoints, speakDetection,
   } = deps
+  // 読み上げは確定の効果より後の効果で予約するので、点列と口は最新を ref で読む
+  const detectedPointsRef = useRef(detectedPoints)
+  detectedPointsRef.current = detectedPoints
+  const speakDetectionRef = useRef(speakDetection)
+  speakDetectionRef.current = speakDetection
+  /**
+   * 読み上げると決めた揺れ（確定の立ち上がりと別地点）。読み上げそのものは、同じ瞬間に鳴る震度更新音の
+   * 長さが判ってから予約する（下の読み上げの効果）。積んだ順に読む。
+   */
+  const pendingSpeechesRef = useRef<PendingDetectionSpeech[]>([])
+  /**
+   * 読み上げの世代。区域の境界データを読み終えるのを待っている読み上げは、待っている間にリプレイの開始・停止や
+   * アンマウントがあれば読まない（世代が変わっていたら捨てる）。
+   */
+  const speechGenRef = useRef(0)
+  useEffect(() => () => { speechGenRef.current++ }, [])
+  /** この描き直しで鳴らした震度更新音の長さ（ms。鳴らしていなければ 0）。読み上げの効果が読んで戻す */
+  const updateSoundLengthThisCommitRef = useRef(0)
 
   // 以下の発報エフェクトは、音の再鳴を安定させるため依存配列を絞ってある（各 effect の
   // eslint-disable を参照）。そのためコールバックと座標をクロージャで掴むと古い実体を呼び続ける。
@@ -652,7 +840,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
 
   // confirmed 中はイベント自身のメンバー最大インデックス、likely 中は主候補イベントの最大インデックス。
   // 非検知時は音を鳴らさないため 0 でよい。confirmed の初期値は -1（欠測）——全地域のメンバーが欠測なら
-  // 通知の呼び名を付けない（0 から始めると計測震度 -3.0 の値があるように「0以下」と名乗る）
+  // 通知の呼び名を付けない（0 から始めると計測震度 -3.0 の値があるように「0未満」と名乗る）
   const effectiveKyoshinMaxIndex = useMemo(() => {
     if (confirmed) return confirmedShocks.reduce((max, s) => Math.max(max, s.index), -1)
     if (candidate) return candidateMaxIndex
@@ -675,7 +863,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
    */
   const lostWhileStalledRef = useRef(false)
   /**
-   * 揺れ検知の通知に出した推定最大震度の段（`kyoshinLevel`。-1 は、この揺れでまだ通知していない）。
+   * 揺れ検知の通知に出した最大リアルタイム震度の段（`kyoshinLevel`。-1 は、この揺れでまだ通知していない）。
    * 強まったときの書き換え（`renotifyStronger`）は、これより段が上がったときだけ出す —— 確定の瞬間に開始の通知と
    * 同じ値で二重に出さず、復帰で通知を省いた揺れにも出さない（省いた揺れは途絶の前に通知を出している）。
    */
@@ -705,8 +893,45 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
         }
         if (notificationAllowed(settings, 'detection')) {
           const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
-          showBrowserNotification('揺れを検知中', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection')
+          // 呼び名は「最大リアルタイム震度」（2026-10-31 ユーザー承認「折り返したりが起きないなら最大リアルタイム震度がいいですね」）。強まったとき・別地点の通知も同じ
+          showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}`, 'kyoshin-detection', false, OPEN_REALTIME)
           notifiedLevelRef.current = kyoshinLevel(effectiveKyoshinMaxIndex)
+        }
+        // 読み上げは確定の立ち上がりで 1 回だけ（2026-10-31 ユーザー選択「地名だけ・1回 (Recommended)」。
+        // 強まったときは更新音だけ）。発表中の緊急地震速報の P 波が既に届いていた揺れは読まない
+        // （`isShockReachedByActiveEewWave`）。届いていない揺れが残れば、それは別の地震なのでその揺れの点で読む
+        if (settings.kyoshinDetectSpeech) {
+          const nowMs = dataTime ? new Date(dataTime).getTime() : NaN
+          const shocks = confirmedShocksRef.current
+          if (!Number.isFinite(nowMs)) {
+            // 届いたかを判定できないとき（データ時刻が読めない）は読む側へ倒す。倒したことを残す
+            if (activeEEWsRef.current.size > 0) {
+              log.info('[kyoshin] データ時刻が読めず緊急地震速報の揺れが届いたかを判定できないため、揺れ検知を読む')
+            }
+            // 時刻が読めないので、読む直前の見直しも捨てない側へ倒れる（→ `eewReachedRecheck`）
+            pendingSpeechesRef.current.push({
+              points: detectedPointsRef.current, textOf: kyoshinDetectSpeechText,
+              dropBeforeSpeaking: eewReachedRecheck(shocks, nowMs, activeEEWsRef),
+            })
+          } else {
+            const unreached = shocks.filter((s) => !isShockReachedByActiveEewWave(s, nowMs, activeEEWsRef.current))
+            if (shocks.length > 0 && unreached.length === 0) {
+              log.info(`[kyoshin] 緊急地震速報の揺れ（P 波）が届いた揺れにつき読み上げを省略（揺れ ${shocks.length} 件・発表中の緊急地震速報 ${activeEEWsRef.current.size} 件）`)
+            } else if (unreached.length < shocks.length) {
+              // 一部だけ届いていた。届いていない揺れの点だけで区域名を決める（全体の点では届いた側の名前になる）
+              log.info(`[kyoshin] 緊急地震速報の揺れ（P 波）が届いた揺れ ${shocks.length - unreached.length} 件を除き、残り ${unreached.length} 件を読む`)
+              pendingSpeechesRef.current.push({
+                points: unreached.flatMap((s) => s.points), textOf: kyoshinDetectSpeechText,
+                dropBeforeSpeaking: eewReachedRecheck(unreached, nowMs, activeEEWsRef),
+              })
+            } else {
+              // 積む時点で届いていなくても、読む直前にもう一度見る（確定の後に速報が届くことがある）
+              pendingSpeechesRef.current.push({
+                points: detectedPointsRef.current, textOf: kyoshinDetectSpeechText,
+                dropBeforeSpeaking: eewReachedRecheck(shocks, nowMs, activeEEWsRef),
+              })
+            }
+          }
         }
       }
     } else if (!confirmed && prevConfirmedRef.current) {
@@ -768,7 +993,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
   const postPeakMinLevelRef = useRef(-1)
   /**
    * 確定（confirmed）中に揺れが強まったら、揺れ検知の通知を同じ札（`kyoshin-detection`）で書き換える
-   * （2026-10-22 ユーザー選択「強まったら通知し直す (Recommended)」）。文面は確定したときと同じで、推定最大震度だけが
+   * （2026-10-22 ユーザー選択「強まったら通知し直す (Recommended)」）。文面は確定したときと同じで、最大リアルタイム震度だけが
    * 新しい値になる。**揺れの可能性（likely）では出さない**（likely での通知は今のまま行わない。同じ選択）。
    */
   const renotifyStronger = (confirmedNow: boolean) => {
@@ -777,7 +1002,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     const level = kyoshinLevel(effectiveKyoshinMaxIndex)
     if (notifiedLevelRef.current < 0 || level <= notifiedLevelRef.current) return
     const label = kyoshinDetectionScaleLabel(effectiveKyoshinMaxIndex) ?? '?'
-    showBrowserNotification('揺れを検知中', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection')
+    showBrowserNotification('揺れを検知中', `最大リアルタイム震度 ${label}`, 'kyoshin-detection', false, OPEN_REALTIME)
     notifiedLevelRef.current = level
   }
   useEffect(() => {
@@ -798,6 +1023,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
         requestShakeFocus()
         if (settings.soundEnabled) {
           playKyoshinUpdateSound(effectiveKyoshinMaxIndex, gainScale)
+          updateSoundLengthThisCommitRef.current = kyoshinUpdateSoundLengthMs(effectiveKyoshinMaxIndex)
         }
         renotifyStronger(confirmed)
       }
@@ -812,6 +1038,7 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
       requestShakeFocus()
       if (settings.soundEnabled) {
         playKyoshinUpdateSound(effectiveKyoshinMaxIndex, gainScale)
+        updateSoundLengthThisCommitRef.current = kyoshinUpdateSoundLengthMs(effectiveKyoshinMaxIndex)
       }
       renotifyStronger(confirmed)
     }
@@ -853,10 +1080,85 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     if (notificationAllowed(settings, 'detection')) {
       // 全体の最大震度ではなく、発報した地域自身の推定震度を出す（「別の地点」の報せなので）
       const label = kyoshinDetectionScaleLabel(alert.index) ?? '?'
-      showBrowserNotification('別の地点で揺れを検知', `推定最大震度 ${label}（強震モニタ）`, 'kyoshin-detection-new')
+      showBrowserNotification('別の地点で揺れを検知', `最大リアルタイム震度 ${label}`, 'kyoshin-detection-new', false, OPEN_REALTIME)
+    }
+    // 読み上げは別地点の地域ごとに 1 回（地域は一度鳴ったら二度と鳴らない。→ `stepAlertRegions`）。
+    // 「茨城県南部でも揺れを検知。」（2026-10-31 ユーザー選択「境を直してから読む (Recommended)」）。
+    // 区域名はその揺れの点から決める（全体の点で決めると先に揺れている地域の名前になる）。
+    // 発表中の緊急地震速報の P 波が既に届いていた地域は読まない（最初の検知と同じ `isShockReachedByActiveEewWave`）。
+    // 鳴らすかを決める吸収（`absorbedByEew`）は有感半径で打ち止めるので、その外で P 波が届いた地域はここまで来る。
+    // 音と通知はそのまま出し、読み上げだけを見送る
+    if (settings.kyoshinDetectSpeech) {
+      if (isShockReachedByActiveEewWave(alert.shock, nowMs, activeEEWsRef.current)) {
+        log.info(`[kyoshin] 別の地点の揺れに緊急地震速報の揺れ（P 波）が届いていたため読み上げを省略: ${alert.lat.toFixed(2)},${alert.lng.toFixed(2)}`)
+      } else {
+        pendingSpeechesRef.current.push({
+          points: alert.shock.points, textOf: kyoshinOtherRegionSpeechText,
+          dropBeforeSpeaking: eewReachedRecheck([alert.shock], nowMs, activeEEWsRef),
+        })
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dataTime を毎フレーム駆動キーにし他は最新クロージャを参照
   }, [dataTime])
+
+  // 揺れ検知の読み上げ（「〇〇で揺れを検知。」「〇〇でも揺れを検知。」）。確定の効果と別地点の効果が積んだ分を、
+  // **それらと震度更新音の効果の後で**予約する。確定と同じ瞬間に震度更新音も鳴ることがあり（確定と同時に段が
+  // 上がった）、その長さが判ってから間を決めるため（2026-10-31 ユーザー指示「効果音がなりおわってから読み上げるようにしてくださいね」）。
+  // 依存は上の効果の和にして、どれかが走った描き直しでは必ずこちらも走るようにする。
+  useEffect(() => {
+    const updateLength = updateSoundLengthThisCommitRef.current
+    updateSoundLengthThisCommitRef.current = 0
+    if (pendingSpeechesRef.current.length === 0) return
+    const items = pendingSpeechesRef.current
+    pendingSpeechesRef.current = []
+    const delayMs = Math.max(ttsDelayFor('kyoshin'), updateLength)
+    for (const item of items) speakPendingDetection(item, delayMs)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 上の効果と同じ描き直しで走らせるための依存
+  }, [confirmed, stalled, effectiveKyoshinMaxIndex, candidate, settings.soundEnabled, settings.notifyDetection, dataTime])
+
+  /**
+   * 積んだ読み上げ 1 件を予約する。区域名はカードと同じ決め方（点の数×強さ。→ `dominantRegionName`）。
+   *
+   * **区域の境界データをまだ読み終えていなければ、読み終えるのを待ってから読む**（2026-10-31 ユーザー選択
+   * 「埋める・取れない時は「別の地点でも」 (Recommended)」）。待った時間は音との間から差し引く（声が音から遅れない）。
+   * 取れなかったときだけ地名を言わない。待っている間にリプレイの開始・停止やアンマウントがあれば読まない。
+   */
+  const speakPendingDetection = (item: PendingDetectionSpeech, delayMs: number): void => {
+    const cached = getSubRegionsCache()
+    if (cached) {
+      speakDetectionRef.current(item.textOf(dominantRegionName(item.points, cached)), delayMs, item.dropBeforeSpeaking)
+      return
+    }
+    const gen = speechGenRef.current
+    const startedAt = performance.now()
+    // 待ちの上限。過ぎたら地名を言わずに読む（取得の上限 60 秒まで待つと、揺れから 1 分遅れて読みうる。
+    // 2026-10-31 ユーザー選択「10秒で地名なしに切替 (Recommended)」）。間に合わなかった取得の結果は捨てる
+    let giveUpTimer: ReturnType<typeof setTimeout> | undefined
+    const giveUp = new Promise<'timeout'>((resolve) => { giveUpTimer = setTimeout(() => resolve('timeout'), DETECT_SPEECH_REGION_WAIT_MS) })
+    const loaded = loadSubRegions()
+      .then((subs): SubRegion[] | null => subs, (err: unknown) => {
+        log.warn('[kyoshin] 区域の境界データを読めず、揺れ検知を地名なしで読む', err)
+        return null
+      })
+    Promise.race([loaded, giveUp])
+      .then((subs) => {
+        clearTimeout(giveUpTimer)
+        if (subs === 'timeout') {
+          log.warn(`[kyoshin] 区域の境界データが ${DETECT_SPEECH_REGION_WAIT_MS / 1000} 秒で読み終わらず、揺れ検知を地名なしで読む`)
+          subs = null
+        }
+        if (gen !== speechGenRef.current) {
+          log.info(`[kyoshin] 区域の境界データを待つ間にリプレイの開始・停止があったため、揺れ検知を読まない: ${item.textOf(null)}`)
+          return
+        }
+        const name = subs ? dominantRegionName(item.points, subs) : null
+        speakDetectionRef.current(item.textOf(name), Math.max(0, delayMs - (performance.now() - startedAt)), item.dropBeforeSpeaking)
+      })
+      // 待ち明けの処理は effect の外で走るので、ここで落ちた例外は React に届かない。黙って消さずに残す
+      .catch((err: unknown) => {
+        log.error(`[kyoshin] 揺れ検知の読み上げを予約できなかった: ${item.textOf(null)}`, err)
+      })
+  }
 
   // 同じ場所の 2 つ目の地震（設計書§40）: 確定が続く中で、静けさを挟んでまとまった立ち上がりが
   // 来たら検知音を鳴らし、realtime タブへ移して、その点へ寄せる。判定は `utils/kyoshinReonset.ts`。
@@ -897,6 +1199,9 @@ export function useKyoshinAlerts(deps: KyoshinAlertsDeps): { resetForReplay: () 
     regionStateRef.current = createAlertRegionState()
     // 別地点として鳴らしたフレームの時刻も落とす（巻き戻した先の同じ時刻で、2 つ目の合図を誤って抑えない）
     regionFiredAtRef.current = null
+    // 境界データを待っている読み上げと、積んだまま予約していない読み上げは、旧い時間軸の揺れなので読まない
+    speechGenRef.current++
+    pendingSpeechesRef.current = []
   }, [])
 
   return { resetForReplay }

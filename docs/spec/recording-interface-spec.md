@@ -104,7 +104,7 @@ for (const ev of events) record(ev)
 |---|---|
 | `speechId` | この読み上げの識別子。`speechEnd` / `speechChunk` が同じ値で指す |
 | `channel` | `'eew'`（緊急地震速報の列）か `'other'`（それ以外）。列が別で、割り込みの規則も違う |
-| `topic` | 読み上げの主題（非 EEW のみ。`quake:<鍵>` / `tsunami` / `lpgm:<eventId>` 等） |
+| `topic` | 読み上げの主題（非 EEW のみ。`quake:<鍵>` / `tsunami` / `lpgm:<eventId>` 等。時報の声は `timeSignal` で、`telegram` は空） |
 | `eewKey` | 緊急地震速報の地震を指す鍵（EEW のみ） |
 | `subject` | 画面の追従が向いている対象（どのカードを見せているか）。`topic` と重なることが多いが別の軸で、渡されていなければ `null` |
 | `telegram` | **どの電文のものか**（→ §5） |
@@ -127,6 +127,10 @@ for (const ev of events) record(ev)
 ### 通知音
 
 `type: 'sound'`。`sound` に種別（`eew` / `tsunami` / `kyoshin` 等）、`telegram` に持ち主。
+
+**時報の音は `sound: 'timeSignal'`・`telegram` は空。** 音は先に予約するので、記録の時刻（`at`）は予約した時ではなく
+鳴り始め（ピッ・ピッ・ピッ・ポーンなら最初のピッ）に合わせたタイマーの時刻。タブが裏に回ってタイマーが間引かれると、実際の鳴り始めより遅れて記録される。他の読み上げの最中で取り消した回は記録しない
+（→ [`audio-tts-spec.md`](audio-tts-spec.md) §2「時報」）。
 
 編集側が「音の上で切っているのは声か通知音か」を判定するのに使う。**強震モニタの検知音は
 電文と無関係**なので `telegram` が空になる（それが正しい）。
@@ -224,7 +228,7 @@ for (const ev of events) record(ev)
 **続報そのものは `alert` に出ない** —— 秒ごとに届くので、出すと「状態が動いた」という問いに
 答えられなくなる。続報の到来は `telegram` の側に出る。
 
-**EEW の `retracted`（誤報取消）と `expired`（自動解除）は重複配信の扱いが違う。** P2PQuake WS と
+**EEW の `retracted`（誤報取消）と `expired`（自動解除）は重複配信の扱いが違う。** 電文の WebSocket と
 Yahoo hypoInfo の両方から同一 EEW の消滅を検出すると、同じ状態遷移に対して複数回キャンセルが
 届くことがある（音・読み上げの二重鳴り防止と同じ現象）。`retracted` は重複を問わず記録する
 （ブラウザ通知と同じ基準——`hadKey=false` でも「自動解除済みの後に遅れて届いた本物の誤報取消」
@@ -254,9 +258,9 @@ Yahoo hypoInfo の両方から同一 EEW の消滅を検出すると、同じ状
 
 **手で押した開閉も出る。** 自動で開いたものだけではない。
 
-**`telegramText` は `subject` で区別すること。** この種別だけは 6 箇所（地震カードの「気象庁
-からの補足」・南海トラフ地震臨時情報・後発地震注意情報・関連解説情報・地震回数・津波のコメント欄）
-が同じ `overlay: 'telegramText'` を共有しているため、`subject`（`'lpgm:<eventId>'` / `'nankai'` /
+**`telegramText` は `subject` で区別すること。** この種別だけは 7 箇所（地震カードの地震情報と長周期の
+「気象庁からの補足」・南海トラフ地震臨時情報・後発地震注意情報・関連解説情報・地震回数・津波のコメント欄）
+が同じ `overlay: 'telegramText'` を共有しているため、`subject`（`'quake:<eventKey>'` / `'lpgm:<eventId>'` / `'nankai'` /
 `'kohatsu'` / `'nankaiCommentary'` / `'earthquakeCount'` / `'tsunamiComment'`）が無いと、
 どの表示が開いたか区別できない。
 
@@ -318,6 +322,7 @@ Yahoo hypoInfo の両方から同一 EEW の消滅を検出すると、同じ状
 ```js
 // この読み上げは採用した電文のものか
 function isAdopted(speechStart, adoptedTelegramSeqs) {
+  if (speechStart.topic === 'timeSignal') return false  // 時報の声（電文のものではない。下記）
   const t = speechStart.telegram
   if (!t) return false          // 持ち主を引けなかった読み上げ（下記）
   return adoptedTelegramSeqs.has(t.seq)
@@ -328,11 +333,11 @@ function isAdopted(speechStart, adoptedTelegramSeqs) {
 
 | 種類 | `null` のとき |
 |---|---|
-| `speechStart` | **緊急地震速報の予想値の読み上げで、鍵から持ち主を引けなかったとき。** あの発話は「値が落ち着くまで待つ」タイマーから始まるので受信処理の文脈が残っておらず、地震の鍵で引き直している。引ければ埋まる |
-| `sound` | **電文と無関係に鳴る音**（強震モニタの揺れ検知・その候補・設定の窓の通知音テスト）。空が正しい状態で、異常ではない |
+| `speechStart` | **緊急地震速報の予想値の読み上げで、鍵から持ち主を引けなかったとき。** あの発話は「値が落ち着くまで待つ」タイマーから始まるので受信処理の文脈が残っておらず、地震の鍵で引き直している。引ければ埋まる。**ただし時報の声（`topic: 'timeSignal'`）は常に空**で、こちらは電文のものではないので空が正しい |
+| `sound` | **電文と無関係に鳴る音**（強震モニタの揺れ検知・その候補・設定の窓の通知音テスト・時報の `timeSignal`）。空が正しい状態で、異常ではない |
 | `alert` | 電文から起こすので、通常は埋まる |
 
-**`speechStart` の `null` だけが「引けなかった」を意味する。** `sound` の `null` を同じ
+**`speechStart` の `null` だけが「引けなかった」を意味する**（時報の声を除く）。 `sound` の `null` を同じ
 ものとして扱うと、揺れ検知の音が毎回「持ち主不明の異常」に見える。
 
 **紐づけの粒度は「予約した瞬間の電文」。** 読み上げは通知音との間（長いもので約 2.8 秒。
@@ -456,3 +461,5 @@ function isAdopted(speechStart, adoptedTelegramSeqs) {
 - 2026-10-25: 再生中も「もっと見る」で地震カードを遡れるようにしたので、再生中の「もっと見る」もライブと同じ経路で記録することを書いた（§4「電文の受信」）。帯を画面へ反映しない判断に承認の日付と選択肢を添えた。「もっと見る」が読んだ津波電文も `notDispatched` で記録するようにした（それまでは記録に残らなかった）
 - 2026-10-27: 設定がタブから窓へ移ったので、画面の変化の `overlay` に `settings` を足した。開くのは歯車だけで、閉じる理由は「歯車」「閉じる操作」「画面の移動」の 3 つ（§4「画面の変化」）
 - 2026-10-30: 最大階級 0 の長周期地震動観測情報も読み上げへ回るようにしたので、`notDispatched` の例から外した（§4「電文の受信」）
+- 2026-11-02: 地震情報の付加文も地震カードの「気象庁からの補足」に畳んだので、`telegramText` を共有する箇所に地震情報の補足を足し、その `subject`（`quake:<eventKey>`。地震カードの鍵）を書いた（§4「画面の変化」）
+- 2026-11-04: 時報の音（`sound: 'timeSignal'`）と声（`topic: 'timeSignal'`）も記録に載るようにした（どちらも `telegram` は空）。

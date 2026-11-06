@@ -1,17 +1,16 @@
 import type { TelegramLogEntry, TelegramLogKind, TelegramOrigin } from '../../types/earthquake'
 import { log } from '../../utils/logger'
 import { TELEGRAM_KIND_OF_HEAD_TYPE } from '../../services/dmdataTelegramPayload'
-import { P2P_KIND_OF_CODE } from '../../services/p2pquake'
 
 /**
  * 電文種別コードから引く種別名。名前は気象庁の情報名に揃える。
  *
  * **扱うコードはすべてここに載せる。** 鍵がコードの文字列なので、書き漏らしても型検査には
  * 掛からず、行にはコードだけが出る。漏れは `labels.test.ts` が、アプリが扱う種別の集合
- * （`dmdataTelegramPayload.ts`・`dmdata.ts`・`p2pquake.ts`）と突き合わせて落とす。
+ * （`dmdataTelegramPayload.ts`）と突き合わせて落とす。
  *
- * **扱わないコードの行にコードだけが出るのは正しい。** P2PQuake は扱わないコードも `filtered`
- * で記録し、DMDATA も試験報を捨てるとき（`includeTest` が無効）は種別を問わず記録する。
+ * **扱わないコードの行にコードだけが出るのは正しい。** DMDATA は試験報を捨てるとき
+ * （`includeTest` が無効）に種別を問わず記録する。
  * これらに名前を付ける必要はない。引くときは `headTypeLabel` を通す。
  *
  * VYSE51・VYSE52 の括弧書きは、気象庁の情報番号コード（`InfoSerial` の 210・219 が「臨時解説」、
@@ -46,14 +45,36 @@ export const HEAD_TYPE_LABEL: Readonly<Record<string, string>> = {
   IXAC41: '推計震度分布図作図用データ',
   IXAC40: '推計震度分布図作図用データ（旧形式）',
   WEPA60: '国際津波関連情報（英文）',
-  '551': '地震情報',
-  '552': '津波情報',
-  '556': 'EEW',
 }
 
 /** 種別名。載っていないコードはコードそのものを返す（継承したキーは引かない）。 */
 export function headTypeLabel(headType: string): string {
   return Object.prototype.hasOwnProperty.call(HEAD_TYPE_LABEL, headType) ? HEAD_TYPE_LABEL[headType] : headType
+}
+
+/**
+ * 電文の Control/Title。`Control` の中だけを見る（Head にも同名の Title がある）。開始タグの属性と接頭辞は、
+ * 訓練・試験の読み取り（`utils/telegramOperationStatus.ts`）と同じく許す。
+ */
+const CONTROL_BLOCK = /<(?:[\w.-]+:)?Control\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?Control>/
+const TITLE = /<(?:[\w.-]+:)?Title\b[^>]*>\s*([^<]*?)\s*<\/(?:[\w.-]+:)?Title>/
+
+/** 一度読んだ行の名前（行は作られた後に書き換えない）。2,022 行を描くたびに本文をなめ直さない。 */
+const titleCache = new WeakMap<object, string>()
+
+/**
+ * 行に出す名前。XML の電文は本文の Control/Title をそのまま出す（2026-11-04 ユーザー選択「電文の Title を
+ * そのまま (Recommended)」）。Title が読めない行（二進の推計震度分布図・復号に失敗した base64・捨てた試験報）は
+ * 種別名（{@link headTypeLabel}）を出す。
+ */
+export function telegramTitleOf(entry: Pick<TelegramLogEntry, 'headType' | 'rawBody'>): string {
+  const cached = titleCache.get(entry)
+  if (cached !== undefined) return cached
+  const body = entry.rawBody
+  const control = typeof body === 'string' && body.trimStart().startsWith('<') ? CONTROL_BLOCK.exec(body)?.[1] : undefined
+  const title = (control === undefined ? undefined : TITLE.exec(control)?.[1]) || headTypeLabel(entry.headType)
+  titleCache.set(entry, title)
+  return title
 }
 
 /**
@@ -76,13 +97,12 @@ export const KIND_LABEL: Readonly<Record<TelegramLogKind, string>> = {
 }
 
 /**
- * 電文種別コードが属する種別。**独自の表は持たず、受信の振り分けが引く 2 つの表を合わせて引く** ——
- * DMDATA は `TELEGRAM_KIND_OF_HEAD_TYPE`（`dmdataTelegramPayload.ts`）、P2PQuake は `P2P_KIND_OF_CODE`（`p2pquake.ts`）。
+ * 電文種別コードが属する種別。**独自の表は持たず、受信の振り分けが引く表**
+ * （`dmdataTelegramPayload.ts` の `TELEGRAM_KIND_OF_HEAD_TYPE`）**を引く**。
  * 読めた行と読めなかった行が同じ絞り込みに入るのはこのため。
  */
 const KIND_OF_HEAD_TYPE: ReadonlyMap<string, TelegramLogKind> = new Map<string, TelegramLogKind>([
   ...TELEGRAM_KIND_OF_HEAD_TYPE,
-  ...[...P2P_KIND_OF_CODE].map(([code, kind]) => [String(code), kind] as const),
 ])
 
 /**
@@ -97,7 +117,6 @@ export function telegramLogKindOf(entry: Pick<TelegramLogEntry, 'kind' | 'headTy
 /** 種別の絞り込みに並べる種別。`KIND_LABEL` から作るので、漏れが起きない。 */
 export const KIND_OPTIONS = Object.keys(KIND_LABEL) as readonly TelegramLogKind[]
 
-export type SourceFilter = 'all' | TelegramLogEntry['source']
 /** 種別の絞り込み。種別のほかに、読み取りの結果（スキップ・エラー）でも絞れる。 */
 export type KindFilter = 'all' | TelegramLogKind | 'filtered' | 'error'
 
@@ -157,14 +176,12 @@ export function operationBadgeOf(
 
 /** その行が絞り込みに当たるか。 */
 export function matchesTelegramFilter(
-  entry: Pick<TelegramLogEntry, 'source' | 'origin' | 'status' | 'kind' | 'headType'>,
-  source: SourceFilter,
+  entry: Pick<TelegramLogEntry, 'origin' | 'status' | 'kind' | 'headType'>,
   kind: KindFilter,
   // **任意（`?`）にしない。** 既定値を置くと、呼び出し側が渡し忘れても型検査が通り、
   // その画面だけ経路の絞り込みが黙って効かなくなる。
   origin: OriginFilter,
 ): boolean {
-  if (source !== 'all' && entry.source !== source) return false
   if (origin !== 'all' && entry.origin !== origin) return false
   if (kind === 'all') return true
   if (kind === 'filtered') return entry.status === 'filtered'

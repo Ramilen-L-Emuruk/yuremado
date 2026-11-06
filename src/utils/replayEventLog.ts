@@ -50,7 +50,7 @@ export const REPLAY_TELEGRAM_MEMORY_CAPACITY = 100
 /** 電文の種別（`LiveEvent` の `kind` と、そこへ流れない「お知らせ」を合わせたもの）。 */
 export type ReplayTelegramKind =
   | 'quake' | 'tsunami' | 'eew' | 'lpgm' | 'nankai' | 'nankaiCommentary'
-  | 'kohatsu' | 'earthquakeCount' | 'estimatedIntensity' | 'quakeNotice'
+  | 'kohatsu' | 'earthquakeCount' | 'estimatedIntensity' | 'quakeNotice' | 'internationalTsunami'
 
 /**
  * 「どの電文か」を指す参照。読み上げ・通知音・警報のイベントへ添える。
@@ -143,7 +143,7 @@ export interface ReplaySpeechChunkEvent extends ReplayEventCommon {
 /** 通知音の再生。 */
 export interface ReplaySoundEvent extends ReplayEventCommon {
   type: 'sound'
-  /** 音の種別（`AlertSoundType`）。 */
+  /** 音の種別（`AlertSoundType`。時報の音は `'timeSignal'`）。 */
   sound: string
   telegram: ReplayTelegramRef | null
 }

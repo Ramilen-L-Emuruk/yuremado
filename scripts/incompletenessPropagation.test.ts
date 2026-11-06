@@ -59,32 +59,12 @@ const ALLOWED: { file: string; call: string; why: string }[] = [
     call: 'fs.writeFileSync(tmp, gz)',
     why: '同じ控えの書き出し（一時ファイルへ出してから rename する形の途中）',
   },
-  {
-    file: 'fetch-p2p-history.mjs',
-    call: "fs.readFileSync(p, 'utf8')",
-    why: 'P2PQuake 履歴の控え（期限付き）。同じスクリプトが書いて同じスクリプトが読む',
-  },
-  {
-    file: 'fetch-p2p-history.mjs',
-    call: 'fs.writeFileSync(tmp, JSON.stringify({ fetchedAt: Date.now(), items }))',
-    why: '同じ控えの書き出し（一時ファイルへ出してから rename する形の途中）',
-  },
 
   // --- 実電文そのもの（ファイルの山。印は収集の札が運ぶ → `collection-mark.mjs`） ---
   {
     file: 'coverage-core.mjs',
     call: "fs.readFileSync(path.join(CACHE, f), 'utf8')",
     why: '集めた実電文の XML。収集の取りこぼしは札が運ぶ',
-  },
-  {
-    file: 'testdata-shapes.mjs',
-    call: "fs.readFileSync(path.join(CACHE, f), 'utf8')",
-    why: '集めた実電文の XML を本物のパーサーへ流すために読む。収集の取りこぼしは札が運ぶ',
-  },
-  {
-    file: 'testdata-shapes.mjs',
-    call: 'fs.readFileSync(path.join(CACHE, p.f))',
-    why: '推計震度分布図の二進電文（分割配信の断片）。JSON ではないので印を載せる場所が無い',
   },
   {
     file: 'header-survey.mjs',
@@ -129,27 +109,17 @@ const ALLOWED: { file: string; call: string; why: string }[] = [
     why: '同上（来歴を焼き込む側）',
   },
   {
-    file: 'testdata-compare.mjs',
-    call: "fs.readFileSync(file, 'utf8')",
-    why: '`p2pquake.ts` / `kyoshin.ts` のソース。TypeScript の AST を読むため',
-  },
-  {
     file: 'coverage-core.mjs',
     call: "fs.readFileSync(path.join(WORK, 'eq_manual.txt'), 'utf8')",
     why: '解説資料のテキスト。JSON ではないので印を載せる場所が無く、読めなければ例外で止まる',
   },
   {
     file: 'archive-cache.mjs',
-    call: "fs.readFileSync(envPath, 'utf8')",
-    why: '`.env.local` から API キーを読む。読めなければ例外で止まる',
+    call: "fs.readFileSync(p, 'utf8')",
+    why: '`.env.local`（このリポジトリとメインの checkout）から API キーを読む。どこにも無ければ探した場所を並べて例外で止まる',
   },
 
   // --- 人が読むレポート（印は本文へ `incompletenessBanner` で入れてある） ---
-  {
-    file: 'testdata-compare.mjs',
-    call: "fs.writeFileSync(path.join(WORK, 'testdata-report.md'), out.join('\\n'))",
-    why: '突き合わせレポート。印は本文の冒頭と E 節に入れてある',
-  },
   {
     file: 'triage.mjs',
     call: "fs.writeFileSync(path.join(WORK, 'triage-result.txt'), out.join('\\n'), 'utf8')",

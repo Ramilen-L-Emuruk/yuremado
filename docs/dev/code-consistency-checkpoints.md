@@ -66,7 +66,7 @@
 | VOICEVOXへの通信が通す前置き（デバウンス・URL検分・末尾スラッシュ正規化）のいずれかを欠くと、誤接続・誤診断・音声合成の無音化のいずれかが起きる（適用範囲は機構ごとに異なる） | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §3「接続先の確認」 |
 | 設定の窓の試聴文を実運用と別に書くと、文型変更時に試聴だけ古い形で残る | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §3「試聴で読ませる文」 |
 | 先行合成（prewarmVoicevox）が進行中の読み上げを止める、または使用予定のものを打ち切ると、鳴っている音が途切れるか、後から始まった読み上げが先行合成を横取りする | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「間を合成の時間に充てる（先行合成）」 |
-| 切り出し語（warmFixedPhrases）の作り置きが応答を待つ・まとめて投げる・辞書を待たずに焼くのいずれかになると、EEW が軒並み無音になる、合成が渋滞する、または辞書を当てていない音が居座る | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「間が無い経路には作り置きを用意する（切り出し語）」・§3「接続先の確認」 |
+| 切り出し語（warmFixedPhrases）の作り置きが応答を待つ・まとめて投げる・辞書を待たずに焼くのいずれかになると、EEW が軒並み無音になる、合成が渋滞する、または辞書を当てていない音が居座る | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「先行合成が使えない経路には作り置きを用意する（切り出し語）」・§3「接続先の確認」 |
 | リプレイの投機合成（speechPrefetch）は1件ごとに上限を張らないと無応答の1件で投機が丸ごと停止し、上限の持ち手をバッチ単位にすると無関係なチャンクまで打ち切られ、続けて焼けなくてもバッチを降りなければ全件が順に上限まで待たされる | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「これから来る電文は先に焼いておく（リプレイの投機）」 |
 | 間を置く読み上げの予約（scheduleSpeech）を画面終了・リプレイ開始で取り消し忘れると、リセット済みの状態へ古い予約が待ち合わせを経ずに割り込む（記録も残らない） | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「間を置く読み上げの予約は追跡する」 |
 
@@ -153,7 +153,7 @@
 | 新しい読み上げフェーズを足すとき `EewPendingSpeechSources` への配線を忘れると、印が語り終わる前に消えるだけで例外もログも出ない | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「読み上げに合わせて緊急地震速報のカードを示す」 |
 | 区分の色（カードの枠線）が表す 3 値の相対的な軽重（予報＜警報＜特別警報）を崩すと、予報／警報／特別警報の区分が読めなくなる（具体的な 16 進色は軽重を保ったまま調整してよい） | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「読み上げに合わせて緊急地震速報のカードを示す」 |
 | 1 音も鳴らなかった発話でも印を出す規約を崩すと、VOICEVOX が繋がらない端末で画面の進み方が声と食い違う | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「読み上げに合わせて緊急地震速報のカードを示す」 |
-| 地震カードの一覧を寄せる相手の順番（語っているカード → 取消の表示が出ているカード → 選択中のカード）を崩すと、縦長の画面で取消カードが枠の外へ押し出される、または選択中のカード自身が取り消されたとき一覧が 2 度動く。寄せる処理をカード側（`scrollIntoView`）へ戻すと、カードの頭が見切れる。取消の読み上げが語る鍵を電文から作ると、暫定 EventID の付け替えがあった地震で一覧が取消カードを見つけられず、記録も残らない | [`quake-spec.md`](../../docs/spec/quake-spec.md) §8「一覧の寄せ方」・[`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「読み上げに合わせて地震カードの一覧を寄せる」 |
+| 地震カードの一覧を寄せる相手の順番（語っているカード → 取消の表示が出ているカード → 選択中のカード。選択中のカードに長周期の節を見せる求めが向いていれば長周期の節）を崩すと、縦長の画面で取消カードが枠の外へ押し出される、または選択中のカード自身が取り消されたとき一覧が 2 度動く。寄せる処理をカード側（`scrollIntoView`）へ戻すと、カードの頭が見切れる。長周期の節を巻く間に一覧の寄せを止めないと、カードが節へ巻いた直後に一覧が頭へ引き戻す。取消の読み上げが語る鍵を電文から作ると、暫定 EventID の付け替えがあった地震で一覧が取消カードを見つけられず、記録も残らない | [`quake-spec.md`](../../docs/spec/quake-spec.md) §8「一覧の寄せ方」・[`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「読み上げに合わせて地震カードの一覧を寄せる」 |
 | 読み上げに合わせた津波カードの追従（視野内なら動かさない・前置きの扱い）を崩すと、読んでいる箇所が画面外へ流れる | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「読み上げに合わせたカードの追従」 |
 | 未入電を伝えている間、地震カードの未入電地点一覧を自動で開閉する仕組みを崩すと、無関係な津波カードが動く、または開閉が正しく戻らない | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「読み上げに合わせた未入電モードの自動開閉」 |
 | 未入電・震度分布・長周期の 3 つの追加表示が排他であることを崩すと、開くと相手が閉じるのに戻す番が無いため、操作していないのに消えたようにしか見えない | [`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「読み上げに合わせた未入電モードの自動開閉」 |
@@ -272,7 +272,7 @@
 | 気象庁が書いた文（本文・付加文 2 種）はバナーの行動指示の行から開く | [`tsunami-spec.md`](../../docs/spec/tsunami-spec.md) §9「気象庁が書いた文は、行動指示の行から開く」 |
 | 続報のマージで前報から引き継ぐもの（規則は `mergeTsunamiReports` の 1 箇所） | [`tsunami-spec.md`](../../docs/spec/tsunami-spec.md) §5「続報で前報から引き継ぐもの」 |
 | 津波の同一性を `isSameTsunamiEvent` 以外で書き直す（EventID の文字列一致など）と、原因地震の追加で `A` → `A B` と番号が伸びたとき同じ津波を別物と取り違え、カードが入れ替わって観測点・期限を落とす | [`tsunami-spec.md`](../../docs/spec/tsunami-spec.md) §3「同じ津波の判定」 |
-| 報を 1 通当てた結果（状態更新・DMDSS 版の失効予約・受信処理）を `stepTsunamiState` 以外で決めると、画面と失効予約の期限が食い違い、注意報の発表中に「失効」しうる | [`tsunami-spec.md`](../../docs/spec/tsunami-spec.md) §3「報を 1 通当てた結果は 1 箇所で決める」 |
+| 報を 1 通当てた結果（状態更新・失効予約・受信処理）を `stepTsunamiState` 以外で決めると、画面と失効予約の期限が食い違い、注意報の発表中に「失効」しうる | [`tsunami-spec.md`](../../docs/spec/tsunami-spec.md) §3「報を 1 通当てた結果は 1 箇所で決める」 |
 
 ## 緊急地震速報（EEW）
 
@@ -281,7 +281,7 @@
 | 項目 | 単一情報源となる仕様書 |
 |---|---|
 | EEW だけは地震の時刻に発生時刻（`OriginTime`）を出す規則を崩すと、他の種別と時刻の基準が食い違う、または `originTime` を読む場所（予報円・S 波到達・自動解除等）の一部が古い値のまま残る | [`eew-spec.md`](../../docs/spec/eew-spec.md) §3「地震の時刻は発生時刻を出す」 |
-| 起動時に発表中の EEW を復元する仕組み（DMDSS 版限定・1 地震 1 通・`silent` で音を止める）を崩すと、起動直後に驚かせる音が鳴る、または開発モードでだけ画面要求が出なくなる | [`eew-spec.md`](../../docs/spec/eew-spec.md) §2「起動時に、発表中のものを復元する」・[`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「起動時の復元が出す要求」 |
+| 起動時に発表中の EEW を復元する仕組み（2 つの取得経路・地震ごとに最新の 1 通・`silent` で音を止める）を崩すと、起動直後に驚かせる音が鳴る、または開発モードでだけ画面要求が出なくなる | [`eew-spec.md`](../../docs/spec/eew-spec.md) §2「起動時に、発表中のものを復元する」・[`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6「起動時の復元が出す要求」 |
 | EEW 続報の古い報を採らない判定（入口で報番号台帳により棄却）を崩すと、画面と音声が食い違う、または処理順の入れ替わりで退行する | [`eew-spec.md`](../../docs/spec/eew-spec.md) §10「古い報で退行させない」 |
 | EEW の区分呼称（予報級／警報級）の対応表を崩すと、表示・ウィンドウタイトルの呼び方が食い違う（読み上げの呼称は別に持つ） | [`eew-spec.md`](../../docs/spec/eew-spec.md) §3「電文の名称と表示・読み上げ」・[`audio-tts-spec.md`](../../docs/spec/audio-tts-spec.md) §6 |
 | 種別ヘッダーの報番号表示を地震情報カードと共有する規則を崩すと、片方だけ見た目が変わる | [`eew-spec.md`](../../docs/spec/eew-spec.md) §3「報番号の見た目は地震情報カードと共有する」 |
@@ -294,7 +294,7 @@
 | 警報の対象地方（`Head/Headline/Information` の地方予報区ブロック）を読む規則を崩すと、続報の差分取りこぼしで地方が欠落する | [`eew-spec.md`](../../docs/spec/eew-spec.md) §3「警報の対象地方」 |
 | EEW の固定付加文を画面にだけ出し読み上げには載せない規約を崩すと、秒を争う震度・地域の告知が遅れる | [`eew-spec.md`](../../docs/spec/eew-spec.md) §3「固定付加文」 |
 | EEW の警報級判定を `isEewWarningKindCode` の 1 箇所に一本化する規則を崩すと、電文解釈・地図の塗り分け・県名の振り分けで判定がずれる | [`eew-spec.md`](../../docs/spec/eew-spec.md) §4「区域の種別コード」 |
-| 区域の主要動到達判定を `isEewAreaArrived` で行う規則を崩すと、standard 版で到達済みの区域が画面から黙って消える | [`eew-spec.md`](../../docs/spec/eew-spec.md) §4「主要動が届いたかどうか」 |
+| 区域の主要動到達判定を `isEewAreaArrived` で行う規則を崩すと、`Condition` を持たない到達済みの区域が画面から黙って消える | [`eew-spec.md`](../../docs/spec/eew-spec.md) §4「主要動が届いたかどうか」 |
 | 「主要動の到達（予測）」欄の並び順・各行の表示規則（件数で打ち切らない・PLUM 法は末尾・残り秒数表示）を崩すと、到達情報が欠落する、または PLUM 法の過去時刻を「まもなく」と誤読する | [`eew-spec.md`](../../docs/spec/eew-spec.md) §4「到達予測時刻は種別によって意味が変わる」 |
 | 「警報:」「予報:」欄の出し方（重複排除・件数で打ち切らない）を崩すと、警報の地域が予報と重なって見える、または情報が「…」に隠れる | [`eew-spec.md`](../../docs/spec/eew-spec.md) §4「「警報:」「予報:」欄の出し方」 |
 | EEW レベル判定（特別警報の条件・長周期の DMDATA 限定）を崩すと、特別警報相当の判定を誤る | [`eew-spec.md`](../../docs/spec/eew-spec.md) §4 |
@@ -397,24 +397,23 @@
 |---|---|
 | 外部への取得を素の `fetch` で書くと、応答が返らない 1 本でリプレイの開始・履歴・強震モニタ・ライブの受信の起点が「取得中」のまま止まる（失敗に数えられず、再試行も「更新停止」も動かない） | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §1「応答が返らない取得には上限を置く」 |
 | 上限を応答の見出しが届いた時点で外すと、中身が流れてこない取得がまた黙って止まる。門（`requestGate`）で待つ前から計ると、混んでいるだけの取得が時間切れに化ける | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §1「応答が返らない取得には上限を置く」 |
-| 複数の呼び出し元が相乗りする取得（アーカイブ本体・電文本体・標準版の日ごとの控え）に止める合図を渡すと、1 人が止めただけで相乗りしている本編・初期状態・履歴まで巻き添えで落ちる。止めた打ち切りを「取得に失敗」と数えると、再生を止めるたびに本物の障害と見分けの付かない記録が積もる | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §1「止めたら打ち切る」 |
-| 標準版（P2PQuake）の黙った接続の見張り（`P2P_SILENT_RECONNECT_MS`）を DMDATA と同じ短さにすると、ping の無い配信元は平常でも 6 分半ほど黙るので（実測 386.5 秒）、静かなだけの時間に張り直しを繰り返す。張り直しを `onclose` 待ちにすると、半開きの接続では閉じる知らせが届かずいつまでも張り直さない | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §3「黙った接続は 15 分で張り直す」 |
-| 標準版で張り直したときの取り戻しの起点を「接続を始めた時刻」にすると、繋がらない試行を繰り返した間の分を落とす。津波を「その接続で見たどの報より新しいか」で比べずに差し替えると、張り直した直後にライブで届いた取消を取り戻した古い発表報が上書きし、終わった津波が甦る | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §3「張り直したら、切れていた間の分を取り戻す」 |
+| 複数の呼び出し元が相乗りする取得（アーカイブ本体・電文本体）に止める合図を渡すと、1 人が止めただけで相乗りしている本編・初期状態・履歴まで巻き添えで落ちる。止めた打ち切りを「取得に失敗」と数えると、再生を止めるたびに本物の障害と見分けの付かない記録が積もる | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §1「止めたら打ち切る」 |
+| DMDATA・中継の WebSocket の見張り（最終受信から `PING_WATCHDOG_MS` で自分から閉じて張り直す）を外して `onclose` 待ちにすると、半開きの接続では閉じる知らせが届かず、いつまでも張り直さない | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「WebSocket 接続」 |
+| 張り直しの取り戻しの左端を `start` を受けた接続だけで進める規則（`DmdataWebSocket.onStarted` の `previousAliveAtMs`）を崩すと、`start` の前に閉じられた接続の時刻で窓が進み、繋がらなかった間の電文を落とす | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「繋がっていなかった間の電文を取り戻す（`fetchLiveTelegramsBetween`）」 |
+| 起動時履歴・取り戻しで読んだ津波を、ライブで当てたどの報より新しいかを `reportOrderKey` で比べずに差し替えると、ライブで届いた取消・解除を古い発表報が上書きし、終わった津波が甦る | [`tsunami-spec.md`](../../docs/spec/tsunami-spec.md)「起動時履歴は、ライブで当てたどの報より新しいときだけ津波を書き換える」 |
 | 購読区分の判定（`eewHeadTypeFor`・`isHandledType` の必須引数）をライブ・リプレイ・起動時の復元のどれかで別に持つと、一部の区分しか契約していない人に経路によって届く電文が食い違う。履歴と復元を、前回受け付けられた区分の覚えも `classificationsReady` の結果も無いまま始める、または一時的な失敗で既定の区分に決めると、受けていない区分を引いて断られる。覚えの扱い（鍵ごとに分ける・認証エラーで消す・突き合わせは最初の 1 回だけ）を崩すと、前の鍵の区分で引く・断られる区分を毎回引く・再接続のたびに履歴を取り直す | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「一部の区分だけ受けられる人」 |
 | 配信元のレート制限（リクエスト数・429）を守る仕組みを崩すと 429 連発・利用制限に触れる | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「リクエスト数を抑える」・§2「429 は「頻度」ではなく「同じ id の取り直し」に返る」 |
 | 取得失敗時の間隔調整・更新停止の通知条件を誤ると、更新停止の見逃しまたは無限リトライになる | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §4「取得に失敗したら間隔を空ける」・[`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「再生する時刻は入口で弾く」 |
 | 目録・電文パース結果のキャッシュの鍵を誤ると、誤った電文を使い回す | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「大量に取るならアーカイブを使う」 |
-| 電文本体の紐付けを filename 以外（識別子推測・拡張子）で行うと、誤った本体を取得しうる | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「DMDSS 版の取得（アーカイブの構造）」 |
+| 電文本体の紐付けを filename 以外（識別子推測・拡張子）で行うと、誤った本体を取得しうる | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「アーカイブ（束）の取得と構造」 |
 | 目録の発表時刻欠落時にファイル名補完をしないと、窓の時刻判定を誤り取りこぼす | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「大量に取るならアーカイブを使う」 |
 | 履歴取得の部分失敗を表示しないと、欠落したカードを地震が無かったと誤認させる | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「大量に取るならアーカイブを使う」 |
 | 読み取り失敗を 3 層で記録しないと、電文の欠損が検知されず気づけない | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「読めなかったものは記録する」 |
 | 同じ日を読み直したときに取りこぼしを二重カウントすると、件数が水増しまたは黙って消える | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「読めなかったものは記録する」 |
-| 標準版リプレイの日次控え（dayCache）に寿命を持たせないと、後から届いた電文が反映されなくなる | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §3「再生の取得は日ごとに控える（当日ぶんだけ寿命がある）」 |
 | 日時の壊れ方を検知する層（電文層・表示層）の境界を見誤ると、時間帯を明示しない壊れた値が無警告で `NaN:N` と表示される | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「日時は 2 つの層で確かめる」 |
-| P2PQuakeレスポンスの不正値破棄条件・震度正規化テーブルを外すと、階級外の値が特別警報の判定エンジンへ渡り地域を丸ごと無視する | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §3「convertEvent の検証と日本語化」 |
 | APIキー文字検証を通信前に弾く経路と弾かない経路で揃えないと、無効な鍵のまま401/403を連発するか原因の違う「未設定」「不正」を同じ文言で伝える | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「認証」 |
 | 南海トラフ 3 種別・後発地震に共通する見出し文/次回発表予定/参考情報の読み取り窓口を 1 箇所に保たないと、経路ごとに要約の有無が食い違う | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「3 種別に共通する要素は 1 箇所で読む」 |
-| 見出し文（`Head/Headline/Text`）をそのまま画面へ出すと、本文と重複する事実が二重に表示される | [`quake-spec.md`](../../docs/spec/quake-spec.md) §8「見出し文（`Head/Headline/Text`）は読むが、地震情報では出さない」 |
+| 見出し文（`Head/Headline/Text`）を出す種別は種別ごとに決めてある（地震情報・津波は出す、長周期は地域名にだけ使う）。出す種別を足し引きするときは、本文と重複する事実が二重に出ないかを見る | [`quake-spec.md`](../../docs/spec/quake-spec.md) §8「見出し文（`Head/Headline/Text`）は、地震情報では開いたカードに出す」 |
 | 見出しの構造化（`Head/Headline/Information`）を新しい事実の入口として読むと、`Body` の部分集合を二重に読み込む（例外は 2 つ。緊急地震速報の警報報の地方予報区ブロックと、震源・震度に関する情報で本文に無い市町村） | [`quake-spec.md`](../../docs/spec/quake-spec.md) §8「見出しの構造化（`Head/Headline/Information`）は読まない」 |
 | 南海トラフ 3 電文の段階判定を `Head/InfoKind` で行うと、臨時情報/解説情報でコード体系が重複し段階が上書きされる | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §2「南海トラフ関連の 3 種別（VYSE50 / VYSE51 / VYSE52）」 |
 | 長期震源カタログの数値欄を桁数固定で読むと、緯度が最大 78km ずれる | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §6「読み取りで踏んだ罠」「異常を検知する仕組み」 |
@@ -481,7 +480,7 @@
 | 録画モードで追加復元する 7 項目（気象庁の文・地震の地域と震源要素・確定情報の通し読み・EEW 誤報取消・EEW 最後の告知震源・津波取消・津波が語った原因地震の震源）を崩すと、区間の境目で同じ内容を読み直す（EEW 最後の告知震源と津波が語った原因地震の震源は読み上げを増やす側にも働く。崩すと区間の境目で震源が動いても言い直さない） | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | リプレイ復元で地震の主題を `mergeQuakeInto` で組み立てる規則を崩すと、震源名が空の報が別の地震を吸い込む、または訂正報の名前変更に追随できない | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
 | 復元の既読にマージ後のカードを使う規則（生の入電を使わない）を崩すと、据え置かれた内容が既読として記録され、後で届く正規の報が省かれる | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §2「主な項目の補足」 |
-| dev サーバーでの API キー自動投入の条件（dev・DMDSS 版・`--host` なし・未入力）と受け取る側の二重チェック（本番ビルド・テスト）を崩すと、本番へ値が漏れる、または未入力の判定が壊れる | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「dev サーバーでの API キー自動投入」 |
+| dev サーバーでの API キー自動投入の条件（dev・`--host` なし・未入力）と受け取る側の二重チェック（本番ビルド・テスト）を崩すと、本番へ値が漏れる、または未入力の判定が壊れる | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「dev サーバーでの API キー自動投入」 |
 | 自前計算を開く門と設定の窓の表示を同じ 1 つの検証結果から出す規則（`useArrivalTokenCheck`）を崩すと、期限の境目で画面表示と機能の開閉が食い違う | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §4.7「検証結果を画面へ出す」 |
 | 設定の書き出しと読み込み（API キーは含めない・`sanitize()` 任せ・`rejectedKeys`・バリアント違いは拒否しない・全項目まとめて置換）を崩すと、書いたはずのキーが消える、または新しい項目が既定値に戻らない | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §4.5 |
 | `window.__replay` によるリプレイの外部操作を崩すと、録画自動化が UI の文言・レイアウト変更のたびに壊れる | [`recording-interface-spec.md`](../../docs/spec/recording-interface-spec.md) |
@@ -512,7 +511,7 @@
 | 半径内の確定メンバーが全欠測のときに全国基準へ倒さないと、近くの観測点がまとめて途絶した最も情報が要る場面で経路が黙って止まる | [`action-checklist-spec.md`](../../docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
 | リアルタイム震度が発表震度より高く振れることを表示側で指標名として明示しないと、同じ画面の地震カードの発表震度と食い違って見える | [`action-checklist-spec.md`](../../docs/spec/action-checklist-spec.md) §2「表示する震度は発表震度と一致しない」・[`action-checklist-spec.md`](../../docs/spec/action-checklist-spec.md) §5「強震モニタ経路だけ指標名を出す」 |
 | 震度0を閾値によらず対象外にする規則を崩すと、震度0と震度1の階級値が同じ（どちらも10）であるため震度1まで下げた設定で平常時のノイズが閾値を通り帯が鳴りっぱなしになる | [`action-checklist-spec.md`](../../docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
-| 観測点名の突き合わせに県名を含めると、DMDATAの電文は `pref` が常に空なのでDMDSS版では構造的に1件も一致せず、地点を登録した人ほど判定が死ぬ | [`action-checklist-spec.md`](../../docs/spec/action-checklist-spec.md) §3「3 つの照合対象」 |
+| 観測点名の突き合わせに県名を含めると、DMDATAの電文は `pref` が常に空なので構造的に1件も一致せず、地点を登録した人ほど判定が死ぬ | [`action-checklist-spec.md`](../../docs/spec/action-checklist-spec.md) §3「3 つの照合対象」 |
 | 地震情報の判定で観測点の点だけを見て区域の点を見ないと、区域別震度しか持たない震度速報（多くの地震で最初に届く報）で何も出せなくなる | [`action-checklist-spec.md`](../../docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
 | 区域を持たない EEW（予測震度の下限が震度 3 以下の報・区域が補われる前の hypoInfo 由来の報）を、自宅の区域を引けるのに全国基準で判定すると、遠くの地震でも自宅に帯が出る。自前の予測震度で埋めると、自宅に向けて自前の予想を出すことになる。「非常に強い揺れを検知」の報まで区域なしとして捨てると、自宅のすぐ近くで強く揺れていても帯が出ない（この報だけは検知点からの距離で見る） | [`action-checklist-spec.md`](../../docs/spec/action-checklist-spec.md) §2「出す条件 — 3 つの経路」 |
 | 地図の下端の自作地震計の波形を EEW で出す判定を区域の突き合わせへ戻すと、区域を持たない小さい報で遠くの地震でも出る。範囲の中心をホーム地点へ戻すと、地点が無い端末では全国どこの検知でも出る。普段が読めない観測点の下限を地震カードと同じ「下限なし」へ揃えると、ホストの起動直後に遠くの小さい地震で出る | [`data-sources-spec.md`](../../docs/spec/data-sources-spec.md) §4.5「EEW の経路は予測計測震度で決める」 |
@@ -542,7 +541,7 @@
 | 津波の観測棒・到達確認マーカー（`maplibregl.Marker` のDOM要素）を撮影後の2Dキャンバスへ描き直さないと画像から消える。描き直しを撮影の同期窓の外（復元後）で行うと `map.project()` が画面寸法で答え、棒が別の場所に立つ | [`share-card-spec.md`](../../docs/spec/share-card-spec.md) §5「地図キャンバスに写らないもの」 |
 | 共有先の本文を見出しと別の材料で組み立てると、画像と本文で違うことを述べる矛盾したカードになる | [`share-card-spec.md`](../../docs/spec/share-card-spec.md) §6「本文の中身」 |
 | 緊急地震速報の注意文・出典を本文にも重ねると、Xの全角140字にほぼ届き（震源名が長いと超える）利用者が削ることになり、削られた結果注意文そのものが落ちうる | [`share-card-spec.md`](../../docs/spec/share-card-spec.md) §6「本文の中身」 |
-| DMDSS版から共有した本文にDMDSS版のURLを載せると、DMDATA.JPのAPIキーが要るため受け取った人がそのまま開くと設定画面に突き当たる | [`share-card-spec.md`](../../docs/spec/share-card-spec.md) §6「本文の中身」 |
+| 共有した本文に載せる URL を、開いているアプリのオリジン（`currentAppUrl`）以外の固定の URL にすると、配信先を移したときに古い場所へ誘導する | [`share-card-spec.md`](../../docs/spec/share-card-spec.md) §6「本文の中身」 |
 | 共有シートを持たない環境で、本文をクリップボードへ置けたか確かめずにボタンの表示を変えると、置けていないのに「コピーしました」と見せてしまい利用者は貼り付け先で初めて気づく | [`share-card-spec.md`](../../docs/spec/share-card-spec.md) §6「共有シートを持たない環境」 |
 | 表示を分ける判定に `textCopied` だけを使うと、共有シートが応じた正常系（クリップボードは使っていない）も偽になり「置けなかった」と同じ扱いになる | [`share-card-spec.md`](../../docs/spec/share-card-spec.md) §6「共有シートを持たない環境」 |
 
@@ -569,10 +568,10 @@
 | 履歴の津波の報を `id` だけで突き合わせると、報番号が種別ごとに別々なので別種別の報を「既にある」と取り違え、24 時間より前の報が 1 通も足されない（鍵は id・発表時刻・情報名）。期限を伝えていない津波を 24 時間より先まで生かすと、終わった津波が甦る | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
 | 推計震度分布図を履歴の補完で種別ごとに畳む（`historyExtraKey` を電文ごとの鍵から外す）と、同じ地震かの判定が受け手（`upsertEstimatedIntensity`）と 2 か所に分かれ、別の地震の分布が消える。二進電文の解析結果を最後の断片の id にしか控えないと、その日のアーカイブを毎回落とす | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」・[`quake-spec.md`](../../docs/spec/quake-spec.md) §8「地震ごとに 1 通を持ち、同じ地震の古い報は採らない」 |
 | ライブ接続時の初回履歴で同じ補完（`HISTORY_EXTRA_TYPES`）を行わないと、7日間表示されるはずの帯・長周期がリロードのたびに消える | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「初期状態（24 時間）では足りないものを、履歴の遡り（7 日）から補う」 |
-| 地震カードの一覧をライブ接続時の初回履歴と別の範囲で復元する（初期状態の 24 時間と同じ扱いにする・DMDSS 版で件数を打ち切る）、または再生中に「もっと見る」を出すと、ライブ接続時と見え方が食い違う、または押した際にライブの最新履歴が混ざり再生時刻より未来の地震が一覧に入る | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「地震カードの履歴はライブ接続時と同じ範囲で遡る」 |
+| 地震カードの一覧をライブ接続時の初回履歴と別の範囲で復元する（初期状態の 24 時間と同じ扱いにする・件数で打ち切る）、または再生中に「もっと見る」を出すと、ライブ接続時と見え方が食い違う、または押した際にライブの最新履歴が混ざり再生時刻より未来の地震が一覧に入る | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「地震カードの履歴はライブ接続時と同じ範囲で遡る」 |
 | 履歴の取得が失敗したときに再生そのものを止めると、一覧が薄くなるだけで済むはずの失敗が電文の再生を止めてしまう。成功したときに揃うのを待たずに再生を始めると、初期状態を 1 本の材料で作れない | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「地震カードの履歴はライブ接続時と同じ範囲で遡る」 |
-| 実地震テストシナリオで電文から新しく時刻を読むようにしたら時刻シフトの対象へ足すことを崩すと、その時刻だけが収録当時の絶対値のまま画面に出る（全部の欄を埋めた見本のテストが落とす。ただし受信処理・統合が後から付ける欄は見本から外してあり、そこは捕まらない） | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6 |
-| テスト時刻設定のバリアント差（standardはP2PQuakeの日付クエリ、DMDSSはDMDATAアーカイブ＋当日ぶんの別経路。EEWはどちらも取得元が異なりstandardでは強震モニタ側の検知に頼る）を崩すと、バリアントごとの取得経路の違いを実機で確認できなくなる | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「テスト時刻設定」 |
+| テストボタンが流す電文で、電文から新しく時刻を読むようにしたら時刻シフトの対象へ足すことを崩すと、その時刻だけが収録当時の絶対値のまま画面に出る（全部の欄を埋めた見本のテストが落とす。ただし受信処理・統合が後から付ける欄は見本から外してあり、そこは捕まらない） | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §7「時刻は「いま」へ寄せる」 |
+| テスト時刻設定の取得元の分け方（中継の束・予報は受けている経路から引く・鍵で引けなかった日だけ中継の警報で埋める・期間が重なればローカル履歴アーカイブ）を崩すと、ライブと再生で採る電文が食い違う、または同じ地震を二重に入れる | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「テスト時刻設定 — 取得元と 3 つの窓」 |
 | archiveリプレイの重複排除（目録に載るXML版／JSON版のどちらを採用するか）を崩す、またはアーカイブが全滅したときに強震モニタの再生まで止めると、失敗の封じ込め範囲が崩れる | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「テスト時刻設定」配下 |
 | アーカイブが無い日を埋める当日経路の日付基準（アーカイブはJST日、`/v2/telegram`・`/v2/gd/eew` はUTCの半開区間）を取り違える、または予報（`eew.forecast`）を受けている人にVXSE43をライブ・当日経路のどちらかで取り込ませると、担当日の重複判定が壊れる、または対応するVXSE45の警報報と同一内容の複製が区域塗りを削る | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「当日ぶんの取得元」 |
 | リプレイの取りこぼしの分母を取得元の日数ではなくアーカイブの本数で取る、または当日経路の3本の一覧を隔離しないと、取得元が当日経路1本しか無い窓で電文0件のまま「再生中」になる、またはEEW一覧の一時障害で地震・津波も巻き込んで再生ごと止まる | [`settings-pwa-spec.md`](../../docs/spec/settings-pwa-spec.md) §6「取りこぼしの扱い」 |

@@ -1,6 +1,6 @@
 // 国際津波関連情報（WEPA60）の読み取り。**このアプリで唯一の平文の電文**（XML でも二進でもない）。
 // 型の説明と画面での扱いは `types/earthquake.ts` の `JMAInternationalTsunami`。
-import type { JMAInternationalTsunami } from '../types/earthquake'
+import type { InternationalTsunamiEvaluation, JMAInternationalTsunami } from '../types/earthquake'
 
 const MONTHS: Readonly<Record<string, number>> = {
   JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
@@ -57,6 +57,8 @@ function readWepa60(raw: string): Wepa60Read {
   const originLine = lines.find(line => /^\s*ORIGIN TIME:/.test(line))
   const originTime = originLine ? parseWepaTime(originLine.replace(/^\s*ORIGIN TIME:\s*/, '')) : null
   const text = lines.join('\n')
+  const bulletin = /BULLETIN NUMBER\s+(\d+)/.exec(title)
+  const evaluation = readEvaluation(lines)
   return {
     data: {
       id: wepa60Id(time, title, text),
@@ -65,8 +67,65 @@ function readWepa60(raw: string): Wepa60Read {
       ...(originTime && { originTime }),
       isCommunicationsTest: isCommunicationsTestTitle(title),
       text,
+      ...readHypocentralParameters(lines),
+      ...(bulletin && { bulletinNumber: Number(bulletin[1]) }),
+      ...(evaluation && { evaluation }),
     },
   }
+}
+
+/**
+ * 津波発生の可能性の文と値。**仕様で決まった 5 種だけ**（気象庁「配信資料に関する技術情報（地震火山編）第522号」別紙1（5）
+ * 「Tsunamigenic Potential には以下の表現のいずれかを記す」）。全期間の控え（2020-12〜2026-10）の地震の報 163 通もすべてこの 5 種。
+ */
+const EVALUATIONS: readonly (readonly [string, InternationalTsunamiEvaluation])[] = [
+  ['THERE IS A POSSIBILITY OF A DESTRUCTIVE OCEAN-WIDE TSUNAMI', 'oceanWide'],
+  ['THERE IS A POSSIBILITY OF A DESTRUCTIVE REGIONAL TSUNAMI', 'regional'],
+  ['THERE IS A POSSIBILITY OF A DESTRUCTIVE LOCAL TSUNAMI NEAR THE EPICENTER', 'localNearEpicenter'],
+  ['THERE IS A VERY SMALL POSSIBILITY OF A DESTRUCTIVE LOCAL TSUNAMI', 'verySmall'],
+  ['THERE IS NO POSSIBILITY OF A TSUNAMI', 'none'],
+]
+
+/** `EVALUATION` の段落（次の空行まで。文が 2 行に折れる報がある）を 5 種のどれかとして読む。どれでもなければ undefined */
+function readEvaluation(lines: readonly string[]): InternationalTsunamiEvaluation | undefined {
+  const at = lines.findIndex(line => /^\s*EVALUATION\s*$/.test(line))
+  if (at < 0) return undefined
+  const words: string[] = []
+  for (let i = at + 1; i < lines.length && lines[i].trim() !== ''; i++) words.push(lines[i].trim())
+  const sentence = words.join(' ').replace(/\s+/g, ' ').replace(/\.$/, '')
+  return EVALUATIONS.find(([s]) => s === sentence)?.[1]
+}
+
+/**
+ * 震源の値を読む（地震の報にだけある）。全期間の控え（2020-11〜2026-10）の地震の報 163 通の書式:
+ * - 震央 `PRELIMINARY EPICENTER:LAT04.8NORTH LON127.4EAST`（163 通すべて。南緯は `SOUTH`）。地名はその次の行
+ * - 規模 `MAG:7.0`（163 通すべて。`(MJMA)`・`(MW)` が付くことがある。深さと同じ行に書く報もある）
+ * - 深さ `FOCAL DEPTH:139KM`（12 通だけ）
+ * 読めない値は持たない（本文はそのまま出すので、値が欠けても電文の中身は画面に残る）。
+ */
+function readHypocentralParameters(lines: readonly string[]): Partial<JMAInternationalTsunami> {
+  const out: Partial<JMAInternationalTsunami> = {}
+  const epiAt = lines.findIndex(line => /^\s*PRELIMINARY EPICENTER:/.test(line))
+  if (epiAt >= 0) {
+    const m = lines[epiAt].match(/LAT\s*(\d+(?:\.\d+)?)\s*(NORTH|SOUTH)\s+LON\s*(\d+(?:\.\d+)?)\s*(EAST|WEST)/)
+    if (m) {
+      out.epicenter = {
+        latitude: Number(m[1]) * (m[2] === 'SOUTH' ? -1 : 1),
+        longitude: Number(m[3]) * (m[4] === 'WEST' ? -1 : 1),
+      }
+    }
+    // 地名は震央の次の行（字下げされている）。空行や次の項目なら持たない
+    const next = lines[epiAt + 1]
+    if (next && /^\s+\S/.test(next) && !next.includes(':')) out.regionName = next.trim()
+  }
+  const mag = lines.join('\n').match(/MAG:\s*(\d+(?:\.\d+)?)(?:\s*\((MJMA|MW)\))?/)
+  if (mag) {
+    out.magnitude = Number(mag[1])
+    if (mag[2]) out.magnitudeType = mag[2] === 'MJMA' ? 'Mj' : 'Mw'
+  }
+  const depth = lines.join('\n').match(/FOCAL DEPTH:\s*(\d+(?:\.\d+)?)\s*KM/)
+  if (depth) out.depthKm = Number(depth[1])
+  return out
 }
 
 /**

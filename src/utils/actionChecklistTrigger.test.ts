@@ -87,15 +87,14 @@ describe('quakeScaleForScope', () => {
     expect(quakeScaleForScope(q, NEAR, MIN)).toBe(50)
   })
 
-  // DMDATA（DMDSS 版）の電文は観測点も区域も `pref` を空で積む（quake-spec.md §4）。
-  // 県名を含むキーで突き合わせていたため、DMDSS 版で地点を登録すると構造的に 1 件も一致せず、
-  // この経路が恒久的に死んでいた。
-  it('pref が空の電文（DMDSS 版）でも観測点名で引き当てる', () => {
+  // DMDATA の電文は観測点も区域も `pref` を空で積む（quake-spec.md §4）。
+  // 県名を含むキーで突き合わせると、地点を登録しても構造的に 1 件も一致しない。
+  it('pref が空の電文でも観測点名で引き当てる', () => {
     const q = quake(50, [{ pref: '', addr: '新宿区西新宿', isArea: false, scale: 45 }])
     expect(quakeScaleForScope(q, NEAR, MIN)).toBe(45)
   })
 
-  it('pref が非空の電文（標準版）でも同じく引き当てる', () => {
+  it('pref が非空の点でも同じく引き当てる', () => {
     const q = quake(50, [{ pref: '東京都', addr: '新宿区西新宿', isArea: false, scale: 45 }])
     expect(quakeScaleForScope(q, NEAR, MIN)).toBe(45)
   })
@@ -105,7 +104,7 @@ describe('quakeScaleForScope', () => {
   })
 })
 
-// 実地震テストシナリオの手書き JSON など、型検査を通らない経路から階級表に無い値が来る
+// ローカル履歴アーカイブの手書き JSON など、型検査を通らない経路から階級表に無い値が来る
 // （eew.ts の eewMaxScaleInfo も同じ理由で実行時に弾いている）。
 describe('壊れた震度の扱い', () => {
   it('階級表に無い震度の点は「観測できなかった」ものとして全国基準へ倒す', () => {
@@ -292,7 +291,7 @@ describe('eewScaleForScope', () => {
     expect(eewScaleForScope(e, emptyRegions, MIN)).toBe(50)
   })
 
-  // 区域を持たない報（予測震度の下限が震度 3 以下・standard 版で区域が補われる前）は、電文全体の最大で
+  // 区域を持たない報（予測震度の下限が震度 3 以下・強震モニタの報で区域が補われる前）は、電文全体の最大で
   // 判定すると遠くの地震でも自宅に帯が出る（2026-10-22 ユーザー承認「区域が無ければ使わない」）。
   // 以前は全国基準へ倒していた —— この 3 件はその判断を覆したもの。
   describe('区域を持たない報', () => {
@@ -471,8 +470,8 @@ describe('半径内が電文に載っていないとき', () => {
   })
 })
 
-describe('区域を持たない EEW（standard 版・Yahoo hypoInfo 由来の初期検知）', () => {
-  // standard 版は Yahoo hypoInfo で先に検知し、後着の P2PQuake が区域を補う（eew-spec.md §3）。
+describe('区域を持たない EEW（Yahoo hypoInfo 由来の初期検知）', () => {
+  // Yahoo hypoInfo で先に検知し、後着の電文の報が区域を補う（eew-spec.md §3）。
   // 補われる前の報は areas を持たず、予想震度は forecastMaxScale にしか入らない。
   // areas だけを見ていたため、この窓ではこの経路が丸ごと死んでいた。
   function eewNoAreas(forecastMaxScale: number): EEWAlert {
@@ -513,7 +512,7 @@ describe('判定に使った範囲', () => {
 
   it('地震情報: 半径内の観測点で判定したら near', () => {
     const q = quake(50, [{ pref: '', addr: '新宿区西新宿', isArea: false, scale: 50 }])
-    expect(judgeQuakeForScope(q, NEAR, MIN)).toEqual({ scale: 50, scope: 'near' })
+    expect(judgeQuakeForScope(q, NEAR, MIN)).toEqual({ scale: 50, scope: 'near', unreceived: false })
   })
 
   // 区域は 30km の円ではなく区域名の一致で引くので、「30km 以内の観測点」とは名乗らない。
@@ -523,7 +522,7 @@ describe('判定に使った範囲', () => {
     // 正: 区域しか載らない電文（震度速報）
     it('区域の点で判定したら nearArea', () => {
       const q = quake(50, [{ pref: '', addr: '東京都23区', isArea: true, scale: 50 }])
-      expect(judgeQuakeForScope(q, BOTH, MIN)).toEqual({ scale: 50, scope: 'nearArea' })
+      expect(judgeQuakeForScope(q, BOTH, MIN)).toEqual({ scale: 50, scope: 'nearArea', unreceived: false })
     })
 
     // 対照: 区域より観測点が強ければ観測点の名乗り
@@ -532,15 +531,15 @@ describe('判定に使った範囲', () => {
         { pref: '', addr: '東京都23区', isArea: true, scale: 45 },
         { pref: '', addr: '新宿区西新宿', isArea: false, scale: 50 },
       ])
-      expect(judgeQuakeForScope(q, BOTH, MIN)).toEqual({ scale: 50, scope: 'near' })
+      expect(judgeQuakeForScope(q, BOTH, MIN)).toEqual({ scale: 50, scope: 'near', unreceived: false })
     })
 
     // 安全弁: 同じ震度なら狭い方（観測点）を名乗る。並び順によらない
     it('同じ震度なら並び順によらず near', () => {
       const area: EarthquakePoint = { pref: '', addr: '東京都23区', isArea: true, scale: 50 }
       const station: EarthquakePoint = { pref: '', addr: '新宿区西新宿', isArea: false, scale: 50 }
-      expect(judgeQuakeForScope(quake(50, [area, station]), BOTH, MIN)).toEqual({ scale: 50, scope: 'near' })
-      expect(judgeQuakeForScope(quake(50, [station, area]), BOTH, MIN)).toEqual({ scale: 50, scope: 'near' })
+      expect(judgeQuakeForScope(quake(50, [area, station]), BOTH, MIN)).toEqual({ scale: 50, scope: 'near', unreceived: false })
+      expect(judgeQuakeForScope(quake(50, [station, area]), BOTH, MIN)).toEqual({ scale: 50, scope: 'near', unreceived: false })
     })
 
     // 安全弁: 閾値に届かない観測点は名乗りを変えない
@@ -549,39 +548,39 @@ describe('判定に使った範囲', () => {
         { pref: '', addr: '東京都23区', isArea: true, scale: 50 },
         { pref: '', addr: '新宿区西新宿', isArea: false, scale: 10 },
       ])
-      expect(judgeQuakeForScope(q, BOTH, MIN)).toEqual({ scale: 50, scope: 'nearArea' })
+      expect(judgeQuakeForScope(q, BOTH, MIN)).toEqual({ scale: 50, scope: 'nearArea', unreceived: false })
     })
   })
 
   // 地点はあるが電文の点を 1 件も引けない → 全国基準へ倒れる。名乗りも全国にする。
   it('地震情報: 地点があっても全国基準へ倒れたら nationwide', () => {
     const q = quake(55, [{ pref: '', addr: '未知の観測点', isArea: false, scale: 55 }])
-    expect(judgeQuakeForScope(q, NEAR, MIN)).toEqual({ scale: 55, scope: 'nationwide' })
+    expect(judgeQuakeForScope(q, NEAR, MIN)).toEqual({ scale: 55, scope: 'nationwide', unreceived: false })
   })
 
   it('地震情報: 地点が無ければ nationwide', () => {
-    expect(judgeQuakeForScope(quake(50, []), NO_SCOPE, MIN)).toEqual({ scale: 50, scope: 'nationwide' })
+    expect(judgeQuakeForScope(quake(50, []), NO_SCOPE, MIN)).toEqual({ scale: 50, scope: 'nationwide', unreceived: false })
   })
 
   it('強震モニタ: 半径内の確定メンバーで判定したら near', () => {
     const near = scope({ kyoshinKeys: new Set([HOME_KEY]) })
-    expect(judgeKyoshinForScope([pt(HOME_KEY, 19)], near, MIN)).toEqual({ scale: 70, scope: 'near' })
+    expect(judgeKyoshinForScope([pt(HOME_KEY, 19)], near, MIN)).toEqual({ scale: 70, scope: 'near', unreceived: false })
   })
 
   // 安全弁の経路（半径内がすべて欠測）も、全国の値を出すので全国と名乗る。
   it('強震モニタ: 半径内がすべて欠測で全国基準へ倒れたら nationwide', () => {
     const near = scope({ kyoshinKeys: new Set([HOME_KEY]) })
-    expect(judgeKyoshinForScope([pt(HOME_KEY, -1), pt(FAR_KEY, 19)], near, MIN)).toEqual({ scale: 70, scope: 'nationwide' })
+    expect(judgeKyoshinForScope([pt(HOME_KEY, -1), pt(FAR_KEY, 19)], near, MIN)).toEqual({ scale: 70, scope: 'nationwide', unreceived: false })
   })
 
   it('緊急地震速報: 自宅の区域で判定したら near', () => {
     const e = eew([{ pref: '東京都', name: '東京都23区', scaleFrom: 45, scaleTo: 45 }] as EEWAlert['areas'])
-    expect(judgeEewForScope(e, scope({ regionNames: new Set(['東京都23区']) }), MIN)).toEqual({ scale: 45, scope: 'near' })
+    expect(judgeEewForScope(e, scope({ regionNames: new Set(['東京都23区']) }), MIN)).toEqual({ scale: 45, scope: 'near', unreceived: false })
   })
 
   it('緊急地震速報: 区域名を引けない地点では nationwide', () => {
     const e = eew([{ pref: '静岡県', name: '静岡県中部', scaleFrom: 50, scaleTo: 50 }] as EEWAlert['areas'])
-    expect(judgeEewForScope(e, scope({ stationNames: new Set(['新宿区西新宿']) }), MIN)).toEqual({ scale: 50, scope: 'nationwide' })
+    expect(judgeEewForScope(e, scope({ stationNames: new Set(['新宿区西新宿']) }), MIN)).toEqual({ scale: 50, scope: 'nationwide', unreceived: false })
   })
 
   it('緊急地震速報: 「非常に強い揺れを検知」を検知点からの距離で判定したら nearDetected', () => {
@@ -593,6 +592,34 @@ describe('判定に使った範囲', () => {
       strongShakingOnly: true,
       earthquake: { hypocenter: { name: '', latitude: 35.2, longitude: 135.0, depth: 10, magnitude: -1 } },
     } as unknown as EEWAlert
-    expect(judgeEewForScope(e, home, MIN)).toEqual({ scale: 45, scope: 'nearDetected' })
+    expect(judgeEewForScope(e, home, MIN)).toEqual({ scale: 45, scope: 'nearDetected', unreceived: false })
+  })
+})
+
+describe('震度5弱以上（未入電）', () => {
+  // 未入電の点は下限の 45（5弱）へ寄せてある（→ utils/quakePoints.ts の isMaxScaleUnreceived）
+  const unreceivedPt = (addr: string): EarthquakePoint =>
+    ({ addr, scale: 45, isArea: false, unreceived: true } as unknown as EarthquakePoint)
+  const plainPt = (addr: string, scale: number): EarthquakePoint =>
+    ({ addr, scale, isArea: false } as unknown as EarthquakePoint)
+
+  it('正: 全国の判定で、出す最低震度が 5強以上でも「5弱以上」の地震は出し、印を立てる', () => {
+    expect(judgeQuakeForScope(quake(45, [unreceivedPt('どこか')]), NO_SCOPE, 50))
+      .toEqual({ scale: 45, scope: 'nationwide', unreceived: true })
+  })
+
+  it('正: 近所の判定で、未入電の点は 5強以上の閾値でも落とさない', () => {
+    expect(judgeQuakeForScope(quake(45, [unreceivedPt('新宿区西新宿')]), NEAR, 50))
+      .toEqual({ scale: 45, scope: 'near', unreceived: true })
+  })
+
+  it('対照: 入電した 5弱は、5強以上の閾値で落とす（全国・近所とも）', () => {
+    expect(judgeQuakeForScope(quake(45, [plainPt('どこか', 45)]), NO_SCOPE, 50)).toBe(null)
+    expect(judgeQuakeForScope(quake(45, [plainPt('新宿区西新宿', 45)]), NEAR, 50)).toBe(null)
+  })
+
+  it('安全弁: より強い入電した点があれば、そちらを採って印は立てない', () => {
+    const q = quake(55, [unreceivedPt('新宿区西新宿'), plainPt('新宿区西新宿', 55)])
+    expect(judgeQuakeForScope(q, NEAR, 50)).toEqual({ scale: 55, scope: 'near', unreceived: false })
   })
 })

@@ -7,29 +7,27 @@
  */
 
 /**
- * バナーを貼り付けたあと、区域の行のために残す高さの下限（px）。区域の見出しと観測点 1 行ほど。
+ * バナーを大きいまま貼り付けてよい高さの上限（見える高さに対する割合）。超えるならバナーは流し、巻いて上へ抜けたら
+ * 1 行の帯を上に出す（2026-11-04 ユーザー選択「地震タブと同じ規則 (Recommended)」。地震タブの「貼りつく高さが一覧の
+ * 見える高さの 4 割までなら大きな枠を貼りつけ、超えたら帯」と同じ規則 → docs/quake-tab-redesign.md）。
+ * 2026-10-12 承認の「残りの高さ 100px で測る」を置き換える —— 帯があれば、貼り付けを外しても上に何が出ているかは残る。
  *
- * 貼り付けたバナーは、その高さぶん区域の行の居場所を恒久的に削る。パネルを縮めると
- * （上下分割で比率 0.2 など）バナーだけでパネルが埋まり、行に一度も届かなくなる
- * （実測と条件は docs/spec/tsunami-spec.md §9「スクロールの自動制御」）。読み上げの追従も
- * バナーの下を視野にするので、視野の高さが無くなって動かなくなる。
- *
- * **割合ではなく残りの高さで測る**（2026-10-12 ユーザー承認）。守りたいのは「行に届くこと」なので、
- * それを直接測る。パネルの半分を境にすると、既定の比率でも縦の短い画面で貼り付けが外れていた。
+ * 貼り付けたバナーは、その高さぶん区域の行の居場所を恒久的に削る。幅 390×844 では前の形のバナーがパネル 380px の
+ * 約 45% を塞ぎ、区域が 1 つしか見えなかった（2026-11-04 に測った）。
  */
-export const BANNER_STICKY_MIN_ROOM_PX = 100
+export const BANNER_STICK_MAX_RATIO = 0.4
 
 /**
- * バナーを貼り付けるか。**行の居場所が足りなくなるなら貼り付けをやめ、行と一緒に流す**（2026-10-12 ユーザー承認）。
+ * バナーの扱い。`'stick'` は大きいまま貼り付ける、`'band'` はバナーを流して巻いたら 1 行の帯を出す。
  *
- * まだ測れていなければ（どちらかが 0 以下）貼り付ける側へ倒す —— 表示された直後の
- * 数フレームだけ貼り付けが外れて見えるのを避けるため。
- *
- * バナーの高さは貼り付けの有無で変わらないので、行き来して揺れることは無い。
+ * **並び方（左右・上下）では決めず、その場で測る**（上下分割で境のつまみを動かしたときも同じ規則）。
+ * まだ測れていなければ（どちらかが 0 以下）大きいまま貼り付ける側へ倒す —— 表示された直後の
+ * 数フレームだけ帯へ切り替わって見えるのを避けるため。バナーの高さは貼り付けの有無で変わらないので、
+ * 行き来して揺れることは無い。
  */
-export function isBannerSticky(panelHeight: number, bannerHeight: number): boolean {
-  if (panelHeight <= 0 || bannerHeight <= 0) return true
-  return panelHeight - bannerHeight >= BANNER_STICKY_MIN_ROOM_PX
+export function bannerStickMode(panelHeight: number, bannerHeight: number): 'stick' | 'band' {
+  if (panelHeight <= 0 || bannerHeight <= 0) return 'stick'
+  return bannerHeight <= panelHeight * BANNER_STICK_MAX_RATIO ? 'stick' : 'band'
 }
 
 /** 面の下端とパネルの下端のあいだに残す隙間（px）。 */
@@ -65,4 +63,20 @@ export function commentsOverlayMaxHeight(panelHeight: number, bannerHeight: numb
  */
 export function canShowCommentsOverlay(maxHeight: number | undefined): boolean {
   return maxHeight === undefined || maxHeight >= COMMENTS_MIN_HEIGHT
+}
+
+/**
+ * 付加文の入口（バナーの中の「気象庁からの補足 ▸」の行）を出してよいか。
+ *
+ * **入口を出したときのバナーの高さで測る。** 入口の行はバナーの中にあるので、出すとバナーが伸び、面の居場所が
+ * 減る。いま測れたバナーの高さ（入口を出しているかで変わる）で決めると、「余りが足りないので消す → バナーが
+ * 縮んで余りが足りる → 出す → また足りない」を毎フレーム繰り返し、バナーと一覧が上下に揺れ続ける
+ * （幅 390×844 でパネル 380px・バナー 343px／307px の間を行き来した）。入口を除いた高さに入口の高さを足して
+ * 測れば、出しても消しても判定の入力が変わらない。
+ *
+ * @param bannerBaseHeight 入口の行を除いたバナーの高さ
+ * @param entryHeight 入口の行の高さ（上の余白を含む）。まだ一度も描いていなければ 0
+ */
+export function canShowCommentsEntry(panelHeight: number, bannerBaseHeight: number, entryHeight: number): boolean {
+  return canShowCommentsOverlay(commentsOverlayMaxHeight(panelHeight, bannerBaseHeight + entryHeight))
 }

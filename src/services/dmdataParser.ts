@@ -1,4 +1,4 @@
-// DMDATA.JP の formatMode:"json" 電文を内部型に変換する。
+// DMDATA.JP の電文（気象庁の XML。formatMode は raw）を内部型に変換する。
 // 各 parse* 関数は null を返すことがある（必須フィールド欠損時）。
 
 import type {
@@ -36,6 +36,21 @@ import { dmdataTelegramKey } from '../utils/telegramKey'
 import { quakeNoticeId } from '../utils/dmdataId'
 import { arr, obj, str } from './parseHelpers'
 import { unknownEewAccuracyRanks } from '../utils/eewAccuracyRanks'
+
+/**
+ * 読み取りが使う XML の DOM の機能だけを型にしたもの。ブラウザの DOM と、中継（Workers）で使う @xmldom/xmldom の
+ * 両方がこの形を満たす（docs/relay-server-design.md §6.7）。ここに無い機能（`querySelector` など）は使わない。
+ */
+interface XmlNodeLike {
+  getElementsByTagName(qualifiedName: string): ArrayLike<XmlElement>
+}
+interface XmlElement extends XmlNodeLike {
+  readonly localName: string
+  readonly children: ArrayLike<XmlElement>
+  readonly textContent: string | null
+  getAttribute(name: string): string | null
+}
+type XmlDocument = XmlNodeLike
 
 // EEW: "1","2","3","4","5-","5+","6-","6+","7","不明" 等
 // 地震情報: "1","2","3","4","5弱","5強","6弱","6強","7","不明" 等
@@ -114,7 +129,7 @@ function flushUnknownUnreceived(logPrefix: string): void {
   unknownUnreceivedValues.clear()
 }
 
-/** 上限を定めない予想震度を表す DMDATA の値。P2PQuake の `scaleTo: 99` と同じ意味。 */
+/** 上限を定めない予想震度を表す DMDATA の値。 */
 const DMDATA_INTENSITY_OVER = 'over'
 
 /**
@@ -139,7 +154,7 @@ const EEW_AREA_ARRIVED_CONDITION = '既に主要動到達と推測'
  * `to: "over"` は上限を定めない表現（例: `from: "4", to: "over"` = 「震度4以上」）。
  * これを震度7と読むと、仮定震源要素の初報のように下限しか決まっていない報が
  * 最大震度7として塗られ・読み上げられる。上限には下限側の値を採り、「以上」は
- * フラグで持ち越して表示・読み上げで語を補う（P2PQuake の `scaleTo: 99` と同じ扱い）。
+ * フラグで持ち越して表示・読み上げで語を補う。
  *
  * 電文全体の予想震度（`ForecastInt`）も幅（`From`〜`To`）の上限だけを持ち、下限は出さない
  * （2026-10-21 ユーザー承認「今のまま記録する (Recommended)」）。
@@ -232,14 +247,15 @@ function dropTelegram(logPrefix: string, reason: string): null {
  * **6 つの XML パーサで同じ手順を書き写していた**ので 1 箇所へ寄せた（片方の判定だけ足す・
  * 記録を片方にだけ入れる、といったずれが起きる形だった）。
  */
-function parseTelegramXml(xml: string, logPrefix: string): Document | null {
-  let doc: Document
+function parseTelegramXml(xml: string, logPrefix: string): XmlDocument | null {
+  let doc: XmlDocument
   try {
-    doc = new DOMParser().parseFromString(xml, 'application/xml')
+    doc = new DOMParser().parseFromString(xml, 'application/xml') as unknown as XmlDocument
   } catch (e) {
     return dropTelegram(logPrefix, `XML の解析で例外が出ました: ${String(e)}`)
   }
-  if (doc.querySelector('parsererror')) {
+  // `querySelector` は使わない。中継（Workers）で使う XML の DOM（@xmldom/xmldom）には無い
+  if (doc.getElementsByTagName('parsererror').length > 0) {
     return dropTelegram(logPrefix, 'XML として読めません（parsererror）')
   }
   return doc
@@ -411,12 +427,12 @@ const CORRECT_HYPOCENTER_CODE = '0256'
  * 気象庁は訂正の中身を `VarComment/Code` に載せる。**現行のコード表で訂正を表すのは
  * `0256`「震源要素を訂正します。」1 つだけ**で、震度だけの訂正に当たるコードは無い
  * （`AdditionalCommentEarthquake` コード表）。そのため区別できるのは「震源を訂正」と
- * 「（内容の判らない）訂正」の 2 つで、P2PQuake 経路が持つ 5 値とは揃わない。
+ * 「（内容の判らない）訂正」の 2 つで、`CorrectType` の他の値（「震度のみ訂正」など）は作らない。
  *
  * `VarComment` を持たない訂正報・コードを読めなかった訂正報は `'訂正'` のまま返す。
  * 訂正であること自体は `InfoType` が確定させているので、ここで落としてはならない。
  */
-function resolveCorrectType(doc: Document): CorrectType {
+function resolveCorrectType(doc: XmlDocument): CorrectType {
   const varCommentEl = xmlQ(doc, 'VarComment')
   if (!varCommentEl) return '訂正'
   // 複数の固定付加文は 1 つの Code へ空白区切りで併記される（同資料）。兄弟要素へ分かれた
@@ -440,7 +456,7 @@ function resolveCorrectType(doc: Document): CorrectType {
  * @param commentEl `WarningComment` / `ForecastComment` / `VarComment` の要素
  * @param label 記録に出す付加文の呼び名
  */
-function readCommentText(commentEl: Element | null, label: string, logPrefix: string): string {
+function readCommentText(commentEl: XmlElement | null, label: string, logPrefix: string): string {
   if (!commentEl) return ''
   const text = xmlText(xmlChild(commentEl, 'Text'))
   if (text) return text
@@ -459,7 +475,7 @@ function readCommentText(commentEl: Element | null, label: string, logPrefix: st
  * 分かれた場合も取りこぼさないよう配下をすべて集める（地震情報の `ForecastComment` から
  * 津波区分を導く処理と同じ扱い）。
  */
-function readCommentCodes(commentEl: Element | null): string[] {
+function readCommentCodes(commentEl: XmlElement | null): string[] {
   if (!commentEl) return []
   return xmlAll(commentEl, 'Code').flatMap(el => xmlText(el).split(/\s+/)).filter(Boolean)
 }
@@ -486,7 +502,7 @@ function resolveIssueType(headType: string, title: string): IssueType {
 }
 
 // XML ヘルパー: localName で最初の要素を返す
-function xmlQ(parent: Element | Document, localName: string): Element | null {
+function xmlQ(parent: XmlElement | XmlDocument, localName: string): XmlElement | null {
   const els = parent.getElementsByTagName('*')
   for (let i = 0; i < els.length; i++) {
     if (els[i].localName === localName) return els[i]
@@ -495,9 +511,9 @@ function xmlQ(parent: Element | Document, localName: string): Element | null {
 }
 
 // XML ヘルパー: localName が一致する子孫要素をすべて返す（xmlQ の複数版）。
-function xmlAll(parent: Element | Document, localName: string): Element[] {
+function xmlAll(parent: XmlElement | XmlDocument, localName: string): XmlElement[] {
   const els = parent.getElementsByTagName('*')
-  const result: Element[] = []
+  const result: XmlElement[] = []
   for (let i = 0; i < els.length; i++) {
     if (els[i].localName === localName) result.push(els[i])
   }
@@ -507,7 +523,7 @@ function xmlAll(parent: Element | Document, localName: string): Element[] {
 // XML ヘルパー: 直下の子要素だけを localName で返す。
 // xmlQ は子孫すべてを探すため、Area 直下の MaxInt と City 配下の MaxInt のように
 // 同名要素が入れ子になっている箇所では取り違える。階層を特定したいときはこちらを使う。
-function xmlChild(parent: Element, localName: string): Element | null {
+function xmlChild(parent: XmlElement, localName: string): XmlElement | null {
   const children = parent.children
   for (let i = 0; i < children.length; i++) {
     if (children[i].localName === localName) return children[i]
@@ -525,7 +541,7 @@ function xmlChild(parent: Element, localName: string): Element | null {
 // （要素はあるが空）でも PublishingOffice へ落ちる。**この値は画面に出さない** ——
 // 落ちた先は発表官署なので、「編集官署」と名乗って出すと事実を誤らせる。
 // 画面へ出すのは下の `parseEditorialOfficeFromXml`（落とさない側）。
-function parseIssueSourceFromXml(doc: Document): string {
+function parseIssueSourceFromXml(doc: XmlDocument): string {
   const controlEl = xmlQ(doc, 'Control')
   if (!controlEl) return ''
   return xmlText(xmlChild(controlEl, 'EditorialOffice'))
@@ -538,7 +554,7 @@ function parseIssueSourceFromXml(doc: Document): string {
  * 画面が「編集官署 …」と名乗って出すので（→ `JMAQuake.issue.editorialOffice`）、
  * 編集官署そのものが入っているときだけ値を返す。無ければ undefined で、画面は行ごと出さない。
  */
-function parseEditorialOfficeFromXml(doc: Document): string | undefined {
+function parseEditorialOfficeFromXml(doc: XmlDocument): string | undefined {
   const controlEl = xmlQ(doc, 'Control')
   if (!controlEl) return undefined
   return xmlText(xmlChild(controlEl, 'EditorialOffice')) || undefined
@@ -552,13 +568,13 @@ function parseEditorialOfficeFromXml(doc: Document): string | undefined {
  * 入っているときだけ値を返す。全期間の地震情報 19,346 通・津波電文 651 通で値は「気象庁」だけだった
  * （→ `docs/spec/quake-spec.md` §8「電文を編集した官署は常に出す」）。
  */
-function parsePublishingOfficeFromXml(doc: Document): string | undefined {
+function parsePublishingOfficeFromXml(doc: XmlDocument): string | undefined {
   const controlEl = xmlQ(doc, 'Control')
   if (!controlEl) return undefined
   return xmlText(xmlChild(controlEl, 'PublishingOffice')) || undefined
 }
 
-function xmlText(el: Element | null): string {
+function xmlText(el: XmlElement | null): string {
   return el?.textContent?.trim() ?? ''
 }
 
@@ -584,7 +600,7 @@ function xmlText(el: Element | null): string {
  *   （→ `docs/spec/data-sources-spec.md` §2「読めなかったものは記録する」）。既定値を
  *   置かないのは、種別を足したときの決め忘れを型検査で捕まえるため
  */
-function readReportDateTime(doc: Document, kindLabel: string, logPrefix: string): string {
+function readReportDateTime(doc: XmlDocument, kindLabel: string, logPrefix: string): string {
   return readTelegramDateTime(logPrefix, `${kindLabel}の発表時刻`, xmlText(xmlQ(doc, 'ReportDateTime')))
 }
 
@@ -607,7 +623,7 @@ function readReportDateTime(doc: Document, kindLabel: string, logPrefix: string)
  * 種別名だけが読めないときは、配信元が名乗る種別コード（`headType`。`VXSE51` など）で代える。
  * 空のまま組むと、同じ秒に作られた別の種別とまた重なる。代えたことは記録する。
  */
-function readTelegramKey(doc: Document, kindLabel: string, logPrefix: string, headType: string): string | undefined {
+function readTelegramKey(doc: XmlDocument, kindLabel: string, logPrefix: string, headType: string): string | undefined {
   const controlEl = xmlQ(doc, 'Control')
   const raw = controlEl ? xmlText(xmlChild(controlEl, 'DateTime')) : ''
   if (!raw) {
@@ -635,7 +651,7 @@ function readTelegramKey(doc: Document, kindLabel: string, logPrefix: string, he
  * （受信通数と報の新旧）を言う。`Control/DateTime` は全種別で必須の要素で、`telegram.earthquake` の控えの
  * 全期間（2020-11-18〜2026-10-18・XML 20,954 通）で欠けた例は無い。
  */
-function readCreatedAtMs(doc: Document, kindLabel: string, logPrefix: string): number | undefined {
+function readCreatedAtMs(doc: XmlDocument, kindLabel: string, logPrefix: string): number | undefined {
   const controlEl = xmlQ(doc, 'Control')
   const raw = controlEl ? xmlText(xmlChild(controlEl, 'DateTime')) : ''
   const consequence = '報の新旧は発表時刻（分）で比べます'
@@ -657,7 +673,7 @@ function readCreatedAtMs(doc: Document, kindLabel: string, logPrefix: string): n
  * 震源情報（VXSE52）は空要素で届く。空のときは記録を残さない（残すと正常な電文のたびに鳴る）。
  * 空でないのに数値として読めない値だけ記録する。
  */
-function readReportSerial(doc: Document, kindLabel: string, logPrefix: string): number | undefined {
+function readReportSerial(doc: XmlDocument, kindLabel: string, logPrefix: string): number | undefined {
   const raw = xmlText(xmlQ(doc, 'Serial'))
   if (!raw) return undefined
   const n = Number(raw)
@@ -777,7 +793,7 @@ const DEPTH_LOWER_BOUND_KM = 700
  * 値と文字表現が別の書き方を始めたとき、黙って片方だけを信じると「700km以上」が「700km」に
  * 化けても気づけない。文字表現の無い要素（度単位へ丸めた座標など）では突き合わせない。
  */
-function readCoordinate(el: Element | null, logPrefix: string, degreeMinute = false): JmaCoord {
+function readCoordinate(el: XmlElement | null, logPrefix: string, degreeMinute = false): JmaCoord {
   const coord = parseJmaCoord(xmlText(el), degreeMinute)
   const desc = (el?.getAttribute('description') ?? '').replace(/[\s　]/g, '')
   if (desc && Number.isFinite(coord.lat)) {
@@ -810,7 +826,7 @@ function readCoordinate(el: Element | null, logPrefix: string, degreeMinute = fa
  * **`test` フラグとは別物。** あちらは「画面・音・地図へ流さない」抑制で、検証用に受信した
  * 試験報はあえて流している（`services/dmdata.ts`）。ここで読むのは電文自身の名乗り。
  */
-function parseOperationStatus(doc: Document): TelegramOperationStatus | undefined {
+function parseOperationStatus(doc: XmlDocument): TelegramOperationStatus | undefined {
   const raw = xmlText(xmlQ(doc, 'Status'))
   if (raw === '訓練' || raw === '試験') return raw
   if (raw && raw !== '通常') {
@@ -836,13 +852,13 @@ function parseOperationStatus(doc: Document): TelegramOperationStatus | undefine
  * 属性値の空白は落としてから照合する。解説資料の他の事例（「北緯　３９．０度…」）は
  * 全角空白で区切られており、この属性だけ空白が入らないと決めてかかる根拠が無い。
  */
-function isUnknownHypocenterCoord(areaEl: Element | null): boolean {
+function isUnknownHypocenterCoord(areaEl: XmlElement | null): boolean {
   if (!areaEl) return false
   return xmlAll(areaEl, 'Coordinate').some(el =>
     (el.getAttribute('description') ?? '').replace(/[\s　]/g, '').includes('震源要素不明'))
 }
 
-function readHypocenterCoord(areaEl: Element, headType: string): JmaCoord {
+function readHypocenterCoord(areaEl: XmlElement, headType: string): JmaCoord {
   const els = xmlAll(areaEl, 'Coordinate')
   const dm = els.find(el => (el.getAttribute('type') ?? '').includes('度分'))
   // 度分の要素そのものを度単位として読み直さないよう、退避先は「度分ではないほう」から採る。
@@ -872,7 +888,7 @@ function readHypocenterCoord(areaEl: Element, headType: string): JmaCoord {
  * 震央補助表現の材料が落ちていた件と、地震情報だけ震央補助表現そのものが落ちていた件）。
  */
 function readHypocenterAreaLabels(
-  areaEl: Element,
+  areaEl: XmlElement,
 ): Omit<import('../types/earthquake').HypocenterAreaDetail, 'latitude' | 'longitude' | 'depth'> {
   const code = xmlText(xmlChild(areaEl, 'Code'))
   const nameFromMark = xmlText(xmlChild(areaEl, 'NameFromMark'))
@@ -896,7 +912,7 @@ function readHypocenterAreaLabels(
  * 遠地地震など、気象庁以外が決めた震源に入る（電文解説資料 Ⅱ.11/33/37 の各 1-3-2・2-3-2）。
  * 地震情報・長周期・津波の 3 経路で共有する。
  */
-function readHypocenterSource(hypoEl: Element | null): string {
+function readHypocenterSource(hypoEl: XmlElement | null): string {
   return hypoEl ? xmlText(xmlChild(hypoEl, 'Source')) : ''
 }
 
@@ -913,7 +929,7 @@ function readHypocenterSource(hypoEl: Element | null): string {
  * 同じ顔になるため、記録がなければ後から見分けられない。
  */
 function readHypocenterAreaDetail(
-  areaEl: Element,
+  areaEl: XmlElement,
   logPrefix: string,
 ): import('../types/earthquake').HypocenterAreaDetail {
   const coordEl = xmlChild(areaEl, 'Coordinate')
@@ -973,7 +989,7 @@ function stripNonJmaMark(rawName: string): { name: string; nonJma: boolean } {
  * 取消報では取消しの理由が入る（電文解説資料 Ⅱ.11 3）。読み手を分けると、片方だけ扱いを
  * 変えたときに静かにずれる。
  */
-function readTsunamiBodyText(doc: Document): string | undefined {
+function readTsunamiBodyText(doc: XmlDocument): string | undefined {
   const bodyEl = xmlQ(doc, 'Body')
   return (bodyEl ? xmlText(xmlChild(bodyEl, 'Text')) : '') || undefined
 }
@@ -986,9 +1002,10 @@ function readTsunamiBodyText(doc: Document): string | undefined {
  *
  * **どの種別でも、本文や既読の要素に無い事実は含まない**（実電文で確かめた。地震情報は
  * 震源と時刻、長周期は階級、緊急地震速報は空、震源要素更新の文中の時刻は `ReportDateTime` と
- * 同じ）。落とさないために読むだけで、画面に出すのは本文が長い南海トラフ・後発地震だけ。
+ * 同じ）。画面に出すのは地震情報（開いたカード）・津波・南海トラフ・後発地震。長周期は地域名を取り出すのにだけ使う
+ * （→ docs/spec/quake-spec.md §8「見出し文（`Head/Headline/Text`）は、地震情報では開いたカードに出す」）。
  */
-function readHeadlineText(doc: Document): string {
+function readHeadlineText(doc: XmlDocument): string {
   const headEl = xmlQ(doc, 'Head')
   const headlineEl = headEl ? xmlChild(headEl, 'Headline') : null
   return headlineEl ? xmlText(xmlChild(headlineEl, 'Text')) : ''
@@ -1025,7 +1042,7 @@ function headlineIntensityRaw(kindName: string): string {
  * （区域は自分の最大震度の階級に並ぶので、市町村と同じ階級だけを見ると、市町村より強く揺れた
  * 本来の区域を外して別の区域を選びうる）。決まらなければ県の直下に置く。
  */
-function appendHeadlineOnlyCities(doc: Document, cities: JMAQuakeCity[], logPrefix: string): void {
+function appendHeadlineOnlyCities(doc: XmlDocument, cities: JMAQuakeCity[], logPrefix: string): void {
   const headEl = xmlQ(doc, 'Head')
   const headlineEl = headEl ? xmlChild(headEl, 'Headline') : null
   if (!headlineEl) return
@@ -1126,7 +1143,7 @@ const EEW_LAST_KIND_NONE_CODE = '00'
  * 「前報からの差分」で、こちらが前報を取りこぼしていれば一緒に落ちる。何を新しく声にするかは
  * 「自分が何を声にしたか」から決める（`useLiveEventHandler` の第 1.5 フェーズ）。
  */
-function readEewWarningRegions(doc: Document): { regions: string[]; added: string[]; unreadable: number; unreadableLastKind: number } {
+function readEewWarningRegions(doc: XmlDocument): { regions: string[]; added: string[]; unreadable: number; unreadableLastKind: number } {
   const headEl = xmlQ(doc, 'Head')
   const headlineEl = headEl ? xmlChild(headEl, 'Headline') : null
   if (!headlineEl) return { regions: [], added: [], unreadable: 0, unreadableLastKind: 0 }
@@ -1187,7 +1204,7 @@ function readEewWarningRegions(doc: Document): { regions: string[]; added: strin
  *
  * 読み取りをここへ集約するのは、同じ要素を複数の経路が別々に読むと必ず片方が遅れるため。
  */
-function readInfoName(doc: Document): string {
+function readInfoName(doc: XmlDocument): string {
   const headEl = xmlQ(doc, 'Head')
   return headEl ? xmlText(xmlChild(headEl, 'Title')) : ''
 }
@@ -1199,7 +1216,7 @@ function readInfoName(doc: Document): string {
  * 経路ごとに読んでいたため、「解説情報だけが見出し文を読んでいて、臨時情報と後発地震は
  * 読んでいない」という非対称ができていた。→ {@link EarthquakeInfoMeta}
  */
-function readEarthquakeInfoMeta(doc: Document): import('../types/earthquake').EarthquakeInfoMeta {
+function readEarthquakeInfoMeta(doc: XmlDocument): import('../types/earthquake').EarthquakeInfoMeta {
   const summary = readHeadlineText(doc)
   const bodyEl = xmlQ(doc, 'Body')
   const quakeInfoEl = bodyEl ? xmlQ(bodyEl, 'EarthquakeInfo') : null
@@ -1226,7 +1243,7 @@ function readEarthquakeInfoMeta(doc: Document): import('../types/earthquake').Ea
  * 変えたときに黙ってずれる。**型の側で分岐させないのは、未知の語が来たときに
  * 全部の分岐が同時に外れるため。**
  */
-function checkTsunamiHeightType(heightEl: Element | null, expected: string, where: string, name: string): void {
+function checkTsunamiHeightType(heightEl: XmlElement | null, expected: string, where: string, name: string): void {
   if (!heightEl) return
   const type = heightEl.getAttribute('type')?.trim() ?? ''
   if (!type || type === expected) return
@@ -1240,7 +1257,7 @@ function checkTsunamiHeightType(heightEl: Element | null, expected: string, wher
  * 「気象庁が 0 と言った」と「読めなかった」が区別できなくなる。0 は「不明」「変化なし」という
  * 意味のある値なので、この区別は消せない）。
  */
-function intAttr(el: Element | null, name: string): number | undefined {
+function intAttr(el: XmlElement | null, name: string): number | undefined {
   if (!el) return undefined
   const raw = el.getAttribute(name)
   if (raw == null) return undefined
@@ -1248,7 +1265,7 @@ function intAttr(el: Element | null, name: string): number | undefined {
   return Number.isInteger(n) ? n : undefined
 }
 
-function intText(el: Element | null): number | undefined {
+function intText(el: XmlElement | null): number | undefined {
   if (!el) return undefined
   const n = parseInt(xmlText(el), 10)
   return Number.isInteger(n) ? n : undefined
@@ -1263,7 +1280,7 @@ const loggedUnknownEewAccuracy = new Set<string>()
  * 本文はどれも `"NaN"` 固定で、**意味はすべて属性に入っている**（`NumberOfMagnitudeCalculation`
  * だけは本文に数値）。値はそのまま持ち、意味への読み替えは表示側に任せる。
  */
-function parseEEWAccuracy(hypocenterEl: Element | null): EEWAccuracy | undefined {
+function parseEEWAccuracy(hypocenterEl: XmlElement | null): EEWAccuracy | undefined {
   const el = hypocenterEl ? xmlChild(hypocenterEl, 'Accuracy') : null
   if (!el) return undefined
   const a: EEWAccuracy = {
@@ -1297,7 +1314,7 @@ const FORECAST_CHANGE_REASONS: ReadonlySet<number> = new Set([0, 1, 2, 3, 4, 9])
  * **値域の外は捨てて記録する。** ここは「気象庁が何と言ったか」を持つ場所で、知らない値を
  * 通すと表示側が対応表を引けずに空欄になる（なぜ空なのかもどこにも残らない）。
  */
-function parseEEWForecastChange(doc: Document): EEWForecastChange | undefined {
+function parseEEWForecastChange(doc: XmlDocument): EEWForecastChange | undefined {
   // **`Forecast` の下に限って探す。** `Appendix` という要素名は南海トラフ（Ⅱ.41）でも
   // 「参考情報」として使われており、名前だけで文書全体から引くと別の電文の中身を掴みうる。
   const forecastEl = xmlQ(doc, 'Forecast')
@@ -1422,7 +1439,7 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
   const warningComment = readCommentText(eewWarningCommentEl, '固定付加文', DMDATA_LOG_PREFIX) || undefined
 
   const forecastEl = xmlQ(doc, 'Forecast')
-  const intRange = (el: Element | null): { from: string; to: string } => ({
+  const intRange = (el: XmlElement | null): { from: string; to: string } => ({
     from: xmlText(el ? xmlChild(el, 'From') : null),
     to: xmlText(el ? xmlChild(el, 'To') : null),
   })
@@ -1625,7 +1642,9 @@ export function parseEEWFromXml(headType: string, xml: string): EEWAlert | null 
   return {
     kind: 'eew',
     origin: 'dmdata',
-    id: `dmdata-eew-${eventId}-${serial}`,
+    // 警報の電文の報番号は警報だけの通し番号なので、予報の同じ番号の報と id が重ならないよう印を付ける
+    id: headType === 'VXSE43' ? `dmdata-eew-${eventId}-w${serial}` : `dmdata-eew-${eventId}-${serial}`,
+    ...(headType === 'VXSE43' && { serialSeries: 'warning' as const }),
     time: reportTime,
     test: false,
     ...(eewHeadline && { headline: eewHeadline }),
@@ -1691,7 +1710,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
   if (!doc) return null
 
   const quakeOperationStatus = parseOperationStatus(doc)
-  // 見出し文。**読んで持つだけで画面には出さない**（→ `readHeadlineText`）。
+  // 見出し文。開いた地震カードに原文のまま出す（→ `readHeadlineText`・docs/spec/quake-spec.md §8）。
   const quakeHeadline = readHeadlineText(doc)
   const reportDateTime = readReportDateTime(doc, '地震情報', DMDATA_LOG_PREFIX)
   const eventId = xmlText(xmlQ(doc, 'EventID'))
@@ -1844,7 +1863,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
    * 確かめた控えの実電文の範囲では都道府県・地域の `MaxInt` の欠落は見当たらず（市町村では 40 件この形を取る）、
    * 資料が許す形として受ける。
    */
-  const onlyUnreceivedCities = (el: Element): boolean => {
+  const onlyUnreceivedCities = (el: XmlElement): boolean => {
     const cityEls = el.getElementsByTagName('*')
     let count = 0
     for (let i = 0; i < cityEls.length; i++) {
@@ -1857,7 +1876,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
     return count > 0
   }
   const allEls = doc.getElementsByTagName('*')
-  const prefEls: Element[] = []
+  const prefEls: XmlElement[] = []
   for (let i = 0; i < allEls.length; i++) {
     if (allEls[i].localName === 'Pref') prefEls.push(allEls[i])
   }
@@ -2080,7 +2099,7 @@ export function parseEarthquakeFromXml(headType: string, xml: string): JMAQuake 
       time: earthquakeTime,
       hypocenter: {
         name: hypName,
-        // 震度速報は震源情報なし。-200 は「位置不明」センチネル（P2PQuake 経路と揃えてある）。
+        // 震度速報は震源情報なし。-200 は「位置不明」センチネル（`utils/geo.ts` の判定と揃えてある）。
         latitude: Number.isFinite(lat) ? lat : -200,
         longitude: Number.isFinite(lng) ? lng : -200,
         depth,
@@ -2334,7 +2353,7 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
   }
 
   const allEls = forecastEl!.getElementsByTagName('*')
-  const itemEls: Element[] = []
+  const itemEls: XmlElement[] = []
   for (let i = 0; i < allEls.length; i++) {
     if (allEls[i].localName === 'Item') itemEls.push(allEls[i])
   }
@@ -2531,7 +2550,7 @@ export function parseTsunamiFromXml(headType: string, xml: string): JMATsunami |
  * `MaxHeight` を持つ。**発表中の予想と混ぜない** —— こちらは観測から導いた推定で、
  * 気象庁が発表している予想波高とは別物。
  */
-function parseTsunamiEstimationsFromXml(estimationEl: Element): import('../types/earthquake').TsunamiEstimation[] {
+function parseTsunamiEstimationsFromXml(estimationEl: XmlElement): import('../types/earthquake').TsunamiEstimation[] {
   const estimations: import('../types/earthquake').TsunamiEstimation[] = []
   const tally = createReadTally('沖合からの推定')
   for (const itemEl of xmlAll(estimationEl, 'Item')) {
@@ -2584,11 +2603,11 @@ function parseTsunamiEstimationsFromXml(estimationEl: Element): import('../types
   return estimations
 }
 
-function parseTsunamiObservationsFromXml(observationEl: Element, offshore: boolean): import('../types/earthquake').TsunamiObservation[] {
+function parseTsunamiObservationsFromXml(observationEl: XmlElement, offshore: boolean): import('../types/earthquake').TsunamiObservation[] {
   const observations: import('../types/earthquake').TsunamiObservation[] = []
   const tally = createReadTally('津波の観測点')
   const allEls = observationEl.getElementsByTagName('*')
-  const itemEls: Element[] = []
+  const itemEls: XmlElement[] = []
   for (let i = 0; i < allEls.length; i++) {
     if (allEls[i].localName === 'Item') itemEls.push(allEls[i])
   }
@@ -2766,11 +2785,11 @@ const LPGM_PERIOD_BAND_MAX = 7
  * 書式が変わったとき数千行が一度に出て他の警告が埋もれる。
  */
 function readLpgmPeriodBands(
-  stEl: Element,
+  stEl: XmlElement,
   tally: ReadTally,
 ): import('../types/earthquake').LpgmPeriodBand[] {
   const byBand = new Map<number, import('../types/earthquake').LpgmPeriodBand>()
-  const put = (el: Element, key: 'lgInt' | 'sva') => {
+  const put = (el: XmlElement, key: 'lgInt' | 'sva') => {
     const rawBand = el.getAttribute('PeriodicBand') ?? ''
     const band = parseInt(rawBand, 10)
     const raw = xmlText(el)
@@ -2855,7 +2874,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
   const lgPeriodTally = createReadTally('長周期地震動の周期帯')
 
   const allEls = doc.getElementsByTagName('*')
-  const prefEls: Element[] = []
+  const prefEls: XmlElement[] = []
   for (let i = 0; i < allEls.length; i++) {
     if (allEls[i].localName === 'Pref') prefEls.push(allEls[i])
   }
@@ -2889,7 +2908,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
       })
     }
     const prefChildren = prefEl.getElementsByTagName('*')
-    const areaElsArr: Element[] = []
+    const areaElsArr: XmlElement[] = []
     for (let i = 0; i < prefChildren.length; i++) {
       if (prefChildren[i].localName === 'Area') areaElsArr.push(prefChildren[i])
     }
@@ -2995,7 +3014,7 @@ export function parseLpgmFromXml(xml: string): JMALpgm | null {
     log.warn(`${DMDATA_LOG_PREFIX} VXSE62 の全国の最大震度を読めません（無視します）: "${obsRawInt}"`)
   }
 
-  // 震源の要素（→ `LpgmHypocenter`）。地震カードの長周期の欄に出す（→ `LpgmQuakeFacts`）。
+  // 震源の要素（→ `LpgmHypocenter`）。最も新しい報なら地震カードの上段へ当てる（→ `utils/latestQuakeFacts.ts`）。
   const lpgmHypoEl = earthquakeEl ? xmlQ(earthquakeEl, 'Hypocenter') : null
   const lpgmHypoAreaEl = lpgmHypoEl ? xmlQ(lpgmHypoEl, 'Area') : null
   let lpgmHypocenter: import('../types/earthquake').LpgmHypocenter | undefined
@@ -3187,7 +3206,7 @@ export function parseNankaiFromXml(xml: string): JMANankai | null {
  * **落ちたことは記録する** —— 段階そのものは読めているので画面には異常が出ず、
  * 一次情報源が消えたことに気づく手がかりが他に無い。
  */
-function resolveNankaiStage(doc: Document, headline: string): { code: string; name: string } | null {
+function resolveNankaiStage(doc: XmlDocument, headline: string): { code: string; name: string } | null {
   const bodyEl = xmlQ(doc, 'Body')
   const quakeInfoEl = bodyEl ? xmlQ(bodyEl, 'EarthquakeInfo') : null
   // **臨時情報と解説情報は電文自身が名乗り分けている**（Ⅱ.41 1-1「”南海トラフ地震臨時情報”

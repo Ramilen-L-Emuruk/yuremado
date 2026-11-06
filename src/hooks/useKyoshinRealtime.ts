@@ -3,12 +3,13 @@ import type { SiteCoords, YahooHypoInfoItem } from '../services/kyoshin'
 import {
   createYahooLiveSource,
   createYahooArchiveSource,
+  FETCH_OFFSET_MS,
   type KyoshinFrame,
 } from '../services/kyoshinSource'
 import { createLocalKyoshinArchiveSource } from '../services/kyoshinLocalArchiveSource'
 import { createFrameQueue } from '../utils/kyoshinFrameQueue'
 import type { EEWAlert } from '../types/earthquake'
-import { diffHypoInfoEvents, type HypoInfoPendingMissing } from '../utils/eew'
+import { diffHypoInfoEvents, type HypoInfoPendingMissing } from '../utils/eewHypoInfoDiff'
 import { serverDate } from '../utils/clock'
 import { createLogThrottle, log } from '../utils/logger'
 
@@ -90,6 +91,18 @@ const LOG_THROTTLE_MS = 60_000
  * 既定値でも十分収まる想定だが、契約を明示的に満たすため十分な余裕を持った値を渡す。
  */
 const LOCAL_ARCHIVE_QUEUE_MAX_SIZE = 7200
+
+/**
+ * 再生中（`timeOffset` があるとき）に、フレームをデータ時刻からどれだけ遅らせて放出するか (ms)。
+ *
+ * **ライブと同じ遅れにする。** ライブは Yahoo が秒ファイルを公開するのを待ち、データ時刻から
+ * `FETCH_OFFSET_MS` 遅れて取る（`services/kyoshinSource.ts`）。再生だけデータ時刻ちょうどに出すと、
+ * 震度の色・揺れ検知・hypoInfo の緊急地震速報がライブより早く出る。とくに hypoInfo は、その秒の
+ * ファイルが作られた時点の速報を載せているので、**DMDATA がまだ受けていない報まで先に出る**
+ * （能登 2024-01-01 16:18:45 の地震で、Yahoo の第 2 報（警報）が 16:18:51.1 に出て、DMDATA の
+ * 第 1 報（予報・51.6 受信）を追い越した。予報の発表から警報への格上げが再生では起きなかった）。
+ */
+const REPLAY_RELEASE_LAG_MS = FETCH_OFFSET_MS
 
 /**
  * 供給を作り直したときに返す空の震度列。
@@ -305,9 +318,12 @@ export function useKyoshinRealtime(
       }
     }
 
+    // 再生中だけ放出を遅らせる（`REPLAY_RELEASE_LAG_MS`）。ライブのフレームは届いた時点で既に
+    // その遅れを含んでいるので 0。ローカル履歴アーカイブも再生の一種なので同じ遅れにする。
+    const releaseLagMs = timeOffset != null ? REPLAY_RELEASE_LAG_MS : 0
     const drain = () => {
       if (!active) return
-      const frame = queue.drainLatest(serverDate())
+      const frame = queue.drainLatest(new Date(serverDate().getTime() - releaseLagMs))
       if (frame === null) return
       try {
         applyFrame(frame)

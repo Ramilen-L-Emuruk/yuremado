@@ -67,10 +67,10 @@ describe('deriveKyoshinView: candidatePeakIndex（共有カードの副見出し
     expect(view.candidateMaxIndex).toBe(0)
   })
 
-  it('対照: 値を持つメンバーが震度0未満でも、その値を返す（「0以下」と名乗る）', () => {
+  it('対照: 値を持つメンバーが震度0未満でも、その値を返す（「0未満」と名乗る）', () => {
     const view = derive(likely, sites, [-1, 3])
     expect(view.candidatePeakIndex).toBe(3)
-    expect(kyoshinDetectionScaleLabel(view.candidatePeakIndex)).toBe('0以下')
+    expect(kyoshinDetectionScaleLabel(view.candidatePeakIndex)).toBe('0未満')
   })
 
   it('安全弁: likely が無ければ -1', () => {
@@ -280,13 +280,14 @@ describe('deriveKyoshinView: 欠測ホールドの保持値と stale フラグ',
     const held = deriveKyoshinView([confirmedEvent], holdSites, [17, 15], [true, false])
     // 保持値 17 を持つ hKeyA が最大＝寄り先（peak）もその観測点になる。
     expect(held.confirmedShocks).toEqual([
-      { lat: 35.05, lng: 139.05, index: 17, peak: { lat: 35.0, lng: 139.0 } },
+      // points は区域名（読み上げ）を決める点。束が 1 つなので描いた点と同じ
+      { lat: 35.05, lng: 139.05, index: 17, peak: { lat: 35.0, lng: 139.0 }, points: held.detectedPoints },
     ])
     // 保持しない場合（欠測を素通し）は次点の 15 まで落ちる＝揺れが弱まったように見える。
     // 寄り先も次点の観測点（hKeyB）へ移る。
     const raw = deriveKyoshinView([confirmedEvent], holdSites, [-1, 15])
     expect(raw.confirmedShocks).toEqual([
-      { lat: 35.05, lng: 139.05, index: 15, peak: { lat: 35.1, lng: 139.1 } },
+      { lat: 35.05, lng: 139.05, index: 15, peak: { lat: 35.1, lng: 139.1 }, points: raw.detectedPoints },
     ])
   })
 
@@ -384,7 +385,8 @@ describe('deriveKyoshinView: confirmedShocks の寄り先（peak）', () => {
     )
     expect(view.confirmedShocks).toEqual([
       // 値を持つメンバーが無いので index は欠測（-1）。0 は計測震度 -3.0 という値になってしまう
-      { lat: 37.0, lng: 137.5, index: -1, peak: { lat: 37.0, lng: 137.5 } },
+      // 区域名を決める点も無い（読み上げは地名を言わない）
+      { lat: 37.0, lng: 137.5, index: -1, peak: { lat: 37.0, lng: 137.5 }, points: [] },
     ])
   })
 })
@@ -424,12 +426,12 @@ describe('deriveKyoshinView: confirmedShocks の位置はメンバーの重心',
       sites,
       [9, 9],
     )
-    expect(view.confirmedShocks).toEqual([{ lat: 34.0, lng: 133.0, index: -1, peak: { lat: 34.0, lng: 133.0 } }])
+    expect(view.confirmedShocks).toEqual([{ lat: 34.0, lng: 133.0, index: -1, peak: { lat: 34.0, lng: 133.0 }, points: [] }])
   })
 })
 
-// 確かな段の要約の index は、通知の「推定最大震度」の呼び名（`kyoshinDetectionScaleLabel`）へ渡る。
-// 欠測を 0 に丸めると、計測震度 -3.0 の値があるように「0以下」と名乗る
+// 確かな段の要約の index は、通知の「最大リアルタイム震度」の呼び名（`kyoshinDetectionScaleLabel`）へ渡る。
+// 欠測を 0 に丸めると、計測震度 -3.0 の値があるように「0未満」と名乗る
 describe('deriveKyoshinView: confirmedShocks の index と欠測', () => {
   const sites: SiteCoords = [
     [35.0, 139.0],
@@ -444,10 +446,10 @@ describe('deriveKyoshinView: confirmedShocks の index と欠測', () => {
     expect(kyoshinDetectionScaleLabel(view.confirmedShocks[0].index)).toBeNull()
   })
 
-  it('[対照] 震度0 未満の値（index 0 = 計測震度 -3.0）は欠測ではないので「0以下」と呼ぶ', () => {
+  it('[対照] 震度0 未満の値（index 0 = 計測震度 -3.0）は欠測ではないので「0未満」と呼ぶ', () => {
     const view = derive(confirmed(), sites, [0, -1])
     expect(view.confirmedShocks[0].index).toBe(0)
-    expect(kyoshinDetectionScaleLabel(view.confirmedShocks[0].index)).toBe('0以下')
+    expect(kyoshinDetectionScaleLabel(view.confirmedShocks[0].index)).toBe('0未満')
   })
 
   it('[安全弁] 1 点でも震度の値があれば、その値を採る（欠測の点は最大に効かない）', () => {

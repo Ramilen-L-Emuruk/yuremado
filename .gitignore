@@ -69,6 +69,7 @@ verify-*.jpg
 !.claude/agents/code-explorer.md
 !.claude/agents/doc-objectivity-reviewer.md
 !.claude/agents/meta-reviewer.md
+!.claude/agents/perf-reviewer.md
 !.claude/agents/silent-failure-hunter.md
 # .claude/skills/ も同じホワイトリスト方式。スキルは 1 つがディレクトリ単位のため、
 # ディレクトリを再包含する行（!.claude/skills/<name>/）が要る。
@@ -87,12 +88,6 @@ verify-*.jpg
 .claude/skills/scratch-project-blocks/*
 !.claude/skills/scratch-project-blocks/SKILL.md
 !.claude/skills/scratch-project-blocks/scratch-blocks.mjs
-
-# 実地震テストのシナリオ本体（DMDATA.JP利用規約第15条によりEEWの二次配信は
-# 個人契約では制限されるため、各自の契約でキャプチャしたものはコミットしない。
-# index.json は空配列のテンプレートとしてのみ管理する。
-public/data/test-scenarios/*.json
-!public/data/test-scenarios/index.json
 
 # NIED K-NET/KiK-net由来のローカル限定強震モニタ風リプレイデータ（scripts/capture-kyoshin-waveform.ts
 # の出力）。再配布禁止のためコミットしない。実行者本人のNIED登録でのみ生成・再生できる。

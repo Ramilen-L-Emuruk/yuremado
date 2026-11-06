@@ -8,7 +8,7 @@ import { formatCoordinate, formatMagnitude, hasMagnitude } from '../../utils/for
 import { log } from '../../utils/logger'
 import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
 import type { CatalogPointCloud } from '../../utils/hypocenterCatalogView'
-import { hypocenterIntensityLabel } from '../../utils/hypocenterCatalog'
+import { hypocenterIntensityLabel, type TelegramPointLabels } from '../../utils/hypocenterCatalog'
 import { escapeHtml } from './gl/popupHtml'
 
 // 長期震源カタログの点群。**深さを持つ点**として地下へ描く（gl/depthPointLayer.ts）。
@@ -32,15 +32,34 @@ interface Props {
   visible: boolean
 }
 
-/** 発生時刻を日本時間で読める形へ。カタログの時刻は UTC epoch ミリ秒で入っている。 */
-function formatCatalogTime(ms: number): string {
+/**
+ * 秒の欄が空白の記録がある年代の終わり（JST の年）。生成データは空白の秒を 0 秒で埋めていて、どれが空白だったかの印を
+ * 持たない（`scripts/hypocenterRecord.ts` の `secondUnknown`。1919〜1950 年に 18 件）。
+ */
+const BLANK_SECOND_LAST_YEAR = 1950
+
+/**
+ * 発生時刻を日本時間で読める形へ。カタログの時刻は UTC epoch ミリ秒で入っている。
+ *
+ * **秒まで出す**（2026-11-04 ユーザー選択「0.01 秒まで出す (Recommended)」）。桁は取得元のまま —— 地震月報（カタログ編）は
+ * 0.01 秒、日別の震源リスト（速報値）は 0.1 秒。秒の欄が空白の記録がある年代で、ちょうど 0 秒のものは分までにする
+ * （空白を 0 秒で埋めた値を「00.00 秒」と名乗らないため。その年代の本当の 0 秒も分までになるが、無い値は出さない）。
+ */
+export function formatCatalogTime(ms: number, preliminary: boolean): string {
   // 実行環境のタイムゾーンに依らず日本時間で出す（`getFullYear` 等は端末の設定で答えが変わる）。
   const d = new Date(ms + 9 * 3600 * 1000)
   const p = (n: number) => String(n).padStart(2, '0')
-  return (
-    `${d.getUTCFullYear()}/${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())} ` +
-    `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
-  )
+  const head = `${d.getUTCFullYear()}/${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
+  const digits = preliminary ? 1 : 2
+  // 生成データの時刻は 0.01 秒刻みの整数から戻した値なので、浮動小数の端数を取得元の桁へ丸める
+  const scale = 10 ** digits
+  // 1970 年より前は負の数なので、余りを 0〜59,999 へ寄せてから秒にする（`%` は負の余りを返す）
+  const msInMinute = (((ms + 9 * 3600 * 1000) % 60_000) + 60_000) % 60_000
+  const secScaled = Math.round((msInMinute / 1000) * scale)
+  if (secScaled === 0 && d.getUTCFullYear() <= BLANK_SECOND_LAST_YEAR) return head
+  // 丸めで 60 秒へ届く端数は、分の繰り上がりを避けて 59.99 秒側へ寄せる（取得元は 60 秒を書かない）
+  const sec = Math.min(secScaled, 60 * scale - 1) / scale
+  return `${head}:${sec.toFixed(digits).padStart(digits + 3, '0')}`
 }
 
 /**
@@ -65,10 +84,31 @@ function formatCatalogMagnitude(magnitude: number): string {
   return hasMagnitude(magnitude) ? formatMagnitude(magnitude, undefined) : 'M 不明'
 }
 
+/**
+ * 中継の地震情報の電文から作った末尾の点の吹き出し。行の並びはカタログの点と同じで、値は電文の書き方のまま
+ * （時刻は分まで・規模の説明・「700km以上」・「以上」の付いた最大震度・震源決定機関）。
+ * 「地震情報の電文」の行は 2026-11-06 ユーザー選択「「地震情報の電文」 (Recommended)」。
+ */
+function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null, coord: string): string {
+  return (
+    `<div class="text-sm" style="min-width:170px">` +
+    `<div class="font-bold" style="margin-bottom:4px">${escapeHtml(label.time)}</div>` +
+    `<div class="text-xs" style="color:#94a3b8">地震情報の電文</div>` +
+    (name != null ? `<div class="text-xs">${escapeHtml(name)}</div>` : '') +
+    (label.intensity != null ? `<div class="text-xs">${escapeHtml(label.intensity)}</div>` : '') +
+    `<div class="text-xs" style="color:#94a3b8">${escapeHtml(label.magnitude)} / ${escapeHtml(label.depth)}</div>` +
+    `<div class="text-xs" style="color:#64748b;margin-top:4px">${coord}</div>` +
+    (label.source != null ? `<div class="text-xs" style="color:#64748b;margin-top:4px">${escapeHtml(label.source)}</div>` : '') +
+    `</div>`
+  )
+}
+
 function buildPopupHtml(cloud: CatalogPointCloud, i: number): string {
   const lat = cloud.columns.lat[i]
   const lng = cloud.columns.lng[i]
   const coord = formatCoordinate(lat, lng, 3)
+  const telegram = cloud.telegramLabels.get(i)
+  if (telegram) return buildTelegramPopupHtml(telegram, cloud.names[i], coord)
   // 行の並びは 2026-10-25 ユーザー承認「C の案でよい (Recommended)」・「D の案でよい (Recommended)」。
   // 震央地名と最大震度は、記録が無い地震では行ごと出さない。
   const name = cloud.names[i]
@@ -79,7 +119,10 @@ function buildPopupHtml(cloud: CatalogPointCloud, i: number): string {
   const depth = cloud.depthUnknown[i] === 1 ? '深さ不明' : `深さ ${formatCatalogDepth(cloud.columns.depthKm[i])}`
   return (
     `<div class="text-sm" style="min-width:170px">` +
-    `<div class="font-bold" style="margin-bottom:4px">${formatCatalogTime(cloud.timeMs[i])}</div>` +
+    `<div class="font-bold" style="margin-bottom:4px">${formatCatalogTime(cloud.timeMs[i], cloud.preliminary[i] === 1)}</div>` +
+    // 日別の震源リスト（速報値）の年の地震。取得元は「暫定値であり、変更になる場合があります」と書く
+    // （2026-11-04 ユーザー選択「吹き出しに出す (Recommended)」。語はタブの期間の注記と同じ）
+    (cloud.preliminary[i] === 1 ? `<div class="text-xs" style="color:#94a3b8">速報値</div>` : '') +
     (name != null ? `<div class="text-xs">${escapeHtml(name)}</div>` : '') +
     (intensity != null ? `<div class="text-xs">${escapeHtml(intensity)}</div>` : '') +
     `<div class="text-xs" style="color:#94a3b8">` +

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex">
+  <title>揺れ窓は新しいアドレスへ移りました</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: #0b1220; color: #e5e7eb; font-family: system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+    main { max-width: 32rem; padding: 2rem 1.5rem; line-height: 1.8; }
+    h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+    p { margin: 0 0 0.75rem; font-size: 0.95rem; }
+    a.button { display: inline-block; margin-top: 1rem; padding: 0.6rem 1.2rem; border-radius: 0.375rem;
+      background: #2563eb; color: #fff; text-decoration: none; font-weight: 600; }
+    a.button:hover { background: #1d4ed8; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>揺れ窓は https://yuremado.com/ へ移りました</h1>
+    <p id="carried" hidden>設定は引き継ぎます（APIキーを除く）。</p>
+    <p id="no-settings" hidden>この端末には引き継ぐ設定がありませんでした。以前に書き出した設定のファイルがあれば、新しいアドレスの設定の窓の「設定の読み込み」で入れられます。</p>
+    <p>ホーム画面のアプリとブラウザ通知は、新しいアドレスで設定し直してください。</p>
+    <a id="go" class="button" href="https://yuremado.com/" referrerpolicy="origin">新しいアドレスで開く</a>
+  </main>
+  <!-- 絶対パスで読む。存在しないパスで開かれたとき（404.html として配る）も同じ本体を読めるようにする -->
+  <script type="module" src="/yuremado/handoff.js"></script>
+</body>
+</html>

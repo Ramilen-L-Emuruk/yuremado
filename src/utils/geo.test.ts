@@ -10,7 +10,7 @@ describe('hasKnownEpicenter', () => {
     expect(hasKnownEpicenter(-33.4, -70.6)).toBe(true)
   })
 
-  it('DMDATA・P2PQuake の位置不明センチネル（-200）を弾く', () => {
+  it('DMDATA の位置不明センチネル（-200）を弾く', () => {
     expect(hasKnownEpicenter(-200, -200)).toBe(false)
     // 片方だけでも位置は決まらない。
     expect(hasKnownEpicenter(37.5, -200)).toBe(false)

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { log } from './logger'
 import {
   drainReplayEvents, withReplayTelegramContext, __resetReplayEventLogForTest,
@@ -815,6 +815,64 @@ describe('通知音のあとに声を出すまでの間', () => {
     for (const type of ALL_TYPES) {
       expect(sound.SOUND_AUDIBLE_END_MS[type], type).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('声を出してよい時刻は、音が実際に鳴り始める時刻から数える', () => {
+  // 音は頼んだ時刻の少し後に予約され、音声出力が止まっていれば再開まで鳴らない。声の間を壁時計で
+  // 数えると、その分だけ声が音へ食い込む（2026-10-31 ユーザー指示「効果音がなりおわってから
+  // 読み上げるようにしてくださいね」）。
+  //
+  //   正     : 声を出してよい時刻は、音を予約した時刻＋間
+  //   対照   : 時計がその時刻を過ぎれば待たない
+  //   安全弁 : 時計が止まっている（音声出力の再開待ち）間は、待ちが縮まない
+
+  afterEach(() => { ctx.currentTime = 10 })
+
+  it('正: 音を予約した時刻から間を数える', () => {
+    ctx.reset()
+    sound.playAlertSound('earthquake')
+    const soundStart = Math.min(...ctx.oscillators.map(o => o.startedAt ?? Infinity))
+    const notBefore = sound.speechNotBefore(sound.ttsDelayFor('earthquake'))
+    expect(notBefore).not.toBeNull()
+    expect(notBefore! - soundStart).toBeCloseTo(sound.ttsDelayFor('earthquake') / 1000, 6)
+    // 同じ時点では、間の全部（音の頭の先送りを含む）を待つ
+    expect(sound.msUntilAudioTime(notBefore)).toBe(Math.ceil((notBefore! - ctx.currentTime) * 1000))
+    expect(sound.msUntilAudioTime(notBefore)).toBeGreaterThan(sound.ttsDelayFor('earthquake'))
+  })
+
+  it('対照: 時計がその時刻を過ぎれば待たない', () => {
+    const notBefore = sound.speechNotBefore(500)
+    ctx.currentTime = notBefore! + 0.001
+    expect(sound.msUntilAudioTime(notBefore)).toBe(0)
+    expect(sound.msUntilAudioTime(null)).toBe(0)
+  })
+
+  it('安全弁: 時計が止まっている間は、待ちが縮まない', () => {
+    // AudioContext が止まっていると currentTime は進まない。壁時計がいくら進んでも残りは同じ
+    const notBefore = sound.speechNotBefore(500)
+    const first = sound.msUntilAudioTime(notBefore)
+    expect(sound.msUntilAudioTime(notBefore)).toBe(first)
+    ctx.currentTime += 0.2
+    // 切り上げの丸めで 1ms ずれうる
+    expect(Math.abs(sound.msUntilAudioTime(notBefore) - (first - 200))).toBeLessThanOrEqual(1)
+  })
+
+  it('対照: 間が 0 の予約（音を鳴らしていない）は待つ相手が無い', () => {
+    expect(sound.speechNotBefore(0)).toBeNull()
+  })
+
+  it('安全弁: 一度も再開できていない出力（suspended）では待たない', () => {
+    // 自動再生の制限で止まったままの出力は時計が進まず、待っても明けない。待つと読み上げのたびに
+    // 上限まで遅れるだけなので、待たずに進める
+    const notBefore = sound.speechNotBefore(500)
+    ctx.state = 'suspended'
+    try {
+      expect(sound.msUntilAudioTime(notBefore)).toBe(0)
+    } finally {
+      ctx.state = 'running'
+    }
+    expect(sound.msUntilAudioTime(notBefore)).toBeGreaterThan(0)
   })
 })
 

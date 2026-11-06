@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ReloadSchedule } from '../hooks/useReloadSchedule'
-import { isDmdss } from '../utils/env'
 import { log } from '../utils/logger'
 import { compareVersions, notesBetween, notesForUpdate, type ReleaseNoteEntry } from '../utils/releaseNotes'
-import { lastOpenedVersionKey, previousVersionToAnnounce } from '../utils/updatedNotice'
+import { LAST_OPENED_VERSION_KEY, previousVersionToAnnounce } from '../utils/updatedNotice'
 import { ReleaseNotesDialog } from './ReleaseNotesDialog'
-
-const VARIANT = isDmdss ? 'dmdss' : 'standard'
 
 /** 「バージョン X に更新しました」を出しておく時間（2026-10-26 ユーザー承認「30 秒で消える」）。 */
 export const UPDATED_NOTICE_MS = 30_000
@@ -20,14 +17,14 @@ export const UPDATED_NOTICE_MS = 30_000
  *   ［変更内容］［今すぐ更新］
  * - 更新した直後: 「バージョン 5.70.0 に更新しました」と［変更内容］［閉じる］。30 秒で消える
  *
- * 前に開いた版は localStorage にバリアントごとに覚える（`utils/updatedNotice.ts`）。
+ * 前に開いた版は localStorage に覚える（`utils/updatedNotice.ts`）。
  */
 export function AppUpdateBadge({ schedule }: { schedule: ReloadSchedule }) {
   // **読むのは初期値の段、書くのは効果の段に分ける。** 効果の中で読んでから書くと、開発時の StrictMode が
   // 効果を 2 回走らせたとき、2 回目が自分の書いた今の版を読んで「更新していない」と判断する
   const [updatedFrom, setUpdatedFrom] = useState<string | null>(() => {
     try {
-      return previousVersionToAnnounce(localStorage.getItem(lastOpenedVersionKey(VARIANT)), __APP_VERSION__)
+      return previousVersionToAnnounce(localStorage.getItem(LAST_OPENED_VERSION_KEY), __APP_VERSION__)
     } catch (err) {
       log.warn('[更新] 前に開いた版を読めなかった（更新しましたの知らせは出さない）', err)
       return null
@@ -38,7 +35,7 @@ export function AppUpdateBadge({ schedule }: { schedule: ReloadSchedule }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(lastOpenedVersionKey(VARIANT), __APP_VERSION__)
+      localStorage.setItem(LAST_OPENED_VERSION_KEY, __APP_VERSION__)
     } catch (err) {
       log.warn('[更新] 開いた版を覚えられなかった（次に更新しても知らせが出ない）', err)
     }
@@ -60,14 +57,14 @@ export function AppUpdateBadge({ schedule }: { schedule: ReloadSchedule }) {
     if (notes === null) return null
     if (notes.kind === 'updated') {
       const { from } = notes
-      return (entries: readonly ReleaseNoteEntry[]) => notesForUpdate(entries, from, __APP_VERSION__, VARIANT)
+      return (entries: readonly ReleaseNoteEntry[]) => notesForUpdate(entries, from, __APP_VERSION__)
     }
     const { to } = notes
     // 待っている版の変更内容。番号を取れていなければ、資料に載っているいちばん新しい版までを出す
     return (entries: readonly ReleaseNoteEntry[]) => {
-      if (to !== null) return notesForUpdate(entries, __APP_VERSION__, to, VARIANT)
+      if (to !== null) return notesForUpdate(entries, __APP_VERSION__, to)
       const latest = entries.reduce<string>((best, e) => ((compareVersions(e.version, best) ?? 0) > 0 ? e.version : best), __APP_VERSION__)
-      return notesBetween(entries, __APP_VERSION__, latest, VARIANT)
+      return notesBetween(entries, __APP_VERSION__, latest)
     }
   }, [notes])
 
@@ -107,7 +104,7 @@ export function AppUpdateBadge({ schedule }: { schedule: ReloadSchedule }) {
     <>
       {/* 狭いとき（右上の行と横に並んで幅が足りないとき）は、ボタンを文字の途中で割らずに次の行へ送る */}
       {body !== null && (
-        <div className="pointer-events-auto flex flex-wrap items-center gap-x-2 gap-y-1 bg-black/80 rounded-sm text-xs px-2 py-1 roomy:text-lg roomy:px-2.5 text-white">
+        <div className="pointer-events-auto flex flex-wrap items-center gap-x-2 gap-y-1 bg-panel/90 rounded-sm text-xs px-2 py-1 roomy:text-lg roomy:px-2.5 text-white">
           {body}
         </div>
       )}
@@ -121,7 +118,7 @@ function BadgeButton({ onClick, children }: { onClick: () => void; children: Rea
     <button
       type="button"
       onClick={onClick}
-      className="rounded-sm border border-white/30 px-2 py-0.5 hover:bg-white/15 whitespace-nowrap"
+      className="rounded-md border border-border bg-panel px-2 py-0.5 hover:bg-white/10 whitespace-nowrap"
     >
       {children}
     </button>

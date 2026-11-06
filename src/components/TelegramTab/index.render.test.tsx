@@ -25,23 +25,55 @@ const log: TelegramLogEntry[] = [
   entry('c', { headType: 'VXSE53', kind: 'quake' }),
   // 結合待ちの断片。種別を持たずに記録される
   entry('d', { headType: 'IXAC41', status: 'filtered' }),
-  // 扱わないコード（P2PQuake は filtered で記録する）
-  entry('e', { headType: '561', status: 'filtered', source: 'p2pquake', rawBody: {} }),
+  // 扱わないコード（試験報を捨てたときは種別を問わず filtered で記録する）
+  entry('e', { headType: 'VZSE41', status: 'filtered' }),
 ]
 
 const rowTexts = () => screen.getAllByRole('listitem').map(li => li.textContent ?? '')
 
 describe('TelegramTab', () => {
-  it('いままで種別名の出なかった電文も、短い名前と種別名を並べて出す', () => {
+  it('Title の無い電文は、種別の前置きを付けずに短い名前を出す', () => {
     render(<TelegramTab telegramLog={log} onClear={() => {}} active />)
     const rows = rowTexts()
-    expect(rows[0]).toContain('南海トラフ解説情報 · 南海トラフ地震関連解説情報（臨時解説）')
-    expect(rows[1]).toContain('推計震度分布図 · 推計震度分布図作図用データ')
-    expect(rows[2]).toContain('地震 · 震源・震度')
-    expect(rows[3]).toContain('推計震度分布図 · 推計震度分布図作図用データ')
+    expect(rows[0]).toContain('南海トラフ地震関連解説情報（臨時解説）')
+    expect(rows[1]).toContain('推計震度分布図作図用データ')
+    expect(rows[2]).toContain('震源・震度')
+    expect(rows.some(row => row.includes('·'))).toBe(false)
     // 扱わないコードは名前を付けず、コードだけを出す
-    expect(rows[4]).toContain('561')
-    expect(rows[4]).not.toContain('·')
+    expect(rows[4]).toContain('VZSE41')
+    // 発信元は 1 つだけなので、印を出さない
+    expect(rows.some(row => row.includes('DM'))).toBe(false)
+  })
+
+  it('XML の電文は Control/Title をそのまま名前にする', () => {
+    const xml = '<Report><Control><Title>震源・震度に関する情報</Title></Control><Head><Title>震源・震度情報</Title></Head></Report>'
+    render(<TelegramTab telegramLog={[entry('x', { headType: 'VXSE53', kind: 'quake', rawBody: xml })]} onClear={() => {}} active />)
+    expect(rowTexts()[0]).toContain('震源・震度に関する情報')
+  })
+
+  it('受けた日が変わる所に日付の区切りを置く', () => {
+    const two = [
+      entry('n', { receivedAt: new Date(2026, 10, 4, 0, 5) }),
+      entry('o', { receivedAt: new Date(2026, 10, 3, 23, 55) }),
+    ]
+    const { container } = render(<TelegramTab telegramLog={two} onClear={() => {}} active />)
+    // 区切りは行とは別の要素（選んだ行の地が区切りまで染まらないように）。行の数は電文の数のまま
+    expect(rowTexts()).toHaveLength(2)
+    const items = [...container.querySelectorAll('ul > li')].map(li => li.textContent ?? '')
+    expect(items[0]).toBe('2026年11月4日')
+    expect(items[2]).toBe('2026年11月3日')
+  })
+
+  // 安全弁: 時刻の読めない行の次の行には、同じ日でも区切りを出し直す（前の日の区切りの下に紛れない）
+  it('時刻の読めない行の後は、同じ日でも区切りを出し直す', () => {
+    const three = [
+      entry('p', { receivedAt: new Date(2026, 10, 4, 0, 5) }),
+      entry('q', { receivedAt: new Date(Number.NaN) }),
+      entry('r', { receivedAt: new Date(2026, 10, 4, 0, 1) }),
+    ]
+    const { container } = render(<TelegramTab telegramLog={three} onClear={() => {}} active />)
+    const separators = [...container.querySelectorAll('ul > li[role="presentation"]')].map(li => li.textContent)
+    expect(separators).toEqual(['2026年11月4日', '2026年11月4日'])
   })
 
   it('いままで絞れなかった種別で絞れる', () => {

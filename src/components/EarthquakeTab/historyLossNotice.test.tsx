@@ -58,6 +58,7 @@ async function renderTab(opts: {
   loadMoreFailed?: boolean
   reconnectGapLoss?: boolean
   fetchThrottled?: boolean
+  onDismissKeyReentry?: (() => void) | null
   error?: string | null
 }) {
   const earthquakes = opts.earthquakes ?? [QUAKE]
@@ -65,6 +66,7 @@ async function renderTab(opts: {
     <EarthquakeTab
       earthquakes={earthquakes}
       selectedId={earthquakes[0] ? quakeEventKey(earthquakes[0]) : null}
+      selectSeq={0}
       speakingKey={null}
       followSpeech={false}
       onSelect={() => {}}
@@ -78,12 +80,14 @@ async function renderTab(opts: {
       loadMoreFailed={opts.loadMoreFailed ?? false}
       reconnectGapLoss={opts.reconnectGapLoss ?? false}
       fetchThrottled={opts.fetchThrottled ?? false}
+      onDismissKeyReentry={opts.onDismissKeyReentry ?? null}
       lpgmByEventId={new Map()}
       updateMarks={new Map()}
       activeLpgmEventId={null}
       onToggleLpgm={() => {}}
+      lpgmFocus={null}
       estimatedIntensities={[]}
-      internationalTsunamis={[]}
+      internationalTsunamisByQuake={new Map()}
       distributionQuakeKey={null}
       onToggleDistribution={() => {}}
       unreceivedQuakeKey={null}
@@ -276,5 +280,43 @@ describe('取得制限中の帯', () => {
     // **形をそろえたぶん、差は語だけが担う。** 確定した損失は「取り込めず」、
     // 見送りは「未取得」。片方の帯にもう片方の語が混ざっていないことまで見る。
     expect(screen.getByText(/取り込めず（再読み込み/).textContent).not.toMatch(/未取得/)
+  })
+})
+
+// 鍵の入れ直しの案内（2026-10-31 ユーザー選択の文面）
+describe('鍵の入れ直しの案内', () => {
+  const KEY = '予報を受けるには、設定で API キーを入れ直してください（アドレスが変わったため引き継いでいません）'
+
+  // 正: 案内は青で、［×］で閉じられる
+  it('正: 鍵の入れ直しの案内を青で出し、［×］で閉じる', async () => {
+    let closed = 0
+    await renderTab({ onDismissKeyReentry: () => { closed += 1 } })
+
+    const band = screen.getByText(KEY).closest('div.rounded-lg')
+    expect(band?.className).toContain('sky')
+    screen.getByRole('button', { name: '閉じる' }).click()
+    expect(closed).toBe(1)
+  })
+
+  // 安全弁: 案内を出さないときは閉じるボタンも無い（他の帯には閉じるボタンを付けない）
+  it('安全弁: 案内を出さないときは閉じるボタンも出さない', async () => {
+    await renderTab({ fetchThrottled: true })
+
+    expect(screen.queryByText(KEY)).toBeNull()
+    expect(screen.queryByRole('button', { name: '閉じる' })).toBeNull()
+  })
+})
+
+// 取得がまるごと失敗してカードが 0 件の全画面でも、鍵の入れ直しの案内は出す（中継に繋がらない初回こそ要る）。
+describe('全画面の失敗表示と帯', () => {
+  it('カードが 0 件で取得に失敗しても鍵の入れ直しの案内は出す', async () => {
+    await renderTab({
+      earthquakes: [],
+      error: 'Failed to fetch',
+      onDismissKeyReentry: () => {},
+    })
+
+    expect(screen.getByText('データの取得に失敗')).toBeTruthy()
+    expect(screen.getByText(/入れ直してください/)).toBeTruthy()
   })
 })
