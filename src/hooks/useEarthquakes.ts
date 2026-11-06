@@ -1097,6 +1097,12 @@ export function useEarthquakes(
    * 表示が終わった EEW の分は台帳と一緒に掃除する。
    */
   const eewLatestRef = useRef<Map<string, EEWAlert>>(new Map())
+  /**
+   * 強震モニタの一覧から消えたことで積んだ自動解除の予約（地震 ID → 消えた報の発表時刻）。
+   * 最終報の予約と違い、最終でない報から積むので後から同じ地震の新しい報が届きうる。そのときは新しい報を採った時点で
+   * ここから外し、発火した予約は捨てる（外さないと、表示中の新しい報を古い報の式の時刻で消す）
+   */
+  const eewVanishPendingRef = useRef<Map<string, string>>(new Map())
   // VXSE51 受信時に震度データをキャッシュし、後続の VXSE52（震源情報）に補完する。
   // VXSE52 は震源のみで震度を持たないため、VXSE51 の maxScale・points を引き継ぐ。
   // `report` は控えた震度速報の発表時刻・作成時刻（取消がこの報より後かを比べるため）
@@ -1633,6 +1639,27 @@ export function useEarthquakes(
     // 強震モニタの訓練報は、設定「試験報を受信」が真なら印を付けて普通の報として流す（→ `admitTrainingEew`）。
     // 入口の最初で決める —— 下の判定・状態・読み上げ・通知が同じ 1 つの値を見るように。
     const event: AppEvent = rawEvent.kind === 'eew' ? admitTrainingEew(rawEvent, dmdataTestDeliveryRef.current) : rawEvent
+    // 強震モニタの一覧から取消の印なしで消えたことによる自動解除は、ここでは当てない。最終報から積む自動解除と
+    // 同じ待ち行列へ、その報から求めた式の時刻で積み直す。発火したときに揺れ検知の広がり待ち（eew-spec §7）を通る
+    // （2026-11-06 ユーザー選択「消えたら①と同じ待ちを通す (Recommended)」）。強震モニタは最終報を出さずに一覧から
+    // 外すことがあるので、消えたことを捨てると速報が画面に居座る
+    if (event.kind === 'eew' && event.vanishedFromList) {
+      const key = eewEventKey(event)
+      // 式は表示中の最新の報（震源要素と発表時刻）から求める。最終報の予約と同じく、震源と起点を同じ報から取る
+      const basis = eewLatestRef.current.get(key) ?? event
+      const formulaMs = calcEEWCancelTime(basis, new Date(basis.time)).getTime()
+      // 式の時刻を決められなくても積む（発火時の判断が「式の時刻を決められない」として記録してから消す）
+      const eventTime = new Date(Number.isFinite(formulaMs) ? formulaMs : getTimeRef.current().getTime())
+      // 印は付けたまま積む。発火した側が `eewVanishPendingRef` と照らして、後から新しい報を採っていれば捨てる
+      eewVanishPendingRef.current.set(key, event.time)
+      eventQueueRef.current.push({
+        eventTime,
+        payload: { kind: 'event', event },
+        logEntry: null,
+      })
+      log.debug(`[eew] 強震モニタの一覧から消えたので、自動解除を式の時刻で待つ: key=${key} 解除=${eventTime.toISOString()}`)
+      return
+    }
     // 古い報は**入口で**捨てる。この下の通知（読み上げ・ウィンドウタイトル）と自動解除の予約は
     // setState の外で走るため、状態更新の直前で弾いても間に合わない。地図・カードだけが新しい報を
     // 保ち、読み上げとタイトルが古い報で上書きされる——画面と音声が食い違う方が始末が悪い。
@@ -1732,6 +1759,11 @@ export function useEarthquakes(
           }
           eewAcceptanceRef.current.set(key, taken.acceptance)
           eewLatestRef.current.set(key, eewMerged)
+          // 一覧から消えたことで積んだ予約は、新しい報を採った時点で無効にする（→ `eewVanishPendingRef`）。
+          // 別の経路から届いた同じ報（`eewSameReport`）では外さない —— 外すと、その報が最終報でなければ終わらせる合図が残らない
+          if (!eewSameReport && eewVanishPendingRef.current.delete(key)) {
+            log.debug(`[eew] 一覧から消えた後に新しい報を採ったので、消えたことによる自動解除の予約を外す: key=${key} 経路=${incoming.origin}`)
+          }
         }
       } else if (incoming.expired || incoming.test) {
         // 自動解除は、消えた地震の記憶をこの場で書く（effect でも書くが、それを待つと同じティックに続けて届いた誤報取消を
@@ -1905,10 +1937,9 @@ export function useEarthquakes(
     }
 
     // 556（EEW）: 最終報受信時、解除時刻にキャンセルイベントをキューへ挿入する。
-    // 強震モニタ（Yahoo hypoInfo）経由の EEW は useKyoshinRealtime 側の消滅検出（diffHypoInfoEvents）
-    // でも独立に解除イベントが発生しうるため、同一 eventId に対しここでのタイマー式解除と
-    // 二重に発火することがある。2発目は activeEEWs から既に消えているため
-    // useEarthquakes/useLiveEventHandler の hadKey チェックで無視される（意図した重複）。
+    // 強震モニタ（Yahoo hypoInfo）経由の最終報もここで予約する。一覧から消えたことによる自動解除（`diffHypoInfoEvents`）も
+    // 入口の先頭で同じ待ち行列へ積むので、同一 eventId へ予約が 2 つ以上積まれることがある。2 つ目以降は activeEEWs から
+    // 既に消えているので useEarthquakes/useLiveEventHandler の hadKey チェックで無視される（意図した重複）。
     //
     if (event.kind === 'eew') {
       const eew = event as EEWAlert
@@ -2398,7 +2429,16 @@ export function useEarthquakes(
         if (payload.kind === 'event') {
           // 自動解除（最終報から積んだ `expired` の取消）は、その地震の揺れ検知の束にまだ点が加わっていれば待たせる
           // （eew-spec §7「検知が広がっている間は待つ」）。待つ先は最後の追加から 30 秒・式の時刻から 5 分まで
-          const ev = payload.event
+          let ev = payload.event
+          if (ev.kind === 'eew' && ev.vanishedFromList) {
+            // 強震モニタの一覧から消えたことで積んだ予約。後から新しい報を採っていれば捨てる（→ `eewVanishPendingRef`）
+            const vanishKey = eewEventKey(ev)
+            if (eewVanishPendingRef.current.get(vanishKey) !== ev.time) {
+              log.debug(`[eew] 一覧から消えた後に新しい報を採ったので、消えたことによる自動解除を捨てる: key=${vanishKey}`)
+              isSilentRef.current = false
+              continue
+            }
+          }
           if (ev.kind === 'eew' && ev.expired) {
             const key = eewEventKey(ev)
             const shown = eewLatestRef.current.get(key) ?? stateRef.current.activeEEWs.get(key)
@@ -2406,12 +2446,14 @@ export function useEarthquakes(
             // ここで消すと取消の表示が途中で消える）
             if (shown && (shown.cancelled || shown.cancelledAt) && !shown.expired) {
               log.debug(`[eew] 誤報取消を受けた後の自動解除は捨てる: key=${key}`)
+              eewVanishPendingRef.current.delete(key)
               isSilentRef.current = false
               continue
             }
             // 画面に無い（別の経路が先に消した）なら待たない
             if (shown) {
-              const decision = decideExpirySafely(key, () => decideFinalReportExpiry(ev, now.getTime(), eewSpreadLogRef.current))
+              const expiring = ev
+              const decision = decideExpirySafely(key, () => decideFinalReportExpiry(expiring, now.getTime(), eewSpreadLogRef.current))
               if (decision.kind === 'hold') {
                 eventQueueRef.current.push({ ...entry, eventTime: new Date(decision.untilMs), logEntry: null })
                 log.debug(`[eew] 揺れ検知が広がっているので自動解除を待つ: key=${key} 解除=${new Date(decision.untilMs).toISOString()}`)
@@ -2422,6 +2464,11 @@ export function useEarthquakes(
             } else {
               log.debug(`[eew] 自動解除: 表示に無いので揺れ検知は見ない key=${key}`)
             }
+          }
+          if (ev.kind === 'eew' && ev.vanishedFromList) {
+            // 当てる直前に印を外す（付けたまま渡すと入口がまた予約として積む）
+            eewVanishPendingRef.current.delete(eewEventKey(ev))
+            ev = { ...ev, vanishedFromList: undefined }
           }
           handleEvent(ev)
         } else if (payload.kind === 'lpgm') {
@@ -2575,6 +2622,7 @@ export function useEarthquakes(
       // `handleEvent` を直接呼ぶ。
       clearTestSimulationTimers()
       eventQueueRef.current.clear()
+      eewVanishPendingRef.current.clear()
     }
   }, [clearTestSimulationTimers])
 
@@ -4376,6 +4424,8 @@ export function useEarthquakes(
       telegramLog: dropTelegramLogOrigins(prev.telegramLog, ['test', 'replay']),
     }))
     eventQueueRef.current.clear()
+    // 待ち行列と一緒に、一覧から消えたことで積んだ予約の台帳も捨てる（→ `eewVanishPendingRef`）
+    eewVanishPendingRef.current.clear()
     quakeIntensityCacheRef.current.clear()
     // 帯の期限の予約もリセット対象。resetState 後に古い予約が残ると、リプレイモード切替→ライブ復帰後に
     // 発火して、新しく積んだ一覧を前の時間軸の一覧で上書きしうる。

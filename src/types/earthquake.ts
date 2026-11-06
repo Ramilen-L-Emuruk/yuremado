@@ -1461,6 +1461,13 @@ export interface EEWAlert {
   severity: 'Unknown' | 'Forecast' | 'Warning'
   cancelled: boolean
   expired?: boolean
+  /**
+   * 強震モニタ（Yahoo）の一覧から、取消の印なしで消えたことで出した自動解除（`diffHypoInfoEvents`）。
+   * 受け口（`useEarthquakes` の `handleEvent`）はその場では当てず、最終報から積む自動解除と同じ待ち行列へ積み直す。
+   * 強震モニタは最終報を出さずに一覧から外すことがある（2026-10-25 11:09 の地震は第 3 報まで `isFinal` が偽のまま外れた）ので、
+   * この報が速報を終わらせる唯一の合図になる場面がある
+   */
+  vanishedFromList?: boolean
   isFinal?: boolean
   cancelledAt?: Date
   /**

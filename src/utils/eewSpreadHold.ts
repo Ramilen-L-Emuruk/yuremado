@@ -17,15 +17,15 @@
  * **束とその EEW は走時で結ぶ**（2026-11-04 ユーザー選択「走時で結び付ける (Recommended)」）。束の始まりが、EEW の
  * 震源から束の最初の点までの距離での P 波の到達（の {@link TRAVEL_EARLY_MS} 前）から S 波の到達（の
  * {@link TRAVEL_LATE_MS} 後）までに入れば、その地震の束とみなす。
- * **距離で切るのは、観測網の中の地震（震央から有感半径の内に観測点がある地震）だけ**（2026-11-04 ユーザー選択
- * 「網の中の地震は距離でも切る (Recommended)」）。そうした地震は以前どおり有感半径の内の束に限る。観測網から遠い海域の
- * 地震（硫黄島近海など）は、最寄りの観測点でも有感半径の外にあるので、距離では切らない。
+ * **距離では切らない**（2026-11-06 ユーザー選択「距離で切らず走時だけで結ぶ (Recommended)」。2026-11-04 の「網の中の地震は
+ * 距離でも切る (Recommended)」を覆した）。速報の震源・深さ・規模は実際と大きく外れることがあり、その値で求めた有感半径の外でも
+ * 同じ地震の揺れが広がる（2026-10-25 11:09 の深発地震）。
  *
  * **観測網へ P 波が届く前には消さない。** 最寄りの観測点へ P 波が届く見込み＋{@link FIRST_ARRIVAL_WAIT_MS}（2026-11-04
  * ユーザー選択「60 秒 (Recommended)」）までは、束の有無に関わらず消さない（届いても束ができなければ、そこで消える）。
  */
 import type { EEWAlert } from '../types/earthquake'
-import { calcEEWCancelTime, eewFeltRadiusKm, eewSortTimeMs, isProvisionalHypocenter, UNKNOWN_DEPTH_ASSUMED_KM } from './eew'
+import { calcEEWCancelTime, eewSortTimeMs, isProvisionalHypocenter, UNKNOWN_DEPTH_ASSUMED_KM } from './eew'
 import { hasDepth } from './formatters'
 import { hasKnownEpicenter, haversineKm } from './geo'
 import { travelTimeSec } from './travelTime'
@@ -100,7 +100,7 @@ export type FirstArrivalWait = { kind: 'wait'; ms: number } | { kind: 'unavailab
 export interface DetectionSpreadLog {
   /** 1 秒ぶんの検知を流す。`ms` はその検知のデータ時刻。最初の点の座標が読めない束は覚えない */
   push(ms: number, detections: readonly SpreadDetection[]): void
-  /** 強震モニタの観測点の座標（`[緯度, 経度]`）。観測網の中の地震かの判定と、最寄りの観測点へ P 波が届く見込みに使う */
+  /** 強震モニタの観測点の座標（`[緯度, 経度]`）。最寄りの観測点へ P 波が届く見込みに使う */
   setSites(sites: readonly (readonly [number, number])[]): void
   /**
    * その EEW に結び付く束が最後に広がっていたとみなす時刻。結び付く束が無ければ null。
@@ -169,14 +169,12 @@ export function createDetectionSpreadLog(): DetectionSpreadLog {
       const src = eewSource(eew)
       if (!src) return null
       const stale = isStale(nowMs)
-      const feltRadiusKm = eewFeltRadiusKm(src.magnitude, src.depthKm)
-      // 観測網の中の地震（有感半径の内に観測点がある）は、以前どおり有感半径の内の束に限る。観測点を知らなければ網の中とみる
-      const nearest = nearestSiteKm(src.lat, src.lng)
-      const inNetwork = nearest === null || nearest <= feltRadiusKm
       let latest: SpreadTime | null = null
       for (const b of bundles.values()) {
+        // 距離では切らない。速報の震源・深さ・規模は実際と大きく外れることがあり、その値で求めた有感半径の外でも
+        // 同じ地震の揺れが広がる（2026-10-25 11:09: 強震モニタの報は深さ 10km・M6.2 で有感半径 826km、
+        // 気象庁の決定は深さ 470km・M7.0 で、震央から 1124km の東北で発生の 290 秒後に揺れ検知が始まった）
         const distKm = haversineKm(b.epicenter[0], b.epicenter[1], src.lat, src.lng)
-        if (inNetwork && distKm > feltRadiusKm) continue
         const earliestMs = src.originMs + Math.max(-ORIGIN_MATCH_BEFORE_MS, travelTimeSec('P', distKm, src.depthKm) * 1000 - TRAVEL_EARLY_MS)
         const sArrivalMs = src.originMs + travelTimeSec('S', distKm, src.depthKm) * 1000
         if (b.firstMs < earliestMs || b.firstMs > sArrivalMs + TRAVEL_LATE_MS) continue

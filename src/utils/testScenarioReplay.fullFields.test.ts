@@ -45,7 +45,10 @@ type TsunamiSample = DeepRequired<Omit<JMATsunami,
   | 'foldedReports' // 報を畳んだときに統合が積む
   | 'previousSourceEarthquakes' // 別の地震の津波で置き換えたときに統合が積む（時刻は積む前の報で既にずれている）
 >>
-type EewSample = DeepRequired<Omit<EEWAlert, 'cancelledAt'>>
+type EewSample = DeepRequired<Omit<EEWAlert,
+  | 'cancelledAt' // 取消を当てたときに受信処理が付ける（Date）
+  | 'vanishedFromList' // 強震モニタの一覧から消えたときに差分（diffHypoInfoEvents）が付ける印（電文の欄ではない）
+>>
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/
 
