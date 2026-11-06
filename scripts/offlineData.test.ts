@@ -107,7 +107,6 @@ describe('offlineDataUrlPattern', () => {
   })
 
   it('控えない生成データには当たらない（対照）', () => {
-    expect(standard.test(`${origin}/yuremado/data/hypocenter/2024.json`)).toBe(false)
     expect(standard.test(`${origin}/yuremado/data/historical-archives/index.json`)).toBe(false)
     // 名前の一部だけが一致するもの（`.` を任意の 1 文字として扱っていない）
     expect(standard.test(`${origin}/yuremado/data/subregionsXjson`)).toBe(false)

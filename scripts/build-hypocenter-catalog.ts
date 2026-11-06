@@ -4,7 +4,7 @@
 // 余震域・同一地点履歴・深さ断面）の土台。
 //
 //   npm run build-hypocenter-catalog                 # 既定（1919 年〜今年・M2.0 以上）
-//   npm run build-hypocenter-catalog -- --from 2024  # 直近だけ作り直す（週次更新はこれ）
+//   npm run build-hypocenter-catalog -- --from 2024  # 直近だけ作り直す（確定値が出た年から今年まで。毎日の書き足しは中継の Cron）
 //   npm run build-hypocenter-catalog -- --min-magnitude 3
 //
 // 【取得元が 2 つある】確定値（地震月報カタログ編）は精査を経てから収録されるため構造的に
@@ -13,8 +13,8 @@
 //
 // 【年別に分ける】1 ファイルにまとめると 30MB 前後になる。年別なら平年 1MB 弱で、用途に応じて
 // 必要な年だけ読める（時計盤なら 1 年、b 値なら 10 年）。
-// **月別には分けない。** 週次更新で書き換わるのは当年ファイルだけだが、内容は末尾への追記なので
-// git の差分圧縮がよく効く（788KB の年ファイルを 52 回更新して .git の増分は 438KB）。
+// **月別には分けない。** 読む側（アプリ・中継の書き足し）は年単位で控え・書き換えるので、年より細かく割っても
+// 読む量は減らない。毎日の書き足しは中継の Cron が当年ファイルの末尾へ足す。
 //
 // 【完全性は年代で違う】M2.0 の取りこぼしが無いのは 1997 年以降だけ。それ以前は観測網が疎で、
 // 1919〜1950 年は M2.0 以上を年 505 件しか記録していない（現代は 2 万件超）。**同じ濃淡で
@@ -26,13 +26,13 @@
 // 気象庁の公共データ利用規約（第 1.0 版）に基づき、加工して作成。
 
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { unzipSync } from 'fflate'
 import { parseDepthField, parseHypocenterRecord, parseMagnitudeField } from './hypocenterRecord'
 import { SOURCE_REVISION as EPICENTER_REGION_REVISION, SOURCE_URL as EPICENTER_REGION_URL } from './build-epicenter-accents'
 import { buildEpicenterRegionIndex, type EpicenterRegionIndex } from './lib/epicenterRegion'
 import { cacheDir } from './lib/cacheDir.mjs'
+import { hypocenterCatalogDir } from './lib/hypocenterCatalogDir'
 import { isYearMagColumnValid, isZipCacheStale } from './hypocenterCacheRules'
 import { extractDailyHypocenterRows, parseDailyHypocenterLine } from './hypocenterDailyRecord'
 // 格納単位と「その単位で元データを表せるか」の検査はここが単一情報源。
@@ -42,8 +42,11 @@ const ZIP_BASE = 'https://www.data.jma.go.jp/eqev/data/bulletin/data/hypo'
 const DAILY_BASE = 'https://www.data.jma.go.jp/eqev/data/daily_map'
 const SOURCE_PAGE = 'https://www.data.jma.go.jp/eqev/data/bulletin/hypo.html'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const OUT_DIR = join(__dirname, '..', 'public', 'data', 'hypocenter')
+/**
+ * 書き出し先（メインの checkout の `.cache/hypocenter-catalog/`。`scripts/lib/hypocenterCatalogDir.ts`）。アプリが読むのは中継の公開バケットで、
+ * ここから中継の `scripts/upload-hypocenter-catalog.mjs` で上げる
+ */
+const OUT_DIR = hypocenterCatalogDir()
 /** 日別ページの置き場（メインの checkout の `.cache/hypocenter-cache`）。Git 管理外。 */
 const CACHE_DIR = cacheDir('hypocenter-cache')
 
@@ -581,7 +584,7 @@ async function readDailyCache(key: string): Promise<string | null> {
 /**
  * 日別ページを取る。**一度取った日はディスクに残して二度取らない。**
  *
- * 過去の日のページは書き換わらないため、キャッシュは無期限でよい。週次更新で新しい数日だけを
+ * 過去の日のページは書き換わらないため、キャッシュは無期限でよい。作り直すときに新しい数日だけを
  * 取りに行けるようにするのが目的（966 日を毎回取り直すと約 70MB になる）。
  */
 async function fetchDailyHtml(key: string): Promise<string> {
@@ -884,7 +887,7 @@ async function readYearSummary(year: number): Promise<YearSummary | null> {
       return null
     }
     // **格納単位が今の定数と違う年ファイルは弾く。** 単位を変えた後に範囲を絞って生成すると
-    // （週次更新は `--from 2024`）、作り直さなかった年が古い単位で残る。**読み取り側は年ファイル
+    // （確定値が出た年から作り直す `--from <年>` など）、作り直さなかった年が古い単位で残る。**読み取り側は年ファイル
     // 自身の単位を信じて読むので、混在していても何も言わずに粗い精度で読む** —— この変更自体が
     // 直そうとしている「静かに精度が落ちる」形そのもの。捕まえられるのは生成のここだけ。
     const mismatch = findScaleMismatch(parsed)
@@ -892,15 +895,21 @@ async function readYearSummary(year: number): Promise<YearSummary | null> {
       console.error(`  ${year}.json の ${mismatch} です。全年の再生成が必要です`)
       return null
     }
+    // **品質と終端は既定値で埋めない。** 失った年を確定値・通年ぶん覆えた扱いにすると、確定値が出た知らせの対象から
+    // 外れ、終端が実際より先を指す（読み取り側 src/utils/hypocenterCatalog.ts も既定値を置かずに投げる）
+    const quality = parsed.quality
+    if ((quality !== 'final' && quality !== 'preliminary') || typeof parsed.coveredThroughMs !== 'number') {
+      console.error(`  ${year}.json の品質（quality）か終端（coveredThroughMs）が読めません。この年を作り直してください`)
+      return null
+    }
     return {
       count: parsed.count,
       // **欄ではなく列から数える。** 欄を持たない古い年ファイル（M 未決定を落としていた頃のもの）も
       // そのまま正しい値（0）になる。
       unknownMagnitudeCount: (mag as (number | null)[]).filter((m) => m === null).length,
-      quality: parsed.quality === 'preliminary' ? 'preliminary' : 'final',
+      quality,
       hasIntensity: parsed.hasIntensity === true,
-      coveredThroughMs:
-        typeof parsed.coveredThroughMs === 'number' ? parsed.coveredThroughMs : yearStart(year + 1),
+      coveredThroughMs: parsed.coveredThroughMs,
     }
   } catch (e) {
     // 無いのは「この年を作っていない」だけ。それ以外（JSON の破損など）は理由を出す。
@@ -912,13 +921,16 @@ async function readYearSummary(year: number): Promise<YearSummary | null> {
 }
 
 async function readExistingMinMagnitude(): Promise<number | null> {
+  let raw: string
   try {
-    const raw = await readFile(join(OUT_DIR, 'index.json'), 'utf-8')
-    const parsed = JSON.parse(raw) as { minMagnitude?: number }
-    return typeof parsed.minMagnitude === 'number' ? parsed.minMagnitude : null
-  } catch {
-    return null
+    raw = await readFile(join(OUT_DIR, 'index.json'), 'utf-8')
+  } catch (err) {
+    // 初めて作る端末では索引がまだ無い。それ以外（読めない）は黙って「下限の混在は無い」にしない
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw err
   }
+  const parsed = JSON.parse(raw) as { minMagnitude?: number }
+  return typeof parsed.minMagnitude === 'number' ? parsed.minMagnitude : null
 }
 
 /**
@@ -1065,7 +1077,31 @@ async function main(): Promise<void> {
 
   const years = Object.keys(counts).map(Number).sort((a, b) => a - b)
   if (years.length === 0) throw new Error('1 年も生成できませんでした')
+  // **欠けた年の並びで索引を書かない。** 手元に一部の年しか無い端末で `--from` だけ流すと、索引が途中の年から始まる。
+  // それを中継へ上げると、上げていない年がアプリから消える（中継の upload-hypocenter-catalog も同じ形で止まる）
+  const gaps = years.filter((y, i) => i > 0 && y !== years[i - 1] + 1)
+  if (years[0] !== FIRST_YEAR || gaps.length > 0) {
+    throw new Error(
+      `手元の年ファイルが ${FIRST_YEAR} 年から途切れずに揃っていないので、索引を書きません（最初の年 ${years[0]}`
+      + `${gaps.length > 0 ? `・途切れの後の年 ${gaps.join(', ')}` : ''}）。--from を付けずに全期間を作ってください`,
+    )
+  }
 
+  if (missing.length > 0) {
+    // **取得できなかった年を警告で済ませない。** 終了コードだけを見て中継へ上げると、
+    // 取れなかった年が古いまま公開される。
+    console.error(`※ 取得できなかった年: ${missing.join(', ')}`)
+    failures.push(`取得できなかった年: ${missing.join(', ')}`)
+  }
+  // **失敗があれば索引を書かない。** 読めなかった年を外した索引（終端が早まる・件数が欠ける）が手元に残ると、
+  // 評価台や中継へ上げる作業がそれを読む。年ファイルは書き直していても、索引は前の正しいものを残す
+  if (failures.length > 0) {
+    console.error(`
+生成に失敗しました（${failures.length} 件）。索引は書き直していません:`)
+    for (const f of failures) console.error(`  - ${f}`)
+    process.exitCode = 1
+    return
+  }
   await writeFile(
     join(OUT_DIR, 'index.json'),
     JSON.stringify({
@@ -1102,18 +1138,6 @@ async function main(): Promise<void> {
     if (!verifiedPaths.includes(k.path)) {
       console.log(`※ ${k.year} 年を含めなかったため、${k.path} の照合は行っていません`)
     }
-  }
-  if (missing.length > 0) {
-    // **取得できなかった年を警告で済ませない。** CI は exit code しか見ておらず、
-    // 「毎週緑なのに数ヶ月データが古いまま」という状態を作る。
-    console.error(`※ 取得できなかった年: ${missing.join(', ')}`)
-    failures.push(`取得できなかった年: ${missing.join(', ')}`)
-  }
-  if (failures.length > 0) {
-    console.error(`
-生成に失敗しました（${failures.length} 件）:`)
-    for (const f of failures) console.error(`  - ${f}`)
-    process.exitCode = 1
   }
 }
 

@@ -48,7 +48,7 @@ import {
   buildCatalogPointCloud, DEPTH_FILTER_MAX_KM, MAGNITUDE_FILTER_RANGE,
   LATITUDE_FILTER_RANGE, LONGITUDE_FILTER_RANGE,
   CATALOG_REBUILD_DEBOUNCE_MS,
-  jstYearOf, jstYearStartMs, jstYearEndMs, clampPeriodToRange, catalogPeriodBounds,
+  jstYearOf, jstYearStartMs, jstYearEndMs, catalogPeriodBounds, periodForBounds,
   type CatalogFilter, type CatalogViewOptions, type CatalogPointCloud,
 } from './utils/hypocenterCatalogView'
 import { SpecialInfoBanner, shareButtonBottomClass, shareButtonRowHeightClass } from './components/SpecialInfoBanner'
@@ -1744,7 +1744,16 @@ export function App() {
     jstYearOf(settledFilter.toMs),
     mapTab === 'catalog',
   )
-  const catalogIndex = catalog.index
+  // 期間の端は、目次の終端ではなく読めた年ファイルの終端で止める（`useHypocenterCatalog` の `catalogEndMs`）
+  const catalogIndex = useMemo(
+    () => (catalog.index && catalog.catalogEndMs !== null && catalog.catalogEndMs !== catalog.index.coveredThroughMs
+      ? { ...catalog.index, coveredThroughMs: catalog.catalogEndMs }
+      : catalog.index),
+    [catalog.index, catalog.catalogEndMs],
+  )
+  const catalogTailUntilMs = catalog.tail?.untilMs ?? null
+  // 期間の終わりが前の端にあったか（末尾が届いて端が伸びたとき、終わりも一緒に伸ばすため）
+  const catalogMaxRef = useRef<number | null>(null)
   // 索引が届いたら、期間を収録範囲へ収める。
   // **収める側も必要。** 年が明けた直後は「今年」がまだ収録されておらず、選択肢に無い値が残る。
   // **終わりはデータの最終日へ収める**（`catalogPeriodBounds`）。既定の終わり（今年の 12 月 31 日）は
@@ -1755,16 +1764,19 @@ export function App() {
   // （`catalogCompleteness` → 震源カタログタブ）で示す。
   useEffect(() => {
     if (!catalogIndex || catalogIndex.years.length === 0) return
+    const { minMs: lo, maxMs: hi } = catalogPeriodBounds(catalogIndex, catalogTailUntilMs)
+    const prevMax = catalogMaxRef.current
+    catalogMaxRef.current = hi
+    // **終わりが前の端にあったら、伸びた端まで一緒に伸ばす**（`periodForBounds`）。
+    // **収めるのは日ごと**（`clampPeriodToRange`）。両端をそれぞれ時刻で丸めると、選んでいる
+    // 期間が丸ごと収録の外にあるときに同じ 1 点へ潰れ、1 件も残らないのに見出しは
+    // 「1 日ぶん」と出る。
     setCatalogFilter((prev) => {
-      const { minMs: lo, maxMs: hi } = catalogPeriodBounds(catalogIndex)
-      // **収めるのは日ごと**（`clampPeriodToRange`）。両端をそれぞれ時刻で丸めると、選んでいる
-      // 期間が丸ごと収録の外にあるときに同じ 1 点へ潰れ、1 件も残らないのに見出しは
-      // 「1 日ぶん」と出る。
-      const { fromMs, toMs } = clampPeriodToRange(prev, lo, hi)
+      const { fromMs, toMs } = periodForBounds(prev, prevMax, { minMs: lo, maxMs: hi })
       if (fromMs === prev.fromMs && toMs === prev.toMs) return prev
       return { ...prev, fromMs, toMs }
     })
-  }, [catalogIndex])
+  }, [catalogIndex, catalogTailUntilMs])
   const handleCatalogFilterChange = useCallback((next: CatalogFilter) => {
     setCatalogFilter(next)
   }, [])
@@ -1777,14 +1789,22 @@ export function App() {
   // 最後に組んだものを持ったまま止め、タブへ戻った時に一度だけ追いつかせる。
   const catalogCloudRef = useRef<CatalogPointCloud | null>(null)
   const catalogActive = mapTab === 'catalog'
+  // **期間が末尾に掛かるまでは、末尾の無い並びで組む。** 末尾は索引より後に届き、届いた直後は期間の終わりがまだ前の端に
+  // ある（伸ばすのは上の効果）。そこで末尾の入った並びに替えると、末尾の点が 1 つも入らない組み直しが 1 回余計に走る。
+  // 年ファイルの終端は日の 0 時（日ごとに書き足す）なので、伸ばす前の終わり（前の日の最後の瞬間）はこの門を開けない。
+  // 終端が日の途中になっても、その日の終わりまで選んだ期間には末尾の点が入るので、開いた組み直しは無駄にならない
+  const catalogTailFromMs = catalog.tail?.fromMs ?? null
+  const catalogCloudYears = catalogTailFromMs !== null && Math.max(settledFilter.fromMs, settledFilter.toMs) >= catalogTailFromMs
+    ? catalog.years
+    : catalog.catalogYears
   const catalogCloud = useMemo(() => {
     if (!catalogActive) return catalogCloudRef.current
-    const next = catalog.years.length > 0
-      ? buildCatalogPointCloud(catalog.years, settledFilter, settledView)
+    const next = catalogCloudYears.length > 0
+      ? buildCatalogPointCloud(catalogCloudYears, settledFilter, settledView)
       : null
     catalogCloudRef.current = next
     return next
-  }, [catalogActive, catalog.years, settledFilter, settledView])
+  }, [catalogActive, catalogCloudYears, settledFilter, settledView])
 
   // 津波発表中フラグ（解除済みでない津波情報があるか。Forecast＝若干の海面変動も含む）とバッジ用グレード
   // tsunamiGrade は色分け用のため MajorWarning/Warning/Watch のみ（Forecast は除外）。ナビのバッジへ渡すときだけ、予報だけの
@@ -3335,7 +3355,7 @@ export function App() {
           <div className={`${TAB_SCROLLER_CLASS}${activeTab !== 'catalog' ? ' invisible pointer-events-none' : ''}`}>
             <ErrorBoundary variant="region" label={TAB_LABELS.catalog}>
               <CatalogTab
-                index={catalog.index}
+                index={catalogIndex}
                 filter={catalogFilter}
                 onFilterChange={handleCatalogFilterChange}
                 view={catalogView}
@@ -3350,6 +3370,7 @@ export function App() {
                 missingYears={catalog.missingYears}
                 requestedYears={catalog.requestedYears}
                 onRetry={catalog.retry}
+                tail={catalog.tail}
               />
             </ErrorBoundary>
           </div>

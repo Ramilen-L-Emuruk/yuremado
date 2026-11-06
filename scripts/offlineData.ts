@@ -53,7 +53,6 @@ export const OFFLINE_DATA_FILES = [
  * （控えないこと自体を諮って決めたわけではない）。
  */
 export const OFFLINE_DATA_EXCLUDED: readonly { path: string; reason: string }[] = [
-  { path: 'hypocenter/', reason: '長期震源カタログ（合計 約 34 MB）。眺めた年だけを取りに行く' },
   { path: 'historical-archives/', reason: 'ローカル履歴アーカイブ。再生するときだけ読む' },
   { path: 'historical-archives-kyoshin/', reason: '手元で生成した K-NET 由来の再生データ（Git 管理外）' },
   { path: 'test-telegrams/', reason: 'テストボタンが流す電文。押されたときだけ読む（検証用で、オフラインで要らない）' },

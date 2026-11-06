@@ -70,6 +70,11 @@ interface Props {
    */
   requestedYears: number
   onRetry: () => void
+  /**
+   * カタログの終端より後を、中継の地震情報の電文から足した範囲。取れていなければ null（期間の端はカタログの終端で止め、
+   * 添え書きの 2 つ目の文も出さない）。→ `useHypocenterCatalog` の `tail`
+   */
+  tail: { fromMs: number; untilMs: number } | null
 }
 
 const COLOR_BY_LABEL: Record<CatalogColorBy, string> = {
@@ -171,6 +176,7 @@ export const CatalogTab = memo(function CatalogTab({
   missingYears,
   requestedYears,
   onRetry,
+  tail,
 }: Props) {
   const years = index?.years ?? []
   // **収録の両端をスライダーの端にする。** 索引が来るまでは選んでいる値をそのまま端にして
@@ -179,7 +185,7 @@ export const CatalogTab = memo(function CatalogTab({
   // いない日が「地震が無かった日」に見える。
   const fromYear = jstYearOf(filter.fromMs)
   const toYear = jstYearOf(filter.toMs)
-  const bounds = index && years.length > 0 ? catalogPeriodBounds(index) : null
+  const bounds = index && years.length > 0 ? catalogPeriodBounds(index, tail?.untilMs ?? null) : null
   const periodMin = bounds?.minMs ?? jstYearStartMs(fromYear)
   const periodMax = bounds?.maxMs ?? jstYearEndMs(toYear)
   const firstYear = jstYearOf(periodMin)
@@ -274,7 +280,7 @@ export const CatalogTab = memo(function CatalogTab({
           label="期間"
           description="表示する期間です。スライダーは年ごとに動き、日付を選ぶと年の途中から指定できます。日付を選んだ側は、もう一方のつまみを動かしても保たれます"
           valueText={`${formatJstDate(filter.fromMs)} 〜 ${formatJstDate(filter.toMs)}（${periodDayCount(filter.fromMs, filter.toMs).toLocaleString()}日ぶん）`}
-          note={index ? preliminaryNote(index, filter) : null}
+          note={index ? preliminaryNote(index, filter, tail?.fromMs ?? null) : null}
         >
           <RangeSlider
             label="期間"

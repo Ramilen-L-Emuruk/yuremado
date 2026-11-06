@@ -102,7 +102,7 @@ React 18 + TypeScript + Vite 6 で作られた PWA（Progressive Web App）。�
 | 緊急地震速報（予報 VXSE45） | 予報キーを入れた端末（開発者本人の端末だけ） | 中継から（予報キーを示して受けた札で）。中継が予報を届けられない間だけ、鍵があれば自分の鍵へ倒す |
 | 緊急地震速報（予報の段階） | 誰でも | 強震モニタ（Yahoo）の hypoInfo。同じ地震に DMDATA の報（中継の警報・自分の鍵の予報）が届いたらそちらが置き換える（`mergeEewReport`） |
 | リアルタイム震度・揺れ検知 | 誰でも | 強震モニタ（Yahoo） |
-| ヒートマップ | 誰でも | 長期震源カタログ（`public/data/hypocenter/`）に、カタログの終端より後を中継の震源に関する情報の電文から足す |
+| ヒートマップ | 誰でも | 長期震源カタログ（中継の公開バケット `data.yuremado.com/h/`）に、カタログの終端より後を中継の震源に関する情報の電文から足す（震源カタログタブも同じ） |
 
 読み取りは、中継から受けた電文も自分の鍵で受けた電文も同じパーサー（`buildXmlPayload`）を通る。
 繋ぎ先は `src/services/relayEndpoint.ts`（中継）と `src/services/dmdataEndpoint.ts` の `dmdataKeyEndpoint`（自分の鍵）。

@@ -1562,7 +1562,7 @@ EEW の発表状況ページは 2 種類あり、優先順に使う（2026-10-23
      ① の控えを読んで決めるので、① の後に走らせる。** 先に `--dry-run`。取り直しは 1 件につき 1 回まで・取り直しを
      含めて 16 件を超える計画なら取らない
   3. `npx tsx scripts/build-historical-archive-<地震>.ts`（`2016-kumamoto`・`2016-tottori`・`2018-osaka`・`2018-iburi` の 4 本）
-     —— 控えと NII の控え（`.cache/nii-cache/`）・長期震源カタログ（`public/data/hypocenter/`）を読んでアーカイブを書く。
+     —— 控えと NII の控え（`.cache/nii-cache/`）・長期震源カタログの手元の写し（`.cache/hypocenter-catalog/`。`scripts/lib/hypocenterCatalogDir.ts`）を読んでアーカイブを書く。
      **4 本とも index.json を書き換えるので、並べずに 1 本ずつ走らせる**
   - 取得の決まり（① ② 共通）: 名乗る（`yuremado-archive-build (personal research)`）・1 件ごとに 10 秒あける・
     本体は 30 秒、目録は 120 秒で打ち切る（時間切れは失敗に数える）・失敗したら 30 秒あけて取り直す。
@@ -1576,7 +1576,7 @@ EEW の発表状況ページは 2 種類あり、優先順に使う（2026-10-23
 - **fc_hist は震源要素の表の書式が pub_hist と違う。** 発生時刻が分まで（「平成28年04月16日01時25分」）・
   緯度経度が10進度（「32.8」）。しかも値は地震情報の確定値ではなく**緊急地震速報の最終報の値**
   （2016-04-16 01:25 の地震は表が M7.1、確定値は M7.3）。パーサーは両方の書式を読む
-- **発生時刻の秒は長期震源カタログ（`public/data/hypocenter/`）から補う**（[`catalogOriginTime.ts`](../../scripts/catalogOriginTime.ts)）。
+- **発生時刻の秒は長期震源カタログの手元の写し（`.cache/hypocenter-catalog/`）から補う**（[`catalogOriginTime.ts`](../../scripts/catalogOriginTime.ts)）。
   予報円の半径は発生時刻から決まるので、分のまま使うと最大 59 秒ぶん早い時刻から波が広がった絵になる。
   手掛かりは EventID（たいてい発生時刻の数秒後。後になることもある）で、EventID の 60 秒前〜30 秒後かつ
   表の分の 10 秒前〜70 秒後・位置 0.3 度以内・M 1.0 以内の地震を探す。複数あれば EventID にいちばん近いものを採るが、

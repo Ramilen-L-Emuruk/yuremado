@@ -35,6 +35,7 @@ import {
   clampPeriodToRange,
   periodFromYearChange,
   catalogPeriodBounds,
+  periodForBounds,
   preliminaryNote,
   periodFromDateChange,
   formatJstDate,
@@ -64,6 +65,8 @@ const makeYear = (
   }[],
 ): HypocenterYear => ({
   year,
+  source: 'catalog',
+  telegramLabels: null,
   count: events.length,
   coveredThroughMs: Date.UTC(year + 1, 0, 1),
   quality: 'final',
@@ -1081,6 +1084,31 @@ describe('unknownMagnitudePasses', () => {
   })
 })
 
+describe('periodForBounds', () => {
+  const lo = jstYearStartMs(2017)
+  const oldMax = fromDateInputValue('2026-10-16', 'end')!
+  const newMax = fromDateInputValue('2026-10-19', 'end')!
+
+  // 正: 終わりが前の端にあったら、末尾が届いて伸びた端まで一緒に伸びる
+  it('終わりが前の端にあれば、伸びた端まで伸ばす', () => {
+    expect(periodForBounds({ fromMs: lo, toMs: oldMax }, oldMax, { minMs: lo, maxMs: newMax })).toEqual({ fromMs: lo, toMs: newMax })
+  })
+
+  // 対照: 手で前へ寄せた終わりは動かさない。初めて収めるとき（前の端が無い）も伸ばさない
+  it('手で寄せた終わり・初めて収めるときは伸ばさない', () => {
+    const moved = fromDateInputValue('2026-10-10', 'end')!
+    expect(periodForBounds({ fromMs: lo, toMs: moved }, oldMax, { minMs: lo, maxMs: newMax }).toMs).toBe(moved)
+    expect(periodForBounds({ fromMs: lo, toMs: oldMax }, null, { minMs: lo, maxMs: newMax }).toMs).toBe(oldMax)
+  })
+
+  // 安全弁: 端が縮んだら（末尾が消えた）終わりは収め直し、また伸びたら一緒に伸びる
+  it('端が縮めば収め、また伸びれば一緒に伸ばす', () => {
+    const shrunk = periodForBounds({ fromMs: lo, toMs: newMax }, newMax, { minMs: lo, maxMs: oldMax })
+    expect(shrunk.toMs).toBe(oldMax)
+    expect(periodForBounds(shrunk, oldMax, { minMs: lo, maxMs: newMax }).toMs).toBe(newMax)
+  })
+})
+
 describe('catalogPeriodBounds', () => {
   // 生成物の終端（2026-10-17 00:00 JST ＝ 排他的な終端）。データは 2026 年 10 月 16 日まで。
   const index = {
@@ -1090,7 +1118,7 @@ describe('catalogPeriodBounds', () => {
 
   // 正: 終わりは排他的な終端の 1 ミリ秒手前（データの最終日の終わり）。
   it('終わりはデータの最終日の終わり（排他的な終端の手前の日）', () => {
-    const { minMs, maxMs } = catalogPeriodBounds(index)
+    const { minMs, maxMs } = catalogPeriodBounds(index, null)
     expect(minMs).toBe(jstYearStartMs(1919))
     expect(toDateInputValue(maxMs)).toBe('2026-10-16')
     expect(maxMs).toBe(fromDateInputValue('2026-10-16', 'end'))
@@ -1098,7 +1126,7 @@ describe('catalogPeriodBounds', () => {
 
   // 正: 既定の期間（直近 10 年・今年の 12 月 31 日まで）を収めると、行の文字列が承認どおりになる。
   it('既定の期間を収めると「2017年1月1日 〜 2026年10月16日（3,576日ぶん）」', () => {
-    const { minMs, maxMs } = catalogPeriodBounds(index)
+    const { minMs, maxMs } = catalogPeriodBounds(index, null)
     const r = clampPeriodToRange({ fromMs: jstYearStartMs(2017), toMs: jstYearEndMs(2026) }, minMs, maxMs)
     const text = `${formatJstDate(r.fromMs)} 〜 ${formatJstDate(r.toMs)}（${periodDayCount(r.fromMs, r.toMs).toLocaleString('ja-JP')}日ぶん）`
     expect(text).toBe('2017年1月1日 〜 2026年10月16日（3,576日ぶん）')
@@ -1106,19 +1134,38 @@ describe('catalogPeriodBounds', () => {
 
   // 対照: 通年ぶん覆えた最後の年（終端が翌年の頭）なら、年の終わりまで選べる。
   it('最後の年を通年ぶん覆えていれば、終わりは 12 月 31 日', () => {
-    const { maxMs } = catalogPeriodBounds({ years: [2024], coveredThroughMs: jstYearStartMs(2025) })
+    const { maxMs } = catalogPeriodBounds({ years: [2024], coveredThroughMs: jstYearStartMs(2025) }, null)
     expect(maxMs).toBe(jstYearEndMs(2024))
   })
 
   // 安全弁: 終端が最後の年の終わりを越えていても、年の終わりで止める。
   it('終端が最後の年を越えていても、年の終わりで止める', () => {
-    const { maxMs } = catalogPeriodBounds({ years: [2024], coveredThroughMs: jstYearStartMs(2030) })
+    const { maxMs } = catalogPeriodBounds({ years: [2024], coveredThroughMs: jstYearStartMs(2030) }, null)
     expect(maxMs).toBe(jstYearEndMs(2024))
+  })
+
+  // 正: 中継の電文から末尾を取れたら、終わりはその日まで伸びる。
+  it('末尾を取れたら、終わりは末尾を取った日の終わりまで伸びる', () => {
+    // 2026-10-19 09:30 JST まで取った
+    const { maxMs } = catalogPeriodBounds(index, Date.UTC(2026, 9, 19, 0, 30))
+    expect(toDateInputValue(maxMs)).toBe('2026-10-19')
+  })
+
+  // 対照: 末尾が取れていない（null）・カタログより手前なら、カタログの終端で止まる。
+  it('末尾が無い・カタログの終端より手前なら、終端で止まる', () => {
+    expect(toDateInputValue(catalogPeriodBounds(index, null).maxMs)).toBe('2026-10-16')
+    expect(toDateInputValue(catalogPeriodBounds(index, index.coveredThroughMs - 3_600_000).maxMs)).toBe('2026-10-16')
+  })
+
+  // 安全弁: 末尾が年をまたいだら、索引に無い新しい年の日まで伸ばす（年の終わりで切らない）。
+  it('末尾が年をまたいでも、取った日まで伸ばす', () => {
+    const { maxMs } = catalogPeriodBounds({ years: [2026], coveredThroughMs: jstYearStartMs(2027) - 86_400_000 }, jstYearStartMs(2027) + 3_600_000)
+    expect(toDateInputValue(maxMs)).toBe('2027-01-01')
   })
 
   // 安全弁: 終端が最初の年より前（壊れた索引）でも幅を残し、日の境界に乗せる。
   it('終端が最初の年より前でも、最初の 1 日を残す', () => {
-    const { minMs, maxMs } = catalogPeriodBounds({ years: [2024], coveredThroughMs: jstYearStartMs(2020) })
+    const { minMs, maxMs } = catalogPeriodBounds({ years: [2024], coveredThroughMs: jstYearStartMs(2020) }, null)
     expect(periodDayCount(minMs, maxMs)).toBe(1)
     expect(maxMs).toBe(fromDateInputValue('2024-01-01', 'end'))
   })
@@ -1136,26 +1183,39 @@ describe('preliminaryNote', () => {
 
   // 正: 速報値の年に掛かれば、最初の速報値の年の元日から速報値だと添える。
   it('速報値の年に掛かれば「2025年1月1日以降は速報値」', () => {
-    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'))).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'), null)).toBe('2025年1月1日以降は速報値')
   })
 
   it('期間が速報値の年の途中から始まっても、境目の日付を出す', () => {
-    expect(preliminaryNote(index, period('2026-03-01', '2026-10-16'))).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, period('2026-03-01', '2026-10-16'), null)).toBe('2025年1月1日以降は速報値')
   })
 
   // 対照: 確定値の年だけなら出さない。
   it('確定値の年だけなら出さない', () => {
-    expect(preliminaryNote(index, period('2023-01-01', '2024-12-31'))).toBeNull()
+    expect(preliminaryNote(index, period('2023-01-01', '2024-12-31'), null)).toBeNull()
   })
 
   // 安全弁: 開始と終了を逆に置いても掛かりを見落とさない（年ファイルの取得と同じく両端を正規化）。
   it('開始と終了が逆でも掛かりを見る', () => {
     const p = period('2023-01-01', '2025-02-01')
-    expect(preliminaryNote(index, { fromMs: p.toMs, toMs: p.fromMs })).toBe('2025年1月1日以降は速報値')
+    expect(preliminaryNote(index, { fromMs: p.toMs, toMs: p.fromMs }, null)).toBe('2025年1月1日以降は速報値')
+  })
+
+  // 正: 末尾に掛かれば 2 つ目の文を続ける（2026-11-06 ユーザー選択「2 つ目の文を続ける (Recommended)」）。
+  it('末尾に掛かれば「…以降は地震情報の電文から（無感の地震は載らない）」を続ける', () => {
+    const tailFrom = fromDateInputValue('2026-10-17', 'start')!
+    expect(preliminaryNote(index, period('2017-01-01', '2026-10-18'), tailFrom))
+      .toBe('2025年1月1日以降は速報値。2026年10月17日以降は地震情報の電文から（無感の地震は載らない）')
+  })
+
+  // 対照: 期間が末尾より前で終わるなら続けない。
+  it('期間が末尾より前で終わるなら、2 つ目の文は出さない', () => {
+    const tailFrom = fromDateInputValue('2026-10-17', 'start')!
+    expect(preliminaryNote(index, period('2017-01-01', '2026-10-16'), tailFrom)).toBe('2025年1月1日以降は速報値')
   })
 
   it('速報値の年が無い索引では出さない', () => {
-    expect(preliminaryNote({ years: [2023], quality: { 2023: 'final' } }, period('2023-01-01', '2023-12-31'))).toBeNull()
+    expect(preliminaryNote({ years: [2023], quality: { 2023: 'final' } }, period('2023-01-01', '2023-12-31'), null)).toBeNull()
   })
 })
 
