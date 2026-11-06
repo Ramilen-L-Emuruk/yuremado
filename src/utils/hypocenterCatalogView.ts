@@ -2,7 +2,7 @@
 //
 // カタログの読み込みは utils/hypocenterCatalog.ts、描画は components/Map/HypocenterCatalogGL.tsx。
 // 背景と判断は docs/spec/data-sources-spec.md §6「長期震源カタログ」。
-import type { HypocenterIndex, HypocenterYear } from './hypocenterCatalog'
+import type { HypocenterIndex, HypocenterYear, TelegramPointLabels } from './hypocenterCatalog'
 import { completeMinMagnitude } from './hypocenterCatalog'
 import { depthPointShapeId, type DepthPointColumns } from '../components/Map/gl/depthPointLayer'
 
@@ -89,6 +89,11 @@ export interface CatalogPointCloud {
    * （2026-11-04 ユーザー選択「吹き出しに出す (Recommended)」「0.01 秒まで出す (Recommended)」）。
    */
   preliminary: Uint8Array
+  /**
+   * 中継の地震情報の電文から作った末尾の点の、吹き出しの語（添字 → 語）。**疎に持つ**（末尾は数十件で、
+   * 点群は最大 100 万点ある）。ここに載る点は吹き出しを電文の語で組む（`HypocenterCatalogGL.tsx`）。
+   */
+  telegramLabels: ReadonlyMap<number, TelegramPointLabels>
   /**
    * 発生年で色を付けるときに使った両端（UTC epoch ミリ秒）。点が 1 つも残らなければ `null`。
    *
@@ -395,6 +400,24 @@ export function clampPeriodToRange(period: CatalogPeriod, minMs: number, maxMs: 
 }
 
 /**
+ * 収録の範囲（`catalogPeriodBounds`）が届いた・変わったときの期間。
+ *
+ * **終わりが前の端にあったら、伸びた端まで一緒に伸ばす。** 末尾（電文の約 2 日）は索引より後に届くので、伸ばさないと
+ * 既定の期間（いちばん新しい日まで）に末尾が入らない。手で前へ寄せた終わりは動かさない。そのうえで範囲へ収める
+ * （`clampPeriodToRange`）。
+ *
+ * @param prevMaxMs 前に収めたときの範囲の終わり。初めてなら null
+ */
+export function periodForBounds(
+  period: CatalogPeriod,
+  prevMaxMs: number | null,
+  bounds: { minMs: number; maxMs: number },
+): CatalogPeriod {
+  const base = prevMaxMs !== null && bounds.maxMs > prevMaxMs && period.toMs === prevMaxMs ? { ...period, toMs: bounds.maxMs } : period
+  return clampPeriodToRange(base, bounds.minMs, bounds.maxMs)
+}
+
+/**
  * 年ごとのつまみで期間を変えたときの新しい範囲。
  *
  * **動かしていない側の日付は保つ。** 両方を年へ丸め直すと、片方のつまみを触っただけで
@@ -430,10 +453,21 @@ export function periodFromYearChange(
  *
  * 返す 2 つはどちらも日の境界に乗る（期間の不変条件。→ `CatalogPeriod`）。
  */
-export function catalogPeriodBounds(index: Pick<HypocenterIndex, 'years' | 'coveredThroughMs'>): { minMs: number; maxMs: number } {
+export function catalogPeriodBounds(
+  index: Pick<HypocenterIndex, 'years' | 'coveredThroughMs'>,
+  /**
+   * 中継の地震情報の電文から末尾を取れた範囲の終わり（排他）。取れていなければ null で、終わりはカタログの終端で止まる
+   * （取れていない日を選べると「地震が無かった」に見える）。取れていれば終わりはその日まで伸びる（年をまたいでも伸ばす）
+   */
+  tailUntilMs: number | null,
+): { minMs: number; maxMs: number } {
   const minMs = jstYearStartMs(index.years[0])
-  const lastYearEnd = jstYearEndMs(index.years[index.years.length - 1])
-  const lastDay = jstDayBounds(Math.min(index.coveredThroughMs - 1, lastYearEnd))
+  const hasTail = tailUntilMs !== null && tailUntilMs > index.coveredThroughMs
+  const coveredEndMs = hasTail ? tailUntilMs : index.coveredThroughMs
+  // 最後の年の終わりで止める（壊れた終端の安全弁）。末尾があるときだけ、末尾の日の年まで広げる
+  const lastIndexYearEnd = jstYearEndMs(index.years[index.years.length - 1])
+  const lastYearEnd = hasTail ? Math.max(lastIndexYearEnd, jstYearEndMs(jstYearOf(coveredEndMs - 1))) : lastIndexYearEnd
+  const lastDay = jstDayBounds(Math.min(coveredEndMs - 1, lastYearEnd))
   // 終端が最初の年より前（壊れた索引）なら、最初の 1 日だけを残す。幅を消すと 1 件も出ないのに
   // 見出しだけがもっともらしく出る（理由は `jstDayBounds`）。
   const firstDay = jstDayBounds(minMs)
@@ -453,14 +487,26 @@ export function catalogPeriodBounds(index: Pick<HypocenterIndex, 'years' | 'cove
  *
  * 掛かるかは期間の両端の年（逆順でもよい）の間に速報値の年があるかで見る。
  */
-export function preliminaryNote(index: Pick<HypocenterIndex, 'years' | 'quality'>, period: CatalogPeriod): string | null {
+export function preliminaryNote(
+  index: Pick<HypocenterIndex, 'years' | 'quality'>,
+  period: CatalogPeriod,
+  /** 中継の地震情報の電文から作った末尾の始まり（＝カタログの終端）。末尾を足していなければ null */
+  tailFromMs: number | null,
+): string | null {
+  const notes: string[] = []
   const firstPreliminary = index.years.find((y) => index.quality[String(y)] === 'preliminary')
-  if (firstPreliminary === undefined) return null
-  const lo = Math.min(jstYearOf(period.fromMs), jstYearOf(period.toMs))
-  const hi = Math.max(jstYearOf(period.fromMs), jstYearOf(period.toMs))
-  const touches = index.years.some((y) => y >= lo && y <= hi && index.quality[String(y)] === 'preliminary')
-  if (!touches) return null
-  return `${formatJstDate(jstYearStartMs(firstPreliminary))}以降は速報値`
+  if (firstPreliminary !== undefined) {
+    const lo = Math.min(jstYearOf(period.fromMs), jstYearOf(period.toMs))
+    const hi = Math.max(jstYearOf(period.fromMs), jstYearOf(period.toMs))
+    const touches = index.years.some((y) => y >= lo && y <= hi && index.quality[String(y)] === 'preliminary')
+    if (touches) notes.push(`${formatJstDate(jstYearStartMs(firstPreliminary))}以降は速報値`)
+  }
+  // 末尾に掛かるときだけ 2 つ目の文を続ける（2026-11-06 ユーザー選択「2 つ目の文を続ける (Recommended)」）。
+  // 地震情報は震度 1 以上の地震などにしか出ないので、末尾の件数が少なく出る理由もここで伝える
+  if (tailFromMs !== null && Math.max(period.fromMs, period.toMs) >= tailFromMs) {
+    notes.push(`${formatJstDate(tailFromMs)}以降は地震情報の電文から（無感の地震は載らない）`)
+  }
+  return notes.length > 0 ? notes.join('。') : null
 }
 
 /**
@@ -801,6 +847,7 @@ export function buildCatalogPointCloud(
   const external = new Uint8Array(count)
   const depthUnknown = new Uint8Array(count)
   const preliminary = new Uint8Array(count)
+  const telegramLabels = new Map<number, TelegramPointLabels>()
   // **形の列は気象庁以外の点が残ったときだけ作る。** 既定の表示では作らず、全点共通の円で描く。
   const shapeIds = externalCount > 0 ? new Uint8Array(count) : undefined
   const ringId = depthPointShapeId('ring')
@@ -831,7 +878,9 @@ export function buildCatalogPointCloud(
       intensityCode[k] = y.intensityCode.get(i) ?? null
       external[k] = isExternal ? 1 : 0
       depthUnknown[k] = unknownDepth ? 1 : 0
-      preliminary[k] = y.quality === 'preliminary' ? 1 : 0
+      preliminary[k] = y.source === 'catalog' && y.quality === 'preliminary' ? 1 : 0
+      const label = y.telegramLabels?.[i]
+      if (label) telegramLabels.set(k, label)
       if (shapeIds) shapeIds[k] = isExternal ? ringId : circleId
       const [r, g, b] =
         options.colorBy === 'depth'
@@ -870,6 +919,7 @@ export function buildCatalogPointCloud(
     external,
     depthUnknown,
     preliminary,
+    telegramLabels,
     // **色を付けるのに使った幅をそのまま渡す。** 凡例が期間の指定から目盛りを組むと、
     // 絞り込みで端まで点が残っていないときに色と食い違う。点が 0 件なら `timeLo` は
     // `Infinity` のままなので `null` にする（そのまま渡すと目盛りが 1970 年になる）。

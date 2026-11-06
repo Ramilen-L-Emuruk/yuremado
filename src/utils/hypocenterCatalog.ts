@@ -1,7 +1,8 @@
-// 長期震源カタログ（public/data/hypocenter/）を読む。
+// 長期震源カタログ（中継の公開バケットの data.yuremado.com/h/）を読む。
 //
-// 気象庁の震源データを加工した静的データで、統計解析（b 値・静穏化・余震域・同一地点履歴・
-// 深さ断面）の土台。生成は `scripts/build-hypocenter-catalog.ts`。
+// 気象庁の震源データを加工したデータで、統計解析（b 値・静穏化・余震域・同一地点履歴・
+// 深さ断面）の土台。全年の生成は `scripts/build-hypocenter-catalog.ts`、毎日の書き足しは中継の Cron
+// （docs/relay-server-design.md §0 の 2026-10-29 の行）。
 //
 // 【年別に分かれている】1 ファイルにまとめると 30MB 前後になるため年ごとに分けてある。
 // 用途に応じて必要な年だけ読む（時計盤なら 1 年、b 値なら 10 年、というように）。
@@ -17,16 +18,18 @@
 //
 // 【電文の地震とは母集団が違う】このカタログは M2.0 以上の全地震。DMDATA の地震情報は
 // **震度を観測した地震だけ**で、1 日あたり 6〜7 件（カタログは 88 件）。10 倍以上違うので、
-// 繋いで日別回数や統計に使わない。ヒートマップ（`useQuakeHeatmap`）だけはカタログを主にし、
-// 終端より後の数日だけを電文で埋めて繋ぐ（2026-10-22 ユーザー承認「カタログ＋末尾の空きだけ API」）。
-// 密度の見た目に使うだけで、回数は数えない。
+// 繋いで日別回数や統計に使わない。終端より後の数日だけを電文で埋めて繋ぐのは 2 か所 —— ヒートマップ
+// （`useQuakeHeatmap`。2026-10-22 ユーザー承認「カタログ＋末尾の空きだけ API」）と、カタログタブの点群と件数
+// （`useHypocenterCatalog`。2026-11-06 ユーザー選択「カタログタブにも足す (Recommended)」。件数が末尾で少なく出ることは
+// 期間の添え書きで伝える）。電文から作った年は `source` が `'telegram'`。
 //
 // 【列で持つ】1 件 1 オブジェクトに展開すると数十万件でメモリを大きく食う。列ごとの
 // TypedArray で保持し、利用側は添字で読む。
 
 import { fetchJsonWithTimeout } from './fetchJson'
+import { RELAY_CATALOG_BASE } from '../services/relayEndpoint'
 
-const BASE_URL = `${import.meta.env.BASE_URL}data/hypocenter`
+const BASE_URL = RELAY_CATALOG_BASE
 
 /** 確定値（地震月報カタログ編）か速報値（震源リスト）か。 */
 export type HypocenterQuality = 'final' | 'preliminary'
@@ -69,8 +72,32 @@ export interface HypocenterIndex {
 }
 
 /** 1 年ぶんの震源。各配列は同じ長さで、同じ添字が同じ地震を指す。時刻の昇順。 */
+/**
+ * 電文から作った点の、吹き出しに出す語（電文の書き方のまま）。カタログの数値の列では表せない値
+ * （分までの時刻・巨大地震の説明・「700km以上」・「以上」の付いた最大震度・震源決定機関）を落とさないために持つ。
+ */
+export interface TelegramPointLabels {
+  /** 発生時刻（日本時間・電文の桁の分まで） */
+  time: string
+  /** 最大震度（例「最大震度 5弱以上」）。電文に無ければ null */
+  intensity: string | null
+  /** 規模（例「M4.2」「Mj4.2」「M8を超える巨大地震」） */
+  magnitude: string
+  /** 深さ（例「深さ 10km」「深さ ごく浅い」「深さ 700km以上」） */
+  depth: string
+  /** 震源決定機関の行（気象庁以外が決めた震源だけ。地震カードと同じ文面）。無ければ null */
+  source: string | null
+}
+
 export interface HypocenterYear {
   year: number
+  /**
+   * どこから作った年か。`'catalog'` は公開バケットの年ファイル、`'telegram'` はカタログの終端より後を
+   * 中継の地震情報の電文から作った末尾（`hypocenterTail.ts`）。
+   */
+  source: 'catalog' | 'telegram'
+  /** 電文から作った末尾だけが持つ、点ごとの吹き出しの語（添字は列と同じ）。年ファイルの年は null */
+  telegramLabels: readonly TelegramPointLabels[] | null
   count: number
   /** この年のデータが覆っている終端（UTC epoch ミリ秒）。通年なら翌年の頭。 */
   coveredThroughMs: number
@@ -414,6 +441,8 @@ export function loadHypocenterYear(year: number): Promise<HypocenterYear> {
       const n = raw.count
       const out: HypocenterYear = {
         year: raw.year,
+        source: 'catalog',
+        telegramLabels: null,
         count: n,
         coveredThroughMs: raw.coveredThroughMs,
         quality: raw.quality,

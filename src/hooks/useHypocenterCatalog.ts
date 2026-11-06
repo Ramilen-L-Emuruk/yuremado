@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   loadHypocenterIndex,
   loadHypocenterYear,
   type HypocenterIndex,
   type HypocenterYear,
 } from '../utils/hypocenterCatalog'
-import { yearsInRange } from '../utils/hypocenterCatalogView'
+import { jstYearOf, yearsInRange } from '../utils/hypocenterCatalogView'
+import { tailYearFromQuakes } from '../utils/hypocenterTail'
+import { fetchListedHypocenters } from '../services/dmdataReplayLive'
+import { relayRestEndpoint } from '../services/relayEndpoint'
+import { liveServerNow } from '../utils/clock'
 import { log } from '../utils/logger'
 
 // 長期震源カタログを、選んだ年の範囲ぶんだけ読む。
@@ -25,6 +29,11 @@ export interface HypocenterCatalogState {
    * 読み込みが終わったように見えるため気づけない。
    */
   years: HypocenterYear[]
+  /**
+   * 読めた終端の年の年ファイルの終端（排他）。期間の端はこれで止める —— 年ファイル（控え 1 時間）は目次（10 分）より
+   * 古いことがあり、目次の終端で止めると年ファイルに無い日を選べてしまう。終端の年を読めていない間は null
+   */
+  catalogEndMs: number | null
   /** 索引または年ファイルを取得中か。 */
   loading: boolean
   /** 索引を取得できなかった理由（利用者に見せる文言）。年ファイルの欠けは `missingYears`。 */
@@ -40,7 +49,28 @@ export interface HypocenterCatalogState {
   requestedYears: number
   /** もう一度取りに行く。期間を変えずに失敗から復帰する手段。 */
   retry: () => void
+  /**
+   * カタログの終端より後を、中継の地震情報の電文から足した範囲（`years` の最後の 1 つがその年）。取れていない・
+   * 期間が掛からないなら null。**取りきれなかったときも null** —— 欠けたまま足すと、取れなかった地震が
+   * 「起きなかった」に見える（期間の端もカタログの終端で止める。`catalogPeriodBounds`）。
+   */
+  tail: { fromMs: number; untilMs: number } | null
+  /**
+   * `years` から末尾を除いた並び（参照は年を読み直すまで変わらない）。期間が末尾に掛からない間は点群をこちらで組めば、
+   * 末尾が届いても組み直さずに済む（届いた直後は期間の終わりがまだ前の端にあり、末尾の点は 1 つも入らない）
+   */
+  catalogYears: HypocenterYear[]
 }
+
+/** 末尾を取り直す間隔。タブを開き直すたびに電文一覧を引かないため（本文は端末の控えが効く） */
+const TAIL_REFRESH_MS = 10 * 60_000
+/**
+ * 末尾として取る長さの上限（ヒートマップの末尾と同じ 30 日）。カタログの書き足しが止まって終端が古くなっても、
+ * 電文一覧を際限なく引かない。**超えたら末尾を足さない** —— 一部だけ足すと、終端と末尾の間が「地震が無かった」に見える
+ */
+const TAIL_MAX_MS = 30 * 24 * 3600_000
+/** 末尾を取れなかった後、取り直すまでの間 */
+const TAIL_RETRY_AFTER_FAILURE_MS = 60_000
 
 const EMPTY_YEARS: HypocenterYear[] = []
 const EMPTY_MISSING: number[] = []
@@ -51,6 +81,17 @@ const EMPTY_MISSING: number[] = []
  */
 function sameYears(a: readonly HypocenterYear[], b: readonly HypocenterYear[]): boolean {
   return a.length === b.length && a.every((y, i) => y === b[i])
+}
+
+/** 末尾の年が同じ地震を同じ値で持つか（取り直した結果が前と同じかを見る。件数は高々数百） */
+function sameTailYear(a: HypocenterYear, b: HypocenterYear): boolean {
+  if (a.count !== b.count) return false
+  for (let i = 0; i < a.count; i++) {
+    if (a.timeMs[i] !== b.timeMs[i] || a.lat[i] !== b.lat[i] || a.lng[i] !== b.lng[i] || a.external[i] !== b.external[i]) return false
+    if (!Object.is(a.depth[i], b.depth[i]) || !Object.is(a.magnitude[i], b.magnitude[i])) return false
+  }
+  return JSON.stringify(a.telegramLabels) === JSON.stringify(b.telegramLabels) && JSON.stringify(a.names) === JSON.stringify(b.names)
+    && a.nameIdx.every((n, i) => n === b.nameIdx[i])
 }
 
 function sameNumbers(a: readonly number[], b: readonly number[]): boolean {
@@ -144,5 +185,100 @@ export function useHypocenterCatalog(
     }
   }, [enabled, index, fromYear, toYear, attempt])
 
-  return { index, years, loading, error, missingYears, requestedYears, retry }
+  // ── 末尾（カタログの終端より後の約 2 日。2026-11-06 ユーザー選択「カタログタブにも足す (Recommended)」）──
+  // ヒートマップの末尾と同じく、中継の電文一覧から震源の電文を選んで読む（`fetchListedHypocenters`）
+  //
+  // **始まりは目次の終端ではなく、読めた終端の年ファイルの終端。** 年ファイル（書き足す年は 1 時間）と目次（10 分）は
+  // 中継の控えの寿命が違うので、目次だけが 1 日先へ進んでいることも、その逆もある。目次の終端から足すと、前者では
+  // 年ファイルに無い 1 日が抜け、後者では同じ地震が 2 つ並ぶ。年ファイルの終端から足せば、点の列は必ず繋がる。
+  // 終端の年を読めていない（読み込み中・取れなかった）間は末尾を足さない。
+  //
+  // **終端の年は、選んだ期間の年とは別に読む。** 年をまたいだ直後（末尾だけが新しい年に入り、その年のファイルが
+  // まだ無い数日）に期間を新しい年だけにすると、期間の年からは終端の年が消え、末尾まで消える。読み込みは年ごとに
+  // 控えが効くので、期間に入っている年なら通信は増えない
+  const endYear = index ? jstYearOf(index.coveredThroughMs) : null
+  const endYearListed = index !== null && endYear !== null && index.years.includes(endYear)
+  const [endYearFile, setEndYearFile] = useState<{ year: number; coveredThroughMs: number } | null>(null)
+  useEffect(() => {
+    if (!enabled || !endYearListed || endYear === null || toYear < endYear) return
+    let cancelled = false
+    loadHypocenterYear(endYear)
+      .then((y) => {
+        if (!cancelled) setEndYearFile((prev) => (prev?.year === y.year && prev.coveredThroughMs === y.coveredThroughMs ? prev : { year: y.year, coveredThroughMs: y.coveredThroughMs }))
+      })
+      .catch((err: unknown) => {
+        // 期間の年として読んでいれば missingYears にも出る。ここは末尾を足さないことだけ残す
+        log.error(`[useHypocenterCatalog] 終端の ${endYear} 年を読めないので、震源カタログの末尾を足しません`, err)
+      })
+    return () => { cancelled = true }
+  }, [enabled, endYearListed, endYear, toYear, attempt])
+  /** 読めた年ファイルの終端。年の頭ちょうどが終端（新しい年のファイルがまだ無い）なら目次の終端 */
+  const catalogEndMs = !index ? null
+    : !endYearListed ? index.coveredThroughMs
+      : endYearFile?.year === endYear ? endYearFile.coveredThroughMs : null
+  const wantsTail = index !== null && catalogEndMs !== null && toYear >= jstYearOf(catalogEndMs)
+  const [tail, setTail] = useState<{ year: HypocenterYear; fromMs: number; untilMs: number } | null>(null)
+  const tailFetchedRef = useRef<{ fromMs: number; atMs: number } | null>(null)
+  // 取れなかった・取りきれなかった時刻。失敗が続く間、タブの出入りのたびに電文一覧を引き直さない
+  const tailFailedAtRef = useRef(0)
+  /** 最後に末尾の効果を回したときの attempt（手で押した再試行を見分ける） */
+  const tailAttemptRef = useRef(0)
+  useEffect(() => {
+    if (!enabled || !wantsTail || catalogEndMs === null) return
+    const fromMs = catalogEndMs
+    const untilMs = liveServerNow()
+    if (untilMs <= fromMs) return
+    if (untilMs - fromMs > TAIL_MAX_MS) {
+      log.error(`[useHypocenterCatalog] 震源カタログの終端（${new Date(fromMs).toISOString()}）が 30 日より前のため、末尾を足しません（中継の書き足しが止まっている）`)
+      return
+    }
+    const last = tailFetchedRef.current
+    if (last && last.fromMs === fromMs && untilMs - last.atMs < TAIL_REFRESH_MS) return
+    // 手で押した再試行（attempt が進んだ）は、失敗の後の間を待たずに取り直す
+    const manualRetry = attempt !== tailAttemptRef.current
+    tailAttemptRef.current = attempt
+    if (!manualRetry && untilMs - tailFailedAtRef.current < TAIL_RETRY_AFTER_FAILURE_MS) {
+      log.debug('[useHypocenterCatalog] 震源カタログの末尾は失敗して間もないので、まだ取り直しません')
+      return
+    }
+    const controller = new AbortController()
+    fetchListedHypocenters(relayRestEndpoint, new Date(fromMs), new Date(untilMs), controller.signal)
+      .then((r) => {
+        if (controller.signal.aborted) return
+        if (!r.complete) {
+          // 欠けたまま足さない（上の `tail` の注記）。少し置いて、次に開いたときにまた取りに行く
+          tailFailedAtRef.current = liveServerNow()
+          log.warn(`[useHypocenterCatalog] 震源カタログの末尾を取りきれなかったので、カタログの終端までを出します（読めた電文 ${r.quakes.length} 件）`)
+          return
+        }
+        tailFetchedRef.current = { fromMs, atMs: liveServerNow() }
+        const year = tailYearFromQuakes(r.quakes, fromMs, untilMs)
+        // **中身が同じなら前の年をそのまま使う**（下流の点群の組み立てと GPU への転送を走らせ直さない）。範囲の終わりだけ進める
+        setTail((prev) => ({
+          year: prev && prev.fromMs === fromMs && sameTailYear(prev.year, year) ? prev.year : year,
+          fromMs,
+          untilMs,
+        }))
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        tailFailedAtRef.current = liveServerNow()
+        log.error('[useHypocenterCatalog] 震源カタログの末尾を取得できませんでした（カタログの終端までを出します）', err)
+      })
+    return () => controller.abort()
+  }, [enabled, wantsTail, catalogEndMs, attempt])
+
+  // 始まりが今の終端と違う末尾（年ファイルが書き足されて終端が進んだ）は使わない。取り直すまで、カタログの終端までを出す
+  const tailInUse = tail !== null && wantsTail && tail.fromMs === catalogEndMs ? tail : null
+  const tailYear = tailInUse?.year ?? null
+  // **参照を保つ。** 末尾が変わらなければ同じ配列を返す（下流の点群の組み立てと GPU への転送を走らせ直さない）
+  const merged = useMemo(() => (tailYear ? [...years, tailYear] : years), [years, tailYear])
+  const tailFromMs = tailInUse?.fromMs ?? null
+  const tailUntilMs = tailInUse?.untilMs ?? null
+  const tailRange = useMemo(
+    () => (tailFromMs !== null && tailUntilMs !== null ? { fromMs: tailFromMs, untilMs: tailUntilMs } : null),
+    [tailFromMs, tailUntilMs],
+  )
+
+  return { index, catalogEndMs, years: merged, catalogYears: years, loading, error, missingYears, requestedYears, retry, tail: tailRange }
 }
