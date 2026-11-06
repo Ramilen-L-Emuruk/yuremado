@@ -9,6 +9,7 @@ import type { JMAQuake } from '../../src/types/earthquake'
 import { hasDepth } from '../../src/utils/formatters'
 import { haversineKm } from '../../src/utils/geo'
 import { matchCatalog, type CatalogQuake } from './kyoshinCatalogMatch'
+import type { Restart } from './kyoshinContinuousEval'
 
 const DAY_MS = 86_400_000
 /** 地震情報の地震と震源リストの地震を同じとみなす、震央どうしの距離の上限（km） */
@@ -157,6 +158,11 @@ export function archiveDaysOf(days: readonly string[]): string[] {
 
 /** 連続評価が秒フレームの無かった時間（日本時間の YYYYMMDD と時）。この時間に起きた地震は見ていないので数えない */
 export interface MissingHour { day: string; hour: number }
+/**
+ * 連続評価が検知器を作り直した点（控えの時刻）。`afterMs`（直前に流した秒。期間の頭なら null）から `atMs` までと、
+ * そこからの助走の間は見ていない（`eval-kyoshin-continuous` の結果の `runs[].restarts`。型は書き出す側の `kyoshinContinuousEval.ts` が持つ）
+ */
+export type { Restart }
 
 export interface FeltRow {
   quake: FeltQuake
@@ -176,14 +182,14 @@ export interface FeltResult {
 
 /**
  * 地震情報の地震ごとに、照合の規則で当たる束を探す。流した区間の外の地震は落とし、助走の間・終わり際・
- * 秒フレームの無かった時間（`missingHours`）の地震は `outside` へ分ける。
+ * 秒フレームの無かった時間（`missingHours`）・検知器を作り直した後の助走の間（`restarts`）の地震は `outside` へ分ける。
  * `frameOffsetMs` は UTC のミリ秒を秒フレームの時刻へ直す差（控えの秒フレームは日本時間の時刻を UTC として数える）
  */
 export function matchFeltQuakes(
   felt: readonly FeltQuake[], events: readonly FeltEvent[], days: readonly string[], warmupSec: number,
-  missingHours: readonly MissingHour[], frameOffsetMs: number, catalogOf: (q: FeltQuake) => readonly CatalogQuake[],
+  missingHours: readonly MissingHour[], restarts: readonly Restart[], frameOffsetMs: number, catalogOf: (q: FeltQuake) => readonly CatalogQuake[],
 ): FeltResult {
-  const watch = watchOf(days, warmupSec, missingHours, FELT_END_MARGIN_SEC)
+  const watch = watchOf(days, warmupSec, missingHours, restarts, FELT_END_MARGIN_SEC)
   const counted = events.filter((e) => !e.inWarmup)
   const rows: FeltRow[] = []
   const outside: FeltQuake[] = []
@@ -205,10 +211,12 @@ export function matchFeltQuakes(
 
 /**
  * 流した区間・助走・終わり際・秒フレームの無かった時間の判定。`at(t)` は、流していない時刻なら `'unrun'`、
- * 見ていない時刻（区間の頭の助走・終わりの `endMarginSec` 秒・秒フレームの無かった時間とその前後）なら `'blind'`、
- * 見ていた時刻なら `'watched'`。`touches(minuteMs)` は、その分の 60 秒がどこかの区間に掛かるか
+ * 見ていない時刻（区間の頭の助走・終わりの `endMarginSec` 秒・秒フレームの無かった時間とその前後・検知器を作り直した
+ * 後の助走の間とその前の途切れ）なら `'blind'`、見ていた時刻なら `'watched'`。`touches(minuteMs)` は、その分の 60 秒がどこかの区間に掛かるか
  */
-export function watchOf(days: readonly string[], warmupSec: number, missingHours: readonly MissingHour[], endMarginSec: number) {
+export function watchOf(
+  days: readonly string[], warmupSec: number, missingHours: readonly MissingHour[], restarts: readonly Restart[], endMarginSec: number,
+) {
   const segments = segmentsOfDays(days)
   // 秒フレームの無かった時間（UTC のミリ秒の区間）。その前の endMarginSec 秒（束が見え始める前に欠けに入る）と、
   // その後の助走の間（連続評価は欠けの後で検知器を作り直す）も見ていないので広げておく
@@ -216,6 +224,12 @@ export function watchOf(days: readonly string[], warmupSec: number, missingHours
     const from = Date.UTC(+m.day.slice(0, 4), +m.day.slice(4, 6) - 1, +m.day.slice(6, 8), m.hour) - 9 * 3_600_000
     return { from: from - endMarginSec * 1000, to: from + 3_600_000 + warmupSec * 1000 }
   })
+  // 検知器を作り直した点（時間の中の 60 秒を超える途切れ・観測点の版の変わり目も入る）。途切れる前の endMarginSec 秒から、
+  // 作り直した後の助走の終わりまで見ていない。控えの時刻なので UTC へ直す
+  for (const r of restarts) {
+    const from = (r.afterMs ?? r.atMs) - 9 * 3_600_000
+    blind.push({ from: from - endMarginSec * 1000, to: r.atMs - 9 * 3_600_000 + warmupSec * 1000 })
+  }
   return {
     touches: (minuteMs: number) => segments.some((g) => minuteMs + 60_000 > g.from && minuteMs < g.to),
     at(t: number): 'unrun' | 'blind' | 'watched' {
@@ -365,9 +379,9 @@ export interface ShindoRow { shindo: ShindoOnly; matched: FeltEvent[]; km: numbe
  */
 export function matchShindoOnly(
   shindo: readonly ShindoOnly[], events: readonly FeltEvent[], days: readonly string[], warmupSec: number,
-  missingHours: readonly MissingHour[], frameOffsetMs: number, labelOf: (area: string) => readonly [number, number] | null,
+  missingHours: readonly MissingHour[], restarts: readonly Restart[], frameOffsetMs: number, labelOf: (area: string) => readonly [number, number] | null,
 ): { rows: ShindoRow[]; outside: ShindoOnly[]; noLabel: ShindoOnly[]; unrun: number } {
-  const watch = watchOf(days, warmupSec, missingHours, SHINDO_WINDOW_AFTER_MS / 1000)
+  const watch = watchOf(days, warmupSec, missingHours, restarts, SHINDO_WINDOW_AFTER_MS / 1000)
   const counted = events.filter((e) => !e.inWarmup)
   const rows: ShindoRow[] = [], outside: ShindoOnly[] = [], noLabel: ShindoOnly[] = []
   let unrun = 0

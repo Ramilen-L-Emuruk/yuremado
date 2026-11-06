@@ -22,7 +22,7 @@ import { JSDOM } from 'jsdom'
 import type { CatalogQuake } from './lib/kyoshinCatalogMatch'
 import { readDayHypocenters } from './lib/hypocenterDays'
 import {
-  type FeltEvent, type FeltQuake, type FeltReport, type ShindoOnly, type ShindoReport, archiveDaysOf, areaScalesOf, feltQuakeOf, latestPerEvent,
+  type FeltEvent, type FeltQuake, type FeltReport, type Restart, type ShindoOnly, type ShindoReport, archiveDaysOf, areaScalesOf, feltQuakeOf, latestPerEvent,
   latestQuakeStates, latestShindoPerEvent, linkShindo, matchFeltQuakes, matchShindoOnly, segmentsOfDays, shindoReportOf,
 } from './lib/kyoshinFeltQuakes'
 import {
@@ -42,7 +42,7 @@ interface ContinuousResult {
   days: string[]
   warmupSec: number
   events: FeltEvent[]
-  runs: { day: string; missingHours: number[] }[]
+  runs: { day: string; missingHours: number[]; restarts: Restart[] }[]
   summary: { complete: boolean }
 }
 
@@ -53,6 +53,13 @@ async function main(): Promise<void> {
   const result = JSON.parse(readFileSync(resultPath, 'utf8')) as ContinuousResult
   if (!Array.isArray(result.days) || !Array.isArray(result.runs) || typeof result.summary?.complete !== 'boolean') {
     throw new Error(`${resultPath} は連続評価の結果の形ではありません（days・runs・summary.complete が要る）`)
+  }
+  // 検知器を作り直した点が無い結果（古い版で書いたもの）では、途切れの後の助走の間の地震を見ていない地震として除けない。
+  // 黙って取りこぼしに数えないよう止める
+  const isRestart = (x: Restart) => Number.isFinite(x?.atMs) && (x.afterMs === null || Number.isFinite(x.afterMs))
+  const badRun = result.runs.find((r) => !Array.isArray(r.missingHours) || !Array.isArray(r.restarts) || !r.restarts.every(isRestart))
+  if (badRun) {
+    throw new Error(`${resultPath} の ${badRun.day ?? '?'} に missingHours か restarts がありません（古い版の連続評価の結果です。eval-kyoshin-continuous で流し直してください）`)
   }
 
   // dmdataParser.ts はブラウザの DOMParser を使うので、読み込む前に jsdom のものを置く
@@ -137,7 +144,8 @@ async function main(): Promise<void> {
   }
   const { quakes: felt, cancelled } = latestPerEvent(reports)
   const missingHours = result.runs.flatMap((r) => r.missingHours.map((hour) => ({ day: r.day, hour })))
-  const { rows, outside } = matchFeltQuakes(felt, result.events, result.days, result.warmupSec, missingHours, JST_OFFSET_MS, catalogOf)
+  const restarts = result.runs.flatMap((r) => r.restarts)
+  const { rows, outside } = matchFeltQuakes(felt, result.events, result.days, result.warmupSec, missingHours, restarts, JST_OFFSET_MS, catalogOf)
   // 震度速報だけの地震: 同じ EventID の震源・震度情報が数える側（felt）にも取消にも無いもの。数えないと決まった震源・震度情報
   // （震源の位置が決まっていない等）しか無い地震は、震度速報の側で数える（どちらでも数えないと、その地震はどこにも数えられない）
   const states = latestQuakeStates(quakeReports)
@@ -156,7 +164,7 @@ async function main(): Promise<void> {
     if (st?.state !== 'felt') throw new Error(`震源・震度情報 ${q.eventId} の状態が数える報になっていない（${st?.state ?? '無し'}）。報の採り方の食い違い`)
     return { eventId: q.eventId, minuteMs: q.minuteMs, areas: st.areas }
   }), new Set(felt.map((q) => q.eventId).filter((id) => own51.has(id))))
-  const shindoRes = matchShindoOnly(unlinked, result.events, result.days, result.warmupSec, missingHours, JST_OFFSET_MS, (a) => labels.get(a) ?? null)
+  const shindoRes = matchShindoOnly(unlinked, result.events, result.days, result.warmupSec, missingHours, restarts, JST_OFFSET_MS, (a) => labels.get(a) ?? null)
   // 欠けの印に効く（結べず、見ていた時刻の）震度速報の、代表点を引けない地域
   const unlabeledAreas = [...new Set(shindoRes.noLabel.flatMap((s) => s.topAreas).filter((a) => !labels.has(a)))]
   // 欠け: 連続評価の結果自体の欠け・読んでいない日・一覧に無い日・読めなかった報・震源リストの控えが無い日と読めなかった行
