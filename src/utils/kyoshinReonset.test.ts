@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import { log } from './logger'
 import {
   createReonsetState, stepReonset, REONSET_QUIET_MS, REONSET_GUARD_MS, REONSET_BURST_MS, REONSET_SETTLED_MS, REONSET_PAIR_NEAR_KM, REONSET_ONSET_NEAR_KM,
+  REONSET_REPEAT_MS,
 } from './kyoshinReonset'
 import type { EnsembleDetection } from './kyoshinEnsembleTracker'
 import { fakeEnsembleDetection } from '../test-utils/ensembleDetection'
@@ -202,6 +204,59 @@ describe('stepReonset: 新しい束（2026-10-29 ユーザー選択「新しい�
     const s = createReonsetState()
     stepReonset(s, [a('likely')], [], T0)
     expect(stepReonset(s, [a('likely'), b()], [], T0 + REONSET_SETTLED_MS)).toBeNull()
+  })
+
+  describe('直前の合図の近くは鳴らさない（2026-11-06 ユーザー選択「まとめず、合図を 30 秒間引く (Recommended)」）', () => {
+    // 点の鍵は座標の形（合図の位置は点の重心で見る）。b・c は a の近く、d は a から約 400 km 南
+    const at = (id: string, lat: number, lng: number) =>
+      fakeEnsembleDetection({ id, confidence: 'confirmed', epicenter: [lat, lng], memberKeys: [`${lat.toFixed(3)},${lng.toFixed(3)}`], originTimeMs: T0 })
+    const settled = () => {
+      const s = createReonsetState()
+      stepReonset(s, [at('a', 37.5, 137.2)], [], T0)
+      return s
+    }
+    const t = T0 + REONSET_SETTLED_MS
+
+    it('正: 合図から REONSET_REPEAT_MS の内・REONSET_REPEAT_KM の内の合図は返さない', () => {
+      const s = settled()
+      expect(stepReonset(s, [at('a', 37.5, 137.2), at('b', 37.3, 137.0)], [], t)?.eventId).toBe('b')
+      // 10 秒後（REONSET_REPEAT_MS の内）。時刻を定数から作らない —— 定数を変えたときに、時刻の巻き戻り（状態を捨てる）で null になるのを防ぐ
+      expect(stepReonset(s, [at('a', 37.5, 137.2), at('b', 37.3, 137.0), at('c', 37.4, 137.1)], [], t + 10_000)).toBeNull()
+    })
+
+    it('対照: REONSET_REPEAT_MS を過ぎた合図は返す', () => {
+      const s = settled()
+      stepReonset(s, [at('a', 37.5, 137.2), at('b', 37.3, 137.0)], [], t)
+      expect(stepReonset(s, [at('a', 37.5, 137.2), at('b', 37.3, 137.0), at('c', 37.4, 137.1)], [], t + REONSET_REPEAT_MS + 1000)?.eventId).toBe('c')
+    })
+
+    it('対照: REONSET_REPEAT_KM より離れた合図は返す', () => {
+      const s = createReonsetState()
+      stepReonset(s, [at('a', 37.5, 137.2), at('d', 34.0, 136.0)], [], T0)
+      expect(stepReonset(s, [at('a', 37.5, 137.2), at('d', 34.0, 136.0), at('b', 37.3, 137.0)], [], t)?.eventId).toBe('b')
+      // e は d の近く（a・b から約 400 km）。b の合図から 100 km より離れているので返す
+      expect(stepReonset(s, [at('a', 37.5, 137.2), at('d', 34.0, 136.0), at('b', 37.3, 137.0), at('e', 34.1, 136.1)], [], t + 1000)?.eventId).toBe('e')
+    })
+
+    it('安全弁: 時刻が巻き戻ったら鳴らした記録も捨て、同じ時刻の近くの合図を返す（リプレイのやり直し）', () => {
+      const s = settled()
+      expect(stepReonset(s, [at('a', 37.5, 137.2), at('b', 37.3, 137.0)], [], t)?.eventId).toBe('b')
+      stepReonset(s, [at('a', 37.5, 137.2)], [], T0)
+      expect(stepReonset(s, [at('a', 37.5, 137.2), at('c', 37.4, 137.1)], [], t)?.eventId).toBe('c')
+    })
+
+    it('安全弁: 点の鍵から位置を引けない合図は、間引かずに返して記録を残す', () => {
+      const warn = vi.spyOn(log, 'warn').mockImplementation(() => {})
+      try {
+        const s = createReonsetState()
+        const noPos = (id: string) => fakeEnsembleDetection({ id, confidence: 'confirmed', epicenter: [37.3, 137.0], memberKeys: [`${id}1`], originTimeMs: T0 })
+        stepReonset(s, [at('a', 37.5, 137.2)], [], T0)
+        expect(stepReonset(s, [at('a', 37.5, 137.2), noPos('x')], [], t)?.eventId).toBe('x')
+        expect(warn).toHaveBeenCalled()
+      } finally {
+        warn.mockRestore()
+      }
+    })
   })
 
   it('安全弁: 新しい束が確かな段のまま続いても、合図は確かな段になったときの 1 回だけ', () => {

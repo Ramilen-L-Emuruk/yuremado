@@ -8,7 +8,8 @@
  * - 段階は戻さない。一度確かな段の行が出た束は、その後に早い段の行しか出なくても確かな段のまま
  * - 加わった観測点は、束が生きている間に報告された点をすべて合わせる（減らさない）
  * - 地図に描く点（とカメラの寄せ先）は別に持つ。加わった点のうち、震度0 未満が `DRAWN_FADE_MS` 続いた点を外す（`drawnKeys`）
- * - 検知を消すのは、束ね役が束を捨てるのと同じとき（どの部分からも `ENSEMBLE_KEEP_MS` 報告されなかった）
+ * - 検知を消すのは、どの部分からも `ENSEMBLE_KEEP_MS` 報告されず、加わった点のうち `HOLD_MIN_POINTS` 点以上が
+ *   震度1 以上だった最後の秒からも `ENSEMBLE_KEEP_MS` たったとき（揺れている点が残る間は消さない）
  */
 import { computeSiteKeys, indexToValue } from './kyoshinSiteKeys'
 import { ENSEMBLE_KEEP_MS, type DetectorFrame, type EnsembleReport, type EnsembleSource } from './kyoshinEnsembleDetector'
@@ -34,6 +35,15 @@ function lastToFade(members: number[], lastUpMs: Map<number, number>): number[] 
 
 /** 震度インデックスのうち計測震度 0.0（震度0 の下端）。これ未満が「震度0 未満」 */
 const ZERO_INDEX = 6
+
+/** 震度インデックスのうち計測震度 0.5（震度1 の下端） */
+const ONE_INDEX = 7
+/**
+ * 検知を消さずに残す、震度1 以上の加わった点の数の下限。1 点にしないのは、値が上がったまま居座る点 1 つで
+ * 検知がいつまでも消えなくなるのを防ぐため（2026-11-05 ユーザー選択「B で入れる (Recommended)」・
+ * 2026-11-06 ユーザー選択「まとめず、合図を 30 秒間引く (Recommended)」。設計書§69）
+ */
+export const HOLD_MIN_POINTS = 2
 
 /** 束ね役のうち、ここが使う口。テストで偽物を差し込めるよう、生の束ね役ではなくこれを受け取る */
 export interface EnsembleReporter {
@@ -86,6 +96,8 @@ interface State {
   confirmedSnapshot: { size: number; maxIntensity: number | null } | null
   sources: Set<EnsembleSource>
   lastReportMs: number
+  /** 加わった点のうち `HOLD_MIN_POINTS` 点以上が震度1 以上だった最後のデータ時刻 */
+  shakingMs: number
 }
 
 /** 加わった観測点のいまの計測震度の最大。全員が欠測なら null */
@@ -115,7 +127,7 @@ export function createEnsembleTracker(sites: [number, number][], reporter: Ensem
       for (const r of reporter.push(f)) {
         let s = live.get(r.id)
         if (!s) {
-          s = { id: r.id, confirmed: false, epicenter: [r.lat, r.lng], originTimeMs: r.startMs, members: [], memberSet: new Set(), lastUpMs: new Map(), firstConfirmedAtMs: null, confirmedSnapshot: null, sources: new Set(), lastReportMs: f.ms }
+          s = { id: r.id, confirmed: false, epicenter: [r.lat, r.lng], originTimeMs: r.startMs, members: [], memberSet: new Set(), lastUpMs: new Map(), firstConfirmedAtMs: null, confirmedSnapshot: null, sources: new Set(), lastReportMs: f.ms, shakingMs: f.ms }
           live.set(r.id, s)
         }
         s.lastReportMs = f.ms
@@ -126,7 +138,12 @@ export function createEnsembleTracker(sites: [number, number][], reporter: Ensem
         for (const i of r.sites) if (!s.memberSet.has(i)) { s.memberSet.add(i); s.members.push(i); s.lastUpMs.set(i, f.ms) }
         for (const src of r.sources) s.sources.add(src)
       }
-      for (const [id, s] of live) if (f.ms - s.lastReportMs > ENSEMBLE_KEEP_MS) live.delete(id)
+      for (const [id, s] of live) {
+        let up = 0
+        for (const i of s.members) if (f.values[i] >= ONE_INDEX && ++up >= HOLD_MIN_POINTS) break
+        if (up >= HOLD_MIN_POINTS) s.shakingMs = f.ms
+        if (f.ms - Math.max(s.lastReportMs, s.shakingMs) > ENSEMBLE_KEEP_MS) live.delete(id)
+      }
       const out: EnsembleDetection[] = []
       for (const s of live.values()) {
         const drawn: number[] = []

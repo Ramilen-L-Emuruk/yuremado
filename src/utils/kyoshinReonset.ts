@@ -29,6 +29,7 @@
 
 import type { EnsembleDetection } from './kyoshinEnsembleTracker'
 import { haversineKm } from './geo'
+import { log } from './logger'
 
 /**
  * 点が前に立ち上がってからこの長さは、その点のもう一度の立ち上がりを候補に数えない（ms。同じ揺れの続きを外す）。
@@ -76,6 +77,14 @@ export const REONSET_NEARBY_KM = 300
 /** 先の束から新しい束までの見かけの速さ（km/s）がこの範囲なら、同じ地震の波が届いただけとみなす */
 export const REONSET_WAVE_KMPS_MIN = 2.5
 export const REONSET_WAVE_KMPS_MAX = 5
+/**
+ * 合図を出したら、その後この長さの内に、この距離の内で出る合図は返さない（ms・km。位置は合図に入った点の重心）。
+ * 同じ地震の立ち上がりを、別の束や別の点のまとまりで 2 度 3 度と拾って鳴らさないため。能登 2024 の 1 週間で、
+ * 同じ地震に 2 回目以降に鳴った合図が 89 回から 30 回に減り、有感の取りこぼしは増えなかった
+ * （2026-11-06 ユーザー選択「まとめず、合図を 30 秒間引く (Recommended)」。設計書§69）
+ */
+export const REONSET_REPEAT_MS = 30_000
+export const REONSET_REPEAT_KM = 100
 
 /** 観測点のキー（`kyoshinSiteKeys` の `緯度,経度` か `緯度,経度#n`）から座標を読む。読めなければ null */
 export function keyLatLng(key: string): [number, number] | null {
@@ -96,6 +105,8 @@ export interface ReonsetState {
   candidates: Candidate[]
   /** 出した合図の位置と時刻（後の立ち上がりを説明する地震として使う） */
   fired: { ms: number; lat: number; lng: number }[]
+  /** 返した（鳴らした）合図の時刻と位置（直近 `REONSET_REPEAT_MS` だけ。`fired` と違い、返さなかった合図は入れない） */
+  sounded: { ms: number; lat: number; lng: number }[]
   /** 前のフレームで「直近に立ち上がった」観測点 */
   prevRecent: Set<string>
   /** 直近に処理したデータ時刻（巻き戻りの検出と、同じフレームの二度渡しの判定に使う） */
@@ -105,7 +116,7 @@ export interface ReonsetState {
 }
 
 export function createReonsetState(): ReonsetState {
-  return { confirmedSince: new Map(), lastEntry: new Map(), candidates: [], fired: [], prevRecent: new Set(), lastMs: -Infinity, lastResult: null }
+  return { confirmedSince: new Map(), lastEntry: new Map(), candidates: [], fired: [], sounded: [], prevRecent: new Set(), lastMs: -Infinity, lastResult: null }
 }
 
 /** 「2 つ目」の合図。どのイベントで、どの観測点が立ち上がったか。 */
@@ -150,9 +161,34 @@ export function stepReonset(
   // 立ち上がりの記録（lastEntry）を毎フレーム進めるため、もう一度の立ち上がり側は新しい束の合図が出たフレームでも走らせる
   const bundle = newBundleAlert(state, detections, nowMs)
   const rerise = reriseAlert(state, detections, newOnsets, nowMs)
-  const result = bundle ?? rerise
+  let result = bundle ?? rerise
+  // 直前に鳴らした合図の近くなら返さない（同じ地震の 2 度鳴りを防ぐ）。`fired` には残るので、後の立ち上がりを説明する役は変わらない
+  state.sounded = state.sounded.filter((x) => nowMs - x.ms <= REONSET_REPEAT_MS)
+  if (result) {
+    const pos = centroidOf(result.keys)
+    if (!pos) {
+      // 座標を読めるキーが 1 つも無い合図は間引けない。鳴らすが、間引きが効いていないことは残す
+      log.warn(`[kyoshin] 同じ場所の 2 つ目の合図の位置を観測点のキーから引けず、間引かずに鳴らす（${result!.eventId}）`)
+    } else if (state.sounded.some((x) => haversineKm(x.lat, x.lng, pos[0], pos[1]) <= REONSET_REPEAT_KM)) {
+      log.info(`[kyoshin] 同じ場所の 2 つ目の合図を、直前の合図の近くなので鳴らさない（${result.eventId}・${result.keys.length} 点）`)
+      result = null
+    } else {
+      state.sounded.push({ ms: nowMs, lat: pos[0], lng: pos[1] })
+    }
+  }
   state.lastResult = result
   return result
+}
+
+/** 観測点のキーの重心。座標を読めるキーが無ければ null */
+function centroidOf(keys: readonly string[]): [number, number] | null {
+  let lat = 0, lng = 0, n = 0
+  for (const k of keys) {
+    const p = keyLatLng(k)
+    if (!p) continue
+    lat += p[0]; lng += p[1]; n++
+  }
+  return n > 0 ? [lat / n, lng / n] : null
 }
 
 /** 新しい束: 近くの確かな束が続く最中に、別の束が確かな段になった */
