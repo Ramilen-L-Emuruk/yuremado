@@ -891,6 +891,17 @@ describe('mergeQuakeInto — 通常電文どうし', () => {
       ],
     })
 
+    // 地震発生時刻は震源と組で運ぶ（波形の線の起点の秒を探す幅がこれで決まる。→ `JMAQuake.earthquake.originTime`）
+    it('正: 震源と一緒に、震源情報の地震発生時刻も震度速報の続報で残る', () => {
+      const withOrigin: JMAQuake = {
+        ...epicenterOnly,
+        earthquake: { ...epicenterOnly.earthquake, originTime: '2026-01-01T07:07:00Z' },
+      }
+      const merged = mergeQuakeInto(mergeQuakeInto(firstPrompt, withOrigin), secondPrompt)
+      expect(secondPrompt.earthquake.originTime).toBeUndefined()
+      expect(merged.earthquake.originTime).toBe('2026-01-01T07:07:00Z')
+    })
+
     it('正: 震源情報が確定させた震源要素が、震度速報の続報でも残る', () => {
       const afterEpicenter = mergeQuakeInto(firstPrompt, epicenterOnly)
       expect(afterEpicenter.earthquake.hypocenter.name).toBe('石川県能登地方')

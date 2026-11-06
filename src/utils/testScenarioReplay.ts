@@ -100,7 +100,13 @@ function remapAppEvent(event: AppEvent, deltaMs: number, remapId: IdRemapper): A
         // 絶対値のまま残り、比べる相手（同じ再生で届く報）と時間軸が食い違う。
         ...(event.createdAtMs !== undefined && { createdAtMs: event.createdAtMs + deltaMs }),
         issue: { ...event.issue, time: shiftIso(event.issue.time, deltaMs) },
-        earthquake: { ...event.earthquake, time: shiftIso(event.earthquake.time, deltaMs) },
+        // 地震発生時刻（分まで）も動かす。波形の線の起点の秒を探す幅がこれで決まるので、止めると収録当時の
+        // 分で探して、ずらした緊急地震速報・震源リストの秒と結べなくなる。
+        earthquake: {
+          ...event.earthquake,
+          time: shiftIso(event.earthquake.time, deltaMs),
+          ...(event.earthquake.originTime !== undefined && { originTime: shiftIso(event.earthquake.originTime, deltaMs) }),
+        },
         // 電文の鍵（`題名|作成時刻`）の時刻も動かす。開いたカードの「更新」と報の一覧はこの時刻を
         // 読むので、止めると見出しの時刻はずれたのに「更新」だけが収録当時の日付を出す。
         ...(event.telegramKey !== undefined && { telegramKey: shiftTelegramKey(event.telegramKey, deltaMs) }),

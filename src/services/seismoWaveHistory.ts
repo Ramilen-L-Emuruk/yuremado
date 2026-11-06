@@ -152,14 +152,28 @@ export interface WaveHistoryRange {
  *
  * **未来を切り落とさない。** まだ来ていない区間を要求してもホストは「記録が無い」を
  * 返すだけで、害は無い。切り落とす形にすると現在時刻が要る（上記のとおり当てにならない）。
+ *
+ * @param originMs 地震カードの時刻（地震発現の分）
+ * @param earliestOriginMs 本当の発生が入りうる最も早い時刻（`utils/quakeOriginSeconds.ts` の `earliestOriginMs`）。
+ *   **始まりはそこから {@link NOISE_SPAN_MS} 手前まで広げる** —— 深い地震・遠い地震では発生がカードの分の頭より
+ *   {@link QUAKE_MINUTE_LEAD_MS} 以上前に出て、0 の手前でノイズを測る区間が範囲の外になる。読めなければ `NaN`
  */
-export function buildWaveHistoryRange(originMs: number): WaveHistoryRange | null {
+export function buildWaveHistoryRange(originMs: number, earliestOriginMs: number): WaveHistoryRange | null {
   if (!Number.isFinite(originMs)) return null
-  const fromMs = Math.floor(originMs - WAVE_HISTORY_LEAD_MS)
   const toMs = Math.floor(originMs + WAVE_HISTORY_TAIL_MS)
-  // 幅は定数の和（整数なので床を取っても変わらない）で、ホストの上限に収まることは
-  // `seismoWaveHistory.test.ts` が固定している。ここでは上限を見ない。
+  const fromMs = Math.floor(widenedStartMs(originMs - WAVE_HISTORY_LEAD_MS, earliestOriginMs, toMs - HOST_RANGE_MAX_MS))
+  // 幅はふだん定数の和（整数なので床を取っても変わらない）で、ホストの上限に収まることは
+  // `seismoWaveHistory.test.ts` が固定している。前へ広げた分も上限の内に収める（`widenedStartMs`）。
   return { fromMs, toMs }
+}
+
+/**
+ * 範囲の始まりを、本当の発生が入りうる最も早い時刻の {@link NOISE_SPAN_MS} 手前まで広げる。**`floorMs` より前へは
+ * 出さない**（範囲の長さの上限を越えないため）。公開観測点の範囲（`utils/publicQuakeRange.ts`）と共有する。
+ */
+export function widenedStartMs(startMs: number, earliestOriginMs: number, floorMs: number): number {
+  if (!Number.isFinite(earliestOriginMs)) return startMs
+  return Math.max(floorMs, Math.min(startMs, earliestOriginMs - NOISE_SPAN_MS))
 }
 
 /**

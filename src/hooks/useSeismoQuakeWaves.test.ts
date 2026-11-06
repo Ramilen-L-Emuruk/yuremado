@@ -16,6 +16,7 @@ import { computeWaveArrival } from '../utils/seismoWaveArrival'
 import type { OriginSeconds } from '../utils/quakeOriginSeconds'
 import type { JMAQuake } from '../types/earthquake'
 import type { QuakeIntensityResult } from '../services/seismoQuakeIntensity'
+import type { TimedColumns } from '../utils/seismoWaveColumns'
 
 const fetchSeismoStatus = vi.hoisted(() => vi.fn())
 const fetchSeismoWaveHistory = vi.hoisted(() => vi.fn())
@@ -746,6 +747,78 @@ describe('useSeismoQuakeWaves', () => {
     const { result } = setup()
     await waitFor(() => expect(fetchSeismoWaveHistory).toHaveBeenCalled())
     expect(result.current.size).toBe(0)
+  })
+
+  describe('電文の地震発生時刻が後から届いて範囲の始まりが前へ出たとき', () => {
+    // カードの時刻 22:00 に対して、後から届く地震情報の発生時刻は 21:59（深い地震・遠い地震の形）。
+    // 始まりは 21:59:00（カードの時刻の 60 秒前）から 21:58:25（発生時刻の分の頭の 5 秒前のさらに 30 秒前）へ出る。
+    const FIRST_FROM_MS = new Date('2026/09/29 21:59:00').getTime()
+    const WANT_FROM_MS = new Date('2026/09/29 21:58:25').getTime()
+    const withOrigin = { ...SECONDS_QUAKE, earthquake: { ...SECONDS_QUAKE.earthquake, originTime: '2026/09/29 21:59:00' } } as JMAQuake
+    const baseProps = {
+      enabled: true,
+      baseUrl: 'http://host:50506',
+      quakes: [SECONDS_QUAKE],
+      scope: NO_SCOPE,
+      readWave: () => null,
+      replayOffsetMs: null,
+      originSeconds: SECONDS,
+      subscribeWaveRevised: NO_REVISED,
+    }
+    type Call = { range: { fromMs: number; toMs: number }; columns: number }
+    const frontCalls = (): Call[] =>
+      (fetchSeismoWaveHistory.mock.calls as [Call][]).map(([p]) => p).filter((p) => p.range.toMs === FIRST_FROM_MS)
+    const firstColumns = (r: { current: ReadonlyMap<string, readonly { columns: TimedColumns }[]> }) =>
+      [...r.current.values()][0]?.[0]?.columns
+
+    async function start() {
+      fetchSeismoStatus.mockResolvedValue(okStatus())
+      fetchSeismoWaveHistory.mockImplementation((p: Call) => quietHistory(p))
+      const hook = renderHook((p: typeof baseProps) => useSeismoQuakeWaves(p), { initialProps: baseProps })
+      await waitFor(() => expect(firstColumns(hook.result)?.fromMs).toBe(FIRST_FROM_MS))
+      return hook
+    }
+
+    // 正: 足りない前の部分だけを取り、今の列の前へ繋ぐ（今の列は捨てない）。
+    it('足りない前の部分だけを取って前へ繋ぐ', async () => {
+      const { result, rerender } = await start()
+      const before = firstColumns(result)!
+      rerender({ ...baseProps, quakes: [withOrigin] })
+      await waitFor(() => expect(firstColumns(result)?.fromMs).toBeLessThanOrEqual(WANT_FROM_MS))
+      const after = firstColumns(result)!
+      expect(frontCalls()).toHaveLength(1)
+      expect(frontCalls()[0]?.range.fromMs).toBeLessThanOrEqual(WANT_FROM_MS)
+      expect(after.columnSpanMs).toBeCloseTo(before.columnSpanMs, 6)
+      // 後ろは前の列そのもの（前の部分の列数だけ前へずれる）
+      expect(after.columns.slice(after.columns.length - before.columns.length)).toEqual(before.columns)
+    })
+
+    // 対照: 発生時刻が変わらなければ、前の部分を取りに行かない。
+    it('始まりが動かなければ前を取りに行かない', async () => {
+      const { result, rerender } = await start()
+      rerender({ ...baseProps, quakes: [{ ...SECONDS_QUAKE }] })
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 30))
+      })
+      expect(frontCalls()).toHaveLength(0)
+      expect(firstColumns(result)?.fromMs).toBe(FIRST_FROM_MS)
+    })
+
+    // 安全弁: 前の部分に記録が無くても、前の波形は残す。取りに行き続けもしない。
+    it('前の部分に記録が無ければ前の波形を残し、取りに行き続けない', async () => {
+      const { result, rerender } = await start()
+      fetchSeismoWaveHistory.mockImplementation((p: Call) =>
+        p.range.toMs === FIRST_FROM_MS ? history({ hasAnyValue: false }) : quietHistory(p),
+      )
+      rerender({ ...baseProps, quakes: [withOrigin] })
+      await waitFor(() => expect(frontCalls()).toHaveLength(1))
+      // 別の地震が増えて一巡がもう一度走っても、同じ前の部分を訊き直さない
+      const next = quake('b', '2026/09/29 23:00:00', 30, [] as JMAQuake['points'])
+      rerender({ ...baseProps, quakes: [next, withOrigin] })
+      await waitFor(() => expect(result.current.has(quakeEventKey(next))).toBe(true))
+      expect(frontCalls()).toHaveLength(1)
+      expect(result.current.get(quakeEventKey(withOrigin))?.[0]?.columns.fromMs).toBe(FIRST_FROM_MS)
+    })
   })
 
   it('機能が無効なら 1 件も取りに行かない', async () => {

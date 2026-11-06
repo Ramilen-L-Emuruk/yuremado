@@ -48,6 +48,7 @@ import {
   findCatalogOriginMs,
   parseJstTimeMs,
   resolveOriginSeconds,
+  telegramOriginMinuteMs,
   usableEewOrigin,
   type CatalogColumns,
   type OriginSeconds,
@@ -78,10 +79,16 @@ export interface LoadedCatalog {
 }
 
 /** 地震カードの材料（地震 ID と時刻）。2 か所で同じ式を使うので 1 つにまとめる。 */
-function quakeKeys(q: JMAQuake): { readonly eventId: string | null; readonly timeMs: number } {
+function quakeKeys(q: JMAQuake): {
+  readonly eventId: string | null
+  /** カードの時刻（地震発現の分）。 */
+  readonly timeMs: number
+  /** 電文の地震発生時刻（分まで）。電文が持たない（震度速報）・読めなければ `null`。 */
+  readonly originMinuteMs: number | null
+} {
   // **日本時間として読む**（端末の時間帯で読むと、日本国外で突き合わせが全滅する）。
   const timeMs = parseJstTimeMs(q.earthquake.time)
-  return { eventId: extractQuakeEventId(q), timeMs }
+  return { eventId: extractQuakeEventId(q), timeMs, originMinuteMs: telegramOriginMinuteMs(q) }
 }
 
 /**
@@ -98,23 +105,23 @@ export function buildOriginSecondsMap(params: {
   const { quakes, eewOrigins, catalog } = params
   const out = new Map<string, OriginSeconds>()
   for (const q of quakes) {
-    const { eventId, timeMs } = quakeKeys(q)
+    const { eventId, timeMs, originMinuteMs } = quakeKeys(q)
     const eew = eventId === null ? undefined : eewOrigins.get(eventId)
     let catalogOriginMs: number | null = null
-    if (usableEewOrigin(timeMs, eew) === null && catalog !== null) {
+    if (usableEewOrigin(timeMs, originMinuteMs, eew) === null && catalog !== null) {
       // **要る年が全部読めているときだけ引く。** 年をまたぐ分で片方の年しか無いと、もう片方にある
       // 2 つ目の候補が見えず、「1 つに決まった」と取り違える（見ていないものを見つからなかったと扱わない）。
-      const years = catalogYearsFor(timeMs).map((y) => catalog.years.get(y))
+      const years = catalogYearsFor(timeMs, originMinuteMs).map((y) => catalog.years.get(y))
       if (years.length > 0 && years.every((y) => y !== undefined)) {
         const h = q.earthquake.hypocenter
         catalogOriginMs = findCatalogOriginMs(
-          { timeMs, latitude: h.latitude, longitude: h.longitude, magnitude: h.magnitude },
+          { timeMs, originMinuteMs, latitude: h.latitude, longitude: h.longitude, magnitude: h.magnitude },
           years as CatalogColumns[],
           catalog.coveredThroughMs,
         )
       }
     }
-    const resolved = resolveOriginSeconds({ quakeTimeMs: timeMs, eew, catalogOriginMs })
+    const resolved = resolveOriginSeconds({ quakeTimeMs: timeMs, originMinuteMs, eew, catalogOriginMs })
     if (resolved !== null) out.set(quakeEventKey(q), resolved)
   }
   return out
@@ -133,9 +140,9 @@ export function catalogYearsNeeded(params: {
   for (const q of quakes) {
     const h = q.earthquake.hypocenter
     if (!hasKnownEpicenter(h.latitude, h.longitude) || !hasMagnitude(h.magnitude)) continue
-    const { eventId, timeMs } = quakeKeys(q)
-    if (usableEewOrigin(timeMs, eventId === null ? undefined : eewOrigins.get(eventId)) !== null) continue
-    for (const y of catalogYearsFor(timeMs)) years.add(y)
+    const { eventId, timeMs, originMinuteMs } = quakeKeys(q)
+    if (usableEewOrigin(timeMs, originMinuteMs, eventId === null ? undefined : eewOrigins.get(eventId)) !== null) continue
+    for (const y of catalogYearsFor(timeMs, originMinuteMs)) years.add(y)
   }
   return [...years].sort((a, b) => a - b)
 }

@@ -187,6 +187,46 @@ export function appendHistoryColumns(base: TimedColumns, next: TimedColumns): Ti
 }
 
 /**
+ * 読み返した列の**前**へ、前の部分として読み返した列を足す。**刻みが揃い、前の部分の末尾がちょうど今の左端に来るときだけ**
+ * （許しは {@link appendHistoryColumns} と同じ）。継げなければ `null`。
+ *
+ * **刻みと時刻は今の列のものを正とする。** 前の部分の刻みはホストが端を切り捨てたぶん少しずれるので、それを正にすると
+ * 今の列の全部の時刻がずれ、続きの読み返しの頭（今の左端 + n × 刻み）とも合わなくなる。左端だけを刻みの整数倍で前へ動かす。
+ */
+export function prependHistoryColumns(base: TimedColumns, front: TimedColumns): TimedColumns | null {
+  const span = base.columnSpanMs
+  if (!(span > 0) || Math.abs(front.columnSpanMs - span) > span * 1e-3) return null
+  const frontEndMs = front.fromMs + front.columns.length * front.columnSpanMs
+  if (Math.abs(frontEndMs - base.fromMs) > 1) return null
+  return { ...base, fromMs: base.fromMs - front.columns.length * span, columns: [...front.columns, ...base.columns] }
+}
+
+/**
+ * 読み返した列の**前**へ足す範囲。`wantFromMs` まで覆うよう、今の左端から刻みの整数倍だけ前へ出す。
+ * 取れた列を {@link prependHistoryColumns} で今の列の前へ足せば、刻みも境目も揃う
+ * （ホストは頼んだ始まりを左端にし、刻みを「長さ ÷ 列数」で返すため）。
+ *
+ * **今の列を捨てずに前だけ伸ばすために使う。** 取り直して丸ごと差し替えると、継ぎ足した後ろの列・
+ * 伸ばし終えた印・訊けた震度まで捨てることになる。
+ *
+ * @returns 足す範囲と列数。刻みが壊れている・既に覆えているときは `null`
+ */
+export function frontRangeBefore(
+  base: TimedColumns,
+  wantFromMs: number,
+): { fromMs: number; toMs: number; columns: number } | null {
+  const span = base.columnSpanMs
+  if (!(span > 0) || !Number.isFinite(wantFromMs)) return null
+  // 1 ms までのずれは覆えている扱い（範囲の端をミリ秒へ丸めたぶん）。
+  const needed = Math.ceil((base.fromMs - wantFromMs - 1) / span)
+  if (needed < 1) return null
+  // **列を少なくしすぎない。** ホストは範囲の端を整数のミリ秒へ切り捨てるので、返る刻みは最大 1 ms ÷ 列数ずれる。
+  // 継ぐときの許し（刻みの 0.1%）に収まる列数を下限にする（その分だけ少し前から取る）。
+  const columns = Math.max(needed, Math.ceil(1 / (span * 1e-3)) + 1)
+  return { fromMs: base.fromMs - columns * span, toMs: base.fromMs, columns }
+}
+
+/**
  * 末尾の一定時間ぶんが静穏か（＝揺れが収まったか）。
  *
  * **時間で打ち切るのではなく、収まったかで決めるための判定**（2026-09-30 のユーザー判断）。

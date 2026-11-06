@@ -3,8 +3,10 @@ import {
   PUBLIC_WAVE_MAX_RETRIES,
   planPublicWaveEviction,
   publicWaveCacheVerdict,
+  storedFromMs,
   type PublicWaveEntryMeta,
 } from './publicWaveStoreLogic'
+import { WAVE_HISTORY_LEAD_MS } from '../services/seismoWaveHistory'
 
 const meta = (over: Partial<PublicWaveEntryMeta> & { key: string }): PublicWaveEntryMeta => ({
   originMs: 0,
@@ -42,26 +44,48 @@ describe('planPublicWaveEviction', () => {
 
 describe('publicWaveCacheVerdict', () => {
   it('入りきってから取った控えと確かな不在はそのまま使う', () => {
-    expect(publicWaveCacheVerdict(meta({ key: 'a' }), 1_000, true)).toBe('use')
-    expect(publicWaveCacheVerdict(meta({ key: 'a', state: 'absent' }), 1_000, true)).toBe('use')
+    expect(publicWaveCacheVerdict(meta({ key: 'a' }), { fromMs: 0, toMs: 1_000 }, true)).toBe('use')
+    expect(publicWaveCacheVerdict(meta({ key: 'a', state: 'absent' }), { fromMs: 0, toMs: 1_000 }, true)).toBe('use')
   })
 
   // 正: 仮の控えは範囲が入りきるまで待ち、入りきったら取り直す。
   it('仮の控えは入りきるまで待ち、入りきったら取り直す', () => {
     const m = meta({ key: 'a', state: 'provisional' })
-    expect(publicWaveCacheVerdict(m, 1_000, false)).toBe('wait')
-    expect(publicWaveCacheVerdict(m, 1_000, true)).toBe('refetch')
+    expect(publicWaveCacheVerdict(m, { fromMs: 0, toMs: 1_000 }, false)).toBe('wait')
+    expect(publicWaveCacheVerdict(m, { fromMs: 0, toMs: 1_000 }, true)).toBe('refetch')
   })
 
   // 安全弁: 取り直しは 1 回まで（保存庫を繰り返し問い合わせない）。
   it('1 回取り直した仮の控えはそのまま使う', () => {
     const m = meta({ key: 'a', state: 'provisional', retries: PUBLIC_WAVE_MAX_RETRIES })
     expect(PUBLIC_WAVE_MAX_RETRIES).toBe(1)
-    expect(publicWaveCacheVerdict(m, 1_000, true)).toBe('use')
+    expect(publicWaveCacheVerdict(m, { fromMs: 0, toMs: 1_000 }, true)).toBe('use')
   })
 
   // 正: 次の地震で切った位置が緩み、欲しい範囲が後ろへ伸びたら取り直す。
   it('欲しい範囲が伸びたら取り直す', () => {
-    expect(publicWaveCacheVerdict(meta({ key: 'a', toMs: 1_000 }), 2_000, true)).toBe('refetch')
+    expect(publicWaveCacheVerdict(meta({ key: 'a', toMs: 1_000 }), { fromMs: 0, toMs: 2_000 }, true)).toBe('refetch')
+  })
+})
+
+describe('範囲の始まりが前へ伸びたとき', () => {
+  // 正: 電文の地震発生時刻が分かって欲しい範囲が前へ伸びたら、入りきった控えでも取り直す（深い地震・遠い地震）
+  it('欲しい始まりが控えの始まりより前なら取り直す', () => {
+    expect(publicWaveCacheVerdict(meta({ key: 'a', fromMs: -60_000 }), { fromMs: -95_000, toMs: 1_000 }, true)).toBe('refetch')
+  })
+
+  // 対照: 始まりが同じか後ろなら使う（取り直しを増やさない）
+  it('欲しい始まりが控えの始まり以降なら使う', () => {
+    expect(publicWaveCacheVerdict(meta({ key: 'a', fromMs: -95_000 }), { fromMs: -95_000, toMs: 1_000 }, true)).toBe('use')
+    expect(publicWaveCacheVerdict(meta({ key: 'a', fromMs: -95_000 }), { fromMs: -60_000, toMs: 1_000 }, true)).toBe('use')
+  })
+
+  // 安全弁: 始まりを持たない古い控えは、そのときの決め方（カードの時刻の手前の幅）で取ったものとして比べる。
+  // ふだんの地震（始まりが変わらない）で、古い控えを全部取り直さない
+  it('始まりを持たない控えは、カードの時刻の手前の幅で取ったものとして比べる', () => {
+    const old = meta({ key: 'a', originMs: 1_000_000 })
+    expect(storedFromMs(old)).toBe(1_000_000 - WAVE_HISTORY_LEAD_MS)
+    expect(publicWaveCacheVerdict(old, { fromMs: 1_000_000 - WAVE_HISTORY_LEAD_MS, toMs: 1_000 }, true)).toBe('use')
+    expect(publicWaveCacheVerdict(old, { fromMs: 1_000_000 - WAVE_HISTORY_LEAD_MS - 35_000, toMs: 1_000 }, true)).toBe('refetch')
   })
 })

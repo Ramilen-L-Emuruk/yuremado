@@ -3,6 +3,8 @@
  * 決めごとは `docs/public-waveform-design.md` §0・§6.1・§6.2。
  */
 
+import { WAVE_HISTORY_LEAD_MS } from '../services/seismoWaveHistory'
+
 /** 控えた 1 件の状態。 */
 export type PublicWaveEntryState =
   /** 範囲が保存庫に入りきってから取った。取り直さない */
@@ -21,6 +23,11 @@ export interface PublicWaveEntryMeta {
   readonly state: PublicWaveEntryState
   /** 取った範囲の終わり（ms）。後で範囲が伸びたら取り直すかを決める */
   readonly toMs: number
+  /**
+   * 取った範囲の始まり（ms）。欲しい範囲が前へ伸びたら取り直す（深い地震・遠い地震は、電文の地震発生時刻が分かると始まりが前へ出る）。
+   * **持たない控えは、始まりを書く前に取ったもの**で、そのときの決め方（カードの時刻の {@link WAVE_HISTORY_LEAD_MS} 前）で取っている（→ {@link storedFromMs}）
+   */
+  readonly fromMs?: number
   /** 最後に取った時刻（本当のいま・ms） */
   readonly fetchedAtMs: number
   /** 仮の控えから取り直した回数 */
@@ -65,15 +72,24 @@ export function planPublicWaveEviction(
 /** 控えをどう扱うか。`use` はそのまま使う・`refetch` は取り直す・`wait` は控えを使いつつ範囲が入りきるまで待つ。 */
 export type PublicWaveCacheVerdict = 'use' | 'refetch' | 'wait'
 
+/** 控えが取った範囲の始まり。始まりを持たない控えは、そのときの決め方（カードの時刻の {@link WAVE_HISTORY_LEAD_MS} 前）で取っている */
+export function storedFromMs(meta: PublicWaveEntryMeta): number {
+  return meta.fromMs ?? meta.originMs - WAVE_HISTORY_LEAD_MS
+}
+
 /**
- * 控えを使うか取り直すか。`wantedToMs` はいま欲しい範囲の終わり（次の地震の発生で切る位置が後で緩むことがある）。
- * `settledNow` は、いま欲しい範囲が保存庫に入りきっているか（`isPublicWaveRangeSettled`。本当のいまの時刻で判定したもの）。
+ * 控えを使うか取り直すか。`wanted` はいま欲しい範囲（終わりは次の地震の発生で切る位置が後で緩むことがあり、始まりは電文の地震発生時刻が
+ * 分かると前へ出ることがある）。`settledNow` は、いま欲しい範囲が保存庫に入りきっているか（`isPublicWaveRangeSettled`。本当のいまの時刻で判定したもの）。
  *
  * 仮の控えは、**範囲が入りきってから 1 回だけ**取り直す（入りきる前に何度も訊かない）。
  */
-export function publicWaveCacheVerdict(meta: PublicWaveEntryMeta, wantedToMs: number, settledNow: boolean): PublicWaveCacheVerdict {
-  // 欲しい範囲が控えより後ろへ伸びた（取った範囲に後ろが含まれていない）
-  const extended = wantedToMs > meta.toMs
+export function publicWaveCacheVerdict(
+  meta: PublicWaveEntryMeta,
+  wanted: { readonly fromMs: number; readonly toMs: number },
+  settledNow: boolean,
+): PublicWaveCacheVerdict {
+  // 欲しい範囲が控えより後ろか前へ伸びた（取った範囲に含まれていない区間がある）
+  const extended = wanted.toMs > meta.toMs || wanted.fromMs < storedFromMs(meta)
   if (meta.state !== 'provisional') return extended ? 'refetch' : 'use'
   if (!extended && meta.retries >= PUBLIC_WAVE_MAX_RETRIES) return 'use'
   return settledNow ? 'refetch' : 'wait'

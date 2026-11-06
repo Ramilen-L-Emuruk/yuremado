@@ -13,10 +13,10 @@ import { decodePublicQuakeWave, hasSamplesFrom, publicQuakeColumns } from '../ut
 import { isPublicWaveRangeSettled, publicWaveRange, type PublicWaveRange } from '../utils/publicQuakeRange'
 import { publicWaveKey, readPublicWave, writePublicWave } from '../utils/publicQuakeWaveDb'
 import { quakeEventKey } from '../utils/quakeMerge'
-import { parseJstTimeMs, type OriginSeconds } from '../utils/quakeOriginSeconds'
+import { earliestOriginMs, parseJstTimeMs, telegramOriginMinuteMs, type OriginSeconds } from '../utils/quakeOriginSeconds'
 import { activeEpochsAt, checkPublicStations, subscribePublicStations, loadPublicStations, type PublicStationEpoch, type PublicStationsFile } from '../utils/publicStations'
 import { candidateCodes, EMPTY_PUBLIC_SELECTION, selectPublicStations, type PublicSelectionSource } from '../utils/publicStationSelection'
-import { publicWaveCacheVerdict, PUBLIC_WAVE_MAX_RETRIES, type PublicWaveEntryState } from '../utils/publicWaveStoreLogic'
+import { publicWaveCacheVerdict, PUBLIC_WAVE_MAX_RETRIES, storedFromMs, type PublicWaveEntryState } from '../utils/publicWaveStoreLogic'
 import type { SeismoWaveWindow } from '../utils/seismoWaveBuffer'
 import { appendWaveWindow, type TimedColumns } from '../utils/seismoWaveColumns'
 import { computeHypocentralDistanceKm, computeWaveArrival, type WaveArrival } from '../utils/seismoWaveArrival'
@@ -73,6 +73,8 @@ interface QuakeTarget {
   /** P/S 線の起点（秒まで取れた発生時刻）。取れなければ `null`。 */
   readonly arrivalOriginMs: number | null
   readonly arrivalOriginSource: OriginSeconds['source'] | null
+  /** 本当の発生が入りうる最も早い時刻（自作地震計の `SeismoWaveTarget.earliestOriginMs` と同じ）。 */
+  readonly earliestOriginMs: number
   readonly source: PublicSelectionSource
   readonly hypocenter: JMAQuake['earthquake']['hypocenter']
   readonly cutoffMs: number | null
@@ -96,6 +98,7 @@ export function pickPublicQuakeTargets(quakes: readonly JMAQuake[], originSecond
       originMs,
       arrivalOriginMs: originSeconds.get(eventKey)?.originMs ?? null,
       arrivalOriginSource: originSeconds.get(eventKey)?.source ?? null,
+      earliestOriginMs: earliestOriginMs(originMs, telegramOriginMinuteMs(q)),
       hypocenter: h,
       source: {
         kind: 'hypocenter',
@@ -114,7 +117,7 @@ export function pickPublicQuakeTargets(quakes: readonly JMAQuake[], originSecond
 /** 現在の地震・観測点から取る範囲を決める（取得と、取得後の切り戻しで共用）。 */
 function rangeForStation(target: QuakeTarget, epoch: PublicStationEpoch): PublicWaveRange | null {
   const arrival = computeWaveArrival({ originMs: target.arrivalOriginMs ?? target.originMs, hypocenter: target.hypocenter, stationLat: epoch.lat, stationLon: epoch.lon })
-  return publicWaveRange({ originMs: target.originMs, cutoffMs: target.cutoffMs, sArrivalMs: arrival?.sMs ?? null })
+  return publicWaveRange({ originMs: target.originMs, earliestOriginMs: target.earliestOriginMs, cutoffMs: target.cutoffMs, sArrivalMs: arrival?.sMs ?? null })
 }
 
 /** 観測点 × 地震の 1 件ぶん。 */
@@ -128,6 +131,8 @@ interface Slot {
   done: boolean
   /** 取った範囲の終わり（次の地震で切る位置が緩んで範囲が伸びたら、もう一度見る）。 */
   toMs: number
+  /** 取った範囲の始まり（電文の地震発生時刻が分かって範囲が前へ伸びたら、もう一度見る）。 */
+  fromMs: number
   /** 取れなかった回数と、次に試してよい時刻。 */
   failures: number
   retryAtMs: number
@@ -233,7 +238,7 @@ export function usePublicQuakeWaves(params: {
         const slotKey = `${t.eventKey}|${s.epoch.code}`
         const prev = slotsRef.current.get(slotKey)
         if (prev?.busy) continue
-        const extended = prev !== undefined && range.toMs > prev.toMs
+        const extended = prev !== undefined && (range.toMs > prev.toMs || range.fromMs < prev.fromMs)
         if (prev?.done && !extended) continue
         // 組み立て済みの仮の控えは、範囲が保存庫に入りきるまで読み直さない。中身は入りきってから取り直すまで変わらない
         // （`publicWaveCacheVerdict` の 'wait'）。この見直しは地震を選ぶたびにも走るので、読み直すと発生から数分のあいだ、
@@ -241,7 +246,7 @@ export function usePublicQuakeWaves(params: {
         if (prev !== undefined && prev.wave !== null && !extended && !isPublicWaveRangeSettled(range, Date.now())) continue
         // 失敗の上限と待ちは、範囲が伸びたときも守る（伸びるたびに取り直すと上限が効かない）。諦めたら待ちは無限。
         if (prev !== undefined && Date.now() < prev.retryAtMs) continue
-        const slot: Slot = prev ?? { wave: null, epoch: s.epoch, rawBytes: null, busy: false, done: false, toMs: range.toMs, failures: 0, retryAtMs: 0 }
+        const slot: Slot = prev ?? { wave: null, epoch: s.epoch, rawBytes: null, busy: false, done: false, toMs: range.toMs, fromMs: range.fromMs, failures: 0, retryAtMs: 0 }
         slot.busy = true
         slotsRef.current.set(slotKey, slot)
         jobs.push({ slot, epoch: s.epoch, number: s.number, range, settled: false })
@@ -398,7 +403,7 @@ async function loadQuake(job: {
       const key = publicWaveKey(j.epoch.code, target.originMs)
       const settled = isPublicWaveRangeSettled(j.range, now)
       const cached = await readPublicWave(key)
-      const verdict = cached === null ? 'refetch' : publicWaveCacheVerdict(cached.meta, j.range.toMs, settled)
+      const verdict = cached === null ? 'refetch' : publicWaveCacheVerdict(cached.meta, j.range, settled)
       return { j, key, settled, cached, verdict, bytes: cached?.bytes ?? null, failed: false }
     }),
   )
@@ -451,11 +456,12 @@ async function loadQuake(job: {
         let retries = p.cached?.meta.retries ?? 0
         if (p.cached !== null && p.cached.meta.state === 'provisional') retries = Math.min(PUBLIC_WAVE_MAX_RETRIES, retries + 1)
         const ok = await writePublicWave(
-          { key: p.key, originMs: target.originMs, state, toMs: p.j.range.toMs, fetchedAtMs: Date.now(), retries },
+          { key: p.key, originMs: target.originMs, state, toMs: p.j.range.toMs, fromMs: p.j.range.fromMs, fetchedAtMs: Date.now(), retries },
           bytes,
         )
         if (!ok) log.debug(`[public-wave] ${p.j.epoch.code} の波形を控えに書けなかった（そのまま出す）`)
         p.j.slot.toMs = p.j.range.toMs
+        p.j.slot.fromMs = p.j.range.fromMs
         p.j.slot.done = state !== 'provisional' || retries >= PUBLIC_WAVE_MAX_RETRIES
         p.j.settled = true
         p.bytes = bytes
@@ -466,6 +472,7 @@ async function loadQuake(job: {
   for (const p of prepared) {
     if (p.verdict !== 'refetch') {
       p.j.slot.toMs = p.cached!.meta.toMs
+      p.j.slot.fromMs = storedFromMs(p.cached!.meta)
       p.j.slot.done = p.verdict === 'use'
       p.j.settled = true
     }

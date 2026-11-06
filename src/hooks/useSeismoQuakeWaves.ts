@@ -26,7 +26,7 @@ import { canPredictReach, judgeQuakeReach, NO_FLOOR_WITHOUT_USUAL, type ReachSta
 import { serverNow } from '../utils/clock'
 import { createLogThrottle, log } from '../utils/logger'
 import { quakeEventKey } from '../utils/quakeMerge'
-import { parseJstTimeMs, type OriginSeconds } from '../utils/quakeOriginSeconds'
+import { earliestOriginMs, parseJstTimeMs, telegramOriginMinuteMs, type OriginSeconds } from '../utils/quakeOriginSeconds'
 import {
   columnsSpan,
   computeReachBand,
@@ -40,7 +40,9 @@ import { computeHypocentralDistanceKm, computeWaveArrival, type WaveArrival } fr
 import {
   appendWaveWindow,
   appendHistoryColumns,
+  frontRangeBefore,
   isSettled,
+  prependHistoryColumns,
   revisedColumnSpan,
   spliceRevisedColumns,
   trimAfter,
@@ -268,6 +270,11 @@ export interface SeismoWaveTarget {
   /** {@link arrivalOriginMs} の出どころ。**秒が取れなければ `null`。** */
   readonly arrivalOriginSource: OriginSeconds['source'] | null
   /**
+   * 本当の発生が入りうる最も早い時刻（`utils/quakeOriginSeconds.ts` の `earliestOriginMs`）。**秒が取れる前から決まる**
+   * （カードの時刻と電文の地震発生時刻の分だけで決まる）ので、読み返す範囲の始まりと、秒が無いときの届きうる時間帯に使う。
+   */
+  readonly earliestOriginMs: number
+  /**
    * 波形を取りに行く観測点（→ {@link pickTargets}）。**揺れが届いたと見込めた観測点だけ。**
    * 観測点が 1 つなら、その地震を出すかどうかと同じ意味になる。
    */
@@ -363,6 +370,7 @@ export function pickTargets(
       eventKey, originMs, hypocenter: q.earthquake.hypocenter,
       arrivalOriginMs: seconds?.originMs ?? null,
       arrivalOriginSource: seconds?.source ?? null,
+      earliestOriginMs: earliestOriginMs(originMs, telegramOriginMinuteMs(q)),
       stationIds,
     })
   }
@@ -410,7 +418,7 @@ export function rememberPicks(
 
 /** その対象の窓（読み返す範囲）。**打ち切りが手前にあればそこで切る。** */
 function rangeFor(target: SeismoWaveTarget): { fromMs: number; toMs: number } | null {
-  const full = buildWaveHistoryRange(target.originMs)
+  const full = buildWaveHistoryRange(target.originMs, target.earliestOriginMs)
   if (full === null) return null
   return { fromMs: full.fromMs, toMs: Math.min(full.toMs, target.cutoffMs) }
 }
@@ -504,6 +512,13 @@ interface Entry {
   readonly lat: number | null
   readonly lon: number | null
   columns: TimedColumns
+  /**
+   * 読み返しで**頼んだ**範囲の始まり（ms）。範囲の始まりが後から前へ出たら、前の部分を取りに行くかをこれと比べて決める。
+   * **列の始まり（`columns.fromMs`）とは比べない** —— ホストは列の幅に揃えて返すので頼んだ時刻とずれうる。
+   * ずれた値と比べると、取るたびに「始まりが足りない」と判定して取り直し続ける。
+   * 前の部分に記録が無かった・諦めたときも、その範囲の始まりへ進める（進めないと前を取りに行き続ける）
+   */
+  requestedFromMs: number
   /**
    * 最後に列が伸びた時刻（**`serverNow()` 基準**）。
    *
@@ -656,8 +671,10 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
   )
   // **依存は鍵の並びで持つ。** `targets` は毎レンダー新しい配列になるので、そのまま
   // 依存に置くと電文が 1 通届くたびに取り直しへ入る。
+  // **範囲の始まり（`earliestOriginMs`）も入れる** —— 電文の地震発生時刻が後から届くと始まりが前へ出て、前の部分を取りに行く要が出る
+  // （→ 読み返しの一巡の「取った波形の始まり」の判定）。値が変わるのは発生時刻を初めて読んだときの 1 回だけ
   const targetKey = targets
-    .map((t) => `${t.eventKey}@${t.originMs}@${t.cutoffMs}#${t.stationIds.join('+')}`)
+    .map((t) => `${t.eventKey}@${t.originMs}@${t.earliestOriginMs}@${t.cutoffMs}#${t.stationIds.join('+')}`)
     .join(',')
   // **観測点を読みに行く種。** 時刻を読める地震が 1 件でもあれば `/status` を読む（読めるまで
   // 対象は選べない）。**地震が増えるたびに読み直す** —— 普段の計測震度は 10 分ごとに変わるので、
@@ -914,7 +931,18 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
           // **地震ごとに数える。** 窓を鍵にすると、同じ分に起きた別の地震で 2 件目が
           // 「取得済み」と見なされ、片方のカードにだけ波形が出ない。
           const key = `${target.eventKey}|${station.stationId}`
-          if (doneRef.current.has(key) || inFlightRef.current.has(key)) continue
+          // **取った波形の始まりが、いま欲しい範囲の始まりより後ろなら、足りない前の部分だけを取って前へ繋ぐ。**
+          // 電文の地震発生時刻が後から届くと（震度速報が先・深い地震や遠い地震）範囲の始まりが前へ出る。使い回すと
+          // 0 の手前でノイズを測れない。**丸ごと取り直して差し替えない** —— 継ぎ足した後ろの列・伸ばし終えた印・
+          // 訊けた震度まで捨てることになり、いちばん起きやすい「先頭のカードを伸ばしている最中」に絵が縮む
+          const held = bookRef.current.get(target.eventKey)?.find((e) => e.stationId === station.stationId)
+          let front: { fromMs: number; toMs: number; columns: number } | null = null
+          if (held !== undefined && range.fromMs < held.requestedFromMs) {
+            front = frontRangeBefore(held.columns, range.fromMs)
+            // 列が既にそこまで覆えている（頼んだ時刻と列の左端のずれの内）なら取らずに済む
+            if (front === null) held.requestedFromMs = range.fromMs
+          }
+          if ((doneRef.current.has(key) && front === null) || inFlightRef.current.has(key)) continue
           // **取り直しの待ちが明けていなければ飛ばす**（明ける時刻だけ覚えて、次の一巡の時計にする）。
           const failed = failuresRef.current.get(key)
           if (failed !== undefined && failed.retryAt > performance.now()) {
@@ -930,8 +958,8 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
             result = await fetchSeismoWaveHistory({
               baseUrl,
               stationId: station.stationId,
-              range,
-              columns: WAVE_HISTORY_COLUMNS,
+              range: front ?? range,
+              columns: front?.columns ?? WAVE_HISTORY_COLUMNS,
               signal: ctrl.signal,
             })
           } catch (error) {
@@ -968,6 +996,10 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
             failuresRef.current.delete(key)
           }
           doneRef.current.add(key)
+          // **この範囲まで取り終えた印を前の波形に付ける。** 前の部分に記録が無かった・諦めたときに古い始まりのまま
+          // 残ると、次の一巡でまた前を取りに行き続ける
+          const stale = bookRef.current.get(target.eventKey)?.find((e) => e.stationId === station.stationId)
+          if (stale !== undefined) stale.requestedFromMs = Math.min(stale.requestedFromMs, range.fromMs)
           publishFailedRef.current()
           if (result === null || result.kind !== 'ok') continue
           // **ホストが記録の欠けを申告していたら残す。** 絵は出るので画面からは
@@ -989,6 +1021,24 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
             continue
           }
 
+          const frontColumns = {
+            fromMs: result.history.fromMs,
+            columnSpanMs: result.history.columnSpanMs,
+            columns: result.history.columns,
+          }
+          if (front !== null) {
+            // **前の部分は、いまの項目の前へ繋ぐ。** 取りに行っている間に後ろが継ぎ足されていても左端は変わらないので、
+            // その時点の列へ繋ぐ（取る前に覚えた列へ繋ぐと、間に継ぎ足した分を落とす）
+            const current = bookRef.current.get(target.eventKey)?.find((e) => e.stationId === station.stationId)
+            const joined = current === undefined ? null : prependHistoryColumns(current.columns, frontColumns)
+            if (current === undefined || joined === null) {
+              log.warn(`[seismo] 地震カードの波形の前の部分を継げなかった（${target.eventKey}・${station.stationId}）。前の始まりのまま描く`)
+              continue
+            }
+            current.columns = joined
+            publishRef.current()
+            continue
+          }
           const prev = bookRef.current.get(target.eventKey) ?? []
           bookRef.current.set(target.eventKey, [
             ...prev,
@@ -1002,6 +1052,7 @@ export function useSeismoQuakeWavesWithStatus(params: UseSeismoQuakeWavesParams)
                 columnSpanMs: result.history.columnSpanMs,
                 columns: result.history.columns,
               },
+              requestedFromMs: range.fromMs,
               lastGrewAt: serverNow(),
               interrupted: false,
               // 伸ばすかどうかは継ぎ足しの巡回が決める（先頭でなければ出すときに伸ばし終えた扱い）。
