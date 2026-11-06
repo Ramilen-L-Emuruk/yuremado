@@ -711,7 +711,7 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
         {serial != null && <SerialBadge serial={serial} suffix={eew.isFinal ? ' 最終報' : ''} />}
       </div>
 
-      <div className="flex flex-col gap-1.5 pt-2 @min-[520px]:pt-3">
+      <div className="flex flex-col gap-1.5 pt-2">
         {/* 震度の枠と震源の値。地震タブの開いたカードと同じ骨組み（左に枠・右に震源と値）。 */}
         <div className="grid" style={{ gridTemplateColumns: 'var(--rt-tile-w) 1fr', gap: 'var(--qk-fact-gap)' }}>
           {(() => {
