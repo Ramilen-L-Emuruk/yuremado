@@ -22,25 +22,36 @@ export type NotificationOpen =
    * 当てる（`matchEstimatedIntensityArrival` と同じ）
    */
   | { readonly tab: 'earthquake'; readonly estimated: string; readonly lat?: number; readonly lon?: number }
+  /**
+   * 地震タブで、その国際津波関連情報（英文の発生時刻 `ORIGIN TIME` と震央）が付く地震カードを選ぶ。付く先は画面の結び付け
+   * （`internationalTsunamiIndex`）と同じ規則で引く —— 中継は地震カードを持たないので、カードの鍵では指せない
+   */
+  | { readonly tab: 'earthquake'; readonly wepa60: string; readonly lat?: number; readonly lon?: number }
 
 export const OPEN_REALTIME: NotificationOpen = { tab: 'realtime' }
 export const OPEN_TSUNAMI: NotificationOpen = { tab: 'tsunami' }
 
 /** 問い合わせに使う名前。アプリの URL から開き先を取り除くとき（{@link withoutNotificationOpen}）もこれを見る */
-const PARAM_NAMES = ['open', 'quake', 'lpgm', 'estimated', 'lat', 'lon'] as const
+const PARAM_NAMES = ['open', 'quake', 'lpgm', 'estimated', 'wepa60', 'lat', 'lon'] as const
 
 /** 開き先を URL の問い合わせの形へ直す（先頭の `?` は付けない）。開き先が無ければ空文字 */
 export function notificationOpenQuery(open: NotificationOpen | null): string {
   if (open === null) return ''
   const q = new URLSearchParams({ open: open.tab })
+  const setEpicenter = (lat?: number, lon?: number) => {
+    if (lat !== undefined && lon !== undefined && Number.isFinite(lat) && Number.isFinite(lon)) {
+      q.set('lat', String(lat))
+      q.set('lon', String(lon))
+    }
+  }
   if ('quake' in open) q.set('quake', open.quake)
   else if ('lpgm' in open) q.set('lpgm', open.lpgm)
   else if ('estimated' in open) {
     q.set('estimated', open.estimated)
-    if (open.lat !== undefined && open.lon !== undefined && Number.isFinite(open.lat) && Number.isFinite(open.lon)) {
-      q.set('lat', String(open.lat))
-      q.set('lon', String(open.lon))
-    }
+    setEpicenter(open.lat, open.lon)
+  } else if ('wepa60' in open) {
+    q.set('wepa60', open.wepa60)
+    setEpicenter(open.lat, open.lon)
   }
   return q.toString()
 }
@@ -59,14 +70,15 @@ export function parseNotificationOpen(search: string): NotificationOpen | null {
   if (quake) return { tab, quake }
   const lpgm = q.get('lpgm')
   if (lpgm) return { tab, lpgm }
-  const estimated = q.get('estimated')
-  if (!estimated) return null
   // `Number(null)` は 0 なので、値があるかも見る。片方だけ・数でないものは震源ごと捨てて時刻だけで当てる
   const lat = Number(q.get('lat'))
   const lon = Number(q.get('lon'))
-  return q.get('lat') && q.get('lon') && Number.isFinite(lat) && Number.isFinite(lon)
-    ? { tab, estimated, lat, lon }
-    : { tab, estimated }
+  const epicenter = q.get('lat') && q.get('lon') && Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : {}
+  const estimated = q.get('estimated')
+  if (estimated) return { tab, estimated, ...epicenter }
+  const wepa60 = q.get('wepa60')
+  if (wepa60) return { tab, wepa60, ...epicenter }
+  return null
 }
 
 /**
