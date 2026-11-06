@@ -64,7 +64,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe('buildWaveHistoryRange', () => {
   it('発生時刻の前後へ窓を広げる', () => {
-    const range = buildWaveHistoryRange(1_000_000)
+    const range = buildWaveHistoryRange(1_000_000, Number.NaN)
     expect(range).toEqual({
       fromMs: 1_000_000 - WAVE_HISTORY_LEAD_MS,
       toMs: 1_000_000 + WAVE_HISTORY_TAIL_MS,
@@ -82,7 +82,7 @@ describe('buildWaveHistoryRange', () => {
     expect(Number.isInteger(WAVE_HISTORY_LEAD_MS)).toBe(true)
     expect(Number.isInteger(WAVE_HISTORY_TAIL_MS)).toBe(true)
     for (const origin of [0, 1_000_000.4, 1_000_000.6, 1_760_000_000_123.999, -5.5]) {
-      const range = buildWaveHistoryRange(origin)
+      const range = buildWaveHistoryRange(origin, Number.NaN)
       expect(range).not.toBeNull()
       expect(range!.toMs - range!.fromMs).toBe(WAVE_HISTORY_LEAD_MS + WAVE_HISTORY_TAIL_MS)
       expect(range!.toMs - range!.fromMs).toBeLessThanOrEqual(HOST_RANGE_MAX_MS)
@@ -95,8 +95,8 @@ describe('buildWaveHistoryRange', () => {
   })
 
   it('時刻として読めなければ窓を作らない', () => {
-    expect(buildWaveHistoryRange(NaN)).toBeNull()
-    expect(buildWaveHistoryRange(Infinity)).toBeNull()
+    expect(buildWaveHistoryRange(NaN, Number.NaN)).toBeNull()
+    expect(buildWaveHistoryRange(Infinity, Number.NaN)).toBeNull()
   })
 })
 

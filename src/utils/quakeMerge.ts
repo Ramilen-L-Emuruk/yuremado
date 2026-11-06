@@ -449,7 +449,7 @@ export function withoutLatestQuakeFacts(card: JMAQuake): JMAQuake {
   return {
     ...rest,
     // 当てて動く欄だけを戻す。それ以外（当てた後に津波から借りた津波区分など）は今の値のまま
-    earthquake: { ...card.earthquake, hypocenter: facts.hypocenter, time: facts.time, maxScale: facts.maxScale },
+    earthquake: { ...card.earthquake, hypocenter: facts.hypocenter, time: facts.time, originTime: facts.originTime, maxScale: facts.maxScale },
     ...(facts.hypocenterSource && { hypocenterSource: facts.hypocenterSource }),
   }
 }
@@ -817,6 +817,17 @@ function domesticTsunamiFrom(
   }
 }
 
+/**
+ * 地震発生時刻（分まで）を、震源を採った報から取り出す（`earthquake` へスプレッドで使う）。
+ *
+ * **震源と組で運ぶ**（→ `JMAQuake.earthquake.originTime`）。統合で震源を片側から採るのに発生時刻を土台の側に
+ * 残すと、波形の線の起点の秒を、震源とは別の報の発生時刻の分で探すことになる。採った側が持たなければ
+ * `undefined` で上書きして消す（{@link domesticTsunamiFrom} と同じ形）。
+ */
+function originTimeFrom(from: Pick<JMAQuake, 'earthquake'>): Pick<JMAQuake['earthquake'], 'originTime'> {
+  return { originTime: from.earthquake.originTime }
+}
+
 export function mergeQuakeInto(
   existingCard: JMAQuake | undefined,
   incomingCard: JMAQuake,
@@ -903,6 +914,8 @@ function mergeQuakeIntoBody(
       earthquake: {
         ...existing.earthquake,
         hypocenter: incoming.earthquake.hypocenter,
+        // 発生時刻は震源と一緒に動かす（→ `JMAQuake.earthquake.originTime`）
+        ...originTimeFrom(incoming),
         // 区分を決めたコードも区分と同じ側から採る（札がコードで出し分けるので、片側だけ
         // 動くと札が区分と違うことを言う。→ `JMAQuake.earthquake.domesticTsunamiCode`）。
         ...domesticTsunamiFrom(incoming.earthquake.domesticTsunami !== '不明' ? incoming : existing),
@@ -1113,7 +1126,7 @@ function mergeQuakeIntoBody(
   if (isHypocenterPending(incoming) && !isHypocenterPending(existing) && !existing.cancelledAt) {
     result = {
       ...result,
-      earthquake: { ...result.earthquake, hypocenter: existing.earthquake.hypocenter },
+      earthquake: { ...result.earthquake, hypocenter: existing.earthquake.hypocenter, ...originTimeFrom(existing) },
       // **出どころの印も震源と一緒に運ぶ。** 既存カードの震源が津波電文から借りたものなら、
       // それを引き継いだ側も借り物。印を落とすと画面から出どころが消えるだけでなく、
       // 「自前の震源を持つカード」と見分けが付かなくなり、津波の続報で震源が更新されても
@@ -1173,7 +1186,7 @@ function mergeQuakeIntoBody(
       ...result,
       time: existing.time,
       issue: existing.issue,
-      earthquake: { ...result.earthquake, hypocenter: existing.earthquake.hypocenter },
+      earthquake: { ...result.earthquake, hypocenter: existing.earthquake.hypocenter, ...originTimeFrom(existing) },
       // 自由付加文も新しい側（＝ここでは VXSE61）を残す。土台が incoming なので、
       // 明示しないと VXSE61 が伝える精査後の Mw が**震度が確定した瞬間に消える**。
       // VXSE61 が先に立ったカードへ後から震度電文が届く経路は実運用で起きる（§8 QUAKE-4）。

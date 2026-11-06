@@ -80,6 +80,7 @@ function withLatestQuakeFactsBy(
     quakeInfoFacts: {
       hypocenter: base.earthquake.hypocenter,
       time: base.earthquake.time,
+      ...(base.earthquake.originTime !== undefined && { originTime: base.earthquake.originTime }),
       maxScale: base.earthquake.maxScale,
       ...(base.hypocenterSource && { hypocenterSource: base.hypocenterSource }),
     },
@@ -253,6 +254,7 @@ function newestOtherReport(
  * 長周期が深さを持つときだけ長周期の値にする。
  *
  * - 地震発現時刻は `arrivalTime`（地震情報の `earthquake.time` と同じ意味の時刻）。無ければカードのまま
+ * - 地震発生時刻は `originTime`（地震情報の `earthquake.originTime` と同じ意味。震源と組で動かす）
  * - 全国の最大震度は `maxInt`。無ければカードのまま
  * - 規模が数値で求まらない報は `NaN` と説明（`magnitudeCondition`）を写す（地震情報のパーサーと同じ番兵）
  */
@@ -282,6 +284,7 @@ function factsFromLpgm(card: JMAQuake, lpgm: JMALpgm): JMAQuake['earthquake'] {
     ...card.earthquake,
     hypocenter: dropUndefined(hypocenter),
     ...(lpgm.arrivalTime && { time: lpgm.arrivalTime }),
+    ...(lpgm.originTime && { originTime: lpgm.originTime }),
     ...(lpgm.maxInt !== undefined && { maxScale: lpgm.maxInt }),
   }
 }
@@ -291,6 +294,7 @@ function factsFromLpgm(card: JMAQuake, lpgm: JMALpgm): JMAQuake['earthquake'] {
  * 補助表現の残し方は {@link factsFromLpgm} と同じ（地名が同じときだけ地震情報の値を残す）。
  *
  * - 地震発現時刻は `arrivalTime`。無ければカードのまま（津波電文の `originTime` は発生時刻で、意味が違う）
+ * - 地震発生時刻は `originTime`（カードの `earthquake.originTime` へ。震源と組で動かす）。無ければカードのまま
  * - 規模の扱いは {@link magnitudeTriple}
  */
 function factsFromTsunami(card: JMAQuake, src: TsunamiSourceEarthquake): JMAQuake['earthquake'] {
@@ -318,6 +322,7 @@ function factsFromTsunami(card: JMAQuake, src: TsunamiSourceEarthquake): JMAQuak
     ...card.earthquake,
     hypocenter: dropUndefined(hypocenter),
     ...(src.arrivalTime && { time: src.arrivalTime }),
+    ...(src.originTime && { originTime: src.originTime }),
   }
 }
 
@@ -361,7 +366,7 @@ function dropUndefined<T extends object>(o: T): T {
 
 /** 上段の値が同じか。規模は `NaN` を取りうるので `Object.is` で比べる。 */
 function sameFacts(a: JMAQuake['earthquake'], b: JMAQuake['earthquake']): boolean {
-  if (a.time !== b.time || a.maxScale !== b.maxScale) return false
+  if (a.time !== b.time || a.originTime !== b.originTime || a.maxScale !== b.maxScale) return false
   const x = a.hypocenter as unknown as Record<string, unknown>
   const y = b.hypocenter as unknown as Record<string, unknown>
   const keys = new Set([...Object.keys(x), ...Object.keys(y)])

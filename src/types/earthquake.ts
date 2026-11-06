@@ -393,7 +393,16 @@ export interface JMAQuake {
     correct: CorrectType
   }
   earthquake: {
+    /** 地震発現時刻（`Earthquake/ArrivalTime`）。無ければ地震発生時刻、震度速報は検知時刻（→ `dmdataParser.ts`）。 */
     time: string
+    /**
+     * 地震発生時刻（`Earthquake/OriginTime`）。**分まで**（電文の秒は 00）。電文が持たなければ（震度速報）入らない。
+     *
+     * **{@link time} と別物。** 深い地震・遠い地震では、発生から地震発現（最初に揺れを捉えた時刻）まで 30 秒を超え、
+     * 分がずれる。自作地震計の波形の線の起点にする発生時刻の秒を探すときに使う（→ `utils/quakeOriginSeconds.ts`）。
+     * **震源と一緒に動かす**（統合で震源を片側から採るときは、この値も同じ側から採る。→ `utils/quakeMerge.ts`）。
+     */
+    originTime?: string
     hypocenter: Hypocenter
     /**
      * 電文全体の最大震度。**「5弱以上・未入電」（電文の「震度５弱以上未入電」）もここへ 45 として入る。**
@@ -616,6 +625,8 @@ export interface JMAQuake {
   quakeInfoFacts?: {
     hypocenter: Hypocenter
     time: string
+    /** 地震発生時刻（→ `earthquake.originTime`）。震源と組で当てて動くので一緒に持つ。地震情報が持たなければ入らない */
+    originTime?: string
     maxScale: JMAQuake['earthquake']['maxScale']
     hypocenterSource?: BorrowedFromTsunami
   }

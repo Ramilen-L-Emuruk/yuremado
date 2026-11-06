@@ -11,6 +11,8 @@ import {
   appendHistoryColumns,
   appendWaveWindow,
   compositeCoverage,
+  frontRangeBefore,
+  prependHistoryColumns,
   isSettled,
   lastFilledIndex,
   revisedColumnSpan,
@@ -470,3 +472,67 @@ describe('appendHistoryColumns（読み返しを伸ばす）', () => {
   })
 })
 
+
+describe('frontRangeBefore（読み返した列の前へ足す範囲）', () => {
+  const base: TimedColumns = { fromMs: 100_000, columnSpanMs: 250, columns: [] }
+
+  it('正: 欲しい始まりまで、刻みの整数倍だけ前へ出す（後ろの端は今の左端）', () => {
+    expect(frontRangeBefore(base, 65_000)).toEqual({ fromMs: 65_000, toMs: 100_000, columns: 140 })
+  })
+
+  it('正: 刻みで割り切れなければ、欲しい始まりより少し前から取る', () => {
+    const r = frontRangeBefore(base, 99_100)!
+    expect(r.fromMs).toBeLessThanOrEqual(99_100)
+    expect((r.toMs - r.fromMs) / r.columns).toBe(250)
+  })
+
+  it('正: 列が少なすぎると切り捨ての 1 ms で刻みが許しを越えるので、下限の列数まで広げる', () => {
+    // 刻み 250 ms なら 1 ms のずれは 1 列で 0.4%。許しは 0.1% なので 5 列以上要る
+    expect(frontRangeBefore(base, 99_900)!.columns).toBeGreaterThanOrEqual(5)
+  })
+
+  it('対照: 既に覆えている（1 ms のずれの内）なら null', () => {
+    expect(frontRangeBefore(base, 100_000)).toBeNull()
+    expect(frontRangeBefore(base, 99_999.5)).toBeNull()
+  })
+
+  it('安全弁: 刻みが壊れていれば null（前へ繋げない）', () => {
+    expect(frontRangeBefore({ ...base, columnSpanMs: 0 }, 65_000)).toBeNull()
+  })
+
+  it('取れた前の部分を今の列の前へ足せる（ホストの切り捨てのずれ込みで）', () => {
+    const now: TimedColumns = { fromMs: 100_000, columnSpanMs: 250, columns: [null, null] }
+    const r = frontRangeBefore(now, 99_900)!
+    const from = Math.floor(r.fromMs)
+    const front: TimedColumns = { fromMs: from, columnSpanMs: (Math.floor(r.toMs) - from) / r.columns, columns: Array(r.columns).fill(null) }
+    expect(prependHistoryColumns(now, front)?.columns).toHaveLength(r.columns + 2)
+  })
+})
+
+describe('prependHistoryColumns（読み返しを前へ伸ばす）', () => {
+  const col = (v: number): WaveHistoryColumn => ({ min: [-v, -v, -v], max: [v, v, v], minMembers: 3, magMin: 0, magMax: v, magSum: Number.NaN, magCount: 0 })
+  const base: TimedColumns = { fromMs: 1000, columnSpanMs: 250, columns: [col(3), col(4)] }
+
+  it('正: 前の部分の末尾が今の左端に来れば前へ足す', () => {
+    const front: TimedColumns = { fromMs: 500, columnSpanMs: 250, columns: [col(1), col(2)] }
+    const r = prependHistoryColumns(base, front)!
+    expect(r.columns.map((c) => c?.max[0])).toEqual([1, 2, 3, 4])
+    expect(r.fromMs).toBe(500)
+  })
+
+  it('正: 刻みと時刻は今の列を正にする（前の部分の刻みが切り捨てでずれていても、今の列の時刻は動かない）', () => {
+    const front: TimedColumns = { fromMs: 500.4, columnSpanMs: 249.8, columns: [col(1), col(2)] }
+    const r = prependHistoryColumns(base, front)!
+    expect(r.columnSpanMs).toBe(250)
+    // 今の列の頭（3 本目）の時刻はもとの左端のまま
+    expect(r.fromMs + 2 * r.columnSpanMs).toBe(1000)
+  })
+
+  it('対照: 刻みが違えば足さない', () => {
+    expect(prependHistoryColumns(base, { fromMs: 480, columnSpanMs: 260, columns: [col(1), col(2)] })).toBeNull()
+  })
+
+  it('安全弁: 前の部分の末尾が今の左端と離れていれば足さない（間が詰まる）', () => {
+    expect(prependHistoryColumns(base, { fromMs: 250, columnSpanMs: 250, columns: [col(1), col(2)] })).toBeNull()
+  })
+})

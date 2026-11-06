@@ -79,6 +79,7 @@ function quakeSample(): QuakeSample {
     issue: { source: '気象庁', editorialOffice: '気象庁本庁', publishingOffice: '気象庁', time: iso(), type: '震源・震度情報', correct: 'なし' },
     earthquake: {
       time: iso(),
+      originTime: iso(),
       hypocenter: {
         name: '石川県能登地方', latitude: 37.5, longitude: 137.2, depth: 10, depthAtLeast: true, magnitude: 7.6,
         magnitudeCondition: 'Ｍ不明', magnitudeType: 'Mj', code: '390', detailedCode: '3900',

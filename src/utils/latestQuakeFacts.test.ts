@@ -17,6 +17,8 @@ function quake(reportTime: string, magnitude = 7.4): JMAQuake {
     issue: { source: '気象庁', time: reportTime, type: '震源・震度情報', correct: 'なし' },
     earthquake: {
       time: '2024-01-01T16:10:00+09:00',
+      // 実電文の地震情報は発生時刻を持つ（長周期・津波の原因地震と同じ値）
+      originTime: '2024-01-01T16:10:00+09:00',
       hypocenter: { name: '石川県能登地方', latitude: 37.5, longitude: 137.2, depth: 0, magnitude },
       maxScale: 70,
       domesticTsunami: '警報等',
@@ -127,6 +129,17 @@ describe('withLatestQuakeFacts', () => {
     const out = withLatestQuakeFacts(card, map(lpgm('2024-01-01T16:23:00+09:00')), [])
     expect(out.hypocenterSource).toBeUndefined()
     expect(out.earthquake.hypocenter.magnitude).toBe(7.6)
+  })
+
+  // 地震発生時刻は震源と組で当てて動く（波形の線の起点の秒を、当てた震源の発生時刻の分で探す。→ `JMAQuake.earthquake.originTime`）
+  it('長周期の地震発生時刻も震源と一緒に当て、当てる報が無くなれば地震情報の値へ戻す', () => {
+    const base = quake('2024-01-01T16:16:00+09:00')
+    const card = { ...base, earthquake: { ...base.earthquake, originTime: '2024-01-01T16:10:00+09:00' } } as JMAQuake
+    const applied = withLatestQuakeFacts(card, map(lpgm('2024-01-01T16:23:00+09:00', 7.6, { originTime: '2024-01-01T16:09:00+09:00' })), [])
+    expect(applied.earthquake.originTime).toBe('2024-01-01T16:09:00+09:00')
+    expect(applied.quakeInfoFacts?.originTime).toBe('2024-01-01T16:10:00+09:00')
+    const back = withLatestQuakeFacts(applied, map(), [])
+    expect(back.earthquake.originTime).toBe('2024-01-01T16:10:00+09:00')
   })
 
   // 正: 当てていた長周期が無くなれば（取消）、上段は地震情報の値へ戻り、津波から借りた印も戻る
