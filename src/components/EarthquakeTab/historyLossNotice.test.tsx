@@ -85,6 +85,7 @@ async function renderTab(opts: {
       updateMarks={new Map()}
       activeLpgmEventId={null}
       onToggleLpgm={() => {}}
+      lpgmFocus={null}
       estimatedIntensities={[]}
       internationalTsunamisByQuake={new Map()}
       distributionQuakeKey={null}

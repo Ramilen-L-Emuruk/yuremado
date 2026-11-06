@@ -81,6 +81,8 @@ function regionDescendantKeys(region: IntensityRegionRow): string[] {
 const LPGM_NOTES_KEY = 'lpgm:notes'
 /** 地震情報の「気象庁からの補足」の開閉の鍵（長周期の補足と同じ `expanded` を共有する）。 */
 const QUAKE_NOTES_KEY = 'quake:notes'
+/** 国際津波関連情報（WEPA60）の 1 報の開閉の鍵（同じ `expanded` を共有する）。 */
+const internationalTsunamiFoldKey = (id: string): string => `wepa60:${id}`
 
 /**
  * 区域も都道府県も分からず、長周期の一覧に置けなかった観測点を記録する
@@ -321,7 +323,7 @@ function finitePx(v: string): number {
   return Number.isFinite(n) ? n : 0
 }
 
-/** 一覧の見出しの行の高さ（`--qk-head-h`。`scroll-margin-top` と同じ値を読むので単位を問わない）。 */
+/** 上に貼りついて残る一覧の見出しの行と日付の区切りの高さ（`scroll-margin-top` と同じ値を読むので単位を問わない）。 */
 function listHeadPx(el: HTMLElement): number {
   const card = el.closest<HTMLElement>(`[${QUAKE_CARD_KEY_ATTR}]`)
   return card ? finitePx(getComputedStyle(card).scrollMarginTop) : 0
@@ -548,6 +550,12 @@ interface Props {
   activeLpgmEventId?: string | null
   onToggleLpgm?: (eventId: string) => void
   /**
+   * 長周期地震動の節を見せる求めの番号（求めが無い・このカードの番でなければ 0）。進んだら、開いたカードの
+   * 長周期の節を、長周期の札を押したときと同じ位置へ巻く（2026-11-06 ユーザー選択「長周期の節へ巻く
+   * (Recommended)」「同じく巻く (Recommended)」。長周期地震動観測情報の受信と、長周期の通知を押したとき）。
+   */
+  lpgmFocusSeq: number
+  /**
    * **この地震の**推計震度分布図（引き当て済み。無ければ null）。引き当ては一覧の側で行う
    * （→ `estimatedIntensityFor`）—— 一覧ごと渡すと、別の地震の分布が届くたびに全カードの
    * `memo` が素通りする。
@@ -725,8 +733,9 @@ function QuakeCancelOverlay({ cancelText, compact, fade }: { cancelText?: string
     // 閉じた行は高さが 1 行ぶんしか無いので、縦に 3 段積むと下が切れる。「取消」を左に置き、
     // 文の 2 行を右に積む（2026-11-03 選択「案 A：横に並べる (Recommended)」）。
     // 理由が長くて収まらないときは、右の列の中でスクロールできるようにしておく。
+    // 角は丸めない（開いたカードの覆いと同じ）。行は四角いので、丸めると四隅だけ暗くならずに残る。
     return (
-      <div ref={fade ? fadeOverlayOnMount : undefined} className="absolute inset-0 flex items-center justify-center gap-3 bg-black/70 z-10 rounded-lg px-3">
+      <div ref={fade ? fadeOverlayOnMount : undefined} className="absolute inset-0 flex items-center justify-center gap-3 bg-black/70 z-10 px-3">
         <span className="flex-none font-black text-white" style={{ fontSize: '1.5rem', lineHeight: 1.1 }}>取消</span>
         <div className="flex flex-col min-w-0 max-h-full overflow-y-auto py-1">
           <span className="text-xs font-bold text-white/90">この地震情報は取り消されました</span>
@@ -737,13 +746,14 @@ function QuakeCancelOverlay({ cancelText, compact, fade }: { cancelText?: string
       </div>
     )
   }
+  // 角は丸めない。開いたカードは四角い（角丸を持たない）ので、丸めると四隅 8px だけ暗くならずに残る。
   return (
-    <div ref={fade ? fadeOverlayOnMount : undefined} className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-lg px-4">
+    <div ref={fade ? fadeOverlayOnMount : undefined} className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 px-4">
       <span className="font-black text-white" style={{ fontSize: '3rem', lineHeight: 1.1 }}>取消</span>
       <span className="text-sm font-bold text-white/90 mt-1">この地震情報は取り消されました</span>
-      {/* カードは `overflow-hidden` で、オーバーレイは `absolute inset-0`。**本文が下地の
-          高さを超えると下が切れる**（読み上げは長文を画面へ委ねる設計なので、そこで切れると
-          理由がどこにも残らない）。この要素の中でスクロールできるようにしておく。 */}
+      {/* オーバーレイは `absolute inset-0` でカードの高さに固定される。**本文がそれを超えると
+          覆いの上下へはみ出し、カードの外の行と重なる**（読み上げは長文を画面へ委ねる設計なので、
+          読めなくなると理由がどこにも残らない）。この要素の中でスクロールできるようにしておく。 */}
       {cancelText && (
         <span className="mt-2 text-center text-white/80 overflow-y-auto" style={{ fontSize: '0.75rem', lineHeight: 1.5, whiteSpace: 'pre-line', maxHeight: '40%' }}>
           {cancelText}
@@ -802,7 +812,7 @@ function InternationalTsunamiHeading() {
  * 親で包まず、**地震の鍵をこちら側で作って渡す**（→ {@link Props.onSelect}）。
  */
 export const EarthquakeCard = memo(function EarthquakeCard({
-  quake, isSelected: selected = false, reopenSignal, onSelect, lpgm, activeLpgmEventId, onToggleLpgm,
+  quake, isSelected: selected = false, reopenSignal, onSelect, lpgm, activeLpgmEventId, onToggleLpgm, lpgmFocusSeq,
   estimatedIntensity = null, internationalTsunamis, distributionActive = false, onToggleDistribution,
   unreceivedActive = false, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject,
   marks, lpgmMarks, seismoWaves, seismoWaveFailed, seismoWaveView,
@@ -837,7 +847,7 @@ export const EarthquakeCard = memo(function EarthquakeCard({
     // 行が上半分だけ切れて見え、崩れたように見える（2026-11-03 発言「開いた瞬間崩れる瞬間が一瞬あります。」）
     if (anim && isSelected) {
       for (const child of Array.from(el.children)) {
-        if (child instanceof HTMLElement && !child.matches('.quake-open-head, .quake-pin')) fadeIn(child, CARD_RESIZE_MS)
+        if (child instanceof HTMLElement && !child.matches('.quake-open-head, .quake-pin-track')) fadeIn(child, CARD_RESIZE_MS)
       }
     }
   }, [isSelected])
@@ -846,6 +856,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
   useLayoutEffect(() => { resizeFromRef.current = null })
   const collapseCard = () => {
     resizeFromRef.current = openRootRef.current?.getBoundingClientRect().height ?? null
+    // 畳んだら、長周期の節を見せる求めは済んだことにする（後で開き直したときに古い求めで急に巻かない）
+    lpgmFocusDoneRef.current = lpgmFocusSeq
     setCollapsed(true)
   }
   // 貼りつく帯から畳むと、カードが縮んで畳んだ行が画面の上へ抜けることがある。抜けたら行を一覧の頭へ戻す
@@ -1387,6 +1399,28 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       window.removeEventListener('resize', measure)
     }
   }, [isSelected])
+  // 長周期の節を見せる求め（→ `lpgmFocusSeq`）。巻けるのは、開いていて長周期の節が描かれているときだけ。
+  // まだ巻けない（畳んでいたのを開き直す途中・長周期の電文が先に届いた）なら、巻けるようになった描き直しで巻く。
+  // カードの開く動きが走っている間は、伸び終えてから巻く（途中の高さで測ると着地がずれる。→ useFollowScroll と同じ）
+  const lpgmFocusDoneRef = useRef(0)
+  const lpgmSectionShown = !!lpgm && !lpgm.cancelled
+  useLayoutEffect(() => {
+    const seq = lpgmFocusSeq
+    if (seq === 0 || lpgmFocusDoneRef.current === seq || !isSelected || !lpgmSectionShown) return
+    const section = lpgmSectionRef.current
+    const root = openRootRef.current
+    if (!section || !root) return
+    lpgmFocusDoneRef.current = seq
+    const resizing = root.getAnimations?.().filter(a => a.id === CARD_RESIZE_ANIMATION_ID && a.playState === 'running') ?? []
+    if (resizing.length === 0) {
+      scrollOpenSectionIntoView(section)
+      return
+    }
+    void Promise.all(resizing.map(a => a.finished.catch(() => undefined))).then(() => {
+      // 伸びている間に畳まれた・別の求めが来たなら巻かない
+      if (section.isConnected && lpgmFocusDoneRef.current === seq) scrollOpenSectionIntoView(section)
+    }).catch((err: unknown) => log.warn('[地震タブ] 長周期の節へ巻けなかった', err))
+  }, [lpgmFocusSeq, isSelected, lpgmSectionShown])
   // 一覧に載せるのは、カードに紐づく電文すべて（2026-11-01 選択「紐づく電文のうち最新の発表時刻 (Recommended)」。
   // 地震情報・長周期・国際津波・推計震度分布図・値を借りた津波の電文）。借りた津波は震源と津波の有無で
   // 別の報になりうるので、同じ報（名前と時刻が同じ）は 1 行にまとめる。
@@ -1453,7 +1487,9 @@ export const EarthquakeCard = memo(function EarthquakeCard({
         // 地（押せる所の外）を押すと、地図をこの地震の全体へ寄せ直す（2026-11-03 選択「開いたカードの地を押す
         // (Recommended)」。前の作りでは開いたカード全体が 1 つのボタンで、どこを押しても寄せ直していた）
         onClick={quake.cancelledAt ? undefined : (e) => { if (isPlainBackgroundClick(e)) onSelect?.(eventKey) }}
-        className="quake-open relative border-b border-border bg-card"
+        // `isolate`: 取消の覆い（z-10）と中で貼りつく段をこのカードの中に閉じる。閉じないと、一覧の見出しの行（z-[4]）・
+        // 日付の区切り（z-[3]）と同じ重なりで比べられ、巻いたとき覆いがその上へ被る
+        className="quake-open relative isolate border-b border-border bg-card"
         style={{ padding: '4px var(--qk-pad) 16px', fontSize: 'var(--qk-f)', boxShadow: `inset 3px 0 0 ${tileBg}` }}
       >
         {quake.cancelledAt && <QuakeCancelOverlay cancelText={quake.cancelText} compact={false} fade={fadeCancel} />}
@@ -1670,18 +1706,34 @@ export const EarthquakeCard = memo(function EarthquakeCard({
           </div>
         )}
 
-        {/* 国際津波関連情報（WEPA60）。付加文の下に置き、本文は畳まず出す（2026-11-01 選択
-            「それぞれ自分の欄を持つ (Recommended)」・「国際津波関連情報はいいんじゃない？」に続く選択） */}
+        {/* 国際津波関連情報（WEPA60）。付加文の下に置き（2026-11-01 選択「それぞれ自分の欄を持つ (Recommended)」）、
+            報ごとに見出しの行で開閉する。英文だけのカードでは初めから開き、地震情報のカードでは閉じて置く
+            （2026-11-05 ユーザー発言「遠地地震とかはそれしか無いから開いていいけど、地震情報はほかに情報があるのに
+            押されて見えなくなるので」、選択「英文だけのカードだけ開く」）。鍵が `expanded` にあるのは初めの開き方から
+            押して変えた報 */}
         {internationalTsunamis.length > 0 && (
           <div className="mt-3.5 flex flex-col gap-1.5">
-            {internationalTsunamis.map(x => (
-              <div key={x.id} className="w-full rounded-lg border border-border bg-panel px-3 py-1 text-xs text-secondary roomy:text-sm">
-                <div className="py-1 text-white">
-                  国際津波関連情報（英文）<span className="ml-2 text-secondary">{x.title}</span>
+            {internationalTsunamis.map(x => {
+              const key = internationalTsunamiFoldKey(x.id)
+              const open = expanded.has(key) !== (quake.fromInternationalTsunami === true)
+              return (
+                <div key={x.id} className="w-full rounded-lg border border-border bg-panel px-3 py-1 text-xs text-secondary roomy:text-sm">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={open}
+                    onClick={(e) => { e.stopPropagation(); toggle(key) }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); toggle(key) } }}
+                    className="cursor-pointer py-1 text-white"
+                  >
+                    国際津波関連情報（英文）<span className="ml-2 text-secondary">{x.title}</span> <DisclosureCaret open={open} />
+                  </div>
+                  <Reveal open={open}>{() => (
+                    <pre className="overflow-x-auto whitespace-pre-wrap break-words pb-2 font-mono leading-relaxed">{x.text}</pre>
+                  )}</Reveal>
                 </div>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-words pb-2 font-mono leading-relaxed">{x.text}</pre>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 
@@ -2104,7 +2156,8 @@ export const EarthquakeCard = memo(function EarthquakeCard({
       // 選んでいることは aria-current で伝える（押すと開き直すだけなので、押した状態の札にはしない）
       aria-current={selected ? 'true' : undefined}
       aria-expanded={false}
-      className={`relative block w-full border-b border-border text-left transition-colors ${quake.cancelledAt ? 'cursor-default' : 'cursor-pointer hover:bg-white/5 quake-press-row'}`}
+      // `isolate`: 取消の覆い（z-10）を行の中に閉じる（理由は開いたカードの箱と同じ）
+      className={`relative isolate block w-full border-b border-border text-left transition-colors ${quake.cancelledAt ? 'cursor-default' : 'cursor-pointer hover:bg-white/5 quake-press-row'}`}
       // 選んだまま畳んだ行は、見本 opened.html の選ばれた行（.r.sel）の形で出す
       style={{ padding: '7px var(--qk-pad)', ...(selected ? { backgroundColor: '#16191d', boxShadow: `inset 3px 0 0 ${getIntensityColor(maxScale)}` } : {}) }}
     >

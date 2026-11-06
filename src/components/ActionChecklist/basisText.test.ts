@@ -6,7 +6,7 @@ describe('checklistBasisText', () => {
   it('ホーム地点の周りで判定したときは経路ごとの範囲を言う', () => {
     expect(checklistBasisText('eew', 'near')).toBe('緊急地震速報・ホーム地点の地域の予想')
     expect(checklistBasisText('eew', 'nearDetected')).toBe('緊急地震速報・ホーム地点から 30km 以内で検知')
-    expect(checklistBasisText('kyoshin', 'near')).toBe('強震モニタ・ホーム地点から 30km 以内')
+    expect(checklistBasisText('kyoshin', 'near')).toBe('リアルタイム震度・ホーム地点から 30km 以内')
     expect(checklistBasisText('quake', 'near')).toBe('地震情報・ホーム地点から 30km 以内の観測点')
   })
 
@@ -18,7 +18,7 @@ describe('checklistBasisText', () => {
 
   it('全国基準のときは全国の最大と言う', () => {
     expect(checklistBasisText('eew', 'nationwide')).toBe('緊急地震速報・全国の最大')
-    expect(checklistBasisText('kyoshin', 'nationwide')).toBe('強震モニタ・全国の最大')
+    expect(checklistBasisText('kyoshin', 'nationwide')).toBe('リアルタイム震度・全国の最大')
     expect(checklistBasisText('quake', 'nationwide')).toBe('地震情報・全国の最大')
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { JMAEarthquakeCount, JMAEstimatedIntensity, JMALpgm, JMANankaiCommentary } from '../types/earthquake'
+import type { JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, JMALpgm, JMANankaiCommentary } from '../types/earthquake'
 import { notificationRegionAllowed } from './notificationGate'
 import { planSpecialInfoNotification } from './specialInfoPush'
 
@@ -40,6 +40,26 @@ describe('planSpecialInfoNotification', () => {
     expect(planSpecialInfoNotification({ kind: 'earthquakeCount', data: count }, noName)!.prefectures).toBeNull()
     const ei = { id: 'i', arrivalTime: '2026-01-01T00:00:00+09:00' } as unknown as JMAEstimatedIntensity
     expect(planSpecialInfoNotification({ kind: 'estimatedIntensity', data: ei, isNew: true }, noName)!.prefectures).toBeNull()
+  })
+  it('国際津波関連情報は津波の設定に従い、地域で絞らず、本文は読み上げの文から名乗りを除いたもの', () => {
+    const x = {
+      id: 'w', title: 'TSUNAMI BULLETIN NUMBER 001', time: '2020-12-25T00:03:00.000Z', originTime: '2020-12-24T23:43:00.000Z',
+      isCommunicationsTest: false, text: '', epicenter: { latitude: 13.9, longitude: 120.5 }, magnitude: 6.5, evaluation: 'verySmall',
+    } as JMAInternationalTsunami
+    const plan = planSpecialInfoNotification({ kind: 'internationalTsunami', data: x }, noName)!
+    expect(plan.kind).toBe('tsunami')
+    expect(plan.prefectures).toBeNull()
+    expect(plan.notification.title).toBe('国際津波関連情報')
+    expect(plan.notification.body).toBe('25日8時43分頃、北緯13.9度、東経120.5度で発生したマグニチュード6.5の地震について、被害をもたらす津波の可能性は非常に小さいと発表されました。')
+    expect(plan.notification.open).toEqual({ tab: 'earthquake', wepa60: '2020-12-24T23:43:00.000Z', lat: 13.9, lon: 120.5 })
+    // 結べた地震カードの震源名があれば、それで言う
+    expect(planSpecialInfoNotification({ kind: 'internationalTsunami', data: x, quakeName: 'フィリピン諸島' }, noName)!.notification.body)
+      .toMatch(/^25日8時43分頃、フィリピン諸島で発生した/)
+    // 通信試験も出すが、開き先は持たない
+    const test = { ...x, isCommunicationsTest: true, title: 'NWPTA COMMUNICATIONS TEST', originTime: undefined }
+    const testPlan = planSpecialInfoNotification({ kind: 'internationalTsunami', data: test }, noName)!
+    expect(testPlan.notification.body).toBe('通信試験です。')
+    expect(testPlan.notification.open).toBeNull()
   })
   it('推計震度の時刻は端末の時間帯によらず日本時間で書く', () => {
     const ei = { id: 'i', arrivalTime: '2026-01-01T15:04:00Z' } as unknown as JMAEstimatedIntensity

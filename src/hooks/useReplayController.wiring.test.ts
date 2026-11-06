@@ -264,7 +264,7 @@ describe('useReplayController の start', () => {
     expect(h.current.error).toMatch(/本編/)
     expect(h.current.error).toMatch(/boom/)
     // 電文が取れないことと、強震モニタは続くことの両方を伝える
-    expect(h.current.error).toMatch(/強震モニタの再生は継続/)
+    expect(h.current.error).toMatch(/リアルタイム震度の再生は継続/)
     // 強震モニタは timeOffset だけで過去フレームへ切り替わる別経路なので、DMDATA の
     // アーカイブが読めなくても再生は成立する。戻すと API キーが無い環境で検証できなくなる。
     expect(h.deps.setTimeOffset).toHaveBeenLastCalledWith(expect.any(Number))

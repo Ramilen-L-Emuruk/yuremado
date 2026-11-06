@@ -1,7 +1,7 @@
 import type { LiveEvent, EEWAlert, JMAQuake, JMATsunami, JMANankai, JMANankaiCommentary, JMAKohatsu, JMAEarthquakeCount, JMAQuakeNotice, JMALpgm, IntensityScale, TsunamiGrade, TsunamiArea, EarthquakePoint, DomesticTsunami, DomesticTsunamiCode, TsunamiObservation, TsunamiSourceEarthquake, Hypocenter } from '../types/earthquake'
 import { eewNoForecastReason, canPresentLpgmClass, statesEewLpgmClassZero, type EewMaxScaleInfo } from './eew'
 import { getIntensityLabel, getIntensityLabelWithApproxAbove } from './intensity'
-import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME, TSUNAMI_GRADE_LIFTED, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
+import { tsunamiMaxGrade, groupAreasForCardDisplay, sortAreasForCardDisplay, hasForecastHeight, compareObservedHeightDesc, overSuffixedHeight, evacuationActionLine, fallbackEvacuationAction, expiryNeedsDate, GRADES_IN_CARD_ORDER, TSUNAMI_GRADE_NAME, TSUNAMI_GRADE_LIFTED, TSUNAMI_ALL_LIFTED_SENTENCE, type TsunamiAreaGradeChange, type TideReportChange } from './tsunami'
 import { SENTENCE_END, SENTENCE_END_RE } from './ttsPunctuation'
 import { joinSegments, plain, type SpeechSegment, type SpeechRef, type QuakeFact, type SpokenObservation } from './ttsFollow'
 import { getSubRegionsCache } from './subregions'
@@ -1692,6 +1692,28 @@ function domesticTsunamiSegment(t: DomesticTsunami): SpeechSegment {
 export { DOMESTIC_TSUNAMI_CODE_TEXT }
 
 /**
+ * 読み上げで読む、区分を決める固定付加文の文。**0211 だけ括弧書きを除き、ほかは画面と同じ気象庁の文。**
+ *
+ * 0211 は読み上げでは「津波警報等を発表中です。」と読む（2026-11-05 ユーザー選択「読み上げだけ「津波警報等を発表中です。」 (Recommended)」。
+ * 2026-10-23 の「気象庁の原文を読む」を 0211 の読み上げについてだけ覆した）。括弧書き「（大津波警報・津波警報あるいは
+ * 津波注意報）」は「等」の中身の説明で、声では本題の前に警報の名前が続いてしまう。画面の地震カードは電文の全文のまま
+ * （`domesticTsunamiCardForecastText`）。
+ */
+export const DOMESTIC_TSUNAMI_CODE_SPEECH: Readonly<Record<DomesticTsunamiCode, string>> = {
+  ...DOMESTIC_TSUNAMI_CODE_TEXT,
+  '0211': '津波警報等を発表中です。',
+}
+
+/**
+ * 遠地地震に関する情報の付加文の原文を、読み上げる形にする。**原文の 0211 の文だけを読み上げ用の文へ置き換え**、
+ * ほかの文はそのまま読む（2026-11-05 ユーザー選択「遠地地震も「津波警報等を発表中です。」 (Recommended)」。画面は全文のまま）。
+ * 照合は表の文との完全一致で、文面が一字でも違えば原文のまま読む。
+ */
+function speakableForecast(text: string): string {
+  return text.split(DOMESTIC_TSUNAMI_CODE_TEXT['0211']).join(DOMESTIC_TSUNAMI_CODE_SPEECH['0211'])
+}
+
+/**
  * 津波区分の既読・差分の鍵。**区分とコードの組で作る** —— 区分が同じでもコードが違えば読み上げる文が
  * 違う（0212 と 0213 はどちらも「若干の海面変動」）ので、区分だけで比べると続報で文が変わっても黙る。
  */
@@ -1702,7 +1724,7 @@ export function domesticTsunamiFactValue(t: DomesticTsunami, code: DomesticTsuna
 /**
  * 国内の地震情報の津波の一文。**区分を決めたコードを持てば、そのコードの気象庁の文を読む**
  * （2026-10-23 ユーザー選択「気象庁の原文を読む (Recommended)」、範囲は同日の選択「A: 発表文の内訳に足す (Recommended)」で
- * 津波の文だけにした）。
+ * 津波の文だけにした）。0211 だけは括弧書きを除いた文を読む（→ {@link DOMESTIC_TSUNAMI_CODE_SPEECH}）。
  *
  * 区分から文を起こすと、区分へ丸めたぶん気象庁が書いていないことを言う —— 0230「この地震による日本への
  * 津波の影響はありません。」を 0215 の文で読み、0213・0214 の「注意してください」を「被害の心配はありません」に、
@@ -1714,7 +1736,7 @@ export function domesticTsunamiFactValue(t: DomesticTsunami, code: DomesticTsuna
 function domesticTsunamiSegmentOf(event: JMAQuake): SpeechSegment {
   const { domesticTsunami: t, domesticTsunamiCode: code } = event.earthquake
   return {
-    text: code ? DOMESTIC_TSUNAMI_CODE_TEXT[code] : domesticTsunamiText(t),
+    text: code ? DOMESTIC_TSUNAMI_CODE_SPEECH[code] : domesticTsunamiText(t),
     refs: [{ kind: 'quakeFact', fact: 'domesticTsunami', value: domesticTsunamiFactValue(t, code) }],
   }
 }
@@ -2144,7 +2166,8 @@ function buildEarthquakeSegments(
     // 原文を持たない電文は区分から文を起こし、海外への津波の見通し
     // （`foreignTsunamiText`）があれば続ける。
     // **空白だけの付加文もここで区分側へ倒れる**（{@link endTelegramSentence} が空を返す）。
-    const forecast = endTelegramSentence(event.forecastText)
+    // 原文に 0211 の文があれば、国内の地震情報と同じく括弧書きを除いて読む（{@link speakableForecast}）。
+    const forecast = speakableForecast(endTelegramSentence(event.forecastText))
     const foreign = endTelegramSentence(event.foreignTsunamiText)
     const tail: SpeechSegment[] = forecast
       ? [plain(forecast)]
@@ -3017,11 +3040,8 @@ export function tsunamiAreaGradeChangeToText(changes: readonly TsunamiAreaGradeC
   return joinSegments(tsunamiAreaGradeChangeToSegments(changes))
 }
 
-/**
- * 全区域が解除されたことを告げる文。読み上げと、気象庁の文を持たない解除の報の通知本文が共有する
- * （2026-10-19 ユーザー選択「読み上げと同じ文 (Recommended)」）。
- */
-export const TSUNAMI_ALL_LIFTED_SENTENCE = '津波警報等は全て解除されました。'
+/** 全区域が解除されたことを告げる文（定義は `utils/tsunami.ts`。通知の文面も同じものを読む）。 */
+export { TSUNAMI_ALL_LIFTED_SENTENCE }
 
 /** VTSE41/51/52 津波警報等 全解除の読み上げテキストを cancelReason ごとに生成する。 */
 export function tsunamiCancelToText(cancelReason: JMATsunami['cancelReason'], cancelText?: string): string {
@@ -4882,6 +4902,9 @@ export function telegramTextToSpeak(event: LiveEvent, opts: TtsSpeechOptions): T
     }
     // 推計震度分布図は二進電文で、気象庁が書いた文を運ばない。
     case 'estimatedIntensity':
+      return null
+    // 国際津波関連情報の本文は英文で、日本語の声では読めない（読むのは `internationalTsunamiToText` の要約だけ）
+    case 'internationalTsunami':
       return null
   }
 }

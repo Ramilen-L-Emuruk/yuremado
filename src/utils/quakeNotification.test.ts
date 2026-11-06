@@ -70,7 +70,7 @@ describe('decideQuakeNotification', () => {
   // 正: 震度速報で 1 回目を出す。tag は地震ごとの鍵。
   it('震度速報なら速報の文で出す', () => {
     const r = decide(prompt, 'r1', null)!
-    expect(r.notification).toEqual({ title: '地震情報', body: '震度速報 石川県能登 最大震度5弱', tag: '20260101162200' })
+    expect(r.notification).toEqual({ title: '地震情報', body: '震度速報 石川県能登 最大震度5弱', tag: '20260101162200', open: { tab: 'earthquake', quake: '20260101162200' } })
     expect(r.next).toEqual({ key: '20260101162200', withHypocenter: false, maxScale: 45, reportKeys: ['r1'] })
   })
 
@@ -153,7 +153,7 @@ describe('decideQuakeNotification', () => {
     const first = decide(withHypo, 'r1', null)!
     const raised = makeQuake({ hypoName: '石川県能登地方', maxScale: 55, points: [area('石川県能登', 55)] })
     const r = decide(raised, 'r2', first.next)!
-    expect(r.notification).toEqual({ title: '地震情報', body: '最大震度更新 石川県能登地方 最大震度6弱 M5.2', tag: first.notification.tag })
+    expect(r.notification).toEqual({ title: '地震情報', body: '最大震度更新 石川県能登地方 最大震度6弱 M5.2', tag: first.notification.tag, open: first.notification.open })
     expect(r.next.maxScale).toBe(55)
     // 同じ階級のままの次の報では頭を付けない
     expect(decide(raised, 'r3', r.next)!.notification.body).toBe('石川県能登地方 最大震度6弱 M5.2')
@@ -202,7 +202,7 @@ describe('decideQuakeNotification（遠地地震）', () => {
   // 正: 国内の震度を持たなくても、設定の震度に関係なく出す。本文は詳細震央地名と規模。
   it('震度の閾値に関係なく、遠地地震の文で出す', () => {
     const r = decideQuakeNotification(foreign, ['r1'], null, 50, null)!
-    expect(r.notification).toEqual({ title: '地震情報', body: '遠地地震 メキシコ、チアパス州沿岸 M7.4', tag: '20260101162200' })
+    expect(r.notification).toEqual({ title: '地震情報', body: '遠地地震 メキシコ、チアパス州沿岸 M7.4', tag: '20260101162200', open: { tab: 'earthquake', quake: '20260101162200' } })
   })
 
   // 正: 同じ遠地地震の続報も、新しい報なら出す。対照: 同じ報の重複は出さない。

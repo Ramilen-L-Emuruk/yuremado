@@ -1,6 +1,6 @@
 import type { JMATsunami, TsunamiArea, TsunamiObservation } from '../types/earthquake'
-import { tsunamiMaxGrade, tsunamiLiftText, sortAreasAcrossGradesForCardDisplay, observationHeightText, isObservationMissing } from './tsunami'
-import { TSUNAMI_ALL_LIFTED_SENTENCE } from './ttsText'
+import { OPEN_TSUNAMI, type NotificationOpen } from './notificationOpen'
+import { tsunamiMaxGrade, tsunamiLiftText, sortAreasAcrossGradesForCardDisplay, observationHeightText, isObservationMissing, TSUNAMI_ALL_LIFTED_SENTENCE } from './tsunami'
 
 /** 津波のブラウザ通知に出す中身。`showBrowserNotification` の引数へそのまま渡す。 */
 export interface TsunamiNotification {
@@ -8,10 +8,12 @@ export interface TsunamiNotification {
   readonly body: string
   /** 閉じるまで残すか。 */
   readonly requireInteraction: boolean
+  /** 押したときに開く先（津波タブ。発表・観測・解除・取消・失効のどれも） */
+  readonly open: NotificationOpen
 }
 
 /**
- * 通知が区域を挙げるのに使う材料。受信処理の `tsunamiCardOrderBasis` がそのまま渡る
+ * 通知が区域を挙げるのに使う材料。`tsunamiNotifyTracker.ts` の `tsunamiCardOrderBasis` がそのまま渡る
  * （**カードと同じ材料**。電文の値だけで並べるとカードの並びと食い違う。理由はあちらの宣言箇所）。
  */
 export interface TsunamiNotificationBasis {
@@ -41,7 +43,7 @@ export function joinAreaNamesForNotification(areas: readonly TsunamiArea[]): str
  * 呼び出し側が弾く（`isTsunamiGradeReport`・`isTsunamiObservationOnly`・`cancelled`）。
  *
  * - 見出しは発表中のいちばん高い等級
- * - 1 行目はいま出ている区域を**カードの並び**で（受信処理の `tsunamiCardOrderBasis` が作る材料。電文順＝気象庁の地理順で
+ * - 1 行目はいま出ている区域を**カードの並び**で（`tsunamiNotifyTracker.ts` の `tsunamiCardOrderBasis` が作る材料。電文順＝気象庁の地理順で
  *   切ると、カードの先頭に並ぶ深刻な区域が通知から落ちる）
  * - **この報で解除された区域は「解除：」を頭に付けた別の行に出す**（2026-10-14 ユーザー選択
  *   「解除区域を別の行で出す」。書き方は 2026-10-19 ユーザー選択「「解除：」を頭に付ける
@@ -60,7 +62,7 @@ export function tsunamiIssueNotification(event: JMATsunami, basis: TsunamiNotifi
   if (basis.liftedAreas.length > 0) lines.push(`解除：${joinAreaNamesForNotification(basis.liftedAreas)}`)
   // 等級を読めなかった報（`Unknown`）は残さない。選んだのは「注意報以上を残す」で、読めない等級はそこに入らない
   const requireInteraction = grade === 'MajorWarning' || grade === 'Warning' || grade === 'Watch'
-  return { title, body: lines.join('\n'), requireInteraction }
+  return { title, body: lines.join('\n'), requireInteraction, open: OPEN_TSUNAMI }
 }
 
 /**
@@ -76,6 +78,7 @@ export function tsunamiLiftNotification(event: Pick<JMATsunami, 'bodyText' | 'wa
     title: '津波警報等の解除',
     body: tsunamiLiftText(event) ?? TSUNAMI_ALL_LIFTED_SENTENCE,
     requireInteraction: false,
+    open: OPEN_TSUNAMI,
   }
 }
 
@@ -123,6 +126,7 @@ export function tsunamiObservationNotification(
     title: event.infoName || '津波観測に関する情報',
     body: rest > 0 ? `${shown} ほか ${rest} 地点` : shown,
     requireInteraction: false,
+    open: OPEN_TSUNAMI,
   }
 }
 
@@ -139,10 +143,11 @@ export function tsunamiEndNotification(event: Pick<JMATsunami, 'cancelReason' | 
       title: '津波警報等の取消',
       body: event.cancelText?.trim() || '津波警報等は誤って発表されたため取り消されました。',
       requireInteraction: false,
+      open: OPEN_TSUNAMI,
     }
   }
   if (event.cancelReason === 'expired') {
-    return { title: '津波予報の失効', body: '津波予報は失効しました。', requireInteraction: false }
+    return { title: '津波予報の失効', body: '津波予報は失効しました。', requireInteraction: false, open: OPEN_TSUNAMI }
   }
   return null
 }

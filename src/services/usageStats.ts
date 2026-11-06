@@ -13,6 +13,11 @@
  */
 
 import { log } from '../utils/logger'
+import {
+  encodeUsageSetting, USAGE_NESTED_SETTINGS, USAGE_SETTING_NESTED_SEPARATOR, USAGE_SETTING_SPECS, USAGE_TELEGRAM_BOILERPLATE,
+  USAGE_TELEGRAM_TEXT_BLOCKS, USAGE_TOP_LEVEL_SPECS, type UsageTopLevelSettingName,
+} from '../utils/usageSettings'
+import type { AppSettings } from '../hooks/useSettings'
 import { RELAY_ORIGIN, type RelayTokenStore } from './relayEndpoint'
 
 /**
@@ -23,6 +28,11 @@ type UsageTab = 'earthquake' | 'realtime' | 'tsunami' | 'catalog' | 'telegrams'
 
 /** 一意の識別子を置く鍵 */
 export const USAGE_INSTALL_KEY = 'yuremado-usage-install-id'
+/**
+ * 最後に中継へ送れた設定の全項目の控え（識別子・日本時間の日・値の並び）。同じ日に同じ値なら送らない
+ * （2026-11-05 ユーザー選択「変わったときと 1 日 1 回 (Recommended)」。1 回の札で 108 件書くので、札のたびに送ると書き込みが多すぎる）
+ */
+export const USAGE_PREFS_SENT_KEY = 'yuremado-usage-prefs-sent'
 /** 同意の窓に答えた（または閉じた）印。あれば二度と窓を出さない（2026-11-03 ユーザー選択「二度と出さない (Recommended)」） */
 export const USAGE_CONSENT_ASKED_KEY = 'yuremado-usage-consent-asked'
 
@@ -38,6 +48,8 @@ export interface UsageReport {
   form: string
   lang: string
   settings: { apiKey: boolean; tts: boolean; sound: boolean; notify: boolean; seismo: boolean }
+  /** 設定の窓の全項目を記録の文字列にしたもの（{@link usageSettingValues}。名前と値の決まりは `utils/usageSettings.ts`） */
+  prefs: Record<string, string>
 }
 
 /** 報告に載せる設定。値の中身（鍵・URL）は持たず、使っているかだけ */
@@ -47,6 +59,47 @@ export interface UsageSettingsFlags {
   sound: boolean
   notify: boolean
   seismo: boolean
+}
+
+type Same<A, B> = [Exclude<A, B>, Exclude<B, A>] extends [never, never] ? true : false
+type Assert<T extends true> = T
+/**
+ * 送る項目が設定の全項目と一致していることを型で縛る（設定を足して `utils/usageSettings.ts` へ書き忘れると、ここで型が落ちる）。
+ * 入れ子の 2 つ（気象庁の発表文の区分と定型文）は、中の区分まで揃っていることを見る
+ */
+export type UsageSettingsCoverAll = Assert<Same<keyof AppSettings, UsageTopLevelSettingName | (typeof USAGE_NESTED_SETTINGS)[number]>>
+export type UsageTelegramTextBlocksCoverAll = Assert<Same<keyof AppSettings['ttsTelegramTextBlocks'], keyof typeof USAGE_TELEGRAM_TEXT_BLOCKS>>
+export type UsageTelegramBoilerplateCoverAll = Assert<Same<keyof AppSettings['ttsTelegramBoilerplate'], keyof typeof USAGE_TELEGRAM_BOILERPLATE>>
+type TopSpecs = typeof USAGE_TOP_LEVEL_SPECS
+type ChoiceValues<K extends UsageTopLevelSettingName> = Extract<TopSpecs[K]['rule'], { kind: 'choice' }>['values'][number]
+type ChoiceKeys = { [K in UsageTopLevelSettingName]: TopSpecs[K]['rule'] extends { kind: 'choice' } ? K : never }[UsageTopLevelSettingName]
+/**
+ * 選択肢の項目は、決まりの一覧と設定の型が同じ値の集まりであることを型で縛る（設定に値を足して一覧へ書き忘れると落ちる）。
+ * 型が素の数（震度・長周期の階級）のものは型では見られないので、`usageSettings.test.ts` が設定の読み込みと突き合わせる
+ */
+type ChoiceMismatch = { [K in ChoiceKeys]: number extends AppSettings[K] ? never : Same<AppSettings[K], ChoiceValues<K>> extends true ? never : K }[ChoiceKeys]
+export type UsageChoicesMatch = Assert<Same<ChoiceMismatch, never>>
+
+/**
+ * 設定の窓の全項目を、使用状況データの記録の文字列にする（決まりは `utils/usageSettings.ts`）。
+ * 鍵・接続先・登録した地点は入れているかだけ、通知する地域は選んだ数だけになる。
+ * 決まりに合わない値（設定の読み込みが揃えるので、ふつうは無い）は送らずにログへ残す。`defaults` は接続先が既定のままかを見るのに使う
+ */
+export function usageSettingValues(settings: AppSettings, defaults: AppSettings): Record<string, string> {
+  const pick = (from: AppSettings, name: string): unknown => {
+    const [top, sub] = name.split(USAGE_SETTING_NESTED_SEPARATOR)
+    const v = (from as unknown as Record<string, unknown>)[top]
+    return sub === undefined ? v : (v as Record<string, unknown> | undefined)?.[sub]
+  }
+  const out: Record<string, string> = {}
+  const rejected: string[] = []
+  for (const [name, spec] of Object.entries(USAGE_SETTING_SPECS)) {
+    const v = encodeUsageSetting(spec, pick(settings, name), pick(defaults, name))
+    if (v === null) rejected.push(name)
+    else out[name] = v
+  }
+  if (rejected.length > 0) log.warn('[使用状況] 決まりに合わない設定の値を送らなかった', rejected)
+  return out
 }
 
 /** ブラウザの名乗りから、OS とブラウザの種類を粗く見分ける。分からなければ other（中継も一覧に無い値は other に丸める） */
@@ -103,6 +156,7 @@ export function storedInstallId(storage: Pick<Storage, 'getItem'>): string | nul
 export function syncInstallId(enabled: boolean, storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>): string | null {
   if (!enabled) {
     try { storage.removeItem(USAGE_INSTALL_KEY) } catch (err) { log.warn('[使用状況] 識別子を消せなかった', err) }
+    try { storage.removeItem(USAGE_PREFS_SENT_KEY) } catch (err) { log.warn('[使用状況] 送った設定の控えを消せなかった', err) }
     return null
   }
   const existing = storedInstallId(storage)
@@ -153,11 +207,76 @@ export function markUsageConsentAnswered(): void {
   }
 }
 
+/** 日本時間の日の通し番号（1970-01-01 が 0） */
+export function usageDay(wallMs: number): number {
+  return Math.floor((wallMs + 9 * 3600_000) / 86400_000)
+}
+
+function prefsSignature(prefs: Record<string, string>): string {
+  return Object.keys(prefs).sort().map(k => `${k}=${prefs[k]}`).join('&')
+}
+
+/**
+ * 札に添える設定の全項目。同じ識別子で、同じ日（日本時間）に同じ値を送れていれば空にする（送らない）。
+ * 控えが読めない・保存できない端末では毎回送る（数が多めに書かれるだけで、欠けはしない）
+ */
+export function prefsToSend(install: string, prefs: Record<string, string>, wallMs: number, storage: Pick<Storage, 'getItem'> | null): Record<string, string> {
+  if (storage === null) return prefs
+  try {
+    const raw = storage.getItem(USAGE_PREFS_SENT_KEY)
+    if (raw === null) return prefs
+    const sent = JSON.parse(raw) as { install?: unknown; day?: unknown; sig?: unknown }
+    if (sent.install === install && sent.day === usageDay(wallMs) && sent.sig === prefsSignature(prefs)) return {}
+    return prefs
+  } catch (err) {
+    log.warn('[使用状況] 送った設定の控えを読めなかった（設定を送る）', err)
+    return prefs
+  }
+}
+
+/**
+ * 中継が報告を添えた札を出したら、送れた設定を控える。中継が受け付けた件数（書けた＋決まりに合わず捨てた。`prefsRecorded`）が
+ * 送った件数と揃ったときだけ控える（記録を切ってある・書けなかった・前の版の中継で件数が返らないときは控えず、次の札で送り直す）。
+ * 捨てた項目は送り直しても捨てられるだけなので、揃ったものとして扱う。
+ * 設定を添えていない報告（同じ日に送り済み）は控えを変えない。日は報告を組んだときの日（{@link usageReportDay}）
+ */
+export function markPrefsSent(install: string, report: unknown, prefsRecorded: number | null, day: number, storage: Pick<Storage, 'setItem'> | null): void {
+  const prefs = (report as { prefs?: unknown } | null)?.prefs
+  if (storage === null || typeof prefs !== 'object' || prefs === null) return
+  const count = Object.keys(prefs).length
+  if (count === 0 || prefsRecorded !== count) return
+  try {
+    storage.setItem(USAGE_PREFS_SENT_KEY, JSON.stringify({ install, day, sig: prefsSignature(prefs as Record<string, string>) }))
+  } catch (err) {
+    log.warn('[使用状況] 送った設定の控えを保存できなかった（次の札でも設定を送る）', err)
+  }
+}
+
+/** 報告を組んだときの日（日本時間）。送れたと控えるときにこの日を使う（日をまたいで返った札で、翌日の分を送り済みにしない） */
+const reportDays = new WeakMap<object, number>()
+export function usageReportDay(report: unknown): number | null {
+  return typeof report === 'object' && report !== null ? reportDays.get(report) ?? null : null
+}
+
+/** 札に添える報告を組む（設定の全項目は、同じ日に同じ値を送れていれば空）。組んだ日を覚えておく。`nowMs` はサーバーの時刻 */
+export function buildUsageReportNow(install: string, flags: UsageSettingsFlags, allPrefs: Record<string, string>, env: Parameters<typeof buildUsageReport>[3], nowMs: number): UsageReport {
+  const report = buildUsageReport(install, flags, prefsToSend(install, allPrefs, nowMs, localStorageOrNull()), env)
+  reportDays.set(report, usageDay(nowMs))
+  return report
+}
+
+/** {@link markPrefsSent} を端末の保存領域で呼ぶ（日は報告を組んだときの日。分からなければ控えない） */
+export function markPrefsSentSafely(install: string, report: unknown, prefsRecorded: number | null): void {
+  const day = usageReportDay(report)
+  if (day === null) return
+  markPrefsSent(install, report, prefsRecorded, day, localStorageOrNull())
+}
+
 /** 操作の回数をまとめて送る間隔 */
 export const USAGE_FLUSH_INTERVAL_MS = 30 * 60_000
 
 /** 札に添える報告を組む */
-export function buildUsageReport(install: string, flags: UsageSettingsFlags, env: {
+export function buildUsageReport(install: string, flags: UsageSettingsFlags, prefs: Record<string, string>, env: {
   version: string
   standalone: boolean
   userAgent: string
@@ -170,12 +289,12 @@ export function buildUsageReport(install: string, flags: UsageSettingsFlags, env
   return {
     install, version: env.version, standalone: env.standalone, os, browser,
     form: formFactor(env.screenWidth, env.screenHeight),
-    lang: env.language, settings: { ...flags },
+    lang: env.language, settings: { ...flags }, prefs: { ...prefs },
   }
 }
 
 /** いまの端末の様子（ブラウザの値を読む）。版はビルドが注入した値を呼ぶ側から渡す */
-export function browserUsageEnv(version: string): Parameters<typeof buildUsageReport>[2] {
+export function browserUsageEnv(version: string): Parameters<typeof buildUsageReport>[3] {
   const standalone = window.matchMedia?.('(display-mode: standalone)').matches === true
     || (navigator as Navigator & { standalone?: boolean }).standalone === true
   return {

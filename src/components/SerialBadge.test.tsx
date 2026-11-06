@@ -89,6 +89,7 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
       updateMarks={new Map()}
       activeLpgmEventId={null}
       onToggleLpgm={() => {}}
+      lpgmFocus={null}
       estimatedIntensities={[]}
       internationalTsunamisByQuake={new Map()}
       distributionQuakeKey={null}

@@ -47,7 +47,7 @@ const LIST_COLUMNS = 'var(--qk-tile-w) var(--qk-col-t) 1fr minmax(var(--qk-col-m
 /** 一覧の先頭の列の見出し（見本の .hdr）。 */
 export function QuakeListHeader() {
   return (
-    // 巻いても上に残す（開いたカードの帯・枠はこの下に貼りつく。高さは index.css の --qk-head-h）
+    // 巻いても上に残す（日付の区切りがこの下に、開いたカードの帯・枠はさらにその下に貼りつく。高さは index.css の --qk-head-h）
     <div
       className="sticky top-0 z-[4] grid items-center border-b border-border bg-panel text-[11px] text-secondary"
       style={{ gridTemplateColumns: LIST_COLUMNS, columnGap: 'var(--qk-gap)', padding: '0 var(--qk-pad)', height: 'var(--qk-head-h)' }}
@@ -57,10 +57,15 @@ export function QuakeListHeader() {
   )
 }
 
-/** 日付の区切り（見本の .day）。 */
+/**
+ * 日付の区切り（見本の .day）。巻いても一覧の見出しの行の下に貼りつき、次の日の区切りに押し上げられる
+ * （束ねるのは `EarthquakeTab`。2026-11-05 ユーザー発言「普通にヘッダ(震度 時刻 震央地名 規模 深さ)の下に張り付くイメージ」）。
+ * 高さは `--qk-day-h` で決め打つ（開いたカードの帯・枠はこの下に貼りつくので、高さが分かっていないと重なる）。
+ * 地の色を敷くのは、下を流れる行が透けないようにするため。
+ */
 export function QuakeListDayLabel({ label }: { label: string }) {
   return (
-    <div className="border-b border-border/60 text-secondary" style={{ padding: '8px var(--qk-pad) 3px', fontSize: 'var(--qk-fs)' }}>
+    <div className="sticky z-[3] flex items-end border-b border-border/60 bg-app text-secondary" style={{ top: 'var(--qk-head-h)', height: 'var(--qk-day-h)', padding: '0 var(--qk-pad) 3px', fontSize: 'var(--qk-fs)' }}>
       {label}
     </div>
   )
@@ -69,10 +74,12 @@ export function QuakeListDayLabel({ label }: { label: string }) {
 /**
  * 震度の値（「5強」なら「5」と「強」）。数字はそのままの大きさで、「弱」「強」だけ小さく添える
  * （2026-11-03 選択「B2：縦に伸ばし中身は中央 (Recommended)」。見本の案 B は弱・強を数字の 0.55 倍で添える）。
+ * 揺れ検知の「0未満」の「未満」も同じく 0.55 倍で添える（2026-11-05 ユーザー発言「未満だけ小さくしたら」、続く選択
+ * 「数字の横に 0.55 倍 (Recommended)」）。
  * 値の本体（`data-tile-value`）は 1 つの要素のまま —— 「以上」はこれとは別の要素で添える（→ `maxScaleOrAbove`）。
  */
 export function TileScaleLabel({ label }: { label: string }) {
-  const m = /^(.*?)([弱強])$/.exec(label)
+  const m = /^(.*?)(弱|強|未満)$/.exec(label)
   return (
     <span data-tile-value className="whitespace-nowrap">
       {m ? <>{m[1]}<span style={{ fontSize: '0.55em' }}>{m[2]}</span></> : label}
@@ -183,7 +190,10 @@ export function QuakeListRow({ lpgmTabbable, scale, scaleLabel, orAbove, lpgmCla
         <div className="col-start-2 col-end-6 row-start-2 flex justify-end gap-1.5" style={{ fontSize: 'var(--qk-fs)' }}><span ref={chipsRef} className="contents">{chips}</span></div>
       )}
       <span data-col="time" className="col-start-2 tabular-nums text-secondary" style={{ gridRow: nameRow, fontSize: 'var(--qk-f)' }}>{time}</span>
-      <span ref={nameRef} className="col-start-3 min-w-0 overflow-hidden whitespace-nowrap font-bold text-white" style={{ gridRow: nameRow, fontSize: 'var(--qk-f)' }}>{name}</span>
+      {/* 震央地名。規模と深さを下の段へ下げても欄に入らないときは、1 行のまま末尾を「…」で省き、全文は `title` で
+          持たせる（2026-11-05 ユーザー選択「B 「…」で省く」。全文の出し方とスマホの扱いは docs/quake-tab-redesign.md の表）。
+          省いても `scrollWidth` は全文の幅のままなので、段を下げる判定は変わらない */}
+      <span ref={nameRef} title={name} className="col-start-3 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-bold text-white" style={{ gridRow: nameRow, fontSize: 'var(--qk-f)' }}>{name}</span>
       <span className="flex items-center justify-end gap-1.5 whitespace-nowrap tabular-nums" style={{ gridRow: valueRow, gridColumn: dropValues ? '3 / 5' : '4', fontSize: 'var(--qk-f)' }}>
         {magnitude && <><i className="inline-block h-[1.05em] w-1 rounded-[2px]" style={{ backgroundColor: getMagnitudeColor(magnitude.value) }} />{magnitude.text}</>}
       </span>

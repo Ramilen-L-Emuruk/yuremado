@@ -30,7 +30,7 @@ export interface EvidenceRow {
 }
 
 /**
- * 計測震度 → 震度階級ラベル。震度0 未満は「0以下」、欠測は `—`（`kyoshinIntensity.ts` の
+ * 計測震度 → 震度階級ラベル。震度0 未満は「0未満」、欠測は `—`（`kyoshinIntensity.ts` の
  * `detectionScaleLabelFromValue`）。**0.5 刻みのインデックスへ丸めてから引かない** —— 計測震度 4.4 が「5弱」になる
  */
 function scaleLabel(value: number | null): string {

@@ -8,7 +8,7 @@ import { formatCoordinate, formatMagnitude, hasMagnitude } from '../../utils/for
 import { log } from '../../utils/logger'
 import { reportRenderFailure, clearRenderFailure, clearRenderFailuresFor } from '../../utils/renderHealth'
 import type { CatalogPointCloud } from '../../utils/hypocenterCatalogView'
-import { hypocenterIntensityLabel } from '../../utils/hypocenterCatalog'
+import { hypocenterIntensityLabel, type TelegramPointLabels } from '../../utils/hypocenterCatalog'
 import { escapeHtml } from './gl/popupHtml'
 
 // 長期震源カタログの点群。**深さを持つ点**として地下へ描く（gl/depthPointLayer.ts）。
@@ -84,10 +84,31 @@ function formatCatalogMagnitude(magnitude: number): string {
   return hasMagnitude(magnitude) ? formatMagnitude(magnitude, undefined) : 'M 不明'
 }
 
+/**
+ * 中継の地震情報の電文から作った末尾の点の吹き出し。行の並びはカタログの点と同じで、値は電文の書き方のまま
+ * （時刻は分まで・規模の説明・「700km以上」・「以上」の付いた最大震度・震源決定機関）。
+ * 「地震情報の電文」の行は 2026-11-06 ユーザー選択「「地震情報の電文」 (Recommended)」。
+ */
+function buildTelegramPopupHtml(label: TelegramPointLabels, name: string | null, coord: string): string {
+  return (
+    `<div class="text-sm" style="min-width:170px">` +
+    `<div class="font-bold" style="margin-bottom:4px">${escapeHtml(label.time)}</div>` +
+    `<div class="text-xs" style="color:#94a3b8">地震情報の電文</div>` +
+    (name != null ? `<div class="text-xs">${escapeHtml(name)}</div>` : '') +
+    (label.intensity != null ? `<div class="text-xs">${escapeHtml(label.intensity)}</div>` : '') +
+    `<div class="text-xs" style="color:#94a3b8">${escapeHtml(label.magnitude)} / ${escapeHtml(label.depth)}</div>` +
+    `<div class="text-xs" style="color:#64748b;margin-top:4px">${coord}</div>` +
+    (label.source != null ? `<div class="text-xs" style="color:#64748b;margin-top:4px">${escapeHtml(label.source)}</div>` : '') +
+    `</div>`
+  )
+}
+
 function buildPopupHtml(cloud: CatalogPointCloud, i: number): string {
   const lat = cloud.columns.lat[i]
   const lng = cloud.columns.lng[i]
   const coord = formatCoordinate(lat, lng, 3)
+  const telegram = cloud.telegramLabels.get(i)
+  if (telegram) return buildTelegramPopupHtml(telegram, cloud.names[i], coord)
   // 行の並びは 2026-10-25 ユーザー承認「C の案でよい (Recommended)」・「D の案でよい (Recommended)」。
   // 震央地名と最大震度は、記録が無い地震では行ごと出さない。
   const name = cloud.names[i]

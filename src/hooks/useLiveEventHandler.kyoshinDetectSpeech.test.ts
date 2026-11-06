@@ -64,9 +64,10 @@ async function deliver(h: Handler, event: Parameters<Handler['handleLiveEvent']>
   })
 }
 
-async function speakDetection(h: Handler) {
+/** 検知を予約する。`drop` は声に出す直前の見直し（既定は捨てない） */
+async function speakDetection(h: Handler, drop: () => boolean = () => false) {
   await act(async () => {
-    h.speakKyoshinDetection(DETECT_TEXT, DETECT_DELAY_MS)
+    h.speakKyoshinDetection(DETECT_TEXT, DETECT_DELAY_MS, drop)
     await flushMicrotasks()
   })
 }
@@ -206,13 +207,56 @@ describe('揺れ検知の読み上げと他の読み上げの待ち合わせ', (
   })
 })
 
+// 声に出す直前の見直し（2026-11-05 ユーザー選択「揺れが届いた所だけ読まない (Recommended)」を、読む直前にも当てる）。
+// 検知の予約が速報の新規発報より後に入ると、追い越しの判定には掛からず速報を読み終えた後で読まれる。そこを見直しが拾う。
+//
+//   正     : 速報を読み終えた後、見直しが真なら検知を読まない
+//   正     : 間が明けた時点で見直しが真なら読まない
+//   対照   : 見直しが偽なら、速報を読み終えた後で検知を読む
+describe('揺れ検知の読み上げの、声に出す直前の見直し', () => {
+  it('正: 速報を読み終えた後、見直しが真なら検知を読まない', async () => {
+    const h = setup()
+    await deliver(h, makeEEW())
+    const drop = vi.fn(() => true)
+    await speakDetection(h, drop)
+    await advance(120_000)
+    expect(spokenTexts()[0]).toBe('緊急地震速報、日向灘で地震。')
+    expect(spokenTexts()).not.toContain(DETECT_TEXT)
+    expect(drop).toHaveBeenCalled()
+  })
+
+  it('対照: 見直しが偽なら、速報を読み終えた後で検知を読む', async () => {
+    const h = setup()
+    await deliver(h, makeEEW())
+    await speakDetection(h, () => false)
+    await advance(120_000)
+    const texts = spokenTexts()
+    expect(texts[0]).toBe('緊急地震速報、日向灘で地震。')
+    expect(texts.indexOf(DETECT_TEXT)).toBeGreaterThan(0)
+  })
+
+  it('正: 速報が無くても、間が明けた時点で見直しが真なら読まない', async () => {
+    const h = setup()
+    await speakDetection(h, () => true)
+    await advance(DETECT_DELAY_MS + 2000)
+    expect(spokenTexts()).toEqual([])
+  })
+
+  it('安全弁: 見直しが例外を投げたら、読む側へ倒す', async () => {
+    const h = setup()
+    await speakDetection(h, () => { throw new Error('テスト用の見直しの失敗') })
+    await advance(DETECT_DELAY_MS + 2000)
+    expect(spokenTexts()).toEqual([DETECT_TEXT])
+  })
+})
+
 describe('揺れ検知どうしの重なり', () => {
   it('正: 最初の検知を待っている間に別の地点の検知が来ても、両方が順に読まれる', async () => {
     const h = setup()
     await speakDetection(h)
     await advance(1000)
     await act(async () => {
-      h.speakKyoshinDetection('茨城県南部でも揺れを検知。', DETECT_DELAY_MS)
+      h.speakKyoshinDetection('茨城県南部でも揺れを検知。', DETECT_DELAY_MS, () => false)
       await flushMicrotasks()
     })
     await advance(DETECT_DELAY_MS * 2 + 2000)

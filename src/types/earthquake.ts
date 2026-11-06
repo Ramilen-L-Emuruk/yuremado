@@ -1332,9 +1332,11 @@ export interface EEWForecastChange {
  * - `archive`: 保存しておいた電文から組み立てた報（ローカル履歴アーカイブ）
  * - `test`: 設定の窓のテストボタンが組み立てた報
  *
- * **報番号の数え方も経路で違う。** Yahoo の `reportNum` は予報からの通し番号で、電文の報番号とは
+ * **報番号の数え方も経路で違う。** Yahoo の `reportNum` は予報からの通し番号で、警報の電文（VXSE43）の報番号とは
  * 揃わない（2026-10-16 千島列島の報で、発表時刻 12:40:02 の報が Yahoo 17・警報の電文を配っていた P2PQuake では 1）。
- * 経路をまたいで報番号を比べないこと。比べるなら発表時刻（`issue.time`）を使う。
+ * **予報の電文（VXSE45）の報番号とは揃う**（同じ報の予報の電文は報番号 17。2026-11-05 に控えの束で確かめた）。
+ * 経路をまたいで新旧を比べるなら発表時刻（`issue.time`）を使う。報番号は、同じ秒の報が同じ報かを確かめるときだけ、
+ * 予報の通し番号どうしで比べる（→ `utils/eew.ts` の `isSameReportAsTelegram`）。
  */
 export type EewOrigin = 'dmdata' | 'yahoo' | 'archive' | 'test'
 
@@ -1459,6 +1461,13 @@ export interface EEWAlert {
   severity: 'Unknown' | 'Forecast' | 'Warning'
   cancelled: boolean
   expired?: boolean
+  /**
+   * 強震モニタ（Yahoo）の一覧から、取消の印なしで消えたことで出した自動解除（`diffHypoInfoEvents`）。
+   * 受け口（`useEarthquakes` の `handleEvent`）はその場では当てず、最終報から積む自動解除と同じ待ち行列へ積み直す。
+   * 強震モニタは最終報を出さずに一覧から外すことがある（2026-10-25 11:09 の地震は第 3 報まで `isFinal` が偽のまま外れた）ので、
+   * この報が速報を終わらせる唯一の合図になる場面がある
+   */
+  vanishedFromList?: boolean
   isFinal?: boolean
   cancelledAt?: Date
   /**
@@ -1854,6 +1863,11 @@ export type ExtraLiveEvent =
      */
     isNew: boolean
   }
+  /**
+   * 国際津波関連情報（WEPA60）。一覧へ新しく足せた報だけが流れる（同じ報の 2 度目は流れない）。
+   * 読み上げ・通知・音は受け手の `handleExtraLiveEvent`。
+   */
+  | { kind: 'internationalTsunami'; data: JMAInternationalTsunami }
 
 /**
  * `onLiveEvent` が受け取る電文の全体。**`kind` で判別できる**ので、受け手は絞り込みだけで
@@ -2115,7 +2129,8 @@ export interface JMAQuakeNotice {
  * 国際津波関連情報（WEPA60）。北西太平洋津波情報センター（NWPTAC。気象庁が運営）が各国の機関へ
  * 出す英文の電文で、**XML ではなく平文**で届く。遠地地震に関する情報（VXSE53）と同じ地震について
  * 出るので、遠地地震のカードに原文のまま畳んで添える（2026-10-30 ユーザー選択「受けて英文のまま出す (Recommended)」）。
- * 読み上げ・通知・音は無い。
+ * 受けたら読み上げ・通知・音でも伝える（2026-11-06 ユーザー選択「読み上げ・通知・音をまとめて足す」。読む文は
+ * `utils/internationalTsunamiSpeech.ts`）。
  *
  * 電文の形（実電文 3 通で確かめた）: 1 行目が `WEPA60 RJTD 250003`、2 行目が題名
  * （`TSUNAMI BULLETIN NUMBER 001`・通信試験は `NWPTA COMMUNICATIONS TEST`）、続いて
@@ -2144,7 +2159,24 @@ export interface JMAInternationalTsunami {
   magnitudeType?: 'Mj' | 'Mw'
   /** `FOCAL DEPTH:139KM` の深さ（km）。書かれた報にだけある */
   depthKm?: number
+  /** 題名 `TSUNAMI BULLETIN NUMBER 001` の番号。通信試験には無い */
+  bulletinNumber?: number
+  /**
+   * `EVALUATION` の段落（津波発生の可能性）。仕様で決まった 5 種のどれか（気象庁「配信資料に関する技術情報（地震火山編）
+   * 第522号」別紙1（5））。5 種のどれでもない文は持たない（原文は `text` に残る）
+   */
+  evaluation?: InternationalTsunamiEvaluation
 }
+
+/**
+ * 国際津波関連情報の津波発生の可能性（`EVALUATION`）。電文の文と 1 対 1:
+ * - `oceanWide` — `THERE IS A POSSIBILITY OF A DESTRUCTIVE OCEAN-WIDE TSUNAMI`
+ * - `regional` — `THERE IS A POSSIBILITY OF A DESTRUCTIVE REGIONAL TSUNAMI`
+ * - `localNearEpicenter` — `THERE IS A POSSIBILITY OF A DESTRUCTIVE LOCAL TSUNAMI NEAR THE EPICENTER`
+ * - `verySmall` — `THERE IS A VERY SMALL POSSIBILITY OF A DESTRUCTIVE LOCAL TSUNAMI`
+ * - `none` — `THERE IS NO POSSIBILITY OF A TSUNAMI`
+ */
+export type InternationalTsunamiEvaluation = 'oceanWide' | 'regional' | 'localNearEpicenter' | 'verySmall' | 'none'
 
 /** {@link JMAEarthquakeCount} の 1 区間。 */
 export interface JMAEarthquakeCountItem {

@@ -46,7 +46,7 @@
 }
 
 /* 左右分割時の情報パネル幅（App.tsx が side:/sideNarrow: で使う）。
-   素の 26rem/22rem ではなく画面幅から上限を掛けているのは、UI 倍率（uiScale）が
+   素の 35rem/22rem ではなく画面幅から上限を掛けているのは、UI 倍率（uiScale）が
    ルートの font-size を変える設計のため。倍率を上げると rem 指定のパネルもアイコンナビも
    一緒に伸びるが、左右分割の下限幅（1024px）は CSS px で固定されているので、
    高倍率ではパネル＋ナビの合計が画面幅を超えてナビが画面外へ押し出される。
@@ -56,11 +56,14 @@
 /* 左右分割の幅は 35rem（UI 倍率 1 で 560px）。地震カードの広い組（枠 128px・地名 32px）が
    値を 2 列に並べたまま収まる幅で、26rem（416px）では上の枠が 435px に伸びて値が 1 列に落ちた
    （2026-11-02 ユーザー選択「PC のパネルを広げる」。→ docs/quake-tab-redesign.md）。 */
+/* 境界のつまみで幅を変えたら、App が `--panel-w-side` / `--panel-w-narrow` を置く（PC とスマホ横で別。
+   下限 20rem・地図を 360px 残す上限はその値の中で掛けてある。→ src/utils/panelWidth.ts）。
+   動かしていなければ変数は無く、上の既定の幅のまま。 */
 @utility w-panel {
-  width: min(35rem, calc(100dvw - 4rem));
+  width: min(var(--panel-w-side, 35rem), calc(100dvw - 4rem));
 }
 @utility w-panel-narrow {
-  width: min(22rem, calc(100dvw - 4rem));
+  width: min(var(--panel-w-narrow, 22rem), calc(100dvw - 4rem));
 }
 
 @theme {
@@ -96,6 +99,7 @@
   --qk-band-f: 0.875rem;
   --qk-fact-gap: 0.75rem;
   --qk-head-h: 1.625rem;    /* 一覧の見出しの行（震度・時刻・震央地名…）26px。巻いても上に残る */
+  --qk-day-h: 1.75rem;      /* 日付の区切り 28px。見出しの行の下に貼りつく */
 }
 /* 開いたカードの震度の枠の下端に置く影の受け皿。普段は高さを持たない（影を描くのは貼りついている間だけ。下の @container quake-stick）。
    親（.quake-stick）に gap を持たせると、高さ 0 でもこの子のぶん隙間が増える */
@@ -103,9 +107,9 @@
   display: block;
   height: 0;
 }
-/* 一覧の見出しの行は巻いても上に残るので、カードへ寄せるときはその下へ着地させる（→ useFollowScroll） */
+/* 一覧の見出しの行と日付の区切りは巻いても上に残るので、カードへ寄せるときはその下へ着地させる（→ useFollowScroll） */
 .quake-list [data-quake-key] {
-  scroll-margin-top: var(--qk-head-h);
+  scroll-margin-top: calc(var(--qk-head-h) + var(--qk-day-h));
 }
 @container (min-width: 520px) {
   .quake-list-scope {
@@ -134,13 +138,15 @@
      見出しの段の高さはカードがこの枠自身の --qk-open-head-h に書く */
   .quake-list-scope [data-stick-tall] .quake-open-head {
     position: sticky;
-    top: var(--qk-head-h);
+    top: calc(var(--qk-head-h) + var(--qk-day-h));
     z-index: 2;
   }
+  /* 震度の枠は見出しの段（z 2）の下に描く（z 1）。カードの終わりで枠が押し上げられて見出しの段と重なるとき、
+     同じ z だと DOM で後ろの枠が見出しの段の上へ被さる。日付の区切り（z 3）・一覧の見出しの行（z 4）より下なのは変わらない */
   .quake-list-scope [data-stick-tall] .quake-stick {
     position: sticky;
-    top: calc(var(--qk-head-h) + var(--qk-open-head-h, 0px));
-    z-index: 2;
+    top: calc(var(--qk-head-h) + var(--qk-day-h) + var(--qk-open-head-h, 0px));
+    z-index: 1;
     /* 貼りついている間だけ下端に、狭い組の帯と同じ境の線と影を付ける（2026-11-03 選択「帯と同じ影を付ける (Recommended)」）。
        scroll-state の問い合わせは箱の子にしか効かないので、描くのは子の quake-stick-edge。使えない端末では影が付かないだけ。
        名前を付けた箱なので、名前の無い幅の問い合わせ（@container (min-width: …)）はこれまでどおり一覧の箱を見る */
@@ -155,6 +161,9 @@
       pointer-events: none;
     }
   }
+  /* 帯の受け皿（quake-pin）も消す。受け皿の display を見て「帯ごと隠している」と判断する所がある
+     （QuakeOpenPin・EarthquakeCard の scrollToSection）ので、入れ物（quake-pin-track）だけを消さない */
+  .quake-list-scope [data-stick-tall] .quake-pin-track,
   .quake-list-scope [data-stick-tall] .quake-pin {
     display: none;
   }
@@ -264,12 +273,16 @@ body {
 
 /* ポップアップ（活断層・プレート境界・震源・区域塗り等の maplibregl.Popup）をダークテーマに合わせる。
    MapLibre 既定は白背景のため、コンテンツと吹き出しの色を上書きする。 */
-/* 吹き出しは HTML マーカーより必ず前面に置く。
-   マーカー側は重なり順の制御に z-index を使っており（震度ラベルは 震度値 × INTENSITY_Z(1000) で
-   最大 70000、LPGM ラベルは 階級 × 1000）、ポップアップは既定が z-index:auto。両者は同じ
-   スタッキングコンテキスト（.maplibregl-map 直下）に並ぶため、放置すると吹き出しがラベルの下へ潜る。 */
+/* 吹き出しの重なり順。地図の要素（.maplibregl-map）は重なりの文脈を作らないので、吹き出しの z は
+   地図の器（App.tsx の mapAreaRef）に並ぶ部品と直に比べられる。
+   - 地図の中の物より前に出す: 津波の観測点の印などの HTML マーカー（z 無し）・MapLibre の操作ボタン（z 2）・
+     共有カードの撮影中に被せる静止画（z 5。→ Map/gl/captureMap.ts）
+   - 地図の上に重ねる部品（z-99999。左上の状態・行動チェックリスト・凡例・特別情報の帯）より後ろに置く ——
+     前に出すと、地図の端で開いた吹き出しがそれらを隠す
+   その間で、地図の器の外の物（パネル z-10・境のつまみ z-10／z-20）との前後を変えないよう、99999 のすぐ下にする。
+   画面全体の窓（z-100000）はこれより前に出る（→ src/components/Map/popupLayering.test.ts） */
 .maplibregl-popup {
-  z-index: 100000;
+  z-index: 99998;
 }
 .maplibregl-popup-content {
   background: var(--color-card);

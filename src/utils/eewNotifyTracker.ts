@@ -6,6 +6,7 @@
 // アプリは React の ref に、中継は SQL に持つ。どちらもこの決定どおりに記憶を書き換える。
 
 import type { EEWAlert } from '../types/earthquake'
+import { OPEN_REALTIME, type NotificationOpen } from './notificationOpen'
 import {
   type EewAcceptance, type EndedEew, type EndedEewMatch, type EewNotifiedForecast,
   ACTIVE_EEW_WINDOW_MS, acceptEewReport, calcEEWCancelTime, computeDisplayEEWLevel, computeSingleEEWLevel,
@@ -226,6 +227,8 @@ export interface EewNotice {
   readonly title: string
   readonly body: string
   readonly tag: string
+  /** 押したときに開く先（リアルタイムタブ。取消も同じ） */
+  readonly open: NotificationOpen
 }
 
 /**
@@ -239,10 +242,11 @@ export function eewAnnounceNotice(key: string, event: EEWAlert, forecast: EewNot
     title: level === 2 ? '緊急地震速報 特別警報' : level === 1 ? '緊急地震速報 警報' : eewKindLabel(0),
     body: eewNotificationBody(event.earthquake.hypocenter.name, forecast),
     tag: `eew-${key}`,
+    open: OPEN_REALTIME,
   }
 }
 
 /** 誤報取消の通知。名前は取消の報・覚えた震央地名・消えた地震の最後の報の順に引いたもの（無ければ名前抜きの文） */
 export function eewCancelNotice(key: string, name: string | undefined): EewNotice {
-  return { title: '緊急地震速報 取消', body: eewCancelNotificationBody(name), tag: `eew-cancel-${key}` }
+  return { title: '緊急地震速報 取消', body: eewCancelNotificationBody(name), tag: `eew-cancel-${key}`, open: OPEN_REALTIME }
 }

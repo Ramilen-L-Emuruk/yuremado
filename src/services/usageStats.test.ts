@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRelayTokenStore } from './relayEndpoint'
 import {
   USAGE_INSTALL_KEY, buildUsageReport, classifyUserAgent, countUsage, createUsageCounter, flushUsage, formFactor, setUsageCounting,
-  syncInstallId, usageCounter, withUsageCount,
+  syncInstallId, usageCounter, withUsageCount, prefsToSend, markPrefsSent, USAGE_PREFS_SENT_KEY, usageDay,
 } from './usageStats'
 
 function memoryStorage() {
@@ -66,13 +66,13 @@ describe('syncInstallId', () => {
 
 describe('buildUsageReport', () => {
   it('識別子・版・端末の種類・設定の使い方だけを載せる', () => {
-    const r = buildUsageReport('a'.repeat(32), { apiKey: true, tts: false, sound: true, notify: false, seismo: false }, {
+    const r = buildUsageReport('a'.repeat(32), { apiKey: true, tts: false, sound: true, notify: false, seismo: false }, { soundVolume: '0.5' }, {
       version: '6.2.0', standalone: true, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1',
       maxTouchPoints: 5, screenWidth: 390, screenHeight: 844, language: 'ja',
     })
     expect(r).toEqual({
       install: 'a'.repeat(32), version: '6.2.0', standalone: true, os: 'ios', browser: 'safari', form: 'phone', lang: 'ja',
-      settings: { apiKey: true, tts: false, sound: true, notify: false, seismo: false },
+      settings: { apiKey: true, tts: false, sound: true, notify: false, seismo: false }, prefs: { soundVolume: '0.5' },
     })
   })
 })
@@ -113,7 +113,7 @@ describe('flushUsage', () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ status: 'ok', token: 't1', expiresAt: '2099-01-01T00:00:00Z' })))
     vi.stubGlobal('fetch', fetcher)
     const store = createRelayTokenStore({ origin: 'https://relay.test', wallNowMs: () => Date.parse('2026-11-03T00:00:00Z') })
-    store.setUsage(install, install === null ? null : () => ({ install }))
+    store.setUsage(install, install === null ? null : () => ({ install }), null)
     await store.ensure()
     vi.unstubAllGlobals()
     return store
@@ -174,5 +174,49 @@ describe('flushUsage', () => {
     c.count('test')
     await flushUsage(c, store, (async () => { throw new TypeError('切れた') }) as unknown as typeof fetch)
     expect(c.take()).toEqual({ test: 1 })
+  })
+})
+
+describe('設定の全項目は、変わったときと 1 日 1 回だけ送る', () => {
+  const ID = 'a'.repeat(32)
+  const T = Date.parse('2026-11-05T03:00:00Z') // 日本時間 12:00
+  const prefs = { soundVolume: '0.5', notifyEnabled: '1' }
+  it('正: 送れたあと同じ日に同じ値なら空にする', () => {
+    const s = memoryStorage()
+    expect(prefsToSend(ID, prefs, T, s)).toEqual(prefs)
+    markPrefsSent(ID, { prefs }, 2, usageDay(T), s)
+    expect(prefsToSend(ID, prefs, T + 3 * 3600_000, s)).toEqual({})
+  })
+  it('正: 値が変わった・日本時間の日が替わった・識別子が変わったときは送る', () => {
+    const s = memoryStorage()
+    markPrefsSent(ID, { prefs }, 2, usageDay(T), s)
+    expect(prefsToSend(ID, { ...prefs, soundVolume: '0.6' }, T, s)).toEqual({ ...prefs, soundVolume: '0.6' })
+    expect(prefsToSend(ID, prefs, Date.parse('2026-11-05T15:00:00Z'), s)).toEqual(prefs) // 日本時間 11-06 0:00
+    expect(prefsToSend('b'.repeat(32), prefs, T, s)).toEqual(prefs)
+  })
+  it('対照: 送れていない（札を受け取れなかった）間は、何度でも送る', () => {
+    const s = memoryStorage()
+    expect(prefsToSend(ID, prefs, T, s)).toEqual(prefs)
+    expect(prefsToSend(ID, prefs, T + 60_000, s)).toEqual(prefs)
+  })
+  it('安全弁: 設定を添えていない報告（同じ日に送り済み）は控えを書き換えない。オフにすると控えも消える', () => {
+    const s = memoryStorage()
+    markPrefsSent(ID, { prefs }, 2, usageDay(T), s)
+    markPrefsSent(ID, { prefs: {} }, 0, usageDay(T + 86400_000), s)
+    expect(prefsToSend(ID, prefs, T, s)).toEqual({})
+    syncInstallId(false, s)
+    expect(s.m.has(USAGE_PREFS_SENT_KEY)).toBe(false)
+  })
+  it('対照: 中継が記録できた件数が送った件数と揃わなければ控えない（記録を切ってある・捨てた・前の版の中継）', () => {
+    const s = memoryStorage()
+    markPrefsSent(ID, { prefs }, 1, usageDay(T), s)
+    markPrefsSent(ID, { prefs }, null, usageDay(T), s)
+    markPrefsSent(ID, { prefs }, 0, usageDay(T), s)
+    expect(prefsToSend(ID, prefs, T, s)).toEqual(prefs)
+  })
+  it('安全弁: 控えが壊れていても送る側へ倒す', () => {
+    const s = memoryStorage()
+    s.m.set(USAGE_PREFS_SENT_KEY, '{')
+    expect(prefsToSend(ID, prefs, T, s)).toEqual(prefs)
   })
 })

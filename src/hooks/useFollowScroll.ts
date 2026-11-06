@@ -89,10 +89,15 @@ export function useFollowScroll(
     const rect = target.getBoundingClientRect()
     // 上に貼りつく見出しがあるなら、その下を見える範囲の上端にする（寄せた先が見出しに隠れないように）。
     // 見出しの高さは寄せる相手が `scroll-margin-top` で名乗る（CSS の標準の書き方に合わせる）。
-    const marginTop = parseFloat(getComputedStyle(target).scrollMarginTop) || 0
+    // 下に貼りつくもの（リアルタイムタブの主要動のカウントダウン）は `scroll-margin-bottom` で名乗り、その上を下端にする。
+    const targetStyle = getComputedStyle(target)
+    const marginTop = parseFloat(targetStyle.scrollMarginTop) || 0
+    const marginBottom = parseFloat(targetStyle.scrollMarginBottom) || 0
+    // 下に貼りつくものが枠を埋めるほど高くても、見える範囲を裏返さない（上端より上に下端を置かない）
+    const viewTop = view.top + marginTop
     const next = planFollowScroll({
-      viewTop: view.top + marginTop,
-      viewBottom: view.top + scroller.clientHeight,
+      viewTop,
+      viewBottom: Math.max(viewTop, view.top + scroller.clientHeight - marginBottom),
       currentRects: [{ top: rect.top, bottom: rect.bottom }],
       upcomingRects: [],
       currentScrollTop: scroller.scrollTop,

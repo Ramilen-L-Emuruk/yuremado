@@ -97,6 +97,7 @@ const renderTab = async (lpgm: JMALpgm) => {
     updateMarks={new Map()}
     activeLpgmEventId={null}
     onToggleLpgm={() => {}}
+    lpgmFocus={null}
     estimatedIntensities={[]}
     internationalTsunamisByQuake={new Map()}
     distributionQuakeKey={null}
@@ -138,6 +139,7 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     updateMarks={new Map()}
     activeLpgmEventId={null}
     onToggleLpgm={() => {}}
+    lpgmFocus={null}
     estimatedIntensities={[]}
     internationalTsunamisByQuake={new Map()}
     distributionQuakeKey={null}

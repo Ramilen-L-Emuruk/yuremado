@@ -13,7 +13,7 @@ import { getSpeechClock } from '../../utils/voicevox'
 import { INTERACTION_HOLD_SEC } from '../Map/gl/camera'
 import { log } from '../../utils/logger'
 import { useTsunamiObsCoords } from '../../hooks/useTsunamiObsCoords'
-import { commentsOverlayMaxHeight, canShowCommentsOverlay, bannerStickMode } from './overlayHeight'
+import { commentsOverlayMaxHeight, canShowCommentsEntry, bannerStickMode } from './overlayHeight'
 import { DisclosureCaret, prefersReducedMotion } from '../EarthquakeTab/quakeMotion'
 import { useTsunamiZones } from '../../hooks/useTsunamiZones'
 import { ringsBoundsIndex, EMPTY_BOUNDS_INDEX } from '../../utils/subregions'
@@ -676,7 +676,9 @@ function TsunamiGradeCard({ grade, label, isFirstOfGrade, areas, observations, o
             const markColor = marks.length === 0 ? undefined
               : UPDATE_MARK_COLOR[marks.some(m => m.status === 'new') ? 'new' : 'changed']
             // 区域を読むときの合わせ先はこの見出し（どの等級・どの高さの話かが視野から消えないように）。
-            // 高さの区切りが無い組が先頭に来たときは、等級名だけの見出しがその後ろの区切りの無い組もまとめて受ける。
+            // 高さの無い区域は続く分が 1 つの組に束ねてあり（→ `groupAreasByHeight`）、先頭の組なら等級名だけの見出しを
+            // 立てて、その組を巻く間ずっと貼りつく。高さのある組を挟んだ後ろの高さの無い組は見出しを持たないので、
+            // その区域もこの見出しが受ける。
             const anchored = group.heightLabel ? group.areas : groups.slice(gi).filter(g => !g.heightLabel).flatMap(g => g.areas)
             return (
               <TsunamiGradeHeader
@@ -942,24 +944,41 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   const bannerObserverRef = useRef<ResizeObserver | null>(null)
   const bannerElRef = useRef<HTMLDivElement | null>(null)
   const [bannerHeight, setBannerHeight] = useState(0)
+  // 付加文の入口の行を除いたバナーの高さと、入口の行の高さ（→ `canShowCommentsEntry`）。入口の行の高さは
+  // 消えている間も覚えておく —— 判定は「出したときの高さ」で行うので、消えた途端に 0 へ戻すと揺れが戻る。
+  const [bannerBaseHeight, setBannerBaseHeight] = useState(0)
+  const [commentsEntryHeight, setCommentsEntryHeight] = useState(0)
+  const commentsEntryHeightRef = useRef(0)
 
   const bannerRef = useCallback((el: HTMLDivElement | null) => {
     bannerElRef.current = el
     bannerObserverRef.current?.disconnect()
     bannerObserverRef.current = null
     // 消えたら 0 へ戻す。前の津波の高さが残ると、次の津波の最初の判定が古い高さで決まる
-    if (!el) { setBannerHeight(0); return }
+    if (!el) { setBannerHeight(0); setBannerBaseHeight(0); return }
     // contentRect は padding を含まない content-box。バナーには pt-3 の padding があるため
-    // 実際の占有高さ（border-box）は getBoundingClientRect で測る
-    const observer = new ResizeObserver(() => {
-      setBannerHeight(el.getBoundingClientRect().height)
-    })
-    observer.observe(el)
-    bannerObserverRef.current = observer
+    // 実際の占有高さ（border-box）は getBoundingClientRect で測る。
+    // **入口の行もここで同じ瞬間に測る** —— 別々に見張ると、バナーは入口込み・入口は 0 のような食い違った組が出る。
+    const measure = () => {
+      const height = el.getBoundingClientRect().height
+      const entry = el.querySelector<HTMLElement>('[data-comments-entry]')
+      if (entry) {
+        commentsEntryHeightRef.current = entry.getBoundingClientRect().height + (parseFloat(getComputedStyle(entry).marginTop) || 0)
+      }
+      setBannerHeight(height)
+      setBannerBaseHeight(height - (entry ? commentsEntryHeightRef.current : 0))
+      setCommentsEntryHeight(commentsEntryHeightRef.current)
+    }
+    // 見張りを持たない環境（テストの jsdom）では張らず、下の 1 回だけ測る（リアルタイムタブのカウントダウンと同じ扱い）
+    if (typeof ResizeObserver === 'function') {
+      const observer = new ResizeObserver(measure)
+      observer.observe(el)
+      bannerObserverRef.current = observer
+    }
     // **初期値も同期で入れる**（パネル側と形を揃える）。監視のコールバックだけに任せると、
     // 「津波情報なし」から切り替わった直後の数フレームはバナーが 0 のままで、下の上限が
     // 実際より大きく出る。
-    setBannerHeight(el.getBoundingClientRect().height)
+    measure()
   }, [])
 
   // 今回変更された区域の行DOM（area.code ?? area.name をキーに登録・登録解除される）
@@ -1040,7 +1059,8 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
   const stickyBannerHeight = bannerMode === 'stick' ? bannerHeight : bandHeight
   // **出す場所が無いときも入口にしない。** パネルを縮めるとバナーだけで埋まり、面は
   // 高さ 0 になる。開くと矢印が ▶→▼ に変わるだけで中身は 1 行も見えず、理由も出ない。
-  const canOpenComments = hasCommentsToShow && canShowCommentsOverlay(commentsMaxHeight)
+  // 測るのは入口を出したときの高さ（→ `canShowCommentsEntry`。いまの高さで測ると入口の出し入れで揺れ続ける）。
+  const canOpenComments = hasCommentsToShow && canShowCommentsEntry(panelHeight, bannerBaseHeight, commentsEntryHeight)
 
   const registerRow = useCallback((area: TsunamiArea, isChanged: boolean, isTop: boolean, el: HTMLDivElement | null) => {
     const key = area.code ?? area.name ?? ''
@@ -1561,7 +1581,11 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
             aria-hidden={!bandShown}
             onClick={scrollToBanner}
             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); scrollToBanner() } }}
-            className={`flex items-center gap-2 cursor-pointer transition-transform duration-150 ease-out motion-reduce:transition-none shadow-[0_3px_8px_rgba(0,0,0,.55)]${bandShown ? '' : ' pointer-events-none'}`}
+            // 隠している間は `invisible` も付ける。上へ押し出すだけだと、帯の下の影（下へ 3px＋ぼかし 8px）が
+            // タブの上端に覗く。`visibility` を出し入れの遷移に入れるので、引っ込む動きの間は見えたまま、
+            // 引っ込み終えてから消える。出している間は `visible` を明示しない —— タブは `invisible` の付け外しで
+            // 切り替わるので、明示すると隠れたタブの上に帯だけが残る（地震タブの帯 `QuakeOpenPin` と同じ作り）。
+            className={`flex items-center gap-2 cursor-pointer transition-[transform,visibility] duration-150 ease-out motion-reduce:transition-none shadow-[0_3px_8px_rgba(0,0,0,.55)]${bandShown ? '' : ' invisible pointer-events-none'}`}
             style={{
               padding: '6px var(--qk-pad)',
               background: bannerBand,
@@ -1651,6 +1675,7 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
                 **バナー自身のクリック（地震カードへの移動）へ伝播させない。** */}
             {canOpenComments && (
               <div
+                data-comments-entry
                 role="button"
                 tabIndex={0}
                 aria-expanded={commentsOpen}
@@ -1765,7 +1790,9 @@ export const TsunamiTab = memo(function TsunamiTab({ tsunamis, earthquakes, onEa
         const unmatched = observations.filter(o =>
           !t.areas.some(a => matchesArea(o, a)) && !liftedAreas.some(a => matchesArea(o, a)))
         return (
-          <div key={t.id} className="flex flex-col gap-3 relative">
+          // `isolate`: 取消の覆い（z-10）をこの箱の中に閉じる。閉じないと、巻いたときに上へ貼りつくバナー（z-10）と
+          // そこから開いた補足の面（z-20）より前に出て、覆いが被さる。
+          <div key={t.id} className="flex flex-col gap-3 relative isolate">
             {t.cancelledAt && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-10 rounded-md" style={{ minHeight: '5rem' }}>
                 <span className="font-black text-white" style={{ fontSize: '2.5rem', lineHeight: 1.1 }}>{cancelInfo.badge}</span>

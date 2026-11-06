@@ -17,7 +17,7 @@ React + TypeScript + MapLibre GL JS で構築されています。
 - **地震情報**: 過去の地震カード・観測点別震度・区域塗り・震源マーカーを地図に表示
 - **緊急地震速報（EEW）**: 発報時に予報円・震源・警報区域を表示、気象庁が発表した地域ごとの主要動到達予測をカウントダウン
 - **津波情報**: 大津波警報・警報・注意報・予報を海岸線に色分け、観測情報も併記
-- **リアルタイム震度**: 強震モニタ由来の各地の震度を毎秒更新、震源非依存の揺れ検知エンジン付き
+- **リアルタイム震度**: 各地の震度を毎秒更新、震源非依存の揺れ検知エンジン付き
 - **観測点の波形**: 揺れを検知したときや緊急地震速報の発表中に、震源や揺れを検知した地点の周りにある気象庁の広帯域地震計の波形を地図の下に表示し、その観測点を地図に番号つきの印で示す
 - **通知連携**: 種別ごとの通知音・ブラウザ通知・自動タブ切替・ウィンドウタイトル変更（AutoHotKey 等で監視可能）
 - **行動チェックリスト**: 強い揺れを検知したら、直後にとる行動と避難時に持ち出すものを地図の上に表示（地点を登録するとその周辺で判定）
@@ -27,7 +27,7 @@ React + TypeScript + MapLibre GL JS で構築されています。
 - **震源カタログ**: 1919 年からの地震を点群として立体表示。期間・マグニチュード・深さで絞り込み、深さ・規模・発生年で色分けでき、規模の大きい地震を強調表示できる（点を押すと発生日時・規模・深さを表示）
 - **PWA 対応**: ホーム画面へのインストールとオフラインキャッシュに対応
 - **スマートフォン対応**: 画面の向きに応じた地図と情報の並べ替え、表示中タブの再タップで情報パネルを畳んで地図を全画面表示（縦画面では境界のドラッグで比率も調整可）
-- **VOICEVOX 読み上げ**: ローカル VOICEVOX と連携して情報を音声で読み上げ（任意）
+- **VOICEVOX 読み上げ**: 自分のパソコンで動かした VOICEVOX と連携して情報を音声で読み上げ（任意・準備の手順は [`docs/voicevox-setup.md`](docs/voicevox-setup.md)）
 - **電文ログ**: 受信電文の一覧・生電文コピー・ダウンロード（開発・検証用途）
 - **共有カード**: 表示中の地図を、見出しと出典を添えた 1 枚の画像にして共有・保存（表示中の内容の概要を本文として添えます）
 
@@ -37,7 +37,6 @@ React + TypeScript + MapLibre GL JS で構築されています。
 
 地震・津波などの電文は、開発者が運営する配信サーバー（DMDATA.JP の電文を中継するもの）から、誰でも受け取れます。
 緊急地震速報の予報を見たい方は、ご自身で契約した DMDATA.JP の API キーを設定の窓に入れると、予報だけを DMDATA.JP から直接受け取ります。
-リアルタイム震度は強震モニタ（Yahoo）から受け取ります。詳しくは [`docs/spec/architecture-spec.md`](docs/spec/architecture-spec.md) を参照。
 
 ## セットアップ
 
@@ -77,11 +76,11 @@ npm run preview
 - [`docs/spec/quake-spec.md`](docs/spec/quake-spec.md) — 地震情報
 - [`docs/spec/map-rendering-spec.md`](docs/spec/map-rendering-spec.md) — 地図描画
 - [`docs/spec/audio-tts-spec.md`](docs/spec/audio-tts-spec.md) — 通知音・読み上げ・タイトル連携
-- [`docs/spec/data-sources-spec.md`](docs/spec/data-sources-spec.md) — 配信サーバー（中継）/ DMDATA / Yahoo の統合
+- [`docs/spec/data-sources-spec.md`](docs/spec/data-sources-spec.md) — 配信サーバー（中継）/ DMDATA / リアルタイム震度の統合
 - [`docs/spec/settings-pwa-spec.md`](docs/spec/settings-pwa-spec.md) — 設定・PWA・テストボタン・リプレイ
 - [`docs/spec/action-checklist-spec.md`](docs/spec/action-checklist-spec.md) — 行動チェックリスト
 - [`docs/spec/share-card-spec.md`](docs/spec/share-card-spec.md) — 共有カード
-- [`docs/spec/kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) — 強震モニタ揺れ検知エンジン
+- [`docs/spec/kyoshin-detection-spec.md`](docs/spec/kyoshin-detection-spec.md) — 揺れ検知エンジン
 - [`CLAUDE.md`](CLAUDE.md) — 開発ワークフロー（Claude Code / 人間 共通）
 
 完了済み PoC・移行記録は [`docs/archive/`](docs/archive/) にまとめています。
@@ -96,7 +95,7 @@ npm run preview
 [利用規約](docs/terms-of-service.md)・[プライバシーポリシー](docs/privacy-policy.md)もあわせてご覧ください。
 
 - 本アプリが表示する情報は参考情報です。避難等の判断は気象庁や自治体の公式情報を確認してください。
-- 強震モニタの震度は推定値であり、気象庁発表の震度と異なる場合があります。
+- リアルタイム震度は推定値であり、気象庁発表の震度と異なる場合があります。
 - 緊急地震速報は予測情報のため、実際の揺れと異なる場合があります。
 - 主要動の到達予測は、気象庁が**地域ごと**（都道府県を 3〜4 つに分けた広さ）に発表した値です。同じ地域の中でも場所によって到達時刻は異なります。
 - 地震・津波などの情報は開発者が個人で運営する配信サーバーを通して届くため、サービスの継続性は保証されません。
@@ -111,8 +110,7 @@ MIT License（[LICENSE](LICENSE)）。
 （`npm run build-third-party-licenses` で `package.json` の `dependencies` とその依存先から生成）。
 
 **データ・地図・フォントの出典**:
-- 地震情報・緊急地震速報・津波情報: 気象庁 — 配信は [DMDATA.JP](https://dmdata.jp/)（開発者が運営する配信サーバーが中継。緊急地震速報の予報は API キーを入れた端末が直接受信）。緊急地震速報は強震モニタ（[Yahoo!天気・災害](https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/)）からも受信
-- リアルタイム震度: [防災科学技術研究所 強震モニタ](https://www.kmoni.bosai.go.jp/) — 配信は [Yahoo!天気・災害](https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/) 経由
+- 地震情報・緊急地震速報・津波情報: 気象庁 — 配信は [DMDATA.JP](https://dmdata.jp/)（開発者が運営する配信サーバーが中継。緊急地震速報の予報は API キーを入れた端末が直接受信）
 - 公開観測点の波形: 気象庁（JP 網）— 配信は [EarthScope](https://www.earthscope.org/)（NSF NGF）経由（[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/deed.ja)）
 - 地図データ: 「気象庁 予報区等 GIS データ（都道府県・地震情報／細分区域・津波予報区）」 — GeoJSON 化: [Ichihai1415/JMA-GIS-GeoJSON](https://github.com/Ichihai1415/JMA-GIS-GeoJSON)（CC BY 4.0）
 - 震央地名: 気象庁「地震情報で用いる震央地名」「多言語辞書データ」 — データ整備: [0Quake/JMA_Region](https://github.com/0Quake/JMA_Region)（CC0 1.0）

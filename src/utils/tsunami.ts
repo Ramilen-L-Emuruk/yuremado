@@ -188,6 +188,13 @@ export function isRetractedTsunamiInfoUnit(
 }
 
 /**
+ * 全区域が解除されたことを告げる文。読み上げと、気象庁の文を持たない解除の報の通知本文が共有する
+ * （2026-10-19 ユーザー選択「読み上げと同じ文 (Recommended)」）。ここに置くのは、通知の文面（`tsunamiNotification.ts`）が
+ * 読み上げの文を組む大きなモジュール（`ttsText.ts`）を読まずに済むようにするため（中継へ写す範囲を小さく保つ）。
+ */
+export const TSUNAMI_ALL_LIFTED_SENTENCE = '津波警報等は全て解除されました。'
+
+/**
  * 全区域の解除の報に気象庁が書いた文を、画面に出す 1 つの文字列にする（本文・固定付加文・自由付加文の順に改行で連ねる）。
  *
  * 並びは気象庁の文の読み上げ（`telegramTextToSpeak` の津波の分岐）と同じ。どれも無ければ undefined。
@@ -380,7 +387,7 @@ export function isCancelForCurrentTsunami(cancel: JMATsunami, current: JMATsunam
  * 新報を「表示中の津波の続報」として扱い、前報の区域・観測点を引き継いでよいかを判定する。
  *
  * **カードの状態更新（`useEarthquakes`）と、カードの並びを引く基準の組み立て
- * （`useLiveEventHandler` の `tsunamiCardOrderBasis`）で同じ述語を使うこと。** 前者だけが
+ * （`utils/tsunamiNotifyTracker.ts` の `tsunamiCardOrderBasis`）で同じ述語を使うこと。** 前者だけが
  * 引き継ぎを断ると、その基準を渡す先が「カードに無い観測点」で並べ替えた結果を使うことになる
  * （渡す先の一覧は `tsunamiCardOrderBasis` の宣言箇所。ここで数え上げないのは、経路が増えたときに
  * 取りこぼすため）。逆も同じで、片方だけ緩めれば黙って食い違う。
@@ -1720,13 +1727,17 @@ export function hasForecastHeight(area: TsunamiArea): boolean {
 /**
  * 同一階級内で、予想波高（maxHeight.description）が連続して一致する区域を1グループにまとめる。
  * 電文内の区域順序は維持し、離れた位置にある同じ波高の区域まではまとめない。
+ *
+ * **予想の高さを持たない区域も、続いていれば 1 つの組にする**（2026-11-05 ユーザー選択「高さの無い区域を 1 つの組に
+ * 束ねる (Recommended)」）。カードの等級の見出しは組の中で貼りつくので、1 区域ずつの組だと最初の 1 区域を巻く間しか
+ * 貼りつかない。高さのある区域が間に挟まれば、ほかの高さと同じく分かれる。
  */
 function groupAreasByHeight(areas: TsunamiArea[]): TsunamiHeightGroup[] {
   const groups: { heightLabel: string | null; areas: TsunamiArea[] }[] = []
   for (const area of areas) {
     const label = hasForecastHeight(area) ? area.maxHeight!.description : null
     const last = groups[groups.length - 1]
-    if (label && last && last.heightLabel === label) {
+    if (last && last.heightLabel === label) {
       last.areas.push(area)
     } else {
       groups.push({ heightLabel: label, areas: [area] })
@@ -2070,6 +2081,10 @@ export function splitAreasByKindName(areas: readonly TsunamiArea[]): { label: st
  * カードが描画する区域の並び順を、波高グループの構造を保ったまま返す。
  * カードは波高ごとに見出しを挟むため、平坦化していない形が必要。
  * 電文の名前で分かれる区域（→ `splitAreasByKindName`）は、名前ごとにまとめてから波高で束ねる。
+ *
+ * **予想の高さを持たない組は、観測で並べ替えず電文順のまま返す。** この組は見出しを貼りつけるために束ねたもので
+ * （→ `groupAreasByHeight`）、束ねる前は 1 区域ずつの組だったので並べ替えが起きなかった。ここで並べ替えると、
+ * カードと読み上げの区域の順が束ねる前から変わる（2026-11-05 ユーザー選択の説明「区域の並び・表示は今と同じ」）。
  */
 export function groupAreasForCardDisplay(
   areas: TsunamiArea[],
@@ -2077,7 +2092,7 @@ export function groupAreasForCardDisplay(
 ): TsunamiHeightGroup[] {
   return splitAreasByKindName(areas).flatMap(part => groupAreasByHeight(part.areas).map(group => ({
     ...group,
-    areas: sortAreasByObservation(group.areas, observations),
+    areas: group.heightLabel === null ? group.areas : sortAreasByObservation(group.areas, observations),
   })))
 }
 

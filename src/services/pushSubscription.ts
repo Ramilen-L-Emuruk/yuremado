@@ -1,5 +1,6 @@
 import type { AppSettings } from '../hooks/useSettings'
 import { log } from '../utils/logger'
+import { setPushQuietBinding } from './notifyQuietWhileOpen'
 import { RELAY_ORIGIN, relayTokenStore } from './relayEndpoint'
 
 /**
@@ -125,6 +126,9 @@ export async function subscribePush(
       body: JSON.stringify({ subscription: subscription.toJSON(), prefs: pushPrefsOf(settings) }),
     })
     if (!res.ok) { log.warn(`[push] 中継へ購読を登録できませんでした（${res.status}）`); return 'failed' }
+    // 中継に登録できた購読だけを名乗りに使う（中継は登録済みの購読と突き合わせてから受ける。→ notifyQuietWhileOpen.ts）
+    const auth = subscription.toJSON().keys?.auth
+    setPushQuietBinding(typeof auth === 'string' && auth !== '' ? { endpoint: subscription.endpoint, auth } : null)
     return 'ok'
   } catch (err) {
     log.warn('[push] プッシュ通知を購読できませんでした', err)
@@ -138,6 +142,8 @@ export async function subscribePush(
  * 先に中継へ送る形だと、届かなかったときにブラウザの購読が残り、設定を切っても通知が届き続ける
  */
 export async function unsubscribePush(): Promise<void> {
+  // 外すと決めた時点で名乗りも取り下げる（購読が残っていても、もう尋ねられる理由が無い）
+  setPushQuietBinding(null)
   if (!pushSupported()) return
   let endpoint: string
   try {

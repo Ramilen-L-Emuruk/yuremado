@@ -1,7 +1,7 @@
 // リアルタイムタブの右パネル。地図エリアは JapanMap が強震モニタ（観測点）と
 // 予報円を描画し、ここでは EEW 情報カード・強震モニタ検知(V2)カード・注記を表示する。
 // 震度スケールの凡例は地図へ重ねる `MapLegend` が持つ（同じものを 2 箇所に出さない）。
-import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useFieldFlash, type FieldFlash } from '../../hooks/useFieldFlash'
 import { EEW_FLASH_COLOR, UPDATE_MARK_WASH, EEW_HIGHLIGHT_FADE_MS } from '../../utils/updateMark'
 import type { EEWAlert } from '../../types/earthquake'
@@ -641,6 +641,8 @@ function EEWCard({ eew, visible, speaking, followCancel, noForecastWaited, activ
         border: `2px solid ${cardBorder}`,
         padding: '0 var(--qk-pad) 12px',
         fontSize: 'var(--qk-f)',
+        // 下に貼りついた主要動のカウントダウンの高さを名乗る。寄せる側（`useFollowScroll`）はその上を見える範囲の下端にする
+        scrollMarginBottom: 'var(--rt-sticky-bottom, 0px)',
         // 語っているあいだは区分の色のリングを太く・不透明にし、外側へ同系色の明るいトーン
         // （speakingRingColor）を添える。
         //
@@ -1208,7 +1210,8 @@ function SWaveArrivalCard({ arrival }: { arrival: SWaveArrival }) {
     ...(arrival.rows.some((r) => r.source === 'own') ? ['※推定値。実際の到達時間は異なる場合があります'] : []),
   ]
   // 見出しは「主要動」だけにし、届いたか・何秒後かは下の値の行が伝える（2026-11-04 ユーザー選択「詰めて上へ (Recommended)」。
-  // 速報のカードより上に置くので、高さを 2 行に詰めて速報の枠と時刻を最初の画面に残す）
+  // 高さを 2 行に詰める。置き場所は 2026-11-05 に速報のカードの下・下端に貼りつく形へ変えたので、詰めた高さは
+  // 貼りついている間に速報のカードを隠す量を小さくしている）
   const heading = noForecastOnly
     ? (single && lead.distanceKm !== null ? `震源から ${lead.distanceKm.toFixed(0)} km` : '主要動の到達予測なし')
     : '主要動'
@@ -1272,8 +1275,13 @@ function SWaveArrivalCountdown({ row }: { row: SWaveArrivalRow }) {
 // 反応が収まっている間の段のチップの背景。主張を持たない灰で、白文字とのコントラストは約 7.6:1。
 // 段の色を消しつつラベルは読める濃さを保つ（経緯は KyoshinDetectionSummary 内のコメント）。
 const SETTLED_CHIP_BG = '#4b5563'
-/** 字が詰まる所で「0以下」の代わりに書く語（震度の枠の数字・棒の札。2026-11-04 ユーザー発言「小さい狭いところ全体に適用したいです」） */
-const BELOW_ZERO_SHORT_LABEL = '≦0'
+/**
+ * 震度の棒の札（「5弱」と同じ 2 文字幅にそろえた札）で「0未満」の代わりに書く語。使うのはこの札だけで、最大リアルタイム震度の
+ * 枠の数字は「0未満」と書く（2026-11-05 ユーザー発言「あれ、＜0の表示は狭いところだけって言ったはずなんだけど」、続く選択
+ * 「棒の札だけ (Recommended)」）。語は 2026-11-05 ユーザー選択「「0未満」と「<0」にする (Recommended)」で「≦0」から改めた
+ * —— 「≦0」は「0」の行と並ぶと 0 を含むように読める
+ */
+const BELOW_ZERO_SHORT_LABEL = '<0'
 
 // `border` はチップの背景色として使う。白文字（12px 太字＝WCAG の Large Text 緩和に該当しない）を
 // 載せるため 4.5:1 が要る。confirmed の #ef4444 は 3.76:1・likely の #d97706 は 3.19:1 で足りず、
@@ -1410,7 +1418,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
     .filter(e => e.confidence === topTier)
     .reduce<EnsembleDetection | null>((best, e) => (!best || intensityOf(e) > intensityOf(best) ? e : best), null)
   const summary = primary ? ensembleSummary(primary) : null
-  const heading = '強震モニタ検知'
+  const heading = '揺れ検知'
   const regionCount = events.length
   const earliestMs = events.reduce((m, e) => Math.min(m, e.originTimeMs), Infinity)
   const time = new Date(earliestMs).toLocaleTimeString('ja-JP', { hour12: false })
@@ -1419,8 +1427,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   // 描く点（`drawnKeys`）から用意する）。以前はここでも同じ計算を組み立てていたが、同じ入力から
   // 同じ結果になることに頼ると、片方の実装を変えたときに黙って食い違う。
   // 数える対象は地図が描く点と同じ「値のある点」（欠測は数えない）。震度階級の付く点は階級ごとの行へ、
-  // 震度0 未満の点は一番下の「0以下」の行へ数える（地図の文字なしの印と同じ点。2026-10-29 ユーザー選択
-  // 「棒に「0以下」を足す (Recommended)」）。地図の検知点マーカー（gl/kyoshinDetectedFeatures.ts の
+  // 震度0 未満の点は一番下の「0未満」の行へ数える（地図の文字なしの印と同じ点。2026-10-29 ユーザー選択
+  // 「棒に「0以下」を足す (Recommended)」。呼び名は 2026-11-05 に「0未満」へ改めた）。地図の検知点マーカー（gl/kyoshinDetectedFeatures.ts の
   // buildFeatures）も同じ判定で描き分けており、ここと基準を分けると表示点数が食い違う。
   const counts = new Map<string, { color: string; count: number }>()
   let maxIndex = 0
@@ -1440,6 +1448,8 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   const maxLabel = kyoshinIndexToLabel(maxIndex)
   const groups = LABEL_ORDER.filter(l => counts.has(l)).map(l => ({ label: l, ...counts.get(l)! }))
   const subZeroLabel = kyoshinDetectionScaleLabel(0)
+  // 棒の札「<0」と枠の「0未満」を、ホバーと画面読み上げで伝える語（本文の「震度0未満の反応」と同じ呼び名）
+  const subZeroFullLabel = subZeroLabel ? `震度${subZeroLabel}` : undefined
   if (subZeroCount > 0 && subZeroLabel) groups.push({ label: subZeroLabel, color: KYOSHIN_SUB_ZERO_COLOR, count: subZeroCount })
   const rawMaxCount = groups.reduce((m, g) => Math.max(m, g.count), 1)
   // バー幅のスケール（分母）は、カードが見えている間は**下げない**。瞬間値を分母にすると、
@@ -1498,18 +1508,18 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
   //
   // ただし**確かな段で、加わった点が全員震度0 未満**（欠測を除く）のときは収まったと言わない。組み合わせの検知器は
   // 震度1 に届かない揺れも確かな段にするので、揺れの最中でも震度0以上の点が 1 つも無いことがある。このときは
-  // 最大リアルタイム震度を「0以下」、本文を「N観測点で震度0以下の反応」と出し、色も弱めない
-  // （2026-10-29 ユーザー選択「「震度0以下」で出す (Recommended)」）。検知は最後の報告から `ENSEMBLE_KEEP_MS` 残るので、
+  // 最大リアルタイム震度を「0未満」、本文を「N観測点で震度0未満の反応」と出し、色も弱めない
+  // （2026-10-29 ユーザー選択「「震度0以下」で出す (Recommended)」。呼び名は 2026-11-05 ユーザー選択
+  // 「「0未満」と「<0」にする (Recommended)」で「0未満」へ改めた）。検知は最後の報告（と、震度1 以上の点が残っていた最後の秒）から `ENSEMBLE_KEEP_MS` 残るので、
   // 本当に収まった後の余韻もこの形で出る。数えるのは地図に描いている震度0 未満の印と同じ点（早い段の点・直前の値を
   // 保持して描いている点も含む。2026-10-29 ユーザー選択「地図と同じ点を数える (Recommended)」）。
-  // 早い段だけのときは本文を「収まりました」のままにし、「0以下」の行だけを出す
+  // 早い段だけのときは本文を「収まりました」のままにし、「0未満」の行だけを出す
   // （2026-10-29 ユーザー選択「「0以下」の行を出す (Recommended)」）
   const belowZeroCount = activeCount === 0 && topTier === 'confirmed' ? subZeroCount : 0
   const belowZero = belowZeroCount > 0
   const settled = activeCount === 0 && !belowZero
-  // 字が詰まる所（震度の枠の数字・棒の札）では「0以下」を「≦0」と書く（2026-11-04 ユーザー発言「「0以下」じゃなくて「≦0」とかにしたら」、
-  // 範囲は「小さい狭いところ全体に適用したいです」）。本文・判定の内訳・通知・共有カードの文は「0以下」のまま
-  const maxLabelShown = maxLabel ?? (belowZero ? BELOW_ZERO_SHORT_LABEL : null)
+  // 枠の数字は「0未満」と書く。「<0」と詰めるのは棒の札だけ（→ `BELOW_ZERO_SHORT_LABEL`）
+  const maxLabelShown = maxLabel ?? (belowZero ? subZeroLabel : null)
   const strongestName = settled ? null : strongestRegionName(points, subregions)
 
   return (
@@ -1541,11 +1551,12 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
           <span className="whitespace-nowrap font-semibold text-[length:var(--qk-fs)]" style={{ color: liftForContrast(frameBorder, frameBg) }}>最大リアルタイム震度</span>
           <span
             className="font-black leading-none text-white"
-            title={maxLabel === null && belowZero ? '震度0以下' : undefined}
-            aria-label={maxLabel === null && belowZero ? '震度0以下' : undefined}
+            title={maxLabel === null && belowZero ? subZeroFullLabel : undefined}
+            aria-label={maxLabel === null && belowZero ? subZeroFullLabel : undefined}
             style={{ fontSize: 'calc(var(--qk-big-f) * 0.75 * var(--rt-tw))' }}
           >
-            {maxLabelShown ?? '—'}
+            {/* 地震タブ・緊急地震速報の枠と同じく「弱・強・未満」を 0.55 倍で添える（2026-11-05 ユーザー選択「そろえる (Recommended)」） */}
+            {maxLabelShown === null ? '—' : <TileScaleLabel label={maxLabelShown} />}
           </span>
         </div>
         <div className="flex flex-col gap-1.5 flex-1 min-w-0">
@@ -1554,13 +1565,13 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
             <div className="flex flex-col gap-1">
               {groups.map(g => (
                 <div key={g.label} className="flex items-center gap-2">
-                  {/* 幅は 2 文字の札（「5弱」「≦0」）が縁の内側に収まる幅に揃える（行ごとに幅が違うと棒の左端がずれる）。
-                      震度0 未満の行は「0以下」ではなく「≦0」と書く（→ `BELOW_ZERO_SHORT_LABEL`）。
+                  {/* 幅は 2 文字の札（「5弱」「<0」）が縁の内側に収まる幅に揃える（行ごとに幅が違うと棒の左端がずれる）。
+                      震度0 未満の行は「0未満」ではなく「<0」と書く（→ `BELOW_ZERO_SHORT_LABEL`）。
                       札の形は到達一覧の震度の札と同じ（震度の色の縁・震度の色を 35% 混ぜた地・白い字） */}
                   <span
                     className="box-border text-center text-[length:var(--qk-fs)] font-extrabold leading-tight whitespace-nowrap text-white rounded-[3px] shrink-0"
-                    title={g.label === subZeroLabel ? '震度0以下' : undefined}
-                    aria-label={g.label === subZeroLabel ? '震度0以下' : undefined}
+                    title={g.label === subZeroLabel ? subZeroFullLabel : undefined}
+                    aria-label={g.label === subZeroLabel ? subZeroFullLabel : undefined}
                     style={{ width: 'calc(2.2em + 4px)', border: `2px solid ${g.color}`, background: `color-mix(in srgb, ${g.color} 35%, #141414)` }}
                   >
                     {g.label === subZeroLabel ? BELOW_ZERO_SHORT_LABEL : g.label}
@@ -1588,7 +1599,7 @@ function KyoshinDetectionSummary({ events, points, visible, subregions }: {
             {activeCount > 0
               ? `${activeCount + subZeroCount}観測点で反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
               : belowZero
-                ? `${belowZeroCount}観測点で震度0以下の反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
+                ? `${belowZeroCount}観測点で${subZeroFullLabel ?? ''}の反応${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''} ・ 推定値`
                 : `観測点の反応は収まりました${regionCount >= 2 ? ` ・ ${regionCount}地域` : ''}`}
           </span>
           {/* 段のチップが「どの段か」を示すのに対し、この行は何がその検知を支えたかを示す。確かな段は確定した瞬間の
@@ -1613,13 +1624,27 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
     const ms = eew.cancelledAt?.getTime()
     if (ms !== undefined && ms > latestCancelMs) { latestCancelMs = ms; latestCancelKey = eewEventKey(eew) }
   }
+  // 下に貼りつくカウントダウンの高さ。速報のカードが `scroll-margin-bottom` として名乗り、寄せた先がカウントダウンの
+  // 裏へ潜らないようにする（→ `useFollowScroll`）。カウントダウンは出たり消えたりするので callback ref で見張り直す
+  const [countdownHeight, setCountdownHeight] = useState(0)
+  const countdownObserverRef = useRef<ResizeObserver | null>(null)
+  const countdownRef = useCallback((el: HTMLDivElement | null) => {
+    countdownObserverRef.current?.disconnect()
+    countdownObserverRef.current = null
+    if (!el) { setCountdownHeight(0); return }
+    const measure = () => setCountdownHeight(el.getBoundingClientRect().height)
+    if (typeof ResizeObserver === 'function') {
+      const observer = new ResizeObserver(measure)
+      observer.observe(el)
+      countdownObserverRef.current = observer
+    }
+    measure()
+  }, [])
   return (
     // 文字と寸法は地震タブと同じ 2 組を、パネル自身の幅（520px）で切り替える（→ src/index.css の quake-list）
     <div className="quake-list min-h-full">
-    <div className="quake-list-scope flex flex-col min-h-full p-2 gap-2 @min-[520px]:p-3 @min-[520px]:gap-3 [--rt-k:0.82] [--rt-tw:1.25] @min-[520px]:[--rt-k:1] @min-[520px]:[--rt-tw:1.2] [--rt-tile-w:calc(var(--qk-big)*var(--rt-tw))]">
-      {/* ホーム地点の区域の秒数は、速報のカードより上に置く。到達一覧が伸びても最初の画面に残す
-          （2026-11-04 ユーザー選択「詰めて上へ (Recommended)」） */}
-      {swaveArrival !== null && <SWaveArrivalCard arrival={swaveArrival} />}
+    <div className="quake-list-scope flex flex-col min-h-full p-2 gap-2 @min-[520px]:p-3 @min-[520px]:gap-3 [--rt-k:0.82] [--rt-tw:1.25] @min-[520px]:[--rt-k:1] @min-[520px]:[--rt-tw:1.2] [--rt-tile-w:calc(var(--qk-big)*var(--rt-tw))]"
+      style={{ '--rt-sticky-bottom': `${countdownHeight}px` } as React.CSSProperties}>
       {/* データカード */}
       {[...eews]
         .sort(compareEewNewestFirst)
@@ -1637,6 +1662,15 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
           />
         ))
       }
+      {/* ホーム地点の区域の秒数は、速報のカードの下に置き、巻いて下へ外れたら枠の下端に貼りつける
+          （2026-11-05 ユーザー回答「カウントダウンは下に持ってきて、ほかのタブとは逆に、巻いたら下に貼り付けるようにしたら？
+          EEWは上に大事な情報があるので上を隠したくないです」。2026-11-04 の「詰めて上へ」を置き換える）。
+          上に置くと、読み上げで速報のカードの頭へ寄せたときにカウントダウンが枠の外へ押し出されていた */}
+      {swaveArrival !== null && (
+        <div ref={countdownRef} className="sticky bottom-0 z-10 rounded-md shadow-[0_-3px_8px_rgba(0,0,0,.55)]">
+          <SWaveArrivalCard arrival={swaveArrival} />
+        </div>
+      )}
 
       {/* 強震モニタ検知: 早い段・確かな段を 1 つの揺れとして集約表示する。
           大地震では揺れが複数の束に分かれて検知器が複数の検知を返すため、
@@ -1647,7 +1681,7 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
         return (
           <div className="flex flex-col gap-2">
             <KyoshinDetectionSummary events={events} points={kyoshinDetectedPoints} visible={visible && pageVisible} subregions={subregions} />
-            <p className="text-[length:var(--qk-fs)] text-secondary">※強震モニタによる推定値。気象庁発表とは異なる場合があります。</p>
+            <p className="text-[length:var(--qk-fs)] text-secondary">※リアルタイムの推定値。気象庁発表とは異なる場合があります。</p>
           </div>
         )
       })()}
@@ -1672,8 +1706,7 @@ export const RealtimeTab = memo(function RealtimeTab({ eews, kyoshinV2Detections
         {/* 注記 */}
         <div className="bg-card rounded-md p-3 border border-border">
           <p className="text-secondary text-[length:var(--qk-fs)] leading-relaxed">
-            ※ データ出典: Yahoo!天気・災害 リアルタイム震度（防災科学技術研究所 強震モニタ）。
-            表示される震度はリアルタイムの推定値であり、気象庁が発表する震度とは異なる場合があります。
+            ※ 表示される震度はリアルタイムの推定値であり、気象庁が発表する震度とは異なる場合があります。
           </p>
         </div>
       </div>

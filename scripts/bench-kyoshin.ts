@@ -44,7 +44,7 @@
  * こちらで測る。助走の控えは `<キャッシュ>/warmup/<窓>.json`（件数は `--warmup-dry-run` で数える。静穏でも最低 10 分ぶん遡るので、全 795 窓で最短 47.7 万件）。
  * 助走を付けた測定ではベースラインを更新しない（入れ替えるときに決める）。
  *
- * 無関係な検知は、長期震源カタログ（`public/data/hypocenter/`。無感の地震も入る）とも突き合わせ、
+ * 無関係な検知は、長期震源カタログ（手元の `.cache/hypocenter-catalog/`。無感の地震も入る）とも突き合わせ、
  * どの地震にも当てはまらないもの（ノイズの疑い）の件数を別に出す。
  *
  * ## 窓カタログ
@@ -77,12 +77,14 @@
  *   決め方は `scripts/lib/kyoshinBenchCache.ts`）。環境変数 `KYOSHIN_BENCH_CACHE` で変えられる
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
+import { requireHypocenterCatalogDir } from './lib/hypocenterCatalogDir'
 import { kyoshinBenchCacheDir } from './lib/kyoshinBenchCache'
 import { createEnsembleDetector } from '../src/utils/kyoshinEnsembleDetector'
 import { createEnsembleTracker } from '../src/utils/kyoshinEnsembleTracker'
 import { validateQuietTables, type QuietTables } from '../src/utils/kyoshinQuietTables'
 import { haversineKm } from '../src/utils/geo'
+import { matchCatalog, type CatalogQuake } from './lib/kyoshinCatalogMatch'
 import { WARMUP_BLOCK_SEC, WARMUP_MAX_BLOCKS, firstContinuousIndex, mayStopWarmup } from '../src/utils/kyoshinWarmup'
 
 const CACHE_DIR = kyoshinBenchCacheDir()
@@ -411,37 +413,36 @@ function relatedQuake(e: Pick<Detection, 'epicenter'>, w: WindowSpec, nowMs: num
 }
 
 /**
- * 無関係な検知を、長期震源カタログ（`public/data/hypocenter/<年>.json`。M2.0 以上と M が決まっていない地震・無感も入る）と
+ * 無関係な検知を、長期震源カタログ（手元の `.cache/hypocenter-catalog/<年>.json`。M2.0 以上と M が決まっていない地震・無感も入る）と
  * 突き合わせる。窓の `quakes` は気象庁が震度を発表した地震だけなので、無感の小さな地震による本物の揺れも「無関係」に数えられる。
  * それを分けて数え、どの地震にも当てはまらない検知（ノイズの疑い）を見えるようにする。
  *
- * 当てはまりの条件は、検知が見え始める {@link CATALOG_MATCH_BEFORE_MS} 前〜{@link CATALOG_MATCH_AFTER_MS} 後に発生し、
- * 震央が検知の位置から M に応じた距離（{@link catalogReachKm}）以内にある地震。
+ * 当てはまりの規則は `scripts/lib/kyoshinCatalogMatch.ts`（連続した日を流す評価と共有）。
  */
-const CATALOG_MATCH_BEFORE_MS = 120_000
-const CATALOG_MATCH_AFTER_MS = 10_000
 const JST_OFFSET_MS = 9 * 3_600_000
-function catalogReachKm(mag: number): number {
-  if (!Number.isFinite(mag) || mag < 3) return 100
-  if (mag < 4) return 200
-  if (mag < 5) return 400
-  return 1000
-}
-interface CatalogQuake { t: number; lat: number; lng: number; mag: number }
 const catalogYears = new Map<number, CatalogQuake[] | null>()
 function catalogYear(y: number): CatalogQuake[] | null {
   if (catalogYears.has(y)) return catalogYears.get(y) ?? null
-  const path = `public/data/hypocenter/${y}.json`
+  const dir = requireHypocenterCatalogDir()
+  const path = join(dir, `${y}.json`)
   let list: CatalogQuake[] | null = null
-  if (existsSync(path)) {
+  if (!existsSync(path)) {
+    // 目次にある年のファイルが無いのは手元の写しが欠けている。「照合できない」で流すと、その年の窓の分類が黙って変わる
+    const indexYears = (JSON.parse(readFileSync(join(dir, 'index.json'), 'utf8')) as { years: number[] }).years
+    if (indexYears.includes(y)) throw new Error(`長期震源カタログの ${y} 年のファイルがありません（${path}）。npm run build-hypocenter-catalog で作り直してください`)
+  } else {
     const r = JSON.parse(readFileSync(path, 'utf8')) as {
-      count: number; startMs: number; timeScale: number; coordScale: number; magScale: number
-      t: number[]; lat: number[]; lng: number[]; mag: (number | null)[]
+      count: number; startMs: number; timeScale: number; coordScale: number; magScale: number; depthScale: number
+      t: number[]; lat: number[]; lng: number[]; dep: (number | null)[]; mag: (number | null)[]
     }
     list = []
     for (let i = 0; i < r.count; i++) {
       const m = r.mag[i]
-      list.push({ t: r.startMs + (r.t[i] * 1000) / r.timeScale, lat: r.lat[i] / r.coordScale, lng: r.lng[i] / r.coordScale, mag: m === null ? NaN : m / r.magScale })
+      const d = r.dep[i]
+      list.push({
+        t: r.startMs + (r.t[i] * 1000) / r.timeScale, lat: r.lat[i] / r.coordScale, lng: r.lng[i] / r.coordScale,
+        depth: d === null ? NaN : d / r.depthScale, mag: m === null ? NaN : m / r.magScale,
+      })
     }
   }
   catalogYears.set(y, list)
@@ -453,7 +454,7 @@ function inCatalog(benchMs: number, pos: [number, number] | null): boolean | nul
   const real = benchMs - JST_OFFSET_MS
   const list = catalogYear(new Date(real).getUTCFullYear())
   if (list === null) return null
-  return list.some((q) => q.t >= real - CATALOG_MATCH_BEFORE_MS && q.t <= real + CATALOG_MATCH_AFTER_MS && haversineKm(pos[0], pos[1], q.lat, q.lng) <= catalogReachKm(q.mag))
+  return matchCatalog(real, pos, list) !== null
 }
 
 const stationCoords = JSON.parse(readFileSync('public/data/station-coords.json', 'utf8')) as {

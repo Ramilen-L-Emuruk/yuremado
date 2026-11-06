@@ -85,7 +85,7 @@ export function checklistHeadline(reason: ChecklistReason, scope: ChecklistScope
  */
 const SOURCE_LABEL: Record<ChecklistReason, string> = {
   eew: '緊急地震速報',
-  kyoshin: '強震モニタ',
+  kyoshin: 'リアルタイム震度',
   quake: '地震情報',
 }
 

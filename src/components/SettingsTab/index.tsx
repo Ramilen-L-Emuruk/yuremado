@@ -841,7 +841,7 @@ export function TimeSignalRows({ settings, onUpdate, voicevoxSpeakers }: {
   /** 選べる声。VOICEVOX に繋がっていないときは空（声の行を出さない） */
   voicevoxSpeakers: readonly VoicevoxSpeaker[]
 }) {
-  const selectClass = 'bg-input border border-border rounded-sm px-2 py-1 text-xs text-white'
+  const selectClass = 'bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white'
   const speech = settings.voicevoxEnabled
   return (
     <>
@@ -1583,6 +1583,11 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         </Row>
         {settings.notifyEnabled && (
           <>
+            {/* 名前と説明は 2026-11-05 ユーザー選択「画面に出ている間だけ止める (Recommended)」。止める場所は
+                services/notifyQuietWhileOpen.ts（プッシュ通知は中継が送る前に尋ねる。2026-11-05 選択「受け取りを待って送る (Recommended)」） */}
+            <Row label="アプリを開いている間は通知しない" description="アプリが画面に出ている間は、通知（プッシュ通知を含む）を出しません。画面の表示と、通知音・読み上げはそのままです">
+              <Toggle checked={settings.notifyQuietWhileOpen} onChange={v => onUpdate('notifyQuietWhileOpen', v)} />
+            </Row>
             {/* **種別のトグルは地震情報の通知から独立させる**（2026-10-22 ユーザー選択「3 種を切り離す (Recommended)」。
                 行の文面は 2026-10-24 ユーザー選択「この案でよい (Recommended)」）。入り切りは最低震度と別の値で持つ
                 （切って入れ直しても最低震度を忘れない。2026-10-25 ユーザー承認）。 */}
@@ -1602,7 +1607,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               </Row>
             )}
             {/* ── 種別トグル: テスト系と同じ 揺れ検知 → EEW → 津波 → 南海トラフ の順 ── */}
-            <Row label="揺れ検知通知" description="強震モニタで揺れを検知したときに通知します。推定値のため、通知は多めになります">
+            <Row label="揺れ検知通知" description="揺れを検知したときに通知します。推定値のため、通知は多めになります">
               <Toggle checked={settings.notifyDetection} onChange={v => onUpdate('notifyDetection', v)} />
             </Row>
             <Row label="緊急地震速報の通知" description="緊急地震速報が出たときと、警報・特別警報へ上がったときに通知します">
@@ -1619,23 +1624,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <Row label="通知する地域" description="選んだ都道府県に関わる情報だけを通知します。地震情報は震度を観測した都道府県、緊急地震速報は対象の地域、津波は予報区で見ます。選ばなければ全国の情報を通知します。南海トラフ・後発地震・地震回数など、地域を持たない情報は絞りません">
               <PrefecturePicker value={settings.notifyPrefectures} onChange={v => onUpdate('notifyPrefectures', v)} />
             </Row>
-            {/* プッシュ通知（docs/relay-server-design.md §6.7）。購読を扱えないブラウザ（安全な接続でない・Push API が無い）では出さない。
-                名前と説明は 2026-11-03 ユーザー選択「プッシュ通知」 */}
-            {pushSupported() && (
-              <Row label="プッシュ通知" description="アプリを閉じているときや、ほかのアプリを使っているときも通知を受け取ります。オンにすると、この端末の通知の届け先と通知の設定を配信サーバーに登録します">
-                {/* 入れるときは、押した操作の中で最初に許可を求める（Safari・Firefox は操作から離れた許可の要求を尋ねない）。
-                    許可されなければ入れない */}
-                <Toggle
-                  checked={settings.pushNotifyEnabled}
-                  onChange={v => {
-                    if (!v) { onUpdate('pushNotifyEnabled', false); return }
-                    void requestPushPermission()
-                      .then(ok => { if (ok) onUpdate('pushNotifyEnabled', true) })
-                      .catch((err: unknown) => log.warn('[push] 通知の許可を求められませんでした', err))
-                  }}
-                />
-              </Row>
-            )}
           </>
         )}
         <Row label="通知許可" description="ブラウザの通知権限を確認・許可します">
@@ -1648,6 +1636,28 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
           </Row>
         )}
       </Section>
+
+      {/* プッシュ通知（docs/relay-server-design.md §6.7）は配信サーバーへ届け先を登録する別の仕組みなので、見出しを分ける
+          （2026-11-06 ユーザー選択「プッシュ通知」）。上の種類ごとの通知・地域の絞りがそのまま効くので、
+          通知をまとめて止めている間は見出しごと出さない。購読を扱えないブラウザ（安全な接続でない・Push API が無い）でも出さない。
+          名前と説明は 2026-11-03 ユーザー選択「プッシュ通知」 */}
+      {settings.notifyEnabled && pushSupported() && (
+        <Section category="notification" title="プッシュ通知">
+          <Row label="プッシュ通知" description="アプリを閉じているときや、ほかのアプリを使っているときも通知を受け取ります。オンにすると、この端末の通知の届け先と通知の設定を配信サーバーに登録します">
+            {/* 入れるときは、押した操作の中で最初に許可を求める（Safari・Firefox は操作から離れた許可の要求を尋ねない）。
+                許可されなければ入れない */}
+            <Toggle
+              checked={settings.pushNotifyEnabled}
+              onChange={v => {
+                if (!v) { onUpdate('pushNotifyEnabled', false); return }
+                void requestPushPermission()
+                  .then(ok => { if (ok) onUpdate('pushNotifyEnabled', true) })
+                  .catch((err: unknown) => log.warn('[push] 通知の許可を求められませんでした', err))
+              }}
+            />
+          </Row>
+        </Section>
+      )}
 
       <Section category="sound" title="音と読み上げ">
         <Row label="通知音" description="地震・緊急地震速報・津波の受信時に音を鳴らします">
@@ -1675,6 +1685,46 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </div>
           </Row>
         )}
+        {/* 解説情報は平常時でも毎月1回は必ず届くため、音と読み上げを個別に切れるようにしている。
+            臨時情報（段階の発表）はこの設定に関わらず鳴る。 */}
+        <Row
+          label="解説情報の音・読み上げ"
+          description="南海トラフ地震関連解説情報の通知音と読み上げを行います。この情報は平常時も毎月届きます"
+        >
+          <Toggle
+            checked={settings.nankaiCommentaryAlerts}
+            onChange={v => onUpdate('nankaiCommentaryAlerts', v)}
+          />
+        </Row>
+        <Row
+          label="お知らせの音・読み上げ"
+          description="地震・津波に関するお知らせの通知音と読み上げを行います"
+        >
+          <Toggle
+            checked={settings.quakeNoticeAlerts}
+            onChange={v => onUpdate('quakeNoticeAlerts', v)}
+          />
+        </Row>
+        {/* 文言は 2026-10-31 ユーザー選択「「揺れ検知の読み上げ」 (Recommended)」、説明文の最後の一文は同日「範囲内と書く (Recommended)」。既定はオフ */}
+        <Row
+          label="揺れ検知の読み上げ"
+          description="揺れを検知したとき、最も強く揺れている地域の名前を読み上げます。緊急地震速報の範囲内の揺れは読み上げません"
+        >
+          <Toggle
+            checked={settings.kyoshinDetectSpeech}
+            onChange={v => onUpdate('kyoshinDetectSpeech', v)}
+          />
+        </Row>
+      </Section>
+
+      {/* 時報は地震・津波の音や読み上げとは別の機能なので、見出しを分ける（2026-11-06 ユーザー発言「時報は独立したセクションにしたいです。」、
+          置き場所は選択「音と読み上げのすぐ下」、行の名前は選択「「時報」のまま (Recommended)」） */}
+      <Section category="sound" title="時報">
+        <TimeSignalRows settings={settings} onUpdate={onUpdate} voicevoxSpeakers={voicevoxStatus === 'available' ? voicevoxSpeakers : []} />
+      </Section>
+
+      {/* VOICEVOX の接続と声（2026-11-06 ユーザー選択「VOICEVOX」）。読み上げの入り切りもここに置き、何を読むかの行は上の「音と読み上げ」に残す */}
+      <Section category="sound" title="VOICEVOX">
         {/* 「要：VOICEVOXアプリ起動」は hint に置いて常時見せる。説明文に混ぜて隠すと、
             ON にしたとき「接続状態: 起動していません」だけが見えて原因に辿り着けない。 */}
         <Row
@@ -1694,7 +1744,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                   type="text"
                   value={settings.voicevoxUrl}
                   onChange={e => onUpdate('voicevoxUrl', e.target.value)}
-                  className={`bg-input border rounded-sm px-2 py-1 text-xs text-white w-44 ${
+                  className={`bg-panel border rounded-sm px-2 py-1 text-xs text-white w-44 ${
                     voicevoxStatus === 'invalid' ? 'border-red-500' : 'border-border'
                   }`}
                   spellCheck={false}
@@ -1726,7 +1776,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                   <select
                     value={settings.voicevoxSpeakerId}
                     onChange={e => onUpdate('voicevoxSpeakerId', Number(e.target.value))}
-                    className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+                    className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
                   >
                     {voicevoxSpeakers.flatMap(spk =>
                       spk.styles.map(st => (
@@ -1752,37 +1802,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             )}
           </>
         )}
-        {/* 解説情報は平常時でも毎月1回は必ず届くため、音と読み上げを個別に切れるようにしている。
-            臨時情報（段階の発表）はこの設定に関わらず鳴る。 */}
-        <Row
-          label="解説情報の音・読み上げ"
-          description="南海トラフ地震関連解説情報の通知音と読み上げを行います。この情報は平常時も毎月届きます"
-        >
-          <Toggle
-            checked={settings.nankaiCommentaryAlerts}
-            onChange={v => onUpdate('nankaiCommentaryAlerts', v)}
-          />
-        </Row>
-        <Row
-          label="お知らせの音・読み上げ"
-          description="地震・津波に関するお知らせの通知音と読み上げを行います"
-        >
-          <Toggle
-            checked={settings.quakeNoticeAlerts}
-            onChange={v => onUpdate('quakeNoticeAlerts', v)}
-          />
-        </Row>
-        {/* 文言は 2026-10-31 ユーザー選択「「揺れ検知の読み上げ」 (Recommended)」、説明文の最後の一文は同日「範囲内と書く (Recommended)」。既定はオフ */}
-        <Row
-          label="揺れ検知の読み上げ"
-          description="強震モニタで揺れを検知したとき、最も強く揺れている地域の名前を読み上げます。緊急地震速報の範囲内の揺れは読み上げません"
-        >
-          <Toggle
-            checked={settings.kyoshinDetectSpeech}
-            onChange={v => onUpdate('kyoshinDetectSpeech', v)}
-          />
-        </Row>
-        <TimeSignalRows settings={settings} onUpdate={onUpdate} voicevoxSpeakers={voicevoxStatus === 'available' ? voicevoxSpeakers : []} />
       </Section>
 
       {/* 読み上げの詳しさ。VOICEVOX を有効にしたときだけ出す（無効な端末では何も効かないため）。
@@ -1794,7 +1813,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsIntensityLevels}
               onChange={e => onUpdate('ttsIntensityLevels', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               {/* 最後の選択肢は「すべての階級」。値は階級の段数から導く（数を直接書くと、
                   階級が増減したときに選択肢だけが古い段数のまま残る）。 */}
@@ -1821,7 +1840,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsAlwaysReadLpgmClass}
               onChange={e => onUpdate('ttsAlwaysReadLpgmClass', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               <option value={-1}>階数の設定どおり</option>
               {[0, 1, 2, 3, 4].map(n => (
@@ -1833,7 +1852,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsMaxRegions}
               onChange={e => onUpdate('ttsMaxRegions', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               {[0, 3, 5, 10, 15, 20].map(n => (
                 <option key={n} value={n}>{n === 0 ? '無制限' : `${n}地域`}</option>
@@ -1845,7 +1864,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
               <select
                 value={settings.ttsRegionTolerance}
                 onChange={e => onUpdate('ttsRegionTolerance', Number(e.target.value))}
-                className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+                className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
               >
                 {[0, 1, 2, 3, 5].map(n => (
                   <option key={n} value={n}>{n === 0 ? '許容しない' : `+${n}地域まで`}</option>
@@ -1863,7 +1882,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsUnreceivedDetail}
               onChange={e => onUpdate('ttsUnreceivedDetail', e.target.value as TtsUnreceivedDetail)}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               <option value="stations">地点名</option>
               <option value="areas">区域名</option>
@@ -1874,7 +1893,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <select
               value={settings.ttsMaxObservationPoints}
               onChange={e => onUpdate('ttsMaxObservationPoints', Number(e.target.value))}
-              className="bg-input border border-border rounded-sm px-2 py-1 text-xs text-white"
+              className="bg-panel border border-border rounded-sm px-2 py-1 text-xs text-white"
             >
               {[0, 1, 3, 5, 10, 15, 20].map(n => (
                 <option key={n} value={n}>{n === 0 ? '無制限' : `${n}地点`}</option>
@@ -1961,6 +1980,22 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             ))}
           </select>
         </Row>
+        {/* 2026-10-23 ユーザー選択「やることとして積む (Recommended)」・寸法と文面は 2026-10-24 ユーザー選択 */}
+        {/* 地震・津波に関するお知らせ（運用連絡）。帯と、音・読み上げを別々に切り替える
+            （文言は 2026-10-18 ユーザー承認）。 */}
+        <Row
+          label="お知らせを表示"
+          description="地震・津波に関するお知らせを地図の下に表示します"
+        >
+          <Toggle
+            checked={settings.quakeNoticeBanner}
+            onChange={v => onUpdate('quakeNoticeBanner', v)}
+          />
+        </Row>
+      </Section>
+
+      {/* 地図に重ねるものの入り切り（2026-11-06 ユーザー選択「地図」） */}
+      <Section category="display" title="地図">
         {/* ── 地図レイヤー: 地形 → 明るさ → 地質構造 → 観測データ の順。
             濃さのような従属する項目は、親のトグルがオンのときだけ出す（VOICEVOX の関連設定と同じ） ── */}
         <Row label="海底地形を表示" description="背景の海域に海底地形（陰影）を表示します">
@@ -2049,18 +2084,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             onChange={v => onUpdate('showMapLegend', v)}
           />
         </Row>
-        {/* 2026-10-23 ユーザー選択「やることとして積む (Recommended)」・寸法と文面は 2026-10-24 ユーザー選択 */}
-        {/* 地震・津波に関するお知らせ（運用連絡）。帯と、音・読み上げを別々に切り替える
-            （文言は 2026-10-18 ユーザー承認）。 */}
-        <Row
-          label="お知らせを表示"
-          description="地震・津波に関するお知らせを地図の下に表示します"
-        >
-          <Toggle
-            checked={settings.quakeNoticeBanner}
-            onChange={v => onUpdate('quakeNoticeBanner', v)}
-          />
-        </Row>
       </Section>
 
       <Section category="display" title="震度スケール">
@@ -2124,6 +2147,19 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             <option value={1800}>30分</option>
           </select>
         </Row>
+        <Row label="定期自動リロード" description="毎日午前5時に画面を再起動してメモリを解放します。地震・津波・緊急地震速報の発表中は延期します">
+          <Toggle
+            checked={settings.periodicReloadHours > 0}
+            onChange={v => onUpdate('periodicReloadHours', v ? 1 : 0)}
+          />
+        </Row>
+        <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりません">
+          <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
+        </Row>
+      </Section>
+
+      {/* 行動チェックリスト（→ action-checklist-spec.md）。タブの切り替えとは別の機能なので見出しを分ける（2026-11-06 ユーザー選択「行動チェックリスト」） */}
+      <Section category="behavior" title="行動チェックリスト">
         <Row label="行動チェックリスト" description="強い揺れのときに、とるべき行動と持ち出すものを画面上部に出します。緊急地震速報・リアルタイム震度・地震情報のいずれかで判定します">
           <Toggle
             checked={settings.actionChecklistEnabled}
@@ -2142,15 +2178,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             </div>
           </Row>
         )}
-        <Row label="定期自動リロード" description="毎日午前5時に画面を再起動してメモリを解放します。地震・津波・緊急地震速報の発表中は延期します">
-          <Toggle
-            checked={settings.periodicReloadHours > 0}
-            onChange={v => onUpdate('periodicReloadHours', v ? 1 : 0)}
-          />
-        </Row>
-        <Row label="録画モード" description="画面録画中のコマ落ちを減らします。表示される内容は変わりません">
-          <Toggle checked={settings.recordingMode} onChange={v => onUpdate('recordingMode', v)} />
-        </Row>
       </Section>
 
       <Section category="location" title="ホーム地点">
@@ -2195,7 +2222,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
                 type="text"
                 value={settings.seismoHostUrl}
                 onChange={e => onUpdate('seismoHostUrl', e.target.value)}
-                className={`bg-input border rounded-sm px-2 py-1 text-xs text-white w-44 ${
+                className={`bg-panel border rounded-sm px-2 py-1 text-xs text-white w-44 ${
                   seismoStatus.kind === 'invalid' ? 'border-red-500' : 'border-border'
                 }`}
                 spellCheck={false}
@@ -2325,7 +2352,7 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
             ここでオンにした間だけ送る。文面は 2026-11-03 ユーザー選択「VS Code・Apple の形」 */}
         <Row
           label="使用状況データを送信する"
-          description={'開いたタブ・使っている機能・端末の種類などを送ります。名前・IP アドレス・登録した地点は送りません。' +
+          description={'開いたタブ・使っている機能・設定・端末の種類などを送ります。名前・IP アドレス・登録した地点は送りません。' +
             'オフにすると、この端末の識別子も消えます。'}
         >
           <Toggle checked={settings.usageStatsEnabled} onChange={v => onUpdate('usageStatsEnabled', v)} />
@@ -2346,18 +2373,6 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         ]} />
         <CreditRow label="地震・津波データ" items={[
           <a href="https://dmdata.jp/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>Project DM-D.S.S</a>,
-        ]} />
-        {/* **一次出典と配信経路の両方を出す。** データを作っているのは防災科学技術研究所で、
-            アプリが実際に取得しているのは Yahoo!天気・災害 の配信（`services/kyoshin.ts`）。
-            片方だけだと、出典としては足りないか（配信元を伏せる）、事実と食い違う（作成者を伏せる）。
-            **同じ二段書きにしてあるのは README の出典節**（`docs/spec/data-sources-spec.md` §1 は
-            配信元の呼称を挙げるだけ・§4 は接続先とデータ形式の技術仕様で、この枠組みは持たない）。
-
-            **すぐ上の「地震・津波データ」行と粒度が揃っていないのは意図したもの。** あちらは
-            配信 API（DM-D.S.S）だけを出し、一次出典（気象庁）は README 側で担保している。 */}
-        <CreditRow label="リアルタイム震度" items={[
-          <a href="https://www.kmoni.bosai.go.jp/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>防災科研 強震モニタ</a>,
-          <a href="https://typhoon.yahoo.co.jp/weather/jp/earthquake/kyoshin/" target="_blank" rel="noopener noreferrer" className={CREDIT_LINK_CLASS}>Yahoo!天気・災害</a>,
         ]} />
         {/* 下部の波形に出す公開観測点（気象庁の広帯域地震計・JP 網）。文面は `docs/public-waveform-design.md` §0
             （2026-10-15 ユーザー承認）。EarthScope は運用者がライセンスを宣言していない網を CC BY 4.0 で配るので、
@@ -2579,10 +2594,10 @@ export const SettingsTab = memo(function SettingsTab({ settings, onUpdate, arriv
         <Row label="遠地地震（規模を速報できない報）" description="チリ中部沿岸 M8を超える巨大地震 – earthquakeInfo 音 / 規模が数値で出ない第一報。日本への津波の有無は調査中">
           <TestButton color="purple" onClick={onTest.foreignQuakeHuge}>巨大地震テスト</TestButton>
         </Row>
-        <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに原文の欄が付く。英文そのものには音・読み上げ・通知が無い">
+        <Row label="遠地地震と国際津波関連情報（英文）" description="インドネシア付近 M7.0（実データ）の遠地地震と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、遠地地震のカードに原文の欄が付く。英文が届くと earthquakeInfo 音と通知が出て、日本語で要約を読み上げる">
           <TestButton color="purple" onClick={onTest.foreignQuakeInternationalTsunami}>国際津波関連情報テスト</TestButton>
         </Row>
-        <Row label="国内の地震と英文だけの国際津波関連情報" description="日向灘 M7.1（実データ）の震源・震度情報と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、日向灘の地震カードに原文が付く / 6 秒後に、地震情報の無い地震の英文が届き、一覧に英文だけのカード（国際津波関連情報）が出る。英文そのものには音・読み上げ・通知が無い">
+        <Row label="国内の地震と英文だけの国際津波関連情報" description="日向灘 M7.1（実データ）の震源・震度情報と、同じ地震の国際津波関連情報（英文） – earthquakeInfo 音 / 3 秒後に英文が届き、日向灘の地震カードに原文が付く / 6 秒後に、地震情報の無い地震の英文が届き、一覧に英文だけのカード（国際津波関連情報）が出る / 9 秒後に通信試験の英文が届く。英文が届くと earthquakeInfo 音と通知が出て、日本語で要約を読み上げる">
           <TestButton color="purple" onClick={onTest.internationalTsunamiDomesticAndOnly}>英文だけテスト</TestButton>
         </Row>
         <Row label="見出しにだけある市町村" description="2024-01-01 佐渡付近の震源・震度に関する情報（実データ）で、輪島市が見出しにだけ載っている形 – earthquakeInfo 音 / 震度一覧の石川県能登の下に輪島市（震度3）が並ぶ。この市町村には観測点の行が無い">

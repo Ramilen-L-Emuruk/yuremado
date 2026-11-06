@@ -64,3 +64,19 @@ export function commentsOverlayMaxHeight(panelHeight: number, bannerHeight: numb
 export function canShowCommentsOverlay(maxHeight: number | undefined): boolean {
   return maxHeight === undefined || maxHeight >= COMMENTS_MIN_HEIGHT
 }
+
+/**
+ * 付加文の入口（バナーの中の「気象庁からの補足 ▸」の行）を出してよいか。
+ *
+ * **入口を出したときのバナーの高さで測る。** 入口の行はバナーの中にあるので、出すとバナーが伸び、面の居場所が
+ * 減る。いま測れたバナーの高さ（入口を出しているかで変わる）で決めると、「余りが足りないので消す → バナーが
+ * 縮んで余りが足りる → 出す → また足りない」を毎フレーム繰り返し、バナーと一覧が上下に揺れ続ける
+ * （幅 390×844 でパネル 380px・バナー 343px／307px の間を行き来した）。入口を除いた高さに入口の高さを足して
+ * 測れば、出しても消しても判定の入力が変わらない。
+ *
+ * @param bannerBaseHeight 入口の行を除いたバナーの高さ
+ * @param entryHeight 入口の行の高さ（上の余白を含む）。まだ一度も描いていなければ 0
+ */
+export function canShowCommentsEntry(panelHeight: number, bannerBaseHeight: number, entryHeight: number): boolean {
+  return canShowCommentsOverlay(commentsOverlayMaxHeight(panelHeight, bannerBaseHeight + entryHeight))
+}

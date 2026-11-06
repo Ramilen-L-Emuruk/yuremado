@@ -121,10 +121,11 @@ describe('主要動の到達カード: 自前計算の行と発表値の行が�
   })
 })
 
-// 置き場所: 緊急地震速報のカードより上（2026-11-04 ユーザー選択「詰めて上へ (Recommended)」）。
-// 到達一覧が伸びても、ホーム地点の区域の秒数を最初の画面に残すため
+// 置き場所: 緊急地震速報のカードの下で、巻いて外れたら下端に貼りつく（2026-11-05 ユーザー回答「カウントダウンは下に
+// 持ってきて、ほかのタブとは逆に、巻いたら下に貼り付けるようにしたら？」。2026-11-04 の「詰めて上へ」を覆した）。
+// 上に置くと、読み上げで速報のカードの頭へ寄せたときにカウントダウンが枠の外へ押し出されていた
 describe('主要動の到達カード: 置き場所', () => {
-  it('緊急地震速報のカードより前に描く', () => {
+  it('緊急地震速報のカードより後に描き、下端に貼りつく箱に入れる（上に置いていた形を覆した）', () => {
     const arrival: SWaveArrival = { source: 'telegram', areaName: '石川県能登', rows: [row({ key: 'near', distanceKm: 40, etaSec: 23 })] }
     const eew = {
       kind: 'eew', origin: 'dmdata', id: 'test-eew', time: '2026-01-01T12:00:00Z', test: false,
@@ -136,6 +137,22 @@ describe('主要動の到達カード: 置き場所', () => {
     )
     const countdown = screen.getByText('主要動')
     const eewHeading = screen.getByText('能登半島沖')
-    expect(countdown.compareDocumentPosition(eewHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(countdown.compareDocumentPosition(eewHeading) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
+    expect(countdown.closest('.sticky.bottom-0')).not.toBeNull()
+  })
+
+  // 対照: 速報のカードは、貼りついたカウントダウンの高さを `scroll-margin-bottom` で名乗る（寄せた先が裏へ潜らないように）
+  it('速報のカードが下に貼りついたものの高さを名乗る', () => {
+    const arrival: SWaveArrival = { source: 'telegram', areaName: '石川県能登', rows: [row({ key: 'near', distanceKm: 40, etaSec: 23 })] }
+    const eew = {
+      kind: 'eew', origin: 'dmdata', id: 'test-eew', time: '2026-01-01T12:00:00Z', test: false,
+      earthquake: { originTime: '2026-01-01T12:00:00Z', condition: '', hypocenter: { name: '能登半島沖', latitude: 37.5, longitude: 137.2, depth: 10, magnitude: 6.5 } },
+      severity: 'Warning', cancelled: false, forecastMaxScale: 50,
+    } as EEWAlert
+    render(
+      <RealtimeTab eewNoForecastSettledKeys={new Set()} eews={[eew]} swaveArrival={arrival} kyoshinV2Detections={[]} kyoshinDetectedPoints={[]} visible />,
+    )
+    const card = screen.getByText('能登半島沖').closest<HTMLElement>('.bg-card.rounded-md.overflow-hidden.relative')
+    expect(card?.style.scrollMarginBottom).toBe('var(--rt-sticky-bottom, 0px)')
   })
 })

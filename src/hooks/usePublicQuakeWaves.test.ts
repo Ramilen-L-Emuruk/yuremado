@@ -83,10 +83,17 @@ function quake(id: string, time: string, maxScale: number, lat = 35.5, lon = 139
   } as unknown as JMAQuake
 }
 
-function recordsFor(codes: readonly string[]): Uint8Array {
+/**
+ * 観測点ごとに 3 成分のレコード（10 秒）を組む。既定の始まりは 2026-10-13 11:44:29 UTC（20:44:29 JST）。
+ * `hms` を並べると、その時刻（UTC）に始まるレコードを観測点ごとに並べる。
+ */
+function recordsFor(codes: readonly string[], hms: readonly (readonly [number, number, number])[] = [[11, 44, 29]]): Uint8Array {
   const parts = codes.flatMap((station) =>
-    (['BHE', 'BHN', 'BHZ'] as const).map(
-      (channel) => steim2Record(Int32Array.from({ length: 200 }, (_, i) => 1000 + i), { station, channel, factor: 20, multiplier: 1 }).bytes,
+    hms.flatMap((at) =>
+      (['BHE', 'BHN', 'BHZ'] as const).map(
+        (channel) =>
+          steim2Record(Int32Array.from({ length: 200 }, (_, i) => 1000 + i), { station, channel, factor: 20, multiplier: 1, hms: [...at] }).bytes,
+      ),
     ),
   )
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
@@ -159,7 +166,8 @@ describe('usePublicQuakeWaves', () => {
   // 地図の別の観測点と番号が重なりえた。
   it('発生から 10 分以内の地震はどれも下部の波形の番号を引き継ぎ、無い観測点は続きの番号にする', async () => {
     setReplayOffset(Date.parse('2026-10-13T11:46:00Z') - Date.now())
-    archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB']) })
+    // old の範囲は new の発生（20:44:00）で切れるので、old の範囲の中（20:43:40 JST）にもレコードを置く
+    archive.fetch.mockResolvedValue({ kind: 'ok', bytes: recordsFor(['AAA', 'BBB'], [[11, 43, 40], [11, 44, 29]]) })
     const quakes = [quake('new', TIME, 30), quake('old', '2026/10/13 20:43:30', 30, 35.6, 139.9)]
     const live = new Map([['ZZZ', 5], ['BBB', 3]])
     const h = renderHook(() =>

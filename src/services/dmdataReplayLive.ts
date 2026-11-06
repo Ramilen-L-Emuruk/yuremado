@@ -1588,9 +1588,9 @@ export async function fetchListedHypocenters(
       // 一覧は新しい順なので、読めた分は期間の新しい側。それだけでも描く
       items = e.items
       complete = false
-      log.warn('[data] 地震活動ヒートマップ: 電文一覧のページの上限に当たりました（読めた新しい側の地震だけを描きます）', e)
+      log.warn('[data] 震源の電文（ヒートマップ・震源カタログの末尾）: 電文一覧のページの上限に当たりました（読めた新しい側の地震だけを描きます）', e)
     } else {
-      log.warn('[data] 地震活動ヒートマップ: 電文一覧を引けませんでした', e)
+      log.warn('[data] 震源の電文（ヒートマップ・震源カタログの末尾）: 電文一覧を引けませんでした', e)
       return { quakes: [], complete: false }
     }
   }
@@ -1616,7 +1616,7 @@ export async function fetchListedHypocenters(
   }
   if (unidentified > 0) {
     complete = false
-    log.warn(`[data] 地震活動ヒートマップ: 電文一覧に地震 ID を読めない震源の電文が ${unidentified} 通ありました（その報は選びません）`)
+    log.warn(`[data] 震源の電文（ヒートマップ・震源カタログの末尾）: 電文一覧に地震 ID を読めない震源の電文が ${unidentified} 通ありました（その報は選びません）`)
   }
   const targets = [...primary.values()]
   for (const [eventId, item] of fallback) if (!primary.has(eventId)) targets.push(item)
@@ -1624,7 +1624,7 @@ export async function fetchListedHypocenters(
   targets.sort((a, b) => (Date.parse(b.receivedTime) || 0) - (Date.parse(a.receivedTime) || 0))
   if (targets.length > LISTED_HYPOCENTER_MAX_EVENTS) {
     complete = false
-    log.warn(`[data] 地震活動ヒートマップ: 震源を読む地震が上限（${LISTED_HYPOCENTER_MAX_EVENTS} 地震）を超えたため古い側を打ち切りました（残り ${targets.length - LISTED_HYPOCENTER_MAX_EVENTS} 地震）`)
+    log.warn(`[data] 震源の電文（ヒートマップ・震源カタログの末尾）: 震源を読む地震が上限（${LISTED_HYPOCENTER_MAX_EVENTS} 地震）を超えたため古い側を打ち切りました（残り ${targets.length - LISTED_HYPOCENTER_MAX_EVENTS} 地震）`)
     targets.length = LISTED_HYPOCENTER_MAX_EVENTS
   }
   const quakes: JMAQuake[] = []
@@ -1635,14 +1635,14 @@ export async function fetchListedHypocenters(
       const quake = payload?.kind === 'event' && payload.event.kind === 'quake' ? (payload.event as JMAQuake) : null
       if (quake === null) {
         complete = false
-        log.warn(`[data] 地震活動ヒートマップ: 震源の電文を読み取れませんでした id=${item.id}`)
+        log.warn(`[data] 震源の電文（ヒートマップ・震源カタログの末尾）: 震源の電文を読み取れませんでした id=${item.id}`)
         return
       }
       if (!quake.cancelled) quakes.push(quake)
     } catch (e) {
       if (isAbortedByCaller(e)) throw e
       complete = false
-      log.warn(`[data] 地震活動ヒートマップ: 震源の電文の本文を取れませんでした id=${item.id}`, e)
+      log.warn(`[data] 震源の電文（ヒートマップ・震源カタログの末尾）: 震源の電文の本文を取れませんでした id=${item.id}`, e)
     }
   })
   return { quakes, complete }

@@ -57,10 +57,10 @@ describe('組み合わせの検知器の判定の根拠', () => {
     expect(rows.find(r => r.label === '最大震度')?.value).toBe('—')
   })
 
-  it('正: 震度0 未満のまま確かな段になったら「震度0以下」と言う（「震度—」にしない）', () => {
+  it('正: 震度0 未満のまま確かな段になったら「震度0未満」と言う（「震度—」にしない）', () => {
     const d = det({ maxIntensity: -0.8, confirmedSnapshot: { size: 3, maxIntensity: -1.2 } })
-    expect(ensembleSummary(d)).toBe('3点・震度0以下で確定')
-    expect(ensembleRows(d).find(r => r.label === '最大震度')?.value).toBe('震度0以下')
+    expect(ensembleSummary(d)).toBe('3点・震度0未満で確定')
+    expect(ensembleRows(d).find(r => r.label === '最大震度')?.value).toBe('震度0未満')
   })
 
   it('対照: 計測震度 0.0〜0.5 はいまどおり「震度0」', () => {

@@ -98,7 +98,8 @@ describe('fc_hist の実ページから EEW を組み立てる', () => {
 
 describe('発生時刻の秒を震源カタログで補う', () => {
   let catalog: CatalogYear
-  const load = async () => (catalog ??= await loadCatalogYear(ROOT, 2016))
+  // 見本は 2016 年の年ファイルから本震の前後 30 分（2016-04-16 00:55〜01:55 JST・153 件）を形のまま切り出したもの
+  const load = async () => (catalog ??= await loadCatalogYear(join(ROOT, 'scripts', 'fixtures', 'hypocenter-catalog'), 2016))
   // 2016-04-16 01:25 の地震。EventID は 01:25:10（地震波を検知した時刻）
   const mainshock = { eventIdIso: '2016-04-15T16:25:10.000Z', minuteIso: '2016-04-15T16:25:00.000Z', latitude: 32.8, longitude: 130.8, magnitude: 7.1 }
 

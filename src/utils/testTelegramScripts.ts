@@ -225,6 +225,8 @@ export const FOREIGN_QUAKE_INTERNATIONAL_TSUNAMI: TestTelegramScript = {
  *   1. 2024-08-08 16:42 日向灘 M7.1 の震源・震度に関する情報（NII の実電文）
  *   2. 同じ地震の WEPA60（自作の英文 `synthetic/wepa60-hyuganada.txt`。実電文の行の並びに倣い、発生時刻 07:42Z・震央・規模を合わせた）
  *   3. 地震情報の無い地震の WEPA60（自作の英文 `synthetic/wepa60-mindanao.txt`。ミンダナオの M6.9。発生は日向灘の 22 分前）
+ *   4. 通信試験の WEPA60（自作の英文 `synthetic/wepa60-commtest.txt`。2020-12-15 の実電文の行の並びと文に倣った）。どのカードにも
+ *      付かず、読み上げ・通知・音だけが出る（2026-11-06 ユーザー選択「英文だけテストの最後に足す (Recommended)」）
  *
  * **3 の発生時刻を日向灘より前にしてある。** 台本は 1 つの差分で全体を押した時刻へずらすので（`anchor`）、後にすると押した時刻より
  * 未来の地震になる。
@@ -235,6 +237,7 @@ export const INTERNATIONAL_TSUNAMI_DOMESTIC_AND_ONLY: TestTelegramScript = {
     { file: nii('20240808075502_0_VXSE53_010000'), headType: 'VXSE53', atMs: 0 },
     { file: 'synthetic/wepa60-hyuganada.txt', headType: 'WEPA60', atMs: 3_000 },
     { file: 'synthetic/wepa60-mindanao.txt', headType: 'WEPA60', atMs: 6_000 },
+    { file: 'synthetic/wepa60-commtest.txt', headType: 'WEPA60', atMs: 9_000 },
   ],
 }
 
