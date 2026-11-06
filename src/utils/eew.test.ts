@@ -92,6 +92,8 @@ describe('diffHypoInfoEvents', () => {
     expect(events[0].cancelled).toBe(true)
     // 誤報取消ではなく自動終了として expired を立てる（誤報取消の音・通知を鳴らさないため）
     expect(events[0].expired).toBe(true)
+    // 受け口がその場で当てず、揺れ検知の広がり待ちを通すための印（2026-11-06 ユーザー選択「消えたら①と同じ待ちを通す (Recommended)」）
+    expect(events[0].vanishedFromList).toBe(true)
     expect(pendingMissing.size).toBe(0)
   })
 
@@ -102,6 +104,8 @@ describe('diffHypoInfoEvents', () => {
     expect(events).toHaveLength(1)
     expect(events[0].cancelled).toBe(true)
     expect(events[0].expired).toBeUndefined()
+    // 誤報取消は待たせない
+    expect(events[0].vanishedFromList).toBeUndefined()
   })
 
   it('複数EEW同時追跡中、片方だけ消滅してももう片方は影響を受けない', () => {

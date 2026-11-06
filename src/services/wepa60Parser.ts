@@ -1,6 +1,6 @@
 // 国際津波関連情報（WEPA60）の読み取り。**このアプリで唯一の平文の電文**（XML でも二進でもない）。
 // 型の説明と画面での扱いは `types/earthquake.ts` の `JMAInternationalTsunami`。
-import type { JMAInternationalTsunami } from '../types/earthquake'
+import type { InternationalTsunamiEvaluation, JMAInternationalTsunami } from '../types/earthquake'
 
 const MONTHS: Readonly<Record<string, number>> = {
   JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
@@ -57,6 +57,8 @@ function readWepa60(raw: string): Wepa60Read {
   const originLine = lines.find(line => /^\s*ORIGIN TIME:/.test(line))
   const originTime = originLine ? parseWepaTime(originLine.replace(/^\s*ORIGIN TIME:\s*/, '')) : null
   const text = lines.join('\n')
+  const bulletin = /BULLETIN NUMBER\s+(\d+)/.exec(title)
+  const evaluation = readEvaluation(lines)
   return {
     data: {
       id: wepa60Id(time, title, text),
@@ -66,8 +68,32 @@ function readWepa60(raw: string): Wepa60Read {
       isCommunicationsTest: isCommunicationsTestTitle(title),
       text,
       ...readHypocentralParameters(lines),
+      ...(bulletin && { bulletinNumber: Number(bulletin[1]) }),
+      ...(evaluation && { evaluation }),
     },
   }
+}
+
+/**
+ * 津波発生の可能性の文と値。**仕様で決まった 5 種だけ**（気象庁「配信資料に関する技術情報（地震火山編）第522号」別紙1（5）
+ * 「Tsunamigenic Potential には以下の表現のいずれかを記す」）。全期間の控え（2020-12〜2026-10）の地震の報 163 通もすべてこの 5 種。
+ */
+const EVALUATIONS: readonly (readonly [string, InternationalTsunamiEvaluation])[] = [
+  ['THERE IS A POSSIBILITY OF A DESTRUCTIVE OCEAN-WIDE TSUNAMI', 'oceanWide'],
+  ['THERE IS A POSSIBILITY OF A DESTRUCTIVE REGIONAL TSUNAMI', 'regional'],
+  ['THERE IS A POSSIBILITY OF A DESTRUCTIVE LOCAL TSUNAMI NEAR THE EPICENTER', 'localNearEpicenter'],
+  ['THERE IS A VERY SMALL POSSIBILITY OF A DESTRUCTIVE LOCAL TSUNAMI', 'verySmall'],
+  ['THERE IS NO POSSIBILITY OF A TSUNAMI', 'none'],
+]
+
+/** `EVALUATION` の段落（次の空行まで。文が 2 行に折れる報がある）を 5 種のどれかとして読む。どれでもなければ undefined */
+function readEvaluation(lines: readonly string[]): InternationalTsunamiEvaluation | undefined {
+  const at = lines.findIndex(line => /^\s*EVALUATION\s*$/.test(line))
+  if (at < 0) return undefined
+  const words: string[] = []
+  for (let i = at + 1; i < lines.length && lines[i].trim() !== ''; i++) words.push(lines[i].trim())
+  const sentence = words.join(' ').replace(/\s+/g, ' ').replace(/\.$/, '')
+  return EVALUATIONS.find(([s]) => s === sentence)?.[1]
 }
 
 /**

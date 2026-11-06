@@ -1,7 +1,8 @@
 import type {
-  JMANankai, JMANankaiCommentary, JMAKohatsu, JMALpgm, JMAEarthquakeCount, JMAEstimatedIntensity,
+  JMANankai, JMANankaiCommentary, JMAKohatsu, JMALpgm, JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami,
 } from '../types/earthquake'
 import { readDateTime } from './formatters'
+import { INTERNATIONAL_TSUNAMI_NAME, internationalTsunamiBody } from './internationalTsunamiSpeech'
 import type { NotificationOpen } from './notificationOpen'
 
 /**
@@ -106,4 +107,22 @@ export function estimatedIntensityNotification(event: JMAEstimatedIntensity, isN
 export function earthquakeCountNotification(event: JMAEarthquakeCount, headline: string): SpecialInfoNotification {
   if (event.cancelled) return cancelled(COUNT_NAME, 'earthquake-count')
   return { title: COUNT_NAME, body: headline === COUNT_NAME ? '' : headline, tag: 'earthquake-count', open: null }
+}
+
+/**
+ * 国際津波関連情報の通知（2026-11-06 ユーザー選択「津波の通知の設定で出す (Recommended)」）。見出しは情報名、本文は読み上げの文から
+ * 名乗りを除いたもの（{@link internationalTsunamiBody}）。同じ地震の報は後の報で置き換える（`tag` は発生時刻ごと）。
+ * 押したら、その地震のカード（結べた地震カードか、英文だけのカード）を選ぶ。通信試験は開き先を持たない。
+ */
+export function internationalTsunamiNotification(event: JMAInternationalTsunami, quakeName?: string): SpecialInfoNotification {
+  const body = internationalTsunamiBody(event, quakeName)
+  if (event.isCommunicationsTest || event.originTime === undefined) {
+    return { title: INTERNATIONAL_TSUNAMI_NAME, body, tag: 'international-tsunami', open: null }
+  }
+  return {
+    title: INTERNATIONAL_TSUNAMI_NAME,
+    body,
+    tag: `international-tsunami-${event.originTime}`,
+    open: { tab: 'earthquake', wepa60: event.originTime, lat: event.epicenter?.latitude, lon: event.epicenter?.longitude },
+  }
 }

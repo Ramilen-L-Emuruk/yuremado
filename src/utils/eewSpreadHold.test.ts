@@ -52,7 +52,7 @@ function tickEmpty(log: ReturnType<typeof createDetectionSpreadLog>, fromMs: num
   log.push(toMs, [])
 }
 
-// 根室の震央から約 50km の観測点（観測網の中の地震にする）
+// 根室の震央から約 50km の観測点（最寄りの観測点へ P 波が届く見込みをすぐにする）
 const NEAR_NEMURO: [number, number] = [43.3, 145.7]
 
 describe('decideFinalReportExpiry: 検知の束が広がっている間は自動解除を待つ', () => {
@@ -78,12 +78,14 @@ describe('decideFinalReportExpiry: 検知の束が広がっている間は自動
     expect(decideFinalReportExpiry(eew, formulaMs, log)).toEqual({ kind: 'expire', reason: 'grace-elapsed' })
   })
 
-  it('対照: 観測網の中の地震は、有感半径の外の束を結び付けない（走時の窓に入っていても）', () => {
+  // 覆した決まり: 以前は観測網の中の地震なら有感半径の外の束を結び付けなかった（2026-11-04）。速報の深さ・規模が外れると
+  // 同じ地震の揺れが半径の外まで広がるので、走時の窓だけで結ぶ（2026-11-06 ユーザー選択「距離で切らず走時だけで結ぶ (Recommended)」）
+  it('正: 観測網の中の地震でも、有感半径の外で走時の窓に入って始まった束を結び付ける', () => {
     const log = createDetectionSpreadLog()
     log.setSites([NEAR_NEMURO])
-    // 根室から約 1000km の関東で、P 波が届く頃（発生 130 秒後）に始まった束。走時では合うが、根室の地震の揺れではない
+    // 根室から約 1000km の関東で、P 波が届く頃（発生 130 秒後）に始まった束
     feedGrowingBundle(log, { epicenter: [35.0, 139.0], fromSec: 130, growUntilSec: 200, aliveUntilSec: 200 })
-    expect(log.lastSpread(eew, T0 + 200_000)).toBeNull()
+    expect(log.lastSpread(eew, T0 + 200_000)).not.toBeNull()
   })
 
   it('対照: 波が届く前に遠くで始まった束（別の揺れ）は結び付けない', () => {

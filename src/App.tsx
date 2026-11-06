@@ -1421,7 +1421,7 @@ export function App() {
   // 何を外し、何を外さないか（遠地地震・津波の原因地震・英文の付いた地震）は `filterDisplayedQuakes`。
   //
   // 国際津波関連情報の結び付けは、絞る前の全カードで 1 回だけ作る（→ `internationalTsunamiIndex`）。付く地震カードの無い報は、
-  // ここで英文だけのカードにして差し込む。状態の一覧には入れないので、音・読み上げ・通知は鳴らない（2026-10-30 の決定どおり）
+  // ここで英文だけのカードにして差し込む。状態の一覧には入れないので、カードを足しても音・読み上げ・通知は起きない（報そのものは受けたときに useEarthquakes から流す）
   const internationalTsunamiIdx = useMemo(
     () => internationalTsunamiIndex(earthquakes, internationalTsunamis),
     [earthquakes, internationalTsunamis],

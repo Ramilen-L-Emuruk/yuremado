@@ -1,12 +1,14 @@
-import type { JMAEarthquakeCount, JMAEstimatedIntensity, JMAKohatsu, JMALpgm, JMANankai, JMANankaiCommentary } from '../types/earthquake'
+import type {
+  JMAEarthquakeCount, JMAEstimatedIntensity, JMAInternationalTsunami, JMAKohatsu, JMALpgm, JMANankai, JMANankaiCommentary,
+} from '../types/earthquake'
 import { earthquakeCountHeadline } from './earthquakeCountSummary'
 import {
-  earthquakeCountNotification, estimatedIntensityNotification, kohatsuNotification, lpgmNotification,
-  nankaiCommentaryNotification, nankaiNotification, type SpecialInfoNotification,
+  earthquakeCountNotification, estimatedIntensityNotification, internationalTsunamiNotification, kohatsuNotification,
+  lpgmNotification, nankaiCommentaryNotification, nankaiNotification, type SpecialInfoNotification,
 } from './specialInfoNotification'
 
 /**
- * 南海トラフ・後発地震・関連解説情報・長周期地震動・推計震度分布図・地震回数の通知を、**出すかの判定と文面**まで決める。
+ * 南海トラフ・後発地震・関連解説情報・長周期地震動・推計震度分布図・地震回数・国際津波関連情報の通知を、**出すかの判定と文面**まで決める。
  * アプリ（画面内の通知）と中継（プッシュ通知）が同じものを使う（docs/relay-server-design.md §6.7）ので、
  * ブラウザにしか無いもの（画面・設定・音）を読まない。設定で止めるか（`notificationAllowed`）と、地域で絞るかは呼び出し側。
  *
@@ -15,7 +17,7 @@ import {
  */
 
 /** 設定のどの入り切りに従うか（`NotificationKind` のうちこの種類が使うもの） */
-export type SpecialInfoKind = 'quake' | 'nankai'
+export type SpecialInfoKind = 'quake' | 'nankai' | 'tsunami'
 
 export type SpecialInfoEvent =
   | { kind: 'lpgm'; data: JMALpgm }
@@ -24,6 +26,11 @@ export type SpecialInfoEvent =
   | { kind: 'nankaiCommentary'; data: JMANankaiCommentary }
   | { kind: 'nankai'; data: JMANankai }
   | { kind: 'kohatsu'; data: JMAKohatsu }
+  /**
+   * 国際津波関連情報。`quakeName` は同じ地震の地震カードの震源名（結べたときだけ。アプリが地震カードから引く）。
+   * 中継は地震カードを持たないので渡さず、本文は電文の座標で震源を言う
+   */
+  | { kind: 'internationalTsunami'; data: JMAInternationalTsunami; quakeName?: string }
 
 export interface SpecialInfoPlan {
   notification: SpecialInfoNotification
@@ -81,5 +88,10 @@ export function planSpecialInfoNotification(event: SpecialInfoEvent, lpgmName: L
       return { notification: nankaiNotification(event.data), kind: 'nankai', prefectures: null }
     case 'kohatsu':
       return { notification: kohatsuNotification(event.data), kind: 'nankai', prefectures: null }
+    case 'internationalTsunami':
+      // 津波の通知の設定に従い、地域では絞らない（2026-11-06 ユーザー選択「津波の通知の設定で出す (Recommended)」。説明は
+      // 「通知する地域では絞らない（国外の地震で県が無いため。南海トラフと同じ扱い）」）。通信試験も出す（同日の選択
+      // 「遠地地震の音・試験も伝える (Recommended)」）
+      return { notification: internationalTsunamiNotification(event.data, event.quakeName), kind: 'tsunami', prefectures: null }
   }
 }

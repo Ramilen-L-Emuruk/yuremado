@@ -38,6 +38,8 @@ import {
 } from '../utils/replayEventLog'
 import { replayTelegramFacts } from '../utils/replayTelegramRef'
 import { rollbackSpokenEntry } from '../utils/rollbackSpoken'
+import { internationalTsunamiTarget } from '../utils/internationalTsunami'
+import { internationalTsunamiToText } from '../utils/internationalTsunamiSpeech'
 import { eewAlertToText, eewIntensityText, eewLpgmOnlyText, eewScaleOnlyText, EEW_LPGM_CLASS_ZERO_TEXT, EEW_UPGRADE_PHRASE, EEW_WARNING_REGIONS_CLOSING, eewWarningRegionsText, eewCancelToText, deferredCancelReasonToSpeak, earthquakeToSegments, earthquakeCancelToText, earthquakeReportCancelToText, tsunamiToSegments, tsunamiDowngradeToSegments, tsunamiExpiryChangeSegments, tsunamiAreaGradeChangeToSegments, tsunamiAreaGradeChangeActionSegments, tsunamiForecastHeightChangeToSegments, tsunamiCancelToText, tsunamiPartialRetractionToText, tsunamiObservationUpdateToSegments, selectObservationUpdatesToSpeak, tsunamiArrivalToSegments, selectArrivalsToSpeak, tsunamiMissingToSegments, selectMissingToSpeak, tsunamiWarningLevelToSegments, selectWarningLevelToSpeak, joinWithAlso, applyTsunamiSpokenRefs, nankaiToText, nankaiCommentaryToText, kohatsuToText, earthquakeCountToText, quakeNoticeToText, estimatedIntensityToText, lpgmToText, telegramTextToSpeak, createQuakeSpokenState, applySpokenRefs, tsunamiTideToSegments, tsunamiMaxHeightTimeToSegments, tsunamiMissingMaxHeightTimeToSegments, selectMaxHeightTimeUpdatesToSpeak, tsunamiFirstWaveToSegments, selectFirstWaveUpdatesToSpeak, tsunamiObservationNoChangeSegments, type TtsSpeechOptions, type QuakeSpokenState, type TsunamiQuakeSpoken, tsunamiObservationLoweredSegments } from '../utils/ttsText'
 import { type EewSpeakingCardFollow } from './useEewSpeakingCard'
 import { joinSegments, plain, hasFollowTarget, hasUnreceivedFollowTarget, hasTelegramTextFollowTarget, hasBorrowedHypocenterFollowTarget, TELEGRAM_TEXT_OPEN_TARGET_KINDS, telegramTextSubject, quakeTelegramTextTarget, mapChunksToRefs, spokenChunkIndices, type SpeechFollowApi, type SpeechSegment, type SpeechRef } from '../utils/ttsFollow'
@@ -310,6 +312,11 @@ type SpeechTopic =
    */
   | `estimatedIntensity:${string}`
   /**
+   * 国際津波関連情報。**地震ごとに分ける**（鍵は英文の発生時刻。通信試験は報の `id`）。同じ地震の続報は
+   * 前の報の読み上げを取り下げ、別の地震どうしは推計震度分布図と同じく相互譲りで順に読む。
+   */
+  | `internationalTsunami:${string}`
+  /**
    * 地震・津波に関するお知らせ（見出しと取消）。最下位の層（`commentary`）で読む。
    *
    * **相互譲り（`MUTUAL_YIELD_TOPICS`）にも載せる。** 同じ最下位の層には南海トラフ関連解説情報がいて、
@@ -395,6 +402,8 @@ function isMutualYieldTopic(topic: SpeechTopic): boolean {
     || topic.startsWith('estimatedIntensity:')
     // 揺れ検知（`kyoshinDetect:*`）は 1 回ごとに主題を分けたので接頭辞で見る。理由は `SpeechTopic` の注記
     || topic.startsWith('kyoshinDetect:')
+    // 国際津波関連情報（`internationalTsunami:*`）も地震ごとに分けた。地震情報・津波の読み上げを切らずに順を待つ
+    || topic.startsWith('internationalTsunami:')
 }
 
 /**
@@ -3180,6 +3189,46 @@ export function useLiveEventHandler(deps: LiveEventHandlerDeps) {
       // 選択「南海は新設、他は地震情報に (Recommended)」）。本文は気象庁の要約（2026-10-23 ユーザー選択「通知の本文に使う
       // (Recommended)」）
       notifySpecialInfo(event.kind === 'nankai' ? { kind: 'nankai', data: event.data } : { kind: 'kohatsu', data: event.data })
+      return
+    }
+
+    // 国際津波関連情報（WEPA60）。**音・通知・読み上げで伝える**（2026-11-06 ユーザー選択「読み上げ・通知・音をまとめて足す」）。
+    // 音は遠地地震と同じ（同日の選択「遠地地震の音・試験も伝える (Recommended)」。通信試験も同じく伝える）。通知は津波の
+    // 通知の設定に従う（同日の選択「津波の通知の設定で出す (Recommended)」）。読む文は `internationalTsunamiToText`。
+    // 英文の本文そのものは読まない（日本語の声では読めない。上の `telegramTextToSpeak` も外している）。
+    //
+    // **画面は遠地地震と同じく地震タブへ移し、英文が付く地震カードを選ぶ**（同日の選択「遠地地震と同じく地震タブへ移る
+    // (Recommended)」）。付く地震カードが無ければ英文だけのカードを選ぶ。通信試験はどのカードにも付かないので画面は動かさない。
+    // 動かし方は推計震度分布図と同じく読み上げに同調させる（読み上げを切った端末だけ受けた時点で移す）。
+    if (event.kind === 'internationalTsunami') {
+      const intl = event.data
+      const target = internationalTsunamiTarget(earthquakesRef.current, intl)
+      const quakeName = target?.quakeName
+      if (!intl.isCommunicationsTest && intl.evaluation === undefined) {
+        // 仕様では 5 種のどれかが必ず入る（全期間の控えの地震の報 163 通もすべて読めた）。読めなければ書式が変わった印
+        log.warn(`[quake] 国際津波関連情報の津波発生の可能性（EVALUATION）を読めず、その句を省いて読み上げます: ${intl.title} ${intl.time}`)
+      }
+      // 選ぶ鍵は読み上げの番が来た瞬間に引き直す。待つ間に同じ地震の地震情報が届けば、付く先がそちらへ移る
+      // 付く先が取り消されたカードなら選ばない（選ぶとすぐ外れる。通知を押したときの `resolveNotificationOpen` も同じく選ばない）
+      const selectCard = () => {
+        const now = internationalTsunamiTarget(earthquakesRef.current, intl)
+        if (now && !now.cancelled) selectQuake(now.key)
+      }
+      if (settings.soundEnabled) playAlertSound('earthquakeInfo')
+      notifySpecialInfo({ kind: 'internationalTsunami', data: intl, quakeName })
+      if (!settings.voicevoxEnabled && target) {
+        log.info('[tab] earthquake を要求 (国際津波関連情報・読み上げ無し)')
+        setActiveTabNonRealtime('earthquake')
+        selectCard()
+      }
+      if (settings.voicevoxEnabled) {
+        speakNonEEWDelayed(
+          internationalTsunamiToText(intl, quakeName), SPEECH_PRIORITY.normal, ttsDelayFor('earthquakeInfo'),
+          `internationalTsunami:${intl.originTime ?? intl.id}`,
+          target ? { tab: 'earthquake', priority: TAB_PRIORITY.quake } : undefined,
+          undefined, undefined, target ? selectCard : undefined,
+        )
+      }
       return
     }
 

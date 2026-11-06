@@ -123,6 +123,40 @@ describe('組み合わせの検知のまとめ', () => {
     })
   })
 
+  describe('揺れている点が残る間は消さない', () => {
+    const keepSec = ENSEMBLE_KEEP_MS / 1000
+    /** 0 秒に点 0・1 で確かな段になった束を、`toSec` 秒まで `values(s)` で流し、最後の秒の検知の id を返す */
+    const idsAt = (toSec: number, values: (s: number) => number[]) => {
+      const t = createEnsembleTracker(SITES, scripted({ 0: [row('confirmed', [0, 1])] }))
+      let out: string[] = []
+      for (let s = 0; s <= toSec; s++) out = t.push(frame(s, values(s))).map(d => d.id)
+      return out
+    }
+
+    it('正: 報告が途切れても、加わった点の 2 点以上が震度1 以上なら寿命を過ぎても残す', () => {
+      expect(idsAt(keepSec + 60, () => [7, 7, 0, 0])).toEqual(['e1'])
+    })
+
+    it('対照: 震度1 以上が 1 点だけなら寿命で消す', () => {
+      expect(idsAt(keepSec + 1, () => [7, 6, 0, 0])).toEqual([])
+    })
+
+    it('安全弁: 揺れが収まってから寿命を過ぎたら消す', () => {
+      const calmAt = 100
+      const v = (s: number) => (s < calmAt ? [8, 8, 0, 0] : [6, 6, 0, 0])
+      expect(idsAt(calmAt - 1 + keepSec, v)).toEqual(['e1'])
+      expect(idsAt(calmAt + keepSec, v)).toEqual([])
+    })
+
+    it('対照: 欠測の点は震度1 以上に数えない', () => {
+      expect(idsAt(keepSec + 1, () => [-1, -1, 0, 0])).toEqual([])
+    })
+
+    it('対照: 加わっていない点が震度1 以上でも残さない', () => {
+      expect(idsAt(keepSec + 1, () => [0, 0, 7, 7])).toEqual([])
+    })
+  })
+
   it('観測点の数と値の数が食い違えば投げる', () => {
     const t = createEnsembleTracker(SITES, scripted({}))
     expect(() => t.push(frame(0, [8, 8]))).toThrow('食い違って')

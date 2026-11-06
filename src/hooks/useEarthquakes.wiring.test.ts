@@ -482,6 +482,71 @@ describe('再生中もキューの予約は発火時刻を待つ', () => {
     expect(h.current.activeEEWs.size).toBe(0)
   })
 
+  /** 強震モニタ（Yahoo）の最終報でない報と、それが一覧から取消の印なしで消えたときの自動解除（`diffHypoInfoEvents`） */
+  const yahooReport = (at: Date): EEWAlert => ({ ...finalEEW(at), origin: 'yahoo', id: 'yahoo-replay', isFinal: false })
+  const yahooVanished = (at: Date): EEWAlert => ({ ...yahooReport(at), cancelled: true, expired: true, vanishedFromList: true })
+
+  // 正: 強震モニタは最終報を出さずに一覧から外すことがある（2026-10-25 11:09 の地震）。消えたことによる自動解除も、
+  // 最終報の予約と同じく揺れ検知が広がっている間は待つ（2026-11-06 ユーザー選択「消えたら①と同じ待ちを通す (Recommended)」）
+  it('強震モニタの一覧から消えた速報も、揺れ検知の束が広がっている間は自動解除を待つ', () => {
+    setReplayOffset(OFFSET_MS)
+    const at = serverDate()
+    const wait = cancelAfterMs(at)
+    const growUntilSec = Math.round(wait / 1000) + 20
+    const h = setup({ offset: OFFSET_MS, eewSpreadLog: spreadingLog(at, growUntilSec) })
+
+    act(() => { h.current.injectEvent(yahooReport(at)) })
+    act(() => { h.current.injectEvent(yahooVanished(at)) })
+    expect(h.current.activeEEWs.size).toBe(1)
+
+    act(() => { vi.advanceTimersByTime(wait + 1_000) })
+    expect(h.current.activeEEWs.size).toBe(1)
+
+    act(() => { vi.advanceTimersByTime(48_000) })
+    expect(h.current.activeEEWs.size).toBe(1)
+
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(h.current.activeEEWs.size).toBe(0)
+  })
+
+  // 安全弁: 一覧から消えた後に同じ地震の新しい報を採ったら、消えたことで積んだ予約は捨てる（古い報の式の時刻で新しい報を消さない）
+  it('強震モニタの一覧から消えた後に新しい報が届いたら、消えたことによる自動解除は効かない', () => {
+    setReplayOffset(OFFSET_MS)
+    const h = setup({ offset: OFFSET_MS })
+    const at = serverDate()
+    const wait = cancelAfterMs(at)
+
+    act(() => { h.current.injectEvent(yahooReport(at)) })
+    act(() => { h.current.injectEvent(yahooVanished(at)) })
+    const later = new Date(at.getTime() + 5_000).toISOString()
+    act(() => {
+      h.current.injectEvent({ ...yahooReport(at), time: later, issue: { eventId: 'replay-final-event', serial: '3', time: later } })
+    })
+    expect(h.current.activeEEWs.size).toBe(1)
+
+    // 消えた報の式の時刻を過ぎても、新しい報は残る
+    act(() => { vi.advanceTimersByTime(wait + 1_000) })
+    expect(h.current.activeEEWs.size).toBe(1)
+  })
+
+  // 対照: 揺れ検知が広がっていなければ、一覧から消えた瞬間ではなく式の時刻で消える（最終報が無くても居座らない）
+  it('強震モニタの一覧から消えた速報は、揺れ検知が無ければ式の時刻で消える', () => {
+    setReplayOffset(OFFSET_MS)
+    const h = setup({ offset: OFFSET_MS })
+    const at = serverDate()
+    const wait = cancelAfterMs(at)
+
+    act(() => { h.current.injectEvent(yahooReport(at)) })
+    act(() => { h.current.injectEvent(yahooVanished(at)) })
+    expect(h.current.activeEEWs.size).toBe(1)
+
+    act(() => { vi.advanceTimersByTime(wait - 1_000) })
+    expect(h.current.activeEEWs.size).toBe(1)
+
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(h.current.activeEEWs.size).toBe(0)
+  })
+
   // 対照: 待っている間に誤報取消が届いたら、積み直した自動解除が取消の 10 秒表示を途中で消さない
   it('揺れ検知で自動解除を待っている間に誤報取消が届いても、取消の表示は 10 秒残る', () => {
     setReplayOffset(OFFSET_MS)

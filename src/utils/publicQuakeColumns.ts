@@ -35,8 +35,23 @@ export interface DecodedPublicQuakeWave {
   readonly window: SeismoWaveWindow | null
   /** 読めなかったレコードの数。 */
   readonly unreadable: number
-  /** 読めたが置かなかったレコードの数（別の観測点・表に無い成分・採取率の食い違い）。 */
+  /** 読めたが置かなかったレコードの数（別の観測点・表に無い成分・採取率の食い違い）。全部が範囲の外のレコードは数えない。 */
   readonly rejected: number
+}
+
+/**
+ * レコードのうち、範囲 `[fromMs, toMs]` に入るサンプルだけを残したもの。1 つも入らなければ `null`。
+ * 時刻はサンプルの番号を数え直さずに済むよう、残した最初のサンプルの時刻へずらす。
+ */
+export function clipRecordToRange(rec: Mseed2Record, range: PublicQuakeRange): Mseed2Record | null {
+  if (!Number.isFinite(range.fromMs) || !Number.isFinite(range.toMs)) return null
+  if (!(rec.sampleRate > 0) || !Number.isFinite(rec.startMs)) return rec // 置く側が invalid として数える
+  const ms = 1000 / rec.sampleRate
+  const first = Math.max(0, Math.ceil((range.fromMs - rec.startMs) / ms - 1e-6))
+  const last = Math.min(rec.samples.length - 1, Math.floor((range.toMs - rec.startMs) / ms + 1e-6))
+  if (last < first) return null
+  if (first === 0 && last === rec.samples.length - 1) return rec
+  return { ...rec, startMs: rec.startMs + first * ms, samples: rec.samples.subarray(first, last + 1) }
 }
 
 /** 生バイトを読み、範囲のぶんを入れ物へ置いて取り出す。 */
@@ -47,11 +62,15 @@ export function decodePublicQuakeWave(params: {
 }): DecodedPublicQuakeWave {
   const { bytes, epoch, range } = params
   const stream = splitMseed2Stream(bytes)
-  // 抱える長さは範囲ぶん（レコードは範囲の前後へ少しはみ出して返る。古い端から落ちるので、前へ 60 秒の余裕を持たせる）
-  const buffer = new PublicWaveBuffer(Math.ceil((range.toMs - range.fromMs) / 1000) + 60)
+  // **範囲の外のサンプルは置かない。** 控えには、観測点をまとめて取った問い合わせの広さ（いちばん遠い観測点の範囲の終わり）まで
+  // 入っている。そのまま置くと入れ物の最新が範囲の外へ進み、抱えられる長さからはみ出した範囲の頭が古い端から落ちる。
+  // 範囲の中だけを置くので、抱える長さは範囲ぶん（端の丸めに 1 秒の余裕）で足りる
+  const buffer = new PublicWaveBuffer(Math.ceil((range.toMs - range.fromMs) / 1000) + 1)
   let rejected = 0
   for (const rec of stream.records) {
-    if (pushPublicRecord(buffer, epoch, rec).kind !== 'ok') rejected += 1
+    const clipped = clipRecordToRange(rec, range)
+    if (clipped === null) continue
+    if (pushPublicRecord(buffer, epoch, clipped).kind !== 'ok') rejected += 1
   }
   return { window: buffer.snapshot(range.fromMs), unreadable: stream.unreadable.length, rejected }
 }
