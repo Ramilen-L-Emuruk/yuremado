@@ -176,17 +176,20 @@ describe('upsertEstimatedIntensity', () => {
     const follow = { ...kumaEi, time: '2026-07-28T16:38:00+09:00', count: 1701 }
     const r = upsertEstimatedIntensity([kumaEi, otherEi], follow)
     expect(r.update).toEqual({ apply: true, reason: 'newer' })
-    // 置き換えた前の報の発表時刻は引き継ぐ（開いたカードの報の一覧に出す）
-    expect(r.list).toEqual([{ ...follow, previousTimes: [kumaEi.time] }, otherEi])
+    // 置き換えた前の報の発表時刻と中身は引き継ぐ（開いたカードの報の一覧に出し、押せばその報の分布を出す）
+    expect(r.list).toEqual([{ ...follow, previousTimes: [kumaEi.time], previousVersions: [kumaEi] }, otherEi])
   })
 
-  // 正: 続報が重なっても、前の報の発表時刻を古い順にすべて持ち続ける。
-  it('続報を重ねても前の報の発表時刻を古い順にすべて持つ', () => {
+  // 正: 続報が重なっても、前の報の発表時刻と中身を古い順にすべて持ち続ける。
+  // 安全弁: 積む前の報からは引き継ぎを外す（入れ子にすると続報のたびに前の報が二重三重に残る）。
+  it('続報を重ねても前の報の発表時刻と中身を古い順にすべて持ち、入れ子にしない', () => {
     const second = { ...kumaEi, time: '2026-07-28T16:38:00+09:00', count: 1701 }
     const third = { ...kumaEi, time: '2026-07-28T16:45:00+09:00', count: 1800 }
     const after2 = upsertEstimatedIntensity([kumaEi], second).list
     const after3 = upsertEstimatedIntensity(after2, third).list
     expect(after3[0].previousTimes).toEqual([kumaEi.time, second.time])
+    expect(after3[0].previousVersions).toEqual([kumaEi, second])
+    expect(after3[0].previousVersions?.every(v => !('previousVersions' in v) && !('previousTimes' in v))).toBe(true)
   })
 
   // 安全弁: **遅れて届いた古い地震の分布が、新しい地震の分布を押しのけない。**

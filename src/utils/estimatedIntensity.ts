@@ -378,9 +378,15 @@ export function upsertEstimatedIntensity(
   if (!update.apply) return { list, update }
   if (index < 0) return { list: [...list, next], update }
   const replaced = list.slice()
-  // 置き換える前の報の発表時刻を引き継ぐ（開いたカードの報の一覧に前の報も出すため。→ `previousTimes`）
+  // 置き換える前の報の発表時刻と中身を引き継ぐ（開いたカードの報の一覧に前の報も出し、押せばその報の分布を出すため。
+  // → `previousTimes`・`previousVersions`）。前の報が持っていた引き継ぎは外して積む（入れ子にしない）
   const prev = list[index]
-  replaced[index] = { ...next, previousTimes: [...(prev.previousTimes ?? []), prev.time] }
+  const { previousTimes: prevTimes, previousVersions: prevVersions, ...prevOwn } = prev
+  replaced[index] = {
+    ...next,
+    previousTimes: [...(prevTimes ?? []), prev.time],
+    previousVersions: [...(prevVersions ?? []), prevOwn],
+  }
   return { list: replaced, update }
 }
 
