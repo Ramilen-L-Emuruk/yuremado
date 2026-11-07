@@ -61,8 +61,11 @@ interface Props {
   isLoading: boolean
   isLoadingMore: boolean
   hasMore: boolean
-  /** 「もっと見る」の取得。返る promise は取得が終わったら解決する（期間に合わせた自動の読み足しが、終わったかをこれで見る） */
-  onLoadMore: () => Promise<void>
+  /**
+   * 「もっと見る」の取得。返る promise は取得が終わったら、**読んだ結果を一覧へ反映したか**で解決する（期間に合わせた
+   * 自動の読み足しが、終わったことと「読んだのに一番古い日が動かなかった」ことをこれで見る）
+   */
+  onLoadMore: () => Promise<boolean>
   /**
    * 「もっと見る」が取得制限で待たされている間、ボタンに残り時間を出すか（→ `LoadMoreButton`）。
    */
@@ -213,22 +216,20 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
   const autoFromRef = useRef<string | null | undefined>(undefined)
   const [autoDoneSeq, setAutoDoneSeq] = useState(0)
   const seenDoneSeqRef = useRef(0)
-  // 自動で呼んだ後に読み込み中の印が立ったか。立たずに返った呼び出し（時間軸の切り替え・手で押した「もっと見る」と重なった等で
-  // 読まずに返った）は、進まなかったとは見なさない
-  const autoStartedRef = useRef(false)
-  if (autoFromRef.current !== undefined && isLoadingMore) autoStartedRef.current = true
+  // 自動で呼んだ取得が、読んだ結果を一覧へ反映したか（読まずに返った・捨てた・失敗したなら false。進まなかったとは見なさない）
+  const autoAppliedRef = useRef(false)
   const [autoStalled, setAutoStalled] = useState(false)
   useEffect(() => { setAutoStalled(false) }, [filter.period, historyOldestDay])
   useEffect(() => {
     if (autoDoneSeq !== seenDoneSeqRef.current) {
       seenDoneSeqRef.current = autoDoneSeq
       const from = autoFromRef.current
-      const started = autoStartedRef.current
+      const applied = autoAppliedRef.current
       autoFromRef.current = undefined
-      autoStartedRef.current = false
+      autoAppliedRef.current = false
       // 止めるのは「まだ読む必要があり、失敗でもないのに一番古い日が動かなかった」ときだけ（失敗は loadMoreFailed が止める。
       // 期間を外した・90 日より古くした後に返ったなら止める理由が無い）
-      if (started && from !== undefined && from === historyOldestDay && periodNeedsMore && hasMore && !loadMoreFailed) {
+      if (applied && from !== undefined && from === historyOldestDay && periodNeedsMore && hasMore && !loadMoreFailed) {
         log.warn(`[地震タブ] 期間に合わせた読み足しで、読み込んだ一番古い日が ${historyOldestDay ?? '（なし）'} から動かなかったので止めた`)
         setAutoStalled(true)
         return
@@ -238,7 +239,9 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
     if (autoFromRef.current !== undefined) return
     if (!shown || !periodNeedsMore || !hasMore || isLoadingMore || loadMoreFailed || autoStalled) return
     autoFromRef.current = historyOldestDay
-    onLoadMore().catch(() => { /* 失敗は onLoadMore が loadMoreFailed と記録に残す */ }).finally(() => setAutoDoneSeq(s => s + 1))
+    onLoadMore()
+      .then(applied => { autoAppliedRef.current = applied }, () => { autoAppliedRef.current = false /* 失敗は onLoadMore が loadMoreFailed と記録に残す */ })
+      .finally(() => setAutoDoneSeq(s => s + 1))
   }, [shown, periodNeedsMore, historyOldestDay, hasMore, isLoadingMore, loadMoreFailed, autoStalled, autoDoneSeq, onLoadMore])
   // 読み足しの様子（2026-11-08 選択「読み込み中と止まった後を分けて出す (Recommended)」）。読み込み中は期間の始まりまで読んでいる途中、
   // 止まった後（失敗・進まない・90 日より古い期間）は読めた範囲を添える。どちらでもなければ出さない。もう遡れない（hasMore が偽）なら注記も出さない
@@ -247,8 +250,8 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
   const loadNote = unloadedBefore === null || !hasMore || filter.period === null
     ? null
     : autoLoading
-      ? { note: `${quakeListPeriodStartLabel(filter.period, nowMs)}まで読み込んでいます…`, countSuffix: '（読み込み中）' }
-      : { note: `${unloadedBefore}以前は未読込みです。`, countSuffix: oldestLabel === null ? '' : `（${oldestLabel}以降を読込済み）` }
+      ? { note: `${quakeListPeriodStartLabel(filter.period, nowMs)}まで読み込んでいます…`, countSuffix: '（読み込み中）', loading: true }
+      : { note: `${unloadedBefore}以前は未読込みです。`, countSuffix: oldestLabel === null ? '' : `（${oldestLabel}以降を読込済み）`, loading: false }
   const filterDialog = <QuakeListFilterDialog filter={filter} onChange={onFilterChange} quakes={filterSourceQuakes} open={shown && openFilter} onClose={() => setOpenFilter(false)} shownCount={earthquakes.length} totalCount={filterSourceQuakes.length} loadNote={loadNote} />
   const withDialog = (screen: React.ReactNode) => <>{filterDialog}{screen}</>
   // 寄せる相手と寄せ直す合図は `quakeCardScrollTarget`、寄せ方は共有のフック（→ docs/spec/quake-spec.md §8「一覧の寄せ方」）。

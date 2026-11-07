@@ -86,7 +86,7 @@ const renderTab = async (lpgm: JMALpgm) => {
     isLoading={false}
     isLoadingMore={false}
     hasMore={false}
-    onLoadMore={async () => {}}
+    onLoadMore={async () => false}
     watchLoadMoreThrottle={false}
     error={null}
     historyLoss={createEmptyTelegramLoss()}
@@ -139,7 +139,7 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     isLoading={false}
     isLoadingMore={false}
     hasMore={false}
-    onLoadMore={async () => {}}
+    onLoadMore={async () => false}
     watchLoadMoreThrottle={false}
     error={null}
     historyLoss={createEmptyTelegramLoss()}

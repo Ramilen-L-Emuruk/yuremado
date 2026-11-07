@@ -52,7 +52,8 @@ function activeKinds(filter: QuakeListFilter): Record<FilterKind, boolean> {
 }
 
 /**
- * 絞り込みのボタン（漏斗の印）。絞っている条件があれば青くし、その数を添える（絞っていることはここで分かる）。
+ * 絞り込みのボタン（漏斗の印）。絞っている条件があれば青くし、その数を漏斗の右上に小さく重ねる（絞っていることはここで分かる）。
+ * 数を横に並べないのは、震度の欄（狭い幅で 50px）に「震度▼」と並べると隣の欄へはみ出すから（2026-11-08 選択「数を漏斗の右上に小さく重ねる (Recommended)」）
  */
 export function QuakeListFilterButton({ filter, open, onOpen }: { filter: QuakeListFilter; open: boolean; onOpen: () => void }) {
   const count = Object.values(activeKinds(filter)).filter(Boolean).length
@@ -64,10 +65,11 @@ export function QuakeListFilterButton({ filter, open, onOpen }: { filter: QuakeL
       aria-expanded={open}
       aria-label={count > 0 ? `絞り込み（${count}）` : '絞り込み'}
       onClick={onOpen}
-      className={`flex shrink-0 items-center gap-0.5 rounded-sm px-0.5 hover:text-white ${count > 0 ? 'text-blue-400' : ''}`}
+      // 押せる範囲は見た目より広くする（負の余白で打ち消すので、並びの中で占める幅は漏斗の 12px だけ）。スマホで指が届く大きさにする
+      className={`relative -mx-1.5 -my-1.5 flex shrink-0 items-center rounded-sm px-1.5 py-1.5 hover:text-white ${count > 0 ? 'text-blue-400' : ''}`}
     >
       <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3 w-3" fill="currentColor"><path d="M1.5 2h13l-5 6.2V13l-3 1.5V8.2z" /></svg>
-      {count > 0 && <span aria-hidden="true" className="tabular-nums">{count}</span>}
+      {count > 0 && <span aria-hidden="true" className="absolute top-0.5 left-[15px] text-[9px] leading-none font-bold tabular-nums">{count}</span>}
     </button>
   )
 }
@@ -90,7 +92,7 @@ interface DialogProps {
    * 期間に合わせた読み足しの様子（2026-11-08 選択「読み込み中と止まった後を分けて出す (Recommended)」）。読み込み中か、止まって
    * 期間の始まりまで読めていないときだけ渡す。`note` は期間の節に出す文、`countSuffix` は件数の後ろに添える語
    */
-  loadNote: { note: string; countSuffix: string } | null
+  loadNote: { note: string; countSuffix: string; loading: boolean } | null
 }
 
 /**
@@ -129,6 +131,8 @@ export function QuakeListFilterDialog({ filter, onChange, quakes, open, onClose,
       title="絞り込み"
       // 今の条件で一覧に出る数（2026-11-08 ユーザー発言「選んでる条件で表示される地震の数は…あらかじめ表示しておくべき」・選択「窓の見出しの横「50件中 12件」 (Recommended)」）
       count={(isQuakeListFiltered(filter) ? `${totalCount}件中 ${shownCount}件` : `${totalCount}件`) + (loadNote?.countSuffix ?? '')}
+      // 自動で読み足している間は読み上げない（7 日ずつ増えるたびに読むと続けて鳴る）。読み終わった件数は読む
+      countLive={!(loadNote?.loading ?? false)}
       onClose={onClose} onClearAll={isQuakeListFiltered(filter) ? () => onChange(DEFAULT_QUAKE_LIST_FILTER) : null}>
       {KINDS.map(kind => (
         <section key={kind} className="border-b border-border py-3 first:pt-0 last:border-b-0">
@@ -164,7 +168,7 @@ function clearKind(f: QuakeListFilter, kind: FilterKind): QuakeListFilter {
  * Esc は先に受けて伝わりを止める。閉じたらフォーカスを開いたボタンへ戻す（ブラウザが押した要素を覚えているので、閉じる側で戻す）。
  * 選んだものはその場で一覧へ効かせる（2026-11-07 選択「地域で絞る／地名で探す／海域／選択を解除 (Recommended)」の説明「決定のボタンは置かない」）。
  */
-function FilterDialog({ title, count, onClose, onClearAll, children }: { title: string; count: string; onClose: () => void; onClearAll: (() => void) | null; children: ReactNode }) {
+function FilterDialog({ title, count, countLive, onClose, onClearAll, children }: { title: string; count: string; countLive: boolean; onClose: () => void; onClearAll: (() => void) | null; children: ReactNode }) {
   const closeRef = useRef<HTMLButtonElement | null>(null)
   // **開いたときに 1 回だけ**フォーカスを移し、閉じたときに戻す。`onClose` は描くたびに新しい関数になるので、
   // 依存に置くと値を変えるたびにフォーカスがボタンと［閉じる］を往復し、スライダーの矢印キーが 2 回目から届かない
@@ -212,7 +216,7 @@ function FilterDialog({ title, count, onClose, onClearAll, children }: { title: 
       <div role="dialog" aria-modal="true" aria-label={title} className="flex max-h-full w-[min(32rem,100%)] flex-col rounded-md border border-border bg-panel p-4 shadow-[0_3px_8px_rgba(0,0,0,.55)]">
         <div className="mb-3 flex items-baseline gap-3 text-sm text-white">
           {title}
-          <span aria-live="polite" className="text-xs tabular-nums text-secondary">{count}</span>
+          <span aria-live={countLive ? 'polite' : 'off'} className="text-xs tabular-nums text-secondary">{count}</span>
         </div>
         <div className="min-h-0 overflow-y-auto text-xs text-secondary">{children}</div>
         <div className="mt-4 flex justify-end gap-2">
@@ -359,7 +363,8 @@ function RegionPicker({ filter, quakes, onChange }: { filter: QuakeListFilter; q
     onChange({ ...filter, region: { basis, names: adding ? [...names, name] : names.filter(n => n !== name) } })
   }
   // 基準を変えたら選んだ名前は空にする（震央地名と細分区域は別の名前の集まり）
-  const setBasis = (b: QuakeRegionBasis) => { if (b !== basis) onChange({ ...filter, region: { basis: b, names: [] } }) }
+  // 基準を替えたら畳みの指定も外す（県の名前は両方の基準で同じなので、残すと片方で畳んだ県がもう片方でも畳まれて見える）
+  const setBasis = (b: QuakeRegionBasis) => { if (b !== basis) { setGroupOpen(new Map()); onChange({ ...filter, region: { basis: b, names: [] } }) } }
   const seg = (on: boolean) => `px-2 py-0.5 ${on ? 'bg-blue-500/30 text-white' : 'hover:bg-white/10'}`
   const q = query.trim()
   const mapOn = basis === 'observed' && mode === 'map'
@@ -451,26 +456,50 @@ function zoomView(v: MapView, factor: number, cx: number, cy: number): MapView {
  * **拡大できる**（2026-11-08 ユーザー発言「両方残すけど、地図拡大できないの？」・選択「ピンチ・ホイールで拡大 (Recommended)」
  * 「＋・−・全体 (Recommended)」）。ホイールとピンチで寄り、ドラッグで動かす。動かしたときは区域を選ばない。
  */
+/**
+ * 区域の形（SVG の path の文字列）の控え。約 14 万点の文字列を組むので、地図を開くたびに組み直さない。区域データ
+ * （`useSubRegions` の data）は取得した 1 つを使い回すので、その参照が同じなら組んだものを返す。
+ */
+let regionPathCache: { data: unknown; paths: { name: string; d: string }[] } | null = null
+
 function RegionMap({ selected, present, onToggle }: { selected: readonly string[]; present: ReadonlySet<string>; onToggle: (name: string) => void }) {
   const { data, failed } = useSubRegions()
   const paths = useMemo(() => {
     if (!data) return null
+    if (regionPathCache?.data === data) return regionPathCache.paths
     // 西端 122°・東端 149°、南端 24°・北端 46°（本州・北海道・南西諸島が入る範囲）
     const W = 122, E = 149, S = 24, N = 46
     const sx = (lng: number) => ((lng - W) / (E - W)) * MAP_W
     const sy = (lat: number) => ((N - lat) / (N - S)) * MAP_H
-    return data.map(r => ({
+    const built = data.map(r => ({
       name: r.name,
       // 間引かずに描く。区域ごとに別々に間引くと、隣り合う区域の境目が別々にずれ、拡大したときに隙間と段差が出る
       // （2026-11-08 ユーザー発言「きもすぎるんだけど。」。全国で約 14 万点・192 区域。組むのは地図を開いたときの 1 回だけ）
       d: r.rings.map(ring => ring.map(([lat, lng], i) => `${i === 0 ? 'M' : 'L'}${sx(lng).toFixed(2)},${sy(lat).toFixed(2)}`).join('') + 'Z').join(''),
     }))
+    regionPathCache = { data, paths: built }
+    return built
   }, [data])
   const [view, setView] = useState<MapView>({ x: 0, y: 0, w: MAP_W })
   // ホイールの受け口（購読は 1 回）から今の寄り具合を読むための控え
   const viewRef = useRef(view)
   viewRef.current = view
   const svgRef = useRef<SVGSVGElement | null>(null)
+  // 寄り具合の変更は 1 フレームに 1 回へまとめる（ホイール・指の動きは 1 フレームに何度も来る。そのたびに描き直すと、
+  // 約 14 万点の塗りを何度もやり直す）。来た変更を順に貯め、次のフレームでまとめて当てる
+  const pendingView = useRef<((v: MapView) => MapView)[]>([])
+  const viewFrame = useRef<number | null>(null)
+  const updateView = (fn: (v: MapView) => MapView) => {
+    pendingView.current.push(fn)
+    if (viewFrame.current !== null) return
+    viewFrame.current = requestAnimationFrame(() => {
+      viewFrame.current = null
+      const fns = pendingView.current
+      pendingView.current = []
+      setView(v => fns.reduce((acc, f) => f(acc), v))
+    })
+  }
+  useEffect(() => () => { if (viewFrame.current !== null) cancelAnimationFrame(viewFrame.current) }, [])
   // 押している指・マウス（pointerId → 画面座標）。2 本ならピンチ、1 本ならドラッグ
   const pointers = useRef(new Map<number, { x: number; y: number }>())
   const moved = useRef(false)
@@ -491,7 +520,7 @@ function RegionMap({ selected, present, onToggle }: { selected: readonly string[
       const v0 = viewRef.current
       if (out ? v0.w >= MAP_W : v0.w <= MAP_MIN_W) return
       e.preventDefault()
-      setView(v => {
+      updateView(v => {
         const p = toMap(e.clientX, e.clientY, v)
         return zoomView(v, e.deltaY > 0 ? 1.2 : 1 / 1.2, p.x, p.y)
       })
@@ -519,15 +548,17 @@ function RegionMap({ selected, present, onToggle }: { selected: readonly string[
     if (!r || r.width === 0) return
     if (others.length === 0) {
       // ドラッグ: 指の動きぶん地図を逆へずらす
-      setView(v => clampView({ ...v, x: v.x - ((e.clientX - prev.x) / r.width) * v.w, y: v.y - ((e.clientY - prev.y) / r.width) * v.w }))
+      const dx = e.clientX - prev.x, dy = e.clientY - prev.y
+      updateView(v => clampView({ ...v, x: v.x - (dx / r.width) * v.w, y: v.y - (dy / r.width) * v.w }))
     } else {
       // ピンチ: 2 本の指の間の距離の比で寄る（中点を動かさない）
       const [, o] = others[0]
       const before = Math.hypot(prev.x - o.x, prev.y - o.y)
       const after = Math.hypot(e.clientX - o.x, e.clientY - o.y)
       if (before < 1 || after < 1) return
-      setView(v => {
-        const mid = toMap((e.clientX + o.x) / 2, (e.clientY + o.y) / 2, v)
+      const mx = (e.clientX + o.x) / 2, my = (e.clientY + o.y) / 2
+      updateView(v => {
+        const mid = toMap(mx, my, v)
         return zoomView(v, before / after, mid.x, mid.y)
       })
     }
@@ -536,22 +567,27 @@ function RegionMap({ selected, present, onToggle }: { selected: readonly string[
     pointers.current.delete(e.pointerId)
     if (pointers.current.size === 0) startAt.current = null
   }
+  // 押したときの関数は親の描き直しのたびに作り直されるので、控えから呼ぶ（区域の絵を選択が変わったときだけ組み直すため）
+  const onToggleRef = useRef(onToggle)
+  onToggleRef.current = onToggle
   const regionPaths = useMemo(() => paths?.map(p => (
     <path
-      key={p.name} d={p.d} onClick={present.has(p.name) ? () => onToggle(p.name) : undefined}
+      key={p.name} d={p.d} onClick={present.has(p.name) ? () => onToggleRef.current(p.name) : undefined}
       className={present.has(p.name) ? 'cursor-pointer' : undefined}
       fill={selected.includes(p.name) ? 'rgba(59,130,246,.75)' : present.has(p.name) ? 'rgba(148,163,184,.45)' : 'rgba(148,163,184,.08)'}
       stroke="rgba(15,23,42,.9)" strokeWidth={0.8} vectorEffect="non-scaling-stroke"
     >
       <title>{p.name}</title>
     </path>
-  )), [paths, present, selected, onToggle])
+  )), [paths, present, selected])
   const zoomBy = (factor: number) => setView(v => zoomView(v, factor, v.x + v.w / 2, v.y + (v.w * MAP_H / MAP_W) / 2))
   const whole = view.w >= MAP_W
   // 読み込み中・失敗は地図の代わりに 1 行出す（2026-11-08 ユーザー選択「両方出す (Recommended)」）。選ぶのは下の一覧でもできる
   if (failed) return <p className="text-xs text-secondary">地図を読み込めませんでした。下の一覧から選べます。</p>
   if (!paths) return <p className="text-xs text-secondary">地図を読み込んでいます…</p>
-  const mapBtn = 'flex h-6 min-w-6 items-center justify-center rounded-sm border border-border bg-panel/90 px-1 text-white hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-panel/90'
+  // 限界で disabled にすると、押した直後にフォーカスが落ちる。押せない印（aria-disabled）にして、押しても何もしない
+  const mapBtn = 'flex h-6 min-w-6 items-center justify-center rounded-sm border border-border bg-panel/90 px-1 text-white hover:bg-white/10 aria-disabled:opacity-40 aria-disabled:hover:bg-panel/90'
+  const atMax = view.w <= MAP_MIN_W
   return (
     <div className="relative">
       <svg
@@ -566,9 +602,9 @@ function RegionMap({ selected, present, onToggle }: { selected: readonly string[
         {regionPaths}
       </svg>
       <div className="absolute top-1.5 right-1.5 flex flex-col gap-1">
-        <button type="button" aria-label="拡大" className={mapBtn} disabled={view.w <= MAP_MIN_W} onClick={() => zoomBy(1 / 1.5)}>＋</button>
-        <button type="button" aria-label="縮小" className={mapBtn} disabled={whole} onClick={() => zoomBy(1.5)}>−</button>
-        <button type="button" aria-label="全体を表示" className={mapBtn} disabled={whole} onClick={() => setView({ x: 0, y: 0, w: MAP_W })}>全体</button>
+        <button type="button" aria-label="拡大" className={mapBtn} aria-disabled={atMax} onClick={() => { if (!atMax) zoomBy(1 / 1.5) }}>＋</button>
+        <button type="button" aria-label="縮小" className={mapBtn} aria-disabled={whole} onClick={() => { if (!whole) zoomBy(1.5) }}>−</button>
+        <button type="button" aria-label="全体を表示" className={mapBtn} aria-disabled={whole} onClick={() => { if (!whole) setView({ x: 0, y: 0, w: MAP_W }) }}>全体</button>
       </div>
     </div>
   )

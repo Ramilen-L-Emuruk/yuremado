@@ -74,7 +74,7 @@ async function renderTab(opts: {
       isLoading={false}
       isLoadingMore={false}
       hasMore={false}
-      onLoadMore={async () => {}}
+      onLoadMore={async () => false}
       watchLoadMoreThrottle={false}
       error={opts.error ?? null}
       historyLoss={opts.historyLoss ?? createEmptyTelegramLoss()}

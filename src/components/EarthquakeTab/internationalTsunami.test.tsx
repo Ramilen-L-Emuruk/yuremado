@@ -57,7 +57,7 @@ const tabElement = (quake: JMAQuake, bulletins: readonly JMAInternationalTsunami
       isLoading={false}
       isLoadingMore={false}
       hasMore={false}
-      onLoadMore={async () => {}}
+      onLoadMore={async () => false}
       watchLoadMoreThrottle={false}
       error={null}
       historyLoss={createEmptyTelegramLoss()}

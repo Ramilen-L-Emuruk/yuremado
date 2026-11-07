@@ -64,7 +64,7 @@ const tab = (lpgmFocus: LpgmSectionFocus | null, quake: JMAQuake = QUAKE, lpgm: 
       isLoading={false}
       isLoadingMore={false}
       hasMore={false}
-      onLoadMore={async () => {}}
+      onLoadMore={async () => false}
       watchLoadMoreThrottle={false}
       error={null}
       historyLoss={createEmptyTelegramLoss()}
