@@ -16,6 +16,7 @@ import { lpgmMarkKey, type QuakeCardMarks } from '../../utils/quakeUpdateMark'
 import { estimatedIntensityFor } from '../../utils/estimatedIntensity'
 import { NO_INTERNATIONAL_TSUNAMIS } from '../../utils/internationalTsunami'
 import type { LatLng } from '../../utils/stationCoords'
+import type { QuakeHistoryInputs, QuakeHistoryView } from '../../utils/quakeReportHistory'
 import { quakeCardScrollTarget, type LpgmSectionFocus, QUAKE_CARD_KEY_ATTR } from '../../utils/quakeCardScroll'
 import { useFollowScroll } from '../../hooks/useFollowScroll'
 import { growFrom, ROW_INSERT_MS, CARD_RESIZE_ANIMATION_ID } from './quakeMotion'
@@ -104,6 +105,17 @@ interface Props {
   estimatedIntensities: readonly JMAEstimatedIntensity[]
   /** 国際津波関連情報（WEPA60）をカードの鍵ごとに結んだもの（→ `internationalTsunamiIndex` の `byQuakeKey`） */
   internationalTsunamisByQuake: ReadonlyMap<string, readonly JMAInternationalTsunami[]>
+  /**
+   * 選択中のカードの報の一覧を組む材料（→ `utils/quakeReportHistory.ts`）。選択中のカードが無ければ null。
+   * 開いたカードはこれで「更新 ▾」の一覧を組む。
+   */
+  historyInputs: QuakeHistoryInputs | null
+  /** 報の一覧で押している行（無ければ null）。 */
+  historyPickedId: string | null
+  /** 押している行の時点の姿。開いたカードの中身をこれへ差し替える（無ければ最新のまま）。 */
+  historyView: QuakeHistoryView | null
+  /** 報の一覧の行を押した（同じ行をもう一度押すと最新へ戻す）。`count` はカードが組んだ一覧の行数。 */
+  onPickHistory: (entryId: string, count: number) => void
   /** 震度分布モードを開いている地震の `eventKey`。 */
   distributionQuakeKey: string | null
   onToggleDistribution: (eventKey: string) => void
@@ -170,7 +182,7 @@ interface Notice { text: string; tone: 'loss' | 'info'; onClose?: () => void }
 // 地震情報タブの右パネル。地震カードの一覧を表示し、クリックで地図表示対象を選択する。
 // 地図そのものは App が常時表示する。
 // React.memo 化の理由と props 参照安定性の要件は docs/spec/architecture-spec.md 参照。
-export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyOldestDay, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
+export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, filter, onFilterChange, sort, onSortChange, filterSourceQuakes, historyOldestDay, selectedId, selectSeq, speakingKey, followSpeech, onSelect, isLoading, isLoadingMore, hasMore, onLoadMore, watchLoadMoreThrottle, error, historyLoss, loadMoreFailed, reconnectGapLoss, fetchThrottled, onDismissKeyReentry, lpgmByEventId, updateMarks, activeLpgmEventId, onToggleLpgm, lpgmFocus, estimatedIntensities, internationalTsunamisByQuake, historyInputs, historyPickedId, historyView, onPickHistory, distributionQuakeKey, onToggleDistribution, unreceivedQuakeKey, onToggleUnreceived, onFocusMap, speakingTelegramTextSubject, seismoWaves, seismoWaveFailedKeys, seismoWaveView }: Props) {
   // **早期 return より前に置く**（フックの数を回ごとに変えないため）。一覧が無い回は寄せずに持ち越す。
   const listRef = useRef<HTMLDivElement>(null)
   // 並べ替え（見出しを押して選ぶ。→ `sortQuakeList`）
@@ -352,6 +364,11 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
        <section key={group.key}>
         {group.label && <QuakeListDayLabel label={group.label} />}
         {group.quakes.map(quake => {
+        const key = quakeEventKey(quake)
+        const selected = key === selectedId
+        // 報の一覧で前の報を押している間は、そのカードの中身だけをその報の時点へ差し替える（→ `historyView`）。
+        // ほかのカードには何も渡さない（memo が効く）
+        const view = selected && historyView ? historyView : null
         return (
         // QUAKE-4: 続報で id 末尾の serial が変わるたびに EarthquakeCard がリマウントされ、
         // isSelected の副作用（強制スクロール）が発火してユーザー操作を妨害する。
@@ -365,15 +382,20 @@ export const EarthquakeTab = memo(function EarthquakeTab({ shown, earthquakes, f
           // **包まずにそのまま渡す。** ここで包むと毎レンダー新しい関数になり、
           // `EarthquakeCard` の memo が素通りする（地震の鍵はカード側で作る）。
           onSelect={onSelect}
-          lpgm={lpgmByEventId.get(extractQuakeEventId(quake) ?? '')}
-          marks={updateMarks.get(quakeEventKey(quake))}
-          lpgmMarks={updateMarks.get(lpgmMarkKey(extractQuakeEventId(quake) ?? ''))}
+          lpgm={view ? view.lpgm : lpgmByEventId.get(extractQuakeEventId(quake) ?? '')}
+          marks={view ? view.marks : updateMarks.get(quakeEventKey(quake))}
+          historyQuake={view?.quake ?? null}
+          historyInputs={selected ? historyInputs : null}
+          historyPickedId={selected ? historyPickedId : null}
+          onPickHistory={onPickHistory}
+          // 前の報を見ている間は長周期の印を出さない（その報の時点の長周期の印は組んでいない。最新の印が混ざると時点の画面にならない）
+          lpgmMarks={view ? undefined : updateMarks.get(lpgmMarkKey(extractQuakeEventId(quake) ?? ''))}
           activeLpgmEventId={activeLpgmEventId}
           onToggleLpgm={onToggleLpgm}
           // 求めの番号は、見せる番のカードにだけ渡す（ほかのカードは 0 のままなので memo が効く）
           lpgmFocusSeq={lpgmFocusTarget?.key === quakeEventKey(quake) ? lpgmFocusTarget.seq : 0}
-          estimatedIntensity={estimatedIntensityFor(quake, estimatedIntensities)}
-          internationalTsunamis={internationalTsunamisByQuake.get(quakeEventKey(quake)) ?? NO_INTERNATIONAL_TSUNAMIS}
+          estimatedIntensity={view ? view.estimatedIntensity : estimatedIntensityFor(quake, estimatedIntensities)}
+          internationalTsunamis={view ? view.internationalTsunamis : internationalTsunamisByQuake.get(quakeEventKey(quake)) ?? NO_INTERNATIONAL_TSUNAMIS}
           distributionActive={quakeEventKey(quake) === distributionQuakeKey}
           onToggleDistribution={onToggleDistribution}
           unreceivedActive={quakeEventKey(quake) === unreceivedQuakeKey}

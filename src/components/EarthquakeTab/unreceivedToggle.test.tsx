@@ -97,6 +97,10 @@ const renderTab = async (quake: JMAQuake, opts: { unreceivedOpen?: boolean } = {
     filterSourceQuakes={[]}
     shown
     historyOldestDay={null}
+    historyInputs={null}
+    historyPickedId={null}
+    historyView={null}
+    onPickHistory={() => {}}
   />
   )
   await flushDataEffects()
@@ -177,6 +181,10 @@ describe('未入電トグル', () => {
         filterSourceQuakes={[]}
         shown
         historyOldestDay={null}
+        historyInputs={null}
+        historyPickedId={null}
+        historyView={null}
+        onPickHistory={() => {}}
       />,
     )
     expect(findIntensityRow(PREF)).toBeUndefined()

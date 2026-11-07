@@ -109,6 +109,10 @@ const renderQuake = async (quake: JMAQuake, selected = true) => {
       filterSourceQuakes={[]}
       shown
       historyOldestDay={null}
+      historyInputs={null}
+      historyPickedId={null}
+      historyView={null}
+      onPickHistory={() => {}}
     />,
   )
   await flushDataEffects()

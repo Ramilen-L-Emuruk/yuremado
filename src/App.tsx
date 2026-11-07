@@ -101,6 +101,7 @@ import { quakeEventKey, quakeKeyForLpgmEventId, extractQuakeEventId } from './ut
 import type { LpgmSectionFocus } from './utils/quakeCardScroll'
 import { canOpenLpgmNotes } from './utils/lpgm'
 import { estimatedIntensityFor, matchEstimatedIntensityArrival } from './utils/estimatedIntensity'
+import { quakeHistoryEntries, quakeHistoryView, type QuakeHistoryInputs } from './utils/quakeReportHistory'
 import {
   type QuakeOverlay, toggleLpgmOverlay, toggleDistributionOverlay, toggleUnreceivedOverlay,
   openDistributionOverlay, openLpgmOverlay,
@@ -115,7 +116,7 @@ import {
   type QuakeFilterContext, type QuakeListFilter, type QuakeListSort,
 } from './utils/quakeListView'
 import { useMinuteClock } from './hooks/useMinuteClock'
-import { internationalTsunamiIndex, withInternationalTsunamiCards } from './utils/internationalTsunami'
+import { internationalTsunamiIndex, withInternationalTsunamiCards, NO_INTERNATIONAL_TSUNAMIS } from './utils/internationalTsunami'
 import { playCountdownBeep, unlockAudio, setSoundVolume, setKeepAliveEnabled } from './utils/alertSound'
 import { loadTtsPhraseBreakDict } from './utils/ttsPhraseBreakDict'
 import { loadTtsStationReadings } from './utils/ttsStationReadings'
@@ -170,6 +171,7 @@ const EMPTY_INDICES: number[] = []
 /** 降ろした検知が無いときに RealtimeTab へ渡す空の並び（参照を保って memo を効かせる）。 */
 // 公開観測点の波形を出していないときに地図へ渡す空の印（毎回の新しい配列で地図の印を作り直させない）。
 const NO_PUBLIC_STATIONS: readonly PublicStationMarker[] = []
+
 // 地図の上の隅の列と、その下から始める行動チェックリストの帯の隙間（px）。
 const TOP_CORNERS_GAP_PX = 12
 
@@ -1120,7 +1122,7 @@ export function App() {
   // 揺れ検知の束の広がり。下の検知結果から毎秒流し込み、EEW の自動解除を広がっている間は待たせる（eew-spec §7）
   const [eewSpreadLog] = useState(createDetectionSpreadLog)
   const {
-    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentaryList, kohatsuList, quakeNoticeList, earthquakeCountList, estimatedIntensities, internationalTsunamis, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, keyForecastRefused, lastUpdate, isLoading, isLoadingMore, hasMore, error,
+    earthquakes, tsunamis, activeEEWs, lpgmByEventId, quakeUpdateMarks, nankai, nankaiCommentaryList, kohatsuList, quakeNoticeList, earthquakeCountList, estimatedIntensities, internationalTsunamis, tsunamiFactSteps, connectionStatus, relayUpstream, keyForecastStatus, relayForecastLive, dmdataClassifications, keyForecastRefused, lastUpdate, isLoading, isLoadingMore, hasMore, error,
     historyLoss, loadMoreFailed, reconnectGapLoss, historyOldestDay,
     telegramLog, clearTelegramLog,
     injectEvent, loadMoreEarthquakes,
@@ -1508,6 +1510,53 @@ export function App() {
   // 選択中に見えているカードの鍵。**開いているカードに従うものは `selectedQuakeId` ではなくこちらを見る** ——
   // 起動直後や選んだカードが取り消された後は `selectedQuakeId` が表示中のカードを指していない。
   const selectedQuakeKey = selectedQuake ? quakeEventKey(selectedQuake) : null
+  // 「更新 ▾」の報の一覧で押した報（→ `utils/quakeReportHistory.ts`。2026-11-07 ユーザー依頼）。押した報の時点のカードを
+  // 地震カードと地図へ出す（同日選択「カードの中身を差し替え (Recommended)」「地図もその報の時点にする (Recommended)」）。
+  // **同じ行をもう一度押すと最新へ戻る**（同日のユーザー発言「もっかいタップでいいんじゃないの？前のUIの長周期地震動の
+  // 切り替えみたいに。」）。**画面のカードが別の地震になる・そのカードの報の一覧が伸びたら最新へ戻す**（同日選択
+  // 「カードが変わるか一覧が伸びたら (Recommended)」）。届いた電文の種類ではなく画面の状態で見るので、選択を動かす経路が
+  // 増えても漏れない。`count` は押したときの行数
+  const [historyPick, setHistoryPick] = useState<{ quakeKey: string; entryId: string; count: number } | null>(null)
+  const historyInputs = useMemo<QuakeHistoryInputs | null>(() => selectedQuake ? {
+    card: selectedQuake,
+    lpgm: lpgmByEventId.get(extractQuakeEventId(selectedQuake) ?? ''),
+    internationalTsunamis: internationalTsunamiIdx.byQuakeKey.get(quakeEventKey(selectedQuake)) ?? NO_INTERNATIONAL_TSUNAMIS,
+    estimatedIntensity: estimatedIntensityFor(selectedQuake, estimatedIntensities),
+    tsunamiSteps: tsunamiFactSteps,
+    tsunamis,
+    quakes: earthquakes,
+    areaPrefIndex: getAreaPrefIndexCache(),
+  } : null, [selectedQuake, lpgmByEventId, internationalTsunamiIdx, estimatedIntensities, tsunamiFactSteps, tsunamis, earthquakes])
+  // 行数と押した行の姿は、押している間だけ組む（組むのは当て直しと印で、何度も走る経路に載せない）
+  const historyEntryCount = useMemo(
+    () => historyPick && historyInputs ? quakeHistoryEntries(historyInputs).length : 0,
+    [historyPick, historyInputs],
+  )
+  const historyPickLive = historyPick !== null && historyPick.quakeKey === selectedQuakeKey && historyPick.count === historyEntryCount
+  const historyView = useMemo(
+    () => historyPickLive && historyPick && historyInputs ? quakeHistoryView(historyInputs, historyPick.entryId) : null,
+    [historyPickLive, historyPick, historyInputs],
+  )
+  useEffect(() => {
+    if (historyPick && !historyPickLive) {
+      log.info('[地震タブ] 報の一覧で押した報から最新へ戻す（画面のカードが変わったか、報の一覧が伸びた）')
+      setHistoryPick(null)
+    } else if (historyPick && historyPickLive && historyView === null) {
+      // 押した行の姿を組めなかった（行の鍵が一覧に無い・カードがまだ無い時点）。押した見た目だけ残すと、最新の姿を前の報と
+      // 読み違えるので、最新へ戻して記録する
+      log.warn('[地震タブ] 報の一覧で押した行の時点のカードを組めず、最新へ戻します', { entryId: historyPick.entryId })
+      setHistoryPick(null)
+    }
+  }, [historyPick, historyPickLive, historyView])
+  // 押す口は参照を変えない（地震タブは `React.memo`）。押した瞬間に見えているカードの鍵を読む。`count` は押したカードが
+  // 見ていた行数（カードが組んだ一覧と同じもの）
+  const selectedQuakeKeyRef = useRef(selectedQuakeKey)
+  selectedQuakeKeyRef.current = selectedQuakeKey
+  const pickHistoryEntry = useCallback((entryId: string, count: number) => {
+    const quakeKey = selectedQuakeKeyRef.current
+    if (!quakeKey) return
+    setHistoryPick(prev => prev && prev.quakeKey === quakeKey && prev.entryId === entryId ? null : { quakeKey, entryId, count })
+  }, [])
   // 長周期の節を見せる求めを、地震カードへ引き当てる（求めの受け口は `focusLpgmSection`）。引き当てるのは
   // 選択中のカードに当たったときだけで、当たらなければ求めを捨てる（別の地震を見ている人の画面は動かさない）。
   // 紐づくカードがまだ無いなら、一覧が次に変わるまで待つ（同じ瞬間に届いた地震情報が載るのを待つため）。
@@ -2768,11 +2817,13 @@ export function App() {
   // 宣言が useReplayController より後になるため ref 経由で渡す（上記 resetLocalState 参照）。
   resetKyoshinAlertsRef.current = kyoshinAlerts.resetForReplay
 
-  const mapQuake = mapTab === 'earthquake' ? selectedQuake : latest
+  // 報の一覧で前の報を押している間は、地図もその報の時点にする（→ `historyView`）
+  const mapHistoryView = mapTab === 'earthquake' ? historyView : null
+  const mapQuake = mapHistoryView ? mapHistoryView.quake : mapTab === 'earthquake' ? selectedQuake : latest
   // 地図に出す推計震度分布図。**地図が出している地震のものだけ**を渡す（引き当ては
   // 発現時刻。→ `estimatedIntensityFor`）。別の地震のものを渡すと、まるで違う場所の
   // 分布が「気象庁の推計」として重なる。
-  const mapEstimatedIntensity = estimatedIntensityFor(mapQuake, estimatedIntensities)
+  const mapEstimatedIntensity = mapHistoryView ? mapHistoryView.estimatedIntensity : estimatedIntensityFor(mapQuake, estimatedIntensities)
   const mapDistributionMode = !!mapQuake && distributionQuakeKey === quakeEventKey(mapQuake)
   // 未入電の印を寄り具合に関わらず出すか。**地図が出している地震のものだけ**を見る
   // （分布モードと同じ理由）。
@@ -3115,7 +3166,7 @@ export function App() {
                 tsunamis={tsunamis}
                 tsunamiSourceQuakes={filteredEarthquakes}
                 observations={latestTsunamiObservations}
-                lpgm={activeLpgm ?? undefined}
+                lpgm={(mapHistoryView && activeLpgm && activeLpgm.eventId === extractQuakeEventId(mapHistoryView.quake) ? mapHistoryView.lpgm : activeLpgm) ?? undefined}
                 distributionMode={mapDistributionMode}
                 unreceivedMode={mapUnreceivedMode}
                 estimatedIntensity={mapEstimatedIntensity}
@@ -3373,6 +3424,10 @@ export function App() {
                 lpgmFocus={lpgmFocus}
                 estimatedIntensities={estimatedIntensities}
                 internationalTsunamisByQuake={internationalTsunamiIdx.byQuakeKey}
+                historyInputs={historyInputs}
+                historyPickedId={historyView ? historyView.entryId : null}
+                historyView={historyView}
+                onPickHistory={pickHistoryEntry}
                 distributionQuakeKey={distributionQuakeKey}
                 onToggleDistribution={toggleDistribution}
                 unreceivedQuakeKey={unreceivedQuakeKey}

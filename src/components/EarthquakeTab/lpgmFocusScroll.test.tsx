@@ -95,6 +95,10 @@ const tab = (lpgmFocus: LpgmSectionFocus | null, quake: JMAQuake = QUAKE, lpgm: 
       filterSourceQuakes={[]}
       shown
       historyOldestDay={null}
+      historyInputs={null}
+      historyPickedId={null}
+      historyView={null}
+      onPickHistory={() => {}}
     />
   </div>
 )

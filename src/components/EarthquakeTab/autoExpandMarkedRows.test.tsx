@@ -101,6 +101,10 @@ const renderTab = async (updateMarks: ReadonlyMap<string, QuakeCardMarks>, selec
     filterSourceQuakes={[]}
     shown
     historyOldestDay={null}
+    historyInputs={null}
+    historyPickedId={null}
+    historyView={null}
+    onPickHistory={() => {}}
   />,
   )
   await flushDataEffects()
@@ -177,6 +181,10 @@ describe('印の付いた行の自動展開（カードとの配線）', () => {
         filterSourceQuakes={[]}
         shown
         historyOldestDay={null}
+        historyInputs={null}
+        historyPickedId={null}
+        historyView={null}
+        onPickHistory={() => {}}
       />,
     )
     expect(findIntensityRow(STATION)).toBeDefined()

@@ -72,6 +72,10 @@ const renderTab = async (sort: QuakeListSort) => {
       filterSourceQuakes={[]}
       shown
       historyOldestDay={null}
+      historyInputs={null}
+      historyPickedId={null}
+      historyView={null}
+      onPickHistory={() => {}}
     />,
   )
   await flushDataEffects()

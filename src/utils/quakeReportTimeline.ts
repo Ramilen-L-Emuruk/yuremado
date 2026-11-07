@@ -34,24 +34,46 @@ export function quakeReportTimeline(
   extra: readonly { label: string; time: string }[] = [],
 ): QuakeTimelineEntry[] {
   const telegrams = quake.sourceTelegrams ?? [quake]
-  const byType = new Map<string, (typeof telegrams)[number][]>()
+  const labels = quakeTelegramLabels(telegrams)
+  const out: QuakeTimelineEntry[] = []
+  for (const t of telegrams) out.push({ label: labels.get(t) ?? t.issue.type, ms: msOf(t.issue.time) })
+  for (const e of extra) out.push({ label: e.label, ms: msOf(e.time) })
+  return sortTimeline(out)
+}
+
+/**
+ * 地震情報の報それぞれに一覧の名前を付ける（例「震源・震度情報 #2」）。番号の振り方は {@link quakeReportTimeline} の注記。
+ * 報の時点のカードを組む側（`utils/quakeReportHistory.ts`）も同じ名前を使う。
+ */
+export function quakeTelegramLabels(
+  telegrams: readonly Pick<JMAQuake, 'issue' | 'reportSerial'>[],
+): Map<Pick<JMAQuake, 'issue' | 'reportSerial'>, string> {
+  const byType = new Map<string, Pick<JMAQuake, 'issue' | 'reportSerial'>[]>()
   for (const t of telegrams) {
     const list = byType.get(t.issue.type)
     if (list) list.push(t)
     else byType.set(t.issue.type, [t])
   }
-  const out: QuakeTimelineEntry[] = []
+  const labels = new Map<Pick<JMAQuake, 'issue' | 'reportSerial'>, string>()
   for (const [type, list] of byType) {
     const n = list.length
     const named = list.map(t => t.reportSerial).filter((s): s is number => s !== undefined)
     const last = named.length > 0 ? Math.max(...named) : n
     list.forEach((t, idx) => {
       const no = last - (n - 1 - idx)
-      out.push({ label: last > 1 && no >= 1 ? `${type} #${no}` : type, ms: msOf(t.issue.time) })
+      labels.set(t, last > 1 && no >= 1 ? `${type} #${no}` : type)
     })
   }
-  for (const e of extra) out.push({ label: e.label, ms: msOf(e.time) })
-  return out
+  return labels
+}
+
+/**
+ * 発表時刻の古い順に並べる。読めない時刻は末尾、同じ時刻は渡した順のまま（安定）。
+ * 報の時点のカードを組む側（`utils/quakeReportHistory.ts`）も同じ並びを使う —— 押した行より上の報で組むので、
+ * 並びが違うと「上にある報」と「当てた報」が食い違う。
+ */
+export function sortTimeline<T extends { ms: number | null }>(entries: readonly T[]): T[] {
+  return entries
     .map((e, i) => ({ e, i }))
     .sort((a, b) => {
       if (a.e.ms === null && b.e.ms === null) return a.i - b.i
@@ -62,7 +84,7 @@ export function quakeReportTimeline(
     .map(x => x.e)
 }
 
-function msOf(time: string): number | null {
+export function msOf(time: string): number | null {
   const d = readDateTime('quakeReportTimeline', time)
   return d ? d.getTime() : null
 }

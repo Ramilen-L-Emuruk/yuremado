@@ -117,6 +117,10 @@ const renderTab = async (lpgm: JMALpgm) => {
     filterSourceQuakes={[]}
     shown
     historyOldestDay={null}
+    historyInputs={null}
+    historyPickedId={null}
+    historyView={null}
+    onPickHistory={() => {}}
   />
   )
   await flushDataEffects()
@@ -166,6 +170,10 @@ const tabWith = (subject: string | null, lpgm: JMALpgm = makeLpgm()) => (
     filterSourceQuakes={[]}
     shown
     historyOldestDay={null}
+    historyInputs={null}
+    historyPickedId={null}
+    historyView={null}
+    onPickHistory={() => {}}
   />
 )
 const renderSpeaking = async (subject: string | null, lpgm: JMALpgm = makeLpgm()) => {

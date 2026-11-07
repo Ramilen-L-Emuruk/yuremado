@@ -2650,7 +2650,7 @@ describe('取消は情報名称の単位で当てる（applyQuakeCancelToCard）
     expect(effect.card.reports?.map(r => r.type)).toEqual(['震源・震度情報'])
     expect(effect.card.sourceTelegrams?.map(t => t.issue.type)).toEqual(['震源・震度情報'])
     expect(effect.card.retractedReports).toEqual([{
-      issueType: '震度速報', reportTime: 震度速報.time, cancelText: '先ほどの、震度速報を取り消します。',
+      issueType: '震度速報', reportTime: 震度速報.time, cancelText: '先ほどの、震度速報を取り消します。', cancelTime: 後の取消.time,
     }])
     // 鍵は据え置く（選択・既読・更新の印との紐づきを切らない）
     expect(quakeEventKey(effect.card)).toBe(quakeEventKey(合わせたカード))
@@ -2720,7 +2720,7 @@ describe('取消は情報名称の単位で当てる（applyQuakeCancelToCard）
     const effect = applyQuakeCancelToCard({ ...合わせたカード, retractedReports: [前の記録] }, 後の取消, [], null)
     if (effect.kind !== 'partial') throw new Error('partial のはず')
     expect(effect.retracted).toEqual({
-      issueType: '震度速報', reportTime: 震度速報.time, cancelText: '先ほどの、震度速報を取り消します。',
+      issueType: '震度速報', reportTime: 震度速報.time, cancelText: '先ほどの、震度速報を取り消します。', cancelTime: 後の取消.time,
     })
   })
 

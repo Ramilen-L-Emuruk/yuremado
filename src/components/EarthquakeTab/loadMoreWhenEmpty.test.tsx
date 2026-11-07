@@ -77,6 +77,10 @@ async function renderTab(opts: { earthquakes: JMAQuake[]; hasMore: boolean; isLo
       filterSourceQuakes={[]}
       shown
       historyOldestDay={null}
+      historyInputs={null}
+      historyPickedId={null}
+      historyView={null}
+      onPickHistory={() => {}}
     />,
   )
   await flushDataEffects()

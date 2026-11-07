@@ -110,6 +110,10 @@ const renderTab = async (quake: JMAQuake, selected: boolean) => {
     filterSourceQuakes={[]}
     shown
     historyOldestDay={null}
+    historyInputs={null}
+    historyPickedId={null}
+    historyView={null}
+    onPickHistory={() => {}}
   />,
   )
   await flushDataEffects()

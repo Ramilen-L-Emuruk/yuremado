@@ -192,6 +192,10 @@ function earthquakeTabProps() {
     filterSourceQuakes: [],
     shown: true,
     historyOldestDay: null,
+    historyInputs: null,
+    historyPickedId: null,
+    historyView: null,
+    onPickHistory: () => {},
   } as const
 }
 

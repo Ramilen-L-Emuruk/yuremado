@@ -38,7 +38,8 @@ export interface DetectorFrame {
   values: Int8Array
 }
 
-const T_EARLY = 10
+/** 早い段の下限。点数 9〜10 に留まる有感を拾うため 9 にしている（普段の週の空振りとの兼ね合いは設計書§77） */
+const T_EARLY = 9
 /** 値の無い点が多い中心での、早い段の下限（設計書§65）。確かな段の下限（T_CONF）は変えない */
 const T_EARLY_MISS = 8
 /** 値の無い点が多いとみなす割合（いちばん狭い半径の内の点のうち） */
@@ -296,7 +297,7 @@ export function createStatDetector(sites: readonly (readonly [number, number])[]
           if (S >= (sparseData ? T_EARLY_MISS : T_EARLY)) {
             const mem: number[] = []
             for (let t = 0; t < Rb; t++) if (sv[nb[t]] >= ch.def.memMin) mem.push(nb[t])
-            // 下げた下限だけで届いた候補は、候補の点が MISS_MEM_N 点以上要る（2 点だけの上がりは、欠測の中でも検知にしない）
+            // 下げた下限だけで届いた候補（T_EARLY 未満）は、候補の点が MISS_MEM_N 点以上要る（T_EARLY に届かない 2 点だけの上がりは、欠測の中でも検知にしない）
             if (S < T_EARLY && mem.length < MISS_MEM_N) continue
             sig.push({ c, S, mem, s: sv })
           }

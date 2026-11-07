@@ -105,6 +105,10 @@ async function renderTab(opts: {
       filterSourceQuakes={[]}
       shown
       historyOldestDay={null}
+      historyInputs={null}
+      historyPickedId={null}
+      historyView={null}
+      onPickHistory={() => {}}
     />,
   )
   // 観測点を持たない空の一覧（`earthquakes: []`）ではカードが 1 枚も描かれず、

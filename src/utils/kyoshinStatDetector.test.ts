@@ -29,15 +29,19 @@ function frame(s: number, midAt: number): Int8Array {
   return v
 }
 
-const tail = (): TailCounts => {
-  const y = Array.from({ length: 12 }, (_, k) => Math.round(100_000 * 0.0005 / (k + 1)))
+/** 平常のゆらぎの表。p は 1 段上がる秒の割合（k 段は p / k） */
+const tail = (p = 0.0005): TailCounts => {
+  const y = Array.from({ length: 12 }, (_, k) => Math.round(100_000 * p / (k + 1)))
   return { n: 100_000, y, y3: [...y], y15: [...y] }
 }
-const QUIET: QuietTables = {
-  version: 1, days: ['test'], glob: tail(),
-  tails: Object.fromEntries(SITES.map(s => [quietSiteKey(s), tail()])),
+const quietTables = (p: number): QuietTables => ({
+  version: 1, days: ['test'], glob: tail(p),
+  tails: Object.fromEntries(SITES.map(s => [quietSiteKey(s), tail(p)])),
   fire: Object.fromEntries(SITES.map(s => [quietSiteKey(s), [0.1, 0.1, 0.1, 0.1, 0.1]])),
-}
+})
+const QUIET = quietTables(0.0005)
+/** 平常の上がりが QUIET の倍ある表。同じ上がりでも珍しさが下がり、点数が低く出る（下の並びの点数の幅は、下限を差し替えた写しで確かめた値。表の値や並びを変えたら測り直す。測り方は設計書§77） */
+const NOISY = quietTables(0.001)
 
 function run(midAt: number): DetectorReport[][] {
   const det = createStatDetector(SITES, QUIET)
@@ -308,25 +312,29 @@ describe('値の無い点は、平常の期待値に数えない', () => {
   })
 })
 
+/** 6×6 の近くの組のうち `up` の点が ON 秒に一斉に rise 段上がる。`missing` の点は欠測（-1）、残りは値はあるが静か（段 4 のまま） */
+function nearBurst(tables: QuietTables, up: number[], rise: number, missing: (i: number) => boolean, ON = 300): DetectorReport[][] {
+  const det = createStatDetector(NEAR, tables)
+  const out: DetectorReport[][] = []
+  for (let s = 0; s < ON + 60; s++) {
+    const v = new Int8Array(NEAR.length)
+    for (let i = 0; i < NEAR.length; i++) v[i] = up.includes(i) ? (s >= ON ? 4 + rise : 4) : missing(i) ? -1 : 4
+    out.push(det.push({ ms: T0 + s * 1000, values: v }))
+  }
+  return out
+}
+
 describe('値の無い点が多い中心は、早い段の下限を下げる', () => {
-  // 6×6 の近くの組のうち `up` の点が一斉に rise 段上がる。`missing` の点は欠測（-1）、残りは値はあるが静か（段 4 のまま）
-  const ON = 300
+  // 早い段の下限が 9 なので（設計書§77）、平常の上がりが倍ある表（NOISY）で、3 点・1 段の点数が 8 以上 9 未満に入る並びを作る
   function burst(up: number[], rise: number, missing: (i: number) => boolean): DetectorReport[][] {
-    const det = createStatDetector(NEAR, QUIET)
-    const out: DetectorReport[][] = []
-    for (let s = 0; s < ON + 60; s++) {
-      const v = new Int8Array(NEAR.length)
-      for (let i = 0; i < NEAR.length; i++) v[i] = up.includes(i) ? (s >= ON ? 4 + rise : 4) : missing(i) ? -1 : 4
-      out.push(det.push({ ms: T0 + s * 1000, values: v }))
-    }
-    return out
+    return nearBurst(NOISY, up, rise, missing)
   }
   const THREE = [0, 1, 6] // 隅の点と、東・北の隣
   const mostlyMissing = (i: number) => i % 4 !== 0 // 4 点に 3 点が欠測
   const fewMissing = (i: number) => i % 3 === 2 // 3 点に 1 点が欠測
 
   // 値の届く点が少ないと、揺れていても点数が数え切れない（能登 2024 の 01-03 以降、2 点以上上がった有感が点数 8〜10 で止まった。設計書§65）。
-  // 下げる前（下限 10）は、この並びでは何も出なかった
+  // この表と並びでは、欠測の多い中心の下限（8）が無ければ何も出ない（下の対照）
   it('正: 近くの点の多くが欠測なら、3 点が 1 段上がっただけで早い段に上がる（確かな段へは上がらない）', () => {
     const out = burst(THREE, 1, mostlyMissing)
     expect(out.flat().some(r => r.tier === 'early')).toBe(true)
@@ -337,8 +345,30 @@ describe('値の無い点が多い中心は、早い段の下限を下げる', (
     expect(burst(THREE, 1, fewMissing).flat()).toEqual([])
   })
 
-  // 下げた下限だけで届いた候補は、候補の点が 3 点以上要る（§57 で入れなかった 2 点の組を、欠測の多い所で入れない）
-  it('安全弁: 近くの点の多くが欠測でも、2 点だけの上がりは何段でも検知にしない', () => {
-    for (const rise of [1, 3, 8]) expect(burst([0, 1], rise, mostlyMissing).flat()).toEqual([])
+  // 下げた下限だけで届いた候補は、候補の点が 3 点以上要る（§57 で入れなかった 2 点の組を、欠測の多い所で入れない）。
+  // QUIET の 2 点・8 段・欠測が多い並びは点数が 8 以上 9 未満で、下限 8 には届く。止めるのは 3 点の要件だけ
+  it('安全弁: 近くの点の多くが欠測でも、下げた下限だけで届く 2 点の上がりは検知にしない', () => {
+    expect(nearBurst(QUIET, [0, 1], 8, mostlyMissing).flat()).toEqual([])
+  })
+})
+
+describe('早い段の下限は 9', () => {
+  // 点数 9 以上 10 未満に留まる有感を拾う（設計書§77）。
+  // QUIET の 3 点・1 段（欠測なし）は点数が 9 以上 10 未満、NOISY の同じ並びは 8 以上 9 未満。下限が 10 でも 8 でも、正か安全弁のどちらかが落ちる
+  const THREE = [0, 1, 6]
+  const none = () => false
+
+  it('正: 値の届く点の中で 3 点が 1 段上がれば早い段に上がる（確かな段へは上がらない）', () => {
+    const out = nearBurst(QUIET, THREE, 1, none)
+    expect(out.flat().some(r => r.tier === 'early')).toBe(true)
+    expect(firstConfirmed(out)).toBe(-1)
+  })
+
+  it('対照: 2 点だけが 1 段上がっても何も出ない', () => {
+    expect(nearBurst(QUIET, [0, 1], 1, none).flat()).toEqual([])
+  })
+
+  it('安全弁: 平常の上がりが倍ある所では、同じ 3 点・1 段でも何も出ない（欠測の少ない中心の下限は 9 より下がっていない）', () => {
+    expect(nearBurst(NOISY, THREE, 1, none).flat()).toEqual([])
   })
 })
